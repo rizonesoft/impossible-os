@@ -107,6 +107,9 @@
 
 **Test checkpoint:** When `hv_supports_cr4_smep_smap()` returns non-zero after kernel PTE U/S is fixed: `CR4.SMEP` and `CR4.SMAP` read back set on KVM/VBox/bare metal; WHPX may still skip per hypervisor policy. Until then, expect klog "SMEP: skipped" / "SMAP: skipped". `copy_from_user`/`copy_to_user` succeed on valid user buffers. After `clac` returns to `isr_common_stub`, entry path leaves AC cleared for SMAP-on configs. Test on: QEMU WHPX, QEMU TCG, VirtualBox; bare metal.
 
+> **Verified:** 2026-04-12 -- 6 of 10 items `[x]`, 1 `[/]` (CR4 blocked on kernel PTE User bit), 3 `[ ]` deferred (copy_from_user migration -> T05, ProbeForRead -> T10, clac in ISR -> blocked on SMAP). Log messages fixed: SMEP/SMAP skip now says "kernel PTE User bit -- needs KPTI" instead of misleading "EPT enforced". Verification path distinguishes Hyper-V EPT (real enforcement) from PTE blocker. Codex adversarial: copy_from_user range validation + fault recovery deferred to T10 SEH (no callers yet). Accepted: copy_from_user dead code until T05 wiring (-> XREF T05 + T10).
+> **Quality reviewed:** 2026-04-12 -- kernel-code-quality 11 gates walked. CR4 per-core (no SMP race). Intel SDM compliant. copy_from_user/copy_to_user confirmed dead (no callers). CR4_SMEP/CR4_SMAP local definitions consistent with codebase. Accepted: none.
+
 ---
 
 ## 3. KPTI Trampoline Page + Per-CPU CR3 Fields

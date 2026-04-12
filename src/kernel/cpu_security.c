@@ -63,7 +63,7 @@ void cpu_enable_smep(void)
         return;
 
     if (!hv_supports_cr4_smep_smap()) {
-        klog(LOG_DEBUG, "cpu", "SMEP: skipped (Hyper-V enforces via EPT)");
+        klog(LOG_DEBUG, "cpu", "SMEP: skipped (kernel pages have User bit -- needs KPTI S6)");
         return;
     }
 
@@ -82,7 +82,7 @@ void cpu_enable_smap(void)
         return;
 
     if (!hv_supports_cr4_smep_smap()) {
-        klog(LOG_DEBUG, "cpu", "SMAP: skipped (Hyper-V enforces via EPT)");
+        klog(LOG_DEBUG, "cpu", "SMAP: skipped (kernel pages have User bit -- needs KPTI S6)");
         return;
     }
 
@@ -167,8 +167,10 @@ void cpu_verify_hardening(void)
     if (cpu_has(CPU_FEATURE_SMEP)) {
         if (cr4 & CR4_SMEP)
             klog(LOG_INFO, "cpu", "Verify: SMEP enabled (CR4.SMEP set)");
-        else if (!hv_supports_cr4_smep_smap())
+        else if (platform_detect() == PLATFORM_HYPERV)
             klog(LOG_INFO, "cpu", "Verify: SMEP enforced via EPT (Hyper-V)");
+        else if (!hv_supports_cr4_smep_smap())
+            klog(LOG_INFO, "cpu", "Verify: SMEP skipped (kernel PTE User bit -- needs KPTI)");
         else
             klog(LOG_WARN, "cpu", "Verify: SMEP FAILED -- CR4.SMEP not set");
     }
@@ -177,8 +179,10 @@ void cpu_verify_hardening(void)
     if (cpu_has(CPU_FEATURE_SMAP)) {
         if (cr4 & CR4_SMAP)
             klog(LOG_INFO, "cpu", "Verify: SMAP enabled (CR4.SMAP set)");
-        else if (!hv_supports_cr4_smep_smap())
+        else if (platform_detect() == PLATFORM_HYPERV)
             klog(LOG_INFO, "cpu", "Verify: SMAP enforced via EPT (Hyper-V)");
+        else if (!hv_supports_cr4_smep_smap())
+            klog(LOG_INFO, "cpu", "Verify: SMAP skipped (kernel PTE User bit -- needs KPTI)");
         else
             klog(LOG_WARN, "cpu", "Verify: SMAP FAILED -- CR4.SMAP not set");
     }
