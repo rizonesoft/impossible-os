@@ -912,13 +912,27 @@ void vmm_apply_nx_policy(void)
                     if (page_base < kernel_base || page_end_addr > kernel_top)
                         continue;
 
-                    /* If this 2 MiB page overlaps the text section, leave it executable */
-                    if (page_base < text_end && page_end_addr > text_start)
+                    /* If this 2 MiB page overlaps the text section, split it
+                     * into 4 KiB pages so we can apply NX per-page -- only the
+                     * exact pages covering .text stay executable. Without this,
+                     * adjacent rodata/data/BSS in the same huge page would be
+                     * left executable (Gate 11/13: spec compliance). */
+                    if (page_base < text_end && page_end_addr > text_start) {
+                        if (vmm_split_huge_page(page_base) == 0) {
+                            /* Re-read PDE -- it's now a PT pointer, not huge.
+                             * Fall through to the 4 KiB walk below. */
+                            pde = pd[pdi];
+                        } else {
+                            /* Split failed (out of memory) -- leave whole page
+                             * executable as degraded fallback. */
+                            continue;
+                        }
+                    } else {
+                        /* Entire huge page is non-text kernel data -- NX it */
+                        pd[pdi] |= VMM_FLAG_NX;
+                        nx_count++;
                         continue;
-
-                    pd[pdi] |= VMM_FLAG_NX;
-                    nx_count++;
-                    continue;
+                    }
                 }
 
                 /* 4 KiB page table -- walk PT entries */
