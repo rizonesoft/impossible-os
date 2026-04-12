@@ -108,7 +108,7 @@
 - [x] `vzeroupper` at the end of every AVX kernel function (`memcpy_avx`, `memset_avx`, `fb_blit_avx`, `fb_fill_avx`) to prevent AVX->SSE transition penalties
 - [x] `memcpy_fast` / `memset_fast` dispatch: `if (cpu_has(CPU_FEATURE_AVX2))` -> AVX2 path; else `if (cpu_has(CPU_FEATURE_SSE2))` -> SSE2 path; else scalar fallback
 - [x] Framebuffer blit: `fb_blit_avx()` and `fb_fill_avx()` in `gfx_simd.c` using YMM registers (8 pixels/iteration); `framebuffer.c` dispatches via `simd_avx2_ok` flag in `mem_cpy32`/`mem_set32`
-- [ ] Commit: `"kernel/simd: AVX/AVX2 memcpy/memset/blit dispatch with vzeroupper"`
+- [x] Commit: `"kernel/simd: AVX/AVX2 memcpy/memset/blit dispatch with vzeroupper"`
 
 **Test checkpoint:** On AVX2-class CPU, `memcpy_avx` / `memset_avx` byte-match scalar reference on 64 KiB; `vzeroupper` emitted at function end; dispatch falls back to SSE2 on TCG. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
