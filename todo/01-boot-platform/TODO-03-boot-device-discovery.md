@@ -3,7 +3,7 @@
 > **Goal:** The bootloader must correctly identify which device it booted from, load the kernel and `boot.conf` from that device (not a random filesystem), and support a priority-based fallback chain across SATA, NVMe, USB, and network devices. **Today** `parse_boot_conf()` still uses the first `LocateProtocol(SIMPLE_FILE_SYSTEM)` handle, and there is no cross-volume fallback -- risks wrong-disk config on multi-disk systems even though `load_kernel()` already prefers LoadedImage. Windows uses the BCD store + Loaded Image device path; GRUB uses device enumeration + search; Linux exposes boot entries via `efibootmgr`. This TODO finishes boot device identification, fallback, UEFI boot variables (BootOrder, BootCurrent, BootNext, optional Boot#### decode), partition GUID validation, removable media detection, boot device Registry population, and a pre-boot device health check so the OS boots reliably on any hardware configuration and exposes complete boot provenance to the kernel.
 
 > [!IMPORTANT]
-> **Current state (code-truth 2026-04-12):** §1 done -- `efi_main()` resolves `LoadedImage->DeviceHandle` into `g_boot_device_handle` global with POST16 0xB090/0xB091 and serial proof. `load_kernel()` uses the global (no duplicate lookup). **Still wrong:** `parse_boot_conf()` still opens the volume via `LocateProtocol(SIMPLE_FILE_SYSTEM)` only -- §2 will fix this. **Not implemented:** `boot_info` has no `boot_device_*` / UEFI boot-variable / partition-GUID fields yet (§3-§8). **Not implemented:** multi-volume fallback chain (§5), Boot#### decode (§12), Registry §9 population, §10 enumeration log, §11 health check.
+> **Current state (code-truth 2026-04-12):** §1-§2 done -- `efi_main()` resolves `LoadedImage->DeviceHandle` into `g_boot_device_handle` global. Both `parse_boot_conf()` and `load_kernel()` use the global with SimpleFS fallback to LocateProtocol. POST16 0xB090-0xB093 cover both steps. **Not implemented:** `boot_info` has no `boot_device_*` / UEFI boot-variable / partition-GUID fields yet (§3-§8). **Not implemented:** multi-volume fallback chain (§5), Boot#### decode (§12), Registry §9 population, §10 enumeration log, §11 health check.
 
 ---
 
@@ -41,7 +41,7 @@
 | ⭐  | Order | Deliverable                                        | Depends On     | Status |
 | --- | :---: | -------------------------------------------------- | -------------- | :----: |
 | 💎  |   1   | Boot device identification via LoadedImage         | --             |  [x]   |
-| 💎  |   2   | Filesystem access scoped to boot device            | §1             |  [ ]   |
+| 💎  |   2   | Filesystem access scoped to boot device            | §1             |  [/]   |
 | 💎  |   3   | Boot device info in boot_info struct               | §1             |  [ ]   |
 | 💎  |   4   | Boot device type detection (SATA/NVMe/USB/Net)     | §3             |  [ ]   |
 | 💎  |   5   | Device fallback chain (priority-based)             | §2, §4         |  [ ]   |
@@ -84,11 +84,11 @@ Use UEFI `EFI_LOADED_IMAGE_PROTOCOL` to find which device the bootloader was loa
 
 Replace `LocateProtocol(SIMPLE_FILE_SYSTEM)` with `HandleProtocol(DeviceHandle, SIMPLE_FILE_SYSTEM)` everywhere boot configuration and kernel loads must stay on the same volume.
 
-- [ ] In `parse_boot_conf()`: open filesystem from boot `DeviceHandle`, not global `LocateProtocol` (**primary gap vs current `bootx64.c` ~855**)
-- [ ] In `load_kernel()`: same change -- use boot device filesystem
-- [ ] If `DeviceHandle` doesn't have `SIMPLE_FILE_SYSTEM_PROTOCOL`: fall back to `LocateProtocol` with warning
-- [ ] Log: `"[BOOT] Using boot device filesystem"` or `"[WARN] Boot device has no filesystem, using fallback"`
-- [ ] `POST16(0xB092)` before filesystem open, `POST16(0xB093)` after success -- if crash at 0xB092, filesystem scoping failed
+- [x] In `parse_boot_conf()`: open filesystem from boot `DeviceHandle`, not global `LocateProtocol` -- `bootx64.c:2327-2345` uses `g_boot_device_handle` with HandleProtocol, fallback to LocateProtocol
+- [x] In `load_kernel()`: same change -- already done in §1 (`bootx64.c:2450-2465`)
+- [x] If `DeviceHandle` doesn't have `SIMPLE_FILE_SYSTEM_PROTOCOL`: fall back to `LocateProtocol` with warning -- both `parse_boot_conf()` and `load_kernel()` have the same fallback pattern
+- [x] Log: `"[BOOT] Using boot device filesystem"` or `"[WARN] Boot device has no filesystem, using fallback"` -- both messages present
+- [x] `POST16(0xB092)` before filesystem open, `POST16(0xB093)` after success -- `POST16_BL_BOOT_FS` / `POST16_BL_BOOT_FS_OK` in `bootx64.c`, `POST16_BOOT_FS` / `POST16_BOOT_FS_OK` in `boot_init.h`
 - [ ] Commit: `"boot: scope filesystem access to boot device -- no more random disk"`
 
 **Test checkpoint:** On QEMU with single disk, behavior unchanged. On multi-disk (SATA + NVMe test), kernel loads from correct device. Verify on bare metal multi-disk system -- firmware filesystem handle order differs from QEMU. If crash, check POST code: 0xB092 = filesystem open failed.
@@ -267,7 +267,7 @@ Firmware boot entry **`Boot####`** variables hold an **`EFI_LOAD_OPTION`**: attr
 
 | ⭐   | Feature                     | 🪟 Win11                      | 🐧 Linux                 | 🚀 Impossible OS |
 | --- | --------------------------- | ---------------------------- | ----------------------- | --------------- |
-| 💎   | Boot device identification  | ✅ BCD + device path          | ✅ GRUB search command   | 🔨 §1 done, §2 next |
+| 💎   | Boot device identification  | ✅ BCD + device path          | ✅ GRUB search command   | ✅ §1-§2 done |
 | 💎   | Multi-device fallback       | ✅ BCD boot order             | ✅ GRUB menu entries     | ⬜ §5            |
 | 💎   | Boot device type in kernel  | ✅ Registry boot info         | ✅ /proc/cmdline root=   | ⬜ §3--§4        |
 | 💎   | Boot variable reading       | ✅ BCD reads BootOrder        | ✅ efibootmgr/efivarfs   | ⬜ §6            |

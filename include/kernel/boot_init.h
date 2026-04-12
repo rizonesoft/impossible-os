@@ -129,6 +129,8 @@ typedef enum {
 #define POST16_USB_DISC_OK      0xB081
 #define POST16_BOOT_DEV         0xB090  /* Boot device identification via LoadedImage */
 #define POST16_BOOT_DEV_OK      0xB091
+#define POST16_BOOT_FS          0xB092  /* Boot device filesystem open */
+#define POST16_BOOT_FS_OK       0xB093
 
 /* Phase 0 -- Critical Init (0x0000–0x0FFF) */
 #define POST16_SERIAL           0x0010

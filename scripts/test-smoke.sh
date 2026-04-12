@@ -58,6 +58,7 @@ BOOT_REQUIRED_PATTERNS=(
     "[BOOT] ExitBootServices OK"
     "Boot info v1"
     "Boot device:"
+    "Using boot device filesystem"
 )
 # These patterns must NOT appear on a clean firmware boot.
 BOOT_ABSENT_PATTERNS=(

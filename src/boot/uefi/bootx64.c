@@ -418,6 +418,16 @@ static UINT8   gFbPixelFormat; /* 0=RGBX, 1=BGRX, 2=BitMask -- see gop_pixel_for
 static UINT32  g_conf_res_width  = 0;
 static UINT32  g_conf_res_height = 0;
 
+/* --- Forward declarations for POST16 (used by parse_boot_conf, load_kernel) --- */
+static inline void post_code(UINT8 code);
+static inline void post_code16(UINT16 code);
+
+/* 16-bit POST codes for boot device filesystem scoping (§2).
+ * Placed here so parse_boot_conf() can reference them; the remaining
+ * bootloader POST16 codes live near efi_main() where they're used. */
+#define POST16_BL_BOOT_FS       0xB092
+#define POST16_BL_BOOT_FS_OK    0xB093
+
 /* --- Helper: memory ops --- */
 static void efi_memset(void *dst, UINT8 val, UINTN size)
 {
@@ -2321,18 +2331,34 @@ static void parse_boot_conf(void)
 
     serial_early_print("[BOOT] parse_boot_conf...\n");
 
-    /* Open filesystem */
-    status = gBS->LocateProtocol(&fs_guid, (VOID *)0, (VOID **)&fs);
+    /* Open filesystem from boot device (§2: scoped to boot volume).
+     * Fall back to LocateProtocol if device handle is absent or lacks
+     * SimpleFS -- same pattern as load_kernel(). */
+    post_code16(POST16_BL_BOOT_FS);
+    fs = (EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *)0;
+    if (g_boot_device_handle) {
+        status = gBS->HandleProtocol(g_boot_device_handle,
+                                      &fs_guid, (VOID **)&fs);
+        if (!EFI_ERROR(status)) {
+            serial_early_print("[BOOT] Using boot device filesystem\n");
+        } else {
+            serial_early_print("[WARN] Boot device has no filesystem, "
+                               "using fallback\n");
+            status = gBS->LocateProtocol(&fs_guid, (VOID *)0, (VOID **)&fs);
+        }
+    } else {
+        status = gBS->LocateProtocol(&fs_guid, (VOID *)0, (VOID **)&fs);
+    }
     if (EFI_ERROR(status)) {
         serial_early_print("[BOOT] boot.conf - no filesystem\n");
         return;
     }
-
     status = fs->OpenVolume(fs, &root_dir);
     if (EFI_ERROR(status)) {
         serial_early_print("[BOOT] boot.conf - cannot open volume\n");
         return;
     }
+    post_code16(POST16_BL_BOOT_FS_OK);
 
     /* Open boot.conf */
     status = root_dir->Open(
@@ -4403,6 +4429,7 @@ static inline void post_code16(UINT16 code)
 #define POST16_BL_USB_DISC_OK   0xB081
 #define POST16_BL_BOOT_DEV      0xB090  /* Boot device identification (§1) */
 #define POST16_BL_BOOT_DEV_OK   0xB091
+/* POST16_BL_BOOT_FS / _OK (0xB092/0xB093) defined near top -- used by parse_boot_conf */
 #define POST16_BL_EXIT_BS       0xB050
 #define POST16_BL_PAGE_TABLES   0xB060
 #define POST16_BL_KERNEL_JUMP   0xB070
