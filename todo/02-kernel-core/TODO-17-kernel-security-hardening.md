@@ -53,16 +53,19 @@
 | --- | :---: | --------------------------------------------------- | ----------------------------- | :----: |
 | 💎  |   1   | NX bit: EFER.NXE + PTE NX on all non-code mappings  | (none)                        |  [x]   |
 | 💎  |   2   | SMEP & SMAP: CR4 activation + CLAC/STAC wrappers    | §1                            |  [/]   |
-| 💎  |   3   | KPTI: per-process user page table + CR3 swap        | §1, T04 §3, T05 §2            |  [ ]   |
-| 💎  |   4   | PCID: TLB tagging for KPTI (no-flush CR3 switch)    | §3                            |  [ ]   |
-| 💎  |   5   | Spectre: IBRS/IBPB MSR + retpoline build flag       | T05 §2                        |  [ ]   |
-| 💎  |   6   | CET shadow stack (kernel ring 0)                    | §1, §2                        |  [ ]   |
-| 💎  |   7   | CET indirect branch tracking (IBT / ENDBR64)        | §6                            |  [ ]   |
-| 💎  |   8   | Kernel heap hardening (cookies, redzone)            | T16 §1                        |  [ ]   |
-| 💎  |   9   | Stack canaries (`-fstack-protector-strong`)         | T16 §1                        |  [ ]   |
-| 💎  |  10   | Kernel stack guard pages                            | §1                            |  [ ]   |
-| ⭐  |  11   | KASLR (RDRAND kernel load address)                  | §1, §3                        |  [ ]   |
-| 💎  |  12   | Enclave and signing syscalls wired to SSDT          | §11, T05 §4                   |  [ ]   |
+| 💎  |   3   | KPTI trampoline page + per-CPU CR3 fields           | §1, T04 §3                    |  [ ]   |
+| 💎  |   4   | KPTI SYSCALL CR3 swap                               | §3                            |  [ ]   |
+| 💎  |   5   | KPTI IDT CR3 swap (all 256 vectors)                 | §3, §4                        |  [ ]   |
+| 💎  |   6   | KPTI user_cr3 allocation + context switch            | §3, §4, §5                   |  [ ]   |
+| 💎  |   7   | PCID: TLB tagging for KPTI (no-flush CR3 switch)    | §6                            |  [ ]   |
+| 💎  |   8   | Spectre: IBRS/IBPB MSR + retpoline build flag       | T05 §2                        |  [ ]   |
+| 💎  |   9   | CET shadow stack (kernel ring 0)                    | §1, §2                        |  [ ]   |
+| 💎  |  10   | CET indirect branch tracking (IBT / ENDBR64)        | §9                            |  [ ]   |
+| 💎  |  11   | Kernel heap hardening (cookies, redzone)            | T16 §1                        |  [ ]   |
+| 💎  |  12   | Stack canaries (`-fstack-protector-strong`)         | T16 §1                        |  [ ]   |
+| 💎  |  13   | Kernel stack guard pages                            | §1                            |  [ ]   |
+| ⭐  |  14   | KASLR (RDRAND kernel load address)                  | §1, §6                        |  [ ]   |
+| 💎  |  15   | Enclave and signing syscalls wired to SSDT          | §14, T05 §4                   |  [ ]   |
 
 > 💎 = parity work: matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work: Impossible OS is superior or first.
@@ -103,41 +106,70 @@
 
 ---
 
-## 3. KPTI: Per-Process User Page Table + CR3 Swap
+## 3. KPTI Trampoline Page + Per-CPU CR3 Fields
 
-- [ ] Each process gets two `pml4_t` roots:
-  - **Kernel CR3** (`task->kernel_cr3`): existing full mapping (kernel + user VA); used for all kernel-mode execution
-  - **User CR3** (`task->user_cr3`): sparse mapping; contains only:
-    - The process's own user-space pages (`[0, 0x800000000000)`)
-    - The syscall entry trampoline stub page (one 4 KiB page containing the `syscall` entry `SWAPGS` + CR3 swap code; must be mapped NX=0 at the same VA in both tables)
-    - The GDT/TSS page (CPU needs these in both tables)
-  - Kernel text, data, heap, stacks, and other processes are **absent** from `user_cr3`; this is the Meltdown fix
+Design and allocate the shared trampoline infrastructure that all KPTI ring transitions depend on. On x86-64, SYSCALL and interrupt entry fetch instructions from the current CR3 before any software runs -- so the entry code page, the CPU-selected stacks (RSP0/IST), the GDT/TSS, and the per-CPU data segment must all be mapped in user_cr3 with supervisor-only permissions.
 
-- [ ] `vmm_create_user_cr3(task)`:
-  1. `pmm_alloc_contiguous(1)`: allocate a fresh PML4 page, zero it
-  2. Copy user-space PML4 entries (`pml4[0..255]`) from the kernel CR3 into the new PML4 (user half of VA space)
-  3. Map only the KPTI trampoline stub and GDT/TSS into the upper-half entries that the user CR3 needs; all other kernel PML4 entries remain absent
-- [ ] `vmm_sync_user_cr3(task)`: called whenever a user-space page is mapped/unmapped; sync the corresponding PML4 entry in `task->user_cr3`
+> [!IMPORTANT]
+> **Design constraint (Codex design review 2026-04-12):** LSTAR points to `syscall_entry` in kernel text. If kernel text is removed from user_cr3, SYSCALL faults before executing a single instruction. Similarly, IDT delivery pushes the exception frame onto TSS RSP0/IST stacks -- those must be mapped in user_cr3. The trampoline page is the foundation for all subsequent KPTI sections.
 
-- [ ] Syscall entry (-> XREF `TODO-05-native-api-ssdt.md §2`): immediately after `SWAPGS`:
-  ```asm
-  mov rax, [gs:pcpu_kernel_cr3]   ; load per-CPU saved kernel CR3
-  mov cr3, rax                    ; switch to kernel CR3
-  ```
-- [ ] Syscall return: before `SYSRETQ`:
-  ```asm
-  mov rax, [gs:pcpu_user_cr3]     ; load current task's user CR3
-  mov cr3, rax                    ; switch back to user CR3
-  ```
-- [ ] Interrupt/exception entry (all 256 IDT stubs): same CR3 swap pattern; the KPTI trampoline stub is the first code that runs in user CR3 context and immediately swaps to the kernel CR3
-- [ ] Per-CPU `pcpu_kernel_cr3` and `pcpu_user_cr3` fields in `cpu_data` struct (-> XREF `src/kernel/smp/smp.c`: `cpu_data` per-CPU struct, already implemented); updated on every scheduler context switch
-- [ ] Commit: `"kernel/security: KPTI dual page tables, user/kernel CR3 swap at ring transitions"`
+- [ ] Allocate a single 4 KiB trampoline page at a fixed kernel VA (e.g. `KPTI_TRAMPOLINE_VA = 0xFFFFFFFFFFFFF000` -- last page of VA space) via `pmm_alloc_frame()` + `vmm_map_page()` with Present + Executable (no NX)
+- [ ] Write minimal assembly into the trampoline page: SYSCALL entry stub (SWAPGS + CR3 swap + JMP to real `syscall_entry`), interrupt entry stub (CR3 swap + JMP to `isr_common_stub`), and SYSRET/IRET return stubs (CR3 swap back to user_cr3)
+- [ ] Add `kernel_cr3` and `user_cr3` fields to `struct per_cpu_data` in `smp.h` with `_Static_assert` offset checks; initialize `kernel_cr3` to the boot PML4 on BSP and each AP
+- [ ] Identify all pages that must be in user_cr3: trampoline page, per-CPU RSP0 stack page(s), IST stack pages (DF/NMI/MCE), GDT/TSS page, per-CPU data page -- document the list
+- [ ] Commit: `"kernel/security: KPTI trampoline page + per-CPU CR3 fields"`
 
-**Test checkpoint:** `vmm_create_user_cr3()` returns valid PML4; user CR3 has no kernel text VA; syscall entry swaps CR3 before kernel C code; Meltdown probe read of `0xFFFF800000000000` from ring 3 faults. Test on: QEMU WHPX, QEMU TCG, VirtualBox; bare metal.
+**Test checkpoint:** Trampoline page allocated and mapped at fixed VA. Per-CPU `kernel_cr3`/`user_cr3` fields exist with correct offsets. Trampoline assembly compiles. Boot does NOT use user_cr3 yet -- this is infrastructure only.
 
 ---
 
-## 4. PCID: TLB Tagging for No-Flush CR3 Switch
+## 4. KPTI SYSCALL CR3 Swap
+
+Wire the SYSCALL entry/exit path to swap CR3 via the trampoline page. LSTAR is redirected from `syscall_entry` to the trampoline's syscall stub. The stub loads `kernel_cr3` from per-CPU data, writes CR3, then jumps to the real `syscall_entry`. On SYSRET, the return path loads `user_cr3` and writes CR3 before executing SYSRETQ.
+
+- [ ] Redirect LSTAR to `kpti_syscall_entry` in the trampoline page (-> XREF `src/kernel/sched/syscall_entry.asm`)
+- [ ] Trampoline `kpti_syscall_entry`: SWAPGS, `mov rax, [gs:pcpu_kernel_cr3]`, `mov cr3, rax`, JMP to original `syscall_entry` (which skips its own SWAPGS since trampoline already did it)
+- [ ] Trampoline `kpti_syscall_return`: `mov rax, [gs:pcpu_user_cr3]`, `mov cr3, rax`, SWAPGS, SYSRETQ
+- [ ] Modify `syscall_entry.asm` to JMP to `kpti_syscall_return` instead of inline SWAPGS + SYSRET
+- [ ] Gate: only activate when KPTI is enabled (boot flag `kpti=1` in boot.conf, default on for bare metal, off for hypervisors with EPT that already mitigate Meltdown)
+- [ ] Commit: `"kernel/security: KPTI SYSCALL CR3 swap via trampoline"`
+
+**Test checkpoint:** Syscall from ring 3 works with CR3 swap active. Serial shows `[KPTI] SYSCALL path active`. A syscall with user_cr3 = kernel_cr3 (no isolation yet) doesn't regress. Test on: QEMU WHPX, QEMU TCG; bare metal.
+
+---
+
+## 5. KPTI IDT CR3 Swap (All 256 Vectors)
+
+Wire all interrupt/exception entry stubs to swap CR3 via the trampoline. Unlike SYSCALL (which doesn't change stack), IDT delivery pushes the exception frame onto TSS RSP0/IST stacks while user_cr3 is active -- so those stacks must be mapped in user_cr3 (supervisor-only).
+
+- [ ] Map RSP0 and IST stack pages (DF/NMI/MCE) into every user_cr3 with Present + Writable + NX (supervisor-only, no User bit)
+- [ ] Trampoline `kpti_isr_entry`: read saved CS from exception frame to check if ring 3 entry; if yes: `mov rax, [gs:pcpu_kernel_cr3]`, `mov cr3, rax`; then JMP to `isr_common_stub` (which skips its own SWAPGS since trampoline handled the ring check)
+- [ ] Trampoline `kpti_isr_return`: before IRETQ from ring-3 return: `mov rax, [gs:pcpu_user_cr3]`, `mov cr3, rax`
+- [ ] Redirect all 256 IDT entries from current stubs to `kpti_isr_entry` in the trampoline page
+- [ ] Special handling: NMI and #DF use IST stacks and can nest -- CR3 swap must not clobber the IST stack or re-enter; use a dedicated IST trampoline stub that checks if CR3 is already kernel_cr3
+- [ ] Gate: same `kpti=1` flag as S4
+- [ ] Commit: `"kernel/security: KPTI IDT CR3 swap for all 256 vectors"`
+
+**Test checkpoint:** Timer IRQ from ring 3 works with CR3 swap. Page fault from ring 3 works. NMI during syscall doesn't double-swap. #DF handler survives. Test on: QEMU WHPX, QEMU TCG; bare metal is critical (IST behavior differs under EPT vs native paging).
+
+---
+
+## 6. KPTI User CR3 Allocation + Context Switch
+
+With trampoline and CR3 swap paths wired (S3-S5), allocate the actual sparse user_cr3 per process and activate Meltdown isolation.
+
+- [ ] `vmm_create_user_cr3(task)`: allocate fresh PML4, copy only user-half PML4 entries (PML4[0..255]) from kernel PML4, plus the trampoline page, RSP0/IST stacks, GDT/TSS, per-CPU data page in the upper half (supervisor-only); all other kernel PML4 entries absent
+- [ ] `vmm_sync_user_cr3(task)`: called on user page map/unmap; syncs the affected PML4 entry in user_cr3
+- [ ] `vmm_destroy_user_cr3(task)`: frees the sparse PML4 and any intermediate page tables allocated for it
+- [ ] Context switch (`task_switch`): update `smp_this_cpu()->user_cr3 = next_task->user_cr3`; `smp_this_cpu()->kernel_cr3 = next_task->kernel_cr3` (or the shared boot CR3 for kernel threads)
+- [ ] Kernel threads (no user_cr3): set `user_cr3 = kernel_cr3` so the CR3 swap is a no-op
+- [ ] Commit: `"kernel/security: KPTI dual page tables, user_cr3 allocation, Meltdown isolation active"`
+
+**Test checkpoint:** `vmm_create_user_cr3()` returns valid PML4; user CR3 has no kernel text VA (`PML4[256..511]` entries absent except trampoline/stacks); Meltdown probe read of kernel VA from ring 3 faults. Context switch updates per-CPU CR3 pair. Test on: QEMU WHPX, QEMU TCG, VirtualBox; bare metal.
+
+---
+
+## 7. PCID: TLB Tagging for No-Flush CR3 Switch
 
 - [ ] Enable `CR4.PCIDE (bit 17)` if `cpu_has(CPU_FEATURE_PCID)`: `cpu_set_cr4_bit(CR4_PCIDE)` during `cpu_harden_post_pagetable()` (or a dedicated `cpu_enable_pcid()` called from the same post-NX-policy window)
 - [ ] Assign a 12-bit PCID to each process; stored in `task->pcid`:
@@ -162,7 +194,7 @@
 
 ---
 
-## 5. Spectre Mitigations: IBRS/IBPB + Retpoline
+## 8. Spectre Mitigations: IBRS/IBPB + Retpoline
 
 - [ ] `MSR_IA32_SPEC_CTRL = 0x48`; `SPEC_CTRL_IBRS = 1`:
   ```c
@@ -203,7 +235,7 @@
 
 ---
 
-## 6. CET Shadow Stack (Kernel Ring 0)
+## 9. CET Shadow Stack (Kernel Ring 0)
 
 - [ ] MSR definitions:
   ```c
@@ -233,7 +265,7 @@
 
 ---
 
-## 7. CET Indirect Branch Tracking (IBT / ENDBR64)
+## 10. CET Indirect Branch Tracking (IBT / ENDBR64)
 
 - [ ] Add `-fcf-protection=branch` to kernel `CFLAGS` (Clang 19 supports this); the compiler emits `ENDBR64` at the start of every function and every valid indirect call/jump target
 - [ ] Verify: `objdump -d build/kernel.elf | grep endbr64 | wc -l`; must be > 0 (non-zero); count should match approximate function count
@@ -249,7 +281,7 @@
 
 ---
 
-## 8. Kernel Heap Hardening: Cookies & Redzones
+## 11. Kernel Heap Hardening: Cookies & Redzones
 
 - [ ] Extend the `kmalloc` block header in `src/kernel/mm/heap.c`:
   ```c
@@ -286,7 +318,7 @@
 
 ---
 
-## 9. Stack Canaries (`-fstack-protector-strong`)
+## 12. Stack Canaries (`-fstack-protector-strong`)
 
 - [ ] Remove `-fno-stack-protector` from `CFLAGS` in `Makefile`
 - [ ] Add `-fstack-protector-strong`; protects functions that have:
@@ -341,7 +373,7 @@
 
 ---
 
-## 10. Kernel Stack Guard Pages
+## 13. Kernel Stack Guard Pages
 
 - [ ] Every kernel thread stack is allocated as `STACK_SIZE + PAGE_SIZE` pages; the first page (bottom of the stack, lowest address) is mapped with `PTE_PRESENT=0`; an unmapped guard page:
   ```c
@@ -366,7 +398,7 @@
 
 ---
 
-## 11. KASLR: RDRAND Kernel Load Address
+## 14. KASLR: RDRAND Kernel Load Address
 
 - [ ] The bootloader (`src/boot/uefi/bootx64.c`) currently loads the kernel ELF at its linked virtual base. For KASLR:
   1. Use UEFI `GetRNG` protocol (or `RDRAND` instruction) to generate a random 9-bit slide value `s` in `[0, 511]`
@@ -388,7 +420,7 @@
 
 ---
 
-## 12. Enclave and Code Signing Syscalls Wired to SSDT
+## 15. Enclave and Code Signing Syscalls Wired to SSDT
 
 Register VBS/SGX enclave management and code signing verification syscalls in the SSDT. (-> XREF `TODO-05-native-api-ssdt.md §4`)
 
