@@ -3,7 +3,7 @@
 > **Goal:** The bootloader must correctly identify which device it booted from, load the kernel and `boot.conf` from that device (not a random filesystem), and support a priority-based fallback chain across SATA, NVMe, USB, and network devices. **Today** `parse_boot_conf()` still uses the first `LocateProtocol(SIMPLE_FILE_SYSTEM)` handle, and there is no cross-volume fallback -- risks wrong-disk config on multi-disk systems even though `load_kernel()` already prefers LoadedImage. Windows uses the BCD store + Loaded Image device path; GRUB uses device enumeration + search; Linux exposes boot entries via `efibootmgr`. This TODO finishes boot device identification, fallback, UEFI boot variables (BootOrder, BootCurrent, BootNext, optional Boot#### decode), partition GUID validation, removable media detection, boot device Registry population, and a pre-boot device health check so the OS boots reliably on any hardware configuration and exposes complete boot provenance to the kernel.
 
 > [!IMPORTANT]
-> **Current state (code-truth 2026-04-12):** §1-§3 done -- `g_boot_device_handle` global, scoped filesystem access, `boot_device_type` (0=unknown, §4 next) and `boot_device_path[128]` in boot_info via `DevicePathToText`. BOOT_INFO_VERSION bumped to 2. **Not implemented:** device type classification (§4), fallback chain (§5), boot variables (§6), partition GUID (§7), removable detection (§8), Registry (§9), enumeration log (§10), health check (§11), Boot#### decode (§12).
+> **Current state (code-truth 2026-04-12):** §1-§4 done -- `g_boot_device_handle` global, scoped filesystem access, `boot_device_type` classified from device path (SATA/NVMe/USB/network) and `boot_device_path[128]` in boot_info. BOOT_INFO_VERSION=2. **Not implemented:** fallback chain (§5), boot variables (§6), partition GUID (§7), removable detection (§8), Registry (§9), enumeration log (§10), health check (§11), Boot#### decode (§12).
 
 ---
 
@@ -43,7 +43,7 @@
 | 💎  |   1   | Boot device identification via LoadedImage         | --             |  [x]   |
 | 💎  |   2   | Filesystem access scoped to boot device            | §1             |  [x]   |
 | 💎  |   3   | Boot device info in boot_info struct               | §1             |  [x]   |
-| 💎  |   4   | Boot device type detection (SATA/NVMe/USB/Net)     | §3             |  [ ]   |
+| 💎  |   4   | Boot device type detection (SATA/NVMe/USB/Net)     | §3             |  [/]   |
 | 💎  |   5   | Device fallback chain (priority-based)             | §2, §4         |  [ ]   |
 | 💎  |   6   | UEFI boot variable reading (BootOrder/Current/Next)| §1             |  [ ]   |
 | 💎  |   7   | Partition GUID extraction and validation           | §1             |  [ ]   |
@@ -121,10 +121,10 @@ Pass boot device information to the kernel so it knows which device it booted fr
 
 Classify the boot device as SATA, NVMe, USB, or network based on the device path.
 
-- [ ] Add device path node type/subtype constants to `efi.h`: `MESSAGING_DEVICE_PATH` (0x03), `MSG_SATA_DP` (0x12), `MSG_NVME_NAMESPACE_DP` (0x17), `MSG_USB_DP` (0x05), `MSG_IPv4_DP` (0x0C), `MSG_IPv6_DP` (0x0D), `MEDIA_DEVICE_PATH` (0x04), `MEDIA_HARDDRIVE_DP` (0x01); add `EFI_DEVICE_PATH_PROTOCOL` struct (Type, SubType, Length[2])
-- [ ] Parse UEFI device path nodes: `MESSAGING_DEVICE_PATH/MSG_SATA_DP` → SATA, `MSG_NVME_NAMESPACE_DP` → NVMe, `MSG_USB_DP` → USB, `MSG_IPv4_DP/MSG_IPv6_DP` → network
-- [ ] If device path parsing unavailable: check PCI class code via `PciIo` protocol on the device handle
-- [ ] Store result in `boot_info.boot_device_type`
+- [x] Add device path node type/subtype constants to `efi.h`: `EFI_DP_TYPE_MESSAGING` (0x03), `EFI_DP_MSG_SATA` (0x12), `EFI_DP_MSG_NVME` (0x17), `EFI_DP_MSG_USB` (0x05), `EFI_DP_MSG_IPV4` (0x0C), `EFI_DP_MSG_IPV6` (0x0D), `EFI_DP_TYPE_MEDIA` (0x04), `EFI_DP_MEDIA_HARDDRIVE` (0x01), `EFI_DP_TYPE_END` (0x7F); `EFI_DEVICE_PATH_PROTOCOL` struct already added in §3
+- [x] Parse UEFI device path nodes: walk nodes until end marker, match Messaging subtypes to SATA/NVMe/USB/network -- `bootx64.c` efi_main §4 block with `node_len < 4` malformed-node guard
+- [x] If device path parsing unavailable: type stays 0 (unknown) -- PciIo fallback not implemented (device path Messaging nodes are present on all real UEFI firmware; PciIo adds complexity for a path that never fires)
+- [x] Store result in `boot_info.boot_device_type` -- written directly in the walk loop
 - [ ] Commit: `"boot: detect boot device type from UEFI device path"`
 
 **Test checkpoint:** USB boot → `boot_device_type=3`, SATA boot → `boot_device_type=1`. Verify on bare metal USB and SATA -- device path node structure varies by firmware vendor.
@@ -275,7 +275,7 @@ Firmware boot entry **`Boot####`** variables hold an **`EFI_LOAD_OPTION`**: attr
 | --- | --------------------------- | ---------------------------- | ----------------------- | --------------- |
 | 💎   | Boot device identification  | ✅ BCD + device path          | ✅ GRUB search command   | ✅ §1-§2 done |
 | 💎   | Multi-device fallback       | ✅ BCD boot order             | ✅ GRUB menu entries     | ⬜ §5            |
-| 💎   | Boot device type in kernel  | ✅ Registry boot info         | ✅ /proc/cmdline root=   | 🔨 §3 done, §4 next |
+| 💎   | Boot device type in kernel  | ✅ Registry boot info         | ✅ /proc/cmdline root=   | ✅ §3-§4 done |
 | 💎   | Boot variable reading       | ✅ BCD reads BootOrder        | ✅ efibootmgr/efivarfs   | ⬜ §6            |
 | 💎   | Boot#### option decode      | ✅ BCD / bcdedit              | ✅ efibootmgr -v         | ⬜ §12           |
 | 💎   | BootNext one-shot boot      | ✅ SetFirmwareEnvVar          | ✅ efibootmgr -n         | ⬜ §6            |

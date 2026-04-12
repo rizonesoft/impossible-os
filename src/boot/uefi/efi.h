@@ -765,6 +765,21 @@ typedef struct {
     UINT8  Length[2];   /* little-endian 16-bit length */
 } EFI_DEVICE_PATH_PROTOCOL;
 
+/* Device path node type/subtype constants (§4: boot device type detection) */
+#define EFI_DP_TYPE_MESSAGING    0x03
+#define EFI_DP_TYPE_MEDIA        0x04
+#define EFI_DP_TYPE_END          0x7F
+
+#define EFI_DP_MSG_SATA          0x12
+#define EFI_DP_MSG_NVME          0x17
+#define EFI_DP_MSG_USB           0x05
+#define EFI_DP_MSG_IPV4          0x0C
+#define EFI_DP_MSG_IPV6          0x0D
+
+#define EFI_DP_MEDIA_HARDDRIVE   0x01
+
+#define EFI_DP_SUBTYPE_END_ENTIRE 0xFF
+
 /* --- Device Path To Text Protocol (§3: human-readable device path) --- */
 
 #define EFI_DEVICE_PATH_TO_TEXT_PROTOCOL_GUID \

@@ -4593,11 +4593,11 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
 
         dp_s = gBS->HandleProtocol(g_boot_device_handle, &dp_guid, (VOID **)&dp);
         if (!EFI_ERROR(dp_s) && dp) {
+            /* §3: Convert device path to text for boot_info */
             dp_s = gBS->LocateProtocol(&dptt_guid, (VOID *)0, (VOID **)&dptt);
             if (!EFI_ERROR(dp_s) && dptt) {
                 CHAR16 *text = dptt->ConvertDevicePathToText(dp, 0, 0);
                 if (text) {
-                    /* Convert UCS-2 to ASCII into boot_device_path (cap 127+NUL) */
                     UINTN j;
                     for (j = 0; j < 127 && text[j]; j++)
                         g_boot_info_ptr->boot_device_path[j] = (char)(text[j] & 0x7F);
@@ -4610,6 +4610,61 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                 }
             } else {
                 serial_early_print("[BOOT] DevicePathToText not available\n");
+            }
+
+            /* §4: Walk device path nodes to classify boot device type.
+             * SATA, NVMe, USB, and network each have a distinct Messaging
+             * Device Path subtype per UEFI spec Table 10-47. */
+            {
+                const EFI_DEVICE_PATH_PROTOCOL *node = dp;
+                const UINT8 *base = (const UINT8 *)dp;
+                UINT16 node_len;
+                UINTN walked = 0;
+                #define DP_MAX_WALK 1024  /* sane upper bound for device paths */
+
+                while (walked < DP_MAX_WALK &&
+                       node->Type != EFI_DP_TYPE_END) {
+                    node_len = (UINT16)node->Length[0] |
+                               ((UINT16)node->Length[1] << 8);
+                    if (node_len < 4) break; /* malformed */
+
+                    if (node->Type == EFI_DP_TYPE_MESSAGING) {
+                        switch (node->SubType) {
+                        case EFI_DP_MSG_SATA:
+                            g_boot_info_ptr->boot_device_type = 1;
+                            break;
+                        case EFI_DP_MSG_NVME:
+                            g_boot_info_ptr->boot_device_type = 2;
+                            break;
+                        case EFI_DP_MSG_USB:
+                            g_boot_info_ptr->boot_device_type = 3;
+                            break;
+                        case EFI_DP_MSG_IPV4:
+                        case EFI_DP_MSG_IPV6:
+                            g_boot_info_ptr->boot_device_type = 4;
+                            break;
+                        default:
+                            break;
+                        }
+                        if (g_boot_info_ptr->boot_device_type != 0)
+                            break;
+                    }
+                    node = (const EFI_DEVICE_PATH_PROTOCOL *)
+                           ((const UINT8 *)node + node_len);
+                    walked = (UINTN)((const UINT8 *)node - base);
+                }
+                #undef DP_MAX_WALK
+            }
+
+            /* Log detected type */
+            {
+                static const char *type_names[] = {
+                    "unknown", "SATA", "NVMe", "USB", "network"
+                };
+                UINT8 t = g_boot_info_ptr->boot_device_type;
+                serial_early_print("[BOOT] Boot device type: ");
+                serial_early_print(t <= 4 ? type_names[t] : "invalid");
+                serial_early_print("\n");
             }
         }
     }
