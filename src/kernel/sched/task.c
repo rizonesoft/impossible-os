@@ -618,11 +618,14 @@ uint64_t schedule_now(struct interrupt_frame *frame)
     if (next_task == prev_task && next_thread == prev_thread)
         return (uint64_t)frame;
 
-    /* FPU/SIMD save for cooperative path (mirrors preemptive schedule) */
+    /* FPU/SIMD save for cooperative path (mirrors preemptive schedule).
+     * CLTS before save: FXSAVE/XSAVE fault #NM when CR0.TS=1
+     * (Intel SDM Vol. 3A Section 2.5: TS affects ALL FPU instructions). */
     {
         extern struct cpu_features g_cpu;
         int have_xsave = cpu_has(CPU_FEATURE_XSAVE);
         if (tasks[prev_task].fpu_used && tasks[prev_task].xsave_area) {
+            __asm__ volatile ("clts");
             if (have_xsave) {
                 uint64_t xcr0 = g_cpu.xcr0_active;
                 uint32_t lo = (uint32_t)xcr0, hi = (uint32_t)(xcr0 >> 32);
@@ -783,12 +786,15 @@ uint64_t schedule(struct interrupt_frame *frame)
 
     /* --- Lazy FPU: save prev, restore/defer next ---
      * Use XSAVE/XRSTOR when available (AVX/AVX-512 state), fall back
-     * to FXSAVE/FXRSTOR on CPUs without XSAVE (e.g., QEMU TCG). */
+     * to FXSAVE/FXRSTOR on CPUs without XSAVE (e.g., QEMU TCG).
+     * CLTS before save: FXSAVE/XSAVE fault #NM when CR0.TS=1
+     * (Intel SDM Vol. 3A Section 2.5: TS affects ALL FPU instructions). */
     {
     extern struct cpu_features g_cpu;
     int have_xsave = cpu_has(CPU_FEATURE_XSAVE);
 
     if (tasks[prev_task].fpu_used && tasks[prev_task].xsave_area) {
+        __asm__ volatile ("clts");
         if (have_xsave) {
             uint64_t xcr0 = g_cpu.xcr0_active;
             uint32_t lo = (uint32_t)xcr0;
