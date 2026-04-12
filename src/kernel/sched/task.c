@@ -229,11 +229,17 @@ void task_alloc_xsave(struct task *t)
             return;
         }
 
-        /* Zero the buffer */
+        /* Zero the buffer, then set architectural defaults */
         uint8_t *p = (uint8_t *)t->xsave_area;
         uint32_t i;
         for (i = 0; i < pages * 4096; i++)
             p[i] = 0;
+
+        /* MXCSR at offset 24 in FXSAVE/XSAVE layout (Intel SDM Vol. 1
+         * Table 10-2). Default value 0x1F80 = all SIMD exceptions masked.
+         * Without this, XRSTOR loads MXCSR=0 which unmarks all exceptions
+         * and the first SSE/AVX instruction triggers #XM (vector 19). */
+        *(uint32_t *)(p + 24) = 0x1F80;
 
         /* Set XSTATE_BV header: bit 0 = x87 initial state present */
         if (size >= FXSAVE_SIZE + 64) {
@@ -699,9 +705,27 @@ uint64_t schedule_now(struct interrupt_frame *frame)
             msr_write(MSR_IA32_KERNEL_GS_BASE, new_gs);
     }
 
-    /* FPU/SIMD restore: rely on preemptive schedule() to restore on next
-     * timer tick, or on #NM lazy allocation if next task hasn't used FPU.
-     * Direct restore here caused a freeze on WHPX -- needs investigation. */
+    /* FPU/SIMD restore for cooperative path (mirrors preemptive schedule) */
+    {
+        extern struct cpu_features g_cpu;
+        int have_xsave = cpu_has(CPU_FEATURE_XSAVE);
+        if (tasks[next_task].fpu_used && tasks[next_task].xsave_area) {
+            __asm__ volatile ("clts");
+            if (have_xsave) {
+                uint64_t xcr0 = g_cpu.xcr0_active;
+                uint32_t lo = (uint32_t)xcr0, hi = (uint32_t)(xcr0 >> 32);
+                __asm__ volatile ("xrstor %0" : : "m"(*(uint8_t *)tasks[next_task].xsave_area),
+                                  "a"(lo), "d"(hi) : "memory");
+            } else {
+                __asm__ volatile ("fxrstor %0" : : "m"(*(uint8_t *)tasks[next_task].xsave_area) : "memory");
+            }
+        } else {
+            uint64_t cr0;
+            __asm__ volatile ("mov %%cr0, %0" : "=r"(cr0));
+            cr0 |= (1UL << 3);
+            __asm__ volatile ("mov %0, %%cr0" : : "r"(cr0));
+        }
+    }
 
     /* Return the correct RSP: thread stack if secondary thread, task stack otherwise */
     if (next_thread > 0)
