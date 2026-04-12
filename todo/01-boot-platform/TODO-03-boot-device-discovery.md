@@ -46,7 +46,7 @@
 | 💎  |   4   | Boot device type detection (SATA/NVMe/USB/Net)     | §3             |  [x]   |
 | 💎  |   5   | Device fallback chain (priority-based)             | §2, §4         |  [x]   |
 | 💎  |   6   | UEFI boot variable reading (BootOrder/Current/Next)| §1             |  [x]   |
-| 💎  |   7   | Partition GUID extraction and validation           | §1             |  [/]   |
+| 💎  |   7   | Partition GUID extraction and validation           | §1             |  [x]   |
 | 💎  |   8   | Removable media detection                          | §1, §4         |  [ ]   |
 | 💎  |   9   | Boot device Registry population                    | §3, §4, §7, §8 |  [ ]   |
 | ⭐  |  10   | Boot device logging and diagnostics                | §1--§9, §12    |  [ ]   |
@@ -186,9 +186,12 @@ Extract the GPT partition GUID from the boot device's media device path node. Th
 - [x] Store in `boot_info.boot_partition_guid[16]` and `boot_info.boot_partition_style` (0=unknown, 1=MBR, 2=GPT) -- `boot_info.h` + `bootx64.c` mirror, BOOT_INFO_VERSION bumped to 4
 - [x] If GPT: validate GUID is non-zero; if all-zero: `"[WARN] Boot partition GUID is zero -- firmware may not support GPT"` logged
 - [x] Log: `"[BOOT] Boot partition: GUID=XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX (GPT)"` or `"(MBR sig=0xXXXXXXXX)"` -- UEFI mixed-endian GUID format
-- [ ] Commit: `"boot: extract and validate boot partition GUID from device path"`
+- [x] Commit: `"boot: extract and validate boot partition GUID from device path"` (d125a47c)
 
 **Test checkpoint:** QEMU SATA boot: serial shows GPT partition GUID matching the EFI system partition GUID in the disk image. `boot_info.boot_partition_style == 2` (GPT) on all modern hardware. MBR systems (if any) show `boot_partition_style == 1`.
+
+> **Verified:** 2026-04-12 -- all 6 items confirmed. HardDrive DP node extraction in shared walk at `bootx64.c:4740-4760`. Both MBRType and SignatureType validated (GPT: mbr_type==0x02 && sig_type==0x02; MBR: mbr_type==0x01 && sig_type==0x01). node_len>=42 guard. `walked+node_len<=1024` cap prevents reading past walk boundary. GUID formatted in UEFI mixed-endian. All-zero GUID warned. Codex adversarial: walk-cap overread fixed, SignatureType check added. Accepted: none.
+> **Quality reviewed:** 2026-04-12 -- boot-code-quality gates walked. EFI_DP_SUBTYPE_END_ENTIRE kept as forward-reserve for §4's single-instance rationale. No dead code. Shared walk is single O(n) pass. UEFI spec Table 10-58 compliance. Accepted: none.
 
 ---
 

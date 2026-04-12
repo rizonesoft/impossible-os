@@ -4709,6 +4709,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                     node_len = (UINT16)node->Length[0] |
                                ((UINT16)node->Length[1] << 8);
                     if (node_len < 4) break;
+                    if (walked + node_len > DP_MAX_WALK) break;
 
                     /* §4: Messaging subtypes -> device type */
                     if (node->Type == EFI_DP_TYPE_MESSAGING &&
@@ -4743,15 +4744,16 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                         g_boot_info_ptr->boot_partition_style == 0) {
                         const UINT8 *nd = (const UINT8 *)node;
                         UINT8 mbr_type = nd[40];
+                        UINT8 sig_type = nd[41];
                         UINTN gi;
 
-                        if (mbr_type == 0x02) {
-                            /* GPT: copy 16-byte GUID from offset 24 */
+                        if (mbr_type == 0x02 && sig_type == 0x02) {
+                            /* GPT + GUID signature: copy 16 bytes from offset 24 */
                             g_boot_info_ptr->boot_partition_style = 2;
                             for (gi = 0; gi < 16; gi++)
                                 g_boot_info_ptr->boot_partition_guid[gi] = nd[24 + gi];
-                        } else if (mbr_type == 0x01) {
-                            /* MBR: 4-byte signature at offset 24 */
+                        } else if (mbr_type == 0x01 && sig_type == 0x01) {
+                            /* MBR + 32-bit signature: 4 bytes from offset 24 */
                             g_boot_info_ptr->boot_partition_style = 1;
                             for (gi = 0; gi < 4; gi++)
                                 g_boot_info_ptr->boot_partition_guid[gi] = nd[24 + gi];
