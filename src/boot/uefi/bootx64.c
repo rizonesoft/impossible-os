@@ -1613,7 +1613,7 @@ static void bsod_render_graphical(UINT32 err_code, const char *title,
         /* Reserve space below the QR for the URL caption.  The QR
          * is pushed up by exactly caption_reserve pixels so the
          * URL fits between the QR bottom and the screen edge. */
-        caption_reserve = BSOD_AA_BODY_LINE_H + 8;
+        caption_reserve = BSOD_AA_BODY_LINE_H + 4;
 
         if (gFbWidth >= qr_total + side_margin &&
             gFbHeight >= qr_total + side_margin + caption_reserve) {
