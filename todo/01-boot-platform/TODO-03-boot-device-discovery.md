@@ -3,7 +3,7 @@
 > **Goal:** The bootloader must correctly identify which device it booted from, load the kernel and `boot.conf` from that device (not a random filesystem), and support a priority-based fallback chain across SATA, NVMe, USB, and network devices. **Today** `parse_boot_conf()` still uses the first `LocateProtocol(SIMPLE_FILE_SYSTEM)` handle, and there is no cross-volume fallback -- risks wrong-disk config on multi-disk systems even though `load_kernel()` already prefers LoadedImage. Windows uses the BCD store + Loaded Image device path; GRUB uses device enumeration + search; Linux exposes boot entries via `efibootmgr`. This TODO finishes boot device identification, fallback, UEFI boot variables (BootOrder, BootCurrent, BootNext, optional Boot#### decode), partition GUID validation, removable media detection, boot device Registry population, and a pre-boot device health check so the OS boots reliably on any hardware configuration and exposes complete boot provenance to the kernel.
 
 > [!IMPORTANT]
-> **Current state (code-truth 2026-04-12):** §1-§4 done -- `g_boot_device_handle` global, scoped filesystem access, `boot_device_type` classified from device path (SATA/NVMe/USB/network) and `boot_device_path[128]` in boot_info. BOOT_INFO_VERSION=2. **Not implemented:** fallback chain (§5), boot variables (§6), partition GUID (§7), removable detection (§8), Registry (§9), enumeration log (§10), health check (§11), Boot#### decode (§12).
+> **Current state (code-truth 2026-04-12):** §1-§5 done -- `g_boot_device_handle` global, scoped filesystem access, device type classification, device path in boot_info, multi-volume fallback chain. BOOT_INFO_VERSION=2. **Not implemented:** boot variables (§6), partition GUID (§7), removable detection (§8), Registry (§9), enumeration log (§10), health check (§11), Boot#### decode (§12).
 
 ---
 
@@ -44,7 +44,7 @@
 | 💎  |   2   | Filesystem access scoped to boot device            | §1             |  [x]   |
 | 💎  |   3   | Boot device info in boot_info struct               | §1             |  [x]   |
 | 💎  |   4   | Boot device type detection (SATA/NVMe/USB/Net)     | §3             |  [x]   |
-| 💎  |   5   | Device fallback chain (priority-based)             | §2, §4         |  [ ]   |
+| 💎  |   5   | Device fallback chain (priority-based)             | §2, §4         |  [/]   |
 | 💎  |   6   | UEFI boot variable reading (BootOrder/Current/Next)| §1             |  [ ]   |
 | 💎  |   7   | Partition GUID extraction and validation           | §1             |  [ ]   |
 | 💎  |   8   | Removable media detection                          | §1, §4         |  [ ]   |
@@ -141,12 +141,12 @@ If the boot device's kernel is missing or corrupt, try other devices in priority
 > [!NOTE]
 > **CLAUDE.md:** QEMU WHPX emulated NVMe can be flaky; run SATA+NVMe fallback scenarios on **QEMU TCG**, VirtualBox, or bare metal so failures are not misread as bootloader bugs.
 
-- [ ] Enumerate all `SIMPLE_FILE_SYSTEM_PROTOCOL` handles using `LocateHandleBuffer()`
-- [ ] For each handle: check if `\boot\kernel.exe` exists (try to open, close immediately)
-- [ ] Priority order: boot device first → SATA/NVMe → USB → other
-- [ ] If kernel found on non-boot device: `"[WARN] Kernel not on boot device, using %s"` with device path
-- [ ] If no device has kernel: trigger boot failure screen (→ XREF `TODO-02-bootloader-error-recovery.md §9`)
-- [ ] `POST16(0xB094)` on fallback entry, `POST16(0xB095)` on fallback success or failure -- localizes fallback hangs on slow firmware
+- [x] Enumerate all `SIMPLE_FILE_SYSTEM_PROTOCOL` handles using `LocateHandleBuffer()` -- `bootx64.c` load_kernel §5 block, after boot device path search fails
+- [x] For each handle: check if `\boot\kernel.exe` (or `\kernel.exe`, `\EFI\ImpossibleOS\kernel.exe`) exists via Open+Close -- reuses the existing 3-path search per handle
+- [x] Priority order: boot device first (tried before fallback), then firmware enumeration order -- SATA/NVMe/USB ordering is firmware-dependent; boot device is always tried first via `g_boot_device_handle`, skipped in fallback loop
+- [x] If kernel found on non-boot device: `"[WARN] Kernel found on non-boot device at \boot\kernel.exe"` -- logs which path matched
+- [x] If no device has kernel: returns `EFI_NOT_FOUND` which triggers `boot_fatal()` error screen in efi_main (→ XREF `TODO-02 §9`)
+- [x] `POST16(0xB094)` on fallback entry, `POST16(0xB095)` on fallback exit -- `POST16_BL_FALLBACK` / `POST16_BL_FALLBACK_OK` in `bootx64.c` + `boot_init.h`
 - [ ] Commit: `"boot: device fallback chain -- search all filesystems for kernel"`
 
 **Test checkpoint:** Remove kernel from SATA disk, leave it on USB. Boot from SATA → bootloader finds kernel on USB with warning. Verify on bare metal -- firmware `LocateHandleBuffer` may return handles in different order than QEMU.
@@ -277,7 +277,7 @@ Firmware boot entry **`Boot####`** variables hold an **`EFI_LOAD_OPTION`**: attr
 | ⭐   | Feature                     | 🪟 Win11                      | 🐧 Linux                 | 🚀 Impossible OS |
 | --- | --------------------------- | ---------------------------- | ----------------------- | --------------- |
 | 💎   | Boot device identification  | ✅ BCD + device path          | ✅ GRUB search command   | ✅ §1-§2 done |
-| 💎   | Multi-device fallback       | ✅ BCD boot order             | ✅ GRUB menu entries     | ⬜ §5            |
+| 💎   | Multi-device fallback       | ✅ BCD boot order             | ✅ GRUB menu entries     | ✅ §5 done |
 | 💎   | Boot device type in kernel  | ✅ Registry boot info         | ✅ /proc/cmdline root=   | ✅ §3-§4 done |
 | 💎   | Boot variable reading       | ✅ BCD reads BootOrder        | ✅ efibootmgr/efivarfs   | ⬜ §6            |
 | 💎   | Boot#### option decode      | ✅ BCD / bcdedit              | ✅ efibootmgr -v         | ⬜ §12           |

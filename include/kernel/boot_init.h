@@ -131,6 +131,8 @@ typedef enum {
 #define POST16_BOOT_DEV_OK      0xB091
 #define POST16_BOOT_FS          0xB092  /* Boot device filesystem open */
 #define POST16_BOOT_FS_OK       0xB093
+#define POST16_BOOT_FALLBACK    0xB094  /* Device fallback chain */
+#define POST16_BOOT_FALLBACK_OK 0xB095
 
 /* Phase 0 -- Critical Init (0x0000–0x0FFF) */
 #define POST16_SERIAL           0x0010

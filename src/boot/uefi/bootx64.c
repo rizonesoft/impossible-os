@@ -432,6 +432,8 @@ static inline void post_code16(UINT16 code);
  * bootloader POST16 codes live near efi_main() where they're used. */
 #define POST16_BL_BOOT_FS       0xB092
 #define POST16_BL_BOOT_FS_OK    0xB093
+#define POST16_BL_FALLBACK      0xB094  /* Device fallback chain (§5) */
+#define POST16_BL_FALLBACK_OK   0xB095
 
 /* --- Helper: memory ops --- */
 static void efi_memset(void *dst, UINT8 val, UINTN size)
@@ -2542,12 +2544,76 @@ static EFI_STATUS load_kernel(UINT64 *entry_point)
             }
         }
         if (!found) {
-            serial_early_print(
-                "[FAIL] Kernel not found. Searched: "
-                "\\boot\\kernel.exe, \\kernel.exe, "
-                "\\EFI\\ImpossibleOS\\kernel.exe\n");
+            /* §5: Device fallback chain -- kernel not on boot device,
+             * try all other filesystems before giving up. */
             root_dir->Close(root_dir);
-            return EFI_NOT_FOUND;
+            post_code16(POST16_BL_FALLBACK);
+            serial_early_print("[WARN] Kernel not on boot device, "
+                               "searching other volumes...\n");
+            {
+                EFI_GUID fs_fb_guid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
+                EFI_HANDLE *fs_handles = (EFI_HANDLE *)0;
+                UINTN fs_count = 0;
+                EFI_STATUS fb_s;
+
+                fb_s = gBS->LocateHandleBuffer(ByProtocol, &fs_fb_guid,
+                                                (VOID *)0, &fs_count,
+                                                &fs_handles);
+                if (EFI_ERROR(fb_s) || !fs_handles || fs_count == 0) {
+                    serial_early_print("[WARN] LocateHandleBuffer failed "
+                                       "or no filesystems found\n");
+                } else {
+                    UINTN hi;
+                    for (hi = 0; hi < fs_count && !found; hi++) {
+                        EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *fb_fs;
+                        EFI_FILE_PROTOCOL *fb_root;
+
+                        /* Skip the boot device -- already tried */
+                        if (fs_handles[hi] == g_boot_device_handle)
+                            continue;
+
+                        fb_s = gBS->HandleProtocol(fs_handles[hi],
+                                                    &fs_fb_guid,
+                                                    (VOID **)&fb_fs);
+                        if (EFI_ERROR(fb_s)) continue;
+
+                        fb_s = fb_fs->OpenVolume(fb_fs, &fb_root);
+                        if (EFI_ERROR(fb_s)) continue;
+
+                        for (pi = 0; pi < 3; pi++) {
+                            fb_s = fb_root->Open(fb_root, &kernel_file,
+                                                  (CHAR16 *)kernel_paths[pi],
+                                                  EFI_FILE_MODE_READ, 0);
+                            if (!EFI_ERROR(fb_s)) {
+                                serial_early_print("[WARN] Kernel found on "
+                                                   "non-boot device at ");
+                                serial_early_print(kernel_path_names[pi]);
+                                serial_early_print("\n");
+                                /* Use this volume's root for the rest
+                                 * of load_kernel */
+                                root_dir = fb_root;
+                                fs = fb_fs;
+                                found = 1;
+                                break;
+                            }
+                        }
+                        if (!found)
+                            fb_root->Close(fb_root);
+                    }
+                    gBS->FreePool(fs_handles);
+                }
+            }
+
+            if (!found) {
+                serial_early_print(
+                    "[FAIL] Kernel not found on any volume. Searched: "
+                    "\\boot\\kernel.exe, \\kernel.exe, "
+                    "\\EFI\\ImpossibleOS\\kernel.exe\n");
+                /* No POST16_BL_FALLBACK_OK -- last POST stays at 0xB094
+                 * so a POST card shows fallback failed. */
+                return EFI_NOT_FOUND;
+            }
+            post_code16(POST16_BL_FALLBACK_OK);
         }
     }
 
