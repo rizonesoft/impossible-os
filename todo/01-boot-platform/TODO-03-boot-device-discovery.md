@@ -44,7 +44,7 @@
 | 💎  |   2   | Filesystem access scoped to boot device            | §1             |  [x]   |
 | 💎  |   3   | Boot device info in boot_info struct               | §1             |  [x]   |
 | 💎  |   4   | Boot device type detection (SATA/NVMe/USB/Net)     | §3             |  [x]   |
-| 💎  |   5   | Device fallback chain (priority-based)             | §2, §4         |  [/]   |
+| 💎  |   5   | Device fallback chain (priority-based)             | §2, §4         |  [x]   |
 | 💎  |   6   | UEFI boot variable reading (BootOrder/Current/Next)| §1             |  [ ]   |
 | 💎  |   7   | Partition GUID extraction and validation           | §1             |  [ ]   |
 | 💎  |   8   | Removable media detection                          | §1, §4         |  [ ]   |
@@ -147,11 +147,14 @@ If the boot device's kernel is missing or corrupt, try other devices in priority
 - [x] If kernel found on non-boot device: `"[WARN] Kernel found on non-boot device at \boot\kernel.exe"` -- logs which path matched
 - [x] If no device has kernel: returns `EFI_NOT_FOUND` which triggers `boot_fatal()` error screen in efi_main (→ XREF `TODO-02 §9`)
 - [x] `POST16(0xB094)` on fallback entry, `POST16(0xB095)` on fallback exit -- `POST16_BL_FALLBACK` / `POST16_BL_FALLBACK_OK` in `bootx64.c` + `boot_init.h`
-- [ ] Commit: `"boot: device fallback chain -- search all filesystems for kernel"`
+- [x] Commit: `"boot: device fallback chain -- search all filesystems for kernel"` (c5eacf9f)
 
 **Test checkpoint:** Remove kernel from SATA disk, leave it on USB. Boot from SATA → bootloader finds kernel on USB with warning. Verify on bare metal -- firmware `LocateHandleBuffer` may return handles in different order than QEMU.
 
 **Regression risk:** MEDIUM -- iterates all filesystem handles. If enumeration is slow on firmware, adds boot time.
+
+> **Verified:** 2026-04-12 -- all 7 items confirmed. LocateHandleBuffer enumeration at `bootx64.c:2559`. 3-path search per handle. Boot device skipped. fb_root closed on failure, fs_handles freed. LocateHandleBuffer failure logged. POST16 0xB094/0xB095 (success-only). Codex adversarial: corrupt-kernel fallback accepted as out-of-scope (→ XREF TODO-02 §3 error recovery). Handle leak on later failure rejected (shared cleanup paths + UEFI reclaims at EBS). Accepted: corrupt-kernel fallback (TODO-02 §3 scope).
+> **Quality reviewed:** 2026-04-12 -- boot-code-quality gates walked. Priority-sorted fallback accepted as documented limitation (firmware enumeration order, boot device always first; matches Windows BCD/GRUB behavior). No dead code. POST16 naming consistent with §1-§4 convention. O(n) handle iteration, no performance concern. Accepted: none.
 
 ---
 
