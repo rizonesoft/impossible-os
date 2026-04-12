@@ -50,7 +50,7 @@
 | 💎  |   8   | Removable media detection                          | §1, §4         |  [x]   |
 | 💎  |   9   | Boot device Registry population                    | §3, §4, §7, §8 |  [x]   |
 | ⭐  |  10   | Boot device logging and diagnostics                | §1--§9, §12    |  [x]   |
-| ⭐  |  11   | Pre-boot device health check                       | §1, §7         |  [/]   |
+| ⭐  |  11   | Pre-boot device health check                       | §1, §7         |  [x]   |
 | 💎  |  12   | Boot#### `EFI_LOAD_OPTION` decode (diagnostics)    | §6             |  [ ]   |
 
 > 💎 = parity -- Windows (BCD + device path) and Linux (GRUB device search) both do this.
@@ -267,11 +267,14 @@ Read basic health indicators from the boot device before loading the kernel. Nei
 - [x] If `ReadOnly == TRUE` on a non-USB device: `"[WARN] Boot disk is read-only -- possible hardware failure"` -- USB excluded (USB sticks with write-protect switch are normal)
 - [x] If `MediaPresent == FALSE`: `"[WARN] Boot media not present (reported by firmware -- may be stale)"` -- warning only (boot_fatal would false-trigger on partition handles where we already loaded from the device)
 - [x] SATA link status via PCI: skipped -- requires AHCI BAR MMIO access from UEFI bootloader which is risky on real firmware (BAR may not be mapped, MMIO access could crash). Media fields cover critical health indicators. Bare-metal SATA link errors are caught by the kernel's AHCI driver at Port 0 init.
-- [ ] Commit: `"boot: pre-boot device health check -- early warning for failing disks"`
+- [x] Commit: `"boot: pre-boot device health check -- early warning for failing disks"` (a9a6e5c3)
 
 **Test checkpoint:** Normal boot: serial shows `"Boot disk: NNN MiB (SATA)"` with correct capacity. QEMU with read-only disk (`-drive ...,readonly=on`): serial shows `"read-only"` warning. Verify on bare metal -- SATA link status bits should be clean on healthy hardware.
 
 **Regression risk:** LOW -- read-only queries. No writes to disk, no modification of boot path. If SATA status check fails (unsupported firmware), skip silently.
+
+> **Verified:** 2026-04-12 -- all 6 items confirmed. S8+S11 merged into single HandleProtocol(BlockIO) block. Capacity with overflow guard (LastBlock+blocks*BlockSize). ReadOnly on non-USB. MediaPresent warning-only (not fatal -- partition handle stale state). LogicalPartition diagnostic. SATA link status skipped (AHCI BAR MMIO risk). Codex adversarial: MediaPresent reverted from fatal to warn, capacity overflow guarded. Codex quality: duplicate HandleProtocol refactored to single call. Accepted: SATA link status (kernel AHCI driver handles this).
+> **Quality reviewed:** 2026-04-12 -- boot-code-quality 13 gates walked. Single BlockIO lookup shared between S8+S11. Overflow-safe UINT64 capacity math. Exclusive feature -- neither Windows nor Linux checks disk health at bootloader stage. Accepted: none.
 
 ---
 

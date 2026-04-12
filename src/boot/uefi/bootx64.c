@@ -4823,13 +4823,13 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
         }
     }
 
-    /* §8: Removable media detection via EFI_BLOCK_IO_PROTOCOL.Media.
-     * Query the boot device handle for BlockIO and read Media fields.
-     * If BlockIO is unavailable, infer from device type: USB defaults
-     * to removable (safe for write-caching policy). */
-    g_boot_info_ptr->boot_media_present = 1; /* assume present (booted from it) */
+    /* §8 + §11: Removable media detection AND pre-boot device health check.
+     * Single HandleProtocol(BlockIO) call for both. Reads: RemovableMedia,
+     * MediaPresent (§8), BlockSize, LastBlock, ReadOnly, LogicalPartition (§11).
+     * If BlockIO unavailable, USB defaults to removable (safe for cache policy). */
+    g_boot_info_ptr->boot_media_present = 1;
     g_boot_info_ptr->boot_device_removable =
-        (g_boot_info_ptr->boot_device_type == 3) ? 1 : 0; /* USB defaults removable */
+        (g_boot_info_ptr->boot_device_type == 3) ? 1 : 0;
     if (g_boot_device_handle) {
         EFI_GUID bio_guid = EFI_BLOCK_IO_PROTOCOL_GUID;
         EFI_BLOCK_IO_PROTOCOL *bio = (EFI_BLOCK_IO_PROTOCOL *)0;
@@ -4838,86 +4838,67 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
         bio_s = gBS->HandleProtocol(g_boot_device_handle, &bio_guid,
                                      (VOID **)&bio);
         if (!EFI_ERROR(bio_s) && bio && bio->Media) {
+            EFI_BLOCK_IO_MEDIA *m = bio->Media;
+
+            /* §8: Removable + MediaPresent */
             g_boot_info_ptr->boot_device_removable =
-                bio->Media->RemovableMedia ? 1 : 0;
+                m->RemovableMedia ? 1 : 0;
             g_boot_info_ptr->boot_media_present =
-                bio->Media->MediaPresent ? 1 : 0;
+                m->MediaPresent ? 1 : 0;
+
+            /* §11: Capacity */
+            {
+                UINT64 total_bytes = 0;
+                UINT32 mib = 0;
+                if (m->BlockSize > 0 && m->LastBlock < 0xFFFFFFFFFFFFFFFFULL) {
+                    UINT64 blocks = m->LastBlock + 1;
+                    if (blocks <= 0xFFFFFFFFFFFFFFFFULL / (UINT64)m->BlockSize)
+                        total_bytes = blocks * (UINT64)m->BlockSize;
+                    mib = (UINT32)(total_bytes / (1024 * 1024));
+                }
+                serial_early_print("[BOOT] Boot disk: ");
+                {
+                    char nb[20];
+                    UINT32 v = mib;
+                    int n = 0;
+                    if (v == 0) nb[n++] = '0';
+                    else { while (v > 0 && n < 20) { nb[n++] = '0' + (char)(v % 10); v /= 10; } }
+                    while (n > 0) serial_early_putchar(nb[--n]);
+                }
+                serial_early_print(" MiB (");
+                {
+                    static const char *tn[] = {"unknown","SATA","NVMe","USB","network"};
+                    UINT8 t = g_boot_info_ptr->boot_device_type;
+                    serial_early_print(t <= 4 ? tn[t] : "?");
+                }
+                serial_early_print(")\n");
+            }
+
+            /* §11: ReadOnly warning (abnormal on fixed non-USB disks) */
+            if (m->ReadOnly && g_boot_info_ptr->boot_device_type != 3)
+                serial_early_print("[WARN] Boot disk is read-only "
+                                   "-- possible hardware failure\n");
+
+            /* §11: LogicalPartition diagnostic */
+            if (m->LogicalPartition)
+                serial_early_print("[BOOT] Boot device is a logical partition "
+                                   "(not whole disk)\n");
         } else {
             serial_early_print("[WARN] BlockIO not available on boot device"
                                " -- using type-based default\n");
         }
     }
 
+    /* §8 logging */
     if (g_boot_info_ptr->boot_device_removable)
         serial_early_print("[BOOT] Boot device is removable "
                            "-- write-caching will be disabled by default\n");
     else
         serial_early_print("[BOOT] Boot device is fixed\n");
 
-    if (!g_boot_info_ptr->boot_media_present) {
-        /* Warning only -- boot_fatal would be a false positive on partition
-         * handles where firmware reports stale MediaPresent. We already
-         * loaded the bootloader from this device, so media IS present. */
+    if (!g_boot_info_ptr->boot_media_present)
         serial_early_print("[WARN] Boot media not present "
                            "(reported by firmware -- may be stale)\n");
-    }
-
-    /* §11: Pre-boot device health check -- read capacity, ReadOnly, and
-     * LogicalPartition from BlockIO.Media. This is an exclusive feature:
-     * neither Windows nor Linux checks disk health at the bootloader stage. */
-    if (g_boot_device_handle) {
-        EFI_GUID hc_bio_guid = EFI_BLOCK_IO_PROTOCOL_GUID;
-        EFI_BLOCK_IO_PROTOCOL *hc_bio = (EFI_BLOCK_IO_PROTOCOL *)0;
-        EFI_STATUS hc_s;
-
-        hc_s = gBS->HandleProtocol(g_boot_device_handle, &hc_bio_guid,
-                                    (VOID **)&hc_bio);
-        if (!EFI_ERROR(hc_s) && hc_bio && hc_bio->Media) {
-            EFI_BLOCK_IO_MEDIA *m = hc_bio->Media;
-            UINT64 total_bytes = 0;
-            UINT32 mib = 0;
-
-            /* Compute capacity: (LastBlock + 1) * BlockSize.
-             * Guard against BlockSize==0 and LastBlock==UINT64_MAX overflow. */
-            if (m->BlockSize > 0 && m->LastBlock < 0xFFFFFFFFFFFFFFFFULL) {
-                UINT64 blocks = m->LastBlock + 1;
-                /* Overflow check: blocks * BlockSize must fit UINT64 */
-                if (blocks <= 0xFFFFFFFFFFFFFFFFULL / (UINT64)m->BlockSize)
-                    total_bytes = blocks * (UINT64)m->BlockSize;
-                mib = (UINT32)(total_bytes / (1024 * 1024));
-            }
-
-            /* Log capacity with device type */
-            serial_early_print("[BOOT] Boot disk: ");
-            {
-                char nb[20];
-                UINT32 v = mib;
-                int n = 0;
-                if (v == 0) nb[n++] = '0';
-                else { while (v > 0 && n < 20) { nb[n++] = '0' + (char)(v % 10); v /= 10; } }
-                while (n > 0) serial_early_putchar(nb[--n]);
-            }
-            serial_early_print(" MiB (");
-            {
-                static const char *tn[] = {"unknown","SATA","NVMe","USB","network"};
-                UINT8 t = g_boot_info_ptr->boot_device_type;
-                serial_early_print(t <= 4 ? tn[t] : "?");
-            }
-            serial_early_print(")\n");
-
-            /* ReadOnly warning: abnormal on fixed non-USB disks */
-            if (m->ReadOnly && g_boot_info_ptr->boot_device_type != 3) {
-                serial_early_print("[WARN] Boot disk is read-only "
-                                   "-- possible hardware failure\n");
-            }
-
-            /* LogicalPartition info (diagnostic) */
-            if (m->LogicalPartition) {
-                serial_early_print("[BOOT] Boot device is a logical partition "
-                                   "(not whole disk)\n");
-            }
-        }
-    }
 
     /* §6: Read UEFI boot variables (BootCurrent, BootOrder, BootNext).
      * RuntimeServices->GetVariable is available before ExitBootServices. */
