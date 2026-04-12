@@ -43,6 +43,28 @@ FAIL_PATTERNS=(
     "triple fault"
     "General Protection Fault"
     "Page Fault"
+    "[CRIT] ExitBootServices failed"
+    "[FAIL] Kernel ELF corrupt"
+    "[BOOT HALT]"
+)
+
+# ---- Bootloader presence checks (verified after boot) ----
+# These patterns MUST appear in a healthy boot serial log.
+BOOT_REQUIRED_PATTERNS=(
+    "[BOOT] ELF segment"
+    "[BOOT] Kernel found at"
+    "[BOOT] Watchdog: armed"
+    "[BOOT] Watchdog: disarmed"
+    "[BOOT] ExitBootServices OK"
+    "Boot info v1"
+)
+# These patterns must NOT appear on a clean firmware boot.
+BOOT_ABSENT_PATTERNS=(
+    "[BOOT] mmap: overlap resolved"
+    "[WARN] mmap: carve at cap"
+    "[WARN] Memory map entry"
+    "[FAIL] Kernel ELF corrupt"
+    "[CRIT] ExitBootServices failed"
 )
 
 echo -e "${CYAN}══════════════════════════════════════════════════${NC}"
@@ -150,6 +172,25 @@ echo ""
 
 LOG_LINES=$(wc -l < "$SERIAL_LOG" 2>/dev/null || echo 0)
 echo -e "  ${DIM}Serial log: $SERIAL_LOG ($LOG_LINES lines)${NC}"
+
+# ---- Bootloader pattern checks (TODO-02 §1-§18) ----
+PATTERN_FAIL=false
+for pattern in "${BOOT_REQUIRED_PATTERNS[@]}"; do
+    if ! grep -q "$pattern" "$SERIAL_LOG" 2>/dev/null; then
+        echo -e "  ${RED}MISSING:${NC} $pattern"
+        PATTERN_FAIL=true
+    fi
+done
+for pattern in "${BOOT_ABSENT_PATTERNS[@]}"; do
+    if grep -q "$pattern" "$SERIAL_LOG" 2>/dev/null; then
+        echo -e "  ${RED}UNEXPECTED:${NC} $pattern"
+        PATTERN_FAIL=true
+    fi
+done
+if [ "$PATTERN_FAIL" = true ]; then
+    BOOT_FAILED=true
+    FAIL_REASON="Bootloader pattern check failed (see MISSING/UNEXPECTED above)"
+fi
 
 if [ "$BOOT_FAILED" = true ]; then
     echo ""
