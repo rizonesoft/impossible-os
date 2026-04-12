@@ -1,32 +1,38 @@
 # TODO-04 -- CPU Boot Sequencing & AP Hardening
 
-> **Goal:** Establish the correct activation order for CPU security and context features during boot phases 0 and 1, replicate that activation on every Application Processor (AP), validate AP feature consistency, pin safety-critical CR4 bits against post-boot modification, synchronize MTRR/PAT cache policy on each AP, and provide a comprehensive CPU register state audit trail. The feature implementations themselves live in `02-kernel-core/TODO-17` (security hardening) and `02-kernel-core/TODO-19` (x86-64 architecture); this TODO owns the boot-sequencing contract between them -- what activates, in what phase, who ensures APs match the BSP, and what happens when they don't.
+> **Goal:** Establish the correct activation order for CPU security and context features during boot phases 0 and 1, replicate that activation on every Application Processor (AP), validate AP feature consistency, pin safety-critical CR4 bits against post-boot modification, synchronize MTRR/PAT cache policy on each AP, and provide a comprehensive CPU register state audit trail. The feature implementations themselves live in `02-kernel-core/TODO-17-kernel-security-hardening.md` (security hardening) and `02-kernel-core/TODO-19-x86-64-architecture.md` (x86-64 architecture); this TODO owns the boot-sequencing contract between them -- what activates, in what phase, who ensures APs match the BSP, and what happens when they don't.
 
 > [!IMPORTANT]
 > **Scope boundary:** Do NOT implement CPU security features or CPU architecture features here. That work lives in:
-> - NX/EFER, SMEP/SMAP, KPTI, PCID, Spectre, CET → `02-kernel-core/TODO-17`
-> - XSAVE, MSR layer, UMIP, 1 GiB pages, topology, errata, VM detection → `02-kernel-core/TODO-19`
-> - TSC frequency calibration → `02-kernel-core/TODO-07`
+> - NX/EFER, SMEP/SMAP, KPTI, PCID, Spectre, CET → `02-kernel-core/TODO-17-kernel-security-hardening.md`
+> - XSAVE, MSR layer, UMIP, 1 GiB pages, topology, errata, VM detection → `02-kernel-core/TODO-19-x86-64-architecture.md`
+> - TSC frequency calibration and timekeeping → `02-kernel-core/TODO-07-time-filetime-management.md`
 > This TODO owns: phase placement, activation order within phases, AP-trampoline replication, AP feature consistency validation, CR4 bit pinning, MTRR/PAT AP synchronization, CPU register audit trail, and hypervisor pre-detection before the timer subsystem selects its driver.
+> **Current state (code-truth 2026-04-11):** `cpuid_init()` runs in `src/kernel/main/boot_hw.c` after heap/klog (~259--263) with `boot_progress(..., POSTCODE_CPUID_OK)`. `cpu_harden()` / `vmm_apply_nx_policy()` / `cpu_harden_post_pagetable()` / `simd_enable_avx()` run in Phase 0 order shown there (~288--334); **no** `msr_init()`, `cpu_efer_harden()`, or `cpu_cr4_harden()` yet. `platform_detect()` fills `g_boot_info.hv_vendor` + `hv_flags` in `src/kernel/cpuid_platform.c`; it runs from `hv_supports_cr4_smep_smap()` in `src/kernel/cpu_security.c:56` (SMEP/SMAP gate, returns 0 today so SMEP/SMAP stay skipped) and again at start of `timer_hal_init()` in `src/kernel/timer.c:104` before LAPIC/PIT selection. AP path `smp_ap_main()` calls `cpu_harden()` + `cpu_harden_post_pagetable()` in `src/kernel/smp/smp.c` (~122--123) -- **not** the planned `ap_cpu_harden()` contract. PAT is programmed in `boot_hw.c` (~304--320) with value `0x0007040600010406` (§8 NOTE: decode vs intent). **Registry keys** in §3 Goal prose (`HKLM\HARDWARE\VM\...`) are **not** populated in tree -- only `boot_info` fields.
 
 ---
 
 ## Inputs
 
-- `src/kernel/main/boot_init.c` -- `boot_phase0/1/2/3()` entry points; this TODO annotates the phase boundaries
+- `src/kernel/main/boot_hw.c` -- `boot_phase0()` implementation (CPUID, `cpu_harden`, PAT, SIMD); primary attach point for §2 ordering
+- `src/kernel/main/boot_init.c` -- `boot_phase1/2/3()` and boot orchestration comments (see `TODO-01-kernel-init-sequencing.md` §2)
 - `include/kernel/boot_init.h` -- `BOOT_STEP`, `BOOT_REQUIRE`, `POSTCODE_*`; add CPU postcodes
 - `src/kernel/smp/ap_trampoline.asm` + `src/kernel/smp/smp.c` -- AP startup path; add `ap_cpu_harden()` call
 - `include/kernel/cpuid.h` -- `cpuid_init()`, `cpu_has()`; already called in Phase 0
-- `src/kernel/smp/smp.c` -- `wrmsr`/`rdmsr` inline helpers; input to MSR layer (-> TODO-19 §3)
+- `src/kernel/smp/smp.c` -- `wrmsr`/`rdmsr` inline helpers; input to MSR layer (→ XREF `02-kernel-core/TODO-19-x86-64-architecture.md §3`)
 - `src/kernel/mm/vmm.c` -- VMM init; EFER.NXE must be set before first page table write with NX bit
-- `src/kernel/cpu_security.c` -- `cpu_harden()`, `cpu_harden_post_pagetable()`; current AP hardening path
+- `src/kernel/cpu_security.c` -- `cpu_harden()`, `cpu_harden_post_pagetable()`; `hv_supports_cr4_smep_smap()` calls `platform_detect()` (SMEP/SMAP gate)
+- `src/kernel/cpuid_platform.c` -- `platform_detect()`; populates `g_boot_info.hv_vendor` / `hv_flags`
+- `src/kernel/timer.c` -- `timer_hal_init()`; calls `platform_detect()` before timer backend selection
 - `include/kernel/msr.h` -- MSR addresses (IA32_EFER, IA32_PAT); CR4 bit definitions; `MSR_IA32_MISC_ENABLE` to be added by §9
-- -> XREF: `02-kernel-core/TODO-01 §2` -- `boot_phase0` sequence; CPU hardening steps slot in here
-- -> XREF: `02-kernel-core/TODO-17 §1--§7` -- NX, SMEP, SMAP, PCID, Spectre, CET (implementation details)
-- -> XREF: `02-kernel-core/TODO-19 §1, §3--§7, §9, §11` -- XSAVE, MSR layer, UMIP, 1 GiB pages, errata, VM detection
-- -> XREF: `01-boot-platform/TODO-06 §6` -- UTS timer driver selection; hypervisor detection (§3 here) feeds it
-- -> XREF: `04-drivers-hardware/TODO-11-security-hardware.md §7` -- SMEP+SMAP implementation (CR4 enable + copy_from/to_user wrappers); this TODO owns boot sequencing and AP consistency, TODO-11 §7 owns the actual CR4 write functions
-- -> XREF: `03-memory-concurrency/TODO-01-vmm-memory-protection.md §1` -- UC MMIO mapping; PAT MSR programming (§8 here) must be consistent with VMM cache policy
+- → XREF: `02-kernel-core/TODO-01-kernel-init-sequencing.md §2` -- `boot_phase0` sequence; CPU hardening steps slot in here
+- → XREF: `02-kernel-core/TODO-17-kernel-security-hardening.md §1--§7` -- NX, SMEP, SMAP, PCID, Spectre, CET (implementation details)
+- → XREF: `02-kernel-core/TODO-19-x86-64-architecture.md §1, §3--§7, §9, §11` -- XSAVE, MSR layer, UMIP, 1 GiB pages, errata, VM detection
+- → XREF: `01-boot-platform/TODO-06-interrupt-timer-arch.md §6` -- UTS timer driver selection; hypervisor detection (§3 here) feeds it
+- → XREF: `04-drivers-hardware/TODO-11-security-hardware.md §7` -- SMEP+SMAP implementation (CR4 enable + copy_from/to_user wrappers); this TODO owns boot sequencing and AP consistency, TODO-11 §7 owns the actual CR4 write functions
+- → XREF: `03-memory-concurrency/TODO-01-vmm-memory-protection.md §11` -- UC MMIO; PAT layout must match §8 here
+- → XREF: `02-kernel-core/TODO-07-time-filetime-management.md §2,§3` -- monotonic clock + invariant TSC calibration consume stable timer choice from §3
+- → XREF: `02-kernel-core/TODO-13-registry-completion.md` -- §3 / §9 Registry keys when hardware hive writer exists
 
 ---
 
@@ -37,7 +43,8 @@
 - AP feature consistency is validated: mismatched CPUID feature sets between BSP and AP trigger a controlled bug-check (`MULTIPROCESSOR_CONFIGURATION_NOT_SUPPORTED`) or graceful degradation to the lowest common feature set.
 - CR4 safety bits (SMEP, SMAP, UMIP, CET, FSGSBASE) are pinned after boot -- any post-boot attempt to clear them panics with `CRITICAL_STRUCTURE_CORRUPTION`.
 - Each AP synchronizes its PAT MSR to match BSP cache policy -- prevents WB-vs-UC mismatch on shared MMIO pages.
-- Hypervisor vendor is detected and stored in `boot_info` before the UTS probes its timer drivers, enabling correct Hyper-V TSC and TLB enlightenments from the start.
+- Hypervisor vendor is detected and stored in `boot_info` before the UTS probes its timer drivers, enabling correct Hyper-V TSC and TLB enlightenments from the start; optional Registry mirror under `HKLM\HARDWARE\VM\*` once the registry engine exposes early boot writes.
+- MTRR fixed/variable ranges and `MTRRdefType` are consistent across BSP and APs where firmware left gaps (parity with Linux MTRR sync warnings).
 - XSAVE and PCID are activated only after VMM is ready, in the correct Phase 1 window.
 - A per-CPU register audit trail logs EFER, CR4, XCR0, and PAT values with postcodes: `[Phase0] CPU0: EFER=0xD01 CR4=0x3406E0 XCR0=0x7 PAT=0x0007040600070406`.
 
@@ -47,14 +54,14 @@
 
 | ⭐  | Order | Deliverable                                      | Depends On                 | Status |
 | --- | :---: | ------------------------------------------------ | -------------------------- | :----: |
-| 💎  |   1   | CPUID detection & per-CPU capability capture     | P0, D02 T19 §1             |  [x]   |
-| 💎  |   2   | Phase 0 CPU security activation order            | §1, D02 T17 §1--3 & T19 §3 | defer  |
-| ⭐  |   3   | Hypervisor detection before timer selection      | §1, D02 T19 §11            |  [x]   |
-| 💎  |   4   | AP CPU hardening (`ap_cpu_harden()`)             | §2, D02 T17 §1--7          | defer  |
-| 💎  |   5   | Phase 1 XSAVE & PCID activation window           | §2, D02 T17 §4 & T19 §1   | defer  |
+| 💎  |   1   | CPUID detection & per-CPU capability capture     | T19 §1                     |  [x]   |
+| 💎  |   2   | Phase 0 CPU security activation order            | §1, T17 §1--§3, T19 §3     |  [ ]   |
+| ⭐  |   3   | Hypervisor detection before timer selection      | §1, T19 §11                |  [/]   |
+| 💎  |   4   | AP CPU hardening (`ap_cpu_harden()`)             | §2, T17 §1--§7             |  [ ]   |
+| 💎  |   5   | Phase 1 XSAVE & PCID activation window           | §2, T17 §4, T19 §1         |  [ ]   |
 | 💎  |   6   | AP feature consistency validation                | §1, §4                     |  [ ]   |
 | 💎  |   7   | CR4 safety-bit pinning                           | §2, §5                     |  [ ]   |
-| 💎  |   8   | MTRR/PAT AP synchronization                      | §4                          |  [ ]   |
+| 💎  |   8   | MTRR/PAT AP synchronization                      | §4                         |  [ ]   |
 | ⭐  |   9   | CPU register state audit trail                   | §2, §5                     |  [ ]   |
 
 > 💎 = parity -- Windows and Linux both enforce EFER/CR4 ordering, AP parity, feature consistency, CR4 pinning, and PAT synchronization; Impossible OS must match that contract.
@@ -67,23 +74,26 @@
 **Prompt:** `cpuid_init()` already runs in Phase 0 and populates feature flags, but the AMD extended leaves (`0x80000001`, `0x8000001E`, `0x80000008`) and per-CPU storage in `struct cpu_data` are not complete. Extend `cpuid_init()` to probe all leaves needed by TODO-17 and TODO-19: SSE2, SSE4.2, AVX, AVX2, AVX512F, AES-NI, RDRAND, RDSEED, CET_SS, CET_IBT, UMIP, SMEP, SMAP, PCID, INVPCID, FSGSBASE, FFXSR; AMD leaves 0x80000001 (1-GB pages, RDTSCP, PDPE1GB, SVM), 0x8000001E (Zen topology), 0x80000008 (phys/virt address bits); store result in `cpu_data[0].cpuid_features`; emit `[Phase0] CPUID probed, POSTCODE_CPUID_DONE` to `boot_progress()`.
 
 > [!IMPORTANT]
-> → XREF: `02-kernel-core/TODO-19 §1` -- full feature struct definition lives there; this TODO only gates the call into Phase 0.
+> → XREF: `02-kernel-core/TODO-19-x86-64-architecture.md §1` -- full feature struct definition lives there; this TODO only gates the call into Phase 0.
 
-- [x] `cpuid_init()` runs in Phase 0 after heap_init -- confirmed in boot_hw.c line 141
+- [x] `cpuid_init()` runs in Phase 0 after heap_init -- confirmed in `boot_hw.c` ~259--263
 - [x] AMD extended leaves 0x80000001 (NX, SVM, OSVW, IBS, Page1GB, RDTSCP), 0x8000001E (Zen topology), 0x80000008 (phys/linear addr bits) all parsed
 - [x] Result stored in global `g_cpu` struct (type `struct cpu_features`) -- 54 feature flags + address bits + topology
 - [x] `POSTCODE_CPUID_INIT = 0x24` already defined; `boot_progress(0, "CPUID", POSTCODE_CPUID_INIT)` emitted
 - [x] Already implemented -- marking complete
+- [x] Commit: "(shipped) CPUID extended leaves + POSTCODE_CPUID_INIT in Phase 0"
+
+**Test checkpoint:** Serial or POST shows CPUID stage (`POSTCODE_CPUID_INIT` / `boot_progress` "CPUID"); `g_cpu` has NX and AMD extended topology bits on AMD hosts; homogeneous check on QEMU WHPX, TCG, VirtualBox, bare metal.
 
 ---
 
-## 2. Phase 0 CPU Security Activation Order *(deferred -- blocked by TODO-17 `cpu_efer_harden`/`cpu_cr4_harden` + TODO-19 `msr_init`; minimal version in TODO-05 §11)*
+## 2. Phase 0 CPU Security Activation Order *(deferred -- blocked by TODO-17 `cpu_efer_harden`/`cpu_cr4_harden` + TODO-19 `msr_init`; minimal path in `TODO-05-bare-metal-hardening.md` §9)*
 **Prompt:** Document and enforce the required activation sequence in `boot_phase0()`: (1) `msr_init()` (centralized MSR layer, TODO-19 §3) must run before any MSR write; (2) `cpu_efer_harden()` sets `EFER.NXE=1`, `EFER.SCE=1`, `EFER.FFXSR` if supported -- **this must complete before VMM init** because VMM will write PTE bit 63 (NX) on the first `vmm_map_page()` call; (3) `cpu_cr4_harden()` sets `CR4.SMEP`, `CR4.SMAP`, `CR4.UMIP` if detected -- must run before any user-mode-visible mapping; emit a `POSTCODE_CPU_HARDEN_DONE` after the last CR4 write. Add `BOOT_REQUIRE(SUBSYS_MSR)` guards to EFER/CR4 steps so wrong-order calls panic with a clear message. Log: `[Phase0] EFER=0x{val} CR4=0x{val}`.
 
 > [!IMPORTANT]
-> -> XREF: `02-kernel-core/TODO-17 §1--3` -- `cpu_efer_harden()` and `cpu_cr4_harden()` implementations live there.
-> → XREF: `02-kernel-core/TODO-19 §3` -- `msr_init()` implementation lives there (MSR Management Infrastructure).
-> → XREF: `02-kernel-core/TODO-01 §2` -- Phase 0 boot sequence; this step slots between serial init and PMM.
+> → XREF: `02-kernel-core/TODO-17-kernel-security-hardening.md §1--§3` -- `cpu_efer_harden()` and `cpu_cr4_harden()` implementations live there.
+> → XREF: `02-kernel-core/TODO-19-x86-64-architecture.md §3` -- `msr_init()` implementation lives there (MSR Management Infrastructure).
+> → XREF: `02-kernel-core/TODO-01-kernel-init-sequencing.md §2` -- Phase 0 boot sequence; this step slots between serial init and PMM.
 
 - [ ] Add `POSTCODE_MSR_INIT`, `POSTCODE_CPU_EFER`, `POSTCODE_CPU_CR4`, `POSTCODE_CPU_HARDEN_DONE` to `boot_init.h`
 - [ ] Insert `BOOT_STEP(SUBSYS_MSR, msr_init)` in `boot_phase0()` before VMM step
@@ -99,18 +109,22 @@
 
 ## 3. Hypervisor Detection Before Timer Selection
 
-The UTS probe in TODO-06 §6 selects HPET vs PIT vs LAPIC timer, but on Hyper-V the correct choice is the `HV_X64_MSR_TIME_REF_COUNT` reference counter. Hypervisor detection must run before UTS `timer_probe()`. In Phase 0, after CPUID: probe CPUID `0x40000000` for the hypervisor-present bit; if set, read vendor string (`0x40000001`); store `hv_vendor` in `boot_info` and `HKLM\HARDWARE\VM\HypervisorVendor`; for `"Microsoft Hv"`: set `boot_info.hv_flags |= HV_TSC_ENLIGHTENMENT | HV_TLBFLUSH_HYPERCALL`; for `"KVMKVMKVM"`: set `HV_KVM_STEAL_TIME`; UTS probe reads `boot_info.hv_flags` to select the correct clock source first. Emit `[Phase0] Hypervisor: Microsoft Hv (flags=0x3)` or `[Phase0] Bare metal`.
+The UTS probe in `TODO-06-interrupt-timer-arch.md` §6 selects HPET vs PIT vs LAPIC timer, but on Hyper-V the correct choice is the `HV_X64_MSR_TIME_REF_COUNT` reference counter (Microsoft TLFS: partition reference counter MSR `0x40000020`). Hypervisor detection must run before UTS backend selection: **`timer_hal_init()`** calls `platform_detect()` first (`src/kernel/timer.c:104`). **`platform_detect()` may also run earlier** from `cpu_enable_smep()` via `hv_supports_cr4_smep_smap()` (`src/kernel/cpu_security.c:56`) during `cpu_harden_post_pagetable()` -- side effect for SMEP gating, not a substitute for the timer path. Probe CPUID `0x40000000` / vendor leaves; store `hv_vendor` + `hv_flags` in `boot_info`; for `"Microsoft Hv"`: set `HV_FLAG_TSC_ENLIGHTENMENT | HV_FLAG_TLBFLUSH_HYPERCALL` (and related flags already in `cpuid_platform.c`); for KVM/VMware/VBox: existing branches in `platform_detect()`. Emit `[Phase0] Hypervisor: ...` style klog from `platform_detect()` where applicable.
 
 > [!IMPORTANT]
-> → XREF: `01-boot-platform/TODO-06 §6` -- UTS reads `boot_info.hv_flags` to select clock; must be set before `timer_probe()`.
-> → XREF: `02-kernel-core/TODO-19 §11` -- AMD-V / VT-x host capability detection; Hyper-V guest enlightenment MSR initialization (using `boot_info.hv_flags` populated by this step) is not yet specced in §11 and needs to be added there.
+> → XREF: `01-boot-platform/TODO-06-interrupt-timer-arch.md §6` -- UTS reads `boot_info.hv_flags` to select clock; must be set before `timer_probe()`.
+> → XREF: `02-kernel-core/TODO-19-x86-64-architecture.md §11` -- AMD-V / VT-x host capability detection; Hyper-V guest enlightenment MSR initialization (using `boot_info.hv_flags` populated by this step) is not yet specced in §11 and needs to be added there.
+> → XREF: `02-kernel-core/TODO-13-registry-completion.md` -- mirror `hv_vendor` / `hv_flags` to `HKLM\HARDWARE\VM\HypervisorVendor` (and related values) when early-boot registry writes are supported.
 
 - [x] Add `hv_vendor[16]` and `hv_flags` fields to `struct boot_info`
 - [x] Define `HV_FLAG_TSC_ENLIGHTENMENT`, `HV_FLAG_TLBFLUSH_HYPERCALL`, `HV_FLAG_KVM_STEAL_TIME`, `HV_FLAG_APIC_FREQ_MSR`, `HV_FLAG_VMWARE_BACKDOOR` in `boot_init.h`
 - [x] `platform_detect()` in `cpuid_platform.c` populates `g_boot_info.hv_vendor` + `g_boot_info.hv_flags` for Hyper-V, KVM, VMware, VirtualBox
 - [x] Detection runs from `timer_hal_init()` → `platform_detect()` in Phase 1, before timer backend selection
 - [x] UTS timer probe uses `platform_has_apic_freq_msr()` which reads cached platform state
+- [ ] Registry mirror (deferred): when `registry_init()` + hardware hive APIs from `TODO-13-registry-completion.md` allow pre-desktop writes, persist `hv_vendor` string and `hv_flags` dword under `HKLM\HARDWARE\VM\` for Win32-style inventory (no stub keys in tree today)
 - [x] Commit: `"boot: hypervisor detection with hv_flags in boot_info"`
+
+**Test checkpoint:** `g_boot_info.hv_vendor` / `hv_flags` populated before timer backend selection; klog or serial shows hypervisor detection before first `[UTS]` / `[Timer]` line on Hyper-V and KVM guests; bare metal shows empty vendor or known non-HV path. QEMU WHPX, TCG, VirtualBox, bare metal.
 
 ---
 
@@ -118,7 +132,7 @@ The UTS probe in TODO-06 §6 selects HPET vs PIT vs LAPIC timer, but on Hyper-V 
 **Prompt:** When APs start up via `smp_ap_main()`, they run their own GDT/IDT/LAPIC setup but currently skip the EFER and CR4 security features that BSP Phase 0 enables. An AP running without `EFER.NXE`/`SMEP`/`SMAP` is a full privilege bypass vector -- kernel code on that AP can execute user pages and access user memory unchecked. Implement `ap_cpu_harden()` that replicates the BSP Phase 0 CPU activation: `msr_write(IA32_EFER, bsp_efer_val)`, then `cr4_write(bsp_cr4_val)` (read from BSP at Phase 0, stored in `cpu_data[0].efer_at_boot` and `cpu_data[0].cr4_at_boot`); call from `smp_ap_main()` immediately after GDT load and before AP signals ready; each AP logs `[AP%u] CPU hardening applied EFER=0x{val} CR4=0x{val}`.
 
 > [!IMPORTANT]
-> -> XREF: `02-kernel-core/TODO-17 §1--7` -- notes that AP trampoline must enable same CR4/MSR features; this TODO writes the call site; TODO-17 provides the underlying `cpu_efer_harden()` function reused on APs.
+> → XREF: `02-kernel-core/TODO-17-kernel-security-hardening.md §1--§7` -- notes that AP trampoline must enable same CR4/MSR features; this TODO writes the call site; TODO-17 provides the underlying `cpu_efer_harden()` function reused on APs.
 
 - [ ] Add `efer_at_boot` and `cr4_at_boot` fields to `struct cpu_data`; BSP stores values at end of Phase 0
 - [ ] Implement `ap_cpu_harden()` in `boot_init.c`: reads BSP values, applies to current CPU
@@ -135,9 +149,9 @@ The UTS probe in TODO-06 §6 selects HPET vs PIT vs LAPIC timer, but on Hyper-V 
 **Prompt:** XSAVE and PCID require VMM to be ready first -- XSAVE because per-thread XSAVE areas are allocated in TEB pages managed by VMM, and PCID because `CR4.PCIDE` changes how CR3 is loaded (PCID bits 11:0) and must be set only after the page table base is established. Slot these activations into Phase 1: (1) after `vmm_init()`: call `cpu_xsave_enable()` -- sets `CR4.OSXSAVE`, calls `XSETBV(XCR0, X87|SSE|AVX)`, stores `xsave_area_size` in a global; (2) after process table is initialised: call `cpu_pcid_enable()` -- sets `CR4.PCIDE`, validates INVPCID is available; PCID 0 reserved for kernel; emit `POSTCODE_XSAVE_ENABLED` and `POSTCODE_PCID_ENABLED`. Both functions are no-ops if the CPU does not support the feature.
 
 > [!IMPORTANT]
-> → XREF: `02-kernel-core/TODO-19 §1` -- `cpu_xsave_enable()` implementation (XSAVE area sizing, XCR0 bits).
-> → XREF: `02-kernel-core/TODO-17 §4` -- `cpu_pcid_enable()` and CR3 load changes for KPTI (PCID implementation).
-> → XREF: `02-kernel-core/TODO-04 §6` -- TEB Allocation and Population at Thread Create; XSAVE area is allocated alongside the TEB at thread creation, which is why VMM must be ready before XSAVE is enabled.
+> → XREF: `02-kernel-core/TODO-19-x86-64-architecture.md §1` -- `cpu_xsave_enable()` implementation (XSAVE area sizing, XCR0 bits).
+> → XREF: `02-kernel-core/TODO-17-kernel-security-hardening.md §4` -- `cpu_pcid_enable()` and CR3 load changes for KPTI (PCID implementation).
+> → XREF: `02-kernel-core/TODO-04-peb-teb-user-abi.md §6` -- TEB allocation at thread create; XSAVE areas tie to per-thread TEB pages, so VMM must be ready before XSAVE is enabled globally.
 
 - [ ] Add `POSTCODE_XSAVE_ENABLED`, `POSTCODE_PCID_ENABLED` to `boot_init.h` Phase 1 constants
 - [ ] Insert `BOOT_STEP(SUBSYS_XSAVE, cpu_xsave_enable)` in `boot_phase1()` after VMM init
@@ -155,7 +169,7 @@ The UTS probe in TODO-06 §6 selects HPET vs PIT vs LAPIC timer, but on Hyper-V 
 Windows triggers bug-check `MULTIPROCESSOR_CONFIGURATION_NOT_SUPPORTED` (0x3E) when an AP's CPUID feature set is incompatible with the BSP. Linux runs `verify_cpu.S` on each AP during trampoline entry to ensure Long Mode and SSE. Impossible OS currently has no equivalent -- an AP with different capabilities could silently cause undefined behavior.
 
 > [!IMPORTANT]
-> -> XREF: `02-kernel-core/TODO-19 §7` -- CPU topology parsing; topology differences (core count, cache layout) are informational, not a failure. This section only validates *security-critical* feature mismatches.
+> → XREF: `02-kernel-core/TODO-19-x86-64-architecture.md §7` -- CPU topology parsing; topology differences (core count, cache layout) are informational, not a failure. This section only validates *security-critical* feature mismatches.
 
 - [ ] Define `cpu_features_required_mask` in `cpuid.h`: bitmask of features that all CPUs must share (NX, SSE2, LAHF, CMPXCHG16B, SYSCALL, PAE, PGE); derive from BSP's detected features at Phase 0
 - [ ] Implement `cpu_validate_ap_features(uint32_t ap_id)` in `cpu_security.c`: runs on each AP after CPUID probe, compares AP features against BSP `cpu_features_required_mask`
@@ -197,12 +211,13 @@ Linux pins CR4 bits (SMEP, SMAP, UMIP, FSGSBASE, CET) after boot to prevent root
 Both Windows and Linux synchronize the PAT (Page Attribute Table) MSR on each AP to match the BSP. The PAT MSR (`IA32_PAT`, MSR 0x277) maps PAT index values (from PTE bits PWT/PCD/PAT) to cache types (WB, UC, WC, WT, WP). If APs have different PAT MSR values than the BSP, the same PTE on different CPUs would produce different cache types -- causing silent data corruption on shared MMIO pages.
 
 > [!NOTE]
-> -> XREF: `03-memory-concurrency/TODO-01-vmm-memory-protection.md §1` -- VMM uses `vmm_map_mmio_uc()` which relies on PAT index 3 being UC. If an AP's PAT MSR maps index 3 to WB, MMIO accessed on that AP is cached and hardware registers read stale values.
+> → XREF: `03-memory-concurrency/TODO-01-vmm-memory-protection.md §11` -- VMM uses `vmm_map_mmio_uc()` which relies on PAT index 3 being UC. If an AP's PAT MSR maps index 3 to WB, MMIO accessed on that AP is cached and hardware registers read stale values.
 
 > [!IMPORTANT]
-> **PAT constant decode bug found during TODO-01 §2 verify (2026-04-08):** `boot_hw.c:270` writes `0x0007040600010406` intending "entry 1: WT(04)→WC(01)" per the comment. Decoding bits [23:16] (PA2): 0x07 → 0x01. The actual change is at PA2, not PA1. Meanwhile `vmm_map_mmio_wc()` uses `VMM_FLAG_WRITETHROUGH` only (PWT=1, PCD=0, PAT bit=0) which selects PAT index 1 = still 0x04 (WT). **Net effect: framebuffer is mapped WT, not WC -- silent perf regression on every CPU.** Fix the constant to `0x0007040600070106` (or similar -- ensure PA1 = 0x01 = WC) BEFORE wiring AP sync, otherwise APs will faithfully synchronize the wrong layout.
+> **PAT constant decode bug (2026-04-08):** `boot_hw.c` (~307) writes `0x0007040600010406` intending "entry 1: WT(04)→WC(01)" per the comment. Decoding bits [23:16] (PA2): 0x07 → 0x01. The actual change is at PA2, not PA1. Meanwhile `vmm_map_mmio_wc()` uses `VMM_FLAG_WRITETHROUGH` only (PWT=1, PCD=0, PAT bit=0) which selects PAT index 1 = still 0x04 (WT). **Net effect: framebuffer is mapped WT, not WC -- silent perf regression on every CPU.** Fix the constant to `0x0007040600070106` (or similar -- ensure PA1 = 0x01 = WC) BEFORE wiring AP sync, otherwise APs will faithfully synchronize the wrong layout.
 
-- [ ] **Fix the PAT constant decode bug in `boot_hw.c:270` first** -- correct value should set PA1 (bits 15:8) to 0x01 (WC), not PA2. Verify by computing expected hex and decoding before/after with byte-level comments. Add a unit test that asserts `(g_bsp_pat_msr >> 8) & 0xFF == 0x01` to catch future regressions.
+- [ ] **Fix the PAT constant decode bug in `boot_hw.c` (~307) first** -- correct value should set PA1 (bits 15:8) to 0x01 (WC), not PA2. Verify by computing expected hex and decoding before/after with byte-level comments. Add a unit test that asserts `(g_bsp_pat_msr >> 8) & 0xFF == 0x01` to catch future regressions.
+- [ ] **MTRR AP parity (Linux-style):** on SMP bringup, read fixed/variable MTRRs + `IA32_MTRR_DEF_TYPE` on BSP; on each AP compare to BSP snapshot; if firmware left inconsistent MTRRs (common on some VMs), log `klog(LOG_WARN, ...)` and program AP MTRRs to match BSP before relying on UC MMIO paths from AP-scheduled code (→ XREF `03-memory-concurrency/TODO-01-vmm-memory-protection.md §11` for MMIO cache type expectations)
 - [ ] Read BSP PAT MSR value in Phase 0 after `cpuid_init()`; store in `g_bsp_pat_msr` global (or in `cpu_data[0].pat_msr`)
 - [ ] In `ap_cpu_harden()` (§4): after EFER/CR4 replication, write `wrmsr(IA32_PAT, g_bsp_pat_msr)` to synchronize AP PAT to BSP. **Rollback:** If PAT write crashes AP, skip the wrmsr and log `[WARN] AP%u PAT sync skipped` -- AP will use firmware-default PAT which is usually identical to BSP anyway
 - [ ] Read back AP PAT and verify match: `rdmsr(IA32_PAT) == g_bsp_pat_msr`; log `[AP%u] PAT synced: 0x%lx` on success, panic on mismatch (hardware fault)
@@ -239,27 +254,28 @@ Neither Windows nor Linux produces a consolidated, structured, per-CPU register 
 
 ## OS Comparison
 
-| ⭐ | Feature                   | 🪟 Win11                        | 🐧 Linux                         | 🚀 Impossible OS                      |
-|----|---------------------------|------------------------------|-------------------------------|------------------------------------|
-| 💎 | EFER.NXE before NX pages  | ✅ HalInitializeProcessor   | ✅ cpu_init before paging     | ⚠️ §2 defer -- NX works, order WIP |
-| 💎 | SMEP/SMAP BSP Phase 0     | ✅ CR4 in HalInitSystem     | ✅ setup_cr4 early            | ⚠️ §2 defer -- bare metal skips    |
-| 💎 | AP hardening = BSP        | ✅ APs run HalInitProc      | ✅ cpu_init per secondary     | ⚠️ §4 defer -- basic in smp.c      |
-| 💎 | XSAVE after VMM ready     | ✅ CR4.OSXSAVE post-paging  | ✅ fpu__init_cpu deferred     | ⚠️ §5 defer -- AVX works           |
-| 💎 | PCID after page tables    | ✅ CR4.PCIDE post-PML4      | ✅ cr4_set_bits post-paging   | ⬜ §5 defer                       |
-| 💎 | AP feature consistency    | ✅ BugCheck 0x3E            | ✅ verify_cpu.S per AP        | ⬜ §6                             |
-| 💎 | CR4 bit pinning           | ✅ HAL protects CR4         | ✅ cr4_pinned_bits            | ⬜ §7                             |
-| 💎 | PAT MSR AP sync           | ✅ pat_init per CPU         | ✅ pat_cpu_init per AP        | ⬜ §8                             |
-| ⭐ | HV detect before timer    | ✅ Before HAL timer         | ⚠️ May lag clocksource        | ✅ §3 -- done                      |
-| ⭐ | CPU register audit trail  | ❌ ETW fragments only       | ❌ dmesg fragments only       | ⬜ §9 -- structured per-CPU dump   |
-| ⭐ | POST code per CPU step    | ❌ BIOS POST only           | ❌ dmesg only                 | ⬜ §1--9 -- planned in TODO-05 §1  |
+| ⭐   | Feature                     | 🪟 Win11                    | 🐧 Linux                 | 🚀 Impossible OS        |
+| --- | --------------------------- | --------------------------- | ------------------------ | ----------------------- |
+| 💎  | EFER.NXE before NX pages    | ✅ Hal before paging        | ✅ cpu_init pre-paging   | ⚠️ §2 order WIP         |
+| 💎  | SMEP/SMAP BSP Phase 0       | ✅ Hal CR4 early            | ✅ setup_cr4 early       | ⚠️ §2 bare metal gap    |
+| 💎  | AP hardening matches BSP    | ✅ Hal per AP               | ✅ cpu_init secondary    | ⚠️ §4 smp partial       |
+| 💎  | XSAVE after VMM ready       | ✅ OSXSAVE post-paging      | ✅ fpu deferred          | ⚠️ §5 AVX no formal win |
+| 💎  | PCID after page tables      | ✅ PCIDE post-PML4          | ✅ cr4 post-paging       | ⬜ §5 planned           |
+| 💎  | AP feature consistency      | ✅ BugCheck 0x3E            | ✅ verify_cpu per AP     | ⬜ §6 planned           |
+| 💎  | CR4 bit pinning             | ✅ HAL pins CR4             | ✅ cr4_pinned_bits       | ⬜ §7 planned           |
+| 💎  | PAT MSR AP sync             | ✅ pat per CPU              | ✅ pat per AP            | ⬜ §8 planned           |
+| 💎  | MTRR AP matches BSP         | ✅ HAL sync paths           | ✅ mtrr_bp_init on APs   | ⬜ §8 MTRR bullet       |
+| ⭐  | HV detect before timer      | ✅ Before HAL timer         | ⚠️ Clocksource may lag   | [/] §3 boot_info only   |
+| ⭐  | CPU register audit trail    | ❌ ETW fragments            | ❌ dmesg fragments       | ⬜ §9 planned           |
+| ⭐  | POST per activation step    | ❌ BIOS POST only           | ❌ dmesg only            | ⬜ TODO-07-boot-diag §1   |
 
-> **§1 and §3 complete.** §2, §4, §5 deferred -- blocked by TODO-17/TODO-19 implementations. §6--§9 are new parity and competitive-edge sections. Minimal CPU hardening works via `cpu_harden()` + `cpu_harden_post_pagetable()` (TODO-05 §11). Full formal sequencing comes when TODO-17 delivers `cpu_efer_harden()`/`cpu_cr4_harden()`.
+> **§1 complete.** **§3:** `boot_info` hypervisor fields + `timer_hal_init()` ordering are in tree; **Registry mirror and TLFS-grade TSC reference page setup are still open** (see §3 unchecked bullet). §2, §4, §5 deferred -- blocked by TODO-17/TODO-19 implementations. §6--§9 are parity and competitive-edge sections. Minimal CPU hardening runs via `cpu_harden()` + `cpu_harden_post_pagetable()` (`TODO-05-bare-metal-hardening.md` §9). Full formal sequencing lands when TODO-17 ships `cpu_efer_harden()` / `cpu_cr4_harden()`.
 
 ---
 
 ## Unit Tests
 
-> Wire into `test_runner_init()` via `test_register_cpu_seq()` (-> `src/kernel/test/test_runner.c`, `include/kernel/test/test.h`).
+> Wire into `test_runner_init()` via `test_register_cpu_seq()` (→ `src/kernel/test/test_runner.c`, `include/kernel/test/test.h`).
 > Boot tests run with `debug=1` or `test=1` in boot.conf.
 
 - [ ] Create `src/kernel/test/test_cpu_seq.c` with:
@@ -278,6 +294,10 @@ Neither Windows nor Linux produces a consolidated, structured, per-CPU register 
 - [ ] Register in `test_runner_init()`: `test_register_cpu_seq()`
 - [ ] Commit: `"test: add cpu_seq test suite"`
 
+**Test checkpoint:** `bash scripts/test.sh SUITE=boot` (or `make test-boot`) passes after `test_cpu_seq.c` and `test_register_cpu_seq()` land; each bullet above is a `TEST_ASSERT_*` with an expected value (no vague "CPU works"). QEMU WHPX, TCG, VirtualBox, bare metal.
+
+---
+
 ## Verification
 
 - [ ] Serial log shows `EFER.NXE=1` line **before** first `[VMM]` line in boot output
@@ -291,3 +311,17 @@ Neither Windows nor Linux produces a consolidated, structured, per-CPU register 
 - [ ] Serial log shows `[SMP] All N CPUs register-consistent` after SMP bringup (§9)
 - [ ] Boot completes with `=== BUILD OK ===` and no regressions in QEMU + Hyper-V + bare metal
 - [ ] Commit: `"boot: cpu-sequencing verified -- EFER/CR4 order, AP hardening, feature consistency, CR4 pinning, PAT sync, register audit"`
+
+**Test checkpoint:** Every Verification bullet above holds on QEMU WHPX, QEMU TCG, VirtualBox, and bare metal; §2/§4/§5/§6--§9 items marked N/A until those sections ship stay documented in serial/klog gaps, not silent failures.
+
+**Test runner:** `scripts\debug\run-boot-tests.bat` (SUITE=boot)
+
+---
+
+## History
+
+| Date | Action | Summary |
+| --- | --- | --- |
+| 2026-04-10 | validate | validate-todo-file: Inputs XREFs use full `.md` paths; VMM PAT XREF §1→§11; PEB/TEB link disambiguated to `TODO-04-peb-teb-user-abi.md §6`; §2 TODO-05 §11→§9; §3 `HV_FLAG_*` + test checkpoint; Impl Order `defer`→`[ ]`, T17/T19 § refs; OS table padded + last row TODO-07 §1; Unit/Verification checkpoints + `run-boot-tests.bat`; History added; reciprocal XREF on PEB/TEB §6. Flags: §2/§4/§5 blocked on T17/T19; §6--§9 need `cpu_data`/`g_bsp_pat_msr`/audit fields. |
+| 2026-04-11 | gap-analysis | Web: Hyper-V TLFS timers (`HV_X64_MSR_TIME_REF_COUNT`); Linux SMP/`verify_cpu` paths; MTRR+PAT SMP context (Gentoo/kernel docs). Code-truth: `boot_hw.c` Phase0 order; `platform_detect()` in `timer.c` + `cpu_security.c`; SMEP/SMAP globally skipped (`hv_supports_cr4_smep_smap` returns 0); PAT value ~307; no Registry HV keys. Added `IMPORTANT` current-state block; Inputs `cpuid_platform.c`/`timer.c`; TSC XREF `TODO-07-time-filetime-management.md`; §3 Registry deferral + Impl §3→`[/]`; §8 MTRR bullet + OS row; TODO-13 XREF. |
+| 2026-04-11 | validate | validate-todo-file: Inputs add `boot_hw.c`, fix `boot_phase0` anchor; XREF `TODO-07-time` → §2,§3; OS POST row → `TODO-07-boot-diagnostics.md` §1; Unit Tests `→` arrow; 9 sections Commit+checkpoint OK; §8 at 10 pre-Commit bullets (split if grow); `[/]` row 3 + external T17/T19 blockers; `run-boot-tests.bat` present. |

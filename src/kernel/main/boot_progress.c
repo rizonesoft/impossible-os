@@ -41,7 +41,7 @@ static const stage_meta_t s_meta[BOOT_STAGE_COUNT] = {
     [BOOT_STAGE_DESKTOP_READY] = { 3, 0x63, 100, "DESKTOP_READY" },
 };
 
-/* ---- History ring ------------------------------------------------------- */
+/* ---- Stage history (cap BOOT_STAGE_HISTORY_MAX, no wrap) ---------------- */
 
 static boot_stage_entry_t s_history[BOOT_STAGE_HISTORY_MAX];
 static uint32_t           s_history_count;
@@ -56,6 +56,14 @@ static inline uint64_t rdtsc(void)
     uint32_t lo, hi;
     __asm__ volatile ("rdtsc" : "=a"(lo), "=d"(hi));
     return ((uint64_t)hi << 32) | lo;
+}
+
+/* TSC delta to milliseconds -- avoids divide-by-zero when freq / 1000 == 0 */
+static uint32_t boot_prog_tsc_delta_ms(uint64_t delta, uint64_t freq)
+{
+    if (freq < 1000)
+        return 0;
+    return (uint32_t)((delta * 1000ULL) / freq);
 }
 
 /* ---- Hex helpers for serial output -------------------------------------- */
@@ -92,14 +100,6 @@ static const uint8_t s_hex_font[16][8] = {
     { 0x3E,0x20,0x20,0x3C,0x20,0x20,0x3E,0x00 }, /* E */
     { 0x3E,0x20,0x20,0x3C,0x20,0x20,0x20,0x00 }, /* F */
 };
-
-#define POST_GLYPH_W 8   /* native 8px */
-#define POST_GLYPH_H 8
-#define POST_GAP     2   /* gap between digits */
-#define POST_MARGIN  6   /* margin from screen edge */
-#define POST_TOP     6   /* top padding */
-#define POST_TOTAL_W (POST_GLYPH_W * 2 + POST_GAP)  /* 18 px */
-#define POST_TOTAL_H (POST_GLYPH_H + 2)              /* 10 px */
 
 /* ---- 16-bit POST display (4 hex digits, thin font, 1×1 native) ----------- */
 
@@ -214,7 +214,8 @@ void boot_timeline_dump_json(void)
     if (count < 2) return;
 
     freq = boot_timing_tsc_freq();
-    if (freq == 0) return;
+    if (freq < 1000)
+        return;
     base = steps[0].tsc;
 
     buf = (uint8_t *)(uintptr_t)pmm_alloc_contiguous(2);  /* 8 KB */
@@ -225,10 +226,10 @@ void boot_timeline_dump_json(void)
     buf[pos++] = '\n';
 
     for (i = 0; i < count && pos < buf_size - 128; i++) {
-        uint32_t start_ms = (uint32_t)((steps[i].tsc - base) / (freq / 1000));
+        uint32_t start_ms = boot_prog_tsc_delta_ms(steps[i].tsc - base, freq);
         uint32_t dur_ms = 0;
         if (i + 1 < count)
-            dur_ms = (uint32_t)((steps[i + 1].tsc - steps[i].tsc) / (freq / 1000));
+            dur_ms = boot_prog_tsc_delta_ms(steps[i + 1].tsc - steps[i].tsc, freq);
 
         /* Truncate step name to 32 chars max for JSON safety */
         char safe_name[33];
@@ -274,6 +275,8 @@ void boot_timeline_dump_json(void)
             struct vfs_node *dir = vfs_open(tl_dir, VFS_O_READ);
             if (dir && dir->ops && dir->ops->create)
                 dir->ops->create(dir, "boot-timeline.json", VFS_FILE);
+            if (dir)
+                vfs_close(dir);
         }
         f = vfs_open(tl_path, VFS_O_WRITE);
     }
@@ -309,13 +312,13 @@ void boot_stage_report(boot_stage_t stage, const char *msg)
     /* Compute elapsed ms */
     if (s_kernel_entry_tsc > 0) {
         uint64_t freq = boot_timing_tsc_freq();
-        if (freq > 0) {
+        if (freq >= 1000) {
             uint64_t delta = now - s_kernel_entry_tsc;
-            elapsed = (uint32_t)(delta / (freq / 1000));
+            elapsed = boot_prog_tsc_delta_ms(delta, freq);
         }
     }
 
-    /* Record in history ring */
+    /* Record in stage history (drops when buffer full) */
     if (s_history_count < BOOT_STAGE_HISTORY_MAX) {
         boot_stage_entry_t *e = &s_history[s_history_count++];
         e->stage      = stage;
@@ -336,11 +339,11 @@ void boot_stage_report(boot_stage_t stage, const char *msg)
     /* POST hex display on framebuffer + I/O port 0x80 */
     post_display16((uint16_t)m->postcode);
 
-    /* Desktop ready: clear POST display + render debug bar */
+    /* Desktop ready: clear POST display (match post_display16 footprint) */
     if (stage == BOOT_STAGE_DESKTOP_READY && kernel_subsystem_ready(SUBSYS_FB)) {
-        uint32_t cx = fb_get_width() - POST_TOTAL_W - POST_MARGIN;
-        fb_fill_rect(cx, POST_TOP, POST_TOTAL_W, POST_TOTAL_H, 0x00000000);
-        fb_swap_rect(cx, POST_TOP, POST_TOTAL_W, POST_TOTAL_H);
+        uint32_t cx = fb_get_width() - POST16_TOTAL_W - POST16_MARGIN;
+        fb_fill_rect(cx, POST16_TOP, POST16_TOTAL_W, POST16_TOTAL_H, 0x00000000);
+        fb_swap_rect(cx, POST16_TOP, POST16_TOTAL_W, POST16_TOTAL_H);
     }
 
     /* Forward to boot_progress (phase, step, postcode) */
@@ -352,9 +355,9 @@ uint32_t boot_get_elapsed_ms(void)
     uint64_t freq, delta;
     if (s_kernel_entry_tsc == 0) return 0;
     freq = boot_timing_tsc_freq();
-    if (freq == 0) return 0;
+    if (freq < 1000) return 0;
     delta = rdtsc() - s_kernel_entry_tsc;
-    return (uint32_t)(delta / (freq / 1000));
+    return boot_prog_tsc_delta_ms(delta, freq);
 }
 
 const boot_stage_entry_t *boot_stage_history_get(uint32_t *out_count)

@@ -155,6 +155,9 @@ Move crash-persistent log recovery output to `X:\Crash\`.
 
 **Test checkpoint:** Force panic with `crash_test=1`; on next boot, `crash_recovery.log` appears in `X:\Crash\`, not `C:\Impossible\System\Logs\`. Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
 
+> [!NOTE]
+> Handoff: `TODO-07-boot-diagnostics.md` §5 will write `X:\Crash\last-panic.txt` when implemented -- same `X:\Crash\` mount and BlackBox path rules as this section.
+
 ## 8. Perf and Diag -- boot-profile, hwdump to X:\Perf\ and X:\Diag\
 
 Move performance and diagnostic outputs to their BlackBox directories.

@@ -40,7 +40,7 @@
 
 | ⭐  | Order | Deliverable                                        | Depends On     | Status |
 | --- | :---: | -------------------------------------------------- | -------------- | :----: |
-| 💎  |   1   | Boot device identification via LoadedImage         | --             |  [/]   |
+| 💎  |   1   | Boot device identification via LoadedImage         | --             |  [x]   |
 | 💎  |   2   | Filesystem access scoped to boot device            | §1             |  [ ]   |
 | 💎  |   3   | Boot device info in boot_info struct               | §1             |  [ ]   |
 | 💎  |   4   | Boot device type detection (SATA/NVMe/USB/Net)     | §3             |  [ ]   |
@@ -71,7 +71,7 @@ Use UEFI `EFI_LOADED_IMAGE_PROTOCOL` to find which device the bootloader was loa
 - [x] Log: `"[BOOT] Boot device: handle=0x%x"` on serial -- full 64-bit hex printed
 - [x] `POST16(0xB090)` on entry, `POST16(0xB091)` on success -- `POST16_BL_BOOT_DEV` / `POST16_BL_BOOT_DEV_OK` in `bootx64.c`
 - [x] Add matching `#define POST16_BL_DEV_*` names in `include/kernel/boot_init.h` in the `0xB000` bootloader range (and mirror in `bootx64.c` if locals remain) -- `POST16_BOOT_DEV` (0xB090) / `POST16_BOOT_DEV_OK` (0xB091) added; no collision with 0xB080-0xB085 USB/xHCI range
-- [ ] Commit: `"boot: identify boot device via EFI_LOADED_IMAGE_PROTOCOL"`
+- [x] Commit: `"boot: identify boot device via EFI_LOADED_IMAGE_PROTOCOL"` (6b2aa73e)
 
 **Test checkpoint:** Serial output shows `"Boot device: handle=0x..."` on all platforms (QEMU WHPX, TCG, VirtualBox, bare metal). Handle is non-zero. Verify on bare metal -- firmware LoadedImage behavior may differ from emulated.
 

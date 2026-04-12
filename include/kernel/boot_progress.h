@@ -2,7 +2,7 @@
  * boot_progress.h -- Named-stage boot progress API
  *
  * High-level wrapper over boot_progress() that adds typed stage tracking,
- * a 32-entry history ring buffer, elapsed-ms timing, and splash progress
+ * a 32-entry stage history (capped), elapsed-ms timing, and splash progress
  * forwarding. Used by panic forensics and boot timing reports.
  *
  * XREF: 01-boot-platform/TODO-07-boot-diagnostics.md §2
@@ -33,7 +33,7 @@ typedef enum {
     BOOT_STAGE_COUNT         = 15,
 } boot_stage_t;
 
-/* ---- History ring entry ------------------------------------------------- */
+/* ---- History entry ------------------------------------------------------ */
 
 #define BOOT_STAGE_HISTORY_MAX  32
 
@@ -54,7 +54,7 @@ void boot_stage_report(boot_stage_t stage, const char *msg);
  * Returns 0 if TSC frequency is unknown or kernel entry not yet reported. */
 uint32_t boot_get_elapsed_ms(void);
 
-/* Get the history ring buffer. *out_count = number of valid entries. */
+/* Get the stage history array. *out_count = number of valid entries (<=32). */
 const boot_stage_entry_t *boot_stage_history_get(uint32_t *out_count);
 
 /* Lightweight refresh for timer callbacks -- re-sends the last stage
@@ -65,7 +65,7 @@ void boot_progress_poll(void);
  * JSON array of {stage, phase, post, start_ms, duration_ms} per step. */
 void boot_timeline_dump_json(void);
 
-/* Render 4-digit hex POST code at 2× scale in top-right corner.
+/* Render 4-digit hex POST code at native 8 px scale in top-right corner.
  * Writes I/O port 0x80 (high byte) for hardware POST cards.
  * Skips pixel writes if SUBSYS_FB not ready. */
 void post_display16(uint16_t code);

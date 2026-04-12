@@ -133,6 +133,9 @@ Allocate the PEB in the user address space and fill it before the first instruct
 **Test checkpoint:** On `task_exec`, PEB and process-parameter pages map at expected user VAs, fields are non-NULL and consistent (`ImageBaseAddress`, `ProcessParameters`, OS version/build, processor count), and UTF-16 command-line/environment blocks decode correctly. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
 ## 6. TEB Allocation and Population at Thread Create
+
+> → XREF: `01-boot-platform/TODO-04-cpu-boot-sequencing.md §5` -- Phase 1 XSAVE/PCID window references TEB-backed XSAVE layout from this section.
+
 One TEB per thread. Allocated in the user address space near the thread stack.
 
 - [x] TEB at `0x7FFDB000` (TID 0), subsequent threads decrement by page (`0x7FFDB000 - TID * 0x1000`)

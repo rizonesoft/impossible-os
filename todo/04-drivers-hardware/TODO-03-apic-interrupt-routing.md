@@ -10,11 +10,12 @@
 - [`src/kernel/drivers/lapic.c`](../../src/kernel/drivers/lapic.c), [`include/kernel/drivers/lapic.h`](../../include/kernel/drivers/lapic.h)
 - [`src/kernel/drivers/ioapic.c`](../../src/kernel/drivers/ioapic.c)
 - [`src/kernel/acpi.c`](../../src/kernel/acpi.c) -- MADT type-4 (NMI) and type-9 (x2APIC) entries already parsed; consumed by §1 and §4
+- → XREF: `01-boot-platform/TODO-06-interrupt-timer-arch.md` §5 -- ISA/IOAPIC `irq_request_gsi` path; MSI/MSI-X allocation in this file §5 must reuse the same vector allocator rules
 - → XREF: `04-drivers-hardware/TODO-02-core-driver-enhancements.md §2` -- `hpet_read_ns()` from HPET driver consumed by §2 calibration; implement HPET before this section
 - → XREF: `04-drivers-hardware/TODO-02-core-driver-enhancements.md §5` -- `pci_enable_msi(dev, vector)` calls `apic_alloc_msi_vector()` from §5 to obtain the vector; implement §5 before TODO-02 §5
 - → XREF: `03-memory-concurrency/TODO-06-smp-phase2.md §2` -- TLB shootdown VMM/scheduler side (calls `tlb_shootdown(cpu_mask, vaddr, len)`); the APIC IPI send mechanism and `invlpg` handler defined here in §3 are what that side calls
 - → XREF: `03-memory-concurrency/TODO-09-concurrency-diagnostics.md §5` -- kernel watchdog thread (tick-based, software); the NMI watchdog here (§4) is the hardware PMI backup that fires even when `CLI` is active
-- → XREF: `01-boot-platform/TODO-06-interrupt-timer-arch.md §3` -- unified timer HAL; LAPIC calibration in §2 writes its result into `g_tick_ns` consumed by that HAL
+- → XREF: `01-boot-platform/TODO-06-interrupt-timer-arch.md` §6 -- unified timer HAL (`timer_hal_init`, `uptime_ns`); LAPIC-via-HPET calibration in this file §2 must stay consistent with that HAL
 
 ## Outcome
 

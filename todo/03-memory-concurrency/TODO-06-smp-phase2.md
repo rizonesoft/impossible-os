@@ -20,6 +20,7 @@
 - → XREF: `02-kernel-core/TODO-06-irql-model-dpcs.md` -- IPI delivery at `DISPATCH_LEVEL`; TLB shootdown in §2 and RCU IPIs in §6 must not lower IRQL during handler
 - → XREF: `03-memory-concurrency/TODO-01-vmm-memory-protection.md §1` -- `vmm_unmap` and `mprotect` call `tlb_shootdown()` from §2 after every PTE change on a shared address space
 - → XREF: `02-kernel-core/TODO-04-peb-teb-user-abi.md §15` -- per-thread TEB unmap on `thread_join()` is consumer of §2; until `tlb_shootdown()` lands, §15 defers TEB reclamation to `task_cleanup()` and accepts a bounded leak (16 * 4 KiB per multithreaded process). Implementing §2 here unblocks §15's runtime reclamation path.
+- → XREF: `01-boot-platform/TODO-06-interrupt-timer-arch.md` §10 -- optional `irq_send_ipi`-style HAL wrapper; Phase 1 uses `lapic_send_ipi()` until §2 IPI infrastructure matures
 
 ## Outcome
 
