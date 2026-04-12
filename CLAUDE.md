@@ -62,9 +62,15 @@ Register new tests with `test_suite_register_cat("name", fn, TEST_CAT_XX)`. Use 
 
 **Opt-out:** for legitimate test cases (panic recovery testing in a controlled context, hardware fault simulation), add `/* TEST-SIDE-EFFECT-ALLOWED: <one-line reason> */` in the test function body.
 
-## No Unicode Dashes -- ASCII Only
+## No Unicode Dashes (en/em): ASCII only
 
-Never use em dashes (`--`, U+2014), en dashes (`--`, U+2013), or other Unicode punctuation in source files, comments, strings, docs, or scripts. Always use ASCII double-dash `--`. Serial output goes to Windows terminals (CMD/PowerShell) which render UTF-8 multi-byte characters as garbled `ΓÇö`. This applies to `.c`, `.h`, `.md`, `.sh`, `.ps1`, `.bat`, `.conf`, and all other tracked files.
+Do not use Unicode **en dash** (U+2013) or **em dash** (U+2014) in source files, comments, strings, docs, or scripts. Windows serial and CMD/PowerShell often garble those bytes as mojibake (for example `ΓÇö`).
+
+**Prose and explanatory comments:** Do not paste two ASCII hyphens (`--`) where an em dash would go; that is not clearer. It looks like minus or `--flag` noise. **Rewrite** the sentence (colon, semicolon, parentheses, comma pair, or two short sentences). Example: prefer `/* Redzone: detect underflow */` over `/* ... -- detect underflow */`.
+
+**Where ASCII `--` stays correct:** technical uses readers already parse as non-prose (markdown `---`, decrement operator in docs, long options in command examples, search patterns, ranges where house style already uses double hyphen).
+
+This applies to `.c`, `.h`, `.md`, `.sh`, `.ps1`, `.bat`, `.conf`, and all other tracked files.
 
 ## Freestanding Kernel -- No stdlib
 

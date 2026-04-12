@@ -13,6 +13,7 @@
 - [`src/kernel/drivers/ahci.c`](../../src/kernel/drivers/ahci.c) -- reference for DMA queue pattern used in §1
 - [`src/kernel/acpi.c`](../../src/kernel/acpi.c) -- `acpi_get_hpet_base()` consumed by §2; `acpi_get_mcfg()` consumed by §3
 - Port base for §1: SerenityOS `Kernel/Devices/Storage/NVMe/` (BSD-2-Clause)
+- [`../01-boot-platform/TODO-09-nvme-storage.md`](../01-boot-platform/TODO-09-nvme-storage.md) (→ XREF) -- boot-critical NVMe discovery, queues, blkdev; this file §1 defers implementation there
 - → XREF: `01-boot-platform/TODO-06-interrupt-timer-arch.md §3` -- HPET register layout and unified `uptime_ns()` HAL consumed by §2; LAPIC calibration call site also lives there
 - → XREF: `02-kernel-core/TODO-02-pci-bus.md` -- PCI enumeration and bus scan that §3–§6 extend
 - → XREF: `04-drivers-hardware/TODO-01-kernel-module-system.md §1` -- `EXPORT_SYMBOL` for `nvme_*`, `hpet_read_ns`, `pci_read_config32_ext`, `pci_find_capability`, `pci_enable_msi/msix`
@@ -47,6 +48,8 @@
 Port from SerenityOS BSD-2 (`Kernel/Devices/Storage/NVMe/`) and adapt to the Impossible OS driver model. Detect PCI class `0x01/0x08/0x02`, map BAR0 MMIO, initialise Admin Queue, run Identify commands, create one I/O Queue pair, and register the namespace via `blkdev_register`. Must complete before IXFS mounts.
 
 **Files:** `src/kernel/drivers/nvme.c` (new), `include/kernel/drivers/nvme.h` (new)
+
+- [ ] Reconcile §1 checklist with shipped `../01-boot-platform/TODO-09-nvme-storage.md` §1..§4 (kernel already has minimal NVMe); close superseded Serenity-port bullets or mark N/A. Advanced parity backlog mirrored in TODO-09 §5 (-> XREF).
 
 > [!CAUTION]
 > Admin SQ, Admin CQ, I/O SQ, I/O CQ, Identify buffers, and all PRP lists are DMA buffers -- allocate each via `pmm_alloc_contiguous(pages)`. All must be physically contiguous and 4 KB aligned. Physical page addresses go directly into controller registers -- do not pass virtual addresses.

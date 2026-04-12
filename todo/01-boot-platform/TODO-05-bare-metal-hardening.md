@@ -42,7 +42,8 @@
 - → XREF: `TODO-07-boot-diagnostics.md §5` -- panic forensic evidence struct (deferred; this TODO validates it works on bare metal when implemented)
 - → XREF: `TODO-06-interrupt-timer-arch.md` -- UTS / LAPIC calibration / `hpet_read_ns()` owner; bare-metal ISR path fixed in this file §3 (`clac` removal)
 - → XREF: `TODO-04-cpu-boot-sequencing.md §2,§4` -- CPU hardening activation order (deferred there; minimal version in §9 here)
-- → XREF: `TODO-08-visual-post-display.md §1-§2` -- 4-digit POST code system and per-function instrumentation (moved from this TODO to TODO-08)
+- → XREF: `TODO-08-visual-post-display.md` §1 §2 -- 4-digit POST16 system and per-function instrumentation (moved from this TODO to TODO-08)
+- → XREF: `TODO-08-visual-post-display.md` §4 -- Tier 1 VPD raw VRAM; follows bare-metal interrupt and page-flip constraints in this file §3
 - → XREF: `02-kernel-core/TODO-17-kernel-security-hardening.md` -- NX/SMEP/SMAP implementation (this TODO does NOT reimplement; handles bare-metal quirks like shared page tables)
 - → XREF: `02-kernel-core/TODO-01-kernel-init-sequencing.md §1` -- boot_progress() infrastructure (this TODO consumes it)
 - → XREF: `03-memory-concurrency/TODO-01-vmm-memory-protection.md §11` -- full `vmm_map_mmio()` / UC MMIO; this TODO §1 keeps minimal `vmm_map_mmio_uc()` only
@@ -513,3 +514,4 @@ Full acceptance pass. All sections complete.
 | 2026-04-11 | validate | validate-todo-file (pass 3): §1/§2/§6 Debug POST in NOTE/IMPORTANT; Outcome + Impl Order footnote match BOOT_TRY; §1/§4/§5/§7/§9/§10/§12/§13/§14/§15 Test checkpoint platform lists; OS table rebuilt aligned; §11 shipped Commit line; TODO-02 XREF arrow; §3 IMPORTANT empty `>` lines removed; Unit Tests intro drops missing TODO-03 path, points at test_runner.c. |
 | 2026-04-11 | gap-analysis | gap-analysis-todo: Current state callout; Origin block marked historical + §3 fix; Outcome NVRAM/VPD nuance; §15 stale timer text fixed; Unit Tests note `test_boot_init` degraded_mask overlap; Inputs + `boot_init.h`; TODO-06 §6/§7 XREF TODO-05 §1 (was §3). Research: 6 web + 2 docs fetched (Linux kernel stacks doc; MmMapIoSpaceEx Learn). No new `##` sections; OS table unchanged. |
 | 2026-04-11 | validate | validate-todo-file (pass 4): §1 deferral XREF TODO-06 §6 (not §2); Inputs TODO-06 blurb; §3 **Test checkpoint**; §4 IMPORTANT blank `>` removed; §8 `USER_ELF_*`; BM Test 5 NVRAM bullet matches `[BOOT] Last boot succeeded`; History chronological; TODO-06 XREF §3 + parity paragraph. Flags: `### BM Test`; Impl Order `[x]` vs open Verification/BM5. |
+| 2026-04-12 | validate | TODO-08 validate-todo-file: Inputs XREF to TODO-08 §1 §2 split from old `§1-§2` line; added back-XREF from TODO-08 §4 Tier 1 VPD to this file §3 (page flip / bare metal). |

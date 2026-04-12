@@ -52,17 +52,17 @@
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                      | Depends On                 | Status |
-| --- | :---: | ------------------------------------------------ | -------------------------- | :----: |
-| 💎  |   1   | CPUID detection & per-CPU capability capture     | T19 §1                     |  [x]   |
-| 💎  |   2   | Phase 0 CPU security activation order            | §1, T17 §1--§3, T19 §3     |  [ ]   |
-| ⭐  |   3   | Hypervisor detection before timer selection      | §1, T19 §11                |  [/]   |
-| 💎  |   4   | AP CPU hardening (`ap_cpu_harden()`)             | §2, T17 §1--§7             |  [ ]   |
-| 💎  |   5   | Phase 1 XSAVE & PCID activation window           | §2, T17 §4, T19 §1         |  [ ]   |
-| 💎  |   6   | AP feature consistency validation                | §1, §4                     |  [ ]   |
-| 💎  |   7   | CR4 safety-bit pinning                           | §2, §5                     |  [ ]   |
-| 💎  |   8   | MTRR/PAT AP synchronization                      | §4                         |  [ ]   |
-| ⭐  |   9   | CPU register state audit trail                   | §2, §5                     |  [ ]   |
+| ⭐  | Order | Deliverable                                      | Depends On                    | Status |
+| --- | :---: | ------------------------------------------------ | ----------------------------- | :----: |
+| 💎  |   1   | CPUID detection & per-CPU capability capture     | D2/T19 §1                     |  [x]   |
+| 💎  |   2   | Phase 0 CPU security activation order            | §1, D2/T17 §1 §3, D2/T19 §3   |  [ ]   |
+| ⭐  |   3   | Hypervisor detection before timer selection      | §1, D2/T19 §11                |  [/]   |
+| 💎  |   4   | AP CPU hardening (`ap_cpu_harden()`)             | §2, D2/T17 §1 §7              |  [ ]   |
+| 💎  |   5   | Phase 1 XSAVE & PCID activation window           | §2, D2/T17 §4, D2/T19 §1      |  [ ]   |
+| 💎  |   6   | AP feature consistency validation                | §1, §4                        |  [ ]   |
+| 💎  |   7   | CR4 safety-bit pinning                           | §2, §5                        |  [ ]   |
+| 💎  |   8   | MTRR/PAT AP synchronization                      | §4                            |  [ ]   |
+| ⭐  |   9   | CPU register state audit trail                   | §2, §5                        |  [ ]   |
 
 > 💎 = parity -- Windows and Linux both enforce EFER/CR4 ordering, AP parity, feature consistency, CR4 pinning, and PAT synchronization; Impossible OS must match that contract.
 > ⭐ = exclusive -- hypervisor pre-detection before timer HAL selection, per-activation postcode audit trail, and structured register dump are not surfaced the same way on Windows or Linux.
@@ -94,7 +94,7 @@
 **Prompt:** Document and enforce the required activation sequence in `boot_phase0()`: (1) `msr_init()` (centralized MSR layer, TODO-19 §3) must run before any MSR write; (2) `cpu_efer_harden()` sets `EFER.NXE=1`, `EFER.SCE=1`, `EFER.FFXSR` if supported -- **this must complete before VMM init** because VMM will write PTE bit 63 (NX) on the first `vmm_map_page()` call; (3) `cpu_cr4_harden()` sets `CR4.SMEP`, `CR4.SMAP`, `CR4.UMIP` if detected -- must run before any user-mode-visible mapping; emit a `POSTCODE_CPU_HARDEN_DONE` after the last CR4 write. Add `BOOT_REQUIRE(SUBSYS_MSR)` guards to EFER/CR4 steps so wrong-order calls panic with a clear message. Log: `[Phase0] EFER=0x{val} CR4=0x{val}`.
 
 > [!IMPORTANT]
-> → XREF: `02-kernel-core/TODO-17-kernel-security-hardening.md §1--§3` -- `cpu_efer_harden()` and `cpu_cr4_harden()` implementations live there.
+> → XREF: `02-kernel-core/TODO-17-kernel-security-hardening.md §1, §3` -- `cpu_efer_harden()` and `cpu_cr4_harden()` implementations live there.
 > → XREF: `02-kernel-core/TODO-19-x86-64-architecture.md §3` -- `msr_init()` implementation lives there (MSR Management Infrastructure).
 > → XREF: `02-kernel-core/TODO-01-kernel-init-sequencing.md §2` -- Phase 0 boot sequence; this step slots between serial init and PMM.
 

@@ -34,7 +34,7 @@ Before writing any kernel code, mentally walk through these gates. Each gate is 
 - [ ] **No stdlib headers.** Use `#include "kernel/types.h"` -- never `<stdint.h>`, `<string.h>`, `<stdlib.h>`, `<stdio.h>`.
 - [ ] **No stdlib functions.** Use `kmalloc()`/`kfree()` not `malloc()`/`free()`. Use `klog()`/`printk()` not `printf()`. Use `memcpy()`/`memset()` from `kernel/types.h`.
 - [ ] **Memory sizing.** `kmalloc()` for <= 4 KB only. `pmm_alloc_contiguous()` for larger buffers. Always check the return value for NULL.
-- [ ] **ASCII only.** No Unicode dashes, no UTF-8 in strings or comments. Use `--` not em dash. Serial output goes to Windows terminals that garble multi-byte UTF-8.
+- [ ] **ASCII only.** No Unicode dashes (U+2013/U+2014), no UTF-8 in strings or comments. For prose, rewrite (see `CLAUDE.md` No Unicode Dashes); do not use `--` as a fake em dash. Serial output goes to Windows terminals that garble multi-byte UTF-8.
 
 ### Gate 2: SMP Safety (Every. Single. Time.)
 
@@ -267,9 +267,9 @@ When updating, add a comment at the bottom of the relevant Gate section:
 | Any allocation | Check for NULL return |
 | Cross-file constant | `_Static_assert` in every file that uses it |
 | New public function | At least one unit test assertion |
-| Test code that touches boot infrastructure | DON'T -- pure helper or save/restore wrapper only; never `boot_progress`, `vpd_*`, `_init`, `panic`, `boot_halt` |
+| Test code that touches boot infrastructure | DON'T: pure helper or save/restore wrapper only; never `boot_progress`, `vpd_*`, `_init`, `panic`, `boot_halt` |
 | Bare-metal crash lesson | Add to CLAUDE.md Bare Metal Gotchas |
-| Unicode in strings/comments | Replace with ASCII `--` |
+| Unicode in strings/comments | Remove U+2013/U+2014; rewrite prose (see `CLAUDE.md`) |
 | Tempted to write TODO/FIXME | Walk the scope-gap protocol -- Branches A/B/C/D |
 | Magic number in source | Extract to `#define` in a header |
 | Test failing | Fix the code, never skip the test |

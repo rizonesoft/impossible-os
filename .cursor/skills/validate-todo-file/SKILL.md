@@ -81,6 +81,7 @@ validate-todo-file -- all steps (no skips):
    - **Report findings explicitly** -- the user must see what was checked.
 8. **XREF validation and loose ends.**
    - For each `→ XREF: TODO-XX §N`, confirm the target file exists and the referenced section number is present.
+   - **Domain + TODO shorthand (mandatory for cross-domain):** When referencing another domain's TODO in Implementation Order `Depends On`, Inputs, prose, or History, use the compact notation from `.claude/skills/create-todo/implementation-order.md`: **same-domain** `TNN §N` (example `T17 §3`); **cross-domain** `DNN TNN §N` (example `D02 T19 §1` for `todo/02-kernel-core/TODO-19-...`). **`D02T19 §1`** (no space) is acceptable in tight table cells -- same meaning as `D02 T19 §1`. Domain digits are the folder prefix (`01-boot-platform` -> `01`, `02-kernel-core` -> `02`). Flag bare `TODO-19` or `TODO-02` alone when the owning domain is not obvious from context (ambiguous across 14 domains). A markdown path such as `02-kernel-core/TODO-19-foo.md` still satisfies clarity; add `D02T19 §N` when the file edits the `Depends On` column for scannability.
    - Check handoff boundaries: receiving TODOs should have matching Inputs or XREF entries.
    - **Loose end check:** For every "blocked by TODO-XX §N" or "deferred to TODO-XX" note:
      1. Verify the back-reference exists in the other TODO. Add one if missing.
@@ -90,7 +91,7 @@ validate-todo-file -- all steps (no skips):
 9. **Self-contained execution check.**
    - The TODO must be executable from §1 to the last section without being blocked by unimplemented external sections.
    - For each external `Depends On` entry in the Implementation Order:
-     1. Must include specific section numbers (`T11 §1,§3`), not bare TODO numbers.
+     1. Must include specific section numbers: same-domain `T11 §1,§3`; cross-domain `D02 T19 §1` or compact `D02T19 §1` (never bare `TODO-19` for cross-folder deps).
      2. If the external section is `[x]`: no action needed.
      3. If `[ ]`: flag as **blocked**. Suggest adding a minimal local prerequisite section or note the blocker.
    - Flag any `Depends On` referencing something that doesn't exist yet.
@@ -121,6 +122,7 @@ validate-todo-file -- all steps (no skips):
 
 ## Guardrails
 
+- **Unicode en/em dash vs. prose:** Tracked files must not contain U+2013 (en) or U+2014 (em). **Do not** paste ASCII `--` as a typographic substitute in running text; it reads as minus, decrement, or noise (especially in C comments). **Rewrite** instead: colon, semicolon, parentheses, a short lead-in clause, or split into two sentences. Reserve `--` for meanings readers already expect (CLI flags in examples, markdown `---` rules, minus/range in formulas). See `CLAUDE.md` (No Unicode Dashes).
 - **Never create or preserve N.M subnumbering** (`17.1`, `**3.2**`, `### 4.1`, etc.). One `## N.` section, one checklist stream.
 - Do not implement code.
 - Do not turn this into a formatting-only cleanup pass; structural clarity is the goal.

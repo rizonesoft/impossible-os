@@ -36,6 +36,7 @@
 - `include/kernel/sched/syscall.h` -- next free syscall number -- §3 `SYS_GPU_*` additions
 - `09-services-security/TODO-12-long-term-features.md §8` (→ XREF) -- TinyGL port; §2 here assesses upgrade to Mesa lavapipe from TinyGL baseline
 - `13-future-research/TODO-02-hypervisor.md §4 §6` (→ XREF) -- virtio-gpu stretch mentioned there; IOMMU prerequisite documented there; §1 §3 here build on that analysis
+- `TODO-06-android-app-compatibility.md` (→ XREF) -- TODO-06 section 5 guest framebuffer to host compositor; VirtIO-GPU scanout ties to sections 1 and 5 here
 - `src/kernel/drivers/virtio/virtio.c` -- existing guest-side VirtIO transport; §1 VirtIO-GPU driver extends this
 - `src/kernel/gfx/` -- `gfx_simd.c`, `arc_ring.c`, `gfx_text.c` -- current CPU compositor internals
 

@@ -17,7 +17,7 @@ When you edit, validate, or gap-analyze files under `todo/`, you MUST treat thes
 - **TODO structure:** under each `## N.` use a **single** continuous `- [ ]` list. Never add `### N.M`, `**N.M**` labels, or `17.1`/`17.2` sub-chapters. Splitting work = new top-level `##` section (renumber), not subnumbering.
 - At **task start**, open the relevant SKILL.md and **paste its Progress checklist** into the chat.
 - At **task end**, reply with a **checklist matrix**: each checklist line marked done, skipped (with reason), or N/A -- no silent omissions.
-- **validate-todo-file:** do not skip step 7 (Win11/Linux parity and competitive edge) or step 15 (History `validate` row).
+- **validate-todo-file:** do not skip step 7 (Win11/Linux parity and competitive edge) or step 15 (History `validate` row). Step 8 requires **domain + TODO shorthand** for cross-domain refs: `DNN TNN §N` or compact `D02T19 §1`; same-domain `TNN §N` (see `.claude/skills/create-todo/implementation-order.md`).
 - **validate-todo-section:** do not skip build/test evidence (workflow step 3) or the strict done gate (step 5); do not expand to full-file validation.
 - **gap-analysis-todo:** do not skip Phase 2 (minimum 6 web searches, 2 WebFetch reads; URLs go in the **report to the user**, not `<!-- Sources: ... -->` in the TODO) or report schema item 21 / History `gap-analysis` row.
 - Single-section code truth uses **`.cursor/skills/validate-todo-section/SKILL.md`**; full verify pipeline (Codex + tests) uses **`.claude/skills/verify-todo-section/SKILL.md`**. Neither replaces validate-todo-file for whole-file structure.

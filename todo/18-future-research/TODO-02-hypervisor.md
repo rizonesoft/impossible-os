@@ -41,6 +41,7 @@
 - `src/kernel/drivers/virtio/virtio.c` -- guest-side VirtIO transport (reference for §4 host-side emulation design; understand the split-ring format from the guest's perspective)
 - Intel SDM Vol. 3C (VMX chapter) -- VMCS layout, VM entry/exit, EPT, VPID
 - AMD APM Vol. 2 (SVM chapter) -- VMCB (VM Control Block), nested paging, VMSAVE/VMLOAD
+- `TODO-06-android-app-compatibility.md` (→ XREF) -- TODO-06 sections 2 and 4 Android guest VM path; VirtIO device set for AOSP bring-up overlaps section 4 host emulation design
 
 ---
 

@@ -326,7 +326,9 @@ Firmware boot entry **`Boot####`** variables hold an **`EFI_LOAD_OPTION`**: attr
 - [x] Smoke test patterns: skipped per feedback -- don't add patterns to test-smoke.sh (breaks Windows QEMU tests)
 - [x] Create `src/kernel/test/test_boot_device.c` with 9 test suites: type valid (0--4), path non-empty, type known (not UNKNOWN on QEMU), partition style GPT, partition GUID non-zero, SATA not removable (with SKIP for non-SATA), media present, boot order count bounded, Registry Type matches boot_info
 - [x] Register in `test_runner_init()`: `test_register_boot_device()` under `/* Boot */` category at `test_runner.c:231`
-- [ ] Commit: `"test: add boot device discovery unit tests"`
+- [x] Commit: `"test: add boot device discovery unit tests"` (9d230ab5)
+
+> **Done:** 9 suites, 11 assertions -- registered in `test_runner_init()` as `test_register_boot_device()` (2026-04-12)
 
 **Test checkpoint:** `scripts/test-smoke.sh` matches all listed `[BOOT]` serial patterns on a reference QEMU boot; `bash scripts/test.sh SUITE=boot` (or `make test-boot`) passes after `test_register_boot_device()` and `test_boot_device.c` land. Tests avoid CLAUDE.md forbidden boot-path side effects in kernel tests.
 

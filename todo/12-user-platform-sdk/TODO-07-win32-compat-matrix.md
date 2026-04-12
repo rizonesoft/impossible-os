@@ -33,6 +33,7 @@
 - `include/kernel/ipc/` -- `SYS_SHMEM_CREATE=35`, `SYS_SHMEM_MAP=36` for stub counter shared memory
 - `user/` -- `hello.c`, `cmd.c` as reference user-mode program patterns
 - `scripts/build.sh` -- QEMU headless run pattern (`-serial stdio`); `build/serial.log`
+- `18-future-research/TODO-06-android-app-compatibility.md` (→ XREF) -- TODO-06 sections 5 and 8 launcher UX and lifecycle for Android guest beside Win32 tiers (future epic)
 - `sdk/docs/` -- `win32-compat.md` lives here (§1)
 
 ---

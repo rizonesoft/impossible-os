@@ -49,7 +49,7 @@ description: Analyze a serial log for real bugs -- parse WARN/FAIL/crash lines, 
    - `heap full` / `no free frames` / `registry full` / `quota exhausted` -- resource exhaustion (outside test context)
    - `Heap:.*used.*total` -- extract heap utilization; flag if >80% as RESOURCE_PRESSURE
    - `Degraded subsystems:` -- extract degraded subsystem list
-   - Garbled Unicode: `┬º` / `ΓÇö` / `┬` / `Γ` -- encoding corruption (see CLAUDE.md "No Unicode Dashes"). Flag as ENCODING.
+   - Garbled Unicode: `┬º` / `ΓÇö` / `┬` / `Γ`; encoding corruption (see CLAUDE.md "No Unicode Dashes"). Flag as ENCODING.
 
 6. **Validate POST16 sequence** -- extract all `POST16` codes from the log. Verify:
    - Phase 0 codes (0x0000-0x0FFF) appear before Phase 1 (0x1000-0x1FFF)
