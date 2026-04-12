@@ -71,38 +71,6 @@
 
 ---
 
-## OS Comparison
-
-| ⭐   | Feature              | 🪟 Win11        | 🐧 Linux         | 🚀 Impossible OS |
-| --- | -------------------- | -------------- | --------------- | --------------- |
-| 💎   | CPUID feature gates  | ✅ Ke API       | ✅ x86/cpu       | ✅ cpuid_init    |
-| 💎   | AMD ext CPUID        | ✅ HAL leaves   | ✅ amd.c         | ✅ §1            |
-| 💎   | XSAVE per thread     | ✅ Full         | ✅ fpu__*        | ✅ §1 Done       |
-| 💎   | AVX memops in kernel | ✅ Yes          | ✅ kfpu          | ⚠️ §2 GFX only  |
-| 💎   | AVX-512 + throttle   | ✅ Yes          | ✅ power aware   | ⬜ §2            |
-| 💎   | Central safe MSR     | ✅ HAL          | ✅ rdmsr_safe    | ✅ §3            |
-| 💎   | UMIP                 | ✅ On           | ✅ 4.15+         | ⬜ §4            |
-| 💎   | PKU / pkeys          | ✅ OS use       | ✅ pkey_*        | ⬜ §4 Win32 API  |
-| 💎   | PKS (supervisor)     | ⚠️ niche       | ✅ mm since 5.13 | ⬜ defer T17     |
-| 💎   | FB WC PAT            | ✅ GPU path     | ✅ ioremap_wc    | ⬜ §5 UC today   |
-| 💎   | 1 GiB huge pages     | ✅ Large page   | ✅ hugetlb 1G    | ⬜ §5            |
-| 💎   | FRED events          | 🔜 roadmap      | ✅ 6.9+          | ⬜ §6            |
-| 💎   | LKGS fast GS         | 🔜 roadmap      | ✅ 6.4+          | ⬜ §6            |
-| 💎   | Zen CCD NUMA         | ✅ Ke node      | ✅ amd topo      | ⬜ §7            |
-| 💎   | Intel P/E hybrid     | ✅ Director     | ✅ HFI           | ⬜ §7            |
-| 💎   | PMU / PMC            | ✅ ETW WPA      | ✅ perf          | ⬜ §8            |
-| 💎   | OSVW errata          | ✅ HAL          | ✅ amd.c         | ⬜ §9            |
-| 💎   | RDTSCP TSC_AUX       | ✅ QPC path     | ✅ SMP init      | ⬜ §9            |
-| 💎   | AMD IBS sample       | ⚠️ vendor tool | ✅ perf IBS      | ⬜ §10 stretch   |
-| 💎   | SVM VT-x detect      | ✅ HAL          | ✅ kvm caps      | ✅ §11           |
-| ⭐   | Boot hw self tune    | ❌ static       | ❌ static        | ⬜ §12           |
-| ⭐   | PKU Win32 wrapper    | ❌ none         | ⚠️ raw syscalls | ⬜ §4            |
-| ⭐   | Per-core freq UI     | ❌ simple       | ⚠️ turbostat    | ⬜ §8 + shell    |
-
-After §1 through §11 done and §2 through §10 plus §12 through §13 planned, parity with Win11/Linux 6.x on this stack; §12 boot benchmark is the differentiator. `SetThreadMemoryZone` (§4) is a planned Win32-style PKU surface. PKS (supervisor keys) stays in `TODO-17` until kernel mappings allow it without breaking SMEP/SMAP rollout.
-
----
-
 ## 1. XSAVE / XRSTOR State Management
 
 - [x] Replaced `simd_enable_avx()` XCR0 setup with `cpu_configure_xcr0()` in `cpuid.c`, called from `cpuid_init()`:
@@ -450,6 +418,38 @@ After §1 through §11 done and §2 through §10 plus §12 through §13 planned,
 - [ ] Commit: `"kernel/cpu: UINTR/LA57 detection stubs, future silicon log entries"`
 
 **Test checkpoint:** When CPU advertises UINTR or LA57, serial shows one-line stub log and kernel continues without enabling new modes. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+---
+
+## OS Comparison
+
+| ⭐   | Feature              | 🪟 Win11        | 🐧 Linux         | 🚀 Impossible OS |
+| --- | -------------------- | -------------- | --------------- | --------------- |
+| 💎   | CPUID feature gates  | ✅ Ke API       | ✅ x86/cpu       | ✅ cpuid_init    |
+| 💎   | AMD ext CPUID        | ✅ HAL leaves   | ✅ amd.c         | ✅ §1            |
+| 💎   | XSAVE per thread     | ✅ Full         | ✅ fpu__*        | ✅ §1 Done       |
+| 💎   | AVX memops in kernel | ✅ Yes          | ✅ kfpu          | ⚠️ §2 GFX only  |
+| 💎   | AVX-512 + throttle   | ✅ Yes          | ✅ power aware   | ⬜ §2            |
+| 💎   | Central safe MSR     | ✅ HAL          | ✅ rdmsr_safe    | ✅ §3            |
+| 💎   | UMIP                 | ✅ On           | ✅ 4.15+         | ⬜ §4            |
+| 💎   | PKU / pkeys          | ✅ OS use       | ✅ pkey_*        | ⬜ §4 Win32 API  |
+| 💎   | PKS (supervisor)     | ⚠️ niche       | ✅ mm since 5.13 | ⬜ defer T17     |
+| 💎   | FB WC PAT            | ✅ GPU path     | ✅ ioremap_wc    | ⬜ §5 UC today   |
+| 💎   | 1 GiB huge pages     | ✅ Large page   | ✅ hugetlb 1G    | ⬜ §5            |
+| 💎   | FRED events          | 🔜 roadmap      | ✅ 6.9+          | ⬜ §6            |
+| 💎   | LKGS fast GS         | 🔜 roadmap      | ✅ 6.4+          | ⬜ §6            |
+| 💎   | Zen CCD NUMA         | ✅ Ke node      | ✅ amd topo      | ⬜ §7            |
+| 💎   | Intel P/E hybrid     | ✅ Director     | ✅ HFI           | ⬜ §7            |
+| 💎   | PMU / PMC            | ✅ ETW WPA      | ✅ perf          | ⬜ §8            |
+| 💎   | OSVW errata          | ✅ HAL          | ✅ amd.c         | ⬜ §9            |
+| 💎   | RDTSCP TSC_AUX       | ✅ QPC path     | ✅ SMP init      | ⬜ §9            |
+| 💎   | AMD IBS sample       | ⚠️ vendor tool | ✅ perf IBS      | ⬜ §10 stretch   |
+| 💎   | SVM VT-x detect      | ✅ HAL          | ✅ kvm caps      | ✅ §11           |
+| ⭐   | Boot hw self tune    | ❌ static       | ❌ static        | ⬜ §12           |
+| ⭐   | PKU Win32 wrapper    | ❌ none         | ⚠️ raw syscalls | ⬜ §4            |
+| ⭐   | Per-core freq UI     | ❌ simple       | ⚠️ turbostat    | ⬜ §8 + shell    |
+
+After §1 through §11 done and §2 through §10 plus §12 through §13 planned, parity with Win11/Linux 6.x on this stack; §12 boot benchmark is the differentiator. `SetThreadMemoryZone` (§4) is a planned Win32-style PKU surface. PKS (supervisor keys) stays in `TODO-17` until kernel mappings allow it without breaking SMEP/SMAP rollout.
 
 ---
 
