@@ -540,6 +540,8 @@ _Static_assert(__builtin_offsetof(struct boot_info, rt_mmap_count) == 20352,
     "boot_info.rt_mmap_count offset drift -- update kernel + bootloader mirror");
 _Static_assert(__builtin_offsetof(struct boot_info, usb_device_count) == 21504,
     "boot_info.usb_device_count offset drift -- update kernel + bootloader mirror");
+_Static_assert(__builtin_offsetof(struct boot_info, uefi_boot_current) == 22056,
+    "boot_info.uefi_boot_current offset drift -- update kernel + bootloader mirror");
 
 /* Global boot info -- populated by multiboot2_parse() or UEFI bootloader */
 extern struct boot_info g_boot_info;

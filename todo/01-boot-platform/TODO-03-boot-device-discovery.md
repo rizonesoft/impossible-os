@@ -45,7 +45,7 @@
 | 💎  |   3   | Boot device info in boot_info struct               | §1             |  [x]   |
 | 💎  |   4   | Boot device type detection (SATA/NVMe/USB/Net)     | §3             |  [x]   |
 | 💎  |   5   | Device fallback chain (priority-based)             | §2, §4         |  [x]   |
-| 💎  |   6   | UEFI boot variable reading (BootOrder/Current/Next)| §1             |  [/]   |
+| 💎  |   6   | UEFI boot variable reading (BootOrder/Current/Next)| §1             |  [x]   |
 | 💎  |   7   | Partition GUID extraction and validation           | §1             |  [ ]   |
 | 💎  |   8   | Removable media detection                          | §1, §4         |  [ ]   |
 | 💎  |   9   | Boot device Registry population                    | §3, §4, §7, §8 |  [ ]   |
@@ -168,9 +168,12 @@ Read UEFI global boot variables so the bootloader knows which firmware boot entr
 - [x] Read `BootNext` (UINT16, optional): `rt->GetVariable(u"BootNext", ...)` -> `boot_info.uefi_boot_next` with `uefi_boot_next_valid=1` if present
 - [x] If `BootNext` is set: `"[BOOT] BootNext=0x%04x (one-shot override)"` logged
 - [x] Log: `"[BOOT] BootCurrent=0x%04x"` and `"[BOOT] BootOrder=[0x%04x,0x%04x,...]"` logged separately for clarity
-- [ ] Commit: `"boot: read UEFI boot variables -- BootOrder, BootCurrent, BootNext"`
+- [x] Commit: `"boot: read UEFI boot variables -- BootOrder, BootCurrent, BootNext"` (77a4823c)
 
 **Test checkpoint:** Serial shows `"BootCurrent=0x0000"` (or valid entry number) on all UEFI platforms. `boot_info.uefi_boot_order_count > 0` on real firmware. On QEMU OVMF: BootOrder may be empty (acceptable).
+
+> **Verified:** 2026-04-12 -- all 7 items confirmed. EFI_GLOBAL_VARIABLE_GUID at `efi.h:769`. GetVariable for BootCurrent/BootOrder/BootNext with size validation. 128-entry BootOrder buffer (handles large firmware), odd-size rejection (`sz%2==0`). BOOT_INFO_VERSION=3 both sides. Offset assert 22056 for `uefi_boot_current` in both files. Codex adversarial: BootOrder buffer fixed, odd-size rejected, offset assert added. Accepted: none.
+> **Quality reviewed:** 2026-04-12 -- boot-code-quality gates walked. Kernel consuming boot_info variables instead of runtime reads accepted as future optimization (fields are forward infrastructure for §9/§12). GUID correct per UEFI 2.10 Section 3.3. 3 GetVariable calls O(1) each. Accepted: kernel runtime read dedup (optimization, not blocking).
 
 ---
 

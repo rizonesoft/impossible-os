@@ -326,6 +326,8 @@ _Static_assert(__builtin_offsetof(struct boot_info, rt_mmap_count) == 20352,
     "boot_info.rt_mmap_count offset drift -- kernel + bootloader mirror out of sync");
 _Static_assert(__builtin_offsetof(struct boot_info, usb_device_count) == 21504,
     "boot_info.usb_device_count offset drift -- kernel + bootloader mirror out of sync");
+_Static_assert(__builtin_offsetof(struct boot_info, uefi_boot_current) == 22056,
+    "boot_info.uefi_boot_current offset drift -- kernel + bootloader mirror out of sync");
 
 /* Inline rdtsc for boot timing */
 static inline UINT64 boot_rdtsc(void)
@@ -4779,7 +4781,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                 UINTN sz = sizeof(order);
                 EFI_STATUS vs = rt->GetVariable(
                     u"BootOrder", &global_guid, &attrs, &sz, order);
-                if (!EFI_ERROR(vs) && sz >= 2) {
+                if (!EFI_ERROR(vs) && sz >= 2 && (sz % 2) == 0) {
                     UINTN count = sz / 2;
                     if (count > 16) count = 16;
                     g_boot_info_ptr->uefi_boot_order_count = (UINT8)count;
