@@ -111,9 +111,11 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
     - Push to `origin/main` immediately after successful commit.
     - Mark the section's `- [ ] Commit: "..."` item `[x]`.
 
-## Phase 2: Post-Implementation Review
+## Phase 2: Post-Implementation Review (MANDATORY -- NO EXCEPTIONS)
 
 > After the implementation commit, invoke the review pipeline to verify and quality-review the freshly implemented section. This catches issues that implementation-time Codex missed because it reviewed the diff in isolation.
+>
+> **This step is NEVER skippable.** Not for "straightforward plumbing." Not for "Codex already ran in step 13." Not for "same pattern as the previous section." Step 13 reviews the diff in isolation during implementation; step 20 reviews the committed code in full context -- they catch different classes of bugs. The pattern of "looks simple, I'll skip the review" is the exact signal to NOT skip. (Incident 2026-04-12: §2 review skipped, user had to ask for it.)
 
 20. **Invoke `/review-todo-section`** on the section just committed. This runs:
     - Phase 1: evidence mapping + test checkpoint verification (skips adversarial Codex since step 13 already ran it)

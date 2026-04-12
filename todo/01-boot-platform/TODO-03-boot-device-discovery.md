@@ -41,7 +41,7 @@
 | ⭐  | Order | Deliverable                                        | Depends On     | Status |
 | --- | :---: | -------------------------------------------------- | -------------- | :----: |
 | 💎  |   1   | Boot device identification via LoadedImage         | --             |  [x]   |
-| 💎  |   2   | Filesystem access scoped to boot device            | §1             |  [/]   |
+| 💎  |   2   | Filesystem access scoped to boot device            | §1             |  [x]   |
 | 💎  |   3   | Boot device info in boot_info struct               | §1             |  [ ]   |
 | 💎  |   4   | Boot device type detection (SATA/NVMe/USB/Net)     | §3             |  [ ]   |
 | 💎  |   5   | Device fallback chain (priority-based)             | §2, §4         |  [ ]   |
@@ -89,11 +89,14 @@ Replace `LocateProtocol(SIMPLE_FILE_SYSTEM)` with `HandleProtocol(DeviceHandle, 
 - [x] If `DeviceHandle` doesn't have `SIMPLE_FILE_SYSTEM_PROTOCOL`: fall back to `LocateProtocol` with warning -- both `parse_boot_conf()` and `load_kernel()` have the same fallback pattern
 - [x] Log: `"[BOOT] Using boot device filesystem"` or `"[WARN] Boot device has no filesystem, using fallback"` -- both messages present
 - [x] `POST16(0xB092)` before filesystem open, `POST16(0xB093)` after success -- `POST16_BL_BOOT_FS` / `POST16_BL_BOOT_FS_OK` in `bootx64.c`, `POST16_BOOT_FS` / `POST16_BOOT_FS_OK` in `boot_init.h`
-- [ ] Commit: `"boot: scope filesystem access to boot device -- no more random disk"`
+- [x] Commit: `"boot: scope filesystem access to boot device -- no more random disk"` (d7ee0bcc)
 
 **Test checkpoint:** On QEMU with single disk, behavior unchanged. On multi-disk (SATA + NVMe test), kernel loads from correct device. Verify on bare metal multi-disk system -- firmware filesystem handle order differs from QEMU. If crash, check POST code: 0xB092 = filesystem open failed.
 
 **Regression risk:** MEDIUM -- changes how filesystem is located. If `DeviceHandle` is wrong, falls back to old behavior.
+
+> **Verified:** 2026-04-12 -- all 6 items confirmed. `parse_boot_conf()` uses `g_boot_device_handle` via HandleProtocol with LocateProtocol fallback; `load_kernel()` same (done in §1). POST16 0xB092 entry / 0xB093 after OpenVolume succeeds. Smoke test pattern `"Using boot device filesystem"`. Codex adversarial: fallback-to-LocateProtocol cross-device risk rejected (intentional per checklist, PXE/network compatibility, documented `[WARN]`). Accepted: none.
+> **Quality reviewed:** 2026-04-12 -- boot-code-quality 12 gates walked (all applicable pass). POST16 ordering confirmed correct (success POST after OpenVolume, not before). Forward declarations valid gnu11. No dead code, no orphaned defines. Parity: matches Windows BCD + GRUB device scoping. Accepted: none.
 
 ---
 
