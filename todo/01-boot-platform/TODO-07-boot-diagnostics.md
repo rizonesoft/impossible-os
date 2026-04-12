@@ -60,7 +60,7 @@ Write I/O port 0x80 POST codes from the bootloader so hardware POST-code reader 
 **Files:** `src/boot/uefi/bootx64.c`
 
 - [x] Add `post_code(uint8_t code)` inline in `bootx64.c`: `outb(0x80, code)`; add `post_code16(uint16_t code)` (writes high byte to port `0x80`, logs full value on serial) plus legacy 8-bit names `POST_ENTRY` through `POST_KERNEL_JUMP` for reference
-- [x] Insert `post_code16()` at bootloader milestones: `0xB001` entry, `0xB010` GOP init, `0xB020`/`0xB021` ELF open/load, `0xB030` RSDP, `0xB080`-`0xB085` USB discovery and xHCI DMA/takeover substeps, `0xB040` memory map, `0xB050` ExitBootServices, `0xB060` page tables, `0xB070` kernel jump
+- [x] Insert `post_code16()` at bootloader milestones: `0xB001` entry, `0xB090`/`0xB091` boot device (LoadedImage) before GOP, `0xB010` GOP init, `0xB020`/`0xB021` ELF open/load, `0xB030` RSDP, `0xB080`-`0xB085` USB discovery and xHCI DMA/takeover substeps, `0xB040` memory map, `0xB050` ExitBootServices, `0xB060` page tables, `0xB070` kernel jump
 - [x] QEMU ignores port 0x80 writes silently -- no fault, verified by clean build
 - [x] Commit: `"boot: UEFI pre-kernel POST codes to I/O port 0x80"`
 
