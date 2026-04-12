@@ -22,8 +22,11 @@
 section .text
 
 ; ---- Offsets matching kpti.h ----
-%define PCPU_KERNEL_CR3  104
-%define PCPU_USER_CR3    112
+%define PCPU_KERNEL_CR3        104
+%define PCPU_USER_CR3          112
+%define PCPU_KPTI_SCRATCH      120
+%define PCPU_KPTI_SYSCALL_TGT  128
+%define PCPU_KPTI_ISR_TGT      136
 
 ; ---- Labels exported for kpti_init() to measure sizes ----
 global kpti_stub_syscall_entry
@@ -48,13 +51,13 @@ global kpti_stub_isr_return_end
 
 kpti_stub_syscall_entry:
     swapgs                              ; GS = per-CPU; KERNEL_GS = TEB
+    mov [gs:PCPU_KPTI_SCRATCH], rax     ; save RAX (syscall service number)
     mov rax, [gs:PCPU_KERNEL_CR3]       ; load kernel CR3
     mov cr3, rax                        ; switch to kernel page tables
-    ; Now kernel text is mapped -- jump to the real entry.
-    ; syscall_entry_inner is the existing syscall_entry minus its SWAPGS
-    ; (we already did it). The address is patched by kpti_init().
-    mov rax, 0xDEADBEEFDEADBEEF        ; placeholder -- patched at runtime
-    jmp rax
+    mov rax, [gs:PCPU_KPTI_SCRATCH]     ; restore RAX (service number intact)
+    ; Now kernel text is mapped. All user-visible registers preserved.
+    ; Jump target stored by S4 at boot in per-CPU kpti_syscall_target.
+    jmp [gs:PCPU_KPTI_SYSCALL_TGT]
 kpti_stub_syscall_entry_end:
 
 ; ============================================================================
@@ -66,8 +69,10 @@ kpti_stub_syscall_entry_end:
 ; ============================================================================
 
 kpti_stub_syscall_return:
+    mov [gs:PCPU_KPTI_SCRATCH], rax     ; save RAX (NTSTATUS return value)
     mov rax, [gs:PCPU_USER_CR3]         ; load user CR3
     mov cr3, rax                        ; switch to user page tables
+    mov rax, [gs:PCPU_KPTI_SCRATCH]     ; restore RAX (return value intact)
     swapgs                              ; GS = user TEB; KERNEL_GS = per-CPU
     o64 sysret                          ; RIP=RCX, RFLAGS=R11|2, ring 3
 kpti_stub_syscall_return_end:
@@ -91,13 +96,13 @@ kpti_stub_isr_entry:
     test byte [rsp+8], 3               ; check RPL of saved CS
     jz .from_kernel                     ; ring 0 -- skip SWAPGS + CR3 swap
     swapgs                              ; ring 3: GS = per-CPU
+    mov [gs:PCPU_KPTI_SCRATCH], rax     ; save RAX (interrupted register)
     mov rax, [gs:PCPU_KERNEL_CR3]
     mov cr3, rax                        ; switch to kernel CR3
+    mov rax, [gs:PCPU_KPTI_SCRATCH]     ; restore RAX
 .from_kernel:
-    ; Now kernel text is mapped -- jump to isr_common_stub.
-    ; Address patched by kpti_init().
-    mov rax, 0xCAFEBABECAFEBABE        ; placeholder -- patched at runtime
-    jmp rax
+    ; Kernel text is mapped. Jump target stored by S5 at boot.
+    jmp [gs:PCPU_KPTI_ISR_TGT]
 kpti_stub_isr_entry_end:
 
 ; ============================================================================
@@ -108,8 +113,10 @@ kpti_stub_isr_entry_end:
 ; ============================================================================
 
 kpti_stub_isr_return:
+    mov [gs:PCPU_KPTI_SCRATCH], rax     ; save RAX (restored register)
     mov rax, [gs:PCPU_USER_CR3]
     mov cr3, rax                        ; switch to user CR3
+    mov rax, [gs:PCPU_KPTI_SCRATCH]     ; restore RAX
     swapgs                              ; GS = user TEB
     iretq                               ; return to ring 3
 kpti_stub_isr_return_end:

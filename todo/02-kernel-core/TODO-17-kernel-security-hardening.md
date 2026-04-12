@@ -53,7 +53,7 @@
 | --- | :---: | --------------------------------------------------- | ----------------------------- | :----: |
 | 💎  |   1   | NX bit: EFER.NXE + PTE NX on all non-code mappings  | (none)                        |  [x]   |
 | 💎  |   2   | SMEP & SMAP: CR4 activation + CLAC/STAC wrappers    | §1                            |  [/]   |
-| 💎  |   3   | KPTI trampoline page + per-CPU CR3 fields           | §1, T04 §3                    |  [/]   |
+| 💎  |   3   | KPTI trampoline page + per-CPU CR3 fields           | §1, T04 §3                    |  [x]   |
 | 💎  |   4   | KPTI SYSCALL CR3 swap                               | §3                            |  [ ]   |
 | 💎  |   5   | KPTI IDT CR3 swap (all 256 vectors)                 | §3, §4                        |  [ ]   |
 | 💎  |   6   | KPTI user_cr3 allocation + context switch           | §3, §4, §5                    |  [ ]   |
@@ -120,9 +120,12 @@ Design and allocate the shared trampoline infrastructure that all KPTI ring tran
 - [x] Assembly stubs in `src/kernel/kpti_trampoline.asm`: 4 stubs at offsets 0x000/0x080/0x100/0x180 (SYSCALL entry/return, ISR entry/return). JMP targets are placeholder addresses patched by S4/S5.
 - [x] `kernel_cr3` (gs:104) and `user_cr3` (gs:112) added to `struct per_cpu_data` in `smp.h` with `_Static_assert` offset checks. BSP init in `smp_early_bsp_init()`, AP init in `ap_entry()`, both from current CR3. user_cr3 = kernel_cr3 until S6.
 - [x] User_cr3 required pages documented in `kpti.h`: trampoline, RSP0 stacks, IST stacks (DF/NMI/MCE), GDT/TSS, per-CPU data -- all supervisor-only.
-- [ ] Commit: `"kernel/security: KPTI trampoline page + per-CPU CR3 fields"`
+- [x] Commit: `"kernel/security: KPTI trampoline page + per-CPU CR3 fields"` (ad2d05e2)
 
 **Test checkpoint:** Trampoline page allocated and mapped at fixed VA. Per-CPU `kernel_cr3`/`user_cr3` fields exist with correct offsets. Trampoline assembly compiles. Boot does NOT use user_cr3 yet -- this is infrastructure only.
+
+> **Verified:** 2026-04-12 -- all 4 items confirmed. Trampoline at `kpti.c` allocated + mapped at `KPTI_TRAMPOLINE_VA` via `vmm_map_page`. 4 stubs in `kpti_trampoline.asm` preserve RAX via `gs:kpti_scratch` (Codex adversarial finding -- fixed). Per-CPU fields at gs:104-136 with 5 `_Static_assert` checks (Codex quality finding -- added). BSP+AP init from CR3. Required user_cr3 pages documented in `kpti.h`. Accepted: none.
+> **Quality reviewed:** 2026-04-12 -- kernel-code-quality 11 gates walked. Per-CPU fields SMP-safe (per-core). Intel SDM SYSCALL ABI: RAX preserved via scratch slot. JMP targets via per-CPU fields (not clobbered registers). All new GS offsets compile-time asserted. O(1) per-entry overhead. Accepted: none.
 
 ---
 

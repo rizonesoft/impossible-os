@@ -35,8 +35,11 @@
 #define KPTI_OFF_ISR_RETURN     0x180
 
 /* ---- Per-CPU struct offsets for assembly (must match smp.h) ---- */
-#define PCPU_KERNEL_CR3  104   /* gs:104 = kernel_cr3 */
-#define PCPU_USER_CR3    112   /* gs:112 = user_cr3 */
+#define PCPU_KERNEL_CR3        104  /* gs:104 = kernel_cr3 */
+#define PCPU_USER_CR3          112  /* gs:112 = user_cr3 */
+#define PCPU_KPTI_SCRATCH      120  /* gs:120 = scratch for RAX during CR3 swap */
+#define PCPU_KPTI_SYSCALL_TGT  128  /* gs:128 = SYSCALL entry JMP target */
+#define PCPU_KPTI_ISR_TGT      136  /* gs:136 = ISR entry JMP target */
 
 /* ---- Pages required in user_cr3 (documented per S3 checklist) ----
  *

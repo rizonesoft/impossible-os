@@ -122,6 +122,9 @@ struct per_cpu_data {
     /* KPTI CR3 pair (TODO-17 §3) -- updated on context switch */
     uint64_t          kernel_cr3;       /* full kernel PML4 (all mappings) */
     uint64_t          user_cr3;         /* sparse user PML4 (user + trampoline only) */
+    uint64_t          kpti_scratch;     /* scratch for trampoline (save RAX during CR3 swap) */
+    uint64_t          kpti_syscall_target; /* jump target after SYSCALL CR3 swap */
+    uint64_t          kpti_isr_target;    /* jump target after ISR CR3 swap */
 };
 
 /* Compile-time enforcement of assembly-referenced struct offsets */
@@ -135,6 +138,12 @@ _Static_assert(__builtin_offsetof(struct per_cpu_data, kernel_cr3) == 104,
     "gs:104 must be kernel_cr3 -- KPTI trampoline depends on this");
 _Static_assert(__builtin_offsetof(struct per_cpu_data, user_cr3) == 112,
     "gs:112 must be user_cr3 -- KPTI trampoline depends on this");
+_Static_assert(__builtin_offsetof(struct per_cpu_data, kpti_scratch) == 120,
+    "gs:120 must be kpti_scratch -- KPTI trampoline depends on this");
+_Static_assert(__builtin_offsetof(struct per_cpu_data, kpti_syscall_target) == 128,
+    "gs:128 must be kpti_syscall_target -- KPTI trampoline depends on this");
+_Static_assert(__builtin_offsetof(struct per_cpu_data, kpti_isr_target) == 136,
+    "gs:136 must be kpti_isr_target -- KPTI trampoline depends on this");
 
 /* ---- API ---- */
 
