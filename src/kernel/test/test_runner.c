@@ -27,6 +27,7 @@ static const char *cat_names[] = {
     [TEST_CAT_ABI]      = "abi",
     [TEST_CAT_STORAGE]  = "storage",
     [TEST_CAT_EXEC]     = "exec",
+    [TEST_CAT_X86]      = "x86",
 };
 
 static const char *cat_labels[] = {
@@ -40,6 +41,7 @@ static const char *cat_labels[] = {
     [TEST_CAT_ABI]      = "ABI Compatibility",
     [TEST_CAT_STORAGE]  = "Storage Drivers",
     [TEST_CAT_EXEC]     = "Binary System",
+    [TEST_CAT_X86]      = "x86-64 Architecture",
 };
 
 /* ---- Global test state ---- */
@@ -189,7 +191,7 @@ extern void test_register_boot_info(void);
 extern void test_register_klog(void);
 extern void test_register_uefi_boot(void);
 extern void test_register_boot_device(void);
-extern void test_register_cpu_security(void);
+extern void test_register_x86(void);
 extern void test_register_ob(void);
 extern void test_register_security(void);
 extern void test_register_peb_teb(void);
@@ -230,7 +232,9 @@ void test_runner_init(void)
     test_register_klog();
     test_register_uefi_boot();
     test_register_boot_device();
-    test_register_cpu_security();
+
+    /* x86-64 Architecture (CPUID, MSR, KPTI, CPU security) */
+    test_register_x86();
 
     /* Exec / Binary System */
     test_register_exec();

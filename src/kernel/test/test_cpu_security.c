@@ -79,20 +79,20 @@ static void test_kpti_kernel_cr3_matches_hw(void)
 
 /* ---- Registration ---- */
 
-void test_register_cpu_security(void)
+void test_register_x86(void)
 {
     test_suite_register_cat("CPU security: NX EFER.NXE set",
-        test_nx_efer_set, TEST_CAT_BOOT);
+        test_nx_efer_set, TEST_CAT_X86);
     test_suite_register_cat("CPU security: SMEP/SMAP CR4 accessible",
-        test_smep_smap_state, TEST_CAT_BOOT);
+        test_smep_smap_state, TEST_CAT_X86);
     test_suite_register_cat("CPU security: kernel_cr3 non-zero",
-        test_kpti_percpu_kernel_cr3, TEST_CAT_BOOT);
+        test_kpti_percpu_kernel_cr3, TEST_CAT_X86);
     test_suite_register_cat("CPU security: user_cr3 == kernel_cr3",
-        test_kpti_percpu_user_cr3_eq_kernel, TEST_CAT_BOOT);
+        test_kpti_percpu_user_cr3_eq_kernel, TEST_CAT_X86);
     test_suite_register_cat("CPU security: kpti_active() == 0",
-        test_kpti_active_false, TEST_CAT_BOOT);
+        test_kpti_active_false, TEST_CAT_X86);
     test_suite_register_cat("CPU security: kernel_cr3 matches HW CR3",
-        test_kpti_kernel_cr3_matches_hw, TEST_CAT_BOOT);
+        test_kpti_kernel_cr3_matches_hw, TEST_CAT_X86);
 }
 
 #endif /* KERNEL_TESTS */

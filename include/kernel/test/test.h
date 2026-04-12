@@ -45,6 +45,7 @@ typedef enum {
     TEST_CAT_ABI,
     TEST_CAT_STORAGE,
     TEST_CAT_EXEC,
+    TEST_CAT_X86,       /* x86-64 architecture (CPUID, MSR, KPTI, CPU security) */
     TEST_CAT_COUNT,
     TEST_CAT_ALL = 0xFF,
 } test_category_t;
