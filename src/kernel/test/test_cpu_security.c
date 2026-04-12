@@ -77,6 +77,56 @@ static void test_kpti_kernel_cr3_matches_hw(void)
                    "per-CPU kernel_cr3 matches hardware CR3 (PML4 base)");
 }
 
+/* ---- S1: XSAVE / XRSTOR ---- */
+
+static void test_xcr0_active(void)
+{
+    if (!cpu_has(CPU_FEATURE_XSAVE)) {
+        TEST_SKIP("CPU does not support XSAVE");
+        return;
+    }
+    extern struct cpu_features g_cpu;
+    TEST_ASSERT_NEQ(g_cpu.xcr0_active, 0,
+                    "xcr0_active is non-zero when XSAVE supported");
+}
+
+static void test_xsave_size(void)
+{
+    if (!cpu_has(CPU_FEATURE_XSAVE)) {
+        TEST_SKIP("CPU does not support XSAVE");
+        return;
+    }
+    extern struct cpu_features g_cpu;
+    TEST_ASSERT(g_cpu.xsave_size_max > 0,
+                "xsave_size_max > 0 when XSAVE supported");
+    TEST_ASSERT(g_cpu.xsave_size_max >= 512,
+                "xsave_size_max >= 512 (minimum FXSAVE area)");
+}
+
+static void test_xcr0_has_x87_sse(void)
+{
+    if (!cpu_has(CPU_FEATURE_XSAVE)) {
+        TEST_SKIP("CPU does not support XSAVE");
+        return;
+    }
+    extern struct cpu_features g_cpu;
+    /* XCR0 bits 0 (x87) and 1 (SSE) are mandatory when XSAVE is enabled */
+    TEST_ASSERT(g_cpu.xcr0_active & 0x3,
+                "xcr0_active has x87 (bit 0) and SSE (bit 1) set");
+}
+
+static void test_cr4_osxsave(void)
+{
+    if (!cpu_has(CPU_FEATURE_XSAVE)) {
+        TEST_SKIP("CPU does not support XSAVE");
+        return;
+    }
+    uint64_t cr4;
+    __asm__ volatile("mov %%cr4, %0" : "=r"(cr4));
+    TEST_ASSERT(cr4 & (1ULL << 18),
+                "CR4.OSXSAVE (bit 18) is set when XSAVE supported");
+}
+
 /* ---- Registration ---- */
 
 void test_register_x86(void)
@@ -93,6 +143,16 @@ void test_register_x86(void)
         test_kpti_active_false, TEST_CAT_X86);
     test_suite_register_cat("CPU security: kernel_cr3 matches HW CR3",
         test_kpti_kernel_cr3_matches_hw, TEST_CAT_X86);
+
+    /* S1: XSAVE / XRSTOR */
+    test_suite_register_cat("XSAVE: xcr0_active non-zero",
+        test_xcr0_active, TEST_CAT_X86);
+    test_suite_register_cat("XSAVE: xsave_size_max valid",
+        test_xsave_size, TEST_CAT_X86);
+    test_suite_register_cat("XSAVE: xcr0 has x87+SSE bits",
+        test_xcr0_has_x87_sse, TEST_CAT_X86);
+    test_suite_register_cat("XSAVE: CR4.OSXSAVE set",
+        test_cr4_osxsave, TEST_CAT_X86);
 }
 
 #endif /* KERNEL_TESTS */
