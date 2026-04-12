@@ -2444,11 +2444,18 @@ static EFI_STATUS load_kernel(UINT64 *entry_point)
     UINT16 i;
 
     /* Use global g_boot_device_handle (set in efi_main §1) to get the
-     * boot device's filesystem.  Fall back to LocateProtocol only if
-     * the handle was not resolved (firmware lacks LoadedImage). */
+     * boot device's filesystem.  Fall back to LocateProtocol if the
+     * handle was not resolved OR if the handle lacks SimpleFS (e.g.
+     * PXE boot, partition handle without filesystem driver). */
+    fs = (EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *)0;
     if (g_boot_device_handle) {
         status = gBS->HandleProtocol(g_boot_device_handle,
                                       &fs_guid, (VOID **)&fs);
+        if (EFI_ERROR(status)) {
+            serial_early_print("[WARN] Boot device has no filesystem, "
+                               "trying LocateProtocol fallback\n");
+            status = gBS->LocateProtocol(&fs_guid, (VOID *)0, (VOID **)&fs);
+        }
     } else {
         status = gBS->LocateProtocol(&fs_guid, (VOID *)0, (VOID **)&fs);
     }
