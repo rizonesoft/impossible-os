@@ -235,9 +235,18 @@ void task_alloc_xsave(struct task *t)
         for (i = 0; i < pages * 4096; i++)
             p[i] = 0;
 
+        /* FCW at offset 0 in FXSAVE/XSAVE layout (Intel SDM Vol. 1
+         * Table 10-2). Default value 0x037F = all x87 exceptions masked,
+         * double precision, round-to-nearest (same as FINIT).
+         * Without this, FXRSTOR loads FCW=0 which unmasks all x87
+         * exceptions and the first imprecise FP op triggers #MF (vec 16).
+         * WHPX masks this because XRSTOR uses init optimization; TCG
+         * uses FXRSTOR which loads FCW directly from the buffer. */
+        *(uint16_t *)(p + 0) = 0x037F;
+
         /* MXCSR at offset 24 in FXSAVE/XSAVE layout (Intel SDM Vol. 1
          * Table 10-2). Default value 0x1F80 = all SIMD exceptions masked.
-         * Without this, XRSTOR loads MXCSR=0 which unmarks all exceptions
+         * Without this, XRSTOR loads MXCSR=0 which unmasks all exceptions
          * and the first SSE/AVX instruction triggers #XM (vector 19). */
         *(uint32_t *)(p + 24) = 0x1F80;
 
