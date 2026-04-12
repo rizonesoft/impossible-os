@@ -540,3 +540,54 @@ void simd_blur_accum_avx2(const uint32_t *src, uint32_t count,
         sum_buf[i * 4 + 3] += (p >> 24) & 0xFF;
     }
 }
+
+/* ---- AVX2 framebuffer blit: block copy of uint32_t pixels ---- */
+
+void fb_blit_avx(uint32_t *dst, const uint32_t *src, uint32_t count)
+{
+    uint32_t i = 0;
+    uint32_t aligned = count & ~7u;  /* 8 pixels = 32 bytes per YMM */
+
+    for (; i < aligned; i += 8) {
+        __asm__ volatile (
+            "vmovdqu (%[s]), %%ymm0\n\t"
+            "vmovdqu %%ymm0, (%[d])\n\t"
+            :
+            : [s] "r"(src + i), [d] "r"(dst + i)
+            : "memory", "xmm0"
+        );
+    }
+
+    /* Scalar tail: 0-7 remaining pixels */
+    for (; i < count; i++)
+        dst[i] = src[i];
+
+    __asm__ volatile ("vzeroupper" ::: "memory");
+}
+
+/* ---- AVX2 framebuffer fill: block fill of uint32_t pixels ---- */
+
+void fb_fill_avx(uint32_t *dst, uint32_t val, uint32_t count)
+{
+    uint32_t i = 0;
+    uint32_t aligned = count & ~7u;
+
+    /* Broadcast and store in single asm block to keep register lifetime
+     * visible to the compiler (vpbroadcastd + vmovdqu in one block). */
+    for (; i < aligned; i += 8) {
+        __asm__ volatile (
+            "vmovd       %[v], %%xmm0\n\t"
+            "vpbroadcastd %%xmm0, %%ymm0\n\t"
+            "vmovdqu     %%ymm0, (%[d])\n\t"
+            :
+            : [v] "r"(val), [d] "r"(dst + i)
+            : "memory", "xmm0"
+        );
+    }
+
+    /* Scalar tail: 0-7 remaining pixels */
+    for (; i < count; i++)
+        dst[i] = val;
+
+    __asm__ volatile ("vzeroupper" ::: "memory");
+}

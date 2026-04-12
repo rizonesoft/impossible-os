@@ -73,3 +73,11 @@ void simd_blend_pixels_avx2(uint32_t *dst, const uint32_t *src, uint32_t count);
 /* Horizontal blur accumulate pass, 8 pixels per iteration (AVX2). */
 void simd_blur_accum_avx2(const uint32_t *src, uint32_t count,
                            uint32_t *sum_buf);
+
+/* Block copy of uint32_t pixels, 8 pixels per iteration (AVX2).
+ * Scalar fallback handles trailing pixels. vzeroupper at exit. */
+void fb_blit_avx(uint32_t *dst, const uint32_t *src, uint32_t count);
+
+/* Block fill of uint32_t pixels, 8 pixels per iteration (AVX2).
+ * Uses vpbroadcastd to replicate the 32-bit pixel value. */
+void fb_fill_avx(uint32_t *dst, uint32_t val, uint32_t count);

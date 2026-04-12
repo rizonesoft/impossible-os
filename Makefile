@@ -807,12 +807,20 @@ $(AP_TRAMPOLINE_OBJ): $(SRC_DIR)/kernel/smp/ap_trampoline.asm
 		$(notdir $(AP_TRAMPOLINE_BIN)) $(CURDIR)/$@
 	@echo "[AS/BIN] $< (AP trampoline)"
 
-# SSE2 SIMD module — compiled with -msse2 (overrides -mno-sse from CFLAGS)
+# SSE2 SIMD module -- compiled with -msse2 (overrides -mno-sse from CFLAGS)
 SIMD_CFLAGS := $(filter-out -mno-mmx -mno-sse -mno-sse2, $(CFLAGS)) -msse2
+# AVX2 module -- compiled with -mavx2 (memops.c only)
+AVX2_CFLAGS := $(SIMD_CFLAGS) -mavx2
 $(BUILD_DIR)/kernel/gfx/gfx_simd.o: $(SRC_DIR)/kernel/gfx/gfx_simd.c | $(GENERATED_HDRS)
 	@mkdir -p $(dir $@)
 	$(CC) $(SIMD_CFLAGS) -I$(INCLUDE) -I$(KERNEL_DIR) -c $< -o $@
 	@echo "[CC/SSE2] $<"
+
+# AVX2 memops -- SIMD-accelerated memcpy/memset with vzeroupper
+$(BUILD_DIR)/kernel/mm/memops.o: $(SRC_DIR)/kernel/mm/memops.c | $(GENERATED_HDRS)
+	@mkdir -p $(dir $@)
+	$(CC) $(AVX2_CFLAGS) -I$(INCLUDE) -I$(KERNEL_DIR) -c $< -o $@
+	@echo "[CC/AVX2] $<"
 
 # stb_truetype implementation — needs SSE2 for floating-point math
 $(BUILD_DIR)/kernel/gfx/stb_truetype_impl.o: $(SRC_DIR)/kernel/gfx/stb_truetype_impl.c | $(GENERATED_HDRS)

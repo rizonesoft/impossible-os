@@ -3,7 +3,7 @@
 > **Goal:** Activate and exploit the x86-64 architecture features that `cpuid.c` already detects, pushing beyond today's partial enablement: full XSAVE/XRSTOR state management with per-thread XSAVE areas and lazy FPU, AVX/AVX2 optimised kernel paths and AVX-512 support, a centralised MSR access layer, UMIP and PKU protection keys, 1 GiB huge pages and Write-Combining PAT for the framebuffer, FRED event delivery with LKGS, CPU topology parsing (Zen chiplets + Intel P/E-cores), performance monitoring counters (Intel PMU + AMD PMC), OSVW errata + RDTSCP setup, AMD IBS profiling, virtualization detection, and a boot-time self-benchmark that auto-tunes the kernel to the detected hardware.
 
 > [!IMPORTANT]
-> **Current state:** `cpuid_init()` / `cpu_has()` gate the feature set. **Done [x]:** §1 `cpu_configure_xcr0()`, per-thread `xsave_area`, lazy FPU (`#NM` first touch), XSAVEOPT when supported, FXSAVE removed from `icon_store.c` / `gfx_text.c`. §4 `msr_read` / `msr_write` / `msr_try_read` plus MSR constants; SMP/LAPIC migrated off raw inline MSR asm where noted in §4. §12 AMD SVM + Intel VT-x detection via `cpu_has()`. **Open [ ]:** §2, §3, §5 through §11, §13, §14 per Implementation Order.
+> **Current state:** `cpuid_init()` / `cpu_has()` gate the feature set. **Done [x]:** §1 `cpu_configure_xcr0()`, per-thread `xsave_area`, lazy FPU (`#NM` first touch), XSAVEOPT when supported, FXSAVE removed from `icon_store.c` / `gfx_text.c`. §2 AVX2 `memcpy_avx`/`memset_avx` in `memops.c`, SSE2 fallbacks, `memcpy_fast`/`memset_fast` dispatch, `fb_blit_avx`/`fb_fill_avx` in `gfx_simd.c`, framebuffer dispatch via `simd_avx2_ok`. §4 `msr_read` / `msr_write` / `msr_try_read` plus MSR constants; SMP/LAPIC migrated off raw inline MSR asm where noted in §4. §12 AMD SVM + Intel VT-x detection via `cpu_has()`. **Open [ ]:** §3, §5 through §11, §13, §14 per Implementation Order.
 > **Scope boundary with other TODOs (do not implement here):**
 > - NX/EFER, SMEP/SMAP, KPTI, PCID, IBRS/retpoline, CET -> `TODO-17` (gap analysis 2026-04-12: `TODO-17` §1 NX + `vmm_apply_nx_policy()` are live; §2 SMEP/SMAP helpers exist but `hv_supports_cr4_smep_smap()` forces skip so CR4 bits stay off until kernel PTE User policy is fixed; `isr_stubs.asm` omits `clac` until SMAP is real)
 > - TSC invariant check + TSC-Deadline APIC -> `TODO-07`
@@ -53,7 +53,7 @@
 | ⭐  | Order | Deliverable                                         | Depends On           | Status |
 | --- | :---: | --------------------------------------------------- | -------------------- | :----: |
 | 💎  |   1   | XSAVE/XRSTOR state management (per-thread, lazy)    | (none)               |  [x]   |
-| 💎  |   2   | AVX/AVX2 kernel memops + framebuffer blit           | §1                   |  [ ]   |
+| 💎  |   2   | AVX/AVX2 kernel memops + framebuffer blit           | §1                   |  [x]   |
 | 💎  |   3   | AVX-512 opt-in + future silicon detection           | §2                   |  [ ]   |
 | 💎  |   4   | MSR management infrastructure (`msr.c`)             | (none)               |  [/]   |
 | 💎  |   5   | UMIP + PKU protection keys                          | §4                   |  [ ]   |
@@ -103,16 +103,16 @@
 
 ## 2. AVX/AVX2 Kernel Memops + Framebuffer Blit
 
-- [ ] `cpu_configure_xcr0()` (§1) enables `XCR0[2]` (AVX YMM halves); this is the gate; `simd_avx2_ok` flag already exists in `gfx_simd.c`
-- [ ] Add `-mavx2` to a per-file `CFLAGS_simd.c` (not all kernel files) and implement in `src/kernel/mm/memops.c`:
-  - `memcpy_avx(dst, src, len)`: 256-bit `vmovdqu` / `vmovdqu` loop; handle head/tail < 32 bytes with scalar fallback
-  - `memset_avx(dst, val, len)`: `vpbroadcastd` + `vmovdqa` store loop
-- [ ] `vzeroupper` at the end of every AVX kernel function to prevent AVX->SSE transition penalties in subsequent SSE code
-- [ ] `memcpy` / `memset` dispatch: `if (cpu_has(CPU_FEATURE_AVX2))` -> AVX2 path; else `if (cpu_has(CPU_FEATURE_SSE2))` -> existing SSE path
-- [ ] Framebuffer blit: update `fb_blit_avx()` from `gfx_simd.c` to use YMM registers (8 pixels/iteration, already scaffolded but verify it uses XSAVE-safe approach after §1)
+- [x] `cpu_configure_xcr0()` (§1) enables `XCR0[2]` (AVX YMM halves); this is the gate; `simd_avx2_ok` flag already exists in `gfx_simd.c`
+- [x] Add `-mavx2` to a per-file `AVX2_CFLAGS` (not all kernel files) and implement in `src/kernel/mm/memops.c`: `memcpy_avx(dst, src, len)` using 256-bit `vmovdqu` loop with scalar tail; `memset_avx(dst, val, len)` using `vpbroadcastb` + `vmovdqu` store loop; also SSE2 fallbacks `memcpy_sse2`/`memset_sse2` using 128-bit `movdqu`
+- [x] `vzeroupper` at the end of every AVX kernel function (`memcpy_avx`, `memset_avx`, `fb_blit_avx`, `fb_fill_avx`) to prevent AVX->SSE transition penalties
+- [x] `memcpy_fast` / `memset_fast` dispatch: `if (cpu_has(CPU_FEATURE_AVX2))` -> AVX2 path; else `if (cpu_has(CPU_FEATURE_SSE2))` -> SSE2 path; else scalar fallback
+- [x] Framebuffer blit: `fb_blit_avx()` and `fb_fill_avx()` in `gfx_simd.c` using YMM registers (8 pixels/iteration); `framebuffer.c` dispatches via `simd_avx2_ok` flag in `mem_cpy32`/`mem_set32`
 - [ ] Commit: `"kernel/simd: AVX/AVX2 memcpy/memset/blit dispatch with vzeroupper"`
 
 **Test checkpoint:** On AVX2-class CPU, `memcpy_avx` / `memset_avx` byte-match scalar reference on 64 KiB; `vzeroupper` emitted at function end; dispatch falls back to SSE2 on TCG. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+**Test runner:** `scripts\debug\run-x86-tests.bat` (SUITE=x86, 16 suites expected, 0 failures)
 
 ---
 

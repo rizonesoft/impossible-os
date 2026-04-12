@@ -17,6 +17,7 @@
 #include "kernel/mm/vmm.h"
 #include "kernel/klog.h"
 #include "kernel/printk.h"
+#include "gfx_simd.h"
 
 /* --- Embedded 8x16 bitmap font (ASCII 32–126) ---
  * Each character is 8 pixels wide × 16 pixels tall = 16 bytes per glyph.
@@ -162,16 +163,28 @@ static inline int32_t iabs(int32_t v) { return v < 0 ? -v : v; }
 
 static void mem_set32(uint32_t *dst, uint32_t val, uint32_t count)
 {
-    uint32_t i;
-    for (i = 0; i < count; i++)
-        dst[i] = val;
+    if (simd_avx2_ok) {
+        fb_fill_avx(dst, val, count);
+        return;
+    }
+    {
+        uint32_t i;
+        for (i = 0; i < count; i++)
+            dst[i] = val;
+    }
 }
 
 static void mem_cpy32(uint32_t *dst, const uint32_t *src, uint32_t count)
 {
-    uint32_t i;
-    for (i = 0; i < count; i++)
-        dst[i] = src[i];
+    if (simd_avx2_ok) {
+        fb_blit_avx(dst, src, count);
+        return;
+    }
+    {
+        uint32_t i;
+        for (i = 0; i < count; i++)
+            dst[i] = src[i];
+    }
 }
 
 /* ============================================================================

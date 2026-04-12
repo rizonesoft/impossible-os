@@ -15,6 +15,7 @@
 #include "kernel/kpti.h"
 #include "kernel/smp.h"
 #include "kernel/msr.h"
+#include "kernel/mm/memops.h"
 
 /* ---- S1: NX Bit ---- */
 
@@ -127,6 +128,167 @@ static void test_cr4_osxsave(void)
                 "CR4.OSXSAVE (bit 18) is set when XSAVE supported");
 }
 
+/* ---- S2: AVX2 memops ---- */
+
+static void test_memcpy_avx_correctness(void)
+{
+    if (!cpu_has(CPU_FEATURE_AVX2)) {
+        TEST_SKIP("CPU does not support AVX2");
+        return;
+    }
+
+    /* Stack-allocated 32-byte aligned buffers (256 bytes each) */
+    uint8_t __attribute__((aligned(32))) src[256];
+    uint8_t __attribute__((aligned(32))) dst[256];
+    uint32_t i;
+
+    /* Fill src with known pattern, dst with 0xFF */
+    for (i = 0; i < 256; i++) {
+        src[i] = (uint8_t)(i & 0xFF);
+        dst[i] = 0xFF;
+    }
+
+    memcpy_avx(dst, src, 256);
+
+    /* Verify byte-for-byte match */
+    for (i = 0; i < 256; i++) {
+        if (dst[i] != src[i]) {
+            TEST_ASSERT_EQ(dst[i], src[i],
+                           "memcpy_avx: dst matches src at every byte");
+            return;
+        }
+    }
+    TEST_ASSERT(1, "memcpy_avx: 256-byte copy matches reference");
+}
+
+static void test_memcpy_avx_tail(void)
+{
+    if (!cpu_has(CPU_FEATURE_AVX2)) {
+        TEST_SKIP("CPU does not support AVX2");
+        return;
+    }
+
+    /* Test with non-aligned size (37 bytes: 1 YMM iter + 5 byte tail) */
+    uint8_t __attribute__((aligned(32))) src[64];
+    uint8_t __attribute__((aligned(32))) dst[64];
+    uint32_t i;
+
+    for (i = 0; i < 37; i++)
+        src[i] = (uint8_t)(0xA0 + i);
+    for (i = 0; i < 64; i++)
+        dst[i] = 0;
+
+    memcpy_avx(dst, src, 37);
+
+    for (i = 0; i < 37; i++) {
+        if (dst[i] != src[i]) {
+            TEST_ASSERT_EQ(dst[i], src[i],
+                           "memcpy_avx tail: first 37 bytes match");
+            return;
+        }
+    }
+    /* Verify bytes beyond copy length are untouched */
+    TEST_ASSERT_EQ(dst[37], 0,
+                   "memcpy_avx tail: byte 37 untouched (still 0)");
+    TEST_ASSERT(1, "memcpy_avx tail: 37-byte copy correct");
+}
+
+static void test_memset_avx_correctness(void)
+{
+    if (!cpu_has(CPU_FEATURE_AVX2)) {
+        TEST_SKIP("CPU does not support AVX2");
+        return;
+    }
+
+    uint8_t __attribute__((aligned(32))) buf[256];
+    uint32_t i;
+
+    for (i = 0; i < 256; i++)
+        buf[i] = 0;
+
+    memset_avx(buf, 0x42, 256);
+
+    for (i = 0; i < 256; i++) {
+        if (buf[i] != 0x42) {
+            TEST_ASSERT_EQ(buf[i], 0x42,
+                           "memset_avx: every byte is 0x42");
+            return;
+        }
+    }
+    TEST_ASSERT(1, "memset_avx: 256-byte fill with 0x42 correct");
+}
+
+static void test_memset_avx_tail(void)
+{
+    if (!cpu_has(CPU_FEATURE_AVX2)) {
+        TEST_SKIP("CPU does not support AVX2");
+        return;
+    }
+
+    uint8_t __attribute__((aligned(32))) buf[64];
+    uint32_t i;
+
+    for (i = 0; i < 64; i++)
+        buf[i] = 0;
+
+    memset_avx(buf, 0xBB, 41);
+
+    for (i = 0; i < 41; i++) {
+        if (buf[i] != 0xBB) {
+            TEST_ASSERT_EQ(buf[i], 0xBB,
+                           "memset_avx tail: first 41 bytes are 0xBB");
+            return;
+        }
+    }
+    TEST_ASSERT_EQ(buf[41], 0,
+                   "memset_avx tail: byte 41 untouched (still 0)");
+    TEST_ASSERT(1, "memset_avx tail: 41-byte fill correct");
+}
+
+static void test_memcpy_fast_dispatch(void)
+{
+    /* memcpy_fast should produce correct results regardless of CPU */
+    uint8_t __attribute__((aligned(32))) src[128];
+    uint8_t __attribute__((aligned(32))) dst[128];
+    uint32_t i;
+
+    for (i = 0; i < 128; i++) {
+        src[i] = (uint8_t)(i * 3);
+        dst[i] = 0;
+    }
+
+    memcpy_fast(dst, src, 128);
+
+    for (i = 0; i < 128; i++) {
+        if (dst[i] != src[i]) {
+            TEST_ASSERT_EQ(dst[i], src[i],
+                           "memcpy_fast dispatch: result matches");
+            return;
+        }
+    }
+    TEST_ASSERT(1, "memcpy_fast dispatch: 128-byte copy correct");
+}
+
+static void test_memset_fast_dispatch(void)
+{
+    uint8_t __attribute__((aligned(32))) buf[128];
+    uint32_t i;
+
+    for (i = 0; i < 128; i++)
+        buf[i] = 0;
+
+    memset_fast(buf, 0x55, 128);
+
+    for (i = 0; i < 128; i++) {
+        if (buf[i] != 0x55) {
+            TEST_ASSERT_EQ(buf[i], 0x55,
+                           "memset_fast dispatch: every byte is 0x55");
+            return;
+        }
+    }
+    TEST_ASSERT(1, "memset_fast dispatch: 128-byte fill correct");
+}
+
 /* ---- Registration ---- */
 
 void test_register_x86(void)
@@ -153,6 +315,20 @@ void test_register_x86(void)
         test_xcr0_has_x87_sse, TEST_CAT_X86);
     test_suite_register_cat("XSAVE: CR4.OSXSAVE set",
         test_cr4_osxsave, TEST_CAT_X86);
+
+    /* S2: AVX2 memops */
+    test_suite_register_cat("AVX2: memcpy_avx correctness",
+        test_memcpy_avx_correctness, TEST_CAT_X86);
+    test_suite_register_cat("AVX2: memcpy_avx tail bytes",
+        test_memcpy_avx_tail, TEST_CAT_X86);
+    test_suite_register_cat("AVX2: memset_avx correctness",
+        test_memset_avx_correctness, TEST_CAT_X86);
+    test_suite_register_cat("AVX2: memset_avx tail bytes",
+        test_memset_avx_tail, TEST_CAT_X86);
+    test_suite_register_cat("AVX2: memcpy_fast dispatch",
+        test_memcpy_fast_dispatch, TEST_CAT_X86);
+    test_suite_register_cat("AVX2: memset_fast dispatch",
+        test_memset_fast_dispatch, TEST_CAT_X86);
 }
 
 #endif /* KERNEL_TESTS */
