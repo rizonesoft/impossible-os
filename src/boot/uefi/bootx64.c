@@ -4705,7 +4705,8 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                 #define DP_MAX_WALK 1024
 
                 while (walked + 4 <= DP_MAX_WALK &&
-                       node->Type != EFI_DP_TYPE_END) {
+                       !(node->Type == EFI_DP_TYPE_END &&
+                         node->SubType == EFI_DP_SUBTYPE_END_ENTIRE)) {
                     node_len = (UINT16)node->Length[0] |
                                ((UINT16)node->Length[1] << 8);
                     if (node_len < 4) break;
