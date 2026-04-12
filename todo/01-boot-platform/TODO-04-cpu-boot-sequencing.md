@@ -85,6 +85,9 @@
 
 **Test checkpoint:** Serial or POST shows CPUID stage (`POSTCODE_CPUID_INIT` / `boot_progress` "CPUID"); `g_cpu` has NX and AMD extended topology bits on AMD hosts; homogeneous check on QEMU WHPX, TCG, VirtualBox, bare metal.
 
+> **Verified:** 2026-04-12 -- all 6 items confirmed. `cpuid_init()` at `boot_hw.c:332`. Extended leaves 0x80000001/0x80000008/0x8000001E at `cpuid.c:187-233`, guarded by `max_ext_leaf`. 54+ feature flags in `g_cpu` (`struct cpu_features`). `boot_progress(0, "CPUID", POST16_CPUID_OK)` at `boot_hw.c:334`. Codex adversarial: `cpuid_raw` NULL-pointer rejected (internal helper, all callers pass stack locals, Gate 5: validate at system boundaries only). Accepted: none.
+> **Quality reviewed:** 2026-04-12 -- kernel-code-quality 11 gates walked. Feature flags match CPUID register bits consistently. O(1) one-time Phase 0 call. Intel SDM Vol. 2A compliant (leaf bounds). Parity: matches Windows NtQuerySystemInformation + Linux /proc/cpuinfo. Accepted: none.
+
 ---
 
 ## 2. Phase 0 CPU Security Activation Order *(deferred -- blocked by TODO-17 `cpu_efer_harden`/`cpu_cr4_harden` + TODO-19 `msr_init`; minimal path in `TODO-05-bare-metal-hardening.md` §9)*
