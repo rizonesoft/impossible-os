@@ -93,6 +93,8 @@
 
 **Test checkpoint:** Two tasks with distinct YMM patterns survive `schedule()` round-trip without corruption when `fpu_used` is set; never-FPU task keeps `xsave_area == NULL` and no XSAVE on switch. Serial boot unchanged vs pre-§1 baseline. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
+> **Test runner:** `scripts\debug\run-x86-tests.bat` (SUITE=x86) -- 10 suites, 0 failures expected. S1 tests: xcr0_active non-zero, xsave_size_max >= 512, xcr0 x87+SSE bits, CR4.OSXSAVE set.
+
 > **Verified:** 2026-04-12 -- all 13 items confirmed. `cpu_configure_xcr0()` at `cpuid.c:321`. `xsave_area`+`fpu_used` in `task.h:147-148`. `task_alloc_xsave` at `task.c:188`. schedule XSAVE/XRSTOR at `task.c:776-810`. #NM handler at `task.c:154`. xsaveopt detection at `task.c:782`. Codex adversarial: 3 critical/high findings FIXED -- (1) CLTS moved before XRSTOR in schedule (was after, causing #NM inside scheduler); (2) #NM handler now loads clean FPU state after first allocation (was leaving stale registers = cross-task data leak); (3) yield/schedule_now path now has FPU save+restore (was dropping SIMD state on cooperative switch). Accepted: none.
 > **Quality reviewed:** 2026-04-12 -- kernel-code-quality 11 gates walked. G2: FPU save/restore runs with IRQs disabled in schedule context. G11: XSAVE/XRSTOR alignment (page-aligned from PMM). Intel SDM Vol. 1 Ch. 13 XSAVE compliant. Parity: matches Windows/Linux lazy FPU + XSAVEOPT. Accepted: none.
 
