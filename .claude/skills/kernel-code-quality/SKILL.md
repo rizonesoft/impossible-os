@@ -213,7 +213,14 @@ Lesson: `s_subsys_names[]` missed `SUBSYS_OB`, causing OOB read in `kernel_subsy
 - [ ] **Correct the first time.** Read the spec, read the existing code, understand the integration surface BEFORE writing. A function that works on the first `build.sh` run is the goal -- iterating through compile errors is wasted motion. Think, then type.
 - [ ] **No backwards-compatibility shims.** If a function signature changes, update all callers. Don't add a wrapper that converts old arguments to new ones. Don't re-export removed symbols. If it's unused, delete it completely.
 
-<!-- Updated 2026-04-03: added Gate 9 after user feedback -- never patch, always production-ready -->
+### Gate 11: Spec Compliance -- No Sub-Standard Code
+
+> **Incident 2026-04-12:** UEFI device path walk used `Type == 0x7F` instead of `Type == 0x7F && SubType == 0xFF` for END_ENTIRE, and HardDrive DP extraction checked MBRType but not SignatureType. Both diverged from the UEFI spec. Claude accepted them as "forward-reserve" or "low risk" instead of fixing immediately. The user had to ask.
+
+- [ ] **Use the full spec, not the subset that works on your test platform.** If a standard defines multiple fields, subtypes, or flags for a structure, check all the ones that affect correctness. Checking 2 of 4 fields is cutting corners.
+- [ ] **No "works on QEMU/WHPX" shortcuts.** Emulators are lenient. Real hardware (AMD, Intel, ARM, AMI BIOS, Phoenix, Insyde) enforces the spec strictly. Write code that matches the spec, not code that passes on one emulator.
+- [ ] **Fix sub-standard code immediately.** If during implementation or review you notice code that takes a shortcut (ignores a spec field, uses a broader check than the spec requires, relies on implementation-specific behavior), fix it in the same commit. Do not accept it as "forward-reserve," "low risk," or "future enhancement." Sub-standard code that works today breaks on the next hardware platform.
+- [ ] **Validate all fields the spec defines.** When parsing ACPI tables, UEFI structures, x86 MSRs, PCI config space, or any hardware-defined layout, check every field the spec says to check. Partial parsing is a time bomb.
 
 ---
 

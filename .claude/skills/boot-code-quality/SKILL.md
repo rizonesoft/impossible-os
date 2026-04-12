@@ -102,3 +102,12 @@ Before writing any boot code, walk through these gates. Each gate is pass/fail.
 - [ ] **Never `for (;;) hlt;` without an error message.** Use `boot_fatal()` which shows an error screen + serial message + optional keypress + HLT.
 - [ ] **No silent HLT.** If the bootloader cannot proceed, the user MUST see why. On screen if ConOut available, on serial always.
 - [ ] **Explicit "not found" paths.** If a table/protocol/device is absent, log it explicitly: `"[BOOT] SPCR absent"`, `"[BOOT] GOP: headless mode"`. Silence is a bug.
+
+### Gate 13: Spec Compliance -- No Sub-Standard Code
+
+> **Incident 2026-04-12:** Device path walk used `Type == 0x7F` instead of `Type == 0x7F && SubType == 0xFF` for END_ENTIRE. Technically worked but violated UEFI spec Table 10-1. Claude accepted this as "forward-reserve" instead of fixing it immediately. The user had to ask.
+
+- [ ] **Every UEFI protocol/structure usage matches the spec.** If the UEFI spec defines a field, constant, or subtype, use it. Do not take shortcuts that happen to work on tested firmware but diverge from the spec. Examples: device path END nodes have subtypes (0xFF=Entire, 0x01=Instance); HardDrive DP has both MBRType AND SignatureType; GetVariable returns EFI_BUFFER_TOO_SMALL not a truncated prefix.
+- [ ] **No "works on QEMU" shortcuts.** QEMU/OVMF is lenient. Real firmware (AMI, Phoenix, Insyde) is not. If the spec says check a field, check it -- even if QEMU doesn't care.
+- [ ] **Fix immediately, don't defer.** If you notice sub-standard code during implementation or review, fix it in the same commit. Do not accept it as "forward-reserve" or "future enhancement." Sub-standard code that works today breaks on the next firmware update.
+- [ ] **Validate all fields the spec defines for a structure.** If you're parsing a UEFI table node and only checking 2 of 4 defined fields, you're cutting corners. Check all fields that affect correctness.
