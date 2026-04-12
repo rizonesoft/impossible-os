@@ -1610,11 +1610,10 @@ static void bsod_render_graphical(UINT32 err_code, const char *title,
         quiet_zone = mod * 4;
         qr_total = (UINT32)(QR_SIZE * mod + quiet_zone * 2);
 
-        /* Reserve space ABOVE the QR for the URL caption (industry
-         * standard -- ChromeOS and Windows place the recovery text
-         * above or beside the QR, not below where it gets clipped
-         * by the screen edge on most resolutions). */
-        caption_reserve = BSOD_AA_BODY_LINE_H + 20;
+        /* Reserve space below the QR for the URL caption.  The QR
+         * is pushed up by exactly caption_reserve pixels so the
+         * URL fits between the QR bottom and the screen edge. */
+        caption_reserve = BSOD_AA_BODY_LINE_H + 8;
 
         if (gFbWidth >= qr_total + side_margin &&
             gFbHeight >= qr_total + side_margin + caption_reserve) {
@@ -1628,13 +1627,13 @@ static void bsod_render_graphical(UINT32 err_code, const char *title,
                 qr_place_data(matrix, used, all_cw, QR_TOTAL_CW);
                 qr_apply_mask_and_format(matrix);
 
-                /* QR sits at bottom-right; caption goes above it. */
+                /* QR pushed up from bottom edge by side_margin +
+                 * caption_reserve so the URL text fits below it. */
                 qr_x = gFbWidth  - qr_total - side_margin;
-                qr_y = gFbHeight - qr_total - side_margin;
+                qr_y = gFbHeight - qr_total - side_margin - caption_reserve;
                 qr_render_to_fb(matrix, qr_x, qr_y, mod);
 
-                /* URL caption ABOVE the QR code, centered under the
-                 * QR module area or right-aligned if wider. */
+                /* URL caption centered below the QR with a 4px gap. */
                 url_w = bsod_aa_string_width(url, bsod_aa_BODY);
                 if (qr_total >= url_w) {
                     url_x = qr_x + (qr_total - url_w) / 2;
@@ -1645,10 +1644,9 @@ static void bsod_render_graphical(UINT32 err_code, const char *title,
                     if (url_x + url_w > gFbWidth)
                         url_x = gFbWidth;  /* sentinel: skip */
                 }
-                url_y = (qr_y >= caption_reserve)
-                    ? qr_y - caption_reserve
-                    : 0;
-                if (url_x + url_w <= gFbWidth && url_y + BSOD_AA_BODY_LINE_H <= qr_y) {
+                url_y = qr_y + qr_total + 4;
+                if (url_x + url_w <= gFbWidth &&
+                    url_y + BSOD_AA_BODY_LINE_H <= gFbHeight) {
                     bsod_aa_string(url_x, url_y, url,
                                     bsod_aa_BODY, bsod_aa_BODY_data,
                                     BSOD_AA_BODY_ASCENT,
