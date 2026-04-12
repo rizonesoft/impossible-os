@@ -37,7 +37,7 @@
 - -> XREF: `04-drivers-hardware/TODO-04-acpi-power-management.md §6` -- ACPICA-based `IA32_THERM_STATUS` per-core temp; §14 here owns the ACPI thermal zone framework
 - -> XREF: `04-drivers-hardware/TODO-04-acpi-power-management.md §7` -- ACPICA-based `_CST` C-state parsing; §16 here owns the kernel-core idle governor
 - -> XREF: `03-memory-concurrency/TODO-05-scheduler-enhancement.md §9` -- `cpufreq_register_driver()` vtable consumed by §15; scheduler provides load metrics for governor
-- -> XREF: `02-kernel-core/TODO-19-x86-64-architecture.md §7` -- Intel hybrid P/E-core detection feeds §15 HWP/CPPC governor with core asymmetry data
+- -> XREF: `02-kernel-core/TODO-19-x86-64-architecture.md §8` -- Intel hybrid P/E-core detection feeds §15 HWP/CPPC governor with core asymmetry data
 - -> XREF: `04-drivers-hardware/TODO-08-gpu-display-drivers.md` -- GPU power management (DPMS, RTD3 runtime D3, Panel Self-Refresh) owned by GPU TODO; §18 `DisplayOffTimeout` triggers DPMS via `gfx_set_dpms(DPMS_OFF)`
 
 ---
@@ -561,7 +561,7 @@ Kernel-core governor framework that sits between the scheduler's load metrics an
 > -> XREF: `04-drivers-hardware/TODO-04-acpi-power-management.md §4` -- `_PSS` P-state hardware driver
 > -> XREF: `03-memory-concurrency/TODO-05-scheduler-enhancement.md §9` -- `cpufreq_register_driver()` and load metrics
 > -> XREF: `01-boot-platform/TODO-06-interrupt-timer-arch.md §7` -- LAPIC timer recalibration after frequency change
-> -> XREF: `02-kernel-core/TODO-19-x86-64-architecture.md §7` -- Intel hybrid P/E-core topology data
+> -> XREF: `02-kernel-core/TODO-19-x86-64-architecture.md §8` -- Intel hybrid P/E-core topology data
 - [ ] `cpufreq_governor_t` interface:
   ```c
   typedef struct {
@@ -717,7 +717,7 @@ On heterogeneous CPU topologies (Intel Alder Lake+ P/E-cores, future ARM big.LIT
 
 > [!IMPORTANT]
 > **Scope boundary:** D02T19§7 detects Intel hybrid P/E-core topology and Intel Thread Director (ITD) / Hardware Feedback Interface (HFI). D03T05§9 provides the scheduler's load metrics. This section integrates those signals with the CPU frequency governor (§15) to make energy-aware placement decisions.
-> -> XREF: `02-kernel-core/TODO-19-x86-64-architecture.md §7` -- P/E-core detection, HFI capability data
+> -> XREF: `02-kernel-core/TODO-19-x86-64-architecture.md §8` -- P/E-core detection, HFI capability data
 > -> XREF: `03-memory-concurrency/TODO-05-scheduler-enhancement.md §9` -- scheduler load tracking, PELT utilization
 - [ ] `em_cpu_t` per logical CPU:
   ```c

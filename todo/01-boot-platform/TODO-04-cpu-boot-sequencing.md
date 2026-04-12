@@ -19,7 +19,7 @@
 - `include/kernel/boot_init.h` -- `BOOT_STEP`, `BOOT_REQUIRE`, `POSTCODE_*`; add CPU postcodes
 - `src/kernel/smp/ap_trampoline.asm` + `src/kernel/smp/smp.c` -- AP startup path; add `ap_cpu_harden()` call
 - `include/kernel/cpuid.h` -- `cpuid_init()`, `cpu_has()`; already called in Phase 0
-- `src/kernel/smp/smp.c` -- `wrmsr`/`rdmsr` inline helpers; input to MSR layer (→ XREF `02-kernel-core/TODO-19-x86-64-architecture.md §3`)
+- `src/kernel/smp/smp.c` -- `wrmsr`/`rdmsr` inline helpers; input to MSR layer (→ XREF `02-kernel-core/TODO-19-x86-64-architecture.md §4`)
 - `src/kernel/mm/vmm.c` -- VMM init; EFER.NXE must be set before first page table write with NX bit
 - `src/kernel/cpu_security.c` -- `cpu_harden()`, `cpu_harden_post_pagetable()`; `hv_supports_cr4_smep_smap()` calls `platform_detect()` (SMEP/SMAP gate)
 - `src/kernel/cpuid_platform.c` -- `platform_detect()`; populates `g_boot_info.hv_vendor` / `hv_flags`
@@ -27,7 +27,7 @@
 - `include/kernel/msr.h` -- MSR addresses (IA32_EFER, IA32_PAT); CR4 bit definitions; `MSR_IA32_MISC_ENABLE` to be added by §9
 - → XREF: `02-kernel-core/TODO-01-kernel-init-sequencing.md §2` -- `boot_phase0` sequence; CPU hardening steps slot in here
 - → XREF: `02-kernel-core/TODO-17-kernel-security-hardening.md §1--§7` -- NX, SMEP, SMAP, PCID, Spectre, CET (implementation details)
-- → XREF: `02-kernel-core/TODO-19-x86-64-architecture.md §1, §3--§7, §9, §11` -- XSAVE, MSR layer, UMIP, 1 GiB pages, errata, VM detection
+- → XREF: `02-kernel-core/TODO-19-x86-64-architecture.md §1, §4--§8, §10, §12` -- XSAVE, MSR layer, UMIP, 1 GiB pages, errata, VM detection
 - → XREF: `01-boot-platform/TODO-06-interrupt-timer-arch.md §6` -- UTS timer driver selection; hypervisor detection (§3 here) feeds it
 - → XREF: `04-drivers-hardware/TODO-11-security-hardware.md §7` -- SMEP+SMAP implementation (CR4 enable + copy_from/to_user wrappers); this TODO owns boot sequencing and AP consistency, TODO-11 §7 owns the actual CR4 write functions
 - → XREF: `03-memory-concurrency/TODO-01-vmm-memory-protection.md §11` -- UC MMIO; PAT layout must match §8 here
@@ -95,7 +95,7 @@
 
 > [!IMPORTANT]
 > → XREF: `02-kernel-core/TODO-17-kernel-security-hardening.md §1, §3` -- `cpu_efer_harden()` and `cpu_cr4_harden()` implementations live there.
-> → XREF: `02-kernel-core/TODO-19-x86-64-architecture.md §3` -- `msr_init()` implementation lives there (MSR Management Infrastructure).
+> → XREF: `02-kernel-core/TODO-19-x86-64-architecture.md §4` -- `msr_init()` implementation lives there (MSR Management Infrastructure).
 > → XREF: `02-kernel-core/TODO-01-kernel-init-sequencing.md §2` -- Phase 0 boot sequence; this step slots between serial init and PMM.
 
 - [ ] Add `POSTCODE_MSR_INIT`, `POSTCODE_CPU_EFER`, `POSTCODE_CPU_CR4`, `POSTCODE_CPU_HARDEN_DONE` to `boot_init.h`
@@ -116,7 +116,7 @@ The UTS probe in `TODO-06-interrupt-timer-arch.md` §6 selects HPET vs PIT vs LA
 
 > [!IMPORTANT]
 > → XREF: `01-boot-platform/TODO-06-interrupt-timer-arch.md §6` -- UTS reads `boot_info.hv_flags` to select clock; must be set before `timer_probe()`.
-> → XREF: `02-kernel-core/TODO-19-x86-64-architecture.md §11` -- AMD-V / VT-x host capability detection; Hyper-V guest enlightenment MSR initialization (using `boot_info.hv_flags` populated by this step) is not yet specced in §11 and needs to be added there.
+> → XREF: `02-kernel-core/TODO-19-x86-64-architecture.md §12` -- AMD-V / VT-x host capability detection; Hyper-V guest enlightenment MSR initialization (using `boot_info.hv_flags` populated by this step) is not yet specced in §12 and needs to be added there.
 > → XREF: `02-kernel-core/TODO-13-registry-completion.md` -- mirror `hv_vendor` / `hv_flags` to `HKLM\HARDWARE\VM\HypervisorVendor` (and related values) when early-boot registry writes are supported.
 
 - [x] Add `hv_vendor[16]` and `hv_flags` fields to `struct boot_info`
@@ -172,7 +172,7 @@ The UTS probe in `TODO-06-interrupt-timer-arch.md` §6 selects HPET vs PIT vs LA
 Windows triggers bug-check `MULTIPROCESSOR_CONFIGURATION_NOT_SUPPORTED` (0x3E) when an AP's CPUID feature set is incompatible with the BSP. Linux runs `verify_cpu.S` on each AP during trampoline entry to ensure Long Mode and SSE. Impossible OS currently has no equivalent -- an AP with different capabilities could silently cause undefined behavior.
 
 > [!IMPORTANT]
-> → XREF: `02-kernel-core/TODO-19-x86-64-architecture.md §7` -- CPU topology parsing; topology differences (core count, cache layout) are informational, not a failure. This section only validates *security-critical* feature mismatches.
+> → XREF: `02-kernel-core/TODO-19-x86-64-architecture.md §8` -- CPU topology parsing; topology differences (core count, cache layout) are informational, not a failure. This section only validates *security-critical* feature mismatches.
 
 - [ ] Define `cpu_features_required_mask` in `cpuid.h`: bitmask of features that all CPUs must share (NX, SSE2, LAHF, CMPXCHG16B, SYSCALL, PAE, PGE); derive from BSP's detected features at Phase 0
 - [ ] Implement `cpu_validate_ap_features(uint32_t ap_id)` in `cpu_security.c`: runs on each AP after CPUID probe, compares AP features against BSP `cpu_features_required_mask`
@@ -224,7 +224,7 @@ Both Windows and Linux synchronize the PAT (Page Attribute Table) MSR on each AP
 - [ ] Read BSP PAT MSR value in Phase 0 after `cpuid_init()`; store in `g_bsp_pat_msr` global (or in `cpu_data[0].pat_msr`)
 - [ ] In `ap_cpu_harden()` (§4): after EFER/CR4 replication, write `wrmsr(IA32_PAT, g_bsp_pat_msr)` to synchronize AP PAT to BSP. **Rollback:** If PAT write crashes AP, skip the wrmsr and log `[WARN] AP%u PAT sync skipped` -- AP will use firmware-default PAT which is usually identical to BSP anyway
 - [ ] Read back AP PAT and verify match: `rdmsr(IA32_PAT) == g_bsp_pat_msr`; log `[AP%u] PAT synced: 0x%lx` on success, panic on mismatch (hardware fault)
-- [ ] If the kernel later reprograms PAT (e.g., for Write-Combining framebuffer in TODO-19 §5), broadcast the new PAT value to all online APs via IPI + `smp_call_function(pat_update_ap, &new_pat, true)` (note: `smp_call_function()` does not exist yet -- defer this bullet until SMP IPI infrastructure is available)
+- [ ] If the kernel later reprograms PAT (e.g., for Write-Combining framebuffer in TODO-19 §6), broadcast the new PAT value to all online APs via IPI + `smp_call_function(pat_update_ap, &new_pat, true)` (note: `smp_call_function()` does not exist yet -- defer this bullet until SMP IPI infrastructure is available)
 - [ ] Add `POSTCODE_PAT_SYNC = 0x29` to `boot_init.h` (Phase 0 range -- PAT sync runs on each AP during SMP bringup)
 - [ ] Add debug `POST16(0xD800)` before PAT wrmsr on AP, `POST16(0xD801)` after readback verify (remove after bare-metal verification)
 - [ ] Verify (serial log): `[AP%u] PAT synced` appears for each AP

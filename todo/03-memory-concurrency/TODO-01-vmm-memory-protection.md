@@ -216,7 +216,7 @@ Implement `vmm_map_mmio()` / `MmMapIoSpace()` to create uncacheable (UC) mapping
 > → XREF: `04-drivers-hardware/TODO-02-core-driver-enhancements.md §2` -- HPET timer driver consumes `vmm_map_mmio()` for register access.
 > → XREF: `04-drivers-hardware/TODO-02-core-driver-enhancements.md §3` -- PCIe ECAM needs `vmm_map_mmio()` with UC for config space.
 > → XREF: `04-drivers-hardware/TODO-03-apic-interrupt-routing.md` -- LAPIC/IOAPIC MMIO should use UC mappings (currently works via MTRR override).
-> → XREF: `02-kernel-core/TODO-19-x86-64-architecture.md §5` -- PAT configuration for WC (framebuffer) and UC (MMIO) page types.
+> → XREF: `02-kernel-core/TODO-19-x86-64-architecture.md §6` -- PAT configuration for WC (framebuffer) and UC (MMIO) page types.
 
 > **Current state (2026-03-28):** The bootloader maps all 4 GiB with `0x87` (Present+Writable+User+PS) -- no PCD/PWT bits, so all pages are WB cached. LAPIC/IOAPIC work because MTRRs override those specific ranges to UC. HPET, ECAM, and other MMIO devices have no MTRR entries and crash on bare metal when accessed through WB pages. The HPET calibration path in `lapic.c` currently has a probe guard but should use a proper UC mapping instead.
 
