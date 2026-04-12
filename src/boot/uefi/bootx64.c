@@ -1513,7 +1513,8 @@ static void bsod_render_graphical(UINT32 err_code, const char *title,
     bsod_aa_string((px), (py), (str), bsod_aa_BODY, bsod_aa_BODY_data, \
                     BSOD_AA_BODY_ASCENT, (r), (g), (b), 0x20, 0x67, 0xB2)
 
-    /* 3. Title (28px Selawik Semibold), centered horizontally. */
+    /* 3. Title (36px Selawik Semibold), centered horizontally.
+     *    Positioned 20px below the icon bottom (icon at y=30, h=100). */
     {
         const char *t = "Impossible OS could not start";
         UINT32 w = bsod_aa_string_width(t, bsod_aa_TITLE);
@@ -1521,7 +1522,9 @@ static void bsod_render_graphical(UINT32 err_code, const char *title,
         AA_TITLE(x, 150, t, 0xFF, 0xFF, 0xFF);
     }
 
-    /* 4. Error code + title (28px for code, 16px for detail title). */
+    /* 4. Error code + title line (16px body font, left-aligned).
+     *    40px gap below the 36px title gives clear visual separation
+     *    between the headline and the detail block. */
     {
         i = 0;
         err_buf[i++] = 'e'; err_buf[i++] = 'r'; err_buf[i++] = 'r';
@@ -1535,16 +1538,16 @@ static void bsod_render_graphical(UINT32 err_code, const char *title,
         err_buf[i++] = ' ';
         err_buf[i] = '\0';
         {
-            UINT32 w1 = bsod_aa_string_width(err_buf, bsod_aa_TITLE);
-            AA_TITLE(80, 200, err_buf, 0xB2, 0xD8, 0xFF);
+            UINT32 w1 = bsod_aa_string_width(err_buf, bsod_aa_BODY);
+            AA_BODY(80, 240, err_buf, 0xB2, 0xD8, 0xFF);
             if (title)
-                AA_TITLE(80 + w1, 200, title, 0xFF, 0xFF, 0xFF);
+                AA_BODY(80 + w1, 240, title, 0xFF, 0xFF, 0xFF);
         }
     }
 
     /* 5. Detail text wrapped (16px body font). */
     if (detail) {
-        bsod_aa_wrapped(80, 250, detail,
+        bsod_aa_wrapped(80, 280, detail,
                          bsod_aa_BODY, bsod_aa_BODY_data,
                          BSOD_AA_BODY_ASCENT, BSOD_AA_BODY_LINE_H,
                          gFbWidth - 160, 3,
@@ -1553,11 +1556,11 @@ static void bsod_render_graphical(UINT32 err_code, const char *title,
     }
 
     /* 6. Recovery hint lines (16px body font). */
-    AA_BODY(80, 300, "What to try:", 0xFF, 0xFF, 0xFF);
-    AA_BODY(100, 324, "- Check boot media is inserted", 0xB2, 0xD8, 0xFF);
-    AA_BODY(100, 348, "- Verify \\boot\\kernel.exe exists", 0xB2, 0xD8, 0xFF);
-    AA_BODY(100, 372, "- Scan the QR code for recovery help", 0xB2, 0xD8, 0xFF);
-    AA_BODY(100, 396, "- Press any key to reboot", 0xB2, 0xD8, 0xFF);
+    AA_BODY(80, 360, "What to try:", 0xFF, 0xFF, 0xFF);
+    AA_BODY(100, 384, "- Check boot media is inserted", 0xB2, 0xD8, 0xFF);
+    AA_BODY(100, 408, "- Verify \\boot\\kernel.exe exists", 0xB2, 0xD8, 0xFF);
+    AA_BODY(100, 432, "- Scan the QR code for recovery help", 0xB2, 0xD8, 0xFF);
+    AA_BODY(100, 456, "- Press any key to reboot", 0xB2, 0xD8, 0xFF);
 
 #undef AA_TITLE
 #undef AA_BODY
@@ -1606,7 +1609,7 @@ static void bsod_render_graphical(UINT32 err_code, const char *title,
          * standard -- ChromeOS and Windows place the recovery text
          * above or beside the QR, not below where it gets clipped
          * by the screen edge on most resolutions). */
-        caption_reserve = BSOD_AA_BODY_LINE_H + 6;
+        caption_reserve = BSOD_AA_BODY_LINE_H + 12;
 
         if (gFbWidth >= qr_total + side_margin &&
             gFbHeight >= qr_total + side_margin + caption_reserve) {
