@@ -4,14 +4,13 @@
 
 > [!IMPORTANT]
 > **Current state:** `cpuid_init()` / `cpu_has()` gate the feature set. **Done [x]:** §1 `cpu_configure_xcr0()`, per-thread `xsave_area`, lazy FPU (`#NM` first touch), XSAVEOPT when supported, FXSAVE removed from `icon_store.c` / `gfx_text.c`. §3 `msr_read` / `msr_write` / `msr_try_read` plus MSR constants; SMP/LAPIC migrated off raw inline MSR asm where noted in §3. §11 AMD SVM + Intel VT-x detection via `cpu_has()`. **Open [ ]:** §2 through §10, §12 through §13 per Implementation Order.
->
 > **Scope boundary with other TODOs (do not implement here):**
 > - NX/EFER, SMEP/SMAP, KPTI, PCID, IBRS/retpoline, CET -> `TODO-17` (gap analysis 2026-04-12: `TODO-17` §1 NX + `vmm_apply_nx_policy()` are live; §2 SMEP/SMAP helpers exist but `hv_supports_cr4_smep_smap()` forces skip so CR4 bits stay off until kernel PTE User policy is fixed; `isr_stubs.asm` omits `clac` until SMAP is real)
 > - TSC invariant check + TSC-Deadline APIC -> `TODO-07`
 > - HWP/CPPC frequency scaling + thermal monitoring -> `TODO-15`
-> - NUMA-aware page allocator -> `03-memory-concurrency`
-> - Hybrid P/E-core scheduler policy -> `03-memory-concurrency`
-> - CPU feature explorer GUI + chiplet visualizer -> `08-desktop-shell`
+> - NUMA-aware page allocator -> `D03` `03-memory-concurrency`
+> - Hybrid P/E-core scheduler policy -> `D03` `03-memory-concurrency`
+> - CPU feature explorer GUI + chiplet visualizer -> `D08` `08-desktop-shell`
 > - PKS (Protection Keys for Supervisor, `PKRS` MSR): Linux mm uses it for selective kernel writeability; overlaps PTE key bits with PKU. Defer design and enablement to `TODO-17` until kernel direct-map and SMEP/SMAP page attributes match `CLAUDE.md` policy (user PKU stays §4 here)
 
 ---
@@ -25,7 +24,7 @@
 - `src/kernel/mm/vmm.c`: `vmm_map_page`; extend for 1 GiB PS bit and PAT bits
 - `src/kernel/idt.c`: IDT init; FRED replaces/supplements this (§6)
 - -> XREF: `TODO-06-irql-model-dpcs.md §3`: per-CPU IRQL; FRED event levels map to IRQL (§6)
-- -> XREF: `TODO-07-time-filetime-management.md §2`: RDTSCP in scheduler timing; §9 of this TODO programmes `IA32_TSC_AUX`
+- -> XREF: `TODO-07-time-filetime-management.md §3`: per-CPU TSC read path (`rdtsc_ns`); §9 here programmes `IA32_TSC_AUX` for `RDTSCP` CPU id in ECX
 - -> XREF: `TODO-15-power-management.md §9`: Driver Power Callbacks & Resume Ordering; CPU topology (§7) feeds the scheduler policy deferred to `03-memory-concurrency`
 - -> XREF: `TODO-17-kernel-security-hardening.md` (§1 through §7): NX, SMEP/SMAP, KPTI, PCID, IBRS, CET are already scoped there; this TODO does not touch those
 - -> XREF: `01-boot-platform/TODO-04-cpu-boot-sequencing.md §1, §3, §5`: CPUID detection call site (§1), hypervisor pre-detection (§3), XSAVE/PCID Phase 1 activation window (§5) consume features defined here
@@ -34,7 +33,7 @@
 
 ## Outcome
 
-- Every kernel context switch uses `XSAVE`/`XRSTOR` with the correct XSAVE area size for the present CPU; lazy FPU avoids saving unused state.
+- On CPUs with `XSAVE`, every kernel context switch uses `XSAVE`/`XRSTOR` with the correct XSAVE area size; without `XSAVE`, `schedule()` falls back to `fxsave`/`fxrstor` on the same buffer (§1). Lazy FPU avoids saving unused state.
 - AVX/AVX2 paths for `memcpy`, `memset`, and the framebuffer blit replace SSE2 where supported; AVX-512 optional fast paths enabled on supporting CPUs.
 - A centralised `msr.c` replaces scattered inline `rdmsr`/`wrmsr` asm with a safe, whitelisted API that avoids `#GP` on unknown MSRs.
 - `CR4.UMIP` prevents user-space from leaking GDT/IDT addresses.
@@ -61,7 +60,7 @@
 | 💎  |   6   | FRED event delivery + LKGS                        | §3, T06 §3           |  [ ]   |
 | 💎  |   7   | CPU topology: Zen chiplets + Intel hybrid P/E-core | (none)               |  [ ]   |
 | 💎  |   8   | Performance monitoring counters (Intel + AMD)     | §3                   |  [ ]   |
-| 💎  |   9   | OSVW errata + RDTSCP processor ID setup             | §3, T07 §2           |  [ ]   |
+| 💎  |   9   | OSVW errata + RDTSCP processor ID setup             | §3, T07 §3           |  [ ]   |
 | 💎  |  10   | AMD IBS profiling (stretch)                         | §3                   |  [ ]   |
 | 💎  |  11   | Virtualization detection (AMD-V + Intel VT-x)     | §3                   |  [x]   |
 | ⭐  |  12   | Boot self-benchmark + auto-tune                   | §1, §2, §7           |  [ ]   |
@@ -165,32 +164,32 @@ After §1 through §11 done and §2 through §10 plus §12 through §13 planned,
   ```
 - [x] MSR constants table in `include/kernel/msr.h` (22 constants including Intel, AMD, and Hyper-V):
   ```c
-  #define MSR_IA32_EFER          0xC0000080
-  #define MSR_IA32_STAR          0xC0000081
-  #define MSR_IA32_LSTAR         0xC0000082
-  #define MSR_IA32_FMASK         0xC0000084
-  #define MSR_IA32_FS_BASE       0xC0000100
-  #define MSR_IA32_GS_BASE       0xC0000101
-  #define MSR_IA32_KERNEL_GS_BASE 0xC0000102
-  #define MSR_IA32_TSC_AUX       0xC0000103
-  #define MSR_IA32_PAT           0x00000277
-  #define MSR_IA32_APIC_BASE     0x0000001B
-  #define MSR_IA32_SPEC_CTRL     0x00000048
-  #define MSR_IA32_PRED_CMD      0x00000049
-  #define MSR_IA32_ARCH_CAPS     0x0000010A
-  #define MSR_IA32_MPERF         0x000000E7
-  #define MSR_IA32_APERF         0x000000E8
+  #define MSR_IA32_EFER             0xC0000080
+  #define MSR_IA32_STAR             0xC0000081
+  #define MSR_IA32_LSTAR            0xC0000082
+  #define MSR_IA32_FMASK            0xC0000084
+  #define MSR_IA32_FS_BASE          0xC0000100
+  #define MSR_IA32_GS_BASE          0xC0000101
+  #define MSR_IA32_KERNEL_GS_BASE   0xC0000102
+  #define MSR_IA32_TSC_AUX          0xC0000103
+  #define MSR_IA32_PAT              0x00000277
+  #define MSR_IA32_APIC_BASE        0x0000001B
+  #define MSR_IA32_SPEC_CTRL        0x00000048
+  #define MSR_IA32_PRED_CMD         0x00000049
+  #define MSR_IA32_ARCH_CAPS        0x0000010A
+  #define MSR_IA32_MPERF            0x000000E7
+  #define MSR_IA32_APERF            0x000000E8
   #define MSR_IA32_PERF_GLOBAL_CTRL 0x0000038F
-  #define MSR_IA32_FIXED_CTR0    0x00000309
-  #define MSR_AMD_OSVW_ID_LEN    0xC0010140
-  #define MSR_AMD_OSVW_STATUS    0xC0010141
-  #define MSR_AMD_PERF_CTL0      0xC0010200
-  #define MSR_AMD_PERF_CTR0      0xC0010201
+  #define MSR_IA32_FIXED_CTR0       0x00000309
+  #define MSR_AMD_OSVW_ID_LEN       0xC0010140
+  #define MSR_AMD_OSVW_STATUS       0xC0010141
+  #define MSR_AMD_PERF_CTL0         0xC0010200
+  #define MSR_AMD_PERF_CTR0         0xC0010201
   ```
 - [x] `msr_try_read()`: temporarily installs #GP handler, attempts rdmsr, skips instruction on fault; returns -1 if unsupported
 - [x] Migrated all inline `rdmsr`/`wrmsr` in `smp.c` (3 sites) and `lapic.c` (2 sites) to `msr_read()`/`msr_write()`
-- [ ] `cpu_verify_hardening()` in `cpu_security.c` still uses raw `rdmsr` for EFER readback (`src/kernel/cpu_security.c` around the NX verify block); refactor to `msr_read(MSR_IA32_EFER)` so C-side hot paths consistently use `msr.h` (AP trampoline and pre-`msr.c` boot asm may keep raw insns) (-> XREF: `TODO-17-kernel-security-hardening.md` IMPORTANT: same file owns `cpu_verify_hardening` sequencing)
-- [x] Commit: `"kernel/msr: centralised MSR read/write infrastructure, #GP-safe msr_try_read"`
+- [x] `cpu_verify_hardening()` in `cpu_security.c` refactored: raw `rdmsr` + dead duplicate replaced with `msr_read(MSR_IA32_EFER)` (d825576d)
+- [x] Commit: `"kernel/msr: cpu_verify_hardening EFER verify uses msr_read"` (d825576d)
 
 **Test checkpoint:** `msr_read(MSR_IA32_EFER)` stable across calls; `msr_try_read(0xFFFFFFFF, &scratch) == -1` without panic; boot completes with MSR layer linked. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
@@ -362,7 +361,7 @@ After §1 through §11 done and §2 through §10 plus §12 through §13 planned,
     ```c
     __asm__ volatile("rdtscp" : "=A"(*tsc), "=c"(*cpu_id));
     ```
-  - Use in `TODO-07-time-filetime-management.md §2` scheduler for nanosecond-accurate per-CPU timestamps; XREF noted in Inputs
+  - Use in `TODO-07-time-filetime-management.md §3` (`rdtsc_ns` path) for nanosecond-accurate per-CPU timestamps; XREF noted in Inputs
 - [ ] BSP: also write `IA32_TSC_AUX` with CPU 0 during Phase 1 init
 
 - [ ] Commit: `"kernel/cpu: OSVW errata table, RDTSCP per-CPU IA32_TSC_AUX setup"`
@@ -392,12 +391,9 @@ After §1 through §11 done and §2 through §10 plus §12 through §13 planned,
 
 ## 11. Virtualization Detection (AMD-V + Intel VT-x)
 
-AMD SVM / Intel VMX capability reporting
-
-- [x] AMD SVM: CPUID 0x8000000A parsed; revision, NPT, ASIDs logged
+- [x] AMD SVM / Intel VMX capability reporting: AMD SVM: CPUID 0x8000000A parsed; revision, NPT, ASIDs logged
 - [x] Intel VT-x: `CPU_FEATURE_VMX` added (CPUID.1:ECX[5]); `IA32_FEATURE_CONTROL` MSR read for lock + enable status
 - [x] Exposed via `cpu_has(CPU_FEATURE_SVM)` / `cpu_has(CPU_FEATURE_VMX)` (detection only)
-
 - [x] Commit: `"kernel/cpu: AMD SVM + Intel VT-x capability detection and logging"`
 
 **Test checkpoint:** Boot log shows AMD SVM or Intel VMX lines matching `cpuid -1` expectations on real silicon; `cpu_has` agrees with known host type. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
@@ -507,3 +503,4 @@ AMD SVM / Intel VMX capability reporting
 | 2026-04-12 | gap-analysis | Reciprocal sync from `TODO-17` gap analysis: scope bullet now records live NX + `vmm_apply_nx_policy()`, partial SMEP/SMAP (`hv_supports_cr4_smep_smap()` forces skip), and missing IDT `clac` until SMAP is real. |
 | 2026-04-12 | validate | §9 through §13: Commit before **Test checkpoint**; replaced spaced hyphen pairs used as sentence glue; §12 SIMD bullet joined; Unit Tests + Verification **Test checkpoint** blocks; History wording fix for §2 through §12. **Parity gaps (Win11+Linux strong, Impossible not done):** §2 AVX-512 throttle, §4 UMIP+PKU, §5 WC+1G, §6 FRED+LKGS, §7 topology, §8 PMC, §9 OSVW+TSC_AUX, §10 IBS, §12 boot tune. **Blocked / external:** T06 §3 (FRED vs IRQL), T07 §2 (RDTSCP consumer), T13 §4 (HwProfile registry), D03 memory + D08 shell deferrals per Inputs. |
 | 2026-04-12 | gap-analysis | Web: Win UMIP/Linux PKU docs, Linux FRED merge 6.9 (LWN), kernel.org protection-keys, perf-amd-ibs. Code-truth: §3 MSR bullet narrowed; new follow-up for `cpu_security.c` raw `rdmsr`; §1 documents FXSAVE fallback in `task.c`; PKS row + scope defer to T17; reciprocal note in T17 IMPORTANT. **Parity gaps unchanged** except explicit PKS tracking. **Flags:** §1 item count >10 (mostly done); §5 PAT+FB touches MTRR/MMIO gotchas from `CLAUDE.md`. |
+| 2026-04-12 | validate | IMPORTANT callout joined (no blank inside); Inputs T07 XREF §2 to §3 + Impl row 9 `T07 §3`; Outcome XSAVE vs FXSAVE truth; scope `D03`/`D08` shorthands; §11 orphan prose merged into first `[x]`; table column scan OK; **blocked:** §6 on `T06 §3` open, §9 on `T07 §3` consumer wiring; parity gaps unchanged from prior validate row. |
