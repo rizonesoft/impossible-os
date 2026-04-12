@@ -122,7 +122,7 @@ static void xhci_bios_handoff(struct xhci_controller *hc)
                     return;
                 }
                 xhci_delay_us(1000);  /* 1ms */
-                if ((timeout % 100) == 0)
+                if ((timeout % 50) == 0)
                     spinner_advance();
                 timeout--;
             }
