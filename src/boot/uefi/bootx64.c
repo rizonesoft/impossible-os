@@ -4854,9 +4854,70 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     else
         serial_early_print("[BOOT] Boot device is fixed\n");
 
-    if (!g_boot_info_ptr->boot_media_present)
+    if (!g_boot_info_ptr->boot_media_present) {
+        /* Warning only -- boot_fatal would be a false positive on partition
+         * handles where firmware reports stale MediaPresent. We already
+         * loaded the bootloader from this device, so media IS present. */
         serial_early_print("[WARN] Boot media not present "
-                           "(reported by firmware)\n");
+                           "(reported by firmware -- may be stale)\n");
+    }
+
+    /* §11: Pre-boot device health check -- read capacity, ReadOnly, and
+     * LogicalPartition from BlockIO.Media. This is an exclusive feature:
+     * neither Windows nor Linux checks disk health at the bootloader stage. */
+    if (g_boot_device_handle) {
+        EFI_GUID hc_bio_guid = EFI_BLOCK_IO_PROTOCOL_GUID;
+        EFI_BLOCK_IO_PROTOCOL *hc_bio = (EFI_BLOCK_IO_PROTOCOL *)0;
+        EFI_STATUS hc_s;
+
+        hc_s = gBS->HandleProtocol(g_boot_device_handle, &hc_bio_guid,
+                                    (VOID **)&hc_bio);
+        if (!EFI_ERROR(hc_s) && hc_bio && hc_bio->Media) {
+            EFI_BLOCK_IO_MEDIA *m = hc_bio->Media;
+            UINT64 total_bytes = 0;
+            UINT32 mib = 0;
+
+            /* Compute capacity: (LastBlock + 1) * BlockSize.
+             * Guard against BlockSize==0 and LastBlock==UINT64_MAX overflow. */
+            if (m->BlockSize > 0 && m->LastBlock < 0xFFFFFFFFFFFFFFFFULL) {
+                UINT64 blocks = m->LastBlock + 1;
+                /* Overflow check: blocks * BlockSize must fit UINT64 */
+                if (blocks <= 0xFFFFFFFFFFFFFFFFULL / (UINT64)m->BlockSize)
+                    total_bytes = blocks * (UINT64)m->BlockSize;
+                mib = (UINT32)(total_bytes / (1024 * 1024));
+            }
+
+            /* Log capacity with device type */
+            serial_early_print("[BOOT] Boot disk: ");
+            {
+                char nb[20];
+                UINT32 v = mib;
+                int n = 0;
+                if (v == 0) nb[n++] = '0';
+                else { while (v > 0 && n < 20) { nb[n++] = '0' + (char)(v % 10); v /= 10; } }
+                while (n > 0) serial_early_putchar(nb[--n]);
+            }
+            serial_early_print(" MiB (");
+            {
+                static const char *tn[] = {"unknown","SATA","NVMe","USB","network"};
+                UINT8 t = g_boot_info_ptr->boot_device_type;
+                serial_early_print(t <= 4 ? tn[t] : "?");
+            }
+            serial_early_print(")\n");
+
+            /* ReadOnly warning: abnormal on fixed non-USB disks */
+            if (m->ReadOnly && g_boot_info_ptr->boot_device_type != 3) {
+                serial_early_print("[WARN] Boot disk is read-only "
+                                   "-- possible hardware failure\n");
+            }
+
+            /* LogicalPartition info (diagnostic) */
+            if (m->LogicalPartition) {
+                serial_early_print("[BOOT] Boot device is a logical partition "
+                                   "(not whole disk)\n");
+            }
+        }
+    }
 
     /* §6: Read UEFI boot variables (BootCurrent, BootOrder, BootNext).
      * RuntimeServices->GetVariable is available before ExitBootServices. */
