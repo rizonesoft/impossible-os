@@ -43,7 +43,7 @@
  *   - Bootloader writes sizeof(struct boot_info) into header.size at
  *     compile time -- a size mismatch means the structs diverged. */
 #define BOOT_INFO_MAGIC    0x49504F53  /* "IPOS" (Impossible OS) */
-#define BOOT_INFO_VERSION  2           /* §3: added boot_device_type + boot_device_path */
+#define BOOT_INFO_VERSION  3           /* §6: added UEFI boot variables */
 
 /* Upper bound for pre-copy address validation: the UEFI bootloader
  * identity-maps [0, 4 GiB) with 2 MiB pages in setup_page_tables()
@@ -486,6 +486,14 @@ struct boot_info {
     uint8_t  boot_device_type;      /* 0=unknown, 1=SATA, 2=NVMe, 3=USB, 4=network */
     uint8_t  _boot_dev_pad[3];      /* alignment */
     char     boot_device_path[128]; /* UEFI device path text (DevicePathToText) */
+
+    /* UEFI boot variables (§6: read pre-ExitBootServices) */
+    uint16_t uefi_boot_current;     /* BootCurrent: firmware-selected Boot#### entry */
+    uint16_t uefi_boot_next;        /* BootNext: one-shot override (0xFFFF = not set) */
+    uint8_t  uefi_boot_next_valid;  /* 1 if BootNext was present */
+    uint8_t  uefi_boot_order_count; /* number of valid entries in uefi_boot_order[] */
+    uint8_t  _boot_var_pad[2];      /* alignment */
+    uint16_t uefi_boot_order[16];   /* first 16 entries of BootOrder variable */
 
     /* Kernel-populated fields (set after boot; never written by the bootloader) */
     uint8_t  secure_boot_enabled;   /* 1 if Secure Boot is active (uefi_secureboot_init) */

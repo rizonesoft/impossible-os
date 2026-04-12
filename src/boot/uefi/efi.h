@@ -765,6 +765,11 @@ typedef struct {
     UINT8  Length[2];   /* little-endian 16-bit length */
 } EFI_DEVICE_PATH_PROTOCOL;
 
+/* UEFI Global Variable GUID (§6: BootOrder, BootCurrent, BootNext) */
+#define EFI_GLOBAL_VARIABLE_GUID \
+    { 0x8BE4DF61, 0x93CA, 0x11D2, \
+      { 0xAA, 0x0D, 0x00, 0xE0, 0x98, 0x03, 0x2B, 0x8C } }
+
 /* Device path node type/subtype constants (§4: boot device type detection) */
 #define EFI_DP_TYPE_MESSAGING    0x03
 #define EFI_DP_TYPE_MEDIA        0x04

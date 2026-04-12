@@ -194,7 +194,7 @@ struct boot_usb_controller {
 
 /* ABI header (S15) -- must match kernel/boot_info.h */
 #define BOOT_INFO_MAGIC    0x49504F53  /* "IPOS" */
-#define BOOT_INFO_VERSION  2  /* §3: added boot_device_type + boot_device_path */
+#define BOOT_INFO_VERSION  3  /* §6: added UEFI boot variables */
 
 struct boot_info_header {
     UINT32 magic;
@@ -286,6 +286,14 @@ struct boot_info {
     UINT8   boot_device_type;       /* 0=unknown, 1=SATA, 2=NVMe, 3=USB, 4=network */
     UINT8   _boot_dev_pad[3];
     char    boot_device_path[128];  /* UEFI device path text */
+
+    /* UEFI boot variables (§6) */
+    UINT16  uefi_boot_current;
+    UINT16  uefi_boot_next;
+    UINT8   uefi_boot_next_valid;
+    UINT8   uefi_boot_order_count;
+    UINT8   _boot_var_pad[2];
+    UINT16  uefi_boot_order[16];
 
     /* Kernel-populated fields (set after boot) */
     UINT8   secure_boot_enabled;
@@ -4731,6 +4739,77 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                 serial_early_print("[BOOT] Boot device type: ");
                 serial_early_print(t <= 4 ? type_names[t] : "invalid");
                 serial_early_print("\n");
+            }
+        }
+    }
+
+    /* §6: Read UEFI boot variables (BootCurrent, BootOrder, BootNext).
+     * RuntimeServices->GetVariable is available before ExitBootServices. */
+    {
+        EFI_GUID global_guid = EFI_GLOBAL_VARIABLE_GUID;
+        EFI_RUNTIME_SERVICES *rt = gST->RuntimeServices;
+        UINT32 attrs = 0;
+
+        /* Defaults */
+        g_boot_info_ptr->uefi_boot_current = 0xFFFF;
+        g_boot_info_ptr->uefi_boot_next = 0xFFFF;
+        g_boot_info_ptr->uefi_boot_next_valid = 0;
+        g_boot_info_ptr->uefi_boot_order_count = 0;
+
+        if (rt && rt->GetVariable) {
+            /* BootCurrent (UINT16) */
+            {
+                UINT16 bc = 0;
+                UINTN sz = sizeof(bc);
+                EFI_STATUS vs = rt->GetVariable(
+                    u"BootCurrent", &global_guid, &attrs, &sz, &bc);
+                if (!EFI_ERROR(vs) && sz == sizeof(bc)) {
+                    g_boot_info_ptr->uefi_boot_current = bc;
+                    serial_early_print("[BOOT] BootCurrent=0x");
+                    serial_early_print_hex16(bc);
+                    serial_early_print("\n");
+                }
+            }
+
+            /* BootOrder (UINT16 array -- read full, store first 16).
+             * Use a 128-entry stack buffer so GetVariable succeeds even
+             * on firmware with large boot menus (>16 entries). */
+            {
+                UINT16 order[128];
+                UINTN sz = sizeof(order);
+                EFI_STATUS vs = rt->GetVariable(
+                    u"BootOrder", &global_guid, &attrs, &sz, order);
+                if (!EFI_ERROR(vs) && sz >= 2) {
+                    UINTN count = sz / 2;
+                    if (count > 16) count = 16;
+                    g_boot_info_ptr->uefi_boot_order_count = (UINT8)count;
+                    UINTN oi;
+                    for (oi = 0; oi < count; oi++)
+                        g_boot_info_ptr->uefi_boot_order[oi] = order[oi];
+
+                    serial_early_print("[BOOT] BootOrder=[");
+                    for (oi = 0; oi < count; oi++) {
+                        if (oi > 0) serial_early_print(",");
+                        serial_early_print("0x");
+                        serial_early_print_hex16(order[oi]);
+                    }
+                    serial_early_print("]\n");
+                }
+            }
+
+            /* BootNext (UINT16, optional one-shot override) */
+            {
+                UINT16 bn = 0;
+                UINTN sz = sizeof(bn);
+                EFI_STATUS vs = rt->GetVariable(
+                    u"BootNext", &global_guid, &attrs, &sz, &bn);
+                if (!EFI_ERROR(vs) && sz == sizeof(bn)) {
+                    g_boot_info_ptr->uefi_boot_next = bn;
+                    g_boot_info_ptr->uefi_boot_next_valid = 1;
+                    serial_early_print("[BOOT] BootNext=0x");
+                    serial_early_print_hex16(bn);
+                    serial_early_print(" (one-shot override)\n");
+                }
             }
         }
     }

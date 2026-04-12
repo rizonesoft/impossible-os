@@ -3,7 +3,7 @@
 > **Goal:** The bootloader must correctly identify which device it booted from, load the kernel and `boot.conf` from that device (not a random filesystem), and support a priority-based fallback chain across SATA, NVMe, USB, and network devices. **Today** `parse_boot_conf()` still uses the first `LocateProtocol(SIMPLE_FILE_SYSTEM)` handle, and there is no cross-volume fallback -- risks wrong-disk config on multi-disk systems even though `load_kernel()` already prefers LoadedImage. Windows uses the BCD store + Loaded Image device path; GRUB uses device enumeration + search; Linux exposes boot entries via `efibootmgr`. This TODO finishes boot device identification, fallback, UEFI boot variables (BootOrder, BootCurrent, BootNext, optional Boot#### decode), partition GUID validation, removable media detection, boot device Registry population, and a pre-boot device health check so the OS boots reliably on any hardware configuration and exposes complete boot provenance to the kernel.
 
 > [!IMPORTANT]
-> **Current state (code-truth 2026-04-12):** §1-§5 done -- `g_boot_device_handle` global, scoped filesystem access, device type classification, device path in boot_info, multi-volume fallback chain. BOOT_INFO_VERSION=2. **Not implemented:** boot variables (§6), partition GUID (§7), removable detection (§8), Registry (§9), enumeration log (§10), health check (§11), Boot#### decode (§12).
+> **Current state (code-truth 2026-04-12):** §1-§6 done -- `g_boot_device_handle` global, scoped FS, device type, device path, fallback chain, BootCurrent/BootOrder/BootNext in boot_info. BOOT_INFO_VERSION=3. **Not implemented:** partition GUID (§7), removable detection (§8), Registry (§9), enumeration log (§10), health check (§11), Boot#### decode (§12).
 
 ---
 
@@ -45,7 +45,7 @@
 | 💎  |   3   | Boot device info in boot_info struct               | §1             |  [x]   |
 | 💎  |   4   | Boot device type detection (SATA/NVMe/USB/Net)     | §3             |  [x]   |
 | 💎  |   5   | Device fallback chain (priority-based)             | §2, §4         |  [x]   |
-| 💎  |   6   | UEFI boot variable reading (BootOrder/Current/Next)| §1             |  [ ]   |
+| 💎  |   6   | UEFI boot variable reading (BootOrder/Current/Next)| §1             |  [/]   |
 | 💎  |   7   | Partition GUID extraction and validation           | §1             |  [ ]   |
 | 💎  |   8   | Removable media detection                          | §1, §4         |  [ ]   |
 | 💎  |   9   | Boot device Registry population                    | §3, §4, §7, §8 |  [ ]   |
@@ -162,12 +162,12 @@ If the boot device's kernel is missing or corrupt, try other devices in priority
 
 Read UEFI global boot variables so the bootloader knows which firmware boot entry was selected and whether a one-shot boot was requested. Windows reads these via BCD abstractions; Linux reads them via efibootmgr/efivarfs. Every production bootloader must honor BootNext for firmware update reboot flows.
 
-- [ ] Add `EFI_GLOBAL_VARIABLE` GUID to `efi.h`: `{8BE4DF61-93CA-11D2-AA0D-00E098032B8C}` (needed for all UEFI global variable reads)
-- [ ] Read `BootCurrent` (UEFI global variable, UINT16): identifies which `Boot####` entry firmware selected for this boot; store in `boot_info.uefi_boot_current`
-- [ ] Read `BootOrder` (UEFI global variable, UINT16 array): firmware priority list; store first 16 entries in `boot_info.uefi_boot_order[16]` with `boot_info.uefi_boot_order_count`
-- [ ] Read `BootNext` (UEFI global variable, UINT16): if present, this is a one-shot boot override; store in `boot_info.uefi_boot_next` with `boot_info.uefi_boot_next_valid = 1`
-- [ ] If `BootNext` is set: log `"[BOOT] BootNext=0x%04x (one-shot override)"` -- firmware deletes this variable after reading it, but log its presence for diagnostics
-- [ ] Log: `"[BOOT] BootCurrent=0x%04x, BootOrder=[0x%04x, 0x%04x, ...]"` with variable contents
+- [x] Add `EFI_GLOBAL_VARIABLE` GUID to `efi.h`: `EFI_GLOBAL_VARIABLE_GUID {8BE4DF61-93CA-11D2-AA0D-00E098032B8C}` at `efi.h:762`
+- [x] Read `BootCurrent` (UINT16): `rt->GetVariable(u"BootCurrent", ...)` -> `boot_info.uefi_boot_current` -- `bootx64.c` efi_main §6 block
+- [x] Read `BootOrder` (UINT16 array, up to 16): `rt->GetVariable(u"BootOrder", ...)` -> `boot_info.uefi_boot_order[16]` with count -- capped at 16 entries
+- [x] Read `BootNext` (UINT16, optional): `rt->GetVariable(u"BootNext", ...)` -> `boot_info.uefi_boot_next` with `uefi_boot_next_valid=1` if present
+- [x] If `BootNext` is set: `"[BOOT] BootNext=0x%04x (one-shot override)"` logged
+- [x] Log: `"[BOOT] BootCurrent=0x%04x"` and `"[BOOT] BootOrder=[0x%04x,0x%04x,...]"` logged separately for clarity
 - [ ] Commit: `"boot: read UEFI boot variables -- BootOrder, BootCurrent, BootNext"`
 
 **Test checkpoint:** Serial shows `"BootCurrent=0x0000"` (or valid entry number) on all UEFI platforms. `boot_info.uefi_boot_order_count > 0` on real firmware. On QEMU OVMF: BootOrder may be empty (acceptable).
@@ -282,9 +282,9 @@ Firmware boot entry **`Boot####`** variables hold an **`EFI_LOAD_OPTION`**: attr
 | 💎   | Boot device identification  | ✅ BCD + device path          | ✅ GRUB search command   | ✅ §1-§2 done |
 | 💎   | Multi-device fallback       | ✅ BCD boot order             | ✅ GRUB menu entries     | ✅ §5 done |
 | 💎   | Boot device type in kernel  | ✅ Registry boot info         | ✅ /proc/cmdline root=   | ✅ §3-§4 done |
-| 💎   | Boot variable reading       | ✅ BCD reads BootOrder        | ✅ efibootmgr/efivarfs   | ⬜ §6            |
+| 💎   | Boot variable reading       | ✅ BCD reads BootOrder        | ✅ efibootmgr/efivarfs   | ✅ §6 done |
 | 💎   | Boot#### option decode      | ✅ BCD / bcdedit              | ✅ efibootmgr -v         | ⬜ §12           |
-| 💎   | BootNext one-shot boot      | ✅ SetFirmwareEnvVar          | ✅ efibootmgr -n         | ⬜ §6            |
+| 💎   | BootNext one-shot boot      | ✅ SetFirmwareEnvVar          | ✅ efibootmgr -n         | ✅ §6 done |
 | 💎   | Partition GUID validation   | ✅ BCD disk signature         | ✅ root=PARTUUID=        | ⬜ §7            |
 | 💎   | Removable media detection   | ✅ DriveType removable        | ✅ sysfs removable flag  | ⬜ §8            |
 | 💎   | Boot device Registry        | ✅ HKLM Enum + MountedDevices | ✅ /sys/firmware/efi     | ⬜ §9            |
