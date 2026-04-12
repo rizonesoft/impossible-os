@@ -48,7 +48,7 @@ typedef struct {
     uint8_t     _pad[3];    /* alignment padding */
     uint32_t    pid;        /* process ID (0 during boot) */
     uint32_t    tid;        /* thread ID (0 during boot) */
-    char        message[128];
+    char        message[256];
 } klog_entry_t;
 
 /* Get pointer to ring buffer and current count.

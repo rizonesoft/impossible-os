@@ -842,8 +842,8 @@ void klog(log_level_t level, const char *subsystem, const char *fmt, ...)
      * serial_write() holds its own spinlock for the entire string. */
     {
         /* Line format: "[  X.XXX] [LEVEL] subsystem: message\n"
-         * Max size: 11 (ts) + 7 (level) + 16 (subsys+": ") + 128 (msg) + 2 = 164 */
-        char line[256];
+         * Max size: 11 (ts) + 7 (level) + 16 (subsys+": ") + 256 (msg) + ANSI ~40 = 330 */
+        char line[512];
         uint32_t pos = 0;
 
         #define LP(c) do { if (pos < sizeof(line)-1) line[pos++] = (c); } while(0)
