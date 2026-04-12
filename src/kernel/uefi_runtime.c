@@ -479,63 +479,41 @@ boot_result_t uefi_vars_init(void)
     uint32_t total = 0;
     uefi_var_enumerate(count_var_cb, &total);
 
-    /* Try to read BootOrder */
-    struct boot_uefi_guid global_guid = EFI_GLOBAL_VARIABLE_GUID;
-    static const uint16_t boot_order_name[] = {
-        'B','o','o','t','O','r','d','e','r', 0
-    };
-
-    uint8_t order_buf[32];  /* max 16 boot entries */
-    uint64_t order_size = sizeof(order_buf);
-    uint32_t attrs = 0;
-
-    efi_status_t status = uefi_get_variable(
-        &global_guid, boot_order_name, &attrs, &order_size, order_buf);
-
-    if (status == UEFI_SUCCESS && order_size >= 2) {
-        uint16_t *order = (uint16_t *)order_buf;
-        uint32_t num_entries = (uint32_t)(order_size / 2);
-
-        /* Build BootOrder string for logging */
-        char order_str[64];
-        uint32_t pos = 0;
-        uint32_t e;
-        for (e = 0; e < num_entries && pos < sizeof(order_str) - 6; e++) {
-            if (e > 0 && pos < sizeof(order_str) - 1)
-                order_str[pos++] = ',';
-            /* Format as 4-digit hex */
-            uint16_t val = order[e];
-            order_str[pos++] = "0123456789ABCDEF"[(val >> 12) & 0xF];
-            order_str[pos++] = "0123456789ABCDEF"[(val >> 8) & 0xF];
-            order_str[pos++] = "0123456789ABCDEF"[(val >> 4) & 0xF];
-            order_str[pos++] = "0123456789ABCDEF"[val & 0xF];
+    /* BootOrder and BootCurrent: use boot_info fields populated by the
+     * bootloader pre-ExitBootServices (TODO-03 §6) instead of re-reading
+     * via runtime services.  Avoids duplicate firmware calls and works
+     * even if runtime variable services are degraded. */
+    {
+        uint8_t count = g_boot_info.uefi_boot_order_count;
+        if (count > 0) {
+            char order_str[96];
+            uint32_t pos = 0;
+            uint8_t e;
+            for (e = 0; e < count && pos < sizeof(order_str) - 6; e++) {
+                if (e > 0 && pos < sizeof(order_str) - 1)
+                    order_str[pos++] = ',';
+                uint16_t val = g_boot_info.uefi_boot_order[e];
+                order_str[pos++] = "0123456789ABCDEF"[(val >> 12) & 0xF];
+                order_str[pos++] = "0123456789ABCDEF"[(val >> 8) & 0xF];
+                order_str[pos++] = "0123456789ABCDEF"[(val >> 4) & 0xF];
+                order_str[pos++] = "0123456789ABCDEF"[val & 0xF];
+            }
+            order_str[pos] = '\0';
+            klog(LOG_INFO, "UEFI", "NVRAM: %u variables, BootOrder=[%s]",
+                 total, order_str);
+        } else {
+            klog(LOG_INFO, "UEFI", "NVRAM: %u variables (BootOrder not available)",
+                 total);
         }
-        order_str[pos] = '\0';
-
-        klog(LOG_INFO, "UEFI", "NVRAM: %u variables, BootOrder=[%s]",
-             total, order_str);
-    } else {
-        klog(LOG_INFO, "UEFI", "NVRAM: %u variables (BootOrder not available)",
-             total);
     }
 
-    /* Try to read BootCurrent */
-    static const uint16_t boot_current_name[] = {
-        'B','o','o','t','C','u','r','r','e','n','t', 0
-    };
-    uint16_t boot_current = 0;
-    uint64_t bc_size = sizeof(boot_current);
-    attrs = 0;
-
-    status = uefi_get_variable(
-        &global_guid, boot_current_name, &attrs, &bc_size, &boot_current);
-
-    if (status == UEFI_SUCCESS) {
+    if (g_boot_info.uefi_boot_current != 0xFFFF) {
+        uint16_t bc = g_boot_info.uefi_boot_current;
         char bc_str[5];
-        bc_str[0] = "0123456789ABCDEF"[(boot_current >> 12) & 0xF];
-        bc_str[1] = "0123456789ABCDEF"[(boot_current >> 8) & 0xF];
-        bc_str[2] = "0123456789ABCDEF"[(boot_current >> 4) & 0xF];
-        bc_str[3] = "0123456789ABCDEF"[boot_current & 0xF];
+        bc_str[0] = "0123456789ABCDEF"[(bc >> 12) & 0xF];
+        bc_str[1] = "0123456789ABCDEF"[(bc >> 8) & 0xF];
+        bc_str[2] = "0123456789ABCDEF"[(bc >> 4) & 0xF];
+        bc_str[3] = "0123456789ABCDEF"[bc & 0xF];
         bc_str[4] = '\0';
         klog(LOG_INFO, "UEFI", "BootCurrent: Boot%s", bc_str);
     }

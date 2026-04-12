@@ -89,7 +89,7 @@ Thin wrappers around `gRT->GetVariable` / `SetVariable` with error translation.
 - [x] `uefi_var_enumerate(callback)` for iterating all variables
 - [x] Win32 API wired: `NtQuerySystemEnvironmentValue[Ex]` (0x00D2-0x00D4) and `NtSetSystemEnvironmentValue[Ex]` (0x00D3-0x00D5) registered in SSDT, mapped to `uefi_get_variable` / `uefi_set_variable`
 - [x] Commit: `"kernel: UEFI variable get/set wrappers"`
-- [ ] Optimization: kernel `uefi_vars_init()` re-reads BootOrder/BootCurrent via runtime services, but these are already in `g_boot_info.uefi_boot_*` (populated pre-EBS by TODO-03 §6). Dedup: use boot_info fields for boot variable logging instead of runtime reads (-> XREF `01-boot-platform/TODO-03 §6`)
+- [x] Optimization: kernel `uefi_vars_init()` now uses `g_boot_info.uefi_boot_*` (populated pre-EBS by TODO-03 §6) instead of re-reading BootOrder/BootCurrent via runtime services -- removes 2 GetVariable calls, works even if runtime services are degraded
 
 **Test checkpoint:** `uefi_var_get(L"SecureBoot", ...)` returns success or not-found without crash; test GUID roundtrip via `uefi_var_set_u32` / `uefi_var_get_u32` survives reboot when NVRAM allows. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
