@@ -4622,7 +4622,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                 UINTN walked = 0;
                 #define DP_MAX_WALK 1024  /* sane upper bound for device paths */
 
-                while (walked < DP_MAX_WALK &&
+                while (walked + 4 <= DP_MAX_WALK &&
                        node->Type != EFI_DP_TYPE_END) {
                     node_len = (UINT16)node->Length[0] |
                                ((UINT16)node->Length[1] << 8);

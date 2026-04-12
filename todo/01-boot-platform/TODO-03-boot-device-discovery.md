@@ -43,7 +43,7 @@
 | 💎  |   1   | Boot device identification via LoadedImage         | --             |  [x]   |
 | 💎  |   2   | Filesystem access scoped to boot device            | §1             |  [x]   |
 | 💎  |   3   | Boot device info in boot_info struct               | §1             |  [x]   |
-| 💎  |   4   | Boot device type detection (SATA/NVMe/USB/Net)     | §3             |  [/]   |
+| 💎  |   4   | Boot device type detection (SATA/NVMe/USB/Net)     | §3             |  [x]   |
 | 💎  |   5   | Device fallback chain (priority-based)             | §2, §4         |  [ ]   |
 | 💎  |   6   | UEFI boot variable reading (BootOrder/Current/Next)| §1             |  [ ]   |
 | 💎  |   7   | Partition GUID extraction and validation           | §1             |  [ ]   |
@@ -125,9 +125,12 @@ Classify the boot device as SATA, NVMe, USB, or network based on the device path
 - [x] Parse UEFI device path nodes: walk nodes until end marker, match Messaging subtypes to SATA/NVMe/USB/network -- `bootx64.c` efi_main §4 block with `node_len < 4` malformed-node guard
 - [x] If device path parsing unavailable: type stays 0 (unknown) -- PciIo fallback not implemented (device path Messaging nodes are present on all real UEFI firmware; PciIo adds complexity for a path that never fires)
 - [x] Store result in `boot_info.boot_device_type` -- written directly in the walk loop
-- [ ] Commit: `"boot: detect boot device type from UEFI device path"`
+- [x] Commit: `"boot: detect boot device type from UEFI device path"` (50049dd7)
 
 **Test checkpoint:** USB boot → `boot_device_type=3`, SATA boot → `boot_device_type=1`. Verify on bare metal USB and SATA -- device path node structure varies by firmware vendor.
+
+> **Verified:** 2026-04-12 -- all 5 items confirmed. Device path node constants in `efi.h:769-781`. Bounded walk (1024 bytes, header-safe `walked+4<=cap`) in `bootx64.c:4618-4656`. Type stored in `boot_info.boot_device_type`. Serial log: `"[BOOT] Boot device type: SATA"`. Codex adversarial: walk cap tightened from `walked<1024` to `walked+4<=1024`. Multi-instance END rejected (HandleProtocol returns single-instance paths per UEFI 10.3.1). Accepted: none.
+> **Quality reviewed:** 2026-04-12 -- boot-code-quality gates walked. Codex quality: `EFI_DP_TYPE_MEDIA`/`EFI_DP_MEDIA_HARDDRIVE`/`EFI_DP_SUBTYPE_END_ENTIRE` forward-reserved for §7 (partition GUID). Constants match UEFI spec Table 10-1/10-47. O(n) bounded walk, one-time at boot. Accepted: none.
 
 ---
 
