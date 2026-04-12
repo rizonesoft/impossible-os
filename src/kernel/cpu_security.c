@@ -147,13 +147,7 @@ void cpu_verify_hardening(void)
     POST16(0xD900);
 
     /* Verify NX (EFER.NXE, bit 11) */
-    __asm__ volatile("rdmsr" : "=a"((uint32_t){0}), "=d"((uint32_t){0})
-                     : "c"(0xC0000080));
-    {
-        uint32_t lo, hi;
-        __asm__ volatile("rdmsr" : "=a"(lo), "=d"(hi) : "c"(0xC0000080));
-        efer = ((uint64_t)hi << 32) | lo;
-    }
+    efer = msr_read(MSR_IA32_EFER);
     if (cpu_has(CPU_FEATURE_NX)) {
         if (efer & (1ULL << 11))
             klog(LOG_INFO, "cpu", "Verify: NX enabled (EFER.NXE set)");
