@@ -1520,7 +1520,7 @@ static void bsod_render_graphical(UINT32 err_code, const char *title,
     /* 3. Title (36px Selawik Semibold), centered horizontally.
      *    Positioned 20px below the icon bottom (icon at y=30, h=100). */
     {
-        const char *t = "We tried. We really did.";
+        const char *t = "This wasn't supposed to happen.";
         UINT32 w = bsod_aa_string_width(t, bsod_aa_TITLE);
         UINT32 x = (gFbWidth > w) ? (gFbWidth - w) / 2 : 8;
         AA_TITLE(x, 150, t, 0xFF, 0xFF, 0xFF);
@@ -1560,11 +1560,11 @@ static void bsod_render_graphical(UINT32 err_code, const char *title,
     }
 
     /* 6. Recovery hint lines (16px body font). */
-    AA_BODY(80, 390, "What to try:", 0xFF, 0xFF, 0xFF);
-    AA_BODY(100, 414, "- Check boot media is inserted", 0xB2, 0xD8, 0xFF);
-    AA_BODY(100, 438, "- Verify \\boot\\kernel.exe exists", 0xB2, 0xD8, 0xFF);
-    AA_BODY(100, 462, "- Scan the QR code for recovery help", 0xB2, 0xD8, 0xFF);
-    AA_BODY(100, 486, "- Press any key to reboot", 0xB2, 0xD8, 0xFF);
+    AA_BODY(80, 390, "Here's what you can do:", 0xFF, 0xFF, 0xFF);
+    AA_BODY(100, 414, "- Make sure your boot drive is connected", 0xB2, 0xD8, 0xFF);
+    AA_BODY(100, 438, "- Check that \\boot\\kernel.exe is on the drive", 0xB2, 0xD8, 0xFF);
+    AA_BODY(100, 462, "- Scan the QR code below for help", 0xB2, 0xD8, 0xFF);
+    AA_BODY(100, 486, "- Press any key to restart", 0xB2, 0xD8, 0xFF);
 
 #undef AA_TITLE
 #undef AA_SUB
