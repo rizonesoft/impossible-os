@@ -49,7 +49,7 @@
 | 💎  |   7   | Partition GUID extraction and validation           | §1             |  [x]   |
 | 💎  |   8   | Removable media detection                          | §1, §4         |  [x]   |
 | 💎  |   9   | Boot device Registry population                    | §3, §4, §7, §8 |  [x]   |
-| ⭐  |  10   | Boot device logging and diagnostics                | §1--§9, §12    |  [/]   |
+| ⭐  |  10   | Boot device logging and diagnostics                | §1--§9, §12    |  [x]   |
 | ⭐  |  11   | Pre-boot device health check                       | §1, §7         |  [ ]   |
 | 💎  |  12   | Boot#### `EFI_LOAD_OPTION` decode (diagnostics)    | §6             |  [ ]   |
 
@@ -246,9 +246,12 @@ Log the full boot device enumeration to serial for debugging. This is the compre
 - [x] If `BootNext` was set -- already logged in §6 block above (`[BOOT] BootNext=0x... (one-shot override)`)
 - [x] Log partition GUID for boot device -- already logged in §7 block above (`[BOOT] Boot partition: GUID=...`)
 - [x] Summary line: `"[BOOT] Device summary: N devices found, boot=SATA (fixed)"` with device count and type/removable status
-- [ ] Commit: `"boot: comprehensive boot device enumeration logging"`
+- [x] Commit: `"boot: comprehensive boot device enumeration logging"` (93005d23)
 
 **Test checkpoint:** Serial output shows numbered list of all available boot devices with kernel presence status, device type, and removable flag. Summary line present. Verify on QEMU multi-disk and bare metal.
+
+> **Verified:** 2026-04-12 -- all 8 items confirmed. LocateHandleBuffer enumeration at `bootx64.c:4946`. Per-handle: Open/Close kernel check, BlockIO tri-state removable, DevicePathToText 80-char. Boot device marked *BOOT*. Summary with nb[20] buffer. BootCurrent/BootOrder/BootNext from S6. Partition GUID from S7. Codex adversarial: approved, no findings. Accepted: unconditional probe (watchdog guards, gatable later if needed).
+> **Quality reviewed:** 2026-04-12 -- boot-code-quality 13 gates walked. No dead GUIDs. O(n) enumeration. Tri-state removable per G13 spec compliance. Exclusive feature -- neither Windows nor Linux logs full device enumeration at bootloader level. Accepted: none.
 
 ---
 
