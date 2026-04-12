@@ -216,7 +216,7 @@ static void blit_char(volatile uint32_t *fb, uint32_t pitch_px,
         for (uint32_t col = 0; col < FONT_W; col++) {
             uint32_t x = px + col;
             if (x >= fb_w) break;
-            if (bits & (0x80u >> col))
+            if (bits & (1u << col))
                 fb[y * pitch_px + x] = color;
         }
     }

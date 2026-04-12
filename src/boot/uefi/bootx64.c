@@ -1422,7 +1422,7 @@ static void bsod_blit_char(UINT32 px, UINT32 py, unsigned char ch,
     for (row = 0; row < BSOD_FONT_H; row++) {
         UINT8 bits = glyph[row];
         for (col = 0; col < BSOD_FONT_W; col++) {
-            if ((bits & (0x80u >> col)) == 0) continue;
+            if ((bits & (1u << col)) == 0) continue;
             for (sy = 0; sy < scale; sy++) {
                 UINT32 y = py + row * scale + sy;
                 if (y >= gFbHeight) break;
