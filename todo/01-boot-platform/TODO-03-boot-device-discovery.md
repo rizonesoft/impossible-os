@@ -3,7 +3,7 @@
 > **Goal:** The bootloader must correctly identify which device it booted from, load the kernel and `boot.conf` from that device (not a random filesystem), and support a priority-based fallback chain across SATA, NVMe, USB, and network devices. **Today** `parse_boot_conf()` still uses the first `LocateProtocol(SIMPLE_FILE_SYSTEM)` handle, and there is no cross-volume fallback -- risks wrong-disk config on multi-disk systems even though `load_kernel()` already prefers LoadedImage. Windows uses the BCD store + Loaded Image device path; GRUB uses device enumeration + search; Linux exposes boot entries via `efibootmgr`. This TODO finishes boot device identification, fallback, UEFI boot variables (BootOrder, BootCurrent, BootNext, optional Boot#### decode), partition GUID validation, removable media detection, boot device Registry population, and a pre-boot device health check so the OS boots reliably on any hardware configuration and exposes complete boot provenance to the kernel.
 
 > [!IMPORTANT]
-> **Current state (code-truth 2026-04-12):** §1-§6 done -- `g_boot_device_handle` global, scoped FS, device type, device path, fallback chain, BootCurrent/BootOrder/BootNext in boot_info. BOOT_INFO_VERSION=3. **Not implemented:** partition GUID (§7), removable detection (§8), Registry (§9), enumeration log (§10), health check (§11), Boot#### decode (§12).
+> **Current state (code-truth 2026-04-12):** §1-§7 done -- device handle, scoped FS, device type+path, fallback chain, boot variables, partition GUID. BOOT_INFO_VERSION=4. **Not implemented:** removable detection (§8), Registry (§9), enumeration log (§10), health check (§11), Boot#### decode (§12).
 
 ---
 
@@ -46,7 +46,7 @@
 | 💎  |   4   | Boot device type detection (SATA/NVMe/USB/Net)     | §3             |  [x]   |
 | 💎  |   5   | Device fallback chain (priority-based)             | §2, §4         |  [x]   |
 | 💎  |   6   | UEFI boot variable reading (BootOrder/Current/Next)| §1             |  [x]   |
-| 💎  |   7   | Partition GUID extraction and validation           | §1             |  [ ]   |
+| 💎  |   7   | Partition GUID extraction and validation           | §1             |  [/]   |
 | 💎  |   8   | Removable media detection                          | §1, §4         |  [ ]   |
 | 💎  |   9   | Boot device Registry population                    | §3, §4, §7, §8 |  [ ]   |
 | ⭐  |  10   | Boot device logging and diagnostics                | §1--§9, §12    |  [ ]   |
@@ -181,11 +181,11 @@ Read UEFI global boot variables so the bootloader knows which firmware boot entr
 
 Extract the GPT partition GUID from the boot device's media device path node. This provides a stable, cross-boot identifier for the boot partition -- more reliable than device path text which can change when PCI topology changes. Windows BCD uses disk signature + partition GUID for stable boot volume identification; Linux uses PARTUUID.
 
-- [ ] Walk the boot device's device path: look for `MEDIA_DEVICE_PATH` (Type 0x04) / `MEDIA_HARDDRIVE_DP` (SubType 0x01) node
-- [ ] Extract `PartitionSignature` (16 bytes = GUID for GPT) and `MBRType` (0x02 = GPT, 0x01 = MBR)
-- [ ] Store in `boot_info.boot_partition_guid[16]` (raw GUID bytes) and `boot_info.boot_partition_style` (0=unknown, 1=MBR, 2=GPT)
-- [ ] If GPT: validate GUID is non-zero; if all-zero, log `"[WARN] Boot partition GUID is zero -- firmware may not support GPT"`
-- [ ] Log: `"[BOOT] Boot partition: GUID=%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x (GPT)"` or `"(MBR sig=0x%08x)"`
+- [x] Walk the boot device's device path: look for `MEDIA_DEVICE_PATH` (Type 0x04) / `MEDIA_HARDDRIVE_DP` (SubType 0x01) node -- integrated into §4 walk loop with `node_len >= 42` guard
+- [x] Extract `PartitionSignature` (16 bytes at offset 24 for GPT) and `MBRType` (offset 40: 0x02=GPT, 0x01=MBR) -- per UEFI spec Table 10-58
+- [x] Store in `boot_info.boot_partition_guid[16]` and `boot_info.boot_partition_style` (0=unknown, 1=MBR, 2=GPT) -- `boot_info.h` + `bootx64.c` mirror, BOOT_INFO_VERSION bumped to 4
+- [x] If GPT: validate GUID is non-zero; if all-zero: `"[WARN] Boot partition GUID is zero -- firmware may not support GPT"` logged
+- [x] Log: `"[BOOT] Boot partition: GUID=XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX (GPT)"` or `"(MBR sig=0xXXXXXXXX)"` -- UEFI mixed-endian GUID format
 - [ ] Commit: `"boot: extract and validate boot partition GUID from device path"`
 
 **Test checkpoint:** QEMU SATA boot: serial shows GPT partition GUID matching the EFI system partition GUID in the disk image. `boot_info.boot_partition_style == 2` (GPT) on all modern hardware. MBR systems (if any) show `boot_partition_style == 1`.
@@ -288,7 +288,7 @@ Firmware boot entry **`Boot####`** variables hold an **`EFI_LOAD_OPTION`**: attr
 | 💎   | Boot variable reading       | ✅ BCD reads BootOrder        | ✅ efibootmgr/efivarfs   | ✅ §6 done |
 | 💎   | Boot#### option decode      | ✅ BCD / bcdedit              | ✅ efibootmgr -v         | ⬜ §12           |
 | 💎   | BootNext one-shot boot      | ✅ SetFirmwareEnvVar          | ✅ efibootmgr -n         | ✅ §6 done |
-| 💎   | Partition GUID validation   | ✅ BCD disk signature         | ✅ root=PARTUUID=        | ⬜ §7            |
+| 💎   | Partition GUID validation   | ✅ BCD disk signature         | ✅ root=PARTUUID=        | ✅ §7 done |
 | 💎   | Removable media detection   | ✅ DriveType removable        | ✅ sysfs removable flag  | ⬜ §8            |
 | 💎   | Boot device Registry        | ✅ HKLM Enum + MountedDevices | ✅ /sys/firmware/efi     | ⬜ §9            |
 | ⭐   | Full device enumeration log | ❌ Hidden in Event Log        | ❌ Not logged            | ⬜ §10 🚀         |

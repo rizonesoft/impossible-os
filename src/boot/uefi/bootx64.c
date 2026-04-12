@@ -194,7 +194,7 @@ struct boot_usb_controller {
 
 /* ABI header (S15) -- must match kernel/boot_info.h */
 #define BOOT_INFO_MAGIC    0x49504F53  /* "IPOS" */
-#define BOOT_INFO_VERSION  3  /* §6: added UEFI boot variables */
+#define BOOT_INFO_VERSION  4  /* §7: added boot partition GUID + style */
 
 struct boot_info_header {
     UINT32 magic;
@@ -294,6 +294,11 @@ struct boot_info {
     UINT8   uefi_boot_order_count;
     UINT8   _boot_var_pad[2];
     UINT16  uefi_boot_order[16];
+
+    /* Boot partition info (§7) */
+    UINT8   boot_partition_guid[16];
+    UINT8   boot_partition_style;     /* 0=unknown, 1=MBR, 2=GPT */
+    UINT8   _part_pad[3];
 
     /* Kernel-populated fields (set after boot) */
     UINT8   secure_boot_enabled;
@@ -4688,23 +4693,26 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                 serial_early_print("[BOOT] DevicePathToText not available\n");
             }
 
-            /* §4: Walk device path nodes to classify boot device type.
-             * SATA, NVMe, USB, and network each have a distinct Messaging
-             * Device Path subtype per UEFI spec Table 10-47. */
+            /* §4+§7: Walk device path nodes to classify boot device type
+             * (Messaging subtypes) and extract partition GUID (Media/HardDrive).
+             * Both extractions share the same bounded walk. */
+            g_boot_info_ptr->boot_partition_style = 0;
             {
                 const EFI_DEVICE_PATH_PROTOCOL *node = dp;
                 const UINT8 *base = (const UINT8 *)dp;
                 UINT16 node_len;
                 UINTN walked = 0;
-                #define DP_MAX_WALK 1024  /* sane upper bound for device paths */
+                #define DP_MAX_WALK 1024
 
                 while (walked + 4 <= DP_MAX_WALK &&
                        node->Type != EFI_DP_TYPE_END) {
                     node_len = (UINT16)node->Length[0] |
                                ((UINT16)node->Length[1] << 8);
-                    if (node_len < 4) break; /* malformed */
+                    if (node_len < 4) break;
 
-                    if (node->Type == EFI_DP_TYPE_MESSAGING) {
+                    /* §4: Messaging subtypes -> device type */
+                    if (node->Type == EFI_DP_TYPE_MESSAGING &&
+                        g_boot_info_ptr->boot_device_type == 0) {
                         switch (node->SubType) {
                         case EFI_DP_MSG_SATA:
                             g_boot_info_ptr->boot_device_type = 1;
@@ -4722,9 +4730,34 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                         default:
                             break;
                         }
-                        if (g_boot_info_ptr->boot_device_type != 0)
-                            break;
                     }
+
+                    /* §7: Media/HardDrive -> partition GUID + style.
+                     * UEFI spec Table 10-58: HardDrive DP node is 42 bytes.
+                     * Offset 24: PartitionSignature (16 bytes)
+                     * Offset 40: MBRType (0x01=MBR, 0x02=GPT)
+                     * Offset 41: SignatureType (0x02=GUID for GPT) */
+                    if (node->Type == EFI_DP_TYPE_MEDIA &&
+                        node->SubType == EFI_DP_MEDIA_HARDDRIVE &&
+                        node_len >= 42 &&
+                        g_boot_info_ptr->boot_partition_style == 0) {
+                        const UINT8 *nd = (const UINT8 *)node;
+                        UINT8 mbr_type = nd[40];
+                        UINTN gi;
+
+                        if (mbr_type == 0x02) {
+                            /* GPT: copy 16-byte GUID from offset 24 */
+                            g_boot_info_ptr->boot_partition_style = 2;
+                            for (gi = 0; gi < 16; gi++)
+                                g_boot_info_ptr->boot_partition_guid[gi] = nd[24 + gi];
+                        } else if (mbr_type == 0x01) {
+                            /* MBR: 4-byte signature at offset 24 */
+                            g_boot_info_ptr->boot_partition_style = 1;
+                            for (gi = 0; gi < 4; gi++)
+                                g_boot_info_ptr->boot_partition_guid[gi] = nd[24 + gi];
+                        }
+                    }
+
                     node = (const EFI_DEVICE_PATH_PROTOCOL *)
                            ((const UINT8 *)node + node_len);
                     walked = (UINTN)((const UINT8 *)node - base);
@@ -4740,6 +4773,44 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                 UINT8 t = g_boot_info_ptr->boot_device_type;
                 serial_early_print("[BOOT] Boot device type: ");
                 serial_early_print(t <= 4 ? type_names[t] : "invalid");
+                serial_early_print("\n");
+            }
+
+            /* §7: Log partition GUID or MBR signature */
+            if (g_boot_info_ptr->boot_partition_style == 2) {
+                const UINT8 *g = g_boot_info_ptr->boot_partition_guid;
+                /* Check for all-zero GUID */
+                int zero = 1;
+                UINT8 zi;
+                for (zi = 0; zi < 16; zi++)
+                    if (g[zi]) { zero = 0; break; }
+                if (zero) {
+                    serial_early_print("[WARN] Boot partition GUID is zero "
+                                       "-- firmware may not support GPT\n");
+                } else {
+                    serial_early_print("[BOOT] Boot partition: GUID=");
+                    /* Format: AABBCCDD-EEFF-GGHH-IIJJ-KKLLMMNNOOPP
+                     * UEFI GUID layout: Data1(4B LE) Data2(2B LE)
+                     * Data3(2B LE) Data4(8B) */
+                    serial_early_print_hex16((UINT16)(g[3] << 8 | g[2]));
+                    serial_early_print_hex16((UINT16)(g[1] << 8 | g[0]));
+                    serial_early_print("-");
+                    serial_early_print_hex16((UINT16)(g[5] << 8 | g[4]));
+                    serial_early_print("-");
+                    serial_early_print_hex16((UINT16)(g[7] << 8 | g[6]));
+                    serial_early_print("-");
+                    serial_early_print_hex16((UINT16)(g[8] << 8 | g[9]));
+                    serial_early_print("-");
+                    serial_early_print_hex16((UINT16)(g[10] << 8 | g[11]));
+                    serial_early_print_hex16((UINT16)(g[12] << 8 | g[13]));
+                    serial_early_print_hex16((UINT16)(g[14] << 8 | g[15]));
+                    serial_early_print(" (GPT)\n");
+                }
+            } else if (g_boot_info_ptr->boot_partition_style == 1) {
+                const UINT8 *g = g_boot_info_ptr->boot_partition_guid;
+                serial_early_print("[BOOT] Boot partition: MBR sig=0x");
+                serial_early_print_hex16((UINT16)(g[3] << 8 | g[2]));
+                serial_early_print_hex16((UINT16)(g[1] << 8 | g[0]));
                 serial_early_print("\n");
             }
         }
