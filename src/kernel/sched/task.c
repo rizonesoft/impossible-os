@@ -1395,7 +1395,7 @@ int task_exec(const uint8_t *data, uint64_t size)
                      "task_exec: RDRAND unavailable, using TSC fallback for "
                      "AT_RANDOM (DEGRADED ENTROPY -- not exploitable today "
                      "because user binaries are -fno-stack-protector; "
-                     "TODO-20 §5 will replace this with a kernel CSPRNG)");
+                     "TODO-20 S5 will replace this with a kernel CSPRNG)");
             }
         }
         at_random_addr = (uint64_t)ustk;
