@@ -160,9 +160,25 @@ static uint64_t nm_handler(struct interrupt_frame *frame)
 
     t = &tasks[current_task];
     if (!t->fpu_used) {
-        /* First FPU use -- allocate page-aligned XSAVE area */
+        /* First FPU use -- allocate and load clean FPU state.
+         * Without the load, hardware registers still contain the
+         * previous task's SIMD/FP data (cross-task data leakage). */
         task_alloc_xsave(t);
         t->fpu_used = 1;
+
+        if (t->xsave_area) {
+            extern struct cpu_features g_cpu;
+            if (cpu_has(CPU_FEATURE_XSAVE)) {
+                uint64_t xcr0 = g_cpu.xcr0_active;
+                __asm__ volatile ("xrstor %0" : :
+                    "m"(*(uint8_t *)t->xsave_area),
+                    "a"((uint32_t)xcr0),
+                    "d"((uint32_t)(xcr0 >> 32)) : "memory");
+            } else {
+                __asm__ volatile ("fxrstor %0" : :
+                    "m"(*(uint8_t *)t->xsave_area) : "memory");
+            }
+        }
     }
 
     return (uint64_t)frame;
@@ -596,6 +612,26 @@ uint64_t schedule_now(struct interrupt_frame *frame)
     if (next_task == prev_task && next_thread == prev_thread)
         return (uint64_t)frame;
 
+    /* FPU/SIMD save for cooperative path (mirrors preemptive schedule) */
+    {
+        extern struct cpu_features g_cpu;
+        int have_xsave = cpu_has(CPU_FEATURE_XSAVE);
+        if (tasks[prev_task].fpu_used && tasks[prev_task].xsave_area) {
+            if (have_xsave) {
+                uint64_t xcr0 = g_cpu.xcr0_active;
+                uint32_t lo = (uint32_t)xcr0, hi = (uint32_t)(xcr0 >> 32);
+                if (cpu_has(CPU_FEATURE_XSAVEOPT))
+                    __asm__ volatile ("xsaveopt %0" : "=m"(*(uint8_t *)tasks[prev_task].xsave_area)
+                                      : "a"(lo), "d"(hi) : "memory");
+                else
+                    __asm__ volatile ("xsave %0" : "=m"(*(uint8_t *)tasks[prev_task].xsave_area)
+                                      : "a"(lo), "d"(hi) : "memory");
+            } else {
+                __asm__ volatile ("fxsave %0" : "=m"(*(uint8_t *)tasks[prev_task].xsave_area) : : "memory");
+            }
+        }
+    }
+
     /* Save current task/thread's interrupt frame pointer
      * (skip if exec_pending -- don't overwrite the exec'd frame) */
     if (!tasks[prev_task].exec_pending) {
@@ -662,6 +698,10 @@ uint64_t schedule_now(struct interrupt_frame *frame)
         if (new_gs)
             msr_write(MSR_IA32_KERNEL_GS_BASE, new_gs);
     }
+
+    /* FPU/SIMD restore: rely on preemptive schedule() to restore on next
+     * timer tick, or on #NM lazy allocation if next task hasn't used FPU.
+     * Direct restore here caused a freeze on WHPX -- needs investigation. */
 
     /* Return the correct RSP: thread stack if secondary thread, task stack otherwise */
     if (next_thread > 0)
@@ -741,6 +781,8 @@ uint64_t schedule(struct interrupt_frame *frame)
     }
 
     if (tasks[next_task].fpu_used && tasks[next_task].xsave_area) {
+        /* CLTS before restore -- XRSTOR/FXRSTOR fault with #NM when CR0.TS=1 */
+        __asm__ volatile ("clts");
         if (have_xsave) {
             uint64_t xcr0 = g_cpu.xcr0_active;
             uint32_t lo = (uint32_t)xcr0;
@@ -750,7 +792,6 @@ uint64_t schedule(struct interrupt_frame *frame)
         } else {
             __asm__ volatile ("fxrstor %0" : : "m"(*(uint8_t *)tasks[next_task].xsave_area) : "memory");
         }
-        __asm__ volatile ("clts");
     } else {
         uint64_t cr0;
         __asm__ volatile ("mov %%cr0, %0" : "=r"(cr0));
