@@ -391,6 +391,7 @@ typedef struct {
 static EFI_SYSTEM_TABLE    *gST;
 static EFI_BOOT_SERVICES   *gBS;
 static EFI_HANDLE           gImageHandle;
+static EFI_HANDLE           g_boot_device_handle;  /* §1: boot device from LoadedImage */
 
 /* Boot info -- placed at a known physical address (64 KiB) */
 #define BOOT_INFO_PHYS_ADDR  0x10000
@@ -2270,6 +2271,12 @@ static void parse_conf_kv(struct boot_config *cfg,
     else if (ascii_streq(key, "config_version")) {
         cfg->config_version = (UINT8)ascii_atoi(val);
     }
+    else if (ascii_streq(key, "kernel")) {
+        /* Recognised but ignored -- kernel path is a hardcoded 3-path
+           fallback search (\boot\kernel.exe, \kernel.exe,
+           \EFI\ImpossibleOS\kernel.exe).  Accept the key so boot.conf
+           can document the default without triggering a warning. */
+    }
     else {
         /* Unknown key -- warn but don't fail (forward compatibility) */
         serial_early_print("[WARN] boot.conf: unknown key '");
@@ -2427,9 +2434,7 @@ static void parse_boot_conf(void)
 static EFI_STATUS load_kernel(UINT64 *entry_point)
 {
     EFI_GUID fs_guid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
-    EFI_GUID li_guid = EFI_LOADED_IMAGE_PROTOCOL_GUID;
     EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *fs;
-    EFI_LOADED_IMAGE_PROTOCOL *loaded_image;
     EFI_FILE_PROTOCOL *root_dir, *kernel_file;
     EFI_STATUS status;
     UINT8 *file_buf;
@@ -2438,15 +2443,13 @@ static EFI_STATUS load_kernel(UINT64 *entry_point)
     Elf64_Phdr *phdr;
     UINT16 i;
 
-    /* Use LoadedImage->DeviceHandle to get the boot device's filesystem
-     * (not LocateProtocol which returns an arbitrary filesystem). */
-    status = gBS->HandleProtocol(gImageHandle, &li_guid,
-                                  (VOID **)&loaded_image);
-    if (!EFI_ERROR(status) && loaded_image && loaded_image->DeviceHandle) {
-        status = gBS->HandleProtocol(loaded_image->DeviceHandle,
+    /* Use global g_boot_device_handle (set in efi_main §1) to get the
+     * boot device's filesystem.  Fall back to LocateProtocol only if
+     * the handle was not resolved (firmware lacks LoadedImage). */
+    if (g_boot_device_handle) {
+        status = gBS->HandleProtocol(g_boot_device_handle,
                                       &fs_guid, (VOID **)&fs);
     } else {
-        /* Fallback: locate any filesystem protocol */
         status = gBS->LocateProtocol(&fs_guid, (VOID *)0, (VOID **)&fs);
     }
     if (EFI_ERROR(status)) {
@@ -4391,6 +4394,8 @@ static inline void post_code16(UINT16 code)
 #define POST16_BL_MEMMAP        0xB040
 #define POST16_BL_USB_DISC      0xB080
 #define POST16_BL_USB_DISC_OK   0xB081
+#define POST16_BL_BOOT_DEV      0xB090  /* Boot device identification (§1) */
+#define POST16_BL_BOOT_DEV_OK   0xB091
 #define POST16_BL_EXIT_BS       0xB050
 #define POST16_BL_PAGE_TABLES   0xB060
 #define POST16_BL_KERNEL_JUMP   0xB070
@@ -4507,6 +4512,35 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     /* Record bootloader entry time */
     g_boot_info_ptr->timing.bl_entry = boot_rdtsc();
 
+    /* Step 0: Identify boot device via EFI_LOADED_IMAGE_PROTOCOL (TODO-03 §1).
+     * Store DeviceHandle globally so parse_boot_conf(), load_kernel(), and
+     * future §2-§12 consumers all use the same boot device handle. */
+    post_code16(POST16_BL_BOOT_DEV);
+    {
+        EFI_GUID li_guid = EFI_LOADED_IMAGE_PROTOCOL_GUID;
+        EFI_LOADED_IMAGE_PROTOCOL *loaded_image = (EFI_LOADED_IMAGE_PROTOCOL *)0;
+        EFI_STATUS li_status;
+
+        li_status = gBS->HandleProtocol(gImageHandle, &li_guid,
+                                         (VOID **)&loaded_image);
+        if (!EFI_ERROR(li_status) && loaded_image && loaded_image->DeviceHandle) {
+            g_boot_device_handle = loaded_image->DeviceHandle;
+            serial_early_print("[BOOT] Boot device: handle=0x");
+            serial_early_print_hex16((UINT16)((UINTN)g_boot_device_handle >> 48));
+            serial_early_print_hex16((UINT16)((UINTN)g_boot_device_handle >> 32));
+            serial_early_print_hex16((UINT16)((UINTN)g_boot_device_handle >> 16));
+            serial_early_print_hex16((UINT16)(UINTN)g_boot_device_handle);
+            serial_early_print("\n");
+            post_code16(POST16_BL_BOOT_DEV_OK);
+        } else {
+            g_boot_device_handle = (EFI_HANDLE)0;
+            serial_early_print("[WARN] Boot device: LoadedImage unavailable, "
+                               "using LocateProtocol fallback\n");
+            /* No POST16_BL_BOOT_DEV_OK -- last POST stays at 0xB090
+             * so a POST card shows the lookup did not succeed. */
+        }
+    }
+
     /* Step 1b: Parse boot.conf first -- Resolution= key needed by init_gop */
     g_boot_info_ptr->timing.conf_start = boot_rdtsc();
     parse_boot_conf();
@@ -4521,6 +4555,11 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     if (EFI_ERROR(status)) {
         serial_early_print("[FAIL] init_gop\n");
         efi_print(u"[FAIL] Graphics initialization failed\r\n");
+        if (g_wd_armed && gBS) {
+            EFI_STATUS wd_dis = gBS->SetWatchdogTimer(0, 0, 0, (CHAR16 *)0);
+            if (!EFI_ERROR(wd_dis))
+                g_wd_armed = 0;
+        }
         return status;
     }
     if (g_boot_info_ptr->fb.addr == 0)

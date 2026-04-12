@@ -127,6 +127,8 @@ typedef enum {
 #define POST16_KERNEL_JUMP      0xB050
 #define POST16_USB_DISC         0xB080  /* USB device discovery (before ExitBS) */
 #define POST16_USB_DISC_OK      0xB081
+#define POST16_BOOT_DEV         0xB090  /* Boot device identification via LoadedImage */
+#define POST16_BOOT_DEV_OK      0xB091
 
 /* Phase 0 -- Critical Init (0x0000–0x0FFF) */
 #define POST16_SERIAL           0x0010

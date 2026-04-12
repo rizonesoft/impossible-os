@@ -528,12 +528,12 @@ The pre-§18 error screen used UEFI text console (`ConOut`) with white-on-blue t
 - [ ] **Normal boot regression**: all 4 platforms (QEMU WHPX, TCG, VBox, bare metal) boot cleanly with no new warnings in serial.
 - [ ] **Serial probe test**: VirtualBox with serial disabled -- bootloader skips serial silently, boot succeeds.
 - [ ] **Memory map test**: verify `mmap_truncated` field is 0 on normal boot, logged correctly in kernel.
-- [ ] §10: Serial log shows `"[BOOT] Serial: SPCR"` line (detected or absent) before serial port output begins.
-- [ ] §11: Serial log shows `"Watchdog: armed"` after efi_main entry and `"Watchdog: disarmed"` before ExitBootServices. No unexpected reboots on any platform.
-- [ ] §12: Serial log shows no `"[WARN] Memory map entry"` warnings on QEMU OVMF (clean firmware). If warnings appear on real hardware, log them for firmware bug reporting.
-- [ ] §13: After boot failure, next boot serial shows `"Previous boot failed: code=0x"`. After successful boot, NVRAM variable reads `BOOT_OK`.
+- [x] §10: Serial log shows `"[BOOT] Serial: SPCR"` line (detected or absent) before serial port output begins. **Verified WHPX 2026-04-12.**
+- [x] §11: Serial log shows `"Watchdog: armed"` after efi_main entry and `"Watchdog: disarmed"` before ExitBootServices. No unexpected reboots on any platform. **Verified WHPX 2026-04-12.**
+- [x] §12: Serial log shows no `"[WARN] Memory map entry"` warnings on QEMU OVMF (clean firmware). If warnings appear on real hardware, log them for firmware bug reporting. **Verified WHPX 2026-04-12.**
+- [x] §13: After boot failure, next boot serial shows `"Previous boot failed: code=0x"`. After successful boot, NVRAM variable reads `BOOT_OK`. **Verified WHPX 2026-04-12.**
 - [ ] §14: Boot failure error screen includes QR code in bottom-right. QR scans to `https://impossibleos.co/err/XXXX` with correct error code.
-- [ ] §15-§16: `boot_info` header populated by bootloader; kernel rejects tampered magic or version skew before Phase 0 copy.
+- [x] §15-§16: `boot_info` header populated by bootloader; kernel rejects tampered magic or version skew before Phase 0 copy. **Verified WHPX 2026-04-12.**
 - [ ] Commit: `"boot: bootloader error recovery complete -- zero silent failures"`
 
 **Test checkpoint:** Every Verification bullet passes on QEMU WHPX, QEMU TCG, VirtualBox, and bare metal; serial shows no unexpected `[WARN]` / `[CRIT]` on clean boot after all sections land.
