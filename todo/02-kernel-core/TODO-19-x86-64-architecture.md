@@ -54,17 +54,17 @@
 | --- | :---: | --------------------------------------------------- | -------------------- | :----: |
 | 💎  |   1   | XSAVE/XRSTOR state management (per-thread, lazy)    | (none)               |  [x]   |
 | 💎  |   2   | AVX/AVX2 + AVX-512 kernel paths                     | §1                   |  [ ]   |
-| 💎  |   3   | MSR management infrastructure (`msr.c`)           | (none)               |  [/]   |
+| 💎  |   3   | MSR management infrastructure (`msr.c`)             | (none)               |  [/]   |
 | 💎  |   4   | UMIP + PKU protection keys                          | §3                   |  [ ]   |
-| 💎  |   5   | 1 GiB huge pages + Write-Combining PAT            | §3                   |  [ ]   |
-| 💎  |   6   | FRED event delivery + LKGS                        | §3, T06 §3           |  [ ]   |
-| 💎  |   7   | CPU topology: Zen chiplets + Intel hybrid P/E-core | (none)               |  [ ]   |
-| 💎  |   8   | Performance monitoring counters (Intel + AMD)     | §3                   |  [ ]   |
+| 💎  |   5   | 1 GiB huge pages + Write-Combining PAT              | §3                   |  [ ]   |
+| 💎  |   6   | FRED event delivery + LKGS                          | §3, T06 §3           |  [ ]   |
+| 💎  |   7   | CPU topology: Zen chiplets + Intel hybrid P/E-core  | (none)               |  [ ]   |
+| 💎  |   8   | Performance monitoring counters (Intel + AMD)       | §3                   |  [ ]   |
 | 💎  |   9   | OSVW errata + RDTSCP processor ID setup             | §3, T07 §3           |  [ ]   |
 | 💎  |  10   | AMD IBS profiling (stretch)                         | §3                   |  [ ]   |
-| 💎  |  11   | Virtualization detection (AMD-V + Intel VT-x)     | §3                   |  [x]   |
-| ⭐  |  12   | Boot self-benchmark + auto-tune                   | §1, §2, §7           |  [ ]   |
-| 💎  |  13   | Future silicon stubs: APX, UINTR, AVX10, LA57     | (none)               |  [ ]   |
+| 💎  |  11   | Virtualization detection (AMD-V + Intel VT-x)       | §3                   |  [x]   |
+| ⭐  |  12   | Boot self-benchmark + auto-tune                     | §1, §2, §7           |  [ ]   |
+| 💎  |  13   | Future silicon stubs: APX, UINTR, AVX10, LA57       | (none)               |  [ ]   |
 
 > 💎 = parity work: matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work: Impossible OS is superior or first.
@@ -192,6 +192,9 @@ After §1 through §11 done and §2 through §10 plus §12 through §13 planned,
 - [x] Commit: `"kernel/msr: cpu_verify_hardening EFER verify uses msr_read"` (d825576d)
 
 **Test checkpoint:** `msr_read(MSR_IA32_EFER)` stable across calls; `msr_try_read(0xFFFFFFFF, &scratch) == -1` without panic; boot completes with MSR layer linked. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Verified:** 2026-04-12 -- all 6 items confirmed. `msr_read`/`msr_write` inline in `msr.h:16-28`. `msr_try_read` in `msr.c:48-89` with spinlock+irqsave+RIP check (Codex: SMP race + unrelated #GP swallowing fixed). 22 MSR constants in `msr.h`. smp.c (4 sites) + lapic.c (2 sites) migrated. `cpu_verify_hardening` uses `msr_read` (d825576d). Hyper-V MSR constants corrected per TLFS Table 2-2 (0x40000022=TSC, 0x40000023=APIC). `msr_write` memory clobber added. Accepted: none.
+> **Quality reviewed:** 2026-04-12 -- kernel-code-quality 11 gates walked. G2: spinlock serializes msr_try_read on SMP. G11: rdmsr 2-byte skip per Intel SDM. Hyper-V TLFS compliant. Memory clobber on wrmsr prevents store reordering across GS_BASE writes. Accepted: none.
 
 ---
 

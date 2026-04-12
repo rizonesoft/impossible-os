@@ -24,7 +24,7 @@ static inline void msr_write(uint32_t index, uint64_t value)
 {
     uint32_t lo = (uint32_t)value;
     uint32_t hi = (uint32_t)(value >> 32);
-    __asm__ volatile ("wrmsr" :: "c"(index), "a"(lo), "d"(hi));
+    __asm__ volatile ("wrmsr" :: "c"(index), "a"(lo), "d"(hi) : "memory");
 }
 
 /* #GP-safe MSR read -- returns 0 on success, -1 if MSR is unsupported.
@@ -78,6 +78,6 @@ int msr_try_read(uint32_t index, uint64_t *out);
 #define MSR_AMD_PERF_CTL0           0xC0010200
 #define MSR_AMD_PERF_CTR0           0xC0010201
 
-/* Hyper-V synthetic */
-#define MSR_HV_TSC_FREQUENCY        0x40000023
-#define MSR_HV_APIC_FREQUENCY       0x40000024
+/* Hyper-V synthetic (TLFS Table 2-2) */
+#define MSR_HV_TSC_FREQUENCY        0x40000022
+#define MSR_HV_APIC_FREQUENCY       0x40000023
