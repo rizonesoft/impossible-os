@@ -4972,7 +4972,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
             /* S12: Decode Boot#### EFI_LOAD_OPTION for the current boot entry.
              * Format variable name as Boot0000..BootFFFF from BootCurrent. */
             if (g_boot_info_ptr->uefi_boot_current != 0xFFFF) {
-                static const char hex[] = "0123456789abcdef";
+                static const char hex[] = "0123456789ABCDEF";
                 UINT16 bc = g_boot_info_ptr->uefi_boot_current;
                 CHAR16 var_name[] = u"Boot0000";
                 /* Fill in the 4 hex digits (UCS-2) */

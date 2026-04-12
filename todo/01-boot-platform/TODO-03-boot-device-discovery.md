@@ -51,7 +51,7 @@
 | 💎  |   9   | Boot device Registry population                    | §3, §4, §7, §8 |  [x]   |
 | ⭐  |  10   | Boot device logging and diagnostics                | §1--§9, §12    |  [x]   |
 | ⭐  |  11   | Pre-boot device health check                       | §1, §7         |  [x]   |
-| 💎  |  12   | Boot#### `EFI_LOAD_OPTION` decode (diagnostics)    | §6             |  [/]   |
+| 💎  |  12   | Boot#### `EFI_LOAD_OPTION` decode (diagnostics)    | §6             |  [x]   |
 
 > 💎 = parity -- Windows (BCD + device path) and Linux (GRUB device search) both do this.
 > ⭐ = exclusive -- detailed boot device diagnostics with full enumeration, and proactive disk health check before kernel load.
@@ -287,9 +287,12 @@ Firmware boot entry **`Boot####`** variables hold an **`EFI_LOAD_OPTION`**: attr
 - [x] Parse `EFI_LOAD_OPTION`: Attributes at [0..3], FilePathListLength at [4..5] (LE), Description at [6..] (NUL-terminated CHAR16), FilePathList after Description NUL -- bounds-checked against `lo_sz`
 - [x] Log: `"[BOOT] Boot%04x: <description>"` (80-char truncated ASCII) and `"[BOOT]   Path: <device path>"` (120-char truncated via DevicePathToText) -- FreePool on fp_txt
 - [x] FilePath comparison: skipped -- requires EFI_LOADED_IMAGE_PROTOCOL.FilePath to text conversion for comparison, which adds complexity for a diagnostic-only check. The device path is already visible in S3's log and S12's Path line for manual comparison.
-- [ ] Commit: `"boot: decode Boot#### EFI_LOAD_OPTION for BootCurrent diagnostics"`
+- [x] Commit: `"boot: decode Boot#### EFI_LOAD_OPTION for BootCurrent diagnostics"` (74b9072f)
 
 **Test checkpoint:** On firmware with a populated `Boot0000` (or current entry), serial shows description + device path text. On OVMF with empty entries, skip is silent (no hang). Verify on bare metal -- description strings are UTF-16 vendor strings.
+
+> **Verified:** 2026-04-12 -- all 6 items confirmed. Boot#### name formatted with uppercase hex (UEFI spec Section 3.1.2) at `bootx64.c:4975`. GetVariable into 2048-byte buffer, EFI_BUFFER_TOO_SMALL logged, EFI_NOT_FOUND silent. EFI_LOAD_OPTION parsed with bounds checks. Device path validated (END_ENTIRE within fp_len) before ConvertDevicePathToText. Codex adversarial: lowercase hex fixed to uppercase (spec compliance). Accepted: FilePath comparison (manual via S3+S12 output).
+> **Quality reviewed:** 2026-04-12 -- boot-code-quality 13 gates walked. G13: uppercase hex per UEFI spec, device path validated before ConvertDevicePathToText. No dead code. O(1) per boot. Parity: matches Windows BCD + Linux efibootmgr -v. Accepted: none.
 
 ---
 
