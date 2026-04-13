@@ -679,8 +679,11 @@ static void test_1g_page_pdpt_promoted(void)
         TEST_SKIP("CPU does not support 1 GiB pages");
         return;
     }
-    /* After vmm_promote_to_1g(), PDPT[1] should have PS=1 (1 GiB page).
-     * Read CR3 to get PML4, then follow to PDPT. */
+    /* After vmm_promote_to_1g(), PDPT[2] should have PS=1 (1 GiB page).
+     * We check PDPT[2] (GiB 2) instead of PDPT[1] because GiB 1 contains
+     * KUSD at 0x7FFE0000, and vmm_split_huge_page cascades from 1 GiB back
+     * to 2 MiB when mapping KUSD, de-promoting PDPT[1]. PDPT[2] and [3]
+     * remain promoted since nothing maps in those ranges. */
     uint64_t cr3;
     __asm__ volatile("mov %%cr3, %0" : "=r"(cr3));
     uint64_t *pml4 = (uint64_t *)(cr3 & 0x000FFFFFFFFFF000ULL);
@@ -689,13 +692,13 @@ static void test_1g_page_pdpt_promoted(void)
         return;
     }
     uint64_t *pdpt = (uint64_t *)(pml4[0] & 0x000FFFFFFFFFF000ULL);
-    /* PDPT[1] should be a 1 GiB page (PS=1, bit 7) */
-    TEST_ASSERT(pdpt[1] & (1ULL << 7),
-                "PDPT[1] has PS=1 (promoted to 1 GiB page)");
-    /* Physical address should be 1 GiB (identity map) */
-    uint64_t phys = pdpt[1] & 0x000FFFFFC0000000ULL;
-    TEST_ASSERT_EQ(phys, (1ULL << 30),
-                   "PDPT[1] maps physical 1 GiB (identity map)");
+    /* PDPT[2] should be a 1 GiB page (PS=1, bit 7) */
+    TEST_ASSERT(pdpt[2] & (1ULL << 7),
+                "PDPT[2] has PS=1 (promoted to 1 GiB page)");
+    /* Physical address should be 2 GiB (identity map) */
+    uint64_t phys = pdpt[2] & 0x000FFFFFC0000000ULL;
+    TEST_ASSERT_EQ(phys, (2ULL << 30),
+                   "PDPT[2] maps physical 2 GiB (identity map)");
 }
 
 static void test_1g_page_pdpt0_not_promoted(void)
@@ -837,7 +840,7 @@ void test_register_x86(void)
     /* S6: 1 GiB huge pages + WC PAT */
     test_suite_register_cat("1GiB: PAGE1GB CPUID feature",
         test_1g_page_cpuid_feature, TEST_CAT_X86);
-    test_suite_register_cat("1GiB: PDPT[1] promoted to 1 GiB",
+    test_suite_register_cat("1GiB: PDPT[2] promoted to 1 GiB",
         test_1g_page_pdpt_promoted, TEST_CAT_X86);
     test_suite_register_cat("1GiB: PDPT[0] NOT promoted (NX)",
         test_1g_page_pdpt0_not_promoted, TEST_CAT_X86);
