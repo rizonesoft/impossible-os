@@ -289,6 +289,9 @@
 > **Test runner:** `scripts\debug\run-x86-tests.bat` (SUITE=x86)
 > **Expected:** 47 suites, 0 failures
 
+> **Verified:** 2026-04-13 -- all 7 items confirmed. `topology.c` and `topology.h` at `src/kernel/topology.c`, `include/kernel/topology.h`. `topology_init()` called from `boot_storage.c:175` after `smp_init()`. Zen path: BSP `compute_unit_id` as core_id, BSP `node_id` for NUMA; APs derive core_id from LAPIC ID, node_id/ccd_id=0 (per-AP CPUID deferred). Intel hybrid: BSP core type logged from leaf 0x1A; P/E masks left zero (per-AP CPUID required for accuracy). Leaf 0x1F: SMT/Core shift extraction with correct bit-range core_id formula. Fallback: all GENERIC. 5 tests under TEST_CAT_X86. Codex adversarial: offline CPU check added (is_online guard); SMT lp_count clamped to 255; false P/E mask publication prevented; CCD aliasing fixed. Accepted: per-AP CPUID (XREF TODO-04 §4); ACPI SRAT NUMA (XREF D03); x2APIC 32-bit ID (pre-existing 8-bit truncation in lapic.c).
+> **Quality reviewed:** 2026-04-13 -- kernel-code-quality 11 gates walked. G2: written once at boot, read-only after. G5: fallback path for no topology extensions. G6: CPUID leaves per Intel SDM Vol. 2A (0x1A native model ID, 0x1F v2 extended topology) and AMD APM (0x8000001E). G11: core_id extraction uses bit range between SMT and Core shifts per SDM Table 3-8. Parity: matches Linux `arch/x86/kernel/cpu/topology.c` + `smpboot.c` topology detection; matches Windows Ke node + NUMA policy approach. Accepted: same as verified stamp.
+
 ---
 
 ## 10. Performance Monitoring Counters: Intel + AMD

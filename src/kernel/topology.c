@@ -38,6 +38,8 @@ static void topology_parse_zen(void)
      * APs get node_id=0 and ccd_id=0 (unknown). */
     for (i = 0; i < g_topo_cpu_count; i++) {
         struct per_cpu_data *cpu = smp_get_cpu(i);
+        if (cpu && !cpu->is_online && i > 0)
+            continue;  /* skip offline AP slots */
         if (i == 0) {
             /* BSP: compute_unit_id = core within CCD */
             g_cpu_topo[i].core_id = g_cpu.compute_unit_id;
@@ -119,7 +121,7 @@ static void topology_parse_intel_hybrid(void)
             if (level_type == 1) {
                 /* SMT level */
                 smt_shift = shift;
-                if (lp_count > 0) {
+                if (lp_count > 0 && lp_count <= 255) {
                     for (i = 0; i < g_topo_cpu_count; i++)
                         g_cpu_topo[i].smt_siblings = (uint8_t)lp_count;
                 }
@@ -155,6 +157,8 @@ static void topology_parse_generic(void)
     uint32_t i;
     for (i = 0; i < g_topo_cpu_count; i++) {
         struct per_cpu_data *cpu = smp_get_cpu(i);
+        if (cpu && !cpu->is_online && i > 0)
+            continue;
         if (cpu) {
             g_cpu_topo[i].core_id = cpu->lapic_id;
             g_cpu_topo[i].ccd_id  = 0;
