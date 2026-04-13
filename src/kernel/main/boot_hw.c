@@ -401,13 +401,16 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
         kpti_init();
     }
 
-    /* --- SIMD: enable AVX2 or fall back to SSE2 --- */
+    /* --- SIMD: enable AVX2 or fall back to SSE2, then try AVX-512 --- */
     POST16(POST16_SIMD);
     simd_enable_avx();
     if (simd_avx2_ok)
         klog(LOG_INFO, "simd", "AVX2 enabled (8 pixels/iter)");
     else
         klog(LOG_WARN, "simd", "AVX2 not available, using SSE2 fallback");
+
+    /* AVX-512 opt-in with throttle guard (requires AVX2 as baseline) */
+    simd_enable_avx512();
     boot_progress(0, "SIMD", POST16_SIMD_OK);
 
     klog(LOG_DEBUG, "", "");

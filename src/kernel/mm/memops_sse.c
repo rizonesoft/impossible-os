@@ -24,6 +24,10 @@ extern void *memset(void *dst, int c, size_t n);
  * Raw CPUID alone is not sufficient: XCR0 must be programmed. */
 extern int simd_avx2_ok;
 
+/* simd_avx512_ok is set by simd_enable_avx512() after verifying
+ * AVX512F + XCR0 bits 5-7 + MPERF/APERF throttle check passes. */
+extern int simd_avx512_ok;
+
 /* ---- SSE2 memcpy: 16-byte movdqu loop ---- */
 
 void *memcpy_sse2(void *dst, const void *src, size_t n)
@@ -95,6 +99,8 @@ void *memset_sse2(void *dst, int val, size_t n)
 
 void *memcpy_fast(void *dst, const void *src, size_t n)
 {
+    if (simd_avx512_ok)
+        return memcpy_avx512(dst, src, n);
     if (simd_avx2_ok)
         return memcpy_avx(dst, src, n);
     if (cpu_has(CPU_FEATURE_SSE2))
@@ -104,6 +110,8 @@ void *memcpy_fast(void *dst, const void *src, size_t n)
 
 void *memset_fast(void *dst, int val, size_t n)
 {
+    if (simd_avx512_ok)
+        return memset_avx512(dst, val, n);
     if (simd_avx2_ok)
         return memset_avx(dst, val, n);
     if (cpu_has(CPU_FEATURE_SSE2))

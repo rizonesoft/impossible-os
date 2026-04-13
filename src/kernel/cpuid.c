@@ -312,6 +312,21 @@ void cpuid_init(void)
     /* Configure XCR0 after all features are detected */
     cpu_configure_xcr0();
 
+    /* ---- AVX10 detection ---- */
+    if (cpu_has(CPU_FEATURE_AVX10) && g_cpu.max_leaf >= 0x24) {
+        uint32_t avx10_ebx;
+        cpuid_raw(0x24, 0, &eax, &avx10_ebx, &ecx, &edx);
+        klog(LOG_INFO, "cpu",
+             "[SIMD] AVX10 v%u detected; not yet enabled",
+             (uint64_t)(avx10_ebx & 0xFF));
+    }
+
+    /* ---- APX detection (CPUID.(7,1):EDX[21]) ---- */
+    if (cpu_has(CPU_FEATURE_APX)) {
+        klog(LOG_INFO, "cpu",
+             "[SIMD] APX detected (R16-R31); not yet enabled");
+    }
+
     /* Suppress unused warning */
     (void)cpuid_memcpy;
 }

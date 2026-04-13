@@ -811,16 +811,30 @@ $(AP_TRAMPOLINE_OBJ): $(SRC_DIR)/kernel/smp/ap_trampoline.asm
 SIMD_CFLAGS := $(filter-out -mno-mmx -mno-sse -mno-sse2, $(CFLAGS)) -msse2
 # AVX2 module -- compiled with -mavx2 (memops.c only)
 AVX2_CFLAGS := $(SIMD_CFLAGS) -mavx2
+# AVX-512 module -- compiled with -mavx512f (memops_avx512.c, gfx_simd_avx512.c)
+AVX512_CFLAGS := $(SIMD_CFLAGS) -mavx512f
 $(BUILD_DIR)/kernel/gfx/gfx_simd.o: $(SRC_DIR)/kernel/gfx/gfx_simd.c | $(GENERATED_HDRS)
 	@mkdir -p $(dir $@)
 	$(CC) $(SIMD_CFLAGS) -I$(INCLUDE) -I$(KERNEL_DIR) -c $< -o $@
 	@echo "[CC/SSE2] $<"
+
+# AVX-512 SIMD -- fb_blit_avx512/fb_fill_avx512 + throttle burst (AVX-512 ONLY)
+$(BUILD_DIR)/kernel/gfx/gfx_simd_avx512.o: $(SRC_DIR)/kernel/gfx/gfx_simd_avx512.c | $(GENERATED_HDRS)
+	@mkdir -p $(dir $@)
+	$(CC) $(AVX512_CFLAGS) -I$(INCLUDE) -I$(KERNEL_DIR) -c $< -o $@
+	@echo "[CC/AVX512] $<"
 
 # AVX2 memops -- memcpy_avx/memset_avx with vzeroupper (AVX2 ONLY)
 $(BUILD_DIR)/kernel/mm/memops.o: $(SRC_DIR)/kernel/mm/memops.c | $(GENERATED_HDRS)
 	@mkdir -p $(dir $@)
 	$(CC) $(AVX2_CFLAGS) -I$(INCLUDE) -I$(KERNEL_DIR) -c $< -o $@
 	@echo "[CC/AVX2] $<"
+
+# AVX-512 memops -- memcpy_avx512/memset_avx512 (AVX-512 ONLY)
+$(BUILD_DIR)/kernel/mm/memops_avx512.o: $(SRC_DIR)/kernel/mm/memops_avx512.c | $(GENERATED_HDRS)
+	@mkdir -p $(dir $@)
+	$(CC) $(AVX512_CFLAGS) -I$(INCLUDE) -I$(KERNEL_DIR) -c $< -o $@
+	@echo "[CC/AVX512] $<"
 
 # SSE2 memops + dispatch -- must NOT use -mavx2 (VEX instructions crash TCG)
 $(BUILD_DIR)/kernel/mm/memops_sse.o: $(SRC_DIR)/kernel/mm/memops_sse.c | $(GENERATED_HDRS)

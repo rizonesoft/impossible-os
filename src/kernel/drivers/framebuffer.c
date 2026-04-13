@@ -163,6 +163,10 @@ static inline int32_t iabs(int32_t v) { return v < 0 ? -v : v; }
 
 static void mem_set32(uint32_t *dst, uint32_t val, uint32_t count)
 {
+    if (simd_avx512_ok) {
+        fb_fill_avx512(dst, val, count);
+        return;
+    }
     if (simd_avx2_ok) {
         fb_fill_avx(dst, val, count);
         return;
@@ -176,6 +180,10 @@ static void mem_set32(uint32_t *dst, uint32_t val, uint32_t count)
 
 static void mem_cpy32(uint32_t *dst, const uint32_t *src, uint32_t count)
 {
+    if (simd_avx512_ok) {
+        fb_blit_avx512(dst, src, count);
+        return;
+    }
     if (simd_avx2_ok) {
         fb_blit_avx(dst, src, count);
         return;

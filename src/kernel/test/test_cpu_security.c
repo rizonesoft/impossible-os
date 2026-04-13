@@ -290,6 +290,173 @@ static void test_memset_fast_dispatch(void)
     TEST_ASSERT(1, "memset_fast dispatch: 128-byte fill correct");
 }
 
+/* ---- S3: AVX-512 ---- */
+
+static void test_avx512_xcr0_bits(void)
+{
+    if (!cpu_has(CPU_FEATURE_AVX512F)) {
+        TEST_SKIP("CPU does not support AVX-512");
+        return;
+    }
+    extern struct cpu_features g_cpu;
+    /* If AVX-512 is enabled (not throttled), XCR0 bits 5-7 must be set.
+     * If throttled, they were cleared by simd_enable_avx512(). */
+    if (simd_avx512_ok) {
+        TEST_ASSERT((g_cpu.xcr0_active & 0xE0) == 0xE0,
+                     "xcr0_active has opmask+ZMM_Hi256+Hi16_ZMM when AVX-512 ok");
+    } else {
+        TEST_ASSERT((g_cpu.xcr0_active & 0xE0) == 0,
+                     "xcr0_active has AVX-512 bits cleared when throttled");
+    }
+}
+
+static void test_avx512_flag_consistent(void)
+{
+    /* simd_avx512_ok must be 0 or 1 */
+    TEST_ASSERT(simd_avx512_ok == 0 || simd_avx512_ok == 1,
+                "simd_avx512_ok is 0 or 1");
+    /* If AVX-512 not in CPUID, flag must be 0 */
+    if (!cpu_has(CPU_FEATURE_AVX512F)) {
+        TEST_ASSERT_EQ(simd_avx512_ok, 0,
+                       "simd_avx512_ok == 0 when CPU lacks AVX512F");
+    }
+}
+
+static void test_memcpy_avx512_correctness(void)
+{
+    if (!simd_avx512_ok) {
+        TEST_SKIP("AVX-512 not enabled");
+        return;
+    }
+
+    uint8_t __attribute__((aligned(64))) src[256];
+    uint8_t __attribute__((aligned(64))) dst[256];
+    uint32_t i;
+
+    for (i = 0; i < 256; i++) {
+        src[i] = (uint8_t)(i & 0xFF);
+        dst[i] = 0xFF;
+    }
+
+    memcpy_avx512(dst, src, 256);
+
+    for (i = 0; i < 256; i++) {
+        if (dst[i] != src[i]) {
+            TEST_ASSERT_EQ(dst[i], src[i],
+                           "memcpy_avx512: dst matches src at every byte");
+            return;
+        }
+    }
+    TEST_ASSERT(1, "memcpy_avx512: 256-byte copy matches reference");
+}
+
+static void test_memcpy_avx512_tail(void)
+{
+    if (!simd_avx512_ok) {
+        TEST_SKIP("AVX-512 not enabled");
+        return;
+    }
+
+    /* Test with non-aligned size (70 bytes: 1 ZMM iter + 6 byte tail) */
+    uint8_t __attribute__((aligned(64))) src[128];
+    uint8_t __attribute__((aligned(64))) dst[128];
+    uint32_t i;
+
+    for (i = 0; i < 70; i++)
+        src[i] = (uint8_t)(0xC0 + i);
+    for (i = 0; i < 128; i++)
+        dst[i] = 0;
+
+    memcpy_avx512(dst, src, 70);
+
+    for (i = 0; i < 70; i++) {
+        if (dst[i] != src[i]) {
+            TEST_ASSERT_EQ(dst[i], src[i],
+                           "memcpy_avx512 tail: first 70 bytes match");
+            return;
+        }
+    }
+    TEST_ASSERT_EQ(dst[70], 0,
+                   "memcpy_avx512 tail: byte 70 untouched (still 0)");
+    TEST_ASSERT(1, "memcpy_avx512 tail: 70-byte copy correct");
+}
+
+static void test_memset_avx512_correctness(void)
+{
+    if (!simd_avx512_ok) {
+        TEST_SKIP("AVX-512 not enabled");
+        return;
+    }
+
+    uint8_t __attribute__((aligned(64))) buf[256];
+    uint32_t i;
+
+    for (i = 0; i < 256; i++)
+        buf[i] = 0;
+
+    memset_avx512(buf, 0x7A, 256);
+
+    for (i = 0; i < 256; i++) {
+        if (buf[i] != 0x7A) {
+            TEST_ASSERT_EQ(buf[i], 0x7A,
+                           "memset_avx512: every byte is 0x7A");
+            return;
+        }
+    }
+    TEST_ASSERT(1, "memset_avx512: 256-byte fill with 0x7A correct");
+}
+
+static void test_memset_avx512_tail(void)
+{
+    if (!simd_avx512_ok) {
+        TEST_SKIP("AVX-512 not enabled");
+        return;
+    }
+
+    uint8_t __attribute__((aligned(64))) buf[128];
+    uint32_t i;
+
+    for (i = 0; i < 128; i++)
+        buf[i] = 0;
+
+    memset_avx512(buf, 0xDD, 73);
+
+    for (i = 0; i < 73; i++) {
+        if (buf[i] != 0xDD) {
+            TEST_ASSERT_EQ(buf[i], 0xDD,
+                           "memset_avx512 tail: first 73 bytes are 0xDD");
+            return;
+        }
+    }
+    TEST_ASSERT_EQ(buf[73], 0,
+                   "memset_avx512 tail: byte 73 untouched (still 0)");
+    TEST_ASSERT(1, "memset_avx512 tail: 73-byte fill correct");
+}
+
+static void test_memcpy_fast_avx512_dispatch(void)
+{
+    /* memcpy_fast should pick AVX-512 when available */
+    uint8_t __attribute__((aligned(64))) src[128];
+    uint8_t __attribute__((aligned(64))) dst[128];
+    uint32_t i;
+
+    for (i = 0; i < 128; i++) {
+        src[i] = (uint8_t)(i * 5);
+        dst[i] = 0;
+    }
+
+    memcpy_fast(dst, src, 128);
+
+    for (i = 0; i < 128; i++) {
+        if (dst[i] != src[i]) {
+            TEST_ASSERT_EQ(dst[i], src[i],
+                           "memcpy_fast avx512 dispatch: result matches");
+            return;
+        }
+    }
+    TEST_ASSERT(1, "memcpy_fast dispatch: correct with current SIMD tier");
+}
+
 /* ---- Registration ---- */
 
 void test_register_x86(void)
@@ -330,6 +497,22 @@ void test_register_x86(void)
         test_memcpy_fast_dispatch, TEST_CAT_X86);
     test_suite_register_cat("AVX2: memset_fast dispatch",
         test_memset_fast_dispatch, TEST_CAT_X86);
+
+    /* S3: AVX-512 */
+    test_suite_register_cat("AVX-512: xcr0 bits 5-7 consistent",
+        test_avx512_xcr0_bits, TEST_CAT_X86);
+    test_suite_register_cat("AVX-512: simd_avx512_ok flag consistent",
+        test_avx512_flag_consistent, TEST_CAT_X86);
+    test_suite_register_cat("AVX-512: memcpy_avx512 correctness",
+        test_memcpy_avx512_correctness, TEST_CAT_X86);
+    test_suite_register_cat("AVX-512: memcpy_avx512 tail bytes",
+        test_memcpy_avx512_tail, TEST_CAT_X86);
+    test_suite_register_cat("AVX-512: memset_avx512 correctness",
+        test_memset_avx512_correctness, TEST_CAT_X86);
+    test_suite_register_cat("AVX-512: memset_avx512 tail bytes",
+        test_memset_avx512_tail, TEST_CAT_X86);
+    test_suite_register_cat("AVX-512: memcpy_fast dispatch",
+        test_memcpy_fast_avx512_dispatch, TEST_CAT_X86);
 }
 
 #endif /* KERNEL_TESTS */

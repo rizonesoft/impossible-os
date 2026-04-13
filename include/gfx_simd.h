@@ -81,3 +81,26 @@ void fb_blit_avx(uint32_t *dst, const uint32_t *src, uint32_t count);
 /* Block fill of uint32_t pixels, 8 pixels per iteration (AVX2).
  * Uses vpbroadcastd to replicate the 32-bit pixel value. */
 void fb_fill_avx(uint32_t *dst, uint32_t val, uint32_t count);
+
+/* ---- AVX-512 accelerated operations (16 pixels per iteration) ---- */
+
+/* Runtime flag: set to 1 at boot if AVX-512 is available, enabled, and
+ * passes the MPERF/APERF throttle check (no significant frequency drop) */
+extern int simd_avx512_ok;
+
+/* Enable AVX-512 with throttle guard. Reads MPERF/APERF around a 512-bit
+ * micro-burst; disables AVX-512 and clears XCR0 bits 5-7 if frequency
+ * drops > 5%. Must be called after simd_enable_avx(). */
+void simd_enable_avx512(void);
+
+/* Execute a tight AVX-512 micro-burst (~10 us) for throttle detection.
+ * Implemented in gfx_simd_avx512.c (compiled with -mavx512f). */
+void simd_avx512_burst(void);
+
+/* Block copy of uint32_t pixels, 16 pixels per iteration (AVX-512).
+ * Uses vmovdqu64 for 64-byte loads/stores. vzeroupper at exit. */
+void fb_blit_avx512(uint32_t *dst, const uint32_t *src, uint32_t count);
+
+/* Block fill of uint32_t pixels, 16 pixels per iteration (AVX-512).
+ * Uses vpbroadcastd + vmovdqu64. vzeroupper at exit. */
+void fb_fill_avx512(uint32_t *dst, uint32_t val, uint32_t count);

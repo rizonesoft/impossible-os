@@ -3,7 +3,7 @@
 > **Goal:** Activate and exploit the x86-64 architecture features that `cpuid.c` already detects, pushing beyond today's partial enablement: full XSAVE/XRSTOR state management with per-thread XSAVE areas and lazy FPU, AVX/AVX2 optimised kernel paths and AVX-512 support, a centralised MSR access layer, UMIP and PKU protection keys, 1 GiB huge pages and Write-Combining PAT for the framebuffer, FRED event delivery with LKGS, CPU topology parsing (Zen chiplets + Intel P/E-cores), performance monitoring counters (Intel PMU + AMD PMC), OSVW errata + RDTSCP setup, AMD IBS profiling, virtualization detection, and a boot-time self-benchmark that auto-tunes the kernel to the detected hardware.
 
 > [!IMPORTANT]
-> **Current state:** `cpuid_init()` / `cpu_has()` gate the feature set. **Done [x]:** §1 `cpu_configure_xcr0()`, per-thread `xsave_area`, lazy FPU (`#NM` first touch), XSAVEOPT when supported, FXSAVE removed from `icon_store.c` / `gfx_text.c`. §2 AVX2 `memcpy_avx`/`memset_avx` in `memops.c`, SSE2 fallbacks, `memcpy_fast`/`memset_fast` dispatch, `fb_blit_avx`/`fb_fill_avx` in `gfx_simd.c`, framebuffer dispatch via `simd_avx2_ok`. §4 `msr_read` / `msr_write` / `msr_try_read` plus MSR constants; SMP/LAPIC migrated off raw inline MSR asm where noted in §4. §12 AMD SVM + Intel VT-x detection via `cpu_has()`. **Open [ ]:** §3, §5 through §11, §13, §14 per Implementation Order.
+> **Current state:** `cpuid_init()` / `cpu_has()` gate the feature set. **Done [x]:** §1 XSAVE/XRSTOR with per-thread lazy FPU. §2 AVX2 memops + framebuffer blit with SSE2 fallbacks. §3 AVX-512 opt-in with MPERF/APERF throttle guard, `memcpy_avx512`/`memset_avx512`/`fb_blit_avx512`/`fb_fill_avx512` in separate `-mavx512f` TUs, AVX10/APX detection stubs. §4 `msr_read`/`msr_write`/`msr_try_read` plus MSR constants. §12 AMD SVM + Intel VT-x detection. **Open [ ]:** §5 through §11, §13, §14 per Implementation Order.
 > **Scope boundary with other TODOs (do not implement here):**
 > - NX/EFER, SMEP/SMAP, KPTI, PCID, IBRS/retpoline, CET -> `TODO-17` (gap analysis 2026-04-12: `TODO-17` §1 NX + `vmm_apply_nx_policy()` are live; §2 SMEP/SMAP helpers exist but `hv_supports_cr4_smep_smap()` forces skip so CR4 bits stay off until kernel PTE User policy is fixed; `isr_stubs.asm` omits `clac` until SMAP is real)
 > - TSC invariant check + TSC-Deadline APIC -> `TODO-07`
@@ -54,7 +54,7 @@
 | --- | :---: | --------------------------------------------------- | -------------------- | :----: |
 | 💎  |   1   | XSAVE/XRSTOR state management (per-thread, lazy)    | (none)               |  [x]   |
 | 💎  |   2   | AVX/AVX2 kernel memops + framebuffer blit           | §1                   |  [x]   |
-| 💎  |   3   | AVX-512 opt-in + future silicon detection           | §2                   |  [ ]   |
+| 💎  |   3   | AVX-512 opt-in + future silicon detection           | §2                   |  [x]   |
 | 💎  |   4   | MSR management infrastructure (`msr.c`)             | (none)               |  [/]   |
 | 💎  |   5   | UMIP + PKU protection keys                          | §4                   |  [ ]   |
 | 💎  |   6   | 1 GiB huge pages + Write-Combining PAT              | §4                   |  [ ]   |
@@ -121,15 +121,18 @@
 
 ## 3. AVX-512 Opt-In + Future Silicon Detection
 
-- [ ] Enable `XCR0` bits 5-7 if `cpu_has(CPU_FEATURE_AVX512F)` and a frequency-throttle check passes: read `IA32_MPERF`/`IA32_APERF` ratio before and after a 10 us AVX-512 burst; if ratio drops > 5%, disable AVX-512 (core throttling detected; common on consumer CPUs)
-- [ ] Update XSAVE area allocation to use `xsave_size_max` (includes ZMM)
-- [ ] `memcpy_avx512` and `fb_blit_avx512` (16 pixels/iteration) with `zmovdqu64` and `evmovdqu64`; gated by `simd_avx512_ok` flag
-- [ ] `vzeroupper` still needed when mixing 512-bit and 128/256-bit code
-- [ ] If `cpu_has(CPU_FEATURE_AVX10)`: log `[SIMD] AVX10 v%u detected; not yet enabled`; placeholder for future enablement when compilers fully support `-mavx10.N`
-- [ ] If `CPUID.(7,1):EDX[21]` (APX): log detected; future work to set `XCR0[19]` (reuses MPX area) and compile with `-mapx`
-- [ ] Commit: `"kernel/simd: AVX-512 opt-in with throttle guard, AVX10/APX detection stubs"`
+- [x] Enable `XCR0` bits 5-7 if `cpu_has(CPU_FEATURE_AVX512F)` and a frequency-throttle check passes: read `IA32_MPERF`/`IA32_APERF` ratio before and after a 10 us AVX-512 burst; if ratio drops > 5%, disable AVX-512 (core throttling detected; common on consumer CPUs)
+- [x] Update XSAVE area allocation to use `xsave_size_max` (includes ZMM) **Note:** already done in §1; `task_alloc_xsave()` at `task.c:212` uses `g_cpu.xsave_size_max` which includes ZMM state when AVX-512 is detected by CPUID leaf 0x0D
+- [x] `memcpy_avx512` and `fb_blit_avx512` (16 pixels/iteration) with `vmovdqu64`; gated by `simd_avx512_ok` flag. Separate TUs: `memops_avx512.c` compiled with `-mavx512f`, `gfx_simd_avx512.c` compiled with `-mavx512f`. `memset_avx512` and `fb_fill_avx512` also implemented
+- [x] `vzeroupper` at exit of every AVX-512 function (`memcpy_avx512`, `memset_avx512`, `fb_blit_avx512`, `fb_fill_avx512`, `simd_avx512_burst`)
+- [x] If `cpu_has(CPU_FEATURE_AVX10)`: log `[SIMD] AVX10 v%u detected; not yet enabled`; reads version from CPUID leaf 0x24 EBX[7:0]
+- [x] If `CPUID.(7,1):EDX[21]` (APX): log detected; future work to set `XCR0[19]` and compile with `-mapx`
+- [x] Commit: `"kernel/simd: AVX-512 opt-in with throttle guard, AVX10/APX detection stubs"`
 
 **Test checkpoint:** AVX-512 path disables when MPERF/APERF ratio drops >5% after micro-burst; AVX10/APX stubs log and continue without enabling. Test on: QEMU WHPX (has AVX-512 on Rocket Lake+), bare metal.
+
+> **Test runner:** `scripts\debug\run-x86-tests.bat` (SUITE=x86)
+> **Expected:** 23 suites, 0 failures
 
 ---
 
@@ -440,7 +443,7 @@
 | 💎   | AMD ext CPUID        | ✅ HAL leaves   | ✅ amd.c         | ✅ §1            |
 | 💎   | XSAVE per thread     | ✅ Full         | ✅ fpu__*        | ✅ §1 Done       |
 | 💎   | AVX memops in kernel | ✅ Yes          | ✅ kfpu          | ⚠️ §2 GFX only  |
-| 💎   | AVX-512 + throttle   | ✅ Yes          | ✅ power aware   | ⬜ §3            |
+| 💎   | AVX-512 + throttle   | ✅ Yes          | ✅ power aware   | ✅ §3 Done       |
 | 💎   | Central safe MSR     | ✅ HAL          | ✅ rdmsr_safe    | ✅ §4            |
 | 💎   | UMIP                 | ✅ On           | ✅ 4.15+         | ⬜ §5            |
 | 💎   | PKU / pkeys          | ✅ OS use       | ✅ pkey_*        | ⬜ §5 Win32 API  |

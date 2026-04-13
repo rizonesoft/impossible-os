@@ -15,6 +15,8 @@
 #include "gfx_simd.h"
 #include "kernel/types.h"
 #include "kernel/cpuid.h"
+#include "kernel/msr.h"
+#include "kernel/klog.h"
 
 /* ---- FPU / SSE state management ---- */
 
@@ -292,7 +294,8 @@ void simd_blur_accum_sse2(const uint32_t *src, uint32_t count,
  * SSE/AVX transition penalties.
  * ============================================================================ */
 
-int simd_avx2_ok = 0;  /* Set to 1 at boot if AVX2 is available and enabled */
+int simd_avx2_ok = 0;   /* Set to 1 at boot if AVX2 is available and enabled */
+int simd_avx512_ok = 0; /* Set to 1 at boot if AVX-512 passes throttle check */
 
 void simd_enable_avx(void)
 {
@@ -309,6 +312,96 @@ void simd_enable_avx(void)
     }
 
     simd_avx2_ok = 1;
+}
+
+/* ---- AVX-512 opt-in with MPERF/APERF throttle guard ----
+ *
+ * Consumer CPUs (Rocket Lake, Alder Lake) often throttle core frequency
+ * when executing 512-bit instructions. This check runs a ~10 us AVX-512
+ * micro-burst and compares APERF/MPERF ratios before/after. If the
+ * effective frequency drops > 5%, AVX-512 is disabled by clearing
+ * XCR0 bits 5-7 and the kernel falls back to AVX2 paths.
+ *
+ * MPERF increments at the maximum non-turbo ratio (fixed reference).
+ * APERF increments at the actual running frequency. A ratio drop means
+ * the CPU reduced frequency in response to heavy vector instructions.
+ *
+ * Must be called after simd_enable_avx() and cpu_configure_xcr0().
+ */
+
+void simd_enable_avx512(void)
+{
+    extern struct cpu_features g_cpu;
+    uint64_t mperf0, aperf0, mperf1, aperf1;
+    uint64_t dmperf, daperf;
+
+    if (!cpu_has(CPU_FEATURE_AVX512F))
+        return;
+
+    /* Verify XCR0 bits 5-7 are set (opmask + ZMM_Hi256 + Hi16_ZMM) */
+    if ((g_cpu.xcr0_active & 0xE0) != 0xE0)
+        return;
+
+    /* Try reading MPERF/APERF; skip throttle check if unavailable
+     * (e.g., some hypervisors do not expose these MSRs) */
+    if (msr_try_read(MSR_IA32_MPERF, &mperf0) != 0 ||
+        msr_try_read(MSR_IA32_APERF, &aperf0) != 0) {
+        /* Cannot read performance counters; enable without throttle check */
+        klog(LOG_WARN, "simd",
+             "MPERF/APERF unavailable; enabling AVX-512 without throttle check");
+        simd_avx512_ok = 1;
+        return;
+    }
+
+    /* Execute AVX-512 micro-burst (~10 us of 512-bit operations) */
+    simd_avx512_burst();
+
+    /* Sample counters after burst; use msr_try_read for both post-burst
+     * reads since these MSRs are optional telemetry (Codex finding #3) */
+    if (msr_try_read(MSR_IA32_MPERF, &mperf1) != 0 ||
+        msr_try_read(MSR_IA32_APERF, &aperf1) != 0) {
+        klog(LOG_WARN, "simd",
+             "MPERF/APERF post-burst read failed; enabling AVX-512");
+        simd_avx512_ok = 1;
+        return;
+    }
+
+    dmperf = mperf1 - mperf0;
+    daperf = aperf1 - aperf0;
+
+    /* Guard against zero delta or implausibly large deltas (VM pause,
+     * counter wraparound). For a ~10us burst, deltas should be < 1M
+     * cycles. Cap at 2^56 to prevent overflow in the multiply below. */
+    if (dmperf == 0 || dmperf > (1ULL << 56)) {
+        klog(LOG_WARN, "simd",
+             "MPERF delta out of range (%u); enabling AVX-512 without throttle check",
+             (uint64_t)dmperf);
+        simd_avx512_ok = 1;
+        return;
+    }
+
+    /* Check if frequency dropped > 5%:
+     * ratio = daperf / dmperf; throttled if ratio < 0.95
+     * Integer math: throttled if daperf * 100 < dmperf * 95
+     * Overflow-safe: deltas capped at 2^56, so *100 fits in 64 bits. */
+    if (daperf * 100 < dmperf * 95) {
+        /* Throttling detected; disable AVX-512 by clearing XCR0 bits 5-7 */
+        uint64_t mask = g_cpu.xcr0_active & ~0xE0UL;
+        uint32_t lo = (uint32_t)mask;
+        uint32_t hi = (uint32_t)(mask >> 32);
+        __asm__ volatile ("xsetbv" : : "a"(lo), "d"(hi), "c"((uint32_t)0));
+        g_cpu.xcr0_active = mask;
+
+        klog(LOG_WARN, "simd",
+             "AVX-512 throttling detected (APERF/MPERF=%u%%), disabled",
+             (uint64_t)(daperf * 100 / dmperf));
+        return;
+    }
+
+    simd_avx512_ok = 1;
+    klog(LOG_INFO, "simd",
+         "AVX-512 enabled (16 pixels/iter, APERF/MPERF=%u%%)",
+         (uint64_t)(daperf * 100 / dmperf));
 }
 
 /* ---- AVX2 alpha blending (8 pixels per iteration) ---- */
