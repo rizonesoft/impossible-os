@@ -153,6 +153,7 @@ Lesson: `s_subsys_names[]` missed `SUBSYS_OB`, causing OOB read in `kernel_subsy
 
 - [ ] **MMIO must use UC or WC pages.** Device register MMIO (HPET, NVMe, xHCI, ECAM) must go through `vmm_map_mmio_uc()`. Framebuffer VRAM uses `vmm_map_mmio_wc()` for Write-Combining. The bootloader maps everything WB; MMIO through WB pages causes stale reads or bus errors on real hardware.
 - [ ] **No CPUID-gated instructions without checking.** Before using `clac`/`stac` (SMAP), `xsave`/`xrstor` (XSAVE), or AVX instructions, check `cpu_has(CPU_FEATURE_XX)`. TCG and some bare metal CPUs lack these.
+- [ ] **Never use `msr_try_read()` as the sole MSR existence check.** WHPX silently absorbs reads of unknown MSRs (returns 0, no #GP), making `msr_try_read()` a no-crash guarantee, NOT an existence probe. Always gate on `cpu_has()` or CPUID first; use `msr_try_read()` only as a secondary safety net. Pattern: `if (!cpu_has(FEATURE)) return; if (msr_try_read(MSR, &val) != 0) { fallback; }`. Lesson: 2026-04-13 test_msr_try_read(0xFFFFFFFF) returned success on WHPX because the hypervisor intercepted the read.
 - [ ] **Never compile SSE2 fallback code with `-mavx2`.** With `-mavx2`, the compiler emits VEX-encoded instructions (e.g., `vmovdqu` instead of `movdqu`) even for legacy SSE2 inline asm surroundings and scalar tails. On CPUs without AVX (TCG `qemu64`, pre-2011 bare metal), VEX instructions cause #UD. Split SIMD files: AVX2 functions in a `-mavx2` file, SSE2 fallbacks and dispatch in a `-msse2` file. Lesson: 2026-04-13 TCG crash from `memops.c` SSE2+dispatch compiled with `-mavx2`.
 - [ ] **GS_BASE is set.** Any code that reads `gs:N` (per-CPU data) must run AFTER `smp_early_bsp_init()`. If unsure, check `smp_this_cpu() != NULL`.
 - [ ] **No LAPIC TPR writes in ISR path.** IRQL tracking is software-only. The LAPIC handles hardware priority via ISR/PPR.
@@ -279,6 +280,7 @@ When updating, add a comment at the bottom of the relevant Gate section:
 | Magic number in source | Extract to `#define` in a header |
 | Test failing | Fix the code, never skip the test |
 | Emulator-specific behavior | Write to the hardware spec, not the emulator |
+| Probing MSR existence | CPUID/cpu_has() first, msr_try_read() as safety net only; WHPX absorbs unknown MSRs silently |
 | Arch header in fs/ob/ipc/nt code | Don't include it -- find an arch-neutral way |
 | Inline asm in neutral code | Use a wrapper or HAL call, not raw asm |
 | GDT/IDT concept in neutral logic | Keep in arch-specific files (task.c context setup) |

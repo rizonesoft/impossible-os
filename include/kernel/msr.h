@@ -27,7 +27,16 @@ static inline void msr_write(uint32_t index, uint64_t value)
     __asm__ volatile ("wrmsr" :: "c"(index), "a"(lo), "d"(hi) : "memory");
 }
 
-/* #GP-safe MSR read -- returns 0 on success, -1 if MSR is unsupported.
+/* #GP-safe MSR read -- returns 0 on success, -1 if #GP was caught.
+ *
+ * WARNING: This is a NO-CRASH guarantee, NOT an existence check.
+ * WHPX silently absorbs reads of unknown MSRs (returns 0, no #GP),
+ * so ret==0 does NOT prove the MSR exists on every platform.
+ *
+ * Rule: ALWAYS gate on cpu_has(CPU_FEATURE_*) or CPUID before calling.
+ * Use msr_try_read() only as a secondary safety net for edge cases
+ * where CPUID does not directly indicate MSR availability.
+ *
  * Implemented in msr.c using a temporary #GP handler. */
 int msr_try_read(uint32_t index, uint64_t *out);
 

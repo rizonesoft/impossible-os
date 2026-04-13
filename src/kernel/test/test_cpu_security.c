@@ -487,12 +487,17 @@ static void test_msr_try_read_valid(void)
                 "msr_try_read(EFER) output has LMA set");
 }
 
-static void test_msr_try_read_invalid(void)
+static void test_msr_try_read_no_crash(void)
 {
-    /* msr_try_read on a nonexistent MSR should return -1 without panic.
-     * WHPX silently absorbs unknown MSR reads (returns 0, no #GP), so
-     * on that platform ret==0 is also acceptable. The key invariant is
-     * that the kernel does not crash. */
+    /* msr_try_read on a nonexistent MSR must not crash.
+     *
+     * Platform divergence:
+     *   TCG / bare metal: hardware raises #GP, handler catches it, ret==-1
+     *   WHPX: hypervisor absorbs the read silently, returns 0, ret==0
+     *
+     * This test verifies the NO-CRASH guarantee. It does NOT verify MSR
+     * existence detection because WHPX makes that unreliable. Feature
+     * detection must always use cpu_has() / CPUID first. */
     uint64_t val = 0xDEAD;
     int ret = msr_try_read(0xFFFFFFFF, &val);
     TEST_ASSERT(ret == 0 || ret == -1,
@@ -509,6 +514,26 @@ static void test_msr_try_read_null_out(void)
     int ret = msr_try_read(MSR_IA32_EFER, (uint64_t *)0);
     TEST_ASSERT_EQ(ret, 0,
                    "msr_try_read(EFER, NULL) returns 0 without crash");
+}
+
+static void test_msr_cpuid_gate_pattern(void)
+{
+    /* Correct pattern: CPUID gate first, msr_try_read as safety net.
+     * MPERF/APERF are available on CPUs with hardware coordination
+     * feedback (CPUID.06H:ECX[0]). On CPUs without it, the MSR may
+     * not exist, and on WHPX the read would silently return 0.
+     *
+     * This test verifies the pattern used in simd_enable_avx512():
+     * if CPUID says the feature exists, msr_try_read must succeed. */
+    if (!cpu_has(CPU_FEATURE_AVX512F)) {
+        TEST_SKIP("AVX512F not present; MPERF/APERF test not applicable");
+        return;
+    }
+    /* On a CPU with AVX512F, MPERF/APERF should be readable */
+    uint64_t mperf = 0;
+    int ret = msr_try_read(MSR_IA32_MPERF, &mperf);
+    TEST_ASSERT_EQ(ret, 0,
+                   "MPERF readable when AVX512F present (CPUID-gated)");
 }
 
 /* ---- Registration ---- */
@@ -575,10 +600,12 @@ void test_register_x86(void)
         test_msr_read_efer_lma_set, TEST_CAT_X86);
     test_suite_register_cat("MSR: msr_try_read valid MSR",
         test_msr_try_read_valid, TEST_CAT_X86);
-    test_suite_register_cat("MSR: msr_try_read invalid MSR",
-        test_msr_try_read_invalid, TEST_CAT_X86);
+    test_suite_register_cat("MSR: msr_try_read no-crash guarantee",
+        test_msr_try_read_no_crash, TEST_CAT_X86);
     test_suite_register_cat("MSR: msr_try_read NULL out",
         test_msr_try_read_null_out, TEST_CAT_X86);
+    test_suite_register_cat("MSR: CPUID-gated msr_try_read pattern",
+        test_msr_cpuid_gate_pattern, TEST_CAT_X86);
 }
 
 #endif /* KERNEL_TESTS */
