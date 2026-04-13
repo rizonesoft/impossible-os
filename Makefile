@@ -816,11 +816,17 @@ $(BUILD_DIR)/kernel/gfx/gfx_simd.o: $(SRC_DIR)/kernel/gfx/gfx_simd.c | $(GENERAT
 	$(CC) $(SIMD_CFLAGS) -I$(INCLUDE) -I$(KERNEL_DIR) -c $< -o $@
 	@echo "[CC/SSE2] $<"
 
-# AVX2 memops -- SIMD-accelerated memcpy/memset with vzeroupper
+# AVX2 memops -- memcpy_avx/memset_avx with vzeroupper (AVX2 ONLY)
 $(BUILD_DIR)/kernel/mm/memops.o: $(SRC_DIR)/kernel/mm/memops.c | $(GENERATED_HDRS)
 	@mkdir -p $(dir $@)
 	$(CC) $(AVX2_CFLAGS) -I$(INCLUDE) -I$(KERNEL_DIR) -c $< -o $@
 	@echo "[CC/AVX2] $<"
+
+# SSE2 memops + dispatch -- must NOT use -mavx2 (VEX instructions crash TCG)
+$(BUILD_DIR)/kernel/mm/memops_sse.o: $(SRC_DIR)/kernel/mm/memops_sse.c | $(GENERATED_HDRS)
+	@mkdir -p $(dir $@)
+	$(CC) $(SIMD_CFLAGS) -I$(INCLUDE) -I$(KERNEL_DIR) -c $< -o $@
+	@echo "[CC/SSE2] $< (dispatch)"
 
 # stb_truetype implementation — needs SSE2 for floating-point math
 $(BUILD_DIR)/kernel/gfx/stb_truetype_impl.o: $(SRC_DIR)/kernel/gfx/stb_truetype_impl.c | $(GENERATED_HDRS)
