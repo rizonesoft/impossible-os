@@ -176,13 +176,13 @@
 - [x] `cpu_verify_hardening()` in `cpu_security.c` refactored: raw `rdmsr` + dead duplicate replaced with `msr_read(MSR_IA32_EFER)` (d825576d)
 - [x] Commit: `"kernel/msr: cpu_verify_hardening EFER verify uses msr_read"` (d825576d)
 
-**Test checkpoint:** `msr_read(MSR_IA32_EFER)` stable across calls; `msr_try_read(0xFFFFFFFF, &scratch) == -1` without panic; boot completes with MSR layer linked. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** `msr_read(MSR_IA32_EFER)` stable across calls; `msr_try_read(0xFFFFFFFF, &scratch)` survives without panic (returns -1 on TCG/bare metal where #GP fires, returns 0 on WHPX where hypervisor absorbs the read); boot completes with MSR layer linked. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
 > **Test runner:** `scripts\debug\run-x86-tests.bat` (SUITE=x86)
-> **Expected:** 28 suites, 0 failures
+> **Expected:** 29 suites, 0 failures
 >
 > **Verified:** 2026-04-12 -- all 6 items confirmed. `msr_read`/`msr_write` inline in `msr.h:16-28`. `msr_try_read` in `msr.c:48-89` with spinlock+irqsave+RIP check (Codex: SMP race + unrelated #GP swallowing fixed). 22 MSR constants in `msr.h`. smp.c (4 sites) + lapic.c (2 sites) migrated. `cpu_verify_hardening` uses `msr_read` (d825576d). Hyper-V MSR constants corrected per TLFS Table 2-2 (0x40000022=TSC, 0x40000023=APIC). `msr_write` memory clobber added. Accepted: none.
-> **Quality reviewed:** 2026-04-13 -- kernel-code-quality 11 gates walked. G1: spinlock+irqsave serializes msr_try_read on SMP; result captured under lock (Codex fix: s_gp_fired race). G7: non-probe #GP now calls panic_screen instead of returning unchanged frame (Codex fix: infinite-loop on unrelated #GP). G11: rdmsr 2-byte skip per Intel SDM Vol. 2B; MSR indices match SDM Vol. 4 + AMD APM Vol. 2 + Hyper-V TLFS Table 2-2. XREF comments fixed (§3->§4). 5 MSR unit tests added (EFER stable, LMA set, try_read valid/invalid/NULL). Parity: matches Windows HAL HalMsrRead + Linux rdmsr_safe; our approach uses temporary #GP handler vs Linux extable mechanism. Accepted: IDT handler registration race (low practical risk: vector 13 only modified by serialized msr_try_read; proper extable mechanism is out of scope for §4).
+> **Quality reviewed:** 2026-04-13 -- kernel-code-quality 11 gates walked. G1: spinlock+irqsave serializes msr_try_read on SMP; result captured under lock (Codex fix: s_gp_fired race). G7: non-probe #GP now calls panic_screen instead of returning unchanged frame (Codex fix: infinite-loop on unrelated #GP). G11: rdmsr 2-byte skip per Intel SDM Vol. 2B; MSR indices match SDM Vol. 4 + AMD APM Vol. 2 + Hyper-V TLFS Table 2-2. XREF comments fixed (§3->§4). 6 MSR unit tests (EFER stable, LMA set, try_read valid, try_read no-crash, NULL out, CPUID-gate pattern). **WHPX limitation:** `msr_try_read()` is a no-crash guarantee, not an existence check; WHPX silently absorbs unknown MSR reads (returns 0, no #GP). Rule added to `msr.h` API doc, kernel-code-quality Gate 6, and CLAUDE.md Bare Metal Gotchas: always gate on `cpu_has()`/CPUID first, use `msr_try_read()` only as secondary safety net. Parity: matches Windows HAL HalMsrRead + Linux rdmsr_safe. Accepted: IDT handler registration race (low practical risk: vector 13 only modified by serialized msr_try_read; proper extable mechanism is out of scope for §4).
 
 ---
 
@@ -426,31 +426,31 @@
 
 ## OS Comparison
 
-| ⭐   | Feature              | 🪟 Win11        | 🐧 Linux         | 🚀 Impossible OS |
-| --- | -------------------- | -------------- | --------------- | --------------- |
-| 💎   | CPUID feature gates  | ✅ Ke API       | ✅ x86/cpu       | ✅ cpuid_init    |
-| 💎   | AMD ext CPUID        | ✅ HAL leaves   | ✅ amd.c         | ✅ §1            |
-| 💎   | XSAVE per thread     | ✅ Full         | ✅ fpu__*        | ✅ §1 Done       |
-| 💎   | AVX memops in kernel | ✅ Yes          | ✅ kfpu          | ⚠️ §2 GFX only   |
-| 💎   | AVX-512 + throttle   | ✅ Yes          | ✅ power aware   | ✅ §3 Done       |
-| 💎   | Central safe MSR     | ✅ HAL          | ✅ rdmsr_safe    | ✅ §4            |
-| 💎   | UMIP                 | ✅ On           | ✅ 4.15+         | ⬜ §5            |
-| 💎   | PKU / pkeys          | ✅ OS use       | ✅ pkey_*        | ⬜ §5 Win32 API  |
-| 💎   | PKS (supervisor)     | ⚠️ niche        | ✅ mm since 5.13 | ⬜ defer T17     |
-| 💎   | FB WC PAT            | ✅ GPU path     | ✅ ioremap_wc    | ⬜ §6 UC today   |
-| 💎   | 1 GiB huge pages     | ✅ Large page   | ✅ hugetlb 1G    | ⬜ §6            |
-| 💎   | FRED events          | 🔜 roadmap      | ✅ 6.9+          | ⬜ §7            |
-| 💎   | LKGS fast GS         | 🔜 roadmap      | ✅ 6.4+          | ⬜ §7            |
-| 💎   | Zen CCD NUMA         | ✅ Ke node      | ✅ amd topo      | ⬜ §8            |
-| 💎   | Intel P/E hybrid     | ✅ Director     | ✅ HFI           | ⬜ §8            |
-| 💎   | PMU / PMC            | ✅ ETW WPA      | ✅ perf          | ⬜ §9            |
-| 💎   | OSVW errata          | ✅ HAL          | ✅ amd.c         | ⬜ §10           |
-| 💎   | RDTSCP TSC_AUX       | ✅ QPC path     | ✅ SMP init      | ⬜ §10           |
-| 💎   | AMD IBS sample       | ⚠️ vendor tool  | ✅ perf IBS      | ⬜ §11 stretch   |
-| 💎   | SVM VT-x detect      | ✅ HAL          | ✅ kvm caps      | ✅ §12           |
-| ⭐   | Boot hw self tune    | ❌ static       | ❌ static        | ⬜ §13           |
-| ⭐   | PKU Win32 wrapper    | ❌ none         | ⚠️ raw syscalls  | ⬜ §5            |
-| ⭐   | Per-core freq UI     | ❌ simple       | ⚠️ turbostat     | ⬜ §9 + shell    |
+| ⭐  | Feature              | 🪟 Win11                    | 🐧 Linux                    | 🚀 Impossible OS |
+| --- | -------------------- | ---------------------------- | --------------------------- | ----------------- |
+| 💎  | CPUID feature gates  | ✅ KeQueryFeature API       | ✅ cpu_has() x86/cpu        | ✅ cpuid_init    |
+| 💎  | AMD ext CPUID        | ✅ HAL ext leaves 8000xxxx  | ✅ amd.c + topo ext         | ✅ §1            |
+| 💎  | XSAVE per thread     | ✅ KTHREAD XSAVE area       | ✅ fpu__alloc lazy FPU      | ✅ §1 Done       |
+| 💎  | AVX memops in kernel | ✅ RtlCopyMemory via NT HAL | ✅ kernel_fpu_begin + kfpu  | ⚠️ §2 GFX only   |
+| 💎  | AVX-512 + throttle   | ✅ context-switch aware     | ✅ eager FPU, power cgroup  | ✅ §3 Done       |
+| 💎  | Central safe MSR     | ✅ HalMsrRead + #GP safe    | ✅ rdmsr_safe() extable     | ✅ §4 Done       |
+| 💎  | UMIP                 | ✅ CR4.UMIP on boot         | ✅ 4.15+ on boot            | ⬜ §5            |
+| 💎  | PKU / pkeys          | ✅ implicit OS use          | ✅ pkey_alloc/mprotect_key  | ⬜ §5 Win32 API  |
+| 💎  | PKS (supervisor)     | ⚠️ niche, not exposed       | ✅ mm/pkeys since 5.13      | ⬜ defer T17     |
+| 💎  | FB WC PAT            | ✅ WDDM GPU WC mapping      | ✅ ioremap_wc PAT entry     | ⬜ §6 UC today   |
+| 💎  | 1 GiB huge pages     | ✅ Large Pages in registry  | ✅ hugetlbfs 1G mount       | ⬜ §6            |
+| 💎  | FRED events          | 🔜 future Windows roadmap   | ✅ 6.9+ Granite Rapids      | ⬜ §7            |
+| 💎  | LKGS fast GS         | 🔜 future Windows roadmap   | ✅ 6.4+ no SWAPGS in entry  | ⬜ §7            |
+| 💎  | Zen CCD NUMA         | ✅ Ke node + NUMA policy    | ✅ amd_nb.c CCD/CCX topo    | ⬜ §8            |
+| 💎  | Intel P/E hybrid     | ✅ Thread Director HFI      | ✅ HFI + itmt scheduler     | ⬜ §8            |
+| 💎  | PMU / PMC            | ✅ ETW + WPA counters       | ✅ perf_event PMU driver    | ⬜ §9            |
+| 💎  | OSVW errata          | ✅ HAL workaround table     | ✅ amd.c osvw_id_length     | ⬜ §10           |
+| 💎  | RDTSCP TSC_AUX       | ✅ QPC reads TSC_AUX        | ✅ per-CPU wrmsr in SMP     | ⬜ §10           |
+| 💎  | AMD IBS sample       | ⚠️ uProf vendor tool only   | ✅ perf IBS + oprofile      | ⬜ §11 stretch   |
+| 💎  | SVM VT-x detect      | ✅ HAL + Hv caps            | ✅ kvm cpuid + vmx_init     | ✅ §12           |
+| ⭐  | Boot hw self tune    | ❌ static config only       | ❌ static defaults          | ⬜ §13           |
+| ⭐  | PKU Win32 wrapper    | ❌ no user API surface      | ⚠️ raw syscall pkey_*       | ⬜ §5            |
+| ⭐  | Per-core freq UI     | ❌ basic Task Manager       | ⚠️ turbostat CLI tool       | ⬜ §9 + shell    |
 
 After §1 through §12 done and §2 through §11 plus §13 through §14 planned, parity with Win11/Linux 6.x on this stack; §13 boot benchmark is the differentiator. `SetThreadMemoryZone` (§5) is a planned Win32-style PKU surface. PKS (supervisor keys) stays in `TODO-17` until kernel mappings allow it without breaking SMEP/SMAP rollout.
 
