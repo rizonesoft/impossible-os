@@ -55,7 +55,7 @@
 | 💎  |  10   | DbgKdGetVersionApi + module list                         | §3, TODO-16 §3 |  [ ]   |
 | 💎  |  11   | I/O port & MSR read/write (DbgKdReadIoSpace / MSR apis)  | §4                       |  [ ]   |
 | ⭐  |  12   | `kd_break()` + keyboard F12 breakin + QEMU pipe guide    | §3                       |  [ ]   |
-| 💎  |  13   | Debug syscalls wired to SSDT                             | §1, §4, TODO-05 §4, TODO-05 §20     |  [ ]   |
+| 💎  |  13   | Debug syscalls wired to SSDT                             | §1, §4, TODO-05 §4, TODO-05 §21     |  [ ]   |
 
 > 💎 = parity work -- matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work -- Impossible OS is superior or first.
@@ -472,7 +472,7 @@ After §1--§13, WinDbg-compatible KD on COM1 plus user-mode debug SSDT surface.
 
 ## 13. Debug Syscalls Wired to SSDT
 
-Register user-mode debug API entry points in the SSDT so debuggers can attach/detach/wait via `syscall`. (-> XREF: `TODO-05-native-api-ssdt.md` §4 SSDT indices, §20 Exception/Debug syscalls)
+Register user-mode debug API entry points in the SSDT so debuggers can attach/detach/wait via `syscall`. (-> XREF: `TODO-05-native-api-ssdt.md` §4 SSDT indices, §21 Exception/Debug syscalls)
 
 - [ ] `NtCreateDebugObject(DebugObjectHandle, DesiredAccess, ObjectAttributes, Flags)` -> SSDT 0x0135: allocate debug port object; register as ObpDebugType
 - [ ] `NtDebugActiveProcess(ProcessHandle, DebugObjectHandle)` -> SSDT 0x0132: attach debug port to target process; all exceptions route to debugger first
@@ -522,9 +522,3 @@ Register user-mode debug API entry points in the SSDT so debuggers can attach/de
 **Test runner:** `scripts\debug\run-boot-tests.bat` (SUITE=boot)
 
 ---
-
-## History
-
-| Date | Action | Summary |
-| --- | --- | --- |
-| 2026-04-10 | validate | Flat sections (removed ### N.M), stripped model tags, moved OS Comparison after Implementation Order, compact table + parity rows, Depends On uses § + `TODO-05 §20` for §13, per-section **Test checkpoint** + four platforms, Unit Tests use `TEST_CAT_BOOT` / real `symtab_resolve`, Verification + `run-boot-tests.bat`. **Note:** `TODO-06 §3` is [x] upstream; KD must still assert `HIGH_LEVEL` / no DPC during the command loop per Inputs XREF. **Flag:** `TODO-05 §20` checklists are still [ ]; §13 syscall bodies land there first -- keep SSDT indices in TODO-05 §4 until handlers exist. |

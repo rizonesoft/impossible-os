@@ -3,42 +3,44 @@
 > **Goal:** Implement the complete ACPI power management stack beyond the S5 shutdown that already works. This covers S1 CPU-halt idle, S3 suspend-to-RAM, S4 hibernate-to-disk, fast startup (hybrid shutdown / hiberboot), PCI/device D-states (D0--D3cold), runtime device idle management, the ACPI Embedded Controller (EC) driver required for every laptop, battery and AC adapter status (`_BIF`/`_BIX`/`_BST`), power button and lid-close event handling, driver power callbacks with query/veto and correct resume ordering, ACPI thermal zone management (`_TMP`/`_CRT`/`_HOT`/`_PSV`/`_ACx`) with passive and active cooling, CPU idle governor framework (C-states via `_CST`/`MWAIT`), CPU frequency scaling governor framework (HWP/CPPC/`_PSS`), connected standby (S0ix / Modern Standby), power request tracking, wake source management, and the power-plan UI. Without this, Impossible OS has no viable story on laptops or any real hardware that expects ACPI power events.
 
 > [!IMPORTANT]
-> **Current state:** `src/kernel/acpi.c` (618 lines) implements: RSDP->RSDT/XSDT chain walk, FADT extraction (PM1a control port, PM timer), MADT (LAPIC/IOAPIC/ISA overrides), `acpi_shutdown()` via `\_S5_` AML parse + PM1a_CNT write, and ACPI reset register. Everything else in this TODO is **greenfield**: no `\_S3_`/`\_S4_` parsing, no sleep-state entry, no CPU state save/restore, no hibernation image, no EC driver, no battery, no power button events, no device D-states.
+> **Current state:** `src/kernel/acpi.c` implements RSDP through XSDT walk, FADT (PM1a control, PM timer), MADT, `acpi_shutdown()` / `acpi_reboot()`, and **`acpi_power_init()`** which parses `\_S1_`, `\_S3_`, and `\_S4_` from the DSDT via **`parse_sleep_type()`**, plus **`acpi_sleep_supported()`** / **`acpi_get_slp_typa()`** and the `Sleep states: S1=...` klog line. **`acpi_enter_sleep_state()`** performs the ACPI PM1a/b SLP_TYP+SLP_EN sequence then `sti; hlt` (S1-style wake only today; S3/S4 still need §3/§4 state save, FACS vector, and firmware resume). **`acpi_enable_fixed_events()`** and **`acpi_register_sci()`** / **`acpi_sci_handler()`** enable PM1 fixed-event SCI path (logs today; §7 owns user-visible dispatch). Phase 2 **`boot_storage.c`** wires `acpi_power_init()`, `acpi_enable_fixed_events()`, and `acpi_register_sci()` after timer init. **`src/kernel/test/test_acpi_power.c`** covers §1 discovery and unsupported-state rejection. **Still greenfield:** EC (§5), battery (§6), S3/S4 (§3/§4), scheduler S1 idle (§2), PCI D-states (§8), governors and `powercfg` (§15+), power syscalls (§20), Linux sysfs parity doc (§21).
 
 > [!CAUTION]
-> **Memory rule:** Hibernation image buffers can be multi-gigabyte -- always use `pmm_alloc_contiguous()` for hibernation scratch pages. Never `kmalloc` anything > 4 KiB in the suspend/hibernate paths.
+> **Memory rule:** Hibernation image buffers can be multi-gigabyte: always use `pmm_alloc_contiguous()` for hibernation scratch pages. Never `kmalloc` anything > 4 KiB in the suspend/hibernate paths.
 
 > [!IMPORTANT]
-> **Scope boundary with `04-drivers-hardware/TODO-04-acpi-power-management.md`:** TODO-04 is the authoritative ACPI power management implementation (ACPICA-based AML interpreter). §1, §3, §4, §5, §6, and §7 of this TODO are the *pre-ACPICA* implementation path -- they use hand-rolled AML parsing (same pattern as the existing `\_S5_` parser) and provide usable functionality before TODO-04 §1 (ACPICA) is complete. Once TODO-04 §1 lands, TODO-04 §2 (S3), §3 (battery), §5 (power button), and §8 (S4) supersede the equivalent sections here. **§2 (S1/idle thread), §8 (PCI D-states), §9 (driver callbacks), §10 (S0ix), and §18 (power plan UI / `powercfg`) are kernel-core responsibilities not covered by TODO-04 and remain authoritative.**
-> -> XREF: `04-drivers-hardware/TODO-04-acpi-power-management.md §1` -- ACPICA integration; when complete, replaces hand-rolled AML parsing in §1 of this TODO
-> -> XREF: `04-drivers-hardware/TODO-04-acpi-power-management.md §2` -- authoritative S3 suspend/resume (ACPICA path); §3 here is the pre-ACPICA fallback
-> -> XREF: `04-drivers-hardware/TODO-04-acpi-power-management.md §3` -- authoritative battery `_BST`/`_BIF` (ACPICA path); §6 here is the pre-ACPICA fallback
-> -> XREF: `04-drivers-hardware/TODO-04-acpi-power-management.md §5` -- authoritative power button SCI (ACPICA path); §7 here is the pre-ACPICA fallback
-> -> XREF: `04-drivers-hardware/TODO-04-acpi-power-management.md §8` -- authoritative S4 hibernate (ACPICA path); §4 here is the pre-ACPICA fallback
+> **Scope boundary with `04-drivers-hardware/TODO-04-acpi-power-management.md`:** TODO-04 is the authoritative ACPI power management implementation (ACPICA-based AML interpreter). §1, §3, §4, §5, §6, and §7 of this TODO are the *pre-ACPICA* implementation path; they use hand-rolled AML parsing (same pattern as the existing `\_S5_` parser) and provide usable functionality before TODO-04 §1 (ACPICA) is complete. Once TODO-04 §1 lands, TODO-04 §2 (S3), §3 (battery), §5 (power button), and §8 (S4) supersede the equivalent sections here. **§2 (S1/idle thread), §8 (PCI D-states), §9 (driver callbacks), §10 (S0ix), and §18 (power plan UI / `powercfg`) are kernel-core responsibilities not covered by TODO-04 and remain authoritative.**
+> → XREF: `04-drivers-hardware/TODO-04-acpi-power-management.md §1` -- ACPICA integration; when complete, replaces hand-rolled AML parsing in §1 of this TODO
+> → XREF: `04-drivers-hardware/TODO-04-acpi-power-management.md §2` -- authoritative S3 suspend/resume (ACPICA path); §3 here is the pre-ACPICA fallback
+> → XREF: `04-drivers-hardware/TODO-04-acpi-power-management.md §3` -- authoritative battery `_BST`/`_BIF` (ACPICA path); §6 here is the pre-ACPICA fallback
+> → XREF: `04-drivers-hardware/TODO-04-acpi-power-management.md §5` -- authoritative power button SCI (ACPICA path); §7 here is the pre-ACPICA fallback
+> → XREF: `04-drivers-hardware/TODO-04-acpi-power-management.md §8` -- authoritative S4 hibernate (ACPICA path); §4 here is the pre-ACPICA fallback
 
 ---
 
 ## Inputs
 
 - `src/kernel/acpi.c` -- existing ACPI parser; extend for new sleep objects
+- `include/kernel/pm/sleep.h` (planned, not in tree yet): `pm_sleep_variant_t`, `pm_get_sleep_variants()` (§21)
+- `docs/kernel/pm-linux-sysfs-parity.md` (planned, not in tree yet): Linux `mem_sleep` parity doc (§21; create under `todo/02-kernel-core/` if `docs/kernel/` not present)
 - `include/kernel/acpi.h` -- ACPI types (FADT, RSDP, MADT)
 - `src/kernel/drivers/pci.c` -- PCI config space read/write (D-state §8)
 - `src/kernel/sched/task.c` -- scheduler freeze for S3/S4
 - `src/kernel/mm/vmm.c` -- page table save for S3 wakeup identity map
-- -> XREF: `TODO-06-irql-model-dpcs.md §3` -- DPCs and IRQL transitions must be quiesced before entering any sleep state; `KeLowerIrql(PASSIVE_LEVEL)` required on resume
-- -> XREF: `TODO-07-time-filetime-management.md §3` -- TSC must be recalibrated after S3/S0ix wake (clock drift); `acpi_pm_timer_read()` used as reference; §3 = Invariant TSC Detection and Per-CPU Offset Calibration
-- -> XREF: `TODO-07-time-filetime-management.md §14` -- S3/S4 resume path must call `ke_suspend_bias_update()` to adjust `InterruptTimeBias` by the sleep duration; §14 = Suspend/Hibernate Time Bias Tracking
-- -> XREF: `TODO-01-kernel-init-sequencing.md §3` -- S4 resume check runs early in Phase 1; must distinguish cold boot from hibernate resume via hibernation signature
-- -> XREF: `04-drivers-hardware/TODO-01-kernel-module-system.md §4` -- driver model HAL vtables required for USB xHCI to register power callbacks; xHCI D3cold->D0 handled via callback registered in §9
-- -> XREF: `05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md §1` -- IXFS WAL journal (`ixfs_journal_begin`/`commit`/`abort`) must be verified (§1 Subsystem Verification) before S4 journal-flush dependency is safe; storage driver must reach D0 before journal replay on resume
-- -> XREF: `TODO-05-native-api-ssdt.md §4` -- SSDT indices 0x00D7 (NtShutdownSystem) and 0x0140--0x0145 (NtSetSystemPowerState, NtInitiatePowerAction, NtPowerInformation, NtGetDevicePowerState, NtSetThreadExecutionState, NtRequestWakeupLatency) reserved for this TODO; TODO-05 §21 wires power syscalls into the SSDT
-- -> XREF: `01-boot-platform/TODO-06-interrupt-timer-arch.md §7` -- LAPIC timer recalibration required after HWP/CPPC frequency changes (§15 CPU frequency scaling)
-- -> XREF: `04-drivers-hardware/TODO-04-acpi-power-management.md §4` -- ACPICA-based `_PSS` P-state parsing; §15 here owns the kernel-core governor framework that consumes it
-- -> XREF: `04-drivers-hardware/TODO-04-acpi-power-management.md §6` -- ACPICA-based `IA32_THERM_STATUS` per-core temp; §14 here owns the ACPI thermal zone framework
-- -> XREF: `04-drivers-hardware/TODO-04-acpi-power-management.md §7` -- ACPICA-based `_CST` C-state parsing; §16 here owns the kernel-core idle governor
-- -> XREF: `03-memory-concurrency/TODO-05-scheduler-enhancement.md §9` -- `cpufreq_register_driver()` vtable consumed by §15; scheduler provides load metrics for governor
-- -> XREF: `02-kernel-core/TODO-19-x86-64-architecture.md §9` -- Intel hybrid P/E-core detection feeds §15 HWP/CPPC governor with core asymmetry data
-- -> XREF: `04-drivers-hardware/TODO-08-gpu-display-drivers.md` -- GPU power management (DPMS, RTD3 runtime D3, Panel Self-Refresh) owned by GPU TODO; §18 `DisplayOffTimeout` triggers DPMS via `gfx_set_dpms(DPMS_OFF)`
+- → XREF: `TODO-06-irql-model-dpcs.md §3` -- DPCs and IRQL transitions must be quiesced before entering any sleep state; `KeLowerIrql(PASSIVE_LEVEL)` required on resume
+- → XREF: `TODO-07-time-filetime-management.md §3` -- TSC must be recalibrated after S3/S0ix wake (clock drift); `acpi_pm_timer_read()` used as reference; §3 = Invariant TSC Detection and Per-CPU Offset Calibration
+- → XREF: `TODO-07-time-filetime-management.md §14` -- S3/S4 resume path must call `ke_suspend_bias_update()` to adjust `InterruptTimeBias` by the sleep duration; §14 = Suspend/Hibernate Time Bias Tracking
+- → XREF: `TODO-01-kernel-init-sequencing.md §3` -- S4 resume check runs early in Phase 1; must distinguish cold boot from hibernate resume via hibernation signature
+- → XREF: `04-drivers-hardware/TODO-01-kernel-module-system.md §4` -- driver model HAL vtables required for USB xHCI to register power callbacks; xHCI D3cold->D0 handled via callback registered in §9
+- → XREF: `05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md §1` -- IXFS WAL journal (`ixfs_journal_begin`/`commit`/`abort`) must be verified (§1 Subsystem Verification) before S4 journal-flush dependency is safe; storage driver must reach D0 before journal replay on resume
+- → XREF: `TODO-05-native-api-ssdt.md §4` -- SSDT indices 0x00D7 (NtShutdownSystem) and 0x0140--0x0145 (NtSetSystemPowerState, NtInitiatePowerAction, NtPowerInformation, NtGetDevicePowerState, NtSetThreadExecutionState, NtRequestWakeupLatency) reserved for this TODO; TODO-05 §22 wires power syscalls into the SSDT
+- → XREF: `01-boot-platform/TODO-06-interrupt-timer-arch.md §7` -- LAPIC timer recalibration required after HWP/CPPC frequency changes (§15 CPU frequency scaling)
+- → XREF: `04-drivers-hardware/TODO-04-acpi-power-management.md §4` -- ACPICA-based `_PSS` P-state parsing; §15 here owns the kernel-core governor framework that consumes it
+- → XREF: `04-drivers-hardware/TODO-04-acpi-power-management.md §6` -- ACPICA-based `IA32_THERM_STATUS` per-core temp; §14 here owns the ACPI thermal zone framework
+- → XREF: `04-drivers-hardware/TODO-04-acpi-power-management.md §7` -- ACPICA-based `_CST` C-state parsing; §16 here owns the kernel-core idle governor
+- → XREF: `03-memory-concurrency/TODO-05-scheduler-enhancement.md §9` -- `cpufreq_register_driver()` vtable consumed by §15; scheduler provides load metrics for governor
+- → XREF: `02-kernel-core/TODO-19-x86-64-architecture.md §9` -- Intel hybrid P/E-core detection feeds §15 HWP/CPPC governor with core asymmetry data
+- → XREF: `04-drivers-hardware/TODO-08-gpu-display-drivers.md` -- GPU power management (DPMS, RTD3 runtime D3, Panel Self-Refresh) owned by GPU TODO; §18 `DisplayOffTimeout` triggers DPMS via `gfx_set_dpms(DPMS_OFF)`
 
 ---
 
@@ -50,7 +52,7 @@
 - Fast startup (hybrid shutdown) hibernates only the kernel session for < 5 s boot times.
 - ACPI EC driver enables all ACPI battery/lid/hotkey events on laptops.
 - Battery status (charge %, AC/DC, time remaining, wear level via `_BIX`) appears in the system tray.
-- Power button and lid close trigger configurable actions (sleep/hibernate/ shutdown/lock) read from Registry.
+- Power button and lid close trigger configurable actions (sleep, hibernate, shutdown, lock) read from Registry.
 - Every PCI device has a D-state machine; drivers register sleep/wake callbacks with query/veto support; resume ordering (storage before filesystem before scheduler) is enforced.
 - Runtime device idle puts individual devices into low-power states when unused, without full system sleep.
 - ACPI thermal zones enforce passive cooling (CPU throttle) and active cooling (fan control) with trip points (`_CRT`/`_HOT`/`_PSV`/`_ACx`).
@@ -60,6 +62,7 @@
 - Power request tracking shows which applications are preventing sleep (`powercfg /requests`).
 - Wake source registry provides `powercfg /lastwake` and `powercfg /waketimers` diagnostics.
 - `powercfg` shell command and Power Options `sysdm.cpl` tab let users configure power plans.
+- Documented parity mapping from Linux `/sys/power` suspend variants (`mem_sleep` s2idle/shallow/deep) to Impossible OS S0ix/S1/S3 policy knobs (§21).
 
 ---
 
@@ -67,7 +70,7 @@
 
 | ⭐  | Order | Deliverable                                         | Depends On               | Status |
 | --- | :---: | --------------------------------------------------- | ------------------------ | :----: |
-| 💎  |   1   | §1 ACPI sleep object parsing & PM1 state machine    | --                        |  [x]   |
+| 💎  |   1   | §1 ACPI sleep object parsing & PM1 state machine    | (none)                    |  [x]   |
 | 💎  |   2   | §2 S1: CPU halt / idle thread integration           | §1                       |  [ ]   |
 | 💎  |   3   | §3 S3: suspend to RAM (CPU state + driver freeze)   | §1, §2, D02T06§3        |  [ ]   |
 | 💎  |   4   | §4 S4: hibernate to disk (image write + resume)     | §3                       |  [ ]   |
@@ -87,10 +90,11 @@
 | 💎  |  18   | §18 Power plan UI & `powercfg`                      | §6, §7, §13, §14, §15, §16 |  [ ]   |
 | ⭐  |  19   | §19 Energy-aware scheduling integration             | §15, §16, D02T19§9      |  [ ]   |
 | 💎  |  20   | §20 Power syscalls wired to SSDT                    | §2, §6, D02T05§4        |  [ ]   |
-| 💎  |  21   | Unit Tests                                          | §1--§20                  |  [ ]   |
+| 💎  |  21   | §21 Linux `/sys/power` suspend variant parity       | §1, §10                  |  [ ]   |
+| 💎  |  22   | Unit Tests                                          | §1 through §21           |  [ ]   |
 
-> 💎 = parity work -- matches what Windows 11 and Linux already do.
-> ⭐ = exclusive work -- Impossible OS is superior or first.
+> 💎 = parity work: matches what Windows 11 and Linux already do.
+> ⭐ = exclusive work: Impossible OS is superior or first.
 > Compact XREF notation: D=domain, T=TODO, §=section (e.g. D02T06§3 = domain 02, TODO-06, §3).
 
 ---
@@ -115,15 +119,16 @@
 - [x] Wired into Phase 2 boot after `acpi_power_init()`
 - [x] Commit: `"kernel/acpi: S1/S3/S4 sleep type parsing, PM1 state machine, fixed-event ISR"`
 
-**Test checkpoint:** `acpi_sleep_supported(5)` returns 1. `acpi_get_slp_typa(S5)` != 0xFFFF. `acpi_enter_sleep_state(2)` returns -1 (unsupported). `acpi_enter_sleep_state(6)` returns -1 (invalid). 7 tests in `test_acpi_power.c`. Test on: QEMU TCG + WHPX.
+**Test checkpoint:** `acpi_sleep_supported(5)` returns 1. `acpi_get_slp_typa(S5)` != 0xFFFF. `acpi_enter_sleep_state(2)` returns -1 (unsupported). `acpi_enter_sleep_state(6)` returns -1 (invalid). 7 tests in `test_acpi_power.c`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
 ---
 
 ## 2. S1: CPU Halt / Idle Thread Integration
+
 - [ ] S1 is a low-latency power-saving state: the CPU executes `HLT` but retains all register state and cache; system bus power is reduced
 - [ ] `acpi_enter_s1()`:
   - Call `acpi_enter_sleep_state(1)`
-  - On resume (next interrupt wakes the CPU): re-enable interrupts and return immediately -- no state restore needed for S1
+  - On resume (next interrupt wakes the CPU): re-enable interrupts and return immediately; no state restore needed for S1
 - [ ] S1 is entered only if `acpi_sleep_supported(1)`; otherwise fall back to a plain `HLT` loop
 - [ ] Replace the scheduler's idle busy-wait loop with a power-aware path:
   ```c
@@ -145,10 +150,10 @@
 ---
 
 ## 3. S3: Suspend to RAM
-- [ ] `pm_enter_s3()` -- called by the power manager when the user requests sleep; runs at `DISPATCH_LEVEL` (-> XREF: `TODO-06-irql-model-dpcs.md §3`):
+- [ ] `pm_enter_s3()` -- called by the power manager when the user requests sleep; runs at `DISPATCH_LEVEL` (→ XREF: `TODO-06-irql-model-dpcs.md §3`):
   1. Broadcast `PO_CB_SYSTEM_STATE_LOCK` to all registered power callbacks (§9): let drivers flush queues and reach D3hot/D3cold (§8)
   2. Freeze the scheduler (`sched_freeze_all()`) -- no new threads start; all CPUs except the one doing suspend park themselves at a spin barrier
-  3. Flush VFS page cache and IXFS journal (-> XREF: `05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md §1`)
+  3. Flush VFS page cache and IXFS journal (→ XREF: `05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md §1`)
   4. Save APIC state (LVT registers, LAPIC base MSR) to a per-CPU save area
   5. Save `IDTR`, `GDTR`, `CR0`, `CR3`, `CR4`, `EFER` per CPU
   6. Save all CPU general-purpose and SSE registers for the BSP (`struct s3_cpu_state` allocated in pinned physical memory)
@@ -162,13 +167,13 @@
   2. Re-initialise IOAPIC routing (MADT-based)
   3. Restore BSP general-purpose + SSE registers
   4. Wake AP CPUs: write `INIT`->`SIPI`->`SIPI` IPI sequence; each AP restores its own saved state and un-parks from the spin barrier
-  5. Recalibrate TSC (-> XREF: `TODO-07-time-filetime-management.md §3`) -- PM timer used as reference
-  6. Compute sleep duration from RTC/UEFI time delta; call `ke_suspend_bias_update()` (-> XREF: `TODO-07-time-filetime-management.md §14`)
+  5. Recalibrate TSC (→ XREF: `TODO-07-time-filetime-management.md §3`) -- PM timer used as reference
+  6. Compute sleep duration from RTC/UEFI time delta; call `ke_suspend_bias_update()` (→ XREF: `TODO-07-time-filetime-management.md §14`)
   7. Call `pm_notify_resume()` (§9) -- drivers transition back D3->D0
   8. Unfreeze scheduler; resume from the instruction after `acpi_enter_sleep_state(3)`
 - [ ] Power button physical press -> PM1 fixed event (§1) generates SCI; firmware raises the CPU from S3
 - [ ] RTC alarm: `acpi_set_wakeup_alarm(seconds)` -- programs CMOS RTC alarm registers (port 0x70/0x71), sets `RTC_EN` in PM1a_EN; used for timed wake (-> `Task Scheduler` integration, future)
-- [ ] USB device activity: `XHCI_S3_WAKEUP_EN` -- xHCI remote-wakeup enable bit in the USB port status register (-> XREF: `04-drivers-hardware/TODO-09-usb-stack.md`)
+- [ ] USB device activity: `XHCI_S3_WAKEUP_EN` -- xHCI remote-wakeup enable bit in the USB port status register (→ XREF: `04-drivers-hardware/TODO-09-usb-stack.md`)
 - [ ] Commit: `"kernel/acpi: S3 suspend-to-RAM, wakeup vector, CPU state save/restore, AP re-init"`
 
 **Test checkpoint:** `struct s3_cpu_state` saves/restores all GPRs + CR0/CR3/CR4/EFER. `FACS->FirmwareWakingVector` set to `pm_s3_wakeup_entry` physical address. AP re-init SIPI sequence completes. TSC recalibrated after wake. `ke_suspend_bias_update()` adjusts `InterruptTimeBias`. Test on: QEMU TCG (`-machine q35,acpi=on`).
@@ -198,10 +203,10 @@
   3. Walk PMM used-page list; for each page: compress 64-page chunk with LZ4; write to hibernation partition via DMA (must reach D0 device state first)
   4. Write `HIBR_HEADER` at offset 0 with final `image_pages` count and CRC32C
   5. Call `acpi_enter_sleep_state(4)` -- system powers off; same as S5 but firmware knows to look for hibernation image on next boot
-- [ ] In kernel init (-> XREF: `TODO-01-kernel-init-sequencing.md §3`), early in Phase 1: check the hibernation partition for a valid `HIBR_HEADER.magic`; if found and `kernel_version` matches: enter hibernation resume path
+- [ ] In kernel init (→ XREF: `TODO-01-kernel-init-sequencing.md §3`), early in Phase 1: check the hibernation partition for a valid `HIBR_HEADER.magic`; if found and `kernel_version` matches: enter hibernation resume path
 - [ ] `pm_hibernate_resume()`:
   1. Read all compressed chunks from the partition; decompress into a separate bounce buffer
-  2. CRC32C verify the full image; halt with `KERNEL_HIBERNATE_CORRUPT` (-> XREF: `TODO-16-crash-dump-generation.md §1`) if mismatch
+  2. CRC32C verify the full image; halt with `KERNEL_HIBERNATE_CORRUPT` (→ XREF: `TODO-16-crash-dump-generation.md §1`) if mismatch
   3. Copy pages from bounce buffer back to their original physical addresses; restore CR3, RSP, RIP from `HIBR_HEADER`
   4. Jump to resume RIP -- execution resumes from inside `pm_hibernate_write()` as if `acpi_enter_sleep_state(4)` just returned
   5. Run §3 resume steps 4--7 (recalibrate TSC, notify drivers, unfreeze scheduler)
@@ -254,7 +259,7 @@
 - [ ] `bat_update()` -- reads `_BST`; computes `charge_pct = remaining / full * 100`; `time_remaining_min = remaining / rate * 60`; stores in `bat_state_t`
 - [ ] Battery cycle count and wear level: `wear_pct = (1 - last_full_cap / design_cap) * 100`; available from `_BIX.cycle_count` and capacity ratio
 - [ ] Evaluate `\_SB.ACAD._PSR` (AC Adapter Power Source): 0=offline, 1=online
-- [ ] Register Registry key `HKLM\SYSTEM\Battery\Status` (REG_BINARY) updated on each `bat_update()` call; apps can use `RegNotifyChangeKeyValue` to watch for power changes (-> XREF: `TODO-13-registry-completion.md §3`)
+- [ ] Register Registry key `HKLM\SYSTEM\Battery\Status` (REG_BINARY) updated on each `bat_update()` call; apps can use `RegNotifyChangeKeyValue` to watch for power changes (→ XREF: `TODO-13-registry-completion.md §3`)
 - [ ] `pm_check_battery_warn()` -- called from `bat_update()`:
   - `charge_pct <= warn_pct` (Registry `PowerWarnPercent`, default 10%): post `WM_POWERBROADCAST (PBT_APMBATTERYLOWAGE)` to all top-level windows
   - `charge_pct <= critical_pct` (Registry `PowerCriticalPercent`, default 5%): trigger `pm_enter_s4()` (hibernate) or OS shutdown based on `PowerCriticalAction` Registry value
@@ -370,7 +375,7 @@
 - [ ] Network keepalive: the NIC (if `_DSM` advertises DRIPS/D0ix support) remains powered in D0i3 state for ARP/IPv6 NS replies and WoL packets; `rtl8139_d0i3_enter()` / `rtl8139_d0i3_exit()` stubs (full implementation depends on the specific NIC driver)
 - [ ] Any interrupt or I/O wakes the CPU from `mwait`; execution resumes immediately after the `mwait` instruction; no page table or register restore needed (unlike S3)
 - [ ] Call `pm_notify_resume(PM_RESUME_S0IX)` (§9) to un-gate devices
-- [ ] TSC recalibration (-> XREF: `TODO-07-time-filetime-management.md §3`) may be needed if `mwait` C10 was held for > 1 second (TSC stops in deep C-states on some CPUs)
+- [ ] TSC recalibration (→ XREF: `TODO-07-time-filetime-management.md §3`) may be needed if `mwait` C10 was held for > 1 second (TSC stops in deep C-states on some CPUs)
 - [ ] Directed PoFx (DFx, PoFx v3): the power manager *directs* entire device stacks to enter low-power during Modern Standby idle when no activator-brokered activity; unlike runtime PM where the device self-idles, DFx is top-down OS-directed
 - [ ] `pm_dfx_power_down(dev_stack)` -- OS calls `PO_FX_DIRECTED_POWER_DOWN_CALLBACK` on each driver in the stack; driver must save state, stop DMA, enter D3
 - [ ] `pm_dfx_power_up(dev_stack)` -- called on activator wake or system exit from S0ix; driver restores state
@@ -425,7 +430,7 @@ Per-device runtime idle management -- equivalent to Windows PoFx (Power Manageme
   ```
 - [ ] Per-device state: `PM_RT_ACTIVE`, `PM_RT_SUSPENDING`, `PM_RT_SUSPENDED`, `PM_RT_RESUMING`
 - [ ] Reference counter per device: `pm_runtime_get(dev)` increments and ensures device is active; `pm_runtime_put(dev)` decrements and starts idle timer when count reaches 0
-- [ ] When reference count reaches 0: start a DPC timer with `idle_timeout_ms` delay (-> XREF: `TODO-06-irql-model-dpcs.md §3`)
+- [ ] When reference count reaches 0: start a DPC timer with `idle_timeout_ms` delay (→ XREF: `TODO-06-irql-model-dpcs.md §3`)
 - [ ] Timer expiry: call `ops->runtime_idle(ctx)`; if returns 0 (device can suspend): call `ops->runtime_suspend(ctx)` to transition to low-power state
 - [ ] `pm_runtime_set_autosuspend_delay(dev, ms)` -- adjustable per device; storage controllers use longer delays (2000 ms); input devices use shorter (500 ms)
 - [ ] `pm_runtime_get(dev)` on a suspended device: call `ops->runtime_resume(ctx)` synchronously before returning
@@ -512,7 +517,7 @@ Implement the OSPM thermal policy engine per ACPI spec chapter 11. This is the k
 
 > [!IMPORTANT]
 > **Scope boundary with D04T04§6:** TODO-04 §6 covers per-core MSR-based thermal monitoring (`IA32_THERM_STATUS`, LAPIC Thermal LVT). This section covers the ACPI thermal zone framework that sits above it -- processing `_TMP`/`_CRT`/`_HOT`/`_PSV`/`_ACx` objects and coordinating cooling responses. Both are needed for full parity.
-> -> XREF: `04-drivers-hardware/TODO-04-acpi-power-management.md §6` -- MSR-based per-core thermal; this section adds ACPI thermal zones
+> → XREF: `04-drivers-hardware/TODO-04-acpi-power-management.md §6` -- MSR-based per-core thermal; this section adds ACPI thermal zones
 - [ ] Walk ACPI namespace for `ThermalZone` objects (`\_TZ.*` or `\_SB.*.TZ*`)
 - [ ] For each thermal zone, evaluate:
   - `_TMP` -- current temperature (returns tenths of Kelvin; convert: `celsius = (tmp - 2732) / 10`)
@@ -524,7 +529,7 @@ Implement the OSPM thermal policy engine per ACPI spec chapter 11. This is the k
   - `_TC1`, `_TC2` -- passive cooling algorithm coefficients
   - `_SCP` -- set cooling policy (0=active preferred, 1=passive preferred)
 - [ ] Store in `thermal_zone_t { name, tmp, crt, hot, psv, ac[10], tsp, tc1, tc2, cooling_policy }`
-- [ ] Poll each thermal zone every `_TSP` milliseconds via DPC timer (-> XREF: `TODO-06-irql-model-dpcs.md §3`)
+- [ ] Poll each thermal zone every `_TSP` milliseconds via DPC timer (→ XREF: `TODO-06-irql-model-dpcs.md §3`)
 - [ ] On each poll, evaluate `_TMP`; compare against trip points:
   - `temp >= _CRT` -> `system_shutdown(SHUTDOWN_THERMAL_EMERGENCY)` -- immediate power-off
   - `temp >= _HOT` -> `pm_enter_s4()` -- emergency hibernate to preserve state
@@ -558,10 +563,10 @@ Kernel-core governor framework that sits between the scheduler's load metrics an
 
 > [!IMPORTANT]
 > **Scope boundary:** D04T04§4 parses `_PSS` P-state tables via ACPICA and provides the hardware driver. D03T05§9 provides the scheduler hook. This section owns the policy layer -- governor algorithms, HWP/CPPC native support, and the connection between them.
-> -> XREF: `04-drivers-hardware/TODO-04-acpi-power-management.md §4` -- `_PSS` P-state hardware driver
-> -> XREF: `03-memory-concurrency/TODO-05-scheduler-enhancement.md §9` -- `cpufreq_register_driver()` and load metrics
-> -> XREF: `01-boot-platform/TODO-06-interrupt-timer-arch.md §7` -- LAPIC timer recalibration after frequency change
-> -> XREF: `02-kernel-core/TODO-19-x86-64-architecture.md §8` -- Intel hybrid P/E-core topology data
+> → XREF: `04-drivers-hardware/TODO-04-acpi-power-management.md §4` -- `_PSS` P-state hardware driver
+> → XREF: `03-memory-concurrency/TODO-05-scheduler-enhancement.md §9` -- `cpufreq_register_driver()` and load metrics
+> → XREF: `01-boot-platform/TODO-06-interrupt-timer-arch.md §7` -- LAPIC timer recalibration after frequency change
+> → XREF: `02-kernel-core/TODO-19-x86-64-architecture.md §9` -- Intel hybrid P/E-core topology data
 - [ ] `cpufreq_governor_t` interface:
   ```c
   typedef struct {
@@ -613,7 +618,7 @@ Kernel-core idle governor that selects the optimal C-state based on predicted id
 
 > [!IMPORTANT]
 > **Scope boundary:** D04T04§7 parses `_CST` and provides `cpuidle_enter(cpu, cstate)`. This section owns the governor that decides *which* C-state to enter. §2 of this TODO provides the basic S1/HLT idle path; this section replaces it with a full governor.
-> -> XREF: `04-drivers-hardware/TODO-04-acpi-power-management.md §7` -- `_CST` parsing and `cpuidle_enter()` hardware interface
+> → XREF: `04-drivers-hardware/TODO-04-acpi-power-management.md §7` -- `_CST` parsing and `cpuidle_enter()` hardware interface
 - [ ] `cpuidle_governor_t`:
   ```c
   typedef struct {
@@ -676,7 +681,7 @@ Before changing system or device power state, query all affected drivers and all
   - `MaxProcessorState` (REG_DWORD): 0--100% cap on CPU frequency (§15)
   - `MinProcessorState` (REG_DWORD): 0--100% floor on CPU frequency
   - `CoolingPolicy` (REG_DWORD): 0=active preferred (fan first), 1=passive preferred (throttle first)
-- [ ] `pm_apply_plan(guid)` -- reads plan Registry values; sets idle timers in the scheduler's DPC timer (-> XREF: `TODO-06-irql-model-dpcs.md §3`); configures governor (§15), idle budget (§16), thermal policy (§14)
+- [ ] `pm_apply_plan(guid)` -- reads plan Registry values; sets idle timers in the scheduler's DPC timer (→ XREF: `TODO-06-irql-model-dpcs.md §3`); configures governor (§15), idle budget (§16), thermal policy (§14)
 - [ ] Default plan GUIDs match Windows 11's well-known GUIDs:
   - Balanced: `{381b4222-f694-41f0-9685-ff5bb260df2e}`
   - Power Saver: `{a1841308-3541-4fab-bc81-f71556f20b4a}`
@@ -717,8 +722,8 @@ On heterogeneous CPU topologies (Intel Alder Lake+ P/E-cores, future ARM big.LIT
 
 > [!IMPORTANT]
 > **Scope boundary:** D02T19§9 detects Intel hybrid P/E-core topology and Intel Thread Director (ITD) / Hardware Feedback Interface (HFI). D03T05§9 provides the scheduler's load metrics. This section integrates those signals with the CPU frequency governor (§15) to make energy-aware placement decisions.
-> -> XREF: `02-kernel-core/TODO-19-x86-64-architecture.md §9` -- P/E-core detection, HFI capability data
-> -> XREF: `03-memory-concurrency/TODO-05-scheduler-enhancement.md §9` -- scheduler load tracking, PELT utilization
+> → XREF: `02-kernel-core/TODO-19-x86-64-architecture.md §9` -- P/E-core detection, HFI capability data
+> → XREF: `03-memory-concurrency/TODO-05-scheduler-enhancement.md §9` -- scheduler load tracking, PELT utilization
 - [ ] `em_cpu_t` per logical CPU:
   ```c
   typedef struct {
@@ -748,7 +753,7 @@ On heterogeneous CPU topologies (Intel Alder Lake+ P/E-cores, future ARM big.LIT
 
 ## 20. Power Syscalls Wired to SSDT
 
-Register all power management NtXxx entry points in the SSDT so user-mode code can invoke them via `syscall`. See TODO-05-native-api-ssdt.md §4 (SSDT layout) and §21 (power syscalls).
+Register all power management NtXxx entry points in the SSDT so user-mode code can invoke them via `syscall`. See TODO-05-native-api-ssdt.md §4 (SSDT layout) and §22 (power syscalls).
 
 - [ ] `NtShutdownSystem(Action)` -> SSDT 0x00D7: call `pm_shutdown()` / `pm_reboot()` based on action; requires `SeShutdownPrivilege`
 - [ ] `NtSetSystemPowerState(SystemAction, LightestSystemState, Flags)` -> SSDT 0x0140: route through ACPI S-state transition (§2)
@@ -761,6 +766,23 @@ Register all power management NtXxx entry points in the SSDT so user-mode code c
 - [ ] Commit: `"kernel/pm: wire power syscalls to SSDT (0x00D7, 0x0140--0x0145)"`
 
 **Test checkpoint:** `NtShutdownSystem(ShutdownReboot)` triggers ACPI reset. `NtPowerInformation(SystemPowerCapabilities)` returns valid S-state mask. `NtSetThreadExecutionState(ES_SYSTEM_REQUIRED)` prevents idle sleep during long operation. `NtPowerInformation(ProcessorPowerInformation)` returns current CPU frequency per core.
+
+---
+
+## 21. Linux `/sys/power` Suspend Variant Parity
+
+Linux exposes system suspend through `/sys/power/state` plus `/sys/power/mem_sleep` (`s2idle`, `shallow`, `deep`) and hibernation mode through `/sys/power/disk`. Windows 11 documents S0 low-power idle (Modern Standby) separately from ACPI S1 through S3. This section is the **policy and diagnostics parity** layer so developers know how Impossible OS maps those models onto ACPI and our §2/§3/§10 paths.
+
+- [ ] Author `docs/kernel/pm-linux-sysfs-parity.md` (or equivalent under `todo/02-kernel-core/` if docs tree is not ready): table columns `Linux interface`, `Typical ACPI mapping`, `Impossible OS owner (TODO-15 §N)`, `Notes` (include default `mem_sleep_default=s2idle` vs `deep` firmware behavior)
+- [ ] Document `freeze` vs `mem`+`s2idle` equivalence for suspend-to-idle per upstream sleep-states.rst semantics
+- [ ] Document `disk` file modes (`platform`, `shutdown`, `reboot`, `suspend`, `test_resume`) and map `platform` to ACPI S4 vs power-off fallback
+- [ ] Add `pm_sleep_variant_t` enum in `include/kernel/pm/sleep.h` with `PM_SLEEP_S2IDLE`, `PM_SLEEP_STANDBY`, `PM_SLEEP_STR`, `PM_SLEEP_HIBER_PLATFORM`, `PM_SLEEP_HIBER_SHUTDOWN` mirroring the Linux strings we support first
+- [ ] `pm_get_sleep_variants(char *buf, size_t cap)`: returns a comma-separated list analogous to reading `mem_sleep` (used by future `powercfg /availablesleepstates` and shell introspection)
+- [ ] Wire klog at INFO once after `acpi_power_init()`: log FADT `LOW_POWER_S0_IDLE_CAPABLE` when present and how it affects default sleep choice vs S3 (`acpi_s0ix_supported()` from §10 when implemented)
+- [ ] Cross-link from §18 `powercfg /availablesleepstates` checklist to this doc so CLI output stays aligned with Linux vocabulary where useful
+- [ ] Commit: `"docs/pm: Linux sysfs sleep variant parity table + pm_sleep_variant_t"`
+
+**Test checkpoint:** Doc builds or renders in-tree; `pm_get_sleep_variants()` returns a non-empty string on QEMU (at least `PM_SLEEP_STR` or `PM_SLEEP_S2IDLE` token when gated by `acpi_sleep_supported()`). klog line appears once per boot when `debug=1`. QEMU WHPX, QEMU TCG, VirtualBox.
 
 ---
 
@@ -787,6 +809,7 @@ Register all power management NtXxx entry points in the SSDT so user-mode code c
 | 💎 | CPU DVFS cpufreq | ✅ PPM HWP | ✅ cpufreq | ⬜ §15 |
 | 💎 | CPU idle C-states | ✅ PPM | ✅ menu teo | ⬜ §16 |
 | 💎 | Connected standby S0ix | ✅ Modern | ⚠️ Partial | ⬜ §10 |
+| 💎 | mem_sleep s2idle deep   | ✅ S0 idle | ✅ sysfs   | ⬜ §21 |
 | 💎 | powercfg CLI surface | ✅ 50 cmds | ⚠️ systemctl | ⬜ §18 |
 | 💎 | Power Options GUI | ✅ powercpl | ⚠️ GNOME basic | ⬜ §18 |
 | ⭐ | Energy aware scheduling | ⚠️ HW ITD | ✅ EAS ARM | ⬜ §19 |
@@ -806,15 +829,17 @@ Register all power management NtXxx entry points in the SSDT so user-mode code c
 | 💎 | Energy Saver adaptive | ✅ Win11 | ⚠️ profiles | ⬜ §18 |
 | ⭐ | Human presence HPD wake | ✅ Platform | ❌ None | ⬜ §7 |
 
-After §1--§20, Impossible OS reaches parity for laptop-grade power on real hardware: S-states, D-states, runtime idle including component F-states, USB LPM, NVMe APST, SATA ALPM, thermal, DVFS with HWP CPPC EPP RAPL, C-states, EC, battery with smart charging, power lid HPD events, driver callbacks with query veto, DFx for Modern Standby DRIPS, fast startup, Energy Saver, NIC offloads, and power request tracking. Linux splits this across drivers, logind, upower, cpufreq, and cpufreq sysfs; Windows is the most integrated reference. Impossible OS adds a software energy model on hybrid CPUs, HPD wake and lock policies Linux lacks, adaptive Energy Saver, and convenient battery wear plus plain-text `powercfg /batteryreport`.
+After §1 through §21, Impossible OS reaches parity for laptop-grade power on real hardware: S-states, D-states, runtime idle including component F-states, USB LPM, NVMe APST, SATA ALPM, thermal, DVFS with HWP CPPC EPP RAPL, C-states, EC, battery with smart charging, power lid HPD events, driver callbacks with query veto, DFx for Modern Standby DRIPS, fast startup, Energy Saver, NIC offloads, power request tracking, and an explicit Linux `mem_sleep` vocabulary map for suspend diagnostics. Linux splits this across drivers, logind, upower, cpufreq, and cpufreq sysfs; Windows is the most integrated reference. Impossible OS adds a software energy model on hybrid CPUs, HPD wake and lock policies Linux lacks, adaptive Energy Saver, and convenient battery wear plus plain-text `powercfg /batteryreport`.
 
+---
 
 ## Unit Tests
 
-> Wire into `test_runner_init()` via `test_register_power()` (-> XREF `00-infrastructure/TODO-03-kernel-test-framework.md`).
+> Wire into `test_runner_init()` via `test_register_power()` (see `src/kernel/test/test_runner.c` and `include/kernel/test/test.h`; same pattern as `TODO-04-peb-teb-user-abi.md` Unit Tests).
 > Boot tests run with `debug=1` or `test=1` in boot.conf.
 
 - [ ] Create `src/kernel/test/test_power.c` with:
+  - Linux parity: `pm_get_sleep_variants()` returns a comma list including at least one token matching `acpi_sleep_supported()` for S1/S3 when firmware advertises those states (or skip when none)
   - ACPI sleep type lookup: `acpi_get_slp_typa(5)` returns valid SLP_TYPa/b values
   - Power state query: `PoGetSystemPowerState()` returns `PowerSystemWorking` during boot
   - Device D-state: `PoSetDevicePowerState(dev, D0)` succeeds for active device
@@ -842,6 +867,8 @@ After §1--§20, Impossible OS reaches parity for laptop-grade power on real har
 - [ ] Register in `test_runner_init()`: `test_register_power()`
 - [ ] Commit: `"test: add power management test suite"`
 
+**Test checkpoint:** `bash scripts/test.sh SUITE=boot` reports every `test_power_*` (and existing `test_acpi_power_*`) case PASS once `test_power.c` lands; until then, `test_acpi_power.c` suite green; `tail -1 build/build.log` is `=== BUILD OK ===`. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
 ---
 
 ## Verification
@@ -864,10 +891,16 @@ After §1--§20, Impossible OS reaches parity for laptop-grade power on real har
 - [ ] **Remaining limits**: connected standby (§10) requires Intel LPSS hardware; QEMU does not support `LOW_POWER_S0_IDLE_CAPABLE` -- skip in CI; D3cold `_PS3` ACPI method evaluation deferred until the AML interpreter is complete.
 - [ ] Commit: `"kernel/pm: full power management verification -- S-states, D-states, thermal, DVFS, idle, runtime PM"`
 
-**Test runner:** `scripts\debug\run-boot-tests.bat` (SUITE=boot) -- `test_acpi_power.c` uses TEST_CAT_BOOT; add TEST_CAT_POWER and `run-power-tests.bat` when `test_power.c` lands (Unit Tests section).
+**Test checkpoint:** Every Verification bullet above passes where hardware allows; `bash scripts/test.sh SUITE=boot` green for ACPI power tests; `tail -1 build/build.log` is `=== BUILD OK ===`. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+**Test runner:** `scripts\debug\run-boot-tests.bat` (SUITE=boot); `test_acpi_power.c` uses `TEST_CAT_BOOT`. When `test_power.c` lands, add `TEST_CAT_POWER` and `scripts\debug\run-power-tests.bat` (see Unit Tests section).
+
+---
 
 ## History
 
-| Date | Action | Summary |
-| --- | --- | --- |
-| 2026-04-10 | validate | ASCII dashes; removed §N.M refs; scope §18 fix; SSDT handoff TODO-05 §21; compact OS table; tray ASCII; Unit Tests acpi_get_slp_typa; XREF normalize; Verification test runner boot suite; §14 blocked on TODO-04 §1 ACPICA. |
+| Date       | Action   | Summary |
+| ---------- | -------- | ------- |
+| 2026-04-13 | gap-analysis | 9 web searches + 2 doc fetches; Current state refreshed vs `acpi_power_init`/`acpi_enter_sleep_state`/SCI; new §21 Linux `mem_sleep` parity + OS row + Impl Order 21 to 22 + Unit Tests bullet; oversized section split deferred (see report); TODO-04 Inputs back-XREF §21. |
+| 2026-04-16 | validate | `→ XREF` normalized; `§1 through §20`; Unit Tests + Verification **Test checkpoint**; wire note uses `test_runner.c`; D02T19 hybrid XREF §8→§9; double blank before Unit Tests removed; §1 checkpoint adds VirtualBox + bare metal; §2 prose `--` fix; History added. |
+| 2026-04-17 | validate | Callout prose `--` fixes (CAUTION, scope, legend); Impl Order row 1 Depends On `(none)`; Inputs mark §21 paths planned; Outcome list punctuation; `---` before `## Unit Tests`; continuation-line rg hits are fenced code only; XREF targets spot-checked; `run-boot-tests.bat` present; parity rows include §21 mem_sleep. |

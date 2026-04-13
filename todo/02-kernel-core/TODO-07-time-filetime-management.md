@@ -24,7 +24,7 @@
 - → XREF: `TODO-06-irql-model-dpcs.md §9` -- Timer-DPC association: KTIMER objects carry an optional KDPC pointer; when the timer fires, the DPC is auto-queued via `KeInsertQueueDpc`
 - → XREF: `TODO-04-peb-teb-user-abi.md §11` -- KUSER_SHARED_DATA time fields (SystemTime, InterruptTime, QpcFrequency) are populated by §12 of this TODO; `kusd_update_time()` is called from the timer ISR
 - → XREF: `TODO-15-power-management.md §3,§4` -- S3/S4 resume path calls `ke_suspend_bias_update()` (§14 of this TODO) to adjust `InterruptTimeBias` by the sleep duration
-- → XREF: `TODO-05-native-api-ssdt.md §18` -- `NtSetTimerResolution` (SSDT 0x00F4) is implemented in §8 of this TODO
+- → XREF: `TODO-05-native-api-ssdt.md §19` -- `NtSetTimerResolution` (SSDT 0x00F4) is implemented in §8 of this TODO
 
 ## Outcome
 

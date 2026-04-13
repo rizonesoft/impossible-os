@@ -568,7 +568,7 @@
 ---
 
 ## 12. Security and Token Syscalls Wired to SSDT
-Register all token and access control NtXxx entry points in the SSDT. Most implementations already exist in `src/kernel/security/token.c` and `luid.c`. (→ XREF: TODO-05-native-api-ssdt.md §4, §15)
+Register all token and access control NtXxx entry points in the SSDT. Most implementations already exist in `src/kernel/security/token.c` and `luid.c`. (→ XREF: TODO-05-native-api-ssdt.md §4, §16)
 
 - [ ] `NtOpenProcessToken(ProcessHandle, DesiredAccess, TokenHandle)` → SSDT 0x00B0 (token.c exists -- wire to SSDT)
 - [ ] `NtOpenProcessTokenEx(ProcessHandle, DesiredAccess, HandleAttributes, TokenHandle)` → SSDT 0x00B1

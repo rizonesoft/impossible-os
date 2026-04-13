@@ -3,7 +3,7 @@
 > **Goal:** Extend the kernel process model with the per-process state fields and syscalls that don't belong to the scheduler, VMM, or Object Manager individually: current working directory, standard handle pre-wiring, user-mode program break (Linux compat heap), process priority classes mapped to Win32 `SetPriorityClass`, scheduling policy per-task (`SCHED_FIFO`/`SCHED_IDLE`), and a process capability/privilege bitmask. All of these hang off `struct task` and are needed before any non-trivial user-mode program can run correctly.
 
 > [!IMPORTANT]
-> **Current state:** `struct task` has `pid`, `state`, `rsp`, stacks, `name`, `parent_pid`, `exit_status`, `wait_pid`, and `signals`. Thread-level priority is fully implemented (`THREAD_PRIO_IDLE`…`THREAD_PRIO_REALTIME`, priority-aware scheduler, PI boosting). Missing from `struct task`: `cwd`, `capabilities`, `brk`/`program_break`, `sched_policy`, and process-class priority. Handle table infrastructure is in TODO-03. Environment block is in TODO-04 §5.
+> **Current state:** `struct task` has `pid`, `state`, `rsp`, stacks, `name`, `parent_pid`, `exit_status`, `wait_pid`, and `signals`. Thread-level priority is fully implemented (`THREAD_PRIO_IDLE`…`THREAD_PRIO_REALTIME`, priority-aware scheduler, PI boosting). Missing from `struct task`: `cwd`, `capabilities`, `brk`/`program_break`, `sched_policy`, and process-class priority. Handle table infrastructure is in TODO-03. PEB `RTL_USER_PROCESS_PARAMETERS.Environment` pointer layout is in D02 T04 §2 and §5; per-process env arrays and argv are owned by D02 T14.
 
 ## Inputs
 
@@ -96,6 +96,7 @@ When a process is created, `STD_INPUT_HANDLE` (0), `STD_OUTPUT_HANDLE` (1), and 
 - [ ] `GetStdHandle(nStdHandle)` → look up the pre-wired slot; `SetStdHandle(nStdHandle, handle)` → replace it
 - [ ] `DuplicateHandle`: duplicate a handle slot into the child process at `NtCreateProcess` time for I/O redirection (`cmd > file` pipes the child stdout to a file handle before execution)
 - [ ] Inherit standard handles into child at `task_fork()` if `HANDLE_FLAG_INHERIT` is set (TODO-03 §10)
+- [ ] When `NtCreateProcess` gains a caller-supplied UTF-16 environment block, set `CREATE_UNICODE_ENVIRONMENT` in creation flags per Microsoft Learn ("Changing Environment Variables"); coordinate with D02 T14 §10 and D02 T05 §7 (distinct from firmware `NtQuerySystemEnvironmentValue*` at SSDT indices 0x00D2 through 0x00D6).
 - [ ] Commit: `"kernel: task -- STD handle pre-wiring at process creation"`
 
 **Test checkpoint:** After `task_create()`, `STD_INPUT_HANDLE`, `STD_OUTPUT_HANDLE`, `STD_ERROR_HANDLE` are valid handles in the process handle table. `WriteFile(STD_OUTPUT_HANDLE, ...)` produces console output. `DuplicateHandle` into child works for I/O redirection. `POST16(0xD020)` on entry, `POST16(0xD021)` after handles wired. Range `0xD02x` confirmed free. Test on: QEMU WHPX + TCG.
@@ -250,7 +251,7 @@ Both Win11 (Job Object quotas + `QUOTA_LIMITS` via `NtQueryInformationProcess`) 
 Win11 provides `SetProcessMitigationPolicy` to control per-process security features: DEP enforcement mode, mandatory ASLR, CFG strictness, child process creation restrictions, image load restrictions. Linux uses `prctl` with `PR_SET_NO_NEW_PRIVS`, `PR_SET_SECCOMP`, etc. Impossible OS needs a unified per-process mitigation flags field that coordinates with the security features implemented in other TODOs.
 
 > [!NOTE]
-> → XREF: `TODO-17-kernel-security-hardening.md §1` (NX/DEP), `TODO-08-binary-system.md §15` (ASLR), `TODO-08 §12` (CFG), `TODO-05-native-api-ssdt.md §24` (syscall filtering). This section defines the per-process flags and API surface; enforcement is authoritative in those TODOs.
+> → XREF: `TODO-17-kernel-security-hardening.md §1` (NX/DEP), `TODO-08-binary-system.md §15` (ASLR), `TODO-08 §12` (CFG), `TODO-05-native-api-ssdt.md §25` (syscall filtering). This section defines the per-process flags and API surface; enforcement is authoritative in those TODOs.
 
 - [ ] Add `uint64_t mitigation_flags` to `struct task` with bit definitions:
   - `MIT_DEP_ENABLE (1 << 0)` -- permanent DEP/NX for the process
@@ -276,7 +277,7 @@ Win11 provides `SetProcessMitigationPolicy` to control per-process security feat
 
 - [ ] `NtPledge(const char *promises)`: restrict the calling process to a set of named syscall categories. Categories: `"stdio"` (read/write/close), `"rpath"` (read-only file access), `"wpath"` (write file access), `"cpath"` (create/delete files), `"inet"` (network sockets), `"proc"` (fork/exec), `"exec"` (exec only), `"dns"` (DNS resolution), `"tty"` (terminal I/O). Once pledged, attempting a syscall outside the pledged set terminates the process with `STATUS_PLEDGE_VIOLATION`.
 - [ ] Add `uint64_t pledge_mask` to `struct task`; `0` = not pledged (all allowed); non-zero = bitmask of allowed categories
-- [ ] In SSDT dispatcher: if `task->pledge_mask != 0`, check if the invoked syscall's category bit is set; if not, terminate with `STATUS_PLEDGE_VIOLATION` and log the violation (→ XREF: `TODO-05-native-api-ssdt.md §24` -- per-index bitmap filter runs in the same dispatcher path; pledge category check runs AFTER the bitmap filter; both must pass for the syscall to proceed)
+- [ ] In SSDT dispatcher: if `task->pledge_mask != 0`, check if the invoked syscall's category bit is set; if not, terminate with `STATUS_PLEDGE_VIOLATION` and log the violation (→ XREF: `TODO-05-native-api-ssdt.md §25` -- per-index bitmap filter runs in the same dispatcher path; pledge category check runs AFTER the bitmap filter; both must pass for the syscall to proceed)
 - [ ] `NtUnveil(const char *path, const char *permissions)`: restrict filesystem visibility. After the first `NtUnveil` call, only unveiled paths are accessible. `permissions` is a subset of `"rwxc"` (read, write, execute, create). Calling `NtUnveil(NULL, NULL)` locks the unveil set -- no further calls allowed.
 - [ ] Add `unveil_entry_t *unveil_list` to `struct task`; VFS path resolution checks against this list if non-NULL
 - [ ] Both `NtPledge` and `NtUnveil` are irreversible -- once applied, restrictions can only be tightened, never loosened
