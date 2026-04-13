@@ -134,6 +134,10 @@ struct cpu_features {
     /* PKRU XSAVE component (from leaf 0x0D subleaf 9) */
     uint32_t pkru_xsave_offset;   /* byte offset of PKRU in XSAVE area (0 = not available) */
     uint32_t pkru_xsave_size;     /* size of PKRU component (4 bytes on Intel) */
+
+    /* AMD OSVW (OS Visible Workarounds) */
+    uint32_t osvw_length;         /* number of errata tracked (0 = OSVW not available) */
+    uint64_t osvw_status;         /* bitmask of active errata */
 };
 
 /* --- API --- */
@@ -156,6 +160,26 @@ static inline int cpu_has(enum cpu_feature feat)
 
 /* Get pointer to global CPU features struct (for reading vendor/brand/etc). */
 const struct cpu_features *cpuid_get(void);
+
+/* Check if AMD erratum N is active (via OSVW MSR). Returns 1 if active.
+ * Safe for n >= 64 (osvw_status is uint64_t; shift UB prevented by clamp). */
+static inline int cpu_has_erratum(uint32_t n)
+{
+    extern struct cpu_features g_cpu;
+    if (n >= g_cpu.osvw_length || n >= 64) return 0;
+    return (int)((g_cpu.osvw_status >> n) & 1);
+}
+
+/* RDTSCP: read TSC and CPU ID atomically.
+ * Returns TSC value; *cpu_id receives IA32_TSC_AUX (logical CPU index).
+ * Requires CPU_FEATURE_RDTSCP. */
+static inline uint64_t rdtscp_read(uint32_t *cpu_id)
+{
+    uint32_t lo, hi, aux;
+    __asm__ volatile ("rdtscp" : "=a"(lo), "=d"(hi), "=c"(aux));
+    if (cpu_id) *cpu_id = aux;
+    return ((uint64_t)hi << 32) | lo;
+}
 
 /* Low-level CPUID wrapper (for use by other subsystems). */
 void cpuid_raw(uint32_t leaf, uint32_t subleaf,

@@ -357,6 +357,23 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
             klog(LOG_WARN, "cpu", "RECOMMENDED: RDRAND not available");
     }
 
+    /* --- BSP: write IA32_TSC_AUX = 0 for RDTSCP CPU identification ---
+     * Probe first via msr_try_read: WHPX may expose RDTSCP in CPUID
+     * but trap TSC_AUX MSR access. If probe fails, skip TSC_AUX setup
+     * (RDTSCP still works for TSC reads, just ECX is unpredictable). */
+    if (cpu_has(CPU_FEATURE_RDTSCP)) {
+        extern int g_tsc_aux_available;
+        uint64_t probe;
+        if (msr_try_read(MSR_IA32_TSC_AUX, &probe) == 0) {
+            msr_write(MSR_IA32_TSC_AUX, 0);
+            g_tsc_aux_available = 1;
+            klog(LOG_INFO, "cpu", "RDTSCP: IA32_TSC_AUX = 0 (BSP)");
+        } else {
+            klog(LOG_WARN, "cpu",
+                 "RDTSCP: TSC_AUX MSR probe failed; CPU ID tagging disabled");
+        }
+    }
+
     /* --- CPU security hardening: NX (SMEP/SMAP deferred until page tables fixed) --- */
     POST16(POST16_CPU_HARDEN);
     cpu_harden();

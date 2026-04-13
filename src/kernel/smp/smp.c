@@ -142,6 +142,14 @@ void ap_entry(uint32_t cpu_index)
     cpu_harden();
     cpu_harden_post_pagetable();
 
+    /* Write logical CPU ID to IA32_TSC_AUX for RDTSCP identification.
+     * Only if BSP probe succeeded (g_tsc_aux_available set in boot_hw.c). */
+    {
+        extern int g_tsc_aux_available;
+        if (g_tsc_aux_available)
+            msr_write(MSR_IA32_TSC_AUX, (uint64_t)cpu_index);
+    }
+
     /* Initialize this AP's LAPIC */
     lapic_init_ap();
 

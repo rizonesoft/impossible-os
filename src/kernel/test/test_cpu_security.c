@@ -787,6 +787,49 @@ static void test_topo_smt_siblings(void)
                 "CPU 0 smt_siblings >= 1 (at least 1 thread per core)");
 }
 
+/* ---- S11: OSVW + RDTSCP ---- */
+
+static void test_osvw_fields(void)
+{
+    if (!cpu_has(CPU_FEATURE_OSVW)) {
+        TEST_SKIP("CPU does not support OSVW");
+        return;
+    }
+    extern struct cpu_features g_cpu;
+    TEST_ASSERT(g_cpu.osvw_length > 0,
+                "OSVW: osvw_length > 0 when OSVW supported");
+}
+
+static void test_rdtscp_cpu_id(void)
+{
+    if (!cpu_has(CPU_FEATURE_RDTSCP)) {
+        TEST_SKIP("CPU does not support RDTSCP");
+        return;
+    }
+    extern int g_tsc_aux_available;
+    if (!g_tsc_aux_available) {
+        TEST_SKIP("TSC_AUX MSR not writable (WHPX may trap it)");
+        return;
+    }
+    uint32_t cpu_id = 0xFFFF;
+    uint64_t tsc = rdtscp_read(&cpu_id);
+    /* BSP should have TSC_AUX = 0 */
+    TEST_ASSERT_EQ(cpu_id, 0,
+                   "RDTSCP: TSC_AUX = 0 on BSP (test runs on BSP)");
+    TEST_ASSERT(tsc > 0, "RDTSCP: TSC value is non-zero");
+}
+
+static void test_rdtscp_null_cpuid(void)
+{
+    if (!cpu_has(CPU_FEATURE_RDTSCP)) {
+        TEST_SKIP("CPU does not support RDTSCP");
+        return;
+    }
+    /* Should not crash with NULL cpu_id pointer */
+    uint64_t tsc = rdtscp_read((uint32_t *)0);
+    TEST_ASSERT(tsc > 0, "RDTSCP: works with NULL cpu_id pointer");
+}
+
 /* ---- S10: Performance Monitoring Counters ---- */
 
 static void test_pmc_info_valid(void)
@@ -960,6 +1003,14 @@ void test_register_x86(void)
         test_topo_core_type_valid, TEST_CAT_X86);
     test_suite_register_cat("Topo: smt_siblings >= 1",
         test_topo_smt_siblings, TEST_CAT_X86);
+
+    /* S11: OSVW + RDTSCP */
+    test_suite_register_cat("OSVW: fields populated",
+        test_osvw_fields, TEST_CAT_X86);
+    test_suite_register_cat("RDTSCP: TSC_AUX = 0 on BSP",
+        test_rdtscp_cpu_id, TEST_CAT_X86);
+    test_suite_register_cat("RDTSCP: NULL cpu_id safe",
+        test_rdtscp_null_cpuid, TEST_CAT_X86);
 
     /* S10: Performance Monitoring Counters */
     test_suite_register_cat("PMC: info valid after init",

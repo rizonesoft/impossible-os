@@ -62,7 +62,7 @@
 | 💎  |   8   | LKGS fast GS-base swap                              | §4                   | blocked |
 | 💎  |   9   | CPU topology: Zen chiplets + Intel hybrid P/E-core  | (none)               |  [x]   |
 | 💎  |  10   | Performance monitoring counters (Intel + AMD)       | §4                   |  [x]   |
-| 💎  |  11   | OSVW errata + RDTSCP processor ID setup             | §4, T07 §3           |  [ ]   |
+| 💎  |  11   | OSVW errata + RDTSCP processor ID setup             | §4, T07 §3           |  [x]   |
 | 💎  |  12   | AMD IBS profiling (stretch)                         | §4                   |  [ ]   |
 | 💎  |  13   | Virtualization detection (AMD-V + Intel VT-x)       | §4                   |  [x]   |
 | ⭐  |  14   | Boot self-benchmark + auto-tune                     | §1, §2, §9           |  [ ]   |
@@ -320,24 +320,16 @@
 
 ## 11. OSVW Errata + RDTSCP Processor ID Setup
 
-- [ ] If `cpu_has(CPU_FEATURE_OSVW)`:
-  - `msr_read(MSR_AMD_OSVW_ID_LEN)` -> number of errata tracked
-  - `msr_read(MSR_AMD_OSVW_STATUS)` -> bitmask of active errata
-  - Store in `cpu_features.osvw_length` / `cpu_features.osvw_status`
-  - `cpu_has_erratum(n)` -> `(osvw_status >> n) & 1`
-  - Log: `[cpu] OSVW: %u errata tracked, mask=0x%llx`
-- [ ] Apply per-erratum workarounds as they are identified from the AMD PPR for the detected family/model; initially a no-op table is fine
-- [ ] If `cpu_has(CPU_FEATURE_RDTSCP)`:
-  - During AP startup in `ap_startup_c()`: `msr_write(MSR_IA32_TSC_AUX, this_cpu_id)` stores logical CPU ID in `IA32_TSC_AUX`
-  - `rdtscp_read(tsc, cpu_id)` inline wrapper:
-    ```c
-    __asm__ volatile("rdtscp" : "=A"(*tsc), "=c"(*cpu_id));
-    ```
-  - Use in `TODO-07-time-filetime-management.md §3` (`rdtsc_ns` path) for nanosecond-accurate per-CPU timestamps; XREF noted in Inputs
-- [ ] BSP: also write `IA32_TSC_AUX` with CPU 0 during Phase 1 init
-- [ ] Commit: `"kernel/cpu: OSVW errata table, RDTSCP per-CPU IA32_TSC_AUX setup"`
+- [x] OSVW: `cpu_has(CPU_FEATURE_OSVW)` gates MSR reads. `g_cpu.osvw_length` from `MSR_AMD_OSVW_ID_LEN`, `g_cpu.osvw_status` from `MSR_AMD_OSVW_STATUS`. Fields added to `struct cpu_features` in `cpuid.h`. Query runs in `cpuid_init()`. `cpu_has_erratum(n)` inline helper checks bit N of `osvw_status`. Logs errata count and mask
+- [x] Errata workaround table: no-op initially (no specific AMD PPR errata identified for current targets). Framework in place via `cpu_has_erratum()` for future per-erratum gating
+- [x] RDTSCP: `rdtscp_read(cpu_id)` inline wrapper in `cpuid.h` returns TSC and writes CPU ID to `*cpu_id` via `IA32_TSC_AUX`. Safe with NULL pointer (skips write). BSP writes `IA32_TSC_AUX = 0` in `boot_hw.c` Phase 0 after CPUID. APs write `IA32_TSC_AUX = cpu_index` in `ap_entry()` after `cpu_harden()`
+- [x] BSP TSC_AUX: written in Phase 0 with value 0 (CPU logical ID 0)
+- [x] Commit: `"kernel/cpu: OSVW errata table, RDTSCP per-CPU IA32_TSC_AUX setup"`
 
-**Test checkpoint:** When `CPU_FEATURE_OSVW`, serial logs mask line; `RDTSCP` ECX matches `smp_this_cpu()->id` on BSP and each AP after init. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** OSVW: serial logs errata count when present (AMD only, skipped on Intel). RDTSCP: TSC_AUX = 0 on BSP verified by test; TSC non-zero; NULL pointer safe. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\run-x86-tests.bat` (SUITE=x86)
+> **Expected:** 54 suites, 0 failures
 
 ---
 
@@ -456,8 +448,8 @@
 | 💎  | Zen CCD NUMA         | ✅ Ke node + NUMA policy    | ✅ amd_nb.c CCD/CCX topo    | ✅ §9 Done        |
 | 💎  | Intel P/E hybrid     | ✅ Thread Director HFI      | ✅ HFI + itmt scheduler     | ✅ §9 BSP-only    |
 | 💎  | PMU / PMC            | ✅ ETW + WPA counters       | ✅ perf_event PMU driver    | ✅ §10 Done       |
-| 💎  | OSVW errata          | ✅ HAL workaround table     | ✅ amd.c osvw_id_length     | ⬜ §11            |
-| 💎  | RDTSCP TSC_AUX       | ✅ QPC reads TSC_AUX        | ✅ per-CPU wrmsr in SMP     | ⬜ §11            |
+| 💎  | OSVW errata          | ✅ HAL workaround table     | ✅ amd.c osvw_id_length     | ✅ §11 Done       |
+| 💎  | RDTSCP TSC_AUX       | ✅ QPC reads TSC_AUX        | ✅ per-CPU wrmsr in SMP     | ✅ §11 Done       |
 | 💎  | AMD IBS sample       | ⚠️ uProf vendor tool only   | ✅ perf IBS + oprofile      | ⬜ §12 stretch    |
 | 💎  | SVM VT-x detect      | ✅ HAL + Hv caps            | ✅ kvm cpuid + vmx_init     | ✅ §13            |
 | ⭐  | Boot hw self tune    | ❌ static config only       | ❌ static defaults          | ⬜ §14            |

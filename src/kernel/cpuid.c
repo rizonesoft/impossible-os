@@ -15,6 +15,9 @@
 /* Global CPU features -- zero-initialized at startup */
 struct cpu_features g_cpu;
 
+/* TSC_AUX MSR availability (set by boot_hw.c after BSP probe) */
+int g_tsc_aux_available;
+
 /* --- Low-level CPUID wrapper --- */
 
 void cpuid_raw(uint32_t leaf, uint32_t subleaf,
@@ -314,6 +317,14 @@ void cpuid_init(void)
                  locked ? "yes" : "no",
                  vmx_enabled ? "yes" : "no");
         }
+    }
+
+    /* ---- OSVW (OS Visible Workarounds, AMD only) ---- */
+    if (cpu_has(CPU_FEATURE_OSVW)) {
+        g_cpu.osvw_length = (uint32_t)msr_read(MSR_AMD_OSVW_ID_LEN);
+        g_cpu.osvw_status = msr_read(MSR_AMD_OSVW_STATUS);
+        klog(LOG_INFO, "cpu", "OSVW: %u errata tracked, mask=0x%llx",
+             (uint64_t)g_cpu.osvw_length, g_cpu.osvw_status);
     }
 
     /* Configure XCR0 after all features are detected */
