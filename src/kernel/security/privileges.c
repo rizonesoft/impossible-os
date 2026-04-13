@@ -94,6 +94,14 @@ int RtlPrivilegeSetToString(const PRIVILEGE_SET *ps, char *buf, uint32_t len)
     if (!ps || !buf || len < 4)
         return -1;
 
+    /* Clamp to buffer: if caller passes a very small len, the snprintf
+     * truncation path must not write past the buffer. Early return for
+     * buffers too small to hold even a truncated privilege name. */
+    if (len < 8) {
+        buf[0] = '\0';
+        return 0;
+    }
+
     buf[0] = '\0';
 
     for (i = 0; i < ps->PrivilegeCount && pos < len - 1; i++) {
