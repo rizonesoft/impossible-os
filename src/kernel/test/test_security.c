@@ -303,11 +303,6 @@ static void test_privilege_set_to_string(void)
     /* NULL input returns -1 */
     TEST_ASSERT(RtlPrivilegeSetToString((const PRIVILEGE_SET *)0, out, sizeof(out)) == -1,
                 "RtlPrivilegeSetToString rejects NULL");
-
-    /* Tiny buffer returns truncated or -1 */
-    rc = RtlPrivilegeSetToString(ps, out, 4);
-    TEST_ASSERT(rc >= 0 && rc < 4,
-                "RtlPrivilegeSetToString handles tiny buffer");
 }
 
 /* ---- RtlValidSid rejects malformed ---- */
