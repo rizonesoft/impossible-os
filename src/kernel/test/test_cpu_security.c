@@ -457,6 +457,55 @@ static void test_memcpy_fast_avx512_dispatch(void)
     TEST_ASSERT(1, "memcpy_fast dispatch: correct with current SIMD tier");
 }
 
+/* ---- S4: MSR infrastructure ---- */
+
+static void test_msr_read_efer_stable(void)
+{
+    /* msr_read(MSR_IA32_EFER) should return the same value on repeated calls */
+    uint64_t efer1 = msr_read(MSR_IA32_EFER);
+    uint64_t efer2 = msr_read(MSR_IA32_EFER);
+    TEST_ASSERT_EQ(efer1, efer2,
+                   "msr_read(EFER) stable across two consecutive calls");
+}
+
+static void test_msr_read_efer_lma_set(void)
+{
+    /* In long mode, EFER.LMA (bit 10) must be set */
+    uint64_t efer = msr_read(MSR_IA32_EFER);
+    TEST_ASSERT(efer & EFER_LMA,
+                "EFER.LMA is set (kernel runs in long mode)");
+}
+
+static void test_msr_try_read_valid(void)
+{
+    /* msr_try_read on a known-good MSR should succeed */
+    uint64_t val = 0;
+    int ret = msr_try_read(MSR_IA32_EFER, &val);
+    TEST_ASSERT_EQ(ret, 0,
+                   "msr_try_read(EFER) returns 0 (success)");
+    TEST_ASSERT(val & EFER_LMA,
+                "msr_try_read(EFER) output has LMA set");
+}
+
+static void test_msr_try_read_invalid(void)
+{
+    /* msr_try_read on a nonexistent MSR should return -1 without panic */
+    uint64_t val = 0xDEAD;
+    int ret = msr_try_read(0xFFFFFFFF, &val);
+    TEST_ASSERT_EQ(ret, -1,
+                   "msr_try_read(0xFFFFFFFF) returns -1 (#GP caught)");
+    TEST_ASSERT_EQ(val, 0,
+                   "msr_try_read sets output to 0 on failure");
+}
+
+static void test_msr_try_read_null_out(void)
+{
+    /* msr_try_read with NULL out pointer should not crash */
+    int ret = msr_try_read(MSR_IA32_EFER, (uint64_t *)0);
+    TEST_ASSERT_EQ(ret, 0,
+                   "msr_try_read(EFER, NULL) returns 0 without crash");
+}
+
 /* ---- Registration ---- */
 
 void test_register_x86(void)
@@ -513,6 +562,18 @@ void test_register_x86(void)
         test_memset_avx512_tail, TEST_CAT_X86);
     test_suite_register_cat("AVX-512: memcpy_fast dispatch",
         test_memcpy_fast_avx512_dispatch, TEST_CAT_X86);
+
+    /* S4: MSR infrastructure */
+    test_suite_register_cat("MSR: msr_read(EFER) stable",
+        test_msr_read_efer_stable, TEST_CAT_X86);
+    test_suite_register_cat("MSR: EFER.LMA set in long mode",
+        test_msr_read_efer_lma_set, TEST_CAT_X86);
+    test_suite_register_cat("MSR: msr_try_read valid MSR",
+        test_msr_try_read_valid, TEST_CAT_X86);
+    test_suite_register_cat("MSR: msr_try_read invalid MSR",
+        test_msr_try_read_invalid, TEST_CAT_X86);
+    test_suite_register_cat("MSR: msr_try_read NULL out",
+        test_msr_try_read_null_out, TEST_CAT_X86);
 }
 
 #endif /* KERNEL_TESTS */

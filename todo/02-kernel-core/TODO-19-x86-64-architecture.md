@@ -55,7 +55,7 @@
 | 💎  |   1   | XSAVE/XRSTOR state management (per-thread, lazy)    | (none)               |  [x]   |
 | 💎  |   2   | AVX/AVX2 kernel memops + framebuffer blit           | §1                   |  [x]   |
 | 💎  |   3   | AVX-512 opt-in + future silicon detection           | §2                   |  [x]   |
-| 💎  |   4   | MSR management infrastructure (`msr.c`)             | (none)               |  [/]   |
+| 💎  |   4   | MSR management infrastructure (`msr.c`)             | (none)               |  [x]   |
 | 💎  |   5   | UMIP + PKU protection keys                          | §4                   |  [ ]   |
 | 💎  |   6   | 1 GiB huge pages + Write-Combining PAT              | §4                   |  [ ]   |
 | 💎  |   7   | FRED event delivery + LKGS                          | §4, T06 §3           |  [ ]   |
@@ -178,8 +178,11 @@
 
 **Test checkpoint:** `msr_read(MSR_IA32_EFER)` stable across calls; `msr_try_read(0xFFFFFFFF, &scratch) == -1` without panic; boot completes with MSR layer linked. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
+> **Test runner:** `scripts\debug\run-x86-tests.bat` (SUITE=x86)
+> **Expected:** 28 suites, 0 failures
+>
 > **Verified:** 2026-04-12 -- all 6 items confirmed. `msr_read`/`msr_write` inline in `msr.h:16-28`. `msr_try_read` in `msr.c:48-89` with spinlock+irqsave+RIP check (Codex: SMP race + unrelated #GP swallowing fixed). 22 MSR constants in `msr.h`. smp.c (4 sites) + lapic.c (2 sites) migrated. `cpu_verify_hardening` uses `msr_read` (d825576d). Hyper-V MSR constants corrected per TLFS Table 2-2 (0x40000022=TSC, 0x40000023=APIC). `msr_write` memory clobber added. Accepted: none.
-> **Quality reviewed:** 2026-04-12 -- kernel-code-quality 11 gates walked. G2: spinlock serializes msr_try_read on SMP. G11: rdmsr 2-byte skip per Intel SDM. Hyper-V TLFS compliant. Memory clobber on wrmsr prevents store reordering across GS_BASE writes. Accepted: none.
+> **Quality reviewed:** 2026-04-13 -- kernel-code-quality 11 gates walked. G1: spinlock+irqsave serializes msr_try_read on SMP; result captured under lock (Codex fix: s_gp_fired race). G7: non-probe #GP now calls panic_screen instead of returning unchanged frame (Codex fix: infinite-loop on unrelated #GP). G11: rdmsr 2-byte skip per Intel SDM Vol. 2B; MSR indices match SDM Vol. 4 + AMD APM Vol. 2 + Hyper-V TLFS Table 2-2. XREF comments fixed (§3->§4). 5 MSR unit tests added (EFER stable, LMA set, try_read valid/invalid/NULL). Parity: matches Windows HAL HalMsrRead + Linux rdmsr_safe; our approach uses temporary #GP handler vs Linux extable mechanism. Accepted: IDT handler registration race (low practical risk: vector 13 only modified by serialized msr_try_read; proper extable mechanism is out of scope for §4).
 
 ---
 
@@ -188,7 +191,6 @@
 - [ ] `cpu_enable_umip()`: `if (cpu_has(CPU_FEATURE_UMIP)) cpu_set_cr4_bit(CR4_UMIP)` where `CR4_UMIP = (1ULL << 11)`; called in Phase 1 on BSP and each AP
 - [ ] Effect: user-space `SGDT`, `SIDT`, `SLDT`, `SMSW`, `STR` raise `#GP` instead of revealing GDT/IDT base addresses; eliminates a trivial kernel address leak
 - [ ] Verify: user-mode test `SGDT [ptr]` after `cpu_enable_umip()` must fault with `#GP` (error code = 0)
-
 - [ ] Enable: `if (cpu_has(CPU_FEATURE_PKU)) cpu_set_cr4_bit(CR4_PKE)` where `CR4_PKE = (1ULL << 22)`
 - [ ] Add PKRU to XCR0 (bit 9) in `cpu_configure_xcr0()` (from §1); ensures per-thread `PKRU` state is saved/restored automatically
 - [ ] Kernel API in `src/kernel/security/pku.c`:
@@ -202,7 +204,6 @@
 - [ ] PTE key field: bits 62:59 in each page table entry; add `pku_key` field to `vmm_map_page` flags parameter
 - [ ] Win32 API surface: `SetThreadMemoryZone(zone_id, ACCESS_NONE)` -> `pku_set_permissions(zone_id, PKU_ACCESS_DISABLE)`; zero-cost switch without any syscall, using `WRPKRU` (~1 ns vs ~1 us for `mprotect`)
 - [ ] PKRU initial value: `0x55555554` (disable access to keys 1-15 by default for user threads; key 0 = full access always)
-
 - [ ] Commit: `"kernel/security: UMIP (CR4.UMIP), PKU protection keys, SetThreadMemoryZone"`
 
 **Test checkpoint:** After `cpu_enable_umip()`, user test `SGDT` faults `#GP`; PKRU disable on keyed page raises `#PF` with AD/WK set when probed from ring 3 harness. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
@@ -216,7 +217,6 @@
 - [ ] `vmm_map_huge_1g(va, pa, flags)`: single-entry helper: set PDPTE `PS` bit; physical address in bits [51:30]
 - [ ] Use at boot: identity-map the first N GiB of physical RAM with 1 GiB pages where N is aligned to 1 GiB; reduces TLB miss pressure for large DMA buffers and MMIO regions
 - [ ] Fallback: if `PAGE1GB` not set, silently fall through to 2 MiB pages
-
 - [ ] Read `IA32_PAT` MSR (`0x277`) at boot; ensure entry 1 = `0x01` (WC, Write-Combining type); default PAT entry 1 is WC on most CPUs but verify explicitly:
   ```c
   uint64_t pat = msr_read(MSR_IA32_PAT);
@@ -225,7 +225,6 @@
   ```
 - [ ] Add `PTE_WC` flag: `PCD=0, PWT=1, PAT=0` (selects PAT entry 1 = WC) in the PTE; encode in `vmm_map_wc(va, pa, size)`
 - [ ] Update `fb_init()` in `src/kernel/drivers/framebuffer.c`: replace current uncached mapping with `vmm_map_wc(fb_va, fb_pa, fb_size)`; benchmark: log `fb_swap()` time before and after; expect about 10 to 50x speedup
-
 - [ ] Commit: `"kernel/mm: 1 GiB huge pages, Write-Combining PAT for framebuffer"`
 
 **Test checkpoint:** `cpu_has(PAGE1GB)` gate respected; 1 GiB-aligned range uses single PDPTE PS path; `fb_swap()` TSC median drops >=5x after WC map on 1080p. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
@@ -247,7 +246,6 @@
   - `ERETU`: return to ring 3
 - [ ] `SYSCALL` via FRED: automatically uses FRED entry; `IA32_LSTAR` still needed for non-FRED fallback path
 - [ ] Fallback: if `CPU_FEATURE_FRED` not present, IDT path unchanged
-
 - [ ] Check `cpu_has(CPU_FEATURE_LKGS)` (CPUID leaf 7, ECX=1, EAX bit 18)
 - [ ] `LKGS reg` writes directly to `IA32_KERNEL_GS_BASE` without touching the active GS; eliminates `SWAPGS` and its speculative side-channel
 - [ ] In `src/kernel/sched/syscall_entry.asm`:
@@ -255,7 +253,6 @@
   - On SYSRET: `LKGS [user_gs_base]` before `SYSRETQ`
 - [ ] Same replacement in IDT common stubs that currently use `SWAPGS`
 - [ ] Fallback: if LKGS unavailable, keep existing `SWAPGS` (no regression)
-
 - [ ] Commit: `"kernel/cpu: FRED unified event delivery, LKGS replaces SWAPGS in syscall path"`
 
 **Test checkpoint:** On FRED-capable QEMU (`-cpu Cooperlake,fred=on`), timer IRQ still reaches `isr_handler`; syscall path uses LKGS when `CPU_FEATURE_LKGS`; fallback CPU boots unchanged. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
@@ -282,19 +279,16 @@
   extern uint32_t   g_numa_nodes;
   ```
 - [ ] `topology_init()` called from Phase 1 after `cpuid_init()` and SMP probe; for each logical CPU: run per-CPU leaf queries via IPI or on-CPU during AP startup
-
 - [ ] If `cpu_has(CPU_FEATURE_TOPO_EXT)` (from §1, already in cpuid.c):
   - Per-CPU `CPUID 0x8000001E`: `ccd_id = EBX[7:0]`, `node_id = ECX[7:0]`, `smt_siblings = EBX[15:8] + 1`
   - Log: `[topo] Zen: %u CCDs, %u NUMA nodes, NPS=%u`
 - [ ] `g_numa_nodes` = max `node_id` + 1; expose to PMM as a hint (NUMA allocator implementation deferred to `03-memory-concurrency`)
-
 - [ ] If `CPUID.(7,0):EDX[15]` (hybrid bit) set:
   - Per-CPU `CPUID 0x1A`: `EAX[31:24]` = core type (0x40=P, 0x20=E)
   - Per-CPU `CPUID 0x1F` (V2 Extended Topology): enumerate SMT/Core/Die levels; map to `core_id` and `ccd_id`
   - Populate `p_core_mask` and `e_core_mask` bitmasks
   - Log: `[topo] Intel hybrid: %u P-cores, %u E-cores`
 - [ ] Fallback: no hybrid, all cores treated as `CORE_TYPE_GENERIC`
-
 - [ ] Commit: `"kernel/topology: Zen CCD/NUMA parser, Intel hybrid P/E-core detection"`
 
 **Test checkpoint:** Serial shows `[topo] Zen:` or `[topo] Intel hybrid:` line with non-zero masks; `g_cpu_topo[0].logical_id == 0`; Zen path populates `ccd_id` when `TOPO_EXT`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
@@ -322,11 +316,9 @@
 - [ ] `pmc_amd_read(slot)` -> `msr_read(0xC0010201 + slot*2)`
 - [ ] `pmc_amd_stop(slot)` -> clear enable bit
 - [ ] Pre-defined events: `0x76` (CPU clocks), `0xC0` (instructions retired), `0xC2` (retired branches), `0x64` (DRAM accesses)
-
 - [ ] `pmc_start(slot, event)` / `pmc_read(slot)` / `pmc_stop(slot)`: dispatch to Intel or AMD path based on `cpu_features.vendor`
 - [ ] `pmc_ipc()` shortcut: start inst+cycle counters; read after 1 ms; return `instructions / cycles` as fixed-point; used by Task Manager (`08-desktop-shell`) for per-process IPC display
 - [ ] Enable via `IA32_PERF_GLOBAL_CTRL` (Intel, MSR 0x38F); AMD counters enabled per-counter via the `ENABLE` bit in CTL
-
 - [ ] Commit: `"kernel/pmc: Intel PMU + AMD PMC, pmc_start/read/stop, pmc_ipc() for Task Manager"`
 
 **Test checkpoint:** `pmc_intel_read` increments on tight loop; `pmc_ipc()` returns finite fixed-point >0; stopping counter zeros enable bit without GPF. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
@@ -342,7 +334,6 @@
   - `cpu_has_erratum(n)` -> `(osvw_status >> n) & 1`
   - Log: `[cpu] OSVW: %u errata tracked, mask=0x%llx`
 - [ ] Apply per-erratum workarounds as they are identified from the AMD PPR for the detected family/model; initially a no-op table is fine
-
 - [ ] If `cpu_has(CPU_FEATURE_RDTSCP)`:
   - During AP startup in `ap_startup_c()`: `msr_write(MSR_IA32_TSC_AUX, this_cpu_id)` stores logical CPU ID in `IA32_TSC_AUX`
   - `rdtscp_read(tsc, cpu_id)` inline wrapper:
@@ -351,7 +342,6 @@
     ```
   - Use in `TODO-07-time-filetime-management.md §3` (`rdtsc_ns` path) for nanosecond-accurate per-CPU timestamps; XREF noted in Inputs
 - [ ] BSP: also write `IA32_TSC_AUX` with CPU 0 during Phase 1 init
-
 - [ ] Commit: `"kernel/cpu: OSVW errata table, RDTSCP per-CPU IA32_TSC_AUX setup"`
 
 **Test checkpoint:** When `CPU_FEATURE_OSVW`, serial logs mask line; `RDTSCP` ECX matches `smp_this_cpu()->id` on BSP and each AP after init. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
@@ -370,7 +360,6 @@
 - [ ] IBS NMI handler: read all IBS MSRs; pack into a ring buffer of `ibs_sample_t` structs (256 entries per CPU, static allocation); re-arm counter; return from NMI
 - [ ] `ibs_start(rate)` / `ibs_stop()` / `ibs_read_samples(buf, max)` API
 - [ ] Future: wire to a profiler GUI in `10-apps`
-
 - [ ] Commit: `"kernel/pmc: AMD IBS fetch+op sampling, NMI handler, sample ring buffer"`
 
 **Test checkpoint:** With `CPU_FEATURE_IBS`, NMI handler fills ring without nested NMI deadlock; `ibs_read_samples` returns monotonic sequence numbers. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal (AMD).
@@ -408,7 +397,6 @@
   ```
 - [ ] Stored in `HKLM\SYSTEM\HwProfile\*` via Registry (-> XREF `TODO-13-registry-completion.md §4`)
 - [ ] Stale if CPU brand string has changed since last boot (different hardware)
-
 - [ ] Run during Phase 2 init (after SMP, before GUI) if `HwProfile` is stale or absent; total runtime <= 2 seconds:
   - **Memory bandwidth**: `VMOVDQA` 256 MiB sequential write; measure MB/s from TSC delta
   - **Memory latency**: 4 MiB pointer-chase array (stride = cache-line); measure ns/access
@@ -416,12 +404,10 @@
   - **SIMD throughput**: timed SSE2 / AVX / AVX-512 alpha-blend loop over 4 MiB framebuffer; record Gpix/s per ISA level
   - **Context switch**: 1000 yield-pairs between two kernel tasks; `rdtsc` around each switch; average ns per switch
 - [ ] Write `hw_profile_t` to Registry
-
 - [ ] SIMD dispatch: if `avx_gpix / sse2_gpix < 1.10` (< 10% gain; throttling detected): set `simd_avx2_ok = 0`; use SSE2 path to avoid frequency reduction
 - [ ] Scheduler quantum: if `ctx_switch_ns < 500` -> set `SCHED_TICK_US = 100`; if `ctx_switch_ns > 2000` -> set `SCHED_TICK_US = 500`
 - [ ] Compositor triple-buffering: if `mem_bandwidth_mb_s > 20 000` -> enable
 - [ ] `memcpy` threshold: if `l1_size_kb == 32` -> `REP MOVSB` for < 128 B, SIMD for larger
-
 - [ ] Commit: `"kernel/bench: boot self-benchmark, hw_profile Registry, auto-tune SIMD/scheduler"`
 
 **Test checkpoint:** Registry `HKLM\SYSTEM\HwProfile\MemBandwidthMbS` non-zero after bench; second boot skips bench when profile valid; `simd_avx2_ok` toggles per auto-tune rule when AVX gain <10%. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
@@ -445,12 +431,12 @@
 | 💎   | CPUID feature gates  | ✅ Ke API       | ✅ x86/cpu       | ✅ cpuid_init    |
 | 💎   | AMD ext CPUID        | ✅ HAL leaves   | ✅ amd.c         | ✅ §1            |
 | 💎   | XSAVE per thread     | ✅ Full         | ✅ fpu__*        | ✅ §1 Done       |
-| 💎   | AVX memops in kernel | ✅ Yes          | ✅ kfpu          | ⚠️ §2 GFX only  |
+| 💎   | AVX memops in kernel | ✅ Yes          | ✅ kfpu          | ⚠️ §2 GFX only   |
 | 💎   | AVX-512 + throttle   | ✅ Yes          | ✅ power aware   | ✅ §3 Done       |
 | 💎   | Central safe MSR     | ✅ HAL          | ✅ rdmsr_safe    | ✅ §4            |
 | 💎   | UMIP                 | ✅ On           | ✅ 4.15+         | ⬜ §5            |
 | 💎   | PKU / pkeys          | ✅ OS use       | ✅ pkey_*        | ⬜ §5 Win32 API  |
-| 💎   | PKS (supervisor)     | ⚠️ niche       | ✅ mm since 5.13 | ⬜ defer T17     |
+| 💎   | PKS (supervisor)     | ⚠️ niche        | ✅ mm since 5.13 | ⬜ defer T17     |
 | 💎   | FB WC PAT            | ✅ GPU path     | ✅ ioremap_wc    | ⬜ §6 UC today   |
 | 💎   | 1 GiB huge pages     | ✅ Large page   | ✅ hugetlb 1G    | ⬜ §6            |
 | 💎   | FRED events          | 🔜 roadmap      | ✅ 6.9+          | ⬜ §7            |
@@ -460,11 +446,11 @@
 | 💎   | PMU / PMC            | ✅ ETW WPA      | ✅ perf          | ⬜ §9            |
 | 💎   | OSVW errata          | ✅ HAL          | ✅ amd.c         | ⬜ §10           |
 | 💎   | RDTSCP TSC_AUX       | ✅ QPC path     | ✅ SMP init      | ⬜ §10           |
-| 💎   | AMD IBS sample       | ⚠️ vendor tool | ✅ perf IBS      | ⬜ §11 stretch   |
+| 💎   | AMD IBS sample       | ⚠️ vendor tool  | ✅ perf IBS      | ⬜ §11 stretch   |
 | 💎   | SVM VT-x detect      | ✅ HAL          | ✅ kvm caps      | ✅ §12           |
 | ⭐   | Boot hw self tune    | ❌ static       | ❌ static        | ⬜ §13           |
-| ⭐   | PKU Win32 wrapper    | ❌ none         | ⚠️ raw syscalls | ⬜ §5            |
-| ⭐   | Per-core freq UI     | ❌ simple       | ⚠️ turbostat    | ⬜ §9 + shell    |
+| ⭐   | PKU Win32 wrapper    | ❌ none         | ⚠️ raw syscalls  | ⬜ §5            |
+| ⭐   | Per-core freq UI     | ❌ simple       | ⚠️ turbostat     | ⬜ §9 + shell    |
 
 After §1 through §12 done and §2 through §11 plus §13 through §14 planned, parity with Win11/Linux 6.x on this stack; §13 boot benchmark is the differentiator. `SetThreadMemoryZone` (§5) is a planned Win32-style PKU surface. PKS (supervisor keys) stays in `TODO-17` until kernel mappings allow it without breaking SMEP/SMAP rollout.
 

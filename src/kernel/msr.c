@@ -6,11 +6,12 @@
  * Protected by a spinlock + interrupt disable to prevent SMP races
  * and unrelated #GP swallowing.
  *
- * XREF: 02-kernel-core/TODO-19-x86-64-architecture.md S3
+ * XREF: 02-kernel-core/TODO-19-x86-64-architecture.md §4
  * ============================================================================ */
 
 #include "kernel/msr.h"
 #include "kernel/idt.h"
+#include "kernel/panic.h"
 #include "kernel/sched/spinlock.h"
 
 /* Per-probe state -- protected by s_probe_lock + CLI */
@@ -32,8 +33,12 @@ static uint64_t gp_probe_handler(struct interrupt_frame *frame)
     /* Not our probe -- chain to original handler */
     if (s_saved_gp_handler)
         return s_saved_gp_handler(frame);
-    /* No saved handler -- return frame unchanged (will likely panic) */
-    return (uint64_t)frame;
+    /* No saved handler -- trigger the same panic the default ISR path
+     * would produce. Returning the unchanged frame would infinite-loop
+     * because the faulting instruction would retry and fault again. */
+    panic_screen(frame, frame->err_code,
+                 "General Protection Fault (#GP)", "msr.c", 0);
+    __builtin_unreachable();
 }
 
 /* Address of the rdmsr instruction inside msr_read().
@@ -77,13 +82,18 @@ int msr_try_read(uint32_t index, uint64_t *out)
     /* Restore original handler */
     idt_register_handler(13, s_saved_gp_handler);
 
-    spin_unlock_irqrestore(&s_probe_lock, irq_flags);
+    /* Capture result while still holding the lock to prevent the next
+     * CPU's probe from resetting s_gp_fired before we read it. */
+    {
+        int faulted = s_gp_fired;
+        spin_unlock_irqrestore(&s_probe_lock, irq_flags);
 
-    if (s_gp_fired) {
-        if (out) *out = 0;
-        return -1;
+        if (faulted) {
+            if (out) *out = 0;
+            return -1;
+        }
+
+        if (out) *out = ((uint64_t)hi << 32) | lo;
+        return 0;
     }
-
-    if (out) *out = ((uint64_t)hi << 32) | lo;
-    return 0;
 }
