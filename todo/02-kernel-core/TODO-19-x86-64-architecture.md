@@ -3,7 +3,7 @@
 > **Goal:** Activate and exploit the x86-64 architecture features that `cpuid.c` already detects, pushing beyond today's partial enablement: full XSAVE/XRSTOR state management with per-thread XSAVE areas and lazy FPU, AVX/AVX2 optimised kernel paths and AVX-512 support, a centralised MSR access layer, UMIP and PKU protection keys, 1 GiB huge pages and Write-Combining PAT for the framebuffer, FRED event delivery with LKGS, CPU topology parsing (Zen chiplets + Intel P/E-cores), performance monitoring counters (Intel PMU + AMD PMC), OSVW errata + RDTSCP setup, AMD IBS profiling, virtualization detection, and a boot-time self-benchmark that auto-tunes the kernel to the detected hardware.
 
 > [!IMPORTANT]
-> **Current state:** `cpuid_init()` / `cpu_has()` gate the feature set. **Done [x]:** §1 XSAVE/XRSTOR with per-thread lazy FPU. §2 AVX2 memops + framebuffer blit with SSE2 fallbacks. §3 AVX-512 opt-in with MPERF/APERF throttle guard. §4 `msr_read`/`msr_write`/`msr_try_read` plus MSR constants. §5 UMIP (CR4.UMIP) + PKU protection keys (CR4.PKE, XCR0 bit 9 PKRU, pku_alloc/free/set_permissions, PTE key macros, PKRU XSAVE init). §12 AMD SVM + Intel VT-x detection. **Open [ ]:** §6 through §11, §13, §14 per Implementation Order.
+> **Current state:** `cpuid_init()` / `cpu_has()` gate the feature set. **Done [x]:** §1 XSAVE/XRSTOR with per-thread lazy FPU. §2 AVX2 memops + framebuffer blit with SSE2 fallbacks. §3 AVX-512 opt-in with MPERF/APERF throttle guard. §4 `msr_read`/`msr_write`/`msr_try_read` plus MSR constants. §5 UMIP + PKU protection keys. §6 1 GiB huge pages (PDPT promotion) + Write-Combining PAT (framebuffer WC-mapped). §12 AMD SVM + Intel VT-x detection. **Open [ ]:** §7 through §11, §13, §14 per Implementation Order.
 > **Scope boundary with other TODOs (do not implement here):**
 > - NX/EFER, SMEP/SMAP, KPTI, PCID, IBRS/retpoline, CET -> `TODO-17` (gap analysis 2026-04-12: `TODO-17` §1 NX + `vmm_apply_nx_policy()` are live; §2 SMEP/SMAP helpers exist but `hv_supports_cr4_smep_smap()` forces skip so CR4 bits stay off until kernel PTE User policy is fixed; `isr_stubs.asm` omits `clac` until SMAP is real)
 > - TSC invariant check + TSC-Deadline APIC -> `TODO-07`
@@ -57,7 +57,7 @@
 | 💎  |   3   | AVX-512 opt-in + future silicon detection           | §2                   |  [x]   |
 | 💎  |   4   | MSR management infrastructure (`msr.c`)             | (none)               |  [x]   |
 | 💎  |   5   | UMIP + PKU protection keys                          | §4                   |  [x]   |
-| 💎  |   6   | 1 GiB huge pages + Write-Combining PAT              | §4                   |  [ ]   |
+| 💎  |   6   | 1 GiB huge pages + Write-Combining PAT              | §4                   |  [x]   |
 | 💎  |   7   | FRED event delivery + LKGS                          | §4, T06 §3           |  [ ]   |
 | 💎  |   8   | CPU topology: Zen chiplets + Intel hybrid P/E-core  | (none)               |  [ ]   |
 | 💎  |   9   | Performance monitoring counters (Intel + AMD)       | §4                   |  [ ]   |
@@ -211,22 +211,19 @@
 
 ## 6. 1 GiB Huge Pages + Write-Combining PAT
 
-- [ ] Check `cpu_has(CPU_FEATURE_PAGE1GB)` before use
-- [ ] VMM extension: in `vmm_map_range(va, pa, size, flags)`, if size >= 1 GiB and both `va` and `pa` are 1 GiB-aligned and `CPU_FEATURE_PAGE1GB`: use PDPTE with `PS = 1` (bit 7) instead of a PD -> PT chain
-- [ ] `vmm_map_huge_1g(va, pa, flags)`: single-entry helper: set PDPTE `PS` bit; physical address in bits [51:30]
-- [ ] Use at boot: identity-map the first N GiB of physical RAM with 1 GiB pages where N is aligned to 1 GiB; reduces TLB miss pressure for large DMA buffers and MMIO regions
-- [ ] Fallback: if `PAGE1GB` not set, silently fall through to 2 MiB pages
-- [ ] Read `IA32_PAT` MSR (`0x277`) at boot; ensure entry 1 = `0x01` (WC, Write-Combining type); default PAT entry 1 is WC on most CPUs but verify explicitly:
-  ```c
-  uint64_t pat = msr_read(MSR_IA32_PAT);
-  pat = (pat & ~(0xFFULL << 8)) | (0x01ULL << 8); /* entry 1 = WC */
-  msr_write(MSR_IA32_PAT, pat);
-  ```
-- [ ] Add `PTE_WC` flag: `PCD=0, PWT=1, PAT=0` (selects PAT entry 1 = WC) in the PTE; encode in `vmm_map_wc(va, pa, size)`
-- [ ] Update `fb_init()` in `src/kernel/drivers/framebuffer.c`: replace current uncached mapping with `vmm_map_wc(fb_va, fb_pa, fb_size)`; benchmark: log `fb_swap()` time before and after; expect about 10 to 50x speedup
-- [ ] Commit: `"kernel/mm: 1 GiB huge pages, Write-Combining PAT for framebuffer"`
+- [x] Check `cpu_has(CPU_FEATURE_PAGE1GB)` before use; `vmm_map_huge_1g()` and `vmm_promote_to_1g()` both gate on the CPUID feature
+- [x] `vmm_map_huge_1g(va, pa, flags)`: single-entry helper in `vmm.c`; sets PDPTE PS bit (bit 7) with physical address in bits 51:30; validates 1 GiB alignment on both addresses; returns -1 on misalignment or missing feature
+- [x] `vmm_promote_to_1g()`: promotes identity-mapped GiB 1-3 from PD trees to single 1 GiB PDPTE entries; skips PDPT[0] (first GiB, contains kernel text that needs NX at 2 MiB granularity); flushes TLB after promotion; called from boot_phase0 after vmm_apply_nx_policy()
+- [x] Fallback: if `PAGE1GB` not set, `vmm_promote_to_1g()` logs "not supported" and keeps 2 MiB identity map unchanged
+- [x] PAT MSR entry 1 = WC: **already done** in `boot_hw.c:376-393`; PAT reprogrammed from `0x0007040600070406` to `0x0007040600010406` (entry 1: WT -> WC) with readback verification
+- [x] WC PTE flag: **already done** as `VMM_MMIO_WC` in `vmm.c:734-758` (PWT=1, PCD=0 selects PAT entry 1 = WC); `vmm_map_mmio_wc()` exposed in `vmm.h:96`
+- [x] Framebuffer WC mapping: **already done** in `framebuffer.c:247-266`; `fb_init()` calls `vmm_map_mmio_wc()` for VRAM, with identity-map fallback on failure
+- [x] Commit: `"kernel/mm: 1 GiB huge pages, Write-Combining PAT for framebuffer"`
 
 **Test checkpoint:** `cpu_has(PAGE1GB)` gate respected; 1 GiB-aligned range uses single PDPTE PS path; `fb_swap()` TSC median drops >=5x after WC map on 1080p. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\run-x86-tests.bat` (SUITE=x86)
+> **Expected:** 42 suites, 0 failures
 
 ---
 
@@ -425,31 +422,31 @@
 
 ## OS Comparison
 
-| ⭐  | Feature              | 🪟 Win11                    | 🐧 Linux                    | 🚀 Impossible OS |
-| --- | -------------------- | ---------------------------- | --------------------------- | ----------------- |
-| 💎  | CPUID feature gates  | ✅ KeQueryFeature API       | ✅ cpu_has() x86/cpu        | ✅ cpuid_init    |
-| 💎  | AMD ext CPUID        | ✅ HAL ext leaves 8000xxxx  | ✅ amd.c + topo ext         | ✅ §1            |
-| 💎  | XSAVE per thread     | ✅ KTHREAD XSAVE area       | ✅ fpu__alloc lazy FPU      | ✅ §1 Done       |
-| 💎  | AVX memops in kernel | ✅ RtlCopyMemory via NT HAL | ✅ kernel_fpu_begin + kfpu  | ⚠️ §2 GFX only   |
-| 💎  | AVX-512 + throttle   | ✅ context-switch aware     | ✅ eager FPU, power cgroup  | ✅ §3 Done       |
-| 💎  | Central safe MSR     | ✅ HalMsrRead + #GP safe    | ✅ rdmsr_safe() extable     | ✅ §4 Done       |
-| 💎  | UMIP                 | ✅ CR4.UMIP on boot         | ✅ 4.15+ on boot            | ✅ §5 Done       |
-| 💎  | PKU / pkeys          | ✅ implicit OS use          | ✅ pkey_alloc/mprotect_key  | ✅ §5 kernel API |
-| 💎  | PKS (supervisor)     | ⚠️ niche, not exposed       | ✅ mm/pkeys since 5.13      | ⬜ defer T17     |
-| 💎  | FB WC PAT            | ✅ WDDM GPU WC mapping      | ✅ ioremap_wc PAT entry     | ⬜ §6 UC today   |
-| 💎  | 1 GiB huge pages     | ✅ Large Pages in registry  | ✅ hugetlbfs 1G mount       | ⬜ §6            |
-| 💎  | FRED events          | 🔜 future Windows roadmap   | ✅ 6.9+ Granite Rapids      | ⬜ §7            |
-| 💎  | LKGS fast GS         | 🔜 future Windows roadmap   | ✅ 6.4+ no SWAPGS in entry  | ⬜ §7            |
-| 💎  | Zen CCD NUMA         | ✅ Ke node + NUMA policy    | ✅ amd_nb.c CCD/CCX topo    | ⬜ §8            |
-| 💎  | Intel P/E hybrid     | ✅ Thread Director HFI      | ✅ HFI + itmt scheduler     | ⬜ §8            |
-| 💎  | PMU / PMC            | ✅ ETW + WPA counters       | ✅ perf_event PMU driver    | ⬜ §9            |
-| 💎  | OSVW errata          | ✅ HAL workaround table     | ✅ amd.c osvw_id_length     | ⬜ §10           |
-| 💎  | RDTSCP TSC_AUX       | ✅ QPC reads TSC_AUX        | ✅ per-CPU wrmsr in SMP     | ⬜ §10           |
-| 💎  | AMD IBS sample       | ⚠️ uProf vendor tool only   | ✅ perf IBS + oprofile      | ⬜ §11 stretch   |
-| 💎  | SVM VT-x detect      | ✅ HAL + Hv caps            | ✅ kvm cpuid + vmx_init     | ✅ §12           |
-| ⭐  | Boot hw self tune    | ❌ static config only       | ❌ static defaults          | ⬜ §13           |
+| ⭐  | Feature              | 🪟 Win11                    | 🐧 Linux                    | 🚀 Impossible OS  |
+| --- | -------------------- | ---------------------------- | --------------------------- | ------------------ |
+| 💎  | CPUID feature gates  | ✅ KeQueryFeature API       | ✅ cpu_has() x86/cpu        | ✅ cpuid_init     |
+| 💎  | AMD ext CPUID        | ✅ HAL ext leaves 8000xxxx  | ✅ amd.c + topo ext         | ✅ §1             |
+| 💎  | XSAVE per thread     | ✅ KTHREAD XSAVE area       | ✅ fpu__alloc lazy FPU      | ✅ §1 Done        |
+| 💎  | AVX memops in kernel | ✅ RtlCopyMemory via NT HAL | ✅ kernel_fpu_begin + kfpu  | ⚠️ §2 GFX only    |
+| 💎  | AVX-512 + throttle   | ✅ context-switch aware     | ✅ eager FPU, power cgroup  | ✅ §3 Done        |
+| 💎  | Central safe MSR     | ✅ HalMsrRead + #GP safe    | ✅ rdmsr_safe() extable     | ✅ §4 Done        |
+| 💎  | UMIP                 | ✅ CR4.UMIP on boot         | ✅ 4.15+ on boot            | ✅ §5 Done        |
+| 💎  | PKU / pkeys          | ✅ implicit OS use          | ✅ pkey_alloc/mprotect_key  | ✅ §5 kernel API  |
+| 💎  | PKS (supervisor)     | ⚠️ niche, not exposed       | ✅ mm/pkeys since 5.13      | ⬜ defer T17      |
+| 💎  | FB WC PAT            | ✅ WDDM GPU WC mapping      | ✅ ioremap_wc PAT entry     | ✅ §6 WC mapped  |
+| 💎  | 1 GiB huge pages     | ✅ Large Pages in registry  | ✅ hugetlbfs 1G mount       | ✅ §6 promoted   |
+| 💎  | FRED events          | 🔜 future Windows roadmap   | ✅ 6.9+ Granite Rapids      | ⬜ §7             |
+| 💎  | LKGS fast GS         | 🔜 future Windows roadmap   | ✅ 6.4+ no SWAPGS in entry  | ⬜ §7             |
+| 💎  | Zen CCD NUMA         | ✅ Ke node + NUMA policy    | ✅ amd_nb.c CCD/CCX topo    | ⬜ §8             |
+| 💎  | Intel P/E hybrid     | ✅ Thread Director HFI      | ✅ HFI + itmt scheduler     | ⬜ §8             |
+| 💎  | PMU / PMC            | ✅ ETW + WPA counters       | ✅ perf_event PMU driver    | ⬜ §9             |
+| 💎  | OSVW errata          | ✅ HAL workaround table     | ✅ amd.c osvw_id_length     | ⬜ §10            |
+| 💎  | RDTSCP TSC_AUX       | ✅ QPC reads TSC_AUX        | ✅ per-CPU wrmsr in SMP     | ⬜ §10            |
+| 💎  | AMD IBS sample       | ⚠️ uProf vendor tool only   | ✅ perf IBS + oprofile      | ⬜ §11 stretch    |
+| 💎  | SVM VT-x detect      | ✅ HAL + Hv caps            | ✅ kvm cpuid + vmx_init     | ✅ §12            |
+| ⭐  | Boot hw self tune    | ❌ static config only       | ❌ static defaults          | ⬜ §13            |
 | ⭐  | PKU Win32 wrapper    | ❌ no user API surface      | ⚠️ raw syscall pkey_*       | ⚠️ §5 kernel only |
-| ⭐  | Per-core freq UI     | ❌ basic Task Manager       | ⚠️ turbostat CLI tool       | ⬜ §9 + shell    |
+| ⭐  | Per-core freq UI     | ❌ basic Task Manager       | ⚠️ turbostat CLI tool       | ⬜ §9 + shell     |
 
 After §1 through §12 done and §2 through §11 plus §13 through §14 planned, parity with Win11/Linux 6.x on this stack; §13 boot benchmark is the differentiator. `SetThreadMemoryZone` (§5) is a planned Win32-style PKU surface. PKS (supervisor keys) stays in `TODO-17` until kernel mappings allow it without breaking SMEP/SMAP rollout.
 

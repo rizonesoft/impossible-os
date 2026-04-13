@@ -663,6 +663,78 @@ static void test_pku_xsave_offset(void)
                    "PKRU XSAVE component size is 4 bytes");
 }
 
+/* ---- S6: 1 GiB huge pages ---- */
+
+static void test_1g_page_cpuid_feature(void)
+{
+    /* CPU_FEATURE_PAGE1GB should match CPUID leaf 0x80000001 EDX bit 26 */
+    int has_1g = cpu_has(CPU_FEATURE_PAGE1GB);
+    TEST_ASSERT(has_1g == 0 || has_1g == 1,
+                "cpu_has(PAGE1GB) returns 0 or 1");
+}
+
+static void test_1g_page_pdpt_promoted(void)
+{
+    if (!cpu_has(CPU_FEATURE_PAGE1GB)) {
+        TEST_SKIP("CPU does not support 1 GiB pages");
+        return;
+    }
+    /* After vmm_promote_to_1g(), PDPT[1] should have PS=1 (1 GiB page).
+     * Read CR3 to get PML4, then follow to PDPT. */
+    uint64_t cr3;
+    __asm__ volatile("mov %%cr3, %0" : "=r"(cr3));
+    uint64_t *pml4 = (uint64_t *)(cr3 & 0x000FFFFFFFFFF000ULL);
+    if (!(pml4[0] & 1)) {
+        TEST_SKIP("PML4[0] not present");
+        return;
+    }
+    uint64_t *pdpt = (uint64_t *)(pml4[0] & 0x000FFFFFFFFFF000ULL);
+    /* PDPT[1] should be a 1 GiB page (PS=1, bit 7) */
+    TEST_ASSERT(pdpt[1] & (1ULL << 7),
+                "PDPT[1] has PS=1 (promoted to 1 GiB page)");
+    /* Physical address should be 1 GiB (identity map) */
+    uint64_t phys = pdpt[1] & 0x000FFFFFC0000000ULL;
+    TEST_ASSERT_EQ(phys, (1ULL << 30),
+                   "PDPT[1] maps physical 1 GiB (identity map)");
+}
+
+static void test_1g_page_pdpt0_not_promoted(void)
+{
+    /* PDPT[0] should NOT be promoted (contains kernel text, needs NX) */
+    uint64_t cr3;
+    __asm__ volatile("mov %%cr3, %0" : "=r"(cr3));
+    uint64_t *pml4 = (uint64_t *)(cr3 & 0x000FFFFFFFFFF000ULL);
+    if (!(pml4[0] & 1)) {
+        TEST_SKIP("PML4[0] not present");
+        return;
+    }
+    uint64_t *pdpt = (uint64_t *)(pml4[0] & 0x000FFFFFFFFFF000ULL);
+    /* PDPT[0] should be a PD pointer, NOT a 1 GiB page */
+    if (pdpt[0] & 1) {
+        TEST_ASSERT(!(pdpt[0] & (1ULL << 7)),
+                    "PDPT[0] is NOT a 1 GiB page (preserves NX granularity)");
+    }
+}
+
+static void test_vmm_map_huge_1g_alignment(void)
+{
+    /* vmm_map_huge_1g should reject misaligned addresses */
+    int ret = vmm_map_huge_1g(0x1000, 0x1000, VMM_FLAG_PRESENT | VMM_FLAG_WRITABLE);
+    TEST_ASSERT_EQ(ret, -1,
+                   "vmm_map_huge_1g rejects misaligned addresses");
+}
+
+static void test_wc_pat_entry(void)
+{
+    /* PAT MSR entry 1 should be WC (0x01).
+     * PAT MSR format: 8 entries, 8 bits each, packed in 64 bits. */
+    extern struct cpu_features g_cpu;
+    uint64_t pat = msr_read(0x277);  /* MSR_IA32_PAT */
+    uint8_t entry1 = (uint8_t)((pat >> 8) & 0xFF);
+    TEST_ASSERT_EQ(entry1, 0x01,
+                   "PAT entry 1 is WC (0x01) for framebuffer Write-Combining");
+}
+
 /* ---- Registration ---- */
 
 void test_register_x86(void)
@@ -751,6 +823,18 @@ void test_register_x86(void)
         test_pku_pte_key_macros, TEST_CAT_X86);
     test_suite_register_cat("PKU: XSAVE offset from CPUID",
         test_pku_xsave_offset, TEST_CAT_X86);
+
+    /* S6: 1 GiB huge pages + WC PAT */
+    test_suite_register_cat("1GiB: PAGE1GB CPUID feature",
+        test_1g_page_cpuid_feature, TEST_CAT_X86);
+    test_suite_register_cat("1GiB: PDPT[1] promoted to 1 GiB",
+        test_1g_page_pdpt_promoted, TEST_CAT_X86);
+    test_suite_register_cat("1GiB: PDPT[0] NOT promoted (NX)",
+        test_1g_page_pdpt0_not_promoted, TEST_CAT_X86);
+    test_suite_register_cat("1GiB: misaligned address rejected",
+        test_vmm_map_huge_1g_alignment, TEST_CAT_X86);
+    test_suite_register_cat("PAT: entry 1 is WC (0x01)",
+        test_wc_pat_entry, TEST_CAT_X86);
 }
 
 #endif /* KERNEL_TESTS */

@@ -33,6 +33,10 @@ typedef uint64_t pte_t;
 /* Mask for extracting physical address from a PTE (bits 12-51) */
 #define PTE_ADDR_MASK  0x000FFFFFFFFFF000ULL
 
+/* 1 GiB page alignment: lower 30 bits must be zero */
+#define GIB_ALIGN_MASK  0x3FFFFFFFULL
+#define GIB_SIZE        (1ULL << 30)
+
 /* Kernel PML4 -- read from CR3 at init */
 static pte_t *kernel_pml4;
 
@@ -291,9 +295,15 @@ uintptr_t vmm_get_physical(uintptr_t virt)
     pti   = pt_index(virt);
     offset = virt & 0xFFF;
 
-    /* Walk PML4 → PDPT */
+    /* Walk PML4 -> PDPT */
     pdpt = get_or_create_table(kernel_pml4, pml4i, 0);
     if (!pdpt) return 0;
+
+    /* Check for 1 GiB huge page at PDPT level */
+    if ((pdpt[pdpti] & VMM_FLAG_PRESENT) && (pdpt[pdpti] & VMM_FLAG_HUGE)) {
+        uintptr_t gib_base = pdpt[pdpti] & ~GIB_ALIGN_MASK & PTE_ADDR_MASK;
+        return gib_base + (virt & GIB_ALIGN_MASK);
+    }
 
     pd = get_or_create_table(pdpt, pdpti, 0);
     if (!pd) return 0;
@@ -830,6 +840,92 @@ int vmm_install_guard_page(uintptr_t virt, const char *label)
 
     guard_page_register(virt, label);
     return 0;
+}
+
+/* --- 1 GiB huge page support --- */
+
+int vmm_map_huge_1g(uintptr_t virt, uintptr_t phys, uint64_t flags)
+{
+    pte_t *pdpt;
+    uint64_t pml4i, pdpti;
+
+    if (!cpu_has(CPU_FEATURE_PAGE1GB))
+        return -1;
+
+    /* Both addresses must be 1 GiB aligned */
+    if ((virt & GIB_ALIGN_MASK) || (phys & GIB_ALIGN_MASK))
+        return -1;
+
+    if (!kernel_pml4)
+        return -1;
+
+    pml4i = pml4_index(virt);
+    pdpti = pdpt_index(virt);
+
+    /* Walk PML4 to PDPT (create if needed) */
+    pdpt = get_or_create_table(kernel_pml4, pml4i, 1);
+    if (!pdpt)
+        return -1;
+
+    /* Clear NX if CPU lacks it */
+    if (!cpu_has(CPU_FEATURE_NX))
+        flags &= ~VMM_FLAG_NX;
+
+    /* Set PDPT entry with PS=1 for 1 GiB page.
+     * Physical address occupies bits 51:30 (30-bit aligned).
+     * Intel SDM Vol. 3A Table 4-15: PDPTE format for 1 GiB pages. */
+    pdpt[pdpti] = (phys & ~GIB_ALIGN_MASK) | flags | VMM_FLAG_HUGE;
+
+    vmm_flush_tlb(virt);
+    return 0;
+}
+
+void vmm_promote_to_1g(void)
+{
+    pte_t *pdpt;
+    uint64_t pdpti;
+    uint32_t promoted = 0;
+
+    if (!cpu_has(CPU_FEATURE_PAGE1GB)) {
+        klog(LOG_INFO, "mm", "1 GiB pages: not supported, keeping 2 MiB identity map");
+        return;
+    }
+
+    if (!kernel_pml4 || !(kernel_pml4[0] & VMM_FLAG_PRESENT))
+        return;
+
+    pdpt = (pte_t *)(kernel_pml4[0] & PTE_ADDR_MASK);
+
+    /* Promote PDPT entries 1-3 (GiB 1-3) from PD trees to 1 GiB pages.
+     * Skip PDPT[0] (first GiB) because it contains kernel text and needs
+     * fine-grained NX at 2 MiB or 4 KiB level (vmm_apply_nx_policy). */
+    for (pdpti = 1; pdpti < 4; pdpti++) {
+        pte_t pdpte = pdpt[pdpti];
+        uintptr_t phys_base;
+
+        /* Only promote entries that point to a PD (present, not already 1 GiB) */
+        if (!(pdpte & VMM_FLAG_PRESENT))
+            continue;
+        if (pdpte & VMM_FLAG_HUGE)
+            continue;  /* already a 1 GiB page */
+
+        /* The PD maps pdpti * 1 GiB as an identity map (phys == virt) */
+        phys_base = pdpti * GIB_SIZE;
+
+        /* Replace the PD-pointer PDPT entry with a direct 1 GiB page.
+         * Flags: present + writable + user (match entry.asm 0x87 flags).
+         * The PD frame from entry.asm is statically allocated BSS; no need
+         * to free it. */
+        pdpt[pdpti] = phys_base | VMM_FLAG_PRESENT | VMM_FLAG_WRITABLE
+                    | VMM_FLAG_USER | VMM_FLAG_HUGE;
+        promoted++;
+    }
+
+    if (promoted > 0) {
+        vmm_flush_tlb_all();
+        klog(LOG_INFO, "mm", "1 GiB pages: promoted %u PDPT entries (GiB 1-%u)",
+             (uint64_t)promoted, (uint64_t)(promoted));
+    }
 }
 
 /* --- Initialization --- */

@@ -121,3 +121,19 @@ int vmm_protect_range(uintptr_t addr, uint64_t size, uint64_t new_flags);
 /* Apply NX policy: mark all non-text kernel pages as non-executable.
  * Call after vmm_init() and cpu_enable_nx(). */
 void vmm_apply_nx_policy(void);
+
+/* Map a single 1 GiB huge page at PDPT level (PS=1 on PDPTE).
+ * Both virt and phys must be 1 GiB aligned. Requires CPU_FEATURE_PAGE1GB.
+ * Returns 0 on success, -1 if not supported or misaligned.
+ * Intel SDM Vol. 3A Section 4.5: PDPTE with PS=1 maps 1 GiB directly.
+ *
+ * WARNING: Only safe to call before SMP bringup (no IPI TLB shootdown).
+ * Overwrites any existing PDPT entry; caller must ensure no dynamic
+ * mappings (MMIO, guard pages, user pages) exist in the target GiB. */
+int vmm_map_huge_1g(uintptr_t virt, uintptr_t phys, uint64_t flags);
+
+/* Promote identity-mapped 2 MiB ranges to 1 GiB pages where possible.
+ * Skips the first GiB (PDPT[0]) to preserve NX granularity for kernel text.
+ * Falls back silently if CPU_FEATURE_PAGE1GB is not supported.
+ * Call after vmm_init() and vmm_apply_nx_policy(). */
+void vmm_promote_to_1g(void);

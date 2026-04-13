@@ -365,6 +365,9 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
     /* --- Apply NX policy + clear User bit from kernel pages --- */
     POST16(POST16_NX_POLICY);
     vmm_apply_nx_policy();
+
+    /* --- Promote upper GiBs to 1 GiB pages (after NX policy) --- */
+    vmm_promote_to_1g();
     POST16(POST16_NX_POLICY_OK);
 
     /* --- PAT: reprogram entry 1 from WT to WC for framebuffer VRAM ---
