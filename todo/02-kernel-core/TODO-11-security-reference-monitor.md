@@ -60,6 +60,7 @@
 | 💎  |  13   | SD inheritance / SeAssignSecurity                 | §3, §4, §5, T03 §1  |  [ ]   |
 | 💎  |  14   | AppContainer / LowBox tokens                      | §4, §5, §6, §9      |  [ ]   |
 | ⭐  |  15   | Access denial explainer                           | §5, §6, §8, §14     |  [ ]   |
+| 💎  |  16   | Security primitive hardening (SHA-1 SID, 64-bit LUID, const-time) | §1, TODO-07 §1 |  [ ]   |
 
 > 💎 = parity work -- matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work -- Impossible OS is superior or first.
@@ -114,7 +115,7 @@
 > **Test runner:** `scripts\debug\run-security-tests.bat` (SUITE=security), 11 suites, 0 failures expected
 
 > **Verified** (2026-04-13): SID struct at sid.h:25-30 matches Windows ABI (_Static_assert at sid.h:33-40). 13 well-known SIDs initialized in sid.c:34-50 with correct S-1-X-Y values. 7 SID utility functions implemented (RtlLengthSid, RtlEqualSid, RtlCopySid, RtlInitializeSid, RtlSubAuthoritySid, RtlConvertSidToString, RtlCreateServiceSid). LUID at luid.h:15-18, NtAllocateLocallyUniqueId at luid.c:13-19 (atomic counter, SMP-safe). All consumer functions guard with RtlValidSid. RtlInitializeSid clamps count to SID_MAX_SUB_AUTHORITIES. 48-bit authority formatting handles values above 32 bits. Build clean.
-> **Accepted:** FNV-1a service SID derivation (32-bit entropy, not Windows SHA-1 compatible; acceptable for < 100 services, upgrade when crypto library available) -> XREF: 02-kernel-core/TODO-11 §5 or future crypto TODO. LUID 32-bit counter (HighPart always 0; wrap at ~4B allocations, not reachable in practice) -> accept. RtlEqualSid uses memcmp (timing variable; no user-mode oracle exists, constant-time is future hardening).
+> **Accepted:** FNV-1a service SID derivation (32-bit entropy, not Windows SHA-1 compatible; acceptable for < 100 services) -> XREF: 02-kernel-core/TODO-11 §16, 09-desktop-shell/TODO-07 §1. LUID 32-bit counter (HighPart always 0; wrap at ~4B allocations) -> XREF: 02-kernel-core/TODO-11 §16. RtlEqualSid uses memcmp (timing variable; no user-mode oracle exists) -> XREF: 02-kernel-core/TODO-11 §16, 09-desktop-shell/TODO-07 §1.
 > **Quality reviewed** (2026-04-13): dead code clean (all well-known SIDs consumed by token.c, acl.c, default_sds.c). Struct layouts consistent (RtlLengthSid and RtlValidSid agree on 8+4*N). Stack usage bounded (sid_str[80] in RtlAclToCStr). fnv1a_hash_name not in hot path (service registration only). RtlAclToCStr handles invalid SID from RtlConvertSidToString failure (emits "<invalid-sid>"). 3 new tests added: service SID generation, LUID allocator, malformed SID rejection.
 
 ---
@@ -667,6 +668,20 @@ AppContainer is the primary process sandboxing mechanism in modern Windows (used
 
 ---
 
+## 16. Security Primitive Hardening
+
+> [!NOTE]
+> Addresses three accepted findings from the TODO-11 §1 review. These are correctness and hardening upgrades to the SID/LUID primitives that depend on the CNG crypto library (TODO-07 §1). Not blocking for current security functionality but required for Windows parity and long-term robustness.
+
+- [ ] **SHA-1 service SID derivation:** replace `fnv1a_hash_name()` in `RtlCreateServiceSid` with Windows-compatible derivation: uppercase-normalize service name, compute SHA-1 hash (via `cng_sha1()`), map 160 bits into 5 SubAuthority DWORDs. Verify against known Windows service SID vectors (e.g., `S-1-5-80-...` for "TrustedInstaller"). Remove `fnv1a_hash_name()` dead code after replacement. (-> XREF: 09-desktop-shell/TODO-07 §1 for `cng_sha1()`)
+- [ ] **64-bit LUID allocator:** upgrade `NtAllocateLocallyUniqueId` in `luid.c` to use a 64-bit atomic counter (`atomic64_t`). Split counter value into `LowPart` and `HighPart` on return. Eliminates wrap-around after ~4B allocations. Add regression test: allocate 2 LUIDs, verify `HighPart` is populated correctly when `LowPart` would wrap. (-> XREF: kernel/atomic.h for `atomic64_t` support)
+- [ ] **Constant-time SID comparison:** replace `memcmp` in `RtlEqualSid` with `cng_consttime_compare()` to eliminate timing side-channel on SID equality checks. Gate on `cng_ready()` flag (fall back to `memcmp` during early boot before CNG is initialized). Add unit test: verify `RtlEqualSid` returns correct result and call duration does not correlate with prefix match length. (-> XREF: 09-desktop-shell/TODO-07 §1 for `cng_consttime_compare()`)
+- [ ] Commit: `"kernel/security: SID/LUID hardening -- SHA-1 service SIDs, 64-bit LUID, constant-time compare"`
+
+**Test checkpoint:** `RtlCreateServiceSid("TrustedInstaller")` produces the same SID as Windows (`S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464`). LUID allocator returns increasing values with non-zero `HighPart` after simulated 32-bit boundary. `RtlEqualSid` timing variance < 5% between full-match and first-byte-mismatch cases (kernel cycle counter measurement). Test on: QEMU WHPX + TCG.
+
+---
+
 ## OS Comparison
 
 | ⭐ | Feature                     | 🪟 Win11         | 🐧 Linux            | 🚀 Impossible OS    |
@@ -686,6 +701,8 @@ AppContainer is the primary process sandboxing mechanism in modern Windows (used
 | ⭐ | IL badge in File Mgr        | ❌ Hidden     | ❌ N/A           | ⬜ §11 + shell   |
 | ⭐ | ACL denial toast            | ❌ Event log  | ❌ auditd        | ⬜ Planned       |
 | ⭐ | Access denial explainer     | ❌ No API     | ❌ EACCES only   | ⬜ §15           |
+| 💎 | Constant-time SID compare   | ✅ Implicit   | ✅ Implicit      | ⬜ §16           |
+| 💎 | SHA-1 service SID parity    | ✅ Native     | ❌ N/A           | ⬜ §16           |
 
 After §1–§13, Impossible OS reaches full Windows 11 security architecture parity -- SID tokens, DACL/SACL access checks with inheritance, MIC integrity levels, privilege separation, UAC elevation, and restricted tokens are all present. §14 (AppContainer) adds the modern sandboxing mechanism used by all UWP apps and browsers. Linux with only POSIX permissions and optional MAC add-ons (SELinux/AppArmor) is strictly weaker. The access denial explainer (§15), tray token inspector (§11), and integrated IL badges in the File Manager are exclusive features that make Impossible OS's security model visible, diagnosable, and actionable.
 

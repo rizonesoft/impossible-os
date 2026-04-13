@@ -68,8 +68,9 @@ AES-256-GCM encrypt/decrypt (pure-C, no SSE2); SHA-256 (32-byte digest); HMAC-SH
 - [ ] `int cng_rsa2048_encrypt(const uint8_t pub[256], const uint8_t *plain, size_t plen, uint8_t cipher_out[256])` -- PKCS#1 v1.5 padding
 - [ ] `int cng_rsa2048_decrypt(const uint8_t priv[512], const uint8_t cipher[256], uint8_t *plain_out, size_t *plen_out)` -- PKCS#1 v1.5 unpad; constant-time
 - [ ] `static int cng_consttime_compare(const uint8_t *a, const uint8_t *b, size_t n)` -- no early return; XOR-fold
-- [ ] Boot log: `klog(LOG_OK, "cng", "primitives ready: AES-256-GCM SHA-256 HMAC RSA-2048 X25519 BLAKE2b")`
-- [ ] Commit: `"cng: crypto primitives -- AES-256-GCM, SHA-256, HMAC, RSA-2048, X25519, BLAKE2b"`
+- [ ] `void cng_sha1(const uint8_t *data, size_t len, uint8_t hash_out[20])` -- SHA-1 (160-bit); needed by WIM file format (-> XREF: 15-installer-release/TODO-02 §5), Windows-compatible service SID derivation (-> XREF: 02-kernel-core/TODO-11 §16), and WPA2 PBKDF2 (-> XREF: 04-drivers-hardware/TODO-14 §6)
+- [ ] Boot log: `klog(LOG_OK, "cng", "primitives ready: AES-256-GCM SHA-256 SHA-1 HMAC RSA-2048 X25519 BLAKE2b")`
+- [ ] Commit: `"cng: crypto primitives -- AES-256-GCM, SHA-256, SHA-1, HMAC, RSA-2048, X25519, BLAKE2b"`
 
 ## 2. TLS Handshake Helper `[Sonnet]`
 
