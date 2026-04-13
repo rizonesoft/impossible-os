@@ -27,7 +27,7 @@
 - `include/kernel/msr.h` -- MSR addresses (IA32_EFER, IA32_PAT); CR4 bit definitions; `MSR_IA32_MISC_ENABLE` to be added by §9
 - → XREF: `02-kernel-core/TODO-01-kernel-init-sequencing.md §2` -- `boot_phase0` sequence; CPU hardening steps slot in here
 - → XREF: `02-kernel-core/TODO-17-kernel-security-hardening.md §1--§7` -- NX, SMEP, SMAP, PCID, Spectre, CET (implementation details)
-- → XREF: `02-kernel-core/TODO-19-x86-64-architecture.md §1, §4--§8, §10, §12` -- XSAVE, MSR layer, UMIP, 1 GiB pages, errata, VM detection
+- → XREF: `02-kernel-core/TODO-19-x86-64-architecture.md §1, §4--§9, §11, §13` -- XSAVE, MSR layer, UMIP, 1 GiB pages, LKGS, topology, errata, VM detection
 - → XREF: `01-boot-platform/TODO-06-interrupt-timer-arch.md §6` -- UTS timer driver selection; hypervisor detection (§3 here) feeds it
 - → XREF: `04-drivers-hardware/TODO-11-security-hardware.md §7` -- SMEP+SMAP implementation (CR4 enable + copy_from/to_user wrappers); this TODO owns boot sequencing and AP consistency, TODO-11 §7 owns the actual CR4 write functions
 - → XREF: `03-memory-concurrency/TODO-01-vmm-memory-protection.md §11` -- UC MMIO; PAT layout must match §8 here
@@ -56,7 +56,7 @@
 | --- | :---: | ------------------------------------------------ | ----------------------------- | :----: |
 | 💎  |   1   | CPUID detection & per-CPU capability capture     | D2/T19 §1                     |  [x]   |
 | 💎  |   2   | Phase 0 CPU security activation order            | §1, D2/T17 §1 §3, D2/T19 §3   |  [ ]   |
-| ⭐  |   3   | Hypervisor detection before timer selection      | §1, D2/T19 §11                |  [/]   |
+| ⭐  |   3   | Hypervisor detection before timer selection      | §1, D2/T19 §12                |  [/]   |
 | 💎  |   4   | AP CPU hardening (`ap_cpu_harden()`)             | §2, D2/T17 §1 §7              |  [ ]   |
 | 💎  |   5   | Phase 1 XSAVE & PCID activation window           | §2, D2/T17 §4, D2/T19 §1      |  [ ]   |
 | 💎  |   6   | AP feature consistency validation                | §1, §4                        |  [ ]   |
@@ -116,7 +116,7 @@ The UTS probe in `TODO-06-interrupt-timer-arch.md` §6 selects HPET vs PIT vs LA
 
 > [!IMPORTANT]
 > → XREF: `01-boot-platform/TODO-06-interrupt-timer-arch.md §6` -- UTS reads `boot_info.hv_flags` to select clock; must be set before `timer_probe()`.
-> → XREF: `02-kernel-core/TODO-19-x86-64-architecture.md §12` -- AMD-V / VT-x host capability detection; Hyper-V guest enlightenment MSR initialization (using `boot_info.hv_flags` populated by this step) is not yet specced in §12 and needs to be added there.
+> → XREF: `02-kernel-core/TODO-19-x86-64-architecture.md §13` -- AMD-V / VT-x host capability detection; Hyper-V guest enlightenment MSR initialization (using `boot_info.hv_flags` populated by this step) is not yet specced in §13 and needs to be added there.
 > → XREF: `02-kernel-core/TODO-13-registry-completion.md` -- mirror `hv_vendor` / `hv_flags` to `HKLM\HARDWARE\VM\HypervisorVendor` (and related values) when early-boot registry writes are supported.
 
 - [x] Add `hv_vendor[16]` and `hv_flags` fields to `struct boot_info`
@@ -172,7 +172,7 @@ The UTS probe in `TODO-06-interrupt-timer-arch.md` §6 selects HPET vs PIT vs LA
 Windows triggers bug-check `MULTIPROCESSOR_CONFIGURATION_NOT_SUPPORTED` (0x3E) when an AP's CPUID feature set is incompatible with the BSP. Linux runs `verify_cpu.S` on each AP during trampoline entry to ensure Long Mode and SSE. Impossible OS currently has no equivalent -- an AP with different capabilities could silently cause undefined behavior.
 
 > [!IMPORTANT]
-> → XREF: `02-kernel-core/TODO-19-x86-64-architecture.md §8` -- CPU topology parsing; topology differences (core count, cache layout) are informational, not a failure. This section only validates *security-critical* feature mismatches.
+> → XREF: `02-kernel-core/TODO-19-x86-64-architecture.md §9` -- CPU topology parsing; topology differences (core count, cache layout) are informational, not a failure. This section only validates *security-critical* feature mismatches.
 
 - [ ] Define `cpu_features_required_mask` in `cpuid.h`: bitmask of features that all CPUs must share (NX, SSE2, LAHF, CMPXCHG16B, SYSCALL, PAE, PGE); derive from BSP's detected features at Phase 0
 - [ ] Implement `cpu_validate_ap_features(uint32_t ap_id)` in `cpu_security.c`: runs on each AP after CPUID probe, compares AP features against BSP `cpu_features_required_mask`

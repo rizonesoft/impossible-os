@@ -37,7 +37,7 @@
 - -> XREF: `04-drivers-hardware/TODO-04-acpi-power-management.md §6` -- ACPICA-based `IA32_THERM_STATUS` per-core temp; §14 here owns the ACPI thermal zone framework
 - -> XREF: `04-drivers-hardware/TODO-04-acpi-power-management.md §7` -- ACPICA-based `_CST` C-state parsing; §16 here owns the kernel-core idle governor
 - -> XREF: `03-memory-concurrency/TODO-05-scheduler-enhancement.md §9` -- `cpufreq_register_driver()` vtable consumed by §15; scheduler provides load metrics for governor
-- -> XREF: `02-kernel-core/TODO-19-x86-64-architecture.md §8` -- Intel hybrid P/E-core detection feeds §15 HWP/CPPC governor with core asymmetry data
+- -> XREF: `02-kernel-core/TODO-19-x86-64-architecture.md §9` -- Intel hybrid P/E-core detection feeds §15 HWP/CPPC governor with core asymmetry data
 - -> XREF: `04-drivers-hardware/TODO-08-gpu-display-drivers.md` -- GPU power management (DPMS, RTD3 runtime D3, Panel Self-Refresh) owned by GPU TODO; §18 `DisplayOffTimeout` triggers DPMS via `gfx_set_dpms(DPMS_OFF)`
 
 ---
@@ -85,7 +85,7 @@
 | 💎  |  16   | §16 CPU idle governor framework                     | §2, D04T04§7             |  [ ]   |
 | 💎  |  17   | §17 Driver power query & veto (IRP_MN_QUERY_POWER)  | §9                       |  [ ]   |
 | 💎  |  18   | §18 Power plan UI & `powercfg`                      | §6, §7, §13, §14, §15, §16 |  [ ]   |
-| ⭐  |  19   | §19 Energy-aware scheduling integration             | §15, §16, D02T19§7      |  [ ]   |
+| ⭐  |  19   | §19 Energy-aware scheduling integration             | §15, §16, D02T19§9      |  [ ]   |
 | 💎  |  20   | §20 Power syscalls wired to SSDT                    | §2, §6, D02T05§4        |  [ ]   |
 | 💎  |  21   | Unit Tests                                          | §1--§20                  |  [ ]   |
 
@@ -716,8 +716,8 @@ Before changing system or device power state, query all affected drivers and all
 On heterogeneous CPU topologies (Intel Alder Lake+ P/E-cores, future ARM big.LITTLE), the scheduler should place tasks on the most energy-efficient core that can meet the task's performance requirements. This is Impossible OS's competitive edge -- integrating power and scheduling into a single decision loop rather than layering them separately.
 
 > [!IMPORTANT]
-> **Scope boundary:** D02T19§7 detects Intel hybrid P/E-core topology and Intel Thread Director (ITD) / Hardware Feedback Interface (HFI). D03T05§9 provides the scheduler's load metrics. This section integrates those signals with the CPU frequency governor (§15) to make energy-aware placement decisions.
-> -> XREF: `02-kernel-core/TODO-19-x86-64-architecture.md §8` -- P/E-core detection, HFI capability data
+> **Scope boundary:** D02T19§9 detects Intel hybrid P/E-core topology and Intel Thread Director (ITD) / Hardware Feedback Interface (HFI). D03T05§9 provides the scheduler's load metrics. This section integrates those signals with the CPU frequency governor (§15) to make energy-aware placement decisions.
+> -> XREF: `02-kernel-core/TODO-19-x86-64-architecture.md §9` -- P/E-core detection, HFI capability data
 > -> XREF: `03-memory-concurrency/TODO-05-scheduler-enhancement.md §9` -- scheduler load tracking, PELT utilization
 - [ ] `em_cpu_t` per logical CPU:
   ```c
