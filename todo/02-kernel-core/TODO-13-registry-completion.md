@@ -26,7 +26,7 @@
 
 - `src/kernel/registry.c` -- 2 536-line implementation (engine complete)
 - `include/registry.h` -- types, constants, API declarations
-- → XREF: `TODO-05-native-api-ssdt.md §14` -- SSDT: all `NtXxx` registry entry points are SSDT slots (0x0090--0x00AA + extended range); §14 must exist before §4 of this TODO
+- → XREF: `TODO-05-native-api-ssdt.md §14, §15` -- SSDT: core registry entry points in §14 (0x0090--0x009B), advanced (flush/notify/save/hive) in §15 (0x009C--0x00A6 + extended range); §14 must exist before §4 of this TODO
 - → XREF: `TODO-07-time-filetime-management.md §2` -- `ticks_to_filetime()` conversion needed by §1 for `LastWriteTime` FILETIME output
 - → XREF: `TODO-11-security-reference-monitor.md §3,§4,§5` -- `SECURITY_DESCRIPTOR` + `SeAccessCheck` are used to enforce `KEY_*` access rights on `RegOpenKeyEx` / `NtOpenKey`
 - → XREF: `TODO-03-object-manager.md §3` -- registry `HKEY` handles must eventually be registered in the per-process handle table for `DuplicateHandle` parity; deferred to §4 of this TODO as a note
@@ -53,21 +53,21 @@
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                        | Depends On          | Status |
-| --- | :---: | -------------------------------------------------- | ------------------- | :----: |
+| ⭐  | Order | Deliverable                                        | Depends On                   | Status |
+| --- | :---: | -------------------------------------------------- | ---------------------------- | :----: |
 | 💎  |   1   | Access rights, API limits, FILETIME & RegFlushKey  | TODO-11 §3,§4,§5, TODO-07 §2 |  [ ]   |
-| 💎  |   2   | Advanced key ops (copy, rename, save, volatile)    | §1                  |  [ ]   |
-| 💎  |   3   | Change notifications (core + exclusive extras)     | §2                  |  [ ]   |
-| 💎  |   4   | Nt/Zw registry syscalls & pointer validation       | §1, TODO-05 §14    |  [ ]   |
-| 💎  |   5   | advapi32.dll compat (A/W, HKCR, error map)         | §4                  |  [ ]   |
-| 💎  |   6   | Registry virtualization & .reg import/export       | §5                  |  [ ]   |
-| 💎  |   7   | `regedit` shell tool                               | §4                  |  [ ]   |
-| ⭐  |   8   | Advanced hive features (dual-log, delta, compact)  | §4                  |  [ ]   |
-| ⭐  |   9   | Transactions, search API & snapshot/diff           | §2, §3, §8         |  [ ]   |
-| ⭐  |  10   | Performance (mmap hive, B-tree cell format)        | §9                  |  [ ]   |
-| 💎  |  11   | KTM Transaction syscalls wired to SSDT             | §9, TODO-05 §14    |  [ ]   |
-| 💎  |  12   | Registry symlink completion (create, open-link)    | §2, §4             |  [ ]   |
-| ⭐  |  13   | Schema-validated registry keys                     | §3, §4             |  [ ]   |
+| 💎  |   2   | Advanced key ops (copy, rename, save, volatile)    | §1                           |  [ ]   |
+| 💎  |   3   | Change notifications (core + exclusive extras)     | §2                           |  [ ]   |
+| 💎  |   4   | Nt/Zw registry syscalls & pointer validation       | §1, TODO-05 §14,§15          |  [ ]   |
+| 💎  |   5   | advapi32.dll compat (A/W, HKCR, error map)         | §4                           |  [ ]   |
+| 💎  |   6   | Registry virtualization & .reg import/export       | §5                           |  [ ]   |
+| 💎  |   7   | `regedit` shell tool                               | §4                           |  [ ]   |
+| ⭐  |   8   | Advanced hive features (dual-log, delta, compact)  | §4                           |  [ ]   |
+| ⭐  |   9   | Transactions, search API & snapshot/diff           | §2, §3, §8                   |  [ ]   |
+| ⭐  |  10   | Performance (mmap hive, B-tree cell format)        | §9                           |  [ ]   |
+| 💎  |  11   | KTM Transaction syscalls wired to SSDT             | §9, TODO-05 §14, §15         |  [ ]   |
+| 💎  |  12   | Registry symlink completion (create, open-link)    | §2, §4                       |  [ ]   |
+| ⭐  |  13   | Schema-validated registry keys                     | §3, §4                       |  [ ]   |
 
 > 💎 = parity work -- matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work -- Impossible OS is superior or first.
@@ -203,7 +203,7 @@
 > - **ProbeForRead / ProbeForWrite** (TODO-10 §13): §4 requires pointer validation. If not yet implemented, add no-op stubs that accept all pointers -- real probing added by TODO-10 §13.
 > - **APC queuing** (`05-storage-filesystems/TODO-05 §9`): `NtNotifyChangeKey` async path uses APC delivery. If not yet implemented, use synchronous-only path initially.
 
-- [ ] Add to SSDT (→ XREF `TODO-05-native-api-ssdt.md §14`); SSDT indices already reserved in TODO-05:
+- [ ] Add to SSDT (→ XREF `TODO-05-native-api-ssdt.md §14, §15`); SSDT indices already reserved in TODO-05:
   ```
   NtCreateKey(KeyHandle, DesiredAccess, ObjectAttributes, TitleIndex, Class, CreateOptions, Disposition)         0x0090
   NtOpenKey(KeyHandle, DesiredAccess, ObjectAttributes)                                                          0x0092
@@ -211,22 +211,22 @@
   NtDeleteKey(KeyHandle)                                                                                         0x0095
   NtRenameKey(KeyHandle, NewName)                                                                                0x009F
   NtSetValueKey(KeyHandle, ValueName, TitleIndex, Type, Data, DataSize)                                          0x0096
-  NtQueryValueKey(KeyHandle, ValueName, KeyValueInfoClass, KeyValueInfo, Length, ResultLength)                    0x0097
+  NtQueryValueKey(KeyHandle, ValueName, KeyValueInfoClass, KeyValueInfo, Length, ResultLength)                   0x0097
   NtQueryMultipleValueKey(KeyHandle, ValueEntries, EntryCount, ValueBuffer, BufferLength, RequiredLength)         --
   NtDeleteValueKey(KeyHandle, ValueName)                                                                         0x0098
-  NtEnumerateKey(KeyHandle, Index, KeyInfoClass, KeyInfo, Length, ResultLength)                                   0x0099
-  NtEnumerateValueKey(KeyHandle, Index, KeyValueInfoClass, KeyValueInfo, Length, ResultLength)                    0x009A
-  NtQueryKey(KeyHandle, KeyInfoClass, KeyInfo, Length, ResultLength)                                              0x009B
+  NtEnumerateKey(KeyHandle, Index, KeyInfoClass, KeyInfo, Length, ResultLength)                                  0x0099
+  NtEnumerateValueKey(KeyHandle, Index, KeyValueInfoClass, KeyValueInfo, Length, ResultLength)                   0x009A
+  NtQueryKey(KeyHandle, KeyInfoClass, KeyInfo, Length, ResultLength)                                             0x009B
   NtSetInformationKey(KeyHandle, KeySetInfoClass, KeySetInfo, KeySetInfoLength)                                   --
   NtFlushKey(KeyHandle)                                                                                          0x009C
-  NtNotifyChangeKey(KeyHandle, Event, ApcRoutine, ApcContext, IoStatusBlock, CompletionFilter, ...)               0x009D
-  NtNotifyChangeMultipleKeys(MasterKeyHandle, Count, SubordinateObjects[], Event, ApcRoutine, ...)                0x009E
+  NtNotifyChangeKey(KeyHandle, Event, ApcRoutine, ApcContext, IoStatusBlock, CompletionFilter, ...)              0x009D
+  NtNotifyChangeMultipleKeys(MasterKeyHandle, Count, SubordinateObjects[], Event, ApcRoutine, ...)               0x009E
   NtSaveKey(KeyHandle, FileHandle)                                                                               0x00A0
   NtSaveKeyEx(KeyHandle, FileHandle, Format)                                                                     0x00A1
   NtRestoreKey(KeyHandle, FileHandle, Flags)                                                                     0x00A2
   NtReplaceKey(NewFile, TargetHandle, OldFile)                                                                   --
   NtLoadKey(TargetKey, SourceFile)                                                                               0x00A3
-  NtLoadKeyEx(TargetKey, SourceFile, Flags, TrustClassKey, Event, DesiredAccess, RootHandle, IoStatus)            0x00A4
+  NtLoadKeyEx(TargetKey, SourceFile, Flags, TrustClassKey, Event, DesiredAccess, RootHandle, IoStatus)           0x00A4
   NtUnloadKey(TargetKey)                                                                                         0x00A5
   NtUnloadKeyEx(TargetKey, Event)                                                                                0x00A6
   NtCompactKeys(Count, KeyArray[])                                                                               0x00A8
@@ -238,13 +238,11 @@
   NtInitializeRegistry(BootCondition)                                                                            --
   ZwXxx aliases for each -- kernel-mode bypass wrappers
   ```
-- [ ] Syscalls marked `--` need SSDT index allocation in TODO-05 §14; add to the registry block (0x0090--0x00AA range or extended range)
+- [ ] Syscalls marked `--` need SSDT index allocation in TODO-05 §14/§15; add to the registry block (0x0090--0x00AA range or extended range)
 - [ ] `ObjectAttributes` for key paths: `RootDirectory` handle + `ObjectName` (`UNICODE_STRING` for future UTF-16; for now accept UTF-8 `ANSI_STRING` wrapper); resolve absolute paths starting with `\Registry\Machine` → `HKLM`, `\Registry\User\{SID}` → `HKCU`
-
 - [ ] Wrap every user-mode pointer argument in `ProbeForRead(ptr, size, align)` / `ProbeForWrite(ptr, size, align)` (→ XREF `TODO-10-exception-dispatch-seh.md §13`) before any dereference; return `STATUS_ACCESS_VIOLATION` if probe faults
 - [ ] `UNICODE_STRING` / `ANSI_STRING` struct fields: validate both the struct pointer AND the embedded `Buffer` pointer separately
 - [ ] `KeyValueInfo` output buffer: `ProbeForWrite(KeyValueInfo, Length, 1)`; if probe succeeds but `Length` is too small to hold the result, return `STATUS_BUFFER_TOO_SMALL` with `*ResultLength` set to the required size
-
 - [ ] `KEY_INFORMATION_CLASS` -- `NtQueryKey` / `NtEnumerateKey` info class enum:
   - `KeyBasicInformation` (0): `LastWriteTime`, `TitleIndex`, `NameLength`, `Name[]`
   - `KeyNodeInformation` (1): adds `ClassOffset`, `ClassLength`
@@ -269,11 +267,9 @@
   - `KeySetVirtualizationInformation` (3): enable/disable virtualization per key
   - `KeySetDebugInformation` (4): debug information
   - `KeySetHandleTagsInformation` (5): set handle tags
-
 - [ ] `NtNotifyChangeKey`: validates `KeyHandle`, resolves to `reg_key_t`, calls `reg_notify_register()` from §3; if `Asynchronous == FALSE`, blocks calling thread on the watcher's semaphore (interruptible via APC)
 - [ ] APC completion: if `ApcRoutine != NULL`, queue a user-mode APC to the calling thread when the notification fires (→ XREF `05-storage-filesystems/TODO-05-win32-file-io-api.md §9`)
 - [ ] `NtNotifyChangeMultipleKeys(MasterKeyHandle, Count, SubordinateObjects[], ...)`: register notifications on `MasterKeyHandle` plus up to `Count` additional subordinate keys in a single call; fires when *any* of the watched keys changes; shares implementation with §3 but registers multiple watchers atomically
-
 - [ ] `NtSetInformationKey(KeyHandle, KeySetInfoClass, KeySetInfo, Length)`: set key metadata; initial implementation covers `KeyWriteTimeInformation` (set `LastWriteTime`) and `KeyControlFlagsInformation` (set virtualization control flags -- see §6)
 - [ ] `NtQueryMultipleValueKey(KeyHandle, ValueEntries[], EntryCount, ValueBuffer, BufferLength, RequiredLength)`: query multiple values in a single syscall; `ValueEntries` is an array of `KEY_VALUE_ENTRY` structs (name + type + data offset); reduces syscall overhead for batch reads (e.g., reading 10 display settings at once)
 - [ ] `NtReplaceKey(NewFile, TargetHandle, OldFile)`: atomically replace a hive file; used during upgrade/restore; copies `NewFile` over the hive backing `TargetHandle`, saves current hive to `OldFile`; requires `SeRestorePrivilege`
@@ -283,13 +279,10 @@
 - [ ] `NtQueryOpenSubKeys(TargetKey, HandleCount)` / `NtQueryOpenSubKeysEx(...)`: return how many handles are open to subkeys of `TargetKey`; used before `NtUnloadKey` to check if a hive can be safely unloaded
 - [ ] `NtCompactKeys(Count, KeyArray[])`: move the specified keys into the same hive bin to improve spatial locality; `NtCompressKey(KeyHandle)`: compress a key and all subkeys (reduces hive file size)
 - [ ] `NtLockRegistryKey(KeyHandle)`: mark a key as immutable for the remainder of the boot session; used for security-critical keys like `HKLM\SAM`
-
 - [ ] `HKCU` redirect: `NtOpenKey` with a path under `\Registry\User` resolves to the *current process's* per-session user subtree rather than a global `HKCU`; each process inherits its user SID from its primary token (→ XREF `TODO-11-security-reference-monitor.md §7`); `\Registry\User\S-1-5-21-...-1001` is the actual physical path; `NtOpenKey` with `RootDirectory=HKCU` resolves via the task's token
 - [ ] **Per-process sandbox** ⭐ -- `NtSetInformationProcess(ProcessRegistrySandbox, root_path)`: future API that restricts all registry access for a process to a sub-tree; used by browser renderer and low-IL processes; deferred until process isolation (→ XREF `TODO-09-process-model-extensions.md`) matures
-
 - [ ] **Rate limiting** ⭐ -- per-task `reg_ops_this_sec` counter reset every 1 000 ms by scheduler tick; if > 10 000 registry ops per second: `schedule_yield()` and re-check; soft throttle prevents runaway registry hammering from buggy apps; counter tracked in `struct task`
 - [ ] **Audit log** ⭐ -- if `HKLM\SYSTEM\Registry\AuditEnabled = 1`: write a compact audit entry to `X:\Logs\registry-audit.log` on each `NtSetValueKey` / `NtDeleteKey`: `{timestamp, pid, key_path, value_name, old_type, new_type, result_ntstatus}`; uses the existing `klog` ring buffer at LOG_AUDIT level; auto-rotated at 4 MiB
-
 - [ ] Commit: `"kernel/registry: NtOpenKey/NtSetValueKey/NtNotifyChangeKey syscalls, pointer validation, audit"`
 
 **Test checkpoint:** `NtCreateKey` + `NtOpenKey` round-trip via SYSCALL from user-mode succeeds. `NtQueryValueKey(KeyValuePartialInformation)` returns correct data. `ProbeForWrite` with invalid pointer → `STATUS_ACCESS_VIOLATION`. `NtFreezeRegistry(5)` → all `NtSetValueKey` from another thread block; `NtThawRegistry()` → blocked writes complete. Audit log: enable `AuditEnabled=1` → `NtSetValueKey` entries appear in `registry-audit.log`. Serial log: `"[SSDT] NtOpenKey: \\Registry\\Machine\\... -> 0x%x"`. Test on: QEMU WHPX + TCG.
@@ -487,7 +480,7 @@
 
 ## 11. KTM Transaction Syscalls Wired to SSDT
 
-Register the full Kernel Transaction Manager (KTM) syscall surface in the SSDT for transactional registry, file, and resource management. (→ XREF `TODO-05-native-api-ssdt.md §14`)
+Register the full Kernel Transaction Manager (KTM) syscall surface in the SSDT for transactional registry, file, and resource management. (→ XREF `TODO-05-native-api-ssdt.md §14, §15`)
 
 - [ ] Implement KTM Transaction Manager syscalls: `NtCreateTransactionManager` (0x01A0), `NtOpenTransactionManager` (0x01A1)
 - [ ] Implement Transaction syscalls: `NtCreateTransaction` (0x01A2), `NtOpenTransaction` (0x01A3), `NtCommitTransaction` (0x01A4), `NtRollbackTransaction` (0x01A5), `NtQueryInformationTransaction` (0x01A6), `NtSetInformationTransaction` (0x01A7)
