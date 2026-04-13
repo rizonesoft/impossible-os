@@ -169,6 +169,12 @@ void boot_phase2(void)
         boot_progress(2, "SMP", POST16_SMP_OK);
     }
 
+    /* CPU topology: Zen CCD/NUMA + Intel hybrid P/E-core detection */
+    {
+        extern void topology_init(void);
+        topology_init();
+    }
+
     /* Register async init IPI handler (safe even with 1 CPU) */
     boot_async_init();
 

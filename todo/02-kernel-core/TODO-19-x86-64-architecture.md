@@ -60,7 +60,7 @@
 | 💎  |   6   | 1 GiB huge pages + Write-Combining PAT              | §4                   |  [x]   |
 | 💎  |   7   | FRED unified event delivery                         | §4, T06 §3           | blocked |
 | 💎  |   8   | LKGS fast GS-base swap                              | §4                   | blocked |
-| 💎  |   9   | CPU topology: Zen chiplets + Intel hybrid P/E-core  | (none)               |  [ ]   |
+| 💎  |   9   | CPU topology: Zen chiplets + Intel hybrid P/E-core  | (none)               |  [x]   |
 | 💎  |  10   | Performance monitoring counters (Intel + AMD)       | §4                   |  [ ]   |
 | 💎  |  11   | OSVW errata + RDTSCP processor ID setup             | §4, T07 §3           |  [ ]   |
 | 💎  |  12   | AMD IBS profiling (stretch)                         | §4                   |  [ ]   |
@@ -276,37 +276,18 @@
 
 ## 9. CPU Topology: Zen Chiplets + Intel Hybrid
 
-- [ ] Create `src/kernel/topology.c` and `include/kernel/topology.h`:
-  ```c
-  typedef struct {
-      uint32_t logical_id;   /* APIC ID / OS CPU number */
-      uint32_t core_id;      /* physical core within CCD/package */
-      uint32_t ccd_id;       /* AMD: CCD (Compute Complex Die); Intel: cluster */
-      uint32_t node_id;      /* NUMA domain */
-      uint8_t  core_type;    /* CORE_TYPE_P (0x40), CORE_TYPE_E (0x20), CORE_TYPE_GENERIC (0) */
-      uint8_t  smt_siblings; /* hyperthreads per core */
-  } cpu_topo_t;
+- [x] Created `src/kernel/topology.c` and `include/kernel/topology.h`: `cpu_topo_t` struct with `logical_id`, `core_id`, `ccd_id`, `node_id`, `core_type`, `smt_siblings`. Globals: `g_cpu_topo[MAX_CPUS]`, `g_topo_cpu_count`, `p_core_mask`, `e_core_mask`, `g_numa_nodes`. Constants: `CORE_TYPE_GENERIC=0`, `CORE_TYPE_P=0x40`, `CORE_TYPE_E=0x20`. Helper: `topology_is_hybrid()`
+- [x] `topology_init()` called from Phase 2 (`boot_storage.c`) after `smp_init()`. Populates per-CPU topology from BSP CPUID data. Per-AP CPUID queries deferred to TODO-04 §4 (`ap_cpu_harden`)
+- [x] Zen path (`cpu_has(CPU_FEATURE_TOPO_EXT)`): BSP values from `g_cpu.compute_unit_id`/`g_cpu.node_id`; APs derive from LAPIC ID. Logs CCD count, NUMA nodes, CPU count
+- [x] `g_numa_nodes` = max `node_id` + 1; NUMA allocator deferred to `03-memory-concurrency`
+- [x] Intel hybrid path (`CPUID.07H:EDX[15]`): leaf 0x1A for core type (EAX[31:24]), leaf 0x1F for SMT/core topology levels (shift-based core_id extraction). Populates `p_core_mask`/`e_core_mask`. BSP core type applied to all CPUs until per-AP CPUID available
+- [x] Fallback: no topology extensions, all cores `CORE_TYPE_GENERIC`, 1 NUMA node
+- [x] Commit: `"kernel/topology: Zen CCD/NUMA parser, Intel hybrid P/E-core detection"`
 
-  extern cpu_topo_t g_cpu_topo[MAX_CPUS];
-  extern uint32_t   g_cpu_count;
-  extern uint64_t   p_core_mask; /* Intel: bitmask of P-core logical CPUs */
-  extern uint64_t   e_core_mask; /* Intel: bitmask of E-core logical CPUs */
-  extern uint32_t   g_numa_nodes;
-  ```
-- [ ] `topology_init()` called from Phase 1 after `cpuid_init()` and SMP probe; for each logical CPU: run per-CPU leaf queries via IPI or on-CPU during AP startup
-- [ ] If `cpu_has(CPU_FEATURE_TOPO_EXT)` (from §1, already in cpuid.c):
-  - Per-CPU `CPUID 0x8000001E`: `ccd_id = EBX[7:0]`, `node_id = ECX[7:0]`, `smt_siblings = EBX[15:8] + 1`
-  - Log: `[topo] Zen: %u CCDs, %u NUMA nodes, NPS=%u`
-- [ ] `g_numa_nodes` = max `node_id` + 1; expose to PMM as a hint (NUMA allocator implementation deferred to `03-memory-concurrency`)
-- [ ] If `CPUID.(7,0):EDX[15]` (hybrid bit) set:
-  - Per-CPU `CPUID 0x1A`: `EAX[31:24]` = core type (0x40=P, 0x20=E)
-  - Per-CPU `CPUID 0x1F` (V2 Extended Topology): enumerate SMT/Core/Die levels; map to `core_id` and `ccd_id`
-  - Populate `p_core_mask` and `e_core_mask` bitmasks
-  - Log: `[topo] Intel hybrid: %u P-cores, %u E-cores`
-- [ ] Fallback: no hybrid, all cores treated as `CORE_TYPE_GENERIC`
-- [ ] Commit: `"kernel/topology: Zen CCD/NUMA parser, Intel hybrid P/E-core detection"`
+**Test checkpoint:** Serial shows `[topo] Zen:`, `[topo] Intel:`, or `[topo] Generic:` line; `g_cpu_topo[0].logical_id == 0`; `g_topo_cpu_count` matches `smp_cpu_count()`; `g_numa_nodes >= 1`; core_type is valid constant. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-**Test checkpoint:** Serial shows `[topo] Zen:` or `[topo] Intel hybrid:` line with non-zero masks; `g_cpu_topo[0].logical_id == 0`; Zen path populates `ccd_id` when `TOPO_EXT`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+> **Test runner:** `scripts\debug\run-x86-tests.bat` (SUITE=x86)
+> **Expected:** 47 suites, 0 failures
 
 ---
 
@@ -475,8 +456,8 @@
 | 💎  | 1 GiB boot PT        | ✅ HAL builds from start    | ✅ direct-map 1G native     | ⬜ §16 runtime   |
 | 💎  | FRED events          | 🔜 future Windows roadmap   | ✅ 6.9+ Granite Rapids      | ⬜ §7             |
 | 💎  | LKGS fast GS         | 🔜 future Windows roadmap   | ✅ 6.4+ no SWAPGS in entry  | ⬜ §8             |
-| 💎  | Zen CCD NUMA         | ✅ Ke node + NUMA policy    | ✅ amd_nb.c CCD/CCX topo    | ⬜ §9             |
-| 💎  | Intel P/E hybrid     | ✅ Thread Director HFI      | ✅ HFI + itmt scheduler     | ⬜ §9             |
+| 💎  | Zen CCD NUMA         | ✅ Ke node + NUMA policy    | ✅ amd_nb.c CCD/CCX topo    | ✅ §9 Done        |
+| 💎  | Intel P/E hybrid     | ✅ Thread Director HFI      | ✅ HFI + itmt scheduler     | ✅ §9 BSP-only    |
 | 💎  | PMU / PMC            | ✅ ETW + WPA counters       | ✅ perf_event PMU driver    | ⬜ §10            |
 | 💎  | OSVW errata          | ✅ HAL workaround table     | ✅ amd.c osvw_id_length     | ⬜ §11            |
 | 💎  | RDTSCP TSC_AUX       | ✅ QPC reads TSC_AUX        | ✅ per-CPU wrmsr in SMP     | ⬜ §11            |

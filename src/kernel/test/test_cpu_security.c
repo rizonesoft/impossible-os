@@ -12,6 +12,7 @@
 #include "kernel/test/test.h"
 #include "kernel/cpuid.h"
 #include "kernel/cpu_security.h"
+#include "kernel/topology.h"
 #include "kernel/kpti.h"
 #include "kernel/smp.h"
 #include "kernel/msr.h"
@@ -748,6 +749,43 @@ static void test_wc_pat_entry(void)
     }
 }
 
+/* ---- S9: CPU Topology ---- */
+
+static void test_topo_cpu0_logical_id(void)
+{
+    TEST_ASSERT_EQ(g_cpu_topo[0].logical_id, 0,
+                   "CPU 0 topology logical_id is 0");
+}
+
+static void test_topo_cpu_count(void)
+{
+    TEST_ASSERT(g_topo_cpu_count >= 1,
+                "topology CPU count >= 1");
+    uint32_t smp_count = smp_cpu_count();
+    TEST_ASSERT_EQ(g_topo_cpu_count, smp_count,
+                   "topology CPU count matches smp_cpu_count()");
+}
+
+static void test_topo_numa_nodes(void)
+{
+    TEST_ASSERT(g_numa_nodes >= 1,
+                "NUMA node count >= 1 (at least UMA)");
+}
+
+static void test_topo_core_type_valid(void)
+{
+    /* Core type must be one of the defined constants */
+    uint8_t ct = g_cpu_topo[0].core_type;
+    TEST_ASSERT(ct == CORE_TYPE_GENERIC || ct == CORE_TYPE_P || ct == CORE_TYPE_E,
+                "CPU 0 core_type is a valid constant");
+}
+
+static void test_topo_smt_siblings(void)
+{
+    TEST_ASSERT(g_cpu_topo[0].smt_siblings >= 1,
+                "CPU 0 smt_siblings >= 1 (at least 1 thread per core)");
+}
+
 /* ---- Registration ---- */
 
 void test_register_x86(void)
@@ -848,6 +886,18 @@ void test_register_x86(void)
         test_vmm_map_huge_1g_alignment, TEST_CAT_X86);
     test_suite_register_cat("PAT: entry 1 is WC (0x01)",
         test_wc_pat_entry, TEST_CAT_X86);
+
+    /* S9: CPU Topology */
+    test_suite_register_cat("Topo: CPU 0 logical_id == 0",
+        test_topo_cpu0_logical_id, TEST_CAT_X86);
+    test_suite_register_cat("Topo: cpu_count matches SMP",
+        test_topo_cpu_count, TEST_CAT_X86);
+    test_suite_register_cat("Topo: NUMA nodes >= 1",
+        test_topo_numa_nodes, TEST_CAT_X86);
+    test_suite_register_cat("Topo: core_type valid",
+        test_topo_core_type_valid, TEST_CAT_X86);
+    test_suite_register_cat("Topo: smt_siblings >= 1",
+        test_topo_smt_siblings, TEST_CAT_X86);
 }
 
 #endif /* KERNEL_TESTS */
