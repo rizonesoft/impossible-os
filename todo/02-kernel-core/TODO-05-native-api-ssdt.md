@@ -1105,12 +1105,16 @@ Extended file operations: metadata queries, attribute modification, device I/O c
 - [x] `NtEnumerateKey(KeyHandle, Index, KeyInformationClass, KeyInformation, Length, ResultLength)` → SSDT 0x0099
 - [x] `NtEnumerateValueKey(KeyHandle, Index, KeyValueInformationClass, KeyValueInformation, Length, ResultLength)` → SSDT 0x009A
 - [x] `NtQueryKey(KeyHandle, KeyInformationClass, KeyInformation, Length, ResultLength)` → SSDT 0x009B
-- [ ] Commit: `"kernel: nt -- core registry syscalls wired to SSDT (create/open/query/set/delete/enumerate)"`
+- [x] Commit: `"kernel: nt -- core registry syscalls wired to SSDT (create/open/query/set/delete/enumerate)"` (6d6535d5)
 
 **Test checkpoint:** `NtCreateKey` under `\Registry\Machine\Software\Test` returns `STATUS_SUCCESS`. `NtSetValueKey` + `NtQueryValueKey` round-trip succeeds. `NtDeleteKey` removes the key. `NtEnumerateKey` iterates subkeys correctly.
 
 > **Test runner:** `scripts\debug\run-abi-tests.bat` (SUITE=abi)
-> **Expected:** 7 new registry SSDT tests, 0 failures
+> **Expected:** 9 suites (2 Win32 + 7 NT SSDT), 0 failures
+
+> **Verified** (2026-04-13): all 10 NtXxx handlers registered (SSDT 0x0090-0x009B), evidence mapped to nt_registry.c:730-739. NT path resolution (\Registry\Machine\...) functional. Predefined handle safety (RegIsPredefinedKey). NtDeleteKey returns STATUS_KEY_HAS_CHILDREN for non-empty keys. KeyFullInformation supported in NtEnumerateKey. ntdll exports sorted. Build clean.
+> **Accepted:** HKEY-to-HANDLE ABI gap (registry handles not in OB table, NtClose cannot close them) -> XREF: 02-kernel-core/TODO-13 §4. SMP locking for registry pools -> XREF: 03-memory-concurrency/TODO-06. ASCII UNICODE_STRING kernel-wide -> XREF: 02-kernel-core/TODO-13 §4. KeyNodeInformation returns STATUS_INVALID_PARAMETER (acceptable, rarely used).
+> **Quality reviewed** (2026-04-13): dead code clean (all structs/helpers used). SSDT numbers match service_numbers.h. Error mapping consistent (ERROR_ACCESS_DENIED -> STATUS_ACCESS_DENIED; child-count check returns STATUS_KEY_HAS_CHILDREN specifically). Stack usage bounded by REG_MAX_* constants (512B data arrays). NtEnumerateKey KeyFullInformation opens/queries/closes child key inline.
 
 ---
 

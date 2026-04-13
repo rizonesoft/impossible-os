@@ -127,7 +127,7 @@ static NTSTATUS reg_win32_to_nt(long err)
     switch (err) {
     case ERROR_SUCCESS:          return STATUS_SUCCESS;
     case ERROR_FILE_NOT_FOUND:   return STATUS_OBJECT_NAME_NOT_FOUND;
-    case ERROR_ACCESS_DENIED:    return STATUS_KEY_HAS_CHILDREN;
+    case ERROR_ACCESS_DENIED:    return STATUS_ACCESS_DENIED;
     case ERROR_INVALID_HANDLE:   return STATUS_INVALID_HANDLE;
     case ERROR_OUTOFMEMORY:      return STATUS_NO_MEMORY;
     case ERROR_INVALID_PARAMETER:return STATUS_INVALID_PARAMETER;
@@ -277,6 +277,10 @@ static NTSTATUS NtDeleteKey_handler(uint64_t a1, uint64_t a2, uint64_t a3,
     key = hkey->key;
     if (!key)
         return STATUS_INVALID_HANDLE;
+
+    /* Return the specific NT status for children before the generic delete */
+    if (key->child_count > 0)
+        return STATUS_KEY_HAS_CHILDREN;
 
     rc = RegDeleteKeyDirect(key);
     if (rc != ERROR_SUCCESS)
@@ -512,11 +516,43 @@ static NTSTATUS NtEnumerateKey_handler(uint64_t a1, uint64_t a2, uint64_t a3,
         }
         return STATUS_SUCCESS;
     }
-    case KeyFullInformation:
+    case KeyFullInformation: {
+        /* Open the child key temporarily to query its metadata */
+        HKEY child_hkey;
+        long child_rc = RegOpenKeyEx(hkey, name, 0, KEY_ALL_ACCESS, &child_hkey);
+        if (child_rc != ERROR_SUCCESS)
+            return reg_win32_to_nt(child_rc);
+        {
+            uint32_t sub_keys = 0, child_values = 0;
+            uint32_t max_subkey_len = 0, max_value_name_len = 0, max_value_data_len = 0;
+            uint64_t child_last_write = 0;
+            uint32_t needed = sizeof(KEY_FULL_INFORMATION);
+            RegQueryInfoKey(child_hkey, (char *)0, (uint32_t *)0, (uint32_t *)0,
+                            &sub_keys, &max_subkey_len, (uint32_t *)0,
+                            &child_values, &max_value_name_len, &max_value_data_len,
+                            (uint32_t *)0, &child_last_write);
+            RegCloseKey(child_hkey);
+            if (result_len) *result_len = needed;
+            if (buf_len < needed)
+                return STATUS_BUFFER_TOO_SMALL;
+            if (buffer) {
+                KEY_FULL_INFORMATION *info = (KEY_FULL_INFORMATION *)buffer;
+                nt_reg_memset(buffer, 0, needed);
+                info->LastWriteTime = child_last_write;
+                info->TitleIndex = 0;
+                info->ClassOffset = (uint32_t)-1;
+                info->ClassLength = 0;
+                info->SubKeys = sub_keys;
+                info->MaxNameLen = max_subkey_len;
+                info->MaxClassLen = 0;
+                info->Values = child_values;
+                info->MaxValueNameLen = max_value_name_len;
+                info->MaxValueDataLen = max_value_data_len;
+            }
+        }
+        return STATUS_SUCCESS;
+    }
     case KeyNodeInformation:
-        /* These require additional data (class string, sub-key counts) that
-         * RegEnumKeyEx does not provide per-child.  Return basic for now. */
-        return STATUS_INVALID_PARAMETER;
     default:
         return STATUS_INVALID_PARAMETER;
     }
