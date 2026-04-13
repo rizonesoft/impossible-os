@@ -134,6 +134,9 @@
 > **Test runner:** `scripts\debug\run-x86-tests.bat` (SUITE=x86)
 > **Expected:** 23 suites, 0 failures
 
+> **Verified:** 2026-04-13 -- all 7 items confirmed. `simd_enable_avx512()` at `gfx_simd.c:332` reads MPERF/APERF via `msr_try_read()` before and after `simd_avx512_burst()` (1000-iter vpaddq ZMM loop in `gfx_simd_avx512.c`), clears XCR0 bits 5-7 on >5% frequency drop. XSAVE area uses `xsave_size_max` from §1 (`task.c:212`). `memcpy_avx512`/`memset_avx512` at `memops_avx512.c` (64B vmovdqu64 loop, vpbroadcastd fill, vzeroupper). `fb_blit_avx512`/`fb_fill_avx512` at `gfx_simd_avx512.c` (16 pixels/iter). Dispatch at `memops_sse.c:101-114` and `framebuffer.c:165-190` (AVX-512 -> AVX2 -> SSE2 -> scalar). AVX10 version logged from CPUID leaf 0x24 (`cpuid.c:316`). APX logged (`cpuid.c:325`). 7 tests under TEST_CAT_X86. Codex adversarial: vpbroadcastb->vpbroadcastd (AVX512F-only), post-burst msr_try_read, delta range guard (fail-closed for both MPERF and APERF), comment fix. Accepted: AP XCR0 (XREF TODO-04 §4, same as §2 AVX2); framebuffer dimension overflow (pre-existing, not §3).
+> **Quality reviewed:** 2026-04-13 -- kernel-code-quality 11 gates walked. G1: BSP-only write at boot, read-only after. G8: vzeroupper on all 5 AVX-512 functions. G9: separate `-mavx512f` TUs (no EVEX leakage to non-AVX512 CPUs, mirrors §2 VEX fix). G11: all instructions AVX512F-only per Intel SDM Vol. 1 Section 13.3 (no AVX512BW/DQ dependency). MPERF/APERF per SDM Vol. 3 Section 14.2. Throttle guard fail-closed on invalid telemetry. Parity: matches Windows conditional AVX-512 enablement; exceeds Linux (no runtime throttle detection in kernel). Accepted: none.
+
 ---
 
 ## 4. MSR Management Infrastructure

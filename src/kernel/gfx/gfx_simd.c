@@ -369,14 +369,14 @@ void simd_enable_avx512(void)
     dmperf = mperf1 - mperf0;
     daperf = aperf1 - aperf0;
 
-    /* Guard against zero delta or implausibly large deltas (VM pause,
-     * counter wraparound). For a ~10us burst, deltas should be < 1M
-     * cycles. Cap at 2^56 to prevent overflow in the multiply below. */
-    if (dmperf == 0 || dmperf > (1ULL << 56)) {
+    /* Guard against zero or implausibly large deltas (VM pause, counter
+     * wraparound). For a ~10us burst, deltas should be < 1M cycles.
+     * Cap at 2^56 to prevent overflow in the multiply below.
+     * Fail closed: if telemetry is broken, do NOT enable AVX-512. */
+    if (dmperf == 0 || dmperf > (1ULL << 56) ||
+        daperf == 0 || daperf > (1ULL << 56)) {
         klog(LOG_WARN, "simd",
-             "MPERF delta out of range (%u); enabling AVX-512 without throttle check",
-             (uint64_t)dmperf);
-        simd_avx512_ok = 1;
+             "MPERF/APERF delta out of range; AVX-512 disabled (fail-closed)");
         return;
     }
 
