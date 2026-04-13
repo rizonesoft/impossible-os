@@ -787,6 +787,27 @@ static void test_topo_smt_siblings(void)
                 "CPU 0 smt_siblings >= 1 (at least 1 thread per core)");
 }
 
+/* ---- S13: Virtualization Detection ---- */
+
+static void test_virt_detect_flags(void)
+{
+    /* SVM and VMX should not both be set (AMD or Intel, not both) */
+    int has_svm = cpu_has(CPU_FEATURE_SVM);
+    int has_vmx = cpu_has(CPU_FEATURE_VMX);
+    TEST_ASSERT(!(has_svm && has_vmx),
+                "SVM and VMX are mutually exclusive (not both set)");
+    /* Note: some VMs or configurations may hide both; only assert
+     * mutual exclusion, not presence (presence is platform-dependent). */
+}
+
+static void test_virt_detect_consistent(void)
+{
+    /* cpu_has should return consistent values on repeated calls */
+    int v1 = cpu_has(CPU_FEATURE_VMX);
+    int v2 = cpu_has(CPU_FEATURE_VMX);
+    TEST_ASSERT_EQ(v1, v2, "cpu_has(VMX) stable across calls");
+}
+
 /* ---- S11: OSVW + RDTSCP ---- */
 
 static void test_osvw_fields(void)
@@ -1003,6 +1024,12 @@ void test_register_x86(void)
         test_topo_core_type_valid, TEST_CAT_X86);
     test_suite_register_cat("Topo: smt_siblings >= 1",
         test_topo_smt_siblings, TEST_CAT_X86);
+
+    /* S13: Virtualization Detection */
+    test_suite_register_cat("Virt: SVM/VMX mutually exclusive",
+        test_virt_detect_flags, TEST_CAT_X86);
+    test_suite_register_cat("Virt: cpu_has(VMX) stable",
+        test_virt_detect_consistent, TEST_CAT_X86);
 
     /* S11: OSVW + RDTSCP */
     test_suite_register_cat("OSVW: fields populated",

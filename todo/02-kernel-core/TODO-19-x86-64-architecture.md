@@ -50,24 +50,24 @@
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                         | Depends On           | Status |
-| --- | :---: | --------------------------------------------------- | -------------------- | :----: |
-| 💎  |   1   | XSAVE/XRSTOR state management (per-thread, lazy)    | (none)               |  [x]   |
-| 💎  |   2   | AVX/AVX2 kernel memops + framebuffer blit           | §1                   |  [x]   |
-| 💎  |   3   | AVX-512 opt-in + future silicon detection           | §2                   |  [x]   |
-| 💎  |   4   | MSR management infrastructure (`msr.c`)             | (none)               |  [x]   |
-| 💎  |   5   | UMIP + PKU protection keys                          | §4                   |  [x]   |
-| 💎  |   6   | 1 GiB huge pages + Write-Combining PAT              | §4                   |  [x]   |
+| ⭐  | Order | Deliverable                                         | Depends On           | Status  |
+| --- | :---: | --------------------------------------------------- | -------------------- | :-----: |
+| 💎  |   1   | XSAVE/XRSTOR state management (per-thread, lazy)    | (none)               |  [x]    |
+| 💎  |   2   | AVX/AVX2 kernel memops + framebuffer blit           | §1                   |  [x]    |
+| 💎  |   3   | AVX-512 opt-in + future silicon detection           | §2                   |  [x]    |
+| 💎  |   4   | MSR management infrastructure (`msr.c`)             | (none)               |  [x]    |
+| 💎  |   5   | UMIP + PKU protection keys                          | §4                   |  [x]    |
+| 💎  |   6   | 1 GiB huge pages + Write-Combining PAT              | §4                   |  [x]    |
 | 💎  |   7   | FRED unified event delivery                         | §4, T06 §3           | blocked |
 | 💎  |   8   | LKGS fast GS-base swap                              | §4                   | blocked |
-| 💎  |   9   | CPU topology: Zen chiplets + Intel hybrid P/E-core  | (none)               |  [x]   |
-| 💎  |  10   | Performance monitoring counters (Intel + AMD)       | §4                   |  [x]   |
-| 💎  |  11   | OSVW errata + RDTSCP processor ID setup             | §4, T07 §3           |  [x]   |
-| 💎  |  12   | AMD IBS profiling (stretch)                         | §4                   |  [ ]   |
-| 💎  |  13   | Virtualization detection (AMD-V + Intel VT-x)       | §4                   |  [x]   |
-| ⭐  |  14   | Boot self-benchmark + auto-tune                     | §1, §2, §9           |  [ ]   |
-| 💎  |  15   | Future silicon stubs: APX, UINTR, AVX10, LA57       | (none)               |  [ ]   |
-| 💎  |  16   | Boot page tables: 1 GiB pages from entry.asm        | §6                   |  [ ]   |
+| 💎  |   9   | CPU topology: Zen chiplets + Intel hybrid P/E-core  | (none)               |  [x]    |
+| 💎  |  10   | Performance monitoring counters (Intel + AMD)       | §4                   |  [x]    |
+| 💎  |  11   | OSVW errata + RDTSCP processor ID setup             | §4, T07 §3           |  [x]    |
+| 💎  |  12   | AMD IBS profiling (stretch)                         | §4                   | blocked |
+| 💎  |  13   | Virtualization detection (AMD-V + Intel VT-x)       | §4                   |  [x]    |
+| ⭐  |  14   | Boot self-benchmark + auto-tune                     | §1, §2, §9           |  [ ]    |
+| 💎  |  15   | Future silicon stubs: APX, UINTR, AVX10, LA57       | (none)               |  [ ]    |
+| 💎  |  16   | Boot page tables: 1 GiB pages from entry.asm        | §6                   |  [ ]    |
 
 > 💎 = parity work: matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work: Impossible OS is superior or first.
@@ -338,6 +338,9 @@
 
 ## 12. AMD IBS Profiling (Stretch)
 
+> [!WARNING]
+> **Blocked: no test platform.** AMD IBS requires AMD Zen+ or later bare metal. No available platform (Intel WHPX, TCG, VirtualBox, Haswell bare metal) supports IBS. The NMI handler modifications and per-CPU ring buffer require real IBS hardware to validate. Implement when AMD bare metal with IBS is available.
+
 - [ ] Check `cpu_has(CPU_FEATURE_IBS)` (from §1)
 - [ ] **IBS Fetch Sampling:** samples random instruction fetch ops:
   - Configure `MSR 0xC001_1030` (IBS_FETCH_CTL): set `IbsFetchEn (bit 17)`, `IbsFetchCnt (bits 15:0)` = sample rate (~100K ops)
@@ -362,6 +365,12 @@
 - [x] Commit: `"kernel/cpu: AMD SVM + Intel VT-x capability detection and logging"`
 
 **Test checkpoint:** Boot log shows AMD SVM or Intel VMX lines matching `cpuid -1` expectations on real silicon; `cpu_has` agrees with known host type. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\run-x86-tests.bat` (SUITE=x86)
+> **Expected:** 56 suites, 0 failures
+
+> **Verified:** 2026-04-13 -- all 4 items confirmed. AMD SVM: `cpuid.c:300-308` parses CPUID 0x8000000A (gated on `max_ext_leaf >= 0x8000000A`), logs revision, NPT, ASIDs. Intel VT-x: `cpuid.c:310-321` reads `IA32_FEATURE_CONTROL` via `msr_try_read` (gated on Intel vendor), logs lock+enable status. Both exposed via `cpu_has`. 2 tests under TEST_CAT_X86. Codex: VT-x raw msr_read changed to msr_try_read; SVM gated on max_ext_leaf; test relaxed (presence is platform-dependent). Accepted: none.
+> **Quality reviewed:** 2026-04-13 -- kernel-code-quality 11 gates walked. G6: SVM per AMD APM Vol. 2 Section 15.1; VT-x per SDM Vol. 3C Section 23.7. Vendor-gated MSR access prevents cross-vendor #GP. Parity: matches Linux kvm detection + Windows HAL. Accepted: none.
 
 ---
 

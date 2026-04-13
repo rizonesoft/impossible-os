@@ -296,26 +296,31 @@ void cpuid_init(void)
                  (uint64_t)g_cpu.node_id);
         }
 
-        /* AMD SVM detection */
-        if (cpu_has(CPU_FEATURE_SVM)) {
+        /* AMD SVM detection (gate on max_ext_leaf to avoid bogus CPUID data) */
+        if (cpu_has(CPU_FEATURE_SVM) && g_cpu.max_ext_leaf >= 0x8000000A) {
             uint32_t svm_eax, svm_ebx, svm_ecx2, svm_edx;
             cpuid_raw(0x8000000A, 0, &svm_eax, &svm_ebx, &svm_ecx2, &svm_edx);
             klog(LOG_INFO, "cpu", "AMD-V: rev %u, NPT=%s, ASIDs=%u",
                  (uint64_t)(svm_eax & 0xFF),
                  (svm_edx & 1) ? "yes" : "no",
                  (uint64_t)svm_ebx);
+        } else if (cpu_has(CPU_FEATURE_SVM)) {
+            klog(LOG_INFO, "cpu", "AMD-V: SVM present (detail leaf 0x8000000A not available)");
         }
 
-        /* Intel VT-x detection */
-        if (cpu_has(CPU_FEATURE_VMX)) {
-            /* Check IA32_FEATURE_CONTROL MSR (0x3A) */
-            uint64_t feat_ctrl = msr_read(0x3A);
-            int locked = (feat_ctrl & 1) ? 1 : 0;
-            int vmx_enabled = (feat_ctrl & (1 << 2)) ? 1 : 0;  /* EnableVmxOutsideSMX */
+        /* Intel VT-x detection (gate on Intel vendor + msr_try_read) */
+        if (cpu_has(CPU_FEATURE_VMX) && g_cpu.vendor[0] == 'G') {
+            uint64_t feat_ctrl;
+            if (msr_try_read(0x3A, &feat_ctrl) == 0) {
+                int locked = (feat_ctrl & 1) ? 1 : 0;
+                int vmx_enabled = (feat_ctrl & (1 << 2)) ? 1 : 0;
 
-            klog(LOG_INFO, "cpu", "Intel VT-x: locked=%s, enabled=%s",
-                 locked ? "yes" : "no",
-                 vmx_enabled ? "yes" : "no");
+                klog(LOG_INFO, "cpu", "Intel VT-x: locked=%s, enabled=%s",
+                     locked ? "yes" : "no",
+                     vmx_enabled ? "yes" : "no");
+            } else {
+                klog(LOG_INFO, "cpu", "Intel VT-x: FEATURE_CONTROL MSR unreadable");
+            }
         }
     }
 
