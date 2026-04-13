@@ -800,6 +800,28 @@ int vmm_split_huge_page(uintptr_t virt)
     pdpt = get_or_create_table(kernel_pml4, pml4i, 0);
     if (!pdpt) return -1;
 
+    /* If the PDPT entry is a 1 GiB huge page, split it into 512 x 2 MiB
+     * PD entries first, then fall through to the 2 MiB -> 4 KiB split. */
+    if ((pdpt[pdpti] & VMM_FLAG_PRESENT) && (pdpt[pdpti] & VMM_FLAG_HUGE)) {
+        uintptr_t gib_phys = pdpt[pdpti] & ~GIB_ALIGN_MASK & PTE_ADDR_MASK;
+        uint64_t gib_flags = pdpt[pdpti] & ~(PTE_ADDR_MASK | VMM_FLAG_HUGE);
+        uintptr_t pd_frame = pmm_alloc_frame();
+        if (!pd_frame) return -1;
+
+        pte_t *new_pd = (pte_t *)pd_frame;
+        uint32_t j;
+        for (j = 0; j < PT_ENTRIES; j++)
+            new_pd[j] = (gib_phys + ((uintptr_t)j << 21)) | gib_flags | VMM_FLAG_HUGE;
+
+        /* Replace the 1 GiB PDPTE with a PD pointer */
+        pdpt[pdpti] = pd_frame | VMM_FLAG_PRESENT | VMM_FLAG_WRITABLE
+                     | (gib_flags & VMM_FLAG_USER);
+        vmm_flush_tlb_all();
+
+        klog(LOG_INFO, "mm", "Split 1 GiB page at 0x%x into 512 x 2 MiB entries",
+             (uint64_t)(gib_phys));
+    }
+
     pd = get_or_create_table(pdpt, pdpti, 0);
     if (!pd) return -1;
 
