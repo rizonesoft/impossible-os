@@ -153,6 +153,7 @@ Lesson: `s_subsys_names[]` missed `SUBSYS_OB`, causing OOB read in `kernel_subsy
 
 - [ ] **MMIO must use UC or WC pages.** Device register MMIO (HPET, NVMe, xHCI, ECAM) must go through `vmm_map_mmio_uc()`. Framebuffer VRAM uses `vmm_map_mmio_wc()` for Write-Combining. The bootloader maps everything WB; MMIO through WB pages causes stale reads or bus errors on real hardware.
 - [ ] **No CPUID-gated instructions without checking.** Before using `clac`/`stac` (SMAP), `xsave`/`xrstor` (XSAVE), or AVX instructions, check `cpu_has(CPU_FEATURE_XX)`. TCG and some bare metal CPUs lack these.
+- [ ] **Never compile SSE2 fallback code with `-mavx2`.** With `-mavx2`, the compiler emits VEX-encoded instructions (e.g., `vmovdqu` instead of `movdqu`) even for legacy SSE2 inline asm surroundings and scalar tails. On CPUs without AVX (TCG `qemu64`, pre-2011 bare metal), VEX instructions cause #UD. Split SIMD files: AVX2 functions in a `-mavx2` file, SSE2 fallbacks and dispatch in a `-msse2` file. Lesson: 2026-04-13 TCG crash from `memops.c` SSE2+dispatch compiled with `-mavx2`.
 - [ ] **GS_BASE is set.** Any code that reads `gs:N` (per-CPU data) must run AFTER `smp_early_bsp_init()`. If unsure, check `smp_this_cpu() != NULL`.
 - [ ] **No LAPIC TPR writes in ISR path.** IRQL tracking is software-only. The LAPIC handles hardware priority via ISR/PPR.
 - [ ] **User-mode pages need User bit at all 4 levels.** `vmm_set_user_page()` auto-splits 2 MiB huge pages on demand and sets User at PML4/PDPT/PD/PT. Works for any address. Note: per-process pages currently share physical frames (identity-mapped) -- true isolation requires unique physical backing per process (planned for Win32 PE loader).
@@ -259,7 +260,8 @@ When updating, add a comment at the bottom of the relevant Gate section:
 | New init function in BOOT path (Phase 0/1/2) | POST16 entry/exit + klog + error handling |
 | New non-boot function (sched/exec/syscall/io) | klog only -- NO POST16 |
 | Moving boot-path work to a thread | Don't -- compositor starves threads; run inline |
-| Allocating XSAVE/FXSAVE buffer | Zero + set MXCSR at offset 24 to 0x1F80 (all SIMD exceptions masked); zeroed MXCSR causes #XM on first SSE instruction |
+| Allocating XSAVE/FXSAVE buffer | Zero + set FCW at offset 0 to 0x037F (all x87 exceptions masked) + MXCSR at offset 24 to 0x1F80 (all SIMD exceptions masked); zeroed values unmask all FP exceptions causing #MF/#XM |
+| SSE2 fallback in SIMD dispatch | Compile SSE2 code with `-msse2` ONLY, never `-mavx2`; VEX encoding crashes CPUs without AVX |
 | XSAVE/XRSTOR/FXSAVE/FXRSTOR | CLTS first -- ALL FPU instructions fault #NM when CR0.TS=1, not just XRSTOR |
 | FPU save/restore in scheduler | Must be in BOTH preemptive schedule() AND cooperative schedule_now() paths |
 | Code called from panic/fault handler | No spinlocks, no kmalloc, no interrupt assumptions |
