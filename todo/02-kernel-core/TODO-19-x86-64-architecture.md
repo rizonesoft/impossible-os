@@ -61,7 +61,7 @@
 | 💎  |   7   | FRED unified event delivery                         | §4, T06 §3           | blocked |
 | 💎  |   8   | LKGS fast GS-base swap                              | §4                   | blocked |
 | 💎  |   9   | CPU topology: Zen chiplets + Intel hybrid P/E-core  | (none)               |  [x]   |
-| 💎  |  10   | Performance monitoring counters (Intel + AMD)       | §4                   |  [ ]   |
+| 💎  |  10   | Performance monitoring counters (Intel + AMD)       | §4                   |  [x]   |
 | 💎  |  11   | OSVW errata + RDTSCP processor ID setup             | §4, T07 §3           |  [ ]   |
 | 💎  |  12   | AMD IBS profiling (stretch)                         | §4                   |  [ ]   |
 | 💎  |  13   | Virtualization detection (AMD-V + Intel VT-x)       | §4                   |  [x]   |
@@ -296,31 +296,22 @@
 
 ## 10. Performance Monitoring Counters: Intel + AMD
 
-- [ ] Check CPUID leaf `0x0A`: PMU version (EAX[7:0]), counter count (EAX[15:8]), counter width (EAX[23:16])
-- [ ] `pmc_intel_start(slot, event_select, unit_mask)`:
-  - Write event to `IA32_PERFEVTSELx` MSR (0x186+slot): `event_select | (unit_mask << 8) | ENABLE_BIT | OS_BIT | USR_BIT`
-  - Clear `IA32_PMCx` (0xC1+slot)
-- [ ] `pmc_intel_read(slot)` -> `msr_read(0xC1 + slot)`
-- [ ] `pmc_intel_stop(slot)` -> clear `IA32_PERFEVTSELx` enable bit
-- [ ] Pre-defined event constants:
-  ```c
-  #define PMC_INTEL_INST_RETIRED    0xC0  /* instructions retired */
-  #define PMC_INTEL_UNHALTED_CYCLES 0x3C  /* CPU_CLK_UNHALTED.THREAD */
-  #define PMC_INTEL_LLC_MISSES      0x2E  /* LAST_LEVEL_CACHE.MISS */
-  #define PMC_INTEL_BR_MISPREDICT   0xC5  /* BR_MISP_RETIRED */
-  ```
+- [x] Check CPUID leaf `0x0A`: PMU version (EAX[7:0]), counter count (EAX[15:8]), counter width (EAX[23:16]). Stored in `g_pmc_info` struct. Intel path probes `IA32_PERF_GLOBAL_CTRL` via `msr_try_read` as safety net (CPUID-first rule)
+- [x] Intel `pmc_intel_start(slot, event)`: writes `IA32_PERFEVTSELx` (0x186+slot) with event + OS + USR + EN bits, clears `IA32_PMCx` (0xC1+slot), enables in `IA32_PERF_GLOBAL_CTRL` (0x38F)
+- [x] Intel `pmc_intel_read(slot)`: `msr_read(0xC1 + slot)`
+- [x] Intel `pmc_intel_stop(slot)`: clears `IA32_PERFEVTSELx` and `IA32_PERF_GLOBAL_CTRL` bit
+- [x] Intel pre-defined events: `PMC_INTEL_INST_RETIRED=0xC0`, `PMC_INTEL_UNHALTED_CYCLES=0x3C`, `PMC_INTEL_LLC_MISSES=0x2E`, `PMC_INTEL_BR_MISPREDICT=0xC5`
+- [x] AMD `pmc_amd_start/read/stop`: `MSR_AMD_PERF_CTL0` (0xC0010200) + `MSR_AMD_PERF_CTR0` (0xC0010201) with stride 2 per slot. 6 counters assumed for Zen 2+. AMD availability probed via `msr_try_read` on first counter MSR
+- [x] AMD pre-defined events: `PMC_AMD_CPU_CLOCKS=0x76`, `PMC_AMD_INST_RETIRED=0xC0`, `PMC_AMD_RET_BRANCHES=0xC2`, `PMC_AMD_DRAM_ACCESSES=0x64`
+- [x] Vendor-neutral dispatch: `pmc_start(slot, event)` / `pmc_read(slot)` / `pmc_stop(slot)` dispatch to Intel or AMD based on `g_pmc_info.is_amd`. All gated on `g_pmc_info.available`
+- [x] `pmc_ipc()`: starts inst+cycle counters on slots 0+1, spins 1M iterations, reads, stops, returns 8.8 fixed-point IPC. Overflow-safe (clamp at 0xFFFF)
+- [x] `pmc_init()` called from Phase 2 after topology_init. Logs PMU version, counter count, width. Degrades gracefully if MSR probe fails (WHPX)
+- [x] Commit: `"kernel/pmc: Intel PMU + AMD PMC, pmc_start/read/stop, pmc_ipc() for Task Manager"`
 
-- [ ] AMD Zen uses `MSR_AMD_PERF_CTL0` (0xC0010200) + `MSR_AMD_PERF_CTR0` (0xC0010201) per counter (6 per core on Zen 4)
-- [ ] `pmc_amd_start(slot, event)` -> `msr_write(0xC0010200 + slot*2, event | ENABLE)`
-- [ ] `pmc_amd_read(slot)` -> `msr_read(0xC0010201 + slot*2)`
-- [ ] `pmc_amd_stop(slot)` -> clear enable bit
-- [ ] Pre-defined events: `0x76` (CPU clocks), `0xC0` (instructions retired), `0xC2` (retired branches), `0x64` (DRAM accesses)
-- [ ] `pmc_start(slot, event)` / `pmc_read(slot)` / `pmc_stop(slot)`: dispatch to Intel or AMD path based on `cpu_features.vendor`
-- [ ] `pmc_ipc()` shortcut: start inst+cycle counters; read after 1 ms; return `instructions / cycles` as fixed-point; used by Task Manager (`08-desktop-shell`) for per-process IPC display
-- [ ] Enable via `IA32_PERF_GLOBAL_CTRL` (Intel, MSR 0x38F); AMD counters enabled per-counter via the `ENABLE` bit in CTL
-- [ ] Commit: `"kernel/pmc: Intel PMU + AMD PMC, pmc_start/read/stop, pmc_ipc() for Task Manager"`
+**Test checkpoint:** `pmc_info` populated after init; `pmc_read` increments on tight loop (when available); `pmc_ipc()` returns non-zero fixed-point (when 2+ counters available); out-of-range slot rejected. Tests skip gracefully on WHPX if PMU MSRs are trapped. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-**Test checkpoint:** `pmc_intel_read` increments on tight loop; `pmc_ipc()` returns finite fixed-point >0; stopping counter zeros enable bit without GPF. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+> **Test runner:** `scripts\debug\run-x86-tests.bat` (SUITE=x86)
+> **Expected:** 51 suites, 0 failures
 
 ---
 
@@ -461,7 +452,7 @@
 | 💎  | LKGS fast GS         | 🔜 future Windows roadmap   | ✅ 6.4+ no SWAPGS in entry  | ⬜ §8             |
 | 💎  | Zen CCD NUMA         | ✅ Ke node + NUMA policy    | ✅ amd_nb.c CCD/CCX topo    | ✅ §9 Done        |
 | 💎  | Intel P/E hybrid     | ✅ Thread Director HFI      | ✅ HFI + itmt scheduler     | ✅ §9 BSP-only    |
-| 💎  | PMU / PMC            | ✅ ETW + WPA counters       | ✅ perf_event PMU driver    | ⬜ §10            |
+| 💎  | PMU / PMC            | ✅ ETW + WPA counters       | ✅ perf_event PMU driver    | ✅ §10 Done       |
 | 💎  | OSVW errata          | ✅ HAL workaround table     | ✅ amd.c osvw_id_length     | ⬜ §11            |
 | 💎  | RDTSCP TSC_AUX       | ✅ QPC reads TSC_AUX        | ✅ per-CPU wrmsr in SMP     | ⬜ §11            |
 | 💎  | AMD IBS sample       | ⚠️ uProf vendor tool only   | ✅ perf IBS + oprofile      | ⬜ §12 stretch    |

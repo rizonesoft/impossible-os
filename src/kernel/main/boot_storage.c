@@ -175,6 +175,12 @@ void boot_phase2(void)
         topology_init();
     }
 
+    /* Performance monitoring counters (Intel PMU / AMD PMC) */
+    {
+        extern void pmc_init(void);
+        pmc_init();
+    }
+
     /* Register async init IPI handler (safe even with 1 CPU) */
     boot_async_init();
 

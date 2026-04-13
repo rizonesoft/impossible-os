@@ -13,6 +13,7 @@
 #include "kernel/cpuid.h"
 #include "kernel/cpu_security.h"
 #include "kernel/topology.h"
+#include "kernel/pmc.h"
 #include "kernel/kpti.h"
 #include "kernel/smp.h"
 #include "kernel/msr.h"
@@ -786,6 +787,67 @@ static void test_topo_smt_siblings(void)
                 "CPU 0 smt_siblings >= 1 (at least 1 thread per core)");
 }
 
+/* ---- S10: Performance Monitoring Counters ---- */
+
+static void test_pmc_info_valid(void)
+{
+    /* g_pmc_info should be populated after pmc_init */
+    TEST_ASSERT(g_pmc_info.available == 0 || g_pmc_info.available == 1,
+                "pmc available flag is 0 or 1");
+    if (g_pmc_info.available) {
+        TEST_ASSERT(g_pmc_info.num_counters >= 1,
+                    "PMC num_counters >= 1 when available");
+        TEST_ASSERT(g_pmc_info.counter_width >= 32,
+                    "PMC counter_width >= 32 when available");
+    }
+}
+
+static void test_pmc_start_stop(void)
+{
+    if (!g_pmc_info.available) {
+        TEST_SKIP("PMC not available");
+        return;
+    }
+    /* Start slot 0 with instructions retired, read, stop */
+    uint64_t event = g_pmc_info.is_amd ? PMC_AMD_INST_RETIRED
+                                       : PMC_INTEL_INST_RETIRED;
+    int ret = pmc_start(0, event);
+    TEST_ASSERT_EQ(ret, 0, "pmc_start(0) returns 0");
+
+    /* Spin briefly to accumulate some counts */
+    {
+        volatile uint32_t spin = 0;
+        uint32_t j;
+        for (j = 0; j < 10000; j++) spin++;
+        (void)spin;
+    }
+
+    uint64_t val = pmc_read(0);
+    TEST_ASSERT(val > 0, "PMC counter incremented after tight loop");
+
+    ret = pmc_stop(0);
+    TEST_ASSERT_EQ(ret, 0, "pmc_stop(0) returns 0");
+}
+
+static void test_pmc_out_of_range(void)
+{
+    /* Out-of-range slot should return -1 / 0 */
+    int ret = pmc_start(PMC_MAX_SLOTS + 1, 0);
+    TEST_ASSERT_EQ(ret, -1, "pmc_start with invalid slot returns -1");
+    TEST_ASSERT_EQ(pmc_read(PMC_MAX_SLOTS + 1), 0,
+                   "pmc_read with invalid slot returns 0");
+}
+
+static void test_pmc_ipc(void)
+{
+    if (!g_pmc_info.available || g_pmc_info.num_counters < 2) {
+        TEST_SKIP("PMC IPC requires 2+ counters");
+        return;
+    }
+    uint32_t ipc = pmc_ipc();
+    TEST_ASSERT(ipc > 0, "pmc_ipc returns non-zero fixed-point IPC");
+}
+
 /* ---- Registration ---- */
 
 void test_register_x86(void)
@@ -898,6 +960,16 @@ void test_register_x86(void)
         test_topo_core_type_valid, TEST_CAT_X86);
     test_suite_register_cat("Topo: smt_siblings >= 1",
         test_topo_smt_siblings, TEST_CAT_X86);
+
+    /* S10: Performance Monitoring Counters */
+    test_suite_register_cat("PMC: info valid after init",
+        test_pmc_info_valid, TEST_CAT_X86);
+    test_suite_register_cat("PMC: start/read/stop slot 0",
+        test_pmc_start_stop, TEST_CAT_X86);
+    test_suite_register_cat("PMC: out-of-range slot rejected",
+        test_pmc_out_of_range, TEST_CAT_X86);
+    test_suite_register_cat("PMC: pmc_ipc non-zero",
+        test_pmc_ipc, TEST_CAT_X86);
 }
 
 #endif /* KERNEL_TESTS */
