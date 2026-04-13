@@ -209,7 +209,17 @@ static const pe_export_entry_t s_kernel32_exports[] = {
 static const pe_export_entry_t s_ntdll_exports[] = {
     { "NtClose",               SSDT_NtClose },
     { "NtCreateFile",          SSDT_NtCreateFile },
+    { "NtCreateKey",           SSDT_NtCreateKey },
+    { "NtDeleteKey",           SSDT_NtDeleteKey },
+    { "NtDeleteValueKey",      SSDT_NtDeleteValueKey },
+    { "NtEnumerateKey",        SSDT_NtEnumerateKey },
+    { "NtEnumerateValueKey",   SSDT_NtEnumerateValueKey },
+    { "NtOpenKey",             SSDT_NtOpenKey },
+    { "NtOpenKeyEx",           SSDT_NtOpenKeyEx },
+    { "NtQueryKey",            SSDT_NtQueryKey },
+    { "NtQueryValueKey",       SSDT_NtQueryValueKey },
     { "NtReadFile",            SSDT_NtReadFile },
+    { "NtSetValueKey",         SSDT_NtSetValueKey },
     { "NtTerminateProcess",    SSDT_NtTerminateProcess },
     { "NtWriteFile",           SSDT_NtWriteFile },
 };

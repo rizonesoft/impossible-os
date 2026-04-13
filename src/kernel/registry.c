@@ -629,6 +629,11 @@ static int reg_is_predefined(HKEY hkey)
     return (v >= 0x80000000UL && v <= 0x80000005UL);
 }
 
+int RegIsPredefinedKey(HKEY hKey)
+{
+    return reg_is_predefined(hKey);
+}
+
 /* ---- Resolve HKEY to reg_key_t* ---- */
 
 /* Handles predefined sentinels (including HKCU/HKCR redirection)
@@ -896,6 +901,32 @@ long RegDeleteKey(HKEY hKey, const char *lpSubKey)
     /* Mark key slot as freed */
     target->name[0] = '\0';
     target->flags = 0;
+
+    return ERROR_SUCCESS;
+}
+
+/* ---- RegDeleteKeyDirect ---- */
+
+long RegDeleteKeyDirect(reg_key_t *key)
+{
+    if (!key)
+        return ERROR_INVALID_PARAMETER;
+
+    /* Cannot delete key with children */
+    if (key->child_count > 0)
+        return ERROR_ACCESS_DENIED;
+
+    /* Cannot delete a root key (no parent) */
+    if (!key->parent)
+        return ERROR_ACCESS_DENIED;
+
+    /* Free values and unlink from parent */
+    reg_free_values(key);
+    reg_remove_child(key->parent, key);
+
+    /* Mark key slot as freed */
+    key->name[0] = '\0';
+    key->flags = 0;
 
     return ERROR_SUCCESS;
 }

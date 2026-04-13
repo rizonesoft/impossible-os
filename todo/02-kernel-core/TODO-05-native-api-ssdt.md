@@ -62,7 +62,7 @@
 | ⭐  |  11   | Extended error information (IOSB + TEB LastError)              | §5, TODO-04 §6    |  [x]   |
 | ⭐  |  12   | ZwXxx kernel-mode alias layer with privilege assertion         | §4, §5            |  [x]   |
 | 💎  |  13   | File metadata and device control                               | §6                |  [x]   |
-| 💎  |  14   | Registry syscalls (core CRUD)                                  | §5, TODO-13 §4    |  [ ]   |
+| 💎  |  14   | Registry syscalls (core CRUD)                                  | §5, TODO-13 §4    |  [x]   |
 | 💎  |  15   | Registry syscalls (advanced: flush/notify/save/hive)           | §14, TODO-13 §4   |  [ ]   |
 | 💎  |  16   | Token and access control syscalls                              | §5, TODO-11 §4    |  [ ]   |
 | 💎  |  17   | Directory and symbolic link object syscalls                    | §5, TODO-03 §4    |  [ ]   |
@@ -1095,19 +1095,22 @@ Extended file operations: metadata queries, attribute modification, device I/O c
 > [!NOTE]
 > Full registry engine implemented in TODO-13-registry-completion.md. This section wires the core registry CRUD operations into the SSDT with NT-compatible signatures and NTSTATUS return values. Advanced operations (flush, notify, save/restore, hive load/unload) are in §15.
 
-- [ ] `NtCreateKey(KeyHandle, DesiredAccess, ObjectAttributes, TitleIndex, Class, CreateOptions, Disposition)` → SSDT 0x0090
-- [ ] `NtOpenKey(KeyHandle, DesiredAccess, ObjectAttributes)` → SSDT 0x0092
-- [ ] `NtOpenKeyEx(KeyHandle, DesiredAccess, ObjectAttributes, OpenOptions)` → SSDT 0x0094
-- [ ] `NtDeleteKey(KeyHandle)` → SSDT 0x0095
-- [ ] `NtSetValueKey(KeyHandle, ValueName, TitleIndex, Type, Data, DataSize)` → SSDT 0x0096
-- [ ] `NtQueryValueKey(KeyHandle, ValueName, KeyValueInformationClass, KeyValueInformation, Length, ResultLength)` → SSDT 0x0097
-- [ ] `NtDeleteValueKey(KeyHandle, ValueName)` → SSDT 0x0098
-- [ ] `NtEnumerateKey(KeyHandle, Index, KeyInformationClass, KeyInformation, Length, ResultLength)` → SSDT 0x0099
-- [ ] `NtEnumerateValueKey(KeyHandle, Index, KeyValueInformationClass, KeyValueInformation, Length, ResultLength)` → SSDT 0x009A
-- [ ] `NtQueryKey(KeyHandle, KeyInformationClass, KeyInformation, Length, ResultLength)` → SSDT 0x009B
+- [x] `NtCreateKey(KeyHandle, DesiredAccess, ObjectAttributes, TitleIndex, Class, CreateOptions, Disposition)` → SSDT 0x0090
+- [x] `NtOpenKey(KeyHandle, DesiredAccess, ObjectAttributes)` → SSDT 0x0092
+- [x] `NtOpenKeyEx(KeyHandle, DesiredAccess, ObjectAttributes, OpenOptions)` → SSDT 0x0094
+- [x] `NtDeleteKey(KeyHandle)` → SSDT 0x0095
+- [x] `NtSetValueKey(KeyHandle, ValueName, TitleIndex, Type, Data, DataSize)` → SSDT 0x0096
+- [x] `NtQueryValueKey(KeyHandle, ValueName, KeyValueInformationClass, KeyValueInformation, Length, ResultLength)` → SSDT 0x0097
+- [x] `NtDeleteValueKey(KeyHandle, ValueName)` → SSDT 0x0098
+- [x] `NtEnumerateKey(KeyHandle, Index, KeyInformationClass, KeyInformation, Length, ResultLength)` → SSDT 0x0099
+- [x] `NtEnumerateValueKey(KeyHandle, Index, KeyValueInformationClass, KeyValueInformation, Length, ResultLength)` → SSDT 0x009A
+- [x] `NtQueryKey(KeyHandle, KeyInformationClass, KeyInformation, Length, ResultLength)` → SSDT 0x009B
 - [ ] Commit: `"kernel: nt -- core registry syscalls wired to SSDT (create/open/query/set/delete/enumerate)"`
 
 **Test checkpoint:** `NtCreateKey` under `\Registry\Machine\Software\Test` returns `STATUS_SUCCESS`. `NtSetValueKey` + `NtQueryValueKey` round-trip succeeds. `NtDeleteKey` removes the key. `NtEnumerateKey` iterates subkeys correctly.
+
+> **Test runner:** `scripts\debug\run-abi-tests.bat` (SUITE=abi)
+> **Expected:** 7 new registry SSDT tests, 0 failures
 
 ---
 

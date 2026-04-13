@@ -254,6 +254,20 @@ long RegDeleteKey(HKEY hKey, const char *lpSubKey);
 /* Recursively delete a sub-key and all its children + values. */
 long RegDeleteTree(HKEY hKey, const char *lpSubKey);
 
+/* Delete a key by its internal reg_key_t pointer (NT API support).
+ * Used by NtDeleteKey which has a handle to the key itself, not parent+name.
+ * Key must have no child keys; returns ERROR_ACCESS_DENIED if it does.
+ * Frees values, unlinks from parent, marks slot freed. */
+long RegDeleteKeyDirect(reg_key_t *key);
+
+/* Check if an HKEY is a predefined sentinel (HKLM, HKCU, etc.).
+ * Returns 1 for predefined handles, 0 for user-allocated handles. */
+int RegIsPredefinedKey(HKEY hKey);
+
+/* Resolve a predefined HKEY sentinel to its internal reg_key_t pointer.
+ * Returns NULL for non-predefined handles. */
+reg_key_t *reg_resolve_predefined(HKEY hkey);
+
 /* ---- RegGetValue flags (RRF_*) ---- */
 
 #define RRF_RT_REG_SZ        0x00000002   /* Accept REG_SZ results         */
