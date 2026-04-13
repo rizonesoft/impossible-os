@@ -58,9 +58,9 @@
 | ⭐  |  11   | Live token inspector (`whoami.exe` + tray popout) | §4–§10              |  [ ]   |
 | 💎  |  12   | Security/token syscalls wired to SSDT             | §4, §8, T05 §4      |  [ ]   |
 | 💎  |  13   | SD inheritance / SeAssignSecurity                 | §3, §4, §5, T03 §1  |  [ ]   |
-| 💎  |  14   | AppContainer / LowBox tokens                      | §4, §5, §6, §9      |  [ ]   |
-| ⭐  |  15   | Access denial explainer                           | §5, §6, §8, §14     |  [ ]   |
-| 💎  |  16   | Security primitive hardening (SHA-1 SID, 64-bit LUID, const-time) | §1, TODO-07 §1 |  [ ]   |
+| 💎  |  14   | AppContainer / LowBox tokens                                      | §4, §5, §6, §9      |  [ ]   |
+| ⭐  |  15   | Access denial explainer                                           | §5, §6, §8, §14     |  [ ]   |
+| 💎  |  16   | Security primitive hardening (SHA-1 SID, 64-bit LUID, const-time) | §1, TODO-07 §1      |  [ ]   |
 
 > 💎 = parity work -- matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work -- Impossible OS is superior or first.
@@ -170,6 +170,12 @@
   ```
 - [x] `RtlPrivilegeSetToString(ps, buf, len)` -- debug helper
 - [x] Commit: `"kernel/security: privilege LUID table and PRIVILEGE_SET types"`
+
+> **Test runner:** `scripts\debug\run-security-tests.bat` (SUITE=security), 13 suites, 0 failures expected
+
+> **Verified** (2026-04-14): 24 privilege LUID constants at privileges.h:46-69, all with HighPart=0 via SE_PRIVILEGE_LUID macro. LowPart values match Windows SDK exactly (gaps at 6,16,22,24,26,27 intentional). LUID_AND_ATTRIBUTES at privileges.h:79-82 (12 bytes, _Static_assert). PRIVILEGE_SET at privileges.h:89-93 (base 8 bytes, Control at offset 4, _Static_assert). TOKEN_PRIVILEGES at privileges.h:97-100 (base 4 bytes, _Static_assert). SE_PRIVILEGE_* attribute values match Windows SDK (ENABLED_BY_DEFAULT=1, ENABLED=2, REMOVED=4, USED_FOR_ACCESS=0x80000000). RtlPrivilegeLuidToName at privileges.c:71-84 (bounded scan, 24 entries). RtlPrivilegeSetToString at privileges.c:88-125 (remaining-length safe). All 24 privileges consumed in token.c SeCreateSystemToken/SeCreateUserToken. Build clean.
+> **Accepted:** PRIVILEGE_SET_ALL_NECESSARY and SE_PRIVILEGE_USED_FOR_ACCESS defined but not consumed; these are ABI constants for struct completeness; consumers planned in -> XREF: 02-kernel-core/TODO-11 §8 (SePrivilegeCheck).
+> **Quality reviewed** (2026-04-14): dead code clean (all 24 privileges in g_priv_names[] + token.c). Consistency verified: g_priv_names[] index mapping validated by test iterating all 24 LUIDs. RtlPrivilegeSetToString uses safe remaining-length math (no uint32_t overflow). Performance bounded: linear scan over 24 entries max. New tests: all-24-LUID name mapping, unknown LUID rejection, RtlPrivilegeSetToString output + NULL + truncation, privilege struct ABI sizes.
 
 ---
 

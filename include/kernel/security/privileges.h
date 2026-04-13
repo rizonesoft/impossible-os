@@ -81,6 +81,10 @@ typedef struct {
     uint32_t Attributes;
 } LUID_AND_ATTRIBUTES;
 
+/* Windows ABI: LUID_AND_ATTRIBUTES = 8 (LUID) + 4 (Attributes) = 12 bytes */
+_Static_assert(sizeof(LUID_AND_ATTRIBUTES) == 12,
+    "LUID_AND_ATTRIBUTES must be 12 bytes (Windows ABI)");
+
 /* --- PRIVILEGE_SET ------------------------------------------------------- */
 
 /* Control flag: all privileges in the set must be held */
@@ -92,12 +96,22 @@ typedef struct {
     LUID_AND_ATTRIBUTES Privilege[];
 } PRIVILEGE_SET;
 
+/* Windows ABI: PRIVILEGE_SET base = 4 (Count) + 4 (Control) = 8 bytes */
+_Static_assert(sizeof(PRIVILEGE_SET) == 8,
+    "PRIVILEGE_SET base must be 8 bytes (Windows ABI)");
+_Static_assert(__builtin_offsetof(PRIVILEGE_SET, Control) == 4,
+    "PRIVILEGE_SET.Control must be at offset 4");
+
 /* --- TOKEN_PRIVILEGES ---------------------------------------------------- */
 
 typedef struct {
     uint32_t            PrivilegeCount;
     LUID_AND_ATTRIBUTES Privileges[];
 } TOKEN_PRIVILEGES;
+
+/* Windows ABI: TOKEN_PRIVILEGES base = 4 (Count) = 4 bytes */
+_Static_assert(sizeof(TOKEN_PRIVILEGES) == 4,
+    "TOKEN_PRIVILEGES base must be 4 bytes (Windows ABI)");
 
 /* --- Debug helper -------------------------------------------------------- */
 

@@ -86,12 +86,47 @@ static void test_privilege_name(void)
     TEST_ASSERT(name != (const char *)0, "RtlPrivilegeLuidToName returns non-NULL");
 
     /* Check it's "SeShutdownPrivilege" */
-    const char *expected = "SeShutdownPrivilege";
-    const char *a = name;
-    const char *b = expected;
-    while (*a && *b && *a == *b) { a++; b++; }
-    TEST_ASSERT(*a == '\0' && *b == '\0',
-                "SeShutdownPrivilege LUID maps to \"SeShutdownPrivilege\"");
+    {
+        const char *expected = "SeShutdownPrivilege";
+        const char *a = name;
+        const char *b = expected;
+        while (*a && *b && *a == *b) { a++; b++; }
+        TEST_ASSERT(*a == '\0' && *b == '\0',
+                    "SeShutdownPrivilege LUID maps to \"SeShutdownPrivilege\"");
+    }
+
+    /* Verify all 24 privilege LUIDs have non-NULL name mappings.
+     * Catches g_priv_names[] table drift from SE_*_PRIVILEGE macros. */
+    {
+        const LUID *all_privs[] = {
+            &SeCreateTokenPrivilege, &SeAssignPrimaryTokenPrivilege,
+            &SeLockMemoryPrivilege, &SeIncreaseQuotaPrivilege,
+            &SeTcbPrivilege, &SeSecurityPrivilege,
+            &SeTakeOwnershipPrivilege, &SeLoadDriverPrivilege,
+            &SeSystemProfilePrivilege, &SeSystemtimePrivilege,
+            &SeProfileSingleProcessPrivilege, &SeIncreaseBasePriorityPrivilege,
+            &SeCreatePagefilePrivilege, &SeBackupPrivilege,
+            &SeRestorePrivilege, &SeShutdownPrivilege,
+            &SeDebugPrivilege, &SeAuditPrivilege,
+            &SeChangeNotifyPrivilege, &SeUndockPrivilege,
+            &SeManageVolumePrivilege, &SeImpersonatePrivilege,
+            &SeCreateGlobalPrivilege, &SeCreateSymbolicLinkPrivilege
+        };
+        uint32_t i;
+        uint32_t mapped = 0;
+        for (i = 0; i < 24; i++) {
+            if (RtlPrivilegeLuidToName(all_privs[i]) != (const char *)0)
+                mapped++;
+        }
+        TEST_ASSERT_EQ(mapped, 24, "All 24 privilege LUIDs have name mappings");
+    }
+
+    /* Unknown LUID returns NULL */
+    {
+        LUID unknown = { 999, 0 };
+        TEST_ASSERT(RtlPrivilegeLuidToName(&unknown) == (const char *)0,
+                    "Unknown LUID returns NULL");
+    }
 }
 
 /* ---- Struct size assertions (bulletproofing §12) ---- */
@@ -103,6 +138,11 @@ static void test_security_struct_sizes(void)
     TEST_ASSERT_EQ(sizeof(ACCESS_ALLOWED_ACE), 12, "ACCESS_ALLOWED_ACE is 12 bytes");
     TEST_ASSERT_EQ(sizeof(ACCESS_DENIED_ACE), 12, "ACCESS_DENIED_ACE is 12 bytes");
     TEST_ASSERT_EQ(sizeof(SID), 8, "SID base is 8 bytes");
+
+    /* Privilege structs (§2) */
+    TEST_ASSERT_EQ(sizeof(LUID_AND_ATTRIBUTES), 12, "LUID_AND_ATTRIBUTES is 12 bytes");
+    TEST_ASSERT_EQ(sizeof(PRIVILEGE_SET), 8, "PRIVILEGE_SET base is 8 bytes");
+    TEST_ASSERT_EQ(sizeof(TOKEN_PRIVILEGES), 4, "TOKEN_PRIVILEGES base is 4 bytes");
 }
 
 /* ---- SID binary format verification ---- */
@@ -225,6 +265,51 @@ static void test_luid_allocator(void)
                 "Allocated LUID is not zero");
 }
 
+/* ---- RtlPrivilegeSetToString ---- */
+
+static void test_privilege_set_to_string(void)
+{
+    /* Build a small PRIVILEGE_SET with 2 entries on the stack */
+    uint8_t ps_buf[8 + 2 * 12];  /* base + 2 LUID_AND_ATTRIBUTES */
+    PRIVILEGE_SET *ps = (PRIVILEGE_SET *)ps_buf;
+    char out[256];
+    int rc;
+
+    ps->PrivilegeCount = 2;
+    ps->Control = 0;
+    ps->Privilege[0].Luid = SeShutdownPrivilege;
+    ps->Privilege[0].Attributes = SE_PRIVILEGE_ENABLED;
+    ps->Privilege[1].Luid = SeDebugPrivilege;
+    ps->Privilege[1].Attributes = 0;  /* disabled */
+
+    rc = RtlPrivilegeSetToString(ps, out, sizeof(out));
+    TEST_ASSERT(rc > 0, "RtlPrivilegeSetToString returns positive length");
+
+    /* Should contain both privilege names */
+    {
+        int found_shutdown = 0, found_debug = 0;
+        const char *p = out;
+        while (*p) {
+            if (*p == 'S' && p[1] == 'e' && p[2] == 'S' && p[3] == 'h')
+                found_shutdown = 1;
+            if (*p == 'S' && p[1] == 'e' && p[2] == 'D' && p[3] == 'e')
+                found_debug = 1;
+            p++;
+        }
+        TEST_ASSERT(found_shutdown, "Output contains SeShutdownPrivilege");
+        TEST_ASSERT(found_debug, "Output contains SeDebugPrivilege");
+    }
+
+    /* NULL input returns -1 */
+    TEST_ASSERT(RtlPrivilegeSetToString((const PRIVILEGE_SET *)0, out, sizeof(out)) == -1,
+                "RtlPrivilegeSetToString rejects NULL");
+
+    /* Tiny buffer returns truncated or -1 */
+    rc = RtlPrivilegeSetToString(ps, out, 4);
+    TEST_ASSERT(rc >= 0 && rc < 4,
+                "RtlPrivilegeSetToString handles tiny buffer");
+}
+
 /* ---- RtlValidSid rejects malformed ---- */
 
 static void test_sid_valid_reject(void)
@@ -266,6 +351,7 @@ void test_register_security(void)
     test_suite_register_cat("Security: service SID", test_service_sid, TEST_CAT_SECURITY);
     test_suite_register_cat("Security: LUID allocator", test_luid_allocator, TEST_CAT_SECURITY);
     test_suite_register_cat("Security: SID validation reject", test_sid_valid_reject, TEST_CAT_SECURITY);
+    test_suite_register_cat("Security: privilege set to string", test_privilege_set_to_string, TEST_CAT_SECURITY);
 }
 
 #endif /* KERNEL_TESTS */

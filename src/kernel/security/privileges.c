@@ -98,6 +98,7 @@ int RtlPrivilegeSetToString(const PRIVILEGE_SET *ps, char *buf, uint32_t len)
 
     for (i = 0; i < ps->PrivilegeCount && pos < len - 1; i++) {
         const char *name = RtlPrivilegeLuidToName(&ps->Privilege[i].Luid);
+        uint32_t remaining = len - pos;
         char flag;
 
         if (ps->Privilege[i].Attributes & SE_PRIVILEGE_REMOVED)
@@ -108,15 +109,15 @@ int RtlPrivilegeSetToString(const PRIVILEGE_SET *ps, char *buf, uint32_t len)
             flag = 'D';
 
         if (name) {
-            written = snprintf(buf + pos, len - pos, "%s%s(%c)",
+            written = snprintf(buf + pos, remaining, "%s%s(%c)",
                                (i > 0) ? " " : "", name, flag);
         } else {
-            written = snprintf(buf + pos, len - pos, "%sPriv%u(%c)",
+            written = snprintf(buf + pos, remaining, "%sPriv%u(%c)",
                                (i > 0) ? " " : "",
                                ps->Privilege[i].Luid.LowPart, flag);
         }
 
-        if (written < 0 || pos + (uint32_t)written >= len)
+        if (written < 0 || (uint32_t)written >= remaining)
             break;
         pos += (uint32_t)written;
     }
