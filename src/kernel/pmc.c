@@ -115,17 +115,25 @@ void pmc_init(void)
 
     /* Check vendor */
     if (g_cpu.vendor[0] == 'A') {
-        /* AMD: probe PMC via msr_try_read on the first counter MSR */
+        /* AMD: probe PMC via msr_try_read on the first counter MSR,
+         * then verify write works (hypervisors may allow reads but
+         * trap writes, same issue as Intel PERFEVTSEL probe). */
         uint64_t val;
-        if (msr_try_read(MSR_AMD_PERF_CTR0, &val) == 0) {
-            g_pmc_info.is_amd = 1;
-            g_pmc_info.num_counters = 6;  /* Zen 2+ has 6 per core */
-            g_pmc_info.counter_width = 48;
-            g_pmc_info.available = 1;
-            klog(LOG_INFO, "pmc", "AMD PMC: 6 counters, 48-bit width");
-        } else {
-            klog(LOG_INFO, "pmc", "AMD PMC: MSR probe failed; counters unavailable");
+        if (msr_try_read(MSR_AMD_PERF_CTR0, &val) != 0) {
+            klog(LOG_INFO, "pmc", "AMD PMC: counter MSR read failed; unavailable");
+            return;
         }
+        /* Write probe: write zero to CTL0 (disabled state), read back */
+        msr_write(MSR_AMD_PERF_CTL0, 0);
+        if (msr_try_read(MSR_AMD_PERF_CTL0, &val) != 0) {
+            klog(LOG_WARN, "pmc", "AMD PMC: control MSR write/read failed; unavailable");
+            return;
+        }
+        g_pmc_info.is_amd = 1;
+        g_pmc_info.num_counters = 6;  /* Zen 2+ has 6 per core */
+        g_pmc_info.counter_width = 48;
+        g_pmc_info.available = 1;
+        klog(LOG_INFO, "pmc", "AMD PMC: 6 counters, 48-bit width");
         return;
     }
 

@@ -313,6 +313,9 @@
 > **Test runner:** `scripts\debug\run-x86-tests.bat` (SUITE=x86)
 > **Expected:** 51 suites, 0 failures
 
+> **Verified:** 2026-04-13 -- all 11 items confirmed. `pmc.c` and `pmc.h` at `src/kernel/pmc.c`, `include/kernel/pmc.h`. Intel path: CPUID 0x0A for version/count/width + `msr_try_read(PERF_GLOBAL_CTRL)` + `msr_write(PERFEVTSEL0)` write probe. AMD path: `msr_try_read(PERF_CTR0)` + `msr_write(PERF_CTL0)` write probe. `pmc_init()` at `boot_storage.c:181`. `pmc_start/read/stop` dispatch on `is_amd` flag. `pmc_ipc` with 8.8 fixed-point, overflow-safe clamp. 4 Intel + 4 AMD event constants. 4 tests under TEST_CAT_X86. Codex adversarial: AMD write probe added (was read-only, same class as Intel PERFEVTSEL fix). Accepted: PERF_GLOBAL_CTRL RMW race (single-caller at boot; SMP locking needed when exposed to multi-threaded callers); event API limited to bits 0-15 (full PERFEVTSEL passthrough deferred).
+> **Quality reviewed:** 2026-04-13 -- kernel-code-quality 11 gates walked. G2: per-CPU MSRs, single BSP caller currently. G6: CPUID-first with msr_try_read safety net on both vendors; write probe verifies MSR accessibility before marking available. G11: Intel PMU per SDM Vol. 3B Ch. 19; AMD PMC per APM Vol. 2 Section 13.2. Parity: matches Windows ETW/WPA PMU access + Linux perf_event PMU driver. Accepted: same as verified stamp.
+
 ---
 
 ## 11. OSVW Errata + RDTSCP Processor ID Setup
