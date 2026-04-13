@@ -317,8 +317,13 @@ static void test_privilege_set_to_string(void)
         ps2->Privilege[0].Luid = SeShutdownPrivilege;
         ps2->Privilege[0].Attributes = SE_PRIVILEGE_ENABLED;
 
-        rc = RtlPrivilegeSetToString(ps2, out, 8);
-        TEST_ASSERT(rc >= 0, "RtlPrivilegeSetToString with len=8 does not crash");
+        /* Guard path: len < 8 returns 0 immediately */
+        rc = RtlPrivilegeSetToString(ps2, out, 4);
+        TEST_ASSERT(rc == 0, "RtlPrivilegeSetToString with len=4 returns 0 (guard)");
+
+        /* Truncation path: len=32 enters loop but truncates privilege name */
+        rc = RtlPrivilegeSetToString(ps2, out, 32);
+        TEST_ASSERT(rc >= 0, "RtlPrivilegeSetToString with len=32 truncates safely");
     }
 }
 
