@@ -371,27 +371,19 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
     POST16(POST16_NX_POLICY_OK);
 
     /* --- PAT: reprogram entry 1 from WT to WC for framebuffer VRAM ---
-     * Intel default PAT: 0x0007040600070406
-     *   Entry 0=WB(06) 1=WT(04) 2=UC-(07) 3=UC(00) 4=WB 5=WT 6=UC- 7=UC
-     * We change entry 1 to WC(01).  PTE bits PWT=1,PCD=0 select entry 1.
-     * Nothing in the kernel uses PWT=1 alone, so this is safe.  UC (entry 3,
-     * PWT=1+PCD=1) and WB (entry 0, PWT=0+PCD=0) are unchanged. */
+     * PAT is per-CPU; cpu_harden() already called cpu_configure_pat() above.
+     * Readback verify here on BSP to catch hypervisors that trap PAT writes. */
     POST16(POST16_PAT);
     {
-        uint64_t pat_old = msr_read(MSR_IA32_PAT);
-        uint64_t pat_new = 0x0007040600010406ULL;  /* entry 1: WT(04)->WC(01) */
-        msr_write(MSR_IA32_PAT, pat_new);
-
-        /* Guardrail: readback verify -- if MSR write was ignored or trapped,
-         * vmm_map_mmio_wc() will silently produce WT pages instead of WC. */
-        uint64_t pat_verify = msr_read(MSR_IA32_PAT);
-        if (pat_verify != pat_new) {
-            klog(LOG_FATAL, "mm", "PAT MSR readback mismatch: wrote 0x%016llx, read 0x%016llx",
-                 pat_new, pat_verify);
+        uint64_t pat = msr_read(MSR_IA32_PAT);
+        uint8_t entry1 = (uint8_t)((pat >> 8) & 0xFF);
+        if (entry1 != 0x01) {
+            klog(LOG_FATAL, "mm",
+                 "PAT entry 1 readback: expected WC (0x01), got 0x%02x",
+                 (uint64_t)entry1);
             boot_halt("PAT MSR write failed -- WC framebuffer not possible");
         }
-        klog(LOG_INFO, "mm", "PAT: 0x%016llx -> 0x%016llx (entry 1 = WC)",
-             pat_old, pat_new);
+        klog(LOG_INFO, "mm", "PAT: 0x%016llx (entry 1 = WC)", pat);
     }
     POST16(POST16_PAT_OK);
 

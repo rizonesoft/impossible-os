@@ -33,7 +33,12 @@ void cpu_enable_umip(void);
  * PKU only affects ring-3 data accesses; kernel is unaffected. */
 void cpu_enable_pku(void);
 
-/* Enable NX, UMIP, and PKU for the current core.
+/* Program PAT MSR entry 1 = WC (Write-Combining) on the current CPU.
+ * PAT is per-CPU; must be called on BSP and each AP. Without this,
+ * vmm_map_mmio_wc() pages get WT instead of WC (Intel default). */
+void cpu_configure_pat(void);
+
+/* Enable NX, UMIP, PKU, and program PAT for the current core.
  * Call on BSP in Phase 0 and on each AP during SMP bringup. */
 void cpu_harden(void);
 

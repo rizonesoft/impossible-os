@@ -164,6 +164,19 @@ void cpu_enable_pku(void)
     }
 }
 
+/* ---- PAT: reprogram entry 1 to WC (per-CPU MSR) ---- */
+
+/* PAT value with entry 1 = WC (Write-Combining).
+ * Intel default: 0x0007040600070406 (entry 1 = WT = 0x04).
+ * We change entry 1 to WC (0x01) for framebuffer VRAM performance. */
+#define PAT_WC_VALUE  0x0007040600010406ULL
+
+void cpu_configure_pat(void)
+{
+    uint64_t pat_new = PAT_WC_VALUE;
+    msr_write(MSR_IA32_PAT, pat_new);
+}
+
 /* ---- Combined hardening call ---- */
 
 void cpu_harden(void)
@@ -171,6 +184,7 @@ void cpu_harden(void)
     cpu_enable_nx();
     cpu_enable_umip();
     cpu_enable_pku();
+    cpu_configure_pat();
 }
 
 /* Enable SMEP/SMAP after page tables have been fixed (U/S cleared from
