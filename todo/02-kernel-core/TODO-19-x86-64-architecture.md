@@ -66,6 +66,7 @@
 | 💎  |  12   | Virtualization detection (AMD-V + Intel VT-x)       | §4                   |  [x]   |
 | ⭐  |  13   | Boot self-benchmark + auto-tune                     | §1, §2, §8           |  [ ]   |
 | 💎  |  14   | Future silicon stubs: APX, UINTR, AVX10, LA57       | (none)               |  [ ]   |
+| 💎  |  15   | Boot page tables: 1 GiB pages from entry.asm        | §6                   |  [ ]   |
 
 > 💎 = parity work: matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work: Impossible OS is superior or first.
@@ -423,6 +424,24 @@
 
 ---
 
+## 15. Boot Page Tables: 1 GiB Pages From entry.asm
+
+> **Why:** `vmm_promote_to_1g()` (§6) upgrades 2 MiB identity-map entries to 1 GiB pages at runtime, but later code (KUSD at 0x7FFE0000, guard pages, MMIO mappings) splits them back to 2 MiB via `vmm_split_huge_page()`. This promote-then-split cycle wastes boot time and allocates throwaway PD frames. Windows and Linux build 1 GiB pages from the start in their initial page tables.
+
+- [ ] Modify `src/boot/entry.asm`: for PDPT[1], PDPT[2], PDPT[3], set PS=1 (bit 7) directly in the PDPT entry instead of pointing to a PD table. Physical address = PDPT index * 1 GiB. Flags: Present + Writable + User + PS (0x87 with PS at PDPT level). Keep PDPT[0] pointing to a PD with 512 x 2 MiB entries (kernel text needs NX at fine granularity)
+- [ ] Gate on `CPU_FEATURE_PAGE1GB`: entry.asm runs before CPUID detection, so either (a) probe CPUID leaf 0x80000001 EDX bit 26 inline in assembly before building page tables, or (b) always build 1 GiB entries and let the kernel downgrade at runtime if PAGE1GB is absent (1 GiB PDPTEs with PS=1 on CPUs without PAGE1GB cause #PF; the page fault handler would need to handle this gracefully)
+- [ ] Remove `vmm_promote_to_1g()` from `boot_hw.c` and `vmm.c` (no longer needed; the page tables are already optimal from boot)
+- [ ] Keep `vmm_split_huge_page()` 1 GiB cascade (added in §6): still needed for on-demand splits when mapping individual pages inside GiB 1-3 (KUSD, guard pages, MMIO)
+- [ ] Verify `vmm_apply_nx_policy()` still skips 1 GiB pages at PDPT level (already does, line 893-895)
+- [ ] Remove the 4 statically allocated PD tables for GiB 1-3 from entry.asm BSS (saves 12 KiB of boot memory; PD for GiB 0 stays)
+- [ ] Commit: `"boot: build identity map with 1 GiB pages in entry.asm (PDPT[1-3])"`
+
+**Test checkpoint:** Serial log shows NO `promoted N PDPT entries` line (promotion removed). `vmm_get_physical(0x80000000)` returns 0x80000000 (identity map via 1 GiB page). KUSD at 0x7FFE0000 triggers 1 GiB split on demand and maps correctly. Guard pages in GiB 1-3 split correctly. Test on: QEMU WHPX, QEMU TCG (may lack PAGE1GB), VirtualBox, bare metal.
+
+-> XREF: `01-boot-platform/TODO-04-cpu-boot-sequencing.md §8` (PAT AP sync uses same page table infrastructure)
+
+---
+
 ## OS Comparison
 
 | ⭐  | Feature              | 🪟 Win11                    | 🐧 Linux                    | 🚀 Impossible OS  |
@@ -438,6 +457,7 @@
 | 💎  | PKS (supervisor)     | ⚠️ niche, not exposed       | ✅ mm/pkeys since 5.13      | ⬜ defer T17      |
 | 💎  | FB WC PAT            | ✅ WDDM GPU WC mapping      | ✅ ioremap_wc PAT entry     | ✅ §6 WC mapped  |
 | 💎  | 1 GiB huge pages     | ✅ Large Pages in registry  | ✅ hugetlbfs 1G mount       | ✅ §6 promoted   |
+| 💎  | 1 GiB boot PT        | ✅ HAL builds from start    | ✅ direct-map 1G native     | ⬜ §15 runtime   |
 | 💎  | FRED events          | 🔜 future Windows roadmap   | ✅ 6.9+ Granite Rapids      | ⬜ §7             |
 | 💎  | LKGS fast GS         | 🔜 future Windows roadmap   | ✅ 6.4+ no SWAPGS in entry  | ⬜ §7             |
 | 💎  | Zen CCD NUMA         | ✅ Ke node + NUMA policy    | ✅ amd_nb.c CCD/CCX topo    | ⬜ §8             |
