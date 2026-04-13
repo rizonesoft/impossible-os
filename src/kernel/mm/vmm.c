@@ -871,12 +871,20 @@ int vmm_map_huge_1g(uintptr_t virt, uintptr_t phys, uint64_t flags)
     if (!cpu_has(CPU_FEATURE_NX))
         flags &= ~VMM_FLAG_NX;
 
+    /* Refuse to overwrite an existing non-huge PDPT entry (subtree with
+     * dynamic mappings). Only allow overwriting if the slot is empty or
+     * already a 1 GiB page. */
+    if ((pdpt[pdpti] & VMM_FLAG_PRESENT) && !(pdpt[pdpti] & VMM_FLAG_HUGE))
+        return -1;
+
     /* Set PDPT entry with PS=1 for 1 GiB page.
      * Physical address occupies bits 51:30 (30-bit aligned).
      * Intel SDM Vol. 3A Table 4-15: PDPTE format for 1 GiB pages. */
     pdpt[pdpti] = (phys & ~GIB_ALIGN_MASK) | flags | VMM_FLAG_HUGE;
 
-    vmm_flush_tlb(virt);
+    /* Full TLB flush: a single invlpg only covers one page size; replacing
+     * an entire GiB of translations requires a global invalidation. */
+    vmm_flush_tlb_all();
     return 0;
 }
 
@@ -912,12 +920,45 @@ void vmm_promote_to_1g(void)
         /* The PD maps pdpti * 1 GiB as an identity map (phys == virt) */
         phys_base = pdpti * GIB_SIZE;
 
-        /* Replace the PD-pointer PDPT entry with a direct 1 GiB page.
-         * Flags: present + writable + user (match entry.asm 0x87 flags).
-         * The PD frame from entry.asm is statically allocated BSS; no need
-         * to free it. */
-        pdpt[pdpti] = phys_base | VMM_FLAG_PRESENT | VMM_FLAG_WRITABLE
-                    | VMM_FLAG_USER | VMM_FLAG_HUGE;
+        /* Validate: all 512 PDEs must be present 2 MiB huge pages with
+         * contiguous identity-mapped physical addresses AND identical
+         * flags. Skip promotion if any PDE has been split, has a guard
+         * page, or has different flags (NX, RO, WC, etc.). */
+        {
+            pte_t *pd = (pte_t *)(pdpte & PTE_ADDR_MASK);
+            uint32_t pdi;
+            int safe = 1;
+            /* Flag mask: all flag bits except address, accessed, dirty */
+            uint64_t flag_mask = ~(PTE_ADDR_MASK | VMM_FLAG_ACCESSED | VMM_FLAG_DIRTY);
+            uint64_t expected_flags = pd[0] & flag_mask;
+            for (pdi = 0; pdi < 512; pdi++) {
+                pte_t pde = pd[pdi];
+                uintptr_t expected_phys = phys_base + ((uintptr_t)pdi << 21);
+                if (!(pde & VMM_FLAG_PRESENT) || !(pde & VMM_FLAG_HUGE)) {
+                    safe = 0;
+                    break;
+                }
+                if ((pde & PTE_ADDR_MASK) != expected_phys) {
+                    safe = 0;
+                    break;
+                }
+                if ((pde & flag_mask) != expected_flags) {
+                    safe = 0;
+                    break;
+                }
+            }
+            if (!safe) {
+                klog(LOG_WARN, "mm",
+                     "1 GiB: PDPT[%u] PD not uniform at PDE %u; skipping promotion",
+                     (uint64_t)pdpti, (uint64_t)pdi);
+                continue;
+            }
+            /* Build PDPTE from validated PDE flags (preserve P, W, U, etc.)
+             * plus PS=1 for the 1 GiB page. Strip the 2 MiB PS bit from
+             * the flags first (it's the same bit, but conceptually it now
+             * means 1 GiB at PDPT level). */
+            pdpt[pdpti] = phys_base | expected_flags;
+        }
         promoted++;
     }
 
