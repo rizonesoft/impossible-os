@@ -160,6 +160,97 @@ static void test_acl_3ace_walk(void)
     TEST_ASSERT(rc != 0, "ACE 3 (OOB) returns error");
 }
 
+/* ---- Service SID generation ---- */
+
+static void test_service_sid(void)
+{
+    uint8_t buf[68];  /* SID_MAX_SIZE */
+    SID *sid = (SID *)buf;
+    uint32_t sid_len = sizeof(buf);
+    int rc;
+    char str[128];
+
+    rc = RtlCreateServiceSid("TestService", sid, &sid_len);
+    TEST_ASSERT(rc == 0, "RtlCreateServiceSid succeeds");
+    TEST_ASSERT_EQ(sid->Revision, 1, "Service SID revision is 1");
+    TEST_ASSERT_EQ(sid->SubAuthorityCount, 6, "Service SID has 6 sub-authorities");
+    TEST_ASSERT_EQ(sid->SubAuthority[0], 80, "Service SID RID base is 80");
+
+    /* Deterministic: same name produces same SID */
+    {
+        uint8_t buf2[68];
+        SID *sid2 = (SID *)buf2;
+        uint32_t len2 = sizeof(buf2);
+        RtlCreateServiceSid("TestService", sid2, &len2);
+        TEST_ASSERT(RtlEqualSid(sid, sid2) != 0,
+                    "Same service name produces identical SID");
+    }
+
+    /* Different name produces different SID */
+    {
+        uint8_t buf3[68];
+        SID *sid3 = (SID *)buf3;
+        uint32_t len3 = sizeof(buf3);
+        RtlCreateServiceSid("OtherService", sid3, &len3);
+        TEST_ASSERT(RtlEqualSid(sid, sid3) == 0,
+                    "Different service name produces different SID");
+    }
+
+    /* String format starts with S-1-5-80- */
+    rc = RtlConvertSidToString(str, sizeof(str), sid);
+    TEST_ASSERT(rc > 0, "Service SID converts to string");
+    TEST_ASSERT(str[0] == 'S' && str[2] == '1' && str[4] == '5',
+                "Service SID string starts with S-1-5-");
+}
+
+/* ---- LUID allocator ---- */
+
+#include "kernel/security/luid.h"
+
+static void test_luid_allocator(void)
+{
+    LUID a = NtAllocateLocallyUniqueId();
+    LUID b = NtAllocateLocallyUniqueId();
+
+    /* Monotonically increasing */
+    TEST_ASSERT(b.LowPart > a.LowPart,
+                "LUID allocator is monotonically increasing");
+
+    /* Not equal */
+    TEST_ASSERT(RtlEqualLuid(&a, &b) == 0,
+                "Consecutive LUIDs are unique");
+
+    /* Not zero */
+    TEST_ASSERT(RtlIsZeroLuid(&a) == 0,
+                "Allocated LUID is not zero");
+}
+
+/* ---- RtlValidSid rejects malformed ---- */
+
+static void test_sid_valid_reject(void)
+{
+    uint8_t bad_buf[68];
+    SID *bad = (SID *)bad_buf;
+
+    /* SubAuthorityCount > 15 should be rejected */
+    bad->Revision = SID_REVISION;
+    bad->SubAuthorityCount = 16;
+    TEST_ASSERT(RtlValidSid(bad) == 0,
+                "RtlValidSid rejects SubAuthorityCount > 15");
+
+    /* Wrong revision */
+    bad->Revision = 99;
+    bad->SubAuthorityCount = 1;
+    TEST_ASSERT(RtlValidSid(bad) == 0,
+                "RtlValidSid rejects bad revision");
+
+    /* RtlEqualSid should reject malformed SID */
+    bad->Revision = SID_REVISION;
+    bad->SubAuthorityCount = 200;
+    TEST_ASSERT(RtlEqualSid(bad, SeLocalSystemSid) == 0,
+                "RtlEqualSid rejects malformed SID");
+}
+
 /* ---- Registration ---- */
 
 void test_register_security(void)
@@ -172,6 +263,9 @@ void test_register_security(void)
     test_suite_register_cat("Security: struct sizes", test_security_struct_sizes, TEST_CAT_SECURITY);
     test_suite_register_cat("Security: SID binary format", test_sid_binary_format, TEST_CAT_SECURITY);
     test_suite_register_cat("Security: ACL 3-ACE walk", test_acl_3ace_walk, TEST_CAT_SECURITY);
+    test_suite_register_cat("Security: service SID", test_service_sid, TEST_CAT_SECURITY);
+    test_suite_register_cat("Security: LUID allocator", test_luid_allocator, TEST_CAT_SECURITY);
+    test_suite_register_cat("Security: SID validation reject", test_sid_valid_reject, TEST_CAT_SECURITY);
 }
 
 #endif /* KERNEL_TESTS */

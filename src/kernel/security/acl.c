@@ -419,7 +419,8 @@ int RtlAclToCStr(const ACL *acl, char *buf, uint32_t len)
                          type_str, mask, alias);
         } else {
             char sid_str[80];
-            RtlConvertSidToString(sid_str, sizeof(sid_str), sid);
+            if (RtlConvertSidToString(sid_str, sizeof(sid_str), sid) < 0)
+                snprintf(sid_str, sizeof(sid_str), "<invalid-sid>");
             w = snprintf(buf + pos, len - pos, "(%s;;0x%x;;;%s)",
                          type_str, mask, sid_str);
         }

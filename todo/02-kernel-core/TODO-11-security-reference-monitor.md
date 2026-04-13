@@ -45,7 +45,7 @@
 
 | ⭐  | Order | Deliverable                                       | Depends On          | Status |
 | --- | :---: | ------------------------------------------------- | ------------------- | :----: |
-| 💎  |   1   | SID & LUID primitives                             | --                   |  [x]   |
+| 💎  |   1   | SID & LUID primitives                             | --                  |  [x]   |
 | 💎  |   2   | Privilege constants & PRIVILEGE_SET               | §1                  |  [x]   |
 | 💎  |   3   | SECURITY_DESCRIPTOR, ACL, ACE types               | §1                  |  [x]   |
 | 💎  |   4   | ACCESS_TOKEN object (primary)                     | §1, §2, §3, T03 §1  |  [x]   |
@@ -55,11 +55,11 @@
 | 💎  |   8   | SePrivilegeCheck & per-privilege enforcement      | §2, §4, §5          |  [ ]   |
 | 💎  |   9   | UAC token split & NtFilterToken                   | §4, §6, §7          |  [ ]   |
 | 💎  |  10   | Win32 security API wrappers                       | §4–§9, T05 §1       |  [ ]   |
-| ⭐  |  11   | Live token inspector (`whoami.exe` + tray popout) | §4–§10               |  [ ]   |
+| ⭐  |  11   | Live token inspector (`whoami.exe` + tray popout) | §4–§10              |  [ ]   |
 | 💎  |  12   | Security/token syscalls wired to SSDT             | §4, §8, T05 §4      |  [ ]   |
-| 💎  |  13   | SD inheritance / SeAssignSecurity                 | §3, §4, §5, T03 §1   |  [ ]   |
-| 💎  |  14   | AppContainer / LowBox tokens                      | §4, §5, §6, §9       |  [ ]   |
-| ⭐  |  15   | Access denial explainer                           | §5, §6, §8, §14      |  [ ]   |
+| 💎  |  13   | SD inheritance / SeAssignSecurity                 | §3, §4, §5, T03 §1  |  [ ]   |
+| 💎  |  14   | AppContainer / LowBox tokens                      | §4, §5, §6, §9      |  [ ]   |
+| ⭐  |  15   | Access denial explainer                           | §5, §6, §8, §14     |  [ ]   |
 
 > 💎 = parity work -- matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work -- Impossible OS is superior or first.
@@ -67,7 +67,6 @@
 ---
 
 ## 1. SID & LUID Primitives
-### 1.1 SID type and helpers
 
 - [x] Define `struct SID` in `include/kernel/security/sid.h`:
   ```c
@@ -104,24 +103,23 @@
   - `RtlSubAuthoritySid(sid, n)` → pointer into SubAuthority array
   - `RtlConvertSidToString(str, sid, buf_size)` -- formats `S-1-X-Y-...`
   - `RtlCreateServiceSid(name, sid, len)` -- generates `S-1-5-80-<hash>` for service accounts (used by Service Manager)
-
-### 1.2 LUID type
-
 - [x] Define `LUID` (64-bit opaque identifier):
   ```c
   typedef struct { uint32_t LowPart; int32_t HighPart; } LUID;
   ```
 - [x] `RtlEqualLuid`, `RtlIsZeroLuid`
 - [x] `NtAllocateLocallyUniqueId` -- monotonically incrementing counter, returned to user mode for dynamic LUID allocation
-
-### 1.3 Commit
-
 - [x] Commit: `"kernel/security: SID primitives and well-known SID table"`
+
+> **Test runner:** `scripts\debug\run-security-tests.bat` (SUITE=security), 11 suites, 0 failures expected
+
+> **Verified** (2026-04-13): SID struct at sid.h:25-30 matches Windows ABI (_Static_assert at sid.h:33-40). 13 well-known SIDs initialized in sid.c:34-50 with correct S-1-X-Y values. 7 SID utility functions implemented (RtlLengthSid, RtlEqualSid, RtlCopySid, RtlInitializeSid, RtlSubAuthoritySid, RtlConvertSidToString, RtlCreateServiceSid). LUID at luid.h:15-18, NtAllocateLocallyUniqueId at luid.c:13-19 (atomic counter, SMP-safe). All consumer functions guard with RtlValidSid. RtlInitializeSid clamps count to SID_MAX_SUB_AUTHORITIES. 48-bit authority formatting handles values above 32 bits. Build clean.
+> **Accepted:** FNV-1a service SID derivation (32-bit entropy, not Windows SHA-1 compatible; acceptable for < 100 services, upgrade when crypto library available) -> XREF: 02-kernel-core/TODO-11 §5 or future crypto TODO. LUID 32-bit counter (HighPart always 0; wrap at ~4B allocations, not reachable in practice) -> accept. RtlEqualSid uses memcmp (timing variable; no user-mode oracle exists, constant-time is future hardening).
+> **Quality reviewed** (2026-04-13): dead code clean (all well-known SIDs consumed by token.c, acl.c, default_sds.c). Struct layouts consistent (RtlLengthSid and RtlValidSid agree on 8+4*N). Stack usage bounded (sid_str[80] in RtlAclToCStr). fnv1a_hash_name not in hot path (service registration only). RtlAclToCStr handles invalid SID from RtlConvertSidToString failure (emits "<invalid-sid>"). 3 new tests added: service SID generation, LUID allocator, malformed SID rejection.
 
 ---
 
 ## 2. Privilege Constants & PRIVILEGE_SET
-### 2.1 Privilege LUID constants
 
 - [x] Define all standard privilege LUIDs in `include/kernel/security/privileges.h` as `const LUID` values with `HighPart=0`, `LowPart=<n>`:
 
@@ -152,8 +150,6 @@
   | `SeCreateGlobalPrivilege`         | 30 | objects in global namespace       |
   | `SeCreateSymbolicLinkPrivilege`   | 35 | NtCreateSymbolicLinkObject        |
 
-### 2.2 PRIVILEGE_SET and TOKEN_PRIVILEGES
-
 - [x] Define types:
   ```c
   typedef struct { LUID Luid; uint32_t Attributes; } LUID_AND_ATTRIBUTES;
@@ -172,15 +168,11 @@
   } TOKEN_PRIVILEGES;
   ```
 - [x] `RtlPrivilegeSetToString(ps, buf, len)` -- debug helper
-
-### 2.3 Commit
-
 - [x] Commit: `"kernel/security: privilege LUID table and PRIVILEGE_SET types"`
 
 ---
 
 ## 3. SECURITY_DESCRIPTOR, ACL & ACE Types
-### 3.1 Core types
 
 - [x] Define in `include/kernel/security/acl.h`:
   ```c
@@ -214,18 +206,12 @@
   ```
 - [x] ACE type constants: `ACCESS_ALLOWED_ACE_TYPE=0`, `ACCESS_DENIED_ACE_TYPE=1`, `SYSTEM_AUDIT_ACE_TYPE=2`, `SYSTEM_MANDATORY_LABEL_ACE_TYPE=0x11`
 - [x] ACE flag constants: `OBJECT_INHERIT_ACE`, `CONTAINER_INHERIT_ACE`, `INHERIT_ONLY_ACE`, `INHERITED_ACE`, `SUCCESSFUL_ACCESS_ACE_FLAG`, `FAILED_ACCESS_ACE_FLAG`
-
-### 3.2 ACL helpers
-
 - [x] `RtlCreateAcl(acl, size, rev)` -- initialise empty ACL
 - [x] `RtlAddAccessAllowedAce(acl, rev, mask, sid)` -- append allowed ACE
 - [x] `RtlAddAccessDeniedAce(acl, rev, mask, sid)` -- append denied ACE
 - [x] `RtlAddMandatoryAce(acl, rev, flags, mask, type, integrity_sid)`
 - [x] `RtlGetAce(acl, index, ace_ptr)` -- walk ACE by index
 - [x] `RtlAclToCStr(acl, buf, len)` -- debug dump (`"D:(A;;FA;;;SY)(A;;FA;;;BA)"`)
-
-### 3.3 SECURITY_DESCRIPTOR helpers
-
 - [x] `RtlCreateSecurityDescriptor(sd, rev)`
 - [x] `RtlSetOwnerSecurityDescriptor(sd, owner, defaulted)`
 - [x] `RtlSetGroupSecurityDescriptor(sd, group, defaulted)`
@@ -235,9 +221,6 @@
 - [x] `RtlGetDaclSecurityDescriptor(sd, present, dacl, defaulted)`
 - [x] `RtlAbsoluteToSelfRelativeSD(abs, rel_buf, rel_len)` -- marshal to flat buffer
 - [x] `RtlSelfRelativeToAbsoluteSD(rel, abs_buf, ...)` -- unmarshal from flat buffer
-
-### 3.4 Default SDs for kernel object types
-
 - [x] `SeCreateDefaultSD(type)` -- returns a self-relative SD with:
   - Owner = `SeLocalSystemSid`
   - DACL: `(A;;GA;;;SY)(A;;GA;;;BA)(A;;GR;;;WD)` -- System+Admins=FullControl, Everyone=ReadControl
@@ -246,15 +229,11 @@
   - `OB_TYPE_PROCESS` -- `(A;;GA;;;SY)(A;;0x1FFFFF;;;BA)(A;;0x1000;;;WD)` (create/terminate restricted for Everyone)
   - `OB_TYPE_TOKEN` -- `(A;;GA;;;SY)(A;;0x0008;;;OW)` (Query only for owner)
   - `OB_TYPE_REGISTRY_KEY` -- `(A;;GA;;;SY)(A;;GA;;;BA)(A;;GR;;;BU)` (BuiltinUsers=Read)
-
-### 3.5 Commit
-
 - [x] Commit: `"kernel/security: SECURITY_DESCRIPTOR, ACL, ACE types and helpers"`
 
 ---
 
 ## 4. ACCESS_TOKEN Object
-### 4.1 Token struct
 
 - [x] Define `struct ACCESS_TOKEN` in `include/kernel/security/token.h`:
   ```c
@@ -288,32 +267,19 @@
   - `SeILHigh` = `S-1-16-12288`
   - `SeILSystem` = `S-1-16-16384`
 - [x] Register `ObpTokenType` via `ob_create_type("Token", sizeof(ACCESS_TOKEN), ...)` (→ XREF `TODO-03 §1`); token objects are reference-counted kernel objects
-
-### 4.2 Token creation and system tokens
-
 - [x] `SeCreateSystemToken()` -- called in Phase 0 of kernel init (→ XREF `TODO-01-kernel-init-sequencing.md §2`): UserSid=`SeLocalSystemSid`, Groups=`{SeBuiltinAdministratorsSid | SE_GROUP_ENABLED, SeWorldSid | SE_GROUP_ENABLED}`, all privileges enabled, IL=System; stored in `PsInitialSystemProcess->Token`
 - [x] `SeCreateUserToken(user_sid, admin)` -- creates Medium IL primary token for interactive logon (called by login manager in `09-desktop-shell`); if `admin`, also creates High IL linked token for elevation; groups include `SeBuiltinUsersSid`; privileges: `SeChangeNotifyPrivilege` enabled by default; `SeShutdownPrivilege`/`SeUndockPrivilege` enabled by default; admin token adds `SeBackupPrivilege`, `SeRestorePrivilege`, `SeLoadDriverPrivilege` as disabled by default (present but off until elevated)
-
-### 4.3 Token query syscalls
-
 - [x] `NtOpenProcessToken(ProcessHandle, DesiredAccess, TokenHandle)` -- opens the primary token of a process; access check on the process object for `PROCESS_QUERY_INFORMATION`; returns handle with requested access
 - [x] `NtOpenThreadToken(ThreadHandle, DesiredAccess, OpenAsSelf, TokenHandle)` -- returns impersonation token or `STATUS_NO_TOKEN` if thread is not impersonating
 - [x] `NtQueryInformationToken(hToken, class, buf, len, retlen)` -- implement `TokenUser`, `TokenGroups`, `TokenPrivileges`, `TokenOwner`, `TokenPrimaryGroup`, `TokenDefaultDacl`, `TokenType`, `TokenImpersonationLevel`, `TokenStatistics`, `TokenIntegrityLevel`, `TokenElevationType`, `TokenLinkedToken`, `TokenIsElevated`
-
-### 4.4 Token mutation syscalls
-
 - [x] `NtDuplicateToken(Existing, Access, ObjAttr, EffectiveOnly, Type, New)` -- deep-copies token struct, allocates new `TokenId` LUID; `EffectiveOnly` strips disabled privileges and groups
 - [x] `NtAdjustPrivilegesToken(hToken, DisableAll, NewState, BufferLen, PreviousState, ReturnLen)` -- for each LUID_AND_ATTRIBUTES in `NewState`: find matching privilege in token, apply SE_PRIVILEGE_ENABLED / SE_PRIVILEGE_REMOVED; requires `TOKEN_ADJUST_PRIVILEGES`; write previous state to `PreviousState`; return `STATUS_NOT_ALL_ASSIGNED` if any LUID not found
 - [x] `NtAdjustGroupsToken(hToken, ResetToDefault, NewState, BufferLen, PreviousState, ReturnLen)` -- enable/disable group SIDs; cannot re-enable a `SE_GROUP_USE_FOR_DENY_ONLY` group (immutable once disabled)
-
-### 4.5 Commit
-
 - [x] Commit: `"kernel/security: ACCESS_TOKEN object, SeCreateSystemToken, NtOpenProcessToken"`
 
 ---
 
 ## 5. SeAccessCheck Engine
-### 5.1 Subject security context
 
 - [ ] Define `SECURITY_SUBJECT_CONTEXT`:
   ```c
@@ -326,9 +292,6 @@
   ```
 - [ ] `SeCaptureSubjectContext(ctx)` -- reads `task_current()->token` (primary) and TEB impersonation token (if any) into `ctx`; thread-safe snapshot
 - [ ] `SeReleaseSubjectContext(ctx)` -- dereferences token pointers
-
-### 5.2 Generic access mapping
-
 - [ ] Define `GENERIC_MAPPING` per object type in `include/kernel/security/generic_mapping.h`:
   ```c
   typedef struct {
@@ -338,9 +301,6 @@
   ```
 - [ ] Declare mappings for: File (standard Unix rwx mapping), Process, Thread, Token, Registry Key, Event, Mutex, Semaphore, Waitable Timer
 - [ ] `RtlMapGenericMask(access, mapping)` -- replaces `GENERIC_READ`/`WRITE`/ `EXECUTE`/`ALL` bits with type-specific masks in-place
-
-### 5.3 Access check algorithm
-
 - [ ] Implement `SeAccessCheck(sd, ctx, ctx_locked, desired, prev_granted, privs, mapping, mode, granted, status)`:
   1. **Kernel bypass**: if `mode == KernelMode` → `*granted = desired`, return `TRUE`
   2. **Owner bypass**: if `ctx->PrimaryToken->UserSid` == SD owner → set `READ_CONTROL | WRITE_DAC` bits in accumulated access without DACL check
@@ -360,14 +320,8 @@
   - Subject: user=SY → expect GRANT
   - Subject: user=BU, desired=ReadControl → expect GRANT
   ```
-
-### 5.4 Integration with Object Manager
-
 - [ ] In `ObpReferenceObjectByHandle` (→ XREF `TODO-03 §3`): after locating the handle entry, call `SeAccessCheck(object->SecurityDescriptor, ctx, FALSE, desired, 0, NULL, object->Type->GenericMapping, UserMode, &granted, &status)`; return `STATUS_ACCESS_DENIED` if check fails
 - [ ] `NtAccessCheck(sd, token, desired, mapping, privs, priv_len, granted, status)` syscall -- user-mode accessible wrapper for testing DACLs without opening an object
-
-### 5.5 Commit
-
 - [ ] Commit: `"kernel/security: SeAccessCheck engine and ObpReferenceObjectByHandle integration"`
 
 **Test checkpoint:** `SeAccessCheck` with KernelMode → always grants. SD with deny-ACE for BA before allow-ACE → BA token denied (deny takes precedence). SD with NULL DACL → all granted. SD with empty DACL (AceCount=0) → all denied. Owner requesting READ_CONTROL → granted via owner bypass. Restricted token with restricting SID not in DACL → denied even though normal SIDs match. Serial log: `"[SRM] SeAccessCheck: desired=0x%x granted=0x%x result=%s"`. Test on: QEMU WHPX + TCG (pure kernel logic, no hardware).

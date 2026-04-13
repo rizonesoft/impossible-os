@@ -105,6 +105,10 @@ int RtlEqualSid(const SID *a, const SID *b)
     if (!a || !b)
         return 0;
 
+    /* Reject malformed SIDs before computing length from SubAuthorityCount */
+    if (!RtlValidSid(a) || !RtlValidSid(b))
+        return 0;
+
     len_a = RtlLengthSid(a);
     len_b = RtlLengthSid(b);
     if (len_a != len_b)
@@ -118,6 +122,9 @@ int RtlCopySid(void *buf, uint32_t buf_size, const SID *src)
     uint32_t len;
 
     if (!buf || !src)
+        return -1;
+
+    if (!RtlValidSid(src))
         return -1;
 
     len = RtlLengthSid(src);
@@ -134,6 +141,10 @@ void RtlInitializeSid(SID *sid, const uint8_t authority[6], uint8_t count)
 
     if (!sid || !authority)
         return;
+
+    /* Clamp to SID spec maximum to prevent out-of-bounds writes */
+    if (count > SID_MAX_SUB_AUTHORITIES)
+        count = SID_MAX_SUB_AUTHORITIES;
 
     sid->Revision = SID_REVISION;
     sid->SubAuthorityCount = count;
@@ -163,14 +174,23 @@ int RtlConvertSidToString(char *buf, uint32_t buf_size, const SID *sid)
     if (!buf || !sid || buf_size < 8)
         return -1;
 
+    if (!RtlValidSid(sid))
+        return -1;
+
     /* Extract 48-bit authority as a single value */
     authority = 0;
     for (i = 0; i < 6; i++)
         authority = (authority << 8) | sid->IdentifierAuthority[i];
 
-    /* Format: S-<Revision>-<Authority> */
-    written = snprintf(buf, buf_size, "S-%u-%u",
-                       (uint32_t)sid->Revision, (uint32_t)authority);
+    /* Format: S-<Revision>-<Authority>
+     * Per Windows spec: authorities <= 2^32 use decimal, above use 0x hex.
+     * All well-known authorities (0-16) fit in 32 bits. */
+    if (authority > 0xFFFFFFFFULL)
+        written = snprintf(buf, buf_size, "S-%u-0x%llx",
+                           (uint32_t)sid->Revision, (unsigned long long)authority);
+    else
+        written = snprintf(buf, buf_size, "S-%u-%u",
+                           (uint32_t)sid->Revision, (uint32_t)authority);
     if (written < 0 || (uint32_t)written >= buf_size)
         return -1;
 
