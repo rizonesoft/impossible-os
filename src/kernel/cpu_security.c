@@ -10,6 +10,7 @@
 #include "kernel/msr.h"
 #include "kernel/boot_init.h"
 #include "kernel/klog.h"
+#include "kernel/security/pku.h"
 
 /* ---- CR4 bit definitions ---- */
 #define CR4_UMIP  (1UL << 11)
@@ -158,6 +159,7 @@ void cpu_enable_pku(void)
     uint64_t cr4 = read_cr4();
     if (!(cr4 & CR4_PKE)) {
         write_cr4(cr4 | CR4_PKE);
+        pku_enabled = 1;
         klog(LOG_DEBUG, "cpu", "PKU enabled (CR4.PKE)");
     }
 }

@@ -16,6 +16,10 @@
 #include "kernel/sched/spinlock.h"
 #include "kernel/klog.h"
 
+/* Global flag: set to 1 after CR4.PKE is successfully written.
+ * Gates all RDPKRU/WRPKRU operations. */
+int pku_enabled = 0;
+
 /* Bitmap of allocated keys: bit N = 1 means key N is in use.
  * Key 0 is always reserved (set at init). */
 static uint16_t s_key_bitmap;
@@ -32,7 +36,7 @@ int pku_alloc_key(void)
     uint64_t irq_flags;
     int key;
 
-    if (!cpu_has(CPU_FEATURE_PKU))
+    if (!pku_enabled)
         return -1;
 
     spin_lock_irqsave(&s_key_lock, &irq_flags);
@@ -72,7 +76,7 @@ void pku_set_permissions(int key, uint32_t flags)
 
     if (key < 0 || key >= PKU_KEY_COUNT)
         return;
-    if (!cpu_has(CPU_FEATURE_PKU))
+    if (!pku_enabled)
         return;
 
     /* Read current PKRU, modify the 2-bit field for this key, write back.
@@ -96,7 +100,7 @@ uint32_t pku_read(void)
 {
     uint32_t pkru;
 
-    if (!cpu_has(CPU_FEATURE_PKU))
+    if (!pku_enabled)
         return 0;
 
     __asm__ volatile (
