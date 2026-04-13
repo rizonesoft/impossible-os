@@ -1113,7 +1113,7 @@ Extended file operations: metadata queries, attribute modification, device I/O c
 > **Expected:** 9 suites (2 Win32 + 7 NT SSDT), 0 failures
 
 > **Verified** (2026-04-13): all 10 NtXxx handlers registered (SSDT 0x0090-0x009B), evidence mapped to nt_registry.c:730-739. NT path resolution (\Registry\Machine\...) functional. Predefined handle safety (RegIsPredefinedKey). NtDeleteKey returns STATUS_KEY_HAS_CHILDREN for non-empty keys. KeyFullInformation supported in NtEnumerateKey. ntdll exports sorted. Build clean.
-> **Accepted:** HKEY-to-HANDLE ABI gap (registry handles not in OB table, NtClose cannot close them) -> XREF: 02-kernel-core/TODO-13 §4. SMP locking for registry pools -> XREF: 03-memory-concurrency/TODO-06. ASCII UNICODE_STRING kernel-wide -> XREF: 02-kernel-core/TODO-13 §4. KeyNodeInformation returns STATUS_INVALID_PARAMETER (acceptable, rarely used).
+> **Accepted:** HKEY-to-HANDLE ABI gap (registry handles not in OB table, NtClose cannot close them) -> XREF: 02-kernel-core/TODO-13 §4. SMP locking for registry pools -> XREF: 02-kernel-core/TODO-13 §14. ASCII UNICODE_STRING kernel-wide -> XREF: 02-kernel-core/TODO-13 §4. KeyNodeInformation -> XREF: 02-kernel-core/TODO-13 §4 (KEY_INFORMATION_CLASS completeness).
 > **Quality reviewed** (2026-04-13): dead code clean (all structs/helpers used). SSDT numbers match service_numbers.h. Error mapping consistent (ERROR_ACCESS_DENIED -> STATUS_ACCESS_DENIED; child-count check returns STATUS_KEY_HAS_CHILDREN specifically). Stack usage bounded by REG_MAX_* constants (512B data arrays). NtEnumerateKey KeyFullInformation opens/queries/closes child key inline.
 
 ---

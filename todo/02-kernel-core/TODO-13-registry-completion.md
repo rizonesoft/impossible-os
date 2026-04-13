@@ -58,7 +58,7 @@
 | 💎  |   1   | Access rights, API limits, FILETIME & RegFlushKey  | TODO-11 §3,§4,§5, TODO-07 §2 |  [ ]   |
 | 💎  |   2   | Advanced key ops (copy, rename, save, volatile)    | §1                           |  [ ]   |
 | 💎  |   3   | Change notifications (core + exclusive extras)     | §2                           |  [ ]   |
-| 💎  |   4   | Nt/Zw registry syscalls & pointer validation       | §1, TODO-05 §14,§15          |  [ ]   |
+| 💎  |   4   | Nt/Zw registry syscalls & pointer validation       | §1, TODO-05 §14, §15         |  [ ]   |
 | 💎  |   5   | advapi32.dll compat (A/W, HKCR, error map)         | §4                           |  [ ]   |
 | 💎  |   6   | Registry virtualization & .reg import/export       | §5                           |  [ ]   |
 | 💎  |   7   | `regedit` shell tool                               | §4                           |  [ ]   |
@@ -68,6 +68,7 @@
 | 💎  |  11   | KTM Transaction syscalls wired to SSDT             | §9, TODO-05 §14, §15         |  [ ]   |
 | 💎  |  12   | Registry symlink completion (create, open-link)    | §2, §4                       |  [ ]   |
 | ⭐  |  13   | Schema-validated registry keys                     | §3, §4                       |  [ ]   |
+| 💎  |  14   | Registry SMP synchronization                       | TODO-05 §14                  |  [ ]   |
 
 > 💎 = parity work -- matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work -- Impossible OS is superior or first.
@@ -537,6 +538,25 @@ Basic `REG_LINK` type, `REG_FLAG_LINK` flag, and transparent symlink resolution 
 
 ---
 
+## 14. Registry SMP Synchronization
+
+> [!NOTE]
+> The registry engine (`registry.c`) was designed as a single-threaded subsystem used only during boot. TODO-05 §14 exposed it to concurrent SSDT dispatch from user-mode tasks, making three unsynchronized shared resources vulnerable to SMP races: pool allocators, handle pool, and tree structure. This section adds a registry-wide rwlock so read-heavy workloads (enumerate, query) can run concurrently while mutations (create, delete, set value) serialize safely.
+
+- [ ] Declare `static spinlock_t reg_lock` in `registry.c`; initialize in `registry_init()`
+- [ ] Wrap all `RegCreateKeyEx`, `RegOpenKeyEx`, `RegCloseKey`, `RegDeleteKey`, `RegDeleteTree`, `RegDeleteKeyDirect` entry points with `spin_lock(&reg_lock)` / `spin_unlock(&reg_lock)` (write path)
+- [ ] Wrap all `RegSetValueEx`, `RegDeleteValue` entry points with write lock
+- [ ] Wrap all `RegQueryValueEx`, `RegGetValue`, `RegEnumKeyEx`, `RegEnumValue`, `RegQueryInfoKey` entry points with read lock (or shared spinlock if available; single spinlock is acceptable for v1)
+- [ ] Protect pool allocators: `reg_alloc_key()`, `reg_alloc_value()`, `reg_alloc_handle()`, `reg_free_handle()` must hold the lock when called (verify callers already hold it, or acquire internally)
+- [ ] Protect `hive_save()` / `hive_load()` / `registry_flush()` / `registry_save_all()` / `registry_load_hives()` with the lock (these walk the entire tree)
+- [ ] SMP stress test: concurrent `NtCreateKey` + `NtDeleteKey` + `NtEnumerateKey` from multiple tasks; verify no pool corruption, no stale pointer dereference, no duplicate handle allocation
+- [ ] Upgrade to rwlock if profiling shows read contention (deferred; spinlock is correct first step for a 512-key pool)
+- [ ] Commit: `"kernel/registry: SMP-safe registry with spinlock around all pool and tree operations"`
+
+**Test checkpoint:** Two tasks concurrently creating and deleting keys under `\Registry\Machine\Software\SmpTest` for 1000 iterations. No kernel fault, no duplicate handles, enumeration sees consistent child counts. `RegQueryInfoKey` returns correct `lpcSubKeys` under concurrent mutation. Serial log: `"[REG] SMP lock: %u contention events"` (informational). Test on: QEMU WHPX (2 vCPU).
+
+---
+
 ## OS Comparison
 
 | ⭐   | Feature                              | 🪟 Win11                     | 🐧 Linux                           | 🚀 Impossible OS               |
@@ -570,10 +590,11 @@ Basic `REG_LINK` type, `REG_FLAG_LINK` flag, and transparent symlink resolution 
 | ⭐   | Memory-mapped hive                   | ❌ Static pool               | ✅ dconf mmap reads                | ⬜ §10                         |
 | ⭐   | B-tree cell format                   | ✅ `regf` format             | ❌ N/A                             | ⬜ §10                         |
 | ⭐   | Schema-validated keys                | ❌ No type enforcement       | ⚠️ GSettings XML schemas          | ⬜ §13                         |
+| 💎   | SMP-safe registry operations         | ✅ CmpLock pushlock          | ✅ dconf GVDB atomic               | ⬜ §14                         |
 | 💎   | NtFreezeRegistry / NtThawRegistry    | ✅ VSS backup support        | ❌ N/A                             | ⬜ §4                          |
 | 💎   | NtInitializeRegistry boot signal     | ✅ SMSS boot sequence        | ❌ N/A                             | ⬜ §4                          |
 
-After §1--7 + §12, Impossible OS reaches full Windows 11 parity on every registry feature including access rights, FILETIME timestamps, symlink creation, complete NT syscall surface (30+ syscalls with all info classes), notifications, HKCR, virtualization with control flags, `.reg` I/O, and the regedit tool. Linux has no equivalent in-kernel typed store -- it relies on user-space GNOME dconf or scattered ini files.
+After §1--7 + §12 + §14, Impossible OS reaches full Windows 11 parity on every registry feature including access rights, FILETIME timestamps, symlink creation, complete NT syscall surface (30+ syscalls with all info classes), notifications, HKCR, virtualization with control flags, `.reg` I/O, the regedit tool, and SMP-safe concurrent access. Linux has no equivalent in-kernel typed store; it relies on user-space GNOME dconf or scattered ini files.
 Sections §8--10 + §13 deliver exclusive features that exceed Windows 11: incremental delta flush saves I/O on large hives, notification coalescing and change-detail payloads eliminate the need to re-query after a change, atomic transactions fill a gap Windows deprecated, snapshot/diff and search API replace third-party RegShot, hive compaction and mmap make the registry faster, and schema-validated keys provide type enforcement that neither Windows nor Linux offers natively.
 
 > [!NOTE]
