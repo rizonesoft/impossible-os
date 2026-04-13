@@ -371,22 +371,23 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
     POST16(POST16_NX_POLICY_OK);
 
     /* --- PAT: program entry 1 = WC for framebuffer VRAM ---
-     * cpu_harden() wrote PAT earlier, but vmm_promote_to_1g() did a CR3
-     * reload (vmm_flush_tlb_all) which can cause WHPX to reset per-vCPU
-     * MSRs. Re-program PAT after all page table modifications to ensure
-     * the write sticks, then readback verify. */
+     * PAT is per-CPU; cpu_harden() programmed it, but page table
+     * modifications may have triggered a CR3 reload. Write again and
+     * readback verify. If WHPX traps the write (returns Intel default),
+     * degrade to WT (still functional, ~2-5x slower than WC for FB). */
     POST16(POST16_PAT);
     {
         cpu_configure_pat();
         uint64_t pat = msr_read(MSR_IA32_PAT);
         uint8_t entry1 = (uint8_t)((pat >> 8) & 0xFF);
-        if (entry1 != 0x01) {
-            klog(LOG_FATAL, "mm",
-                 "PAT entry 1 readback: expected WC (0x01), got 0x%02x",
+        if (entry1 == 0x01) {
+            klog(LOG_INFO, "mm", "PAT: entry 1 = WC (0x%016llx)", pat);
+        } else {
+            klog(LOG_WARN, "mm",
+                 "PAT: entry 1 = 0x%02x (expected WC=0x01); hypervisor may trap PAT writes. "
+                 "Framebuffer mapped WT instead of WC (functional, slower)",
                  (uint64_t)entry1);
-            boot_halt("PAT MSR write failed -- WC framebuffer not possible");
         }
-        klog(LOG_INFO, "mm", "PAT: 0x%016llx (entry 1 = WC)", pat);
     }
     POST16(POST16_PAT_OK);
 
