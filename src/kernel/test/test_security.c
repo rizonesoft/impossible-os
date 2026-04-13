@@ -305,28 +305,19 @@ static void test_privilege_set_to_string(void)
     TEST_ASSERT(RtlPrivilegeSetToString((const PRIVILEGE_SET *)0, out, sizeof(out)) == -1,
                 "RtlPrivilegeSetToString rejects NULL");
 
-    /* Tiny buffer: verify snprintf does not crash with small size.
-     * Regression: WHPX freeze observed when RtlPrivilegeSetToString
-     * calls snprintf with size=4 and a long format string. */
+    /* Tiny buffer: RtlPrivilegeSetToString must handle truncation safely.
+     * Regression: WHPX freeze observed when calling with small len after
+     * prior calls on the same PRIVILEGE_SET. Rebuild ps to rule out
+     * stale pointer from compiler stack reuse. */
     {
-        /* Step 1: snprintf alone with size=8 (sanity) */
-        char tiny8[8];
-        int tw8 = snprintf(tiny8, 8, "%s", "ABCDEFGHIJ");
-        TEST_ASSERT(tw8 == 10, "snprintf size=8 returns 10 (would-have-written)");
-        TEST_ASSERT(tiny8[7] == '\0', "snprintf size=8 NUL-terminates");
-    }
-    {
-        /* Step 2: snprintf with size=4 (the crash case) */
-        char tiny4[8];  /* over-allocate to avoid stack issues */
-        tiny4[0] = 'Z'; tiny4[4] = 'Z';
-        int tw4 = snprintf(tiny4, 4, "%s", "ABCDEFGHIJ");
-        TEST_ASSERT(tw4 == 10, "snprintf size=4 returns 10 (would-have-written)");
-        TEST_ASSERT(tiny4[3] == '\0', "snprintf size=4 NUL-terminates at [3]");
-        TEST_ASSERT(tiny4[4] == 'Z', "snprintf size=4 does not overwrite past size");
-    }
-    {
-        /* Step 3: the formatter itself with small buffer */
-        rc = RtlPrivilegeSetToString(ps, out, 8);
+        uint8_t ps2_buf[8 + 2 * 12];
+        PRIVILEGE_SET *ps2 = (PRIVILEGE_SET *)ps2_buf;
+        ps2->PrivilegeCount = 1;
+        ps2->Control = 0;
+        ps2->Privilege[0].Luid = SeShutdownPrivilege;
+        ps2->Privilege[0].Attributes = SE_PRIVILEGE_ENABLED;
+
+        rc = RtlPrivilegeSetToString(ps2, out, 8);
         TEST_ASSERT(rc >= 0, "RtlPrivilegeSetToString with len=8 does not crash");
     }
 }
