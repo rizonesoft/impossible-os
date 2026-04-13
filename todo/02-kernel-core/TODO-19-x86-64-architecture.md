@@ -58,8 +58,8 @@
 | 💎  |   4   | MSR management infrastructure (`msr.c`)             | (none)               |  [x]   |
 | 💎  |   5   | UMIP + PKU protection keys                          | §4                   |  [x]   |
 | 💎  |   6   | 1 GiB huge pages + Write-Combining PAT              | §4                   |  [x]   |
-| 💎  |   7   | FRED unified event delivery                         | §4, T06 §3           |  [ ]   |
-| 💎  |   8   | LKGS fast GS-base swap                              | §4                   |  [ ]   |
+| 💎  |   7   | FRED unified event delivery                         | §4, T06 §3           | blocked |
+| 💎  |   8   | LKGS fast GS-base swap                              | §4                   | blocked |
 | 💎  |   9   | CPU topology: Zen chiplets + Intel hybrid P/E-core  | (none)               |  [ ]   |
 | 💎  |  10   | Performance monitoring counters (Intel + AMD)       | §4                   |  [ ]   |
 | 💎  |  11   | OSVW errata + RDTSCP processor ID setup             | §4, T07 §3           |  [ ]   |
@@ -234,6 +234,9 @@
 
 ## 7. FRED Unified Event Delivery
 
+> [!WARNING]
+> **Blocked: no test platform.** FRED requires Intel Granite Rapids (2024 server) or later. No available platform (WHPX i5-11600K, TCG, VirtualBox, Haswell bare metal) supports FRED. QEMU does not emulate FRED. Implementing untested interrupt entry code risks total system failure on the first FRED-capable hardware. Implement when FRED hardware or a FRED-capable emulator becomes available.
+
 - [ ] Check `cpu_has(CPU_FEATURE_FRED)` (CPUID leaf 7, ECX=1, EAX bit 17)
 - [ ] FRED delivers all events (interrupts, exceptions, `SYSCALL`) to a single kernel entry point with the event type and vector in registers; eliminates IDT corruption edge-cases and provides native NMI nesting
 - [ ] Enable: `cpu_set_cr4_bit(CR4_FRED)` where `CR4_FRED = (1ULL << 32)`; configure `IA32_FRED_CONFIG` MSR with:
@@ -254,6 +257,9 @@
 ---
 
 ## 8. LKGS Fast GS-Base Swap
+
+> [!WARNING]
+> **Blocked: no test platform.** LKGS requires Intel Granite Rapids or later (same silicon as FRED). No available platform supports LKGS. Replacing SWAPGS with untested LKGS in the syscall/ISR entry path risks corrupting per-CPU GS-base on the first LKGS-capable hardware. Implement when LKGS hardware becomes available.
 
 - [ ] Check `cpu_has(CPU_FEATURE_LKGS)` (CPUID leaf 7, ECX=1, EAX bit 18)
 - [ ] `LKGS reg` writes directly to `IA32_KERNEL_GS_BASE` without touching the active GS; eliminates `SWAPGS` and its speculative side-channel
