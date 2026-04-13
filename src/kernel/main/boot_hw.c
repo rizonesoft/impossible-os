@@ -370,11 +370,14 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
     vmm_promote_to_1g();
     POST16(POST16_NX_POLICY_OK);
 
-    /* --- PAT: reprogram entry 1 from WT to WC for framebuffer VRAM ---
-     * PAT is per-CPU; cpu_harden() already called cpu_configure_pat() above.
-     * Readback verify here on BSP to catch hypervisors that trap PAT writes. */
+    /* --- PAT: program entry 1 = WC for framebuffer VRAM ---
+     * cpu_harden() wrote PAT earlier, but vmm_promote_to_1g() did a CR3
+     * reload (vmm_flush_tlb_all) which can cause WHPX to reset per-vCPU
+     * MSRs. Re-program PAT after all page table modifications to ensure
+     * the write sticks, then readback verify. */
     POST16(POST16_PAT);
     {
+        cpu_configure_pat();
         uint64_t pat = msr_read(MSR_IA32_PAT);
         uint8_t entry1 = (uint8_t)((pat >> 8) & 0xFF);
         if (entry1 != 0x01) {
