@@ -14,6 +14,7 @@
 #include "kernel/boot_info.h"
 #include "registry.h"
 #include "gfx_simd.h"
+#include "kernel/security/pku.h"
 #include "kernel/drivers/serial.h"
 #include "kernel/klog.h"
 #include "kernel/boot_timing.h"
@@ -412,6 +413,10 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
     /* AVX-512 opt-in with throttle guard (requires AVX2 as baseline) */
     simd_enable_avx512();
     boot_progress(0, "SIMD", POST16_SIMD_OK);
+
+    /* PKU key allocator (must run after cpu_configure_xcr0 sets XCR0 bit 9) */
+    if (cpu_has(CPU_FEATURE_PKU))
+        pku_init();
 
     klog(LOG_DEBUG, "", "");
     klog(LOG_DEBUG, "", "[PHASE0] complete -- serial, memory, klog, CPUID, SIMD ready");

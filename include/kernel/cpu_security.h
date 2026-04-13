@@ -23,7 +23,17 @@ void cpu_enable_smep(void);
  * Prevents kernel from reading/writing user-mode pages without CLAC/STAC. */
 void cpu_enable_smap(void);
 
-/* Enable NX for the current core.
+/* Enable UMIP (User-Mode Instruction Prevention) via CR4.UMIP.
+ * Prevents ring-3 from executing SGDT/SIDT/SLDT/SMSW/STR (#GP on attempt).
+ * Eliminates kernel address leaks from user-mode. */
+void cpu_enable_umip(void);
+
+/* Enable PKU (Protection Keys for User-mode) via CR4.PKE.
+ * Requires XCR0 bit 9 (PKRU state) to be set by cpu_configure_xcr0().
+ * PKU only affects ring-3 data accesses; kernel is unaffected. */
+void cpu_enable_pku(void);
+
+/* Enable NX, UMIP, and PKU for the current core.
  * Call on BSP in Phase 0 and on each AP during SMP bringup. */
 void cpu_harden(void);
 

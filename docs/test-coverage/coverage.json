@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-04-13T09:33:16Z",
-  "total_suites": 338,
-  "total_assertions": 1030,
+  "timestamp": "2026-04-13T09:51:48Z",
+  "total_suites": 346,
+  "total_assertions": 1042,
   "files": [
     {"file": "test_acpi_power.c", "suites": 7, "assertions": 10},
     {"file": "test_blackbox.c", "suites": 11, "assertions": 9},
@@ -9,7 +9,7 @@
     {"file": "test_boot_info.c", "suites": 22, "assertions": 22},
     {"file": "test_boot_init.c", "suites": 23, "assertions": 85},
     {"file": "test_bulletproof.c", "suites": 7, "assertions": 39},
-    {"file": "test_cpu_security.c", "suites": 29, "assertions": 49},
+    {"file": "test_cpu_security.c", "suites": 37, "assertions": 61},
     {"file": "test_crashdump.c", "suites": 35, "assertions": 121},
     {"file": "test_exec.c", "suites": 24, "assertions": 59},
     {"file": "test_heap.c", "suites": 4, "assertions": 9},

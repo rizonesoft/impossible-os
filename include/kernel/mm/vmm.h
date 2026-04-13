@@ -21,6 +21,12 @@
 #define VMM_FLAG_GLOBAL     (1ULL << 8)
 #define VMM_FLAG_NX         (1ULL << 63)  /* No-Execute */
 
+/* Protection Key (PKU): 4-bit key in PTE bits 62:59.
+ * Key 0 = default (full access). Keys 1-15 are controlled by PKRU.
+ * Only effective when CR4.PKE=1 and access is from ring 3. */
+#define VMM_PKU_KEY(k)      ((uint64_t)((k) & 0xF) << 59)
+#define VMM_PKU_KEY_GET(pte) (((pte) >> 59) & 0xF)
+
 /* Common flag combinations */
 #define VMM_KERNEL_RW  (VMM_FLAG_PRESENT | VMM_FLAG_WRITABLE)
 #define VMM_KERNEL_RO  (VMM_FLAG_PRESENT)

@@ -16,6 +16,8 @@
 #include "kernel/smp.h"
 #include "kernel/msr.h"
 #include "kernel/mm/memops.h"
+#include "kernel/mm/vmm.h"
+#include "kernel/security/pku.h"
 #include "gfx_simd.h"
 
 /* ---- S1: NX Bit ---- */
@@ -536,6 +538,131 @@ static void test_msr_cpuid_gate_pattern(void)
                    "MPERF readable when AVX512F present (CPUID-gated)");
 }
 
+/* ---- S5: UMIP + PKU ---- */
+
+static void test_umip_cr4_set(void)
+{
+    if (!cpu_has(CPU_FEATURE_UMIP)) {
+        TEST_SKIP("CPU does not support UMIP");
+        return;
+    }
+    uint64_t cr4;
+    __asm__ volatile("mov %%cr4, %0" : "=r"(cr4));
+    TEST_ASSERT(cr4 & (1ULL << 11),
+                "CR4.UMIP (bit 11) is set when CPU supports UMIP");
+}
+
+static void test_pku_cr4_pke_set(void)
+{
+    if (!cpu_has(CPU_FEATURE_PKU)) {
+        TEST_SKIP("CPU does not support PKU");
+        return;
+    }
+    extern struct cpu_features g_cpu;
+    if (!(g_cpu.xcr0_active & (1UL << 9))) {
+        TEST_SKIP("XCR0 bit 9 (PKRU) not set");
+        return;
+    }
+    uint64_t cr4;
+    __asm__ volatile("mov %%cr4, %0" : "=r"(cr4));
+    TEST_ASSERT(cr4 & (1ULL << 22),
+                "CR4.PKE (bit 22) is set when PKU + XCR0 bit 9 active");
+}
+
+static void test_pku_xcr0_bit9(void)
+{
+    if (!cpu_has(CPU_FEATURE_PKU)) {
+        TEST_SKIP("CPU does not support PKU");
+        return;
+    }
+    extern struct cpu_features g_cpu;
+    TEST_ASSERT(g_cpu.xcr0_active & (1UL << 9),
+                "XCR0 bit 9 (PKRU state) is set when PKU supported");
+}
+
+static void test_pku_alloc_free(void)
+{
+    if (!cpu_has(CPU_FEATURE_PKU)) {
+        TEST_SKIP("PKU not available");
+        return;
+    }
+    int key = pku_alloc_key();
+    TEST_ASSERT(key >= 1 && key <= 15,
+                "pku_alloc_key returns key in range 1-15");
+    pku_free_key(key);
+
+    /* Allocate again; should get a key (possibly the same one) */
+    int key2 = pku_alloc_key();
+    TEST_ASSERT(key2 >= 1 && key2 <= 15,
+                "pku_alloc_key returns valid key after free");
+    pku_free_key(key2);
+}
+
+static void test_pku_read_pkru(void)
+{
+    if (!cpu_has(CPU_FEATURE_PKU)) {
+        TEST_SKIP("PKU not available");
+        return;
+    }
+    uint32_t pkru = pku_read();
+    /* Key 0 (bits 1:0) should be 0 (full access) */
+    TEST_ASSERT_EQ(pkru & 3, 0,
+                   "PKRU key 0 has full access (bits 1:0 == 0)");
+}
+
+static void test_pku_set_permissions(void)
+{
+    if (!cpu_has(CPU_FEATURE_PKU)) {
+        TEST_SKIP("PKU not available");
+        return;
+    }
+    int key = pku_alloc_key();
+    if (key < 0) {
+        TEST_SKIP("No PKU keys available");
+        return;
+    }
+
+    /* Set write-disable on the key */
+    pku_set_permissions(key, PKU_WRITE_DISABLE);
+    uint32_t pkru = pku_read();
+    uint32_t field = (pkru >> (key * 2)) & 3;
+    TEST_ASSERT_EQ(field, PKU_WRITE_DISABLE,
+                   "PKRU key field matches PKU_WRITE_DISABLE after set");
+
+    /* Restore to access-disable (default) and free */
+    pku_set_permissions(key, PKU_ACCESS_DISABLE);
+    pku_free_key(key);
+}
+
+static void test_pku_pte_key_macros(void)
+{
+    /* Verify PTE key encode/decode round-trips */
+    uint64_t pte = VMM_FLAG_PRESENT | VMM_FLAG_USER | VMM_PKU_KEY(7);
+    TEST_ASSERT_EQ(VMM_PKU_KEY_GET(pte), 7,
+                   "VMM_PKU_KEY(7) encodes and decodes to 7");
+
+    pte = VMM_PKU_KEY(0);
+    TEST_ASSERT_EQ(VMM_PKU_KEY_GET(pte), 0,
+                   "VMM_PKU_KEY(0) encodes and decodes to 0");
+
+    pte = VMM_PKU_KEY(15);
+    TEST_ASSERT_EQ(VMM_PKU_KEY_GET(pte), 15,
+                   "VMM_PKU_KEY(15) encodes and decodes to 15");
+}
+
+static void test_pku_xsave_offset(void)
+{
+    if (!cpu_has(CPU_FEATURE_PKU)) {
+        TEST_SKIP("PKU not available");
+        return;
+    }
+    extern struct cpu_features g_cpu;
+    TEST_ASSERT(g_cpu.pkru_xsave_offset > 0,
+                "PKRU XSAVE offset is non-zero when PKU supported");
+    TEST_ASSERT_EQ(g_cpu.pkru_xsave_size, 4,
+                   "PKRU XSAVE component size is 4 bytes");
+}
+
 /* ---- Registration ---- */
 
 void test_register_x86(void)
@@ -606,6 +733,24 @@ void test_register_x86(void)
         test_msr_try_read_null_out, TEST_CAT_X86);
     test_suite_register_cat("MSR: CPUID-gated msr_try_read pattern",
         test_msr_cpuid_gate_pattern, TEST_CAT_X86);
+
+    /* S5: UMIP + PKU */
+    test_suite_register_cat("UMIP: CR4.UMIP set",
+        test_umip_cr4_set, TEST_CAT_X86);
+    test_suite_register_cat("PKU: CR4.PKE set",
+        test_pku_cr4_pke_set, TEST_CAT_X86);
+    test_suite_register_cat("PKU: XCR0 bit 9 active",
+        test_pku_xcr0_bit9, TEST_CAT_X86);
+    test_suite_register_cat("PKU: alloc/free key",
+        test_pku_alloc_free, TEST_CAT_X86);
+    test_suite_register_cat("PKU: read PKRU value",
+        test_pku_read_pkru, TEST_CAT_X86);
+    test_suite_register_cat("PKU: set_permissions + readback",
+        test_pku_set_permissions, TEST_CAT_X86);
+    test_suite_register_cat("PKU: PTE key macros round-trip",
+        test_pku_pte_key_macros, TEST_CAT_X86);
+    test_suite_register_cat("PKU: XSAVE offset from CPUID",
+        test_pku_xsave_offset, TEST_CAT_X86);
 }
 
 #endif /* KERNEL_TESTS */

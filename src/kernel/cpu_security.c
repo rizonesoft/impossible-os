@@ -12,6 +12,8 @@
 #include "kernel/klog.h"
 
 /* ---- CR4 bit definitions ---- */
+#define CR4_UMIP  (1UL << 11)
+#define CR4_PKE   (1UL << 22)
 #define CR4_SMEP  (1UL << 20)
 #define CR4_SMAP  (1UL << 21)
 
@@ -123,11 +125,50 @@ int copy_to_user(void *user_dst, const void *src, uint32_t len)
     return 0;
 }
 
+/* ---- UMIP (User-Mode Instruction Prevention) via CR4.UMIP ---- */
+
+void cpu_enable_umip(void)
+{
+    if (!cpu_has(CPU_FEATURE_UMIP))
+        return;
+
+    uint64_t cr4 = read_cr4();
+    if (!(cr4 & CR4_UMIP)) {
+        write_cr4(cr4 | CR4_UMIP);
+        klog(LOG_DEBUG, "cpu", "UMIP enabled (CR4.UMIP)");
+    }
+}
+
+/* ---- PKU (Protection Keys for User-mode) via CR4.PKE ---- */
+
+void cpu_enable_pku(void)
+{
+    if (!cpu_has(CPU_FEATURE_PKU))
+        return;
+
+    /* XCR0 bit 9 (PKRU state) must already be set by cpu_configure_xcr0() */
+    {
+        extern struct cpu_features g_cpu;
+        if (!(g_cpu.xcr0_active & (1UL << 9))) {
+            klog(LOG_WARN, "cpu", "PKU: XCR0 bit 9 not set; skipping CR4.PKE");
+            return;
+        }
+    }
+
+    uint64_t cr4 = read_cr4();
+    if (!(cr4 & CR4_PKE)) {
+        write_cr4(cr4 | CR4_PKE);
+        klog(LOG_DEBUG, "cpu", "PKU enabled (CR4.PKE)");
+    }
+}
+
 /* ---- Combined hardening call ---- */
 
 void cpu_harden(void)
 {
     cpu_enable_nx();
+    cpu_enable_umip();
+    cpu_enable_pku();
 }
 
 /* Enable SMEP/SMAP after page tables have been fixed (U/S cleared from
@@ -179,6 +220,26 @@ void cpu_verify_hardening(void)
             klog(LOG_INFO, "cpu", "Verify: SMAP skipped (kernel PTE User bit -- needs KPTI)");
         else
             klog(LOG_WARN, "cpu", "Verify: SMAP FAILED -- CR4.SMAP not set");
+    }
+    POST16(0xD903);
+
+    /* Verify UMIP (CR4 bit 11) */
+    if (cpu_has(CPU_FEATURE_UMIP)) {
+        if (cr4 & CR4_UMIP)
+            klog(LOG_INFO, "cpu", "Verify: UMIP enabled (CR4.UMIP set)");
+        else
+            klog(LOG_WARN, "cpu", "Verify: UMIP FAILED -- CR4.UMIP not set");
+    }
+
+    /* Verify PKU (CR4 bit 22) */
+    if (cpu_has(CPU_FEATURE_PKU)) {
+        extern struct cpu_features g_cpu;
+        if (cr4 & CR4_PKE)
+            klog(LOG_INFO, "cpu", "Verify: PKU enabled (CR4.PKE set)");
+        else if (!(g_cpu.xcr0_active & (1UL << 9)))
+            klog(LOG_INFO, "cpu", "Verify: PKU skipped (XCR0 bit 9 not available)");
+        else
+            klog(LOG_WARN, "cpu", "Verify: PKU FAILED -- CR4.PKE not set");
     }
     POST16(0xD904);
 }

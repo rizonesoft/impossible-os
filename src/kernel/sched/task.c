@@ -256,6 +256,21 @@ void task_alloc_xsave(struct task *t)
              * XSTATE_BV (offset 512, 8 bytes) = 0x01 (x87 state valid) */
             p[FXSAVE_SIZE] = 0x01;
         }
+
+        /* PKRU initial value: 0x55555554 (keys 1-15 access-disabled,
+         * key 0 full access). Only set if PKU is enabled and the XSAVE
+         * area includes the PKRU component. The offset comes from CPUID
+         * leaf 0x0D subleaf 9 (queried in cpuid_init). */
+        if (cpu_has(CPU_FEATURE_PKU) &&
+            g_cpu.pkru_xsave_offset > 0 &&
+            g_cpu.pkru_xsave_offset + 4 <= size) {
+            *(uint32_t *)(p + g_cpu.pkru_xsave_offset) = 0x55555554u;
+            /* Mark PKRU as valid in XSTATE_BV (bit 9) */
+            if (size >= FXSAVE_SIZE + 64) {
+                uint64_t *xstate_bv = (uint64_t *)(p + FXSAVE_SIZE);
+                *xstate_bv |= (1ULL << 9);
+            }
+        }
     }
 }
 

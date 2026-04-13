@@ -130,6 +130,10 @@ struct cpu_features {
     uint8_t  compute_unit_id;     /* physical core within CCD */
     uint8_t  node_id;             /* NUMA domain identifier */
     uint8_t  _pad1[2];            /* alignment padding */
+
+    /* PKRU XSAVE component (from leaf 0x0D subleaf 9) */
+    uint32_t pkru_xsave_offset;   /* byte offset of PKRU in XSAVE area (0 = not available) */
+    uint32_t pkru_xsave_size;     /* size of PKRU component (4 bytes on Intel) */
 };
 
 /* --- API --- */

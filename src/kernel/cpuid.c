@@ -180,7 +180,14 @@ void cpuid_init(void)
         set_flag_if(&g_cpu.flags, CPU_FEATURE_XSAVES,   eax, 3);
     }
 
-    /* ---- Extended leaves: 0x80000001, 0x80000002–4, 0x80000007 ---- */
+    /* ---- Leaf 0x0D subleaf 9: PKRU XSAVE component ---- */
+    if (g_cpu.max_leaf >= 0x0D && (g_cpu.xcr0_supported & (1UL << 9))) {
+        cpuid_raw(0x0D, 9, &eax, &ebx, &ecx, &edx);
+        g_cpu.pkru_xsave_size   = eax;  /* component size (4 bytes) */
+        g_cpu.pkru_xsave_offset = ebx;  /* byte offset in XSAVE area */
+    }
+
+    /* ---- Extended leaves: 0x80000001, 0x80000002 to 4, 0x80000007 ---- */
     cpuid_raw(0x80000000, 0, &eax, &ebx, &ecx, &edx);
     g_cpu.max_ext_leaf = eax;
 
@@ -360,8 +367,9 @@ void cpu_configure_xcr0(void)
         mask |= (1UL << 7);  /* bit 7: Hi16_ZMM */
     }
 
-    if (cpu_has(CPU_FEATURE_UMIP)) {
-        /* PKRU (bit 9) -- enable if PKU is supported */
+    if (cpu_has(CPU_FEATURE_PKU)) {
+        /* PKRU (bit 9) -- per-thread PKRU state saved/restored via XSAVE.
+         * Intel SDM Vol. 1 Section 2.7: PKRU is XCR0 component 9. */
         if (g_cpu.xcr0_supported & (1UL << 9))
             mask |= (1UL << 9);
     }
