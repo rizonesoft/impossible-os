@@ -15,6 +15,7 @@
 #include "kernel/security/token.h"
 #include "kernel/security/privileges.h"
 #include "kernel/ob/ob.h"
+#include "libc/string.h"
 
 /* ---- SID comparison ---- */
 
@@ -303,6 +304,31 @@ static void test_privilege_set_to_string(void)
     /* NULL input returns -1 */
     TEST_ASSERT(RtlPrivilegeSetToString((const PRIVILEGE_SET *)0, out, sizeof(out)) == -1,
                 "RtlPrivilegeSetToString rejects NULL");
+
+    /* Tiny buffer: verify snprintf does not crash with small size.
+     * Regression: WHPX freeze observed when RtlPrivilegeSetToString
+     * calls snprintf with size=4 and a long format string. */
+    {
+        /* Step 1: snprintf alone with size=8 (sanity) */
+        char tiny8[8];
+        int tw8 = snprintf(tiny8, 8, "%s", "ABCDEFGHIJ");
+        TEST_ASSERT(tw8 == 10, "snprintf size=8 returns 10 (would-have-written)");
+        TEST_ASSERT(tiny8[7] == '\0', "snprintf size=8 NUL-terminates");
+    }
+    {
+        /* Step 2: snprintf with size=4 (the crash case) */
+        char tiny4[8];  /* over-allocate to avoid stack issues */
+        tiny4[0] = 'Z'; tiny4[4] = 'Z';
+        int tw4 = snprintf(tiny4, 4, "%s", "ABCDEFGHIJ");
+        TEST_ASSERT(tw4 == 10, "snprintf size=4 returns 10 (would-have-written)");
+        TEST_ASSERT(tiny4[3] == '\0', "snprintf size=4 NUL-terminates at [3]");
+        TEST_ASSERT(tiny4[4] == 'Z', "snprintf size=4 does not overwrite past size");
+    }
+    {
+        /* Step 3: the formatter itself with small buffer */
+        rc = RtlPrivilegeSetToString(ps, out, 8);
+        TEST_ASSERT(rc >= 0, "RtlPrivilegeSetToString with len=8 does not crash");
+    }
 }
 
 /* ---- RtlValidSid rejects malformed ---- */
