@@ -331,6 +331,9 @@
 > **Test runner:** `scripts\debug\run-x86-tests.bat` (SUITE=x86)
 > **Expected:** 54 suites, 0 failures
 
+> **Verified:** 2026-04-13 -- all 5 items confirmed. OSVW: `cpuid.c:324-330` reads `MSR_AMD_OSVW_ID_LEN`/`MSR_AMD_OSVW_STATUS` via `msr_try_read`, gated on `CPU_FEATURE_OSVW` AND AMD vendor string. `cpu_has_erratum(n)` at `cpuid.h:165` with n>=64 UB guard. BSP TSC_AUX: `boot_hw.c:366-375` probes via `msr_try_read`, writes 0 only on success, sets `g_tsc_aux_available`. AP TSC_AUX: `smp.c:148-150` conditional on `g_tsc_aux_available`. `rdtscp_read()` at `cpuid.h:174` with NULL-safe cpu_id. 3 tests under TEST_CAT_X86. Codex adversarial: OSVW vendor gate + msr_try_read added (was raw msr_read); shift UB guard added in implementation. Accepted: TSC_AUX write after read probe (TSC_AUX is documented R/W on all implementations; the read probe catches hypervisors that trap the MSR entirely).
+> **Quality reviewed:** 2026-04-13 -- kernel-code-quality 11 gates walked. G2: per-CPU MSR writes at boot, read-only after. G6: OSVW per AMD APM Vol. 2 Section 6.1; TSC_AUX per Intel SDM Vol. 3B Section 17.17.2; vendor gate prevents OSVW MSR reads on non-AMD CPUs. G11: RDTSCP encoding correct (EAX=lo, EDX=hi, ECX=aux per SDM Vol. 2B). Parity: matches Linux `amd.c` osvw handling + per-CPU `IA32_TSC_AUX` wrmsr in `smpboot.c`; matches Windows HAL OSVW errata table. Accepted: same as verified stamp.
+
 ---
 
 ## 12. AMD IBS Profiling (Stretch)

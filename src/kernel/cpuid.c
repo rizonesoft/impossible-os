@@ -319,12 +319,21 @@ void cpuid_init(void)
         }
     }
 
-    /* ---- OSVW (OS Visible Workarounds, AMD only) ---- */
-    if (cpu_has(CPU_FEATURE_OSVW)) {
-        g_cpu.osvw_length = (uint32_t)msr_read(MSR_AMD_OSVW_ID_LEN);
-        g_cpu.osvw_status = msr_read(MSR_AMD_OSVW_STATUS);
-        klog(LOG_INFO, "cpu", "OSVW: %u errata tracked, mask=0x%llx",
-             (uint64_t)g_cpu.osvw_length, g_cpu.osvw_status);
+    /* ---- OSVW (OS Visible Workarounds, AMD only) ----
+     * Gate on both CPUID feature AND AMD vendor. OSVW MSRs are AMD-
+     * specific; a non-AMD CPU with CPUID ECX[9] set would #GP on raw
+     * msr_read. Use msr_try_read for both MSRs as safety net. */
+    if (cpu_has(CPU_FEATURE_OSVW) && g_cpu.vendor[0] == 'A') {
+        uint64_t id_len, status;
+        if (msr_try_read(MSR_AMD_OSVW_ID_LEN, &id_len) == 0 &&
+            msr_try_read(MSR_AMD_OSVW_STATUS, &status) == 0) {
+            g_cpu.osvw_length = (uint32_t)id_len;
+            g_cpu.osvw_status = status;
+            klog(LOG_INFO, "cpu", "OSVW: %u errata tracked, mask=0x%llx",
+                 (uint64_t)g_cpu.osvw_length, g_cpu.osvw_status);
+        } else {
+            klog(LOG_WARN, "cpu", "OSVW: CPUID reports support but MSR probe failed");
+        }
     }
 
     /* Configure XCR0 after all features are detected */
