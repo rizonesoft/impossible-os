@@ -108,6 +108,7 @@ The handle table maps opaque `HANDLE` integer values to (object pointer + grante
 - [x] Handle table is freed at process exit: iterate all slots and call `ObpFreeHandle` for each
 - [x] Special kernel pseudo-handles: `INVALID_HANDLE_VALUE (-1)`, `CURRENT_PROCESS (-2)`, `CURRENT_THREAD (-3)` -- resolve in `ObpLookupHandle` without a table entry
 - [x] Commit: `"kernel: ob -- per-process handle table"`
+- [ ] **Wire HandleAttributes through `ObpAllocateHandle` for `NtXxxEx` syscalls**: the `attrs` parameter is already plumbed through `ObpAllocateHandle` and stored in `HANDLE_TABLE_ENTRY.attributes`, but the `NtXxxEx` syscalls (`NtOpenProcessTokenEx`, `NtOpenThreadTokenEx`, `NtOpenKeyEx`, `NtCreateFileEx`, etc.) currently discard their `HandleAttributes` argument (see `src/kernel/nt/nt_token.c::NtOpenProcessTokenEx_handler` which explicitly `(void)a3`). Update every `NtXxxEx` handler to pass validated `HandleAttributes` into `ObpAllocateHandle` (via library function or directly). Validate against `OBJ_VALID_ATTRIBUTES = 0x000007F2`; reject with `STATUS_INVALID_PARAMETER` for unsupported bits. This auto-closes TODO-05 §16 Accepted #3 (NtOpenProcessTokenEx HandleAttributes discarded).
 
 ## 4. Object Namespace
 A hierarchical in-memory namespace rooted at `\`. Directories hold named object entries. Symbolic links redirect name lookups.
@@ -180,6 +181,7 @@ Core Win32 handle management syscalls routed through the Ob layer.
   - `ObjectBasicInformation` -- returns refcount, handle count, attributes
 - [x] Expose `NtClose` via `SYS_CLOSEHANDLE` replacing inline `ObpFreeHandle` in syscall.c
 - [x] Commit: `"kernel: ob -- NtClose, NtDuplicateObject, NtQueryObject"`
+- [ ] **Migrate PID/TID-encoded process/thread handles to OB-allocated handles**: current `src/kernel/nt/nt_process.c::task_from_handle` and `src/kernel/nt/nt_token.c::resolve_process_handle` cast a raw PID/TID integer to a `HANDLE` and look up the task directly. This bypasses the per-process handle table entirely, so `granted_access`, `OBJ_INHERIT`, `DuplicateHandle`, and `NtClose` all fail to apply to process/thread handles. Change `NtOpenProcess`/`NtOpenThread` (TODO-05 §7) to call `ObpAllocateHandle(&task_current()->handle_table, task, desired_access, attrs)` using `ObpProcessType`/`ObpThreadType` (registered in §5). Then change every handler that resolves process/thread handles (`nt_process.c`, `nt_token.c`, `nt_sync.c` wait handlers that accept thread/process) to use `ObpLookupHandle` + type-check + read `granted_access`. Remove the PID/TID-cast fallback except for explicit pseudo-handles (`CURRENT_PROCESS = -2`, `CURRENT_THREAD = -3`). This auto-closes TODO-05 §16 Accepted #1 (PID/TID-encoded handles) and enables per-handle access enforcement.
 
 ## 10. Handle Inheritance Across CreateProcess
 Win32 `CreateProcess` with `bInheritHandles=TRUE` copies inheritable handles into the child.
