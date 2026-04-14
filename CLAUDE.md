@@ -143,7 +143,7 @@ When you change code or conventions, update `CLAUDE.md`, `.claude/skills/`, and 
 
 Claude Code skills live in `.claude/skills/`. They auto-load when Claude judges them relevant based on the `description` field. Each skill is self-contained.
 
-Cursor mirrors for TODO prep live under `.cursor/skills/` (for example `validate-todo-file`, `validate-todo-section`, `gap-analysis-todo`) with `.cursor/rules/todo-validate-gap-workflows.mdc`, `.cursor/rules/todo-workflows-always-pointer.mdc`, and `.cursor/hooks.json` (beforeReadFile reminder for `todo/**/TODO-*.md` only). Hooks may not run in every agent session; `@`-reference the skill or rule when automations do not fire. Confirm hook delivery in Cursor **Output → Hooks** if needed.
+Cursor keeps a **full mirror** of Claude Code skills under `.cursor/skills/` (same filenames and workflows as `.claude/skills/`). After adding or editing a skill in `.claude/skills/`, sync to Cursor with: `rsync -a --delete .claude/skills/ .cursor/skills/`, then re-apply any Cursor-only deltas (for example Copilot dispatch strings) if you maintain them separately. Rules: `.cursor/rules/todo-validate-gap-workflows.mdc`, `.cursor/rules/todo-workflows-always-pointer.mdc`, `.cursor/rules/claude-third-party-hooks.mdc`. Hooks: `.cursor/hooks.json` plus, when **Third-party skills** is enabled in Cursor, the merged hooks from `.claude/settings.json` (PreToolUse / PostToolUse quality gates). External reviews in Cursor use `bash scripts/copilot-review.sh` (GitHub Copilot CLI when installed). Hooks may not run in every agent session; `@`-reference the skill or rule when automations do not fire. Confirm hook delivery in Cursor **Output → Hooks** if needed.
 
 | Skill | Description |
 |---|---|
@@ -185,6 +185,7 @@ These are non-negotiable. Auto-loading by description is unreliable -- the rules
 | Implementing a TODO section | `implement-todo-section` | Steps 13-18 (Codex review, fix loop, self-review, build, validate, tie up loose ends) are MANDATORY before commit. No exceptions for "simple" sections. |
 | Test file in `src/kernel/test/` | `implement-unit-tests` | Wire to `test_runner.c`, correct `TEST_CAT_*`, concrete `TEST_ASSERT_*` with expected values. |
 | Codex skill returns findings | `superpowers:receiving-code-review` | Same rule -- every codex-* skill is upstream of receiving-code-review. |
+| Writing "Accepted: ... XREF: TODO-NN §N" in a TODO stamp | `review-todo-section` step 15 | Every Accepted/Deferred XREF must name a concrete `[ ]` checklist item in the target section (use `(item: "NAME" at line N)` or name a specific helper/retrofit). Bare `§N` references and paraphrase-only parentheticals (e.g. `(SeAccessCheck)`) are rejected. Hooks enforce: PostToolUse reminder on TODO edits, `git commit` BLOCKs (exit 2) if staged diff contains bare XREFs. If no concrete item exists in the target, CREATE one now before stamping. |
 
 If a skill is listed above, "I forgot" is not a valid excuse. The hooks will remind you; act on the reminder.
 
