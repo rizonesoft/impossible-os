@@ -100,6 +100,10 @@ static NTSTATUS NtCreateSection_handler(uint64_t a1, uint64_t a2, uint64_t a3,
     if (!out_handle)
         return STATUS_INVALID_PARAMETER;
 
+    prn = ProbeForWriteIfUser(out_handle, sizeof(HANDLE), 4);
+    if (!NT_SUCCESS(prn))
+        return prn;
+
     prn = oa_probe_ascii_name(oa, &name);
     if (!NT_SUCCESS(prn))
         return prn;
@@ -132,6 +136,10 @@ static NTSTATUS NtOpenSection_handler(uint64_t a1, uint64_t a2, uint64_t a3,
 
     if (!out_handle)
         return STATUS_INVALID_PARAMETER;
+
+    prn = ProbeForWriteIfUser(out_handle, sizeof(HANDLE), 4);
+    if (!NT_SUCCESS(prn))
+        return prn;
 
     prn = oa_probe_ascii_name(oa, &name);
     if (!NT_SUCCESS(prn))
@@ -172,6 +180,10 @@ static NTSTATUS NtMapViewOfSection_handler(uint64_t a1, uint64_t a2, uint64_t a3
 
     if (!base_ptr)
         return STATUS_INVALID_PARAMETER;
+
+    pr = ProbeForWriteIfUser(base_ptr, sizeof(void *), 8);
+    if (!NT_SUCCESS(pr))
+        return pr;
 
     if (!target)
         return STATUS_INVALID_HANDLE;
@@ -235,6 +247,12 @@ static NTSTATUS NtUnmapViewOfSection_handler(uint64_t a1, uint64_t a2,
 
     if (!target)
         return STATUS_INVALID_HANDLE;
+
+    /* Cross-process unmap requires per-process VMM infrastructure.
+     * Until then, reject non-current process targets symmetrically with
+     * NtMapViewOfSection. */
+    if (target != task_current())
+        return STATUS_ACCESS_DENIED;
 
     if (ObUnmapViewOfSectionByBase(&target->handle_table, target->pid, base)
         != 0)

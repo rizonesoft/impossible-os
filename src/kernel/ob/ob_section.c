@@ -242,7 +242,33 @@ HANDLE ObCreateSectionEx(HANDLE_TABLE *ht, uint64_t max_size_bytes,
         void *bno_dir = NULL;
         if (ObLookupObjectByName("\\BaseNamedObjects", ObpDirectoryType, 0,
                                  &bno_dir) == 0 && bno_dir) {
-            ObInsertObject(so, name, bno_dir);
+            if (ObInsertObject(so, name, bno_dir) < 0) {
+                /* Collision: another thread inserted the same name between
+                 * our initial lookup and here. Redirect to the winner. */
+                void *winner = NULL;
+                char path[128];
+
+                ObDereferenceObject(bno_dir);
+                snprintf(path, sizeof(path), "\\BaseNamedObjects\\%s", name);
+                if (ObLookupObjectByName(path, ObpSectionType, 0, &winner) == 0
+                    && winner) {
+                    h = ObpAllocateHandle(ht, winner, section_desired_access,
+                                          0);
+                    ObDereferenceObject(winner);
+                    ObDereferenceObject(so); /* discard our losing section */
+                    klog(LOG_DEBUG, "ob",
+                         "Section create race lost: redirected to winner");
+                    return h;
+                }
+                /* Insert failed and no winner exists (name-cache glitch,
+                 * OOM on the namespace entry, etc.). The caller requested a
+                 * named section; returning an unnamed orphan would split
+                 * creator and opener views silently. Fail deterministically. */
+                ObDereferenceObject(so);
+                klog(LOG_WARN, "ob",
+                     "Section named-insert failed with no winner; aborting");
+                return INVALID_HANDLE_VALUE;
+            }
             ObDereferenceObject(bno_dir);
         }
     }
@@ -362,6 +388,11 @@ uintptr_t ObMapViewOfSectionFull(HANDLE_TABLE *ht, HANDLE section_handle,
     so->views[i].in_use         = 1;
     so->map_count++;
 
+    /* Pin the section BEFORE dropping the lock -- otherwise a concurrent
+     * NtClose could drive refcount to zero between unlock and
+     * ObReferenceObject and free the backing underneath us. */
+    ObReferenceObject(so);
+
     spin_unlock_irqrestore(&so->lk, irqf);
     return map_base;
 }
@@ -408,6 +439,9 @@ int ObUnmapViewOfSection(HANDLE_TABLE *ht, HANDLE section_handle,
     so->views[(uint32_t)idx].in_use = 0;
     so->map_count--;
     spin_unlock_irqrestore(&so->lk, irqf);
+
+    /* Drop the pin that ObMapViewOfSectionFull took on view install. */
+    ObDereferenceObject(so);
     return 0;
 }
 
@@ -442,6 +476,8 @@ int ObUnmapViewOfSectionByBase(HANDLE_TABLE *ht, uint32_t view_owner_pid,
                 so->views[(uint32_t)idx].in_use = 0;
                 so->map_count--;
                 spin_unlock_irqrestore(&so->lk, irqf);
+                /* Drop the pin that ObMapViewOfSectionFull took. */
+                ObDereferenceObject(so);
                 return 0;
             }
             spin_unlock_irqrestore(&so->lk, irqf);
@@ -487,6 +523,14 @@ NTSTATUS ObExtendSectionObject(SECTION_OBJECT *so, uint64_t new_max_bytes)
         return STATUS_SUCCESS;
     }
 
+    /* Extending while views are mapped would strand callers on freed pages
+     * once the backing is swapped. Reject until a versioned backing handoff
+     * exists (per-process page tables + VAD). */
+    if (so->map_count > 0) {
+        spin_unlock_irqrestore(&so->lk, irqf);
+        return STATUS_SECTION_NOT_EXTENDED;
+    }
+
     copy_sz = so->size;
     old_phys = so->phys_base;
     old_page_count = so->page_count;
@@ -503,29 +547,24 @@ NTSTATUS ObExtendSectionObject(SECTION_OBJECT *so, uint64_t new_max_bytes)
 
     spin_lock_irqsave(&so->lk, &irqf);
 
-    if (so->phys_base != old_phys || so->size != old_size) {
+    /* Abort if another thread mutated phys_base/size OR installed a view
+     * during the unlocked alloc/copy window. A new view would be pinned to
+     * old_phys which we are about to free; returning STATUS_RETRY lets the
+     * caller re-attempt after the racing view is unmapped. */
+    if (so->phys_base != old_phys || so->size != old_size
+        || so->map_count != 0) {
         spin_unlock_irqrestore(&so->lk, irqf);
         {
             uint32_t i;
             for (i = 0; i < new_page_count; i++)
                 pmm_free_frame(new_phys + (uintptr_t)i * PMM_FRAME_SIZE);
         }
-        return STATUS_UNSUCCESSFUL;
+        return STATUS_SECTION_NOT_EXTENDED;
     }
 
     so->phys_base = new_phys;
     so->size = (uint32_t)new_max_bytes;
     so->page_count = new_page_count;
-
-    {
-        uint32_t vi;
-        for (vi = 0; vi < SECTION_MAX_VIEWS; vi++) {
-            if (!so->views[vi].in_use)
-                continue;
-            so->views[vi].base_addr = so->phys_base
-                + (uintptr_t)so->views[vi].section_offset;
-        }
-    }
 
     spin_unlock_irqrestore(&so->lk, irqf);
 
