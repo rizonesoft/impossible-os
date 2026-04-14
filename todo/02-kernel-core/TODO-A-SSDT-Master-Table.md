@@ -172,14 +172,14 @@
 
 | Index  | Function                         | §   | Owner                    | Done |
 |--------|----------------------------------|-----|--------------------------|------|
-| 0x00B0 | NtOpenProcessToken               | §16 | T11 (token.c exists)     | [ ]  |
-| 0x00B1 | NtOpenProcessTokenEx             | §16 | T11                      | [ ]  |
-| 0x00B2 | NtOpenThreadToken                | §16 | T11 (token.c exists)     | [ ]  |
-| 0x00B3 | NtOpenThreadTokenEx              | §16 | T11                      | [ ]  |
-| 0x00B4 | NtQueryInformationToken          | §16 | T11 (token.c exists)     | [ ]  |
-| 0x00B5 | NtSetInformationToken            | §16 | T11                      | [ ]  |
-| 0x00B6 | NtAdjustPrivilegesToken          | §16 | T11 (token.c exists)     | [ ]  |
-| 0x00B7 | NtAdjustGroupsToken              | §16 | T11 (token.c exists)     | [ ]  |
+| 0x00B0 | NtOpenProcessToken               | §16 | T05 §16 (nt_token.c)     | [x]  |
+| 0x00B1 | NtOpenProcessTokenEx             | §16 | T05 §16 (nt_token.c)     | [x]  |
+| 0x00B2 | NtOpenThreadToken                | §16 | T05 §16 (nt_token.c)     | [x]  |
+| 0x00B3 | NtOpenThreadTokenEx              | §16 | T05 §16 (nt_token.c)     | [x]  |
+| 0x00B4 | NtQueryInformationToken          | §16 | T05 §16 (nt_token.c)     | [x]  |
+| 0x00B5 | NtSetInformationToken            | §16 | T05 §16 (nt_token.c)     | [x]  |
+| 0x00B6 | NtAdjustPrivilegesToken          | §16 | T05 §16 (nt_token.c)     | [x]  |
+| 0x00B7 | NtAdjustGroupsToken              | §16 | T05 §16 (nt_token.c)     | [x]  |
 | 0x00B8 | NtDuplicateToken                 | §16 | T11 (token.c exists)     | [ ]  |
 | 0x00B9 | NtFilterToken                    | §16 | T11                      | [ ]  |
 | 0x00BA | NtCreateToken                    | §16 | T11                      | [ ]  |
@@ -191,7 +191,7 @@
 | 0x00C0 | NtPrivilegeObjectAuditAlarm      | §16 | T11                      | [ ]  |
 | 0x00C1 | NtSetSecurityObject              | §16 | T11                      | [ ]  |
 | 0x00C2 | NtQuerySecurityObject            | §16 | T11                      | [ ]  |
-| 0x00C3 | NtAllocateLocallyUniqueId        | §16 | T11 (luid.c exists)      | [ ]  |
+| 0x00C3 | NtAllocateLocallyUniqueId        | §16 | T05 §16 (nt_token.c)     | [x]  |
 | 0x00C4 | NtCreateTokenEx                  | §16 | T11                      | [ ]  |
 
 **0x00D0–0x00EF: System Information and Control**
@@ -644,6 +644,6 @@
 
 > **Total: 470 service entries** across 30 functional ranges -- full Windows 11 parity plus Impossible OS exclusive extensions. Shadow SSDT (Win32k) has a separate index space starting at 0x1000.
 >
-> **Implementation progress: 124/470 wired** (26.4%) -- **104 complete `[x]`** (22.1%) + **20 partial/stub `[/]`** (4.3%). Complete ranges: ETW (7/7), Time/Timer (5/5), Registry CRUD + advanced (19/27, missing only transacted/compact/lock variants), File I/O (15/28 with 6 partial deferrals for IRP/async), Process+Thread (15/24 with 5 stubs for CONTEXT/APC/impersonation/user-process), Memory (11/19 with 3 AWE stubs), Sync (17/30 with 4 keyed-event stubs). Run `/audit-ssdt` to refresh.
+> **Implementation progress: 133/470 wired** (28.3%) -- **113 complete `[x]`** (24.0%) + **20 partial/stub `[/]`** (4.3%). Complete ranges: ETW (7/7), Time/Timer (5/5), Registry CRUD + advanced (19/27), File I/O (15/28 with 6 partial deferrals for IRP/async), Process+Thread (15/24 with 5 stubs), Memory (11/19 with 3 AWE stubs), Sync (17/30 with 4 keyed-event stubs), Token open/query/adjust (9/21 -- §16 complete; §29 lifecycle+SRM pending). Run `/audit-ssdt` to refresh.
 
 **Test checkpoint:** `syscall_dispatch(0xFFFF)` returns `STATUS_NOT_IMPLEMENTED`, not crash. `syscall_dispatch(valid_index)` calls correct handler. Serial: `"ssdt: registered 470 services"` during init.

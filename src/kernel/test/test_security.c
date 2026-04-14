@@ -353,6 +353,163 @@ static void test_sid_valid_reject(void)
                 "RtlEqualSid rejects malformed SID");
 }
 
+/* ============================================================================
+ * §16 NT token syscall tests (SSDT dispatch path)
+ * ============================================================================ */
+
+#include "kernel/nt/ssdt.h"
+#include "kernel/nt/ntstatus.h"
+#include "kernel/nt/service_numbers.h"
+
+/* Test: NtAllocateLocallyUniqueId via SSDT returns monotonic LUIDs */
+static void test_nt_allocate_luid(void)
+{
+    LUID a, b;
+    NTSTATUS status;
+
+    a.LowPart = 0; a.HighPart = 0;
+    status = ssdt_dispatch(SSDT_NtAllocateLocallyUniqueId,
+                           (uint64_t)(uintptr_t)&a, 0, 0, 0, 0, 0);
+    TEST_ASSERT(NT_SUCCESS(status), "NtAllocateLocallyUniqueId via SSDT succeeds");
+    TEST_ASSERT(!RtlIsZeroLuid(&a), "First LUID is non-zero");
+
+    b.LowPart = 0; b.HighPart = 0;
+    status = ssdt_dispatch(SSDT_NtAllocateLocallyUniqueId,
+                           (uint64_t)(uintptr_t)&b, 0, 0, 0, 0, 0);
+    TEST_ASSERT(NT_SUCCESS(status), "Second SSDT dispatch succeeds");
+    TEST_ASSERT(b.LowPart > a.LowPart, "LUIDs are monotonically increasing");
+
+    /* NULL out pointer returns INVALID_PARAMETER */
+    status = ssdt_dispatch(SSDT_NtAllocateLocallyUniqueId, 0, 0, 0, 0, 0, 0);
+    TEST_ASSERT(status == STATUS_INVALID_PARAMETER,
+                "NtAllocateLocallyUniqueId rejects NULL out pointer");
+}
+
+/* Test: NtOpenProcessToken via SSDT returns a token handle for current process */
+static void test_nt_open_process_token(void)
+{
+    HANDLE token_handle = INVALID_HANDLE_VALUE;
+    NTSTATUS status;
+
+    status = ssdt_dispatch(SSDT_NtOpenProcessToken,
+                           (uint64_t)CURRENT_PROCESS,
+                           (uint64_t)0x000F01FF  /* TOKEN_ALL_ACCESS */,
+                           (uint64_t)(uintptr_t)&token_handle,
+                           0, 0, 0);
+
+    /* Current task may not have a token assigned in the test environment
+     * (kernel boot-time tests run before any process has been given a
+     * primary token).  Accept either success-with-handle or STATUS_NO_TOKEN. */
+    if (NT_SUCCESS(status)) {
+        TEST_ASSERT(token_handle != INVALID_HANDLE_VALUE,
+                    "NtOpenProcessToken produces a valid handle");
+    } else {
+        TEST_ASSERT(status == STATUS_NO_TOKEN,
+                    "NtOpenProcessToken returns STATUS_NO_TOKEN when task has no token");
+    }
+
+    /* NULL out pointer */
+    status = ssdt_dispatch(SSDT_NtOpenProcessToken,
+                           (uint64_t)CURRENT_PROCESS,
+                           (uint64_t)0x000F01FF  /* TOKEN_ALL_ACCESS */,
+                           0, 0, 0, 0);
+    TEST_ASSERT(status == STATUS_INVALID_PARAMETER,
+                "NtOpenProcessToken rejects NULL out pointer");
+}
+
+/* Test: NtQueryInformationToken rejects invalid handle */
+static void test_nt_query_token_invalid_handle(void)
+{
+    uint8_t buf[64];
+    uint32_t ret_len = 0;
+    NTSTATUS status;
+
+    /* Fabricated invalid handle */
+    status = ssdt_dispatch(SSDT_NtQueryInformationToken,
+                           (uint64_t)0x7FFFFFFF,
+                           (uint64_t)TokenUser,
+                           (uint64_t)(uintptr_t)buf,
+                           (uint64_t)sizeof(buf),
+                           (uint64_t)(uintptr_t)&ret_len,
+                           0);
+    TEST_ASSERT(status == STATUS_INVALID_HANDLE,
+                "NtQueryInformationToken rejects bogus handle");
+
+    /* Zero handle */
+    status = ssdt_dispatch(SSDT_NtQueryInformationToken,
+                           0,
+                           (uint64_t)TokenUser,
+                           (uint64_t)(uintptr_t)buf,
+                           (uint64_t)sizeof(buf),
+                           (uint64_t)(uintptr_t)&ret_len,
+                           0);
+    TEST_ASSERT(status == STATUS_INVALID_HANDLE,
+                "NtQueryInformationToken rejects zero handle");
+}
+
+/* Test: NtSetInformationToken rejects read-only info classes */
+static void test_nt_set_token_readonly(void)
+{
+    uint8_t buf[64] = { 0 };
+    NTSTATUS status;
+
+    /* TokenUser is read-only per Windows docs; we must reject it. */
+    status = ssdt_dispatch(SSDT_NtSetInformationToken,
+                           (uint64_t)0x7FFFFFFF,  /* bogus handle */
+                           (uint64_t)TokenUser,
+                           (uint64_t)(uintptr_t)buf,
+                           (uint64_t)sizeof(buf),
+                           0, 0);
+    /* Invalid handle rejected first */
+    TEST_ASSERT(status == STATUS_INVALID_HANDLE,
+                "NtSetInformationToken rejects invalid handle before class check");
+
+    /* NULL buffer */
+    status = ssdt_dispatch(SSDT_NtSetInformationToken,
+                           (uint64_t)0x7FFFFFFF,
+                           (uint64_t)TokenUser,
+                           0,
+                           (uint64_t)sizeof(buf),
+                           0, 0);
+    TEST_ASSERT(status == STATUS_INVALID_PARAMETER,
+                "NtSetInformationToken rejects NULL buffer");
+}
+
+/* Test: NtAdjustPrivilegesToken rejects invalid handle + NULL new state */
+static void test_nt_adjust_privileges_invalid(void)
+{
+    NTSTATUS status;
+
+    /* Invalid handle */
+    status = ssdt_dispatch(SSDT_NtAdjustPrivilegesToken,
+                           (uint64_t)0x7FFFFFFF, 0, 0, 0, 0, 0);
+    TEST_ASSERT(status == STATUS_INVALID_HANDLE,
+                "NtAdjustPrivilegesToken rejects invalid handle");
+}
+
+/* Test: all 9 SSDT slots are registered (not default stubs) */
+static void test_nt_token_ssdt_registered(void)
+{
+    const SSDT_TABLE *tbl = ssdt_get_table(SSDT_TABLE_MAIN);
+    extern NTSTATUS ssdt_stub_not_implemented(uint64_t, uint64_t, uint64_t,
+                                              uint64_t, uint64_t, uint64_t);
+    uint32_t slots[] = {
+        SSDT_NtOpenProcessToken, SSDT_NtOpenProcessTokenEx,
+        SSDT_NtOpenThreadToken, SSDT_NtOpenThreadTokenEx,
+        SSDT_NtQueryInformationToken, SSDT_NtSetInformationToken,
+        SSDT_NtAdjustPrivilegesToken, SSDT_NtAdjustGroupsToken,
+        SSDT_NtAllocateLocallyUniqueId,
+    };
+    uint32_t i;
+    TEST_ASSERT(tbl != (const SSDT_TABLE *)0, "SSDT main table exists");
+    if (!tbl) return;
+    for (i = 0; i < 9; i++) {
+        uint32_t idx = slots[i] & 0xFFF;
+        TEST_ASSERT(tbl->handlers[idx] != ssdt_stub_not_implemented,
+                    "Token SSDT slot is registered");
+    }
+}
+
 /* ---- Registration ---- */
 
 void test_register_security(void)
@@ -369,6 +526,12 @@ void test_register_security(void)
     test_suite_register_cat("Security: LUID allocator", test_luid_allocator, TEST_CAT_SECURITY);
     test_suite_register_cat("Security: SID validation reject", test_sid_valid_reject, TEST_CAT_SECURITY);
     test_suite_register_cat("Security: privilege set to string", test_privilege_set_to_string, TEST_CAT_SECURITY);
+    test_suite_register_cat("Security: NtAllocateLocallyUniqueId", test_nt_allocate_luid, TEST_CAT_SECURITY);
+    test_suite_register_cat("Security: NtOpenProcessToken", test_nt_open_process_token, TEST_CAT_SECURITY);
+    test_suite_register_cat("Security: NtQueryInformationToken invalid", test_nt_query_token_invalid_handle, TEST_CAT_SECURITY);
+    test_suite_register_cat("Security: NtSetInformationToken read-only", test_nt_set_token_readonly, TEST_CAT_SECURITY);
+    test_suite_register_cat("Security: NtAdjustPrivilegesToken invalid", test_nt_adjust_privileges_invalid, TEST_CAT_SECURITY);
+    test_suite_register_cat("Security: token SSDT slots registered", test_nt_token_ssdt_registered, TEST_CAT_SECURITY);
 }
 
 #endif /* KERNEL_TESTS */

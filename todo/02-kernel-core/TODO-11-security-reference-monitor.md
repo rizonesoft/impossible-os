@@ -283,6 +283,8 @@
 - [x] `NtDuplicateToken(Existing, Access, ObjAttr, EffectiveOnly, Type, New)` -- deep-copies token struct, allocates new `TokenId` LUID; `EffectiveOnly` strips disabled privileges and groups
 - [x] `NtAdjustPrivilegesToken(hToken, DisableAll, NewState, BufferLen, PreviousState, ReturnLen)` -- for each LUID_AND_ATTRIBUTES in `NewState`: find matching privilege in token, apply SE_PRIVILEGE_ENABLED / SE_PRIVILEGE_REMOVED; requires `TOKEN_ADJUST_PRIVILEGES`; write previous state to `PreviousState`; return `STATUS_NOT_ALL_ASSIGNED` if any LUID not found
 - [x] `NtAdjustGroupsToken(hToken, ResetToDefault, NewState, BufferLen, PreviousState, ReturnLen)` -- enable/disable group SIDs; cannot re-enable a `SE_GROUP_USE_FOR_DENY_ONLY` group (immutable once disabled)
+- [ ] **Deep-copy token field setters for `NtSetInformationToken`** -- current TODO-05 §16 `NtSetInformationToken` rejects all info classes with `STATUS_INVALID_INFO_CLASS` to avoid storing caller-owned pointers in `ACCESS_TOKEN`. Implement safe setters: `token_set_integrity_level(tok, sid, sid_len)` deep-copies the SID into token-owned heap storage, validates revision/length, and replaces `tok->IntegrityLevelSid` under the per-token lock (see next item). Similar setters for TokenOwner, TokenPrimaryGroup, TokenDefaultDacl. Remove the reject list from `NtSetInformationToken_handler` (src/kernel/nt/nt_token.c::NtSetInformationToken_handler) once these are available.
+- [ ] **Per-token lock for SMP safety** -- add `spinlock_t lock` to `ACCESS_TOKEN` covering Groups[], Privileges[], IntegrityLevelSid, DefaultDacl, and other mutable fields. All NtAdjust*Token / NtSet*Token / NtQuery*Token paths must acquire (write for mutate, read for query). Required to make TODO-05 §16 token syscalls SMP-safe when scheduler exposes them to multiple threads of the same process.
 - [x] Commit: `"kernel/security: ACCESS_TOKEN object, SeCreateSystemToken, NtOpenProcessToken"`
 
 ---
@@ -532,15 +534,15 @@
 ## 12. Security and Token Syscalls Wired to SSDT
 Register all token and access control NtXxx entry points in the SSDT. Most implementations already exist in `src/kernel/security/token.c` and `luid.c`. (→ XREF: TODO-05-native-api-ssdt.md §4, §16)
 
-- [ ] `NtOpenProcessToken(ProcessHandle, DesiredAccess, TokenHandle)` → SSDT 0x00B0 (token.c exists -- wire to SSDT)
-- [ ] `NtOpenProcessTokenEx(ProcessHandle, DesiredAccess, HandleAttributes, TokenHandle)` → SSDT 0x00B1
-- [ ] `NtOpenThreadToken(ThreadHandle, DesiredAccess, OpenAsSelf, TokenHandle)` → SSDT 0x00B2 (token.c exists)
-- [ ] `NtOpenThreadTokenEx(...)` → SSDT 0x00B3
-- [ ] `NtQueryInformationToken(TokenHandle, TokenInformationClass, Buffer, Length, ReturnLength)` → SSDT 0x00B4 (token.c exists -- 13 info classes)
-- [ ] `NtSetInformationToken(TokenHandle, TokenInformationClass, Buffer, Length)` → SSDT 0x00B5
-- [ ] `NtAdjustPrivilegesToken(TokenHandle, DisableAll, NewState, BufLen, PrevState, RetLen)` → SSDT 0x00B6 (token.c exists)
-- [ ] `NtAdjustGroupsToken(...)` → SSDT 0x00B7 (token.c exists)
-- [ ] `NtDuplicateToken(ExistingHandle, DesiredAccess, ObjAttrs, EffectiveOnly, TokenType, NewHandle)` → SSDT 0x00B8 (token.c exists)
+- [x] `NtOpenProcessToken(ProcessHandle, DesiredAccess, TokenHandle)` → SSDT 0x00B0 -- wired in TODO-05 §16 (nt_token.c)
+- [x] `NtOpenProcessTokenEx(ProcessHandle, DesiredAccess, HandleAttributes, TokenHandle)` → SSDT 0x00B1 -- wired in TODO-05 §16 (nt_token.c)
+- [x] `NtOpenThreadToken(ThreadHandle, DesiredAccess, OpenAsSelf, TokenHandle)` → SSDT 0x00B2 -- wired in TODO-05 §16 (nt_token.c)
+- [x] `NtOpenThreadTokenEx(...)` → SSDT 0x00B3 -- wired in TODO-05 §16 (nt_token.c)
+- [x] `NtQueryInformationToken(TokenHandle, TokenInformationClass, Buffer, Length, ReturnLength)` → SSDT 0x00B4 (14 info classes) -- wired in TODO-05 §16 (nt_token.c)
+- [/] `NtSetInformationToken(TokenHandle, TokenInformationClass, Buffer, Length)` → SSDT 0x00B5 -- wired in TODO-05 §16 (nt_token.c); all settable classes currently return STATUS_INVALID_INFO_CLASS pending deep-copy setters (→ §4 above)
+- [x] `NtAdjustPrivilegesToken(TokenHandle, DisableAll, NewState, BufLen, PrevState, RetLen)` → SSDT 0x00B6 -- wired in TODO-05 §16 (nt_token.c)
+- [x] `NtAdjustGroupsToken(...)` → SSDT 0x00B7 -- wired in TODO-05 §16 (nt_token.c)
+- [ ] `NtDuplicateToken(ExistingHandle, DesiredAccess, ObjAttrs, EffectiveOnly, TokenType, NewHandle)` → SSDT 0x00B8 -- deferred to TODO-05 §29 (lifecycle)
 - [ ] `NtFilterToken(ExistingHandle, Flags, SidsToDisable, PrivsToDelete, RestrictedSids, NewHandle)` → SSDT 0x00B9
 - [ ] `NtCreateToken(...)` → SSDT 0x00BA: privileged operation for LSA
 - [ ] `NtCreateLowBoxToken(NewToken, ExistingToken, DesiredAccess, ObjectAttributes, AppContainerSid, CapabilityCount, Capabilities, HandleCount, Handles)` → SSDT 0x00BB: route to AppContainer token creation (§14)
@@ -548,7 +550,7 @@ Register all token and access control NtXxx entry points in the SSDT. Most imple
 - [ ] `NtPrivilegeCheck(ClientToken, RequiredPrivileges, Result)` → SSDT 0x00BF: route to `SePrivilegeCheck()` (§8)
 - [ ] `NtSetSecurityObject(Handle, SecurityInformation, SD)` → SSDT 0x00C1
 - [ ] `NtQuerySecurityObject(Handle, SecurityInformation, SD, Length, LengthNeeded)` → SSDT 0x00C2
-- [ ] `NtAllocateLocallyUniqueId(Luid)` → SSDT 0x00C3 (luid.c exists)
+- [x] `NtAllocateLocallyUniqueId(Luid)` → SSDT 0x00C3 -- wired in TODO-05 §16 (nt_token.c, SSDT wrapper around luid.c)
 - [ ] `NtAccessCheckAndAuditAlarm(SubsystemName, HandleId, ObjectTypeName, ObjectName, SD, DesiredAccess, GenericMapping, ObjectCreation, GrantedAccess, AccessStatus, GenerateOnClose)` → SSDT 0x00C4: combines access check + SACL audit
 - [ ] `NtQueryAccessDenialReason(Handle, DesiredAccess, DenialReason)` → SSDT 0x00C5: route to §15 denial explainer
 - [ ] All functions return `NTSTATUS`; use codes from `include/kernel/nt/ntstatus.h` (TODO-05 §1)

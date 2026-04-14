@@ -207,6 +207,9 @@ static const pe_export_entry_t s_kernel32_exports[] = {
 
 /* ntdll.dll exports (sorted by name) */
 static const pe_export_entry_t s_ntdll_exports[] = {
+    { "NtAdjustGroupsToken",   SSDT_NtAdjustGroupsToken },
+    { "NtAdjustPrivilegesToken", SSDT_NtAdjustPrivilegesToken },
+    { "NtAllocateLocallyUniqueId", SSDT_NtAllocateLocallyUniqueId },
     { "NtClose",               SSDT_NtClose },
     { "NtCreateFile",          SSDT_NtCreateFile },
     { "NtCreateKey",           SSDT_NtCreateKey },
@@ -220,6 +223,11 @@ static const pe_export_entry_t s_ntdll_exports[] = {
     { "NtNotifyChangeKey",     SSDT_NtNotifyChangeKey },
     { "NtOpenKey",             SSDT_NtOpenKey },
     { "NtOpenKeyEx",           SSDT_NtOpenKeyEx },
+    { "NtOpenProcessToken",    SSDT_NtOpenProcessToken },
+    { "NtOpenProcessTokenEx",  SSDT_NtOpenProcessTokenEx },
+    { "NtOpenThreadToken",     SSDT_NtOpenThreadToken },
+    { "NtOpenThreadTokenEx",   SSDT_NtOpenThreadTokenEx },
+    { "NtQueryInformationToken", SSDT_NtQueryInformationToken },
     { "NtQueryKey",            SSDT_NtQueryKey },
     { "NtQueryValueKey",       SSDT_NtQueryValueKey },
     { "NtReadFile",            SSDT_NtReadFile },
@@ -227,6 +235,7 @@ static const pe_export_entry_t s_ntdll_exports[] = {
     { "NtRestoreKey",          SSDT_NtRestoreKey },
     { "NtSaveKey",             SSDT_NtSaveKey },
     { "NtSaveKeyEx",           SSDT_NtSaveKeyEx },
+    { "NtSetInformationToken", SSDT_NtSetInformationToken },
     { "NtSetValueKey",         SSDT_NtSetValueKey },
     { "NtTerminateProcess",    SSDT_NtTerminateProcess },
     { "NtUnloadKey",           SSDT_NtUnloadKey },

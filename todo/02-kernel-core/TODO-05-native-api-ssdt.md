@@ -64,7 +64,7 @@
 | 💎  |  13   | File metadata and device control                               | §6                |  [x]   |
 | 💎  |  14   | Registry syscalls (core CRUD)                                  | §5, TODO-13 §4    |  [x]   |
 | 💎  |  15   | Registry syscalls (advanced: flush/notify/save/hive)           | §14, TODO-13 §4   |  [/]   |
-| 💎  |  16   | Token and access control syscalls                              | §5, TODO-11 §4    |  [ ]   |
+| 💎  |  16   | Token open/query/adjust syscalls                               | §5, TODO-11 §4    |  [x]   |
 | 💎  |  17   | Directory and symbolic link object syscalls                    | §5, TODO-03 §4    |  [ ]   |
 | 💎  |  18   | Section and memory-mapped file syscalls                        | §5, TODO-03 §7    |  [ ]   |
 | 💎  |  19   | Timer control syscalls                                         | §5, TODO-07 §8,§9 |  [ ]   |
@@ -77,6 +77,7 @@
 | 💎  |  26   | Kernel-to-user mode callback dispatch (KeUserModeCallback)     | §2, TODO-04 §5    |  [ ]   |
 | ⭐  |  27   | SSDT integrity protection (hardware write-protect)             | §4                |  [ ]   |
 | 💎  |  28   | Extended directory enumeration classes                         | §6, §13           |  [x]   |
+| 💎  |  29   | Token lifecycle + SRM access check syscalls                    | §16, TODO-11 §4,§5|  [ ]   |
 
 > 💎 = parity -- Windows NT and Linux both have equivalents for these categories.
 > ⭐ = exclusive -- the ZwXxx privilege layer, the audit hook, SSDT integrity protection, and the IOSB/LastError unified path go beyond what Linux offers.
@@ -491,32 +492,28 @@ Extended file operations: metadata queries, attribute modification, device I/O c
 > **Accepted:** Change notifications (NtNotifyChangeKey watcher lists) -> XREF: 02-kernel-core/TODO-13 §3 (reg_watcher_t + reg_notify_register), §4 line 271 (NtNotifyChangeKey SSDT wiring calls §3 infra). SMP dirty-flag races on registry_flush/hive_table -> XREF: 02-kernel-core/TODO-13 §14 (explicit wrap of registry_flush/hive_save/hive_load). UTF-16 UNICODE_STRING decode -> XREF: 02-kernel-core/TODO-13 §4 (new `reg_decode_unicode_string` helper, retrofit §14/§15 handlers). Per-key flush optimization -> XREF: 02-kernel-core/TODO-13 §4 (new `registry_flush_key` walks parent chain to owning hive).
 > **Quality reviewed** (2026-04-14): dead code clean. Consistency: reg_resolve_key in registry.c now tombstone-aware (rejects keys with name[0]=='\0'); §14 handlers (NtDeleteKey, NtRenameKey, NtQueryKey) routed through shared resolve_hkey in nt_registry.c for uniform liveness semantics. NtLoadKey rollback on hive_load failure uses captured disposition. File handle type-checked via OB_HEADER_FROM_BODY + ObpFileType. New helpers: vfs_get_path_from_node (bounded VFS_MAX_NAME strlen, depth-64 cycle guard, subtraction-form bounds), vfs_name_len_bounded, vfs_find_drive_letter. 5 new tests.
 
-## 16. Token and Access Control Syscalls
+---
+
+## 16. Token Open, Query, and Adjust Syscalls
 
 > [!NOTE]
-> Token implementation exists in `src/kernel/security/token.c` (→ XREF TODO-11). NtAccessCheck routes through the Security Reference Monitor. This section wires these into the SSDT.
+> Token implementation exists in `src/kernel/security/token.c` (→ XREF TODO-11 §4). This section wires the "operate on an existing token" surface (open, query, set, adjust) plus `NtAllocateLocallyUniqueId` into the SSDT. Token creation/derivation and SRM access check are in §29.
 
-- [ ] `NtOpenProcessToken(ProcessHandle, DesiredAccess, TokenHandle)` → SSDT 0x00B0
-- [ ] `NtOpenProcessTokenEx(ProcessHandle, DesiredAccess, HandleAttributes, TokenHandle)` → SSDT 0x00B1
-- [ ] `NtOpenThreadToken(ThreadHandle, DesiredAccess, OpenAsSelf, TokenHandle)` → SSDT 0x00B2
-- [ ] `NtOpenThreadTokenEx(ThreadHandle, DesiredAccess, OpenAsSelf, HandleAttributes, TokenHandle)` → SSDT 0x00B3
-- [ ] `NtQueryInformationToken(TokenHandle, TokenInformationClass, Buffer, Length, ReturnLength)` → SSDT 0x00B4:
-  - `TokenUser (1)`, `TokenGroups (2)`, `TokenPrivileges (3)`, `TokenOwner (4)`, `TokenPrimaryGroup (5)`, `TokenDefaultDacl (6)`, `TokenSource (7)`, `TokenType (8)`, `TokenStatistics (10)`, `TokenSessionId (12)`
-- [ ] `NtSetInformationToken(TokenHandle, TokenInformationClass, Buffer, Length)` → SSDT 0x00B5
-- [ ] `NtAdjustPrivilegesToken(TokenHandle, DisableAllPrivileges, NewState, BufferLength, PreviousState, ReturnLength)` → SSDT 0x00B6
-- [ ] `NtAdjustGroupsToken(TokenHandle, ResetToDefault, NewState, BufferLength, PreviousState, ReturnLength)` → SSDT 0x00B7
-- [ ] `NtDuplicateToken(ExistingTokenHandle, DesiredAccess, ObjectAttributes, EffectiveOnly, TokenType, NewTokenHandle)` → SSDT 0x00B8
-- [ ] `NtFilterToken(ExistingTokenHandle, Flags, SidsToDisable, PrivilegesToDelete, RestrictedSids, NewTokenHandle)` → SSDT 0x00B9
-- [ ] `NtCreateToken(TokenHandle, DesiredAccess, ObjectAttributes, TokenType, AuthenticationId, ExpirationTime, User, Groups, Privileges, Owner, PrimaryGroup, DefaultDacl, Source)` → SSDT 0x00BA
-- [ ] `NtAccessCheck(SecurityDescriptor, ClientToken, DesiredAccess, GenericMapping, PrivilegeSet, PrivilegeSetLength, GrantedAccess, AccessStatus)` → SSDT 0x00BC:
-  - Core SRM decision point; routes to `SeAccessCheck()` in the Security Reference Monitor
-- [ ] `NtPrivilegeCheck(ClientToken, RequiredPrivileges, Result)` → SSDT 0x00BF
-- [ ] `NtSetSecurityObject(Handle, SecurityInformation, SecurityDescriptor)` → SSDT 0x00C1
-- [ ] `NtQuerySecurityObject(Handle, SecurityInformation, SecurityDescriptor, Length, LengthNeeded)` → SSDT 0x00C2
-- [ ] `NtAllocateLocallyUniqueId(Luid)` → SSDT 0x00C3
-- [ ] Commit: `"kernel: nt -- token and access control syscalls"`
+- [x] `NtOpenProcessToken(ProcessHandle, DesiredAccess, TokenHandle)` → SSDT 0x00B0 (resolves process handle, returns task->token via `NtOpenProcessToken` library)
+- [x] `NtOpenProcessTokenEx(ProcessHandle, DesiredAccess, HandleAttributes, TokenHandle)` → SSDT 0x00B1 (HandleAttributes currently ignored; inherit/audit flags tracked in TODO-03 §3)
+- [x] `NtOpenThreadToken(ThreadHandle, DesiredAccess, OpenAsSelf, TokenHandle)` → SSDT 0x00B2 (falls back to owning task's primary token; thread impersonation slot pending → XREF: 02-kernel-core/TODO-11 §7)
+- [x] `NtOpenThreadTokenEx(ThreadHandle, DesiredAccess, OpenAsSelf, HandleAttributes, TokenHandle)` → SSDT 0x00B3
+- [x] `NtQueryInformationToken(TokenHandle, TokenInformationClass, Buffer, Length, ReturnLength)` → SSDT 0x00B4 (14 info classes via library: TokenUser, TokenGroups, TokenPrivileges, TokenOwner, TokenPrimaryGroup, TokenDefaultDacl, TokenSource, TokenTypeInfo, TokenImpersonationLevelInfo, TokenStatistics, TokenElevationTypeInfo, TokenLinkedToken, TokenIsElevatedInfo, TokenIntegrityLevel)
+- [x] `NtSetInformationToken(TokenHandle, TokenInformationClass, Buffer, Length)` → SSDT 0x00B5 (supports TokenIntegrityLevel; read-only classes return STATUS_INVALID_INFO_CLASS; ownership-transfer classes → XREF: 02-kernel-core/TODO-11 §4)
+- [x] `NtAdjustPrivilegesToken(TokenHandle, DisableAllPrivileges, NewState, BufferLength, PreviousState, ReturnLength)` → SSDT 0x00B6 (unpacks TOKEN_PRIVILEGES, delegates to library)
+- [x] `NtAdjustGroupsToken(TokenHandle, ResetToDefault, NewState, BufferLength, PreviousState, ReturnLength)` → SSDT 0x00B7 (unpacks TOKEN_GROUPS, delegates to library)
+- [x] `NtAllocateLocallyUniqueId(Luid)` → SSDT 0x00C3 (SSDT wrapper around `NtAllocateLocallyUniqueId` in luid.c)
+- [ ] Commit: `"kernel: nt -- token open/query/adjust syscalls"`
 
-**Test checkpoint:** `NtOpenProcessToken` returns valid token handle. `NtQueryInformationToken(TokenUser)` returns correct SID. `NtAccessCheck` against an object with DACL returns correct granted access. `NtAdjustPrivilegesToken` enables/disables a privilege.
+**Test checkpoint:** `NtOpenProcessToken` returns valid token handle. `NtQueryInformationToken(TokenUser)` returns correct SID. `NtAdjustPrivilegesToken` enables/disables a privilege. `NtAllocateLocallyUniqueId` returns monotonically increasing LUIDs.
+
+> **Test runner:** `scripts\debug\run-security-tests.bat` (SUITE=security)
+> **Expected:** 6 new §16 tests (NtAllocateLocallyUniqueId via SSDT, NtOpenProcessToken, NtQueryInformationToken invalid handle, NtSetInformationToken read-only, NtAdjustPrivilegesToken invalid, token SSDT registration), 0 failures.
 
 ## 17. Directory and Symbolic Link Object Syscalls
 Namespace manipulation -- create, open, and query Ob directory objects and symbolic links from user mode.
@@ -794,6 +791,25 @@ NtQueryDirectoryFile (§6) currently returns `FileNamesInformation` only (name +
 - [x] Commit: `"kernel: nt -- extended directory enumeration (FileDirectoryInfo, FileBothDir, FileIdBothDir)"` (7338e0a4)
 
 **Test checkpoint:** `NtQueryDirectoryFile(FileBothDirectoryInformation)` on `C:\` returns entries with valid timestamps and sizes. Entry names match VFS readdir output. 8.3 ShortName is populated (uppercase truncated). ReturnSingleEntry returns exactly 1 entry per call. RestartScan re-reads from the beginning.
+
+---
+
+## 29. Token Lifecycle and SRM Access Check Syscalls
+
+> [!NOTE]
+> Split from §16 to keep each section under the 10-item limit. §16 covers "operate on existing token" (open/query/set/adjust). This section covers token creation/derivation and the Security Reference Monitor decision points (NtAccessCheck, NtPrivilegeCheck, security-descriptor I/O). Token infrastructure in `src/kernel/security/token.c`; SRM engine in `src/kernel/security/srm.c` (→ XREF TODO-11 §4, §5).
+
+- [ ] `NtDuplicateToken(ExistingTokenHandle, DesiredAccess, ObjectAttributes, EffectiveOnly, TokenType, NewTokenHandle)` → SSDT 0x00B8
+- [ ] `NtFilterToken(ExistingTokenHandle, Flags, SidsToDisable, PrivilegesToDelete, RestrictedSids, NewTokenHandle)` → SSDT 0x00B9
+- [ ] `NtCreateToken(TokenHandle, DesiredAccess, ObjectAttributes, TokenType, AuthenticationId, ExpirationTime, User, Groups, Privileges, Owner, PrimaryGroup, DefaultDacl, Source)` → SSDT 0x00BA
+- [ ] `NtAccessCheck(SecurityDescriptor, ClientToken, DesiredAccess, GenericMapping, PrivilegeSet, PrivilegeSetLength, GrantedAccess, AccessStatus)` → SSDT 0x00BC:
+  - Core SRM decision point; routes to `SeAccessCheck()` in the Security Reference Monitor
+- [ ] `NtPrivilegeCheck(ClientToken, RequiredPrivileges, Result)` → SSDT 0x00BF
+- [ ] `NtSetSecurityObject(Handle, SecurityInformation, SecurityDescriptor)` → SSDT 0x00C1
+- [ ] `NtQuerySecurityObject(Handle, SecurityInformation, SecurityDescriptor, Length, LengthNeeded)` → SSDT 0x00C2
+- [ ] Commit: `"kernel: nt -- token lifecycle and SRM access check syscalls"`
+
+**Test checkpoint:** `NtDuplicateToken` returns a distinct token with copied privileges/groups. `NtAccessCheck` against an object with DACL returns correct granted access. `NtPrivilegeCheck` with a held privilege returns TRUE; with a missing privilege returns FALSE. `NtQuerySecurityObject` round-trips through `NtSetSecurityObject`.
 
 ---
 

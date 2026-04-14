@@ -9,6 +9,7 @@
 #pragma once
 
 #include "kernel/types.h"
+#include "kernel/nt/ntstatus.h"
 #include "kernel/security/sid.h"
 #include "kernel/security/luid.h"
 #include "kernel/security/privileges.h"
@@ -156,14 +157,14 @@ typedef enum {
     TokenIntegrityLevel        = 25,
 } TOKEN_INFORMATION_CLASS;
 
-/* --- NTSTATUS codes for token operations -------------------------------- */
+/* --- NTSTATUS codes for token operations --------------------------------
+ * Canonical definitions are in kernel/nt/ntstatus.h (included above).
+ * STATUS_NO_TOKEN is token-specific and defined here if ntstatus.h does
+ * not provide it. */
 
-#define STATUS_SUCCESS           0
+#ifndef STATUS_NO_TOKEN
 #define STATUS_NO_TOKEN         ((int32_t)0xC000007C)
-#define STATUS_BUFFER_TOO_SMALL ((int32_t)0xC0000023)
-#define STATUS_INVALID_HANDLE   ((int32_t)0xC0000008)
-#define STATUS_INVALID_PARAMETER ((int32_t)0xC000000D)
-#define STATUS_INVALID_INFO_CLASS ((int32_t)0xC0000003)
+#endif
 
 /* --- Token query/open functions ------------------------------------------ */
 
