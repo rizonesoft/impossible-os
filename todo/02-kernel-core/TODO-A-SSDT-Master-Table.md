@@ -248,22 +248,22 @@
 | 0x010C | NtImpersonateClientOfPort        | §20 | T05 §20 (nt_lpc.c stub, T08 §7 retrofit) | [/]  |
 | 0x010D | NtReadRequestData                | §20 | T05 §20 (nt_lpc.c stub, T08 §7 retrofit) | [/]  |
 | 0x010E | NtWriteRequestData               | §20 | T05 §20 (nt_lpc.c stub, T08 §7 retrofit) | [/]  |
-| 0x010F | NtAlpcCreatePort                 | §31 | T12 §8               | [ ]  |
-| 0x0110 | NtAlpcConnectPort                | §31 | T12 §8               | [ ]  |
-| 0x0111 | NtAlpcConnectPortEx              | §31 | T12 §8               | [ ]  |
-| 0x0112 | NtAlpcAcceptConnectPort          | §31 | T12 §8               | [ ]  |
-| 0x0113 | NtAlpcSendWaitReceivePort        | §31 | T12 §8               | [ ]  |
-| 0x0114 | NtAlpcDisconnectPort             | §31 | T12 §8               | [ ]  |
-| 0x0115 | NtAlpcCancelMessage              | §31 | T12 §8               | [ ]  |
-| 0x0116 | NtAlpcCreatePortSection          | §31 | T12 §8               | [ ]  |
-| 0x0117 | NtAlpcDeletePortSection          | §31 | T12 §8               | [ ]  |
-| 0x0118 | NtAlpcCreateSectionView          | §31 | T12 §8               | [ ]  |
-| 0x0119 | NtAlpcDeleteSectionView          | §31 | T12 §8               | [ ]  |
-| 0x011A | NtAlpcCreateResourceReserve      | §31 | T12 §8               | [ ]  |
-| 0x011B | NtAlpcDeleteResourceReserve      | §31 | T12 §8               | [ ]  |
-| 0x011C | NtAlpcQueryInformation           | §31 | T12 §8               | [ ]  |
-| 0x011D | NtAlpcSetInformation             | §31 | T12 §8               | [ ]  |
-| 0x011E | NtAlpcQueryInformationMessage    | §31 | T12 §8               | [ ]  |
+| 0x010F | NtAlpcCreatePort                 | §31 | T05 §31 (nt_alpc.c stub, T12 §8 retrofit) | [/]  |
+| 0x0110 | NtAlpcConnectPort                | §31 | T05 §31 (nt_alpc.c stub, T12 §8 retrofit) | [/]  |
+| 0x0111 | NtAlpcConnectPortEx              | §31 | T05 §31 (nt_alpc.c stub, T12 §8 retrofit) | [/]  |
+| 0x0112 | NtAlpcAcceptConnectPort          | §31 | T05 §31 (nt_alpc.c stub, T12 §8 retrofit) | [/]  |
+| 0x0113 | NtAlpcSendWaitReceivePort        | §31 | T05 §31 (nt_alpc.c stub, T12 §8 retrofit) | [/]  |
+| 0x0114 | NtAlpcDisconnectPort             | §31 | T05 §31 (nt_alpc.c stub, T12 §8 retrofit) | [/]  |
+| 0x0115 | NtAlpcCancelMessage              | §31 | T05 §31 (nt_alpc.c stub, T12 §8 retrofit) | [/]  |
+| 0x0116 | NtAlpcCreatePortSection          | §31 | T05 §31 (nt_alpc.c stub, T12 §8 retrofit) | [/]  |
+| 0x0117 | NtAlpcDeletePortSection          | §31 | T05 §31 (nt_alpc.c stub, T12 §8 retrofit) | [/]  |
+| 0x0118 | NtAlpcCreateSectionView          | §31 | T05 §31 (nt_alpc.c stub, T12 §8 retrofit) | [/]  |
+| 0x0119 | NtAlpcDeleteSectionView          | §31 | T05 §31 (nt_alpc.c stub, T12 §8 retrofit) | [/]  |
+| 0x011A | NtAlpcCreateResourceReserve      | §31 | T05 §31 (nt_alpc.c stub, T12 §8 retrofit) | [/]  |
+| 0x011B | NtAlpcDeleteResourceReserve      | §31 | T05 §31 (nt_alpc.c stub, T12 §8 retrofit) | [/]  |
+| 0x011C | NtAlpcQueryInformation           | §31 | T05 §31 (nt_alpc.c stub, T12 §8 retrofit) | [/]  |
+| 0x011D | NtAlpcSetInformation             | §31 | T05 §31 (nt_alpc.c stub, T12 §8 retrofit) | [/]  |
+| 0x011E | NtAlpcQueryInformationMessage    | §31 | T05 §31 (nt_alpc.c stub, T12 §8 retrofit) | [/]  |
 
 **0x0120–0x012F: Namespace and Directory Objects**
 

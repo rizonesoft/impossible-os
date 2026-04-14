@@ -19,6 +19,7 @@
 #include "kernel/sched/workqueue.h"
 #include "kernel/sched/syscall.h"
 #include "kernel/nt/ssdt.h"
+#include "kernel/boot_halt.h"
 #include "kernel/etw.h"
 #include "kernel/boot_splash.h"
 #include "kernel/boot_timing.h"
@@ -115,7 +116,9 @@ void boot_phase3(void)
         extern void nt_namespace_register_ssdt(void);
         extern void nt_section_register_ssdt(void);
         extern void nt_timer_register_ssdt(void);
-        extern void nt_lpc_register_ssdt(void);
+        extern int  nt_lpc_register_ssdt(void);
+        extern int  nt_alpc_register_ssdt(void);
+        int reg_failures;
         nt_syscall_register_ssdt();
         nt_process_register_ssdt();
         nt_sync_register_ssdt();
@@ -125,7 +128,14 @@ void boot_phase3(void)
         nt_token_register_ssdt();
         nt_namespace_register_ssdt();
         nt_timer_register_ssdt();
-        nt_lpc_register_ssdt();
+        reg_failures  = nt_lpc_register_ssdt();
+        reg_failures += nt_alpc_register_ssdt();
+        if (reg_failures != 0) {
+            klog(LOG_ERROR, "boot",
+                 "SSDT registration failures: %d -- aborting boot",
+                 (uint64_t)reg_failures);
+            boot_halt("SSDT registration failed");
+        }
     }
 
     /* --- ETW tracing subsystem --- */

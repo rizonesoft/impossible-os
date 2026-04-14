@@ -249,3 +249,9 @@ pe_validate_result_t pe_validate(const uint8_t *data, uint64_t size);
  * Currently validates only (§7); section loading in §8.
  * Returns entry point VA on success, 0 on failure. */
 uint64_t pe_load(const uint8_t *data, uint64_t size);
+
+/* Verify every DLL export table in pe.c is strictly sorted ascending by
+ * name (required by the binary-search lookup in pe_lookup_export).
+ * Returns 0 if all tables are sorted, else the number of violations.
+ * Intended for boot-time gating and unit tests. */
+int pe_exports_sorted_check(void);

@@ -81,7 +81,7 @@
 | 💎  |  28   | Extended directory enumeration classes                         | §6, §13           |  [x]   |
 | 💎  |  29   | Token lifecycle + SRM access check syscalls                    | §16, TODO-11 §4,§5|  [ ]   |
 | 💎  |  30   | Generic object management (make-temp/perm, set-info, compare)  | §17, TODO-03 §1,§9|  [ ]   |
-| 💎  |  31   | Modern ALPC port syscalls                                      | §20, TODO-12 §8   |  [ ]   |
+| 💎  |  31   | Modern ALPC port syscalls                                      | §20, TODO-12 §8   |  [x]   |
 
 > 💎 = parity -- Windows NT and Linux both have equivalents for these categories.
 > ⭐ = exclusive -- the ZwXxx privilege layer, the audit hook, SSDT integrity protection, and the IOSB/LastError unified path go beyond what Linux offers.
@@ -851,25 +851,28 @@ NtQueryDirectoryFile (§6) currently returns `FileNamesInformation` only (name +
 > [!NOTE]
 > Split from §20 to keep both sections under the 10-item limit. §20 covers legacy LPC (NT 3.x-5.x) compatibility syscalls; this section covers the modern ALPC (Vista+) surface. Reserves SSDT indices 0x010F-0x011E and wires NT-compatible signatures so user-mode callers get `STATUS_NOT_IMPLEMENTED` (rather than an empty SSDT slot) until the ALPC subsystem lands. Full port infrastructure -- `ALPC_PORT` object, message queue, connection state machine, send/receive engine, section views, resource reserves, information classes -- is implemented in `02-kernel-core/TODO-12-alpc-message-ports.md`. `\RPC Control\` namespace directory is added by TODO-12 §2 (`ObpAlpcPortType` registration).
 
-- [ ] `NtAlpcCreatePort(PortHandle, ObjectAttributes, PortAttributes)` → SSDT 0x010F
-- [ ] `NtAlpcConnectPort(PortHandle, PortName, ObjectAttributes, PortAttributes, Flags, RequiredServerSid, ConnectionMessage, BufferLength, OutMessageAttributes, InMessageAttributes, Timeout)` → SSDT 0x0110
-- [ ] `NtAlpcConnectPortEx(...)` → SSDT 0x0111
-- [ ] `NtAlpcAcceptConnectPort(PortHandle, ConnectionPortHandle, Flags, ObjectAttributes, PortAttributes, PortContext, ConnectionRequest, ConnectionMessageAttributes, AcceptConnection)` → SSDT 0x0112
-- [ ] `NtAlpcSendWaitReceivePort(PortHandle, Flags, SendMessage, SendMessageAttributes, ReceiveMessage, BufferLength, ReceiveMessageAttributes, Timeout)` → SSDT 0x0113
-- [ ] `NtAlpcDisconnectPort(PortHandle, Flags)` → SSDT 0x0114
-- [ ] `NtAlpcCancelMessage(PortHandle, Flags, MessageContext)` → SSDT 0x0115
-- [ ] `NtAlpcCreatePortSection(PortHandle, Flags, SectionHandle, SectionSize, AlpcSectionHandle, ActualSectionSize)` → SSDT 0x0116
-- [ ] `NtAlpcDeletePortSection(PortHandle, Flags, SectionHandle)` → SSDT 0x0117
-- [ ] `NtAlpcCreateSectionView(PortHandle, Flags, ViewAttributes)` → SSDT 0x0118
-- [ ] `NtAlpcDeleteSectionView(PortHandle, Flags, ViewBase)` → SSDT 0x0119
-- [ ] `NtAlpcCreateResourceReserve(PortHandle, Flags, MessageSize, ResourceId)` → SSDT 0x011A
-- [ ] `NtAlpcDeleteResourceReserve(PortHandle, Flags, ResourceId)` → SSDT 0x011B
-- [ ] `NtAlpcQueryInformation(PortHandle, PortInformationClass, Buffer, Length, ReturnLength)` → SSDT 0x011C
-- [ ] `NtAlpcSetInformation(PortHandle, PortInformationClass, Buffer, Length)` → SSDT 0x011D
-- [ ] `NtAlpcQueryInformationMessage(PortHandle, PortMessage, MessageInformationClass, Buffer, Length, ReturnLength)` → SSDT 0x011E
-- [ ] Commit: `"kernel: nt -- modern ALPC port syscalls wired to SSDT"`
+- [x] `NtAlpcCreatePort(PortHandle, ObjectAttributes, PortAttributes)` → SSDT 0x010F
+- [x] `NtAlpcConnectPort(PortHandle, PortName, ObjectAttributes, PortAttributes, Flags, RequiredServerSid, ConnectionMessage, BufferLength, OutMessageAttributes, InMessageAttributes, Timeout)` → SSDT 0x0110
+- [x] `NtAlpcConnectPortEx(...)` → SSDT 0x0111
+- [x] `NtAlpcAcceptConnectPort(PortHandle, ConnectionPortHandle, Flags, ObjectAttributes, PortAttributes, PortContext, ConnectionRequest, ConnectionMessageAttributes, AcceptConnection)` → SSDT 0x0112
+- [x] `NtAlpcSendWaitReceivePort(PortHandle, Flags, SendMessage, SendMessageAttributes, ReceiveMessage, BufferLength, ReceiveMessageAttributes, Timeout)` → SSDT 0x0113
+- [x] `NtAlpcDisconnectPort(PortHandle, Flags)` → SSDT 0x0114
+- [x] `NtAlpcCancelMessage(PortHandle, Flags, MessageContext)` → SSDT 0x0115
+- [x] `NtAlpcCreatePortSection(PortHandle, Flags, SectionHandle, SectionSize, AlpcSectionHandle, ActualSectionSize)` → SSDT 0x0116
+- [x] `NtAlpcDeletePortSection(PortHandle, Flags, SectionHandle)` → SSDT 0x0117
+- [x] `NtAlpcCreateSectionView(PortHandle, Flags, ViewAttributes)` → SSDT 0x0118
+- [x] `NtAlpcDeleteSectionView(PortHandle, Flags, ViewBase)` → SSDT 0x0119
+- [x] `NtAlpcCreateResourceReserve(PortHandle, Flags, MessageSize, ResourceId)` → SSDT 0x011A
+- [x] `NtAlpcDeleteResourceReserve(PortHandle, Flags, ResourceId)` → SSDT 0x011B
+- [x] `NtAlpcQueryInformation(PortHandle, PortInformationClass, Buffer, Length, ReturnLength)` → SSDT 0x011C
+- [x] `NtAlpcSetInformation(PortHandle, PortInformationClass, Buffer, Length)` → SSDT 0x011D
+- [x] `NtAlpcQueryInformationMessage(PortHandle, PortMessage, MessageInformationClass, Buffer, Length, ReturnLength)` → SSDT 0x011E
+- [x] Commit: `"kernel: nt -- modern ALPC port syscalls wired to SSDT"`
 
-**Test checkpoint:** All 15 ALPC SSDT slots resolve to the registered handler (not the default `ssdt_stub_not_implemented`). Each handler returns `STATUS_NOT_IMPLEMENTED` until TODO-12 ALPC subsystem lands; functional round-trip (`NtAlpcCreatePort` + `NtAlpcConnectPort` + `NtAlpcSendWaitReceivePort`) and `\RPC Control\` namespace visibility are exercised by TODO-12 §8 tests.
+**Test checkpoint:** All 16 ALPC SSDT slots resolve to the registered handler (not the default `ssdt_stub_not_implemented`). Each handler returns `STATUS_NOT_IMPLEMENTED` until TODO-12 §8 ALPC engine lands; functional round-trip (`NtAlpcCreatePort` + `NtAlpcConnectPort` + `NtAlpcSendWaitReceivePort`) and `\RPC Control\` namespace visibility are exercised by TODO-12 §8 tests.
+
+> **Test runner:** `scripts\debug\run-ob-tests.bat` (SUITE=ob)
+> **Expected:** 2 new §31 tests (ALPC slots registered, ALPC returns deferred-status), 0 failures.
 
 ---
 
@@ -899,7 +902,7 @@ NtQueryDirectoryFile (§6) currently returns `FileNamesInformation` only (name +
 | 💎 | Namespace dir/symlink      | ✅ NtCreateDirectoryObj     | ❌ No kernel namespace     | ⬜ §17                      |
 | 💎 | Memory-mapped sections     | ✅ NtCreateSection/MapView  | ✅ mmap with MAP_SHARED    | ✅ §18 full §5 SSDT 0x005C-0x0062 |
 | 💎 | Timer objects              | ✅ NtSetTimer periodic      | ✅ timerfd_create          | ✅ §19 full 6 SSDT 0x007E-0x0083 |
-| 💎 | ALPC message ports         | ✅ NtAlpcSendWaitReceive    | ❌ No equivalent           | ⬜ §20 (LPC) + §31 (ALPC) + TODO-12 |
+| 💎 | ALPC message ports         | ✅ NtAlpcSendWaitReceive    | ❌ No equivalent           | 🟡 §20 (LPC stub) + §31 (ALPC stub), engine in TODO-12 |
 | 💎 | Debug API                  | ✅ NtDebugActiveProcess     | ✅ ptrace                  | ⬜ §21 + TODO-18            |
 | 💎 | Power management           | ✅ NtSetSystemPowerState    | ✅ sys_reboot + ACPI       | 🔄 §5 NtShutdownSystem wired |
 | 💎 | Atom table                 | ✅ NtAddAtom/FindAtom       | ❌ No equivalent           | ⬜ §23                      |

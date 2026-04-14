@@ -227,7 +227,7 @@ static int lpc_register_one(uint32_t svc, SSDT_HANDLER h, const char *name)
     return 0;
 }
 
-void nt_lpc_register_ssdt(void)
+int nt_lpc_register_ssdt(void)
 {
     int failures = 0;
 
@@ -281,8 +281,9 @@ void nt_lpc_register_ssdt(void)
         klog(LOG_ERROR, "nt/lpc",
              "NT legacy LPC: %d of 15 handlers FAILED to register",
              (uint64_t)failures);
-        return;
+        return failures;
     }
     klog(LOG_INFO, "nt/lpc",
          "NT legacy LPC: 15 stub handlers registered (SSDT 0x0100-0x010E)");
+    return 0;
 }

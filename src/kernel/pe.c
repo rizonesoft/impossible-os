@@ -206,75 +206,96 @@ static const pe_export_entry_t s_kernel32_exports[] = {
 };
 
 /* ntdll.dll exports (sorted by name) */
+/* Export names MUST be in strictly ascending order (case-sensitive byte
+ * compare) because pe_lookup_export() below does binary search. Adding
+ * an entry out of order silently breaks import resolution for every
+ * name at or beyond the misplaced entry. The assertion in
+ * pe_test_ntdll_exports_sorted() verifies this invariant at boot. */
 static const pe_export_entry_t s_ntdll_exports[] = {
-    { "NtAdjustGroupsToken",   SSDT_NtAdjustGroupsToken },
-    { "NtAdjustPrivilegesToken", SSDT_NtAdjustPrivilegesToken },
-    { "NtAllocateLocallyUniqueId", SSDT_NtAllocateLocallyUniqueId },
-    { "NtAcceptConnectPort",   SSDT_NtAcceptConnectPort },
-    { "NtAreMappedFilesTheSame", SSDT_NtAreMappedFilesTheSame },
-    { "NtCancelTimer",         SSDT_NtCancelTimer },
-    { "NtClose",               SSDT_NtClose },
-    { "NtCompleteConnectPort", SSDT_NtCompleteConnectPort },
-    { "NtConnectPort",         SSDT_NtConnectPort },
-    { "NtCreateDirectoryObject", SSDT_NtCreateDirectoryObject },
-    { "NtCreateFile",          SSDT_NtCreateFile },
-    { "NtCreateKey",           SSDT_NtCreateKey },
-    { "NtCreatePort",          SSDT_NtCreatePort },
-    { "NtCreateSymbolicLinkObject", SSDT_NtCreateSymbolicLinkObject },
-    { "NtCreateSection",          SSDT_NtCreateSection },
-    { "NtCreateTimer",         SSDT_NtCreateTimer },
-    { "NtCreateWaitablePort",  SSDT_NtCreateWaitablePort },
-    { "NtDeleteKey",           SSDT_NtDeleteKey },
-    { "NtDeleteValueKey",      SSDT_NtDeleteValueKey },
-    { "NtEnumerateKey",        SSDT_NtEnumerateKey },
-    { "NtEnumerateValueKey",   SSDT_NtEnumerateValueKey },
-    { "NtExtendSection",       SSDT_NtExtendSection },
-    { "NtFlushKey",            SSDT_NtFlushKey },
-    { "NtImpersonateClientOfPort", SSDT_NtImpersonateClientOfPort },
-    { "NtListenPort",          SSDT_NtListenPort },
-    { "NtLoadKey",             SSDT_NtLoadKey },
-    { "NtLoadKeyEx",           SSDT_NtLoadKeyEx },
-    { "NtMapViewOfSection",    SSDT_NtMapViewOfSection },
-    { "NtNotifyChangeKey",     SSDT_NtNotifyChangeKey },
-    { "NtOpenDirectoryObject", SSDT_NtOpenDirectoryObject },
-    { "NtOpenKey",             SSDT_NtOpenKey },
-    { "NtOpenKeyEx",           SSDT_NtOpenKeyEx },
-    { "NtOpenProcessToken",    SSDT_NtOpenProcessToken },
-    { "NtOpenProcessTokenEx",  SSDT_NtOpenProcessTokenEx },
-    { "NtOpenSection",         SSDT_NtOpenSection },
-    { "NtOpenSymbolicLinkObject", SSDT_NtOpenSymbolicLinkObject },
-    { "NtOpenThreadToken",     SSDT_NtOpenThreadToken },
-    { "NtOpenThreadTokenEx",   SSDT_NtOpenThreadTokenEx },
-    { "NtOpenTimer",           SSDT_NtOpenTimer },
-    { "NtQueryDirectoryObject", SSDT_NtQueryDirectoryObject },
-    { "NtQueryInformationToken", SSDT_NtQueryInformationToken },
-    { "NtQueryKey",            SSDT_NtQueryKey },
-    { "NtQuerySection",        SSDT_NtQuerySection },
-    { "NtQuerySymbolicLinkObject", SSDT_NtQuerySymbolicLinkObject },
-    { "NtQueryTimer",          SSDT_NtQueryTimer },
-    { "NtQueryValueKey",       SSDT_NtQueryValueKey },
-    { "NtReadFile",            SSDT_NtReadFile },
-    { "NtReadRequestData",     SSDT_NtReadRequestData },
-    { "NtRenameKey",           SSDT_NtRenameKey },
-    { "NtReplyPort",           SSDT_NtReplyPort },
-    { "NtReplyWaitReceivePort", SSDT_NtReplyWaitReceivePort },
-    { "NtReplyWaitReceivePortEx", SSDT_NtReplyWaitReceivePortEx },
-    { "NtRequestPort",         SSDT_NtRequestPort },
-    { "NtRequestWaitReplyPort", SSDT_NtRequestWaitReplyPort },
-    { "NtRestoreKey",          SSDT_NtRestoreKey },
-    { "NtSaveKey",             SSDT_NtSaveKey },
-    { "NtSaveKeyEx",           SSDT_NtSaveKeyEx },
-    { "NtSecureConnectPort",   SSDT_NtSecureConnectPort },
-    { "NtSetInformationToken", SSDT_NtSetInformationToken },
-    { "NtSetTimer",            SSDT_NtSetTimer },
-    { "NtSetTimerEx",          SSDT_NtSetTimerEx },
-    { "NtSetValueKey",         SSDT_NtSetValueKey },
-    { "NtTerminateProcess",    SSDT_NtTerminateProcess },
-    { "NtUnloadKey",           SSDT_NtUnloadKey },
-    { "NtUnloadKeyEx",         SSDT_NtUnloadKeyEx },
-    { "NtUnmapViewOfSection",  SSDT_NtUnmapViewOfSection },
-    { "NtWriteFile",           SSDT_NtWriteFile },
-    { "NtWriteRequestData",    SSDT_NtWriteRequestData },
+    { "NtAcceptConnectPort",         SSDT_NtAcceptConnectPort },
+    { "NtAdjustGroupsToken",         SSDT_NtAdjustGroupsToken },
+    { "NtAdjustPrivilegesToken",     SSDT_NtAdjustPrivilegesToken },
+    { "NtAllocateLocallyUniqueId",   SSDT_NtAllocateLocallyUniqueId },
+    { "NtAlpcAcceptConnectPort",     SSDT_NtAlpcAcceptConnectPort },
+    { "NtAlpcCancelMessage",         SSDT_NtAlpcCancelMessage },
+    { "NtAlpcConnectPort",           SSDT_NtAlpcConnectPort },
+    { "NtAlpcConnectPortEx",         SSDT_NtAlpcConnectPortEx },
+    { "NtAlpcCreatePort",            SSDT_NtAlpcCreatePort },
+    { "NtAlpcCreatePortSection",     SSDT_NtAlpcCreatePortSection },
+    { "NtAlpcCreateResourceReserve", SSDT_NtAlpcCreateResourceReserve },
+    { "NtAlpcCreateSectionView",     SSDT_NtAlpcCreateSectionView },
+    { "NtAlpcDeletePortSection",     SSDT_NtAlpcDeletePortSection },
+    { "NtAlpcDeleteResourceReserve", SSDT_NtAlpcDeleteResourceReserve },
+    { "NtAlpcDeleteSectionView",     SSDT_NtAlpcDeleteSectionView },
+    { "NtAlpcDisconnectPort",        SSDT_NtAlpcDisconnectPort },
+    { "NtAlpcQueryInformation",      SSDT_NtAlpcQueryInformation },
+    { "NtAlpcQueryInformationMessage", SSDT_NtAlpcQueryInformationMessage },
+    { "NtAlpcSendWaitReceivePort",   SSDT_NtAlpcSendWaitReceivePort },
+    { "NtAlpcSetInformation",        SSDT_NtAlpcSetInformation },
+    { "NtAreMappedFilesTheSame",     SSDT_NtAreMappedFilesTheSame },
+    { "NtCancelTimer",               SSDT_NtCancelTimer },
+    { "NtClose",                     SSDT_NtClose },
+    { "NtCompleteConnectPort",       SSDT_NtCompleteConnectPort },
+    { "NtConnectPort",               SSDT_NtConnectPort },
+    { "NtCreateDirectoryObject",     SSDT_NtCreateDirectoryObject },
+    { "NtCreateFile",                SSDT_NtCreateFile },
+    { "NtCreateKey",                 SSDT_NtCreateKey },
+    { "NtCreatePort",                SSDT_NtCreatePort },
+    { "NtCreateSection",             SSDT_NtCreateSection },
+    { "NtCreateSymbolicLinkObject",  SSDT_NtCreateSymbolicLinkObject },
+    { "NtCreateTimer",               SSDT_NtCreateTimer },
+    { "NtCreateWaitablePort",        SSDT_NtCreateWaitablePort },
+    { "NtDeleteKey",                 SSDT_NtDeleteKey },
+    { "NtDeleteValueKey",            SSDT_NtDeleteValueKey },
+    { "NtEnumerateKey",              SSDT_NtEnumerateKey },
+    { "NtEnumerateValueKey",         SSDT_NtEnumerateValueKey },
+    { "NtExtendSection",             SSDT_NtExtendSection },
+    { "NtFlushKey",                  SSDT_NtFlushKey },
+    { "NtImpersonateClientOfPort",   SSDT_NtImpersonateClientOfPort },
+    { "NtListenPort",                SSDT_NtListenPort },
+    { "NtLoadKey",                   SSDT_NtLoadKey },
+    { "NtLoadKeyEx",                 SSDT_NtLoadKeyEx },
+    { "NtMapViewOfSection",          SSDT_NtMapViewOfSection },
+    { "NtNotifyChangeKey",           SSDT_NtNotifyChangeKey },
+    { "NtOpenDirectoryObject",       SSDT_NtOpenDirectoryObject },
+    { "NtOpenKey",                   SSDT_NtOpenKey },
+    { "NtOpenKeyEx",                 SSDT_NtOpenKeyEx },
+    { "NtOpenProcessToken",          SSDT_NtOpenProcessToken },
+    { "NtOpenProcessTokenEx",        SSDT_NtOpenProcessTokenEx },
+    { "NtOpenSection",               SSDT_NtOpenSection },
+    { "NtOpenSymbolicLinkObject",    SSDT_NtOpenSymbolicLinkObject },
+    { "NtOpenThreadToken",           SSDT_NtOpenThreadToken },
+    { "NtOpenThreadTokenEx",         SSDT_NtOpenThreadTokenEx },
+    { "NtOpenTimer",                 SSDT_NtOpenTimer },
+    { "NtQueryDirectoryObject",      SSDT_NtQueryDirectoryObject },
+    { "NtQueryInformationToken",     SSDT_NtQueryInformationToken },
+    { "NtQueryKey",                  SSDT_NtQueryKey },
+    { "NtQuerySection",              SSDT_NtQuerySection },
+    { "NtQuerySymbolicLinkObject",   SSDT_NtQuerySymbolicLinkObject },
+    { "NtQueryTimer",                SSDT_NtQueryTimer },
+    { "NtQueryValueKey",             SSDT_NtQueryValueKey },
+    { "NtReadFile",                  SSDT_NtReadFile },
+    { "NtReadRequestData",           SSDT_NtReadRequestData },
+    { "NtRenameKey",                 SSDT_NtRenameKey },
+    { "NtReplyPort",                 SSDT_NtReplyPort },
+    { "NtReplyWaitReceivePort",      SSDT_NtReplyWaitReceivePort },
+    { "NtReplyWaitReceivePortEx",    SSDT_NtReplyWaitReceivePortEx },
+    { "NtRequestPort",               SSDT_NtRequestPort },
+    { "NtRequestWaitReplyPort",      SSDT_NtRequestWaitReplyPort },
+    { "NtRestoreKey",                SSDT_NtRestoreKey },
+    { "NtSaveKey",                   SSDT_NtSaveKey },
+    { "NtSaveKeyEx",                 SSDT_NtSaveKeyEx },
+    { "NtSecureConnectPort",         SSDT_NtSecureConnectPort },
+    { "NtSetInformationToken",       SSDT_NtSetInformationToken },
+    { "NtSetTimer",                  SSDT_NtSetTimer },
+    { "NtSetTimerEx",                SSDT_NtSetTimerEx },
+    { "NtSetValueKey",               SSDT_NtSetValueKey },
+    { "NtTerminateProcess",          SSDT_NtTerminateProcess },
+    { "NtUnloadKey",                 SSDT_NtUnloadKey },
+    { "NtUnloadKeyEx",               SSDT_NtUnloadKeyEx },
+    { "NtUnmapViewOfSection",        SSDT_NtUnmapViewOfSection },
+    { "NtWriteFile",                 SSDT_NtWriteFile },
+    { "NtWriteRequestData",          SSDT_NtWriteRequestData },
 };
 
 /* DLL registry -- add new DLLs here */
@@ -289,6 +310,31 @@ static const pe_dll_exports_t s_dll_tables[] = {
 
 /* Binary search for a function name in a sorted export table.
  * Returns SSDT index on success, or (uint32_t)-1 on not found. */
+/* Walk every export table and count strict-ordering violations. The
+ * binary search in pe_lookup_export() is correct only if each table
+ * is sorted ascending by name; one misplaced entry silently breaks
+ * import resolution. Exposed so tests (and boot-time gates) can assert
+ * the invariant. Returns 0 if all tables are strictly sorted, else
+ * the number of violations. */
+int pe_exports_sorted_check(void)
+{
+    uint32_t dll_i;
+    int violations = 0;
+
+    for (dll_i = 0; dll_i < PE_DLL_COUNT; dll_i++) {
+        const pe_dll_exports_t *dll = &s_dll_tables[dll_i];
+        uint32_t i;
+
+        for (i = 1; i < dll->count; i++) {
+            if (pe_strcmp(dll->exports[i - 1].name,
+                          dll->exports[i].name) >= 0) {
+                violations++;
+            }
+        }
+    }
+    return violations;
+}
+
 static uint32_t pe_lookup_export(const pe_dll_exports_t *dll, const char *name)
 {
     uint32_t lo = 0, hi = dll->count;

@@ -18,4 +18,7 @@
 
 #include "kernel/types.h"
 
-void nt_lpc_register_ssdt(void);
+/* Returns 0 on success, or the number of handlers that failed to
+ * register. Callers SHOULD treat non-zero as boot-fatal -- a partial
+ * LPC surface with missing handlers is an ABI hazard. */
+int nt_lpc_register_ssdt(void);

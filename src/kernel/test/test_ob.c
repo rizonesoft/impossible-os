@@ -1069,6 +1069,70 @@ static void test_nt_lpc_returns_deferred_status(void)
     }
 }
 
+/* ============================================================================
+ * §31 NT modern ALPC SSDT stub-wiring tests
+ * ============================================================================ */
+
+#include "kernel/nt/nt_alpc.h"
+#include "kernel/pe.h"
+
+static void test_pe_ntdll_exports_sorted(void)
+{
+    /* pe_lookup_export() binary-searches each DLL export table, which is
+     * correct only if the table is strictly sorted by name. A single
+     * out-of-order entry silently breaks import resolution from that
+     * point forward. This test scans all tables every boot. */
+    int v = pe_exports_sorted_check();
+    TEST_ASSERT(v == 0, "PE DLL export tables strictly sorted by name");
+}
+
+static void test_nt_alpc_slots_registered(void)
+{
+    const SSDT_TABLE *tbl = ssdt_get_table(SSDT_TABLE_MAIN);
+    extern NTSTATUS ssdt_stub_not_implemented(uint64_t, uint64_t, uint64_t,
+                                              uint64_t, uint64_t, uint64_t);
+    uint32_t slots[] = {
+        SSDT_NtAlpcCreatePort,            SSDT_NtAlpcConnectPort,
+        SSDT_NtAlpcConnectPortEx,         SSDT_NtAlpcAcceptConnectPort,
+        SSDT_NtAlpcSendWaitReceivePort,   SSDT_NtAlpcDisconnectPort,
+        SSDT_NtAlpcCancelMessage,         SSDT_NtAlpcCreatePortSection,
+        SSDT_NtAlpcDeletePortSection,     SSDT_NtAlpcCreateSectionView,
+        SSDT_NtAlpcDeleteSectionView,     SSDT_NtAlpcCreateResourceReserve,
+        SSDT_NtAlpcDeleteResourceReserve, SSDT_NtAlpcQueryInformation,
+        SSDT_NtAlpcSetInformation,        SSDT_NtAlpcQueryInformationMessage,
+    };
+    uint32_t i;
+    TEST_ASSERT(tbl != (const SSDT_TABLE *)0, "SSDT main table exists");
+    if (!tbl) return;
+    for (i = 0; i < sizeof(slots) / sizeof(slots[0]); i++) {
+        uint32_t idx = slots[i] & 0xFFF;
+        TEST_ASSERT(tbl->handlers[idx] != ssdt_stub_not_implemented,
+                    "ALPC SSDT slot registered (not default stub)");
+    }
+}
+
+static void test_nt_alpc_returns_deferred_status(void)
+{
+    /* Dispatch ALL 16 slots so mis-registration to another non-stub
+     * handler in any unsampled slot cannot ship undetected. */
+    uint32_t slots[] = {
+        SSDT_NtAlpcCreatePort,            SSDT_NtAlpcConnectPort,
+        SSDT_NtAlpcConnectPortEx,         SSDT_NtAlpcAcceptConnectPort,
+        SSDT_NtAlpcSendWaitReceivePort,   SSDT_NtAlpcDisconnectPort,
+        SSDT_NtAlpcCancelMessage,         SSDT_NtAlpcCreatePortSection,
+        SSDT_NtAlpcDeletePortSection,     SSDT_NtAlpcCreateSectionView,
+        SSDT_NtAlpcDeleteSectionView,     SSDT_NtAlpcCreateResourceReserve,
+        SSDT_NtAlpcDeleteResourceReserve, SSDT_NtAlpcQueryInformation,
+        SSDT_NtAlpcSetInformation,        SSDT_NtAlpcQueryInformationMessage,
+    };
+    uint32_t i;
+    for (i = 0; i < sizeof(slots) / sizeof(slots[0]); i++) {
+        NTSTATUS st = ssdt_dispatch(slots[i], 0, 0, 0, 0, 0, 0);
+        TEST_ASSERT(st == STATUS_NOT_IMPLEMENTED,
+                    "ALPC slot returns STATUS_NOT_IMPLEMENTED");
+    }
+}
+
 /* ---- Registration ---- */
 
 void test_register_ob(void)
@@ -1101,6 +1165,9 @@ void test_register_ob(void)
     test_suite_register_cat("OB: NT timer SSDT registered", test_nt_timer_ssdt_registered, TEST_CAT_OB);
     test_suite_register_cat("OB: NT LPC slots registered", test_nt_lpc_slots_registered, TEST_CAT_OB);
     test_suite_register_cat("OB: NT LPC returns deferred", test_nt_lpc_returns_deferred_status, TEST_CAT_OB);
+    test_suite_register_cat("OB: NT ALPC slots registered", test_nt_alpc_slots_registered, TEST_CAT_OB);
+    test_suite_register_cat("OB: NT ALPC returns deferred", test_nt_alpc_returns_deferred_status, TEST_CAT_OB);
+    test_suite_register_cat("OB: PE ntdll exports sorted", test_pe_ntdll_exports_sorted, TEST_CAT_OB);
 }
 
 #endif /* KERNEL_TESTS */
