@@ -369,6 +369,245 @@ static void test_alpc_syscall_full_path(void)
         NtClose(&task_current()->handle_table, out);
 }
 
+/* =========================================================================
+ * §3 Connection state machine tests
+ * =======================================================================*/
+
+/* Simple pattern: static state set by the main thread, consumed by the
+ * kthread worker. One test at a time uses these -- the test framework
+ * runs suites sequentially on a single thread pool. */
+static volatile HANDLE s_conn_client_handle;
+static volatile NTSTATUS s_conn_client_status;
+static volatile int s_conn_worker_done;
+static const char *s_conn_target_name;
+
+static void alpc_connect_worker(void *arg)
+{
+    (void)arg;
+    HANDLE h = INVALID_HANDLE_VALUE;
+    NTSTATUS st = AlpcConnectPort(&task_current()->handle_table,
+                                  s_conn_target_name,
+                                  /* timeout_ms */ 5000, &h);
+    s_conn_client_handle = h;
+    s_conn_client_status = st;
+    s_conn_worker_done   = 1;
+}
+
+static void test_alpc_connect_nonexistent(void)
+{
+    HANDLE h = INVALID_HANDLE_VALUE;
+    NTSTATUS st = AlpcConnectPort(&task_current()->handle_table,
+                                  "\\RPC Control\\NoSuchPort", 100, &h);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_OBJECT_NAME_NOT_FOUND,
+                   "connect to nonexistent => OBJECT_NAME_NOT_FOUND");
+    TEST_ASSERT_EQ(h, INVALID_HANDLE_VALUE, "handle left INVALID");
+}
+
+static void test_alpc_connect_type_mismatch(void)
+{
+    /* A directory is not an ALPC port. Passing its namespace path to
+     * AlpcConnectPort must reject with STATUS_OBJECT_NAME_NOT_FOUND
+     * (ObLookupObjectByName filters by type, which returns -1 for any
+     * mismatched type). */
+    HANDLE h = INVALID_HANDLE_VALUE;
+    NTSTATUS st = AlpcConnectPort(&task_current()->handle_table,
+                                  "\\RPC Control", 100, &h);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_OBJECT_NAME_NOT_FOUND,
+                   "connect to directory => OBJECT_NAME_NOT_FOUND");
+}
+
+static void test_alpc_accept_handshake(void)
+{
+    /* Server thread (this thread) creates a port, then spawns a worker
+     * that calls AlpcConnectPort. Server accepts; both sides end with
+     * valid handles and cross-linked ConnectedPort pointers. */
+    HANDLE server_conn = INVALID_HANDLE_VALUE;
+    NTSTATUS st = AlpcCreatePort(&task_current()->handle_table,
+                                 "HsServer", (ALPC_PORT_ATTRIBUTES *)0,
+                                 &server_conn);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS,
+                   "server CreatePort SUCCESS");
+    if (server_conn == INVALID_HANDLE_VALUE)
+        return;
+
+    s_conn_target_name   = "\\RPC Control\\HsServer";
+    s_conn_client_handle = INVALID_HANDLE_VALUE;
+    s_conn_client_status = STATUS_INVALID_PARAMETER;
+    s_conn_worker_done   = 0;
+
+    int tid = kthread_create(alpc_connect_worker, (void *)0, 0);
+    TEST_ASSERT(tid >= 0, "kthread_create(connect worker) succeeds");
+    if (tid < 0) {
+        NtClose(&task_current()->handle_table, server_conn);
+        return;
+    }
+
+    /* Accept the request the worker will queue. */
+    HANDLE server_comm = INVALID_HANDLE_VALUE;
+    st = AlpcAcceptConnectPort(&task_current()->handle_table,
+                               server_conn, /* accept */ 1,
+                               /* timeout_ms */ 5000, &server_comm);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS,
+                   "accept(TRUE) SUCCESS");
+    TEST_ASSERT_NEQ(server_comm, INVALID_HANDLE_VALUE,
+                    "server-comm handle valid");
+
+    thread_join((uint32_t)tid);
+
+    TEST_ASSERT_EQ((uint32_t)s_conn_client_status, (uint32_t)STATUS_SUCCESS,
+                   "client saw SUCCESS");
+    TEST_ASSERT_NEQ(s_conn_client_handle, INVALID_HANDLE_VALUE,
+                    "client-comm handle valid");
+
+    /* Cross-link check: walk both handles to their port bodies and
+     * assert ConnectedPort is non-NULL on each side. */
+    HANDLE_TABLE_ENTRY *se = ObpLookupHandle(&task_current()->handle_table,
+                                              server_comm);
+    HANDLE_TABLE_ENTRY *ce = ObpLookupHandle(&task_current()->handle_table,
+                                              s_conn_client_handle);
+    TEST_ASSERT_NOT_NULL(se, "server-comm entry");
+    TEST_ASSERT_NOT_NULL(ce, "client-comm entry");
+    if (se && ce) {
+        ALPC_PORT *sp = (ALPC_PORT *)se->object;
+        ALPC_PORT *cp = (ALPC_PORT *)ce->object;
+        TEST_ASSERT_NOT_NULL((void *)sp->ConnectedPort,
+                             "server-comm->ConnectedPort non-NULL");
+        TEST_ASSERT_NOT_NULL((void *)cp->ConnectedPort,
+                             "client-comm->ConnectedPort non-NULL");
+        TEST_ASSERT_EQ((uint64_t)(uintptr_t)sp->ConnectedPort,
+                       (uint64_t)(uintptr_t)cp,
+                       "cross-link: server_comm->ConnectedPort == client_comm");
+        TEST_ASSERT_EQ((uint64_t)(uintptr_t)cp->ConnectedPort,
+                       (uint64_t)(uintptr_t)sp,
+                       "cross-link: client_comm->ConnectedPort == server_comm");
+    }
+
+    if (server_comm != INVALID_HANDLE_VALUE)
+        NtClose(&task_current()->handle_table, server_comm);
+    if (s_conn_client_handle != INVALID_HANDLE_VALUE)
+        NtClose(&task_current()->handle_table, s_conn_client_handle);
+    NtClose(&task_current()->handle_table, server_conn);
+}
+
+static void test_alpc_reject_handshake(void)
+{
+    HANDLE server_conn = INVALID_HANDLE_VALUE;
+    NTSTATUS st = AlpcCreatePort(&task_current()->handle_table,
+                                 "RjServer", (ALPC_PORT_ATTRIBUTES *)0,
+                                 &server_conn);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS,
+                   "server CreatePort SUCCESS");
+    if (server_conn == INVALID_HANDLE_VALUE)
+        return;
+
+    s_conn_target_name   = "\\RPC Control\\RjServer";
+    s_conn_client_handle = INVALID_HANDLE_VALUE;
+    s_conn_client_status = STATUS_SUCCESS;
+    s_conn_worker_done   = 0;
+
+    int tid = kthread_create(alpc_connect_worker, (void *)0, 0);
+    TEST_ASSERT(tid >= 0, "reject: kthread_create succeeds");
+    if (tid < 0) {
+        NtClose(&task_current()->handle_table, server_conn);
+        return;
+    }
+
+    /* Reject the connection. */
+    HANDLE server_comm = INVALID_HANDLE_VALUE;
+    st = AlpcAcceptConnectPort(&task_current()->handle_table,
+                               server_conn, /* accept */ 0,
+                               /* timeout_ms */ 5000, &server_comm);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS,
+                   "server's reject call still returns SUCCESS");
+    TEST_ASSERT_EQ(server_comm, INVALID_HANDLE_VALUE,
+                   "reject path leaves out-handle untouched");
+
+    thread_join((uint32_t)tid);
+
+    TEST_ASSERT_EQ((uint32_t)s_conn_client_status,
+                   (uint32_t)STATUS_PORT_CONNECTION_REFUSED,
+                   "client saw CONNECTION_REFUSED");
+    TEST_ASSERT_EQ(s_conn_client_handle, INVALID_HANDLE_VALUE,
+                   "client handle rolled back on reject");
+
+    NtClose(&task_current()->handle_table, server_conn);
+}
+
+static void test_alpc_disconnect_queues_close_msg(void)
+{
+    /* Full handshake, then server disconnects. Peer's MessageQueue must
+     * pick up a PORT_MESSAGE_ENTRY with Type = ALPC_MSG_TYPE_PORT_CLOSED. */
+    HANDLE server_conn = INVALID_HANDLE_VALUE;
+    NTSTATUS st = AlpcCreatePort(&task_current()->handle_table,
+                                 "DcServer", (ALPC_PORT_ATTRIBUTES *)0,
+                                 &server_conn);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS,
+                   "disc server CreatePort SUCCESS");
+    if (server_conn == INVALID_HANDLE_VALUE)
+        return;
+
+    s_conn_target_name   = "\\RPC Control\\DcServer";
+    s_conn_client_handle = INVALID_HANDLE_VALUE;
+    s_conn_client_status = STATUS_INVALID_PARAMETER;
+    s_conn_worker_done   = 0;
+
+    int tid = kthread_create(alpc_connect_worker, (void *)0, 0);
+    if (tid < 0) {
+        TEST_ASSERT(0, "disc kthread_create");
+        NtClose(&task_current()->handle_table, server_conn);
+        return;
+    }
+
+    HANDLE server_comm = INVALID_HANDLE_VALUE;
+    st = AlpcAcceptConnectPort(&task_current()->handle_table,
+                               server_conn, 1, 5000, &server_comm);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS, "disc accept");
+    thread_join((uint32_t)tid);
+
+    /* Server disconnects. The client-comm's MessageQueue should gain
+     * one ALPC_MSG_TYPE_PORT_CLOSED entry. */
+    st = AlpcDisconnectPort(&task_current()->handle_table, server_comm);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS, "disconnect SUCCESS");
+
+    HANDLE_TABLE_ENTRY *ce = ObpLookupHandle(&task_current()->handle_table,
+                                              s_conn_client_handle);
+    TEST_ASSERT_NOT_NULL(ce, "client-comm entry after disconnect");
+    if (ce) {
+        ALPC_PORT *cp = (ALPC_PORT *)ce->object;
+        TEST_ASSERT_NEQ(cp->MessageQueue.Count, 0u,
+                        "client MessageQueue has the PORT_CLOSED marker");
+        if (cp->MessageQueue.Head) {
+            TEST_ASSERT_EQ((uint32_t)cp->MessageQueue.Head->Header.Type,
+                           (uint32_t)ALPC_MSG_TYPE_PORT_CLOSED,
+                           "marker type == ALPC_MSG_TYPE_PORT_CLOSED");
+        }
+        TEST_ASSERT_EQ((uint32_t)cp->Disconnected, 1u,
+                       "client side marked Disconnected");
+    }
+
+    if (server_comm != INVALID_HANDLE_VALUE)
+        NtClose(&task_current()->handle_table, server_comm);
+    if (s_conn_client_handle != INVALID_HANDLE_VALUE)
+        NtClose(&task_current()->handle_table, s_conn_client_handle);
+    NtClose(&task_current()->handle_table, server_conn);
+}
+
+static void test_alpc_disconnect_unconnected(void)
+{
+    /* Disconnecting a server connection port with no peer is a no-op
+     * success (it just marks Disconnected). */
+    HANDLE h = INVALID_HANDLE_VALUE;
+    NTSTATUS st = AlpcCreatePort(&task_current()->handle_table,
+                                 "LonelyDc", (ALPC_PORT_ATTRIBUTES *)0, &h);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS, "lonely create");
+    if (h == INVALID_HANDLE_VALUE)
+        return;
+    st = AlpcDisconnectPort(&task_current()->handle_table, h);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS,
+                   "disconnect with no peer SUCCESS");
+    NtClose(&task_current()->handle_table, h);
+}
+
 static void test_alpc_syscall_bad_prefix_rejected(void)
 {
     /* A path that is NOT under \RPC Control must be rejected with
@@ -431,6 +670,19 @@ void test_register_alpc(void)
                             test_alpc_syscall_full_path, TEST_CAT_IPC);
     test_suite_register_cat("alpc: syscall bad prefix rejected",
                             test_alpc_syscall_bad_prefix_rejected, TEST_CAT_IPC);
+    /* §3 connection state machine */
+    test_suite_register_cat("alpc: connect to nonexistent",
+                            test_alpc_connect_nonexistent, TEST_CAT_IPC);
+    test_suite_register_cat("alpc: connect type mismatch",
+                            test_alpc_connect_type_mismatch, TEST_CAT_IPC);
+    test_suite_register_cat("alpc: accept handshake (2 threads)",
+                            test_alpc_accept_handshake, TEST_CAT_IPC);
+    test_suite_register_cat("alpc: reject handshake (2 threads)",
+                            test_alpc_reject_handshake, TEST_CAT_IPC);
+    test_suite_register_cat("alpc: disconnect queues PORT_CLOSED",
+                            test_alpc_disconnect_queues_close_msg, TEST_CAT_IPC);
+    test_suite_register_cat("alpc: disconnect unconnected noop",
+                            test_alpc_disconnect_unconnected, TEST_CAT_IPC);
 }
 
 #endif /* KERNEL_TESTS */

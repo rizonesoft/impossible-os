@@ -206,11 +206,67 @@ static NTSTATUS NtAlpcCreatePort_handler(uint64_t a1, uint64_t a2, uint64_t a3,
 }
 
 /* ---- 0x0110 NtAlpcConnectPort ------------------------------------------- */
+/* Real implementation wired by TODO-12 §3. SCOPE-GAP-ALLOWED: optional
+ * OBJECT_ATTRIBUTES.SecurityDescriptor, RequiredServerSid, ConnMsg,
+ * SendMsgAttr, RecvMsgAttr all deferred to §4-§7 -- the path parse +
+ * leaf extraction reuses the §2 `alpc_probe_and_split` pattern. */
 static NTSTATUS NtAlpcConnectPort_handler(uint64_t a1, uint64_t a2, uint64_t a3,
                                           uint64_t a4, uint64_t a5, uint64_t a6)
 {
-    (void)a1; (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
-    ALPC_STUB_BODY(NtAlpcConnectPort);
+    HANDLE *out_handle = (HANDLE *)a1;
+    OBJECT_ATTRIBUTES *oa = (OBJECT_ATTRIBUTES *)a2;
+    ALPC_PORT_ATTRIBUTES *port_attrs = (ALPC_PORT_ATTRIBUTES *)a3;
+    uint32_t timeout_ms = (uint32_t)a5;
+    char leaf_buf[64];
+    char full_path[96];
+    int have_name = 0;
+    NTSTATUS st;
+    HANDLE h;
+
+    (void)a4;                                      /* Flags -- §4+ */
+    (void)a6;
+
+    if (!out_handle)
+        return STATUS_INVALID_PARAMETER;
+
+    st = ProbeForWriteIfUser(out_handle, sizeof(HANDLE), 4);
+    if (!NT_SUCCESS(st))
+        return st;
+
+    if (port_attrs) {
+        /* Validate + discard; §3 does not persist caller-supplied port
+         * attrs on the client-comm port. They're caller intent for the
+         * server connection, not our concern here. */
+        st = ProbeForReadIfUser(port_attrs, sizeof(ALPC_PORT_ATTRIBUTES), 8);
+        if (!NT_SUCCESS(st))
+            return st;
+    }
+
+    st = alpc_probe_and_split(oa, leaf_buf, sizeof(leaf_buf), &have_name);
+    if (!NT_SUCCESS(st))
+        return st;
+    if (!have_name)
+        return STATUS_INVALID_PARAMETER;
+
+    /* Reconstruct the full namespace path -- AlpcConnectPort expects a
+     * complete path for ObLookupObjectByName. The split helper already
+     * verified the prefix; rebuild instead of trusting user memory. */
+    {
+        const char prefix[] = "\\RPC Control\\";
+        uint32_t pi = 0, li;
+        for (li = 0; prefix[li]; li++, pi++) full_path[pi] = prefix[li];
+        for (li = 0; leaf_buf[li] && pi < sizeof(full_path) - 1; li++, pi++)
+            full_path[pi] = leaf_buf[li];
+        full_path[pi] = '\0';
+    }
+
+    st = AlpcConnectPort(&task_current()->handle_table, full_path,
+                         timeout_ms, &h);
+    if (!NT_SUCCESS(st))
+        return st;
+
+    *out_handle = h;
+    return STATUS_SUCCESS;
 }
 
 /* ---- 0x0111 NtAlpcConnectPortEx ----------------------------------------- */
@@ -223,12 +279,36 @@ static NTSTATUS NtAlpcConnectPortEx_handler(uint64_t a1, uint64_t a2,
 }
 
 /* ---- 0x0112 NtAlpcAcceptConnectPort ------------------------------------- */
+/* Real implementation wired by TODO-12 §3. SCOPE-GAP-ALLOWED: optional
+ * PortContext, ConnectionMessage, ConnMsgAttr all deferred to §4-§5. */
 static NTSTATUS NtAlpcAcceptConnectPort_handler(uint64_t a1, uint64_t a2,
                                                 uint64_t a3, uint64_t a4,
                                                 uint64_t a5, uint64_t a6)
 {
-    (void)a1; (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
-    ALPC_STUB_BODY(NtAlpcAcceptConnectPort);
+    HANDLE *out_handle = (HANDLE *)a1;
+    HANDLE conn_port_handle = (HANDLE)(int32_t)(uint32_t)a2;
+    int accept = (int)(a3 & 1u);
+    uint32_t timeout_ms = (uint32_t)a4;
+    NTSTATUS st;
+    HANDLE h = INVALID_HANDLE_VALUE;
+
+    (void)a5; (void)a6;
+
+    if (!out_handle)
+        return STATUS_INVALID_PARAMETER;
+
+    st = ProbeForWriteIfUser(out_handle, sizeof(HANDLE), 4);
+    if (!NT_SUCCESS(st))
+        return st;
+
+    st = AlpcAcceptConnectPort(&task_current()->handle_table,
+                               conn_port_handle, accept, timeout_ms, &h);
+    if (!NT_SUCCESS(st))
+        return st;
+
+    if (accept)
+        *out_handle = h;
+    return STATUS_SUCCESS;
 }
 
 /* ---- 0x0113 NtAlpcSendWaitReceivePort ----------------------------------- */
@@ -241,12 +321,15 @@ static NTSTATUS NtAlpcSendWaitReceivePort_handler(uint64_t a1, uint64_t a2,
 }
 
 /* ---- 0x0114 NtAlpcDisconnectPort ---------------------------------------- */
+/* Real implementation wired by TODO-12 §3. Flags deferred. */
 static NTSTATUS NtAlpcDisconnectPort_handler(uint64_t a1, uint64_t a2,
                                              uint64_t a3, uint64_t a4,
                                              uint64_t a5, uint64_t a6)
 {
-    (void)a1; (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
-    ALPC_STUB_BODY(NtAlpcDisconnectPort);
+    HANDLE port_handle = (HANDLE)(int32_t)(uint32_t)a1;
+    (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
+
+    return AlpcDisconnectPort(&task_current()->handle_table, port_handle);
 }
 
 /* ---- 0x0115 NtAlpcCancelMessage ----------------------------------------- */

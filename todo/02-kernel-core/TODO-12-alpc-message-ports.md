@@ -54,7 +54,7 @@
 | --- | :---: | ------------------------------------------------- | ------------------ | :----: |
 | 💎  |   1   | Message header, port attributes, type codes       | (none)              |  [x]   |
 | 💎  |   2   | ALPC_PORT object & Object Manager registration    | §1, T03 §1-§4     |  [x]   |
-| 💎  |   3   | Connection state machine (create/connect/accept)  | §2, T05 §4        |  [ ]   |
+| 💎  |   3   | Connection state machine (create/connect/accept)  | §2, T05 §4        |  [x]   |
 | 💎  |   4   | Synchronous send+wait+receive engine              | §3, T06 §3        |  [ ]   |
 | 💎  |   5   | Asynchronous delivery & completion list           | §4                 |  [ ]   |
 | 💎  |   6   | Large data: port sections & view mapping          | §2, T03 §7        |  [ ]   |
@@ -96,6 +96,7 @@ Define the on-the-wire ALPC ABI in `include/kernel/ipc/alpc.h`. Field names foll
 > **Quality reviewed:** 2026-04-14 -- Two Codex dispatches (step-5 adversarial + step-8 quality/dead-code/consistency/perf). Four Highs fixed: (1) ABI-comment overclaim of Windows winternl.h binary compat softened to explicit Impossible-OS-native layout; (2) `ALPC_PORT_ATTRIBUTES` sizeof + every external offset locked with explicit `Pad0/Pad1/Pad2` fields (80B); (3) duplicate `CLIENT_ID` collision with `kernel/ob/teb.h` fixed by reusing the canonical 16-byte type + re-asserting sizeof/offsets locally; (4) duplicate `SECURITY_IMPERSONATION_LEVEL` collision with `kernel/security/token.h` fixed by reusing canonical enum. PORT_MESSAGE offsets shifted: MessageId 16 -> 24, CallbackId 24 -> 32; trailing Reserved u64 removed (16-byte CLIENT_ID fills the gap). Coexistence compile-proof: `alpc.h` now includes both `ob/teb.h` and `security/token.h`; full-tree build passes. Tests + TODO spec + kernel-code-quality gates (Gates 1-11) all walked. No dead code. No perf concerns (header-only + one klog line).
 > **Test runner:** `scripts\debug\run-ipc-tests.bat` (SUITE=ipc), 7 alpc suites, 0 failures expected
 
+---
 
 ## 2. ALPC_PORT Object & Object Manager Registration
 
@@ -124,54 +125,31 @@ Register the `ALPC Port` kernel object type with the Object Manager, create the 
 
 ## 3. Connection State Machine
 
-- [ ] (3.1 NtAlpcCreatePort -- server side) `NtAlpcCreatePort(PortHandle, ObjectAttributes, PortAttributes)`:
-  1. `ObCreateObject(AlpcPortObjectType, attrs, &port)` -- allocate + insert in `\RPC Control\` if `ObjectName` non-NULL
-  2. Set `port->PortType = AlpcServerConnectionPort`
-  3. Copy `PortAttributes` (if non-NULL; defaults if NULL)
-  4. Initialise `ConnectionQueue`, `MessageQueue`, `WaitQueue`, `Lock`
-  5. `ObInsertObject → handle table → *PortHandle`
-- [ ] Security: the DACL on the port object controls which processes may connect; default SD = `(A;;0x1F0001;;;SY)(A;;0x00120001;;;WD)` (Everyone=connect only, System=full)
-- [ ] (3.2 NtAlpcConnectPort -- client side) `NtAlpcConnectPort(PortHandle, PortName, ObjAttr, PortAttr, Flags, RequiredServerSid, ConnMsg, BufferLen, SendMsgAttr, RecvMsgAttr, Timeout)`:
-  1. `ObReferenceObjectByName(PortName, ...)` → server connection port; returns `STATUS_OBJECT_NAME_NOT_FOUND` if not found
-  2. `SeAccessCheck` on server port with `PORT_CONNECT (0x1)` access -- deny if client IL < server port IL
-  3. If `RequiredServerSid` non-NULL: compare to server port owner SID; deny if mismatch (prevents client from accidentally connecting to a hijacked port)
-  4. Allocate `ConnMsg` payload, set `Type=ALPC_MSG_TYPE_CONNECTION_REQUEST`
-  5. Allocate client communication port (`AlpcClientCommunicationPort`); set `ConnectionPort` pointer to the server port
-  6. Queue connection request entry on `server->ConnectionQueue`; wake server `WaitQueue`
-  7. Client blocks on `port->WaitQueue` (interruptible, honours `Timeout`)
-  8. Server's `NtAlpcAcceptConnectPort` resumes client (§3 accept path)
-  9. On accept: `*PortHandle` = client comm port handle; return `STATUS_SUCCESS`
-  10. On reject: return `STATUS_PORT_CONNECTION_REFUSED`
+The three-way handshake: client connects by name, server accepts/rejects, both sides hold unnamed communication-port handles cross-linked via `ConnectedPort`. `NtAlpcCreatePort` already ships from §2, so §3 delivers the remaining three syscalls (`NtAlpcConnectPort`, `NtAlpcAcceptConnectPort`, `NtAlpcDisconnectPort`) plus the cross-task wake path.
 
-- [ ] (3.3 NtAlpcAcceptConnectPort -- server side) `NtAlpcAcceptConnectPort(PortHandle, ConnectionPortHandle, Flags, ObjAttr, PortAttr, PortContext, ConnectionRequest, ConnMsgAttr, AcceptConnection)`:
-  1. `ObReferenceObjectByHandle(ConnectionPortHandle)` → server connection port
-  2. Dequeue the first entry from `server->ConnectionQueue` (or the specific request matched by `ConnectionRequest->MessageId`)
-  3. If `AcceptConnection == FALSE`:
-     - Send `ALPC_MSG_TYPE_LOST_REPLY` back to the waiting client's `ReplySyncWait`
-     - Client's `NtAlpcConnectPort` returns `STATUS_PORT_CONNECTION_REFUSED`
-     - Return `STATUS_SUCCESS` (server's decision, not an error)
-  4. If `AcceptConnection == TRUE`:
-     - Allocate server communication port (`AlpcServerCommunicationPort`)
-     - Set `server_comm->ConnectedPort = client_comm_port` (cross-link)
-     - Set `client_comm->ConnectedPort = server_comm_port`
-     - If `PortContext` non-NULL: `server_comm->PortContext = PortContext`
-     - Capture client security token if `SecurityQos.ImpersonationLevel >= SecurityIdentification` (§7)
-     - `ObInsertObject(server_comm)` → `*PortHandle` (server's new handle)
-     - Wake client's `ReplySyncWait` with `STATUS_SUCCESS`
-- [ ] Connection queue is FIFO; server processes one connection at a time unless it uses async mode (§5) to drain multiple pending connections
-- [ ] (3.4 NtAlpcDisconnectPort) `NtAlpcDisconnectPort(PortHandle, Flags)`:
-  - Sets `port->Disconnected = true`
-  - If `ConnectedPort` non-NULL: queue `ALPC_MSG_TYPE_PORT_CLOSED` message to the peer's `MessageQueue`; wake peer's `WaitQueue`
-  - Release `ConnectedPort` reference
-  - Any threads blocked in `NtAlpcSendWaitReceivePort` on this port are woken with `STATUS_PORT_DISCONNECTED`
+> [!IMPORTANT]
+> **Primitive swap:** §2's `WaitQueue` was declared as `condvar_t`, but `condvar_t` requires a held `mutex_t` partner and this kernel's ports lock with `spinlock_t`. `event_t` is the right cross-task wakeup primitive here -- it carries a timeout (`event_wait_timeout`, see `include/kernel/sched/event.h`) and does not require a matched mutex. §3 changes `ALPC_PORT.WaitQueue` and `PORT_MESSAGE_ENTRY.ReplySyncWait` from `condvar_t` to `event_t`. No §2 code path exercised the condvar, so the swap is behaviour-neutral on the §2 test suite.
 
-- [ ] (3.5 Self-contained execution note) Follow the callout on the next lines.
-> [!NOTE]
-> `SeAccessCheck` (T11 §5) is not yet implemented. §3 (NtAlpcConnectPort) step 2 should stub the access check as always-grant until T11 §5 is complete. Add `// TODO: SeAccessCheck always-grant stub` with a compile-time `#warning` so it's not forgotten.
+- [x] Switch `ALPC_PORT.WaitQueue` and `PORT_MESSAGE_ENTRY.ReplySyncWait` from `condvar_t` to `event_t` (`include/kernel/sched/event.h`). Update `alpc_port_on_delete` + `AlpcCreatePort` initialisation. No cross-ref changes in tests.
+- [x] Add `ALPC_PORT_CONNECT = 0x0001` and `ALPC_PORT_ALL_ACCESS = 0x001F` to `include/kernel/ipc/alpc_port.h`. Added `STATUS_INVALID_PORT_HANDLE` (0xC0000042) to `include/kernel/nt/ntstatus.h`.
+- [x] Define file-local `ALPC_CONNECTION_REQUEST` in `src/kernel/ipc/alpc_port.c` with `Link_next` + `ClientCommPort` + `ServerCommPort` + `RequesterTask` + `ReplyStatus` + `ReplyEvent` (auto-reset). Reuse `ALPC_MSG_QUEUE` head/tail slots via the shared `Link_next` prefix through `conn_queue_enqueue`/`conn_queue_dequeue` helpers.
+- [x] `AlpcConnectPort(ht, port_name, timeout_ms, out_handle)` implemented. Lookup server_conn by name + subtype check; allocate client_comm unnamed; allocate handle; build request; enqueue under server_conn->Lock; `event_set(WaitQueue)`; `event_wait_timeout(ReplyEvent, timeout_ms)` (0 = block forever). Timeout path re-locks server_conn, unlinks request, handles the race where the server dequeued but has not yet signalled. Drops creation ref on success (finding fix). Rolls back client_comm + handle + server_body refs on every failure path.
+- [x] `AlpcAcceptConnectPort(ht, conn_port_handle, accept, timeout_ms, out)` implemented. ObpLookupHandle + ObReferenceObject pin + PortType == AlpcServerConnectionPort check. Dequeue loop with `event_wait_timeout(WaitQueue)` when queue empty. Reject: `ReplyStatus=STATUS_PORT_CONNECTION_REFUSED`, `event_set`, server return SUCCESS. Accept: allocate server_comm unnamed, cross-link (server_comm->ConnectedPort <-> client_comm) with ref+1 each, pin ConnectionPort, allocate server handle, snapshot `RequesterTask->pid` BEFORE `event_set` (UAF fix).
+- [x] `AlpcDisconnectPort(ht, port_handle)` implemented. Lock port, set Disconnected, snapshot peer + pin; if server_conn, also detach the whole ConnectionQueue so pending clients unblock with `STATUS_PORT_DISCONNECTED` instead of their per-request timeout (finding fix). Outside lock: wake every pending connect with DISCONNECTED status; queue `ALPC_MSG_TYPE_PORT_CLOSED` on peer's MessageQueue + signal peer WaitQueue; drop peer pin + peer ConnectedPort ref.
+- [x] `alpc_port_on_delete` now releases `ConnectionPort` as well as `ConnectedPort` (finding fix) -- comm ports no longer leak the listener port reference.
+- [x] Retrofit `NtAlpcConnectPort_handler` -- `alpc_probe_and_split` leaf extraction, rebuild full `\RPC Control\<leaf>` path, `AlpcConnectPort` call. Port attrs probed + validated (discarded for §3 scope).
+- [x] Retrofit `NtAlpcAcceptConnectPort_handler` -- probe out_handle, call `AlpcAcceptConnectPort`. PortContext / ConnectionMessage / ConnMsgAttr deferred with `SCOPE-GAP-ALLOWED` to §4-§5.
+- [x] Retrofit `NtAlpcDisconnectPort_handler` -- direct call to `AlpcDisconnectPort`; Flags deferred.
+- [x] Slots `0x0110`, `0x0112`, `0x0114` dropped from the pending-features sweep in `test_ob.c` alongside `0x010F` (§2).
+- [x] **SeAccessCheck (deferred):** on_open stays NULL per §2 precedent; tracked at `11-security-reference-monitor/TODO-01 §5` (SeAccessCheck wiring) which owns the retrofit. `SCOPE-GAP-ALLOWED: pending T11 §5` sentinel in source.
+- [x] **RequiredServerSid (deferred):** skipped per §3 minimum-scope; §7 (token capture) will add the check alongside `ClientToken` population. `SCOPE-GAP-ALLOWED: pending §7` sentinel.
+- [x] Unit tests under `TEST_CAT_IPC`: `connect_nonexistent` (STATUS_OBJECT_NAME_NOT_FOUND), `connect_type_mismatch`, cross-thread `accept_handshake` (ConnectedPort cross-link verified), cross-thread `reject_handshake` (client CONNECTION_REFUSED + server SUCCESS), `disconnect_queues_close_msg` (PORT_CLOSED in peer's MessageQueue), `disconnect_unconnected` (no-op success). Uses `kthread_create`/`thread_join` pattern from `test_ipc.c`.
+- [x] Commit: `"kernel/ipc/alpc: connection state machine (Connect/Accept/Disconnect)"`
 
-- [ ] (3.6 Commit) Commit: `"kernel/ipc/alpc: connection state machine, NtAlpcCreatePort, Connect, Accept, Disconnect"`
+**Test checkpoint:** 6 new `alpc:` suites under `TEST_CAT_IPC`: (a) connect-to-nonexistent returns `STATUS_OBJECT_NAME_NOT_FOUND`; (b) connect-to-non-connection-port rejects with `STATUS_INVALID_PORT_HANDLE`; (c) two-thread accept handshake succeeds and both sides have non-NULL `ConnectedPort`; (d) reject handshake returns `CONNECTION_REFUSED` to client and `SUCCESS` to server; (e) disconnect enqueues `PORT_CLOSED` on peer's `MessageQueue`; (f) disconnect on unconnected port is a no-op success. Platforms: QEMU WHPX + TCG (SMP cross-task required); bare metal + VirtualBox sweep by running the IPC test suite.
 
-**Test checkpoint:** Task A creates `\RPC Control\TestPort`. Task B calls `NtAlpcConnectPort("\\RPC Control\\TestPort")`; connection request queued. Task A calls `NtAlpcAcceptConnectPort(TRUE)`; both tasks hold valid port handles. Task A calls `NtAlpcAcceptConnectPort(FALSE)` on a second connection; client gets `STATUS_PORT_CONNECTION_REFUSED`. `NtAlpcDisconnectPort` on server → client receives `ALPC_MSG_TYPE_PORT_CLOSED`. Connecting to non-existent port → `STATUS_OBJECT_NAME_NOT_FOUND`. Serial log: `"[ALPC] connection accepted: client=%u server=%u"`. Test on: QEMU WHPX + TCG.
+> **Test runner:** `scripts\debug\run-ipc-tests.bat` (SUITE=ipc)
+> **Expected:** 6 new alpc-connection suites pass, 0 failures
 
 ---
 
@@ -565,4 +543,5 @@ After §1-10, Impossible OS reaches full Windows 11 ALPC parity for hosting CSRS
 | 2026-04-14 | implement | §1 Message header / port attributes / type codes: `include/kernel/ipc/alpc.h` (PORT_MESSAGE 40B + SQOS 12B + ALPC_PORT_ATTRIBUTES 80B with sizeof + per-field offset `_Static_assert`, 10 msg-type codes, 4 PORTFLG + 6 MSGFLG non-overlap asserts), `src/kernel/ipc/alpc.c` (`alpc_init` klog), `src/kernel/test/test_alpc.c` (7 suites under `TEST_CAT_IPC`), pipe_init -> boot_result_t; Codex adversarial review (2 highs: ABI-claim softened to explicit native-layout + PORT_ATTRIBUTES locked); `boot_phase3` wiring + TODO-01 §8 pipe_init checked. |
 | 2026-04-14 | review | §1 review-todo-section: Phase-1 evidence + scope-gap + build clean; Phase-2 adversarial already ran during implement; Phase-3 kernel-code-quality Gates 1-11 walked clean + second Codex quality dispatch (dead-code + consistency + perf) found 2 highs: duplicate `CLIENT_ID` (fixed by reusing canonical 16B type from `ob/teb.h` + re-asserting locally) and duplicate `SECURITY_IMPERSONATION_LEVEL` (fixed by reusing canonical enum from `security/token.h`); PORT_MESSAGE offsets re-shifted MessageId 16->24 and CallbackId 24->32; trailing Reserved u64 dropped; test layout + TODO spec synced; full build passes proving coexistence with both consumer headers. |
 | 2026-04-15 | implement | §2 ALPC_PORT object + registration: new `include/kernel/ipc/alpc_port.h` (ALPC_PORT body, PORT_MESSAGE_ENTRY, ALPC_MSG_QUEUE, ALPC_PORT_STATS stub), new `src/kernel/ipc/alpc_port.c` (`alpc_port_init` registers ObpAlpcPortType + creates `\RPC Control`, `alpc_port_on_delete` drains queues under lock/free outside, `AlpcCreatePort` kernel helper with **handle-first rollback** ordering), NtAlpcCreatePort retrofitted with ProbeForRead/WriteIfUser + `alpc_probe_and_split` that **copies leaf into kernel-owned 64-byte buffer** (TOCTOU fix); slot 0x010F removed from pending sweep in test_ob.c; 10 new IPC tests (port type + \RPC Control + named/unnamed create + duplicate reject + NULL ht + embedded slash reject + syscall full-path + syscall bad-prefix reject). Codex adversarial review -- 3 highs (full-path-as-leaf, missing user-pointer probes, half-created namespace entry on handle-fail) all fixed; re-dispatch found 1 high TOCTOU (leaf still pointed into user buf), fixed with kernel-owned copy. Added `STATUS_OBJECT_NAME_INVALID = 0xC0000033` to ntstatus.h. |
+| 2026-04-15 | implement | §3 Connection state machine: swapped `ALPC_PORT.WaitQueue` + `PORT_MESSAGE_ENTRY.ReplySyncWait` from `condvar_t` to `event_t` (condvar needed mutex partner; port uses spinlock). Added `ALPC_PORT_CONNECT`/`ALL_ACCESS` + `STATUS_INVALID_PORT_HANDLE`. New kernel helpers `AlpcConnectPort`/`AcceptConnectPort`/`DisconnectPort` in alpc_port.c (~370 lines): file-local `ALPC_CONNECTION_REQUEST` with `event_t ReplyEvent`, cross-linked comm ports with proper ref accounting. Retrofitted 3 Nt handlers; dropped slots `0x0110`/`0x0112`/`0x0114` from the pending sweep. 6 new IPC tests (cross-thread handshake uses `kthread_create`/`thread_join`). Codex adversarial review found 4 Highs + 1 kernel-wide Medium: UAF after `event_set` (fixed: snapshot pid before signal), client_comm creation-ref leak on success (fixed), `on_delete` missing ConnectionPort deref (fixed: listen port no longer leaks), disconnect didn't drain pending connects (fixed: server disconnect now wakes everyone with STATUS_PORT_DISCONNECTED); the `ObpLookupHandle` close-race is kernel-wide and tracked at `02-kernel-core/TODO-03 §3` ObpReferenceObjectByHandle retrofit (added `nt_alpc.c` to its consumer list). |
 | 2026-04-15 | review | §2 review-todo-section: Phase-1 evidence + scope-gap + build clean; Phase-2 adversarial already ran 2x during implement; Phase-3 kernel-code-quality Gates 1-11 walked clean + Codex quality dispatch (dead-code + consistency + perf) found 4 more: 1 HIGH rejected (probe+direct-deref is kernel-wide precedent, SMAP disabled per CLAUDE.md), 2 MEDIUM fixed (`alpc_validate_attrs` rejects unknown Flags + privileged SYSTEM_PROCESS + non-zero reserved pads; `AlpcCreatePort` now returns NTSTATUS+out-HANDLE so syscall propagates OBJECT_NAME_COLLISION/INVALID/NOT_FOUND accurately), 1 LOW fixed (removed over-promising sizeof-drift-check comment from alpc_port.h). 2 new tests (privileged flag + reserved pad rejection). TODO-03/TODO-02 §4 "Audit all syscall handlers" checklist item extended to explicitly name `nt_alpc.c`'s `alpc_probe_and_split` + `NtAlpcCreatePort_handler` as retrofit consumers (concrete XREF for the Accepted finding). |

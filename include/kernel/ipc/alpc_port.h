@@ -29,9 +29,19 @@
 #include "kernel/nt/ntstatus.h"
 #include "kernel/ipc/alpc.h"
 #include "kernel/sched/spinlock.h"
-#include "kernel/sched/condvar.h"
+#include "kernel/sched/event.h"
 #include "kernel/ob/ob_type.h"
 #include "kernel/ob/handle_table.h"
+
+/* ---- ALPC port access rights ------------------------------------------ */
+/*
+ * Per-object-type access masks (no central registry -- see
+ * ob_section.h SECTION_MAP_* for the established pattern). §7 wires
+ * SeAccessCheck on these with the server port's DACL; until then
+ * they're informational.
+ */
+#define ALPC_PORT_CONNECT         0x00000001u
+#define ALPC_PORT_ALL_ACCESS      0x0000001Fu
 
 /* Forward declarations -- pulled via full headers at use-site in .c files. */
 struct task;
@@ -65,7 +75,7 @@ typedef struct port_message_entry {
     uint64_t                   ReplyMessageId;  /* request this is a reply for */
     uint8_t                    WaitingForReply; /* sender blocked on reply */
     uint8_t                    _pad[3];         /* align next field */
-    condvar_t                  ReplySyncWait;   /* sender sleeps here -- §4 */
+    event_t                    ReplySyncWait;   /* sender sleeps here -- §4 */
     /* uint8_t Body[Header.DataLength]; -- flexible tail (no [] because the
      * struct already has well-defined size; payload is laid out by hand) */
 } PORT_MESSAGE_ENTRY;
@@ -115,7 +125,10 @@ typedef struct alpc_port {
     ALPC_PORT_ATTRIBUTES   Attributes;         /* 80 bytes, §1 */
 
     struct task           *OwnerTask;         /* creator/connector */
-    condvar_t              WaitQueue;          /* receivers block here -- §4 */
+    event_t                WaitQueue;          /* cross-task wakeup (server:
+                                                 * connection arrived;
+                                                 * client/comm: message
+                                                 * arrived); auto-reset */
     struct access_token   *ClientToken;       /* captured on accept -- §7 */
 
     /* Future extensions: keep these at the end so adding to them does
@@ -176,3 +189,60 @@ boot_result_t alpc_port_init(void);
 NTSTATUS AlpcCreatePort(HANDLE_TABLE *ht, const char *name,
                         const ALPC_PORT_ATTRIBUTES *attrs,
                         HANDLE *out_handle);
+
+/*
+ * AlpcConnectPort -- client-side connection initiation.
+ *
+ *   ht          -- handle table to receive the new client-comm handle
+ *   port_name   -- full path, typically "\\RPC Control\\<name>"
+ *   timeout_ms  -- 0 = block indefinitely, otherwise bounded wait
+ *   out_handle  -- on success, receives the client communication-port
+ *                  handle; on failure untouched
+ *
+ * Returns STATUS_SUCCESS on accept, STATUS_PORT_CONNECTION_REFUSED
+ * on server reject, STATUS_OBJECT_NAME_NOT_FOUND if no port at
+ * port_name, STATUS_OBJECT_TYPE_MISMATCH if the path resolves to a
+ * non-server-connection port, STATUS_TIMEOUT if the server did not
+ * accept/reject within timeout_ms, STATUS_INSUFFICIENT_RESOURCES on
+ * allocation failure. Rolls back every partial state on failure.
+ */
+NTSTATUS AlpcConnectPort(HANDLE_TABLE *ht, const char *port_name,
+                         uint32_t timeout_ms, HANDLE *out_handle);
+
+/*
+ * AlpcAcceptConnectPort -- server-side connection completion.
+ *
+ *   ht                    -- handle table to receive the new
+ *                            server-comm handle
+ *   conn_port_handle      -- server connection port (the thing
+ *                            AlpcCreatePort returned)
+ *   accept                -- 1 = accept, 0 = reject
+ *   timeout_ms            -- max wait for a pending connection
+ *                            request; 0 = block indefinitely
+ *   out_server_comm_handle -- on accept success, receives the server
+ *                             communication-port handle
+ *
+ * Returns STATUS_SUCCESS on both accept and reject (the server's
+ * decision succeeded); rejection propagates as
+ * STATUS_PORT_CONNECTION_REFUSED to the blocked client. Returns
+ * STATUS_TIMEOUT if no request arrived in time,
+ * STATUS_INVALID_PORT_HANDLE if the handle is not a server-connection
+ * port, STATUS_INSUFFICIENT_RESOURCES on allocation failure.
+ */
+NTSTATUS AlpcAcceptConnectPort(HANDLE_TABLE *ht,
+                               HANDLE conn_port_handle, int accept,
+                               uint32_t timeout_ms,
+                               HANDLE *out_server_comm_handle);
+
+/*
+ * AlpcDisconnectPort -- tear down the cross-link and notify the peer.
+ *
+ * Queues a PORT_CLOSED message on the peer's MessageQueue so any
+ * receiver sees the close, then clears this side's ConnectedPort
+ * reference. The caller still owns their handle; a subsequent
+ * NtClose is what finally frees the port object (via the refcount).
+ *
+ * Returns STATUS_SUCCESS whether a peer existed or not;
+ * STATUS_INVALID_PORT_HANDLE if the handle is not an ALPC port.
+ */
+NTSTATUS AlpcDisconnectPort(HANDLE_TABLE *ht, HANDLE port_handle);

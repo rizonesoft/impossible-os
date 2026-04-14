@@ -69,6 +69,7 @@ uint32_t RtlNtStatusToDosError(NTSTATUS status);
 #define STATUS_PORT_DISCONNECTED            ((NTSTATUS)0xC0000037)  /* ALPC port closed by peer */
 #define STATUS_OBJECT_PATH_NOT_FOUND        ((NTSTATUS)0xC000003A)  /* intermediate path component missing */
 #define STATUS_PORT_CONNECTION_REFUSED       ((NTSTATUS)0xC0000041)  /* ALPC connection rejected by server */
+#define STATUS_INVALID_PORT_HANDLE           ((NTSTATUS)0xC0000042)  /* handle is not an ALPC port / wrong port subtype */
 #define STATUS_NOT_FOUND                    ((NTSTATUS)0xC0000225)  /* generic not-found (UEFI vars etc.) */
 
 /* ---- Error codes -- sync ------------------------------------------------- */

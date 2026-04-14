@@ -1182,8 +1182,13 @@ static void test_nt_alpc_pending_features(void)
     uint32_t i;
     char msg[64];
     for (i = 0; i < sizeof(s_alpc_slots) / sizeof(s_alpc_slots[0]); i++) {
-        if (s_alpc_slots[i].svc == SSDT_NtAlpcCreatePort)
-            continue;   /* shipped in TODO-12 §2 */
+        /* Slots retired by TODO-12 §2 and §3 -- they now return real
+         * statuses (INVALID_PARAMETER / INVALID_HANDLE / etc. on the
+         * null dispatch this test uses), not STATUS_NOT_IMPLEMENTED. */
+        if (s_alpc_slots[i].svc == SSDT_NtAlpcCreatePort)        continue; /* §2 */
+        if (s_alpc_slots[i].svc == SSDT_NtAlpcConnectPort)       continue; /* §3 */
+        if (s_alpc_slots[i].svc == SSDT_NtAlpcAcceptConnectPort) continue; /* §3 */
+        if (s_alpc_slots[i].svc == SSDT_NtAlpcDisconnectPort)    continue; /* §3 */
         NTSTATUS st = ssdt_dispatch(s_alpc_slots[i].svc, 0, 0, 0, 0, 0, 0);
         snprintf(msg, sizeof(msg), "%s (0x%x): no ALPC engine yet",
                  s_alpc_slots[i].name, (uint64_t)s_alpc_slots[i].svc);

@@ -65,7 +65,9 @@ static void alpc_port_on_delete(void *body)
     queue_init(&p->PendingQueue);
     queue_init(&p->ConnectionQueue);
     ALPC_PORT *peer = p->ConnectedPort;
-    p->ConnectedPort = (ALPC_PORT *)0;
+    ALPC_PORT *listen = p->ConnectionPort;
+    p->ConnectedPort   = (ALPC_PORT *)0;
+    p->ConnectionPort  = (ALPC_PORT *)0;
     struct access_token *tok = p->ClientToken;
     p->ClientToken = (struct access_token *)0;
     p->Disconnected = 1;
@@ -77,6 +79,8 @@ static void alpc_port_on_delete(void *body)
 
     if (peer)
         ObDereferenceObject(peer);
+    if (listen)
+        ObDereferenceObject(listen);                  /* drop ConnectionPort ref */
 
     /* ClientToken is owned by the process (tied to task lifetime), not
      * refcount-owned by the port -- see token.h notes. Just NULL it out
@@ -247,7 +251,7 @@ NTSTATUS AlpcCreatePort(HANDLE_TABLE *ht, const char *name,
     port->Lock.flag     = 0;                    /* SPINLOCK_INIT */
     port->OwnerTask     = task_current();
     port->NextMessageId = 1;
-    cond_init(&port->WaitQueue, "alpc_port_wait");
+    event_init(&port->WaitQueue, "alpc_port_wait", EVENT_AUTO_RESET, 0);
 
     if (attrs)
         port->Attributes = *attrs;              /* copy by value */
@@ -286,5 +290,505 @@ NTSTATUS AlpcCreatePort(HANDLE_TABLE *ht, const char *name,
 
     ObDereferenceObject(port);                   /* drop creation ref */
     *out_handle = h;
+    return STATUS_SUCCESS;
+}
+
+/* =========================================================================
+ * §3 Connection state machine
+ *
+ * Design:
+ *   - Client pre-allocates its own client_comm port + handle so the accept
+ *     path never touches the client's handle table (cross-process
+ *     handle-table access would require privileges we don't have yet).
+ *   - Connection request is a file-local node, not a PORT_MESSAGE_ENTRY,
+ *     because it carries cross-port pointers + a reply event rather than
+ *     wire-format bytes.
+ *   - One spinlock per port is enough today: the client only mutates the
+ *     server_conn->ConnectionQueue while holding server_conn->Lock; the
+ *     server drains the same queue under the same lock. Cross-link
+ *     assignment (server_comm <-> client_comm) happens before the
+ *     request is published to the client via event_set, so the client
+ *     observes a consistent cross-link.
+ * =======================================================================*/
+
+typedef struct alpc_connection_request {
+    struct alpc_connection_request *Link_next;
+    ALPC_PORT                      *ClientCommPort;    /* pre-allocated */
+    ALPC_PORT                      *ServerCommPort;    /* set on accept */
+    struct task                    *RequesterTask;    /* informational */
+    NTSTATUS                        ReplyStatus;
+    event_t                         ReplyEvent;        /* auto-reset */
+} ALPC_CONNECTION_REQUEST;
+
+/* Server-side FIFO for ALPC_CONNECTION_REQUEST. Kept file-local since the
+ * request node type does not leak across the header. Uses the server
+ * port's Lock for mutual exclusion. */
+typedef struct alpc_conn_queue {
+    ALPC_CONNECTION_REQUEST *Head;
+    ALPC_CONNECTION_REQUEST *Tail;
+    uint32_t                 Count;
+} ALPC_CONN_Q;
+
+/* The server's ConnectionQueue in ALPC_PORT is an ALPC_MSG_QUEUE (for
+ * PORT_MESSAGE_ENTRY). §3 needs a DIFFERENT queue type for connection
+ * requests. The cleanest path: reuse ALPC_MSG_QUEUE's head/tail slots by
+ * casting through a parallel node type -- both share the
+ * `{void* next; ...}` prefix. But that lies to the type system. Instead
+ * we store a singly-linked list of ALPC_CONNECTION_REQUEST in a small
+ * file-static table keyed by the server port pointer. For §3 we
+ * simplify: embed head/tail in a parallel per-port slot using PortContext
+ * as scratch? No -- that's reserved for user context.
+ *
+ * The pragmatic answer: reuse ConnectionQueue's Head/Tail fields. A
+ * PORT_MESSAGE_ENTRY and an ALPC_CONNECTION_REQUEST are both laid out
+ * with a `Link_next` pointer in the first slot, so a head/tail pair of
+ * "void *" works for either. Expose it via helpers. */
+
+static void conn_queue_enqueue(ALPC_MSG_QUEUE *q, ALPC_CONNECTION_REQUEST *r)
+{
+    r->Link_next = (ALPC_CONNECTION_REQUEST *)0;
+    if (!q->Head) {
+        q->Head = (PORT_MESSAGE_ENTRY *)r;
+        q->Tail = (PORT_MESSAGE_ENTRY *)r;
+    } else {
+        ((ALPC_CONNECTION_REQUEST *)q->Tail)->Link_next = r;
+        q->Tail = (PORT_MESSAGE_ENTRY *)r;
+    }
+    q->Count++;
+}
+
+static ALPC_CONNECTION_REQUEST *conn_queue_dequeue(ALPC_MSG_QUEUE *q)
+{
+    ALPC_CONNECTION_REQUEST *r = (ALPC_CONNECTION_REQUEST *)q->Head;
+    if (!r)
+        return (ALPC_CONNECTION_REQUEST *)0;
+    q->Head = (PORT_MESSAGE_ENTRY *)r->Link_next;
+    if (!q->Head)
+        q->Tail = (PORT_MESSAGE_ENTRY *)0;
+    q->Count--;
+    r->Link_next = (ALPC_CONNECTION_REQUEST *)0;
+    return r;
+}
+
+/* ---- Internal helper: allocate + init a bare comm port ---------------- */
+/*
+ * Comm ports (client + server communication) are unnamed. We bypass
+ * AlpcCreatePort because that path is named-port-focused and does a
+ * namespace lookup the comm case does not need. The init matches
+ * AlpcCreatePort's "new port" state exactly.
+ */
+static ALPC_PORT *alpc_alloc_comm_port(ALPC_PORT_TYPE type)
+{
+    ALPC_PORT *p = (ALPC_PORT *)ob_alloc_object(ObpAlpcPortType);
+    if (!p)
+        return (ALPC_PORT *)0;
+    p->PortType      = type;
+    p->Lock.flag     = 0;
+    p->OwnerTask     = task_current();
+    p->NextMessageId = 1;
+    event_init(&p->WaitQueue, "alpc_comm_wait", EVENT_AUTO_RESET, 0);
+    return p;
+}
+
+/* ---- AlpcConnectPort --------------------------------------------------- */
+
+NTSTATUS AlpcConnectPort(HANDLE_TABLE *ht, const char *port_name,
+                         uint32_t timeout_ms, HANDLE *out_handle)
+{
+    void *server_body = (void *)0;
+    ALPC_PORT *server_conn, *client_comm;
+    ALPC_CONNECTION_REQUEST *req;
+    HANDLE h = INVALID_HANDLE_VALUE;
+    uint64_t irqf;
+    NTSTATUS st;
+    int waited_ok;
+
+    if (!out_handle)
+        return STATUS_INVALID_PARAMETER;
+    *out_handle = INVALID_HANDLE_VALUE;
+    if (!ht || !port_name || !ObpAlpcPortType)
+        return STATUS_INVALID_PARAMETER;
+
+    /* 1. Look up server connection port by name (refcount +1). */
+    if (ObLookupObjectByName(port_name, ObpAlpcPortType, 0,
+                             &server_body) != 0 || !server_body)
+        return STATUS_OBJECT_NAME_NOT_FOUND;
+    server_conn = (ALPC_PORT *)server_body;
+    if (server_conn->PortType != AlpcServerConnectionPort) {
+        ObDereferenceObject(server_body);
+        return STATUS_OBJECT_TYPE_MISMATCH;
+    }
+
+    /* SCOPE-GAP-ALLOWED: SeAccessCheck on server DACL with
+     * ALPC_PORT_CONNECT pending T11 §5 (security reference monitor).
+     * Concrete retrofit tracked at 11-security-reference-monitor/TODO-01 §5. */
+
+    /* 2. Allocate client communication port. */
+    client_comm = alpc_alloc_comm_port(AlpcClientCommunicationPort);
+    if (!client_comm) {
+        ObDereferenceObject(server_body);
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+    ObReferenceObject(server_conn);                   /* for ConnectionPort field */
+    client_comm->ConnectionPort = server_conn;
+
+    /* 3. Allocate handle for client_comm in caller's table. */
+    h = ObpAllocateHandle(ht, client_comm, ALPC_PORT_ALL_ACCESS, 0);
+    if (h == INVALID_HANDLE_VALUE) {
+        ObDereferenceObject(server_conn);             /* undo ConnectionPort ref */
+        ObDereferenceObject(client_comm);             /* drops creation ref */
+        ObDereferenceObject(server_body);
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+
+    /* 4. Build the connection request. */
+    req = (ALPC_CONNECTION_REQUEST *)kmalloc(sizeof(*req));
+    if (!req) {
+        ObpFreeHandle(ht, h);
+        ObDereferenceObject(server_conn);
+        ObDereferenceObject(client_comm);
+        ObDereferenceObject(server_body);
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+    req->Link_next      = (ALPC_CONNECTION_REQUEST *)0;
+    req->ClientCommPort = client_comm;
+    req->ServerCommPort = (ALPC_PORT *)0;
+    req->RequesterTask  = task_current();
+    req->ReplyStatus    = STATUS_PORT_CONNECTION_REFUSED;  /* safe default */
+    event_init(&req->ReplyEvent, "alpc_conn_reply", EVENT_AUTO_RESET, 0);
+
+    /* 5. Publish to server + wake it. */
+    spin_lock_irqsave(&server_conn->Lock, &irqf);
+    if (server_conn->Disconnected) {
+        spin_unlock_irqrestore(&server_conn->Lock, irqf);
+        kfree(req);
+        ObpFreeHandle(ht, h);
+        ObDereferenceObject(server_conn);
+        ObDereferenceObject(client_comm);
+        ObDereferenceObject(server_body);
+        return STATUS_PORT_DISCONNECTED;
+    }
+    conn_queue_enqueue(&server_conn->ConnectionQueue, req);
+    spin_unlock_irqrestore(&server_conn->Lock, irqf);
+    event_set(&server_conn->WaitQueue);
+
+    klog(LOG_DEBUG, "alpc", "connect: server=%s timeout=%u",
+         port_name, (uint64_t)timeout_ms);
+
+    /* 6. Wait for server's accept/reject. */
+    if (timeout_ms == 0) {
+        event_wait(&req->ReplyEvent);
+        waited_ok = 1;
+    } else {
+        waited_ok = event_wait_timeout(&req->ReplyEvent, timeout_ms);
+    }
+
+    if (!waited_ok) {
+        /* Timeout. The request may still be sitting on the server's queue
+         * with a dangling pointer to `req`; we must remove it before
+         * freeing, otherwise the server will dereference freed memory. */
+        st = STATUS_TIMEOUT;
+        spin_lock_irqsave(&server_conn->Lock, &irqf);
+        ALPC_CONNECTION_REQUEST **pp =
+            (ALPC_CONNECTION_REQUEST **)&server_conn->ConnectionQueue.Head;
+        ALPC_CONNECTION_REQUEST *prev = (ALPC_CONNECTION_REQUEST *)0;
+        int found = 0;
+        while (*pp) {
+            if (*pp == req) {
+                *pp = req->Link_next;
+                if (server_conn->ConnectionQueue.Tail == (PORT_MESSAGE_ENTRY *)req)
+                    server_conn->ConnectionQueue.Tail = (PORT_MESSAGE_ENTRY *)prev;
+                server_conn->ConnectionQueue.Count--;
+                found = 1;
+                break;
+            }
+            prev = *pp;
+            pp = &(*pp)->Link_next;
+        }
+        spin_unlock_irqrestore(&server_conn->Lock, irqf);
+        if (!found) {
+            /* Server already dequeued and is racing to set ReplyEvent.
+             * Do one more blocking wait so we don't free `req` while the
+             * server still holds a pointer to it. */
+            event_wait(&req->ReplyEvent);
+            st = req->ReplyStatus;
+            /* Respect the reply we just got, even though we already
+             * returned STATUS_TIMEOUT intent -- actually adopt the real
+             * result to keep the handle/ref accounting honest. */
+        }
+    } else {
+        st = req->ReplyStatus;
+    }
+
+    kfree(req);
+
+    if (NT_SUCCESS(st)) {
+        *out_handle = h;
+        /* Drop the creation ref: handle + cross-link from server_comm
+         * are the remaining references that keep client_comm alive.
+         * This mirrors AlpcCreatePort's final ObDereferenceObject and
+         * stops every successful connect from leaking one port body. */
+        ObDereferenceObject(client_comm);
+    } else {
+        /* Rollback client-side state on reject / disconnect / timeout. */
+        ObpFreeHandle(ht, h);
+        /* ConnectionPort ref + creation ref both drop here: handle close
+         * fired the handle_count->0 path in ObpFreeHandle, but the
+         * creation ref (ref_count +1 from ob_alloc_object) is still
+         * held. Drop it and the ConnectionPort ref we added. */
+        spin_lock_irqsave(&client_comm->Lock, &irqf);
+        ALPC_PORT *cp = client_comm->ConnectionPort;
+        client_comm->ConnectionPort = (ALPC_PORT *)0;
+        spin_unlock_irqrestore(&client_comm->Lock, irqf);
+        if (cp)
+            ObDereferenceObject(cp);                   /* drop ConnectionPort ref */
+        ObDereferenceObject(client_comm);             /* drop creation ref */
+    }
+
+    ObDereferenceObject(server_body);                 /* drop lookup ref */
+    return st;
+}
+
+/* ---- AlpcAcceptConnectPort -------------------------------------------- */
+
+NTSTATUS AlpcAcceptConnectPort(HANDLE_TABLE *ht,
+                               HANDLE conn_port_handle, int accept,
+                               uint32_t timeout_ms,
+                               HANDLE *out_server_comm_handle)
+{
+    HANDLE_TABLE_ENTRY *entry;
+    ALPC_PORT *server_conn;
+    ALPC_CONNECTION_REQUEST *req;
+    ALPC_PORT *server_comm = (ALPC_PORT *)0;
+    ALPC_PORT *client_comm;
+    HANDLE h = INVALID_HANDLE_VALUE;
+    uint64_t irqf;
+    int waited_ok;
+
+    if (out_server_comm_handle)
+        *out_server_comm_handle = INVALID_HANDLE_VALUE;
+    if (!ht)
+        return STATUS_INVALID_PARAMETER;
+
+    /* Lookup the server connection port by handle. */
+    entry = ObpLookupHandle(ht, conn_port_handle);
+    if (!entry || !entry->object)
+        return STATUS_INVALID_HANDLE;
+    OBJECT_HEADER *hdr = OB_HEADER_FROM_BODY(entry->object);
+    if (hdr->type != ObpAlpcPortType)
+        return STATUS_OBJECT_TYPE_MISMATCH;
+    server_conn = (ALPC_PORT *)entry->object;
+    if (server_conn->PortType != AlpcServerConnectionPort)
+        return STATUS_INVALID_PORT_HANDLE;
+    ObReferenceObject(server_conn);                   /* pin across wait + accept */
+
+    /* Dequeue a request (or wait). */
+    for (;;) {
+        spin_lock_irqsave(&server_conn->Lock, &irqf);
+        req = conn_queue_dequeue(&server_conn->ConnectionQueue);
+        spin_unlock_irqrestore(&server_conn->Lock, irqf);
+        if (req)
+            break;
+        /* Queue empty. Wait for producer to signal. */
+        if (timeout_ms == 0) {
+            event_wait(&server_conn->WaitQueue);
+            waited_ok = 1;
+        } else {
+            waited_ok = event_wait_timeout(&server_conn->WaitQueue,
+                                           timeout_ms);
+        }
+        if (!waited_ok) {
+            ObDereferenceObject(server_conn);
+            return STATUS_TIMEOUT;
+        }
+        /* Re-check the queue after wake -- a concurrent accept on another
+         * thread may have stolen the request. */
+    }
+
+    client_comm = req->ClientCommPort;
+
+    if (!accept) {
+        /* Reject path: the server's syscall succeeds; the client's
+         * blocked AlpcConnectPort sees STATUS_PORT_CONNECTION_REFUSED. */
+        req->ServerCommPort = (ALPC_PORT *)0;
+        req->ReplyStatus    = STATUS_PORT_CONNECTION_REFUSED;
+        event_set(&req->ReplyEvent);
+        /* req is freed by the client. */
+        ObDereferenceObject(server_conn);
+        klog(LOG_DEBUG, "alpc", "accept: rejected");
+        return STATUS_SUCCESS;
+    }
+
+    /* Accept path. */
+    server_comm = alpc_alloc_comm_port(AlpcServerCommunicationPort);
+    if (!server_comm) {
+        req->ReplyStatus = STATUS_INSUFFICIENT_RESOURCES;
+        event_set(&req->ReplyEvent);
+        ObDereferenceObject(server_conn);
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+
+    /* Cross-link: server_comm <-> client_comm (each takes +1 ref on peer
+     * so cross-link survives until either side disconnects). */
+    ObReferenceObject(client_comm);
+    server_comm->ConnectedPort = client_comm;
+    ObReferenceObject(server_conn);
+    server_comm->ConnectionPort = server_conn;        /* pin listen port */
+
+    ObReferenceObject(server_comm);
+    client_comm->ConnectedPort = server_comm;
+
+    /* Allocate server-side handle. */
+    h = ObpAllocateHandle(ht, server_comm, ALPC_PORT_ALL_ACCESS, 0);
+    if (h == INVALID_HANDLE_VALUE) {
+        /* Undo cross-link. */
+        ObDereferenceObject(server_comm);             /* client's ref */
+        client_comm->ConnectedPort = (ALPC_PORT *)0;
+        ObDereferenceObject(client_comm);             /* server_comm's ref */
+        server_comm->ConnectedPort = (ALPC_PORT *)0;
+        ObDereferenceObject(server_conn);             /* server_comm's ConnectionPort ref */
+        server_comm->ConnectionPort = (ALPC_PORT *)0;
+        ObDereferenceObject(server_comm);             /* creation ref */
+        req->ReplyStatus = STATUS_INSUFFICIENT_RESOURCES;
+        event_set(&req->ReplyEvent);
+        ObDereferenceObject(server_conn);             /* server_conn pin */
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+
+    /* Snapshot any field we want to log BEFORE signalling the client:
+     * once event_set fires, the client thread is free to return from
+     * event_wait and kfree(req), so req pointers cease to be valid on
+     * this CPU immediately after the signal. */
+    uint32_t requester_pid =
+        req->RequesterTask ? req->RequesterTask->pid : 0u;
+
+    req->ServerCommPort = server_comm;
+    req->ReplyStatus    = STATUS_SUCCESS;
+    event_set(&req->ReplyEvent);                      /* client may now free req */
+    req = (ALPC_CONNECTION_REQUEST *)0;               /* poison: do not dereference */
+
+    ObDereferenceObject(server_comm);                 /* drop creation ref */
+    ObDereferenceObject(server_conn);                 /* drop pin */
+
+    klog(LOG_DEBUG, "alpc", "accept: client-pid=%u",
+         (uint64_t)requester_pid);
+
+    if (out_server_comm_handle)
+        *out_server_comm_handle = h;
+    return STATUS_SUCCESS;
+}
+
+/* ---- AlpcDisconnectPort ----------------------------------------------- */
+
+NTSTATUS AlpcDisconnectPort(HANDLE_TABLE *ht, HANDLE port_handle)
+{
+    HANDLE_TABLE_ENTRY *entry;
+    ALPC_PORT *port, *peer;
+    PORT_MESSAGE_ENTRY *close_msg;
+    ALPC_CONNECTION_REQUEST *pending_head = (ALPC_CONNECTION_REQUEST *)0;
+    uint64_t irqf;
+
+    if (!ht)
+        return STATUS_INVALID_PARAMETER;
+
+    entry = ObpLookupHandle(ht, port_handle);
+    if (!entry || !entry->object)
+        return STATUS_INVALID_HANDLE;
+    OBJECT_HEADER *hdr = OB_HEADER_FROM_BODY(entry->object);
+    if (hdr->type != ObpAlpcPortType)
+        return STATUS_INVALID_PORT_HANDLE;
+    port = (ALPC_PORT *)entry->object;
+
+    /* Mark this side disconnected + snapshot peer under the port lock.
+     * Server connection ports additionally drain ConnectionQueue so any
+     * client blocked in AlpcConnectPort unblocks with
+     * STATUS_PORT_DISCONNECTED instead of waiting for its per-request
+     * timeout (or forever on timeout_ms=0). We pin the peer with an
+     * extra ref so it cannot be freed between dropping our lock and
+     * queuing the PORT_CLOSED notification. */
+    spin_lock_irqsave(&port->Lock, &irqf);
+    port->Disconnected = 1;
+    peer = port->ConnectedPort;
+    if (peer)
+        ObReferenceObject(peer);
+    port->ConnectedPort = (ALPC_PORT *)0;
+    if (port->PortType == AlpcServerConnectionPort) {
+        /* Detach the whole ConnectionQueue list head; signal outside the lock. */
+        pending_head = (ALPC_CONNECTION_REQUEST *)port->ConnectionQueue.Head;
+        port->ConnectionQueue.Head  = (PORT_MESSAGE_ENTRY *)0;
+        port->ConnectionQueue.Tail  = (PORT_MESSAGE_ENTRY *)0;
+        port->ConnectionQueue.Count = 0;
+    }
+    spin_unlock_irqrestore(&port->Lock, irqf);
+
+    /* Wake every pending connect caller with PORT_DISCONNECTED. Each
+     * request's lifetime is owned by its client -- we only set status
+     * and event_set; the client frees the node after event_wait returns. */
+    while (pending_head) {
+        ALPC_CONNECTION_REQUEST *next = pending_head->Link_next;
+        pending_head->ServerCommPort = (ALPC_PORT *)0;
+        pending_head->ReplyStatus    = STATUS_PORT_DISCONNECTED;
+        event_set(&pending_head->ReplyEvent);
+        pending_head = next;
+    }
+
+    if (!peer) {
+        klog(LOG_DEBUG, "alpc", "disconnect: port=%u (no peer)",
+             (uint64_t)port->PortType);
+        return STATUS_SUCCESS;
+    }
+
+    /* Allocate a PORT_CLOSED marker (zero-body message). On allocation
+     * failure the peer still gets its Disconnected side cleared; we log
+     * and drop the extra ref. */
+    close_msg = (PORT_MESSAGE_ENTRY *)kmalloc(sizeof(PORT_MESSAGE_ENTRY));
+    if (close_msg) {
+        /* Zero the message entry body to avoid passing uninitialised
+         * stack bytes to consumers (event_init below overwrites its
+         * slot). */
+        uint8_t *zp = (uint8_t *)close_msg;
+        for (uint32_t i = 0; i < sizeof(*close_msg); i++)
+            zp[i] = 0;
+        close_msg->Header.TotalLength = sizeof(PORT_MESSAGE);
+        close_msg->Header.DataLength  = 0;
+        close_msg->Header.Type        = ALPC_MSG_TYPE_PORT_CLOSED;
+        event_init(&close_msg->ReplySyncWait, "alpc_closed",
+                   EVENT_AUTO_RESET, 0);
+
+        spin_lock_irqsave(&peer->Lock, &irqf);
+        /* Append to peer's MessageQueue. */
+        if (!peer->MessageQueue.Head) {
+            peer->MessageQueue.Head = close_msg;
+            peer->MessageQueue.Tail = close_msg;
+        } else {
+            peer->MessageQueue.Tail->Link_next = close_msg;
+            peer->MessageQueue.Tail = close_msg;
+        }
+        peer->MessageQueue.Count++;
+        peer->Disconnected = 1;
+        spin_unlock_irqrestore(&peer->Lock, irqf);
+
+        event_set(&peer->WaitQueue);
+    } else {
+        /* Couldn't allocate the marker. Still mark peer Disconnected so
+         * any subsequent send fails fast. */
+        spin_lock_irqsave(&peer->Lock, &irqf);
+        peer->Disconnected = 1;
+        spin_unlock_irqrestore(&peer->Lock, irqf);
+        event_set(&peer->WaitQueue);
+        klog(LOG_WARN, "alpc",
+             "disconnect: PORT_CLOSED alloc failed; peer still marked");
+    }
+
+    /* Drop the pin AND the cross-link reference the peer held on us.
+     * The cross-link on the PEER side still points at our port; the
+     * port object itself will survive until that side also disconnects
+     * or closes. Our ConnectedPort cleared above drops our reference to
+     * the peer. */
+    ObDereferenceObject(peer);                        /* drop pin */
+    ObDereferenceObject(peer);                        /* drop our ConnectedPort ref */
+
+    klog(LOG_DEBUG, "alpc", "disconnect: port=%u",
+         (uint64_t)port->PortType);
     return STATUS_SUCCESS;
 }
