@@ -357,17 +357,26 @@ static void test_nt_registry_ssdt_registered(void)
     /* Verify all 10 registry slots are not the default stub */
     extern NTSTATUS ssdt_stub_not_implemented(uint64_t, uint64_t, uint64_t,
                                               uint64_t, uint64_t, uint64_t);
-    uint32_t slots[] = {
-        SSDT_NtCreateKey, SSDT_NtOpenKey, SSDT_NtOpenKeyEx,
-        SSDT_NtDeleteKey, SSDT_NtSetValueKey, SSDT_NtQueryValueKey,
-        SSDT_NtDeleteValueKey, SSDT_NtEnumerateKey,
-        SSDT_NtEnumerateValueKey, SSDT_NtQueryKey
+    extern int snprintf(char *buf, size_t size, const char *fmt, ...);
+    static const struct { uint32_t svc; const char *name; } slots[] = {
+        { SSDT_NtCreateKey,        "NtCreateKey" },
+        { SSDT_NtOpenKey,          "NtOpenKey" },
+        { SSDT_NtOpenKeyEx,        "NtOpenKeyEx" },
+        { SSDT_NtDeleteKey,        "NtDeleteKey" },
+        { SSDT_NtSetValueKey,      "NtSetValueKey" },
+        { SSDT_NtQueryValueKey,    "NtQueryValueKey" },
+        { SSDT_NtDeleteValueKey,   "NtDeleteValueKey" },
+        { SSDT_NtEnumerateKey,     "NtEnumerateKey" },
+        { SSDT_NtEnumerateValueKey,"NtEnumerateValueKey" },
+        { SSDT_NtQueryKey,         "NtQueryKey" },
     };
     uint32_t i;
-    for (i = 0; i < 10; i++) {
-        uint32_t idx = slots[i] & 0xFFF;
-        TEST_ASSERT(tbl->handlers[idx] != ssdt_stub_not_implemented,
-                    "Registry SSDT slot is registered");
+    char msg[96];
+    for (i = 0; i < sizeof(slots) / sizeof(slots[0]); i++) {
+        uint32_t idx = slots[i].svc & 0xFFF;
+        snprintf(msg, sizeof(msg), "%s (0x%x) registered",
+                 slots[i].name, (uint64_t)slots[i].svc);
+        TEST_ASSERT(tbl->handlers[idx] != ssdt_stub_not_implemented, msg);
     }
 }
 
@@ -502,19 +511,28 @@ static void test_nt_registry_advanced_registered(void)
     const SSDT_TABLE *tbl = ssdt_get_table(SSDT_TABLE_MAIN);
     extern NTSTATUS ssdt_stub_not_implemented(uint64_t, uint64_t, uint64_t,
                                               uint64_t, uint64_t, uint64_t);
-    uint32_t slots[] = {
-        SSDT_NtFlushKey, SSDT_NtNotifyChangeKey, SSDT_NtRenameKey,
-        SSDT_NtSaveKey, SSDT_NtSaveKeyEx, SSDT_NtRestoreKey,
-        SSDT_NtLoadKey, SSDT_NtLoadKeyEx,
-        SSDT_NtUnloadKey, SSDT_NtUnloadKeyEx
+    extern int snprintf(char *buf, size_t size, const char *fmt, ...);
+    static const struct { uint32_t svc; const char *name; } slots[] = {
+        { SSDT_NtFlushKey,        "NtFlushKey" },
+        { SSDT_NtNotifyChangeKey, "NtNotifyChangeKey" },
+        { SSDT_NtRenameKey,       "NtRenameKey" },
+        { SSDT_NtSaveKey,         "NtSaveKey" },
+        { SSDT_NtSaveKeyEx,       "NtSaveKeyEx" },
+        { SSDT_NtRestoreKey,      "NtRestoreKey" },
+        { SSDT_NtLoadKey,         "NtLoadKey" },
+        { SSDT_NtLoadKeyEx,       "NtLoadKeyEx" },
+        { SSDT_NtUnloadKey,       "NtUnloadKey" },
+        { SSDT_NtUnloadKeyEx,     "NtUnloadKeyEx" },
     };
     uint32_t i;
+    char msg[96];
     TEST_ASSERT(tbl != (const SSDT_TABLE *)0, "SSDT main table exists");
     if (!tbl) return;
-    for (i = 0; i < 10; i++) {
-        uint32_t idx = slots[i] & 0xFFF;
-        TEST_ASSERT(tbl->handlers[idx] != ssdt_stub_not_implemented,
-                    "Advanced registry SSDT slot registered");
+    for (i = 0; i < sizeof(slots) / sizeof(slots[0]); i++) {
+        uint32_t idx = slots[i].svc & 0xFFF;
+        snprintf(msg, sizeof(msg), "%s (0x%x) registered",
+                 slots[i].name, (uint64_t)slots[i].svc);
+        TEST_ASSERT(tbl->handlers[idx] != ssdt_stub_not_implemented, msg);
     }
 }
 

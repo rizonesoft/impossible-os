@@ -11,6 +11,11 @@
 
 #include "kernel/test/test.h"
 #include "kernel/cpuid.h"
+
+/* snprintf is not in freestanding kernel headers; declared extern at file
+ * scope so test functions can build per-iteration mismatch messages with
+ * the offending byte index baked in (per implement-unit-tests skill). */
+extern int snprintf(char *buf, size_t size, const char *fmt, ...);
 #include "kernel/cpu_security.h"
 #include "kernel/topology.h"
 #include "kernel/pmc.h"
@@ -155,15 +160,20 @@ static void test_memcpy_avx_correctness(void)
 
     memcpy_avx(dst, src, 256);
 
-    /* Verify byte-for-byte match */
-    for (i = 0; i < 256; i++) {
-        if (dst[i] != src[i]) {
-            TEST_ASSERT_EQ(dst[i], src[i],
-                           "memcpy_avx: dst matches src at every byte");
-            return;
+    /* Verify byte-for-byte match. Track first mismatch and report once
+     * outside the loop so a failure includes the byte index, not just
+     * "every byte" (per implement-unit-tests skill). */
+    {
+        uint32_t mismatch = 256;
+        char m[96];
+        for (i = 0; i < 256; i++) {
+            if (dst[i] != src[i]) { mismatch = i; break; }
         }
+        snprintf(m, sizeof(m),
+                 "memcpy_avx 256B: dst matches src (first diff @ byte %u/256)",
+                 (uint64_t)mismatch);
+        TEST_ASSERT(mismatch == 256, m);
     }
-    TEST_ASSERT(1, "memcpy_avx: 256-byte copy matches reference");
 }
 
 static void test_memcpy_avx_tail(void)
@@ -185,17 +195,20 @@ static void test_memcpy_avx_tail(void)
 
     memcpy_avx(dst, src, 37);
 
-    for (i = 0; i < 37; i++) {
-        if (dst[i] != src[i]) {
-            TEST_ASSERT_EQ(dst[i], src[i],
-                           "memcpy_avx tail: first 37 bytes match");
-            return;
+    {
+        uint32_t mismatch = 37;
+        char m[96];
+        for (i = 0; i < 37; i++) {
+            if (dst[i] != src[i]) { mismatch = i; break; }
         }
+        snprintf(m, sizeof(m),
+                 "memcpy_avx tail 37B: dst matches src (first diff @ byte %u/37)",
+                 (uint64_t)mismatch);
+        TEST_ASSERT(mismatch == 37, m);
     }
     /* Verify bytes beyond copy length are untouched */
     TEST_ASSERT_EQ(dst[37], 0,
                    "memcpy_avx tail: byte 37 untouched (still 0)");
-    TEST_ASSERT(1, "memcpy_avx tail: 37-byte copy correct");
 }
 
 static void test_memset_avx_correctness(void)
@@ -213,14 +226,17 @@ static void test_memset_avx_correctness(void)
 
     memset_avx(buf, 0x42, 256);
 
-    for (i = 0; i < 256; i++) {
-        if (buf[i] != 0x42) {
-            TEST_ASSERT_EQ(buf[i], 0x42,
-                           "memset_avx: every byte is 0x42");
-            return;
+    {
+        uint32_t mismatch = 256;
+        char m[96];
+        for (i = 0; i < 256; i++) {
+            if (buf[i] != 0x42) { mismatch = i; break; }
         }
+        snprintf(m, sizeof(m),
+                 "memset_avx 256B: every byte 0x42 (first diff @ byte %u/256)",
+                 (uint64_t)mismatch);
+        TEST_ASSERT(mismatch == 256, m);
     }
-    TEST_ASSERT(1, "memset_avx: 256-byte fill with 0x42 correct");
 }
 
 static void test_memset_avx_tail(void)
@@ -238,16 +254,19 @@ static void test_memset_avx_tail(void)
 
     memset_avx(buf, 0xBB, 41);
 
-    for (i = 0; i < 41; i++) {
-        if (buf[i] != 0xBB) {
-            TEST_ASSERT_EQ(buf[i], 0xBB,
-                           "memset_avx tail: first 41 bytes are 0xBB");
-            return;
+    {
+        uint32_t mismatch = 41;
+        char m[96];
+        for (i = 0; i < 41; i++) {
+            if (buf[i] != 0xBB) { mismatch = i; break; }
         }
+        snprintf(m, sizeof(m),
+                 "memset_avx tail 41B: every byte 0xBB (first diff @ byte %u/41)",
+                 (uint64_t)mismatch);
+        TEST_ASSERT(mismatch == 41, m);
     }
     TEST_ASSERT_EQ(buf[41], 0,
                    "memset_avx tail: byte 41 untouched (still 0)");
-    TEST_ASSERT(1, "memset_avx tail: 41-byte fill correct");
 }
 
 static void test_memcpy_fast_dispatch(void)
@@ -264,14 +283,17 @@ static void test_memcpy_fast_dispatch(void)
 
     memcpy_fast(dst, src, 128);
 
-    for (i = 0; i < 128; i++) {
-        if (dst[i] != src[i]) {
-            TEST_ASSERT_EQ(dst[i], src[i],
-                           "memcpy_fast dispatch: result matches");
-            return;
+    {
+        uint32_t mismatch = 128;
+        char m[96];
+        for (i = 0; i < 128; i++) {
+            if (dst[i] != src[i]) { mismatch = i; break; }
         }
+        snprintf(m, sizeof(m),
+                 "memcpy_fast 128B: dst matches src (first diff @ byte %u/128)",
+                 (uint64_t)mismatch);
+        TEST_ASSERT(mismatch == 128, m);
     }
-    TEST_ASSERT(1, "memcpy_fast dispatch: 128-byte copy correct");
 }
 
 static void test_memset_fast_dispatch(void)
@@ -284,14 +306,17 @@ static void test_memset_fast_dispatch(void)
 
     memset_fast(buf, 0x55, 128);
 
-    for (i = 0; i < 128; i++) {
-        if (buf[i] != 0x55) {
-            TEST_ASSERT_EQ(buf[i], 0x55,
-                           "memset_fast dispatch: every byte is 0x55");
-            return;
+    {
+        uint32_t mismatch = 128;
+        char m[96];
+        for (i = 0; i < 128; i++) {
+            if (buf[i] != 0x55) { mismatch = i; break; }
         }
+        snprintf(m, sizeof(m),
+                 "memset_fast 128B: every byte 0x55 (first diff @ byte %u/128)",
+                 (uint64_t)mismatch);
+        TEST_ASSERT(mismatch == 128, m);
     }
-    TEST_ASSERT(1, "memset_fast dispatch: 128-byte fill correct");
 }
 
 /* ---- S3: AVX-512 ---- */
@@ -344,14 +369,17 @@ static void test_memcpy_avx512_correctness(void)
 
     memcpy_avx512(dst, src, 256);
 
-    for (i = 0; i < 256; i++) {
-        if (dst[i] != src[i]) {
-            TEST_ASSERT_EQ(dst[i], src[i],
-                           "memcpy_avx512: dst matches src at every byte");
-            return;
+    {
+        uint32_t mismatch = 256;
+        char m[96];
+        for (i = 0; i < 256; i++) {
+            if (dst[i] != src[i]) { mismatch = i; break; }
         }
+        snprintf(m, sizeof(m),
+                 "memcpy_avx512 256B: dst matches src (first diff @ byte %u/256)",
+                 (uint64_t)mismatch);
+        TEST_ASSERT(mismatch == 256, m);
     }
-    TEST_ASSERT(1, "memcpy_avx512: 256-byte copy matches reference");
 }
 
 static void test_memcpy_avx512_tail(void)
@@ -373,16 +401,19 @@ static void test_memcpy_avx512_tail(void)
 
     memcpy_avx512(dst, src, 70);
 
-    for (i = 0; i < 70; i++) {
-        if (dst[i] != src[i]) {
-            TEST_ASSERT_EQ(dst[i], src[i],
-                           "memcpy_avx512 tail: first 70 bytes match");
-            return;
+    {
+        uint32_t mismatch = 70;
+        char m[96];
+        for (i = 0; i < 70; i++) {
+            if (dst[i] != src[i]) { mismatch = i; break; }
         }
+        snprintf(m, sizeof(m),
+                 "memcpy_avx512 tail 70B: dst matches src (first diff @ byte %u/70)",
+                 (uint64_t)mismatch);
+        TEST_ASSERT(mismatch == 70, m);
     }
     TEST_ASSERT_EQ(dst[70], 0,
                    "memcpy_avx512 tail: byte 70 untouched (still 0)");
-    TEST_ASSERT(1, "memcpy_avx512 tail: 70-byte copy correct");
 }
 
 static void test_memset_avx512_correctness(void)
@@ -400,14 +431,17 @@ static void test_memset_avx512_correctness(void)
 
     memset_avx512(buf, 0x7A, 256);
 
-    for (i = 0; i < 256; i++) {
-        if (buf[i] != 0x7A) {
-            TEST_ASSERT_EQ(buf[i], 0x7A,
-                           "memset_avx512: every byte is 0x7A");
-            return;
+    {
+        uint32_t mismatch = 256;
+        char m[96];
+        for (i = 0; i < 256; i++) {
+            if (buf[i] != 0x7A) { mismatch = i; break; }
         }
+        snprintf(m, sizeof(m),
+                 "memset_avx512 256B: every byte 0x7A (first diff @ byte %u/256)",
+                 (uint64_t)mismatch);
+        TEST_ASSERT(mismatch == 256, m);
     }
-    TEST_ASSERT(1, "memset_avx512: 256-byte fill with 0x7A correct");
 }
 
 static void test_memset_avx512_tail(void)
@@ -425,16 +459,19 @@ static void test_memset_avx512_tail(void)
 
     memset_avx512(buf, 0xDD, 73);
 
-    for (i = 0; i < 73; i++) {
-        if (buf[i] != 0xDD) {
-            TEST_ASSERT_EQ(buf[i], 0xDD,
-                           "memset_avx512 tail: first 73 bytes are 0xDD");
-            return;
+    {
+        uint32_t mismatch = 73;
+        char m[96];
+        for (i = 0; i < 73; i++) {
+            if (buf[i] != 0xDD) { mismatch = i; break; }
         }
+        snprintf(m, sizeof(m),
+                 "memset_avx512 tail 73B: every byte 0xDD (first diff @ byte %u/73)",
+                 (uint64_t)mismatch);
+        TEST_ASSERT(mismatch == 73, m);
     }
     TEST_ASSERT_EQ(buf[73], 0,
                    "memset_avx512 tail: byte 73 untouched (still 0)");
-    TEST_ASSERT(1, "memset_avx512 tail: 73-byte fill correct");
 }
 
 static void test_memcpy_fast_avx512_dispatch(void)
@@ -451,14 +488,17 @@ static void test_memcpy_fast_avx512_dispatch(void)
 
     memcpy_fast(dst, src, 128);
 
-    for (i = 0; i < 128; i++) {
-        if (dst[i] != src[i]) {
-            TEST_ASSERT_EQ(dst[i], src[i],
-                           "memcpy_fast avx512 dispatch: result matches");
-            return;
+    {
+        uint32_t mismatch = 128;
+        char m[96];
+        for (i = 0; i < 128; i++) {
+            if (dst[i] != src[i]) { mismatch = i; break; }
         }
+        snprintf(m, sizeof(m),
+                 "memcpy_fast (avx512 tier) 128B: dst matches src (first diff @ byte %u/128)",
+                 (uint64_t)mismatch);
+        TEST_ASSERT(mismatch == 128, m);
     }
-    TEST_ASSERT(1, "memcpy_fast dispatch: correct with current SIMD tier");
 }
 
 /* ---- S4: MSR infrastructure ---- */

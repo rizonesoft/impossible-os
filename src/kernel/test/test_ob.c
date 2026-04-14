@@ -12,6 +12,12 @@
 #include "kernel/test/test.h"
 #include "kernel/atomic.h"
 #include "kernel/ob/ob.h"
+
+/* snprintf is not in freestanding kernel headers; declared extern here at
+ * file scope so all test functions below can build per-iteration assertion
+ * messages (see implement-unit-tests skill -- per-iteration messages
+ * mandatory for any TEST_ASSERT inside a loop). */
+extern int snprintf(char *buf, size_t size, const char *fmt, ...);
 #include "kernel/ob/ob_type.h"
 #include "kernel/ob/ob_callback.h"
 #include "kernel/ob/ob_trace.h"
@@ -621,18 +627,23 @@ static void test_nt_namespace_ssdt_registered(void)
     const SSDT_TABLE *tbl = ssdt_get_table(SSDT_TABLE_MAIN);
     extern NTSTATUS ssdt_stub_not_implemented(uint64_t, uint64_t, uint64_t,
                                               uint64_t, uint64_t, uint64_t);
-    uint32_t slots[] = {
-        SSDT_NtCreateDirectoryObject, SSDT_NtOpenDirectoryObject,
-        SSDT_NtQueryDirectoryObject,  SSDT_NtCreateSymbolicLinkObject,
-        SSDT_NtOpenSymbolicLinkObject, SSDT_NtQuerySymbolicLinkObject,
+    static const struct { uint32_t svc; const char *name; } slots[] = {
+        { SSDT_NtCreateDirectoryObject,  "NtCreateDirectoryObject" },
+        { SSDT_NtOpenDirectoryObject,    "NtOpenDirectoryObject" },
+        { SSDT_NtQueryDirectoryObject,   "NtQueryDirectoryObject" },
+        { SSDT_NtCreateSymbolicLinkObject, "NtCreateSymbolicLinkObject" },
+        { SSDT_NtOpenSymbolicLinkObject, "NtOpenSymbolicLinkObject" },
+        { SSDT_NtQuerySymbolicLinkObject, "NtQuerySymbolicLinkObject" },
     };
     uint32_t i;
+    char msg[96];
     TEST_ASSERT(tbl != (const SSDT_TABLE *)0, "SSDT main table exists");
     if (!tbl) return;
-    for (i = 0; i < 6; i++) {
-        uint32_t idx = slots[i] & 0xFFF;
-        TEST_ASSERT(tbl->handlers[idx] != ssdt_stub_not_implemented,
-                    "Namespace SSDT slot is registered");
+    for (i = 0; i < sizeof(slots) / sizeof(slots[0]); i++) {
+        uint32_t idx = slots[i].svc & 0xFFF;
+        snprintf(msg, sizeof(msg), "%s (0x%x) registered",
+                 slots[i].name, (uint64_t)slots[i].svc);
+        TEST_ASSERT(tbl->handlers[idx] != ssdt_stub_not_implemented, msg);
     }
 }
 
@@ -646,10 +657,6 @@ static void test_nt_namespace_ssdt_registered(void)
 #include "kernel/ob/ob_section.h"
 #include "kernel/nt/nt_section.h"
 #include "kernel/nt/nt_memory.h"
-
-/* snprintf not in freestanding kernel headers; declared extern in each
- * consumer that needs it (see ob_section.c / ob_timer.c pattern). */
-extern int snprintf(char *buf, size_t size, const char *fmt, ...);
 
 #define NTSTA_NOT_MAPPED_VIEW ((NTSTATUS)0xC0000019)
 

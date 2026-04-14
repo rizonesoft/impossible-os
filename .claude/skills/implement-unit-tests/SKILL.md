@@ -298,6 +298,41 @@ If the existing categories don't fit, add a new one:
 - If the TODO lists 30+ test cases, consider splitting into multiple test files grouped by sub-feature rather than one giant file
 - **Test isolation:** some subsystems (e.g., module registry `s_modules[]`, SSDT dispatch table) have no reset/cleanup mechanism. Tests that modify global state may affect later tests. Document this limitation in a comment and use unique values (e.g., unique base addresses) to avoid collisions with prior tests.
 - If tests add POST16 codes, verify they don't conflict with existing codes in `boot_init.h`
+- **Per-iteration assertion messages (MANDATORY for any TEST_ASSERT in a loop).** A `for`/`while` loop containing `TEST_ASSERT(cond, "literal message")` makes every passing iteration log the same line, so a mid-loop failure cannot be diagnosed from the boot log -- "LPC SSDT slot registered" 15 times tells you nothing about which slot. Two patterns:
+
+  **Small-N loops (under ~50 iterations, each meaningful):** build the message per iteration with `snprintf` so the log identifies which case is being exercised. Use a `struct { ... key; const char *name; }` table so `cond` and `name` stay in lockstep:
+
+  ```c
+  static const struct { uint32_t svc; const char *name; } slots[] = {
+      { SSDT_NtCreatePort,  "NtCreatePort"  },
+      { SSDT_NtConnectPort, "NtConnectPort" },
+      ...
+  };
+  char msg[96];
+  for (i = 0; i < N; i++) {
+      snprintf(msg, sizeof(msg), "%s (0x%x) registered",
+               slots[i].name, (uint64_t)slots[i].svc);
+      TEST_ASSERT(check(slots[i].svc), msg);
+  }
+  ```
+
+  **High-N loops (hundreds of iterations -- byte/page scans):** per-iteration messages would explode the log. Track the first failing index inside the loop, then assert ONCE outside with the index baked into the message:
+
+  ```c
+  uint32_t mismatch_at = N;  /* sentinel: no mismatch */
+  for (i = 0; i < N; i++) {
+      if (dst[i] != src[i]) { mismatch_at = i; break; }
+  }
+  char msg[96];
+  snprintf(msg, sizeof(msg),
+           "memcpy_avx: dst matches src at every byte (first diff @ %u of %u)",
+           (uint64_t)mismatch_at, (uint64_t)N);
+  TEST_ASSERT(mismatch_at == N, msg);
+  ```
+
+  Both patterns require `extern int snprintf(char *buf, size_t size, const char *fmt, ...);` declared near the top of the test file (snprintf is not in freestanding kernel headers; see ob_section.c / ob_timer.c for the convention).
+
+  The PostToolUse hook in `.claude/settings.json` (matcher `Edit|Write|MultiEdit` on `src/kernel/test/test_*.c`) flags new occurrences of this pattern at edit time. The exception list is small: tautological constant comparisons (already banned -- skip them entirely) and tests with a single `TEST_ASSERT` in the loop body whose message already contains a `%` formatter.
 
 ## Existing Test Files (Reference)
 

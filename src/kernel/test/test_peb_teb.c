@@ -13,6 +13,11 @@
 
 #include "kernel/test/test.h"
 #include "kernel/ob/peb.h"
+
+/* snprintf is not in freestanding kernel headers; declared extern at file
+ * scope so test functions can build per-iteration assertion messages
+ * (per implement-unit-tests skill). */
+extern int snprintf(char *buf, size_t size, const char *fmt, ...);
 #include "kernel/ob/teb.h"
 #include "kernel/acpi.h"
 #include "kernel/elf.h"
@@ -379,17 +384,15 @@ static void test_rdrand_bytes_boundaries(void)
     for (li = 0; li < num_lens; li++) {
         uint32_t n = lens[li];
         uint32_t i;
+        char m[96];
 
         for (i = 0; i < sizeof(buf); i++) buf[i] = sentinel;
 
         int ok = rdrand_bytes(buf, n);
-        TEST_ASSERT_EQ(ok, 1, "rdrand_bytes(n) returns 1");
+        snprintf(m, sizeof(m), "rdrand_bytes(n=%u) returns 1", (uint64_t)n);
+        TEST_ASSERT_EQ(ok, 1, m);
 
-        /* Bytes beyond n must still be sentinel (no over-write).
-         * Aggregate into a single TEST_ASSERT: with five outer lengths
-         * the inner loop would otherwise emit up to 296 duplicate PASS
-         * lines per test invocation, drowning out the rest of the
-         * serial log. */
+        /* Bytes beyond n must still be sentinel (no over-write). */
         {
             int no_overwrite = 1;
             for (i = n; i < sizeof(buf); i++) {
@@ -398,8 +401,10 @@ static void test_rdrand_bytes_boundaries(void)
                     break;
                 }
             }
-            TEST_ASSERT_EQ(no_overwrite, 1,
-                           "rdrand_bytes did not write past length");
+            snprintf(m, sizeof(m),
+                     "rdrand_bytes(n=%u) did not write past length",
+                     (uint64_t)n);
+            TEST_ASSERT_EQ(no_overwrite, 1, m);
         }
 
         /* For n >= 2 there's effectively zero chance all bytes equal
@@ -411,8 +416,10 @@ static void test_rdrand_bytes_boundaries(void)
             for (i = 0; i < n; i++) {
                 if (buf[i] != sentinel) { differs = 1; break; }
             }
-            TEST_ASSERT_EQ(differs, 1,
-                           "rdrand_bytes touched the buffer (random != sentinel)");
+            snprintf(m, sizeof(m),
+                     "rdrand_bytes(n=%u) touched buffer (random != sentinel)",
+                     (uint64_t)n);
+            TEST_ASSERT_EQ(differs, 1, m);
         }
     }
 }
@@ -783,15 +790,29 @@ static void test_per_thread_teb_va_stride(void)
      * produces non-overlapping, non-zero addresses for tids 0..THREAD_MAX-1. */
     uint64_t base = 0x7FFDB000ULL;
     uint32_t tid;
-    for (tid = 0; tid < THREAD_MAX; tid++) {
-        uint64_t va = base - (uint64_t)tid * 0x1000;
-        TEST_ASSERT(va > 0x1000000ULL,
-                    "TEB VA for tid is above kernel region");
-        if (tid > 0) {
-            uint64_t prev = base - (uint64_t)(tid - 1) * 0x1000;
-            TEST_ASSERT(va != prev,
-                        "TEB VAs for adjacent tids are distinct");
+    /* Track first-failure tid so a regression points at exactly which
+     * thread index breaks the formula, instead of THREAD_MAX identical
+     * pass lines. */
+    {
+        uint32_t low_fail = THREAD_MAX;
+        uint32_t dup_fail = THREAD_MAX;
+        char m[96];
+        for (tid = 0; tid < THREAD_MAX; tid++) {
+            uint64_t va = base - (uint64_t)tid * 0x1000;
+            if (!(va > 0x1000000ULL)) { low_fail = tid; break; }
+            if (tid > 0) {
+                uint64_t prev = base - (uint64_t)(tid - 1) * 0x1000;
+                if (va == prev) { dup_fail = tid; break; }
+            }
         }
+        snprintf(m, sizeof(m),
+                 "TEB VAs above kernel region for all %u tids (first low @ tid %u)",
+                 (uint64_t)THREAD_MAX, (uint64_t)low_fail);
+        TEST_ASSERT(low_fail == THREAD_MAX, m);
+        snprintf(m, sizeof(m),
+                 "TEB VAs distinct across %u tids (first dup @ tid %u)",
+                 (uint64_t)THREAD_MAX, (uint64_t)dup_fail);
+        TEST_ASSERT(dup_fail == THREAD_MAX, m);
     }
     /* Lowest TEB (tid=THREAD_MAX-1) must not overlap user thread stack base */
     {

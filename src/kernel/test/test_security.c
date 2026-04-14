@@ -493,20 +493,27 @@ static void test_nt_token_ssdt_registered(void)
     const SSDT_TABLE *tbl = ssdt_get_table(SSDT_TABLE_MAIN);
     extern NTSTATUS ssdt_stub_not_implemented(uint64_t, uint64_t, uint64_t,
                                               uint64_t, uint64_t, uint64_t);
-    uint32_t slots[] = {
-        SSDT_NtOpenProcessToken, SSDT_NtOpenProcessTokenEx,
-        SSDT_NtOpenThreadToken, SSDT_NtOpenThreadTokenEx,
-        SSDT_NtQueryInformationToken, SSDT_NtSetInformationToken,
-        SSDT_NtAdjustPrivilegesToken, SSDT_NtAdjustGroupsToken,
-        SSDT_NtAllocateLocallyUniqueId,
+    extern int snprintf(char *buf, size_t size, const char *fmt, ...);
+    static const struct { uint32_t svc; const char *name; } slots[] = {
+        { SSDT_NtOpenProcessToken,      "NtOpenProcessToken" },
+        { SSDT_NtOpenProcessTokenEx,    "NtOpenProcessTokenEx" },
+        { SSDT_NtOpenThreadToken,       "NtOpenThreadToken" },
+        { SSDT_NtOpenThreadTokenEx,     "NtOpenThreadTokenEx" },
+        { SSDT_NtQueryInformationToken, "NtQueryInformationToken" },
+        { SSDT_NtSetInformationToken,   "NtSetInformationToken" },
+        { SSDT_NtAdjustPrivilegesToken, "NtAdjustPrivilegesToken" },
+        { SSDT_NtAdjustGroupsToken,     "NtAdjustGroupsToken" },
+        { SSDT_NtAllocateLocallyUniqueId, "NtAllocateLocallyUniqueId" },
     };
     uint32_t i;
+    char msg[96];
     TEST_ASSERT(tbl != (const SSDT_TABLE *)0, "SSDT main table exists");
     if (!tbl) return;
-    for (i = 0; i < 9; i++) {
-        uint32_t idx = slots[i] & 0xFFF;
-        TEST_ASSERT(tbl->handlers[idx] != ssdt_stub_not_implemented,
-                    "Token SSDT slot is registered");
+    for (i = 0; i < sizeof(slots) / sizeof(slots[0]); i++) {
+        uint32_t idx = slots[i].svc & 0xFFF;
+        snprintf(msg, sizeof(msg), "%s (0x%x) registered",
+                 slots[i].name, (uint64_t)slots[i].svc);
+        TEST_ASSERT(tbl->handlers[idx] != ssdt_stub_not_implemented, msg);
     }
 }
 
