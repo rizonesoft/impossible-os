@@ -60,13 +60,13 @@
 |---|---:|---:|---:|
 | **Lines of code** | ~28,000,000 | ~50,000,000 | 175,767 |
 | **Developers** | ~1,000 active | ~5,000 peak | 1 |
-| **Time span** | 33 years | 40 years | 1 month(s), 8 day(s) |
+| **Time span** | 33 years | 40 years | 1 month(s), 9 day(s) |
 
 > At industry rates (10,000 LOC/developer/year -- COCOMO II), writing 175,767
-> lines of kernel code would take **168 developers** working for **1 month(s), 8 day(s)**.
+> lines of kernel code would take **164 developers** working for **1 month(s), 9 day(s)**.
 >
 > *The "impossible" in Impossible OS was supposed to be the name, not the development method.*
 
 ---
 
-*Last updated: 2026-04-14 16:22 · commit `0b9dd67f`*
+*Last updated: 2026-04-14 17:33 · commit `8bd3b321`*
