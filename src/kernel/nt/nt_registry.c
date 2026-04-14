@@ -125,6 +125,10 @@ static const char *reg_oa_path(OBJECT_ATTRIBUTES *oa)
     return (const char *)oa->ObjectName->Buffer;
 }
 
+/* ---- Helper: tombstone-aware HKEY resolver (shared by §14 and §15) ----
+ * Forward-declared here; implementation in the §15 block at file-end. */
+static reg_key_t *resolve_hkey(HKEY hkey);
+
 /* ---- Helper: convert Win32 error to NTSTATUS ---------------------------- */
 
 static NTSTATUS reg_win32_to_nt(long err)
@@ -278,8 +282,8 @@ static NTSTATUS NtDeleteKey_handler(uint64_t a1, uint64_t a2, uint64_t a3,
         return STATUS_ACCESS_DENIED;
 
     /* NtDeleteKey takes a handle to the key itself (not parent + subkey).
-     * Use RegDeleteKeyDirect which operates on the internal reg_key_t. */
-    key = hkey->key;
+     * Route through resolve_hkey for tombstone-aware liveness check. */
+    key = resolve_hkey(hkey);
     if (!key)
         return STATUS_INVALID_HANDLE;
 
@@ -696,13 +700,10 @@ static NTSTATUS NtQueryKey_handler(uint64_t a1, uint64_t a2, uint64_t a3,
     if (rc != ERROR_SUCCESS)
         return reg_win32_to_nt(rc);
 
-    /* Resolve HKEY to reg_key_t* safely (handles predefined sentinels) */
+    /* Resolve HKEY to reg_key_t* safely: handles predefined sentinels
+     * and tombstoned user handles uniformly via resolve_hkey. */
     {
-        reg_key_t *resolved_key;
-        if (RegIsPredefinedKey(hkey))
-            resolved_key = reg_resolve_predefined(hkey);
-        else
-            resolved_key = hkey->key;
+        reg_key_t *resolved_key = resolve_hkey(hkey);
 
     switch (info_class) {
     case KeyBasicInformation: {
@@ -837,6 +838,7 @@ static NTSTATUS NtFlushKey_handler(uint64_t a1, uint64_t a2, uint64_t a3,
 {
     HKEY hkey = (HKEY)(uintptr_t)a1;
     reg_key_t *key;
+    int rc;
 
     (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
 
@@ -847,8 +849,13 @@ static NTSTATUS NtFlushKey_handler(uint64_t a1, uint64_t a2, uint64_t a3,
     if (!key)
         return STATUS_INVALID_HANDLE;
 
-    /* Flush all dirty hives; registry_flush respects the per-hive dirty flag */
-    registry_flush();
+    /* Flush all dirty hives with status.  Per-key flush is a future
+     * optimization -> XREF: 02-kernel-core/TODO-13 §4 (registry syscalls). */
+    rc = registry_flush_checked();
+    if (rc < 0)
+        return STATUS_SUCCESS;  /* registry not yet ready; treat as no-op */
+    if (rc > 0)
+        return STATUS_REGISTRY_IO_FAILED;
     return STATUS_SUCCESS;
 }
 
@@ -893,7 +900,7 @@ static NTSTATUS NtRenameKey_handler(uint64_t a1, uint64_t a2, uint64_t a3,
     if (RegIsPredefinedKey(hkey))
         return STATUS_ACCESS_DENIED;
 
-    key = hkey->key;
+    key = resolve_hkey(hkey);
     if (!key)
         return STATUS_INVALID_HANDLE;
 

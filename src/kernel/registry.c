@@ -640,6 +640,8 @@ int RegIsPredefinedKey(HKEY hKey)
  * and user-allocated handles. */
 static reg_key_t *reg_resolve_key(HKEY hkey)
 {
+    reg_key_t *k;
+
     if (!hkey) return (reg_key_t *)0;
 
     if (reg_is_predefined(hkey)) {
@@ -652,8 +654,13 @@ static reg_key_t *reg_resolve_key(HKEY hkey)
         return reg_resolve_predefined(hkey);
     }
 
-    /* User-allocated handle */
-    return hkey->key;
+    /* User-allocated handle: reject tombstoned (deleted/unloaded) keys.
+     * RegDeleteKeyDirect and RegUnloadHive set name[0]='\0' to mark the
+     * slot freed; returning such a key would allow ghost writes. */
+    k = hkey->key;
+    if (!k || k->name[0] == '\0')
+        return (reg_key_t *)0;
+    return k;
 }
 
 /* ---- Path walker ---- */
@@ -2584,7 +2591,35 @@ static void hive_ensure_dir(void)
     vfs_create("C:\\Impossible\\System\\Config\\Registry", 0);
 }
 
-/* ---- registry_flush ---- */
+/* ---- registry_flush / registry_flush_checked ---- */
+
+int registry_flush_checked(void)
+{
+    uint32_t i;
+    int failures = 0;
+
+    if (!registry_ready || !hive_table_inited)
+        return -1;
+    if (!vfs_is_mounted('C'))
+        return -1;
+
+    for (i = 0; i < REG_HIVE_COUNT; i++) {
+        if (!hive_table[i].dirty) continue;
+
+        reg_key_t *sub = hive_get_subkey(i);
+        if (!sub) continue;
+
+        if (hive_save(sub, hive_table[i].path) == 0) {
+            hive_table[i].dirty = 0;
+            klog(LOG_DEBUG, "registry", "Flushed hive: %s", hive_table[i].path);
+        } else {
+            failures++;
+            klog(LOG_ERROR, "registry", "Flush FAILED for hive: %s",
+                 hive_table[i].path);
+        }
+    }
+    return failures;  /* 0 = all clean, >0 = count of failed hives */
+}
 
 void registry_flush(void)
 {

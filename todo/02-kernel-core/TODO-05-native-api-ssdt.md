@@ -480,12 +480,16 @@ Extended file operations: metadata queries, attribute modification, device I/O c
 - [x] `NtRestoreKey(KeyHandle, FileHandle, Flags)` → SSDT 0x00A2 (same path resolution, then `hive_load`)
 - [x] `NtLoadKey(ObjectAttributes, ObjectAttributes)` / `NtLoadKeyEx(...)` → SSDT 0x00A3/0x00A4 (creates registry mountpoint, loads hive file by path)
 - [x] `NtUnloadKey(ObjectAttributes)` / `NtUnloadKeyEx(...)` → SSDT 0x00A5/0x00A6 (uses `RegUnloadHive` helper)
-- [ ] Commit: `"kernel: nt -- advanced registry syscalls (flush/notify/save/restore/hive load)"`
+- [x] Commit: `"kernel: nt -- advanced registry syscalls (flush/notify/save/restore/hive load)"` (dd22e696)
 
 **Test checkpoint:** `NtFlushKey` completes without error. `NtNotifyChangeKey` fires callback after `NtSetValueKey` on watched key. `NtSaveKey` + `NtRestoreKey` round-trip succeeds.
 
 > **Test runner:** `scripts\debug\run-abi-tests.bat` (SUITE=abi)
 > **Expected:** 5 new §15 tests (NtFlushKey, NtRenameKey, NtNotifyChangeKey blocked, NtUnloadKey invalid, advanced SSDT registered), 0 failures.
+
+> **Verified** (2026-04-14): 10 handlers registered at SSDT 0x009C-0x00A6 via nt_registry.c:1113-1122. 9 complete paths ([x]) route through registry.c helpers: NtFlushKey → registry_flush_checked with STATUS_REGISTRY_IO_FAILED propagation; NtRenameKey → RegRenameKey with case-only no-op + collision check; NtSaveKey/Ex + NtRestoreKey → vfs_get_path_from_node(bounded strlen, overflow-safe math, cycle detection) → hive_save/hive_load; NtLoadKey/Ex → mountpoint creation with rollback on hive_load failure; NtUnloadKey/Ex → RegUnloadHive recursive free. 1 stub ([/]): NtNotifyChangeKey returns STATUS_NOT_IMPLEMENTED with SCOPE-GAP-ALLOWED sentinel. 10 ntdll PE exports added (alphabetically sorted for binary search). Build clean.
+> **Accepted:** Change notifications (NtNotifyChangeKey watcher lists) -> XREF: 02-kernel-core/TODO-13 §3. UNICODE_STRING treated as ASCII (kernel-wide pattern) -> XREF: 02-kernel-core/TODO-13 §4. SMP dirty-flag races on registry_flush/hive_table -> XREF: 02-kernel-core/TODO-13 §14. Per-key flush (vs current flush-all-hives) -> XREF: 02-kernel-core/TODO-13 §4.
+> **Quality reviewed** (2026-04-14): dead code clean. Consistency: reg_resolve_key in registry.c now tombstone-aware (rejects keys with name[0]=='\0'); §14 handlers (NtDeleteKey, NtRenameKey, NtQueryKey) routed through shared resolve_hkey in nt_registry.c for uniform liveness semantics. NtLoadKey rollback on hive_load failure uses captured disposition. File handle type-checked via OB_HEADER_FROM_BODY + ObpFileType. New helpers: vfs_get_path_from_node (bounded VFS_MAX_NAME strlen, depth-64 cycle guard, subtraction-form bounds), vfs_name_len_bounded, vfs_find_drive_letter. 5 new tests.
 
 ## 16. Token and Access Control Syscalls
 

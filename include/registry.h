@@ -402,6 +402,12 @@ void registry_mark_dirty(reg_key_t *key);
  * Only writes hives whose dirty flag is set. */
 void registry_flush(void);
 
+/* Flush dirty hives with status reporting.  Returns 0 on success, or the
+ * number of hives whose save failed (>0), or -1 if the registry is not
+ * ready to flush (no mount, not initialized).  Used by NtFlushKey to
+ * propagate I/O errors to user mode. */
+int registry_flush_checked(void);
+
 /* Save all hives to disk unconditionally (for clean shutdown). */
 void registry_save_all(void);
 
