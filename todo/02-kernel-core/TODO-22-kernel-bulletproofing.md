@@ -410,9 +410,3 @@ Five non-negotiable rules for correct framebuffer/GOP handling on real hardware.
 **Test runner:** `scripts\debug\run-abi-tests.bat` (SUITE=abi)
 
 ---
-
-## History
-
-| Date | Action | Summary |
-| --- | --- | --- |
-| 2026-04-10 | validate | validate-todo-file: merged Goal; Impl table Star to emoji column; OS Comparison moved after Impl + compacted; sections 1--15 checkpoint then Commit + four platforms; section 9 checkpoint matches gs:0 verify; Unit Tests checkpoint; Verification test runner; INDEX TODO-23 line cleaned; XREF backrefs added to TODO-04, TODO-05, TODO-17; Inputs XREFs tightened with section numbers. |

@@ -3,12 +3,12 @@
 > **Goal:** Build the complete freestanding library layer the rest of the kernel depends on: `snprintf`/`vsnprintf` in `libc` (§1; `panic.c` / klog migration still deferred), full floating-point math beyond `kmath.h` (§2), LZ4 (§3; assumed by TODO-15/TODO-16), miniz deflate/ZIP (§4), Monocypher + kernel CSPRNG (§5), cJSON (§6), and Mbed TLS record layer (§7) for HTTPS/FTPS consumers. All ports compile with `-ffreestanding -nostdlib` and route heap through `kmalloc`/`kfree` with `pmm_alloc_contiguous` for buffers > 4 KiB.
 
 > [!IMPORTANT]
+> **Current state (code-truth 2026-04-13):** `src/libc/string.c` + `include/libc/string.h` ship `snprintf`/`vsnprintf` and string/memory ops (§1 core done; `panic.c` still hand-rolls crash text). `include/kernel/kmath.h` already inlines `kmath_cos`, `kmath_acos`, `kmath_pow`, `kmath_sqrt` for stb; §2 `src/libc/math.c` trig/log suite not started. `src/libs/cjson/` + `src/kernel/json.c` implement §6 parser + thin wrappers; `cJSON_SetMaxDepth` / production call sites still open. No `src/libs/lz4`, `miniz`, `monocypher`, or `mbedtls` trees. `test_register_klibs` is not declared or called from `src/kernel/test/test_runner.c`.
 > **Already done -- do NOT re-implement:**
 > - `stb_truetype` -> `src/kernel/gfx/stb_truetype_impl.c` [done]
 > - `stb_image` -> `include/stb_image.h` + `src/kernel/image.c` [done]
 > - `kmath.h` -> exists with `fabs`, `floor`, `ceil`, `fmod`, `sqrt` [done]
 >   (incomplete; §2 extends it)
->
 > **Not in scope for this TODO:**
 > - `dr_wav`, `dr_mp3`, `stb_vorbis`, `pl_mpeg` audio/video codecs -> belong in the multimedia domain (`10-apps` or `08-desktop-shell`).
 > - TLS session management, certificate validation, HTTPS client logic -> networking domain (`07-networking`); §7 of this TODO only ports Mbed TLS as a freestanding library.
@@ -22,16 +22,18 @@
 ## Inputs
 
 - `include/kernel/kmath.h` -- existing math helpers (fabs/floor/ceil/fmod/sqrt); extend in §2
-- `src/kernel/panic.c` -- explicitly comments "no snprintf in freestanding"; fixed by §1
+- `src/kernel/panic.c` -- legacy comment path still hand-rolls crash text; safe to migrate to `snprintf` when §1 stabilizes in panic path
 - `src/kernel/gfx/stb_truetype_impl.c` -- example of a correctly integrated freestanding stb library; use as the pattern for all new ports
 - `src/kernel/image.c` -- example of tiered kmalloc/pmm allocator delegation for stb_image; replicate the pattern for miniz/monocypher/Mbed TLS
+- -> XREF: `12-user-platform-sdk/TODO-01-kernel-libraries.md` -- COMPLEMENT: ZIP writer + stream deflate after D02 T20 §4 reader/port; do not re-vendor miniz here
 - -> XREF: `TODO-15-power-management.md §4` -- S4 hibernation image write uses LZ4 block compression; requires §3 of this TODO to be complete first
 - -> XREF: `TODO-16-crash-dump-generation.md §5, §6` -- crash dump minidump/kernel dump use LZ4 compression; requires §3
-- -> XREF: `TODO-17-kernel-security-hardening.md §9` -- `__stack_chk_guard` canary seeded with RDRAND; the full CSPRNG (§5) is a superset of that; share the seed path
-- -> XREF: `TODO-11-security-reference-monitor.md §4` -- token/SID hashing uses Blake2b from Monocypher (§5)
+- -> XREF: `TODO-17-kernel-security-hardening.md §12` -- `__stack_chk_guard` canary seeded with RDRAND; the full CSPRNG (§5) is a superset of that; share the seed path
+- -> XREF: `TODO-11-security-reference-monitor.md §14` -- AppContainer / package SID hashing uses Monocypher (T20 §5; T11 §14)
 - -> XREF: `TODO-13-registry-completion.md §4` -- registry hive WAJ uses CRC32C; separate from Monocypher but benefits from a consistent hash dispatch layer (§5)
 - -> XREF: `TODO-02-system-logging.md §10` -- HMAC-Blake2b chain for tamper-evident `events.jsonl`; requires Monocypher Blake2b + kernel CSPRNG (§5)
 - -> XREF: `07-networking/TODO-03-http-tls.md` §5 -- Mbed TLS Kernel Port in networking depends on this §7 freestanding port being complete first
+- -> XREF: `TODO-21-bsod-ux-enhancements.md` §4 -- BSOD smart QR may zlib-compress or LZ4-compress crash payloads using §4 miniz or §3 LZ4 once those subsystems are merged (panic path obeys T20 allocator rules)
 
 ---
 
@@ -41,7 +43,7 @@
 - A complete floating-point math library (`kmath.h` + `src/libc/math.c`) provides sin/cos/tan/atan2/exp/log/pow with SSE2 precision; no libm needed.
 - LZ4 block compression is available for crash dumps, hibernation images, and any other kernel subsystem that needs fast in-kernel compression.
 - miniz provides zlib-compatible deflate/inflate and ZIP archive reading, unblocking IXFS transparent compression and HTTP gzip.
-- Monocypher provides production-grade ChaCha20, Poly1305, Blake2b, Argon2i, X25519, and Ed25519 with a RDRAND-seeded CSPRNG (`csprng_fill()`).
+- Monocypher provides production-grade ChaCha20, Poly1305, Blake2b, Argon2id, X25519, and Ed25519 with a RDRAND-seeded CSPRNG (`csprng_fill()`).
 - cJSON parses and serialises JSON for theme files, settings, update manifests, and NTP server lists.
 - Mbed TLS 3.x compiles freestanding in a minimal configuration (TLS 1.3 record layer + AES-GCM + RSA/ECDSA) ready for use by the networking layer.
 
@@ -56,32 +58,12 @@
 | 💎  |   3   | LZ4 block compressor                                 | --                   |  [ ]   |
 | 💎  |   4   | miniz deflate/inflate + ZIP                          | §1                   |  [ ]   |
 | 💎  |   5   | Monocypher crypto primitives + kernel CSPRNG         | §1                   |  [ ]   |
-| 💎  |   6   | cJSON DOM parser                                     | §1                   |  [x]   |
-| 💎  |   7   | Mbed TLS freestanding port (record layer)            | §1, §2, §5             |  [ ]   |
+| 💎  |   6   | cJSON DOM parser                                     | §1                   |  [/]   |
+| 💎  |   7   | Mbed TLS freestanding port (record layer)            | §1, §2, §5            |  [ ]   |
 
-> 💎 = parity work -- matches what Windows 11 and Linux already do.
-> ⭐ = exclusive work -- Impossible OS is superior or first.
+> 💎 = parity work: matches what Windows 11 and Linux already do.
+> ⭐ = exclusive work: Impossible OS is superior or first.
 
-## OS Comparison
-
-| ⭐ | Feature | 🪟 Win11 | 🐧 Linux | 🚀 Impossible OS |
-| --- | --- | --- | --- | --- |
-| 💎 | snprintf safe | ✅ Rtl safe | ✅ vsprintf | ✅ §1 libc |
-| 💎 | Core string ops | ✅ Rtl mem | ✅ string.c | ✅ §1 libc |
-| 💎 | Float math lib | ✅ CRT | ✅ libm | ⚠️ §2 kmath |
-| 💎 | LZ4 in kernel | ⚠️ Xpress | ✅ lib/lz4 | ⬜ §3 |
-| 💎 | Deflate zlib | ✅ Rtl LZNT1 | ✅ zlib | ⬜ §4 miniz |
-| 💎 | ZIP read | ✅ Shell | ✅ unzip | ⬜ §4 |
-| 💎 | ChaCha Poly AEAD | ✅ BCrypt | ✅ chacha | ⬜ §5 |
-| 💎 | Blake2b | ✅ no native | ✅ blake2b | ⬜ §5 |
-| 💎 | Argon2id | ✅ KDF API | ✅ argon2 | ⬜ §5 |
-| 💎 | X25519 ECDH | ✅ BCrypt | ✅ ecdh | ⬜ §5 |
-| 💎 | Ed25519 | ✅ BCrypt | ✅ eddsa | ⬜ §5 |
-| 💎 | Kernel CSPRNG | ✅ BCrypt | ✅ random.c | ⬜ §5 |
-| 💎 | JSON in kernel | ❌ user COM | ❌ none std | ✅ §6 cJSON |
-| 💎 | TLS record crypto | ✅ SChannel | ✅ ktls | ⬜ §7 mbed |
-
-After §1--§7, freestanding libc + libs unblock LZ4/miniz/crypto/JSON/TLS record for hibernation, dumps, IXFS, and `07-networking` HTTPS.
 ---
 
 ## 1. Freestanding String Library
@@ -89,20 +71,16 @@ After §1--§7, freestanding libc + libs unblock LZ4/miniz/crypto/JSON/TLS recor
 - [x] Grep the entire kernel source for `memcpy`, `memset`, `strlen`, `strcmp`, `snprintf` etc.; document which are provided by compiler builtins (`__builtin_memcpy`) vs. missing vs. hand-rolled in callers
 - [x] Map against the functions `panic.c`, `printk.h`, VFS, and drivers call -- the gap list drives the implementation priority
 
-> **Gap analysis results (2026-03-27):**
->
+> **Gap analysis results (2026-03-27) -- historical; see Current state above for 2026-04-13 code-truth.**
 > **Provided (weak symbols in `image.c` + `stb_truetype_impl.c` + `freestanding/string.h`):**
 > - `memcpy`, `memset`, `memmove`, `memcmp`, `strlen` -- 2 duplicate implementations (image.c + stb_truetype_impl.c); should consolidate into `libc/string.c`
->
 > **Compiler builtins used:**
 > - `__builtin_memcpy`, `__builtin_memset` -- only in `image_save.c` (4 uses)
->
 > **Missing entirely (no implementation, no builtin):**
 > - `strcmp`, `strncmp`, `strcpy`, `strncpy`, `strcat`, `strncat` -- 0 actual calls, but hand-rolled `str_eq()` in 5 files (klog.c, klog_disk.c, icon_store.c, ipc/shmem.c, blkdev.c)
 > - `snprintf` / `vsnprintf` -- not available; `panic.c` has a comment noting "no snprintf in freestanding"; `klog.c` has `vformat_buf()` (private, supports %d %u %x %p %s %c only)
 > - `atoi`, `strtol`, `strtoul` -- not available
 > - `memchr`, `strstr`, `strchr`, `strrchr` -- not available
->
 > **Priority for §1 (remaining):**
 > 1. Consolidate `memcpy`/`memset`/`memmove`/`memcmp`/`strlen` into `libc/string.c` (eliminate 2 duplicate weak symbol sets)
 > 2. Add `strcmp`/`strncmp` (replace 5 hand-rolled `str_eq()` functions)
@@ -121,13 +99,15 @@ After §1--§7, freestanding libc + libs unblock LZ4/miniz/crypto/JSON/TLS recor
 - [ ] Update `panic.c` to use `snprintf` -- deferred (current hand-rolled formatter works; changing it during active development risks boot regression)
 - [ ] Update `klog` / `printk` to use `vsnprintf` internally -- deferred (same reason; `vformat_buf` is battle-tested)
 
-**Test checkpoint:** `snprintf(buf, 64, "%lld %p", (long long)-1, (void *)0x1000)` returns expected length; `strcmp`/`memcmp` unit vectors pass; link includes `libc/string.c` without duplicate weak symbols from `image.c`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
-
 - [x] Commit: `"libc: freestanding string library -- memcpy/memset/str*, snprintf/vsnprintf"`
+
+**Test checkpoint:** `snprintf(buf, 64, "%lld %p", (long long)-1, (void *)0x1000)` returns expected length; `strcmp`/`memcmp` unit vectors pass; link includes `libc/string.c` without duplicate weak symbols from `image.c`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
 ---
 
 ## 2. Complete Floating-Point Math Library
+
+- [ ] Reconcile with existing `include/kernel/kmath.h` inlines today: `kmath_cos`, `kmath_acos`, `kmath_pow`, `kmath_sqrt` (used by stb_truetype); avoid duplicate symbols when promoting or moving APIs into `src/libc/math.c` (confirmed `include/kernel/kmath.h:36-135`).
 
 - [ ] Document which functions `kmath.h` already provides: `kmath_fabs`, `kmath_floor`, `kmath_ceil`, `kmath_fmod`, `kmath_sqrt`
 - [ ] Identify callers across the codebase to understand which new functions are urgently needed (stb_truetype, compositor, future audio synthesis)
@@ -152,9 +132,9 @@ After §1--§7, freestanding libc + libs unblock LZ4/miniz/crypto/JSON/TLS recor
 - [ ] `double kmath_trunc(double x)` -- truncate toward zero
 - [ ] `double kmath_cbrt(double x)` -- cube root via Newton-Raphson
 
-**Test checkpoint:** `kmath_sin(0)==0`, `kmath_cos(0)==1`, `kmath_atan2(1,1)` within 1e-9 of pi/4; `kmath_exp(1)` within 1e-9 of e; spot-check stb_truetype glyph raster unchanged vs baseline. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
-
 - [ ] Commit: `"libc: floating-point math -- sin/cos/tan/atan2/exp/log/pow, float variants"`
+
+**Test checkpoint:** `kmath_sin(0)==0`, `kmath_cos(0)==1`, `kmath_atan2(1,1)` within 1e-9 of pi/4; `kmath_exp(1)` within 1e-9 of e; spot-check stb_truetype glyph raster unchanged vs baseline. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
 ---
 
@@ -178,9 +158,9 @@ After §1--§7, freestanding libc + libs unblock LZ4/miniz/crypto/JSON/TLS recor
 - [ ] For streaming use cases (large IXFS extents), vendor `lz4frame.c` from the same repository; provides the standard `.lz4` framing layer with content checksum (XXH32) and block independence flag
 - [ ] `lz4f_compress_begin / update / end` / `lz4f_decompress` API
 
-**Test checkpoint:** 64 KiB random buffer round-trip through `lz4_compress` / `lz4_decompress` matches; `lz4_compress_bound` >= actual compressed size; TODO-16 writer calls real LZ4 API without placeholder. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
-
 - [ ] Commit: `"libs: LZ4 block compressor, freestanding port, wired to crash dump + hibernate"`
+
+**Test checkpoint:** 64 KiB random buffer round-trip through `lz4_compress` / `lz4_decompress` matches; `lz4_compress_bound` >= actual compressed size; TODO-16 writer calls real LZ4 API without placeholder. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
 ---
 
@@ -210,9 +190,9 @@ After §1--§7, freestanding libc + libs unblock LZ4/miniz/crypto/JSON/TLS recor
 - [ ] Compress a known 8 KiB buffer; decompress; verify byte-for-byte integrity
 - [ ] Open a ZIP archive from memory; list entries; extract one file; verify content against a known SHA-256 (using Monocypher Blake2b from §5)
 
-**Test checkpoint:** 8 KiB gzip round-trip identity; ZIP in-memory extract matches golden hash; no `kmalloc` for output >4 KiB without `pmm_alloc_contiguous`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
-
 - [ ] Commit: `"libs: miniz deflate/inflate, ZIP archive reading"`
+
+**Test checkpoint:** 8 KiB gzip round-trip identity; ZIP in-memory extract matches golden hash; no `kmalloc` for output >4 KiB without `pmm_alloc_contiguous`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
 ---
 
@@ -225,7 +205,7 @@ After §1--§7, freestanding libc + libs unblock LZ4/miniz/crypto/JSON/TLS recor
   - **Poly1305** -- `crypto_poly1305()` MAC; pairs with ChaCha20 for AEAD
   - **ChaCha20-Poly1305** -- `crypto_aead_lock()` / `crypto_aead_unlock()` authenticated encryption
   - **Blake2b** -- `crypto_blake2b()` cryptographic hash; 256 or 512-bit output
-  - **Argon2id** -- `crypto_argon2()` memory-hard password hash; used by login auth (-> XREF `TODO-11-security-reference-monitor.md §4`)
+  - **Argon2id** -- `crypto_argon2()` memory-hard password hash; used by desktop login/password hashing (-> XREF `09-desktop-shell/TODO-06-security-accounts.md §2`)
   - **X25519** -- `crypto_x25519()` Diffie-Hellman key exchange
   - **Ed25519** -- `crypto_eddsa_sign()` / `crypto_eddsa_check()` signatures; used for EIF code signing (-> XREF `TODO-08-binary-system.md §17`)
 
@@ -241,13 +221,13 @@ After §1--§7, freestanding libc + libs unblock LZ4/miniz/crypto/JSON/TLS recor
   3. ACPI PM timer reading (adds ~20 bits of timing entropy)
   4. XOR all sources into a 256-bit seed; expand with Blake2b to produce the initial ChaCha20 key
 - [ ] Continuous operation: maintain a global ChaCha20 state; `csprng_fill` calls `crypto_chacha20_x()` to generate output; re-key every 4 MiB of output (forward-secrecy)
-- [ ] Share the RDRAND seed path with `TODO-17-kernel-security-hardening.md §9` (`__stack_chk_guard` canary init); `canary_init()` calls `csprng_u64()` after `csprng_init()` runs
+- [ ] Share the RDRAND seed path with `TODO-17-kernel-security-hardening.md §12` (`__stack_chk_guard` canary init); `canary_init()` calls `csprng_u64()` after `csprng_init()` runs
 - [ ] Replace `task_exec()` AT_RANDOM TSC fallback with `csprng_fill(rand_buf, 16)` (-> XREF `02-kernel-core/TODO-04-peb-teb-user-abi.md §13` follow-up). Until this lands, AT_RANDOM uses RDRAND on hardware and a TSC-mixed fallback on TCG; user binaries are `-fno-stack-protector` so this is not currently exploitable.
 - [ ] `SYS_GETRANDOM` syscall: `getrandom(buf, len, flags)` fills user buffer via `csprng_fill` + `copy_to_user`; add to SSDT (-> XREF `TODO-05-native-api-ssdt.md §4`)
 
-**Test checkpoint:** `crypto_aead_lock`/`unlock` round-trip on test vector; `csprng_fill` two 32 B buffers differ; Blake2b self-test vector passes; `RDRAND` path exercised on hardware when present. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
-
 - [ ] Commit: `"libs: Monocypher crypto, kernel CSPRNG (RDRAND + Blake2b), SYS_GETRANDOM"`
+
+**Test checkpoint:** `crypto_aead_lock`/`unlock` round-trip on test vector; `csprng_fill` two 32 B buffers differ; Blake2b self-test vector passes; `RDRAND` path exercised on hardware when present. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
 ---
 
@@ -275,9 +255,9 @@ After §1--§7, freestanding libc + libs unblock LZ4/miniz/crypto/JSON/TLS recor
 - [ ] Use for: desktop theme files (`theme.json`), settings persistence, update manifests, NTP server list
 - [ ] Test: parse `{"os": "Impossible", "build": 1024, "debug": true}`; verify all fields extract correctly
 
-**Test checkpoint:** Sample JSON parses; `json_int`/`json_str` match literals; `cJSON_SetMaxDepth` enforced on fuzz input without heap exhaustion; `json_print` round-trip stable. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
-
 - [x] Commit: `"libs: cJSON DOM parser, json_parse/get/print wrapper"`
+
+**Test checkpoint:** Sample JSON parses; `json_int`/`json_str` match literals; `cJSON_SetMaxDepth` enforced on fuzz input without heap exhaustion; `json_print` round-trip stable. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
 ---
 
@@ -305,9 +285,33 @@ After §1--§7, freestanding libc + libs unblock LZ4/miniz/crypto/JSON/TLS recor
 - [ ] Implement `tls_selftest()`: run `mbedtls_aes_self_test(1)` and `mbedtls_sha256_self_test(1)` -- pass means AES and SHA-256 are functionally correct in freestanding mode
 - [ ] The full TLS session layer (handshake, certificates, SNI) is implemented in `07-networking`; this section only validates the port
 
+- [ ] Commit: `"libs: Mbed TLS 3.x freestanding port, AES/SHA256/TLS1.3 config, CSPRNG entropy hook"`
+
 **Test checkpoint:** `mbedtls_aes_self_test(1)` and `mbedtls_sha256_self_test(1)` return 0; kernel links with `src/libs/mbedtls/` objects only via this port; serial shows entropy hook OK. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-- [ ] Commit: `"libs: Mbed TLS 3.x freestanding port, AES/SHA256/TLS1.3 config, CSPRNG entropy hook"`
+---
+
+## OS Comparison
+
+| ⭐ | Feature                    | 🪟 Win11      | 🐧 Linux      | 🚀 Impossible OS |
+| --- | -------------------------- | ------------- | ------------- | ---------------- |
+| 💎 | snprintf safe              | ✅ Rtl safe   | ✅ vsprintf   | ✅ §1 libc       |
+| 💎 | Core string ops            | ✅ Rtl mem    | ✅ string.c   | ✅ §1 libc       |
+| 💎 | Float math lib             | ✅ CRT        | ✅ libm       | ⚠️ §2 partial (`kmath.h` cos/pow/sqrt; no `libm`) |
+| 💎 | LZ4 in kernel              | ⚠️ Xpress     | ✅ lib/lz4    | ⬜ §3            |
+| 💎 | Deflate zlib               | ✅ Rtl LZNT1 | ✅ zlib       | ⬜ §4 miniz      |
+| 💎 | ZIP read                   | ✅ Shell      | ✅ unzip      | ⬜ §4            |
+| 💎 | ChaCha Poly AEAD           | ✅ BCrypt     | ✅ chacha     | ⬜ §5            |
+| 💎 | Blake2b                    | ✅ no native  | ✅ blake2b    | ⬜ §5            |
+| 💎 | Argon2id                   | ✅ KDF API    | ✅ argon2     | ⬜ §5            |
+| 💎 | X25519 ECDH                | ✅ BCrypt     | ✅ ecdh       | ⬜ §5            |
+| 💎 | Ed25519                    | ✅ BCrypt     | ✅ eddsa      | ⬜ §5            |
+| 💎 | Kernel CSPRNG              | ✅ BCrypt     | ✅ random.c   | ⬜ §5            |
+| 💎 | JSON in kernel             | ❌ user COM   | ❌ none std   | ✅ §6 cJSON      |
+| 💎 | TLS record crypto          | ✅ SChannel   | ✅ ktls       | ⬜ §7 mbed       |
+| ⭐ | One ring-0 CSPRNG façade (TLS seed + hiber + dumps + klog HMAC) | ⚠️ many BCrypt entry points | ⚠️ `get_random_bytes` + drivers | ⬜ §5 `csprng_fill` |
+
+After §1 through §7, freestanding libc and these libs unblock LZ4, miniz, crypto, JSON, and the TLS record layer for hibernation, dumps, IXFS, and `07-networking` HTTPS.
 
 ---
 
@@ -331,6 +335,7 @@ After §1--§7, freestanding libc + libs unblock LZ4/miniz/crypto/JSON/TLS recor
   - SHA-256: `"abc"` -> known hash `ba7816bf...`
   - AES-128-ECB: encrypt + decrypt round-trip -> plaintext matches
 - [ ] Add `extern void test_register_klibs(void);` in `test_runner.c`, call `test_register_klibs()` from `test_runner_init()`
+- [ ] Until §3 exists: register LZ4 round-trip test as `TEST_SKIP` or behind `#if 0`; until §4/§5 ship crypto: skip CRC32 / SHA-256 / AES bullets or use `TEST_SKIP` with explicit reason (avoid linking missing symbols)
 - [ ] Commit: `"test: add kernel libraries test suite"`
 
 ---
@@ -358,4 +363,7 @@ After §1--§7, freestanding libc + libs unblock LZ4/miniz/crypto/JSON/TLS recor
 
 | Date | Action | Summary |
 | --- | --- | --- |
-| 2026-04-10 | validate | Removed ### N.M and model tags, ASCII `->`/`<=` sweep, Depends On uses §, fixed HTTP-TLS path to `07-networking/TODO-03-http-tls.md` §5, compact OS table after Implementation Order, §1/§6 status [x], per-section **Test checkpoint** + four platforms, Unit Tests -> `TEST_CAT_EXEC` + `test_runner.c`, added `scripts/debug/run-exec-tests.bat`, back-XREF on `TODO-03` Inputs, Goal aligned with libc snprintf present. **Parity:** Win11+Linux-strong rows covered by §2--§7 except JSON row (Impossible leads). **Flag:** CRC32/AES unit bullets need real APIs from §4/§5 before tests compile. |
+| 2026-04-10 | validate | Removed ### N.M and model tags, ASCII `->`/`<=` sweep, Depends On uses §, fixed HTTP-TLS path to `07-networking/TODO-03-http-tls.md` §5, compact OS table after Implementation Order, §1/§6 status [x], per-section **Test checkpoint** + four platforms, Unit Tests -> `TEST_CAT_EXEC` + `test_runner.c`, added `scripts/debug/run-exec-tests.bat`, back-XREF on `TODO-03` Inputs, Goal aligned with libc snprintf present. **Parity:** Win11+Linux-strong rows covered by §2 through §7 except JSON row (Impossible leads). **Flag:** CRC32/AES unit bullets need real APIs from §4/§5 before tests compile. |
+| 2026-04-13 | validate | Moved `## OS Comparison` after §7 and before `## Unit Tests`; each §1 through §7 now ends with `- [ ] Commit:` / `- [x] Commit:` before `**Test checkpoint:**`; Inputs XREF fixes (T17 stack canary §12, T11 AppContainer §14, Argon2 -> D09 `TODO-06-security-accounts.md` §2); OS table re-padded; IMPORTANT callout blank line removed; §1 gap-analysis blockquote empty `>` lines removed; prior History row date un-bolded. **Parity:** unchanged intent (⬜ rows tracked in §2 through §7). **Blocked deps:** Implementation Order §4 through §7 still depend on open sections on source TODOs. |
+| 2026-04-13 | gap-analysis | 6 web + 2 Learn fetches (CNG alg IDs incl. ChaCha20-Poly1305 + SHA3 24H2; RtlCompressBuffer LZNT1/Xpress); code-truth: §1/§6 partial, §2 partial in `kmath.h` only, no lz4/miniz/monocypher/mbedtls dirs, no `test_register_klibs`; IO row §6 -> `[/]`; Outcome Argon2i to Argon2id; OS ⭐ CSPRNG façade row; Inputs D12 T01 COMPLEMENT; Unit Tests skip-gate; INDEX snprintf stale line; §1 gap block marked historical; INDEX line 47 substring; D12 T01 code-truth note; §2 kmath reconcile bullet. |
+| 2026-04-14 | validate | Idempotent pass: OS Comparison after §7 before Unit Tests; Commit before Test checkpoint §1-§7; fixed gap-analysis History pipe; parity footnote lines 63-64 colon style; Inputs paths and XREF targets checked; run-exec-tests.bat present. **Parity:** ⬜ rows still §2-§7. **Flag:** external IO deps open; §6 [/] per partial cJSON. |

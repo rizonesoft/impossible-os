@@ -24,6 +24,7 @@
 - → XREF: `01-boot-platform/TODO-16-boot-watchdog.md` -- watchdog timer integrates with `boot_progress()` calls; detects hung subsystem init
 - → XREF: `04-drivers-hardware/TODO-11-security-hardware.md §4` -- TPM2 `PCR_Extend` for measured boot; extends the PCR event log parsed in Phase 0
 - → XREF: `01-boot-platform/TODO-04-cpu-boot-sequencing.md §2` -- CPU security activation order (EFER/CR4 hardening) slots into Phase 0 between serial init and PMM
+- → XREF: `TODO-18-kernel-debugger-kd-protocol.md` §4, §15 -- `kd_init()` placement relative to COM IRQ + IDT and transport coexistence notes
 
 ## Outcome
 
@@ -134,6 +135,7 @@ Hardware abstraction layer: GDT/IDT, interrupt controllers, timer, RTC, display.
 - [x] `fb_init()` + `boot_splash_init()` -- BOOT_DEGRADED; display is optional for kernel correctness
 - [x] `boot_timing_init()` + boot timing report log path after timer calibration
 - [ ] Wire `except_init()` in Phase 1 after IDT/IRQ setup (→ XREF: [TODO-10-exception-dispatch-seh.md §1](./TODO-10-exception-dispatch-seh.md))
+- [ ] Call `kd_init()` from Phase 1 after the COM IRQ path and IDT vectors KD relies on are registered, gated by boot args / registry per [TODO-18-kernel-debugger-kd-protocol.md §4](./TODO-18-kernel-debugger-kd-protocol.md) and ordering notes in §15 (-> XREF `TODO-18-kernel-debugger-kd-protocol.md §15`)
 - [x] `__asm__ volatile ("sti")` -- enable interrupts only after all of the above
 - [x] `boot_splash_start_animation()` -- after STI so LAPIC timer can drive the spinner
 - [x] Remove `#include "kernel/fs/vfs.h"` and `#include "kernel/fs/partition.h"` from this file

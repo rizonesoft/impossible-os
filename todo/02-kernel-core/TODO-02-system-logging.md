@@ -19,6 +19,7 @@
 - → XREF: `01-boot-platform/TODO-11-usb-boot-hardening.md` -- USB boot hardening (klog_disk_flush bounded loop, deferred flush mode); both TODOs modify klog_disk.c
 - → XREF: `TODO-05-native-api-ssdt.md §4` -- SSDT indices 0x01D0–0x01D6 reserved for ETW tracing syscalls; §8 of this TODO wires them into the SSDT
 - → XREF: `TODO-16-crash-dump-generation.md §2,§7` -- crash dump raw-partition sink bypasses VFS; §8 of this TODO captures ring buffer to reserved physical memory on panic (complementary -- TODO-16 captures binary state, §8 captures text log)
+- → XREF: `TODO-21-bsod-ux-enhancements.md` §3: BSOD last N klog lines at panic (`klog_get_recent`); §8 persists ring for next boot replay. Panic reads stay memcpy only when `klog_entry_t` grows (T02 §9).
 - → XREF: `TODO-20-kernel-libraries.md §5` -- Monocypher Blake2b + kernel CSPRNG required by §10 (HMAC-chain log integrity)
 - → XREF: `01-boot-platform/TODO-17-blackbox-service-partition.md` -- BlackBox X:\ partition; log paths migrate from C:\ to X:\Logs\
 - → XREF: `14-host-tools/TODO-08-blackbox-log-extractor.md` -- host-side log viewer/extractor; solves "not verifiable from serial log" verification items
@@ -147,6 +148,7 @@ Emit machine-parseable events alongside plain-text logs. Implemented with manual
 - [x] §4 log rotation applied to `events.jsonl` via `rotate_log_file()`
 - [x] `"dropped"` field included from §5 rate limiter via `klog_get_dropped()` public API
 - [ ] Event viewer reads `events.jsonl` for colour-coded filtering -- → XREF: [13-tools-accessories/TODO-02](../13-tools-accessories/TODO-02-event-viewer.md)
+- [ ] When TODO-16 §7 first writes DUMP_PARTITION_HEADER: add JSON keys dump_encryption_state and dump_present_on_raw for panic or flush paths (names from TODO-16 §10 doc)
 - [x] Commit: `"kernel: structured JSON log events"`
 
 ## 7. ETW Tracing Syscalls Wired to SSDT

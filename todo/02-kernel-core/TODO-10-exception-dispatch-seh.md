@@ -168,10 +168,10 @@ For kernel-mode: if no handler → `KeBugCheckEx` with the exception code.
 
 > [!WARNING]
 > `KPROCESSOR_MODE` does not exist yet. Define locally in `include/kernel/except.h`: `typedef enum { KernelMode = 0, UserMode = 1 } KPROCESSOR_MODE;`. Canonical definition moves to a shared NT types header when TODO-05 matures.
-> `KeBugCheckEx` does not exist yet (→ TODO-16 §1). Define as a thin wrapper around `panic_screen()` in `src/kernel/except.c`: `void KeBugCheckEx(uint32_t code, ...) { panic_screen(...); }`. Replace with the structured crash dump entry point when TODO-16 §1 lands.
+> `KeBugCheckEx` is implemented in `src/kernel/panic.c` per `TODO-16-crash-dump-generation.md` §1. When `except.c` lands, include `panic.h` (or a forward declaration) and call the shared `KeBugCheckEx` entry point for terminal kernel-mode faults. Do not add a second implementation in `except.c`.
 
 - [ ] `include/kernel/except.h` -- `typedef enum { KernelMode, UserMode } KPROCESSOR_MODE;` (local; moved to shared header later)
-- [ ] `src/kernel/except.c` -- `KeBugCheckEx()` stub wrapping `panic_screen()` (replaced by TODO-16 §1)
+- [ ] `src/kernel/except.c`: include `panic.h`; call `KeBugCheckEx(...)` for terminal kernel-mode dispatch (no duplicate body)
 - [ ] `src/kernel/except.c` -- `ki_dispatch_exception(rec, ctx, mode, first_chance)` -- master dispatcher
 - [ ] `KiDebugRoutine` function pointer -- defaults to NULL (no debugger); set by KD attach (→ XREF: TODO-18 §4)
 - [ ] `DbgkForwardException(rec, ctx, first_chance)` -- stub returning FALSE; sends exception to user-mode debug port when TODO-18 §13 lands

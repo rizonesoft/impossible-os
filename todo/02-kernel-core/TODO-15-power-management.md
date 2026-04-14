@@ -142,6 +142,7 @@
   }
   ```
 - [ ] `pm_deep_idle_allowed()` returns true if: no pending DPCs, no high-priority runnable tasks, S1 sleep type is available, and the `PowerIdleEnable` Registry value is non-zero
+- [ ] When `TODO-18-kernel-debugger-kd-protocol.md` ships `kd_present` / `kd_breakin_requested`, treat any pending breakin as not-deep-idle-safe: return false (or run `kd_poll()` once) before `acpi_enter_s1()` so WinDbg breakin bytes are not delayed behind a halted CPU (-> XREF `TODO-18-kernel-debugger-kd-protocol.md §4` `kd_poll`, §15)
 - [ ] Per-CPU idle tracking: accumulate `idle_tsc_cycles` counter per CPU; exposed via `NtQuerySystemInformation(SystemProcessorIdleInformation)` for power-usage telemetry
 - [ ] Commit: `"kernel/acpi: S1 CPU halt, idle thread power-saving integration"`
 

@@ -122,7 +122,7 @@ One-line intro explaining what this section does and why it matters.
 - Every section needs: checklist items (max 8-10), Commit line, Test checkpoint.
 - `Depends On` column always uses `§N` notation, never bare numbers.
 - The `> [!IMPORTANT] Current state:` callout after Goal is mandatory -- it's the implementer's starting context.
-- The OS Comparison table is **mandatory** -- populate from actual Win11/Linux research. **Do not** add `<!-- Sources: ... -->` URL comment blocks in the file.
+- The OS Comparison table is **mandatory** -- populate from actual Win11/Linux research. **Do not** add `<!-- Sources: ... -->` URL comment blocks in the file. **Order:** keep `## OS Comparison` after every `## N.` implementation section and immediately before `## Unit Tests` (not directly under Implementation Order).
 - The Unit Tests section is **mandatory** -- derive test cases from implementation deliverables.
 - Keep OS Comparison cells short; pad columns so pipes align in source. The `💎`/`⭐` column must always be present in both tables.
 - Use ✅ = done, ⚠️ = partial, ⬜ = planned, ❌ = not available/not applicable.

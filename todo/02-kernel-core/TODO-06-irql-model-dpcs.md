@@ -56,8 +56,8 @@
 | ⭐  |  13   | IRQL violation traps and structured telemetry      | §2, §3, §5  |  [ ]   |
 | ⭐  |  14   | Budgeted DPC/APC fairness and starvation watchdog  | §5, §6, §12 |  [ ]   |
 | 💎  |  15   | Threaded DPC list synchronization                  | §8          |  [ ]   |
-| 💎  |  16   | KeFlushQueuedDpcs threaded DPC completion           | §8, §15     |  [ ]   |
-| 💎  |  17   | Per-CPU threaded DPC worker affinity                | §8, §15     |  [ ]   |
+| 💎  |  16   | KeFlushQueuedDpcs threaded DPC completion          | §8, §15     |  [ ]   |
+| 💎  |  17   | Per-CPU threaded DPC worker affinity               | §8, §15     |  [ ]   |
 
 > 💎 = parity -- core IRQL, DPC, and APC behavior expected from Windows NT and mirrored by Linux's hardirq/softirq/signal split.
 > ⭐ = exclusive -- Impossible OS adds explicit diagnostics and fairness controls as first-class kernel guarantees.

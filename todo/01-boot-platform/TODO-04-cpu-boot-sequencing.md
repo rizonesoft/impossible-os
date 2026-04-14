@@ -268,9 +268,9 @@ Neither Windows nor Linux produces a consolidated, structured, per-CPU register 
 | 💎  | CR4 bit pinning             | ✅ HAL pins CR4             | ✅ cr4_pinned_bits       | ⬜ §7 planned           |
 | 💎  | PAT MSR AP sync             | ✅ pat per CPU              | ✅ pat per AP            | ⬜ §8 planned           |
 | 💎  | MTRR AP matches BSP         | ✅ HAL sync paths           | ✅ mtrr_bp_init on APs   | ⬜ §8 MTRR bullet       |
-| ⭐  | HV detect before timer      | ✅ Before HAL timer         | ⚠️ Clocksource may lag   | [/] §3 boot_info only   |
+| ⭐  | HV detect before timer      | ✅ Before HAL timer         | ⚠️ Clocksource may lag   | ⬜ §3 boot_info only    |
 | ⭐  | CPU register audit trail    | ❌ ETW fragments            | ❌ dmesg fragments       | ⬜ §9 planned           |
-| ⭐  | POST per activation step    | ❌ BIOS POST only           | ❌ dmesg only            | ⬜ TODO-07-boot-diag §1   |
+| ⭐  | POST per activation step    | ❌ BIOS POST only           | ❌ dmesg only            | ⬜ TODO-07-boot-diag §1 |
 
 > **§1 complete.** **§3:** `boot_info` hypervisor fields + `timer_hal_init()` ordering are in tree; **Registry mirror and TLFS-grade TSC reference page setup are still open** (see §3 unchecked bullet). §2, §4, §5 deferred -- blocked by TODO-17/TODO-19 implementations. §6--§9 are parity and competitive-edge sections. Minimal CPU hardening runs via `cpu_harden()` + `cpu_harden_post_pagetable()` (`TODO-05-bare-metal-hardening.md` §9). Full formal sequencing lands when TODO-17 ships `cpu_efer_harden()` / `cpu_cr4_harden()`.
 

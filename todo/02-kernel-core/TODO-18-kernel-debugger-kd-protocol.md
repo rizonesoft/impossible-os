@@ -3,7 +3,7 @@
 > **Goal:** Implement a WinDbg-compatible kernel debug stub over the existing COM1 serial port. The KD protocol is the wire format that WinDbg uses to control a target kernel: it allows a connected debugger to set software and hardware breakpoints, read and write memory and registers, single-step, enumerate loaded modules, and analyze crashes on live hardware. Today the serial port outputs text at 38400 baud with no receive capability beyond a single `serial_trygetchar`; there is no breakpoint infrastructure, no `#DB`/`#BP` routing to a debugger, and no packet framing. Without KD, every crash on real hardware requires a reboot-and-guess cycle; with KD, a developer attaches WinDbg from a second machine and gets live `!analyze -v`, symbol-resolved stack traces, and memory inspection in real time.
 
 > [!IMPORTANT]
-> **Current state:** `src/kernel/drivers/serial.c` (57 lines) initialises COM1 at 38400 baud, 8N1, with `serial_putchar` / `serial_write` / `serial_trygetchar` (polling only). `idt.c` has `idt_register_handler(n, fn)` for custom IDT slot registration but no `#DB` (vector 1) or `#BP` (vector 3) handlers -- both panic on the default path. No KD packet structures, no connection state, no breakpoint table, no debug register management exist anywhere.
+> **Current state:** `src/kernel/drivers/serial.c` (~110 lines today) initialises COM1 at 38400 baud, 8N1, with `serial_putchar` / `serial_write` / `serial_trygetchar` (polling only). `idt.c` has `idt_register_handler(n, fn)` for custom IDT slot registration but no `#DB` (vector 1) or `#BP` (vector 3) handlers; both panic on the default path. No KD packet structures, no connection state, no breakpoint table, no debug register management exist anywhere.
 
 > [!NOTE]
 > The KD serial stub is independent of the text-based `printk` path.
@@ -15,27 +15,36 @@
 
 - `src/kernel/drivers/serial.c` -- COM1 init + polling TX/RX; extend to 115200 baud + IRQ-driven RX
 - `include/kernel/drivers/serial.h` -- `serial_putchar`, `serial_trygetchar`
+- `include/kernel/mm/vmm.h` -- `vmm_map_page`, `vmm_get_physical` for §7 physical-memory KD paths (no `phys_to_virt()` in tree)
+- `include/kernel/boot_info.h` -- early identity map extent for §7 `DbgKdReadPhysicalMemoryApi` bounds
+- `include/kernel/kd/kd_protocol.h` -- `KD_PACKET`, leaders, packet types (created in §3; not in tree yet)
+- `src/kernel/kd/kd.c` -- KD state machine, handshake, command loop (created in §4 onward; not in tree yet)
+- `src/kernel/drivers/keyboard.c` -- F12 breakin path in §13
 - `src/kernel/idt.c` -- `idt_register_handler(n, fn)` for `#DB` and `#BP`
 - `include/kernel/idt.h` -- `struct interrupt_frame` (full x64 register save)
-- `src/kernel/smp/smp.c` -- `wrmsr`/`rdmsr`; per-CPU data (AP freeze in §4)
-- -> XREF: `TODO-10-exception-dispatch-seh.md §1` -- `EXCEPTION_RECORD` and `CONTEXT` types defined there; §5 of this TODO serialises them into `KD_STATE_CHANGE64`
-- -> XREF: `TODO-10-exception-dispatch-seh.md §4` -- `ki_dispatch_exception()` calls `KiDebugRoutine` for first/second-chance debugger notification; §4 of TODO-18 provides the `KiDebugRoutine` implementation that enters the KD command loop
-- -> XREF: `TODO-16-crash-dump-generation.md §3` -- `g_module_list` / `g_module_count` from the module registry fed into `DbgKdGetVersionApi` response (§10)
-- -> XREF: `TODO-16-crash-dump-generation.md §2` -- `CONTEXT` record layout must match exactly what §5 of this TODO sends to WinDbg over the wire
-- -> XREF: `TODO-06-irql-model-dpcs.md §3` -- IRQL must be at `HIGH_LEVEL` while the kernel is frozen in the debugger; DPC timer must not fire during the debug loop
-- -> XREF: `TODO-05-native-api-ssdt.md §4` -- SSDT indices 0x0130--0x0137 reserved for debug/exception syscalls; TODO-18 §13 wires NtDebugActiveProcess, NtWaitForDebugEvent, etc. into the SSDT
+- `src/kernel/smp/smp.c` -- `wrmsr`/`rdmsr`; per-CPU data (AP freeze in §5)
+- → XREF: `TODO-10-exception-dispatch-seh.md §1` -- `EXCEPTION_RECORD` and `CONTEXT` types defined there; §6 of this TODO serialises them into `KD_STATE_CHANGE64`
+- → XREF: `TODO-10-exception-dispatch-seh.md §4` -- `ki_dispatch_exception()` calls `KiDebugRoutine` for first/second-chance debugger notification; §5 of this TODO provides the `KiDebugRoutine` implementation that enters the KD command loop
+- → XREF: `TODO-16-crash-dump-generation.md §3` -- `g_module_list` / `g_module_count` from the module registry fed into `DbgKdGetVersionApi` response (§11)
+- → XREF: `TODO-16-crash-dump-generation.md §2` -- `CONTEXT` record layout must match exactly what §6 of this TODO sends to WinDbg over the wire
+- → XREF: `TODO-06-irql-model-dpcs.md §3` -- IRQL must be at `HIGH_LEVEL` while the kernel is frozen in the debugger; DPC timer must not fire during the debug loop
+- → XREF: `TODO-05-native-api-ssdt.md §4` -- SSDT indices 0x0132-0x0137 reserved for debug syscalls; §14 of this TODO wires NtDebugActiveProcess, NtWaitForDebugEvent, etc. into the SSDT
+
+> [!NOTE]
+> **Planned doc (not in tree yet):** §13 creates `docs/guides/windbg-kd-setup.md` on first guide commit. Do not list it as a required Inputs anchor until the file exists.
 
 ---
 
 ## Outcome
 
-- COM1 operates at 115200 baud with IRQ-driven receive; a 256-byte RX ring buffer feeds the KD packet reader without polling.
-- `KD_PACKET` framing layer sends and receives packets with correct leaders, checksums, packet IDs, and ACK/RESEND handshaking.
-- WinDbg connects via `windbg -k com:port=COM1,baud=115200` and receives a `PACKET_TYPE_KD_RESET` on the first breakin byte.
+- COM1/COM2 KD line operates at 115200 baud (§1) with IRQ-driven receive (§2); a 256-byte RX ring buffer feeds the KD packet reader without polling.
+- `KD_PACKET` framing layer (§3) sends and receives packets with correct leaders, checksums, packet IDs, and ACK/RESEND handshaking.
+- WinDbg connects via `windbg -k com:port=COM1,baud=115200` and receives a `PACKET_TYPE_KD_RESET` on the first breakin byte (§4).
 - Any `INT3` / `#BP` in the kernel or any explicit `DbgBreakPoint()` call freezes all APs, sends `KD_STATE_CHANGE64` to WinDbg, and enters the KD command loop; WinDbg shows the source line and register state.
 - `#DB` handles both single-step (TF flag) and hardware watchpoints (DR0-DR3).
 - WinDbg can: `db / dd / dq` (read memory), `eb / ed / eq` (write memory), `r` (registers), `bp`/`bu` (software breakpoints), `ba` (hardware access breakpoints), `p`/`t` (step over/into), `lm` (module list), `g` (go).
 - `kd_break()` callable from any kernel code to enter the debugger programmatically; `F12` on the target keyboard triggers a breakin too.
+- Documented KDNET/USB3 and idle/BSOD coexistence policy (§15) so later milestones stay aligned with Win11 and Linux kgdb/kdb operator expectations.
 
 ---
 
@@ -43,48 +52,28 @@
 
 | ⭐  | Order | Deliverable                                              | Depends On              | Status |
 | --- | :---: | -------------------------------------------------------- | ----------------------- | :----: |
-| 💎  |   1   | Serial port upgrade: 115200 baud + IRQ-driven RX         | --                       |  [ ]   |
-| 💎  |   2   | KD packet framing: send/receive, checksum, ACK/RESEND    | §1                       |  [ ]   |
-| 💎  |   3   | KD connection handshake & breakin detection              | §2                       |  [ ]   |
-| 💎  |   4   | `#DB` / `#BP` exception routing to KD, AP freeze/thaw   | TODO-18 §3, TODO-06 §3     |  [ ]   |
-| 💎  |   5   | Context get/set (DbgKdGetContextApi / SetContextApi)     | §4, TODO-16 §2 |  [ ]   |
-| 💎  |   6   | Memory read/write (DbgKdReadVirtualMemoryApi / Write)    | §4                       |  [ ]   |
-| 💎  |   7   | Software breakpoint management (Write / RestoreApi)      | §5, §6                    |  [ ]   |
-| 💎  |   8   | Hardware breakpoints (DR0--DR3, DR7) + `#DB` reporting   | §4, §5                    |  [ ]   |
-| 💎  |   9   | Single-step (RFLAGS.TF) + continue / continue-step       | §4, §5                    |  [ ]   |
-| 💎  |  10   | DbgKdGetVersionApi + module list                         | §3, TODO-16 §3 |  [ ]   |
-| 💎  |  11   | I/O port & MSR read/write (DbgKdReadIoSpace / MSR apis)  | §4                       |  [ ]   |
-| ⭐  |  12   | `kd_break()` + keyboard F12 breakin + QEMU pipe guide    | §3                       |  [ ]   |
-| 💎  |  13   | Debug syscalls wired to SSDT                             | §1, §4, TODO-05 §4, TODO-05 §21     |  [ ]   |
+| 💎  |   1   | Serial line: 115200 baud, 8N1, FIFO                      | --                       |  [ ]   |
+| 💎  |   2   | IRQ RX ring + COM1/COM2 KD port selection                | §1                       |  [ ]   |
+| 💎  |   3   | KD packet framing: send/receive, checksum, ACK/RESEND    | §1, §2                   |  [ ]   |
+| 💎  |   4   | KD connection handshake & breakin detection              | §3                       |  [ ]   |
+| 💎  |   5   | `#DB` / `#BP` exception routing to KD, AP freeze/thaw   | §4, T06 §3               |  [ ]   |
+| 💎  |   6   | Context get/set (DbgKdGetContextApi / SetContextApi)     | §5, T16 §2               |  [ ]   |
+| 💎  |   7   | Memory read/write (DbgKdReadVirtualMemoryApi / Write)    | §5                       |  [ ]   |
+| 💎  |   8   | Software breakpoint management (Write / RestoreApi)      | §5, §7                   |  [ ]   |
+| 💎  |   9   | Hardware breakpoints (DR0--DR3, DR7) + `#DB` reporting   | §5, §6                   |  [ ]   |
+| 💎  |  10   | Single-step (RFLAGS.TF) + continue / continue-step       | §5, §6                   |  [ ]   |
+| 💎  |  11   | DbgKdGetVersionApi + module list                         | §4, T16 §3               |  [ ]   |
+| 💎  |  12   | I/O port & MSR read/write (DbgKdReadIoSpace / MSR apis)  | §5                       |  [ ]   |
+| ⭐  |  13   | `kd_break()` + keyboard F12 breakin + QEMU pipe guide    | §4                       |  [ ]   |
+| 💎  |  14   | Debug syscalls wired to SSDT                             | §1, §2, §5, T05 §4, T05 §21       |  [ ]   |
+| 💎  |  15   | KD transport roadmap + idle/BSOD coexistence           | §3, §5, T15 §2, T21 §1     |  [ ]   |
 
-> 💎 = parity work -- matches what Windows 11 and Linux already do.
-> ⭐ = exclusive work -- Impossible OS is superior or first.
-
-
-## OS Comparison
-
-| ⭐ | Feature | 🪟 Win11 | 🐧 Linux | 🚀 Impossible OS |
-| --- | --- | --- | --- | --- |
-| 💎 | KD serial stub | ✅ kdcom | ✅ KGDB serial | ⬜ §1--§4 |
-| 💎 | WinDbg wire format | ✅ Native | ❌ GDB only | ⬜ §2--§3 |
-| 💎 | Live SW breakpoints | ✅ Full | ✅ GDB break | ⬜ §7 |
-| 💎 | HW DR breakpoints | ✅ ba | ✅ watch | ⬜ §8 |
-| 💎 | Single step t p | ✅ Full | ✅ stepi | ⬜ §9 |
-| 💎 | Live mem r w | ✅ db eb | ✅ x set | ⬜ §6 |
-| 💎 | Register r w | ✅ r | ✅ info reg | ⬜ §5 |
-| 💎 | Module list lm | ✅ lm | ✅ shared | ⬜ §10 |
-| 💎 | MSR from debugger | ✅ !msr | ✅ msr sysfs | ⬜ §11 |
-| 💎 | DbgBreak kd_break | ✅ Yes | ✅ KGDB BP | ⬜ §12 |
-| 💎 | I/O from debugger | ✅ ioctl | ⚠️ driver | ⬜ §11 |
-| ⭐ | F12 target breakin | ❌ SysRq | ⚠️ SysRq+g | ⬜ §12 |
-| ⭐ | KD via Registry | ⚠️ bcdedit | ⚠️ cmdline | ⬜ §12 |
-| ⭐ | QEMU TCP pipe KD | ⚠️ pipe | ⚠️ gdb remote | ⬜ §12 |
-
-After §1--§13, WinDbg-compatible KD on COM1 plus user-mode debug SSDT surface. KGDB stays GDB-only. Extras: Registry KD toggle, F12 breakin, QEMU pipe doc.
+> 💎 = parity work: matches what Windows 11 and Linux already do.
+> ⭐ = exclusive work: Impossible OS is superior or first.
 
 ---
 
-## 1. Serial Port Upgrade: 115200 Baud + IRQ-Driven RX
+## 1. Serial Line Setup: 115200 Baud, 8N1, FIFO
 
 - [ ] Update `serial_init()` in `src/kernel/drivers/serial.c`:
   ```c
@@ -96,7 +85,14 @@ After §1--§13, WinDbg-compatible KD on COM1 plus user-mode debug SSDT surface.
   outb(SERIAL_PORT + 2, 0xC7);  /* FIFO: enable, 14-byte trigger level */
   outb(SERIAL_PORT + 4, 0x0B);  /* RTS+DTR+OUT2 (OUT2 enables IRQ to PIC) */
   ```
-- [ ] After init, enable RX interrupts: `outb(SERIAL_PORT + 1, 0x01)` (IER bit 0 = Received Data Available Interrupt)
+- [ ] After init, enable RX interrupts: `outb(SERIAL_PORT + 1, 0x01)` (IER bit 0 = Received Data Available Interrupt; KD uses same line when IRQ path is primary)
+- [ ] Commit: `"kernel/serial: 115200 baud 8N1 FIFO COM1 baseline"`
+
+**Test checkpoint:** Serial log readable at 115200; line control matches divisor 1 for 115200 with 8N1. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+---
+
+## 2. IRQ-Driven RX Ring Buffer and KD COM Port Selection
 
 - [ ] `#define SERIAL_RX_BUF_SIZE 256` -- power-of-two, static allocation
 - [ ] `static uint8_t serial_rx_buf[SERIAL_RX_BUF_SIZE]`
@@ -108,19 +104,18 @@ After §1--§13, WinDbg-compatible KD on COM1 plus user-mode debug SSDT surface.
 
 - [ ] `SERIAL_PORT_KD` -- compile-time or Registry-selectable: `0x3F8` (COM1, default) or `0x2F8` (COM2); store in `g_kd_com_port`
 - [ ] `kd_serial_init()` calls `serial_init_port(g_kd_com_port)` which is a generalisation of the above; the existing `printk` path stays on COM1
+- [ ] Commit: `"kernel/serial: IRQ RX ring, COM1/COM2 KD port selection, kd_serial_init"`
 
-- [ ] Commit: `"kernel/serial: 115200 baud, IRQ-driven RX ring buffer, COM1/COM2 KD port"`
-
-**Test checkpoint:** Serial log readable at 115200; IRQ RX ring `rx_head != rx_tail` advances under byte flood from host; no boot hang when KD disabled. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** IRQ RX ring `rx_head != rx_tail` advances under byte flood from host; no boot hang when KD disabled. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
 ---
 
-## 2. KD Packet Framing: Send / Receive, Checksum, ACK/RESEND
+## 3. KD Packet Framing: Send / Receive, Checksum, ACK/RESEND
 
 - [ ] Define in `include/kernel/kd/kd_protocol.h`:
   ```c
   #define PACKET_LEADER           0x30303030UL
-  #define BREAKIN_PACKET_LEADER   0x62626262UL  /* 'bbbb' -- breakin byte */
+  #define BREAKIN_PACKET_LEADER   0x62626262UL  /* 'bbbb' breakin leader */
   #define CONTROL_PACKET_LEADER   0x69696969UL  /* 'iiii' */
 
   #define PACKET_TYPE_KD_STATE_CHANGE64    2
@@ -171,7 +166,7 @@ After §1--§13, WinDbg-compatible KD on COM1 plus user-mode debug SSDT surface.
 
 ---
 
-## 3. KD Connection Handshake & Breakin Detection
+## 4. KD Connection Handshake & Breakin Detection
 
 - [ ] In `src/kernel/kd/kd.c`:
   ```c
@@ -180,10 +175,10 @@ After §1--§13, WinDbg-compatible KD on COM1 plus user-mode debug SSDT surface.
   static bool kd_active     = false; /* currently in KD command loop */
   static uint32_t g_kd_packet_id = 0;
   ```
-- [ ] `kd_init()` -- called from Phase 1 kernel init (-> XREF `TODO-01-kernel-init-sequencing.md §3`); sets `kd_present = true` if the boot command line contains `kddebug=serial` or `HKLM\SYSTEM\KernelDebugger\Enabled = 1`; calls `kd_serial_init()` (§1)
+- [ ] `kd_init()` -- called from Phase 1 kernel init (-> XREF `T01 §3`); sets `kd_present = true` if the boot command line contains `kddebug=serial` or `HKLM\SYSTEM\KernelDebugger\Enabled = 1`; calls `kd_serial_init()` (§1, §2)
 
 - [ ] The serial RX ISR checks: if the received byte is `0x62` ('b') and the 4-byte accumulator becomes `0x62626262` (BREAKIN_PACKET_LEADER): call `kd_handle_breakin()` -- sets a flag `kd_breakin_requested`; the next call to `kd_poll()` or any `#DB`/`#BP` handler picks it up
-- [ ] `kd_poll()` -- called from the idle thread (TODO-15-power-management.md §2) and from the timer ISR every 100 ms when `kd_present`; if `kd_breakin_requested`: clear flag, invoke `kd_enter_command_loop(NULL)` (§4)
+- [ ] `kd_poll()` -- called from the idle thread (`T15 §2`) and from the timer ISR every 100 ms when `kd_present`; if `kd_breakin_requested`: clear flag, invoke `kd_enter_command_loop(NULL)` (§5)
 
 - [ ] When the first BREAKIN bytes arrive:
   1. `kd_send_control(PACKET_TYPE_KD_RESET)` -- tells WinDbg "I am here"
@@ -199,7 +194,7 @@ After §1--§13, WinDbg-compatible KD on COM1 plus user-mode debug SSDT surface.
 
 ---
 
-## 4. `#DB` / `#BP` Exception Routing to KD, AP Freeze/Thaw
+## 5. `#DB` / `#BP` Exception Routing to KD, AP Freeze/Thaw
 
 - [ ] In `kd_init()`, register:
   ```c
@@ -211,24 +206,24 @@ After §1--§13, WinDbg-compatible KD on COM1 plus user-mode debug SSDT surface.
 
 - [ ] `kd_freeze_aps()` -- send `KD_IPI_FREEZE` IPI to all APs (use LAPIC broadcast IPI `NMI` or a dedicated synthetic vector); each AP's IPI handler sets `cpu_data[this_cpu].frozen = true` and busy-waits
 - [ ] `kd_thaw_aps()` -- clear `frozen` flag on all CPUs; they resume executing their previous tasks
-- [ ] The BSP holds `kd_active = true` and runs the command loop (§4) while APs are frozen; at no point can a frozen AP deliver a DPC or preempt the debug session (-> XREF `TODO-06-irql-model-dpcs.md §3`)
+- [ ] The BSP holds `kd_active = true` and runs `kd_enter_command_loop` (see checklist below) while APs are frozen; at no point can a frozen AP deliver a DPC or preempt the debug session (-> XREF `TODO-06-irql-model-dpcs.md §3`)
 
 - [ ] `kd_enter_command_loop(frame)`:
   1. `kd_freeze_aps()` if SMP enabled
-  2. Send `PACKET_TYPE_KD_STATE_CHANGE64` (§5) to WinDbg
+  2. Send `PACKET_TYPE_KD_STATE_CHANGE64` (§6) to WinDbg
   3. Loop: `kd_receive_packet(...)` -> dispatch to handler by `ApiNumber`:
-     - `0x3131` -> `kd_handle_read_virt_mem()`   (§6)
-     - `0x3132` -> `kd_handle_write_virt_mem()`  (§6)
-     - `0x3133` -> `kd_handle_get_context()`     (§5)
-     - `0x3134` -> `kd_handle_set_context()`     (§5)
-     - `0x3135` -> `kd_handle_write_breakpoint()` (§7)
-     - `0x3136` -> `kd_handle_restore_breakpoint()` (§7)
+     - `0x3131` -> `kd_handle_read_virt_mem()`   (§7)
+     - `0x3132` -> `kd_handle_write_virt_mem()`  (§7)
+     - `0x3133` -> `kd_handle_get_context()`     (§6)
+     - `0x3134` -> `kd_handle_set_context()`     (§6)
+     - `0x3135` -> `kd_handle_write_breakpoint()` (§8)
+     - `0x3136` -> `kd_handle_restore_breakpoint()` (§8)
      - `0x3137` -> `kd_handle_continue()` -> break loop
      - `0x313D` -> `kd_handle_continue2()` -> break loop (with step flag)
-     - `0x314A` -> `kd_handle_get_version()` (§10)
-     - `0x3152` -> `kd_handle_read_msr()` (§11)
-     - `0x3153` -> `kd_handle_write_msr()` (§11)
-     - `0x313A`/`0x313B` -> `kd_handle_io_space_rw()` (§11)
+     - `0x314A` -> `kd_handle_get_version()` (§11)
+     - `0x3152` -> `kd_handle_read_msr()` (§12)
+     - `0x3153` -> `kd_handle_write_msr()` (§12)
+     - `0x313A`/`0x313B` -> `kd_handle_io_space_rw()` (§12)
      - Unknown -> send error response
   4. On continue: `kd_thaw_aps()`; set `kd_active = false`; return frame
 
@@ -238,7 +233,7 @@ After §1--§13, WinDbg-compatible KD on COM1 plus user-mode debug SSDT surface.
 
 ---
 
-## 5. Context Get / Set
+## 6. Context Get / Set
 
 - [ ] `DBGKD_WAIT_STATE_CHANGE64` payload for `PACKET_TYPE_KD_STATE_CHANGE64`:
   ```c
@@ -267,7 +262,7 @@ After §1--§13, WinDbg-compatible KD on COM1 plus user-mode debug SSDT surface.
 
 - [ ] Receive `CONTEXT` record from WinDbg; apply to the saved `frame`:
   - `frame->rip = ctx->Rip`, `frame->rsp = ctx->Rsp`, etc.
-  - Restore DR0-DR3, DR7 via `mov dr0, rax` etc. (§8)
+  - Restore DR0-DR3, DR7 via `mov dr0, rax` etc. (§9)
   - Restore `frame->rflags = ctx->EFlags` (preserves single-step TF if WinDbg set it)
   - Send success response
 
@@ -277,23 +272,16 @@ After §1--§13, WinDbg-compatible KD on COM1 plus user-mode debug SSDT surface.
 
 ---
 
-## 6. Memory Read / Write
+## 7. Memory Read / Write
 
-- [ ] Request: `{BaseAddress (uint64_t), TransferCount (uint32_t)}`
-- [ ] Response: `{ActualBytesRead (uint32_t)}` + raw bytes
-- [ ] Safe read: walk page tables to verify each page is mapped and present before `memcpy`; if a page is absent, return a partial read up to the last valid byte; set `ActualBytesRead` accordingly
-- [ ] Maximum transfer: 4096 bytes per request (KD protocol limit); WinDbg issues multiple requests for larger reads
+- [ ] **Virtual read (`DbgKdReadVirtualMemoryApi`):** request `{BaseAddress (uint64_t), TransferCount (uint32_t)}`; response `{ActualBytesRead (uint32_t)}` plus raw bytes; walk page tables to verify each page is mapped and present before `memcpy`; on absent page return partial read; cap `TransferCount` at 4096 bytes per KD request
+- [ ] **Virtual write (`DbgKdWriteVirtualMemoryApi`):** request `{BaseAddress, TransferCount}` plus raw payload; same page-walk validation as read; if PTE is read-only (NX or RO), temporarily set `PTE_WRITE`, perform write, restore original PTE (supports kernel `INT3` patches under `TODO-17-kernel-security-hardening.md §1`); return `ActualBytesWritten`
 
-- [ ] Request: `{BaseAddress, TransferCount}` + raw bytes
-- [ ] Safe write: same page-walk validation; if page is read-only (NX or RO PTE), temporarily flip the `PTE_WRITE` bit, perform the write, then restore the original PTE -- allows patching kernel code for breakpoints even after `TODO-17-kernel-security-hardening.md §1` (NX/RO pages)
-- [ ] Return `ActualBytesWritten`
+- [ ] Implement `kd_phys_to_kva(uintptr_t pa, size_t *max_contiguous)` (or reuse an existing MM helper) that maps `pa` only inside the boot-time identity window described in `include/kernel/boot_info.h` (and/or a small fixed low-memory policy); reject `pa` outside allowed ranges; do not add a Linux-style `phys_to_virt()` name (tree has none: `rg phys_to_virt` only hits this TODO)
+- [ ] `DbgKdReadPhysicalMemoryApi (0x313F)` -- read using `kd_phys_to_kva()` + bounds; verify each mapped host VA with `vmm_get_physical()` round-trip where applicable
+- [ ] `DbgKdWritePhysicalMemoryApi (0x3140)` -- same for write with identical bounds rules
 
-- [ ] `DbgKdReadPhysicalMemoryApi (0x313F)` -- read from physical address via identity-mapped kernel window; `phys_to_virt(pa)` + bounds check
-- [ ] `DbgKdWritePhysicalMemoryApi (0x3140)` -- same for write
-
-- [ ] Request: `{SearchAddress, SearchLength, PatternLength}` + pattern bytes
-- [ ] Scan `[SearchAddress, SearchAddress + SearchLength)` for the pattern; return the first matching VA (or `0xFFFFFFFFFFFFFFFF` if not found)
-- [ ] Used by WinDbg's `s` command to search for pool tags, magic values, etc.
+- [ ] **Search memory:** request `{SearchAddress, SearchLength, PatternLength}` plus pattern bytes; scan `[SearchAddress, SearchAddress + SearchLength)`; return first matching VA or `0xFFFFFFFFFFFFFFFF`; used by WinDbg `s` for pool tags and magic values
 
 - [ ] Commit: `"kernel/kd: DbgKdReadVirtualMemory, WriteVirtualMemory, Physical variants, SearchMemory"`
 
@@ -301,7 +289,7 @@ After §1--§13, WinDbg-compatible KD on COM1 plus user-mode debug SSDT surface.
 
 ---
 
-## 7. Software Breakpoint Management
+## 8. Software Breakpoint Management
 
 - [ ] Static table of 64 slots:
   ```c
@@ -315,13 +303,13 @@ After §1--§13, WinDbg-compatible KD on COM1 plus user-mode debug SSDT surface.
   ```
 
 - [ ] Request: `{BreakPointAddress (uint64_t), BreakPointHandle (uint32_t)}`
-- [ ] Find or allocate a slot; save `orig_byte = *(uint8_t*)address`; use `kd_handle_write_virt_mem()` (§6) to patch the byte to `0xCC` (must use the write-protected-bypass path)
+- [ ] Find or allocate a slot; save `orig_byte = *(uint8_t*)address`; use `kd_handle_write_virt_mem()` (§7) to patch the byte to `0xCC` (must use the write-protected-bypass path)
 - [ ] Response: `{BreakPointHandle}` (index + 1)
 
 - [ ] Request: `{BreakPointHandle}`
 - [ ] Restore `*(uint8_t*)address = orig_byte` (using the same write bypass); mark slot `active = false`
 
-- [ ] In `kd_breakpoint_exception_handler` (§4): scan the breakpoint table for an entry matching `frame->rip - 1` (the `INT3` is one byte); if found: set `ExceptionRecord.ExceptionInformation[0] = handle` in the `KD_STATE_CHANGE64` so WinDbg can match the breakpoint to its `bp` command
+- [ ] In `kd_breakpoint_exception_handler` (§5): scan the breakpoint table for an entry matching `frame->rip - 1` (the `INT3` is one byte); if found: set `ExceptionRecord.ExceptionInformation[0] = handle` in the `KD_STATE_CHANGE64` so WinDbg can match the breakpoint to its `bp` command
 
 - [ ] Commit: `"kernel/kd: software breakpoint table, WriteBP/RestoreBP, INT3 hit identification"`
 
@@ -329,7 +317,7 @@ After §1--§13, WinDbg-compatible KD on COM1 plus user-mode debug SSDT surface.
 
 ---
 
-## 8. Hardware Breakpoints: DR0--DR3, DR7, `#DB` Reporting
+## 9. Hardware Breakpoints: DR0--DR3, DR7, `#DB` Reporting
 
 - [ ] `kd_dr_read(n)` / `kd_dr_write(n, val)` for n in {0,1,2,3,6,7}:
   ```asm
@@ -357,7 +345,7 @@ After §1--§13, WinDbg-compatible KD on COM1 plus user-mode debug SSDT surface.
 
 ---
 
-## 9. Single-Step (RFLAGS.TF) + Continue / Step
+## 10. Single-Step (RFLAGS.TF) + Continue / Step
 
 - [ ] Request: `{ContinueStatus (uint32_t)}` -- `DBG_CONTINUE (0x10002)` or `DBG_EXCEPTION_NOT_HANDLED (0x80010001)`
 - [ ] Set `kd_continue = true`; exit the command loop; do not set `RFLAGS.TF` -- execution resumes normally
@@ -373,7 +361,7 @@ After §1--§13, WinDbg-compatible KD on COM1 plus user-mode debug SSDT surface.
 
 ---
 
-## 10. DbgKdGetVersionApi + Module List
+## 11. DbgKdGetVersionApi + Module List
 
 - [ ] `DbgKdGetVersionApi (0x314A)` response payload:
   ```c
@@ -409,7 +397,7 @@ After §1--§13, WinDbg-compatible KD on COM1 plus user-mode debug SSDT surface.
 
 ---
 
-## 11. I/O Port & MSR Read / Write
+## 12. I/O Port & MSR Read / Write
 
 - [ ] Request: `{IoAddress (uint64_t), DataSize (uint32_t)}`:
   - `DataSize = 1` -> `inb(IoAddress)` / `outb(IoAddress, data)`
@@ -431,19 +419,19 @@ After §1--§13, WinDbg-compatible KD on COM1 plus user-mode debug SSDT surface.
 
 ---
 
-## 12. `kd_break()`, Keyboard F12 Breakin & QEMU Guide
+## 13. `kd_break()`, Keyboard F12 Breakin & QEMU Guide
 
 - [ ] `void kd_break(void)` -- callable from any kernel code to programmatically enter the debugger:
   ```c
   void kd_break(void) {
       if (kd_present)
-          __asm__ volatile ("int $3"); /* triggers §4 */
+          __asm__ volatile ("int $3"); /* triggers §5 */
       /* else: no-op if KD not configured */
   }
   ```
 - [ ] `void DbgBreakPoint(void)` -- Win32-compatible alias; allows porting existing Windows driver code that calls `DbgBreakPoint()` to break in
 
-- [ ] In `keyboard.c` ISR: if KD is present and `kd_connected` and the scancode for F12 is received: set `kd_breakin_requested = true`; the KD poll path picks it up (§3)
+- [ ] In `keyboard.c` ISR: if KD is present and `kd_connected` and the scancode for F12 is received: set `kd_breakin_requested = true`; the KD poll path picks it up (§4)
 - [ ] Allows a developer sitting at the target machine to break in without needing the debugger host; mirrors the `SysRq+g` mechanism on Linux
 
 - [ ] Document in `docs/guides/windbg-kd-setup.md`:
@@ -470,7 +458,7 @@ After §1--§13, WinDbg-compatible KD on COM1 plus user-mode debug SSDT surface.
 
 ---
 
-## 13. Debug Syscalls Wired to SSDT
+## 14. Debug Syscalls Wired to SSDT
 
 Register user-mode debug API entry points in the SSDT so debuggers can attach/detach/wait via `syscall`. (-> XREF: `TODO-05-native-api-ssdt.md` §4 SSDT indices, §21 Exception/Debug syscalls)
 
@@ -481,9 +469,53 @@ Register user-mode debug API entry points in the SSDT so debuggers can attach/de
 - [ ] `NtDebugContinue(DebugObjectHandle, ClientId, ContinueStatus)` -> SSDT 0x0133: continue after debug event with `DBG_CONTINUE` or `DBG_EXCEPTION_NOT_HANDLED`
 - [ ] `NtSetInformationDebugObject(DebugObjectHandle, DebugObjectInformationClass, Buffer, Length, ReturnLength)` -> SSDT 0x0137: control debug object behavior
 - [ ] All functions return `NTSTATUS`; use codes from `include/kernel/nt/ntstatus.h` (TODO-05 §1)
-- [ ] Commit: `"kernel/kd: wire debug syscalls to SSDT (0x0132--0x0137)"`
+- [ ] Commit: `"kernel/kd: wire debug syscalls to SSDT (0x0132-0x0137)"`
 
 **Test checkpoint:** `NtCreateDebugObject` returns valid handle. `NtDebugActiveProcess` on child process captures INT3 breakpoint via `NtWaitForDebugEvent`. `NtDebugContinue(DBG_CONTINUE)` resumes debuggee. `NtRemoveProcessDebug` detaches cleanly. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+---
+
+## 15. KD Transport Roadmap, SMP Policy, and Coexistence
+
+> [!WARNING]
+> `kd_freeze_aps()` must not resurrect deprecated broadcast Init Level De-Assert IPI sequences; follow `CLAUDE.md` AP bring-up guidance and use only supported per-CPU freeze vectors plus LAPIC rules already used for SMP stop-machine class work.
+
+- [ ] In `docs/guides/windbg-kd-setup.md` (first commit of that file), document milestone order: (1) COM1/COM2 serial + IRQ path per §1-§2, (2) QEMU `-serial pipe` / TCP-pty bridge examples from §13, (3) defer Win11-style KDNET (`windbg -k net:port=...,key=...`, host `kdnet.exe` flow) until a verified-NIC allowlist story exists for Impossible OS (-> XREF Microsoft Learn "Set up KDNET network kernel debugging automatically")
+- [ ] Extend the same guide with a short "Linux operator cross-walk" covering `kgdboc`, `kgdbwait`, SysRq-G, and kdb versus kgdb so developers know Impossible OS matches WinDbg wire format, not GDB remote (-> XREF Linux kernel.org kgdb documentation v6.12)
+- [ ] Mirror `TODO-15-power-management.md §2`: when `kd_present` is true, `pm_deep_idle_allowed()` (or `sched_idle_cpu()` prolog) must not enter S1/deep idle while `kd_breakin_requested` is set; optionally invoke `kd_poll()` before halting (-> XREF `TODO-15-power-management.md §2`)
+- [ ] Mirror `T21 §1`: when `kd_active`, defer `panic_screen()` until the debugger continues or a documented timeout elapses; keep first-chance path in `ki_dispatch_exception` ahead of BSOD (-> XREF `TODO-21-bsod-ux-enhancements.md` §1)
+- [ ] Mirror `TODO-01-kernel-init-sequencing.md §3`: call `kd_init()` only after COM IRQ registration and IDT slots for vectors used by KD are live; document ordering relative to `sti` (-> XREF `TODO-01-kernel-init-sequencing.md §3`)
+- [ ] Add release-build policy notes: compile-time `KERNEL_KD` (name TBD) plus registry must both allow KD in production-equivalent images, analogous to disabling `bcdedit /debug` on shipping Windows SKUs (-> XREF `TODO-17-kernel-security-hardening.md` hardening themes)
+- [ ] Commit: `"docs/kernel: KD transport roadmap + idle/BSOD coexistence"`
+
+**Test checkpoint:** No kernel binary requirement yet; verify markdown links and mirrored TODO bullets exist. After `kd_init` lands, expect `klog(LOG_INFO, "[KD] transport policy ...")` once at boot when `kd_present` is true. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+---
+
+## OS Comparison
+
+| ⭐   | Feature                    | 🪟 Win11    | 🐧 Linux        | 🚀 Impossible OS   |
+| --- | -------------------------- | ---------- | --------------- | ------------------ |
+| 💎   | KD serial stub             | ✅ kdcom    | ✅ KGDB serial  | ⬜ §1-§5           |
+| 💎   | WinDbg wire format         | ✅ Native   | ❌ GDB only     | ⬜ §3-§4           |
+| 💎   | Live SW breakpoints        | ✅ Full     | ✅ GDB break    | ⬜ §8              |
+| 💎   | HW DR breakpoints          | ✅ ba       | ✅ watch        | ⬜ §9              |
+| 💎   | Single step t p            | ✅ Full     | ✅ stepi        | ⬜ §10             |
+| 💎   | Live mem r w               | ✅ db eb    | ✅ x set        | ⬜ §7              |
+| 💎   | Register r w               | ✅ r        | ✅ info reg     | ⬜ §6              |
+| 💎   | Module list lm             | ✅ lm       | ✅ shared       | ⬜ §11             |
+| 💎   | MSR from debugger          | ✅ !msr     | ✅ msr sysfs    | ⬜ §12             |
+| 💎   | DbgBreak kd_break          | ✅ Yes      | ✅ KGDB BP      | ⬜ §13             |
+| 💎   | I/O from debugger          | ✅ ioctl    | ⚠️ driver       | ⬜ §12             |
+| ⭐   | F12 target breakin         | ❌ SysRq    | ⚠️ SysRq+g      | ⬜ §13             |
+| ⭐   | KD via Registry            | ⚠️ bcdedit  | ⚠️ cmdline      | ⬜ §13             |
+| ⭐   | QEMU TCP pipe KD           | ⚠️ pipe     | ⚠️ gdb remote   | ⬜ §13             |
+| 💎   | KDNET Ethernet debug       | ✅ kdnet    | ❌ N/A          | ⬜ §15 defer       |
+| 💎   | USB3 kernel debug          | ✅ Yes      | ⚠️ platform     | ⬜ §15 defer       |
+| 💎   | kdb shell + kgdb gdbstub   | ❌ WinDbg   | ✅ kdb + kgdb   | ⬜ WinDbg KD only  |
+| 💎   | SMP freeze other CPUs      | ✅ Yes      | ✅ kgdb roundup | ⬜ §5 §15          |
+
+After §1-§14, WinDbg-compatible KD on COM1 plus user-mode debug SSDT surface. KGDB stays GDB-only. §15 tracks KDNET/USB deferrals, idle/BSOD coexistence, and Linux kgdb operator cross-walk. Extras: Registry KD toggle, F12 breakin, QEMU pipe doc.
 
 ---
 
@@ -500,6 +532,8 @@ Register user-mode debug API entry points in the SSDT so debuggers can attach/de
   - Breakpoint: `kd_set_breakpoint(addr)` writes `0xCC`; `kd_clear_breakpoint(addr)` restores saved opcode
   - Symbol oracle: `symtab_resolve(kernel_main_va, &off)` returns non-NULL name (no separate `kd_lookup_symbol` until KD exports one)
   - Serial transport: `kd_serial_send(buf, len)` (or mock backend) records exact byte sequence including `0xAA` trailer
+  - Physical read helper: `kd_phys_to_kva()` rejects addresses above the documented identity window and accepts a page inside low RAM per `boot_info` constants
+  - Policy strings: build-time test or static assert that `docs/guides/windbg-kd-setup.md` (once added) contains required section headings listed in §15 (optional doc lint hook)
 - [ ] Add `extern void test_register_kd(void);` in `test_runner.c`, call `test_register_kd()` from `test_runner_init()`
 - [ ] Commit: `"test: add kernel debugger (KD protocol) test suite"`
 
@@ -522,3 +556,11 @@ Register user-mode debug API entry points in the SSDT so debuggers can attach/de
 **Test runner:** `scripts\debug\run-boot-tests.bat` (SUITE=boot)
 
 ---
+
+## History
+
+| Date       | Action   | Summary |
+| ---------- | -------- | ------- |
+| 2026-04-13 | validate | Full-file validate: moved OS Comparison after §13; Impl Order `T06`/`T16`/`T05`/`§3` deps; `→ XREF` Inputs; IMPORTANT serial.c line count; OS table § ranges; legend colons; SSDT range hyphen; planned-doc NOTE; Verification `---` before History. |
+| 2026-04-13 | gap-analysis | WebSearch x6 + WebFetch x4 (WinDbg kernel-mode, KDNET auto, KDNET-USB, Linux kgdb v6.12, SMP freeze); split §1 serial; add §15 transport/coexistence; OS table + Impl Order row 15; §7 phys helper; cross-patched TODO-01 §3, TODO-15 §2, TODO-21 Inputs+§1; History validate row preserved. |
+| 2026-04-13 | validate | Full-file validate: Impl Order row 15 `T15`/`T21 §1`; Inputs `kd_protocol.h`, `kd.c`, `keyboard.c`; OS row kdb/kgdb clarity; §1/§2 list spacing; XREF section targets verified (TODO-05/06/10/16). |

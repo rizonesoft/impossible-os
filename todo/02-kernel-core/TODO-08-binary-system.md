@@ -22,6 +22,7 @@
 - → XREF: `12-user-platform-sdk/INDEX.md` -- EIF spec doc lives there; `elf2eif` tool and SDK integration wire back to §13
 - → XREF: `TODO-09-process-model-extensions.md §3` -- `exec_load()` (§1) must set `task->program_break` to end of BSS so brk/sbrk (TODO-09 §3) can extend from the correct address
 - → XREF: `TODO-23-eif-full-implementation.md` -- completes EIF beyond §5 basic loader: segment permissions, ASLR, API version gating, metadata parsing, LZ4 decompression, module registration, import stubs. §13 (elf2eif) and §17 (code signing) remain here.
+- → XREF: `TODO-21-bsod-ux-enhancements.md` §12: F2 last-driver deferral consumes module registry and `exec_find_module_by_pc()` from §6
 
 ## Outcome
 

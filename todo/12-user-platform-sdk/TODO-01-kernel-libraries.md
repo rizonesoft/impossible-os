@@ -9,6 +9,8 @@
 > **Source migration:** All sections from
 > `todo-old/010-Kernel-Foundations/TODO-027-Kernel-Libraries.md` are migrated here.
 >
+> **Code-truth (2026-04-13):** D02 T20 section 1 snprintf/vsnprintf and section 6 cJSON plus json.c wrappers are in-tree; T20 sections 3 through 5 and 7 remain open. This file stays the ZIP writer and stream extension on top of T20 section 4.
+>
 > **Overlap -- miniz:** `02-kernel-core/TODO-20-kernel-libraries.md §4` already specifies
 > the miniz port to `src/libs/miniz/` and the ZIP reader API (`zip_open/entry_count/find/
 > read/close`). This TODO-01 §3 extends that work with the **ZIP writer** (`mz_zip_writer_*`)
