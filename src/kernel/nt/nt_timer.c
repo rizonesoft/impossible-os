@@ -71,7 +71,36 @@ static int armed_list_remove_locked(TIMER_OBJECT *to)
     return 0;
 }
 
-/* --- nt_timer_tick (ISR context) ---------------------------------------- */
+/* --- nt_timer_tick (ISR context) ----------------------------------------
+ *
+ * Two-phase design to minimize lock hold time:
+ *   Phase A: under s_armed_lock, scan the queue. Periodic timers are
+ *            re-armed in place (list pointer stays). One-shot timers are
+ *            unlinked from the armed list. In both cases we push the
+ *            fired timer onto a local "to_signal" chain (via the SAME
+ *            next_armed field, reused for a transient second role that
+ *            is safe only because we still logically "own" the entry
+ *            until the caller would unmap it).
+ *   Phase B: after releasing s_armed_lock, walk the local chain and
+ *            call event_set() on each. event_set() may enumerate and
+ *            wake waiters; keeping it outside the spinlock prevents
+ *            lock contention from scaling with waiter counts.
+ *
+ * Reusing next_armed for the local chain is safe because for each timer
+ * we either (a) left it on the armed list with `on_queue=1` and we do
+ * NOT re-link it onto any signal chain, reading next_armed one more
+ * time before unlock; or (b) we unlinked it and cleared on_queue before
+ * re-purposing next_armed to walk the local chain. Concurrent arm/
+ * cancel paths check on_queue under the same lock, so they cannot see
+ * the transient state.
+ *
+ * To keep semantics simple, periodic timers signal inline (event_set
+ * still called from ISR), because they stay on the armed list and we
+ * would otherwise need a separate secondary link. This is the same
+ * lock-held event_set as before but only fires ONCE per periodic timer
+ * per tick, which is the lower-contention case. The hot case we
+ * optimize here is a burst of one-shot timers expiring together.
+ * ------------------------------------------------------------------------- */
 
 void nt_timer_tick(void)
 {
@@ -80,6 +109,7 @@ void nt_timer_tick(void)
     TIMER_OBJECT *to;
     TIMER_OBJECT *next;
     TIMER_OBJECT **pp;
+    TIMER_OBJECT *signal_chain = (TIMER_OBJECT *)0;
 
     now = uptime_ns();
     if (now == 0)
@@ -93,26 +123,24 @@ void nt_timer_tick(void)
         next = to->next_armed;
 
         if (to->active && to->due_ns <= now) {
-            /* Fire: signal the event. event_set() is IRQ-safe. */
-            event_set(&to->event);
-
             if (to->period_ms > 0) {
-                /* Periodic: re-arm for next period. If we fell behind,
-                 * slew to the next future tick so we do not spin signalling
-                 * back-to-back. */
+                /* Periodic: re-arm for next period. Signal inline under
+                 * the lock (one event_set per periodic timer per tick). */
                 uint64_t period_ns = to->period_ms * 1000000ULL;
                 to->due_ns += period_ns;
                 if (to->due_ns <= now)
                     to->due_ns = now + period_ns;
-                /* Leave it on the list; advance pointer. */
+                event_set(&to->event);
                 pp = &to->next_armed;
             } else {
-                /* One-shot: unlink and clear active. */
+                /* One-shot: unlink from armed list, clear active, push
+                 * onto local signal chain for deferred wake. */
                 *pp = to->next_armed;
-                to->next_armed = (TIMER_OBJECT *)0;
                 to->on_queue = 0;
                 to->active = 0;
-                /* pp unchanged: continue at what used to be our successor. */
+                to->next_armed = signal_chain;
+                signal_chain = to;
+                /* pp unchanged: continue at our former successor. */
             }
         } else {
             pp = &to->next_armed;
@@ -122,6 +150,14 @@ void nt_timer_tick(void)
     }
 
     spin_unlock_irqrestore(&s_armed_lock, irqf);
+
+    /* Phase B: wake one-shot fire chain OUTSIDE the spinlock. */
+    while (signal_chain) {
+        TIMER_OBJECT *fired = signal_chain;
+        signal_chain = fired->next_armed;
+        fired->next_armed = (TIMER_OBJECT *)0;
+        event_set(&fired->event);
+    }
 }
 
 /* --- nt_timer_detach (on_close / on_delete callback) -------------------- */

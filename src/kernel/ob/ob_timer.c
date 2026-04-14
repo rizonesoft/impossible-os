@@ -164,9 +164,3 @@ HANDLE ObOpenTimer(HANDLE_TABLE *ht, const char *name, uint32_t access)
     return h;
 }
 
-/* --- Legacy stub (kept for call sites using the minimal signature) ------- */
-
-HANDLE NtCreateTimer(HANDLE_TABLE *ht, const char *name)
-{
-    return ObCreateTimerEx(ht, name, TIMER_TYPE_NOTIFICATION, 0);
-}

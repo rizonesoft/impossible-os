@@ -146,6 +146,7 @@ Re-register the existing event, mutex, semaphore, and timer primitives as Ob-man
 - [x] `NtCreateEvent`, `NtOpenEvent`, `NtCreateMutex`, `NtOpenMutex`, `NtCreateSemaphore`, `NtCreateTimer` stubs -- resolve name via Ob namespace, allocate or open, return HANDLE (→ XREF: TODO-05 §8)
 - [x] Update `SYS_PIPE` to wrap the pipe read/write ends as two File objects in the handle table so pipes are closeable with `NtClose` like any other handle
 - [x] Commit: `"kernel: ob -- event, mutex, semaphore, timer object types"`
+- [ ] **Replace the flat NT timer armed list with an ordered structure (min-heap or timing wheel)**: `src/kernel/nt/nt_timer.c` currently keeps `s_armed_head` as an unsorted singly-linked list; `nt_timer_tick()` walks every entry on every ISR call and NtSetTimer/NtCancelTimer do linear search. This is fine for tens of armed timers but becomes O(N * ticks/sec) work in ISR context at scale. Swap the list for either (a) a min-heap keyed by `due_ns` stored in an array attached to `static struct nt_timer_queue g_tq[MAX_CPUS]` (per-CPU to eliminate the global lock), or (b) a classic timing wheel with O(1) arm/cancel/tick for common cases. Preserve the two-phase ISR signal-outside-lock pattern. Add a stress test in `test_ob.c` that arms 1024 one-shot timers with staggered `DueTime` and asserts wake fan-out under 1ms of slack. This auto-closes TODO-05 §19 Accepted (linear armed-list scan at scale).
 
 ## 7. Section (Shared Memory) Object Type
 Sections represent mappable memory objects; the foundation for `MapViewOfFile` and shared memory.

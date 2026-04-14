@@ -63,9 +63,3 @@ HANDLE ObCreateTimerEx(HANDLE_TABLE *ht, const char *name,
  * ObOpenTimer -- open an existing named timer.
  */
 HANDLE ObOpenTimer(HANDLE_TABLE *ht, const char *name, uint32_t access);
-
-/*
- * Legacy stub retained for call sites that only need a default timer.
- * Equivalent to ObCreateTimerEx(ht, name, TIMER_TYPE_NOTIFICATION, 0).
- */
-HANDLE NtCreateTimer(HANDLE_TABLE *ht, const char *name);
