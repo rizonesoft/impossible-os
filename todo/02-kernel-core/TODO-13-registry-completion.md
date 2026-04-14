@@ -270,7 +270,7 @@
   - `KeySetVirtualizationInformation` (3): enable/disable virtualization per key
   - `KeySetDebugInformation` (4): debug information
   - `KeySetHandleTagsInformation` (5): set handle tags
-- [ ] `NtNotifyChangeKey`: validates `KeyHandle`, resolves to `reg_key_t`, calls `reg_notify_register()` from §3; if `Asynchronous == FALSE`, blocks calling thread on the watcher's semaphore (interruptible via APC)
+- [ ] `NtNotifyChangeKey`: **replace the existing `STATUS_NOT_IMPLEMENTED` stub** in `src/kernel/nt/nt_registry.c::NtNotifyChangeKey_handler` (currently tagged `SCOPE-GAP-ALLOWED: blocked on TODO-13 §3`) with real wiring: validates `KeyHandle`, resolves to `reg_key_t`, calls `reg_notify_register()` from §3; if `Asynchronous == FALSE`, blocks calling thread on the watcher's semaphore (interruptible via APC). Remove the `SCOPE-GAP-ALLOWED` comment when the stub is replaced.
 - [ ] APC completion: if `ApcRoutine != NULL`, queue a user-mode APC to the calling thread when the notification fires (→ XREF `05-storage-filesystems/TODO-05-win32-file-io-api.md §9`)
 - [ ] `NtNotifyChangeMultipleKeys(MasterKeyHandle, Count, SubordinateObjects[], ...)`: register notifications on `MasterKeyHandle` plus up to `Count` additional subordinate keys in a single call; fires when *any* of the watched keys changes; shares implementation with §3 but registers multiple watchers atomically
 - [ ] `NtSetInformationKey(KeyHandle, KeySetInfoClass, KeySetInfo, Length)`: set key metadata; initial implementation covers `KeyWriteTimeInformation` (set `LastWriteTime`) and `KeyControlFlagsInformation` (set virtualization control flags -- see §6)
