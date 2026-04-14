@@ -17,6 +17,7 @@ uint64_t filetime_days_from_date_fn(uint16_t year, uint8_t month, uint8_t day)
     static const uint16_t cumdays[12] = {
         0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334
     };
+    if (year < 1601) return 0;
     uint64_t y = (uint64_t)year - 1601;
     uint64_t days = y * 365 + y / 4 - y / 100 + y / 400;
     uint8_t m = (month > 0 && month <= 12) ? month - 1 : 0;
@@ -36,6 +37,11 @@ void filetime_to_dos_datetime(FILETIME ft, int tz_bias_minutes,
     static const uint8_t dpm[12] = {31,28,31,30,31,30,31,31,30,31,30,31};
     int64_t local_ticks = (int64_t)ft
                         + (int64_t)tz_bias_minutes * 60 * FILETIME_TICKS_PER_SECOND;
+    if (local_ticks <= 0) {
+        if (date_out) *date_out = (uint16_t)((0 << 9) | (1 << 5) | 1); /* 1980-01-01 */
+        if (time_out) *time_out = 0;
+        return;
+    }
     uint64_t total_secs = (uint64_t)local_ticks / FILETIME_TICKS_PER_SECOND;
     uint32_t secs_in_day = (uint32_t)(total_secs % 86400);
     uint64_t total_days  = total_secs / 86400;
@@ -62,8 +68,13 @@ void filetime_to_dos_datetime(FILETIME ft, int tz_bias_minutes,
     }
     day = (uint32_t)total_days + 1;
     month += 1;
-    if (year < 1980) year = 1980;
-    if (year > 2107) year = 2107;
+    if (year < 1980) {
+        year = 1980; month = 1; day = 1;
+        hours = 0; mins = 0; s2 = 0;
+    } else if (year > 2107) {
+        year = 2107; month = 12; day = 31;
+        hours = 23; mins = 59; s2 = 29; /* 58 seconds / 2 */
+    }
 
     *time_out = (uint16_t)((hours << 11) | (mins << 5) | s2);
     *date_out = (uint16_t)(((year - 1980) << 9) | (month << 5) | day);

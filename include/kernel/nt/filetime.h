@@ -53,9 +53,11 @@ static inline FILETIME filetime_from_unix_seconds(uint64_t unix_sec)
     return (unix_sec + FILETIME_EPOCH_OFFSET_SECONDS) * FILETIME_TICKS_PER_SECOND;
 }
 
-/* FILETIME -> Unix epoch seconds */
+/* FILETIME -> Unix epoch seconds; returns 0 for pre-Unix-epoch FILETIMEs */
 static inline uint64_t filetime_to_unix_seconds(FILETIME ft)
 {
+    if (ft < FILETIME_EPOCH_OFFSET_100NS)
+        return 0;
     return (ft / FILETIME_TICKS_PER_SECOND) - FILETIME_EPOCH_OFFSET_SECONDS;
 }
 

@@ -406,7 +406,38 @@ static void test_filetime_ticks_per_second(void)
                    "FILETIME_TICKS_PER_MS == 10,000");
 }
 
-/* ---- NT syscall migration SSDT registration verification ---- */
+static void test_filetime_pre_epoch_guard(void)
+{
+    /* filetime_to_unix_seconds must return 0 for pre-Unix-epoch FILETIMEs */
+    TEST_ASSERT_EQ(filetime_to_unix_seconds(0), 0ULL,
+                   "filetime_to_unix_seconds(0) == 0 (pre-epoch guard)");
+    TEST_ASSERT_EQ(filetime_to_unix_seconds(FILETIME_EPOCH_OFFSET_100NS - 1), 0ULL,
+                   "filetime_to_unix_seconds(EPOCH_OFFSET-1) == 0 (boundary)");
+}
+
+static void test_filetime_dos_clamp_low(void)
+{
+    /* ft=0 (FILETIME_NOW_PLACEHOLDER) with negative bias: full saturation to 1980-01-01 */
+    uint16_t date, time;
+    filetime_to_dos_datetime(0, 0, &date, &time);
+    TEST_ASSERT_EQ(date, (uint16_t)((0 << 9) | (1 << 5) | 1),
+                   "FILETIME=0 -> DOS min date 1980-01-01");
+    TEST_ASSERT_EQ(time, 0, "FILETIME=0 -> DOS time 00:00:00");
+}
+
+static void test_filetime_days_year_guard(void)
+{
+    /* filetime_days_from_date_fn: year < 1601 returns 0 (no underflow) */
+    TEST_ASSERT_EQ(filetime_days_from_date_fn(0, 1, 1), 0ULL,
+                   "filetime_days_from_date_fn(year=0) == 0 (guard)");
+    TEST_ASSERT_EQ(filetime_days_from_date_fn(1600, 12, 31), 0ULL,
+                   "filetime_days_from_date_fn(year=1600) == 0 (guard)");
+    /* year=1601 should be non-zero baseline */
+    TEST_ASSERT_EQ(filetime_days_from_date_fn(1601, 1, 1), 0ULL,
+                   "filetime_days_from_date_fn(1601-01-01) == 0 (FILETIME epoch)");
+}
+
+
 
 static void test_nt_syscall_ssdt_registered(void)
 {
@@ -1064,6 +1095,9 @@ void test_register_nt_types(void)
     test_suite_register_cat("NT: FILETIME roundtrip", test_filetime_roundtrip, TEST_CAT_ABI);
     test_suite_register_cat("NT: FILETIME DOS roundtrip", test_filetime_dos_roundtrip, TEST_CAT_ABI);
     test_suite_register_cat("NT: FILETIME ticks/sec", test_filetime_ticks_per_second, TEST_CAT_ABI);
+    test_suite_register_cat("NT: FILETIME pre-epoch guard", test_filetime_pre_epoch_guard, TEST_CAT_ABI);
+    test_suite_register_cat("NT: FILETIME DOS low clamp", test_filetime_dos_clamp_low, TEST_CAT_ABI);
+    test_suite_register_cat("NT: FILETIME days year guard", test_filetime_days_year_guard, TEST_CAT_ABI);
 
     /* NT syscall migration tests */
     test_suite_register_cat("NT: syscall SSDT registered", test_nt_syscall_ssdt_registered, TEST_CAT_ABI);

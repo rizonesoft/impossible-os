@@ -77,8 +77,12 @@
 - [x] Inline helpers: `filetime_from_unix_seconds()`, `filetime_to_unix_seconds()`, `filetime_days_from_date()`, `filetime_to_dos_datetime()`, `filetime_from_dos_datetime()`
 - [x] Non-inline (in `src/kernel/nt/filetime.c`): `filetime_from_rtc()`, `filetime_from_efi_time()` -- need full struct definitions
 - [x] `FILETIME_NOW_PLACEHOLDER = 0` sentinel defined
-- [x] 4 unit tests: epoch offset, round-trip, DOS date round-trip, ticks/sec constants
+- [x] 7 unit tests: epoch offset, round-trip, DOS date round-trip, ticks/sec constants, pre-epoch guard, DOS low clamp, days year guard
 - [x] Commit: `"kernel: nt -- FILETIME type, epoch constants, and conversion math"`
+
+> **Verified:** 2026-04-14 -- `include/kernel/nt/filetime.h` and `src/kernel/nt/filetime.c` confirmed at HEAD; all 7 unit tests registered in `test_nt_types.c` under `TEST_CAT_ABI`; build clean (`=== BUILD OK ===`). Epoch constants verified: 11644473600 s = 134,774 days x 86400. DOS encode/decode round-trips correctly. `filetime_to_string` used in klog_disk.c and wer.c. No dead exports.
+> **Quality reviewed:** 2026-04-14 -- Two Codex dispatches (adversarial + dead-code/consistency/perf). Four findings fixed: (1) `filetime_to_unix_seconds` pre-Unix-epoch unsigned underflow -- guard added (`ft < FILETIME_EPOCH_OFFSET_100NS` returns 0); (2) `filetime_to_dos_datetime` negative `local_ticks` wrapping -- saturation to DOS min on `local_ticks <= 0`; (3) `filetime_days_from_date_fn` year < 1601 wraps `uint64_t y = year - 1601` -- guard added; (4) DOS clamp was year-only, leaving month/day/time from wrong year -- full tuple saturation on year bounds. Accepted LOW: NULL deref on ptr args (kernel-internal callers hold non-NULL by invariant); `filetime_from_unix_seconds` overflow for unix_sec >= 1.8e12 (year 60,000+, no actionable risk). No dead code. No perf concerns (calendar loop ~425 iterations, negligible vs FAT32 I/O). **Test gap:** `filetime_from_rtc`, `filetime_from_efi_time`, `filetime_to_string` not exercised in unit tests -- covered by full `test_time.c` in Unit Tests section.
+> **Test runner:** `scripts\debug\run-abi-tests.bat` (SUITE=abi), 7 FILETIME suites, 0 failures expected
 
 ## 2. Monotonic Nanosecond Clock Source Selection
 Select the highest-resolution monotonic source available: invariant TSC → HPET → LAPIC counter.
@@ -253,7 +257,7 @@ The NTP protocol client (network stack TODO) needs a kernel interface to correct
 
 | ⭐ | Feature                  | 🪟 Win11                 | 🐧 Linux                  | 🚀 Impossible OS          |
 |----|--------------------------|---------------------------|---------------------------|----------------------------|
-| 💎 | 100 ns wall time         | ✅ FILETIME API          | ⚠️ timespec, diff epoch   | ⚠️ §1 done, §5-§6 pending |
+| 💎 | 100 ns wall time         | ✅ FILETIME API          | ⚠️ timespec, diff epoch   | ✅ §1,§5,§6 done          |
 | 💎 | Monotonic counter        | ✅ QPC via TSC/HPET      | ✅ CLOCK_MONOTONIC vDSO   | ⚠️ §2 done, §3-§4 pending |
 | 💎 | Invariant TSC detect     | ✅ CPUID 0x15            | ✅ tsc_khz calibration    | ⬜ §3                     |
 | 💎 | Per-CPU TSC sync         | ✅ TSC sync at INIT      | ✅ check_tsc_sync         | ⬜ §3                     |
