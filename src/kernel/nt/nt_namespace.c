@@ -289,6 +289,7 @@ static NTSTATUS NtQueryDirectoryObject_handler(uint64_t a1, uint64_t a2,
     HANDLE dir_handle = (HANDLE)(int32_t)a1;
     OBJECT_DIRECTORY_INFORMATION *buf = (OBJECT_DIRECTORY_INFORMATION *)a2;
     uint32_t buf_len = (uint32_t)a3;
+    uint32_t single_entry = (uint32_t)(a4 & 0x1);
     uint32_t restart = (uint32_t)((a4 >> 8) & 0x1);
     uint32_t *context = (uint32_t *)a5;
     uint32_t *ret_len = (uint32_t *)a6;
@@ -297,13 +298,16 @@ static NTSTATUS NtQueryDirectoryObject_handler(uint64_t a1, uint64_t a2,
     uint32_t local_ret = 0;
     int rc;
 
-    /* a4 bit 0 = ReturnSingleEntry; caller may request a single entry by
-     * passing a buffer sized for exactly one OBJECT_DIRECTORY_INFORMATION. */
-
     if (!buf || buf_len < sizeof(OBJECT_DIRECTORY_INFORMATION))
         return STATUS_INVALID_PARAMETER;
 
     buf_count = buf_len / (uint32_t)sizeof(OBJECT_DIRECTORY_INFORMATION);
+
+    /* ReturnSingleEntry caps the effective slot count to 1, matching
+     * NtQueryDirectoryObject Win32 contract: caller iterates one entry
+     * per call advancing Context. */
+    if (single_entry && buf_count > 1)
+        buf_count = 1;
 
     if (restart && context)
         *context = 0;

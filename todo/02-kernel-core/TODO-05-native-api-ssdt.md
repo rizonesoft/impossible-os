@@ -531,12 +531,16 @@ Namespace manipulation -- create, open, and query Ob directory objects and symbo
 - [x] `NtCreateSymbolicLinkObject(LinkHandle, DesiredAccess, ObjectAttributes, LinkTarget)` → SSDT 0x0123 (nt_namespace.c -- ob_ns_create_symlink + ObInsertObject; bounded target length)
 - [x] `NtOpenSymbolicLinkObject(LinkHandle, DesiredAccess, ObjectAttributes)` → SSDT 0x0124 (nt_namespace.c -- ObLookupObjectByName with ObpSymlinkType to stop at the link itself)
 - [x] `NtQuerySymbolicLinkObject(LinkHandle, LinkTarget, ReturnedLength)` → SSDT 0x0125 (nt_namespace.c -- ObpLookupHandle + type-check against ObpSymlinkType + bounded copy of target string)
-- [ ] Commit: `"kernel: nt -- directory and symbolic link object syscalls"`
+- [x] Commit: `"kernel: nt -- directory and symbolic link object syscalls"` (6052c7aa)
 
 **Test checkpoint:** `NtCreateDirectoryObject` creates `\Test`; `NtOpenDirectoryObject` opens it. `NtCreateSymbolicLinkObject` creates `\TestLink → \Test`; `NtQuerySymbolicLinkObject` returns `\Test`.
 
 > **Test runner:** `scripts\debug\run-ob-tests.bat` (SUITE=ob)
 > **Expected:** 5 new §17 tests (NT create+open directory roundtrip, open not found, symlink roundtrip, query wrong type, namespace SSDT registered), 0 failures.
+
+> **Verified** (2026-04-14): 6 handlers registered at SSDT 0x0120-0x0125 via nt_namespace.c:512-523. Create handlers (Directory, SymbolicLink) are atomic: allocate handle BEFORE inserting into namespace, clear OB_FLAG_PERMANENT on rollback so deref actually frees. Query handlers use ObpLookupHandle + type-check (ObpDirectoryType / ObpSymlinkType). NtQueryDirectoryObject ABI repacked: a4 carries (RestartScan << 8) | ReturnSingleEntry so Context (a5) and ReturnLength (a6) stay full 64-bit pointers. ReturnSingleEntry caps effective buf_count to 1. 10 ntdll PE exports added (sorted). 5 new tests in TEST_CAT_OB. Build clean.
+> **Accepted:** UNICODE_STRING.Buffer cast to const char* + NUL-terminated bounded_strlen scan (kernel-wide ASCII pattern shared with §14, §15, §16 NT handlers) -> XREF: 02-kernel-core/TODO-13 §4 (new `reg_decode_unicode_string` helper retrofits all NT counted-string consumers including this section's `oa_name`, `path_within_bounds`, `NtCreateSymbolicLinkObject_handler` target read).
+> **Quality reviewed** (2026-04-14): dead code clean (bounded_strlen is local-scope; ns_memcpy is local-scope; split_path is single-use). Consistency: SSDT constants 0x0120-0x0125 match service_numbers.h:269-274; OBJECT_DIRECTORY_INFORMATION layout matches library NtQueryDirectoryObject signature in ob.c:421. Performance: split_path linear (one pass for last_sep + one memcpy); ObInsertObject linear over directory entries (bounded by OB_DIR_MAX_ENTRIES=128). bounded_strlen called twice per create (once for plen guard, once for leaf len) -- acceptable given OB_PATH_MAX=256. Codex finding "ReturnSingleEntry not honored" fixed: caps buf_count to 1 when flag set.
 
 ## 18. Section and Memory-Mapped File Syscalls
 
