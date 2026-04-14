@@ -212,9 +212,10 @@ static void test_alpc_create_unnamed_port(void)
                                  (ALPC_PORT_ATTRIBUTES *)0, &h);
     TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS,
                    "AlpcCreatePort(NULL name) returns SUCCESS");
+    /* HANDLE 0 is slot-0 = legitimate in this kernel; only
+     * INVALID_HANDLE_VALUE ((HANDLE)-1) is the failure sentinel. */
     TEST_ASSERT_NEQ(h, INVALID_HANDLE_VALUE, "unnamed port handle valid");
-    TEST_ASSERT_NEQ(h, 0, "unnamed port handle non-zero");
-    if (h != INVALID_HANDLE_VALUE && h != 0)
+    if (h != INVALID_HANDLE_VALUE)
         NtClose(&task_current()->handle_table, h);
 }
 
@@ -227,7 +228,6 @@ static void test_alpc_create_named_port(void)
     TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS,
                    "AlpcCreatePort(\"TestPort\") returns SUCCESS");
     TEST_ASSERT_NEQ(h, INVALID_HANDLE_VALUE, "named port handle valid");
-    TEST_ASSERT_NEQ(h, 0, "named port handle non-zero");
 
     /* Verify the port is findable in \RPC Control */
     void *body = (void *)0;
@@ -242,7 +242,7 @@ static void test_alpc_create_named_port(void)
                        "new port has server-connection type");
         ObDereferenceObject(body);  /* drop lookup ref */
     }
-    if (h != INVALID_HANDLE_VALUE && h != 0)
+    if (h != INVALID_HANDLE_VALUE)
         NtClose(&task_current()->handle_table, h);
 }
 
@@ -261,7 +261,7 @@ static void test_alpc_duplicate_name_rejected(void)
                    "duplicate name => OBJECT_NAME_COLLISION");
     TEST_ASSERT_EQ(h2, INVALID_HANDLE_VALUE,
                    "duplicate-name handle left INVALID");
-    if (h1 != INVALID_HANDLE_VALUE && h1 != 0)
+    if (h1 != INVALID_HANDLE_VALUE)
         NtClose(&task_current()->handle_table, h1);
 }
 
@@ -356,7 +356,6 @@ static void test_alpc_syscall_full_path(void)
                                 (uint64_t)&out, (uint64_t)&oa, 0, 0, 0, 0);
     TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS,
                    "NtAlpcCreatePort(\\RPC Control\\TestPortSyscall) == SUCCESS");
-    TEST_ASSERT_NEQ(out, 0, "handle non-zero");
     TEST_ASSERT_NEQ(out, INVALID_HANDLE_VALUE, "handle not INVALID");
 
     void *body = (void *)0;
@@ -366,7 +365,7 @@ static void test_alpc_syscall_full_path(void)
     TEST_ASSERT_NOT_NULL(body, "syscall-created port body non-NULL");
     if (body)
         ObDereferenceObject(body);
-    if (out != 0 && out != INVALID_HANDLE_VALUE)
+    if (out != INVALID_HANDLE_VALUE)
         NtClose(&task_current()->handle_table, out);
 }
 
