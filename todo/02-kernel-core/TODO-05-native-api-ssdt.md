@@ -70,7 +70,7 @@
 | 💎  |  17   | Directory and symbolic link object syscalls                    | §5, TODO-03 §4    |  [x]   |
 | 💎  |  18   | Section and memory-mapped file syscalls                        | §5, TODO-03 §7    |  [x]   |
 | 💎  |  19   | Timer control syscalls                                         | §5, TODO-07 §8,§9 |  [x]   |
-| 💎  |  20   | ALPC / LPC port syscalls                                       | §5, TODO-12 §8    |  [ ]   |
+| 💎  |  20   | Legacy LPC port syscalls                                       | §5, TODO-12 §8    |  [ ]   |
 | 💎  |  21   | Exception and debug syscalls                                   | §5, TODO-10 §5    |  [ ]   |
 | 💎  |  22   | Power and system control                                       | §5, TODO-15 §12   |  [ ]   |
 | 💎  |  23   | Atom, locale, and miscellaneous                                | §5                |  [ ]   |
@@ -81,6 +81,7 @@
 | 💎  |  28   | Extended directory enumeration classes                         | §6, §13           |  [x]   |
 | 💎  |  29   | Token lifecycle + SRM access check syscalls                    | §16, TODO-11 §4,§5|  [ ]   |
 | 💎  |  30   | Generic object management (make-temp/perm, set-info, compare)  | §17, TODO-03 §1,§9|  [ ]   |
+| 💎  |  31   | Modern ALPC port syscalls                                      | §20, TODO-12 §8   |  [ ]   |
 
 > 💎 = parity -- Windows NT and Linux both have equivalents for these categories.
 > ⭐ = exclusive -- the ZwXxx privilege layer, the audit hook, SSDT integrity protection, and the IOSB/LastError unified path go beyond what Linux offers.
@@ -603,12 +604,11 @@ Namespace manipulation -- create, open, and query Ob directory objects and symbo
 > **Quality reviewed** (2026-04-14): Codex quality review drove two local fixes: (1) `nt_timer_tick` now uses a two-phase pattern -- Phase A detaches one-shot due timers into a local `signal_chain` under `s_armed_lock` (periodic timers are signalled inline since they stay on the queue); Phase B releases the lock, then calls `event_set()` for the one-shot chain so waiter-list walks in `event_set` no longer contribute to lock hold time and cannot serialize other CPUs' Set/Cancel calls. (2) Removed the dead legacy `NtCreateTimer(ht, name)` wrapper from `ob_timer.c` / `ob_timer.h` (zero callers).
 > **Accepted:** (1) `UNICODE_STRING.Buffer` in `oa_probe_ascii_name` is returned as a raw pointer and consumed via `snprintf("%s", name)` in `ObCreateTimerEx`/`ObOpenTimer`, risking an overread if the buffer has no NUL within probed bytes (same codebase-wide pattern as `nt_section.c`/`nt_namespace.c`) -> XREF: 02-kernel-core/TODO-13 §14 (item: "UTF-16 decode for `UNICODE_STRING` inputs (kernel-wide)" at line 246 -- retrofit list explicitly names `nt_timer.c::oa_probe_ascii_name` and the ASCII path construction in `ObCreateTimerEx`/`ObOpenTimer`). (2) Initial `ObpLookupHandle` UAF race in `nt_timer.c::resolve_timer_handle` (body could be freed by concurrent `NtClose` on another thread of the same task between lookup and use) -> XREF: 02-kernel-core/TODO-03 §3 (item: "Add `ObpReferenceObjectByHandle(...)` primitive" at line 112 -- retrofit list now explicitly names `nt_timer.c` and enumerates the four consumer handlers). (3) Flat armed-list linear scan per tick (tens of timers OK today, O(N * ticks) at scale) -> XREF: 02-kernel-core/TODO-03 §6 (item: "Replace the flat NT timer armed list with an ordered structure (min-heap or timing wheel)" -- names `nt_timer.c::s_armed_head`, suggests min-heap or timing wheel, requires 1024-timer stress test).
 
-## 20. ALPC / LPC Port Syscalls
+## 20. Legacy LPC Port Syscalls
 
 > [!NOTE]
-> Full ALPC implementation in TODO-12-alpc-message-ports.md §8. This section reserves SSDT indices and provides the NT-compatible syscall signatures for both legacy LPC and modern ALPC.
+> Legacy LPC (NT 3.x-5.x) syscall surface. Reserves SSDT indices 0x0100-0x010C and wires NT-compatible signatures so user-mode callers get `STATUS_NOT_IMPLEMENTED` (rather than an empty SSDT slot) until the ALPC subsystem lands. Full port infrastructure -- `ALPC_PORT` object, message queue, connection state machine, send/receive engine -- is implemented in `02-kernel-core/TODO-12-alpc-message-ports.md`. Modern ALPC (Vista+) syscalls split to §31. LPC and ALPC share the same underlying kernel object type (`ObpAlpcPortType`); LPC is a thin compatibility adapter over ALPC in Windows and will be the same here.
 
-**Legacy LPC (NT 3.x–5.x compatibility):**
 - [ ] `NtCreatePort(PortHandle, ObjectAttributes, MaxConnectionInfoLength, MaxMessageLength, MaxPoolUsage)` → SSDT 0x0100
 - [ ] `NtCreateWaitablePort(...)` → SSDT 0x0101
 - [ ] `NtConnectPort(PortHandle, PortName, SecurityQos, ClientView, ServerView, MaxMessageLength, ConnectionInformation, ConnectionInformationLength)` → SSDT 0x0102
@@ -622,27 +622,11 @@ Namespace manipulation -- create, open, and query Ob directory objects and symbo
 - [ ] `NtRequestPort(PortHandle, RequestMessage)` → SSDT 0x010A
 - [ ] `NtRequestWaitReplyPort(PortHandle, RequestMessage, ReplyMessage)` → SSDT 0x010B
 - [ ] `NtImpersonateClientOfPort(PortHandle, Message)` → SSDT 0x010C
+- [ ] `NtReadRequestData(PortHandle, Message, DataEntryIndex, Buffer, BufferSize, BytesRead)` → SSDT 0x010D
+- [ ] `NtWriteRequestData(PortHandle, Message, DataEntryIndex, Buffer, BufferSize, BytesWritten)` → SSDT 0x010E
+- [ ] Commit: `"kernel: nt -- legacy LPC port syscalls wired to SSDT"`
 
-**Modern ALPC (Vista+):**
-- [ ] `NtAlpcCreatePort(PortHandle, ObjectAttributes, PortAttributes)` → SSDT 0x010F
-- [ ] `NtAlpcConnectPort(PortHandle, PortName, ObjectAttributes, PortAttributes, Flags, RequiredServerSid, ConnectionMessage, BufferLength, OutMessageAttributes, InMessageAttributes, Timeout)` → SSDT 0x0110
-- [ ] `NtAlpcConnectPortEx(...)` → SSDT 0x0111
-- [ ] `NtAlpcAcceptConnectPort(PortHandle, ConnectionPortHandle, Flags, ObjectAttributes, PortAttributes, PortContext, ConnectionRequest, ConnectionMessageAttributes, AcceptConnection)` → SSDT 0x0112
-- [ ] `NtAlpcSendWaitReceivePort(PortHandle, Flags, SendMessage, SendMessageAttributes, ReceiveMessage, BufferLength, ReceiveMessageAttributes, Timeout)` → SSDT 0x0113
-- [ ] `NtAlpcDisconnectPort(PortHandle, Flags)` → SSDT 0x0114
-- [ ] `NtAlpcCancelMessage(PortHandle, Flags, MessageContext)` → SSDT 0x0115
-- [ ] `NtAlpcCreatePortSection(PortHandle, Flags, SectionHandle, SectionSize, AlpcSectionHandle, ActualSectionSize)` → SSDT 0x0116
-- [ ] `NtAlpcDeletePortSection(PortHandle, Flags, SectionHandle)` → SSDT 0x0117
-- [ ] `NtAlpcCreateSectionView(PortHandle, Flags, ViewAttributes)` → SSDT 0x0118
-- [ ] `NtAlpcDeleteSectionView(PortHandle, Flags, ViewBase)` → SSDT 0x0119
-- [ ] `NtAlpcCreateResourceReserve(PortHandle, Flags, MessageSize, ResourceId)` → SSDT 0x011A
-- [ ] `NtAlpcDeleteResourceReserve(PortHandle, Flags, ResourceId)` → SSDT 0x011B
-- [ ] `NtAlpcQueryInformation(PortHandle, PortInformationClass, Buffer, Length, ReturnLength)` → SSDT 0x011C
-- [ ] `NtAlpcSetInformation(PortHandle, PortInformationClass, Buffer, Length)` → SSDT 0x011D
-- [ ] `NtAlpcQueryInformationMessage(PortHandle, PortMessage, MessageInformationClass, Buffer, Length, ReturnLength)` → SSDT 0x011E
-- [ ] Commit: `"kernel: nt -- ALPC and LPC port syscalls wired to SSDT"`
-
-**Test checkpoint:** LPC `NtCreatePort` + `NtConnectPort` + `NtRequestWaitReplyPort` message round-trip. ALPC `NtAlpcCreatePort` + `NtAlpcConnectPort` + `NtAlpcSendWaitReceivePort` round-trip. Port visible in `\RPC Control\` namespace.
+**Test checkpoint:** All 13 LPC SSDT slots resolve to the registered handler (not the default `ssdt_stub_not_implemented`). Each handler returns `STATUS_NOT_IMPLEMENTED` until TODO-12 ALPC subsystem lands; functional round-trip (`NtCreatePort` + `NtConnectPort` + `NtRequestWaitReplyPort`) is exercised by TODO-12 §8 tests.
 
 ## 21. Exception and Debug Syscalls
 
@@ -854,6 +838,31 @@ NtQueryDirectoryFile (§6) currently returns `FileNamesInformation` only (name +
 
 **Test checkpoint:** `NtMakePermanentObject` on an event handle prevents deletion when last reference released. `NtMakeTemporaryObject` re-enables deletion. `NtSetInformationObject(ObjectHandleFlagInformation)` toggles `OBJ_INHERIT` on a handle. `NtCompareObjects` with two duplicate handles returns `STATUS_SUCCESS`; with handles to different objects returns `STATUS_NOT_SAME_OBJECT`.
 
+## 31. Modern ALPC Port Syscalls
+
+> [!NOTE]
+> Split from §20 to keep both sections under the 10-item limit. §20 covers legacy LPC (NT 3.x-5.x) compatibility syscalls; this section covers the modern ALPC (Vista+) surface. Reserves SSDT indices 0x010F-0x011E and wires NT-compatible signatures so user-mode callers get `STATUS_NOT_IMPLEMENTED` (rather than an empty SSDT slot) until the ALPC subsystem lands. Full port infrastructure -- `ALPC_PORT` object, message queue, connection state machine, send/receive engine, section views, resource reserves, information classes -- is implemented in `02-kernel-core/TODO-12-alpc-message-ports.md`. `\RPC Control\` namespace directory is added by TODO-12 §2 (`ObpAlpcPortType` registration).
+
+- [ ] `NtAlpcCreatePort(PortHandle, ObjectAttributes, PortAttributes)` → SSDT 0x010F
+- [ ] `NtAlpcConnectPort(PortHandle, PortName, ObjectAttributes, PortAttributes, Flags, RequiredServerSid, ConnectionMessage, BufferLength, OutMessageAttributes, InMessageAttributes, Timeout)` → SSDT 0x0110
+- [ ] `NtAlpcConnectPortEx(...)` → SSDT 0x0111
+- [ ] `NtAlpcAcceptConnectPort(PortHandle, ConnectionPortHandle, Flags, ObjectAttributes, PortAttributes, PortContext, ConnectionRequest, ConnectionMessageAttributes, AcceptConnection)` → SSDT 0x0112
+- [ ] `NtAlpcSendWaitReceivePort(PortHandle, Flags, SendMessage, SendMessageAttributes, ReceiveMessage, BufferLength, ReceiveMessageAttributes, Timeout)` → SSDT 0x0113
+- [ ] `NtAlpcDisconnectPort(PortHandle, Flags)` → SSDT 0x0114
+- [ ] `NtAlpcCancelMessage(PortHandle, Flags, MessageContext)` → SSDT 0x0115
+- [ ] `NtAlpcCreatePortSection(PortHandle, Flags, SectionHandle, SectionSize, AlpcSectionHandle, ActualSectionSize)` → SSDT 0x0116
+- [ ] `NtAlpcDeletePortSection(PortHandle, Flags, SectionHandle)` → SSDT 0x0117
+- [ ] `NtAlpcCreateSectionView(PortHandle, Flags, ViewAttributes)` → SSDT 0x0118
+- [ ] `NtAlpcDeleteSectionView(PortHandle, Flags, ViewBase)` → SSDT 0x0119
+- [ ] `NtAlpcCreateResourceReserve(PortHandle, Flags, MessageSize, ResourceId)` → SSDT 0x011A
+- [ ] `NtAlpcDeleteResourceReserve(PortHandle, Flags, ResourceId)` → SSDT 0x011B
+- [ ] `NtAlpcQueryInformation(PortHandle, PortInformationClass, Buffer, Length, ReturnLength)` → SSDT 0x011C
+- [ ] `NtAlpcSetInformation(PortHandle, PortInformationClass, Buffer, Length)` → SSDT 0x011D
+- [ ] `NtAlpcQueryInformationMessage(PortHandle, PortMessage, MessageInformationClass, Buffer, Length, ReturnLength)` → SSDT 0x011E
+- [ ] Commit: `"kernel: nt -- modern ALPC port syscalls wired to SSDT"`
+
+**Test checkpoint:** All 15 ALPC SSDT slots resolve to the registered handler (not the default `ssdt_stub_not_implemented`). Each handler returns `STATUS_NOT_IMPLEMENTED` until TODO-12 ALPC subsystem lands; functional round-trip (`NtAlpcCreatePort` + `NtAlpcConnectPort` + `NtAlpcSendWaitReceivePort`) and `\RPC Control\` namespace visibility are exercised by TODO-12 §8 tests.
+
 ---
 
 ## OS Comparison
@@ -882,7 +891,7 @@ NtQueryDirectoryFile (§6) currently returns `FileNamesInformation` only (name +
 | 💎 | Namespace dir/symlink      | ✅ NtCreateDirectoryObj     | ❌ No kernel namespace     | ⬜ §17                      |
 | 💎 | Memory-mapped sections     | ✅ NtCreateSection/MapView  | ✅ mmap with MAP_SHARED    | ✅ §18 full §5 SSDT 0x005C-0x0062 |
 | 💎 | Timer objects              | ✅ NtSetTimer periodic      | ✅ timerfd_create          | ✅ §19 full 6 SSDT 0x007E-0x0083 |
-| 💎 | ALPC message ports         | ✅ NtAlpcSendWaitReceive    | ❌ No equivalent           | ⬜ §20 + TODO-12            |
+| 💎 | ALPC message ports         | ✅ NtAlpcSendWaitReceive    | ❌ No equivalent           | ⬜ §20 (LPC) + §31 (ALPC) + TODO-12 |
 | 💎 | Debug API                  | ✅ NtDebugActiveProcess     | ✅ ptrace                  | ⬜ §21 + TODO-18            |
 | 💎 | Power management           | ✅ NtSetSystemPowerState    | ✅ sys_reboot + ACPI       | 🔄 §5 NtShutdownSystem wired |
 | 💎 | Atom table                 | ✅ NtAddAtom/FindAtom       | ❌ No equivalent           | ⬜ §23                      |
