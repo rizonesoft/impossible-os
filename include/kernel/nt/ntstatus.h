@@ -63,6 +63,7 @@ uint32_t RtlNtStatusToDosError(NTSTATUS status);
 #define STATUS_ACCESS_DENIED                ((NTSTATUS)0xC0000022)  /* SeAccessCheck denied */
 #define STATUS_BUFFER_TOO_SMALL             ((NTSTATUS)0xC0000023)  /* output buffer too small */
 #define STATUS_OBJECT_TYPE_MISMATCH         ((NTSTATUS)0xC0000024)  /* handle is wrong object type */
+#define STATUS_OBJECT_NAME_INVALID          ((NTSTATUS)0xC0000033)  /* name fails validation (e.g. bad chars) */
 #define STATUS_OBJECT_NAME_NOT_FOUND        ((NTSTATUS)0xC0000034)  /* named object not in namespace */
 #define STATUS_OBJECT_NAME_COLLISION        ((NTSTATUS)0xC0000035)  /* name already exists */
 #define STATUS_PORT_DISCONNECTED            ((NTSTATUS)0xC0000037)  /* ALPC port closed by peer */

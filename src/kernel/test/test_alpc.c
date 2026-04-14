@@ -1,17 +1,28 @@
 /* ============================================================================
- * test_alpc.c -- ALPC ABI constants & layout tests
+ * test_alpc.c -- ALPC ABI constants & layout tests + port-object tests
  *
  * Covers the static contract shipped in include/kernel/ipc/alpc.h:
  * message header size and per-field offsets (via static asserts
  * re-validated at runtime), message type code uniqueness and range,
  * maximum inline message length, and non-overlap of ALPC_PORTFLG_* and
  * ALPC_MSGFLG_* bit groups.
+ *
+ * §2 adds port-object tests: ObpAlpcPortType registration, \RPC Control
+ * namespace entry, AlpcCreatePort success paths (named + unnamed), and
+ * namespace lookup of a named port.
  * ============================================================================ */
 
 #ifdef KERNEL_TESTS
 
 #include "kernel/test/test.h"
 #include "kernel/ipc/alpc.h"
+#include "kernel/ipc/alpc_port.h"
+#include "kernel/nt/nt_types.h"
+#include "kernel/nt/ssdt.h"
+#include "kernel/nt/service_numbers.h"
+#include "kernel/ob/ob.h"
+#include "kernel/ob/ob_ns.h"
+#include "kernel/sched/task.h"
 
 /* ---- Layout (PORT_MESSAGE is 40 bytes, fields at documented offsets) ---- */
 
@@ -164,6 +175,171 @@ static void test_alpc_sqos_layout(void)
                    "CONTEXT_TRACKING_DYNAMIC == 1");
 }
 
+/* ---- §2 Port object tests ---------------------------------------------- */
+
+static void test_alpc_port_type_registered(void)
+{
+    TEST_ASSERT_NOT_NULL((void *)ObpAlpcPortType,
+                         "ObpAlpcPortType non-NULL after alpc_init");
+    if (ObpAlpcPortType) {
+        /* name comparison via first-char check (strcmp would drag libc) */
+        TEST_ASSERT(ObpAlpcPortType->name &&
+                    ObpAlpcPortType->name[0] == 'A' &&
+                    ObpAlpcPortType->name[1] == 'L' &&
+                    ObpAlpcPortType->name[2] == 'P' &&
+                    ObpAlpcPortType->name[3] == 'C',
+                    "type name begins with 'ALPC'");
+        TEST_ASSERT_EQ(ObpAlpcPortType->body_size, sizeof(ALPC_PORT),
+                       "type body_size == sizeof(ALPC_PORT)");
+    }
+}
+
+static void test_alpc_rpc_control_directory(void)
+{
+    void *dir = (void *)0;
+    int rc = ObLookupObjectByName("\\RPC Control", ObpDirectoryType, 0, &dir);
+    TEST_ASSERT_EQ(rc, 0, "ObLookupObjectByName(\\RPC Control) returns 0");
+    TEST_ASSERT_NOT_NULL(dir, "\\RPC Control directory body is non-NULL");
+    if (dir)
+        ObDereferenceObject(dir);
+}
+
+static void test_alpc_create_unnamed_port(void)
+{
+    HANDLE h = AlpcCreatePort(&task_current()->handle_table,
+                              (const char *)0, (ALPC_PORT_ATTRIBUTES *)0);
+    TEST_ASSERT_NEQ(h, INVALID_HANDLE_VALUE,
+                    "AlpcCreatePort(NULL name) returns valid handle");
+    TEST_ASSERT_NEQ(h, 0, "unnamed port handle non-zero");
+    if (h != INVALID_HANDLE_VALUE && h != 0)
+        NtClose(&task_current()->handle_table, h);
+}
+
+static void test_alpc_create_named_port(void)
+{
+    HANDLE h = AlpcCreatePort(&task_current()->handle_table,
+                              "TestPort", (ALPC_PORT_ATTRIBUTES *)0);
+    TEST_ASSERT_NEQ(h, INVALID_HANDLE_VALUE,
+                    "AlpcCreatePort(\"TestPort\") returns valid handle");
+    TEST_ASSERT_NEQ(h, 0, "named port handle non-zero");
+
+    /* Verify the port is findable in \RPC Control */
+    void *body = (void *)0;
+    int rc = ObLookupObjectByName("\\RPC Control\\TestPort",
+                                   ObpAlpcPortType, 0, &body);
+    TEST_ASSERT_EQ(rc, 0, "ObLookupObjectByName(\\RPC Control\\TestPort) == 0");
+    TEST_ASSERT_NOT_NULL(body, "TestPort body non-NULL in namespace");
+
+    if (body) {
+        ALPC_PORT *p = (ALPC_PORT *)body;
+        TEST_ASSERT_EQ((uint32_t)p->PortType, (uint32_t)AlpcServerConnectionPort,
+                       "new port has server-connection type");
+        ObDereferenceObject(body);  /* drop lookup ref */
+    }
+    if (h != INVALID_HANDLE_VALUE && h != 0)
+        NtClose(&task_current()->handle_table, h);
+}
+
+static void test_alpc_duplicate_name_rejected(void)
+{
+    HANDLE h1 = AlpcCreatePort(&task_current()->handle_table,
+                               "DupPort", (ALPC_PORT_ATTRIBUTES *)0);
+    TEST_ASSERT_NEQ(h1, INVALID_HANDLE_VALUE, "first DupPort create succeeds");
+
+    HANDLE h2 = AlpcCreatePort(&task_current()->handle_table,
+                               "DupPort", (ALPC_PORT_ATTRIBUTES *)0);
+    TEST_ASSERT_EQ(h2, INVALID_HANDLE_VALUE,
+                   "second DupPort create rejected (name collision)");
+    if (h1 != INVALID_HANDLE_VALUE && h1 != 0)
+        NtClose(&task_current()->handle_table, h1);
+}
+
+static void test_alpc_null_handle_table_rejected(void)
+{
+    HANDLE h = AlpcCreatePort((HANDLE_TABLE *)0, "ShouldFail",
+                              (ALPC_PORT_ATTRIBUTES *)0);
+    TEST_ASSERT_EQ(h, INVALID_HANDLE_VALUE,
+                   "AlpcCreatePort(NULL ht) returns INVALID_HANDLE_VALUE");
+}
+
+static void test_alpc_embedded_backslash_rejected(void)
+{
+    /* Embedded path separator in the leaf must be refused -- otherwise a
+     * kernel caller could smuggle a sub-path past ObInsertObject, which
+     * treats the argument as a single leaf component. */
+    HANDLE h = AlpcCreatePort(&task_current()->handle_table,
+                              "foo\\bar", (ALPC_PORT_ATTRIBUTES *)0);
+    TEST_ASSERT_EQ(h, INVALID_HANDLE_VALUE,
+                   "leaf with embedded backslash rejected");
+    HANDLE h2 = AlpcCreatePort(&task_current()->handle_table,
+                               "foo/bar", (ALPC_PORT_ATTRIBUTES *)0);
+    TEST_ASSERT_EQ(h2, INVALID_HANDLE_VALUE,
+                   "leaf with embedded forward slash rejected");
+    HANDLE h3 = AlpcCreatePort(&task_current()->handle_table,
+                               "", (ALPC_PORT_ATTRIBUTES *)0);
+    TEST_ASSERT_EQ(h3, INVALID_HANDLE_VALUE, "empty leaf rejected");
+}
+
+static void test_alpc_syscall_full_path(void)
+{
+    /* Exercise the SSDT-dispatched NtAlpcCreatePort handler with a full
+     * \RPC Control\TestPortSyscall path in OBJECT_ATTRIBUTES. Verifies
+     * (a) the path-split logic peels "\\RPC Control\\" and passes only
+     * "TestPortSyscall" to AlpcCreatePort, and (b) the resulting port
+     * is findable at the original full path. This is the exact test the
+     * §2 Codex review asked for. */
+    HANDLE out = 0;
+    UNICODE_STRING name_us;
+    OBJECT_ATTRIBUTES oa;
+    char buf[] = "\\RPC Control\\TestPortSyscall";
+
+    name_us.Length        = (uint16_t)(sizeof(buf) - 1);
+    name_us.MaximumLength = (uint16_t)sizeof(buf);
+    name_us._pad          = 0;
+    name_us.Buffer        = (uint16_t *)buf;   /* ASCII-in-char-buffer, see handler */
+
+    InitializeObjectAttributes(&oa, &name_us, 0, (HANDLE)0, (void *)0);
+
+    NTSTATUS st = ssdt_dispatch(SSDT_NtAlpcCreatePort,
+                                (uint64_t)&out, (uint64_t)&oa, 0, 0, 0, 0);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS,
+                   "NtAlpcCreatePort(\\RPC Control\\TestPortSyscall) == SUCCESS");
+    TEST_ASSERT_NEQ(out, 0, "handle non-zero");
+    TEST_ASSERT_NEQ(out, INVALID_HANDLE_VALUE, "handle not INVALID");
+
+    void *body = (void *)0;
+    int rc = ObLookupObjectByName("\\RPC Control\\TestPortSyscall",
+                                   ObpAlpcPortType, 0, &body);
+    TEST_ASSERT_EQ(rc, 0, "full-path lookup after syscall == 0");
+    TEST_ASSERT_NOT_NULL(body, "syscall-created port body non-NULL");
+    if (body)
+        ObDereferenceObject(body);
+    if (out != 0 && out != INVALID_HANDLE_VALUE)
+        NtClose(&task_current()->handle_table, out);
+}
+
+static void test_alpc_syscall_bad_prefix_rejected(void)
+{
+    /* A path that is NOT under \RPC Control must be rejected with
+     * STATUS_OBJECT_NAME_INVALID -- we don't want user-mode smuggling
+     * ports into arbitrary directories. */
+    HANDLE out = 0;
+    UNICODE_STRING name_us;
+    OBJECT_ATTRIBUTES oa;
+    char buf[] = "\\BaseNamedObjects\\RogueAlpc";
+
+    name_us.Length        = (uint16_t)(sizeof(buf) - 1);
+    name_us.MaximumLength = (uint16_t)sizeof(buf);
+    name_us._pad          = 0;
+    name_us.Buffer        = (uint16_t *)buf;
+    InitializeObjectAttributes(&oa, &name_us, 0, (HANDLE)0, (void *)0);
+
+    NTSTATUS st = ssdt_dispatch(SSDT_NtAlpcCreatePort,
+                                (uint64_t)&out, (uint64_t)&oa, 0, 0, 0, 0);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_OBJECT_NAME_INVALID,
+                   "path outside \\RPC Control rejected");
+}
+
 /* ---- Registration ------------------------------------------------------ */
 
 void test_register_alpc(void)
@@ -182,6 +358,24 @@ void test_register_alpc(void)
                             test_alpc_sqos_layout, TEST_CAT_IPC);
     test_suite_register_cat("alpc: ALPC_PORT_ATTRIBUTES layout",
                             test_alpc_port_attributes_layout, TEST_CAT_IPC);
+    test_suite_register_cat("alpc: ObpAlpcPortType registered",
+                            test_alpc_port_type_registered, TEST_CAT_IPC);
+    test_suite_register_cat("alpc: \\RPC Control directory",
+                            test_alpc_rpc_control_directory, TEST_CAT_IPC);
+    test_suite_register_cat("alpc: AlpcCreatePort unnamed",
+                            test_alpc_create_unnamed_port, TEST_CAT_IPC);
+    test_suite_register_cat("alpc: AlpcCreatePort named",
+                            test_alpc_create_named_port, TEST_CAT_IPC);
+    test_suite_register_cat("alpc: duplicate name rejected",
+                            test_alpc_duplicate_name_rejected, TEST_CAT_IPC);
+    test_suite_register_cat("alpc: NULL handle table rejected",
+                            test_alpc_null_handle_table_rejected, TEST_CAT_IPC);
+    test_suite_register_cat("alpc: embedded backslash rejected",
+                            test_alpc_embedded_backslash_rejected, TEST_CAT_IPC);
+    test_suite_register_cat("alpc: syscall full-path split",
+                            test_alpc_syscall_full_path, TEST_CAT_IPC);
+    test_suite_register_cat("alpc: syscall bad prefix rejected",
+                            test_alpc_syscall_bad_prefix_rejected, TEST_CAT_IPC);
 }
 
 #endif /* KERNEL_TESTS */

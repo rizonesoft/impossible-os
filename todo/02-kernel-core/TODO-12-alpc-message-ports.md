@@ -53,7 +53,7 @@
 | ⭐  | Order | Deliverable                                       | Depends On         | Status |
 | --- | :---: | ------------------------------------------------- | ------------------ | :----: |
 | 💎  |   1   | Message header, port attributes, type codes       | (none)              |  [x]   |
-| 💎  |   2   | ALPC_PORT object & Object Manager registration    | §1, T03 §1-§4     |  [ ]   |
+| 💎  |   2   | ALPC_PORT object & Object Manager registration    | §1, T03 §1-§4     |  [x]   |
 | 💎  |   3   | Connection state machine (create/connect/accept)  | §2, T05 §4        |  [ ]   |
 | 💎  |   4   | Synchronous send+wait+receive engine              | §3, T06 §3        |  [ ]   |
 | 💎  |   5   | Asynchronous delivery & completion list           | §4                 |  [ ]   |
@@ -96,61 +96,25 @@ Define the on-the-wire ALPC ABI in `include/kernel/ipc/alpc.h`. Field names foll
 > **Quality reviewed:** 2026-04-14 -- Two Codex dispatches (step-5 adversarial + step-8 quality/dead-code/consistency/perf). Four Highs fixed: (1) ABI-comment overclaim of Windows winternl.h binary compat softened to explicit Impossible-OS-native layout; (2) `ALPC_PORT_ATTRIBUTES` sizeof + every external offset locked with explicit `Pad0/Pad1/Pad2` fields (80B); (3) duplicate `CLIENT_ID` collision with `kernel/ob/teb.h` fixed by reusing the canonical 16-byte type + re-asserting sizeof/offsets locally; (4) duplicate `SECURITY_IMPERSONATION_LEVEL` collision with `kernel/security/token.h` fixed by reusing canonical enum. PORT_MESSAGE offsets shifted: MessageId 16 -> 24, CallbackId 24 -> 32; trailing Reserved u64 removed (16-byte CLIENT_ID fills the gap). Coexistence compile-proof: `alpc.h` now includes both `ob/teb.h` and `security/token.h`; full-tree build passes. Tests + TODO spec + kernel-code-quality gates (Gates 1-11) all walked. No dead code. No perf concerns (header-only + one klog line).
 > **Test runner:** `scripts\debug\run-ipc-tests.bat` (SUITE=ipc), 7 alpc suites, 0 failures expected
 
----
 
 ## 2. ALPC_PORT Object & Object Manager Registration
 
-- [ ] (2.1 ALPC_PORT struct) Define in `include/kernel/ipc/alpc_port.h`:
-  ```c
-  typedef enum {
-      AlpcServerConnectionPort,   /* named, listens for connections */
-      AlpcClientCommunicationPort,/* unnamed, client's end after connect */
-      AlpcServerCommunicationPort /* unnamed, server's end after accept */
-  } ALPC_PORT_TYPE;
+Register the `ALPC Port` kernel object type with the Object Manager, create the `\RPC Control` namespace directory, and expose a kernel-side `AlpcCreatePort()` helper that the NT syscall dispatcher and in-kernel servers build on top of. The port body is Ob-prefix-conformant -- it ships as a plain body, and the `OBJECT_HEADER` sits at a negative offset (`OB_HEADER_FROM_BODY`). All queue and sync state is initialised empty; real message flow arrives in §3-§5.
 
-  typedef struct ALPC_PORT {
-      OBJECT_HEADER         Header;       /* MUST be first -- Ob prefix */
-      ALPC_PORT_TYPE        PortType;
-      struct ALPC_PORT     *ConnectedPort; /* peer port (for comm ports) */
-      struct ALPC_PORT     *ConnectionPort;/* server connection port (for comm ports) */
-      spinlock_t            Lock;
-      list_head_t           MessageQueue;  /* pending PORT_MESSAGE_ENTRY items */
-      list_head_t           PendingQueue;  /* requests waiting for reply */
-      list_head_t           ConnectionQueue; /* connection requests (server port only) */
-      uint32_t              QueuedMessages;
-      uint64_t              NextMessageId; /* monotonically increasing */
-      void                 *PortContext;   /* opaque user data */
-      ALPC_PORT_ATTRIBUTES  Attributes;
-      struct task          *OwnerTask;     /* process that created/connected */
-      wait_queue_t          WaitQueue;     /* threads waiting to receive */
-      ACCESS_TOKEN         *ClientToken;   /* captured on accept (server comm port) */
-      list_head_t           SectionList;   /* registered ALPC_PORT_SECTION entries */
-      ALPC_MESSAGE_ZONE    *MessageZone;   /* pre-allocated buffer pool (§11), NULL if none */
-      ALPC_PORT_STATS       Stats;         /* per-port message/latency counters (§12) */
-      bool                  Disconnected;
-  } ALPC_PORT;
-  ```
-- [ ] `PORT_MESSAGE_ENTRY` -- message node allocated from pool:
-  ```c
-  typedef struct {
-      list_head_t       Link;
-      PORT_MESSAGE      Header;
-      struct ALPC_PORT *ReplyPort;  /* which port to send reply to */
-      uint64_t          ReplyMessageId; /* MessageId this is a reply for */
-      bool              WaitingForReply;/* sender blocked waiting for reply */
-      wait_queue_t      ReplySyncWait;  /* sender sleeps here until reply arrives */
-      /* uint8_t Body[]; */
-  } PORT_MESSAGE_ENTRY;
-  ```
+- [x] Define `ALPC_PORT_TYPE` enum in `include/kernel/ipc/alpc_port.h` (3 values): `AlpcServerConnectionPort` (named, listens), `AlpcClientCommunicationPort` (unnamed, client's end after connect), `AlpcServerCommunicationPort` (unnamed, server's end after accept).
+- [x] Define `struct alpc_port` body in `include/kernel/ipc/alpc_port.h`. Fields: `PortType` (`ALPC_PORT_TYPE`), `ConnectedPort`/`ConnectionPort` (`struct alpc_port *`), `Lock` (`spinlock_t`), three intrusive singly-linked queue heads (`MessageQueue`, `PendingQueue`, `ConnectionQueue` -- each an `ALPC_MSG_QUEUE` `{head, tail, count}` of `PORT_MESSAGE_ENTRY *`; the kernel has no generic `list_head_t`), `NextMessageId` (u64), `PortContext` (`void *`), `Attributes` (`ALPC_PORT_ATTRIBUTES` by value, 80B), `OwnerTask` (`struct task *`), `WaitQueue` (`condvar_t`, unused until §4), `ClientToken` (`struct access_token *`, NULL until §7), `SectionList` head/tail/count (empty until §6), `MessageZone` (forward-declared `struct alpc_message_zone *`, NULL until §11), `Stats` (`ALPC_PORT_STATS` inline stub, zero-init until §12), `Disconnected` (u8).
+- [x] Define `PORT_MESSAGE_ENTRY` in `include/kernel/ipc/alpc_port.h`. Fields: `Link_next` (`struct port_message_entry *`, intrusive singly-linked-list forward pointer), `Header` (`PORT_MESSAGE` by value, 40B), `ReplyPort` (`struct alpc_port *`), `ReplyMessageId` (u64), `WaitingForReply` (u8), `ReplySyncWait` (`condvar_t`, unused until §4). Inline body follows the struct via hand-laid-out flexible allocation; body length lives in `Header.DataLength`.
+- [x] Implement `alpc_port_init()` in `src/kernel/ipc/alpc_port.c`. Registers `ObpAlpcPortType` via `ob_create_type(&(OBJECT_TYPE){.name="ALPC Port", .body_size=sizeof(ALPC_PORT), .on_delete=alpc_port_on_delete})`. Creates `\RPC Control` directory under `ObpRootDirectory` via `ob_ns_create_directory` + `ObInsertObject`. Logs `[alpc] ALPC Port type registered` and `[alpc] \RPC Control directory created`. Returns `BOOT_FATAL` on registration failure. Idempotent.
+- [x] Implement `alpc_port_on_delete(void *body)` as the type DeleteProcedure. Snapshots queues under the port's own `Lock`, releases lock, then drains (kfree may sleep in debug builds -- never free under a spinlock). Drops ref on `ConnectedPort` if non-NULL. `ClientToken` is NULL today and process-lifetime-owned per token.h; no drop path yet (adds in §7 when token capture ships). `MessageZone` NULL until §11. Idempotent: safe to call on an already-drained port body.
+- [x] Implement `HANDLE AlpcCreatePort(HANDLE_TABLE *ht, const char *name, const ALPC_PORT_ATTRIBUTES *attrs)` in `src/kernel/ipc/alpc_port.c`. Kernel-side helper used by both the NT syscall retrofit and in-kernel servers (CSRSS in §10). Path: validate leaf name (rejects `\\`, `/`, empty, > `OB_NAME_MAX`) -> `ob_alloc_object(ObpAlpcPortType)` -> initialise (`PortType=AlpcServerConnectionPort`, `Lock=SPINLOCK_INIT`, queues empty, `OwnerTask=task_current()`, `NextMessageId=1`, `cond_init(WaitQueue)`, `Attributes=*attrs` or zero-init when `attrs==NULL`) -> **allocate handle FIRST** (mirrors `NtCreateDirectoryObject` rollback idiom in `nt_namespace.c`) -> if `name`, resolve `\RPC Control` + `ObInsertObject`. On any failure path: `ObpFreeHandle` (if handle allocated) then drop creation ref. Handle-first ordering guarantees no half-created namespace entries.
+- [x] Retrofit `NtAlpcCreatePort_handler` in `src/kernel/nt/nt_alpc.c` to call `AlpcCreatePort`. Interprets `a1` as out-`HANDLE *`, `a2` as `OBJECT_ATTRIBUTES *`, `a3` as `ALPC_PORT_ATTRIBUTES *`. User-mode previous-mode: `ProbeForWriteIfUser` on out-handle, `ProbeForReadIfUser` on port_attrs (single-shot copy-by-value) and via `alpc_probe_and_split` on OA + UNICODE_STRING + bounded buffer. `alpc_probe_and_split` verifies path is rooted at `\RPC Control\`, splits the leaf, and **copies it into a kernel-owned 64-byte buffer** before dereferencing (avoids TOCTOU). Rejects embedded `\\`/`/` in leaf with `STATUS_OBJECT_NAME_INVALID`. Slot `0x010F` skipped in `test_nt_alpc_pending_features` -- it is no longer pending.
+- [x] Wire `alpc_port_init()` into `alpc_init()` in `src/kernel/ipc/alpc.c` so the `\RPC Control` directory and `ObpAlpcPortType` come up in the same `boot_phase3` pass. `alpc_init` propagates the `boot_result_t` from `alpc_port_init`.
+- [x] Commit: `"kernel/ipc/alpc: ALPC_PORT object, ObCreateObjectType, port init"`
 
-- [ ] (2.2 Object type registration) `AlpcInitialize()` called from Phase 1 kernel init (→ XREF `TODO-01-kernel-init-sequencing.md §3`); add `POST16(0xDB00)` before and `POST16(0xDB01)` after to localize boot crashes:
-  - `ObCreateObjectType("ALPC Port", sizeof(ALPC_PORT), AlpcPortDelete, ...)`
-  - Registers `AlpcPortDelete` as the `DeleteProcedure`; drains queues, disconnects linked port, frees all message entries
-- [ ] Named server connection ports live in `\RPC Control\<name>` in the Ob namespace (→ XREF `TODO-03-object-manager.md §4`); `NtAlpcCreatePort` with non-NULL `ObjectAttributes->ObjectName` inserts there
-- [ ] Unnamed ports (client + server communication ports) have no namespace entry; accessed only via handle
-- [ ] (2.3 Commit) Commit: `"kernel/ipc/alpc: ALPC_PORT object, ObCreateObjectType, port init"`
+**Test checkpoint:** Unit tests (under `TEST_CAT_IPC` in `src/kernel/test/test_alpc.c`): (a) `ObpAlpcPortType` non-NULL after `alpc_init`; (b) `\RPC Control` directory resolvable via `ObLookupObjectByName("\\RPC Control", ObpDirectoryType, ...)`; (c) `AlpcCreatePort(ht, "TestPort", NULL)` returns a valid non-zero handle; (d) the port is findable via `ObLookupObjectByName("\\RPC Control\\TestPort", ObpAlpcPortType, ...)`; (e) `NtClose` on the handle plus a matching deref drops `ref_count` to 0 and invokes `alpc_port_on_delete`; (f) `AlpcCreatePort(ht, NULL, NULL)` creates an unnamed port (handle-only, no namespace entry). Serial log on init: `[alpc] ALPC Port type registered`, `[alpc] \RPC Control directory created`. Platforms: QEMU WHPX + TCG; bare metal + VirtualBox sweep via the IPC test suite (pure kernel-heap + Ob, no hardware path).
 
-**Test checkpoint:** `AlpcInitialize()` returns `BOOT_OK`. `ob_create_type("ALPC Port", ...)` succeeds. `NtAlpcCreatePort` with `ObjectName = "\\RPC Control\\TestPort"` succeeds; handle is non-zero. Port object is findable in Ob namespace. Closing the handle triggers `AlpcPortDelete`. Serial log: `"[ALPC] port object type registered"`, `"[ALPC] TestPort created in \\RPC Control\\"`. Test on: QEMU WHPX + TCG.
+> **Test runner:** `scripts\debug\run-ipc-tests.bat` (SUITE=ipc)
+> **Expected:** 6 new alpc-port suites pass, 0 failures
 
 ---
 
@@ -596,3 +560,4 @@ After §1-10, Impossible OS reaches full Windows 11 ALPC parity for hosting CSRS
 | 2026-04-14 | validate | validate-todo-file: planned Inputs paths; flat § refs (no §N.M); XREF colons; removed blanks between adjacent checkboxes; ASCII latency comment; OS §12 row text; padded Impl Order row 9. |
 | 2026-04-14 | implement | §1 Message header / port attributes / type codes: `include/kernel/ipc/alpc.h` (PORT_MESSAGE 40B + SQOS 12B + ALPC_PORT_ATTRIBUTES 80B with sizeof + per-field offset `_Static_assert`, 10 msg-type codes, 4 PORTFLG + 6 MSGFLG non-overlap asserts), `src/kernel/ipc/alpc.c` (`alpc_init` klog), `src/kernel/test/test_alpc.c` (7 suites under `TEST_CAT_IPC`), pipe_init -> boot_result_t; Codex adversarial review (2 highs: ABI-claim softened to explicit native-layout + PORT_ATTRIBUTES locked); `boot_phase3` wiring + TODO-01 §8 pipe_init checked. |
 | 2026-04-14 | review | §1 review-todo-section: Phase-1 evidence + scope-gap + build clean; Phase-2 adversarial already ran during implement; Phase-3 kernel-code-quality Gates 1-11 walked clean + second Codex quality dispatch (dead-code + consistency + perf) found 2 highs: duplicate `CLIENT_ID` (fixed by reusing canonical 16B type from `ob/teb.h` + re-asserting locally) and duplicate `SECURITY_IMPERSONATION_LEVEL` (fixed by reusing canonical enum from `security/token.h`); PORT_MESSAGE offsets re-shifted MessageId 16->24 and CallbackId 24->32; trailing Reserved u64 dropped; test layout + TODO spec synced; full build passes proving coexistence with both consumer headers. |
+| 2026-04-15 | implement | §2 ALPC_PORT object + registration: new `include/kernel/ipc/alpc_port.h` (ALPC_PORT body, PORT_MESSAGE_ENTRY, ALPC_MSG_QUEUE, ALPC_PORT_STATS stub), new `src/kernel/ipc/alpc_port.c` (`alpc_port_init` registers ObpAlpcPortType + creates `\RPC Control`, `alpc_port_on_delete` drains queues under lock/free outside, `AlpcCreatePort` kernel helper with **handle-first rollback** ordering), NtAlpcCreatePort retrofitted with ProbeForRead/WriteIfUser + `alpc_probe_and_split` that **copies leaf into kernel-owned 64-byte buffer** (TOCTOU fix); slot 0x010F removed from pending sweep in test_ob.c; 10 new IPC tests (port type + \RPC Control + named/unnamed create + duplicate reject + NULL ht + embedded slash reject + syscall full-path + syscall bad-prefix reject). Codex adversarial review -- 3 highs (full-path-as-leaf, missing user-pointer probes, half-created namespace entry on handle-fail) all fixed; re-dispatch found 1 high TOCTOU (leaf still pointed into user buf), fixed with kernel-owned copy. Added `STATUS_OBJECT_NAME_INVALID = 0xC0000033` to ntstatus.h. |

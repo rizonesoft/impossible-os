@@ -22,10 +22,119 @@
  * ============================================================================ */
 
 #include "kernel/nt/nt_alpc.h"
+#include "kernel/nt/nt_types.h"
 #include "kernel/nt/ssdt.h"
 #include "kernel/nt/ntstatus.h"
 #include "kernel/nt/service_numbers.h"
+#include "kernel/nt/zw.h"
+#include "kernel/ipc/alpc.h"
+#include "kernel/ipc/alpc_port.h"
+#include "kernel/sched/task.h"
 #include "kernel/klog.h"
+
+/* ---- OBJECT_ATTRIBUTES probe + \RPC Control path split ----------------
+ *
+ * NT OBJECT_ATTRIBUTES.ObjectName typically carries a full path like
+ * "\\RPC Control\\TestPort". ObInsertObject treats its name argument as
+ * a single leaf component (no splitting), so we split here: verify the
+ * parent prefix is literally "\\RPC Control\\" and pass only the leaf
+ * to AlpcCreatePort.
+ *
+ * When previous mode is UserMode, probe OA + UNICODE_STRING + bounded
+ * buffer before dereferencing (mirrors the oa_probe_ascii_name pattern
+ * from nt_section.c). Kernel callers skip the probes via
+ * ProbeForReadIfUser.
+ * ---------------------------------------------------------------------- */
+
+/*
+ * After probing + prefix validation, COPY the leaf bytes into a
+ * caller-provided kernel buffer. Returning a pointer into
+ * UNICODE_STRING.Buffer (user memory) would be a TOCTOU gap: a
+ * malicious user-mode caller could alter or unmap the buffer between
+ * the probe here and the later strncpy inside ObInsertObject.
+ *
+ * The kernel-owned copy is NUL-terminated, bounded to kbuf_len-1, and
+ * validated byte-by-byte against the {no \\, no /, no empty, no
+ * > OB_NAME_MAX} contract.
+ */
+static NTSTATUS alpc_probe_and_split(OBJECT_ATTRIBUTES *oa,
+                                     char *kbuf, uint32_t kbuf_len,
+                                     int *out_have_name)
+{
+    const char prefix[] = "\\RPC Control\\";
+    const uint32_t prefix_len = sizeof(prefix) - 1;   /* excl. NUL */
+    UNICODE_STRING *us;
+    uint32_t probe_len;
+    const char *ascii;
+    uint32_t i;
+    uint32_t leaf_len = 0;
+    NTSTATUS st;
+
+    *out_have_name = 0;
+    if (!kbuf || kbuf_len == 0)
+        return STATUS_INVALID_PARAMETER;
+    kbuf[0] = '\0';
+
+    if (!oa)
+        return STATUS_SUCCESS;                  /* unnamed port */
+
+    st = ProbeForReadIfUser(oa, sizeof(OBJECT_ATTRIBUTES), 8);
+    if (!NT_SUCCESS(st))
+        return st;
+
+    us = oa->ObjectName;
+    if (!us)
+        return STATUS_SUCCESS;                  /* unnamed */
+
+    st = ProbeForReadIfUser(us, sizeof(UNICODE_STRING), 4);
+    if (!NT_SUCCESS(st))
+        return st;
+    if (!us->Buffer)
+        return STATUS_INVALID_PARAMETER;
+
+    probe_len = (uint32_t)us->Length;
+    if (probe_len == 0u || probe_len > 255u)
+        return STATUS_INVALID_PARAMETER;
+
+    st = ProbeForReadIfUser(us->Buffer, probe_len, 1);
+    if (!NT_SUCCESS(st))
+        return st;
+
+    /* UNICODE_STRING.Buffer is declared uint16_t* but current kernel-wide
+     * convention treats it as ASCII char* (see nt_decode_unicode_string
+     * retrofit tracked at TODO-13 §4). */
+    ascii = (const char *)us->Buffer;
+
+    /* Verify prefix. Fail on any path not rooted at \RPC Control\ -- we
+     * do not currently support nested subdirectories under RPC Control. */
+    if (probe_len <= prefix_len)
+        return STATUS_OBJECT_NAME_INVALID;
+    for (i = 0; i < prefix_len; i++) {
+        if (ascii[i] != prefix[i])
+            return STATUS_OBJECT_NAME_INVALID;
+    }
+
+    /* Copy leaf byte-by-byte into the kernel buffer, validating as we
+     * go. Reject empty leaves and any embedded path separator. Every
+     * byte lands in kbuf, so AlpcCreatePort + ObInsertObject never read
+     * user memory for this name again. */
+    for (i = prefix_len; i < probe_len; i++) {
+        char c = ascii[i];
+        if (c == '\0')
+            break;
+        if (c == '\\' || c == '/')
+            return STATUS_OBJECT_NAME_INVALID;
+        if (leaf_len + 1u >= kbuf_len)
+            return STATUS_OBJECT_NAME_INVALID;   /* leaf won't fit + NUL */
+        kbuf[leaf_len++] = c;
+    }
+    if (leaf_len == 0u)
+        return STATUS_OBJECT_NAME_INVALID;
+    kbuf[leaf_len] = '\0';
+
+    *out_have_name = 1;
+    return STATUS_SUCCESS;
+}
 
 /* Stub return -- no runtime klog. The deferred-feature inventory is
  * maintained by test_nt_alpc_returns_deferred_status() in test_ob.c
@@ -44,11 +153,56 @@
     } while (0)
 
 /* ---- 0x010F NtAlpcCreatePort -------------------------------------------- */
+/* Real implementation wired by TODO-12 §2. SCOPE-GAP-ALLOWED: the
+ * remaining 15 NtAlpc* handlers below still stub out to the deferred
+ * sentinel pending TODO-12 §8's engine retrofit; §2 moves only slot
+ * 0x010F out of the pending-features sweep in test_ob.c. User-mode
+ * pointer validation (copy_to_user for the out-HANDLE, user-range check
+ * on OBJECT_ATTRIBUTES) is §8's responsibility; for now the args are
+ * treated as kernel pointers, which is what in-kernel callers (tests,
+ * CSRSS bootstrap in §10) use today. */
 static NTSTATUS NtAlpcCreatePort_handler(uint64_t a1, uint64_t a2, uint64_t a3,
                                          uint64_t a4, uint64_t a5, uint64_t a6)
 {
-    (void)a1; (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
-    ALPC_STUB_BODY(NtAlpcCreatePort);
+    HANDLE *out_handle = (HANDLE *)a1;
+    OBJECT_ATTRIBUTES *oa = (OBJECT_ATTRIBUTES *)a2;
+    ALPC_PORT_ATTRIBUTES *port_attrs = (ALPC_PORT_ATTRIBUTES *)a3;
+    ALPC_PORT_ATTRIBUTES local_attrs;
+    ALPC_PORT_ATTRIBUTES *attrs_to_pass = (ALPC_PORT_ATTRIBUTES *)0;
+    char leaf_buf[64];                          /* OB_NAME_MAX */
+    int have_name = 0;
+    NTSTATUS st;
+    HANDLE h;
+
+    (void)a4; (void)a5; (void)a6;
+
+    if (!out_handle)
+        return STATUS_INVALID_PARAMETER;
+
+    st = ProbeForWriteIfUser(out_handle, sizeof(HANDLE), 4);
+    if (!NT_SUCCESS(st))
+        return st;
+
+    if (port_attrs) {
+        st = ProbeForReadIfUser(port_attrs, sizeof(ALPC_PORT_ATTRIBUTES), 8);
+        if (!NT_SUCCESS(st))
+            return st;
+        local_attrs = *port_attrs;              /* single-shot copy */
+        attrs_to_pass = &local_attrs;
+    }
+
+    st = alpc_probe_and_split(oa, leaf_buf, sizeof(leaf_buf), &have_name);
+    if (!NT_SUCCESS(st))
+        return st;
+
+    h = AlpcCreatePort(&task_current()->handle_table,
+                       have_name ? leaf_buf : (const char *)0,
+                       attrs_to_pass);
+    if (h == INVALID_HANDLE_VALUE)
+        return STATUS_INSUFFICIENT_RESOURCES;
+
+    *out_handle = h;
+    return STATUS_SUCCESS;
 }
 
 /* ---- 0x0110 NtAlpcConnectPort ------------------------------------------- */

@@ -10,11 +10,19 @@
  * ============================================================================ */
 
 #include "kernel/ipc/alpc.h"
+#include "kernel/ipc/alpc_port.h"
 #include "kernel/boot_init.h"
 #include "kernel/klog.h"
 
 boot_result_t alpc_init(void)
 {
+    boot_result_t r;
+
     klog(LOG_INFO, "alpc", "header constants defined");
+
+    r = alpc_port_init();
+    if (r != BOOT_OK)
+        return r;
+
     return BOOT_OK;
 }

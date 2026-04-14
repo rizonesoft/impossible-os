@@ -1160,9 +1160,16 @@ static void test_nt_alpc_slots_registered(void)
 
 static void test_nt_alpc_pending_features(void)
 {
-    /* ALPC engine not yet implemented. Each slot is reserved; tests
-     * verify the deferred contract holds via TEST_PENDING -- a break
-     * here means a slot returned the wrong status (mis-registration).
+    /* Most ALPC engine not yet implemented. 15 slots still reserved;
+     * tests verify the deferred contract holds via TEST_PENDING -- a
+     * break here means a slot returned the wrong status
+     * (mis-registration).
+     *
+     * NtAlpcCreatePort (0x010F) is now REAL (TODO-12 §2 shipped the
+     * port type + \RPC Control + AlpcCreatePort); skip that slot here
+     * to keep the pending inventory honest. When dispatched with
+     * null args it returns STATUS_INVALID_PARAMETER, not
+     * STATUS_NOT_IMPLEMENTED.
      *
      * Message format: name + slot + brief gap. Suite name "NT ALPC
      * pending features" already names the subsystem. NO TODO refs in
@@ -1175,6 +1182,8 @@ static void test_nt_alpc_pending_features(void)
     uint32_t i;
     char msg[64];
     for (i = 0; i < sizeof(s_alpc_slots) / sizeof(s_alpc_slots[0]); i++) {
+        if (s_alpc_slots[i].svc == SSDT_NtAlpcCreatePort)
+            continue;   /* shipped in TODO-12 §2 */
         NTSTATUS st = ssdt_dispatch(s_alpc_slots[i].svc, 0, 0, 0, 0, 0, 0);
         snprintf(msg, sizeof(msg), "%s (0x%x): no ALPC engine yet",
                  s_alpc_slots[i].name, (uint64_t)s_alpc_slots[i].svc);
