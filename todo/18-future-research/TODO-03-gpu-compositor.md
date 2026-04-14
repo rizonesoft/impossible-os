@@ -12,7 +12,7 @@
 > the GPU path; it does NOT modify the existing compositor.
 >
 > **TinyGL software OpenGL** (~5 K lines, zlib) is specced in
-> `09-services-security/TODO-12 §8`; §2 here assesses the *upgrade path* from TinyGL
+> `10-platform-services/TODO-12 §8`; §2 here assesses the *upgrade path* from TinyGL
 > to Mesa lavapipe (CPU Vulkan) -- it does not re-specify the TinyGL port itself.
 >
 > **IOMMU driver** is a hard prerequisite for DMA-safe GPU memory (§3) and is documented
@@ -34,7 +34,7 @@
 - `include/kernel/mm/pmm.h` -- `pmm_alloc_contiguous()` -- §3 GPU-visible memory allocator
 - `include/kernel/mm/vmm.h` -- `vmm_map_page()` -- §3 IOMMU-safe GPU buffer mapping
 - `include/kernel/sched/syscall.h` -- next free syscall number -- §3 `SYS_GPU_*` additions
-- `09-services-security/TODO-12-long-term-features.md §8` (→ XREF) -- TinyGL port; §2 here assesses upgrade to Mesa lavapipe from TinyGL baseline
+- `10-platform-services/TODO-12-long-term-features.md §8` (→ XREF) -- TinyGL port; §2 here assesses upgrade to Mesa lavapipe from TinyGL baseline
 - `13-future-research/TODO-02-hypervisor.md §4 §6` (→ XREF) -- virtio-gpu stretch mentioned there; IOMMU prerequisite documented there; §1 §3 here build on that analysis
 - `TODO-06-android-app-compatibility.md` (→ XREF) -- TODO-06 section 5 guest framebuffer to host compositor; VirtIO-GPU scanout ties to sections 1 and 5 here
 - `src/kernel/drivers/virtio/virtio.c` -- existing guest-side VirtIO transport; §1 VirtIO-GPU driver extends this

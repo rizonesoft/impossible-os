@@ -11,7 +11,7 @@
 - `src/kernel/net/ip.c` -- `ipv4_handle()` dispatches on `protocol` field; add `case IP_PROTO_TCP: tcp_handle(...)` here for §1
 - `include/kernel/net/net.h` -- `struct net_config` → replaced/extended by `struct net_interface` in §5; all existing callers shim through `netif_get_default()`
 - → XREF: `06-networking/TODO-02-*` (future DNS/TLS/HTTP TODOs) -- those callers use `tcp_connect()` / `tcp_send()` / `tcp_recv()` from this TODO
-- → XREF: `09-services-security/TODO-xx-firewall` -- connection tracking hash table (§7) is the backing store for the stateful firewall "allow established" rule
+- → XREF: `10-platform-services/TODO-xx-firewall` -- connection tracking hash table (§7) is the backing store for the stateful firewall "allow established" rule
 
 ## Outcome
 

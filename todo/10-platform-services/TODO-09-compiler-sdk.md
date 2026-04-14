@@ -1,6 +1,6 @@
 # TODO-09 -- C/C++ Compiler & SDK
 
-**Domain:** `09-services-security`
+**Domain:** `10-platform-services`
 **Goal:** Port TCC to run natively on Impossible OS so developers can compile and run native PE apps on the OS itself, and publish a complete developer SDK -- the moment the OS can develop its own software.
 
 > [!IMPORTANT]

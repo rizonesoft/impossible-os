@@ -12,7 +12,7 @@
 - `src/kernel/fs/ixfs/ixfs_core.c`, `ixfs_alloc.c`, `ixfs_inode.c`, `ixfs_extent.c`, `ixfs_journal.c`, `ixfs_cow.c`, `ixfs_format.c`, `ixfs_ops.c`, `ixfs_test.c` -- working v2 implementation; §1 verifies each; §2–10 extend them
 - → XREF: `05-storage-filesystems/TODO-05-win32-file-io-api.md §3` -- `FILE_OBJECT`/`HANDLE` table must exist before §4 (ADS `CreateFile` path) and §9 (`OpenFileById`) can wire up
 - → XREF: `05-storage-filesystems/TODO-04-fat32-hardening-vfs-semantics.md §11` -- Win32 feature stubs that return empty ADS, default ACL are superseded here by real IXFS implementations
-- → XREF: `09-services-security` Object Manager + Security TODO -- §5 security descriptors wire into `SeAccessCheck`; coordinate on `SECURITY_DESCRIPTOR` binary format and well-known SID constants
+- → XREF: `10-platform-services` Object Manager + Security TODO -- §5 security descriptors wire into `SeAccessCheck`; coordinate on `SECURITY_DESCRIPTOR` binary format and well-known SID constants
 - → XREF: `todo-old/010-Kernel-Foundations/TODO-040-Filesystem/TODO-040.11-IXFS.md` -- **do not delete**; advanced storage features (compression, encryption, dedup, tiering) remain there for TODO-07
 
 ## Outcome
@@ -128,7 +128,7 @@ Implement a hash-deduped security descriptor table in IXFS reserved inodes. Map 
 **Files:** `src/kernel/fs/ixfs/ixfs_security.c` (new), `include/kernel/fs/ixfs.h` (extend)
 
 > [!NOTE]
-> SD table: reserved inode range (e.g., inodes 8–15 reserved for metadata). SD table inode stores an array of `{ uint32_t sd_hash; uint32_t sd_size; uint8_t sd_data[...]; }` entries appended to a data block chain. `i_security_id` in the v3 inode is the index into this table. Default SD at format time: Everyone:Full-Control (same binary format as NTFS `$Secure`). Parent DACL inheritance: when creating a file, if parent dir has a DACL with `CONTAINER_INHERIT_ACE` or `OBJECT_INHERIT_ACE` flags, propagate those ACEs to the child's DACL. Wire into `SeAccessCheck` (→ XREF: `09-services-security`).
+> SD table: reserved inode range (e.g., inodes 8–15 reserved for metadata). SD table inode stores an array of `{ uint32_t sd_hash; uint32_t sd_size; uint8_t sd_data[...]; }` entries appended to a data block chain. `i_security_id` in the v3 inode is the index into this table. Default SD at format time: Everyone:Full-Control (same binary format as NTFS `$Secure`). Parent DACL inheritance: when creating a file, if parent dir has a DACL with `CONTAINER_INHERIT_ACE` or `OBJECT_INHERIT_ACE` flags, propagate those ACEs to the child's DACL. Wire into `SeAccessCheck` (→ XREF: `10-platform-services`).
 
 - [ ] `ixfs_sd_table_init(vol)`: at mount, find/create SD table inode; load existing entries into in-memory cache `vol->sd_cache[]` (up to 256 entries)
 - [ ] `ixfs_sd_write(vol, sd_buf, sd_len, &sd_id)`: CRC32C hash SD; scan cache for dup; if not found: append to table inode data; assign new `sd_id`; return `sd_id`

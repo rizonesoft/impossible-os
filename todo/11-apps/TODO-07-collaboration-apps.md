@@ -117,7 +117,7 @@
   - [ ] `/me <action>` → `PRIVMSG {channel} :\x01ACTION {action}\x01\r\n` (CTCP ACTION)
 - [ ] **Registry**: `HKCU\Software\Impossible\Chat\{network}\Server`, `Nick`, `AutoJoin`, `UseTLS`; on connect pre-fill from Registry; save on successful connect
 - [ ] **Notifications**: `notify_send("IRC", "{nick} in #{channel}: {text}", ICON_CHAT, 4000)` on PRIVMSG when window is not focused
-- [ ] **Stretch -- Matrix client**: note that Matrix uses HTTP+JSON (can reuse `https_get`/POST) + Olm E2E encryption (monocypher Curve25519 + AES-GCM); defer full implementation to `09-services-security` domain when Win32/SDK is stable
+- [ ] **Stretch -- Matrix client**: note that Matrix uses HTTP+JSON (can reuse `https_get`/POST) + Olm E2E encryption (monocypher Curve25519 + AES-GCM); defer full implementation to `10-platform-services` domain when Win32/SDK is stable
 
 ---
 

@@ -19,7 +19,7 @@
 - → XREF: `TODO-07-time-filetime-management.md §8–§9` -- NtSetTimerResolution/NtQueryTimerResolution (§8), NtQuerySystemTime/NtSetSystemTime/NtQueryPerformanceCounter (§9); service numbers reserved in §4
 - → XREF: `TODO-10-exception-dispatch-seh.md §5` -- NtRaiseException and NtContinue; SSDT indices reserved in §4
 - → XREF: `TODO-11-security-reference-monitor.md §5,§12` -- §5 SeAccessCheck bypasses for kernel-mode (ZwXxx) callers; §12 wires NtAccessCheck, NtOpenProcessToken, etc. to SSDT
-- → XREF: `TODO-12-alpc-message-ports.md §8` -- ALPC port syscalls (NtCreatePort, NtAlpcSendWaitReceivePort, etc.); SSDT indices reserved in §4
+- → XREF: `TODO-12-alpc-message-ports.md §8-§9` -- ALPC port syscalls (NtCreatePort, NtAlpcSendWaitReceivePort, etc.); SSDT indices reserved in §4
 - → XREF: `TODO-13-registry-completion.md §4` -- Registry syscalls (NtCreateKey, NtOpenKey, NtSetValueKey, etc.); SSDT indices reserved in §4
 - → XREF: `TODO-15-power-management.md §12` -- NtSetSystemPowerState, NtInitiatePowerAction; SSDT indices reserved in §4
 - → XREF: `TODO-18-kernel-debugger-kd-protocol.md §13` -- NtDebugActiveProcess, NtWaitForDebugEvent; SSDT indices reserved in §4
@@ -70,7 +70,7 @@
 | 💎  |  17   | Directory and symbolic link object syscalls                    | §5, TODO-03 §4    |  [x]   |
 | 💎  |  18   | Section and memory-mapped file syscalls                        | §5, TODO-03 §7    |  [x]   |
 | 💎  |  19   | Timer control syscalls                                         | §5, TODO-07 §8,§9 |  [x]   |
-| 💎  |  20   | Legacy LPC port syscalls                                       | §5, TODO-12 §8    |  [x]   |
+| 💎  |  20   | Legacy LPC port syscalls                                       | §5, TODO-12 §8-§9 |  [x]   |
 | 💎  |  21   | Exception and debug syscalls                                   | §5, TODO-10 §5    |  [ ]   |
 | 💎  |  22   | Power and system control                                       | §5, TODO-15 §12   |  [ ]   |
 | 💎  |  23   | Atom, locale, and miscellaneous                                | §5                |  [ ]   |
@@ -81,7 +81,7 @@
 | 💎  |  28   | Extended directory enumeration classes                         | §6, §13           |  [x]   |
 | 💎  |  29   | Token lifecycle + SRM access check syscalls                    | §16, TODO-11 §4,§5|  [ ]   |
 | 💎  |  30   | Generic object management (make-temp/perm, set-info, compare)  | §17, TODO-03 §1,§9|  [ ]   |
-| 💎  |  31   | Modern ALPC port syscalls                                      | §20, TODO-12 §8   |  [x]   |
+| 💎  |  31   | Modern ALPC port syscalls                                      | §20, TODO-12 §8-§9 |  [x]   |
 
 > 💎 = parity -- Windows NT and Linux both have equivalents for these categories.
 > ⭐ = exclusive -- the ZwXxx privilege layer, the audit hook, SSDT integrity protection, and the IOSB/LastError unified path go beyond what Linux offers.
@@ -626,7 +626,7 @@ Namespace manipulation -- create, open, and query Ob directory objects and symbo
 - [x] `NtWriteRequestData(PortHandle, Message, DataEntryIndex, Buffer, BufferSize, BytesWritten)` → SSDT 0x010E
 - [x] Commit: `"kernel: nt -- legacy LPC port syscalls wired to SSDT"`
 
-**Test checkpoint:** All 15 LPC SSDT slots resolve to the registered handler (not the default `ssdt_stub_not_implemented`). Each handler returns `STATUS_NOT_IMPLEMENTED` until TODO-08 §7 LPC engine lands; functional round-trip (`NtCreatePort` + `NtConnectPort` + `NtRequestWaitReplyPort`) is exercised by TODO-08 §7 tests and TODO-12 §8 tests.
+**Test checkpoint:** All 15 LPC SSDT slots resolve to the registered handler (not the default `ssdt_stub_not_implemented`). Each handler returns `STATUS_NOT_IMPLEMENTED` until TODO-08 §7 LPC engine lands; functional round-trip (`NtCreatePort` + `NtConnectPort` + `NtRequestWaitReplyPort`) is exercised by TODO-08 §7 tests and TODO-12 §8-§9 tests.
 
 > **Test runner:** `scripts\debug\run-ob-tests.bat` (SUITE=ob)
 > **Expected:** 2 new §20 tests (LPC slots registered, LPC returns deferred-status), 0 failures.
@@ -869,7 +869,7 @@ NtQueryDirectoryFile (§6) currently returns `FileNamesInformation` only (name +
 - [x] `NtAlpcQueryInformationMessage(PortHandle, PortMessage, MessageInformationClass, Buffer, Length, ReturnLength)` → SSDT 0x011E
 - [x] Commit: `"kernel: nt -- modern ALPC port syscalls wired to SSDT"`
 
-**Test checkpoint:** All 16 ALPC SSDT slots resolve to the registered handler (not the default `ssdt_stub_not_implemented`). Each handler returns `STATUS_NOT_IMPLEMENTED` until TODO-12 §8 ALPC engine lands; functional round-trip (`NtAlpcCreatePort` + `NtAlpcConnectPort` + `NtAlpcSendWaitReceivePort`) and `\RPC Control\` namespace visibility are exercised by TODO-12 §8 tests.
+**Test checkpoint:** All 16 ALPC SSDT slots resolve to the registered handler (not the default `ssdt_stub_not_implemented`). Each handler returns `STATUS_NOT_IMPLEMENTED` until TODO-12 §8-§9 ALPC engine lands; functional round-trip (`NtAlpcCreatePort` + `NtAlpcConnectPort` + `NtAlpcSendWaitReceivePort`) and `\RPC Control\` namespace visibility are exercised by TODO-12 §8-§9 tests.
 
 > **Test runner:** `scripts\debug\run-ob-tests.bat` (SUITE=ob)
 > **Expected:** 2 new §31 tests (ALPC slots registered, ALPC returns deferred-status) + 1 cross-section PE export-sort invariant test, 0 failures.
@@ -877,7 +877,7 @@ NtQueryDirectoryFile (§6) currently returns `FileNamesInformation` only (name +
 > **Codex adversarial (2026-04-14):** Two findings, both fixed: (1) `s_ntdll_exports[]` in `pe.c` was not strictly sorted (pre-existing drift plus my mis-insertion of `NtAcceptConnectPort` and `NtAlpc*` entries) -- `pe_lookup_export()` binary-searches the table, so any out-of-order pair silently breaks NTAPI import resolution. Resorted the full 82-entry table and added `pe_exports_sorted_check()` exposed via `pe.h`. (2) `nt_alpc_register_ssdt()` was fail-open -- logged failures but returned void; `boot_phase3` continued with a partial ALPC surface. Changed to return `int` (failure count); applied the same mirror fix to `nt_lpc_register_ssdt()`. Both returns are now accumulated in `boot_desktop.c` and a non-zero result escalates to `boot_halt("SSDT registration failed")`.
 > **Verified** (2026-04-14): `nt_alpc_register_ssdt()` registers 16 stub handlers at SSDT 0x010F-0x011E (`nt_alpc.c`). Each handler is guarded by `SCOPE-GAP-ALLOWED` sentinel, uses the load-first + CAS-on-0-to-1 atomic one-time-log pattern (matching §20 after its review fix), and returns `STATUS_NOT_IMPLEMENTED`. `alpc_register_one()` helper checks `ssdt_get_table`, detects collision with the default stub, captures `ssdt_register()` return, and per-slot logs failures. PE exports added in `pe.c` (16 entries, alphabetically sorted). Master table TODO-A rows 0x010F-0x011E flipped from `[ ]` to `[/]` and Owner updated to `T05 §31 (nt_alpc.c stub, T12 §8 retrofit)`.
 > **Quality reviewed** (2026-04-14): Codex quality review drove two fixes: (1) `alpc_register_one()` / `lpc_register_one()` computed `idx = svc & 0xFFF` (4096 range) and read `tbl->handlers[idx]` BEFORE any bounds check, but `SSDT_MAIN_MAX` is 1024 -- a mis-numbered service constant above 0x3FF would read past the handler array. Added `if (idx >= SSDT_MAIN_MAX)` guard before the handler load in BOTH helpers, and changed the mask to `SSDT_INDEX_MASK` for consistency with `ssdt_register()` itself. (2) `pe_exports_sorted_check()` was test-only; release boots (which skip tests) could ship with unsorted exports and silently break import resolution. Added a boot-time call in `boot_desktop.c` after SSDT registration that `boot_halt`s on any non-zero violation, making the invariant a hard gate on EVERY boot, not just debug.
-> **Accepted:** (1) ALPC engine itself (ALPC_PORT object, connection state machine, PORT_MESSAGE rendezvous, port sections, resource reserves, 11-class `ALPC_PORT_INFORMATION_CLASS`, 2-class `ALPC_MESSAGE_INFORMATION_CLASS`, `\RPC Control\` namespace directory) intentionally deferred -- this section's explicit scope is SSDT reservation + syscall signatures only -> XREF: 02-kernel-core/TODO-12 §8 (item: "Retrofit the 16 ALPC SSDT stubs in src/kernel/nt/nt_alpc.c (SSDT 0x010F-0x011E) to real handlers that call into the ALPC engine instead of returning STATUS_NOT_IMPLEMENTED" -- enumerates every slot with per-syscall retrofit semantics and auto-closes §31).
+> **Accepted:** (1) ALPC engine itself (ALPC_PORT object, connection state machine, PORT_MESSAGE rendezvous, port sections, resource reserves, 11-class `ALPC_PORT_INFORMATION_CLASS`, 2-class `ALPC_MESSAGE_INFORMATION_CLASS`, `\RPC Control\` namespace directory) intentionally deferred -- this section's explicit scope is SSDT reservation + syscall signatures only -> XREF: 02-kernel-core/TODO-12 §8 (SSDT retrofit item: "Retrofit the 16 ALPC SSDT stubs in src/kernel/nt/nt_alpc.c (SSDT 0x010F-0x011E) to real handlers that call into the ALPC engine instead of returning STATUS_NOT_IMPLEMENTED") and TODO-12 §9 (Query/Set/CancelMessage) -- enumerates every slot with per-syscall retrofit semantics and auto-closes §31).
 
 ---
 

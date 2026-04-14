@@ -26,7 +26,7 @@
 - → XREF: `TODO-17-kernel-security-hardening.md §6` -- CET shadow stack; §3 of this TODO handles the resulting `#CP` exception (vector 21)
 - → XREF: `TODO-18-kernel-debugger-kd-protocol.md §4` -- #DB/#BP exception handlers; §3–4 of this TODO integrate with KD for first/second-chance notification
 - → XREF: `TODO-02-system-logging.md §6` -- JSON structured event log; §16 of this TODO emits exception dispatch telemetry
-- → XREF: `10-services-security/TODO-10-linux-compat.md §8` -- `rt_sigaction` handler registration for Linux compat signal delivery (§15)
+- → XREF: `10-platform-services/TODO-10-linux-compat.md §8` -- `rt_sigaction` handler registration for Linux compat signal delivery (§15)
 
 ## Outcome
 
@@ -406,13 +406,13 @@ Add a WER (Windows Error Reporting) stub: `WerpReportFault()` calls into a futur
 - `STATUS_INTEGER_DIVIDE_BY_ZERO` → `SIGFPE`
 - `STATUS_STACK_OVERFLOW` → `SIGSEGV` (with `si_code = SEGV_ACCERR`)
 - `STATUS_BREAKPOINT` → `SIGTRAP`
-Deliver via the existing `task->signals` mechanism. If the signal has a handler registered via `rt_sigaction` (→ XREF: `10-services-security/TODO-10-linux-compat.md §8`), set up a signal frame on the user stack with a `siginfo_t` containing fault details and redirect execution to the handler. If the signal has no handler (default disposition), terminate the task with an appropriate `NTSTATUS` exit code.
+Deliver via the existing `task->signals` mechanism. If the signal has a handler registered via `rt_sigaction` (→ XREF: `10-platform-services/TODO-10-linux-compat.md §8`), set up a signal frame on the user stack with a `siginfo_t` containing fault details and redirect execution to the handler. If the signal has no handler (default disposition), terminate the task with an appropriate `NTSTATUS` exit code.
 If the process has set up a `sigaltstack`, deliver `SIGSEGV` on the alternate stack to handle stack overflow correctly.
 This section is gated on the Linux compat layer existing -- stub it out with a compile-time flag `CONFIG_LINUX_COMPAT` for now.
 
 > [!IMPORTANT]
 > → XREF: `TODO-09 §6` (process capabilities) -- compat mode is a process flag.
-> → XREF: `10-services-security/TODO-10-linux-compat.md §8` -- `rt_sigaction` handler registration. This section handles the kernel-side fault-to-signal mapping and signal frame setup; the compat layer TODO handles the `rt_sigaction`/`rt_sigprocmask` API surface.
+> → XREF: `10-platform-services/TODO-10-linux-compat.md §8` -- `rt_sigaction` handler registration. This section handles the kernel-side fault-to-signal mapping and signal frame setup; the compat layer TODO handles the `rt_sigaction`/`rt_sigprocmask` API surface.
 > Delivery path hooks into §12 (unhandled exception filter) as a pre-termination step.
 
 - [ ] `include/kernel/compat.h` -- `CONFIG_LINUX_COMPAT` guard, fault-to-signal table

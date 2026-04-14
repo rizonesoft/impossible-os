@@ -185,9 +185,10 @@ ALPC handle-attribute marshalling and direct/indirect mode selection -- the incr
 
 > [!IMPORTANT]
 > → XREF: `02-kernel-core/TODO-12-alpc-message-ports.md` -- prerequisite; `ALPC_PORT`, `NtAlpcCreatePort`, `NtAlpcConnectPort`, `NtAlpcAcceptConnectPort`, `NtAlpcSendWaitReceivePort`, and port sections are implemented there. Do NOT re-implement those primitives here.
+> → XREF: `02-kernel-core/TODO-12-alpc-message-ports.md` §8-§9: gap-analysis 2026-04-14; D02 split NtAlpc into §8 (SSDT stub retrofit, OpenSender gap items) and §9 (QueryInformation, SetInformation, CancelMessage). This file §8 adds only handle-attribute and direct/indirect extensions.
 > → XREF: `03-memory-concurrency/TODO-04-advanced-virtual-memory.md §5` -- ALPC view attributes work by mapping the same Section Object into both the client and server address spaces. `NtMapViewOfSection` must be fully operational before §8 can be implemented. Handle marshalling requires the Object Manager handle table in §6 to duplicate handles across processes atomically.
 
-- [ ] Handle attribute (`ALPC_HANDLE_ATTR`, bit 0x4 in `ALPC_MESSAGE_ATTRIBUTES`): sender provides a handle array; kernel duplicates each handle into receiver’s handle table atomically via `NtDuplicateObject`; receiver gets the new handle values in the message header (→ XREF `02-kernel-core/TODO-12-alpc-message-ports.md §6.3` -- deferred there pending `NtDuplicateObject` stability)
+- [ ] Handle attribute (`ALPC_HANDLE_ATTR`, bit 0x4 in `ALPC_MESSAGE_ATTRIBUTES`): sender provides a handle array; kernel duplicates each handle into receiver’s handle table atomically via `NtDuplicateObject`; receiver gets the new handle values in the message header (→ XREF `02-kernel-core/TODO-12-alpc-message-ports.md §6` message-attribute dispatch; deferred there pending `NtDuplicateObject` stability)
 - [ ] Direct mode: messages ≤ 256 bytes copied by value (LPC-compatible path); add size-threshold check in `AlpcEnqueueMessage` to auto-select inline copy vs. view-attribute path
 - [ ] Indirect mode: messages > 256 bytes auto-select view attribute; kernel sets `DataLength = 0`, populates `ALPC_DATA_VIEW_ATTR` from the registered port section
 - [ ] Commit: `"ipc/alpc: ALPC extensions -- handle-attribute marshalling, direct/indirect mode selection"`

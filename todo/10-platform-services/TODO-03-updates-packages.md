@@ -21,7 +21,7 @@
 - → XREF: `06-networking/TODO-03` -- HTTPS client; §1 + §2 depend on HTTP GET being available
 - → XREF: `08-desktop-shell/TODO-07` -- `cng_sha256()`; §2 verify depends on crypto module
 - → XREF: `08-desktop-shell/TODO-04 §4` -- ZIP/IPKG extract; §3 and §6 depend on `zip_extract()`
-- → XREF: `09-services-security/TODO-04 §1` -- system restore point; §3 update-apply and §6 app install call `restore_create()` before making changes
+- → XREF: `10-platform-services/TODO-04 §1` -- system restore point; §3 update-apply and §6 app install call `restore_create()` before making changes
 - → XREF: `08-desktop-shell/TODO-11 §3` -- `appwiz.cpl` stub registered in Control Panel; §8 implements it
 
 ## Outcome

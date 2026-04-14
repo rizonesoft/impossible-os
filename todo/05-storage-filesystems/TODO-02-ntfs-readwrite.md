@@ -15,7 +15,7 @@
 - `src/kernel/fs/ntfs/ntfs_vfs.c` -- mount/unmount path; §2 + §5 extend it; §3 adds `ntfs_format()`
 - `src/kernel/fs/ntfs/ntfs_test.c` -- existing test suite; §6 extends it with the format+crash+replay scenario
 - → XREF: `05-storage-filesystems/TODO-01-block-storage-hardening.md §7` -- the LRU sector cache must be invalidated (`cache_invalidate(dev)`) at NTFS unmount; verify the unmount path calls this
-- → XREF: `09-services-security` -- `$Secure` security descriptors (§4) provide the on-disk format that maps to the kernel security token model; coordinate with the security TODO for how `Everyone:Full-Control` maps to kernel ACL structs
+- → XREF: `10-platform-services` -- `$Secure` security descriptors (§4) provide the on-disk format that maps to the kernel security token model; coordinate with the security TODO for how `Everyone:Full-Control` maps to kernel ACL structs
 
 ## Outcome
 

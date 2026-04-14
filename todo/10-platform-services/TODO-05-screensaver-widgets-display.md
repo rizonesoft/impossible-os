@@ -21,7 +21,7 @@
 - → XREF: `08-desktop-shell/TODO-06 §7` -- Win+L lock screen; §2 calls lock screen on screensaver dismiss when `RequirePassword=1`
 - → XREF: `08-desktop-shell/TODO-07 §2` -- `wallpaper_set()`; §1 bouncing logo screensaver reads wallpaper path; §3 widget manager sits above wallpaper layer
 - → XREF: `08-desktop-shell/TODO-11 §2` -- `desk.cpl` resolution dropdown; §5 here populates it with GOP mode list
-- → XREF: `09-services-security/TODO-12 §1` -- `sched_get_task_list()` + `cpu_ticks`; §4 CPU meter widget depends on that
+- → XREF: `10-platform-services/TODO-12 §1` -- `sched_get_task_list()` + `cpu_ticks`; §4 CPU meter widget depends on that
 
 ## Outcome
 

@@ -3,7 +3,7 @@
 > **Goal:** Implement the complete WiFi hardware driver layer -- a `wifi_device_t` vtable abstraction, four real-hardware drivers (RTL8188/8192 USB, RTL8821CE/8822BE PCIe, Intel AX200/AX210 iwlwifi, MediaTek MT7921/MT7922), a WPA2-PSK EAPOL supplicant with CCMP decryption, 802.11 frame layer, scan/association state machine, power management, and `netsh wlan` + `ncpa.cpl` WiFi UI integration -- making Impossible OS functional on any laptop or device that lacks Ethernet.
 
 > [!IMPORTANT]
-> **No WiFi infrastructure exists.** The networking stack (`src/kernel/net/`) handles Ethernet frames via `net_receive_ethernet()`; WiFi feeds into the same hook after stripping the 802.11 header and LLC/SNAP. The WiFi driver layer is architecturally independent of the Ethernet NIC drivers (`04-drivers-hardware/TODO-07`). The WPA2-PSK supplicant (§6) is the most security-critical piece -- it must use constant-time comparison for MIC verification to prevent timing side-channels. WiFi UI (`ncpa.cpl` §10) and connection manager live here; the `ncpa.cpl` base infrastructure belongs to `09-services-security/TODO-02 §6`.
+> **No WiFi infrastructure exists.** The networking stack (`src/kernel/net/`) handles Ethernet frames via `net_receive_ethernet()`; WiFi feeds into the same hook after stripping the 802.11 header and LLC/SNAP. The WiFi driver layer is architecturally independent of the Ethernet NIC drivers (`04-drivers-hardware/TODO-07`). The WPA2-PSK supplicant (§6) is the most security-critical piece -- it must use constant-time comparison for MIC verification to prevent timing side-channels. WiFi UI (`ncpa.cpl` §10) and connection manager live here; the `ncpa.cpl` base infrastructure belongs to `10-platform-services/TODO-02 §6`.
 
 ## Inputs
 
@@ -11,7 +11,7 @@
 - [`src/kernel/drivers/virtio/virtio.c`](../../src/kernel/drivers/virtio/virtio.c) -- VirtIO transport pattern (reference only; WiFi uses its own DMA rings)
 - → XREF: `04-drivers-hardware/TODO-07-network-drivers.md §7` -- WiFi 802.11 MAC stub (`wifi_mac_t`) defined there; this TODO supersedes those stubs with full implementations; the vtable names must be reconciled
 - → XREF: `04-drivers-hardware/TODO-11-security-hardware.md §1` -- `hwrng_read()` required by WPA2 supplicant for `SNonce` generation (§6) and CCMP nonce (§6); must be available before §6
-- → XREF: `09-services-security/TODO-02` -- `ncpa.cpl` base window (§10) is defined there; WiFi tab (§10 here) extends it; coordinate to avoid duplicate window registration
+- → XREF: `10-platform-services/TODO-02` -- `ncpa.cpl` base window (§10) is defined there; WiFi tab (§10 here) extends it; coordinate to avoid duplicate window registration
 - → XREF: `04-drivers-hardware/TODO-04-acpi-power-management.md §7` -- Wake-on-WLAN (§9) triggers S3 resume; integrate with ACPI power button SCI path
 
 ## Outcome
@@ -237,7 +237,7 @@ Add a WiFi tab to `ncpa.cpl` (Network Connections): scan results list, Connect/D
 **Files:** `src/desktop/ncpa_cpl.c` (extend or new WiFi tab), `src/shell/cmd_netsh.c` (extend)
 
 > [!NOTE]
-> → XREF: `09-services-security/TODO-02` -- `ncpa.cpl` base window infrastructure is defined there; this section adds the WiFi tab. The WiFi tab only appears if `wifi_manager_get_device() != NULL` (WiFi hardware present). Signal strength bars: map RSSI dBm to 0–4 bars: `< -80 dBm = 0`, `-80..-70 = 1`, `-70..-60 = 2`, `-60..-50 = 3`, `>= -50 = 4`.
+> → XREF: `10-platform-services/TODO-02` -- `ncpa.cpl` base window infrastructure is defined there; this section adds the WiFi tab. The WiFi tab only appears if `wifi_manager_get_device() != NULL` (WiFi hardware present). Signal strength bars: map RSSI dBm to 0–4 bars: `< -80 dBm = 0`, `-80..-70 = 1`, `-70..-60 = 2`, `-60..-50 = 3`, `>= -50 = 4`.
 
 - [ ] WiFi tab: scan-results list box with columns `SSID | Security | Signal (bars) | Channel`; auto-refresh scan every 30 s
 - [ ] "Connect" button: if security != OPEN, show passphrase input dialog; call `SYS_WIFI_CONNECT(ssid, passphrase, security)`; poll `SYS_WIFI_STATUS` every 500 ms; show progress: "Connecting…" → "Obtaining IP…" → "Connected"

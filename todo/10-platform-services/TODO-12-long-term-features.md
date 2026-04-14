@@ -1,10 +1,10 @@
 # TODO-12 -- Long-Term Features
 
-**Domain:** `09-services-security`
+**Domain:** `10-platform-services`
 **Goal:** Track the advanced features that elevate Impossible OS to a mature production platform -- developer tools, kernel/user-mode debugger, touch/gamepad input, print, TTS, software OpenGL, multi-user sessions, telemetry, and parental controls.
 
 > [!IMPORTANT]
-> **Depends on:** Core OS complete -- ring-3 PE execution (`TODO-07`), Win32 API surface (`TODO-08`), audio system (`09-services-security/TODO-01`), user accounts (`09-services-security/TODO-03 §*`), IxUI (`TODO-08 §13`). No section here is a prerequisite for any other active TODO.
+> **Depends on:** Core OS complete -- ring-3 PE execution (`TODO-07`), Win32 API surface (`TODO-08`), audio system (`10-platform-services/TODO-01`), user accounts (`10-platform-services/TODO-03 §*`), IxUI (`TODO-08 §13`). No section here is a prerequisite for any other active TODO.
 > **Long-term scope:** Nothing in this TODO is P0 or P1. All sections are P2–P4 power-user and ecosystem features. Each section is independently implementable.
 
 ---
@@ -17,7 +17,7 @@
 - The user-mode debugger (§2) uses hardware debug registers (`DR0`–`DR7`) for hardware breakpoints and `INT3` patching for software breakpoints -- both require ring-0 kernel support with a `DR`-read/write syscall.
 - TTS engine: prompt specifies **eSpeak-NG** (LGPL); the old TODO used **SAM** (public domain, ~2 K lines). Use SAM as the initial port (simpler), with eSpeak-NG as the upgrade path.
 - OpenGL: prompt specifies **TinyGL** (~5 K lines, zlib license) -- already named in `todo-old`. No existing OpenGL infrastructure.
-- Multi-user sessions (§8) depend on user accounts and a per-session compositor surface; overlaps with `09-services-security/TODO-03` (accounts) and `07-graphics-ui/TODO-02` (compositor) -- cross-link, don't duplicate.
+- Multi-user sessions (§8) depend on user accounts and a per-session compositor surface; overlaps with `10-platform-services/TODO-03` (accounts) and `07-graphics-ui/TODO-02` (compositor) -- cross-link, don't duplicate.
 - Telemetry (§9) is **opt-in only**, zero by default. `HKLM\SYSTEM\Privacy\Telemetry = 0`.
 - Parental controls (§10) hook into `SYS_CREATEPROCESS` to block apps -- that hook point is in the kernel process creation path (`TODO-07 §7`).
 
@@ -33,11 +33,11 @@
 | `include/kernel/mm/vmm.h` | `vmm_read_user()`, `vmm_write_user()` -- `ReadProcessMemory`/`WriteProcessMemory` |
 | `include/registry.h` | `registry_get/set()` -- debug console, telemetry, parental controls flags |
 | `include/desktop/wm.h` | `wm_create_window()` -- debug overlay, session compositor surface |
-| → XREF: `09-services-security/TODO-01` | `audio_play()` -- TTS PCM output |
-| → XREF: `09-services-security/TODO-08 §10–13` | IxUI windows -- debug console, parcon.cpl, gamepad settings |
+| → XREF: `10-platform-services/TODO-01` | `audio_play()` -- TTS PCM output |
+| → XREF: `10-platform-services/TODO-08 §10–13` | IxUI windows -- debug console, parcon.cpl, gamepad settings |
 | → XREF: `04-drivers-hardware/TODO-09` | USB HID -- touch digitizer and gamepad hardware input |
 | → XREF: `07-graphics-ui/TODO-02` | Compositor -- per-session backbuffer for multi-user |
-| → XREF: `09-services-security/TODO-03 §*` | User accounts and per-user registry hives (parental controls) |
+| → XREF: `10-platform-services/TODO-03 §*` | User accounts and per-user registry hives (parental controls) |
 
 ---
 

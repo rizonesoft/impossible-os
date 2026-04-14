@@ -14,12 +14,12 @@
 > on top of those foundations -- do not re-specify kernel XSAVE initialization.
 >
 > **C++ support** (for `ggml` C++ bindings and `llama.cpp`) depends on
-> `09-services-security/TODO-09 §11` (GCC/G++ long-term). The ggml C99 core
+> `10-platform-services/TODO-09 §11` (GCC/G++ long-term). The ggml C99 core
 > (`src/ggml.c`) does NOT require C++; §2 targets the C99 core only. C++ bindings
 > are a post-compiler stretch.
 >
 > **Compiler/SDK** for building inference apps (`ai_assistant.exe`) depends on
-> `09-services-security/TODO-09` TCC/GCC SDK. This TODO designs the runtime and
+> `10-platform-services/TODO-09` TCC/GCC SDK. This TODO designs the runtime and
 > syscall surface; app building follows when the compiler is available.
 >
 > No production ML code is merged during the research phase. The §7 deliverable
@@ -32,7 +32,7 @@
 
 - `02-kernel-core/TODO-19-x86-64-architecture.md §1` (→ XREF) -- XSAVE design; `CR4.OSXSAVE`; `XSETBV(XCR0, AVX_MASK)` -- §3 per-thread XSAVE context builds on this
 - `01-boot-platform/TODO-04-cpu-boot-sequencing.md §5` (→ XREF) -- Phase 1 XSAVE & PCID activation window; §3 adds per-thread TEB XSAVE area after §5 activates OSXSAVE
-- `09-services-security/TODO-09-compiler-sdk.md §11` (→ XREF) -- GCC/G++ C++ support; ggml C++ bindings depend on this (stretch, post-C99 core)
+- `10-platform-services/TODO-09-compiler-sdk.md §11` (→ XREF) -- GCC/G++ C++ support; ggml C++ bindings depend on this (stretch, post-C99 core)
 - `include/kernel/mm/pmm.h` -- `pmm_alloc_contiguous(count)` -- §4 model tensor allocation (128 MB–4 GB contiguous regions)
 - `include/kernel/mm/vmm.h` -- `vmm_map_page()` -- §4 user-mode tensor memory mapping
 - `include/kernel/sched/task.h` -- `task_t`, `TEB` -- §3 XSAVE area in TEB per thread

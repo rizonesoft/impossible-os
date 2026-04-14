@@ -1,11 +1,11 @@
 # TODO-11 -- OS Installer & ISO Build
 
-**Domain:** `09-services-security`
+**Domain:** `10-platform-services`
 **Goal:** Deliver a bootable ISO and graphical installer that make Impossible OS distributable and installable on real hardware -- the capstone that transforms the OS from a QEMU-only raw disk image into a product that ships.
 
 > [!IMPORTANT]
 > **Depends on:** `TODO-07 §7` (ring-3 PE execution) and `TODO-08 §10–13` (IxUI windows, user32, gdi32) for the installer GUI. GPT + FAT32 + IXFS format APIs must be available: `fat32_format()` (`include/kernel/fs/fat32.h`), `ixfs_format()` (`include/kernel/fs/ixfs.h`), `gpt_parse()` (`include/kernel/fs/gpt.h`), `blkdev_count()` (`include/kernel/drivers/blkdev.h`).
-> **Overlap:** §3 (first-boot wizard) XREFs `TODO-04-restore-recovery §7` (OOBE wizard in 09-services-security); do not duplicate that wizard -- trigger it from here.
+> **Overlap:** §3 (first-boot wizard) XREFs `TODO-04-restore-recovery §7` (OOBE wizard in this domain); do not duplicate that wizard; trigger it from here.
 
 ---
 
@@ -33,7 +33,7 @@
 | `include/registry.h` | `registry_set()` for `InstallerMode`, `FirstBoot` flags |
 | `src/boot/uefi/bootx64.c` | Existing bootloader -- copy to ISO `EFI/BOOT/BOOTX64.EFI` |
 | `scripts/build.sh` | Add `make iso` target here |
-| → XREF: `09-services-security/TODO-04 §7` | OOBE first-boot wizard (do not re-implement -- trigger only) |
+| → XREF: `10-platform-services/TODO-04 §7` | OOBE first-boot wizard (do not re-implement -- trigger only) |
 | → XREF: `05-storage-filesystems/TODO-08 §1` | GPT partition table write (reuse if available) |
 | → XREF: `TODO-08 §10–13` | IxUI window/message/GDI stack for installer GUI |
 

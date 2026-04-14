@@ -312,7 +312,7 @@ outsiders can track progress without reading 100+ TODO files.
   ```
   v1.0-kernel       → 01-boot-platform, 02-kernel-core, 03-memory-concurrency, 04-drivers-hardware
   v1.0-desktop      → 05-filesystem-storage, 06-networking, 07-graphics-ui, 08-desktop-shell
-  v1.0-apps         → 09-services-security, 10-apps
+  v1.0-apps         → 10-platform-services, 10-apps
   v1.0-release      → 12-installer-release
   v1.1-compat       → 11-user-platform-sdk
   ```

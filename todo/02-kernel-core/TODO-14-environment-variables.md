@@ -486,7 +486,7 @@
   4. Return the full path or `NULL` if not found
 - [ ] Integration: `shell_find_command` (§7) checks App Paths **after** the standard PATH search fails; this matches Windows `ShellExecute` behavior where App Paths is a fallback
 - [ ] Per-user App Paths: also check `HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\{name}` (HKCU takes precedence over HKLM)
-- [ ] `app_paths_register(name, full_path, additional_path)` -- API for installers to register executables without modifying PATH (→ XREF `10-services-security/TODO-03-updates-packages.md`)
+- [ ] `app_paths_register(name, full_path, additional_path)` -- API for installers to register executables without modifying PATH (→ XREF `10-platform-services/TODO-03-updates-packages.md`)
 
 - [ ] Commit: `"kernel/env: App Paths registry-based executable lookup"`
 

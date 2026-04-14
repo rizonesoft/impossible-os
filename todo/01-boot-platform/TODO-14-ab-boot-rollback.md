@@ -14,7 +14,7 @@
 - `include/kernel/boot_info.h` -- boot_info (needs slot metadata)
 - → XREF: `TODO-01-uefi-hardening-secureboot.md §1` -- UEFI runtime handoff / shared bootloader file; A/B slot policy is owned only here
 - → XREF: `TODO-02-bootloader-error-recovery.md §9` -- boot failure screen integration
-- → XREF: `10-services-security/TODO-03-updates-packages.md` -- update engine (downstream consumer)
+- → XREF: `10-platform-services/TODO-03-updates-packages.md` -- update engine (downstream consumer)
 
 ---
 

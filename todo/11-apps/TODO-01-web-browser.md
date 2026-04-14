@@ -35,7 +35,7 @@
 | `include/registry.h` | `registry_get/set()` -- homepage, search engine, bookmarks |
 | → XREF: `06-networking/TODO-03` | HTTP/HTTPS client -- mandatory prerequisite |
 | → XREF: `07-graphics-ui/TODO-04 §6` | `CTRL_TABSTRIP` -- browser tabs widget |
-| → XREF: `09-services-security/TODO-08 §10–11` | IxUI `user32`/`gdi32` for window + rendering in user-mode |
+| → XREF: `10-platform-services/TODO-08 §10–11` | IxUI `user32`/`gdi32` for window + rendering in user-mode |
 
 ---
 

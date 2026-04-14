@@ -8,13 +8,13 @@
 
 > [!IMPORTANT]
 > **Update client** (`update_check/download/verify/apply`, `wuapp.cpl`, IPKG
-> installer wizard) is owned by `09-services-security/TODO-03`; §1 here adds a small
+> installer wizard) is owned by `10-platform-services/TODO-03`; §1 here adds a small
 > migration note -- the existing `update_check()` parses an INI endpoint; this TODO
 > **upgrades the endpoint to JSON** and notes the matching client-side parse change
 > required in `TODO-03 §1`.
 >
 > **On-OS telemetry sender** (`telemetry_record_event`, rotating log, `privacy.cpl`)
-> is owned by `09-services-security/TODO-12 §9`; §7 here builds only the server
+> is owned by `10-platform-services/TODO-12 §9`; §7 here builds only the server
 > receiver (Cloudflare Worker → D1 → Grafana). Do not re-specify the on-OS client.
 >
 > **Release artifacts** (disk image, ISO, code signing, `release-{ver}.json` manifest)
@@ -25,8 +25,8 @@
 
 ## Inputs
 
-- `09-services-security/TODO-03-updates-packages.md §1` (→ XREF) -- `update_check()` INI client; §1 here changes the endpoint to JSON and notes the parse upgrade required there
-- `09-services-security/TODO-12-long-term-features.md §9` (→ XREF) -- `telemetry_record_event()`; HTTP POST stretch; §7 here builds the receiving server
+- `10-platform-services/TODO-03-updates-packages.md §1` (→ XREF) -- `update_check()` INI client; §1 here changes the endpoint to JSON and notes the parse upgrade required there
+- `10-platform-services/TODO-12-long-term-features.md §9` (→ XREF) -- `telemetry_record_event()`; HTTP POST stretch; §7 here builds the receiving server
 - `12-installer-release/TODO-01-release-artifacts.md §6` (→ XREF) -- `release-{version}.json` artifact manifest; §4 here consumes it for CDN upload
 - `12-installer-release/TODO-01-release-artifacts.md §1` (→ XREF) -- `OS_VERSION_STRING`, `increment-build.sh`; §5 promotion pipeline increments and tags versions
 - `11-user-platform-sdk/TODO-06-sdk-distribution.md §8` (→ XREF) -- `release-sdk.sh`; §5 promotion coordinates SDK + OS release
@@ -86,7 +86,7 @@ and Cloudflare R2 -- no live server to maintain.
   - `min_version`: oldest version from which this delta applies; client ignores `delta_url` if current version < `min_version`
 - [ ] **Channels**: three static files: `api/version/stable.json`, `api/version/beta.json`, `api/version/dev.json`; served via GitHub Pages CNAME redirect so `?channel=stable` maps to `stable.json`; CF Workers or Netlify redirect handles query-string routing (one-line Workers script)
 - [ ] **Changelog endpoint**: `GET /changelog/{version}` → Markdown file in `docs/changelog/1.0.22100.md`; generated from git log by `scripts/gen-changelog.sh`
-- [ ] **Client parse upgrade** (note for `09-services-security/TODO-03 §1`): change `update_check()` to `http_get()` the JSON endpoint and parse with a minimal JSON key-value extractor (no stdlib; 50-line `update_json_get_string/int` helpers); map fields to existing `struct update_info`; add `delta_url[256]` + `delta_sha256[65]` + `delta_size` fields to `struct update_info`
+- [ ] **Client parse upgrade** (note for `10-platform-services/TODO-03 §1`): change `update_check()` to `http_get()` the JSON endpoint and parse with a minimal JSON key-value extractor (no stdlib; 50-line `update_json_get_string/int` helpers); map fields to existing `struct update_info`; add `delta_url[256]` + `delta_sha256[65]` + `delta_size` fields to `struct update_info`
 - [ ] **SSL**: Let's Encrypt via GitHub Pages custom domain or Cloudflare proxy -- no configuration beyond CNAME
 - [ ] **Rate limiting**: static file; no server to rate-limit; Cloudflare's default DDoS protection covers it
 
@@ -152,7 +152,7 @@ and Cloudflare R2 -- no live server to maintain.
   ```
   - Valid categories: `System Tools`, `Development`, `Multimedia`, `Internet`, `Productivity`, `Games`
   - `index.json` is rebuilt by CI on every package submission approval (see §5)
-- [ ] **New shell commands** (extend `09-services-security/TODO-03` IPKG client):
+- [ ] **New shell commands** (extend `10-platform-services/TODO-03` IPKG client):
   - `ipkg search <query>` -- `http_get("https://pkg.impossible-os.dev/index.json", ...)` → cache to `C:\Temp\ipkg-index.json`; filter entries where `name` or `description` contains `query` (case-insensitive); print table: `Name | Version | Category | Size | Description`
   - `ipkg install <name>` -- look up name in cached index; if not found: `ipkg update` + retry; download `.ipkg` from `url`; verify SHA-256 via `cng_sha256()`; call existing `ipkg_install(path)` from `TODO-03 §4`
   - `ipkg list` -- scan `HKLM\SOFTWARE\Installed\*` subkeys (set by `TODO-03 §4` installer); print `Name | Version | Install Date`
@@ -211,7 +211,7 @@ and Cloudflare R2 -- no live server to maintain.
   5. Print `"Delta: {delta_size} bytes ({pct}% of full image), {file_count} changed files"`
   6. Upload delta to R2: `rclone copy build/delta-*.zip r2:impossible-os-releases/{channel}/deltas/`
   7. Populate `delta_url`, `delta_sha256`, `delta_size`, `min_version` fields in channel manifest JSON (§1)
-- [ ] **Client delta-first logic** (note for `09-services-security/TODO-03 §2`):
+- [ ] **Client delta-first logic** (note for `10-platform-services/TODO-03 §2`):
   - After `update_check()`: if `update_info.delta_url[0] != '\0'` AND current version >= `min_version`: try `update_download(delta_url, delta_sha256, ...)` first
   - `update_apply_delta(path)`: extract `delta.ini`; for each file in `[Files]`: extract from ZIP, verify hash, copy to `C:\`; update `HKLM\SYSTEM\Version` to `NewVersion`; on any file hash mismatch: log error + fall back to full image apply
   - Fallback: if delta download or apply fails: re-run full `update_download()` + `update_apply()` automatically
@@ -222,7 +222,7 @@ and Cloudflare R2 -- no live server to maintain.
 ## 7. Telemetry Pipeline `[Sonnet]`
 
 > Server-side receiver only. On-OS sender (`telemetry_record_event`, privacy.cpl,
-> `Telemetry=0` default) is specced in `09-services-security/TODO-12 §9`.
+> `Telemetry=0` default) is specced in `10-platform-services/TODO-12 §9`.
 
 - [ ] **Cloudflare Worker** (`workers/telemetry-receiver.js`):
   - `POST https://telemetry.impossible-os.dev/api/v1/report`

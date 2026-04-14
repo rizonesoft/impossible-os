@@ -30,7 +30,7 @@
 - → XREF: `TODO-18-kernel-debugger-kd-protocol.md` §5: debugger first-chance notification happens before panic; BSOD only shows if debugger is not attached
 - → XREF: `TODO-18-kernel-debugger-kd-protocol.md` §15: when `kd_active`, defer `panic_screen()` until debugger continue or timeout (mirrored checklist in TODO-18)
 - → XREF: `14-host-tools/TODO-04-crash-decode.md` (`D14 T04`): host-side crash dump decoder; QR code data format must be compatible
-- → XREF: `10-services-security/TODO-04-restore-recovery.md` (`D10 T04`): safe mode and recovery environment integration
+- → XREF: `10-platform-services/TODO-04-restore-recovery.md` (`D10 T04`): safe mode and recovery environment integration
 
 ---
 
@@ -302,7 +302,7 @@ The current BSOD only offers auto-restart or halt. Neither Windows nor Linux off
 - [ ] F2 = Defer next boot with last-loaded kernel module disabled: if `exec_find_module_by_pc(RIP)` (T08 §6) returns a module record, set `HKLM\SYSTEM\Recovery\BootBlacklistDriver` (REG_SZ) or NVRAM flag for loader to skip that image on next boot; if registry or module walk is unsafe, show "F2 unavailable" and log once to serial
 - [ ] F1 = Restart in Safe Mode: set `HKLM\SYSTEM\Recovery\BootToSafeMode = 1` + NVRAM flag, then restart
 - [ ] F5 = Restart with verbose logging: set `boot.conf` debug=1 equivalent via NVRAM flag
-- [ ] F8 = Recovery shell: if implemented, boot directly to recovery environment (-> XREF: `10-services-security/TODO-04-restore-recovery.md` (`D10 T04`))
+- [ ] F8 = Recovery shell: if implemented, boot directly to recovery environment (-> XREF: `10-platform-services/TODO-04-restore-recovery.md` (`D10 T04`))
 - [ ] Esc = Cancel countdown and halt permanently
 - [ ] Display F-key options as a footer menu: `F1 Safe Mode | F2 Last driver | F5 Verbose | F8 Recovery | Esc Halt`
 - [ ] Commit: `"kernel: keyboard-driven recovery actions on BSOD"`

@@ -4,11 +4,11 @@
 > kernel WM, providing the per-thread message queue, window class registry, WndProc
 > dispatch, HDC painting model, accelerator tables, window subclassing, cross-process
 > messaging, and common dialogs. This is the architectural substrate that backs the
-> API-surface stubs in `09-services-security/TODO-08 §10/§11` and
-> `07-graphics-ui/TODO-11`.
+> API-surface stubs in `10-platform-services/TODO-08` Sections 10 and 11 and
+> `07-graphics-ui/TODO-11`. Per-export rows for user32: `10-platform-services/TODO-A-user32-export-master-table.md`.
 
 > [!IMPORTANT]
-> **Scope boundary**: `TODO-08 §10` contains `user32.dll` function stubs
+> **Scope boundary**: `TODO-08` Section 10 contains `user32.dll` function stubs
 > (`RegisterClassExA`, `CreateWindowExA`, `GetMessage`, `DispatchMessage`,
 > `PostQuitMessage`, `SendMessage`, `SetWindowText`) and `TODO-11` (07-graphics-ui)
 > contains the GDI object table and `GetMessageA` per-window blocking queue. This TODO
@@ -41,8 +41,8 @@
 - `07-graphics-ui/TODO-11-win32-gdi-user32-stubs.md §2` (→ XREF) -- GDI object table, HDC→`gfx_surface_t` mapping
 - `07-graphics-ui/TODO-04-ui-controls.md` (→ XREF) -- `CTRL_*` implementations backing built-in window classes (§2)
 - `07-graphics-ui/TODO-05-widget-dialogs.md §8` (→ XREF) -- `dialog_color` + file dialogs backing `ChooseColor`/`ChooseFont` (§8)
-- `09-services-security/TODO-08-win32-api-surface.md §10 §11` (→ XREF) -- `user32.dll` / `gdi32.dll` stubs that delegate to subsystem (do not duplicate)
-- `09-services-security/TODO-07-win32-pe-loader.md §2` (→ XREF) -- Win32 syscall range `SYS_CREATEFILE=60`…`SYS_POSTMESSAGE=73`
+- `10-platform-services/TODO-08-win32-api-surface.md §10 §11` (→ XREF) -- `user32.dll` / `gdi32.dll` stubs that delegate to subsystem (do not duplicate)
+- `10-platform-services/TODO-07-win32-pe-loader.md §2` (→ XREF) -- Win32 syscall range `SYS_CREATEFILE=60`…`SYS_POSTMESSAGE=73`
 - `include/kernel/drivers/framebuffer.h` -- `fb_lock_compositor`, dirty-rect API -- §4
 
 ---

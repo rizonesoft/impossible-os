@@ -6,13 +6,13 @@
 > from CI/CD to hardware partner imaging.
 
 > [!IMPORTANT]
-> **Prerequisite**: `09-services-security/TODO-11` -- interactive installer wizard,
+> **Prerequisite**: `10-platform-services/TODO-11` -- interactive installer wizard,
 > `gpt_create`/`ixfs_format`/`fat32_format`, `installer_copy_files`, `InstallerMode`
 > Registry flag, `setup.log`. This TODO adds the unattended execution path through the
 > same pipeline -- do not re-specify partitioning, format, or file-copy logic.
 >
 > **OOBE trigger** (`HKLM\SYSTEM\FirstBoot=1`) and first-boot wizard are owned by
-> `09-services-security/TODO-04 §7`; `auth_create_user()` is owned by `TODO-06`.
+> `10-platform-services/TODO-04 §7`; `auth_create_user()` is owned by `TODO-06`.
 > Answer-file user creation (§2) calls these existing APIs -- do not re-specify them.
 >
 > **Kernel cmdline** is available via `boot_info->cmdline[BOOT_CONF_CMDLINE_MAX]`
@@ -25,9 +25,9 @@
 
 ## Inputs
 
-- `09-services-security/TODO-11-installer-iso.md` (→ XREF) -- `installer_copy_files`, `gpt_create`, `ixfs_format`, `InstallerMode`, `setup.log`; unattended path (§2) runs through same pipeline
-- `09-services-security/TODO-04-restore-recovery.md §7` (→ XREF) -- OOBE (`HKLM\SYSTEM\FirstBoot=1`); answer-file sets values OOBE would collect
-- `09-services-security/TODO-06-auth-security.md` (→ XREF) -- `auth_create_user(username, password, privilege)` -- §2 §3
+- `10-platform-services/TODO-11-installer-iso.md` (→ XREF) -- `installer_copy_files`, `gpt_create`, `ixfs_format`, `InstallerMode`, `setup.log`; unattended path (§2) runs through same pipeline
+- `10-platform-services/TODO-04-restore-recovery.md §7` (→ XREF) -- OOBE (`HKLM\SYSTEM\FirstBoot=1`); answer-file sets values OOBE would collect
+- `10-platform-services/TODO-06-auth-security.md` (→ XREF) -- `auth_create_user(username, password, privilege)` -- §2 §3
 - `11-user-platform-sdk/TODO-06-sdk-distribution.md §1` (→ XREF) -- `ipkg_create.exe` for OEM package format -- §4
 - `include/kernel/boot_info.h` -- `boot_info->cmdline` -- §2 `answer=<path>` kernel cmdline token
 - `include/kernel/fs/vfs.h` -- `vfs_open`, `vfs_read`, `vfs_readdir`, `vfs_unlink` -- §1 §2 §4 §5
@@ -114,7 +114,7 @@ the install. `pxesrv start` serves netboot images over TFTP to diskless clients.
 
 ## 2. Unattended Install Mode `[Sonnet]`
 
-> Extends `09-services-security/TODO-11` installer pipeline; auto-proceeds through
+> Extends `10-platform-services/TODO-11` installer pipeline; auto-proceeds through
 > every step that would otherwise show a UI dialog.
 
 **Source:** extends `src/installer/installer.c`

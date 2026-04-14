@@ -160,7 +160,7 @@
 
 ## 6. SSH Config File `[Sonnet]`
 
-> → XREF: `09-services-security/TODO-08 §2` -- `GetEnvironmentVariableA` for username resolution
+> → XREF: `10-platform-services/TODO-08 §2` -- `GetEnvironmentVariableA` for username resolution
 
 **Source file:** `src/apps/ssh/ssh_config.c`
 

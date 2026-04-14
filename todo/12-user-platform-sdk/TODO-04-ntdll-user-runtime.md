@@ -8,16 +8,16 @@
 
 > [!IMPORTANT]
 > **Prerequisites complete before starting:**
-> - `09-services-security/TODO-07 §7` -- `pe_exec()` with minimal TEB (`stack_base/limit/self`,
+> - `10-platform-services/TODO-07 §7` -- `pe_exec()` with minimal TEB (`stack_base/limit/self`,
 >   `FS_BASE` MSR) and minimal PEB (`ImageBaseAddress`, `ProcessParameters.CommandLine`).
 >   This TODO **extends** TEB with `TlsSlots[64]`, `ExceptionList`, VEH chain head, and
 >   `Tib.FiberData`; and extends PEB with `ProcessHeap`, `Ldr` (module list), `TlsBitmap`.
-> - `09-services-security/TODO-08 §4` -- `ntdll.dll` minimal stubs
+> - `10-platform-services/TODO-08 §4` -- `ntdll.dll` minimal stubs
 >   (`RtlInitUnicodeString`, `NtCurrentTeb`, `RtlGetVersion`, `NtAllocateVirtualMemory`).
 >   Stubs are replaced/completed here without breaking their export table entries.
-> - `09-services-security/TODO-08 §5` -- `VirtualAlloc`/`VirtualFree` already wired;
+> - `10-platform-services/TODO-08 §5` -- `VirtualAlloc`/`VirtualFree` already wired;
 >   `HeapAlloc`/`HeapFree`/`GetProcessHeap` call through to `RtlAllocateHeap` (§2 here).
-> - `09-services-security/TODO-08 §7` -- `LoadLibrary`/`GetProcAddress`/`FreeLibrary`
+> - `10-platform-services/TODO-08 §7` -- `LoadLibrary`/`GetProcAddress`/`FreeLibrary`
 >   already wired; they forward to `LdrLoadDll`/`LdrGetProcedureAddress` (§3 here).
 >
 > **`ntdll.dll` is always mapped at `0x7FF00000000`** (fixed VA, set in PE optional header
@@ -36,9 +36,10 @@
 - `include/pe.h` -- `IMAGE_TLS_DIRECTORY`, `IMAGE_DATA_DIRECTORY` -- `TODO-07 §3`
 - `include/kernel/mm/vmm.h` -- `vmm_alloc_user()`, `VirtualAlloc`/`VirtualFree` -- `TODO-08 §5`
 - `include/kernel/syscall.h` -- syscall numbers for `SYS_VIRTUALALLOC`, `SYS_VIRTUALFREE`
+- `08-graphics-ui/TODO-A-Win32k-Shadow-SSDT-Master-Table.md` (XREF) -- `NtGdi*` / `NtUser*` syscall stub indices in `ntdll_syscalls.asm` must match Table 1; router contract in `08-graphics-ui/TODO-13-win32k-shadow-native-api.md`
 - `src/win32/ntdll.c` -- existing minimal stubs from `TODO-08 §4` (extend, do not duplicate)
-- `09-services-security/TODO-07-win32-pe-loader.md §7` (→ XREF) -- TEB/PEB minimal setup
-- `09-services-security/TODO-08-win32-api-surface.md §4 §5 §7` (→ XREF) -- stubs + VirtualAlloc + LoadLibrary forwards
+- `10-platform-services/TODO-07-win32-pe-loader.md §7` (→ XREF) -- TEB/PEB minimal setup
+- `10-platform-services/TODO-08-win32-api-surface.md §4 §5 §7` (→ XREF) -- stubs + VirtualAlloc + LoadLibrary forwards
 - `02-kernel-core/TODO-10-exception-handling.md §3` (→ XREF) -- SEH frame walk; VEH fallback
 - `user/lib/crt0_pe.asm` -- existing from `TODO-07 §9`; extend for static initializers (§6)
 

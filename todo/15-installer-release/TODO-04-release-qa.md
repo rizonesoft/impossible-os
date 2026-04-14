@@ -18,7 +18,7 @@
 > working correctly.
 >
 > **Post-install OOBE trigger** (`HKLM\SYSTEM\FirstBoot=1`) verified in
-> `09-services-security/TODO-11 §8`; §3 here checks it passes on the Hyper-V VM.
+> `10-platform-services/TODO-11 §8`; §3 here checks it passes on the Hyper-V VM.
 >
 > **Win32 compat CI gate** (`scripts/compat-check.sh`) is owned by
 > `11-user-platform-sdk/TODO-07 §12`; §7 here lists it as a sign-off gating condition --
@@ -32,7 +32,7 @@
 - `03-memory-concurrency/TODO-09-concurrency-diagnostics.md` (→ XREF) -- `KASAN=1`, `LOCKDEP=1` build flags; stack guard pages; heap canaries; §8 QA build profile
 - `01-boot-platform/TODO-04-cpu-boot-sequencing.md §3` (→ XREF) -- `HV_TSC_ENLIGHTENMENT` detection; `boot_info.hv_flags`; §3 Hyper-V boot dependency
 - `01-boot-platform/TODO-07-boot-diagnostics.md` (→ XREF) -- `[READY]` serial marker; `boot_stage_history[]`; §1 §2 serial output parsing
-- `09-services-security/TODO-11-installer-iso.md §8` (→ XREF) -- post-install first boot + OOBE trigger verification; §3 Hyper-V certification baseline test
+- `10-platform-services/TODO-11-installer-iso.md §8` (→ XREF) -- post-install first boot + OOBE trigger verification; §3 Hyper-V certification baseline test
 - `11-user-platform-sdk/TODO-07-win32-compat-matrix.md §12` (→ XREF) -- `scripts/compat-check.sh` Tier 1–7 gate; §7 sign-off gating condition
 - `12-installer-release/TODO-01-release-artifacts.md §1 §5` (→ XREF) -- `OS_VERSION_STRING`, `increment-build.sh`, code signing; §7 checklist items
 - `12-installer-release/TODO-03-update-server.md §3` (→ XREF) -- `promote-release.sh` stable promotion; §7 final step

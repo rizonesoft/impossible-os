@@ -8,11 +8,11 @@
 > [!IMPORTANT]
 > This TODO owns **tracking and testing infrastructure only** -- it does not implement
 > any Win32 API functions. Implementation of each API lives in its owning TODO
-> (`09-services-security/TODO-07` through `TODO-08`, `11-user-platform-sdk/TODO-04`
+> (`10-platform-services/TODO-07` through `TODO-08`, `11-user-platform-sdk/TODO-04`
 > through `TODO-05`). Gate conditions reference those TODOs.
 >
 > **`win32_unimpl_stub`** (in-kernel call-count table + `win32log` shell command) is
-> already specced in `09-services-security/TODO-08 §9`. This TODO extends it with a
+> already specced in `10-platform-services/TODO-08 §9`. This TODO extends it with a
 > shared-memory counter map for user-mode access and the `win32compat.exe` report tool --
 > do not re-specify the base stub infrastructure.
 >
@@ -24,9 +24,9 @@
 
 ## Inputs
 
-- `09-services-security/TODO-07-win32-pe-loader.md` (→ XREF) -- gate TODO for Tiers 1–3
-- `09-services-security/TODO-08-win32-api-surface.md §9` (→ XREF) -- `win32_unimpl_stub` call-count table; extend here with shmem map
-- `09-services-security/TODO-08-win32-api-surface.md §1 §2 §5 §6 §7 §10` (→ XREF) -- gate TODOs for Tiers 2–7
+- `10-platform-services/TODO-07-win32-pe-loader.md` (→ XREF) -- gate TODO for Tiers 1–3
+- `10-platform-services/TODO-08-win32-api-surface.md §9` (→ XREF) -- `win32_unimpl_stub` call-count table; extend here with shmem map
+- `10-platform-services/TODO-08-win32-api-surface.md §1 §2 §5 §6 §7 §10` (→ XREF) -- gate TODOs for Tiers 2–7
 - `11-user-platform-sdk/TODO-04-ntdll-user-runtime.md §2 §3` (→ XREF) -- gate TODO for Tiers 5–7
 - `11-user-platform-sdk/TODO-05-win32-subsystem.md §1–4` (→ XREF) -- gate TODO for Tiers 6–7
 - `02-kernel-core/TODO-13-registry.md` (→ XREF) -- gate TODO for Tier 4 (RegOpenKey etc.)
@@ -35,15 +35,15 @@
 - `scripts/build.sh` -- QEMU headless run pattern (`-serial stdio`); `build/serial.log`
 - `18-future-research/TODO-06-android-app-compatibility.md` (→ XREF) -- TODO-06 sections 5 and 8 launcher UX and lifecycle for Android guest beside Win32 tiers (future epic)
 - `sdk/docs/` -- `win32-compat.md` lives here (§1)
+- `../10-platform-services/TODO-A-user32-export-master-table.md` (XREF) authoritative user32.dll export rows + Done bits (this TODO keeps tier gates + sample apps)
+- `../10-platform-services/TODO-B-comctl32-export-master-table.md` (XREF) authoritative comctl32.dll export rows
+- `../10-platform-services/TODO-C-shell32-export-master-table.md` (XREF) authoritative shell32.dll export rows
 
 ---
 
 ## Outcome
 
-`sdk/docs/win32-compat.md` tracks every tracked Win32 function with status. Each tier
-1–8 has passing native test programs and green real-binary milestones. `make compat-check`
-runs all tier 1–7 programs under QEMU headless and reports a compat score. When PuTTY
-runs, Win32 compatibility is excellent.
+`sdk/docs/win32-compat.md` tracks aggregate Win32 function status by DLL and tier. Per-DLL export rows and owners live in D10 TODO-A, TODO-B, and TODO-C (see Inputs). Each tier 1 through 8 has passing native test programs and green real-binary milestones. `make compat-check` runs all tier 1 through 7 programs under QEMU headless and reports a compat score. When PuTTY runs, Win32 compatibility is excellent.
 
 ---
 
@@ -72,7 +72,7 @@ runs, Win32 compatibility is excellent.
 
 - [ ] **`sdk/docs/win32-compat.md`** structure:
   - Header: date regenerated, total tracked, summary counts per status
-  - One table per DLL (`kernel32.dll`, `user32.dll`, `gdi32.dll`, `ntdll.dll`, `advapi32.dll`, `shell32.dll`, `msvcrt.dll`, `comdlg32.dll`)
+  - One summary table per DLL in `win32-compat.md` (kernel32.dll, user32.dll, gdi32.dll, ntdll.dll, advapi32.dll, shell32.dll, msvcrt.dll, comdlg32.dll); detailed export rows for user32, comctl32, and shell32 stay in D10 TODO-A / TODO-B / TODO-C
   - Columns: `Function | Status | Tier | Notes`
   - Status values: `✅ implemented`, `⚠️ stub (returns error)`, `🔄 partial`, `❌ missing`
   - Tier: 1–8 from bring-up ladder (§2)
@@ -133,7 +133,7 @@ runs, Win32 compatibility is excellent.
 
 ## 3. Tier 1 -- Process Exit Only `[Sonnet]`
 
-> Gate: `09-services-security/TODO-07 §1` (ring-3 fix + `SYS_EXITPROCESS`)
+> Gate: `10-platform-services/TODO-07 §1` (ring-3 fix + `SYS_EXITPROCESS`)
 
 **~2 functions:** `ExitProcess`, `GetLastError`
 
@@ -148,7 +148,7 @@ runs, Win32 compatibility is excellent.
 
 ## 4. Tier 2 -- Console I/O `[Sonnet]`
 
-> Gate: `09-services-security/TODO-08 §1 §8`
+> Gate: `10-platform-services/TODO-08 §1 §8`
 
 **~6 functions:** `GetStdHandle`, `WriteConsoleA`, `ReadConsoleA`, `ExitProcess`, `GetLastError`, `SetLastError`
 
@@ -166,7 +166,7 @@ runs, Win32 compatibility is excellent.
 
 ## 5. Tier 3 -- File I/O `[Sonnet]`
 
-> Gate: `09-services-security/TODO-07 §6`, `TODO-08 §3` partial
+> Gate: `10-platform-services/TODO-07 §6`, `TODO-08 §3` partial
 
 **~12 functions:** `CreateFile`, `ReadFile`, `WriteFile`, `CloseHandle`, `GetFileSize`, `SetFilePointer`, `DeleteFile`, `MoveFile`, `CreateDirectory`, `RemoveDirectory`, `FindFirstFile`, `FindNextFile`, `FindClose`
 
@@ -185,7 +185,7 @@ runs, Win32 compatibility is excellent.
 
 ## 6. Tier 4 -- Process & Registry `[Sonnet]`
 
-> Gate: `09-services-security/TODO-08 §2`, `02-kernel-core/TODO-13-registry.md`
+> Gate: `10-platform-services/TODO-08 §2`, `02-kernel-core/TODO-13-registry.md`
 
 **~20 functions** adds: `CreateProcess`, `WaitForSingleObject`, `GetExitCodeProcess`, `TerminateProcess`, `RegOpenKeyExA`, `RegQueryValueExA`, `RegSetValueExA`, `RegCreateKeyExA`, `RegCloseKey`, `GetEnvironmentVariableA`, `SetEnvironmentVariableA`, `GetCommandLineA`, `OpenProcess`, `GetCurrentProcessId`, `GetCurrentThreadId`
 
@@ -204,7 +204,7 @@ runs, Win32 compatibility is excellent.
 
 ## 7. Tier 5 -- Memory & Sync `[Sonnet]`
 
-> Gate: `09-services-security/TODO-08 §5 §6`, `11-user-platform-sdk/TODO-04 §2`
+> Gate: `10-platform-services/TODO-08 §5 §6`, `11-user-platform-sdk/TODO-04 §2`
 
 **~15 additional functions** adds: `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `VirtualQuery`, `HeapCreate`, `HeapAlloc`, `HeapFree`, `HeapReAlloc`, `GetProcessHeap`, `CreateMutex`, `CreateEvent`, `SetEvent`, `ResetEvent`, `WaitForMultipleObjects`, `InitializeCriticalSection`, `EnterCriticalSection`, `LeaveCriticalSection`, `DeleteCriticalSection`, `InterlockedCompareExchange`, `InterlockedIncrement`, `InterlockedDecrement`
 
@@ -223,7 +223,7 @@ runs, Win32 compatibility is excellent.
 
 ## 8. Tier 6 -- MessageBox & Basic GUI `[Sonnet]`
 
-> Gate: `11-user-platform-sdk/TODO-05 §1–3`, `09-services-security/TODO-08 §10`
+> Gate: `11-user-platform-sdk/TODO-05 §1–3`, `10-platform-services/TODO-08 §10`
 
 **~5 additional functions** adds: `MessageBoxA`, `MessageBoxW`, `LoadIconA`, `LoadCursorA`, `GetSystemMetrics`
 
@@ -240,7 +240,7 @@ runs, Win32 compatibility is excellent.
 
 ## 9. Tier 7 -- Full Win32 Window + Controls `[Sonnet]`
 
-> Gate: `11-user-platform-sdk/TODO-05 §2–4`, `09-services-security/TODO-08 §7 §10 §11`
+> Gate: `11-user-platform-sdk/TODO-05 §2–4`, `10-platform-services/TODO-08 §7 §10 §11`
 
 **~40 additional functions** adds: `RegisterClassExA`, `CreateWindowExA`, `ShowWindow`, `UpdateWindow`, `DestroyWindow`, `GetMessage`, `DispatchMessage`, `DefWindowProcA`, `TranslateMessage`, `PostQuitMessage`, `BeginPaint`, `EndPaint`, `InvalidateRect`, `TextOutA`, `DrawTextA`, `SetBkColor`, `SetTextColor`, `GetDC`, `ReleaseDC`, `CreatePen`, `CreateSolidBrush`, `SelectObject`, `DeleteObject`, `MoveWindow`, `SetWindowTextA`, `GetWindowTextA`, `GetClientRect`, `SetWindowLongPtrA`, `GetWindowLongPtrA`, standard control message set (`WM_COMMAND`, `BM_SETSTATE`, `EM_GETTEXT`, `LB_ADDSTRING`, etc.)
 
@@ -371,3 +371,12 @@ Run `bash scripts/build.sh` then each tier's test in order.
 - [ ] **Stub log**: `win32compat log putty.exe` → prints top-10 stubs + writes `compat_putty_*.log`; `win32-compat.md` updated with `⚠️` status for at least 5 functions
 - [ ] **CI gate**: `make compat-check` runs Tier 1–3 tests; prints score ≥ 25% after Tier 4 complete
 - [ ] Commit: `"sdk: Win32 compat matrix, bring-up ladder Tier 1–8, compat_stub shmem, win32compat.exe, compat-check CI"`
+
+---
+
+## History
+
+| Date | Action | Summary |
+|------|--------|---------|
+| 2026-04-14 | validate | Linked Inputs to D10 TODO-A/B/C as authoritative export tables; clarified Outcome + tracker checklist vs per-DLL rows. |
+| 2026-04-14 | gap-analysis | Cross-TODO ownership: compat matrix stays tier gates; export inventories owned by TODO-A/B/C only. |

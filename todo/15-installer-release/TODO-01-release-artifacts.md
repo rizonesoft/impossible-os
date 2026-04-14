@@ -12,7 +12,7 @@
 > `set-version.sh` script, Registry baking, and `winver.exe`. Do not re-specify the
 > base `version.h` constants.
 >
-> **ISO script already specced**: `09-services-security/TODO-11-installer-iso.md §1`
+> **ISO script already specced**: `10-platform-services/TODO-11-installer-iso.md §1`
 > owns `scripts/make-iso.sh` (El Torito + EFI, no GRUB, `make iso` target,
 > `sha256sum`). §4 here extends it with Joliet+Rock Ridge, versioned filename, and
 > `README.txt` -- do not duplicate the base ISO build.
@@ -23,7 +23,7 @@
 > and the **bootloader-side kernel verification** path -- do not re-specify the crypto or
 > the PE trailer format.
 >
-> **Artifact manifest consumer**: `09-services-security/TODO-03` update check API parses
+> **Artifact manifest consumer**: `10-platform-services/TODO-03` update check API parses
 > the `release-{version}.json` produced by §6.
 
 ---
@@ -34,8 +34,8 @@
 - `scripts/build.sh` -- existing build script; extend with `make release` / `make iso` hooks
 - `scripts/make-iso.sh` (from `TODO-11 §1`) -- base ISO build; extend in §4
 - `08-desktop-shell/TODO-07-cng-crypto.md §7` (→ XREF) -- `codesign_sign(path, priv_key)` / `codesign_verify(path)`; used in §5
-- `09-services-security/TODO-11-installer-iso.md §1` (→ XREF) -- `make iso` target; §4 extends it
-- `09-services-security/TODO-03-update-delivery.md` (→ XREF) -- consumes `release-{version}.json` from §6
+- `10-platform-services/TODO-11-installer-iso.md §1` (→ XREF) -- `make iso` target; §4 extends it
+- `10-platform-services/TODO-03-update-delivery.md` (→ XREF) -- consumes `release-{version}.json` from §6
 - `src/boot/uefi/bootx64.c` -- bootloader source; extend with optional kernel signature check in §5
 - `include/kernel/uefi_runtime.h` -- UEFI variable access for Secure Boot toggle check -- §5
 - `tools/` (host-side build tools pattern) -- `usb_creator.c` follows same pattern -- §3
@@ -128,7 +128,7 @@ shows `Impossible OS 1.0 (Build 22000)`.
 
 ## 4. Bootable ISO (Joliet + Rock Ridge) `[Sonnet]`
 
-> Extends `09-services-security/TODO-11-installer-iso.md §1` -- adds Joliet+Rock Ridge
+> Extends `10-platform-services/TODO-11-installer-iso.md §1` -- adds Joliet+Rock Ridge
 > extensions, versioned output filename, and `README.txt` at ISO root.
 
 **Modification to `scripts/make-iso.sh`**

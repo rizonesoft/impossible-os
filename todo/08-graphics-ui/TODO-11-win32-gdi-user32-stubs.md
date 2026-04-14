@@ -4,6 +4,8 @@
 
 > [!IMPORTANT]
 > **Already exists**: All graphics primitives (`gfx_draw_line`, `gfx_fill_rect`, `gfx_draw_rect`, `gfx_fill_circle`, `gfx_blit_alpha`, `gfx_surface_create/destroy`, `gfx_surface_t`) in `gfx.h`. Font system (`ttf_draw_string`, `ttf_get`, `FONT_UI`, `FONT_UI_BOLD`) in `font_mgr.h`. Window manager (`wm_create_window`, `wm_destroy_window`, `wm_move_window`, `wm_resize_window`, `wm_focus_window`, `wm_mark_dirty`) in `wm.h`. Cursor shapes (`cursor_set_shape`, `CURSOR_ARROW/HAND/TEXT/MOVE/WAIT/CROSSHAIR/FORBIDDEN/RESIZE_*`) in `cursor.h`. Icon system (`icon_get`, `icon_for_extension`) in `icon_store.h`. `MessageBox`, `dialog_file_open/save`, `dialog_color` from TODO-05. `wm_minimize/maximize/restore/set_title` from TODO-06. **Missing**: all Win32 handle types (`HDC`, `HBITMAP`, etc.), GDI DC object table, shell icon index maps, USER32 message-loop infrastructure, `WM_*` constant IDs. **Scope boundary**: this TODO is stubs only -- each Win32 API wraps an existing Impossible OS primitive; the full Win32 PE loader and syscall thunking belong to `02-kernel-core`. Complete sections in order: icon map → GDI DC → GDI drawing → GDI text → cursor/icon/metrics → USER32 windows → USER32 message loop → dialogs.
+>
+> **USER32 export rows:** authoritative per-export checklist and Done bits live in [`../10-platform-services/TODO-A-user32-export-master-table.md`](../10-platform-services/TODO-A-user32-export-master-table.md) (do not maintain a second export inventory in this file).
 
 ## Inputs
 

@@ -22,7 +22,7 @@
 - `include/desktop/wm.h` -- `wm_create_window()` -- §7 first-boot wizard, §9 crash report viewer
 - → XREF: `02-kernel-core/TODO-16` -- crash dump generation (registers, stack trace); §9 here adds on-boot prompt + formatted viewer on top
 - → XREF: `07-graphics-ui/TODO-03 §5` -- F8 boot-time keyboard intercept lives there; §4 here implements the recovery menu content behind that intercept
-- → XREF: `09-services-security/TODO-03 §3` -- `update_apply()` and `installer_open()` call `restore_create()` from §1 here
+- → XREF: `10-platform-services/TODO-03 §3` -- `update_apply()` and `installer_open()` call `restore_create()` from §1 here
 - → XREF: `08-desktop-shell/TODO-04 §7` -- built-in scheduler tasks include `klog_rotate`; §8 event log rotate uses same scheduler slot
 - → XREF: `08-desktop-shell/TODO-06 §5` -- user account creation used in §7 first-boot wizard
 

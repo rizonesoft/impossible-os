@@ -81,7 +81,7 @@
 > - [ ] `NtSetCurrentDirectory` / `NtQueryCurrentDirectory` are not wired in SSDT registration yet; add service numbers and table registration as part of this section and `TODO-05-native-api-ssdt.md §4`.
 > - [ ] `MAX_PATH` is not a kernel-wide constant today; use or define a constant aligned with `VFS_MAX_PATH` to avoid path-size drift.
 > - [ ] PEB process-parameter `CurrentDirectory` is currently hardcoded to `C:\\`; keep `RTL_USER_PROCESS_PARAMETERS.CurrentDirectory` synchronized with `task->cwd` (→ XREF `TODO-04-peb-teb-user-abi.md §5`).
-> - [ ] Win32 wrappers are separate user-mode/API-surface work: `GetCurrentDirectoryW`/`SetCurrentDirectoryW` in `todo/05-storage-filesystems/TODO-05-win32-file-io-api.md §6`, and A-suffixed API exports in `todo/10-services-security/TODO-08-win32-api-surface.md §2`.
+> - [ ] Win32 wrappers are separate user-mode/API-surface work: `GetCurrentDirectoryW`/`SetCurrentDirectoryW` in `todo/05-storage-filesystems/TODO-05-win32-file-io-api.md §6`, and A-suffixed API exports in `todo/10-platform-services/TODO-08-win32-api-surface.md §2`.
 
 **Test checkpoint:** New process `task->cwd` is `"C:\\"`. `NtSetCurrentDirectory("C:\\Impossible")` updates CWD; `NtQueryCurrentDirectory` returns `"C:\\Impossible"`. `NtSetCurrentDirectory` on non-existent path returns error (CWD unchanged). Relative path `"System\\Logs"` resolves to `"C:\\System\\Logs"` when CWD is `"C:\\"`. `task_fork()` child inherits parent CWD. `POST16(0xD010)` on entry, `POST16(0xD011)` after VFS resolver wired. Range `0xD01x` confirmed free. Test on: QEMU WHPX + TCG.
 

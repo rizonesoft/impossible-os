@@ -1,11 +1,14 @@
 # TODO-08 -- Win32 API Surface Completion
 
-**Domain:** `09-services-security`
+**Domain:** `10-platform-services`
 **Goal:** Complete the Win32 API surface so unmodified Win32 programs compiled with MinGW run on Impossible OS -- console apps, GUI apps, process/memory/sync APIs, DLL loading, the IxUI toolkit, and the developer SDK.
 
 > [!IMPORTANT]
 > **Depends on:** `TODO-07 §1–9` -- ring-3 execution, `SYSCALL`/`SYSRET`, and the PE loader must be working before this TODO begins.
 > **Continues from:** `todo-old/510-Long-Term-Stretch/TODO-510-Native-Win32.md` §5–9 (migrated and expanded).
+> [!NOTE]
+> **DLL export master tables (authoritative rows):** [`TODO-A-user32-export-master-table.md`](TODO-A-user32-export-master-table.md), [`TODO-B-comctl32-export-master-table.md`](TODO-B-comctl32-export-master-table.md), [`TODO-C-shell32-export-master-table.md`](TODO-C-shell32-export-master-table.md). Sections 10 through 12 below describe **files, wiring, and acceptance**; do **not** duplicate full export inventories here (maintain rows in TODO-A/B/C).
+
 
 ---
 
@@ -223,7 +226,7 @@ Add to `src/win32/kernel32.c` and extend `src/win32/pe_loader.c`. Enables loadin
 Prevents crashes when a PE calls a function not yet implemented. Maps to Impossible OS's superior diagnostics story.
 
 - [ ] Create `src/win32/unimpl.c`: `win32_unimpl_stub(const char *dll, const char *fn)` → `klog_warn("UNIMPL: %s!%s", dll, fn)`; increment call count in a static table (max 256 entries: `dll!fn` → count)
-- [ ] All stub entries in export tables (§2, §10–12) route to `win32_unimpl_stub(dll, fn)` when the real implementation is missing
+- [ ] All stub entries in export tables (Section 2, Sections 10 through 12) route to `win32_unimpl_stub(dll, fn)` when the real implementation is missing
 - [ ] Return safe defaults: `(HANDLE)0` / `0` / `FALSE` / `NULL` as appropriate per function signature
 - [ ] Shell command `win32log` (in `cmd.exe`) → dump the unimpl table sorted by call count descending to serial + screen
 - [ ] Commit: `"win32: unimplemented function logger"`
@@ -234,42 +237,19 @@ Prevents crashes when a PE calls a function not yet implemented. Maps to Impossi
 
 Create `src/win32/user32.c`. Maps Win32 window and message API to the native WM (`wm_create_window`, `wm_destroy_window`).
 
-- [ ] `RegisterClassExA/W(wndclass)` → store `WNDCLASSEX` (class name, `WndProc`, icon, cursor, bg brush) in a per-process class table (max 32 entries)
-- [ ] `CreateWindowExA/W(exStyle, className, title, style, x, y, w, h, parent, menu, hInst, param)` → `wm_create_window(title, x, y, w, h, flags)` → store `WndProc` ptr; return HWND
-- [ ] `ShowWindow(hWnd, nCmdShow)` → `wm_show_window()` / `wm_hide_window()` based on `nCmdShow`
-- [ ] `DestroyWindow(hWnd)` → `wm_destroy_window(handle)`
-- [ ] `GetMessage(lpMsg, hWnd, msgMin, msgMax)` → block on WM event queue; populate `MSG` struct; return 0 on `WM_QUIT`
-- [ ] `TranslateMessage(lpMsg)` → convert `WM_KEYDOWN` scan codes to `WM_CHAR` messages
-- [ ] `DispatchMessage(lpMsg)` → look up registered `WndProc` for `lpMsg->hwnd`; call it with `(hWnd, msg, wParam, lParam)`
-- [ ] `DefWindowProc(hWnd, msg, wParam, lParam)` → handle `WM_CLOSE` (destroy window), `WM_PAINT` (no-op), `WM_DESTROY` (post WM_QUIT), others return 0
-- [ ] `PostQuitMessage(exitCode)` → enqueue `WM_QUIT` with `wParam = exitCode`
-- [ ] `PostMessage(hWnd, msg, wParam, lParam)` / `SendMessage(hWnd, msg, wParam, lParam)` → post/dispatch to WM queue
-- [ ] `MessageBoxA/W(hWnd, text, caption, type)` → `SYS_MSGBOX` (TODO-07 §2, syscall 71)
-- [ ] `SetWindowTextA/W(hWnd, str)` → update window title via WM
-- [ ] `GetClientRect(hWnd, lpRect)` → return drawable area dimensions
+- [ ] Per-export tracking and Done bits: authoritative table in [`TODO-A-user32-export-master-table.md`](TODO-A-user32-export-master-table.md) (Tier 1 core pump; Tier 2 TODO-11 bridge). Mark each row `[x]` only when callable from a PE and tested per [`../12-user-platform-sdk/TODO-07-win32-compat-matrix.md`](../12-user-platform-sdk/TODO-07-win32-compat-matrix.md) tiers.
+- [ ] Implement Tier 1 behaviors: class registration, `CreateWindowEx`, message loop (`GetMessage` / `TranslateMessage` / `DispatchMessage`), `DefWindowProc` integration with [`../12-user-platform-sdk/TODO-05-win32-subsystem.md`](../12-user-platform-sdk/TODO-05-win32-subsystem.md), `PostQuitMessage` / `PostMessage` / `SendMessage`, `MessageBox` syscall path, `SetWindowText`, `GetClientRect`.
+- [ ] Wire exports into the built-in DLL table per [`TODO-07-win32-pe-loader.md`](TODO-07-win32-pe-loader.md) Section 6; ship with the on-disk name contract in TODO-A (`C:\Windows\System32\user32.dll`).
 - [ ] Commit: `"win32: user32.dll window management"`
 
 ---
 
 ## 11. GDI Rendering (`gdi32.dll`) `[Sonnet]`
 
-Create `src/win32/gdi32.c`. Maps GDI primitives to the kernel's `gfx_*` and `ttf_*` APIs.
+Create `src/win32/gdi32.c`. Maps GDI primitives to the kernel `gfx_*` and `ttf_*` APIs.
 
-- [ ] Device Context model: `HDC` = opaque pointer to `struct win_dc { gfx_surface_t *surface; int32_t x_origin, y_origin; uint32_t text_color, bg_color; }` 
-- [ ] `GetDC(hWnd)` / `ReleaseDC(hWnd, hDC)` → get/release drawable surface for window
-- [ ] `BeginPaint(hWnd, lpPaint)` / `EndPaint(hWnd, lpPaint)` → like `GetDC`/`ReleaseDC` but clears update region
-- [ ] `CreateCompatibleDC(hDC)` → allocate off-screen `gfx_surface_t` buffer
-- [ ] `DeleteDC(hDC)` → release off-screen buffer
-- [ ] `BitBlt(dst, dx, dy, w, h, src, sx, sy, rop)` → `gfx_blit()` (ROP `SRCCOPY` only initially)
-- [ ] `TextOutA/W(hDC, x, y, str, len)` → `ttf_draw_string(surface, font, x, y, text_color, str)`
-- [ ] `DrawTextA/W(hDC, str, len, rect, fmt)` → `ttf_draw_string` with rect clipping
-- [ ] `FillRect(hDC, lprc, hBrush)` → `gfx_fill_rect(surface, rc.left, rc.top, width, height, brush_color)`
-- [ ] `SetTextColor(hDC, color)` / `SetBkColor(hDC, color)` → update `win_dc` fields
-- [ ] `SetPixel(hDC, x, y, color)` / `GetPixel(hDC, x, y)` → direct framebuffer pixel access
-- [ ] `MoveToEx(hDC, x, y, lpPoint)` / `LineTo(hDC, x, y)` → `gfx_draw_line()`
-- [ ] `CreateSolidBrush(color)` → `HBRUSH` = packed color value; `DeleteObject(hBrush)` → no-op
-- [ ] `SelectObject(hDC, hObj)` → swap current pen/brush/font in DC; return old object
-- [ ] Test: PE app opens a window, draws text + rectangle → renders on desktop
+- [ ] Optional future: add `TODO-D-gdi32-export-master-table.md` in this folder for export-by-export parity with TODO-A style. Until then, use [`../08-graphics-ui/TODO-11-win32-gdi-user32-stubs.md`](../08-graphics-ui/TODO-11-win32-gdi-user32-stubs.md) plus [`../08-graphics-ui/TODO-A-Win32k-Shadow-SSDT-Master-Table.md`](../08-graphics-ui/TODO-A-Win32k-Shadow-SSDT-Master-Table.md) for NtGdi mapping.
+- [ ] Device context model, `GetDC` / `ReleaseDC`, `BeginPaint` / `EndPaint`, `CreateCompatibleDC`, `DeleteDC`, `BitBlt`, `TextOut` / `DrawText`, `FillRect`, `SetTextColor` / `SetBkColor`, `SetPixel` / `GetPixel`, `MoveToEx` / `LineTo`, `CreateSolidBrush`, `SelectObject`, PE smoke test (window draws text and rectangle).
 - [ ] Commit: `"win32: gdi32.dll rendering"`
 
 ---
@@ -278,17 +258,9 @@ Create `src/win32/gdi32.c`. Maps GDI primitives to the kernel's `gfx_*` and `ttf
 
 Create `src/win32/shell32.c`.
 
-- [ ] `ExtractIconExA/W(path, index, phiconLarge, phiconSmall, nIcons)` → system DLLs → `win32_icon_lookup()`; `.ico` → `ico_load()`; `.exe`/`.dll` → parse PE `RT_GROUP_ICON` resource directory
-- [ ] `SHGetFileInfoA/W(path, attrs, psfi, cbfi, flags)` → `SHGFI_ICON` → `icon_for_extension(ext)`; `SHGFI_DISPLAYNAME` → filename portion; `SHGFI_TYPENAME` → file type string
-- [ ] `SHGetStockIconInfo(siid, flags, psii)` → map `SIID_*` constants to system icon handles
-- [ ] `LoadIconA/W(hInst, lpIconName)` / `LoadImageA/W(hInst, name, type, cx, cy, flags)` → PE resource extraction
-- [ ] `DestroyIcon(hIcon)` → release cached icon handle
-- [ ] `SHGetFolderPathA/W(hwnd, csidl, hToken, flags, pszPath)` → map CSIDL constants: `CSIDL_DESKTOP` → `C:\Users\Default\Desktop\`; `CSIDL_PERSONAL` → `C:\Users\Default\Documents\`; `CSIDL_MYPICTURES` → `C:\Users\Default\Pictures\`; `CSIDL_SYSTEM` → `C:\Impossible\System32\`; `CSIDL_WINDOWS` → `C:\Impossible\`; `CSIDL_APPDATA` → `C:\Users\Default\AppData\`
-- [ ] `PathCombineA/W(dest, dir, file)` → join with backslash, normalize double-slashes
-- [ ] `PathAppendA/W(path, more)` → append `more` to `path` with separator
-- [ ] `PathFileExistsA/W(path)` → `vfs_exists(path)` wrapper
-- [ ] Commit: `"win32: shell32.dll shell + icon API"`
-
+- [ ] Per-export rows: [`TODO-C-shell32-export-master-table.md`](TODO-C-shell32-export-master-table.md) (Tier 1 icons and paths; Tier 1b `ShellExecute` and path helpers). Mark rows `[x]` with the same Done gate as Section 10.
+- [ ] Shell32 / imageres **icon index** tables stay in [`../08-graphics-ui/TODO-11-win32-gdi-user32-stubs.md`](../08-graphics-ui/TODO-11-win32-gdi-user32-stubs.md) Section 1; TODO-C rows point there with Notes (no second index source).
+- [ ] Commit: `"win32: shell32.dll shell + icon API"
 ---
 
 ## 13. IxUI Native Toolkit `[Opus]`
@@ -378,11 +350,21 @@ Provides the cross-compilation toolchain for targeting Impossible OS from a host
 
 **Impossible OS advantage:** Win32 is implemented natively in the kernel -- no translation layer, no Wine, no DLL emulation. IxUI is a first-class toolkit that gives Win32 programs a native compositor-backed window system with zero overhead. The unimplemented-function logger gives a unique observability story not available on any other platform.
 
+
+## History
+
+| Date | Action | Summary |
+|------|--------|---------|
+| 2026-04-14 | Added DLL export master tables TODO-A/B/C; condensed Sections 10 through 12 to XREF those tables | Hub links TODO-A/B/C as authoritative export rows. |
+| 2026-04-14 | gap-analysis | Confirmed TODO-A/B/C own export rows; TODO-08 hub + narrative only; Win32k syscall map stays 08-graphics-ui TODO-A shadow SSDT. |
+| 2026-04-14 | validate | Domain label set to 10-services-security; History schema aligned. |
+| 2026-04-14 | retarget | Renamed domain folder to `10-platform-services`; refreshed all `todo/` XREF paths. |
+
 ---
 
 ## Verification
 
-**§1–3: Console Hello World**
+**Sections 1 to 3: Console Hello World**
 - Cross-compile: `x86_64-w64-mingw32-gcc -o hello.exe hello.c` (uses `WriteConsoleA`, `ExitProcess`)
 - QEMU serial: `hello.exe` runs, prints "Hello, Win32!" to console
 
@@ -398,7 +380,7 @@ Provides the cross-compilation toolchain for targeting Impossible OS from a host
 - `LoadLibraryA("kernel32.dll")` → returns non-NULL HMODULE; `GetProcAddress(hmod, "ExitProcess")` → returns valid function pointer
 - Load a simple PE DLL: `DllMain(DLL_PROCESS_ATTACH)` fires; `GetProcAddress` resolves exported function
 
-**§10–11: GUI App**
+**Sections 10 and 11: GUI App**
 - Cross-compile GUI app: `CreateWindowEx`, `RegisterClassEx`, `WndProc` with `WM_PAINT` drawing "Hello, GDI!"
 - QEMU: window appears on desktop, text renders, close button destroys window
 

@@ -3,7 +3,7 @@
 > **Goal:** Build the complete Win32 I/O subsystem from scratch -- IRP engine, MDL, file handle table, `CreateFile`/`ReadFile`/`WriteFile`, directory APIs, file management, metadata, async I/O + APC, filter manager stub, file change notifications, and `GetDiskFreeSpaceEx` -- then migrate all kernel and shell internal files from raw `vfs_open`/`vfs_read`/`vfs_write` calls to the new Win32 layer. This is the **P0 blocker for all user-mode programs**.
 
 > [!IMPORTANT]
-> No Win32 file API exists yet. The current syscall layer (`SYS_READFILE`, `SYS_READDIR`) is a primitive stub. Raw `vfs_open`/`vfs_read`/`vfs_write` calls are scattered across ~15 kernel and desktop source files that §11 migrates. Execution order is strict: §1 (IRP) → §2 (MDL) → §3 (handle table) → §4 (CreateFile) → §5 (ReadFile/WriteFile) → §6 (directories) → §7 (file management) → §8 (metadata) → §9 (async) → §10 (filter manager) → §11 (migration) → §12 (change notifications) → §13 (disk free space). Do not start §4 before §3; do not start §11 before §5. The handle table in §3 **extends** the Object Manager (→ XREF: `09-services-security` Object Manager TODO) -- coordinate on the `HANDLE` type, reference counting, and `ObReferenceObjectByHandle`.
+> No Win32 file API exists yet. The current syscall layer (`SYS_READFILE`, `SYS_READDIR`) is a primitive stub. Raw `vfs_open`/`vfs_read`/`vfs_write` calls are scattered across ~15 kernel and desktop source files that §11 migrates. Execution order is strict: §1 (IRP) → §2 (MDL) → §3 (handle table) → §4 (CreateFile) → §5 (ReadFile/WriteFile) → §6 (directories) → §7 (file management) → §8 (metadata) → §9 (async) → §10 (filter manager) → §11 (migration) → §12 (change notifications) → §13 (disk free space). Do not start §4 before §3; do not start §11 before §5. The handle table in §3 **extends** the Object Manager (→ XREF: `10-platform-services` Object Manager TODO) -- coordinate on the `HANDLE` type, reference counting, and `ObReferenceObjectByHandle`.
 
 ## Inputs
 
@@ -11,8 +11,8 @@
 - `src/kernel/sched/syscall.c` -- `SYS_READFILE`/`SYS_READDIR` stubs; §3 + §4 + §5 replace them with `NtCreateFile`/`NtReadFile`/`NtWriteFile` syscall numbers
 - `src/kernel/sched/` -- process task struct; §3 adds per-process handle table; §6 adds per-process CWD
 - `src/desktop/`, `src/kernel/gfx/gfx_text.c`, `src/kernel/panic.c`, `src/kernel/klog_disk.c`, `src/kernel/registry.c`, `src/kernel/image.c`, `src/kernel/mm/swap.c`, `src/kernel/mm/mmap.c`, `src/kernel/symtab.c`, `src/kernel/ico.c`, `src/kernel/icon_store.c`, `src/kernel/image_save.c`, `src/kernel/drivers/cursor.c` -- raw `vfs_open` callers migrated in §11
-- → XREF: `09-services-security` Object Manager TODO -- `HANDLE`, reference counting, `ObReferenceObjectByHandle`, `OBJ_INHERIT` flag; handle table in §3 must use the same type definitions
-- → XREF: `09-services-security` Process Object TODO -- per-process handle table lives in the process object; coordinate on layout
+- → XREF: `10-platform-services` Object Manager TODO -- `HANDLE`, reference counting, `ObReferenceObjectByHandle`, `OBJ_INHERIT` flag; handle table in §3 must use the same type definitions
+- → XREF: `10-platform-services` Process Object TODO -- per-process handle table lives in the process object; coordinate on layout
 - → XREF: `05-storage-filesystems/TODO-04-fat32-hardening-vfs-semantics.md §8–10` -- share-mode, delete-on-close, byte-range locks are VFS-layer; `NtCreateFile` in §4 passes these flags down to `vfs_open()`
 - → XREF: `05-storage-filesystems/TODO-03-volume-management-automount.md §6` -- `GetDiskFreeSpaceEx` and `GetVolumeInformation` (§13) depend on Registry volume entries from `vfs_probe()`
 - → XREF: `11-user-platform-sdk` Win32 API TODO -- `CreateFile`/`ReadFile`/`WriteFile` defined here are the kernel implementations; the SDK exposes them as user-mode wrappers

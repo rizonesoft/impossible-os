@@ -26,7 +26,7 @@ This tree is the live planning scaffold for active work.
 | 08 | [07 Networking](./07-networking/INDEX.md) | Kernel networking stack, protocols, sockets, and network-facing integration. |
 | 09 | [08 Graphics UI](./08-graphics-ui/INDEX.md) | Themes, animations, advanced widgets, and reusable UI framework pieces. |
 | 10 | [09 Desktop Shell](./09-desktop-shell/INDEX.md) | Desktop workflows, file manager, terminal, settings, and shell-level apps. |
-| 11 | [10 Services Security](./10-services-security/INDEX.md) | Shared system services, security policy, accounts, crypto, and orchestration. |
+| 11 | [10 Platform Services](./10-platform-services/INDEX.md) | Win32 PE/API surface, installer and updates, recovery and accessibility, Linux compat, and other shared platform services above the kernel. |
 | 12 | [11 Apps](./11-apps/INDEX.md) | Built-in applications, CLI tools, and user-facing product features. |
 | 13 | [12 User Platform SDK](./12-user-platform-sdk/INDEX.md) | User-mode ABI, compatibility surface, SDK assets, and developer-facing contracts. |
 | 14 | [13 Tools & Accessories](./13-tools-accessories/INDEX.md) | System diagnostic tools, namespace browsers, and administrative utilities. |

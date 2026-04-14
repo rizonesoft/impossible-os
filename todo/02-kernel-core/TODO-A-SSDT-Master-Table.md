@@ -229,7 +229,7 @@
 | 0x00F3 | NtQueryTimerResolution           | §19 | T07 §8 (timer_resolution.c) | [x]  |
 | 0x00F4 | NtSetTimerResolution             | §19 | T07 §8 (timer_resolution.c) | [x]  |
 
-**0x0100–0x011F: ALPC and LPC Ports (→ XREF TODO-12 §8)**
+**0x0100–0x011F: ALPC and LPC Ports (→ XREF TODO-12 §8-§9)**
 
 | Index  | Function                         | §   | Owner                | Done |
 |--------|----------------------------------|-----|----------------------|------|

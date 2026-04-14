@@ -3,7 +3,7 @@
 > **Goal:** Build the ELF relocation engine powering two subsystems: loadable kernel
 > modules (`.kmod` drivers) and the Linux ELF compatibility layer's `dlopen`/`dlsym`.
 > The native user-mode binary format is PE (`.exe`/`.dll`) -- `LoadLibrary`/`GetProcAddress`
-> is the native DLL path (→ XREF `09-services-security/TODO-08 §7`). ELF supports only
+> is the native DLL path (→ XREF `10-platform-services/TODO-08 §7`). ELF supports only
 > ring-0 `.kmod` drivers and Linux compat `.so` shared libraries.
 
 > [!IMPORTANT]
@@ -14,7 +14,7 @@
 > definitions.
 >
 > **dlopen / dlsym** (§5): the Linux ELF compat stretch goal is specced in
-> `09-services-security/TODO-10 §11`; this TODO provides the kernel-side relocation and
+> `10-platform-services/TODO-10 §11`; this TODO provides the kernel-side relocation and
 > GOT/PLT infrastructure that TODO-10 §11 depends on.
 >
 > **`pmm_alloc_contiguous(count)`** must be used for all module image buffers > 4 KB.
@@ -35,8 +35,8 @@
 - `include/kernel/sched/task.h` -- `task_exec`, `struct task` -- §5 per-process loaded-module list
 - `include/kernel/syscall.h` -- add `SYS_DLOPEN`/`SYS_DLSYM`/`SYS_DLCLOSE` -- §5
 - `src/kernel/elf.c` (existing `task_exec` ELF loader) -- reuse section-scan helpers -- §1
-- `09-services-security/TODO-08-win32-api-surface.md §7` (→ XREF) -- PE DLL `LoadLibrary` (native path; not ELF)
-- `09-services-security/TODO-10-linux-compat.md §11` (→ XREF) -- dynamic ELF `dlopen` consumer
+- `10-platform-services/TODO-08-win32-api-surface.md §7` (→ XREF) -- PE DLL `LoadLibrary` (native path; not ELF)
+- `10-platform-services/TODO-10-linux-compat.md §11` (→ XREF) -- dynamic ELF `dlopen` consumer
 - `scripts/linker-kernel.ld` (kernel linker script) -- add `__ksymtab` section -- §4
 
 ---
@@ -239,7 +239,7 @@ binding engine is available for the Linux ELF compat `dlopen` path.
 
 ## 5. `dlopen` / `dlsym` for Linux Compat `[Sonnet]`
 
-> Implements the kernel-side infrastructure for `09-services-security/TODO-10 §11`.
+> Implements the kernel-side infrastructure for `10-platform-services/TODO-10 §11`.
 > The Linux compat layer calls these; the native PE equivalent is
 > `LoadLibrary`/`GetProcAddress` (→ `TODO-08 §7`).
 

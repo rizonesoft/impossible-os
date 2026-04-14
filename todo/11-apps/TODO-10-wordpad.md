@@ -15,7 +15,7 @@
 > `07-graphics-ui/TODO-05-widget-dialogs.md` -- do not build a custom combo widget here; add
 > `CTRL_COMBOBOX` to TODO-05 if it is not yet present when §4 is implemented.
 >
-> Print (§7) depends on `pdf_begin/draw_text/end` from `09-services-security/TODO-12 §6` --
+> Print (§7) depends on `pdf_begin/draw_text/end` from `10-platform-services/TODO-12 §6` --
 > implement §7 only after the print subsystem is available.
 
 ---
@@ -31,7 +31,7 @@
 - `include/desktop/file_assoc.h` (→ XREF `08-desktop-shell/TODO-02 §1`) -- `file_assoc_set(ext, prog_id, path)` -- §6
 - `include/registry.h` -- `reg_get_string`, `reg_set_string` -- §6 recent files
 - `include/kernel/vfs.h` -- `vfs_open`, `vfs_read`, `vfs_write`, `vfs_create`, `vfs_stat`
-- `09-services-security/TODO-12-long-term-features.md §6` -- `pdf_begin`, `pdf_draw_text`, `pdf_draw_rect`, `pdf_end` -- §7 print stretch
+- `10-platform-services/TODO-12-long-term-features.md §6` -- `pdf_begin`, `pdf_draw_text`, `pdf_draw_rect`, `pdf_end` -- §7 print stretch
 
 ---
 
@@ -199,7 +199,7 @@
 
 ## 7. Print (Stretch) `[Sonnet]`
 
-> → XREF: `09-services-security/TODO-12-long-term-features.md §6` -- `pdf_begin/draw_text/end`.
+> → XREF: `10-platform-services/TODO-12-long-term-features.md §6` -- `pdf_begin/draw_text/end`.
 
 - [ ] **Pagination**: compute page height in points (A4 = 841.89 pt or Letter = 792 pt); walk layout lines (§3); break when accumulated height exceeds page height minus margins
 - [ ] **Print preview window**: `wm_create_window("Print Preview", 800, 600)` -- renders each page as a thumbnail bitmap; `[← Prev]` `[Next →]` navigation; `[Close Preview]`

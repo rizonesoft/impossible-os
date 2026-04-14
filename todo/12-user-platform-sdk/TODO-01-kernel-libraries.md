@@ -3,7 +3,7 @@
 > **Goal:** Port and consolidate all embedded third-party libraries -- string/math libc,
 > miniz, monocypher, cJSON, Mbed TLS, and STB -- into `src/libs/` with freestanding memory
 > redirects and host-side integration tests. This is a foundational prerequisite consumed by
-> 06-networking, 08-desktop-shell, 09-services-security, and 10-apps.
+> 06-networking, 08-desktop-shell, 10-platform-services, and 10-apps.
 
 > [!IMPORTANT]
 > **Source migration:** All sections from
@@ -42,7 +42,7 @@
 - `include/kernel/syscall.h` -- syscall number table; add `SYS_GETRANDOM` -- §4
 - `02-kernel-core/TODO-20-kernel-libraries.md §4` (→ XREF) -- miniz port + ZIP reader prerequisite -- §3
 - `06-networking/TODO-03-http-tls.md` (→ XREF) -- Mbed TLS TLS 1.2 consumer -- §6
-- `09-services-security/TODO-07` (→ XREF) -- monocypher consumer (WiFi WPA2, SSH crypto) -- §4
+- `10-platform-services/TODO-07` (→ XREF) -- monocypher consumer (WiFi WPA2, SSH crypto) -- §4
 - `include/kernel/klog.h` -- `klog()` for library init diagnostics -- §8
 
 ---

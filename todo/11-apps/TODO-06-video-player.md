@@ -7,8 +7,8 @@
 
 > [!IMPORTANT]
 > Audio subsystem (`audio_mixer_stream_add`, `audio_mixer_stream_stop`) from
-> `09-services-security/TODO-01-audio-system.md §2` **must** be complete before §3 A/V sync --
-> `→ XREF: 09-services-security/TODO-01 §2`.
+> `10-platform-services/TODO-01-audio-system.md §2` **must** be complete before §3 A/V sync --
+> `→ XREF: 10-platform-services/TODO-01 §2`.
 > All video frame buffers and PCM decode buffers are large (frame = width × height × 4 bytes) --
 > **always use `pmm_alloc_contiguous()` for these**; `kmalloc` heap is only 2 MiB.
 > SSE2 is available (`-msse2` is already in the kernel build flags) but the kernel uses
@@ -19,7 +19,7 @@
 
 ## Inputs
 
-- `09-services-security/TODO-01-audio-system.md §2` -- `audio_mixer_stream_add(pcm, samples, vol)`, `audio_mixer_stream_stop(handle)` from `include/audio_mixer.h`
+- `10-platform-services/TODO-01-audio-system.md §2` -- `audio_mixer_stream_add(pcm, samples, vol)`, `audio_mixer_stream_stop(handle)` from `include/audio_mixer.h`
 - `include/kernel/timer.h` -- `system_get_ticks()` (monotonic ms counter), `sleep_ms(ms)`
 - `include/gfx.h` -- `gfx_surface_create()`, `gfx_fill_rect()`, `gfx_blit()`, `gfx_scale_blit()`
 - `include/desktop/controls.h` -- `CTRL_BUTTON`, `CTRL_SCROLLBAR` (seek bar via `CTRL_SCROLLBAR_HORIZ`), `CTRL_TEXTBOX`

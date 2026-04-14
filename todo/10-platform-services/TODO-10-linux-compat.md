@@ -1,6 +1,6 @@
 # TODO-10 -- Linux ELF Compatibility Layer
 
-**Domain:** `09-services-security`
+**Domain:** `10-platform-services`
 **Goal:** Add a secondary ELF/POSIX compatibility layer so statically-linked Linux x86-64 binaries (busybox, coreutils, musl-static apps) run unmodified on Impossible OS -- "WSL in reverse", without modifying the host binary.
 
 > [!IMPORTANT]

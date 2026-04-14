@@ -7,6 +7,7 @@
 
 ## Inputs
 
+- [`TODO-13-explorer-shell-host.md`](TODO-13-explorer-shell-host.md) (XREF) shell host process model + `ShellExecute` wiring; this file stays the deep four-zone file manager UX
 - `include/kernel/fs/vfs.h` -- `vfs_readdir`, `vfs_stat`, `vfs_rename`, `vfs_create`, `vfs_unlink`, `vfs_open/read/write`, `vfs_mkdir` -- all file operations and directory listing
 - `include/icon_store.h` -- `icon_for_extension()`, `icon_draw()`, `icon_draw_scaled()` -- icon grid rendering
 - `include/gfx.h` -- `gfx_fill_rect()`, `gfx_surface_t`, `ttf_draw_string()` -- cell and label rendering
