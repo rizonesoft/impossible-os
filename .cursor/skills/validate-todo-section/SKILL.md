@@ -1,46 +1,22 @@
 ---
 name: validate-todo-section
-description: Validates whether a TODO section marked done or in progress matches actual code, build, and runtime evidence, then corrects the section state conservatively. Use when auditing completed TODO work, reconciling stale checklist state, or verifying a claimed implementation. In Cursor, read from .cursor/skills/validate-todo-section/SKILL.md and complete every workflow step; do not expand scope to full-file validation.
+description: Validate whether a TODO section marked done or in progress matches actual code, build, and runtime evidence, then correct the section state conservatively. Use when auditing completed TODO work, reconciling stale checklist state, or verifying a claimed implementation.
 ---
 
-# Validate TODO Section (Cursor)
+# Validate TODO Section
 
-## Cursor: mandatory coverage
+## Cursor
 
-- **Load this skill** from `.cursor/skills/validate-todo-section/SKILL.md` when the task matches the description.
-- **Copy the checklist below into the chat** at the start of a section validate run; in your final message, report **done/skipped + reason** per line.
-- **Related rule:** `.cursor/rules/todo-validate-gap-workflows.mdc` when `todo/**/*.md` is in scope.
-- **Full-file structure / parity:** `.cursor/skills/validate-todo-file/SKILL.md` -- not this skill.
-- **Deep quality pipeline (Codex + tests + this):** `.claude/skills/verify-todo-section/SKILL.md` -- use when the user wants verification without re-implementing.
-- **Implement pipeline Stage 7:** `.claude/skills/implement-todo-section/SKILL.md` invokes this style of check; follow this skill's workflow when validating after implement.
-
-## Cursor reliability
-
-- **Rules:** See `.cursor/rules/todo-workflows-always-pointer.mdc` (always apply) and `.cursor/rules/todo-validate-gap-workflows.mdc` (when `todo/**/*.md` is in scope). `@`-mention this skill if context is thin.
-- **Hooks:** Reminders fire on reads of `todo/**/TODO-*.md` only. No History row is required for this skill; hooks that mention History refer to other workflows.
-- **Full verify:** Codex-heavy verification stays in `.claude/skills/verify-todo-section/SKILL.md`.
-
-## Progress checklist (copy for every run)
-
-```text
-validate-todo-section -- all steps (no skips):
-- [ ] 1  Read section + notes + verification context
-- [ ] 2  Evidence plan (search, build/test, runtime, cross-TODO)
-- [ ] 3  Collect evidence (build.sh, tests, addr2line if crash)
-- [ ] 4  Section plan quality (Commit line, Test checkpoint, concrete items, Inputs/symbols; no N.M sublabels)
-- [ ] 5  Classify each checklist item (strict done gate, SSDT consistency if applicable)
-- [ ] 6  Cross-TODO sync + ID/SATISFIES auto-close rules
-- [ ] 7  Report: checked, passed, failed, state change rationale
-```
+- Follow `.cursor/rules/todo-validate-gap-workflows.mdc` when validating `todo/**/*.md` sections.
+- Hooks: optional `beforeReadFile` on `todo/**/TODO-*.md` (see `.cursor/hooks/todo-read-reminder.py`).
 
 ## Use This Skill When
 
-- A section was just implemented and you need to verify checklist items match actual code before committing.
-- The implement-todo-section pipeline reaches Stage 7 (it invokes this kind of verification).
+- A section was just implemented and you need to verify checklist items match actual code before committing (or the user wants a Cursor-side audit only).
 - Reconciling stale checklist state -- items marked `[x]` that may no longer be accurate after refactoring.
 - The user asks "is §N correct?" or "validate this section."
-- Do NOT use for full-file validation -- use `.cursor/skills/validate-todo-file/SKILL.md` instead.
-- Do NOT use for deep quality audit only -- use `.claude/skills/verify-todo-section/SKILL.md` instead (which runs Codex + tests + section validation).
+- Do NOT use for full-file validation -- use `/validate-todo-file` instead.
+- Do NOT use for deep quality or adversarial code review -- that stays in Claude Code (`.claude/skills/verify-todo-section`, `review-todo-section`, Codex skills, etc.).
 
 ## Workflow
 
@@ -81,8 +57,8 @@ validate-todo-section -- all steps (no skips):
 - Do not assume a master-and-child TODO cascade unless the current TODO actually uses one.
 - Preserve table/header formatting (including OS header icons) while editing status/content.
 - Keep scope section-targeted unless direct cross-TODO sync is required.
-- **Never add or preserve N.M subnumbering** (`17.1`, `### 3.2`, `**4.1 Foo**`). One `## N.` -- one continuous `- [ ]` list. Full-file structure: `.cursor/skills/validate-todo-file/SKILL.md`.
+- **Never add or preserve N.M subnumbering** (`17.1`, `### 3.2`, `**4.1 Foo**`). One `## N.` -- one continuous `- [ ]` list. For full-file structure passes, use `validate-todo-file`.
 
 ## Additional Resources
 
-- [status-evidence.md](status-evidence.md) (optional companion file; same name may exist under `.claude/skills/validate-todo-section/` when added)
+- [status-evidence.md](status-evidence.md)

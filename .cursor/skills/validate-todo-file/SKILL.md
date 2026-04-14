@@ -1,51 +1,22 @@
 ---
 name: validate-todo-file
-description: Validates a TODO file for structural completeness, Implementation Order accuracy, XREF continuity, cross-TODO scope overlap, Inputs path existence, parity gaps, and test coverage. Use when reviewing a TODO after creation, major edits, or during implementation tracking. In Cursor, read this file from .cursor/skills/validate-todo-file/SKILL.md and execute every numbered step; do not skip step 7 (parity) or History (step 15).
+description: Validate a TODO file for structural completeness, Implementation Order accuracy, XREF continuity, cross-TODO scope overlap, Inputs path existence, parity gaps, and test coverage. Use when reviewing a TODO after creation, major edits, or during implementation tracking.
 ---
 
-# Validate TODO File (Cursor)
+# Validate TODO File
 
-## Cursor: mandatory coverage
+## Cursor
 
-- **Load this skill** from `.cursor/skills/validate-todo-file/SKILL.md` when the task matches the description.
-- **Copy the checklist below into the chat** at the start of a validate run; in your final message, state **done/skipped + reason** for each line (no silent skips).
-- **Related rule:** `.cursor/rules/todo-validate-gap-workflows.mdc` when `todo/**/*.md` is in scope.
-- **Single-section code truth:** use `.cursor/skills/validate-todo-section/SKILL.md` or `.claude/skills/verify-todo-section/SKILL.md` (full verify pipeline stays in Claude Code) -- not this file.
-
-## Cursor reliability
-
-- **Rules:** The detailed rule uses `globs: todo/**/*.md` and may not attach if no matching file is in context. The always-on pointer is `.cursor/rules/todo-workflows-always-pointer.mdc`. When starting a validate task, `@`-mention this skill or `.cursor/rules/todo-validate-gap-workflows.mdc` if the agent might miss context.
-- **Hooks:** `beforeReadFile` runs only for `todo/**/TODO-*.md` reads and requires Hooks enabled in Cursor. If no reminder appears, still execute every workflow step here.
-- **Verify pipeline:** Full Codex verify without implementing remains `.claude/skills/verify-todo-section/SKILL.md`.
-
-## Progress checklist (copy for every run)
-
-```text
-validate-todo-file -- all steps (no skips):
-- [ ] 1  Full file read
-- [ ] 2  Formatting cleanup (rg continuation lines, lists, callouts, tables, blank lines)
-- [ ] 3  Remove model tags from ## headings ([Opus]/[Sonnet])
-- [ ] 4  Inputs path existence (Glob per path)
-- [ ] 5  Domain overlap + duplicate XREF scan
-- [ ] 6  Lean structure (flat ## N. only; **no N.M** sublabels; one `- [ ]` list per section; Depends On §; Commit; OS table position before Unit Tests + shape + alignment)
-- [ ] 7  Win11/Linux parity + competitive edge scan (report explicitly)
-- [ ] 8  XREF + loose ends + internal §N check; patch external TODOs same run
-- [ ] 9  Self-contained execution (Depends On with section numbers, blockers flagged)
-- [ ] 10 Prerequisite code audit (Grep APIs)
-- [ ] 11 Platform coverage (hardware sections)
-- [ ] 12 Test enforcement (checkpoints, Unit Tests section)
-- [ ] 13 Test runner bat line + create bat if missing
-- [ ] 14 Stale completion -> validate-todo-section / verify-todo-section skill
-- [ ] 15 History table row (Action=validate)
-```
+- Load this file from `.cursor/skills/validate-todo-file/SKILL.md` and follow `.cursor/rules/todo-validate-gap-workflows.mdc` when `todo/**/*.md` is in scope.
+- Hooks: `beforeReadFile` on `todo/**/TODO-*.md` via `.cursor/hooks/todo-read-reminder.py` (optional in Cursor; use **Output → Hooks** if nothing fires).
 
 ## Use This Skill When
 
 - A TODO file was just created or significantly edited and needs structural validation.
-- The todo-pipeline invokes this as stages 1 and 3 (before and after gap analysis).
+- A common manual sequence is **validate-todo-file** then **gap-analysis-todo** then **validate-todo-file** again (same idea as the old three-stage prep pipeline).
 - The user asks "validate TODO-XX" or "check this TODO file" (not a specific section).
 - Before starting implementation on a TODO to ensure it's structurally sound.
-- Do NOT use for single-section validation -- use `.cursor/skills/validate-todo-section/SKILL.md` or `.claude/skills/verify-todo-section/SKILL.md` instead.
+- Do NOT use for single-section validation -- use `/validate-todo-section` instead.
 
 ## Workflow
 
@@ -113,7 +84,7 @@ validate-todo-file -- all steps (no skips):
     - Determine the `TEST_CAT_*` category from the Unit Tests section (e.g., `TEST_CAT_MM` -> `mm`, `TEST_CAT_SCHED` -> `sched`).
     - Check if `scripts/debug/run-<suite>-tests.bat` exists on disk. If it does NOT exist, create it following the pattern in existing bat files (one-liner calling `run-qemu.ps1 -Accel whpx -TestOnly -TestSuite <suite>`).
     - Add the line to the Verification section if missing.
-14. If section completion state seems wrong, defer to `.cursor/skills/validate-todo-section/SKILL.md` or `.claude/skills/verify-todo-section/SKILL.md` for deep code-truth verification.
+14. If section completion state seems wrong, defer to `/validate-todo-section` for deep code-truth verification.
 15. **Update the History table** at the bottom of the TODO file (after Verification). If no `## History` section exists, create one. Append a row for this validation run:
     ```
     | Date | Action | Summary |

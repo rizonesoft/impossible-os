@@ -3,7 +3,7 @@
   "hooks": {
     "beforeReadFile": [
       {
-        "command": "hooks/todo-read-reminder.py"
+        "command": ".cursor/hooks/todo-read-reminder.py"
       }
     ]
   }

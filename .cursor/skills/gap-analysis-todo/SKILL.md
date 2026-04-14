@@ -1,50 +1,14 @@
 ---
 name: gap-analysis-todo
-description: Deep gap analysis of a TODO file against all overlapping TODOs -- scope conflicts, stale sections, missing coverage, unclear ownership, Win11/Linux research, and code-truth audit. Use after creating or majorly editing a TODO, or when planning cross-domain work. In Cursor, read from .cursor/skills/gap-analysis-todo/SKILL.md and complete Phases 1--5 plus report schema item 21; do not skip Phase 2 web research minimums.
+description: Deep gap analysis of a TODO file against all overlapping TODOs -- find scope conflicts, stale sections, missing coverage, and unclear ownership. Use after creating or majorly editing a TODO, or when planning cross-domain work.
 ---
 
-# Gap Analysis TODO (Cursor)
+# Gap Analysis TODO
 
-## Cursor: mandatory coverage
+## Cursor
 
-- **Load this skill** from `.cursor/skills/gap-analysis-todo/SKILL.md` when the task matches the description.
-- **Copy the checklist below into the chat** at the start of a gap-analysis run; in your final message, map **every** line to done/skipped + reason (no silent skips).
-- **Related rule:** `.cursor/rules/todo-validate-gap-workflows.mdc` when `todo/**/*.md` is in scope.
-- **Research tools:** use WebSearch and WebFetch (or equivalent) as specified -- no skipping Phase 2.
-
-## Cursor reliability
-
-- **Rules:** Use `.cursor/rules/todo-workflows-always-pointer.mdc` plus `.cursor/rules/todo-validate-gap-workflows.mdc` when working on `todo/`. `@`-mention this skill for gap-analysis tasks so steps are not dropped.
-- **Hooks:** `beforeReadFile` may inject a reminder when reading `todo/**/TODO-*.md`. If Hooks are off or the hook does not run, still complete Phases 1--5 and report schema item 21.
-- **Verify pipeline:** `.claude/skills/verify-todo-section/SKILL.md` is separate; this skill is research and TODO text, not the Codex verify loop.
-
-## Progress checklist (copy for every run)
-
-```text
-gap-analysis-todo -- all phases (no skips):
-- [ ] P1.1  Read full TODO
-- [ ] P1.2  Current state callout after Goal
-- [ ] P1.3  Domain topic extracted
-- [ ] P1.4  INDEX.md + sibling TODOs read
-- [ ] P1.5  CLAUDE.md Bare Metal Gotchas + Safety Gates checked
-- [ ] P2.6  Win11 research (>=3 searches, URLs saved)
-- [ ] P2.7  Linux research (>=3 searches, URLs saved)
-- [ ] P2.8  Emerging / best-practice search (URLs saved)
-- [ ] P3.9  Merged feature inventory
-- [ ] P3.10 Compare inventory vs sections (gap classes)
-- [ ] P3.11 Cross-TODO overlap (patch both sides)
-- [ ] P3.12 Code-truth audit full file (strict evidence gate)
-- [ ] P3.13 Section size audit (>10 items flagged)
-- [ ] P4.14 New sections for significant gaps
-- [ ] P4.15 Renumber ## N. + fix §N refs
-- [ ] P4.16 Implementation Order updated
-- [ ] P4.17 OS Comparison table (+ parity note; no Sources HTML comment)
-- [ ] P4.18 Unit Tests section updated
-- [ ] P4.19 Outcome updated
-- [ ] P4.20 Inputs + bidirectional XREFs
-- [ ] P5.21 Report (full 12-part schema + confidence tags)
-- [ ] P5.22 History row (Action=gap-analysis)
-```
+- Follow `.cursor/rules/todo-validate-gap-workflows.mdc` for mandatory steps when analyzing `todo/**/*.md`.
+- Hooks: optional `beforeReadFile` on `todo/**/TODO-*.md` (see `.cursor/hooks/todo-read-reminder.py`).
 
 ## Use This Skill When
 
@@ -160,7 +124,7 @@ gap-analysis-todo -- all phases (no skips):
       - Section heading: `## N. Feature Name`
       - One-line intro paragraph explaining what this feature does and why it matters.
       - Checklist items (`- [ ]`) with concrete deliverables (max 8-10 per section). Each item must reference specific functions, types, or APIs. No vague "implement X" items.
-      - **No N.M subnumbering:** never add `### N.M`, `**N.M Title**`, or `17.1` / `17.2` blocks. One `## N.` = one continuous checklist (nested bullets under one `- [ ]` OK). Extra blocks: optional callouts, then `- [ ] Commit:` as the last checklist line, then `**Test checkpoint:**` closes the section.
+      - **No N.M subnumbering:** never add `### N.M`, `**N.M Title**`, or split the work into `17.1` / `17.2` style blocks. One `## N.` section = one continuous `- [ ]` list (nested detail bullets under a checkbox allowed). End with `- [ ] Commit:` as the last checklist line, then `**Test checkpoint:**` last in the section.
       - `**Test checkpoint:**` block with concrete pass/fail criteria and platforms (QEMU WHPX + TCG; bare metal). Mention POST16 codes ONLY if the section is boot-path (Phase 0/1/2); for post-boot sections use a `klog(LOG_INFO, ...)` line as the observable instead.
       - Commit message item.
       - For BOOT-PATH sections (Phase 0/1/2 init, hardware bring-up, page tables, GDT/IDT, APIC, ACPI, SMP AP startup): `**Regression risk:**` note and `POST16(0xDDNN)` codes (check `boot_init.h` for conflicts).
