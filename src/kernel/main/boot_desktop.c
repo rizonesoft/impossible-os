@@ -19,6 +19,7 @@
 #include "kernel/sched/workqueue.h"
 #include "kernel/sched/syscall.h"
 #include "kernel/nt/ssdt.h"
+#include "kernel/pe.h"
 #include "kernel/boot_halt.h"
 #include "kernel/etw.h"
 #include "kernel/boot_splash.h"
@@ -135,6 +136,20 @@ void boot_phase3(void)
                  "SSDT registration failures: %d -- aborting boot",
                  (uint64_t)reg_failures);
             boot_halt("SSDT registration failed");
+        }
+
+        /* PE export tables feed binary-search import resolution; a
+         * single unsorted entry silently breaks NTAPI lookup for every
+         * user-mode process. Assert at boot (not just under KERNEL_TESTS)
+         * so release builds cannot ship with a regressed ordering. */
+        {
+            int pe_violations = pe_exports_sorted_check();
+            if (pe_violations != 0) {
+                klog(LOG_ERROR, "boot",
+                     "PE export table unsorted (%d violations) -- aborting",
+                     (uint64_t)pe_violations);
+                boot_halt("PE export table unsorted");
+            }
         }
     }
 

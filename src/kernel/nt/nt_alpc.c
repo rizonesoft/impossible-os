@@ -200,11 +200,20 @@ static int alpc_register_one(uint32_t svc, SSDT_HANDLER h, const char *name)
     extern NTSTATUS ssdt_stub_not_implemented(uint64_t, uint64_t, uint64_t,
                                               uint64_t, uint64_t, uint64_t);
     const SSDT_TABLE *tbl = ssdt_get_table(SSDT_TABLE_MAIN);
-    uint32_t idx = svc & 0xFFF;
+    uint32_t idx = svc & SSDT_INDEX_MASK;
 
     if (!tbl) {
         klog(LOG_ERROR, "nt/alpc",
              "ALPC register %s: main SSDT absent", name);
+        return -1;
+    }
+    /* Bounds check BEFORE the handlers[idx] read. SSDT_INDEX_MASK is
+     * 0xFFF (4096 slots) but SSDT_MAIN_MAX is smaller (1024); catch a
+     * mis-numbered service constant before it reads past the array. */
+    if (idx >= SSDT_MAIN_MAX) {
+        klog(LOG_ERROR, "nt/alpc",
+             "ALPC register %s: SSDT index 0x%x out of range (max 0x%x)",
+             name, (uint64_t)idx, (uint64_t)SSDT_MAIN_MAX);
         return -1;
     }
     if (tbl->handlers[idx] != ssdt_stub_not_implemented) {
