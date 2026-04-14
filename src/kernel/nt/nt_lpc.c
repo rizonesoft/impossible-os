@@ -29,13 +29,22 @@
 #include "kernel/klog.h"
 
 /* Log the first call to each handler so missing LPC calls are visible
- * in serial/klog without drowning the log on repeat calls. s_warned uses
- * an atomic exchange so concurrent syscalls on multiple CPUs cannot
- * both race to see s_warned==0 and double-log -- at most one wins. */
+ * in serial/klog without drowning the log on repeat calls.
+ *
+ * Fast-path avoids the read-modify-write on the steady-state call. A
+ * relaxed atomic LOAD handles the common "already warned" case in one
+ * uncontended read; a user-mode caller repeatedly invoking an
+ * unimplemented LPC syscall cannot force cross-CPU cacheline ping-pong.
+ * Only the first-ever call per handler enters the compare_exchange,
+ * and only the winning CPU logs. */
 #define LPC_STUB_BODY(name)                                                  \
     do {                                                                     \
         static uint32_t s_warned = 0;                                        \
-        if (__atomic_exchange_n(&s_warned, 1, __ATOMIC_ACQ_REL) == 0) {      \
+        uint32_t expected = 0;                                               \
+        if (__atomic_load_n(&s_warned, __ATOMIC_RELAXED) == 0                \
+            && __atomic_compare_exchange_n(&s_warned, &expected, 1, 0,       \
+                                           __ATOMIC_ACQ_REL,                 \
+                                           __ATOMIC_RELAXED)) {              \
             klog(LOG_WARN, "nt/lpc",                                         \
                  #name " called -- LPC subsystem deferred to TODO-08 §7");   \
         }                                                                    \
