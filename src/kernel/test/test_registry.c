@@ -480,7 +480,7 @@ static void test_nt_notify_change_key_pending(void)
     NTSTATUS status = ssdt_dispatch(SSDT_NtNotifyChangeKey,
                                     0, 0, 0, 0, 0, 0);
     TEST_PENDING(status == STATUS_NOT_IMPLEMENTED,
-                 "NtNotifyChangeKey: registry change-notification engine deferred (TODO-13 s3 ships real handler)");
+                 "NtNotifyChangeKey: no change-notification engine yet");
 }
 
 /* Test: NtUnloadKey rejects a root key and unknown paths */

@@ -1083,18 +1083,22 @@ static void test_nt_lpc_slots_registered(void)
 
 static void test_nt_lpc_pending_features(void)
 {
-    /* Each LPC slot is reserved but its real implementation is deferred
-     * (TODO-08 §7 LPC engine). Dispatch every slot, render the deferred
-     * contract as TEST_PENDING -- the [STUB] line + pending counter is
-     * the canonical "what is incomplete?" registry. A break here
-     * (slot returns something other than the deferred status) is a
-     * mis-registration / accidental wiring and gets logged as FAIL. */
+    /* Each LPC slot is reserved but the underlying engine is not yet
+     * implemented. TEST_PENDING bumps the pending counter so the
+     * end-of-run summary shows total reserved-but-unimplemented at a
+     * glance. A break here (slot returns something other than the
+     * deferred status) means mis-registration -- logged as FAIL.
+     *
+     * Message format: name + slot + brief gap. Suite name "NT LPC
+     * pending features" already says it is an LPC stub. NO TODO refs
+     * in the runtime message: they drift, the source comment above
+     * is the durable record, and shorter messages reduce klog rate-
+     * limit pressure during the 31-slot LPC+ALPC pending sweep. */
     uint32_t i;
-    char msg[96];
+    char msg[64];
     for (i = 0; i < sizeof(s_lpc_slots) / sizeof(s_lpc_slots[0]); i++) {
         NTSTATUS st = ssdt_dispatch(s_lpc_slots[i].svc, 0, 0, 0, 0, 0, 0);
-        snprintf(msg, sizeof(msg),
-                 "%s (0x%x): LPC engine deferred (TODO-08 s7 ships real handler)",
+        snprintf(msg, sizeof(msg), "%s (0x%x): no LPC engine yet",
                  s_lpc_slots[i].name, (uint64_t)s_lpc_slots[i].svc);
         TEST_PENDING(st == STATUS_NOT_IMPLEMENTED, msg);
     }
@@ -1156,14 +1160,23 @@ static void test_nt_alpc_slots_registered(void)
 
 static void test_nt_alpc_pending_features(void)
 {
-    /* ALPC engine deferred to TODO-12 §8-§9. Render each slot's deferred
-     * contract as TEST_PENDING ([STUB] line + pending count). */
+    /* ALPC engine not yet implemented. Each slot is reserved; tests
+     * verify the deferred contract holds via TEST_PENDING -- a break
+     * here means a slot returned the wrong status (mis-registration).
+     *
+     * Message format: name + slot + brief gap. Suite name "NT ALPC
+     * pending features" already names the subsystem. NO TODO refs in
+     * the runtime message: they drift, the source comment carries the
+     * durable record, and short messages reduce klog rate-limit
+     * pressure during the 16-slot sweep. ASCII only -- the section
+     * sign U+00A7 (UTF-8 C2 A7) garbles in Windows serial terminals
+     * and overflows snprintf -> klog buffers when packed into long
+     * strings (see CLAUDE.md "No Unicode Dashes"). */
     uint32_t i;
-    char msg[96];
+    char msg[64];
     for (i = 0; i < sizeof(s_alpc_slots) / sizeof(s_alpc_slots[0]); i++) {
         NTSTATUS st = ssdt_dispatch(s_alpc_slots[i].svc, 0, 0, 0, 0, 0, 0);
-        snprintf(msg, sizeof(msg),
-                 "%s (0x%x): ALPC engine deferred (TODO-12 §8-§9 ships real handler)",
+        snprintf(msg, sizeof(msg), "%s (0x%x): no ALPC engine yet",
                  s_alpc_slots[i].name, (uint64_t)s_alpc_slots[i].svc);
         TEST_PENDING(st == STATUS_NOT_IMPLEMENTED, msg);
     }

@@ -277,12 +277,15 @@ NTSTATUS NtFooBar_handler(...) {
 /* In the corresponding test: */
 static void test_foo_pending_features(void) {
     NTSTATUS st = ssdt_dispatch(SSDT_NtFooBar, ...);
+    /* Message: name + slot + brief gap. ASCII only. NO TODO refs --
+     * they drift; the source comment above the SCOPE-GAP-ALLOWED
+     * stub is the durable record. */
     TEST_PENDING(st == STATUS_NOT_IMPLEMENTED,
-                 "NtFooBar: subsystem deferred (TODO-XX sN ships real handler)");
+                 "NtFooBar (0xNN): no <subsystem> yet");
 }
 ```
 
-End-of-run summary then surfaces the pending count so a glance answers "how many features are still incomplete?". See `implement-unit-tests` skill -- "When to use TEST_PENDING vs TEST_ASSERT" section.
+End-of-run summary then surfaces the pending count so a glance answers "how many features are still incomplete?". See `implement-unit-tests` skill -- "When to use TEST_PENDING vs TEST_ASSERT" section for the full message-format rules (NO TODO refs, ASCII only, under 50 chars, suite name carries subsystem).
 
 ---
 
