@@ -49,6 +49,7 @@ This domain holds kernel work that is foundational but is not primarily memory m
 
 - [TODO-22 Kernel Bulletproofing](./TODO-22-kernel-bulletproofing.md) -- 5-layer invariant defense (static assert, boot verify, unit tests, canaries, docs) for gs: offsets, boot_config, user ELF range, vectors, guard pages, IXFS, security structs, framebuffer rules, exec_pending, and related invariants.
 - [TODO-23 EIF Full Implementation](./TODO-23-eif-full-implementation.md) -- Complete EIF from basic loader to production: segment permissions, ASLR, API version gating, metadata parsing, LZ4 decompression, range overlap validation, module registration, optional import stubs, per-process dispatch table isolation.
+- [TODO-24 Kernel Logging v2: Lockless](./TODO-24-kernel-logging-v2-lockless.md) -- Replace TODO-02 v1 single-lock global-ring klog with per-CPU SPSC rings, priority lanes (FATAL never drops), structured native fields (timestamp/cpu/pid/tid/level/tag/file/line/msg as separate fields not concatenated string), background drain worker with backpressure, NMI-safe enqueue, boot-survival snapshot. Eliminates v1 freeze risks: global-lock contention, recursive klog from rate-limit summary, diagnostic-tag rate-limit pressure. Combines lockless per-CPU (Linux 5.10 printk) + structured fields (Windows ETW) + plain-text simultaneous render (no other OS) + fail-proof FATAL guarantee (no other OS).
 
 ## Completed / Doc-converted
 

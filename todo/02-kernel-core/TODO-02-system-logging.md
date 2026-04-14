@@ -23,6 +23,7 @@
 - → XREF: `TODO-20-kernel-libraries.md §5` -- Monocypher Blake2b + kernel CSPRNG required by §10 (HMAC-chain log integrity)
 - → XREF: `01-boot-platform/TODO-17-blackbox-service-partition.md` -- BlackBox X:\ partition; log paths migrate from C:\ to X:\Logs\
 - → XREF: `14-host-tools/TODO-08-blackbox-log-extractor.md` -- host-side log viewer/extractor; solves "not verifiable from serial log" verification items
+- → XREF: [`TODO-24-kernel-logging-v2-lockless.md`](./TODO-24-kernel-logging-v2-lockless.md) -- v2 architecture: per-CPU lockless rings, priority lanes, fail-proof FATAL, native structured fields. SUPERSEDES this TODO's §5 (rate limit) and reorganises §9 (per-entry context); retains §1-§4, §6, §7, §8, §10 unchanged.
 
 ## Outcome
 
@@ -130,6 +131,9 @@ Prevent log files growing unbounded on long-running or repeatedly booted systems
 
 ## 5. Rate Limiting
 Prevent a misbehaving subsystem from flooding the log and starving disk I/O.
+
+> [!NOTE]
+> **Superseded by TODO-24 §5** (configurable per-subsystem rate limits + diagnostic-tag exemption). The v1 design here treats every subsystem identically with a single global table and a recursive `klog()` from the rate-limit summary path -- both are real freeze risks documented in TODO-24's Goal. v1 is preserved unchanged until TODO-24 §10 retires it; this section's `[x]` items remain a correct record of the v1 implementation.
 
 - [x] Track per-subsystem message count within a 100-tick sliding window (100 Hz = 1 second); 32-slot table
 - [x] When a subsystem exceeds the rate: drop entries and emit one summary: `"[<tag>] rate limit active (>N msgs/sec)"`

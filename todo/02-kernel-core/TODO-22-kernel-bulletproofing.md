@@ -86,6 +86,9 @@ Assembly code (syscall_entry.asm, ap_trampoline.asm) reads `gs:0`, `gs:24`, `gs:
 
 **Files:** `include/kernel/smp.h`, `src/kernel/sched/syscall_entry.asm`
 
+> [!NOTE]
+> → XREF: [`TODO-24-kernel-logging-v2-lockless.md`](./TODO-24-kernel-logging-v2-lockless.md) §1 -- adds `klog_ring_v2_t klog_ring` field to `struct per_cpu_data`. The 5-layer defense pattern in this section MUST be applied when adding the field: static assert on offset/size, runtime verification at `klog_v2_init`, unit test, doc note. Place the new field AFTER the existing assembly-visible fields (`syscall_rsp0` at 24, etc.) to avoid breaking existing offsets.
+
 - [x] Add `_Static_assert(offsetof(struct per_cpu_data, self) == 0, "gs:0 must be self-pointer")`
 - [x] Add `_Static_assert(offsetof(struct per_cpu_data, syscall_rsp0) == 24, "gs:24 must be syscall_rsp0")`
 - [x] Add `_Static_assert(offsetof(struct per_cpu_data, user_rsp_scratch) == 32, "gs:32 must be user_rsp_scratch")`
