@@ -262,7 +262,11 @@ static NTSTATUS NtAlpcConnectPort_handler(uint64_t a1, uint64_t a2, uint64_t a3,
 
     st = AlpcConnectPort(&task_current()->handle_table, full_path,
                          timeout_ms, &h);
-    if (!NT_SUCCESS(st))
+    /* STATUS_TIMEOUT and other non-error-severity informational values
+     * are NOT success here -- NT_SUCCESS(STATUS_TIMEOUT) is true because
+     * its severity bit is 0, but the connection did not complete. Only
+     * STATUS_SUCCESS publishes the handle. */
+    if (st != STATUS_SUCCESS)
         return st;
 
     *out_handle = h;
@@ -303,7 +307,9 @@ static NTSTATUS NtAlpcAcceptConnectPort_handler(uint64_t a1, uint64_t a2,
 
     st = AlpcAcceptConnectPort(&task_current()->handle_table,
                                conn_port_handle, accept, timeout_ms, &h);
-    if (!NT_SUCCESS(st))
+    /* Same rationale as NtAlpcConnectPort: STATUS_TIMEOUT must propagate
+     * verbatim, NT_SUCCESS is not tight enough to gate the handle write. */
+    if (st != STATUS_SUCCESS)
         return st;
 
     if (accept)

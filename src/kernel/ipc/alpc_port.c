@@ -24,6 +24,20 @@ const OBJECT_TYPE *ObpAlpcPortType;
 static void *s_rpc_control_dir;
 static uint8_t s_inited;
 
+/* Forward declaration: full definition lives with the §3 connection
+ * state machine below. alpc_port_on_delete needs the layout to drain
+ * ConnectionQueue correctly; publishing the typedef up here lets on_delete
+ * signal waiters without moving the whole block. */
+typedef struct alpc_connection_request ALPC_CONNECTION_REQUEST;
+struct alpc_connection_request {
+    struct alpc_connection_request *Link_next;
+    ALPC_PORT                      *ClientCommPort;
+    ALPC_PORT                      *ServerCommPort;
+    struct task                    *RequesterTask;
+    NTSTATUS                        ReplyStatus;
+    event_t                         ReplyEvent;
+};
+
 /* ---- Queue helpers ----------------------------------------------------- */
 
 static void queue_init(ALPC_MSG_QUEUE *q)
@@ -60,10 +74,13 @@ static void alpc_port_on_delete(void *body)
     spin_lock_irqsave(&p->Lock, &irqf);
     ALPC_MSG_QUEUE msg = p->MessageQueue;
     ALPC_MSG_QUEUE pending = p->PendingQueue;
-    ALPC_MSG_QUEUE conn = p->ConnectionQueue;
+    ALPC_CONNECTION_REQUEST *conn_head =
+        (ALPC_CONNECTION_REQUEST *)p->ConnectionQueue.Head;
     queue_init(&p->MessageQueue);
     queue_init(&p->PendingQueue);
-    queue_init(&p->ConnectionQueue);
+    p->ConnectionQueue.Head  = (PORT_MESSAGE_ENTRY *)0;
+    p->ConnectionQueue.Tail  = (PORT_MESSAGE_ENTRY *)0;
+    p->ConnectionQueue.Count = 0;
     ALPC_PORT *peer = p->ConnectedPort;
     ALPC_PORT *listen = p->ConnectionPort;
     p->ConnectedPort   = (ALPC_PORT *)0;
@@ -75,7 +92,31 @@ static void alpc_port_on_delete(void *body)
 
     queue_drain(&msg);
     queue_drain(&pending);
-    queue_drain(&conn);
+
+    /* ConnectionQueue carries ALPC_CONNECTION_REQUEST nodes, NOT
+     * PORT_MESSAGE_ENTRY -- the list lives on client stacks + heaps and
+     * each node is owned/freed by its requesting client AFTER
+     * event_wait returns. Contract: by the time on_delete fires,
+     * ref_count == 0, and the only references that could possibly have
+     * kept the port alive are the client_comm ConnectionPort links +
+     * the client's lookup ref. Both are dropped before the client
+     * frees its request -- so ConnectionQueue MUST be empty in the
+     * normal flow. If it is not, that is a contract violation higher
+     * up; we signal every pending client with PORT_DISCONNECTED so at
+     * least no one hangs, and let the client's post-wake path free the
+     * node. kfree'ing the node ourselves would UAF on the client's
+     * kfree. */
+    if (conn_head) {
+        klog(LOG_WARN, "alpc",
+             "port on_delete with pending connects -- contract violation");
+        while (conn_head) {
+            ALPC_CONNECTION_REQUEST *next = conn_head->Link_next;
+            conn_head->ServerCommPort = (ALPC_PORT *)0;
+            conn_head->ReplyStatus    = STATUS_PORT_DISCONNECTED;
+            event_set(&conn_head->ReplyEvent);
+            conn_head = next;
+        }
+    }
 
     if (peer)
         ObDereferenceObject(peer);
@@ -311,38 +352,19 @@ NTSTATUS AlpcCreatePort(HANDLE_TABLE *ht, const char *name,
  *     observes a consistent cross-link.
  * =======================================================================*/
 
-typedef struct alpc_connection_request {
-    struct alpc_connection_request *Link_next;
-    ALPC_PORT                      *ClientCommPort;    /* pre-allocated */
-    ALPC_PORT                      *ServerCommPort;    /* set on accept */
-    struct task                    *RequesterTask;    /* informational */
-    NTSTATUS                        ReplyStatus;
-    event_t                         ReplyEvent;        /* auto-reset */
-} ALPC_CONNECTION_REQUEST;
+/* ALPC_CONNECTION_REQUEST layout is declared at the top of this file
+ * so alpc_port_on_delete can signal pending waiters. The helpers
+ * below operate on that shared definition. */
 
-/* Server-side FIFO for ALPC_CONNECTION_REQUEST. Kept file-local since the
- * request node type does not leak across the header. Uses the server
- * port's Lock for mutual exclusion. */
-typedef struct alpc_conn_queue {
-    ALPC_CONNECTION_REQUEST *Head;
-    ALPC_CONNECTION_REQUEST *Tail;
-    uint32_t                 Count;
-} ALPC_CONN_Q;
-
-/* The server's ConnectionQueue in ALPC_PORT is an ALPC_MSG_QUEUE (for
- * PORT_MESSAGE_ENTRY). §3 needs a DIFFERENT queue type for connection
- * requests. The cleanest path: reuse ALPC_MSG_QUEUE's head/tail slots by
- * casting through a parallel node type -- both share the
- * `{void* next; ...}` prefix. But that lies to the type system. Instead
- * we store a singly-linked list of ALPC_CONNECTION_REQUEST in a small
- * file-static table keyed by the server port pointer. For §3 we
- * simplify: embed head/tail in a parallel per-port slot using PortContext
- * as scratch? No -- that's reserved for user context.
- *
- * The pragmatic answer: reuse ConnectionQueue's Head/Tail fields. A
- * PORT_MESSAGE_ENTRY and an ALPC_CONNECTION_REQUEST are both laid out
- * with a `Link_next` pointer in the first slot, so a head/tail pair of
- * "void *" works for either. Expose it via helpers. */
+/*
+ * Server-side FIFO for ALPC_CONNECTION_REQUEST. Reuses the port's
+ * ConnectionQueue field (which is declared as `ALPC_MSG_QUEUE` for
+ * PORT_MESSAGE_ENTRY nodes) by the common-initial-sequence rule:
+ * PORT_MESSAGE_ENTRY and ALPC_CONNECTION_REQUEST both start with a
+ * `struct X *Link_next` field, and ALPC_MSG_QUEUE's Head/Tail slots
+ * are plain pointers we can carry either node type in. The helpers
+ * below do the cast in one place so the rest of the file stays
+ * type-safe. No separate ALPC_CONN_Q struct is needed. */
 
 static void conn_queue_enqueue(ALPC_MSG_QUEUE *q, ALPC_CONNECTION_REQUEST *r)
 {
@@ -522,7 +544,12 @@ NTSTATUS AlpcConnectPort(HANDLE_TABLE *ht, const char *port_name,
 
     kfree(req);
 
-    if (NT_SUCCESS(st)) {
+    /* Only STATUS_SUCCESS means the server accepted and cross-linked
+     * us; STATUS_TIMEOUT / STATUS_PORT_DISCONNECTED /
+     * STATUS_PORT_CONNECTION_REFUSED all mean the handshake failed
+     * even though their severity bit is zero. NT_SUCCESS is too loose
+     * here. */
+    if (st == STATUS_SUCCESS) {
         *out_handle = h;
         /* Drop the creation ref: handle + cross-link from server_comm
          * are the remaining references that keep client_comm alive.

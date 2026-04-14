@@ -592,6 +592,60 @@ static void test_alpc_disconnect_queues_close_msg(void)
     NtClose(&task_current()->handle_table, server_conn);
 }
 
+static void test_alpc_connect_timeout(void)
+{
+    /* Create a server but do not accept. Client connects with a
+     * finite timeout; the call MUST return STATUS_TIMEOUT and
+     * leave the out-handle at INVALID_HANDLE_VALUE. STATUS_TIMEOUT
+     * passes NT_SUCCESS (it is 0x00000102, non-error severity), so
+     * this test guards against the "NT_SUCCESS is too loose" bug. */
+    HANDLE server_conn = INVALID_HANDLE_VALUE;
+    NTSTATUS st = AlpcCreatePort(&task_current()->handle_table,
+                                 "TimeoutSrv", (ALPC_PORT_ATTRIBUTES *)0,
+                                 &server_conn);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS,
+                   "timeout srv CreatePort SUCCESS");
+    if (server_conn == INVALID_HANDLE_VALUE)
+        return;
+
+    HANDLE client_h = INVALID_HANDLE_VALUE;
+    st = AlpcConnectPort(&task_current()->handle_table,
+                         "\\RPC Control\\TimeoutSrv",
+                         /* timeout_ms */ 50, &client_h);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_TIMEOUT,
+                   "connect timeout => STATUS_TIMEOUT");
+    TEST_ASSERT_EQ(client_h, INVALID_HANDLE_VALUE,
+                   "timeout path must NOT publish a handle");
+
+    NtClose(&task_current()->handle_table, server_conn);
+}
+
+static void test_alpc_accept_timeout(void)
+{
+    /* Server creates, no client connects, server accepts with finite
+     * timeout. Must return STATUS_TIMEOUT and leave out-handle
+     * INVALID_HANDLE_VALUE. */
+    HANDLE server_conn = INVALID_HANDLE_VALUE;
+    NTSTATUS st = AlpcCreatePort(&task_current()->handle_table,
+                                 "AcceptTimeoutSrv",
+                                 (ALPC_PORT_ATTRIBUTES *)0, &server_conn);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS,
+                   "accept timeout srv CreatePort SUCCESS");
+    if (server_conn == INVALID_HANDLE_VALUE)
+        return;
+
+    HANDLE server_comm = INVALID_HANDLE_VALUE;
+    st = AlpcAcceptConnectPort(&task_current()->handle_table,
+                               server_conn, /* accept */ 1,
+                               /* timeout_ms */ 50, &server_comm);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_TIMEOUT,
+                   "accept with no pending => STATUS_TIMEOUT");
+    TEST_ASSERT_EQ(server_comm, INVALID_HANDLE_VALUE,
+                   "timeout path leaves out-handle INVALID");
+
+    NtClose(&task_current()->handle_table, server_conn);
+}
+
 static void test_alpc_disconnect_unconnected(void)
 {
     /* Disconnecting a server connection port with no peer is a no-op
@@ -681,6 +735,10 @@ void test_register_alpc(void)
                             test_alpc_reject_handshake, TEST_CAT_IPC);
     test_suite_register_cat("alpc: disconnect queues PORT_CLOSED",
                             test_alpc_disconnect_queues_close_msg, TEST_CAT_IPC);
+    test_suite_register_cat("alpc: connect timeout (no acceptor)",
+                            test_alpc_connect_timeout, TEST_CAT_IPC);
+    test_suite_register_cat("alpc: accept timeout (no connector)",
+                            test_alpc_accept_timeout, TEST_CAT_IPC);
     test_suite_register_cat("alpc: disconnect unconnected noop",
                             test_alpc_disconnect_unconnected, TEST_CAT_IPC);
 }
