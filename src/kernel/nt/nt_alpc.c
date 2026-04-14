@@ -43,7 +43,7 @@
                                            __ATOMIC_ACQ_REL,                 \
                                            __ATOMIC_RELAXED)) {              \
             klog(LOG_WARN, "nt/alpc",                                        \
-                 #name " called -- ALPC subsystem deferred to TODO-12 §8");  \
+                 #name " called -- ALPC subsystem deferred to TODO-12 s8");  \
         }                                                                    \
         return STATUS_NOT_IMPLEMENTED;  /* SCOPE-GAP-ALLOWED */              \
     } while (0)

@@ -46,7 +46,7 @@
                                            __ATOMIC_ACQ_REL,                 \
                                            __ATOMIC_RELAXED)) {              \
             klog(LOG_WARN, "nt/lpc",                                         \
-                 #name " called -- LPC subsystem deferred to TODO-08 §7");   \
+                 #name " called -- LPC subsystem deferred to TODO-08 s7");   \
         }                                                                    \
         return STATUS_NOT_IMPLEMENTED;  /* SCOPE-GAP-ALLOWED */              \
     } while (0)
