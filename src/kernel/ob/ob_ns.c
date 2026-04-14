@@ -163,8 +163,16 @@ void *ObpLookupDirectory(const char *path, const char **remaining)
 
         hdr = OB_HEADER_FROM_BODY(entry->object);
 
-        /* Follow symlinks */
+        /* Follow symlinks only when more path follows this component.
+         * If the symlink is the final path component, stop at the parent
+         * directory and return remaining = segment name so
+         * ObLookupObjectByName can open the symlink object (NtOpenSymbolicLinkObject). */
         if (hdr->type == ObpSymlinkType) {
+            if (*p == '\0') {
+                if (remaining)
+                    *remaining = seg_start;
+                return cur_dir;
+            }
             if (++symlink_count > OB_SYMLINK_DEPTH) {
                 if (remaining) *remaining = seg_start;
                 return cur_dir;
@@ -260,9 +268,10 @@ int ObLookupObjectByName(const char *path, const OBJECT_TYPE *type,
     if (!entry)
         return -1;
 
-    /* Follow symlink at leaf level */
+    /* Follow symlink at leaf level unless caller asked for the symlink type
+     * (NtOpenSymbolicLinkObject stops at the link; other lookups resolve). */
     hdr = OB_HEADER_FROM_BODY(entry->object);
-    if (hdr->type == ObpSymlinkType) {
+    if (hdr->type == ObpSymlinkType && type != ObpSymlinkType) {
         OBJECT_SYMBOLIC_LINK *sl = (OBJECT_SYMBOLIC_LINK *)entry->object;
         return ObLookupObjectByName(sl->target, type, access, result);
     }
