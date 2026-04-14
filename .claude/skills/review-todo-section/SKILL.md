@@ -71,11 +71,36 @@ description: Full review of a TODO section -- adversarial Codex, dead code, cons
 ### Phase 4: Stamp + Commit
 
 14. **Reconcile tables** -- IO row, OS Comparison row.
-15. **Stamps** -- Verified + Quality reviewed. No blank line between. Domain-qualified XREFs in Accepted field. Include test runner info:
+
+15. **Accepted-XREF concreteness check (MANDATORY)** -- before writing any "Accepted" line in the stamp, prove every XREF target points at a **concrete, actionable `[ ]` checklist item** that would close the gap when marked `[x]`. A prose mention, an enum definition, or a section title alone is NOT a concrete item.
+
+    For each finding you intend to write as "Accepted":
+    - Open the XREF'd target file and section.
+    - Search for a checklist item whose body explicitly addresses this finding (names the gap, cites the source file/function to fix, describes the work in operational terms).
+    - **If found:** quote the item by name in the stamp (e.g., `XREF: TODO-13 §4 (item: "Migrate HKEY to OB handle table" at line 248)`).
+    - **If not found:** create the concrete item NOW:
+        - Identify the right owner section. If the natural owner is registry-specific but the gap is kernel-wide, generalize the helper name and place it in a kernel-wide location.
+        - Write a checklist item that names the source file/function to retrofit, the helper to add (with signature), and the validation behavior. Cite this section's source file and function as a consumer.
+        - If no owner section exists and none fits, follow scope-gap protocol Branch C/D (create new section or new TODO file) BEFORE writing the stamp.
+        - Update the stamp XREF to reference the concrete item by name/line, not just the section.
+
+    **Examples of dead-end XREFs to reject:**
+    - `XREF: TODO-13 §4` (just the section, no item) -- WRONG
+    - `XREF: TODO-13 §4 (KEY_INFORMATION_CLASS completeness)` (paraphrases an enum, not a checklist item) -- WRONG
+    - `XREF: TODO-11 §5 (SeAccessCheck)` (section exists, no item for THIS gap) -- WRONG
+
+    **Examples of concrete XREFs to accept:**
+    - `XREF: TODO-13 §4 (item: "Migrate HKEY to OB handle table" at line 248 -- registers ObpKeyType, retrofits §14/§15 handlers)` -- OK
+    - `XREF: TODO-13 §4 (kernel-wide nt_decode_unicode_string helper; retrofit list explicitly names this section's oa_name, NtCreateSymbolicLinkObject_handler)` -- OK
+
+    **Why this step exists:** without it, "Accepted with XREF" becomes a paper trail that someone later has to chase, find nothing actionable, and re-do the analysis. Every Accepted finding must be one `[x]` away from being fully closed.
+
+16. **Stamps** -- Verified + Quality reviewed. No blank line between. Domain-qualified XREFs in Accepted field. Each Accepted XREF must reference a concrete item per step 15. Include test runner info:
     ```
     > **Test runner:** `scripts\debug\run-<category>-tests.bat` (SUITE=<cat>), N suites, 0 failures expected
     ```
-16. **Commit and push** -- `"review: <TODO> §N -- <summary>"`
+
+17. **Commit and push** -- `"review: <TODO> §N -- <summary>"`. If step 15 created or modified items in other TODO files, stage and commit those in the SAME commit as the stamp.
 
 ## Rules
 
