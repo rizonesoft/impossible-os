@@ -207,6 +207,7 @@ Every loaded executable and shared library must be registered in the per-process
 - [x] task_exec made format-agnostic: uses `exec_find_module_by_pc(entry)` to determine user page range instead of hardcoding ELF range. Works for PE, ELF, and EIF.
 - [x] 3 unit tests: pe_load returns correct entry VA, module registered with correct base/format, rejects low ImageBase
 - [x] Commit: `"kernel: pe -- PE32+ section loader with .pdata registration"`
+- [ ] `NtQuerySection(..., SectionImageInformation)` for `SEC_IMAGE` sections: after `pe_load()` maps a PE, persist optional-header fields (ImageBase, AddressOfEntryPoint, SizeOfStackReserve, SizeOfStackCommit) on the backing `SECTION_OBJECT` (or a PE-side hook in `ob_section.c` / `nt_section.c`) so `ObQuerySectionObject` class 1 returns real values instead of all-zero placeholders. Validation: unit test loads a tiny PE fixture, maps as image section, queries class 1, asserts entry and stack fields match the fixture header. -> XREF: `TODO-05-native-api-ssdt.md` section 18 Accepted (SectionImageInformation deferred until PE loader exposes headers to section layer).
 
 **Test checkpoint:** Serial log shows `"pe: mapped <N> sections, .pdata at 0x<addr> (<M> entries)"`. Section permissions match `Characteristics`. BSS-only sections are zero-filled. `POST16(0xD80C)` on entry, `POST16(0xD80D)` after `.pdata` registered. Test on: QEMU WHPX + TCG; bare metal.
 
