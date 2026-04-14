@@ -374,7 +374,8 @@ static uint64_t syscall_handler(struct interrupt_frame *frame)
     }
     case SYS_SHMEM_MAP: {
         HANDLE sh = (HANDLE)(int32_t)arg1;
-        uintptr_t addr = ObMapViewOfSection(&task_current()->handle_table, sh);
+        uintptr_t addr = ObMapViewOfSection(&task_current()->handle_table, sh,
+                                            task_current()->pid);
         ret = (int64_t)(uint64_t)addr;
         break;
     }

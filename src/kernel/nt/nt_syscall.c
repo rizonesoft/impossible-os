@@ -26,7 +26,6 @@
 #include "kernel/ipc/shmem.h"
 #include "kernel/ob/ob.h"
 #include "kernel/ob/ob_file.h"
-#include "kernel/ob/ob_section.h"
 #include "kernel/mm/vmm.h"
 #include "kernel/mm/pmm.h"
 #include "kernel/smp.h"
@@ -912,65 +911,6 @@ static NTSTATUS NtCreateNamedPipeFile(uint64_t a1, uint64_t a2, uint64_t a3,
     return STATUS_SUCCESS;
 }
 
-/* ---- NtCreateSection ----------------------------------------------------
- * SSDT 0x005C -- wraps SYS_SHMEM_CREATE.
- * a1 = HANDLE* out, a2 = ACCESS_MASK, a3 = OBJECT_ATTRIBUTES* (name),
- * a4 = size.
- * ----------------------------------------------------------------------- */
-static NTSTATUS NtCreateSection(uint64_t a1, uint64_t a2, uint64_t a3,
-                                uint64_t a4, uint64_t a5, uint64_t a6)
-{
-    HANDLE *out_handle = (HANDLE *)a1;
-    uint32_t access = (uint32_t)a2;
-    OBJECT_ATTRIBUTES *oa = (OBJECT_ATTRIBUTES *)a3;
-    uint32_t size = (uint32_t)a4;
-    const char *name = (const char *)0;
-    HANDLE h;
-
-    (void)a5; (void)a6;
-
-    if (!out_handle || size == 0)
-        return STATUS_INVALID_PARAMETER;
-
-    /* Extract name from OBJECT_ATTRIBUTES if provided */
-    if (oa && oa->ObjectName) {
-        /* UNICODE_STRING.Buffer is a char* in our kernel */
-        name = (const char *)oa->ObjectName->Buffer;
-    }
-
-    h = ObCreateSection(&task_current()->handle_table, size, access, name);
-    if (h == INVALID_HANDLE_VALUE)
-        return STATUS_NO_MEMORY;
-
-    *out_handle = h;
-    return STATUS_SUCCESS;
-}
-
-/* ---- NtMapViewOfSection -------------------------------------------------
- * SSDT 0x005E -- wraps SYS_SHMEM_MAP.
- * a1 = HANDLE (section), a2 = HANDLE (process, ignored for now),
- * a3 = uintptr_t* base address output.
- * ----------------------------------------------------------------------- */
-static NTSTATUS NtMapViewOfSection(uint64_t a1, uint64_t a2, uint64_t a3,
-                                   uint64_t a4, uint64_t a5, uint64_t a6)
-{
-    HANDLE section_handle = (HANDLE)(int32_t)a1;
-    uintptr_t *base_out = (uintptr_t *)a3;
-    uintptr_t addr;
-
-    (void)a2; (void)a4; (void)a5; (void)a6;
-
-    if (!base_out)
-        return STATUS_INVALID_PARAMETER;
-
-    addr = ObMapViewOfSection(&task_current()->handle_table, section_handle);
-    if (addr == 0)
-        return STATUS_INVALID_HANDLE;
-
-    *base_out = addr;
-    return STATUS_SUCCESS;
-}
-
 /* ---- NtClose ------------------------------------------------------------
  * SSDT 0x0000 -- wraps SYS_CLOSEHANDLE.
  * a1 = HANDLE.
@@ -1014,12 +954,8 @@ void nt_syscall_register_ssdt(void)
     /* Shutdown */
     ssdt_register(SSDT_NtShutdownSystem,        (SSDT_HANDLER)NtShutdownSystem);
 
-    /* Memory sections */
-    ssdt_register(SSDT_NtCreateSection,         (SSDT_HANDLER)NtCreateSection);
-    ssdt_register(SSDT_NtMapViewOfSection,      (SSDT_HANDLER)NtMapViewOfSection);
-
     /* File metadata, device control, I/O completion (S13) */
     nt_file_register_ssdt();
 
-    klog(LOG_INFO, "nt", "NT syscall: 33 NtXxx handlers registered");
+    klog(LOG_INFO, "nt", "NT syscall: 31 NtXxx handlers registered");
 }

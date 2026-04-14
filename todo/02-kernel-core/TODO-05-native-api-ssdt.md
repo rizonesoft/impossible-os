@@ -26,6 +26,8 @@
 - → XREF: `TODO-10-exception-dispatch-seh.md §13` -- ProbeForRead/ProbeForWrite safe probing used by §12 and all NtXxx handlers
 - → XREF: `TODO-17-kernel-security-hardening.md` -- SSDT integrity protection (§27) complements KASLR and SMEP/SMAP
 - → XREF: `08-graphics-ui/TODO-12-win32k-shadow-ssdt.md §8` -- Win32k user-mode callback dispatch via §26 KeUserModeCallback; shadow SSDT stub registered in §4
+- → XREF: `08-graphics-ui/TODO-A-Win32k-Shadow-SSDT-Master-Table.md` -- canonical 1300-row Table 1 slot map (`0x1000+`); keep `WIN32K_SSDT_*` constants aligned here when Win32k grows
+- → XREF: `08-graphics-ui/TODO-13-win32k-shadow-native-api.md` -- Table 1 routing, bounds, and NTSTATUS contract (companion to this file for shadow SSDT only)
 - → XREF: `TODO-06-irql-model-dpcs.md §11,§12` -- KAPC object type and APC delivery mechanism; NtQueueApcThread (SSDT 0x0043) and NtQueueApcThreadEx (SSDT 0x0380) consume KeInitializeApc/KeInsertQueueApc
 - → XREF: `TODO-09-process-model-extensions.md §4,§5,§8,§10,§11,§13` -- §4 priority class, §5 scheduling policy, §8 accounting fields, §10 CPU affinity, §11 mitigation policy all flow through `NtSetInformationProcess`/`NtQueryInformationProcess` (§10 of this TODO); §13 wires Job Object SSDT entries 0x0160–0x0167; §12 pledge check integrates into the SSDT dispatcher alongside §25 syscall filter
 - → XREF: `TODO-22-kernel-bulletproofing.md` §7 -- SSDT_MAIN_COUNT / last-index static asserts keep this TODO's syscall table in sync with `service_numbers.h`
@@ -66,7 +68,7 @@
 | 💎  |  15   | Registry syscalls (advanced: flush/notify/save/hive)           | §14, TODO-13 §4   |  [/]   |
 | 💎  |  16   | Token open/query/adjust syscalls                               | §5, TODO-11 §4    |  [x]   |
 | 💎  |  17   | Directory and symbolic link object syscalls                    | §5, TODO-03 §4    |  [x]   |
-| 💎  |  18   | Section and memory-mapped file syscalls                        | §5, TODO-03 §7    |  [ ]   |
+| 💎  |  18   | Section and memory-mapped file syscalls                        | §5, TODO-03 §7    |  [x]   |
 | 💎  |  19   | Timer control syscalls                                         | §5, TODO-07 §8,§9 |  [ ]   |
 | 💎  |  20   | ALPC / LPC port syscalls                                       | §5, TODO-12 §8    |  [ ]   |
 | 💎  |  21   | Exception and debug syscalls                                   | §5, TODO-10 §5    |  [ ]   |
@@ -468,7 +470,6 @@ Extended file operations: metadata queries, attribute modification, device I/O c
 > **Accepted:** HKEY-to-HANDLE ABI gap (registry handles not in OB table, NtClose cannot close them) -> XREF: 02-kernel-core/TODO-13 §4 (new item: "Migrate HKEY to OB handle table" -- registers ObpKeyType and routes §14/§15 handlers through ObpAllocateHandle). SMP locking for registry pools -> XREF: 02-kernel-core/TODO-13 §14 (concrete spinlock wrapping for registry_flush/hive_save/hive_load). UTF-16 UNICODE_STRING decode -> XREF: 02-kernel-core/TODO-13 §4 (nt_decode_unicode_string helper). KeyNodeInformation -> XREF: 02-kernel-core/TODO-13 §4 (new item: "KeyNodeInformation output struct in NtQueryKey/NtEnumerateKey").
 > **Quality reviewed** (2026-04-13): dead code clean (all structs/helpers used). SSDT numbers match service_numbers.h. Error mapping consistent (ERROR_ACCESS_DENIED -> STATUS_ACCESS_DENIED; child-count check returns STATUS_KEY_HAS_CHILDREN specifically). Stack usage bounded by REG_MAX_* constants (512B data arrays). NtEnumerateKey KeyFullInformation opens/queries/closes child key inline.
 
----
 
 ## 15. Registry Syscalls (Advanced)
 
@@ -489,11 +490,11 @@ Extended file operations: metadata queries, attribute modification, device I/O c
 > **Test runner:** `scripts\debug\run-abi-tests.bat` (SUITE=abi)
 > **Expected:** 5 new §15 tests (NtFlushKey, NtRenameKey, NtNotifyChangeKey blocked, NtUnloadKey invalid, advanced SSDT registered), 0 failures.
 
+> **Codex (2026-04-14):** Fixed page-count overflow (64-bit math + `section_page_count_from_size`), per-section `spinlock_t` for views/size/phys, `oa_probe_ascii_name` for user `OBJECT_ATTRIBUTES`, NULL buffer guard in `ObQuerySectionObject`, file-backed create uses single validated `FILE_OBJECT` for `vfs_read` (no second lookup), `ObExtendSection` double-checked backing swap under lock.
 > **Verified** (2026-04-14): 10 handlers registered at SSDT 0x009C-0x00A6 via nt_registry.c:1113-1122. 9 complete paths ([x]) route through registry.c helpers: NtFlushKey → registry_flush_checked with STATUS_REGISTRY_IO_FAILED propagation; NtRenameKey → RegRenameKey with case-only no-op + collision check; NtSaveKey/Ex + NtRestoreKey → vfs_get_path_from_node(bounded strlen, overflow-safe math, cycle detection) → hive_save/hive_load; NtLoadKey/Ex → mountpoint creation with rollback on hive_load failure; NtUnloadKey/Ex → RegUnloadHive recursive free. 1 stub ([/]): NtNotifyChangeKey returns STATUS_NOT_IMPLEMENTED with SCOPE-GAP-ALLOWED sentinel. 10 ntdll PE exports added (alphabetically sorted for binary search). Build clean.
 > **Accepted:** Change notifications (NtNotifyChangeKey watcher lists) -> XREF: 02-kernel-core/TODO-13 §3 (reg_watcher_t + reg_notify_register), §4 line 271 (NtNotifyChangeKey SSDT wiring calls §3 infra). SMP dirty-flag races on registry_flush/hive_table -> XREF: 02-kernel-core/TODO-13 §14 (explicit wrap of registry_flush/hive_save/hive_load). UTF-16 UNICODE_STRING decode -> XREF: 02-kernel-core/TODO-13 §4 (kernel-wide `nt_decode_unicode_string` helper in src/kernel/nt/nt_string.c; retrofit list explicitly covers §14, §15, §17). Per-key flush optimization -> XREF: 02-kernel-core/TODO-13 §4 (new `registry_flush_key` walks parent chain to owning hive).
 > **Quality reviewed** (2026-04-14): dead code clean. Consistency: reg_resolve_key in registry.c now tombstone-aware (rejects keys with name[0]=='\0'); §14 handlers (NtDeleteKey, NtRenameKey, NtQueryKey) routed through shared resolve_hkey in nt_registry.c for uniform liveness semantics. NtLoadKey rollback on hive_load failure uses captured disposition. File handle type-checked via OB_HEADER_FROM_BODY + ObpFileType. New helpers: vfs_get_path_from_node (bounded VFS_MAX_NAME strlen, depth-64 cycle guard, subtraction-form bounds), vfs_name_len_bounded, vfs_find_drive_letter. 5 new tests.
 
----
 
 ## 16. Token Open, Query, and Adjust Syscalls
 
@@ -520,7 +521,6 @@ Extended file operations: metadata queries, attribute modification, device I/O c
 > **Accepted:** (1) Process/thread handles are PID/TID-encoded rather than OB-allocated (matches existing nt_process.c pattern; no per-handle access rights enforcement) -> XREF: 02-kernel-core/TODO-03 §9 (new item: "Migrate PID/TID-encoded process/thread handles to OB-allocated handles"). (2) Token handle granted_access not checked on mutate ops -> XREF: 02-kernel-core/TODO-11 §5 (new item: "Enforce per-handle granted_access on token mutation syscalls"). (3) NtOpenProcessTokenEx HandleAttributes discarded -> XREF: 02-kernel-core/TODO-03 §3 (new item: "Wire HandleAttributes through ObpAllocateHandle for NtXxxEx syscalls"). (4) NtSetInformationToken set classes (deep-copy) -> XREF: 02-kernel-core/TODO-11 §4 (item: "Deep-copy token field setters for NtSetInformationToken"). (5) Per-token SMP lock -> XREF: 02-kernel-core/TODO-11 §4 (item: "Per-token lock for SMP safety"). (6) Thread impersonation slot -> XREF: 02-kernel-core/TODO-11 §7 (items: ImpersonationToken field + NtImpersonateThread + NtSetInformationThread).
 > **Quality reviewed** (2026-04-14): dead code clean (local TOKEN_GROUPS struct needed -- not in token.h; resolve_thread_handle's out_task is used in NtOpenThreadToken). Consistency: TokenTypeInfo=8 matches Windows TokenType enum value (the name difference is because ntstatus.h already uses "TokenType" for an enum; our enum member is TokenTypeInfo). Performance: resolve_thread_handle linear scan bounded by task->num_threads; adjust privileges O(n*m) bounded by 36*36=1296 ops. Codex findings (PID-as-handle, granted_access, HandleAttributes) are pre-existing systemic gaps not introduced by §16; all three accepted with concrete XREFs.
 
----
 
 ## 17. Directory and Symbolic Link Object Syscalls
 Namespace manipulation -- create, open, and query Ob directory objects and symbolic links from user mode.
@@ -542,25 +542,32 @@ Namespace manipulation -- create, open, and query Ob directory objects and symbo
 > **Accepted:** UNICODE_STRING.Buffer cast to const char* + NUL-terminated bounded_strlen scan (kernel-wide ASCII pattern shared with §14, §15 NT handlers; §16 has no UNICODE_STRING args) -> XREF: 02-kernel-core/TODO-13 §4 (kernel-wide `nt_decode_unicode_string` helper in `src/kernel/nt/nt_string.c`; retrofit list explicitly names §17's `oa_name`, `path_within_bounds`, and `NtCreateSymbolicLinkObject_handler` target read as consumers).
 > **Quality reviewed** (2026-04-14): dead code clean (bounded_strlen is local-scope; ns_memcpy is local-scope; split_path is single-use). Consistency: SSDT constants 0x0120-0x0125 match service_numbers.h:269-274; OBJECT_DIRECTORY_INFORMATION layout matches library NtQueryDirectoryObject signature in ob.c:421. Performance: split_path linear (one pass for last_sep + one memcpy); ObInsertObject linear over directory entries (bounded by OB_DIR_MAX_ENTRIES=128). bounded_strlen called twice per create (once for plen guard, once for leaf len) -- acceptable given OB_PATH_MAX=256. Codex finding "ReturnSingleEntry not honored" fixed: caps buf_count to 1 when flag set.
 
+
 ## 18. Section and Memory-Mapped File Syscalls
 
 > [!NOTE]
-> Section (shared memory) object type implemented in TODO-03 §7 (`ob_section.c`). This section wires it into the SSDT with full NT-compatible signatures.
+> Section (shared memory) object type implemented in TODO-03 §7 (`ob_section.c`). SSDT wiring lives in `src/kernel/nt/nt_section.c` (registers 0x005C-0x0062 after `nt_memory_register_ssdt()`). `NtCreateSection` packs `SectionPageProtection` (low 32) and `AllocationAttributes` (high 32) in SSDT arg `a5`; optional `NT_MAPVIEW_ARGS` at `a5` extends `NtMapViewOfSection` beyond the first four register slots.
 
-- [ ] `NtCreateSection(SectionHandle, DesiredAccess, ObjectAttributes, MaximumSize, SectionPageProtection, AllocationAttributes, FileHandle)` → SSDT 0x005C:
+- [x] `NtCreateSection(SectionHandle, DesiredAccess, ObjectAttributes, MaximumSize, SectionPageProtection, AllocationAttributes, FileHandle)` → SSDT 0x005C:
   - `AllocationAttributes`: `SEC_COMMIT = 0x8000000`, `SEC_RESERVE = 0x4000000`, `SEC_IMAGE = 0x1000000`, `SEC_NOCACHE = 0x10000000`
   - If `FileHandle` non-NULL: file-backed section; otherwise page-file-backed
-- [ ] `NtOpenSection(SectionHandle, DesiredAccess, ObjectAttributes)` → SSDT 0x005D
-- [ ] `NtMapViewOfSection(SectionHandle, ProcessHandle, BaseAddress, ZeroBits, CommitSize, SectionOffset, ViewSize, InheritDisposition, AllocationType, Win32Protect)` → SSDT 0x005E
-- [ ] `NtUnmapViewOfSection(ProcessHandle, BaseAddress)` → SSDT 0x005F
-- [ ] `NtExtendSection(SectionHandle, NewMaximumSize)` → SSDT 0x0060
-- [ ] `NtQuerySection(SectionHandle, SectionInformationClass, Buffer, Length, ReturnLength)` → SSDT 0x0061:
+- [x] `NtOpenSection(SectionHandle, DesiredAccess, ObjectAttributes)` → SSDT 0x005D
+- [x] `NtMapViewOfSection(SectionHandle, ProcessHandle, BaseAddress, ZeroBits, CommitSize, SectionOffset, ViewSize, InheritDisposition, AllocationType, Win32Protect)` → SSDT 0x005E
+- [x] `NtUnmapViewOfSection(ProcessHandle, BaseAddress)` → SSDT 0x005F
+- [x] `NtExtendSection(SectionHandle, NewMaximumSize)` → SSDT 0x0060
+- [x] `NtQuerySection(SectionHandle, SectionInformationClass, Buffer, Length, ReturnLength)` → SSDT 0x0061:
   - `SectionBasicInformation (0)`: base address, size, attributes
   - `SectionImageInformation (1)`: entry point, image base, stack info (for PE sections)
-- [ ] `NtAreMappedFilesTheSame(File1MappedAsAnImage, File2MappedAsFile)` → SSDT 0x0062
-- [ ] Commit: `"kernel: nt -- section and memory-mapped file syscalls"`
+- [x] `NtAreMappedFilesTheSame(File1MappedAsAnImage, File2MappedAsFile)` → SSDT 0x0062
+- [x] Commit: `"kernel: nt -- section and memory-mapped file syscalls"`
 
 **Test checkpoint:** `NtCreateSection` with `SEC_COMMIT` creates pagefile-backed section. `NtMapViewOfSection` maps into current process; write/read round-trip. `NtUnmapViewOfSection` unmaps. File-backed section maps file contents correctly.
+
+> **Test runner:** `scripts\debug\run-ob-tests.bat` (SUITE=ob)
+> **Expected:** 5 new §18 tests (anon roundtrip, file-backed map, named open+query+extend, unmap bad base, SSDT slots registered), 0 failures. Note: full `bash scripts/test.sh SUITE=ob` may exceed 60s TCG boot budget on slow hosts; build verification `=== BUILD OK ===` plus OB suite on Windows QEMU per project norm.
+
+> **Verified** (2026-04-14): `nt_section_register_ssdt()` registers 7 handlers at 0x005C-0x0062 (`nt_section.c`). `ObCreateSectionEx` backs anonymous (`pmm_alloc_contiguous` + zero) and file-backed (`vfs_read` snapshot + `vfs_get_path_from_node` identity) sections; `ObMapViewOfSectionFull` / `ObUnmapViewOfSectionByBase` track views by PID; `ObExtendSectionObject` reallocates backing (rejects `SEC_IMAGE`). `NtMapViewOfSection` rejects non-current `ProcessHandle` with `STATUS_ACCESS_DENIED` until per-process VMM exists. PE exports added in `pe.c` (sorted). SYS_SHMEM paths call `ObMapViewOfSection(..., task_current()->pid)`.
+> **Accepted:** (1) `NtMapViewOfSection` full 10-parameter Windows stack ABI not wired on INT 0x2E / fast syscall (only 4-5 GPR slots today); extended fields use optional `NT_MAPVIEW_ARGS*` at `a5` when non-NULL -> XREF: 02-kernel-core/TODO-05 §3 (extend INT 0x2E / `syscall_entry.asm` to pass stack args 5-6+ for full NT stack contract). (2) Cross-process map / other-process `NtUnmapViewOfSection` -> XREF: 03-memory-concurrency/TODO-04-advanced-virtual-memory.md §5 (per-process page tables + VAD). (3) `SEC_RESERVE`-only sparse pagefile sections without physical pages -> XREF: same TODO-04 §5 (demand paging). (4) `SectionImageInformation` PE parse (entry point, stack) -> XREF: 08-binary-system/TODO-08 (PE loader) with concrete checklist item when that TODO gains a § for image sections.
 
 ## 19. Timer Control Syscalls
 
@@ -862,7 +869,7 @@ NtQueryDirectoryFile (§6) currently returns `FileNamesInformation` only (name +
 | 💎 | Registry syscalls          | ✅ NtCreate/Open/QueryKey   | ❌ No equivalent           | ⬜ §14 + TODO-13            |
 | 💎 | Token/access control       | ✅ NtAccessCheck + tokens   | ✅ capabilities + DAC/MAC  | ⬜ §16 + TODO-11            |
 | 💎 | Namespace dir/symlink      | ✅ NtCreateDirectoryObj     | ❌ No kernel namespace     | ⬜ §17                      |
-| 💎 | Memory-mapped sections     | ✅ NtCreateSection/MapView  | ✅ mmap with MAP_SHARED    | 🔄 §5 Create+Map wired      |
+| 💎 | Memory-mapped sections     | ✅ NtCreateSection/MapView  | ✅ mmap with MAP_SHARED    | ✅ §18 full §5 SSDT 0x005C-0x0062 |
 | 💎 | Timer objects              | ✅ NtSetTimer periodic      | ✅ timerfd_create          | ⬜ §19 + TODO-07 §8,§9      |
 | 💎 | ALPC message ports         | ✅ NtAlpcSendWaitReceive    | ❌ No equivalent           | ⬜ §20 + TODO-12            |
 | 💎 | Debug API                  | ✅ NtDebugActiveProcess     | ✅ ptrace                  | ⬜ §21 + TODO-18            |

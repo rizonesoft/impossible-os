@@ -636,6 +636,208 @@ static void test_nt_namespace_ssdt_registered(void)
     }
 }
 
+
+/* ============================================================================
+ * §18 NT section / mapped file syscall tests
+ * ============================================================================ */
+
+#include "kernel/fs/vfs.h"
+#include "kernel/ob/ob_file.h"
+#include "kernel/ob/ob_section.h"
+#include "kernel/nt/nt_section.h"
+#include "kernel/nt/nt_memory.h"
+
+#define NTSTA_NOT_MAPPED_VIEW ((NTSTATUS)0xC0000019)
+
+static void test_nt_section_anon_roundtrip(void)
+{
+    HANDLE sh = INVALID_HANDLE_VALUE;
+    void *base = (void *)0;
+    NTSTATUS st;
+    volatile uint8_t *mp;
+
+    st = ssdt_dispatch(SSDT_NtCreateSection,
+                       (uint64_t)(uintptr_t)&sh,
+                       (uint64_t)SECTION_ALL_ACCESS,
+                       0,
+                       4096,
+                       (uint64_t)PAGE_READWRITE | ((uint64_t)SEC_COMMIT << 32),
+                       0);
+    TEST_ASSERT(NT_SUCCESS(st), "NtCreateSection SEC_COMMIT anon");
+    TEST_ASSERT(sh != INVALID_HANDLE_VALUE, "section handle valid");
+
+    st = ssdt_dispatch(SSDT_NtMapViewOfSection,
+                       (uint64_t)sh,
+                       (uint64_t)CURRENT_PROCESS,
+                       (uint64_t)(uintptr_t)&base,
+                       0, 0, 0);
+    TEST_ASSERT(NT_SUCCESS(st), "NtMapViewOfSection anon");
+    TEST_ASSERT(base != (void *)0, "mapped base non-NULL");
+
+    mp = (volatile uint8_t *)base;
+    mp[0] = 0x5A;
+    TEST_ASSERT(mp[0] == 0x5A, "mapped write visible");
+
+    st = ssdt_dispatch(SSDT_NtUnmapViewOfSection,
+                       (uint64_t)CURRENT_PROCESS, (uint64_t)(uintptr_t)base,
+                       0, 0, 0, 0);
+    TEST_ASSERT(NT_SUCCESS(st), "NtUnmapViewOfSection anon");
+
+    st = ssdt_dispatch(SSDT_NtClose, (uint64_t)sh, 0, 0, 0, 0, 0);
+    TEST_ASSERT(NT_SUCCESS(st), "NtClose section");
+}
+
+static void test_nt_section_file_backed(void)
+{
+    const char *path = "C:\\Impossible\\test_section_ssdt.txt";
+    const char payload[] = "HELLO";
+    HANDLE fh;
+    HANDLE sh = INVALID_HANDLE_VALUE;
+    void *base = (void *)0;
+    NTSTATUS st;
+    uint8_t *rb;
+
+    if (vfs_create(path, VFS_FILE) != 0) {
+        TEST_SKIP("vfs_create failed (C: not mounted?)");
+        return;
+    }
+    {
+        struct vfs_node *n = vfs_open(path, VFS_O_WRITE | VFS_O_READ);
+        if (!n) {
+            vfs_unlink(path);
+            TEST_SKIP("vfs_open failed for section file test");
+            return;
+        }
+        vfs_write(n, 0, (uint32_t)sizeof(payload) - 1u,
+                  (const uint8_t *)payload);
+        vfs_close(n);
+    }
+
+    fh = ob_create_file_handle(path, VFS_O_READ);
+    if (fh == INVALID_HANDLE_VALUE) {
+        vfs_unlink(path);
+        TEST_SKIP("ob_create_file_handle failed for section file test");
+        return;
+    }
+
+    st = ssdt_dispatch(SSDT_NtCreateSection,
+                       (uint64_t)(uintptr_t)&sh,
+                       (uint64_t)SECTION_ALL_ACCESS,
+                       0,
+                       0,
+                       (uint64_t)PAGE_READONLY | ((uint64_t)SEC_COMMIT << 32),
+                       (uint64_t)fh);
+    TEST_ASSERT(NT_SUCCESS(st), "NtCreateSection file-backed");
+    st = ssdt_dispatch(SSDT_NtMapViewOfSection,
+                       (uint64_t)sh,
+                       (uint64_t)CURRENT_PROCESS,
+                       (uint64_t)(uintptr_t)&base,
+                       0, 0, 0);
+    TEST_ASSERT(NT_SUCCESS(st), "NtMapViewOfSection file-backed");
+    rb = (uint8_t *)base;
+    TEST_ASSERT(rb[0] == 'H' && rb[4] == 'O', "file bytes visible in view");
+
+    ssdt_dispatch(SSDT_NtUnmapViewOfSection,
+                  (uint64_t)CURRENT_PROCESS, (uint64_t)(uintptr_t)base,
+                  0, 0, 0, 0);
+    ssdt_dispatch(SSDT_NtClose, (uint64_t)sh, 0, 0, 0, 0, 0);
+    ssdt_dispatch(SSDT_NtClose, (uint64_t)fh, 0, 0, 0, 0, 0);
+    vfs_unlink(path);
+}
+
+static void test_nt_section_named_open_query_extend(void)
+{
+    OBJECT_ATTRIBUTES oa;
+    UNICODE_STRING us;
+    HANDLE cr = INVALID_HANDLE_VALUE;
+    HANDLE op = INVALID_HANDLE_VALUE;
+    void *base = (void *)0;
+    NTSTATUS st;
+    SECTION_BASIC_INFORMATION sbi;
+    uint64_t ret_len = 0;
+    LARGE_INTEGER grow;
+
+    s17_build_oa(&oa, &us, "SectNamedX1");
+
+    st = ssdt_dispatch(SSDT_NtCreateSection,
+                       (uint64_t)(uintptr_t)&cr,
+                       (uint64_t)SECTION_ALL_ACCESS,
+                       (uint64_t)(uintptr_t)&oa,
+                       4096,
+                       (uint64_t)PAGE_READWRITE | ((uint64_t)SEC_COMMIT << 32),
+                       0);
+    TEST_ASSERT(NT_SUCCESS(st), "NtCreateSection named");
+
+    s17_build_oa(&oa, &us, "SectNamedX1");
+    st = ssdt_dispatch(SSDT_NtOpenSection,
+                       (uint64_t)(uintptr_t)&op,
+                       (uint64_t)SECTION_ALL_ACCESS,
+                       (uint64_t)(uintptr_t)&oa, 0, 0, 0);
+    TEST_ASSERT(NT_SUCCESS(st), "NtOpenSection named");
+    TEST_ASSERT(op != INVALID_HANDLE_VALUE, "open handle valid");
+
+    st = ssdt_dispatch(SSDT_NtQuerySection,
+                       (uint64_t)op,
+                       SectionBasicInformation,
+                       (uint64_t)(uintptr_t)&sbi,
+                       sizeof(sbi),
+                       (uint64_t)(uintptr_t)&ret_len, 0);
+    TEST_ASSERT(NT_SUCCESS(st), "NtQuerySection basic");
+    TEST_ASSERT(sbi.MaximumSize.QuadPart == 4096, "query max size");
+
+    grow.QuadPart = 8192;
+    st = ssdt_dispatch(SSDT_NtExtendSection, (uint64_t)op,
+                       (uint64_t)(uintptr_t)&grow, 0, 0, 0, 0);
+    TEST_ASSERT(NT_SUCCESS(st), "NtExtendSection");
+
+    st = ssdt_dispatch(SSDT_NtMapViewOfSection,
+                       (uint64_t)op,
+                       (uint64_t)CURRENT_PROCESS,
+                       (uint64_t)(uintptr_t)&base,
+                       0, 0, 0);
+    TEST_ASSERT(NT_SUCCESS(st), "map after extend");
+
+    st = ssdt_dispatch(SSDT_NtUnmapViewOfSection,
+                       (uint64_t)CURRENT_PROCESS, (uint64_t)(uintptr_t)base,
+                       0, 0, 0, 0);
+    TEST_ASSERT(NT_SUCCESS(st), "unmap named");
+
+    st = ssdt_dispatch(SSDT_NtClose, (uint64_t)op, 0, 0, 0, 0, 0);
+    TEST_ASSERT(NT_SUCCESS(st), "NtClose open section");
+    st = ssdt_dispatch(SSDT_NtClose, (uint64_t)cr, 0, 0, 0, 0, 0);
+    TEST_ASSERT(NT_SUCCESS(st), "NtClose create section");
+}
+
+static void test_nt_section_unmap_bad_base(void)
+{
+    NTSTATUS st = ssdt_dispatch(SSDT_NtUnmapViewOfSection,
+                                (uint64_t)CURRENT_PROCESS,
+                                (uint64_t)(uintptr_t)0x12345000,
+                                0, 0, 0, 0);
+    TEST_ASSERT(st == NTSTA_NOT_MAPPED_VIEW,
+                "NtUnmapViewOfSection bad base");
+}
+
+static void test_nt_section_ssdt_registered(void)
+{
+    const SSDT_TABLE *tbl = ssdt_get_table(SSDT_TABLE_MAIN);
+    extern NTSTATUS ssdt_stub_not_implemented(uint64_t, uint64_t, uint64_t,
+                                              uint64_t, uint64_t, uint64_t);
+    uint32_t slots[] = {
+        SSDT_NtCreateSection, SSDT_NtOpenSection, SSDT_NtMapViewOfSection,
+        SSDT_NtUnmapViewOfSection, SSDT_NtExtendSection, SSDT_NtQuerySection,
+        SSDT_NtAreMappedFilesTheSame,
+    };
+    uint32_t i;
+    TEST_ASSERT(tbl != (const SSDT_TABLE *)0, "SSDT main table exists");
+    if (!tbl) return;
+    for (i = 0; i < sizeof(slots) / sizeof(slots[0]); i++) {
+        uint32_t idx = slots[i] & 0xFFF;
+        TEST_ASSERT(tbl->handlers[idx] != ssdt_stub_not_implemented,
+                    "Section SSDT slot registered");
+    }
+}
+
 /* ---- Registration ---- */
 
 void test_register_ob(void)
@@ -656,6 +858,11 @@ void test_register_ob(void)
     test_suite_register_cat("OB: NT symlink roundtrip", test_nt_symlink_roundtrip, TEST_CAT_OB);
     test_suite_register_cat("OB: NT query symlink wrong type", test_nt_query_symlink_wrong_type, TEST_CAT_OB);
     test_suite_register_cat("OB: NT namespace SSDT registered", test_nt_namespace_ssdt_registered, TEST_CAT_OB);
+    test_suite_register_cat("OB: NT section anon roundtrip", test_nt_section_anon_roundtrip, TEST_CAT_OB);
+    test_suite_register_cat("OB: NT section file-backed", test_nt_section_file_backed, TEST_CAT_OB);
+    test_suite_register_cat("OB: NT section named open+query+extend", test_nt_section_named_open_query_extend, TEST_CAT_OB);
+    test_suite_register_cat("OB: NT section unmap bad base", test_nt_section_unmap_bad_base, TEST_CAT_OB);
+    test_suite_register_cat("OB: NT section SSDT registered", test_nt_section_ssdt_registered, TEST_CAT_OB);
 }
 
 #endif /* KERNEL_TESTS */

@@ -113,10 +113,12 @@ void boot_phase3(void)
         extern void nt_registry_register_ssdt(void);
         extern void nt_token_register_ssdt(void);
         extern void nt_namespace_register_ssdt(void);
+        extern void nt_section_register_ssdt(void);
         nt_syscall_register_ssdt();
         nt_process_register_ssdt();
         nt_sync_register_ssdt();
         nt_memory_register_ssdt();
+        nt_section_register_ssdt();
         nt_registry_register_ssdt();
         nt_token_register_ssdt();
         nt_namespace_register_ssdt();

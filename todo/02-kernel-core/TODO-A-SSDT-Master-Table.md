@@ -1,6 +1,7 @@
 # SSDT Master Table
 
 > Service numbers organized by functional range. Each range has headroom for future additions. Endpoints marked `→ TODO-XX` are implemented in that TODO and registered here.
+> Win32k shadow SSDT (Table 1, indices `0x1000+`): [`../08-graphics-ui/TODO-A-Win32k-Shadow-SSDT-Master-Table.md`](../08-graphics-ui/TODO-A-Win32k-Shadow-SSDT-Master-Table.md).
 
 **0x0000–0x000F: Core Object and Handle Operations**
 
@@ -93,13 +94,13 @@
 | 0x0059 | NtAllocateUserPhysicalPages      | §9  | T04-mem §4 (AWE stub)   | [/]  |
 | 0x005A | NtFreeUserPhysicalPages          | §9  | T04-mem §4 (AWE stub)   | [/]  |
 | 0x005B | NtMapUserPhysicalPages           | §9  | T04-mem §4 (AWE stub)   | [/]  |
-| 0x005C | NtCreateSection                  | §5  | T05 (§5 migration)      | [x]  |
-| 0x005D | NtOpenSection                    | §18 | T05                     | [ ]  |
-| 0x005E | NtMapViewOfSection               | §5  | T05 (§5 migration)      | [x]  |
-| 0x005F | NtUnmapViewOfSection             | §18 | T05 (ob_section exists) | [ ]  |
-| 0x0060 | NtExtendSection                  | §18 | T05                     | [ ]  |
-| 0x0061 | NtQuerySection                   | §18 | T05                     | [ ]  |
-| 0x0062 | NtAreMappedFilesTheSame          | §18 | T05                     | [ ]  |
+| 0x005C | NtCreateSection                  | §18 | T05 (nt_section.c)      | [x]  |
+| 0x005D | NtOpenSection                    | §18 | T05 (nt_section.c)    | [x]  |
+| 0x005E | NtMapViewOfSection               | §18 | T05 (nt_section.c)      | [x]  |
+| 0x005F | NtUnmapViewOfSection             | §18 | T05 (nt_section.c)      | [x]  |
+| 0x0060 | NtExtendSection                  | §18 | T05 (nt_section.c)    | [x]  |
+| 0x0061 | NtQuerySection                   | §18 | T05 (nt_section.c)    | [x]  |
+| 0x0062 | NtAreMappedFilesTheSame          | §18 | T05 (nt_section.c)    | [x]  |
 
 **0x0070–0x008F: Synchronization**
 
