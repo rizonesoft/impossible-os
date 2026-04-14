@@ -52,7 +52,7 @@
 
 | ⭐  | Order | Deliverable                                       | Depends On         | Status |
 | --- | :---: | ------------------------------------------------- | ------------------ | :----: |
-| 💎  |   1   | Message header, port attributes, type codes       | (none)              |  [ ]   |
+| 💎  |   1   | Message header, port attributes, type codes       | (none)              |  [x]   |
 | 💎  |   2   | ALPC_PORT object & Object Manager registration    | §1, T03 §1-§4     |  [ ]   |
 | 💎  |   3   | Connection state machine (create/connect/accept)  | §2, T05 §4        |  [ ]   |
 | 💎  |   4   | Synchronous send+wait+receive engine              | §3, T06 §3        |  [ ]   |
@@ -72,21 +72,25 @@
 
 ## 1. Message Header, Port Attributes & Type Codes
 
-Define the on-the-wire ALPC ABI in `include/kernel/ipc/alpc.h`. Field names and values match the Windows ALPC convention (winternl.h `PORT_MESSAGE`, MSDN ALPC reference). Compile-time `_Static_assert` lines lock the layout contract.
+Define the on-the-wire ALPC ABI in `include/kernel/ipc/alpc.h`. Field names follow the Windows ALPC convention (winternl.h `PORT_MESSAGE`, MSDN ALPC reference) for source-level familiarity; wire layout is Impossible OS native (32-bit PID/TID, 40-byte `PORT_MESSAGE`) and is NOT binary-compatible with Windows x64. Compile-time `_Static_assert` lines lock every ABI-visible sizeof and field offset.
 
-- [ ] Define `CLIENT_ID` (8 bytes): `ProcessId` (uint32), `ThreadId` (uint32).
-- [ ] Define `PORT_MESSAGE` (40 bytes) per Windows ABI: `TotalLength`/`DataLength`/`Type`/`DataInfoOffset` (uint16 packed at offset 0..7), `ClientId` (CLIENT_ID at offset 8), `MessageId` (uint64 at offset 16), `CallbackId` (uint64 at offset 24), reserved-pad to 40. Add `_Static_assert(sizeof(PORT_MESSAGE) == 40)` and per-field offset asserts.
-- [ ] Define `ALPC_MESSAGE` wrapper: `{PORT_MESSAGE Header; uint8_t Body[];}` -- variable-length flexible array; body length carried by `Header.DataLength`.
-- [ ] Define 10 `ALPC_MSG_TYPE_*` constants per Windows convention: `REQUEST=1`, `REPLY=2`, `DATAGRAM=3`, `LOST_REPLY=4`, `PORT_CLOSED=5`, `CLIENT_DIED=6`, `EXCEPTION=7`, `DEBUG_EVENT=8`, `ERROR_EVENT=9`, `CONNECTION_REQUEST=10`.
-- [ ] Define `ALPC_MAX_ALLOWED_MESSAGE_LENGTH = 65528` (kernel rejects larger inline messages). Document recommended port-section threshold = 512 bytes in header comment.
-- [ ] Define `SECURITY_QUALITY_OF_SERVICE`: `Length` (uint32), `ImpersonationLevel` (enum: Anonymous/Identification/Impersonation/Delegation), `ContextTrackingMode` (uint8: STATIC=0/DYNAMIC=1), `EffectiveOnly` (bool).
-- [ ] Define `ALPC_PORT_ATTRIBUTES` (8 fields per MSDN ALPC reference): `Flags` (uint32, ALPC_PORTFLG_* bitmask), `SecurityQos` (SECURITY_QUALITY_OF_SERVICE), `MaxMessageLength`/`MemoryBandwidth`/`MaxPoolUsage`/`MaxSectionSize`/`MaxViewSize`/`MaxTotalSectionSize` (uint64), `DupObjectTypes` (uint32 bitmask).
-- [ ] Define 4 `ALPC_PORTFLG_*` constants: `LPC_MODE=0x20000`, `ALLOW_DUP_OBJECT=0x80000`, `WAITABLE_PORT=0x40000`, `SYSTEM_PROCESS=0x100000`. Add `_Static_assert` non-overlap on bit positions.
-- [ ] Define 6 `ALPC_MSGFLG_*` send-flag constants for `NtAlpcSendWaitReceivePort`: `REPLY_MESSAGE=0x1`, `LPC_MODE=0x2`, `RELEASE_MESSAGE=0x10`, `SYNC_REQUEST=0x20000`, `WAIT_USER_MODE=0x100000`, `WAIT_PENDING_CALLBACKS=0x200000`. Non-overlap asserted.
-- [ ] Update `pipe_init()` to return `boot_result_t` instead of `void` -- migration item carried from TODO-01 §8.
-- [ ] Commit: `"kernel/ipc/alpc: message header, port attributes, type codes"`
+- [x] Define `CLIENT_ID` (8 bytes): `ProcessId` (uint32), `ThreadId` (uint32).
+- [x] Define `PORT_MESSAGE` (40 bytes): `TotalLength`/`DataLength`/`Type`/`DataInfoOffset` (uint16 packed at offset 0..7), `ClientId` (CLIENT_ID at offset 8), `MessageId` (uint64 at offset 16), `CallbackId` (uint64 at offset 24), `Reserved` (uint64 at offset 32, pad to 40). `_Static_assert(sizeof(PORT_MESSAGE) == 40)` + per-field offset asserts.
+- [x] Define `ALPC_MESSAGE` wrapper: `{PORT_MESSAGE Header; uint8_t Body[];}` -- flexible array; body length carried by `Header.DataLength`. Offset assert: `Body == sizeof(PORT_MESSAGE)`.
+- [x] Define 10 `ALPC_MSG_TYPE_*` constants: `REQUEST=1`, `REPLY=2`, `DATAGRAM=3`, `LOST_REPLY=4`, `PORT_CLOSED=5`, `CLIENT_DIED=6`, `EXCEPTION=7`, `DEBUG_EVENT=8`, `ERROR_EVENT=9`, `CONNECTION_REQUEST=10`.
+- [x] Define `ALPC_MAX_ALLOWED_MESSAGE_LENGTH = 65528` (kernel rejects larger inline messages). Recommended port-section threshold = 512 bytes documented in header comment.
+- [x] Define `SECURITY_QUALITY_OF_SERVICE` (12 bytes, sizeof asserted): `Length` (uint32), `ImpersonationLevel` (enum Anonymous/Identification/Impersonation/Delegation), `ContextTrackingMode` (uint8 STATIC=0/DYNAMIC=1), `EffectiveOnly` (uint8), 2-byte trailing pad.
+- [x] Define `ALPC_PORT_ATTRIBUTES` (80 bytes, sizeof + every external offset asserted): `Flags` (uint32), explicit 4-byte `Pad0`, `SecurityQos` (SECURITY_QUALITY_OF_SERVICE), explicit 4-byte `Pad1`, six uint64 fields (MaxMessageLength/MemoryBandwidth/MaxPoolUsage/MaxSectionSize/MaxViewSize/MaxTotalSectionSize), `DupObjectTypes` (uint32), trailing `Pad2`. Explicit pad fields make layout drift-proof.
+- [x] Define 4 `ALPC_PORTFLG_*` constants: `LPC_MODE=0x20000`, `WAITABLE_PORT=0x40000`, `ALLOW_DUP_OBJECT=0x80000`, `SYSTEM_PROCESS=0x100000`. `_Static_assert` pairwise non-overlap (OR == SUM).
+- [x] Define 6 `ALPC_MSGFLG_*` send-flag constants for `NtAlpcSendWaitReceivePort`: `REPLY_MESSAGE=0x1`, `LPC_MODE=0x2`, `RELEASE_MESSAGE=0x10`, `SYNC_REQUEST=0x20000`, `WAIT_USER_MODE=0x100000`, `WAIT_PENDING_CALLBACKS=0x200000`. `_Static_assert` pairwise non-overlap.
+- [x] Update `pipe_init()` to return `boot_result_t` instead of `void` -- migration item carried from TODO-01 §8. Idempotent: returns `BOOT_OK`; all callers converted to `(void)pipe_init()`.
+- [x] Add `alpc_init()` (in `src/kernel/ipc/alpc.c`) emitting `"[alpc] header constants defined"` to klog. Wire into `boot_phase3()` alongside explicit `pipe_init()` call.
+- [x] Commit: `"kernel/ipc/alpc: message header, port attributes, type codes"`
 
-**Test checkpoint:** `_Static_assert` lines compile (sizeof PORT_MESSAGE == 40, field offsets correct). Unit test `test_alpc_constants` verifies: `ALPC_MAX_ALLOWED_MESSAGE_LENGTH == 65528`, all `ALPC_MSG_TYPE_*` values unique (1..10), all `ALPC_MSGFLG_*` bits non-overlapping, all `ALPC_PORTFLG_*` bits non-overlapping. Serial log on init: `"[ALPC] header constants defined"`. Test on QEMU WHPX + TCG (header compiles + unit test runs).
+**Test checkpoint:** `_Static_assert` lines compile (sizeof PORT_MESSAGE == 40, sizeof SECURITY_QUALITY_OF_SERVICE == 12, sizeof ALPC_PORT_ATTRIBUTES == 80, every field offset correct). Unit test `test_alpc_*` (7 suites under `TEST_CAT_IPC` in `src/kernel/test/test_alpc.c`) verifies: PORT_MESSAGE layout, message-type uniqueness (1..10), `ALPC_MAX_ALLOWED_MESSAGE_LENGTH == 65528`, `ALPC_PORTFLG_*` non-overlap, `ALPC_MSGFLG_*` non-overlap, SQOS layout, PORT_ATTRIBUTES layout. Serial log on init: `[alpc] header constants defined`. Platforms: QEMU WHPX + TCG (header compiles + unit tests run); bare metal + VirtualBox sweep: header is pure compile-time, runtime risk nil.
+
+> **Test runner:** `scripts\debug\run-ipc-tests.bat` (SUITE=ipc)
+> **Expected:** 7 alpc suites pass, 0 failures
 
 ---
 
@@ -586,3 +590,4 @@ After §1-10, Impossible OS reaches full Windows 11 ALPC parity for hosting CSRS
 | 2026-04-14 | validate | Structural validate-todo-file pass: folded ### N.M into checklist lines, ASCII range hyphens, TEST_CAT_IPC, padded OS Comparison, ETW deferral pointer, `run-ipc-tests.bat` runner line, bare-metal + VBox platform sweep bullet, History section. |
 | 2026-04-14 | gap-analysis | Win11/Linux IPC research (6+ web searches); code-truth: `nt_alpc.c` stubs + `test_ob.c`; IMPORTANT + Inputs refresh; §8 split into §8 SSDT + §9 Query/Set (12 sections); OpenSender* + RevokeSecurityContext gap items; OS rows; XREF updates in TODO-05, TODO-A, TODO-08, `nt_alpc`/`nt_lpc` headers. |
 | 2026-04-14 | validate | validate-todo-file: planned Inputs paths; flat § refs (no §N.M); XREF colons; removed blanks between adjacent checkboxes; ASCII latency comment; OS §12 row text; padded Impl Order row 9. |
+| 2026-04-14 | implement | §1 Message header / port attributes / type codes: `include/kernel/ipc/alpc.h` (PORT_MESSAGE 40B + SQOS 12B + ALPC_PORT_ATTRIBUTES 80B with sizeof + per-field offset `_Static_assert`, 10 msg-type codes, 4 PORTFLG + 6 MSGFLG non-overlap asserts), `src/kernel/ipc/alpc.c` (`alpc_init` klog), `src/kernel/test/test_alpc.c` (7 suites under `TEST_CAT_IPC`), pipe_init -> boot_result_t; Codex adversarial review (2 highs: ABI-claim softened to explicit native-layout + PORT_ATTRIBUTES locked); `boot_phase3` wiring + TODO-01 §8 pipe_init checked. |

@@ -16,6 +16,7 @@
 #pragma once
 
 #include "kernel/types.h"
+#include "kernel/boot_init.h"
 #include "kernel/sched/mutex.h"
 #include "kernel/sched/semaphore.h"
 
@@ -62,5 +63,8 @@ int32_t pipe_read(int pipe_id, void *buf, uint32_t len);
  * When both ends are closed, the pipe is freed. */
 void pipe_close(int pipe_id, int end);
 
-/* Initialize the pipe subsystem. */
-void pipe_init(void);
+/* Initialize the pipe subsystem. Safe to call multiple times (idempotent).
+ * Returns BOOT_OK on success. Never fails in the current implementation
+ * because all state is a static array; the boot_result_t return exists
+ * so the init sequencing infrastructure can call it uniformly. */
+boot_result_t pipe_init(void);

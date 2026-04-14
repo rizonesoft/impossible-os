@@ -42,6 +42,8 @@
 #include "desktop/gallery.h"
 #include "kernel/fs/vfs.h"
 #include "kernel/elf.h"
+#include "kernel/ipc/pipe.h"
+#include "kernel/ipc/alpc.h"
 #include "main/main_internal.h"
 
 /* ---- Phase 3 ------------------------------------------------------------ */
@@ -90,10 +92,14 @@ void boot_phase3(void)
             klog(LOG_ERROR, "wq", "sys_wq creation FAILED");
     }
 
-    /* --- IPC init (pipe, shmem, signal) --- */
-    /* IPC subsystem is initialized implicitly by the kernel;
-     * pipe_create/shmem_create work after heap + sched are up.
-     * Mark ready for dependency tracking. */
+    /* --- IPC init (pipe, shmem, signal, alpc) --- */
+    /* pipe_create/shmem_create already init lazily; the explicit pipe_init
+     * call here is idempotent but gives the init sequencing a uniform
+     * entry point. alpc_init emits the ABI-present marker for the header
+     * shipped in TODO-12 section 1; port objects + syscalls arrive in
+     * later sections. */
+    (void)pipe_init();
+    (void)alpc_init();
     kernel_subsystem_set_ready(SUBSYS_IPC, true);
     boot_progress(3, "IPC", 0x0061);
 

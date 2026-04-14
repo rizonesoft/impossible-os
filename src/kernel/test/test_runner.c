@@ -218,6 +218,7 @@ extern void test_register_security(void);
 extern void test_register_peb_teb(void);
 extern void test_register_nt_types(void);
 extern void test_register_ipc(void);
+extern void test_register_alpc(void);
 extern void test_register_storage(void);
 extern void test_register_ixfs(void);
 extern void test_register_bulletproof(void);
@@ -276,6 +277,7 @@ void test_runner_init(void)
 
     /* IPC */
     test_register_ipc();
+    test_register_alpc();
 
     /* Storage */
     test_register_storage();

@@ -25,13 +25,14 @@
 static pipe_t pipes[PIPE_MAX];
 static uint32_t pipe_inited = 0;
 
-void pipe_init(void)
+boot_result_t pipe_init(void)
 {
     uint32_t i;
     for (i = 0; i < PIPE_MAX; i++) {
         pipes[i].in_use = 0;
     }
     pipe_inited = 1;
+    return BOOT_OK;
 }
 
 int pipe_create(int fds[2])
@@ -39,7 +40,7 @@ int pipe_create(int fds[2])
     uint32_t i;
 
     if (!pipe_inited)
-        pipe_init();
+        (void)pipe_init();
 
     /* Find a free pipe slot */
     for (i = 0; i < PIPE_MAX; i++) {

@@ -122,7 +122,7 @@ static void test_semaphore_prodcons(void)
 static void test_pipe_roundtrip(void)
 {
     quiet_ipc_logs();
-    pipe_init();
+    (void)pipe_init();
 
     int pipe_fds[2];
     pipe_test_ok = 0;
