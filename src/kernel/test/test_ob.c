@@ -647,6 +647,10 @@ static void test_nt_namespace_ssdt_registered(void)
 #include "kernel/nt/nt_section.h"
 #include "kernel/nt/nt_memory.h"
 
+/* snprintf not in freestanding kernel headers; declared extern in each
+ * consumer that needs it (see ob_section.c / ob_timer.c pattern). */
+extern int snprintf(char *buf, size_t size, const char *fmt, ...);
+
 #define NTSTA_NOT_MAPPED_VIEW ((NTSTATUS)0xC0000019)
 
 static void test_nt_section_anon_roundtrip(void)
@@ -823,18 +827,24 @@ static void test_nt_section_ssdt_registered(void)
     const SSDT_TABLE *tbl = ssdt_get_table(SSDT_TABLE_MAIN);
     extern NTSTATUS ssdt_stub_not_implemented(uint64_t, uint64_t, uint64_t,
                                               uint64_t, uint64_t, uint64_t);
-    uint32_t slots[] = {
-        SSDT_NtCreateSection, SSDT_NtOpenSection, SSDT_NtMapViewOfSection,
-        SSDT_NtUnmapViewOfSection, SSDT_NtExtendSection, SSDT_NtQuerySection,
-        SSDT_NtAreMappedFilesTheSame,
+    struct { uint32_t svc; const char *name; } slots[] = {
+        { SSDT_NtCreateSection,         "NtCreateSection" },
+        { SSDT_NtOpenSection,           "NtOpenSection" },
+        { SSDT_NtMapViewOfSection,      "NtMapViewOfSection" },
+        { SSDT_NtUnmapViewOfSection,    "NtUnmapViewOfSection" },
+        { SSDT_NtExtendSection,         "NtExtendSection" },
+        { SSDT_NtQuerySection,          "NtQuerySection" },
+        { SSDT_NtAreMappedFilesTheSame, "NtAreMappedFilesTheSame" },
     };
     uint32_t i;
+    char msg[96];
     TEST_ASSERT(tbl != (const SSDT_TABLE *)0, "SSDT main table exists");
     if (!tbl) return;
     for (i = 0; i < sizeof(slots) / sizeof(slots[0]); i++) {
-        uint32_t idx = slots[i] & 0xFFF;
-        TEST_ASSERT(tbl->handlers[idx] != ssdt_stub_not_implemented,
-                    "Section SSDT slot registered");
+        uint32_t idx = slots[i].svc & 0xFFF;
+        snprintf(msg, sizeof(msg), "%s (0x%x) registered",
+                 slots[i].name, (uint64_t)slots[i].svc);
+        TEST_ASSERT(tbl->handlers[idx] != ssdt_stub_not_implemented, msg);
     }
 }
 
@@ -1000,17 +1010,23 @@ static void test_nt_timer_ssdt_registered(void)
     const SSDT_TABLE *tbl = ssdt_get_table(SSDT_TABLE_MAIN);
     extern NTSTATUS ssdt_stub_not_implemented(uint64_t, uint64_t, uint64_t,
                                               uint64_t, uint64_t, uint64_t);
-    uint32_t slots[] = {
-        SSDT_NtCreateTimer, SSDT_NtOpenTimer,  SSDT_NtSetTimer,
-        SSDT_NtCancelTimer, SSDT_NtQueryTimer, SSDT_NtSetTimerEx,
+    struct { uint32_t svc; const char *name; } slots[] = {
+        { SSDT_NtCreateTimer, "NtCreateTimer" },
+        { SSDT_NtOpenTimer,   "NtOpenTimer" },
+        { SSDT_NtSetTimer,    "NtSetTimer" },
+        { SSDT_NtCancelTimer, "NtCancelTimer" },
+        { SSDT_NtQueryTimer,  "NtQueryTimer" },
+        { SSDT_NtSetTimerEx,  "NtSetTimerEx" },
     };
     uint32_t i;
+    char msg[96];
     TEST_ASSERT(tbl != (const SSDT_TABLE *)0, "SSDT main table exists");
     if (!tbl) return;
     for (i = 0; i < sizeof(slots) / sizeof(slots[0]); i++) {
-        uint32_t idx = slots[i] & 0xFFF;
-        TEST_ASSERT(tbl->handlers[idx] != ssdt_stub_not_implemented,
-                    "Timer SSDT slot registered");
+        uint32_t idx = slots[i].svc & 0xFFF;
+        snprintf(msg, sizeof(msg), "%s (0x%x) registered",
+                 slots[i].name, (uint64_t)slots[i].svc);
+        TEST_ASSERT(tbl->handlers[idx] != ssdt_stub_not_implemented, msg);
     }
 }
 
@@ -1020,28 +1036,41 @@ static void test_nt_timer_ssdt_registered(void)
 
 #include "kernel/nt/nt_lpc.h"
 
+/* Shared LPC slot table -- used by both registration and dispatch tests so
+ * the two stay in lockstep. Named so each assertion message identifies
+ * exactly which syscall is being exercised. */
+static const struct { uint32_t svc; const char *name; } s_lpc_slots[] = {
+    { SSDT_NtCreatePort,              "NtCreatePort" },
+    { SSDT_NtCreateWaitablePort,      "NtCreateWaitablePort" },
+    { SSDT_NtConnectPort,             "NtConnectPort" },
+    { SSDT_NtSecureConnectPort,       "NtSecureConnectPort" },
+    { SSDT_NtAcceptConnectPort,       "NtAcceptConnectPort" },
+    { SSDT_NtCompleteConnectPort,     "NtCompleteConnectPort" },
+    { SSDT_NtListenPort,              "NtListenPort" },
+    { SSDT_NtReplyPort,               "NtReplyPort" },
+    { SSDT_NtReplyWaitReceivePort,    "NtReplyWaitReceivePort" },
+    { SSDT_NtReplyWaitReceivePortEx,  "NtReplyWaitReceivePortEx" },
+    { SSDT_NtRequestPort,             "NtRequestPort" },
+    { SSDT_NtRequestWaitReplyPort,    "NtRequestWaitReplyPort" },
+    { SSDT_NtImpersonateClientOfPort, "NtImpersonateClientOfPort" },
+    { SSDT_NtReadRequestData,         "NtReadRequestData" },
+    { SSDT_NtWriteRequestData,        "NtWriteRequestData" },
+};
+
 static void test_nt_lpc_slots_registered(void)
 {
     const SSDT_TABLE *tbl = ssdt_get_table(SSDT_TABLE_MAIN);
     extern NTSTATUS ssdt_stub_not_implemented(uint64_t, uint64_t, uint64_t,
                                               uint64_t, uint64_t, uint64_t);
-    uint32_t slots[] = {
-        SSDT_NtCreatePort,              SSDT_NtCreateWaitablePort,
-        SSDT_NtConnectPort,             SSDT_NtSecureConnectPort,
-        SSDT_NtAcceptConnectPort,       SSDT_NtCompleteConnectPort,
-        SSDT_NtListenPort,              SSDT_NtReplyPort,
-        SSDT_NtReplyWaitReceivePort,    SSDT_NtReplyWaitReceivePortEx,
-        SSDT_NtRequestPort,             SSDT_NtRequestWaitReplyPort,
-        SSDT_NtImpersonateClientOfPort, SSDT_NtReadRequestData,
-        SSDT_NtWriteRequestData,
-    };
     uint32_t i;
+    char msg[96];
     TEST_ASSERT(tbl != (const SSDT_TABLE *)0, "SSDT main table exists");
     if (!tbl) return;
-    for (i = 0; i < sizeof(slots) / sizeof(slots[0]); i++) {
-        uint32_t idx = slots[i] & 0xFFF;
-        TEST_ASSERT(tbl->handlers[idx] != ssdt_stub_not_implemented,
-                    "LPC SSDT slot registered (not default stub)");
+    for (i = 0; i < sizeof(s_lpc_slots) / sizeof(s_lpc_slots[0]); i++) {
+        uint32_t idx = s_lpc_slots[i].svc & 0xFFF;
+        snprintf(msg, sizeof(msg), "%s (0x%x) registered",
+                 s_lpc_slots[i].name, (uint64_t)s_lpc_slots[i].svc);
+        TEST_ASSERT(tbl->handlers[idx] != ssdt_stub_not_implemented, msg);
     }
 }
 
@@ -1051,21 +1080,14 @@ static void test_nt_lpc_returns_deferred_status(void)
      * must see a real NTSTATUS, not a dispatch-miss path. Dispatch ALL
      * 15 slots -- mis-registration to another non-stub handler in any
      * slot would otherwise ship undetected. */
-    uint32_t slots[] = {
-        SSDT_NtCreatePort,              SSDT_NtCreateWaitablePort,
-        SSDT_NtConnectPort,             SSDT_NtSecureConnectPort,
-        SSDT_NtAcceptConnectPort,       SSDT_NtCompleteConnectPort,
-        SSDT_NtListenPort,              SSDT_NtReplyPort,
-        SSDT_NtReplyWaitReceivePort,    SSDT_NtReplyWaitReceivePortEx,
-        SSDT_NtRequestPort,             SSDT_NtRequestWaitReplyPort,
-        SSDT_NtImpersonateClientOfPort, SSDT_NtReadRequestData,
-        SSDT_NtWriteRequestData,
-    };
     uint32_t i;
-    for (i = 0; i < sizeof(slots) / sizeof(slots[0]); i++) {
-        NTSTATUS st = ssdt_dispatch(slots[i], 0, 0, 0, 0, 0, 0);
-        TEST_ASSERT(st == STATUS_NOT_IMPLEMENTED,
-                    "LPC slot returns STATUS_NOT_IMPLEMENTED");
+    char msg[96];
+    for (i = 0; i < sizeof(s_lpc_slots) / sizeof(s_lpc_slots[0]); i++) {
+        NTSTATUS st = ssdt_dispatch(s_lpc_slots[i].svc, 0, 0, 0, 0, 0, 0);
+        snprintf(msg, sizeof(msg),
+                 "%s (0x%x) returns STATUS_NOT_IMPLEMENTED",
+                 s_lpc_slots[i].name, (uint64_t)s_lpc_slots[i].svc);
+        TEST_ASSERT(st == STATUS_NOT_IMPLEMENTED, msg);
     }
 }
 
@@ -1086,28 +1108,40 @@ static void test_pe_ntdll_exports_sorted(void)
     TEST_ASSERT(v == 0, "PE DLL export tables strictly sorted by name");
 }
 
+/* Shared ALPC slot table -- same pattern as s_lpc_slots above. */
+static const struct { uint32_t svc; const char *name; } s_alpc_slots[] = {
+    { SSDT_NtAlpcCreatePort,             "NtAlpcCreatePort" },
+    { SSDT_NtAlpcConnectPort,            "NtAlpcConnectPort" },
+    { SSDT_NtAlpcConnectPortEx,          "NtAlpcConnectPortEx" },
+    { SSDT_NtAlpcAcceptConnectPort,      "NtAlpcAcceptConnectPort" },
+    { SSDT_NtAlpcSendWaitReceivePort,    "NtAlpcSendWaitReceivePort" },
+    { SSDT_NtAlpcDisconnectPort,         "NtAlpcDisconnectPort" },
+    { SSDT_NtAlpcCancelMessage,          "NtAlpcCancelMessage" },
+    { SSDT_NtAlpcCreatePortSection,      "NtAlpcCreatePortSection" },
+    { SSDT_NtAlpcDeletePortSection,      "NtAlpcDeletePortSection" },
+    { SSDT_NtAlpcCreateSectionView,      "NtAlpcCreateSectionView" },
+    { SSDT_NtAlpcDeleteSectionView,      "NtAlpcDeleteSectionView" },
+    { SSDT_NtAlpcCreateResourceReserve,  "NtAlpcCreateResourceReserve" },
+    { SSDT_NtAlpcDeleteResourceReserve,  "NtAlpcDeleteResourceReserve" },
+    { SSDT_NtAlpcQueryInformation,       "NtAlpcQueryInformation" },
+    { SSDT_NtAlpcSetInformation,         "NtAlpcSetInformation" },
+    { SSDT_NtAlpcQueryInformationMessage, "NtAlpcQueryInformationMessage" },
+};
+
 static void test_nt_alpc_slots_registered(void)
 {
     const SSDT_TABLE *tbl = ssdt_get_table(SSDT_TABLE_MAIN);
     extern NTSTATUS ssdt_stub_not_implemented(uint64_t, uint64_t, uint64_t,
                                               uint64_t, uint64_t, uint64_t);
-    uint32_t slots[] = {
-        SSDT_NtAlpcCreatePort,            SSDT_NtAlpcConnectPort,
-        SSDT_NtAlpcConnectPortEx,         SSDT_NtAlpcAcceptConnectPort,
-        SSDT_NtAlpcSendWaitReceivePort,   SSDT_NtAlpcDisconnectPort,
-        SSDT_NtAlpcCancelMessage,         SSDT_NtAlpcCreatePortSection,
-        SSDT_NtAlpcDeletePortSection,     SSDT_NtAlpcCreateSectionView,
-        SSDT_NtAlpcDeleteSectionView,     SSDT_NtAlpcCreateResourceReserve,
-        SSDT_NtAlpcDeleteResourceReserve, SSDT_NtAlpcQueryInformation,
-        SSDT_NtAlpcSetInformation,        SSDT_NtAlpcQueryInformationMessage,
-    };
     uint32_t i;
+    char msg[96];
     TEST_ASSERT(tbl != (const SSDT_TABLE *)0, "SSDT main table exists");
     if (!tbl) return;
-    for (i = 0; i < sizeof(slots) / sizeof(slots[0]); i++) {
-        uint32_t idx = slots[i] & 0xFFF;
-        TEST_ASSERT(tbl->handlers[idx] != ssdt_stub_not_implemented,
-                    "ALPC SSDT slot registered (not default stub)");
+    for (i = 0; i < sizeof(s_alpc_slots) / sizeof(s_alpc_slots[0]); i++) {
+        uint32_t idx = s_alpc_slots[i].svc & 0xFFF;
+        snprintf(msg, sizeof(msg), "%s (0x%x) registered",
+                 s_alpc_slots[i].name, (uint64_t)s_alpc_slots[i].svc);
+        TEST_ASSERT(tbl->handlers[idx] != ssdt_stub_not_implemented, msg);
     }
 }
 
@@ -1115,21 +1149,14 @@ static void test_nt_alpc_returns_deferred_status(void)
 {
     /* Dispatch ALL 16 slots so mis-registration to another non-stub
      * handler in any unsampled slot cannot ship undetected. */
-    uint32_t slots[] = {
-        SSDT_NtAlpcCreatePort,            SSDT_NtAlpcConnectPort,
-        SSDT_NtAlpcConnectPortEx,         SSDT_NtAlpcAcceptConnectPort,
-        SSDT_NtAlpcSendWaitReceivePort,   SSDT_NtAlpcDisconnectPort,
-        SSDT_NtAlpcCancelMessage,         SSDT_NtAlpcCreatePortSection,
-        SSDT_NtAlpcDeletePortSection,     SSDT_NtAlpcCreateSectionView,
-        SSDT_NtAlpcDeleteSectionView,     SSDT_NtAlpcCreateResourceReserve,
-        SSDT_NtAlpcDeleteResourceReserve, SSDT_NtAlpcQueryInformation,
-        SSDT_NtAlpcSetInformation,        SSDT_NtAlpcQueryInformationMessage,
-    };
     uint32_t i;
-    for (i = 0; i < sizeof(slots) / sizeof(slots[0]); i++) {
-        NTSTATUS st = ssdt_dispatch(slots[i], 0, 0, 0, 0, 0, 0);
-        TEST_ASSERT(st == STATUS_NOT_IMPLEMENTED,
-                    "ALPC slot returns STATUS_NOT_IMPLEMENTED");
+    char msg[96];
+    for (i = 0; i < sizeof(s_alpc_slots) / sizeof(s_alpc_slots[0]); i++) {
+        NTSTATUS st = ssdt_dispatch(s_alpc_slots[i].svc, 0, 0, 0, 0, 0, 0);
+        snprintf(msg, sizeof(msg),
+                 "%s (0x%x) returns STATUS_NOT_IMPLEMENTED",
+                 s_alpc_slots[i].name, (uint64_t)s_alpc_slots[i].svc);
+        TEST_ASSERT(st == STATUS_NOT_IMPLEMENTED, msg);
     }
 }
 
@@ -1155,7 +1182,8 @@ void test_register_ob(void)
     test_suite_register_cat("OB: NT namespace SSDT registered", test_nt_namespace_ssdt_registered, TEST_CAT_OB);
     test_suite_register_cat("OB: NT section anon roundtrip", test_nt_section_anon_roundtrip, TEST_CAT_OB);
     test_suite_register_cat("OB: NT section file-backed", test_nt_section_file_backed, TEST_CAT_OB);
-    test_suite_register_cat("OB: NT section named open+query+extend", test_nt_section_named_open_query_extend, TEST_CAT_OB);
+    test_suite_register_cat("OB: NT section named open+query+extend",
+                            test_nt_section_named_open_query_extend, TEST_CAT_OB);
     test_suite_register_cat("OB: NT section unmap bad base", test_nt_section_unmap_bad_base, TEST_CAT_OB);
     test_suite_register_cat("OB: NT section SSDT registered", test_nt_section_ssdt_registered, TEST_CAT_OB);
     test_suite_register_cat("OB: NT timer create+query", test_nt_timer_create_and_query, TEST_CAT_OB);
