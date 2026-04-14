@@ -1014,6 +1014,61 @@ static void test_nt_timer_ssdt_registered(void)
     }
 }
 
+/* ============================================================================
+ * §20 NT legacy LPC SSDT stub-wiring tests
+ * ============================================================================ */
+
+#include "kernel/nt/nt_lpc.h"
+
+static void test_nt_lpc_slots_registered(void)
+{
+    const SSDT_TABLE *tbl = ssdt_get_table(SSDT_TABLE_MAIN);
+    extern NTSTATUS ssdt_stub_not_implemented(uint64_t, uint64_t, uint64_t,
+                                              uint64_t, uint64_t, uint64_t);
+    uint32_t slots[] = {
+        SSDT_NtCreatePort,              SSDT_NtCreateWaitablePort,
+        SSDT_NtConnectPort,             SSDT_NtSecureConnectPort,
+        SSDT_NtAcceptConnectPort,       SSDT_NtCompleteConnectPort,
+        SSDT_NtListenPort,              SSDT_NtReplyPort,
+        SSDT_NtReplyWaitReceivePort,    SSDT_NtReplyWaitReceivePortEx,
+        SSDT_NtRequestPort,             SSDT_NtRequestWaitReplyPort,
+        SSDT_NtImpersonateClientOfPort, SSDT_NtReadRequestData,
+        SSDT_NtWriteRequestData,
+    };
+    uint32_t i;
+    TEST_ASSERT(tbl != (const SSDT_TABLE *)0, "SSDT main table exists");
+    if (!tbl) return;
+    for (i = 0; i < sizeof(slots) / sizeof(slots[0]); i++) {
+        uint32_t idx = slots[i] & 0xFFF;
+        TEST_ASSERT(tbl->handlers[idx] != ssdt_stub_not_implemented,
+                    "LPC SSDT slot registered (not default stub)");
+    }
+}
+
+static void test_nt_lpc_returns_deferred_status(void)
+{
+    /* Deterministic STATUS_NOT_IMPLEMENTED contract: user-mode callers
+     * must see a real NTSTATUS, not a dispatch-miss path. Dispatch ALL
+     * 15 slots -- mis-registration to another non-stub handler in any
+     * slot would otherwise ship undetected. */
+    uint32_t slots[] = {
+        SSDT_NtCreatePort,              SSDT_NtCreateWaitablePort,
+        SSDT_NtConnectPort,             SSDT_NtSecureConnectPort,
+        SSDT_NtAcceptConnectPort,       SSDT_NtCompleteConnectPort,
+        SSDT_NtListenPort,              SSDT_NtReplyPort,
+        SSDT_NtReplyWaitReceivePort,    SSDT_NtReplyWaitReceivePortEx,
+        SSDT_NtRequestPort,             SSDT_NtRequestWaitReplyPort,
+        SSDT_NtImpersonateClientOfPort, SSDT_NtReadRequestData,
+        SSDT_NtWriteRequestData,
+    };
+    uint32_t i;
+    for (i = 0; i < sizeof(slots) / sizeof(slots[0]); i++) {
+        NTSTATUS st = ssdt_dispatch(slots[i], 0, 0, 0, 0, 0, 0);
+        TEST_ASSERT(st == STATUS_NOT_IMPLEMENTED,
+                    "LPC slot returns STATUS_NOT_IMPLEMENTED");
+    }
+}
+
 /* ---- Registration ---- */
 
 void test_register_ob(void)
@@ -1044,6 +1099,8 @@ void test_register_ob(void)
     test_suite_register_cat("OB: NT timer open existing", test_nt_timer_open_existing, TEST_CAT_OB);
     test_suite_register_cat("OB: NT timer wrong type", test_nt_timer_wrong_type, TEST_CAT_OB);
     test_suite_register_cat("OB: NT timer SSDT registered", test_nt_timer_ssdt_registered, TEST_CAT_OB);
+    test_suite_register_cat("OB: NT LPC slots registered", test_nt_lpc_slots_registered, TEST_CAT_OB);
+    test_suite_register_cat("OB: NT LPC returns deferred", test_nt_lpc_returns_deferred_status, TEST_CAT_OB);
 }
 
 #endif /* KERNEL_TESTS */

@@ -233,21 +233,21 @@
 
 | Index  | Function                         | §   | Owner                | Done |
 |--------|----------------------------------|-----|----------------------|------|
-| 0x0100 | NtCreatePort                     | §20 | T12 §8               | [ ]  |
-| 0x0101 | NtCreateWaitablePort             | §20 | T12 §8               | [ ]  |
-| 0x0102 | NtConnectPort                    | §20 | T12 §8               | [ ]  |
-| 0x0103 | NtSecureConnectPort              | §20 | T12 §8               | [ ]  |
-| 0x0104 | NtAcceptConnectPort              | §20 | T12 §8               | [ ]  |
-| 0x0105 | NtCompleteConnectPort            | §20 | T12 §8               | [ ]  |
-| 0x0106 | NtListenPort                     | §20 | T12 §8               | [ ]  |
-| 0x0107 | NtReplyPort                      | §20 | T12 §8               | [ ]  |
-| 0x0108 | NtReplyWaitReceivePort           | §20 | T12 §8               | [ ]  |
-| 0x0109 | NtReplyWaitReceivePortEx         | §20 | T12 §8               | [ ]  |
-| 0x010A | NtRequestPort                    | §20 | T12 §8               | [ ]  |
-| 0x010B | NtRequestWaitReplyPort           | §20 | T12 §8               | [ ]  |
-| 0x010C | NtImpersonateClientOfPort        | §20 | T12 §8               | [ ]  |
-| 0x010D | NtReadRequestData                | §20 | T12 §8               | [ ]  |
-| 0x010E | NtWriteRequestData               | §20 | T12 §8               | [ ]  |
+| 0x0100 | NtCreatePort                     | §20 | T05 §20 (nt_lpc.c stub, T08 §7 retrofit) | [/]  |
+| 0x0101 | NtCreateWaitablePort             | §20 | T05 §20 (nt_lpc.c stub, T08 §7 retrofit) | [/]  |
+| 0x0102 | NtConnectPort                    | §20 | T05 §20 (nt_lpc.c stub, T08 §7 retrofit) | [/]  |
+| 0x0103 | NtSecureConnectPort              | §20 | T05 §20 (nt_lpc.c stub, T08 §7 retrofit) | [/]  |
+| 0x0104 | NtAcceptConnectPort              | §20 | T05 §20 (nt_lpc.c stub, T08 §7 retrofit) | [/]  |
+| 0x0105 | NtCompleteConnectPort            | §20 | T05 §20 (nt_lpc.c stub, T08 §7 retrofit) | [/]  |
+| 0x0106 | NtListenPort                     | §20 | T05 §20 (nt_lpc.c stub, T08 §7 retrofit) | [/]  |
+| 0x0107 | NtReplyPort                      | §20 | T05 §20 (nt_lpc.c stub, T08 §7 retrofit) | [/]  |
+| 0x0108 | NtReplyWaitReceivePort           | §20 | T05 §20 (nt_lpc.c stub, T08 §7 retrofit) | [/]  |
+| 0x0109 | NtReplyWaitReceivePortEx         | §20 | T05 §20 (nt_lpc.c stub, T08 §7 retrofit) | [/]  |
+| 0x010A | NtRequestPort                    | §20 | T05 §20 (nt_lpc.c stub, T08 §7 retrofit) | [/]  |
+| 0x010B | NtRequestWaitReplyPort           | §20 | T05 §20 (nt_lpc.c stub, T08 §7 retrofit) | [/]  |
+| 0x010C | NtImpersonateClientOfPort        | §20 | T05 §20 (nt_lpc.c stub, T08 §7 retrofit) | [/]  |
+| 0x010D | NtReadRequestData                | §20 | T05 §20 (nt_lpc.c stub, T08 §7 retrofit) | [/]  |
+| 0x010E | NtWriteRequestData               | §20 | T05 §20 (nt_lpc.c stub, T08 §7 retrofit) | [/]  |
 | 0x010F | NtAlpcCreatePort                 | §31 | T12 §8               | [ ]  |
 | 0x0110 | NtAlpcConnectPort                | §31 | T12 §8               | [ ]  |
 | 0x0111 | NtAlpcConnectPortEx              | §31 | T12 §8               | [ ]  |

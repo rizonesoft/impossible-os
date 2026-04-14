@@ -70,7 +70,7 @@
 | 💎  |  17   | Directory and symbolic link object syscalls                    | §5, TODO-03 §4    |  [x]   |
 | 💎  |  18   | Section and memory-mapped file syscalls                        | §5, TODO-03 §7    |  [x]   |
 | 💎  |  19   | Timer control syscalls                                         | §5, TODO-07 §8,§9 |  [x]   |
-| 💎  |  20   | Legacy LPC port syscalls                                       | §5, TODO-12 §8    |  [ ]   |
+| 💎  |  20   | Legacy LPC port syscalls                                       | §5, TODO-12 §8    |  [x]   |
 | 💎  |  21   | Exception and debug syscalls                                   | §5, TODO-10 §5    |  [ ]   |
 | 💎  |  22   | Power and system control                                       | §5, TODO-15 §12   |  [ ]   |
 | 💎  |  23   | Atom, locale, and miscellaneous                                | §5                |  [ ]   |
@@ -609,24 +609,27 @@ Namespace manipulation -- create, open, and query Ob directory objects and symbo
 > [!NOTE]
 > Legacy LPC (NT 3.x-5.x) syscall surface. Reserves SSDT indices 0x0100-0x010C and wires NT-compatible signatures so user-mode callers get `STATUS_NOT_IMPLEMENTED` (rather than an empty SSDT slot) until the ALPC subsystem lands. Full port infrastructure -- `ALPC_PORT` object, message queue, connection state machine, send/receive engine -- is implemented in `02-kernel-core/TODO-12-alpc-message-ports.md`. Modern ALPC (Vista+) syscalls split to §31. LPC and ALPC share the same underlying kernel object type (`ObpAlpcPortType`); LPC is a thin compatibility adapter over ALPC in Windows and will be the same here.
 
-- [ ] `NtCreatePort(PortHandle, ObjectAttributes, MaxConnectionInfoLength, MaxMessageLength, MaxPoolUsage)` → SSDT 0x0100
-- [ ] `NtCreateWaitablePort(...)` → SSDT 0x0101
-- [ ] `NtConnectPort(PortHandle, PortName, SecurityQos, ClientView, ServerView, MaxMessageLength, ConnectionInformation, ConnectionInformationLength)` → SSDT 0x0102
-- [ ] `NtSecureConnectPort(...)` → SSDT 0x0103: with SID validation
-- [ ] `NtAcceptConnectPort(PortHandle, PortContext, ConnectionRequest, AcceptConnection, ServerView, ClientView)` → SSDT 0x0104
-- [ ] `NtCompleteConnectPort(PortHandle)` → SSDT 0x0105
-- [ ] `NtListenPort(PortHandle, ConnectionRequest)` → SSDT 0x0106
-- [ ] `NtReplyPort(PortHandle, ReplyMessage)` → SSDT 0x0107
-- [ ] `NtReplyWaitReceivePort(PortHandle, PortContext, ReplyMessage, ReceiveMessage)` → SSDT 0x0108
-- [ ] `NtReplyWaitReceivePortEx(PortHandle, PortContext, ReplyMessage, ReceiveMessage, Timeout)` → SSDT 0x0109
-- [ ] `NtRequestPort(PortHandle, RequestMessage)` → SSDT 0x010A
-- [ ] `NtRequestWaitReplyPort(PortHandle, RequestMessage, ReplyMessage)` → SSDT 0x010B
-- [ ] `NtImpersonateClientOfPort(PortHandle, Message)` → SSDT 0x010C
-- [ ] `NtReadRequestData(PortHandle, Message, DataEntryIndex, Buffer, BufferSize, BytesRead)` → SSDT 0x010D
-- [ ] `NtWriteRequestData(PortHandle, Message, DataEntryIndex, Buffer, BufferSize, BytesWritten)` → SSDT 0x010E
-- [ ] Commit: `"kernel: nt -- legacy LPC port syscalls wired to SSDT"`
+- [x] `NtCreatePort(PortHandle, ObjectAttributes, MaxConnectionInfoLength, MaxMessageLength, MaxPoolUsage)` → SSDT 0x0100
+- [x] `NtCreateWaitablePort(...)` → SSDT 0x0101
+- [x] `NtConnectPort(PortHandle, PortName, SecurityQos, ClientView, ServerView, MaxMessageLength, ConnectionInformation, ConnectionInformationLength)` → SSDT 0x0102
+- [x] `NtSecureConnectPort(...)` → SSDT 0x0103: with SID validation
+- [x] `NtAcceptConnectPort(PortHandle, PortContext, ConnectionRequest, AcceptConnection, ServerView, ClientView)` → SSDT 0x0104
+- [x] `NtCompleteConnectPort(PortHandle)` → SSDT 0x0105
+- [x] `NtListenPort(PortHandle, ConnectionRequest)` → SSDT 0x0106
+- [x] `NtReplyPort(PortHandle, ReplyMessage)` → SSDT 0x0107
+- [x] `NtReplyWaitReceivePort(PortHandle, PortContext, ReplyMessage, ReceiveMessage)` → SSDT 0x0108
+- [x] `NtReplyWaitReceivePortEx(PortHandle, PortContext, ReplyMessage, ReceiveMessage, Timeout)` → SSDT 0x0109
+- [x] `NtRequestPort(PortHandle, RequestMessage)` → SSDT 0x010A
+- [x] `NtRequestWaitReplyPort(PortHandle, RequestMessage, ReplyMessage)` → SSDT 0x010B
+- [x] `NtImpersonateClientOfPort(PortHandle, Message)` → SSDT 0x010C
+- [x] `NtReadRequestData(PortHandle, Message, DataEntryIndex, Buffer, BufferSize, BytesRead)` → SSDT 0x010D
+- [x] `NtWriteRequestData(PortHandle, Message, DataEntryIndex, Buffer, BufferSize, BytesWritten)` → SSDT 0x010E
+- [x] Commit: `"kernel: nt -- legacy LPC port syscalls wired to SSDT"`
 
-**Test checkpoint:** All 13 LPC SSDT slots resolve to the registered handler (not the default `ssdt_stub_not_implemented`). Each handler returns `STATUS_NOT_IMPLEMENTED` until TODO-12 ALPC subsystem lands; functional round-trip (`NtCreatePort` + `NtConnectPort` + `NtRequestWaitReplyPort`) is exercised by TODO-12 §8 tests.
+**Test checkpoint:** All 15 LPC SSDT slots resolve to the registered handler (not the default `ssdt_stub_not_implemented`). Each handler returns `STATUS_NOT_IMPLEMENTED` until TODO-08 §7 LPC engine lands; functional round-trip (`NtCreatePort` + `NtConnectPort` + `NtRequestWaitReplyPort`) is exercised by TODO-08 §7 tests and TODO-12 §8 tests.
+
+> **Test runner:** `scripts\debug\run-ob-tests.bat` (SUITE=ob)
+> **Expected:** 2 new §20 tests (LPC slots registered, LPC returns deferred-status), 0 failures.
 
 ## 21. Exception and Debug Syscalls
 
