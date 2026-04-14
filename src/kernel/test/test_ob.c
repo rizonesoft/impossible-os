@@ -838,6 +838,182 @@ static void test_nt_section_ssdt_registered(void)
     }
 }
 
+/* ============================================================================
+ * §19 NT timer syscall tests
+ * ============================================================================ */
+
+#include "kernel/nt/nt_timer.h"
+#include "kernel/ob/ob_event.h"
+#include "kernel/timer.h"
+
+static void test_nt_timer_create_and_query(void)
+{
+    HANDLE th = INVALID_HANDLE_VALUE;
+    OBJECT_ATTRIBUTES oa;
+    UNICODE_STRING us;
+    NTSTATUS st;
+    TIMER_BASIC_INFORMATION bi;
+    uint64_t ret_len = 0;
+
+    s17_build_oa(&oa, &us, "TimerTest19A");
+
+    st = ssdt_dispatch(SSDT_NtCreateTimer,
+                       (uint64_t)(uintptr_t)&th,
+                       (uint64_t)0,  /* access */
+                       (uint64_t)(uintptr_t)&oa,
+                       (uint64_t)TIMER_TYPE_NOTIFICATION,
+                       0, 0);
+    TEST_ASSERT(NT_SUCCESS(st), "NtCreateTimer");
+    TEST_ASSERT(th != INVALID_HANDLE_VALUE, "timer handle valid");
+
+    /* Query before arm: TimerState should be 1 (signalled/not pending). */
+    st = ssdt_dispatch(SSDT_NtQueryTimer,
+                       (uint64_t)th,
+                       (uint64_t)TimerBasicInformation,
+                       (uint64_t)(uintptr_t)&bi,
+                       sizeof(bi),
+                       (uint64_t)(uintptr_t)&ret_len, 0);
+    TEST_ASSERT(NT_SUCCESS(st), "NtQueryTimer basic");
+    TEST_ASSERT(ret_len == sizeof(bi), "ret_len == sizeof(TIMER_BASIC_INFORMATION)");
+    TEST_ASSERT(bi.TimerState == 1, "unarmed timer reports TimerState=1");
+    TEST_ASSERT(bi.RemainingTime.QuadPart == 0, "unarmed RemainingTime==0");
+
+    ssdt_dispatch(SSDT_NtClose, (uint64_t)th, 0, 0, 0, 0, 0);
+}
+
+static void test_nt_timer_set_cancel(void)
+{
+    HANDLE th = INVALID_HANDLE_VALUE;
+    OBJECT_ATTRIBUTES oa;
+    UNICODE_STRING us;
+    NTSTATUS st;
+    LARGE_INTEGER due;
+    uint8_t prev_state = 0xFF;
+    uint8_t current_state = 0xFF;
+
+    s17_build_oa(&oa, &us, "TimerTest19B");
+
+    st = ssdt_dispatch(SSDT_NtCreateTimer,
+                       (uint64_t)(uintptr_t)&th,
+                       (uint64_t)0,
+                       (uint64_t)(uintptr_t)&oa,
+                       (uint64_t)TIMER_TYPE_NOTIFICATION,
+                       0, 0);
+    TEST_ASSERT(NT_SUCCESS(st), "NtCreateTimer set/cancel");
+
+    /* Arm for 1 second in the future: -10_000_000 (100-ns units). */
+    due.QuadPart = -(int64_t)10000000;
+    st = ssdt_dispatch(SSDT_NtSetTimer,
+                       (uint64_t)th,
+                       (uint64_t)(uintptr_t)&due,
+                       0, 0,  /* ApcRoutine, ApcContext */
+                       NT_SETTIMER_PACK(0, 0),  /* Period=0, Resume=0 */
+                       (uint64_t)(uintptr_t)&prev_state);
+    TEST_ASSERT(NT_SUCCESS(st), "NtSetTimer");
+    TEST_ASSERT(prev_state == 0, "first set: previous state 0");
+
+    /* Arm again: previous state should now be 1 (armed). */
+    due.QuadPart = -(int64_t)20000000;
+    st = ssdt_dispatch(SSDT_NtSetTimer,
+                       (uint64_t)th,
+                       (uint64_t)(uintptr_t)&due,
+                       0, 0,
+                       NT_SETTIMER_PACK(0, 0),
+                       (uint64_t)(uintptr_t)&prev_state);
+    TEST_ASSERT(NT_SUCCESS(st), "NtSetTimer re-arm");
+    TEST_ASSERT(prev_state == 1, "re-arm: previous state 1");
+
+    /* Cancel: current state should be 1 (was armed). */
+    st = ssdt_dispatch(SSDT_NtCancelTimer,
+                       (uint64_t)th,
+                       (uint64_t)(uintptr_t)&current_state,
+                       0, 0, 0, 0);
+    TEST_ASSERT(NT_SUCCESS(st), "NtCancelTimer");
+    TEST_ASSERT(current_state == 1, "cancel: current state 1");
+
+    /* Cancel again: should now report 0 (not armed). */
+    current_state = 0xFF;
+    st = ssdt_dispatch(SSDT_NtCancelTimer,
+                       (uint64_t)th,
+                       (uint64_t)(uintptr_t)&current_state,
+                       0, 0, 0, 0);
+    TEST_ASSERT(NT_SUCCESS(st), "NtCancelTimer idempotent");
+    TEST_ASSERT(current_state == 0, "second cancel: current state 0");
+
+    ssdt_dispatch(SSDT_NtClose, (uint64_t)th, 0, 0, 0, 0, 0);
+}
+
+static void test_nt_timer_open_existing(void)
+{
+    HANDLE ch = INVALID_HANDLE_VALUE;
+    HANDLE oh = INVALID_HANDLE_VALUE;
+    OBJECT_ATTRIBUTES oa;
+    UNICODE_STRING us;
+    NTSTATUS st;
+
+    s17_build_oa(&oa, &us, "TimerTest19C");
+    st = ssdt_dispatch(SSDT_NtCreateTimer,
+                       (uint64_t)(uintptr_t)&ch,
+                       0,
+                       (uint64_t)(uintptr_t)&oa,
+                       (uint64_t)TIMER_TYPE_SYNCHRONIZATION,
+                       0, 0);
+    TEST_ASSERT(NT_SUCCESS(st), "NtCreateTimer (named)");
+
+    s17_build_oa(&oa, &us, "TimerTest19C");
+    st = ssdt_dispatch(SSDT_NtOpenTimer,
+                       (uint64_t)(uintptr_t)&oh,
+                       0,
+                       (uint64_t)(uintptr_t)&oa,
+                       0, 0, 0);
+    TEST_ASSERT(NT_SUCCESS(st), "NtOpenTimer");
+    TEST_ASSERT(oh != INVALID_HANDLE_VALUE, "open handle valid");
+
+    ssdt_dispatch(SSDT_NtClose, (uint64_t)oh, 0, 0, 0, 0, 0);
+    ssdt_dispatch(SSDT_NtClose, (uint64_t)ch, 0, 0, 0, 0, 0);
+}
+
+static void test_nt_timer_wrong_type(void)
+{
+    /* Attempt to query an event handle (wrong object type) via NtQueryTimer. */
+    HANDLE eh = NtCreateEvent(&task_current()->handle_table, NULL,
+                              EVENT_MANUAL_RESET, 0);
+    TIMER_BASIC_INFORMATION bi;
+    NTSTATUS st;
+
+    TEST_ASSERT(eh != INVALID_HANDLE_VALUE, "NtCreateEvent precondition");
+
+    st = ssdt_dispatch(SSDT_NtQueryTimer,
+                       (uint64_t)eh,
+                       (uint64_t)TimerBasicInformation,
+                       (uint64_t)(uintptr_t)&bi,
+                       sizeof(bi),
+                       0, 0);
+    TEST_ASSERT(st == STATUS_OBJECT_TYPE_MISMATCH,
+                "NtQueryTimer on event -> OBJECT_TYPE_MISMATCH");
+
+    ssdt_dispatch(SSDT_NtClose, (uint64_t)eh, 0, 0, 0, 0, 0);
+}
+
+static void test_nt_timer_ssdt_registered(void)
+{
+    const SSDT_TABLE *tbl = ssdt_get_table(SSDT_TABLE_MAIN);
+    extern NTSTATUS ssdt_stub_not_implemented(uint64_t, uint64_t, uint64_t,
+                                              uint64_t, uint64_t, uint64_t);
+    uint32_t slots[] = {
+        SSDT_NtCreateTimer, SSDT_NtOpenTimer,  SSDT_NtSetTimer,
+        SSDT_NtCancelTimer, SSDT_NtQueryTimer, SSDT_NtSetTimerEx,
+    };
+    uint32_t i;
+    TEST_ASSERT(tbl != (const SSDT_TABLE *)0, "SSDT main table exists");
+    if (!tbl) return;
+    for (i = 0; i < sizeof(slots) / sizeof(slots[0]); i++) {
+        uint32_t idx = slots[i] & 0xFFF;
+        TEST_ASSERT(tbl->handlers[idx] != ssdt_stub_not_implemented,
+                    "Timer SSDT slot registered");
+    }
+}
+
 /* ---- Registration ---- */
 
 void test_register_ob(void)
@@ -863,6 +1039,11 @@ void test_register_ob(void)
     test_suite_register_cat("OB: NT section named open+query+extend", test_nt_section_named_open_query_extend, TEST_CAT_OB);
     test_suite_register_cat("OB: NT section unmap bad base", test_nt_section_unmap_bad_base, TEST_CAT_OB);
     test_suite_register_cat("OB: NT section SSDT registered", test_nt_section_ssdt_registered, TEST_CAT_OB);
+    test_suite_register_cat("OB: NT timer create+query", test_nt_timer_create_and_query, TEST_CAT_OB);
+    test_suite_register_cat("OB: NT timer set/cancel", test_nt_timer_set_cancel, TEST_CAT_OB);
+    test_suite_register_cat("OB: NT timer open existing", test_nt_timer_open_existing, TEST_CAT_OB);
+    test_suite_register_cat("OB: NT timer wrong type", test_nt_timer_wrong_type, TEST_CAT_OB);
+    test_suite_register_cat("OB: NT timer SSDT registered", test_nt_timer_ssdt_registered, TEST_CAT_OB);
 }
 
 #endif /* KERNEL_TESTS */

@@ -120,12 +120,12 @@
 | 0x007B | NtOpenSemaphore                  | §8  | T05 (§8 implemented)     | [x]  |
 | 0x007C | NtReleaseSemaphore               | §8  | T05 (§8 implemented)     | [x]  |
 | 0x007D | NtQuerySemaphore                 | §8  | T05 (§8 implemented)     | [x]  |
-| 0x007E | NtCreateTimer                    | §19 | T05 (ob_timer exists)    | [ ]  |
-| 0x007F | NtOpenTimer                      | §19 | T05 §19                  | [ ]  |
-| 0x0080 | NtSetTimer                       | §19 | T05 §19                  | [ ]  |
-| 0x0081 | NtCancelTimer                    | §19 | T05 §19                  | [ ]  |
-| 0x0082 | NtQueryTimer                     | §19 | T05 §19                  | [ ]  |
-| 0x0083 | NtSetTimerEx                     | §19 | T05 §19                  | [ ]  |
+| 0x007E | NtCreateTimer                    | §19 | T05 §19 (nt_timer.c)     | [x]  |
+| 0x007F | NtOpenTimer                      | §19 | T05 §19 (nt_timer.c)     | [x]  |
+| 0x0080 | NtSetTimer                       | §19 | T05 §19 (nt_timer.c)     | [x]  |
+| 0x0081 | NtCancelTimer                    | §19 | T05 §19 (nt_timer.c)     | [x]  |
+| 0x0082 | NtQueryTimer                     | §19 | T05 §19 (nt_timer.c)     | [x]  |
+| 0x0083 | NtSetTimerEx                     | §19 | T05 §19 (nt_timer.c)     | [x]  |
 | 0x0084 | NtCreateKeyedEvent               | §8  | T07-mem §4 (stub)        | [/]  |
 | 0x0085 | NtOpenKeyedEvent                 | §8  | T07-mem §4 (stub)        | [/]  |
 | 0x0086 | NtWaitForKeyedEvent              | §8  | T07-mem §4 (stub)        | [/]  |

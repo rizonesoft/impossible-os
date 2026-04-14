@@ -69,7 +69,7 @@
 | 💎  |  16   | Token open/query/adjust syscalls                               | §5, TODO-11 §4    |  [x]   |
 | 💎  |  17   | Directory and symbolic link object syscalls                    | §5, TODO-03 §4    |  [x]   |
 | 💎  |  18   | Section and memory-mapped file syscalls                        | §5, TODO-03 §7    |  [x]   |
-| 💎  |  19   | Timer control syscalls                                         | §5, TODO-07 §8,§9 |  [ ]   |
+| 💎  |  19   | Timer control syscalls                                         | §5, TODO-07 §8,§9 |  [x]   |
 | 💎  |  20   | ALPC / LPC port syscalls                                       | §5, TODO-12 §8    |  [ ]   |
 | 💎  |  21   | Exception and debug syscalls                                   | §5, TODO-10 §5    |  [ ]   |
 | 💎  |  22   | Power and system control                                       | §5, TODO-15 §12   |  [ ]   |
@@ -575,25 +575,28 @@ Namespace manipulation -- create, open, and query Ob directory objects and symbo
 ## 19. Timer Control Syscalls
 
 > [!NOTE]
-> Timer object type implemented in TODO-03 (`ob_timer.c`). Time source APIs (NtQuerySystemTime, etc.) implemented in TODO-07 §9; timer resolution APIs in TODO-07 §8. This section provides the full timer control surface and SSDT wiring.
+> Timer object type implemented in TODO-03 (`ob_timer.c`). Time source APIs (NtQuerySystemTime, etc.) implemented in TODO-07 §9; timer resolution APIs in TODO-07 §8. This section provides the full timer control surface and SSDT wiring. SSDT handlers live in `src/kernel/nt/nt_timer.c`. The armed-timer queue is a singly-linked list of `TIMER_OBJECT` bodies; `nt_timer_tick()` walks it from both `lapic_timer_handler` (LAPIC path) and `pit_tick_increment` (PIT/TCG path) on every tick under an irqsave spinlock, calling `event_set()` on any timer whose `due_ns` has been reached. Periodic timers self-rearm. `wait_on_handle` in `src/kernel/nt/nt_sync.c` dispatches `ObpTimerType` through the same event so `NtWaitForSingleObject(timer)` works. `NtSetTimer` takes 7 params; `Period` (low 32) and `ResumeTimer` (high 32) are packed into `a5` via `NT_SETTIMER_PACK()` until TODO-05 §3 extends the entry to read stack args.
 
-- [ ] `NtCreateTimer(TimerHandle, DesiredAccess, ObjectAttributes, TimerType)` → SSDT 0x007E:
+- [x] `NtCreateTimer(TimerHandle, DesiredAccess, ObjectAttributes, TimerType)` → SSDT 0x007E:
   - `TimerType`: `NotificationTimer (0)` = manual-reset, `SynchronizationTimer (1)` = auto-reset
-- [ ] `NtOpenTimer(TimerHandle, DesiredAccess, ObjectAttributes)` → SSDT 0x007F
-- [ ] `NtSetTimer(TimerHandle, DueTime, TimerApcRoutine, TimerContext, ResumeTimer, Period, PreviousState)` → SSDT 0x0080:
+- [x] `NtOpenTimer(TimerHandle, DesiredAccess, ObjectAttributes)` → SSDT 0x007F
+- [x] `NtSetTimer(TimerHandle, DueTime, TimerApcRoutine, TimerContext, ResumeTimer, Period, PreviousState)` → SSDT 0x0080:
   - `DueTime`: negative = relative (100ns units), positive = absolute FILETIME
   - `Period`: 0 = one-shot, >0 = periodic (milliseconds)
-- [ ] `NtCancelTimer(TimerHandle, CurrentState)` → SSDT 0x0081
-- [ ] `NtQueryTimer(TimerHandle, TimerInformationClass, Buffer, Length, ReturnLength)` → SSDT 0x0082
-- [ ] `NtSetTimerEx(TimerHandle, TimerSetInformationClass, Buffer, Length)` → SSDT 0x0083
+- [x] `NtCancelTimer(TimerHandle, CurrentState)` → SSDT 0x0081
+- [x] `NtQueryTimer(TimerHandle, TimerInformationClass, Buffer, Length, ReturnLength)` → SSDT 0x0082
+- [x] `NtSetTimerEx(TimerHandle, TimerSetInformationClass, Buffer, Length)` → SSDT 0x0083
 - [x] `NtQuerySystemTime(SystemTime)` → SSDT 0x00F0 (→ XREF TODO-07 §9)
 - [x] `NtSetSystemTime(SystemTime, PreviousTime)` → SSDT 0x00F1 (→ XREF TODO-07 §9)
 - [x] `NtQueryPerformanceCounter(PerformanceCounter, PerformanceFrequency)` → SSDT 0x00F2 (→ XREF TODO-07 §9)
 - [x] `NtQueryTimerResolution(MaximumTime, MinimumTime, CurrentTime)` → SSDT 0x00F3 (→ XREF TODO-07 §8)
 - [x] `NtSetTimerResolution(DesiredTime, SetResolution, ActualTime)` → SSDT 0x00F4 (→ XREF TODO-07 §8)
-- [ ] Commit: `"kernel: nt -- timer control and time query syscalls"`
+- [x] Commit: `"kernel: nt -- timer control and time query syscalls"`
 
 **Test checkpoint:** `NtCreateTimer` + `NtSetTimer` with relative 100ms due time fires. `NtCancelTimer` cancels before fire returns `STATUS_SUCCESS`. `NtQueryPerformanceCounter` returns monotonically increasing value. `NtQueryTimerResolution` reports correct LAPIC timer resolution.
+
+> **Test runner:** `scripts\debug\run-ob-tests.bat` (SUITE=ob)
+> **Expected:** 5 new §19 tests (create+query, set/cancel, open existing, wrong-type mismatch, SSDT slots registered), 0 failures. The actual fire-via-event test is exercised via `nt_timer_tick()` under WHPX; on TCG the PIT path is equivalent.
 
 ## 20. ALPC / LPC Port Syscalls
 
@@ -873,7 +876,7 @@ NtQueryDirectoryFile (§6) currently returns `FileNamesInformation` only (name +
 | 💎 | Token/access control       | ✅ NtAccessCheck + tokens   | ✅ capabilities + DAC/MAC  | ⬜ §16 + TODO-11            |
 | 💎 | Namespace dir/symlink      | ✅ NtCreateDirectoryObj     | ❌ No kernel namespace     | ⬜ §17                      |
 | 💎 | Memory-mapped sections     | ✅ NtCreateSection/MapView  | ✅ mmap with MAP_SHARED    | ✅ §18 full §5 SSDT 0x005C-0x0062 |
-| 💎 | Timer objects              | ✅ NtSetTimer periodic      | ✅ timerfd_create          | ⬜ §19 + TODO-07 §8,§9      |
+| 💎 | Timer objects              | ✅ NtSetTimer periodic      | ✅ timerfd_create          | ✅ §19 full 6 SSDT 0x007E-0x0083 |
 | 💎 | ALPC message ports         | ✅ NtAlpcSendWaitReceive    | ❌ No equivalent           | ⬜ §20 + TODO-12            |
 | 💎 | Debug API                  | ✅ NtDebugActiveProcess     | ✅ ptrace                  | ⬜ §21 + TODO-18            |
 | 💎 | Power management           | ✅ NtSetSystemPowerState    | ✅ sys_reboot + ACPI       | 🔄 §5 NtShutdownSystem wired |

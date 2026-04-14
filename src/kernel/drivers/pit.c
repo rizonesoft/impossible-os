@@ -73,6 +73,15 @@ int pit_tick_increment(void)
         }
     }
     spin_unlock_irqrestore(&pit_lock, flags);
+
+    /* NT timer queue scan AFTER releasing pit_lock -- nt_timer_tick()
+     * takes its own irqsave spinlock and must not be nested under
+     * pit_lock to keep lock-order simple (TODO-05 §19). */
+    {
+        extern void nt_timer_tick(void);
+        nt_timer_tick();
+    }
+
     return callback_fired;
 }
 

@@ -18,6 +18,7 @@
 #include "kernel/sched/semaphore.h"
 #include "kernel/ob/ob.h"
 #include "kernel/ob/ob_event.h"
+#include "kernel/ob/ob_timer.h"
 #include "kernel/ob/ob_mutex.h"
 #include "kernel/ob/ob_semaphore.h"
 #include "kernel/ob/ob_process.h"
@@ -493,6 +494,21 @@ static NTSTATUS wait_on_handle(HANDLE handle, uint32_t timeout_ms)
             return STATUS_SUCCESS;
         task_waitpid(t->pid);
         return STATUS_SUCCESS;
+    }
+
+    if (hdr->type == ObpTimerType) {
+        /* Waiting on a timer blocks until the next fire. The NT timer
+         * tick ISR (src/kernel/nt/nt_timer.c) calls event_set() when
+         * due_ns is reached; auto-reset timers self-clear on consumption. */
+        TIMER_OBJECT *to = (TIMER_OBJECT *)entry->object;
+        if (timeout_ms == 0)
+            return event_is_set(&to->event) ? STATUS_SUCCESS : STATUS_TIMEOUT;
+        if (timeout_ms == 0xFFFFFFFF) {
+            event_wait(&to->event);
+            return STATUS_SUCCESS;
+        }
+        return event_wait_timeout(&to->event, timeout_ms) == 0
+               ? STATUS_SUCCESS : STATUS_TIMEOUT;
     }
 
     return STATUS_OBJECT_TYPE_MISMATCH;
