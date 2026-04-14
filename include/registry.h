@@ -260,6 +260,16 @@ long RegDeleteTree(HKEY hKey, const char *lpSubKey);
  * Frees values, unlinks from parent, marks slot freed. */
 long RegDeleteKeyDirect(reg_key_t *key);
 
+/* Rename a key by its internal reg_key_t pointer.
+ * Validates new_name length and uniqueness within the parent.
+ * Re-links the key in the parent's hash bucket under the new name.
+ * Returns ERROR_ACCESS_DENIED if name collides or key is a root. */
+long RegRenameKey(reg_key_t *key, const char *new_name);
+
+/* Unload a hive subtree: recursively free all children, values, and the
+ * key itself.  Used by NtUnloadKey.  Returns ERROR_ACCESS_DENIED for roots. */
+long RegUnloadHive(reg_key_t *key);
+
 /* Check if an HKEY is a predefined sentinel (HKLM, HKCU, etc.).
  * Returns 1 for predefined handles, 0 for user-allocated handles. */
 int RegIsPredefinedKey(HKEY hKey);
@@ -383,6 +393,10 @@ int hive_load(const char *filepath, reg_key_t *root);
 
 #define REG_HIVE_DIR   "C:\\Impossible\\System\\Config\\Registry"
 #define REG_HIVE_COUNT 4    /* SYSTEM, SOFTWARE, HARDWARE, DEFAULT */
+
+/* Mark the hive containing 'key' as dirty (pending flush).  Walks the
+ * parent chain to find the hive root and sets its dirty flag. */
+void registry_mark_dirty(reg_key_t *key);
 
 /* Flush dirty hives to disk (called periodically from compositor loop).
  * Only writes hives whose dirty flag is set. */

@@ -187,6 +187,12 @@ int vfs_truncate(const char *path, uint64_t new_size);
 /* Get the root node of a mounted drive */
 struct vfs_node *vfs_get_drive_root(char drive_letter);
 
+/* Reconstruct the full path from a vfs_node by walking parent pointers.
+ * Output format: "X:\\dir\\file" (drive letter derived from mount table).
+ * Returns bytes written (excluding NUL), or 0 on failure. */
+uint32_t vfs_get_path_from_node(const struct vfs_node *node,
+                                char *buf, uint32_t buf_size);
+
 /* Check if a drive letter is mounted */
 int vfs_is_mounted(char drive_letter);
 

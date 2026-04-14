@@ -931,6 +931,103 @@ long RegDeleteKeyDirect(reg_key_t *key)
     return ERROR_SUCCESS;
 }
 
+/* ---- RegRenameKey ---- */
+
+long RegRenameKey(reg_key_t *key, const char *new_name)
+{
+    reg_key_t *parent;
+
+    if (!key || !new_name || new_name[0] == '\0')
+        return ERROR_INVALID_PARAMETER;
+
+    parent = key->parent;
+    if (!parent)
+        return ERROR_ACCESS_DENIED;  /* cannot rename root */
+
+    /* Validate name length */
+    {
+        uint32_t len = 0;
+        while (new_name[len]) len++;
+        if (len > REG_MAX_KEY_NAME)
+            return ERROR_INVALID_PARAMETER;
+    }
+
+    /* Reject if a DIFFERENT sibling with new_name already exists.
+     * Renaming to the same name (including case-variant) is a no-op. */
+    {
+        reg_key_t *existing = reg_find_child(parent, new_name);
+        if (existing && existing != key)
+            return ERROR_ACCESS_DENIED;  /* collision with different sibling */
+        if (existing == key) {
+            /* Same key: update name in place for case-only changes, mark
+             * dirty, and return without touching hash buckets. */
+            reg_strcpy(key->name, new_name, REG_MAX_KEY_NAME + 1);
+            parent->last_write_time = reg_get_uptime_ticks();
+            key->last_write_time = parent->last_write_time;
+            registry_mark_dirty(key);
+            return ERROR_SUCCESS;
+        }
+    }
+
+    /* Unlink from current hash bucket (based on old name) */
+    reg_remove_child(parent, key);
+
+    /* Update name */
+    reg_strcpy(key->name, new_name, REG_MAX_KEY_NAME + 1);
+
+    /* Re-link into hash bucket (based on new name) */
+    reg_add_child(parent, key);
+
+    /* Timestamps + dirty flag */
+    parent->last_write_time = reg_get_uptime_ticks();
+    key->last_write_time = parent->last_write_time;
+    registry_mark_dirty(key);
+
+    return ERROR_SUCCESS;
+}
+
+/* ---- RegUnloadHive ----
+ *
+ * Recursively unload a previously-loaded hive subtree.  Frees all children,
+ * their values, and the key itself.  Used by NtUnloadKey. */
+
+/* Forward-declare the subtree deleter (defined below) */
+static void reg_delete_subtree(reg_key_t *key);
+
+long RegUnloadHive(reg_key_t *key)
+{
+    uint32_t b;
+
+    if (!key)
+        return ERROR_INVALID_PARAMETER;
+    if (!key->parent)
+        return ERROR_ACCESS_DENIED;  /* cannot unload a root */
+
+    /* Delete all children recursively */
+    for (b = 0; b < REG_CHILD_BUCKETS; b++) {
+        reg_key_t *c = key->children[b];
+        while (c) {
+            reg_key_t *next = c->hash_next;
+            reg_delete_subtree(c);
+            c = next;
+        }
+        key->children[b] = (reg_key_t *)0;
+    }
+    key->child_count = 0;
+
+    /* Free own values */
+    reg_free_values(key);
+
+    /* Unlink from parent */
+    reg_remove_child(key->parent, key);
+
+    /* Mark slot freed */
+    key->name[0] = '\0';
+    key->flags = 0;
+
+    return ERROR_SUCCESS;
+}
+
 /* ---- RegDeleteTree ---- */
 
 /* Recursively delete all children of a key. */

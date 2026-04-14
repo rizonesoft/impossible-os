@@ -1,11 +1,12 @@
 /* ============================================================================
- * nt_registry.c -- NT registry syscall SSDT handlers (core CRUD)
+ * nt_registry.c -- NT registry syscall SSDT handlers (core CRUD + advanced)
  *
- * Wires 10 NtXxx registry operations into the SSDT, translating NT
+ * Wires 20 NtXxx registry operations into the SSDT, translating NT
  * object-namespace paths (\Registry\Machine\...) into Win32 RegXxx calls
  * against the existing registry engine (registry.c).
  *
- * TODO-05 section 14.
+ * TODO-05 sections 14 (core CRUD) and 15 (advanced: flush/notify/save/
+ * restore/hive load).
  * ============================================================================ */
 
 #include "kernel/nt/nt_registry.h"
@@ -14,6 +15,10 @@
 #include "kernel/nt/nt_types.h"
 #include "kernel/nt/service_numbers.h"
 #include "kernel/klog.h"
+#include "kernel/sched/task.h"
+#include "kernel/ob/ob.h"
+#include "kernel/ob/ob_file.h"
+#include "kernel/fs/vfs.h"
 #include "registry.h"
 
 /* ---- String helpers (freestanding) -------------------------------------- */
@@ -759,10 +764,340 @@ static NTSTATUS NtQueryKey_handler(uint64_t a1, uint64_t a2, uint64_t a3,
     } /* end resolved_key block */
 }
 
+/* ============================================================================
+ * §15 Advanced Registry Operations
+ * ============================================================================ */
+
+/* ---- Helper: resolve HKEY handle to reg_key_t safely -------------------- */
+
+/* Returns NULL for NULL/invalid/tombstoned handles. Tombstoned keys have
+ * name[0] == '\0' after delete/unload, which we treat as "stale handle"
+ * and refuse to return (minimal handle-liveness enforcement pending full
+ * refcount tracking -> XREF: 02-kernel-core/TODO-13 §4). */
+static reg_key_t *resolve_hkey(HKEY hkey)
+{
+    reg_key_t *k;
+
+    if (!hkey)
+        return (reg_key_t *)0;
+    if (RegIsPredefinedKey(hkey))
+        return reg_resolve_predefined(hkey);
+    k = hkey->key;
+    if (!k || k->name[0] == '\0')  /* tombstone check */
+        return (reg_key_t *)0;
+    return k;
+}
+
+/* ---- Helper: resolve FILE handle from current task to VFS path --------- */
+
+/* Looks up a FILE handle in the calling task's handle table, verifies it
+ * is a FILE_OBJECT (via OB type header), follows it to the underlying
+ * vfs_node, and reconstructs the canonical path.
+ * Returns bytes written (excluding NUL) or 0 on failure. */
+extern const OBJECT_TYPE *ObpFileType;
+
+static uint32_t resolve_file_handle_path(HANDLE file_handle,
+                                         char *buf, uint32_t buf_size)
+{
+    HANDLE_TABLE_ENTRY *entry;
+    OBJECT_HEADER *hdr;
+    FILE_OBJECT *file_obj;
+
+    if (file_handle == INVALID_HANDLE_VALUE || !buf || buf_size == 0)
+        return 0;
+
+    entry = ObpLookupHandle(&task_current()->handle_table, file_handle);
+    if (!entry || !entry->object)
+        return 0;
+
+    /* Type-check: reject non-file handles before casting */
+    hdr = OB_HEADER_FROM_BODY(entry->object);
+    if (hdr->type != ObpFileType)
+        return 0;
+
+    file_obj = (FILE_OBJECT *)entry->object;
+    if (!file_obj->vfs_node)
+        return 0;
+
+    return vfs_get_path_from_node(file_obj->vfs_node, buf, buf_size);
+}
+
+/* ======================================================================== */
+/* NtFlushKey (SSDT 0x009C)                                                */
+/*                                                                          */
+/* a1 = HANDLE KeyHandle                                                   */
+/*                                                                          */
+/* Flushes dirty registry keys to their backing hive files. The parameter  */
+/* selects a specific key's hive in Windows; our implementation flushes    */
+/* all dirty hives (registry_flush iterates the hive table).               */
+/* ======================================================================== */
+
+static NTSTATUS NtFlushKey_handler(uint64_t a1, uint64_t a2, uint64_t a3,
+                                   uint64_t a4, uint64_t a5, uint64_t a6)
+{
+    HKEY hkey = (HKEY)(uintptr_t)a1;
+    reg_key_t *key;
+
+    (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
+
+    if (!hkey)
+        return STATUS_INVALID_HANDLE;
+
+    key = resolve_hkey(hkey);
+    if (!key)
+        return STATUS_INVALID_HANDLE;
+
+    /* Flush all dirty hives; registry_flush respects the per-hive dirty flag */
+    registry_flush();
+    return STATUS_SUCCESS;
+}
+
+/* ======================================================================== */
+/* NtNotifyChangeKey (SSDT 0x009D)                                         */
+/*                                                                          */
+/* Registry change notifications. Not implemented: requires async I/O      */
+/* completion infrastructure and per-key watcher lists.                    */
+/* -> XREF: 02-kernel-core/TODO-13 §3 (Change Notifications)               */
+/* ======================================================================== */
+
+static NTSTATUS NtNotifyChangeKey_handler(uint64_t a1, uint64_t a2, uint64_t a3,
+                                          uint64_t a4, uint64_t a5, uint64_t a6)
+{
+    (void)a1; (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
+    /* SCOPE-GAP-ALLOWED: blocked on TODO-13 §3 watcher infrastructure */
+    return STATUS_NOT_IMPLEMENTED;
+}
+
+/* ======================================================================== */
+/* NtRenameKey (SSDT 0x009F)                                               */
+/*                                                                          */
+/* a1 = HANDLE KeyHandle                                                   */
+/* a2 = UNICODE_STRING* NewName                                            */
+/* ======================================================================== */
+
+static NTSTATUS NtRenameKey_handler(uint64_t a1, uint64_t a2, uint64_t a3,
+                                    uint64_t a4, uint64_t a5, uint64_t a6)
+{
+    HKEY hkey = (HKEY)(uintptr_t)a1;
+    UNICODE_STRING *nn = (UNICODE_STRING *)a2;
+    reg_key_t *key;
+    const char *name_str;
+    long rc;
+
+    (void)a3; (void)a4; (void)a5; (void)a6;
+
+    if (!hkey)
+        return STATUS_INVALID_HANDLE;
+    if (!nn || !nn->Buffer)
+        return STATUS_INVALID_PARAMETER;
+    if (RegIsPredefinedKey(hkey))
+        return STATUS_ACCESS_DENIED;
+
+    key = hkey->key;
+    if (!key)
+        return STATUS_INVALID_HANDLE;
+
+    name_str = (const char *)nn->Buffer;
+    rc = RegRenameKey(key, name_str);
+    return reg_win32_to_nt(rc);
+}
+
+/* ======================================================================== */
+/* NtSaveKey (SSDT 0x00A0) / NtSaveKeyEx (SSDT 0x00A1)                     */
+/*                                                                          */
+/* a1 = HANDLE KeyHandle                                                   */
+/* a2 = HANDLE FileHandle                                                  */
+/* a3 = uint32_t Format (Ex only; ignored)                                 */
+/*                                                                          */
+/* Serializes the key's subtree to the hive file backing FileHandle.       */
+/* FileHandle must be an open handle to an empty file on a mounted drive.  */
+/* ======================================================================== */
+
+static NTSTATUS NtSaveKey_handler(uint64_t a1, uint64_t a2, uint64_t a3,
+                                  uint64_t a4, uint64_t a5, uint64_t a6)
+{
+    HKEY hkey = (HKEY)(uintptr_t)a1;
+    HANDLE file_handle = (HANDLE)(int32_t)a2;
+    reg_key_t *key;
+    char path[REG_MAX_PATH];
+    uint32_t path_len;
+
+    (void)a3; (void)a4; (void)a5; (void)a6;
+
+    if (!hkey)
+        return STATUS_INVALID_HANDLE;
+
+    key = resolve_hkey(hkey);
+    if (!key)
+        return STATUS_INVALID_HANDLE;
+
+    path_len = resolve_file_handle_path(file_handle, path, sizeof(path));
+    if (path_len == 0)
+        return STATUS_INVALID_HANDLE;
+
+    if (hive_save(key, path) != 0)
+        return STATUS_UNSUCCESSFUL;
+
+    return STATUS_SUCCESS;
+}
+
+/* ======================================================================== */
+/* NtRestoreKey (SSDT 0x00A2)                                              */
+/*                                                                          */
+/* a1 = HANDLE KeyHandle                                                   */
+/* a2 = HANDLE FileHandle                                                  */
+/* a3 = uint32_t Flags (REG_WHOLE_HIVE_VOLATILE, REG_NO_LAZY_FLUSH, etc.)  */
+/*                                                                          */
+/* Deserializes a hive file into the key subtree.                          */
+/* ======================================================================== */
+
+static NTSTATUS NtRestoreKey_handler(uint64_t a1, uint64_t a2, uint64_t a3,
+                                     uint64_t a4, uint64_t a5, uint64_t a6)
+{
+    HKEY hkey = (HKEY)(uintptr_t)a1;
+    HANDLE file_handle = (HANDLE)(int32_t)a2;
+    reg_key_t *key;
+    char path[REG_MAX_PATH];
+    uint32_t path_len;
+    int values_loaded;
+
+    (void)a3; (void)a4; (void)a5; (void)a6;
+
+    if (!hkey)
+        return STATUS_INVALID_HANDLE;
+
+    key = resolve_hkey(hkey);
+    if (!key)
+        return STATUS_INVALID_HANDLE;
+
+    path_len = resolve_file_handle_path(file_handle, path, sizeof(path));
+    if (path_len == 0)
+        return STATUS_INVALID_HANDLE;
+
+    values_loaded = hive_load(path, key);
+    if (values_loaded < 0)
+        return STATUS_REGISTRY_CORRUPT;
+
+    registry_mark_dirty(key);
+    return STATUS_SUCCESS;
+}
+
+/* ======================================================================== */
+/* NtLoadKey (SSDT 0x00A3) / NtLoadKeyEx (SSDT 0x00A4)                     */
+/*                                                                          */
+/* a1 = OBJECT_ATTRIBUTES* TargetKey (registry mountpoint)                 */
+/* a2 = OBJECT_ATTRIBUTES* SourceFile (hive file path)                     */
+/* a3-a6 = Flags, TrustKeyHandle, EventHandle, etc. (Ex variants; ignored) */
+/* ======================================================================== */
+
+static NTSTATUS NtLoadKey_handler(uint64_t a1, uint64_t a2, uint64_t a3,
+                                  uint64_t a4, uint64_t a5, uint64_t a6)
+{
+    OBJECT_ATTRIBUTES *target_oa = (OBJECT_ATTRIBUTES *)a1;
+    OBJECT_ATTRIBUTES *source_oa = (OBJECT_ATTRIBUTES *)a2;
+    const char *target_path;
+    const char *source_path;
+    const char *subpath;
+    HKEY root, mount_key;
+    uint32_t disposition = 0;
+    long rc;
+    int values_loaded;
+
+    (void)a3; (void)a4; (void)a5; (void)a6;
+
+    if (!target_oa || !target_oa->ObjectName || !target_oa->ObjectName->Buffer)
+        return STATUS_INVALID_PARAMETER;
+    if (!source_oa || !source_oa->ObjectName || !source_oa->ObjectName->Buffer)
+        return STATUS_INVALID_PARAMETER;
+
+    target_path = (const char *)target_oa->ObjectName->Buffer;
+    source_path = (const char *)source_oa->ObjectName->Buffer;
+
+    /* Strip \??\ device namespace prefix from source path if present */
+    if (source_path[0] == '\\' && source_path[1] == '?' &&
+        source_path[2] == '?' && source_path[3] == '\\')
+        source_path += 4;
+
+    /* Resolve target registry path to a root + subpath */
+    root = nt_reg_resolve_path(target_path, &subpath);
+    if (!root)
+        return STATUS_OBJECT_NAME_NOT_FOUND;
+
+    /* Create (or open) the mountpoint key.  Capture disposition so we can
+     * roll back a newly-created key if hive_load subsequently fails. */
+    rc = RegCreateKeyEx(root, subpath, 0, (const char *)0, 0,
+                        KEY_ALL_ACCESS, (void *)0, &mount_key, &disposition);
+    if (rc != ERROR_SUCCESS)
+        return reg_win32_to_nt(rc);
+
+    /* Load the hive file into the mountpoint */
+    values_loaded = hive_load(source_path, mount_key->key);
+    if (values_loaded < 0) {
+        /* Rollback: if we just created this mountpoint, remove it so the
+         * failed load does not leave an orphaned key in the tree. */
+        if (disposition == REG_CREATED_NEW_KEY && mount_key->key)
+            RegDeleteKeyDirect(mount_key->key);
+        RegCloseKey(mount_key);
+        return STATUS_REGISTRY_CORRUPT;
+    }
+
+    RegCloseKey(mount_key);
+    return STATUS_SUCCESS;
+}
+
+/* ======================================================================== */
+/* NtUnloadKey (SSDT 0x00A5) / NtUnloadKeyEx (SSDT 0x00A6)                 */
+/*                                                                          */
+/* a1 = OBJECT_ATTRIBUTES* TargetKey                                       */
+/* a2 = HANDLE Event (Ex only; ignored)                                    */
+/* ======================================================================== */
+
+static NTSTATUS NtUnloadKey_handler(uint64_t a1, uint64_t a2, uint64_t a3,
+                                    uint64_t a4, uint64_t a5, uint64_t a6)
+{
+    OBJECT_ATTRIBUTES *oa = (OBJECT_ATTRIBUTES *)a1;
+    const char *nt_path;
+    const char *subpath;
+    HKEY root, key;
+    reg_key_t *rk;
+    long rc;
+
+    (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
+
+    if (!oa || !oa->ObjectName || !oa->ObjectName->Buffer)
+        return STATUS_INVALID_PARAMETER;
+
+    nt_path = (const char *)oa->ObjectName->Buffer;
+    root = nt_reg_resolve_path(nt_path, &subpath);
+    if (!root)
+        return STATUS_OBJECT_NAME_NOT_FOUND;
+
+    /* Must specify a specific subkey; cannot unload a root */
+    if (!subpath || subpath[0] == '\0')
+        return STATUS_ACCESS_DENIED;
+
+    rc = RegOpenKeyEx(root, subpath, 0, KEY_ALL_ACCESS, &key);
+    if (rc != ERROR_SUCCESS)
+        return reg_win32_to_nt(rc);
+
+    rk = key->key;
+    if (!rk) {
+        RegCloseKey(key);
+        return STATUS_INVALID_HANDLE;
+    }
+
+    rc = RegUnloadHive(rk);
+
+    /* Close the handle; the underlying key is gone after unload */
+    RegCloseKey(key);
+    return reg_win32_to_nt(rc);
+}
+
 /* ---- SSDT Registration -------------------------------------------------- */
 
 void nt_registry_register_ssdt(void)
 {
+    /* §14 Core CRUD */
     ssdt_register(SSDT_NtCreateKey,         (SSDT_HANDLER)NtCreateKey_handler);
     ssdt_register(SSDT_NtOpenKey,           (SSDT_HANDLER)NtOpenKey_handler);
     ssdt_register(SSDT_NtOpenKeyEx,         (SSDT_HANDLER)NtOpenKeyEx_handler);
@@ -774,5 +1109,18 @@ void nt_registry_register_ssdt(void)
     ssdt_register(SSDT_NtEnumerateValueKey, (SSDT_HANDLER)NtEnumerateValueKey_handler);
     ssdt_register(SSDT_NtQueryKey,          (SSDT_HANDLER)NtQueryKey_handler);
 
-    klog(LOG_INFO, "nt", "NT registry: 10 core CRUD handlers registered (S14)");
+    /* §15 Advanced: flush / notify / rename / save / restore / hive load */
+    ssdt_register(SSDT_NtFlushKey,          (SSDT_HANDLER)NtFlushKey_handler);
+    ssdt_register(SSDT_NtNotifyChangeKey,   (SSDT_HANDLER)NtNotifyChangeKey_handler);
+    ssdt_register(SSDT_NtRenameKey,         (SSDT_HANDLER)NtRenameKey_handler);
+    ssdt_register(SSDT_NtSaveKey,           (SSDT_HANDLER)NtSaveKey_handler);
+    ssdt_register(SSDT_NtSaveKeyEx,         (SSDT_HANDLER)NtSaveKey_handler);
+    ssdt_register(SSDT_NtRestoreKey,        (SSDT_HANDLER)NtRestoreKey_handler);
+    ssdt_register(SSDT_NtLoadKey,           (SSDT_HANDLER)NtLoadKey_handler);
+    ssdt_register(SSDT_NtLoadKeyEx,         (SSDT_HANDLER)NtLoadKey_handler);
+    ssdt_register(SSDT_NtUnloadKey,         (SSDT_HANDLER)NtUnloadKey_handler);
+    ssdt_register(SSDT_NtUnloadKeyEx,       (SSDT_HANDLER)NtUnloadKey_handler);
+
+    klog(LOG_INFO, "nt",
+         "NT registry: 20 handlers registered (S14 core + S15 advanced)");
 }

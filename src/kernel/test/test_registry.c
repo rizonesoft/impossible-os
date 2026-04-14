@@ -371,6 +371,153 @@ static void test_nt_registry_ssdt_registered(void)
     }
 }
 
+/* ============================================================================
+ * §15 Advanced registry tests (flush, rename, unload, SSDT registration)
+ * ============================================================================ */
+
+/* Test: NtFlushKey accepts a valid handle and returns success */
+static void test_nt_flush_key(void)
+{
+    OBJECT_ATTRIBUTES oa;
+    UNICODE_STRING us;
+    HANDLE key_handle = INVALID_HANDLE_VALUE;
+    NTSTATUS status;
+
+    /* Create a test key with a value so there's something dirty */
+    build_oa(&oa, &us, "\\Registry\\Machine\\Software\\NtFlushTest");
+    status = ssdt_dispatch(SSDT_NtCreateKey,
+                           (uint64_t)(uintptr_t)&key_handle,
+                           (uint64_t)KEY_ALL_ACCESS,
+                           (uint64_t)(uintptr_t)&oa, 0, 0, 0);
+    TEST_ASSERT(NT_SUCCESS(status), "NtCreateKey for flush test");
+    if (!NT_SUCCESS(status)) return;
+
+    /* NtFlushKey should succeed */
+    status = ssdt_dispatch(SSDT_NtFlushKey,
+                           (uint64_t)(uintptr_t)key_handle, 0, 0, 0, 0, 0);
+    TEST_ASSERT(NT_SUCCESS(status), "NtFlushKey returns STATUS_SUCCESS");
+
+    /* NtFlushKey with NULL handle should fail */
+    status = ssdt_dispatch(SSDT_NtFlushKey, 0, 0, 0, 0, 0, 0);
+    TEST_ASSERT(status == STATUS_INVALID_HANDLE,
+                "NtFlushKey rejects NULL handle");
+
+    /* Clean up */
+    ssdt_dispatch(SSDT_NtDeleteKey, (uint64_t)(uintptr_t)key_handle,
+                  0, 0, 0, 0, 0);
+}
+
+/* Test: NtRenameKey changes a key's name and keeps it addressable */
+static void test_nt_rename_key(void)
+{
+    OBJECT_ATTRIBUTES oa;
+    UNICODE_STRING us;
+    UNICODE_STRING new_name_us;
+    HANDLE key_handle = INVALID_HANDLE_VALUE;
+    HANDLE verify_handle = INVALID_HANDLE_VALUE;
+    NTSTATUS status;
+    const char *new_name = "Renamed";
+
+    /* Create key with original name */
+    build_oa(&oa, &us, "\\Registry\\Machine\\Software\\NtRenameTest");
+    status = ssdt_dispatch(SSDT_NtCreateKey,
+                           (uint64_t)(uintptr_t)&key_handle,
+                           (uint64_t)KEY_ALL_ACCESS,
+                           (uint64_t)(uintptr_t)&oa, 0, 0, 0);
+    TEST_ASSERT(NT_SUCCESS(status), "NtCreateKey for rename test");
+    if (!NT_SUCCESS(status)) return;
+
+    /* Rename it */
+    new_name_us.Buffer = (uint16_t *)(uintptr_t)new_name;
+    new_name_us.Length = 7;
+    new_name_us.MaximumLength = 8;
+    status = ssdt_dispatch(SSDT_NtRenameKey,
+                           (uint64_t)(uintptr_t)key_handle,
+                           (uint64_t)(uintptr_t)&new_name_us,
+                           0, 0, 0, 0);
+    TEST_ASSERT(NT_SUCCESS(status), "NtRenameKey succeeds");
+
+    /* Verify new name is reachable */
+    build_oa(&oa, &us, "\\Registry\\Machine\\Software\\Renamed");
+    status = ssdt_dispatch(SSDT_NtOpenKey,
+                           (uint64_t)(uintptr_t)&verify_handle,
+                           (uint64_t)KEY_ALL_ACCESS,
+                           (uint64_t)(uintptr_t)&oa, 0, 0, 0);
+    TEST_ASSERT(NT_SUCCESS(status), "Renamed key reachable by new name");
+
+    /* Verify old name is NOT reachable */
+    {
+        HANDLE dead = INVALID_HANDLE_VALUE;
+        OBJECT_ATTRIBUTES oa2;
+        UNICODE_STRING us2;
+        build_oa(&oa2, &us2, "\\Registry\\Machine\\Software\\NtRenameTest");
+        status = ssdt_dispatch(SSDT_NtOpenKey,
+                               (uint64_t)(uintptr_t)&dead,
+                               (uint64_t)KEY_ALL_ACCESS,
+                               (uint64_t)(uintptr_t)&oa2, 0, 0, 0);
+        TEST_ASSERT(status == STATUS_OBJECT_NAME_NOT_FOUND,
+                    "Old name no longer resolves after rename");
+    }
+
+    /* Clean up: delete the renamed key */
+    if (verify_handle != INVALID_HANDLE_VALUE)
+        ssdt_dispatch(SSDT_NtDeleteKey, (uint64_t)(uintptr_t)verify_handle,
+                      0, 0, 0, 0, 0);
+}
+
+/* Test: NtNotifyChangeKey returns STATUS_NOT_IMPLEMENTED (blocked on TODO-13 §3) */
+static void test_nt_notify_change_key_blocked(void)
+{
+    NTSTATUS status = ssdt_dispatch(SSDT_NtNotifyChangeKey,
+                                    0, 0, 0, 0, 0, 0);
+    TEST_ASSERT(status == STATUS_NOT_IMPLEMENTED,
+                "NtNotifyChangeKey returns NOT_IMPLEMENTED (TODO-13 §3)");
+}
+
+/* Test: NtUnloadKey rejects a root key and unknown paths */
+static void test_nt_unload_key_invalid(void)
+{
+    OBJECT_ATTRIBUTES oa;
+    UNICODE_STRING us;
+    NTSTATUS status;
+
+    /* Unloading a root directly returns ACCESS_DENIED */
+    build_oa(&oa, &us, "\\Registry\\Machine");
+    status = ssdt_dispatch(SSDT_NtUnloadKey,
+                           (uint64_t)(uintptr_t)&oa, 0, 0, 0, 0, 0);
+    TEST_ASSERT(status == STATUS_ACCESS_DENIED,
+                "NtUnloadKey rejects bare root (no subpath)");
+
+    /* Unknown path returns OBJECT_NAME_NOT_FOUND */
+    build_oa(&oa, &us, "\\Registry\\Machine\\NoSuchHive12345");
+    status = ssdt_dispatch(SSDT_NtUnloadKey,
+                           (uint64_t)(uintptr_t)&oa, 0, 0, 0, 0, 0);
+    TEST_ASSERT(status == STATUS_OBJECT_NAME_NOT_FOUND,
+                "NtUnloadKey rejects unknown key");
+}
+
+/* Test: all 10 advanced SSDT slots are registered (not stubs) */
+static void test_nt_registry_advanced_registered(void)
+{
+    const SSDT_TABLE *tbl = ssdt_get_table(SSDT_TABLE_MAIN);
+    extern NTSTATUS ssdt_stub_not_implemented(uint64_t, uint64_t, uint64_t,
+                                              uint64_t, uint64_t, uint64_t);
+    uint32_t slots[] = {
+        SSDT_NtFlushKey, SSDT_NtNotifyChangeKey, SSDT_NtRenameKey,
+        SSDT_NtSaveKey, SSDT_NtSaveKeyEx, SSDT_NtRestoreKey,
+        SSDT_NtLoadKey, SSDT_NtLoadKeyEx,
+        SSDT_NtUnloadKey, SSDT_NtUnloadKeyEx
+    };
+    uint32_t i;
+    TEST_ASSERT(tbl != (const SSDT_TABLE *)0, "SSDT main table exists");
+    if (!tbl) return;
+    for (i = 0; i < 10; i++) {
+        uint32_t idx = slots[i] & 0xFFF;
+        TEST_ASSERT(tbl->handlers[idx] != ssdt_stub_not_implemented,
+                    "Advanced registry SSDT slot registered");
+    }
+}
+
 /* Registration */
 void test_register_registry(void)
 {
@@ -383,6 +530,11 @@ void test_register_registry(void)
     test_suite_register_cat("Registry: NtEnumerateKey", test_nt_enumerate_key, TEST_CAT_ABI);
     test_suite_register_cat("Registry: NtQueryKey", test_nt_query_key, TEST_CAT_ABI);
     test_suite_register_cat("Registry: SSDT slots registered", test_nt_registry_ssdt_registered, TEST_CAT_ABI);
+    test_suite_register_cat("Registry: NtFlushKey", test_nt_flush_key, TEST_CAT_ABI);
+    test_suite_register_cat("Registry: NtRenameKey", test_nt_rename_key, TEST_CAT_ABI);
+    test_suite_register_cat("Registry: NtNotifyChangeKey blocked", test_nt_notify_change_key_blocked, TEST_CAT_ABI);
+    test_suite_register_cat("Registry: NtUnloadKey invalid", test_nt_unload_key_invalid, TEST_CAT_ABI);
+    test_suite_register_cat("Registry: advanced SSDT registered", test_nt_registry_advanced_registered, TEST_CAT_ABI);
 }
 
 #endif /* KERNEL_TESTS */

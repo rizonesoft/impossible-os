@@ -735,6 +735,102 @@ int vfs_is_mounted(char drive_letter)
     return mounts[idx].mounted;
 }
 
+/* Bounded strlen for a fixed-size name field.  Returns length up to max,
+ * or max if no NUL found within [0, max). */
+static uint32_t vfs_name_len_bounded(const char *name, uint32_t max)
+{
+    uint32_t i;
+    for (i = 0; i < max; i++) {
+        if (name[i] == '\0') return i;
+    }
+    return max;
+}
+
+/* Walk parent pointers to find the drive letter; detects cycles by depth
+ * limit and by confirming the terminal node has NULL parent.
+ * Returns the letter or '\0' on failure. */
+static char vfs_find_drive_letter(const struct vfs_node *node)
+{
+    const struct vfs_node *cur = node;
+    int depth = 0;
+
+    /* Walk to root; bail on cycle (depth exceeded before finding NULL parent) */
+    while (cur && cur->parent && depth < 64) {
+        cur = cur->parent;
+        depth++;
+    }
+
+    /* If we hit the depth limit without reaching a root, treat as failure
+     * (cycle in parent chain). */
+    if (!cur || cur->parent)
+        return '\0';
+
+    /* Match root node against mount table */
+    {
+        int i;
+        for (i = 0; i < 26; i++) {
+            if (mounts[i].mounted && mounts[i].root == cur)
+                return (char)('A' + i);
+        }
+    }
+    return '\0';
+}
+
+uint32_t vfs_get_path_from_node(const struct vfs_node *node,
+                                char *buf, uint32_t buf_size)
+{
+    const struct vfs_node *chain[64];
+    int depth = 0;
+    const struct vfs_node *cur;
+    char drive;
+    uint32_t pos;
+    int i;
+
+    if (!node || !buf || buf_size < 4)
+        return 0;
+
+    /* Collect chain from node up to (but not including) root */
+    cur = node;
+    while (cur && cur->parent && depth < 64) {
+        chain[depth++] = cur;
+        cur = cur->parent;
+    }
+
+    /* Reject cycles: if depth limit was reached before hitting root, fail */
+    if (depth == 64 && cur && cur->parent)
+        return 0;
+
+    /* cur is the root node; find its drive letter */
+    drive = vfs_find_drive_letter(node);
+    if (drive == '\0')
+        return 0;
+
+    /* Write "X:" prefix */
+    pos = 0;
+    buf[pos++] = drive;
+    buf[pos++] = ':';
+
+    /* Walk chain in reverse (root-to-leaf), appending "\name" each step.
+     * Use bounded strlen (VFS_MAX_NAME) to guard against unterminated
+     * names; subtraction-form bound check avoids uint32_t overflow. */
+    for (i = depth - 1; i >= 0; i--) {
+        uint32_t name_len = vfs_name_len_bounded(chain[i]->name, VFS_MAX_NAME);
+        uint32_t j;
+
+        /* Need: '\\' + name_len + NUL.  Use subtraction form to avoid overflow. */
+        if (name_len >= buf_size || pos >= buf_size ||
+            (buf_size - pos) < (name_len + 2))
+            return 0;
+
+        buf[pos++] = '\\';
+        for (j = 0; j < name_len; j++)
+            buf[pos++] = chain[i]->name[j];
+    }
+
+    buf[pos] = '\0';
+    return pos;
+}
+
 /* --- Win32 feature-spoofing stubs (§11) --- */
 
 uint32_t vfs_query_volume_flags(char drive_letter, char *fs_name, uint32_t name_max)

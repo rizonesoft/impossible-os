@@ -118,6 +118,8 @@ uint32_t RtlNtStatusToDosError(NTSTATUS status);
 #define STATUS_KEY_DELETED                  ((NTSTATUS)0xC000017C)  /* op on deleted key */
 #define STATUS_KEY_HAS_CHILDREN             ((NTSTATUS)0xC0000180)  /* delete key with subkeys */
 #define STATUS_CHILD_MUST_BE_VOLATILE       ((NTSTATUS)0xC0000181)  /* non-volatile child under volatile parent */
+#define STATUS_REGISTRY_CORRUPT             ((NTSTATUS)0xC000014C)  /* hive file failed integrity check */
+#define STATUS_REGISTRY_IO_FAILED           ((NTSTATUS)0xC000014D)  /* hive I/O failed */
 
 /* ---- Error codes -- debug ------------------------------------------------ */
 

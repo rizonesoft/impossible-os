@@ -63,7 +63,7 @@
 | ⭐  |  12   | ZwXxx kernel-mode alias layer with privilege assertion         | §4, §5            |  [x]   |
 | 💎  |  13   | File metadata and device control                               | §6                |  [x]   |
 | 💎  |  14   | Registry syscalls (core CRUD)                                  | §5, TODO-13 §4    |  [x]   |
-| 💎  |  15   | Registry syscalls (advanced: flush/notify/save/hive)           | §14, TODO-13 §4   |  [ ]   |
+| 💎  |  15   | Registry syscalls (advanced: flush/notify/save/hive)           | §14, TODO-13 §4   |  [/]   |
 | 💎  |  16   | Token and access control syscalls                              | §5, TODO-11 §4    |  [ ]   |
 | 💎  |  17   | Directory and symbolic link object syscalls                    | §5, TODO-03 §4    |  [ ]   |
 | 💎  |  18   | Section and memory-mapped file syscalls                        | §5, TODO-03 §7    |  [ ]   |
@@ -473,16 +473,19 @@ Extended file operations: metadata queries, attribute modification, device I/O c
 > [!NOTE]
 > Persistence, notification, and hive management operations. Depends on §14 (core CRUD) and TODO-13 hive infrastructure.
 
-- [ ] `NtFlushKey(KeyHandle)` → SSDT 0x009C: flush to backing hive
-- [ ] `NtNotifyChangeKey(KeyHandle, Event, ApcRoutine, ApcContext, IoStatusBlock, CompletionFilter, WatchTree, Buffer, BufferSize, Asynchronous)` → SSDT 0x009D
-- [ ] `NtRenameKey(KeyHandle, NewName)` → SSDT 0x009F
-- [ ] `NtSaveKey(KeyHandle, FileHandle)` / `NtSaveKeyEx(...)` → SSDT 0x00A0/0x00A1
-- [ ] `NtRestoreKey(KeyHandle, FileHandle, Flags)` → SSDT 0x00A2
-- [ ] `NtLoadKey(ObjectAttributes, ObjectAttributes)` / `NtLoadKeyEx(...)` → SSDT 0x00A3/0x00A4
-- [ ] `NtUnloadKey(ObjectAttributes)` / `NtUnloadKeyEx(...)` → SSDT 0x00A5/0x00A6
+- [x] `NtFlushKey(KeyHandle)` → SSDT 0x009C: delegates to `registry_flush()`
+- [/] `NtNotifyChangeKey(KeyHandle, Event, ApcRoutine, ApcContext, IoStatusBlock, CompletionFilter, WatchTree, Buffer, BufferSize, Asynchronous)` → SSDT 0x009D (returns STATUS_NOT_IMPLEMENTED pending change-notification infrastructure -> XREF: 02-kernel-core/TODO-13 §3)
+- [x] `NtRenameKey(KeyHandle, NewName)` → SSDT 0x009F (uses `RegRenameKey` helper)
+- [x] `NtSaveKey(KeyHandle, FileHandle)` / `NtSaveKeyEx(...)` → SSDT 0x00A0/0x00A1 (resolves FileHandle via `vfs_get_path_from_node`, then `hive_save`)
+- [x] `NtRestoreKey(KeyHandle, FileHandle, Flags)` → SSDT 0x00A2 (same path resolution, then `hive_load`)
+- [x] `NtLoadKey(ObjectAttributes, ObjectAttributes)` / `NtLoadKeyEx(...)` → SSDT 0x00A3/0x00A4 (creates registry mountpoint, loads hive file by path)
+- [x] `NtUnloadKey(ObjectAttributes)` / `NtUnloadKeyEx(...)` → SSDT 0x00A5/0x00A6 (uses `RegUnloadHive` helper)
 - [ ] Commit: `"kernel: nt -- advanced registry syscalls (flush/notify/save/restore/hive load)"`
 
 **Test checkpoint:** `NtFlushKey` completes without error. `NtNotifyChangeKey` fires callback after `NtSetValueKey` on watched key. `NtSaveKey` + `NtRestoreKey` round-trip succeeds.
+
+> **Test runner:** `scripts\debug\run-abi-tests.bat` (SUITE=abi)
+> **Expected:** 5 new §15 tests (NtFlushKey, NtRenameKey, NtNotifyChangeKey blocked, NtUnloadKey invalid, advanced SSDT registered), 0 failures.
 
 ## 16. Token and Access Control Syscalls
 

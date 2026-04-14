@@ -152,17 +152,17 @@
 | 0x0099 | NtEnumerateKey                   | §14 | T05 §14 (nt_registry.c) | [x]  |
 | 0x009A | NtEnumerateValueKey              | §14 | T05 §14 (nt_registry.c) | [x]  |
 | 0x009B | NtQueryKey                       | §14 | T05 §14 (nt_registry.c) | [x]  |
-| 0x009C | NtFlushKey                       | §14 | T13 §4               | [ ]  |
-| 0x009D | NtNotifyChangeKey                | §14 | T13 §4               | [ ]  |
+| 0x009C | NtFlushKey                       | §15 | T05 §15 (nt_registry.c) | [x]  |
+| 0x009D | NtNotifyChangeKey                | §15 | T13 §3 (stub: watchers not impl) | [/]  |
 | 0x009E | NtNotifyChangeMultipleKeys       | §14 | T13 §4               | [ ]  |
-| 0x009F | NtRenameKey                      | §14 | T13 §4               | [ ]  |
-| 0x00A0 | NtSaveKey                        | §14 | T13 §4               | [ ]  |
-| 0x00A1 | NtSaveKeyEx                      | §14 | T13 §4               | [ ]  |
-| 0x00A2 | NtRestoreKey                     | §14 | T13 §4               | [ ]  |
-| 0x00A3 | NtLoadKey                        | §14 | T13 §4               | [ ]  |
-| 0x00A4 | NtLoadKeyEx                      | §14 | T13 §4               | [ ]  |
-| 0x00A5 | NtUnloadKey                      | §14 | T13 §4               | [ ]  |
-| 0x00A6 | NtUnloadKeyEx                    | §14 | T13 §4               | [ ]  |
+| 0x009F | NtRenameKey                      | §15 | T05 §15 (nt_registry.c) | [x]  |
+| 0x00A0 | NtSaveKey                        | §15 | T05 §15 (nt_registry.c) | [x]  |
+| 0x00A1 | NtSaveKeyEx                      | §15 | T05 §15 (nt_registry.c) | [x]  |
+| 0x00A2 | NtRestoreKey                     | §15 | T05 §15 (nt_registry.c) | [x]  |
+| 0x00A3 | NtLoadKey                        | §15 | T05 §15 (nt_registry.c) | [x]  |
+| 0x00A4 | NtLoadKeyEx                      | §15 | T05 §15 (nt_registry.c) | [x]  |
+| 0x00A5 | NtUnloadKey                      | §15 | T05 §15 (nt_registry.c) | [x]  |
+| 0x00A6 | NtUnloadKeyEx                    | §15 | T05 §15 (nt_registry.c) | [x]  |
 | 0x00A7 | NtQueryOpenSubKeys               | §14 | T13 §4               | [ ]  |
 | 0x00A8 | NtCompactKeys                    | §14 | T13 §4               | [ ]  |
 | 0x00A9 | NtCompressKey                    | §14 | T13 §4               | [ ]  |
@@ -644,6 +644,6 @@
 
 > **Total: 470 service entries** across 30 functional ranges -- full Windows 11 parity plus Impossible OS exclusive extensions. Shadow SSDT (Win32k) has a separate index space starting at 0x1000.
 >
-> **Implementation progress: 114/470 wired** (24.3%) -- **95 complete `[x]`** (20.2%) + **19 partial/stub `[/]`** (4.0%). Complete ranges: ETW (7/7), Time/Timer (5/5), Registry core CRUD (10/12, missing only transacted variants), File I/O (15/28 with 6 partial deferrals for IRP/async), Process+Thread (15/24 with 5 stubs for CONTEXT/APC/impersonation/user-process), Memory (11/19 with 3 AWE stubs), Sync (17/30 with 4 keyed-event stubs). Run `/audit-ssdt` to refresh.
+> **Implementation progress: 124/470 wired** (26.4%) -- **104 complete `[x]`** (22.1%) + **20 partial/stub `[/]`** (4.3%). Complete ranges: ETW (7/7), Time/Timer (5/5), Registry CRUD + advanced (19/27, missing only transacted/compact/lock variants), File I/O (15/28 with 6 partial deferrals for IRP/async), Process+Thread (15/24 with 5 stubs for CONTEXT/APC/impersonation/user-process), Memory (11/19 with 3 AWE stubs), Sync (17/30 with 4 keyed-event stubs). Run `/audit-ssdt` to refresh.
 
 **Test checkpoint:** `syscall_dispatch(0xFFFF)` returns `STATUS_NOT_IMPLEMENTED`, not crash. `syscall_dispatch(valid_index)` calls correct handler. Serial: `"ssdt: registered 470 services"` during init.
