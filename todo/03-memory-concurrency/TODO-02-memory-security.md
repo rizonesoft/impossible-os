@@ -114,7 +114,7 @@ Supervisor Mode Access Prevention: the CPU faults on any kernel access to a user
 - [ ] Boot log: `[CPU] SMAP: enabled` or `[CPU] SMAP: not supported`
 - [ ] Create `include/kernel/mm/uaccess.h`: declare `copy_from_user(kern_dst, user_src, len)` and `copy_to_user(user_dst, kern_src, len)` with inline `stac` / `clac` guards; return bytes copied or -1 on fault
 - [ ] Page fault handler: detect SMAP violation (`error_code & PFEC_SMAP`, bit 5 set, U=0, W=access type) → `PANIC("SMAP violation at 0x%lx from 0x%lx")`
-- [ ] Audit all syscall handlers in `syscall.c`: replace raw user-pointer dereference with `copy_from_user()` / `copy_to_user()`
+- [ ] Audit all syscall handlers: replace raw user-pointer dereference with `copy_from_user()` / `copy_to_user()` in `src/kernel/sched/syscall.c` AND every `src/kernel/nt/nt_*.c` that reads `OBJECT_ATTRIBUTES`, `UNICODE_STRING`, or any user-pointer-typed syscall arg. Explicit retrofit list (consumers currently on the probe+direct-deref pattern): `nt_namespace.c` (`oa_name`), `nt_section.c` (`oa_probe_ascii_name`), `nt_timer.c`, `nt_file.c`, `nt_alpc.c` (`alpc_probe_and_split`, `NtAlpcCreatePort_handler`). Retrofit replaces the kernel-owned copy_from_user'd leaf with a SMAP-safe variant; the current kernel-owned 64-byte leaf buffer stays (TOCTOU fix), only the acquisition path changes.
 - [ ] Apply CR4.SMAP in `ap_cpu_harden()` for every AP
 - [ ] Commit: `"mm: SMAP -- CR4.SMAP + copy_from_user / copy_to_user wrappers, syscall audit"`
 

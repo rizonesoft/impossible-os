@@ -195,11 +195,11 @@ static NTSTATUS NtAlpcCreatePort_handler(uint64_t a1, uint64_t a2, uint64_t a3,
     if (!NT_SUCCESS(st))
         return st;
 
-    h = AlpcCreatePort(&task_current()->handle_table,
-                       have_name ? leaf_buf : (const char *)0,
-                       attrs_to_pass);
-    if (h == INVALID_HANDLE_VALUE)
-        return STATUS_INSUFFICIENT_RESOURCES;
+    st = AlpcCreatePort(&task_current()->handle_table,
+                        have_name ? leaf_buf : (const char *)0,
+                        attrs_to_pass, &h);
+    if (!NT_SUCCESS(st))
+        return st;
 
     *out_handle = h;
     return STATUS_SUCCESS;

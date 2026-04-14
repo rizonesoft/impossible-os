@@ -26,6 +26,7 @@
 
 #include "kernel/types.h"
 #include "kernel/boot_init.h"
+#include "kernel/nt/ntstatus.h"
 #include "kernel/ipc/alpc.h"
 #include "kernel/sched/spinlock.h"
 #include "kernel/sched/condvar.h"
@@ -73,8 +74,10 @@ typedef struct port_message_entry {
 /*
  * Populated by section 12 (port monitor / latency profiler). Defined as
  * a concrete small struct here so the ALPC_PORT body has a stable size
- * from day one; later we grow this in place, and the static assert on
- * sizeof(struct alpc_port) catches unintentional drift.
+ * while later sections grow it; the internal layout is NOT an ABI
+ * contract -- consumers treat ALPC_PORT as opaque and only the public
+ * API in this header crosses translation units. No `_Static_assert`
+ * on sizeof(ALPC_PORT) until layout stabilises after §4-§12.
  */
 typedef struct alpc_port_stats {
     uint64_t MessagesReceived;
@@ -152,17 +155,24 @@ boot_result_t alpc_port_init(void);
  * AlpcCreatePort -- create a server connection port.
  *
  * Parameters:
- *   ht    -- handle table to receive the new handle (usually
- *            &task_current()->handle_table)
- *   name  -- component name under \RPC Control, or NULL for an
- *            unnamed handle-only port (client/inline use cases)
- *   attrs -- caller-supplied port attributes (copied by value), or
- *            NULL to use zero-init defaults
+ *   ht           -- handle table to receive the new handle (usually
+ *                   &task_current()->handle_table)
+ *   name         -- component name under \RPC Control (leaf only,
+ *                   no `\\` or `/`), or NULL for an unnamed
+ *                   handle-only port (client/inline use cases)
+ *   attrs        -- caller-supplied port attributes (copied by value),
+ *                   or NULL to use zero-init defaults
+ *   out_handle   -- receives the HANDLE on success; untouched on
+ *                   failure
  *
- * Returns a non-zero HANDLE on success or INVALID_HANDLE_VALUE on
- * allocation / namespace / handle-table failure. Every failure path
- * rolls back state so the namespace never holds a half-created entry
- * and the handle table never holds a dangling entry.
+ * Returns an NTSTATUS so callers can distinguish duplicate-name
+ * collisions (STATUS_OBJECT_NAME_COLLISION), invalid leaves
+ * (STATUS_OBJECT_NAME_INVALID), missing \RPC Control
+ * (STATUS_OBJECT_NAME_NOT_FOUND), and resource exhaustion
+ * (STATUS_INSUFFICIENT_RESOURCES). Every failure path rolls back
+ * state so the namespace never holds a half-created entry and the
+ * handle table never holds a dangling entry.
  */
-HANDLE AlpcCreatePort(HANDLE_TABLE *ht, const char *name,
-                      const ALPC_PORT_ATTRIBUTES *attrs);
+NTSTATUS AlpcCreatePort(HANDLE_TABLE *ht, const char *name,
+                        const ALPC_PORT_ATTRIBUTES *attrs,
+                        HANDLE *out_handle);

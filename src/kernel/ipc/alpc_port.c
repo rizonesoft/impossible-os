@@ -148,6 +148,41 @@ boot_result_t alpc_port_init(void)
 /* ---- AlpcCreatePort ---------------------------------------------------- */
 
 /*
+ * alpc_validate_attrs -- gate user-reachable ALPC_PORT_ATTRIBUTES.
+ *
+ * Called from AlpcCreatePort before the port is allocated. Rejects:
+ *   - unknown Flags bits (anything outside the 4 declared ALPC_PORTFLG_*)
+ *   - ALPC_PORTFLG_SYSTEM_PROCESS: reserved for a privileged kernel
+ *     path; will gain an SeAccessCheck in §7 once token capture is up.
+ *     For §2, the only legitimate caller is the kernel itself, and the
+ *     kernel does not set this flag today -- so any caller passing it
+ *     is either confused or malicious.
+ *   - non-zero reserved pad fields (Pad0/Pad1/Pad2): catch uninitialised
+ *     stack bytes from user mode; ABI contract is pad-must-be-zero.
+ */
+static NTSTATUS alpc_validate_attrs(const ALPC_PORT_ATTRIBUTES *attrs)
+{
+    uint32_t allowed_flags;
+
+    if (!attrs)
+        return STATUS_SUCCESS;
+
+    allowed_flags = ALPC_PORTFLG_LPC_MODE
+                  | ALPC_PORTFLG_WAITABLE_PORT
+                  | ALPC_PORTFLG_ALLOW_DUP_OBJECT;
+    /* ALPC_PORTFLG_SYSTEM_PROCESS intentionally excluded: privileged
+     * bit, §7 gates it via SeAccessCheck once token capture ships. */
+
+    if (attrs->Flags & ~allowed_flags)
+        return STATUS_INVALID_PARAMETER;
+
+    if (attrs->Pad0 != 0 || attrs->Pad1 != 0 || attrs->Pad2 != 0)
+        return STATUS_INVALID_PARAMETER;
+
+    return STATUS_SUCCESS;
+}
+
+/*
  * Ordering (follows NtCreateDirectoryObject idiom in nt_namespace.c):
  *   1. ob_alloc_object         (ref_count = 1; creation ref)
  *   2. Initialize fields        (port not yet published)
@@ -164,37 +199,47 @@ boot_result_t alpc_port_init(void)
  * touching the namespace, and namespace insert failure only needs a
  * handle free.
  */
-HANDLE AlpcCreatePort(HANDLE_TABLE *ht, const char *name,
-                      const ALPC_PORT_ATTRIBUTES *attrs)
+NTSTATUS AlpcCreatePort(HANDLE_TABLE *ht, const char *name,
+                        const ALPC_PORT_ATTRIBUTES *attrs,
+                        HANDLE *out_handle)
 {
     ALPC_PORT *port;
     HANDLE h;
     void *rpc_dir = (void *)0;
+    NTSTATUS st;
+
+    if (!out_handle)
+        return STATUS_INVALID_PARAMETER;
+    *out_handle = INVALID_HANDLE_VALUE;
 
     if (!ht || !ObpAlpcPortType)
-        return INVALID_HANDLE_VALUE;
+        return STATUS_INVALID_PARAMETER;
 
-    /* Leaf-name length check: ObInsertObject rejects empty or > OB_NAME_MAX-1,
-     * but we also want to refuse embedded backslashes here so a caller
-     * cannot smuggle a path ("foo\\bar") past the namespace's component
-     * contract. Kernel helpers (tests, CSRSS) pass pure leaf names;
-     * syscall callers split at the syscall boundary. */
+    st = alpc_validate_attrs(attrs);
+    if (!NT_SUCCESS(st))
+        return st;
+
+    /* Leaf-name validation: ObInsertObject rejects empty or >
+     * OB_NAME_MAX-1, but we also refuse embedded backslashes here so a
+     * caller cannot smuggle a path ("foo\\bar") past the namespace's
+     * component contract. Kernel helpers (tests, CSRSS) pass pure leaf
+     * names; syscall callers split at the syscall boundary. */
     if (name) {
         const char *c;
         uint32_t len = 0;
         for (c = name; *c; c++) {
             if (*c == '\\' || *c == '/')
-                return INVALID_HANDLE_VALUE;
+                return STATUS_OBJECT_NAME_INVALID;
             if (++len >= 64)                    /* OB_NAME_MAX */
-                return INVALID_HANDLE_VALUE;
+                return STATUS_OBJECT_NAME_INVALID;
         }
         if (len == 0)
-            return INVALID_HANDLE_VALUE;
+            return STATUS_OBJECT_NAME_INVALID;
     }
 
     port = (ALPC_PORT *)ob_alloc_object(ObpAlpcPortType);
     if (!port)
-        return INVALID_HANDLE_VALUE;
+        return STATUS_INSUFFICIENT_RESOURCES;
 
     /* ob_alloc_object zero-fills the body; explicit field setup below
      * captures only the non-zero initial state. */
@@ -206,9 +251,6 @@ HANDLE AlpcCreatePort(HANDLE_TABLE *ht, const char *name,
 
     if (attrs)
         port->Attributes = *attrs;              /* copy by value */
-    /* else leave zero-init: Flags=0, SecurityQos zeroed, sizes 0 -- the
-     * syscall path will layer policy on top; unit tests rely on the
-     * zero defaults. */
 
     /* 3. Allocate the handle FIRST. On failure, the creation ref is the
      * only reference; a simple deref frees the port. No namespace
@@ -216,7 +258,7 @@ HANDLE AlpcCreatePort(HANDLE_TABLE *ht, const char *name,
     h = ObpAllocateHandle(ht, port, /* access */ 0, /* attrs */ 0);
     if (h == INVALID_HANDLE_VALUE) {
         ObDereferenceObject(port);              /* drops creation ref */
-        return INVALID_HANDLE_VALUE;
+        return STATUS_INSUFFICIENT_RESOURCES;
     }
 
     /* 4. If named, insert under \RPC Control. Failure path frees the
@@ -226,19 +268,23 @@ HANDLE AlpcCreatePort(HANDLE_TABLE *ht, const char *name,
                                  &rpc_dir) != 0 || !rpc_dir) {
             ObpFreeHandle(ht, h);               /* drops handle ref */
             ObDereferenceObject(port);          /* drops creation ref */
-            return INVALID_HANDLE_VALUE;
+            return STATUS_OBJECT_NAME_NOT_FOUND;
         }
 
         if (ObInsertObject(port, name, rpc_dir) != 0) {
+            /* ObInsertObject fails on duplicate or directory-full; both
+             * collapse into OBJECT_NAME_COLLISION at the syscall
+             * boundary, matching Windows NT behaviour. */
             ObDereferenceObject(rpc_dir);       /* drop lookup ref */
             ObpFreeHandle(ht, h);               /* drops handle ref */
             ObDereferenceObject(port);          /* drops creation ref */
-            return INVALID_HANDLE_VALUE;
+            return STATUS_OBJECT_NAME_COLLISION;
         }
 
         ObDereferenceObject(rpc_dir);            /* drop lookup ref */
     }
 
     ObDereferenceObject(port);                   /* drop creation ref */
-    return h;
+    *out_handle = h;
+    return STATUS_SUCCESS;
 }

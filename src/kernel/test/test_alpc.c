@@ -206,10 +206,13 @@ static void test_alpc_rpc_control_directory(void)
 
 static void test_alpc_create_unnamed_port(void)
 {
-    HANDLE h = AlpcCreatePort(&task_current()->handle_table,
-                              (const char *)0, (ALPC_PORT_ATTRIBUTES *)0);
-    TEST_ASSERT_NEQ(h, INVALID_HANDLE_VALUE,
-                    "AlpcCreatePort(NULL name) returns valid handle");
+    HANDLE h = INVALID_HANDLE_VALUE;
+    NTSTATUS st = AlpcCreatePort(&task_current()->handle_table,
+                                 (const char *)0,
+                                 (ALPC_PORT_ATTRIBUTES *)0, &h);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS,
+                   "AlpcCreatePort(NULL name) returns SUCCESS");
+    TEST_ASSERT_NEQ(h, INVALID_HANDLE_VALUE, "unnamed port handle valid");
     TEST_ASSERT_NEQ(h, 0, "unnamed port handle non-zero");
     if (h != INVALID_HANDLE_VALUE && h != 0)
         NtClose(&task_current()->handle_table, h);
@@ -217,10 +220,13 @@ static void test_alpc_create_unnamed_port(void)
 
 static void test_alpc_create_named_port(void)
 {
-    HANDLE h = AlpcCreatePort(&task_current()->handle_table,
-                              "TestPort", (ALPC_PORT_ATTRIBUTES *)0);
-    TEST_ASSERT_NEQ(h, INVALID_HANDLE_VALUE,
-                    "AlpcCreatePort(\"TestPort\") returns valid handle");
+    HANDLE h = INVALID_HANDLE_VALUE;
+    NTSTATUS st = AlpcCreatePort(&task_current()->handle_table,
+                                 "TestPort",
+                                 (ALPC_PORT_ATTRIBUTES *)0, &h);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS,
+                   "AlpcCreatePort(\"TestPort\") returns SUCCESS");
+    TEST_ASSERT_NEQ(h, INVALID_HANDLE_VALUE, "named port handle valid");
     TEST_ASSERT_NEQ(h, 0, "named port handle non-zero");
 
     /* Verify the port is findable in \RPC Control */
@@ -242,24 +248,30 @@ static void test_alpc_create_named_port(void)
 
 static void test_alpc_duplicate_name_rejected(void)
 {
-    HANDLE h1 = AlpcCreatePort(&task_current()->handle_table,
-                               "DupPort", (ALPC_PORT_ATTRIBUTES *)0);
-    TEST_ASSERT_NEQ(h1, INVALID_HANDLE_VALUE, "first DupPort create succeeds");
+    HANDLE h1 = INVALID_HANDLE_VALUE;
+    NTSTATUS st1 = AlpcCreatePort(&task_current()->handle_table,
+                                  "DupPort", (ALPC_PORT_ATTRIBUTES *)0, &h1);
+    TEST_ASSERT_EQ((uint32_t)st1, (uint32_t)STATUS_SUCCESS,
+                   "first DupPort create SUCCESS");
 
-    HANDLE h2 = AlpcCreatePort(&task_current()->handle_table,
-                               "DupPort", (ALPC_PORT_ATTRIBUTES *)0);
+    HANDLE h2 = INVALID_HANDLE_VALUE;
+    NTSTATUS st2 = AlpcCreatePort(&task_current()->handle_table,
+                                  "DupPort", (ALPC_PORT_ATTRIBUTES *)0, &h2);
+    TEST_ASSERT_EQ((uint32_t)st2, (uint32_t)STATUS_OBJECT_NAME_COLLISION,
+                   "duplicate name => OBJECT_NAME_COLLISION");
     TEST_ASSERT_EQ(h2, INVALID_HANDLE_VALUE,
-                   "second DupPort create rejected (name collision)");
+                   "duplicate-name handle left INVALID");
     if (h1 != INVALID_HANDLE_VALUE && h1 != 0)
         NtClose(&task_current()->handle_table, h1);
 }
 
 static void test_alpc_null_handle_table_rejected(void)
 {
-    HANDLE h = AlpcCreatePort((HANDLE_TABLE *)0, "ShouldFail",
-                              (ALPC_PORT_ATTRIBUTES *)0);
-    TEST_ASSERT_EQ(h, INVALID_HANDLE_VALUE,
-                   "AlpcCreatePort(NULL ht) returns INVALID_HANDLE_VALUE");
+    HANDLE h = INVALID_HANDLE_VALUE;
+    NTSTATUS st = AlpcCreatePort((HANDLE_TABLE *)0, "ShouldFail",
+                                 (ALPC_PORT_ATTRIBUTES *)0, &h);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_INVALID_PARAMETER,
+                   "NULL ht => STATUS_INVALID_PARAMETER");
 }
 
 static void test_alpc_embedded_backslash_rejected(void)
@@ -267,17 +279,57 @@ static void test_alpc_embedded_backslash_rejected(void)
     /* Embedded path separator in the leaf must be refused -- otherwise a
      * kernel caller could smuggle a sub-path past ObInsertObject, which
      * treats the argument as a single leaf component. */
-    HANDLE h = AlpcCreatePort(&task_current()->handle_table,
-                              "foo\\bar", (ALPC_PORT_ATTRIBUTES *)0);
-    TEST_ASSERT_EQ(h, INVALID_HANDLE_VALUE,
-                   "leaf with embedded backslash rejected");
-    HANDLE h2 = AlpcCreatePort(&task_current()->handle_table,
-                               "foo/bar", (ALPC_PORT_ATTRIBUTES *)0);
-    TEST_ASSERT_EQ(h2, INVALID_HANDLE_VALUE,
-                   "leaf with embedded forward slash rejected");
-    HANDLE h3 = AlpcCreatePort(&task_current()->handle_table,
-                               "", (ALPC_PORT_ATTRIBUTES *)0);
-    TEST_ASSERT_EQ(h3, INVALID_HANDLE_VALUE, "empty leaf rejected");
+    HANDLE h = INVALID_HANDLE_VALUE;
+    NTSTATUS st = AlpcCreatePort(&task_current()->handle_table,
+                                 "foo\\bar", (ALPC_PORT_ATTRIBUTES *)0, &h);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_OBJECT_NAME_INVALID,
+                   "embedded backslash => OBJECT_NAME_INVALID");
+    NTSTATUS st2 = AlpcCreatePort(&task_current()->handle_table,
+                                  "foo/bar", (ALPC_PORT_ATTRIBUTES *)0, &h);
+    TEST_ASSERT_EQ((uint32_t)st2, (uint32_t)STATUS_OBJECT_NAME_INVALID,
+                   "embedded forward slash => OBJECT_NAME_INVALID");
+    NTSTATUS st3 = AlpcCreatePort(&task_current()->handle_table,
+                                  "", (ALPC_PORT_ATTRIBUTES *)0, &h);
+    TEST_ASSERT_EQ((uint32_t)st3, (uint32_t)STATUS_OBJECT_NAME_INVALID,
+                   "empty leaf => OBJECT_NAME_INVALID");
+}
+
+static void test_alpc_privileged_flag_rejected(void)
+{
+    /* ALPC_PORTFLG_SYSTEM_PROCESS is privileged; §7 gates it via
+     * SeAccessCheck. Until then, reject from everywhere so it cannot
+     * be set via user-mode. */
+    ALPC_PORT_ATTRIBUTES attrs;
+    HANDLE h = INVALID_HANDLE_VALUE;
+    NTSTATUS st;
+
+    /* Zero-init then set the privileged flag */
+    uint8_t *p = (uint8_t *)&attrs;
+    for (uint32_t i = 0; i < sizeof(attrs); i++) p[i] = 0;
+    attrs.Flags = ALPC_PORTFLG_SYSTEM_PROCESS;
+
+    st = AlpcCreatePort(&task_current()->handle_table,
+                        (const char *)0, &attrs, &h);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_INVALID_PARAMETER,
+                   "SYSTEM_PROCESS flag => INVALID_PARAMETER");
+}
+
+static void test_alpc_reserved_pad_rejected(void)
+{
+    /* Non-zero reserved pad fields => reject (catches uninitialised
+     * user-mode stack bytes from being persisted in the port body). */
+    ALPC_PORT_ATTRIBUTES attrs;
+    HANDLE h = INVALID_HANDLE_VALUE;
+    NTSTATUS st;
+
+    uint8_t *p = (uint8_t *)&attrs;
+    for (uint32_t i = 0; i < sizeof(attrs); i++) p[i] = 0;
+    attrs.Pad1 = 0xDEADBEEF;
+
+    st = AlpcCreatePort(&task_current()->handle_table,
+                        (const char *)0, &attrs, &h);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_INVALID_PARAMETER,
+                   "non-zero Pad1 => INVALID_PARAMETER");
 }
 
 static void test_alpc_syscall_full_path(void)
@@ -372,6 +424,10 @@ void test_register_alpc(void)
                             test_alpc_null_handle_table_rejected, TEST_CAT_IPC);
     test_suite_register_cat("alpc: embedded backslash rejected",
                             test_alpc_embedded_backslash_rejected, TEST_CAT_IPC);
+    test_suite_register_cat("alpc: privileged SYSTEM_PROCESS rejected",
+                            test_alpc_privileged_flag_rejected, TEST_CAT_IPC);
+    test_suite_register_cat("alpc: reserved pad non-zero rejected",
+                            test_alpc_reserved_pad_rejected, TEST_CAT_IPC);
     test_suite_register_cat("alpc: syscall full-path split",
                             test_alpc_syscall_full_path, TEST_CAT_IPC);
     test_suite_register_cat("alpc: syscall bad prefix rejected",
