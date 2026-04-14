@@ -475,12 +475,12 @@ static void test_nt_rename_key(void)
 }
 
 /* Test: NtNotifyChangeKey returns STATUS_NOT_IMPLEMENTED (blocked on TODO-13 §3) */
-static void test_nt_notify_change_key_blocked(void)
+static void test_nt_notify_change_key_pending(void)
 {
     NTSTATUS status = ssdt_dispatch(SSDT_NtNotifyChangeKey,
                                     0, 0, 0, 0, 0, 0);
-    TEST_ASSERT(status == STATUS_NOT_IMPLEMENTED,
-                "NtNotifyChangeKey returns NOT_IMPLEMENTED (TODO-13 §3)");
+    TEST_PENDING(status == STATUS_NOT_IMPLEMENTED,
+                 "NtNotifyChangeKey: registry change-notification engine deferred (TODO-13 s3 ships real handler)");
 }
 
 /* Test: NtUnloadKey rejects a root key and unknown paths */
@@ -550,7 +550,7 @@ void test_register_registry(void)
     test_suite_register_cat("Registry: SSDT slots registered", test_nt_registry_ssdt_registered, TEST_CAT_ABI);
     test_suite_register_cat("Registry: NtFlushKey", test_nt_flush_key, TEST_CAT_ABI);
     test_suite_register_cat("Registry: NtRenameKey", test_nt_rename_key, TEST_CAT_ABI);
-    test_suite_register_cat("Registry: NtNotifyChangeKey blocked", test_nt_notify_change_key_blocked, TEST_CAT_ABI);
+    test_suite_register_cat("Registry: NtNotifyChangeKey pending", test_nt_notify_change_key_pending, TEST_CAT_ABI);
     test_suite_register_cat("Registry: NtUnloadKey invalid", test_nt_unload_key_invalid, TEST_CAT_ABI);
     test_suite_register_cat("Registry: advanced SSDT registered", test_nt_registry_advanced_registered, TEST_CAT_ABI);
 }

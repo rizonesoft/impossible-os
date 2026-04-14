@@ -1081,20 +1081,22 @@ static void test_nt_lpc_slots_registered(void)
     }
 }
 
-static void test_nt_lpc_returns_deferred_status(void)
+static void test_nt_lpc_pending_features(void)
 {
-    /* Deterministic STATUS_NOT_IMPLEMENTED contract: user-mode callers
-     * must see a real NTSTATUS, not a dispatch-miss path. Dispatch ALL
-     * 15 slots -- mis-registration to another non-stub handler in any
-     * slot would otherwise ship undetected. */
+    /* Each LPC slot is reserved but its real implementation is deferred
+     * (TODO-08 §7 LPC engine). Dispatch every slot, render the deferred
+     * contract as TEST_PENDING -- the [STUB] line + pending counter is
+     * the canonical "what is incomplete?" registry. A break here
+     * (slot returns something other than the deferred status) is a
+     * mis-registration / accidental wiring and gets logged as FAIL. */
     uint32_t i;
     char msg[96];
     for (i = 0; i < sizeof(s_lpc_slots) / sizeof(s_lpc_slots[0]); i++) {
         NTSTATUS st = ssdt_dispatch(s_lpc_slots[i].svc, 0, 0, 0, 0, 0, 0);
         snprintf(msg, sizeof(msg),
-                 "%s (0x%x) returns STATUS_NOT_IMPLEMENTED",
+                 "%s (0x%x): LPC engine deferred (TODO-08 s7 ships real handler)",
                  s_lpc_slots[i].name, (uint64_t)s_lpc_slots[i].svc);
-        TEST_ASSERT(st == STATUS_NOT_IMPLEMENTED, msg);
+        TEST_PENDING(st == STATUS_NOT_IMPLEMENTED, msg);
     }
 }
 
@@ -1152,18 +1154,18 @@ static void test_nt_alpc_slots_registered(void)
     }
 }
 
-static void test_nt_alpc_returns_deferred_status(void)
+static void test_nt_alpc_pending_features(void)
 {
-    /* Dispatch ALL 16 slots so mis-registration to another non-stub
-     * handler in any unsampled slot cannot ship undetected. */
+    /* ALPC engine deferred to TODO-12 §8-§9. Render each slot's deferred
+     * contract as TEST_PENDING ([STUB] line + pending count). */
     uint32_t i;
     char msg[96];
     for (i = 0; i < sizeof(s_alpc_slots) / sizeof(s_alpc_slots[0]); i++) {
         NTSTATUS st = ssdt_dispatch(s_alpc_slots[i].svc, 0, 0, 0, 0, 0, 0);
         snprintf(msg, sizeof(msg),
-                 "%s (0x%x) returns STATUS_NOT_IMPLEMENTED",
+                 "%s (0x%x): ALPC engine deferred (TODO-12 §8-§9 ships real handler)",
                  s_alpc_slots[i].name, (uint64_t)s_alpc_slots[i].svc);
-        TEST_ASSERT(st == STATUS_NOT_IMPLEMENTED, msg);
+        TEST_PENDING(st == STATUS_NOT_IMPLEMENTED, msg);
     }
 }
 
@@ -1199,9 +1201,9 @@ void test_register_ob(void)
     test_suite_register_cat("OB: NT timer wrong type", test_nt_timer_wrong_type, TEST_CAT_OB);
     test_suite_register_cat("OB: NT timer SSDT registered", test_nt_timer_ssdt_registered, TEST_CAT_OB);
     test_suite_register_cat("OB: NT LPC slots registered", test_nt_lpc_slots_registered, TEST_CAT_OB);
-    test_suite_register_cat("OB: NT LPC returns deferred", test_nt_lpc_returns_deferred_status, TEST_CAT_OB);
+    test_suite_register_cat("OB: NT LPC pending features", test_nt_lpc_pending_features, TEST_CAT_OB);
     test_suite_register_cat("OB: NT ALPC slots registered", test_nt_alpc_slots_registered, TEST_CAT_OB);
-    test_suite_register_cat("OB: NT ALPC returns deferred", test_nt_alpc_returns_deferred_status, TEST_CAT_OB);
+    test_suite_register_cat("OB: NT ALPC pending features", test_nt_alpc_pending_features, TEST_CAT_OB);
     test_suite_register_cat("OB: PE ntdll exports sorted", test_pe_ntdll_exports_sorted, TEST_CAT_OB);
 }
 

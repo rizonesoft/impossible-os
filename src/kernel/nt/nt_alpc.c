@@ -5,12 +5,13 @@
  * surface. Each handler is a bounded stub that logs the call once
  * (atomic one-time flag, load-fast / CAS-on-transition) and returns a
  * deferred-status sentinel until the ALPC engine in
- * 02-kernel-core/TODO-12 §8 is implemented.
+ * 02-kernel-core/TODO-12 §8-§9 is implemented.
  *
  * SCOPE-GAP-ALLOWED: 16 handlers in this file intentionally return
  *                    STATUS_NOT_IMPLEMENTED pending TODO-12 §8 ALPC
- *                    engine. Retrofit path is a concrete checklist
- *                    item in TODO-12 §8 that enumerates each slot.
+ *                    SSDT retrofit + §9 Query/Set/Cancel. Retrofit path
+ *                    is a concrete checklist item in TODO-12 §8 that
+ *                    enumerates each slot.
  *                    When that item ships, every handler body in this
  *                    file is replaced with a call into the ALPC
  *                    subsystem and the sentinel comments are removed.
@@ -26,25 +27,19 @@
 #include "kernel/nt/service_numbers.h"
 #include "kernel/klog.h"
 
-/* Log the first call to each handler so missing ALPC calls are visible
- * in serial/klog without drowning the log on repeat calls.
+/* Stub return -- no runtime klog. The deferred-feature inventory is
+ * maintained by test_nt_alpc_returns_deferred_status() in test_ob.c
+ * via TEST_PENDING; that's the single canonical place "what is
+ * incomplete?" gets announced. Adding a per-call klog here would just
+ * duplicate the test signal and create N noise lines per boot.
  *
- * Fast path: relaxed __atomic_load_n handles the steady state in one
- * uncontended read. Only the first-ever call per handler enters the
- * compare_exchange, and only the winning CPU logs. Prevents user-mode
- * callers who hammer an unimplemented ALPC syscall from forcing
- * cross-CPU cacheline traffic beyond the first transition. */
+ * SCOPE-GAP-ALLOWED: pending TODO-12 §8 ALPC engine retrofit (the
+ * concrete checklist item there enumerates every slot). */
 #define ALPC_STUB_BODY(name)                                                 \
     do {                                                                     \
-        static uint32_t s_warned = 0;                                        \
-        uint32_t expected = 0;                                               \
-        if (__atomic_load_n(&s_warned, __ATOMIC_RELAXED) == 0                \
-            && __atomic_compare_exchange_n(&s_warned, &expected, 1, 0,       \
-                                           __ATOMIC_ACQ_REL,                 \
-                                           __ATOMIC_RELAXED)) {              \
-            klog(LOG_WARN, "nt/alpc",                                        \
-                 #name " called -- ALPC subsystem deferred to TODO-12 s8");  \
-        }                                                                    \
+        /* name is a bare identifier passed for documentation only;          \
+         * the deferred contract is exercised by TEST_PENDING in tests. */   \
+        (void)#name;                                                         \
         return STATUS_NOT_IMPLEMENTED;  /* SCOPE-GAP-ALLOWED */              \
     } while (0)
 

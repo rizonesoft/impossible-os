@@ -59,11 +59,14 @@ typedef struct {
     test_category_t cat;
 } test_suite_t;
 
-/* ---- Test state (global, used by TEST_ASSERT) ---- */
+/* ---- Test state (global, used by TEST_ASSERT / TEST_PENDING) ---- */
 typedef struct {
     uint32_t passed;
     uint32_t failed;
     uint32_t skipped;
+    uint32_t pending;       /* condition holds but feature is intentionally
+                             * deferred (slot reserved before its subsystem
+                             * ships) -- see TEST_PENDING below */
     uint32_t suite_count;
     uint32_t suites_passed;
     uint32_t suites_failed;
@@ -102,6 +105,13 @@ void _test_assert(int condition, const char *msg, const char *file, int line);
 /* Internal: called by TEST_SKIP macro */
 void _test_skip(const char *msg, const char *file, int line);
 
+/* Internal: called by TEST_PENDING macro -- the assertion held AND the
+ * feature is intentionally deferred. Logged as [STUB] and counted in a
+ * separate `pending` bucket so end-of-run summary shows how many
+ * features are reserved-but-unimplemented at a glance. */
+void _test_pending(int condition, const char *msg,
+                   const char *file, int line);
+
 /* Category name lookup */
 const char *test_category_name(test_category_t cat);
 
@@ -126,6 +136,16 @@ test_category_t test_category_from_string(const char *str);
 
 #define TEST_SKIP(msg) \
     _test_skip((msg), __FILE__, __LINE__)
+
+/* TEST_PENDING -- the deferred-feature contract holds. Use when a slot
+ * is intentionally reserved before its subsystem ships (e.g. SSDT slot
+ * registered as a stub returning a documented "not implemented" status
+ * pending the engine in another TODO). The condition still verifies the
+ * deferred contract; this macro just renders the outcome as [STUB] in
+ * the boot log and counts in a separate `pending` bucket so total
+ * incomplete features are visible in the end-of-run summary. */
+#define TEST_PENDING(cond, msg) \
+    _test_pending((cond), (msg), __FILE__, __LINE__)
 
 void _test_assert_eq(uint64_t a, uint64_t b, const char *msg,
                      const char *file, int line);
@@ -152,5 +172,6 @@ static inline void test_runner_init(void) {}
 #define TEST_ASSERT_NULL(p, msg)    ((void)0)
 #define TEST_ASSERT_NOT_NULL(p, msg)((void)0)
 #define TEST_SKIP(msg)              ((void)0)
+#define TEST_PENDING(cond, msg)     ((void)0)
 
 #endif /* KERNEL_TESTS */

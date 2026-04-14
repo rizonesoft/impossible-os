@@ -4,7 +4,7 @@
  * Reserves SSDT slots 0x0100-0x010E for the NT 3.x-5.x LPC syscall
  * surface. Each handler is a bounded stub that logs the call once and
  * returns a deferred-status sentinel until the LPC engine in
- * 03-memory-concurrency/TODO-08 §7 + 02-kernel-core/TODO-12 §8 is
+ * 03-memory-concurrency/TODO-08 §7 + 02-kernel-core/TODO-12 §8-§9 is
  * implemented.
  *
  * SCOPE-GAP-ALLOWED: 15 handlers in this file intentionally return
@@ -28,26 +28,19 @@
 #include "kernel/nt/service_numbers.h"
 #include "kernel/klog.h"
 
-/* Log the first call to each handler so missing LPC calls are visible
- * in serial/klog without drowning the log on repeat calls.
+/* Stub return -- no runtime klog. The deferred-feature inventory is
+ * maintained by test_nt_lpc_returns_deferred_status() in test_ob.c via
+ * TEST_PENDING; that's the single canonical place "what is incomplete?"
+ * gets announced. Adding a per-call klog here would just duplicate the
+ * test signal and create N noise lines per boot.
  *
- * Fast-path avoids the read-modify-write on the steady-state call. A
- * relaxed atomic LOAD handles the common "already warned" case in one
- * uncontended read; a user-mode caller repeatedly invoking an
- * unimplemented LPC syscall cannot force cross-CPU cacheline ping-pong.
- * Only the first-ever call per handler enters the compare_exchange,
- * and only the winning CPU logs. */
+ * SCOPE-GAP-ALLOWED: pending TODO-08 §7 LPC engine retrofit (the
+ * concrete checklist item there enumerates every slot). */
 #define LPC_STUB_BODY(name)                                                  \
     do {                                                                     \
-        static uint32_t s_warned = 0;                                        \
-        uint32_t expected = 0;                                               \
-        if (__atomic_load_n(&s_warned, __ATOMIC_RELAXED) == 0                \
-            && __atomic_compare_exchange_n(&s_warned, &expected, 1, 0,       \
-                                           __ATOMIC_ACQ_REL,                 \
-                                           __ATOMIC_RELAXED)) {              \
-            klog(LOG_WARN, "nt/lpc",                                         \
-                 #name " called -- LPC subsystem deferred to TODO-08 s7");   \
-        }                                                                    \
+        /* name is a bare identifier passed for documentation only;          \
+         * the deferred contract is exercised by TEST_PENDING in tests. */   \
+        (void)#name;                                                         \
         return STATUS_NOT_IMPLEMENTED;  /* SCOPE-GAP-ALLOWED */              \
     } while (0)
 

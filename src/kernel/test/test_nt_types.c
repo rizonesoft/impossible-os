@@ -556,15 +556,15 @@ static void test_nt_process_ssdt_registered(void)
     TEST_ASSERT_EQ(s, STATUS_INVALID_PARAMETER,
                    "NtDelayExecution SSDT registered (NULL interval)");
 
-    /* NtGetContextThread (0x003C) -- stub returns NOT_IMPLEMENTED */
+    /* NtGetContextThread (0x003C) -- pending TODO-10 SEH/CONTEXT */
     s = ssdt_dispatch(SSDT_NtGetContextThread, 0, 0, 0, 0, 0, 0);
-    TEST_ASSERT_EQ(s, STATUS_NOT_IMPLEMENTED,
-                   "NtGetContextThread stub (needs TODO-10)");
+    TEST_PENDING(s == STATUS_NOT_IMPLEMENTED,
+                 "NtGetContextThread (0x3c): SEH/CONTEXT engine deferred (TODO-10 ships real handler)");
 
-    /* NtQueueApcThread (0x0043) -- stub returns NOT_IMPLEMENTED */
+    /* NtQueueApcThread (0x0043) -- pending TODO-06 APC */
     s = ssdt_dispatch(SSDT_NtQueueApcThread, 0, 0, 0, 0, 0, 0);
-    TEST_ASSERT_EQ(s, STATUS_NOT_IMPLEMENTED,
-                   "NtQueueApcThread stub (needs TODO-06)");
+    TEST_PENDING(s == STATUS_NOT_IMPLEMENTED,
+                 "NtQueueApcThread (0x43): APC delivery engine deferred (TODO-06 ships real handler)");
 
     /* NtTerminateProcess (0x0033) with PID 0 / CURRENT_PROCESS
      * can't test without killing ourselves, so test with invalid handle */
@@ -625,10 +625,10 @@ static void test_nt_sync_ssdt_registered(void)
     TEST_ASSERT_EQ(s, STATUS_INVALID_HANDLE,
                    "NtSetEvent SSDT registered (bad handle)");
 
-    /* Keyed event stub (0x0084) -- NOT_IMPLEMENTED */
+    /* Keyed event (0x0084) -- pending TODO-07 advanced sync */
     s = ssdt_dispatch(SSDT_NtCreateKeyedEvent, 0, 0, 0, 0, 0, 0);
-    TEST_ASSERT_EQ(s, STATUS_NOT_IMPLEMENTED,
-                   "NtCreateKeyedEvent stub (deferred TODO-07)");
+    TEST_PENDING(s == STATUS_NOT_IMPLEMENTED,
+                 "NtCreateKeyedEvent (0x84): keyed-event subsystem deferred (TODO-07 ships real handler)");
 }
 
 static void test_nt_sync_constants(void)
@@ -663,10 +663,10 @@ static void test_nt_vm_ssdt_registered(void)
     TEST_ASSERT_EQ(s, STATUS_INVALID_PARAMETER,
                    "NtReadVirtualMemory SSDT registered (NULL buf)");
 
-    /* AWE stub (0x0059) -- NOT_IMPLEMENTED */
+    /* AWE (0x0059) -- pending TODO-04 advanced VM */
     s = ssdt_dispatch(SSDT_NtAllocateUserPhysicalPages, 0, 0, 0, 0, 0, 0);
-    TEST_ASSERT_EQ(s, STATUS_NOT_IMPLEMENTED,
-                   "NtAllocateUserPhysicalPages AWE stub");
+    TEST_PENDING(s == STATUS_NOT_IMPLEMENTED,
+                 "NtAllocateUserPhysicalPages (0x59): AWE windowing engine deferred (TODO-04 advanced VM ships real handler)");
 
     /* NtLockVirtualMemory (0x0054) -- always SUCCESS (no swap) */
     s = ssdt_dispatch(SSDT_NtLockVirtualMemory, 0, 0, 0, 0, 0, 0);
@@ -728,10 +728,10 @@ static void test_nt_sysinfo_classes(void)
     TEST_ASSERT_EQ(s, STATUS_SUCCESS,
                    "SystemProcessorInformation returns SUCCESS");
 
-    /* NtSetSystemInformation -- stub returns NOT_IMPLEMENTED */
+    /* NtSetSystemInformation -- pending whole subsystem (no class handlers) */
     s = ssdt_dispatch(SSDT_NtSetSystemInformation, 0, 0, 0, 0, 0, 0);
-    TEST_ASSERT_EQ(s, STATUS_NOT_IMPLEMENTED,
-                   "NtSetSystemInformation stub");
+    TEST_PENDING(s == STATUS_NOT_IMPLEMENTED,
+                 "NtSetSystemInformation: SystemInformationClass setters deferred (TODO-05 s10 ships per-class handlers)");
 
     /* Unknown class returns NOT_IMPLEMENTED */
     s = ssdt_dispatch(SSDT_NtQuerySystemInformation,

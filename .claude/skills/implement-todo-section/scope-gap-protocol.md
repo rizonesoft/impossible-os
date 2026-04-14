@@ -263,6 +263,27 @@ A: No. `-ENOSYS` is a legitimate POSIX error return for genuinely unsupported op
 
 A: Single commit, one section equals one commit. The commit message body has two lines: the section's `Commit:` line, plus a `scope-gap: inline expansion -- <what>` line. Both the original section work and the inline expansion ship together.
 
+**Q: My branch-B/C/D stub returns `STATUS_NOT_IMPLEMENTED`. Should the stub log a runtime warning on every call?**
+
+A: No. Add a `TEST_PENDING(cond, msg)` test instead -- the test framework's `pending` bucket + `[STUB]` log line is the canonical "what is incomplete?" registry. A runtime klog warning in the stub body just duplicates the test signal and creates N noise lines per boot. The pattern:
+
+```c
+/* In the stub function: */
+NTSTATUS NtFooBar_handler(...) {
+    /* SCOPE-GAP-ALLOWED: pending TODO-XX §N (subsystem name). */
+    return STATUS_NOT_IMPLEMENTED;  /* no klog -- TEST_PENDING owns the signal */
+}
+
+/* In the corresponding test: */
+static void test_foo_pending_features(void) {
+    NTSTATUS st = ssdt_dispatch(SSDT_NtFooBar, ...);
+    TEST_PENDING(st == STATUS_NOT_IMPLEMENTED,
+                 "NtFooBar: subsystem deferred (TODO-XX sN ships real handler)");
+}
+```
+
+End-of-run summary then surfaces the pending count so a glance answers "how many features are still incomplete?". See `implement-unit-tests` skill -- "When to use TEST_PENDING vs TEST_ASSERT" section.
+
 ---
 
 ## Mirror Note

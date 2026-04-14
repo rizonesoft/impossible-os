@@ -56,12 +56,39 @@ TEST_ASSERT_NEQ(a, b, msg)        // a != b (both cast to uint64_t)
 TEST_ASSERT_NULL(p, msg)          // p == NULL
 TEST_ASSERT_NOT_NULL(p, msg)      // p != NULL
 TEST_SKIP(msg)                    // skip this check (counted separately)
+TEST_PENDING(cond, msg)           // condition holds AND feature is intentionally
+                                  //   deferred (slot reserved before its
+                                  //   subsystem ships) -- counts in `pending`
+                                  //   bucket, logs as [STUB] line
 ```
 
 - On pass: increments `passed` counter, logs `[ OK ] TEST: suite :: msg` (unless quiet mode)
 - On fail: increments `failed` counter, logs `[FAIL] TEST: suite :: msg (file:line)` with got/expected for EQ/NEQ
 - On skip: increments `skipped` counter, logs `[WARN] TEST: suite :: SKIP: msg`
+- On pending (`TEST_PENDING(true, ...)`): increments `pending` counter, logs `[WARN] TEST: suite :: [STUB] msg`
+- On pending broken (`TEST_PENDING(false, ...)`): increments `failed` -- the deferred contract was supposed to hold and did not (e.g. mis-registered slot returned wrong status)
+- End-of-run summary: `=== N tests passed, F failed, S skipped, P pending (X.Xs) ===`. The pending count is the canonical answer to "how many features are reserved-but-unimplemented?"
 - There are no `TEST_PASS` or `TEST_FAIL` macros -- success is implicit when assertions pass
+
+### When to use TEST_PENDING vs TEST_ASSERT (MANDATORY)
+
+If a test asserts `STATUS_NOT_IMPLEMENTED` (or any equivalent "intentionally deferred" sentinel) as the EXPECTED outcome -- you are testing a stub. Use `TEST_PENDING` instead of `TEST_ASSERT`:
+
+```c
+/* WRONG -- treats deferred as success, hides the incomplete feature */
+TEST_ASSERT(st == STATUS_NOT_IMPLEMENTED, "NtAlpcCreatePort returns deferred");
+
+/* RIGHT -- counts in pending bucket, [STUB] line names the gap */
+TEST_PENDING(st == STATUS_NOT_IMPLEMENTED,
+             "NtAlpcCreatePort: ALPC engine deferred (TODO-12 s8)");
+```
+
+Why this matters:
+- **Single source of truth.** The `pending` count tells you at a glance how many features are incomplete; `[STUB]` lines list each one. No need for parallel runtime klog warnings in the stub body itself -- doing both creates duplicate signal in the boot log (one [WARN] from the stub, one [ OK ] from the test, both saying the same thing).
+- **Stable references.** Embed a TODO ref in the message string ONLY if you're OK with it going stale; the audit script (`scripts/audit-stubs.sh`) walks `TEST_PENDING` call sites and verifies the references resolve. The TODO ref in the source comment next to the test (not the message) is the durable one.
+- **Visible incompleteness.** A regression where someone "implements" an SSDT slot that returns the wrong status is caught -- `TEST_PENDING` flips to FAIL when the deferred contract breaks, instead of silently passing.
+
+If the stub body itself logs a runtime warning (e.g. an old `KSTUB_WARN_ONCE` pattern), DELETE the runtime log when you add the `TEST_PENDING` test. Two signals for the same fact = noise.
 
 ### Registration API
 

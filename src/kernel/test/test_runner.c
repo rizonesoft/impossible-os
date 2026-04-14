@@ -50,6 +50,7 @@ test_state_t g_test_state = {
     .passed        = 0,
     .failed        = 0,
     .skipped       = 0,
+    .pending       = 0,
     .suite_count   = 0,
     .suites_passed = 0,
     .suites_failed = 0,
@@ -174,6 +175,26 @@ void _test_skip(const char *msg, const char *file, int line)
     if (!g_quiet)
         klog(LOG_WARN, "TEST", "%s :: SKIP: %s",
              g_test_state.current_suite, msg);
+}
+
+/* TEST_PENDING -- contract holds AND feature is intentionally deferred.
+ * On hold: log [STUB] line and bump pending counter. On break: log a
+ * normal failure (the deferred contract was supposed to hold and did
+ * not -- e.g. a slot that was supposed to return the deferred status
+ * returned something else, indicating mis-registration).  */
+void _test_pending(int condition, const char *msg,
+                   const char *file, int line)
+{
+    if (condition) {
+        g_test_state.pending++;
+        klog(LOG_WARN, "TEST", "%s :: [STUB] %s",
+             g_test_state.current_suite, msg);
+    } else {
+        g_test_state.failed++;
+        klog(LOG_ERROR, "TEST",
+             "%s :: PENDING-CONTRACT BROKEN: %s  (%s:%d)",
+             g_test_state.current_suite, msg, file, line);
+    }
 }
 
 /* ---- Register built-in test suites ---- */
@@ -324,31 +345,23 @@ void test_runner_run(void)
     uint64_t run_sec  = run_ms / 1000;
     uint64_t run_frac = (run_ms % 1000) / 100;
     uint32_t total = g_test_state.passed + g_test_state.failed;
+    uint32_t skipped = g_test_state.skipped;
+    uint32_t pending = g_test_state.pending;
 
-    if (g_test_state.skipped > 0) {
-        if (g_test_state.failed == 0) {
-            klog(LOG_INFO, "TEST",
-                 "=== %u tests passed, 0 failed, %u skipped (%u.%us) ===",
-                 (uint64_t)total, (uint64_t)g_test_state.skipped,
-                 run_sec, run_frac);
-        } else {
-            klog(LOG_ERROR, "TEST",
-                 "=== %u passed, %u FAILED, %u skipped (of %u) (%u.%us) ===",
-                 (uint64_t)g_test_state.passed, (uint64_t)g_test_state.failed,
-                 (uint64_t)g_test_state.skipped, (uint64_t)total,
-                 run_sec, run_frac);
-        }
+    /* Single canonical summary including pending (deferred-feature
+     * stubs). The pending count lets a glance at the boot log answer
+     * "how many features are still incomplete?" without grepping. */
+    if (g_test_state.failed == 0) {
+        klog(LOG_INFO, "TEST",
+             "=== %u tests passed, 0 failed, %u skipped, %u pending (%u.%us) ===",
+             (uint64_t)total, (uint64_t)skipped, (uint64_t)pending,
+             run_sec, run_frac);
     } else {
-        if (g_test_state.failed == 0) {
-            klog(LOG_INFO, "TEST",
-                 "=== %u tests passed, 0 failed (%u.%us) ===",
-                 (uint64_t)total, run_sec, run_frac);
-        } else {
-            klog(LOG_ERROR, "TEST",
-                 "=== %u passed, %u FAILED (of %u) (%u.%us) ===",
-                 (uint64_t)g_test_state.passed, (uint64_t)g_test_state.failed,
-                 (uint64_t)total, run_sec, run_frac);
-        }
+        klog(LOG_ERROR, "TEST",
+             "=== %u passed, %u FAILED, %u skipped, %u pending (of %u) (%u.%us) ===",
+             (uint64_t)g_test_state.passed, (uint64_t)g_test_state.failed,
+             (uint64_t)skipped, (uint64_t)pending,
+             (uint64_t)total, run_sec, run_frac);
     }
 }
 
