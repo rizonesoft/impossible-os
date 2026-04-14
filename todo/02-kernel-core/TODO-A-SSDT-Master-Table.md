@@ -268,12 +268,12 @@
 
 | Index  | Function                         | §   | Owner                    | Done |
 |--------|----------------------------------|-----|--------------------------|------|
-| 0x0120 | NtCreateDirectoryObject          | §17 | T05                      | [ ]  |
-| 0x0121 | NtOpenDirectoryObject            | §17 | T05 (ob.c exists)        | [ ]  |
-| 0x0122 | NtQueryDirectoryObject           | §17 | T05 (ob.c exists)        | [ ]  |
-| 0x0123 | NtCreateSymbolicLinkObject       | §17 | T05                      | [ ]  |
-| 0x0124 | NtOpenSymbolicLinkObject         | §17 | T05                      | [ ]  |
-| 0x0125 | NtQuerySymbolicLinkObject        | §17 | T05                      | [ ]  |
+| 0x0120 | NtCreateDirectoryObject          | §17 | T05 §17 (nt_namespace.c) | [x]  |
+| 0x0121 | NtOpenDirectoryObject            | §17 | T05 §17 (nt_namespace.c) | [x]  |
+| 0x0122 | NtQueryDirectoryObject           | §17 | T05 §17 (nt_namespace.c) | [x]  |
+| 0x0123 | NtCreateSymbolicLinkObject       | §17 | T05 §17 (nt_namespace.c) | [x]  |
+| 0x0124 | NtOpenSymbolicLinkObject         | §17 | T05 §17 (nt_namespace.c) | [x]  |
+| 0x0125 | NtQuerySymbolicLinkObject        | §17 | T05 §17 (nt_namespace.c) | [x]  |
 
 **0x0130–0x013F: Debug and Exception (→ XREF TODO-10 §5, TODO-18)**
 
@@ -644,6 +644,6 @@
 
 > **Total: 470 service entries** across 30 functional ranges -- full Windows 11 parity plus Impossible OS exclusive extensions. Shadow SSDT (Win32k) has a separate index space starting at 0x1000.
 >
-> **Implementation progress: 133/470 wired** (28.3%) -- **113 complete `[x]`** (24.0%) + **20 partial/stub `[/]`** (4.3%). Complete ranges: ETW (7/7), Time/Timer (5/5), Registry CRUD + advanced (19/27), File I/O (15/28 with 6 partial deferrals for IRP/async), Process+Thread (15/24 with 5 stubs), Memory (11/19 with 3 AWE stubs), Sync (17/30 with 4 keyed-event stubs), Token open/query/adjust (9/21 -- §16 complete; §29 lifecycle+SRM pending). Run `/audit-ssdt` to refresh.
+> **Implementation progress: 139/470 wired** (29.6%) -- **119 complete `[x]`** (25.3%) + **20 partial/stub `[/]`** (4.3%). Complete ranges: ETW (7/7), Time/Timer (5/5), Registry CRUD + advanced (19/27), File I/O (15/28 with 6 partial deferrals for IRP/async), Process+Thread (15/24 with 5 stubs), Memory (11/19 with 3 AWE stubs), Sync (17/30 with 4 keyed-event stubs), Token open/query/adjust (9/21 -- §16 complete), Namespace (6/6 -- §17 complete: directory + symlink). Run `/audit-ssdt` to refresh.
 
 **Test checkpoint:** `syscall_dispatch(0xFFFF)` returns `STATUS_NOT_IMPLEMENTED`, not crash. `syscall_dispatch(valid_index)` calls correct handler. Serial: `"ssdt: registered 470 services"` during init.

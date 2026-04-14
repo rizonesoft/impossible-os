@@ -65,7 +65,7 @@
 | 💎  |  14   | Registry syscalls (core CRUD)                                  | §5, TODO-13 §4    |  [x]   |
 | 💎  |  15   | Registry syscalls (advanced: flush/notify/save/hive)           | §14, TODO-13 §4   |  [/]   |
 | 💎  |  16   | Token open/query/adjust syscalls                               | §5, TODO-11 §4    |  [x]   |
-| 💎  |  17   | Directory and symbolic link object syscalls                    | §5, TODO-03 §4    |  [ ]   |
+| 💎  |  17   | Directory and symbolic link object syscalls                    | §5, TODO-03 §4    |  [x]   |
 | 💎  |  18   | Section and memory-mapped file syscalls                        | §5, TODO-03 §7    |  [ ]   |
 | 💎  |  19   | Timer control syscalls                                         | §5, TODO-07 §8,§9 |  [ ]   |
 | 💎  |  20   | ALPC / LPC port syscalls                                       | §5, TODO-12 §8    |  [ ]   |
@@ -78,6 +78,7 @@
 | ⭐  |  27   | SSDT integrity protection (hardware write-protect)             | §4                |  [ ]   |
 | 💎  |  28   | Extended directory enumeration classes                         | §6, §13           |  [x]   |
 | 💎  |  29   | Token lifecycle + SRM access check syscalls                    | §16, TODO-11 §4,§5|  [ ]   |
+| 💎  |  30   | Generic object management (make-temp/perm, set-info, compare)  | §17, TODO-03 §1,§9|  [ ]   |
 
 > 💎 = parity -- Windows NT and Linux both have equivalents for these categories.
 > ⭐ = exclusive -- the ZwXxx privilege layer, the audit hook, SSDT integrity protection, and the IOSB/LastError unified path go beyond what Linux offers.
@@ -519,22 +520,23 @@ Extended file operations: metadata queries, attribute modification, device I/O c
 > **Accepted:** (1) Process/thread handles are PID/TID-encoded rather than OB-allocated (matches existing nt_process.c pattern; no per-handle access rights enforcement) -> XREF: 02-kernel-core/TODO-03 §9 (new item: "Migrate PID/TID-encoded process/thread handles to OB-allocated handles"). (2) Token handle granted_access not checked on mutate ops -> XREF: 02-kernel-core/TODO-11 §5 (new item: "Enforce per-handle granted_access on token mutation syscalls"). (3) NtOpenProcessTokenEx HandleAttributes discarded -> XREF: 02-kernel-core/TODO-03 §3 (new item: "Wire HandleAttributes through ObpAllocateHandle for NtXxxEx syscalls"). (4) NtSetInformationToken set classes (deep-copy) -> XREF: 02-kernel-core/TODO-11 §4 (item: "Deep-copy token field setters for NtSetInformationToken"). (5) Per-token SMP lock -> XREF: 02-kernel-core/TODO-11 §4 (item: "Per-token lock for SMP safety"). (6) Thread impersonation slot -> XREF: 02-kernel-core/TODO-11 §7 (items: ImpersonationToken field + NtImpersonateThread + NtSetInformationThread).
 > **Quality reviewed** (2026-04-14): dead code clean (local TOKEN_GROUPS struct needed -- not in token.h; resolve_thread_handle's out_task is used in NtOpenThreadToken). Consistency: TokenTypeInfo=8 matches Windows TokenType enum value (the name difference is because ntstatus.h already uses "TokenType" for an enum; our enum member is TokenTypeInfo). Performance: resolve_thread_handle linear scan bounded by task->num_threads; adjust privileges O(n*m) bounded by 36*36=1296 ops. Codex findings (PID-as-handle, granted_access, HandleAttributes) are pre-existing systemic gaps not introduced by §16; all three accepted with concrete XREFs.
 
+---
+
 ## 17. Directory and Symbolic Link Object Syscalls
 Namespace manipulation -- create, open, and query Ob directory objects and symbolic links from user mode.
 
-- [ ] `NtCreateDirectoryObject(DirectoryHandle, DesiredAccess, ObjectAttributes)` → SSDT 0x0120
-- [ ] `NtOpenDirectoryObject(DirectoryHandle, DesiredAccess, ObjectAttributes)` → SSDT 0x0121 (already implemented in ob.c)
-- [ ] `NtQueryDirectoryObject(DirectoryHandle, Buffer, Length, ReturnSingleEntry, RestartScan, Context, ReturnLength)` → SSDT 0x0122 (already implemented in ob.c)
-- [ ] `NtCreateSymbolicLinkObject(LinkHandle, DesiredAccess, ObjectAttributes, LinkTarget)` → SSDT 0x0123
-- [ ] `NtOpenSymbolicLinkObject(LinkHandle, DesiredAccess, ObjectAttributes)` → SSDT 0x0124
-- [ ] `NtQuerySymbolicLinkObject(LinkHandle, LinkTarget, ReturnedLength)` → SSDT 0x0125
-- [ ] `NtMakeTemporaryObject(Handle)` → SSDT 0x0003: clear OB_FLAG_PERMANENT
-- [ ] `NtMakePermanentObject(Handle)` → SSDT 0x0004: set OB_FLAG_PERMANENT (kernel-only)
-- [ ] `NtSetInformationObject(Handle, ObjectInformationClass, Buffer, Length)` → SSDT 0x0005
-- [ ] `NtCompareObjects(FirstObjectHandle, SecondObjectHandle)` → SSDT 0x0009: test if two handles refer to the same object
-- [ ] Commit: `"kernel: nt -- directory, symbolic link, and object management syscalls"`
+- [x] `NtCreateDirectoryObject(DirectoryHandle, DesiredAccess, ObjectAttributes)` → SSDT 0x0120 (nt_namespace.c -- ob_ns_create_directory + ObInsertObject + ObpAllocateHandle; rejects duplicate via ObLookupObjectByName)
+- [x] `NtOpenDirectoryObject(DirectoryHandle, DesiredAccess, ObjectAttributes)` → SSDT 0x0121 (nt_namespace.c -- thin wrapper around library NtOpenDirectoryObject in ob.c)
+- [x] `NtQueryDirectoryObject(DirectoryHandle, Buffer, Length, ReturnSingleEntry, RestartScan, Context, ReturnLength)` → SSDT 0x0122 (nt_namespace.c -- 7 NT params packed into 6 SSDT slots: a6 = (high32 ReturnLength*) | (low32 Context*); kernel pointers in low-4-GiB)
+- [x] `NtCreateSymbolicLinkObject(LinkHandle, DesiredAccess, ObjectAttributes, LinkTarget)` → SSDT 0x0123 (nt_namespace.c -- ob_ns_create_symlink + ObInsertObject; bounded target length)
+- [x] `NtOpenSymbolicLinkObject(LinkHandle, DesiredAccess, ObjectAttributes)` → SSDT 0x0124 (nt_namespace.c -- ObLookupObjectByName with ObpSymlinkType to stop at the link itself)
+- [x] `NtQuerySymbolicLinkObject(LinkHandle, LinkTarget, ReturnedLength)` → SSDT 0x0125 (nt_namespace.c -- ObpLookupHandle + type-check against ObpSymlinkType + bounded copy of target string)
+- [ ] Commit: `"kernel: nt -- directory and symbolic link object syscalls"`
 
-**Test checkpoint:** `NtCreateDirectoryObject` creates `\Test`; `NtOpenDirectoryObject` opens it. `NtCreateSymbolicLinkObject` creates `\TestLink → \Test`; `NtQuerySymbolicLinkObject` returns `\Test`. `NtCompareObjects` returns `STATUS_SUCCESS` for two handles to the same object.
+**Test checkpoint:** `NtCreateDirectoryObject` creates `\Test`; `NtOpenDirectoryObject` opens it. `NtCreateSymbolicLinkObject` creates `\TestLink → \Test`; `NtQuerySymbolicLinkObject` returns `\Test`.
+
+> **Test runner:** `scripts\debug\run-ob-tests.bat` (SUITE=ob)
+> **Expected:** 5 new §17 tests (NT create+open directory roundtrip, open not found, symlink roundtrip, query wrong type, namespace SSDT registered), 0 failures.
 
 ## 18. Section and Memory-Mapped File Syscalls
 
@@ -814,6 +816,21 @@ NtQueryDirectoryFile (§6) currently returns `FileNamesInformation` only (name +
 - [ ] Commit: `"kernel: nt -- token lifecycle and SRM access check syscalls"`
 
 **Test checkpoint:** `NtDuplicateToken` returns a distinct token with copied privileges/groups. `NtAccessCheck` against an object with DACL returns correct granted access. `NtPrivilegeCheck` with a held privilege returns TRUE; with a missing privilege returns FALSE. `NtQuerySecurityObject` round-trips through `NtSetSecurityObject`.
+
+---
+
+## 30. Generic Object Management Syscalls
+
+> [!NOTE]
+> Split from §17 to keep both sections under the 10-item limit. §17 covers namespace objects (directory + symlink); this section covers object lifetime and identity operations that apply to **any** OB type (events, mutexes, files, sections, etc.). Object Manager infrastructure in `src/kernel/ob/ob.c` (→ XREF TODO-03 §1, §2, §9).
+
+- [ ] `NtMakeTemporaryObject(Handle)` → SSDT 0x0003: clears `OB_FLAG_PERMANENT`, allowing the object to be deleted when its reference count drops to zero
+- [ ] `NtMakePermanentObject(Handle)` → SSDT 0x0004: sets `OB_FLAG_PERMANENT` (kernel-mode caller only; requires `SeCreatePermanentPrivilege`)
+- [ ] `NtSetInformationObject(Handle, ObjectInformationClass, Buffer, Length)` → SSDT 0x0005: writable counterpart to `NtQueryObject`; supports `ObjectHandleFlagInformation` (set `OBJ_INHERIT` / `OBJ_PROTECT_CLOSE` on the HANDLE_TABLE_ENTRY)
+- [ ] `NtCompareObjects(FirstObjectHandle, SecondObjectHandle)` → SSDT 0x0009: returns `STATUS_SUCCESS` if both handles refer to the same underlying object body, else `STATUS_NOT_SAME_OBJECT`
+- [ ] Commit: `"kernel: nt -- generic object management syscalls (make-temp/perm, set-info, compare)"`
+
+**Test checkpoint:** `NtMakePermanentObject` on an event handle prevents deletion when last reference released. `NtMakeTemporaryObject` re-enables deletion. `NtSetInformationObject(ObjectHandleFlagInformation)` toggles `OBJ_INHERIT` on a handle. `NtCompareObjects` with two duplicate handles returns `STATUS_SUCCESS`; with handles to different objects returns `STATUS_NOT_SAME_OBJECT`.
 
 ---
 

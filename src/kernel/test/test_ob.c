@@ -450,6 +450,192 @@ static void test_ob_handle_quota(void)
     ObDereferenceObject(obj);
 }
 
+/* ============================================================================
+ * §17 NT namespace syscall tests (SSDT dispatch path)
+ * ============================================================================ */
+
+#include "kernel/nt/ssdt.h"
+#include "kernel/nt/ntstatus.h"
+#include "kernel/nt/service_numbers.h"
+#include "kernel/nt/nt_types.h"
+#include "kernel/sched/task.h"
+
+/* Build OBJECT_ATTRIBUTES + UNICODE_STRING for an NT namespace path */
+static void s17_build_oa(OBJECT_ATTRIBUTES *oa, UNICODE_STRING *us,
+                         const char *path)
+{
+    uint32_t len = 0;
+    while (path[len]) len++;
+    us->Buffer = (uint16_t *)(uintptr_t)path;  /* ASCII via uint16_t* cast */
+    us->Length = (uint16_t)len;
+    us->MaximumLength = (uint16_t)(len + 1);
+    oa->Length = sizeof(OBJECT_ATTRIBUTES);
+    oa->RootDirectory = INVALID_HANDLE_VALUE;
+    oa->_pad1 = 0;
+    oa->ObjectName = us;
+    oa->Attributes = OBJ_CASE_INSENSITIVE;
+    oa->_pad2 = 0;
+    oa->SecurityDescriptor = (void *)0;
+    oa->SecurityQualityOfService = (void *)0;
+}
+
+/* Test: NtCreateDirectoryObject + NtOpenDirectoryObject round-trip */
+static void test_nt_create_open_directory(void)
+{
+    OBJECT_ATTRIBUTES oa;
+    UNICODE_STRING us;
+    HANDLE create_h = INVALID_HANDLE_VALUE;
+    HANDLE open_h = INVALID_HANDLE_VALUE;
+    NTSTATUS status;
+
+    s17_build_oa(&oa, &us, "\\BaseNamedObjects\\NtDirTest");
+
+    status = ssdt_dispatch(SSDT_NtCreateDirectoryObject,
+                           (uint64_t)(uintptr_t)&create_h,
+                           0, (uint64_t)(uintptr_t)&oa, 0, 0, 0);
+    TEST_ASSERT(NT_SUCCESS(status), "NtCreateDirectoryObject succeeds");
+    TEST_ASSERT(create_h != INVALID_HANDLE_VALUE,
+                "NtCreateDirectoryObject returns valid handle");
+
+    /* Open the just-created directory */
+    status = ssdt_dispatch(SSDT_NtOpenDirectoryObject,
+                           (uint64_t)(uintptr_t)&open_h,
+                           0, (uint64_t)(uintptr_t)&oa, 0, 0, 0);
+    TEST_ASSERT(NT_SUCCESS(status), "NtOpenDirectoryObject succeeds");
+    TEST_ASSERT(open_h != INVALID_HANDLE_VALUE,
+                "NtOpenDirectoryObject returns valid handle");
+
+    /* Re-create with same path -> STATUS_OBJECT_NAME_COLLISION */
+    {
+        HANDLE dup_h = INVALID_HANDLE_VALUE;
+        status = ssdt_dispatch(SSDT_NtCreateDirectoryObject,
+                               (uint64_t)(uintptr_t)&dup_h,
+                               0, (uint64_t)(uintptr_t)&oa, 0, 0, 0);
+        TEST_ASSERT(status == STATUS_OBJECT_NAME_COLLISION,
+                    "Duplicate create returns STATUS_OBJECT_NAME_COLLISION");
+    }
+}
+
+/* Test: NtOpenDirectoryObject on non-existent path */
+static void test_nt_open_directory_not_found(void)
+{
+    OBJECT_ATTRIBUTES oa;
+    UNICODE_STRING us;
+    HANDLE h = INVALID_HANDLE_VALUE;
+    NTSTATUS status;
+
+    s17_build_oa(&oa, &us, "\\BaseNamedObjects\\NtDirNoSuch12345");
+    status = ssdt_dispatch(SSDT_NtOpenDirectoryObject,
+                           (uint64_t)(uintptr_t)&h,
+                           0, (uint64_t)(uintptr_t)&oa, 0, 0, 0);
+    TEST_ASSERT(status == STATUS_OBJECT_NAME_NOT_FOUND,
+                "NtOpenDirectoryObject returns OBJECT_NAME_NOT_FOUND");
+}
+
+/* Test: NtCreateSymbolicLinkObject + NtOpenSymbolicLinkObject + Query */
+static void test_nt_symlink_roundtrip(void)
+{
+    OBJECT_ATTRIBUTES oa;
+    UNICODE_STRING us;
+    UNICODE_STRING target_us;
+    HANDLE link_h = INVALID_HANDLE_VALUE;
+    HANDLE open_h = INVALID_HANDLE_VALUE;
+    NTSTATUS status;
+    const char *target = "\\BaseNamedObjects";
+
+    s17_build_oa(&oa, &us, "\\BaseNamedObjects\\NtSymLinkTest");
+    target_us.Buffer = (uint16_t *)(uintptr_t)target;
+    {
+        uint16_t tlen = 0;
+        while (target[tlen]) tlen++;
+        target_us.Length = tlen;
+        target_us.MaximumLength = tlen + 1;
+    }
+
+    status = ssdt_dispatch(SSDT_NtCreateSymbolicLinkObject,
+                           (uint64_t)(uintptr_t)&link_h,
+                           0, (uint64_t)(uintptr_t)&oa,
+                           (uint64_t)(uintptr_t)&target_us, 0, 0);
+    TEST_ASSERT(NT_SUCCESS(status), "NtCreateSymbolicLinkObject succeeds");
+    TEST_ASSERT(link_h != INVALID_HANDLE_VALUE,
+                "NtCreateSymbolicLinkObject returns valid handle");
+
+    /* Open the link and query target */
+    status = ssdt_dispatch(SSDT_NtOpenSymbolicLinkObject,
+                           (uint64_t)(uintptr_t)&open_h,
+                           0, (uint64_t)(uintptr_t)&oa, 0, 0, 0);
+    TEST_ASSERT(NT_SUCCESS(status), "NtOpenSymbolicLinkObject succeeds");
+
+    {
+        char target_buf[OB_SYMLINK_MAX];
+        UNICODE_STRING out_us;
+        uint32_t ret_len = 0;
+
+        out_us.Buffer = (uint16_t *)(uintptr_t)target_buf;
+        out_us.Length = 0;
+        out_us.MaximumLength = sizeof(target_buf);
+
+        status = ssdt_dispatch(SSDT_NtQuerySymbolicLinkObject,
+                               (uint64_t)(uintptr_t)open_h,
+                               (uint64_t)(uintptr_t)&out_us,
+                               (uint64_t)(uintptr_t)&ret_len, 0, 0, 0);
+        TEST_ASSERT(NT_SUCCESS(status), "NtQuerySymbolicLinkObject succeeds");
+        TEST_ASSERT(ret_len > 0, "Query returns non-zero length");
+        TEST_ASSERT(target_buf[0] == '\\' && target_buf[1] == 'B',
+                    "Query returns target starting with \\B");
+    }
+}
+
+/* Test: NtQuerySymbolicLinkObject rejects non-symlink handle */
+static void test_nt_query_symlink_wrong_type(void)
+{
+    OBJECT_ATTRIBUTES oa;
+    UNICODE_STRING us;
+    UNICODE_STRING out_us;
+    char buf[64];
+    HANDLE dir_h = INVALID_HANDLE_VALUE;
+    NTSTATUS status;
+    uint32_t ret_len = 0;
+
+    s17_build_oa(&oa, &us, "\\BaseNamedObjects");
+    status = ssdt_dispatch(SSDT_NtOpenDirectoryObject,
+                           (uint64_t)(uintptr_t)&dir_h,
+                           0, (uint64_t)(uintptr_t)&oa, 0, 0, 0);
+    if (!NT_SUCCESS(status)) return;
+
+    out_us.Buffer = (uint16_t *)(uintptr_t)buf;
+    out_us.Length = 0;
+    out_us.MaximumLength = sizeof(buf);
+
+    status = ssdt_dispatch(SSDT_NtQuerySymbolicLinkObject,
+                           (uint64_t)(uintptr_t)dir_h,
+                           (uint64_t)(uintptr_t)&out_us,
+                           (uint64_t)(uintptr_t)&ret_len, 0, 0, 0);
+    TEST_ASSERT(status == STATUS_OBJECT_TYPE_MISMATCH,
+                "NtQuerySymbolicLinkObject rejects directory handle");
+}
+
+/* Test: all 6 SSDT slots are registered (not stubs) */
+static void test_nt_namespace_ssdt_registered(void)
+{
+    const SSDT_TABLE *tbl = ssdt_get_table(SSDT_TABLE_MAIN);
+    extern NTSTATUS ssdt_stub_not_implemented(uint64_t, uint64_t, uint64_t,
+                                              uint64_t, uint64_t, uint64_t);
+    uint32_t slots[] = {
+        SSDT_NtCreateDirectoryObject, SSDT_NtOpenDirectoryObject,
+        SSDT_NtQueryDirectoryObject,  SSDT_NtCreateSymbolicLinkObject,
+        SSDT_NtOpenSymbolicLinkObject, SSDT_NtQuerySymbolicLinkObject,
+    };
+    uint32_t i;
+    TEST_ASSERT(tbl != (const SSDT_TABLE *)0, "SSDT main table exists");
+    if (!tbl) return;
+    for (i = 0; i < 6; i++) {
+        uint32_t idx = slots[i] & 0xFFF;
+        TEST_ASSERT(tbl->handlers[idx] != ssdt_stub_not_implemented,
+                    "Namespace SSDT slot is registered");
+    }
+}
+
 /* ---- Registration ---- */
 
 void test_register_ob(void)
@@ -465,6 +651,11 @@ void test_register_ob(void)
     test_suite_register_cat("OB: callbacks", test_ob_callbacks, TEST_CAT_OB);
     test_suite_register_cat("OB: handle quota", test_ob_handle_quota, TEST_CAT_OB);
     test_suite_register_cat("OB: trace", test_ob_trace, TEST_CAT_OB);
+    test_suite_register_cat("OB: NT create+open directory", test_nt_create_open_directory, TEST_CAT_OB);
+    test_suite_register_cat("OB: NT open directory not found", test_nt_open_directory_not_found, TEST_CAT_OB);
+    test_suite_register_cat("OB: NT symlink roundtrip", test_nt_symlink_roundtrip, TEST_CAT_OB);
+    test_suite_register_cat("OB: NT query symlink wrong type", test_nt_query_symlink_wrong_type, TEST_CAT_OB);
+    test_suite_register_cat("OB: NT namespace SSDT registered", test_nt_namespace_ssdt_registered, TEST_CAT_OB);
 }
 
 #endif /* KERNEL_TESTS */
