@@ -72,84 +72,21 @@
 
 ## 1. Message Header, Port Attributes & Type Codes
 
-- [ ] (1.1 PORT_MESSAGE header) Define in `include/kernel/ipc/alpc.h`:
-  ```c
-  typedef struct {
-      uint16_t TotalLength;    /* sizeof header + sizeof body */
-      uint16_t DataLength;     /* sizeof body only */
-      uint16_t Type;           /* message type -- see below */
-      uint16_t DataInfoOffset; /* offset from end of header to ALPC_DATA_INFO,
-                                  0 if no data info entries */
-      CLIENT_ID ClientId;      /* filled by kernel on send: {ProcessId, ThreadId} */
-      uint64_t MessageId;      /* monotonic ID assigned by kernel */
-      uint64_t CallbackId;     /* for async replies */
-  } PORT_MESSAGE;
+Define the on-the-wire ALPC ABI in `include/kernel/ipc/alpc.h`. Field names and values match the Windows ALPC convention (winternl.h `PORT_MESSAGE`, MSDN ALPC reference). Compile-time `_Static_assert` lines lock the layout contract.
 
-  typedef struct { uint32_t ProcessId; uint32_t ThreadId; } CLIENT_ID;
-
-  /* Message body follows immediately after PORT_MESSAGE in the same allocation */
-  typedef struct {
-      PORT_MESSAGE Header;
-      /* uint8_t Body[DataLength]; */
-  } ALPC_MESSAGE;
-  ```
-- [ ] Message type constants:
-  ```c
-  #define ALPC_MSG_TYPE_REQUEST         1  /* client → server request */
-  #define ALPC_MSG_TYPE_REPLY           2  /* server → client reply */
-  #define ALPC_MSG_TYPE_DATAGRAM        3  /* fire-and-forget, no reply */
-  #define ALPC_MSG_TYPE_LOST_REPLY      4  /* server side closed before reply */
-  #define ALPC_MSG_TYPE_PORT_CLOSED     5  /* peer port destroyed */
-  #define ALPC_MSG_TYPE_CLIENT_DIED     6  /* client process terminated */
-  #define ALPC_MSG_TYPE_EXCEPTION       7  /* exception in client */
-  #define ALPC_MSG_TYPE_DEBUG_EVENT     8  /* debug event */
-  #define ALPC_MSG_TYPE_ERROR_EVENT     9  /* kernel error notification */
-  #define ALPC_MSG_TYPE_CONNECTION_REQUEST 10 /* sent on NtAlpcConnectPort */
-  ```
-- [ ] Maximum inline message body: `ALPC_MAX_ALLOWED_MESSAGE_LENGTH = 65528` bytes; kernel rejects messages that exceed this; recommended threshold for using port sections instead: 512 bytes
-- [ ] (1.2 Port attributes) `ALPC_PORT_ATTRIBUTES`:
-  ```c
-  typedef struct {
-      uint32_t Flags;            /* ALPC_PORTFLG_* below */
-      SECURITY_QUALITY_OF_SERVICE SecurityQos; /* impersonation level for server */
-      uint64_t MaxMessageLength; /* max inline message body; 0 = default 512 */
-      uint64_t MemoryBandwidth;  /* memory-bandwidth accounting (0 = unlimited) */
-      uint64_t MaxPoolUsage;     /* max pool memory for queued messages */
-      uint64_t MaxSectionSize;   /* max size of a single port section */
-      uint64_t MaxViewSize;      /* max size of a single mapped view */
-      uint64_t MaxTotalSectionSize;
-      uint32_t DupObjectTypes;   /* bitmask of object types that can be duped */
-  } ALPC_PORT_ATTRIBUTES;
-  ```
-- [ ] `ALPC_PORTFLG_*` constants:
-  - `ALPC_PORTFLG_LPC_MODE (0x20000)` -- compatibility with old LPC style
-  - `ALPC_PORTFLG_ALLOW_DUP_OBJECT (0x80000)` -- permit handle duplication
-  - `ALPC_PORTFLG_WAITABLE_PORT (0x40000)` -- port acts as waitable object; signalled when a message is queued
-  - `ALPC_PORTFLG_SYSTEM_PROCESS (0x100000)` -- port owned by kernel/SYSTEM
-- [ ] `SECURITY_QUALITY_OF_SERVICE`:
-  ```c
-  typedef struct {
-      uint32_t Length;
-      SECURITY_IMPERSONATION_LEVEL ImpersonationLevel; /* Anonymous/Identification/Impersonation/Delegation */
-      uint8_t  ContextTrackingMode; /* SECURITY_STATIC_TRACKING (0) or DYNAMIC (1) */
-      bool     EffectiveOnly;       /* strip disabled privileges/groups from captured token */
-  } SECURITY_QUALITY_OF_SERVICE;
-  ```
-
-- [ ] (1.3 Message send flags) `NtAlpcSendWaitReceivePort` flags:
-  ```c
-  #define ALPC_MSGFLG_REPLY_MESSAGE       0x1  /* this message is a reply */
-  #define ALPC_MSGFLG_LPC_MODE            0x2  /* LPC compat -- sync call+reply */
-  #define ALPC_MSGFLG_RELEASE_MESSAGE     0x10 /* release message back to pool */
-  #define ALPC_MSGFLG_SYNC_REQUEST        0x20000 /* block until reply received */
-  #define ALPC_MSGFLG_WAIT_USER_MODE      0x100000 /* alertable wait */
-  #define ALPC_MSGFLG_WAIT_PENDING_CALLBACKS 0x200000 /* wait for async completions */
-  ```
-
-- [ ] (1.4 Commit) Update `pipe_init()` to return `boot_result_t` instead of `void` -- moved from TODO-01 §8
+- [ ] Define `CLIENT_ID` (8 bytes): `ProcessId` (uint32), `ThreadId` (uint32).
+- [ ] Define `PORT_MESSAGE` (40 bytes) per Windows ABI: `TotalLength`/`DataLength`/`Type`/`DataInfoOffset` (uint16 packed at offset 0..7), `ClientId` (CLIENT_ID at offset 8), `MessageId` (uint64 at offset 16), `CallbackId` (uint64 at offset 24), reserved-pad to 40. Add `_Static_assert(sizeof(PORT_MESSAGE) == 40)` and per-field offset asserts.
+- [ ] Define `ALPC_MESSAGE` wrapper: `{PORT_MESSAGE Header; uint8_t Body[];}` -- variable-length flexible array; body length carried by `Header.DataLength`.
+- [ ] Define 10 `ALPC_MSG_TYPE_*` constants per Windows convention: `REQUEST=1`, `REPLY=2`, `DATAGRAM=3`, `LOST_REPLY=4`, `PORT_CLOSED=5`, `CLIENT_DIED=6`, `EXCEPTION=7`, `DEBUG_EVENT=8`, `ERROR_EVENT=9`, `CONNECTION_REQUEST=10`.
+- [ ] Define `ALPC_MAX_ALLOWED_MESSAGE_LENGTH = 65528` (kernel rejects larger inline messages). Document recommended port-section threshold = 512 bytes in header comment.
+- [ ] Define `SECURITY_QUALITY_OF_SERVICE`: `Length` (uint32), `ImpersonationLevel` (enum: Anonymous/Identification/Impersonation/Delegation), `ContextTrackingMode` (uint8: STATIC=0/DYNAMIC=1), `EffectiveOnly` (bool).
+- [ ] Define `ALPC_PORT_ATTRIBUTES` (8 fields per MSDN ALPC reference): `Flags` (uint32, ALPC_PORTFLG_* bitmask), `SecurityQos` (SECURITY_QUALITY_OF_SERVICE), `MaxMessageLength`/`MemoryBandwidth`/`MaxPoolUsage`/`MaxSectionSize`/`MaxViewSize`/`MaxTotalSectionSize` (uint64), `DupObjectTypes` (uint32 bitmask).
+- [ ] Define 4 `ALPC_PORTFLG_*` constants: `LPC_MODE=0x20000`, `ALLOW_DUP_OBJECT=0x80000`, `WAITABLE_PORT=0x40000`, `SYSTEM_PROCESS=0x100000`. Add `_Static_assert` non-overlap on bit positions.
+- [ ] Define 6 `ALPC_MSGFLG_*` send-flag constants for `NtAlpcSendWaitReceivePort`: `REPLY_MESSAGE=0x1`, `LPC_MODE=0x2`, `RELEASE_MESSAGE=0x10`, `SYNC_REQUEST=0x20000`, `WAIT_USER_MODE=0x100000`, `WAIT_PENDING_CALLBACKS=0x200000`. Non-overlap asserted.
+- [ ] Update `pipe_init()` to return `boot_result_t` instead of `void` -- migration item carried from TODO-01 §8.
 - [ ] Commit: `"kernel/ipc/alpc: message header, port attributes, type codes"`
 
-**Test checkpoint:** `PORT_MESSAGE` header is 40 bytes (`sizeof(PORT_MESSAGE) == 40`). `ALPC_PORT_ATTRIBUTES` is aligned and has correct field offsets. `ALPC_MAX_ALLOWED_MESSAGE_LENGTH == 65528`. All `ALPC_MSG_TYPE_*` constants are unique. All `ALPC_MSGFLG_*` flag bits are non-overlapping. All `ALPC_PORTFLG_*` flag bits are non-overlapping. Serial log: `"[ALPC] message header types defined"`. Test on: QEMU WHPX + TCG (compile-time assertions + boot log).
+**Test checkpoint:** `_Static_assert` lines compile (sizeof PORT_MESSAGE == 40, field offsets correct). Unit test `test_alpc_constants` verifies: `ALPC_MAX_ALLOWED_MESSAGE_LENGTH == 65528`, all `ALPC_MSG_TYPE_*` values unique (1..10), all `ALPC_MSGFLG_*` bits non-overlapping, all `ALPC_PORTFLG_*` bits non-overlapping. Serial log on init: `"[ALPC] header constants defined"`. Test on QEMU WHPX + TCG (header compiles + unit test runs).
 
 ---
 

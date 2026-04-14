@@ -80,7 +80,39 @@ description: Validate a TODO file for structural completeness, Implementation Or
     - Check if `scripts/debug/run-<suite>-tests.bat` exists on disk. If it does NOT exist, create it following the pattern in existing bat files (one-liner calling `run-qemu.ps1 -Accel whpx -TestOnly -TestSuite <suite>`).
     - Add the line to the Verification section if missing.
 14. If section completion state seems wrong, defer to `/validate-todo-section` for deep code-truth verification.
-15. **Update the History table** at the bottom of the TODO file (after Verification). If no `## History` section exists, create one. Append a row for this validation run:
+
+15. **Code block compaction (MANDATORY).** Inline ` ```c ``` ` blocks are for SHOWING THE CONTRACT, not for pre-writing the implementation. A TODO is a plan; the header file and source file are the implementation. Duplicating struct definitions, enum tables, and function bodies in the TODO creates four problems: (a) the TODO drifts from the code, (b) the implementer copy-pastes from the TODO instead of designing the type fresh against current invariants, (c) the section bloats from ~10 lines to ~80, making the checklist unscannable, (d) future readers cannot tell the spec from a stale draft.
+
+    **What's allowed:**
+    - Single struct WITH `_Static_assert` lines (3-8 lines) showing an offset/size contract that crosses subsystems (e.g. assembly reads it; bootloader writes it).
+    - 1-3 line snippet showing a critical signature or invariant the section establishes.
+    - Wire format / on-disk format spec (the bytes ARE the contract).
+
+    **What's NOT allowed (compact aggressively):**
+    - Full struct definitions with field comments. Replace with a single bullet naming the struct + listing fields by name + total size: `Define PORT_MESSAGE (40 bytes) in include/kernel/ipc/alpc.h: TotalLength, DataLength, Type, DataInfoOffset, CLIENT_ID, MessageId, CallbackId. Reference: winternl.h.`
+    - Enum / `#define` tables with more than 4 constants. Replace with a count + naming scheme + reference: `Define 10 ALPC_MSG_TYPE_* constants (REQUEST=1 ... CONNECTION_REQUEST=10) per Windows ALPC convention.`
+    - Function bodies, even small ones. The implementer will write them.
+    - Any block that re-states what `man 3 X` or MSDN already says verbatim.
+
+    **Detection:** any ` ```c\n...``` ` block exceeding ~15 lines is presumed bloated. Compact to a bullet that names the type + fields/constants + size + external reference. The compacted form must preserve the same information density (every constant value, every field name, every size invariant) -- it just doesn't pre-write the C code.
+
+    **Example transformation:**
+    ```c
+    typedef struct {
+        uint32_t Flags;
+        SECURITY_QUALITY_OF_SERVICE SecurityQos;
+        uint64_t MaxMessageLength;
+        ...
+    } ALPC_PORT_ATTRIBUTES;
+    ```
+    becomes:
+    `Define ALPC_PORT_ATTRIBUTES (8 fields per MSDN ALPC reference): Flags (uint32, ALPC_PORTFLG_*), SecurityQos (SECURITY_QUALITY_OF_SERVICE), MaxMessageLength/MemoryBandwidth/MaxPoolUsage/MaxSectionSize/MaxViewSize/MaxTotalSectionSize (uint64), DupObjectTypes (uint32 bitmask).`
+
+    **Forbidden parenthesized N.M labels.** `- [ ] (1.1 PORT_MESSAGE header) Define ...` is the same anti-pattern as `### 1.1` in disguise -- a checklist item label that carves a section into sub-chapters. Strip the `(N.M Title)` prefix; the bullet itself names what is being defined.
+
+    The PostToolUse hook on `todo/**/*.md` flags any new ` ```c ``` ` block over 15 lines AND any `(N.M Title)` parenthesized prefix in checklist items. The hook is a reminder, not a block; intentional spec-defining blocks (wire format, ABI contract assertions) opt out by adding `<!-- spec-block-ok: <one-line-reason> -->` immediately above the ` ``` `.
+
+16. **Update the History table** at the bottom of the TODO file (after Verification). If no `## History` section exists, create one. Append a row for this validation run:
     ```
     | Date | Action | Summary |
     ```
