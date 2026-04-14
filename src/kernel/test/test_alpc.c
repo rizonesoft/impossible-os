@@ -29,11 +29,11 @@ static void test_alpc_port_message_layout(void)
                    "PORT_MESSAGE.DataInfoOffset at offset 6");
     TEST_ASSERT_EQ(__builtin_offsetof(PORT_MESSAGE, ClientId), 8,
                    "PORT_MESSAGE.ClientId at offset 8");
-    TEST_ASSERT_EQ(__builtin_offsetof(PORT_MESSAGE, MessageId), 16,
-                   "PORT_MESSAGE.MessageId at offset 16");
-    TEST_ASSERT_EQ(__builtin_offsetof(PORT_MESSAGE, CallbackId), 24,
-                   "PORT_MESSAGE.CallbackId at offset 24");
-    TEST_ASSERT_EQ(sizeof(CLIENT_ID), 8, "CLIENT_ID sizeof == 8");
+    TEST_ASSERT_EQ(__builtin_offsetof(PORT_MESSAGE, MessageId), 24,
+                   "PORT_MESSAGE.MessageId at offset 24");
+    TEST_ASSERT_EQ(__builtin_offsetof(PORT_MESSAGE, CallbackId), 32,
+                   "PORT_MESSAGE.CallbackId at offset 32");
+    TEST_ASSERT_EQ(sizeof(CLIENT_ID), 16, "CLIENT_ID sizeof == 16");
     TEST_ASSERT_EQ(__builtin_offsetof(ALPC_MESSAGE, Body),
                    sizeof(PORT_MESSAGE),
                    "ALPC_MESSAGE.Body follows Header");

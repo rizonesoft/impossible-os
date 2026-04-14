@@ -8,15 +8,18 @@
  *     Field names and constant values follow the Windows ALPC convention
  *     (winternl.h PORT_MESSAGE, MSDN ALPC reference) so code written
  *     against that naming reads naturally here. Binary wire layout is
- *     Impossible OS native, NOT binary-compatible with Windows x64:
- *       - CLIENT_ID is 8 bytes (uint32 ProcessId + uint32 ThreadId),
- *         matching the Impossible OS 32-bit PID/TID width. On Windows
- *         x64 CLIENT_ID is 16 bytes (two HANDLE-sized fields).
+ *     Impossible OS native and matches the canonical Windows x64 widths
+ *     for the structurally shared types:
+ *       - CLIENT_ID is the canonical 16-byte Impossible OS type from
+ *         `kernel/ob/teb.h` (two uint64_t: UniqueProcess, UniqueThread).
+ *         Do NOT redefine it here.
+ *       - SECURITY_IMPERSONATION_LEVEL is the canonical enum from
+ *         `kernel/security/token.h`. Do NOT redefine it here.
  *       - PORT_MESSAGE is 40 bytes. Windows x64 PORT_MESSAGE is 48 bytes
  *         and uses unions at offsets 32..47 for ClientViewSize /
- *         section transfer metadata; Impossible OS reserves those
- *         8 bytes for a future union once view transfers are wired in
- *         TODO-12 section 6.
+ *         section transfer metadata; Impossible OS defers those 8
+ *         bytes until TODO-12 section 6 wires view transfers, at which
+ *         point PORT_MESSAGE may grow or gain a trailing union.
  *     Consumers compile against THIS header, not Windows headers. A
  *     user-mode translation layer is out of scope for this section.
  *
@@ -40,19 +43,19 @@
 
 #include "kernel/types.h"
 #include "kernel/boot_init.h"
+#include "kernel/ob/teb.h"            /* canonical CLIENT_ID */
+#include "kernel/security/token.h"    /* canonical SECURITY_IMPERSONATION_LEVEL */
 
 /* ---- CLIENT_ID ---------------------------------------------------------- */
+/* Sourced from kernel/ob/teb.h (two uint64_t: UniqueProcess/UniqueThread).
+ * Re-asserted here so any drift in the canonical definition trips this
+ * compile-time check in the ALPC ABI translation unit too. */
 
-typedef struct {
-    uint32_t ProcessId;
-    uint32_t ThreadId;
-} CLIENT_ID;
-
-_Static_assert(sizeof(CLIENT_ID) == 8, "CLIENT_ID must be 8 bytes");
-_Static_assert(__builtin_offsetof(CLIENT_ID, ProcessId) == 0,
-               "CLIENT_ID.ProcessId at offset 0");
-_Static_assert(__builtin_offsetof(CLIENT_ID, ThreadId) == 4,
-               "CLIENT_ID.ThreadId at offset 4");
+_Static_assert(sizeof(CLIENT_ID) == 16, "CLIENT_ID must be 16 bytes");
+_Static_assert(__builtin_offsetof(CLIENT_ID, UniqueProcess) == 0,
+               "CLIENT_ID.UniqueProcess at offset 0");
+_Static_assert(__builtin_offsetof(CLIENT_ID, UniqueThread) == 8,
+               "CLIENT_ID.UniqueThread at offset 8");
 
 /* ---- PORT_MESSAGE ------------------------------------------------------- */
 /*
@@ -72,10 +75,9 @@ typedef struct {
     uint16_t  DataLength;       /* offset  2 */
     uint16_t  Type;             /* offset  4 */
     uint16_t  DataInfoOffset;   /* offset  6 */
-    CLIENT_ID ClientId;         /* offset  8 */
-    uint64_t  MessageId;        /* offset 16 */
-    uint64_t  CallbackId;       /* offset 24 */
-    uint64_t  Reserved;         /* offset 32 -- pad to 40 */
+    CLIENT_ID ClientId;         /* offset  8 (16 bytes) */
+    uint64_t  MessageId;        /* offset 24 */
+    uint64_t  CallbackId;       /* offset 32 */
 } PORT_MESSAGE;
 
 _Static_assert(sizeof(PORT_MESSAGE) == 40, "PORT_MESSAGE must be 40 bytes");
@@ -84,9 +86,8 @@ _Static_assert(__builtin_offsetof(PORT_MESSAGE, DataLength)     ==  2, "PORT_MES
 _Static_assert(__builtin_offsetof(PORT_MESSAGE, Type)           ==  4, "PORT_MESSAGE.Type offset");
 _Static_assert(__builtin_offsetof(PORT_MESSAGE, DataInfoOffset) ==  6, "PORT_MESSAGE.DataInfoOffset offset");
 _Static_assert(__builtin_offsetof(PORT_MESSAGE, ClientId)       ==  8, "PORT_MESSAGE.ClientId offset");
-_Static_assert(__builtin_offsetof(PORT_MESSAGE, MessageId)      == 16, "PORT_MESSAGE.MessageId offset");
-_Static_assert(__builtin_offsetof(PORT_MESSAGE, CallbackId)     == 24, "PORT_MESSAGE.CallbackId offset");
-_Static_assert(__builtin_offsetof(PORT_MESSAGE, Reserved)       == 32, "PORT_MESSAGE.Reserved offset");
+_Static_assert(__builtin_offsetof(PORT_MESSAGE, MessageId)      == 24, "PORT_MESSAGE.MessageId offset");
+_Static_assert(__builtin_offsetof(PORT_MESSAGE, CallbackId)     == 32, "PORT_MESSAGE.CallbackId offset");
 
 /* ---- ALPC_MESSAGE ------------------------------------------------------- */
 /*
@@ -129,13 +130,8 @@ _Static_assert(__builtin_offsetof(ALPC_MESSAGE, Body) == sizeof(PORT_MESSAGE),
 #define ALPC_MAX_ALLOWED_MESSAGE_LENGTH 65528u
 
 /* ---- SECURITY_QUALITY_OF_SERVICE --------------------------------------- */
-
-typedef enum {
-    SecurityAnonymous      = 0,
-    SecurityIdentification = 1,
-    SecurityImpersonation  = 2,
-    SecurityDelegation     = 3,
-} SECURITY_IMPERSONATION_LEVEL;
+/* SECURITY_IMPERSONATION_LEVEL is owned by kernel/security/token.h and
+ * pulled in via this header's top-level includes. Do NOT redefine it. */
 
 #define SECURITY_CONTEXT_TRACKING_STATIC  0u
 #define SECURITY_CONTEXT_TRACKING_DYNAMIC 1u
