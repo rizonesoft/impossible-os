@@ -88,12 +88,20 @@ static void task_wrapper(void)
 }
 
 /* --- Find the next runnable task+thread (priority-aware) ---
- * Scans ALL tasks × threads and returns the highest effective-priority
- * READY/RUNNING thread.  Round-robin order within equal-priority threads:
- * we still start from the slot *after* the current one so that same-priority
- * threads each get a fair turn.
- * Sets *out_thread to the thread index within the found task.
- * Returns the task index (or from_task/from_thread if nothing else found). */
+ *
+ * Flat cyclic scan: visits every (task, thread) slot exactly once starting
+ * at the slot immediately after (from_task, from_thread) in global order,
+ * wrapping across task boundaries. This gives every runnable thread the
+ * same round-robin chance regardless of which task it lives in, so a
+ * thread late in one task's array is not starved by earlier same-priority
+ * threads in other tasks.
+ *
+ * Returns the highest-priority runnable thread; within a tie, the first
+ * one reached in the cyclic order (i.e. the one "closest after" the
+ * current slot) wins -- that is the fairness rule.
+ *
+ * Sets *out_thread to the thread index. Returns the task index, or
+ * (from_task, from_thread) if nothing else is runnable. */
 static uint32_t find_next_task(uint32_t from_task, uint32_t from_thread,
                                uint32_t *out_thread)
 {
@@ -101,46 +109,54 @@ static uint32_t find_next_task(uint32_t from_task, uint32_t from_thread,
     uint32_t best_thread = from_thread;
     uint32_t best_prio   = 0;
     int      found       = 0;
+    uint32_t total_slots = 0;
+    uint32_t t;
 
-    uint32_t ti;
+    /* Total slots bounds the cyclic scan. If zero, nothing to do. */
+    for (t = 0; t < num_tasks; t++)
+        total_slots += tasks[t].num_threads;
+    if (total_slots == 0) {
+        *out_thread = from_thread;
+        return from_task;
+    }
 
-    /* Scan all tasks, walking threads in round-robin order so equal-priority
-     * threads are visited in circular order starting from the current slot. */
-    for (ti = 0; ti < num_tasks; ti++) {
-        uint32_t task_idx = (from_task + 1 + ti) % num_tasks;
-        uint32_t tj;
+    uint32_t task_idx   = from_task;
+    uint32_t thread_idx = from_thread;
+    uint32_t steps;
 
+    for (steps = 0; steps < total_slots; steps++) {
+        /* Advance one slot in global order, hopping tasks on wrap.
+         * Bounded by num_tasks to avoid looping on a run of empty tasks. */
+        uint32_t hops = 0;
+        thread_idx++;
+        while (thread_idx >= tasks[task_idx].num_threads) {
+            thread_idx = 0;
+            task_idx = (task_idx + 1) % num_tasks;
+            if (++hops > num_tasks)
+                break;  /* every task empty -- total_slots guard catches this */
+        }
+
+        /* Skip whole task if not runnable. */
         if (tasks[task_idx].state != TASK_READY &&
             tasks[task_idx].state != TASK_RUNNING)
             continue;
 
-        /* Walk threads in round-robin order within the task */
-        for (tj = 0; tj < tasks[task_idx].num_threads; tj++) {
-            uint32_t thread_idx;
-            struct thread *thr;
+        struct thread *thr = &tasks[task_idx].threads[thread_idx];
+        if (thr->state != THREAD_READY && thr->state != THREAD_RUNNING)
+            continue;
 
-            /* Determine start offset for fairness within same task */
-            if (task_idx == from_task)
-                thread_idx = (from_thread + 1 + tj) % tasks[task_idx].num_threads;
-            else
-                thread_idx = tj;
-
-            thr = &tasks[task_idx].threads[thread_idx];
-
-            if (thr->state != THREAD_READY && thr->state != THREAD_RUNNING)
-                continue;
-
-            if (!found || thr->priority > best_prio) {
-                best_task   = task_idx;
-                best_thread = thread_idx;
-                best_prio   = thr->priority;
-                found = 1;
-            }
+        /* Strict > keeps the first-reached thread at the current max
+         * priority (round-robin tie-break). A strictly higher priority
+         * seen later still overrides. */
+        if (!found || thr->priority > best_prio) {
+            best_task   = task_idx;
+            best_thread = thread_idx;
+            best_prio   = thr->priority;
+            found = 1;
         }
     }
 
     if (!found) {
-        /* Nothing else runnable -- stay on current */
         *out_thread = from_thread;
         return from_task;
     }
@@ -783,7 +799,12 @@ uint64_t schedule(struct interrupt_frame *frame)
     uint32_t prev_task, prev_thread;
     uint32_t next_task, next_thread;
 
-    if (!sched_enabled || num_tasks <= 1)
+    /* Match schedule_now: a single-task kernel with multiple runnable
+     * kernel threads must still preempt, otherwise any CPU-bound thread
+     * in the sole task can monopolize the CPU even when kthread_create
+     * added READY siblings. */
+    if (!sched_enabled ||
+        (num_tasks <= 1 && tasks[0].num_threads <= 1))
         return (uint64_t)frame;
 
     sched_ticks++;
