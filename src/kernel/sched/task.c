@@ -2132,7 +2132,12 @@ int kthread_create(thread_entry_t entry, void *arg, uint32_t stack_size)
     uint8_t *stack;
     uint64_t *sp;
 
-    if (t->num_threads >= THREAD_MAX) {
+    for (tid = 1; tid < t->num_threads; tid++) {
+        if (t->threads[tid].state == THREAD_FREE)
+            break;
+    }
+
+    if (tid == t->num_threads && t->num_threads >= THREAD_MAX) {
         klog(LOG_ERROR, "sched", "thread_create: max threads reached (PID %u)",
                (uint64_t)t->pid);
         return -1;
@@ -2149,7 +2154,8 @@ int kthread_create(thread_entry_t entry, void *arg, uint32_t stack_size)
         return -1;
     }
 
-    tid = t->num_threads;
+    if (tid == t->num_threads)
+        t->num_threads++;
 
     /* Build initial interrupt frame on thread stack.
      * Same layout as task_create: 22 qwords for ISR stub restore + iretq. */
@@ -2202,8 +2208,6 @@ int kthread_create(thread_entry_t entry, void *arg, uint32_t stack_size)
     t->threads[tid].user_stack_pages = 0;
     t->threads[tid].teb = (void *)0;          /* kernel thread -- no TEB */
     t->threads[tid].kernel_gs_base = 0;
-    t->num_threads++;
-
     /* Register thread with Object Manager */
     ob_thread_create(&t->threads[tid], t->pid);
 
@@ -2491,12 +2495,32 @@ static void thread_free_stacks(struct thread *thr)
     thr->kernel_rsp = 0;
 }
 
+static void thread_reap_kernel_slot(struct task *t, uint32_t thread_id)
+{
+    struct thread *thr = &t->threads[thread_id];
+
+    thread_free_stacks(thr);
+    thr->state = THREAD_FREE;
+    thr->rsp = 0;
+    thr->stack_size = 0;
+    thr->exit_status = 0;
+    thr->join_tid = -1;
+    thr->priority = THREAD_PRIO_NORMAL;
+    thr->base_priority = THREAD_PRIO_NORMAL;
+    thr->parent_task = t->pid;
+
+    while (t->num_threads > 1 &&
+           t->threads[t->num_threads - 1].state == THREAD_FREE)
+        t->num_threads--;
+}
+
 int32_t thread_join(uint32_t thread_id)
 {
     struct task *t = &tasks[current_task];
 
     /* Validate thread ID */
-    if (thread_id >= t->num_threads || thread_id == current_thread) {
+    if (thread_id >= t->num_threads || thread_id == current_thread ||
+        t->threads[thread_id].state == THREAD_FREE) {
         klog(LOG_DEBUG, "sched", "Invalid thread ID %u for join",
                (uint64_t)thread_id);
         return -1;
@@ -2505,7 +2529,11 @@ int32_t thread_join(uint32_t thread_id)
     /* If target thread is already dead, return immediately */
     if (t->threads[thread_id].state == THREAD_DEAD) {
         int32_t status = t->threads[thread_id].exit_status;
-        thread_free_stacks(&t->threads[thread_id]);
+        if (t->threads[thread_id].user_stack_pages == 0 &&
+            t->threads[thread_id].teb == (void *)0)
+            thread_reap_kernel_slot(t, thread_id);
+        else
+            thread_free_stacks(&t->threads[thread_id]);
         return status;
     }
 
@@ -2519,7 +2547,11 @@ int32_t thread_join(uint32_t thread_id)
     /* When we wake up, target thread has exited */
     {
         int32_t status = t->threads[thread_id].exit_status;
-        thread_free_stacks(&t->threads[thread_id]);
+        if (t->threads[thread_id].user_stack_pages == 0 &&
+            t->threads[thread_id].teb == (void *)0)
+            thread_reap_kernel_slot(t, thread_id);
+        else
+            thread_free_stacks(&t->threads[thread_id]);
         return status;
     }
 }

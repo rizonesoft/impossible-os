@@ -216,6 +216,9 @@ Both Win11 (`NtQueryInformationProcess` with `ProcessTimes`, `ProcessIoCounters`
 
 Both Win11 (Job Object quotas + `QUOTA_LIMITS` via `NtQueryInformationProcess`) and Linux (`getrlimit`/`setrlimit`/`prlimit`) enforce per-process resource limits. This prevents runaway processes from exhausting system resources.
 
+> [!NOTE]
+> → XREF: `03-memory-concurrency/TODO-05-scheduler-enhancement.md §12` -- dynamic thread storage and thread admission are implemented in the scheduler domain. This section owns the quota/accounting surface; §12 consumes those limits so thread creation fails on real resource pressure instead of a fixed `THREAD_MAX` array ceiling.
+
 - [ ] Define `rlimit_t` in `include/kernel/task_limits.h`: `{ uint64_t rlim_cur; uint64_t rlim_max; }` with `RLIM_INFINITY = UINT64_MAX`
 - [ ] Define limit indices: `RLIMIT_AS` (address space), `RLIMIT_NOFILE` (open files -- coordinates with TODO-03 §14), `RLIMIT_CPU` (CPU seconds), `RLIMIT_STACK` (stack size), `RLIMIT_NPROC` (child processes), `RLIMIT_FSIZE` (file write size), `RLIMIT_COUNT`
 - [ ] Add `rlimit_t rlimits[RLIMIT_COUNT]` to `struct task`; populate with sane defaults at `task_create()` (e.g., `RLIMIT_NOFILE.rlim_cur = 256`, `RLIMIT_AS.rlim_cur = RLIM_INFINITY`)

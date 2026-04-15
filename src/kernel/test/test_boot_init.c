@@ -110,9 +110,15 @@ static void test_boot_require_passes_when_ready(void)
 
 static void test_boot_progress_null_step(void)
 {
-    /* boot_timing_record_step is the pure data helper -- no side effects */
+    const boot_timing_step_t *steps = (const boot_timing_step_t *)0;
+    uint32_t before = boot_timing_get_steps(&steps);
+
+    /* boot_timing_record_step is the pure data helper -- NULL step ignored */
     boot_timing_record_step(0, (const char *)0, 0x0000);
-    TEST_ASSERT(1, "boot_timing_record_step(NULL step) does not crash");
+
+    uint32_t after = boot_timing_get_steps(&steps);
+    TEST_ASSERT_EQ(after, before,
+                   "boot_timing_record_step(NULL step) does not append");
 }
 
 /* ---- POST code constants ---- */

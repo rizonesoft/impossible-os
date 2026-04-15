@@ -63,7 +63,7 @@ graph TD
 | Badge         | Status                                              |             |
 | ------------- | --------------------------------------------------- | ----------- |
 | Build Status  | Deferred -- links to CI workflow when available      |             |
-| License       | `GPL-3.0`                                           |             |
+| License       | `GPL-3.0-only`                                      |             |
 | Platform      | `x86_64`                                            |             |
 | Boot          | `UEFI`                                              |             |
 | Language      | `C                                                  | x86-64 ASM` |
@@ -104,7 +104,7 @@ Contributor Covenant v2.1. Contact: `conduct@rizonesoft.com`.
 
 ### LICENSE
 
-GPL-3.0 (changed from MIT in commit `474abac`).
+GPL-3.0-only (changed from MIT in commit `474abac`).
 
 ---
 
@@ -407,7 +407,7 @@ Critical path explicit ownership:
 | `CONTRIBUTING.md`                            | Contributor guidelines        |
 | `CODE_OF_CONDUCT.md`                         | Contributor Covenant v2.1     |
 | `SECURITY.md`                                | Security vulnerability policy |
-| `LICENSE`                                    | GPL-3.0 license               |
+| `LICENSE`                                    | GPL-3.0-only license          |
 | `CHANGELOG.md`                               | Auto-generated changelog      |
 | `.github/CODEOWNERS`                         | Code review ownership         |
 | `.github/PULL_REQUEST_TEMPLATE.md`           | PR description template       |
@@ -440,7 +440,7 @@ Critical path explicit ownership:
 > **Build CI smoke test.** Currently commented out in `build.yml` -- uncomment when `scripts/test-smoke.sh` is integrated into CI pipeline.
 
 > [!NOTE]
-> **License change.** License was changed from MIT to GPL-3.0 (commit `474abac`). All badges and documentation reflect GPL-3.0.
+> **License change.** License was changed from MIT to GPL-3.0-only (commit `474abac`). All badges and documentation reflect GPL-3.0-only.
 
 ---
 

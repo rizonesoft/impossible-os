@@ -24,6 +24,8 @@ static void test_sched_create_thread(void)
     g_thread_ran = 0;
     int tid = kthread_create(test_thread_entry, NULL, 0);
     TEST_ASSERT(tid >= 0, "thread_create returns valid TID");
+    if (tid >= 0)
+        thread_join((uint32_t)tid);
 }
 
 /* Test: exec_pending field exists and is 0 for the current task (not exec'd) */
@@ -105,6 +107,20 @@ static void test_sched_cooperative_yield_fairness(void)
     thread_join((uint32_t)tid);
 }
 
+static void test_sched_kthread_slot_reuse(void)
+{
+    int i;
+
+    g_thread_ran = 0;
+    for (i = 0; i < THREAD_MAX + 4; i++) {
+        int tid = kthread_create(test_thread_entry, NULL, 0);
+        TEST_ASSERT(tid >= 0, "joined kthread slot can be reused past THREAD_MAX");
+        if (tid < 0)
+            return;
+        thread_join((uint32_t)tid);
+    }
+}
+
 /* Registration */
 void test_register_sched(void)
 {
@@ -117,6 +133,8 @@ void test_register_sched(void)
     test_suite_register_cat("Sched: cooperative-yield fairness (regression)",
                             test_sched_cooperative_yield_fairness,
                             TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: joined kthread slot reuse (regression)",
+                            test_sched_kthread_slot_reuse, TEST_CAT_SCHED);
 }
 
 #endif /* KERNEL_TESTS */

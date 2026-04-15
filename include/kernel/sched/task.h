@@ -28,11 +28,12 @@
 #define TASK_BLOCKED    3   /* waiting on I/O or event */
 #define TASK_WAITING    4   /* blocked on waitpid */
 
-/* Thread states (same values as TASK_* for simplicity) */
+/* Thread states */
 #define THREAD_RUNNING  0
 #define THREAD_READY    1
 #define THREAD_DEAD     2
 #define THREAD_BLOCKED  3   /* blocked on join */
+#define THREAD_FREE     4   /* slot reaped by thread_join, safe to reuse */
 
 /* Limits */
 #define TASK_MAX         32          /* max concurrent tasks */

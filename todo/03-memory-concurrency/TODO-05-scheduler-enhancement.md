@@ -1,6 +1,6 @@
 # TODO-05 -- Scheduler Enhancement
 
-> **Goal:** Evolve the current round-robin dispatcher into a production-quality scheduler: O(1) priority queues, starvation-proof dynamic aging, CFS vruntime fair sharing, `SCHED_FIFO`/`SCHED_RR`/`SCHED_DEADLINE` real-time classes, CPU affinity, accurate tick calibration via RDTSC+HPET, a unified `/sys/sched` stats view, and a CPU frequency scaling hook for ACPI P-states.
+> **Goal:** Evolve the current round-robin dispatcher into a production-quality scheduler: O(1) priority queues, starvation-proof dynamic aging, CFS vruntime fair sharing, `SCHED_FIFO`/`SCHED_RR`/`SCHED_DEADLINE` real-time classes, CPU affinity, accurate tick calibration via RDTSC+HPET, a unified `/sys/sched` stats view, CPU frequency scaling hooks for ACPI P-states, and dynamic resource-driven thread limits instead of a tiny fixed per-process slot ceiling.
 
 > [!IMPORTANT]
 > The current scheduler tick source is the LAPIC timer with a hardcoded ICR. On Hyper-V Gen 2, the actual bus frequency differs, making quanta unpredictable. §8 tick calibration fixes this and is a hard prerequisite for accurate CFS vruntime accounting in §3. Do not implement §3 before §8 is done.
@@ -19,6 +19,8 @@
 - → XREF: `04-drivers-hardware` domain -- ACPI `_PSS` P-state table needed for §9 CPU frequency scaling governors
 - → XREF: `02-kernel-core/TODO-05-native-api-ssdt.md §4` -- SSDT indices 0x0180--0x0186 reserved for Worker Factory (kernel thread pool) syscalls; §10 wires them
 - → XREF: `02-kernel-core/TODO-09-process-model-extensions.md §5,§10` -- scope overlap: TODO-09 §5 defines the process-level `sched_policy` field and `NtSetInformationProcess(ProcessSchedulingPolicy)` API; TODO-09 §10 defines `SetProcessAffinityMask`. Scheduler loop changes for RT classes (§4) and thread-level affinity (§6) are authoritative HERE.
+- → XREF: `02-kernel-core/TODO-04-peb-teb-user-abi.md §15` -- current user-thread TEB placement is `TEB_USER_BASE - tid * 0x1000`; §12 here must decouple thread identity from storage slot and replace tid-derived VA placement with an allocator-backed scheme
+- → XREF: `02-kernel-core/TODO-09-process-model-extensions.md §9` -- process resource limits own quota fields and API surface; §12 here consumes those limits during thread admission and replaces fixed `THREAD_MAX` exhaustion with resource-driven failures
 
 ## Outcome
 
@@ -30,6 +32,7 @@
 - The scheduler tick is calibrated via RDTSC + HPET measurement to produce accurate nanosecond quanta; Hyper-V synthetic timer is used as a fallback.
 - `/sys/sched` VFS file and `sched` shell command expose per-thread class, priority, vruntime, CPU time, and context-switch counts in a single snapshot.
 - The scheduler exposes a `cpufreq_governor_t` vtable; `performance` and `powersave` governors track idle fraction and request P-state changes via ACPI.
+- Thread creation is limited by memory, quotas, and user VA space rather than a small compile-time `THREAD_MAX` array ceiling; stable TIDs survive slot reuse and table growth.
 
 ## Implementation Order
 
@@ -46,6 +49,7 @@
 | 💎  |   9   | §9 CPU frequency scaling hook + P-state governors    | §7 (load measurement), ACPI         |  [ ]   |
 | 💎  |  10   | Worker Factory syscalls wired to SSDT                | §1, TODO-05 §4                      |  [ ]   |
 | 💎  |  11   | Per-thread kernel stack + TSS.rsp0 switching         | --                                   |  [x]   |
+| 💎  |  12   | Dynamic thread table + resource-driven thread limits | §11, TODO-04 §15, TODO-09 §9       |  [ ]   |
 
 > 💎 = parity -- Windows and Linux both implement priority queues, aging, CFS-equivalent, RT classes, affinity, tick calibration, and cpufreq; Impossible OS must match.
 > ⭐ = exclusive -- `SCHED_DEADLINE` with GRUB bandwidth reclaim and the unified `/sys/sched` all-threads snapshot are differentiators over the base Windows NT scheduler.
@@ -253,6 +257,7 @@ The scheduler currently stores `kernel_rsp` per-task (in `struct task`), not per
 | 💎 | Tick calibration         | ✅ HAL HPET/TSC       | ✅ calibrate_delay     | ⬜ §8 RDTSC+HPET          |
 | 💎 | CPU freq scaling         | ✅ power plans        | ✅ cpufreq governors   | ⬜ §9 governor vtable     |
 | 💎 | Per-thread kernel stack  | ✅ per-KTHREAD        | ✅ per-task_struct     | ✅ §11 per-thread rsp0    |
+| 💎 | Resource-driven thread limit | ✅ memory/quota bound | ✅ pid/task + memory bound | ⬜ §12 dynamic table   |
 
 > Parity: matches Win11+Linux on priority queues, aging, RT classes, affinity, tick calibration, cpufreq, per-thread kernel stacks. EDF deadline scheduling and unified /sys/sched thread snapshot are exclusive.
 
@@ -268,6 +273,8 @@ The scheduler currently stores `kernel_rsp` per-task (in `struct task`), not per
 - [ ] §4: RT thread preempts SCHED_NORMAL at any priority
 - [ ] §5: admission rejects when utilization > 90%
 - [ ] §11: `threads[0].kernel_rsp != 0` after `task_init()`
+- [ ] §12: repeated `kthread_create` / `thread_join` cycles succeed well past the old `THREAD_MAX`
+- [ ] §12: sparse TID reuse does not alias TEB or user-stack VAs across live threads
 
 > **Note:** Most scheduler tests require multi-thread runtime behavior (preemption, timing, context switch) which cannot be validated in WSL. Test checkpoints in each section define serial-log criteria for QEMU/bare metal.
 
@@ -282,6 +289,8 @@ The scheduler currently stores `kernel_rsp` per-task (in `struct task`), not per
 - [ ] CPU affinity: pin thread to CPU 0; `sched` command shows `last_cpu=0` across 100+ switches
 - [ ] `sched` shell command prints table with all boot threads; CPU-time increments with each call
 - [ ] Tick calibration: serial log shows `[SCHED] tick calibrated: ICR=N, tick=1000000 ns` (≈1 ms)
+- [ ] Dynamic thread table: create/join more than 16 kernel threads in one process; no `max threads reached` until a real quota, memory, or VA limit is hit
+- [ ] Dynamic user threads: multiple live threads receive distinct TEB and user-stack VAs even after slot reuse; no `tid * stride` aliasing
 - [ ] Commit: `"sched: enhanced scheduler -- priority, aging, CFS, RT, EDF, affinity, tick cal, cpufreq"`
 
 **Test runner:** `scripts\debug\run-sched-tests.bat` (SUITE=sched)
@@ -291,3 +300,28 @@ The scheduler currently stores `kernel_rsp` per-task (in `struct task`), not per
 | Date | Action | Summary |
 |------|--------|---------|
 | 2026-04-10 | validate | 11 sections checked; stripped 9 model tags, fixed 2 broken input anchors (planned files), fixed en-dash, compacted OS Comparison table (added §10/§11 rows), added Unit Tests skeleton, added §11 row to OS Comparison |
+
+---
+
+## 12. Dynamic Thread Table + Resource-Driven Thread Limits
+
+The current thread model uses `struct task { struct thread threads[THREAD_MAX]; uint32_t num_threads; }`, where TID is implicitly the array slot and the user-mode TEB/stack layout derives virtual addresses from that bounded TID. Slot reuse fixes leaks, but it does not remove the architectural ceiling: thread creation still bottoms out at a small compile-time constant and the user-mode ABI still assumes tightly bounded TIDs. This section replaces the fixed-slot design with a full resource-driven implementation.
+
+> [!IMPORTANT]
+> This is a full feature, not a temporary migration note. The target state is that thread admission fails only for real reasons: memory exhaustion, process quota, or user VA allocator exhaustion. A tiny fixed `THREAD_MAX` is an implementation artifact to remove, not a product requirement to preserve.
+
+> [!NOTE]
+> → XREF: [`02-kernel-core/TODO-04-peb-teb-user-abi.md §15`](../02-kernel-core/TODO-04-peb-teb-user-abi.md) -- per-thread TEB allocation currently uses `TEB_USER_BASE - tid * 0x1000`; this section must replace tid-derived user VA placement with allocator-backed TEB and user-stack reservations.
+> → XREF: [`02-kernel-core/TODO-09-process-model-extensions.md §9`](../02-kernel-core/TODO-09-process-model-extensions.md) -- process resource limits own the quota surface; this section consumes those limits when admitting new threads.
+
+- [ ] Replace fixed inline `threads[THREAD_MAX]` storage with growable per-task thread storage (`thread_capacity`, reusable free-slot tracking, explicit live-thread count). `num_threads` must stop meaning both "highest used slot" and "number of live threads".
+- [ ] Separate stable thread identity from storage slot. Add monotonic per-task TID allocation (or equivalent stable ID source) so TID survives slot reuse and table compaction. All scheduler, handle-table, and `NtQueryInformationThread` paths must stop assuming `tid == slot_index`.
+- [ ] Add reusable slot/free-list logic for dead joined threads. Slot reuse must be race-safe and must not block forever on double-join or stale TIDs.
+- [ ] Replace `TEB_USER_BASE - tid * 0x1000` and `USER_THREAD_STACK_BASE - tid * stride` placement with allocator-backed user VA reservations for TEB pages and user-thread stacks. Distinct live threads must never alias VAs even when storage slots are reused.
+- [ ] Update `uthread_create`, `NtCreateThread_handler`, and thread teardown paths to consume allocator-backed TEB and user-stack reservations, and to release them on thread death when the required unmap/shootdown infrastructure exists.
+- [ ] Make thread admission resource-driven: fail with `STATUS_INSUFFICIENT_RESOURCES` or quota-specific errors when stack pages, TEB pages, process thread quota, or user VA space cannot be reserved. Remove fixed-constant exhaustion as the primary failure mode.
+- [ ] Define inheritance and accounting rules for new threads: process affinity mask, scheduling policy/class, capability/mitigation state, and any future per-process thread quota must copy or intersect deterministically at creation time.
+- [ ] Add regression tests: create/join cycles beyond the old `THREAD_MAX`, sparse TID reuse, repeated kernel-thread slot reuse, user-thread TEB/stack uniqueness after slot reuse, quota exhaustion, and cleanup correctness on process exit.
+- [ ] Commit: `"sched: dynamic thread table and resource-driven thread limits"`
+
+**Test checkpoint:** Creating and joining more than 16 kernel threads in the same process no longer fails on a fixed slot ceiling. Multiple live user threads have unique TEB and stack VAs even after earlier threads exit and slots are reused. Thread creation fails only for real resource reasons (quota, VA exhaustion, page allocation failure), and the returned status identifies the real limit. `NtQueryInformationThread` and Ob thread lookup continue to return stable thread identities after table growth and slot reuse. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.

@@ -738,6 +738,8 @@ static void test_kthread_create_smoke(void)
     g_kthread_test_ran = 0;
     int tid = kthread_create(kthread_test_entry, (void *)0, 0);
     TEST_ASSERT(tid >= 0, "kthread_create returns valid TID");
+    if (tid >= 0)
+        thread_join((uint32_t)tid);
 }
 
 /* USER_THREAD_STACK_BASE does not overlap main user stack or TEB region */

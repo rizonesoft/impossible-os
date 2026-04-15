@@ -59,6 +59,7 @@ uint32_t boot_timing_get_steps(const boot_timing_step_t **out)
 
 void boot_timing_record_step(uint8_t phase, const char *step, uint16_t postcode)
 {
+    if (!step || !step[0]) return;
     if (s_step_count >= BOOT_TIMING_MAX_STEPS) return;
     uint32_t idx          = s_step_count++;
     s_steps[idx].tsc      = rdtsc();
@@ -328,8 +329,14 @@ static void str_copy_trunc(char *dst, const char *src, uint32_t max)
 
 static int str_eq(const char *a, const char *b)
 {
+    if (!a || !b) return 0;
     while (*a && *b && *a == *b) { a++; b++; }
     return *a == *b;
+}
+
+static int boot_perf_enabled(void)
+{
+    return !g_boot_info.config.test && !g_boot_info.config.debug;
 }
 
 void boot_perf_read_prev(void)
@@ -388,6 +395,10 @@ void boot_perf_compare(void)
 {
     if (s_tsc_freq == 0 || s_step_count == 0 || s_prev_count == 0)
         return;
+    if (!boot_perf_enabled()) {
+        klog(LOG_INFO, "PERF", "Boot perf comparison skipped in test/debug mode");
+        return;
+    }
 
     uint64_t base = s_steps[0].tsc;
 
@@ -428,6 +439,10 @@ void boot_perf_save(void)
 {
     if (s_tsc_freq == 0 || s_step_count == 0)
         return;
+    if (!boot_perf_enabled()) {
+        klog(LOG_INFO, "PERF", "Boot perf save skipped in test/debug mode");
+        return;
+    }
 
     /* Build the NVRAM payload: header + records */
     static uint8_t buf[sizeof(boot_perf_header_t) +
