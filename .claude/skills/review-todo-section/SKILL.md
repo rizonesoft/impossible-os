@@ -95,7 +95,17 @@ description: Full review of a TODO section -- adversarial Codex, dead code, cons
 
     **Why this step exists:** without it, "Accepted with XREF" becomes a paper trail that someone later has to chase, find nothing actionable, and re-do the analysis. Every Accepted finding must be one `[x]` away from being fully closed.
 
-16. **Stamps** -- Verified + Quality reviewed. No blank line between. Domain-qualified XREFs in Accepted field. Each Accepted XREF must reference a concrete item per step 15. **Do NOT re-emit a `> **Test runner:**` line** -- the pre-stamp block written by `implement-todo-section` step 8 is the single source of truth. Duplicating the runner line after the stamps produced clutter across TODO-12 §1-§5; the review skill only appends Verified + Quality reviewed, nothing else. If the test count or bat file changed during review, edit the pre-stamp block in place instead of adding a second line.
+16. **Stamps** -- three distinct blockquote lines, no blank lines between:
+
+    ```
+    > **Verified:** YYYY-MM-DD -- <evidence map>. Build clean.
+    > **Accepted:** <finding 1> -> XREF: NN-domain/TODO-XX §N (item: "..." at line N). <finding 2> -> XREF: ... .
+    > **Quality reviewed:** YYYY-MM-DD -- <gates walked, fixes applied, dispatches summarised>.
+    ```
+
+    - `> **Accepted:**` gets its OWN blockquote line between Verified and Quality reviewed. Do NOT bury accepted items inside the Quality-reviewed paragraph -- the user scans for deferred issues and a dedicated line is the whole point. If there are NO accepted items, OMIT the line entirely (don't write `Accepted: none`).
+    - Every Accepted XREF must reference a concrete item per step 15. Domain-qualified (e.g. `02-kernel-core/TODO-17`, not bare `TODO-17`).
+    - **Do NOT re-emit a `> **Test runner:**` line** -- the pre-stamp block written by `implement-todo-section` step 8 is the single source of truth. If the test count or bat file changed during review, edit the pre-stamp block in place instead of adding a second line.
 
 17. **Commit and push** -- `"review: <TODO> §N -- <summary>"`. If step 15 created or modified items in other TODO files, stage and commit those in the SAME commit as the stamp.
 

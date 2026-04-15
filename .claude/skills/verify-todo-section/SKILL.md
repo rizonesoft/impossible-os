@@ -56,17 +56,20 @@ description: Verify an already-implemented TODO section through the full quality
    - **Deferred-item check:** scan earlier sections for "deferred to §N" where N is this section. If not resolved, flag.
    - **Implementation Order row:** must match section state. Downgrade conservatively.
    - **OS Comparison row:** must match section state. Downgrade if claimed Done but evidence shows Partial.
-   - **Verified stamp:** if ALL `[x]` items survived (no downgrades), add or update IMMEDIATELY after the **Test checkpoint** paragraph (no blank line between stamps):
+   - **Verified stamp + optional Accepted stamp:** if ALL `[x]` items survived (no downgrades), add or update IMMEDIATELY after the **Test checkpoint** paragraph. Three blockquote lines maximum, no blank lines between them:
      ```
-     > **Verified:** YYYY-MM-DD -- <summary>. Accepted: <out-of-scope items with owner refs, or "none">.
+     > **Verified:** YYYY-MM-DD -- <evidence summary>. Build clean.
+     > **Accepted:** <finding> -> XREF: NN-domain/TODO-XX §N (item: "..." at line N). <next finding> -> XREF: ... .
+     > **Quality reviewed:** YYYY-MM-DD -- <gates walked, quality-dispatch findings, fixes applied>.
      ```
      The stamp format:
-     - `<summary>`: what Codex found and what was fixed, or "Codex adversarial review clean"
-     - `Accepted: none` when all findings were fixed or rejected
-     - `Accepted: <brief> (-> XREF: NN-domain/TODO-XX §N)` for valid findings deferred to another owner -- ALWAYS include the domain prefix (e.g., `02-kernel-core/TODO-17`, not just `TODO-17`)
-     - If re-verifying, REPLACE the existing `> **Verified:**` line (don't duplicate)
-     - If any items were DOWNGRADED, do NOT add the stamp
-     - **No blank line** between the Verified stamp and a Quality reviewed stamp (if one exists). Keep stamps as adjacent blockquote lines.
+     - `Verified` is always present on a passing verification.
+     - `Accepted` gets its OWN blockquote line between Verified and Quality reviewed when there ARE deferred findings. If NO findings were accepted (all fixed or rejected), OMIT the line entirely -- do NOT write `Accepted: none`.
+     - Every `Accepted` entry must reference a concrete `[ ]` checklist item at the target (`item: "<name>" at line N`), domain-qualified (e.g. `02-kernel-core/TODO-17`, never bare `TODO-17`).
+     - `Quality reviewed` is added when the quality pipeline ran (separate skill or inline in verify if extended).
+     - If re-verifying, REPLACE existing stamp lines in place; never duplicate.
+     - If any items were DOWNGRADED, do NOT add any stamp.
+     - **No blank line** between any of the three stamp lines. Keep them as adjacent blockquote lines.
    - Preserve formatting. No N.M subnumbering.
 
 ## HARD GATE: Steps 8-12 are MANDATORY before step 13
