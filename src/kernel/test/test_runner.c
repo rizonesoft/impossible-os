@@ -13,6 +13,7 @@
 #include "kernel/test/test.h"
 #include "kernel/klog.h"
 #include "kernel/timer.h"
+#include "kernel/mm/heap.h"             /* kmalloc_fail_countdown_clear (hygiene) */
 
 /* ---- Category names (must match test_category_t order) ---- */
 
@@ -332,6 +333,13 @@ void test_runner_run(void)
         uint32_t pre_fail = g_test_state.failed;
 
         s->fn();
+
+        /* Defensive hygiene: if a suite armed the kmalloc fault-injection
+         * countdown and then failed an assertion before it fired, clear
+         * the counter so the next suite does not inherit a "fail the
+         * next kmalloc" trap. Test author forgetfulness is the usual
+         * source. No-op when the countdown is already zero. */
+        kmalloc_fail_countdown_clear();
 
         uint32_t suite_fails = g_test_state.failed - pre_fail;
         (void)(g_test_state.passed - pre_pass);

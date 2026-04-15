@@ -32,7 +32,7 @@
 
 | ⭐  | Order | Deliverable                                         | Depends On    | Status |
 | --- | :---: | --------------------------------------------------- | ------------- | :----: |
-| 💎  |   1   | kmalloc fault injection (`kmalloc_fail_countdown`)  | --            |  [ ]   |
+| 💎  |   1   | kmalloc fault injection (`kmalloc_fail_countdown`)  | --            |  [x]   |
 | 💎  |   2   | Deterministic race barrier (`test_race_barrier_t`)  | --            |  [ ]   |
 | 💎  |   3   | Scratch-buffer helper (`TEST_SCRATCH_KBUF`)         | --            |  [ ]   |
 | 💎  |   4   | Retrofit existing "Test gaps" stamps across `todo/` | §1, §2, §3    |  [ ]   |
@@ -45,14 +45,17 @@
 
 A per-CPU test-only countdown that causes `kmalloc` to return `NULL` on the next (or Nth subsequent) call WITHOUT hitting the real allocator. Tests set the countdown, invoke the code under test, assert the failure-cleanup path executed, then reset the countdown.
 
-- [ ] Add `uint32_t kmalloc_fail_countdown` -- per-CPU (`per_cpu_data_t`) to avoid cross-test interference on SMP; decrements on every `kmalloc` call; when it reaches 1, the call returns NULL and the counter resets to 0.
-- [ ] Expose `void kmalloc_fail_countdown_set(uint32_t n)` and `void kmalloc_fail_countdown_clear(void)` in `include/kernel/mm/heap.h` behind `#ifdef KERNEL_TESTS` so release builds see no overhead.
-- [ ] `kmalloc` checks the per-CPU counter FIRST before touching the heap. On fault-injection trigger: return NULL, increment `s_fault_injections_triggered` stat, do NOT log (tests expect silent failure).
-- [ ] Convenience: `kmalloc_fail_next(void)` == `kmalloc_fail_countdown_set(1)`. Symmetric `kmalloc_fail_clear_on_exit` helper that tests call at the start of each test body so a leftover counter from a failing test never taints the next one.
-- [ ] Unit test in `src/kernel/test/test_heap.c`: after `kmalloc_fail_next()`, the next `kmalloc(16)` returns NULL; the one after returns a valid pointer; `s_fault_injections_triggered` increments.
-- [ ] Commit: `"test/heap: kmalloc fault-injection countdown for failure-path coverage"`
+- [x] Added `uint32_t kmalloc_fail_countdown` to `struct per_cpu_data` in `include/kernel/smp.h` (gated by `#ifdef KERNEL_TESTS` so release builds compile the field out). Decrements on every `kmalloc` call; when the decrement crosses from 1 to 0, that allocation returns NULL.
+- [x] `include/kernel/mm/heap.h` exposes `kmalloc_fail_countdown_set(n)`, `kmalloc_fail_countdown_clear()`, `kmalloc_fail_next()`, and `kmalloc_fail_injections_triggered()` -- all under `#ifdef KERNEL_TESTS`.
+- [x] `src/kernel/mm/heap.c` `kmalloc()` checks `smp_this_cpu()->kmalloc_fail_countdown` FIRST (before block-list walk) so the heap state is unaltered on a forced failure. On trigger: increment `s_kmalloc_fault_injections` (atomic) and return NULL. No klog -- tests expect silent failure. **Thread-context gate:** the hook is silently bypassed when `KeGetCurrentIrql() != PASSIVE_LEVEL`, so an IRQ / DPC / spinlock-holding caller on the same CPU (e.g. the RTL8139 RX ISR) cannot steal a pending injection from the thread-context test that armed it. Caught by Codex adversarial review; regression test `Heap: fault-inject IRQL gate` locks it in.
+- [x] `kmalloc_fail_next()` == `kmalloc_fail_countdown_set(1)` shorthand. Test-runner hygiene: `src/kernel/test/test_runner.c` now calls `kmalloc_fail_countdown_clear()` after every suite, so a suite that armed the trap and then failed an assertion before it fired cannot poison the next suite.
+- [x] `src/kernel/test/test_heap.c` covers: (a) `kmalloc_fail_next` fires on the next call and auto-clears; (b) `kmalloc_fail_countdown_set(3)` fires on the 3rd call; (c) `kmalloc_fail_countdown_clear` disarms a pending trap; (d) forced NULL does not mutate `heap_get_used()`; (e) armed countdown is NOT consumed by a kmalloc made at `DISPATCH_LEVEL` (IRQL gate regression). All five tests verify `kmalloc_fail_injections_triggered()` increments exactly once per forced NULL.
+- [x] Commit: `"test/heap: kmalloc fault-injection countdown for failure-path coverage"`
 
 **Test checkpoint:** `kmalloc_fail_next()` + `kmalloc(16) == NULL` + subsequent `kmalloc(16) != NULL`. Verifies the per-CPU counter decrements correctly and auto-clears.
+
+> **Test runner:** `scripts\debug\run-mm-tests.bat` (SUITE=mm)
+> **Expected:** 5 new heap fault-injection suites pass, 0 failures
 
 ---
 

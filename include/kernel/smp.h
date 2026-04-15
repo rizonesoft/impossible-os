@@ -125,6 +125,17 @@ struct per_cpu_data {
     uint64_t          kpti_scratch;     /* scratch for trampoline (save RAX during CR3 swap) */
     uint64_t          kpti_syscall_target; /* jump target after SYSCALL CR3 swap */
     uint64_t          kpti_isr_target;    /* jump target after ISR CR3 swap */
+
+#ifdef KERNEL_TESTS
+    /* Per-CPU kmalloc fault-injection countdown. 0 disables the hook.
+     * On each kmalloc() call, a non-zero value decrements; when the
+     * decrement crosses from 1 to 0, that allocation returns NULL to
+     * exercise caller failure-cleanup paths. Released builds compile
+     * the field out via KERNEL_TESTS -- zero runtime cost. See
+     * 00-infrastructure/kernel-test-harness specification. */
+    uint32_t          kmalloc_fail_countdown;
+    uint32_t          _kmalloc_fail_pad;
+#endif
 };
 
 /* Compile-time enforcement of assembly-referenced struct offsets */

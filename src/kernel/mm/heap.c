@@ -18,6 +18,10 @@
 #include "kernel/mm/pmm.h"
 #include "kernel/mm/vmm.h"
 #include "kernel/klog.h"
+#ifdef KERNEL_TESTS
+#include "kernel/smp.h"                 /* smp_this_cpu() for per-CPU countdown */
+#include "kernel/sched/irql.h"          /* KeGetCurrentIrql for thread-context gate */
+#endif
 /* Heap size constants */
 #define HEAP_INITIAL_PAGES  512      /* 512 pages = 2 MiB */
 #define HEAP_PAGE_SIZE      4096
@@ -140,12 +144,68 @@ boot_result_t heap_init(void)
     return (heap_start_block && total_heap_size > 0) ? BOOT_OK : BOOT_FATAL;
 }
 
+#ifdef KERNEL_TESTS
+/* Aggregate count across all CPUs of kmalloc calls that were forced to
+ * return NULL by the fault-injection hook. Updated with __atomic ops so
+ * tests on either CPU read a coherent value. */
+static uint64_t s_kmalloc_fault_injections;
+
+void kmalloc_fail_countdown_set(uint32_t n)
+{
+    /* smp_this_cpu() returns this CPU's per-CPU block; the counter is
+     * per-CPU by construction so concurrent tests on different CPUs
+     * never step on each other. */
+    smp_this_cpu()->kmalloc_fail_countdown = n;
+}
+
+void kmalloc_fail_countdown_clear(void)
+{
+    smp_this_cpu()->kmalloc_fail_countdown = 0;
+}
+
+void kmalloc_fail_next(void)
+{
+    smp_this_cpu()->kmalloc_fail_countdown = 1;
+}
+
+uint64_t kmalloc_fail_injections_triggered(void)
+{
+    return __atomic_load_n(&s_kmalloc_fault_injections, __ATOMIC_RELAXED);
+}
+#endif /* KERNEL_TESTS */
+
 void *kmalloc(size_t size)
 {
     struct block_header *curr;
 
     if (size == 0)
         return (void *)0;
+
+#ifdef KERNEL_TESTS
+    /* Test-only fault-injection hook. Checked BEFORE walking the block
+     * list so the heap state is unaltered on a forced failure; a
+     * returning test then sees the exact same free-list shape it would
+     * on a real OOM. Decrement reaches 0 on the armed call: return NULL.
+     *
+     * Thread-context gate: the hook only consumes the countdown when
+     * we are at PASSIVE_LEVEL. IRQ / DPC / spinlock-holding callers on
+     * the same CPU (e.g. the RTL8139 RX ISR calling kmalloc for a work
+     * packet) would otherwise steal the pending injection from the
+     * thread-context test that armed it -- turning the test
+     * nondeterministic and giving false confidence. Tests that want to
+     * inject into IRQ-context allocations need a different harness
+     * scoped to that context; §1 is thread-context only. */
+    if (KeGetCurrentIrql() == PASSIVE_LEVEL) {
+        struct per_cpu_data *pc = smp_this_cpu();
+        if (pc && pc->kmalloc_fail_countdown) {
+            if (--pc->kmalloc_fail_countdown == 0) {
+                __atomic_fetch_add(&s_kmalloc_fault_injections, 1ull,
+                                   __ATOMIC_RELAXED);
+                return (void *)0;
+            }
+        }
+    }
+#endif
 
     /* Align size to 16 bytes */
     size = (size + 15) & ~((size_t)15);
