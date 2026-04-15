@@ -30,6 +30,10 @@ This domain tracks the tooling and workflow work that supports the whole project
   exercising the real syscall interface.
 - [TODO-02 Desktop & UI Test Framework](./TODO-02-desktop-ui-test-framework.md) - Framebuffer
   snapshots, input injection, terminal verification, visual regression CI, WM state introspection.
+- [TODO-03 Kernel Test Harness](./TODO-03-kernel-test-harness.md) - Kernel-internal test-time
+  infrastructure: `kmalloc_fail_countdown` fault injection, `test_race_barrier_t` deterministic
+  race fence, `TEST_SCRATCH_KBUF` > 4 KiB scratch buffers. Closes the "Test gaps (NO current
+  owner)" block in TODO-12 §4 and similar deferred gaps elsewhere.
 
 ## Completed / Doc-converted
 
