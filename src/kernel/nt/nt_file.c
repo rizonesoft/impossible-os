@@ -617,32 +617,115 @@ static NTSTATUS NtCancelIoFileEx_handler(
     return NtCancelIoFile_handler(a1, a3, 0, 0, 0, a6);
 }
 
-/* ---- I/O Completion Ports ----------------------------------------------- */
+/* ---- I/O Completion Ports -----------------------------------------------
+ *
+ * IOCP "handle" encoding: idx + 0x10000. Not a real Ob handle; a real
+ * handle-table integration lands alongside the full I/O completion port
+ * rewrite. For now the wide offset keeps IOCP handles distinguishable
+ * from Ob handles at a glance when debugging.
+ *
+ * Lock: each port has an internal spinlock that protects head/tail/count
+ * /entries. Added 2026-04-15 (TODO-12 §5) when ALPC started posting
+ * completion packets concurrently with user-mode NtSet/Remove.
+ */
 
 static IO_COMPLETION_PORT s_iocp_pool[16];
 static uint32_t s_iocp_allocated;
+static spinlock_t s_iocp_allocator_lock;   /* protects s_iocp_allocated */
+
+static NTSTATUS iocp_index_from_handle(HANDLE h, uint32_t *out_idx)
+{
+    uint64_t val = (uint64_t)(uintptr_t)h;
+    if (val < 0x10000u)
+        return STATUS_INVALID_HANDLE;
+    uint32_t idx = (uint32_t)(val - 0x10000u);
+    uint64_t irqf;
+    uint32_t allocated;
+    spin_lock_irqsave(&s_iocp_allocator_lock, &irqf);
+    allocated = s_iocp_allocated;
+    spin_unlock_irqrestore(&s_iocp_allocator_lock, irqf);
+    if (idx >= allocated)
+        return STATUS_INVALID_HANDLE;
+    *out_idx = idx;
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS io_completion_validate_handle(HANDLE iocp_handle)
+{
+    uint32_t idx;
+    return iocp_index_from_handle(iocp_handle, &idx);
+}
+
+static NTSTATUS iocp_enqueue_locked_call(IO_COMPLETION_PORT *port,
+                                         uint64_t key, uint64_t apc,
+                                         NTSTATUS status, uint64_t info)
+{
+    uint64_t irqf;
+    IO_COMPLETION_ENTRY *entry;
+
+    spin_lock_irqsave(&port->lock, &irqf);
+    if (port->count >= IOCP_MAX_ENTRIES) {
+        spin_unlock_irqrestore(&port->lock, irqf);
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+    entry = &port->entries[port->tail];
+    entry->KeyContext = key;
+    entry->ApcContext = apc;
+    entry->IoStatus = status;
+    entry->_pad = 0;
+    entry->IoStatusInformation = info;
+    port->tail = (port->tail + 1) % IOCP_MAX_ENTRIES;
+    port->count++;
+    spin_unlock_irqrestore(&port->lock, irqf);
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS io_completion_post(HANDLE iocp_handle, uint64_t key,
+                            uint64_t apc, NTSTATUS status, uint64_t info)
+{
+    uint32_t idx;
+    NTSTATUS st = iocp_index_from_handle(iocp_handle, &idx);
+    if (!NT_SUCCESS(st))
+        return st;
+    return iocp_enqueue_locked_call(&s_iocp_pool[idx], key, apc,
+                                    status, info);
+}
 
 static NTSTATUS NtCreateIoCompletion_handler(
     uint64_t a1, uint64_t a2, uint64_t a3,
     uint64_t a4, uint64_t a5, uint64_t a6)
 {
     HANDLE *out = (HANDLE *)a1;
+    uint64_t irqf;
+    uint32_t idx;
 
     (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
 
     if (!out)
         return STATUS_INVALID_PARAMETER;
 
-    if (s_iocp_allocated >= 16)
+    spin_lock_irqsave(&s_iocp_allocator_lock, &irqf);
+    if (s_iocp_allocated >= 16) {
+        spin_unlock_irqrestore(&s_iocp_allocator_lock, irqf);
         return STATUS_INSUFFICIENT_RESOURCES;
-
-    {
-        uint32_t idx = s_iocp_allocated++;
-        s_iocp_pool[idx].head = 0;
-        s_iocp_pool[idx].tail = 0;
-        s_iocp_pool[idx].count = 0;
-        *out = (HANDLE)(idx + 0x10000);  /* offset to avoid handle collision */
     }
+    /* Reserve the next slot but do NOT publish it to iocp_index_from_handle
+     * (via s_iocp_allocated bump) until head/tail/count/lock are
+     * initialized. Otherwise a concurrent NtSet/Remove or
+     * io_completion_post could walk freshly-bumped storage with stale
+     * head/tail/count values, or with lock.flag left at whatever the
+     * zero-initialized static value was. Init-then-publish closes the
+     * race; the allocator lock serializes it against other creators. */
+    idx = s_iocp_allocated;
+    s_iocp_pool[idx].head = 0;
+    s_iocp_pool[idx].tail = 0;
+    s_iocp_pool[idx].count = 0;
+    s_iocp_pool[idx]._pad_count = 0;
+    s_iocp_pool[idx].lock.flag = 0;
+    s_iocp_allocated = idx + 1;
+    spin_unlock_irqrestore(&s_iocp_allocator_lock, irqf);
+
+    *out = (HANDLE)(uintptr_t)(idx + 0x10000u);
     return STATUS_SUCCESS;
 }
 
@@ -650,59 +733,59 @@ static NTSTATUS NtSetIoCompletion_handler(
     uint64_t a1, uint64_t a2, uint64_t a3,
     uint64_t a4, uint64_t a5, uint64_t a6)
 {
-    uint32_t idx = (uint32_t)((uint64_t)a1 - 0x10000);
-    IO_COMPLETION_PORT *port;
-    IO_COMPLETION_ENTRY *entry;
+    uint32_t idx;
+    NTSTATUS st;
 
     (void)a6;
+    st = iocp_index_from_handle((HANDLE)(uintptr_t)a1, &idx);
+    if (!NT_SUCCESS(st))
+        return st;
 
-    if (idx >= s_iocp_allocated)
-        return STATUS_INVALID_HANDLE;
-
-    port = &s_iocp_pool[idx];
-    if (port->count >= IOCP_MAX_ENTRIES)
-        return STATUS_INSUFFICIENT_RESOURCES;
-
-    entry = &port->entries[port->tail];
-    entry->KeyContext = a2;
-    entry->ApcContext = a3;
-    entry->IoStatus = (NTSTATUS)(int32_t)a4;
-    entry->_pad = 0;
-    entry->IoStatusInformation = a5;
-    port->tail = (port->tail + 1) % IOCP_MAX_ENTRIES;
-    port->count++;
-    return STATUS_SUCCESS;
+    return iocp_enqueue_locked_call(&s_iocp_pool[idx], a2, a3,
+                                    (NTSTATUS)(int32_t)a4, a5);
 }
 
 static NTSTATUS NtRemoveIoCompletion_handler(
     uint64_t a1, uint64_t a2, uint64_t a3,
     uint64_t a4, uint64_t a5, uint64_t a6)
 {
-    uint32_t idx = (uint32_t)((uint64_t)a1 - 0x10000);
+    uint32_t idx;
     uint64_t *key_out = (uint64_t *)a2;
     uint64_t *apc_out = (uint64_t *)a3;
     IO_STATUS_BLOCK *iosb = (IO_STATUS_BLOCK *)a4;
     IO_COMPLETION_PORT *port;
     IO_COMPLETION_ENTRY *entry;
+    uint64_t irqf;
+    NTSTATUS st;
 
-    (void)a5; /* Timeout */ (void)a6;
+    (void)a5; /* Timeout -- non-blocking for now */
+    (void)a6;
 
-    if (idx >= s_iocp_allocated)
-        return STATUS_INVALID_HANDLE;
+    st = iocp_index_from_handle((HANDLE)(uintptr_t)a1, &idx);
+    if (!NT_SUCCESS(st))
+        return st;
 
     port = &s_iocp_pool[idx];
-    if (port->count == 0)
+    spin_lock_irqsave(&port->lock, &irqf);
+    if (port->count == 0) {
+        spin_unlock_irqrestore(&port->lock, irqf);
         return STATUS_TIMEOUT;
-
-    entry = &port->entries[port->head];
-    if (key_out) *key_out = entry->KeyContext;
-    if (apc_out) *apc_out = entry->ApcContext;
-    if (iosb) {
-        iosb->Status = entry->IoStatus;
-        iosb->Information = entry->IoStatusInformation;
     }
+    entry = &port->entries[port->head];
+    uint64_t e_key = entry->KeyContext;
+    uint64_t e_apc = entry->ApcContext;
+    NTSTATUS e_st  = entry->IoStatus;
+    uint64_t e_info = entry->IoStatusInformation;
     port->head = (port->head + 1) % IOCP_MAX_ENTRIES;
     port->count--;
+    spin_unlock_irqrestore(&port->lock, irqf);
+
+    if (key_out) *key_out = e_key;
+    if (apc_out) *apc_out = e_apc;
+    if (iosb) {
+        iosb->Status = e_st;
+        iosb->Information = e_info;
+    }
     return STATUS_SUCCESS;
 }
 

@@ -462,12 +462,45 @@ static NTSTATUS NtAlpcQueryInformation_handler(uint64_t a1, uint64_t a2,
 }
 
 /* ---- 0x011D NtAlpcSetInformation ---------------------------------------- */
+/* Real implementation wired by TODO-12 §5. Only
+ * AlpcAssociateCompletionPortInformation is handled here; other info
+ * classes return STATUS_NOT_IMPLEMENTED pending §9 Query/Set classes.
+ *
+ * Arg layout (a1=PortHandle, a2=InfoClass, a3=Info, a4=Length). */
 static NTSTATUS NtAlpcSetInformation_handler(uint64_t a1, uint64_t a2,
                                              uint64_t a3, uint64_t a4,
                                              uint64_t a5, uint64_t a6)
 {
-    (void)a1; (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
-    ALPC_STUB_BODY(NtAlpcSetInformation);
+    HANDLE port_handle = (HANDLE)(int32_t)(uint32_t)a1;
+    uint32_t info_class = (uint32_t)a2;
+    void *info = (void *)a3;
+    uint32_t length = (uint32_t)a4;
+    NTSTATUS st;
+
+    (void)a5; (void)a6;
+
+    switch (info_class) {
+    case AlpcAssociateCompletionPortInformation: {
+        ALPC_PORT_ASSOCIATE_COMPLETION_PORT local;
+        if (!info || length < sizeof(ALPC_PORT_ASSOCIATE_COMPLETION_PORT))
+            return STATUS_INVALID_PARAMETER;
+        st = ProbeForReadIfUser(info,
+                                sizeof(ALPC_PORT_ASSOCIATE_COMPLETION_PORT),
+                                8);
+        if (!NT_SUCCESS(st))
+            return st;
+        local = *(ALPC_PORT_ASSOCIATE_COMPLETION_PORT *)info;
+        return AlpcAssociateCompletionPort(&task_current()->handle_table,
+                                           port_handle,
+                                           local.CompletionPort,
+                                           local.CompletionKey);
+    }
+    default:
+        /* SCOPE-GAP-ALLOWED: remaining info classes land in TODO-12 §9
+         * (Query/Set/CancelMessage). The completion-port association is
+         * the only class §5 promises. */
+        return STATUS_NOT_IMPLEMENTED;
+    }
 }
 
 /* ---- 0x011E NtAlpcQueryInformationMessage ------------------------------- */

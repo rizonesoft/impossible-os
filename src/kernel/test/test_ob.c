@@ -1190,6 +1190,7 @@ static void test_nt_alpc_pending_features(void)
         if (s_alpc_slots[i].svc == SSDT_NtAlpcAcceptConnectPort) continue; /* §3 */
         if (s_alpc_slots[i].svc == SSDT_NtAlpcDisconnectPort)    continue; /* §3 */
         if (s_alpc_slots[i].svc == SSDT_NtAlpcSendWaitReceivePort) continue; /* §4 */
+        if (s_alpc_slots[i].svc == SSDT_NtAlpcSetInformation)     continue; /* §5 (partial: AssociateCompletionPort) */
         NTSTATUS st = ssdt_dispatch(s_alpc_slots[i].svc, 0, 0, 0, 0, 0, 0);
         snprintf(msg, sizeof(msg), "%s (0x%x): no ALPC engine yet",
                  s_alpc_slots[i].name, (uint64_t)s_alpc_slots[i].svc);

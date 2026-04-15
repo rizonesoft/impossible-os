@@ -191,9 +191,45 @@ typedef struct alpc_port {
     struct alpc_message_zone *MessageZone;   /* NULL until §11 */
     ALPC_PORT_STATS        Stats;              /* zero-init until §12 */
 
+    /* §5 Async delivery & waitable port.
+     * CompletionPortHandle is set (non-INVALID) when a user-space I/O
+     * Completion Port has been associated via
+     * NtAlpcSetInformation(AlpcAssociateCompletionPortInformation). Once
+     * set, every message enqueued on THIS port's MessageQueue also
+     * causes io_completion_post() to enqueue a notification packet on
+     * the associated IOCP; the ALPC message stays on MessageQueue so
+     * the receiver can still pull the body via NtAlpcSendWaitReceivePort.
+     * A failed IOCP post is logged and ignored (best-effort wake).
+     *
+     * IsWaitable mirrors ALPC_PORTFLG_WAITABLE_PORT on Attributes.Flags;
+     * cached here so wait_on_handle does not have to re-read attrs.
+     * SignalledEvent is a MANUAL_RESET event that mirrors
+     * MessageQueue.Count > 0 -- set on 0->1 transition, reset on 1->0,
+     * both under port->Lock so the event state is never out of sync
+     * with the queue count. */
+    HANDLE                 CompletionPortHandle;
+    uint64_t               CompletionKey;
+    uint8_t                IsWaitable;
+    uint8_t                _pad_waitable[7];
+    event_t                SignalledEvent;
+
     uint8_t                Disconnected;
     uint8_t                _pad_tail[7];
 } ALPC_PORT;
+
+/* §5 NtAlpcSetInformation: ALPC_PORT_INFORMATION_CLASS values.
+ * AlpcAssociateCompletionPortInformation wires an IOCP to the port so
+ * future sends post a completion notification in addition to landing on
+ * MessageQueue. Other values land with §9 (NtAlpcQueryInformation). */
+typedef enum {
+    AlpcAssociateCompletionPortInformation = 0,
+} ALPC_PORT_INFORMATION_CLASS;
+
+/* Payload for AlpcAssociateCompletionPortInformation. */
+typedef struct {
+    HANDLE    CompletionPort;     /* IOCP handle (idx + 0x10000) */
+    uint64_t  CompletionKey;      /* opaque value returned to receiver */
+} ALPC_PORT_ASSOCIATE_COMPLETION_PORT;
 
 /* ---- API -------------------------------------------------------------- */
 
@@ -385,3 +421,23 @@ NTSTATUS AlpcSendWaitReceivePort(HANDLE_TABLE *ht, HANDLE port_handle,
                                  PORT_MESSAGE *recv_msg,
                                  uint32_t recv_buf_len,
                                  uint32_t timeout_ms);
+
+/* ---- §5 Asynchronous delivery & completion list ---------------------- */
+
+/*
+ * AlpcAssociateCompletionPort -- attach an I/O completion port to an
+ * ALPC port so subsequent sends post a completion notification in
+ * addition to landing the message on MessageQueue.
+ *
+ *   ht              -- handle table holding `port_handle`
+ *   port_handle     -- ALPC_PORT handle (client or server comm port)
+ *   completion_port -- IOCP handle returned by NtCreateIoCompletion
+ *   key             -- opaque value returned verbatim to the consumer
+ *                      via NtRemoveIoCompletion's KeyContext
+ *
+ * Returns STATUS_SUCCESS on association, STATUS_INVALID_HANDLE for a
+ * bad port or IOCP handle, STATUS_INVALID_PORT_HANDLE if the handle is
+ * not an ALPC port.
+ */
+NTSTATUS AlpcAssociateCompletionPort(HANDLE_TABLE *ht, HANDLE port_handle,
+                                     HANDLE completion_port, uint64_t key);

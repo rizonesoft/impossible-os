@@ -22,6 +22,7 @@
 #include "kernel/ob/ob_mutex.h"
 #include "kernel/ob/ob_semaphore.h"
 #include "kernel/ob/ob_process.h"
+#include "kernel/ipc/alpc_port.h"       /* ObpAlpcPortType + ALPC_PORT for waitable ports (§5.3) */
 #include "kernel/klog.h"
 #include "kernel/timer.h"
 
@@ -465,7 +466,11 @@ static NTSTATUS wait_on_handle(HANDLE handle, uint32_t timeout_ms)
             event_wait(&eo->event);
             return STATUS_SUCCESS;
         }
-        return event_wait_timeout(&eo->event, timeout_ms) == 0
+        /* event_wait_timeout returns 1 on signalled, 0 on timeout.
+         * (Prior inversion here -- `== 0 ? SUCCESS : TIMEOUT` -- would
+         * have reported timeouts as SUCCESS and vice versa; caught
+         * during the ALPC §5 design review.) */
+        return event_wait_timeout(&eo->event, timeout_ms)
                ? STATUS_SUCCESS : STATUS_TIMEOUT;
     }
 
@@ -507,7 +512,26 @@ static NTSTATUS wait_on_handle(HANDLE handle, uint32_t timeout_ms)
             event_wait(&to->event);
             return STATUS_SUCCESS;
         }
-        return event_wait_timeout(&to->event, timeout_ms) == 0
+        return event_wait_timeout(&to->event, timeout_ms)
+               ? STATUS_SUCCESS : STATUS_TIMEOUT;
+    }
+
+    /* ALPC Port: signalled when MessageQueue is non-empty. Only valid
+     * when the port was created with ALPC_PORTFLG_WAITABLE_PORT (TODO-12
+     * §5.3). Non-waitable ALPC ports fall through to OBJECT_TYPE_MISMATCH
+     * so the caller learns the port is not wait-compatible. */
+    if (hdr->type == ObpAlpcPortType) {
+        ALPC_PORT *port = (ALPC_PORT *)entry->object;
+        if (!port->IsWaitable)
+            return STATUS_OBJECT_TYPE_MISMATCH;
+        if (timeout_ms == 0)
+            return event_is_set(&port->SignalledEvent)
+                   ? STATUS_SUCCESS : STATUS_TIMEOUT;
+        if (timeout_ms == 0xFFFFFFFF) {
+            event_wait(&port->SignalledEvent);
+            return STATUS_SUCCESS;
+        }
+        return event_wait_timeout(&port->SignalledEvent, timeout_ms)
                ? STATUS_SUCCESS : STATUS_TIMEOUT;
     }
 

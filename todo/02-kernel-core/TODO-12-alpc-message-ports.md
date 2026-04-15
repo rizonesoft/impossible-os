@@ -56,7 +56,7 @@
 | 💎  |   2   | ALPC_PORT object & Object Manager registration    | §1, T03 §1-§4     |  [x]   |
 | 💎  |   3   | Connection state machine (create/connect/accept)  | §2, T05 §4        |  [x]   |
 | 💎  |   4   | Synchronous send+wait+receive engine              | §3, T06 §3        |  [x]   |
-| 💎  |   5   | Asynchronous delivery & completion list           | §4                 |  [ ]   |
+| 💎  |   5   | Asynchronous delivery & completion list           | §4                 |  [x]   |
 | 💎  |   6   | Large data: port sections & view mapping          | §2, T03 §7        |  [ ]   |
 | 💎  |   7   | Security: client token capture & impersonation    | §4, T11 §4-§7     |  [ ]   |
 | 💎  |   8   | NtAlpc* SSDT registration & stub retrofit           | §1-§7, T05 §4     |  [ ]   |
@@ -199,7 +199,7 @@ The three-way handshake: client connects by name, server accepts/rejects, both s
 - [x] `PendingQueue` is per-port (now typed as `ALPC_PENDING_QUEUE` of sender-owned `ALPC_PENDING_REPLY` records, separate from `ALPC_MSG_QUEUE`); entries are looked up by `MessageId` (monotonic u64) and removed by pointer identity to defeat any later MessageId reuse in disconnect/timeout races.
 - [x] Multiple threads may call `NtAlpcSendWaitReceivePort` on the same server port concurrently -- each dequeues one message; FIFO order is preserved within the spinlock window; no message is delivered to two threads (covered by `alpc: receive FIFO + truncation`).
 - [x] Port destruction race: `AlpcDisconnectPort` acquires `port->Lock`, sets `Disconnected=1`, drains MY `PendingQueue` AND peer's `PendingQueue` (each under its own port's lock), signals every blocked sync waiter with `STATUS_PORT_DISCONNECTED` BEFORE returning. `alpc_port_on_delete` performs the same drain defensively. Sender always frees its own `ALPC_PENDING_REPLY` after observing `Completed=1`, so no path frees memory another path is still writing to.
-- [x] (4.4 Commit) ~~Commit:~~ `"kernel/ipc/alpc: synchronous send+wait+receive engine with reply routing"` (b8054b5e, pushed)
+- [x] Commit `"kernel/ipc/alpc: synchronous send+wait+receive engine with reply routing"` (b8054b5e, pushed)
 
 **Test checkpoint:** Client sends 64-byte request with `ALPC_MSGFLG_SYNC_REQUEST` → client blocks. Server calls `NtAlpcSendWaitReceivePort` (receive-only) → dequeues request with correct `ClientId` and body. Server sends `ALPC_MSGFLG_REPLY_MESSAGE` → client unblocks with reply body intact and matching `MessageId`. Datagram send (no `SYNC_REQUEST`) → message queued, sender returns immediately. Message exceeding `MaxMessageLength` → `STATUS_BUFFER_TOO_SMALL`. Reply with wrong `MessageId` → `STATUS_REPLY_MESSAGE_MISMATCH`. Port disconnected during wait → `STATUS_PORT_DISCONNECTED`. FIFO order + body truncation when caller buffer is smaller than queued message. Late reply after sender timeout → `STATUS_REPLY_MESSAGE_MISMATCH`. Pool quota exceeded → `STATUS_INSUFFICIENT_RESOURCES`. Sync request with no peer → `STATUS_PORT_DISCONNECTED`. Serial log: `"alpc: msg sent: id=N type=DATAGRAM|REQUEST|REPLY len=N"`. Test on: QEMU WHPX + TCG.
 
@@ -219,34 +219,25 @@ The three-way handshake: client connects by name, server accepts/rejects, both s
 
 ## 5. Asynchronous Delivery & Completion List
 
-- [ ] (5.1 ALPC completion list) `ALPC_COMPLETION_LIST` -- lock-free single-producer / multi-consumer ring buffer for async message delivery:
-  ```c
-  typedef struct {
-      uint32_t  TotalSize;
-      uint32_t  UserVirtualAddr; /* mapped into server's address space */
-      uint32_t  KernelOffset;
-      uint32_t  Capacity;        /* number of entries */
-      _Atomic(uint32_t) ProducerHead;
-      _Atomic(uint32_t) ConsumerHead;
-      ALPC_COMPLETION_LIST_ITEM Items[]; /* variable length */
-  } ALPC_COMPLETION_LIST;
+- [x] (5.1 ALPC completion list) `ALPC_COMPLETION_LIST` + `ALPC_COMPLETION_LIST_ITEM` ABI types defined in `include/kernel/ipc/alpc.h` with `_Static_assert(sizeof(ALPC_COMPLETION_LIST_ITEM) == 24)`. The user-VA-mapped ring-buffer mechanism lands with §6 port sections; §5 implements the notification channel via the existing IOCP infrastructure.
+- [x] `NtAlpcSetInformation(port, AlpcAssociateCompletionPortInformation, {CompletionPort, CompletionKey}, len)` -- associates a user-space `IO_COMPLETION_PORT` (the `s_iocp_pool[]` entry opened by `NtCreateIoCompletion`) with the ALPC port. Incoming messages post a notification packet to that IOCP (KeyContext=CompletionKey, ApcContext=MessageId, Information=DataLength) IN ADDITION TO enqueueing on `MessageQueue`. The body remains on MessageQueue so receivers still pull it via `NtAlpcSendWaitReceivePort`; the IOCP is a wake/notification channel, not a replacement delivery vehicle.
+- [x] (5.2 Async message delivery) When the port has an associated completion port: datagram and sync-request sends call `io_completion_post()` after the normal MessageQueue enqueue. A failed post (IOCP full / stale handle) is logged and ignored -- the message is still on MessageQueue and will be delivered via normal receive. Exclusive delivery models were rejected in design review because they would either discard payload (IOCP entries cannot carry variable-length bodies) or duplicate it.
+- [x] Server consumes notifications from the completion port via `NtRemoveIoCompletion` (existing handler). Full blocking removal and `NtRemoveIoCompletionEx` remain in the IOCP backlog TODO; the non-blocking path is enough to drive §5 tests and a real-world poll loop.
+- [x] Fallback: if no completion port is associated (`port->CompletionPortHandle == 0`), `alpc_notify_completion_port()` early-returns and the send path uses only the synchronous `MessageQueue` + `WaitQueue` path from §4.
+- [x] (5.3 Waitable port) When `ALPC_PORTFLG_WAITABLE_PORT` is set in the port's `Attributes.Flags`, the port caches `IsWaitable=1` and initializes a MANUAL_RESET `SignalledEvent`. `msg_queue_enqueue_locked` sets the event on the 0→1 Count transition; `msg_queue_dequeue_locked` clears it on the 1→0 transition -- both under `port->Lock`, so the event state can never disagree with the queue state a waiter observes. `wait_on_handle` (src/kernel/nt/nt_sync.c) grew an `ObpAlpcPortType` branch that dispatches on `IsWaitable`, returning `STATUS_OBJECT_TYPE_MISMATCH` for non-waitable ports.
+- [x] (Bonus fix) `wait_on_handle` Event and Timer branches had an inverted `event_wait_timeout` result mapping (`== 0 ? SUCCESS : TIMEOUT`) that would have reported timeouts as SUCCESS and successes as TIMEOUT. Caught during §5 design review; corrected to `? SUCCESS : TIMEOUT`.
+- [x] (Bonus fix) `IO_COMPLETION_PORT` gained a per-port `spinlock_t lock` plus `s_iocp_allocator_lock` guarding `s_iocp_allocated`. The previous "single-threaded today" assumption ceased to hold as soon as kernel ALPC sends started posting completion packets concurrently with user-mode `NtSet/Remove` handlers. All four IOCP handlers (`NtCreate/Set/Remove` + the new `io_completion_post`) now run under the port lock.
+- [x] Disconnect's PORT_CLOSED marker is now routed through `msg_queue_enqueue_locked` (was a manual append) so SignalledEvent tracks MessageQueue.Count transitions across every producer, including teardown.
+- [x] (5.4 Commit) ~~Commit:~~ `"kernel/ipc/alpc: async completion list, waitable port, IO_COMPLETION integration"`
 
-  typedef struct {
-      PORT_MESSAGE *Message;   /* pointer into shared mapping */
-      uint64_t      PortContext;
-      uint32_t      MessageFlags;
-  } ALPC_COMPLETION_LIST_ITEM;
-  ```
-- [ ] `NtAlpcSetInformation(port, AlpcAssociateCompletionPortInformation,
-  {CompletionPort, CompletionKey}, len)` -- associates an `IO_COMPLETION_OBJECT` with the port; incoming async messages post a completion packet instead of queuing on `MessageQueue`; integrates with `NtWaitForSingleObject` on the completion port
+**Test checkpoint:** Create port with `ALPC_PORTFLG_WAITABLE_PORT`. `NtWaitForSingleObject(port, timeout=0)` returns `STATUS_TIMEOUT` when queue is empty. Send a message → wait returns `STATUS_SUCCESS`. Drain queue → next wait returns `STATUS_TIMEOUT` again. Non-waitable port → `STATUS_OBJECT_TYPE_MISMATCH`. Associate IOCP via `NtAlpcSetInformation(AlpcAssociateCompletionPortInformation)`; send datagram; `NtRemoveIoCompletion` returns a packet with `KeyContext == CompletionKey` and `Information == DataLength`; the message body still dequeues from `MessageQueue` via `NtAlpcSendWaitReceivePort`. Associate with a bogus IOCP handle → `STATUS_INVALID_HANDLE`. Unknown info class → `STATUS_NOT_IMPLEMENTED` (pending §9). Serial log: `"alpc: port associated with IOCP: port_type=N key=0x..."`. Test on: QEMU WHPX + TCG.
 
-- [ ] (5.2 Async message delivery) When the port has an associated completion port: on `AlpcEnqueueMessage`, instead of pushing to `MessageQueue` + waking `WaitQueue`, post a completion packet to the `IO_COMPLETION_OBJECT`: `IoSetIoCompletion(completion_port, completion_key, message_ptr, STATUS_SUCCESS, 0)`
-- [ ] Server consumes messages from the completion port via `NtRemoveIoCompletion` / `NtRemoveIoCompletionEx` (standard I/O completion port API, → future TODO for I/O completion ports in `05-storage-filesystems`)
-- [ ] Fallback: if no completion port is associated, use the synchronous `MessageQueue` + `WaitQueue` path from §4
-- [ ] (5.3 Waitable port) When `ALPC_PORTFLG_WAITABLE_PORT` is set: port itself is a waitable kernel object; `ObSetObjectWaitable(port)` makes it compatible with `NtWaitForSingleObject`; port is signalled when `MessageQueue` becomes non-empty, cleared when queue drains to empty
-- [ ] (5.4 Commit) Commit: `"kernel/ipc/alpc: async completion list, waitable port, IO_COMPLETION integration"`
+> **Test runner:** `scripts\debug\run-ipc-tests.bat` (SUITE=ipc)
+> **Expected:** 6 new alpc §5 suites pass (ALPC_COMPLETION_LIST_ITEM layout, waitable port signal/drain, non-waitable port rejects wait, associate completion port + notification, bad IOCP handle, unknown info class), 0 failures
 
-**Test checkpoint:** Create port with `ALPC_PORTFLG_WAITABLE_PORT`. `NtWaitForSingleObject(port)` blocks when queue is empty. Send a message → port becomes signalled, wait returns `STATUS_SUCCESS`. Drain queue → port unsignalled. If I/O completion ports are available: associate completion port with ALPC port, send message, verify completion packet posted. Serial log: `"[ALPC] waitable port signalled: %s"`. Test on: QEMU WHPX + TCG (pure kernel logic, no hardware).
+> **Verified:** 2026-04-15 -- Evidence mapped: every `[x]` item backed by `include/kernel/ipc/alpc.h` (`ALPC_COMPLETION_LIST` + `ALPC_COMPLETION_LIST_ITEM` + static_assert), `include/kernel/ipc/alpc_port.h` (`ALPC_PORT_INFORMATION_CLASS`, `ALPC_PORT_ASSOCIATE_COMPLETION_PORT`, `ALPC_PORT.{CompletionPortHandle, CompletionKey, IsWaitable, SignalledEvent}`, `AlpcAssociateCompletionPort` proto), `include/kernel/nt/nt_file.h` (`IO_COMPLETION_PORT.lock`, `io_completion_post`, `io_completion_validate_handle` protos), `src/kernel/ipc/alpc_port.c` (SignalledEvent init in both port-alloc paths, edge hooks in `msg_queue_enqueue_locked` / `msg_queue_dequeue_locked`, `alpc_notify_completion_port` invoked from datagram + sync-request after enqueue, `AlpcAssociateCompletionPort` body, disconnect PORT_CLOSED routed through helper), `src/kernel/nt/nt_file.c` (per-port + allocator spinlock, init-then-publish in NtCreateIoCompletion, `iocp_index_from_handle`, `iocp_enqueue_locked_call`, `io_completion_post`, `io_completion_validate_handle`), `src/kernel/nt/nt_sync.c` (ObpAlpcPortType branch in `wait_on_handle` + pre-existing inverted timeout mapping fixed), `src/kernel/nt/nt_alpc.c` (real `NtAlpcSetInformation_handler`), `src/kernel/test/test_alpc.c` (6 new TEST_CAT_IPC suites). Slot 0x011D dropped from `test_ob.c` pending sweep. Build clean (`=== BUILD OK ===`).
+> **Quality reviewed:** 2026-04-15 -- kernel-code-quality Gates 1-11 walked clean. Codex design review caught 1 Critical + 3 High + 1 Medium in the INITIAL plan (payload-discarding IOCP "exclusive delivery", IOCP ring race, disconnect bypassing SignalledEvent helper, inverted timeout mapping) -- all redesigned before a line of code was written: IOCP became a notification channel (body stays on MessageQueue), IOCP got its own spinlock, disconnect now routes through `msg_queue_enqueue_locked`, and the `wait_on_handle` inversion was fixed as an in-scope bonus. Step-13 adversarial review on the implemented code found 1 High + 1 Medium: (1) HIGH accepted with XREF -- IOCP handles are numeric `idx + 0x10000` values with no ownership check, so any task can guess a peer's IOCP index; this is a pre-existing design issue not introduced by §5 and the §5 spec text itself defers the Ob-backed IOCP rewrite to `03-memory-concurrency/TODO-08 §4` (concrete item "Retrofit existing in-tree consumers to the new Ob-backed IOCP" at line 121 -- names `iocp_index_from_handle`, `io_completion_post`, and `AlpcAssociateCompletionPort` as the three retrofit consumers plus the cross-task access-denied test requirement); (2) MEDIUM fixed -- `NtCreateIoCompletion_handler` published `s_iocp_allocated` before initializing the slot's head/tail/count/lock, exposing the slot to a concurrent NtSet/Remove/io_completion_post walking uninitialized fields; fix holds the allocator lock through init and publishes last. Accepted IOCP cross-task threat explicitly matches the §5 "future TODO for I/O completion ports" caveat in the TODO text. No dead code; no consistency drift; no perf regressions (two new spinlocks both <100 ns per op).
+> **Test runner:** `scripts\debug\run-ipc-tests.bat` (SUITE=ipc), 6 alpc §5 suites + 14 §4 + 8 §3 + 18 §1-§2 = 46 total alpc suites, 0 failures expected
 
 ---
 
@@ -484,7 +475,7 @@ High-throughput ports like `\Windows\ApiPort` (CSRSS) process thousands of messa
 | --- | ------------------------------ | ----------------------- | ------------------------- | -------------------------------------- |
 | 💎 | Connection-oriented ports    | ✅ ALPC                | ⚠️ SOCK_SEQPACKET       | ⬜ §2-§3                              |
 | 💎 | Sync send+wait+reply         | ✅ Full                | ⚠️ No typed reply       | ✅ §4 done (datagram + sync + reply) |
-| 💎 | Async completion delivery    | ✅ Full                | ⚠️ io_uring (RFC 2026)  | ⬜ §5                                 |
+| 💎 | Async completion delivery    | ✅ Full                | ⚠️ io_uring (RFC 2026)  | ✅ §5 (IOCP notify + waitable port)   |
 | 💎 | Large data via section       | ✅ Port sections       | ⚠️ Manual mmap          | ⬜ §6                                 |
 | 💎 | Client identity capture      | ✅ Full                | ⚠️ SCM_CREDENTIALS      | ⬜ §7                                 |
 | 💎 | Named port namespace         | ✅ `\\RPC Control\\`     | ⚠️ Abstract sockets     | ⬜ §2                                 |

@@ -225,6 +225,8 @@ typedef struct {
 
 /* ---- I/O Completion Port ------------------------------------------------ */
 
+#include "kernel/sched/spinlock.h"
+
 typedef struct {
     uint64_t KeyContext;
     uint64_t ApcContext;
@@ -240,7 +242,33 @@ typedef struct {
     uint32_t head;
     uint32_t tail;
     uint32_t count;
+    uint32_t _pad_count;
+    /* Added 2026-04-15 for ALPC §5: kernel-side ALPC sends now post
+     * completion packets concurrently with user-side NtSet/Remove. The
+     * previous single-threaded assumption does not hold once ALPC posts
+     * asynchronously. */
+    spinlock_t lock;
 } IO_COMPLETION_PORT;
+
+/* ---- Kernel-internal IOCP bridge (used by ALPC §5) --------------------
+ *
+ * io_completion_post: enqueue a completion packet from a kernel producer.
+ * Validates the IOCP "handle" (idx + 0x10000) against the allocated pool,
+ * takes the per-port lock, appends entry. Returns STATUS_SUCCESS on
+ * enqueue, STATUS_INVALID_HANDLE for an unknown index, or
+ * STATUS_INSUFFICIENT_RESOURCES when the ring is full.
+ *
+ * Callers (e.g. ALPC datagram/sync paths) should treat the result as a
+ * best-effort notification: a failed post is not a message loss, because
+ * the ALPC message remains on its normal MessageQueue.
+ */
+NTSTATUS io_completion_post(HANDLE iocp_handle, uint64_t key,
+                            uint64_t apc, NTSTATUS status, uint64_t info);
+
+/* Validate an IOCP handle without posting. Used by ALPC §5 association
+ * at registration time. Returns STATUS_SUCCESS if the handle is a live
+ * IOCP index, STATUS_INVALID_HANDLE otherwise. */
+NTSTATUS io_completion_validate_handle(HANDLE iocp_handle);
 
 /* ---- DeviceIoControlFile method codes ----------------------------------- */
 

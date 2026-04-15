@@ -224,6 +224,42 @@ _Static_assert((ALPC_MSGFLG_REPLY_MESSAGE
               + ALPC_MSGFLG_WAIT_PENDING_CALLBACKS),
                "ALPC_MSGFLG_* bits must be non-overlapping");
 
+/* ---- ALPC_COMPLETION_LIST (TODO-12 §5.1) -----------------------------
+ *
+ * Lock-free single-producer / multi-consumer ring buffer for async
+ * message notifications. Windows maps this structure into the server's
+ * address space so the consumer can check for incoming messages without
+ * a syscall. Impossible OS defines the on-the-wire layout now; the
+ * full shared-VA mapping path lives in §6 (port sections), and §5's
+ * IOCP bridge (io_completion_post) implements the kernel-side wake
+ * while leaving actual message bodies on MessageQueue.
+ *
+ * Consumers read ConsumerHead, atomically increment to claim a slot,
+ * then read Items[slot]. Producers (the kernel ALPC engine) increment
+ * ProducerHead. Callers that only care about IOCP-based delivery can
+ * ignore this struct.
+ */
+typedef struct {
+    void     *Message;        /* PORT_MESSAGE * into the port's section */
+    uint64_t  PortContext;
+    uint32_t  MessageFlags;
+    uint32_t  _pad;
+} ALPC_COMPLETION_LIST_ITEM;
+
+typedef struct {
+    uint32_t  TotalSize;          /* total bytes, including header */
+    uint32_t  UserVirtualAddr;    /* offset from mapping base */
+    uint32_t  KernelOffset;       /* offset from kernel-side pointer */
+    uint32_t  Capacity;           /* number of Items[] slots */
+    uint32_t  ProducerHead;       /* producer cursor -- atomic ops only */
+    uint32_t  ConsumerHead;       /* consumer cursor -- atomic ops only */
+    uint32_t  _pad[2];            /* align Items[] to 32 bytes */
+    ALPC_COMPLETION_LIST_ITEM Items[];   /* variable length, Capacity entries */
+} ALPC_COMPLETION_LIST;
+
+_Static_assert(sizeof(ALPC_COMPLETION_LIST_ITEM) == 24,
+               "ALPC_COMPLETION_LIST_ITEM must be 24 bytes");
+
 /* ---- Boot-time announcement -------------------------------------------- */
 /*
  * alpc_init() emits a single klog line confirming the ABI is compiled

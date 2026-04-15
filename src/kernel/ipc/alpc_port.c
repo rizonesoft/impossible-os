@@ -18,12 +18,20 @@
 #include "kernel/sched/task.h"
 #include "kernel/mm/heap.h"
 #include "kernel/klog.h"
+#include "kernel/nt/nt_file.h"         /* io_completion_post, validate */
 #include "libc/string.h"               /* canonical kernel memcpy */
 
 const OBJECT_TYPE *ObpAlpcPortType;
 
 static void *s_rpc_control_dir;
 static uint8_t s_inited;
+
+/* Forward declarations for §5 helpers used by §3 AlpcDisconnectPort and
+ * the §4 engine before their definitions appear below. */
+static void msg_queue_enqueue_locked(ALPC_PORT *port, PORT_MESSAGE_ENTRY *entry);
+static void alpc_notify_completion_port(ALPC_PORT *peer,
+                                        uint64_t message_id,
+                                        uint32_t data_len);
 
 /* Forward declaration: full definition lives with the §3 connection
  * state machine below. alpc_port_on_delete needs the layout to drain
@@ -382,9 +390,17 @@ NTSTATUS AlpcCreatePort(HANDLE_TABLE *ht, const char *name,
     port->OwnerTask     = task_current();
     port->NextMessageId = 1;
     event_init(&port->WaitQueue, "alpc_port_wait", EVENT_AUTO_RESET, 0);
+    /* §5.3: SignalledEvent is manual-reset so NtWaitForSingleObject on
+     * the port sees "queue non-empty" until the consumer explicitly
+     * drains. event_reset on the 1 -> 0 dequeue transition clears it. */
+    event_init(&port->SignalledEvent, "alpc_port_signal",
+               EVENT_MANUAL_RESET, 0);
 
-    if (attrs)
+    if (attrs) {
         port->Attributes = *attrs;              /* copy by value */
+        if (attrs->Flags & ALPC_PORTFLG_WAITABLE_PORT)
+            port->IsWaitable = 1;
+    }
 
     /* 3. Allocate the handle FIRST. On failure, the creation ref is the
      * only reference; a simple deref frees the port. No namespace
@@ -499,13 +515,20 @@ static ALPC_PORT *alpc_alloc_comm_port(ALPC_PORT_TYPE type,
     p->OwnerTask     = task_current();
     p->NextMessageId = 1;
     event_init(&p->WaitQueue, "alpc_comm_wait", EVENT_AUTO_RESET, 0);
+    event_init(&p->SignalledEvent, "alpc_comm_signal",
+               EVENT_MANUAL_RESET, 0);
     /* Comm ports inherit the connection port's Attributes so per-port
      * caps (MaxMessageLength, MaxPoolUsage, MaxViewSize, etc.) apply to
      * messages flowing through this side of the cross-link. Matches
      * Windows ALPC behaviour where the connection-port attrs govern
-     * the whole port pair. */
-    if (inherit)
+     * the whole port pair. Waitable bit inherits for the same reason:
+     * if the listener was created waitable, both comm ports can be
+     * wait targets for NtWaitForSingleObject. */
+    if (inherit) {
         p->Attributes = *inherit;
+        if (inherit->Flags & ALPC_PORTFLG_WAITABLE_PORT)
+            p->IsWaitable = 1;
+    }
     return p;
 }
 
@@ -903,15 +926,11 @@ NTSTATUS AlpcDisconnectPort(HANDLE_TABLE *ht, HANDLE port_handle)
         close_msg->Header.Type        = ALPC_MSG_TYPE_PORT_CLOSED;
 
         spin_lock_irqsave(&peer->Lock, &irqf);
-        /* Append to peer's MessageQueue. */
-        if (!peer->MessageQueue.Head) {
-            peer->MessageQueue.Head = close_msg;
-            peer->MessageQueue.Tail = close_msg;
-        } else {
-            peer->MessageQueue.Tail->Link_next = close_msg;
-            peer->MessageQueue.Tail = close_msg;
-        }
-        peer->MessageQueue.Count++;
+        /* Route through the shared enqueue helper so §5.3's SignalledEvent
+         * tracks MessageQueue.Count transitions across every producer,
+         * including disconnect's PORT_CLOSED marker. A waitable peer
+         * must wake on teardown, not only on normal sends. */
+        msg_queue_enqueue_locked(peer, close_msg);
         peer->Disconnected = 1;
         /* Drain peer's PendingQueue too: peer may have sync requests
          * waiting for replies from US, which will never arrive. Signal
@@ -1154,10 +1173,17 @@ static uint32_t alpc_effective_max_message(const ALPC_PORT *p)
 }
 
 /* Append `entry` to `port->MessageQueue` under `port->Lock`. Caller
- * holds the lock. */
+ * holds the lock.
+ *
+ * Side effect for §5.3: on the 0 -> 1 transition, set port->SignalledEvent
+ * (manual-reset) iff the port is waitable. The event is strictly tied
+ * to MessageQueue.Count > 0; edge transitions happen under the same
+ * lock that guards Count so the event state can never disagree with the
+ * queue state a waiter would observe. */
 static void msg_queue_enqueue_locked(ALPC_PORT *port, PORT_MESSAGE_ENTRY *entry)
 {
     entry->Link_next = (PORT_MESSAGE_ENTRY *)0;
+    uint32_t was = port->MessageQueue.Count;
     if (!port->MessageQueue.Head) {
         port->MessageQueue.Head = entry;
         port->MessageQueue.Tail = entry;
@@ -1166,10 +1192,15 @@ static void msg_queue_enqueue_locked(ALPC_PORT *port, PORT_MESSAGE_ENTRY *entry)
         port->MessageQueue.Tail = entry;
     }
     port->MessageQueue.Count++;
+    if (port->IsWaitable && was == 0)
+        event_set(&port->SignalledEvent);
 }
 
 /* Dequeue front of `port->MessageQueue` under `port->Lock`. Returns
- * NULL if empty. Caller holds the lock. */
+ * NULL if empty. Caller holds the lock.
+ *
+ * Side effect for §5.3: on the 1 -> 0 transition, clear
+ * port->SignalledEvent so subsequent NtWaitForSingleObject blocks again. */
 static PORT_MESSAGE_ENTRY *msg_queue_dequeue_locked(ALPC_PORT *port)
 {
     PORT_MESSAGE_ENTRY *e = port->MessageQueue.Head;
@@ -1180,6 +1211,8 @@ static PORT_MESSAGE_ENTRY *msg_queue_dequeue_locked(ALPC_PORT *port)
         port->MessageQueue.Tail = (PORT_MESSAGE_ENTRY *)0;
     port->MessageQueue.Count--;
     e->Link_next = (PORT_MESSAGE_ENTRY *)0;
+    if (port->IsWaitable && port->MessageQueue.Count == 0)
+        event_reset(&port->SignalledEvent);
     return e;
 }
 
@@ -1369,6 +1402,11 @@ static NTSTATUS alpc_datagram_send(ALPC_PORT *sender_port,
     entry = (PORT_MESSAGE_ENTRY *)0;
 
     event_set(&peer->WaitQueue);
+    /* §5.2 async wake: if the peer associated an IOCP, push a notification
+     * packet in addition to the MessageQueue enqueue. Must run AFTER the
+     * regular event_set so a receiver that observed WaitQueue still sees
+     * the matching IOCP entry. */
+    alpc_notify_completion_port(peer, local_msg_id, data_len);
 
     klog(LOG_DEBUG, "alpc", "msg sent: id=%u type=DATAGRAM len=%u",
          local_msg_id, (uint64_t)data_len);
@@ -1489,6 +1527,11 @@ static NTSTATUS alpc_sync_request(ALPC_PORT *sender_port,
     alpc_unlock_two(first, second, irqf, irqf2);
 
     event_set(&peer->WaitQueue);
+    /* §5.2: also notify peer's associated IOCP if any. Sync request +
+     * completion port is a valid combination; the IOCP wake is purely
+     * an advisory signal to the receiver that a message (request) is
+     * ready. The sender still blocks on pending->ReplyWait as usual. */
+    alpc_notify_completion_port(peer, message_id, data_len);
 
     klog(LOG_DEBUG, "alpc", "msg sent: id=%u type=REQUEST len=%u",
          (uint64_t)message_id, (uint64_t)data_len);
@@ -1602,6 +1645,85 @@ static NTSTATUS alpc_reply(ALPC_PORT *replier_port, PORT_MESSAGE *send_msg)
          (uint64_t)message_id, (uint64_t)copy_len);
 
     ObDereferenceObject(peer);
+    return STATUS_SUCCESS;
+}
+
+/* ---- §5 Async delivery: IOCP notification helper --------------------
+ *
+ * Called after a successful enqueue on peer->MessageQueue to wake a
+ * server that associated an IOCP. The ALPC message itself STAYS on
+ * MessageQueue -- this is a notification channel only, not a delivery
+ * substitute. A failed post (IOCP full, stale handle) is logged and
+ * ignored; the sender does not learn about it because the receiver can
+ * still observe the message through normal ALPC receive.
+ *
+ * KeyContext  = port->CompletionKey (opaque identifier chosen at
+ *               association time)
+ * ApcContext  = MessageId of the ALPC message just enqueued
+ * IoStatus    = STATUS_SUCCESS
+ * Information = DataLength of the message body
+ *
+ * Caller must NOT hold any port->Lock (io_completion_post takes the
+ * IOCP's own spinlock). */
+static void alpc_notify_completion_port(ALPC_PORT *peer,
+                                        uint64_t message_id,
+                                        uint32_t data_len)
+{
+    HANDLE cp;
+    uint64_t key;
+    uint64_t irqf;
+
+    spin_lock_irqsave(&peer->Lock, &irqf);
+    cp  = peer->CompletionPortHandle;
+    key = peer->CompletionKey;
+    spin_unlock_irqrestore(&peer->Lock, irqf);
+
+    if (cp == (HANDLE)0 || cp == INVALID_HANDLE_VALUE)
+        return;
+
+    NTSTATUS st = io_completion_post(cp, key, message_id,
+                                     STATUS_SUCCESS,
+                                     (uint64_t)data_len);
+    if (!NT_SUCCESS(st)) {
+        /* Best-effort wake: message is still on MessageQueue and will
+         * be delivered via the normal receive path. Log so operators
+         * notice a starved IOCP. */
+        klog(LOG_WARN, "alpc",
+             "completion port post failed (status=0x%x) id=%u len=%u",
+             (uint64_t)(uint32_t)st, (uint64_t)message_id,
+             (uint64_t)data_len);
+    }
+}
+
+/* ---- AlpcAssociateCompletionPort (§5.1 public helper) --------------- */
+
+NTSTATUS AlpcAssociateCompletionPort(HANDLE_TABLE *ht, HANDLE port_handle,
+                                     HANDLE completion_port, uint64_t key)
+{
+    ALPC_PORT *port;
+    NTSTATUS st;
+    uint64_t irqf;
+
+    /* Validate IOCP handle before pinning the ALPC port so a bad IOCP
+     * never leaves the port in a half-associated state. */
+    st = io_completion_validate_handle(completion_port);
+    if (!NT_SUCCESS(st))
+        return st;
+
+    st = resolve_alpc_port(ht, port_handle, &port);
+    if (!NT_SUCCESS(st))
+        return st;
+
+    spin_lock_irqsave(&port->Lock, &irqf);
+    port->CompletionPortHandle = completion_port;
+    port->CompletionKey        = key;
+    spin_unlock_irqrestore(&port->Lock, irqf);
+
+    klog(LOG_DEBUG, "alpc",
+         "port associated with IOCP: port_type=%u key=0x%lx",
+         (uint64_t)port->PortType, key);
+
+    ObDereferenceObject(port);
     return STATUS_SUCCESS;
 }
 

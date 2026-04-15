@@ -1510,6 +1510,278 @@ static void test_alpc_syscall_validation(void)
     }
 }
 
+/* =========================================================================
+ * §5 Asynchronous Delivery & Completion List tests
+ *
+ * Covers:
+ *   - ALPC_COMPLETION_LIST_ITEM ABI (sizeof lock)
+ *   - Waitable port: NtWaitForSingleObject signalled on message, cleared on drain
+ *   - Non-waitable port rejected by NtWaitForSingleObject
+ *   - NtAlpcSetInformation(AlpcAssociateCompletionPort) success + bad handles
+ *   - IOCP notification: datagram send with associated completion port
+ *     enqueues both on MessageQueue (body stays) AND IOCP (notification)
+ * =======================================================================*/
+
+#include "kernel/nt/nt_file.h"          /* IO_COMPLETION_PORT + io_completion_post */
+
+static void test_alpc_completion_list_item_layout(void)
+{
+    TEST_ASSERT_EQ(sizeof(ALPC_COMPLETION_LIST_ITEM), 24u,
+                   "ALPC_COMPLETION_LIST_ITEM sizeof == 24");
+    TEST_ASSERT_EQ(__builtin_offsetof(ALPC_COMPLETION_LIST_ITEM, Message), 0u,
+                   "ALPC_COMPLETION_LIST_ITEM.Message at offset 0");
+    TEST_ASSERT_EQ(__builtin_offsetof(ALPC_COMPLETION_LIST_ITEM, PortContext), 8u,
+                   "ALPC_COMPLETION_LIST_ITEM.PortContext at offset 8");
+    TEST_ASSERT_EQ(__builtin_offsetof(ALPC_COMPLETION_LIST_ITEM, MessageFlags), 16u,
+                   "ALPC_COMPLETION_LIST_ITEM.MessageFlags at offset 16");
+}
+
+/* ---- §5.3 Waitable port: NtWaitForSingleObject signalled on msg ------ */
+
+static void test_alpc_waitable_port_signal(void)
+{
+    HANDLE server_conn = INVALID_HANDLE_VALUE;
+    ALPC_PORT_ATTRIBUTES attrs;
+    uint8_t *zp = (uint8_t *)&attrs;
+    for (uint32_t i = 0; i < sizeof(attrs); i++) zp[i] = 0;
+    attrs.Flags = ALPC_PORTFLG_WAITABLE_PORT;
+
+    NTSTATUS st = AlpcCreatePort(&task_current()->handle_table,
+                                 "WaitPort", &attrs, &server_conn);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS,
+                   "waitable: server CreatePort");
+    if (server_conn == INVALID_HANDLE_VALUE)
+        return;
+
+    s_sync_target_name = "\\RPC Control\\WaitPort";
+    s_sync_client_handle = INVALID_HANDLE_VALUE;
+    s_sync_worker_done = 0;
+    int tid = kthread_create(s4_connect_worker, (void *)0, 0);
+    TEST_ASSERT(tid >= 0, "waitable: worker");
+    HANDLE server_comm = INVALID_HANDLE_VALUE;
+    (void)AlpcAcceptConnectPort(&task_current()->handle_table,
+                                server_conn, 1, 5000, &server_comm);
+    thread_join((uint32_t)tid);
+    HANDLE client_h = s_sync_client_handle;
+    if (client_h == INVALID_HANDLE_VALUE) {
+        NtClose(&task_current()->handle_table, server_conn);
+        return;
+    }
+
+    /* With empty queue, NtWaitForSingleObject with timeout=0 returns TIMEOUT. */
+    int64_t zero_timeout = 0;
+    st = (NTSTATUS)ssdt_dispatch(SSDT_NtWaitForSingleObject,
+                                 (uint64_t)(uintptr_t)server_comm, 0,
+                                 (uint64_t)(uintptr_t)&zero_timeout,
+                                 0, 0, 0);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_TIMEOUT,
+                   "waitable empty + timeout=0 => TIMEOUT");
+
+    /* Client sends a datagram -> port becomes signalled. */
+    uint8_t buf[sizeof(PORT_MESSAGE) + 4];
+    PORT_MESSAGE *msg = (PORT_MESSAGE *)buf;
+    for (uint32_t i = 0; i < sizeof(buf); i++) buf[i] = 0;
+    msg->TotalLength = sizeof(PORT_MESSAGE) + 4;
+    msg->DataLength  = 4;
+    msg->Type        = ALPC_MSG_TYPE_DATAGRAM;
+    st = AlpcSendWaitReceivePort(&task_current()->handle_table,
+                                 client_h, 0, msg, (PORT_MESSAGE *)0, 0, 0);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS, "datagram sent");
+
+    /* Wait with timeout=0 should now succeed (queue non-empty). */
+    st = (NTSTATUS)ssdt_dispatch(SSDT_NtWaitForSingleObject,
+                                 (uint64_t)(uintptr_t)server_comm, 0,
+                                 (uint64_t)(uintptr_t)&zero_timeout,
+                                 0, 0, 0);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS,
+                   "waitable + msg queued => SUCCESS");
+
+    /* Drain the message, port should become unsignalled. */
+    uint8_t rxbuf[sizeof(PORT_MESSAGE) + 32];
+    PORT_MESSAGE *rx = (PORT_MESSAGE *)rxbuf;
+    st = AlpcSendWaitReceivePort(&task_current()->handle_table,
+                                 server_comm, 0, (PORT_MESSAGE *)0, rx,
+                                 sizeof(rxbuf), 0);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS, "drain");
+
+    st = (NTSTATUS)ssdt_dispatch(SSDT_NtWaitForSingleObject,
+                                 (uint64_t)(uintptr_t)server_comm, 0,
+                                 (uint64_t)(uintptr_t)&zero_timeout,
+                                 0, 0, 0);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_TIMEOUT,
+                   "waitable drained => TIMEOUT again");
+
+    NtClose(&task_current()->handle_table, client_h);
+    NtClose(&task_current()->handle_table, server_comm);
+    NtClose(&task_current()->handle_table, server_conn);
+}
+
+/* ---- §5.3 Non-waitable port rejected ---------------------------------- */
+
+static void test_alpc_nonwaitable_rejects(void)
+{
+    HANDLE h = INVALID_HANDLE_VALUE;
+    NTSTATUS st = AlpcCreatePort(&task_current()->handle_table,
+                                 "NotWaitable", (ALPC_PORT_ATTRIBUTES *)0, &h);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS, "nw: create");
+    if (h == INVALID_HANDLE_VALUE)
+        return;
+
+    int64_t zero = 0;
+    st = (NTSTATUS)ssdt_dispatch(SSDT_NtWaitForSingleObject,
+                                 (uint64_t)(uintptr_t)h, 0,
+                                 (uint64_t)(uintptr_t)&zero,
+                                 0, 0, 0);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_OBJECT_TYPE_MISMATCH,
+                   "non-waitable port rejects NtWaitForSingleObject");
+
+    NtClose(&task_current()->handle_table, h);
+}
+
+/* ---- §5.1/§5.2 NtAlpcSetInformation: AssociateCompletionPort --------- */
+
+static void test_alpc_associate_completion_port(void)
+{
+    /* Create an IOCP. */
+    HANDLE iocp = INVALID_HANDLE_VALUE;
+    NTSTATUS st = (NTSTATUS)ssdt_dispatch(SSDT_NtCreateIoCompletion,
+                                          (uint64_t)(uintptr_t)&iocp,
+                                          0, 0, 0, 0, 0);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS, "iocp: create");
+    TEST_ASSERT_NEQ(iocp, INVALID_HANDLE_VALUE, "iocp: handle valid");
+
+    /* Create an ALPC port (non-waitable is fine -- IOCP path is
+     * orthogonal to waitable port). */
+    HANDLE server_conn = INVALID_HANDLE_VALUE;
+    st = AlpcCreatePort(&task_current()->handle_table,
+                       "IocpPort", (ALPC_PORT_ATTRIBUTES *)0, &server_conn);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS, "iocp: alpc create");
+
+    s_sync_target_name = "\\RPC Control\\IocpPort";
+    s_sync_client_handle = INVALID_HANDLE_VALUE;
+    s_sync_worker_done = 0;
+    int tid = kthread_create(s4_connect_worker, (void *)0, 0);
+    HANDLE server_comm = INVALID_HANDLE_VALUE;
+    (void)AlpcAcceptConnectPort(&task_current()->handle_table,
+                                server_conn, 1, 5000, &server_comm);
+    thread_join((uint32_t)tid);
+    HANDLE client_h = s_sync_client_handle;
+    if (client_h == INVALID_HANDLE_VALUE) {
+        NtClose(&task_current()->handle_table, server_conn);
+        return;
+    }
+
+    /* Associate the IOCP with the server-comm port. */
+    ALPC_PORT_ASSOCIATE_COMPLETION_PORT assoc;
+    assoc.CompletionPort = iocp;
+    assoc.CompletionKey  = 0xCAFE5678ul;
+    st = (NTSTATUS)ssdt_dispatch(
+        SSDT_NtAlpcSetInformation,
+        (uint64_t)(uintptr_t)server_comm,
+        AlpcAssociateCompletionPortInformation,
+        (uint64_t)(uintptr_t)&assoc,
+        sizeof(assoc), 0, 0);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS,
+                   "SetInfo: AssociateCompletionPort SUCCESS");
+
+    /* Client sends a datagram. The IOCP MUST receive a notification. */
+    uint8_t buf[sizeof(PORT_MESSAGE) + 8];
+    PORT_MESSAGE *msg = (PORT_MESSAGE *)buf;
+    for (uint32_t i = 0; i < sizeof(buf); i++) buf[i] = 0;
+    msg->TotalLength = sizeof(PORT_MESSAGE) + 8;
+    msg->DataLength  = 8;
+    msg->Type        = ALPC_MSG_TYPE_DATAGRAM;
+    st = AlpcSendWaitReceivePort(&task_current()->handle_table,
+                                 client_h, 0, msg, (PORT_MESSAGE *)0, 0, 0);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS, "iocp: datagram");
+
+    /* Dequeue the completion packet. Key must match, Information == DataLength. */
+    uint64_t key_out = 0, apc_out = 0;
+    IO_STATUS_BLOCK iosb;
+    iosb.Status = 0xDEADBEEFu;
+    iosb.Information = 0xBAD0BAD0u;
+    st = (NTSTATUS)ssdt_dispatch(SSDT_NtRemoveIoCompletion,
+                                 (uint64_t)(uintptr_t)iocp,
+                                 (uint64_t)(uintptr_t)&key_out,
+                                 (uint64_t)(uintptr_t)&apc_out,
+                                 (uint64_t)(uintptr_t)&iosb,
+                                 0, 0);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS,
+                   "iocp: RemoveIoCompletion returns the notification");
+    TEST_ASSERT_EQ(key_out, 0xCAFE5678ul,
+                   "iocp: CompletionKey round-trips");
+    TEST_ASSERT_EQ((uint64_t)iosb.Information, 8ul,
+                   "iocp: IoStatusInformation == DataLength");
+    TEST_ASSERT_EQ((uint32_t)iosb.Status, (uint32_t)STATUS_SUCCESS,
+                   "iocp: IoStatus == SUCCESS");
+
+    /* The message body MUST still be on MessageQueue (notification, not
+     * delivery replacement). Drain it via normal receive. */
+    uint8_t rxbuf[sizeof(PORT_MESSAGE) + 32];
+    PORT_MESSAGE *rx = (PORT_MESSAGE *)rxbuf;
+    st = AlpcSendWaitReceivePort(&task_current()->handle_table,
+                                 server_comm, 0, (PORT_MESSAGE *)0, rx,
+                                 sizeof(rxbuf), 100);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS,
+                   "iocp: body still on MessageQueue (notification-only)");
+    TEST_ASSERT_EQ((uint32_t)rx->DataLength, 8u,
+                   "iocp: body DataLength intact");
+
+    NtClose(&task_current()->handle_table, client_h);
+    NtClose(&task_current()->handle_table, server_comm);
+    NtClose(&task_current()->handle_table, server_conn);
+}
+
+/* ---- SetInfo with bad IOCP handle ------------------------------------- */
+
+static void test_alpc_associate_bad_iocp(void)
+{
+    HANDLE h = INVALID_HANDLE_VALUE;
+    NTSTATUS st = AlpcCreatePort(&task_current()->handle_table,
+                                 "BadIocp", (ALPC_PORT_ATTRIBUTES *)0, &h);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS, "badiocp: create");
+    if (h == INVALID_HANDLE_VALUE)
+        return;
+
+    /* Handle 0x0000 is below the IOCP offset -- must reject. */
+    ALPC_PORT_ASSOCIATE_COMPLETION_PORT assoc;
+    assoc.CompletionPort = (HANDLE)0;
+    assoc.CompletionKey  = 0;
+    st = (NTSTATUS)ssdt_dispatch(
+        SSDT_NtAlpcSetInformation,
+        (uint64_t)(uintptr_t)h,
+        AlpcAssociateCompletionPortInformation,
+        (uint64_t)(uintptr_t)&assoc,
+        sizeof(assoc), 0, 0);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_INVALID_HANDLE,
+                   "bad IOCP handle => INVALID_HANDLE");
+
+    NtClose(&task_current()->handle_table, h);
+}
+
+/* ---- SetInfo unknown info class --------------------------------------- */
+
+static void test_alpc_setinfo_unknown_class(void)
+{
+    HANDLE h = INVALID_HANDLE_VALUE;
+    NTSTATUS st = AlpcCreatePort(&task_current()->handle_table,
+                                 "BadClass", (ALPC_PORT_ATTRIBUTES *)0, &h);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS, "badclass: create");
+    if (h == INVALID_HANDLE_VALUE)
+        return;
+
+    uint64_t dummy = 0;
+    st = (NTSTATUS)ssdt_dispatch(SSDT_NtAlpcSetInformation,
+                                 (uint64_t)(uintptr_t)h,
+                                 /* info_class */ 99,
+                                 (uint64_t)(uintptr_t)&dummy,
+                                 sizeof(dummy), 0, 0);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_NOT_IMPLEMENTED,
+                   "unknown info class => NOT_IMPLEMENTED (pending §9)");
+
+    NtClose(&task_current()->handle_table, h);
+}
+
 /* ---- Registration ------------------------------------------------------ */
 
 void test_register_alpc(void)
@@ -1596,6 +1868,19 @@ void test_register_alpc(void)
                             test_alpc_sync_no_peer, TEST_CAT_IPC);
     test_suite_register_cat("alpc: NtAlpcSendWaitReceivePort syscall validation",
                             test_alpc_syscall_validation, TEST_CAT_IPC);
+    /* §5 async delivery + waitable port */
+    test_suite_register_cat("alpc: ALPC_COMPLETION_LIST_ITEM layout",
+                            test_alpc_completion_list_item_layout, TEST_CAT_IPC);
+    test_suite_register_cat("alpc: waitable port signal/drain",
+                            test_alpc_waitable_port_signal, TEST_CAT_IPC);
+    test_suite_register_cat("alpc: non-waitable port rejects wait",
+                            test_alpc_nonwaitable_rejects, TEST_CAT_IPC);
+    test_suite_register_cat("alpc: associate completion port + notification",
+                            test_alpc_associate_completion_port, TEST_CAT_IPC);
+    test_suite_register_cat("alpc: associate with bad IOCP => INVALID_HANDLE",
+                            test_alpc_associate_bad_iocp, TEST_CAT_IPC);
+    test_suite_register_cat("alpc: SetInfo unknown class => NOT_IMPLEMENTED",
+                            test_alpc_setinfo_unknown_class, TEST_CAT_IPC);
 }
 
 #endif /* KERNEL_TESTS */
