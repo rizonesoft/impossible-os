@@ -63,6 +63,48 @@ static void test_per_thread_kernel_rsp_mirror(void)
     }
 }
 
+/* Regression test for cooperative-yield fairness (fixed 2026-04-15).
+ *
+ * The bug: find_next_task() iterated tasks starting at from_task+1 and
+ * tied same-priority candidates with strict '>'. When the caller
+ * cooperatively yielded (RUNNING, not BLOCKED), the scheduler always
+ * picked a thread in another task before reaching same-task siblings,
+ * so a freshly-created kthread starved indefinitely. Symptom: ALPC
+ * handshake tests timed out 5s waiting for a worker that never ran.
+ *
+ * This test is the canonical positive contract: a `while (!cond) yield()`
+ * loop MUST be able to wait for a sibling kthread without thread_join. */
+static volatile int g_yield_worker_ran = 0;
+
+static void yield_fairness_worker(void *arg)
+{
+    (void)arg;
+    g_yield_worker_ran = 1;
+}
+
+static void test_sched_cooperative_yield_fairness(void)
+{
+    g_yield_worker_ran = 0;
+    int tid = kthread_create(yield_fairness_worker, NULL, 0);
+    TEST_ASSERT(tid >= 0, "kthread_create succeeds");
+    if (tid < 0)
+        return;
+
+    /* Bounded yield loop: 100k iterations is several orders of magnitude
+     * more than needed if the scheduler is fair. If the worker never
+     * runs, this exits with the assertion below catching it -- never
+     * an infinite hang. */
+    int i;
+    for (i = 0; i < 100000 && !g_yield_worker_ran; i++)
+        thread_yield();
+
+    TEST_ASSERT(g_yield_worker_ran,
+                "sibling kthread runs while caller cooperatively yields");
+
+    /* Reap the worker so the thread slot is freed cleanly. */
+    thread_join((uint32_t)tid);
+}
+
 /* Registration */
 void test_register_sched(void)
 {
@@ -72,6 +114,9 @@ void test_register_sched(void)
                             test_exec_pending_state, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: per-thread kernel_rsp mirror",
                             test_per_thread_kernel_rsp_mirror, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: cooperative-yield fairness (regression)",
+                            test_sched_cooperative_yield_fairness,
+                            TEST_CAT_SCHED);
 }
 
 #endif /* KERNEL_TESTS */
