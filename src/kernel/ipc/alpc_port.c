@@ -18,6 +18,7 @@
 #include "kernel/sched/task.h"
 #include "kernel/mm/heap.h"
 #include "kernel/klog.h"
+#include "libc/string.h"               /* canonical kernel memcpy */
 
 const OBJECT_TYPE *ObpAlpcPortType;
 
@@ -876,17 +877,17 @@ NTSTATUS AlpcDisconnectPort(HANDLE_TABLE *ht, HANDLE port_handle)
      * and drop the extra ref. */
     close_msg = (PORT_MESSAGE_ENTRY *)kmalloc(sizeof(PORT_MESSAGE_ENTRY));
     if (close_msg) {
-        /* Zero the message entry body to avoid passing uninitialised
-         * stack bytes to consumers (event_init below overwrites its
-         * slot). */
+        /* Zero-fill so PORT_MESSAGE header bytes and ChargedSize start
+         * at 0. ChargedSize=0 is the documented "uncharged" sentinel:
+         * AlpcFreeMessage will skip the PoolUsageBytes decrement when
+         * the receiver eventually dequeues this marker, so the marker
+         * cannot corrupt quota that belongs to other entries. */
         uint8_t *zp = (uint8_t *)close_msg;
         for (uint32_t i = 0; i < sizeof(*close_msg); i++)
             zp[i] = 0;
         close_msg->Header.TotalLength = sizeof(PORT_MESSAGE);
         close_msg->Header.DataLength  = 0;
         close_msg->Header.Type        = ALPC_MSG_TYPE_PORT_CLOSED;
-        event_init(&close_msg->ReplySyncWait, "alpc_closed",
-                   EVENT_AUTO_RESET, 0);
 
         spin_lock_irqsave(&peer->Lock, &irqf);
         /* Append to peer's MessageQueue. */
@@ -1033,20 +1034,22 @@ PORT_MESSAGE_ENTRY *AlpcAllocateMessage(ALPC_PORT *charge_port,
             zp[i] = 0;
     }
     entry->ChargedSize = alloc_size;
-    event_init(&entry->ReplySyncWait, "alpc_msg_unused", EVENT_AUTO_RESET, 0);
     return entry;
 }
 
 void AlpcFreeMessage(ALPC_PORT *charge_port, PORT_MESSAGE_ENTRY *entry)
 {
-    uint32_t size;
     uint64_t irqf;
 
     if (!entry)
         return;
-    size = entry->ChargedSize ? entry->ChargedSize
-                              : (uint32_t)sizeof(PORT_MESSAGE_ENTRY);
-    if (charge_port) {
+    /* ChargedSize == 0 means the entry was allocated outside the pool
+     * accounting path (e.g. the PORT_CLOSED marker AlpcDisconnectPort
+     * queues with raw kmalloc when the peer is being torn down). Skip
+     * the decrement in that case so we don't undercount quota that
+     * belongs to other entries. */
+    if (charge_port && entry->ChargedSize > 0) {
+        uint32_t size = entry->ChargedSize;
         spin_lock_irqsave(&charge_port->Lock, &irqf);
         if (charge_port->PoolUsageBytes >= size)
             charge_port->PoolUsageBytes -= size;
@@ -1225,14 +1228,6 @@ static void alpc_fill_client_id(CLIENT_ID *cid)
                               * with §7 token capture / TEB integration */
 }
 
-static void alpc_memcpy(void *dst, const void *src, uint32_t n)
-{
-    uint8_t *d = (uint8_t *)dst;
-    const uint8_t *s = (const uint8_t *)src;
-    for (uint32_t i = 0; i < n; i++)
-        d[i] = s[i];
-}
-
 /* ---- Receive-only path ------------------------------------------------ */
 
 static NTSTATUS alpc_receive_only(ALPC_PORT *port, PORT_MESSAGE *recv_msg,
@@ -1266,7 +1261,7 @@ static NTSTATUS alpc_receive_only(ALPC_PORT *port, PORT_MESSAGE *recv_msg,
 
     /* Copy header. Body bounded by the smaller of TotalLength and
      * the caller's recv_buf_len; truncation is normal at this layer. */
-    alpc_memcpy(recv_msg, &entry->Header, sizeof(PORT_MESSAGE));
+    memcpy(recv_msg, &entry->Header, sizeof(PORT_MESSAGE));
     copy_len = entry->Header.DataLength;
     {
         uint32_t avail = recv_buf_len - (uint32_t)sizeof(PORT_MESSAGE);
@@ -1274,7 +1269,7 @@ static NTSTATUS alpc_receive_only(ALPC_PORT *port, PORT_MESSAGE *recv_msg,
             copy_len = avail;
     }
     if (copy_len > 0)
-        alpc_memcpy((uint8_t *)recv_msg + sizeof(PORT_MESSAGE),
+        memcpy((uint8_t *)recv_msg + sizeof(PORT_MESSAGE),
                     ALPC_MSG_BODY(entry), copy_len);
 
     AlpcFreeMessage(port, entry);
@@ -1342,11 +1337,9 @@ static NTSTATUS alpc_datagram_send(ALPC_PORT *sender_port,
     entry->Header.MessageId      = local_msg_id;
     entry->Header.CallbackId     = 0;
     alpc_fill_client_id(&entry->Header.ClientId);
-    entry->ReplyPort       = (ALPC_PORT *)0;
-    entry->WaitingForReply = 0;
 
     if (data_len > 0)
-        alpc_memcpy(ALPC_MSG_BODY(entry),
+        memcpy(ALPC_MSG_BODY(entry),
                     (const uint8_t *)send_msg + sizeof(PORT_MESSAGE),
                     data_len);
 
@@ -1454,11 +1447,14 @@ static NTSTATUS alpc_sync_request(ALPC_PORT *sender_port,
     entry->Header.MessageId      = message_id;
     entry->Header.CallbackId     = 0;
     alpc_fill_client_id(&entry->Header.ClientId);
-    entry->ReplyPort       = sender_port;     /* replier finds us via this */
-    entry->WaitingForReply = 1;
+    /* The reply destination is implicit: the receiver replies via
+     * its own port handle and the engine routes the reply to
+     * port->ConnectedPort (which is the original requester). The
+     * MessageId carries the correlation. No per-entry ReplyPort
+     * field is needed. */
 
     if (data_len > 0)
-        alpc_memcpy(ALPC_MSG_BODY(entry),
+        memcpy(ALPC_MSG_BODY(entry),
                     (const uint8_t *)send_msg + sizeof(PORT_MESSAGE),
                     data_len);
 
@@ -1510,9 +1506,9 @@ static NTSTATUS alpc_sync_request(ALPC_PORT *sender_port,
             hdr.DataLength  = pending->ReplyBodyLen;
             hdr.Type        = pending->ReplyType;
             hdr.MessageId   = message_id;
-            alpc_memcpy(recv_msg, &hdr, sizeof(hdr));
+            memcpy(recv_msg, &hdr, sizeof(hdr));
             if (pending->ReplyBodyLen > 0)
-                alpc_memcpy((uint8_t *)recv_msg + sizeof(PORT_MESSAGE),
+                memcpy((uint8_t *)recv_msg + sizeof(PORT_MESSAGE),
                             pending->ReplyBody, pending->ReplyBodyLen);
             final_status = STATUS_SUCCESS;
         } else {
@@ -1579,7 +1575,7 @@ static NTSTATUS alpc_reply(ALPC_PORT *replier_port, PORT_MESSAGE *send_msg)
     if (copy_len > pending->ReplyBodyCap)
         copy_len = pending->ReplyBodyCap;
     if (copy_len > 0)
-        alpc_memcpy(pending->ReplyBody,
+        memcpy(pending->ReplyBody,
                     (const uint8_t *)send_msg + sizeof(PORT_MESSAGE),
                     copy_len);
     pending->ReplyBodyLen = copy_len;

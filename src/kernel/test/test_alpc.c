@@ -1305,6 +1305,73 @@ static void test_alpc_disconnect_then_send(void)
     alpc_teardown_pair(client_h, server_comm);
 }
 
+/* ---- §4.10a PORT_CLOSED marker is uncharged (regression) ------------- */
+
+static void test_alpc_port_closed_marker_uncharged(void)
+{
+    /* Catches the Codex-quality finding: a PORT_CLOSED marker queued by
+     * AlpcDisconnectPort must NOT decrement peer->PoolUsageBytes when
+     * the receiver dequeues it, otherwise it can subtract quota that
+     * belongs to other in-flight entries. The fix stores ChargedSize=0
+     * on the marker; AlpcFreeMessage skips the decrement for ChargedSize=0. */
+    HANDLE server_comm = INVALID_HANDLE_VALUE;
+    HANDLE client_h = alpc_setup_pair("ClosedAcct", &server_comm);
+    if (client_h == INVALID_HANDLE_VALUE)
+        return;
+
+    /* Send a charged datagram so server's PoolUsageBytes is non-zero. */
+    uint8_t buf[sizeof(PORT_MESSAGE) + 32];
+    PORT_MESSAGE *msg = (PORT_MESSAGE *)buf;
+    for (uint32_t i = 0; i < sizeof(buf); i++) buf[i] = 0;
+    msg->TotalLength = sizeof(PORT_MESSAGE) + 32;
+    msg->DataLength  = 32;
+    msg->Type        = ALPC_MSG_TYPE_DATAGRAM;
+    NTSTATUS st = AlpcSendWaitReceivePort(&task_current()->handle_table,
+                                          client_h, 0, msg,
+                                          (PORT_MESSAGE *)0, 0, 0);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS, "datagram queued");
+
+    /* Snapshot server's PoolUsageBytes via the port body. The handle
+     * table lookup goes through ObpLookupHandle. */
+    HANDLE_TABLE_ENTRY *server_entry = ObpLookupHandle(
+        &task_current()->handle_table, server_comm);
+    TEST_ASSERT_NOT_NULL(server_entry, "server entry lookup");
+    if (!server_entry) {
+        alpc_teardown_pair(client_h, server_comm);
+        return;
+    }
+    ALPC_PORT *server_port = (ALPC_PORT *)server_entry->object;
+    uint64_t pool_before = server_port->PoolUsageBytes;
+    TEST_ASSERT(pool_before > 0u,
+                "server PoolUsageBytes >0 after charged send");
+
+    /* Disconnect the client side -- this enqueues an UNCHARGED
+     * PORT_CLOSED marker on the server. The server's PoolUsageBytes
+     * must NOT change. */
+    st = AlpcDisconnectPort(&task_current()->handle_table, client_h);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS, "client disconnect");
+    TEST_ASSERT_EQ((uint64_t)server_port->PoolUsageBytes, (uint64_t)pool_before,
+                   "PORT_CLOSED enqueue must not charge peer quota");
+
+    /* Now drain BOTH messages. After the charged datagram is freed,
+     * pool drops by exactly the charged amount. After the uncharged
+     * marker is freed, pool stays the same. */
+    uint8_t rxbuf[sizeof(PORT_MESSAGE) + 64];
+    PORT_MESSAGE *rx = (PORT_MESSAGE *)rxbuf;
+    st = AlpcSendWaitReceivePort(&task_current()->handle_table,
+                                 server_comm, 0, (PORT_MESSAGE *)0, rx,
+                                 sizeof(rxbuf), 100);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS, "drain 1");
+    st = AlpcSendWaitReceivePort(&task_current()->handle_table,
+                                 server_comm, 0, (PORT_MESSAGE *)0, rx,
+                                 sizeof(rxbuf), 100);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS, "drain 2");
+    TEST_ASSERT_EQ((uint64_t)server_port->PoolUsageBytes, 0u,
+                   "after draining one charged + one uncharged, quota = 0");
+
+    alpc_teardown_pair(client_h, server_comm);
+}
+
 /* ---- §4.10b Remote disconnect then send => DISCONNECTED -------------- */
 
 static void test_alpc_remote_disconnect_then_send(void)
@@ -1521,6 +1588,8 @@ void test_register_alpc(void)
                             test_alpc_sync_timeout_late_reply, TEST_CAT_IPC);
     test_suite_register_cat("alpc: disconnect-then-send => DISCONNECTED",
                             test_alpc_disconnect_then_send, TEST_CAT_IPC);
+    test_suite_register_cat("alpc: PORT_CLOSED marker uncharged",
+                            test_alpc_port_closed_marker_uncharged, TEST_CAT_IPC);
     test_suite_register_cat("alpc: remote disconnect-then-send => DISCONNECTED",
                             test_alpc_remote_disconnect_then_send, TEST_CAT_IPC);
     test_suite_register_cat("alpc: sync request with no peer",

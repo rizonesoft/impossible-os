@@ -71,15 +71,12 @@ typedef enum {
 typedef struct port_message_entry {
     struct port_message_entry *Link_next;      /* next entry in queue */
     PORT_MESSAGE               Header;          /* on-the-wire msg header */
-    struct alpc_port          *ReplyPort;       /* reply target (sync request) */
-    uint64_t                   ReplyMessageId;  /* request this is a reply for */
-    uint8_t                    WaitingForReply; /* sender blocked on reply */
-    uint8_t                    _pad[3];         /* align next field */
-    event_t                    ReplySyncWait;   /* legacy reserve (unused) */
     uint32_t                   ChargedSize;     /* bytes counted against
-                                                 * owning port's quota --
-                                                 * the size passed to
-                                                 * AlpcAllocateMessage */
+                                                 * owning port's quota at
+                                                 * AlpcAllocateMessage time;
+                                                 * 0 = uncharged (e.g. the
+                                                 * PORT_CLOSED marker queued
+                                                 * by AlpcDisconnectPort) */
     uint32_t                   _pad_charged;
     /* uint8_t Body[Header.DataLength]; -- flexible tail (no [] because the
      * struct already has well-defined size; payload is laid out by hand) */
