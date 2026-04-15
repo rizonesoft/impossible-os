@@ -116,6 +116,7 @@ description: Verify an already-implemented TODO section through the full quality
     - Deferred items pointing to this section that weren't resolved
     - Stale warning boxes that should be NOTE (resolved)
     - Cross-TODO dependency notes now satisfied or broken
+    - **Inbound `> **Accepted:**` sweep (MANDATORY).** If this verify run just confirmed items `[x]` that other sections list in an `> **Accepted:**` line as their deferred-gap XREF target, those stamps are now stale. Grep `todo/` for this TODO/section identifier and any quoted item name; for each match, DELETE the fully-resolved Accepted entry, or rewrite it to drop only the closed concern. If all Accepted entries on a line go away, remove the whole line -- keep Verified and Quality reviewed adjacent. This is the closed-loop counterpart to the implement-todo-section Accepted-XREF concreteness check.
     - PE export table sync (if user-mode APIs)
     - SSDT audit trigger (if SSDT handlers)
     - Filed-in-owner check: follow-up `[ ]` items naming an owner must be filed reciprocally

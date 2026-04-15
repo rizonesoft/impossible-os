@@ -110,6 +110,12 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
     - Stale warning boxes that should be updated to NOTE (resolved).
     - Implementation Order rows that need status updates.
     - Cross-TODO dependency notes that are now satisfied.
+    - **Inbound `> **Accepted:**` sweep (MANDATORY).** Any `[x]` item this section just closed is almost certainly the target of `> **Accepted:**` stamps in other TODO sections. Run `grep -rn "TODO-XX §N"` (and, if the item name was quoted, the quoted item name too) across `todo/` to find every inbound reference. For each match:
+        - If the inbound `Accepted` entry's concern is FULLY resolved by this section's work: DELETE the entire `> **Accepted:**` line. If it was the only Accepted entry on that line, remove the line entirely; keep the Verified + Quality reviewed stamps adjacent.
+        - If the inbound entry is PARTIALLY resolved (you closed one of several concerns on the line): rewrite the line, dropping the resolved concern while preserving the remaining XREFs.
+        - If uncertain, leave the entry and note the ambiguity in chat so the user can decide.
+
+      **Why this step exists:** otherwise `> **Accepted:**` lines accumulate indefinitely and lose their value as a "what's still deferred on this section" scan target. The XREF target moving to `[x]` is exactly when the inbound reference becomes stale.
     - Any checklist items in other sections affected by this implementation.
     - **PE export table sync:** if this section implemented new public APIs callable from user-mode, verify they're in `s_kernel32_exports[]`/`s_ntdll_exports[]` in `pe.c`.
     - **SSDT audit trigger:** if this section implemented or modified SSDT handlers, recommend running `/audit-ssdt` after commit to verify master table consistency.
