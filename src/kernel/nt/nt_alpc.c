@@ -318,12 +318,63 @@ static NTSTATUS NtAlpcAcceptConnectPort_handler(uint64_t a1, uint64_t a2,
 }
 
 /* ---- 0x0113 NtAlpcSendWaitReceivePort ----------------------------------- */
+/* Real implementation wired by TODO-12 §4. SCOPE-GAP-ALLOWED: optional
+ * ALPC_MESSAGE_ATTRIBUTES (SendMsgAttr/RecvMsgAttr) deferred to §6 -- §4
+ * inline send+wait+reply does not consume them. NumberOfBytesTransferred
+ * is implicit in recv_msg->DataLength after success and is not returned
+ * separately. Timeout is uint32_t milliseconds rather than the Windows
+ * LARGE_INTEGER pointer convention; the sentinel 0 means "wait
+ * forever" for the sync/receive paths and "no wait" for non-blocking
+ * receive (matching §4 spec). */
 static NTSTATUS NtAlpcSendWaitReceivePort_handler(uint64_t a1, uint64_t a2,
                                                   uint64_t a3, uint64_t a4,
                                                   uint64_t a5, uint64_t a6)
 {
-    (void)a1; (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
-    ALPC_STUB_BODY(NtAlpcSendWaitReceivePort);
+    HANDLE port_handle = (HANDLE)(int32_t)(uint32_t)a1;
+    uint32_t flags     = (uint32_t)a2;
+    PORT_MESSAGE *send_msg = (PORT_MESSAGE *)a3;
+    PORT_MESSAGE *recv_msg = (PORT_MESSAGE *)a4;
+    uint32_t recv_buf_len  = (uint32_t)a5;
+    uint32_t timeout_ms    = (uint32_t)a6;
+    NTSTATUS st;
+
+    /* User-mode probes. send_msg is read-only (header + inline body up
+     * to TotalLength); recv_msg is write-only (caller-supplied buffer
+     * the kernel fills on dequeue/reply wake). Each probe runs only
+     * when previous mode is UserMode (kernel callers skip). */
+    if (send_msg) {
+        st = ProbeForReadIfUser(send_msg, sizeof(PORT_MESSAGE), 8);
+        if (!NT_SUCCESS(st))
+            return st;
+        if (send_msg->TotalLength < sizeof(PORT_MESSAGE) ||
+            send_msg->DataLength > ALPC_MAX_ALLOWED_MESSAGE_LENGTH)
+            return STATUS_INVALID_PARAMETER;
+        st = ProbeForReadIfUser((const uint8_t *)send_msg
+                                  + sizeof(PORT_MESSAGE),
+                                send_msg->DataLength, 1);
+        if (!NT_SUCCESS(st))
+            return st;
+    }
+    if (recv_msg) {
+        if (recv_buf_len < sizeof(PORT_MESSAGE))
+            return STATUS_BUFFER_TOO_SMALL;
+        st = ProbeForWriteIfUser(recv_msg, recv_buf_len, 8);
+        if (!NT_SUCCESS(st))
+            return st;
+    }
+    /* recv_msg may be NULL only when the call is a fire-and-forget
+     * datagram or reply; receive-only and sync-request both require it. */
+    if (!recv_msg && !send_msg)
+        return STATUS_INVALID_PARAMETER;
+    if (!recv_msg && (flags & ALPC_MSGFLG_SYNC_REQUEST))
+        return STATUS_INVALID_PARAMETER;
+    if (!send_msg && !recv_msg)
+        return STATUS_INVALID_PARAMETER;
+
+    return AlpcSendWaitReceivePort(&task_current()->handle_table,
+                                   port_handle, flags,
+                                   send_msg, recv_msg,
+                                   recv_buf_len, timeout_ms);
 }
 
 /* ---- 0x0114 NtAlpcDisconnectPort ---------------------------------------- */

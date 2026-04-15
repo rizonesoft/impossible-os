@@ -684,6 +684,765 @@ static void test_alpc_syscall_bad_prefix_rejected(void)
                    "path outside \\RPC Control rejected");
 }
 
+/* =========================================================================
+ * §4 Synchronous Send+Wait+Receive Engine tests
+ *
+ * Each test sets up a connected pair via the §3 handshake, then drives
+ * AlpcSendWaitReceivePort on both endpoints. Worker threads run the
+ * client side via kthread_create so the cooperative-yield scheduler
+ * can interleave server and client.
+ * =======================================================================*/
+
+#include "kernel/sched/task.h"
+
+/* Shared state for §4 worker threads. The framework runs suites
+ * sequentially on a single thread pool, so a single set of statics is
+ * safe. */
+static volatile HANDLE   s_sync_client_handle;
+static volatile HANDLE   s_sync_server_conn;
+static const char       *s_sync_target_name;
+static volatile NTSTATUS s_sync_send_status;
+static volatile int      s_sync_worker_done;
+
+/* §4 connect-worker (file-static; replaces inline GCC-nested-function
+ * pattern that clang -- the project compiler -- does not support). */
+static void s4_connect_worker(void *arg)
+{
+    (void)arg;
+    HANDLE ch = INVALID_HANDLE_VALUE;
+    (void)AlpcConnectPort(&task_current()->handle_table,
+                          s_sync_target_name, /* timeout */ 5000, &ch);
+    s_sync_client_handle = ch;
+    s_sync_worker_done = 1;
+}
+
+static HANDLE alpc_setup_pair(const char *server_name, HANDLE *server_comm)
+{
+    /* Convenience: build a fully connected server/client pair using §3
+     * primitives. Returns the client communication handle. The server
+     * connection handle is exposed via s_sync_server_conn so the test
+     * can NtClose it afterwards. */
+    HANDLE server_conn = INVALID_HANDLE_VALUE;
+    HANDLE client_h    = INVALID_HANDLE_VALUE;
+    NTSTATUS st;
+    char path[96];
+
+    st = AlpcCreatePort(&task_current()->handle_table, server_name,
+                        (ALPC_PORT_ATTRIBUTES *)0, &server_conn);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS,
+                   "pair: server CreatePort");
+    if (server_conn == INVALID_HANDLE_VALUE)
+        return INVALID_HANDLE_VALUE;
+
+    /* Build "\\RPC Control\\<name>". */
+    {
+        const char prefix[] = "\\RPC Control\\";
+        uint32_t pi = 0, li;
+        for (li = 0; prefix[li]; li++, pi++) path[pi] = prefix[li];
+        for (li = 0; server_name[li] && pi < sizeof(path) - 1; li++, pi++)
+            path[pi] = server_name[li];
+        path[pi] = '\0';
+    }
+
+    s_sync_server_conn = server_conn;
+    s_sync_target_name = path;
+
+    /* Worker calls AlpcConnectPort; we accept inline. */
+    s_sync_client_handle = INVALID_HANDLE_VALUE;
+    s_sync_worker_done = 0;
+    int tid = kthread_create(s4_connect_worker, (void *)0, 0);
+    TEST_ASSERT(tid >= 0, "pair: connect worker spawned");
+
+    HANDLE sc = INVALID_HANDLE_VALUE;
+    st = AlpcAcceptConnectPort(&task_current()->handle_table,
+                               server_conn, /* accept */ 1,
+                               /* timeout */ 5000, &sc);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS, "pair: accept");
+    thread_join((uint32_t)tid);
+    TEST_ASSERT_NEQ(s_sync_client_handle, INVALID_HANDLE_VALUE,
+                    "pair: client got handle");
+
+    *server_comm = sc;
+    client_h = s_sync_client_handle;
+    return client_h;
+}
+
+static void alpc_teardown_pair(HANDLE client_h, HANDLE server_comm)
+{
+    HANDLE_TABLE *ht = &task_current()->handle_table;
+    if (client_h != INVALID_HANDLE_VALUE) NtClose(ht, client_h);
+    if (server_comm != INVALID_HANDLE_VALUE) NtClose(ht, server_comm);
+    if (s_sync_server_conn != INVALID_HANDLE_VALUE)
+        NtClose(ht, s_sync_server_conn);
+    s_sync_server_conn = INVALID_HANDLE_VALUE;
+}
+
+/* ---- §4.1 Datagram send delivers to peer's MessageQueue --------------- */
+
+static void test_alpc_datagram_delivery(void)
+{
+    HANDLE server_comm = INVALID_HANDLE_VALUE;
+    HANDLE client_h = alpc_setup_pair("DgPair", &server_comm);
+    if (client_h == INVALID_HANDLE_VALUE)
+        return;
+
+    /* Client sends a 16-byte datagram. */
+    uint8_t buf[sizeof(PORT_MESSAGE) + 16];
+    PORT_MESSAGE *msg = (PORT_MESSAGE *)buf;
+    for (uint32_t i = 0; i < sizeof(buf); i++) buf[i] = 0;
+    msg->TotalLength = sizeof(PORT_MESSAGE) + 16;
+    msg->DataLength  = 16;
+    msg->Type        = ALPC_MSG_TYPE_DATAGRAM;
+    for (uint32_t i = 0; i < 16; i++)
+        ((uint8_t *)msg + sizeof(PORT_MESSAGE))[i] = (uint8_t)(0xA0 + i);
+
+    NTSTATUS st = AlpcSendWaitReceivePort(&task_current()->handle_table,
+                                          client_h, /* flags */ 0,
+                                          msg, (PORT_MESSAGE *)0, 0,
+                                          /* timeout */ 0);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS,
+                   "datagram send returns SUCCESS");
+
+    /* Server receives. */
+    uint8_t rxbuf[sizeof(PORT_MESSAGE) + 64];
+    PORT_MESSAGE *rx = (PORT_MESSAGE *)rxbuf;
+    for (uint32_t i = 0; i < sizeof(rxbuf); i++) rxbuf[i] = 0;
+    st = AlpcSendWaitReceivePort(&task_current()->handle_table,
+                                 server_comm, /* flags */ 0,
+                                 (PORT_MESSAGE *)0, rx, sizeof(rxbuf),
+                                 /* timeout */ 1000);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS,
+                   "server receive datagram SUCCESS");
+    TEST_ASSERT_EQ((uint32_t)rx->Type, (uint32_t)ALPC_MSG_TYPE_DATAGRAM,
+                   "received Type=DATAGRAM");
+    TEST_ASSERT_EQ((uint32_t)rx->DataLength, 16u, "DataLength=16");
+    TEST_ASSERT_EQ(((uint8_t *)rx + sizeof(PORT_MESSAGE))[0], 0xA0u,
+                   "body byte 0 round-trips");
+    TEST_ASSERT_EQ(((uint8_t *)rx + sizeof(PORT_MESSAGE))[15], 0xAFu,
+                   "body byte 15 round-trips");
+
+    alpc_teardown_pair(client_h, server_comm);
+}
+
+/* ---- §4.2 Sync request + reply round-trip ----------------------------- */
+
+static void sync_server_worker(void *arg)
+{
+    HANDLE server_comm = (HANDLE)(uintptr_t)arg;
+    uint8_t rxbuf[sizeof(PORT_MESSAGE) + 128];
+    PORT_MESSAGE *rx = (PORT_MESSAGE *)rxbuf;
+    for (uint32_t i = 0; i < sizeof(rxbuf); i++) rxbuf[i] = 0;
+
+    /* Receive request */
+    NTSTATUS st = AlpcSendWaitReceivePort(&task_current()->handle_table,
+                                          server_comm, 0,
+                                          (PORT_MESSAGE *)0, rx,
+                                          sizeof(rxbuf), 5000);
+    if (st != STATUS_SUCCESS) {
+        s_sync_send_status = st;
+        s_sync_worker_done = 1;
+        return;
+    }
+
+    /* Build a reply: echo body bytes XORed with 0xFF. */
+    uint8_t txbuf[sizeof(PORT_MESSAGE) + 128];
+    PORT_MESSAGE *tx = (PORT_MESSAGE *)txbuf;
+    for (uint32_t i = 0; i < sizeof(txbuf); i++) txbuf[i] = 0;
+    uint16_t n = rx->DataLength;
+    if (n > 128) n = 128;
+    tx->TotalLength = sizeof(PORT_MESSAGE) + n;
+    tx->DataLength  = n;
+    tx->Type        = ALPC_MSG_TYPE_REPLY;
+    tx->MessageId   = rx->MessageId;
+    for (uint16_t i = 0; i < n; i++)
+        ((uint8_t *)tx + sizeof(PORT_MESSAGE))[i] =
+            ((uint8_t *)rx + sizeof(PORT_MESSAGE))[i] ^ 0xFFu;
+
+    s_sync_send_status = AlpcSendWaitReceivePort(&task_current()->handle_table,
+                                                 server_comm,
+                                                 ALPC_MSGFLG_REPLY_MESSAGE,
+                                                 tx, (PORT_MESSAGE *)0, 0, 0);
+    s_sync_worker_done = 1;
+}
+
+static void test_alpc_sync_request_reply(void)
+{
+    HANDLE server_comm = INVALID_HANDLE_VALUE;
+    HANDLE client_h = alpc_setup_pair("SyncPair", &server_comm);
+    if (client_h == INVALID_HANDLE_VALUE)
+        return;
+
+    /* Spawn server worker that will receive + reply. */
+    s_sync_send_status = STATUS_INVALID_PARAMETER;
+    s_sync_worker_done = 0;
+    int tid = kthread_create(sync_server_worker,
+                             (void *)(uintptr_t)server_comm, 0);
+    TEST_ASSERT(tid >= 0, "sync: server worker spawned");
+
+    /* Client sends sync request, blocks for reply. */
+    uint8_t txbuf[sizeof(PORT_MESSAGE) + 64];
+    PORT_MESSAGE *tx = (PORT_MESSAGE *)txbuf;
+    for (uint32_t i = 0; i < sizeof(txbuf); i++) txbuf[i] = 0;
+    tx->TotalLength = sizeof(PORT_MESSAGE) + 64;
+    tx->DataLength  = 64;
+    tx->Type        = ALPC_MSG_TYPE_REQUEST;
+    for (uint32_t i = 0; i < 64; i++)
+        ((uint8_t *)tx + sizeof(PORT_MESSAGE))[i] = (uint8_t)i;
+
+    uint8_t rxbuf[sizeof(PORT_MESSAGE) + 128];
+    PORT_MESSAGE *rx = (PORT_MESSAGE *)rxbuf;
+    for (uint32_t i = 0; i < sizeof(rxbuf); i++) rxbuf[i] = 0;
+
+    NTSTATUS st = AlpcSendWaitReceivePort(&task_current()->handle_table,
+                                          client_h,
+                                          ALPC_MSGFLG_SYNC_REQUEST,
+                                          tx, rx, sizeof(rxbuf), 5000);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS,
+                   "sync request SUCCESS");
+    TEST_ASSERT_EQ((uint32_t)rx->Type, (uint32_t)ALPC_MSG_TYPE_REPLY,
+                   "reply Type=REPLY");
+    TEST_ASSERT_EQ((uint32_t)rx->DataLength, 64u, "reply DataLength=64");
+    TEST_ASSERT_EQ(((uint8_t *)rx + sizeof(PORT_MESSAGE))[0], 0xFFu,
+                   "reply byte 0 = 0x00 ^ 0xFF");
+    TEST_ASSERT_EQ(((uint8_t *)rx + sizeof(PORT_MESSAGE))[63], 0xC0u,
+                   "reply byte 63 = 0x3F ^ 0xFF");
+
+    thread_join((uint32_t)tid);
+    TEST_ASSERT_EQ((uint32_t)s_sync_send_status, (uint32_t)STATUS_SUCCESS,
+                   "server's reply call returned SUCCESS");
+
+    alpc_teardown_pair(client_h, server_comm);
+}
+
+/* ---- §4.3 Reply with bogus MessageId ---------------------------------- */
+
+static void test_alpc_reply_mismatch(void)
+{
+    HANDLE server_comm = INVALID_HANDLE_VALUE;
+    HANDLE client_h = alpc_setup_pair("MmPair", &server_comm);
+    if (client_h == INVALID_HANDLE_VALUE)
+        return;
+
+    /* Server sends a reply with a MessageId that has no pending entry
+     * on the client's PendingQueue (the client never sent a sync
+     * request). Must return STATUS_REPLY_MESSAGE_MISMATCH. */
+    uint8_t txbuf[sizeof(PORT_MESSAGE)];
+    PORT_MESSAGE *tx = (PORT_MESSAGE *)txbuf;
+    for (uint32_t i = 0; i < sizeof(txbuf); i++) txbuf[i] = 0;
+    tx->TotalLength = sizeof(PORT_MESSAGE);
+    tx->DataLength  = 0;
+    tx->Type        = ALPC_MSG_TYPE_REPLY;
+    tx->MessageId   = 0xDEADBEEFu;
+
+    NTSTATUS st = AlpcSendWaitReceivePort(&task_current()->handle_table,
+                                          server_comm,
+                                          ALPC_MSGFLG_REPLY_MESSAGE,
+                                          tx, (PORT_MESSAGE *)0, 0, 0);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_REPLY_MESSAGE_MISMATCH,
+                   "reply with unknown MessageId => REPLY_MESSAGE_MISMATCH");
+
+    alpc_teardown_pair(client_h, server_comm);
+}
+
+/* ---- §4.4 Datagram exceeding MaxMessageLength ------------------------- */
+
+static void test_alpc_send_too_large(void)
+{
+    HANDLE server_comm = INVALID_HANDLE_VALUE;
+    HANDLE client_h = alpc_setup_pair("TooBig", &server_comm);
+    if (client_h == INVALID_HANDLE_VALUE)
+        return;
+
+    /* Construct a header claiming an oversized DataLength; the engine
+     * must reject without allocating. We don't actually need that many
+     * bytes on the stack -- the engine validates DataLength up front. */
+    PORT_MESSAGE hdr;
+    uint8_t *zp = (uint8_t *)&hdr;
+    for (uint32_t i = 0; i < sizeof(hdr); i++) zp[i] = 0;
+    hdr.TotalLength = 0;     /* invalid intentionally */
+    hdr.DataLength  = ALPC_MAX_ALLOWED_MESSAGE_LENGTH + 1;
+    hdr.Type        = ALPC_MSG_TYPE_DATAGRAM;
+
+    NTSTATUS st = AlpcSendWaitReceivePort(&task_current()->handle_table,
+                                          client_h, 0,
+                                          &hdr, (PORT_MESSAGE *)0, 0, 0);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_BUFFER_TOO_SMALL,
+                   "DataLength > max => STATUS_BUFFER_TOO_SMALL");
+
+    alpc_teardown_pair(client_h, server_comm);
+}
+
+/* ---- §4.5 Receive on empty queue with timeout=0 ----------------------- */
+
+static void test_alpc_receive_empty_no_wait(void)
+{
+    HANDLE server_comm = INVALID_HANDLE_VALUE;
+    HANDLE client_h = alpc_setup_pair("EmptyRx", &server_comm);
+    if (client_h == INVALID_HANDLE_VALUE)
+        return;
+
+    uint8_t rxbuf[sizeof(PORT_MESSAGE)];
+    PORT_MESSAGE *rx = (PORT_MESSAGE *)rxbuf;
+    NTSTATUS st = AlpcSendWaitReceivePort(&task_current()->handle_table,
+                                          server_comm, 0,
+                                          (PORT_MESSAGE *)0, rx,
+                                          sizeof(rxbuf), 0);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_TIMEOUT,
+                   "empty queue + timeout=0 => STATUS_TIMEOUT");
+
+    alpc_teardown_pair(client_h, server_comm);
+}
+
+/* ---- §4.6 Disconnect wakes blocked sync waiter ------------------------ */
+
+static void disconnect_after_delay_worker(void *arg)
+{
+    /* Yield a few times to let the client get into its sync wait, then
+     * disconnect. Bounded retries -- if the client doesn't get there,
+     * we still disconnect and the test fails meaningfully. */
+    HANDLE port = (HANDLE)(uintptr_t)arg;
+    for (int i = 0; i < 200; i++)
+        thread_yield();
+    (void)AlpcDisconnectPort(&task_current()->handle_table, port);
+    s_sync_worker_done = 1;
+}
+
+static void test_alpc_sync_wait_disconnect(void)
+{
+    HANDLE server_comm = INVALID_HANDLE_VALUE;
+    HANDLE client_h = alpc_setup_pair("DcWake", &server_comm);
+    if (client_h == INVALID_HANDLE_VALUE)
+        return;
+
+    /* Spawn a worker that disconnects the SERVER side after a short
+     * delay. The client (running inline here) blocks in a sync wait
+     * with a long timeout; the disconnect path must wake it with
+     * STATUS_PORT_DISCONNECTED before the timeout elapses. */
+    s_sync_worker_done = 0;
+    int tid = kthread_create(disconnect_after_delay_worker,
+                             (void *)(uintptr_t)server_comm, 0);
+    TEST_ASSERT(tid >= 0, "dc-wake: worker spawned");
+
+    uint8_t txbuf[sizeof(PORT_MESSAGE) + 8];
+    PORT_MESSAGE *tx = (PORT_MESSAGE *)txbuf;
+    for (uint32_t i = 0; i < sizeof(txbuf); i++) txbuf[i] = 0;
+    tx->TotalLength = sizeof(PORT_MESSAGE) + 8;
+    tx->DataLength  = 8;
+    tx->Type        = ALPC_MSG_TYPE_REQUEST;
+
+    uint8_t rxbuf[sizeof(PORT_MESSAGE) + 64];
+    PORT_MESSAGE *rx = (PORT_MESSAGE *)rxbuf;
+
+    NTSTATUS st = AlpcSendWaitReceivePort(&task_current()->handle_table,
+                                          client_h,
+                                          ALPC_MSGFLG_SYNC_REQUEST,
+                                          tx, rx, sizeof(rxbuf),
+                                          /* timeout */ 5000);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_PORT_DISCONNECTED,
+                   "sync wait wakes with PORT_DISCONNECTED");
+
+    thread_join((uint32_t)tid);
+    alpc_teardown_pair(client_h, server_comm);
+}
+
+/* ---- §4.7 Pool quota exceeded ----------------------------------------- */
+
+static void test_alpc_pool_quota_exceeded(void)
+{
+    /* Build a server with a tight MaxPoolUsage so the quota path is
+     * exercised. Sending one too-big datagram should return
+     * STATUS_INSUFFICIENT_RESOURCES from the allocator. */
+    HANDLE server_conn = INVALID_HANDLE_VALUE;
+    ALPC_PORT_ATTRIBUTES attrs;
+    uint8_t *zp = (uint8_t *)&attrs;
+    for (uint32_t i = 0; i < sizeof(attrs); i++) zp[i] = 0;
+    attrs.MaxMessageLength = 256;
+    attrs.MaxPoolUsage     = 128;     /* much less than one entry needs */
+
+    NTSTATUS st = AlpcCreatePort(&task_current()->handle_table,
+                                 "TightPool", &attrs, &server_conn);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS,
+                   "tight-pool: server CreatePort");
+    if (server_conn == INVALID_HANDLE_VALUE)
+        return;
+
+    s_sync_target_name = "\\RPC Control\\TightPool";
+    s_sync_client_handle = INVALID_HANDLE_VALUE;
+    s_sync_worker_done = 0;
+    int tid = kthread_create(s4_connect_worker, (void *)0, 0);
+    TEST_ASSERT(tid >= 0, "tight-pool: worker spawned");
+
+    HANDLE server_comm = INVALID_HANDLE_VALUE;
+    (void)AlpcAcceptConnectPort(&task_current()->handle_table,
+                                server_conn, 1, 5000, &server_comm);
+    thread_join((uint32_t)tid);
+
+    HANDLE client_h = s_sync_client_handle;
+    if (client_h == INVALID_HANDLE_VALUE) {
+        NtClose(&task_current()->handle_table, server_conn);
+        return;
+    }
+
+    /* Send 200 bytes -- header(40) + 200 = 240 > MaxPoolUsage(128). */
+    uint8_t buf[sizeof(PORT_MESSAGE) + 200];
+    PORT_MESSAGE *msg = (PORT_MESSAGE *)buf;
+    for (uint32_t i = 0; i < sizeof(buf); i++) buf[i] = 0;
+    msg->TotalLength = sizeof(PORT_MESSAGE) + 200;
+    msg->DataLength  = 200;
+    msg->Type        = ALPC_MSG_TYPE_DATAGRAM;
+
+    st = AlpcSendWaitReceivePort(&task_current()->handle_table,
+                                 client_h, 0,
+                                 msg, (PORT_MESSAGE *)0, 0, 0);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_INSUFFICIENT_RESOURCES,
+                   "send exceeding MaxPoolUsage => INSUFFICIENT_RESOURCES");
+
+    NtClose(&task_current()->handle_table, client_h);
+    NtClose(&task_current()->handle_table, server_comm);
+    NtClose(&task_current()->handle_table, server_conn);
+}
+
+/* ---- §4.8 Receive-only path: FIFO + truncation ------------------------ */
+
+static void test_alpc_receive_fifo_truncation(void)
+{
+    HANDLE server_comm = INVALID_HANDLE_VALUE;
+    HANDLE client_h = alpc_setup_pair("FifoTrunc", &server_comm);
+    if (client_h == INVALID_HANDLE_VALUE)
+        return;
+
+    /* Send two datagrams: 32B (pattern A) then 8B (pattern B). */
+    {
+        uint8_t buf[sizeof(PORT_MESSAGE) + 32];
+        PORT_MESSAGE *msg = (PORT_MESSAGE *)buf;
+        for (uint32_t i = 0; i < sizeof(buf); i++) buf[i] = 0;
+        msg->TotalLength = sizeof(PORT_MESSAGE) + 32;
+        msg->DataLength  = 32;
+        msg->Type        = ALPC_MSG_TYPE_DATAGRAM;
+        for (uint32_t i = 0; i < 32; i++)
+            ((uint8_t *)msg + sizeof(PORT_MESSAGE))[i] = (uint8_t)(0xA0 + i);
+        NTSTATUS st = AlpcSendWaitReceivePort(&task_current()->handle_table,
+                                              client_h, 0, msg,
+                                              (PORT_MESSAGE *)0, 0, 0);
+        TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS,
+                       "FIFO: first datagram sent");
+    }
+    {
+        uint8_t buf[sizeof(PORT_MESSAGE) + 8];
+        PORT_MESSAGE *msg = (PORT_MESSAGE *)buf;
+        for (uint32_t i = 0; i < sizeof(buf); i++) buf[i] = 0;
+        msg->TotalLength = sizeof(PORT_MESSAGE) + 8;
+        msg->DataLength  = 8;
+        msg->Type        = ALPC_MSG_TYPE_DATAGRAM;
+        for (uint32_t i = 0; i < 8; i++)
+            ((uint8_t *)msg + sizeof(PORT_MESSAGE))[i] = (uint8_t)(0xB0 + i);
+        NTSTATUS st = AlpcSendWaitReceivePort(&task_current()->handle_table,
+                                              client_h, 0, msg,
+                                              (PORT_MESSAGE *)0, 0, 0);
+        TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS,
+                       "FIFO: second datagram sent");
+    }
+
+    /* First receive with truncated buffer (room for only 4 body bytes).
+     * Sentinel byte at offset (header+4) verifies no overrun. */
+    {
+        uint8_t buf[sizeof(PORT_MESSAGE) + 16];
+        for (uint32_t i = 0; i < sizeof(buf); i++) buf[i] = 0xCC;
+        PORT_MESSAGE *rx = (PORT_MESSAGE *)buf;
+        NTSTATUS st = AlpcSendWaitReceivePort(&task_current()->handle_table,
+                                              server_comm, 0,
+                                              (PORT_MESSAGE *)0, rx,
+                                              sizeof(PORT_MESSAGE) + 4, 0);
+        TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS,
+                       "FIFO: truncated receive SUCCESS");
+        TEST_ASSERT_EQ((uint32_t)rx->Type, (uint32_t)ALPC_MSG_TYPE_DATAGRAM,
+                       "FIFO: header preserved on truncation");
+        TEST_ASSERT_EQ((uint32_t)rx->DataLength, 32u,
+                       "FIFO: original DataLength preserved (truncation is on body only)");
+        TEST_ASSERT_EQ(((uint8_t *)rx + sizeof(PORT_MESSAGE))[0], 0xA0u,
+                       "FIFO: truncated body[0] = pattern A");
+        TEST_ASSERT_EQ(((uint8_t *)rx + sizeof(PORT_MESSAGE))[3], 0xA3u,
+                       "FIFO: truncated body[3] = pattern A");
+        TEST_ASSERT_EQ(((uint8_t *)rx + sizeof(PORT_MESSAGE))[4], 0xCCu,
+                       "FIFO: sentinel past truncation untouched");
+    }
+
+    /* Second receive returns the SECOND datagram (FIFO), not the
+     * remainder of the first. */
+    {
+        uint8_t buf[sizeof(PORT_MESSAGE) + 16];
+        for (uint32_t i = 0; i < sizeof(buf); i++) buf[i] = 0;
+        PORT_MESSAGE *rx = (PORT_MESSAGE *)buf;
+        NTSTATUS st = AlpcSendWaitReceivePort(&task_current()->handle_table,
+                                              server_comm, 0,
+                                              (PORT_MESSAGE *)0, rx,
+                                              sizeof(buf), 0);
+        TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS,
+                       "FIFO: second receive SUCCESS");
+        TEST_ASSERT_EQ((uint32_t)rx->DataLength, 8u, "FIFO: second msg DataLength=8");
+        TEST_ASSERT_EQ(((uint8_t *)rx + sizeof(PORT_MESSAGE))[0], 0xB0u,
+                       "FIFO: second msg body[0] = pattern B");
+        TEST_ASSERT_EQ(((uint8_t *)rx + sizeof(PORT_MESSAGE))[7], 0xB7u,
+                       "FIFO: second msg body[7] = pattern B");
+    }
+
+    alpc_teardown_pair(client_h, server_comm);
+}
+
+/* ---- §4.9 Sync timeout + late reply mismatch -------------------------- */
+
+static void test_alpc_sync_timeout_late_reply(void)
+{
+    HANDLE server_comm = INVALID_HANDLE_VALUE;
+    HANDLE client_h = alpc_setup_pair("LateReply", &server_comm);
+    if (client_h == INVALID_HANDLE_VALUE)
+        return;
+
+    /* Client sends sync request with a SHORT timeout and no server is
+     * receiving yet. Sync wait must return STATUS_TIMEOUT. */
+    uint8_t txbuf[sizeof(PORT_MESSAGE) + 8];
+    PORT_MESSAGE *tx = (PORT_MESSAGE *)txbuf;
+    for (uint32_t i = 0; i < sizeof(txbuf); i++) txbuf[i] = 0;
+    tx->TotalLength = sizeof(PORT_MESSAGE) + 8;
+    tx->DataLength  = 8;
+    tx->Type        = ALPC_MSG_TYPE_REQUEST;
+
+    uint8_t rxbuf[sizeof(PORT_MESSAGE) + 32];
+    PORT_MESSAGE *rx = (PORT_MESSAGE *)rxbuf;
+    for (uint32_t i = 0; i < sizeof(rxbuf); i++) rxbuf[i] = 0;
+
+    NTSTATUS st = AlpcSendWaitReceivePort(&task_current()->handle_table,
+                                          client_h,
+                                          ALPC_MSGFLG_SYNC_REQUEST,
+                                          tx, rx, sizeof(rxbuf),
+                                          /* timeout */ 50);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_TIMEOUT,
+                   "sync wait timed out");
+
+    /* The request entry is still on server's MessageQueue (we never
+     * received it). Server now receives, observes the request, and tries
+     * to reply -- but the client already cleaned up its pending record,
+     * so the reply must miss. */
+    uint8_t srvrx[sizeof(PORT_MESSAGE) + 32];
+    PORT_MESSAGE *srx = (PORT_MESSAGE *)srvrx;
+    for (uint32_t i = 0; i < sizeof(srvrx); i++) srvrx[i] = 0;
+    st = AlpcSendWaitReceivePort(&task_current()->handle_table,
+                                 server_comm, 0,
+                                 (PORT_MESSAGE *)0, srx, sizeof(srvrx),
+                                 /* timeout */ 100);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS,
+                   "server received the timed-out request");
+    TEST_ASSERT_EQ((uint32_t)srx->Type, (uint32_t)ALPC_MSG_TYPE_REQUEST,
+                   "received was a REQUEST");
+
+    /* Late reply with the captured MessageId -- pending record gone. */
+    uint8_t reply_buf[sizeof(PORT_MESSAGE) + 4];
+    PORT_MESSAGE *reply = (PORT_MESSAGE *)reply_buf;
+    for (uint32_t i = 0; i < sizeof(reply_buf); i++) reply_buf[i] = 0;
+    reply->TotalLength = sizeof(PORT_MESSAGE) + 4;
+    reply->DataLength  = 4;
+    reply->Type        = ALPC_MSG_TYPE_REPLY;
+    reply->MessageId   = srx->MessageId;
+    st = AlpcSendWaitReceivePort(&task_current()->handle_table,
+                                 server_comm,
+                                 ALPC_MSGFLG_REPLY_MESSAGE,
+                                 reply, (PORT_MESSAGE *)0, 0, 0);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_REPLY_MESSAGE_MISMATCH,
+                   "late reply => REPLY_MESSAGE_MISMATCH");
+
+    /* Pair must still be usable: send a fresh datagram, server receives it. */
+    uint8_t dg_buf[sizeof(PORT_MESSAGE) + 4];
+    PORT_MESSAGE *dg = (PORT_MESSAGE *)dg_buf;
+    for (uint32_t i = 0; i < sizeof(dg_buf); i++) dg_buf[i] = 0;
+    dg->TotalLength = sizeof(PORT_MESSAGE) + 4;
+    dg->DataLength  = 4;
+    dg->Type        = ALPC_MSG_TYPE_DATAGRAM;
+    st = AlpcSendWaitReceivePort(&task_current()->handle_table,
+                                 client_h, 0, dg, (PORT_MESSAGE *)0, 0, 0);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS,
+                   "post-timeout send still works");
+
+    alpc_teardown_pair(client_h, server_comm);
+}
+
+/* ---- §4.10 Disconnect-then-send returns DISCONNECTED ----------------- */
+
+static void test_alpc_disconnect_then_send(void)
+{
+    HANDLE server_comm = INVALID_HANDLE_VALUE;
+    HANDLE client_h = alpc_setup_pair("DcThenSend", &server_comm);
+    if (client_h == INVALID_HANDLE_VALUE)
+        return;
+
+    /* Disconnect the local (client) side. Subsequent sends must fail
+     * fast with STATUS_PORT_DISCONNECTED. */
+    NTSTATUS st = AlpcDisconnectPort(&task_current()->handle_table,
+                                     client_h);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS,
+                   "local disconnect SUCCESS");
+
+    uint8_t buf[sizeof(PORT_MESSAGE) + 4];
+    PORT_MESSAGE *msg = (PORT_MESSAGE *)buf;
+    for (uint32_t i = 0; i < sizeof(buf); i++) buf[i] = 0;
+    msg->TotalLength = sizeof(PORT_MESSAGE) + 4;
+    msg->DataLength  = 4;
+    msg->Type        = ALPC_MSG_TYPE_DATAGRAM;
+
+    st = AlpcSendWaitReceivePort(&task_current()->handle_table,
+                                 client_h, 0, msg, (PORT_MESSAGE *)0, 0, 0);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_PORT_DISCONNECTED,
+                   "datagram on disconnected port => PORT_DISCONNECTED");
+
+    uint8_t rxbuf[sizeof(PORT_MESSAGE) + 32];
+    PORT_MESSAGE *rx = (PORT_MESSAGE *)rxbuf;
+    msg->Type = ALPC_MSG_TYPE_REQUEST;
+    st = AlpcSendWaitReceivePort(&task_current()->handle_table,
+                                 client_h, ALPC_MSGFLG_SYNC_REQUEST,
+                                 msg, rx, sizeof(rxbuf), 50);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_PORT_DISCONNECTED,
+                   "sync request on disconnected port => PORT_DISCONNECTED");
+
+    alpc_teardown_pair(client_h, server_comm);
+}
+
+/* ---- §4.10b Remote disconnect then send => DISCONNECTED -------------- */
+
+static void test_alpc_remote_disconnect_then_send(void)
+{
+    /* Tear down the SERVER side, then attempt sends from the client.
+     * The client's port is still alive but the peer is marked
+     * Disconnected; the engine must report STATUS_PORT_DISCONNECTED
+     * and NOT alias the failure as STATUS_INSUFFICIENT_RESOURCES
+     * (a regression Codex caught in the v3 implementation review). */
+    HANDLE server_comm = INVALID_HANDLE_VALUE;
+    HANDLE client_h = alpc_setup_pair("RemoteDc", &server_comm);
+    if (client_h == INVALID_HANDLE_VALUE)
+        return;
+
+    NTSTATUS st = AlpcDisconnectPort(&task_current()->handle_table,
+                                     server_comm);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS,
+                   "remote disconnect SUCCESS");
+
+    /* Drain the PORT_CLOSED marker the disconnect leaves on our queue
+     * so the next receive doesn't shadow the test. */
+    {
+        uint8_t junk[sizeof(PORT_MESSAGE) + 8];
+        PORT_MESSAGE *jx = (PORT_MESSAGE *)junk;
+        for (uint32_t i = 0; i < sizeof(junk); i++) junk[i] = 0;
+        (void)AlpcSendWaitReceivePort(&task_current()->handle_table,
+                                      client_h, 0, (PORT_MESSAGE *)0, jx,
+                                      sizeof(junk), 100);
+    }
+
+    uint8_t buf[sizeof(PORT_MESSAGE) + 4];
+    PORT_MESSAGE *msg = (PORT_MESSAGE *)buf;
+    for (uint32_t i = 0; i < sizeof(buf); i++) buf[i] = 0;
+    msg->TotalLength = sizeof(PORT_MESSAGE) + 4;
+    msg->DataLength  = 4;
+    msg->Type        = ALPC_MSG_TYPE_DATAGRAM;
+
+    st = AlpcSendWaitReceivePort(&task_current()->handle_table,
+                                 client_h, 0, msg, (PORT_MESSAGE *)0, 0, 0);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_PORT_DISCONNECTED,
+                   "datagram after remote disconnect => PORT_DISCONNECTED (not INSUFFICIENT_RESOURCES)");
+
+    uint8_t rxbuf[sizeof(PORT_MESSAGE) + 32];
+    PORT_MESSAGE *rx = (PORT_MESSAGE *)rxbuf;
+    msg->Type = ALPC_MSG_TYPE_REQUEST;
+    st = AlpcSendWaitReceivePort(&task_current()->handle_table,
+                                 client_h, ALPC_MSGFLG_SYNC_REQUEST,
+                                 msg, rx, sizeof(rxbuf), 50);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_PORT_DISCONNECTED,
+                   "sync after remote disconnect => PORT_DISCONNECTED");
+
+    alpc_teardown_pair(client_h, server_comm);
+}
+
+/* ---- §4.11 Sync request with no peer (server connection port) -------- */
+
+static void test_alpc_sync_no_peer(void)
+{
+    /* Server connection ports never have a ConnectedPort -- a sync
+     * request issued on one must immediately return PORT_DISCONNECTED
+     * without allocating anything. */
+    HANDLE h = INVALID_HANDLE_VALUE;
+    NTSTATUS st = AlpcCreatePort(&task_current()->handle_table, "NoPeer",
+                                 (ALPC_PORT_ATTRIBUTES *)0, &h);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS,
+                   "no-peer: server CreatePort");
+    if (h == INVALID_HANDLE_VALUE)
+        return;
+
+    uint8_t txbuf[sizeof(PORT_MESSAGE) + 4];
+    PORT_MESSAGE *tx = (PORT_MESSAGE *)txbuf;
+    for (uint32_t i = 0; i < sizeof(txbuf); i++) txbuf[i] = 0;
+    tx->TotalLength = sizeof(PORT_MESSAGE) + 4;
+    tx->DataLength  = 4;
+    tx->Type        = ALPC_MSG_TYPE_REQUEST;
+
+    uint8_t rxbuf[sizeof(PORT_MESSAGE) + 32];
+    PORT_MESSAGE *rx = (PORT_MESSAGE *)rxbuf;
+    st = AlpcSendWaitReceivePort(&task_current()->handle_table, h,
+                                 ALPC_MSGFLG_SYNC_REQUEST,
+                                 tx, rx, sizeof(rxbuf), 50);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_PORT_DISCONNECTED,
+                   "sync send with no peer => PORT_DISCONNECTED");
+
+    NtClose(&task_current()->handle_table, h);
+}
+
+/* ---- §4.12 NtAlpcSendWaitReceivePort syscall validation -------------- */
+
+static void test_alpc_syscall_validation(void)
+{
+    /* Both pointers NULL => INVALID_PARAMETER. */
+    NTSTATUS st = ssdt_dispatch(SSDT_NtAlpcSendWaitReceivePort,
+                                0, 0, 0, 0, 0, 0);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_INVALID_PARAMETER,
+                   "syscall: send=NULL, recv=NULL => INVALID_PARAMETER");
+
+    /* recv_buf_len < sizeof(PORT_MESSAGE) but recv_msg present =>
+     * BUFFER_TOO_SMALL. */
+    {
+        PORT_MESSAGE rx;
+        st = ssdt_dispatch(SSDT_NtAlpcSendWaitReceivePort,
+                           0, 0, 0, (uint64_t)&rx,
+                           sizeof(PORT_MESSAGE) - 1, 0);
+        TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_BUFFER_TOO_SMALL,
+                       "syscall: tiny recv_buf_len => BUFFER_TOO_SMALL");
+    }
+
+    /* send_msg with bogus DataLength => INVALID_PARAMETER. */
+    {
+        PORT_MESSAGE tx;
+        uint8_t *zp = (uint8_t *)&tx;
+        for (uint32_t i = 0; i < sizeof(tx); i++) zp[i] = 0;
+        tx.TotalLength = sizeof(tx);
+        tx.DataLength  = ALPC_MAX_ALLOWED_MESSAGE_LENGTH + 1;
+        tx.Type        = ALPC_MSG_TYPE_DATAGRAM;
+        st = ssdt_dispatch(SSDT_NtAlpcSendWaitReceivePort, 0, 0,
+                           (uint64_t)&tx, 0, 0, 0);
+        TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_INVALID_PARAMETER,
+                       "syscall: oversized DataLength => INVALID_PARAMETER");
+    }
+
+    /* recv_msg=NULL with SYNC_REQUEST flag => INVALID_PARAMETER. */
+    {
+        PORT_MESSAGE tx;
+        uint8_t *zp = (uint8_t *)&tx;
+        for (uint32_t i = 0; i < sizeof(tx); i++) zp[i] = 0;
+        tx.TotalLength = sizeof(tx);
+        tx.DataLength  = 0;
+        tx.Type        = ALPC_MSG_TYPE_REQUEST;
+        st = ssdt_dispatch(SSDT_NtAlpcSendWaitReceivePort, 0,
+                           ALPC_MSGFLG_SYNC_REQUEST,
+                           (uint64_t)&tx, 0, 0, 0);
+        TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_INVALID_PARAMETER,
+                       "syscall: SYNC_REQUEST without recv => INVALID_PARAMETER");
+    }
+}
+
 /* ---- Registration ------------------------------------------------------ */
 
 void test_register_alpc(void)
@@ -741,6 +1500,33 @@ void test_register_alpc(void)
                             test_alpc_accept_timeout, TEST_CAT_IPC);
     test_suite_register_cat("alpc: disconnect unconnected noop",
                             test_alpc_disconnect_unconnected, TEST_CAT_IPC);
+    /* §4 send+wait+receive engine */
+    test_suite_register_cat("alpc: datagram delivery (2 threads)",
+                            test_alpc_datagram_delivery, TEST_CAT_IPC);
+    test_suite_register_cat("alpc: sync request+reply round-trip",
+                            test_alpc_sync_request_reply, TEST_CAT_IPC);
+    test_suite_register_cat("alpc: reply unknown MessageId rejected",
+                            test_alpc_reply_mismatch, TEST_CAT_IPC);
+    test_suite_register_cat("alpc: send oversized => BUFFER_TOO_SMALL",
+                            test_alpc_send_too_large, TEST_CAT_IPC);
+    test_suite_register_cat("alpc: receive empty timeout=0 => TIMEOUT",
+                            test_alpc_receive_empty_no_wait, TEST_CAT_IPC);
+    test_suite_register_cat("alpc: disconnect wakes sync waiter",
+                            test_alpc_sync_wait_disconnect, TEST_CAT_IPC);
+    test_suite_register_cat("alpc: pool quota exceeded",
+                            test_alpc_pool_quota_exceeded, TEST_CAT_IPC);
+    test_suite_register_cat("alpc: receive FIFO + truncation",
+                            test_alpc_receive_fifo_truncation, TEST_CAT_IPC);
+    test_suite_register_cat("alpc: sync timeout + late reply mismatch",
+                            test_alpc_sync_timeout_late_reply, TEST_CAT_IPC);
+    test_suite_register_cat("alpc: disconnect-then-send => DISCONNECTED",
+                            test_alpc_disconnect_then_send, TEST_CAT_IPC);
+    test_suite_register_cat("alpc: remote disconnect-then-send => DISCONNECTED",
+                            test_alpc_remote_disconnect_then_send, TEST_CAT_IPC);
+    test_suite_register_cat("alpc: sync request with no peer",
+                            test_alpc_sync_no_peer, TEST_CAT_IPC);
+    test_suite_register_cat("alpc: NtAlpcSendWaitReceivePort syscall validation",
+                            test_alpc_syscall_validation, TEST_CAT_IPC);
 }
 
 #endif /* KERNEL_TESTS */

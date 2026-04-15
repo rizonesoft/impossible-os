@@ -52,12 +52,73 @@ static void queue_drain(ALPC_MSG_QUEUE *q)
     PORT_MESSAGE_ENTRY *cur = q->Head;
     while (cur) {
         PORT_MESSAGE_ENTRY *next = cur->Link_next;
+        /* on_delete drains the queue; the port is being freed, so
+         * PoolUsageBytes accounting is moot. Use the uncharged
+         * destroy path. */
         kfree(cur);
         cur = next;
     }
     q->Head = (PORT_MESSAGE_ENTRY *)0;
     q->Tail = (PORT_MESSAGE_ENTRY *)0;
     q->Count = 0;
+}
+
+static void pending_queue_init(ALPC_PENDING_QUEUE *q)
+{
+    q->Head = (ALPC_PENDING_REPLY *)0;
+    q->Tail = (ALPC_PENDING_REPLY *)0;
+    q->Count = 0;
+}
+
+static void pending_queue_enqueue(ALPC_PENDING_QUEUE *q, ALPC_PENDING_REPLY *r)
+{
+    r->Link_next = (ALPC_PENDING_REPLY *)0;
+    if (!q->Head) {
+        q->Head = r;
+        q->Tail = r;
+    } else {
+        q->Tail->Link_next = r;
+        q->Tail = r;
+    }
+    q->Count++;
+}
+
+/* Remove `r` from `q` if present. Caller holds the port's Lock.
+ * Returns 1 if found and removed, 0 if not present. Pointer-keyed so
+ * the sender's timeout-vs-reply race uses unambiguous identity (no
+ * MessageId reuse risk within the port lifetime). */
+static int pending_queue_remove(ALPC_PENDING_QUEUE *q, ALPC_PENDING_REPLY *r)
+{
+    ALPC_PENDING_REPLY **pp = &q->Head;
+    ALPC_PENDING_REPLY *prev = (ALPC_PENDING_REPLY *)0;
+    while (*pp) {
+        if (*pp == r) {
+            *pp = r->Link_next;
+            if (q->Tail == r)
+                q->Tail = prev;
+            q->Count--;
+            r->Link_next = (ALPC_PENDING_REPLY *)0;
+            return 1;
+        }
+        prev = *pp;
+        pp = &(*pp)->Link_next;
+    }
+    return 0;
+}
+
+/* Find a pending record by MessageId. Caller holds the port's Lock.
+ * Returns the record (still on the queue) or NULL; reply path then
+ * removes it via pending_queue_remove. */
+static ALPC_PENDING_REPLY *pending_queue_find(ALPC_PENDING_QUEUE *q,
+                                              uint64_t message_id)
+{
+    ALPC_PENDING_REPLY *cur = q->Head;
+    while (cur) {
+        if (cur->MessageId == message_id)
+            return cur;
+        cur = cur->Link_next;
+    }
+    return (ALPC_PENDING_REPLY *)0;
 }
 
 /* ---- DeleteProcedure --------------------------------------------------- */
@@ -70,14 +131,23 @@ static void alpc_port_on_delete(void *body)
     /* Snapshot queues under the port's own lock, then release before
      * freeing entries -- kfree may sleep in heap debug builds; the
      * lock-hold-time rule forbids blocking calls while holding a
-     * spinlock. */
+     * spinlock.
+     *
+     * Pending sync waiters are SENDER-OWNED (heap allocations on this
+     * port's PendingQueue but freed by the sender thread on wake).
+     * on_delete must signal them WHILE STILL HOLDING the lock so the
+     * sender (which acquires the same lock on wake) cannot free a
+     * record before our event_set fires. After the lock is dropped, the
+     * pending records are unreachable from this port and any waiter
+     * that wakes will simply observe Completed=1 and free its own
+     * record. */
     spin_lock_irqsave(&p->Lock, &irqf);
     ALPC_MSG_QUEUE msg = p->MessageQueue;
-    ALPC_MSG_QUEUE pending = p->PendingQueue;
+    ALPC_PENDING_REPLY *pending_head = p->PendingQueue.Head;
     ALPC_CONNECTION_REQUEST *conn_head =
         (ALPC_CONNECTION_REQUEST *)p->ConnectionQueue.Head;
     queue_init(&p->MessageQueue);
-    queue_init(&p->PendingQueue);
+    pending_queue_init(&p->PendingQueue);
     p->ConnectionQueue.Head  = (PORT_MESSAGE_ENTRY *)0;
     p->ConnectionQueue.Tail  = (PORT_MESSAGE_ENTRY *)0;
     p->ConnectionQueue.Count = 0;
@@ -88,10 +158,28 @@ static void alpc_port_on_delete(void *body)
     struct access_token *tok = p->ClientToken;
     p->ClientToken = (struct access_token *)0;
     p->Disconnected = 1;
+
+    /* Wake every pending sync waiter under the lock. Contract violation
+     * if non-empty (sender should have removed before port hit ref==0)
+     * but log + signal defensively so no thread hangs. */
+    if (pending_head) {
+        klog(LOG_WARN, "alpc",
+             "port on_delete with pending sync replies -- contract violation");
+        ALPC_PENDING_REPLY *cur = pending_head;
+        while (cur) {
+            ALPC_PENDING_REPLY *next = cur->Link_next;
+            cur->Link_next   = (ALPC_PENDING_REPLY *)0;
+            cur->ReplyType   = ALPC_MSG_TYPE_PORT_CLOSED;
+            cur->ReplyStatus = STATUS_PORT_DISCONNECTED;
+            cur->ReplyBodyLen = 0;
+            cur->Completed   = 1;
+            event_set(&cur->ReplyWait);
+            cur = next;
+        }
+    }
     spin_unlock_irqrestore(&p->Lock, irqf);
 
     queue_drain(&msg);
-    queue_drain(&pending);
 
     /* ConnectionQueue carries ALPC_CONNECTION_REQUEST nodes, NOT
      * PORT_MESSAGE_ENTRY -- the list lives on client stacks + heaps and
@@ -746,6 +834,24 @@ NTSTATUS AlpcDisconnectPort(HANDLE_TABLE *ht, HANDLE port_handle)
         port->ConnectionQueue.Tail  = (PORT_MESSAGE_ENTRY *)0;
         port->ConnectionQueue.Count = 0;
     }
+    /* Drain MY PendingQueue: any sync waiter that I sent a request from
+     * gets STATUS_PORT_DISCONNECTED. Signal under the lock so the
+     * sender (which acquires the same lock on wake) cannot free the
+     * record before our event_set is observed. */
+    {
+        ALPC_PENDING_REPLY *pr = port->PendingQueue.Head;
+        while (pr) {
+            ALPC_PENDING_REPLY *next = pr->Link_next;
+            pr->Link_next   = (ALPC_PENDING_REPLY *)0;
+            pr->ReplyType   = ALPC_MSG_TYPE_PORT_CLOSED;
+            pr->ReplyStatus = STATUS_PORT_DISCONNECTED;
+            pr->ReplyBodyLen = 0;
+            pr->Completed   = 1;
+            event_set(&pr->ReplyWait);
+            pr = next;
+        }
+        pending_queue_init(&port->PendingQueue);
+    }
     spin_unlock_irqrestore(&port->Lock, irqf);
 
     /* Wake every pending connect caller with PORT_DISCONNECTED. Each
@@ -793,14 +899,46 @@ NTSTATUS AlpcDisconnectPort(HANDLE_TABLE *ht, HANDLE port_handle)
         }
         peer->MessageQueue.Count++;
         peer->Disconnected = 1;
+        /* Drain peer's PendingQueue too: peer may have sync requests
+         * waiting for replies from US, which will never arrive. Signal
+         * under peer->Lock so peer's senders can safely free on wake. */
+        {
+            ALPC_PENDING_REPLY *pr = peer->PendingQueue.Head;
+            while (pr) {
+                ALPC_PENDING_REPLY *next = pr->Link_next;
+                pr->Link_next   = (ALPC_PENDING_REPLY *)0;
+                pr->ReplyType   = ALPC_MSG_TYPE_PORT_CLOSED;
+                pr->ReplyStatus = STATUS_PORT_DISCONNECTED;
+                pr->ReplyBodyLen = 0;
+                pr->Completed   = 1;
+                event_set(&pr->ReplyWait);
+                pr = next;
+            }
+            pending_queue_init(&peer->PendingQueue);
+        }
         spin_unlock_irqrestore(&peer->Lock, irqf);
 
         event_set(&peer->WaitQueue);
     } else {
-        /* Couldn't allocate the marker. Still mark peer Disconnected so
-         * any subsequent send fails fast. */
+        /* Couldn't allocate the marker. Still mark peer Disconnected and
+         * drain peer PendingQueue so any subsequent send fails fast and
+         * any blocked sync waiter wakes. */
         spin_lock_irqsave(&peer->Lock, &irqf);
         peer->Disconnected = 1;
+        {
+            ALPC_PENDING_REPLY *pr = peer->PendingQueue.Head;
+            while (pr) {
+                ALPC_PENDING_REPLY *next = pr->Link_next;
+                pr->Link_next   = (ALPC_PENDING_REPLY *)0;
+                pr->ReplyType   = ALPC_MSG_TYPE_PORT_CLOSED;
+                pr->ReplyStatus = STATUS_PORT_DISCONNECTED;
+                pr->ReplyBodyLen = 0;
+                pr->Completed   = 1;
+                event_set(&pr->ReplyWait);
+                pr = next;
+            }
+            pending_queue_init(&peer->PendingQueue);
+        }
         spin_unlock_irqrestore(&peer->Lock, irqf);
         event_set(&peer->WaitQueue);
         klog(LOG_WARN, "alpc",
@@ -818,4 +956,683 @@ NTSTATUS AlpcDisconnectPort(HANDLE_TABLE *ht, HANDLE port_handle)
     klog(LOG_DEBUG, "alpc", "disconnect: port=%u",
          (uint64_t)port->PortType);
     return STATUS_SUCCESS;
+}
+
+/* =========================================================================
+ * §4 Synchronous Send+Wait+Receive Engine
+ *
+ * Ownership model (resolves the v1/v2 design-review criticals):
+ *   - Inbound message entry (PORT_MESSAGE_ENTRY): queue-owned. Lives on
+ *     a single ALPC_MSG_QUEUE (MessageQueue). Receiver dequeues + frees
+ *     via AlpcFreeMessage. on_delete drains and frees defensively.
+ *   - Pending sync record (ALPC_PENDING_REPLY): sender-owned. Lives on
+ *     one ALPC_PENDING_QUEUE (sender_port->PendingQueue). The sender is
+ *     the SOLE freer. Replier and disconnect may signal it but only
+ *     after removing it from the queue (so no other path reaches it),
+ *     and only WHILE STILL HOLDING the port lock the sender will
+ *     re-acquire on wake (so the wake observation is serialized).
+ *
+ * Lock order for cross-port enqueue (sync request only): lower port
+ * address first, then higher. All other paths (reply, receive, timeout,
+ * disconnect drain) hold at most one port lock at a time.
+ *
+ * Pool accounting: AlpcAllocateMessage and the equivalent helper for
+ * pending records charge under the owning port's Lock, then kmalloc
+ * outside the lock. ChargedSize is stored in the entry/record so the
+ * free path uncharges the SAME amount regardless of whether
+ * Header.DataLength has been mutated. AlpcFreeMessage uncharges; on
+ * port destruction the queue_drain in on_delete simply kfree's without
+ * uncharging (the port is going away).
+ * ======================================================================= */
+
+/* ---- AlpcAllocateMessage / AlpcFreeMessage ---------------------------- */
+
+PORT_MESSAGE_ENTRY *AlpcAllocateMessage(ALPC_PORT *charge_port,
+                                        uint32_t data_length)
+{
+    uint32_t alloc_size;
+    uint64_t cap;
+    uint64_t irqf;
+    PORT_MESSAGE_ENTRY *entry;
+
+    if (!charge_port)
+        return (PORT_MESSAGE_ENTRY *)0;
+    if (data_length > ALPC_MAX_ALLOWED_MESSAGE_LENGTH)
+        return (PORT_MESSAGE_ENTRY *)0;
+
+    alloc_size = (uint32_t)sizeof(PORT_MESSAGE_ENTRY) + data_length;
+
+    /* Reserve quota under the lock. Drop the lock before kmalloc so
+     * heap allocation never runs under a spinlock. */
+    spin_lock_irqsave(&charge_port->Lock, &irqf);
+    if (charge_port->Disconnected) {
+        spin_unlock_irqrestore(&charge_port->Lock, irqf);
+        return (PORT_MESSAGE_ENTRY *)0;
+    }
+    cap = charge_port->Attributes.MaxPoolUsage;
+    if (cap > 0 && (charge_port->PoolUsageBytes + alloc_size) > cap) {
+        spin_unlock_irqrestore(&charge_port->Lock, irqf);
+        return (PORT_MESSAGE_ENTRY *)0;
+    }
+    charge_port->PoolUsageBytes += alloc_size;
+    spin_unlock_irqrestore(&charge_port->Lock, irqf);
+
+    entry = (PORT_MESSAGE_ENTRY *)kmalloc(alloc_size);
+    if (!entry) {
+        spin_lock_irqsave(&charge_port->Lock, &irqf);
+        if (charge_port->PoolUsageBytes >= alloc_size)
+            charge_port->PoolUsageBytes -= alloc_size;
+        spin_unlock_irqrestore(&charge_port->Lock, irqf);
+        return (PORT_MESSAGE_ENTRY *)0;
+    }
+
+    /* Zero header + bookkeeping. Body bytes are caller-filled. */
+    {
+        uint8_t *zp = (uint8_t *)entry;
+        for (uint32_t i = 0; i < sizeof(PORT_MESSAGE_ENTRY); i++)
+            zp[i] = 0;
+    }
+    entry->ChargedSize = alloc_size;
+    event_init(&entry->ReplySyncWait, "alpc_msg_unused", EVENT_AUTO_RESET, 0);
+    return entry;
+}
+
+void AlpcFreeMessage(ALPC_PORT *charge_port, PORT_MESSAGE_ENTRY *entry)
+{
+    uint32_t size;
+    uint64_t irqf;
+
+    if (!entry)
+        return;
+    size = entry->ChargedSize ? entry->ChargedSize
+                              : (uint32_t)sizeof(PORT_MESSAGE_ENTRY);
+    if (charge_port) {
+        spin_lock_irqsave(&charge_port->Lock, &irqf);
+        if (charge_port->PoolUsageBytes >= size)
+            charge_port->PoolUsageBytes -= size;
+        spin_unlock_irqrestore(&charge_port->Lock, irqf);
+    }
+    kfree(entry);
+}
+
+/* ---- Pending-reply allocator (file-local) ----------------------------- */
+
+static ALPC_PENDING_REPLY *alpc_alloc_pending_reply(ALPC_PORT *sender_port,
+                                                    uint16_t reply_body_cap)
+{
+    uint32_t alloc_size;
+    uint64_t cap;
+    uint64_t irqf;
+    ALPC_PENDING_REPLY *r;
+
+    if (!sender_port)
+        return (ALPC_PENDING_REPLY *)0;
+    if (reply_body_cap > ALPC_MAX_ALLOWED_MESSAGE_LENGTH)
+        return (ALPC_PENDING_REPLY *)0;
+
+    alloc_size = (uint32_t)sizeof(ALPC_PENDING_REPLY) + reply_body_cap;
+
+    spin_lock_irqsave(&sender_port->Lock, &irqf);
+    if (sender_port->Disconnected) {
+        spin_unlock_irqrestore(&sender_port->Lock, irqf);
+        return (ALPC_PENDING_REPLY *)0;
+    }
+    cap = sender_port->Attributes.MaxPoolUsage;
+    if (cap > 0 && (sender_port->PoolUsageBytes + alloc_size) > cap) {
+        spin_unlock_irqrestore(&sender_port->Lock, irqf);
+        return (ALPC_PENDING_REPLY *)0;
+    }
+    sender_port->PoolUsageBytes += alloc_size;
+    spin_unlock_irqrestore(&sender_port->Lock, irqf);
+
+    r = (ALPC_PENDING_REPLY *)kmalloc(alloc_size);
+    if (!r) {
+        spin_lock_irqsave(&sender_port->Lock, &irqf);
+        if (sender_port->PoolUsageBytes >= alloc_size)
+            sender_port->PoolUsageBytes -= alloc_size;
+        spin_unlock_irqrestore(&sender_port->Lock, irqf);
+        return (ALPC_PENDING_REPLY *)0;
+    }
+
+    {
+        uint8_t *zp = (uint8_t *)r;
+        for (uint32_t i = 0; i < sizeof(ALPC_PENDING_REPLY); i++)
+            zp[i] = 0;
+    }
+    r->ChargedSize  = alloc_size;
+    r->ReplyBodyCap = reply_body_cap;
+    r->ReplyBody    = (uint8_t *)r + sizeof(ALPC_PENDING_REPLY);
+    event_init(&r->ReplyWait, "alpc_reply_wait", EVENT_AUTO_RESET, 0);
+    return r;
+}
+
+static void alpc_free_pending_reply(ALPC_PORT *sender_port,
+                                    ALPC_PENDING_REPLY *r)
+{
+    uint32_t size;
+    uint64_t irqf;
+
+    if (!r)
+        return;
+    size = r->ChargedSize ? r->ChargedSize
+                          : (uint32_t)sizeof(ALPC_PENDING_REPLY);
+    if (sender_port) {
+        spin_lock_irqsave(&sender_port->Lock, &irqf);
+        if (sender_port->PoolUsageBytes >= size)
+            sender_port->PoolUsageBytes -= size;
+        spin_unlock_irqrestore(&sender_port->Lock, irqf);
+    }
+    kfree(r);
+}
+
+/* ---- Engine helpers --------------------------------------------------- */
+
+/* Effective per-port message length cap. MaxMessageLength == 0 means
+ * "use the hard ceiling"; non-zero values cap below the ceiling. */
+static uint32_t alpc_effective_max_message(const ALPC_PORT *p)
+{
+    uint64_t v = p->Attributes.MaxMessageLength;
+    if (v == 0 || v > ALPC_MAX_ALLOWED_MESSAGE_LENGTH)
+        return ALPC_MAX_ALLOWED_MESSAGE_LENGTH;
+    return (uint32_t)v;
+}
+
+/* Append `entry` to `port->MessageQueue` under `port->Lock`. Caller
+ * holds the lock. */
+static void msg_queue_enqueue_locked(ALPC_PORT *port, PORT_MESSAGE_ENTRY *entry)
+{
+    entry->Link_next = (PORT_MESSAGE_ENTRY *)0;
+    if (!port->MessageQueue.Head) {
+        port->MessageQueue.Head = entry;
+        port->MessageQueue.Tail = entry;
+    } else {
+        port->MessageQueue.Tail->Link_next = entry;
+        port->MessageQueue.Tail = entry;
+    }
+    port->MessageQueue.Count++;
+}
+
+/* Dequeue front of `port->MessageQueue` under `port->Lock`. Returns
+ * NULL if empty. Caller holds the lock. */
+static PORT_MESSAGE_ENTRY *msg_queue_dequeue_locked(ALPC_PORT *port)
+{
+    PORT_MESSAGE_ENTRY *e = port->MessageQueue.Head;
+    if (!e)
+        return (PORT_MESSAGE_ENTRY *)0;
+    port->MessageQueue.Head = e->Link_next;
+    if (!port->MessageQueue.Head)
+        port->MessageQueue.Tail = (PORT_MESSAGE_ENTRY *)0;
+    port->MessageQueue.Count--;
+    e->Link_next = (PORT_MESSAGE_ENTRY *)0;
+    return e;
+}
+
+/* Resolve a HANDLE to an ALPC_PORT and pin it with a reference. The
+ * caller drops via ObDereferenceObject. Returns NTSTATUS. */
+static NTSTATUS resolve_alpc_port(HANDLE_TABLE *ht, HANDLE h,
+                                  ALPC_PORT **out)
+{
+    HANDLE_TABLE_ENTRY *entry;
+    OBJECT_HEADER *hdr;
+    ALPC_PORT *p;
+
+    *out = (ALPC_PORT *)0;
+    if (!ht)
+        return STATUS_INVALID_PARAMETER;
+    entry = ObpLookupHandle(ht, h);
+    if (!entry || !entry->object)
+        return STATUS_INVALID_HANDLE;
+    hdr = OB_HEADER_FROM_BODY(entry->object);
+    if (hdr->type != ObpAlpcPortType)
+        return STATUS_INVALID_PORT_HANDLE;
+    p = (ALPC_PORT *)entry->object;
+    ObReferenceObject(p);
+    *out = p;
+    return STATUS_SUCCESS;
+}
+
+/* Address-ordered double lock: take both port spinlocks in a stable
+ * global order so concurrent send/disconnect on opposite endpoints
+ * cannot deadlock. Save IRQ flags from the FIRST acquired lock. */
+static void alpc_lock_two(ALPC_PORT *a, ALPC_PORT *b,
+                          uint64_t *irqf_a, uint64_t *irqf_b,
+                          ALPC_PORT **out_first, ALPC_PORT **out_second)
+{
+    if ((uintptr_t)a < (uintptr_t)b) {
+        *out_first = a; *out_second = b;
+        spin_lock_irqsave(&a->Lock, irqf_a);
+        spin_lock_irqsave(&b->Lock, irqf_b);
+    } else {
+        *out_first = b; *out_second = a;
+        spin_lock_irqsave(&b->Lock, irqf_a);
+        spin_lock_irqsave(&a->Lock, irqf_b);
+    }
+}
+
+static void alpc_unlock_two(ALPC_PORT *first, ALPC_PORT *second,
+                            uint64_t irqf_a, uint64_t irqf_b)
+{
+    spin_unlock_irqrestore(&second->Lock, irqf_b);
+    spin_unlock_irqrestore(&first->Lock, irqf_a);
+}
+
+/* Fill the standard ClientId from the current task. */
+static void alpc_fill_client_id(CLIENT_ID *cid)
+{
+    struct task *t = task_current();
+    cid->UniqueProcess = t ? (uint64_t)t->pid : 0u;
+    cid->UniqueThread  = 0;  /* §4 reserves thread id; full value lands
+                              * with §7 token capture / TEB integration */
+}
+
+static void alpc_memcpy(void *dst, const void *src, uint32_t n)
+{
+    uint8_t *d = (uint8_t *)dst;
+    const uint8_t *s = (const uint8_t *)src;
+    for (uint32_t i = 0; i < n; i++)
+        d[i] = s[i];
+}
+
+/* ---- Receive-only path ------------------------------------------------ */
+
+static NTSTATUS alpc_receive_only(ALPC_PORT *port, PORT_MESSAGE *recv_msg,
+                                  uint32_t recv_buf_len, uint32_t timeout_ms)
+{
+    PORT_MESSAGE_ENTRY *entry;
+    uint64_t irqf;
+    int waited_ok;
+    uint32_t copy_len;
+
+    if (!recv_msg || recv_buf_len < sizeof(PORT_MESSAGE))
+        return STATUS_BUFFER_TOO_SMALL;
+
+    for (;;) {
+        spin_lock_irqsave(&port->Lock, &irqf);
+        if (port->Disconnected && port->MessageQueue.Count == 0) {
+            spin_unlock_irqrestore(&port->Lock, irqf);
+            return STATUS_PORT_DISCONNECTED;
+        }
+        entry = msg_queue_dequeue_locked(port);
+        spin_unlock_irqrestore(&port->Lock, irqf);
+        if (entry)
+            break;
+        if (timeout_ms == 0)
+            return STATUS_TIMEOUT;
+        waited_ok = event_wait_timeout(&port->WaitQueue, timeout_ms);
+        if (!waited_ok)
+            return STATUS_TIMEOUT;
+        /* Re-check disconnect + queue under lock on next iteration. */
+    }
+
+    /* Copy header. Body bounded by the smaller of TotalLength and
+     * the caller's recv_buf_len; truncation is normal at this layer. */
+    alpc_memcpy(recv_msg, &entry->Header, sizeof(PORT_MESSAGE));
+    copy_len = entry->Header.DataLength;
+    {
+        uint32_t avail = recv_buf_len - (uint32_t)sizeof(PORT_MESSAGE);
+        if (copy_len > avail)
+            copy_len = avail;
+    }
+    if (copy_len > 0)
+        alpc_memcpy((uint8_t *)recv_msg + sizeof(PORT_MESSAGE),
+                    ALPC_MSG_BODY(entry), copy_len);
+
+    AlpcFreeMessage(port, entry);
+    return STATUS_SUCCESS;
+}
+
+/* ---- Datagram send path ---------------------------------------------- */
+
+static NTSTATUS alpc_datagram_send(ALPC_PORT *sender_port,
+                                   PORT_MESSAGE *send_msg)
+{
+    ALPC_PORT *peer;
+    PORT_MESSAGE_ENTRY *entry;
+    uint32_t data_len;
+    uint64_t irqf;
+    uint64_t local_msg_id;
+    int local_disc, peer_disc;
+
+    if (!send_msg)
+        return STATUS_INVALID_PARAMETER;
+    data_len = send_msg->DataLength;
+    if (data_len > alpc_effective_max_message(sender_port))
+        return STATUS_BUFFER_TOO_SMALL;
+
+    spin_lock_irqsave(&sender_port->Lock, &irqf);
+    local_disc = sender_port->Disconnected;
+    peer = sender_port->ConnectedPort;
+    if (peer)
+        ObReferenceObject(peer);
+    spin_unlock_irqrestore(&sender_port->Lock, irqf);
+    if (local_disc) {
+        if (peer)
+            ObDereferenceObject(peer);
+        return STATUS_PORT_DISCONNECTED;
+    }
+    if (!peer)
+        return STATUS_PORT_DISCONNECTED;
+
+    /* Pre-check peer Disconnected so a tear-down maps to PORT_DISCONNECTED
+     * rather than the INSUFFICIENT_RESOURCES that AlpcAllocateMessage would
+     * surface (it also rejects when the charge port is Disconnected). */
+    spin_lock_irqsave(&peer->Lock, &irqf);
+    peer_disc = peer->Disconnected;
+    spin_unlock_irqrestore(&peer->Lock, irqf);
+    if (peer_disc) {
+        ObDereferenceObject(peer);
+        return STATUS_PORT_DISCONNECTED;
+    }
+
+    entry = AlpcAllocateMessage(peer, data_len);
+    if (!entry) {
+        ObDereferenceObject(peer);
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+
+    /* Snapshot the MessageId locally BEFORE enqueue so the post-signal
+     * klog never touches `entry` (the receiver may dequeue+free it as
+     * soon as event_set fires). */
+    local_msg_id = __atomic_fetch_add(&sender_port->NextMessageId, 1u,
+                                      __ATOMIC_RELAXED);
+    entry->Header.TotalLength    = (uint16_t)(sizeof(PORT_MESSAGE) + data_len);
+    entry->Header.DataLength     = (uint16_t)data_len;
+    entry->Header.Type           = ALPC_MSG_TYPE_DATAGRAM;
+    entry->Header.DataInfoOffset = 0;
+    entry->Header.MessageId      = local_msg_id;
+    entry->Header.CallbackId     = 0;
+    alpc_fill_client_id(&entry->Header.ClientId);
+    entry->ReplyPort       = (ALPC_PORT *)0;
+    entry->WaitingForReply = 0;
+
+    if (data_len > 0)
+        alpc_memcpy(ALPC_MSG_BODY(entry),
+                    (const uint8_t *)send_msg + sizeof(PORT_MESSAGE),
+                    data_len);
+
+    spin_lock_irqsave(&peer->Lock, &irqf);
+    if (peer->Disconnected) {
+        spin_unlock_irqrestore(&peer->Lock, irqf);
+        AlpcFreeMessage(peer, entry);
+        ObDereferenceObject(peer);
+        return STATUS_PORT_DISCONNECTED;
+    }
+    msg_queue_enqueue_locked(peer, entry);
+    spin_unlock_irqrestore(&peer->Lock, irqf);
+    /* `entry` may be freed by the receiver any time after this point. */
+    entry = (PORT_MESSAGE_ENTRY *)0;
+
+    event_set(&peer->WaitQueue);
+
+    klog(LOG_DEBUG, "alpc", "msg sent: id=%u type=DATAGRAM len=%u",
+         local_msg_id, (uint64_t)data_len);
+
+    ObDereferenceObject(peer);
+    return STATUS_SUCCESS;
+}
+
+/* ---- Sync request+wait path ----------------------------------------- */
+
+static NTSTATUS alpc_sync_request(ALPC_PORT *sender_port,
+                                  PORT_MESSAGE *send_msg,
+                                  PORT_MESSAGE *recv_msg,
+                                  uint32_t recv_buf_len,
+                                  uint32_t timeout_ms)
+{
+    ALPC_PORT *peer;
+    PORT_MESSAGE_ENTRY *entry;
+    ALPC_PENDING_REPLY *pending;
+    uint32_t data_len;
+    uint16_t reply_cap;
+    uint64_t message_id;
+    uint64_t irqf, irqf2;
+    ALPC_PORT *first, *second;
+    int waited_ok;
+    NTSTATUS final_status;
+
+    if (!send_msg || !recv_msg || recv_buf_len < sizeof(PORT_MESSAGE))
+        return STATUS_BUFFER_TOO_SMALL;
+
+    data_len = send_msg->DataLength;
+    if (data_len > alpc_effective_max_message(sender_port))
+        return STATUS_BUFFER_TOO_SMALL;
+
+    /* Reply capacity = the user's RecvMsg payload region after the
+     * header. Capped at the inline-message ceiling so the pending
+     * record's inline body never exceeds the protocol max. */
+    {
+        uint32_t cap = recv_buf_len - (uint32_t)sizeof(PORT_MESSAGE);
+        if (cap > ALPC_MAX_ALLOWED_MESSAGE_LENGTH)
+            cap = ALPC_MAX_ALLOWED_MESSAGE_LENGTH;
+        reply_cap = (uint16_t)cap;
+    }
+
+    int local_disc, peer_disc;
+    spin_lock_irqsave(&sender_port->Lock, &irqf);
+    local_disc = sender_port->Disconnected;
+    peer = sender_port->ConnectedPort;
+    if (peer)
+        ObReferenceObject(peer);
+    spin_unlock_irqrestore(&sender_port->Lock, irqf);
+    if (local_disc) {
+        if (peer)
+            ObDereferenceObject(peer);
+        return STATUS_PORT_DISCONNECTED;
+    }
+    if (!peer)
+        return STATUS_PORT_DISCONNECTED;
+
+    /* Pre-check peer Disconnected so a remote teardown maps to
+     * PORT_DISCONNECTED rather than INSUFFICIENT_RESOURCES. */
+    spin_lock_irqsave(&peer->Lock, &irqf);
+    peer_disc = peer->Disconnected;
+    spin_unlock_irqrestore(&peer->Lock, irqf);
+    if (peer_disc) {
+        ObDereferenceObject(peer);
+        return STATUS_PORT_DISCONNECTED;
+    }
+
+    pending = alpc_alloc_pending_reply(sender_port, reply_cap);
+    if (!pending) {
+        ObDereferenceObject(peer);
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+    entry = AlpcAllocateMessage(peer, data_len);
+    if (!entry) {
+        alpc_free_pending_reply(sender_port, pending);
+        ObDereferenceObject(peer);
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+
+    message_id = __atomic_fetch_add(&sender_port->NextMessageId, 1u,
+                                    __ATOMIC_RELAXED);
+
+    entry->Header.TotalLength    = (uint16_t)(sizeof(PORT_MESSAGE) + data_len);
+    entry->Header.DataLength     = (uint16_t)data_len;
+    entry->Header.Type           = ALPC_MSG_TYPE_REQUEST;
+    entry->Header.DataInfoOffset = 0;
+    entry->Header.MessageId      = message_id;
+    entry->Header.CallbackId     = 0;
+    alpc_fill_client_id(&entry->Header.ClientId);
+    entry->ReplyPort       = sender_port;     /* replier finds us via this */
+    entry->WaitingForReply = 1;
+
+    if (data_len > 0)
+        alpc_memcpy(ALPC_MSG_BODY(entry),
+                    (const uint8_t *)send_msg + sizeof(PORT_MESSAGE),
+                    data_len);
+
+    pending->MessageId = message_id;
+
+    /* Address-ordered double lock for atomic enqueue across BOTH ports.
+     * If either side is Disconnected, abort cleanly without exposing the
+     * partial state. */
+    alpc_lock_two(sender_port, peer, &irqf, &irqf2, &first, &second);
+    if (sender_port->Disconnected || peer->Disconnected) {
+        alpc_unlock_two(first, second, irqf, irqf2);
+        AlpcFreeMessage(peer, entry);
+        alpc_free_pending_reply(sender_port, pending);
+        ObDereferenceObject(peer);
+        return STATUS_PORT_DISCONNECTED;
+    }
+    pending_queue_enqueue(&sender_port->PendingQueue, pending);
+    msg_queue_enqueue_locked(peer, entry);
+    alpc_unlock_two(first, second, irqf, irqf2);
+
+    event_set(&peer->WaitQueue);
+
+    klog(LOG_DEBUG, "alpc", "msg sent: id=%u type=REQUEST len=%u",
+         (uint64_t)message_id, (uint64_t)data_len);
+
+    /* Block on the pending record's wait event. event_wait_timeout uses
+     * cooperative yield (see event.c) -- the pending record stays
+     * reachable from sender_port->PendingQueue until completion or
+     * timeout, and the replier/disconnect path signals under the lock. */
+    if (timeout_ms == 0)
+        timeout_ms = 0xFFFFFFFFu;     /* "block forever" -- huge sentinel */
+    waited_ok = event_wait_timeout(&pending->ReplyWait, timeout_ms);
+
+    /* Acquire sender_port->Lock to serialize with replier/disconnect.
+     * If pending is still on the queue, we won the race over the replier
+     * (timeout) and we remove + own the record. If pending has already
+     * been removed (Completed=1), the replier/disconnect set the result
+     * and event_set'd us. */
+    spin_lock_irqsave(&sender_port->Lock, &irqf);
+    if (pending->Completed) {
+        spin_unlock_irqrestore(&sender_port->Lock, irqf);
+        if (pending->ReplyStatus == STATUS_SUCCESS) {
+            /* Build a reply header at recv_msg + copy reply body. */
+            PORT_MESSAGE hdr;
+            uint8_t *zp = (uint8_t *)&hdr;
+            for (uint32_t i = 0; i < sizeof(hdr); i++) zp[i] = 0;
+            hdr.TotalLength = (uint16_t)(sizeof(PORT_MESSAGE)
+                                         + pending->ReplyBodyLen);
+            hdr.DataLength  = pending->ReplyBodyLen;
+            hdr.Type        = pending->ReplyType;
+            hdr.MessageId   = message_id;
+            alpc_memcpy(recv_msg, &hdr, sizeof(hdr));
+            if (pending->ReplyBodyLen > 0)
+                alpc_memcpy((uint8_t *)recv_msg + sizeof(PORT_MESSAGE),
+                            pending->ReplyBody, pending->ReplyBodyLen);
+            final_status = STATUS_SUCCESS;
+        } else {
+            final_status = pending->ReplyStatus;
+        }
+    } else {
+        /* Timeout: remove from PendingQueue ourselves. */
+        if (pending_queue_remove(&sender_port->PendingQueue, pending)) {
+            final_status = waited_ok ? STATUS_TIMEOUT : STATUS_TIMEOUT;
+        } else {
+            /* Edge case: another path removed pending but didn't set
+             * Completed before we acquired the lock. In practice this
+             * is impossible (replier/disconnect set Completed under the
+             * lock atomically with removal), but defend. */
+            final_status = STATUS_TIMEOUT;
+        }
+        spin_unlock_irqrestore(&sender_port->Lock, irqf);
+    }
+    (void)waited_ok;
+
+    alpc_free_pending_reply(sender_port, pending);
+    ObDereferenceObject(peer);
+    return final_status;
+}
+
+/* ---- Reply path ------------------------------------------------------- */
+
+static NTSTATUS alpc_reply(ALPC_PORT *replier_port, PORT_MESSAGE *send_msg)
+{
+    ALPC_PORT *peer;
+    ALPC_PENDING_REPLY *pending;
+    uint64_t message_id;
+    uint16_t copy_len;
+    uint64_t irqf;
+
+    if (!send_msg)
+        return STATUS_INVALID_PARAMETER;
+    message_id = send_msg->MessageId;
+    if (message_id == 0)
+        return STATUS_REPLY_MESSAGE_MISMATCH;
+
+    spin_lock_irqsave(&replier_port->Lock, &irqf);
+    peer = replier_port->ConnectedPort;
+    if (peer)
+        ObReferenceObject(peer);
+    spin_unlock_irqrestore(&replier_port->Lock, irqf);
+    if (!peer)
+        return STATUS_PORT_DISCONNECTED;
+
+    /* Walk PEER's PendingQueue (the original requester is the peer).
+     * Hold peer->Lock for the full search + removal + signal so the
+     * sender (which acquires the same lock on wake) cannot free the
+     * record before our event_set is observed. */
+    spin_lock_irqsave(&peer->Lock, &irqf);
+    pending = pending_queue_find(&peer->PendingQueue, message_id);
+    if (!pending) {
+        spin_unlock_irqrestore(&peer->Lock, irqf);
+        ObDereferenceObject(peer);
+        return STATUS_REPLY_MESSAGE_MISMATCH;
+    }
+    pending_queue_remove(&peer->PendingQueue, pending);
+
+    copy_len = send_msg->DataLength;
+    if (copy_len > pending->ReplyBodyCap)
+        copy_len = pending->ReplyBodyCap;
+    if (copy_len > 0)
+        alpc_memcpy(pending->ReplyBody,
+                    (const uint8_t *)send_msg + sizeof(PORT_MESSAGE),
+                    copy_len);
+    pending->ReplyBodyLen = copy_len;
+    pending->ReplyType    = ALPC_MSG_TYPE_REPLY;
+    pending->ReplyStatus  = STATUS_SUCCESS;
+    pending->Completed    = 1;
+    event_set(&pending->ReplyWait);
+    spin_unlock_irqrestore(&peer->Lock, irqf);
+
+    klog(LOG_DEBUG, "alpc", "msg sent: id=%u type=REPLY len=%u",
+         (uint64_t)message_id, (uint64_t)copy_len);
+
+    ObDereferenceObject(peer);
+    return STATUS_SUCCESS;
+}
+
+/* ---- AlpcSendWaitReceivePort ----------------------------------------- */
+
+NTSTATUS AlpcSendWaitReceivePort(HANDLE_TABLE *ht, HANDLE port_handle,
+                                 uint32_t flags,
+                                 PORT_MESSAGE *send_msg,
+                                 PORT_MESSAGE *recv_msg,
+                                 uint32_t recv_buf_len,
+                                 uint32_t timeout_ms)
+{
+    ALPC_PORT *port;
+    NTSTATUS st;
+
+    st = resolve_alpc_port(ht, port_handle, &port);
+    if (!NT_SUCCESS(st))
+        return st;
+
+    /* Reply path takes precedence over the SYNC_REQUEST flag. */
+    if (send_msg && (flags & ALPC_MSGFLG_REPLY_MESSAGE)) {
+        st = alpc_reply(port, send_msg);
+        ObDereferenceObject(port);
+        return st;
+    }
+
+    if (!send_msg) {
+        st = alpc_receive_only(port, recv_msg, recv_buf_len, timeout_ms);
+        ObDereferenceObject(port);
+        return st;
+    }
+
+    if (flags & ALPC_MSGFLG_SYNC_REQUEST) {
+        st = alpc_sync_request(port, send_msg, recv_msg,
+                               recv_buf_len, timeout_ms);
+        ObDereferenceObject(port);
+        return st;
+    }
+
+    st = alpc_datagram_send(port, send_msg);
+    ObDereferenceObject(port);
+    return st;
 }

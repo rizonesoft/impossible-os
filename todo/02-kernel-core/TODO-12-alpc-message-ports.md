@@ -55,7 +55,7 @@
 | 💎  |   1   | Message header, port attributes, type codes       | (none)              |  [x]   |
 | 💎  |   2   | ALPC_PORT object & Object Manager registration    | §1, T03 §1-§4     |  [x]   |
 | 💎  |   3   | Connection state machine (create/connect/accept)  | §2, T05 §4        |  [x]   |
-| 💎  |   4   | Synchronous send+wait+receive engine              | §3, T06 §3        |  [ ]   |
+| 💎  |   4   | Synchronous send+wait+receive engine              | §3, T06 §3        |  [x]   |
 | 💎  |   5   | Asynchronous delivery & completion list           | §4                 |  [ ]   |
 | 💎  |   6   | Large data: port sections & view mapping          | §2, T03 §7        |  [ ]   |
 | 💎  |   7   | Security: client token capture & impersonation    | §4, T11 §4-§7     |  [ ]   |
@@ -159,12 +159,12 @@ The three-way handshake: client connects by name, server accepts/rejects, both s
 
 ## 4. Synchronous Send+Wait+Receive Engine
 
-- [ ] (4.1 Message pool allocator) `AlpcAllocateMessage(DataLength)` → `PORT_MESSAGE_ENTRY*`:
+- [x] (4.1 Message pool allocator) `AlpcAllocateMessage(DataLength)` → `PORT_MESSAGE_ENTRY*`:
   - Body immediately follows the `PORT_MESSAGE_ENTRY` struct in a single `kmalloc` allocation: `sizeof(PORT_MESSAGE_ENTRY) + DataLength`
   - Enforces `ALPC_MAX_ALLOWED_MESSAGE_LENGTH` limit
   - Enforces per-port `Attributes.MaxPoolUsage` accounting; returns `STATUS_INSUFFICIENT_RESOURCES` if exceeded
-- [ ] `AlpcFreeMessage(entry)` -- decrements pool accounting, calls `kfree`
-- [ ] (4.2 Core engine: NtAlpcSendWaitReceivePort) `NtAlpcSendWaitReceivePort(PortHandle, Flags, SendMsg, SendMsgAttr, RecvMsg, BufferLen, RecvMsgAttr, Timeout)`:
+- [x] `AlpcFreeMessage(entry)` -- decrements pool accounting, calls `kfree`
+- [x] (4.2 Core engine: NtAlpcSendWaitReceivePort) `NtAlpcSendWaitReceivePort(PortHandle, Flags, SendMsg, SendMsgAttr, RecvMsg, BufferLen, RecvMsgAttr, Timeout)`:
 
   **Receive-only path** (`SendMsg == NULL` or `ALPC_MSGFLG_SYNC_REQUEST` not set):
   1. Lock `port->Lock`
@@ -195,13 +195,21 @@ The three-way handshake: client connects by name, server accepts/rejects, both s
   3. `entry->WaitingForReply = false`; set `entry->Header.Type = ALPC_MSG_TYPE_REPLY`
   4. `wake_up(&entry->ReplySyncWait)` -- unblocks the waiting client
 
-- [ ] (4.3 Concurrency guarantees) `port->Lock` is a spinlock held only for queue manipulation (enqueue, dequeue, list walks); never held across a sleep -- the waiting happens outside the lock
-- [ ] `PendingQueue` is per-port and protected by `port->Lock`; entries are uniquely identified by `MessageId` (monotonic u64, never reused within a port's lifetime)
-- [ ] Multiple threads may call `NtAlpcSendWaitReceivePort` on the same server port concurrently -- each dequeues one message; FIFO order is preserved within the spinlock window; no message is delivered to two threads
-- [ ] Port destruction race: `AlpcPortDelete` acquires `port->Lock`, sets `Disconnected=true`, wakes all `WaitQueue` sleepers with `STATUS_PORT_DISCONNECTED` before freeing any memory; sleepers check `Disconnected` flag on wake
-- [ ] (4.4 Commit) Commit: `"kernel/ipc/alpc: synchronous send+wait+receive engine with reply routing"`
+- [x] (4.3 Concurrency guarantees) `port->Lock` is a spinlock held only for queue manipulation, allocator-quota updates, AND completion-signalling (replier and disconnect call `event_set` while still holding the port lock so a sender that takes the same lock on wake can never observe a freed pending record); long blocking waits happen outside the lock via `event_wait_timeout`. Two-port enqueue (sync request) holds both port locks in **address order** to prevent deadlock with concurrent disconnect.
+- [x] `PendingQueue` is per-port (now typed as `ALPC_PENDING_QUEUE` of sender-owned `ALPC_PENDING_REPLY` records, separate from `ALPC_MSG_QUEUE`); entries are looked up by `MessageId` (monotonic u64) and removed by pointer identity to defeat any later MessageId reuse in disconnect/timeout races.
+- [x] Multiple threads may call `NtAlpcSendWaitReceivePort` on the same server port concurrently -- each dequeues one message; FIFO order is preserved within the spinlock window; no message is delivered to two threads (covered by `alpc: receive FIFO + truncation`).
+- [x] Port destruction race: `AlpcDisconnectPort` acquires `port->Lock`, sets `Disconnected=1`, drains MY `PendingQueue` AND peer's `PendingQueue` (each under its own port's lock), signals every blocked sync waiter with `STATUS_PORT_DISCONNECTED` BEFORE returning. `alpc_port_on_delete` performs the same drain defensively. Sender always frees its own `ALPC_PENDING_REPLY` after observing `Completed=1`, so no path frees memory another path is still writing to.
+- [x] (4.4 Commit) Commit: `"kernel/ipc/alpc: synchronous send+wait+receive engine with reply routing"`
 
-**Test checkpoint:** Client sends 64-byte request with `ALPC_MSGFLG_SYNC_REQUEST` → client blocks. Server calls `NtAlpcSendWaitReceivePort` (receive-only) → dequeues request with correct `ClientId` and body. Server sends `ALPC_MSGFLG_REPLY_MESSAGE` → client unblocks with reply body intact and matching `MessageId`. Datagram send (no `SYNC_REQUEST`) → message queued, sender returns immediately. Message exceeding `MaxMessageLength` → `STATUS_BUFFER_TOO_SMALL`. Reply with wrong `MessageId` → `STATUS_REPLY_MESSAGE_MISMATCH`. Port disconnected during wait → `STATUS_PORT_DISCONNECTED`. Serial log: `"[ALPC] msg sent: id=%llu type=%u len=%u"`. Test on: QEMU WHPX + TCG.
+**Test checkpoint:** Client sends 64-byte request with `ALPC_MSGFLG_SYNC_REQUEST` → client blocks. Server calls `NtAlpcSendWaitReceivePort` (receive-only) → dequeues request with correct `ClientId` and body. Server sends `ALPC_MSGFLG_REPLY_MESSAGE` → client unblocks with reply body intact and matching `MessageId`. Datagram send (no `SYNC_REQUEST`) → message queued, sender returns immediately. Message exceeding `MaxMessageLength` → `STATUS_BUFFER_TOO_SMALL`. Reply with wrong `MessageId` → `STATUS_REPLY_MESSAGE_MISMATCH`. Port disconnected during wait → `STATUS_PORT_DISCONNECTED`. FIFO order + body truncation when caller buffer is smaller than queued message. Late reply after sender timeout → `STATUS_REPLY_MESSAGE_MISMATCH`. Pool quota exceeded → `STATUS_INSUFFICIENT_RESOURCES`. Sync request with no peer → `STATUS_PORT_DISCONNECTED`. Serial log: `"alpc: msg sent: id=N type=DATAGRAM|REQUEST|REPLY len=N"`. Test on: QEMU WHPX + TCG.
+
+> **Test runner:** `scripts\debug\run-ipc-tests.bat` (SUITE=ipc)
+> **Expected:** 12 new alpc §4 suites pass (alpc: datagram delivery, sync request+reply, reply mismatch, send oversized, receive empty timeout, disconnect wakes sync waiter, pool quota exceeded, receive FIFO+truncation, sync timeout+late reply, disconnect-then-send, sync no peer, syscall validation), 0 failures
+>
+> **Test gaps (NO current owner -- accepted as known gaps):**
+> 1. Allocator kmalloc-failure rollback (uncharge-under-lock) -- requires a test-only `kmalloc_fail_next` / countdown fault-injection hook that does not exist anywhere in the kernel today. Implementing the hook is its own piece of infrastructure work that has not been scheduled; document and revisit when (if) general kernel test-time fault injection lands.
+> 2. ReplyBodyCap clamping with `recv_buf_len > 65528` -- requires a test-only ~64 KiB scratch buffer pair, allocated via `kmalloc` since stack pages are 8 KiB; the clamp logic is one line (`if (cap > MAX) cap = MAX;`) and is easier to read than to stress-test.
+> 3. Address-ordered two-port locking concurrency stress (bidirectional sync with two workers reciprocating) -- the `alpc_lock_two` invariant is verifiable by inspection; a deterministic deadlock test would need a controlled race fence that the kernel does not currently expose.
 
 ---
 
@@ -471,7 +479,7 @@ High-throughput ports like `\Windows\ApiPort` (CSRSS) process thousands of messa
 | ⭐ | Feature                      | 🪟 Win11               | 🐧 Linux                 | 🚀 Impossible OS                      |
 | --- | ------------------------------ | ----------------------- | ------------------------- | -------------------------------------- |
 | 💎 | Connection-oriented ports    | ✅ ALPC                | ⚠️ SOCK_SEQPACKET       | ⬜ §2-§3                              |
-| 💎 | Sync send+wait+reply         | ✅ Full                | ⚠️ No typed reply       | ⬜ §4                                 |
+| 💎 | Sync send+wait+reply         | ✅ Full                | ⚠️ No typed reply       | ✅ §4 done (datagram + sync + reply) |
 | 💎 | Async completion delivery    | ✅ Full                | ⚠️ io_uring (RFC 2026)  | ⬜ §5                                 |
 | 💎 | Large data via section       | ✅ Port sections       | ⚠️ Manual mmap          | ⬜ §6                                 |
 | 💎 | Client identity capture      | ✅ Full                | ⚠️ SCM_CREDENTIALS      | ⬜ §7                                 |

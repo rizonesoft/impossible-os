@@ -71,14 +71,60 @@ typedef enum {
 typedef struct port_message_entry {
     struct port_message_entry *Link_next;      /* next entry in queue */
     PORT_MESSAGE               Header;          /* on-the-wire msg header */
-    struct alpc_port          *ReplyPort;       /* reply target (NULL until §4) */
+    struct alpc_port          *ReplyPort;       /* reply target (sync request) */
     uint64_t                   ReplyMessageId;  /* request this is a reply for */
     uint8_t                    WaitingForReply; /* sender blocked on reply */
     uint8_t                    _pad[3];         /* align next field */
-    event_t                    ReplySyncWait;   /* sender sleeps here -- §4 */
+    event_t                    ReplySyncWait;   /* legacy reserve (unused) */
+    uint32_t                   ChargedSize;     /* bytes counted against
+                                                 * owning port's quota --
+                                                 * the size passed to
+                                                 * AlpcAllocateMessage */
+    uint32_t                   _pad_charged;
     /* uint8_t Body[Header.DataLength]; -- flexible tail (no [] because the
      * struct already has well-defined size; payload is laid out by hand) */
 } PORT_MESSAGE_ENTRY;
+
+/* ---- ALPC_PENDING_REPLY ----------------------------------------------- */
+/*
+ * Sender-owned synchronous-request wait record. Created when the sender
+ * issues NtAlpcSendWaitReceivePort with ALPC_MSGFLG_SYNC_REQUEST.
+ *
+ * The sender allocates this on the heap (charged against its own port's
+ * MaxPoolUsage), links it into sender_port->PendingQueue keyed by
+ * MessageId, then blocks on ReplyWait. The replier (or the
+ * disconnect/destroy path) finds the record by MessageId, REMOVES it
+ * from the queue, fills ReplyBody/ReplyType/ReplyStatus, sets Completed,
+ * and event_set's ReplyWait -- ALL while still holding sender_port->Lock
+ * so the sender (which takes the same lock on wake) cannot free the
+ * record before the wake is observed.
+ *
+ * The reply payload lives inline after the struct: kmalloc allocates
+ * sizeof(ALPC_PENDING_REPLY) + ReplyBodyCap bytes; ReplyBody points at
+ * the trailing region.
+ */
+typedef struct alpc_pending_reply {
+    struct alpc_pending_reply *Link_next;
+    uint64_t                   MessageId;       /* matches request */
+    uint32_t                   ChargedSize;     /* against sender port quota */
+    uint16_t                   ReplyBodyCap;    /* allocated capacity */
+    uint16_t                   ReplyBodyLen;    /* bytes the replier wrote */
+    uint16_t                   ReplyType;       /* ALPC_MSG_TYPE_REPLY or
+                                                 * ALPC_MSG_TYPE_PORT_CLOSED */
+    uint8_t                    Completed;       /* 0 waiting, 1 signalled */
+    uint8_t                    _pad[5];
+    NTSTATUS                   ReplyStatus;     /* set by replier/disconnect */
+    event_t                    ReplyWait;       /* sender blocks here */
+    uint8_t                   *ReplyBody;       /* points to inline tail */
+} ALPC_PENDING_REPLY;
+
+/* ---- Pending-reply queue (separate from message queue) ---------------- */
+
+typedef struct alpc_pending_queue {
+    ALPC_PENDING_REPLY *Head;
+    ALPC_PENDING_REPLY *Tail;
+    uint32_t            Count;
+} ALPC_PENDING_QUEUE;
 
 /* ---- ALPC_PORT_STATS stub --------------------------------------------- */
 /*
@@ -113,11 +159,17 @@ typedef struct alpc_port {
     struct alpc_port      *ConnectedPort;     /* peer (comm ports) */
     struct alpc_port      *ConnectionPort;   /* server listen port (comm ports) */
 
-    spinlock_t             Lock;               /* protects queues + refs */
+    spinlock_t             Lock;               /* protects queues + refs +
+                                                 * PoolUsageBytes */
 
     ALPC_MSG_QUEUE         MessageQueue;       /* pending inbound */
-    ALPC_MSG_QUEUE         PendingQueue;       /* awaiting reply */
+    ALPC_PENDING_QUEUE     PendingQueue;       /* awaiting reply -- §4 */
     ALPC_MSG_QUEUE         ConnectionQueue;   /* connection requests (server) */
+
+    uint64_t               PoolUsageBytes;     /* tracked under Lock; charged
+                                                 * by AlpcAllocateMessage and
+                                                 * AlpcAllocatePendingReply,
+                                                 * uncharged on free */
 
     uint64_t               NextMessageId;     /* monotonically increasing */
     void                  *PortContext;       /* opaque user data */
@@ -246,3 +298,93 @@ NTSTATUS AlpcAcceptConnectPort(HANDLE_TABLE *ht,
  * STATUS_INVALID_PORT_HANDLE if the handle is not an ALPC port.
  */
 NTSTATUS AlpcDisconnectPort(HANDLE_TABLE *ht, HANDLE port_handle);
+
+/* ---- §4 Synchronous Send+Wait+Receive Engine -------------------------- */
+
+/*
+ * AlpcAllocateMessage -- allocate a queueable message entry charged
+ * against `charge_port`'s MaxPoolUsage.
+ *
+ * Single kmalloc for sizeof(PORT_MESSAGE_ENTRY) + data_length, with the
+ * inline body region following the struct. Callers fill Header.* and
+ * write the payload into ALPC_MSG_BODY(entry); ChargedSize is set by
+ * this helper so AlpcFreeMessage can decrement the same amount.
+ *
+ * Returns NULL when data_length exceeds ALPC_MAX_ALLOWED_MESSAGE_LENGTH,
+ * when MaxPoolUsage > 0 and the allocation would push PoolUsageBytes
+ * past the cap, or when kmalloc fails. MaxPoolUsage == 0 means
+ * "no per-port limit" (still bounded by ALPC_MAX_ALLOWED_MESSAGE_LENGTH
+ * and overall heap availability).
+ */
+PORT_MESSAGE_ENTRY *AlpcAllocateMessage(struct alpc_port *charge_port,
+                                        uint32_t data_length);
+
+/*
+ * AlpcFreeMessage -- decrement charge_port->PoolUsageBytes by entry's
+ * ChargedSize and kfree the entry. Pass the SAME charge_port that was
+ * passed to AlpcAllocateMessage. The entry MUST NOT be on any queue
+ * when this is called.
+ */
+void AlpcFreeMessage(struct alpc_port *charge_port, PORT_MESSAGE_ENTRY *entry);
+
+/*
+ * Inline body region of an allocated message entry. Body starts
+ * immediately after the struct; the entry was allocated with one extra
+ * `data_length` bytes for the payload.
+ */
+static inline uint8_t *ALPC_MSG_BODY(PORT_MESSAGE_ENTRY *entry)
+{
+    return (uint8_t *)entry + sizeof(PORT_MESSAGE_ENTRY);
+}
+
+/*
+ * AlpcSendWaitReceivePort -- the §4 core. Routes to one of four paths
+ * based on (send_msg, flags):
+ *
+ *   receive-only  : send_msg == NULL. Dequeues from port->MessageQueue,
+ *                   blocking on port->WaitQueue with timeout_ms (0 = no
+ *                   wait; UINT32_MAX = block forever). Copies header +
+ *                   body into recv_msg, capped by recv_buf_len. Returns
+ *                   STATUS_SUCCESS on dequeue, STATUS_TIMEOUT if empty,
+ *                   STATUS_PORT_DISCONNECTED if the port was torn down
+ *                   while waiting.
+ *
+ *   datagram-send : flags has neither SYNC_REQUEST nor REPLY_MESSAGE,
+ *                   send_msg != NULL. Allocates an entry charged on the
+ *                   peer's port, copies the body, enqueues on peer's
+ *                   MessageQueue, signals peer->WaitQueue. Returns
+ *                   STATUS_SUCCESS without blocking.
+ *
+ *   sync request  : ALPC_MSGFLG_SYNC_REQUEST set, send_msg != NULL.
+ *                   Allocates an inbound entry on peer's queue AND a
+ *                   sender-owned ALPC_PENDING_REPLY on this port. Blocks
+ *                   on the pending record's ReplyWait until the replier
+ *                   completes it (STATUS_SUCCESS + reply body in
+ *                   recv_msg) or disconnect/destroy fires
+ *                   (STATUS_PORT_DISCONNECTED). Returns STATUS_TIMEOUT
+ *                   if no reply arrived in time.
+ *
+ *   reply         : ALPC_MSGFLG_REPLY_MESSAGE set, send_msg has the
+ *                   reply body and Header.MessageId equal to the
+ *                   request's MessageId. Walks the peer's PendingQueue
+ *                   under peer->Lock, removes the matching record,
+ *                   copies the reply body into the record's inline
+ *                   buffer, sets Completed and event_set's ReplyWait
+ *                   while STILL HOLDING the lock so the sender cannot
+ *                   free the record before the wake is observed.
+ *                   Returns STATUS_REPLY_MESSAGE_MISMATCH if no record
+ *                   matches the MessageId.
+ *
+ * Buffer rules:
+ *   - Inline body is bounded by ALPC_MAX_ALLOWED_MESSAGE_LENGTH (65528).
+ *   - Per-port MaxMessageLength caps each send (0 = use the hard
+ *     ceiling). Send of a larger message returns STATUS_BUFFER_TOO_SMALL.
+ *   - Receive truncates: if recv_buf_len is smaller than the queued
+ *     entry's TotalLength, copy what fits; the entry is still consumed.
+ */
+NTSTATUS AlpcSendWaitReceivePort(HANDLE_TABLE *ht, HANDLE port_handle,
+                                 uint32_t flags,
+                                 PORT_MESSAGE *send_msg,
+                                 PORT_MESSAGE *recv_msg,
+                                 uint32_t recv_buf_len,
+                                 uint32_t timeout_ms);
