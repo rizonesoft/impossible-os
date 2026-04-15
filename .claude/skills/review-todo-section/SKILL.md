@@ -95,10 +95,7 @@ description: Full review of a TODO section -- adversarial Codex, dead code, cons
 
     **Why this step exists:** without it, "Accepted with XREF" becomes a paper trail that someone later has to chase, find nothing actionable, and re-do the analysis. Every Accepted finding must be one `[x]` away from being fully closed.
 
-16. **Stamps** -- Verified + Quality reviewed. No blank line between. Domain-qualified XREFs in Accepted field. Each Accepted XREF must reference a concrete item per step 15. Include test runner info:
-    ```
-    > **Test runner:** `scripts\debug\run-<category>-tests.bat` (SUITE=<cat>), N suites, 0 failures expected
-    ```
+16. **Stamps** -- Verified + Quality reviewed. No blank line between. Domain-qualified XREFs in Accepted field. Each Accepted XREF must reference a concrete item per step 15. **Do NOT re-emit a `> **Test runner:**` line** -- the pre-stamp block written by `implement-todo-section` step 8 is the single source of truth. Duplicating the runner line after the stamps produced clutter across TODO-12 §1-§5; the review skill only appends Verified + Quality reviewed, nothing else. If the test count or bat file changed during review, edit the pre-stamp block in place instead of adding a second line.
 
 17. **Commit and push** -- `"review: <TODO> §N -- <summary>"`. If step 15 created or modified items in other TODO files, stage and commit those in the SAME commit as the stamp.
 
