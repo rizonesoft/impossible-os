@@ -488,7 +488,8 @@ static ALPC_CONNECTION_REQUEST *conn_queue_dequeue(ALPC_MSG_QUEUE *q)
  * namespace lookup the comm case does not need. The init matches
  * AlpcCreatePort's "new port" state exactly.
  */
-static ALPC_PORT *alpc_alloc_comm_port(ALPC_PORT_TYPE type)
+static ALPC_PORT *alpc_alloc_comm_port(ALPC_PORT_TYPE type,
+                                       const ALPC_PORT_ATTRIBUTES *inherit)
 {
     ALPC_PORT *p = (ALPC_PORT *)ob_alloc_object(ObpAlpcPortType);
     if (!p)
@@ -498,6 +499,13 @@ static ALPC_PORT *alpc_alloc_comm_port(ALPC_PORT_TYPE type)
     p->OwnerTask     = task_current();
     p->NextMessageId = 1;
     event_init(&p->WaitQueue, "alpc_comm_wait", EVENT_AUTO_RESET, 0);
+    /* Comm ports inherit the connection port's Attributes so per-port
+     * caps (MaxMessageLength, MaxPoolUsage, MaxViewSize, etc.) apply to
+     * messages flowing through this side of the cross-link. Matches
+     * Windows ALPC behaviour where the connection-port attrs govern
+     * the whole port pair. */
+    if (inherit)
+        p->Attributes = *inherit;
     return p;
 }
 
@@ -534,8 +542,11 @@ NTSTATUS AlpcConnectPort(HANDLE_TABLE *ht, const char *port_name,
      * ALPC_PORT_CONNECT pending T11 §5 (security reference monitor).
      * Concrete retrofit tracked at 11-security-reference-monitor/TODO-01 §5. */
 
-    /* 2. Allocate client communication port. */
-    client_comm = alpc_alloc_comm_port(AlpcClientCommunicationPort);
+    /* 2. Allocate client communication port; inherit attributes from
+     * the named server connection port so MaxMessageLength /
+     * MaxPoolUsage caps apply to client-side sends too. */
+    client_comm = alpc_alloc_comm_port(AlpcClientCommunicationPort,
+                                       &server_conn->Attributes);
     if (!client_comm) {
         ObDereferenceObject(server_body);
         return STATUS_INSUFFICIENT_RESOURCES;
@@ -735,8 +746,10 @@ NTSTATUS AlpcAcceptConnectPort(HANDLE_TABLE *ht,
         return STATUS_SUCCESS;
     }
 
-    /* Accept path. */
-    server_comm = alpc_alloc_comm_port(AlpcServerCommunicationPort);
+    /* Accept path. Inherit attributes from the connection port so the
+     * server-side comm port enforces the same caps as the listener. */
+    server_comm = alpc_alloc_comm_port(AlpcServerCommunicationPort,
+                                       &server_conn->Attributes);
     if (!server_comm) {
         req->ReplyStatus = STATUS_INSUFFICIENT_RESOURCES;
         event_set(&req->ReplyEvent);
