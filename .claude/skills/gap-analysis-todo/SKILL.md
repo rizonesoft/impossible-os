@@ -184,11 +184,7 @@ description: Deep gap analysis of a TODO file against all overlapping TODOs -- f
     - Every finding line must include a confidence tag: `confirmed` or `inferred`.
     - Include the final section count and checklist delta.
 
-22. **Update the History table** at the bottom of the TODO file (after Verification). If no `## History` section exists, create one. Append a row for this gap analysis run:
-    ```
-    | Date | Action | Summary |
-    ```
-    Action = `gap-analysis`. Summary = one-line (searches run, sections added, gaps found, deferred count). Keep rows chronological, never delete old entries.
+22. **Do NOT add a `## History` section or row.** Gap-analysis activity is already captured by the written report (step 21), the git commit, and any section stamps that get added. A separate History table just duplicates that trail and grows without bound across review passes. Leave existing History sections alone (don't delete prior entries) but don't append new ones.
 
 ## Research Quality Standards
 

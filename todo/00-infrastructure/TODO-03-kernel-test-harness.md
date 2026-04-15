@@ -30,11 +30,11 @@
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                       | Depends On    | Status |
-| --- | :---: | ------------------------------------------------- | ------------- | :----: |
-| 💎  |   1   | kmalloc fault injection (`kmalloc_fail_countdown`) | --             |  [ ]   |
-| 💎  |   2   | Deterministic race barrier (`test_race_barrier_t`) | --             |  [ ]   |
-| 💎  |   3   | Scratch-buffer helper (`TEST_SCRATCH_KBUF`)         | --             |  [ ]   |
+| ⭐  | Order | Deliverable                                         | Depends On    | Status |
+| --- | :---: | --------------------------------------------------- | ------------- | :----: |
+| 💎  |   1   | kmalloc fault injection (`kmalloc_fail_countdown`)  | --            |  [ ]   |
+| 💎  |   2   | Deterministic race barrier (`test_race_barrier_t`)  | --            |  [ ]   |
+| 💎  |   3   | Scratch-buffer helper (`TEST_SCRATCH_KBUF`)         | --            |  [ ]   |
 | 💎  |   4   | Retrofit existing "Test gaps" stamps across `todo/` | §1, §2, §3    |  [ ]   |
 
 > 💎 = parity work -- Linux kernel self-test framework has `fault-injection` (`lib/fault-inject.c`), `kcsan`/`kasan` fences, and KUnit has `kunit_kzalloc()` scratch helpers. This TODO brings the same floor to the Impossible OS kernel test runner.
@@ -101,12 +101,12 @@ After §1-§3 ship, sweep the repo for `Test gaps (NO current owner)` blocks and
 
 ## OS Comparison
 
-| ⭐ | Feature                            | 🪟 Win11                 | 🐧 Linux                      | 🚀 Impossible OS                      |
-| --- | ----------------------------------- | ------------------------- | ------------------------------ | -------------------------------------- |
+| ⭐ | Feature                            | 🪟 Win11                   | 🐧 Linux                       | 🚀 Impossible OS                      |
+| --- | ---------------------------------- | -------------------------- | ------------------------------- | ------------------------------------- |
 | 💎 | Allocator fault injection          | ❌ Driver Verifier (heavy) | ✅ `lib/fault-inject.c`        | ⬜ §1 `kmalloc_fail_countdown`        |
-| 💎 | Deterministic concurrency testing  | ⚠️ TAEF with effort       | ✅ KCSAN + KUnit               | ⬜ §2 `test_race_barrier_t`           |
-| 💎 | Test-scoped kernel scratch buffers | ⚠️ Manual in TAEF tests   | ✅ `kunit_kzalloc()`           | ⬜ §3 `TEST_SCRATCH_KBUF`             |
-| ⭐ | Single-boot 436-suite runner        | ❌ WDK run per-driver      | ❌ KUnit one-module-at-a-time  | ✅ existing `test=1` infrastructure  |
+| 💎 | Deterministic concurrency testing  | ⚠️ TAEF with effort        | ✅ KCSAN + KUnit               | ⬜ §2 `test_race_barrier_t`           |
+| 💎 | Test-scoped kernel scratch buffers | ⚠️ Manual in TAEF tests    | ✅ `kunit_kzalloc()`           | ⬜ §3 `TEST_SCRATCH_KBUF`             |
+| ⭐ | Single-boot 436-suite runner       | ❌ WDK run per-driver      | ❌ KUnit one-module-at-a-time  | ✅ existing `test=1` infrastructure   |
 
 After §1-§4 land, in-kernel test coverage reaches Linux-KUnit-plus-fault-inject parity without requiring the heavyweight Driver Verifier / WDK workflow Windows leans on.
 
@@ -130,9 +130,3 @@ After §1-§4 land, in-kernel test coverage reaches Linux-KUnit-plus-fault-injec
 - `make test-boot` runs §1 + §3 suites.
 - `make test-sched` runs §2 suites.
 - `grep -rn "Test gaps (NO current owner)" todo/` returns only entries unrelated to allocator / race-fence / scratch-buffer needs.
-
----
-
-## History
-
-- 2026-04-15: Scaffolded from TODO-12 §4 deferred-gap block + Codex design-review references. Three primitives chosen because every observed "no current owner" gap in TODO-12 §4 maps cleanly to one of them.

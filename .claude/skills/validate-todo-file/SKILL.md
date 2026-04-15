@@ -112,11 +112,7 @@ description: Validate a TODO file for structural completeness, Implementation Or
 
     The PostToolUse hook on `todo/**/*.md` flags any new ` ```c ``` ` block over 15 lines AND any `(N.M Title)` parenthesized prefix in checklist items. The hook is a reminder, not a block; intentional spec-defining blocks (wire format, ABI contract assertions) opt out by adding `<!-- spec-block-ok: <one-line-reason> -->` immediately above the ` ``` `.
 
-16. **Update the History table** at the bottom of the TODO file (after Verification). If no `## History` section exists, create one. Append a row for this validation run:
-    ```
-    | Date | Action | Summary |
-    ```
-    Action = `validate`. Summary = one-line (sections checked, fixes applied, flags raised). Keep rows chronological, never delete old entries.
+16. **Do NOT add a `## History` section or row.** The git log and per-section stamps already carry the audit trail; a History table just repeats the same dates with less detail and grows without bound. Leave existing History sections alone (don't delete prior entries) but do not append new rows.
 
 ## Guardrails
 
