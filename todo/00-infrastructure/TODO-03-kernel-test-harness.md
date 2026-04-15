@@ -57,6 +57,9 @@ A per-CPU test-only countdown that causes `kmalloc` to return `NULL` on the next
 > **Test runner:** `scripts\debug\run-mm-tests.bat` (SUITE=mm)
 > **Expected:** 5 new heap fault-injection suites pass, 0 failures
 
+> **Verified:** 2026-04-15 -- Evidence mapped: `include/kernel/smp.h` (per_cpu_data.kmalloc_fail_countdown + _pad, #ifdef KERNEL_TESTS gated), `include/kernel/mm/heap.h` (4 prototypes under KERNEL_TESTS), `src/kernel/mm/heap.c` (s_kmalloc_fault_injections static counter + 4 helpers + in-kmalloc hook with `KeGetCurrentIrql() == PASSIVE_LEVEL` gate + `ifdef KERNEL_TESTS` include block), `src/kernel/test/test_runner.c` (include + auto-clear after every suite), `src/kernel/test/test_heap.c` (5 new TEST_CAT_MM suites: fail_next, countdown(3), clear-disarms, no-state-change, IRQL-gate). Build clean (`=== BUILD OK ===`). Existing asm-referenced per_cpu_data offsets at smp.h:131-145 (self=0, syscall_rsp0=24, user_rsp_scratch=32, kernel_cr3=104, user_cr3=112, kpti_scratch=120, kpti_syscall_target=128, kpti_isr_target=136) unchanged -- new fields live at offset 144+ inside the KERNEL_TESTS-only tail.
+> **Quality reviewed:** 2026-04-15 -- kernel-code-quality Gates 1-11 walked clean (no stdlib, SMP-safe via per-CPU storage + RELAXED atomic global counter, no MMIO, every allocation check'd). Codex step-13 adversarial found 1 Medium (IRQ-context kmalloc on same CPU could steal pending injection) fixed pre-commit by `KeGetCurrentIrql() == PASSIVE_LEVEL` gate with regression test (`Heap: fault-inject IRQL gate`). Codex step-8 quality dispatch (dead-code + consistency + perf) returned no findings: all new surface consistently KERNEL_TESTS-gated, static counter reachable via test suites, pre-existing per_cpu_data offsets intact, hot-path cost confined to test builds (3-4 instructions in non-armed case, zero in release builds).
+
 ---
 
 ## 2. Deterministic Race Barrier
