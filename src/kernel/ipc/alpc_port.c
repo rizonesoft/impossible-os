@@ -1685,13 +1685,25 @@ static void alpc_notify_completion_port(ALPC_PORT *peer,
                                      STATUS_SUCCESS,
                                      (uint64_t)data_len);
     if (!NT_SUCCESS(st)) {
-        /* Best-effort wake: message is still on MessageQueue and will
-         * be delivered via the normal receive path. Log so operators
-         * notice a starved IOCP. */
-        klog(LOG_WARN, "alpc",
-             "completion port post failed (status=0x%x) id=%u len=%u",
-             (uint64_t)(uint32_t)st, (uint64_t)message_id,
-             (uint64_t)data_len);
+        /* Best-effort wake: the message is still on MessageQueue and
+         * will be delivered via the normal receive path. Notification
+         * dropping IS backpressure (typically a full IOCP ring after a
+         * slow receiver); per-send logging would flood the kernel log
+         * once the IOCP is saturated. Count every drop, but only log
+         * the FIRST failure per port -- future drops bump the counter
+         * silently and stay observable via ALPC_PORT.DroppedNotifications
+         * (surfaced by §12 alpcmon / ALPC_PORT_STATS). */
+        uint64_t dropped;
+        spin_lock_irqsave(&peer->Lock, &irqf);
+        dropped = peer->DroppedNotifications++;
+        spin_unlock_irqrestore(&peer->Lock, irqf);
+        if (dropped == 0) {
+            klog(LOG_WARN, "alpc",
+                 "completion port post failed (status=0x%x) id=%u len=%u; "
+                 "further drops counted silently",
+                 (uint64_t)(uint32_t)st, (uint64_t)message_id,
+                 (uint64_t)data_len);
+        }
     }
 }
 

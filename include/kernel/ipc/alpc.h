@@ -259,6 +259,33 @@ typedef struct {
 
 _Static_assert(sizeof(ALPC_COMPLETION_LIST_ITEM) == 24,
                "ALPC_COMPLETION_LIST_ITEM must be 24 bytes");
+_Static_assert(__builtin_offsetof(ALPC_COMPLETION_LIST_ITEM, Message) == 0,
+               "ALPC_COMPLETION_LIST_ITEM.Message at offset 0");
+_Static_assert(__builtin_offsetof(ALPC_COMPLETION_LIST_ITEM, PortContext) == 8,
+               "ALPC_COMPLETION_LIST_ITEM.PortContext at offset 8");
+_Static_assert(__builtin_offsetof(ALPC_COMPLETION_LIST_ITEM, MessageFlags) == 16,
+               "ALPC_COMPLETION_LIST_ITEM.MessageFlags at offset 16");
+
+/* ALPC_COMPLETION_LIST is an ABI contract for §6 port sections. Frozen
+ * now so §6 consumers read the same layout the test suite locks. The
+ * header (without flexible tail) is 32 bytes -- one cache line on x86-64
+ * -- so the first Items[] element starts on a 32-byte boundary and SPMC
+ * atomic updates to ProducerHead/ConsumerHead do not share a line with
+ * Items[0]. */
+_Static_assert(__builtin_offsetof(ALPC_COMPLETION_LIST, TotalSize) == 0,
+               "ALPC_COMPLETION_LIST.TotalSize at offset 0");
+_Static_assert(__builtin_offsetof(ALPC_COMPLETION_LIST, UserVirtualAddr) == 4,
+               "ALPC_COMPLETION_LIST.UserVirtualAddr at offset 4");
+_Static_assert(__builtin_offsetof(ALPC_COMPLETION_LIST, KernelOffset) == 8,
+               "ALPC_COMPLETION_LIST.KernelOffset at offset 8");
+_Static_assert(__builtin_offsetof(ALPC_COMPLETION_LIST, Capacity) == 12,
+               "ALPC_COMPLETION_LIST.Capacity at offset 12");
+_Static_assert(__builtin_offsetof(ALPC_COMPLETION_LIST, ProducerHead) == 16,
+               "ALPC_COMPLETION_LIST.ProducerHead at offset 16");
+_Static_assert(__builtin_offsetof(ALPC_COMPLETION_LIST, ConsumerHead) == 20,
+               "ALPC_COMPLETION_LIST.ConsumerHead at offset 20");
+_Static_assert(__builtin_offsetof(ALPC_COMPLETION_LIST, Items) == 32,
+               "ALPC_COMPLETION_LIST.Items[] at offset 32");
 
 /* ---- Boot-time announcement -------------------------------------------- */
 /*

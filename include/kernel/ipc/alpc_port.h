@@ -209,6 +209,14 @@ typedef struct alpc_port {
      * with the queue count. */
     HANDLE                 CompletionPortHandle;
     uint64_t               CompletionKey;
+    uint64_t               DroppedNotifications;  /* increments when
+                                                   * io_completion_post
+                                                   * fails; first failure
+                                                   * is the only one that
+                                                   * logs to avoid the
+                                                   * kernel log flooding
+                                                   * under IOCP
+                                                   * backpressure */
     uint8_t                IsWaitable;
     uint8_t                _pad_waitable[7];
     event_t                SignalledEvent;
