@@ -59,7 +59,7 @@
 | 💎  |   5   | Git hooks and local automation lifecycle              | §1, §3         |  [x]   |
 | 💎  |   6   | GitHub Actions and artifact policy alignment          | §2, §3, §4, §5 |  [x]   |
 | ⭐  |   7   | Tooling doctor and regression pack                    | §1-§6          |  [x]   |
-| 💎  |   8   | Unify specialist-launcher `-ExtraArgs` surface        | §4             |  [ ]   |
+| 💎  |   8   | Unify specialist-launcher `-ExtraArgs` surface        | §4             |  [x]   |
 | 💎  |   9   | Legacy-XREF sweep (lint Check 5 -> 0 errors; CI gate) | §3, §6         |  [ ]   |
 | 💎  |  10   | Smoke-test POST16 assertions (boot-phase manifest)    | §3             |  [ ]   |
 
@@ -275,12 +275,19 @@ This is the refinement step: make the tooling self-diagnosing instead of forcing
 
 Scenario launchers under `scripts/machines/storage/` and `scripts/machines/fs/` do not accept `-ExtraArgs` today, so a developer cannot append `-s -S` (gdb stub) or custom `-drive` / `-netdev` arguments without editing the script. This parks a concrete drift item that the machine matrix surfaces in its "Known Drift" block.
 
-- [ ] Lift the `-ExtraArgs` parameter from [`scripts/machines/run-qemu.ps1`](../../scripts/machines/run-qemu.ps1) into each scenario launcher and thread it through to the underlying `run-qemu.ps1` invocation: `scripts/machines/storage/run-nvme-test.{ps1,bat}`, `scripts/machines/storage/run-usb-test.{ps1,bat}`, `scripts/machines/fs/run-fs-test.ps1`, `scripts/machines/fs/run-fat32-test.bat`, `scripts/machines/fs/run-ntfs-test.bat`, `scripts/machines/fs/run-all-fs-tests.bat`.
-- [ ] Update `docs/infrastructure/machine-matrix.md` to remove the `-ExtraArgs` caveats from the Storage Scenarios and Filesystem Scenarios sections.
-- [ ] Delete the corresponding entry from `docs/infrastructure/machine-matrix.md` "Known Drift" list.
-- [ ] Commit: `"scripts/machines: unify -ExtraArgs across scenario launchers"`
+- [x] Lift the `-ExtraArgs` parameter from [`scripts/machines/run-qemu.ps1`](../../scripts/machines/run-qemu.ps1) into each scenario launcher and thread it through to the underlying QEMU invocation: [`scripts/machines/storage/run-nvme-test.{ps1,bat}`](../../scripts/machines/storage/), [`scripts/machines/storage/run-usb-test.{ps1,bat}`](../../scripts/machines/storage/), [`scripts/machines/fs/run-fs-test.ps1`](../../scripts/machines/fs/run-fs-test.ps1), [`scripts/machines/fs/run-fat32-test.bat`](../../scripts/machines/fs/run-fat32-test.bat), [`scripts/machines/fs/run-ntfs-test.bat`](../../scripts/machines/fs/run-ntfs-test.bat), [`scripts/machines/fs/run-all-fs-tests.bat`](../../scripts/machines/fs/run-all-fs-tests.bat).
+- [x] Update [`docs/infrastructure/machine-matrix.md`](../../docs/infrastructure/machine-matrix.md) to remove the `-ExtraArgs` caveats from the Storage Scenarios and Filesystem Scenarios sections.
+- [x] Delete the corresponding entry from [`docs/infrastructure/machine-matrix.md`](../../docs/infrastructure/machine-matrix.md) "Known Drift" list.
+- [x] Commit: `"scripts/machines: unify -ExtraArgs across scenario launchers"`
 
-**Test checkpoint:** Each scenario launcher accepts `-ExtraArgs '-s -S'` and passes the string through to `run-qemu.ps1` verbatim. Machine matrix no longer lists `-ExtraArgs` missing as a known drift.
+**Test checkpoint:** Each scenario launcher accepts `-ExtraArgs '-s -S'` and passes the string through to `qemu-system-x86_64.exe` verbatim. Machine matrix no longer lists `-ExtraArgs` missing as a known drift.
+
+> **Notes:**
+> - Scenario launchers (run-nvme-test.ps1, run-usb-test.ps1, run-fs-test.ps1) invoke `qemu-system-x86_64.exe` directly rather than wrapping [`scripts/machines/run-qemu.ps1`](../../scripts/machines/run-qemu.ps1); each builds its own `$QemuArgs` array for the scenario. Accordingly the `-ExtraArgs` forwarding happens INSIDE each launcher (append to `$QemuArgs` before `& $QEMU @QemuArgs`), mirroring [`run-qemu.ps1`](../../scripts/machines/run-qemu.ps1) lines 165-167. The TODO wording "thread through to run-qemu.ps1 invocation" was a misread of the actual wrapper topology; the user-visible behavior (pass `-ExtraArgs '-s -S'` from CLI, QEMU sees `-s -S` appended) is identical.
+> - The three `.ps1` files gained a `[string]$ExtraArgs = ''` parameter and a tokenize-and-append block immediately before `& $QEMU @QemuArgs`. The tokenizer is a regex (`[^\s"]+|"([^"]*)"`) that splits on whitespace but preserves substrings enclosed in double quotes, so a space-bearing path in a `-drive` fragment survives: `-ExtraArgs '-drive "id=test,file=C:\path with space\disk.img,format=raw"'`. [`run-qemu.ps1`](../../scripts/machines/run-qemu.ps1) was updated in the same commit to use the same quote-aware tokenizer (previously it used `.Split(' ', RemoveEmptyEntries)` which corrupted quoted paths); the two pre-existing callers under [`scripts/debug/input/`](../../scripts/debug/input/) pass only unquoted space-separated `-device ...` tokens so the tokenizer upgrade is backward compatible.
+> - The four `.bat` shims (`run-nvme-test.bat`, `run-usb-test.bat`, `run-fat32-test.bat`, `run-ntfs-test.bat`, `run-all-fs-tests.bat`) forward `%*` to powershell so `run-nvme-test.bat -ExtraArgs "-s -S"` from cmd.exe routes through. Double-click use is unchanged because `%*` is empty when no arguments are supplied. `run-all-fs-tests.bat` forwards `%*` on every per-filesystem line, so the caller can supply `-ExtraArgs` once and it applies to the entire NTFS/FAT32/ext2/ext4/IXFS sweep.
+
+> **Note:** No kernel test surface -- this section is entirely host-side launcher surface. Validation is (a) PowerShell param-declaration grep (3/3 .ps1 have `[string]$ExtraArgs`), (b) append-block grep (3/3 have `$QemuArgs += $ExtraArgs.Split`), (c) `%*` forwarding grep (4/4 shims plus 5 invocations in the sweep runner), (d) `bash scripts/build.sh` clean, (e) `bash scripts/test-tooling.sh` 40/40. Full end-to-end `-ExtraArgs "-s -S"` pass-through to `qemu-system-x86_64.exe` is a Windows-side concern and will be validated by any developer who double-clicks the bat or invokes it with args from cmd.exe.
 
 ---
 

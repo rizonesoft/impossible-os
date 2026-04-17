@@ -102,16 +102,18 @@ Third-party hypervisor validation (GPU / framebuffer, absolute pointer, VBoxSVGA
 
 `-Accel` accepts `auto | whpx | tcg`. Defaults: **NVMe and USB scripts default to `tcg`** because WHPX hangs on xHCI and processes NVMe doorbell MMIO writes asynchronously through its event loop.
 
-**Debugger.** Storage scripts do not accept `-ExtraArgs` today. To add `-s -S`, either edit the `.ps1` directly or invoke `run-qemu.ps1` with an equivalent `-drive ...` argument via `-ExtraArgs`.
+**Debugger.** Both storage launchers accept `-ExtraArgs '<string>'`. Append `-s -S` to expose the GDB stub; append additional `-drive ...` / `-device ...` / `-netdev ...` fragments to extend the scenario without editing the script. Paths containing spaces survive via double-quoting inside the string (e.g. `-ExtraArgs '-drive "id=extra,file=C:\Users\Jane Doe\disk.img,format=raw"'`); the launchers use a quote-aware tokenizer rather than a plain space split. The `.bat` shims forward `%*` so `run-nvme-test.bat -ExtraArgs "-s -S"` works from cmd.exe as well.
 
 ### [`scripts/machines/storage/run-nvme-test.{ps1,bat}`](../../scripts/machines/storage/) -- Windows
 
+- **Params:** `-Accel auto|whpx|tcg`, `-Build`, `-ExtraArgs '<string>'`.
 - **Default accelerator:** `tcg`. Overridable via `-Accel whpx`.
 - **Use:** 128 MiB emulated NVMe drive alongside the AHCI system disk.
 - **Caveat:** WHPX NVMe admin/I/O timeouts are expected; TCG is the reliable accelerator for NVMe driver runs.
 
 ### [`scripts/machines/storage/run-usb-test.{ps1,bat}`](../../scripts/machines/storage/) -- Windows
 
+- **Params:** `-Accel auto|whpx|tcg`, `-Build`, `-ExtraArgs '<string>'`.
 - **Default accelerator:** `tcg` (WHPX hangs with xHCI device attached).
 - **Use:** xHCI host-controller scenarios.
 - **Caveat:** xHCI emulation differs from real hardware in port-reset timing; bare metal remains authoritative.
@@ -120,11 +122,11 @@ Third-party hypervisor validation (GPU / framebuffer, absolute pointer, VBoxSVGA
 
 ## Filesystem Scenarios
 
-`run-fs-test.ps1` defaults to `-Accel auto`. Test output arrives on serial as `[PASS]` / `[FAIL]` lines. Debugger: these scripts do not accept `-ExtraArgs`; use `run-qemu.ps1` directly with the `-drive ...` argument copied from the script.
+`run-fs-test.ps1` defaults to `-Accel auto`. Test output arrives on serial as `[PASS]` / `[FAIL]` lines. Debugger: `run-fs-test.ps1` accepts `-ExtraArgs '-s -S'`; the `.bat` shims (`run-fat32-test.bat`, `run-ntfs-test.bat`, `run-all-fs-tests.bat`) forward `%*` so the same flag flows through from cmd.exe. `run-all-fs-tests.bat` applies any forwarded `-ExtraArgs` to every filesystem in the sweep.
 
 ### [`scripts/machines/fs/run-fs-test.ps1`](../../scripts/machines/fs/run-fs-test.ps1) -- Windows
 
-- **Params:** `-Disk ntfs|fat32|ext2|ext3|ext4|exfat|ixfs|mbr|gpt`, `-Accel`, `-Build`, `-GenDisk`.
+- **Params:** `-Disk ntfs|fat32|ext2|ext3|ext4|exfat|ixfs|mbr|gpt`, `-Accel`, `-Build`, `-GenDisk`, `-ExtraArgs '<string>'`.
 - **Use:** attach a filesystem-specific test disk on AHCI port 1 alongside the system disk. Kernel auto-detects filesystem and runs in-kernel tests when the volume label matches the expected test pattern.
 
 ### [`scripts/machines/fs/run-fat32-test.bat`](../../scripts/machines/fs/run-fat32-test.bat) -- Windows
@@ -191,7 +193,6 @@ Surfaced here so new contributors can find them instead of tripping over them:
 - **`run-secureboot.bat` lives under `scripts/debug/`**, not `scripts/machines/`. Logically a machine profile; consolidation under `scripts/machines/` is follow-up work.
 - **`scripts/debug/run-*-tests.bat` are not machine profiles** -- they are category-specific test runners that wrap `run-qemu.ps1 -TestOnly -TestSuite <cat>`. Owned by the [Wrapper Contract section of the developer tooling roadmap](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md#3-build-test-lint-and-run-wrapper-contract).
 - **Filesystem and storage harnesses are Windows-first.** No `.sh` equivalents today; Linux contributors invoke `run-qemu.sh` with extra `-drive ...` manually, or run the Windows-side scripts from WSL2.
-- **Storage launchers do not accept `-ExtraArgs`.** NVMe and USB `.ps1` files expose `-Accel` and `-Build` only. Filesystem `run-fs-test.ps1` exposes `-Disk`, `-Accel`, `-Build`, `-GenDisk`. Follow-up: lift the `-ExtraArgs` parameter from `run-qemu.ps1` into the scenario launchers.
 
 ---
 

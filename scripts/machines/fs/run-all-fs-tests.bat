@@ -3,6 +3,8 @@
 ::
 :: Tests each filesystem type one at a time. You'll need to close
 :: QEMU (or let the OS shut down) between each test.
+:: CLI: any extra args (e.g. -ExtraArgs "-s -S" or -Accel tcg) are
+:: forwarded to every per-filesystem launcher via %*.
 
 echo ==============================
 echo  Impossible OS -- FS Test Suite
@@ -10,23 +12,23 @@ echo ==============================
 echo.
 
 echo [1/5] Testing NTFS...
-powershell.exe -ExecutionPolicy Bypass -File "%~dp0run-fs-test.ps1" -Disk ntfs
+powershell.exe -ExecutionPolicy Bypass -File "%~dp0run-fs-test.ps1" -Disk ntfs %*
 echo.
 
 echo [2/5] Testing FAT32...
-powershell.exe -ExecutionPolicy Bypass -File "%~dp0run-fs-test.ps1" -Disk fat32
+powershell.exe -ExecutionPolicy Bypass -File "%~dp0run-fs-test.ps1" -Disk fat32 %*
 echo.
 
 echo [3/5] Testing ext2...
-powershell.exe -ExecutionPolicy Bypass -File "%~dp0run-fs-test.ps1" -Disk ext2
+powershell.exe -ExecutionPolicy Bypass -File "%~dp0run-fs-test.ps1" -Disk ext2 %*
 echo.
 
 echo [4/5] Testing ext4...
-powershell.exe -ExecutionPolicy Bypass -File "%~dp0run-fs-test.ps1" -Disk ext4
+powershell.exe -ExecutionPolicy Bypass -File "%~dp0run-fs-test.ps1" -Disk ext4 %*
 echo.
 
 echo [5/5] Testing IXFS...
-powershell.exe -ExecutionPolicy Bypass -File "%~dp0run-fs-test.ps1" -Disk ixfs
+powershell.exe -ExecutionPolicy Bypass -File "%~dp0run-fs-test.ps1" -Disk ixfs %*
 echo.
 
 echo ==============================

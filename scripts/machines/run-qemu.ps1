@@ -161,9 +161,15 @@ if ($PatchArgs.Count -gt 0) {
     & wsl.exe bash -c "cd ~/impossible-os && bash scripts/patch-boot-conf.sh reset" 2>$null
 }
 
-# Append extra arguments if provided (e.g., "-machine pc,i8042=on")
+# Append extra arguments if provided (e.g., "-machine pc,i8042=on", or
+# `-drive "id=test,file=C:\path with space\disk.img"` for quoted paths).
+# Quote-aware tokenizer: splits on whitespace but preserves substrings
+# enclosed in double quotes so -drive arguments with space-bearing paths
+# survive -- a plain .Split(' ') would corrupt them.
 if ($ExtraArgs) {
-    $QemuArgs += $ExtraArgs.Split(' ', [System.StringSplitOptions]::RemoveEmptyEntries)
+    $QemuArgs += [regex]::Matches($ExtraArgs, '[^\s"]+|"([^"]*)"') | ForEach-Object {
+        if ($_.Groups[1].Success) { $_.Groups[1].Value } else { $_.Value }
+    }
 }
 
 try {

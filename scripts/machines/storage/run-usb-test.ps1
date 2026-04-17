@@ -20,7 +20,8 @@ Param(
     [ValidateSet('auto','whpx','tcg')]
     # TCG required: WHPX hangs with xHCI device attached
     [string]$Accel = 'tcg',
-    [switch]$Build = $false
+    [switch]$Build = $false,
+    [string]$ExtraArgs = ''  # additional QEMU arguments (e.g., "-s -S" for gdb stub)
 )
 
 $ErrorActionPreference = "Stop"
@@ -134,5 +135,16 @@ $QemuArgs += '-netdev', 'user,id=net0'
 $QemuArgs += '-device', 'virtio-tablet-pci'
 $QemuArgs += '-rtc', 'base=localtime'
 $QemuArgs += '-no-reboot'
+
+# Append caller-supplied extra arguments (e.g., "-s -S" for gdb stub, or
+# `-drive "id=test,file=C:\path with space\disk.img"` for quoted paths).
+# Quote-aware tokenizer: splits on whitespace but preserves substrings
+# enclosed in double quotes so -drive arguments with space-bearing paths
+# survive -- a plain .Split(' ') would corrupt them.
+if ($ExtraArgs) {
+    $QemuArgs += [regex]::Matches($ExtraArgs, '[^\s"]+|"([^"]*)"') | ForEach-Object {
+        if ($_.Groups[1].Success) { $_.Groups[1].Value } else { $_.Value }
+    }
+}
 
 & $QEMU @QemuArgs
