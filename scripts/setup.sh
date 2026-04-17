@@ -10,8 +10,12 @@
 #   bash scripts/setup.sh --versions  Print actual tool versions with minimum floors (advisory)
 #   bash scripts/setup.sh --help      Print usage and exit
 #
-# Canonical host bootstrap contract: docs/infrastructure/development-tooling.md
-# TODO owner: todo/00-infrastructure/TODO-01-developer-tooling-stack.md (sections 1 + 2)
+# Canonical contract: docs/infrastructure/development-tooling.md
+#   - "Host Bootstrap Contract" section defines the required-tool sentinel set,
+#     supported distros, idempotence, and scope boundary.
+#   - "Supported Host Profiles and Reproducible Environments" section defines
+#     the profile matrix, minimum version floors, and the .devcontainer profile.
+# Referenced from anchor URLs (stable against TODO renumbering).
 # ============================================================================
 
 set -euo pipefail
@@ -26,7 +30,7 @@ YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-# ---- Required tools (host bootstrap contract, TODO-01 section 1) ----
+# ---- Required tools (see "Host Bootstrap Contract" in the canonical doc) ----
 # Sentinel format: "check:label"; "check" is a command name, the marker __OVMF_CODE__,
 # or the marker __OVMF_VARS__. Kept in one array so install, verify, and the doc
 # stay aligned. Every entry below maps to an exact Makefile command or path.
@@ -59,7 +63,7 @@ OVMF_VARS_CANDIDATES=(
     "/usr/share/OVMF/OVMF_VARS_4M.fd"
 )
 
-# ---- Minimum tool versions (TODO-01 section 2) ----
+# ---- Minimum tool versions (see "Supported Host Profiles" in canonical doc) ----
 # Entry format: "check_cmd:display_name:minimum:version_probe"
 # version_probe is a small awk/sed pipeline that extracts a dotted version
 # from the tool's output. Keeping these inline so docs and script stay aligned.
@@ -107,7 +111,7 @@ Usage:
   bash scripts/setup.sh --versions  Report installed tool versions vs documented minimum floors.
   bash scripts/setup.sh --help      Show this help.
 
-Required host tools (TODO-01 section 1):
+Required host tools (see "Host Bootstrap Contract" in canonical doc):
   clang-19, ld.lld-19, llvm-objcopy-19, llvm-ar-19, llvm-nm-19,
   nasm, gcc, python3, qemu-system-x86_64,
   mtools (mcopy + mmd), dosfstools (mkfs.fat),
@@ -119,12 +123,14 @@ Supported distros:
   hardcodes version-suffixed LLVM tool names (clang-19, ld.lld-19, etc.) and
   the Debian-style OVMF_4M.fd paths; Fedora/Arch hosts currently need manual
   symlinks. The full supported-host profile matrix (Ubuntu/Debian/Fedora/Arch/
-  WSL2/CI) is owned by TODO-01 section 2. See
-  docs/infrastructure/development-tooling.md#host-bootstrap-contract.
+  WSL2/CI) and the .devcontainer reproducible profile are documented in
+  docs/infrastructure/development-tooling.md (sections "Host Bootstrap Contract"
+  and "Supported Host Profiles and Reproducible Environments").
 
 Boundary:
   Repo-local developer bootstrap only. Cross-compiler toolchain and SDK build-system
-  work is owned by todo/14-host-tools/TODO-01-sdk-build-system.md (D14 T01 sections 1-3).
+  work belongs to the SDK build-system TODO. See the "Scope Boundary" table in
+  the canonical doc for the current owner and deep link.
 
 EOF
 }

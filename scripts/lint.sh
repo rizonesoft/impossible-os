@@ -245,6 +245,147 @@ for file in "${FILES[@]}"; do
 done
 
 # ============================================================================
+# Check 7: Drift-prone TODO numeric shorthand outside todo/
+# ============================================================================
+# Numeric XREFs (e.g. TODO-<num> <section-sign><num>, D<num> T<num> <section-sign><num>)
+# go stale silently when TODOs renumber. Inside todo/** the create-todo / validate-todo-file skills
+# enforce the shorthand deliberately. Outside todo/** we want anchor links to a
+# canonical doc or named-capability references instead.
+#
+# Known-dirty files (pre-existing refs) get a warning; everything else is an
+# error so new drift cannot sneak in. Legacy cleanup is tracked in
+# todo/00-infrastructure/TODO-01-developer-tooling-stack.md "tooling doctor"
+# section.
+#
+# Only runs on the default lint scope (whole repo). If a path argument was
+# given, skip -- per-subsystem runs should not scan outside their path.
+if [ "$#" -eq 0 ]; then
+    # ERE regex matching all four drift-prone shorthand flavors.
+    TODO_XREF_REGEX='(TODO-[0-9]+[[:space:]]*§[0-9]+|TODO-[0-9]+[[:space:]]+section[[:space:]]+[0-9]+|D[0-9]+[[:space:]]*T[0-9]+[[:space:]]*§?[0-9]+|\bT[0-9]+[[:space:]]*§[0-9]+)'
+
+    # Paths with pre-existing legacy refs (warn-only until the sweep lands).
+    # Keep sorted alphabetically for easy audit.
+    TODO_XREF_LEGACY_FILES=(
+        "CHANGELOG.md"
+        "docs/specs/eif-format.md"
+        "include/kernel/acpi.h"
+        "include/kernel/elf.h"
+        "include/kernel/exec.h"
+        "include/kernel/ipc/alpc.h"
+        "include/kernel/nt/nt_alpc.h"
+        "include/kernel/nt/nt_lpc.h"
+        "include/kernel/nt/nt_registry.h"
+        "include/kernel/nt/nt_section.h"
+        "include/kernel/nt/nt_timer.h"
+        "include/kernel/random.h"
+        "include/kernel/smp.h"
+        "scripts/debug/run-error-screen-test.bat"
+        "scripts/test-smoke.sh"
+        "src/boot/uefi/bootx64.c"
+        "src/kernel/acpi.c"
+        "src/kernel/drivers/lapic.c"
+        "src/kernel/drivers/pit.c"
+        "src/kernel/drivers/xhci.c"
+        "src/kernel/exec.c"
+        "src/kernel/fs/gpt.c"
+        "src/kernel/ipc/alpc_port.c"
+        "src/kernel/isr_stubs.asm"
+        "src/kernel/klog_disk.c"
+        "src/kernel/main/boot_desktop.c"
+        "src/kernel/nt/nt_alpc.c"
+        "src/kernel/nt/nt_file.c"
+        "src/kernel/nt/nt_lpc.c"
+        "src/kernel/nt/nt_namespace.c"
+        "src/kernel/nt/nt_process.c"
+        "src/kernel/nt/nt_registry.c"
+        "src/kernel/nt/nt_section.c"
+        "src/kernel/nt/nt_sync.c"
+        "src/kernel/nt/nt_timer.c"
+        "src/kernel/nt/nt_token.c"
+        "src/kernel/ob/handle_table.c"
+        "src/kernel/ob/ob.c"
+        "src/kernel/ob/ob_event.c"
+        "src/kernel/ob/ob_file.c"
+        "src/kernel/ob/ob_mutex.c"
+        "src/kernel/ob/ob_ns.c"
+        "src/kernel/ob/ob_process.c"
+        "src/kernel/ob/ob_section.c"
+        "src/kernel/ob/ob_semaphore.c"
+        "src/kernel/ob/ob_thread.c"
+        "src/kernel/ob/ob_timer.c"
+        "src/kernel/random.c"
+        "src/kernel/sched/task.c"
+        "src/kernel/security/acl.c"
+        "src/kernel/security/default_sds.c"
+        "src/kernel/security/luid.c"
+        "src/kernel/security/privileges.c"
+        "src/kernel/security/sid.c"
+        "src/kernel/security/token.c"
+        "src/kernel/test/test_acpi_power.c"
+        "src/kernel/test/test_exec.c"
+        "src/kernel/test/test_ob.c"
+        "src/kernel/test/test_registry.c"
+        "src/kernel/test/test_security.c"
+        "src/kernel/uefi_runtime.c"
+    )
+
+    is_todo_xref_legacy() {
+        local path="$1"
+        local legacy
+        for legacy in "${TODO_XREF_LEGACY_FILES[@]}"; do
+            [ "$path" = "$legacy" ] && return 0
+        done
+        return 1
+    }
+
+    # Top-level roots to scan. Keep narrow so unrelated repos (node_modules,
+    # build artifacts, plugin marketplaces) are not traversed.
+    TODO_XREF_ROOTS=(
+        "$REPO_ROOT/src"
+        "$REPO_ROOT/include"
+        "$REPO_ROOT/scripts"
+        "$REPO_ROOT/docs"
+        "$REPO_ROOT/user"
+        "$REPO_ROOT/tools"
+        "$REPO_ROOT/README.md"
+        "$REPO_ROOT/CONTRIBUTING.md"
+        "$REPO_ROOT/CLAUDE.md"
+        "$REPO_ROOT/Makefile"
+        "$REPO_ROOT/CHANGELOG.md"
+    )
+
+    # Existing roots only (some may not exist in every checkout).
+    TODO_XREF_EXISTING=()
+    for root in "${TODO_XREF_ROOTS[@]}"; do
+        [ -e "$root" ] && TODO_XREF_EXISTING+=("$root")
+    done
+
+    while IFS=: read -r file linenum rest; do
+        [ -z "$file" ] && continue
+        relpath="${file#"$REPO_ROOT"/}"
+        # Skip templates that TEACH the shorthand intentionally.
+        case "$relpath" in
+            .github/PULL_REQUEST_TEMPLATE.md) continue ;;
+            *.cursor/*|*.claude/*) continue ;;
+        esac
+        if is_todo_xref_legacy "$relpath"; then
+            warn "$relpath" "$linenum" "numeric TODO shorthand (legacy; tracked for cleanup)"
+        else
+            error "$relpath" "$linenum" "numeric TODO shorthand outside todo/ (breaks on TODO renumbering; use anchor link or capability name)"
+        fi
+    done < <(
+        grep -rnHE "$TODO_XREF_REGEX" \
+            --include='*.c' --include='*.h' --include='*.asm' --include='*.S' \
+            --include='*.sh' --include='*.md' --include='*.json' \
+            --include='*.bat' --include='*.ps1' --include='*.py' \
+            --include='Makefile' --include='*.mk' \
+            --exclude-dir='.git' --exclude-dir='build' --exclude-dir='node_modules' \
+            "${TODO_XREF_EXISTING[@]}" 2>/dev/null \
+        || true
+    )
+fi
+
+# ============================================================================
 # Summary
 # ============================================================================
 echo ""

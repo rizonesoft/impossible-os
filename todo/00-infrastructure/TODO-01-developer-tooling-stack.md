@@ -195,6 +195,7 @@ This is the refinement step: make the tooling self-diagnosing instead of forcing
 - [ ] Make the doctor output actionable: print missing package/tool names, broken script paths, and the exact fix entry point
 - [ ] Wire the regression pack into a lightweight CI path so wrapper drift is caught before release or contributor onboarding breaks
 - [ ] Link doctor and regression-pack usage from `README.md` and developer docs
+- [ ] **Legacy-XREF sweep:** rewrite the ~60 source/test/header/script files currently in `scripts/lint.sh` `TODO_XREF_LEGACY_FILES` so they stop using numeric TODO shorthand (`TODO-NN §M`, `DNN TNN §N`, `TNN §N`) outside `todo/**`. Each file's numeric refs get replaced with either (a) a functional description of what the code does or (b) a relative-path + heading anchor link into the canonical doc. As files are cleaned, remove them from the lint allowlist; target is 0 entries. Lint rule at `scripts/lint.sh` check 7 already errors on new out-of-todo drift, so this is a one-shot catch-up. Initial allowlist committed with the lint rule; see git history for the baseline list. (Templates under `.claude/skills/**`, `.cursor/**`, `.github/PULL_REQUEST_TEMPLATE.md` intentionally teach the shorthand and stay excluded.)
 - [ ] Commit: `"tooling: add doctor command and regression pack for developer workflow"`
 
 **Test checkpoint:** On a healthy setup, `bash scripts/tooling-doctor.sh` reports PASS across toolchain, hooks, and workflow files. On a missing dependency or broken hook install, it reports the exact failed check and recovery step.

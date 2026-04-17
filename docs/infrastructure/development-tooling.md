@@ -2,11 +2,11 @@
 
 > Complete build system, test framework, asset pipeline, and development utilities for Impossible OS.
 
-This page is the canonical reference for the repo-local developer tooling contract. `README.md` and `CLAUDE.md` link here instead of restating setup commands. TODO ownership lives in [TODO-01 Developer Tooling Stack](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md); supported-host profiles and reproducible environments are section 2 of that TODO.
+This page is the canonical reference for the repo-local developer tooling contract. `README.md` and `CLAUDE.md` link here instead of restating setup commands. Roadmap ownership for this contract lives in the [Developer Tooling Stack TODO](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md) (file-path link; section anchors inside that TODO may renumber as the plan evolves).
 
 ## Host Bootstrap Contract
 
-The one-command setup contract for a new development machine. Section 1 of TODO-01 owns this; sections 2-7 extend it with profiles, wrappers, hooks, CI alignment, and a self-diagnosing doctor.
+The one-command setup contract for a new development machine. Parity work extends this with host profiles, wrappers, hooks, CI alignment, and a self-diagnosing doctor (see the [Scope Boundary](#scope-boundary) table below for the current owners).
 
 ### Canonical Commands
 
@@ -27,7 +27,7 @@ The one-command setup contract for a new development machine. Section 1 of TODO-
 | Fedora-based  | Fedora, RHEL, CentOS, Rocky, Alma      | `dnf`           | Manual shim     |
 | Arch-based    | Arch, Manjaro, EndeavourOS             | `pacman`        | Manual shim     |
 
-Ubuntu/Debian is the out-of-the-box reference today because the Makefile hardcodes version-suffixed LLVM binaries (`clang-19`, `ld.lld-19`, `llvm-objcopy-19`, `llvm-ar-19`, `llvm-nm-19`) and the Debian-style `/usr/share/OVMF/OVMF_CODE_4M.fd` / `OVMF_VARS_4M.fd` paths. Fedora and Arch detection runs, but the default packages in those distros install unversioned LLVM binaries and OVMF at `/usr/share/OVMF/OVMF_CODE.fd` -- `bash scripts/setup.sh --verify` will flag the mismatch until a symlink/shim is added. The full supported-host profile matrix (fully supported vs. best-effort vs. unsupported) is owned by TODO-01 section 2.
+Ubuntu/Debian is the out-of-the-box reference today because the Makefile hardcodes version-suffixed LLVM binaries (`clang-19`, `ld.lld-19`, `llvm-objcopy-19`, `llvm-ar-19`, `llvm-nm-19`) and the Debian-style `/usr/share/OVMF/OVMF_CODE_4M.fd` / `OVMF_VARS_4M.fd` paths. Fedora and Arch detection runs, but the default packages in those distros install unversioned LLVM binaries and OVMF at `/usr/share/OVMF/OVMF_CODE.fd` -- `bash scripts/setup.sh --verify` will flag the mismatch until a symlink/shim is added. The full support-tier matrix (fully supported vs. best-effort vs. unsupported) is documented in [Supported Host Profiles and Reproducible Environments](#supported-host-profiles-and-reproducible-environments) below.
 
 Unsupported distros: `setup-deps.sh` exits with the required package list printed so the operator can install manually.
 
@@ -52,7 +52,7 @@ Unsupported distros: `setup-deps.sh` exits with the required package list printe
 | `/usr/share/OVMF/OVMF_CODE_4M.fd`         | `ovmf`                  | `OVMF_CODE := /usr/share/OVMF/OVMF_CODE_4M.fd` |
 | `/usr/share/OVMF/OVMF_VARS_4M.fd`         | `ovmf`                  | `OVMF_VARS := /usr/share/OVMF/OVMF_VARS_4M.fd` |
 
-The OVMF paths are checked as exact file paths, not a fallback set, because the Makefile hardcodes these filenames. Fedora/Arch install OVMF at a different path; until TODO-01 section 2 lands profile shims, those hosts need `ln -s /usr/share/OVMF/OVMF_CODE.fd /usr/share/OVMF/OVMF_CODE_4M.fd` (and the VARS equivalent) to pass `--verify`.
+The OVMF paths are checked as exact file paths, not a fallback set, because the Makefile hardcodes these filenames. Fedora/Arch install OVMF at a different path; the [Fedora / Arch Shim Procedure](#fedora--arch-shim-procedure) section below documents the symlink step needed to pass `--verify`.
 
 ### Optional Tools
 
@@ -77,40 +77,40 @@ Both scripts are re-run safe:
 
 ### Scope Boundary
 
-Owned here (TODO-01 section 1): repo-local dev bootstrap -- host package install, required-tool verification, verification build.
+Owned here (this contract): repo-local dev bootstrap -- host package install, required-tool verification, verification build.
 
-Owned elsewhere:
+Owned elsewhere. Each row links to the owning TODO *file*; section anchors inside those TODOs may renumber as the plan evolves, so we deliberately avoid `§N` shorthand here:
 
-| Capability                                    | Owner                                              |
-| --------------------------------------------- | -------------------------------------------------- |
-| Cross-compiler toolchain, SDK build system    | `todo/14-host-tools/TODO-01-sdk-build-system.md` sections 1-3 (D14 T01) |
-| Supported-host profile matrix (Ubuntu/Arch/Fedora/WSL2/CI), reproducible container | Landed above ("Supported Host Profiles and Reproducible Environments") |
-| Build/test/lint/run wrapper contract          | TODO-01 section 3                                  |
-| VM/bare-metal launcher matrix                 | TODO-01 section 4                                  |
-| Git hook lifecycle                            | TODO-01 section 5                                  |
-| CI workflow alignment                         | TODO-01 section 6                                  |
-| One-command `scripts/tooling-doctor.sh`       | TODO-01 section 7                                  |
+| Capability                                    | Owner                                                                                                                           |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Cross-compiler toolchain, SDK build system    | [SDK Build System TODO](../../todo/14-host-tools/TODO-01-sdk-build-system.md)                                                   |
+| Host profile matrix + reproducible container  | [Supported Host Profiles and Reproducible Environments](#supported-host-profiles-and-reproducible-environments) (below)         |
+| Build/test/lint/run wrapper contract          | [Developer Tooling Stack TODO](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md) -- "wrapper contract" section   |
+| VM/bare-metal launcher matrix                 | [Developer Tooling Stack TODO](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md) -- "machine launcher" section   |
+| Git hook lifecycle                            | [Developer Tooling Stack TODO](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md) -- "git hooks" section          |
+| CI workflow alignment                         | [Developer Tooling Stack TODO](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md) -- "GitHub Actions" section     |
+| One-command `scripts/tooling-doctor.sh`       | [Developer Tooling Stack TODO](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md) -- "tooling doctor" section     |
 
-D14 T01 ships the SDK cross-tool build experience (user-mode programs, host utilities in `sdk/src/`). It explicitly does *not* own the kernel-side `scripts/build.sh` entry point or the host package install flow.
+The SDK Build System TODO ships the SDK cross-tool build experience (user-mode programs, host utilities in `sdk/src/`). It explicitly does *not* own the kernel-side `scripts/build.sh` entry point or the host package install flow.
 
 ---
 
 ## Supported Host Profiles and Reproducible Environments
 
-Section 2 of TODO-01. Section 1 defines *what must be on the machine*; this section defines *which machines are supported, at what support tier, and how to reproduce them*.
+The [Host Bootstrap Contract](#host-bootstrap-contract) above defines *what must be on the machine*; this section defines *which machines are supported, at what support tier, and how to reproduce them*.
 
 ### Profile Matrix
 
 | Profile                         | Tier                        | Notes                                                                                                 |
 | ------------------------------- | --------------------------- | ----------------------------------------------------------------------------------------------------- |
 | Native Ubuntu/Debian (24.04+)   | ✅ Fully supported          | Reference profile. `setup.sh` installs all packages directly; version-suffixed LLVM-19 available.     |
-| WSL2 + Ubuntu (24.04+)          | ✅ Fully supported          | Same as native Ubuntu for build, lint, unit tests (TCG). No WHPX/KVM; runtime validation done from Windows host (see §4). |
-| GitHub Actions `ubuntu-latest`  | ✅ Fully supported          | CI profile. `setup.sh` runs unmodified. See TODO-01 §6 for workflow alignment.                        |
+| WSL2 + Ubuntu (24.04+)          | ✅ Fully supported          | Same as native Ubuntu for build, lint, unit tests (TCG). No WHPX/KVM; runtime validation done from the Windows host via the machine-launcher matrix (see the [Scope Boundary](#scope-boundary) row for its owning TODO). |
+| GitHub Actions `ubuntu-latest`  | ✅ Fully supported          | CI profile. `setup.sh` runs unmodified. GitHub Actions workflow alignment is tracked in the [Developer Tooling Stack TODO](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md). |
 | `.devcontainer` (Ubuntu base)   | ✅ Fully supported          | Committed reproducible environment -- see below. Same entry points as native Ubuntu.                  |
 | Native Fedora (40+)             | ⚠️ Best-effort              | `setup-deps.sh` installs unversioned LLVM and OVMF under a different path. Needs manual shims (see below) until tracked owner lands. |
 | Native Arch / Manjaro           | ⚠️ Best-effort              | Same as Fedora: unversioned `clang`/`lld`/`llvm-objcopy` and OVMF path drift require shims.           |
 | Native Windows (PowerShell/cmd) | ❌ Unsupported              | No `bash scripts/setup.sh` path. Use WSL2 instead.                                                    |
-| macOS                           | ❌ Unsupported              | No tracked owner for toolchain port. Would need cross-compiler changes in D14 T01.                    |
+| macOS                           | ❌ Unsupported              | No tracked owner for toolchain port. Would need cross-compiler changes in the [SDK Build System TODO](../../todo/14-host-tools/TODO-01-sdk-build-system.md). |
 
 **Out-of-the-box** means `bash scripts/setup.sh` followed by `bash scripts/build.sh` succeeds with no manual steps. Best-effort profiles detect correctly but need the documented shim before `--verify` passes.
 
@@ -164,7 +164,7 @@ Containers reproduce *host-side* work exactly:
 | `scripts/test.sh` on TCG (slow path)       | Hardware-accelerated QEMU test runs                     |
 | Asset pipeline + docs generation           | Secure-boot shim validation                             |
 
-Containers cover host bootstrap and static checks. Runtime validation on hardware accelerators and bare metal stays with the named machine profiles in TODO-01 §4.
+Containers cover host bootstrap and static checks. Runtime validation on hardware accelerators and bare metal stays with the named machine profiles owned by the [Developer Tooling Stack TODO](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md) (see the [Scope Boundary](#scope-boundary) row for the "VM/bare-metal launcher matrix").
 
 ### Unsupported-Host Policy
 
