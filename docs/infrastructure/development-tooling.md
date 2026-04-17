@@ -84,7 +84,7 @@ Owned elsewhere:
 | Capability                                    | Owner                                              |
 | --------------------------------------------- | -------------------------------------------------- |
 | Cross-compiler toolchain, SDK build system    | `todo/14-host-tools/TODO-01-sdk-build-system.md` sections 1-3 (D14 T01) |
-| Supported-host profile matrix (Ubuntu/Arch/Fedora/WSL2/CI), reproducible container | TODO-01 section 2                 |
+| Supported-host profile matrix (Ubuntu/Arch/Fedora/WSL2/CI), reproducible container | Landed above ("Supported Host Profiles and Reproducible Environments") |
 | Build/test/lint/run wrapper contract          | TODO-01 section 3                                  |
 | VM/bare-metal launcher matrix                 | TODO-01 section 4                                  |
 | Git hook lifecycle                            | TODO-01 section 5                                  |
@@ -92,6 +92,104 @@ Owned elsewhere:
 | One-command `scripts/tooling-doctor.sh`       | TODO-01 section 7                                  |
 
 D14 T01 ships the SDK cross-tool build experience (user-mode programs, host utilities in `sdk/src/`). It explicitly does *not* own the kernel-side `scripts/build.sh` entry point or the host package install flow.
+
+---
+
+## Supported Host Profiles and Reproducible Environments
+
+Section 2 of TODO-01. Section 1 defines *what must be on the machine*; this section defines *which machines are supported, at what support tier, and how to reproduce them*.
+
+### Profile Matrix
+
+| Profile                         | Tier                        | Notes                                                                                                 |
+| ------------------------------- | --------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Native Ubuntu/Debian (24.04+)   | ✅ Fully supported          | Reference profile. `setup.sh` installs all packages directly; version-suffixed LLVM-19 available.     |
+| WSL2 + Ubuntu (24.04+)          | ✅ Fully supported          | Same as native Ubuntu for build, lint, unit tests (TCG). No WHPX/KVM; runtime validation done from Windows host (see §4). |
+| GitHub Actions `ubuntu-latest`  | ✅ Fully supported          | CI profile. `setup.sh` runs unmodified. See TODO-01 §6 for workflow alignment.                        |
+| `.devcontainer` (Ubuntu base)   | ✅ Fully supported          | Committed reproducible environment -- see below. Same entry points as native Ubuntu.                  |
+| Native Fedora (40+)             | ⚠️ Best-effort              | `setup-deps.sh` installs unversioned LLVM and OVMF under a different path. Needs manual shims (see below) until tracked owner lands. |
+| Native Arch / Manjaro           | ⚠️ Best-effort              | Same as Fedora: unversioned `clang`/`lld`/`llvm-objcopy` and OVMF path drift require shims.           |
+| Native Windows (PowerShell/cmd) | ❌ Unsupported              | No `bash scripts/setup.sh` path. Use WSL2 instead.                                                    |
+| macOS                           | ❌ Unsupported              | No tracked owner for toolchain port. Would need cross-compiler changes in D14 T01.                    |
+
+**Out-of-the-box** means `bash scripts/setup.sh` followed by `bash scripts/build.sh` succeeds with no manual steps. Best-effort profiles detect correctly but need the documented shim before `--verify` passes.
+
+### Minimum Versions and Verification
+
+Each required-sentinel tool has an expected version floor. `bash scripts/setup.sh --versions` reports actual versions alongside expectations.
+
+| Tool                  | Minimum   | Verification command                                | Rationale                                                      |
+| --------------------- | --------- | --------------------------------------------------- | -------------------------------------------------------------- |
+| `clang-19`            | 19.1.0    | `clang-19 --version`                                | Makefile uses `CC := clang-19`; major must match.              |
+| `ld.lld-19`           | 19.1.0    | `ld.lld-19 --version`                               | Paired with clang-19; major must match.                        |
+| `llvm-objcopy-19`     | 19.1.0    | `llvm-objcopy-19 --version`                         | Paired with clang-19; major must match.                        |
+| `llvm-ar-19`          | 19.1.0    | `llvm-ar-19 --version`                              | Paired with clang-19; major must match.                        |
+| `llvm-nm-19`          | 19.1.0    | `llvm-nm-19 --version`                              | Paired with clang-19; major must match.                        |
+| `nasm`                | 2.15.05   | `nasm -v`                                           | Modern x86-64 syntax; older versions miss `BND` encodings.     |
+| `gcc`                 | 11.0      | `gcc --version`                                     | `HOST_CC := gcc` needs C17 support for host tools.             |
+| `python3`             | 3.8       | `python3 --version`                                 | f-strings, `pathlib`, asset-pipeline tool scripts.             |
+| `qemu-system-x86_64`  | 7.0       | `qemu-system-x86_64 --version`                      | UEFI + AHCI + VirtIO + NVMe + HPET; WHPX accelerator on 7.0+.  |
+| `mcopy`               | 4.0       | `mcopy -V`                                          | Offset syntax `image@@offset` for partition-local FAT writes.  |
+| `mmd`                 | 4.0       | `mmd -V`                                            | BlackBox FAT directory creation (Makefile L391-L392).          |
+| `mkfs.fat`            | 4.0       | `mkfs.fat --help \| tail -1`                        | `--offset` flag required for partition-local format.           |
+| OVMF `*_4M.fd`        | 2022.02   | `ls -l /usr/share/OVMF/OVMF_{CODE,VARS}_4M.fd`      | 4M firmware layout; older 2M OVMF is not compatible.           |
+| `bear`                | 3.0       | `bear --version`                                    | Optional; generates `compile_commands.json` for clangd.        |
+
+`bash scripts/setup.sh --versions` walks the sentinel set and reports version strings for anything that exposes `--version`/`-v`/`-V`. Minimum-floor enforcement is advisory (warn, don't block) because distro patch numbers vary; `--verify` remains the pass/fail gate.
+
+### Reproducible Environment (`.devcontainer`)
+
+A committed VS Code devcontainer lives at `.devcontainer/devcontainer.json`. It brings up an Ubuntu 24.04 base, runs `bash scripts/setup.sh` in `postCreateCommand`, and leaves a container where every wrapper (`scripts/build.sh`, `scripts/test.sh`, `scripts/lint.sh`, `scripts/setup.sh --verify`) works identically to a native Ubuntu host.
+
+| Property            | Value                                                                    |
+| ------------------- | ------------------------------------------------------------------------ |
+| Base image          | `mcr.microsoft.com/devcontainers/base:ubuntu-24.04`                      |
+| Post-create command | `bash scripts/setup.sh`                                                  |
+| Included extensions | `llvm-vs-code-extensions.vscode-clangd`                                  |
+| Forwarded ports     | none                                                                     |
+| Privileged mode     | no (no `--cap-add`, no `seccomp=unconfined`; bootstrap profile only)     |
+
+**Usage:** open the repo in VS Code / Cursor with the Dev Containers extension installed, then "Reopen in Container". Equivalent CLI path: `devcontainer up --workspace-folder .` (Dev Containers CLI).
+
+### Container vs Non-Container Validation Boundary
+
+Containers reproduce *host-side* work exactly:
+
+| Reproducible inside container              | Needs native/VM host                                    |
+| ------------------------------------------ | ------------------------------------------------------- |
+| `scripts/setup.sh` + dependency install    | QEMU with WHPX (Windows)                                |
+| `scripts/build.sh` + `build.sh clean`      | QEMU with KVM (Linux, needs `/dev/kvm` passthrough)     |
+| `scripts/setup.sh --verify` / `--versions` | VirtualBox runtime                                      |
+| `scripts/lint.sh` (static checks)          | Bare-metal USB boot                                     |
+| `scripts/test.sh` on TCG (slow path)       | Hardware-accelerated QEMU test runs                     |
+| Asset pipeline + docs generation           | Secure-boot shim validation                             |
+
+Containers cover host bootstrap and static checks. Runtime validation on hardware accelerators and bare metal stays with the named machine profiles in TODO-01 §4.
+
+### Unsupported-Host Policy
+
+**Native Windows (PowerShell/cmd.exe)** and **macOS** are unsupported paths for local development today. No checklist item owns porting the build system to either. Contributors on those operating systems must use WSL2 (Windows) or a supported Linux host / devcontainer (all platforms).
+
+If a tracked owner later adds a supported native-Windows or macOS path, it lands as a new profile row in the matrix above and a new `setup-*` script; this section is the single gate for that promotion.
+
+### Fedora / Arch Shim Procedure
+
+Until the best-effort profiles are promoted to full support, hosts in those families need:
+
+```sh
+# LLVM-19 symlinks (Fedora: dnf install llvm-toolset-19 clang-tools-extra lld; Arch: pacman -S llvm19 lld19 clang19 or AUR)
+sudo ln -s $(command -v clang) /usr/local/bin/clang-19
+sudo ln -s $(command -v ld.lld) /usr/local/bin/ld.lld-19
+sudo ln -s $(command -v llvm-objcopy) /usr/local/bin/llvm-objcopy-19
+sudo ln -s $(command -v llvm-ar) /usr/local/bin/llvm-ar-19
+sudo ln -s $(command -v llvm-nm) /usr/local/bin/llvm-nm-19
+
+# OVMF 4M paths (Fedora/Arch use /usr/share/OVMF/OVMF_CODE.fd by default)
+sudo ln -sf /usr/share/OVMF/OVMF_CODE.fd /usr/share/OVMF/OVMF_CODE_4M.fd
+sudo ln -sf /usr/share/OVMF/OVMF_VARS.fd /usr/share/OVMF/OVMF_VARS_4M.fd
+```
+
+After shimming, `bash scripts/setup.sh --verify` should report 14/14 OK.
 
 ---
 

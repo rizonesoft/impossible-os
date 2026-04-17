@@ -9,7 +9,11 @@ everything you need to get started.
 
 ### Prerequisites
 
-- **Ubuntu/Debian**, **Fedora**, or **Arch Linux** (WSL 2 on Windows works great)
+- **Fully supported:** Ubuntu/Debian 24.04+ (native or WSL 2), GitHub Actions
+  `ubuntu-latest`, or the committed `.devcontainer` (Ubuntu base image)
+- **Best-effort:** Fedora or Arch Linux (needs the LLVM-19 + OVMF shim from the
+  Host Profiles doc below)
+- **Unsupported:** native Windows (use WSL 2) and macOS
 - Git
 
 ### Development Environment Setup
@@ -17,15 +21,21 @@ everything you need to get started.
 ```bash
 git clone https://github.com/rizonesoft/impossible-os.git
 cd impossible-os
-bash scripts/setup.sh          # Installs Clang-19, NASM, QEMU, OVMF, mtools, etc.
+bash scripts/setup.sh          # Installs Clang-19, NASM, QEMU, OVMF, mtools, gcc, python3, etc.
 bash scripts/build.sh run      # Build + boot in QEMU to verify everything works
 ```
 
 `setup.sh` handles all dependencies automatically. If you're on an unsupported
 distro, run `bash scripts/setup.sh --help` for the required-tool list, then
 install manually. The canonical [Host Bootstrap Contract](docs/infrastructure/development-tooling.md#host-bootstrap-contract)
-documents supported distros, sentinel tools, idempotence, and scope boundaries;
-re-check any host with `bash scripts/setup.sh --verify`.
+and [Supported Host Profiles](docs/infrastructure/development-tooling.md#supported-host-profiles-and-reproducible-environments)
+document distros, sentinel tools, minimum versions, the devcontainer profile,
+idempotence, and scope boundaries. Re-check with `bash scripts/setup.sh --verify`;
+see version floors with `bash scripts/setup.sh --versions`.
+
+**Reproducible environment:** open the repo in VS Code / Cursor with the Dev
+Containers extension installed and "Reopen in Container" -- the devcontainer
+runs `bash scripts/setup.sh` on first start.
 
 ### Enable Git Hooks
 

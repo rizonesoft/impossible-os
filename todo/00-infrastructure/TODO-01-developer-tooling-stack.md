@@ -53,7 +53,7 @@
 | ⭐  | Order | Deliverable                                           | Depends On     | Status |
 | --- | :---: | ----------------------------------------------------- | --------------- | :----: |
 | 💎  |   1   | Host bootstrap and dependency contract                | --             |  [x]   |
-| 💎  |   2   | Supported host profiles and reproducible environments | §1             |  [ ]   |
+| 💎  |   2   | Supported host profiles and reproducible environments | §1             |  [x]   |
 | 💎  |   3   | Build, test, lint, and run wrapper contract           | §1, §2         |  [ ]   |
 | 💎  |   4   | Machine launcher and debug profile matrix             | §2, §3         |  [ ]   |
 | 💎  |   5   | Git hooks and local automation lifecycle              | §1, §3         |  [ ]   |
@@ -94,15 +94,24 @@ Make setup reproducible and explicit so a new machine converges on the same tool
 
 Setup is not complete until contributors know which hosts are supported, which are best-effort, and how to reproduce the toolchain without cargo-cult package installs.
 
-- [ ] Define the supported host profile matrix: native Ubuntu/Debian, native Fedora, native Arch, WSL2 + Ubuntu, and GitHub Actions `ubuntu-latest`; mark which profiles are fully supported, best-effort, and unsupported
-- [ ] Publish minimum required versions and verification commands for `clang-19`, `ld.lld-19`, `nasm`, `qemu-system-x86_64`, `OVMF`, `mtools`, `python3`, and `bear` so setup output is more precise than "binary exists"
-- [ ] Add an optional committed reproducible environment definition (`.devcontainer/` or equivalent container profile) that runs the same setup/build/lint/docs entry points as a fresh supported host
-- [ ] Document the boundary between containerized and non-containerized validation: host bootstrap and static checks can be reproduced in a container, while KVM/WHPX/VirtualBox and bare-metal validation remain owned by the named machine profiles in §4
-- [ ] State unsupported-host policy explicitly in developer docs: Windows native shell flow and macOS are unsupported until a tracked owner lands them; WSL2 and supported Linux hosts are the intended paths today
-- [ ] Add reciprocal XREFs so `README.md`, `CONTRIBUTING.md`, and community docs pull setup guidance from this section instead of freezing parallel command lists
-- [ ] Commit: `"docs/tooling: define supported host profiles and reproducible environment policy"`
+- [x] Define the supported host profile matrix: native Ubuntu/Debian, native Fedora, native Arch, WSL2 + Ubuntu, and GitHub Actions `ubuntu-latest`; mark which profiles are fully supported, best-effort, and unsupported
+- [x] Publish minimum required versions and verification commands for `clang-19`, `ld.lld-19`, `nasm`, `qemu-system-x86_64`, `OVMF`, `mtools`, `python3`, and `bear` so setup output is more precise than "binary exists"
+- [x] Add an optional committed reproducible environment definition (`.devcontainer/` or equivalent container profile) that runs the same setup/build/lint/docs entry points as a fresh supported host
+- [x] Document the boundary between containerized and non-containerized validation: host bootstrap and static checks can be reproduced in a container, while KVM/WHPX/VirtualBox and bare-metal validation remain owned by the named machine profiles in §4
+- [x] State unsupported-host policy explicitly in developer docs: Windows native shell flow and macOS are unsupported until a tracked owner lands them; WSL2 and supported Linux hosts are the intended paths today
+- [x] Add reciprocal XREFs so `README.md`, `CONTRIBUTING.md`, and community docs pull setup guidance from this section instead of freezing parallel command lists
+- [x] Commit: `"docs/tooling: define supported host profiles and reproducible environment policy"`
 
 **Test checkpoint:** On a fresh supported host or the committed reproducible environment, the documented bootstrap path reaches the required tool versions and wrapper entry points without undocumented manual steps. Unsupported hosts fail early with a documented redirect to the supported path.
+
+> **Notes:**
+> - Profile matrix lives in [`docs/infrastructure/development-tooling.md#supported-host-profiles-and-reproducible-environments`](../../docs/infrastructure/development-tooling.md#supported-host-profiles-and-reproducible-environments). Five fully-supported profiles (Ubuntu/Debian 24.04+, WSL2+Ubuntu, GHA `ubuntu-latest`, committed `.devcontainer`, Ubuntu container base), two best-effort (native Fedora, native Arch; both require the LLVM-19 + OVMF shim), two unsupported (native Windows, macOS).
+> - `scripts/setup.sh --versions` reports each installed tool's version alongside its documented minimum floor. Advisory only (not a hard gate): `--verify` remains pass/fail.
+> - `.devcontainer/devcontainer.json` defines a reproducible Ubuntu 24.04 environment. `postCreateCommand` runs `bash scripts/setup.sh`; ships the clangd extension for C intelligence.
+> - Container/non-container boundary documented in the doc table: host bootstrap, static checks, and TCG tests reproduce inside a container; KVM/WHPX/VBox/bare-metal remain owned by §4.
+> - Unsupported-host policy stated explicitly. Native Windows contributors use WSL2; macOS has no tracked owner for a toolchain port.
+> - Fedora/Arch shim procedure is published in the same doc so best-effort profiles have a deterministic path to 14/14 sentinel pass.
+> - `README.md`, `CONTRIBUTING.md`, and `CLAUDE.md` all link into the new §2 doc anchor in addition to the existing §1 link.
 
 ---
 
@@ -194,7 +203,7 @@ This is the refinement step: make the tooling self-diagnosing instead of forcing
 | ⭐ | Feature                       | 🪟 Win11 projects         | 🐧 Linux projects          | 🚀 Impossible OS         |
 | --- | ----------------------------- | ------------------------- | -------------------------- | ------------------------- |
 | 💎 | Bootstrap script              | ⚠️ WDK/HLK heavy setup    | ⚠️ Distro docs + scripts   | ✅ §1 -- setup.sh + --verify sentinel |
-| 💎 | Reproducible host profiles    | ⚠️ EWDK/Dev Box or VMs    | ✅ Devcontainers common    | ⬜ §2                    |
+| 💎 | Reproducible host profiles    | ⚠️ EWDK/Dev Box or VMs    | ✅ Devcontainers common    | ✅ §2 matrix + .devcontainer + shim procedure |
 | 💎 | Canonical build/test wrappers | ✅ Common in mature repos | ✅ Common in mature repos  | ⬜ §3                    |
 | 💎 | Named VM/debug profiles       | ⚠️ Often ad hoc           | ⚠️ Often ad hoc            | ⬜ §4                    |
 | 💎 | Managed local hooks           | ⚠️ Varies by repo         | ✅ Common in many repos    | ⬜ §5                    |

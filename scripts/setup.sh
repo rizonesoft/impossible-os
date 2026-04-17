@@ -5,12 +5,13 @@
 # Clone the repo, run this script, and you're ready to build.
 #
 # Usage:
-#   bash scripts/setup.sh            Install deps + verification build
-#   bash scripts/setup.sh --verify   Read-only sentinel check (no install)
-#   bash scripts/setup.sh --help     Print usage and exit
+#   bash scripts/setup.sh             Install deps + verification build
+#   bash scripts/setup.sh --verify    Read-only sentinel check (no install)
+#   bash scripts/setup.sh --versions  Print actual tool versions with minimum floors (advisory)
+#   bash scripts/setup.sh --help      Print usage and exit
 #
 # Canonical host bootstrap contract: docs/infrastructure/development-tooling.md
-# TODO owner: todo/00-infrastructure/TODO-01-developer-tooling-stack.md (section 1)
+# TODO owner: todo/00-infrastructure/TODO-01-developer-tooling-stack.md (sections 1 + 2)
 # ============================================================================
 
 set -euo pipefail
@@ -49,7 +50,8 @@ REQUIRED_SENTINELS=(
 # OVMF paths are hardcoded in the Makefile. Fallbacks here are strictly for
 # distros that ship OVMF under a different prefix; the repo build still requires
 # the canonical Debian-style 4M paths to be present. Fedora/Arch currently need
-# manual symlinks until TODO-01 section 2 lands the supported-host profile matrix.
+# manual symlinks (see docs/infrastructure/development-tooling.md, Fedora/Arch
+# Shim Procedure section) until full-support promotion lands.
 OVMF_CODE_CANDIDATES=(
     "/usr/share/OVMF/OVMF_CODE_4M.fd"
 )
@@ -57,14 +59,53 @@ OVMF_VARS_CANDIDATES=(
     "/usr/share/OVMF/OVMF_VARS_4M.fd"
 )
 
+# ---- Minimum tool versions (TODO-01 section 2) ----
+# Entry format: "check_cmd:display_name:minimum:version_probe"
+# version_probe is a small awk/sed pipeline that extracts a dotted version
+# from the tool's output. Keeping these inline so docs and script stay aligned.
+VERSION_SPECS=(
+    "clang-19:clang-19:19.1.0:clang-19 --version 2>&1 | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1"
+    "ld.lld-19:ld.lld-19:19.1.0:ld.lld-19 --version 2>&1 | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1"
+    "llvm-objcopy-19:llvm-objcopy-19:19.1.0:llvm-objcopy-19 --version 2>&1 | head -3 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1"
+    "llvm-ar-19:llvm-ar-19:19.1.0:llvm-ar-19 --version 2>&1 | head -3 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1"
+    "llvm-nm-19:llvm-nm-19:19.1.0:llvm-nm-19 --version 2>&1 | head -3 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1"
+    "nasm:nasm:2.15.05:nasm -v 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1"
+    "gcc:gcc:11.0:gcc --version 2>&1 | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1"
+    "python3:python3:3.8:python3 --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1"
+    "qemu-system-x86_64:qemu-system-x86_64:7.0:qemu-system-x86_64 --version 2>&1 | head -1 | grep -oE '[0-9]+\.[0-9]+' | head -1"
+    "mcopy:mtools mcopy:4.0:mcopy -V 2>&1 | head -1 | grep -oE '[0-9]+\.[0-9]+' | head -1"
+    "mmd:mtools mmd:4.0:mmd -V 2>&1 | head -1 | grep -oE '[0-9]+\.[0-9]+' | head -1"
+    "mkfs.fat:dosfstools mkfs.fat:4.0:mkfs.fat --help 2>&1 | tail -1 | grep -oE '[0-9]+\.[0-9]+' | head -1"
+    "bear:bear (optional):3.0:bear --version 2>&1 | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1"
+)
+
+# Firmware files have no version strings. print_versions also walks these
+# for presence + size so `--versions` coverage matches --verify's sentinel set.
+FIRMWARE_CHECKS=(
+    "OVMF_CODE_4M.fd:/usr/share/OVMF/OVMF_CODE_4M.fd"
+    "OVMF_VARS_4M.fd:/usr/share/OVMF/OVMF_VARS_4M.fd"
+)
+
+# Compare dotted versions: returns 0 if $1 >= $2, else 1.
+version_ge() {
+    local have="$1"
+    local need="$2"
+    [ -z "$have" ] && return 1
+    [ -z "$need" ] && return 0
+    local highest
+    highest=$(printf '%s\n%s\n' "$have" "$need" | sort -V | tail -n 1)
+    [ "$highest" = "$have" ]
+}
+
 print_help() {
     cat <<'EOF'
 Impossible OS -- development environment setup
 
 Usage:
-  bash scripts/setup.sh            Install dependencies, then run a verification build.
-  bash scripts/setup.sh --verify   Check required tools (read-only; no install, no build).
-  bash scripts/setup.sh --help     Show this help.
+  bash scripts/setup.sh             Install dependencies, then run a verification build.
+  bash scripts/setup.sh --verify    Check required tools (read-only; no install, no build).
+  bash scripts/setup.sh --versions  Report installed tool versions vs documented minimum floors.
+  bash scripts/setup.sh --help      Show this help.
 
 Required host tools (TODO-01 section 1):
   clang-19, ld.lld-19, llvm-objcopy-19, llvm-ar-19, llvm-nm-19,
@@ -149,12 +190,70 @@ verify_tools() {
     fi
 }
 
+print_versions() {
+    local warnings=0
+    echo -e "${CYAN}==================================================${NC}"
+    echo -e "${CYAN}  Host tool versions vs documented minimums${NC}"
+    echo -e "${CYAN}==================================================${NC}"
+    echo ""
+    printf "  %-24s %-12s %-12s %s\n" "Tool" "Installed" "Minimum" "Status"
+    printf "  %-24s %-12s %-12s %s\n" "----" "---------" "-------" "------"
+    for spec in "${VERSION_SPECS[@]}"; do
+        local check="${spec%%:*}"
+        local rest="${spec#*:}"
+        local name="${rest%%:*}"
+        rest="${rest#*:}"
+        local minimum="${rest%%:*}"
+        local probe="${rest#*:}"
+        local have
+        if ! command -v "$check" >/dev/null 2>&1; then
+            printf "  %-24s ${RED}%-12s${NC} %-12s ${RED}MISSING${NC}\n" "$name" "--" "$minimum"
+            warnings=$((warnings + 1))
+            continue
+        fi
+        have=$(eval "$probe" 2>/dev/null || echo "")
+        if [ -z "$have" ]; then
+            printf "  %-24s ${YELLOW}%-12s${NC} %-12s ${YELLOW}UNKNOWN${NC}\n" "$name" "?" "$minimum"
+            warnings=$((warnings + 1))
+            continue
+        fi
+        if version_ge "$have" "$minimum"; then
+            printf "  %-24s ${GREEN}%-12s${NC} %-12s ${GREEN}OK${NC}\n" "$name" "$have" "$minimum"
+        else
+            printf "  %-24s ${YELLOW}%-12s${NC} %-12s ${YELLOW}BELOW${NC}\n" "$name" "$have" "$minimum"
+            warnings=$((warnings + 1))
+        fi
+    done
+    echo ""
+    echo -e "  ${CYAN}Firmware files (no version string; presence check):${NC}"
+    for entry in "${FIRMWARE_CHECKS[@]}"; do
+        local name="${entry%%:*}"
+        local path="${entry#*:}"
+        if [ -f "$path" ]; then
+            local size
+            size=$(stat -c %s "$path" 2>/dev/null || echo "?")
+            printf "  %-24s ${GREEN}%-12s${NC} present      ${GREEN}OK${NC}  (%s)\n" "$name" "${size} B" "$path"
+        else
+            printf "  %-24s ${RED}%-12s${NC} present      ${RED}MISSING${NC} (%s)\n" "$name" "--" "$path"
+            warnings=$((warnings + 1))
+        fi
+    done
+    echo ""
+    echo -e "  ${CYAN}Advisory:${NC} minimums are documented floors, not hard gates."
+    echo -e "  Hard contract: ${CYAN}bash scripts/setup.sh --verify${NC}."
+    if [ "$warnings" -gt 0 ]; then
+        return 1
+    fi
+    return 0
+}
+
 # ---- Arg parsing ----
 MODE="install"
 while [ $# -gt 0 ]; do
     case "$1" in
         --help|-h) MODE="help" ;;
         --verify) MODE="verify" ;;
+        --versions) MODE="versions" ;;
         *)
             echo "Unknown argument: $1" >&2
             echo ""
@@ -172,6 +271,10 @@ case "$MODE" in
         ;;
     verify)
         verify_tools
+        exit $?
+        ;;
+    versions)
+        print_versions
         exit $?
         ;;
 esac

@@ -72,11 +72,14 @@ bash scripts/build.sh run      # Build + boot in QEMU
 ```
 
 > [!NOTE]
-> **Requires:** Ubuntu/Debian, Fedora, or Arch Linux (WSL 2 recommended on Windows).
-> `setup.sh` installs everything automatically: Clang-19, NASM, QEMU, OVMF, mtools, etc.
+> **Fully supported:** native Ubuntu/Debian 24.04+, WSL2 + Ubuntu, GitHub Actions `ubuntu-latest`, and the committed `.devcontainer` (Ubuntu base).
+> **Best-effort:** native Fedora and Arch (need the LLVM-19 + OVMF shim documented in the contract below).
+> **Unsupported:** native Windows (use WSL2 instead) and macOS.
+> `setup.sh` installs everything automatically: Clang-19, NASM, QEMU, OVMF, mtools, gcc, python3, etc.
 > See [Host Bootstrap Contract](docs/infrastructure/development-tooling.md#host-bootstrap-contract)
-> for the canonical required-tool sentinel set, supported distros, and idempotence guarantees.
-> Re-check any time with `bash scripts/setup.sh --verify`.
+> and [Supported Host Profiles](docs/infrastructure/development-tooling.md#supported-host-profiles-and-reproducible-environments)
+> for the canonical sentinel set, profile matrix, minimum versions, and idempotence guarantees.
+> Re-check any time with `bash scripts/setup.sh --verify`; see version floors with `bash scripts/setup.sh --versions`.
 
 ### Build Commands
 

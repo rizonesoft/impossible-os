@@ -1,0 +1,33 @@
+{
+    "$schema": "https://raw.githubusercontent.com/devcontainers/spec/main/schemas/devContainer.base.schema.json",
+    "name": "Impossible OS -- Ubuntu 24.04 host bootstrap",
+
+    "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+
+    "features": {
+        "ghcr.io/devcontainers/features/sshd:1": {}
+    },
+
+    "postCreateCommand": "bash scripts/setup.sh",
+
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "llvm-vs-code-extensions.vscode-clangd"
+            ],
+            "settings": {
+                "clangd.path": "/usr/bin/clangd-19",
+                "clangd.arguments": [
+                    "--background-index",
+                    "--compile-commands-dir=${workspaceFolder}"
+                ]
+            }
+        }
+    },
+
+    "remoteUser": "vscode",
+
+    "overrideCommand": false,
+
+    "mounts": []
+}
