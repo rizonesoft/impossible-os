@@ -1,5 +1,19 @@
 /* ============================================================================
  * boot_info.h -- Parsed boot information passed to the kernel
+ *
+ * Field ownership (producer / consumer / first valid phase / lifetime / owning
+ * roadmap / validation rule) lives in the canonical matrix at
+ *   docs/boot/boot-info-fields.md
+ * That doc is the single source of truth; this header keeps only the C-level
+ * policy strictly required by the compiler (ABI header offsets, the static
+ * asserts that pin count-field offsets, and the `struct boot_config` size
+ * contract). Everything else -- which fields are bootloader-populated vs
+ * kernel-populated, which are legacy/Multiboot2-only, the update protocol
+ * for adding or deprecating a field -- is documented there.
+ *
+ * Add a field -> update the mirror in src/boot/uefi/bootx64.c -> add a row
+ * to docs/boot/boot-info-fields.md. Do not embed per-field policy prose
+ * inline in this header.
  * ============================================================================ */
 
 #pragma once

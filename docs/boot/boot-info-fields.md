@@ -1,0 +1,444 @@
+# struct boot_info -- Canonical Field Ownership Matrix
+
+> **Owner:** [Boot Protocol ABI & Handoff Contract roadmap -- Canonical boot_info Field Ownership Table section](../../todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md#1-canonical-boot_info-field-ownership-table).
+> **Single source of truth.** [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h) has a file-top comment that points here rather than duplicating policy inline. Every field of `struct boot_info` (and its nested structs) is listed below with producer, first valid phase, consumer(s), lifetime, owning roadmap, and validation rule. Add a field -> add a row.
+
+## How to read this doc
+
+- **Producer** -- who writes the value. `bootx64` is the UEFI bootloader ([`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c)). `mb2` is the legacy GRUB/Multiboot2 path ([`src/kernel/multiboot2_parse.c`](../../src/kernel/multiboot2_parse.c), [`src/boot/entry.asm`](../../src/boot/entry.asm)). `kernel` marks fields written by kernel code AFTER boot_info handoff.
+- **First valid phase** -- the earliest point a consumer can safely read the field. `P0` = entry into `boot_phase0`, after `boot_info_validate*` succeeds; `P1` = after `boot_phase1` init order completes; `P2` = after `boot_phase2`; `P3` = after `boot_phase3` / user-mode; `K` = set later by kernel code (not populated on entry).
+- **Consumer(s)** -- primary kernel files or subsystems that read the field. Non-exhaustive; the column names representative callers.
+- **Lifetime** -- how long the value remains meaningful. `boot` = valid only during boot, stale once the consumer has caught up. `runtime` = required for the whole OS lifetime (e.g., runtime services, hypervisor flags). `handoff` = valid only until PMM reclaims the underlying memory.
+- **Owning roadmap** -- the TODO section whose scope includes this field's producer/consumer contract.
+- **Validation** -- the check that rejects malformed data. `boot_info_validate_*` covers the header; individual subsystems own deeper validation (e.g., `vmm_map_mmio_uc` for MMIO ranges).
+
+ABI invariants (enforced by `_Static_assert` in the header):
+- `boot_info_header` is at offset 0, exactly 8 bytes.
+- `sizeof(struct boot_info)` fits in `uint16_t` (header.size).
+- Six critical count fields are pinned by offset between kernel and bootloader mirror: `mmap_count`, `gop_mode_count`, `config_table_count`, `rt_mmap_count`, `usb_device_count`, `uefi_boot_current`.
+- `boot_config.cmdline` is at byte offset 32 (stable across versions); `boot_config.config_found` at 288; `sizeof(struct boot_config) == 512`.
+
+Every version bump goes in both [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h) and [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c). Current: `BOOT_INFO_VERSION = 5`.
+
+## Top-level `struct boot_info` fields
+
+### ABI header
+
+| Field     | Producer | First valid | Consumer                                | Lifetime | Owning roadmap | Validation |
+| --------- | -------- | ----------- | --------------------------------------- | -------- | -------------- | ---------- |
+| `header.magic`   | bootx64 / mb2 | P0 | `boot_info_validate_header` | runtime | boot-protocol §1 | `== BOOT_INFO_MAGIC` (`"IPOS"`). |
+| `header.version` | bootx64 / mb2 | P0 | `boot_info_validate_header` | runtime | boot-protocol §1 | `== BOOT_INFO_VERSION` exact match (stale-loader detector). |
+| `header.size`    | bootx64 / mb2 | P0 | `boot_info_validate_header` | runtime | boot-protocol §1 | `== sizeof(struct boot_info)` kernel-side. |
+
+### Memory map
+
+| Field | Producer | First valid | Consumer | Lifetime | Owning roadmap | Validation |
+| --- | --- | --- | --- | --- | --- | --- |
+| `mmap[BOOT_MMAP_MAX_ENTRIES]` | bootx64 (UEFI mmap pass) | P0 | `pmm_init`, `vmm_apply_nx_policy`, runtime services map | boot | boot-protocol §6 (reservation table) | Each entry walked against `BOOT_MMAP_MAX_ENTRIES`; per-entry sanity checked in PMM ingestion. |
+| `mmap_count`                  | bootx64 | P0 | same | boot | boot-protocol §6 | `<= BOOT_MMAP_MAX_ENTRIES`; offset pinned (§3 mirror fingerprint). |
+| `mmap_truncated`              | bootx64 | P0 | kernel boot log (warn if 1) | boot | boot-protocol §6 | Advisory flag; non-zero prints a serial warning. |
+| `mmap_quirks`                 | bootx64 | P0 | kernel boot log | boot | boot-protocol §6 | Advisory. |
+
+### Basic memory (legacy)
+
+| Field | Producer | First valid | Consumer | Lifetime | Owning roadmap | Validation |
+| --- | --- | --- | --- | --- | --- | --- |
+| `mem_lower_kb` | bootx64 / mb2 | P0 | **none** (deprecate) | boot | boot-protocol §1 (retain alias) | None. See **Legacy / Multiboot2-only** block below. |
+| `mem_upper_kb` | bootx64 / mb2 | P0 | **none** (deprecate) | boot | boot-protocol §1 (retain alias) | None. |
+
+### Framebuffer
+
+| Field | Producer | First valid | Consumer | Lifetime | Owning roadmap | Validation |
+| --- | --- | --- | --- | --- | --- | --- |
+| `fb` (see nested table below) | bootx64 / mb2 | P0 | `framebuffer.c`, `vmm_map_mmio_uc` | runtime | graphics-asset-foundation | `fb_available == 1` gate; individual geometry checks in `fb_init`. |
+| `fb_available`                | bootx64 / mb2 | P0 | same | runtime | graphics-asset-foundation | `0 | 1`. |
+| `hidpi`                       | bootx64       | P0 | desktop / DPI scaling | runtime | graphics-asset-foundation | `0 | 1` (negotiated width >= 2560). |
+| `fb_pad[2]`                   | bootx64       | P0 | none (alignment) | --   | --             | Reserved; zero. |
+
+### GOP mode list
+
+| Field | Producer | First valid | Consumer | Lifetime | Owning roadmap | Validation |
+| --- | --- | --- | --- | --- | --- | --- |
+| `gop_modes[BOOT_GOP_MODE_MAX]` | bootx64 | P0 | display mode switcher (future) | boot | graphics-asset-foundation | `gop_mode_count <= BOOT_GOP_MODE_MAX`; offset pinned. |
+| `gop_mode_count`               | bootx64 | P0 | same | boot | graphics-asset-foundation | `< BOOT_GOP_MODE_MAX`. |
+| `gop_mode_selected`            | bootx64 | P0 | same | boot | graphics-asset-foundation | `< gop_mode_count`. |
+
+### ACPI
+
+| Field | Producer | First valid | Consumer | Lifetime | Owning roadmap | Validation |
+| --- | --- | --- | --- | --- | --- | --- |
+| `acpi_rsdp_addr` | bootx64 / mb2 | P0 | `acpi_init` | runtime | kernel-init-sequencing | Non-zero when `acpi_available == 1`; `acpi_init` walks RSDP signature. |
+| `acpi_version`   | bootx64 / mb2 | P0 | `acpi_init` | runtime | kernel-init-sequencing | `1` (RSDP v1) or `2` (RSDP v2). |
+| `acpi_available` | bootx64 / mb2 | P0 | gate for ACPI path | runtime | kernel-init-sequencing | `0 | 1`. |
+
+### Module (GRUB legacy)
+
+These fields predate the typed payload descriptor array in [boot-protocol roadmap -- Optional Payload Descriptor Array section](../../todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md#4-optional-payload-descriptor-array). §4 explicitly directs "Keep legacy single `module_start/module_end` as compatibility aliases until consumers migrate"; no kernel code outside the Multiboot2 parser reads these today.
+
+| Field | Producer | First valid | Consumer | Lifetime | Owning roadmap | Validation |
+| --- | --- | --- | --- | --- | --- | --- |
+| `module_start`     | bootx64 / mb2 | P0 | none today; retained as compatibility alias | handoff | boot-protocol §4 / §5 | None. `module_available` gates reads. |
+| `module_end`       | bootx64 / mb2 | P0 | none today; retained as compatibility alias | handoff | boot-protocol §4 / §5 | None. |
+| `module_available` | bootx64 / mb2 | P0 | gate for legacy consumers | boot | boot-protocol §4 / §5 | `0 | 1`. |
+
+See **Legacy / Multiboot2-only** block below for the full retain/deprecate breakdown.
+
+### Boot configuration (`boot.conf`)
+
+| Field | Producer | First valid | Consumer | Lifetime | Owning roadmap | Validation |
+| --- | --- | --- | --- | --- | --- | --- |
+| `config` (see nested table below) | bootx64 (parses `\EFI\ImpossibleOS\boot.conf`) | P0 | boot init, test runner, splash, debug paths | runtime | boot-entry-store-menu-policy | Size + offsets pinned at compile time; `config_found` gates fallbacks. |
+
+### UEFI Configuration Table
+
+| Field | Producer | First valid | Consumer | Lifetime | Owning roadmap | Validation |
+| --- | --- | --- | --- | --- | --- | --- |
+| `config_table[BOOT_CONFIG_TABLE_MAX]` | bootx64 | P0 | ACPI, SMBIOS, FPDT, MEM_ATTR lookups | runtime | kernel-init-sequencing | `config_table_count <= BOOT_CONFIG_TABLE_MAX`; offset pinned. GUID match per consumer. |
+| `config_table_count`                   | bootx64 | P0 | same | runtime | kernel-init-sequencing | `<= BOOT_CONFIG_TABLE_MAX`. |
+
+### UEFI Runtime Services
+
+| Field | Producer | First valid | Consumer | Lifetime | Owning roadmap | Validation |
+| --- | --- | --- | --- | --- | --- | --- |
+| `uefi_runtime_services`    | bootx64 | P0 | `uefi_runtime.c` | runtime | kernel-init-sequencing | Gated by `uefi_rt_available == 1`. |
+| `uefi_rt_available`        | bootx64 | P0 | same | runtime | kernel-init-sequencing | `0 | 1`. |
+| `rt_mmap[BOOT_RT_MMAP_MAX]` | bootx64 | P0 | `SetVirtualAddressMap`, vmm identity map survival | runtime | kernel-init-sequencing | `rt_mmap_count <= BOOT_RT_MMAP_MAX`; offset pinned. |
+| `rt_mmap_count`            | bootx64 | P0 | same | runtime | kernel-init-sequencing | `<= BOOT_RT_MMAP_MAX`. |
+| `uefi_mmap_desc_size`      | bootx64 | P0 | SVAM call shape | runtime | kernel-init-sequencing | Non-zero when `uefi_rt_available == 1`. |
+| `uefi_mmap_desc_version`   | bootx64 | P0 | SVAM call shape | runtime | kernel-init-sequencing | Non-zero when `uefi_rt_available == 1`. |
+| `uefi_runtime` (see nested table) | bootx64 | P0 | per-function dispatcher | runtime | kernel-init-sequencing | Individual function pointers non-NULL when `svam_called == 1`. |
+
+### TPM measured boot
+
+| Field | Producer | First valid | Consumer | Lifetime | Owning roadmap | Validation |
+| --- | --- | --- | --- | --- | --- | --- |
+| `tpm_event_log`      | bootx64 | P0 | TPM event-log parser | runtime | tpm-measured-boot-attestation | Non-zero when `tpm_available == 1`; `tpm_event_log_size` bounded. |
+| `tpm_event_log_size` | bootx64 | P0 | same | runtime | tpm-measured-boot-attestation | `> 0` when `tpm_available == 1`. |
+| `tpm_available`      | bootx64 | P0 | gate for TPM path | runtime | tpm-measured-boot-attestation | `0 | 1`. |
+| `tpm_version`        | bootx64 | P0 | TPM 1.2 vs 2.0 dispatch | runtime | tpm-measured-boot-attestation | `0` (none), `1` (1.2), `2` (2.0). |
+| `tpm_event_count`    | bootx64 | P0 | event-log walker | runtime | tpm-measured-boot-attestation | Matches events parsed from `tpm_event_log`. |
+
+### USB discovery
+
+| Field | Producer | First valid | Consumer | Lifetime | Owning roadmap | Validation |
+| --- | --- | --- | --- | --- | --- | --- |
+| `usb_devices[BOOT_USB_MAX_DEVICES]` | bootx64 | P0 | xHCI driver, USB enumeration | handoff | usb-zero-delay-handover | Per-entry `active == 1`; `usb_device_count <= BOOT_USB_MAX_DEVICES`; offset pinned. |
+| `usb_device_count`                   | bootx64 | P0 | same | handoff | usb-zero-delay-handover | `<= BOOT_USB_MAX_DEVICES`. |
+| `usb_discovery_ok`                   | bootx64 | P0 | gate for zero-delay path | handoff | usb-zero-delay-handover | `0 | 1`. |
+| `usb_handover_complete`              | bootx64 | P0 | PMM reservation pass | handoff | usb-zero-delay-handover | `0 | 1` (gate for `usb_controller` reads). |
+| `usb_pad[2]`                         | bootx64 | P0 | none (alignment) | -- | -- | Reserved. |
+| `usb_controller` (see nested table)  | bootx64 | P0 | xHCI driver + PMM reservation | handoff | usb-zero-delay-handover | Gated by `usb_handover_complete == 1`; each phys addr checked in PMM reservation. |
+
+### Boot timing (FPDT + TSC)
+
+| Field | Producer | First valid | Consumer | Lifetime | Owning roadmap | Validation |
+| --- | --- | --- | --- | --- | --- | --- |
+| `timing.*` (see nested table) | bootx64 + firmware FPDT | P0 | boot perf dashboard, `X:\Perf\` staging | runtime | kernel-init-sequencing | `fpdt_available == 1` gates FPDT fields; TSC fields non-zero if `tsc_freq > 0`. |
+
+### Serial port
+
+| Field | Producer | First valid | Consumer | Lifetime | Owning roadmap | Validation |
+| --- | --- | --- | --- | --- | --- | --- |
+| `serial_port`   | bootx64 | P0 | `serial_init` | runtime | kernel-init-sequencing | One of 0 (absent), 0x3F8 (COM1), 0x2F8 (COM2). |
+| `serial_source` | bootx64 | P0 | serial probe logs | boot | kernel-init-sequencing | `0` none, `1` SPCR, `2` I/O probe. |
+| `_serial_pad`   | bootx64 | P0 | none (alignment) | -- | -- | Reserved. |
+| `serial_baud`   | bootx64 | P0 | `serial_init` | runtime | kernel-init-sequencing | `0` means "use default 38400"; otherwise baud rate from SPCR. |
+
+### Last-boot error (NVRAM)
+
+| Field | Producer | First valid | Consumer | Lifetime | Owning roadmap | Validation |
+| --- | --- | --- | --- | --- | --- | --- |
+| `last_boot_error` | bootx64 (reads `ImpossibleOS-LastBootError` NVRAM var) | P0 | boot recovery UX | runtime | bootloader-error-recovery | `0` = last boot OK; otherwise panic/error code consumed by QR/BSOD path. |
+
+### Boot device identity
+
+| Field | Producer | First valid | Consumer | Lifetime | Owning roadmap | Validation |
+| --- | --- | --- | --- | --- | --- | --- |
+| `boot_device_type`        | bootx64 | P0 | HKLM\SYSTEM\Boot\Device populator | runtime | boot-device-discovery | `0` unknown, `1` SATA, `2` NVMe, `3` USB, `4` network. |
+| `_boot_dev_pad[3]`        | bootx64 | P0 | none (alignment) | -- | -- | Reserved. |
+| `boot_device_path[128]`   | bootx64 | P0 | same | runtime | boot-device-discovery | Null-terminated UEFI device-path text. |
+
+### UEFI boot variables
+
+| Field | Producer | First valid | Consumer | Lifetime | Owning roadmap | Validation |
+| --- | --- | --- | --- | --- | --- | --- |
+| `uefi_boot_current`        | bootx64 | P0 | boot-entry store | runtime | boot-entry-store-menu-policy | Offset pinned. |
+| `uefi_boot_next`           | bootx64 | P0 | one-shot override consumer | runtime | boot-entry-store-menu-policy | `0xFFFF` when `uefi_boot_next_valid == 0`. |
+| `uefi_boot_next_valid`     | bootx64 | P0 | same | runtime | boot-entry-store-menu-policy | `0 | 1`. |
+| `uefi_boot_order_count`    | bootx64 | P0 | boot-order walker | runtime | boot-entry-store-menu-policy | `<= 16`. |
+| `_boot_var_pad[2]`         | bootx64 | P0 | none (alignment) | -- | -- | Reserved. |
+| `uefi_boot_order[16]`      | bootx64 | P0 | boot-order walker | runtime | boot-entry-store-menu-policy | First 16 entries; bounded. |
+
+### Boot partition
+
+| Field | Producer | First valid | Consumer | Lifetime | Owning roadmap | Validation |
+| --- | --- | --- | --- | --- | --- | --- |
+| `boot_partition_guid[16]` | bootx64 | P0 | HKLM\SYSTEM\Boot\Device populator | runtime | boot-device-discovery | Raw GPT GUID or first 4 bytes = MBR signature. |
+| `boot_partition_style`    | bootx64 | P0 | same | runtime | boot-device-discovery | `0` unknown, `1` MBR, `2` GPT. |
+
+### Removable media
+
+| Field | Producer | First valid | Consumer | Lifetime | Owning roadmap | Validation |
+| --- | --- | --- | --- | --- | --- | --- |
+| `boot_device_removable` | bootx64 | P0 | recovery / safe-boot heuristics | runtime | boot-device-discovery | `0 | 1`. |
+| `boot_media_present`    | bootx64 | P0 | same | runtime | boot-device-discovery | `0 | 1`. |
+| `_rem_pad`              | bootx64 | P0 | none (alignment) | -- | -- | Reserved. |
+
+## Kernel-populated fields
+
+These fields live inside `struct boot_info` but the **bootloader never writes them**. Kernel code fills them after its own subsystems come up; readers must gate on the corresponding producer completing. Including them in `boot_info` keeps diagnostic dumps and the registry populator simple, at the cost of a weaker ABI shape (changing the set of kernel-populated fields does not need a `BOOT_INFO_VERSION` bump as long as layout does not change).
+
+| Field | Producer | First valid | Consumer | Lifetime | Owning roadmap | Validation |
+| --- | --- | --- | --- | --- | --- | --- |
+| `secure_boot_enabled` | kernel (`uefi_secureboot_init`) | K (after UEFI runtime init) | registry populator, boot log | runtime | uefi-hardening-secureboot | `0 | 1`. |
+| `_kp_pad[3]`          | kernel (zero init) | K | none (alignment) | -- | -- | Reserved. |
+| `degraded_mask`       | kernel (`boot_degrade_*`) | K (set incrementally across phases) | health orchestrator, BSOD context | runtime | system-health-recovery-orchestrator | Bitmask; individual bits are `SUBSYS_*` from `kernel_subsystems.h`. |
+| `hv_flags`            | kernel (CPUID hypervisor leaf + per-vendor probe) | K (after CPUID init in Phase 0) | platform detection, MSR trap workarounds | runtime | kernel-init-sequencing | `HV_FLAG_*` bits. |
+| `hv_vendor[16]`       | kernel (CPUID 0x40000000) | K | platform detection, boot log | runtime | kernel-init-sequencing | Null-terminated ASCII; zero if none. |
+
+## Legacy / Multiboot2-only fields
+
+The repo supports two boot paths today:
+
+- **UEFI (primary)** -- `src/boot/uefi/bootx64.c`, the shipping path.
+- **Multiboot2 (legacy)** -- `src/boot/entry.asm` + `src/kernel/multiboot2_parse.c`, retained so GRUB-based boots still produce a usable `struct boot_info`.
+
+The fields below exist because Multiboot2 produced them. The UEFI bootloader fills them too for parity, but nothing outside the Multiboot2 parser consumes them. Decision per field:
+
+| Field | Status | Replacement owner | Notes |
+| --- | --- | --- | --- |
+| `mem_lower_kb` | **deprecate** | `mmap[]` (UEFI memory map) | No kernel consumer today. UEFI mmap supersedes lower/upper-memory reporting. Flag for removal in a future `BOOT_INFO_VERSION` bump once the Multiboot2 path is retired or migrated. |
+| `mem_upper_kb` | **deprecate** | `mmap[]` | Same reason. |
+| `module_start`     | **retain as compatibility alias** | boot-protocol §4 typed payload descriptors | Per §4 checklist ("Keep legacy single `module_start/module_end` as compatibility aliases until consumers migrate"). Once typed descriptors are populated by both bootloader and MB2, remove. |
+| `module_end`       | **retain as compatibility alias** | boot-protocol §4 typed payload descriptors | Same. |
+| `module_available` | **retain as compatibility alias** | boot-protocol §4 typed payload descriptors | Same. |
+
+Multiboot2 retain/retire decision itself is a separate question owned by [alternate boot protocols roadmap](../../todo/01-boot-platform/TODO-08-alternate-boot-protocols.md); this doc only records per-field status.
+
+## Nested struct: `boot_mmap_entry`
+
+Per-region entry in `boot_info.mmap[]`. Producer and consumer are the same for every row; the table records per-field validation.
+
+| Field | Producer | First valid | Consumer | Lifetime | Owning roadmap | Validation |
+| --- | --- | --- | --- | --- | --- | --- |
+| `base_addr`          | bootx64 / mb2 | P0 | PMM ingestion | boot | boot-protocol §6 | Per-entry checked for overlap in PMM. |
+| `length`             | bootx64 / mb2 | P0 | same | boot | boot-protocol §6 | `> 0`; no wrap with `base_addr`. |
+| `type`               | bootx64 / mb2 | P0 | same | boot | boot-protocol §6 | Simplified: `1` available, `2` reserved, `3` ACPI, `4` NVS, `5` bad. |
+| `uefi_memory_type`   | bootx64 | P0 | runtime services map | boot | boot-protocol §6 | One of `UEFI_MMAP_*` (0-14). |
+| `attribute`          | bootx64 | P0 | runtime memory walker | boot | kernel-init-sequencing | EFI memory attribute bitmask (`EFI_MEMORY_RUNTIME` etc.). |
+
+## Nested struct: `boot_uefi_guid`
+
+Used wherever a UEFI GUID needs to be carried over (config tables, well-known GUID constants).
+
+| Field | Producer | First valid | Consumer | Lifetime | Owning roadmap | Validation |
+| --- | --- | --- | --- | --- | --- | --- |
+| `data1`    | bootx64 | P0 | GUID matcher | runtime | kernel-init-sequencing | None per-field; whole-GUID match against `UEFI_GUID_*`. |
+| `data2`    | bootx64 | P0 | same | runtime | kernel-init-sequencing | Same. |
+| `data3`    | bootx64 | P0 | same | runtime | kernel-init-sequencing | Same. |
+| `data4[8]` | bootx64 | P0 | same | runtime | kernel-init-sequencing | Same. |
+
+## Nested struct: `boot_uefi_config_entry`
+
+| Field | Producer | First valid | Consumer | Lifetime | Owning roadmap | Validation |
+| --- | --- | --- | --- | --- | --- | --- |
+| `guid`       | bootx64 | P0 | ACPI / SMBIOS / FPDT / MEM_ATTR / RT_PROPS / CONFORMANCE / DTB lookups | runtime | kernel-init-sequencing | Exact match against `UEFI_GUID_*` constants. |
+| `table_addr` | bootx64 | P0 | same | runtime | kernel-init-sequencing | Non-zero when `guid` matches a consumed well-known GUID. |
+
+## Nested struct: `boot_rt_mem_entry`
+
+Region record for `SetVirtualAddressMap`.
+
+| Field | Producer | First valid | Consumer | Lifetime | Owning roadmap | Validation |
+| --- | --- | --- | --- | --- | --- | --- |
+| `phys_addr` | bootx64 | P0 | SVAM call | runtime | kernel-init-sequencing | Page-aligned. |
+| `num_pages` | bootx64 | P0 | SVAM call | runtime | kernel-init-sequencing | `> 0`. |
+| `attribute` | bootx64 | P0 | SVAM call | runtime | kernel-init-sequencing | `UEFI_MEMORY_ATTR_RUNTIME` bit set. |
+| `type`      | bootx64 | P0 | SVAM call | runtime | kernel-init-sequencing | `UEFI_MMAP_RUNTIME_CODE` or `_DATA`. |
+| `reserved`  | bootx64 | P0 | none (alignment) | -- | -- | Zero. |
+
+## Nested struct: `boot_uefi_runtime`
+
+EFI runtime-service function pointers + state flag. Bootloader uses PE/COFF ms_abi; kernel casts at use time to sysv calling convention.
+
+| Field | Producer | First valid | Consumer | Lifetime | Owning roadmap | Validation |
+| --- | --- | --- | --- | --- | --- | --- |
+| `get_time`                   | bootx64 | P0 | `uefi_runtime.c` time path | runtime | kernel-init-sequencing | Non-NULL when `svam_called == 1`. |
+| `set_time`                   | bootx64 | P0 | same | runtime | kernel-init-sequencing | Same. |
+| `get_variable`               | bootx64 | P0 | NVRAM access | runtime | kernel-init-sequencing | Same. |
+| `set_variable`               | bootx64 | P0 | NVRAM access | runtime | kernel-init-sequencing | Same. |
+| `get_next_variable_name`     | bootx64 | P0 | NVRAM walker | runtime | kernel-init-sequencing | Same. |
+| `reset_system`               | bootx64 | P0 | `reset_system` wrapper | runtime | kernel-init-sequencing | Same. |
+| `update_capsule`             | bootx64 | P0 | firmware update path | runtime | kernel-init-sequencing | Same. |
+| `query_capsule_capabilities` | bootx64 | P0 | firmware update path | runtime | kernel-init-sequencing | Same. |
+| `query_variable_info`        | bootx64 | P0 | NVRAM quota | runtime | kernel-init-sequencing | Same. |
+| `get_wakeup_time`            | bootx64 | P0 | wake path | runtime | kernel-init-sequencing | Same. |
+| `set_wakeup_time`            | bootx64 | P0 | wake path | runtime | kernel-init-sequencing | Same. |
+| `svam_called`                | bootx64 | P0 | gate for all above pointers | runtime | kernel-init-sequencing | `0 | 1`; `1` only after `SetVirtualAddressMap` returned EFI_SUCCESS. |
+| `pad[7]`                     | bootx64 | P0 | none (alignment) | -- | -- | Zero. |
+
+## Nested struct: `boot_framebuffer`
+
+| Field | Producer | First valid | Consumer | Lifetime | Owning roadmap | Validation |
+| --- | --- | --- | --- | --- | --- | --- |
+| `addr`         | bootx64 / mb2 | P0 | `framebuffer.c`, `vmm_map_mmio_uc` | runtime | graphics-asset-foundation | Non-zero when `fb_available == 1`; must be mapped WC. |
+| `pitch`        | bootx64 / mb2 | P0 | blit paths | runtime | graphics-asset-foundation | `> 0`; may differ from `width * (bpp / 8)`. |
+| `width`        | bootx64 / mb2 | P0 | compositor, desktop | runtime | graphics-asset-foundation | `> 0` when `fb_available == 1`. |
+| `height`       | bootx64 / mb2 | P0 | compositor, desktop | runtime | graphics-asset-foundation | `> 0`. |
+| `bpp`          | bootx64 / mb2 | P0 | blit paths | runtime | graphics-asset-foundation | `32` on GOP. |
+| `type`         | bootx64 / mb2 | P0 | mode dispatch | runtime | graphics-asset-foundation | `0` indexed, `1` RGB, `2` EGA text (MB2 legacy). |
+| `pixel_format` | bootx64       | P0 | SIMD blit paths | runtime | graphics-asset-foundation | `GOP_PIXEL_RGBX | BGRX | BITMASK`. |
+| `pad0`         | bootx64       | P0 | none (alignment) | -- | -- | Zero. |
+
+## Nested struct: `boot_gop_mode`
+
+One row per GOP mode enumerated pre-ExitBootServices.
+
+| Field | Producer | First valid | Consumer | Lifetime | Owning roadmap | Validation |
+| --- | --- | --- | --- | --- | --- | --- |
+| `width`               | bootx64 | P0 | (future) mode switcher | boot | graphics-asset-foundation | `> 0`. |
+| `height`              | bootx64 | P0 | same | boot | graphics-asset-foundation | `> 0`. |
+| `pixels_per_scanline` | bootx64 | P0 | same | boot | graphics-asset-foundation | `>= width`. |
+| `pixel_format`        | bootx64 | P0 | same | boot | graphics-asset-foundation | `GOP_PIXEL_*`. |
+| `pad[3]`              | bootx64 | P0 | none (alignment) | -- | -- | Zero. |
+
+## Nested struct: `boot_config`
+
+Mirror struct in [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c). `cmdline` at offset 32, `config_found` at 288, total size 512 -- all three pinned by `_Static_assert` in the header. Each flag below is `0 | 1` unless noted.
+
+| Field | Producer | First valid | Consumer | Lifetime | Owning roadmap | Validation |
+| --- | --- | --- | --- | --- | --- | --- |
+| `debug`             | bootx64 (parses `boot.conf`) | P0 | boot logging (`klog` debug path) | runtime | boot-entry-store-menu-policy | `0 | 1`. |
+| `verbose`           | bootx64 | P0 | text-mode boot / skip splash | runtime | boot-entry-store-menu-policy | `0 | 1`. |
+| `serial_debug`      | bootx64 | P0 | serial COM1 debug output | runtime | boot-entry-store-menu-policy | `0 | 1`. |
+| `boot_mode`         | bootx64 | P0 | init-sequencing dispatch | runtime | boot-entry-store-menu-policy | `0` normal, `1` safe, `2` recovery. |
+| `splash_timeout`    | bootx64 | P0 | splash subsystem | runtime | boot-entry-store-menu-policy | Seconds; `0` = no timeout. |
+| `heartbeat`         | bootx64 | P0 | heartbeat subsystem | runtime | kernel-init-sequencing | `0` off, `1` auto, `2` always. |
+| `postcode`          | bootx64 | P0 | POST code emission | runtime | kernel-init-sequencing | `0` off, `1` auto, `2` always. |
+| `postbars`          | bootx64 | P0 | Visual POST Display | runtime | kernel-init-sequencing | `0` off, `1` on (integrated), `2` diag (full). |
+| `test`              | bootx64 | P0 | unit-test runner | runtime | kernel-test-harness | `0 | 1`. |
+| `test_suite`        | bootx64 | P0 | test category filter | runtime | kernel-test-harness | 0-8 specific category, `0xFF` all (default). |
+| `test_quiet`        | bootx64 | P0 | test runner output | runtime | kernel-test-harness | `0 | 1`. |
+| `diag_delay`        | bootx64 | P0 | boot diagnostics | runtime | bootloader-error-recovery | Seconds to pause on each diag screen; `0` skip. |
+| `diag_splash`       | bootx64 | P0 | boot diagnostics | runtime | bootloader-error-recovery | `0 | 1`. |
+| `deferred`          | bootx64 | P0 | init-sequencing strategy | runtime | kernel-init-sequencing | `0 | 1`; default `1`. |
+| `async_init`        | bootx64 | P0 | parallel subsystem init on APs | runtime | kernel-init-sequencing | `0 | 1`. |
+| `crash_test`        | bootx64 | P0 | deliberate BSOD after desktop init | boot | bsod-ux-enhancements | `0 | 1`. |
+| `ob_handle_trace`   | bootx64 | P0 | Object Manager tracing | runtime | object-manager | `0 | 1`. |
+| `config_version`    | bootx64 | P0 | parser metadata | runtime | boot-entry-store-menu-policy | `0` unversioned (legacy), `1+` versioned. |
+| `error_screen_test` | bootx64 | P0 | deliberate `boot_fatal` before kernel load | boot | bootloader-error-recovery | `0 | 1`. |
+| `_reserved[12]`     | bootx64 (zero fill) | P0 | none (room for new flags) | -- | boot-entry-store-menu-policy | Zero; new flags consume bytes here without shifting `cmdline`. |
+| `cmdline[256]`      | bootx64 | P0 | kernel command line parser | runtime | boot-entry-store-menu-policy | Null-terminated; offset 32 is pinned ABI. |
+| `config_found`      | bootx64 | P0 | fallback gate | runtime | boot-entry-store-menu-policy | `0 | 1`. |
+| `_pad[223]`         | bootx64 (zero fill) | P0 | none (sector alignment) | -- | boot-entry-store-menu-policy | Zero; pads struct to 512 bytes. |
+
+## Nested struct: `boot_usb_endpoint`
+
+| Field | Producer | First valid | Consumer | Lifetime | Owning roadmap | Validation |
+| --- | --- | --- | --- | --- | --- | --- |
+| `address`     | bootx64 | P0 | xHCI driver endpoint setup | handoff | usb-zero-delay-handover | `bEndpointAddress` from descriptor; bit 7 = IN/OUT direction. |
+| `attributes`  | bootx64 | P0 | same | handoff | usb-zero-delay-handover | `bmAttributes`; bits 1:0 = transfer type (control/iso/bulk/int). |
+| `max_packet`  | bootx64 | P0 | same | handoff | usb-zero-delay-handover | `wMaxPacketSize`. |
+| `interval`    | bootx64 | P0 | same | handoff | usb-zero-delay-handover | `bInterval` polling interval. |
+| `pad[3]`      | bootx64 | P0 | none (alignment) | -- | -- | Zero. |
+
+## Nested struct: `boot_usb_device`
+
+One row per USB device discovered via `EFI_USB_IO_PROTOCOL` pre-ExitBootServices. Consumer (xHCI driver) skips re-enumeration after taking over the controller.
+
+| Field | Producer | First valid | Consumer | Lifetime | Owning roadmap | Validation |
+| --- | --- | --- | --- | --- | --- | --- |
+| `active`          | bootx64 | P0 | per-device gate | handoff | usb-zero-delay-handover | `0 | 1`; only `1` rows are valid. |
+| `port`            | bootx64 | P0 | xHCI port mapping | handoff | usb-zero-delay-handover | Root hub port number, 1-based. |
+| `speed`           | bootx64 | P0 | xHCI speed selection | handoff | usb-zero-delay-handover | `1` FS, `2` LS, `3` HS, `4` SS. |
+| `device_class`    | bootx64 | P0 | device class dispatch | handoff | usb-zero-delay-handover | `bDeviceClass` from descriptor. |
+| `iface_class`     | bootx64 | P0 | interface class dispatch | handoff | usb-zero-delay-handover | `bInterfaceClass` of primary interface. |
+| `iface_subclass`  | bootx64 | P0 | same | handoff | usb-zero-delay-handover | `bInterfaceSubClass`. |
+| `iface_protocol`  | bootx64 | P0 | same | handoff | usb-zero-delay-handover | `bInterfaceProtocol`. |
+| `num_endpoints`   | bootx64 | P0 | endpoint walker | handoff | usb-zero-delay-handover | `<= BOOT_USB_MAX_ENDPOINTS`. |
+| `vendor_id`       | bootx64 | P0 | device identification | handoff | usb-zero-delay-handover | `idVendor`. |
+| `product_id`      | bootx64 | P0 | same | handoff | usb-zero-delay-handover | `idProduct`. |
+| `is_msc`          | bootx64 | P0 | MSC BOT path | handoff | usb-zero-delay-handover | `0 | 1`; when `1`, `block_size`/`block_count` valid. |
+| `is_hid`          | bootx64 | P0 | HID path | handoff | usb-zero-delay-handover | `0 | 1`. |
+| `pad0`            | bootx64 | P0 | none (alignment) | -- | -- | Zero. |
+| `block_size`      | bootx64 | P0 | MSC BOT path | handoff | usb-zero-delay-handover | Bytes per sector (from `EFI_BLOCK_IO_MEDIA`); valid iff `is_msc == 1`. |
+| `block_count`     | bootx64 | P0 | MSC BOT path | handoff | usb-zero-delay-handover | Total sectors (`LastBlock + 1`); valid iff `is_msc == 1`. |
+| `endpoints[BOOT_USB_MAX_ENDPOINTS]` | bootx64 | P0 | xHCI setup | handoff | usb-zero-delay-handover | Per `boot_usb_endpoint` table above; first `num_endpoints` entries valid. |
+
+## Nested struct: `boot_usb_controller`
+
+xHCI DMA state allocated by the bootloader in `EfiLoaderData`. Survives ExitBootServices if the kernel calls `pmm_mark_region_used` for each non-zero physical address.
+
+| Field | Producer | First valid | Consumer | Lifetime | Owning roadmap | Validation |
+| --- | --- | --- | --- | --- | --- | --- |
+| `pci_bus`                    | bootx64 | P0 | xHCI controller match | handoff | usb-zero-delay-handover | Matches PCI enumeration on kernel side. |
+| `pci_dev`                    | bootx64 | P0 | same | handoff | usb-zero-delay-handover | Same. |
+| `pci_func`                   | bootx64 | P0 | same | handoff | usb-zero-delay-handover | Same. |
+| `active`                     | bootx64 | P0 | gate for all other fields | handoff | usb-zero-delay-handover | `0 | 1`; gated by `usb_handover_complete == 1`. |
+| `mmio_phys`                  | bootx64 | P0 | xHCI driver MMIO map | runtime | usb-zero-delay-handover | Page-aligned; kernel remaps via `vmm_map_mmio_uc`. |
+| `mmio_size`                  | bootx64 | P0 | same | runtime | usb-zero-delay-handover | `> 0`. |
+| `cap_length`                 | bootx64 | P0 | xHCI capability cache | runtime | usb-zero-delay-handover | Matches CAPLENGTH register. |
+| `hci_version`                | bootx64 | P0 | xHCI version dispatch | runtime | usb-zero-delay-handover | BCD (e.g., `0x0100`). |
+| `max_slots`                  | bootx64 | P0 | slot allocator | runtime | usb-zero-delay-handover | `>= 1`. |
+| `max_intrs`                  | bootx64 | P0 | interrupter allocator | runtime | usb-zero-delay-handover | `>= 1`. |
+| `max_ports`                  | bootx64 | P0 | port walker | runtime | usb-zero-delay-handover | `>= 1`. |
+| `db_offset`                  | bootx64 | P0 | doorbell register access | runtime | usb-zero-delay-handover | Offset into MMIO. |
+| `rts_offset`                 | bootx64 | P0 | runtime register access | runtime | usb-zero-delay-handover | Offset into MMIO. |
+| `ac64`                       | bootx64 | P0 | xHCI addressing mode | runtime | usb-zero-delay-handover | `0 | 1`; 1 = 64-bit DMA addressing. |
+| `csz`                        | bootx64 | P0 | xHCI context struct size | runtime | usb-zero-delay-handover | `0` = 32B context, `1` = 64B context. |
+| `max_scratchpads`            | bootx64 | P0 | scratchpad allocator | runtime | usb-zero-delay-handover | `<= BOOT_USB_MAX_SCRATCHPADS`. |
+| `dcbaa_phys`                 | bootx64 | P0 | xHCI DCBAA register | runtime | usb-zero-delay-handover | 64B-aligned; sized `(max_slots + 1) * 8`. |
+| `scratchpad_array_phys`      | bootx64 | P0 | xHCI scratchpad setup | runtime | usb-zero-delay-handover | Non-zero when `max_scratchpads > 0`. |
+| `scratchpad_base_phys`       | bootx64 | P0 | same | runtime | usb-zero-delay-handover | Base of contiguous scratchpad pages. |
+| `scratchpad_page_count`      | bootx64 | P0 | same | runtime | usb-zero-delay-handover | `>= max_scratchpads`. |
+| `scratchpad_pad`             | bootx64 | P0 | none (alignment) | -- | -- | Zero. |
+| `cmd_ring_phys`              | bootx64 | P0 | xHCI command ring register | runtime | usb-zero-delay-handover | 64-byte aligned; 4 KiB (256 TRBs * 16B). |
+| `evt_ring_phys`              | bootx64 | P0 | xHCI event ring (via ERST) | runtime | usb-zero-delay-handover | 64-byte aligned; 4 KiB. |
+| `erst_phys`                  | bootx64 | P0 | xHCI ERST register | runtime | usb-zero-delay-handover | 64-byte aligned; 16B single entry. |
+| `dma_pages[BOOT_USB_MAX_DMA_PAGES]` | bootx64 | P0 | PMM reservation pass | handoff | usb-zero-delay-handover | Each non-zero entry `pmm_mark_region_used`'d. |
+| `dma_page_count`             | bootx64 | P0 | same | handoff | usb-zero-delay-handover | `<= BOOT_USB_MAX_DMA_PAGES`. |
+| `alloc_fail_status`          | bootx64 (debug) | P0 | boot log diagnostics | boot | usb-zero-delay-handover | Low 32 bits of last `AllocatePages` failure `EFI_STATUS`; `0` on success. |
+| `alloc_fail_page`            | bootx64 (debug) | P0 | boot log diagnostics | boot | usb-zero-delay-handover | Page index that failed to allocate; `0` on success. |
+
+## Nested struct: `timing`
+
+FPDT-sourced fields come from the firmware performance record (nanoseconds since some firmware-defined epoch). TSC-sourced fields are raw `rdtsc` ticks captured by the bootloader. Consumer is the boot performance dashboard / `X:\Perf\` staging; all TSC timestamps must be monotonically non-decreasing.
+
+| Field | Producer | First valid | Consumer | Lifetime | Owning roadmap | Validation |
+| --- | --- | --- | --- | --- | --- | --- |
+| `reset_end`               | bootx64 (from FPDT) | P0 | perf dashboard | runtime | kernel-init-sequencing | Non-zero when `fpdt_available == 1`. |
+| `os_loader_load_start`    | bootx64 (FPDT) | P0 | same | runtime | kernel-init-sequencing | Same. |
+| `os_loader_start_start`   | bootx64 (FPDT) | P0 | same | runtime | kernel-init-sequencing | Same. |
+| `exit_bs_entry`           | bootx64 (FPDT) | P0 | same | runtime | kernel-init-sequencing | Same. |
+| `exit_bs_exit`            | bootx64 (FPDT) | P0 | same | runtime | kernel-init-sequencing | Same. |
+| `fpdt_available`          | bootx64 | P0 | gate for FPDT fields above | runtime | kernel-init-sequencing | `0 | 1`. |
+| `bl_entry`                | bootx64 (`rdtsc`) | P0 | perf dashboard | runtime | kernel-init-sequencing | `> 0` if `tsc_freq > 0`. |
+| `gop_start`               | bootx64 (`rdtsc`) | P0 | same | runtime | kernel-init-sequencing | Monotonically `>= bl_entry`. |
+| `gop_end`                 | bootx64 (`rdtsc`) | P0 | same | runtime | kernel-init-sequencing | `>= gop_start`. |
+| `conf_start`              | bootx64 (`rdtsc`) | P0 | same | runtime | kernel-init-sequencing | `>= gop_end`. |
+| `conf_end`                | bootx64 (`rdtsc`) | P0 | same | runtime | kernel-init-sequencing | `>= conf_start`. |
+| `kernel_load_start`       | bootx64 (`rdtsc`) | P0 | same | runtime | kernel-init-sequencing | `>= conf_end`. |
+| `kernel_load_end`         | bootx64 (`rdtsc`) | P0 | same | runtime | kernel-init-sequencing | `>= kernel_load_start`. |
+| `splash_start`            | bootx64 (`rdtsc`) | P0 | same | runtime | kernel-init-sequencing | `>= kernel_load_end`. |
+| `splash_end`              | bootx64 (`rdtsc`) | P0 | same | runtime | kernel-init-sequencing | `>= splash_start`. |
+| `exit_bs`                 | bootx64 (`rdtsc`) | P0 | same | runtime | kernel-init-sequencing | `>= splash_end`. |
+| `kernel_jump`             | bootx64 (`rdtsc`) | P0 | same | runtime | kernel-init-sequencing | `>= exit_bs`. |
+| `tsc_freq`                | bootx64 | P0 | perf dashboard (convert ticks to seconds) | runtime | kernel-init-sequencing | Hz; `0` means unknown (gates TSC-based fields). |
+
+## Update protocol
+
+When adding a field:
+
+1. Decide producer + consumer + first-valid phase before touching `boot_info.h`. Update this doc first.
+2. Add the field to `struct boot_info` (or the appropriate nested struct). Update the bootloader mirror in `src/boot/uefi/bootx64.c` in the same commit.
+3. Bump `BOOT_INFO_VERSION` in BOTH files unless the field fits into an existing `_reserved`/`_pad` region without shifting any documented offset.
+4. Extend the `_Static_assert` offset pins in the header if the field shifts a mirrored count field.
+5. Wire the producer, wire the consumer, add a unit test that reads the field through the real layout (not a synthetic fixture).
+6. Add a row here.
+7. Add the CI manifest fingerprint regeneration (once boot-protocol §2 lands) to confirm kernel/bootloader agreement.
+
+When a field becomes stale:
+
+1. Mark it **deprecate** in the Legacy block above. Include the replacement owner roadmap.
+2. Do NOT remove it until the version bump that drops the Multiboot2 path (or the replacement feature fully displaces it), so existing bootloaders keep parsing clean.
+3. Prefix removed-candidate fields with `/* DEPRECATED: ... */` in the header when the window opens.
