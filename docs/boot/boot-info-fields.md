@@ -38,6 +38,7 @@ Every version bump goes in both [`include/kernel/boot_info.h`](../../include/ker
 | `mmap_count`                  | bootx64 | P0 | same | boot | boot-protocol §6 | `<= BOOT_MMAP_MAX_ENTRIES`; offset pinned (§3 mirror fingerprint). |
 | `mmap_truncated`              | bootx64 | P0 | kernel boot log (warn if 1) | boot | boot-protocol §6 | Advisory flag; non-zero prints a serial warning. |
 | `mmap_quirks`                 | bootx64 | P0 | kernel boot log | boot | boot-protocol §6 | Advisory. |
+| `_mmap_pad[2]`                | bootx64 (zero fill) | P0 | none (alignment) | -- | -- | Zero. |
 
 ### Basic memory (legacy)
 
@@ -60,7 +61,7 @@ Every version bump goes in both [`include/kernel/boot_info.h`](../../include/ker
 | Field | Producer | First valid | Consumer | Lifetime | Owning roadmap | Validation |
 | --- | --- | --- | --- | --- | --- | --- |
 | `gop_modes[BOOT_GOP_MODE_MAX]` | bootx64 | P0 | display mode switcher (future) | boot | graphics-asset-foundation | `gop_mode_count <= BOOT_GOP_MODE_MAX`; offset pinned. |
-| `gop_mode_count`               | bootx64 | P0 | same | boot | graphics-asset-foundation | `< BOOT_GOP_MODE_MAX`. |
+| `gop_mode_count`               | bootx64 | P0 | same | boot | graphics-asset-foundation | `<= BOOT_GOP_MODE_MAX`. Producer enumerates while `i < BOOT_GOP_MODE_MAX`, so a full table legitimately equals the constant. |
 | `gop_mode_selected`            | bootx64 | P0 | same | boot | graphics-asset-foundation | `< gop_mode_count`. |
 
 ### ACPI
@@ -386,11 +387,11 @@ xHCI DMA state allocated by the bootloader in `EfiLoaderData`. Survives ExitBoot
 | `rts_offset`                 | bootx64 | P0 | runtime register access | runtime | usb-zero-delay-handover | Offset into MMIO. |
 | `ac64`                       | bootx64 | P0 | xHCI addressing mode | runtime | usb-zero-delay-handover | `0 | 1`; 1 = 64-bit DMA addressing. |
 | `csz`                        | bootx64 | P0 | xHCI context struct size | runtime | usb-zero-delay-handover | `0` = 32B context, `1` = 64B context. |
-| `max_scratchpads`            | bootx64 | P0 | scratchpad allocator | runtime | usb-zero-delay-handover | `<= BOOT_USB_MAX_SCRATCHPADS`. |
+| `max_scratchpads`            | bootx64 | P0 | scratchpad allocator | runtime | usb-zero-delay-handover | Raw `HCSParams2.Max Scratchpad Buffers` from xHCI capability registers (not clamped against `BOOT_USB_MAX_SCRATCHPADS` today; the constant is not a real ABI bound for this field). Kernel must reserve exactly `scratchpad_page_count` pages via `pmm_mark_region_used`. Clamp + truncation policy owned by the USB zero-delay-handover roadmap (see "USB scratchpad clamp" item). |
 | `dcbaa_phys`                 | bootx64 | P0 | xHCI DCBAA register | runtime | usb-zero-delay-handover | 64B-aligned; sized `(max_slots + 1) * 8`. |
 | `scratchpad_array_phys`      | bootx64 | P0 | xHCI scratchpad setup | runtime | usb-zero-delay-handover | Non-zero when `max_scratchpads > 0`. |
 | `scratchpad_base_phys`       | bootx64 | P0 | same | runtime | usb-zero-delay-handover | Base of contiguous scratchpad pages. |
-| `scratchpad_page_count`      | bootx64 | P0 | same | runtime | usb-zero-delay-handover | `>= max_scratchpads`. |
+| `scratchpad_page_count`      | bootx64 | P0 | same | runtime | usb-zero-delay-handover | Equals `max_scratchpads` today (bootloader allocates one page per scratchpad). |
 | `scratchpad_pad`             | bootx64 | P0 | none (alignment) | -- | -- | Zero. |
 | `cmd_ring_phys`              | bootx64 | P0 | xHCI command ring register | runtime | usb-zero-delay-handover | 64-byte aligned; 4 KiB (256 TRBs * 16B). |
 | `evt_ring_phys`              | bootx64 | P0 | xHCI event ring (via ERST) | runtime | usb-zero-delay-handover | 64-byte aligned; 4 KiB. |
