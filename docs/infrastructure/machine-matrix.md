@@ -157,9 +157,9 @@ Bare metal is the shipping target; VM launchers filter regressions but do not re
 
 1. **Build the image.** `bash scripts/build.sh clean` -> `build/system-disk.img` (GPT: EFI + BlackBox + IXFS). Image is self-contained: UEFI bootloader, kernel, user-mode shell, resources, configuration.
 
-2. **Disk-image handoff.**
-   - Linux: `dd if=build/system-disk.img of=/dev/sdX bs=4M status=progress conv=fsync`.
-   - Windows: Win32DiskImager or Rufus.
+2. **Disk-image handoff.** Use the deploy helpers when possible -- they guard against writing to a fixed drive by accident:
+   - Linux: [`sudo bash scripts/deploy/write-usb.sh`](../../scripts/deploy/write-usb.sh) (lists removable drives only, double-confirm); raw fallback `dd if=build/system-disk.img of=/dev/sdX bs=4M status=progress conv=fsync`.
+   - Windows: [`scripts/deploy/write-usb.ps1`](../../scripts/deploy/write-usb.ps1) and [`write-usb.bat`](../../scripts/deploy/write-usb.bat); raw fallback Win32DiskImager or Rufus.
    - Target device: USB stick, SATA SSD, or NVMe drive that the target BIOS will boot.
 
 3. **Serial capture at 115200 8N1** (matches `src/kernel/drivers/serial.c`).
@@ -173,7 +173,9 @@ Bare metal is the shipping target; VM launchers filter regressions but do not re
    - `X:\Perf\`, `X:\Diag\` -- performance and diagnostic dumps.
    - Full layout and rotation policy: [`todo/01-boot-platform/TODO-24-blackbox-service-partition.md`](../../todo/01-boot-platform/TODO-24-blackbox-service-partition.md).
 
-5. **Offline extraction.** [`bash scripts/tools/read-blackbox.sh`](../../scripts/tools/read-blackbox.sh) against `build/system-disk.img` or an imaged device.
+5. **Offline extraction.**
+   - [`bash scripts/tools/read-blackbox.sh`](../../scripts/tools/read-blackbox.sh) -- mount the BlackBox partition from `build/system-disk.img` or an imaged device.
+   - [`sudo bash scripts/deploy/read-usb-log.sh [/dev/sdX]`](../../scripts/deploy/read-usb-log.sh) -- after booting on real hardware, mounts the Logs partition read-only and copies `debug.log` + hardware info off a USB target.
 
 6. **Debugger.** No in-kernel gdb stub on bare metal today. Debug via serial log + `llvm-addr2line-19 -e build/kernel.exe -f <RIP>` against panic dumps. JTAG / DCI bring-up is future work, not in scope for this doc.
 
