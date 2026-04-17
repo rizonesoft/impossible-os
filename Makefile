@@ -108,10 +108,10 @@ GENERATED_HDRS := include/build_info.h include/kernel/os_logo.h src/kernel/bsod_
 # Targets
 # ============================================================================
 
-.PHONY: all _increment_build boot boot-icon boot-font kernel host-tools sysroot userland iso uefi-boot sign-efi system-disk test-disks run run-test run-debug run-log run-usb-ci run-nvme run-nvme-ci clean assets validate-assets sysroot-dirs sysroot-fonts sysroot-wallpapers sysroot-cursors sysroot-icons test-mm test-fs test-ob test-security test-ipc test-sched test-boot test-abi test-storage test-exec test-x86
+.PHONY: all _increment_build boot boot-icon boot-font kernel host-tools sysroot userland iso uefi-boot sign-efi system-disk test-disks run run-test run-debug run-log run-usb-ci run-nvme run-nvme-ci clean assets validate-assets sysroot-dirs sysroot-fonts sysroot-wallpapers sysroot-cursors sysroot-icons test-mm test-fs test-ob test-security test-ipc test-sched test-boot test-abi test-storage test-exec test-x86 boot-info-abi
 
-## all: Build everything (kernel + userland + system disk)
-all: _increment_build assets kernel userland uefi-boot system-disk
+## all: Build everything (kernel + userland + system disk + boot_info ABI manifest)
+all: _increment_build assets kernel userland uefi-boot boot-info-abi system-disk
 	@echo "[VERSION] Impossible OS v$(VERSION_RAW).$(BUILD_NUMBER) ($(GIT_BRANCH)@$(GIT_HASH), $(BUILD_TIME))"
 
 ## assets: Unified asset pipeline — validate + generate headers + populate sysroot
@@ -200,6 +200,45 @@ $(BUILD_DIR)/tools/irespack: tools/irespack.c
 	@mkdir -p $(BUILD_DIR)/tools
 	$(HOST_CC) -O2 -o $@ $< -lm -Itools
 	@echo "[TOOL] $@ built"
+
+## boot-info-abi: Build kernel + mirror ABI manifest dumpers, emit JSON, and
+##                diff them. Fails the build on any field / offset / size drift
+##                between include/kernel/boot_info.h and
+##                src/boot/uefi/boot_info_mirror.h. The static asserts in those
+##                headers remain as the compile-time first line of defense;
+##                this target catches same-size reorders the asserts miss.
+BOOT_ABI_KERNEL_JSON := $(BUILD_DIR)/boot-info-abi.kernel.json
+BOOT_ABI_MIRROR_JSON := $(BUILD_DIR)/boot-info-abi.mirror.json
+BOOT_ABI_DUMPER_K    := $(BUILD_DIR)/tools/dump-boot-info-kernel
+BOOT_ABI_DUMPER_M    := $(BUILD_DIR)/tools/dump-boot-info-mirror
+BOOT_ABI_HEADERS     := include/kernel/boot_info.h include/kernel/types.h \
+                        include/kernel/boot_init.h src/boot/uefi/boot_info_mirror.h
+
+$(BOOT_ABI_DUMPER_K): tools/boot-info-manifest/dump-kernel.c \
+                      tools/boot-info-manifest/dump-common.h \
+                      tools/boot-info-manifest/dump-fields.inc \
+                      include/kernel/boot_info.h include/kernel/types.h \
+                      include/kernel/boot_init.h
+	@mkdir -p $(BUILD_DIR)/tools
+	$(HOST_CC) -O2 -I include -I tools/boot-info-manifest -o $@ $<
+	@echo "[TOOL] $@ built"
+
+$(BOOT_ABI_DUMPER_M): tools/boot-info-manifest/dump-mirror.c \
+                      tools/boot-info-manifest/dump-common.h \
+                      tools/boot-info-manifest/dump-fields.inc \
+                      src/boot/uefi/boot_info_mirror.h
+	@mkdir -p $(BUILD_DIR)/tools
+	$(HOST_CC) -O2 -I src/boot/uefi -I tools/boot-info-manifest -o $@ $<
+	@echo "[TOOL] $@ built"
+
+boot-info-abi: $(BOOT_ABI_KERNEL_JSON) $(BOOT_ABI_MIRROR_JSON)
+	@bash tools/boot-info-manifest/compare.sh $(BOOT_ABI_KERNEL_JSON) $(BOOT_ABI_MIRROR_JSON)
+
+$(BOOT_ABI_KERNEL_JSON): $(BOOT_ABI_DUMPER_K)
+	@$< > $@
+
+$(BOOT_ABI_MIRROR_JSON): $(BOOT_ABI_DUMPER_M)
+	@$< > $@
 
 ## sysroot: Populate build/sysroot/ with system files and assets
 SYSROOT := $(BUILD_DIR)/sysroot

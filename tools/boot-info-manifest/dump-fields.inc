@@ -1,0 +1,265 @@
+/* ============================================================================
+ * dump-fields.inc -- one authoritative list of struct boot_info fields,
+ *                    included by BOTH tools/boot-info-manifest dumpers so
+ *                    the kernel-view and mirror-view JSONs are comparable
+ *                    row-for-row.
+ *
+ * Each F(...) expands to manifest_field(name, offset, size) using
+ * __builtin_offsetof and sizeof from the including translation unit's view
+ * of struct boot_info. The dumper sets up the struct type (kernel header or
+ * mirror header) BEFORE #including this file.
+ *
+ * This file is NOT an include guard -- it is meant to be #included exactly
+ * once per dumper translation unit, between a manifest_begin() and
+ * manifest_end() call. Do not #pragma once; do not add logic; just F() lines.
+ *
+ * If you add or remove a field in include/kernel/boot_info.h AND in
+ * src/boot/uefi/boot_info_mirror.h, add or remove the matching F() line
+ * here in the same commit -- otherwise the compare step will flag the drift.
+ * ============================================================================ */
+
+/* ---- ABI header ---- */
+F(header.magic);
+F(header.version);
+F(header.size);
+
+/* ---- Memory map ---- */
+F(mmap);
+/* mmap[0].* leaves: same-size reorders inside boot_mmap_entry would keep
+ * the whole-array size the same. Per-leaf rows catch that drift. */
+F(mmap[0].base_addr);
+F(mmap[0].length);
+F(mmap[0].type);
+F(mmap[0].uefi_memory_type);
+F(mmap[0].attribute);
+F(mmap_count);
+F(mmap_truncated);
+F(mmap_quirks);
+F(_mmap_pad);
+
+/* ---- Basic memory (legacy) ---- */
+F(mem_lower_kb);
+F(mem_upper_kb);
+
+/* ---- Framebuffer ---- */
+F(fb.addr);
+F(fb.pitch);
+F(fb.width);
+F(fb.height);
+F(fb.bpp);
+F(fb.type);
+F(fb.pixel_format);
+F(fb.pad0);
+F(fb_available);
+F(hidpi);
+F(fb_pad);
+
+/* ---- GOP mode list ---- */
+F(gop_modes);
+/* gop_modes[0].* leaves (boot_gop_mode): same-size-reorder defense. */
+F(gop_modes[0].width);
+F(gop_modes[0].height);
+F(gop_modes[0].pixels_per_scanline);
+F(gop_modes[0].pixel_format);
+F(gop_modes[0].pad);
+F(gop_mode_count);
+F(gop_mode_selected);
+
+/* ---- ACPI ---- */
+F(acpi_rsdp_addr);
+F(acpi_version);
+F(acpi_available);
+
+/* ---- Module (GRUB legacy) ---- */
+F(module_start);
+F(module_end);
+F(module_available);
+
+/* ---- Boot configuration (boot.conf) ---- */
+F(config.debug);
+F(config.verbose);
+F(config.serial_debug);
+F(config.boot_mode);
+F(config.splash_timeout);
+F(config.heartbeat);
+F(config.postcode);
+F(config.postbars);
+F(config.test);
+F(config.test_suite);
+F(config.test_quiet);
+F(config.diag_delay);
+F(config.diag_splash);
+F(config.deferred);
+F(config.async_init);
+F(config.crash_test);
+F(config.ob_handle_trace);
+F(config.config_version);
+F(config.error_screen_test);
+F(config._reserved);
+F(config.cmdline);
+F(config.config_found);
+F(config._pad);
+
+/* ---- UEFI Configuration Table ---- */
+F(config_table);
+/* config_table[0].* leaves (boot_uefi_config_entry + nested boot_uefi_guid):
+ * same-size-reorder defense for GUID/addr packing. */
+F(config_table[0].guid.data1);
+F(config_table[0].guid.data2);
+F(config_table[0].guid.data3);
+F(config_table[0].guid.data4);
+F(config_table[0].table_addr);
+F(config_table_count);
+
+/* ---- UEFI Runtime Services ---- */
+F(uefi_runtime_services);
+F(uefi_rt_available);
+F(rt_mmap);
+/* rt_mmap[0].* leaves (boot_rt_mem_entry): same-size-reorder defense. */
+F(rt_mmap[0].phys_addr);
+F(rt_mmap[0].num_pages);
+F(rt_mmap[0].attribute);
+F(rt_mmap[0].type);
+F(rt_mmap[0].reserved);
+F(rt_mmap_count);
+F(uefi_mmap_desc_size);
+F(uefi_mmap_desc_version);
+F(uefi_runtime.get_time);
+F(uefi_runtime.set_time);
+F(uefi_runtime.get_variable);
+F(uefi_runtime.set_variable);
+F(uefi_runtime.get_next_variable_name);
+F(uefi_runtime.reset_system);
+F(uefi_runtime.update_capsule);
+F(uefi_runtime.query_capsule_capabilities);
+F(uefi_runtime.query_variable_info);
+F(uefi_runtime.get_wakeup_time);
+F(uefi_runtime.set_wakeup_time);
+F(uefi_runtime.svam_called);
+F(uefi_runtime.pad);
+
+/* ---- TPM measured boot ---- */
+F(tpm_event_log);
+F(tpm_event_log_size);
+F(tpm_available);
+F(tpm_version);
+F(tpm_event_count);
+
+/* ---- USB discovery ---- */
+F(usb_devices);
+/* usb_devices[0].* leaves (boot_usb_device): same-size-reorder defense.
+ * Includes nested endpoints[0].* leaves because boot_usb_endpoint is itself
+ * a struct-of-small-fields that could be reordered without changing size. */
+F(usb_devices[0].active);
+F(usb_devices[0].port);
+F(usb_devices[0].speed);
+F(usb_devices[0].device_class);
+F(usb_devices[0].iface_class);
+F(usb_devices[0].iface_subclass);
+F(usb_devices[0].iface_protocol);
+F(usb_devices[0].num_endpoints);
+F(usb_devices[0].vendor_id);
+F(usb_devices[0].product_id);
+F(usb_devices[0].is_msc);
+F(usb_devices[0].is_hid);
+F(usb_devices[0].pad0);
+F(usb_devices[0].block_size);
+F(usb_devices[0].block_count);
+F(usb_devices[0].endpoints);
+F(usb_devices[0].endpoints[0].address);
+F(usb_devices[0].endpoints[0].attributes);
+F(usb_devices[0].endpoints[0].max_packet);
+F(usb_devices[0].endpoints[0].interval);
+F(usb_devices[0].endpoints[0].pad);
+F(usb_device_count);
+F(usb_discovery_ok);
+F(usb_handover_complete);
+F(usb_pad);
+
+/* ---- USB controller DMA state ---- */
+F(usb_controller.pci_bus);
+F(usb_controller.pci_dev);
+F(usb_controller.pci_func);
+F(usb_controller.active);
+F(usb_controller.mmio_phys);
+F(usb_controller.mmio_size);
+F(usb_controller.cap_length);
+F(usb_controller.hci_version);
+F(usb_controller.max_slots);
+F(usb_controller.max_intrs);
+F(usb_controller.max_ports);
+F(usb_controller.db_offset);
+F(usb_controller.rts_offset);
+F(usb_controller.ac64);
+F(usb_controller.csz);
+F(usb_controller.max_scratchpads);
+F(usb_controller.dcbaa_phys);
+F(usb_controller.scratchpad_array_phys);
+F(usb_controller.scratchpad_base_phys);
+F(usb_controller.scratchpad_page_count);
+F(usb_controller.scratchpad_pad);
+F(usb_controller.cmd_ring_phys);
+F(usb_controller.evt_ring_phys);
+F(usb_controller.erst_phys);
+F(usb_controller.dma_pages);
+F(usb_controller.dma_page_count);
+F(usb_controller.alloc_fail_status);
+F(usb_controller.alloc_fail_page);
+
+/* ---- Boot timing ---- */
+F(timing.reset_end);
+F(timing.os_loader_load_start);
+F(timing.os_loader_start_start);
+F(timing.exit_bs_entry);
+F(timing.exit_bs_exit);
+F(timing.fpdt_available);
+F(timing.bl_entry);
+F(timing.gop_start);
+F(timing.gop_end);
+F(timing.conf_start);
+F(timing.conf_end);
+F(timing.kernel_load_start);
+F(timing.kernel_load_end);
+F(timing.splash_start);
+F(timing.splash_end);
+F(timing.exit_bs);
+F(timing.kernel_jump);
+F(timing.tsc_freq);
+
+/* ---- Serial port ---- */
+F(serial_port);
+F(serial_source);
+F(_serial_pad);
+F(serial_baud);
+
+/* ---- Last-boot error (NVRAM) ---- */
+F(last_boot_error);
+
+/* ---- Boot device identity ---- */
+F(boot_device_type);
+F(_boot_dev_pad);
+F(boot_device_path);
+
+/* ---- UEFI boot variables ---- */
+F(uefi_boot_current);
+F(uefi_boot_next);
+F(uefi_boot_next_valid);
+F(uefi_boot_order_count);
+F(_boot_var_pad);
+F(uefi_boot_order);
+
+/* ---- Boot partition ---- */
+F(boot_partition_guid);
+F(boot_partition_style);
+
+/* ---- Removable media ---- */
+F(boot_device_removable);
+F(boot_media_present);
+F(_rem_pad);
+
+/* ---- Kernel-populated fields ---- */
+F(secure_boot_enabled);
+F(_kp_pad);
+F(degraded_mask);
+F(hv_flags);
+F(hv_vendor);

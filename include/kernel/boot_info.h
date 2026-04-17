@@ -7,13 +7,19 @@
  * That doc is the single source of truth; this header keeps only the C-level
  * policy strictly required by the compiler (ABI header offsets, the static
  * asserts that pin count-field offsets, and the `struct boot_config` size
- * contract). Everything else -- which fields are bootloader-populated vs
- * kernel-populated, which are legacy/Multiboot2-only, the update protocol
- * for adding or deprecating a field -- is documented there.
+ * contract).
  *
- * Add a field -> update the mirror in src/boot/uefi/bootx64.c -> add a row
- * to docs/boot/boot-info-fields.md. Do not embed per-field policy prose
- * inline in this header.
+ * Bootloader mirror of this struct lives in src/boot/uefi/boot_info_mirror.h
+ * (same layout, UEFI UINT* types instead of uint*_t). Adding, removing, or
+ * reordering a field requires updating BOTH headers in the same commit and
+ * adding a matching F(...) line in tools/boot-info-manifest/dump-fields.inc
+ * so the build-time ABI manifest catches the drift.
+ *
+ * Manifest: build/boot-info-abi.{kernel,mirror}.json is regenerated on every
+ * `bash scripts/build.sh` and diffed by tools/boot-info-manifest/compare.sh;
+ * any field / offset / size disagreement fails the build with the first
+ * mismatching field named. Static asserts below remain the compile-time
+ * first line of defense.
  * ============================================================================ */
 
 #pragma once

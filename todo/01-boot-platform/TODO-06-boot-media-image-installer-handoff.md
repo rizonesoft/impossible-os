@@ -29,7 +29,7 @@
 | 💎 | 3 | VHD/VHDX/VDI conversion and validation | §1, §2 | [ ] |
 | 💎 | 4 | Hybrid ISO / El Torito UEFI boot | §1 | [ ] |
 | 💎 | 5 | Installer/live/recovery media detection | §1, TODO-07 | [ ] |
-| 💎 | 6 | Bootloader handoff of media role | §5, TODO-01 | [ ] |
+| 💎 | 6 | Bootloader handoff of media role | §5, TODO-01 §12 | [ ] |
 | 💎 | 7 | Artifact signing and manifest verification | §1, TODO-02 | [ ] |
 | ⭐ | 8 | Offline artifact inspector | §1-§7 | [ ] |
 | 💎 | 9 | CI boot matrix for every artifact | §2-§7 | [ ] |
@@ -77,7 +77,7 @@
 
 ## 6. Bootloader Handoff of Media Role
 
-- [ ] Extend boot_info via TODO-01 with media role, artifact id, manifest digest, and source path.
+- [ ] Extend boot_info via TODO-01 §12 with media role, artifact id, manifest digest, source path, and the shared boot-path decision record for installer/live/recovery media.
 - [ ] Kernel exposes role via Registry and platform APIs.
 - [ ] Installer mode starts installer shell instead of normal desktop.
 - [ ] Recovery mode starts recovery environment when local system is broken.
@@ -138,4 +138,3 @@
 - [ ] Hyper-V VHDX boot
 - [ ] VirtualBox VDI boot
 - [ ] Bare-metal USB boot
-

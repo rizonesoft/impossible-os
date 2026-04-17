@@ -11,6 +11,7 @@
 
 - `src/boot/uefi/bootx64.c` -- bootloader (needs recovery boot path)
 - `scripts/build.sh` -- disk image creation (needs recovery partition)
+- -> XREF: `TODO-01-boot-protocol-abi-handoff.md §4,§12` -- recovery image descriptor and shared boot-path decision record
 - → XREF: `TODO-21-ab-boot-rollback.md §4` -- both slots failed → enter recovery
 - → XREF: `TODO-03-bootloader-error-recovery.md §2` -- boot failure error screen
 - -> XREF: `TODO-03-bootloader-error-recovery.md` -- pre-kernel hardening (ELF, EBS, mmap, watchdog) surfaces failures before recovery shell
@@ -67,6 +68,7 @@ Minimal UEFI application that boots the recovery kernel.
 - [ ] Separate UEFI app: `recovery.efi` -- stripped down version of `bootx64.c`
 - [ ] Installed at both `\EFI\ImpossibleOS\recovery.efi` AND `\EFI\BOOT\BOOTx64.EFI` (UEFI fallback path)
 - [ ] Loads `recovery.exe` from recovery partition
+- [ ] Publish recovery-image descriptor and shared `boot_path=recovery` / reason codes through TODO-01 §4 and §12 so the kernel and diagnostics can distinguish recovery boot from a normal cold boot.
 - [ ] Shows: `"Impossible OS Recovery Environment"` on screen
 - [ ] Does NOT touch A/B slots -- operates only on recovery partition
 - [ ] Commit: `"boot: recovery bootloader -- minimal UEFI app at fallback path"`

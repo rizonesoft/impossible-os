@@ -217,6 +217,8 @@ Every wrapper reads from and writes to a small set of well-known paths. Treat th
 | `build/kernel.exe`                      | `scripts/build.sh`                      | `scripts/debug.sh`, `llvm-addr2line-19`                |
 | `build/kernel.map`                      | `scripts/build.sh` (`llvm-nm-19 -n`)    | `scripts/debug.sh`, BSS-collision check                |
 | `build/kernel.sym`                      | `scripts/build.sh` (`tools/convert_symmap.py`) | kernel BSOD resolver (loaded at boot)                  |
+| `build/boot-info-abi.kernel.json`       | `scripts/build.sh` (`boot_info ABI` step) | `tools/boot-info-manifest/compare.sh`; future ABI changelog |
+| `build/boot-info-abi.mirror.json`       | `scripts/build.sh` (`boot_info ABI` step) | Same; diffed row-for-row against the kernel view       |
 | `build/test.log`                        | `scripts/test.sh` (QEMU serial file:)   | test.sh parse step, coverage scanner                   |
 | `build/smoke-test.log`                  | `scripts/test-smoke.sh`                 | smoke test summary/tail                                |
 | `build/OVMF_VARS_4M.fd`                 | copy of `/usr/share/OVMF/OVMF_VARS_4M.fd` | all QEMU launchers (writable EFI variable store)      |

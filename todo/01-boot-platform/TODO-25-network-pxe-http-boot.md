@@ -28,7 +28,7 @@
 | 💎 | 3 | TFTP kernel and boot.conf load | §1, §2 | [ ] |
 | 💎 | 4 | UEFI HTTP Boot load path | §1, §2 | [ ] |
 | 💎 | 5 | Network boot asset integrity | §3, §4, TODO-13 | [ ] |
-| 💎 | 6 | boot_info network provenance | TODO-01 §4 | [ ] |
+| 💎 | 6 | boot_info network provenance | TODO-01 §4, §12 | [ ] |
 | 💎 | 7 | Fallback ordering with local media | TODO-05 §5, §6 | [ ] |
 | ⭐ | 8 | Recovery and installer over network | §3-§7, TODO-22 | [ ] |
 | 💎 | 9 | Network boot diagnostics and BlackBox report | §1-§8 | [ ] |
@@ -76,7 +76,7 @@
 
 ## 6. boot_info Network Provenance
 
-- [ ] Extend boot_info with network boot descriptor through TODO-01 version bump.
+- [ ] Extend boot_info with network boot descriptor through TODO-01 §4 and the shared boot-path decision record through TODO-01 §12.
 - [ ] Include MAC, IP, server URI, protocol, manifest digest, and insecure flag.
 - [ ] Expose `HKLM\SYSTEM\Boot\Network`.
 - [ ] Add `boot_device_type=network` test coverage.
@@ -136,4 +136,3 @@
 - [ ] QEMU HTTP Boot mock
 - [ ] Network failure fallback to local disk
 - [ ] Bare metal PXE firmware
-

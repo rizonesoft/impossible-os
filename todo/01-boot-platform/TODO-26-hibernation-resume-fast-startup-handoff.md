@@ -26,7 +26,7 @@
 | 💎 | 2 | Bootloader image discovery | §1 | [ ] |
 | 💎 | 3 | Resume eligibility policy | §1, TODO-07 | [ ] |
 | 💎 | 4 | Integrity and version validation | §1, TODO-13 | [ ] |
-| 💎 | 5 | boot_info resume handoff | TODO-01 §4 | [ ] |
+| 💎 | 5 | boot_info resume handoff | TODO-01 §4, §12 | [ ] |
 | 💎 | 6 | Resume failure fallback | §5, TODO-21 | [ ] |
 | 💎 | 7 | Fast startup mode | §1-§6 | [ ] |
 | 💎 | 8 | Diagnostics and BlackBox resume report | §2-§7 | [ ] |
@@ -67,7 +67,7 @@
 ## 5. boot_info Resume Handoff
 
 - [ ] Add typed payload descriptor for hibernation metadata/image.
-- [ ] Add resume flags and reason code to boot_info.
+- [ ] Add resume flags and shared decision-reason codes to boot_info through TODO-01 §12.
 - [ ] Kernel consumes handoff before normal Phase 0 destructive init.
 - [ ] PMM reserves image ranges until resume code consumes them.
 - [ ] Commit: `"boot: hand off hibernation resume payload"`
@@ -126,4 +126,3 @@
 - [ ] Failed resume cold-boot fallback
 - [ ] A/B slot switch invalidates resume
 - [ ] Bare-metal S4 once power TODO is ready
-

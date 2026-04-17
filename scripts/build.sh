@@ -289,9 +289,9 @@ printf ' %b%s  (%d parallel jobs)%b\n\n' "$DIM" "$(date '+%Y-%m-%d %H:%M:%S')" "
 # Step counter
 STEP=0
 if $DO_CLEAN; then
-    TOTAL=6  # clean + kernel + userland + efi + sign + disk
+    TOTAL=7  # clean + kernel + userland + efi + sign + abi + disk
 else
-    TOTAL=5  # kernel + userland + efi + sign + disk
+    TOTAL=6  # kernel + userland + efi + sign + abi + disk
 fi
 
 # Clean (optional)
@@ -338,6 +338,13 @@ run_step $STEP $TOTAL "EFI Boot" "uefi-boot" || { print_errors; echo "=== BUILD 
 # EFI Signing (skipped silently if keys/MOK.key is absent)
 STEP=$((STEP + 1))
 run_step $STEP $TOTAL "EFI Signing" "sign-efi" || { print_errors; echo "=== BUILD FAILED ===" >> "$LOG"; exit 1; }
+
+# boot_info ABI manifest: compile kernel-view + mirror-view dumpers, emit
+# JSON for both, diff them. Fails the build on any field/offset/size drift.
+# Static asserts in the headers remain the first line of defense; this
+# catches same-size reorders the asserts miss.
+STEP=$((STEP + 1))
+run_step $STEP $TOTAL "boot_info ABI" "boot-info-abi" || { print_errors; echo "=== BUILD FAILED ===" >> "$LOG"; exit 1; }
 
 # System Disk
 STEP=$((STEP + 1))

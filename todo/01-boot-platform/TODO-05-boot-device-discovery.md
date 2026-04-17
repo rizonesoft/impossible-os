@@ -12,6 +12,7 @@
 - `src/boot/uefi/bootx64.c` -- `load_kernel()` and `parse_boot_conf()` filesystem access
 - `src/boot/uefi/efi.h` -- UEFI protocol definitions (EFI_LOADED_IMAGE_PROTOCOL, EFI_DEVICE_PATH_PROTOCOL, EFI_BLOCK_IO_PROTOCOL)
 - `include/kernel/boot_info.h` -- boot_info struct (needs boot device info)
+- -> XREF: `TODO-01-boot-protocol-abi-handoff.md §1,§10` -- canonical owner map for `boot_device_*`, Boot####, and related handoff fields that this TODO already populates
 - → XREF: `TODO-02-uefi-hardening-secureboot.md §2` -- UEFI variable services (`uefi_var_get` / `uefi_var_set`); this file reads BootOrder/BootCurrent pre-ExitBootServices
 - → XREF: `TODO-02-uefi-hardening-secureboot.md §5` -- SMBIOS/registry hardware hive population (boot provenance complements device discovery)
 - → XREF: `TODO-27-uefi-advanced.md §1` -- multi-OS detection and boot menu (not TODO-02 §8 -- that is serial klog)

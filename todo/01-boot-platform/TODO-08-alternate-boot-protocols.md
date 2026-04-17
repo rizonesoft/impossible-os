@@ -51,7 +51,7 @@
 
 - [ ] Populate `boot_info.header` even on Multiboot2 path.
 - [ ] Map memory, framebuffer, ACPI, module, and cmdline into canonical fields.
-- [ ] Set flags for missing UEFI-only data.
+- [ ] Set TODO-01 §11 capability bits and TODO-01 §12 boot-path reason codes for missing UEFI-only data.
 - [ ] Reuse `boot_info_validate_*()` where possible.
 - [ ] Commit: `"boot: adapt Multiboot2 into boot_info"`
 
@@ -106,4 +106,3 @@
 - [ ] QEMU UEFI remains primary path
 - [ ] QEMU GRUB path according to selected policy
 - [ ] Documentation clearly states support status
-

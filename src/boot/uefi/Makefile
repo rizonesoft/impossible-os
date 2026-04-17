@@ -25,7 +25,7 @@ OBJS := bootx64.o reloc.o
 all: $(OUTDIR)/BOOTX64.EFI
 
 # Compile C source to position-independent object
-bootx64.o: bootx64.c efi.h
+bootx64.o: bootx64.c efi.h boot_info_mirror.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # Assemble the PE relocation stub

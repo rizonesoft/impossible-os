@@ -2,6 +2,8 @@
 
 > **Owner:** [Boot Protocol ABI & Handoff Contract roadmap -- Canonical boot_info Field Ownership Table section](../../todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md#1-canonical-boot_info-field-ownership-table).
 > **Single source of truth.** [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h) has a file-top comment that points here rather than duplicating policy inline. Every field of `struct boot_info` (and its nested structs) is listed below with producer, first valid phase, consumer(s), lifetime, owning roadmap, and validation rule. Add a field -> add a row.
+>
+> **Machine-readable complement.** Every build emits [`build/boot-info-abi.kernel.json`](../../build/boot-info-abi.kernel.json) and [`build/boot-info-abi.mirror.json`](../../build/boot-info-abi.mirror.json) (154 fields, struct size, SHA-256 fingerprint) via the `boot_info ABI` step of `bash scripts/build.sh`. The two JSONs are diffed by [`tools/boot-info-manifest/compare.sh`](../../tools/boot-info-manifest/compare.sh); any field / offset / size drift between `include/kernel/boot_info.h` and [`src/boot/uefi/boot_info_mirror.h`](../../src/boot/uefi/boot_info_mirror.h) fails the build with the first mismatching field named. This catches same-size reorders the six pinned `_Static_assert` offsets miss.
 
 ## How to read this doc
 
