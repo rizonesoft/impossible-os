@@ -73,7 +73,16 @@ if ! command -v python3 >/dev/null 2>&1; then
     exit 2
 fi
 
-TMPDIR="$(mktemp -d -t boot-info-drift.XXXXXX)"
+if ! TMPDIR="$(mktemp -d -t boot-info-drift.XXXXXX 2>/dev/null)"; then
+    echo "error: mktemp -d failed under \$TMPDIR=${TMPDIR:-/tmp}; read-only filesystem or quota?" >&2
+    exit 2
+fi
+if [ -z "$TMPDIR" ] || [ ! -d "$TMPDIR" ]; then
+    echo "error: mktemp returned '$TMPDIR' but the directory does not exist" >&2
+    exit 2
+fi
+# Only install the cleanup trap after TMPDIR is proven valid so rm -rf
+# never runs against an empty variable if mktemp partially succeeded.
 trap 'rm -rf "$TMPDIR"' EXIT
 
 PASS=0
@@ -89,35 +98,67 @@ t_fail() {
 }
 
 # ---- run_case ----
-# $1 = case name
-# $2 = sed expression to apply to the mirror header (single -e argument)
-# $3 = expected first-mismatch field name (the string inside the '...' quotes
-#      in compare.sh's FAIL line)
-# $4 = preimage pattern (grep -E) that MUST match exactly once in the real
-#      mirror header. Guards against a future harmless-looking header edit
-#      that adds a second matching declaration, which would silently turn
-#      this case into a compound fixture testing something else.
+# $1    = case name
+# $2    = sed expression to apply to the mirror header (single -e argument)
+# $3    = expected first-mismatch field name (string inside '...' quotes in
+#         compare.sh's FAIL line; grep -E regex)
+# $4... = one or more preimage patterns (grep -E), each of which MUST match
+#         exactly once in the real mirror header. The harness checks every
+#         listed preimage -- cases with multi-substitution sed expressions
+#         MUST list one preimage per distinct declaration the sed rewrites,
+#         so a future mirror edit that duplicates any target trips the guard
+#         and fails the case rather than silently mutating multiple lines.
 run_case() {
-    local name="$1" sed_expr="$2" expected_field="$3" preimage="$4"
+    local name="$1" sed_expr="$2" expected_field="$3"
+    shift 3
     local work="$TMPDIR/$name"
-    mkdir -p "$work"
-
-    # Pre-flight: the mutation target must exist in the real mirror exactly
-    # once, or the case no longer tests what its comment claims.
-    local hit_count
-    hit_count="$(grep -Ec "$preimage" "$MIRROR_HDR" || true)"
-    if [ "$hit_count" != "1" ]; then
-        t_fail "$name" \
-            "preimage pattern /$preimage/ matched $hit_count lines in boot_info_mirror.h; expected exactly 1. Update the case so the mutation pin-points one declaration."
+    if ! mkdir -p "$work"; then
+        t_fail "$name" "mkdir -p $work failed -- temp filesystem issue?"
         return
     fi
+
+    # Pre-flight: every mutation target must exist in the real mirror
+    # exactly once, or the case no longer tests what its comment claims.
+    # Cases with two or three sed substitutions (swaps) list one preimage
+    # per distinct declaration the sed rewrites.
+    local preimage hit_count
+    local preimage_count=$#
+    for preimage in "$@"; do
+        hit_count="$(grep -Ec "$preimage" "$MIRROR_HDR" || true)"
+        if [ "$hit_count" != "1" ]; then
+            t_fail "$name" \
+                "preimage pattern /$preimage/ matched $hit_count lines in boot_info_mirror.h; expected exactly 1. Update the case so every sed target pin-points one declaration."
+            return
+        fi
+    done
 
     # Copy and mutate the mirror header. The dumper sees a directory where
     # boot_info_mirror.h is the mutated fixture but dump-common.h etc. still
     # come from the real tools directory.
-    sed -E "$sed_expr" "$MIRROR_HDR" > "$work/boot_info_mirror.h"
+    if ! sed -E "$sed_expr" "$MIRROR_HDR" > "$work/boot_info_mirror.h"; then
+        t_fail "$name" "sed failed while writing fixture header"
+        return
+    fi
     if cmp -s "$MIRROR_HDR" "$work/boot_info_mirror.h"; then
         t_fail "$name" "sed produced identical output -- mutation pattern did not match; update the case"
+        return
+    fi
+
+    # Post-flight: the sed expression must have rewritten EXACTLY
+    # preimage_count lines. The preimage guard above checks what the case
+    # CLAIMS to mutate (anchored regex); this guard checks what sed
+    # ACTUALLY mutated by counting position-wise line differences (not
+    # diff -- diff's alignment heuristic hides position swaps between
+    # otherwise-identical lines, so this uses awk to compare line N of
+    # each file directly). Without this guard, a case could list a strict
+    # preimage while the sed expression uses a looser match and silently
+    # rewrites extra lines -- recreating the compound-fixture failure mode.
+    local changed_lines
+    changed_lines="$(awk 'NR==FNR { a[NR]=$0; next } { if (a[FNR] != $0) n++ } END { print n+0 }' \
+        "$MIRROR_HDR" "$work/boot_info_mirror.h")"
+    if [ "$changed_lines" != "$preimage_count" ]; then
+        t_fail "$name" \
+            "sed rewrote $changed_lines line(s) but preimage list claimed $preimage_count target(s); mutation scope exceeded the guarded preimages (or the mutation's replacement text changed line count)"
         return
     fi
 
@@ -163,12 +204,14 @@ run_case() {
 # Case 1: element-struct same-size swap -- swap `type` and `uefi_memory_type`
 # inside struct boot_mmap_entry. Both UINT32, same total struct size; the
 # whole-array row F(mmap) passes, but F(mmap[0].type) catches it.
-# Preimage pins the line by its trailing comment so a future second UINT32
-# type field in an unrelated struct will not silently expand the match set.
+# TWO sed substitutions -> TWO preimages (both sides of the swap) anchored
+# by their trailing comments so a future additional declaration on either
+# side trips the guard and fails the case.
 run_case "mmap-type-swap" \
     's|UINT32 type;\s+/\* simplified.*\*/\s*$|UINT32 uefi_memory_type; /* MUTATED: swapped with type */|; s|UINT32 uefi_memory_type;\s+/\* original EFI_MEMORY_TYPE.*\*/\s*$|UINT32 type; /* MUTATED: swapped with uefi_memory_type */|' \
     "mmap\[0\]\.type" \
-    '^\s*UINT32 type;\s+/\* simplified'
+    '^\s*UINT32 type;\s+/\* simplified' \
+    '^\s*UINT32 uefi_memory_type;\s+/\* original EFI_MEMORY_TYPE'
 
 # Case 2: scalar-array element-type change -- dma_pages[16] UINT64 -> UINT32[32].
 # Same total 128 bytes; whole-array row F(usb_controller.dma_pages) passes;
@@ -181,13 +224,15 @@ run_case "dma-pages-element-shrink" \
 
 # Case 3: element-struct same-size swap inside a nested nested -- swap
 # `address` and `attributes` in boot_usb_endpoint (both UINT8). The mutation
-# uses a three-step intermediate-name rename. Preimage pins both lines being
-# renamed; since both must exist in the endpoint struct uniquely, we check
-# the more-specific address declaration (exact indent + comment tail).
+# uses a three-step intermediate-name rename. TWO distinct preimages (the
+# third sed step rewrites the intermediate name which does not exist in the
+# real mirror) -- if either the `address` or `attributes` declaration gains
+# a duplicate in the future, the guard fails the case.
 run_case "endpoint-address-swap" \
     's|UINT8   address;|UINT8   attributes_MUT;|; s|UINT8   attributes;|UINT8   address;|; s|UINT8   attributes_MUT;|UINT8   attributes;|' \
     "usb_devices\[0\]\.endpoints\[0\]\.address" \
-    '^\s*UINT8   address;$'
+    '^\s*UINT8   address;$' \
+    '^\s*UINT8   attributes;$'
 
 # Case 4: nested-struct element-type shrink in boot_gop_mode -- replace
 # `UINT32  pixels_per_scanline` with `UINT16 pixels_per_scanline; UINT16 pad`.
