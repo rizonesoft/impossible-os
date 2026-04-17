@@ -54,14 +54,15 @@ FAIL_PATTERNS=(
 )
 
 # ---- Bootloader presence checks (verified after boot) ----
-# These patterns MUST appear in a healthy boot serial log.
+# These patterns MUST appear in a healthy boot serial log. Compared as fixed
+# strings (grep -F), so bracket characters are treated literally.
 BOOT_REQUIRED_PATTERNS=(
     "[BOOT] ELF segment"
     "[BOOT] Kernel found at"
     "[BOOT] Watchdog: armed"
     "[BOOT] Watchdog: disarmed"
     "[BOOT] ExitBootServices OK"
-    "Boot info v1"
+    "[PHASE0] BOOT_INFO"
 )
 # These patterns must NOT appear on a clean firmware boot.
 BOOT_ABSENT_PATTERNS=(
@@ -162,7 +163,7 @@ for i in $(seq 1 "$TIMEOUT_SEC"); do
 
     # Check for fail patterns
     for pattern in "${FAIL_PATTERNS[@]}"; do
-        if grep -q "$pattern" "$SERIAL_LOG" 2>/dev/null; then
+        if grep -qF -- "$pattern" "$SERIAL_LOG" 2>/dev/null; then
             BOOT_FAILED=true
             FAIL_REASON="Detected: $pattern"
             break 2
@@ -171,7 +172,7 @@ for i in $(seq 1 "$TIMEOUT_SEC"); do
 
     # Check for pass patterns
     for pattern in "${PASS_PATTERNS[@]}"; do
-        if grep -q "$pattern" "$SERIAL_LOG" 2>/dev/null; then
+        if grep -qF -- "$pattern" "$SERIAL_LOG" 2>/dev/null; then
             BOOT_PASSED=true
             break 2
         fi
@@ -196,13 +197,13 @@ echo -e "  ${DIM}Serial log: $SERIAL_LOG ($LOG_LINES lines)${NC}"
 # ---- Bootloader pattern checks (TODO-02 §1-§18) ----
 PATTERN_FAIL=false
 for pattern in "${BOOT_REQUIRED_PATTERNS[@]}"; do
-    if ! grep -q "$pattern" "$SERIAL_LOG" 2>/dev/null; then
+    if ! grep -qF -- "$pattern" "$SERIAL_LOG" 2>/dev/null; then
         echo -e "  ${RED}MISSING:${NC} $pattern"
         PATTERN_FAIL=true
     fi
 done
 for pattern in "${BOOT_ABSENT_PATTERNS[@]}"; do
-    if grep -q "$pattern" "$SERIAL_LOG" 2>/dev/null; then
+    if grep -qF -- "$pattern" "$SERIAL_LOG" 2>/dev/null; then
         echo -e "  ${RED}UNEXPECTED:${NC} $pattern"
         PATTERN_FAIL=true
     fi
