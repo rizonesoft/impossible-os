@@ -129,6 +129,7 @@ enum boot_payload_error {
     BOOT_PAYLOAD_ERR_UNKNOWN_REQUIRED    = 9,  /* unknown type with FLAG_REQUIRED set */
     BOOT_PAYLOAD_ERR_UNKNOWN_FLAGS       = 10, /* unknown flag bits with FLAG_REQUIRED set */
     BOOT_PAYLOAD_ERR_TOTAL_MISMATCH      = 11, /* payload_total_bytes != recomputed sum */
+    BOOT_PAYLOAD_ERR_OVERFLOW_TRUNCATED  = 12, /* payload_overflow != 0 -- producer dropped payloads */
 };
 
 /* Forward declaration so the validator prototype can reference

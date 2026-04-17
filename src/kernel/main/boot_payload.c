@@ -267,6 +267,24 @@ boot_result_t boot_payload_validate(const struct boot_info *info,
         return BOOT_FATAL;
     }
 
+    /* payload_overflow is the producer's explicit "I had more payloads
+     * than I could fit in BOOT_PAYLOAD_MAX slots" signal. Accepting a
+     * truncated handoff lets a future security-sensitive payload
+     * (random seed, TPM log, hibernation metadata, recovery image) get
+     * silently dropped while consumers still think they processed the
+     * full set. §4 refuses the handoff outright; a degraded policy
+     * ("warn but continue for optional payloads only") is §11
+     * capability-negotiation territory, not this ABI's contract. */
+    if (info->payload_overflow != 0u) {
+        klog(LOG_ERROR, "boot",
+             "boot_payload: payload_overflow=%u -- producer truncated the "
+             "payload array; refusing to boot with incomplete payload set",
+             (uint64_t)info->payload_overflow);
+        if (out_error != (enum boot_payload_error *)0)
+            *out_error = BOOT_PAYLOAD_ERR_OVERFLOW_TRUNCATED;
+        return BOOT_FATAL;
+    }
+
     /* §2 packed-prefix: scan the FULL array. Any occupied slot past
      * payload_count is a rejected invariant violation -- this closes
      * the footgun where consumers scan the full array while the

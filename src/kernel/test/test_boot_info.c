@@ -682,6 +682,30 @@ static void test_payload_retained_rt_mmap_wrap_rejected(void)
                    "err=OVERLAP_RT_MMAP (retained-region wrap)");
 }
 
+static void test_payload_overflow_truncated_rejected(void)
+{
+    enum boot_payload_error err = BOOT_PAYLOAD_ERR_OK;
+
+    bi_payload_zero();
+    /* Producer reports it had MORE payloads than fit: the prefix
+     * (count=1, one valid descriptor, total matches) is internally
+     * consistent, but payload_overflow=1 flags dropped payloads. §4's
+     * contract refuses the handoff so a consumer can never silently
+     * treat a truncated set as complete. */
+    s_test_buf.payload_count              = 1;
+    s_test_buf.payload_overflow           = 1;
+    s_test_buf.payload_descriptors[0].type       = BOOT_PAYLOAD_MODULE;
+    s_test_buf.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
+    s_test_buf.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
+    s_test_buf.payload_descriptors[0].length     = SAFE_PAYLOAD_LEN;
+    s_test_buf.payload_total_bytes        = SAFE_PAYLOAD_LEN;
+
+    TEST_ASSERT_EQ(boot_payload_validate(&s_test_buf, &err), BOOT_FATAL,
+                   "payload_overflow=1 rejects the entire handoff");
+    TEST_ASSERT_EQ((int)err, (int)BOOT_PAYLOAD_ERR_OVERFLOW_TRUNCATED,
+                   "err=OVERFLOW_TRUNCATED");
+}
+
 static void test_payload_retained_fb_wrap_rejected(void)
 {
     enum boot_payload_error err = BOOT_PAYLOAD_ERR_OK;
@@ -757,6 +781,7 @@ void test_register_boot_info(void)
     test_suite_register_cat("boot_payload: total wrap",            test_payload_aggregate_total_wrap,         TEST_CAT_BOOT);
     test_suite_register_cat("boot_payload: rt_mmap wrap",          test_payload_retained_rt_mmap_wrap_rejected, TEST_CAT_BOOT);
     test_suite_register_cat("boot_payload: fb wrap",               test_payload_retained_fb_wrap_rejected,    TEST_CAT_BOOT);
+    test_suite_register_cat("boot_payload: overflow truncated",    test_payload_overflow_truncated_rejected,  TEST_CAT_BOOT);
 }
 
 #endif /* KERNEL_TESTS */
