@@ -88,7 +88,7 @@ Owned elsewhere. Each row links to the owning TODO *file*; section anchors insid
 | Build/test/lint/run wrapper contract          | [Developer Tooling Stack TODO](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md) -- "wrapper contract" section   |
 | VM/bare-metal launcher matrix                 | [`machine-matrix.md`](machine-matrix.md) -- canonical table (owned by [TODO-01 §4](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md#4-machine-launcher-and-debug-profile-matrix)) |
 | Git hook lifecycle                            | [Developer Tooling Stack TODO](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md) -- "git hooks" section          |
-| CI workflow alignment                         | [GitHub Actions Workflows](#github-actions-workflows) -- canonical section (owned by [TODO-01 §6](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md#6-github-actions-and-artifact-policy-alignment)) |
+| CI workflow alignment                         | [GitHub Actions Workflows](#github-actions-workflows) -- canonical section (owned by the [GitHub Actions roadmap section](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md#6-github-actions-and-artifact-policy-alignment)) |
 | One-command `scripts/tooling-doctor.sh`       | [Developer Tooling Stack TODO](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md) -- "tooling doctor" section     |
 
 The SDK Build System TODO ships the SDK cross-tool build experience (user-mode programs, host utilities in `sdk/src/`). It explicitly does *not* own the kernel-side `scripts/build.sh` entry point or the host package install flow.
@@ -105,7 +105,7 @@ The [Host Bootstrap Contract](#host-bootstrap-contract) above defines *what must
 | ------------------------------- | --------------------------- | ----------------------------------------------------------------------------------------------------- |
 | Native Ubuntu/Debian (24.04+)   | ✅ Fully supported          | Reference profile. `setup.sh` installs all packages directly; version-suffixed LLVM-19 available.     |
 | WSL2 + Ubuntu (24.04+)          | ✅ Fully supported          | Same as native Ubuntu for build, lint, unit tests. KVM works when the Windows host has nested virtualization enabled; opt in with `sudo usermod -aG kvm $USER` then `newgrp kvm` (or reopen the shell). Without KVM, wrappers fall back to TCG; full `scripts/test.sh` hangs on TCG, but `scripts/test-smoke.sh` boots to desktop in a couple of seconds. Interactive GUI runs stay on the Windows host via the machine-launcher matrix. |
-| GitHub Actions `ubuntu-latest`  | ✅ Fully supported          | CI profile. Workflows invoke `bash scripts/setup.sh --verify` + `lint.sh` + `build.sh clean` + `test.sh QUIET=1` -- the same wrappers contributors run locally. Full classification and artifact policy: [GitHub Actions Workflows](#github-actions-workflows). |
+| GitHub Actions `ubuntu-latest`  | ✅ Fully supported          | CI profile. Workflows invoke `bash scripts/setup.sh --verify` + `build.sh clean` + `test.sh QUIET=1` -- the same wrappers contributors run locally (lint is held back until the legacy-XREF sweep closes; see [GitHub Actions Workflows](#github-actions-workflows)). |
 | `.devcontainer` (Ubuntu base)   | ✅ Fully supported          | Committed reproducible environment -- see below. Same entry points as native Ubuntu.                  |
 | Native Fedora (40+)             | ⚠️ Best-effort              | `setup-deps.sh` installs unversioned LLVM and OVMF under a different path. Needs manual shims (see below) until tracked owner lands. |
 | Native Arch / Manjaro           | ⚠️ Best-effort              | Same as Fedora: unversioned `clang`/`lld`/`llvm-objcopy` and OVMF path drift require shims.           |
@@ -857,7 +857,7 @@ The developer machine matrix ([machine-matrix.md](machine-matrix.md)) defines th
 
 1. Open the failing run; the `Run unit tests` or `Verify toolchain sentinels` step is usually the first signal.
 2. Download the `build-log` artifact -- `tail -30` of `build.log` appears inline on the `Verify build sentinel` step if that was the failure, but full diagnostics require the artifact.
-3. Reproduce locally with the exact wrapper the workflow calls: `bash scripts/setup.sh --verify && bash scripts/lint.sh && bash scripts/build.sh clean && bash scripts/test.sh QUIET=1`. If it passes locally but fails in CI, the drift is in the workflow; if it fails locally, it is a real bug in the PR.
+3. Reproduce locally with the exact wrapper the workflow calls: `bash scripts/setup.sh --verify && bash scripts/build.sh clean && bash scripts/test.sh QUIET=1`. If it passes locally but fails in CI, the drift is in the workflow; if it fails locally, it is a real bug in the PR. (Local `bash scripts/lint.sh` is available for staged-file checks but is not part of the CI gate yet -- see the wrapper-alignment table above.)
 4. For release-only failures (`release.yml`), the tag is still in the repo; re-push the tag after the fix lands on main and the workflow re-runs.
 
 ---
