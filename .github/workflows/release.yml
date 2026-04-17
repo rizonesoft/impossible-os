@@ -50,6 +50,8 @@ jobs:
           echo "✅ Tag: $TAG (pre-release: $(echo "$TAG" | grep -qE '-(alpha|beta|rc)' && echo yes || echo no))"
 
       # ── Cache LLVM toolchain ────────────────────────────────────────────
+      # Cache paths must cover every binary setup.sh --verify checks for,
+      # including llvm-ar-${VERSION} and llvm-nm-${VERSION}.
       - name: Cache LLVM toolchain
         id: cache-llvm
         uses: actions/cache@v4
@@ -59,9 +61,11 @@ jobs:
             /usr/bin/clang-${{ env.LLVM_VERSION }}
             /usr/bin/ld.lld-${{ env.LLVM_VERSION }}
             /usr/bin/llvm-objcopy-${{ env.LLVM_VERSION }}
-          key: llvm-${{ env.LLVM_VERSION }}-${{ runner.os }}-v1
+            /usr/bin/llvm-ar-${{ env.LLVM_VERSION }}
+            /usr/bin/llvm-nm-${{ env.LLVM_VERSION }}
+          key: llvm-${{ env.LLVM_VERSION }}-${{ runner.os }}-v2
 
-      # ── Install LLVM (clang-19, lld-19) ────────────────────────────────
+      # ── Install LLVM (clang-19, lld-19, llvm-19) ───────────────────────
       - name: Install LLVM ${{ env.LLVM_VERSION }}
         if: steps.cache-llvm.outputs.cache-hit != 'true'
         run: |
@@ -69,7 +73,10 @@ jobs:
           echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-${{ env.LLVM_VERSION }} main" \
             | sudo tee /etc/apt/sources.list.d/llvm.list
           sudo apt-get update -qq
-          sudo apt-get install -y -qq clang-${{ env.LLVM_VERSION }} lld-${{ env.LLVM_VERSION }}
+          sudo apt-get install -y -qq \
+            clang-${{ env.LLVM_VERSION }} \
+            lld-${{ env.LLVM_VERSION }} \
+            llvm-${{ env.LLVM_VERSION }}
 
       # ── Install build dependencies ──────────────────────────────────────
       - name: Install dependencies
@@ -84,9 +91,23 @@ jobs:
             gcc \
             qemu-utils
 
+      # ── Verify toolchain matches scripts/setup.sh sentinel contract ─────
+      - name: Verify toolchain sentinels
+        run: bash scripts/setup.sh --verify
+
+      # scripts/lint.sh is NOT a release gate yet -- see build.yml for the
+      # reason (legacy-XREF sweep owned by TODO-01 §7).
+
       # ── Build ───────────────────────────────────────────────────────────
       - name: Build OS (clean)
         run: bash scripts/build.sh clean
+
+      # ── Unit tests (release gate) ───────────────────────────────────────
+      # A tag push off main should already be green, but this catches the
+      # case where main was tagged between a regression landing and the
+      # post-commit test advisory surfacing. Do NOT `|| true` this.
+      - name: Run unit tests
+        run: bash scripts/test.sh QUIET=1
 
       # ── Verify build success ────────────────────────────────────────────
       - name: Verify build sentinel

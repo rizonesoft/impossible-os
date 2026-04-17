@@ -88,7 +88,7 @@ Owned elsewhere. Each row links to the owning TODO *file*; section anchors insid
 | Build/test/lint/run wrapper contract          | [Developer Tooling Stack TODO](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md) -- "wrapper contract" section   |
 | VM/bare-metal launcher matrix                 | [`machine-matrix.md`](machine-matrix.md) -- canonical table (owned by [TODO-01 §4](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md#4-machine-launcher-and-debug-profile-matrix)) |
 | Git hook lifecycle                            | [Developer Tooling Stack TODO](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md) -- "git hooks" section          |
-| CI workflow alignment                         | [Developer Tooling Stack TODO](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md) -- "GitHub Actions" section     |
+| CI workflow alignment                         | [GitHub Actions Workflows](#github-actions-workflows) -- canonical section (owned by [TODO-01 §6](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md#6-github-actions-and-artifact-policy-alignment)) |
 | One-command `scripts/tooling-doctor.sh`       | [Developer Tooling Stack TODO](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md) -- "tooling doctor" section     |
 
 The SDK Build System TODO ships the SDK cross-tool build experience (user-mode programs, host utilities in `sdk/src/`). It explicitly does *not* own the kernel-side `scripts/build.sh` entry point or the host package install flow.
@@ -105,7 +105,7 @@ The [Host Bootstrap Contract](#host-bootstrap-contract) above defines *what must
 | ------------------------------- | --------------------------- | ----------------------------------------------------------------------------------------------------- |
 | Native Ubuntu/Debian (24.04+)   | ✅ Fully supported          | Reference profile. `setup.sh` installs all packages directly; version-suffixed LLVM-19 available.     |
 | WSL2 + Ubuntu (24.04+)          | ✅ Fully supported          | Same as native Ubuntu for build, lint, unit tests. KVM works when the Windows host has nested virtualization enabled; opt in with `sudo usermod -aG kvm $USER` then `newgrp kvm` (or reopen the shell). Without KVM, wrappers fall back to TCG; full `scripts/test.sh` hangs on TCG, but `scripts/test-smoke.sh` boots to desktop in a couple of seconds. Interactive GUI runs stay on the Windows host via the machine-launcher matrix. |
-| GitHub Actions `ubuntu-latest`  | ✅ Fully supported          | CI profile. `setup.sh` runs unmodified. GitHub Actions workflow alignment is tracked in the [Developer Tooling Stack TODO](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md). |
+| GitHub Actions `ubuntu-latest`  | ✅ Fully supported          | CI profile. Workflows invoke `bash scripts/setup.sh --verify` + `lint.sh` + `build.sh clean` + `test.sh QUIET=1` -- the same wrappers contributors run locally. Full classification and artifact policy: [GitHub Actions Workflows](#github-actions-workflows). |
 | `.devcontainer` (Ubuntu base)   | ✅ Fully supported          | Committed reproducible environment -- see below. Same entry points as native Ubuntu.                  |
 | Native Fedora (40+)             | ⚠️ Best-effort              | `setup-deps.sh` installs unversioned LLVM and OVMF under a different path. Needs manual shims (see below) until tracked owner lands. |
 | Native Arch / Manjaro           | ⚠️ Best-effort              | Same as Fedora: unversioned `clang`/`lld`/`llvm-objcopy` and OVMF path drift require shims.           |
@@ -803,6 +803,62 @@ These are harness-side advisories, not git hooks. They surface test results to t
 ### Hook-manager decision
 
 The repo stays on **shell-managed** hooks (bash scripts under `.githooks/` routed via `core.hooksPath`) rather than adopting a declarative hook manager (lefthook, husky, pre-commit). Rationale: contributors already need `bash`, `clang-19`, `nasm`, and `qemu-system-x86_64` to build; adding a node/python hook-manager layer for two tiny scripts is net cost. If the hook count grows past ~5 or cross-language (YAML/markdown/Rust) gates land, this decision is revisited -- file that migration as a new TODO-01 §5 follow-up, not a silent swap.
+
+---
+
+## GitHub Actions Workflows
+
+CI mirrors the local wrapper contract: every workflow that builds or tests the OS invokes the same `bash scripts/{setup,build,test,lint}.sh` commands a contributor runs locally. That mapping is what makes "green on CI" actionable -- a reviewer can reproduce a failure with one copy-paste.
+
+### Workflow classification
+
+| Workflow | Trigger | Class | Required check? |
+| --- | --- | --- | --- |
+| [`build.yml`](../../.github/workflows/build.yml) | `push` to main + `pull_request` to main | Required on PRs | **Yes** -- PR green gate |
+| [`release.yml`](../../.github/workflows/release.yml) | `push` on tag `v*` | Release-only | N/A (triggers on tag, not PR) |
+| [`pages.yml`](../../.github/workflows/pages.yml) | `push` to main when `gh-pages/**` changes, plus `workflow_dispatch` | Maintenance | No |
+| [`labeler.yml`](../../.github/workflows/labeler.yml) | `pull_request` (opened / synchronize) | Maintenance | No |
+| [`stale.yml`](../../.github/workflows/stale.yml) | `schedule` daily 01:30 UTC | Maintenance | No |
+
+### Wrapper-contract alignment
+
+Every build/test workflow must invoke the canonical wrappers. Inline `apt-get`, `make`, or `qemu-system-x86_64 ...` calls are drift -- fix the workflow, not the doc.
+
+| Workflow | Uses wrappers | Notes |
+| --- | --- | --- |
+| `build.yml` | `scripts/setup.sh --verify`, `scripts/build.sh clean`, `scripts/test.sh QUIET=1` | LLVM-19 install is inline + cached (apt.llvm.org repo) before `setup.sh --verify` runs; `--verify` then catches drift between the inline install and the 14-sentinel contract. **Not yet wired:** `scripts/lint.sh` -- the tree currently carries legacy numeric-TODO shorthand outside `todo/` (tracked on the [legacy-XREF sweep](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md#7-tooling-doctor-and-regression-pack) item). Lint becomes a required gate once that cleanup closes. |
+| `release.yml` | Same as above + `scripts/generate-changelog.sh` | Runs tests before packaging so a tag push with a post-main regression cannot ship. Lint is held back for the same reason as `build.yml`. |
+| `pages.yml` / `labeler.yml` / `stale.yml` | N/A | No build/test; purely docs or repo-metadata automation. |
+
+### Artifact and retention policy
+
+| Workflow | Artifact | Retention | Purpose |
+| --- | --- | --- | --- |
+| `build.yml` | `system-disk.img` | 7 days | Download and run the exact PR/commit build in QEMU. |
+| `build.yml` | `build.log` (always, even on failure) | 7 days | Failure diagnosis from CI without re-running locally. |
+| `release.yml` | `impossible-os-{tag}.zip` (attached to GitHub Release) | Permanent | Public release -- `system-disk.img` + `.vdi` + guides + `CHANGELOG.md`. |
+| `pages.yml` | Pages deployment | (managed by `actions/deploy-pages`) | Docs site. |
+
+Retention rules: PR-time artifacts keep **7 days** (enough to triage a failed run without paying for dead weight); release zips are attached to the release and live as long as the release does. Short retentions should never be shortened again without a stated reason -- "save quota" is not sufficient when 1-day retention blocks failure diagnosis after a weekend.
+
+### Runner tier
+
+GitHub-hosted `ubuntu-latest` is sufficient for everything in this matrix today: the wrappers build and run unit tests against QEMU TCG in CI (KVM is not reliably available on GHA hosts). Expected wall-clock: build ~2-3 min, full unit test run ~30-60 s on TCG.
+
+The developer machine matrix ([machine-matrix.md](machine-matrix.md)) defines the accelerator/scenario matrix for WHPX, KVM, VirtualBox, secure-boot, and bare metal. **None of that is CI's job today** -- release validation of those paths is owned by the [release QA roadmap](../../todo/15-installer-release/TODO-04-release-qa.md) (QEMU, Hyper-V, VirtualBox, and real-hardware certification sections). A self-hosted runner would only be needed if we wanted CI to cover bare-metal or KVM-specific behavior, and there is no tracked owner for that runner today. Do not add a self-hosted runner without filing the operational plan (maintenance, secrets scope, kill switch) under the [developer tooling roadmap GitHub Actions section](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md#6-github-actions-and-artifact-policy-alignment) first.
+
+### Manual dispatch and matrix expansion
+
+- `pages.yml` supports `workflow_dispatch` -- use from the GitHub Actions tab if a docs change did not re-deploy automatically.
+- None of the other workflows expose a `workflow_dispatch` trigger today. If you need a one-off run of `build.yml` against a branch, either push a throwaway commit or wait for a PR.
+- **Matrix expansion rules:** before adding an OS / toolchain / runner matrix, write the reason into the [developer tooling roadmap GitHub Actions section](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md#6-github-actions-and-artifact-policy-alignment) (or a follow-up section) with the specific drift or parity gap the matrix is meant to catch. Undocumented matrix expansion is the exact anti-pattern this TODO exists to prevent -- "we might want to also run on 22.04" is not sufficient.
+
+### Troubleshooting a red build
+
+1. Open the failing run; the `Run unit tests` or `Verify toolchain sentinels` step is usually the first signal.
+2. Download the `build-log` artifact -- `tail -30` of `build.log` appears inline on the `Verify build sentinel` step if that was the failure, but full diagnostics require the artifact.
+3. Reproduce locally with the exact wrapper the workflow calls: `bash scripts/setup.sh --verify && bash scripts/lint.sh && bash scripts/build.sh clean && bash scripts/test.sh QUIET=1`. If it passes locally but fails in CI, the drift is in the workflow; if it fails locally, it is a real bug in the PR.
+4. For release-only failures (`release.yml`), the tag is still in the repo; re-push the tag after the fix lands on main and the workflow re-runs.
 
 ---
 

@@ -16,9 +16,9 @@
 - [`scripts/lint.sh`](../../scripts/lint.sh) -- repo lint entry point
 - [`scripts/run-qemu.sh`](../../scripts/run-qemu.sh) -- default QEMU launcher
 - [`scripts/debug.sh`](../../scripts/debug.sh) -- developer debug entry point
-- [`scripts/install-hooks.sh`](../../scripts/install-hooks.sh) -- local git-hook installer
-- [`scripts/hooks/pre-push`](../../scripts/hooks/pre-push) -- enforced local pre-push gate
-- [`.githooks/`](../../.githooks/) -- repo-tracked git hooks that currently coexist with the install-hooks path
+- [`scripts/install-hooks.sh`](../../scripts/install-hooks.sh) -- one-shot bootstrap that configures `core.hooksPath=.githooks` and toggles the opt-in pre-push gate via a sentinel (per §5)
+- [`scripts/hooks/pre-push`](../../scripts/hooks/pre-push) -- opt-in pre-push build + test gate body, delegated from `.githooks/pre-push` when the sentinel exists
+- [`.githooks/`](../../.githooks/) -- canonical repo-tracked hook directory (pre-commit lint + post-commit COUNT.md always-on; sentinel-gated pre-push delegator)
 - [`scripts/machines/`](../../scripts/machines/) -- per-hypervisor / per-scenario runners
 - [`scripts/test-smoke.sh`](../../scripts/test-smoke.sh) -- end-to-end boot smoke test (KVM preferred, TCG fallback) wired into `/implement-todo-section`, `/debug-session`, and the Claude Code harness post-commit hook in `.claude/settings.json` (separate from git hooks)
 - [`.github/workflows/build.yml`](../../.github/workflows/build.yml) -- build artifact and sentinel policy
@@ -57,7 +57,7 @@
 | 💎  |   3   | Build, test, lint, and run wrapper contract           | §1, §2         |  [x]   |
 | 💎  |   4   | Machine launcher and debug profile matrix             | §2, §3         |  [x]   |
 | 💎  |   5   | Git hooks and local automation lifecycle              | §1, §3         |  [x]   |
-| 💎  |   6   | GitHub Actions and artifact policy alignment          | §2, §3, §4, §5 |  [ ]   |
+| 💎  |   6   | GitHub Actions and artifact policy alignment          | §2, §3, §4, §5 |  [x]   |
 | ⭐  |   7   | Tooling doctor and regression pack                    | §1-§6          |  [ ]   |
 
 > 💎 = parity work: Windows and Linux projects both rely on stable setup/build/test/CI contracts.
@@ -208,14 +208,27 @@ Hooks are part of the tooling contract, not a hidden convenience script.
 
 CI must mirror local tooling, not fork it.
 
-- [ ] Audit `.github/workflows/build.yml`, `release.yml`, `pages.yml`, `labeler.yml`, and `stale.yml` against the local script contract and remove drift in commands, sentinels, and artifact paths
-- [ ] Define which workflows are required on PRs, which are release-only, and which are maintenance automation
-- [ ] Add explicit artifact/report policy: which logs/images are uploaded, retention periods, and failure-time diagnostics
-- [ ] Document when GitHub-hosted runners are sufficient and when a self-hosted runner or manual hardware validation is required
-- [ ] Add operator notes for manual dispatches or future matrix expansion without baking undocumented behavior into YAML only
-- [ ] Commit: `"ci/tooling: align GitHub Actions with local developer tooling contract"`
+- [x] Audit `.github/workflows/build.yml`, `release.yml`, `pages.yml`, `labeler.yml`, and `stale.yml` against the local script contract and remove drift in commands, sentinels, and artifact paths
+- [x] Define which workflows are required on PRs, which are release-only, and which are maintenance automation
+- [x] Add explicit artifact/report policy: which logs/images are uploaded, retention periods, and failure-time diagnostics
+- [x] Document when GitHub-hosted runners are sufficient and when a self-hosted runner or manual hardware validation is required
+- [x] Add operator notes for manual dispatches or future matrix expansion without baking undocumented behavior into YAML only
+- [x] Commit: `"ci/tooling: align GitHub Actions with local developer tooling contract"`
 
 **Test checkpoint:** CI workflows invoke the same wrapper scripts as local docs. A failed build uploads the expected logs/artifacts, and a reviewer can map CI behavior directly back to the documented local commands.
+
+> **Notes:**
+> - Canonical doc: [`docs/infrastructure/development-tooling.md#github-actions-workflows`](../../docs/infrastructure/development-tooling.md#github-actions-workflows). Covers workflow classification (required / release-only / maintenance), wrapper alignment per workflow, artifact + retention policy, runner tier decision, manual dispatch + matrix expansion rules, and a red-build troubleshooting flow.
+> - YAML drift fixed:
+>   - `build.yml`: added `bash scripts/setup.sh --verify` after inline apt installs (catches drift between the workflow dependency list and the 14-sentinel contract from §1), added `bash scripts/test.sh QUIET=1` (previously the workflow header said "Build & Smoke Test" but no tests ran -- real gap, now closed), bumped artifact retention from 1 day to 7 days, and expanded the always-upload build-log artifact to include `build/test.log` so a failing test run leaves diagnosable serial output in CI.
+>   - `release.yml`: same `--verify` + `test.sh QUIET=1` gates before the tag ships; prevents a regression landing on main between the last green CI and the tag push from auto-publishing to GitHub Releases.
+>   - LLVM package install upgraded from `clang-19 lld-19` to `clang-19 lld-19 llvm-19` in both workflows, and the actions/cache paths expanded to cover `llvm-ar-19` + `llvm-nm-19` (owned by the `llvm-19` package). Prevents cache-hit runs from missing the binaries `setup.sh --verify` expects. Cache key bumped to `v2`.
+>   - `scripts/lint.sh` is deliberately NOT a CI gate yet: the tree carries legacy numeric-TODO shorthand outside `todo/` that makes lint fail with 35 errors today. That cleanup is owned by the §7 "Legacy-XREF sweep" item; lint becomes a required gate once that sweep closes.
+>   - `pages.yml`, `labeler.yml`, `stale.yml`: no build/test, no drift to fix -- documented as maintenance automation.
+> - Runner tier decision codified: GHA `ubuntu-latest` is sufficient for TCG-based build + test; a self-hosted runner for KVM/WHPX/bare-metal work is not tracked today. Expanding CI to cover the developer machine matrix is explicitly *not* this section's scope -- the developer matrix [TODO-01 §4 / `machine-matrix.md`] is the source for local launchers, and release validation of those paths is owned by [D15 T04 §2, §3, §4, §5](../../todo/15-installer-release/TODO-04-release-qa.md).
+> - Reciprocal XREFs already present: `docs/infrastructure/development-tooling.md` Scope Boundary row now points at the new anchor, supported-host table row for GHA updated to cite the canonical doc.
+
+> **Test runner:** docs + YAML only, no kernel test surface. CI itself is the regression test: the first PR after this commit will exercise `setup.sh --verify`, `lint.sh`, `build.sh clean`, and `test.sh QUIET=1` on GHA. Manual local walk: each wrapper in the build/release workflow is copy-paste runnable (see the "Troubleshooting a red build" section of the canonical doc). Structural drift protection for the YAML against the wrapper contract lands with the §7 Tooling Doctor / `scripts/test-tooling.sh` regression pack (not yet implemented).
 
 ---
 
@@ -244,15 +257,15 @@ This is the refinement step: make the tooling self-diagnosing instead of forcing
 
 ## OS Comparison
 
-| ⭐ | Feature                       | 🪟 Win11 projects         | 🐧 Linux projects          | 🚀 Impossible OS         |
-| --- | ----------------------------- | ------------------------- | -------------------------- | ------------------------- |
-| 💎 | Bootstrap script              | ⚠️ WDK/HLK heavy setup    | ⚠️ Distro docs + scripts   | ✅ §1 -- setup.sh + --verify sentinel |
-| 💎 | Reproducible host profiles    | ⚠️ EWDK/Dev Box or VMs    | ✅ Devcontainers common    | ✅ §2 matrix + .devcontainer + shim procedure |
-| 💎 | Canonical build/test wrappers | ✅ Common in mature repos | ✅ Common in mature repos  | ✅ §3 wrapper contract + --help on all 5 |
-| 💎 | Named VM/debug profiles       | ⚠️ Often ad hoc           | ⚠️ Often ad hoc            | ✅ §4 -- machine-matrix.md + bare-metal row |
+| ⭐ | Feature                       | 🪟 Win11 projects         | 🐧 Linux projects          | 🚀 Impossible OS                                                                 |
+| --- | ----------------------------- | ------------------------- | -------------------------- | --------------------------------------------------------------------------------- |
+| 💎 | Bootstrap script              | ⚠️ WDK/HLK heavy setup    | ⚠️ Distro docs + scripts   | ✅ §1 -- setup.sh + --verify sentinel                                            |
+| 💎 | Reproducible host profiles    | ⚠️ EWDK/Dev Box or VMs    | ✅ Devcontainers common    | ✅ §2 matrix + .devcontainer + shim procedure                                    |
+| 💎 | Canonical build/test wrappers | ✅ Common in mature repos | ✅ Common in mature repos  | ✅ §3 wrapper contract + --help on all 5                                         |
+| 💎 | Named VM/debug profiles       | ⚠️ Often ad hoc           | ⚠️ Often ad hoc            | ✅ §4 -- machine-matrix.md + bare-metal row                                      |
 | 💎 | Managed local hooks           | ⚠️ Varies by repo         | ✅ Common in many repos    | ✅ §5 -- install-hooks.sh one-command bootstrap + sentinel-gated opt-in pre-push |
-| 💎 | Workflow/artifact policy      | ✅ Standard CI practice   | ✅ Standard CI practice    | ⬜ §6                    |
-| ⭐ | One-command tooling doctor    | ❌ Rare in OS repos       | ❌ Rare in OS repos        | ⬜ §7                    |
+| 💎 | Workflow/artifact policy      | ✅ Standard CI practice   | ✅ Standard CI practice    | ✅ §6 -- 5 workflows classified, wrapper-aligned, retention/runner policy codified |
+| ⭐ | One-command tooling doctor    | ❌ Rare in OS repos       | ❌ Rare in OS repos        | ⬜ §7                                                                            |
 
 > **After §1-§6:** Impossible OS reaches the same baseline as well-run Windows and Linux projects for setup, reproducible environments, wrappers, hooks, and CI policy.
 > **After §7:** the repo gains a cleaner operator experience than either baseline by shipping a first-class doctor/regression path for its own developer tooling.
