@@ -113,7 +113,7 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
     - Rebuild after fixes.
     - Re-dispatch Codex if fixes are STRUCTURAL. Surgical fixes: self-verify and proceed.
     - Unresolved Critical/High after round 3: do not mark section complete.
-16. **2nd final build** -- `bash scripts/build.sh`, confirm `=== BUILD OK ===`. This catches anything broken by the fix loop or self-review changes.
+16. **2nd final build** -- `bash scripts/build.sh`, confirm `=== BUILD OK ===`. This catches anything broken by the fix loop or self-review changes. **If the section touched boot-path code** (`src/boot/`, `src/kernel/main/boot_*`, `src/kernel/idt.c`, `src/kernel/gdt.c`, `src/kernel/msr.c`, `src/kernel/smp/`, `src/kernel/mm/pmm.c|vmm.c`, `src/kernel/drivers/lapic.c|ioapic.c|acpi.c`, or any Phase 0/1 init), also run `bash scripts/test-smoke.sh` and confirm `SMOKE TEST PASSED`. The smoke test boots the full OS in QEMU (KVM if `/dev/kvm` is writable, TCG otherwise) and checks for `Boot complete in` + `C:\>` on serial -- catches boot regressions that unit tests cannot (phase ordering, #GP from wrong IDT state, init-order crashes). Non-boot changes: skip the smoke test, the post-commit unit-test hook is enough.
 17. **Validate section** (MANDATORY) -- invoke `validate-todo-section` skill. Evidence-based checklist classification. Catches stale/optimistic status claims. Re-checks cross-TODO synchronization.
 18. **Tie up loose ends** (MANDATORY) -- scan the ENTIRE TODO file and any XREF'd TODO files for:
     - **N.M structure drift:** if any `## N.` uses forbidden `### N.M` or `**N.M ...**`, merge to one checklist per section per `validate-todo-file`.

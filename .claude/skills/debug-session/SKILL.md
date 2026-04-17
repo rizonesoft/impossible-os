@@ -39,6 +39,13 @@ If the crash includes a RIP:
 llvm-addr2line-19 -e build/kernel.exe -f <RIP>
 ```
 
+If the bug is a boot-path symptom and there's no fresh log, **reproduce it with the smoke test** before reading code:
+```bash
+bash scripts/test-smoke.sh                        # KVM if /dev/kvm writable, TCG otherwise
+cat build/smoke-test.stripped.log | less          # ANSI-stripped, easiest to grep
+```
+Smoke test boots the full OS and fails fast (30s timeout) when `Boot complete in` or `C:\>` never appears on serial. Use it as the evidence source whenever the bug is phase-0/1 init, crash before desktop, or "boots fine on WHPX but not on X" where X matches the smoke test target.
+
 ### Step 2: Build a Symptom Model
 
 Before reading any source code, write down (internally):
@@ -147,7 +154,8 @@ Must show `=== BUILD OK ===`.
 **Do not stop at "the fix looks right."**
 
 - If a unit test was failing: run the relevant test category and confirm it passes.
-- If the symptom was platform-specific: note which platforms can be verified in WSL vs. native Windows vs. bare metal.
+- If the bug was a boot-path symptom: re-run `bash scripts/test-smoke.sh` and confirm `SMOKE TEST PASSED` + `Boot complete in`. The smoke test is the single best KVM/TCG verification for init-order, IDT/GDT, phase sequencing, and "boots to `C:\>`" class bugs -- faster and more deterministic than full unit runs.
+- If the symptom was platform-specific: note which platforms can be verified in WSL vs. native Windows vs. bare metal. KVM catches real-CPU behavior (traps, MSR access) that WHPX hides; TCG catches device-emulation issues (NVMe, USB). Pick the platform that would have caught the original symptom.
 - If the fix is a NULL guard or bounds check: verify the guard is actually exercised by an existing or new test.
 - If it was a regression: identify the commit that introduced it and confirm the fix is minimal.
 
@@ -185,6 +193,8 @@ Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>
 | Situation | Action |
 |---|---|
 | Have RIP from crash | `llvm-addr2line-19 -e build/kernel.exe -f <RIP>` |
+| Need boot-path repro (no fresh log) | `bash scripts/test-smoke.sh`; inspect `build/smoke-test.stripped.log` |
+| "Works on WHPX, crashes on KVM" | Trap behavior divergence -- KVM raises real #GP on unvirtualized MSRs, WHPX silently returns 0 (see CLAUDE.md msr_try_read notes) |
 | "Works on QEMU, crashes on bare metal" | Check MMIO caching, per-CPU MSRs, CPUID guards, SMEP/SMAP |
 | "Crashes intermittently" | SMP race -- check spinlocks, atomics, per-CPU state |
 | "Only fails in test mode" | Check for test code calling live boot infra (`boot_progress`, `vpd_*`, `_init`) |

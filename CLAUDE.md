@@ -15,7 +15,7 @@ Host bootstrap (deps, supported distros, required-tool sentinels, idempotence): 
 
 ## Testing -- Category-Based Test Infrastructure
 
-> **TCG works in WSL2** (~10s for build + 328 tests). A pre-push hook runs the full suite before every push. SMEP is disabled globally (boot PML4 has User bit on all pages). WHPX, VirtualBox, and bare metal remain the primary validation platforms.
+> **TCG works in WSL2** (~10s for build + 1493 tests). A post-commit hook runs the full suite after every kernel/source commit. SMEP is disabled globally (boot PML4 has User bit on all pages). WHPX, VirtualBox, and bare metal remain the primary validation platforms.
 
 ```bash
 bash scripts/test.sh              # all suites (WSL2 TCG, native Windows, bare metal)
@@ -37,6 +37,35 @@ make test-exec                    # Binary system suites (exec, EIF, modules)
 Categories: `mm`, `fs`, `sched`, `ob`, `security`, `ipc`, `boot`, `abi`, `storage`, `exec`. Configured via `test_suite=` and `test_quiet=` in `boot.conf`. Windows: `scripts/debug/run-mm-tests.bat` etc.
 
 Register new tests with `test_suite_register_cat("name", fn, TEST_CAT_XX)`. Use `TEST_ASSERT_EQ(a, b, msg)` for value comparisons and `TEST_SKIP(msg)` for hardware-dependent tests.
+
+## Smoke Test -- End-to-End Boot Validation
+
+```bash
+bash scripts/test-smoke.sh        # builds, boots in QEMU, checks for Boot complete + C:\>
+```
+
+The smoke test complements unit tests: unit tests cover individual behaviors against in-memory fixtures, the smoke test proves **the image actually boots to userspace**. It auto-selects KVM if `/dev/kvm` is writable and falls back to TCG otherwise. 30-second timeout, fail-fast on missing markers.
+
+**When to run:**
+
+- **After boot-path changes** -- any edit to `src/boot/`, `src/kernel/main/boot_*`, `src/kernel/idt.c|gdt.c|msr.c`, `src/kernel/smp/`, `src/kernel/mm/pmm.c|vmm.c|heap.c`, `src/kernel/drivers/lapic.c|ioapic.c|acpi.c|timer.c`, or any Phase 0/1 init code. Built into `/implement-todo-section` step 16 for exactly these paths.
+- **While debugging** a boot crash or init-order bug -- `/debug-session` uses it as the primary reproduction + verification tool. Inspect `build/smoke-test.stripped.log` (ANSI stripped) to grep klog/POST16 output.
+- **Before handing the user a build to test on native Windows / bare metal** -- a green smoke test on KVM catches ~90% of the phase-0/1 regressions that used to be caught only by the user's boot.
+
+**When NOT to run:**
+
+- Every edit or every commit -- that's what the post-commit unit-test hook is for. Smoke test is advisory, not a gate.
+- Non-kernel changes (user/, src/apps/, src/shell/ alone): unit tests already cover the testable surface.
+
+**KVM vs TCG roles** (both work in WSL2 as of 2026-04-17):
+
+| Platform | Speed | Catches | Misses |
+|---|---|---|---|
+| **KVM** (default when available) | ~2s boot | real-CPU MSR traps, SMP timing, cache semantics | emulated-device bugs (NVMe, USB) |
+| **TCG** (fallback) | ~10s boot | device emulation bugs, portable x86 behavior | per-CPU state, real MSR behavior |
+| **WHPX / VBox / bare metal** (user runs) | varies | the rest | (authoritative) |
+
+Neither WSL runner replaces native Windows or bare metal for shipping. They filter regressions before the user has to boot the image.
 
 ## Test Code -- No Live Boot Infrastructure Calls
 
