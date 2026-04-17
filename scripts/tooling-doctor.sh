@@ -210,8 +210,13 @@ check_hooks() {
             "Set to .githooks" \
             "-"
     elif [ "$configured" = "<unset>" ] || [ -z "$configured" ]; then
-        record hooks fail "core.hooksPath" \
-            "Unset; pre-commit + post-commit hooks will NOT fire" \
+        # Unset is a workstation concern only: CI / fresh clones run
+        # wrappers directly and do not need git hooks. Warn (not fail) so
+        # the doctor still exits 0 on CI while telling a developer the
+        # exact fix. Hook FILE presence remains a hard fail below -- that
+        # actually matters everywhere because the files are in .githooks/.
+        record hooks warn "core.hooksPath" \
+            "Unset; pre-commit + post-commit hooks will NOT fire (OK on CI and fresh clones; developers should configure)" \
             "Run: bash scripts/install-hooks.sh"
     else
         record hooks warn "core.hooksPath" \
