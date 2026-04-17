@@ -23,12 +23,21 @@ OVMF_CODE="/usr/share/OVMF/OVMF_CODE_4M.fd"
 OVMF_VARS_SRC="/usr/share/OVMF/OVMF_VARS_4M.fd"
 OVMF_VARS_CP="$BUILD/OVMF_VARS_4M.fd"
 SERIAL_LOG="$BUILD/smoke-test.log"
-TIMEOUT_SEC=30
+STRIPPED_LOG="$BUILD/smoke-test.stripped.log"
+TIMEOUT_SEC="${TIMEOUT_SEC:-30}"
 
 # Legacy smoke test: superseded by `bash scripts/test.sh`. Retained as a light
 # boot-only sanity check (no unit-test suite). Boots the canonical GPT disk
 # image via AHCI, matching Makefile's run: target. Do not re-introduce the
 # grub-mkrescue ISO path -- that is retired.
+
+# Strip ANSI color and control sequences from the serial log into a derived
+# file before pattern matching. The kernel emits `\x1b[31m[FAIL]...` etc., and
+# OVMF emits screen-clear sequences that collide with any bracketed substring.
+# Matching the stripped copy keeps patterns robust against future color edits.
+strip_ansi() {
+    sed -E 's/\x1b\[[0-9;]*[A-Za-z]//g; s/\x1b[=>]//g' "$SERIAL_LOG" > "$STRIPPED_LOG" 2>/dev/null || :
+}
 
 # ---- Colors ----
 RED='\033[0;31m'
@@ -39,8 +48,13 @@ DIM='\033[0;90m'
 NC='\033[0m'
 
 # ---- Pass/Fail criteria ----
-PASS_PATTERNS=(
+# PASS requires BOTH signals: the kernel's "Boot complete in" sentinel AND the
+# shell's `C:\>` prompt. Either alone is insufficient (a kernel can print the
+# sentinel and then panic in userland). All matches run against STRIPPED_LOG,
+# so bracketed patterns are literal and ANSI colors never confuse grep.
+PASS_PATTERNS_ALL=(
     "Boot complete in"
+    'C:\>'
 )
 FAIL_PATTERNS=(
     "KERNEL PANIC"
@@ -48,14 +62,15 @@ FAIL_PATTERNS=(
     "triple fault"
     "General Protection Fault"
     "Page Fault"
+    "Double Fault"
     "[CRIT] ExitBootServices failed"
     "[FAIL] Kernel ELF corrupt"
     "[BOOT HALT]"
 )
 
-# ---- Bootloader presence checks (verified after boot) ----
-# These patterns MUST appear in a healthy boot serial log. Compared as fixed
-# strings (grep -F), so bracket characters are treated literally.
+# ---- Bootloader + kernel presence checks (verified after boot) ----
+# These MUST appear in a healthy boot. Matched as fixed strings against the
+# ANSI-stripped log.
 BOOT_REQUIRED_PATTERNS=(
     "[BOOT] ELF segment"
     "[BOOT] Kernel found at"
@@ -63,6 +78,8 @@ BOOT_REQUIRED_PATTERNS=(
     "[BOOT] Watchdog: disarmed"
     "[BOOT] ExitBootServices OK"
     "[PHASE0] BOOT_INFO"
+    "Boot complete in"
+    'C:\>'
 )
 # These patterns must NOT appear on a clean firmware boot.
 BOOT_ABSENT_PATTERNS=(
@@ -153,6 +170,7 @@ FAIL_REASON=""
 
 for i in $(seq 1 "$TIMEOUT_SEC"); do
     sleep 1
+    strip_ansi
 
     # Check if QEMU crashed
     if ! kill -0 "$QEMU_PID" 2>/dev/null; then
@@ -161,49 +179,57 @@ for i in $(seq 1 "$TIMEOUT_SEC"); do
         break
     fi
 
-    # Check for fail patterns
+    # Check for fail patterns (match against stripped log)
     for pattern in "${FAIL_PATTERNS[@]}"; do
-        if grep -qF -- "$pattern" "$SERIAL_LOG" 2>/dev/null; then
+        if grep -qF -- "$pattern" "$STRIPPED_LOG" 2>/dev/null; then
             BOOT_FAILED=true
             FAIL_REASON="Detected: $pattern"
             break 2
         fi
     done
 
-    # Check for pass patterns
-    for pattern in "${PASS_PATTERNS[@]}"; do
-        if grep -qF -- "$pattern" "$SERIAL_LOG" 2>/dev/null; then
-            BOOT_PASSED=true
-            break 2
+    # PASS requires ALL patterns in PASS_PATTERNS_ALL (AND-set, not OR)
+    all_found=true
+    for pattern in "${PASS_PATTERNS_ALL[@]}"; do
+        if ! grep -qF -- "$pattern" "$STRIPPED_LOG" 2>/dev/null; then
+            all_found=false
+            break
         fi
     done
+    if [ "$all_found" = true ]; then
+        BOOT_PASSED=true
+        break
+    fi
 
     # Progress indicator
     printf "\r  ${DIM}Waiting... %d/${TIMEOUT_SEC}s${NC}  " "$i"
 done
 printf "\r"
 
-# Kill QEMU
+# Kill QEMU (trap also does this; harmless repeat)
 kill "$QEMU_PID" 2>/dev/null || true
 wait "$QEMU_PID" 2>/dev/null || true
+
+# Final strip in case the loop exited before the last pass
+strip_ansi
 
 # ---- Step 3: Results ----
 echo -e "${CYAN}[3/3]${NC} Analyzing results..."
 echo ""
 
 LOG_LINES=$(wc -l < "$SERIAL_LOG" 2>/dev/null || echo 0)
-echo -e "  ${DIM}Serial log: $SERIAL_LOG ($LOG_LINES lines)${NC}"
+echo -e "  ${DIM}Serial log: $SERIAL_LOG ($LOG_LINES lines; ANSI-stripped: $STRIPPED_LOG)${NC}"
 
-# ---- Bootloader pattern checks (TODO-02 §1-§18) ----
+# ---- Bootloader + kernel presence checks ----
 PATTERN_FAIL=false
 for pattern in "${BOOT_REQUIRED_PATTERNS[@]}"; do
-    if ! grep -qF -- "$pattern" "$SERIAL_LOG" 2>/dev/null; then
+    if ! grep -qF -- "$pattern" "$STRIPPED_LOG" 2>/dev/null; then
         echo -e "  ${RED}MISSING:${NC} $pattern"
         PATTERN_FAIL=true
     fi
 done
 for pattern in "${BOOT_ABSENT_PATTERNS[@]}"; do
-    if grep -qF -- "$pattern" "$SERIAL_LOG" 2>/dev/null; then
+    if grep -qF -- "$pattern" "$STRIPPED_LOG" 2>/dev/null; then
         echo -e "  ${RED}UNEXPECTED:${NC} $pattern"
         PATTERN_FAIL=true
     fi
@@ -221,7 +247,7 @@ if [ "$BOOT_FAILED" = true ]; then
     echo ""
     # Show relevant log lines
     echo -e "${DIM}Last 10 lines of serial output:${NC}"
-    tail -10 "$SERIAL_LOG" 2>/dev/null | sed 's/^/  /'
+    tail -10 "$STRIPPED_LOG" 2>/dev/null | sed 's/^/  /'
     echo ""
     exit 1
 elif [ "$BOOT_PASSED" = true ]; then
@@ -244,7 +270,7 @@ else
     echo -e "${RED}══════════════════════════════════════════════════${NC}"
     echo ""
     echo -e "${DIM}Last 10 lines of serial output:${NC}"
-    tail -10 "$SERIAL_LOG" 2>/dev/null | sed 's/^/  /'
+    tail -10 "$STRIPPED_LOG" 2>/dev/null | sed 's/^/  /'
     echo ""
     exit 1
 fi
