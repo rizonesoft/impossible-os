@@ -59,9 +59,9 @@
 | 💎  |   5   | Git hooks and local automation lifecycle              | §1, §3         |  [x]   |
 | 💎  |   6   | GitHub Actions and artifact policy alignment          | §2, §3, §4, §5 |  [x]   |
 | ⭐  |   7   | Tooling doctor and regression pack                    | §1-§6          |  [x]   |
-| 💎  |  13   | Unify specialist-launcher `-ExtraArgs` surface        | §4             |  [ ]   |
-| 💎  |  14   | Legacy-XREF sweep (lint Check 5 -> 0 errors; CI gate) | §3, §6         |  [ ]   |
-| 💎  |  15   | Smoke-test POST16 assertions (boot-phase manifest)    | §3             |  [ ]   |
+| 💎  |   8   | Unify specialist-launcher `-ExtraArgs` surface        | §4             |  [ ]   |
+| 💎  |   9   | Legacy-XREF sweep (lint Check 5 -> 0 errors; CI gate) | §3, §6         |  [ ]   |
+| 💎  |  10   | Smoke-test POST16 assertions (boot-phase manifest)    | §3             |  [ ]   |
 
 > 💎 = parity work: Windows and Linux projects both rely on stable setup/build/test/CI contracts.
 > ⭐ = exclusive work: Impossible OS can provide a single operator-facing developer workflow with self-diagnosis instead of scattered scripts and tribal knowledge.
@@ -266,12 +266,12 @@ This is the refinement step: make the tooling self-diagnosing instead of forcing
 
 > **Test runner:** shell + YAML + docs, no kernel test surface. Validation is exercised by the regression pack itself: `bash scripts/test-tooling.sh` passes 35/35 on a healthy host, and the pack runs in CI every PR. Build clean (`=== BUILD OK ===`) proves no unintended side effects on the kernel build. `bash scripts/tooling-doctor.sh --quiet` reports `HEALTHY (31 checks, 0 warning(s))` on this host.
 
-> **Verified:** 2026-04-17 -- 8/8 checklist items [x] with diff in commit `cdf5fbc9`: [`scripts/tooling-doctor.sh`](../../scripts/tooling-doctor.sh) ships 31 assertions across 6 groups (toolchain / wrappers / hooks / workflows / runtime / docs) with 3 modes (prose / `--json` via NUL-framed tempfile / `--quiet`) and actionable `fix:` remediation per non-pass row. [`scripts/test-tooling.sh`](../../scripts/test-tooling.sh) ships 35 assertions covering the wrapper `--help` contract, doctor + setup invariants, hook lifecycle round-trip in a per-run `mktemp`'d repo, workflow YAML parse, `build.yml` + `release.yml` wrapper alignment, `.githooks/` executable bits, and `CLAUDE.md` / `README.md` / `development-tooling.md` doc-mention contract. Wired into CI via a new `Run tooling regression pack` step in [`.github/workflows/build.yml`](../../.github/workflows/build.yml), placed between `Verify toolchain sentinels` and `Build OS (clean)`. PyYAML dependency declared in both workflows' apt installs and in `scripts/setup-deps.sh` (per-distro probe). [`docs/infrastructure/development-tooling.md`](../../docs/infrastructure/development-tooling.md#tooling-doctor-and-regression-pack) new canonical section + [`README.md`](../../README.md) new "Tooling Doctor" subsection. Implementation Order row 7 `[x]`; §7 items 8/9/10 moved cleanly to §13/§14/§15 with full scope inherited (including `Commit:` + `Test checkpoint:`). Build clean. On this host: `tooling-doctor --quiet` -> `HEALTHY (31 checks, 0 warning(s))`; simulated CI state (unset `core.hooksPath`) -> exits 0 with 1 warning as expected.
+> **Verified:** 2026-04-17 -- 8/8 checklist items [x] with diff in commit `cdf5fbc9`: [`scripts/tooling-doctor.sh`](../../scripts/tooling-doctor.sh) ships 31 assertions across 6 groups (toolchain / wrappers / hooks / workflows / runtime / docs) with 3 modes (prose / `--json` via NUL-framed tempfile / `--quiet`) and actionable `fix:` remediation per non-pass row. [`scripts/test-tooling.sh`](../../scripts/test-tooling.sh) ships 35 assertions covering the wrapper `--help` contract, doctor + setup invariants, hook lifecycle round-trip in a per-run `mktemp`'d repo, workflow YAML parse, `build.yml` + `release.yml` wrapper alignment, `.githooks/` executable bits, and `CLAUDE.md` / `README.md` / `development-tooling.md` doc-mention contract. Wired into CI via a new `Run tooling regression pack` step in [`.github/workflows/build.yml`](../../.github/workflows/build.yml), placed between `Verify toolchain sentinels` and `Build OS (clean)`. PyYAML dependency declared in both workflows' apt installs and in `scripts/setup-deps.sh` (per-distro probe). [`docs/infrastructure/development-tooling.md`](../../docs/infrastructure/development-tooling.md#tooling-doctor-and-regression-pack) new canonical section + [`README.md`](../../README.md) new "Tooling Doctor" subsection. Implementation Order row 7 `[x]`; §7's original items 8/9/10 moved cleanly into new §8/§9/§10 sections with full scope inherited (including `Commit:` + `Test checkpoint:`). Build clean. On this host: `tooling-doctor --quiet` -> `HEALTHY (31 checks, 0 warning(s))`; simulated CI state (unset `core.hooksPath`) -> exits 0 with 1 warning as expected.
 > **Quality reviewed:** 2026-04-17 -- two Codex dispatches (adversarial at step 13 + consistency/integration at step 20). Step 13 caught 3 findings, all fixed before commit: hook lifecycle subshell silent-skip + potential real-repo mutation on `mktemp` failure (hardened: mktemp rc checked, tempdir prefix validated against `$TMPDIR_BASE/impossible-tooling-*` before setting the `rm -rf` trap, subshell under `set -e`, rc surfaced as a test failure, results file lives inside the tempdir); undeclared PyYAML dependency (added `python3-yaml` to both workflow apt installs + `scripts/setup-deps.sh` post-loop import probe with per-distro install); pipe-delimited record accumulator corrupted `--json` output for fields containing `|` (rewrote to parallel bash arrays + NUL-framed tempfile handoff to `python3`). Step 20 caught 1 more finding, fixed this review: the doctor's `core.hooksPath unset` rule was a hard failure, but a fresh `actions/checkout` worktree never has it set -- CI would red-light every PR for a workstation-only concern. Downgraded to warn with an updated detail line that clarifies "OK on CI and fresh clones". Verified by simulating the CI state (`git config --unset core.hooksPath`) and re-running `tooling-doctor --quiet`: exit 0, 1 warning. Test-tooling still passes 35/35 on a properly-configured workstation. No domain code-quality skill applies (shell + YAML + docs; no src/kernel, src/boot, src/desktop, or user/ touched). Perf/dead-code N/A for this scope.
 
 ---
 
-## 13. Unify Specialist-Launcher Argument Surface
+## 8. Unify Specialist-Launcher Argument Surface
 
 Scenario launchers under `scripts/machines/storage/` and `scripts/machines/fs/` do not accept `-ExtraArgs` today, so a developer cannot append `-s -S` (gdb stub) or custom `-drive` / `-netdev` arguments without editing the script. This parks a concrete drift item that the machine matrix surfaces in its "Known Drift" block.
 
@@ -284,7 +284,7 @@ Scenario launchers under `scripts/machines/storage/` and `scripts/machines/fs/` 
 
 ---
 
-## 14. Legacy-XREF Sweep
+## 9. Legacy-XREF Sweep
 
 Rewrite the ~60 source / test / header / script files on the `scripts/lint.sh` `TODO_XREF_LEGACY_FILES` allowlist so they stop using numeric TODO shorthand (`TODO-NN §M`, `DNN TNN §N`, `TNN §N`) outside `todo/**`. Lint Check 5 (renumbered from Check 7 on 2026-04-17) already errors on new out-of-`todo/` drift, so this is a one-shot catch-up after which lint can become a CI gate.
 
@@ -298,7 +298,7 @@ Rewrite the ~60 source / test / header / script files on the `scripts/lint.sh` `
 
 ---
 
-## 15. Smoke-Test POST16 Assertions
+## 10. Smoke-Test POST16 Assertions
 
 Migrate `scripts/test-smoke.sh`'s boot-pattern match list from raw log-message strings to POST16 code assertions. Log message strings drift silently every time a contributor edits a `printf` / `serial_printf` / `klog` call, breaking the smoke test long after the fact; POST16 codes are `#define` constants in [`include/kernel/boot_init.h`](../../include/kernel/boot_init.h) and [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c) emitted as `POST 0xNNNN` on serial, and they only change when the boot-phase contract changes.
 

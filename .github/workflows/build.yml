@@ -95,7 +95,7 @@ jobs:
       # scripts/lint.sh is deliberately NOT wired as a CI gate yet: the repo
       # carries ~60 files with numeric-TODO shorthand outside todo/ on the
       # legacy allow-list, so adding lint to CI would red-light every PR.
-      # The cleanup is owned by TODO-01 §14 "Legacy-XREF sweep" and lint
+      # The cleanup is owned by TODO-01 §9 "Legacy-XREF sweep" and lint
       # becomes a required gate once that item closes.
 
       # ── Host-side tooling regression pack (cheap, no build required) ───────
