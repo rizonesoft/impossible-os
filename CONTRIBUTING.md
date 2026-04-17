@@ -40,14 +40,21 @@ runs `bash scripts/setup.sh` on first start.
 ### Enable Git Hooks
 
 ```bash
-git config core.hooksPath .githooks       # Post-commit: auto-update COUNT.md
-bash scripts/install-hooks.sh             # Pre-push: run tests before push (optional)
+git config core.hooksPath .githooks       # pre-commit lint + post-commit COUNT.md
 ```
 
-The post-commit hook keeps `COUNT.md` up to date. The pre-push hook runs
-`make test` before every push -- if tests fail, the push is blocked. The
-pre-push hook requires KVM access (`sudo usermod -aG kvm $USER`) for fast
-QEMU execution. To remove: `bash scripts/install-hooks.sh --remove`.
+The active `.githooks/pre-commit` hook lints staged `.c`/`.h` changes and
+enforces the test-file live-call ban; it exits in under a millisecond when no
+C files are staged. The `.githooks/post-commit` hook regenerates `COUNT.md`
+(source-line tally) and amends the commit to include the refresh.
+
+An **opt-in** pre-push hook at `scripts/hooks/pre-push` runs
+`bash scripts/build.sh` and `bash scripts/test.sh` before every push. Enable
+with `bash scripts/install-hooks.sh` (remove: `--remove`). If you skip it,
+GitHub Actions gates the PR instead. See
+[Wrapper Contract](docs/infrastructure/development-tooling.md#wrapper-contract)
+and [Local CI Hooks](docs/infrastructure/development-tooling.md#local-ci-hooks)
+for the full current state.
 
 ---
 
@@ -149,10 +156,12 @@ docs: professional README with feature table
 3. **Implement** your changes following the code style above
 4. **Test** before submitting:
    ```bash
-   bash scripts/build.sh             # Must show "=== BUILD OK ==="
-   make test                         # Run kernel unit tests (needs KVM)
+   bash scripts/build.sh             # Must show "=== BUILD OK ===" in build/build.log
+   bash scripts/test.sh              # Run all kernel unit tests (headless QEMU)
    bash scripts/build.sh run         # Boot in QEMU to verify visually
    ```
+   See [Wrapper Contract](docs/infrastructure/development-tooling.md#wrapper-contract)
+   for the full command reference including `--help`, `SUITE=<cat>`, and `QUIET=1` modes.
 5. **Commit** with a conventional commit message
 6. **Push** and open a Pull Request against `main`
 

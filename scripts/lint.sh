@@ -19,6 +19,36 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# ---- Help ----
+case "${1:-}" in
+    -h|--help)
+        cat <<'EOF'
+Impossible OS -- code style linter
+
+Usage:
+  bash scripts/lint.sh                    Lint full repo (default scope)
+  bash scripts/lint.sh src/kernel/mm/     Lint a specific path (skips xref check)
+  bash scripts/lint.sh --help             Show this help
+
+Checks (7):
+  1. #pragma once or include guard in every .h
+  2. Lines <= 120 characters (excludes comment lines)
+  3. No trailing whitespace
+  4. Functions <= 50 lines (warning only)
+  5. snake_case function definitions (excludes Win32 API wrappers)
+  6. UPPER_CASE macros (warning on pure-lowercase defines)
+  7. No numeric TODO shorthand (TODO-NN sectionN, DNN TNN) outside todo/**
+     except a baseline allowlist of pre-existing files (see TODO-01 "Tooling
+     Doctor" legacy-XREF sweep).
+
+Exit codes:
+  0 = clean
+  1 = errors found
+EOF
+        exit 0
+        ;;
+esac
+
 # ---- Colors ----
 RED='\033[0;31m'
 YELLOW='\033[1;33m'

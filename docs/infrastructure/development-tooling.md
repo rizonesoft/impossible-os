@@ -193,6 +193,62 @@ After shimming, `bash scripts/setup.sh --verify` should report 14/14 OK.
 
 ---
 
+## Wrapper Contract
+
+Five canonical bash wrappers form the stable developer interface to the repo. Every wrapper supports `--help` and writes its output/logs to a documented location. **Never invoke raw `make` for builds**; `bash scripts/build.sh` is the contract. `make test*` shorthand targets are thin passthroughs to `bash scripts/test.sh` and remain supported.
+
+| Wrapper                  | Canonical command                         | Primary output                       | Success sentinel / exit code                                            |
+| ------------------------ | ----------------------------------------- | ------------------------------------ | ----------------------------------------------------------------------- |
+| `scripts/build.sh`       | `bash scripts/build.sh [clean] [run\|run-usb\|run-nvme\|run-usb-ci\|run-nvme-ci] [--jobs=N]` | `build/system-disk.img`, `build/build.log` | `tail -1 build/build.log` == `=== BUILD OK ===`; exit 0 OK, 1 fail       |
+| `scripts/test.sh`        | `bash scripts/test.sh [SUITE=<cat>] [QUIET=1]` (env `TIMEOUT=60`) | `build/test.log`, filtered stdout    | `=== N tests passed ===` summary line in serial log; exit 0 OK, 1 fail  |
+| `scripts/lint.sh`        | `bash scripts/lint.sh [<path>]`           | stderr: `<file>:<line>:<type>:<msg>` | `LINT CLEAN` banner + `0 error(s)`; exit 0 OK, 1 errors                 |
+| `scripts/run-qemu.sh`    | `bash scripts/run-qemu.sh [--debug] [--headless] [--debug-tests] [--test-only] [--single-cpu]` | interactive QEMU session, serial to stdio | no sentinel (interactive); exit 1 if disk or OVMF missing               |
+| `scripts/debug.sh`       | `bash scripts/debug.sh [--breakpoint=<fn>] [--no-default-bp]` | `build/.gdbinit-kernel`, QEMU + GDB session | no sentinel (interactive); exit 0 on clean GDB detach                   |
+| `scripts/setup.sh`       | `bash scripts/setup.sh [--verify\|--versions]` | see [Host Bootstrap Contract](#host-bootstrap-contract) | install: build sentinel; `--verify` exit 0 OK, 1 drift; `--versions` always exit 0 (advisory) |
+
+### Input and Output Paths
+
+Every wrapper reads from and writes to a small set of well-known paths. Treat these as the contract surface; any wrapper change that moves one must update this table.
+
+| Path                                    | Producer                                | Consumers                                              |
+| --------------------------------------- | --------------------------------------- | ------------------------------------------------------ |
+| `build/build.log`                       | `scripts/build.sh`                      | CI, hooks, doc `tail -1` check, `scripts/test.sh`      |
+| `build/system-disk.img`                 | `scripts/build.sh` (GPT: EFI + BlackBox + IXFS) | `run-qemu.sh`, `test.sh`, `test-smoke.sh`, machine launchers |
+| `build/kernel.exe`                      | `scripts/build.sh`                      | `scripts/debug.sh`, `llvm-addr2line-19`                |
+| `build/kernel.map`                      | `scripts/build.sh` (`llvm-nm-19 -n`)    | `scripts/debug.sh`, BSS-collision check                |
+| `build/kernel.sym`                      | `scripts/build.sh` (`tools/convert_symmap.py`) | kernel BSOD resolver (loaded at boot)                  |
+| `build/test.log`                        | `scripts/test.sh` (QEMU serial file:)   | test.sh parse step, coverage scanner                   |
+| `build/smoke-test.log`                  | `scripts/test-smoke.sh`                 | smoke test summary/tail                                |
+| `build/OVMF_VARS_4M.fd`                 | copy of `/usr/share/OVMF/OVMF_VARS_4M.fd` | all QEMU launchers (writable EFI variable store)      |
+| `build/.gdbinit-kernel`                 | `scripts/debug.sh`                      | GDB --command= argument                                |
+| `compile_commands.json` (repo root)     | `scripts/build.sh clean` via `bear`     | clangd LSP                                             |
+| `docs/test-coverage/coverage.{md,json}` | `scripts/test-coverage.sh` (auto on build + test) | coverage browsing                                      |
+
+### Sentinels and Exit Codes
+
+- `build/build.log` last line is **always** `=== BUILD OK ===` or `=== BUILD FAILED ===`. Scripts and hooks should probe with `tail -1 build/build.log` -- never `$?` of the make process (it's tee'd).
+- `scripts/test.sh` looks for `=== N tests passed ===` in `build/test.log`. Timeout before that line = exit 1.
+- `scripts/lint.sh` prints `LINT CLEAN` on success. Errors increment counter; exit code is 1 if any error (warnings don't block).
+- Interactive wrappers (`run-qemu.sh`, `debug.sh`) do not produce sentinels; they exit with whatever QEMU/GDB returned.
+
+### Machine-Specific Launchers
+
+`scripts/run-qemu.sh` is the generic-use launcher. Specialist launchers under `scripts/machines/` provide pinned configurations for WHPX/KVM/TCG/VirtualBox/secure-boot/NVMe/USB; the full matrix is owned by the [Scope Boundary](#scope-boundary) "VM/bare-metal launcher matrix" row. Prefer those over ad hoc `qemu-system-x86_64 ...` invocations:
+
+```text
+scripts/machines/
+├── run-qemu-kvm.{sh,bat}      KVM-forced (fast Linux)
+├── run-qemu-tcg.{sh,bat}      TCG-forced (slow, portable)
+├── run-qemu-1cpu.bat          Single-CPU bisect profile
+├── run-qemu.ps1               Windows QEMU launcher
+├── run-vbox.{sh,ps1,bat}      VirtualBox
+├── reset-qemu-nvram.{bat,ps1} Clear OVMF_VARS for fresh firmware state
+├── storage/                   AHCI / VirtIO / NVMe / USB storage scenarios
+└── fs/                        Filesystem-specific harnesses
+```
+
+---
+
 ## Overview
 
 Impossible OS uses a single-script build system (`bash scripts/build.sh`) that wraps a Makefile-based pipeline. The toolchain is Clang-19/LLD-19 targeting `x86_64-elf` in freestanding mode. The development environment includes incremental builds with parallel compilation, automated QEMU testing, a kernel unit test framework, an asset pipeline with validation, and code intelligence via clangd + Srclight.
@@ -327,13 +383,13 @@ Version is auto-generated using CalVer: `YY.M.D` (e.g., `26.3.17`).
 
 ### Output
 
-The build produces a bootable GPT disk image: `build/system-disk.img`
+The build produces a bootable GPT disk image: `build/system-disk.img` (512 MiB).
 
-| Partition  | Size      | Format        | Contents                               |
-| ---------- | --------- | ------------- | -------------------------------------- |
-| EFI System | 64 MiB    | FAT32         | `BOOTX64.EFI`, `kernel.exe`            |
-| Logs       | 16 MiB    | FAT32         | Runtime debug logs                     |
-| IXFS       | Remaining | IXFS (custom) | System files, fonts, icons, wallpapers |
+| Partition  | Size      | Format        | Contents                                                         |
+| ---------- | --------- | ------------- | ---------------------------------------------------------------- |
+| EFI System | 64 MiB    | FAT32         | `BOOTX64.EFI`, `kernel.exe`, shim (secure boot), `MOK.cer`       |
+| BlackBox   | 128 MiB   | FAT32 (`X:\`) | Runtime logs, crash dumps, WER data, diag output (see TODO-17)   |
+| IXFS       | Remaining | IXFS (custom) | `C:\` system volume: fonts, icons, wallpapers, kernel.sym, apps  |
 
 ---
 
@@ -389,42 +445,28 @@ bash scripts/build.sh run
 
 ## Emulator Testing Scripts
 
-### QEMU Test Runner
+The full machine-launcher matrix (WHPX, KVM, TCG, VirtualBox, secure-boot, NVMe, USB, bare-metal) is tracked under "VM/bare-metal launcher matrix" in the [Scope Boundary](#scope-boundary) table; this section only lists the entry points.
 
-`scripts/run-qemu.sh` -- primary test environment.
+### QEMU via the canonical wrapper
 
-| Feature       | Flag/Setting                              |
-| ------------- | ----------------------------------------- |
-| UEFI firmware | `-bios OVMF.fd` (auto-copied to `build/`) |
-| Disk          | AHCI controller                           |
-| Serial        | `-serial stdio`                           |
-| Resolution    | VGA mode                                  |
+`scripts/run-qemu.sh` boots `build/system-disk.img` via AHCI under UEFI (OVMF 4M firmware). `bash scripts/build.sh run` is the one-command build+launch variant. See `bash scripts/run-qemu.sh --help` for mode flags (`--debug`, `--headless`, `--single-cpu`, `--debug-tests`, `--test-only`).
 
-`bash scripts/build.sh run` wraps this: build + auto-launch.
+### Specialist launchers
 
-### VirtualBox Test Runner
+`scripts/machines/` contains pinned-configuration launchers. Use these instead of ad hoc `qemu-system-x86_64 ...` invocations:
 
-`scripts/machines/run-vbox.sh` -- cross-platform VirtualBox launcher.
+| Launcher                                  | Purpose                                                    |
+| ----------------------------------------- | ---------------------------------------------------------- |
+| `scripts/machines/run-qemu-kvm.sh/.bat`   | KVM-forced (fast Linux path)                               |
+| `scripts/machines/run-qemu-tcg.sh/.bat`   | TCG-forced (deterministic, slow, portable)                 |
+| `scripts/machines/run-qemu-1cpu.bat`      | Single-CPU profile for bisecting SMP bugs                  |
+| `scripts/machines/run-qemu.ps1`           | Windows PowerShell QEMU launcher                           |
+| `scripts/machines/run-vbox.sh/.ps1/.bat`  | VirtualBox (raw -> VDI conversion on each run)             |
+| `scripts/machines/reset-qemu-nvram.*`     | Clear OVMF_VARS (fresh EFI variable state)                 |
+| `scripts/machines/storage/`               | AHCI / VirtIO / NVMe / USB storage scenarios               |
+| `scripts/machines/fs/`                    | Filesystem-specific harnesses                              |
 
-| Setting  | Value                     |
-| -------- | ------------------------- |
-| VM Name  | `ImpossibleOS`            |
-| Firmware | EFI                       |
-| Storage  | AHCI                      |
-| Graphics | VMSVGA, 1280×720          |
-| Memory   | 2048 MB                   |
-| CPUs     | 4                         |
-| Mouse    | PS/2 (no Guest Additions) |
-
-**Features:**
-- Converts raw `system-disk.img` → VDI on each run
-- Properly unregisters old VDI before re-converting (avoids UUID mismatch)
-- `--headless` flag for CI
-- `--debug` injects DEBUG flag via `mcopy`
-
-### Hyper-V Test Runner
-
-See [TODO-008-Hyper-V-Runner](../../todo/000-Infrastructure/TODO-008-Hyper-V-Runner.md) -- dedicated runner with VMBus, synthetic devices, and Gen 2 VM support.
+Hyper-V support is not wired today; when it lands it will join the matrix above.
 
 ---
 
@@ -434,7 +476,7 @@ See [TODO-008-Hyper-V-Runner](../../todo/000-Infrastructure/TODO-008-Hyper-V-Run
 
 `scripts/deploy/write-usb.ps1` -- GPT-partitioned USB via PowerShell.
 
-Creates EFI (FAT32) + System (FAT32) + Logs (FAT32) partitions. Auto-detects USB drive with safety prompts.
+The image already contains GPT + all partitions (EFI / BlackBox / IXFS); the script performs a raw write, not a re-partition. Auto-detects USB drive with safety prompts.
 
 ### USB Write (Linux)
 
@@ -470,68 +512,65 @@ graph LR
 
 ### Kernel Unit Test Framework
 
-Header: `include/kernel/test/test.h`, implementation: `src/kernel/test/test_runner.c`
+Header: `include/kernel/test/test.h`, implementation: `src/kernel/test/test_runner.c`.
 
 **API:**
 
-| Function                        | Purpose                                   |
-| ------------------------------- | ----------------------------------------- |
-| `TEST_ASSERT(cond, msg)`        | Assert condition, log pass/fail to serial |
-| `test_suite_register(name, fn)` | Register a test suite                     |
-| `test_runner_init()`            | Initialize + register all suites          |
-| `test_runner_run()`             | Run all suites, print summary             |
+| Function                                        | Purpose                                                      |
+| ----------------------------------------------- | ------------------------------------------------------------ |
+| `TEST_ASSERT(cond, msg)`                        | Assert condition, log pass/fail to serial                    |
+| `TEST_ASSERT_EQ(a, b, msg)`                     | Value-comparison assert (prints got vs expected on fail)     |
+| `TEST_PENDING(cond, msg)`                       | Mark deferred-feature sentinel; shows `[STUB]` in log        |
+| `TEST_SKIP(msg)`                                | Skip hardware-dependent tests                                |
+| `test_suite_register_cat(name, fn, TEST_CAT_*)` | Register a test suite into a category                        |
+| `test_runner_init()`                            | Initialize + register all suites                             |
+| `test_runner_run()`                             | Run all suites, print summary                                |
+
+Test categories (`TEST_CAT_*`): `mm`, `fs`, `sched`, `ob`, `security`, `ipc`, `boot`, `abi`, `storage`, `exec`. Run a specific category with `bash scripts/test.sh SUITE=<cat>`.
 
 **Output format:**
 ```
 [ OK ] TEST: [ OK ] PMM: alloc+free :: pmm_alloc_frame returns non-zero
 [FAIL] TEST: [FAIL] Heap: no overlap :: allocations overlap  (test_heap.c:45)
-[ OK ] TEST: === 59 tests passed, 0 failed ===
+[STUB] TEST: [STUB] Registry: NtNotifyChangeKey pending
+[ OK ] TEST: === 1400+ tests passed, 0 failed ===
 ```
 
 > [!IMPORTANT]
-> All test code is inside `#ifdef KERNEL_TESTS`. `-DKERNEL_TESTS` is always in CFLAGS -- test code compiles unconditionally but only runs when `test=1` or `debug=1` is set in boot.conf.
+> All test code is inside `#ifdef KERNEL_TESTS`. `-DKERNEL_TESTS` is always in CFLAGS -- test code compiles unconditionally but only runs when `test=1` or `debug=1` is set in `boot.conf`.
 
 ### Core Subsystem Tests
 
-9 test files in `src/kernel/test/`, 38 test suites, 96 assertions:
+28 test files in `src/kernel/test/` covering 10 categories; ~1,400 `TEST_ASSERT*` calls total (growing). Test files are named `test_<subsystem>.c` and register their suites via `test_suite_register_cat()`. For the up-to-date suite breakdown and coverage map, see the auto-generated report at [`docs/test-coverage/coverage.md`](../test-coverage/coverage.md).
 
-| File               | Suites | Assertions | What's Tested                                                         |
-| ------------------ | ------ | ---------- | --------------------------------------------------------------------- |
-| `test_pmm.c`       | 2      | 5          | alloc+free frame reuse, contiguous allocation, page alignment         |
-| `test_heap.c`      | 4      | 9          | kmalloc+kfree, zero-byte→NULL, no-overlap, krealloc preserves data   |
-| `test_vfs.c`       | 3      | 9          | create/write/read/close, open nonexistent, mkdir+rmdir               |
-| `test_sched.c`     | 1      | 1          | thread_create returns valid TID                                      |
-| `test_registry.c`  | 2      | 8          | set/get REG_DWORD, set/get REG_SZ (Win32 API)                       |
-| `test_boot_init.c` | 8      | 19         | boot_result_t values, subsystem readiness, BOOT_REQUIRE, POST codes  |
-| `test_klog.c`      | 6      | 9          | ring buffer write/wrap, per-subsystem level filter, global override   |
-| `test_ob.c`        | 7      | 23         | alloc+header, refcount lifecycle, handles, namespace, NtDuplicate     |
-| `test_security.c`  | 5      | 13         | SID compare/format, ACL roundtrip, system token, privilege lookup     |
+**Safety rules** (see CLAUDE.md "Test Code -- No Live Boot Infrastructure Calls"): test files must never call `boot_progress`, `vpd_stage_*`, `panic`, `_init()`, or any live boot-path function. A pre-commit hook enforces this. Use pure helpers + readiness oracles.
 
 > [!NOTE]
 > Coverage report auto-generated on every build: `docs/test-coverage/coverage.md`. Manual: `bash scripts/test-coverage.sh`.
 
-### Make Test Target
+### Test Wrapper
 
-`make test` -- single command to build, boot QEMU headless, run all unit tests, and report pass/fail:
+`bash scripts/test.sh` is the canonical test entry point. `make test` and per-category shorthand targets (`make test-mm`, `make test-fs`, ...) delegate to it.
 
 ```bash
-make test                  # run all suites
-make test SUITE=pmm        # filter to PMM suites only
-bash scripts/test.sh       # same with colored output
+bash scripts/test.sh                  # all categories
+bash scripts/test.sh SUITE=mm         # Memory Management only
+bash scripts/test.sh QUIET=1          # summary only (suppress per-test PASS)
+bash scripts/test.sh --help           # usage + category list + exit codes
 ```
 
 `scripts/test.sh` handles:
-- Incremental build
-- Patches boot.conf with `test=1` (auto-restored after)
-- Auto-detects KVM acceleration (falls back to TCG with warning)
-- Boots QEMU headless, serial to `build/test.log`
-- Parses `=== N tests passed, M failed ===` summary
+- Incremental build (delegates to `scripts/build.sh`)
+- Patches `boot.conf` with `test=1` (plus `test_suite=<cat>` / `test_quiet=1`), auto-restores on exit
+- Picks KVM when available, falls back to TCG with a visible warning
+- Boots QEMU headless, captures serial to `build/test.log`
+- Parses `=== N tests passed ===` summary
 - Updates `docs/test-coverage/` on success
-- Exits 0 (pass) or 1 (fail/timeout)
+- Exits 0 on pass, 1 on fail or timeout
 
 ```mermaid
 graph LR
-    A[make test] --> B[build.sh]
+    A[bash scripts/test.sh] --> B[build.sh]
     B --> C[patch boot.conf test=1]
     C --> D["QEMU headless (KVM/TCG)"]
     D --> E[serial → build/test.log]
@@ -543,7 +582,7 @@ graph LR
 
 ### Automated QEMU Smoke Test
 
-`scripts/test-smoke.sh` -- headless boot verification (legacy, superseded by `make test`).
+`scripts/test-smoke.sh` -- headless boot verification (legacy; superseded by `bash scripts/test.sh`). Boots `build/system-disk.img` via AHCI, scans the serial log for the `Boot complete in` sentinel, and fails on panic/fault patterns.
 
 ```mermaid
 graph LR
@@ -611,20 +650,21 @@ Features: top 10 largest `.o` files, section breakdown via `llvm-size-19`, delta
 
 ### Code Style Linter
 
-`scripts/lint.sh` -- 6 automated style checks.
+`scripts/lint.sh` -- 7 automated checks. See `bash scripts/lint.sh --help` for the current list.
 
-| Check                  | Type    | Notes                                         |
-| ---------------------- | ------- | --------------------------------------------- |
-| snake_case functions   | Error   | Excludes Win32 API wrappers (`Reg*`, `HKEY*`) |
-| UPPER_CASE macros      | Error   | Flags pure lowercase `#define`                |
-| `#pragma once`         | Error   | Required in every `.h`                        |
-| Lines ≤ 120 chars      | Error   | Excludes comment lines                        |
-| No trailing whitespace | Error   | --                                             |
-| Functions ≤ 50 lines   | Warning | Doesn't fail build                            |
+| Check                                          | Type    | Notes                                              |
+| ---------------------------------------------- | ------- | -------------------------------------------------- |
+| `#pragma once` or include guard in every `.h`  | Error   | --                                                 |
+| Lines <= 120 characters                        | Error   | Excludes comment lines                             |
+| No trailing whitespace                         | Error   | --                                                 |
+| Functions <= 50 lines                          | Warning | Doesn't fail build                                 |
+| snake_case function definitions                | Warning | Excludes Win32 API wrappers (`Reg*`, `HKEY*`)      |
+| UPPER_CASE macros                              | Warning | Flags pure-lowercase `#define`                     |
+| Numeric TODO shorthand outside `todo/**`       | Error   | `TODO-NN sectionN`, `DNN TNN`; allowlisted legacy files warn instead |
 
-Excludes auto-generated files (`build_info.h`, `os_logo.h`, etc.) and third-party code (`stb_truetype`, `stb_image`).
+Excludes auto-generated files (`build_info.h`, `os_logo.h`, etc.) and third-party code (`stb_truetype`, `stb_image`, `cJSON`).
 
-Supports path filtering: `bash scripts/lint.sh src/kernel/mm/`
+Path filtering: `bash scripts/lint.sh src/kernel/mm/`. When a path is given, the numeric-TODO scan is skipped (it's a repo-wide check).
 
 ### GDB Debug Script
 
@@ -692,32 +732,39 @@ No external dependencies (stdlib only, Pillow optional for JPEG). Negative test 
 
 ## Local CI Hooks
 
-### Pre-Commit Lint Hook
+Hook lifecycle (install, remove, update) is owned by the "git hook lifecycle" row in the [Scope Boundary](#scope-boundary) table; this section records the *currently active* state only.
 
-`.githooks/pre-commit` -- opt-in lint checking on commit.
+### Pre-Commit Lint Hook (active)
+
+`.githooks/pre-commit` -- staged-file lint gate.
 
 **Setup:** `git config core.hooksPath .githooks`
 
-| Behavior      | Detail                             |
-| ------------- | ---------------------------------- |
-| Scope         | Only staged `.c`/`.h` files        |
-| Fast path     | No C files staged → exits in < 1ms |
-| Errors        | Block commit (exit 1)              |
-| Warnings      | Don't block                        |
-| Deleted files | Skipped (`--diff-filter=d`)        |
+| Behavior      | Detail                                           |
+| ------------- | ------------------------------------------------ |
+| Scope         | Only staged `.c`/`.h` files                      |
+| Fast path     | No C files staged -> exits in < 1ms              |
+| Errors        | Block commit (exit 1)                            |
+| Warnings      | Don't block                                      |
+| Deleted files | Skipped (`--diff-filter=d`)                      |
+| Live-call ban | Test files cannot call forbidden boot functions  |
 
-### Pre-Push Test Hook
+### Post-Commit COUNT.md Hook (active)
 
-`scripts/hooks/pre-push` -- opt-in test run before push.
+`.githooks/post-commit` -- regenerates `COUNT.md` (source-line tally) after every commit and amends the commit to include the refresh. Silent on success.
 
-**Setup:** `bash scripts/install-hooks.sh` (remove: `bash scripts/install-hooks.sh --remove`)
+### Pre-Push Hook (opt-in)
 
-| Behavior        | Detail                                      |
-| --------------- | ------------------------------------------- |
-| Build check     | `bash scripts/build.sh` -- fast fail on error |
-| Test run        | `bash scripts/test.sh` -- full unit tests    |
-| On failure      | Push blocked with "run `make test` to see details" |
-| KVM requirement | Needs `/dev/kvm` access for fast QEMU       |
+`scripts/hooks/pre-push` -- optional build + test gate. **Not installed by default.** Running `bash scripts/install-hooks.sh` symlinks it into `.git/hooks/pre-push`, after which every `git push` runs:
+
+| Step        | Detail                                                              |
+| ----------- | ------------------------------------------------------------------- |
+| Build check | `bash scripts/build.sh` -- exits 1 on build failure                 |
+| Test run    | `bash scripts/test.sh` -- exits 1 on any test failure               |
+| On failure  | Push blocked; prints "Run 'bash scripts/test.sh' to see details."   |
+| KVM         | Needs `/dev/kvm` for acceptable wall-clock (falls back to TCG)      |
+
+Remove with `bash scripts/install-hooks.sh --remove`. The hook is retained as opt-in because contributors running it at push time trade wall-clock for protection; GitHub Actions provides the same gate at PR time without the local cost.
 
 ---
 
@@ -725,37 +772,37 @@ No external dependencies (stdlib only, Pillow optional for JPEG). Negative test 
 
 ```
 scripts/
-├── build.sh                 ← Core build (daily) -- auto-updates coverage
-├── run-qemu.sh              ← QEMU launcher (daily)
-├── debug.sh                 ← GDB debug (daily)
-├── setup.sh                 ← One-command setup
-├── setup-deps.sh            ← Dependency installer
-├── test.sh                  ← Headless unit test runner (make test)
-├── test-smoke.sh            ← Boot smoke test (legacy)
-├── test-fs.sh               ← Filesystem test suite
-├── test-coverage.sh         ← Test coverage scanner → docs/test-coverage/
-├── patch-boot-conf.sh       ← Patch boot.conf in disk image (test=1, debug=1)
-├── install-hooks.sh         ← Install/remove git hooks (pre-push)
-├── sign-efi.sh              ← EFI binary signing
-├── size-report.sh           ← Binary size tracker
-├── lint.sh                  ← Code style linter
+├── build.sh                 ← Canonical build wrapper (see Wrapper Contract above)
+├── test.sh                  ← Canonical test wrapper
+├── lint.sh                  ← Canonical lint wrapper
+├── run-qemu.sh              ← Generic QEMU launcher (boots system-disk.img via AHCI)
+├── debug.sh                 ← QEMU + GDB with kernel symbols
+├── setup.sh                 ← Host bootstrap wrapper (see Host Bootstrap Contract)
+├── setup-deps.sh            ← Distro package installer (called by setup.sh)
+├── test-smoke.sh            ← Legacy boot smoke test (superseded by test.sh)
+├── test-fs.sh               ← Filesystem driver test suite
+├── test-coverage.sh         ← Coverage scanner → docs/test-coverage/
+├── patch-boot-conf.sh       ← Patch boot.conf in EFI partition (test=1, debug=1)
+├── install-hooks.sh         ← Install/remove repo-tracked git hooks
+├── sign-efi.sh              ← EFI binary signing (uses MOK keys if present)
+├── size-report.sh           ← Binary size tracker + CSV history
+├── debug/                   ← Debug-scenario runner .bat files (Windows)
 ├── hooks/
-│   └── pre-push             ← Optional: run tests before push
+│   └── pre-push             ← Pre-push test/build gate (currently out of tree)
 ├── deploy/
 │   ├── write-usb.ps1        ← USB write (Windows)
 │   ├── write-usb.bat
 │   ├── write-usb.sh         ← USB write (Linux)
 │   └── read-usb-log.sh      ← USB log reader
-├── vm/
-│   ├── run-vbox.sh          ← VirtualBox (Linux)
-│   ├── run-vbox.ps1         ← VirtualBox (Windows)
-│   ├── run-vbox.bat
-│   ├── run-qemu-kvm.sh      ← QEMU KVM (Linux)
-│   ├── run-qemu-kvm.bat
-│   ├── run-qemu-tcg.sh      ← QEMU TCG (Linux)
-│   ├── run-qemu-tcg.bat
-│   ├── run-qemu-debug.bat   ← QEMU WHPX with debug=1 (Windows)
-│   └── run-qemu.ps1         ← QEMU (Windows)
+├── machines/                ← Machine-specific launchers (owned by §4 matrix)
+│   ├── run-qemu-kvm.{sh,bat}
+│   ├── run-qemu-tcg.{sh,bat}
+│   ├── run-qemu-1cpu.bat
+│   ├── run-qemu.ps1
+│   ├── run-vbox.{sh,ps1,bat}
+│   ├── reset-qemu-nvram.{bat,ps1}
+│   ├── storage/             ← AHCI / VirtIO / NVMe / USB scenarios
+│   └── fs/                  ← Filesystem-specific harnesses
 └── secure-boot/
     └── build-shim.sh        ← Shim build (one-time)
 ```
@@ -764,31 +811,31 @@ scripts/
 
 ## Key Files
 
-| File                            | Purpose                                         |
-| ------------------------------- | ----------------------------------------------- |
-| `scripts/build.sh`              | Core build script with progress bar + sentinel  |
-| `scripts/run-qemu.sh`           | Primary QEMU launcher                           |
-| `scripts/debug.sh`              | GDB debug with symbol-aware breakpoints         |
-| `scripts/setup.sh`              | One-command dev environment setup               |
-| `scripts/setup-deps.sh`         | System dependency installer                     |
-| `scripts/test-smoke.sh`         | Headless QEMU boot verification                 |
-| `scripts/test-fs.sh`            | Filesystem driver test suite                    |
-| `scripts/size-report.sh`        | Binary size tracker + CSV history               |
-| `scripts/lint.sh`               | Code style linter (6 checks)                    |
-| `tools/convert_symmap.py`       | nm → KSYM binary symbol table                   |
-| `tools/validate-assets.py`      | Build-time asset validation (37 assets)         |
-| `include/build_info.h`          | Auto-generated build metadata (in `.gitignore`) |
-| `.clangd`                       | clangd language server config                   |
-| `compile_commands.json`         | Bear compilation database (generated)           |
-| `.githooks/pre-commit`          | Pre-commit lint hook (opt-in)                   |
-| `scripts/test.sh`               | Headless test runner (make test backend)         |
-| `scripts/test-coverage.sh`      | Test coverage scanner → docs/test-coverage/      |
-| `scripts/patch-boot-conf.sh`    | Patch boot.conf in disk image without rebuild    |
-| `scripts/install-hooks.sh`      | Install/remove git hooks (pre-push)              |
-| `scripts/hooks/pre-push`        | Pre-push hook: run tests before push             |
-| `src/kernel/test/test_runner.c` | Unit test framework runner                       |
-| `src/kernel/test/test_*.c`      | 9 test files, 38 suites, 96 assertions           |
-| `docs/test-coverage/coverage.md`| Auto-generated test coverage report              |
+| File                              | Purpose                                              |
+| --------------------------------- | ---------------------------------------------------- |
+| `scripts/build.sh`                | Canonical build wrapper (progress bar, sentinel log) |
+| `scripts/test.sh`                 | Canonical test wrapper (`make test*` delegates here) |
+| `scripts/lint.sh`                 | Canonical lint wrapper (7 checks)                    |
+| `scripts/run-qemu.sh`             | Generic QEMU launcher (boots `system-disk.img`)      |
+| `scripts/debug.sh`                | QEMU + GDB with kernel symbols                       |
+| `scripts/setup.sh`                | Host bootstrap wrapper                               |
+| `scripts/setup-deps.sh`           | Distro package installer                             |
+| `scripts/test-smoke.sh`           | Legacy headless boot smoke test                      |
+| `scripts/test-fs.sh`              | Filesystem driver test suite                         |
+| `scripts/test-coverage.sh`        | Coverage scanner -> `docs/test-coverage/`            |
+| `scripts/patch-boot-conf.sh`      | Patch `boot.conf` in EFI partition without rebuild   |
+| `scripts/size-report.sh`          | Binary size tracker + CSV history                    |
+| `scripts/install-hooks.sh`        | Install/remove repo-tracked git hooks                |
+| `tools/convert_symmap.py`         | `nm` -> KSYM binary symbol table                     |
+| `tools/validate-assets.py`        | Build-time asset validation                          |
+| `include/build_info.h`            | Auto-generated build metadata (`.gitignore`d)        |
+| `.clangd`                         | clangd language server config                        |
+| `compile_commands.json`           | Bear compilation database (generated on clean build) |
+| `.githooks/pre-commit`            | Active pre-commit lint hook                          |
+| `.githooks/post-commit`           | Active `COUNT.md` refresh hook                       |
+| `src/kernel/test/test_runner.c`   | Unit test framework runner                           |
+| `src/kernel/test/test_*.c`        | 28 test files covering 10 `TEST_CAT_*` categories    |
+| `docs/test-coverage/coverage.md`  | Auto-generated test coverage report                  |
 
 ---
 
@@ -810,25 +857,25 @@ scripts/
 
 ## OS Comparison
 
-| Feature                        | 🪟 Windows 11 (WDK/VS)       | 🐧 Linux Kernel                | 🚀 Impossible OS                                |
-| ------------------------------ | --------------------------- | ----------------------------- | -------------------------------------------------- |
-| Build system                   | ✅ MSBuild / WDK             | ✅ Kbuild (make)               | ✅ Make + build.sh wrapper                      |
-| Incremental builds             | ✅ MSBuild deps              | ✅ `.d` dependency files       | ✅ `-MMD -MP` + `.d` includes                   |
-| Parallel compilation           | ✅ `/MP` flag                | ✅ `make -j$(nproc)`           | ✅ `-j$(nproc)` default + `--jobs=N`            |
-| Build version metadata         | ✅ Resource files (.rc)      | ✅ `uname -r` + git describe   | ✅ `include/build_info.h` (auto-generated)      |
-| Compiler toolchain             | ✅ MSVC (WDK)                | ✅ GCC (Kbuild)                | ✅ Clang-19/LLD-19 (`--target=x86_64-elf`)      |
-| One-command dev setup          | ❌ Manual VS + WDK install   | ⚠️ `make defconfig && make`    | ✅ `bash scripts/setup.sh` -- **beats both**     |
-| Automated smoke test           | ✅ HCK/HLK test framework    | ✅ kselftest + CI bots         | ✅ `scripts/test-smoke.sh` (headless QEMU)      |
-| Unit test framework (kernel)   | ✅ WDK test framework        | ✅ KUnit                       | ✅ `test.h` + `test_runner.c` (38 suites, 96 assertions) |
-| CI/CD build on push            | ✅ Azure DevOps              | ✅ GitHub Actions + kernel.org | ✅ [GitHub Actions](github-setup.md#build--smoke-test-buildyml) |
-| Symbol map + debug symbols     | ✅ PDB files                 | ✅ vmlinux + kallsyms          | ✅ `kernel.sym` + `symtab_resolve()` (O(log n)) |
-| Code size tracking             | ⚠️ Manual / third-party      | ✅ `bloat-o-meter`             | ✅ `scripts/size-report.sh` + CSV history       |
-| Pre-commit linting             | ⚠️ Optional VS extensions    | ✅ checkpatch.pl               | ✅ `.githooks/pre-commit` (opt-in, staged only) |
-| Language server (code intel)   | ✅ IntelliSense (MSVC)       | ✅ clangd + compile_commands   | ✅ clangd-19 + Bear (200 entries)               |
-| Asset pipeline                 | ✅ MSBuild resource compiler | ⚠️ Manual `make` targets       | ✅ `make assets` (7 sub-targets + stamps)       |
-| Asset validation               | ❌ Runtime discovery         | ❌ No built-in                 | ✅ 37 assets validated at build time            |
-| **Zero-install build wrapper** | ❌ Requires VS + WDK         | ❌ Requires toolchain install  | ✅ **build.sh -- single script, no IDE**         |
-| **QEMU auto-test loop**        | ❌ Manual VM setup           | ✅ virtme + kselftest          | ✅ **build.sh run -- build + boot + verify**     |
+| Feature                        | 🪟 Windows 11 (WDK/VS)       | 🐧 Linux Kernel                 | 🚀 Impossible OS                                           |
+| ------------------------------ | --------------------------- | ------------------------------- | ---------------------------------------------------------- |
+| Build system                   | ✅ MSBuild / WDK            | ✅ Kbuild (make)                 | ✅ Make + `scripts/build.sh` wrapper                        |
+| Incremental builds             | ✅ MSBuild deps             | ✅ `.d` dependency files          | ✅ `-MMD -MP` + `.d` includes                               |
+| Parallel compilation           | ✅ `/MP` flag               | ✅ `make -j$(nproc)`              | ✅ `-j$(nproc)` default + `--jobs=N`                        |
+| Build version metadata         | ✅ Resource files (.rc)     | ✅ `uname -r` + git describe      | ✅ `include/build_info.h` (auto-generated, CalVer)          |
+| Compiler toolchain             | ✅ MSVC (WDK)               | ✅ GCC (Kbuild)                   | ✅ Clang-19 / LLD-19 (`--target=x86_64-elf`)                |
+| One-command dev setup          | ❌ Manual VS + WDK install  | ⚠️ `make defconfig && make`       | ✅ `bash scripts/setup.sh` (install + verify + build)       |
+| Automated smoke test           | ✅ HCK/HLK                  | ✅ kselftest + CI bots            | ✅ `scripts/test.sh` (headless QEMU, category-filterable)   |
+| Unit test framework (kernel)   | ✅ WDK test framework       | ✅ KUnit                          | ✅ `test.h` + 28 files across 10 categories                 |
+| CI/CD build on push            | ✅ Azure DevOps             | ✅ GitHub Actions + kernel.org    | ✅ GitHub Actions ([build.yml](github-setup.md))            |
+| Symbol map + debug symbols     | ✅ PDB files                | ✅ vmlinux + kallsyms             | ✅ `kernel.sym` + `symtab_resolve()` (O(log n))             |
+| Code size tracking             | ⚠️ Manual / third-party     | ✅ `bloat-o-meter`                | ✅ `scripts/size-report.sh` + CSV history                   |
+| Pre-commit linting             | ⚠️ Optional VS extensions   | ✅ checkpatch.pl                  | ✅ `.githooks/pre-commit` (staged-only, fast path)          |
+| Language server (code intel)   | ✅ IntelliSense (MSVC)      | ✅ clangd + compile_commands      | ✅ clangd-19 + Bear                                         |
+| Asset pipeline                 | ✅ MSBuild resource compiler | ⚠️ Manual `make` targets          | ✅ `make assets` (validated + stamped sub-targets)          |
+| **Zero-install build wrapper** | ❌ Requires VS + WDK        | ❌ Requires toolchain install     | ✅ `bash scripts/build.sh` -- single script, no IDE         |
+| **One-command build + boot**   | ❌ Manual VM setup          | ✅ virtme + kselftest              | ✅ `bash scripts/build.sh run` -- build + boot + verify     |
+| **Host bootstrap contract**    | ❌ Ad hoc                   | ⚠️ Distro docs + scripts          | ✅ `--verify` sentinel set + `--versions` advisory report   |
 
 ---
 

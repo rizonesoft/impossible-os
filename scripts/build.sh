@@ -30,11 +30,46 @@ DO_RUN_NVME=false
 DO_RUN_NVME_CI=false
 JOBS=$(nproc 2>/dev/null || echo 4)
 
+print_help() {
+    cat <<'EOF'
+Impossible OS -- build wrapper
+
+Usage:
+  bash scripts/build.sh                 Incremental build (only changed files)
+  bash scripts/build.sh clean           Full clean build (rm build/ + rebuild)
+  bash scripts/build.sh run             Incremental build + launch QEMU
+  bash scripts/build.sh clean run       Clean build + launch QEMU
+  bash scripts/build.sh run-usb         Build + launch QEMU with xHCI USB disk
+  bash scripts/build.sh run-usb-ci      Headless USB test (20s timeout)
+  bash scripts/build.sh run-nvme        Build + launch QEMU with NVMe storage
+  bash scripts/build.sh run-nvme-ci     Headless NVMe test (20s timeout)
+  bash scripts/build.sh --jobs=N        Override parallel jobs (default: nproc)
+  bash scripts/build.sh --help          Show this help
+
+Output:
+  Tee'd to build/build.log. Last line is always one of:
+    === BUILD OK ===
+    === BUILD FAILED ===
+
+  Primary artifacts:
+    build/system-disk.img   canonical GPT disk (EFI + BlackBox + IXFS)
+    build/kernel.exe        kernel ELF
+    build/kernel.map        symbol map (nm -n output)
+    build/kernel.sym        KSYM binary symbol table (for BSOD resolver)
+    compile_commands.json   clangd database (clean builds only)
+
+Exit codes:
+  0 = build OK
+  1 = build failed (errors extracted to tail of build.log)
+EOF
+}
+
 if [[ $# -eq 0 ]]; then
     : # default: incremental build only
 else
     for arg in "$@"; do
         case "$arg" in
+            -h|--help) print_help; exit 0 ;;
             clean) DO_CLEAN=true ;;
             run)     DO_RUN=true ;;
             run-usb) DO_RUN_USB=true ;;
@@ -42,7 +77,12 @@ else
             run-nvme) DO_RUN_NVME=true ;;
             run-nvme-ci) DO_RUN_NVME_CI=true ;;
             --jobs=*) JOBS="${arg#--jobs=}" ;;
-            *)     echo "Unknown argument: $arg"; echo "Usage: build.sh [clean] [run|run-usb|run-nvme|...] [--jobs=N]"; exit 1 ;;
+            *)
+                echo "Unknown argument: $arg"
+                echo ""
+                print_help
+                exit 1
+                ;;
         esac
     done
 fi
@@ -311,42 +351,40 @@ echo "=== BUILD OK ===" >> "$LOG"
 # Update test coverage report (static source scan, no QEMU needed)
 bash scripts/test-coverage.sh --save --quiet 2>/dev/null || true
 
-# Run QEMU (optional)
+# Run-mode banners print to terminal only -- do NOT tee to $LOG, otherwise
+# `tail -1 build/build.log` would no longer be `=== BUILD OK ===` and CI
+# sentinel checks break. The build sentinel written above is the contract.
 if $DO_RUN; then
-    divider | tee -a "$LOG"
-    printf ' %b▶ Launching QEMU%b\n' "${CYAN}${BOLD}" "$RESET" | tee -a "$LOG"
-    divider | tee -a "$LOG"
+    divider
+    printf ' %b▶ Launching QEMU%b\n' "${CYAN}${BOLD}" "$RESET"
+    divider
     make $MAKE_FLAGS run 2>&1
 fi
 
-# Run QEMU with USB (optional)
 if $DO_RUN_USB; then
-    divider | tee -a "$LOG"
-    printf ' %b▶ Launching QEMU with xHCI + USB storage%b\n' "${CYAN}${BOLD}" "$RESET" | tee -a "$LOG"
-    divider | tee -a "$LOG"
+    divider
+    printf ' %b▶ Launching QEMU with xHCI + USB storage%b\n' "${CYAN}${BOLD}" "$RESET"
+    divider
     make $MAKE_FLAGS run-usb 2>&1
 fi
 
-# Run QEMU headless USB test (optional)
 if $DO_RUN_USB_CI; then
-    divider | tee -a "$LOG"
-    printf ' %b▶ Launching headless QEMU (xHCI + USB, 20s timeout)%b\n' "${CYAN}${BOLD}" "$RESET" | tee -a "$LOG"
-    divider | tee -a "$LOG"
+    divider
+    printf ' %b▶ Launching headless QEMU (xHCI + USB, 20s timeout)%b\n' "${CYAN}${BOLD}" "$RESET"
+    divider
     make $MAKE_FLAGS run-usb-ci 2>&1
 fi
 
-# Run QEMU with NVMe (optional)
 if $DO_RUN_NVME; then
-    divider | tee -a "$LOG"
-    printf ' %b▶ Launching QEMU with NVMe storage%b\n' "${CYAN}${BOLD}" "$RESET" | tee -a "$LOG"
-    divider | tee -a "$LOG"
+    divider
+    printf ' %b▶ Launching QEMU with NVMe storage%b\n' "${CYAN}${BOLD}" "$RESET"
+    divider
     make $MAKE_FLAGS run-nvme 2>&1
 fi
 
-# Run QEMU headless NVMe test (optional)
 if $DO_RUN_NVME_CI; then
-    divider | tee -a "$LOG"
-    printf ' %b▶ Launching headless QEMU (NVMe, 20s timeout)%b\n' "${CYAN}${BOLD}" "$RESET" | tee -a "$LOG"
-    divider | tee -a "$LOG"
+    divider
+    printf ' %b▶ Launching headless QEMU (NVMe, 20s timeout)%b\n' "${CYAN}${BOLD}" "$RESET"
+    divider
     make $MAKE_FLAGS run-nvme-ci 2>&1
 fi

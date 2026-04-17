@@ -28,7 +28,7 @@ if bash scripts/test.sh > /dev/null 2>&1; then
     echo -e "${GREEN}[pre-push]${RESET} All tests passed — push allowed"
     exit 0
 else
-    echo -e "${RED}${BOLD}[pre-push] TESTS FAILED${RESET} — push blocked"
-    echo "  Run 'make test' to see details."
+    echo -e "${RED}${BOLD}[pre-push] TESTS FAILED${RESET} -- push blocked"
+    echo "  Run 'bash scripts/test.sh' to see details."
     exit 1
 fi

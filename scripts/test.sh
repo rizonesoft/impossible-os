@@ -34,12 +34,44 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 RESET='\033[0m'
 
+print_help() {
+    cat <<'EOF'
+Impossible OS -- kernel unit test wrapper
+
+Usage:
+  bash scripts/test.sh              Build, boot QEMU headless, run all test suites
+  bash scripts/test.sh SUITE=mm     Filter to Memory Management suites only
+  bash scripts/test.sh SUITE=fs     Filter to Filesystem suites
+  bash scripts/test.sh SUITE=ob     Filter to Object Manager suites
+  bash scripts/test.sh QUIET=1      Summary only (suppress per-test PASS lines)
+  bash scripts/test.sh SUITE=fs QUIET=1   Combine filters
+  TIMEOUT=120 bash scripts/test.sh  Extend QEMU timeout (default: 60s)
+  bash scripts/test.sh --help       Show this help
+
+Categories (SUITE=...):
+  mm, fs, sched, ob, security, ipc, boot, abi, storage, exec
+
+Outputs:
+  build/test.log           full QEMU serial output
+  stdout                   filtered suite results + final PASS/FAIL summary
+  Coverage updated to docs/test-coverage/ on success.
+
+Exit codes:
+  0 = all tests passed
+  1 = one or more tests failed, or timeout (no summary line found)
+
+Boot.conf is patched with test=1 (plus test_suite/test_quiet) for the QEMU run
+and restored on completion. See CLAUDE.md "Testing" for the category registry.
+EOF
+}
+
 # Parse optional arguments
 SUITE_FILTER=""
 SUITE_CATEGORY=""
 QUIET_MODE=0
 for arg in "$@"; do
     case "$arg" in
+        -h|--help) print_help; exit 0 ;;
         SUITE=*)  SUITE_FILTER="${arg#SUITE=}"
                   SUITE_CATEGORY="$SUITE_FILTER" ;;
         QUIET=1)  QUIET_MODE=1 ;;
@@ -63,6 +95,21 @@ if [ "$QUIET_MODE" -eq 1 ]; then
     PATCH_ARGS="$PATCH_ARGS test_quiet 1"
 fi
 bash "$PROJECT/scripts/patch-boot-conf.sh" $PATCH_ARGS > /dev/null
+
+# Install cleanup trap now that boot.conf is patched. Runs on normal exit,
+# SIGINT (Ctrl-C), or SIGTERM, restoring boot.conf and killing any backgrounded
+# QEMU process. Preserves the caller's exit code.
+QEMU_PID=""
+cleanup() {
+    local ec=$?
+    if [ -n "${QEMU_PID:-}" ] && kill -0 "$QEMU_PID" 2>/dev/null; then
+        kill "$QEMU_PID" 2>/dev/null || true
+        wait "$QEMU_PID" 2>/dev/null || true
+    fi
+    bash "$PROJECT/scripts/patch-boot-conf.sh" reset > /dev/null 2>&1 || true
+    exit "$ec"
+}
+trap cleanup EXIT INT TERM
 
 # --- Step 3: Boot QEMU headless ---
 cp "$OVMF_VARS" "$OVMF_VARS_CP"
@@ -117,14 +164,7 @@ while [ "$ELAPSED" -lt "$TIMEOUT" ]; do
     fi
 done
 
-# Kill QEMU if still running
-if kill -0 "$QEMU_PID" 2>/dev/null; then
-    kill "$QEMU_PID" 2>/dev/null
-    wait "$QEMU_PID" 2>/dev/null
-fi
-
-# --- Step 4: Restore boot.conf ---
-bash "$PROJECT/scripts/patch-boot-conf.sh" reset > /dev/null
+# --- Step 4: Cleanup trap (installed above) handles QEMU kill + boot.conf reset ---
 
 # --- Step 5: Parse results ---
 if [ ! -f "$TEST_LOG" ]; then

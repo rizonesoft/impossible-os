@@ -18,12 +18,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 BUILD="$REPO_ROOT/build"
 
-ISO="$BUILD/os-build.iso"
+DISK="$BUILD/system-disk.img"
 OVMF_CODE="/usr/share/OVMF/OVMF_CODE_4M.fd"
 OVMF_VARS_SRC="/usr/share/OVMF/OVMF_VARS_4M.fd"
 OVMF_VARS_CP="$BUILD/OVMF_VARS_4M.fd"
 SERIAL_LOG="$BUILD/smoke-test.log"
 TIMEOUT_SEC=30
+
+# Legacy smoke test: superseded by `bash scripts/test.sh`. Retained as a light
+# boot-only sanity check (no unit-test suite). Boots the canonical GPT disk
+# image via AHCI, matching Makefile's run: target. Do not re-introduce the
+# grub-mkrescue ISO path -- that is retired.
 
 # ---- Colors ----
 RED='\033[0;31m'
@@ -89,8 +94,9 @@ echo -e "  ${GREEN}✓${NC} Build succeeded"
 echo -e "${CYAN}[2/3]${NC} Booting in QEMU (headless, ${TIMEOUT_SEC}s timeout)..."
 
 # Preflight
-if [ ! -f "$ISO" ]; then
-    echo -e "${RED}SMOKE TEST FAILED: $ISO not found${NC}"
+if [ ! -f "$DISK" ]; then
+    echo -e "${RED}SMOKE TEST FAILED: $DISK not found${NC}"
+    echo -e "${DIM}  Run 'bash scripts/build.sh' first.${NC}"
     exit 1
 fi
 if [ ! -f "$OVMF_CODE" ]; then
@@ -100,11 +106,13 @@ fi
 
 cp "$OVMF_VARS_SRC" "$OVMF_VARS_CP"
 
-# Build QEMU flags
+# Boot the canonical GPT image via AHCI (matches Makefile run: target).
 QEMU_FLAGS=(
     -drive "if=pflash,format=raw,readonly=on,file=$OVMF_CODE"
     -drive "if=pflash,format=raw,file=$OVMF_VARS_CP"
-    -cdrom "$ISO"
+    -drive "id=disk0,file=$DISK,format=raw,if=none"
+    -device "ich9-ahci,id=ahci0"
+    -device "ide-hd,drive=disk0,bus=ahci0.0"
     -m 2G
     -serial file:"$SERIAL_LOG"
     -no-reboot
@@ -124,6 +132,18 @@ fi
 # Launch QEMU in background
 qemu-system-x86_64 "${QEMU_FLAGS[@]}" &
 QEMU_PID=$!
+
+# Cleanup trap: kill QEMU on normal exit, SIGINT, SIGTERM. Idempotent so the
+# existing post-polling kill (if it still runs) is harmless.
+cleanup_qemu() {
+    local ec=$?
+    if [ -n "${QEMU_PID:-}" ] && kill -0 "$QEMU_PID" 2>/dev/null; then
+        kill "$QEMU_PID" 2>/dev/null || true
+        wait "$QEMU_PID" 2>/dev/null || true
+    fi
+    exit "$ec"
+}
+trap cleanup_qemu EXIT INT TERM
 
 # Wait for boot with timeout, checking serial log periodically
 BOOT_PASSED=false

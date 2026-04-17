@@ -54,7 +54,7 @@
 | --- | :---: | ----------------------------------------------------- | --------------- | :----: |
 | 💎  |   1   | Host bootstrap and dependency contract                | --             |  [x]   |
 | 💎  |   2   | Supported host profiles and reproducible environments | §1             |  [x]   |
-| 💎  |   3   | Build, test, lint, and run wrapper contract           | §1, §2         |  [ ]   |
+| 💎  |   3   | Build, test, lint, and run wrapper contract           | §1, §2         |  [x]   |
 | 💎  |   4   | Machine launcher and debug profile matrix             | §2, §3         |  [ ]   |
 | 💎  |   5   | Git hooks and local automation lifecycle              | §1, §3         |  [ ]   |
 | 💎  |   6   | GitHub Actions and artifact policy alignment          | §2, §3, §4, §5 |  [ ]   |
@@ -122,15 +122,23 @@ Setup is not complete until contributors know which hosts are supported, which a
 
 The wrappers are the real interface developers use. Their arguments, outputs, sentinels, and log paths must be explicit and stable.
 
-- [ ] Document the canonical entry points and arguments for `scripts/build.sh`, `scripts/test.sh`, `scripts/lint.sh`, `scripts/run-qemu.sh`, and `scripts/debug.sh`
-- [ ] Standardize success/failure signals: `build/build.log` sentinel, serial log paths, exit codes, and quiet/summary modes where applicable
-- [ ] Define which commands are authoritative in docs and hooks (`bash scripts/build.sh`, `bash scripts/test.sh`, never raw `make` for builds)
-- [ ] Add a single tooling reference page listing outputs and artifacts: disk image path, build log path, serial log path, screenshots/diffs if present
-- [ ] Audit repo-facing wrapper surfaces and fix or retire stale entry points that still reference `build/os-build.iso`, `make all`, `run-tests.sh`, or `make test` as the primary flow (`scripts/run-qemu.sh`, `scripts/test-smoke.sh`, `docs/infrastructure/development-tooling.md`, `CONTRIBUTING.md`)
-- [ ] Ensure wrapper docs mention the existing machine-specific scripts instead of encouraging direct ad hoc QEMU invocations
+- [x] Document the canonical entry points and arguments for `scripts/build.sh`, `scripts/test.sh`, `scripts/lint.sh`, `scripts/run-qemu.sh`, and `scripts/debug.sh`
+- [x] Standardize success/failure signals: `build/build.log` sentinel, serial log paths, exit codes, and quiet/summary modes where applicable
+- [x] Define which commands are authoritative in docs and hooks (`bash scripts/build.sh`, `bash scripts/test.sh`, never raw `make` for builds)
+- [x] Add a single tooling reference page listing outputs and artifacts: disk image path, build log path, serial log path, screenshots/diffs if present
+- [x] Audit repo-facing wrapper surfaces and fix or retire stale entry points that still reference `build/os-build.iso`, `make all`, `run-tests.sh`, or `make test` as the primary flow (`scripts/run-qemu.sh`, `scripts/test-smoke.sh`, `docs/infrastructure/development-tooling.md`, `CONTRIBUTING.md`)
+- [x] Ensure wrapper docs mention the existing machine-specific scripts instead of encouraging direct ad hoc QEMU invocations
 - [ ] Commit: `"docs/tooling: codify build, test, lint, and run wrapper contract"`
 
 **Test checkpoint:** The documented wrapper commands match reality: `bash scripts/build.sh clean` ends with `=== BUILD OK ===`, `bash scripts/test.sh QUIET=1` produces a summary-only run, and wrapper exit codes are consistent with success/failure.
+
+> **Notes:**
+> - Added `--help` to `scripts/build.sh`, `scripts/test.sh`, and `scripts/lint.sh`; `scripts/run-qemu.sh` and `scripts/debug.sh` already had one. Every canonical wrapper now self-documents.
+> - Rewrote `scripts/run-qemu.sh` and `scripts/test-smoke.sh` to boot `build/system-disk.img` via AHCI + UEFI. The legacy `build/os-build.iso` + `-cdrom` + `make all` path is retired from both scripts (the Makefile `iso:` target remains as legacy grub-mkrescue infrastructure but is no longer referenced by wrappers).
+> - New [Wrapper Contract](../../docs/infrastructure/development-tooling.md#wrapper-contract) section in the canonical doc lists all five wrappers with their canonical commands, primary outputs, success sentinels, and exit codes. Input/output path table + sentinels + machine-launcher map are all in one place.
+> - Canonical doc audit touched Build System, Emulator Testing Scripts, Test Framework, Scripts Directory Structure, Local CI Hooks, USB Write, Key Files, and OS Comparison. Stale counts (9 files, 38 suites, 96 assertions) replaced with current (28 files, 10 categories, ~1,400 TEST_ASSERTs). `scripts/vm/` rewritten to `scripts/machines/`. Hyper-V broken link removed. Partition table corrected (EFI + BlackBox + IXFS). Lint-check count corrected (6 -> 7).
+> - `CONTRIBUTING.md` PR checklist now uses `bash scripts/test.sh` (not `make test`); hook guidance matches the currently-active pre-commit + post-commit pair; retired pre-push is documented honestly.
+> - `make test*` shorthand remains supported as a thin passthrough, but all authoritative doc references point at the bash wrappers so the "never raw make for builds" rule is cleanly stated.
 
 ---
 
@@ -208,7 +216,7 @@ This is the refinement step: make the tooling self-diagnosing instead of forcing
 | --- | ----------------------------- | ------------------------- | -------------------------- | ------------------------- |
 | 💎 | Bootstrap script              | ⚠️ WDK/HLK heavy setup    | ⚠️ Distro docs + scripts   | ✅ §1 -- setup.sh + --verify sentinel |
 | 💎 | Reproducible host profiles    | ⚠️ EWDK/Dev Box or VMs    | ✅ Devcontainers common    | ✅ §2 matrix + .devcontainer + shim procedure |
-| 💎 | Canonical build/test wrappers | ✅ Common in mature repos | ✅ Common in mature repos  | ⬜ §3                    |
+| 💎 | Canonical build/test wrappers | ✅ Common in mature repos | ✅ Common in mature repos  | ✅ §3 wrapper contract + --help on all 5 |
 | 💎 | Named VM/debug profiles       | ⚠️ Often ad hoc           | ⚠️ Often ad hoc            | ⬜ §4                    |
 | 💎 | Managed local hooks           | ⚠️ Varies by repo         | ✅ Common in many repos    | ⬜ §5                    |
 | 💎 | Workflow/artifact policy      | ✅ Standard CI practice   | ✅ Standard CI practice    | ⬜ §6                    |
