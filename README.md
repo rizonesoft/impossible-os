@@ -74,6 +74,9 @@ bash scripts/build.sh run      # Build + boot in QEMU
 > [!NOTE]
 > **Requires:** Ubuntu/Debian, Fedora, or Arch Linux (WSL 2 recommended on Windows).
 > `setup.sh` installs everything automatically: Clang-19, NASM, QEMU, OVMF, mtools, etc.
+> See [Host Bootstrap Contract](docs/infrastructure/development-tooling.md#host-bootstrap-contract)
+> for the canonical required-tool sentinel set, supported distros, and idempotence guarantees.
+> Re-check any time with `bash scripts/setup.sh --verify`.
 
 ### Build Commands
 

@@ -2,6 +2,96 @@
 
 > Complete build system, test framework, asset pipeline, and development utilities for Impossible OS.
 
+This page is the canonical reference for the repo-local developer tooling contract. `README.md` and `CLAUDE.md` link here instead of restating setup commands. TODO ownership lives in [TODO-01 Developer Tooling Stack](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md); supported-host profiles and reproducible environments are section 2 of that TODO.
+
+## Host Bootstrap Contract
+
+The one-command setup contract for a new development machine. Section 1 of TODO-01 owns this; sections 2-7 extend it with profiles, wrappers, hooks, CI alignment, and a self-diagnosing doctor.
+
+### Canonical Commands
+
+| Command                             | Purpose                                                       |
+| ----------------------------------- | ------------------------------------------------------------- |
+| `bash scripts/setup.sh`             | Install distro packages, verify required tools, verification build. |
+| `bash scripts/setup.sh --verify`    | Read-only sentinel check. No install, no build. Safe to re-run. |
+| `bash scripts/setup.sh --help`      | Print usage, required tools, supported distros, and scope boundary. |
+| `bash scripts/setup-deps.sh`        | Dependency installer only (called by `setup.sh`; idempotent). |
+
+### Supported Distros
+
+`scripts/setup-deps.sh` detects the distro from `/etc/os-release` and installs the matching package set:
+
+| Family        | Examples                               | Package manager | Out-of-the-box? |
+| ------------- | -------------------------------------- | --------------- | --------------- |
+| Debian-based  | Ubuntu, Debian, Linux Mint, Pop!_OS    | `apt-get`       | Yes             |
+| Fedora-based  | Fedora, RHEL, CentOS, Rocky, Alma      | `dnf`           | Manual shim     |
+| Arch-based    | Arch, Manjaro, EndeavourOS             | `pacman`        | Manual shim     |
+
+Ubuntu/Debian is the out-of-the-box reference today because the Makefile hardcodes version-suffixed LLVM binaries (`clang-19`, `ld.lld-19`, `llvm-objcopy-19`, `llvm-ar-19`, `llvm-nm-19`) and the Debian-style `/usr/share/OVMF/OVMF_CODE_4M.fd` / `OVMF_VARS_4M.fd` paths. Fedora and Arch detection runs, but the default packages in those distros install unversioned LLVM binaries and OVMF at `/usr/share/OVMF/OVMF_CODE.fd` -- `bash scripts/setup.sh --verify` will flag the mismatch until a symlink/shim is added. The full supported-host profile matrix (fully supported vs. best-effort vs. unsupported) is owned by TODO-01 section 2.
+
+Unsupported distros: `setup-deps.sh` exits with the required package list printed so the operator can install manually.
+
+### Required Tools (Sentinel Set)
+
+`bash scripts/setup.sh --verify` asserts each of these is reachable. Every entry maps 1:1 to a Makefile command or path; keeping the sentinel list authoritative prevents doc/script drift.
+
+| Sentinel                                  | Source (Debian package) | Makefile consumer                        |
+| ----------------------------------------- | ----------------------- | ---------------------------------------- |
+| `clang-19`                                | `clang-19`              | `CC := clang-19`                         |
+| `ld.lld-19`                               | `lld-19`                | `LD := ld.lld-19`                        |
+| `llvm-objcopy-19`                         | `llvm-19`               | `OBJCOPY := llvm-objcopy-19`             |
+| `llvm-ar-19`                              | `llvm-19`               | `AR := llvm-ar-19` (userland archives)   |
+| `llvm-nm-19`                              | `llvm-19`               | `kernel.map` generation (Makefile L187)  |
+| `nasm`                                    | `nasm`                  | `AS := nasm`                             |
+| `qemu-system-x86_64`                      | `qemu-system-x86`       | `QEMU := qemu-system-x86_64`             |
+| `mcopy` (mtools)                          | `mtools`                | FAT image population (EFI + logs parts)  |
+| `mkfs.fat` (dosfstools)                   | `dosfstools`            | FAT32 partition formatting               |
+| `/usr/share/OVMF/OVMF_CODE_4M.fd`         | `ovmf`                  | `OVMF_CODE := /usr/share/OVMF/OVMF_CODE_4M.fd` |
+| `/usr/share/OVMF/OVMF_VARS_4M.fd`         | `ovmf`                  | `OVMF_VARS := /usr/share/OVMF/OVMF_VARS_4M.fd` |
+
+The OVMF paths are checked as exact file paths, not a fallback set, because the Makefile hardcodes these filenames. Fedora/Arch install OVMF at a different path; until TODO-01 section 2 lands profile shims, those hosts need `ln -s /usr/share/OVMF/OVMF_CODE.fd /usr/share/OVMF/OVMF_CODE_4M.fd` (and the VARS equivalent) to pass `--verify`.
+
+### Optional Tools
+
+Installed by `setup-deps.sh` for full developer experience but not required for a clean build:
+
+| Tool             | Purpose                                                |
+| ---------------- | ------------------------------------------------------ |
+| `bear`           | Generates `compile_commands.json` for clangd intel.    |
+| `clangd-19`      | Editor LSP for C intelligence.                         |
+| `cppcheck`       | Static analysis.                                       |
+| `python3-pil`    | Asset pipeline JPEG decode (optional).                 |
+| `xorriso`        | Legacy ISO image path (retained for compatibility).    |
+| `parted`         | Partition table utilities.                             |
+
+### Idempotence
+
+Both scripts are re-run safe:
+
+- `setup-deps.sh` checks `command -v` (or file path for OVMF) before issuing `apt/dnf/pacman install`. Already-present packages print as `already installed` and are skipped; nothing is uninstalled.
+- `setup.sh` delegates to `setup-deps.sh`, then runs `--verify`, then `bash scripts/build.sh clean`. A second run reuses the same package set and produces the same `=== BUILD OK ===` sentinel in `build/build.log`.
+- `bash scripts/build.sh clean` invokes the Makefile `clean:` rule, which removes `$(BUILD_DIR)` (`build/`) and the auto-generated, `.gitignore`d `include/build_info.h`. Both are regenerated on the next build from git metadata and `.build_number`; no user-authored source is touched.
+
+### Scope Boundary
+
+Owned here (TODO-01 section 1): repo-local dev bootstrap -- host package install, required-tool verification, verification build.
+
+Owned elsewhere:
+
+| Capability                                    | Owner                                              |
+| --------------------------------------------- | -------------------------------------------------- |
+| Cross-compiler toolchain, SDK build system    | `todo/14-host-tools/TODO-01-sdk-build-system.md` sections 1-3 (D14 T01) |
+| Supported-host profile matrix (Ubuntu/Arch/Fedora/WSL2/CI), reproducible container | TODO-01 section 2                 |
+| Build/test/lint/run wrapper contract          | TODO-01 section 3                                  |
+| VM/bare-metal launcher matrix                 | TODO-01 section 4                                  |
+| Git hook lifecycle                            | TODO-01 section 5                                  |
+| CI workflow alignment                         | TODO-01 section 6                                  |
+| One-command `scripts/tooling-doctor.sh`       | TODO-01 section 7                                  |
+
+D14 T01 ships the SDK cross-tool build experience (user-mode programs, host utilities in `sdk/src/`). It explicitly does *not* own the kernel-side `scripts/build.sh` entry point or the host package install flow.
+
+---
+
 ## Overview
 
 Impossible OS uses a single-script build system (`bash scripts/build.sh`) that wraps a Makefile-based pipeline. The toolchain is Clang-19/LLD-19 targeting `x86_64-elf` in freestanding mode. The development environment includes incremental builds with parallel compilation, automated QEMU testing, a kernel unit test framework, an asset pipeline with validation, and code intelligence via clangd + Srclight.

@@ -22,7 +22,10 @@ bash scripts/build.sh run      # Build + boot in QEMU to verify everything works
 ```
 
 `setup.sh` handles all dependencies automatically. If you're on an unsupported
-distro, check the script for the package list and install manually.
+distro, run `bash scripts/setup.sh --help` for the required-tool list, then
+install manually. The canonical [Host Bootstrap Contract](docs/infrastructure/development-tooling.md#host-bootstrap-contract)
+documents supported distros, sentinel tools, idempotence, and scope boundaries;
+re-check any host with `bash scripts/setup.sh --verify`.
 
 ### Enable Git Hooks
 

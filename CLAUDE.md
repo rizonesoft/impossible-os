@@ -11,6 +11,8 @@ bash scripts/build.sh run       # build + QEMU
 ```
 Check `tail -1 build/build.log` for result -- must show `=== BUILD OK ===`.
 
+Host bootstrap (deps, supported distros, required-tool sentinels, idempotence): [docs/infrastructure/development-tooling.md#host-bootstrap-contract](docs/infrastructure/development-tooling.md#host-bootstrap-contract). Re-check with `bash scripts/setup.sh --verify`.
+
 ## Testing -- Category-Based Test Infrastructure
 
 > **TCG works in WSL2** (~10s for build + 328 tests). A pre-push hook runs the full suite before every push. SMEP is disabled globally (boot PML4 has User bit on all pages). WHPX, VirtualBox, and bare metal remain the primary validation platforms.

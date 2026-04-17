@@ -3,7 +3,7 @@
 > **Goal:** Consolidate the repository's host-side developer workflow into one explicit contract: setup, build, run, debug, test, hooks, and GitHub automation all use the same paths, flags, logs, and operator expectations. Today the scripts work, but the rules live across `README.md`, `CLAUDE.md`, ad hoc shell wrappers, and workflow YAML. This TODO turns that into one maintained roadmap so local developer flow, CI, and release-adjacent tooling stop drifting.
 
 > [!IMPORTANT]
-> **Current state:** The repo already has a substantial tooling surface: `scripts/setup.sh`, `scripts/build.sh`, `scripts/test.sh`, `scripts/run-qemu.sh`, `scripts/debug.sh`, machine launchers under `scripts/machines/`, a pre-push hook in `scripts/hooks/pre-push`, and GitHub Actions workflows in `.github/workflows/`. The root and infrastructure indexes now point at this TODO, but the actual contract is still split across docs, scripts, workflow YAML, and adjacent consumer TODOs. No section in the roadmap yet owns the build wrapper contract, hook lifecycle, runner/artifact policy, or a host-side regression pack for these scripts.
+> **Current state:** The repo already has a substantial tooling surface: `scripts/setup.sh`, `scripts/build.sh`, `scripts/test.sh`, `scripts/run-qemu.sh`, `scripts/debug.sh`, machine launchers under `scripts/machines/`, repo-tracked hooks in `.githooks/`, a pre-push hook in `scripts/hooks/pre-push`, and GitHub Actions workflows in `.github/workflows/`. The root and infrastructure indexes now point at this TODO, but the actual contract is still split across docs, scripts, workflow YAML, and adjacent consumer TODOs. Code-truth drift is visible today: `scripts/run-qemu.sh`, `docs/infrastructure/development-tooling.md`, and `CONTRIBUTING.md` still advertise old ISO or `make test` style flows even though the canonical wrappers are now `bash scripts/build.sh` / `bash scripts/test.sh`. No section in the roadmap yet owns the supported-host matrix, wrapper drift cleanup, hook-path boundary, runner/artifact policy, or a host-side regression pack for these surfaces.
 
 ---
 
@@ -18,36 +18,47 @@
 - [`scripts/debug.sh`](../../scripts/debug.sh) -- developer debug entry point
 - [`scripts/install-hooks.sh`](../../scripts/install-hooks.sh) -- local git-hook installer
 - [`scripts/hooks/pre-push`](../../scripts/hooks/pre-push) -- enforced local pre-push gate
+- [`.githooks/`](../../.githooks/) -- repo-tracked git hooks that currently coexist with the install-hooks path
 - [`scripts/machines/`](../../scripts/machines/) -- per-hypervisor / per-scenario runners
+- [`scripts/test-smoke.sh`](../../scripts/test-smoke.sh) -- legacy smoke flow still referenced in docs and needs an explicit keep/retire decision
 - [`.github/workflows/build.yml`](../../.github/workflows/build.yml) -- build artifact and sentinel policy
 - [`.github/workflows/release.yml`](../../.github/workflows/release.yml) -- release automation boundary
+- [`.github/workflows/pages.yml`](../../.github/workflows/pages.yml) -- docs/deployment workflow policy touched by §6
+- [`.github/workflows/labeler.yml`](../../.github/workflows/labeler.yml) -- maintenance automation policy touched by §6
+- [`.github/workflows/stale.yml`](../../.github/workflows/stale.yml) -- maintenance automation policy touched by §6
 - [`.github/CODEOWNERS`](../../.github/CODEOWNERS) -- ownership and review routing
 - [`README.md`](../../README.md) -- public operator-facing setup/build/run docs
+- [`CONTRIBUTING.md`](../../CONTRIBUTING.md) -- contributor-facing setup, hook, and test commands that must stop drifting from the canonical wrapper contract
 - [`CLAUDE.md`](../../CLAUDE.md) -- canonical local workflow rules
+- [`docs/infrastructure/development-tooling.md`](../../docs/infrastructure/development-tooling.md) -- current canonical tooling doc that §1-§3 must consolidate instead of replacing ad hoc
 - -> XREF: `T04 §3, §4, §11` -- user-mode test launcher, CI-friendly output, and final test wiring extend the same tooling contract
 - -> XREF: `T05 §7` -- visual-regression CI consumes the same runner and artifact policy
 - -> XREF: `T03 §4` -- repo-wide deferred-test sweep depends on stable local test orchestration
 - -> XREF: `D14 T01 §1-§3` -- host SDK/build-system work is complementary, but this TODO owns repo-local developer wrappers
 - -> XREF: `D15 T01 §2, §5` -- release packaging and signing consume the tooling contract but remain release-domain owned
+- -> XREF: `D15 T05 §3, §5` -- contributor and README/community docs consume the canonical setup/build/test/hook contract and must not restate stale commands
 
 ## Outcome
 
 - One canonical contract for setup/build/test/run/debug wrappers and their logs, flags, and failure sentinels.
+- Supported host profiles and an optional reproducible environment path make onboarding deterministic instead of distro folklore.
 - Hook installation, local automation, and CI workflow behavior documented and owned in one place.
 - GitHub Actions workflows aligned with the local script contract instead of duplicating behavior ad hoc.
+- Legacy docs and runner surfaces stop advertising obsolete `make test`, `run-tests.sh`, or ISO-only flows once the canonical contract is enforced.
 - Host-side tooling regression checks catch broken wrapper behavior before a developer or reviewer trips over it.
 - An operator-facing "tooling doctor" flow gives Impossible OS a cleaner bootstrap and diagnostics story than typical OS hobby repos.
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                     | Depends On     | Status |
-| --- | :---: | ----------------------------------------------- | -------------- | :----: |
-| 💎  |   1   | Host bootstrap and dependency contract          | --             |  [ ]   |
-| 💎  |   2   | Build, test, lint, and run wrapper contract     | §1             |  [ ]   |
-| 💎  |   3   | Machine launcher and debug profile matrix       | §2             |  [ ]   |
-| 💎  |   4   | Git hooks and local automation lifecycle        | §1, §2         |  [ ]   |
-| 💎  |   5   | GitHub Actions and artifact policy alignment    | §2, §3, §4     |  [ ]   |
-| ⭐  |   6   | Tooling doctor and regression pack              | §1-§5          |  [ ]   |
+| ⭐  | Order | Deliverable                                           | Depends On     | Status |
+| --- | :---: | ----------------------------------------------------- | --------------- | :----: |
+| 💎  |   1   | Host bootstrap and dependency contract                | --             |  [x]   |
+| 💎  |   2   | Supported host profiles and reproducible environments | §1             |  [ ]   |
+| 💎  |   3   | Build, test, lint, and run wrapper contract           | §1, §2         |  [ ]   |
+| 💎  |   4   | Machine launcher and debug profile matrix             | §2, §3         |  [ ]   |
+| 💎  |   5   | Git hooks and local automation lifecycle              | §1, §3         |  [ ]   |
+| 💎  |   6   | GitHub Actions and artifact policy alignment          | §2, §3, §4, §5 |  [ ]   |
+| ⭐  |   7   | Tooling doctor and regression pack                    | §1-§6          |  [ ]   |
 
 > 💎 = parity work: Windows and Linux projects both rely on stable setup/build/test/CI contracts.
 > ⭐ = exclusive work: Impossible OS can provide a single operator-facing developer workflow with self-diagnosis instead of scattered scripts and tribal knowledge.
@@ -58,17 +69,39 @@
 
 Make setup reproducible and explicit so a new machine converges on the same toolchain and package set without guesswork.
 
-- [ ] Audit `scripts/setup.sh` and `scripts/setup-deps.sh` into one documented contract: supported distros, required packages, optional packages, and no-op/idempotent reruns
-- [ ] Define exact outputs and sentinel checks: which tools must exist after setup (`clang-19`, `ld.lld-19`, `nasm`, `qemu-system-x86_64`, `ovmf`, `mtools`)
-- [ ] Add a dedicated docs page under `docs/infrastructure/` for host bootstrap, with `README.md` and `CLAUDE.md` linking to the same canonical instructions
-- [ ] Add explicit boundary notes for what stays in `D14 T01 §1-§3` versus this repo-local setup flow
-- [ ] Commit: `"docs/tooling: define host bootstrap and dependency contract"`
+- [x] Audit `scripts/setup.sh` and `scripts/setup-deps.sh` into one documented contract: supported distros, required packages, optional packages, and no-op/idempotent reruns
+- [x] Define exact outputs and sentinel checks: which tools must exist after setup (`clang-19`, `ld.lld-19`, `nasm`, `qemu-system-x86_64`, `ovmf`, `mtools`)
+- [x] Consolidate the existing `docs/infrastructure/development-tooling.md` page into the canonical host-bootstrap reference, with `README.md` and `CLAUDE.md` linking to the same instructions
+- [x] Add explicit boundary notes for what stays in `D14 T01 §1-§3` versus this repo-local setup flow
+- [x] Commit: `"docs/tooling: define host bootstrap and dependency contract"`
 
 **Test checkpoint:** On a clean supported Linux machine, `bash scripts/setup.sh` completes and the documented required tools are present on `PATH`. A second run is idempotent and reports no destructive drift.
 
+> **Notes:**
+> - `scripts/setup.sh` now supports `--help` and `--verify` modes. `--verify` runs the read-only sentinel set (clang-19, ld.lld-19, llvm-objcopy-19, nasm, qemu-system-x86_64, mtools, dosfstools, OVMF) without touching the system.
+> - The full run executes: deps install -> sentinel verify -> `bash scripts/build.sh clean`. Idempotence is inherited from `setup-deps.sh`'s `command -v` pre-check.
+> - Canonical doc: [`docs/infrastructure/development-tooling.md#host-bootstrap-contract`](../../docs/infrastructure/development-tooling.md#host-bootstrap-contract). `README.md`, `CONTRIBUTING.md`, and `CLAUDE.md` link here instead of restating distro/package lists.
+> - Scope boundary recorded in the doc: repo-local dev bootstrap stays here; SDK cross-tool build system remains owned by `todo/14-host-tools/TODO-01-sdk-build-system.md` sections 1-3 (`D14 T01 §1-§3`).
+
 ---
 
-## 2. Build, Test, Lint, and Run Wrapper Contract
+## 2. Supported Host Profiles and Reproducible Environments
+
+Setup is not complete until contributors know which hosts are supported, which are best-effort, and how to reproduce the toolchain without cargo-cult package installs.
+
+- [ ] Define the supported host profile matrix: native Ubuntu/Debian, native Fedora, native Arch, WSL2 + Ubuntu, and GitHub Actions `ubuntu-latest`; mark which profiles are fully supported, best-effort, and unsupported
+- [ ] Publish minimum required versions and verification commands for `clang-19`, `ld.lld-19`, `nasm`, `qemu-system-x86_64`, `OVMF`, `mtools`, `python3`, and `bear` so setup output is more precise than "binary exists"
+- [ ] Add an optional committed reproducible environment definition (`.devcontainer/` or equivalent container profile) that runs the same setup/build/lint/docs entry points as a fresh supported host
+- [ ] Document the boundary between containerized and non-containerized validation: host bootstrap and static checks can be reproduced in a container, while KVM/WHPX/VirtualBox and bare-metal validation remain owned by the named machine profiles in §4
+- [ ] State unsupported-host policy explicitly in developer docs: Windows native shell flow and macOS are unsupported until a tracked owner lands them; WSL2 and supported Linux hosts are the intended paths today
+- [ ] Add reciprocal XREFs so `README.md`, `CONTRIBUTING.md`, and community docs pull setup guidance from this section instead of freezing parallel command lists
+- [ ] Commit: `"docs/tooling: define supported host profiles and reproducible environment policy"`
+
+**Test checkpoint:** On a fresh supported host or the committed reproducible environment, the documented bootstrap path reaches the required tool versions and wrapper entry points without undocumented manual steps. Unsupported hosts fail early with a documented redirect to the supported path.
+
+---
+
+## 3. Build, Test, Lint, and Run Wrapper Contract
 
 The wrappers are the real interface developers use. Their arguments, outputs, sentinels, and log paths must be explicit and stable.
 
@@ -76,6 +109,7 @@ The wrappers are the real interface developers use. Their arguments, outputs, se
 - [ ] Standardize success/failure signals: `build/build.log` sentinel, serial log paths, exit codes, and quiet/summary modes where applicable
 - [ ] Define which commands are authoritative in docs and hooks (`bash scripts/build.sh`, `bash scripts/test.sh`, never raw `make` for builds)
 - [ ] Add a single tooling reference page listing outputs and artifacts: disk image path, build log path, serial log path, screenshots/diffs if present
+- [ ] Audit repo-facing wrapper surfaces and fix or retire stale entry points that still reference `build/os-build.iso`, `make all`, `run-tests.sh`, or `make test` as the primary flow (`scripts/run-qemu.sh`, `scripts/test-smoke.sh`, `docs/infrastructure/development-tooling.md`, `CONTRIBUTING.md`)
 - [ ] Ensure wrapper docs mention the existing machine-specific scripts instead of encouraging direct ad hoc QEMU invocations
 - [ ] Commit: `"docs/tooling: codify build, test, lint, and run wrapper contract"`
 
@@ -83,7 +117,7 @@ The wrappers are the real interface developers use. Their arguments, outputs, se
 
 ---
 
-## 3. Machine Launcher and Debug Profile Matrix
+## 4. Machine Launcher and Debug Profile Matrix
 
 Local and CI runs need named machine profiles instead of script archaeology across `scripts/machines/`.
 
@@ -99,11 +133,12 @@ Local and CI runs need named machine profiles instead of script archaeology acro
 
 ---
 
-## 4. Git Hooks and Local Automation Lifecycle
+## 5. Git Hooks and Local Automation Lifecycle
 
 Hooks are part of the tooling contract, not a hidden convenience script.
 
 - [ ] Document the local hook lifecycle owned by `scripts/install-hooks.sh` and `scripts/hooks/pre-push`: install, remove, update, and expected blocking behavior
+- [ ] Reconcile repo-tracked `.githooks/` with `scripts/install-hooks.sh`: document whether both remain, which hook families use `core.hooksPath`, and which path is canonical for contributors
 - [ ] Decide whether the repo stays on shell-managed hooks or adopts a declarative hook manager layer; if adopting, file the exact migration under this section instead of leaving it implied
 - [ ] Define which checks are mandatory pre-push versus optional local quality-of-life checks
 - [ ] Add a repo-visible hook reference explaining why push is blocked on failed build/test and where to re-run the same checks manually
@@ -114,7 +149,7 @@ Hooks are part of the tooling contract, not a hidden convenience script.
 
 ---
 
-## 5. GitHub Actions and Artifact Policy Alignment
+## 6. GitHub Actions and Artifact Policy Alignment
 
 CI must mirror local tooling, not fork it.
 
@@ -129,7 +164,7 @@ CI must mirror local tooling, not fork it.
 
 ---
 
-## 6. Tooling Doctor and Regression Pack
+## 7. Tooling Doctor and Regression Pack
 
 This is the refinement step: make the tooling self-diagnosing instead of forcing contributors to reverse-engineer failures.
 
@@ -138,6 +173,8 @@ This is the refinement step: make the tooling self-diagnosing instead of forcing
 
 - [ ] Add a `scripts/tooling-doctor.sh` entry point that checks required host tools, key script executability, hook install status, and expected workflow files without mutating the repo
 - [ ] Add a host-side regression pack (`scripts/test-tooling.sh` or equivalent) covering argument parsing, sentinel paths, hook install/remove idempotence, and CI config sanity checks
+- [ ] Extend doctor coverage to runtime prerequisites named in §2 and §4: OVMF presence, `/dev/kvm` availability, `qemu-img`, `VBoxManage`/PowerShell where relevant, and whether the current host matches a supported profile or only a best-effort one
+- [ ] Add a machine-readable doctor mode (`--json` or equivalent report file) so lightweight CI and bug reports can consume the same diagnostics without screen-scraping prose
 - [ ] Make the doctor output actionable: print missing package/tool names, broken script paths, and the exact fix entry point
 - [ ] Wire the regression pack into a lightweight CI path so wrapper drift is caught before release or contributor onboarding breaks
 - [ ] Link doctor and regression-pack usage from `README.md` and developer docs
@@ -149,17 +186,18 @@ This is the refinement step: make the tooling self-diagnosing instead of forcing
 
 ## OS Comparison
 
-| ⭐ | Feature                       | 🪟 Win11 projects         | 🐧 Linux projects        | 🚀 Impossible OS         |
-| --- | ----------------------------- | ------------------------ | ------------------------ | ------------------------ |
-| 💎 | Bootstrap script              | ⚠️ WDK/HLK heavy setup   | ⚠️ Distro docs + scripts | ⬜ §1                    |
-| 💎 | Canonical build/test wrappers | ✅ Common in mature repos | ✅ Common in mature repos | ⬜ §2                    |
-| 💎 | Named VM/debug profiles       | ⚠️ Often ad hoc          | ⚠️ Often ad hoc          | ⬜ §3                    |
-| 💎 | Managed local hooks           | ⚠️ Varies by repo        | ✅ Common in many repos  | ⬜ §4                    |
-| 💎 | Workflow/artifact policy      | ✅ Standard CI practice  | ✅ Standard CI practice  | ⬜ §5                    |
-| ⭐ | One-command tooling doctor    | ❌ Rare in OS repos      | ❌ Rare in OS repos      | ⬜ §6                    |
+| ⭐ | Feature                       | 🪟 Win11 projects         | 🐧 Linux projects          | 🚀 Impossible OS         |
+| --- | ----------------------------- | ------------------------- | -------------------------- | ------------------------- |
+| 💎 | Bootstrap script              | ⚠️ WDK/HLK heavy setup    | ⚠️ Distro docs + scripts   | ✅ §1 -- setup.sh + --verify sentinel |
+| 💎 | Reproducible host profiles    | ⚠️ EWDK/Dev Box or VMs    | ✅ Devcontainers common    | ⬜ §2                    |
+| 💎 | Canonical build/test wrappers | ✅ Common in mature repos | ✅ Common in mature repos  | ⬜ §3                    |
+| 💎 | Named VM/debug profiles       | ⚠️ Often ad hoc           | ⚠️ Often ad hoc            | ⬜ §4                    |
+| 💎 | Managed local hooks           | ⚠️ Varies by repo         | ✅ Common in many repos    | ⬜ §5                    |
+| 💎 | Workflow/artifact policy      | ✅ Standard CI practice   | ✅ Standard CI practice    | ⬜ §6                    |
+| ⭐ | One-command tooling doctor    | ❌ Rare in OS repos       | ❌ Rare in OS repos        | ⬜ §7                    |
 
-> **After §1-§5:** Impossible OS reaches the same baseline as well-run Windows and Linux projects for setup, wrappers, hooks, and CI policy.
-> **After §6:** the repo gains a cleaner operator experience than either baseline by shipping a first-class doctor/regression path for its own developer tooling.
+> **After §1-§6:** Impossible OS reaches the same baseline as well-run Windows and Linux projects for setup, reproducible environments, wrappers, hooks, and CI policy.
+> **After §7:** the repo gains a cleaner operator experience than either baseline by shipping a first-class doctor/regression path for its own developer tooling.
 
 ## Unit Tests
 
@@ -168,9 +206,11 @@ This is the refinement step: make the tooling self-diagnosing instead of forcing
 
 - [ ] Create `scripts/test-tooling.sh` with concrete assertions:
   - `bash scripts/setup.sh --help` exits 0 and points at the documented bootstrap path
+  - supported-host and reproducible-environment files/docs resolve to the canonical wrapper contract once §2 lands; unsupported-host guidance names the documented fallback path instead of failing silently
   - `bash scripts/build.sh clean` writes `build/build.log`, and `tail -1 build/build.log` equals `=== BUILD OK ===`
   - `bash scripts/test.sh QUIET=1` keeps the summary path while suppressing per-test PASS spam on a healthy tree
   - in a temporary git repo or worktree, `bash scripts/install-hooks.sh` installs `.git/hooks/pre-push`, a second install is idempotent, and `--remove` deletes it cleanly
+  - canonical docs and wrapper pages reject stale primary commands/paths such as `make test`, `run-tests.sh`, and `build/os-build.iso` unless they are explicitly marked legacy
   - workflow sanity checks grep `build.yml`, `release.yml`, `pages.yml`, `labeler.yml`, and `stale.yml` for the canonical wrapper paths they are supposed to invoke
 - [ ] Wire the tooling regression pack into an existing lightweight local/CI path
 - [ ] Document that runtime suite coverage still comes from the owning TODOs (`T03 §1-§4`, `T04 §3-§11`, `T05 §3-§8`) so this section does not silently drop test ownership
@@ -180,10 +220,12 @@ This is the refinement step: make the tooling self-diagnosing instead of forcing
 
 ## Verification
 
+- [ ] Supported-host matrix and reproducible-environment path match reality for native Linux, WSL2, CI, and any committed container profile
 - [ ] `bash scripts/setup.sh` on a clean supported machine installs the documented toolchain successfully
 - [ ] `bash scripts/build.sh clean` ends with `=== BUILD OK ===`
 - [ ] `bash scripts/test.sh QUIET=1` produces the documented summary mode
 - [ ] `bash scripts/install-hooks.sh` installs `scripts/hooks/pre-push`; `--remove` removes it cleanly
+- [ ] `README.md`, `CONTRIBUTING.md`, and `docs/infrastructure/development-tooling.md` no longer advertise stale primary flows such as `make test`, `run-tests.sh`, or ISO-only QEMU paths unless they are explicitly marked legacy
 - [ ] GitHub Actions `build.yml` invokes the documented wrapper flow and uploads the expected artifacts/logs
 - [ ] `bash scripts/tooling-doctor.sh` reports PASS on a healthy environment and actionable failure output on a broken one
 - [ ] `bash scripts/test-tooling.sh` passes on a healthy tree and fails when a canonical wrapper path or sentinel is intentionally broken
