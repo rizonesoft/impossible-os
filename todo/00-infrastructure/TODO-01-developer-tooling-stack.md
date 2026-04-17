@@ -73,7 +73,7 @@ Make setup reproducible and explicit so a new machine converges on the same tool
 - [x] Define exact outputs and sentinel checks: which tools must exist after setup (`clang-19`, `ld.lld-19`, `nasm`, `qemu-system-x86_64`, `ovmf`, `mtools`)
 - [x] Consolidate the existing `docs/infrastructure/development-tooling.md` page into the canonical host-bootstrap reference, with `README.md` and `CLAUDE.md` linking to the same instructions
 - [x] Add explicit boundary notes for what stays in `D14 T01 §1-§3` versus this repo-local setup flow
-- [x] Commit: `"docs/tooling: define host bootstrap and dependency contract"`
+- [x] Commit: `"docs/tooling: define host bootstrap and dependency contract"` (ad4d3fa4)
 
 **Test checkpoint:** On a clean supported Linux machine, `bash scripts/setup.sh` completes and the documented required tools are present on `PATH`. A second run is idempotent and reports no destructive drift.
 
