@@ -11,7 +11,7 @@
 - -> XREF: `TODO-21-ab-boot-rollback.md` -- A/B slot state
 - -> XREF: `TODO-22-recovery-partition.md` -- recovery entries
 - -> XREF: `TODO-27-uefi-advanced.md §1` -- advanced multi-OS menu consumes this store
-- -> XREF: `../02-kernel-core/TODO-02-kernel-configuration-policy.md` -- runtime policy merge after kernel starts
+- -> XREF: `../02-kernel-core/TODO-02-kernel-configuration-policy.md §1, §4, §5` -- runtime policy merge, control-set selection, and safe-mode policy after kernel starts
 
 ## Outcome
 
@@ -137,4 +137,3 @@
 - [ ] QEMU BootNext one-shot path
 - [ ] A/B rollback auto-selection
 - [ ] Bare metal menu over GOP and serial fallback
-

@@ -13,7 +13,7 @@
 - → XREF: [`TODO-01-kernel-init-sequencing.md`](./TODO-01-kernel-init-sequencing.md) -- readiness oracle
 - → XREF: [`TODO-27-crash-dump-generation.md`](./TODO-27-crash-dump-generation.md) -- live/minidump writer
 - → XREF: [`TODO-28-bsod-ux-enhancements.md`](./TODO-28-bsod-ux-enhancements.md) -- crash UX
-- → XREF: [`TODO-02-kernel-configuration-policy.md`](./TODO-02-kernel-configuration-policy.md) -- recovery policy
+- → XREF: [`TODO-02-kernel-configuration-policy.md §5, §10`](./TODO-02-kernel-configuration-policy.md) -- Safe Mode reason codes and boot-status policy thresholds
 - → XREF: [`03-memory-concurrency/TODO-10-concurrency-diagnostics.md`](../03-memory-concurrency/TODO-10-concurrency-diagnostics.md) -- lockdep/KASAN/watchdog providers
 
 ## Outcome
@@ -85,6 +85,7 @@
 
 - [ ] Track crash/hang counts by bucket across boots.
 - [ ] Escalate to Safe Mode after configurable thresholds.
+- [ ] Consume `max_failed_boots`, `recoveryenabled`, and `bootstatuspolicy` semantics from TODO-02 instead of baking thresholds into health code.
 - [ ] Prefer LastKnownGood rollback for driver/config buckets.
 - [ ] Prefer crash dump collection and bugcheck for corruption/security buckets.
 
@@ -108,4 +109,3 @@
 - [ ] Chaos boot flags: fail registry, fail storage mount, hang worker, force resource exhaustion, deny CI image.
 - [ ] Verify Safe Mode escalation after repeated failures.
 - [ ] Verify no allocations in critical health query path.
-

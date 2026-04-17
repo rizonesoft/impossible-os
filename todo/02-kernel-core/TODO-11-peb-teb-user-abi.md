@@ -3,7 +3,7 @@
 > **Goal:** Implement the Process Environment Block, Thread Environment Block, and the complete x86-64 user-mode ABI handoff so that `ntdll.dll` and all Win32 DLLs can initialise and user programs run correctly. Without this, no Win32 binary can call `GetLastError`, locate loaded modules, parse command-line arguments, or access TLS. This is the first item every Win32 user-mode DLL depends on, and blocks everything downstream in the Win32 subsystem.
 
 > [!IMPORTANT]
-> **Current state:** Core PEB/TEB ABI (§1 -- §13) is complete and verified: TEB and PEB at correct Windows x64 offsets, swapgs on INT 0x80, KERNEL_GS_BASE per-task, PEB/TEB allocation, initial user stack frame, Ldr module list, 64 static TLS slots, Ob namespace exposure, KUSER_SHARED_DATA, TLS expansion (1024 slots), and extended ELF auxv (AT_RANDOM/AT_PHDR/AT_HWCAP). Remaining: §14 user-mode thread bootstrap (split `thread_create` into kthread/uthread) and §15 per-thread TEB allocation (blocked on §14).
+> **Current state:** Core PEB/TEB ABI, user-mode thread bootstrap, and per-thread TEB allocation are complete and verified: TEB and PEB at correct Windows x64 offsets, swapgs on INT 0x80, KERNEL_GS_BASE per-task/per-thread, PEB/TEB allocation, initial user stack frame, Ldr module list, 64 static TLS slots, Ob namespace exposure, most `KUSER_SHARED_DATA` time/version fields, TLS expansion (1024 slots), and extended ELF auxv (AT_RANDOM/AT_PHDR/AT_HWCAP). Remaining: finish `KUSER_SHARED_DATA` policy publication for TODO-02 §5 and §10 and add dedicated KUSD test coverage.
 
 ## Inputs
 
@@ -16,6 +16,7 @@
 - → XREF: `TODO-01-kernel-init-sequencing.md` -- PEB/TEB init belongs in Phase 3 (user platform); requires VMM and scheduler (Phase 2)
 - → XREF: `TODO-12-native-api-ssdt.md` -- `NtCreateProcess` populates PEB; `LdrInitializeThunk` (ntdll entry) reads PEB->Ldr
 - → XREF: `TODO-08-time-filetime-management.md §6, §12` -- §11 KUSER_SHARED_DATA time fields (SystemTime, InterruptTime, QpcFrequency) are populated by the kernel time service (§6); ISR time update function provided by §12
+- → XREF: `TODO-02-kernel-configuration-policy.md §5, §10` -- §11 must mirror Safe Mode, debugger, mitigation, and boot-status summary bits from the effective kernel policy snapshot
 - → XREF: `TODO-17-binary-system.md §4` -- §13 extended auxv (AT_PHDR, AT_PHNUM) requires `elf_load_result` extension with `phdr_vaddr` and `phnum` from the Enhanced ELF Loader
 - → XREF: `TODO-10-kernel-security-hardening.md §10` -- §12 AT_RANDOM provides user-mode stack canary seed bytes; shares RDRAND path
 - → XREF: `12-user-platform-sdk/TODO-04-ntdll-user-runtime.md §6` -- §12 kernel TLS expansion allocator consumed by user-mode TlsAlloc/TlsFree wrappers
@@ -48,7 +49,7 @@
 | 💎  |   8   | PEB Ldr (module list) basic population          | §5                 |  [x]   |
 | 💎  |   9   | TLS slot allocation (64 static slots)           | §6                 |  [x]   |
 | ⭐  |  10   | PEB / TEB exposed in Ob namespace               | §5, §6             |  [x]   |
-| 💎  |  11   | KUSER_SHARED_DATA -- kernel-user shared page    | §5                 |  [x]   |
+| 💎  |  11   | KUSER_SHARED_DATA -- kernel-user shared page    | §5                 |  [/]   |
 | 💎  |  12   | TLS expansion slots (1024 dynamic slots)        | §9                 |  [x]   |
 | 💎  |  13   | Extended auxiliary vector (AT_RANDOM + friends) | §7                 |  [x]   |
 | 💎  |  14   | User-mode thread bootstrap (uthread_create)     | §6, T01§12, T12§11 |  [x]   |
@@ -217,6 +218,7 @@ Windows maps a single physical page at fixed virtual address `0x7FFE0000` (user 
   - `SystemCall` = 0 (SYSCALL mode)
 - [x] `kusd_update_time()`: ISR-driven, writes InterruptTime, SystemTime, TimeZoneBias, TickCount via triple-write protocol. Wired into LAPIC + PIT timer ISRs (→ XREF TODO-17 §12)
 - [x] Wired into Phase 2 boot after wall_clock_init() and timezone_init()
+- [ ] Mirror policy publication bits from TODO-02: `SafeBootMode`, `KdDebuggerEnabled`, and a packed mitigation summary in `MitigationPolicies`; update them when the effective kernel policy snapshot changes.
 - [x] Commit: `"kernel: abi -- KUSER_SHARED_DATA shared page at 0x7FFE0000"`
 
 **Test checkpoint:** Serial log shows `KUSD: mapped at user=0x7FFE0000 kernel=0x<rand>`. User-mode test reads `*(uint32_t *)0x7FFE026C` (NtMajorVersion) and gets `10`. `TickCountQuad` at `0x7FFE0320` increments over time. `POST16(0xDF00)` on entry, `POST16(0xDF01)` static init, `POST16(0xDF02)` time update wired, `POST16(0xDF03)` test read verified. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
@@ -342,7 +344,7 @@ Currently, all threads in a process share `tasks[pid].teb` (one TEB per task), w
 | 💎 | Initial stack frame         | ✅ RCX=PEB (Win64)        | ✅ ELF ABI layout        | ✅ §7 argc/argv/auxv          |
 | ⭐ | PEB/TEB in Ob namespace     | ❌ Private internal       | ❌ Not exposed           | ✅ §10 public API             |
 | ⭐ | Win11 version in PEB        | ✅ Internal only          | ❌ N/A                   | ✅ §5 10.0.22621              |
-| 💎 | KUSER_SHARED_DATA page      | ✅ 0x7FFE0000 read-only   | ✅ vDSO equivalent       | ✅ §11 full struct+ISR        |
+| 💎 | KUSER_SHARED_DATA page      | ✅ 0x7FFE0000 read-only   | ✅ vDSO equivalent       | [/] §11 time core; policy pending |
 | 💎 | TLS expansion (1024 slots)  | ✅ TlsExpansionSlots      | ✅ pthread TLS unlimited | ✅ §12 1024 slots             |
 | 💎 | AT_RANDOM stack canary      | ⚠️ PEB Cookie (different) | ✅ auxv AT_RANDOM        | ✅ §13 RDRAND+TSC fb          |
 | 💎 | AT_PHDR/AT_PHNUM auxv       | ❌ PE, not ELF            | ✅ auxv standard         | ✅ §13 shared parser          |
@@ -350,7 +352,7 @@ Currently, all threads in a process share `tasks[pid].teb` (one TEB per task), w
 | 💎 | Real user threads (ring 3)  | ✅ NtCreateThread ring 3  | ✅ clone() ring 3        | ✅ §14 uthread_create done    |
 | 💎 | Per-thread TEB / GS swap    | ✅ Per-thread TEB         | ✅ Per-thread FS_BASE    | ✅ §15 per-thread TEB+MSR     |
 
-> **After §1 -- §13:** Impossible OS matches Windows NT on the user-mode ABI contract for single-threaded user processes. `NtCurrentTeb()`, `GetLastError()`, TLS slots, and PEB->ProcessParameters all work at correct GS offsets -- ntdll and Win32 DLLs initialise without patching.
+> **Current parity:** Impossible OS matches Windows NT on the core user-mode ABI contract for PEB/TEB, TLS, and user threads, with one remaining `KUSER_SHARED_DATA` policy-publication gap in §11. `NtCurrentTeb()`, `GetLastError()`, TLS slots, and PEB->ProcessParameters all work at correct GS offsets -- ntdll and Win32 DLLs initialise without patching.
 > **§10** goes beyond both Windows and Linux by making PEB and TEB first-class named objects in the Ob namespace.
 > **§14 + §15** close the remaining gap for multi-threaded user processes: §14 splits `thread_create` so secondary threads run in ring 3, §15 layers per-thread TEBs on that foundation.
 
@@ -373,7 +375,7 @@ Currently, all threads in a process share `tasks[pid].teb` (one TEB per task), w
 
 - [x] TLS expansion tests: `tls_alloc` returns 0 -- 63 for first 64 calls; 65th call returns 64 (expansion); `tls_set_value(pid, 64, 0xCAFE)` + `tls_get_value(pid, 64)` == 0xCAFE; `tls_alloc` up to 1087 succeeds; 1088th returns -1 -- DONE: covered by §12's 6 suites in `test_peb_teb.c` (TLS constants, static alloc/free, expansion alloc, expansion reuse, expansion boundary at 1088, POST codes)
 - [x] Extended auxv tests: after `task_exec` of ELF binary, stack contains AT_RANDOM pointing to 16 non-zero bytes; AT_PHDR non-NULL; AT_PHNUM > 0; AT_PAGESZ == 4096; AT_HWCAP non-zero and equal to raw CPUID 1 EDX -- 9 suites in `test_peb_teb.c` (auxv constants, rdrand_bytes smoke + boundaries, elf_extract PT_PHDR / PT_LOAD fallback / PT_PHDR vaddr=0 fallback / no coverage / invalid, user auxv populated PID 2)
-- [ ] KUSER_SHARED_DATA tests are NOT in `test_peb_teb.c` today. The infrastructure (§11) is complete and verified at runtime via cmd.exe accessing `0x7FFE0000`, but no compile-time offset checks or unit assertions exist for the KUSD struct fields. Tracked as a deferred test gap; rolls into the next test-coverage pass on §11.
+- [ ] KUSER_SHARED_DATA tests are NOT in `test_peb_teb.c` today. The time/version core of §11 is verified at runtime via cmd.exe accessing `0x7FFE0000`, but no compile-time offset checks or unit assertions exist for the KUSD struct fields and the policy publication bits are still pending. Tracked as a deferred test gap; rolls into the next test-coverage pass on §11.
 
 ## Verification
 
@@ -386,4 +388,4 @@ Currently, all threads in a process share `tasks[pid].teb` (one TEB per task), w
 - [x] After `iretq` exit: GS in ring 3 points to TEB -- PASS: cmd.exe runs, swapgs restores KERNEL_GS_BASE=TEB on every ISR exit (WHPX, 2026-04-02)
 - [x] `user/hello.exe` / cmd.exe starts correctly with new stack frame -- PASS: `C:\>` prompt at 35.170s (WHPX, 2026-04-02)
 - [x] `PEB->OSMajorVersion == 10`, `OSBuildNumber == 22621` -- PASS: logged in serial at task_exec (WHPX, 2026-04-02)
-- [ ] Commit: `"kernel: peb/teb -- user-mode ABI complete"` -- pending §14 + §15 to claim the file as Done
+- [ ] Commit: `"kernel: peb/teb -- user-mode ABI complete"` -- pending §11 policy publication and dedicated KUSD tests to claim the file as Done

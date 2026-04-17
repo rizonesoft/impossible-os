@@ -14,6 +14,7 @@
 - → XREF: `TODO-01-pci-pcie-pnp-resource-manager.md` -- PCI enumeration scan completes before `driver_probe_all()` in §3; the driver model in §3 hooks into that scan callback
 - → XREF: `03-memory-concurrency/TODO-01-vmm-memory-protection.md §1` -- `vmm_map_exec(base, size)` call needed by §4 to mark module `.text` pages as executable (NX cleared)
 - → XREF: `02-kernel-core/TODO-12-native-api-ssdt.md §4` -- SSDT indices 0x0270–0x0272 reserved for Plug and Play syscalls
+- → XREF: `02-kernel-core/TODO-02-kernel-configuration-policy.md §5` -- Safe Mode policy decides which modules may auto-load during boot
 
 ## Outcome
 
@@ -134,6 +135,7 @@ After IXFS mounts `C:\`, scan `C:\Impossible\System\Drivers\` and load every `.k
 **Files:** `src/kernel/main.c`, `src/kernel/main/module.c`
 
 - [ ] `module_load_all(dir)` -- VFS `opendir(dir)`, iterate entries; for each entry ending in `.kmod`, call `module_load(path)`
+- [ ] Consult `kernel_config_get()->safe_mode` plus per-module autoload policy before loading; skip third-party, GUI-only, and network modules unless the current Safe Mode profile explicitly allows them
 - [ ] On success: `klog(LOG_INFO, "MODULE", "Loaded %s (%s, %s)", name, module_name, module_license)` -- parsed from `.modinfo` section
 - [ ] On failure: `klog(LOG_WARN, "MODULE", "Failed to load %s: %s", name, error_string)` -- continue loop
 - [ ] In `kernel_main()`: insert `module_load_all("C:\\Impossible\\System\\Drivers")` immediately after `vfs_mount("C:", ...)` succeeds

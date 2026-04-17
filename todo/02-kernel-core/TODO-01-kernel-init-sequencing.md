@@ -22,6 +22,7 @@
 - → XREF: `TODO-07-irql-model-dpcs.md §4` -- DPC subsystem init belongs in Phase 1, after timer; §4 is the DPC Object Type and Per-CPU Queue init
 - → XREF: `TODO-08-time-filetime-management.md §3` -- `wall_clock_init()` belongs in Phase 2, after UEFI runtime services; NTP wall clock adjustment (§17) belongs in Phase 3
 - → XREF: `01-boot-platform/TODO-23-boot-watchdog.md` -- watchdog timer integrates with `boot_progress()` calls; detects hung subsystem init
+- → XREF: `TODO-02-kernel-configuration-policy.md §2, §4, §5` -- Phase 0 config snapshot publication, control-set success criteria, and Safe Mode policy consume these phase boundaries
 - → XREF: `04-drivers-hardware/TODO-04-security-hardware.md §6` -- TPM2 `PCR_Extend` for measured boot; extends the PCR event log parsed in Phase 0
 - → XREF: `01-boot-platform/TODO-09-cpu-boot-sequencing.md §2` -- CPU security activation order (EFER/CR4 hardening) slots into Phase 0 between serial init and PMM
 - → XREF: `TODO-29-kernel-debugger-kd-protocol.md` §4, §15 -- `kd_init()` placement relative to COM IRQ + IDT and transport coexistence notes

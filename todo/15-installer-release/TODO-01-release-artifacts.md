@@ -39,6 +39,7 @@
 - `src/boot/uefi/bootx64.c` -- bootloader source; extend with optional kernel signature check in §5
 - `include/kernel/uefi_runtime.h` -- UEFI variable access for Secure Boot toggle check -- §5
 - `tools/` (host-side build tools pattern) -- `usb_creator.c` follows same pattern -- §3
+- → XREF: `D00 T01 §3, §6` -- repo-local wrapper and artifact policy own the developer-facing build/CI contract that release scripts consume
 
 ---
 

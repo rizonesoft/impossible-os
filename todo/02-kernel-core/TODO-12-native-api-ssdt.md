@@ -22,6 +22,7 @@
 - → XREF: `TODO-24-alpc-message-ports.md §8-§9` -- ALPC port syscalls (NtCreatePort, NtAlpcSendWaitReceivePort, etc.); SSDT indices reserved in §4
 - → XREF: `TODO-14-registry-completion.md §5` -- Registry syscalls (NtCreateKey, NtOpenKey, NtSetValueKey, etc.); SSDT indices reserved in §5
 - → XREF: `TODO-26-power-management.md §12` -- NtSetSystemPowerState, NtInitiatePowerAction; SSDT indices reserved in §4
+- → XREF: `TODO-02-kernel-configuration-policy.md §8` -- `SystemKernelConfigInformation`, `NtQuerySystemConfiguration`, and `NtSetSystemConfiguration` extend the system-information/config ABI
 - → XREF: `TODO-29-kernel-debugger-kd-protocol.md §13` -- NtDebugActiveProcess, NtWaitForDebugEvent; SSDT indices reserved in §4
 - → XREF: `TODO-23-exception-dispatch-seh.md §13` -- ProbeForRead/ProbeForWrite safe probing used by §12 and all NtXxx handlers
 - → XREF: `TODO-10-kernel-security-hardening.md` -- SSDT integrity protection (§27) complements KASLR and SMEP/SMAP

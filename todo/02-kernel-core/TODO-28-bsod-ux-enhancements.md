@@ -21,6 +21,7 @@
 - `resources/boot/boot.conf`: `panic_screen=` mode switch (§10)
 - `src/kernel/main/boot_hw.c`: Phase 0 hooks, NVRAM, safe mode flags (§7, §8, §12)
 - `src/kernel/main/boot_desktop.c`: successful boot clears crash stats (§7)
+- → XREF: `TODO-02-kernel-configuration-policy.md §5, §10` -- Safe Mode policy, repeated-failure thresholds, and boot-acceptance state are owned there; this TODO only owns crash-screen UX and recovery request plumbing
 - → XREF: `TODO-27-crash-dump-generation.md` §1 through §9: binary crash dump mechanics (scope boundary: T27 owns dump format/analysis, this TODO owns on-screen UX)
 - → XREF: `TODO-03-kernel-libraries.md` §5, §6: LZ4 (T03 §5) or miniz zlib deflate (T03 §6) for §6 QR payload compression once those ports land (panic path must stay kmalloc-free; use static scratch + `pmm_alloc_contiguous` for output per T03 memory rules)
 - → XREF: `TODO-17-binary-system.md` §7: `exec_find_module_by_pc()` / module registry for §12 optional F2 "last module" safe boot and for richer §9 "What failed" than symbol file names alone
@@ -221,11 +222,13 @@ If the kernel detects 3+ consecutive crashes (from NVRAM stats), display a promi
 
 > [!WARNING]
 > **Regression risk:** If safe mode itself crashes, the kernel enters an infinite crash loop. Mitigation: if `consecutive_crashes >= 5`, skip safe mode and boot minimal (serial-only, no desktop). If >= 10, halt with "recovery required" message.
+>
+> **Scope boundary:** TODO-02 owns the repeated-failure policy, Safe Mode reason codes, and whether the next boot really enters Safe Mode. This section owns only the BSOD messaging, operator choice, and the request flag handed to that policy.
 
 - [ ] In `panic_screen()`: if `consecutive_crashes >= 3`, display large yellow warning: "Multiple crashes detected. Safe mode boot recommended."
-- [ ] Set `HKLM\SYSTEM\Recovery\BootToSafeMode = 1` in Registry (if Registry is accessible)
-- [ ] In `boot_phase0()`: if `consecutive_crashes >= 3` from NVRAM, set `g_boot_info.config.boot_mode = 1` (safe mode) automatically
-- [ ] Safe mode: skip non-essential drivers, reduce splash timeout, enable verbose logging
+- [ ] Set `HKLM\SYSTEM\Recovery\BootToSafeMode = 1` or the equivalent recovery-request flag consumed by TODO-02 §5 and §10 (if Registry is accessible)
+- [ ] In `boot_phase0()`: surface the repeated-crash recovery request to TODO-02 policy resolution instead of directly forcing `g_boot_info.config.boot_mode`
+- [ ] Safe-mode behavior itself (skip non-essential drivers, reduce splash timeout, enable verbose logging) is implemented under TODO-02 §5; this section only verifies the request reaches that policy path
 - [ ] Commit: `"kernel: safe mode suggestion after 3+ consecutive crashes"`
 
 **Test checkpoint:** Force crash_test=1 three times in a row: third BSOD shows "Safe mode recommended" in yellow. Fourth boot (without crash_test): kernel boots in safe mode (boot_mode=1 in CONF line). Successful boot resets consecutive counter. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.

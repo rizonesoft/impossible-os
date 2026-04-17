@@ -11,6 +11,7 @@
 - [`src/kernel/drivers/xhci.c`](../../src/kernel/drivers/xhci.c) -- xHCI controller driver (USBLEGSUP handoff already implemented)
 - [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h) -- boot_info USB device array (already defined)
 - [`include/kernel/drivers/xhci.h`](../../include/kernel/drivers/xhci.h) -- xHCI controller and device context structures
+- -> XREF: `TODO-01-boot-protocol-abi-handoff.md §4` -- typed boot payload and boot_info ownership work owns the persistent xHCI handover descriptor schema
 - → XREF: `01-boot-platform/TODO-17-xhci-usb-boot.md §5-§2` -- baseline xHCI boot path and post-boot hot-plug that this handover layer accelerates but does not replace
 - → XREF: `04-drivers-hardware/TODO-08-core-driver-enhancements.md §3` -- MSI/MSI-X (runtime hot-plug path remains in TODO-17 §2)
 - → XREF: `04-drivers-hardware/TODO-10-usb-stack.md` -- advanced USB features (builds on top of this handover)
@@ -31,7 +32,7 @@
 | ⭐  |   1   | Bootloader allocates xHCI DMA structures              | --          |  [x]   |
 | ⭐  |   2   | Bootloader performs USBLEGSUP + controller takeover   | §1         |  [x]   |
 | ⭐  |   3   | Bootloader enumerates devices with persistent state   | §2         |  [-]   |
-| ⭐  |   4   | boot_info passes controller + device DMA state        | §3         |  [ ]   |
+| ⭐  |   4   | boot_info passes controller + device DMA state        | §3, T01 §4 |  [ ]   |
 | ⭐  |   5   | Kernel inherits controller without halt/reset         | §1, §2     |  [x]   |
 | ⭐  |   6   | Kernel registers MSC devices from boot_info geometry  | §5         |  [ ]   |
 | 💎  |   7   | Fallback: detect corrupt state, revert to §1-§4 path  | §5         |  [ ]   |

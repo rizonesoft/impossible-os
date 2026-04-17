@@ -34,6 +34,7 @@
 - → XREF: `01-boot-platform/TODO-02-uefi-hardening-secureboot.md §9` -- optional DWORD values under `HKLM\SYSTEM\SecureBoot\` (db/dbx counts); must not regress `State` value written from TODO-01 §5
 - → XREF: `01-boot-platform/TODO-05-boot-device-discovery.md §9` -- `HKLM\SYSTEM\Boot\Device\*` boot provenance is written from `boot_info` after `registry_init()` (coordinate value layout with that TODO)
 - → XREF: `01-boot-platform/TODO-09-cpu-boot-sequencing.md §4,§10` -- optional `HKLM\HARDWARE\VM\*` hypervisor mirror from `boot_info`; per-CPU `HKLM\HARDWARE\CPU\%u\Registers` audit strings per that TODO §10
+- → XREF: `TODO-02-kernel-configuration-policy.md §3, §4` -- `HKLM\SYSTEM\CurrentControlSet\Control\Kernel`, `Select`, and LastKnownGood semantics are consumed by the kernel config plane
 
 ---
 

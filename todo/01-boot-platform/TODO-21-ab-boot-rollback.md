@@ -15,6 +15,7 @@
 - → XREF: `TODO-02-uefi-hardening-secureboot.md §1` -- UEFI runtime handoff / shared bootloader file; A/B slot policy is owned only here
 - → XREF: `TODO-03-bootloader-error-recovery.md §2` -- boot failure screen integration
 - → XREF: `10-platform-services/TODO-03-updates-packages.md` -- update engine (downstream consumer)
+- → XREF: `../02-kernel-core/TODO-02-kernel-configuration-policy.md §4, §5, §10` -- LastKnownGood, Safe Mode recovery, and boot-status acceptance feed rollback decisions
 
 ---
 
@@ -115,14 +116,14 @@ Automatic rollback after 3 consecutive boot failures.
 
 Kernel-side API to tell the bootloader "this boot worked".
 
-- [ ] Add syscall or kernel function: `mark_boot_successful()` -- writes `successful=1, tries=0` to boot metadata
-- [ ] Called from `boot_phase3()` after desktop is visible and cmd.exe starts (proof of successful boot)
+- [ ] Add syscall or kernel function: `mark_boot_successful()` -- writes `successful=1, tries=0` to boot metadata only after TODO-02 §10 marks the boot accepted
+- [ ] Called from `boot_phase3()` after the configured acceptance stage is satisfied, not a hard-coded "desktop visible" heuristic
 - [ ] On success: `"[BOOT] Boot marked successful (Slot %c)"`
 - [ ] If metadata write fails: `"[WARN] Cannot mark boot successful -- rollback may trigger on next reboot"`
 - [ ] For NVRAM storage: use UEFI `SetVariable()` via runtime services
 - [ ] Commit: `"kernel: mark_boot_successful -- reset try counter after successful boot"`
 
-**Test checkpoint:** Normal boot → serial shows `"Boot marked successful (Slot A)"` after desktop appears.
+**Test checkpoint:** Normal boot → serial shows `"Boot marked successful (Slot A)"` after the configured acceptance stage is reached.
 
 ---
 

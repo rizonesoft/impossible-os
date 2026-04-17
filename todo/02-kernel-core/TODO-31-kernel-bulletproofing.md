@@ -22,6 +22,7 @@
 - `src/kernel/mm/vmm.c` -- USER_PD_INDEX for user-mode pages
 - `src/kernel/mm/pmm.c` -- pmm_mark_region_used for user range
 - `include/kernel/nt/service_numbers.h` -- SSDT_MAIN_COUNT = 470
+- → XREF: `TODO-02-kernel-configuration-policy.md §2, §10` -- `kernel_config_t` layout, versioning, and fixed-size field invariants must adopt the same 5-layer defense
 - -> XREF: `TODO-12-native-api-ssdt.md §1-§5` -- NTSTATUS, SSDT, GDT all depend on these invariants
 - -> XREF: `TODO-11-peb-teb-user-abi.md` §6--§5 -- PEB/TEB offsets are Windows ABI contracts (bulletproofing extends pattern to those structs when implemented)
 - -> XREF: `TODO-10-kernel-security-hardening.md` §1,§4--§7 -- NX/SMEP/SMAP and guard pages must stay consistent with §6 here
@@ -85,7 +86,7 @@ Assembly code (syscall_entry.asm, ap_trampoline.asm) reads `gs:0`, `gs:24`, `gs:
 
 ---
 
-## 2. boot_config Struct Layout
+## 2. boot_config and Early Config Struct Layout
 
 The UEFI bootloader (bootx64.c) and kernel (boot_info.h) each define `struct boot_config` separately. The `cmdline` field must be at **exactly byte offset 32** for stable ABI across bootloader versions. If someone adds a field and forgets to decrement `_reserved[]`, cmdline shifts and the bootloader writes garbage.
 
@@ -97,6 +98,7 @@ The UEFI bootloader (bootx64.c) and kernel (boot_info.h) each define `struct boo
 - [x] Unit test: `test_boot_config_layout()` verifies sizeof, cmdline offset, config_found offset, and config_found == 1
 - [x] Canary: cmdline ASCII check doubles as canary -- non-printable bytes mean struct shifted
 - [x] Documentation: field offset table comment (30 lines) in boot_info.h with byte positions for all fields
+- [ ] Extend the same 5-layer pattern to `kernel_config_t` after TODO-02 §2 lands: add `_Static_assert` size/version guards in `include/kernel/config.h`, a Phase 0 sanity log, unit coverage in `test_kernel_config.c`, and documentation for fixed-size fields and string buffers
 
 **Test checkpoint:** Add a field without shrinking _reserved -> static assert fires. `sizeof(boot_config) != 512` -> compile error. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 

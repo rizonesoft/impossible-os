@@ -11,6 +11,7 @@
 
 - [`scripts/build.sh`](../../scripts/build.sh) -- kernel build script (reference for progress/output style)
 - `sdk/src/` -- SDK tool source directories
+- → XREF: `D00 T01 §1-§3` -- repo-local developer tooling owns the top-level setup, host-profile, and wrapper contract this SDK flow complements
 
 ## Outcome
 

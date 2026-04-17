@@ -16,7 +16,7 @@
 - [`.cursor/rules/`](../../.cursor/rules/) -- Cursor rule set
 - [`.cursor/skills/README.md`](../../.cursor/skills/README.md) -- Cursor skill scope and limits
 - [`todo/TODO-00-INDEX.md`](../TODO-00-INDEX.md) -- root roadmap ownership
-- -> XREF: `T01 §4, §5` -- hook lifecycle and CI/tooling contract live in the developer-tooling roadmap
+- -> XREF: `T01 §5, §6` -- hook lifecycle and CI/tooling contract live in the developer-tooling roadmap
 - -> XREF: `T03 §4` -- deferred test-gap ownership should remain reachable by AI workflow guidance, not duplicated
 
 ## Outcome
@@ -80,7 +80,7 @@ Hooks are part of the AI system, not invisible glue.
 - [ ] Document mandatory triggers for domain-quality skills, TODO workflows, and scope-gap handling
 - [ ] Split large hook concerns into named policy blocks or documented sections so edits do not require blind JSON surgery
 - [ ] Define which hook behaviors are reminders, which are hard blocks, and which are informational only
-- [ ] Add explicit XREFs to `T01 §4` for hook installation/CI surfaces that live outside the AI system itself
+- [ ] Add explicit XREFs to `T01 §5` for hook installation/CI surfaces that live outside the AI system itself
 - [ ] Commit: `"docs/ai: codify hook routing and policy contract"`
 
 **Test checkpoint:** For any given edit path or skill invocation, the responsible hook and its intended effect are documented. A maintainer can tell whether a behavior is a reminder or a block without reading minified JSON logic.

@@ -16,6 +16,7 @@
 - `include/desktop/notify.h` (TODO-09 §6) -- `notify_send()` -- used by §4 service failure toast and §7 `knotify_send()` drain
 - `include/desktop/shortcut.h` (TODO-02 §5) -- `shortcut_execute()` -- used by §7 autostart `.lnk` execution
 - `include/kernel/klog.h` -- `klog()` -- used throughout for `[svc]` serial log lines
+- → XREF: `02-kernel-core/TODO-02-kernel-configuration-policy.md §5, §10` -- Safe Mode and boot acceptance policy decide which services and autostarts may run
 - → XREF: `08-graphics-ui/TODO-11-startmenu-tray-notifications.md §6` -- `knotify_send()` (§7) is drained by the toast queue; `notify_send()` is the user-facing path; §7 bridges the two
 - → XREF: `06-networking/TODO-01-*` (networking) -- `netd` (§2) wraps the existing DHCP/ARP polling loop; must co-exist with existing `net_init()` call in `kernel_main`
 - → XREF: `08-graphics-ui/TODO-14-win32-gdi-user32-stubs.md` -- §4 Win32 system info stubs go into the `kernel32.dll` stub table alongside GDI/USER32
@@ -154,6 +155,7 @@ Minimal `struct user_account` (uid, username, home_dir, privilege_level). Create
 - [ ] `netd_thread(void)` -- `net_dhcp_tick()` + `net_arp_tick()` every 1 s; `knotify_send()` on IP change
 - [ ] `ntpd_thread(void)` -- sleep 60 min; `ntp_sync_now()` (→ XREF `06-networking/TODO-06`); `knotify_send("ntpd", "Time synced", KNOTIFY_INFO)`
 - [ ] `indexd_thread(void)` -- sleep 30 min; `index_rebuild()` stub; `knotify_send("indexd", "Index rebuilt", KNOTIFY_INFO)`
+- [ ] Honor `kernel_config_get()->safe_mode`: always start `registryd`; allow `netd` only in normal or Safe Mode network; suppress `ntpd`, `indexd`, and other nonessential services in minimal/recovery profiles
 - [ ] Dependency array: `registryd.depends_on = {}`, `netd.depends_on = {"registryd"}`, `ntpd.depends_on = {"netd"}`, `indexd.depends_on = {"registryd"}`
 - [ ] `svc_builtins_register()` called from `svc_init()`; auto-start ordering enforced by dependency walk
 - [ ] Commit: `"svc: built-in daemons -- registryd(critical)/netd/ntpd/indexd with dependency order"`
@@ -189,6 +191,7 @@ Scan `C:\Users\Default\AppData\Startup\` for `.lnk` files after desktop fully in
 - [ ] `autostart_run_registry()`: enumerate `HKLM\SYSTEM\Boot\Run` subkeys; execute each value as a command string via `file_assoc_open()` or `shortcut_execute()`
 - [ ] `autostart_run_once()`: enumerate `HKLM\SYSTEM\Boot\RunOnce`; execute; `RegDeleteKey()` after each
 - [ ] Execution order: `autostart_run_registry()` → `autostart_run_once()` → `autostart_run_startup_folder()`
+- [ ] Suppress `Run`, `RunOnce`, and Startup-folder execution when Safe Mode or recovery policy forbids autostart; allow only explicitly tagged recovery tools
 - [ ] Log each autostart execution: `[autostart] run: %s`
 - [ ] Commit: `"autostart: Startup folder scan, Run/RunOnce Registry execution, error knotify"`
 

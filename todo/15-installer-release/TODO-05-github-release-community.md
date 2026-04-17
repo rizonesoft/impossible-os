@@ -38,6 +38,7 @@
 - `README.md`, `CONTRIBUTING.md`, `CHANGELOG.md`, `CODE_OF_CONDUCT.md` -- existing files to overhaul
 - `.github/ISSUE_TEMPLATE/`, `.github/PULL_REQUEST_TEMPLATE.md` -- existing templates to replace
 - `scripts/build.sh` -- quick-start commands; §3 §5
+- `00-infrastructure/TODO-01-developer-tooling-stack.md §1-§7` (→ XREF) -- canonical host setup, wrapper, hook, workflow, and doctor contract consumed by `README.md` and `CONTRIBUTING.md`
 
 ---
 
@@ -124,9 +125,10 @@ outsiders can track progress without reading 100+ TODO files.
 **Source:** `CONTRIBUTING.md` (overhaul existing file)
 
 - [ ] **Sections** (rewrite `CONTRIBUTING.md` to cover):
+  - **Canonical source of truth**: `D00 T01 §1-§7` owns setup/build/test/hook/workflow command truth; `CONTRIBUTING.md` summarizes the supported path and links back instead of inventing parallel commands
   - **Development setup**: WSL2 + Ubuntu 22.04 recommended; `bash scripts/setup.sh` installs all dependencies (clang-19, nasm, lld-19, QEMU, OVMF); Windows native not supported (WSL2 only); macOS not supported
   - **Build commands**: table (`bash scripts/build.sh`, `clean`, `run`, `clean run`, `qa`); verify with `tail -1 build/build.log`
-  - **QEMU test run**: `bash scripts/run-tests.sh` for regression suite; `bash scripts/build.sh run` for interactive
+  - **QEMU test run**: `bash scripts/test.sh` for the regression suite; `bash scripts/build.sh run` for interactive boot
   - **Code style**: line length ≤ 120, function length < 50 lines, `snake_case` functions + vars, `UPPER_CASE` macros, `#pragma once`, no angle-bracket includes; link to `CONTRIBUTING.md §Coding Conventions`
   - **Commit message format**: conventional commits -- `scope: short description`; common scopes table (kernel, boot, desktop, drivers, gfx, fs, net, build, docs, agent)
   - **PR process**: feature branch → PR → CI green → code review → squash-merge; PR title must follow conventional commit format; no direct pushes to `main`
@@ -185,7 +187,7 @@ outsiders can track progress without reading 100+ TODO files.
 
   ## Checklist
   - [ ] `bash scripts/build.sh clean` passes
-  - [ ] `bash scripts/run-tests.sh` passes (no new test failures)
+  - [ ] `bash scripts/test.sh` passes (no new test failures)
   - [ ] `CHANGELOG.md` updated under `## [Unreleased]`
   - [ ] project conventions consulted -- no violations
   - [ ] New TODO files created with `create-todo` skill (if applicable)
@@ -246,6 +248,7 @@ outsiders can track progress without reading 100+ TODO files.
   ```
 - [ ] **Desktop screenshot**: capture QEMU framebuffer at `1280×720` showing desktop with taskbar, wallpaper, and at least one open window; save as `docs/screenshots/desktop-v{version}.png`; script `scripts/take-screenshot.sh` (QEMU `-screenshot` option on a specific frame or `sendkey` sequence to open a window)
 - [ ] **CI status badge**: `[![CI](https://github.com/rizonesoft/impossible-os/actions/workflows/build.yml/badge.svg)](...)` -- auto-shows green/red from GHA
+- [ ] **Tooling-command sync**: README quick start and test guidance must reuse the canonical commands from `D00 T01 §1-§7`; no stale `make test`, `run-tests.sh`, or obsolete ISO-only launcher wording
 - [ ] **Auto-update download table**: `scripts/update-readme-links.sh` -- reads `build/release-{version}.json`; replaces `{latest}` placeholders in README with current version + URLs; called by `create-release.sh` (§1)
 - [ ] **README status sync**: feature status table in README stays current; `scripts/sync-readme-status.sh` generates README table from source to avoid drift
 

@@ -16,6 +16,7 @@
 - `src/kernel/main/compositor.c` -- render loop, framebuffer compositing
 - `src/kernel/drivers/framebuffer.c` -- framebuffer access, page flip
 - `CLAUDE.md` -- `bash scripts/test.sh` / `make test` wiring (local headless QEMU; no CI QEMU in Actions)
+- → XREF: `T01 §4, §6` -- launcher matrix and workflow/artifact policy own the shared VM runner and CI wrapper contract this TODO consumes
 - → XREF: `T04 §3` -- kernel launcher runs the `test_*.exe` sequence this TODO builds on
 - → XREF: `T04 §4` -- shared timeout, TAP, skip, and environment-matrix policy for automated UI runs
 

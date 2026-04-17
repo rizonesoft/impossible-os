@@ -22,6 +22,7 @@
 - → XREF: `05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md §5` -- IXFS security descriptors stored as `SECURITY_DESCRIPTOR` on inodes; SRM is the enforcement engine
 - → XREF: `09-desktop-shell/TODO-06-security-accounts.md §11` -- UAC consent UI triggers token elevation; this TODO provides `NtFilterToken` + elevation protocol
 - → XREF: `TODO-05-object-manager.md §1` -- §13 (SeAssignSecurity) is called by ObCreateObject when a named object is created in a directory
+- → XREF: `TODO-02-kernel-configuration-policy.md §8` -- runtime config writes require `SeSystemProfilePrivilege` or administrator policy gates
 - → XREF: `TODO-03-kernel-libraries.md §3` -- Monocypher SHA-256 used by §14 (AppContainer SID generation from package name hash)
 
 ---

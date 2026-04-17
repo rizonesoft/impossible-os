@@ -16,6 +16,7 @@
 - `src/kernel/sched/syscall.c` -- syscall dispatcher
 - `CLAUDE.md` -- `bash scripts/test.sh` and SUITE=exec for local kernel + user-mode coverage (no CI QEMU in Actions)
 - `include/kernel/sched/syscall.h` -- authoritative INT 0x80 syscall numbers for §2 parity work
+- → XREF: `T01 §3, §4, §6` -- launcher docs, machine-profile matrix, and CI wrapper policy should reuse the canonical developer tooling contract instead of inventing a second runner surface
 - → XREF: `T05 §3, §7` -- desktop UI testing consumes the user-mode launcher foundation and CI-facing automation surfaces
 - → XREF: `02-kernel-core/TODO-12-native-api-ssdt.md §6` -- Win32 and NtXxx coverage expands here once the SSDT surface is implemented
 - → XREF: `02-kernel-core/TODO-17-binary-system.md` -- ELF/PE/EIF loader tested here
