@@ -1,8 +1,8 @@
 # Machine Launcher and Debug Profile Matrix
 
-> **Owner:** [TODO-01 §4](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md) in `todo/00-infrastructure/`.
+> **Owner:** [Developer Tooling Stack roadmap -- Machine Launcher and Debug Profile Matrix section](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md#4-machine-launcher-and-debug-profile-matrix).
 > **Audience:** developers picking the right launcher for a specific scenario (CPU/SMP, storage, filesystem, secure-boot, bare metal) without script archaeology.
-> **Out of scope:** release-validation VM flows (owner: `D15 T04 §2, §4`) and installer/provisioning VM templates (owner: `D15 T02 §7`). This doc does not duplicate those.
+> **Out of scope:** release-validation VM flows (owner: [Release QA roadmap -- QEMU Validation + VirtualBox Certification](../../todo/15-installer-release/TODO-04-release-qa.md)) and installer/provisioning VM templates (owner: [Unattended Install roadmap -- VM Provisioning Templates](../../todo/15-installer-release/TODO-02-unattended-install.md)). This doc does not duplicate those.
 
 The repository ships one default launcher plus pinned specialist launchers under `scripts/machines/`. Each launcher below is documented with its host, accelerator, artifacts, debugger entry point, and known limitations.
 
@@ -189,7 +189,7 @@ Surfaced here so new contributors can find them instead of tripping over them:
 
 - **`run-qemu-kvm.bat` forces WHPX**, not KVM. Name is historical and stays to avoid breaking muscle memory. `run-qemu-kvm.sh` does use KVM.
 - **`run-secureboot.bat` lives under `scripts/debug/`**, not `scripts/machines/`. Logically a machine profile; consolidation under `scripts/machines/` is follow-up work.
-- **`scripts/debug/run-*-tests.bat` are not machine profiles** -- they are category-specific test runners that wrap `run-qemu.ps1 -TestOnly -TestSuite <cat>`. Owned by the [Wrapper Contract (TODO-01 §3)](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md#3-build-test-lint-and-run-wrapper-contract).
+- **`scripts/debug/run-*-tests.bat` are not machine profiles** -- they are category-specific test runners that wrap `run-qemu.ps1 -TestOnly -TestSuite <cat>`. Owned by the [Wrapper Contract section of the developer tooling roadmap](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md#3-build-test-lint-and-run-wrapper-contract).
 - **Filesystem and storage harnesses are Windows-first.** No `.sh` equivalents today; Linux contributors invoke `run-qemu.sh` with extra `-drive ...` manually, or run the Windows-side scripts from WSL2.
 - **Storage launchers do not accept `-ExtraArgs`.** NVMe and USB `.ps1` files expose `-Accel` and `-Build` only. Filesystem `run-fs-test.ps1` exposes `-Disk`, `-Accel`, `-Build`, `-GenDisk`. Follow-up: lift the `-ExtraArgs` parameter from `run-qemu.ps1` into the scenario launchers.
 
@@ -199,12 +199,12 @@ Surfaced here so new contributors can find them instead of tripping over them:
 
 | Concern                                                  | Owner                                                                                                                        |
 | -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| Release-validation VM sweep (QEMU + VirtualBox matrices) | [D15 T04 §2, §4](../../todo/15-installer-release/TODO-04-release-qa.md)                                                      |
-| Installer / provisioning VM templates                    | [D15 T02 §7](../../todo/15-installer-release/TODO-02-unattended-install.md)                                                  |
-| Hyper-V certification flows                              | [D15 T04 §3](../../todo/15-installer-release/TODO-04-release-qa.md) -- deliberately not in the developer matrix              |
-| Real-hardware certification checklist                    | [D15 T04 §5](../../todo/15-installer-release/TODO-04-release-qa.md)                                                          |
-| Performance benchmarks                                   | [D15 T04 §6](../../todo/15-installer-release/TODO-04-release-qa.md)                                                          |
-| GitHub Actions workflow matrix                           | [TODO-01 §6](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md#6-github-actions-and-artifact-policy-alignment) |
+| Release-validation VM sweep (QEMU + VirtualBox matrices) | [Release QA roadmap -- QEMU + VirtualBox sections](../../todo/15-installer-release/TODO-04-release-qa.md)                        |
+| Installer / provisioning VM templates                    | [Unattended Install roadmap -- VM Provisioning Templates section](../../todo/15-installer-release/TODO-02-unattended-install.md) |
+| Hyper-V certification flows                              | [Release QA roadmap -- Hyper-V Certification section](../../todo/15-installer-release/TODO-04-release-qa.md) -- deliberately not in the developer matrix |
+| Real-hardware certification checklist                    | [Release QA roadmap -- Real Hardware Test Checklist section](../../todo/15-installer-release/TODO-04-release-qa.md)              |
+| Performance benchmarks                                   | [Release QA roadmap -- Performance Benchmarks section](../../todo/15-installer-release/TODO-04-release-qa.md)                    |
+| GitHub Actions workflow matrix                           | [Developer Tooling roadmap -- GitHub Actions section](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md#6-github-actions-and-artifact-policy-alignment) |
 
 ---
 
