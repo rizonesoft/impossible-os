@@ -169,9 +169,24 @@ todo/              Development roadmap (100+ TODO items across 50+ files)
 | **QEMU** | `bash scripts/build.sh run` -- default, fastest iteration |
 | **VirtualBox** | `scripts/machines/run-vbox.bat` (Windows) or configure a 64-bit EFI VM |
 | **Hyper-V** | Gen 2 VM, Secure Boot disabled, UEFI boot from `.vhdx` |
-| **Real hardware** | Write `build/system-disk.img` to USB with `dd` or Rufus |
+| **Real hardware** | Write `build/system-disk.img` to USB with `bash scripts/deploy/write-usb.sh`, `dd`, or Rufus |
 
-Serial output is written to `build/serial.log` for debugging.
+Serial output is written to `build/serial.log` for debugging. The full
+launcher and debug profile matrix (WHPX/KVM/TCG/VirtualBox/secure-boot/
+bare metal) lives at
+[`docs/infrastructure/machine-matrix.md`](docs/infrastructure/machine-matrix.md).
+
+### Git Hooks
+
+```bash
+bash scripts/install-hooks.sh              # always-on lint + COUNT.md
+bash scripts/install-hooks.sh --with-pre-push   # + opt-in build/test gate
+```
+
+Sets `core.hooksPath=.githooks` idempotently, enables the opt-in pre-push
+gate via a sentinel file. `--status` prints current state; `--remove`
+undoes everything. Full lifecycle:
+[Local CI Hooks](docs/infrastructure/development-tooling.md#local-ci-hooks).
 
 ---
 

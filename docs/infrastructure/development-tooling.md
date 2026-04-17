@@ -737,13 +737,33 @@ No external dependencies (stdlib only, Pillow optional for JPEG). Negative test 
 
 ## Local CI Hooks
 
-Hook lifecycle (install, remove, update) is owned by the "git hook lifecycle" row in the [Scope Boundary](#scope-boundary) table; this section records the *currently active* state only.
+### Install path
 
-### Pre-Commit Lint Hook (active)
+One command configures every git hook this repo ships:
 
-`.githooks/pre-commit` -- staged-file lint gate.
+```bash
+bash scripts/install-hooks.sh                # idempotent; sets core.hooksPath=.githooks
+bash scripts/install-hooks.sh --with-pre-push  # same + enables the opt-in pre-push gate
+bash scripts/install-hooks.sh --status       # print current state
+bash scripts/install-hooks.sh --remove       # unset core.hooksPath + drop pre-push sentinel
+```
 
-**Setup:** `git config core.hooksPath .githooks`
+`core.hooksPath=.githooks` points git at the repo-tracked `.githooks/` directory so every contributor sees the exact same hook tree without needing a symlink setup per clone. The `.git/hooks/` directory becomes inert once `core.hooksPath` is set -- manual edits there will not fire. The `install-hooks.sh --remove` path also prunes any legacy symlinks that earlier versions of the script left in `.git/hooks/`.
+
+### Hook lifecycle
+
+| Hook | Path | Default | Blocks | Re-run manually |
+| ---- | ---- | ------- | ------ | --------------- |
+| `pre-commit` | [`.githooks/pre-commit`](../../.githooks/pre-commit) | **always on** once `core.hooksPath` is set | commit, on lint failure | `bash scripts/lint.sh` |
+| `post-commit` | [`.githooks/post-commit`](../../.githooks/post-commit) | **always on** | nothing (amends commit with `COUNT.md`) | `bash .githooks/post-commit` (will amend `HEAD`) |
+| `pre-push` | [`.githooks/pre-push`](../../.githooks/pre-push) -> [`scripts/hooks/pre-push`](../../scripts/hooks/pre-push) | **opt-in** via `.git/.impossible-os-prepush` sentinel | push, on build or test failure | `bash scripts/build.sh && bash scripts/test.sh` |
+
+Mandatory (`always on`) vs opt-in matters because wall-clock cost differs:
+- `pre-commit` runs in under a millisecond when no C/H files are staged, and over staged files only when they actually changed.
+- `post-commit` regenerates the source-line tally in `COUNT.md` and amends -- silent on success.
+- `pre-push` rebuilds and runs the full test suite (~10s on KVM, longer on TCG). That is why it is opt-in. GitHub Actions is the mandatory gate at PR time; `--with-pre-push` is for contributors who prefer to catch failures locally before the push leaves their machine.
+
+### Pre-commit lint gate (always on)
 
 | Behavior      | Detail                                           |
 | ------------- | ------------------------------------------------ |
@@ -754,22 +774,35 @@ Hook lifecycle (install, remove, update) is owned by the "git hook lifecycle" ro
 | Deleted files | Skipped (`--diff-filter=d`)                      |
 | Live-call ban | Test files cannot call forbidden boot functions  |
 
-### Post-Commit COUNT.md Hook (active)
+Bypass for one commit: `git commit --no-verify ...` (strongly discouraged; lint is fast).
 
-`.githooks/post-commit` -- regenerates `COUNT.md` (source-line tally) after every commit and amends the commit to include the refresh. Silent on success.
+### Post-commit COUNT.md refresh (always on)
 
-### Pre-Push Hook (opt-in)
+Regenerates [`COUNT.md`](../../COUNT.md) after every commit and amends the commit to include the refresh. Recurses once via `SKIP_COUNT=1` when amending. Silent on success. Disable for one commit with `SKIP_COUNT=1 git commit ...`.
 
-`scripts/hooks/pre-push` -- optional build + test gate. **Not installed by default.** Running `bash scripts/install-hooks.sh` symlinks it into `.git/hooks/pre-push`, after which every `git push` runs:
+### Pre-push build + test gate (opt-in)
+
+Enable with `bash scripts/install-hooks.sh --enable-pre-push`; disable with `--disable-pre-push`. When enabled, every `git push` runs:
 
 | Step        | Detail                                                              |
 | ----------- | ------------------------------------------------------------------- |
 | Build check | `bash scripts/build.sh` -- exits 1 on build failure                 |
 | Test run    | `bash scripts/test.sh` -- exits 1 on any test failure               |
-| On failure  | Push blocked; prints "Run 'bash scripts/test.sh' to see details."   |
+| On failure  | Push blocked; prints `"Run 'bash scripts/test.sh' to see details."` |
 | KVM         | Needs `/dev/kvm` for acceptable wall-clock (falls back to TCG)      |
 
-Remove with `bash scripts/install-hooks.sh --remove`. The hook is retained as opt-in because contributors running it at push time trade wall-clock for protection; GitHub Actions provides the same gate at PR time without the local cost.
+Bypass for one push: `git push --no-verify ...` (CI remains the mandatory gate).
+
+### Claude Code harness hooks (separate system)
+
+The Claude Code agent harness has its own PostToolUse hooks configured in [`.claude/settings.json`](../../.claude/settings.json) that run after a successful `git commit` inside an agent session:
+- Unit-test advisory: `bash scripts/test.sh QUIET=1` when any `.c/.h/.asm/.ld` is touched.
+- Boot-path smoke advisory: `bash scripts/test-smoke.sh` when the commit touches `src/boot/`, `src/kernel/main/boot_*`, `idt.c`, `gdt.c`, `msr.c`, `smp/`, `mm/pmm.c|vmm.c|heap.c`, or selected drivers.
+These are harness-side advisories, not git hooks. They surface test results to the agent (not the human terminal) and are independent of the git-hook system above. Documented here so nobody wastes time grepping `.git/hooks/` for them.
+
+### Hook-manager decision
+
+The repo stays on **shell-managed** hooks (bash scripts under `.githooks/` routed via `core.hooksPath`) rather than adopting a declarative hook manager (lefthook, husky, pre-commit). Rationale: contributors already need `bash`, `clang-19`, `nasm`, and `qemu-system-x86_64` to build; adding a node/python hook-manager layer for two tiny scripts is net cost. If the hook count grows past ~5 or cross-language (YAML/markdown/Rust) gates land, this decision is revisited -- file that migration as a new TODO-01 §5 follow-up, not a silent swap.
 
 ---
 
@@ -784,16 +817,16 @@ scripts/
 ├── debug.sh                 ← QEMU + GDB with kernel symbols
 ├── setup.sh                 ← Host bootstrap wrapper (see Host Bootstrap Contract)
 ├── setup-deps.sh            ← Distro package installer (called by setup.sh)
-├── test-smoke.sh            ← Legacy boot smoke test (superseded by test.sh)
+├── test-smoke.sh            ← End-to-end boot smoke test (KVM preferred, TCG fallback)
 ├── test-fs.sh               ← Filesystem driver test suite
 ├── test-coverage.sh         ← Coverage scanner → docs/test-coverage/
 ├── patch-boot-conf.sh       ← Patch boot.conf in EFI partition (test=1, debug=1)
-├── install-hooks.sh         ← Install/remove repo-tracked git hooks
+├── install-hooks.sh         ← Configure core.hooksPath + toggle opt-in pre-push
 ├── sign-efi.sh              ← EFI binary signing (uses MOK keys if present)
 ├── size-report.sh           ← Binary size tracker + CSV history
 ├── debug/                   ← Debug-scenario runner .bat files (Windows)
 ├── hooks/
-│   └── pre-push             ← Pre-push test/build gate (currently out of tree)
+│   └── pre-push             ← Pre-push build+test gate (delegated from .githooks/pre-push)
 ├── deploy/
 │   ├── write-usb.ps1        ← USB write (Windows)
 │   ├── write-usb.bat

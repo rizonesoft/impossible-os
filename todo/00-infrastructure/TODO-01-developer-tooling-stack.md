@@ -20,7 +20,7 @@
 - [`scripts/hooks/pre-push`](../../scripts/hooks/pre-push) -- enforced local pre-push gate
 - [`.githooks/`](../../.githooks/) -- repo-tracked git hooks that currently coexist with the install-hooks path
 - [`scripts/machines/`](../../scripts/machines/) -- per-hypervisor / per-scenario runners
-- [`scripts/test-smoke.sh`](../../scripts/test-smoke.sh) -- end-to-end boot smoke test (KVM preferred, TCG fallback) wired into `/implement-todo-section`, `/debug-session`, and a conditional post-commit hook
+- [`scripts/test-smoke.sh`](../../scripts/test-smoke.sh) -- end-to-end boot smoke test (KVM preferred, TCG fallback) wired into `/implement-todo-section`, `/debug-session`, and the Claude Code harness post-commit hook in `.claude/settings.json` (separate from git hooks)
 - [`.github/workflows/build.yml`](../../.github/workflows/build.yml) -- build artifact and sentinel policy
 - [`.github/workflows/release.yml`](../../.github/workflows/release.yml) -- release automation boundary
 - [`.github/workflows/pages.yml`](../../.github/workflows/pages.yml) -- docs/deployment workflow policy touched by §6
@@ -56,7 +56,7 @@
 | 💎  |   2   | Supported host profiles and reproducible environments | §1             |  [x]   |
 | 💎  |   3   | Build, test, lint, and run wrapper contract           | §1, §2         |  [x]   |
 | 💎  |   4   | Machine launcher and debug profile matrix             | §2, §3         |  [x]   |
-| 💎  |   5   | Git hooks and local automation lifecycle              | §1, §3         |  [ ]   |
+| 💎  |   5   | Git hooks and local automation lifecycle              | §1, §3         |  [x]   |
 | 💎  |   6   | GitHub Actions and artifact policy alignment          | §2, §3, §4, §5 |  [ ]   |
 | ⭐  |   7   | Tooling doctor and regression pack                    | §1-§6          |  [ ]   |
 
@@ -179,15 +179,25 @@ Local and CI runs need named machine profiles instead of script archaeology acro
 
 Hooks are part of the tooling contract, not a hidden convenience script.
 
-- [ ] Document the local hook lifecycle owned by `scripts/install-hooks.sh` and `scripts/hooks/pre-push`: install, remove, update, and expected blocking behavior
-- [ ] Reconcile repo-tracked `.githooks/` with `scripts/install-hooks.sh`: document whether both remain, which hook families use `core.hooksPath`, and which path is canonical for contributors
-- [ ] Decide whether the repo stays on shell-managed hooks or adopts a declarative hook manager layer; if adopting, file the exact migration under this section instead of leaving it implied
-- [ ] Define which checks are mandatory pre-push versus optional local quality-of-life checks
-- [ ] Add a repo-visible hook reference explaining why push is blocked on failed build/test and where to re-run the same checks manually
-- [ ] Wire hook docs into `README.md` / `CONTRIBUTING.md` / `CLAUDE.md` so all three describe the same install path
-- [ ] Commit: `"tooling: define git hook lifecycle and local automation policy"`
+- [x] Document the local hook lifecycle owned by `scripts/install-hooks.sh` and `scripts/hooks/pre-push`: install, remove, update, and expected blocking behavior
+- [x] Reconcile repo-tracked `.githooks/` with `scripts/install-hooks.sh`: document whether both remain, which hook families use `core.hooksPath`, and which path is canonical for contributors
+- [x] Decide whether the repo stays on shell-managed hooks or adopts a declarative hook manager layer; if adopting, file the exact migration under this section instead of leaving it implied
+- [x] Define which checks are mandatory pre-push versus optional local quality-of-life checks
+- [x] Add a repo-visible hook reference explaining why push is blocked on failed build/test and where to re-run the same checks manually
+- [x] Wire hook docs into `README.md` / `CONTRIBUTING.md` / `CLAUDE.md` so all three describe the same install path
+- [x] Commit: `"tooling: define git hook lifecycle and local automation policy"`
 
 **Test checkpoint:** `bash scripts/install-hooks.sh` installs the hook idempotently, `--remove` cleans it up, and a failing local build or test blocks `git push` with the documented error path.
+
+> **Notes:**
+> - Canonical doc: [`docs/infrastructure/development-tooling.md#local-ci-hooks`](../../docs/infrastructure/development-tooling.md#local-ci-hooks) -- rewritten to reflect the new install path, lifecycle table, always-on vs opt-in split, manual re-run commands, and explicit Claude Code harness separation.
+> - `scripts/install-hooks.sh` redesigned from "symlink into `.git/hooks/`" (which was a silent no-op when `core.hooksPath=.githooks` was set -- the README/CONTRIBUTING path) to a canonical bootstrap: idempotently sets `core.hooksPath=.githooks`, toggles the opt-in pre-push gate via a `.git/.impossible-os-prepush` sentinel file, prunes legacy symlinks on `--remove`, and exposes `--status` / `--help` / `--enable-pre-push` / `--disable-pre-push` / `--with-pre-push` subcommands.
+> - New [`.githooks/pre-push`](../../.githooks/pre-push) delegator: checks for the sentinel and `exec`s `scripts/hooks/pre-push` when opted in; exits 0 silently otherwise. Keeps `.githooks/` as the single canonical hook directory without forcing the heavy build/test gate on every contributor.
+> - **Decision (codified):** the repo stays on shell-managed hooks under `.githooks/` routed via `core.hooksPath`; no declarative hook manager (lefthook/husky/pre-commit) adopted. Rationale and re-visit trigger documented in the canonical doc.
+> - **Mandatory hooks:** pre-commit lint + post-commit `COUNT.md` refresh (always active once `core.hooksPath` is set). **Opt-in:** pre-push build + test gate (activated per-clone via sentinel). CI (`build.yml`) remains the mandatory PR-time gate regardless of local pre-push state.
+> - README.md added a new "Git Hooks" subsection under Testing linking to the canonical doc. CONTRIBUTING.md "Enable Git Hooks" rewritten around `bash scripts/install-hooks.sh` as the single canonical command. CLAUDE.md added a "Git Hooks" section after Doc Sync matching the same command.
+
+> **Test runner:** docs-only section, no kernel test surface. Shell-level validation is built into the script itself: `bash scripts/install-hooks.sh --status` reports the current state, idempotence is proven by running the default command twice and verifying identical output, `--remove` leaves `core.hooksPath` unset + sentinel absent. Full smoke of the sentinel-gated delegator: `echo "" | bash .githooks/pre-push` exits 0 when sentinel absent; with sentinel touched it exec's `scripts/hooks/pre-push` (the full build+test gate). Structural drift protection lands with the §7 Tooling Doctor / `scripts/test-tooling.sh` regression pack (not yet implemented).
 
 ---
 
@@ -237,7 +247,7 @@ This is the refinement step: make the tooling self-diagnosing instead of forcing
 | 💎 | Reproducible host profiles    | ⚠️ EWDK/Dev Box or VMs    | ✅ Devcontainers common    | ✅ §2 matrix + .devcontainer + shim procedure |
 | 💎 | Canonical build/test wrappers | ✅ Common in mature repos | ✅ Common in mature repos  | ✅ §3 wrapper contract + --help on all 5 |
 | 💎 | Named VM/debug profiles       | ⚠️ Often ad hoc           | ⚠️ Often ad hoc            | ✅ §4 -- machine-matrix.md + bare-metal row |
-| 💎 | Managed local hooks           | ⚠️ Varies by repo         | ✅ Common in many repos    | ⬜ §5                    |
+| 💎 | Managed local hooks           | ⚠️ Varies by repo         | ✅ Common in many repos    | ✅ §5 -- install-hooks.sh one-command bootstrap + sentinel-gated opt-in pre-push |
 | 💎 | Workflow/artifact policy      | ✅ Standard CI practice   | ✅ Standard CI practice    | ⬜ §6                    |
 | ⭐ | One-command tooling doctor    | ❌ Rare in OS repos       | ❌ Rare in OS repos        | ⬜ §7                    |
 

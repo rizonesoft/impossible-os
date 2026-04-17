@@ -3,7 +3,7 @@
 # Runs silently after every commit. Amends the commit to include the update.
 # To disable temporarily: SKIP_COUNT=1 git commit ...
 
-[ "$SKIP_COUNT" = "1" ] && exit 0
+[ "${SKIP_COUNT:-}" = "1" ] && exit 0
 
 ROOT="$(git rev-parse --show-toplevel)"
 COUNT_FILE="$ROOT/COUNT.md"

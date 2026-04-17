@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# =============================================================================
+# .githooks/pre-push -- opt-in pre-push gate delegator.
+#
+# Runs scripts/hooks/pre-push (full build + test.sh) only when the sentinel
+# .git/.impossible-os-prepush exists. No-ops silently otherwise. Toggle with:
+#   bash scripts/install-hooks.sh --enable-pre-push
+#   bash scripts/install-hooks.sh --disable-pre-push
+# =============================================================================
+
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Worktree-safe: rev-parse --git-path resolves .git whether it's a directory
+# (main checkout) or a file (linked worktree).
+SENTINEL="$(git -C "$REPO_ROOT" rev-parse --git-path .impossible-os-prepush 2>/dev/null || echo "$REPO_ROOT/.git/.impossible-os-prepush")"
+
+# Opt-out: no sentinel means pre-push is disabled.
+[ -f "$SENTINEL" ] || exit 0
+
+# Stdin carries the ref update info that `git push` passes to pre-push
+# hooks. Forward it verbatim so the delegated script can read it if it wants.
+exec "$REPO_ROOT/scripts/hooks/pre-push" "$@"

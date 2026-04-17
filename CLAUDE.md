@@ -176,6 +176,19 @@ Stop and ask before: security-sensitive changes, destructive operations, ABI cha
 
 When you change code or conventions, update `CLAUDE.md`, `.claude/skills/`, and affected TODO files in the same task. Each AI tool system (`.claude/`, `.cursor/`) is independent -- create skills directly for each tool, not synced from a shared layer.
 
+## Git Hooks
+
+One command configures all repo-tracked hooks:
+
+```bash
+bash scripts/install-hooks.sh              # always-on: pre-commit lint + post-commit COUNT.md
+bash scripts/install-hooks.sh --with-pre-push  # same + opt-in build/test pre-push gate
+bash scripts/install-hooks.sh --status     # what is active now
+bash scripts/install-hooks.sh --remove     # undo
+```
+
+Canonical path is `.githooks/` (activated by `core.hooksPath`). Manual edits under `.git/hooks/` are inert once configured. Mandatory gates are the pre-commit lint (fast, staged-file only) and the post-commit `COUNT.md` refresh; the pre-push build+test gate is opt-in because CI already gates PRs. Full lifecycle in [docs/infrastructure/development-tooling.md#local-ci-hooks](docs/infrastructure/development-tooling.md#local-ci-hooks). Claude Code harness hooks (post-commit unit-test + boot-smoke advisories) live in [.claude/settings.json](.claude/settings.json) -- a separate system, not git hooks.
+
 ## Toolchain
 
 - Compiler: `clang-19 --target=x86_64-elf`

@@ -39,22 +39,34 @@ runs `bash scripts/setup.sh` on first start.
 
 ### Enable Git Hooks
 
+One command wires up the always-on hooks (pre-commit lint + post-commit
+`COUNT.md`) and tells you the current state:
+
 ```bash
-git config core.hooksPath .githooks       # pre-commit lint + post-commit COUNT.md
+bash scripts/install-hooks.sh              # sets core.hooksPath=.githooks (idempotent)
+bash scripts/install-hooks.sh --with-pre-push  # same + enables the opt-in pre-push gate
+bash scripts/install-hooks.sh --status     # print current state
+bash scripts/install-hooks.sh --remove     # undo all of the above
 ```
 
-The active `.githooks/pre-commit` hook lints staged `.c`/`.h` changes and
-enforces the test-file live-call ban; it exits in under a millisecond when no
-C files are staged. The `.githooks/post-commit` hook regenerates `COUNT.md`
-(source-line tally) and amends the commit to include the refresh.
+Always-on hooks once `core.hooksPath=.githooks` is set:
+- [`.githooks/pre-commit`](.githooks/pre-commit) -- lints staged `.c`/`.h`,
+  enforces the test-file live-call ban, exits in under a millisecond when
+  no C files are staged.
+- [`.githooks/post-commit`](.githooks/post-commit) -- regenerates
+  [`COUNT.md`](COUNT.md) and amends the commit. Silent on success.
 
-An **opt-in** pre-push hook at `scripts/hooks/pre-push` runs
-`bash scripts/build.sh` and `bash scripts/test.sh` before every push. Enable
-with `bash scripts/install-hooks.sh` (remove: `--remove`). If you skip it,
-GitHub Actions gates the PR instead. See
-[Wrapper Contract](docs/infrastructure/development-tooling.md#wrapper-contract)
-and [Local CI Hooks](docs/infrastructure/development-tooling.md#local-ci-hooks)
-for the full current state.
+**Opt-in** pre-push gate (`--with-pre-push` or `--enable-pre-push`):
+[`.githooks/pre-push`](.githooks/pre-push) delegates to
+[`scripts/hooks/pre-push`](scripts/hooks/pre-push) when the
+`.git/.impossible-os-prepush` sentinel exists. On push it runs
+`bash scripts/build.sh` then `bash scripts/test.sh`; any failure blocks
+the push with a pointer at the manual re-run command. Skip it at your
+discretion -- GitHub Actions remains the mandatory gate at PR time.
+Disable with `bash scripts/install-hooks.sh --disable-pre-push`.
+
+Full lifecycle reference:
+[Local CI Hooks](docs/infrastructure/development-tooling.md#local-ci-hooks).
 
 ---
 
