@@ -86,7 +86,7 @@ Owned elsewhere. Each row links to the owning TODO *file*; section anchors insid
 | Cross-compiler toolchain, SDK build system    | [SDK Build System TODO](../../todo/14-host-tools/TODO-01-sdk-build-system.md)                                                   |
 | Host profile matrix + reproducible container  | [Supported Host Profiles and Reproducible Environments](#supported-host-profiles-and-reproducible-environments) (below)         |
 | Build/test/lint/run wrapper contract          | [Developer Tooling Stack TODO](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md) -- "wrapper contract" section   |
-| VM/bare-metal launcher matrix                 | [Developer Tooling Stack TODO](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md) -- "machine launcher" section   |
+| VM/bare-metal launcher matrix                 | [`machine-matrix.md`](machine-matrix.md) -- canonical table (owned by [TODO-01 §4](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md#4-machine-launcher-and-debug-profile-matrix)) |
 | Git hook lifecycle                            | [Developer Tooling Stack TODO](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md) -- "git hooks" section          |
 | CI workflow alignment                         | [Developer Tooling Stack TODO](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md) -- "GitHub Actions" section     |
 | One-command `scripts/tooling-doctor.sh`       | [Developer Tooling Stack TODO](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md) -- "tooling doctor" section     |
@@ -233,18 +233,21 @@ Every wrapper reads from and writes to a small set of well-known paths. Treat th
 
 ### Machine-Specific Launchers
 
-`scripts/run-qemu.sh` is the generic-use launcher. Specialist launchers under `scripts/machines/` provide pinned configurations for WHPX/KVM/TCG/VirtualBox/secure-boot/NVMe/USB; the full matrix is owned by the [Scope Boundary](#scope-boundary) "VM/bare-metal launcher matrix" row. Prefer those over ad hoc `qemu-system-x86_64 ...` invocations:
+`scripts/run-qemu.sh` is the generic-use launcher. Specialist launchers under `scripts/machines/` provide pinned configurations for WHPX/KVM/TCG/VirtualBox/secure-boot/NVMe/USB; the full matrix with artifact paths, debugger entry points, and bare-metal bring-up lives in [`machine-matrix.md`](machine-matrix.md). Prefer those over ad hoc `qemu-system-x86_64 ...` invocations:
 
 ```text
 scripts/machines/
-├── run-qemu-kvm.{sh,bat}      KVM-forced (fast Linux)
+├── run-qemu-kvm.sh            KVM-forced (Linux / WSL2)
+├── run-qemu-kvm.bat           WHPX-forced (Windows -- name is misleading)
 ├── run-qemu-tcg.{sh,bat}      TCG-forced (slow, portable)
-├── run-qemu-1cpu.bat          Single-CPU bisect profile
-├── run-qemu.ps1               Windows QEMU launcher
+├── run-qemu-1cpu.bat          Single-CPU bisect profile (WHPX)
+├── run-qemu.ps1               Windows QEMU launcher (underlying .bat dispatch)
 ├── run-vbox.{sh,ps1,bat}      VirtualBox
 ├── reset-qemu-nvram.{bat,ps1} Clear OVMF_VARS for fresh firmware state
 ├── storage/                   AHCI / VirtIO / NVMe / USB storage scenarios
 └── fs/                        Filesystem-specific harnesses
+scripts/debug/
+└── run-secureboot.bat         Secure Boot (TCG + q35 + SMM + pflash)
 ```
 
 ---
@@ -445,7 +448,7 @@ bash scripts/build.sh run
 
 ## Emulator Testing Scripts
 
-The full machine-launcher matrix (WHPX, KVM, TCG, VirtualBox, secure-boot, NVMe, USB, bare-metal) is tracked under "VM/bare-metal launcher matrix" in the [Scope Boundary](#scope-boundary) table; this section only lists the entry points.
+The full machine-launcher matrix (WHPX, KVM, TCG, VirtualBox, secure-boot, NVMe, USB, bare-metal) lives in [`machine-matrix.md`](machine-matrix.md); this section only lists the entry points.
 
 ### QEMU via the canonical wrapper
 
@@ -453,20 +456,22 @@ The full machine-launcher matrix (WHPX, KVM, TCG, VirtualBox, secure-boot, NVMe,
 
 ### Specialist launchers
 
-`scripts/machines/` contains pinned-configuration launchers. Use these instead of ad hoc `qemu-system-x86_64 ...` invocations:
+The full launcher matrix -- with accelerator semantics, artifact paths, debugger entry points, known limitations per profile, and a bare-metal bring-up row -- lives in [`machine-matrix.md`](machine-matrix.md). That is the canonical reference when picking between QEMU/KVM, QEMU/TCG, WHPX, VirtualBox, secure-boot, single-CPU, storage, and filesystem scenarios. The quick summary below points at the main entries:
 
 | Launcher                                  | Purpose                                                    |
 | ----------------------------------------- | ---------------------------------------------------------- |
-| `scripts/machines/run-qemu-kvm.sh/.bat`   | KVM-forced (fast Linux path)                               |
+| `scripts/machines/run-qemu-kvm.sh`        | KVM-forced (Linux / WSL2, fast)                            |
+| `scripts/machines/run-qemu-kvm.bat`       | WHPX-forced (Windows, despite the name -- see matrix)      |
 | `scripts/machines/run-qemu-tcg.sh/.bat`   | TCG-forced (deterministic, slow, portable)                 |
 | `scripts/machines/run-qemu-1cpu.bat`      | Single-CPU profile for bisecting SMP bugs                  |
-| `scripts/machines/run-qemu.ps1`           | Windows PowerShell QEMU launcher                           |
+| `scripts/machines/run-qemu.ps1`           | Windows PowerShell QEMU launcher (accel, smp, test flags)  |
 | `scripts/machines/run-vbox.sh/.ps1/.bat`  | VirtualBox (raw -> VDI conversion on each run)             |
+| `scripts/debug/run-secureboot.bat`        | Secure Boot (TCG + q35 + SMM + pflash; see matrix)         |
 | `scripts/machines/reset-qemu-nvram.*`     | Clear OVMF_VARS (fresh EFI variable state)                 |
 | `scripts/machines/storage/`               | AHCI / VirtIO / NVMe / USB storage scenarios               |
 | `scripts/machines/fs/`                    | Filesystem-specific harnesses                              |
 
-Hyper-V support is not wired today; when it lands it will join the matrix above.
+Hyper-V certification is owned by release validation ([D15 T04 §3](../../todo/15-installer-release/TODO-04-release-qa.md)), not the developer matrix.
 
 ---
 

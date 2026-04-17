@@ -257,6 +257,8 @@ the install. `pxesrv start` serves netboot images over TFTP to diskless clients.
 
 **Source:** `scripts/provision-qemu.sh`; `scripts/provision-hyperv.ps1`
 
+> -> XREF: developer-local QEMU/VirtualBox/secure-boot launchers are owned by [`00-infrastructure/TODO-01 §4`](../00-infrastructure/TODO-01-developer-tooling-stack.md#4-machine-launcher-and-debug-profile-matrix) and documented in [`docs/infrastructure/machine-matrix.md`](../../docs/infrastructure/machine-matrix.md). Provisioning templates in this section target answer-file-driven unattended installs; they are not a substitute for the developer matrix and must not inline its launcher tables.
+
 - [ ] **`scripts/provision-qemu.sh <answer.ini> [--disk-size 8G] [--name vm1]`**:
   1. Create QCOW2 disk: `qemu-img create -f qcow2 "${name}.qcow2" "${disk_size}"`
   2. Build QEMU command: `-drive file=${name}.qcow2,if=virtio -cdrom impossible-os-{ver}.iso -m 512 -cpu qemu64 -bios OVMF.fd -display none -serial stdio -append "answer=/answer.ini"`

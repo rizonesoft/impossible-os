@@ -20,7 +20,7 @@
 - [`scripts/hooks/pre-push`](../../scripts/hooks/pre-push) -- enforced local pre-push gate
 - [`.githooks/`](../../.githooks/) -- repo-tracked git hooks that currently coexist with the install-hooks path
 - [`scripts/machines/`](../../scripts/machines/) -- per-hypervisor / per-scenario runners
-- [`scripts/test-smoke.sh`](../../scripts/test-smoke.sh) -- legacy smoke flow still referenced in docs and needs an explicit keep/retire decision
+- [`scripts/test-smoke.sh`](../../scripts/test-smoke.sh) -- end-to-end boot smoke test (KVM preferred, TCG fallback) wired into `/implement-todo-section`, `/debug-session`, and a conditional post-commit hook
 - [`.github/workflows/build.yml`](../../.github/workflows/build.yml) -- build artifact and sentinel policy
 - [`.github/workflows/release.yml`](../../.github/workflows/release.yml) -- release automation boundary
 - [`.github/workflows/pages.yml`](../../.github/workflows/pages.yml) -- docs/deployment workflow policy touched by §6
@@ -55,7 +55,7 @@
 | 💎  |   1   | Host bootstrap and dependency contract                | --             |  [x]   |
 | 💎  |   2   | Supported host profiles and reproducible environments | §1             |  [x]   |
 | 💎  |   3   | Build, test, lint, and run wrapper contract           | §1, §2         |  [x]   |
-| 💎  |   4   | Machine launcher and debug profile matrix             | §2, §3         |  [ ]   |
+| 💎  |   4   | Machine launcher and debug profile matrix             | §2, §3         |  [x]   |
 | 💎  |   5   | Git hooks and local automation lifecycle              | §1, §3         |  [ ]   |
 | 💎  |   6   | GitHub Actions and artifact policy alignment          | §2, §3, §4, §5 |  [ ]   |
 | ⭐  |   7   | Tooling doctor and regression pack                    | §1-§6          |  [ ]   |
@@ -152,15 +152,23 @@ The wrappers are the real interface developers use. Their arguments, outputs, se
 
 Local and CI runs need named machine profiles instead of script archaeology across `scripts/machines/`.
 
-- [ ] Inventory `scripts/machines/` launchers and classify them by platform and purpose: WHPX, TCG, KVM, VirtualBox, storage, filesystem, and secure-boot scenarios
-- [ ] Create one canonical matrix document mapping each launcher to intended use, expected accelerator, artifacts, and known limitations
-- [ ] Define the boundary between `scripts/run-qemu.sh`, `scripts/debug.sh`, and machine-specific runners so the default path and specialist paths are obvious
-- [ ] Add explicit debugger entry points and serial-log expectations for each supported profile
-- [ ] Add a bare-metal bring-up row covering disk-image handoff, serial capture path, and expected log/artifact locations so the matrix does not stop at VM-only guidance
-- [ ] Mark release-validation VM flows as XREFs to `D15 T04 §2, §4` and installer/provisioning-specific VM flows as XREFs to `D15 T02 §7` instead of duplicating them here
-- [ ] Commit: `"docs/tooling: machine launcher and debug profile matrix"`
+- [x] Inventory `scripts/machines/` launchers and classify them by platform and purpose: WHPX, TCG, KVM, VirtualBox, storage, filesystem, and secure-boot scenarios
+- [x] Create one canonical matrix document mapping each launcher to intended use, expected accelerator, artifacts, and known limitations
+- [x] Define the boundary between `scripts/run-qemu.sh`, `scripts/debug.sh`, and machine-specific runners so the default path and specialist paths are obvious
+- [x] Add explicit debugger entry points and serial-log expectations for each supported profile
+- [x] Add a bare-metal bring-up row covering disk-image handoff, serial capture path, and expected log/artifact locations so the matrix does not stop at VM-only guidance
+- [x] Mark release-validation VM flows as XREFs to `D15 T04 §2, §4` and installer/provisioning-specific VM flows as XREFs to `D15 T02 §7` instead of duplicating them here
+- [x] Commit: `"docs/tooling: machine launcher and debug profile matrix"`
 
 **Test checkpoint:** A developer can choose the right launcher or bring-up path for WHPX, TCG, VirtualBox, secure-boot, and bare-metal scenarios from one table. Each documented path produces the expected serial/artifact location without ambiguity.
+
+> **Notes:**
+> - Canonical matrix: [`docs/infrastructure/machine-matrix.md`](../../docs/infrastructure/machine-matrix.md). Six tables (default path; QEMU accelerator/topology; Secure-Boot; VirtualBox; storage; filesystem), a dedicated bare-metal bring-up section with serial capture path + `X:\` BlackBox log locations, a **Known Drift** block surfacing `run-qemu-kvm.bat` forcing WHPX and the secureboot launcher living under `scripts/debug/`, a **Scope Boundary** table pointing release/installer/hypervisor certification at their correct owners, and an update protocol for future launchers.
+> - Linked from [`docs/infrastructure/development-tooling.md`](../../docs/infrastructure/development-tooling.md): Scope Boundary row, Run/Debug section intro, Specialist Launchers summary (quick-reference only; deep matrix in `machine-matrix.md`).
+> - Scope boundaries cross-linked to [`D15 T04 §2, §4`](../../todo/15-installer-release/TODO-04-release-qa.md) (QEMU + VirtualBox release validation), [`D15 T02 §7`](../../todo/15-installer-release/TODO-02-unattended-install.md) (provisioning templates), and [`D15 T04 §3, §5, §6`](../../todo/15-installer-release/TODO-04-release-qa.md) (Hyper-V certification, real-hardware checklist, performance benchmarks) so this doc does not re-document release-domain VM sweeps.
+> - Known drift noted but not fixed here (keeps the section doc-only per the Commit line): `run-qemu-kvm.bat` name vs. WHPX behavior, `run-secureboot.bat` directory placement, Linux-side gaps in the fs/storage harnesses. Consolidation is deliberately not scoped to §4.
+
+> **Test runner:** validation for §4 is documentation-only (no kernel test surface). Users can walk the Default Path block in [`machine-matrix.md`](../../docs/infrastructure/machine-matrix.md#default-path) and reach the correct launcher for each scenario (WHPX, TCG, KVM, VirtualBox, secure-boot, bare-metal) without reading any script header. No structural checker ships today; drift protection lands with the §7 Tooling Doctor / `scripts/test-tooling.sh` regression pack (not yet implemented).
 
 ---
 
@@ -209,6 +217,7 @@ This is the refinement step: make the tooling self-diagnosing instead of forcing
 - [ ] Make the doctor output actionable: print missing package/tool names, broken script paths, and the exact fix entry point
 - [ ] Wire the regression pack into a lightweight CI path so wrapper drift is caught before release or contributor onboarding breaks
 - [ ] Link doctor and regression-pack usage from `README.md` and developer docs
+- [ ] **Unify specialist-launcher argument surface** -- scenario launchers (`scripts/machines/storage/run-nvme-test.{ps1,bat}`, `run-usb-test.{ps1,bat}`, `scripts/machines/fs/run-fs-test.ps1`, `fs/run-*-test.bat`) do not accept `-ExtraArgs` today, so a developer cannot append `-s -S` (gdb stub) or custom `-drive`/`-netdev` arguments without editing the script. Lift the `-ExtraArgs` parameter from `scripts/machines/run-qemu.ps1` into each scenario launcher and thread it through to the underlying `run-qemu.ps1` invocation. Update `docs/infrastructure/machine-matrix.md` to remove the `-ExtraArgs` caveat from the storage and filesystem sections once shipped. → XREF: [`docs/infrastructure/machine-matrix.md#known-drift`](../../docs/infrastructure/machine-matrix.md#known-drift) item 5.
 - [ ] **Legacy-XREF sweep:** rewrite the ~60 source/test/header/script files currently in `scripts/lint.sh` `TODO_XREF_LEGACY_FILES` so they stop using numeric TODO shorthand (`TODO-NN §M`, `DNN TNN §N`, `TNN §N`) outside `todo/**`. Each file's numeric refs get replaced with either (a) a functional description of what the code does or (b) a relative-path + heading anchor link into the canonical doc. As files are cleaned, remove them from the lint allowlist; target is 0 entries. Lint rule at `scripts/lint.sh` check 7 already errors on new out-of-todo drift, so this is a one-shot catch-up. Initial allowlist committed with the lint rule; see git history for the baseline list. (Templates under `.claude/skills/**`, `.cursor/**`, `.github/PULL_REQUEST_TEMPLATE.md` intentionally teach the shorthand and stay excluded.)
 - [ ] **Smoke-test POST16 assertions:** migrate `scripts/test-smoke.sh`'s `BOOT_REQUIRED_PATTERNS` / `PASS_PATTERNS_ALL` from raw log-message strings (e.g. `[BOOT] ExitBootServices OK`, `Boot complete in`) to **POST16 code assertions** (`0xB091`, `0xB090`, `0x0026`, etc.). Log message strings drift silently every time a contributor edits a `printf`/`serial_printf`/`klog` call, breaking the smoke test long after the fact; POST16 codes are `#define` constants in `include/kernel/boot_init.h` and `src/boot/uefi/bootx64.c` that get emitted as `POST 0xNNNN` on serial, and they only change when the boot-phase contract changes. Work: (1) export the POST16 code-to-phase mapping from the kernel header into a small shell-consumable manifest (JSON or env-style), (2) rewrite `test-smoke.sh` to assert a list of required POST16 codes pulled from that manifest, (3) keep a small residual set of kernel/userland string assertions (`C:\>` prompt, `Boot complete in` timestamp) as the user-visible end-to-end signal. Current string-pattern list stays in place as a fallback layer until the POST16 path is proven. Source: `src/boot/uefi/bootx64.c` POST1 emission + `include/kernel/boot_init.h` POST16 constants + `scripts/test-smoke.sh:42-79`.
 - [ ] Commit: `"tooling: add doctor command and regression pack for developer workflow"`
@@ -224,7 +233,7 @@ This is the refinement step: make the tooling self-diagnosing instead of forcing
 | 💎 | Bootstrap script              | ⚠️ WDK/HLK heavy setup    | ⚠️ Distro docs + scripts   | ✅ §1 -- setup.sh + --verify sentinel |
 | 💎 | Reproducible host profiles    | ⚠️ EWDK/Dev Box or VMs    | ✅ Devcontainers common    | ✅ §2 matrix + .devcontainer + shim procedure |
 | 💎 | Canonical build/test wrappers | ✅ Common in mature repos | ✅ Common in mature repos  | ✅ §3 wrapper contract + --help on all 5 |
-| 💎 | Named VM/debug profiles       | ⚠️ Often ad hoc           | ⚠️ Often ad hoc            | ⬜ §4                    |
+| 💎 | Named VM/debug profiles       | ⚠️ Often ad hoc           | ⚠️ Often ad hoc            | ✅ §4 -- machine-matrix.md + bare-metal row |
 | 💎 | Managed local hooks           | ⚠️ Varies by repo         | ✅ Common in many repos    | ⬜ §5                    |
 | 💎 | Workflow/artifact policy      | ✅ Standard CI practice   | ✅ Standard CI practice    | ⬜ §6                    |
 | ⭐ | One-command tooling doctor    | ❌ Rare in OS repos       | ❌ Rare in OS repos        | ⬜ §7                    |

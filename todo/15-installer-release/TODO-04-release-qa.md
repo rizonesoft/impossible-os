@@ -99,6 +99,8 @@ must tick the release readiness checklist before `promote-release.sh stable` is 
 
 **Source:** `scripts/qemu-test.sh`
 
+> -> XREF: developer-local QEMU launchers (default + WHPX/KVM/TCG/SMP-bisect variants) are owned by [`00-infrastructure/TODO-01 §4`](../00-infrastructure/TODO-01-developer-tooling-stack.md#4-machine-launcher-and-debug-profile-matrix) and documented in [`docs/infrastructure/machine-matrix.md`](../../docs/infrastructure/machine-matrix.md). This section is release-validation only; do not duplicate the developer matrix here.
+
 - [ ] **`scripts/qemu-test.sh`** (full-scenario validation beyond the regression suite):
   1. **Cold boot**: boot from `build/system-disk.img`; wait for `[READY]`; verify serial shows all subsystems init `[OK]`; check `build/serial.log` has no `[PANIC]` or `[ERROR]`
   2. **Warm reboot**: send `reboot` command via serial; re-detect `[READY]` within 30 s
@@ -144,6 +146,8 @@ must tick the release readiness checklist before `promote-release.sh stable` is 
 ## 4. VirtualBox Certification `[Sonnet]`
 
 **Source:** `scripts/vbox-test.sh`
+
+> -> XREF: developer-local VirtualBox launchers (`run-vbox.sh/.ps1/.bat`) are owned by [`00-infrastructure/TODO-01 §4`](../00-infrastructure/TODO-01-developer-tooling-stack.md#4-machine-launcher-and-debug-profile-matrix) and documented in [`docs/infrastructure/machine-matrix.md`](../../docs/infrastructure/machine-matrix.md). This section covers the release-certification sweep; developer-level iteration belongs in the machine matrix.
 
 - [ ] **VM setup** (via `VBoxManage`):
   ```bash
