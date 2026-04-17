@@ -44,6 +44,7 @@
 - [ ] Preserve per-event PCR index, type, digest list, and event payload metadata.
 - [ ] Reject truncation with explicit offsets and status codes.
 - [ ] Export event summaries to `X:\Diag\tpm-events.json`.
+- [ ] When the bootloader copies the TCG event log, publish a typed payload descriptor of type `BOOT_PAYLOAD_TPM_EVENT_LOG` (enum in [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h)) pointing at the copy so TODO-01 §4's overlap validator retains the region alongside boot_info / rt_mmap / USB DMA / framebuffer. -> XREF: [`01-boot-platform/TODO-01 §4`](TODO-01-boot-protocol-abi-handoff.md#4-optional-payload-descriptor-array)
 - [ ] Commit: `"tpm: harden measured boot event log parser"`
 
 ## 2. TPM2 Command Transport

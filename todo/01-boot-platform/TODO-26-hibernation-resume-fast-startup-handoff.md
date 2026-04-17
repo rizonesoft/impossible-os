@@ -66,7 +66,7 @@
 
 ## 5. boot_info Resume Handoff
 
-- [ ] Add typed payload descriptor for hibernation metadata/image.
+- [ ] Add typed payload descriptor for hibernation metadata/image. Use `BOOT_PAYLOAD_HIBERNATION_META` from [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h); set `BOOT_PAYLOAD_FLAG_REQUIRED` on the descriptor so a stale kernel that dropped the type enum fails safe instead of booting past the resume handoff. TODO-01 §4's validator rejects overlap with any retained region before Phase 0 destructive init runs. -> XREF: [`01-boot-platform/TODO-01 §4`](TODO-01-boot-protocol-abi-handoff.md#4-optional-payload-descriptor-array)
 - [ ] Add resume flags and shared decision-reason codes to boot_info through TODO-01 §12.
 - [ ] Kernel consumes handoff before normal Phase 0 destructive init.
 - [ ] PMM reserves image ranges until resume code consumes them.

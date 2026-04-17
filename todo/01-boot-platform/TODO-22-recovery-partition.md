@@ -68,7 +68,7 @@ Minimal UEFI application that boots the recovery kernel.
 - [ ] Separate UEFI app: `recovery.efi` -- stripped down version of `bootx64.c`
 - [ ] Installed at both `\EFI\ImpossibleOS\recovery.efi` AND `\EFI\BOOT\BOOTx64.EFI` (UEFI fallback path)
 - [ ] Loads `recovery.exe` from recovery partition
-- [ ] Publish recovery-image descriptor and shared `boot_path=recovery` / reason codes through TODO-01 §4 and §12 so the kernel and diagnostics can distinguish recovery boot from a normal cold boot.
+- [ ] Publish recovery-image descriptor and shared `boot_path=recovery` / reason codes through TODO-01 §4 and §12 so the kernel and diagnostics can distinguish recovery boot from a normal cold boot. Use `BOOT_PAYLOAD_RECOVERY_IMAGE` from [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h); the TODO-01 §4 validator retains the region through the overlap + packed-prefix check before recovery.efi's kernel dereferences the image. -> XREF: [`01-boot-platform/TODO-01 §4`](../01-boot-platform/TODO-01-boot-protocol-abi-handoff.md#4-optional-payload-descriptor-array)
 - [ ] Shows: `"Impossible OS Recovery Environment"` on screen
 - [ ] Does NOT touch A/B slots -- operates only on recovery partition
 - [ ] Commit: `"boot: recovery bootloader -- minimal UEFI app at fallback path"`

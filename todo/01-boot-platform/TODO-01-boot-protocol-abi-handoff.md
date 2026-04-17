@@ -55,7 +55,7 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 | 💎  |   1   | Canonical boot_info field ownership table          | --                                 |  [x]   |
 | 💎  |   2   | Generated ABI manifest and offset fingerprint      | §1                                 |  [x]   |
 | 💎  |   3   | Full bootloader/kernel mirror drift checker        | §2                                 |  [x]   |
-| 💎  |   4   | Optional payload descriptor array                  | §1                                 |  [ ]   |
+| 💎  |   4   | Optional payload descriptor array                  | §1                                 |  [x]   |
 | 💎  |   5   | Module and initrd handoff contract                 | §4                                 |  [ ]   |
 | 💎  |   6   | Handoff memory ownership and PMM reservation table | §4                                 |  [ ]   |
 | 💎  |   7   | Version negotiation and stale-loader error path    | §2, T03 §2                         |  [ ]   |
@@ -152,15 +152,29 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 
 ## 4. Optional Payload Descriptor Array
 
-- [ ] Add `boot_payload_desc[]` for typed physical payloads: module, initrd, recovery image, hibernation metadata, TPM log copy, network config blob.
-- [ ] Include type, flags, physical start, length, alignment, checksum, and producer.
-- [ ] Add descriptor count, total bytes, and unknown-type skip rules so older kernels can ignore future optional payloads without misparsing the array.
-- [ ] Keep legacy single `module_start/module_end` as compatibility aliases until consumers migrate.
-- [ ] Record the owner for each typed descriptor: USB handover (`T20 §4`), random seed (`T12 §7`), TPM log (`T13 §2`), network provenance (`T25 §6`), and hibernation/resume metadata (`T26 §5`). If a module, initrd, or recovery-image consumer still has no owning section, create that owner before marking this section done.
-- [ ] Validate no payload overlaps boot_info, runtime memory, USB DMA, framebuffer, or reserved crash regions.
-- [ ] Commit: `"boot: add typed payload descriptors"`
+- [x] Add `boot_payload_desc[]` for typed physical payloads: module, initrd, recovery image, hibernation metadata, TPM log copy, network config blob.
+- [x] Include type, flags, physical start, length, alignment, checksum, and producer.
+- [x] Add descriptor count, total bytes, and unknown-type skip rules so older kernels can ignore future optional payloads without misparsing the array.
+- [x] Keep legacy single `module_start/module_end` as compatibility aliases until consumers migrate.
+- [x] Record the owner for each typed descriptor: USB handover ([`01-boot-platform/TODO-20 §4`](TODO-20-usb-zero-delay-handover.md#4-boot_info-passes-controller--device-dma-state)), random seed ([`01-boot-platform/TODO-12 §7`](TODO-12-early-entropy-random-seed.md#7-boot_info-seed-handoff)), TPM log ([`01-boot-platform/TODO-13 §1`](TODO-13-tpm-measured-boot-attestation.md#1-harden-tcg-event-log-parser)), network provenance ([`01-boot-platform/TODO-25 §6`](TODO-25-network-pxe-http-boot.md#6-boot_info-network-provenance)), hibernation/resume metadata ([`01-boot-platform/TODO-26 §5`](TODO-26-hibernation-resume-fast-startup-handoff.md#5-boot_info-resume-handoff)), module + initrd ([`01-boot-platform/TODO-01 §5`](#5-module-and-initrd-handoff-contract)), recovery image ([`01-boot-platform/TODO-22 §2`](TODO-22-recovery-partition.md#2-recovery-bootloader)).
+- [x] Validate no payload overlaps boot_info, runtime memory, USB DMA, framebuffer, or reserved crash regions.
+- [x] Commit: `"boot: add typed payload descriptors"`
 
 **Test checkpoint:** Kernel boot logs show typed payload descriptors with stable type, start, and length values; overlap attempts against `boot_info`, runtime memory, USB DMA, framebuffer, or crash-reserved regions are rejected with a clear serial diagnostic. Verify descriptor ingestion on QEMU WHPX, QEMU TCG, VirtualBox, and bare metal.
+
+> **Notes:**
+> - ABI surface added to [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h): `enum boot_payload_type` (9 values), `BOOT_PAYLOAD_FLAG_*` (4 known bits + MASK_KNOWN), `enum boot_payload_producer`, `struct boot_payload_desc` (48-byte ABI-pinned), `enum boot_payload_error` (12 failure classes), and `boot_payload_validate()`. `BOOT_INFO_VERSION` bumped 5 -> 6; mirror in [`src/boot/uefi/boot_info_mirror.h`](../../src/boot/uefi/boot_info_mirror.h) matches byte-for-byte. Manifest field count: 213 -> 225. Struct size: 22144 -> 23696 bytes (well under the 65535 `header.size` cap).
+> - The legacy `module_start` / `module_end` / `module_available` fields remain populated by the multiboot2 path AS compatibility aliases per item 4; a future §5 migration replaces them with typed descriptors of type `BOOT_PAYLOAD_MODULE`. No removal in this commit.
+> - Packed-prefix invariant: `payload_count` bounds the ACTIVE prefix. An occupied slot at index >= `payload_count` is rejected by the validator before consumers run, so future consumers that scan the full array cannot be tricked into processing an unchecked descriptor. Tested via `test_payload_prefix_violated`.
+> - Unknown-type / unknown-flag policy: forward-compatible by default (skip type-specific validation for unknown types), but `BOOT_PAYLOAD_FLAG_REQUIRED` forces strict checking so a newer bootloader can insist "fail boot rather than silently ignore this payload". Tested via `test_payload_unknown_type_required_fatal`, `test_payload_unknown_type_optional_accepted`, `test_payload_unknown_flags_required_fatal`.
+> - Overlap check runs against every retained boot region regardless of type -- `boot_info` at 0x10000, every populated `rt_mmap[]` entry (using `num_pages * 4096`), every populated `usb_controller.dma_pages[]` page, and the linear framebuffer (`fb.addr` .. `fb.addr + pitch*height`) when `fb_available`. `pitch*height` and `num_pages*4096` multiplications are overflow-checked. Tested via `test_payload_overlap_{boot_info, framebuffer, rt_mmap, usb_dma}`.
+> - Validator recomputes `payload_total_bytes` across occupied slots and rejects a producer/consumer disagreement (`test_payload_total_mismatch`). This catches a bootloader bug that would otherwise cascade into PMM reservation mis-sizing in §6.
+> - No "crash-reserved" RAM region exists today -- BlackBox is on disk, not memory. Kernel ELF range is reserved by §6 (PMM reservation table) once that section lands; §4's overlap list will extend there. Today the validator rejects every retained region that boot_info itself advertises.
+> - Producer state: the UEFI bootloader currently emits `payload_count=0` via the existing `efi_memset(g_boot_info_ptr, 0, sizeof(struct boot_info))` at bootx64.c:4313 -- zero valid descriptors, empty total. The validator short-circuits on count=0 with BOOT_OK. Real payload producers are future work owned by §5 / §20 / §26 / §25 / §13 / §12 (cross-TODO XREFs all updated in this commit).
+> - Reciprocal cross-TODO XREFs added in this commit: TODO-12 §7, TODO-13 §1, TODO-20 §4, TODO-22 §2, TODO-25 §6, TODO-26 §5 each gained a `BOOT_PAYLOAD_*` checklist-item note + back-link to §4.
+
+> **Test runner:** `scripts\debug\run-boot-tests.bat` (SUITE=boot)
+> **Expected:** 343 tests passed, 0 failed (20 new `boot_payload:` cases + 22 pre-existing `boot_info:` cases within TEST_CAT_BOOT). The 20 `boot_payload:` cases cover: empty valid, count OOR, prefix violated, range wrap, overlap (boot_info / framebuffer / rt_mmap / usb_dma), bad alignment (non-power-of-two), unknown type REQUIRED, unknown type optional, unknown flags + REQUIRED, total mismatch, two disjoint descriptors, empty slot in prefix, descriptor size pin, phys_start not multiple of alignment, aggregate total wrap, rt_mmap retained-region wrap, fb retained-region wrap.
 
 ---
 
@@ -279,7 +293,7 @@ Media role, recovery, network boot, and resume each carry their own details, but
 | ⭐ | Feature                         | 🪟 Win11                  | 🐧 Linux                     | 🚀 Impossible OS |
 | --- | ------------------------------- | ------------------------- | ----------------------------- | ---------------- |
 | 💎 | Versioned loader/kernel ABI     | ✅ LPB + extensions       | ✅ boot_params + kernel_info | ⬜ §1 §7 §8      |
-| 💎 | Typed initrd and module handoff | ✅ ramdisk + boot drivers | ✅ initrd + initramfs        | ⬜ §4 §5         |
+| 💎 | Typed initrd and module handoff | ✅ ramdisk + boot drivers | ✅ initrd + initramfs        | ◐ §4 ABI + validator; §5 producer/consumer API still open |
 | ⭐ | Generated ABI manifest          | ⚠️ internal only          | ⚠️ docs + CI                 | ⬜ §2 §3         |
 | ⭐ | Field-level ownership map       | ⚠️ internal ownership     | ⚠️ scattered docs            | ⬜ §1 §10        |
 | 💎 | Capability negotiation          | ✅ loader extensions      | ✅ version + flags           | ⬜ §11           |

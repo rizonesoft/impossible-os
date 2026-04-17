@@ -85,7 +85,7 @@
 
 ## 7. boot_info Seed Handoff
 
-- [ ] Add typed seed payload via TODO-01 with address, length, source mask, quality bits, and checksum.
+- [ ] Add typed seed payload via TODO-01 with address, length, source mask, quality bits, and checksum. Use `BOOT_PAYLOAD_RANDOM_SEED` from [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h); the TODO-01 §4 validator rejects overlap with boot_info / rt_mmap / USB DMA / framebuffer before CSPRNG seeds against the buffer. -> XREF: [`01-boot-platform/TODO-01 §4`](TODO-01-boot-protocol-abi-handoff.md#4-optional-payload-descriptor-array)
 - [ ] Ensure PMM reserves seed memory until CSPRNG consumes it.
 - [ ] Zero seed memory after consumption.
 - [ ] Add ABI tests for seed descriptor.

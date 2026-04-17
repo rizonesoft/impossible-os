@@ -111,6 +111,7 @@ Extend boot_info to carry the full controller state: DCBAA physical address, scr
 - [ ] Add `struct boot_usb_controller` to boot_info: BAR0, DCBAA phys, scratchpad phys, ring addresses
 - [ ] Add per-device: slot_id, output context phys, EP0 ring phys, bulk ring phys addresses
 - [ ] Add `usb_handover_complete` flag -- 1 if bootloader successfully configured the controller
+- [ ] Publish one typed payload descriptor of type `BOOT_PAYLOAD_USB_HANDOVER` (enum in [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h)) covering the contiguous xHCI DMA blob so TODO-01 §4's packed-prefix + overlap validator sees it alongside every other handoff region. -> XREF: [`01-boot-platform/TODO-01 §4`](TODO-01-boot-protocol-abi-handoff.md#4-optional-payload-descriptor-array)
 - [ ] Commit: `"boot: extend boot_info with xHCI controller DMA state"`
 
 **Test checkpoint:** Kernel reads boot_info, logs controller state with matching physical addresses. POST code 0xD754. Test on: QEMU `run-usb`, bare metal i5-4210U (EHCI+xHCI), bare metal i5-11600K (xHCI only).

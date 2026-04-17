@@ -76,7 +76,7 @@
 
 ## 6. boot_info Network Provenance
 
-- [ ] Extend boot_info with network boot descriptor through TODO-01 §4 and the shared boot-path decision record through TODO-01 §12.
+- [ ] Extend boot_info with network boot descriptor through TODO-01 §4 and the shared boot-path decision record through TODO-01 §12. Use `BOOT_PAYLOAD_NETWORK_CONFIG` from [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h) for the TFTP/HTTP config blob pointer; the TODO-01 §4 validator rejects overlap with any other retained boot region before the kernel dereferences the MAC/IP/URI fields. -> XREF: [`01-boot-platform/TODO-01 §4`](TODO-01-boot-protocol-abi-handoff.md#4-optional-payload-descriptor-array)
 - [ ] Include MAC, IP, server URI, protocol, manifest digest, and insecure flag.
 - [ ] Expose `HKLM\SYSTEM\Boot\Network`.
 - [ ] Add `boot_device_type=network` test coverage.

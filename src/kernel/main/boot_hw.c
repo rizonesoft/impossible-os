@@ -139,6 +139,26 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
         }
     }
 
+    /* §4 typed payload descriptor array: validate the packed-prefix,
+     * overlap, range, alignment, total-bytes, and unknown-required
+     * invariants before any subsystem consumes payloads. Empty array
+     * (zero producers today outside the multiboot2 module handoff)
+     * short-circuits cleanly. */
+    {
+        enum boot_payload_error err = BOOT_PAYLOAD_ERR_OK;
+        if (boot_payload_validate(&g_boot_info, &err) != BOOT_OK) {
+            klog(LOG_ERROR, "boot",
+                 "boot_payload_validate failed (err=%u); halting before consumers run",
+                 (uint64_t)err);
+            boot_halt("boot_payload: typed payload array invariants violated");
+        }
+        if (g_boot_info.payload_count > 0u)
+            klog(LOG_INFO, "boot",
+                 "boot_payload: %u descriptor(s) validated, %lu bytes total",
+                 (uint64_t)g_boot_info.payload_count,
+                 (uint64_t)g_boot_info.payload_total_bytes);
+    }
+
     /* S13: Log previous boot error if one was persisted in NVRAM */
     if (g_boot_info.last_boot_error != 0)
         klog(LOG_WARN, "UEFI",

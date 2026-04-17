@@ -63,7 +63,7 @@
  *   - Bootloader writes sizeof(struct boot_info) into header.size at
  *     compile time -- a size mismatch means the structs diverged. */
 #define BOOT_INFO_MAGIC    0x49504F53  /* "IPOS" (Impossible OS) */
-#define BOOT_INFO_VERSION  5           /* §8: removable media detection fields */
+#define BOOT_INFO_VERSION  6           /* §4: typed payload descriptor array */
 
 /* Upper bound for pre-copy address validation: the UEFI bootloader
  * identity-maps [0, 4 GiB) with 2 MiB pages in setup_page_tables()
@@ -112,6 +112,37 @@ boot_result_t boot_info_validate_header(const struct boot_info_header *hdr,
 
 boot_result_t boot_info_validate(const void *p,
                                  size_t kernel_struct_size);
+
+/* §4 payload descriptor validator error classes. Kept near the
+ * validator prototype so callers and tests do not have to forward into
+ * the struct boot_info region of the header. */
+enum boot_payload_error {
+    BOOT_PAYLOAD_ERR_OK                  = 0,
+    BOOT_PAYLOAD_ERR_COUNT_OOR           = 1,  /* payload_count > BOOT_PAYLOAD_MAX */
+    BOOT_PAYLOAD_ERR_PREFIX_VIOLATED     = 2,  /* occupied slot at index >= payload_count */
+    BOOT_PAYLOAD_ERR_RANGE_WRAP          = 3,  /* phys_start + length overflows uint64_t */
+    BOOT_PAYLOAD_ERR_OVERLAP_BOOT_INFO   = 4,  /* overlaps the struct boot_info handoff region */
+    BOOT_PAYLOAD_ERR_OVERLAP_RT_MMAP     = 5,  /* overlaps a UEFI runtime memory region */
+    BOOT_PAYLOAD_ERR_OVERLAP_USB_DMA     = 6,  /* overlaps usb_controller.dma_pages[] */
+    BOOT_PAYLOAD_ERR_OVERLAP_FB          = 7,  /* overlaps the linear framebuffer */
+    BOOT_PAYLOAD_ERR_ALIGNMENT           = 8,  /* alignment not a power of 2 */
+    BOOT_PAYLOAD_ERR_UNKNOWN_REQUIRED    = 9,  /* unknown type with FLAG_REQUIRED set */
+    BOOT_PAYLOAD_ERR_UNKNOWN_FLAGS       = 10, /* unknown flag bits with FLAG_REQUIRED set */
+    BOOT_PAYLOAD_ERR_TOTAL_MISMATCH      = 11, /* payload_total_bytes != recomputed sum */
+};
+
+/* Forward declaration so the validator prototype can reference
+ * struct boot_info before its full definition appears below. */
+struct boot_info;
+
+/* Validate the typed payload descriptor array after the header copy is
+ * complete and g_boot_info is populated. Runs every overlap, range,
+ * packed-prefix, total-bytes, and unknown-required check documented in
+ * the boot_payload_desc contract. On BOOT_FATAL the specific failure
+ * class is written to *out_error (when non-NULL) and a LOG_ERROR klog
+ * entry names the offending descriptor index + retained region. */
+boot_result_t boot_payload_validate(const struct boot_info *info,
+                                    enum boot_payload_error *out_error);
 
 /* A single memory region from the bootloader */
 struct boot_mmap_entry {
@@ -399,6 +430,82 @@ struct boot_usb_controller {
     uint32_t alloc_fail_page;    /* DEBUG: which page# failed */
 };
 
+/* --- Typed payload descriptor array (§4) ---
+ * Bootloader enumerates optional physical payloads (modules, initrd,
+ * recovery image, hibernation metadata, TPM log copy, network config,
+ * random seed, USB handover state) and publishes them here for kernel
+ * consumers in §5, §6, §11, §13, §20, §25, §26.
+ *
+ * Contract:
+ *   - payload_descriptors is a fixed-size array; payload_count is the
+ *     packed-prefix length (a bootloader MUST NOT leave an occupied slot
+ *     at index >= payload_count).  The kernel validator enforces this
+ *     invariant so future consumers scanning the full array can trust
+ *     that index < payload_count covers every real payload.
+ *   - Unknown type enums are SKIPPED for type-specific validation so
+ *     older kernels can ignore future payloads -- EXCEPT when the
+ *     descriptor sets BOOT_PAYLOAD_FLAG_REQUIRED, which forces a fatal
+ *     boot failure.
+ *   - Every descriptor is overlap-checked against boot_info itself, the
+ *     runtime memory map, USB DMA pages, and the framebuffer regardless
+ *     of type -- unknown or future types still cannot stomp retained
+ *     boot regions.
+ */
+#define BOOT_PAYLOAD_MAX  32
+
+/* Well-known payload types. New values are safe to add; the kernel's
+ * unknown-type skip rule keeps older kernels booting against newer
+ * bootloaders that emit payloads this kernel does not recognize. */
+enum boot_payload_type {
+    BOOT_PAYLOAD_NONE              = 0,   /* empty slot */
+    BOOT_PAYLOAD_MODULE            = 1,   /* generic kernel module; owner 01-boot-platform/TODO-01 §5 */
+    BOOT_PAYLOAD_INITRD            = 2,   /* initrd/initramfs; owner 01-boot-platform/TODO-01 §5 */
+    BOOT_PAYLOAD_RECOVERY_IMAGE    = 3,   /* recovery env image; owner 01-boot-platform/TODO-22 */
+    BOOT_PAYLOAD_HIBERNATION_META  = 4,   /* hibernation metadata; owner 01-boot-platform/TODO-26 §5 */
+    BOOT_PAYLOAD_TPM_EVENT_LOG     = 5,   /* TPM TCG event log copy; owner 01-boot-platform/TODO-13 §1 */
+    BOOT_PAYLOAD_NETWORK_CONFIG    = 6,   /* network boot config blob; owner 01-boot-platform/TODO-25 §6 */
+    BOOT_PAYLOAD_RANDOM_SEED       = 7,   /* bootloader RNG seed; owner 01-boot-platform/TODO-12 §7 */
+    BOOT_PAYLOAD_USB_HANDOVER      = 8,   /* xHCI DMA state blob; owner 01-boot-platform/TODO-20 §4 */
+};
+
+/* Descriptor flags (bitmask). New bits are ignored by older kernels if
+ * not listed in BOOT_PAYLOAD_FLAG_MASK_KNOWN, which is how capability
+ * negotiation (§11) will extend this surface without a version bump. */
+#define BOOT_PAYLOAD_FLAG_VALID        (1u << 0)  /* 1 = descriptor is valid and should be processed */
+#define BOOT_PAYLOAD_FLAG_CHECKSUMMED  (1u << 1)  /* 1 = checksum low 32 bits carry CRC-32C of payload */
+#define BOOT_PAYLOAD_FLAG_REQUIRED     (1u << 2)  /* 1 = unknown type aborts boot instead of skipping */
+#define BOOT_PAYLOAD_FLAG_RESERVED     (1u << 3)  /* 1 = PMM must mark this region reserved */
+#define BOOT_PAYLOAD_FLAG_MASK_KNOWN   \
+    (BOOT_PAYLOAD_FLAG_VALID | BOOT_PAYLOAD_FLAG_CHECKSUMMED | \
+     BOOT_PAYLOAD_FLAG_REQUIRED | BOOT_PAYLOAD_FLAG_RESERVED)
+
+/* Producer identity -- which subsystem populated this descriptor. Lets
+ * consumers attribute ownership without re-deriving it from type. */
+enum boot_payload_producer {
+    BOOT_PRODUCER_NONE          = 0,
+    BOOT_PRODUCER_UEFI          = 1,   /* src/boot/uefi/bootx64.c */
+    BOOT_PRODUCER_MULTIBOOT2    = 2,   /* src/kernel/multiboot2_parse.c */
+    BOOT_PRODUCER_KERNEL_TEST   = 3,   /* src/kernel/test/test_boot_info.c fixture */
+};
+
+struct boot_payload_desc {
+    uint32_t type;         /* enum boot_payload_type (u32 for ABI stability) */
+    uint32_t flags;        /* BOOT_PAYLOAD_FLAG_* bitmask */
+    uint64_t phys_start;   /* physical address of payload */
+    uint64_t length;       /* size in bytes; 0 or type=BOOT_PAYLOAD_NONE = empty slot */
+    uint64_t alignment;    /* required natural alignment (power of 2); 0 = none */
+    uint64_t checksum;     /* CRC-32C in low 32 bits if FLAG_CHECKSUMMED; else 0 */
+    uint32_t producer_id;  /* enum boot_payload_producer */
+    uint32_t _reserved;    /* pad to 48 bytes */
+};
+
+_Static_assert(sizeof(struct boot_payload_desc) == 48,
+    "boot_payload_desc ABI size pinned at 48 bytes -- update mirror + manifest on change");
+
+/* enum boot_payload_error is declared earlier alongside the validator
+ * prototype so callers and tests can include this header without
+ * needing the full struct boot_info definition in scope. */
+
 /* All boot info collected from UEFI bootloader */
 struct boot_info {
     /* ABI header -- must be at offset 0 (S15) */
@@ -530,6 +637,16 @@ struct boot_info {
     uint32_t degraded_mask;         /* bitmask of non-critical subsystems that failed init */
     uint32_t hv_flags;              /* hypervisor feature flags (HV_FLAG_*) */
     char     hv_vendor[16];         /* hypervisor vendor string (null-terminated) */
+
+    /* Typed payload descriptor array (§4). See boot_payload_desc above.
+     * Bootloader MUST populate payload_count as the packed-prefix length;
+     * the kernel validator rejects any occupied slot at index >=
+     * payload_count. payload_total_bytes MUST equal the sum of length for
+     * all occupied slots; the kernel validator rejects a mismatch. */
+    struct boot_payload_desc payload_descriptors[BOOT_PAYLOAD_MAX];
+    uint32_t payload_count;         /* 0..BOOT_PAYLOAD_MAX; packed-prefix length */
+    uint32_t payload_overflow;      /* 1 if bootloader had > BOOT_PAYLOAD_MAX payloads */
+    uint64_t payload_total_bytes;   /* sum of length for all occupied slots */
 };
 
 /* Compile-time enforcement of ABI header layout (S15) */

@@ -288,3 +288,19 @@ F(degraded_mask);
 F(hv_flags);
 F(hv_vendor);
 F(hv_vendor[0]);                /* element-size sentinel */
+
+/* ---- Typed payload descriptor array (§4) ---- */
+F(payload_descriptors);
+/* payload_descriptors[0].* leaves (boot_payload_desc): same-size-reorder
+ * defense for the 48-byte descriptor. */
+F(payload_descriptors[0].type);
+F(payload_descriptors[0].flags);
+F(payload_descriptors[0].phys_start);
+F(payload_descriptors[0].length);
+F(payload_descriptors[0].alignment);
+F(payload_descriptors[0].checksum);
+F(payload_descriptors[0].producer_id);
+F(payload_descriptors[0]._reserved);
+F(payload_count);
+F(payload_overflow);
+F(payload_total_bytes);

@@ -3,7 +3,7 @@
 > **Owner:** [Boot Protocol ABI & Handoff Contract roadmap -- Canonical boot_info Field Ownership Table section](../../todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md#1-canonical-boot_info-field-ownership-table).
 > **Single source of truth.** [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h) has a file-top comment that points here rather than duplicating policy inline. Every field of `struct boot_info` (and its nested structs) is listed below with producer, first valid phase, consumer(s), lifetime, owning roadmap, and validation rule. Add a field -> add a row.
 >
-> **Machine-readable complement.** Every build emits [`build/boot-info-abi.kernel.json`](../../build/boot-info-abi.kernel.json) and [`build/boot-info-abi.mirror.json`](../../build/boot-info-abi.mirror.json) (213 fields, struct size, SHA-256 fingerprint) via the `boot_info ABI` step of `bash scripts/build.sh`. The two JSONs are diffed by [`tools/boot-info-manifest/compare.sh`](../../tools/boot-info-manifest/compare.sh); any field / offset / size drift between `include/kernel/boot_info.h` and [`src/boot/uefi/boot_info_mirror.h`](../../src/boot/uefi/boot_info_mirror.h) fails the build with the first mismatching field named. The row set includes indexed leaves for every array-of-struct member (`mmap[0].*`, `gop_modes[0].*`, `config_table[0].*`, `rt_mmap[0].*`, `usb_devices[0].*` plus nested `endpoints[0].*`) and element-size sentinels for every scalar array (`usb_controller.dma_pages[0]`, `uefi_boot_order[0]`, `boot_device_path[0]`, `hv_vendor[0]`, ...), so the manifest also catches same-size element-type changes the six pinned `_Static_assert` offsets miss.
+> **Machine-readable complement.** Every build emits [`build/boot-info-abi.kernel.json`](../../build/boot-info-abi.kernel.json) and [`build/boot-info-abi.mirror.json`](../../build/boot-info-abi.mirror.json) (225 fields, struct size, SHA-256 fingerprint) via the `boot_info ABI` step of `bash scripts/build.sh`. The two JSONs are diffed by [`tools/boot-info-manifest/compare.sh`](../../tools/boot-info-manifest/compare.sh); any field / offset / size drift between `include/kernel/boot_info.h` and [`src/boot/uefi/boot_info_mirror.h`](../../src/boot/uefi/boot_info_mirror.h) fails the build with the first mismatching field named. The row set includes indexed leaves for every array-of-struct member (`mmap[0].*`, `gop_modes[0].*`, `config_table[0].*`, `rt_mmap[0].*`, `usb_devices[0].*` plus nested `endpoints[0].*`) and element-size sentinels for every scalar array (`usb_controller.dma_pages[0]`, `uefi_boot_order[0]`, `boot_device_path[0]`, `hv_vendor[0]`, ...), so the manifest also catches same-size element-type changes the six pinned `_Static_assert` offsets miss.
 
 ## How to read this doc
 
@@ -20,7 +20,7 @@ ABI invariants (enforced by `_Static_assert` in the header):
 - Six critical count fields are pinned by offset between kernel and bootloader mirror: `mmap_count`, `gop_mode_count`, `config_table_count`, `rt_mmap_count`, `usb_device_count`, `uefi_boot_current`.
 - `boot_config.cmdline` is at byte offset 32 (stable across versions); `boot_config.config_found` at 288; `sizeof(struct boot_config) == 512`.
 
-Every version bump goes in both [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h) and [`src/boot/uefi/boot_info_mirror.h`](../../src/boot/uefi/boot_info_mirror.h) (the mirror header included by both [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c) and the host manifest dumper [`tools/boot-info-manifest/dump-mirror.c`](../../tools/boot-info-manifest/dump-mirror.c)). Current: `BOOT_INFO_VERSION = 5`.
+Every version bump goes in both [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h) and [`src/boot/uefi/boot_info_mirror.h`](../../src/boot/uefi/boot_info_mirror.h) (the mirror header included by both [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c) and the host manifest dumper [`tools/boot-info-manifest/dump-mirror.c`](../../tools/boot-info-manifest/dump-mirror.c)). Current: `BOOT_INFO_VERSION = 6`.
 
 ## Top-level `struct boot_info` fields
 
@@ -198,6 +198,32 @@ These fields live inside `struct boot_info` but the **bootloader never writes th
 | `degraded_mask`       | kernel (`boot_degrade_*`) | K (set incrementally across phases) | health orchestrator, BSOD context | runtime | system-health-recovery-orchestrator | Bitmask; individual bits are `SUBSYS_*` from `kernel_subsystems.h`. |
 | `hv_flags`            | kernel (CPUID hypervisor leaf + per-vendor probe) | K (after CPUID init in Phase 0) | platform detection, MSR trap workarounds | runtime | kernel-init-sequencing | `HV_FLAG_*` bits. |
 | `hv_vendor[16]`       | kernel (CPUID 0x40000000) | K | platform detection, boot log | runtime | kernel-init-sequencing | Null-terminated ASCII; zero if none. |
+
+### Typed payload descriptor array (§4)
+
+Bootloader publishes typed physical payloads that are consumed by kernel subsystems after handoff. The packed-prefix invariant + overlap / range / unknown-required validator lives in [`src/kernel/main/boot_payload.c`](../../src/kernel/main/boot_payload.c) and is wired from [`src/kernel/main/boot_hw.c`](../../src/kernel/main/boot_hw.c) immediately after the boot_info copy.
+
+| Field | Producer | First valid | Consumer | Lifetime | Owning roadmap | Validation |
+| --- | --- | --- | --- | --- | --- | --- |
+| `payload_descriptors[BOOT_PAYLOAD_MAX]` | bootx64 | P0 | §5 (module/initrd), §6 (PMM reservation), §13 (TPM log), §20 (USB handover), §22 (recovery), §25 (network), §26 (hibernation), §12 (random seed) | handoff | boot-protocol-abi-handoff §4, §5, §6 | Indices `[0, payload_count)` are the packed prefix; slot N>=payload_count with `length!=0 || type!=NONE` fails validation. Every occupied slot must pass overlap checks against `boot_info` / `rt_mmap[]` / `usb_controller.dma_pages[]` / framebuffer. |
+| `payload_count` | bootx64 | P0 | validator, consumers | handoff | boot-protocol-abi-handoff §4 | `<= BOOT_PAYLOAD_MAX` (32). |
+| `payload_overflow` | bootx64 | P0 | boot log | handoff | boot-protocol-abi-handoff §4 | `0 | 1`; set to 1 when the producer had more typed payloads than the array can hold. |
+| `payload_total_bytes` | bootx64 | P0 | validator | handoff | boot-protocol-abi-handoff §4 | Must equal the sum of `length` for every occupied slot in the packed prefix; validator rejects a mismatch. |
+
+## Nested struct: `boot_payload_desc`
+
+48-byte ABI-pinned descriptor. Kernel enum `boot_payload_type` maps well-known values (MODULE, INITRD, RECOVERY_IMAGE, HIBERNATION_META, TPM_EVENT_LOG, NETWORK_CONFIG, RANDOM_SEED, USB_HANDOVER); unknown values are SKIPPED for type-specific validation unless `BOOT_PAYLOAD_FLAG_REQUIRED` is set on the descriptor (required-unknown forces a fatal boot failure).
+
+| Field | Size | Semantics | Validation |
+| --- | --- | --- | --- |
+| `type` | u32 | `enum boot_payload_type` | `NONE` (0) or a known enum value or an unknown value handled by the REQUIRED policy. |
+| `flags` | u32 | `BOOT_PAYLOAD_FLAG_*` bitmask | Unknown bits are accepted if `REQUIRED` is clear; `REQUIRED | <unknown bit>` fails validation. |
+| `phys_start` | u64 | Physical base of payload | Must not overlap retained regions. |
+| `length` | u64 | Size in bytes | `phys_start + length` must not wrap `u64`; `0` marks an empty slot. |
+| `alignment` | u64 | Required natural alignment | `0` (no requirement) or a power of 2. |
+| `checksum` | u64 | CRC-32C in low 32 bits when `CHECKSUMMED` set | Computed by consumer when they process the payload. |
+| `producer_id` | u32 | `enum boot_payload_producer` | `BOOT_PRODUCER_UEFI`, `_MULTIBOOT2`, or `_KERNEL_TEST` for fixture buffers. |
+| `_reserved` | u32 | Pad to 48 bytes | Zero. |
 
 ## Legacy / Multiboot2-only fields
 

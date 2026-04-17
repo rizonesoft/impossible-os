@@ -197,7 +197,24 @@ struct boot_usb_controller {
 
 /* ABI header -- must match kernel/boot_info.h */
 #define BOOT_INFO_MAGIC    0x49504F53  /* "IPOS" */
-#define BOOT_INFO_VERSION  5  /* boot section 8: removable media detection fields */
+#define BOOT_INFO_VERSION  6  /* boot section 4: typed payload descriptor array */
+
+/* Typed payload descriptor array (§4) -- must match kernel/boot_info.h. */
+#define BOOT_PAYLOAD_MAX  32
+
+struct boot_payload_desc {
+    UINT32 type;         /* enum boot_payload_type */
+    UINT32 flags;        /* BOOT_PAYLOAD_FLAG_* bitmask */
+    UINT64 phys_start;
+    UINT64 length;
+    UINT64 alignment;
+    UINT64 checksum;
+    UINT32 producer_id;  /* enum boot_payload_producer */
+    UINT32 _reserved;
+};
+
+_Static_assert(sizeof(struct boot_payload_desc) == 48,
+    "boot_payload_desc ABI size pinned at 48 bytes -- kernel mirror");
 
 struct boot_info_header {
     UINT32 magic;
@@ -313,6 +330,14 @@ struct boot_info {
     UINT32  degraded_mask;
     UINT32  hv_flags;
     char    hv_vendor[16];
+
+    /* Typed payload descriptor array (§4). packed-prefix invariant:
+     * payload_count is the prefix length; occupied slots beyond that
+     * index are rejected by the kernel validator. */
+    struct boot_payload_desc payload_descriptors[BOOT_PAYLOAD_MAX];
+    UINT32  payload_count;
+    UINT32  payload_overflow;
+    UINT64  payload_total_bytes;
 };
 
 /* ABI compile-time guards -- catch bootloader/kernel struct drift at build */
