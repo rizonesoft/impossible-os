@@ -58,9 +58,14 @@ status() {
     else
         pre_push_state="disabled (no sentinel)"
     fi
+    # List only the always-on hooks; pre-push is always-present in .githooks/
+    # but is sentinel-gated, so including it here would misrepresent state.
+    local always_on
+    always_on="$(ls "$HOOKS_DIR" 2>/dev/null | grep -vxF 'pre-push' | tr '\n' ' ')"
     echo "Hooks path     : $configured (expected: .githooks)"
     echo "Pre-push gate  : $pre_push_state"
-    echo "Always-on hooks: $(ls "$HOOKS_DIR" 2>/dev/null | tr '\n' ' ')"
+    echo "Always-on hooks: $always_on"
+    echo "Opt-in hooks   : pre-push (gated by sentinel above)"
 }
 
 set_hooks_path() {
