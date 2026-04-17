@@ -30,16 +30,21 @@ Usage:
   bash scripts/lint.sh src/kernel/mm/     Lint a specific path (skips xref check)
   bash scripts/lint.sh --help             Show this help
 
-Checks (7):
+Checks (5):
   1. #pragma once or include guard in every .h
   2. Lines <= 120 characters (excludes comment lines)
   3. No trailing whitespace
-  4. Functions <= 50 lines (warning only)
-  5. snake_case function definitions (excludes Win32 API wrappers)
-  6. UPPER_CASE macros (warning on pure-lowercase defines)
-  7. No numeric TODO shorthand (TODO-NN sectionN, DNN TNN) outside todo/**
-     except a baseline allowlist of pre-existing files (see TODO-01 "Tooling
-     Doctor" legacy-XREF sweep).
+  4. snake_case function definitions (excludes Win32 API wrappers)
+  5. No numeric TODO shorthand (TODO-NN sectionN, DNN TNN) outside todo/**
+     except a baseline allowlist of pre-existing files (see the developer
+     tooling stack roadmap -- Tooling Doctor section -- for the legacy-XREF
+     sweep).
+
+Removed 2026-04-17: the old "functions > 50 lines" and "lowercase #define"
+warnings were warn-only, never triaged, and duplicated signal that Codex
+adversarial review + the domain code-quality skills already carry. Style
+review belongs with those tools; lint stays focused on drift-catching
+structural checks.
 
 Exit codes:
   0 = clean
@@ -153,80 +158,7 @@ for file in "${FILES[@]}"; do
 done
 
 # ============================================================================
-# Check 4: Functions > 50 lines (warning only)
-# ============================================================================
-for file in "${FILES[@]}"; do
-    [[ "$file" != *.c ]] && continue
-    relpath="${file#"$REPO_ROOT"/}"
-
-    # Use awk to track brace depth and function length
-    awk -v file="$relpath" '
-        # Detect function definition: line with { at end, not a struct/enum/if/etc
-        /^[a-zA-Z_].*\)$/ || /^[a-zA-Z_].*\)\s*{/ {
-            if ($0 !~ /typedef|struct|enum|if|else|while|for|switch|#/) {
-                func_start = NR
-                func_name = $0
-                sub(/\(.*/, "", func_name)
-                sub(/.*[ \t\*]/, "", func_name)
-            }
-        }
-        /^{/ && func_start > 0 && func_start == NR - 1 {
-            brace_depth = 1
-            body_start = NR
-            next
-        }
-        /\)\s*{/ && func_start == NR {
-            brace_depth = 1
-            body_start = NR
-            next
-        }
-        brace_depth > 0 {
-            # Count braces
-            for (i = 1; i <= length($0); i++) {
-                c = substr($0, i, 1)
-                if (c == "{") brace_depth++
-                if (c == "}") brace_depth--
-                if (brace_depth == 0) {
-                    body_len = NR - body_start
-                    if (body_len > 50) {
-                        printf "'"${YELLOW}"'warn'"${NC}"': %s:%d: function '\''%s'\'' is %d lines (> 50)\n", file, func_start, func_name, body_len
-                    }
-                    func_start = 0
-                    break
-                }
-            }
-        }
-    ' "$file" 2>/dev/null || true
-    # Count warnings
-    func_warns=$(awk '
-        /^[a-zA-Z_].*\)$/ || /^[a-zA-Z_].*\)\s*{/ {
-            if ($0 !~ /typedef|struct|enum|if|else|while|for|switch|#/) {
-                func_start = NR
-                func_name = $0
-            }
-        }
-        /^{/ && func_start > 0 && func_start == NR - 1 { brace_depth = 1; body_start = NR; next }
-        /\)\s*{/ && func_start == NR { brace_depth = 1; body_start = NR; next }
-        brace_depth > 0 {
-            for (i = 1; i <= length($0); i++) {
-                c = substr($0, i, 1)
-                if (c == "{") brace_depth++
-                if (c == "}") brace_depth--
-                if (brace_depth == 0) {
-                    body_len = NR - body_start
-                    if (body_len > 50) count++
-                    func_start = 0
-                    break
-                }
-            }
-        }
-        END { print count+0 }
-    ' "$file" 2>/dev/null || echo 0)
-    WARNINGS=$((WARNINGS + func_warns))
-done
-
-# ============================================================================
-# Check 5: camelCase function definitions (should be snake_case)
+# Check 4: camelCase function definitions (should be snake_case)
 # ============================================================================
 for file in "${FILES[@]}"; do
     [[ "$file" != *.c ]] && continue
@@ -253,29 +185,7 @@ for file in "${FILES[@]}"; do
 done
 
 # ============================================================================
-# Check 6: #define macros should be UPPER_CASE (warning only)
-# ============================================================================
-for file in "${FILES[@]}"; do
-    relpath="${file#"$REPO_ROOT"/}"
-    while IFS= read -r match; do
-        linenum=$(echo "$match" | cut -d: -f1)
-        line=$(echo "$match" | cut -d: -f2-)
-        # Extract macro name
-        macro=$(echo "$line" | sed -E 's/#\s*define\s+([a-zA-Z_][a-zA-Z0-9_]*).*/\1/')
-        # Skip function-like macros with lowercase (common pattern: static inline wrappers)
-        # Only flag pure lowercase macros (not mixed like TEST_ASSERT)
-        if echo "$macro" | grep -qP '^[a-z][a-z0-9_]+$' 2>/dev/null; then
-            # Skip include guards and common patterns
-            if echo "$macro" | grep -qE '_H$|_h$|_INCLUDED' 2>/dev/null; then
-                continue
-            fi
-            warn "$relpath" "$linenum" "macro '$macro' is lowercase (prefer UPPER_CASE)"
-        fi
-    done < <(grep -nE '^\s*#\s*define\s+[a-zA-Z_]' "$file" 2>/dev/null || true)
-done
-
-# ============================================================================
-# Check 7: Drift-prone TODO numeric shorthand outside todo/
+# Check 5: Drift-prone TODO numeric shorthand outside todo/
 # ============================================================================
 # Numeric XREFs (e.g. TODO-<num> <section-sign><num>, D<num> T<num> <section-sign><num>)
 # go stale silently when TODOs renumber. Inside todo/** the create-todo / validate-todo-file skills

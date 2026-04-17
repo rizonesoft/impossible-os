@@ -655,7 +655,7 @@ Features: top 10 largest `.o` files, section breakdown via `llvm-size-19`, delta
 
 ### Code Style Linter
 
-`scripts/lint.sh` -- 7 automated checks. See `bash scripts/lint.sh --help` for the current list.
+`scripts/lint.sh` -- 5 automated checks. See `bash scripts/lint.sh --help` for the current list. (Reduced from 7 on 2026-04-17: two warn-only style checks -- function length and lowercase defines -- were dropped because they duplicated signal already covered by Codex adversarial review and the domain code-quality skills. Lint now focuses on structural drift checks that nothing else watches.)
 
 | Check                                          | Type    | Notes                                              |
 | ---------------------------------------------- | ------- | -------------------------------------------------- |
@@ -909,7 +909,7 @@ scripts/
 | --------------------------------- | ---------------------------------------------------- |
 | `scripts/build.sh`                | Canonical build wrapper (progress bar, sentinel log) |
 | `scripts/test.sh`                 | Canonical test wrapper (`make test*` delegates here) |
-| `scripts/lint.sh`                 | Canonical lint wrapper (7 checks)                    |
+| `scripts/lint.sh`                 | Canonical lint wrapper (5 checks)                    |
 | `scripts/run-qemu.sh`             | Generic QEMU launcher (boots `system-disk.img`)      |
 | `scripts/debug.sh`                | QEMU + GDB with kernel symbols                       |
 | `scripts/setup.sh`                | Host bootstrap wrapper                               |
