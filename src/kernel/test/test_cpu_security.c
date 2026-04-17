@@ -563,21 +563,27 @@ static void test_msr_try_read_null_out(void)
 static void test_msr_cpuid_gate_pattern(void)
 {
     /* Correct pattern: CPUID gate first, msr_try_read as safety net.
-     * MPERF/APERF are available on CPUs with hardware coordination
-     * feedback (CPUID.06H:ECX[0]). On CPUs without it, the MSR may
-     * not exist, and on WHPX the read would silently return 0.
      *
-     * This test verifies the pattern used in simd_enable_avx512():
-     * if CPUID says the feature exists, msr_try_read must succeed. */
+     * CPUID alone does not guarantee MSR availability under virtualization.
+     * KVM with -cpu host passes AVX512F through but traps IA32_MPERF
+     * with #GP (MPERF can't be meaningfully virtualized). WHPX takes the
+     * opposite path and silently returns 0 for unknown MSRs. Both are
+     * legitimate -- the contract of msr_try_read() is "no crash", not
+     * "success implies the feature works". This test verifies both:
+     * msr_try_read either succeeds cleanly (bare metal / WHPX) or fails
+     * cleanly with -1 (KVM / trapping hypervisor). */
     if (!cpu_has(CPU_FEATURE_AVX512F)) {
         TEST_SKIP("AVX512F not present; MPERF/APERF test not applicable");
         return;
     }
-    /* On a CPU with AVX512F, MPERF/APERF should be readable */
     uint64_t mperf = 0;
     int ret = msr_try_read(MSR_IA32_MPERF, &mperf);
-    TEST_ASSERT_EQ(ret, 0,
-                   "MPERF readable when AVX512F present (CPUID-gated)");
+    TEST_ASSERT(ret == 0 || ret == -1,
+                "msr_try_read(MPERF) returns 0 or -1 without crashing");
+    if (ret == -1) {
+        TEST_ASSERT_EQ(mperf, 0,
+                       "msr_try_read sets *out = 0 on probe failure");
+    }
 }
 
 /* ---- S5: UMIP + PKU ---- */

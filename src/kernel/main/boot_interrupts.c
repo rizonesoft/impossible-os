@@ -51,6 +51,7 @@
 #include "kernel/boot_timing.h"
 #include "kernel/smp.h"
 #include "kernel/exec.h"
+#include "gfx_simd.h"
 #include "main/main_internal.h"
 
 /* ---- Phase 1 ------------------------------------------------------------ */
@@ -78,6 +79,14 @@ void boot_phase1(void)
     POST16(POST16_IDT_OK);
     kernel_subsystem_set_ready(SUBSYS_IDT, true);
     boot_progress(1, "IDT", POST16_IDT_OK);
+
+    /* --- AVX-512 opt-in with MPERF/APERF throttle guard ---
+     * Deferred from phase 0 because the probe needs the kernel IDT to
+     * catch a #GP from unavailable MSRs (e.g. KVM traps IA32_MPERF even
+     * when CPUID advertises AVX512F via -cpu host). AVX2 was already
+     * enabled in phase 0; this only turns on the 512-bit memops path
+     * if the CPU measurably does not throttle. */
+    simd_enable_avx512();
 
     /* --- Bugcheck: wire NMI crash handler after IDT (TODO-16 S1) --- */
     {

@@ -44,6 +44,11 @@ static struct idt_pointer idtr;
 /* Custom handler table (NULL = use default) */
 static interrupt_handler_t handlers[256];
 
+/* Set to 1 once lidt has loaded the kernel IDT. Before that the IDTR still
+ * points at the UEFI IDT, so installing a handler in handlers[] has no
+ * effect -- the kernel ISR stubs that consult it are unreachable. */
+static volatile int s_idt_loaded;
+
 /* ---- Per-vector warning rate limiter ----
  * First hit logs full details; subsequent hits are counted silently.
  * Prevents log flooding from repeated synthetic interrupts. */
@@ -459,9 +464,15 @@ void idt_init(void)
     idtr.limit = (uint16_t)(sizeof(idt) - 1);
     idtr.base  = (uint64_t)(uintptr_t)&idt;
     __asm__ volatile ("lidt %0" : : "m"(idtr));
+    s_idt_loaded = 1;
 
     klog(LOG_INFO, "cpu",
          "IDT loaded (256 entries, ISR 0-31, IRQ 32-47, dynamic 48-255)");
+}
+
+int idt_is_loaded(void)
+{
+    return s_idt_loaded;
 }
 
 void idt_get_idtr(void *out_idtr)

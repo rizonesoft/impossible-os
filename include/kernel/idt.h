@@ -88,6 +88,15 @@ _Static_assert(__builtin_offsetof(struct interrupt_frame, ss)     == 168, "ss at
 /* Initialize all 256 IDT entries and load with lidt */
 void idt_init(void);
 
+/* Non-zero once idt_init() has loaded the kernel IDT via lidt.
+ *
+ * Before this returns true, the IDTR still points at the UEFI IDT, so the
+ * C-level handlers[] table consulted by our ISR stubs is not reachable --
+ * any custom #GP handler installed via idt_register_handler() is effectively
+ * invisible to the CPU. msr_try_read() gates on this to avoid crashing on
+ * KVM, which (unlike WHPX) raises real #GP for unavailable MSRs. */
+int idt_is_loaded(void);
+
 /* Interrupt handler type -- returns stack frame pointer (for preemptive switching).
  * Most handlers return the same frame; the scheduler may return a different
  * task's frame pointer to switch contexts. */

@@ -52,6 +52,17 @@ int msr_try_read(uint32_t index, uint64_t *out)
     uint32_t lo = 0, hi = 0;
     uint64_t irq_flags;
 
+    /* The probe requires the kernel IDT to be loaded: installing a handler
+     * in handlers[] only takes effect once the ISR stubs (reached via the
+     * kernel IDT) are dispatching exceptions. Before idt_init(), IDTR still
+     * points at the UEFI IDT, so a real #GP (e.g. KVM denying IA32_MPERF)
+     * would be caught by UEFI and halt. Report "unavailable" so callers
+     * take their existing fallback paths. */
+    if (!idt_is_loaded()) {
+        if (out) *out = 0;
+        return -1;
+    }
+
     /* Serialize: only one CPU can probe at a time. Interrupts disabled
      * to prevent unrelated #GPs from being swallowed by our handler. */
     spin_lock_irqsave(&s_probe_lock, &irq_flags);
