@@ -26,11 +26,12 @@
 - `src/kernel/mm/vmm.c` -- page table management
 - `include/kernel/mm/vmm.h` -- vmm_map_page/vmm_unmap_page API
 - -> XREF: `03-memory-concurrency/TODO-01-vmm-memory-protection.md §3` -- demand paging needed before vmalloc
-- -> XREF: `03-memory-concurrency/TODO-09-concurrency-diagnostics.md §3,§4` -- SLAB red zones, KASAN (COMPLEMENT: diagnostics layer on top of allocator)
+- -> XREF: `03-memory-concurrency/TODO-04-pager-reclaim-working-set.md §3,§5` -- pressure callbacks and pageable-pool victim rules are consumed by the pager and reclaim policy
+- -> XREF: `03-memory-concurrency/TODO-10-concurrency-diagnostics.md §3,§4` -- SLAB red zones, KASAN (COMPLEMENT: diagnostics layer on top of allocator)
 - -> XREF: `02-kernel-core/TODO-01-kernel-init-sequencing.md` -- heap init timing; growable heap must not regress boot
-- -> XREF: `02-kernel-core/TODO-06-irql-model-dpcs.md §1` -- IRQL enforcement for PagedPool vs NonPagedPool
-- -> XREF: `02-kernel-core/TODO-13-registry-completion.md` -- `/sys/pooltags` registry integration
-- -> XREF: `02-kernel-core/TODO-22-kernel-bulletproofing.md` -- 5-layer defense pattern for allocator invariants
+- -> XREF: `02-kernel-core/TODO-07-irql-model-dpcs.md §1` -- IRQL enforcement for PagedPool vs NonPagedPool
+- -> XREF: `02-kernel-core/TODO-14-registry-completion.md` -- `/sys/pooltags` registry integration
+- -> XREF: `02-kernel-core/TODO-31-kernel-bulletproofing.md` -- 5-layer defense pattern for allocator invariants
 - -> XREF: `05-storage-filesystems` domain -- `/sys/slab` VFS files require VFS ready
 
 ---

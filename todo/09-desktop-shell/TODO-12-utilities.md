@@ -3,7 +3,7 @@
 > **Goal:** Deliver the process manager, hardware inspector, and the full suite of small core apps (Calculator, Image Viewer, Screenshot region select, Archive Manager, Calendar, System Info) plus shell command expansion -- everything that completes Impossible OS as a self-sufficient desktop OS.
 
 > [!IMPORTANT]
-> **Already exists**: `struct task { pid, state, name, parent_pid, num_threads }` + `task_get_by_pid()` + `SYS_GETPROCS=10` in `task.h/syscall.h`. `pci_scan()` + `struct pci_device { vendor_id, device_id, ... }` + `pci_find_device()` in `pci.h` -- but no `pci_get_all_devices()` accessor. `image_load/scale/save_bmp()` in `image.h`. `kmath_sqrt/pow/fabs/floor` in `kmath.h` -- but no `kmath_sin/cos/tan/log`. `pmm_get_total_frames()`, `cpuid_get()->brand`, `acpi_get_cpu_count()`. `zip_create/extract/list()` (TODO-04 §4 forward dep). `CTRL_TREEVIEW/TABSTRIP` (TODO-05 forward deps). `search_query_scoped()` (TODO-05). `context_menu_show()` (TODO-07). **Missing**: `cpu_ticks` field in `struct task` (add for CPU%); `sched_get_task_list(out, max)` helper; `pci_get_all_devices(out, max)` helper; `blkdev_get_stats()` / `net_get_stats()` for performance charts; `kmath_sin/cos/tan/log` for scientific calculator. **New functions needed in §1**: add `uint64_t cpu_ticks` to `struct task`; add `sched_get_task_list(proc_info_t *out, int max)`. Complete sections in order: shell commands → calculator → image viewer → screenshot → archive manager → calendar → task manager → device manager → system info.
+> **Already exists**: `struct task { pid, state, name, parent_pid, num_threads }` + `task_get_by_pid()` + `SYS_GETPROCS=10` in `task.h/syscall.h`. `pci_scan()` + `struct pci_device { vendor_id, device_id, ... }` + `pci_find_device()` in `pci.h` -- but no `pci_get_all_devices()` accessor. `image_load/scale/save_bmp()` in `image.h`. `kmath_sqrt/pow/fabs/floor` in `kmath.h` -- but no `kmath_sin/cos/tan/log`. `pmm_get_total_frames()`, `cpuid_get()->brand`, `acpi_get_cpu_count()`. `zip_create/extract/list()` (TODO-04 §6 forward dep). `CTRL_TREEVIEW/TABSTRIP` (TODO-05 forward deps). `search_query_scoped()` (TODO-05). `context_menu_show()` (TODO-07). **Missing**: `cpu_ticks` field in `struct task` (add for CPU%); `sched_get_task_list(out, max)` helper; `pci_get_all_devices(out, max)` helper; `blkdev_get_stats()` / `net_get_stats()` for performance charts; `kmath_sin/cos/tan/log` for scientific calculator. **New functions needed in §1**: add `uint64_t cpu_ticks` to `struct task`; add `sched_get_task_list(proc_info_t *out, int max)`. Complete sections in order: shell commands → calculator → image viewer → screenshot → archive manager → calendar → task manager → device manager → system info.
 
 ## Inputs
 
@@ -17,13 +17,13 @@
 - `include/kernel/timer.h` -- `uptime()`, `system_get_ticks()` -- §1 CPU% rolling sample
 - `include/registry.h` -- `HKCU\...\Calendar\Events\*`, `HKLM\...\Uninstall\*` -- §8 calendar events, §9 software env
 - `include/kernel/fs/vfs.h` -- `vfs_readdir`, `vfs_stat` -- §5 next/prev image in folder, §8 scan
-- `include/desktop/controls.h` (TODO-05) -- `CTRL_TREEVIEW`, `CTRL_TABSTRIP`, `dialog_file_open()` -- §2 device tree, §7 archive, §9 tabs
-- `include/kernel/zip.h` (TODO-04 §4) -- `zip_open/extract/list/add_file()` -- §7 archive manager
-- `include/kernel/time.h` (TODO-10) -- `time_now()`, `time_to_datetime()`, `time_format()` -- §8 calendar, §1 CPU%
-- → XREF: `07-graphics-ui/TODO-07-desktop-shell-features.md §5` -- §6 Screenshot builds on the existing PrintScreen capture module there
-- → XREF: `07-graphics-ui/TODO-10-clock-time.md §3` -- §8 Calendar opened from taskbar clock flyout
-- → XREF: `08-desktop-shell/TODO-04-recycle-zip-scheduler.md §4` -- §7 Archive Manager uses ZIP kernel API
-- → XREF: `08-desktop-shell/TODO-11-control-panel.md §3` -- §9 System Info opened from `sysdm.cpl` "More info" link
+- `include/desktop/controls.h` (TODO-05) -- `CTRL_TREEVIEW`, `CTRL_TABSTRIP`, `dialog_file_open()` -- §4 device tree, §7 archive, §9 tabs
+- `include/kernel/zip.h` (TODO-04 §6) -- `zip_open/extract/list/add_file()` -- §1 archive manager
+- `include/kernel/time.h` (TODO-10) -- `time_now()`, `time_to_datetime()`, `time_format()` -- §9 calendar, §1 CPU%
+- → XREF: `08-graphics-ui/TODO-09-desktop-shell-features.md §5` -- §7 Screenshot builds on the existing PrintScreen capture module there
+- → XREF: `08-graphics-ui/TODO-12-clock-time.md §3` -- §9 Calendar opened from taskbar clock flyout
+- → XREF: `09-desktop-shell/TODO-04-recycle-zip-scheduler.md §6` -- §1 Archive Manager uses ZIP kernel API
+- → XREF: `09-desktop-shell/TODO-11-control-panel.md §5` -- §3 System Info opened from `sysdm.cpl` "More info" link
 
 ## Outcome
 
@@ -45,7 +45,7 @@
 | 💎  |   2   | §3 Calculator -- button grid, two-operand, memory, division-by-zero, keyboard              | `kmath_sqrt/pow` (exist); `gfx_fill_rounded_rect()` (exists or TODO-04 WM)               |  [ ]   |
 | 💎  |   3   | §5 Image Viewer -- `image_load/scale`, fit/zoom/pan, prev/next folder, slideshow           | `image_load/scale` (exist); `vfs_readdir` (exists); `wallpaper_set()` (TODO-07)          |  [ ]   |
 | ⭐  |   4   | §6 Screenshot enhancements -- Win+Shift+S region select, dim overlay, rubber-band, escape  | TODO-07 §5 screenshot module; `image_save_bmp()` (exists); `clipboard_set()` (TODO-01)   |  [ ]   |
-| 💎  |   5   | §7 Archive Manager -- browse `.zip`, Extract All, Add Files, New archive                   | `zip_open/extract/list/add_file()` (TODO-04 §4); `dialog_file_open()` (TODO-05)         |  [ ]   |
+| 💎  |   5   | §7 Archive Manager -- browse `.zip`, Extract All, Add Files, New archive                   | `zip_open/extract/list/add_file()` (TODO-04 §6); `dialog_file_open()` (TODO-05)         |  [ ]   |
 | ⭐  |   6   | §8 Calendar -- month grid, events pane, Registry events, taskbar clock integration         | `time_now/to_datetime()` (TODO-10); Registry (exists); TODO-10 §3 taskbar clock flyout   |  [ ]   |
 | 💎  |   7   | §1 Task Manager -- `cpu_ticks` in task_t, `sched_get_task_list()`, rolling charts, End Task | add `cpu_ticks` to `struct task`; `pmm_get_free_frames()` (exists); Ctrl+Shift+Esc      |  [ ]   |
 | 💎  |   8   | §2 Device Manager -- `pci_get_all_devices()`, `CTRL_TREEVIEW` category tree, properties    | `pci_scan()` (exists); add `pci_get_all_devices()`; `CTRL_TREEVIEW` (TODO-05)           |  [ ]   |
@@ -123,7 +123,7 @@ Win+Shift+S region select mode: full-screen dim overlay (50% black), click+drag 
 **Files:** `src/desktop/screenshot.c` (extend), `include/desktop/screenshot.h` (extend)
 
 > [!NOTE]
-> → XREF: `07-graphics-ui/TODO-07-desktop-shell-features.md §5` -- the existing full-screen PrintScreen capture lives there; §4 here adds Win+Shift+S region mode as an extension. **Region select state machine**: `SCREENSHOT_IDLE → SCREENSHOT_DIM → SCREENSHOT_SELECTING → SCREENSHOT_CAPTURED`. Win+Shift+S → `screenshot_region_start()`: create full-screen overlay window (`z_order=30000`, `WM_FLAG_FULLSCREEN`); fill with 50% alpha black via `gfx_fill_rect(s, 0, 0, sw, sh, 0x80000000)`. **Rubber-band**: `WM_MOUSE_DOWN` → `sel_start_x/y`; `WM_MOUSE_MOVE` → `sel_end_x/y`; render clear rect (XOR-clear or outline) within dim. Release → `screenshot_capture_region(x1, y1, w, h)`: copy compositor back-buffer pixels for that rect → `image_save_bmp()` to `C:\Users\Default\Pictures\Screenshot_{timestamp}.bmp` + `clipboard_set(CLIP_BITMAP, ...)` (TODO-01 multi-format). **3-second countdown**: optional pre-delay for full-screen PrintScreen: overlay countdown "3…2…1" in large centered text; each second via PIT. **Escape** → `screenshot_region_cancel()`: close overlay; restore state to IDLE. Show toast notification after capture: "Screenshot saved to Pictures".
+> → XREF: `08-graphics-ui/TODO-09-desktop-shell-features.md §5` -- the existing full-screen PrintScreen capture lives there; §4 here adds Win+Shift+S region mode as an extension. **Region select state machine**: `SCREENSHOT_IDLE → SCREENSHOT_DIM → SCREENSHOT_SELECTING → SCREENSHOT_CAPTURED`. Win+Shift+S → `screenshot_region_start()`: create full-screen overlay window (`z_order=30000`, `WM_FLAG_FULLSCREEN`); fill with 50% alpha black via `gfx_fill_rect(s, 0, 0, sw, sh, 0x80000000)`. **Rubber-band**: `WM_MOUSE_DOWN` → `sel_start_x/y`; `WM_MOUSE_MOVE` → `sel_end_x/y`; render clear rect (XOR-clear or outline) within dim. Release → `screenshot_capture_region(x1, y1, w, h)`: copy compositor back-buffer pixels for that rect → `image_save_bmp()` to `C:\Users\Default\Pictures\Screenshot_{timestamp}.bmp` + `clipboard_set(CLIP_BITMAP, ...)` (TODO-01 multi-format). **3-second countdown**: optional pre-delay for full-screen PrintScreen: overlay countdown "3…2…1" in large centered text; each second via PIT. **Escape** → `screenshot_region_cancel()`: close overlay; restore state to IDLE. Show toast notification after capture: "Screenshot saved to Pictures".
 
 - [ ] `screenshot_region_start()` -- create dim overlay window; transition to SELECTING state
 - [ ] `WM_MOUSE_DOWN/MOVE/UP` in overlay → rubber-band rect (outline on dim background)

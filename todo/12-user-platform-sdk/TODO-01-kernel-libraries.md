@@ -11,7 +11,7 @@
 >
 > **Code-truth (2026-04-13):** D02 T20 section 1 snprintf/vsnprintf and section 6 cJSON plus json.c wrappers are in-tree; T20 sections 3 through 5 and 7 remain open. This file stays the ZIP writer and stream extension on top of T20 section 4.
 >
-> **Overlap -- miniz:** `02-kernel-core/TODO-20-kernel-libraries.md §4` already specifies
+> **Overlap -- miniz:** `02-kernel-core/TODO-03-kernel-libraries.md §6` already specifies
 > the miniz port to `src/libs/miniz/` and the ZIP reader API (`zip_open/entry_count/find/
 > read/close`). This TODO-01 §3 extends that work with the **ZIP writer** (`mz_zip_writer_*`)
 > and **stream API** (`mz_deflate`/`mz_inflate`) that TODO-20 §4 does not cover. Do not
@@ -40,8 +40,8 @@
 - `include/kernel/mm/heap.h` or equivalent -- `kmalloc`, `kfree` -- malloc redirect in §3 §5 §6
 - `include/kernel/cpuid.h` -- `CPU_FEATURE_RDRAND` flag check -- §4 CSPRNG seed
 - `include/kernel/syscall.h` -- syscall number table; add `SYS_GETRANDOM` -- §4
-- `02-kernel-core/TODO-20-kernel-libraries.md §4` (→ XREF) -- miniz port + ZIP reader prerequisite -- §3
-- `06-networking/TODO-03-http-tls.md` (→ XREF) -- Mbed TLS TLS 1.2 consumer -- §6
+- `02-kernel-core/TODO-03-kernel-libraries.md §6` (→ XREF) -- miniz port + ZIP reader prerequisite -- §5
+- `06-networking/TODO-03-http-tls.md` (→ XREF) -- Mbed TLS TLS 1.2 consumer -- §4
 - `10-platform-services/TODO-07` (→ XREF) -- monocypher consumer (WiFi WPA2, SSH crypto) -- §4
 - `include/kernel/klog.h` -- `klog()` for library init diagnostics -- §8
 
@@ -124,7 +124,7 @@
 
 ## 3. miniz (ZIP Writer + Stream Extension) `[Sonnet]`
 
-> → XREF: `02-kernel-core/TODO-20-kernel-libraries.md §4` -- miniz port to `src/libs/miniz/`
+> → XREF: `02-kernel-core/TODO-03-kernel-libraries.md §6` -- miniz port to `src/libs/miniz/`
 > and ZIP reader (`zip_open/entry_count/find/read/close`) must be complete first.
 > This section adds only the ZIP **writer** and **stream** APIs.
 

@@ -8,7 +8,7 @@
  * On ring transitions (SYSCALL, SYSRET, IDT entry, IRETQ), assembly
  * stubs in the trampoline page swap CR3 between the two tables.
  *
- * XREF: 02-kernel-core/TODO-17-kernel-security-hardening.md S3-S6
+ * XREF: 02-kernel-core/TODO-10-kernel-security-hardening.md S3-S6
  * ============================================================================ */
 
 #ifndef KERNEL_KPTI_H

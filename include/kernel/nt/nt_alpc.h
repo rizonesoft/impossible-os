@@ -3,7 +3,7 @@
  *
  * Reserves SSDT indices 0x010F-0x011E for Vista+ ALPC syscalls. Each
  * handler returns the deferred-status sentinel until the ALPC engine
- * in 02-kernel-core/TODO-12 §8-§9 is implemented. Registering these slots
+ * in 02-kernel-core/TODO-24 §8-§9 is implemented. Registering these slots
  * ensures user-mode callers get a deterministic NTSTATUS rather than
  * a dispatch-miss path, and makes ownership visible in /audit-ssdt.
  *

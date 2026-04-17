@@ -1,9 +1,9 @@
 # TODO-C -- shell32.dll Export Master Table
 
-> **Goal:** Authoritative checklist of **shell32.dll** exports used for paths, icons, folders, and **ShellExecute**. Implementation files stay in `TODO-08-win32-api-surface.md` Sections 12 and 14. **Shell icon index tables** (hardcoded `shell32.dll` / `imageres.dll` resource indices) remain implemented per `../08-graphics-ui/TODO-11-win32-gdi-user32-stubs.md` Section 1; this file references them with Notes `index-map only` to avoid two competing inventories of **indices**.
+> **Goal:** Authoritative checklist of **shell32.dll** exports used for paths, icons, folders, and **ShellExecute**. Implementation files stay in `TODO-08-win32-api-surface.md` Sections 12 and 14. **Shell icon index tables** (hardcoded `shell32.dll` / `imageres.dll` resource indices) remain implemented per `../08-graphics-ui/TODO-14-win32-gdi-user32-stubs.md` Section 1; this file references them with Notes `index-map only` to avoid two competing inventories of **indices**.
 
 > [!IMPORTANT]
-> **Tiers:** Tier 1 = paths + icons + folder CSIDL subset (installer / Explorer). Tier 1b = Shell execute helpers. Tier 2 = **roadmap** (browser APIs, property UI, shell extensions), not a literal PE roster. **Completeness** = Tier 1 + Tier 1b + Tier 3 + ordinal notes. **`CommandLineToArgvW`** is tracked here and implemented per `../02-kernel-core/TODO-14-environment-variables.md` Section 15 (cross-link Owner). **Done column:** `[x]` only when callable from a PE and behavior matches Windows; `[/]` partial; `[ ]` missing. **Owner `NO_OWNING_TODO`:** no leaf TODO owns this symbol yet.
+> **Tiers:** Tier 1 = paths + icons + folder CSIDL subset (installer / Explorer). Tier 1b = Shell execute helpers. Tier 2 = **roadmap** (browser APIs, property UI, shell extensions), not a literal PE roster. **Completeness** = Tier 1 + Tier 1b + Tier 3 + ordinal notes. **`CommandLineToArgvW`** is tracked here and implemented per `../02-kernel-core/TODO-22-environment-variables.md` Section 15 (cross-link Owner). **Done column:** `[x]` only when callable from a PE and behavior matches Windows; `[/]` partial; `[ ]` missing. **Owner `NO_OWNING_TODO`:** no leaf TODO owns this symbol yet.
 
 ## On-disk and naming contract
 
@@ -15,8 +15,8 @@
 | Path / TODO                                                                              | Purpose                                                              |
 | ------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------- |
 | `TODO-08-win32-api-surface.md`                                                           | `shell32.c` APIs + ShellExecute (Sections 12 and 14)                 |
-| `../08-graphics-ui/TODO-11-win32-gdi-user32-stubs.md`                                    | Icon index maps (`shell32_icon_map`, `imageres_icon_map`); Section 1 |
-| `../02-kernel-core/TODO-14-environment-variables.md`                                     | `CommandLineToArgvW` kernel / env surface                            |
+| `../08-graphics-ui/TODO-14-win32-gdi-user32-stubs.md`                                    | Icon index maps (`shell32_icon_map`, `imageres_icon_map`); Section 1 |
+| `../02-kernel-core/TODO-22-environment-variables.md`                                     | `CommandLineToArgvW` kernel / env surface                            |
 | `TODO-A-user32-export-master-table.md`                                                   | `LoadIcon` / window integration                                      |
 | `../09-desktop-shell/TODO-13-explorer-shell-host.md`                                     | Explorer host bring-up depends on Tier 1 done rows                   |
 | `https://raw.githubusercontent.com/wine-mirror/wine/master/dlls/shell32/shell32.spec`    | Scaffold: named exports (Wine `master`)                              |

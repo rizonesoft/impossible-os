@@ -1,6 +1,6 @@
 # Win32k Shadow SSDT Master Table
 
-> **SSDT Table 1.** Service numbers in the `0x1000+` range dispatch to Win32k (`NtGdi*` / `NtUser*`), separate from the main native SSDT (Table 0) in [`../02-kernel-core/TODO-A-SSDT-Master-Table.md`](../02-kernel-core/TODO-A-SSDT-Master-Table.md). Each range has headroom for future additions. The `§` column references [`TODO-12-win32k-shadow-ssdt.md`](TODO-12-win32k-shadow-ssdt.md). Routing, NTSTATUS contract, and filter/audit hooks for Table 1 are in [`TODO-13-win32k-shadow-native-api.md`](TODO-13-win32k-shadow-native-api.md).
+> **SSDT Table 1.** Service numbers in the `0x1000+` range dispatch to Win32k (`NtGdi*` / `NtUser*`), separate from the main native SSDT (Table 0) in [`../02-kernel-core/TODO-A-SSDT-Master-Table.md`](../02-kernel-core/TODO-A-SSDT-Master-Table.md). Each range has headroom for future additions. The `§` column references [`TODO-15-win32k-shadow-ssdt.md`](TODO-15-win32k-shadow-ssdt.md). Routing, NTSTATUS contract, and filter/audit hooks for Table 1 are in [`TODO-16-win32k-shadow-native-api.md`](TODO-16-win32k-shadow-native-api.md).
 
 
 **0x1000–0x100F: GDI Device Context and Object Management**

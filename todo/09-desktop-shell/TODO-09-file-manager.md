@@ -3,7 +3,7 @@
 > **Goal:** Build the primary file browsing application -- a production-quality File Manager with four-zone window layout, sidebar quick access + drives, icon and detail views with column sort, full file operations (copy/cut/paste/delete/rename/new folder), context menus, inline search, drag-and-drop, and stretch advanced features (preview pane, tabs, breadcrumb) that rival Windows Explorer.
 
 > [!IMPORTANT]
-> **Already exists**: `icon_for_extension(ext)` + `icon_draw()` + `icon_draw_scaled()` in `icon_store.h`. `vfs_readdir(dir_node, idx)`, `vfs_finddir(dir_node, name)`, `vfs_stat(path, stat)`, `vfs_rename(old, new)`, `vfs_create(path, type)`, `vfs_open/read/write`, `vfs_unlink` in `vfs.h`. `vfs_mkdir()` for new folder. **No `src/apps/` directory** -- create `src/apps/filemgr/filemgr.c`. **No `vfs_copy()`** -- implement `filemgr_copy_file(src, dst)` as a read+write loop with a PMM 64 KiB copy buffer. **Forward dependencies** (must be completed before the stated sections): `context_menu_show()` (TODO-07 §1), `CTRL_LISTVIEW`/`CTRL_TABSTRIP` (TODO-05), `clipboard_set/get(CLIP_FILES)` (TODO-01 §1), `file_assoc_open()` (TODO-02 §1), `trash_delete/restore()` (TODO-04 §1), `search_query_scoped()` (TODO-05 §2), `wm_drag_start()` (TODO-06 §8 drag-drop). Complete sections in order: core layout → sidebar → view modes → file operations → context menus → file search → drag-and-drop → advanced features.
+> **Already exists**: `icon_for_extension(ext)` + `icon_draw()` + `icon_draw_scaled()` in `icon_store.h`. `vfs_readdir(dir_node, idx)`, `vfs_finddir(dir_node, name)`, `vfs_stat(path, stat)`, `vfs_rename(old, new)`, `vfs_create(path, type)`, `vfs_open/read/write`, `vfs_unlink` in `vfs.h`. `vfs_mkdir()` for new folder. **No `src/apps/` directory** -- create `src/apps/filemgr/filemgr.c`. **No `vfs_copy()`** -- implement `filemgr_copy_file(src, dst)` as a read+write loop with a PMM 64 KiB copy buffer. **Forward dependencies** (must be completed before the stated sections): `context_menu_show()` (TODO-07 §1), `CTRL_LISTVIEW`/`CTRL_TABSTRIP` (TODO-05), `clipboard_set/get(CLIP_FILES)` (TODO-01 §1), `file_assoc_open()` (TODO-02 §1), `trash_delete/restore()` (TODO-04 §2), `search_query_scoped()` (TODO-05 §4), `wm_drag_start()` (TODO-06 §8 drag-drop). Complete sections in order: core layout → sidebar → view modes → file operations → context menus → file search → drag-and-drop → advanced features.
 
 ## Inputs
 
@@ -15,18 +15,18 @@
 - `include/kernel/mm/pmm.h` -- `pmm_alloc_contiguous()` -- 64 KiB copy buffer, large grid allocations
 - `include/registry.h` -- `HKCU\Software\Impossible\FileManager\ViewMode/SortColumn/SidebarWidth` -- §3 view persist
 - `include/kernel/time.h` (TODO-10) -- `time_to_datetime()`, `time_format()` -- §3 Date Modified column
-- `include/desktop/controls.h` (TODO-05) -- `CTRL_LISTVIEW`, `CTRL_TABSTRIP` -- §3 detail view, §8 tabs
+- `include/desktop/controls.h` (TODO-05) -- `CTRL_LISTVIEW`, `CTRL_TABSTRIP` -- §2 detail view, §8 tabs
 - `include/desktop/context_menu.h` (TODO-07 §1) -- `context_menu_show()` -- §5 right-click menus
 - `include/kernel/clipboard.h` (TODO-01 §1) -- `clipboard_set/get(CLIP_FILES, ...)` -- §4 cut/copy/paste
 - `include/desktop/shortcut.h` (TODO-02 §1) -- `file_assoc_open()` -- §1 double-click open
-- `include/kernel/trash.h` (TODO-04 §1) -- `trash_delete()`, `trash_restore()` -- §4 Delete + Ctrl+Z
-- `include/kernel/search.h` (TODO-05 §2) -- `search_query_scoped()` -- §6 toolbar search
+- `include/kernel/trash.h` (TODO-04 §2) -- `trash_delete()`, `trash_restore()` -- §6 Delete + Ctrl+Z
+- `include/kernel/search.h` (TODO-05 §4) -- `search_query_scoped()` -- §6 toolbar search
 - `include/desktop/wm.h` (TODO-06 §8) -- `wm_drag_start()` -- §7 drag-and-drop ghost
 - `include/stb_image.h` -- `stbi_load_from_memory()` -- §8 preview pane image rendering
-- → XREF: `08-desktop-shell/TODO-05-file-search.md §5` -- §6 here IS the file manager search integration described there
-- → XREF: `08-desktop-shell/TODO-04-recycle-zip-scheduler.md §1` -- §4 Delete uses `trash_delete()` from there
-- → XREF: `08-desktop-shell/TODO-02-file-associations-resources.md §1` -- `file_assoc_open()` for double-click; §5 Open With dialog
-- → XREF: `08-desktop-shell/TODO-06-security-accounts.md §9` -- §5 Properties dialog shows `i_uid/i_mode` permissions
+- → XREF: `09-desktop-shell/TODO-05-file-search.md §5` -- §6 here IS the file manager search integration described there
+- → XREF: `09-desktop-shell/TODO-04-recycle-zip-scheduler.md §2` -- §6 Delete uses `trash_delete()` from there
+- → XREF: `09-desktop-shell/TODO-02-file-associations-resources.md §1` -- `file_assoc_open()` for double-click; §3 Open With dialog
+- → XREF: `09-desktop-shell/TODO-06-security-accounts.md §9` -- §5 Properties dialog shows `i_uid/i_mode` permissions
 
 ## Outcome
 
@@ -48,7 +48,7 @@
 | 💎  |   3   | §3 View modes -- Icon grid (48 px), Detail table (sortable columns), multi-select, Registry persist       | §1+§2; `CTRL_LISTVIEW` (TODO-05); `time_format()` (TODO-10); `icon_draw_scaled()` (exists)  |  [ ]   |
 | 💎  |   4   | §4 File operations -- copy/cut/paste, delete (trash), rename (F2 inline), new folder, progress, Ctrl+Z  | §3 selection; `clipboard_set(CLIP_FILES)` (TODO-01); `trash_delete()` (TODO-04)             |  [ ]   |
 | 💎  |   5   | §5 Context menus -- file/folder/empty-area menus; Properties dialog with permissions                     | §3 selection; §4 ops; `context_menu_show()` (TODO-07); `file_assoc_open()` (TODO-02)        |  [ ]   |
-| 💎  |   6   | §6 File search -- toolbar search bar, `search_query_scoped()`, 150 ms debounce, clear-to-restore          | §1 toolbar; `search_query_scoped()` (TODO-05 §2); §3 file area                              |  [ ]   |
+| 💎  |   6   | §6 File search -- toolbar search bar, `search_query_scoped()`, 150 ms debounce, clear-to-restore          | §1 toolbar; `search_query_scoped()` (TODO-05 §4); §2 file area                              |  [ ]   |
 | 💎  |   7   | §7 Drag and drop -- file→desktop, file→trash, file→other window, drop-onto; drag ghost + count badge     | §3 selection; §4 file ops; `wm_drag_start()` (TODO-06 §8)                                   |  [ ]   |
 | ⭐  |   8   | §8 Advanced -- preview pane, `CTRL_TABSTRIP` tabs, breadcrumb address bar, FTP/UNC path stub             | §1–§7; `CTRL_TABSTRIP` (TODO-05); `stb_image` (exists)                                      |  [ ]   |
 
@@ -138,7 +138,7 @@ Right-click file → Open/Open With/Cut/Copy/Delete/Rename/Properties. Right-cli
 **Files:** `src/apps/filemgr/filemgr.c` (extend)
 
 > [!NOTE]
-> Context menus via `context_menu_show()` (TODO-07 §1 forward dep). **File menu**: `{ "Open", filemgr_open_selected }, { "Open With...", filemgr_openwith }, { "---" }, { "Cut", filemgr_cut_selected }, { "Copy", filemgr_copy_selected }, { "---" }, { "Delete", filemgr_delete_selected }, { "Rename", filemgr_rename_inline }, { "---" }, { "Properties", filemgr_show_properties }`. **Empty area menu**: `{ "New Folder", filemgr_new_folder }, { "New Text File", filemgr_new_text_file }, { "New Shortcut", filemgr_new_shortcut }, { "---" }, { "View", submenu: Icon/Detail }, { "Sort By", submenu: Name/Size/Type/Date }, { "---" }, { "Paste", filemgr_paste }, { "Select All", filemgr_select_all }`. **Properties dialog**: 380×300 px modal: icon (48 px) + name top; table rows: Full Path, Size (bytes + human), Type (extension or "Folder"), Created, Modified; Permissions section: `security_check_access()` result + `i_uid/i_mode` from `vfs_stat()` (IXFS only). **Open With**: `dialog_open_with(ext)` from TODO-02 §3 -- launches "Open With" dialog listing registered apps.
+> Context menus via `context_menu_show()` (TODO-07 §1 forward dep). **File menu**: `{ "Open", filemgr_open_selected }, { "Open With...", filemgr_openwith }, { "---" }, { "Cut", filemgr_cut_selected }, { "Copy", filemgr_copy_selected }, { "---" }, { "Delete", filemgr_delete_selected }, { "Rename", filemgr_rename_inline }, { "---" }, { "Properties", filemgr_show_properties }`. **Empty area menu**: `{ "New Folder", filemgr_new_folder }, { "New Text File", filemgr_new_text_file }, { "New Shortcut", filemgr_new_shortcut }, { "---" }, { "View", submenu: Icon/Detail }, { "Sort By", submenu: Name/Size/Type/Date }, { "---" }, { "Paste", filemgr_paste }, { "Select All", filemgr_select_all }`. **Properties dialog**: 380×300 px modal: icon (48 px) + name top; table rows: Full Path, Size (bytes + human), Type (extension or "Folder"), Created, Modified; Permissions section: `security_check_access()` result + `i_uid/i_mode` from `vfs_stat()` (IXFS only). **Open With**: `dialog_open_with(ext)` from TODO-02 §4 -- launches "Open With" dialog listing registered apps.
 
 - [ ] `void filemgr_show_file_context_menu(int entry_idx, int mx, int my)` -- `context_menu_show()` with file entries
 - [ ] `void filemgr_show_folder_context_menu(int entry_idx, int mx, int my)` -- file entries + "Open in New Window"
@@ -146,7 +146,7 @@ Right-click file → Open/Open With/Cut/Copy/Delete/Rename/Properties. Right-cli
 - [ ] `void filemgr_show_properties(int entry_idx)` -- modal dialog; icon + name + stats table + permissions
 - [ ] Properties: size = `st.size` formatted + bytes; dates via `time_format()`; perms from `vfs_stat()`
 - [ ] `void filemgr_new_text_file(void)` -- `vfs_create("New Text File.txt")`; inline rename
-- [ ] `void filemgr_new_shortcut(void)` -- `shortcut_create(path, ...)` (TODO-02 §4); inline rename
+- [ ] `void filemgr_new_shortcut(void)` -- `shortcut_create(path, ...)` (TODO-02 §5); inline rename
 - [ ] `void filemgr_select_all(void)` -- `memset(g_selected, 1, g_entry_count)`; refresh status bar
 - [ ] WM right-click: hit-test → file/folder/empty → dispatch to correct menu
 - [ ] Commit: `"filemgr: context menus -- file/folder/empty, Properties dialog with size/dates/perms, Open With"`
@@ -158,7 +158,7 @@ Search bar in toolbar → `search_query_scoped()` constrained to current directo
 **Files:** `src/apps/filemgr/filemgr.c` (extend)
 
 > [!NOTE]
-> → XREF: `08-desktop-shell/TODO-05-file-search.md §5` -- this section is the implementation of the File Manager integration described there. Search bar: `CTRL_TEXTBOX` rightmost in toolbar; `×` clear button beside it. Debounce: same pattern as Start Menu search (§4 of TODO-05): `g_search_debounce_tick`; set on keystroke; `filemgr_tick()` fires `filemgr_do_search()` when debounce elapsed. `filemgr_do_search(query)`: `search_query_scoped(query, g_current_path, g_search_results, 512)` → convert results to `fm_entry_t[]` + set `g_in_search_mode=1`; render as current view mode. `g_in_search_mode` shows a banner "Search results for '{query}' in {current_path}" above file area. Click × or clear box → `g_in_search_mode=0`; `filemgr_refresh()`. In search mode: file area shows results from any depth of subdirectory; path column shows full path in detail view.
+> → XREF: `09-desktop-shell/TODO-05-file-search.md §5` -- this section is the implementation of the File Manager integration described there. Search bar: `CTRL_TEXTBOX` rightmost in toolbar; `×` clear button beside it. Debounce: same pattern as Start Menu search (§3 of TODO-05): `g_search_debounce_tick`; set on keystroke; `filemgr_tick()` fires `filemgr_do_search()` when debounce elapsed. `filemgr_do_search(query)`: `search_query_scoped(query, g_current_path, g_search_results, 512)` → convert results to `fm_entry_t[]` + set `g_in_search_mode=1`; render as current view mode. `g_in_search_mode` shows a banner "Search results for '{query}' in {current_path}" above file area. Click × or clear box → `g_in_search_mode=0`; `filemgr_refresh()`. In search mode: file area shows results from any depth of subdirectory; path column shows full path in detail view.
 
 - [ ] `g_search_debounce_tick` + `g_in_search_mode` + `g_search_query[64]` globals
 - [ ] Search textbox `WM_KEYDOWN` handler → set dirty; update debounce tick

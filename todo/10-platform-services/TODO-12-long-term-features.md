@@ -17,7 +17,7 @@
 - The user-mode debugger (§2) uses hardware debug registers (`DR0`–`DR7`) for hardware breakpoints and `INT3` patching for software breakpoints -- both require ring-0 kernel support with a `DR`-read/write syscall.
 - TTS engine: prompt specifies **eSpeak-NG** (LGPL); the old TODO used **SAM** (public domain, ~2 K lines). Use SAM as the initial port (simpler), with eSpeak-NG as the upgrade path.
 - OpenGL: prompt specifies **TinyGL** (~5 K lines, zlib license) -- already named in `todo-old`. No existing OpenGL infrastructure.
-- Multi-user sessions (§8) depend on user accounts and a per-session compositor surface; overlaps with `10-platform-services/TODO-03` (accounts) and `07-graphics-ui/TODO-02` (compositor) -- cross-link, don't duplicate.
+- Multi-user sessions (§8) depend on user accounts and a per-session compositor surface; overlaps with `10-platform-services/TODO-03` (accounts) and `08-graphics-ui/TODO-02` (compositor) -- cross-link, don't duplicate.
 - Telemetry (§9) is **opt-in only**, zero by default. `HKLM\SYSTEM\Privacy\Telemetry = 0`.
 - Parental controls (§10) hook into `SYS_CREATEPROCESS` to block apps -- that hook point is in the kernel process creation path (`TODO-07 §7`).
 
@@ -35,8 +35,8 @@
 | `include/desktop/wm.h` | `wm_create_window()` -- debug overlay, session compositor surface |
 | → XREF: `10-platform-services/TODO-01` | `audio_play()` -- TTS PCM output |
 | → XREF: `10-platform-services/TODO-08 §10–13` | IxUI windows -- debug console, parcon.cpl, gamepad settings |
-| → XREF: `04-drivers-hardware/TODO-09` | USB HID -- touch digitizer and gamepad hardware input |
-| → XREF: `07-graphics-ui/TODO-02` | Compositor -- per-session backbuffer for multi-user |
+| → XREF: `04-drivers-hardware/TODO-10-usb-stack.md` | USB HID -- touch digitizer and gamepad hardware input |
+| → XREF: `08-graphics-ui/TODO-02` | Compositor -- per-session backbuffer for multi-user |
 | → XREF: `10-platform-services/TODO-03 §*` | User accounts and per-user registry hives (parental controls) |
 
 ---
@@ -152,7 +152,7 @@ F12 debug overlay and shell diagnostics. All gated by registry flags (disabled b
 
 ## 4. Touch Input + Gesture Recognizer `[Opus]`
 
-Multi-touch input pipeline from USB HID Digitizer to WM events. Depends on USB HID driver (XREF: `04-drivers-hardware/TODO-09`).
+Multi-touch input pipeline from USB HID Digitizer to WM events. Depends on USB HID driver (XREF: `04-drivers-hardware/TODO-10-usb-stack.md`).
 
 - [ ] Create `include/kernel/drivers/touch.h`:
   - `struct touch_point { uint8_t id; int32_t x, y; uint16_t pressure; uint8_t phase; /* TOUCH_DOWN/MOVE/UP */ }`
@@ -175,7 +175,7 @@ Multi-touch input pipeline from USB HID Digitizer to WM events. Depends on USB H
 
 ## 5. Gamepad / Controller Input + XInput Stubs `[Sonnet]`
 
-USB HID gamepad driver + XInput-compatible API. Requires USB HID (XREF: `04-drivers-hardware/TODO-09`).
+USB HID gamepad driver + XInput-compatible API. Requires USB HID (XREF: `04-drivers-hardware/TODO-10-usb-stack.md`).
 
 - [ ] Create `include/gamepad.h`:
   - `struct gamepad_state { uint32_t buttons; int16_t left_x, left_y, right_x, right_y; uint8_t left_trigger, right_trigger; uint8_t dpad; }`
@@ -254,7 +254,7 @@ Port TinyGL (~5 K lines, zlib license) to render to the Impossible OS framebuffe
 
 ## 9. Multi-User Session Management + Fast Switching `[Opus]`
 
-Per-user sessions with isolated compositor surfaces. Depends on user accounts (`TODO-03`) and compositor (`07-graphics-ui/TODO-02`).
+Per-user sessions with isolated compositor surfaces. Depends on user accounts (`TODO-03`) and compositor (`08-graphics-ui/TODO-02`).
 
 - [ ] Create `include/kernel/session.h`:
   - `struct user_session { uint32_t uid; char username[64]; gfx_surface_t *desktop_surface; int *window_list; uint32_t process_count; uint8_t active; }`

@@ -3,7 +3,7 @@
  *
  * Tests exec dispatcher (§1), EIF loader (§5), and module registration (§6).
  *
- * XREF: 02-kernel-core/TODO-08-binary-system.md §Unit Tests
+ * XREF: 02-kernel-core/TODO-17-binary-system.md §Unit Tests
  * ============================================================================ */
 
 #ifdef KERNEL_TESTS

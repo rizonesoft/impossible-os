@@ -25,15 +25,21 @@ This domain tracks the tooling and workflow work that supports the whole project
 
 ## Active TODOs
 
-- [TODO-01 User-Mode Test Framework](./TODO-01-usermode-test-framework.md) - Test binaries
-  for syscalls, libc, IPC, process lifecycle, file I/O, Win32 API -- real user-mode programs
-  exercising the real syscall interface.
-- [TODO-02 Desktop & UI Test Framework](./TODO-02-desktop-ui-test-framework.md) - Framebuffer
-  snapshots, input injection, terminal verification, visual regression CI, WM state introspection.
+- [TODO-01 Developer Tooling Stack](./TODO-01-developer-tooling-stack.md) - Canonical host-side
+  developer workflow for setup, build, test, run, debug, hooks, CI, artifacts, and a tooling
+  doctor/regression pack.
+- [TODO-02 AI Development System](./TODO-02-ai-development-system.md) - Canonical ownership for
+  Claude/Cursor/Copilot instructions, skills, hooks, permissions, drift audit, and AI workflow
+  regression checks.
 - [TODO-03 Kernel Test Harness](./TODO-03-kernel-test-harness.md) - Kernel-internal test-time
   infrastructure: `kmalloc_fail_countdown` fault injection, `test_race_barrier_t` deterministic
   race fence, `TEST_SCRATCH_KBUF` > 4 KiB scratch buffers. Closes the "Test gaps (NO current
-  owner)" block in TODO-12 §4 and similar deferred gaps elsewhere.
+  owner)" block in TODO-12 §5 and similar deferred gaps elsewhere.
+- [TODO-04 User-Mode Test Framework](./TODO-04-usermode-test-framework.md) - Test binaries
+  for syscalls, libc, IPC, process lifecycle, file I/O, Win32 API -- real user-mode programs
+  exercising the real syscall interface.
+- [TODO-05 Desktop & UI Test Framework](./TODO-05-desktop-ui-test-framework.md) - Framebuffer
+  snapshots, input injection, terminal verification, visual regression CI, WM state introspection.
 
 ## Completed / Doc-converted
 

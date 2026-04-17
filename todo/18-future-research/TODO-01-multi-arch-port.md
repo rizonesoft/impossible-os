@@ -34,9 +34,9 @@
 - `src/kernel/drivers/pit.c`, `src/kernel/drivers/pic.c` -- x86 port I/O (`inb`/`outb`), PIT, i8259 PIC
 - `src/boot/linker.ld`, `scripts/build.sh` -- linker script and compiler flags (`-mcmodel=kernel`, `-mno-red-zone`, target triple `x86_64-elf`) -- §5 multi-arch build changes here
 - `include/kernel/types.h`, `include/kernel/boot_info.h` -- check for `uint64_t` / struct layout assumptions
-- `02-kernel-core/TODO-19-x86-64-architecture.md` (→ XREF) -- x86-64 hardware spec reference for the gap analysis
-- `01-boot-platform/TODO-04-cpu-boot-sequencing.md §3` (→ XREF) -- hypervisor detection (`HV_TSC_ENLIGHTENMENT`); ARM64 hypervisors use a different SMCCC-based detection path
-- `02-kernel-core/TODO-17-kernel-security-hardening.md` (→ XREF) -- SMEP/SMAP/CET are x86 features; AArch64 equivalents are PAN/UAO/BTI/PAC
+- `02-kernel-core/TODO-09-x86-64-architecture.md` (→ XREF) -- x86-64 hardware spec reference for the gap analysis
+- `01-boot-platform/TODO-09-cpu-boot-sequencing.md §4` (→ XREF) -- hypervisor detection (`HV_TSC_ENLIGHTENMENT`); ARM64 hypervisors use a different SMCCC-based detection path
+- `02-kernel-core/TODO-10-kernel-security-hardening.md` (→ XREF) -- SMEP/SMAP/CET are x86 features; AArch64 equivalents are PAN/UAO/BTI/PAC
 - `TODO-06-android-app-compatibility.md` (→ XREF) -- TODO-06 section 6 native ARM APK stacks prefer AArch64 guest; Android compat research feeds ABI matrix in multi-arch plan
 
 ---

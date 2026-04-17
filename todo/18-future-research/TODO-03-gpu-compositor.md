@@ -12,7 +12,7 @@
 > the GPU path; it does NOT modify the existing compositor.
 >
 > **TinyGL software OpenGL** (~5 K lines, zlib) is specced in
-> `10-platform-services/TODO-12 §8`; §2 here assesses the *upgrade path* from TinyGL
+> `10-platform-services/TODO-12 §7`; §3 here assesses the *upgrade path* from TinyGL
 > to Mesa lavapipe (CPU Vulkan) -- it does not re-specify the TinyGL port itself.
 >
 > **IOMMU driver** is a hard prerequisite for DMA-safe GPU memory (§3) and is documented
@@ -34,8 +34,8 @@
 - `include/kernel/mm/pmm.h` -- `pmm_alloc_contiguous()` -- §3 GPU-visible memory allocator
 - `include/kernel/mm/vmm.h` -- `vmm_map_page()` -- §3 IOMMU-safe GPU buffer mapping
 - `include/kernel/sched/syscall.h` -- next free syscall number -- §3 `SYS_GPU_*` additions
-- `10-platform-services/TODO-12-long-term-features.md §8` (→ XREF) -- TinyGL port; §2 here assesses upgrade to Mesa lavapipe from TinyGL baseline
-- `13-future-research/TODO-02-hypervisor.md §4 §6` (→ XREF) -- virtio-gpu stretch mentioned there; IOMMU prerequisite documented there; §1 §3 here build on that analysis
+- `10-platform-services/TODO-12-long-term-features.md §7` (→ XREF) -- TinyGL port; §3 here assesses upgrade to Mesa lavapipe from TinyGL baseline
+- `13-future-research/TODO-02-hypervisor.md §5 §6` (→ XREF) -- virtio-gpu stretch mentioned there; IOMMU prerequisite documented there; §1 §4 here build on that analysis
 - `TODO-06-android-app-compatibility.md` (→ XREF) -- TODO-06 section 5 guest framebuffer to host compositor; VirtIO-GPU scanout ties to sections 1 and 5 here
 - `src/kernel/drivers/virtio/virtio.c` -- existing guest-side VirtIO transport; §1 VirtIO-GPU driver extends this
 - `src/kernel/gfx/` -- `gfx_simd.c`, `arc_ring.c`, `gfx_text.c` -- current CPU compositor internals
@@ -57,7 +57,7 @@ compositor to 4K 120 Hz.
 | Step | Section | 💎/⭐ | Dependency |
 |------|---------|-------|-----------|
 | 1 | GPU access strategy (option comparison) | ⭐ | existing VirtIO transport; IOMMU analysis (TODO-02 §6) |
-| 2 | TinyGL → Mesa lavapipe upgrade research | ⭐ | `TODO-12 §8` TinyGL baseline |
+| 2 | TinyGL → Mesa lavapipe upgrade research | ⭐ | `TODO-12 §7` TinyGL baseline |
 | 3 | Display engine research (AMD DCN + Intel Arc) | ⭐ | bare-metal GPU strategy from §1 |
 | 4 | Vulkan kernel driver architecture | ⭐ | §1 option selection; `pmm_alloc_contiguous`; syscall table |
 | 5 | Compositor GPU path design | ⭐ | §4 Vulkan API; `wm.h` compositor internals |
@@ -101,16 +101,16 @@ compositor to 4K 120 Hz.
 ## 2. TinyGL → Mesa lavapipe Upgrade Research `[Sonnet]`
 
 > Assesses upgrade path from TinyGL (OpenGL 1.1) to Mesa lavapipe (CPU Vulkan, no GPU
-> required). TinyGL baseline is specced in `TODO-12 §8`.
+> required). TinyGL baseline is specced in `TODO-12 §7`.
 
-- [ ] **TinyGL baseline** (from `TODO-12 §8`): `~5 K LOC`, OpenGL 1.1, renders to `gfx_surface_t`; `glFlush()` → `gfx_blit()`; covers: `glBegin/glEnd`, matrices, z-buffer, texture mapping
+- [ ] **TinyGL baseline** (from `TODO-12 §7`): `~5 K LOC`, OpenGL 1.1, renders to `gfx_surface_t`; `glFlush()` → `gfx_blit()`; covers: `glBegin/glEnd`, matrices, z-buffer, texture mapping
 - [ ] **Mesa lavapipe assessment**:
   - Mesa is ~10M LOC total; `lavapipe` (CPU Vulkan, `LLVMpipe` backend) is the isolated target
   - Key isolatable modules: `src/gallium/drivers/llvmpipe/` (~80 K LOC), `src/gallium/auxiliary/` (shared utils), `include/vulkan/vulkan.h` (Khronos headers)
   - **Porting blockers for Impossible OS**:
     - Mesa uses `stdlib`, `stdio`, `pthread`, `mmap` -- all need kernel shims or elimination
     - LLVM backend (~2 M LOC) needed for `llvmpipe` JIT; alternative: `softpipe` (non-JIT, pure C, ~40 K LOC) is more portable
-    - `lavapipe` requires `dlfcn.h` for ICD loading -- needs `dlopen` from `TODO-03 §5` (`11-user-platform-sdk/TODO-03`)
+    - `lavapipe` requires `dlfcn.h` for ICD loading -- needs `dlopen` from `TODO-03 §3` (`11-user-platform-sdk/TODO-03`)
   - **`softpipe` as intermediate target** (Mesa's non-JIT Gallium driver, ~40 K LOC):
     - Portable C, no LLVM dependency
     - Provides full Gallium3D state tracker → Vulkan via `zink` layer
@@ -120,11 +120,11 @@ compositor to 4K 120 Hz.
   | Path | LOC to port | Prerequisites | Quality |
   |------|------------|---------------|---------|
   | Keep TinyGL | 0 (done) | None | OpenGL 1.1 only |
-  | Mesa `softpipe` | ~40 K + shims | `dlopen`, libc shims (`TODO-03 §5`, `TODO-04 §7`) | Full OpenGL 4.x |
+  | Mesa `softpipe` | ~40 K + shims | `dlopen`, libc shims (`TODO-03 §3`, `TODO-04 §1`) | Full OpenGL 4.x |
   | Mesa `lavapipe` | ~80 K + LLVM | All above + LLVM port | Vulkan 1.3 |
   | Zink (OpenGL on Vulkan) | Needs lavapipe first | As above | Bridges GL → Vulkan |
 
-- [ ] **Recommended path**: TinyGL stays as the immediate baseline (already specced in `TODO-12 §8`); Mesa `softpipe` becomes the Phase 2 software renderer after libc shims and `dlopen` are complete; lavapipe deferred to Phase 3
+- [ ] **Recommended path**: TinyGL stays as the immediate baseline (already specced in `TODO-12 §7`); Mesa `softpipe` becomes the Phase 2 software renderer after libc shims and `dlopen` are complete; lavapipe deferred to Phase 3
 - [ ] **`vkd3d-proton` compatibility layer assessment**: runs Direct3D 12 apps on Vulkan ICD; requires a working Vulkan ICD (lavapipe or VirtIO-GPU) as prerequisite; enables Windows game compatibility; defer to Phase 3
 
 ---
@@ -245,7 +245,7 @@ compositor to 4K 120 Hz.
   - **Compositor GPU path diagram** (from §5): dirty-scan → upload → blur pass → composite → DMA flip; CPU fallback path
   - **Mesa porting cost assessment** (from §2): TinyGL (done) → softpipe (Phase 2, ~40 K LOC + shims) → lavapipe (Phase 3, ~80 K LOC + LLVM) → vkd3d-proton (Phase 4)
   - **AMD DCN + Intel Arc prerequisite list** (from §3): firmware blobs, PCIe BAR mapping, register access patterns, blocking items
-  - **Dependency tree**: VirtIO-GPU → `gpu.c` VirtIO transport; softpipe → `dlopen` (`TODO-03 §5`) + libc shims (`TODO-04 §7`); bare-metal → IOMMU driver + PCIe driver; vkd3d-proton → Vulkan ICD
+  - **Dependency tree**: VirtIO-GPU → `gpu.c` VirtIO transport; softpipe → `dlopen` (`TODO-03 §3`) + libc shims (`TODO-04 §1`); bare-metal → IOMMU driver + PCIe driver; vkd3d-proton → Vulkan ICD
   - **LOC estimate per phase**:
     - Phase 1 (VirtIO-GPU driver + GPU compositor): ~5 K LOC
     - Phase 2 (Mesa softpipe port): ~40–50 K LOC

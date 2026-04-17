@@ -1,6 +1,6 @@
 # TODO-01 -- VMM Memory Protection & Diagnostics
 
-> **Goal:** PMM, VMM, heap, swap, and mmap are complete. This TODO hardens and extends the memory model: Win32-compatible `mprotect` / `VirtualAlloc` / `VirtualFree`, demand paging (reserve vs. commit), W^X enforcement, `NtQueryVirtualMemory`, and a full allocator safety tier -- build-time lint, canaries, leak detector, and PMM statistics.
+> **Goal:** PMM, VMM, heap, swap, and mmap foundations exist. This TODO hardens and extends the memory model: Win32-compatible `mprotect` / `VirtualAlloc` / `VirtualFree`, demand paging (reserve vs. commit), W^X enforcement, `NtQueryVirtualMemory`, and a full allocator safety tier: build-time lint, canaries, leak detector, and PMM statistics. Pager, pagefile, and working-set policy are owned by `TODO-10`.
 
 > [!IMPORTANT]
 > **Memory rule:** `kmalloc` is for small kernel structs ≤ 4 KB only. Use `pmm_alloc_contiguous()` for every buffer that can exceed 4 KB (fonts, images, file data, DMA regions, network reassembly). Violating this crashes the 2 MiB heap silently. See CLAUDE.md "Freestanding Kernel -- No stdlib".
@@ -15,11 +15,12 @@
 - [`src/kernel/mm/heap.c`](../../src/kernel/mm/heap.c)
 - [`src/kernel/sched/syscall.c`](../../src/kernel/sched/syscall.c)
 - [`scripts/build.sh`](../../scripts/build.sh)
-- → XREF: `01-boot-platform/TODO-04-cpu-boot-sequencing.md §2` -- EFER.NXE and CR4 hardening must be active before §1–§3 can rely on NX bits
-- → XREF: `01-boot-platform/TODO-04-cpu-boot-sequencing.md §8` -- PAT MSR AP synchronization; vmm_map_mmio_uc() cache policy depends on consistent PAT MSR across all CPUs
-- → XREF: `02-kernel-core/TODO-04-peb-teb-user-abi.md §6` -- TEB and stack bounds required for §1 guard page placement
-- → XREF: `02-kernel-core/TODO-05-native-api-ssdt.md` -- syscall wiring for `NtProtectVirtualMemory`, `NtAllocateVirtualMemory`, `NtQueryVirtualMemory`, and the `VirtualAlloc` family
-- → XREF: `01-boot-platform/TODO-01-uefi-hardening-secureboot.md §1` -- UEFI runtime handoff; firmware runtime page W^X policy is `01-boot-platform/TODO-18-uefi-advanced.md §3` (TODO-01 §1-§9)
+- → XREF: `03-memory-concurrency/TODO-04-pager-reclaim-working-set.md §2,§4,§3` -- pagefile ownership, working-set trim policy, and background reclaim back the commit, lock, and fault behavior extended here
+- → XREF: `01-boot-platform/TODO-09-cpu-boot-sequencing.md §2` -- EFER.NXE and CR4 hardening must be active before §1–§4 can rely on NX bits
+- → XREF: `01-boot-platform/TODO-09-cpu-boot-sequencing.md §9` -- PAT MSR AP synchronization; vmm_map_mmio_uc() cache policy depends on consistent PAT MSR across all CPUs
+- → XREF: `02-kernel-core/TODO-11-peb-teb-user-abi.md §1` -- TEB and stack bounds required for §6 guard page placement
+- → XREF: `02-kernel-core/TODO-12-native-api-ssdt.md` -- syscall wiring for `NtProtectVirtualMemory`, `NtAllocateVirtualMemory`, `NtQueryVirtualMemory`, and the `VirtualAlloc` family
+- → XREF: `01-boot-platform/TODO-02-uefi-hardening-secureboot.md §1` -- UEFI runtime handoff; firmware runtime page W^X policy is `01-boot-platform/TODO-27-uefi-advanced.md §3` (TODO-01 §1-§9)
 
 ## Outcome
 
@@ -41,7 +42,7 @@
 
 | ⭐  | Order | Deliverable                                               | Depends On                    | Status |
 | --- | :---: | --------------------------------------------------------- | ----------------------------- | :----: |
-| 💎  |   1   | `mprotect` / `NtProtectVirtualMemory` + guard pages       | TODO-04-cpu §2, TODO-04 §6    |  [ ]   |
+| 💎  |   1   | `mprotect` / `NtProtectVirtualMemory` + guard pages       | 01-boot-platform/TODO-09-cpu-boot-sequencing.md §2, D02 T11 §7    |  [ ]   |
 | 💎  |   2   | W^X enforcement in VMM                                    | §1                            |  [ ]   |
 | 💎  |   3   | Demand paging -- MEM_RESERVE / MEM_COMMIT                  | §1                            |  [ ]   |
 | 💎  |   4   | `NtQueryVirtualMemory` -- `MEMORY_BASIC_INFORMATION`       | §1, §2, §3                    |  [ ]   |
@@ -70,14 +71,14 @@ Change page permissions on an existing mapping -- essential for W^X policy, JIT 
 **Files:** `include/kernel/mm/vmm.h`, `src/kernel/mm/vmm.c`, `src/kernel/sched/syscall.c`
 
 > [!IMPORTANT]
-> → XREF: `01-boot-platform/TODO-04-cpu-boot-sequencing.md §2` -- EFER.NXE must be set and `CR4.SMEP`/`CR4.SMAP` active before this section is implemented; NX-based protection has no effect without it.
-> → XREF: `02-kernel-core/TODO-04-peb-teb-user-abi.md §6` -- TEB allocation is where the guard page below the stack is placed; coordinate guard page size and offset there.
+> → XREF: `01-boot-platform/TODO-09-cpu-boot-sequencing.md §2` -- EFER.NXE must be set and `CR4.SMEP`/`CR4.SMAP` active before this section is implemented; NX-based protection has no effect without it.
+> → XREF: `02-kernel-core/TODO-11-peb-teb-user-abi.md §1` -- TEB allocation is where the guard page below the stack is placed; coordinate guard page size and offset there.
 
 - [ ] Define `PROT_NONE`, `PROT_READ`, `PROT_WRITE`, `PROT_EXEC` constants in `include/kernel/mm/vmm.h`
 - [ ] Implement `vmm_protect(virt, size, prot)` -- walk PTEs for range; map `PROT_WRITE` → R/W=1, `PROT_EXEC` → NX=0, `PROT_NONE` → Present=0 (access fault on touch)
 - [ ] `invlpg` on every modified PTE address to invalidate TLB; on SMP, IPI shootdown for other CPUs
 - [ ] Wire `mprotect(addr, len, prot)` POSIX syscall → `vmm_protect()`
-- [ ] Wire `NtProtectVirtualMemory(handle, &base, &size, new_protect, &old_protect)` → `vmm_protect()` (→ XREF `02-kernel-core/TODO-05-native-api-ssdt.md`)
+- [ ] Wire `NtProtectVirtualMemory(handle, &base, &size, new_protect, &old_protect)` → `vmm_protect()` (→ XREF `02-kernel-core/TODO-12-native-api-ssdt.md`)
 - [ ] Allocate one PROT_NONE guard page below each thread's initial stack in `thread_create()`; page fault on guard page → deliver `EXCEPTION_STACK_OVERFLOW`
 - [ ] Update `pmm_init()`, `vmm_init()`, `heap_init()` to return `boot_result_t` instead of `void` -- moved from TODO-01 §8
 - [ ] Commit: `"mm: mprotect / NtProtectVirtualMemory + stack guard pages"`
@@ -107,9 +108,9 @@ Reserve virtual address space without backing frames; commit pages on-demand wit
 - [ ] Extend `vmm_alloc_region()` to accept `MEM_RESERVE` and `MEM_COMMIT` flags
 - [ ] `MEM_COMMIT` path: mark region committed; zero-fill backing frames on first access (page fault handler checks if faulting address is in a committed region → allocate frame + zero + map PTE → retry)
 - [ ] `MEM_RESERVE` path: record region; page faults in a reserved-but-not-committed range → `EXCEPTION_ACCESS_VIOLATION` (not a silent commit)
-- [ ] Wire `NtAllocateVirtualMemory(handle, &base, zero_bits, &size, type, protect)` accepting `MEM_RESERVE`, `MEM_COMMIT`, and `MEM_RESERVE|MEM_COMMIT` (→ XREF `02-kernel-core/TODO-05-native-api-ssdt.md`)
+- [ ] Wire `NtAllocateVirtualMemory(handle, &base, zero_bits, &size, type, protect)` accepting `MEM_RESERVE`, `MEM_COMMIT`, and `MEM_RESERVE|MEM_COMMIT` (→ XREF `02-kernel-core/TODO-12-native-api-ssdt.md`)
 - [ ] Wire `NtFreeVirtualMemory(handle, &base, &size, MEM_RELEASE)` → unmap committed pages and remove reservation
-- [ ] **Per-process physical isolation:** `vmm_create_user_pml4()` must allocate unique physical pages per process instead of cloning the kernel's identity-mapped frames. Currently all processes share the same physical pages at the same virtual addresses -- process A can read/write process B's data. `MEM_COMMIT` must allocate fresh zero-filled frames from PMM and map them into the per-process PML4 only. Prerequisite for multi-process Win32 (→ XREF D10/T7§4, D10/T7§7)
+- [ ] **Per-process physical isolation:** `vmm_create_user_pml4()` must allocate unique physical pages per process instead of cloning the kernel's identity-mapped frames. Currently all processes share the same physical pages at the same virtual addresses -- process A can read/write process B's data. `MEM_COMMIT` must allocate fresh zero-filled frames from PMM and map them into the per-process PML4 only. Prerequisite for multi-process Win32 and `02-kernel-core/TODO-20-eif-full-implementation.md §9` EIF dispatch-table isolation (→ XREF D10/T7§4, D10/T7§7)
 - [ ] **Per-process PML4 spinlock:** when multi-threaded process creation or `VirtualAlloc` from user threads calls `vmm_set_user_page()` concurrently on the same PML4, add a per-process lock to serialize PD splitting and User bit propagation. Currently safe because PML4 manipulation is task-local and single-threaded (documented in vmm.c)
 - [ ] Commit: `"mm: demand paging -- MEM_RESERVE / MEM_COMMIT / NtAllocateVirtualMemory"`
 
@@ -132,7 +133,7 @@ Thin Win32 shim layer over the NT memory API so user-mode code can use the stand
 **Files:** `include/kernel/win32/memory.h`, `src/kernel/sched/syscall.c`
 
 > [!IMPORTANT]
-> → XREF: `02-kernel-core/TODO-05-native-api-ssdt.md` -- Win32 memory API surface; confirm function signatures and `PAGE_*` constant values match Windows documentation before implementing.
+> → XREF: `02-kernel-core/TODO-12-native-api-ssdt.md` -- Win32 memory API surface; confirm function signatures and `PAGE_*` constant values match Windows documentation before implementing.
 
 - [ ] Define `PAGE_NOACCESS`, `PAGE_READONLY`, `PAGE_READWRITE`, `PAGE_EXECUTE`, `PAGE_EXECUTE_READ`, `PAGE_EXECUTE_READWRITE` constants; map each to `PROT_*` combinations
 - [ ] `VirtualAlloc(lpAddress, dwSize, flAllocationType, flProtect)` → `NtAllocateVirtualMemory()`; translate `MEM_RESERVE` / `MEM_COMMIT` / `MEM_RESERVE|MEM_COMMIT` and `PAGE_*` protect flags
@@ -203,7 +204,7 @@ Debug-mode allocation tracker with zero overhead in release builds -- enabled by
 - [ ] Implement `kmalloc_dump_leaks()` -- called at shutdown; prints all un-freed table entries with caller context
 - [ ] `memleak` shell command → `kmalloc_dump_leaks()`
 - [ ] Implement `kmalloc_stats(mm_stats_t *out)` -- current used bytes, peak used bytes, live allocation count (feeds §8 `SYS_MMSTATS`)
-- [ ] Boot param `kmalloc_debug=1` enables tracking at runtime without recompile (→ XREF `TODO-02-boot-diagnostics.md §1` -- boot param API)
+- [ ] Boot param `kmalloc_debug=1` enables tracking at runtime without recompile (→ XREF `01-boot-platform/TODO-14-boot-diagnostics.md §2` -- boot param API)
 - [ ] Commit: `"mm: kmalloc leak detector (debug build) + kmalloc_stats"`
 
 ## 11. MMIO Mapping with UC Attributes + HPET Validation
@@ -213,10 +214,10 @@ Implement `vmm_map_mmio()` / `MmMapIoSpace()` to create uncacheable (UC) mapping
 **Files:** `include/kernel/mm/vmm.h`, `src/kernel/mm/vmm.c`, `src/kernel/drivers/lapic.c`, `src/kernel/drivers/hpet.c` (new)
 
 > [!IMPORTANT]
-> → XREF: `04-drivers-hardware/TODO-02-core-driver-enhancements.md §2` -- HPET timer driver consumes `vmm_map_mmio()` for register access.
-> → XREF: `04-drivers-hardware/TODO-02-core-driver-enhancements.md §3` -- PCIe ECAM needs `vmm_map_mmio()` with UC for config space.
-> → XREF: `04-drivers-hardware/TODO-03-apic-interrupt-routing.md` -- LAPIC/IOAPIC MMIO should use UC mappings (currently works via MTRR override).
-> → XREF: `02-kernel-core/TODO-19-x86-64-architecture.md §6` -- PAT configuration for WC (framebuffer) and UC (MMIO) page types.
+> → XREF: `04-drivers-hardware/TODO-08-core-driver-enhancements.md §4` -- HPET timer driver consumes `vmm_map_mmio()` for register access.
+> → XREF: `04-drivers-hardware/TODO-08-core-driver-enhancements.md §1` -- PCIe ECAM needs `vmm_map_mmio()` with UC for config space.
+> → XREF: `04-drivers-hardware/TODO-02-apic-interrupt-routing.md` -- LAPIC/IOAPIC MMIO should use UC mappings (currently works via MTRR override).
+> → XREF: `02-kernel-core/TODO-09-x86-64-architecture.md §7` -- PAT configuration for WC (framebuffer) and UC (MMIO) page types.
 
 > **Current state (2026-03-28):** The bootloader maps all 4 GiB with `0x87` (Present+Writable+User+PS) -- no PCD/PWT bits, so all pages are WB cached. LAPIC/IOAPIC work because MTRRs override those specific ranges to UC. HPET, ECAM, and other MMIO devices have no MTRR entries and crash on bare metal when accessed through WB pages. The HPET calibration path in `lapic.c` currently has a probe guard but should use a proper UC mapping instead.
 
@@ -238,9 +239,9 @@ Implement `vmm_map_mmio()` / `MmMapIoSpace()` to create uncacheable (UC) mapping
 Map an arbitrary PMM-allocated physical frame into a specific process PML4 at a chosen user-mode virtual address. The current `vmm_set_user_page()` only sets the User bit on an existing identity-mapped page -- it cannot map a DIFFERENT physical frame at a given VA. This blocks `uthread_create()` (per-thread user stacks) and future `VirtualAlloc(MEM_COMMIT)` which both need to place specific physical pages at process-chosen VAs.
 
 > [!IMPORTANT]
-> **Prerequisite for TODO-04 §14 (uthread_create).** Discovered during Codex design review 2026-04-10: `pmm_alloc_contiguous()` returns a physical frame, but there is no VMM API to install that frame at an arbitrary user VA in a per-process PML4. Without this, user thread stacks would silently alias the identity-mapped physical page at the target VA, corrupting arbitrary memory.
+> **Prerequisite for D02 T11 §14 (`uthread_create`).** Discovered during Codex design review 2026-04-10: `pmm_alloc_contiguous()` returns a physical frame, but there is no VMM API to install that frame at an arbitrary user VA in a per-process PML4. Without this, user thread stacks would silently alias the identity-mapped physical page at the target VA, corrupting arbitrary memory.
 
-→ XREF: [`02-kernel-core/TODO-04-peb-teb-user-abi.md §14`](../02-kernel-core/TODO-04-peb-teb-user-abi.md) -- consumer (uthread_create per-thread user stack mapping)
+→ XREF: [`02-kernel-core/TODO-11-peb-teb-user-abi.md §14`](../02-kernel-core/TODO-11-peb-teb-user-abi.md) -- consumer (uthread_create per-thread user stack mapping)
 
 - [x] Implement `int vmm_map_user_page(uintptr_t cr3, uintptr_t virt, uintptr_t phys)` in `src/kernel/mm/vmm.c` -- walks per-process PML4, creates intermediate tables with User+Writable flags, auto-splits 2 MiB huge pages, installs final PTE with Present+Writable+User+NX, invlpg after. Returns 0/-1.
 - [x] Implement `void vmm_unmap_user_page(uintptr_t cr3, uintptr_t virt)` -- walks PML4, extracts frame from PTE, clears PTE, pmm_free_frame(), invlpg. Does not free intermediate tables.

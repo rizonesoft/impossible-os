@@ -8,7 +8,7 @@
  * Intel hybrid: CPUID leaf 0x1A (native model ID, core type).
  * Intel extended topology: CPUID leaf 0x1F (SMT/core/module/die).
  *
- * XREF: 02-kernel-core/TODO-19-x86-64-architecture.md S9
+ * XREF: 02-kernel-core/TODO-09-x86-64-architecture.md S9
  * ============================================================================ */
 
 #pragma once

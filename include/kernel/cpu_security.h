@@ -4,7 +4,7 @@
  * Functions to enable NX, SMEP, SMAP, CET, and other CPU security features.
  * Each is safe to call on BSP and APs. No-ops if the feature is unsupported.
  *
- * XREF: 02-kernel-core/TODO-17-kernel-security-hardening.md
+ * XREF: 02-kernel-core/TODO-10-kernel-security-hardening.md
  * ============================================================================ */
 
 #pragma once

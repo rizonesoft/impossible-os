@@ -26,10 +26,10 @@
 
 - `10-platform-services/TODO-07-win32-pe-loader.md` (→ XREF) -- gate TODO for Tiers 1–3
 - `10-platform-services/TODO-08-win32-api-surface.md §9` (→ XREF) -- `win32_unimpl_stub` call-count table; extend here with shmem map
-- `10-platform-services/TODO-08-win32-api-surface.md §1 §2 §5 §6 §7 §10` (→ XREF) -- gate TODOs for Tiers 2–7
-- `11-user-platform-sdk/TODO-04-ntdll-user-runtime.md §2 §3` (→ XREF) -- gate TODO for Tiers 5–7
+- `10-platform-services/TODO-08-win32-api-surface.md §5 §4 §3 §6 §7 §10` (→ XREF) -- gate TODOs for Tiers 2–7
+- `11-user-platform-sdk/TODO-04-ntdll-user-runtime.md §4 §3` (→ XREF) -- gate TODO for Tiers 5–7
 - `11-user-platform-sdk/TODO-05-win32-subsystem.md §1–4` (→ XREF) -- gate TODO for Tiers 6–7
-- `02-kernel-core/TODO-13-registry.md` (→ XREF) -- gate TODO for Tier 4 (RegOpenKey etc.)
+- `02-kernel-core/TODO-14-registry-completion.md` (→ XREF) -- gate TODO for Tier 4 (RegOpenKey etc.)
 - `include/kernel/ipc/` -- `SYS_SHMEM_CREATE=35`, `SYS_SHMEM_MAP=36` for stub counter shared memory
 - `user/` -- `hello.c`, `cmd.c` as reference user-mode program patterns
 - `scripts/build.sh` -- QEMU headless run pattern (`-serial stdio`); `build/serial.log`
@@ -54,12 +54,12 @@
 | 1 | API coverage tracker + `compat_stub` extension | ⭐ | `TODO-08 §9` base stub; `SYS_SHMEM_CREATE/MAP` |
 | 2 | Bring-up ladder framework | ⭐ | §1; `sdk/compat/` test program structure |
 | 3 | Tier 1 -- Process exit | 💎 | Gate: `TODO-07 §1` |
-| 4 | Tier 2 -- Console I/O | 💎 | Gate: `TODO-08 §1 §2` |
-| 5 | Tier 3 -- File I/O | 💎 | Gate: `TODO-07 §6`, `TODO-08 §3` partial |
-| 6 | Tier 4 -- Process & Registry | 💎 | Gate: `TODO-08 §2`, `TODO-13` |
-| 7 | Tier 5 -- Memory & Sync | 💎 | Gate: `TODO-08 §5 §6` |
+| 4 | Tier 2 -- Console I/O | 💎 | Gate: `TODO-08 §5 §4` |
+| 5 | Tier 3 -- File I/O | 💎 | Gate: `TODO-07 §7`, `TODO-08 §1` partial |
+| 6 | Tier 4 -- Process & Registry | 💎 | Gate: `TODO-08 §4`, `TODO-13` |
+| 7 | Tier 5 -- Memory & Sync | 💎 | Gate: `TODO-08 §3 §6` |
 | 8 | Tier 6 -- MessageBox & Basic GUI | 💎 | Gate: `TODO-05 §1–3`, `TODO-08 §10` |
-| 9 | Tier 7 -- Full Win32 Window + Controls | 💎 | Gate: `TODO-05 §2–4`, `TODO-08 §7 §10 §11` |
+| 9 | Tier 7 -- Full Win32 Window + Controls | 💎 | Gate: `TODO-05 §4–4`, `TODO-08 §7 §10 §11` |
 | 10 | Tier 8 -- Extended Win32 surface | 💎 | Gate: all Tiers 1–7; `advapi32`/`shell32` |
 | 11 | Stub call log analysis (`win32compat.exe log`) | ⭐ | §1 shmem counters; `win32_unimpl_stub` |
 | 12 | CI compat gate (`scripts/compat-check.sh`) | ⭐ | §3–9 native programs; QEMU headless |
@@ -148,7 +148,7 @@
 
 ## 4. Tier 2 -- Console I/O `[Sonnet]`
 
-> Gate: `10-platform-services/TODO-08 §1 §8`
+> Gate: `10-platform-services/TODO-08 §5 §8`
 
 **~6 functions:** `GetStdHandle`, `WriteConsoleA`, `ReadConsoleA`, `ExitProcess`, `GetLastError`, `SetLastError`
 
@@ -166,7 +166,7 @@
 
 ## 5. Tier 3 -- File I/O `[Sonnet]`
 
-> Gate: `10-platform-services/TODO-07 §6`, `TODO-08 §3` partial
+> Gate: `10-platform-services/TODO-07 §7`, `TODO-08 §1` partial
 
 **~12 functions:** `CreateFile`, `ReadFile`, `WriteFile`, `CloseHandle`, `GetFileSize`, `SetFilePointer`, `DeleteFile`, `MoveFile`, `CreateDirectory`, `RemoveDirectory`, `FindFirstFile`, `FindNextFile`, `FindClose`
 
@@ -185,7 +185,7 @@
 
 ## 6. Tier 4 -- Process & Registry `[Sonnet]`
 
-> Gate: `10-platform-services/TODO-08 §2`, `02-kernel-core/TODO-13-registry.md`
+> Gate: `10-platform-services/TODO-08 §4`, `02-kernel-core/TODO-14-registry-completion.md`
 
 **~20 functions** adds: `CreateProcess`, `WaitForSingleObject`, `GetExitCodeProcess`, `TerminateProcess`, `RegOpenKeyExA`, `RegQueryValueExA`, `RegSetValueExA`, `RegCreateKeyExA`, `RegCloseKey`, `GetEnvironmentVariableA`, `SetEnvironmentVariableA`, `GetCommandLineA`, `OpenProcess`, `GetCurrentProcessId`, `GetCurrentThreadId`
 
@@ -204,7 +204,7 @@
 
 ## 7. Tier 5 -- Memory & Sync `[Sonnet]`
 
-> Gate: `10-platform-services/TODO-08 §5 §6`, `11-user-platform-sdk/TODO-04 §2`
+> Gate: `10-platform-services/TODO-08 §3 §6`, `11-user-platform-sdk/TODO-04 §4`
 
 **~15 additional functions** adds: `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `VirtualQuery`, `HeapCreate`, `HeapAlloc`, `HeapFree`, `HeapReAlloc`, `GetProcessHeap`, `CreateMutex`, `CreateEvent`, `SetEvent`, `ResetEvent`, `WaitForMultipleObjects`, `InitializeCriticalSection`, `EnterCriticalSection`, `LeaveCriticalSection`, `DeleteCriticalSection`, `InterlockedCompareExchange`, `InterlockedIncrement`, `InterlockedDecrement`
 
@@ -240,7 +240,7 @@
 
 ## 9. Tier 7 -- Full Win32 Window + Controls `[Sonnet]`
 
-> Gate: `11-user-platform-sdk/TODO-05 §2–4`, `10-platform-services/TODO-08 §7 §10 §11`
+> Gate: `11-user-platform-sdk/TODO-05 §4–4`, `10-platform-services/TODO-08 §7 §10 §11`
 
 **~40 additional functions** adds: `RegisterClassExA`, `CreateWindowExA`, `ShowWindow`, `UpdateWindow`, `DestroyWindow`, `GetMessage`, `DispatchMessage`, `DefWindowProcA`, `TranslateMessage`, `PostQuitMessage`, `BeginPaint`, `EndPaint`, `InvalidateRect`, `TextOutA`, `DrawTextA`, `SetBkColor`, `SetTextColor`, `GetDC`, `ReleaseDC`, `CreatePen`, `CreateSolidBrush`, `SelectObject`, `DeleteObject`, `MoveWindow`, `SetWindowTextA`, `GetWindowTextA`, `GetClientRect`, `SetWindowLongPtrA`, `GetWindowLongPtrA`, standard control message set (`WM_COMMAND`, `BM_SETSTATE`, `EM_GETTEXT`, `LB_ADDSTRING`, etc.)
 

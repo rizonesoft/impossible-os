@@ -17,13 +17,13 @@
 - `include/gfx.h` -- `gfx_blur_rect()`, `gfx_fill_rect()`, `gfx_blit_alpha()` -- §5/§7 login + lock screen backgrounds
 - `include/desktop/controls.h` (TODO-05) -- `CTRL_TEXTBOX`, `CTRL_BUTTON`, `ctrl_textbox_set_masked()` -- §5 password field
 - `include/desktop/wm.h` -- `wm_create_window()`, `wm_set_z_order()` -- §5 full-screen login window
-- `include/desktop/startmenu.h` (TODO-09) -- Start Menu user avatar area -- §8 user switching entry point
+- `include/desktop/startmenu.h` (TODO-09) -- Start Menu user avatar area -- §9 user switching entry point
 - `include/kernel/boot_splash.h` -- `boot_splash_progress()` -- §5 login screen replaces boot splash at handoff
-- → XREF: `08-desktop-shell/TODO-03-service-manager.md §1` -- user account stub there is superseded by §1/§3 here; TODO-03 §1 is a forward reference to this TODO
-- → XREF: `07-graphics-ui/TODO-07-desktop-shell-features.md §1` -- wallpaper engine provides `wallpaper_set()` called in §6 after successful login
-- → XREF: `07-graphics-ui/TODO-02-animation-engine.md` -- `anim_mgr_add()` used in §6 shake animation and §5/§7 fade transitions
-- -> XREF: `01-boot-platform/TODO-01-uefi-hardening-secureboot.md §6` -- Secure Boot shim chain ends at kernel entry; CSPRNG / runtime entropy is separate (see this file and kernel crypto TODOs, not a TODO-01 section)
-- → XREF: `02-kernel-core/TODO-11-security-reference-monitor.md §9` -- full NT `NtFilterToken` + linked-token UAC kernel machinery; when TODO-11 §9 is implemented, §11 `privilege_request()` consent dialog should signal `NtRequestTokenElevation` rather than using `SYS_PRIVILEGE_REQUEST=59` directly
+- → XREF: `09-desktop-shell/TODO-03-service-manager.md §1` -- user account stub there is superseded by §1/§5 here; TODO-03 §1 is a forward reference to this TODO
+- → XREF: `08-graphics-ui/TODO-09-desktop-shell-features.md §1` -- wallpaper engine provides `wallpaper_set()` called in §7 after successful login
+- → XREF: `08-graphics-ui/TODO-04-animation-engine.md` -- `anim_mgr_add()` used in §6 shake animation and §3/§7 fade transitions
+- -> XREF: `01-boot-platform/TODO-02-uefi-hardening-secureboot.md §6` -- Secure Boot shim chain ends at kernel entry; CSPRNG / runtime entropy is separate (see this file and kernel crypto TODOs, not a TODO-01 section)
+- → XREF: `02-kernel-core/TODO-15-security-reference-monitor.md §9` -- full NT `NtFilterToken` + linked-token UAC kernel machinery; when TODO-11 §3 is implemented, §11 `privilege_request()` consent dialog should signal `NtRequestTokenElevation` rather than using `SYS_PRIVILEGE_REQUEST=59` directly
 
 ## Outcome
 

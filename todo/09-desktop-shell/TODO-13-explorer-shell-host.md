@@ -12,7 +12,7 @@
 | [`../10-platform-services/TODO-C-shell32-export-master-table.md`](../10-platform-services/TODO-C-shell32-export-master-table.md) | Required `shell32` exports for boot shell |
 | [`../10-platform-services/TODO-A-user32-export-master-table.md`](../10-platform-services/TODO-A-user32-export-master-table.md) | Message pump + HWND wiring |
 | [`../10-platform-services/TODO-08-win32-api-surface.md`](../10-platform-services/TODO-08-win32-api-surface.md) Sections 12 and 14 | `shell32.c` and `ShellExecute` |
-| [`../08-graphics-ui/TODO-08-taskbar.md`](../08-graphics-ui/TODO-08-taskbar.md) | Taskbar SYS hooks and progress APIs |
+| [`../08-graphics-ui/TODO-10-taskbar.md`](../08-graphics-ui/TODO-10-taskbar.md) | Taskbar SYS hooks and progress APIs |
 | [`TODO-09-file-manager.md`](TODO-09-file-manager.md) | Optional host for `explore` verb; keep scope split |
 | [`../10-platform-services/TODO-11-installer-iso.md`](../10-platform-services/TODO-11-installer-iso.md) Section 2 | `InstallerMode` vs `explorer.exe` boot |
 | [`TODO-07-win32-pe-loader.md`](../10-platform-services/TODO-07-win32-pe-loader.md) | `pe_exec` ring-3 launch |
@@ -29,7 +29,7 @@
 | :---: | ----------- | ---------- | :----: |
 | 1 | Minimal `explorer.exe` PE (message loop, hidden or minimal main HWND) | D10 T07 §7; D10 T08 §10; D10 TODO-A Tier 1 | [ ] |
 | 2 | Wire `SHGetFolderPath` subset for Desktop / Startup paths | D10 T08 §12; D10 TODO-C Tier 1 | [ ] |
-| 3 | Taskbar heartbeat: integrate with [`../08-graphics-ui/TODO-08-taskbar.md`](../08-graphics-ui/TODO-08-taskbar.md) window list | D08 TODO-08-taskbar §1 | [ ] |
+| 3 | Taskbar heartbeat: integrate with [`../08-graphics-ui/TODO-10-taskbar.md`](../08-graphics-ui/TODO-10-taskbar.md) window list | D08 TODO-08-taskbar §5 | [ ] |
 | 4 | `ShellExecute` open verb to filemgr or assoc target | D10 T08 §14; D09 T09 | [ ] |
 | 5 | Boot selection: `explorer.exe` default; installer override unchanged | D10 T11 §2 | [ ] |
 

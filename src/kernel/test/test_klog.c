@@ -3,7 +3,7 @@
  *
  * Tests ring buffer, per-subsystem filtering, rate limiting, and drop counts.
  *
- * XREF: 02-kernel-core/TODO-02-system-logging.md §Unit Tests
+ * XREF: 02-kernel-core/TODO-04-system-logging.md §Unit Tests
  * ============================================================================ */
 
 #ifdef KERNEL_TESTS

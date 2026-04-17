@@ -4,7 +4,7 @@
 **Goal:** Port TCC to run natively on Impossible OS so developers can compile and run native PE apps on the OS itself, and publish a complete developer SDK -- the moment the OS can develop its own software.
 
 > [!IMPORTANT]
-> **Depends on:** `TODO-07 §1–9` -- ring-3 PE execution; `TODO-08 §1–15` -- Win32 API surface (console, process, memory, file I/O, IxUI) must be working before TCC can run natively.
+> **Depends on:** `TODO-07 §1–9` -- ring-3 PE execution; `TODO-08 §5–15` -- Win32 API surface (console, process, memory, file I/O, IxUI) must be working before TCC can run natively.
 > **Continues from:** `todo-old/510-Long-Term-Stretch/TODO-530-Compiler.md` and `TODO-535-SDK.md` (migrated and consolidated).
 
 ---
@@ -15,7 +15,7 @@
 - `sdk/include/impossible/windows.h` already exists; `sdk/docs/api-reference.md` and `sdk/examples/hello.c` are present -- build on these rather than replacing.
 - TCC already supports PE output natively with `-m64` -- minimal patching needed (include paths + temp dir).
 - GCC/Clang (§8) is a **long-term** goal requiring `fork()`/`exec()` process spawning, large virtual memory, and `libgmp`/`libmpfr`/`libmpc` prerequisites -- tracked here but not a blocker for TCC milestones.
-- SDK headers (`§1–2`) overlap with `TODO-08 §1` (Win32 types) and `TODO-08 §15` (SDK); this TODO focuses on the **on-OS** headers installed at `C:\Impossible\Include\` and the TCC build pipeline; `TODO-08 §15` covers the host cross-compile SDK (`impossible-cc`).
+- SDK headers (`§1–2`) overlap with `TODO-08 §5` (Win32 types) and `TODO-08 §15` (SDK); this TODO focuses on the **on-OS** headers installed at `C:\Impossible\Include\` and the TCC build pipeline; `TODO-08 §15` covers the host cross-compile SDK (`impossible-cc`).
 - Import libraries (`§3`) are COFF `.lib` stub files for the PE linker -- distinct from `libixui.a` (static library produced in `TODO-08 §13`).
 
 ---
@@ -32,7 +32,7 @@
 | `include/kernel/mm/mmap.h` | `mmap_region_t`, `mmap()` kernel API |
 | `include/kernel/timer.h` | `timer_sleep_ms()` for `Sleep()` backing |
 | → XREF: `TODO-07 §2` | `SYS_*` Win32 syscall ABI, `handle_table` in task |
-| → XREF: `TODO-08 §1–5,13,15` | Win32 types, process API, memory API, IxUI, `impossible-cc` host SDK |
+| → XREF: `TODO-08 §5–5,13,15` | Win32 types, process API, memory API, IxUI, `impossible-cc` host SDK |
 | → XREF: `10-apps/TODO-*-notepad*` | Native IDE integration (`cc` build action, error parse) |
 
 ---
@@ -55,17 +55,17 @@
 
 | # | Section | Tag | Dep | Mark |
 |---|---------|-----|-----|------|
-| 1 | SDK C headers (`impossible.h` + subsystem headers) | `[Sonnet]` | TODO-08 §1 | ⭐ |
+| 1 | SDK C headers (`impossible.h` + subsystem headers) | `[Sonnet]` | TODO-08 §5 | ⭐ |
 | 2 | SDK GUI headers (`window.h`, `gdi.h`, `controls.h`, etc.) | `[Sonnet]` | TODO-08 §10–11,13 | 💎 |
 | 3 | SDK import libraries (`kernel32.lib`, `user32.lib`, etc.) | `[Sonnet]` | §1–2 | 💎 |
-| 4 | Cross-compile TCC for Impossible OS | `[Opus]` | §1–3, TODO-08 §2 | 💎 |
+| 4 | Cross-compile TCC for Impossible OS | `[Opus]` | §1–3, TODO-08 §4 | 💎 |
 | 5 | Install TCC on OS disk image | `[Sonnet]` | §4 | 💎 |
 | 6 | TCC self-hosting tests | `[Sonnet]` | §5 | 💎 |
 | 7 | TCC IxUI integration | `[Sonnet]` | §6, TODO-08 §13 | ⭐ |
 | 8 | Shell compiler integration (`cc`, `run`, `make`) | `[Sonnet]` | §6 | ⭐ |
 | 9 | SDK installer + on-OS pre-install | `[Sonnet]` | §1–3 | ⭐ |
 | 10 | SDK documentation | `[Sonnet]` | §1–9 | 💎 |
-| 11 | GCC/Clang (long-term C++ support) | `[Opus]` | §6, TODO-08 §5 | 💎 |
+| 11 | GCC/Clang (long-term C++ support) | `[Opus]` | §6, TODO-08 §3 | 💎 |
 
 ---
 
@@ -113,12 +113,12 @@ GUI-facing headers for Win32 window/GDI programs and IxUI native apps. These com
 Build COFF `.lib` import stub libraries for the PE linker. These let MinGW-compiled and TCC-compiled programs link against Impossible OS DLL stubs.
 
 - [ ] Create `tools/mkimportlib.c` -- host tool that generates a COFF `.lib` from a symbol list file (`dll_name: symbol1 symbol2 ...`); emits `__imp__*` indirection stubs compatible with `ld.lld` and TCC's linker
-- [ ] Generate `sdk/lib/kernel32.lib` from `kernel32` symbol list (all exports from `TODO-08 §2,5,6,8`)
+- [ ] Generate `sdk/lib/kernel32.lib` from `kernel32` symbol list (all exports from `TODO-08 §4,5,6,8`)
 - [ ] Generate `sdk/lib/user32.lib` from `user32` symbol list (all exports from `TODO-08 §10`)
 - [ ] Generate `sdk/lib/gdi32.lib` from `gdi32` symbol list (all exports from `TODO-08 §11`)
-- [ ] Generate `sdk/lib/ntdll.lib` from `ntdll` symbol list (all exports from `TODO-08 §4`)
+- [ ] Generate `sdk/lib/ntdll.lib` from `ntdll` symbol list (all exports from `TODO-08 §2`)
 - [ ] Generate `sdk/lib/shell32.lib` from `shell32` symbol list (all exports from `TODO-08 §12,14`)
-- [ ] Generate `sdk/lib/msvcrt.lib` from `msvcrt` symbol list (all exports from `TODO-08 §3`)
+- [ ] Generate `sdk/lib/msvcrt.lib` from `msvcrt` symbol list (all exports from `TODO-08 §1`)
 - [ ] Add `make install-sdk` Makefile target: copies all headers to `C:\Impossible\Include\` and all libs to `C:\Impossible\Lib\` on the disk image
 - [ ] Commit: `"sdk: COFF import libraries (kernel32, user32, gdi32, ntdll, shell32, msvcrt)"`
 
@@ -246,7 +246,7 @@ Packages the SDK for host cross-compilation and pre-installs it on the OS disk i
 |---|---|---|
 | `fork()` + `exec()` | `SYS_FORK=5`, `SYS_EXEC=6` exist | GCC spawns cc1, as, ld as child processes |
 | `pipe()` for IPC | ⬜ Planned | Pipeline between preprocessor → compiler → assembler |
-| Large virtual memory (256+ MB/process) | ⬜ Planned (TODO-08 §5) | GCC uses 100+ MB during C++ compilation |
+| Large virtual memory (256+ MB/process) | ⬜ Planned (TODO-08 §3) | GCC uses 100+ MB during C++ compilation |
 | `libgmp`, `libmpfr`, `libmpc` | ⬜ Planned | GCC internal math library dependencies |
 | Writable `C:\Temp\` with ≥ 512 MiB | ⬜ Planned | Intermediate compilation files |
 | Working `make` utility | ⬜ §8 above | GCC configure + build system |

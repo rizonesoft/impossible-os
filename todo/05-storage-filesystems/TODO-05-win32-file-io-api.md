@@ -13,11 +13,11 @@
 - `src/desktop/`, `src/kernel/gfx/gfx_text.c`, `src/kernel/panic.c`, `src/kernel/klog_disk.c`, `src/kernel/registry.c`, `src/kernel/image.c`, `src/kernel/mm/swap.c`, `src/kernel/mm/mmap.c`, `src/kernel/symtab.c`, `src/kernel/ico.c`, `src/kernel/icon_store.c`, `src/kernel/image_save.c`, `src/kernel/drivers/cursor.c` -- raw `vfs_open` callers migrated in §11
 - → XREF: `10-platform-services` Object Manager TODO -- `HANDLE`, reference counting, `ObReferenceObjectByHandle`, `OBJ_INHERIT` flag; handle table in §3 must use the same type definitions
 - → XREF: `10-platform-services` Process Object TODO -- per-process handle table lives in the process object; coordinate on layout
-- → XREF: `05-storage-filesystems/TODO-04-fat32-hardening-vfs-semantics.md §8–10` -- share-mode, delete-on-close, byte-range locks are VFS-layer; `NtCreateFile` in §4 passes these flags down to `vfs_open()`
-- → XREF: `05-storage-filesystems/TODO-03-volume-management-automount.md §6` -- `GetDiskFreeSpaceEx` and `GetVolumeInformation` (§13) depend on Registry volume entries from `vfs_probe()`
+- → XREF: `05-storage-filesystems/TODO-04-fat32-hardening-vfs-semantics.md §7–10` -- share-mode, delete-on-close, byte-range locks are VFS-layer; `NtCreateFile` in §6 passes these flags down to `vfs_open()`
+- → XREF: `05-storage-filesystems/TODO-03-volume-management-automount.md §4` -- `GetDiskFreeSpaceEx` and `GetVolumeInformation` (§13) depend on Registry volume entries from `vfs_probe()`
 - → XREF: `11-user-platform-sdk` Win32 API TODO -- `CreateFile`/`ReadFile`/`WriteFile` defined here are the kernel implementations; the SDK exposes them as user-mode wrappers
-- → XREF: `02-kernel-core/TODO-06-irql-model-dpcs.md §11,§12` -- KAPC object and KiDeliverApc; §9 async I/O completion queues a user-mode APC to the issuing thread via KeInsertQueueApc
-- → XREF: `02-kernel-core/TODO-11-security-reference-monitor.md §5` -- `SeAccessCheck` enforcement; `NtCreateFile` in §3 must call `SeAccessCheck` with `FILE_GENERIC_READ`/`WRITE` desired access against the file object's DACL
+- → XREF: `02-kernel-core/TODO-07-irql-model-dpcs.md §11,§12` -- KAPC object and KiDeliverApc; §6 async I/O completion queues a user-mode APC to the issuing thread via KeInsertQueueApc
+- → XREF: `02-kernel-core/TODO-15-security-reference-monitor.md §8` -- `SeAccessCheck` enforcement; `NtCreateFile` in §6 must call `SeAccessCheck` with `FILE_GENERIC_READ`/`WRITE` desired access against the file object's DACL
 
 ## Outcome
 
@@ -51,7 +51,7 @@
 | 💎  |  10   | §10 Filter manager stub -- `FltRegisterFilter`/`FltUnregisterFilter`, pass-through       | §1 (IRP pre/post hook points)                                  |  [ ]   |
 | ⭐  |  11   | §11 Internal migration -- all `vfs_open` callers → `CreateFile`/`ReadFile`/`WriteFile`  | §5 + §8 (full read/write + metadata available)                  |  [ ]   |
 | 💎  |  12   | §12 File change notifications -- `FindFirstChangeNotification`/`ReadDirectoryChangesW`   | §6 (directory watch list), §3 (handle for notification object) |  [ ]   |
-| 💎  |  13   | §13 `GetDiskFreeSpaceEx` / `GetVolumeInformation` -- VFS query + Win32 surface            | TODO-03 §6 (Registry volume entries exist)                     |  [ ]   |
+| 💎  |  13   | §13 `GetDiskFreeSpaceEx` / `GetVolumeInformation` -- VFS query + Win32 surface            | TODO-03 §4 (Registry volume entries exist)                     |  [ ]   |
 
 > §11 (internal migration) is `⭐` exclusive in scope: Windows was built Win32-first and never needed a migration pass; Linux never migrates anything to Win32. Impossible OS performs a clean architectural cut -- kernel-internal code uses `vfs_*` (fast, no handle overhead), while everything visible to user-mode programs uses `CreateFile`/`ReadFile`/`WriteFile` (full Win32 semantics). This gives user-mode programs an unmodified Win32 file API while keeping the kernel core free of handle-table overhead for internal operations.
 
@@ -233,6 +233,7 @@ Migrate all ~15 kernel and desktop source files that currently call `vfs_open`/`
 
 > [!NOTE]
 > Migration pattern: `vfs_open(path, VFS_O_READ)` → `CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL)`; `vfs_read(node, buf, size)` → `ReadFile(handle, buf, size, &read, NULL)`; `vfs_write(node, buf, size)` → `WriteFile(...)`; `vfs_close(node)` → `CloseHandle(handle)`. Kernel-internal modules (like `klog_disk.c`, `registry.c`) may keep using `vfs_*` directly if they run before the handle table is initialised -- document these with a `/* kernel-internal: pre-handle-table path */` comment. Do NOT migrate `src/kernel/fs/` itself -- the VFS layer stays on `vfs_*`.
+> → XREF: `D03 T04 §1,§4` -- `src/kernel/mm/swap.c` and `src/kernel/mm/mmap.c` are pager-owned files. Keep the migration backend narrow so reclaim, pagefile, and mapped-file fault code do not depend on scattered raw `vfs_*` calls.
 
 - [ ] For each file in the list: search for `vfs_open`/`vfs_read`/`vfs_write`/`vfs_close` calls; replace with Win32 equivalents; verify compile; test read/write correctness
 - [ ] `syscall.c`: retire `SYS_READFILE` / `SYS_READDIR`; replace with `NtCreateFile` / `NtReadFile` / `NtWriteFile` / `NtClose` syscall numbers
@@ -259,17 +260,17 @@ Implement `FindFirstChangeNotificationW`/`FindNextChangeNotification`/`FindClose
 
 ## 13. `GetDiskFreeSpaceEx` / `GetVolumeInformation` `[Sonnet]`
 
-Implement `GetDiskFreeSpaceExW`/`GetDiskFreeSpaceW` and the remaining `GetVolumeInformationW` fields not covered in TODO-03 §6 (free bytes, cluster geometry).
+Implement `GetDiskFreeSpaceExW`/`GetDiskFreeSpaceW` and the remaining `GetVolumeInformationW` fields not covered in TODO-03 §4 (free bytes, cluster geometry).
 
 **Files:** `src/kernel/win32/volume_info.c` (new or extend createfile.c)
 
 > [!NOTE]
-> `GetDiskFreeSpaceExW(lpDirectory, lpFreeBytesAvailable, lpTotalNumberOfBytes, lpTotalNumberOfFreeBytes)`: extract drive letter; call `vfs_get_free_space(letter, &free_clusters, &total_clusters, &bytes_per_cluster)`; compute bytes fields. `GetDiskFreeSpaceW` (legacy): returns sectors-per-cluster, bytes-per-sector, free clusters, total clusters. `GetVolumeInformationW` is partially implemented in TODO-03 §6; this section adds `lpVolumeSerialNumber` (hash of device path), `lpMaximumComponentLength = 255`, and `lpFileSystemFlags` per filesystem type.
+> `GetDiskFreeSpaceExW(lpDirectory, lpFreeBytesAvailable, lpTotalNumberOfBytes, lpTotalNumberOfFreeBytes)`: extract drive letter; call `vfs_get_free_space(letter, &free_clusters, &total_clusters, &bytes_per_cluster)`; compute bytes fields. `GetDiskFreeSpaceW` (legacy): returns sectors-per-cluster, bytes-per-sector, free clusters, total clusters. `GetVolumeInformationW` is partially implemented in TODO-03 §4; this section adds `lpVolumeSerialNumber` (hash of device path), `lpMaximumComponentLength = 255`, and `lpFileSystemFlags` per filesystem type.
 
 - [ ] `vfs_get_free_space(char letter, uint64_t *free_clusters, uint64_t *total_clusters, uint64_t *bytes_per_cluster)`: read Registry `FreeBytes`/`TotalBytes` (populated by probe); also query filesystem live: FAT32 `vol->fsinfo_free_count`, NTFS `$Bitmap` free count, IXFS equivalent
 - [ ] `GetDiskFreeSpaceExW(lpDir, lpFreeAvail, lpTotal, lpTotalFree)`: drive letter from `lpDir`; compute from `vfs_get_free_space()`; all three outputs use `ULARGE_INTEGER`
 - [ ] `GetDiskFreeSpaceW(lpRoot, &spc, &bps, &free_c, &total_c)`: return cluster geometry from filesystem BPB + free count
-- [ ] Verify `GetVolumeInformationW` (TODO-03 §6) includes volume serial (CRC32 of device path), max component = 255, correct `FileSystemFlags` per type; extend here if missing
+- [ ] Verify `GetVolumeInformationW` (TODO-03 §4) includes volume serial (CRC32 of device path), max component = 255, correct `FileSystemFlags` per type; extend here if missing
 - [ ] Commit: `"win32: GetDiskFreeSpaceEx/GetDiskFreeSpace -- VFS free-space query, cluster geometry"`
 
 ---

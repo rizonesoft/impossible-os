@@ -31,15 +31,18 @@ description: Validate whether a TODO section marked done or in progress matches 
    - Does the section have a `**Test checkpoint:**` block with concrete pass/fail criteria? Flag if missing or vague.
    - Do checklist items reference specific functions/types/files, or are they vague ("implement X")? Flag vague items.
    - Are symbols referenced in the checklist defined in Inputs or created by a prior section? Flag orphaned references.
+   - If the section would leave obvious adjacent work ownerless when marked done, flag the plan as incomplete. "Ship now, track later" is not acceptable without a concrete owner item.
 5. Classify each item conservatively.
    - Update `[x]`, `[/]`, `[ ]`, and mismatch wording based on actual evidence.
    - Fix stale names, paths, notes, or verification wording when the implementation differs from the old text.
    - Apply strict done proof gate: mark `[x]` only when implemented, wired, and functional on normal path.
+   - Apply **false-completeness gate:** do not leave `[x]` on a section that technically landed but still lacks obvious adjacent wiring, parity-critical behavior, or a concrete owner TODO item for the remaining gap.
    - Do not mark done for `*_stub` handlers or normal-path `STATUS_NOT_IMPLEMENTED` placeholders.
    - For SSDT claims, verify service number/index ↔ Nt function ↔ registration/dispatch entry ↔ SSDT table row consistency.
    - If blocked/incomplete work remains, keep `[ ]` or `[/]` and add missing unchecked prerequisite/ownership items in prerequisite-first order with owner scope and `→ XREF`.
 6. Verify and apply cross-TODO synchronization when section dependencies are involved.
    - For directly referenced TODO sections affected by this status change, patch reciprocal dependency/status notes in the same run.
+   - If validation discovers ownerless adjacent work, file the concrete owner item in the same run when the owning section is obvious; otherwise leave the section partial and record the missing ownership clearly.
    - Auto-close referenced TODO checklist items only when both conditions are true:
      1. explicit mapping exists (`ID:` source and `SATISFIES:` target ID), and
      2. evidence proves full target acceptance-criteria coverage.

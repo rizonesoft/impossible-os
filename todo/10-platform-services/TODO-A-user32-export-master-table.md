@@ -1,6 +1,6 @@
 # TODO-A -- user32.dll Export Master Table
 
-> **Goal:** Single authoritative checklist of **user32.dll** exports (and grouped stubs) for Impossible OS Win32 compatibility. Implementation narrative stays in `TODO-08-win32-api-surface.md` Section 10 and kernel-side stubs in `../08-graphics-ui/TODO-11-win32-gdi-user32-stubs.md`. **NtUser** shadow SSDT indices live only in `../08-graphics-ui/TODO-A-Win32k-Shadow-SSDT-Master-Table.md`; this file links Win32 **names** to owners, not syscall numbers.
+> **Goal:** Single authoritative checklist of **user32.dll** exports (and grouped stubs) for Impossible OS Win32 compatibility. Implementation narrative stays in `TODO-08-win32-api-surface.md` Section 10 and kernel-side stubs in `../08-graphics-ui/TODO-14-win32-gdi-user32-stubs.md`. **NtUser** shadow SSDT indices live only in `../08-graphics-ui/TODO-A-Win32k-Shadow-SSDT-Master-Table.md`; this file links Win32 **names** to owners, not syscall numbers.
 
 > [!IMPORTANT]
 > **Tiers:** Tier 1 and Tier 2 are **implementation sequencing** slices (compat matrix Tier 6 to 7 gates first). **Completeness** is the union of Tier 1, Tier 2, and the **Tier 3 roster** (every other named export from the scaffold below) plus the **ordinal-only** account in the methodology section. **Done column:** `[x]` only when the export is callable from a PE and matches documented behavior; `[/]` partial; `[ ]` missing. **Owner `NO_OWNING_TODO`:** no leaf TODO assigns this symbol yet (open a subsection in `TODO-08` or `TODO-11` before implementing).
@@ -8,7 +8,7 @@
 ## On-disk and naming contract
 
 - **Windows canonical path (PE import name):** `C:\Windows\System32\user32.dll` (built-in stub image or forwarder; same **BaseDllName** as Windows so `GetModuleHandleA("user32.dll")` and loaders behave predictably).
-- **Impossible build layout:** sources may live under `src/win32/user32.c` and `../08-graphics-ui/TODO-11-win32-gdi-user32-stubs.md` paths; only the **published** path above is the user-visible contract unless a NOTE row says otherwise.
+- **Impossible build layout:** sources may live under `src/win32/user32.c` and `../08-graphics-ui/TODO-14-win32-gdi-user32-stubs.md` paths; only the **published** path above is the user-visible contract unless a NOTE row says otherwise.
 - **A / W:** Track A and W as separate rows only where both exist in the wild; otherwise one row with Notes `A+W thin wrapper`.
 
 ## Inputs
@@ -16,7 +16,7 @@
 | Path / TODO                                                                             | Purpose                                                                                    |
 | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
 | `TODO-08-win32-api-surface.md` Section 10                                               | Ring-3 `user32.c` plan and verification                                                    |
-| `../08-graphics-ui/TODO-11-win32-gdi-user32-stubs.md`                                   | WM-backed stubs, message loop, dialogs                                                     |
+| `../08-graphics-ui/TODO-14-win32-gdi-user32-stubs.md`                                   | WM-backed stubs, message loop, dialogs                                                     |
 | `../08-graphics-ui/TODO-A-Win32k-Shadow-SSDT-Master-Table.md`                           | NtUser syscall map (Table 1)                                                               |
 | `TODO-07-win32-pe-loader.md` Section 6                                                  | Built-in `user32` export table / IAT                                                       |
 | `../12-user-platform-sdk/TODO-07-win32-compat-matrix.md`                                | Tier gates and `win32-compat.md` aggregate                                                 |

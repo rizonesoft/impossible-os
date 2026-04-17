@@ -11,7 +11,7 @@
 - `src/kernel/fs/vfs.c` + `include/kernel/fs/vfs.h` -- `vfs_mount()`, `vfs_fs_driver`, `vfs_node_t` interface; mount read-only via `VFS_READONLY` flag
 - `src/kernel/fs/ext4/` -- reference for CRC32C helper and block-device I/O patterns; do not share code
 - → XREF: `05-storage-filesystems/TODO-03-volume-management-automount.md §1` -- `vfs_probe()` calls `btrfs_probe()` at step 6; must return `fs_identify_result_t` with label (volume label from superblock), total bytes, free bytes
-- → XREF: `05-storage-filesystems/TODO-05-win32-file-io-api.md §4` -- `CreateFile` on a Btrfs volume calls `NtCreateFile` → `vfs_open` → `btrfs_ops.finddir`; read-only vtable must still implement `open`, `read`, `finddir`, `readdir`, `stat`, `readlink`
+- → XREF: `05-storage-filesystems/TODO-05-win32-file-io-api.md §3` -- `CreateFile` on a Btrfs volume calls `NtCreateFile` → `vfs_open` → `btrfs_ops.finddir`; read-only vtable must still implement `open`, `read`, `finddir`, `readdir`, `stat`, `readlink`
 - → XREF: `05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md §9` -- xattr read interface (`NtQueryEaFile`) pattern reused for `btrfs_xattr_get()`
 
 ## Outcome

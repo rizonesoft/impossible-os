@@ -12,7 +12,7 @@
 - `src/kernel/` -- current flat structure with arch-specific files mixed in
 - `include/kernel/` -- headers with arch-specific types and inline asm
 - `Makefile` -- single-arch build
-- -> XREF: `02-kernel-core/TODO-22-kernel-bulletproofing.md` -- static asserts on struct offsets must survive the move
+- -> XREF: `02-kernel-core/TODO-31-kernel-bulletproofing.md` -- static asserts on struct offsets must survive the move
 - -> XREF: `03-memory-concurrency/TODO-03-advanced-allocator.md` -- allocator must remain arch-neutral
 
 ---

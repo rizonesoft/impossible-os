@@ -11,8 +11,8 @@
 - `src/kernel/fs/fat32/` + `src/kernel/fs/ntfs/` -- reference for VFS driver vtable pattern, cluster-chain traversal style, and block-device I/O helper usage; do not share code
 - `src/kernel/fs/vfs.c` + `include/kernel/fs/vfs.h` -- `vfs_mount()`, `vfs_fs_driver`, `vfs_node_t` interface all drivers implement
 - → XREF: `05-storage-filesystems/TODO-03-volume-management-automount.md §1` -- `vfs_probe()` calls `ext4_probe()` at step 5 in the probe priority chain; must return `fs_identify_result_t` with label, total bytes, free bytes
-- → XREF: `05-storage-filesystems/TODO-05-win32-file-io-api.md §4` -- `CreateFile` on an ext4 volume calls `NtCreateFile` → `vfs_open` → `ext4_ops.finddir`; ensure `ext4_ops` exposes the full 14-entry `vfs_fs_driver` vtable
-- → XREF: `05-storage-filesystems/TODO-04-fat32-hardening-vfs-semantics.md §7` -- VFS passes names verbatim; ext4 `finddir()` must handle case-insensitive comparison (ext4 casefold or ASCII fold fallback)
+- → XREF: `05-storage-filesystems/TODO-05-win32-file-io-api.md §3` -- `CreateFile` on an ext4 volume calls `NtCreateFile` → `vfs_open` → `ext4_ops.finddir`; ensure `ext4_ops` exposes the full 14-entry `vfs_fs_driver` vtable
+- → XREF: `05-storage-filesystems/TODO-04-fat32-hardening-vfs-semantics.md §1` -- VFS passes names verbatim; ext4 `finddir()` must handle case-insensitive comparison (ext4 casefold or ASCII fold fallback)
 
 ## Outcome
 

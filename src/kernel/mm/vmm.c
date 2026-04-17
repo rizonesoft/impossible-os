@@ -532,7 +532,7 @@ void vmm_set_user_page(uintptr_t pml4_phys, uintptr_t virt)
  * and future VirtualAlloc(MEM_COMMIT).
  *
  * XREF: 03-memory-concurrency/TODO-01-vmm-memory-protection.md §12
- * XREF: 02-kernel-core/TODO-04-peb-teb-user-abi.md §14 (consumer)
+ * XREF: 02-kernel-core/TODO-11-peb-teb-user-abi.md §14 (consumer)
  */
 
 int vmm_map_user_page(uintptr_t cr3, uintptr_t virt, uintptr_t phys)

@@ -11,30 +11,30 @@
 > search bar, read/unread state), CNG credential encryption specifics (`cng_aes256gcm_encrypt`
 > with user login KEK), contacts CSV path and autocomplete wiring, spam/junk filter (not covered
 > in TODO-09), taskbar badge + system tray envelope icon, and the 5-minute `sched_task_add` poll.
-> Implement §1–§3 in coordination with TODO-09 §2–§4; do not re-implement what TODO-09 already
+> Implement §1–§3 in coordination with TODO-09 §2–§5; do not re-implement what TODO-09 already
 > specifies -- use XREFs to stay aligned.
 >
 > Mbed TLS (`tls_connect`, `tls_send`, `tls_recv`) must be complete before STARTTLS/TLS work
 > begins -- `→ XREF: 06-networking/TODO-03`.
 > CNG AES-256-GCM and key store must be complete before §6 credential storage --
-> `→ XREF: 08-desktop-shell/TODO-07 §1 + §4`.
+> `→ XREF: 09-desktop-shell/TODO-07 §1 + §4`.
 
 ---
 
 ## Inputs
 
-- `06-networking/TODO-09-email-client.md` -- canonical protocol implementation reference (§1 parser, §2 SMTP, §3 POP3, §4 IMAP, §7 GUI, §8 compose, §9 contacts, §10 search)
+- `06-networking/TODO-09-email-client.md` -- canonical protocol implementation reference (§1 parser, §2 SMTP, §4 POP3, §5 IMAP, §8 GUI, §9 compose, §10 contacts, §11 search)
 - `include/kernel/net/tls.h` -- `tls_connect(fd, hostname)`, `tls_send()`, `tls_recv()`, `tls_close()` (→ XREF `06-networking/TODO-03`)
 - `include/kernel/net/dns.h` -- `dns_resolve(hostname, &ip)`
-- `include/kernel/cng/cng.h` -- `cng_aes256gcm_encrypt()`, `cng_aes256gcm_decrypt()` (→ XREF `08-desktop-shell/TODO-07 §1`)
-- `include/kernel/cng/cng_keystore.h` -- `cng_keystore_get_kek()`, `cng_key_store_import()`, `cng_key_store_get()` (→ XREF `08-desktop-shell/TODO-07 §4`)
+- `include/kernel/cng/cng.h` -- `cng_aes256gcm_encrypt()`, `cng_aes256gcm_decrypt()` (→ XREF `09-desktop-shell/TODO-07 §1`)
+- `include/kernel/cng/cng_keystore.h` -- `cng_keystore_get_kek()`, `cng_key_store_import()`, `cng_key_store_get()` (→ XREF `09-desktop-shell/TODO-07 §4`)
 - `include/desktop/controls.h` -- `ctrl_create_button`, `ctrl_create_textbox`, `ctrl_create_listview`, `ctrl_create_scrollbar`
 - `include/desktop/wm.h` -- `wm_create_window()`
-- `include/desktop/systray.h` (→ XREF `07-graphics-ui/TODO-09 §4`) -- `tray_register()`, `tray_unregister()`
-- `include/kernel/scheduler_tasks.h` (→ XREF `08-desktop-shell/TODO-04 §6`) -- `sched_task_add(name, cb, interval_s, enabled)`
+- `include/desktop/systray.h` (→ XREF `08-graphics-ui/TODO-09 §5`) -- `tray_register()`, `tray_unregister()`
+- `include/kernel/scheduler_tasks.h` (→ XREF `09-desktop-shell/TODO-04 §8`) -- `sched_task_add(name, cb, interval_s, enabled)`
 - `include/registry.h` -- `reg_set_string`, `reg_get_string`, `reg_create_key`, `reg_delete_key`
 - `include/kernel/vfs.h` -- `vfs_open`, `vfs_read`, `vfs_write`, `vfs_create`, `vfs_mkdir`, `vfs_unlink`
-- `notify_send(title, body, icon_id, timeout_ms)` / `SYS_NOTIFY_SEND=54` (→ XREF `07-graphics-ui/TODO-09 §5`)
+- `notify_send(title, body, icon_id, timeout_ms)` / `SYS_NOTIFY_SEND=54` (→ XREF `08-graphics-ui/TODO-09 §6`)
 
 ---
 
@@ -54,7 +54,7 @@
 | 4 | Three-Panel Email GUI | 💎 | §2 complete, controls.h, wm.h |
 | 5 | Compose Window | 💎 | §4 complete, §7 contacts |
 | 6 | Account Management + Credential Store | ⭐ | CNG TODO-07 §1+§4, Registry |
-| 7 | Auto-Check + Notifications + Tray | ⭐ | §2 complete, TODO-04 §6, TODO-09 §4+§5 |
+| 7 | Auto-Check + Notifications + Tray | ⭐ | §2 complete, TODO-04 §8, TODO-09 §5+§6 |
 | 8 | Contacts Store | 💎 | VFS, §5 compose window |
 | 9 | Spam & Junk Filter | ⭐ | §4 complete, Registry |
 
@@ -82,7 +82,7 @@
 
 ## 2. POP3 Client + Message Storage `[Sonnet]`
 
-> → XREF: `06-networking/TODO-09-email-client.md §3` -- base implementation spec.
+> → XREF: `06-networking/TODO-09-email-client.md §4` -- base implementation spec.
 
 **Source file:** `src/apps/mail/pop3.c`; header `include/apps/mail/pop3.h`
 
@@ -102,7 +102,7 @@
 
 ## 3. IMAP Client (Stretch) `[Opus]`
 
-> → XREF: `06-networking/TODO-09-email-client.md §4` -- base implementation spec.
+> → XREF: `06-networking/TODO-09-email-client.md §5` -- base implementation spec.
 > This section adds IDLE push notification and flag sync detail.
 
 **Source file:** `src/apps/mail/imap.c`; header `include/apps/mail/imap.h`
@@ -121,7 +121,7 @@
 
 ## 4. Three-Panel Email GUI `[Opus]`
 
-> → XREF: `06-networking/TODO-09-email-client.md §7`
+> → XREF: `06-networking/TODO-09-email-client.md §8`
 
 **Source file:** `src/apps/mail/mail.c`; window title `Mail`
 
@@ -138,7 +138,7 @@ Layout (fixed proportions): sidebar 200 px | message list 350 px | viewer fills 
 
 ## 5. Compose Window `[Sonnet]`
 
-> → XREF: `06-networking/TODO-09-email-client.md §8`
+> → XREF: `06-networking/TODO-09-email-client.md §9`
 
 **Source file:** `src/apps/mail/compose.c`
 
@@ -155,7 +155,7 @@ Layout (fixed proportions): sidebar 200 px | message list 350 px | viewer fills 
 
 ## 6. Account Management + Credential Store `[Sonnet]`
 
-> → XREF: `06-networking/TODO-09-email-client.md §5` -- base spec.
+> → XREF: `06-networking/TODO-09-email-client.md §6` -- base spec.
 > This section specifies the CNG AES-256-GCM credential encryption and Registry layout.
 
 **Source file:** `src/apps/mail/mail_account.c`
@@ -173,7 +173,7 @@ Layout (fixed proportions): sidebar 200 px | message list 350 px | viewer fills 
 
 ## 7. Auto-Check + Notifications + Tray `[Sonnet]`
 
-> → XREF: `06-networking/TODO-09-email-client.md §6` -- base spec.
+> → XREF: `06-networking/TODO-09-email-client.md §7` -- base spec.
 
 **Source file:** `src/apps/mail/mail_notify.c`; `mail_systray.c`
 
@@ -187,7 +187,7 @@ Layout (fixed proportions): sidebar 200 px | message list 350 px | viewer fills 
 
 ## 8. Contacts Store `[Sonnet]`
 
-> → XREF: `06-networking/TODO-09-email-client.md §9` -- base spec.
+> → XREF: `06-networking/TODO-09-email-client.md §10` -- base spec.
 
 **Source file:** `src/apps/mail/contacts.c`; header `include/apps/mail/contacts.h`
 

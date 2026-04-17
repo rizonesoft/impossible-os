@@ -14,8 +14,8 @@
 > definitions.
 >
 > **dlopen / dlsym** (§5): the Linux ELF compat stretch goal is specced in
-> `10-platform-services/TODO-10 §11`; this TODO provides the kernel-side relocation and
-> GOT/PLT infrastructure that TODO-10 §11 depends on.
+> `10-platform-services/TODO-10 §13`; this TODO provides the kernel-side relocation and
+> GOT/PLT infrastructure that TODO-10 §13 depends on.
 >
 > **`pmm_alloc_contiguous(count)`** must be used for all module image buffers > 4 KB.
 > `kmalloc` is only for small structs (≤ 4 KB). Violating this silently corrupts the 2 MiB
@@ -36,7 +36,7 @@
 - `include/kernel/syscall.h` -- add `SYS_DLOPEN`/`SYS_DLSYM`/`SYS_DLCLOSE` -- §5
 - `src/kernel/elf.c` (existing `task_exec` ELF loader) -- reuse section-scan helpers -- §1
 - `10-platform-services/TODO-08-win32-api-surface.md §7` (→ XREF) -- PE DLL `LoadLibrary` (native path; not ELF)
-- `10-platform-services/TODO-10-linux-compat.md §11` (→ XREF) -- dynamic ELF `dlopen` consumer
+- `10-platform-services/TODO-10-linux-compat.md §13` (→ XREF) -- dynamic ELF `dlopen` consumer
 - `scripts/linker-kernel.ld` (kernel linker script) -- add `__ksymtab` section -- §4
 
 ---
@@ -59,7 +59,7 @@ binding engine is available for the Linux ELF compat `dlopen` path.
 | 2 | Kernel Module Format `.kmod` | ⭐ | §1 relocation engine |
 | 3 | Kernel Module Loader | ⭐ | §1 §2; `vmm_map_page`; `vfs_read` |
 | 4 | Kernel Symbol Export (`EXPORT_SYMBOL`) | ⭐ | §3; linker script `__ksymtab` section |
-| 5 | `dlopen` / `dlsym` for Linux Compat | 💎 | §1 §6; `TODO-10 §11` prerequisite |
+| 5 | `dlopen` / `dlsym` for Linux Compat | 💎 | §1 §6; `TODO-10 §13` prerequisite |
 | 6 | GOT / PLT Lazy Binding | 💎 | §1 relocation engine; §5 consumer |
 | 7 | Module Hot-swap (Stretch) | ⭐ | §3 stable; clean `exit_fn` protocol |
 | 8 | `lsmod` / `insmod` / `rmmod` / `modprobe` | 💎 | §3 §4 |
@@ -239,7 +239,7 @@ binding engine is available for the Linux ELF compat `dlopen` path.
 
 ## 5. `dlopen` / `dlsym` for Linux Compat `[Sonnet]`
 
-> Implements the kernel-side infrastructure for `10-platform-services/TODO-10 §11`.
+> Implements the kernel-side infrastructure for `10-platform-services/TODO-10 §13`.
 > The Linux compat layer calls these; the native PE equivalent is
 > `LoadLibrary`/`GetProcAddress` (→ `TODO-08 §7`).
 
@@ -365,6 +365,6 @@ Run `bash scripts/build.sh run` for each verification step.
 - [ ] **lsmod**: after loading a `.kmod`, `lsmod` shows its name, version, and address
 - [ ] **insmod / rmmod**: `insmod C:\Impossible\System\Drivers\virtio_blk.kmod` → driver init fires; `rmmod virtio_blk` → exit fires; `lsmod` no longer shows it
 - [ ] **modprobe**: `modprobe rtl8139` → finds `rtl8139.kmod` in drivers dir; loads it; shows in `lsmod`
-- [ ] **dlopen** (when TODO-10 §11 is ready): `dlopen("libfoo.so", RTLD_LAZY)` → returns handle; `dlsym(handle, "foo_fn")` → returns address; call it → correct result; `dlclose` → no crash
+- [ ] **dlopen** (when TODO-10 §13 is ready): `dlopen("libfoo.so", RTLD_LAZY)` → returns handle; `dlsym(handle, "foo_fn")` → returns address; call it → correct result; `dlclose` → no crash
 - [ ] **PLT lazy binding**: first call to imported symbol via PLT → GOT patched; second call goes direct (verify by checking GOT entry before and after first call)
 - [ ] Commit: `"kernel: ELF reloc engine, .kmod loader, EXPORT_SYMBOL, dlopen/PLT, lsmod/insmod/rmmod/modprobe"`

@@ -15,7 +15,7 @@
  * WRPKRU is a ring-0/3 instruction (~1 ns); user-mode code can switch
  * protection zones without a syscall, unlike mprotect (~1 us).
  *
- * XREF: 02-kernel-core/TODO-19-x86-64-architecture.md §5
+ * XREF: 02-kernel-core/TODO-09-x86-64-architecture.md §5
  * ============================================================================ */
 
 #pragma once

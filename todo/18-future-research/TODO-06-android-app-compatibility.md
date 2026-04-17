@@ -39,9 +39,9 @@
 
 - `18-future-research/TODO-01-multi-arch-port.md` §3 §5 §6 (→ XREF) -- AArch64 guest for
   native ARM APK ABI; MS ABI vs AAPCS64 if Android processes ever become first-class PE
-- `18-future-research/TODO-02-hypervisor.md` §3 §4 (→ XREF) -- VM guest RAM, VirtIO
+- `18-future-research/TODO-02-hypervisor.md` §4 §5 (→ XREF) -- VM guest RAM, VirtIO
   blk/net/gpu, serial console for Android bring-up
-- `18-future-research/TODO-03-gpu-compositor.md` §1 §4 §5 (→ XREF) -- VirtIO-GPU scanout,
+- `18-future-research/TODO-03-gpu-compositor.md` §1 §6 §3 (→ XREF) -- VirtIO-GPU scanout,
   host compositor integration, DMA upload path for guest framebuffer
 - `12-user-platform-sdk/TODO-07-win32-compat-matrix.md` (→ XREF) -- launcher UX,
   lifecycle, and test harness patterns beside real Win32 programs
@@ -70,9 +70,9 @@ or ARM64 emulator image boots with VirtIO console (manual step, not CI).
 |------|---------|-------|-----------|
 | 1 | Research charter and success criteria | ⭐ | This file; stakeholder north star |
 | 2 | Architecture options record (VM vs container vs translation) | ⭐ | Industry survey; `TODO-02` |
-| 3 | Host kernel prerequisites | ⭐ | `TODO-02` §4; networking; storage |
+| 3 | Host kernel prerequisites | ⭐ | `TODO-02` §5; networking; storage |
 | 4 | Guest Android runtime plan | ⭐ | AOSP version; ART; update cadence |
-| 5 | Display and input bridging | ⭐ | `TODO-03` §1 §5; compositor |
+| 5 | Display and input bridging | ⭐ | `TODO-03` §1 §3; compositor |
 | 6 | ABI and ISA strategy | ⭐ | `TODO-01` §3 §6; multi-ABI APK |
 | 7 | Distribution and ecosystem stance | ⭐ | AOSP vs GMS; sideload policy |
 | 8 | Milestones, exit gates, deliverables | ⭐ | §1--§7 complete |
@@ -123,7 +123,7 @@ rationale.
 ## 3. Host Kernel Prerequisites `[Sonnet]`
 
 - [ ] **Memory**: contiguous guest RAM budget; ballooning (stretch); host OOM policy.
-- [ ] **VirtIO**: align with `TODO-02` §4 host-side queue emulation; virtio-gpu,
+- [ ] **VirtIO**: align with `TODO-02` §5 host-side queue emulation; virtio-gpu,
   virtio-input, virtio-net minimum set for Android bring-up.
 - [ ] **Time and timers**: TSC / wall clock drift for Android `alarm` and media.
 - [ ] **Binder analog**: if Option B ever resurfaces, standalone subsection on binder
@@ -214,7 +214,7 @@ deferred).
   generic with VirtIO serial; human-visible `logcat` line on host serial.
 - [ ] **Phase 2**: GPU scanout visible in host compositor window (depends `TODO-03`).
 - [ ] **Phase 3**: Input loop; one interactive FOSS app (keyboard + pointer).
-- [ ] **Exit gate**: promote to active execution domain only when `TODO-02` §3 POC or
+- [ ] **Exit gate**: promote to active execution domain only when `TODO-02` §4 POC or
   agreed substitute exists.
 - [ ] **Handoff**: if Phase 1 lands, create child TODOs under `01-boot-platform` or new
   domain for VMM integration -- do not balloon this file.

@@ -10,11 +10,11 @@
 - `src/kernel/fs/gpt.c` + `include/kernel/fs/gpt.h` -- `gpt_parse()`, `guid_generate()`, `gpt_sync_backup()`, `gpt_crc32()`, `gpt_guid_equal()`, `gpt_type_name()` all exist; §1 adds write-path functions on top
 - `src/kernel/fs/mbr.c` + `include/kernel/fs/mbr.h` -- MBR parse, EBR chain, `mbr_type_is_extended()` done; §2 adds create/delete/CHS-encode/write functions
 - `src/kernel/drivers/blkdev.c` + `include/kernel/drivers/blkdev.h` -- `blkdev_write()`, `blkdev_read()`, `blkdev_discard()` for TRIM in §5
-- → XREF: `05-storage-filesystems/TODO-03-volume-management-automount.md §3` -- `vfs_auto_assign_letters()` called after partition CRUD in §1–§2 to update drive-letter mappings; `mount`/`umount` commands owned there
+- → XREF: `05-storage-filesystems/TODO-03-volume-management-automount.md §5` -- `vfs_auto_assign_letters()` called after partition CRUD in §1–§9 to update drive-letter mappings; `mount`/`umount` commands owned there
 - → XREF: `05-storage-filesystems/TODO-05-win32-file-io-api.md §1` -- IRP engine must be complete before any GUI tool issues file I/O
 - → XREF: `05-storage-filesystems/TODO-07-ixfs-advanced-enterprise.md §8` -- `ixfs_snapshot_create/list/restore/delete()` are the backend for §10
 - → XREF: `05-storage-filesystems/TODO-07-ixfs-advanced-enterprise.md §3` -- IXFS defrag backend (`FSCTL_DEFRAGMENT_FILE`) used by §5
-- → XREF: `08-desktop-shell/TODO-xx-window-manager` -- GUI panels for §4, §5, §6, §7, §8, §9, §10 require compositor/widget layer
+- → XREF: `09-desktop-shell/TODO-xx-window-manager` -- GUI panels for §4, §5, §6, §7, §8, §9, §10 require compositor/widget layer
 
 ## Outcome
 
@@ -37,7 +37,7 @@
 | 💎  |   2   | §2 MBR partition write -- create/delete, CHS encoding, slot management              | Existing MBR parse + EBR chain                                    |  [ ]   |
 | 💎  |   3   | §3 `diskpart` CLI -- interactive: list/create/delete/format/assign/active/info      | §1, §2 (CRUD backend); filesystem formatters for `format` command  |  [ ]   |
 | 💎  |   4   | §4 `chkdsk` CLI + GUI -- per-FS validation, repair, progress, boot-schedule         | All fsck backends (NTFS/IXFS/FAT32/exFAT) from §4–§10 of TODO-01–§12 |  [ ]   |
-| 💎  |   5   | §5 `defrag` CLI + GUI -- fragmentation analysis, block relocation, TRIM            | IXFS defrag backend (TODO-07 §6); FAT32/NTFS defrag pass          |  [ ]   |
+| 💎  |   5   | §5 `defrag` CLI + GUI -- fragmentation analysis, block relocation, TRIM            | IXFS defrag backend (TODO-07 §7); FAT32/NTFS defrag pass          |  [ ]   |
 | 💎  |   6   | §6 `sfc` CLI + GUI -- build-time manifest, runtime verify, repair                  | Build script extension for manifest generation                    |  [ ]   |
 | ⭐  |   7   | §7 `recover` CLI + GUI -- IXFS/FAT32 deleted file recovery + data carving           | IXFS inode scan (TODO-07); FAT32 0xE5 scan                        |  [ ]   |
 | 💎  |   8   | §8 Disk Management GUI -- two-panel window, partition bar, context menu, SMART     | §1, §2 (write ops); §3 partial (format); compositor/widget layer  |  [ ]   |
@@ -88,7 +88,7 @@ Interactive disk management shell. Commands: `list disk`, `list part <disk>`, `c
 **Files:** `src/shell/cmd_diskpart.c` (new), `include/shell/diskpart.h` (new)
 
 > [!NOTE]
-> `diskpart` is a stateful interactive CLI: user first selects a disk (`select disk 0`) and partition (`select part 1`); subsequent commands operate on the selected context. Implemented as a sub-shell loop within the main `cmd.exe` command dispatcher. Format: calls the appropriate filesystem formatter (`fat32_format()`, `ntfs_format()`, `ixfs_format()`, `exfat_format()`) after creating the partition. Quick format: skip zero-fill, write only filesystem metadata structures. After any partition CRUD: call `vfs_auto_assign_letters()` (→ XREF: TODO-03 §3) to update drive letter assignments.
+> `diskpart` is a stateful interactive CLI: user first selects a disk (`select disk 0`) and partition (`select part 1`); subsequent commands operate on the selected context. Implemented as a sub-shell loop within the main `cmd.exe` command dispatcher. Format: calls the appropriate filesystem formatter (`fat32_format()`, `ntfs_format()`, `ixfs_format()`, `exfat_format()`) after creating the partition. Quick format: skip zero-fill, write only filesystem metadata structures. After any partition CRUD: call `vfs_auto_assign_letters()` (→ XREF: TODO-03 §5) to update drive letter assignments.
 
 - [ ] Sub-shell entry: `diskpart` command → print `DISKPART>` prompt; read lines from stdin; dispatch commands; `exit` returns to main shell
 - [ ] `list disk`: enumerate `blkdev_t` devices; print index, model string, size, partition table type (GPT/MBR/RAW), free space
@@ -110,10 +110,10 @@ Run per-filesystem validation and optional repair. Real-time progress output. GU
 **Files:** `src/shell/cmd_chkdsk.c` (new/extend), `src/desktop/dlg_chkdsk.c` (new)
 
 > [!NOTE]
-> `chkdsk` already has per-filesystem backends wired in earlier TODOs: `ntfs_fsck()` (TODO-02 §1), `ixfs_fsck()` (TODO-06 §1), `fat32_fsck()` (TODO-04 §6), `exfat_fsck()` (TODO-08 §10), `ext4_fsck()` (TODO-09 §12). This section adds the unified dispatcher, CLI interface, progress reporting via a callback, and the GUI dialog. Boot-time schedule: write `HKLM\SYSTEM\Storage\Chkdsk\Schedule\{letter}` = 1; at next kernel boot, `kernel_init` reads this key and runs chkdsk before mounting the volume. Validation per filesystem: NTFS: `$Bitmap` vs MFT allocated clusters, `$LogFile` dirty state; IXFS: superblock CRC, free bitmap, inode refcounts, journal; FAT32: BPB fields, cross-linked chains, lost clusters (orphaned FAT chains); exFAT: allocation bitmap vs FAT chain consistency.
+> `chkdsk` already has per-filesystem backends wired in earlier TODOs: `ntfs_fsck()` (TODO-02 §1), `ixfs_fsck()` (TODO-06 §1), `fat32_fsck()` (TODO-04 §8), `exfat_fsck()` (TODO-08 §10), `ext4_fsck()` (TODO-09 §12). This section adds the unified dispatcher, CLI interface, progress reporting via a callback, and the GUI dialog. Boot-time schedule: write `HKLM\SYSTEM\Storage\Chkdsk\Schedule\{letter}` = 1; at next kernel boot, `kernel_init` reads this key and runs chkdsk before mounting the volume. Validation per filesystem: NTFS: `$Bitmap` vs MFT allocated clusters, `$LogFile` dirty state; IXFS: superblock CRC, free bitmap, inode refcounts, journal; FAT32: BPB fields, cross-linked chains, lost clusters (orphaned FAT chains); exFAT: allocation bitmap vs FAT chain consistency.
 
 - [ ] `chkdsk_dispatch(letter, fix, scan_only, progress_cb, ctx)`: look up filesystem type for `letter`; dispatch to `ntfs_fsck`/`ixfs_fsck`/`fat32_fsck`/`exfat_fsck`/`ext4_fsck`; pass progress callback; return error count
-  > **Ready:** `fat32_fsck(vol, fix)` is implemented (TODO-04 §6) with BPB validation, FAT1/FAT2 compare, cross-link detection, and lost cluster detection/recovery.
+  > **Ready:** `fat32_fsck(vol, fix)` is implemented (TODO-04 §8) with BPB validation, FAT1/FAT2 compare, cross-link detection, and lost cluster detection/recovery.
 - [ ] CLI: `chkdsk <drive> [/fix] [/scan] [/schedule]`; `/fix` → `fix=1`; `/schedule` → write registry key and exit; real-time line output via progress callback
 - [ ] Boot-time schedule: `kernel_init_storage()` reads `HKLM\SYSTEM\Storage\Chkdsk\Schedule\*`; for each scheduled drive: run chkdsk before `vfs_mount()`; clear registry key after
 - [ ] GUI dialog `dlg_chkdsk_open(letter)`: drive selector dropdown; `Scan` / `Fix` radio buttons; `Schedule on next boot` checkbox for system drive; `Start` button; progress bar (0–100%); scrollable results log; `Close` / `Export Log` buttons
@@ -127,7 +127,7 @@ Fragmentation analysis per filesystem. Journal-safe block relocation engine runn
 **Files:** `src/shell/cmd_defrag.c` (new), `src/desktop/dlg_defrag.c` (new), `src/kernel/fs/defrag_engine.c` (new)
 
 > [!NOTE]
-> Defrag is `[Opus]` because journal-safe block relocation requires careful ordering: (1) allocate a temporary block; (2) copy source data; (3) journal the new extent mapping (point inode extent to temp block); (4) commit journal; (5) free old block -- all inside a JBD2/IXFS-WAL transaction. On crash between steps, the journal ensures the extent points to the copy. For NTFS: use `FSCTL_MOVE_FILE` ioctl (§10 of TODO-05). For IXFS: `FSCTL_DEFRAGMENT_FILE` (TODO-07 §6). For FAT32: move clusters by updating FAT chain entries. For exFAT: relocate clusters + update `NoFatChain` flag if coalesced. SCHED_IDLE thread: set thread priority to `THREAD_PRIORITY_IDLE` so defrag never competes with user-visible I/O. TRIM: after defrag, issue `blkdev_discard()` for all free block ranges.
+> Defrag is `[Opus]` because journal-safe block relocation requires careful ordering: (1) allocate a temporary block; (2) copy source data; (3) journal the new extent mapping (point inode extent to temp block); (4) commit journal; (5) free old block -- all inside a JBD2/IXFS-WAL transaction. On crash between steps, the journal ensures the extent points to the copy. For NTFS: use `FSCTL_MOVE_FILE` ioctl (§10 of TODO-05). For IXFS: `FSCTL_DEFRAGMENT_FILE` (TODO-07 §7). For FAT32: move clusters by updating FAT chain entries. For exFAT: relocate clusters + update `NoFatChain` flag if coalesced. SCHED_IDLE thread: set thread priority to `THREAD_PRIORITY_IDLE` so defrag never competes with user-visible I/O. TRIM: after defrag, issue `blkdev_discard()` for all free block ranges.
 
 - [ ] `defrag_analyze(letter, &report)`: walk filesystem allocation metadata; compute `fragmented_files`, `total_fragments`, `fragmentation_percent`, `largest_free_run`; fast read-only pass
 - [ ] `defrag_engine_run(letter, progress_cb, ctx)`: on `SCHED_IDLE` thread; iterate fragmented files sorted by severity; for each: journal-safe move; yield after each file (check `should_stop` flag); call `progress_cb` after each file

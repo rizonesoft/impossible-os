@@ -6,11 +6,11 @@
 > lower layers.
 
 > [!IMPORTANT]
-> `06-networking/TODO-08-ssh-ftp-clients.md §4–§9` is the canonical SSH **protocol** implementation
+> `06-networking/TODO-08-ssh-ftp-clients.md §2–§9` is the canonical SSH **protocol** implementation
 > spec (transport, auth, channel, shell command, SSH agent, SFTP subsystem). This TODO extends
 > that with the richer wire-format details from the prompt spec, Registry-backed TOFU/known-hosts,
 > Windows-style SSH config file parsing, SCP protocol flow, and sftp interactive UI.
-> Implement §1–§3 here in parallel with or after TODO-08 §4–§6; do not re-implement what
+> Implement §1–§3 here in parallel with or after TODO-08 §2–§6; do not re-implement what
 > TODO-08 already specifies -- use XREFs to stay aligned.
 >
 > Monocypher (Curve25519 / ChaCha20-Poly1305 / Ed25519) **must** be ported before any crypto
@@ -21,9 +21,9 @@
 ## Inputs
 
 - `include/desktop/terminal.h` -- `terminal_open()`, `terminal_puts()`, `terminal_trygetchar()`, `TERM_COLS`, `TERM_ROWS`
-- `06-networking/TODO-08-ssh-ftp-clients.md §4–§9` -- SSH protocol reference spec
-- `06-networking/TODO-02-dns-sockets.md §5` -- `kern_socket`, `kern_connect`, `kern_send`, `kern_recv`, `kern_close`, `dns_resolve`
-- `11-user-platform-sdk/TODO-01-kernel-libraries.md §4` -- monocypher: `crypto_x25519_*`, `crypto_chacha20_*`, `crypto_poly1305_*`, `crypto_ed25519_*`, `crypto_blake2b_*`, `csprng_fill`
+- `06-networking/TODO-08-ssh-ftp-clients.md §2–§9` -- SSH protocol reference spec
+- `06-networking/TODO-02-dns-sockets.md §3` -- `kern_socket`, `kern_connect`, `kern_send`, `kern_recv`, `kern_close`, `dns_resolve`
+- `11-user-platform-sdk/TODO-03-kernel-libraries.md §6` -- monocypher: `crypto_x25519_*`, `crypto_chacha20_*`, `crypto_poly1305_*`, `crypto_ed25519_*`, `crypto_blake2b_*`, `csprng_fill`
 - `include/registry.h` -- `reg_set_string`, `reg_get_string`, `reg_create_key`
 - `10-apps/TODO-02-ftp-wget-wifi.md §2` -- `progress_bar_print(done, total, elapsed_ms)` helper
 
@@ -51,7 +51,7 @@
 
 ## 1. SSH2 Transport Layer `[Opus]`
 
-> → XREF: `06-networking/TODO-08-ssh-ftp-clients.md §4` -- base implementation spec.
+> → XREF: `06-networking/TODO-08-ssh-ftp-clients.md §2` -- base implementation spec.
 > This section specifies the HKDF-SHA256 key derivation, ChaCha20-Poly1305 packet framing, and
 > sequence-number tracking details that §4 of TODO-08 leaves implicit.
 
@@ -79,7 +79,7 @@
 
 ## 2. SSH Authentication `[Opus]`
 
-> → XREF: `06-networking/TODO-08-ssh-ftp-clients.md §5`
+> → XREF: `06-networking/TODO-08-ssh-ftp-clients.md §3`
 
 **Source file:** `src/apps/ssh/ssh_auth.c`
 
@@ -160,7 +160,7 @@
 
 ## 6. SSH Config File `[Sonnet]`
 
-> → XREF: `10-platform-services/TODO-08 §2` -- `GetEnvironmentVariableA` for username resolution
+> → XREF: `10-platform-services/TODO-08 §4` -- `GetEnvironmentVariableA` for username resolution
 
 **Source file:** `src/apps/ssh/ssh_config.c`
 

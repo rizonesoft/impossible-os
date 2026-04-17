@@ -1,7 +1,7 @@
 /* ============================================================================
  * json.c -- Kernel JSON API (thin wrapper over cJSON)
  *
- * XREF: 02-kernel-core/TODO-20-kernel-libraries.md §6
+ * XREF: 02-kernel-core/TODO-03-kernel-libraries.md §6
  * ============================================================================ */
 
 #include "kernel/json.h"

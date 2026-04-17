@@ -15,7 +15,7 @@
 - → XREF: `05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md` -- v3 inode with `i_compress_type`, `i_encrypt_key_id`, `i_flags` (sparse/immutable), `i_access_count` (tiering) must be in place
 - → XREF: TODO-20-kernel-libraries (future) -- LZ4 frame encoder/decoder and Zstd single-frame decompressor; Monocypher for AES-256-XTS and PBKDF2; xxHash64 for dedup hashing; until that TODO completes, stub §1 and §10 behind compile-time feature flags
 - → XREF: `08-desktop-shell` domain -- Disk Manager UI panels (§14 health dashboard, §4 defrag button, §9 Previous Versions, §12 quota panel, §13 tier config) are desktop components; coordinate on the IPC/message interface used to query IXFS stats
-- → XREF: `04-drivers-hardware/TODO-01-block-storage-hardening.md §5` -- AHCI SMART data feeds the health dashboard (§14) disk temperature + error count fields
+- → XREF: `04-drivers-hardware/TODO-13-storage-controller-device-drivers.md §7` -- AHCI SMART data feeds the health dashboard (§14) disk temperature + error count fields
 
 ## Outcome
 

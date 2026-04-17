@@ -15,34 +15,44 @@ This domain covers the path from firmware entry through kernel handoff and early
 
 ## Likely Source Areas
 
-- [src/boot](../src/boot/)
-- [src/kernel/main](../src/kernel/main/)
-- [docs](../docs/)
+- [src/boot](../../src/boot/)
+- [src/kernel/main](../../src/kernel/main/)
+- [docs](../../docs/)
 
 ## Epics
 
-- None yet.
+- [Gap Analysis](./GAP-ANALYSIS.md) -- 2026-04-16 full-domain audit adding the missing boot protocol, firmware inventory, measured boot, network boot, media pipeline, resume, entropy, alternate protocol, and certification lanes.
 
 ## Active TODOs
 
-- [TODO-01 -- UEFI Bootloader Hardening & Secure Boot](TODO-01-uefi-hardening-secureboot.md) -- ✅ §1-§8 shipped in tree; §9 ops backlog + `test_uefi_boot` suite still open; advanced UEFI in [TODO-18](TODO-18-uefi-advanced.md)
-- [TODO-02 -- Bootloader Error Recovery & ELF Hardening](TODO-02-bootloader-error-recovery.md) -- Eliminate silent failures: ELF bounds checking, ExitBootServices retry, fallback kernel search, boot failure error screen
-- [TODO-03 -- Boot Device Discovery & Fallback Chain](TODO-03-boot-device-discovery.md) -- Boot device identification via LoadedImage, multi-device fallback, device type detection, UEFI boot variables (BootOrder/BootCurrent/BootNext + Boot#### decode), partition GUID validation, removable media, Registry population, disk health check
-- [TODO-04 -- CPU Boot Sequencing & AP Hardening](TODO-04-cpu-boot-sequencing.md) -- Phase 0 activation order (EFER->CR4 before VMM), hypervisor detection before UTS, AP hardening replication, AP feature consistency validation, CR4 bit pinning, MTRR/PAT AP sync, CPU register audit trail
-- [TODO-05 -- Bare Metal Boot Hardening](TODO-05-bare-metal-hardening.md) -- IST stacks, ACPI-gated hardware access, graceful degradation, hw interrupt fix, UC MMIO, CPU feature verification
-- [TODO-06 -- Interrupt Architecture & Unified Timer Subsystem](TODO-06-interrupt-timer-arch.md) -- MADT, LAPIC/IOAPIC order, full IDT, dynamic IRQ API, UTS HPET/LAPIC/PIT HAL, LAPIC calibration
-- [TODO-07 -- Boot Diagnostics, Heartbeat & Spinner](TODO-07-boot-diagnostics.md) -- POST codes, named-stage API, panic forensics, QR code, vital signs, multi-instance spinner
-- [TODO-08 -- Visual POST Display (VPD)](TODO-08-visual-post-display.md) -- Two-tier boot progress visualization: pre-splash micro-font bars + splash-integrated stages, NVRAM crash persistence, configurable via `postbars`
-- [TODO-09 -- NVMe Storage Driver](TODO-09-nvme-storage.md) -- NVMe controller, Admin+I/O queues, sector read/write -- access internal NVMe storage
-- [TODO-10 -- xHCI, USB Storage & USB HID](TODO-10-xhci-usb-boot.md) -- xHCI controller, USB MSC BOT, boot handover, hardware compatibility (EHCI/hub); USB HID → [TODO-12](TODO-12-usb-hid-keyboard-mouse.md)
-- [TODO-11 -- USB Boot Hardening & Fail-Safe Pipeline](TODO-11-usb-boot-hardening.md) -- SCSI retry, USB transport stall recovery, bulk transfer timeouts, sleep hack removal, EHCI fallback, bounded klog flush, media speed detection, single-pass log routing, slow-media IXFS tests
-- [TODO-12 -- USB HID Boot-Protocol Keyboard & Mouse](TODO-12-usb-hid-keyboard-mouse.md) -- xHCI interrupt endpoints, HID boot-protocol keyboard/mouse, input coexistence
-- [TODO-13 -- Zero-Delay USB Boot](TODO-13-usb-zero-delay-handover.md) -- Pre-ExitBootServices xHCI driver loading with persistent DMA -- true Windows-style zero-delay USB handover
-- [TODO-14 -- A/B Dual-Slot Boot & Automatic Rollback](TODO-14-ab-boot-rollback.md) -- Never unbootable: dual root partitions, failure counting, automatic rollback
-- [TODO-15 -- Recovery Partition & Self-Repair](TODO-15-recovery-partition.md) -- Recovery environment: filesystem repair, kernel restore, NVRAM reconstruction
-- [TODO-16 -- Boot Watchdog & Hang Detection](TODO-16-boot-watchdog.md) -- LAPIC NMI + ACPI TCO watchdog: detect hung boot, auto-reboot, integrate with A/B rollback
-- [TODO-17 -- BlackBox Service Partition](TODO-17-blackbox-service-partition.md) -- ✅ Complete: 128 MiB FAT32 "BlackBox" partition (X:\) for logs, crash dumps, diagnostics, tools
-- [TODO-18 -- UEFI Advanced Features](TODO-18-uefi-advanced.md) -- Deferred: multi-OS boot menu, capsule updates, W^X, multi-GPU GOP, extended SB, SMBIOS ext, DBX sync
+- [TODO-01 -- Boot Protocol ABI & Handoff Contract](TODO-01-boot-protocol-abi-handoff.md) -- Authoritative `boot_info` owner: shipped ABI header and pre-copy validation foundations, plus remaining ownership, manifest, optional payloads, memory reservation, stale-loader handling, and fuzz coverage.
+- [TODO-02 -- UEFI Bootloader Hardening & Secure Boot](TODO-02-uefi-hardening-secureboot.md) -- ✅ §1-§8 shipped in tree; §9 ops backlog + `test_uefi_boot` suite still open; advanced UEFI in [TODO-27](TODO-27-uefi-advanced.md)
+- [TODO-03 -- Bootloader Error Recovery & ELF Hardening](TODO-03-bootloader-error-recovery.md) -- Eliminate silent failures: ELF bounds checking, ExitBootServices retry, fallback kernel search, boot failure error screen
+- [TODO-04 -- Firmware Table & Platform Inventory](TODO-04-firmware-table-platform-inventory.md) -- Unified catalog, validation, Registry/BlackBox reports, ESRT, FPDT, MAT, RT properties, DTB/EBBR, and firmware quirk database.
+- [TODO-05 -- Boot Device Discovery & Fallback Chain](TODO-05-boot-device-discovery.md) -- Boot device identification via LoadedImage, local-device fallback, UEFI boot variables, partition GUID validation, removable media, Registry population, disk health check
+- [TODO-06 -- Boot Media, Image Pipeline & Installer Handoff](TODO-06-boot-media-image-installer-handoff.md) -- Reproducible raw/USB/VHD/VHDX/VDI/ISO artifacts, signed manifests, installer/live/recovery media roles, artifact inspector, and CI boot matrix.
+- [TODO-07 -- Boot Entry Store, Menu & Policy](TODO-07-boot-entry-store-menu-policy.md) -- BCD-style boot entries, menu UI, BootNext/policy merge, safe/test/recovery entries, A/B integration, known-good kernel entries, and bootcfg tooling.
+- [TODO-08 -- Alternate Boot Protocols & Compatibility Boundary](TODO-08-alternate-boot-protocols.md) -- Multiboot2/GRUB/Limine/legacy BIOS policy, parity audit, boot_info adapter, degradation matrix, and support/deprecation gate.
+- [TODO-09 -- CPU Boot Sequencing & AP Hardening](TODO-09-cpu-boot-sequencing.md) -- Phase 0 activation order, hypervisor detection, AP hardening replication, AP feature consistency validation, CR4 bit pinning, MTRR/PAT AP sync, CPU register audit trail
+- [TODO-10 -- Bare Metal Boot Hardening](TODO-10-bare-metal-hardening.md) -- IST stacks, ACPI-gated hardware access, graceful degradation, hw interrupt fix, UC MMIO, CPU feature verification, and bare-metal validation discipline
+- [TODO-11 -- Interrupt Architecture & Unified Timer Subsystem](TODO-11-interrupt-timer-arch.md) -- MADT, LAPIC/IOAPIC order, full IDT, dynamic IRQ API, UTS HPET/LAPIC/PIT HAL, LAPIC calibration
+- [TODO-12 -- Early Entropy & Random Seed Handoff](TODO-12-early-entropy-random-seed.md) -- EFI RNG, RDRAND/RDSEED, TPM RNG, jitter, seed-file carryover, boot_info seed payload, early CSPRNG seeding, and entropy policy reporting.
+- [TODO-13 -- TPM Measured Boot, PCR Replay & Attestation](TODO-13-tpm-measured-boot-attestation.md) -- TPM2 transport, PCR reads, event-log replay, baseline enrollment, NV storage, sealed secrets, attestation export, and mismatch recovery UX.
+- [TODO-14 -- Boot Diagnostics, Heartbeat & Spinner](TODO-14-boot-diagnostics.md) -- POST codes, named-stage API, panic forensics, QR code, vital signs, multi-instance spinner
+- [TODO-15 -- Visual POST Display (VPD)](TODO-15-visual-post-display.md) -- Two-tier boot progress visualization: pre-splash micro-font bars + splash-integrated stages, NVRAM crash persistence, configurable via `postbars`
+- [TODO-16 -- NVMe Storage Driver](TODO-16-nvme-storage.md) -- NVMe controller, Admin+I/O queues, sector read/write -- access internal NVMe storage
+- [TODO-17 -- xHCI, USB Storage & USB HID](TODO-17-xhci-usb-boot.md) -- Baseline xHCI controller, USB MSC BOT, block-device registration, post-boot hot-plug, and hardware compatibility (EHCI/hub); zero-delay handover -> [TODO-20](TODO-20-usb-zero-delay-handover.md), USB HID -> [TODO-18](TODO-18-usb-hid-keyboard-mouse.md)
+- [TODO-18 -- USB HID Boot-Protocol Keyboard & Mouse](TODO-18-usb-hid-keyboard-mouse.md) -- xHCI interrupt endpoints, HID boot-protocol keyboard/mouse, input coexistence
+- [TODO-19 -- USB Boot Hardening & Fail-Safe Pipeline](TODO-19-usb-boot-hardening.md) -- SCSI retry, USB transport stall recovery, bulk transfer timeouts, sleep hack removal, EHCI fallback, bounded klog flush, media speed detection, single-pass log routing, slow-media IXFS tests
+- [TODO-20 -- Zero-Delay USB Boot](TODO-20-usb-zero-delay-handover.md) -- Pre-ExitBootServices xHCI takeover, persistent DMA state, and kernel inherit path for true Windows-style zero-delay USB boot
+- [TODO-21 -- A/B Dual-Slot Boot & Automatic Rollback](TODO-21-ab-boot-rollback.md) -- Never unbootable: dual root partitions, failure counting, automatic rollback
+- [TODO-22 -- Recovery Partition & Self-Repair](TODO-22-recovery-partition.md) -- Recovery environment: filesystem repair, kernel restore, NVRAM reconstruction
+- [TODO-23 -- Boot Watchdog & Hang Detection](TODO-23-boot-watchdog.md) -- LAPIC NMI + ACPI TCO watchdog: detect hung boot, auto-reboot, integrate with A/B rollback
+- [TODO-24 -- BlackBox Service Partition](TODO-24-blackbox-service-partition.md) -- ✅ Complete: 128 MiB FAT32 "BlackBox" partition (X:\) for logs, crash dumps, diagnostics, tools
+- [TODO-25 -- Network / PXE / HTTP Boot](TODO-25-network-pxe-http-boot.md) -- UEFI network protocol discovery, PXE/TFTP/HTTP asset loading, signed network manifests, network provenance handoff, recovery over network, and test harnesses.
+- [TODO-26 -- Hibernation Resume & Fast Startup Boot Handoff](TODO-26-hibernation-resume-fast-startup-handoff.md) -- S4/fast-startup metadata, resume eligibility, integrity validation, boot_info resume payload, failure fallback, and resume diagnostics.
+- [TODO-27 -- UEFI Advanced Features](TODO-27-uefi-advanced.md) -- Deferred UEFI-specific features: multi-OS discovery/chainload entries for [TODO-07](TODO-07-boot-entry-store-menu-policy.md), capsule updates, W^X, multi-GPU GOP, extended SB, SMBIOS ext, DBX sync
+- [TODO-28 -- Boot Validation & Hardware Certification Matrix](TODO-28-boot-validation-certification-matrix.md) -- Unified VM, media, security, rollback, network, and bare-metal boot certification matrix with support bundle and release gate.
 
 ## Completed / Doc-converted
 

@@ -9,8 +9,8 @@
 
 - [`tools/make-system-disk.c`](../../tools/make-system-disk.c) -- GPT layout, partition offsets
 - [`build/system-disk.img`](../../build/system-disk.img) -- raw disk image with BlackBox partition
-- -> XREF: `01-boot-platform/TODO-17-blackbox-service-partition.md` -- BlackBox partition layout (128 MiB FAT32, GPT name "BlackBox")
-- -> XREF: `02-kernel-core/TODO-02-system-logging.md` -- log file formats, events.jsonl schema, verification items
+- -> XREF: `01-boot-platform/TODO-24-blackbox-service-partition.md` -- BlackBox partition layout (128 MiB FAT32, GPT name "BlackBox")
+- -> XREF: `02-kernel-core/TODO-04-system-logging.md` -- log file formats, events.jsonl schema, verification items
 - -> XREF: `14-host-tools/TODO-06-disk-inspect.md` -- disk image browser (complementary -- disk-inspect shows raw structures, this shows log content)
 
 ## Outcome

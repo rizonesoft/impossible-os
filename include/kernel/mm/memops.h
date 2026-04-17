@@ -12,7 +12,7 @@
  * ISRs), a kernel_fpu_begin/end protocol is needed first to avoid
  * corrupting the current task's lazy FPU state.
  *
- * XREF: 02-kernel-core/TODO-19-x86-64-architecture.md S2, S3
+ * XREF: 02-kernel-core/TODO-09-x86-64-architecture.md S2, S3
  * ============================================================================ */
 
 #pragma once

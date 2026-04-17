@@ -12,6 +12,7 @@ description: Deep quality review of an implemented TODO section -- industry stan
 > - **Apply `superpowers:receiving-code-review` to EVERY Codex finding.** Verify before acting -- reject wrong findings with evidence.
 > - **Fix all valid findings.** Spec violations, best practices, dead code, parity gaps -- if it's real, fix it. Only Accept findings that are wrong, irrelevant, or need missing infrastructure.
 > - **One section = one commit.** All fixes committed together.
+> - **Think beyond parity.** This pass asks whether the result is refined, competitive, and worthy of Impossible OS, not merely equivalent to the current checklist text.
 
 ## Workflow
 
@@ -24,7 +25,10 @@ description: Deep quality review of an implemented TODO section -- industry stan
    - **Win32/NT code:** Windows Internals, ReactOS reference, MSDN documentation (NTSTATUS codes, parameter validation, privilege requirements)
    - **x86-64 code:** Intel SDM / AMD APM (MSR usage, CPUID leaf requirements, CR register rules, interrupt handling)
 
-3. **Win11/Linux parity analysis** -- concrete function/file references, not vague comparisons.
+3. **Win11/Linux parity and superiority analysis** -- concrete function/file references, not vague comparisons.
+   - What do Win11 and Linux already do here?
+   - Where is Impossible OS still behind?
+   - Where can Impossible OS be cleaner, faster, safer, or more coherent without turning this into a rewrite?
 
 4. **Codex comprehensive review** (MANDATORY -- NO EXCEPTIONS) -- single dispatch covering performance, consistency, AND dead code. If Codex responds with "no diff available", re-dispatch with actual file content (read 100-200 relevant lines). A shallow response requires re-prompting with specific angles. This step CANNOT be replaced with self-review.
 
@@ -58,17 +62,20 @@ description: Deep quality review of an implemented TODO section -- industry stan
    - **Wrong/misleading:** reject with concrete code evidence.
    - **Out of scope:** accept with domain-qualified XREF.
 
-5. **Feature completeness + stub audit** (MANDATORY) -- grep the section's source files for incomplete features:
-   - **`STATUS_NOT_IMPLEMENTED` stubs:** if the function is standalone (self-contained, under 1000 lines), IMPLEMENT it fully. Features must not get lost behind stubs. If it requires significant new infrastructure, Accept with a domain-qualified XREF.
-   - **Scope-gap markers:** `TODO`, `FIXME`, `HACK`, `XXX`, `for now`, `placeholder`, `STUB(`. Cross-check against TODO text -- undisclosed gaps are findings.
-   - **Partial implementations:** functions that return early on edge cases without handling them. Error paths that silently succeed. Switch statements with missing cases.
-   - **Dead API promises:** functions declared in headers but not implemented, or implemented but never called.
+5. **Feature completeness + adjacent completeness audit** (MANDATORY) -- grep the section's source files for incomplete features and "almost real" implementations:
+    - **`STATUS_NOT_IMPLEMENTED` stubs:** if the function is standalone (self-contained, under 1000 lines), IMPLEMENT it fully. Features must not get lost behind stubs. If it requires significant new infrastructure, Accept with a domain-qualified XREF.
+    - **Scope-gap markers:** `TODO`, `FIXME`, `HACK`, `XXX`, `for now`, `placeholder`, `STUB(`. Cross-check against TODO text -- undisclosed gaps are findings.
+    - **Partial implementations:** functions that return early on edge cases without handling them. Error paths that silently succeed. Switch statements with missing cases.
+    - **Dead API promises:** functions declared in headers but not implemented, or implemented but never called.
+    - **Adjacent completeness:** exports, registrations, tables, tests, docs, call paths, or owner TODO items missing from an otherwise "done" feature.
+    - **Product feel gaps:** places where the section technically works but still feels rough, under-designed, or clearly behind Win11/Linux in a way that is feasible to improve now.
 
 7. **Self-review BEFORE fixing** -- walk the section's source files looking for what spec research, Codex, AND the stub audit missed:
-   - Regressions from recent changes in other sections
-   - Race conditions that only manifest under specific scheduling
-   - Edge cases at boundary values (0, 1, MAX, overflow)
-   - Resource leaks on error paths (handles, memory, locks not released)
+    - Regressions from recent changes in other sections
+    - Race conditions that only manifest under specific scheduling
+    - Edge cases at boundary values (0, 1, MAX, overflow)
+    - Resource leaks on error paths (handles, memory, locks not released)
+    - Completion radar: correctness, completeness, wiring, parity, superiority, ownership
 
 8. **Classify all findings** (from steps 2, 3, 4, 5, and 7):
 
@@ -78,12 +85,13 @@ description: Deep quality review of an implemented TODO section -- industry stan
    | **Optimization** | Measurably better approach exists | Fix if on hot path; Accept if cold path |
    | **Best practice** | Industry convention we should follow | Fix |
    | **Simplification** | Same behavior with less code | Fix |
-   | **Parity gap** | Win11/Linux does this better | Fix if feasible; Accept with XREF if large |
-   | **Dead code** | Unreachable or unused | Remove |
-   | **Incomplete** | STATUS_NOT_IMPLEMENTED stub or partial implementation | Implement if standalone; Accept with XREF if needs infrastructure |
-   | **Accept** | Wrong, irrelevant, or needs missing infrastructure | Document why with code evidence |
+    | **Parity gap** | Win11/Linux does this better | Fix if feasible; Accept with XREF if large |
+    | **Refinement** | Code works but is still obviously rough or under-designed | Fix if feasible; Accept with XREF if larger |
+    | **Dead code** | Unreachable or unused | Remove |
+    | **Incomplete** | STATUS_NOT_IMPLEMENTED stub or partial implementation | Implement if standalone; Accept with XREF if needs infrastructure |
+    | **Accept** | Wrong, irrelevant, or needs missing infrastructure | Document why with code evidence |
 
-9. **Fix loop** -- fix ALL non-Accept findings. Priority: spec violations > incomplete stubs > dead code > best practices > simplifications > parity gaps > optimizations. Build after each batch.
+9. **Fix loop** -- fix ALL non-Accept findings. Priority: spec violations > incomplete stubs > dead code > best practices > simplifications > parity gaps > refinement > optimizations. Build after each batch.
 
 10. **Post-fix self-review** -- walk every fix for regressions, confirm no TODO/FIXME/HACK introduced. Final build.
 

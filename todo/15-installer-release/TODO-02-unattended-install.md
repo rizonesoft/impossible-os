@@ -12,7 +12,7 @@
 > same pipeline -- do not re-specify partitioning, format, or file-copy logic.
 >
 > **OOBE trigger** (`HKLM\SYSTEM\FirstBoot=1`) and first-boot wizard are owned by
-> `10-platform-services/TODO-04 §7`; `auth_create_user()` is owned by `TODO-06`.
+> `10-platform-services/TODO-04 §1`; `auth_create_user()` is owned by `TODO-06`.
 > Answer-file user creation (§2) calls these existing APIs -- do not re-specify them.
 >
 > **Kernel cmdline** is available via `boot_info->cmdline[BOOT_CONF_CMDLINE_MAX]`
@@ -25,8 +25,8 @@
 
 ## Inputs
 
-- `10-platform-services/TODO-11-installer-iso.md` (→ XREF) -- `installer_copy_files`, `gpt_create`, `ixfs_format`, `InstallerMode`, `setup.log`; unattended path (§2) runs through same pipeline
-- `10-platform-services/TODO-04-restore-recovery.md §7` (→ XREF) -- OOBE (`HKLM\SYSTEM\FirstBoot=1`); answer-file sets values OOBE would collect
+- `10-platform-services/TODO-11-installer-iso.md` (→ XREF) -- `installer_copy_files`, `gpt_create`, `ixfs_format`, `InstallerMode`, `setup.log`; unattended path (§7) runs through same pipeline
+- `10-platform-services/TODO-04-restore-recovery.md §1` (→ XREF) -- OOBE (`HKLM\SYSTEM\FirstBoot=1`); answer-file sets values OOBE would collect
 - `10-platform-services/TODO-06-auth-security.md` (→ XREF) -- `auth_create_user(username, password, privilege)` -- §2 §3
 - `11-user-platform-sdk/TODO-06-sdk-distribution.md §1` (→ XREF) -- `ipkg_create.exe` for OEM package format -- §4
 - `include/kernel/boot_info.h` -- `boot_info->cmdline` -- §2 `answer=<path>` kernel cmdline token
@@ -120,7 +120,7 @@ the install. `pxesrv start` serves netboot images over TFTP to diskless clients.
 **Source:** extends `src/installer/installer.c`
 
 - [ ] **Answer-file check at installer start**: `answer_parse()` (§1); if answer file found and `InstallMode != Interactive`: set `g_unattended = 1`; skip all `wm_create_window` / `CTRL_*` UI creation; log `[setup] Unattended mode: answer file {path}`
-- [ ] **Unattended execution path** (mirrors wizard pages from `TODO-11 §3`, executed sequentially):
+- [ ] **Unattended execution path** (mirrors wizard pages from `TODO-11 §5`, executed sequentially):
   1. Disk selection: use `answer.disk.disk_index`; validate `blkdev_count() > disk_index`; log selected disk
   2. Partition: call `gpt_create()` + `gpt_add_partition(EFI, efi_size_mb)` + `gpt_add_partition(SYSTEM, remaining)`; log partition layout
   3. Format: `fat32_format(esp, "ESP")` + `ixfs_format(sys, "Impossible")`; log

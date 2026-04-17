@@ -1,9 +1,9 @@
 # TODO-01 -- Audio System & Media Player
 
-> **Goal:** Build the complete software audio stack -- abstraction layer, multi-stream mixer, codec decoders (WAV/MP3/OGG/FLAC), unified loader, and the media player app + volume control UI on top. Hardware drivers live in `04-drivers-hardware/TODO-10`.
+> **Goal:** Build the complete software audio stack -- abstraction layer, multi-stream mixer, codec decoders (WAV/MP3/OGG/FLAC), unified loader, and the media player app + volume control UI on top. Hardware drivers live in `04-drivers-hardware/TODO-18-audio-drivers.md`.
 
 > [!IMPORTANT]
-> **Already exists**: AC97 hardware driver in `04-drivers-hardware/TODO-10` (provides `ac97_play(pcm, samples)`, `ac97_stop()`, `ac97_set_volume(0–100)`, DMA buffer feeding). `pmm_alloc_contiguous()` for large PCM buffers. `registry_get/set()`. `CTRL_SLIDER` widget (TODO-05 forward dep). System sounds WAV hooks already wired in `08-desktop-shell/TODO-02` §4 (they call `audio_play()` once §1 exists). **Missing**: all of `src/kernel/audio.c`, `audio_mixer.c`, codec libs (`dr_wav.h`, `dr_mp3.h`, `stb_vorbis`), media player app, volume popup. **Syscalls**: `SYS_AUDIO_PLAY=60`, `SYS_AUDIO_VOLUME=61` (next after `SYS_PRIVILEGE_REQUEST=59`). **PMM rule**: all PCM buffers > 4 KB must use `pmm_alloc_contiguous()` -- `kmalloc` heap is only 2 MiB.
+> **Already exists**: AC97 hardware driver in `04-drivers-hardware/TODO-18-audio-drivers.md` (provides `ac97_play(pcm, samples)`, `ac97_stop()`, `ac97_set_volume(0–100)`, DMA buffer feeding). `pmm_alloc_contiguous()` for large PCM buffers. `registry_get/set()`. `CTRL_SLIDER` widget (TODO-05 forward dep). System sounds WAV hooks already wired in `09-desktop-shell/TODO-02` §4 (they call `audio_play()` once §1 exists). **Missing**: all of `src/kernel/audio.c`, `audio_mixer.c`, codec libs (`dr_wav.h`, `dr_mp3.h`, `stb_vorbis`), media player app, volume popup. **Syscalls**: `SYS_AUDIO_PLAY=60`, `SYS_AUDIO_VOLUME=61` (next after `SYS_PRIVILEGE_REQUEST=59`). **PMM rule**: all PCM buffers > 4 KB must use `pmm_alloc_contiguous()` -- `kmalloc` heap is only 2 MiB.
 
 ## Inputs
 
@@ -17,10 +17,10 @@
 - `include/desktop/wm.h` -- `wm_create_window()`, tray icon hook -- §8 media player window, §9 volume flyout
 - `include/desktop/notification.h` (TODO-09) -- `notify_send()` -- §9 track-change toast
 - `include/cpl.h` (TODO-11) -- `CPlApplet_t`, `NEWCPLINFO` -- §10 mmsys.cpl applet
-- → XREF: `04-drivers-hardware/TODO-10` -- AC97 + Intel HDA hardware drivers; §1 here depends on that
-- → XREF: `08-desktop-shell/TODO-02 §4` -- system sound WAV hooks (`SOUND_STARTUP`, `SOUND_ERROR`, etc.) call `audio_play()` once §1 is live
-- → XREF: `08-desktop-shell/TODO-11 §3` -- `mmsys.cpl` Control Panel entry; §10 here implements it
-- → XREF: `07-graphics-ui/TODO-07` -- taskbar tray icon area; §9 volume flyout anchors to 🔊 tray slot
+- → XREF: `04-drivers-hardware/TODO-18-audio-drivers.md` -- AC97 + Intel HDA hardware drivers; §1 here depends on that
+- → XREF: `09-desktop-shell/TODO-02 §4` -- system sound WAV hooks (`SOUND_STARTUP`, `SOUND_ERROR`, etc.) call `audio_play()` once §1 is live
+- → XREF: `09-desktop-shell/TODO-11 §3` -- `mmsys.cpl` Control Panel entry; §10 here implements it
+- → XREF: `08-graphics-ui/TODO-07` -- taskbar tray icon area; §9 volume flyout anchors to tray slot
 
 ## Outcome
 
@@ -165,13 +165,13 @@ Vendor `dr_flac.h` (public domain, ~5000 lines). Same redirect pattern. `audio_l
 **Files:** `src/kernel/audio_load.c` (new, or extend `audio.c`)
 
 > [!NOTE]
-> `audio_load(path)`: `const char *ext = strrchr(path, '.')` → lowercase compare → dispatch. Unknown extension → `klog_err("audio_load: unsupported format: %s", ext)` → return NULL. Returned `audio_clip *` is PMM-backed (or kmalloc for small WAVs); caller frees with `audio_clip_free(clip)`. This function is used by `08-desktop-shell/TODO-02 §4` system sounds once live.
+> `audio_load(path)`: `const char *ext = strrchr(path, '.')` → lowercase compare → dispatch. Unknown extension → `klog_err("audio_load: unsupported format: %s", ext)` → return NULL. Returned `audio_clip *` is PMM-backed (or kmalloc for small WAVs); caller frees with `audio_clip_free(clip)`. This function is used by `09-desktop-shell/TODO-02 §4` system sounds once live.
 
 - [ ] `audio_clip *audio_load(const char *path)` -- extension dispatch
 - [ ] `void audio_clip_free(audio_clip *clip)` -- PMM or kmalloc branch based on internal `clip->pmm_backed` flag
 - [ ] `void audio_play_file(const char *path)` convenience: `audio_load()` → `audio_play()` → `audio_clip_free()` (fire and forget)
 - [ ] Plug into `SYS_AUDIO_PLAY` handler: if args contain path string instead of raw PCM → route to `audio_load()` then `audio_play()`
-- [ ] System sounds in `08-desktop-shell/TODO-02 §4` call `audio_play_file(SOUND_STARTUP_PATH)` -- confirm API match
+- [ ] System sounds in `09-desktop-shell/TODO-02 §4` call `audio_play_file(SOUND_STARTUP_PATH)` -- confirm API match
 - [ ] Test: `audio_load("test.ogg")` → non-NULL; `audio_load("test.xyz")` → NULL + klog
 - [ ] Commit: `"kernel: audio_load -- unified format dispatch, audio_play_file, audio_clip_free"`
 
@@ -217,12 +217,12 @@ Vendor `dr_flac.h` (public domain, ~5000 lines). Same redirect pattern. `audio_l
 
 ## 10. `mmsys.cpl` -- Sound Settings Applet `[Sonnet]`
 
-Control Panel Sound applet: master volume slider + mute + output device selector + system sounds enable/disable + test sound button. Extends `08-desktop-shell/TODO-11 §3`.
+Control Panel Sound applet: master volume slider + mute + output device selector + system sounds enable/disable + test sound button. Extends `09-desktop-shell/TODO-11 §3`.
 
 **Files:** `src/apps/control/applets/mmsys.c` (new)
 
 > [!NOTE]
-> → XREF: `08-desktop-shell/TODO-11 §3` -- `mmsys.cpl` stub is registered there; §10 here implements its content. **Layout** (380×320 px inner applet surface): "Playback" group: `CTRL_DROPDOWN` device selector (from `audio_get_device_list()` -- initially just "AC97" or "Intel HDA"); Master Volume `CTRL_SLIDER(0, 100)` + current %; Mute checkbox. "System Sounds" group: enable/disable `CTRL_CHECKBOX` + "Test" button → `audio_play_file(SOUND_STARTUP_PATH)`. "Output Quality" group: sample rate display (read-only, from `g_audio_dev.sample_rate`). Apply button: `audio_set_volume(v)` + Registry write. Changes take effect immediately on slider drag (no Apply needed for volume).
+> → XREF: `09-desktop-shell/TODO-11 §3` -- `mmsys.cpl` stub is registered there; §10 here implements its content. **Layout** (380×320 px inner applet surface): "Playback" group: `CTRL_DROPDOWN` device selector (from `audio_get_device_list()` -- initially just "AC97" or "Intel HDA"); Master Volume `CTRL_SLIDER(0, 100)` + current %; Mute checkbox. "System Sounds" group: enable/disable `CTRL_CHECKBOX` + "Test" button → `audio_play_file(SOUND_STARTUP_PATH)`. "Output Quality" group: sample rate display (read-only, from `g_audio_dev.sample_rate`). Apply button: `audio_set_volume(v)` + Registry write. Changes take effect immediately on slider drag (no Apply needed for volume).
 
 - [ ] `src/apps/control/applets/mmsys.c` implementing `CPlApplet()` messages `CPL_INIT/INQUIRE/DBLCLK/STOP`
 - [ ] Applet inner surface: device `CTRL_DROPDOWN` + volume `CTRL_SLIDER` + mute `CTRL_CHECKBOX`

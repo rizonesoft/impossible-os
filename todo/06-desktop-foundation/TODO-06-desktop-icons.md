@@ -137,7 +137,7 @@ Per-icon context menu with standard actions.
 - [ ] "Delete" = move to Recycle Bin
 - [ ] "Properties" = show Properties dialog (placeholder)
 - [ ] Special folder icons: no Delete or Rename options
-- [ ] Right-click on empty desktop: different menu (handled by TODO-05 §2)
+- [ ] Right-click on empty desktop: different menu (handled by TODO-05 §4)
 - [ ] Commit
 
 **Test checkpoint:** Right-click icon -- context menu. Click "Rename" -- inline rename. Click "Delete" -- icon removed.

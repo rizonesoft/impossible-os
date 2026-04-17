@@ -6,7 +6,7 @@
  * TEB runtime tests (GS self-pointer, ClientId) need a user-mode test
  * binary -- kernel GS points to per-CPU data, not TEB.
  *
- * XREF: 02-kernel-core/TODO-04-peb-teb-user-abi.md §Unit Tests
+ * XREF: 02-kernel-core/TODO-11-peb-teb-user-abi.md §Unit Tests
  * ============================================================================ */
 
 #ifdef KERNEL_TESTS

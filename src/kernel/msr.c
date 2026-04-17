@@ -6,7 +6,7 @@
  * Protected by a spinlock + interrupt disable to prevent SMP races
  * and unrelated #GP swallowing.
  *
- * XREF: 02-kernel-core/TODO-19-x86-64-architecture.md §4
+ * XREF: 02-kernel-core/TODO-09-x86-64-architecture.md §4
  * ============================================================================ */
 
 #include "kernel/msr.h"

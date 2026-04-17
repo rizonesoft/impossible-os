@@ -2,7 +2,7 @@
  * service_numbers.h -- SSDT Main Table Service Number Allocation
  *
  * Canonical mapping of Nt* system service numbers to SSDT indices.
- * Derived from TODO-05-native-api-ssdt.md section 4 allocation table.
+ * Derived from TODO-12-native-api-ssdt.md section 4 allocation table.
  *
  * 470 entries across 34 functional ranges -- full Windows 11 parity
  * plus Impossible OS exclusive extensions.  Shadow SSDT (Win32k)

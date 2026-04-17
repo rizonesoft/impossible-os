@@ -15,7 +15,7 @@
 - `src/shell/` -- `cmd_fw.c` (new) for §6 CLI; register in shell command table
 - `src/desktop/controls.c` + desktop compositing -- `firewall.cpl` applet UI in §8
 - → XREF: `06-networking/TODO-01-tcp-network-infrastructure.md` -- §7 stateful connection tracking table (`ct_lookup()`) is mandatory for §2 inbound established auto-allow
-- → XREF: `06-networking/TODO-04-ipv6-dual-stack.md` -- `ipv6_receive()`/`ipv6_send()` hook points needed by §5 IPv6 filter; ICMPv6 ALLOW rule in default ruleset (§4)
+- → XREF: `06-networking/TODO-04-ipv6-dual-stack.md` -- `ipv6_receive()`/`ipv6_send()` hook points needed by §5 IPv6 filter; ICMPv6 ALLOW rule in default ruleset (§6)
 
 ## Outcome
 
@@ -134,8 +134,8 @@ Extend the same engine to filter IPv6 packets. Add `fw_check()` hooks in `ipv6_r
 
 - [ ] Update `fw_check()` signature: `fw_check(uint32_t src4, uint32_t dst4, const uint8_t *src6, const uint8_t *dst6, uint16_t sp, uint16_t dp, fw_proto_t proto, fw_dir_t dir)` -- update §2 callers to pass NULL for src6/dst6
 - [ ] IPv6 rule filter logic in `fw_check()`: if `src6 != NULL`: run `fw_ip6_match()` for src and dst; for rules where IPv6 prefix fields are all zero and IPv4 fields are also zero: treat as "any-protocol any-address" match
-- [ ] Hook in `ipv6_receive()` (from TODO-04 §2): after version check, before dispatch: extract `src6`, `dst6`, `next_header`, `src_port`, `dst_port`; call `fw_check(..., FW_DIR_IN)`; on BLOCK: drop
-- [ ] Hook in `ipv6_send()` (from TODO-04 §2): before `eth_send()`: call `fw_check(..., FW_DIR_OUT)`; on BLOCK: return -EPERM
+- [ ] Hook in `ipv6_receive()` (from TODO-04 §4): after version check, before dispatch: extract `src6`, `dst6`, `next_header`, `src_port`, `dst_port`; call `fw_check(..., FW_DIR_IN)`; on BLOCK: drop
+- [ ] Hook in `ipv6_send()` (from TODO-04 §4): before `eth_send()`: call `fw_check(..., FW_DIR_OUT)`; on BLOCK: return -EPERM
 - [ ] IPv6 CT auto-allow in §3: extend `ct_lookup()` to accept IPv6 4-tuple; ICMPv6 NDP always bypass (as per §3)
 - [ ] Add IPv6 default rules to `fw_install_defaults()` if not already covered by proto=ICMPV6 rule
 - [ ] Commit: `"net/fw: IPv6 filter -- fw_check IPv6 prefix match, ipv6_receive/send hooks, dual-stack rules"`

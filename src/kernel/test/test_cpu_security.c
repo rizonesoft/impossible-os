@@ -2,7 +2,7 @@
  * test_cpu_security.c -- CPU security hardening unit tests
  *
  * Tests NX, SMEP/SMAP state, and KPTI trampoline infrastructure
- * from TODO-17-kernel-security-hardening.md S1-S3.
+ * from TODO-10-kernel-security-hardening.md S1-S3.
  *
  * All tests are read-only checks -- no live boot infrastructure calls.
  * ============================================================================ */

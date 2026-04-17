@@ -14,7 +14,7 @@
 > required in `TODO-03 §1`.
 >
 > **On-OS telemetry sender** (`telemetry_record_event`, rotating log, `privacy.cpl`)
-> is owned by `10-platform-services/TODO-12 §9`; §7 here builds only the server
+> is owned by `10-platform-services/TODO-12 §9`; §2 here builds only the server
 > receiver (Cloudflare Worker → D1 → Grafana). Do not re-specify the on-OS client.
 >
 > **Release artifacts** (disk image, ISO, code signing, `release-{ver}.json` manifest)
@@ -26,7 +26,7 @@
 ## Inputs
 
 - `10-platform-services/TODO-03-updates-packages.md §1` (→ XREF) -- `update_check()` INI client; §1 here changes the endpoint to JSON and notes the parse upgrade required there
-- `10-platform-services/TODO-12-long-term-features.md §9` (→ XREF) -- `telemetry_record_event()`; HTTP POST stretch; §7 here builds the receiving server
+- `10-platform-services/TODO-12-long-term-features.md §9` (→ XREF) -- `telemetry_record_event()`; HTTP POST stretch; §2 here builds the receiving server
 - `12-installer-release/TODO-01-release-artifacts.md §6` (→ XREF) -- `release-{version}.json` artifact manifest; §4 here consumes it for CDN upload
 - `12-installer-release/TODO-01-release-artifacts.md §1` (→ XREF) -- `OS_VERSION_STRING`, `increment-build.sh`; §5 promotion pipeline increments and tags versions
 - `11-user-platform-sdk/TODO-06-sdk-distribution.md §8` (→ XREF) -- `release-sdk.sh`; §5 promotion coordinates SDK + OS release
@@ -53,9 +53,9 @@ and Cloudflare R2 -- no live server to maintain.
 | 1 | Version manifest API (JSON schema + GitHub Pages) | 💎 | `TODO-03 §1` client parse upgrade |
 | 2 | CDN & hosting (GitHub Releases + Cloudflare R2) | 💎 | `TODO-01 §6` artifact manifest |
 | 3 | Release promotion pipeline (dev→beta→stable) | ⭐ | §1; §2; `TODO-01 §1` versioning |
-| 4 | IPKG package repository (index.json + `ipkg` commands) | 💎 | `TODO-03 §4–6` IPKG installer |
+| 4 | IPKG package repository (index.json + `ipkg` commands) | 💎 | `TODO-03 §6–6` IPKG installer |
 | 5 | Package submission (CI validation + `ipkg-sign`) | ⭐ | §4; `TODO-01 §5` code signing key |
-| 6 | Update delta packages (`make-delta.sh` + client delta-first) | ⭐ | §1 manifest `delta_url` field; `TODO-03 §2` download |
+| 6 | Update delta packages (`make-delta.sh` + client delta-first) | ⭐ | §1 manifest `delta_url` field; `TODO-03 §9` download |
 | 7 | Telemetry pipeline (Cloudflare Worker + D1 + Grafana) | ⭐ | `TODO-12 §9` OS-side sender |
 | 8 | Status page (GitHub Actions health checks + incident log) | ⭐ | §1 §2 §4 §7 all live |
 
@@ -154,11 +154,11 @@ and Cloudflare R2 -- no live server to maintain.
   - `index.json` is rebuilt by CI on every package submission approval (see §5)
 - [ ] **New shell commands** (extend `10-platform-services/TODO-03` IPKG client):
   - `ipkg search <query>` -- `http_get("https://pkg.impossible-os.dev/index.json", ...)` → cache to `C:\Temp\ipkg-index.json`; filter entries where `name` or `description` contains `query` (case-insensitive); print table: `Name | Version | Category | Size | Description`
-  - `ipkg install <name>` -- look up name in cached index; if not found: `ipkg update` + retry; download `.ipkg` from `url`; verify SHA-256 via `cng_sha256()`; call existing `ipkg_install(path)` from `TODO-03 §4`
-  - `ipkg list` -- scan `HKLM\SOFTWARE\Installed\*` subkeys (set by `TODO-03 §4` installer); print `Name | Version | Install Date`
+  - `ipkg install <name>` -- look up name in cached index; if not found: `ipkg update` + retry; download `.ipkg` from `url`; verify SHA-256 via `cng_sha256()`; call existing `ipkg_install(path)` from `TODO-03 §6`
+  - `ipkg list` -- scan `HKLM\SOFTWARE\Installed\*` subkeys (set by `TODO-03 §6` installer); print `Name | Version | Install Date`
   - `ipkg update` -- re-download `index.json` to `C:\Temp\ipkg-index.json`; print `"Package index updated: {count} packages"`
   - `ipkg upgrade` -- for each installed package (`HKLM\SOFTWARE\Installed\*`): compare installed version vs. index version; if newer available: `ipkg install <name>` silently; print summary of upgraded packages
-  - `ipkg remove <name>` -- delegate to existing `TODO-03 §5` uninstaller
+  - `ipkg remove <name>` -- delegate to existing `TODO-03 §3` uninstaller
 - [ ] **Index cache**: stored at `C:\Temp\ipkg-index.json`; cache TTL: 1 hour (check `LastModified` header via `http_get` response); `ipkg update` always forces refresh
 - [ ] **`HKCU\Software\Impossible\PackageManager\RepoURL`** (default `https://pkg.impossible-os.dev/`): user-configurable; all `ipkg` commands use this registry value instead of hardcoded URL
 
@@ -211,7 +211,7 @@ and Cloudflare R2 -- no live server to maintain.
   5. Print `"Delta: {delta_size} bytes ({pct}% of full image), {file_count} changed files"`
   6. Upload delta to R2: `rclone copy build/delta-*.zip r2:impossible-os-releases/{channel}/deltas/`
   7. Populate `delta_url`, `delta_sha256`, `delta_size`, `min_version` fields in channel manifest JSON (§1)
-- [ ] **Client delta-first logic** (note for `10-platform-services/TODO-03 §2`):
+- [ ] **Client delta-first logic** (note for `10-platform-services/TODO-03 §9`):
   - After `update_check()`: if `update_info.delta_url[0] != '\0'` AND current version >= `min_version`: try `update_download(delta_url, delta_sha256, ...)` first
   - `update_apply_delta(path)`: extract `delta.ini`; for each file in `[Files]`: extract from ZIP, verify hash, copy to `C:\`; update `HKLM\SYSTEM\Version` to `NewVersion`; on any file hash mismatch: log error + fall back to full image apply
   - Fallback: if delta download or apply fails: re-run full `update_download()` + `update_apply()` automatically
@@ -287,7 +287,7 @@ updates using the same BLAKE2b-160 hash already in the kernel keep minor updates
 
 - [ ] **Version manifest**: `curl https://impossible-os.dev/api/version?channel=stable` → valid JSON with all required fields; `curl .../api/version?channel=beta` → different JSON; `curl .../api/version?channel=invalid` → 404 or empty
 - [ ] **Client JSON parse**: on-OS `update_check()` with upgraded JSON parser: returns `UPDATE_AVAILABLE` with all `struct update_info` fields populated correctly; `update_info.delta_url` non-empty when manifest has `delta_url`
-- [ ] **Package index**: `ipkg update` → HTTP 200; `ipkg search hello` → table shows `hello-world` package; `ipkg install hello-world` → downloads, SHA-256 match, `TODO-03 §4` installer runs, `HKLM\SOFTWARE\Installed\hello-world` set; `ipkg list` shows it; `ipkg remove hello-world` removes Registry entry
+- [ ] **Package index**: `ipkg update` → HTTP 200; `ipkg search hello` → table shows `hello-world` package; `ipkg install hello-world` → downloads, SHA-256 match, `TODO-03 §6` installer runs, `HKLM\SOFTWARE\Installed\hello-world` set; `ipkg list` shows it; `ipkg remove hello-world` removes Registry entry
 - [ ] **Package submission CI**: submit a valid signed `.ipkg` PR → CI all green → `index.json` updated; submit unsigned `.ipkg` → CI fails with signature error
 - [ ] **Delta generation**: `scripts/make-delta.sh 1.0.21000 1.0.22100` → `delta-*.zip` created; verify `delta_size < full_size / 5`; `update_apply_delta()` applies all changed files with correct hashes; tampered delta file → error logged, full-update fallback triggered
 - [ ] **Telemetry receiver**: POST valid event to `https://telemetry.impossible-os.dev/api/v1/report` → HTTP 200; POST with extra PII field → field discarded silently; POST from EU IP → country stored as `EU-ANON`; burst >1 req/5min from same IP → 429

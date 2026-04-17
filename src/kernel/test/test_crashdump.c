@@ -4,7 +4,7 @@
  * Tests bugcheck code table, KeBugCheckEx parameter storage, STOP code
  * name resolution, and POST code uniqueness.
  *
- * XREF: 02-kernel-core/TODO-16-crash-dump-generation.md Unit Tests
+ * XREF: 02-kernel-core/TODO-27-crash-dump-generation.md Unit Tests
  * ============================================================================ */
 
 #ifdef KERNEL_TESTS

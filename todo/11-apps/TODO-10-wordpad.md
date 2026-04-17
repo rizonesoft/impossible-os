@@ -7,15 +7,15 @@
 
 > [!IMPORTANT]
 > Notepad (§1 gap buffer, §3 file ops, §4 clipboard, §5 find) is already specified in
-> `08-desktop-shell/TODO-10-notepad.md` -- WordPad does **not** share its text engine; the
+> `09-desktop-shell/TODO-10-notepad.md` -- WordPad does **not** share its text engine; the
 > paragraph+run model here is purpose-built for mixed formatting and must be implemented from
 > scratch.
 >
 > `CTRL_COMBOBOX` (font family + size combo-boxes in §4) is planned in
-> `07-graphics-ui/TODO-05-widget-dialogs.md` -- do not build a custom combo widget here; add
-> `CTRL_COMBOBOX` to TODO-05 if it is not yet present when §4 is implemented.
+> `08-graphics-ui/TODO-06-widget-dialogs.md` -- do not build a custom combo widget here; add
+> `CTRL_COMBOBOX` to TODO-05 if it is not yet present when §3 is implemented.
 >
-> Print (§7) depends on `pdf_begin/draw_text/end` from `10-platform-services/TODO-12 §6` --
+> Print (§7) depends on `pdf_begin/draw_text/end` from `10-platform-services/TODO-12 §8` --
 > implement §7 only after the print subsystem is available.
 
 ---
@@ -25,13 +25,13 @@
 - `include/font_mgr.h` -- `ttf_get(slot, px)`, `ttf_draw_string()`, `ttf_draw_char()`, `ttf_measure_width()` -- §3 layout + rendering
 - `include/gfx.h` -- `gfx_fill_rect()`, `gfx_draw_rect()`, `gfx_surface_create()`, `gfx_draw_line()` -- §3 selection + ruler
 - `include/desktop/wm.h` -- `wm_create_window()`, `wm_mark_dirty()`
-- `include/desktop/controls.h` -- `CTRL_BUTTON`, `CTRL_TEXTBOX`, `CTRL_SCROLLBAR_VERT`, `CTRL_SCROLLBAR_HORIZ`, `CTRL_COMBOBOX` (→ `07-graphics-ui/TODO-05`)
-- `include/kernel/clipboard.h` (→ XREF `08-desktop-shell/TODO-01 §1`) -- `clipboard_set/get(CLIP_TEXT, ...)` -- §5 cut/copy/paste
-- `07-graphics-ui/TODO-05-widget-dialogs.md §4` -- `dialog_file_open()`, `dialog_file_save()`, `dialog_color()` -- §4 color picker, §6 file ops
-- `include/desktop/file_assoc.h` (→ XREF `08-desktop-shell/TODO-02 §1`) -- `file_assoc_set(ext, prog_id, path)` -- §6
+- `include/desktop/controls.h` -- `CTRL_BUTTON`, `CTRL_TEXTBOX`, `CTRL_SCROLLBAR_VERT`, `CTRL_SCROLLBAR_HORIZ`, `CTRL_COMBOBOX` (→ `08-graphics-ui/TODO-05`)
+- `include/kernel/clipboard.h` (→ XREF `09-desktop-shell/TODO-01 §1`) -- `clipboard_set/get(CLIP_TEXT, ...)` -- §5 cut/copy/paste
+- `08-graphics-ui/TODO-06-widget-dialogs.md §3` -- `dialog_file_open()`, `dialog_file_save()`, `dialog_color()` -- §3 color picker, §6 file ops
+- `include/desktop/file_assoc.h` (→ XREF `09-desktop-shell/TODO-02 §1`) -- `file_assoc_set(ext, prog_id, path)` -- §6
 - `include/registry.h` -- `reg_get_string`, `reg_set_string` -- §6 recent files
 - `include/kernel/vfs.h` -- `vfs_open`, `vfs_read`, `vfs_write`, `vfs_create`, `vfs_stat`
-- `10-platform-services/TODO-12-long-term-features.md §6` -- `pdf_begin`, `pdf_draw_text`, `pdf_draw_rect`, `pdf_end` -- §7 print stretch
+- `10-platform-services/TODO-12-long-term-features.md §8` -- `pdf_begin`, `pdf_draw_text`, `pdf_draw_rect`, `pdf_end` -- §2 print stretch
 
 ---
 
@@ -51,7 +51,7 @@
 | 4 | Toolbar + Menus | 💎 | §3 rendering, `CTRL_COMBOBOX`, `dialog_color` |
 | 5 | Formatting Interactions | 💎 | §3 + §4 stable |
 | 6 | File Operations + File Associations | 💎 | §2 RTF reader/writer, `dialog_file_open/save`, `file_assoc_set` |
-| 7 | Print (Stretch) | 💎 | §3 layout, `pdf_begin/draw_text/end` TODO-12 §6 |
+| 7 | Print (Stretch) | 💎 | §3 layout, `pdf_begin/draw_text/end` TODO-12 §8 |
 
 ---
 
@@ -199,11 +199,11 @@
 
 ## 7. Print (Stretch) `[Sonnet]`
 
-> → XREF: `10-platform-services/TODO-12-long-term-features.md §6` -- `pdf_begin/draw_text/end`.
+> → XREF: `10-platform-services/TODO-12-long-term-features.md §8` -- `pdf_begin/draw_text/end`.
 
 - [ ] **Pagination**: compute page height in points (A4 = 841.89 pt or Letter = 792 pt); walk layout lines (§3); break when accumulated height exceeds page height minus margins
 - [ ] **Print preview window**: `wm_create_window("Print Preview", 800, 600)` -- renders each page as a thumbnail bitmap; `[← Prev]` `[Next →]` navigation; `[Close Preview]`
-- [ ] **File→Print**: call `pdf_begin(out_path, page_width_pt, page_height_pt)` from TODO-12 §6; for each page: `pdf_begin_page()` → for each layout line on page: `pdf_draw_text(x, y, text, font_name, size_pt, color)` → for each decorated run: `pdf_draw_rect` for background fills, underlines; `pdf_end_page()`; `pdf_end()`
+- [ ] **File→Print**: call `pdf_begin(out_path, page_width_pt, page_height_pt)` from TODO-12 §8; for each page: `pdf_begin_page()` → for each layout line on page: `pdf_draw_text(x, y, text, font_name, size_pt, color)` → for each decorated run: `pdf_draw_rect` for background fills, underlines; `pdf_end_page()`; `pdf_end()`
 - [ ] **Print dialog**: `dialog_confirm("Print to PDF?\nOutput: C:\\Users\\{name}\\Documents\\{filename}.pdf", MB_OKCANCEL)` → on OK: run pagination + PDF export; toast `"Document exported to {path}"`
 - [ ] **Page Setup**: paper size dropdown (A4/Letter/A5), margin inputs (top/bottom/left/right in mm); stored in `HKCU\Software\Impossible\WordPad\PageSetup\*`
 

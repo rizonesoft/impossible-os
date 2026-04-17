@@ -10,8 +10,8 @@
 - `src/kernel/drivers/ahci/ahci_atapi.c` + `include/kernel/drivers/ahci_internal.h` -- existing ATAPI transport; `atapi_dma_command(port, cdb, cdb_len, buf, buf_len, dir)` is the CDB issuing primitive for §1; `atapi_do_read(port, lba, count, buf)` is the cooked-sector read primitive for §2–§5
 - `include/kernel/drivers/ahci.h` -- `ahci_atapi_read(atapi_idx, lba, count, buf)` public API; `ahci_atapi_capacity(atapi_idx)` for disc capacity
 - `src/kernel/fs/vfs.c` + `include/kernel/fs/vfs.h` -- `vfs_mount()`, `vfs_fs_driver`, read-only mount via `VFS_READONLY`
-- → XREF: `05-storage-filesystems/TODO-03-volume-management-automount.md §7` -- optical drive handling; `optical_probe()` is step 7 in `vfs_probe()`; tray-open command and autorun stub are owned there; this TODO provides the FS-level mount for `vfs_probe()` to call
-- → XREF: `05-storage-filesystems/TODO-05-win32-file-io-api.md §4` -- `CreateFile` on an optical drive letter calls `NtCreateFile` → `vfs_open` → optical fs vtable; ensure all three vtables expose the full read-only 14-entry `vfs_fs_driver`
+- → XREF: `05-storage-filesystems/TODO-03-volume-management-automount.md §8` -- optical drive handling; `optical_probe()` is step 7 in `vfs_probe()`; tray-open command and autorun stub are owned there; this TODO provides the FS-level mount for `vfs_probe()` to call
+- → XREF: `05-storage-filesystems/TODO-05-win32-file-io-api.md §3` -- `CreateFile` on an optical drive letter calls `NtCreateFile` → `vfs_open` → optical fs vtable; ensure all three vtables expose the full read-only 14-entry `vfs_fs_driver`
 - → XREF: `04-drivers-hardware/TODO-xx-ahci-driver` -- AHCI ATAPI port detection (`AHCI_SIG_ATAPI`, `is_atapi` flag, `ahci_atapi_count()`) provides the `atapi_idx` used throughout §1
 
 ## Outcome
@@ -158,13 +158,13 @@ Implement `GetVolumeInformationW` for optical drives. Return the disc volume ide
 **Files:** `src/kernel/fs/optical/optical_probe.c` (extend)
 
 > [!NOTE]
-> `GetVolumeInformationW` for the optical volume driver: `lpVolumeNameBuffer` → disc label (from PVD `Volume Identifier` for ISO/Joliet, or LVD `Logical Volume Identifier` for UDF, decoded to UTF-16); `lpFileSystemNameBuffer` → `"ISO 9660"`, `"Joliet"`, or `"UDF"` depending on mounted format; `lpVolumeSerialNumber` → CRC32 of the 128-byte `Volume Set Identifier` from the PVD (or UDF UUID if available); `lpMaximumComponentLength` → 255 (Joliet/UDF) or 31 (base ISO 9660) or 64 (Joliet Level 1/2); `lpFileSystemFlags` → `FILE_READ_ONLY_VOLUME | FILE_UNICODE_ON_DISK`. `GetDriveTypeW` returns `DRIVE_CDROM (5)` for any optical drive letter, regardless of disc format. → XREF: `05-storage-filesystems/TODO-03-volume-management-automount.md §7` for Win32 volume API registration.
+> `GetVolumeInformationW` for the optical volume driver: `lpVolumeNameBuffer` → disc label (from PVD `Volume Identifier` for ISO/Joliet, or LVD `Logical Volume Identifier` for UDF, decoded to UTF-16); `lpFileSystemNameBuffer` → `"ISO 9660"`, `"Joliet"`, or `"UDF"` depending on mounted format; `lpVolumeSerialNumber` → CRC32 of the 128-byte `Volume Set Identifier` from the PVD (or UDF UUID if available); `lpMaximumComponentLength` → 255 (Joliet/UDF) or 31 (base ISO 9660) or 64 (Joliet Level 1/2); `lpFileSystemFlags` → `FILE_READ_ONLY_VOLUME | FILE_UNICODE_ON_DISK`. `GetDriveTypeW` returns `DRIVE_CDROM (5)` for any optical drive letter, regardless of disc format. → XREF: `05-storage-filesystems/TODO-03-volume-management-automount.md §8` for Win32 volume API registration.
 
 - [ ] `optical_get_label(atapi_idx, buf, buf_len)`: return label from whichever format is mounted (ISO PVD / Joliet SVD / UDF LVD); trim trailing spaces (ISO 9660 pads with spaces to 32 bytes)
 - [ ] `optical_get_fsname(atapi_idx, buf)` → `"ISO 9660"` / `"Joliet"` / `"UDF 2.01"` (read UDF revision from LVD `DomainIdentifier`)
 - [ ] `optical_get_serial(atapi_idx)` → CRC32 of 128-byte Volume Set Identifier from PVD; for UDF: truncate UUID to 32-bit
 - [ ] `optical_get_max_component_len(atapi_idx)` → 255 (UDF/Joliet L3), 64 (Joliet L2), 31 (Joliet L1), 31 (ISO base), 255 (Rock Ridge)
-- [ ] Wire into Win32 `GetVolumeInformationW` dispatch (→ XREF: `05-storage-filesystems/TODO-03-volume-management-automount.md §5`)
+- [ ] Wire into Win32 `GetVolumeInformationW` dispatch (→ XREF: `05-storage-filesystems/TODO-03-volume-management-automount.md §3`)
 - [ ] `GetDriveTypeW` for any optical letter returns `DRIVE_CDROM` unconditionally (set in volume mount metadata at §6)
 - [ ] Commit: `"fs/optical: GetVolumeInformationW -- disc label, filesystem name, serial CRC32, GetDriveTypeW=CDROM"`
 

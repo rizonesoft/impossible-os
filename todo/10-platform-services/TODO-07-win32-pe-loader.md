@@ -15,9 +15,9 @@
 - `include/kernel/mm/vmm.h` -- `vmm_map_user()`, `vmm_alloc_user()` -- §4 section mapping at `ImageBase`
 - `user/lib/crt0.asm` -- existing ELF `_start` (replace for PE; keep ELF version as `crt0_elf.asm`) -- §9
 - `user/include/syscall.h` -- existing Linux-style ABI (extend with Windows x64 ABI wrapper macros) -- §2, §9
-- → XREF: `02-kernel-core/TODO-11-security-reference-monitor.md` -- privilege model; §1 SYSRET ring transition is the security boundary
-- → XREF: `02-kernel-core/TODO-17-kernel-security-hardening.md` -- SMEP/SMAP; §1 ring-3 execution must respect kernel page protections
-- → XREF: `02-kernel-core/TODO-08-binary-system.md` -- scope overlap: PE header structs, section loader, import resolver (including API-set + delay-load/bound import handling), and base relocation are authoritative in TODO-08 (kernel-level binary format infrastructure). This TODO focuses on Win32 subsystem integration: SYSCALL/SYSRET ABI, user CRT, and `pe_exec()` process launch. §3–§6 here should consume the kernel PE loader from TODO-08 §7–§10,§19 rather than re-implementing.
+- → XREF: `02-kernel-core/TODO-15-security-reference-monitor.md` -- privilege model; §1 SYSRET ring transition is the security boundary
+- → XREF: `02-kernel-core/TODO-10-kernel-security-hardening.md` -- SMEP/SMAP; §1 ring-3 execution must respect kernel page protections
+- → XREF: `02-kernel-core/TODO-17-binary-system.md` -- scope overlap: PE header structs, section loader, import resolver (including API-set + delay-load/bound import handling), and base relocation are authoritative in TODO-08 (kernel-level binary format infrastructure). This TODO focuses on Win32 subsystem integration: SYSCALL/SYSRET ABI, user CRT, and `pe_exec()` process launch. §1–§6 here should consume the kernel PE loader from TODO-08 §7–§10,§19 rather than re-implementing.
 - → XREF: `10-platform-services/TODO-08` (next) -- Win32 API stubs (CreateFile/ReadFile/CreateProcess/CreateWindow); §6 IAT resolution depends on those stubs being present
 
 ## Outcome

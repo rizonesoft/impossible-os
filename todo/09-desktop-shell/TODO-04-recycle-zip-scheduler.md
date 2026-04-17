@@ -3,7 +3,7 @@
 > **Goal:** Build three independent infrastructure pieces that unlock production-quality core apps: a fully-featured Recycle Bin (counter-keyed trash with meta sidecars + restore window), a miniz-backed ZIP archive API with shell commands, and a 16-slot task scheduler with PIT tick + built-in recurring tasks and an `at` command.
 
 > [!IMPORTANT]
-> **Already exists**: `vfs_unlink(path)`, `vfs_rename(old, new)`, `vfs_stat(path, stat)`, `vfs_readdir`, `vfs_create`, `vfs_read/write` in `vfs.h`. `registry_flush()` in `registry.h`. `kmalloc/kfree` in `heap.h`. `klog(level, subsystem, fmt, ...)` in `klog.h`. `system_get_ticks()` + `PIT_TARGET_FREQ=100` for scheduler timing. `time_now()` (TODO-10 §1) for deletion timestamps. `shortcut_execute()` (TODO-02 §4) for `at` command execution. `dialog_input()` + `CTRL_LISTVIEW` (TODO-05) for recycle bin window app. `context_menu_show()` (TODO-07 §1) for right-click items. **Scope overlap**: §1 Recycle Bin core supersedes the lighter stub described in TODO-02 §6 -- implement only once here; TODO-02 §6 becomes a forward reference to this TODO. **Missing**: `src/libs/` directory, miniz, `trash_*`, `zip_*`, `sched_task*`. Complete sections in order: recycle bin core → bin window app → miniz integration → ZIP API → ZIP shell commands → task scheduler → built-in tasks → `at` command.
+> **Already exists**: `vfs_unlink(path)`, `vfs_rename(old, new)`, `vfs_stat(path, stat)`, `vfs_readdir`, `vfs_create`, `vfs_read/write` in `vfs.h`. `registry_flush()` in `registry.h`. `kmalloc/kfree` in `heap.h`. `klog(level, subsystem, fmt, ...)` in `klog.h`. `system_get_ticks()` + `PIT_TARGET_FREQ=100` for scheduler timing. `time_now()` (TODO-10 §1) for deletion timestamps. `shortcut_execute()` (TODO-02 §5) for `at` command execution. `dialog_input()` + `CTRL_LISTVIEW` (TODO-05) for recycle bin window app. `context_menu_show()` (TODO-07 §1) for right-click items. **Scope overlap**: §1 Recycle Bin core supersedes the lighter stub described in TODO-02 §6 -- implement only once here; TODO-02 §6 becomes a forward reference to this TODO. **Missing**: `src/libs/` directory, miniz, `trash_*`, `zip_*`, `sched_task*`. Complete sections in order: recycle bin core → bin window app → miniz integration → ZIP API → ZIP shell commands → task scheduler → built-in tasks → `at` command.
 
 ## Inputs
 
@@ -11,13 +11,13 @@
 - `include/registry.h` -- `registry_flush()`, `RegGetValue/SetValueEx` -- used by §1 MaxSize config and §7 scheduler task configs
 - `include/kernel/mm/heap.h` -- `kmalloc/kfree` -- used by §3 miniz memory redirectors
 - `include/kernel/drivers/pit.h` -- `system_get_ticks()`, `PIT_TARGET_FREQ` -- used by §6 scheduler tick
-- `include/kernel/time.h` (TODO-10 §1) -- `time_now()`, `time_to_datetime()` -- used by §1 deletion timestamp and §8 `at` HH:MM parse
+- `include/kernel/time.h` (TODO-10 §1) -- `time_now()`, `time_to_datetime()` -- used by §1 deletion timestamp and §9 `at` HH:MM parse
 - `include/kernel/klog.h` -- `klog()` -- used throughout for operation logs
-- `include/desktop/controls.h` (TODO-05) -- `CTRL_LISTVIEW`, `dialog_input()` -- used by §2 recycle bin window table
+- `include/desktop/controls.h` (TODO-05) -- `CTRL_LISTVIEW`, `dialog_input()` -- used by §4 recycle bin window table
 - `include/desktop/context_menu.h` (TODO-07 §1) -- `context_menu_show()` -- used by §2 right-click item menu
-- `include/desktop/shortcut.h` (TODO-02 §4) -- `shortcut_execute()` -- used by §8 `at` command execution
-- → XREF: `08-desktop-shell/TODO-02-file-associations-resources.md §6` -- §1 is the full implementation that replaces the stub; TODO-02 §6 trash icon states wire to `trash_count()` from here
-- → XREF: `08-desktop-shell/TODO-03-service-manager.md §2` -- `registryd` and `ntpd` built-in daemons (TODO-03) consume `registry_flush()` and `ntp_sync()`; §7 built-in scheduled tasks are a complementary general-purpose scheduling layer for one-shot and timed callbacks
+- `include/desktop/shortcut.h` (TODO-02 §5) -- `shortcut_execute()` -- used by §8 `at` command execution
+- → XREF: `09-desktop-shell/TODO-02-file-associations-resources.md §6` -- §1 is the full implementation that replaces the stub; TODO-02 §6 trash icon states wire to `trash_count()` from here
+- → XREF: `09-desktop-shell/TODO-03-service-manager.md §9` -- `registryd` and `ntpd` built-in daemons (TODO-03) consume `registry_flush()` and `ntp_sync()`; §8 built-in scheduled tasks are a complementary general-purpose scheduling layer for one-shot and timed callbacks
 - → XREF: `06-networking/TODO-06-ntp-status-winsock.md` -- `ntp_sync()` called by §7 scheduled NTP task
 
 ## Outcome
@@ -147,7 +147,7 @@ Vendor miniz (MIT, ~5 K lines, single-file C) at `src/libs/miniz/miniz.c` + `inc
 **Files:** `src/kernel/scheduler_tasks.c` (new), `include/kernel/scheduler_tasks.h` (new)
 
 > [!NOTE]
-> Distinct from the process scheduler (`sched.c`) -- this is a simple wall-clock task scheduler for periodic callbacks. `sched_task_tick()` is called from the PIT workqueue (once per second, same pattern as `svc_monitor_tick()` in TODO-03 §3). It compares `time_now()` against each entry's `next_run`; if elapsed: call `task->callback()`; update `task->next_run = time_now() + task->interval_seconds`; store return value in `task->last_result`. One-shot tasks: `interval_seconds == 0` → set `task->enabled = 0` after run (auto-remove). `sched_task_add(name, cb, interval_s, enabled)`: find free slot; Registry persist to `HKLM\SYSTEM\Scheduler\Tasks\{name}\{Interval,Enabled}`. Slot 0 reserved for internal use. Max 16 entries.
+> Distinct from the process scheduler (`sched.c`) -- this is a simple wall-clock task scheduler for periodic callbacks. `sched_task_tick()` is called from the PIT workqueue (once per second, same pattern as `svc_monitor_tick()` in TODO-03 §5). It compares `time_now()` against each entry's `next_run`; if elapsed: call `task->callback()`; update `task->next_run = time_now() + task->interval_seconds`; store return value in `task->last_result`. One-shot tasks: `interval_seconds == 0` → set `task->enabled = 0` after run (auto-remove). `sched_task_add(name, cb, interval_s, enabled)`: find free slot; Registry persist to `HKLM\SYSTEM\Scheduler\Tasks\{name}\{Interval,Enabled}`. Slot 0 reserved for internal use. Max 16 entries.
 
 - [ ] `typedef struct { char name[32]; int (*callback)(void); uint32_t interval_seconds; int64_t next_run_unix; uint8_t enabled; int last_result; } sched_task_t;`
 - [ ] `sched_task_t g_sched_tasks[SCHED_MAX]` + `#define SCHED_MAX 16` + `spinlock_t g_sched_lock`
@@ -166,7 +166,7 @@ NTP sync every 3600 s → `ntp_sync()`. Registry flush every 2 s → `registry_f
 **Files:** `src/kernel/scheduler_tasks.c` (extend)
 
 > [!NOTE]
-> Note relationship to TODO-03 §2 daemons: `registryd` in TODO-03 is a continuous kernel thread looping every 2 s; §7 here provides an alternative scheduled-callback path for the same job. Prefer registering `registryd` as a task here -- replace the TODO-03 `registryd_thread()` with a `sched_task_add("registryd", registry_flush, 2, 1)` call. This removes a kernel thread and simplifies the design. `search_index_rebuild()` stub: just `klog(LOG_INFO, "indexd", "index rebuild placeholder")` until file search is implemented. Log rotate: `klog_rotate(5000)` -- new function in `klog.c` that reads `klog.txt`, keeps last 5000 lines, rewrites.
+> Note relationship to TODO-03 §9 daemons: `registryd` in TODO-03 is a continuous kernel thread looping every 2 s; §8 here provides an alternative scheduled-callback path for the same job. Prefer registering `registryd` as a task here -- replace the TODO-03 `registryd_thread()` with a `sched_task_add("registryd", registry_flush, 2, 1)` call. This removes a kernel thread and simplifies the design. `search_index_rebuild()` stub: just `klog(LOG_INFO, "indexd", "index rebuild placeholder")` until file search is implemented. Log rotate: `klog_rotate(5000)` -- new function in `klog.c` that reads `klog.txt`, keeps last 5000 lines, rewrites.
 
 - [ ] `void sched_builtins_init(void)` -- call `sched_task_add()` for each built-in task; called from `sched_init()`
 - [ ] `sched_task_add("ntp_sync", ntp_sync, 3600, 1)` -- `ntp_sync()` returns 0 on success

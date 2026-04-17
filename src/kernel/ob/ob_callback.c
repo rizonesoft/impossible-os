@@ -8,7 +8,7 @@
  * SMP-safe via irqsave spinlock -- callbacks are invoked in the handle
  * allocation hot path so the lock hold time must be minimal.
  *
- * XREF: 02-kernel-core/TODO-03-object-manager.md S13
+ * XREF: 02-kernel-core/TODO-05-object-manager.md S13
  * ============================================================================ */
 
 #include "kernel/ob/ob_callback.h"

@@ -3,7 +3,7 @@
 > **Goal:** Implement the two most-used remote access protocols: FTP (plain, FTPS/FTPES, interactive shell, `wget ftp://`, File Manager `ftp://` URL), and SSH2 (transport with Curve25519/ChaCha20-Poly1305 via **monocypher**, password + Ed25519 public-key auth, interactive channel + PTY relay, `ssh`/`scp`/`ssh-keygen` shell commands, SSH agent, and SFTP subsystem with `sftp://` URL). Together these make Impossible OS viable for system administration and remote file management.
 
 > [!IMPORTANT]
-> TCP + TLS (Mbed TLS from TODO-03) must be complete before any work here begins. SSH uses **monocypher** (MIT, ~2K lines of portable C) for Curve25519 ECDH, ChaCha20-Poly1305 AEAD, and Ed25519 signing -- port it the same way Mbed TLS was ported (redirect `malloc`/`free` → `kmalloc`/`kfree`, compile with `-ffreestanding`). FTP plain-text builds first (§1–§2) as it has no crypto dependency; FTPS/FTPES (§3) adds Mbed TLS after FTP is proven. SSH builds on monocypher and existing TCP sockets (TODO-02 §5). The `terminal_open()`/`terminal_puts()`/`terminal_trygetchar()` API from `include/desktop/terminal.h` is the PTY relay bridge for the SSH interactive session. SFTP (§9) requires SSH channels (§6) to be complete -- do not start §9 until §6 passes the verification test.
+> TCP + TLS (Mbed TLS from TODO-03) must be complete before any work here begins. SSH uses **monocypher** (MIT, ~2K lines of portable C) for Curve25519 ECDH, ChaCha20-Poly1305 AEAD, and Ed25519 signing -- port it the same way Mbed TLS was ported (redirect `malloc`/`free` → `kmalloc`/`kfree`, compile with `-ffreestanding`). FTP plain-text builds first (§1–§9) as it has no crypto dependency; FTPS/FTPES (§5) adds Mbed TLS after FTP is proven. SSH builds on monocypher and existing TCP sockets (TODO-02 §3). The `terminal_open()`/`terminal_puts()`/`terminal_trygetchar()` API from `include/desktop/terminal.h` is the PTY relay bridge for the SSH interactive session. SFTP (§9) requires SSH channels (§6) to be complete -- do not start §9 until §6 passes the verification test.
 
 ## Inputs
 
@@ -13,7 +13,7 @@
 - `include/desktop/terminal.h` -- `terminal_open()`, `terminal_puts()`, `terminal_trygetchar()` for SSH PTY relay
 - `src/kernel/fs/vfs.c` -- `vfs_open()`/`vfs_read()`/`vfs_write()` for SCP/SFTP file transfers and known_hosts file
 - `include/kernel/net/dns.h` + `dns_resolve()` -- resolve hostnames for SSH/FTP connections
-- → XREF: `06-networking/TODO-03-http-tls.md` -- Mbed TLS (`tls_connect`) used by §3 FTPS/FTPES; monocypher port mirrors the same `-ffreestanding` compile approach as Mbed TLS
+- → XREF: `06-networking/TODO-03-http-tls.md` -- Mbed TLS (`tls_connect`) used by §5 FTPS/FTPES; monocypher port mirrors the same `-ffreestanding` compile approach as Mbed TLS
 - → XREF: `06-networking/TODO-02-dns-sockets.md` -- BSD socket layer (`kern_connect/send/recv/close`) used by both SSH and FTP
 - → XREF: `06-networking/TODO-07-web-browser.md` -- `wget ftp://` (§8) extends the `wget` command from TODO-06 §4; `sftp://` File Manager URL support shares VFS path conventions
 
@@ -88,7 +88,7 @@ Interactive `ftp host` with subcommands (ls, cd, get, put, mget, mput, pwd, mkdi
 **Files:** `src/apps/ftp/ftp.c` (extend), `include/apps/ftp/ftp.h` (extend)
 
 > [!NOTE]
-> Explicit FTPS (FTPES): after plain TCP connect and `220` greeting, send `AUTH TLS\r\n`; expect `234` response; call `tls_connect(ctrl_fd, hostname)` from TODO-03 §7 -- from this point all control channel I/O goes through `tls_send()`/`tls_recv()` instead of `kern_send()`/`kern_recv()`. Then send `PBSZ 0\r\n` (protection buffer size) and `PROT P\r\n` (data channel protection = private = encrypted). Encrypted data channel: `ftp_pasv()` still opens a second TCP fd; wrap it with `tls_connect(data_fd, hostname)` before RETR/STOR. The `ftp_session_t` gains `tls_conn_t *ctrl_tls; tls_conn_t *data_tls;` fields; the `ftp_send_cmd()` and `ftp_readline()` functions use `tls_send()`/`tls_recv()` when `ctrl_tls != NULL`. Implicit FTPS (port 990) is not supported -- log a warning if port 990 is specified.
+> Explicit FTPS (FTPES): after plain TCP connect and `220` greeting, send `AUTH TLS\r\n`; expect `234` response; call `tls_connect(ctrl_fd, hostname)` from TODO-03 §8 -- from this point all control channel I/O goes through `tls_send()`/`tls_recv()` instead of `kern_send()`/`kern_recv()`. Then send `PBSZ 0\r\n` (protection buffer size) and `PROT P\r\n` (data channel protection = private = encrypted). Encrypted data channel: `ftp_pasv()` still opens a second TCP fd; wrap it with `tls_connect(data_fd, hostname)` before RETR/STOR. The `ftp_session_t` gains `tls_conn_t *ctrl_tls; tls_conn_t *data_tls;` fields; the `ftp_send_cmd()` and `ftp_readline()` functions use `tls_send()`/`tls_recv()` when `ctrl_tls != NULL`. Implicit FTPS (port 990) is not supported -- log a warning if port 990 is specified.
 
 - [ ] Extend `ftp_session_t`: add `tls_conn_t *ctrl_tls; tls_conn_t *data_tls; uint8_t use_tls;`
 - [ ] `ftp_connect_tls(host, user, pass, &session)` → 0 or -errno: plain `ftp_connect()` first; send `AUTH TLS`; on `234`: `tls_connect(ctrl_fd, host)` → store in `session->ctrl_tls`; send `PBSZ 0` + `PROT P` via `tls_send()`

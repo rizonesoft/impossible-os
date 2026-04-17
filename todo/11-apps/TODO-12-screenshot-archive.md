@@ -9,17 +9,17 @@
 > `todo-old/310-Core-Apps/TODO-370-Utility-Apps.md` are migrated here.
 > **Do not delete that file** -- remaining sections are covered in TODO-13.
 >
-> **Scope overlap:** `08-desktop-shell/TODO-12-utilities.md §6` specifies the Win+Shift+S
+> **Scope overlap:** `09-desktop-shell/TODO-12-utilities.md §8` specifies the Win+Shift+S
 > region capture flow and `§7` specifies Archive Manager as utility stubs. This TODO is the
-> full app-layer companion -- implement here; add `→ XREF` from TODO-12-utilities §6+§7 to
+> full app-layer companion -- implement here; add `→ XREF` from TODO-12-utilities §8+§2 to
 > this file when implementing those sections.
 >
 > **Global hotkeys** use `struct hotkey_entry` + `hotkey_table[32]` from
-> `07-graphics-ui/TODO-06-window-manager.md §5`.
+> `08-graphics-ui/TODO-08-window-manager.md §5`.
 > PrtSc = full screen, Alt+PrtSc = active window, Win+Shift+S = region select.
 >
 > **ZIP write API** (`zip_create`, `zip_add_file`, `zip_extract`, `zip_list`) defined in
-> `08-desktop-shell/TODO-04-recycle-zip-scheduler.md §4` -- implement §4 of that TODO before
+> `09-desktop-shell/TODO-04-recycle-zip-scheduler.md §6` -- implement §6 of that TODO before
 > building Archive Manager write operations.
 
 ---
@@ -31,14 +31,14 @@
 - `include/gfx.h` -- `gfx_fill_rect()`, `gfx_blit()`, `gfx_draw_rect()`, `gfx_surface_create()` -- §2 overlay, §3 annotate
 - `include/desktop/wm.h` -- `wm_create_window()` (z_order=32767 for overlay), `wm_mark_dirty()`, `wm_get_focused()` -- §1 §2 §3
 - `include/desktop/controls.h` -- `CTRL_BUTTON`, `CTRL_LISTVIEW`, `CTRL_SCROLLBAR_VERT`, `CTRL_STATUSBAR`, `CTRL_PROGRESSBAR` -- §3 §4
-- `07-graphics-ui/TODO-06-window-manager.md §5` (→ XREF) -- `struct hotkey_entry`, `hotkey_table[]`, `MOD_WIN/MOD_ALT/MOD_SHIFT`, `KEY_PRINTSCREEN` -- §1 §2 global hotkeys
-- `07-graphics-ui/TODO-09-startmenu-tray-notifications.md §5` (→ XREF) -- `notify_send(title, body, icon_id, timeout_ms)` -- §1 §3 toast
-- `08-desktop-shell/TODO-01-clipboard.md §1` (→ XREF) -- `clipboard_set(CLIP_IMAGE, &img)` -- §1 §2 copy to clipboard
-- `07-graphics-ui/TODO-05-widget-dialogs.md §3` (→ XREF) -- `dialog_file_open()`, `dialog_file_save()` -- §3 §4 §5
+- `08-graphics-ui/TODO-08-window-manager.md §5` (→ XREF) -- `struct hotkey_entry`, `hotkey_table[]`, `MOD_WIN/MOD_ALT/MOD_SHIFT`, `KEY_PRINTSCREEN` -- §1 §2 global hotkeys
+- `08-graphics-ui/TODO-11-startmenu-tray-notifications.md §6` (→ XREF) -- `notify_send(title, body, icon_id, timeout_ms)` -- §1 §4 toast
+- `09-desktop-shell/TODO-01-clipboard.md §1` (→ XREF) -- `clipboard_set(CLIP_IMAGE, &img)` -- §1 §2 copy to clipboard
+- `08-graphics-ui/TODO-06-widget-dialogs.md §2` (→ XREF) -- `dialog_file_open()`, `dialog_file_save()` -- §2 §3 §5
 - `include/registry.h` -- `reg_get_string`, `reg_set_string` -- §3 recent captures, §4 last extract path
-- `include/desktop/file_assoc.h` (→ XREF `08-desktop-shell/TODO-02 §1`) -- `file_assoc_set()` -- §5
-- `02-kernel-core/TODO-20-kernel-libraries.md §4` (→ XREF) -- `zip_open`, `zip_entry_count`, `zip_find`, `zip_read`, `zip_close` -- §4 §5 read
-- `08-desktop-shell/TODO-04-recycle-zip-scheduler.md §4` (→ XREF) -- `zip_create`, `zip_add_file`, `zip_extract`, `zip_extract_file`, `zip_list` -- §4 §5 write
+- `include/desktop/file_assoc.h` (→ XREF `09-desktop-shell/TODO-02 §1`) -- `file_assoc_set()` -- §3
+- `02-kernel-core/TODO-03-kernel-libraries.md §6` (→ XREF) -- `zip_open`, `zip_entry_count`, `zip_find`, `zip_read`, `zip_close` -- §6 §3 read
+- `09-desktop-shell/TODO-04-recycle-zip-scheduler.md §6` (→ XREF) -- `zip_create`, `zip_add_file`, `zip_extract`, `zip_extract_file`, `zip_list` -- §6 §5 write
 - `include/kernel/fs/vfs.h` -- `vfs_create`, `vfs_write`, `vfs_mkdir`, `vfs_stat` -- §1 §4 §5 file output
 - `include/kernel/timer.h` -- `system_get_ticks()`, `time_now()` -- §1 timestamp filename, §3 delay
 
@@ -57,7 +57,7 @@
 | 1 | Full + Window Capture + Hotkeys | 💎 | `fb_get_backbuffer`, `image_save_png`, `notify_send`, `hotkey_table` |
 | 2 | Region Select Overlay | ⭐ | §1 capture pipeline, `wm_create_window` z_order overlay |
 | 3 | Snipping Tool UI | 💎 | §1 + §2 capture complete, `CTRL_*` widgets |
-| 4 | Archive Manager | 💎 | `zip_open/create/add_file/extract/list` APIs (TODO-20 §4 + TODO-04 §4) |
+| 4 | Archive Manager | 💎 | `zip_open/create/add_file/extract/list` APIs (TODO-20 §4 + TODO-04 §6) |
 | 5 | ZIP Shell Integration | 💎 | §4 stable, `file_assoc_set`, context menu verbs |
 
 ---

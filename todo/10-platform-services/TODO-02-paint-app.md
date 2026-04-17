@@ -3,7 +3,7 @@
 > **Goal:** Build the bitmap drawing application -- a full Windows Paint equivalent that exercises the complete GFX/widget stack. The drawing primitives, image loader, and compositing engine are already done; this TODO delivers the interactive canvas, tools, color system, undo/redo, and file I/O on top.
 
 > [!IMPORTANT]
-> **Already exists**: `gfx_fill_rect/draw_rect/fill_circle/draw_line/put_pixel/blend_pixel/blit()` in `gfx.h`. `gfx_surface_create/init/destroy()`. `image_load/scale/save_bmp/save_png()` in `image.h`. `ttf_draw_string(FONT_UI)`. `pmm_alloc_contiguous()` for canvas + undo buffers. `wm_create_window()`, `WM_MOUSE_DOWN/MOVE/UP`, `WM_KEYDOWN`. **Forward deps**: `dialog_file_open/save()` + `dialog_input()` + `dialog_color()` (07-graphics-ui/TODO-05); `clipboard_set/get(CLIP_IMAGE)` (08-desktop-shell/TODO-01 §1-3); `CTRL_SLIDER` + `CTRL_MENUBAR` + `CTRL_STATUSBAR` (07-graphics-ui controls). **Missing**: entire `src/apps/paint/` tree; flood fill BFS; PMM undo stack; text tool caret; selection tool. **Note on `image_save_png`**: if `stb_image_write.h` isn't yet wired in `image.h`, add `image_save_png()` impl using `stb_image_write_png()`.
+> **Already exists**: `gfx_fill_rect/draw_rect/fill_circle/draw_line/put_pixel/blend_pixel/blit()` in `gfx.h`. `gfx_surface_create/init/destroy()`. `image_load/scale/save_bmp/save_png()` in `image.h`. `ttf_draw_string(FONT_UI)`. `pmm_alloc_contiguous()` for canvas + undo buffers. `wm_create_window()`, `WM_MOUSE_DOWN/MOVE/UP`, `WM_KEYDOWN`. **Forward deps**: `dialog_file_open/save()` + `dialog_input()` + `dialog_color()` (08-graphics-ui/TODO-05); `clipboard_set/get(CLIP_IMAGE)` (09-desktop-shell/TODO-01 §1-3); `CTRL_SLIDER` + `CTRL_MENUBAR` + `CTRL_STATUSBAR` (07-graphics-ui controls). **Missing**: entire `src/apps/paint/` tree; flood fill BFS; PMM undo stack; text tool caret; selection tool. **Note on `image_save_png`**: if `stb_image_write.h` isn't yet wired in `image.h`, add `image_save_png()` impl using `stb_image_write_png()`.
 
 ## Inputs
 
@@ -13,11 +13,11 @@
 - `include/font_mgr.h` -- `ttf_draw_string(FONT_UI, size)` -- §2 text tool
 - `include/desktop/wm.h` -- `wm_create_window()`, `WM_MOUSE_*`, `WM_KEYDOWN` -- §1 window + events
 - `include/desktop/controls.h` (TODO-05) -- `CTRL_MENUBAR`, `CTRL_STATUSBAR`, `CTRL_SCROLLBAR` -- §1 layout
-- `include/desktop/dialogs.h` (TODO-05) -- `dialog_file_open/save()`, `dialog_input()`, `dialog_color()` -- §5 file dialogs, §3 color picker
+- `include/desktop/dialogs.h` (TODO-05) -- `dialog_file_open/save()`, `dialog_input()`, `dialog_color()` -- §5 file dialogs, §2 color picker
 - `include/desktop/clipboard.h` (TODO-01) -- `clipboard_set/get(CLIP_IMAGE)` -- §6 copy/paste region
-- → XREF: `07-graphics-ui/TODO-05` -- dialog APIs (`dialog_file_open`, `dialog_input`, `dialog_color`); §5 and §3 depend on those
-- → XREF: `08-desktop-shell/TODO-01` -- `CLIP_IMAGE` format in clipboard; §6 selection copy/paste depends on that
-- → XREF: `08-desktop-shell/TODO-02 §1` -- file association `.png/.bmp/.jpg` → Paint; register default editor app
+- → XREF: `08-graphics-ui/TODO-05` -- dialog APIs (`dialog_file_open`, `dialog_input`, `dialog_color`); §5 and §2 depend on those
+- → XREF: `09-desktop-shell/TODO-01` -- `CLIP_IMAGE` format in clipboard; §6 selection copy/paste depends on that
+- → XREF: `09-desktop-shell/TODO-02 §1` -- file association `.png/.bmp/.jpg` → Paint; register default editor app
 
 ## Outcome
 

@@ -5,7 +5,7 @@
 > dispatch, HDC painting model, accelerator tables, window subclassing, cross-process
 > messaging, and common dialogs. This is the architectural substrate that backs the
 > API-surface stubs in `10-platform-services/TODO-08` Sections 10 and 11 and
-> `07-graphics-ui/TODO-11`. Per-export rows for user32: `10-platform-services/TODO-A-user32-export-master-table.md`.
+> `08-graphics-ui/TODO-11`. Per-export rows for user32: `10-platform-services/TODO-A-user32-export-master-table.md`.
 
 > [!IMPORTANT]
 > **Scope boundary**: `TODO-08` Section 10 contains `user32.dll` function stubs
@@ -25,7 +25,7 @@
 > `SYS_REGISTERCLASS`, `SYS_FINDWINDOW`) follow at 74+.
 >
 > **HDC→gfx_surface_t**: `gfx_surface_t *` is the native rendering type. HDC is an opaque
-> 64-bit handle; the GDI object table (→ XREF `07-graphics-ui/TODO-11 §2`) maps HDC handles
+> 64-bit handle; the GDI object table (→ XREF `08-graphics-ui/TODO-11 §7`) maps HDC handles
 > to `gfx_surface_t *`. BeginPaint/EndPaint (§4) use this mapping.
 
 ---
@@ -38,9 +38,9 @@
 - `include/kernel/ipc/` -- `SYS_SHMEM_CREATE=35`, `SYS_SHMEM_MAP=36` -- §7 `WM_COPYDATA`
 - `include/kernel/sched/syscall.h` -- extend with `SYS_GETMESSAGE=74`, `SYS_WAIT_MESSAGE=75`, `SYS_REGISTERCLASS=76`, `SYS_FINDWINDOW=77`
 - `include/kernel/sched/task.h` -- per-task message queue pointer -- §1
-- `07-graphics-ui/TODO-11-win32-gdi-user32-stubs.md §2` (→ XREF) -- GDI object table, HDC→`gfx_surface_t` mapping
-- `07-graphics-ui/TODO-04-ui-controls.md` (→ XREF) -- `CTRL_*` implementations backing built-in window classes (§2)
-- `07-graphics-ui/TODO-05-widget-dialogs.md §8` (→ XREF) -- `dialog_color` + file dialogs backing `ChooseColor`/`ChooseFont` (§8)
+- `08-graphics-ui/TODO-14-win32-gdi-user32-stubs.md §7` (→ XREF) -- GDI object table, HDC→`gfx_surface_t` mapping
+- `08-graphics-ui/TODO-04-ui-controls.md` (→ XREF) -- `CTRL_*` implementations backing built-in window classes (§4)
+- `08-graphics-ui/TODO-06-widget-dialogs.md §8` (→ XREF) -- `dialog_color` + file dialogs backing `ChooseColor`/`ChooseFont` (§8)
 - `10-platform-services/TODO-08-win32-api-surface.md §10 §11` (→ XREF) -- `user32.dll` / `gdi32.dll` stubs that delegate to subsystem (do not duplicate)
 - `10-platform-services/TODO-07-win32-pe-loader.md §2` (→ XREF) -- Win32 syscall range `SYS_CREATEFILE=60`…`SYS_POSTMESSAGE=73`
 - `include/kernel/drivers/framebuffer.h` -- `fb_lock_compositor`, dirty-rect API -- §4
@@ -65,7 +65,7 @@ synchronous reply. `ChooseColor`/`ChooseFont` show the common dialogs from `TODO
 | 1 | Win32 subsystem architecture + message queue | 💎 | `struct task` queue field; `SYS_WAIT_MESSAGE=75` |
 | 2 | Window class registry + built-in classes | 💎 | §1; `CTRL_*` (TODO-04); `wm_create_window` |
 | 3 | WndProc dispatch + DefWindowProc | 💎 | §1 §2; `TranslateMessage` key tables |
-| 4 | Win32 painting model (HDC + dirty rect) | 💎 | §1 §2; HDC table (TODO-11 §2); compositor |
+| 4 | Win32 painting model (HDC + dirty rect) | 💎 | §1 §2; HDC table (TODO-11 §7); compositor |
 | 5 | Message filters + accelerator tables | 💎 | §1 §3; `TranslateMessage` complete; `SYS_POSTMESSAGE=73` |
 | 6 | Window subclassing + property store | 💎 | §2 §3 |
 | 7 | Inter-process window messaging | 💎 | §1; `pipe.h`; `SYS_SHMEM_CREATE/MAP`; §2 `FindWindow` |
@@ -208,7 +208,7 @@ process in future iteration)
 > Novel: maps Win32 HDC to compositor `gfx_surface_t`; integrates dirty-rect tracking
 > with the WM compositor update cycle. No prior Impossible OS HDC model exists.
 
-**Source:** `src/user/csrss/paint.c`; extends GDI object table in `07-graphics-ui/TODO-11 §2`
+**Source:** `src/user/csrss/paint.c`; extends GDI object table in `08-graphics-ui/TODO-11 §7`
 
 - [ ] **`PAINTSTRUCT`**:
   ```c
@@ -230,7 +230,7 @@ process in future iteration)
 - [ ] **`HDC BeginPaint(hwnd, PAINTSTRUCT *ps)`**:
   - Copy `dirty_rect` into `ps->rcPaint`; set `ps->fErase = erase_background`
   - Get window's `gfx_surface_t *` from WM internal surface list (by HWND internal handle)
-  - Allocate HDC handle via GDI object table (→ XREF `TODO-11 §2`): `hdc_alloc(surf)` → HDC
+  - Allocate HDC handle via GDI object table (→ XREF `TODO-11 §7`): `hdc_alloc(surf)` → HDC
   - Set `ps->hdc = hdc`; call `ValidateRect(hwnd, NULL)` to clear dirty region; return HDC
 - [ ] **`BOOL EndPaint(hwnd, const PAINTSTRUCT *ps)`**:
   - Mark the `gfx_surface_t` region covering `ps->rcPaint` as compositor-dirty
@@ -324,22 +324,22 @@ process in future iteration)
 
 **Source:** `src/user/csrss/comdlg.c`; header `include/win32/comdlg.h`
 
-> Delegates to `07-graphics-ui/TODO-05 §8` dialog implementations via function pointers
+> Delegates to `08-graphics-ui/TODO-05 §8` dialog implementations via function pointers
 > registered at subsystem init. No UI logic here -- this is the Win32 API wrapper layer.
 
 - [ ] **`BOOL ChooseColorA(CHOOSECOLOR *cc)`**:
-  - Show `dialog_color()` (→ XREF `07-graphics-ui/TODO-05 §8`) modal dialog with initial color `cc->rgbResult`
+  - Show `dialog_color()` (→ XREF `08-graphics-ui/TODO-05 §8`) modal dialog with initial color `cc->rgbResult`
   - `cc->lpCustColors[16]` preserved as custom color history
   - On OK: `cc->rgbResult = chosen_color`; return TRUE; on Cancel: return FALSE
   - `cc->Flags & CC_FULLOPEN`: show full expanded picker; `CC_PREVENTFULLOPEN`: hide expand button
 - [ ] **`BOOL ChooseFontA(CHOOSEFONT *cf)`**:
-  - Show font picker dialog (→ XREF `07-graphics-ui/TODO-13 §6` font manager): list system fonts via `font_mgr_list()`; preview with `ttf_draw_string()`; size/style selectors
+  - Show font picker dialog (→ XREF `08-graphics-ui/TODO-02-text-font-internationalization.md §1,§5` font catalog): list system fonts via `font_mgr_list()`; preview with `ttf_draw_string()`; size/style selectors
   - On OK: populate `cf->lpLogFont` (`LOGFONTA`: face name, height, weight, italic, underline); return TRUE
   - `CF_EFFECTS`: show strikethrough + color selector; `CF_FIXEDPITCHONLY`: filter to monospaced only
 - [ ] **`DWORD CommDlgExtendedError(void)`**: return per-thread last common dialog error code; errors:
   - `CDERR_GENERALCODES = 0x0000`, `CDERR_STRUCTSIZE`, `CDERR_INITIALIZATION`, `CDERR_NOTEMPLATE`, `CDERR_MEMALLOCFAILURE`, `CDERR_DIALOGFAILURE`
   - Stored in thread-local `g_comdlg_last_error` (use `TlsAlloc` from §4 of `TODO-04`)
-- [ ] **`GetOpenFileNameA(OPENFILENAME *ofn)`** / **`GetSaveFileNameA`**: already specced in `07-graphics-ui/TODO-05 §8`; provide thin Win32 struct adapter wrapper (map `OFN_*` flags to `dialog_file_open/save` params)
+- [ ] **`GetOpenFileNameA(OPENFILENAME *ofn)`** / **`GetSaveFileNameA`**: already specced in `08-graphics-ui/TODO-05 §8`; provide thin Win32 struct adapter wrapper (map `OFN_*` flags to `dialog_file_open/save` params)
 
 ---
 

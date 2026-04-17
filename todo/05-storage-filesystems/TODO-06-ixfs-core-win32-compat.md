@@ -10,7 +10,7 @@
 - `include/kernel/fs/ixfs.h` -- `struct ixfs_inode` (128B v2); `struct ixfs_dir_entry` (actually 256B but comment says 64B); `IXFS_VERSION=2`; snapshot/scrub API stubs; §1–2 extend it
 - `src/kernel/fs/ixfs/ixfs_internal.h` -- `ixfs_strcmp()` declared (line 121); §3 adds `ixfs_name_cmp()`
 - `src/kernel/fs/ixfs/ixfs_core.c`, `ixfs_alloc.c`, `ixfs_inode.c`, `ixfs_extent.c`, `ixfs_journal.c`, `ixfs_cow.c`, `ixfs_format.c`, `ixfs_ops.c`, `ixfs_test.c` -- working v2 implementation; §1 verifies each; §2–10 extend them
-- → XREF: `05-storage-filesystems/TODO-05-win32-file-io-api.md §3` -- `FILE_OBJECT`/`HANDLE` table must exist before §4 (ADS `CreateFile` path) and §9 (`OpenFileById`) can wire up
+- → XREF: `05-storage-filesystems/TODO-05-win32-file-io-api.md §2` -- `FILE_OBJECT`/`HANDLE` table must exist before §3 (ADS `CreateFile` path) and §9 (`OpenFileById`) can wire up
 - → XREF: `05-storage-filesystems/TODO-04-fat32-hardening-vfs-semantics.md §11` -- Win32 feature stubs that return empty ADS, default ACL are superseded here by real IXFS implementations
 - → XREF: `10-platform-services` Object Manager + Security TODO -- §5 security descriptors wire into `SeAccessCheck`; coordinate on `SECURITY_DESCRIPTOR` binary format and well-known SID constants
 - → XREF: `todo-old/010-Kernel-Foundations/TODO-040-Filesystem/TODO-040.11-IXFS.md` -- **do not delete**; advanced storage features (compression, encryption, dedup, tiering) remain there for TODO-07
@@ -197,7 +197,7 @@ Assign a 16-byte UUID to each file in `i_file_id`. Maintain an in-memory `objid 
 **Files:** `src/kernel/fs/ixfs/ixfs_objid.c` (new), `src/kernel/fs/vfs.c` (extend `vfs_ioctl`)
 
 > [!NOTE]
-> UUID generation: use `hwrng_read()` (→ XREF: `04-drivers-hardware/TODO-11-security-hardware.md §1`) for 16 random bytes. Fall back to hash of (`volume_serial`, `inode_number`, `creation_time`) if hwrng not available. Hash table: `objid_ht[256]` keyed by `objid[0] ^ objid[1]` (simple XOR bucket); entries are `{ uint8_t id[16]; uint32_t inode; }`. Rebuild on mount by scanning all inodes with non-zero `i_file_id`. Object IDs persist across rename/move on the same volume; they are invalidated (zeroed) on cross-volume copy.
+> UUID generation: use `hwrng_read()` (→ XREF: `04-drivers-hardware/TODO-04-security-hardware.md §2`) for 16 random bytes. Fall back to hash of (`volume_serial`, `inode_number`, `creation_time`) if hwrng not available. Hash table: `objid_ht[256]` keyed by `objid[0] ^ objid[1]` (simple XOR bucket); entries are `{ uint8_t id[16]; uint32_t inode; }`. Rebuild on mount by scanning all inodes with non-zero `i_file_id`. Object IDs persist across rename/move on the same volume; they are invalidated (zeroed) on cross-volume copy.
 
 - [ ] `ixfs_objid_assign(vol, inode)`: if `i_file_id` is all-zero: generate UUID; write to inode; insert into hash table
 - [ ] `ixfs_objid_lookup(vol, id[16], &inode_num)`: XOR-bucket hash lookup; compare 16-byte id; return inode number

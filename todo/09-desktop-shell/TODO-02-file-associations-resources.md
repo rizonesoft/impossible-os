@@ -3,7 +3,7 @@
 > **Goal:** Build the plumbing that makes double-click work -- extension-to-app Registry mapping, first-boot defaults, Open With dialog, INI-format `.lnk` shortcuts with desktop integration, Recycle Bin icon state, system sounds (WAV player), and a font manager app.
 
 > [!IMPORTANT]
-> **Already exists**: `icon_for_extension(const char *ext)` in `icon_store.h` -- returns `system_icon_t` for any file extension. `RegOpenKeyEx/RegSetValueEx/RegGetValue` + `HKCR` support in `registry.h`. `vfs_open/read/write/create` in `vfs.h`. `task_exec(data, size)` in `task.h`. `context_menu_show()` (TODO-07 §1) for right-click menus. `dialog_input()` + `CTRL_LISTVIEW` (TODO-05) for Open With dialog. `ttf_get()` + `ttf_draw_string()` in `font_mgr.h` for font preview. `gfx_blit_alpha()` for shortcut arrow overlay. `notify_send()` (TODO-09 §5) for install success toasts. **Missing**: `file_assoc_*`, `shortcut_*`, `trash_*`, WAV player, font manager app, `ttf_mgr_reload()`. **WAV audio**: depends on `04-drivers-hardware/TODO-10` (AC97/HDA driver); §7 implements the WAV parser + player stub that logs to serial if the audio driver is not yet live. Complete sections in order: extension mapping → default associations → shortcut files → desktop shortcut integration → recycle bin → Open With dialog → system sounds → font manager.
+> **Already exists**: `icon_for_extension(const char *ext)` in `icon_store.h` -- returns `system_icon_t` for any file extension. `RegOpenKeyEx/RegSetValueEx/RegGetValue` + `HKCR` support in `registry.h`. `vfs_open/read/write/create` in `vfs.h`. `task_exec(data, size)` in `task.h`. `context_menu_show()` (TODO-07 §1) for right-click menus. `dialog_input()` + `CTRL_LISTVIEW` (TODO-05) for Open With dialog. `ttf_get()` + `ttf_draw_string()` in `font_mgr.h` for font preview. `gfx_blit_alpha()` for shortcut arrow overlay. `notify_send()` (TODO-09 §5) for install success toasts. **Missing**: `file_assoc_*`, `shortcut_*`, `trash_*`, WAV player, font manager app, `ttf_mgr_reload()`. **WAV audio**: depends on `04-drivers-hardware/TODO-18-audio-drivers.md` (AC97/HDA driver); §7 implements the WAV parser + player stub that logs to serial if the audio driver is not yet live. Complete sections in order: extension mapping → default associations → shortcut files → desktop shortcut integration → recycle bin → Open With dialog → system sounds → font manager.
 
 ## Inputs
 
@@ -16,9 +16,9 @@
 - `include/font_mgr.h` -- `ttf_get()`, `ttf_draw_string()` -- used by §8 font preview rendering
 - `include/gfx.h` -- `gfx_blit_alpha()`, `gfx_fill_rounded_rect()`, `gfx_draw_line()` -- used by §5 shortcut arrow overlay and §7 system sounds UI stub
 - `include/desktop/notify.h` (TODO-09 §5) -- `notify_send()` -- §8 font install success toast
-- → XREF: `07-graphics-ui/TODO-09-startmenu-tray-notifications.md §1` -- Start Menu reads `.lnk` files from `C:\Users\Default\AppData\StartMenu\`; §5 must create those default shortcuts on first boot
-- → XREF: `07-graphics-ui/TODO-06-window-manager.md §3` -- desktop icons double-click calls `file_assoc_open()` from §1
-- → XREF: `04-drivers-hardware/TODO-10` (AC97/HDA audio) -- §7 WAV player requires audio output driver; use serial log stub until driver is live
+- → XREF: `08-graphics-ui/TODO-11-startmenu-tray-notifications.md §1` -- Start Menu reads `.lnk` files from `C:\Users\Default\AppData\StartMenu\`; §5 must create those default shortcuts on first boot
+- → XREF: `08-graphics-ui/TODO-08-window-manager.md §3` -- desktop icons double-click calls `file_assoc_open()` from §1
+- → XREF: `04-drivers-hardware/TODO-18-audio-drivers.md` (AC97/HDA audio) -- §7 WAV player requires audio output driver; use serial log stub until driver is live
 - → XREF: `10-apps/TODO-*` (File Manager) -- File Manager double-click calls `file_assoc_open()` from §1; File Manager copy/delete integrates with §6 Recycle Bin
 
 ## Outcome
@@ -149,7 +149,7 @@ Desktop renderer detects `.lnk` files; uses `Icon=` field + `Description=` as la
 
 ## 7. System Sounds `[Sonnet]`
 
-WAV files (22050 Hz mono 16-bit) in `resources/sounds/`; install to `C:\Impossible\Media\`. Minimal WAV parser: 44-byte header, feed PCM samples to AC97/HDA driver (`04-drivers-hardware/TODO-10`). Play on: boot splash finish, error dialogs, toast notifications, shutdown. Registry `HKLM\SYSTEM\Sound\SystemSounds` enable/disable.
+WAV files (22050 Hz mono 16-bit) in `resources/sounds/`; install to `C:\Impossible\Media\`. Minimal WAV parser: 44-byte header, feed PCM samples to AC97/HDA driver (`04-drivers-hardware/TODO-18-audio-drivers.md`). Play on: boot splash finish, error dialogs, toast notifications, shutdown. Registry `HKLM\SYSTEM\Sound\SystemSounds` enable/disable.
 
 **Files:** `src/kernel/sound/wav.c` (new), `include/kernel/sound/wav.h` (new), `src/desktop/system_sounds.c` (new)
 

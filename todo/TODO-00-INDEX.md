@@ -38,6 +38,6 @@ This tree is the live planning scaffold for active work.
 
 ## Active Epics
 
-- [00 Infrastructure] [TODO-01 AI Development System](./00-infrastructure/TODO-01-ai-development-system.md) - Establish Cursor as the canonical agent layer, define MCP policy, and replace prompt-heavy TODO procedure with reusable skills.
-- [00 Infrastructure] [TODO-02 Developer Tooling Stack](./00-infrastructure/TODO-02-developer-tooling-stack.md) - Define the parent roadmap for the git-tracked developer tooling contract, with build, run, host utilities, and GitHub sync kept aligned.
+- [00 Infrastructure] [TODO-01 Developer Tooling Stack](./00-infrastructure/TODO-01-developer-tooling-stack.md) - Define the canonical host-side tooling contract for setup, build, test, run, hooks, GitHub workflows, and a tooling doctor/regression pack.
+- [00 Infrastructure] [TODO-02 AI Development System](./00-infrastructure/TODO-02-ai-development-system.md) - Stabilize the repo AI workflow across Claude, Cursor, and Copilot with explicit ownership, hook policy, drift audit, and regression checks.
 - [03 Memory Concurrency] [TODO-01 VMM Memory Protection & Diagnostics](./03-memory-concurrency/TODO-01-vmm-memory-protection.md) - Harden the memory model with mprotect, W^X enforcement, demand paging, VirtualAlloc Win32 wrappers, kmalloc lint, heap canaries, leak detector, and PMM statistics.

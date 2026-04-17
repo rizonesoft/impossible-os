@@ -1,7 +1,7 @@
 /* ============================================================================
  * pmc.c -- Performance Monitoring Counters (Intel PMU + AMD PMC)
  *
- * XREF: 02-kernel-core/TODO-19-x86-64-architecture.md S10
+ * XREF: 02-kernel-core/TODO-09-x86-64-architecture.md S10
  * ============================================================================ */
 
 #include "kernel/pmc.h"

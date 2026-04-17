@@ -20,14 +20,14 @@
 - `06-networking/TODO-06-ntp-status-winsock.md §4–§7` -- `ping`, `traceroute`, `ifconfig`, `netstat`, `nslookup`, `arp_cache_dump()` already specified there
 - `include/kernel/net/net.h` -- `icmp_send_echo()`, `SYS_PING=15`, `dns_resolve()`, `dns_resolve_reverse()`
 - `06-networking/TODO-03-http-tls.md` -- `http_get()`, `https_get()`, `tls_connect()`, `tls_send()`, `tls_recv()`
-- `06-networking/TODO-02-dns-sockets.md §5` -- `kern_socket()`, `kern_connect()`, `kern_send()`, `kern_recv()`, `kern_close()`
+- `06-networking/TODO-02-dns-sockets.md §3` -- `kern_socket()`, `kern_connect()`, `kern_send()`, `kern_recv()`, `kern_close()`
 - `include/desktop/controls.h` -- `CTRL_BUTTON`, `CTRL_TEXTBOX`, `CTRL_LISTVIEW`, `CTRL_SCROLLBAR_VERT`
 - `include/desktop/wm.h` -- `wm_create_window()`, `wm_mark_dirty()`
 - `include/gfx.h` -- `gfx_blit()`, `gfx_fill_rect()`, `gfx_surface_create()`
 - `include/registry.h` -- `reg_set_string`, `reg_get_string`, `reg_enum_keys`
-- `include/kernel/scheduler_tasks.h` -- `sched_task_add()` (→ XREF `08-desktop-shell/TODO-04 §6`)
+- `include/kernel/scheduler_tasks.h` -- `sched_task_add()` (→ XREF `09-desktop-shell/TODO-04 §8`)
 - `include/kernel/vfs.h` -- `vfs_open`, `vfs_read`, `vfs_write`, `vfs_create`, `vfs_mkdir`
-- `notify_send(title, body, icon_id, timeout_ms)` / `SYS_NOTIFY_SEND=54` (→ XREF `07-graphics-ui/TODO-09 §5`)
+- `notify_send(title, body, icon_id, timeout_ms)` / `SYS_NOTIFY_SEND=54` (→ XREF `08-graphics-ui/TODO-09 §6`)
 
 ---
 

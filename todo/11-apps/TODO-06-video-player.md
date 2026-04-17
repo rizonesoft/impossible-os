@@ -24,7 +24,7 @@
 - `include/gfx.h` -- `gfx_surface_create()`, `gfx_fill_rect()`, `gfx_blit()`, `gfx_scale_blit()`
 - `include/desktop/controls.h` -- `CTRL_BUTTON`, `CTRL_SCROLLBAR` (seek bar via `CTRL_SCROLLBAR_HORIZ`), `CTRL_TEXTBOX`
 - `include/desktop/wm.h` -- `wm_create_window()`, `wm_set_fullscreen()`, `wm_mark_dirty()`
-- `include/desktop/file_assoc.h` -- `file_assoc_set(ext, prog_id, path)` (→ XREF `08-desktop-shell/TODO-02 §1`)
+- `include/desktop/file_assoc.h` -- `file_assoc_set(ext, prog_id, path)` (→ XREF `09-desktop-shell/TODO-02 §1`)
 - `include/registry.h` -- `reg_set_string`, `reg_get_string`, `reg_enum_keys`
 - `include/kernel/vfs.h` -- `vfs_open`, `vfs_read`, `vfs_stat` -- file I/O for pl_mpeg + SRT
 

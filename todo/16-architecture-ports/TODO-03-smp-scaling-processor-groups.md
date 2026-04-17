@@ -10,7 +10,7 @@
 - [`include/kernel/acpi.h`](../../include/kernel/acpi.h) -- `MAX_CPUS` constant
 - [`include/kernel/smp.h`](../../include/kernel/smp.h) -- `per_cpu_data` struct, static arrays
 - [`include/kernel/sched/dpc.h`](../../include/kernel/sched/dpc.h) -- `KeSetTargetProcessorDpc`, `DPC_TARGET_CURRENT`
-- -> XREF: `02-kernel-core/TODO-06-irql-model-dpcs.md §7` -- `KeSetTargetProcessorDpcEx` deferred here
+- -> XREF: `02-kernel-core/TODO-07-irql-model-dpcs.md §9` -- `KeSetTargetProcessorDpcEx` deferred here
 
 ## Outcome
 

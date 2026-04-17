@@ -8,13 +8,13 @@
 
 > [!IMPORTANT]
 > **XSAVE activation** (`CR4.OSXSAVE`, `XSETBV`, XSAVE area layout) is owned by
-> `02-kernel-core/TODO-19 §1` (XSAVE design) and `01-boot-platform/TODO-04 §5`
+> `02-kernel-core/TODO-28 §1` (XSAVE design) and `01-boot-platform/TODO-09 §6`
 > (Phase 1 XSAVE & PCID activation window). §3 here adds the **per-thread user-mode
 > XSAVE context** (YMM/ZMM save area in TEB, context-switch XSAVE/XRSTOR discipline)
 > on top of those foundations -- do not re-specify kernel XSAVE initialization.
 >
 > **C++ support** (for `ggml` C++ bindings and `llama.cpp`) depends on
-> `10-platform-services/TODO-09 §11` (GCC/G++ long-term). The ggml C99 core
+> `10-platform-services/TODO-09 §3` (GCC/G++ long-term). The ggml C99 core
 > (`src/ggml.c`) does NOT require C++; §2 targets the C99 core only. C++ bindings
 > are a post-compiler stretch.
 >
@@ -30,9 +30,9 @@
 
 ## Inputs
 
-- `02-kernel-core/TODO-19-x86-64-architecture.md §1` (→ XREF) -- XSAVE design; `CR4.OSXSAVE`; `XSETBV(XCR0, AVX_MASK)` -- §3 per-thread XSAVE context builds on this
-- `01-boot-platform/TODO-04-cpu-boot-sequencing.md §5` (→ XREF) -- Phase 1 XSAVE & PCID activation window; §3 adds per-thread TEB XSAVE area after §5 activates OSXSAVE
-- `10-platform-services/TODO-09-compiler-sdk.md §11` (→ XREF) -- GCC/G++ C++ support; ggml C++ bindings depend on this (stretch, post-C99 core)
+- `02-kernel-core/TODO-09-x86-64-architecture.md §1` (→ XREF) -- XSAVE design; `CR4.OSXSAVE`; `XSETBV(XCR0, AVX_MASK)` -- §4 per-thread XSAVE context builds on this
+- `01-boot-platform/TODO-09-cpu-boot-sequencing.md §6` (→ XREF) -- Phase 1 XSAVE & PCID activation window; §4 adds per-thread TEB XSAVE area after §6 activates OSXSAVE
+- `10-platform-services/TODO-09-compiler-sdk.md §3` (→ XREF) -- GCC/G++ C++ support; ggml C++ bindings depend on this (stretch, post-C99 core)
 - `include/kernel/mm/pmm.h` -- `pmm_alloc_contiguous(count)` -- §4 model tensor allocation (128 MB–4 GB contiguous regions)
 - `include/kernel/mm/vmm.h` -- `vmm_map_page()` -- §4 user-mode tensor memory mapping
 - `include/kernel/sched/task.h` -- `task_t`, `TEB` -- §3 XSAVE area in TEB per thread
@@ -56,12 +56,12 @@ the ggml port and XSAVE context switch work end-to-end.
 
 | Step | Section | 💎/⭐ | Dependency |
 |------|---------|-------|-----------|
-| 1 | Runtime option survey (ggml vs. ONNX vs. custom) | ⭐ | `TODO-09 §11` C++ assessment |
+| 1 | Runtime option survey (ggml vs. ONNX vs. custom) | ⭐ | `TODO-09 §3` C++ assessment |
 | 2 | SIMD enablement for user mode (XSAVE per-thread) | ⭐ | `TODO-19 §1` + `TODO-04 §5` XSAVE foundations |
 | 3 | ggml C99 kernel port | ⭐ | §2 SIMD; `pmm_alloc_contiguous`; kernel threads |
 | 4 | GGUF model format & loading | ⭐ | §3 ggml infrastructure; `vfs_read`; `vmm_map_page` |
 | 5 | OS integration points (`SYS_AI_INFER` + apps) | ⭐ | §3 §4 runtime + loader |
-| 6 | GPU inference research (stretch, post TODO-03) | ⭐ | `TODO-03` Vulkan driver; §3 ggml Vulkan backend |
+| 6 | GPU inference research (stretch, post TODO-03) | ⭐ | `TODO-03` Vulkan driver; §5 ggml Vulkan backend |
 | 7 | Research deliverables (`ai-ml-runtime-plan.md`) | ⭐ | §1–§6 complete |
 
 ---
@@ -79,7 +79,7 @@ the ggml port and XSAVE context switch work end-to-end.
 
 - [ ] **Option B -- ONNX Runtime** (MIT, ~500 K LOC C++):
   - Full ONNX graph execution; ONNX operator set ~170 ops; supports vision + NLP models
-  - C++ STL dependency (vectors, maps, strings, exceptions, RTTI) -- requires `TODO-09 §11` GCC/G++ first
+  - C++ STL dependency (vectors, maps, strings, exceptions, RTTI) -- requires `TODO-09 §3` GCC/G++ first
   - **Feasibility**: ❌ not achievable within 6 months; blocked by C++ compiler + STL port; defer to Phase 2
 
 - [ ] **Option C -- Minimal custom runtime** (~5 K LOC):
@@ -276,15 +276,15 @@ the ggml port and XSAVE context switch work end-to-end.
 > Depends entirely on `13-future-research/TODO-03` Vulkan driver being available.
 > Research-only section; no prototype code.
 
-- [ ] **ggml Vulkan backend** (`ggml-vulkan.c` in upstream): uses Vulkan compute shaders for SGEMM; once VirtIO-GPU Vulkan is available (TODO-03 §4), enable by building with `GGML_VULKAN=1`
+- [ ] **ggml Vulkan backend** (`ggml-vulkan.c` in upstream): uses Vulkan compute shaders for SGEMM; once VirtIO-GPU Vulkan is available (TODO-03 §6), enable by building with `GGML_VULKAN=1`
 - [ ] **Potential speedup** (estimated from Linux benchmarks on similar hardware):
   - VirtIO-GPU (host RTX 3080): 7B Q4 model → ~100–200 tok/s (10–40× vs. CPU AVX2)
   - Bare-metal RDNA 3 (future): similar or better; limited by VRAM (24 GB → fits 70B Q4 model)
-- [ ] **Memory architecture**: GPU inference requires tensors in GPU-visible memory; `SYS_GPU_MAP` (from `TODO-03 §4`) maps tensor PMM buffers to GPU address space; no copy needed if VirtIO-GPU uses shared memory model
+- [ ] **Memory architecture**: GPU inference requires tensors in GPU-visible memory; `SYS_GPU_MAP` (from `TODO-03 §6`) maps tensor PMM buffers to GPU address space; no copy needed if VirtIO-GPU uses shared memory model
 - [ ] **Whisper.cpp GPU acceleration**: Whisper large-v3 runs in real-time on GPU; on CPU it needs ~5× audio duration; GPU backend unlocks real-time transcription in `ai_assistant.exe`
 - [ ] **Blocking dependencies for GPU inference**:
-  1. VirtIO-GPU Vulkan ICD (TODO-03 §4) -- minimum requirement
-  2. `SYS_GPU_MAP` syscall (TODO-03 §4)
+  1. VirtIO-GPU Vulkan ICD (TODO-03 §6) -- minimum requirement
+  2. `SYS_GPU_MAP` syscall (TODO-03 §6)
   3. ggml Vulkan backend compile with Impossible OS headers (needs C++ or rewritten in C)
   4. Large model VRAM budget: 7B Q4 needs ~4 GB VRAM; VirtIO-GPU shares host GPU VRAM
 
@@ -303,9 +303,9 @@ the ggml port and XSAVE context switch work end-to-end.
   - **Token throughput benchmark plan**: QEMU commands, benchmark script, expected tok/s per model at each quantization level
   - **GPU inference roadmap** (from §6): VirtIO-GPU dependencies, estimated speedup, blocking items
   - **Blocking dependencies summary**:
-    1. `TODO-19 §1` + `TODO-04 §5` XSAVE activation before §2 can be implemented
-    2. `TODO-09 §11` GCC/G++ before C++ ggml bindings
-    3. `TODO-03 §4` Vulkan driver before GPU inference
+    1. `TODO-19 §1` + `TODO-04 §5` XSAVE activation before §4 can be implemented
+    2. `TODO-09 §3` GCC/G++ before C++ ggml bindings
+    3. `TODO-03 §6` Vulkan driver before GPU inference
     4. PMM large-allocation extension (ML pool reservation) before models > 4 GB
 - [ ] **QEMU prototype** (in `ai/ggml-spike` branch):
   - Custom minimal Option C runtime (§1): implement 4-function kernel (`matmul`, `rms_norm`, `softmax`, `embed_lookup`) in ~500 LOC

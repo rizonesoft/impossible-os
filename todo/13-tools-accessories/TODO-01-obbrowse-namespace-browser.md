@@ -13,8 +13,8 @@
 - `include/kernel/ob/ob_ns.h` -- `ObLookupObjectByName`
 - `src/kernel/sched/syscall.c` -- `SYS_OPENDIROBJ` (line 381), `SYS_QUERYDIROBJ` (line 392)
 - `src/kernel/ob/ob_ns.c` -- namespace root directories (line 350)
-- → XREF: `TODO-03-object-manager.md` -- OB implementation (was TODO-03, deferred this tool)
-- → XREF: `00-infrastructure/TODO-03-kernel-test-framework.md` -- unit test wiring for test_register_obbrowse()
+- → XREF: `TODO-05-object-manager.md` -- OB implementation (was TODO-03, deferred this tool)
+- → XREF: `00-infrastructure/TODO-03-kernel-test-harness.md` -- unit test wiring for test_register_obbrowse()
 
 ---
 
@@ -114,7 +114,7 @@ Enhanced display with per-type icons and security info.
 
 ## Unit Tests
 
-> Wire into `test_runner_init()` via `test_register_obbrowse()` (XREF: `00-infrastructure/TODO-03-kernel-test-framework.md`).
+> Wire into `test_runner_init()` via `test_register_obbrowse()` (XREF: `00-infrastructure/TODO-03-kernel-test-harness.md`).
 > Boot tests run with `debug=1` or `test=1` in boot.conf.
 
 - [ ] Create `src/kernel/test/test_obbrowse.c` with:

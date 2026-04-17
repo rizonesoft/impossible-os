@@ -87,6 +87,17 @@ This applies to `.c`, `.h`, `.md`, `.sh`, `.ps1`, `.bat`, `.conf`, and all other
 - Win32 is the native API; POSIX via Linux compat layer only
 - Canonical paths use Windows style: `C:\Impossible\System32\`
 
+## Product North Star -- Complete, Compatible, Better
+
+Impossible OS is not trying to be a partial Windows clone or a Linux-alike with renamed APIs. The target is broader: Win11 compatibility where that is the right surface, Linux compatibility where that expands reach, and a cleaner, faster, more refined system than either one.
+
+**Completion-first, not checklist-first.** Finishing the listed checklist items is not enough if the feature is still obviously incomplete, fragile, poorly wired, or missing adjacent work that a real user would immediately hit next. When implementation reveals that nearby work is required for credible completeness, the agent must either:
+
+- implement it now if it fits the current subsystem and one-session scope, or
+- file it immediately in the owning TODO section or TODO file with a concrete checklist item and reciprocal XREF.
+
+Do not ship happy-path completion with hidden adjacent gaps. "Done for this section" is not the bar; "credible, working, and properly owned" is the bar.
+
 ## Development Strategy -- Bare Metal First, SMP From Day One
 
 **SMP-safe by default.** Every new feature must work correctly on multi-CPU systems. Never design single-CPU assumptions into the code -- use per-CPU data, proper locking, and atomic operations from the start. Windows NT was SMP from day one; Linux added it later and paid for it with the BKL for 20 years.
@@ -139,6 +150,12 @@ When you change code or conventions, update `CLAUDE.md`, `.claude/skills/`, and 
 - Assembler: `nasm`
 - Linker: `ld.lld-19`
 - Crash debug: `llvm-addr2line-19 -e build/kernel.exe -f <RIP>`
+
+## Model Roles
+
+Use the strongest available Opus-class model for implementation and judgment-heavy work such as `implement-todo-section`, `review-todo-section`, `create-todo`, `gap-analysis-todo`, `quality-review-section`, and design-heavy roadmap shaping. Keep Codex and GPT-5.4 style external review passes for adversarial review, consistency audit, dead-code audit, and performance review.
+
+External review does not replace self-review. The agent must always perform its own integration-level check for completeness, polish, regressions, parity gaps, and ownerless adjacent work.
 
 ## Skills
 

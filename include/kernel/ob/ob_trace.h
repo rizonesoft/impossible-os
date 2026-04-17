@@ -4,7 +4,7 @@
  * Provides ObReferenceObjectWithTag / ObDereferenceObjectWithTag for per-tag
  * reference tracking, and ob_handle_trace for per-handle klog event recording.
  *
- * XREF: 02-kernel-core/TODO-03-object-manager.md S15
+ * XREF: 02-kernel-core/TODO-05-object-manager.md S15
  * ============================================================================ */
 
 #pragma once

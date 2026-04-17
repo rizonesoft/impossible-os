@@ -15,12 +15,12 @@
 - `include/registry.h` -- `HKLM\SYSTEM\Accessibility\*`, `HKCU\Software\Impossible\Display\ScaleFactor` -- §1-8 all Registry keys
 - `include/kernel/timer.h` -- `system_get_ticks()` -- §3 sticky key timing, §5 magnifier follow rate
 - `include/desktop/controls.h` (TODO-05) -- `CTRL_SLIDER`, `CTRL_CHECKBOX`, `CTRL_DROPDOWN` -- §8 ease.cpl
-- `include/cpl.h` (TODO-11) -- `CPlApplet_t`, `NEWCPLINFO` -- §8 ease.cpl
-- `include/desktop/notification.h` (TODO-09) -- `notify_send()` -- §3 sticky keys audio + visual cue
-- → XREF: `07-graphics-ui/TODO-08` -- theme system (`theme_reload()`, `WM_THEME_CHANGED`, `THEME_HIGH_CONTRAST`); §1 depends on that
-- → XREF: `07-graphics-ui/TODO-09` -- DPI scale factor + `WM_DPI_CHANGED` broadcast; §2 depends on that
-- → XREF: `07-graphics-ui/TODO-07` -- animation engine (`anim_set_enabled()`); §7 reduced motion depends on that
-- → XREF: `08-desktop-shell/TODO-11 §3` -- `ease.cpl` stub registered in Control Panel; §8 implements it
+- `include/cpl.h` (TODO-11) -- `CPlApplet_t`, `NEWCPLINFO` -- §4 ease.cpl
+- `include/desktop/notification.h` (TODO-09) -- `notify_send()` -- §4 sticky keys audio + visual cue
+- → XREF: `08-graphics-ui/TODO-08` -- theme system (`theme_reload()`, `WM_THEME_CHANGED`, `THEME_HIGH_CONTRAST`); §5 depends on that
+- → XREF: `08-graphics-ui/TODO-09` -- DPI scale factor + `WM_DPI_CHANGED` broadcast; §2 depends on that
+- → XREF: `08-graphics-ui/TODO-07` -- animation engine (`anim_set_enabled()`); §9 reduced motion depends on that
+- → XREF: `09-desktop-shell/TODO-11 §5` -- `ease.cpl` stub registered in Control Panel; §4 implements it
 
 ## Outcome
 
@@ -55,7 +55,7 @@
 **Files:** `src/kernel/accessibility.c` (new), `include/kernel/accessibility.h` (new)
 
 > [!NOTE]
-> → XREF: `07-graphics-ui/TODO-08` -- `theme_reload(int theme_id)` and `WM_THEME_CHANGED` live there; `THEME_HIGH_CONTRAST` ID must be defined in `theme.h`. `accessibility_set_high_contrast(int on)`: `registry_set("HKLM\\SYSTEM\\Accessibility\\HighContrast", on ? "1" : "0")`; `theme_reload(on ? THEME_HIGH_CONTRAST : THEME_DEFAULT)` → broadcasts `WM_THEME_CHANGED` to all windows. All widgets re-read theme tokens on `WM_THEME_CHANGED` (this is the theme system contract from `07-graphics-ui`). **System tray quick tile**: 16×16 contrast icon in notification area; click → `accessibility_set_high_contrast(!g_high_contrast)`. **Load on boot**: kernel init reads `HKLM\SYSTEM\Accessibility\HighContrast` → if `"1"` → `theme_reload(THEME_HIGH_CONTRAST)` before desktop launch.
+> → XREF: `08-graphics-ui/TODO-08` -- `theme_reload(int theme_id)` and `WM_THEME_CHANGED` live there; `THEME_HIGH_CONTRAST` ID must be defined in `theme.h`. `accessibility_set_high_contrast(int on)`: `registry_set("HKLM\\SYSTEM\\Accessibility\\HighContrast", on ? "1" : "0")`; `theme_reload(on ? THEME_HIGH_CONTRAST : THEME_DEFAULT)` → broadcasts `WM_THEME_CHANGED` to all windows. All widgets re-read theme tokens on `WM_THEME_CHANGED` (this is the theme system contract from `07-graphics-ui`). **System tray quick tile**: 16×16 contrast icon in notification area; click → `accessibility_set_high_contrast(!g_high_contrast)`. **Load on boot**: kernel init reads `HKLM\SYSTEM\Accessibility\HighContrast` → if `"1"` → `theme_reload(THEME_HIGH_CONTRAST)` before desktop launch.
 
 - [ ] `include/kernel/accessibility.h`: global state `g_accessibility_t { int high_contrast, dpi_pct, sticky_keys, cursor_size_px, magnifier_zoom, mouse_keys, reduced_motion, color_blind_mode; }`, all `accessibility_set_*()` prototypes
 - [ ] `src/kernel/accessibility.c`: `accessibility_init()` -- read all `HKLM\SYSTEM\Accessibility\*` Registry keys at boot
@@ -72,7 +72,7 @@
 **Files:** extend `src/kernel/accessibility.c`
 
 > [!NOTE]
-> → XREF: `07-graphics-ui/TODO-09` -- DPI scale infrastructure lives there; `WM_DPI_CHANGED` + global `g_dpi_scale` live there. `accessibility_set_dpi(int pct)`: validate pct in `{100, 125, 150, 200, 250, 300}`; `registry_set("HKCU\\Software\\Impossible\\Display\\ScaleFactor", pct_str)` + `registry_set("HKLM\\SYSTEM\\Accessibility\\DPIScale", pct_str)`; call DPI layer's `dpi_set_scale(pct)` → broadcasts `WM_DPI_CHANGED` to all windows (each window recalculates its layout on receipt). Preset levels in `ease.cpl` shown as: 100% (Default), 125% (Medium), 150% (Large), 200% (Larger), 250% (Extra Large), 300% (Huge). **On boot**: `accessibility_init()` reads `DPIScale` → if present + non-zero → `dpi_set_scale()` before window creation.
+> → XREF: `08-graphics-ui/TODO-09` -- DPI scale infrastructure lives there; `WM_DPI_CHANGED` + global `g_dpi_scale` live there. `accessibility_set_dpi(int pct)`: validate pct in `{100, 125, 150, 200, 250, 300}`; `registry_set("HKCU\\Software\\Impossible\\Display\\ScaleFactor", pct_str)` + `registry_set("HKLM\\SYSTEM\\Accessibility\\DPIScale", pct_str)`; call DPI layer's `dpi_set_scale(pct)` → broadcasts `WM_DPI_CHANGED` to all windows (each window recalculates its layout on receipt). Preset levels in `ease.cpl` shown as: 100% (Default), 125% (Medium), 150% (Large), 200% (Larger), 250% (Extra Large), 300% (Huge). **On boot**: `accessibility_init()` reads `DPIScale` → if present + non-zero → `dpi_set_scale()` before window creation.
 
 - [ ] `accessibility_set_dpi(int pct)` -- validate preset levels; `registry_set()` both keys; `dpi_set_scale(pct)` call
 - [ ] `WM_DPI_CHANGED` broadcast: all open windows receive and recalculate layout (contract from TODO-09 DPI system)

@@ -14,7 +14,7 @@
 - FTP uses **two TCP connections**: control (port 21, ASCII commands) and data (negotiated via `PASV`). Both use `kern_connect()`/`kern_send()`/`kern_recv()` from `06-networking/TODO-02`.
 - `https_get()` / `http_get()` from `06-networking/TODO-03` are the only network primitives `wget` and `curl` call -- no raw socket work needed in those tools.
 - `vfs_open()`, `vfs_write()`, `vfs_read()`, `vfs_stat()` from `include/kernel/fs/vfs.h` are used for file I/O in download and upload operations.
-- `CTRL_LISTVIEW` and `CTRL_PROGRESSBAR` are defined in `07-graphics-ui/TODO-05` -- the FTP GUI (§3) and WiFi settings (§6) depend on them.
+- `CTRL_LISTVIEW` and `CTRL_PROGRESSBAR` are defined in `08-graphics-ui/TODO-05` -- the FTP GUI (§3) and WiFi settings (§6) depend on them.
 - WiFi (§6) is a **stretch goal** with a hardware dependency (USB RTL8188 or QEMU virtio-wifi). Do not start §6 until §1–5 are complete and working.
 - `wget -r` (recursive crawl) depends on `TODO-01 §2` (HTML link extractor) for `<a href>` extraction -- cross-link only, don't duplicate.
 - Anonymous FTP uses `USER anonymous` / `PASS user@host` by convention.
@@ -30,10 +30,10 @@
 | `06-networking/TODO-03-http-tls.md` | `http_get`, `https_get`, `http_post` -- wget/curl network ops |
 | `06-networking/TODO-02-dns-sockets.md` | `kern_socket`, `kern_connect`, `kern_send`, `kern_recv`, `kern_close` -- FTP raw TCP |
 | `include/registry.h` | `registry_get/set()` -- WiFi credentials, ncpa.cpl settings |
-| `07-graphics-ui/TODO-05 §*` | `CTRL_LISTVIEW`, `CTRL_PROGRESSBAR` -- FTP GUI + WiFi settings panel |
+| `08-graphics-ui/TODO-05 §*` | `CTRL_LISTVIEW`, `CTRL_PROGRESSBAR` -- FTP GUI + WiFi settings panel |
 | → XREF: `06-networking/TODO-03` | HTTP/HTTPS client -- mandatory for wget/curl |
 | → XREF: `10-apps/TODO-01 §2` | HTML link extractor for `wget -r` recursive crawl |
-| → XREF: `04-drivers-hardware/TODO-09` | USB HID stack -- USB WiFi adapter driver prerequisite |
+| → XREF: `04-drivers-hardware/TODO-10-usb-stack.md` | USB HID stack -- USB WiFi adapter driver prerequisite |
 
 ---
 
@@ -160,7 +160,7 @@ Implements the full `wget` command-line tool backed by `http_get()`/`https_get()
 
 ## 5. FTP GUI Client (Dual-Pane, Stretch) `[Sonnet]`
 
-Standalone `ftpgui.exe` with a dual-pane file manager layout. Depends on `CTRL_LISTVIEW` from `07-graphics-ui/TODO-05`.
+Standalone `ftpgui.exe` with a dual-pane file manager layout. Depends on `CTRL_LISTVIEW` from `08-graphics-ui/TODO-05`.
 
 - [ ] Window layout: toolbar at top (Connect/Disconnect, address bar showing `ftp://host/path`); two equal-width panes side by side
   - **Left pane** (local): `CTRL_LISTVIEW` showing `C:\` directory (columns: Name, Size, Date); breadcrumb `CTRL_LABEL` showing current path; uses `vfs_readdir()`
@@ -178,7 +178,7 @@ Standalone `ftpgui.exe` with a dual-pane file manager layout. Depends on `CTRL_L
 
 ## 6. WiFi Framework (Stretch) `[Opus]`
 
-> Long-term stretch goal. Requires USB host stack (`04-drivers-hardware/TODO-09`) and real hardware or QEMU virtio-wifi. Do not start until §1–5 are complete.
+> Long-term stretch goal. Requires USB host stack (`04-drivers-hardware/TODO-10-usb-stack.md`) and real hardware or QEMU virtio-wifi. Do not start until §1–5 are complete.
 
 - [ ] Create `include/kernel/drivers/wifi.h`:
   - `struct wifi_network { char ssid[33]; uint8_t bssid[6]; int8_t signal_dbm; uint8_t security; /* WIFI_OPEN/WEP/WPA2/WPA3 */ uint8_t channel; }`

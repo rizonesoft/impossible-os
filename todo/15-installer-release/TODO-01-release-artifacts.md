@@ -12,12 +12,12 @@
 > `set-version.sh` script, Registry baking, and `winver.exe`. Do not re-specify the
 > base `version.h` constants.
 >
-> **ISO script already specced**: `10-platform-services/TODO-11-installer-iso.md §1`
+> **ISO script already specced**: `10-platform-services/TODO-11-installer-iso.md §6`
 > owns `scripts/make-iso.sh` (El Torito + EFI, no GRUB, `make iso` target,
 > `sha256sum`). §4 here extends it with Joliet+Rock Ridge, versioned filename, and
 > `README.txt` -- do not duplicate the base ISO build.
 >
-> **Code signing already specced**: `08-desktop-shell/TODO-07-cng-crypto.md §7` owns
+> **Code signing already specced**: `09-desktop-shell/TODO-07-cng-crypto.md §9` owns
 > Ed25519 PE32+ COSI-trailer signing + `codesign_sign/verify()` + optional enforcement
 > in `task_create_user()`. §5 here adds the **release script** that calls those functions
 > and the **bootloader-side kernel verification** path -- do not re-specify the crypto or
@@ -32,10 +32,10 @@
 
 - `include/kernel/version.h` + `include/build_info.h` -- existing version scheme; extend in §1
 - `scripts/build.sh` -- existing build script; extend with `make release` / `make iso` hooks
-- `scripts/make-iso.sh` (from `TODO-11 §1`) -- base ISO build; extend in §4
-- `08-desktop-shell/TODO-07-cng-crypto.md §7` (→ XREF) -- `codesign_sign(path, priv_key)` / `codesign_verify(path)`; used in §5
-- `10-platform-services/TODO-11-installer-iso.md §1` (→ XREF) -- `make iso` target; §4 extends it
-- `10-platform-services/TODO-03-update-delivery.md` (→ XREF) -- consumes `release-{version}.json` from §6
+- `scripts/make-iso.sh` (from `TODO-11 §6`) -- base ISO build; extend in §8
+- `09-desktop-shell/TODO-07-cng-crypto.md §9` (→ XREF) -- `codesign_sign(path, priv_key)` / `codesign_verify(path)`; used in §5
+- `10-platform-services/TODO-11-installer-iso.md §6` (→ XREF) -- `make iso` target; §8 extends it
+- `10-platform-services/TODO-03-update-delivery.md` (→ XREF) -- consumes `release-{version}.json` from §4
 - `src/boot/uefi/bootx64.c` -- bootloader source; extend with optional kernel signature check in §5
 - `include/kernel/uefi_runtime.h` -- UEFI variable access for Secure Boot toggle check -- §5
 - `tools/` (host-side build tools pattern) -- `usb_creator.c` follows same pattern -- §3
@@ -59,8 +59,8 @@ shows `Impossible OS 1.0 (Build 22000)`.
 | 1 | Versioning scheme (`set-version.sh`, `winver.exe`) | 💎 | Extends existing `version.h` + `build_info.h` |
 | 2 | GPT disk image release (`release-image.sh`, zstd) | 💎 | §1 version baked; existing `build/system-disk.img` |
 | 3 | USB-bootable image (`make-usb.sh` + `usb_creator.c`) | 💎 | §2 compressed image |
-| 4 | Bootable ISO (Joliet+Rock Ridge, versioned, `README.txt`) | 💎 | `TODO-11 §1` base ISO; §1 version |
-| 5 | Code signing (`sign-release.sh`, bootloader verify) | 💎 | `TODO-07 §7` `codesign_sign/verify`; §1–§4 artifacts |
+| 4 | Bootable ISO (Joliet+Rock Ridge, versioned, `README.txt`) | 💎 | `TODO-11 §6` base ISO; §6 version |
+| 5 | Code signing (`sign-release.sh`, bootloader verify) | 💎 | `TODO-07 §9` `codesign_sign/verify`; §1–§4 artifacts |
 | 6 | Artifact manifest (`release-{version}.json`) | ⭐ | §2–§5 all artifacts; `TODO-03` consumer |
 | 7 | VM image variants (VMDK/VHD/VHDX + `.ovf`) | 💎 | §2 raw image; `qemu-img` installed |
 | 8 | Reproducible builds (`SOURCE_DATE_EPOCH`) | ⭐ | §1–§7 all scripts; `make verify-reproducible` |
@@ -128,7 +128,7 @@ shows `Impossible OS 1.0 (Build 22000)`.
 
 ## 4. Bootable ISO (Joliet + Rock Ridge) `[Sonnet]`
 
-> Extends `10-platform-services/TODO-11-installer-iso.md §1` -- adds Joliet+Rock Ridge
+> Extends `10-platform-services/TODO-11-installer-iso.md §6` -- adds Joliet+Rock Ridge
 > extensions, versioned output filename, and `README.txt` at ISO root.
 
 **Modification to `scripts/make-iso.sh`**
@@ -164,7 +164,7 @@ shows `Impossible OS 1.0 (Build 22000)`.
 ## 5. Code Signing `[Opus]`
 
 > Security-critical: bootloader-side kernel signature verification is novel (no prior
-> Impossible OS bootloader verification path). Extends `TODO-07 §7` release pipeline.
+> Impossible OS bootloader verification path). Extends `TODO-07 §9` release pipeline.
 
 **Source:** `scripts/sign-release.sh`; modification to `src/boot/uefi/bootx64.c`
 
@@ -179,7 +179,7 @@ shows `Impossible OS 1.0 (Build 22000)`.
      - `gpg --batch --detach-sign --armor "build/impossible-os-${VER}.img.zst"` → `.img.zst.asc`
      - GPG key from `GPG_SIGNING_KEY` GitHub Actions secret
   5. Print manifest of signed artifacts
-- [ ] **`tools/codesign_host.c`**: host-side signing tool using the same Ed25519 COSI-trailer logic as `codesign_sign()` (→ XREF `TODO-07 §7`); compiled with `gcc -O2`; reads PE/ELF file, signs with `crypto_ed25519_sign` (monocypher linked as host library), appends 100-byte trailer; replaces input file in-place
+- [ ] **`tools/codesign_host.c`**: host-side signing tool using the same Ed25519 COSI-trailer logic as `codesign_sign()` (→ XREF `TODO-07 §9`); compiled with `gcc -O2`; reads PE/ELF file, signs with `crypto_ed25519_sign` (monocypher linked as host library), appends 100-byte trailer; replaces input file in-place
 - [ ] **Bootloader-side kernel signature verification** in `src/boot/uefi/bootx64.c`:
   - After loading `kernel.exe` into memory (existing step): check if last 4 bytes of ELF data == `0x434F5349` ("COSI" magic)
   - Read `HKLM\SYSTEM\SecureBoot\Enforce` (or scan UEFI variable `ImpossibleOSSecureBoot` if Registry not yet mounted): value 0 = log only, 1 = enforce (halt on bad signature)
@@ -303,7 +303,7 @@ shows `Impossible OS 1.0 (Build 22000)`.
 | 💎 | `MAJOR.MINOR.BUILD` versioning baked into OS + registry | ✅ `10.0.22000`; `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion` | ✅ `/etc/os-release`; kernel `uname -r`         | ⬜ §1 -- `OS_VERSION_STRING`; `winver.exe`; baked into `HKLM\SOFTWARE\Impossible\Version` |
 | 💎 | Compressed disk image with SHA-256                      | ✅ Windows ISO (no zstd); WinGet                                     | ✅ `xz`/`zstd` compressed images (Fedora, Arch) | ⬜ §2 -- `zstd -T0 -9` + SHA-256                                                          |
 | 💎 | Verified USB writer + cross-platform creator tool       | ✅ Rufus (3rd party); Windows Media                                  | ✅ `dd`; Etcher; Fedora Media Writer            | ⬜ §3 -- `make-usb.sh` with removable-only guard; `usb_creator.exe`                       |
-| 💎 | Joliet+Rock Ridge ISO                                   | ✅ Windows ISO uses Joliet                                           | ✅ Most distros use `-R -J`                     | ⬜ §4 -- extends `TODO-11 §1`; versioned filename                                         |
+| 💎 | Joliet+Rock Ridge ISO                                   | ✅ Windows ISO uses Joliet                                           | ✅ Most distros use `-R -J`                     | ⬜ §4 -- extends `TODO-11 §6`; versioned filename                                         |
 | 💎 | Ed25519 code signing + bootloader verification          | ✅ Authenticode RSA; Secure Boot UEFI                                | ✅ GRUB + shim + kernel                         | ⬜ §5 -- `codesign_sign` on `kernel.exe`+`BOOTX64.EFI`; bootloader verify                 |
 | ⭐ | Artifact manifest JSON                                  | ✅ Windows Update XML feeds (private)                                | ✅ Flatpak/Snap manifests; APT Packages         | ⬜ §6 -- `release-{ver}.json`; consumed by `TODO-03` update                               |
 | 💎 | VM image variants                                       | ✅ Hyper-V VHD; VMware tools                                         | ✅ cloud images (QCOW2, VMDK, AMI)              | ⬜ §7 -- `qemu-img convert` to VMDK/VHD/VHDX; `.ovf`                                      |

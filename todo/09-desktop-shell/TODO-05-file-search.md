@@ -3,7 +3,7 @@
 > **Goal:** Build an instant, VFS-backed search system: a PMM-allocated flat-array index rebuilt in a background kernel thread, a ranked query API wired to a `SYS_SEARCH` syscall, `find` shell command, Start Menu and File Manager integration, and incremental index update hooks on `vfs_create/delete/rename`.
 
 > [!IMPORTANT]
-> **Already exists**: `vfs_readdir(dir_node, index)` + `vfs_finddir(dir_node, name)` + `vfs_stat(path, stat)` + `vfs_create/rename/unlink` in `vfs.h`. `pmm_alloc_contiguous(count)` + `pmm_free_contiguous(addr, count)` in `pmm.h`. `time_now()` (TODO-10 §1) for `modified_ts`. `sched_task_add("index_rebuild", search_index_rebuild, 1800, 1)` already registered in TODO-04 §7 -- §1 here provides the real implementation that replaces the stub. `klog()` in `klog.h`. `task_create()` for background thread. `kmalloc/kfree` for small structs. **Highest defined syscall**: `SYS_CLIPBOARD_GET=57` → assign `SYS_SEARCH=58`. **Missing**: all `search_*` functions, VFS tree walker, index cache file, query ranking, VFS mutation hooks. Complete sections in order: index core → query API → `find` command → Start Menu integration → File Manager integration → change notifications.
+> **Already exists**: `vfs_readdir(dir_node, index)` + `vfs_finddir(dir_node, name)` + `vfs_stat(path, stat)` + `vfs_create/rename/unlink` in `vfs.h`. `pmm_alloc_contiguous(count)` + `pmm_free_contiguous(addr, count)` in `pmm.h`. `time_now()` (TODO-10 §1) for `modified_ts`. `sched_task_add("index_rebuild", search_index_rebuild, 1800, 1)` already registered in TODO-04 §1 -- §2 here provides the real implementation that replaces the stub. `klog()` in `klog.h`. `task_create()` for background thread. `kmalloc/kfree` for small structs. **Highest defined syscall**: `SYS_CLIPBOARD_GET=57` → assign `SYS_SEARCH=58`. **Missing**: all `search_*` functions, VFS tree walker, index cache file, query ranking, VFS mutation hooks. Complete sections in order: index core → query API → `find` command → Start Menu integration → File Manager integration → change notifications.
 
 ## Inputs
 
@@ -14,10 +14,10 @@
 - `include/kernel/sched/syscall.h` -- syscall table -- `SYS_SEARCH=58` added in §2
 - `include/kernel/time.h` (TODO-10 §1) -- `time_now()` -- used by §1 `modified_ts` field
 - `include/kernel/klog.h` -- `klog()` -- used throughout
-- `include/kernel/scheduler_tasks.h` (TODO-04 §6) -- `sched_task_add()` -- §1 replaces the stub `search_index_rebuild()` registered there
+- `include/kernel/scheduler_tasks.h` (TODO-04 §8) -- `sched_task_add()` -- §2 replaces the stub `search_index_rebuild()` registered there
 - `include/desktop/wm.h` -- `wm_create_window()`, window event callbacks -- used by §4 Start Menu and §5 File Manager search bars (XREFs)
-- → XREF: `08-desktop-shell/TODO-04-recycle-zip-scheduler.md §7` -- `sched_task_add("index_rebuild", search_index_rebuild, 1800, 1)` is registered there; §1 here provides the real body that stub forwards to
-- → XREF: `07-graphics-ui/TODO-09-startmenu-tray-notifications.md §3` -- Start Menu search bar calls `search_query()`; §4 is the integration layer that wires §2 into the existing search-bar input handler
+- → XREF: `09-desktop-shell/TODO-04-recycle-zip-scheduler.md §1` -- `sched_task_add("index_rebuild", search_index_rebuild, 1800, 1)` is registered there; §2 here provides the real body that stub forwards to
+- → XREF: `08-graphics-ui/TODO-11-startmenu-tray-notifications.md §4` -- Start Menu search bar calls `search_query()`; §5 is the integration layer that wires §2 into the existing search-bar input handler
 - → XREF: `10-apps/TODO-file-manager.md` (future) -- §5 File Manager integration is a forward hook; no File Manager TODO exists yet
 
 ## Outcome
@@ -37,7 +37,7 @@
 | ⭐  |   1   | §1 Search index -- VFS tree walk, PMM flat array, disk cache, background thread + scheduler hook        | `vfs_readdir`, `pmm_alloc_contiguous`, `task_create`, `time_now()` (planned)   |  [ ]   |
 | 💎  |   2   | §2 Query API -- case-insensitive substring match, ranking (score 3/2/1), apps first, `SYS_SEARCH=58`   | §1 index must exist; `SYS_CLIPBOARD_GET=57` highest existing syscall            |  [ ]   |
 | 💎  |   3   | §3 `find` shell command -- `find <query>`, `--type`, `--path`, relevance-sorted output                 | §2 query API                                                                     |  [ ]   |
-| 💎  |   4   | §4 Start Menu integration -- live filter with 150 ms debounce, accent highlight, keyboard nav           | §2 query API; TODO-09 §3 Start Menu search bar scaffold must exist              |  [ ]   |
+| 💎  |   4   | §4 Start Menu integration -- live filter with 150 ms debounce, accent highlight, keyboard nav           | §2 query API; TODO-09 §4 Start Menu search bar scaffold must exist              |  [ ]   |
 | 💎  |   5   | §5 File Manager integration -- toolbar search scoped to current directory subtree                       | §2 query API; File Manager window must have toolbar (future TODO)                |  [ ]   |
 | ⭐  |   6   | §6 Index change notifications -- `vfs_create/delete/rename` dirty hooks, incremental add/remove, 60 s  | §1 index; §2 query; `vfs_create/rename/unlink` (exist)                          |  [ ]   |
 
@@ -103,7 +103,7 @@ Start Menu search bar calls `search_query()` on each keystroke with 150 ms debou
 **Files:** `src/desktop/startmenu.c` (extend), `include/desktop/startmenu.h` (extend)
 
 > [!NOTE]
-> → XREF: `07-graphics-ui/TODO-09-startmenu-tray-notifications.md §3` -- the search bar scaffold (CTRL_TEXTBOX input, "No results found" state) already exists or is planned there; §4 here wires `search_query()` into that scaffold. **Debounce**: maintain `g_search_debounce_tick` (PIT ticks); on keystroke: `g_search_debounce_tick = system_get_ticks() + DEBOUNCE_TICKS` (150 ms → `DEBOUNCE_TICKS = PIT_TARGET_FREQ * 150 / 1000`); in `startmenu_tick()`: if `system_get_ticks() >= g_search_debounce_tick && g_search_dirty`: call `search_query()` + re-render results. **Accent highlight**: for each result name rendered via `ttf_draw_string()`: find match offset; draw prefix in `theme_get(THEME_TEXT)`, match span in `theme_get(THEME_ACCENT)`, suffix in `theme_get(THEME_TEXT)`. **Keyboard nav**: `WM_KEYDOWN(VK_DOWN)` from search textbox → set focus to first result row; Enter → `file_assoc_open(entry.full_path)` + close Start Menu. **"No results"**: render centered gray text if `search_query()` returns 0.
+> → XREF: `08-graphics-ui/TODO-11-startmenu-tray-notifications.md §4` -- the search bar scaffold (CTRL_TEXTBOX input, "No results found" state) already exists or is planned there; §5 here wires `search_query()` into that scaffold. **Debounce**: maintain `g_search_debounce_tick` (PIT ticks); on keystroke: `g_search_debounce_tick = system_get_ticks() + DEBOUNCE_TICKS` (150 ms → `DEBOUNCE_TICKS = PIT_TARGET_FREQ * 150 / 1000`); in `startmenu_tick()`: if `system_get_ticks() >= g_search_debounce_tick && g_search_dirty`: call `search_query()` + re-render results. **Accent highlight**: for each result name rendered via `ttf_draw_string()`: find match offset; draw prefix in `theme_get(THEME_TEXT)`, match span in `theme_get(THEME_ACCENT)`, suffix in `theme_get(THEME_TEXT)`. **Keyboard nav**: `WM_KEYDOWN(VK_DOWN)` from search textbox → set focus to first result row; Enter → `file_assoc_open(entry.full_path)` + close Start Menu. **"No results"**: render centered gray text if `search_query()` returns 0.
 
 - [ ] `g_search_debounce_tick` + `g_search_dirty` flag in `startmenu.c`
 - [ ] Keystroke handler: set `g_search_dirty=1`; update `g_search_debounce_tick`

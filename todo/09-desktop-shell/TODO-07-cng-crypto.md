@@ -3,7 +3,7 @@
 > **Goal:** Build the full Windows CNG (Cryptography Next Generation) API surface on top of monocypher (TODO-06): AES-256-GCM, SHA-256, HMAC-SHA256, RSA-2048, ECDH X25519 primitives, a minimal X.509 DER certificate store with chain verification, a per-user encrypted key store, Windows-compatible BCrypt/NCrypt stub tables, transparent NTFS EFS file encryption, PE32+ code signing, and a TLS PRF helper consumed by the Mbed TLS network stack.
 
 > [!IMPORTANT]
-> **Already exists**: `crypto_blake2b()` + `crypto_argon2i()` + `crypto_x25519()` + `crypto_ed25519_*()` in monocypher (TODO-06 §2). `csprng_read()` (TODO-06 §11). `kmalloc/kfree`, `pmm_alloc_contiguous`. `uefi_runtime.h` has `CRYPTO_IND_RSA_*` constants for Secure Boot -- these are for UEFI, not runtime CNG; do not reuse. Registry `HKLM\SECURITY\*` hive. `vfs_open/read/write` for file encryption. NTFS `ntfs_internal.h` exists -- EFS adds `$EFS` attribute to NTFS inodes. `07-graphics-ui/TODO-11` establishes the `kernel32` stub table pattern; BCrypt/NCrypt follow the same stub table approach. **Missing**: AES-256-GCM (monocypher is ChaCha20-Poly1305 only; need `tiny-AES-c` or equivalent), SHA-256 (monocypher has BLAKE2b only), RSA-2048, all CNG structs and APIs. **monocypher provides**: `crypto_x25519()` for §1 ECDH Curve25519; `crypto_ed25519_sign/check()` for §7 code signing alternative; `crypto_blake2b()` for §1 BLAKE2b-256. Complete sections in order: primitives → TLS helper → cert store → key store → BCrypt → NCrypt → code signing → EFS.
+> **Already exists**: `crypto_blake2b()` + `crypto_argon2i()` + `crypto_x25519()` + `crypto_ed25519_*()` in monocypher (TODO-06 §2). `csprng_read()` (TODO-06 §11). `kmalloc/kfree`, `pmm_alloc_contiguous`. `uefi_runtime.h` has `CRYPTO_IND_RSA_*` constants for Secure Boot -- these are for UEFI, not runtime CNG; do not reuse. Registry `HKLM\SECURITY\*` hive. `vfs_open/read/write` for file encryption. NTFS `ntfs_internal.h` exists -- EFS adds `$EFS` attribute to NTFS inodes. `08-graphics-ui/TODO-11` establishes the `kernel32` stub table pattern; BCrypt/NCrypt follow the same stub table approach. **Missing**: AES-256-GCM (monocypher is ChaCha20-Poly1305 only; need `tiny-AES-c` or equivalent), SHA-256 (monocypher has BLAKE2b only), RSA-2048, all CNG structs and APIs. **monocypher provides**: `crypto_x25519()` for §1 ECDH Curve25519; `crypto_ed25519_sign/check()` for §7 code signing alternative; `crypto_blake2b()` for §1 BLAKE2b-256. Complete sections in order: primitives → TLS helper → cert store → key store → BCrypt → NCrypt → code signing → EFS.
 
 ## Inputs
 
@@ -18,8 +18,8 @@
 - → XREF: `06-networking/TODO-03-http-tls.md` -- Mbed TLS integration calls `cng_tls_prf()` (§8) and `cng_rsa_pkcs1_sign/verify()` for TLS handshake; §8 is consumed there
 - → XREF: `06-networking/TODO-03-http-tls.md §6` -- Mozilla CA bundle loaded at boot used to seed §2 cert store root CAs
 - → XREF: `05-storage-filesystems/TODO-02-ntfs-readwrite.md` -- §6 EFS integration hooks into the NTFS data path; EFS `$EFS` attribute parsing lives in NTFS driver
-- → XREF: `07-graphics-ui/TODO-11-win32-gdi-user32-stubs.md` -- establishes `kernel32` stub table; `bcrypt.dll` (§4) and `ncrypt.dll` (§5) follow the same stub table pattern
-- → XREF: `08-desktop-shell/TODO-06-security-accounts.md §2` -- monocypher and `csprng_read()` must be complete before §1 starts
+- → XREF: `08-graphics-ui/TODO-14-win32-gdi-user32-stubs.md` -- establishes `kernel32` stub table; `bcrypt.dll` (§4) and `ncrypt.dll` (§5) follow the same stub table pattern
+- → XREF: `09-desktop-shell/TODO-06-security-accounts.md §2` -- monocypher and `csprng_read()` must be complete before §1 starts
 
 ## Outcome
 
@@ -68,7 +68,7 @@ AES-256-GCM encrypt/decrypt (pure-C, no SSE2); SHA-256 (32-byte digest); HMAC-SH
 - [ ] `int cng_rsa2048_encrypt(const uint8_t pub[256], const uint8_t *plain, size_t plen, uint8_t cipher_out[256])` -- PKCS#1 v1.5 padding
 - [ ] `int cng_rsa2048_decrypt(const uint8_t priv[512], const uint8_t cipher[256], uint8_t *plain_out, size_t *plen_out)` -- PKCS#1 v1.5 unpad; constant-time
 - [ ] `static int cng_consttime_compare(const uint8_t *a, const uint8_t *b, size_t n)` -- no early return; XOR-fold
-- [ ] `void cng_sha1(const uint8_t *data, size_t len, uint8_t hash_out[20])` -- SHA-1 (160-bit); needed by WIM file format (-> XREF: 15-installer-release/TODO-02 §5), Windows-compatible service SID derivation (-> XREF: 02-kernel-core/TODO-11 §16), and WPA2 PBKDF2 (-> XREF: 04-drivers-hardware/TODO-14 §6)
+- [ ] `void cng_sha1(const uint8_t *data, size_t len, uint8_t hash_out[20])` -- SHA-1 (160-bit); needed by WIM file format (-> XREF: 15-installer-release/TODO-02 §5), Windows-compatible service SID derivation (-> XREF: 02-kernel-core/TODO-15 §16), and WPA2 PBKDF2 (-> XREF: 04-drivers-hardware/TODO-15 §5)
 - [ ] Boot log: `klog(LOG_OK, "cng", "primitives ready: AES-256-GCM SHA-256 SHA-1 HMAC RSA-2048 X25519 BLAKE2b")`
 - [ ] Commit: `"cng: crypto primitives -- AES-256-GCM, SHA-256, SHA-1, HMAC, RSA-2048, X25519, BLAKE2b"`
 

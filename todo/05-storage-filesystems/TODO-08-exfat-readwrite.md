@@ -10,9 +10,9 @@
 - `src/kernel/fs/fat32/` -- reference implementation for cluster chain traversal pattern and directory scan loop; do not share code, but follow the same structural patterns
 - `src/kernel/fs/vfs.c` + `include/kernel/fs/vfs.h` -- `vfs_mount()`, `vfs_fs_driver`, `vfs_node_t` interface all drivers implement
 - `src/kernel/fs/partition.c` -- `partition_mount_filesystems()` will be replaced by `vfs_probe()` (TODO-03 §1), which calls `exfat_probe()`; the exFAT probe must detect `"EXFAT   "` OEM ID at sector offset 3
-- → XREF: `05-storage-filesystems/TODO-03-volume-management-automount.md §1` -- `vfs_probe()` calls `exfat_probe()` at step 4 in the probe priority chain; §10 of this TODO must return the correct `fs_identify_result_t` with label, total bytes, free bytes
-- → XREF: `05-storage-filesystems/TODO-04-fat32-hardening-vfs-semantics.md §7` -- VFS passes names verbatim; exFAT must do case-insensitive compare in its own `finddir()` via Up-Case Table
-- → XREF: `05-storage-filesystems/TODO-05-win32-file-io-api.md §4` -- `CreateFile` with an exFAT drive letter calls `NtCreateFile` → `vfs_open` → `exfat_ops.finddir`; ensure `exfat_ops` exposes the full 14-entry `vfs_fs_driver` vtable
+- → XREF: `05-storage-filesystems/TODO-03-volume-management-automount.md §1` -- `vfs_probe()` calls `exfat_probe()` at step 4 in the probe priority chain; §7 of this TODO must return the correct `fs_identify_result_t` with label, total bytes, free bytes
+- → XREF: `05-storage-filesystems/TODO-04-fat32-hardening-vfs-semantics.md §1` -- VFS passes names verbatim; exFAT must do case-insensitive compare in its own `finddir()` via Up-Case Table
+- → XREF: `05-storage-filesystems/TODO-05-win32-file-io-api.md §3` -- `CreateFile` with an exFAT drive letter calls `NtCreateFile` → `vfs_open` → `exfat_ops.finddir`; ensure `exfat_ops` exposes the full 14-entry `vfs_fs_driver` vtable
 
 ## Outcome
 

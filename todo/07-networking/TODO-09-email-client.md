@@ -3,18 +3,18 @@
 > **Goal:** Build a full-featured email client: SMTP send (port 587 + STARTTLS), POP3 receive (port 995 + TLS), IMAP sync (port 993 + TLS with IDLE push), account manager (multiple accounts, MX autodiscover, Registry persistence), RFC 2822 message parser + MIME multipart + base64/QP decode, three-panel GUI (sidebar/list/viewer), compose window with attachments, full-text search, desktop notifications with tray icon, and contacts integration.
 
 > [!IMPORTANT]
-> Mbed TLS (`tls_connect()`, `tls_send()`, `tls_recv()`, `tls_close()`) from TODO-03 is the mandatory TLS foundation for SMTP STARTTLS, POP3/IMAP over TLS. DNS `dns_resolve()` from TODO-02 is used for MX autodiscover and hostname resolution. The message parser (§5 in implementation order) defines the `mail_message_t` struct and base64/quoted-printable decode utilities used by all protocol sections -- it must be built first. The `ctrl_create_button/textbox/scrollbar` API from `include/desktop/controls.h` and `wm_create_window()` from `include/desktop/wm.h` are the GUI primitives. All message storage uses VFS paths under `C:\Users\Default\AppData\Mail\{account}\{folder}\`; all buffers > 4 KB use `pmm_alloc_contiguous()`.
+> Mbed TLS (`tls_connect()`, `tls_send()`, `tls_recv()`, `tls_close()`) from TODO-03 is the mandatory TLS foundation for SMTP STARTTLS, POP3/IMAP over TLS. DNS `dns_resolve()` from TODO-02 is used for MX autodiscover and hostname resolution. The message parser (§3 in implementation order) defines the `mail_message_t` struct and base64/quoted-printable decode utilities used by all protocol sections -- it must be built first. The `ctrl_create_button/textbox/scrollbar` API from `include/desktop/controls.h` and `wm_create_window()` from `include/desktop/wm.h` are the GUI primitives. All message storage uses VFS paths under `C:\Users\Default\AppData\Mail\{account}\{folder}\`; all buffers > 4 KB use `pmm_alloc_contiguous()`.
 
 ## Inputs
 
 - `src/kernel/net/tls.c` (TODO-03) -- `tls_connect(fd, host)`, `tls_send()`, `tls_recv()`, `tls_close()` for SMTP STARTTLS, POP3 TLS, IMAP TLS
-- `src/kernel/net/dns.c` (TODO-02) -- `dns_resolve(hostname, &ip)` for server connection; add `dns_resolve_mx(domain, mx_host_out)` for MX autodiscover (§4)
+- `src/kernel/net/dns.c` (TODO-02) -- `dns_resolve(hostname, &ip)` for server connection; add `dns_resolve_mx(domain, mx_host_out)` for MX autodiscover (§5)
 - `include/desktop/controls.h` -- `ctrl_create_button/label/textbox/scrollbar`, `ctrl_draw_all`, `ctrl_handle_mouse/key` for all GUI sections
 - `include/desktop/wm.h` -- `wm_create_window()` for main mail window, compose window, search dialog
 - `src/kernel/fs/vfs.c` -- `vfs_open/read/write/readdir` for `.eml` storage and contacts JSON
 - `include/registry.h` -- account settings in `HKCU\Software\ImpossibleMail\Accounts\{name}\*`
 - → XREF: `06-networking/TODO-03-http-tls.md` -- Mbed TLS (`tls_connect`) is the mandatory prerequisite for all three protocol sections
-- → XREF: `06-networking/TODO-02-dns-sockets.md` -- `dns_resolve()` for SMTP/POP3/IMAP server IPs; extend with `dns_resolve_mx()` for §4 autodiscover
+- → XREF: `06-networking/TODO-02-dns-sockets.md` -- `dns_resolve()` for SMTP/POP3/IMAP server IPs; extend with `dns_resolve_mx()` for §5 autodiscover
 - → XREF: `06-networking/TODO-06-ntp-status-winsock.md` -- tray icon pattern from §3 (network tray) is reused by §9 mail tray envelope icon
 
 ## Outcome

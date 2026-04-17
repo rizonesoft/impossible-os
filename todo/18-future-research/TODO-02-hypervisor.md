@@ -17,7 +17,7 @@
 > guests). These are different code paths -- do not conflate them.
 >
 > **Hypervisor detection** (CPUID `0x40000000`, `boot_info.hv_flags`) is owned by
-> `01-boot-platform/TODO-04 §3`; §1 here uses `cpu_data.cpuid_features` to detect
+> `01-boot-platform/TODO-09 §4`; §1 here uses `cpu_data.cpuid_features` to detect
 > `VMXE` / `SVM` support -- it reads that data, does not re-specify detection.
 >
 > **PMM and VMM APIs** (`pmm_alloc_contiguous`, `vmm_map_page`) already exist and are
@@ -35,9 +35,9 @@
 - `include/kernel/mm/vmm.h` -- `vmm_map_page(virt, phys, flags)` -- §3 EPT setup, guest memory mapping
 - `include/kernel/sched/task.h` -- `task_t` (per-vCPU state), `task_create` -- §2 vCPU scheduling
 - `include/kernel/drivers/lapic.h` -- LAPIC IPI for inter-vCPU signalling -- §2 §3
-- `01-boot-platform/TODO-04-cpu-boot-sequencing.md §3` (→ XREF) -- CPUID feature flags (`cpu_data.cpuid_features`); `VMXE` bit detection uses data collected there
-- `02-kernel-core/TODO-17-kernel-security-hardening.md` (→ XREF) -- SMEP/SMAP/CET on VMX host; must stay active in host CR4 across VM entries/exits
-- `02-kernel-core/TODO-19-x86-64-architecture.md` (→ XREF) -- MSR read/write infrastructure (`rdmsr_safe`, `wrmsr`); used by VMXON and VMCS field access
+- `01-boot-platform/TODO-09-cpu-boot-sequencing.md §4` (→ XREF) -- CPUID feature flags (`cpu_data.cpuid_features`); `VMXE` bit detection uses data collected there
+- `02-kernel-core/TODO-10-kernel-security-hardening.md` (→ XREF) -- SMEP/SMAP/CET on VMX host; must stay active in host CR4 across VM entries/exits
+- `02-kernel-core/TODO-09-x86-64-architecture.md` (→ XREF) -- MSR read/write infrastructure (`rdmsr_safe`, `wrmsr`); used by VMXON and VMCS field access
 - `src/kernel/drivers/virtio/virtio.c` -- guest-side VirtIO transport (reference for §4 host-side emulation design; understand the split-ring format from the guest's perspective)
 - Intel SDM Vol. 3C (VMX chapter) -- VMCS layout, VM entry/exit, EPT, VPID
 - AMD APM Vol. 2 (SVM chapter) -- VMCB (VM Control Block), nested paging, VMSAVE/VMLOAD

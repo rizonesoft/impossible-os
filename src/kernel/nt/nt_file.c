@@ -9,7 +9,7 @@
  * NtRemoveIoCompletion, NtCreateMailslotFile, NtReadFileScatter,
  * NtWriteFileGather.
  *
- * XREF: 02-kernel-core/TODO-05-native-api-ssdt.md S13
+ * XREF: 02-kernel-core/TODO-12-native-api-ssdt.md S13
  * ============================================================================ */
 
 #include "kernel/types.h"

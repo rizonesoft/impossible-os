@@ -9,20 +9,20 @@
 
 - `include/kernel/net/http.h` (TODO-06-net §3) -- `http_get(url, buf, max, &len)`, `http_get_to_file(url, path, progress_cb)` -- §1 version check, §2 download
 - `include/cng.h` (TODO-07-cng §1) -- `cng_sha256(data, len, out32)` -- §2 integrity verification
-- `include/kernel/zip.h` (TODO-04 §4) -- `zip_open/extract/list/close()` -- §3 update apply, §6 app install
+- `include/kernel/zip.h` (TODO-04 §6) -- `zip_open/extract/list/close()` -- §3 update apply, §8 app install
 - `include/registry.h` -- `HKLM\SYSTEM\Version`, `HKLM\SOFTWARE\{name}\*`, `HKLM\SYSTEM\Update\*` -- §1 version compare, §6 install manifest, §8 app list
 - `include/kernel/fs/vfs.h` -- `vfs_mkdir/rename/unlink/stat()` -- §3 file replace, §6 install, §7 uninstall
-- `include/desktop/shortcut.h` (TODO-02 §3) -- `shortcut_create(path, target, icon)` -- §6 Start Menu + Desktop shortcuts
+- `include/desktop/shortcut.h` (TODO-02 §4) -- `shortcut_create(path, target, icon)` -- §6 Start Menu + Desktop shortcuts
 - `include/desktop/file_assoc.h` (TODO-02 §1) -- `file_assoc_set(ext, prog_id, app_path)` -- §6 `.ipkg` association + app assoc
-- `include/desktop/controls.h` (TODO-05) -- `CTRL_LISTVIEW`, `CTRL_PROGRESSBAR`, `CTRL_WIZARDPAGE`, `dialog_confirm()` -- §4 wuapp, §6 wizard, §8 appwiz
-- `include/cpl.h` (TODO-11) -- `CPlApplet_t`, `NEWCPLINFO` -- §4 `wuapp.cpl`, §8 `appwiz.cpl`
+- `include/desktop/controls.h` (TODO-05) -- `CTRL_LISTVIEW`, `CTRL_PROGRESSBAR`, `CTRL_WIZARDPAGE`, `dialog_confirm()` -- §3 wuapp, §6 wizard, §8 appwiz
+- `include/cpl.h` (TODO-11) -- `CPlApplet_t`, `NEWCPLINFO` -- §8 `wuapp.cpl`, §4 `appwiz.cpl`
 - `include/kernel/sched/task.h` -- `sched_task_add()` -- §4 boot auto-check background task
-- `include/desktop/notification.h` (TODO-09) -- `notify_send()` -- §4 "Update available" toast
-- → XREF: `06-networking/TODO-03` -- HTTPS client; §1 + §2 depend on HTTP GET being available
-- → XREF: `08-desktop-shell/TODO-07` -- `cng_sha256()`; §2 verify depends on crypto module
-- → XREF: `08-desktop-shell/TODO-04 §4` -- ZIP/IPKG extract; §3 and §6 depend on `zip_extract()`
-- → XREF: `10-platform-services/TODO-04 §1` -- system restore point; §3 update-apply and §6 app install call `restore_create()` before making changes
-- → XREF: `08-desktop-shell/TODO-11 §3` -- `appwiz.cpl` stub registered in Control Panel; §8 implements it
+- `include/desktop/notification.h` (TODO-09) -- `notify_send()` -- §5 "Update available" toast
+- → XREF: `06-networking/TODO-03` -- HTTPS client; §1 + §9 depend on HTTP GET being available
+- → XREF: `09-desktop-shell/TODO-07` -- `cng_sha256()`; §2 verify depends on crypto module
+- → XREF: `09-desktop-shell/TODO-04 §6` -- ZIP/IPKG extract; §3 and §8 depend on `zip_extract()`
+- → XREF: `10-platform-services/TODO-04 §2` -- system restore point; §3 update-apply and §8 app install call `restore_create()` before making changes
+- → XREF: `09-desktop-shell/TODO-11 §5` -- `appwiz.cpl` stub registered in Control Panel; §4 implements it
 
 ## Outcome
 
@@ -42,7 +42,7 @@
 | ⭐  |   2   | §9 IPKG build tool -- `tools/ipkg_create.c`; `gcc`-compiled; pack dir → `.ipkg`; manifest validate | §5 format spec; host `gcc`; `libzip` or miniz host build                               |  [ ]   |
 | 💎  |   3   | §1 Update check API -- `struct update_info`, `update_check()`, HTTP GET, Registry version compare   | `http_get()` (TODO-06-net §3); `HKLM\SYSTEM\Version`                                  |  [ ]   |
 | 💎  |   4   | §2 Update download & verify -- `update_download()` with progress; `update_verify()` SHA-256 gate   | §1; `cng_sha256()` (TODO-07); `http_get_to_file()`                                    |  [ ]   |
-| 💎  |   5   | §3 Update apply -- restore point, ZIP extract, file replace, version bump, restart prompt           | §2; `zip_extract()` (TODO-04); `restore_create()` (TODO-04 §1)                        |  [ ]   |
+| 💎  |   5   | §3 Update apply -- restore point, ZIP extract, file replace, version bump, restart prompt           | §2; `zip_extract()` (TODO-04); `restore_create()` (TODO-04 §2)                        |  [ ]   |
 | 💎  |   6   | §4 `wuapp.cpl` -- check/download/apply UI, auto-check boot task, update history, toast             | §1-3; `CTRL_PROGRESSBAR` (TODO-05); `notify_send()` (TODO-09); `sched_task_add()`    |  [ ]   |
 | 💎  |   7   | §6 App installer wizard -- IPKG parse, file extract, registry, shortcuts, file assoc, UAC           | §5; `zip_extract()` (TODO-04); `shortcut_create()` (TODO-02); `privilege_request()`  |  [ ]   |
 | 💎  |   8   | §7 App uninstaller -- reverse install, confirmation dialog, empty dir cleanup                       | §6 install metadata in registry; `dialog_confirm()`                                    |  [ ]   |
@@ -89,10 +89,10 @@
 **Files:** extend `src/kernel/update.c`
 
 > [!NOTE]
-> **Restore point first**: `restore_create("Pre-update %s", info.version)` from TODO-04 §1 -- snapshot `C:\Impossible\System\` file list + registry hive before overwriting anything. **Extract**: `zip_extract(path, "C:\\Temp\\update_stage\\")` → `files/` directory appears. **Replace files**: iterate `install.ini` `[Files]` section (`SrcFile=DestPath`); for each: `vfs_rename(dest, dest_bak)` (backup old); `vfs_rename(src, dest)`. On any VFS error: abort + log + preserve backups. **HOTFIX** (< 100 KB single file): no restart needed; `klog_info()` "Update applied: %s". **MINOR** (1–5 MB, driver/service): ask "Restart to complete update? [Restart] [Later]". **MAJOR** (kernel `kernel.exe`): mandatory restart -- write `HKLM\SYSTEM\Update\PendingRestart = 1`; dialog "A restart is required. [Restart Now]" (cannot defer). **Version bump**: `registry_set("HKLM\\SYSTEM\\Version", info.version)` + `LastUpdate` timestamp. **Cleanup**: `vfs_unlink(path)` (delete `.ipkg`); `rmdir("C:\\Temp\\update_stage\\")`.
+> **Restore point first**: `restore_create("Pre-update %s", info.version)` from TODO-04 §2 -- snapshot `C:\Impossible\System\` file list + registry hive before overwriting anything. **Extract**: `zip_extract(path, "C:\\Temp\\update_stage\\")` → `files/` directory appears. **Replace files**: iterate `install.ini` `[Files]` section (`SrcFile=DestPath`); for each: `vfs_rename(dest, dest_bak)` (backup old); `vfs_rename(src, dest)`. On any VFS error: abort + log + preserve backups. **HOTFIX** (< 100 KB single file): no restart needed; `klog_info()` "Update applied: %s". **MINOR** (1–5 MB, driver/service): ask "Restart to complete update? [Restart] [Later]". **MAJOR** (kernel `kernel.exe`): mandatory restart -- write `HKLM\SYSTEM\Update\PendingRestart = 1`; dialog "A restart is required. [Restart Now]" (cannot defer). **Version bump**: `registry_set("HKLM\\SYSTEM\\Version", info.version)` + `LastUpdate` timestamp. **Cleanup**: `vfs_unlink(path)` (delete `.ipkg`); `rmdir("C:\\Temp\\update_stage\\")`.
 
 - [ ] `update_apply(const char *ipkg_path, const struct update_info *info)` -- orchestrate: restore → extract → replace → bump → restart prompt
-- [ ] `restore_create("Pre-update %s", info->version)` -- call TODO-04 §1 restore point API
+- [ ] `restore_create("Pre-update %s", info->version)` -- call TODO-04 §2 restore point API
 - [ ] `zip_extract(ipkg_path, "C:\\Temp\\update_stage\\")` → staging
 - [ ] Iterate `install.ini [Files]` → `vfs_rename(old, old.bak)` + `vfs_rename(new, dest)` for each file
 - [ ] On any error: `klog_err()` + partial-replace rollback (restore `.bak` → orig); return `UPDATE_ERR_APPLY`
@@ -210,7 +210,7 @@ Read `HKLM\SOFTWARE\{name}\InstallPath`, reverse install: delete files, remove r
 
 List all installed apps from `HKLM\SOFTWARE\*`: Name, Version, Size, Install Date. Search/filter. [Uninstall] per row → `uninstaller_run()`. Part of Control Panel. Stub registered in TODO-11 §5.
 
-**Files:** `src/apps/control/applets/appwiz.c` (implement the stub from TODO-11 §5)
+**Files:** `src/apps/control/applets/appwiz.c` (implement the stub from TODO-11 §9)
 
 > [!NOTE]
 > `CTRL_LISTVIEW` (4 columns: Name 180 / Version 80 / Size 70 / Install Date 100 px); sortable. Populate: enumerate `HKLM\SOFTWARE\*` subkeys; for each: read `Version`, `EstimatedSize`, `InstallDate`; filter out system keys (Impossible, Classes, etc.) by checking for `InstallPath` presence. **Search bar**: `CTRL_TEXTBOX` at top; on type: filter `CTRL_LISTVIEW` rows to name substring match. **[Uninstall] button**: enabled when row selected; click → `uninstaller_run(selected_name)` → refresh list. **App icon**: read 16×16 icon for each row from `HKLM\SOFTWARE\{name}\Icon` path (if set); fall back to default app icon. **Double-click row**: show app properties dialog (name, version, publisher, install path, install date, size, description).

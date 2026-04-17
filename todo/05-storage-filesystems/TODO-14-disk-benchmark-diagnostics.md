@@ -13,7 +13,7 @@
 - `src/kernel/drivers/blkdev.c` + `include/kernel/drivers/blkdev.h` -- §4 adds `blkdev_stats_t` to `blkdev_t`; all read/write completion paths call `blkdev_stats_record()`
 - → XREF: `05-storage-filesystems/TODO-01-block-storage-hardening.md §6` -- per-device I/O metrics `blkdev_t.stats` field defined there; §4 of this TODO extends that with histogram and queue-depth data
 - → XREF: `02-kernel-core/TODO-xx-process-scheduler` -- SCHED_IDLE thread priority used by §7 health monitor daemon
-- → XREF: `08-desktop-shell/TODO-xx-taskmanager` -- Task Manager "Storage" tab sparkline consumes §5 latency histogram data via `NtQuerySystemInformation(SystemDiskPerformanceInformation)`
+- → XREF: `09-desktop-shell/TODO-xx-taskmanager` -- Task Manager "Storage" tab sparkline consumes §5 latency histogram data via `NtQuerySystemInformation(SystemDiskPerformanceInformation)`
 
 ## Outcome
 

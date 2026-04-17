@@ -3,20 +3,20 @@
 > **Goal:** Replace the hardcoded `partition_mount_filesystems()` path with a proper volume manager: a priority-ordered filesystem probe chain, dynamic drive-letter assignment, USB hot-plug mount/unmount with desktop toasts, manual `mount`/`umount` shell commands, Win32 volume query APIs, optical drive support, and `FSCTL_*` volume control ioctls.
 
 > [!IMPORTANT]
-> The current `partition_mount_filesystems()` in `src/kernel/fs/partition.c` hardcodes IXFS→C:, FAT32→D:+, NTFS by type field -- no probe abstraction, no hot-plug, no drive-label Registry entries. §1 introduces `vfs_probe()` as the new canonical entry point; §2 rewires `boot_storage.c` to call it. §6 (Win32 APIs) depends on §1's Registry population. §3–4 depend on `04-drivers-hardware/TODO-09-usb-stack.md §7` (hot-plug interrupt events). The IXFS → NTFS volume migration path (`§6` of the old source) is **dropped** -- `C:\` stays IXFS permanently.
+> The current `partition_mount_filesystems()` in `src/kernel/fs/partition.c` hardcodes IXFS→C:, FAT32→D:+, NTFS by type field -- no probe abstraction, no hot-plug, no drive-label Registry entries. §1 introduces `vfs_probe()` as the new canonical entry point; §2 rewires `boot_storage.c` to call it. §6 (Win32 APIs) depends on §1's Registry population. §3–4 depend on `04-drivers-hardware/TODO-10-usb-stack.md §8` (hot-plug interrupt events). The IXFS → NTFS volume migration path (`§7` of the old source) is **dropped** -- `C:\` stays IXFS permanently.
 
 ## Inputs
 
 - `src/kernel/fs/partition.c` + `include/kernel/fs/partition.h` -- `partition_mount_filesystems()` is the current hardcoded mount path; §1–2 replace it with `vfs_probe()`
 - `src/kernel/fs/vfs.c` + `include/kernel/fs/vfs.h` -- `vfs_mount()` / `vfs_unmount()` / `vfs_is_mounted()` exist; §1 adds `vfs_probe()` and drive Registry writes
 - `src/kernel/main/boot_storage.c` -- calls `partition_mount_filesystems()`; §2 replaces it with the new probe+auto-assign flow
-- → XREF: `04-drivers-hardware/TODO-09-usb-stack.md §7` -- hot-plug TRB events that trigger §3 (USB volume arrival) and §4 (safe removal)
+- → XREF: `04-drivers-hardware/TODO-10-usb-stack.md §8` -- hot-plug TRB events that trigger §3 (USB volume arrival) and §4 (safe removal)
 - → XREF: `05-storage-filesystems/TODO-01-block-storage-hardening.md §7` -- `cache_flush(dev)` / `cache_invalidate(dev)` must be called during unmount (§4 safe removal and §5 `umount`)
-- → XREF: `05-storage-filesystems/TODO-02-ntfs-readwrite.md §5` -- dirty NTFS volume recovery runs inside `ntfs_vfs_mount()`, called by `vfs_probe()` in §1
+- → XREF: `05-storage-filesystems/TODO-02-ntfs-readwrite.md §3` -- dirty NTFS volume recovery runs inside `ntfs_vfs_mount()`, called by `vfs_probe()` in §1
 - → XREF: `08-desktop-shell` domain -- §3 desktop toast and §4 tray icon safe-remove are shell-facing components; coordinate with the notification/tray TODO
 - → XREF: `10-apps` domain -- File Manager sidebar (§3 real-time update) and Task Manager disk section (§6 volume stats) consume `vfs_probe` Registry entries
-- → XREF: `01-boot-platform/TODO-03-boot-device-discovery.md §3, §4, §8` -- boot_info.boot_device_type and boot_device_removable inform C: drive assignment and cache policy in §1
-- → XREF: `05-storage-filesystems/TODO-04-fat32-hardening-vfs-semantics.md §1` -- BPB validation fires inside `fat32_init()` which `vfs_probe()` calls
+- → XREF: `01-boot-platform/TODO-05-boot-device-discovery.md §2, §3, §8` -- boot_info.boot_device_type and boot_device_removable inform C: drive assignment and cache policy in §1
+- → XREF: `05-storage-filesystems/TODO-04-fat32-hardening-vfs-semantics.md §2` -- BPB validation fires inside `fat32_init()` which `vfs_probe()` calls
 
 ## Outcome
 
@@ -34,7 +34,7 @@
 | --- | :---: | --------------------------------------------------------------------------------------- | ---------------------------------------------------------------- | :----: |
 | ⭐  |   1   | §1 Filesystem probe chain + drive-letter assignment + Registry population               | Existing FS drivers (IXFS, NTFS, FAT32)                          |  [ ]   |
 | 💎  |   2   | §2 Boot mount sequence -- rewire `boot_storage.c` to use `vfs_probe()`                  | §1 (probe API exists)                                            |  [ ]   |
-| ⭐  |   3   | §3 USB hot-plug volume arrival -- auto-mount + desktop toast + File Manager sidebar     | §1, TODO-09 §7 hot-plug events                                   |  [ ]   |
+| ⭐  |   3   | §3 USB hot-plug volume arrival -- auto-mount + desktop toast + File Manager sidebar     | §1, TODO-09 §8 hot-plug events                                   |  [ ]   |
 | 💎  |   4   | §4 USB safe removal -- tray right-click, flush+unmount, force-unmount after 5 s         | §3 (drive mounted), TODO-01 §7 `cache_flush()`                   |  [ ]   |
 | 💎  |   5   | §5 Manual `mount` / `umount` shell commands                                             | §1 (probe), §4 (unmount path)                                    |  [ ]   |
 | 💎  |   6   | §6 Win32 volume query APIs -- `GetLogicalDrives`, `GetVolumeInformation`, `QueryDosDevice` | §1 (Registry populated)                                        |  [ ]   |
@@ -85,7 +85,7 @@ On USB MSC hot-plug event from the xHCI driver, probe the new block device, auto
 **Files:** `src/kernel/fs/vfs_probe.c` (extend), `src/kernel/main/boot_storage.c` (add hotplug callback), `src/desktop/toast.c` (extend)
 
 > [!NOTE]
-> Hot-plug events arrive from `04-drivers-hardware/TODO-09-usb-stack.md §7` as `usb_hotplug_notify(dev, ATTACH)`. This callback must run in a deferred context (DPC or kernel thread), not the xHCI interrupt handler, since `vfs_probe()` does block I/O. After mounting, post a desktop notification via `toast_show("USB drive detected -- %c:\\ (%s, %s, '%s')", letter, size_str, fs_name, label)` with two buttons: `Open` (opens File Manager to that drive) and `Dismiss`.
+> Hot-plug events arrive from `04-drivers-hardware/TODO-10-usb-stack.md §8` as `usb_hotplug_notify(dev, ATTACH)`. This callback must run in a deferred context (DPC or kernel thread), not the xHCI interrupt handler, since `vfs_probe()` does block I/O. After mounting, post a desktop notification via `toast_show("USB drive detected -- %c:\\ (%s, %s, '%s')", letter, size_str, fs_name, label)` with two buttons: `Open` (opens File Manager to that drive) and `Dismiss`.
 
 - [ ] `vfs_hotplug_attach(blkdev_t *dev)`: find next free drive letter (D:–Z:); call `vfs_probe(dev, letter)`; on success: log `[VFS] Hot-plug: mounted %c: (%s)`; call `desktop_sidebar_add_drive(letter)`; show toast
 - [ ] `vfs_hotplug_detach(blkdev_t *dev)`: find letter for dev; if mounted and all file handles closed: call `vfs_unmount(letter)`; log `[VFS] Hot-plug: unmounted %c: (device removed)`; call `desktop_sidebar_remove_drive(letter)`; show toast `"Drive removed: %c:\\"`; if handles open: log warning, force unmount after 5 s (timer callback)

@@ -5,7 +5,7 @@
  * surface. Each handler is a bounded stub that logs the call once
  * (atomic one-time flag, load-fast / CAS-on-transition) and returns a
  * deferred-status sentinel until the ALPC engine in
- * 02-kernel-core/TODO-12 §8-§9 is implemented.
+ * 02-kernel-core/TODO-24 §8-§9 is implemented.
  *
  * SCOPE-GAP-ALLOWED: 16 handlers in this file intentionally return
  *                    STATUS_NOT_IMPLEMENTED pending TODO-12 §8 ALPC

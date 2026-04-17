@@ -7,7 +7,7 @@
 
 > [!IMPORTANT]
 > miniz (`mz_uncompress`) must be ported before §3 stream decompression --
-> `→ XREF: 02-kernel-core/TODO-20 §3`.
+> `→ XREF: 02-kernel-core/TODO-32 §3`.
 > `image_load_mem()` from `include/kernel/image.h` is the image decode path (JPEG/PNG/BMP) -- no
 > separate stbi call needed for most cases; use `stbi_load_from_memory()` directly only for
 > color-space conversions not handled by the wrapper.
@@ -19,13 +19,13 @@
 
 ## Inputs
 
-- `02-kernel-core/TODO-20-kernel-libraries.md §3` -- `mz_uncompress(dst, &dst_len, src, src_len)` (miniz FlateDecode)
+- `02-kernel-core/TODO-03-kernel-libraries.md §5` -- `mz_uncompress(dst, &dst_len, src, src_len)` (miniz FlateDecode)
 - `include/kernel/image.h` -- `image_load_mem(img, data, size)` -- §5 image rendering
 - `include/font_mgr.h` -- `ttf_get(slot, px)`, `ttf_draw_string()`, `ttf_draw_char()`, `ttf_measure_width()` -- §4 text rendering
 - `include/gfx.h` -- `gfx_create_surface()`, `gfx_fill_rect()`, `gfx_blit()`, `gfx_drop_shadow()`, `gfx_scale_blit()` -- §4–§6
 - `include/desktop/controls.h` -- `CTRL_SCROLLBAR` (`CTRL_SCROLLBAR_VERT`/`CTRL_SCROLLBAR_HORIZ`), `CTRL_TEXTBOX`, `CTRL_BUTTON` -- §6
 - `include/desktop/wm.h` -- `wm_create_window()` -- §6
-- `include/desktop/file_assoc.h` (→ XREF `08-desktop-shell/TODO-02 §1`) -- `file_assoc_set(ext, prog_id, app_path)` -- §9
+- `include/desktop/file_assoc.h` (→ XREF `09-desktop-shell/TODO-02 §1`) -- `file_assoc_set(ext, prog_id, app_path)` -- §9
 - `include/kernel/vfs.h` -- `vfs_open`, `vfs_read`, `vfs_stat` -- §1 file loading
 - `include/kernel/mm/pmm.h` -- `pmm_alloc_contiguous()`, `pmm_free_contiguous()` -- all large buffers
 
@@ -220,7 +220,7 @@
 - [ ] `pdfview.exe` without args → open-file dialog (`dialog_file_open()`) filtered to `*.pdf`
 - [ ] Open from File Manager double-click → `file_assoc_open()` routes to `pdfview.exe` with path arg
 - [ ] Open from browser download (→ XREF `10-apps/TODO-01 §8`) → same launch path
-- [ ] Open from email attachment (→ XREF `10-apps/TODO-04 §4`) → viewer window per attachment click
+- [ ] Open from email attachment (→ XREF `10-apps/TODO-04 §6`) → viewer window per attachment click
 - [ ] Recent files: `HKCU\Software\Impossible\PDFViewer\RecentFiles` (up to 10 paths, MRU order)
 
 ---

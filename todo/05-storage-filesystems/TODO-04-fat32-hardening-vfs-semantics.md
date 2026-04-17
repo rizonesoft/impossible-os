@@ -12,10 +12,10 @@
 - `src/kernel/fs/fat32/fat32_dir.c` -- `lfn_extract_chars()` for LFN read exists; §4 adds LFN write
 - `src/kernel/fs/vfs.c` + `include/kernel/fs/vfs.h` -- no share-mode, delete-on-close, byte-range lock, or case-fold in open path; §7–11 extend it
 - → XREF: `05-storage-filesystems/TODO-03-volume-management-automount.md §1` -- `vfs_probe()` calls `fat32_init()`; BPB validation (§1) must fire inside `fat32_init()` before `vfs_probe()` returns success
-- → XREF: `05-storage-filesystems/TODO-03-volume-management-automount.md §5` -- `umount` shell calls the VFS unmount path; §5 (fsck) must be callable as `chkdsk D: /fat32`
-- → XREF: `12-user-platform-sdk/TODO-04-ntdll-user-runtime.md` -- Win32 `CreateFile` flags `FILE_SHARE_*` and `FILE_FLAG_DELETE_ON_CLOSE` map directly to §8 and §9
-- → XREF: `01-boot-platform/TODO-17-blackbox-service-partition.md` §12 -- BlackBox FAT32 dirty-bit check depends on §1; fsck-on-mount depends on §6
-- -> XREF: `02-kernel-core/TODO-07-time-filetime-management.md` §1,§6,§11,§13 -- FILETIME type, wall clock, timezone bias, and filesystem timestamp encoding; §5 timestamps now use `KeQuerySystemTime()` + `filetime_to_dos_datetime()` (completed by TODO-07 §13)
+- → XREF: `05-storage-filesystems/TODO-03-volume-management-automount.md §3` -- `umount` shell calls the VFS unmount path; §3 (fsck) must be callable as `chkdsk D: /fat32`
+- → XREF: `12-user-platform-sdk/TODO-04-ntdll-user-runtime.md` -- Win32 `CreateFile` flags `FILE_SHARE_*` and `FILE_FLAG_DELETE_ON_CLOSE` map directly to §7 and §9
+- → XREF: `01-boot-platform/TODO-24-blackbox-service-partition.md` §12 -- BlackBox FAT32 dirty-bit check depends on §1; fsck-on-mount depends on §6
+- -> XREF: `02-kernel-core/TODO-08-time-filetime-management.md` §5,§6,§11,§13 -- FILETIME type, wall clock, timezone bias, and filesystem timestamp encoding; §3 timestamps now use `KeQuerySystemTime()` + `filetime_to_dos_datetime()` (completed by TODO-07 §13)
 
 ## Outcome
 
@@ -282,7 +282,7 @@ Windows file system drivers support opportunistic locks that allow clients to ca
 
 ## Unit Tests
 
-> Wire into `test_runner_init()` via `test_register_fat32_hardening()` and `test_register_vfs_semantics()` (XREF: `00-infrastructure/TODO-03-kernel-test-framework.md`).
+> Wire into `test_runner_init()` via `test_register_fat32_hardening()` and `test_register_vfs_semantics()` (XREF: `00-infrastructure/TODO-03-kernel-test-harness.md`).
 > Boot tests run with `test=1` in boot.conf. FAT32 tests require a mounted FAT32 volume (BlackBox X:\ or test volume).
 
 - [ ] Create `src/kernel/test/test_fat32_hardening.c` with:

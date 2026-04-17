@@ -1,7 +1,7 @@
 /* ============================================================================
  * cpu_security.c -- CPU security feature activation
  *
- * XREF: 02-kernel-core/TODO-17-kernel-security-hardening.md §1-§2
+ * XREF: 02-kernel-core/TODO-10-kernel-security-hardening.md §1-§2
  * ============================================================================ */
 
 #include "kernel/cpu_security.h"

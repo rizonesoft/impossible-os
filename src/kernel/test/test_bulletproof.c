@@ -7,7 +7,7 @@
  * this file provides a single-suite reference that covers all 12 invariant
  * classes in one place.
  *
- * XREF: 02-kernel-core/TODO-22-kernel-bulletproofing.md -- Unit Tests
+ * XREF: 02-kernel-core/TODO-31-kernel-bulletproofing.md -- Unit Tests
  * ============================================================================ */
 
 #ifdef KERNEL_TESTS

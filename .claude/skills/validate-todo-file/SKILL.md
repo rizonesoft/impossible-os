@@ -1,9 +1,16 @@
 ---
 name: validate-todo-file
-description: Validate a TODO file for structural completeness, Implementation Order accuracy, XREF continuity, cross-TODO scope overlap, Inputs path existence, parity gaps, and test coverage. Use when reviewing a TODO after creation, major edits, or during implementation tracking.
+description: Validate a TODO file for structural completeness, Implementation Order accuracy, XREF continuity, cross-TODO scope overlap, Inputs path existence, parity gaps, false completeness, ownership, and test coverage. Use when reviewing a TODO after creation, major edits, or during implementation tracking.
 ---
 
 # Validate TODO File
+
+## Execution Discipline
+
+> This is a structure-and-readiness pass, not a formatting-only sweep. The TODO must be executable, ownership-complete, and resistant to paper completion.
+> - **Completion-first.** A valid TODO does not stop at the happy path if adjacent work is obviously required for the feature to feel real.
+> - **No ownerless deferrals.** If the plan defers work, the exact owner section or TODO must already exist.
+> - **Parity is the floor.** A strong TODO also leaves room for competitive refinement where the domain warrants it.
 
 ## Use This Skill When
 
@@ -29,12 +36,16 @@ description: Validate a TODO file for structural completeness, Implementation Or
    - For each file path listed in Inputs, use Glob to confirm it exists on disk.
    - Flag broken anchors; suggest correct path or note as planned.
 5. Domain overlap scan.
-   - Read the domain `INDEX.md` and other TODO files in the same folder.
-   - Grep for deliverable names and feature keywords to detect scope overlap.
-   - Scan for duplicate XREFs where two TODOs both *implement* the same section.
+    - Read the domain `INDEX.md` and other TODO files in the same folder.
+    - Grep for deliverable names and feature keywords to detect scope overlap.
+    - Scan for duplicate XREFs where two TODOs both *implement* the same section.
 6. Validate the lean TODO structure.
-   - Check required sections, numbering, checklist shape, references, and exit criteria.
-   - **Flat section numbering only:** `## 1.`, `## 2.`, `## 3.` -- the only numbered headings are top-level `## N. Title`. **Never** use sub-numbered section labels inside a section:
+    - Check required sections, numbering, checklist shape, references, and exit criteria.
+    - Verify the TODO has a clear completion boundary:
+      - `> [!IMPORTANT] Current state:` callout exists after the Goal paragraph.
+      - Numbered sections do not stop at paper completion when obvious adjacent work still needs to be named.
+      - Deferred work is filed into a concrete owner section or TODO, not left as vague prose.
+    - **Flat section numbering only:** `## 1.`, `## 2.`, `## 3.` -- the only numbered headings are top-level `## N. Title`. **Never** use sub-numbered section labels inside a section:
      - Forbidden: `### N.M` (e.g. `### 17.1`), bold pseudo-headings like `**17.1 Foo**` / `**1.2 Bar**`, or any `N.M` split that breaks the checklist into sub-chapters.
      - Required: under each `## N.` use **one continuous** `- [ ]` checklist (nested bullets under a single `- [ ]` line are OK for detail). Optional blocks only: a one-line intro, optional callouts (`> [!NOTE]` / WARNING / TIP), then all `- [ ]` work items with `- [ ] Commit:` as the **last** checklist line, then `**Test checkpoint:**` (plus its lines) as the **final** block in the section so acceptance criteria close the section. If you need grouping, fold the words into the bullet text (e.g. "App Paths: open HKLM key...") -- do not add `17.1` / `17.2` labels.
      - If validation finds `### N.M` or `**N.M ...**`, **remove** those headings and merge into a single list; never "fix" by renaming to bold `**N.M**`.
@@ -42,21 +53,25 @@ description: Validate a TODO file for structural completeness, Implementation Or
    - **Every section needs a `- [ ] Commit:` item.** Flag sections missing one.
    - **OS Comparison table (content + layout):** **Placement:** The whole `## OS Comparison` section is the `## OS Comparison` heading, the five-column markdown table, and any summary lines or callouts directly under it until the next top-level `## ` heading. It must sit **after** the last numbered implementation section (`## N. Title`) and **immediately before** `## Unit Tests`, matching `.claude/skills/create-todo/todo-template.md`. If it appears earlier (for example right after `## Implementation Order` or `## Outcome` while `## 1.` or higher still appears later, or between two implementation sections), **move** the entire block to the canonical spot. An optional standalone `---` line immediately above `## OS Comparison` is allowed. If `## Unit Tests` is missing, place OS Comparison immediately before `## Verification` and follow step 12 for a skeleton. **After any move:** re-pad the full table so columns align (same padding rules as after cell edits). **Required five-column header:** `⭐ | Feature | 🪟 Win11 | 🐧 Linux | 🚀 Impossible OS`. **Prefer** platform cells that start with a status emoji or glyph and add a **short** status phrase when that stays accurate. **Do not** shorten, merge, or rewrite rows **only** to make the table more compact: preserve distinct Feature labels and parity nuance. If wording is vague or wrong, fix meaning first; optional tightening is secondary. **Too terse:** If a Feature label or platform cell is so short that parity is unclear (emoji-only, generic yes/no, filler duplicated across rows), **expand** with specific accurate wording or a scoped pointer (`§N`, `TNN §N`, or a concrete subsystem or policy name). Prefer one clear clause over many vague stubs. If you cannot state the comparison truthfully without research, flag it in the step 7 report and leave an honest partial/unknown marker rather than empty micro-copy. **Soft row length:** Treat each raw markdown table row (from leading `|` through trailing content and intentional inter-column spaces) as a **soft** ~200 character guide: aim near or under when accuracy is unchanged. Rows may exceed it when detail is required. **Never** hollow cells, merge distinct comparisons, or strip alignment padding **only** to satisfy the number; when a row is long and redundant, prefer clearer phrasing or a `§N` / `TNN §N` pointer over rambling. **Preserve source column alignment:** do not delete trailing spaces inside cells or shrink columns to shorten lines. If you change any cell, re-pad **every row** in that table (including the separator row) so pipes line up in the raw markdown -- separator cells must be `-` repeated to each column width (minimum 3 hyphens per column). **Do not add** `<!-- Sources: ... -->` URL dumps; **delete** any legacy line matching that pattern if found (URLs belong in the gap-analysis chat report or PR text, not tracked TODOs).
 7. **Win11/Linux parity and competitive edge scan (do not skip).**
-   - **Parity gaps:** For each feature where Win11 AND Linux show ✅ but Impossible OS shows ⬜ or is missing: flag it. Verify it's covered by a section, another TODO (add XREF), or note as deferred with reason.
-   - **Competitive edges:** Research what Win11 and Linux do poorly in this domain. For each opportunity, add a row marked ⭐ with ⬜ Planned and suggest a concrete section scope.
-   - **Report findings explicitly** -- the user must see what was checked.
+    - **Parity gaps:** For each feature where Win11 AND Linux show ✅ but Impossible OS shows ⬜ or is missing: flag it. Verify it's covered by a section, another TODO (add XREF), or note as deferred with reason.
+    - **Competitive edges:** Research what Win11 and Linux do poorly in this domain. For each opportunity, add a row marked ⭐ with ⬜ Planned and suggest a concrete section scope.
+    - **False-completeness scan:** For each section, ask whether literal implementation would still leave an obvious adjacent piece missing: failure-path handling, registrations, exports, tests, docs, reciprocal XREFs, or the next capability needed for the feature to feel real.
+    - **Ownership scan:** every deferred/blocked note must point at a concrete owner section or TODO item, not just vague future intent.
+    - **Report findings explicitly** -- the user must see what was checked.
 8. **XREF validation and loose ends.**
    - For each `→ XREF: TODO-XX §N`, confirm the target file exists and the referenced section number is present.
    - **Domain + TODO shorthand (mandatory for cross-domain):** When referencing another domain's TODO in Implementation Order `Depends On`, Inputs, prose, or History, use the compact notation from `.claude/skills/create-todo/implementation-order.md`: **same-domain** `TNN §N` (example `T17 §3`); **cross-domain** `DNN TNN §N` (example `D02 T19 §1` for `todo/02-kernel-core/TODO-19-...`). **`D02T19 §1`** (no space) is acceptable in tight table cells -- same meaning as `D02 T19 §1`. Domain digits are the folder prefix (`01-boot-platform` -> `01`, `02-kernel-core` -> `02`). Flag bare `TODO-19` or `TODO-02` alone when the owning domain is not obvious from context (ambiguous across 14 domains). A markdown path such as `02-kernel-core/TODO-19-foo.md` still satisfies clarity; add `D02T19 §N` when the file edits the `Depends On` column for scannability.
    - Check handoff boundaries: receiving TODOs should have matching Inputs or XREF entries.
-   - **Loose end check:** For every "blocked by TODO-XX §N" or "deferred to TODO-XX" note:
-     1. Verify the back-reference exists in the other TODO. Add one if missing.
-     2. Deferred items must say WHERE (specific TODO + section) or WHY (condition to revisit). Never just "deferred."
-   - **Internal §N check:** Verify every `§N` reference in prose/checklists points to the correct `## N.` heading. Flag self-references and semantic mismatches.
-   - When findings involve external XREFs, patch the referenced TODO in the same run (add back-references, fix stale section numbers).
+    - **Loose end check:** For every "blocked by TODO-XX §N" or "deferred to TODO-XX" note:
+      1. Verify the back-reference exists in the other TODO. Add one if missing.
+      2. Deferred items must say WHERE (specific TODO + section) or WHY (condition to revisit). Never just "deferred."
+      3. If the referenced owner section exists but has no concrete checklist item for the gap, create or request one. A section title alone is not an owner.
+    - **Internal §N check:** Verify every `§N` reference in prose/checklists points to the correct `## N.` heading. Flag self-references and semantic mismatches.
+    - When findings involve external XREFs, patch the referenced TODO in the same run (add back-references, fix stale section numbers).
 9. **Self-contained execution check.**
-   - The TODO must be executable from §1 to the last section without being blocked by unimplemented external sections.
-   - For each external `Depends On` entry in the Implementation Order:
+    - The TODO must be executable from §1 to the last section without being blocked by unimplemented external sections.
+    - The TODO must also be **credibly complete**: implementing it literally should not leave obvious adjacent work unplanned or ownerless.
+    - For each external `Depends On` entry in the Implementation Order:
      1. Must include specific section numbers: same-domain `T11 §1,§3`; cross-domain `D02 T19 §1` or compact `D02T19 §1` (never bare `TODO-19` for cross-folder deps).
      2. If the external section is `[x]`: no action needed.
      3. If `[ ]`: flag as **blocked**. Suggest adding a minimal local prerequisite section or note the blocker.
@@ -74,6 +89,7 @@ description: Validate a TODO file for structural completeness, Implementation Or
     - Every TODO file MUST have a `## Unit Tests` section wired into `test_runner_init()`.
     - Each test case must be a specific assertion (function + expected value). Flag vague "test that X works" items.
     - If the Unit Tests section is missing entirely, flag it and draft a skeleton.
+    - If a section defers a feature on purpose, ensure the Unit Tests plan makes room for the later real assertion or a temporary `TEST_PENDING` pattern rather than silently dropping test ownership.
 13. **Test runner bat file.**
     - At the bottom of the `## Verification` section, ensure there is a line: `**Test runner:** `scripts\debug\run-<suite>-tests.bat` (SUITE=<cat>)`.
     - Determine the `TEST_CAT_*` category from the Unit Tests section (e.g., `TEST_CAT_MM` -> `mm`, `TEST_CAT_SCHED` -> `sched`).
@@ -121,5 +137,7 @@ description: Validate a TODO file for structural completeness, Implementation Or
 - Do not implement code.
 - Do not turn this into a formatting-only cleanup pass; structural clarity is the goal.
 - Inputs path checks are existence-only -- do not read the referenced source files.
+- Do not leave paper completion in place. If a section would still feel obviously incomplete after literal implementation, add the missing adjacent work or file the owner explicitly.
+- Do not leave deferred work ownerless. "Deferred" without a concrete owner section or TODO item is invalid.
 - **OS Comparison:** enforce step 6 **placement** (after last `## N.`, before `## Unit Tests`), **layout** rules (header shape, aligned pipes, padding preserved), and the **soft** ~200 character raw-row target (meaning and padding beat the number). Relocating a misplaced `## OS Comparison` block is required structural work. **Never** leave the table ragged in source (pipes misaligned) and **never** strip inter-column padding to satisfy line length. Re-pad the full table when any cell changes or after moving the block. Idempotent runs should not re-touch an already valid table for cosmetic shortening or "compaction" alone. Underspecified cells (compact but meaningless) are a **content** defect: expand with accurate detail, add a pointer, or flag for research in the parity report.
 - Keep edits idempotent: running validation again on already-correct content should produce no further changes.

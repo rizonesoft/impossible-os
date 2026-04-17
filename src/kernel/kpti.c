@@ -6,7 +6,7 @@
  * that is done by S4 (SYSCALL) and S5 (IDT) when they redirect LSTAR
  * and IDT entries to the trampoline page.
  *
- * XREF: 02-kernel-core/TODO-17-kernel-security-hardening.md S3
+ * XREF: 02-kernel-core/TODO-10-kernel-security-hardening.md S3
  * ============================================================================ */
 
 #include "kernel/types.h"

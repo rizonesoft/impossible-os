@@ -13,17 +13,26 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
 >
 > You cut corners: skipping Codex, self-reviewing instead of dispatching, accepting "clean" without walking quality gates, skipping the post-implementation review pipeline. Your judgment about which steps to skip has been wrong. Follow every step mechanically.
 >
-> - **Follow the plan, don't improvise.** The checklist items define scope. Do not widen.
+> - **Follow the plan, but do not stop at paper completion.** The checklist items define the planned scope, not the completion boundary. Do not widen aimlessly, but do expand when adjacent work is required for correctness, credible completeness, or obvious polish.
 > - **Every Codex dispatch is mandatory.** Step 13 adversarial + step 20 review pipeline. No exceptions.
 > - **Every finding gets fixed.** Not noted. Not accepted unless it truly needs missing infrastructure.
 > - **Domain code quality gates get walked explicitly.** Not just the hook reminder.
 > - **One section = one commit.** Each section is a milestone with a clean commit boundary.
+> - **Completion-first rule.** If the section's user-visible outcome still looks obviously incomplete, fragile, poorly wired, or missing the next adjacent capability a real user would hit, either implement that adjacent work now under Branch A rules or file it immediately in the owning TODO with a concrete checklist item and reciprocal XREF.
 
 ## Workflow
 
 1. **Read the section** -- full text, notes, test checkpoint, warning boxes. If the section has > 10 checklist items, flag it: suggest splitting into **two top-level `##` sections** (new section numbers) before implementing. Never split with `N.M` sublabels (`17.1`, `### 17.2`, `**17.3 Foo**`) -- that pattern is forbidden; see `validate-todo-file`. A 15-item section is two sections pretending to be one.
 2. **Resolve dependencies** -- follow every `-> XREF:` line. Stop and ask if a prerequisite is incomplete or scope conflicts with reality. If part is implementable and part is blocked, implement only the unblocked subset; keep blocked items `[ ]` or `[/]` with explicit blocker notes.
 3. **Explore the codebase** -- Grep/Glob for symbols, call-graph tracing, cross-file discovery. Read relevant source files to understand the integration surface.
+   - **Completion radar (MANDATORY, pre-code):** before writing code, answer these six questions against the section and integration surface:
+     1. **Correctness:** what normal-path and error-path behavior must exist for this to be real?
+     2. **Completeness:** what nearby capability would still be obviously missing if I stopped at the listed items?
+     3. **Wiring:** what tables, exports, registrations, docs, tests, or TODO/XREF sync must land with the code?
+     4. **Parity:** what do Win11 and Linux already do here that this section still would not?
+     5. **Superiority:** is there a cleaner, faster, safer, or more refined design we can afford now?
+     6. **Ownership:** if any adjacent work is too large for this session, exactly which TODO item owns it?
+   - If the radar finds small same-subsystem adjacent work, plan to ship it in this section. If it finds larger adjacent work, pre-plan the Branch B/C/D TODO update instead of discovering that at the end.
 4. **Codex design review** (for complex/high-risk sections) -- if the section touches SMP-sensitive code, boot-path, page tables, interrupt handling, or security-critical logic, dispatch a design review via the Codex plugin BEFORE writing code. Follow the `codex-design-review` skill: send the plan + integration surface + constraints, evaluate for blockers/warnings. Skip for straightforward sections (simple struct definitions, single-function additions, test-only work).
     ```bash
     node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<design review prompt>"
@@ -69,6 +78,7 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
     ```
 10. **Update TODO section** -- mark items with evidence:
     - **Done proof gate:** `[x]` only when implemented + wired + functional on normal path. Never `[x]` for stubs or `STATUS_NOT_IMPLEMENTED` placeholders.
+    - **No false completeness:** if the section's named feature still lacks an obvious adjacent piece required to feel real, do not stamp the section as fully done until that work is either shipped or filed in the owner TODO with a concrete unchecked item and reciprocal XREF.
     - SSDT claims: verify service number <-> function <-> `ssdt_register()` <-> master table row consistency. If SSDT handlers were implemented, update `s_kernel32_exports[]`/`s_ntdll_exports[]` in `pe.c` for any Win32 wrapper names.
     - Blocked items: keep `[ ]` or `[/]`, add missing prerequisite/ownership items with owner scope and `-> XREF`.
     - **Deferred-item resolution:** scan earlier sections in the SAME TODO for items marked "deferred to section N" where N is this section. If the work was done, mark them `[x]`. Deferred items are promises.
@@ -96,6 +106,7 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
     - Industry standards: no hacks, no TODO/FIXME in new code.
     - **Checklist item-by-item:** is each item `[x]`, `[/]`, or `[ ]` with explicit justification?
     - Deferred items from earlier sections resolved?
+    - **Completion radar again:** does the feature now look correct, complete, wired, parity-aware, and properly owned, or did implementation reveal adjacent work that still needs to ship or be tracked?
 15. **Fix loop** (1 round mandatory; up to 3 if needed):
     - Fix all valid Critical and High from BOTH Codex (step 13) and self-review (step 14).
     - Fix valid Medium unless explicitly accepted.
@@ -121,6 +132,7 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
     - **SSDT audit trigger:** if this section implemented or modified SSDT handlers, recommend running `/audit-ssdt` after commit to verify master table consistency.
     - **Filed-in-owner check:** any follow-up `[ ]` item that names an owner (e.g., "tracked in TODO-XX §N", "owner: TODO-YY") must ALSO be filed as a checklist item in that owner section with reciprocal `→ XREF`. If the owner section doesn't exist yet, find or create one via scope-gap protocol Branch C/D before filing. A note here alone is a dead-end paper trail.
     - **Accepted-XREF concreteness check (MANDATORY):** for every Codex finding that step 13 marked "Accepted with XREF" (out-of-scope deferral), open the XREF target and verify a **concrete `[ ]` checklist item** exists that would close the gap when checked. A section title, an enum definition, or prose mention is NOT concrete. If the target lacks such an item, create one NOW: write a checklist item that names the source file/function to fix, the helper to add (with signature), and the validation behavior. If no owner section exists or fits, follow scope-gap protocol Branch C/D to create one BEFORE marking the section complete. Update the Accepted XREF in any chat output and in TODO stamps to reference the concrete item by name/line. **Why this matters:** "Accepted with XREF: TODO-XX §N" with no concrete item there is a paper trail that someone later finds empty. Every accepted finding must be exactly one `[x]` away from being fully closed.
+    - **Completion radar, post-implementation (MANDATORY):** ask one last time whether the feature is merely section-complete or genuinely credible. If obvious adjacent work remains and fits one-session same-subsystem scope, implement it now. If it does not fit, create or extend the owner TODO now before committing.
 19. **Commit and push** -- only after steps 13-18 are ALL complete.
     - Use the section's `Commit:` line as the commit message.
     - Stage all changed source files, headers, the updated TODO file(s), and test changes together.

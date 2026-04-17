@@ -3,28 +3,28 @@
 > **Goal:** Make Impossible OS survivable when things go wrong -- restore points, system rollback, the F8 recovery environment, factory reset, startup repair, first-boot setup wizard, event log, crash dump viewer, and disk cleanup. This is the full OS safety net.
 
 > [!IMPORTANT]
-> **Already exists**: `klog(LOG_INFO/WARN/ERROR, source, fmt)` + `klog_entry_t` + `klog_get_ring()` in `klog.h`. `zip_create/add_file/extract/close()` from TODO-04-recycle-zip-scheduler (forward dep). `cng_sha256()` from TODO-07-cng (forward dep). `registry_backup/restore()` from TODO-02-kernel-core (forward dep -- Registry hive backup). `kernel_panic()` exists; `TODO-16-crash-dump-generation.md` adds full dump; §9 here adds on-boot prompt + viewer on top. `CTRL_LISTVIEW`, `CTRL_TABSTRIP`, `dialog_confirm()`, `CTRL_PROGRESSBAR` from TODO-05. `CTRL_MENUBAR` + `ttf_draw_string(FONT_UI)`. `sched_task_add()`. `notify_send()`. **Missing**: restore point CRUD, event log (`kevent_log()`), recovery environment, first-boot wizard, all CPL applets here. **`LOG_SECURITY`**: add new log level to `klog.h` (between `LOG_ERROR` and a new `LOG_SECURITY=4`). **Note on overlap**: §9 crash dump viewer builds on `02-kernel-core/TODO-16`; §8 event log adds a separate persistent structured event store on top of klog's ring buffer.
+> **Already exists**: `klog(LOG_INFO/WARN/ERROR, source, fmt)` + `klog_entry_t` + `klog_get_ring()` in `klog.h`. `zip_create/add_file/extract/close()` from TODO-04-recycle-zip-scheduler (forward dep). `cng_sha256()` from TODO-07-cng (forward dep). `registry_backup/restore()` from TODO-02-kernel-core (forward dep -- Registry hive backup). `kernel_panic()` exists; `TODO-27-crash-dump-generation.md` adds full dump; §9 here adds on-boot prompt + viewer on top. `CTRL_LISTVIEW`, `CTRL_TABSTRIP`, `dialog_confirm()`, `CTRL_PROGRESSBAR` from TODO-05. `CTRL_MENUBAR` + `ttf_draw_string(FONT_UI)`. `sched_task_add()`. `notify_send()`. **Missing**: restore point CRUD, event log (`kevent_log()`), recovery environment, first-boot wizard, all CPL applets here. **`LOG_SECURITY`**: add new log level to `klog.h` (between `LOG_ERROR` and a new `LOG_SECURITY=4`). **Note on overlap**: §9 crash dump viewer builds on `02-kernel-core/TODO-27`; §8 event log adds a separate persistent structured event store on top of klog's ring buffer.
 
 ## Inputs
 
 - `include/kernel/klog.h` -- `klog()`, `klog_entry_t`, `klog_get_ring()`; extend with `LOG_SECURITY=4` -- §8 event log
-- `include/kernel/zip.h` (TODO-04 §4) -- `zip_create/add_file/close/open/extract()` -- §1 restore ZIP, §2 rollback extract
-- `include/cng.h` (TODO-07 §1) -- `cng_sha256()` -- §2 rollback integrity verify, §6 kernel ELF verify
+- `include/kernel/zip.h` (TODO-04 §6) -- `zip_create/add_file/close/open/extract()` -- §2 restore ZIP, §4 rollback extract
+- `include/cng.h` (TODO-07 §1) -- `cng_sha256()` -- §2 rollback integrity verify, §7 kernel ELF verify
 - `include/registry.h` -- `registry_backup()`, `registry_restore()`, `HKLM\SYSTEM\Restore\*`, `HKLM\SYSTEM\FirstBoot` -- §1, §2, §7
 - `include/kernel/fs/vfs.h` -- `vfs_mkdir/rename/unlink/readdir/stat()` -- §1 restore dir, §2 file replace, §5 factory reset
 - `include/kernel/fs/gpt.h` -- `gpt_write_header()`, CRC recompute -- §6 startup repair
 - `include/kernel/uefi_runtime.h` -- `EFI_ResetSystem()`, NVRAM boot entry `SetVariable` -- §6 UEFI boot entry repair, §5 restart
 - `include/kernel/sched/task.h` -- `sched_task_add()` -- §8 log rotate task, §10 weekly cleanup task
 - `include/kernel/timer.h` -- `uptime()`, `system_get_ticks()` -- §1 restore point timestamps
-- `include/desktop/controls.h` (TODO-05) -- `CTRL_LISTVIEW`, `CTRL_TABSTRIP`, `dialog_confirm()`, `CTRL_PROGRESSBAR` -- §3 rstrui.cpl, §8 event viewer, §10 cleanup UI
-- `include/cpl.h` (TODO-11) -- `CPlApplet_t`, `NEWCPLINFO` -- §3 `rstrui.cpl`, §8 Event Viewer applet
-- `include/desktop/notification.h` (TODO-09) -- `notify_send()` -- §9 on-boot crash report prompt
+- `include/desktop/controls.h` (TODO-05) -- `CTRL_LISTVIEW`, `CTRL_TABSTRIP`, `dialog_confirm()`, `CTRL_PROGRESSBAR` -- §2 rstrui.cpl, §8 event viewer, §10 cleanup UI
+- `include/cpl.h` (TODO-11) -- `CPlApplet_t`, `NEWCPLINFO` -- §5 `rstrui.cpl`, §4 Event Viewer applet
+- `include/desktop/notification.h` (TODO-09) -- `notify_send()` -- §10 on-boot crash report prompt
 - `include/desktop/wm.h` -- `wm_create_window()` -- §7 first-boot wizard, §9 crash report viewer
-- → XREF: `02-kernel-core/TODO-16` -- crash dump generation (registers, stack trace); §9 here adds on-boot prompt + formatted viewer on top
-- → XREF: `07-graphics-ui/TODO-03 §5` -- F8 boot-time keyboard intercept lives there; §4 here implements the recovery menu content behind that intercept
-- → XREF: `10-platform-services/TODO-03 §3` -- `update_apply()` and `installer_open()` call `restore_create()` from §1 here
-- → XREF: `08-desktop-shell/TODO-04 §7` -- built-in scheduler tasks include `klog_rotate`; §8 event log rotate uses same scheduler slot
-- → XREF: `08-desktop-shell/TODO-06 §5` -- user account creation used in §7 first-boot wizard
+- → XREF: `02-kernel-core/TODO-27` -- crash dump generation (registers, stack trace); §9 here adds on-boot prompt + formatted viewer on top
+- → XREF: `08-graphics-ui/TODO-03 §3` -- F8 boot-time keyboard intercept lives there; §6 here implements the recovery menu content behind that intercept
+- → XREF: `10-platform-services/TODO-03 §5` -- `update_apply()` and `installer_open()` call `restore_create()` from §1 here
+- → XREF: `09-desktop-shell/TODO-04 §1` -- built-in scheduler tasks include `klog_rotate`; §7 event log rotate uses same scheduler slot
+- → XREF: `09-desktop-shell/TODO-06 §5` -- user account creation used in §7 first-boot wizard
 
 ## Outcome
 
@@ -48,7 +48,7 @@
 | 💎  |   4   | §3 `rstrui.cpl` -- calendar timeline, [Create], [Restore], [Delete]                                  | §2 + §3; `CTRL_LISTVIEW`; `include/cpl.h` (TODO-11)                                   |  [ ]   |
 | 💎  |   5   | §7 First-boot wizard -- 6-page OOBE; timezone/keyboard/user/wallpaper; `HKLM\SYSTEM\FirstBoot`       | `auth_create_user()` (TODO-06); `wallpaper_set()` (TODO-07); `update_check()` (TODO-03) |  [ ]   |
 | 💎  |   6   | §9 Crash dump viewer -- on-boot `notify_send()` prompt + formatted dump viewer window                 | TODO-16 crash dump file; `vfs_stat()`; `wm_create_window()`; `notify_send()` (TODO-09)|  [ ]   |
-| ⭐  |   7   | §4 F8 recovery environment -- text-mode boot menu; 15-command recovery shell                         | `07-graphics-ui/TODO-03 §5` F8 intercept; VGA text mode or serial output              |  [ ]   |
+| ⭐  |   7   | §4 F8 recovery environment -- text-mode boot menu; 15-command recovery shell                         | `08-graphics-ui/TODO-03 §3` F8 intercept; VGA text mode or serial output              |  [ ]   |
 | 💎  |   8   | §5 Factory reset -- typed-YES confirm; wipe user data + apps; recreate dir tree + FirstBoot flag     | §4 recovery env; `vfs_unlink/rmdir()`; `HKLM\SYSTEM\FirstBoot`                        |  [ ]   |
 | ⭐  |   9   | §6 Startup repair -- GPT CRC, UEFI boot entry rewrite, kernel ELF SHA-256, registry hive repair      | `gpt_write_header()`; `uefi_runtime.h`; `cng_sha256()`; §4 recovery env              |  [ ]   |
 | 💎  |  10   | §10 Disk cleanup -- scan Temp/Recycle/old-restore/cached-pkgs, space per category, weekly schedule   | §1 restore list; `trash_count/size()` (TODO-04); `sched_task_add()`                   |  [ ]   |
@@ -151,9 +151,9 @@ On next boot after crash (dump file present in `CrashDumps\`): `notify_send()` p
 **Files:** `src/apps/crashview/crashview.c` (new)
 
 > [!NOTE]
-> -> XREF: `02-kernel-core/TODO-16` -- crash dump generation (raw `.dmp` format, registers + stack + PMM stats + serial buffer); §6 here only adds the on-boot trigger + viewer UI. **On-boot check** (in kernel init, before desktop starts): `vfs_readdir("X:\\Crash\\")` (BlackBox, -> XREF: TODO-17 §7) -> if any `.dmp` newer than `HKLM\SYSTEM\LastBoot`: `notify_send("Unexpected Shutdown", ...)`. **[View] opens crash viewer**: window 700x520 px; `CTRL_TABSTRIP` tabs: Summary / Registers / Stack Trace / Drivers / Memory. On [Dismiss]: move `.dmp` to `X:\Crash\Archived\` (keep for 30 days).
+> -> XREF: `02-kernel-core/TODO-27` -- crash dump generation (raw `.dmp` format, registers + stack + PMM stats + serial buffer); §6 here only adds the on-boot trigger + viewer UI. **On-boot check** (in kernel init, before desktop starts): `vfs_readdir("X:\\Crash\\")` (BlackBox, -> XREF: TODO-17 §8) -> if any `.dmp` newer than `HKLM\SYSTEM\LastBoot`: `notify_send("Unexpected Shutdown", ...)`. **[View] opens crash viewer**: window 700x520 px; `CTRL_TABSTRIP` tabs: Summary / Registers / Stack Trace / Drivers / Memory. On [Dismiss]: move `.dmp` to `X:\Crash\Archived\` (keep for 30 days).
 
-- [ ] On-boot check: `vfs_readdir("X:\\Crash\\")` -> find unread `.dmp` files (-> XREF: TODO-17 §7)
+- [ ] On-boot check: `vfs_readdir("X:\\Crash\\")` -> find unread `.dmp` files (-> XREF: TODO-17 §8)
 - [ ] "Unread" detection: `.dmp` mtime > `HKLM\SYSTEM\LastBoot` value; update `LastBoot` on each clean boot
 - [ ] `notify_send("Unexpected Shutdown", ..., NOTIFY_PERSISTENT)` with [View] + [Dismiss] action buttons
 - [ ] `crashview_open(const char *dmp_path)` -- `wm_create_window()`; `CTRL_TABSTRIP` 5 tabs
@@ -172,7 +172,7 @@ Text-mode boot menu (intercept F8 before scheduler): Normal / Safe / Recovery Sh
 **Files:** `src/kernel/recovery.c` (new), `include/kernel/recovery.h` (new)
 
 > [!NOTE]
-> → XREF: `07-graphics-ui/TODO-03 §5` -- F8 keyboard polling at early boot (before APIC/scheduler up); that section wires the key detection; §7 here implements the menu + shell loop. **Text mode**: use direct VGA text mode (`0xB8000`) or serial output (`COM1`) for recovery UI -- no framebuffer dependency, no WM. Menu rendered via `vga_puts_at(row, col, str, attr)` or equivalent. **Recovery shell**: small read-eval loop: `recovery_readline(buf, 256)` (PS/2 poll via `inb(0x60)` + PS/2 scancode decode); parse first token → dispatch table. **Commands**: `ls [path]` → `vfs_readdir()`; `cd path` → update cwd; `cat path` → `vfs_open/read/close()`; `cp src dst`; `mv src dst`; `rm path`; `pwd`; `fsck [drive:]` → `ixfs_fsck()` (TODO-fs); `fdisk` → print GPT partition table via `gpt_read()`; `reg-reset` → overwrite `SYSTEM` hive with `SYSTEM.bak` fallback; `reg-query key` → `registry_get()` + print; `reg-set key val` → `registry_set()`; `backup src dst` → `vfs_copy()` (chunked via kmalloc 4 KiB); `restore ts` → `restore_rollback(ts)`; `reboot` → `EFI_ResetSystem(RESET_COLD)`. **Safe mode** option: set `HKLM\SYSTEM\Boot\SafeMode=1` → `EFI_ResetSystem(RESET_WARM)` → kernel init reads flag → skip non-critical drivers.
+> → XREF: `08-graphics-ui/TODO-03 §3` -- F8 keyboard polling at early boot (before APIC/scheduler up); that section wires the key detection; §8 here implements the menu + shell loop. **Text mode**: use direct VGA text mode (`0xB8000`) or serial output (`COM1`) for recovery UI -- no framebuffer dependency, no WM. Menu rendered via `vga_puts_at(row, col, str, attr)` or equivalent. **Recovery shell**: small read-eval loop: `recovery_readline(buf, 256)` (PS/2 poll via `inb(0x60)` + PS/2 scancode decode); parse first token → dispatch table. **Commands**: `ls [path]` → `vfs_readdir()`; `cd path` → update cwd; `cat path` → `vfs_open/read/close()`; `cp src dst`; `mv src dst`; `rm path`; `pwd`; `fsck [drive:]` → `ixfs_fsck()` (TODO-fs); `fdisk` → print GPT partition table via `gpt_read()`; `reg-reset` → overwrite `SYSTEM` hive with `SYSTEM.bak` fallback; `reg-query key` → `registry_get()` + print; `reg-set key val` → `registry_set()`; `backup src dst` → `vfs_copy()` (chunked via kmalloc 4 KiB); `restore ts` → `restore_rollback(ts)`; `reboot` → `EFI_ResetSystem(RESET_COLD)`. **Safe mode** option: set `HKLM\SYSTEM\Boot\SafeMode=1` → `EFI_ResetSystem(RESET_WARM)` → kernel init reads flag → skip non-critical drivers.
 
 - [ ] `void recovery_menu_show(void)` -- VGA text mode menu render; read key; dispatch to option
 - [ ] **Normal Boot**: return immediately; kernel continues normal init
@@ -233,7 +233,7 @@ Rewrite UEFI boot entry, recompute GPT header CRCs, verify kernel ELF SHA-256 vs
 > - **Recycle Bin** (`C:\Recycle\*`): `trash_size()` (TODO-04)
 > - **Old restore points** (keep 3 newest): `restore_list()` → sum sizes of entries beyond 3
 > - **Cached update packages** (`C:\Temp\*.ipkg`): `vfs_readdir()` filter by `.ipkg`
-> - **Crash dumps** (`X:\Crash\Archived\*`): sum sizes (-> XREF: TODO-17 §7)
+> - **Crash dumps** (`X:\Crash\Archived\*`): sum sizes (-> XREF: TODO-17 §8)
 > - **App logs** (`X:\Logs\events.*.log`): sum rotated log files (not current)
 > Total space at bottom: "Total: {N} MB will be freed". [Clean up system files] button: for each checked category → delete files; show `CTRL_PROGRESSBAR` during deletion; refresh sizes. **Weekly task**: `sched_task_add("disk_cleanup", disk_cleanup_auto, 7*86400, 1)` -- runs silently, clears Temp + Archived CrashDumps + old logs (> 7 days); `kevent_log(LOG_INFO, "cleanup", "Auto disk cleanup: freed %llu KB")`.
 

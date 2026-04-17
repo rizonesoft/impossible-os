@@ -17,9 +17,9 @@
 - `include/desktop/wm.h` -- `WM_FLAG_DIALOG`, `wm_window.acrylic_cache` -- §7 Acrylic bg reuse
 - `include/kernel/drivers/pit.h` -- `system_get_ticks()` -- §2 cursor blink 500 ms toggle
 - `include/kernel/drivers/mouse.h` -- mouse button + wheel events -- §4 scrollback wheel, drag selection
-- → XREF: `08-desktop-shell/TODO-01-clipboard.md §1` -- `clipboard_set(CLIP_TEXT, text, len)` used by §4 Ctrl+Shift+C copy; `clipboard_get()` for Ctrl+Shift+V paste; must be complete before §4
+- → XREF: `09-desktop-shell/TODO-01-clipboard.md §1` -- `clipboard_set(CLIP_TEXT, text, len)` used by §4 Ctrl+Shift+C copy; `clipboard_get()` for Ctrl+Shift+V paste; must be complete before §4
 - → XREF: `03-memory-concurrency/TODO-IPC` (or `include/kernel/ipc/signal.h`) -- SIGWINCH signal delivered in §5 resize; existing `signal_send()` call path
-- → XREF: `07-graphics-ui/TODO-02-animation-engine.md` -- `anim_mgr_add()` used by §7 tab slide animation
+- → XREF: `08-graphics-ui/TODO-04-animation-engine.md` -- `anim_mgr_add()` used by §7 tab slide animation
 
 ## Outcome
 

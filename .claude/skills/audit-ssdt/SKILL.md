@@ -66,7 +66,7 @@ File:     include/kernel/nt/service_numbers.h
 ### 4. Read the master tables
 
 - **Main SSDT:** `todo/02-kernel-core/TODO-05-native-api-ssdt.md` section `### SSDT Master Table`
-- **Shadow SSDT:** `todo/08-graphics-ui/TODO-12-win32k-shadow-ssdt.md` section `### Shadow SSDT Master Table`
+- **Shadow SSDT:** `todo/08-graphics-ui/TODO-15-win32k-shadow-ssdt.md` section `### Shadow SSDT Master Table`
 
 Parse every row: Index, Function, Owner, Done status.
 

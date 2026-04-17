@@ -8,7 +8,7 @@
  * WRPKRU/RDPKRU are ring-0/3 instructions; pku_set_permissions()
  * works from both kernel and user mode without a syscall.
  *
- * XREF: 02-kernel-core/TODO-19-x86-64-architecture.md §5
+ * XREF: 02-kernel-core/TODO-09-x86-64-architecture.md §5
  * ============================================================================ */
 
 #include "kernel/security/pku.h"

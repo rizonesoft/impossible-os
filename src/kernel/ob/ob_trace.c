@@ -5,7 +5,7 @@
  * On refcount 0, ob_dump_trace emits per-tag summaries highlighting leaks.
  * Handle event tracing emits klog entries for every handle alloc/free.
  *
- * XREF: 02-kernel-core/TODO-03-object-manager.md S15
+ * XREF: 02-kernel-core/TODO-05-object-manager.md S15
  * ============================================================================ */
 
 #include "kernel/ob/ob_trace.h"

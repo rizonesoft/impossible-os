@@ -8,7 +8,7 @@
  *
  * 512-bit ZMM registers: 16 ARGB pixels per iteration (64 bytes).
  *
- * XREF: 02-kernel-core/TODO-19-x86-64-architecture.md S3
+ * XREF: 02-kernel-core/TODO-09-x86-64-architecture.md S3
  * ============================================================================ */
 
 #include "gfx_simd.h"

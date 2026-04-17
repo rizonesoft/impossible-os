@@ -20,6 +20,8 @@ description: Create lean project TODO files under todo/, choose the correct doma
 > - **Define clear milestones** -- each `## N.` section is a milestone with a commit checkpoint.
 > - **Sequence dependencies correctly** -- the Implementation Order table IS the dependency graph.
 > - **Make it executable** -- someone (human or AI) should be able to follow §1 through §N without guessing.
+> - **Plan for credible completeness** -- do not stop at the obvious happy-path steps. Include adjacent work needed so the feature feels real, wired, testable, and not one missing piece away from a scope-gap stub.
+> - **Plan for competitive advantage** -- parity with Win11 and Linux is the floor. Capture the cleaner, faster, or more refined design choices that make Impossible OS better where that is feasible.
 
 ## Workflow
 
@@ -37,12 +39,13 @@ When `create-todo` is invoked from the scope-gap protocol, the workflow is the s
    - Prefer one canonical TODO home and cross-link instead of duplicating scope.
 
 2. **Research the domain (critical -- do not skip).**
-   - If a spec exists, treat it as the primary structural input.
-   - Use Grep/Glob to discover existing implementations, related symbols, and prior art.
-   - Use `git log` to discover recent work that may already cover planned scope.
-   - **Win11/Linux competitive research:** Run at least 6 web searches (3 Win11, 3 Linux) to build a feature inventory for the OS Comparison table. Queries: `"Windows 11 <topic> internals"`, `"Linux kernel <topic>"`, `"modern OS <topic> best practices"`. Follow at least 2 links with WebFetch for detailed feature descriptions.
-   - Build a feature inventory: for each feature, record Win11 status, Linux status, and whether it's parity (both have it) or competitive edge (neither does it well).
-   - **Save research sources** for your own traceability only: list URLs in the **gap-analysis or create-todo chat report** (or commit message notes). **Do not** paste URL lists into the TODO as `<!-- Sources: ... -->` HTML comments -- they clutter diffs and duplicate long lines across files.
+    - If a spec exists, treat it as the primary structural input.
+    - Use Grep/Glob to discover existing implementations, related symbols, and prior art.
+    - Use `git log` to discover recent work that may already cover planned scope.
+    - **Win11/Linux competitive research:** Run at least 6 web searches (3 Win11, 3 Linux) to build a feature inventory for the OS Comparison table. Queries: `"Windows 11 <topic> internals"`, `"Linux kernel <topic>"`, `"modern OS <topic> best practices"`. Follow at least 2 links with WebFetch for detailed feature descriptions.
+    - Build a feature inventory: for each feature, record Win11 status, Linux status, and whether it's parity (both have it) or competitive edge (neither does it well).
+    - Build an **adjacent completeness inventory:** for each planned milestone, list the next obvious capability, wiring step, or owner TODO that would be needed so the feature does not ship as paper completion.
+    - **Save research sources** for your own traceability only: list URLs in the **gap-analysis or create-todo chat report** (or commit message notes). **Do not** paste URL lists into the TODO as `<!-- Sources: ... -->` HTML comments -- they clutter diffs and duplicate long lines across files.
 
 3. **Cross-TODO overlap scan.**
    - Use Grep to search ALL domain folders for keywords from the planned section titles and deliverables.
@@ -62,24 +65,26 @@ When `create-todo` is invoked from the scope-gap protocol, the workflow is the s
    - **Always include the `> [!IMPORTANT] Current state:` callout** after the Goal paragraph. This tells the implementer what exists NOW vs what the TODO adds. Without it, the implementer has to grep the codebase to understand the starting point.
 
 6. **Build sections with full structure.**
-   - Use flat numbered sections (`## 1. Title`, `## 2. Title`) -- not sub-sections (`### 1.1`).
-   - **Section size rule:** max 8-10 checklist items per section. If a section grows beyond this, split it into two sections. Each section should be implementable in one commit. A 15-item section is two sections pretending to be one.
-   - Every section MUST include:
-     - Concrete checklist items (`- [ ]`) referencing specific functions, types, or files.
-     - A `- [ ] Commit: "scope: short description"` line as the last checklist item.
-     - A `**Test checkpoint:**` block with concrete pass/fail criteria: exact serial strings, expected behavior, and platforms (QEMU WHPX + TCG; bare metal). Mention POST16 codes ONLY if the section is boot-path (Phase 0/1/2). For non-boot sections, use a `klog(LOG_INFO, ...)` line as the observable instead.
+    - Use flat numbered sections (`## 1. Title`, `## 2. Title`) -- not sub-sections (`### 1.1`).
+    - **Section size rule:** max 8-10 checklist items per section. If a section grows beyond this, split it into two sections. Each section should be implementable in one commit. A 15-item section is two sections pretending to be one.
+    - **Completion-first section rule:** if a section would otherwise land code that is technically present but obviously incomplete, split the adjacent work into either the same section (if still one-commit sized) or the next owning section now. Do not leave the missing piece implicit.
+    - Every section MUST include:
+      - Concrete checklist items (`- [ ]`) referencing specific functions, types, or files.
+      - A `- [ ] Commit: "scope: short description"` line as the last checklist item.
+      - A `**Test checkpoint:**` block with concrete pass/fail criteria: exact serial strings, expected behavior, and platforms (QEMU WHPX + TCG; bare metal). Mention POST16 codes ONLY if the section is boot-path (Phase 0/1/2). For non-boot sections, use a `klog(LOG_INFO, ...)` line as the observable instead.
    - For sections touching BOOT-PATH code (Phase 0/1/2 init, hardware bring-up, page tables, GDT/IDT, APIC, ACPI, SMP AP startup):
      - Add `POST16(0xDDNN)` entry/exit codes. Check `boot_init.h` for conflicts before assigning.
      - Add a `**Regression risk:**` note identifying what could break and rollback strategy.
    - For sections touching POST-BOOT code (scheduler, syscall handlers, exec/loader, file I/O, IPC, network, drivers used at runtime):
      - Do NOT add POST16 codes. klog is fully working at this point and a single `klog(LOG_INFO, ...)` line per major step is more useful.
      - Tests for the behavior, not for "POST16 constant equals 0xDDNN" (tautological -- the compiler enforces the literal).
-   - **Cross-reference with `kernel-code-quality` gates:** If the TODO touches kernel code (`src/kernel/`, `include/kernel/`), write sections with the quality gates in mind. Note SMP safety requirements in section prose where shared mutable state is introduced. Note bare-metal gotchas where MMIO or CPUID-gated instructions are involved.
-   - **Use callouts** for important context:
-     - `> [!NOTE]` for resolved issues or clarifications
-     - `> [!WARNING]` for known risks or incomplete prerequisites
-     - `> [!IMPORTANT]` for blockers or critical constraints
-     - `> [!TIP]` for competitive advantages (exclusive features)
+    - **Cross-reference with `kernel-code-quality` gates:** If the TODO touches kernel code (`src/kernel/`, `include/kernel/`), write sections with the quality gates in mind. Note SMP safety requirements in section prose where shared mutable state is introduced. Note bare-metal gotchas where MMIO or CPUID-gated instructions are involved.
+    - **Add ownership where needed:** if a section intentionally defers nearby work, add the owning follow-up section or external TODO XREF now. Never rely on vague future intent.
+    - **Use callouts** for important context:
+      - `> [!NOTE]` for resolved issues or clarifications
+      - `> [!WARNING]` for known risks or incomplete prerequisites
+      - `> [!IMPORTANT]` for blockers or critical constraints
+      - `> [!TIP]` for competitive advantages (exclusive features)
 
 7. **XREF placement rules.**
    - **Inputs section XREFs** = structural dependencies. These are TODOs/files that must exist BEFORE this TODO can be implemented. They define the starting context.
@@ -87,12 +92,13 @@ When `create-todo` is invoked from the scope-gap protocol, the workflow is the s
    - Both types must be bidirectional (the other file must point back).
 
 8. **Set up the Implementation Order table.**
-   - Use `Implementation Order`, not `Phase-by-Phase`.
-   - Mark every row `💎` (parity) or `⭐` (exclusive).
-   - Use compact `§N` notation for internal dependencies, `TNN §N` for same-domain, `DNN TNN §N` for cross-domain. Never bare numbers.
-   - Every `## N.` body section MUST have a corresponding table row, and vice versa.
-   - Cross-TODO references MUST include specific section numbers (`T11 §1,§3`). Never bare TODO numbers.
-   - Add dependencies, overlap notes, handoffs, and `-> XREF:` links while creating the file.
+    - Use `Implementation Order`, not `Phase-by-Phase`.
+    - Mark every row `💎` (parity) or `⭐` (exclusive).
+    - Use compact `§N` notation for internal dependencies, `TNN §N` for same-domain, `DNN TNN §N` for cross-domain. Never bare numbers.
+    - Every `## N.` body section MUST have a corresponding table row, and vice versa.
+    - Cross-TODO references MUST include specific section numbers (`T11 §1,§3`). Never bare TODO numbers.
+    - Add dependencies, overlap notes, handoffs, and `-> XREF:` links while creating the file.
+    - If adjacent work is intentionally deferred, the owner row must exist in the table now. No invisible future sections.
 
 9. **Add a Format Quick Reference table (when applicable).**
    - If the TODO covers multiple formats, modes, or types (e.g., ELF/PE/EIF, AHCI/NVMe, TCP/UDP), add a compact comparison table after the Outcome section.

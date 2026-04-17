@@ -7,6 +7,7 @@
 - [`src/desktop/wm.c`](../../src/desktop/wm.c) -- `wm_handle_mouse()`, basic focus
 - [`src/desktop/controls.c`](../../src/desktop/controls.c) -- `ctrl_handle_key()`, `ctrl_handle_mouse()`
 - [`src/kernel/drivers/keyboard.c`](../../src/kernel/drivers/keyboard.c) -- PS/2 keyboard driver, scancode to ASCII
+- -> XREF: `D08 T16 §4` -- IME and composition work builds on the key-event and focus-routing pipeline owned here
 
 ## Outcome
 

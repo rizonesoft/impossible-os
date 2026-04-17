@@ -10,6 +10,8 @@ description: Full review of a TODO section -- adversarial Codex, dead code, cons
 > You have been observed cutting corners: skipping Codex dispatches, self-reviewing instead of dispatching, accepting "clean" without running quality gates, folding separate concerns into a single shallow pass. This skill exists because your judgment about which steps to skip has been wrong repeatedly.
 >
 > Every step runs. Every time. Mechanically. No judgment calls about skipping.
+>
+> Technical completion is not enough. This review must also catch **false completeness**: code that satisfies the listed checklist items but still leaves the feature obviously incomplete, poorly wired, uncompetitive, or missing a tracked owner for adjacent work.
 
 ## Pipeline
 
@@ -53,7 +55,11 @@ description: Full review of a TODO section -- adversarial Codex, dead code, cons
 
 9. **Industry standards + Win11/Linux parity** -- spec compliance, concrete function/file references.
 
-10. **Feature completeness** -- grep for `STATUS_NOT_IMPLEMENTED`, partial implementations, dead API promises.
+10. **Feature completeness + adjacent completeness** -- grep for `STATUS_NOT_IMPLEMENTED`, partial implementations, dead API promises, and the "one missing piece away from real" pattern:
+    - Did the section technically land, but miss the next obvious adjacent capability a real user or caller would hit?
+    - Are exports, registrations, tables, docs, tests, or TODO/XREF ownership still missing?
+    - Does Win11 or Linux already cover a nearby case that this section still ignores?
+    - If the gap is small and same-subsystem, fix it now. If it needs broader infrastructure, file a concrete owner TODO item now.
 
 11. **Test coverage check (CRITICAL)** -- verify unit tests exist for this section:
     - Grep for the section's functions/features in `src/kernel/test/test_*.c`. If no test file covers the section's code, flag as a finding.
@@ -64,7 +70,13 @@ description: Full review of a TODO section -- adversarial Codex, dead code, cons
 
     > **Incident 2026-04-12:** TODO-03 §1-§12 and TODO-17 §1-§3 all shipped without unit tests. The TODO-19 §1 review then found 3 critical FPU bugs that tests would have caught. Tests are not optional -- they catch real bugs.
 
-12. **Self-review** -- regressions, races, edge cases, resource leaks.
+12. **Self-review** -- regressions, races, edge cases, resource leaks, and completion radar:
+    - Correctness: does it work on normal and failure paths?
+    - Completeness: what still feels obviously missing?
+    - Wiring: what is still not connected end-to-end?
+    - Parity: what do Win11/Linux still do better here?
+    - Superiority: is there an obvious cleanup or refinement we should have taken?
+    - Ownership: if not fixed now, where is the exact checklist item that owns it?
 
 13. **Fix ALL findings** from steps 7-12. Priority: spec violations > incomplete stubs > missing tests > dead code > quality gate failures > consistency > parity > perf. Rebuild after each batch.
 
@@ -114,6 +126,7 @@ description: Full review of a TODO section -- adversarial Codex, dead code, cons
 - **TWO Codex dispatches per review.** Step 5 (adversarial) and step 8 (quality). Both mandatory.
 - **Domain code quality skill walked explicitly** in step 7. Not just the hook -- read the skill and check every gate.
 - **Test coverage verified** in step 11. Missing tests are a finding, not acceptable.
+- **False completeness is a finding.** Checklist satisfaction without credible feature completeness or tracked ownership does not pass review.
 - `superpowers:receiving-code-review` on every Codex finding.
 - All stamps use domain-qualified XREFs.
 - All stamps include test runner bat file and expected results.

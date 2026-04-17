@@ -8,7 +8,7 @@
  * Intel hybrid path: CPUID leaf 0x1A (core type) + 0x1F (extended topology)
  * Fallback: all cores treated as CORE_TYPE_GENERIC
  *
- * XREF: 02-kernel-core/TODO-19-x86-64-architecture.md S9
+ * XREF: 02-kernel-core/TODO-09-x86-64-architecture.md S9
  * ============================================================================ */
 
 #include "kernel/topology.h"

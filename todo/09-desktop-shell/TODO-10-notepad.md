@@ -3,7 +3,7 @@
 > **Goal:** Build Notepad -- the primary text editor and fallback file association for `.txt`/`.md`/`.c`/`.h`/`.asm` -- as the first real app that exercises the full widget stack. Built on a PMM-backed gap buffer with O(1) insert/delete, full keyboard + mouse editing, clipboard integration, find & replace, undo/redo, and stretch features (line numbers, syntax highlighting, font zoom).
 
 > [!IMPORTANT]
-> **Already exists**: `ttf_draw_string(s, f, x, y, text, color)` + `ttf_measure_width(f, text)` + `ttf_get(slot, px)` in `font_mgr.h`. `FONT_MONO=2` (Cascadia Code). `vfs_open/read/write`, `vfs_stat`, `vfs_create` for file I/O. `pmm_alloc_contiguous(pages)` + `pmm_free_contiguous(addr, pages)` for large buffers. `gfx_fill_rect()`, `gfx_surface_t`, `system_get_ticks()` (cursor blink). **Forward deps**: `CTRL_MENUBAR` (TODO-05 §3), `CTRL_STATUSBAR` (TODO-05 §4), `dialog_file_open/save()` (TODO-05 §4), `dialog_input()` (TODO-05 §3) for Go to Line. `clipboard_set/get(CLIP_TEXT)` (TODO-01 §1). **No `src/apps/` yet** -- TODO-09 creates it; Notepad lives at `src/apps/notepad/notepad.c`. **Missing**: gap buffer, text rendering loop, ANSI parser, undo stack, find/replace. Complete sections in order: gap buffer → text rendering → undo/redo → file menu → editing features → find & replace → stretch features.
+> **Already exists**: `ttf_draw_string(s, f, x, y, text, color)` + `ttf_measure_width(f, text)` + `ttf_get(slot, px)` in `font_mgr.h`. `FONT_MONO=2` (Cascadia Code). `vfs_open/read/write`, `vfs_stat`, `vfs_create` for file I/O. `pmm_alloc_contiguous(pages)` + `pmm_free_contiguous(addr, pages)` for large buffers. `gfx_fill_rect()`, `gfx_surface_t`, `system_get_ticks()` (cursor blink). **Forward deps**: `CTRL_MENUBAR` (TODO-05 §2), `CTRL_STATUSBAR` (TODO-05 §3), `dialog_file_open/save()` (TODO-05 §3), `dialog_input()` (TODO-05 §2) for Go to Line. `clipboard_set/get(CLIP_TEXT)` (TODO-01 §1). **No `src/apps/` yet** -- TODO-09 creates it; Notepad lives at `src/apps/notepad/notepad.c`. **Missing**: gap buffer, text rendering loop, ANSI parser, undo stack, find/replace. Complete sections in order: gap buffer → text rendering → undo/redo → file menu → editing features → find & replace → stretch features.
 
 ## Inputs
 
@@ -12,13 +12,13 @@
 - `include/kernel/mm/pmm.h` -- `pmm_alloc_contiguous()`, `pmm_free_contiguous()` -- §1 gap buffer allocation + doubling
 - `include/kernel/fs/vfs.h` -- `vfs_open/read/write`, `vfs_create`, `vfs_stat` -- §3 file load/save
 - `include/kernel/drivers/pit.h` -- `system_get_ticks()`, `PIT_TARGET_FREQ` -- §2 cursor blink 500 ms toggle
-- `include/desktop/controls.h` (TODO-05 §3/§4) -- `CTRL_MENUBAR`, `CTRL_STATUSBAR`, `dialog_file_open/save()`, `dialog_input()` -- §3 file menu
+- `include/desktop/controls.h` (TODO-05 §2/§3) -- `CTRL_MENUBAR`, `CTRL_STATUSBAR`, `dialog_file_open/save()`, `dialog_input()` -- §2 file menu
 - `include/kernel/clipboard.h` (TODO-01 §1) -- `clipboard_set/get(CLIP_TEXT)` -- §4 Ctrl+C/X/V
 - `include/desktop/wm.h` -- `wm_create_window()`, `WM_KEYDOWN`, `WM_MOUSE_DOWN/MOVE` -- §2 keyboard + mouse events
 - `include/desktop/context_menu.h` (TODO-07 §1) -- `context_menu_show()` -- §4 right-click context menu
-- → XREF: `07-graphics-ui/TODO-05-widget-dialogs.md §3` -- `CTRL_MENUBAR`, `dialog_file_open/save` must be complete before §3 File Menu; `CTRL_STATUSBAR` before §4
-- → XREF: `08-desktop-shell/TODO-02-file-associations-resources.md §1` -- `.txt` default file association registered there; Notepad is the launch target
-- → XREF: `07-graphics-ui/TODO-01-theme-system.md` -- `theme_get(THEME_ACCENT)` for selection bg, match highlights, syntax colors
+- → XREF: `08-graphics-ui/TODO-06-widget-dialogs.md §2` -- `CTRL_MENUBAR`, `dialog_file_open/save` must be complete before §2 File Menu; `CTRL_STATUSBAR` before §3
+- → XREF: `09-desktop-shell/TODO-02-file-associations-resources.md §1` -- `.txt` default file association registered there; Notepad is the launch target
+- → XREF: `08-graphics-ui/TODO-03-theme-system.md` -- `theme_get(THEME_ACCENT)` for selection bg, match highlights, syntax colors
 
 ## Outcome
 
@@ -39,7 +39,7 @@
 | 💎  |   3   | §6 Undo/redo -- 200-action stack, every insert/delete logged, Ctrl+Z/Y                           | §1 gap buffer (must be wired from day 1); §2 rendering (visible state after undo)     |  [ ]   |
 | 💎  |   4   | §3 File menu -- `CTRL_MENUBAR`, New/Open/Save/Save As, `modified` flag, "Save changes?" dialog   | §1 gap buffer (load/save); `CTRL_MENUBAR` + `dialog_file_open/save` (TODO-05)         |  [ ]   |
 | 💎  |   5   | §4 Editing features -- mouse cursor, click+drag select, Ctrl+A/C/X/V, scrollbar, word wrap, status bar | §1-§3; `clipboard_set/get(CLIP_TEXT)` (TODO-01); `CTRL_STATUSBAR` (TODO-05)    |  [ ]   |
-| 💎  |   6   | §5 Find & Replace -- Ctrl+F find toolbar, Ctrl+H dialog, match highlight, Ctrl+G Go to line      | §1-§4; `dialog_input()` (TODO-05); §4 selection (Replace All uses select + paste)     |  [ ]   |
+| 💎  |   6   | §5 Find & Replace -- Ctrl+F find toolbar, Ctrl+H dialog, match highlight, Ctrl+G Go to line      | §1-§4; `dialog_input()` (TODO-05); §3 selection (Replace All uses select + paste)     |  [ ]   |
 | 💎  |   7   | §7 Stretch -- line number gutter, `.c/.h/.asm/.md` syntax highlight, Ctrl++/−/0 font zoom        | §1-§6; `theme_get(THEME_ACCENT)` (TODO-01)                                             |  [ ]   |
 
 ---

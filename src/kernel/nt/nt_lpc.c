@@ -4,7 +4,7 @@
  * Reserves SSDT slots 0x0100-0x010E for the NT 3.x-5.x LPC syscall
  * surface. Each handler is a bounded stub that logs the call once and
  * returns a deferred-status sentinel until the LPC engine in
- * 03-memory-concurrency/TODO-08 §7 + 02-kernel-core/TODO-12 §8-§9 is
+ * 03-memory-concurrency/TODO-08 §7 + 02-kernel-core/TODO-24 §8-§9 is
  * implemented.
  *
  * SCOPE-GAP-ALLOWED: 15 handlers in this file intentionally return

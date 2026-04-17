@@ -5,7 +5,7 @@
 > file associations for `.txt`, `.log`, `.ini`, and `.conf` files.
 
 > [!IMPORTANT]
-> **Canonical implementation spec:** `08-desktop-shell/TODO-10-notepad.md` -- that TODO contains
+> **Canonical implementation spec:** `09-desktop-shell/TODO-10-notepad.md` -- that TODO contains
 > the full implementation detail for all sections below (gap buffer §1, text rendering §2,
 > undo/redo §3, file menu §4, editing features §5, find & replace §6, stretch §7). This TODO
 > is the app-layer companion that extends the spec with file-type associations not covered
@@ -13,19 +13,19 @@
 > migration target for `todo-old/310-Core-Apps/TODO-330-Notepad.md`.
 >
 > Clipboard APIs: `clipboard_set/get(CLIP_TEXT, data, size)` -- `SYS_CLIPBOARD_SET=56`,
-> `SYS_CLIPBOARD_GET=57` from `08-desktop-shell/TODO-01-clipboard.md §1`.
-> File dialog: `dialog_file_open()` / `dialog_file_save()` from `07-graphics-ui/TODO-05 §4`.
+> `SYS_CLIPBOARD_GET=57` from `09-desktop-shell/TODO-01-clipboard.md §1`.
+> File dialog: `dialog_file_open()` / `dialog_file_save()` from `08-graphics-ui/TODO-05 §3`.
 
 ---
 
 ## Inputs
 
-- `08-desktop-shell/TODO-10-notepad.md` -- canonical implementation spec (gap buffer, rendering, editing, file ops, find/replace, undo/redo, stretch)
+- `09-desktop-shell/TODO-10-notepad.md` -- canonical implementation spec (gap buffer, rendering, editing, file ops, find/replace, undo/redo, stretch)
 - `include/font_mgr.h` -- `ttf_get(slot, px)`, `ttf_draw_string()`, `ttf_measure_width()` -- §2 rendering
-- `include/kernel/clipboard.h` (→ XREF `08-desktop-shell/TODO-01 §1`) -- `clipboard_set(CLIP_TEXT, ...)`, `clipboard_get(CLIP_TEXT, ...)` -- §4 cut/copy/paste
+- `include/kernel/clipboard.h` (→ XREF `09-desktop-shell/TODO-01 §1`) -- `clipboard_set(CLIP_TEXT, ...)`, `clipboard_get(CLIP_TEXT, ...)` -- §4 cut/copy/paste
 - `include/kernel/vfs.h` -- `vfs_open`, `vfs_read`, `vfs_write`, `vfs_create`, `vfs_stat` -- §3 file ops
-- `07-graphics-ui/TODO-05-widget-dialogs.md §4` -- `dialog_file_open()`, `dialog_file_save()` -- §3 open/save
-- `include/desktop/file_assoc.h` (→ XREF `08-desktop-shell/TODO-02 §1`) -- `file_assoc_set(ext, prog_id, path)` -- §5
+- `08-graphics-ui/TODO-06-widget-dialogs.md §3` -- `dialog_file_open()`, `dialog_file_save()` -- §2 open/save
+- `include/desktop/file_assoc.h` (→ XREF `09-desktop-shell/TODO-02 §1`) -- `file_assoc_set(ext, prog_id, path)` -- §3
 - `include/registry.h` -- `reg_get_string`, `reg_set_string` -- font, word-wrap, encoding prefs
 - `include/desktop/controls.h` -- `CTRL_TEXTBOX`, `CTRL_SCROLLBAR_VERT`, `CTRL_STATUSBAR`, `CTRL_MENUBAR`
 - `include/desktop/wm.h` -- `wm_create_window()`
@@ -48,14 +48,14 @@
 | 4 | Editing Features | 💎 | §2 + §3 complete, `clipboard_set/get` |
 | 5 | File Associations + App Registration | ⭐ | §3 complete, `file_assoc_set` |
 
-> Full section-by-section implementation detail is in `08-desktop-shell/TODO-10-notepad.md §1–§7`.
+> Full section-by-section implementation detail is in `09-desktop-shell/TODO-10-notepad.md §1–§8`.
 > Sections below record app-specific requirements that supplement that spec.
 
 ---
 
 ## 1. Gap Buffer Text Engine `[Opus]`
 
-> → XREF: `08-desktop-shell/TODO-10-notepad.md §1` -- complete implementation spec.
+> → XREF: `09-desktop-shell/TODO-10-notepad.md §1` -- complete implementation spec.
 > `[Opus]` justified: gap buffer is a novel data structure with no prior Impossible OS precedent;
 > the grow-by-doubling realloc path with `pmm_alloc_contiguous` is an unusual allocation pattern.
 
@@ -74,7 +74,7 @@
 
 ## 2. Text Rendering + Cursor `[Sonnet]`
 
-> → XREF: `08-desktop-shell/TODO-10-notepad.md §2`
+> → XREF: `09-desktop-shell/TODO-10-notepad.md §2`
 
 **Source file:** `src/apps/notepad/notepad_render.c`
 
@@ -90,7 +90,7 @@
 
 ## 3. File Operations `[Sonnet]`
 
-> → XREF: `08-desktop-shell/TODO-10-notepad.md §4`
+> → XREF: `09-desktop-shell/TODO-10-notepad.md §4`
 
 **Source file:** `src/apps/notepad/notepad_file.c`
 
@@ -106,7 +106,7 @@
 
 ## 4. Editing Features `[Sonnet]`
 
-> → XREF: `08-desktop-shell/TODO-10-notepad.md §3, §5, §6`
+> → XREF: `09-desktop-shell/TODO-10-notepad.md §3, §5, §7`
 
 **Source file:** `src/apps/notepad/notepad_edit.c`
 
@@ -131,7 +131,7 @@
   - [ ] `file_assoc_set(".log",  "ImpossibleOS.Notepad", "C:\\Impossible\\System32\\notepad.exe")`
   - [ ] `file_assoc_set(".ini",  "ImpossibleOS.Notepad", "C:\\Impossible\\System32\\notepad.exe")`
   - [ ] `file_assoc_set(".conf", "ImpossibleOS.Notepad", "C:\\Impossible\\System32\\notepad.exe")`
-  - [ ] `file_assoc_set(".md",   "ImpossibleOS.Notepad", "C:\\Impossible\\System32\\notepad.exe")` (also targets syntax-highlight stretch in TODO-10 §7)
+  - [ ] `file_assoc_set(".md",   "ImpossibleOS.Notepad", "C:\\Impossible\\System32\\notepad.exe")` (also targets syntax-highlight stretch in TODO-10 §8)
 - [ ] **Context menu integration**: right-click on any file in File Manager → `Open with Notepad` entry (registered via `file_assoc_register_verb("Open with Notepad", "notepad.exe %1")`)
 - [ ] **Recent files**: `HKCU\Software\Impossible\Notepad\RecentFiles\{0..9}` (10 entries, MRU); `File → Recent Files` submenu
 - [ ] **Font preferences**: `Settings → Notepad → Font` (family + size) stored in Registry; Ctrl++ / Ctrl+− zoom (temporary, not persisted); Ctrl+0 resets to Registry value
@@ -149,7 +149,7 @@
 | 💎 | File open/save + unsaved-changes prompt              | ✅ Notepad                             | ✅ gedit                        | ⬜ §3 -- `dialog_file_open/save`, title asterisk, save-changes dialog |
 | 💎 | Click/drag selection + clipboard                     | ✅ Notepad                             | ✅ gedit                        | ⬜ §4 -- `clipboard_set/get(CLIP_TEXT)`                               |
 | 💎 | 200-step undo/redo                                   | ✅ Notepad (unlimited undo since Win10 | ✅ gedit / Kate                 | ⬜ §4 -- 200-entry ring, coalesced single-char inserts                |
-| 💎 | Find + Replace                                       | ✅ Notepad (with regex in Win11)       | ✅ gedit                        | ⬜ §4 -- + `08-desktop-shell/TODO-10 §6`                              |
+| 💎 | Find + Replace                                       | ✅ Notepad (with regex in Win11)       | ✅ gedit                        | ⬜ §4 -- + `09-desktop-shell/TODO-10 §7`                              |
 | ⭐ | `.txt`, `.log`, `.ini`, `.conf`, `.md` all → Notepad | ✅ Notepad (`.txt`); `.ini` → Notepad; | ⚠️ `xdg-open` varies by distro  | ⬜ §5 -- 5× `file_assoc_set` calls, "Open with                        |
 
 Impossible OS Notepad handles every plain-text file type the OS produces out-of-the-box --

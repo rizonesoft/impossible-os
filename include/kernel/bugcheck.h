@@ -4,7 +4,7 @@
  * Defines BUGCHECK_CODE constants matching the Windows NT STOP code namespace.
  * KeBugCheckEx is the single entry point for all kernel panics.
  *
- * XREF: 02-kernel-core/TODO-16-crash-dump-generation.md S1
+ * XREF: 02-kernel-core/TODO-27-crash-dump-generation.md S1
  * ============================================================================ */
 
 #pragma once

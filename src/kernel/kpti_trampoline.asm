@@ -15,7 +15,7 @@
 ;   gs:104 = kernel_cr3
 ;   gs:112 = user_cr3
 ;
-; XREF: 02-kernel-core/TODO-17-kernel-security-hardening.md S3
+; XREF: 02-kernel-core/TODO-10-kernel-security-hardening.md S3
 ; ============================================================================
 
 [BITS 64]

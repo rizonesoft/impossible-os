@@ -5,7 +5,7 @@
  * All structures use pack(4) to match the Windows SDK dbghelp.h layout
  * (pshpack4.h). Every struct size is verified by static assert.
  *
- * XREF: 02-kernel-core/TODO-16-crash-dump-generation.md SS4
+ * XREF: 02-kernel-core/TODO-27-crash-dump-generation.md SS4
  * ============================================================================ */
 
 #pragma once

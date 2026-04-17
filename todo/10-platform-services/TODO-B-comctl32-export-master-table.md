@@ -8,7 +8,7 @@
 ## On-disk and naming contract
 
 - **Windows canonical path:** `C:\Windows\System32\comctl32.dll` (same **BaseDllName** as Windows; v6 activation still requires manifest / activation context work in `TODO-08`).
-- **Implementation:** typically thin re-exports or stubs under `src/win32/` (see `TODO-08-win32-api-surface.md` when a section is added) plus `../08-graphics-ui/TODO-04-widget-library-core.md` where behavior is native IxUI, not a full DLL clone.
+- **Implementation:** typically thin re-exports or stubs under `src/win32/` (see `TODO-08-win32-api-surface.md` when a section is added) plus `../08-graphics-ui/TODO-05-widget-library-core.md` where behavior is native IxUI, not a full DLL clone.
 
 ## Inputs
 
@@ -16,7 +16,7 @@
 | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
 | `TODO-08-win32-api-surface.md`                                                                | Win32 surface owner; add a section when `comctl32.c` lands                |
 | `../12-user-platform-sdk/TODO-07-win32-compat-matrix.md`                                      | Tier 8 `InitCommonControlsEx` gate text                                   |
-| `../08-graphics-ui/TODO-04-widget-library-core.md`                                            | `CTRL_LISTVIEW`, `CTRL_TREEVIEW`, tab strip, etc.                         |
+| `../08-graphics-ui/TODO-05-widget-library-core.md`                                            | `CTRL_LISTVIEW`, `CTRL_TREEVIEW`, tab strip, etc.                         |
 | `TODO-A-user32-export-master-table.md`                                                        | Parent HWND APIs for hosted controls                                      |
 | `https://raw.githubusercontent.com/wine-mirror/wine/master/dlls/comctl32/comctl32.spec`       | Scaffold: legacy `comctl32` ordinals + exports (Wine `master`)            |
 | `https://raw.githubusercontent.com/wine-mirror/wine/master/dlls/comctl32_v6/comctl32_v6.spec` | Scaffold: v6 forwarder surface merged into same checklist (Wine `master`) |
@@ -48,7 +48,7 @@ Every **named** `comctl32.dll` export that appears on a shipping Windows 11 mach
 These are **families** to split into real `comctl32` exports in Tier 3 over time. They are not alternate spellings of the Tier 3 rows.
 
 - **Image list APIs:** implement as `ImageList_*` exports from Tier 3; Owner splits between `TODO-11` (GDI-backed lists) and `TODO-08` (DLL export table).
-- **List view:** `ListView_*` exports line up with `CTRL_LISTVIEW` in `../08-graphics-ui/TODO-04-widget-library-core.md` plus `../08-graphics-ui/TODO-11-win32-gdi-user32-stubs.md` when Win32 shims wrap the widget.
+- **List view:** `ListView_*` exports line up with `CTRL_LISTVIEW` in `../08-graphics-ui/TODO-05-widget-library-core.md` plus `../08-graphics-ui/TODO-14-win32-gdi-user32-stubs.md` when Win32 shims wrap the widget.
 - **Tree view:** `TreeView_*` exports line up with `CTRL_TREEVIEW` in the same TODO-04 file.
 
 ## Export inventory methodology (Win11 completeness)

@@ -4,8 +4,8 @@
 **Goal:** Deliver a bootable ISO and graphical installer that make Impossible OS distributable and installable on real hardware -- the capstone that transforms the OS from a QEMU-only raw disk image into a product that ships.
 
 > [!IMPORTANT]
-> **Depends on:** `TODO-07 §7` (ring-3 PE execution) and `TODO-08 §10–13` (IxUI windows, user32, gdi32) for the installer GUI. GPT + FAT32 + IXFS format APIs must be available: `fat32_format()` (`include/kernel/fs/fat32.h`), `ixfs_format()` (`include/kernel/fs/ixfs.h`), `gpt_parse()` (`include/kernel/fs/gpt.h`), `blkdev_count()` (`include/kernel/drivers/blkdev.h`).
-> **Overlap:** §3 (first-boot wizard) XREFs `TODO-04-restore-recovery §7` (OOBE wizard in this domain); do not duplicate that wizard; trigger it from here.
+> **Depends on:** `TODO-07 §9` (ring-3 PE execution) and `TODO-08 §10–13` (IxUI windows, user32, gdi32) for the installer GUI. GPT + FAT32 + IXFS format APIs must be available: `fat32_format()` (`include/kernel/fs/fat32.h`), `ixfs_format()` (`include/kernel/fs/ixfs.h`), `gpt_parse()` (`include/kernel/fs/gpt.h`), `blkdev_count()` (`include/kernel/drivers/blkdev.h`).
+> **Overlap:** §3 (first-boot wizard) XREFs `TODO-04-restore-recovery §1` (OOBE wizard in this domain); do not duplicate that wizard; trigger it from here.
 
 ---
 
@@ -33,8 +33,8 @@
 | `include/registry.h` | `registry_set()` for `InstallerMode`, `FirstBoot` flags |
 | `src/boot/uefi/bootx64.c` | Existing bootloader -- copy to ISO `EFI/BOOT/BOOTX64.EFI` |
 | `scripts/build.sh` | Add `make iso` target here |
-| → XREF: `10-platform-services/TODO-04 §7` | OOBE first-boot wizard (do not re-implement -- trigger only) |
-| → XREF: `05-storage-filesystems/TODO-08 §1` | GPT partition table write (reuse if available) |
+| → XREF: `10-platform-services/TODO-04 §1` | OOBE first-boot wizard (do not re-implement -- trigger only) |
+| → XREF: `05-storage-filesystems/TODO-08 §5` | GPT partition table write (reuse if available) |
 | → XREF: `TODO-08 §10–13` | IxUI window/message/GDI stack for installer GUI |
 
 ---
@@ -55,7 +55,7 @@
 | # | Section | Tag | Dep | Mark |
 |---|---------|-----|-----|------|
 | 1 | ISO build script (`make-iso.sh`, `make iso`) | `[Sonnet]` | existing build | ⭐ |
-| 2 | Installer init process (InstallerMode registry flag) | `[Sonnet]` | TODO-08 §2 | ⭐ |
+| 2 | Installer init process (InstallerMode registry flag) | `[Sonnet]` | TODO-08 §4 | ⭐ |
 | 3 | Installer GUI wizard (IxUI screens A–G) | `[Sonnet]` | §2, TODO-08 §10–13 | 💎 |
 | 4 | GPT partition write (`gpt_create`/`gpt_commit`) | `[Opus]` | §3 | 💎 |
 | 5 | Partition format (ESP FAT32 + IXFS system) | `[Sonnet]` | §4 | 💎 |
@@ -232,7 +232,7 @@ Install `BOOTX64.EFI` to the ESP and register a UEFI boot entry so the firmware 
 - [ ] Write `HKLM\SYSTEM\InstallerMode = 0` to installed registry hive (ensures normal boot path next time)
 - [ ] Write `HKLM\SYSTEM\InstallDate` = current timestamp (for system info display)
 - [ ] Screen G `[Reboot Now]` → eject ISO media (clear QEMU `-cdrom` equivalent) + ACPI reset via UEFI runtime `ResetSystem(EfiResetCold)`
-- [ ] On first boot from installed disk: kernel reads `FirstBoot=1` → launches OOBE wizard from `TODO-04 §7` (timezone, keyboard, user account, wallpaper, updates); OOBE wizard writes `FirstBoot=0` when complete
+- [ ] On first boot from installed disk: kernel reads `FirstBoot=1` → launches OOBE wizard from `TODO-04 §1` (timezone, keyboard, user account, wallpaper, updates); OOBE wizard writes `FirstBoot=0` when complete
 - [ ] Commit: `"installer: post-install first boot and OOBE trigger"`
 
 ---

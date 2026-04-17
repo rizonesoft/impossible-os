@@ -8,15 +8,15 @@
 
 > [!IMPORTANT]
 > **Upload machinery** (`gh release upload` for disk image, ISO, VM images, SDK ZIP)
-> is specced in `12-installer-release/TODO-03 §2` (`scripts/upload-release.sh`) and
+> is specced in `12-installer-release/TODO-03 §9` (`scripts/upload-release.sh`) and
 > `11-user-platform-sdk/TODO-06 §8` (`scripts/release-sdk.sh`). The `create-release.sh`
 > here **orchestrates** those scripts; do not re-specify artifact upload logic.
 >
-> **`gen-changelog.sh`** is specced in `12-installer-release/TODO-03 §3`; §2 here
+> **`gen-changelog.sh`** is specced in `12-installer-release/TODO-03 §5`; §9 here
 > consumes it to draft the `CHANGELOG.md` update -- do not re-specify the script.
 >
 > **`scripts/promote-release.sh`** (stable promotion, git tag push) is specced in
-> `12-installer-release/TODO-03 §3`; `create-release.sh` (§1 here) runs after
+> `12-installer-release/TODO-03 §5`; `create-release.sh` (§1 here) runs after
 > `promote-release.sh` completes.
 >
 > **Code signing** (`sign-release.sh`, Ed25519) is specced in `TODO-01 §5`; §1 here
@@ -30,9 +30,9 @@
 
 ## Inputs
 
-- `12-installer-release/TODO-03-update-server.md §2 §3` (→ XREF) -- `upload-release.sh`; `promote-release.sh`; `gen-changelog.sh`; §1 §2 orchestration
+- `12-installer-release/TODO-03-update-server.md §9 §5` (→ XREF) -- `upload-release.sh`; `promote-release.sh`; `gen-changelog.sh`; §1 §9 orchestration
 - `12-installer-release/TODO-01-release-artifacts.md §1 §5` (→ XREF) -- `OS_VERSION_STRING`; signed artifacts; §1 release workflow
-- `12-installer-release/TODO-04-release-qa.md §7` (→ XREF) -- `release-checklist.md` PR template; §1 sign-off gate before `create-release.sh`
+- `12-installer-release/TODO-04-release-qa.md §1` (→ XREF) -- `release-checklist.md` PR template; §2 sign-off gate before `create-release.sh`
 - `11-user-platform-sdk/TODO-06-sdk-distribution.md §8` (→ XREF) -- `release-sdk.sh`; SDK ZIP artifact; §1 coordinate
 - `11-user-platform-sdk/TODO-07-win32-compat-matrix.md §12` (→ XREF) -- `compat-check.sh` score; §5 §8 roadmap metric
 - `README.md`, `CONTRIBUTING.md`, `CHANGELOG.md`, `CODE_OF_CONDUCT.md` -- existing files to overhaul
@@ -58,8 +58,8 @@ outsiders can track progress without reading 100+ TODO files.
 |------|---------|-------|-----------|
 | 1 | Contribution guide overhaul (`CONTRIBUTING.md`) | 💎 | `scripts/build.sh`; existing file |
 | 2 | Issue & PR templates (`.github/`) | ⭐ | §1; existing templates |
-| 3 | Changelog discipline (`CHANGELOG.md`) | 💎 | `gen-changelog.sh` (TODO-03 §3) |
-| 4 | GitHub release workflow (`create-release.sh`) | 💎 | `TODO-01 §5` signing; `TODO-03 §2 §3`; SDK `TODO-06 §8` |
+| 3 | Changelog discipline (`CHANGELOG.md`) | 💎 | `gen-changelog.sh` (TODO-03 §5) |
+| 4 | GitHub release workflow (`create-release.sh`) | 💎 | `TODO-01 §5` signing; `TODO-03 §9 §5`; SDK `TODO-06 §8` |
 | 5 | README overhaul | ⭐ | §4 (download links); desktop screenshot |
 | 6 | Project website (`docs/website/`) | ⭐ | §5 content; §4 release links |
 | 7 | Community channels (Discussions + Discord) | 💎 | §6 live; §4 release announcements webhook |
@@ -76,7 +76,7 @@ outsiders can track progress without reading 100+ TODO files.
   2. Create annotated tag: `git tag -a "v{version}" -m "Impossible OS {version}"` + `git push origin "v{version}"`
   3. Determine release flags: `channel=beta` → `--prerelease`; `channel=stable` → full release
   4. `gh release create "v{version}" --title "Impossible OS {version}" --notes-file docs/changelog/{version}.md [--prerelease if beta] --draft`
-  5. Upload OS artifacts (delegate to `scripts/upload-release.sh {version}` from `TODO-03 §2`)
+  5. Upload OS artifacts (delegate to `scripts/upload-release.sh {version}` from `TODO-03 §9`)
   6. Upload SDK ZIP (delegate to `scripts/release-sdk.sh` from `TODO-06 §8`, pass `--upload-only` flag)
   7. Publish draft: `gh release edit "v{version}" --draft=false`
   8. Post Discord announcement webhook (§7): `curl -X POST $DISCORD_RELEASES_WEBHOOK -d "{\"content\":\"...\"}"` with version, download URL, changelog summary
@@ -88,7 +88,7 @@ outsiders can track progress without reading 100+ TODO files.
 
 ## 2. Changelog Discipline `[Sonnet]`
 
-**Source:** `CHANGELOG.md` (overhaul existing); `scripts/gen-changelog.sh` (from `TODO-03 §3`)
+**Source:** `CHANGELOG.md` (overhaul existing); `scripts/gen-changelog.sh` (from `TODO-03 §5`)
 
 - [ ] **`CHANGELOG.md` format** -- [Keep a Changelog](https://keepachangelog.com/) style:
   ```markdown
@@ -114,7 +114,7 @@ outsiders can track progress without reading 100+ TODO files.
   [Unreleased]: https://github.com/rizonesoft/impossible-os/compare/v1.0.22100...HEAD
   ```
 - [ ] **PR requirement**: every PR must add an entry to `## [Unreleased]`; PR template (§4) checklist includes `[ ] CHANGELOG.md updated`; CI linter checks that `## [Unreleased]` section is non-empty on PRs that add/change code
-- [ ] **`scripts/gen-changelog.sh <old-tag> <new-tag>`** (specced in `TODO-03 §3`; used here): `gh pr list --state merged --base main --search "merged:{old-date}..{new-date}" --json title,number,url` → group by PR label (`kernel`/`boot`/`desktop`/`drivers`/etc.) → output draft `docs/changelog/{version}.md`; maintainer reviews + promotes to `CHANGELOG.md`
+- [ ] **`scripts/gen-changelog.sh <old-tag> <new-tag>`** (specced in `TODO-03 §5`; used here): `gh pr list --state merged --base main --search "merged:{old-date}..{new-date}" --json title,number,url` → group by PR label (`kernel`/`boot`/`desktop`/`drivers`/etc.) → output draft `docs/changelog/{version}.md`; maintainer reviews + promotes to `CHANGELOG.md`
 - [ ] **Changelog lint in CI** (`.github/workflows/pr-check.yml`): `python scripts/lint-changelog.py` -- check `CHANGELOG.md` parses; warn if `## [Unreleased]` is empty on code-change PRs; error on version entry missing comparison link
 
 ---

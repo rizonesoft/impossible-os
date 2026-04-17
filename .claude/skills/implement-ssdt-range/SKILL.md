@@ -22,7 +22,7 @@ The user provides an SSDT range block -- either pasted from TODO-05 (main SSDT, 
 
 ### 1. Parse the range
 - Extract every function name and SSDT index from the table.
-- Identify the owning TODO file (main SSDT = `todo/02-kernel-core/TODO-05-native-api-ssdt.md`, shadow SSDT = `todo/08-graphics-ui/TODO-12-win32k-shadow-ssdt.md`).
+- Identify the owning TODO file (main SSDT = `todo/02-kernel-core/TODO-05-native-api-ssdt.md`, shadow SSDT = `todo/08-graphics-ui/TODO-15-win32k-shadow-ssdt.md`).
 - Read the referenced section (§N) in the owning TODO for implementation details, signatures, and checklist items.
 
 ### 2. Check prerequisites

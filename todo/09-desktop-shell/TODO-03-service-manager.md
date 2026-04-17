@@ -3,7 +3,7 @@
 > **Goal:** Build the kernel service lifecycle manager -- a 32-slot static service table with Registry-backed definitions, start/stop/restart/status operations, PIT-ticked crash monitor with exponential backoff, critical-service BSOD gate, built-in daemons (netd/ntpd/registryd/indexd), a kernel notification queue, autostart program scanning, Win32 system-info stubs, and a minimal user account stub.
 
 > [!IMPORTANT]
-> **Already exists**: `task_create(entry, name)`, `task_create_user(entry, name)`, `task_exec(data, size)`, `task_fork()`, `task_waitpid(pid)` in `task.h`. `signal_send(pid, SIGTERM/SIGKILL)` in `signal.h`. `smp_cpu_count()` in `smp.h` + `acpi_get_cpu_count()` in `acpi.h`. `RegOpenKeyEx/RegSetValueEx/RegGetValue` for `HKLM\SYSTEM\Services` + per-user Registry. `vfs_readdir/vfs_finddir/vfs_mkdir/vfs_create` for home dir + startup scan. `shortcut_execute()` (TODO-02 §4) for autostart `.lnk` files. `notify_send()` (TODO-09 §5) for service failure toasts. `system_get_ticks()` for PIT-ticked monitor. **Missing**: all service manager infrastructure, `knotify_send`, `GetSystemInfo`, user account struct. Complete sections in order: user account stub → service manager core → auto-restart monitor → graceful degradation → `sc` shell command → built-in services → notification service → autostart programs → Win32 system info stubs.
+> **Already exists**: `task_create(entry, name)`, `task_create_user(entry, name)`, `task_exec(data, size)`, `task_fork()`, `task_waitpid(pid)` in `task.h`. `signal_send(pid, SIGTERM/SIGKILL)` in `signal.h`. `smp_cpu_count()` in `smp.h` + `acpi_get_cpu_count()` in `acpi.h`. `RegOpenKeyEx/RegSetValueEx/RegGetValue` for `HKLM\SYSTEM\Services` + per-user Registry. `vfs_readdir/vfs_finddir/vfs_mkdir/vfs_create` for home dir + startup scan. `shortcut_execute()` (TODO-02 §5) for autostart `.lnk` files. `notify_send()` (TODO-09 §6) for service failure toasts. `system_get_ticks()` for PIT-ticked monitor. **Missing**: all service manager infrastructure, `knotify_send`, `GetSystemInfo`, user account struct. Complete sections in order: user account stub → service manager core → auto-restart monitor → graceful degradation → `sc` shell command → built-in services → notification service → autostart programs → Win32 system info stubs.
 
 ## Inputs
 
@@ -13,12 +13,12 @@
 - `include/registry.h` -- `RegGetValue/RegSetValueEx/RegOpenKeyEx` -- used by §1 service Registry definitions, §9 user Registry hive, §7 RunOnce/Run
 - `include/kernel/fs/vfs.h` -- `vfs_readdir`, `vfs_mkdir`, `vfs_create` -- used by §9 home dir creation, §7 startup scan
 - `include/kernel/smp.h` -- `smp_cpu_count()` -- used by §8 `GetSystemInfo.dwNumberOfProcessors`
-- `include/desktop/notify.h` (TODO-09 §5) -- `notify_send()` -- used by §3 service failure toast and §6 `knotify_send()` drain
-- `include/desktop/shortcut.h` (TODO-02 §4) -- `shortcut_execute()` -- used by §7 autostart `.lnk` execution
+- `include/desktop/notify.h` (TODO-09 §6) -- `notify_send()` -- used by §4 service failure toast and §7 `knotify_send()` drain
+- `include/desktop/shortcut.h` (TODO-02 §5) -- `shortcut_execute()` -- used by §7 autostart `.lnk` execution
 - `include/kernel/klog.h` -- `klog()` -- used throughout for `[svc]` serial log lines
-- → XREF: `07-graphics-ui/TODO-09-startmenu-tray-notifications.md §5` -- `knotify_send()` (§6) is drained by the toast queue; `notify_send()` is the user-facing path; §6 bridges the two
+- → XREF: `08-graphics-ui/TODO-11-startmenu-tray-notifications.md §6` -- `knotify_send()` (§7) is drained by the toast queue; `notify_send()` is the user-facing path; §7 bridges the two
 - → XREF: `06-networking/TODO-01-*` (networking) -- `netd` (§2) wraps the existing DHCP/ARP polling loop; must co-exist with existing `net_init()` call in `kernel_main`
-- → XREF: `07-graphics-ui/TODO-11-win32-gdi-user32-stubs.md` -- §8 Win32 system info stubs go into the `kernel32.dll` stub table alongside GDI/USER32
+- → XREF: `08-graphics-ui/TODO-14-win32-gdi-user32-stubs.md` -- §4 Win32 system info stubs go into the `kernel32.dll` stub table alongside GDI/USER32
 
 ## Outcome
 

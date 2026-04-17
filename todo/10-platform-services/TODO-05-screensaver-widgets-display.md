@@ -17,11 +17,11 @@
 - `include/registry.h` -- `HKCU\Software\Impossible\Screensaver\*`, `HKCU\Software\Impossible\Widgets\{id}\*`, `HKLM\HARDWARE\Display\*` -- §1 settings, §3 widget positions, §5 current mode
 - `include/desktop/wm.h` -- WM input event loop (add `g_last_input_ticks`); `wm_create_window()` -- §1 idle hook, §4 widget overlay
 - `include/desktop/controls.h` (TODO-05) -- `CTRL_DROPDOWN`, `CTRL_SLIDER`, `CTRL_CHECKBOX` -- §5 desk.cpl
-- `include/cpl.h` (TODO-11) -- `CPlApplet_t` -- §5 desk.cpl mode picker update
-- → XREF: `08-desktop-shell/TODO-06 §7` -- Win+L lock screen; §2 calls lock screen on screensaver dismiss when `RequirePassword=1`
-- → XREF: `08-desktop-shell/TODO-07 §2` -- `wallpaper_set()`; §1 bouncing logo screensaver reads wallpaper path; §3 widget manager sits above wallpaper layer
-- → XREF: `08-desktop-shell/TODO-11 §2` -- `desk.cpl` resolution dropdown; §5 here populates it with GOP mode list
-- → XREF: `10-platform-services/TODO-12 §1` -- `sched_get_task_list()` + `cpu_ticks`; §4 CPU meter widget depends on that
+- `include/cpl.h` (TODO-11) -- `CPlApplet_t` -- §9 desk.cpl mode picker update
+- → XREF: `09-desktop-shell/TODO-06 §7` -- Win+L lock screen; §2 calls lock screen on screensaver dismiss when `RequirePassword=1`
+- → XREF: `09-desktop-shell/TODO-07 §2` -- `wallpaper_set()`; §1 bouncing logo screensaver reads wallpaper path; §3 widget manager sits above wallpaper layer
+- → XREF: `09-desktop-shell/TODO-11 §7` -- `desk.cpl` resolution dropdown; §9 here populates it with GOP mode list
+- → XREF: `10-platform-services/TODO-12 §1` -- `sched_get_task_list()` + `cpu_ticks`; §5 CPU meter widget depends on that
 
 ## Outcome
 
@@ -40,7 +40,7 @@
 | 💎  |   2   | §2 Screensaver → lock bridge -- `RequirePassword` Registry; dismiss → lock screen                       | §1; TODO-06 §7 lock screen `lock_screen_show()`                                             |  [ ]   |
 | ⭐  |   3   | §3 Widget framework -- `struct widget`, `WGT_*` lifecycle, compositor layer, drag, Registry positions   | compositor tick (exists); `gfx_acrylic()`; `registry_set/get()` for positions               |  [ ]   |
 | ⭐  |   4   | §4 Built-in widgets -- Analog Clock, CPU Meter, RAM Monitor, Mini Calendar, Quick Notes                  | §3 framework; `system_get_ticks()` clock; `sched_get_task_list()` (TODO-12 §1)             |  [ ]   |
-| 💎  |   5   | §5 Display management -- `display_enum_modes()`, current mode Registry, `desk.cpl` dropdown update      | `boot_info->gop_modes[]` (exists); `desk.cpl` stub (TODO-11 §3)                            |  [ ]   |
+| 💎  |   5   | §5 Display management -- `display_enum_modes()`, current mode Registry, `desk.cpl` dropdown update      | `boot_info->gop_modes[]` (exists); `desk.cpl` stub (TODO-11 §5)                            |  [ ]   |
 | 💎  |   6   | §6 Multi-monitor stubs -- `struct monitor`, `monitor_enum()`, virtual coordinate space stubs             | §5; no hardware dep (stubs only)                                                             |  [ ]   |
 
 ---
@@ -113,7 +113,7 @@ Five widgets: **Analog Clock** (150×150, `gfx_draw_line` hands), **CPU Meter** 
 **Files:** `src/desktop/widgets/` (new directory: `clock_widget.c`, `cpu_widget.c`, `ram_widget.c`, `cal_widget.c`, `notes_widget.c`)
 
 > [!NOTE]
-> **Analog Clock** (`WGT_INIT`: nothing; `WGT_TICK`: invalidate; `WGT_RENDER`): center `cx=75, cy=75`. Ticks = `system_get_ticks()`; seconds = `(ticks / TICKS_PER_SEC) % 60`; minutes = `uptime() / 60 % 60`; hours = `uptime() / 3600 % 12`. Hand angles in radians: `s_angle = seconds * 2π/60`; m_angle, h_angle. `gfx_draw_line(s, cx, cy, cx + sin(angle)*r, cy - cos(angle)*r, color)` for each hand (kmath_sin/cos from TODO-12 §3 stretch, or manual `sin_table[60]`). Draw 60-tick marks around rim. **CPU Meter** (`WGT_TICK`: `sched_get_task_list()` → sum CPU% → push to `g_cpu_history[60]` ring; `WGT_RENDER`): rolling bar chart: for each of 60 samples, `gfx_fill_rect(s, i*3, 100 - cpu[i], 2, cpu[i], accent_color)`. Label: `"CPU {N}%"`. **RAM Monitor** (`WGT_RENDER`): `total = pmm_get_total_frames() * 4096`; `used = total - pmm_get_free_frames()*4096`; filled bar `(used/total) * bar_w`. Label: `"{used MB} / {total MB}"`. **Mini Calendar** (`WGT_RENDER`): reuse calendar rendering logic from TODO-12 §6 -- 7-col grid, current day accent. Click day → `calendar_open_at_date()` (TODO-12). **Quick Notes** (`WGT_TICK`: nothing; `WGT_CLICK`: focus → enable `g_notes_editing` → `WM_KEYDOWN` appends to `g_notes_buf[1024]`; `WGT_RENDER`: `ttf_draw_string(FONT_UI, 12px)` wrapped; `WGT_CLOSE`: save to `HKCU\...\Notes\Content`).
+> **Analog Clock** (`WGT_INIT`: nothing; `WGT_TICK`: invalidate; `WGT_RENDER`): center `cx=75, cy=75`. Ticks = `system_get_ticks()`; seconds = `(ticks / TICKS_PER_SEC) % 60`; minutes = `uptime() / 60 % 60`; hours = `uptime() / 3600 % 12`. Hand angles in radians: `s_angle = seconds * 2π/60`; m_angle, h_angle. `gfx_draw_line(s, cx, cy, cx + sin(angle)*r, cy - cos(angle)*r, color)` for each hand (kmath_sin/cos from TODO-12 §4 stretch, or manual `sin_table[60]`). Draw 60-tick marks around rim. **CPU Meter** (`WGT_TICK`: `sched_get_task_list()` → sum CPU% → push to `g_cpu_history[60]` ring; `WGT_RENDER`): rolling bar chart: for each of 60 samples, `gfx_fill_rect(s, i*3, 100 - cpu[i], 2, cpu[i], accent_color)`. Label: `"CPU {N}%"`. **RAM Monitor** (`WGT_RENDER`): `total = pmm_get_total_frames() * 4096`; `used = total - pmm_get_free_frames()*4096`; filled bar `(used/total) * bar_w`. Label: `"{used MB} / {total MB}"`. **Mini Calendar** (`WGT_RENDER`): reuse calendar rendering logic from TODO-12 §8 -- 7-col grid, current day accent. Click day → `calendar_open_at_date()` (TODO-12). **Quick Notes** (`WGT_TICK`: nothing; `WGT_CLICK`: focus → enable `g_notes_editing` → `WM_KEYDOWN` appends to `g_notes_buf[1024]`; `WGT_RENDER`: `ttf_draw_string(FONT_UI, 12px)` wrapped; `WGT_CLOSE`: save to `HKCU\...\Notes\Content`).
 
 - [ ] `clock_widget_fn(msg, w, s, data)` -- `sin_table[60]` + `cos_table[60]` (precomputed) for hands; 60-tick rim marks
 - [ ] `cpu_widget_fn(msg, w, s, data)` -- `g_cpu_history[60]` ring; `sched_get_task_list()` on WGT_TICK; bar chart render

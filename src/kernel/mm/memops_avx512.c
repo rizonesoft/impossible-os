@@ -6,7 +6,7 @@
  * memops_sse.c (compiled with -msse2 only) to avoid EVEX-encoded instructions
  * on CPUs without AVX-512 (e.g., QEMU TCG, pre-Skylake-SP).
  *
- * XREF: 02-kernel-core/TODO-19-x86-64-architecture.md S3
+ * XREF: 02-kernel-core/TODO-09-x86-64-architecture.md S3
  * ============================================================================ */
 
 #include "kernel/mm/memops.h"

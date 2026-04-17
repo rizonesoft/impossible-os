@@ -5,7 +5,7 @@
  * handle create and duplicate operations.  Matches Win11's ObRegisterCallbacks
  * API for driver compatibility and anti-tamper enforcement.
  *
- * XREF: 02-kernel-core/TODO-03-object-manager.md S13
+ * XREF: 02-kernel-core/TODO-05-object-manager.md S13
  * ============================================================================ */
 
 #pragma once

@@ -3,7 +3,7 @@
 > **Goal:** Close out the kernel networking layer with nine deliverables: DHCP lease renewal daemon, NTP time-sync client (slew mode, Registry persistence), `ifconfig` multi-NIC display + manual config, network statistics API + system-tray icon, extended `ping` (IPv6/flags), `traceroute`, `netstat`, `/sys/net` VFS aggregation file, and `ws2_32.dll` Winsock compatibility stubs. Together these give Impossible OS a complete, observable, Win32-compatible network stack.
 
 > [!IMPORTANT]
-> DNS (`dns_resolve()`) and UDP (`udp_send()`) must be working before NTP can query `pool.ntp.org`. The `net_interface` manager from TODO-01 §5 is the foundation for multi-NIC `ifconfig` output and per-interface stats. The BSD socket layer from TODO-02 §5–§8 must be complete before `ws2_32.dll` stubs can map to it. ICMPv6 (TODO-04 §3) provides the Echo Request/Reply types needed by the IPv6 `ping` extension. The `/sys/net` VFS file (§8) aggregates outputs from firewall counters (TODO-05 §9), DNS cache (TODO-02 §3), and ARP/NDP tables (TODO-04 §5) -- implement it last. FILETIME epoch conversion uses the existing `FILETIME` type from `include/kernel/fs/ntfs.h` (100-ns units since 1601-01-01); `uefi_set_time()` is available in `include/kernel/uefi_runtime.h`.
+> DNS (`dns_resolve()`) and UDP (`udp_send()`) must be working before NTP can query `pool.ntp.org`. The `net_interface` manager from TODO-01 §5 is the foundation for multi-NIC `ifconfig` output and per-interface stats. The BSD socket layer from TODO-02 §3–§8 must be complete before `ws2_32.dll` stubs can map to it. ICMPv6 (TODO-04 §3) provides the Echo Request/Reply types needed by the IPv6 `ping` extension. The `/sys/net` VFS file (§7) aggregates outputs from firewall counters (TODO-05 §9), DNS cache (TODO-02 §4), and ARP/NDP tables (TODO-04 §5) -- implement it last. FILETIME epoch conversion uses the existing `FILETIME` type from `include/kernel/fs/ntfs.h` (100-ns units since 1601-01-01); `uefi_set_time()` is available in `include/kernel/uefi_runtime.h`.
 
 ## Inputs
 
@@ -20,9 +20,9 @@
 - `user/lib/socket.c` + `include/kernel/net/socket.h` -- BSD socket syscalls from TODO-02; `ws2_32.dll` maps to these
 - → XREF: `06-networking/TODO-01-tcp-network-infrastructure.md` -- `net_interface` manager (§5) extended with stat counters here
 - → XREF: `06-networking/TODO-02-dns-sockets.md` -- `dns_resolve()` for NTP hostname; BSD socket syscalls for `ws2_32.dll` mapping
-- → XREF: `06-networking/TODO-04-ipv6-dual-stack.md` -- ICMPv6 Echo Request/Reply (§3) needed by §4 IPv6 ping; NDP cache for `ndp -an` in `/sys/net`
+- → XREF: `06-networking/TODO-04-ipv6-dual-stack.md` -- ICMPv6 Echo Request/Reply (§3) needed by §6 IPv6 ping; NDP cache for `ndp -an` in `/sys/net`
 - → XREF: `06-networking/TODO-05-firewall.md` -- `/sys/firewall` counters included in `/sys/net` §8 summary
-- → XREF: `02-kernel-core/TODO-07` -- NTP sets system time via `NtSetSystemTime`; coordinate epoch with the kernel time service
+- → XREF: `02-kernel-core/TODO-17` -- NTP sets system time via `NtSetSystemTime`; coordinate epoch with the kernel time service
 
 ## Outcome
 
@@ -46,7 +46,7 @@
 | 💎  |   4   | §3 `ifconfig` command -- multi-NIC display, IPv4/IPv6/MTU/stats, manual IP/up/down config         | §7 (stats counters must exist to display); `net_interface` manager                |  [ ]   |
 | 💎  |   5   | §4 `ping` improvements -- ICMPv6 echo, `-6/-4/-c/-t` flags                                        | ICMPv6 Echo from TODO-04 §3; existing `icmp_send_echo_request()`                  |  [ ]   |
 | 💎  |   6   | §5 `traceroute` -- UDP TTL 1→30, ICMP Time Exceeded, reverse DNS, IPv4+IPv6                       | ICMP Time Exceeded handling (IPv4 `icmp.c`); `dns_resolve()` for reverse lookup   |  [ ]   |
-| 💎  |   7   | §6 `netstat` -- TCP connections, UDP sockets, listening sockets from kernel socket table           | BSD socket table from TODO-02 §5–§6                                                |  [ ]   |
+| 💎  |   7   | §6 `netstat` -- TCP connections, UDP sockets, listening sockets from kernel socket table           | BSD socket table from TODO-02 §3–§6                                                |  [ ]   |
 | ⭐  |   8   | §8 `/sys/net` VFS file -- per-interface stats, ARP, NDP, DNS cache, FW counters                   | §3 stats; §6 `netstat`; TODO-04 §5 NDP cache; TODO-05 §9 FW counters              |  [ ]   |
 | 💎  |   9   | §2 `ws2_32.dll` Winsock stubs -- `WSAStartup`, socket/connect/send/recv, `getaddrinfo`, `select`  | BSD socket syscalls from TODO-02 §7; DLL stub table mechanism                      |  [ ]   |
 
@@ -114,7 +114,7 @@ Display all interfaces: name, MAC, IPv4 (addr/mask/gateway), IPv6 (link-local + 
 **Files:** `src/shell/cmd_ifconfig.c` (new or extend from TODO-04 §10)
 
 > [!NOTE]
-> `ifconfig` with no arguments: iterate all registered `net_interface` entries; for each: print `<name>: flags=<UP|DOWN> mtu=<MTU>`; print `ether <MAC>` on the next line; print `inet <ip> netmask <mask> broadcast <bcast>` if IPv4 configured; print `inet6 <fe80::link-local>/10` and `inet6 <global>/<prefix>` if IPv6 configured (from TODO-04 §4/§6); print `RX packets <n> bytes <n> errors <n>` and `TX packets <n> bytes <n> errors <n>`. Manual config: `ifconfig eth0 192.168.1.10 255.255.255.0` → set `netif->ip4` + `netif->subnet`; `ifconfig eth0 up/down` → set `netif->flags`. This extends the `ifconfig` stub started in TODO-04 §10 -- if that section is complete, this section only adds stats rows and manual config.
+> `ifconfig` with no arguments: iterate all registered `net_interface` entries; for each: print `<name>: flags=<UP|DOWN> mtu=<MTU>`; print `ether <MAC>` on the next line; print `inet <ip> netmask <mask> broadcast <bcast>` if IPv4 configured; print `inet6 <fe80::link-local>/10` and `inet6 <global>/<prefix>` if IPv6 configured (from TODO-04 §6/§8); print `RX packets <n> bytes <n> errors <n>` and `TX packets <n> bytes <n> errors <n>`. Manual config: `ifconfig eth0 192.168.1.10 255.255.255.0` → set `netif->ip4` + `netif->subnet`; `ifconfig eth0 up/down` → set `netif->flags`. This extends the `ifconfig` stub started in TODO-04 §10 -- if that section is complete, this section only adds stats rows and manual config.
 
 - [ ] `ifconfig_print_iface(netif)`: format all rows as described above; use `%d.%d.%d.%d` IPv4 formatting; `ipv6_ntop()` for IPv6 (from TODO-04 §10)
 - [ ] `cmd_ifconfig(argc, argv)`: no args → iterate `netif_all()` + print each; with args: parse `<iface> <verb> [params]`
@@ -164,7 +164,7 @@ List all active TCP connections (local addr:port, remote addr:port, TCP state), 
 **Files:** `src/shell/cmd_netstat.c` (new), `include/kernel/net/socket.h` (extend)
 
 > [!NOTE]
-> `netstat` reads `sock_table[]` from `src/kernel/net/socket.c` (the 64-entry per-process socket table from TODO-02 §5). Output columns: `Proto | Local Address | Foreign Address | State`. TCP states mapped to string: `LISTEN`, `ESTABLISHED`, `SYN_SENT`, `SYN_RECEIVED`, `CLOSE_WAIT`, `TIME_WAIT`, `CLOSED`. UDP sockets show `State=UDP` with local addr/port and `0.0.0.0:*` for foreign. Listening sockets: `SOCK_STREAM` in `SOCK_LISTENING` state from TODO-02 §6. `-n` flag: suppress reverse DNS (print raw IPs). `-a` flag: include LISTEN sockets (default off). Addresses: format `W.X.Y.Z:port` for IPv4; `[ip6]:port` for IPv6 (if TODO-04 complete).
+> `netstat` reads `sock_table[]` from `src/kernel/net/socket.c` (the 64-entry per-process socket table from TODO-02 §3). Output columns: `Proto | Local Address | Foreign Address | State`. TCP states mapped to string: `LISTEN`, `ESTABLISHED`, `SYN_SENT`, `SYN_RECEIVED`, `CLOSE_WAIT`, `TIME_WAIT`, `CLOSED`. UDP sockets show `State=UDP` with local addr/port and `0.0.0.0:*` for foreign. Listening sockets: `SOCK_STREAM` in `SOCK_LISTENING` state from TODO-02 §6. `-n` flag: suppress reverse DNS (print raw IPs). `-a` flag: include LISTEN sockets (default off). Addresses: format `W.X.Y.Z:port` for IPv4; `[ip6]:port` for IPv6 (if TODO-04 complete).
 
 - [ ] `netstat_get_entries(buf, max)` → count: iterate `sock_table[0..63]`; for each `used` entry: fill `netstat_entry_t { char proto[4]; char local[48]; char foreign[48]; char state[16]; }`
 - [ ] TCP state string map: `tcp_state_name(state)` → `"ESTABLISHED"` / `"LISTEN"` etc. from `tcp_connection.state`
@@ -181,7 +181,7 @@ Read-only synthetic VFS file at `/sys/net`. On read: emit per-interface stats, A
 **Files:** `src/kernel/fs/sysfs.c` (extend)
 
 > [!NOTE]
-> `/sys/net` is a read-only synthetic file (same pattern as `/sys/firewall` from TODO-05 §9). `net_sysfs_dump(buf, max)` function: (1) per-interface block: name, IP, link speed, `rx_bytes`/`tx_bytes`/`rx_packets`/`tx_packets`/`rx_errors`/`tx_errors` (from §3 counters); (2) ARP table: iterate `arp_cache[]` (from `src/kernel/net/arp.c`); emit `IP → MAC (age ms)`; (3) NDP neighbor cache: iterate `ndp_cache[]` (TODO-04 §5); emit IPv6 → MAC + state; (4) DNS cache: call `dns_cache_dump(buf_ptr, remaining)` (add this helper to `dns.c`); (5) firewall summary: call `fw_dump_stats(buf_ptr, remaining)` (already in TODO-05 §9). Sections separated by `\n=== <Section> ===\n` headers.
+> `/sys/net` is a read-only synthetic file (same pattern as `/sys/firewall` from TODO-05 §9). `net_sysfs_dump(buf, max)` function: (1) per-interface block: name, IP, link speed, `rx_bytes`/`tx_bytes`/`rx_packets`/`tx_packets`/`rx_errors`/`tx_errors` (from §2 counters); (2) ARP table: iterate `arp_cache[]` (from `src/kernel/net/arp.c`); emit `IP → MAC (age ms)`; (3) NDP neighbor cache: iterate `ndp_cache[]` (TODO-04 §5); emit IPv6 → MAC + state; (4) DNS cache: call `dns_cache_dump(buf_ptr, remaining)` (add this helper to `dns.c`); (5) firewall summary: call `fw_dump_stats(buf_ptr, remaining)` (already in TODO-05 §9). Sections separated by `\n=== <Section> ===\n` headers.
 
 - [ ] `net_sysfs_dump(buf, max)` → bytes: write all five sections in order with section headers
 - [ ] `dns_cache_dump(buf, max)` → bytes: add to `dns.c`; format `hostname → W.X.Y.Z (TTL=Ns)` per entry

@@ -10,17 +10,17 @@
 > §8 (Font Manager, Color Picker, Sticky Notes), §9 (Help/About) from
 > `todo-old/310-Core-Apps/TODO-370-Utility-Apps.md`.
 > **Delete `todo-old/310-Core-Apps/TODO-370-Utility-Apps.md` after creating this TODO** --
-> all its sections are now migrated (§1 → TODO-11, §3–§4 → TODO-12, §5–§9 → here).
+> all its sections are now migrated (§1 → TODO-11, §5–§8 → TODO-12, §6–§9 → here).
 >
 > **Scope overlaps -- cross-reference, do not re-specify:**
 > - Calendar base (Zeller grid, events pane, add-event dialog, taskbar flyout) →
->   `08-desktop-shell/TODO-12-utilities.md §8`; this TODO adds **recurring events** and
+>   `09-desktop-shell/TODO-12-utilities.md §7`; this TODO adds **recurring events** and
 >   **`.ics` export** only.
 > - Font Manager app (preview, install/remove, `ttf_mgr_reload`) →
->   `08-desktop-shell/TODO-02-file-associations-resources.md §8`; this TODO adds **OS/2
+>   `09-desktop-shell/TODO-02-file-associations-resources.md §8`; this TODO adds **OS/2
 >   table Unicode coverage** display only.
 > - System Info as `msinfo32.cpl` (3-tab tabbed CPL) →
->   `08-desktop-shell/TODO-12-utilities.md §9`; this TODO specifies the standalone
+>   `09-desktop-shell/TODO-12-utilities.md §9`; this TODO specifies the standalone
 >   **`sysinfo.exe`** app that shares the data-aggregation layer with `sysdm.cpl`.
 
 ---
@@ -34,7 +34,7 @@
 - `include/gfx.h` -- `gfx_fill_rect()`, `gfx_draw_line()`, `gfx_blit()` -- §1 grid, §5 magnifier loupe
 - `include/kernel/drivers/keyboard.h` -- `keyboard_inject_scancode()` -- §4 OSK keypress injection
 - `include/kernel/drivers/framebuffer.h` -- `fb_get_backbuffer()`, `fb_get_width/height()` -- §5 color picker pixel read
-- `include/kernel/clipboard.h` (→ XREF `08-desktop-shell/TODO-01 §1`) -- `clipboard_set(CLIP_TEXT, ...)` -- §5 HEX copy
+- `include/kernel/clipboard.h` (→ XREF `09-desktop-shell/TODO-01 §1`) -- `clipboard_set(CLIP_TEXT, ...)` -- §5 HEX copy
 - `include/kernel/cpuid.h` -- `cpuid_get()` → `brand`, `vendor`, `model`, `cores`, `threads` -- §3
 - `include/kernel/acpi.h` -- `acpi_get_cpu_count()`, `acpi_get_cpu_info()` -- §3
 - `include/kernel/smbios.h` -- `struct smbios_system_info`, `smbios_get_system_info()` -- §3
@@ -42,11 +42,11 @@
 - `include/kernel/drivers/blkdev.h` -- `blkdev_count()`, `blkdev_list()` -- §3 disk list
 - `include/font_mgr.h` -- `ttf_get(slot, px)`, `ttf_draw_string()`, `ttf_measure_width()` -- §6 font preview
 - `include/kernel/fs/vfs.h` -- `vfs_readdir`, `vfs_open`, `vfs_read`, `vfs_write`, `vfs_stat` -- §1 ICS save, §3 export, §6 font listing
-- `07-graphics-ui/TODO-09-startmenu-tray-notifications.md §5` (→ XREF) -- `notify_send()` -- §6 install toast
-- `08-desktop-shell/TODO-03-service-manager.md §7` (→ XREF) -- `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` autostart -- §2 sticky notes startup
-- `07-graphics-ui/TODO-06-window-manager.md §5` (→ XREF) -- `hotkey_table[]`, `MOD_WIN|MOD_SHIFT`, `MOD_WIN|MOD_CTRL` -- §4 OSK hotkey, §5 color picker hotkey
-- `08-desktop-shell/TODO-12-utilities.md §8` (→ XREF) -- `calendar_open_at_date()`, Zeller formula, add-event dialog -- §1 base
-- `08-desktop-shell/TODO-02-file-associations-resources.md §8` (→ XREF) -- `fontmgr.exe`, `ttf_mgr_reload()` -- §6 base
+- `08-graphics-ui/TODO-11-startmenu-tray-notifications.md §6` (→ XREF) -- `notify_send()` -- §7 install toast
+- `09-desktop-shell/TODO-03-service-manager.md §8` (→ XREF) -- `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` autostart -- §9 sticky notes startup
+- `08-graphics-ui/TODO-08-window-manager.md §5` (→ XREF) -- `hotkey_table[]`, `MOD_WIN|MOD_SHIFT`, `MOD_WIN|MOD_CTRL` -- §4 OSK hotkey, §5 color picker hotkey
+- `09-desktop-shell/TODO-12-utilities.md §7` (→ XREF) -- `calendar_open_at_date()`, Zeller formula, add-event dialog -- §1 base
+- `09-desktop-shell/TODO-02-file-associations-resources.md §8` (→ XREF) -- `fontmgr.exe`, `ttf_mgr_reload()` -- §6 base
 
 ---
 
@@ -60,12 +60,12 @@ Calendar opens from the taskbar clock flyout, persists events in Registry, suppo
 
 | Step | Section | 💎/⭐ | Dependency |
 |------|---------|-------|-----------|
-| 1 | Calendar App (Recurring Events + ICS Export) | 💎 | `08-desktop-shell/TODO-12 §8` base calendar complete |
+| 1 | Calendar App (Recurring Events + ICS Export) | 💎 | `09-desktop-shell/TODO-12 §7` base calendar complete |
 | 2 | Sticky Notes | 💎 | `wm_create_window(WM_FLAG_ALWAYS_ON_TOP)`, Registry persist |
 | 3 | System Information (`sysinfo.exe`) | 💎 | `cpuid_get`, `smbios_get_system_info`, `pmm_*`, `blkdev_count` |
 | 4 | On-Screen Keyboard | 💎 | `keyboard_inject_scancode`, `WM_FLAG_NO_FOCUS`, `hotkey_table` |
 | 5 | Color Picker | ⭐ | `fb_get_backbuffer`, `hotkey_table`, `clipboard_set(CLIP_TEXT)` |
-| 6 | Font Manager (OS/2 + Unicode Coverage) | 💎 | `08-desktop-shell/TODO-02 §8` base fontmgr complete |
+| 6 | Font Manager (OS/2 + Unicode Coverage) | 💎 | `09-desktop-shell/TODO-02 §8` base fontmgr complete |
 | 7 | Shared Help / About Dialog | 💎 | `wm_create_window`, icon rendering |
 
 ---
@@ -73,7 +73,7 @@ Calendar opens from the taskbar clock flyout, persists events in Registry, suppo
 ## 1. Calendar App (Recurring Events + ICS Export) `[Sonnet]`
 
 > Base calendar grid, add-event dialog, and taskbar flyout are specified in
-> `08-desktop-shell/TODO-12-utilities.md §8` -- implement those first.
+> `09-desktop-shell/TODO-12-utilities.md §7` -- implement those first.
 > This section adds **recurring events** and **`.ics` export** only.
 
 **Source file:** `src/apps/calendar/calendar_recur.c` (extension of `calendar.c`)
@@ -119,7 +119,7 @@ Calendar opens from the taskbar clock flyout, persists events in Registry, suppo
 
 ## 3. System Information (`sysinfo.exe`) `[Sonnet]`
 
-> → XREF: `08-desktop-shell/TODO-12-utilities.md §9` -- `msinfo32.cpl` tabbed CPL; share the
+> → XREF: `09-desktop-shell/TODO-12-utilities.md §9` -- `msinfo32.cpl` tabbed CPL; share the
 > data-aggregation layer (`sysinfo_gather()`) between `sysinfo.exe` and `sysdm.cpl`.
 
 **Source file:** `src/apps/sysinfo/sysinfo.c`; header `include/apps/sysinfo/sysinfo.h`
@@ -195,7 +195,7 @@ Calendar opens from the taskbar clock flyout, persists events in Registry, suppo
 ## 6. Font Manager (OS/2 + Unicode Coverage) `[Sonnet]`
 
 > Base font manager UI (list, 4-size preview, install/remove, `ttf_mgr_reload()`) is specified
-> in `08-desktop-shell/TODO-02-file-associations-resources.md §8` -- implement that first.
+> in `09-desktop-shell/TODO-02-file-associations-resources.md §8` -- implement that first.
 > This section adds **OS/2 table parsing** for Unicode coverage and detailed font metadata.
 
 **Source file:** `src/apps/fontmgr/fontmgr_os2.c` (extension of `fontmgr.c`)

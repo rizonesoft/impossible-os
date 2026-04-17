@@ -3,7 +3,7 @@
 > **Goal:** Build the kernel clipboard from scratch -- PMM-backed buffer, format enum, syscalls, Ctrl+C/X/V wiring with SIGINT passthrough for terminals, Win32 `SetClipboardData/GetClipboardData` stubs, clipboard history (Win+V popup, 25-entry ring), and multi-format support. This is the P0 prerequisite before text editing, copy/paste in File Manager, terminal selection, and all Win32 clipboard APIs work.
 
 > [!IMPORTANT]
-> **Already exists**: `kmalloc(size)` in `include/kernel/mm/heap.h` (≤ 4 KB allocations). `pmm_alloc_contiguous(count)` in `include/kernel/mm/pmm.h` (> 4 KB, page-aligned). `CTRL_TEXTBOX` in `include/desktop/controls.h` (text input widget -- Ctrl+C/V wired here). `wm_get_focused_handle()` from TODO-11 §7 (needed by §2 to identify target control). `context_menu_show()` + `wm_create_window()` (TODO-07/TODO-06) for Win+V history popup. `time_now()` from TODO-10 §1 for history timestamps. Win32 clipboard stubs table in TODO-11's `user32` layer. **Missing**: everything clipboard-related -- no `clipboard_set`, no `CLIP_*` enum, no `SYS_CLIPBOARD_*`, no history, no Ctrl+C/X/V global dispatch. **Syscalls**: `SYS_CLIPBOARD_SET=56`, `SYS_CLIPBOARD_GET=57` (next free after `SYS_TIME=55`). Complete sections in order: kernel buffer → Win32 stubs → multi-format → keyboard wiring → history.
+> **Already exists**: `kmalloc(size)` in `include/kernel/mm/heap.h` (≤ 4 KB allocations). `pmm_alloc_contiguous(count)` in `include/kernel/mm/pmm.h` (> 4 KB, page-aligned). `CTRL_TEXTBOX` in `include/desktop/controls.h` (text input widget -- Ctrl+C/V wired here). `wm_get_focused_handle()` from TODO-11 §2 (needed by §7 to identify target control). `context_menu_show()` + `wm_create_window()` (TODO-07/TODO-06) for Win+V history popup. `time_now()` from TODO-10 §1 for history timestamps. Win32 clipboard stubs table in TODO-11's `user32` layer. **Missing**: everything clipboard-related -- no `clipboard_set`, no `CLIP_*` enum, no `SYS_CLIPBOARD_*`, no history, no Ctrl+C/X/V global dispatch. **Syscalls**: `SYS_CLIPBOARD_SET=56`, `SYS_CLIPBOARD_GET=57` (next free after `SYS_TIME=55`). Complete sections in order: kernel buffer → Win32 stubs → multi-format → keyboard wiring → history.
 
 ## Inputs
 
@@ -11,13 +11,13 @@
 - `include/kernel/mm/pmm.h` -- `pmm_alloc_contiguous()` -- used by §1 for > 4 KB image/file clipboard data
 - `include/kernel/sched/syscall.h` -- `SYS_CLIPBOARD_SET=56`, `SYS_CLIPBOARD_GET=57` added in §1
 - `include/desktop/controls.h` -- `CTRL_TEXTBOX` -- §2 keyboard wiring dispatches Ctrl+C/V to active textbox control
-- `include/desktop/wm.h` -- `wm_get_focused_handle()` (TODO-11 §7), `wm_post_message_all()` -- §2 uses focused window to route copy/paste; §4 Win+V opens popup above focused window
-- `include/kernel/gfx/anim_mgr.h` (TODO-02) -- `anim_mgr_add()` -- §4 history popup slide-in animation
+- `include/desktop/wm.h` -- `wm_get_focused_handle()` (TODO-11 §2), `wm_post_message_all()` -- §7 uses focused window to route copy/paste; §8 Win+V opens popup above focused window
+- `include/kernel/gfx/anim_mgr.h` (TODO-02) -- `anim_mgr_add()` -- §5 history popup slide-in animation
 - `include/gfx.h` -- `gfx_acrylic()`, `gfx_fill_rounded_rect()` -- §4 history popup background
-- `include/desktop/win32/user32.h` (TODO-11) -- `SetClipboardData/GetClipboardData` stub table -- §3 wires Win32 CF_* format IDs to `CLIP_*` enum
+- `include/desktop/win32/user32.h` (TODO-11) -- `SetClipboardData/GetClipboardData` stub table -- §5 wires Win32 CF_* format IDs to `CLIP_*` enum
 - `include/kernel/time.h` (TODO-10 §1) -- `time_now()` -- §4 history entry timestamps
-- → XREF: `07-graphics-ui/TODO-11-win32-gdi-user32-stubs.md §8` -- `SetClipboardData`/`GetClipboardData` in the USER32 stub table call into §3 of this TODO
-- → XREF: `07-graphics-ui/TODO-07-desktop-shell-features.md §5` -- screenshot (PrintScreen) calls `clipboard_set_bitmap()` from §1
+- → XREF: `08-graphics-ui/TODO-14-win32-gdi-user32-stubs.md §4` -- `SetClipboardData`/`GetClipboardData` in the USER32 stub table call into §5 of this TODO
+- → XREF: `08-graphics-ui/TODO-09-desktop-shell-features.md §5` -- screenshot (PrintScreen) calls `clipboard_set_bitmap()` from §1
 - → XREF: `10-apps/TODO-*` (terminal, file manager) -- terminal Ctrl+C SIGINT passthrough and File Manager copy/paste depend on §2 keyboard wiring
 
 ## Outcome

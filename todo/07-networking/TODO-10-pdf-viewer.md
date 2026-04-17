@@ -12,10 +12,10 @@
 - `include/kernel/drivers/framebuffer.h` -- `fb_blit(dst_x, dst_y, src, src_w, src_h, stride)` for compositing rasterized pages to screen
 - `include/kernel/image.h` -- `image_t`, `image_load_mem()`, `image_scale()` for auxiliary image handling
 - `include/desktop/wm.h` + `include/desktop/controls.h` -- `wm_create_window()`, `ctrl_create_button/scrollbar/textbox`, `ctrl_draw_all()` for viewer app UI
-- `src/kernel/net/http.c` (TODO-03) -- `https_get(url, buf, max)` for §9 HTTP-fetched PDF streaming
+- `src/kernel/net/http.c` (TODO-03) -- `https_get(url, buf, max)` for §2 HTTP-fetched PDF streaming
 - `src/kernel/fs/vfs.c` -- `vfs_open()`/`vfs_read()` for opening local `.pdf` files
-- → XREF: `06-networking/TODO-03-http-tls.md` -- `https_get()` prerequisite for §9 PDF-from-HTTP
-- → XREF: `06-networking/TODO-07-web-browser.md` -- §9 connects the browser's "Open PDF" flow to `pdfview_open_url()`; browser calls viewer directly rather than saving to disk
+- → XREF: `06-networking/TODO-03-http-tls.md` -- `https_get()` prerequisite for §2 PDF-from-HTTP
+- → XREF: `06-networking/TODO-07-web-browser.md` -- §6 connects the browser's "Open PDF" flow to `pdfview_open_url()`; browser calls viewer directly rather than saving to disk
 
 ## Outcome
 

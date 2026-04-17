@@ -774,7 +774,7 @@ static NTSTATUS NtQueryKey_handler(uint64_t a1, uint64_t a2, uint64_t a3,
 /* Returns NULL for NULL/invalid/tombstoned handles. Tombstoned keys have
  * name[0] == '\0' after delete/unload, which we treat as "stale handle"
  * and refuse to return (minimal handle-liveness enforcement pending full
- * refcount tracking -> XREF: 02-kernel-core/TODO-13 §4). */
+ * refcount tracking -> XREF: 02-kernel-core/TODO-14 §4). */
 static reg_key_t *resolve_hkey(HKEY hkey)
 {
     reg_key_t *k;
@@ -850,7 +850,7 @@ static NTSTATUS NtFlushKey_handler(uint64_t a1, uint64_t a2, uint64_t a3,
         return STATUS_INVALID_HANDLE;
 
     /* Flush all dirty hives with status.  Per-key flush is a future
-     * optimization -> XREF: 02-kernel-core/TODO-13 §4 (registry syscalls). */
+     * optimization -> XREF: 02-kernel-core/TODO-14 §4 (registry syscalls). */
     rc = registry_flush_checked();
     if (rc < 0)
         return STATUS_SUCCESS;  /* registry not yet ready; treat as no-op */
@@ -864,7 +864,7 @@ static NTSTATUS NtFlushKey_handler(uint64_t a1, uint64_t a2, uint64_t a3,
 /*                                                                          */
 /* Registry change notifications. Not implemented: requires async I/O      */
 /* completion infrastructure and per-key watcher lists.                    */
-/* -> XREF: 02-kernel-core/TODO-13 §3 (Change Notifications)               */
+/* -> XREF: 02-kernel-core/TODO-14 §3 (Change Notifications)               */
 /* ======================================================================== */
 
 static NTSTATUS NtNotifyChangeKey_handler(uint64_t a1, uint64_t a2, uint64_t a3,

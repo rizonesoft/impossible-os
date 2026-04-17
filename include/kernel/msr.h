@@ -4,7 +4,7 @@
  * Replaces scattered inline rdmsr/wrmsr across smp.c, acpi.c, lapic.c.
  * Provides #GP-safe msr_try_read() for probing unsupported MSRs.
  *
- * XREF: 02-kernel-core/TODO-19-x86-64-architecture.md §4
+ * XREF: 02-kernel-core/TODO-09-x86-64-architecture.md §4
  * ============================================================================ */
 
 #pragma once

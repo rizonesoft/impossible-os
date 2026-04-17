@@ -4,7 +4,7 @@
 **Goal:** Deliver the flagship browser app for Impossible OS -- from a ~500-line text-only HTML fetcher to a full tab-based browser with HTML/CSS rendering, browser chrome, and settings -- demonstrating the complete networking stack end-to-end.
 
 > [!IMPORTANT]
-> **Depends on:** `06-networking/TODO-03-http-tls.md` -- `http_get(url, buf, max)`, `https_get()`, `http_post()`, TLS 1.2/1.3 (Mbed TLS) must be working. `ttf_draw_string()`/`ttf_measure_width()` from `include/font_mgr.h`. `image_load_mem()` from `include/kernel/image.h`. `CTRL_TABSTRIP` from `07-graphics-ui/TODO-04 §6`.
+> **Depends on:** `06-networking/TODO-03-http-tls.md` -- `http_get(url, buf, max)`, `https_get()`, `http_post()`, TLS 1.2/1.3 (Mbed TLS) must be working. `ttf_draw_string()`/`ttf_measure_width()` from `include/font_mgr.h`. `image_load_mem()` from `include/kernel/image.h`. `CTRL_TABSTRIP` from `08-graphics-ui/TODO-04 §8`.
 > **Alternative path:** §6 tracks NetSurf / Dillo as a faster-path drop-in; evaluate before starting §2 (HTML parser). A port may save thousands of lines.
 
 ---
@@ -14,7 +14,7 @@
 - `http_get(url, buf, max)` and `https_get()` exist in `06-networking/TODO-03` -- these are the only network primitives the browser calls directly; no raw socket work needed here.
 - `ttf_draw_string()`, `ttf_draw_char()`, and `ttf_measure_width()` exist in `include/font_mgr.h` -- the layout engine uses `ttf_measure_width` for per-word inline flow, no custom glyph shaping needed.
 - `image_load_mem(img, data, size)` in `include/kernel/image.h` decodes JPEG/PNG from a memory buffer -- `<img src>` fetches via `http_get` into a buffer then calls this.
-- `CTRL_TABSTRIP` (max 16 tabs) is defined in `07-graphics-ui/TODO-04 §6`; each tab owns an independent `browser_tab_t` struct with its own URL, DOM, and scroll position.
+- `CTRL_TABSTRIP` (max 16 tabs) is defined in `08-graphics-ui/TODO-04 §8`; each tab owns an independent `browser_tab_t` struct with its own URL, DOM, and scroll position.
 - The CSS parser (§4) and JavaScript engine (§5) are stretch goals -- do not let them block §1–3 or §7–8.
 - NetSurf/Dillo (§6) must be evaluated before investing in a custom HTML parser -- porting either saves ~10–15 K lines of bespoke work.
 - Browser settings are stored under `HKCU\Software\Impossible\Browser\` -- the same registry used by other OS apps.
@@ -31,10 +31,10 @@
 | `include/kernel/image.h` | `image_load_mem()` -- decode JPEG/PNG from HTTP response |
 | `include/desktop/wm.h` | `wm_create_window`, `wm_destroy_window` |
 | `include/desktop/controls.h` | `CTRL_BUTTON`, `CTRL_LABEL`, `CTRL_TEXTBOX`, `CTRL_SCROLLBAR` |
-| `07-graphics-ui/TODO-04 §6` | `CTRL_TABSTRIP` (16 tabs, accent underline) |
+| `08-graphics-ui/TODO-04 §8` | `CTRL_TABSTRIP` (16 tabs, accent underline) |
 | `include/registry.h` | `registry_get/set()` -- homepage, search engine, bookmarks |
 | → XREF: `06-networking/TODO-03` | HTTP/HTTPS client -- mandatory prerequisite |
-| → XREF: `07-graphics-ui/TODO-04 §6` | `CTRL_TABSTRIP` -- browser tabs widget |
+| → XREF: `08-graphics-ui/TODO-04 §8` | `CTRL_TABSTRIP` -- browser tabs widget |
 | → XREF: `10-platform-services/TODO-08 §10–11` | IxUI `user32`/`gdi32` for window + rendering in user-mode |
 
 ---
@@ -60,7 +60,7 @@
 | 4 | CSS parser + cascade (stretch) | `[Opus]` | §3 | 💎 |
 | 5 | JavaScript engine -- QuickJS/Duktape (long-term) | `[Opus]` | §3 | 💎 |
 | 6 | Alternative: NetSurf / Dillo port evaluation | `[Sonnet]` | §1 | 💎 |
-| 7 | Browser chrome (tabs, toolbar, bookmarks, context menu) | `[Sonnet]` | §1 or §6, XREF: 07-gfx/TODO-04 §6 | ⭐ |
+| 7 | Browser chrome (tabs, toolbar, bookmarks, context menu) | `[Sonnet]` | §1 or §6, XREF: 07-gfx/TODO-04 §8 | ⭐ |
 | 8 | Browser settings + history + cookie jar | `[Sonnet]` | §7 | 💎 |
 
 ---
@@ -188,7 +188,7 @@ Evaluate before investing in §2–§5. A port may deliver a full browser faster
 
 Multi-tab UI, toolbar, bookmarks bar, and context menu. Built on top of §1 (text browser) or §6 (port).
 
-- [ ] **Tab bar**: `CTRL_TABSTRIP` (from `07-graphics-ui/TODO-04 §6`, max 16 tabs); each tab has: `{ char title[64]; char url[512]; dom_node_t *dom_root; int32_t scroll_y; }` -- switching tabs restores DOM + scroll position without re-fetching
+- [ ] **Tab bar**: `CTRL_TABSTRIP` (from `08-graphics-ui/TODO-04 §8`, max 16 tabs); each tab has: `{ char title[64]; char url[512]; dom_node_t *dom_root; int32_t scroll_y; }` -- switching tabs restores DOM + scroll position without re-fetching
 - [ ] New tab button `[+]`: opens `browser_new_tab()` → blank page; `browser_navigate(url)` fetches into active tab
 - [ ] Close tab `×` on each tab header; last tab close → exit app or show new-tab page
 - [ ] **Toolbar** (fixed strip below tab bar, height 40 px):

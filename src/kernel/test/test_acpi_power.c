@@ -3,7 +3,7 @@
  *
  * Verifies sleep state discovery, sleep entry API, and fixed event setup.
  *
- * XREF: 02-kernel-core/TODO-15-power-management.md §1
+ * XREF: 02-kernel-core/TODO-26-power-management.md §1
  * ============================================================================ */
 
 #ifdef KERNEL_TESTS

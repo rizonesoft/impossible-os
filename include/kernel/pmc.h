@@ -11,7 +11,7 @@
  * AMD:   per-counter control via MSR_AMD_PERF_CTL0 (0xC0010200) and
  *        MSR_AMD_PERF_CTR0 (0xC0010201), stride 2 per slot.
  *
- * XREF: 02-kernel-core/TODO-19-x86-64-architecture.md S10
+ * XREF: 02-kernel-core/TODO-09-x86-64-architecture.md S10
  * ============================================================================ */
 
 #pragma once

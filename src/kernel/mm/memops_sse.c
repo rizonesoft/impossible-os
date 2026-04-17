@@ -9,7 +9,7 @@
  * Dispatch: simd_avx2_ok selects AVX2, cpu_has(SSE2) selects SSE2,
  *           else scalar fallback from libc.
  *
- * XREF: 02-kernel-core/TODO-19-x86-64-architecture.md S2
+ * XREF: 02-kernel-core/TODO-09-x86-64-architecture.md S2
  * ============================================================================ */
 
 #include "kernel/mm/memops.h"

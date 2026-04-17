@@ -15,16 +15,16 @@
 - [`src/kernel/main/boot_tests.c`](../../src/kernel/main/boot_tests.c)
 - [`src/kernel/panic.c`](../../src/kernel/panic.c)
 - [`src/kernel/boot_timing.c`](../../src/kernel/boot_timing.c)
-- → XREF: `TODO-02-system-logging.md` -- `klog_disk_enable()` is a Phase 2 gate; must follow VFS ready
-- → XREF: `TODO-03-object-manager.md §1` -- Object Manager init slot is Phase 2, after heap, before registry; §1 provides the `ob_init()` implementation
+- → XREF: `TODO-04-system-logging.md` -- `klog_disk_enable()` is a Phase 2 gate; must follow VFS ready
+- → XREF: `TODO-05-object-manager.md §1` -- Object Manager init slot is Phase 2, after heap, before registry; §1 provides the `ob_init()` implementation
 - → XREF: `04-drivers-hardware/INDEX.md` -- all driver `_init()` functions must accept and return `boot_result_t`
 - → XREF: `scripts/test.sh` -- headless QEMU serial log is the verification path
-- → XREF: `TODO-06-irql-model-dpcs.md §4` -- DPC subsystem init belongs in Phase 1, after timer; §4 is the DPC Object Type and Per-CPU Queue init
-- → XREF: `TODO-07-time-filetime-management.md §5` -- `wall_clock_init()` belongs in Phase 2, after UEFI runtime services; NTP wall clock adjustment (§17) belongs in Phase 3
-- → XREF: `01-boot-platform/TODO-16-boot-watchdog.md` -- watchdog timer integrates with `boot_progress()` calls; detects hung subsystem init
-- → XREF: `04-drivers-hardware/TODO-11-security-hardware.md §4` -- TPM2 `PCR_Extend` for measured boot; extends the PCR event log parsed in Phase 0
-- → XREF: `01-boot-platform/TODO-04-cpu-boot-sequencing.md §2` -- CPU security activation order (EFER/CR4 hardening) slots into Phase 0 between serial init and PMM
-- → XREF: `TODO-18-kernel-debugger-kd-protocol.md` §4, §15 -- `kd_init()` placement relative to COM IRQ + IDT and transport coexistence notes
+- → XREF: `TODO-07-irql-model-dpcs.md §4` -- DPC subsystem init belongs in Phase 1, after timer; §4 is the DPC Object Type and Per-CPU Queue init
+- → XREF: `TODO-08-time-filetime-management.md §3` -- `wall_clock_init()` belongs in Phase 2, after UEFI runtime services; NTP wall clock adjustment (§17) belongs in Phase 3
+- → XREF: `01-boot-platform/TODO-23-boot-watchdog.md` -- watchdog timer integrates with `boot_progress()` calls; detects hung subsystem init
+- → XREF: `04-drivers-hardware/TODO-04-security-hardware.md §6` -- TPM2 `PCR_Extend` for measured boot; extends the PCR event log parsed in Phase 0
+- → XREF: `01-boot-platform/TODO-09-cpu-boot-sequencing.md §2` -- CPU security activation order (EFER/CR4 hardening) slots into Phase 0 between serial init and PMM
+- → XREF: `TODO-29-kernel-debugger-kd-protocol.md` §4, §15 -- `kd_init()` placement relative to COM IRQ + IDT and transport coexistence notes
 
 ## Outcome
 
@@ -106,8 +106,8 @@ Runs with interrupts off. Only serial, memory, and logging. No drivers, VFS, or 
 > **Implementation drift (verify 2026-04-08):** `boot_phase0()` performs five steps that were added after this checklist was written and are not enumerated above: (1) `smp_early_bsp_init()` first thing -- sets GS_BASE before any interrupt fires, (2) `cpu_harden()` -- enables NX before page tables are touched, (3) `vmm_apply_nx_policy()` -- applies NX to page tables, (4) PAT MSR reprogramming with readback verify -- intent is WC framebuffer mapping (see follow-up below for actual behavior), (5) `cpu_harden_post_pagetable()` + `cpu_verify_hardening()` -- intended to enable SMEP/SMAP, but `hv_supports_cr4_smep_smap()` currently returns 0 globally (CLAUDE.md "No SMEP/SMAP until per-process page tables"), so this is a documented architectural no-op until per-process PML4 is implemented. Plus the LAPIC UC mapping smoke test (validates `vmm_map_mmio_uc()`) and `boot_perf_read_prev()` + `vpd_init()` calls.
 
 **Verify follow-ups (Codex 2026-04-08, out of §2 scope -- defer to owning subsystem):**
-- [ ] **PAT MSR constant + AP propagation bug** -- `boot_hw.c:270` writes `0x0007040600010406`. Decoding bits [23:16] (PA2): 0x07 → 0x01. The comment says "entry 1: WT(04)→WC(01)" but the actual change is at PA2, not PA1. Meanwhile `vmm_map_mmio_wc()` uses `VMM_FLAG_WRITETHROUGH` only (PWT=1, PCD=0, PAT bit=0) which selects PAT index 1 = still 0x04 (WT). **Net effect: framebuffer is mapped WT, not WC -- silent perf regression.** Compounding bug: `ap_entry()` (smp.c:110) does NOT mirror the PAT MSR write, so APs have default PAT (PA2 = UC-) while BSP has PA2 = WC -- cross-CPU cache-type skew if any AP touches a `vmm_map_mmio_wc()` page (e.g., async storage drivers under `async_init=1`). Tracked in [01-boot-platform/TODO-04-cpu-boot-sequencing.md §8](../01-boot-platform/TODO-04-cpu-boot-sequencing.md) which now has a fix-first item for the constant decode bug AND the AP sync work.
-- [ ] **UEFI handoff pointer validation** -- `boot_hw.c:62-67` byte-copies `sizeof(struct boot_info)` from `(struct boot_info *)mbi` with no header magic, version, or size validation. The post-hoc cmdline ASCII check at lines 79-91 catches struct shifts but not wild pointers. Tracked in `01-boot-platform/TODO-02-bootloader-error-recovery.md` **§15** (header + bootloader populate) and **§16** (`boot_info_validate()` + `boot_hw.c` + unit tests): [`TODO-02-bootloader-error-recovery.md`](../01-boot-platform/TODO-02-bootloader-error-recovery.md).
+- [ ] **PAT MSR constant + AP propagation bug** -- `boot_hw.c:270` writes `0x0007040600010406`. Decoding bits [23:16] (PA2): 0x07 → 0x01. The comment says "entry 1: WT(04)→WC(01)" but the actual change is at PA2, not PA1. Meanwhile `vmm_map_mmio_wc()` uses `VMM_FLAG_WRITETHROUGH` only (PWT=1, PCD=0, PAT bit=0) which selects PAT index 1 = still 0x04 (WT). **Net effect: framebuffer is mapped WT, not WC -- silent perf regression.** Compounding bug: `ap_entry()` (smp.c:110) does NOT mirror the PAT MSR write, so APs have default PAT (PA2 = UC-) while BSP has PA2 = WC -- cross-CPU cache-type skew if any AP touches a `vmm_map_mmio_wc()` page (e.g., async storage drivers under `async_init=1`). Tracked in [01-boot-platform/TODO-09-cpu-boot-sequencing.md §9](../01-boot-platform/TODO-09-cpu-boot-sequencing.md) which now has a fix-first item for the constant decode bug AND the AP sync work.
+- [ ] **UEFI handoff pointer validation** -- `boot_hw.c:62-67` byte-copies `sizeof(struct boot_info)` from `(struct boot_info *)mbi` with no header magic, version, or size validation. The post-hoc cmdline ASCII check at lines 79-91 catches struct shifts but not wild pointers. Tracked in `01-boot-platform/TODO-03-bootloader-error-recovery.md` **§15** (header + bootloader populate) and **§16** (`boot_info_validate()` + `boot_hw.c` + unit tests): [`TODO-03-bootloader-error-recovery.md`](../01-boot-platform/TODO-03-bootloader-error-recovery.md).
 
 **Resolved (implement 2026-04-08):** Phase 0 BOOT_DEGRADED propagation. Added 4 new readiness slots (`SUBSYS_UEFI_VARS`, `SUBSYS_UEFI_TIME`, `SUBSYS_SECUREBOOT`, `SUBSYS_TPM`) and wired `uefi_vars_init`, `uefi_time_init`, `uefi_secureboot_init`, `tpm_init` + `tpm_integrity_init` to set them via captured `boot_result_t`. Items 4-8 above are now `[x]`. New unit test `test_subsys_phase0_propagation_slots` exercises the oracle round-trip on the new slot indices via the save/restore pattern (no live boot calls, per the test side-effect ban). `test_subsys_enum_layout` updated for new SUBSYS_COUNT == 25.
 
@@ -126,7 +126,7 @@ Hardware abstraction layer: GDT/IDT, interrupt controllers, timer, RTC, display.
 - [x] `pic_disable()`/`pic_init()` policy -- disable if IOAPIC took over; init if PIC is the only controller
 - [x] Move `ahci_setup_interrupts()` out of Phase 1; call it in Phase 2 after storage driver init and PCI discovery
 - [x] `timer_hal_init()` -- select LAPIC or PIT backend, calibrate; BOOT_FATAL; BOOT_REQUIRE(SUBSYS_IDT)
-- [x] DPC bootstrap split: `dpc_init_queues()` in Phase 1 before `sti`, and `dpc_init()`/`dpc_start_threads()` in Phase 3 after scheduler start (→ XREF: [TODO-06 §4](./TODO-06-irql-model-dpcs.md))
+- [x] DPC bootstrap split: `dpc_init_queues()` in Phase 1 before `sti`, and `dpc_init()`/`dpc_start_threads()` in Phase 3 after scheduler start (→ XREF: [TODO-07 §4](./TODO-07-irql-model-dpcs.md))
 - [x] `rtc_init()` -- BOOT_DEGRADED if unavailable; BOOT_REQUIRE(SUBSYS_IDT)
 - [x] `keyboard_init()` + `mouse_init()` -- BOOT_DEGRADED if unavailable
 - [x] `smbios_init()` -- POST code 0x40; BOOT_DEGRADED if unavailable; move here from Phase 0
@@ -134,8 +134,8 @@ Hardware abstraction layer: GDT/IDT, interrupt controllers, timer, RTC, display.
 - [x] `secureboot_keys_init()` -- BOOT_DEGRADED; move here from Phase 0
 - [x] `fb_init()` + `boot_splash_init()` -- BOOT_DEGRADED; display is optional for kernel correctness
 - [x] `boot_timing_init()` + boot timing report log path after timer calibration
-- [ ] Wire `except_init()` in Phase 1 after IDT/IRQ setup (→ XREF: [TODO-10-exception-dispatch-seh.md §1](./TODO-10-exception-dispatch-seh.md))
-- [ ] Call `kd_init()` from Phase 1 after the COM IRQ path and IDT vectors KD relies on are registered, gated by boot args / registry per [TODO-18-kernel-debugger-kd-protocol.md §4](./TODO-18-kernel-debugger-kd-protocol.md) and ordering notes in §15 (-> XREF `TODO-18-kernel-debugger-kd-protocol.md §15`)
+- [ ] Wire `except_init()` in Phase 1 after IDT/IRQ setup (→ XREF: [TODO-23-exception-dispatch-seh.md §1](./TODO-23-exception-dispatch-seh.md))
+- [ ] Call `kd_init()` from Phase 1 after the COM IRQ path and IDT vectors KD relies on are registered, gated by boot args / registry per [TODO-29-kernel-debugger-kd-protocol.md §4](./TODO-29-kernel-debugger-kd-protocol.md) and ordering notes in §15 (-> XREF `TODO-29-kernel-debugger-kd-protocol.md §15`)
 - [x] `__asm__ volatile ("sti")` -- enable interrupts only after all of the above
 - [x] `boot_splash_start_animation()` -- after STI so LAPIC timer can drive the spinner
 - [x] Remove `#include "kernel/fs/vfs.h"` and `#include "kernel/fs/partition.h"` from this file
@@ -161,18 +161,18 @@ Storage, VFS, filesystem mount, registry, network, and AP bringup. BOOT_FATAL on
 - [/] `registry_init()` is wired after `SUBSYS_VFS`, but typed BOOT_FATAL propagation is still missing because `registry_init()` is `void` today
 - [x] `symtab_init()` -- load symbol table from disk; BOOT_DEGRADED; BOOT_REQUIRE(SUBSYS_VFS)
 - [x] `mmap_init()` -- user-mode memory map subsystem; BOOT_REQUIRE(SUBSYS_VMM)
-- [x] Time service bootstrap in Phase 2: `mono_clock_init()` + `wall_clock_init()` + `timezone_init()` + `kusd_init()` (→ XREF: [TODO-07 §5](./TODO-07-time-filetime-management.md))
+- [x] Time service bootstrap in Phase 2: `mono_clock_init()` + `wall_clock_init()` + `timezone_init()` + `kusd_init()` (→ XREF: [TODO-08 §3](./TODO-08-time-filetime-management.md))
 - [x] `rtl8139_init()` + `net_init()` -- NIC + network stack; BOOT_DEGRADED; moved from Phase 1
 - [x] `virtio_input_init()` + `vbox_mouse_init()` -- BOOT_DEGRADED; moved from Phase 1
 - [x] `dhcp_discover()` -- fire-and-forget; BOOT_DEGRADED; BOOT_REQUIRE(SUBSYS_VFS) for lease file
 - [x] `hw_dump()` -- log full hardware summary after all drivers init
 - [x] `smp_init()` AP bringup is executed in Phase 2 (moved from Phase 1) and marks `SUBSYS_SMP` ready
-- [x] `acpi_power_init()` in Phase 2: parses S1/S3/S4 sleep objects from DSDT (implemented in [TODO-15 §1](./TODO-15-power-management.md))
+- [x] `acpi_power_init()` in Phase 2: parses S1/S3/S4 sleep objects from DSDT (implemented in [TODO-26 §1](./TODO-26-power-management.md))
 - [x] Remove `HV_BAR` macro from `boot_storage.c` if present -- already removed in prior commit
 - [x] Add `boot_progress(2, "step-name", postcode)` at each step
 - [ ] Enforce typed fatal/degraded decisions from Phase 2 init return values (current gap: several Phase 2 init APIs are still `void` and have no boot_result_t propagation):
   - `vfs_init()` return-path ownership → [05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md §2](../05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md)
-  - `registry_init()` return-path ownership → [TODO-13-registry-completion.md §1](./TODO-13-registry-completion.md)
+  - `registry_init()` return-path ownership → [TODO-14-registry-completion.md §2](./TODO-14-registry-completion.md)
   - `partition_mount_filesystems()` root-mount success/failure must be validated explicitly before continuing to registry
 
 ## 5. Phase 3 -- User Platform
@@ -182,9 +182,9 @@ Scheduler, IPC, exec loader, and desktop. The kernel is fully operational before
 
 - [x] `task_init()` starts preemptive scheduler; BOOT_FATAL prerequisite path checks `SUBSYS_HEAP` + `SUBSYS_TIMER`
 - [x] Phase 3 currently marks `SUBSYS_IPC` ready (implicit IPC bootstrap; no dedicated `ipc_init()` symbol wired here)
-- [ ] Add explicit `ipc_init()` boot hook with `boot_result_t` error propagation before setting `SUBSYS_IPC` ready (→ XREF: [TODO-12-alpc-message-ports.md §1](./TODO-12-alpc-message-ports.md))
+- [ ] Add explicit `ipc_init()` boot hook with `boot_result_t` error propagation before setting `SUBSYS_IPC` ready (→ XREF: [TODO-24-alpc-message-ports.md §1](./TODO-24-alpc-message-ports.md))
 - [x] Phase 3 currently marks `SUBSYS_EXEC` ready (no dedicated `exec_loader_init()` bootstrap symbol wired here)
-- [ ] Wire explicit exec-loader bootstrap before setting `SUBSYS_EXEC` ready (→ XREF: [TODO-08-binary-system.md §1](./TODO-08-binary-system.md))
+- [ ] Wire explicit exec-loader bootstrap before setting `SUBSYS_EXEC` ready (→ XREF: [TODO-17-binary-system.md §5](./TODO-17-binary-system.md))
 - [x] `boot_tests_run()` executes only when `debug=1` or `test=1`; release path skips tests
 - [x] `boot_splash_finish()` dismisses splash once desktop is ready
 - [x] `ttf_mgr_init()` + `icon_store_init()` + `cursor_init()` load desktop assets
@@ -192,7 +192,7 @@ Scheduler, IPC, exec loader, and desktop. The kernel is fully operational before
 - [x] `compositor_run()` -- event loop (never returns under normal operation)
 - [x] Phase 3 fatal-path behavior uses recovery screen + `boot_halt()` on prerequisite guards (same pattern as Phase 2); §7 failure policy table updated to match (2026-04-10)
 - [x] Add `boot_progress(3, "step-name", postcode)` at each step
-- [ ] Move syscall/SSDT fast-path bootstrap (`ssdt_init`, `syscall_init_fast`, `syscall_init`) to Phase 1 OR document/accept Phase 3 ownership and update [TODO-05-native-api-ssdt.md](./TODO-05-native-api-ssdt.md) XREF contract
+- [ ] Move syscall/SSDT fast-path bootstrap (`ssdt_init`, `syscall_init_fast`, `syscall_init`) to Phase 1 OR document/accept Phase 3 ownership and update [TODO-12-native-api-ssdt.md](./TODO-12-native-api-ssdt.md) XREF contract
 
 ## 6. Dependency Gates
 - [x] Add dependency guards in phase orchestrators for all critical chains (inline checks + `boot_halt()` + `kernel_subsystem_dump()`)
@@ -228,7 +228,7 @@ These are bugs and structural violations that must be fixed as part of this TODO
 - [x] Remove all `HV_BAR` macro definitions and usages -- already removed in prior commits
 - [x] Remove `#include "kernel/fs/vfs.h"` from `boot_interrupts.c`
 - [x] Remove `#include "kernel/fs/partition.h"` from `boot_interrupts.c`
-- [x] ACPI init split: `acpi_init()` Phase 1 (MADT/FADT), `acpi_power_init()` Phase 2 (S-states) -- implemented in [TODO-15 §1](./TODO-15-power-management.md)
+- [x] ACPI init split: `acpi_init()` Phase 1 (MADT/FADT), `acpi_power_init()` Phase 2 (S-states) -- implemented in [TODO-26 §1](./TODO-26-power-management.md)
 - [x] Move `pci_scan()`, `xhci_init()`, NIC, and DHCP out of `boot_interrupts.c` into `boot_storage.c`
 - [x] Move `smp_init()` AP bringup out of `boot_interrupts.c` into `boot_storage.c`
 - [x] Move `ata_init()`, `virtio_blk_init()`, `ahci_init()` out of `boot_hw.c` into `boot_storage.c`
@@ -237,10 +237,10 @@ These are bugs and structural violations that must be fixed as part of this TODO
 - [x] Gate `boot_tests_run()` behind `g_boot_info.config.debug == 1 || g_boot_info.config.test == 1`
 - [ ] Update init functions to return `boot_result_t` -- distributed to per-subsystem TODOs:
   - [x] `task_init()` -- done (returns `boot_result_t`)
-  - [x] `pipe_init()` → [TODO-12 §1](./TODO-12-alpc-message-ports.md)
+  - [x] `pipe_init()` → [TODO-24 §1](./TODO-24-alpc-message-ports.md)
   - [ ] `pmm/vmm/heap_init()` → [03-memory/TODO-01 §1](../03-memory-concurrency/TODO-01-vmm-memory-protection.md)
   - [ ] `vfs_init()` → [05-storage/TODO-06 §2](../05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md)
-  - [ ] `registry_init()` → [TODO-13 §1](./TODO-13-registry-completion.md)
+  - [ ] `registry_init()` → [TODO-14 §2](./TODO-14-registry-completion.md)
 
 ## 9. Degraded-Boot Recovery Screen
 In-kernel graphical recovery UI shown when a Phase 2 subsystem fails non-fatally. Renders directly to the GOP framebuffer -- no compositor, no window manager required. Displays which subsystem failed, its POST code, and a simple recovery menu (retry / boot to serial console / power off).
@@ -302,7 +302,7 @@ Compare `boot_timing` data across reboots to detect init regressions. Win11 uses
 - [x] On next boot, `boot_perf_read_prev()` reads `ImpossibleBootPerf` from NVRAM into `s_prev_records[]` (called in Phase 0 after uefi_runtime_init)
 - [x] `boot_perf_compare()` compares current vs previous: if >200% OR >500ms regression, logs `[PERF] WARNING: <step> init regressed: <prev>ms -> <cur>ms`
 - [x] `boot_perf_dump()` prints all step durations as a sorted-by-time table to serial
-- [/] Add `bootperf` shell command -- deferred until `TODO-05-native-api-ssdt.md §10` implements `NtQuerySystemInformation(SystemBootPerformanceInformation)` for user-mode NVRAM access
+- [/] Add `bootperf` shell command -- deferred until `TODO-12-native-api-ssdt.md §10` implements `NtQuerySystemInformation(SystemBootPerformanceInformation)` for user-mode NVRAM access
 - [x] Add debug POST codes: `POST16(0xDC00)` entry, `POST16(0xDC01)` NVRAM read, `POST16(0xDC02)` comparison done, `POST16(0xDC03)` NVRAM write
 - [x] Add 3 unit tests: perf record size (24 bytes), BOOT_PERF_MAGIC value, bootperf POST code uniqueness
 - [x] Commit: `"kernel: boot performance regression detection via UEFI NVRAM"`
@@ -396,10 +396,10 @@ Allow independent subsystems within a phase to initialize concurrently on differ
 |---|----------|---------|--------|
 | 1 | critical | `s_subsys_names[]` missing SUBSYS_OB -- OOB read in panic diagnostic path | **Fixed** -- added "OB" entry + `_Static_assert` in both tables |
 | 2 | high | `boot_recovery_show()` return value ignored -- menu is cosmetic | **Fixed** -- all call sites branch on RECOVERY_POWEROFF -> `acpi_shutdown()` |
-| 3 | high | Deferred init not fault-isolated -- optional driver panic aborts Phase 3 | **Reverted** -- thread starved deferred inits (broke mouse); inline call restored; isolation deferred to TODO-10 SEH |
+| 3 | high | Deferred init not fault-isolated -- optional driver panic aborts Phase 3 | **Reverted** -- thread starved deferred inits (broke mouse); inline call restored; isolation deferred to TODO-23 SEH |
 | 4 | high | Recovery keyboard polling races active PS/2 IRQ handler | **Fixed** -- `kbd_poll_begin()`: cli + mask routed GSI + drain |
 | 5 | high | Recovery masks raw IRQ1 instead of ACPI-remapped GSI | **Fixed** -- uses `ioapic_isa_to_gsi(1)` for correct GSI |
-| 6 | high | Deferred init not fault-contained | **Accepted** -- thread approach reverted (starved mouse drivers); inline call restored; per-thread isolation requires TODO-10 SEH |
+| 6 | high | Deferred init not fault-contained | **Accepted** -- thread approach reverted (starved mouse drivers); inline call restored; per-thread isolation requires TODO-23 SEH |
 
 ## Verification
 

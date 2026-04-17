@@ -4,7 +4,7 @@
  * Tests severity macros, status code values, and type sizes for Win32 ABI
  * compatibility.
  *
- * XREF: 02-kernel-core/TODO-05-native-api-ssdt.md section 1
+ * XREF: 02-kernel-core/TODO-12-native-api-ssdt.md section 1
  * ============================================================================ */
 
 #ifdef KERNEL_TESTS

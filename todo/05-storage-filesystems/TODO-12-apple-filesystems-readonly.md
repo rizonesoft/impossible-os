@@ -11,7 +11,7 @@
 - `src/kernel/fs/vfs.c` + `include/kernel/fs/vfs.h` -- `vfs_mount()`, `vfs_fs_driver`, read-only mount via `VFS_READONLY`
 - `src/kernel/fs/ext4/ext4_core.c` -- reference for CRC64 / block I/O helper pattern; APFS uses Fletcher-64, not CRC32C -- implement separately
 - → XREF: `05-storage-filesystems/TODO-03-volume-management-automount.md §1` -- `vfs_probe()` calls `apfs_probe()` (step 8) then `hfsplus_probe()` (step 9); must return `fs_identify_result_t` with label, total bytes, free bytes
-- → XREF: `05-storage-filesystems/TODO-05-win32-file-io-api.md §4` -- `CreateFile` on an Apple volume calls `NtCreateFile` → `vfs_open` → Apple fs vtable; ensure both vtables expose the full read-only 14-entry `vfs_fs_driver`
+- → XREF: `05-storage-filesystems/TODO-05-win32-file-io-api.md §3` -- `CreateFile` on an Apple volume calls `NtCreateFile` → `vfs_open` → Apple fs vtable; ensure both vtables expose the full read-only 14-entry `vfs_fs_driver`
 
 ## Outcome
 

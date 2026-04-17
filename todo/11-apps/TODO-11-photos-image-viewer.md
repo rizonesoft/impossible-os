@@ -31,8 +31,8 @@
 - `include/kernel/fs/vfs.h` -- `vfs_open`, `vfs_readdir`, `vfs_stat`, `vfs_get_name` -- §3 folder scan
 - `include/registry.h` -- `reg_get_string`, `reg_set_string` -- §4 Set as Wallpaper, §5 interval, §8 recent files
 - `include/desktop/desktop.h` -- `desktop_draw_wallpaper()` -- §4 wallpaper reload after set
-- `include/desktop/file_assoc.h` (→ XREF `08-desktop-shell/TODO-02 §1`) -- `file_assoc_set()` -- §8
-- `07-graphics-ui/TODO-05-widget-dialogs.md §3` -- `dialog_file_open()` -- §1 open dialog
+- `include/desktop/file_assoc.h` (→ XREF `09-desktop-shell/TODO-02 §1`) -- `file_assoc_set()` -- §8
+- `08-graphics-ui/TODO-06-widget-dialogs.md §2` -- `dialog_file_open()` -- §1 open dialog
 - `include/kernel/timer.h` -- `system_get_ticks()` -- §2 zoom debounce, §5 slideshow timer
 - `include/kernel/mm/pmm.h` -- `pmm_alloc_contiguous()` -- §6 EXIF IFD buffer, §7 scratch pixels
 

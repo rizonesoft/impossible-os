@@ -4,7 +4,7 @@
 > gap-free history side-panel, memory registers, keyboard input, and clipboard integration.
 
 > [!IMPORTANT]
-> **Base implementation spec:** `08-desktop-shell/TODO-12-utilities.md §2` covers the fixed
+> **Base implementation spec:** `09-desktop-shell/TODO-12-utilities.md §3` covers the fixed
 > 320×480 px window, 5×4 button grid, two-operand model, C/CE/⌫/±/1/x/x²/√, memory M±/R/C/S,
 > and keyboard shortcuts. This TODO is the full-app companion that adds: (a) calculation
 > history panel not specified in TODO-12; (b) full Scientific mode with degree/radian toggle;
@@ -13,18 +13,18 @@
 > `kmath_sin`, `kmath_tan`, `kmath_atan`, `kmath_log`, `kmath_exp` are **missing** from
 > `kmath.h` -- add them in §4 (`kmath_sin` via Taylor series, `kmath_tan` = `sin/cos`,
 > `kmath_log` via ln series, `kmath_exp` via Taylor).
-> Noted in `08-desktop-shell/TODO-12-utilities.md` Important Notes.
+> Noted in `09-desktop-shell/TODO-12-utilities.md` Important Notes.
 
 ---
 
 ## Inputs
 
-- `08-desktop-shell/TODO-12-utilities.md §2` -- base calculator spec (window, button grid, two-operand model, memory ops)
+- `09-desktop-shell/TODO-12-utilities.md §3` -- base calculator spec (window, button grid, two-operand model, memory ops)
 - `include/kernel/kmath.h` -- `kmath_sqrt`, `kmath_pow`, `kmath_cos`, `kmath_acos`, `kmath_floor`, `kmath_fabs`, `kmath_fmod`; §4 adds `kmath_sin/tan/atan/log/exp`
 - `include/gfx.h` -- `gfx_fill_rounded_rect(s, x, y, w, h, radius, color)`, `gfx_fill_rect()`, `gfx_draw_rect()`
 - `include/font_mgr.h` -- `ttf_draw_string()`, `ttf_measure_width()`, `ttf_get(FONT_UI, px)`
 - `include/desktop/wm.h` -- `wm_create_window(x, y, w, h, title, WM_FLAG_NO_RESIZE)`
-- `include/kernel/clipboard.h` (→ XREF `08-desktop-shell/TODO-01 §1`) -- `clipboard_set(CLIP_TEXT, data, size)` -- §3 history copy
+- `include/kernel/clipboard.h` (→ XREF `09-desktop-shell/TODO-01 §1`) -- `clipboard_set(CLIP_TEXT, data, size)` -- §3 history copy
 - `include/desktop/controls.h` -- `CTRL_SCROLLBAR_VERT` -- §3 history scroll
 
 ---
@@ -49,7 +49,7 @@
 
 ## 1. Standard Calculator UI `[Sonnet]`
 
-> → XREF: `08-desktop-shell/TODO-12-utilities.md §2` -- window size, button layout, display area, button rendering detail.
+> → XREF: `09-desktop-shell/TODO-12-utilities.md §3` -- window size, button layout, display area, button rendering detail.
 
 **Source file:** `src/apps/calc/calc.c`; header `include/apps/calc/calc.h`
 
@@ -71,7 +71,7 @@
 
 ## 2. Arithmetic Engine `[Sonnet]`
 
-> → XREF: `08-desktop-shell/TODO-12-utilities.md §2` -- two-operand model, division-by-zero, keyboard shortcuts.
+> → XREF: `09-desktop-shell/TODO-12-utilities.md §3` -- two-operand model, division-by-zero, keyboard shortcuts.
 
 - [ ] **State**: `typedef struct { char display[32]; double operand; char op; int after_op; int has_error; double memory; int mode; int deg_mode; } calc_t;`
 - [ ] **Two-operand model**: `operand1` → press `op` → `operand2` → `=` → `result`

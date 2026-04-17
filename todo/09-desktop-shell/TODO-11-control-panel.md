@@ -3,7 +3,7 @@
 > **Goal:** Build the Control Panel -- a Windows CPL-compatible settings hub that ties all underlying APIs together (theme, DPI, network, time, user accounts, audio, power) into one discoverable place, with a Win32-compatible `cpl.h` that lets Win32 `.cpl` applets run natively.
 
 > [!IMPORTANT]
-> **Already exists**: `cpuid_get()->brand` (49-char brand string) + `cpuid_get()->vendor` in `cpuid.h`. `pmm_get_total_frames()` in `pmm.h` (total RAM = frames × 4096). `acpi_get_cpu_count()` + `smp_cpu_count()`. `uptime()` → uint64 seconds in `timer.h`. `vfs_readdir` for `.cpl` file scanning. `registry_get/set` for all per-applet settings. `icon_draw_scaled()` for sidebar icons. **Forward deps (must exist before respective applet)**: `wallpaper_set()` (TODO-07 §2), `g_dpi_pct`/`DPI_SCALE` (TODO-07 §5), `CTRL_SLIDER` (TODO-04 §1), `CTRL_CHECKBOX` (TODO-04 §1), `ntp_sync()` (TODO-04 §7 scheduled task), `auth_create/delete_user/change_password()` (TODO-06 §1), `firewall_enable/rule_add()` (06-networking/TODO-05), `audio_set_volume()` (future audio TODO), `shortcut_execute()` (TODO-02 §4). **Missing**: `cpl.h` entirely, `src/apps/control/`, all applet `.c` files. Complete sections in order: CPL framework → host app → core applets → additional applets → settings search.
+> **Already exists**: `cpuid_get()->brand` (49-char brand string) + `cpuid_get()->vendor` in `cpuid.h`. `pmm_get_total_frames()` in `pmm.h` (total RAM = frames × 4096). `acpi_get_cpu_count()` + `smp_cpu_count()`. `uptime()` → uint64 seconds in `timer.h`. `vfs_readdir` for `.cpl` file scanning. `registry_get/set` for all per-applet settings. `icon_draw_scaled()` for sidebar icons. **Forward deps (must exist before respective applet)**: `wallpaper_set()` (TODO-07 §2), `g_dpi_pct`/`DPI_SCALE` (TODO-07 §5), `CTRL_SLIDER` (TODO-04 §2), `CTRL_CHECKBOX` (TODO-04 §2), `ntp_sync()` (TODO-04 §1 scheduled task), `auth_create/delete_user/change_password()` (TODO-06 §1), `firewall_enable/rule_add()` (06-networking/TODO-05), `audio_set_volume()` (future audio TODO), `shortcut_execute()` (TODO-02 §5). **Missing**: `cpl.h` entirely, `src/apps/control/`, all applet `.c` files. Complete sections in order: CPL framework → host app → core applets → additional applets → settings search.
 
 ## Inputs
 
@@ -16,14 +16,14 @@
 - `include/icon_store.h` -- `icon_draw_scaled()` -- sidebar applet icons
 - `include/gfx.h` -- `gfx_fill_rect()`, `gfx_draw_circle()`, accent color wheel in `desk.cpl`
 - `include/font_mgr.h` -- `ttf_draw_string()`, `ttf_measure_width()` -- all applet labels
-- `include/desktop/controls.h` (TODO-04 §1) -- `CTRL_SLIDER`, `CTRL_CHECKBOX`, `CTRL_DROPDOWN` -- all applets
+- `include/desktop/controls.h` (TODO-04 §2) -- `CTRL_SLIDER`, `CTRL_CHECKBOX`, `CTRL_DROPDOWN` -- all applets
 - `include/desktop/wm.h` -- `wm_create_window()`, `wm_set_title()` -- §2 host window + applet sub-windows
 - `include/desktop/desktop.h` -- `wallpaper_set()` (TODO-07 §2 fwd) -- `desk.cpl`
 - `include/kernel/auth.h` (TODO-06) -- `auth_create/delete_user/change_password/list_users()` -- `nusrmgr.cpl`
-- → XREF: `07-graphics-ui/TODO-07-desktop-shell-features.md §2` -- `wallpaper_set()` needed for `desk.cpl`
-- → XREF: `07-graphics-ui/TODO-07-desktop-shell-features.md §5` -- `g_dpi_pct` + DPI hot-change for `desk.cpl`
-- → XREF: `07-graphics-ui/TODO-04-widget-library-core.md §3` -- `CTRL_SLIDER` needed for volume, DPI, cursor applets
-- → XREF: `07-graphics-ui/TODO-10-clock-time.md §1` -- `time_now/set/set_timezone()` + `SYS_TIME` for `timedate.cpl`
+- → XREF: `08-graphics-ui/TODO-09-desktop-shell-features.md §2` -- `wallpaper_set()` needed for `desk.cpl`
+- → XREF: `08-graphics-ui/TODO-09-desktop-shell-features.md §5` -- `g_dpi_pct` + DPI hot-change for `desk.cpl`
+- → XREF: `08-graphics-ui/TODO-05-widget-library-core.md §3` -- `CTRL_SLIDER` needed for volume, DPI, cursor applets
+- → XREF: `08-graphics-ui/TODO-12-clock-time.md §1` -- `time_now/set/set_timezone()` + `SYS_TIME` for `timedate.cpl`
 - → XREF: `06-networking/TODO-05-firewall.md` -- `firewall_enable/rule_add/remove()` for `firewall.cpl`
 - → XREF: `06-networking/TODO-06-ntp-status-winsock.md` -- `ntp_sync()` for `timedate.cpl` sync button
 
@@ -54,7 +54,7 @@
 **Files:** `include/cpl.h` (new), `include/apps/control.h` (new)
 
 > [!NOTE]
-> Exact Windows CPL message values: `CPL_INIT=1`, `CPL_GETCOUNT=2`, `CPL_INQUIRE=3`, `CPL_DBLCLK=5`, `CPL_STOP=6`, `CPL_EXIT=7`, `CPL_NEWINQUIRE=8`. `NEWCPLINFO` struct: `{ DWORD dwSize; DWORD dwFlags; DWORD dwHelpContext; LONG lData; HICON hIcon; char szName[32]; char szInfo[64]; char szHelpFile[128]; }` -- use Impossible OS types (`uint32_t` etc.) but keep layout compatible. `CPlApplet` type: `LONG (CALLBACK *APPLET_PROC)(HWND hwndCPl, UINT uMsg, LPARAM lParam1, LPARAM lParam2)` -- in Impossible OS: `typedef int (*CPlApplet_t)(uint32_t hwnd, uint32_t msg, uintptr_t lParam1, uintptr_t lParam2)`. Win32 apps calling `ShellExecute("desk.cpl")` will route through `shell_execute()` (TODO-02 §4) → `cpl_load_and_run(path)`. CPL lifecycle: `CPlApplet(hwnd, CPL_INIT, 0, 0)` → non-zero = success; `CPlApplet(hwnd, CPL_GETCOUNT, 0, 0)` → number of applets in this DLL; `CPlApplet(hwnd, CPL_NEWINQUIRE, idx, &info)` → fills `NEWCPLINFO`; `CPlApplet(hwnd, CPL_DBLCLK, idx, lData)` → open applet UI; `CPlApplet(hwnd, CPL_STOP, idx, lData)` → cleanup; `CPlApplet(hwnd, CPL_EXIT, 0, 0)` → unload.
+> Exact Windows CPL message values: `CPL_INIT=1`, `CPL_GETCOUNT=2`, `CPL_INQUIRE=3`, `CPL_DBLCLK=5`, `CPL_STOP=6`, `CPL_EXIT=7`, `CPL_NEWINQUIRE=8`. `NEWCPLINFO` struct: `{ DWORD dwSize; DWORD dwFlags; DWORD dwHelpContext; LONG lData; HICON hIcon; char szName[32]; char szInfo[64]; char szHelpFile[128]; }` -- use Impossible OS types (`uint32_t` etc.) but keep layout compatible. `CPlApplet` type: `LONG (CALLBACK *APPLET_PROC)(HWND hwndCPl, UINT uMsg, LPARAM lParam1, LPARAM lParam2)` -- in Impossible OS: `typedef int (*CPlApplet_t)(uint32_t hwnd, uint32_t msg, uintptr_t lParam1, uintptr_t lParam2)`. Win32 apps calling `ShellExecute("desk.cpl")` will route through `shell_execute()` (TODO-02 §5) → `cpl_load_and_run(path)`. CPL lifecycle: `CPlApplet(hwnd, CPL_INIT, 0, 0)` → non-zero = success; `CPlApplet(hwnd, CPL_GETCOUNT, 0, 0)` → number of applets in this DLL; `CPlApplet(hwnd, CPL_NEWINQUIRE, idx, &info)` → fills `NEWCPLINFO`; `CPlApplet(hwnd, CPL_DBLCLK, idx, lData)` → open applet UI; `CPlApplet(hwnd, CPL_STOP, idx, lData)` → cleanup; `CPlApplet(hwnd, CPL_EXIT, 0, 0)` → unload.
 
 - [ ] `include/cpl.h` -- `#define CPL_INIT 1`, ..., `CPL_NEWINQUIRE 8`; `NEWCPLINFO` struct; `typedef int (*CPlApplet_t)(...)`;
 - [ ] `#define CPL_OK 0`, `CPL_ERR -1` return values
