@@ -36,6 +36,7 @@ F(mmap_count);
 F(mmap_truncated);
 F(mmap_quirks);
 F(_mmap_pad);
+F(_mmap_pad[0]);                /* element-size sentinel */
 
 /* ---- Basic memory (legacy) ---- */
 F(mem_lower_kb);
@@ -53,6 +54,7 @@ F(fb.pad0);
 F(fb_available);
 F(hidpi);
 F(fb_pad);
+F(fb_pad[0]);                   /* element-size sentinel */
 
 /* ---- GOP mode list ---- */
 F(gop_modes);
@@ -62,6 +64,7 @@ F(gop_modes[0].height);
 F(gop_modes[0].pixels_per_scanline);
 F(gop_modes[0].pixel_format);
 F(gop_modes[0].pad);
+F(gop_modes[0].pad[0]);             /* element-size sentinel for the 3-byte pad */
 F(gop_mode_count);
 F(gop_mode_selected);
 
@@ -96,9 +99,12 @@ F(config.ob_handle_trace);
 F(config.config_version);
 F(config.error_screen_test);
 F(config._reserved);
+F(config._reserved[0]);         /* element-size sentinel */
 F(config.cmdline);
+F(config.cmdline[0]);           /* element-size sentinel (char -> wchar_t would change here) */
 F(config.config_found);
 F(config._pad);
+F(config._pad[0]);              /* element-size sentinel */
 
 /* ---- UEFI Configuration Table ---- */
 F(config_table);
@@ -108,6 +114,7 @@ F(config_table[0].guid.data1);
 F(config_table[0].guid.data2);
 F(config_table[0].guid.data3);
 F(config_table[0].guid.data4);
+F(config_table[0].guid.data4[0]);   /* element-size sentinel for the 8-byte GUID tail */
 F(config_table[0].table_addr);
 F(config_table_count);
 
@@ -137,6 +144,7 @@ F(uefi_runtime.get_wakeup_time);
 F(uefi_runtime.set_wakeup_time);
 F(uefi_runtime.svam_called);
 F(uefi_runtime.pad);
+F(uefi_runtime.pad[0]);            /* element-size sentinel for the 7-byte pad */
 
 /* ---- TPM measured boot ---- */
 F(tpm_event_log);
@@ -171,10 +179,12 @@ F(usb_devices[0].endpoints[0].attributes);
 F(usb_devices[0].endpoints[0].max_packet);
 F(usb_devices[0].endpoints[0].interval);
 F(usb_devices[0].endpoints[0].pad);
+F(usb_devices[0].endpoints[0].pad[0]);  /* element-size sentinel for the 3-byte pad */
 F(usb_device_count);
 F(usb_discovery_ok);
 F(usb_handover_complete);
 F(usb_pad);
+F(usb_pad[0]);                  /* element-size sentinel */
 
 /* ---- USB controller DMA state ---- */
 F(usb_controller.pci_bus);
@@ -202,6 +212,11 @@ F(usb_controller.cmd_ring_phys);
 F(usb_controller.evt_ring_phys);
 F(usb_controller.erst_phys);
 F(usb_controller.dma_pages);
+/* dma_pages[0] sentinel: whole-array row only pins total byte count, so a
+ * uint64_t[16] -> uint32_t[32] kernel/mirror drift would preserve the 128
+ * byte total and sneak past the manifest. Emitting the first element's
+ * size (sizeof uint64_t == 8) catches the element-type change. */
+F(usb_controller.dma_pages[0]);
 F(usb_controller.dma_page_count);
 F(usb_controller.alloc_fail_status);
 F(usb_controller.alloc_fail_page);
@@ -238,7 +253,9 @@ F(last_boot_error);
 /* ---- Boot device identity ---- */
 F(boot_device_type);
 F(_boot_dev_pad);
+F(_boot_dev_pad[0]);            /* element-size sentinel */
 F(boot_device_path);
+F(boot_device_path[0]);         /* element-size sentinel (char[128]; catches char->wchar drift) */
 
 /* ---- UEFI boot variables ---- */
 F(uefi_boot_current);
@@ -246,10 +263,16 @@ F(uefi_boot_next);
 F(uefi_boot_next_valid);
 F(uefi_boot_order_count);
 F(_boot_var_pad);
+F(_boot_var_pad[0]);            /* element-size sentinel */
 F(uefi_boot_order);
+/* uefi_boot_order[0]: uint16_t[16] = 32 bytes; without a per-element row,
+ * a uint8_t[32] or uint32_t[8] mirror drift would preserve the total and
+ * pass the manifest. Emit the first element so element-type changes surface. */
+F(uefi_boot_order[0]);
 
 /* ---- Boot partition ---- */
 F(boot_partition_guid);
+F(boot_partition_guid[0]);      /* element-size sentinel */
 F(boot_partition_style);
 
 /* ---- Removable media ---- */
@@ -260,6 +283,8 @@ F(_rem_pad);
 /* ---- Kernel-populated fields ---- */
 F(secure_boot_enabled);
 F(_kp_pad);
+F(_kp_pad[0]);                  /* element-size sentinel */
 F(degraded_mask);
 F(hv_flags);
 F(hv_vendor);
+F(hv_vendor[0]);                /* element-size sentinel */

@@ -3,7 +3,7 @@
 > **Owner:** [Boot Protocol ABI & Handoff Contract roadmap -- Canonical boot_info Field Ownership Table section](../../todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md#1-canonical-boot_info-field-ownership-table).
 > **Single source of truth.** [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h) has a file-top comment that points here rather than duplicating policy inline. Every field of `struct boot_info` (and its nested structs) is listed below with producer, first valid phase, consumer(s), lifetime, owning roadmap, and validation rule. Add a field -> add a row.
 >
-> **Machine-readable complement.** Every build emits [`build/boot-info-abi.kernel.json`](../../build/boot-info-abi.kernel.json) and [`build/boot-info-abi.mirror.json`](../../build/boot-info-abi.mirror.json) (154 fields, struct size, SHA-256 fingerprint) via the `boot_info ABI` step of `bash scripts/build.sh`. The two JSONs are diffed by [`tools/boot-info-manifest/compare.sh`](../../tools/boot-info-manifest/compare.sh); any field / offset / size drift between `include/kernel/boot_info.h` and [`src/boot/uefi/boot_info_mirror.h`](../../src/boot/uefi/boot_info_mirror.h) fails the build with the first mismatching field named. This catches same-size reorders the six pinned `_Static_assert` offsets miss.
+> **Machine-readable complement.** Every build emits [`build/boot-info-abi.kernel.json`](../../build/boot-info-abi.kernel.json) and [`build/boot-info-abi.mirror.json`](../../build/boot-info-abi.mirror.json) (213 fields, struct size, SHA-256 fingerprint) via the `boot_info ABI` step of `bash scripts/build.sh`. The two JSONs are diffed by [`tools/boot-info-manifest/compare.sh`](../../tools/boot-info-manifest/compare.sh); any field / offset / size drift between `include/kernel/boot_info.h` and [`src/boot/uefi/boot_info_mirror.h`](../../src/boot/uefi/boot_info_mirror.h) fails the build with the first mismatching field named. The row set includes indexed leaves for every array-of-struct member (`mmap[0].*`, `gop_modes[0].*`, `config_table[0].*`, `rt_mmap[0].*`, `usb_devices[0].*` plus nested `endpoints[0].*`) and element-size sentinels for every scalar array (`usb_controller.dma_pages[0]`, `uefi_boot_order[0]`, `boot_device_path[0]`, `hv_vendor[0]`, ...), so the manifest also catches same-size element-type changes the six pinned `_Static_assert` offsets miss.
 
 ## How to read this doc
 
@@ -20,7 +20,7 @@ ABI invariants (enforced by `_Static_assert` in the header):
 - Six critical count fields are pinned by offset between kernel and bootloader mirror: `mmap_count`, `gop_mode_count`, `config_table_count`, `rt_mmap_count`, `usb_device_count`, `uefi_boot_current`.
 - `boot_config.cmdline` is at byte offset 32 (stable across versions); `boot_config.config_found` at 288; `sizeof(struct boot_config) == 512`.
 
-Every version bump goes in both [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h) and [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c). Current: `BOOT_INFO_VERSION = 5`.
+Every version bump goes in both [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h) and [`src/boot/uefi/boot_info_mirror.h`](../../src/boot/uefi/boot_info_mirror.h) (the mirror header included by both [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c) and the host manifest dumper [`tools/boot-info-manifest/dump-mirror.c`](../../tools/boot-info-manifest/dump-mirror.c)). Current: `BOOT_INFO_VERSION = 5`.
 
 ## Top-level `struct boot_info` fields
 
@@ -433,12 +433,13 @@ FPDT-sourced fields come from the firmware performance record (nanoseconds since
 When adding a field:
 
 1. Decide producer + consumer + first-valid phase before touching `boot_info.h`. Update this doc first.
-2. Add the field to `struct boot_info` (or the appropriate nested struct). Update the bootloader mirror in `src/boot/uefi/bootx64.c` in the same commit.
-3. Bump `BOOT_INFO_VERSION` in BOTH files unless the field fits into an existing `_reserved`/`_pad` region without shifting any documented offset.
-4. Extend the `_Static_assert` offset pins in the header if the field shifts a mirrored count field.
-5. Wire the producer, wire the consumer, add a unit test that reads the field through the real layout (not a synthetic fixture).
-6. Add a row here.
-7. Add the CI manifest fingerprint regeneration (once boot-protocol §2 lands) to confirm kernel/bootloader agreement.
+2. Add the field to `struct boot_info` (or the appropriate nested struct) in [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h). Add the matching field (same name, same type, same order) to [`src/boot/uefi/boot_info_mirror.h`](../../src/boot/uefi/boot_info_mirror.h) in the same commit. Bootloader uses `UINT8/16/32/64` spellings; kernel uses `uint8_t/16/32/64_t`.
+3. Add a matching `F(new_field)` line to [`tools/boot-info-manifest/dump-fields.inc`](../../tools/boot-info-manifest/dump-fields.inc). If the new field is an array-of-struct, also add representative `F(new_field[0].leaf)` rows for every element leaf. If it is a scalar array with multi-byte elements, add `F(new_field[0])` as an element-size sentinel. Without this step the manifest compare passes while the struct definitions disagree.
+4. Bump `BOOT_INFO_VERSION` in BOTH files unless the field fits into an existing `_reserved`/`_pad` region without shifting any documented offset.
+5. Extend the `_Static_assert` offset pins in both headers if the field shifts a mirrored count field.
+6. Wire the producer, wire the consumer, add a unit test that reads the field through the real layout (not a synthetic fixture).
+7. Add a row here.
+8. `bash scripts/build.sh` invokes the `boot_info ABI` stage automatically -- a clean build proves kernel/bootloader manifests agree.
 
 When a field becomes stale:
 

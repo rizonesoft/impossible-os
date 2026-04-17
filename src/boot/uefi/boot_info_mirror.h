@@ -84,6 +84,8 @@ struct boot_config {
  * bootloader and kernel struct definitions at compile time. */
 _Static_assert(__builtin_offsetof(struct boot_config, cmdline) == 32,
     "cmdline must be at byte offset 32 -- kernel ABI contract");
+_Static_assert(__builtin_offsetof(struct boot_config, config_found) == 288,
+    "config_found must be at byte offset 288 -- after cmdline[256]");
 _Static_assert(sizeof(struct boot_config) == 512,
     "boot_config must be exactly 512 bytes (sector-aligned)");
 
