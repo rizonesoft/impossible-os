@@ -36,8 +36,11 @@ REQUIRED_SENTINELS=(
     "llvm-ar-19:llvm-ar-19 (Makefile AR, userland archives)"
     "llvm-nm-19:llvm-nm-19 (kernel.map generation, Makefile line 187)"
     "nasm:nasm (Makefile AS)"
+    "gcc:gcc (Makefile HOST_CC, builds irespack/jpg2raw/mkfs-ixfs host tools)"
+    "python3:python3 (asset pipeline + convert_symmap.py)"
     "qemu-system-x86_64:qemu-system-x86_64 (Makefile QEMU)"
-    "mcopy:mtools (FAT image population via mcopy)"
+    "mcopy:mtools mcopy (FAT image population)"
+    "mmd:mtools mmd (BlackBox FAT directory creation)"
     "mkfs.fat:dosfstools (FAT32 partition formatting)"
     "__OVMF_CODE__:OVMF_CODE_4M.fd (Makefile OVMF_CODE)"
     "__OVMF_VARS__:OVMF_VARS_4M.fd (Makefile OVMF_VARS)"
@@ -65,7 +68,8 @@ Usage:
 
 Required host tools (TODO-01 section 1):
   clang-19, ld.lld-19, llvm-objcopy-19, llvm-ar-19, llvm-nm-19,
-  nasm, qemu-system-x86_64, mtools, dosfstools,
+  nasm, gcc, python3, qemu-system-x86_64,
+  mtools (mcopy + mmd), dosfstools (mkfs.fat),
   /usr/share/OVMF/OVMF_CODE_4M.fd, /usr/share/OVMF/OVMF_VARS_4M.fd
 
 Supported distros:

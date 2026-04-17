@@ -78,10 +78,15 @@ Make setup reproducible and explicit so a new machine converges on the same tool
 **Test checkpoint:** On a clean supported Linux machine, `bash scripts/setup.sh` completes and the documented required tools are present on `PATH`. A second run is idempotent and reports no destructive drift.
 
 > **Notes:**
-> - `scripts/setup.sh` now supports `--help` and `--verify` modes. `--verify` runs the read-only sentinel set (clang-19, ld.lld-19, llvm-objcopy-19, nasm, qemu-system-x86_64, mtools, dosfstools, OVMF) without touching the system.
+> - `scripts/setup.sh` supports `--help` and `--verify` modes. `--verify` runs the read-only sentinel set (14 entries: clang-19, ld.lld-19, llvm-objcopy-19, llvm-ar-19, llvm-nm-19, nasm, gcc, python3, qemu-system-x86_64, mcopy, mmd, mkfs.fat, OVMF_CODE_4M.fd, OVMF_VARS_4M.fd) without touching the system.
 > - The full run executes: deps install -> sentinel verify -> `bash scripts/build.sh clean`. Idempotence is inherited from `setup-deps.sh`'s `command -v` pre-check.
+> - `setup-deps.sh` now installs `build-essential` (Debian) / `gcc` (Fedora/Arch) so `HOST_CC := gcc` is guaranteed on every supported distro.
 > - Canonical doc: [`docs/infrastructure/development-tooling.md#host-bootstrap-contract`](../../docs/infrastructure/development-tooling.md#host-bootstrap-contract). `README.md`, `CONTRIBUTING.md`, and `CLAUDE.md` link here instead of restating distro/package lists.
-> - Scope boundary recorded in the doc: repo-local dev bootstrap stays here; SDK cross-tool build system remains owned by `todo/14-host-tools/TODO-01-sdk-build-system.md` sections 1-3 (`D14 T01 §1-§3`).
+> - Scope boundary recorded in the doc: repo-local dev bootstrap stays here; SDK cross-tool build system remains owned by `todo/14-host-tools/TODO-01-sdk-build-system.md` sections 1-3 (`D14 T01 §1-§3`). Supported-host profile matrix (Ubuntu/Debian vs. Fedora/Arch LLVM-19 shim work) is owned by §2 below.
+
+> **Verified:** 2026-04-17 -- all 5 checklist items map to diff in commit `ad4d3fa4` (scripts/setup.sh sentinel array; docs/infrastructure/development-tooling.md Host Bootstrap Contract section; README.md, CONTRIBUTING.md, CLAUDE.md link-throughs; TODO boundary table). Build clean: `=== BUILD OK ===`. `bash scripts/setup.sh --verify` reports 14/14 sentinels OK on this host.
+> **Quality reviewed:** 2026-04-17 -- two Codex dispatches (adversarial + quality/dead-code/consistency/performance). Round 1 found 2 High (missing llvm-ar-19/llvm-nm-19 sentinels; Arch/Fedora LLVM naming drift) + 2 Medium (OVMF fallback paths not matching Makefile hardcode; idempotence claim false re: include/build_info.h). Round 2 found 2 Medium (python3 + gcc missing from sentinel/deps; mmd not verified) + 1 Low (direct mmd in Makefile). All fixed in this review: sentinel grew to 14 entries matching Makefile exactly; setup-deps.sh now installs gcc; doc idempotence section rewritten; OVMF path narrowed to exact 4M paths. No domain code-quality skill applies (docs + bash only; no src/kernel, src/boot, src/desktop, or user/ touched).
+> **Test runner:** scripts/test-tooling.sh (owned by §7). §1 has no dedicated test surface today; `bash scripts/setup.sh --help` exits 0 and `--verify` returns non-zero on missing tools (manual verification). Full tooling regression pack lands with §7.
 
 ---
 

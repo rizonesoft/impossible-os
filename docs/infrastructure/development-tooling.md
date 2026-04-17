@@ -43,8 +43,11 @@ Unsupported distros: `setup-deps.sh` exits with the required package list printe
 | `llvm-ar-19`                              | `llvm-19`               | `AR := llvm-ar-19` (userland archives)   |
 | `llvm-nm-19`                              | `llvm-19`               | `kernel.map` generation (Makefile L187)  |
 | `nasm`                                    | `nasm`                  | `AS := nasm`                             |
+| `gcc`                                     | `build-essential`       | `HOST_CC := gcc` (builds irespack, jpg2raw, mkfs-ixfs host tools) |
+| `python3`                                 | `python3`               | Asset pipeline (`validate-assets.py`, `convert_symmap.py`, `convert_icon.py`, `convert_bsod_icon.py`, `convert_boot_font.py`) |
 | `qemu-system-x86_64`                      | `qemu-system-x86`       | `QEMU := qemu-system-x86_64`             |
 | `mcopy` (mtools)                          | `mtools`                | FAT image population (EFI + logs parts)  |
+| `mmd` (mtools)                            | `mtools`                | BlackBox FAT directory creation (Makefile L391-L392) |
 | `mkfs.fat` (dosfstools)                   | `dosfstools`            | FAT32 partition formatting               |
 | `/usr/share/OVMF/OVMF_CODE_4M.fd`         | `ovmf`                  | `OVMF_CODE := /usr/share/OVMF/OVMF_CODE_4M.fd` |
 | `/usr/share/OVMF/OVMF_VARS_4M.fd`         | `ovmf`                  | `OVMF_VARS := /usr/share/OVMF/OVMF_VARS_4M.fd` |
