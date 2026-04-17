@@ -354,37 +354,51 @@ bash scripts/test-coverage.sh --save --quiet 2>/dev/null || true
 # Run-mode banners print to terminal only -- do NOT tee to $LOG, otherwise
 # `tail -1 build/build.log` would no longer be `=== BUILD OK ===` and CI
 # sentinel checks break. The build sentinel written above is the contract.
+# Run-mode failures DO propagate to the script's exit code so CI / hooks can
+# detect QEMU-launch failures separately from build failures. The build sentinel
+# remains authoritative for the build portion.
+RUN_STATUS=0
+run_make() {
+    local target=$1
+    if ! make $MAKE_FLAGS "$target" 2>&1; then
+        RUN_STATUS=1
+        printf ' %b✗ make %s failed%b\n' "$RED" "$target" "$RESET" >&2
+    fi
+}
+
 if $DO_RUN; then
     divider
     printf ' %b▶ Launching QEMU%b\n' "${CYAN}${BOLD}" "$RESET"
     divider
-    make $MAKE_FLAGS run 2>&1
+    run_make run
 fi
 
 if $DO_RUN_USB; then
     divider
     printf ' %b▶ Launching QEMU with xHCI + USB storage%b\n' "${CYAN}${BOLD}" "$RESET"
     divider
-    make $MAKE_FLAGS run-usb 2>&1
+    run_make run-usb
 fi
 
 if $DO_RUN_USB_CI; then
     divider
     printf ' %b▶ Launching headless QEMU (xHCI + USB, 20s timeout)%b\n' "${CYAN}${BOLD}" "$RESET"
     divider
-    make $MAKE_FLAGS run-usb-ci 2>&1
+    run_make run-usb-ci
 fi
 
 if $DO_RUN_NVME; then
     divider
     printf ' %b▶ Launching QEMU with NVMe storage%b\n' "${CYAN}${BOLD}" "$RESET"
     divider
-    make $MAKE_FLAGS run-nvme 2>&1
+    run_make run-nvme
 fi
 
 if $DO_RUN_NVME_CI; then
     divider
     printf ' %b▶ Launching headless QEMU (NVMe, 20s timeout)%b\n' "${CYAN}${BOLD}" "$RESET"
     divider
-    make $MAKE_FLAGS run-nvme-ci 2>&1
+    run_make run-nvme-ci
 fi
+
+exit "$RUN_STATUS"

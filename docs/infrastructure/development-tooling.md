@@ -526,7 +526,7 @@ Header: `include/kernel/test/test.h`, implementation: `src/kernel/test/test_runn
 | `test_runner_init()`                            | Initialize + register all suites                             |
 | `test_runner_run()`                             | Run all suites, print summary                                |
 
-Test categories (`TEST_CAT_*`): `mm`, `fs`, `sched`, `ob`, `security`, `ipc`, `boot`, `abi`, `storage`, `exec`. Run a specific category with `bash scripts/test.sh SUITE=<cat>`.
+Test categories (`TEST_CAT_*`): `mm`, `fs`, `sched`, `ob`, `security`, `ipc`, `boot`, `abi`, `storage`, `exec`, `x86`. Run a specific category with `bash scripts/test.sh SUITE=<cat>`.
 
 **Output format:**
 ```
@@ -541,7 +541,7 @@ Test categories (`TEST_CAT_*`): `mm`, `fs`, `sched`, `ob`, `security`, `ipc`, `b
 
 ### Core Subsystem Tests
 
-28 test files in `src/kernel/test/` covering 10 categories; ~1,400 `TEST_ASSERT*` calls total (growing). Test files are named `test_<subsystem>.c` and register their suites via `test_suite_register_cat()`. For the up-to-date suite breakdown and coverage map, see the auto-generated report at [`docs/test-coverage/coverage.md`](../test-coverage/coverage.md).
+28 test files in `src/kernel/test/` covering 11 categories; ~1,400 `TEST_ASSERT*` calls total (growing). Test files are named `test_<subsystem>.c` and register their suites via `test_suite_register_cat()`. For the up-to-date suite breakdown and coverage map, see the auto-generated report at [`docs/test-coverage/coverage.md`](../test-coverage/coverage.md).
 
 **Safety rules** (see CLAUDE.md "Test Code -- No Live Boot Infrastructure Calls"): test files must never call `boot_progress`, `vpd_stage_*`, `panic`, `_init()`, or any live boot-path function. A pre-commit hook enforces this. Use pure helpers + readiness oracles.
 

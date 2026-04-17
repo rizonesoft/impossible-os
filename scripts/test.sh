@@ -49,7 +49,7 @@ Usage:
   bash scripts/test.sh --help       Show this help
 
 Categories (SUITE=...):
-  mm, fs, sched, ob, security, ipc, boot, abi, storage, exec
+  mm, fs, sched, ob, security, ipc, boot, abi, storage, exec, x86
 
 Outputs:
   build/test.log           full QEMU serial output
