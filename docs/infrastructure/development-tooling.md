@@ -132,10 +132,10 @@ Each required-sentinel tool has an expected version floor. `bash scripts/setup.s
 | `mcopy`               | 4.0       | `mcopy -V`                                          | Offset syntax `image@@offset` for partition-local FAT writes.  |
 | `mmd`                 | 4.0       | `mmd -V`                                            | BlackBox FAT directory creation (Makefile L391-L392).          |
 | `mkfs.fat`            | 4.0       | `mkfs.fat --help \| tail -1`                        | `--offset` flag required for partition-local format.           |
-| OVMF `*_4M.fd`        | 2022.02   | `ls -l /usr/share/OVMF/OVMF_{CODE,VARS}_4M.fd`      | 4M firmware layout; older 2M OVMF is not compatible.           |
+| OVMF `*_4M.fd`        | presence  | `ls -l /usr/share/OVMF/OVMF_{CODE,VARS}_4M.fd`      | 4M firmware layout. The Debian `ovmf` package since 2022.02 ships these exact paths; `--versions` only asserts presence and size since the firmware binaries expose no standardized version string. |
 | `bear`                | 3.0       | `bear --version`                                    | Optional; generates `compile_commands.json` for clangd.        |
 
-`bash scripts/setup.sh --versions` walks the sentinel set and reports version strings for anything that exposes `--version`/`-v`/`-V`. Minimum-floor enforcement is advisory (warn, don't block) because distro patch numbers vary; `--verify` remains the pass/fail gate.
+`bash scripts/setup.sh --versions` walks the sentinel set and reports version strings for anything that exposes `--version`/`-v`/`-V`. Output is **purely advisory**: the command always exits 0, so optional tools (`bear`) and below-floor entries do not gate wrappers or CI. `--verify` remains the hard pass/fail contract.
 
 ### Reproducible Environment (`.devcontainer`)
 

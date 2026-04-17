@@ -4,10 +4,6 @@
 
     "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
 
-    "features": {
-        "ghcr.io/devcontainers/features/sshd:1": {}
-    },
-
     "postCreateCommand": "bash scripts/setup.sh",
 
     "customizations": {

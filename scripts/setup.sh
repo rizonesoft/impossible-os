@@ -191,9 +191,11 @@ verify_tools() {
 }
 
 print_versions() {
-    local warnings=0
+    # Advisory report: ALWAYS exits 0 so docs-claimed-advisory contract is honored.
+    # Hard pass/fail remains `--verify`. Exit 1 would conflate optional tools
+    # (bear) and patch-level floors with actual host breakage.
     echo -e "${CYAN}==================================================${NC}"
-    echo -e "${CYAN}  Host tool versions vs documented minimums${NC}"
+    echo -e "${CYAN}  Host tool versions vs documented minimums (advisory)${NC}"
     echo -e "${CYAN}==================================================${NC}"
     echo ""
     printf "  %-24s %-12s %-12s %s\n" "Tool" "Installed" "Minimum" "Status"
@@ -208,20 +210,17 @@ print_versions() {
         local have
         if ! command -v "$check" >/dev/null 2>&1; then
             printf "  %-24s ${RED}%-12s${NC} %-12s ${RED}MISSING${NC}\n" "$name" "--" "$minimum"
-            warnings=$((warnings + 1))
             continue
         fi
         have=$(eval "$probe" 2>/dev/null || echo "")
         if [ -z "$have" ]; then
             printf "  %-24s ${YELLOW}%-12s${NC} %-12s ${YELLOW}UNKNOWN${NC}\n" "$name" "?" "$minimum"
-            warnings=$((warnings + 1))
             continue
         fi
         if version_ge "$have" "$minimum"; then
             printf "  %-24s ${GREEN}%-12s${NC} %-12s ${GREEN}OK${NC}\n" "$name" "$have" "$minimum"
         else
             printf "  %-24s ${YELLOW}%-12s${NC} %-12s ${YELLOW}BELOW${NC}\n" "$name" "$have" "$minimum"
-            warnings=$((warnings + 1))
         fi
     done
     echo ""
@@ -235,15 +234,11 @@ print_versions() {
             printf "  %-24s ${GREEN}%-12s${NC} present      ${GREEN}OK${NC}  (%s)\n" "$name" "${size} B" "$path"
         else
             printf "  %-24s ${RED}%-12s${NC} present      ${RED}MISSING${NC} (%s)\n" "$name" "--" "$path"
-            warnings=$((warnings + 1))
         fi
     done
     echo ""
     echo -e "  ${CYAN}Advisory:${NC} minimums are documented floors, not hard gates."
     echo -e "  Hard contract: ${CYAN}bash scripts/setup.sh --verify${NC}."
-    if [ "$warnings" -gt 0 ]; then
-        return 1
-    fi
     return 0
 }
 
