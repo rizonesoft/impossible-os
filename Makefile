@@ -108,7 +108,7 @@ GENERATED_HDRS := include/build_info.h include/kernel/os_logo.h src/kernel/bsod_
 # Targets
 # ============================================================================
 
-.PHONY: all _increment_build boot boot-icon boot-font kernel host-tools sysroot userland iso uefi-boot sign-efi system-disk test-disks run run-test run-debug run-log run-usb-ci run-nvme run-nvme-ci clean assets validate-assets sysroot-dirs sysroot-fonts sysroot-wallpapers sysroot-cursors sysroot-icons test-mm test-fs test-ob test-security test-ipc test-sched test-boot test-abi test-storage test-exec test-x86 boot-info-abi
+.PHONY: all _increment_build boot boot-icon boot-font kernel host-tools sysroot userland iso uefi-boot sign-efi system-disk test-disks run run-test run-debug run-log run-usb-ci run-nvme run-nvme-ci clean assets validate-assets sysroot-dirs sysroot-fonts sysroot-wallpapers sysroot-cursors sysroot-icons test-mm test-fs test-ob test-security test-ipc test-sched test-boot test-abi test-storage test-exec test-x86 boot-info-abi test-boot-info-abi
 
 ## all: Build everything (kernel + userland + system disk + boot_info ABI manifest)
 all: _increment_build assets kernel userland uefi-boot boot-info-abi system-disk
@@ -239,6 +239,13 @@ $(BOOT_ABI_KERNEL_JSON): $(BOOT_ABI_DUMPER_K)
 
 $(BOOT_ABI_MIRROR_JSON): $(BOOT_ABI_DUMPER_M)
 	@$< > $@
+
+## test-boot-info-abi: Regress-test the drift detector itself. Builds
+##                    intentionally-mutated mirror fixtures and verifies
+##                    compare.sh reports the expected first-mismatch field.
+##                    Depends on the real kernel JSON being up to date.
+test-boot-info-abi: $(BOOT_ABI_KERNEL_JSON)
+	@bash tools/boot-info-manifest/test-drift-detection.sh
 
 ## sysroot: Populate build/sysroot/ with system files and assets
 SYSROOT := $(BUILD_DIR)/sysroot

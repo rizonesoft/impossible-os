@@ -54,7 +54,7 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 | --- | :---: | -------------------------------------------------- | ---------------------------------- | :----: |
 | 💎  |   1   | Canonical boot_info field ownership table          | --                                 |  [x]   |
 | 💎  |   2   | Generated ABI manifest and offset fingerprint      | §1                                 |  [x]   |
-| 💎  |   3   | Full bootloader/kernel mirror drift checker        | §2                                 |  [ ]   |
+| 💎  |   3   | Full bootloader/kernel mirror drift checker        | §2                                 |  [x]   |
 | 💎  |   4   | Optional payload descriptor array                  | §1                                 |  [ ]   |
 | 💎  |   5   | Module and initrd handoff contract                 | §4                                 |  [ ]   |
 | 💎  |   6   | Handoff memory ownership and PMM reservation table | §4                                 |  [ ]   |
@@ -123,13 +123,27 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 
 ## 3. Full Bootloader/Kernel Mirror Drift Checker
 
-- [ ] Replace the five-field static fingerprint with complete table validation in host tooling.
-- [ ] Check nested structs: `boot_config`, `boot_usb_device`, `boot_usb_controller`, runtime memory entries, GOP modes.
-- [ ] Add CI output that prints the first differing field on mismatch.
-- [ ] Add negative tests with intentionally reordered fixture structs.
-- [ ] Commit: `"test: boot_info mirror drift checker"`
+- [x] Replace the five-field static fingerprint with complete table validation in host tooling.
+- [x] Check nested structs: `boot_config`, `boot_usb_device`, `boot_usb_controller`, runtime memory entries, GOP modes.
+- [x] Add CI output that prints the first differing field on mismatch.
+- [x] Add negative tests with intentionally reordered fixture structs.
+- [x] Commit: `"test: boot_info mirror drift checker"`
 
 **Test checkpoint:** The host drift checker passes for the real kernel/bootloader pair, fails for an intentionally reordered fixture, and prints the first differing nested field rather than only a hash mismatch. QEMU WHPX, QEMU TCG, VirtualBox, and bare-metal boot behavior stays unchanged once the real structs match again.
+
+> **Notes:**
+> - Items 1-3 were satisfied incrementally by §2's implementation (commits `97bcc762` + `90c29907`): the 213-row manifest emitted by [`tools/boot-info-manifest/dump-kernel.c`](../../tools/boot-info-manifest/dump-kernel.c) + [`dump-mirror.c`](../../tools/boot-info-manifest/dump-mirror.c) IS the "complete table validation" (item 1), covers every nested struct called out in item 2 -- `config_table[0].guid` (6 rows), `rt_mmap[0]` (7 rows), `gop_modes[0]` (7 rows), `boot_config` (34 rows), `usb_devices[0]` + nested `endpoints[0]` (22 rows), `usb_controller` (29 rows) -- and already prints `FAIL boot_info ABI manifest: field #N 'name' diverges on 'key' -- kernel: name@off+size; mirror: name@off+size` via [`tools/boot-info-manifest/compare.sh`](../../tools/boot-info-manifest/compare.sh) (item 3). The six `_Static_assert` offset pins at the bottom of [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h) (the historical "five-field fingerprint", now six) remain as the compile-time first line of defense.
+> - Item 4 is the net-new work: [`tools/boot-info-manifest/test-drift-detection.sh`](../../tools/boot-info-manifest/test-drift-detection.sh) regress-tests the drift-detector itself against five intentionally-broken fixtures + one negative control. Each fixture mutates the real [`src/boot/uefi/boot_info_mirror.h`](../../src/boot/uefi/boot_info_mirror.h) via `sed` into a tempfile, compiles a one-off mirror dumper pointed at the mutated header, runs `compare.sh` against the real kernel JSON, and asserts exit non-zero + expected first-mismatch field name. Mutations cover:
+>   1. Element-struct same-size swap inside `boot_mmap_entry` (UINT32 `type` <-> `uefi_memory_type`) -- expects `mmap[0].type`.
+>   2. Scalar-array element-type shrink (`UINT64 dma_pages[16]` -> `UINT32 dma_pages[32]`, both 128 bytes) -- expects `usb_controller.dma_pages[0]`.
+>   3. Nested-struct same-size swap inside `boot_usb_endpoint` (UINT8 `address` <-> `attributes`) -- expects `usb_devices[0].endpoints[0].address`.
+>   4. Nested-struct element-type shrink inside `boot_gop_mode` (`UINT32 pixels_per_scanline` -> `UINT16 + UINT16 pad`) -- expects `gop_modes[0].pixels_per_scanline`.
+>   5. Nested-struct element-type shrink inside `boot_rt_mem_entry` (`UINT64 num_pages` -> `UINT32 + UINT32 pad`) -- expects `rt_mmap[0].num_pages`.
+> - Wired via new `test-boot-info-abi` Makefile target + [`scripts/test-tooling.sh`](../../scripts/test-tooling.sh) surface checks (harness exists, `--help` exits 0 and documents exit codes, Makefile target + `.PHONY` entry present) + new [`.github/workflows/build.yml`](../../.github/workflows/build.yml) step "Run boot_info ABI drift tests" that runs after the build (needs `build/boot-info-abi.kernel.json`). test-tooling.sh cannot run the full harness because it executes BEFORE the build stage in CI.
+> - Negative control (unmutated mirror must PASS `compare.sh`) protects against a regression where every mutation case fails regardless of the mutation.
+> - Mutation design constraint: mutations that shift ANY of the six pinned count-field offsets fail at compile time via `_Static_assert` before reaching `compare.sh`. All five chosen mutations are leaf-level within nested structs so the pinned offsets stay intact and the manifest pathway is the actual thing under test.
+
+> **Note:** No kernel test surface -- this section is entirely host developer tooling. Validation is the drift harness itself (`bash tools/boot-info-manifest/test-drift-detection.sh`), which passes 6/6 scenarios (5 drift cases + 1 negative control) on every CI build.
 
 ---
 

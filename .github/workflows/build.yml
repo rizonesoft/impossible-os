@@ -132,6 +132,15 @@ jobs:
           SIZE=$(stat -c%s build/system-disk.img)
           echo "✅ system-disk.img: $(( SIZE / 1024 / 1024 )) MiB"
 
+      # ── boot_info ABI drift-detection regression ───────────────────────────
+      # Mutates the mirror header into known-broken fixtures and verifies
+      # tools/boot-info-manifest/compare.sh names the expected first-mismatch
+      # field. Depends on build/boot-info-abi.kernel.json emitted by the
+      # Build step above. Guards against a future compare.sh regression
+      # silently letting real ABI drift ship.
+      - name: Run boot_info ABI drift tests
+        run: make test-boot-info-abi
+
       # ── Unit tests ──────────────────────────────────────────────────────────
       # GHA ubuntu-latest does not expose /dev/kvm reliably -- test.sh falls
       # back to TCG. Job-level timeout-minutes caps runaway runs. Serial

@@ -285,6 +285,36 @@ else
 fi
 
 # ============================================================================
+# boot_info ABI drift-detection harness surface contract
+# ============================================================================
+# Surface-only checks; the harness itself compiles fixtures and needs a
+# fresh kernel manifest, so it runs post-build (make test-boot-info-abi /
+# GitHub Actions "Run boot_info ABI drift tests" step), not here.
+
+[ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[boot_info ABI drift harness]${NC}"
+DRIFT_SH="$REPO_ROOT/tools/boot-info-manifest/test-drift-detection.sh"
+if [ -x "$DRIFT_SH" ]; then
+    t_pass "test-drift-detection.sh executable"
+else
+    t_fail "test-drift-detection.sh executable" "missing or not chmod +x: $DRIFT_SH"
+fi
+assert_exit_zero "test-drift-detection.sh --help exits 0" bash "$DRIFT_SH" --help
+# The harness must document the exit-code contract in its --help so
+# humans and CI readers can parse it without reading the source.
+if bash "$DRIFT_SH" --help 2>/dev/null | grep -qE 'Exit codes:'; then
+    t_pass "test-drift-detection.sh --help documents exit codes"
+else
+    t_fail "test-drift-detection.sh --help documents exit codes" \
+        "expected 'Exit codes:' block in --help output"
+fi
+# Makefile exposes the harness via a .PHONY target that CI and developers
+# can call after a build. A missing target means the test is orphaned.
+assert_grep "Makefile defines test-boot-info-abi target" \
+    "$REPO_ROOT/Makefile" '^test-boot-info-abi:'
+assert_grep "Makefile lists test-boot-info-abi as .PHONY" \
+    "$REPO_ROOT/Makefile" '\.PHONY:.*test-boot-info-abi'
+
+# ============================================================================
 # .githooks/ file presence
 # ============================================================================
 
