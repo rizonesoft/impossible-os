@@ -200,6 +200,25 @@ else
     INSTALLED=$((INSTALLED + 1))
 fi
 
+# PyYAML (required by scripts/tooling-doctor.sh + scripts/test-tooling.sh
+# for .github/workflows/*.yml parse).
+if python3 -c "import yaml" 2>/dev/null; then
+    skip "PyYAML (python3-yaml)"
+else
+    case "$DISTRO" in
+        debian) echo -e "  ${YELLOW}Installing python3-yaml...${NC}"; sudo apt-get install -y python3-yaml ;;
+        fedora) echo -e "  ${YELLOW}Installing python3-pyyaml...${NC}"; sudo dnf install -y python3-pyyaml ;;
+        arch)   echo -e "  ${YELLOW}Installing python-yaml...${NC}"; sudo pacman -S --noconfirm python-yaml ;;
+        *) echo -e "  ${YELLOW}Install PyYAML manually for your distro${NC}" ;;
+    esac
+    if python3 -c "import yaml" 2>/dev/null; then
+        ok "PyYAML installed"
+        INSTALLED=$((INSTALLED + 1))
+    else
+        echo -e "  ${YELLOW}warn:${NC} PyYAML still missing after install; tooling-doctor.sh --json and workflow YAML checks will fall back to warn-only."
+    fi
+fi
+
 # ---- Summary ----
 echo ""
 echo -e "${CYAN}══════════════════════════════════════════════════${NC}"

@@ -188,6 +188,22 @@ gate via a sentinel file. `--status` prints current state; `--remove`
 undoes everything. Full lifecycle:
 [Local CI Hooks](docs/infrastructure/development-tooling.md#local-ci-hooks).
 
+### Tooling Doctor
+
+```bash
+bash scripts/tooling-doctor.sh             # read-only health check
+bash scripts/tooling-doctor.sh --json      # machine-readable report
+bash scripts/test-tooling.sh               # host-side regression pack
+```
+
+`tooling-doctor.sh` reports the state of the toolchain, wrappers, git
+hooks, workflow YAML, runtime prereqs (KVM, qemu-img, host profile), and
+doc anchors, with an actionable fix for every non-pass line.
+`test-tooling.sh` exercises the stable wrapper surface (argument
+parsing, hook lifecycle in a throwaway git repo, YAML sanity) and runs
+in CI before the build stage. Details:
+[Tooling Doctor and Regression Pack](docs/infrastructure/development-tooling.md#tooling-doctor-and-regression-pack).
+
 ---
 
 ## 🤔 Frequently Asked Questions (FAQ)

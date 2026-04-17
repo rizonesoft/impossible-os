@@ -58,7 +58,10 @@
 | 💎  |   4   | Machine launcher and debug profile matrix             | §2, §3         |  [x]   |
 | 💎  |   5   | Git hooks and local automation lifecycle              | §1, §3         |  [x]   |
 | 💎  |   6   | GitHub Actions and artifact policy alignment          | §2, §3, §4, §5 |  [x]   |
-| ⭐  |   7   | Tooling doctor and regression pack                    | §1-§6          |  [ ]   |
+| ⭐  |   7   | Tooling doctor and regression pack                    | §1-§6          |  [x]   |
+| 💎  |  13   | Unify specialist-launcher `-ExtraArgs` surface        | §4             |  [ ]   |
+| 💎  |  14   | Legacy-XREF sweep (lint Check 5 -> 0 errors; CI gate) | §3, §6         |  [ ]   |
+| 💎  |  15   | Smoke-test POST16 assertions (boot-phase manifest)    | §3             |  [ ]   |
 
 > 💎 = parity work: Windows and Linux projects both rely on stable setup/build/test/CI contracts.
 > ⭐ = exclusive work: Impossible OS can provide a single operator-facing developer workflow with self-diagnosis instead of scattered scripts and tribal knowledge.
@@ -242,19 +245,67 @@ This is the refinement step: make the tooling self-diagnosing instead of forcing
 > [!TIP]
 > Windows and Linux projects usually document setup and CI, but they rarely ship one repo-local "doctor" path that validates toolchain, hook install, runner prerequisites, and wrapper availability in one pass.
 
-- [ ] Add a `scripts/tooling-doctor.sh` entry point that checks required host tools, key script executability, hook install status, and expected workflow files without mutating the repo
-- [ ] Add a host-side regression pack (`scripts/test-tooling.sh` or equivalent) covering argument parsing, sentinel paths, hook install/remove idempotence, and CI config sanity checks
-- [ ] Extend doctor coverage to runtime prerequisites named in §2 and §4: OVMF presence, `/dev/kvm` availability, `qemu-img`, `VBoxManage`/PowerShell where relevant, and whether the current host matches a supported profile or only a best-effort one
-- [ ] Add a machine-readable doctor mode (`--json` or equivalent report file) so lightweight CI and bug reports can consume the same diagnostics without screen-scraping prose
-- [ ] Make the doctor output actionable: print missing package/tool names, broken script paths, and the exact fix entry point
-- [ ] Wire the regression pack into a lightweight CI path so wrapper drift is caught before release or contributor onboarding breaks
-- [ ] Link doctor and regression-pack usage from `README.md` and developer docs
-- [ ] **Unify specialist-launcher argument surface** -- scenario launchers (`scripts/machines/storage/run-nvme-test.{ps1,bat}`, `run-usb-test.{ps1,bat}`, `scripts/machines/fs/run-fs-test.ps1`, `fs/run-*-test.bat`) do not accept `-ExtraArgs` today, so a developer cannot append `-s -S` (gdb stub) or custom `-drive`/`-netdev` arguments without editing the script. Lift the `-ExtraArgs` parameter from `scripts/machines/run-qemu.ps1` into each scenario launcher and thread it through to the underlying `run-qemu.ps1` invocation. Update `docs/infrastructure/machine-matrix.md` to remove the `-ExtraArgs` caveat from the storage and filesystem sections once shipped. → XREF: [`docs/infrastructure/machine-matrix.md#known-drift`](../../docs/infrastructure/machine-matrix.md#known-drift) item 5.
-- [ ] **Legacy-XREF sweep:** rewrite the ~60 source/test/header/script files currently in `scripts/lint.sh` `TODO_XREF_LEGACY_FILES` so they stop using numeric TODO shorthand (`TODO-NN §M`, `DNN TNN §N`, `TNN §N`) outside `todo/**`. Each file's numeric refs get replaced with either (a) a functional description of what the code does or (b) a relative-path + heading anchor link into the canonical doc. As files are cleaned, remove them from the lint allowlist; target is 0 entries. Lint rule at `scripts/lint.sh` check 7 already errors on new out-of-todo drift, so this is a one-shot catch-up. Initial allowlist committed with the lint rule; see git history for the baseline list. (Templates under `.claude/skills/**`, `.cursor/**`, `.github/PULL_REQUEST_TEMPLATE.md` intentionally teach the shorthand and stay excluded.)
-- [ ] **Smoke-test POST16 assertions:** migrate `scripts/test-smoke.sh`'s `BOOT_REQUIRED_PATTERNS` / `PASS_PATTERNS_ALL` from raw log-message strings (e.g. `[BOOT] ExitBootServices OK`, `Boot complete in`) to **POST16 code assertions** (`0xB091`, `0xB090`, `0x0026`, etc.). Log message strings drift silently every time a contributor edits a `printf`/`serial_printf`/`klog` call, breaking the smoke test long after the fact; POST16 codes are `#define` constants in `include/kernel/boot_init.h` and `src/boot/uefi/bootx64.c` that get emitted as `POST 0xNNNN` on serial, and they only change when the boot-phase contract changes. Work: (1) export the POST16 code-to-phase mapping from the kernel header into a small shell-consumable manifest (JSON or env-style), (2) rewrite `test-smoke.sh` to assert a list of required POST16 codes pulled from that manifest, (3) keep a small residual set of kernel/userland string assertions (`C:\>` prompt, `Boot complete in` timestamp) as the user-visible end-to-end signal. Current string-pattern list stays in place as a fallback layer until the POST16 path is proven. Source: `src/boot/uefi/bootx64.c` POST1 emission + `include/kernel/boot_init.h` POST16 constants + `scripts/test-smoke.sh:42-79`.
-- [ ] Commit: `"tooling: add doctor command and regression pack for developer workflow"`
+- [x] Add a `scripts/tooling-doctor.sh` entry point that checks required host tools, key script executability, hook install status, and expected workflow files without mutating the repo
+- [x] Add a host-side regression pack (`scripts/test-tooling.sh` or equivalent) covering argument parsing, sentinel paths, hook install/remove idempotence, and CI config sanity checks
+- [x] Extend doctor coverage to runtime prerequisites named in §2 and §4: OVMF presence, `/dev/kvm` availability, `qemu-img`, `VBoxManage`/PowerShell where relevant, and whether the current host matches a supported profile or only a best-effort one
+- [x] Add a machine-readable doctor mode (`--json` or equivalent report file) so lightweight CI and bug reports can consume the same diagnostics without screen-scraping prose
+- [x] Make the doctor output actionable: print missing package/tool names, broken script paths, and the exact fix entry point
+- [x] Wire the regression pack into a lightweight CI path so wrapper drift is caught before release or contributor onboarding breaks
+- [x] Link doctor and regression-pack usage from `README.md` and developer docs
+- [x] Commit: `"tooling: add doctor command and regression pack for developer workflow"`
 
 **Test checkpoint:** On a healthy setup, `bash scripts/tooling-doctor.sh` reports PASS across toolchain, hooks, and workflow files. On a missing dependency or broken hook install, it reports the exact failed check and recovery step.
+
+> **Notes:**
+> - [`scripts/tooling-doctor.sh`](../../scripts/tooling-doctor.sh) -- read-only health check, 31 assertions across six groups (toolchain / wrappers / hooks / workflows / runtime / docs). Three modes: prose (default), `--json` (machine-readable via NUL-framed tempfile -> python3), `--quiet` (one-line summary). Delegates toolchain sentinels to `bash scripts/setup.sh --verify`, hook state to `bash scripts/install-hooks.sh --status`, workflow YAML to `python3 yaml.safe_load`, host profile to `/etc/os-release` + WSL2 detection. Every non-pass line includes an actionable `fix:` remediation.
+> - [`scripts/test-tooling.sh`](../../scripts/test-tooling.sh) -- 35-assertion regression pack covering the wrapper `--help` contract, doctor + setup invariants, hook lifecycle round-trip in a per-run mktemp'd repo (hardened to fail fast if mktemp fails rather than silently skip), workflow YAML parse, `build.yml` / `release.yml` wrapper alignment (`bash scripts/build.sh`, `bash scripts/test.sh`, `bash scripts/setup.sh --verify`), `.githooks/` executable bits, and doc-mention contract (`CLAUDE.md` / `README.md` mention `install-hooks.sh`; `development-tooling.md` mentions `tooling-doctor`).
+> - Wired into [`.github/workflows/build.yml`](../../.github/workflows/build.yml) as a new `Run tooling regression pack` step, placed after `Verify toolchain sentinels` but before `Build OS (clean)` so wrapper drift surfaces on every PR before the expensive build stage runs.
+> - [`scripts/test-smoke.sh`](../../scripts/test-smoke.sh) gained a `--help` block (§3 contract claimed every wrapper has `--help`; doctor caught the gap on its first pass).
+> - PyYAML dependency declared: added to both workflow `apt-get install` lines + `scripts/setup-deps.sh` with a proper `python3 -c 'import yaml'` import probe per-distro (`python3-yaml` Debian, `python3-pyyaml` Fedora, `python-yaml` Arch).
+> - `docs/infrastructure/development-tooling.md` new `## Tooling Doctor and Regression Pack` section enumerates both scripts' check sets + usage. `README.md` got a compact Tooling Doctor subsection under Testing.
+
+> **Test runner:** shell + YAML + docs, no kernel test surface. Validation is exercised by the regression pack itself: `bash scripts/test-tooling.sh` passes 35/35 on a healthy host, and the pack runs in CI every PR. Build clean (`=== BUILD OK ===`) proves no unintended side effects on the kernel build. `bash scripts/tooling-doctor.sh --quiet` reports `HEALTHY (31 checks, 0 warning(s))` on this host.
+
+---
+
+## 13. Unify Specialist-Launcher Argument Surface
+
+Scenario launchers under `scripts/machines/storage/` and `scripts/machines/fs/` do not accept `-ExtraArgs` today, so a developer cannot append `-s -S` (gdb stub) or custom `-drive` / `-netdev` arguments without editing the script. This parks a concrete drift item that the machine matrix surfaces in its "Known Drift" block.
+
+- [ ] Lift the `-ExtraArgs` parameter from [`scripts/machines/run-qemu.ps1`](../../scripts/machines/run-qemu.ps1) into each scenario launcher and thread it through to the underlying `run-qemu.ps1` invocation: `scripts/machines/storage/run-nvme-test.{ps1,bat}`, `scripts/machines/storage/run-usb-test.{ps1,bat}`, `scripts/machines/fs/run-fs-test.ps1`, `scripts/machines/fs/run-fat32-test.bat`, `scripts/machines/fs/run-ntfs-test.bat`, `scripts/machines/fs/run-all-fs-tests.bat`.
+- [ ] Update `docs/infrastructure/machine-matrix.md` to remove the `-ExtraArgs` caveats from the Storage Scenarios and Filesystem Scenarios sections.
+- [ ] Delete the corresponding entry from `docs/infrastructure/machine-matrix.md` "Known Drift" list.
+- [ ] Commit: `"scripts/machines: unify -ExtraArgs across scenario launchers"`
+
+**Test checkpoint:** Each scenario launcher accepts `-ExtraArgs '-s -S'` and passes the string through to `run-qemu.ps1` verbatim. Machine matrix no longer lists `-ExtraArgs` missing as a known drift.
+
+---
+
+## 14. Legacy-XREF Sweep
+
+Rewrite the ~60 source / test / header / script files on the `scripts/lint.sh` `TODO_XREF_LEGACY_FILES` allowlist so they stop using numeric TODO shorthand (`TODO-NN §M`, `DNN TNN §N`, `TNN §N`) outside `todo/**`. Lint Check 5 (renumbered from Check 7 on 2026-04-17) already errors on new out-of-`todo/` drift, so this is a one-shot catch-up after which lint can become a CI gate.
+
+- [ ] For each file in the allowlist, rewrite numeric refs as either (a) a functional description of what the code does, or (b) a relative-path + heading anchor link into the canonical doc that owns the concern.
+- [ ] As each file is cleaned, remove it from `TODO_XREF_LEGACY_FILES` in `scripts/lint.sh`. Target: 0 entries.
+- [ ] Templates under `.claude/skills/**`, `.cursor/**`, `.github/PULL_REQUEST_TEMPLATE.md` intentionally teach the shorthand and stay excluded from the sweep.
+- [ ] Once the allowlist is empty, wire `bash scripts/lint.sh` as a required gate in `.github/workflows/build.yml` and `release.yml` (see the developer tooling roadmap -- GitHub Actions section -- for the existing insertion point, already commented as "Not yet wired" pending this sweep).
+- [ ] Commit: `"scripts: drop legacy numeric-TODO shorthand from tree; lint becomes CI gate"`
+
+**Test checkpoint:** `bash scripts/lint.sh` exits 0 with zero errors on a clean tree (warnings acceptable). `.github/workflows/build.yml` and `release.yml` include `bash scripts/lint.sh` as a step; a PR that introduces new `TODO-NN §N` shorthand outside `todo/` fails CI.
+
+---
+
+## 15. Smoke-Test POST16 Assertions
+
+Migrate `scripts/test-smoke.sh`'s boot-pattern match list from raw log-message strings to POST16 code assertions. Log message strings drift silently every time a contributor edits a `printf` / `serial_printf` / `klog` call, breaking the smoke test long after the fact; POST16 codes are `#define` constants in [`include/kernel/boot_init.h`](../../include/kernel/boot_init.h) and [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c) emitted as `POST 0xNNNN` on serial, and they only change when the boot-phase contract changes.
+
+- [ ] Export the POST16 code-to-phase mapping from `include/kernel/boot_init.h` + `src/boot/uefi/bootx64.c` into a small shell-consumable manifest at `build/post16-manifest.env` (or `.json`). Generated by the Makefile at build time from the `#define` values; no hand-maintained duplicate.
+- [ ] Rewrite `scripts/test-smoke.sh` `BOOT_REQUIRED_PATTERNS` / `PASS_PATTERNS_ALL` to source the manifest and assert a list of required POST16 codes.
+- [ ] Keep a small residual set of kernel/userland string assertions (`C:\>` prompt, `Boot complete in` timestamp) as the user-visible end-to-end signal.
+- [ ] Current string-pattern list stays in place as a fallback layer until the POST16 path is proven on KVM + TCG + VirtualBox + bare metal.
+- [ ] Commit: `"scripts/test-smoke: assert POST16 codes from manifest instead of raw log strings"`
+
+**Test checkpoint:** `scripts/test-smoke.sh` passes when `build/post16-manifest.env` is generated and every POST16 code in the required list appears on serial. A deliberately renamed `printf` in a boot-path file does NOT break the smoke test (string-pattern layer may log a residual diagnostic, but the core assertion is code-based).
 
 ---
 

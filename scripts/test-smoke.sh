@@ -14,6 +14,34 @@
 
 set -euo pipefail
 
+case "${1:-}" in
+    -h|--help)
+        cat <<'EOF'
+test-smoke.sh -- end-to-end boot smoke test
+
+Usage:
+  bash scripts/test-smoke.sh            Build + boot + pattern check (default)
+
+Behavior:
+  Builds the OS, boots build/system-disk.img headless in QEMU (KVM if
+  /dev/kvm is writable, TCG fallback), and asserts that "Boot complete in"
+  and "C:\>" appear on serial within TIMEOUT_SEC seconds.
+
+Environment:
+  TIMEOUT_SEC    QEMU wait budget in seconds (default: 30).
+
+Exit codes:
+  0 = PASS (boot completed successfully)
+  1 = FAIL (panic, timeout, or build failure)
+
+Artifacts:
+  build/smoke-test.log            raw serial capture
+  build/smoke-test.stripped.log   ANSI-stripped serial capture
+EOF
+        exit 0
+        ;;
+esac
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 BUILD="$REPO_ROOT/build"

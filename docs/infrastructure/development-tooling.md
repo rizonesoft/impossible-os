@@ -862,6 +862,50 @@ The developer machine matrix ([machine-matrix.md](machine-matrix.md)) defines th
 
 ---
 
+## Tooling Doctor and Regression Pack
+
+Two repo-local scripts self-diagnose the developer tooling contract so a contributor never has to reverse-engineer why the wrappers stopped working:
+
+### [`scripts/tooling-doctor.sh`](../../scripts/tooling-doctor.sh)
+
+Read-only health check. Does not build the OS, does not mutate the repo. Runs ~30 checks across six groups:
+
+| Group | What it checks |
+| --- | --- |
+| toolchain | Delegates to `bash scripts/setup.sh --verify` (14 sentinels: clang-19, ld.lld-19, llvm-objcopy-19, llvm-ar-19, llvm-nm-19, nasm, gcc, python3, qemu-system-x86_64, mcopy, mmd, mkfs.fat, OVMF_CODE, OVMF_VARS). |
+| wrappers | Every canonical wrapper (`build.sh`, `test.sh`, `lint.sh`, `run-qemu.sh`, `debug.sh`, `test-smoke.sh`, `install-hooks.sh`, `setup.sh`) exists and `--help` exits 0 within 5s. |
+| hooks | Parses `bash scripts/install-hooks.sh --status`; verifies `core.hooksPath=.githooks`; reports pre-push sentinel state; confirms `.githooks/{pre-commit,post-commit,pre-push}` are executable. |
+| workflows | `.github/workflows/{build,release,pages,labeler,stale}.yml` parse as valid YAML; `build.yml` invokes `bash scripts/build.sh` and `bash scripts/test.sh`. |
+| runtime | `/dev/kvm` availability (writable = fast KVM path, unwritable = TCG warn); `qemu-img` present; `VBoxManage` optional; host profile classified against the supported-host matrix tier. |
+| docs | `development-tooling.md` anchors this doctor references still resolve; `machine-matrix.md` and `boot-info-fields.md` exist. |
+
+Usage:
+
+```bash
+bash scripts/tooling-doctor.sh              # prose report
+bash scripts/tooling-doctor.sh --json       # machine-readable JSON
+bash scripts/tooling-doctor.sh --quiet      # one-line summary
+```
+
+Exit codes: `0` = all hard checks passed (warn-only may fire), `1` = one or more hard checks failed. Every non-pass line prints an actionable remediation command under `fix:`.
+
+### [`scripts/test-tooling.sh`](../../scripts/test-tooling.sh)
+
+Host-side regression pack. Exercises the stable surface of the wrappers in ways the doctor cannot -- argument parsing, hook lifecycle round-trips against a throwaway git repo, workflow-YAML references to canonical wrappers, doc-mention contracts. Does not build the OS or run the kernel suite.
+
+Categories tested (~36 assertions):
+
+- Wrapper `--help` contract: every wrapper responds and exits 0.
+- Doctor + setup invariants: `tooling-doctor.sh --quiet` and `setup.sh --verify` both exit 0; lint's `--help` advertises the current check count.
+- Hook lifecycle in a throwaway git repo: default install sets `core.hooksPath`, is idempotent on re-run; `--enable-pre-push` creates the worktree-local sentinel and `--status` reports ENABLED; `--disable-pre-push` removes it; `--remove` clears `core.hooksPath`.
+- Workflow YAML: every `.github/workflows/*.yml` parses; `build.yml` and `release.yml` both invoke the canonical wrappers.
+- `.githooks/{pre-commit,post-commit,pre-push}` executable bits still set.
+- Doc mentions: `CLAUDE.md` and `README.md` reference `install-hooks.sh`; `development-tooling.md` mentions `tooling-doctor`.
+
+Wired into [`.github/workflows/build.yml`](../../.github/workflows/build.yml) so wrapper drift surfaces on every PR, before the expensive build stage runs. Run locally with `bash scripts/test-tooling.sh` (or `--quiet`).
+
+---
+
 ## Scripts Directory Structure
 
 ```

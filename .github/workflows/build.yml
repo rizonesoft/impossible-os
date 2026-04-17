@@ -83,7 +83,8 @@ jobs:
             dosfstools \
             ovmf \
             qemu-system-x86 \
-            gcc
+            gcc \
+            python3-yaml
 
       # ── Verify toolchain matches scripts/setup.sh sentinel contract ─────────
       # If this fails, the inline apt install above and scripts/setup.sh have
@@ -94,8 +95,15 @@ jobs:
       # scripts/lint.sh is deliberately NOT wired as a CI gate yet: the repo
       # carries ~60 files with numeric-TODO shorthand outside todo/ on the
       # legacy allow-list, so adding lint to CI would red-light every PR.
-      # The cleanup is owned by TODO-01 §7 "Legacy-XREF sweep" and lint
+      # The cleanup is owned by TODO-01 §14 "Legacy-XREF sweep" and lint
       # becomes a required gate once that item closes.
+
+      # ── Host-side tooling regression pack (cheap, no build required) ───────
+      # Exercises the wrapper contract, hook lifecycle, and workflow YAML
+      # without actually compiling the OS. Catches drift between local docs
+      # and CI before the build stage runs.
+      - name: Run tooling regression pack
+        run: bash scripts/test-tooling.sh --quiet
 
       # ── Build ───────────────────────────────────────────────────────────────
       - name: Build OS (clean)

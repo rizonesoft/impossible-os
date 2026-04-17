@@ -89,7 +89,8 @@ jobs:
             ovmf \
             qemu-system-x86 \
             gcc \
-            qemu-utils
+            qemu-utils \
+            python3-yaml
 
       # ── Verify toolchain matches scripts/setup.sh sentinel contract ─────
       - name: Verify toolchain sentinels
