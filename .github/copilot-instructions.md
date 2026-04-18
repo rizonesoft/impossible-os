@@ -140,5 +140,4 @@ Key directories:
 - `src/boot/uefi/` -- UEFI bootloader
 - `include/` -- all headers
 - `todo/` -- development roadmap
-- `.cursor/` -- Cursor AI rules and skills
-- `.claude/` -- Claude Code AI skills
+- `.claude/` -- Claude Code AI skills (Claude Code is the master; see `docs/infrastructure/ai-system.md`)

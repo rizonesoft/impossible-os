@@ -58,7 +58,7 @@
 
 | ⭐  | Order | Deliverable                                        | Depends On   | Status |
 | --- | :---: | -------------------------------------------------- | ------------ | :----: |
-| 💎  |   1   | Canonical ownership and source-of-truth map        | --           |  [ ]   |
+| 💎  |   1   | Canonical ownership and source-of-truth map        | --           |  [x]   |
 | 💎  |   2   | Skill lifecycle, templates, and catalog rules      | §1           |  [ ]   |
 | 💎  |   3   | Hook routing and policy contract                   | §1           |  [ ]   |
 | 💎  |   4   | External-reviewer contract (Codex, Copilot)        | §1-§3        |  [ ]   |
@@ -77,15 +77,21 @@
 
 The first job is to state clearly which file owns what.
 
-- [ ] Write an ownership matrix under `docs/infrastructure/` (or as a `docs/infrastructure/ai-system.md` companion to [`development-tooling.md`](../../docs/infrastructure/development-tooling.md)) covering `CLAUDE.md`, `.github/copilot-instructions.md`, `.claude/settings.json`, `.claude/skills/`, and `scripts/copilot-review.sh`. The matrix MUST open with the Authority Hierarchy table from the top of this TODO verbatim (Claude Code = master; CLAUDE.md = doctrine source-of-truth; everything else subordinate). A reader glancing at the matrix must see the hierarchy before any other detail.
-- [ ] Define which doctrine is global (lives in `CLAUDE.md`, owns the product north star, SMP-safe-by-default, bare-metal-first, POST16/boot-path discipline, no Unicode dashes, no live boot infra in tests) and which is tool-local (Claude-Code-specific skill mechanics, Copilot CLI invocation syntax). Each global-doctrine row links to the exact `CLAUDE.md` section that owns it, reinforcing the single-source-of-truth rule.
-- [ ] Document the **Claude Code-only** stance explicitly: "no `.cursor/`, no parallel skill sets; doctrine lives in `CLAUDE.md`; skills live in `.claude/skills/`; external reviewers (Codex, Copilot) are invoked from inside Claude skills, not from separate instruction layers"
-- [ ] Restate the 5 hierarchy invariants (from the Authority Hierarchy block at the top of this TODO) in the `docs/infrastructure/ai-system.md` matrix so the invariants are discoverable from both locations and neither can drift alone
-- [ ] Replace any stale references in root docs/indexes that still point at Cursor or at missing/superseded AI roadmap files
-- [ ] Add explicit "edit here, not there" notes where duplicate concepts currently exist (e.g. doctrine restated in both `CLAUDE.md` and individual skill headers)
-- [ ] Commit: `"docs/ai: define canonical ownership map for repo AI system"`
+- [x] Wrote ownership matrix at [`docs/infrastructure/ai-system.md`](../../docs/infrastructure/ai-system.md) covering `CLAUDE.md`, `.github/copilot-instructions.md`, `.claude/settings.json`, `.claude/skills/`, `scripts/copilot-review.sh`, `.githooks/`, Codex plugin, and Copilot CLI. The doc opens with the Authority Hierarchy table mirrored from the top of this TODO (same rows, same roles, same authority scope; wording normalized for a docs reader -- "this page" in place of "this TODO" in one sentence). Claude Code = MASTER; CLAUDE.md = doctrine SoT; Codex/Copilot = subordinate reviewers.
+- [x] Split doctrine into Global (lives in `CLAUDE.md`, 11 rows covering north star, bare metal first, SMP-from-day-one, POST16 boot-path-only, no Unicode dashes, freestanding kernel, Win32 API, test no-live-boot, Bare Metal Gotchas, Safety Gates, Mandatory Skill Triggers) vs Tool-Local (5 rows: skill SKILL.md files, `settings.json`, Copilot instructions, Codex plugin templates, `copilot-review.sh`). Every global-doctrine row links to the exact `CLAUDE.md` anchor that owns it.
+- [x] "Claude Code-Only Stance" section in `ai-system.md` explicitly lists: no `.cursor/`, no parallel skill sets; doctrine in `CLAUDE.md`; skills in `.claude/skills/`; external reviewers (Codex, Copilot) invoked from inside Claude skills; any future AI tool goes through the external-reviewer contract (§4) with `receiving-code-review` discipline.
+- [x] "Hierarchy Invariants" block in `ai-system.md` restates the 5 invariants verbatim from this TODO's Authority Hierarchy block, so the invariants are discoverable from both locations.
+- [x] Fixed stale `todo/TODO-00-INDEX.md` line 42 ("Claude, Cursor, and Copilot" -> "Claude Code master; Codex + Copilot subordinate reviewers"). No other stale Cursor or Antigravity references remain in root docs (README.md/CLAUDE.md "cursor" hits are the graphical mouse cursor, not the AI tool; verified via grep).
+- [x] "Edit-Here-Not-There Rules" table in `ai-system.md` names 7 concepts with their canonical edit location and the downstream consumers that must NOT be edited to change the concept (doctrine, skill workflow, harness policy, Copilot guidance, Codex dispatch templates, git-hook lifecycle, TODO workflow). Also added a link to `ai-system.md` from `CLAUDE.md` "Skills" section so contributors reach the matrix from the doctrine file.
+- [x] Added `ai-system.md` row to [`docs/infrastructure/index.md`](../../docs/infrastructure/index.md) so the doc is discoverable from the Infrastructure landing page.
+- [x] Commit: `"docs/ai: define canonical ownership map for repo AI system"`
 
-**Test checkpoint:** A contributor can answer "where do I change this rule?" for doctrine, hook behavior, skill content, and Copilot guidance without guessing. Root roadmap links resolve to real files. The "Claude Code-only" stance is stated in one canonical place.
+**Test checkpoint:** A contributor can answer "where do I change this rule?" for doctrine, hook behavior, skill content, and Copilot guidance without guessing. Root roadmap links resolve to real files. The "Claude Code-only" stance is stated in one canonical place ([`docs/infrastructure/ai-system.md` Claude Code-Only Stance](../../docs/infrastructure/ai-system.md#claude-code-only-stance)).
+
+> **Test runner:** N/A (docs-only) | validation: markdown links resolve, 4 stale refs removed (copilot-instructions.md `.cursor/` row, TODO-00-INDEX.md line 42, 00-infrastructure/INDEX.md line 32, CLAUDE.md Skills section updated with matrix link); §9 regression suite will add automated checks when it ships.
+
+> **Verified:** 2026-04-19 | 7/7 items | build N/A (docs-only) | 7 files changed | 4 stale Cursor refs swept
+> **Quality reviewed:** 2026-04-19 | Codex 1x (adversarial) | 3M+1L fixed (Cursor row in copilot-instructions, fake scripts/codex-companion.mjs path, 13->count-dropped, verbatim->mirrored stamp clarified), 0 open | scope: N/A (docs-only, no domain code-quality skill applies)
 
 ---
 
@@ -231,17 +237,17 @@ This is the refinement step: test the workflow itself.
 
 ## OS Comparison
 
-| ⭐ | Feature                               | 🪟 Win11 projects                                         | 🐧 Linux projects                                              | 🚀 Impossible OS                                                        |
-| --- | ------------------------------------- | --------------------------------------------------------- | -------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| 💎 | Repo-codified AI instructions         | ✅ `.github/copilot-instructions.md` standard             | ⚠️ Emerging (AGENTS.md)                                        | ⬜ §1 ownership map + authoritative `CLAUDE.md`                         |
-| 💎 | Skill/catalog ownership               | ⚠️ `.github/chatmodes/` + `/prompts/` emerging            | ❌ Often ad hoc                                                | ⬜ §2 skill lifecycle + no-parallel-trees rule                          |
-| 💎 | Hook policy matrix                    | ⚠️ `.vscode/mcp.json` + IDE settings, usually implicit    | ⚠️ Usually implicit                                            | ⬜ §3 routing matrix + reminder-vs-block classification                 |
-| 💎 | External-reviewer contract            | ❌ Rare                                                   | ❌ Rare                                                        | ⬜ §4 Codex + Copilot reviewer-not-authority                            |
-| 💎 | Permissions/extension boundary        | ⚠️ Varies by repo                                         | ⚠️ Varies by repo                                              | ⬜ §5 allow/deny tiers + `.local.json` split                            |
-| 💎 | Cross-tool AI pointer (`AGENTS.md`)   | ⚠️ Emerging (GitHub awesome-copilot stub)                 | ✅ Linux Foundation-backed (Aug 2025) open standard            | ⬜ §6 thin pointer to `CLAUDE.md`; no doctrine duplication              |
-| 💎 | AI-assist commit disclosure           | ❌ No standard convention                                 | ✅ Linux kernel `Assisted-by:` trailer (2025-12)               | ⬜ §7 explicit zero-trailer policy + stance-change condition            |
-| ⭐ | Autonomous-agent boundary policy      | ⚠️ Copilot coding-agent + firewall allowlist available    | ❌ Rare -- no formal repo boundary policy                      | ⬜ §8 interactive-only; no coding-agent / Devin / copilot-setup-steps   |
-| ⭐ | AI workflow regression suite          | ❌ Rare in practice                                       | ❌ Rare in practice (Promptfoo/Guardrails for AI apps only)    | ⬜ §9 skill catalog + hierarchy + trailer-policy + boundary checks       |
+| ⭐ | Feature                         | 🪟 Win11                                    | 🐧 Linux                                   | 🚀 Impossible OS                                         |
+| --- | ------------------------------- | ------------------------------------------- | ------------------------------------------- | -------------------------------------------------------- |
+| 💎 | Repo-codified AI instructions   | ✅ `.github/copilot-instructions.md`        | ⚠️ AGENTS.md emerging                      | ✅ §1 ownership map + `CLAUDE.md` authority              |
+| 💎 | Skill/catalog ownership         | ⚠️ `.github/chatmodes/` + `/prompts/`       | ❌ Ad hoc                                  | ⬜ §2 skill lifecycle; no parallel trees                 |
+| 💎 | Hook policy matrix              | ⚠️ `.vscode/mcp.json` + IDE settings        | ⚠️ Implicit                                | ⬜ §3 routing; reminder vs block tiers                   |
+| 💎 | External-reviewer contract      | ❌ Rare                                     | ❌ Rare                                    | ⬜ §4 Codex + Copilot reviewer-not-authority             |
+| 💎 | Permissions/extension boundary  | ⚠️ Varies                                   | ⚠️ Varies                                  | ⬜ §5 allow/deny tiers + `.local.json` split             |
+| 💎 | Cross-tool `AGENTS.md` pointer  | ⚠️ awesome-copilot stub                     | ✅ LF-backed (Aug 2025)                    | ⬜ §6 pointer to `CLAUDE.md`; no duplication             |
+| 💎 | AI-assist commit disclosure     | ❌ No convention                            | ✅ kernel `Assisted-by:` trailer (2025-12) | ⬜ §7 zero-trailer policy + stance-change condition      |
+| ⭐ | Autonomous-agent boundary       | ⚠️ coding-agent + firewall allowlist        | ❌ No formal policy                        | ⬜ §8 interactive-only; no Devin / setup-steps           |
+| ⭐ | AI workflow regression suite    | ❌ Rare                                     | ❌ Rare (Promptfoo/Guardrails; AI apps)    | ⬜ §9 catalog + hierarchy + trailer + boundary checks    |
 
 > **After §1-§5:** Impossible OS documents its (Claude Code-only) AI workflow as first-class infrastructure: explicit ownership, documented hooks, and a clear external-reviewer contract.
 > **After §6-§7:** reaches parity with the 2025-2026 Linux Foundation `AGENTS.md` standard and the Linux kernel's AI-assist commit policy, while preserving its zero-trailer stance explicitly.
