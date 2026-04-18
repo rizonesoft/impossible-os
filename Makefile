@@ -111,7 +111,7 @@ GENERATED_HDRS := include/build_info.h include/kernel/os_logo.h src/kernel/bsod_
 .PHONY: all _increment_build boot boot-icon boot-font kernel host-tools sysroot userland iso uefi-boot sign-efi system-disk test-disks run run-test run-debug run-log run-usb-ci run-nvme run-nvme-ci clean assets validate-assets sysroot-dirs sysroot-fonts sysroot-wallpapers sysroot-cursors sysroot-icons test-mm test-fs test-ob test-security test-ipc test-sched test-boot test-abi test-storage test-exec test-x86 boot-info-abi test-boot-info-abi
 
 ## all: Build everything (kernel + userland + system disk + boot_info ABI manifest)
-all: _increment_build assets kernel userland uefi-boot boot-info-abi system-disk
+all: _increment_build assets kernel userland uefi-boot boot-info-abi post16-manifest system-disk
 	@echo "[VERSION] Impossible OS v$(VERSION_RAW).$(BUILD_NUMBER) ($(GIT_BRANCH)@$(GIT_HASH), $(BUILD_TIME))"
 
 ## assets: Unified asset pipeline — validate + generate headers + populate sysroot

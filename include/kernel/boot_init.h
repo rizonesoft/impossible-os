@@ -120,7 +120,18 @@ typedef enum {
  * and tools/post16-manifest/generate.sh for the manifest that feeds the
  * smoke test's required-set assertion. */
 
-/* Phase 0 -- Critical Init (0x0000–0x0FFF) */
+/* Kernel POST16 codes (0x0000-0x3FFF) are emitted via boot_post_write16()
+ * in src/kernel/main/boot_init.c, which writes to I/O port 0x80 and the
+ * framebuffer corner (post_display16()) but NOT to serial. Some of the
+ * constants below are reserved for subsystems that exist but have not yet
+ * been wired to call boot_post_write16() (for example POST16_WQ work
+ * queues, POST16_COMPOSITOR desktop compositor, POST16_WALLPAPER asset
+ * loader). They are kept as the stable contract for future wiring rather
+ * than removed; add a caller rather than renumbering when the subsystem
+ * gains a discrete boot-path init. Grep for the name in src/ to see
+ * whether a constant is currently live or reserved. */
+
+/* Phase 0 -- Critical Init (0x0000-0x0FFF) */
 #define POST16_SERIAL           0x0010
 #define POST16_SERIAL_OK        0x0011
 #define POST16_UEFI_RT          0x0012  /* UEFI runtime services init */

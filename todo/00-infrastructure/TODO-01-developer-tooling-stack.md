@@ -352,8 +352,8 @@ Migrate `scripts/test-smoke.sh`'s boot-pattern match list from raw log-message s
 
 > **Test runner:** N/A (kernel test surface unaffected) | validation: `bash scripts/test-smoke.sh` on KVM; 19/19 POST16 codes verified, 0 missing, 0 fallback miss, build + boot 2.26s.
 
-> **Verified:** 2026-04-18 | commit `c3daefb9` | 5/5 items | build OK | smoke PASS (KVM 2.26s, 19/19 POST16)
-> **Quality reviewed:** 2026-04-18 | Codex 4x (adversarial) | 2H+2M fixed, 0 open | scope: boot-code-quality
+> **Verified:** 2026-04-18 | commit `c3daefb9` | 5/5 items | build OK | smoke PASS (KVM 2.28s, 19/19 POST16)
+> **Quality reviewed:** 2026-04-18 | Codex 6x (adversarial + quality) | 2H+1M+2L fixed, 0 open | scope: boot-code-quality
 
 ---
 

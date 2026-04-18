@@ -610,10 +610,23 @@ int vpd_is_active(void)
 
 struct post16_entry { uint16_t code; const char *name; };
 
+/* Bootloader codes (0xB0xx) mirror the POST16_BL_* defines in
+ * src/boot/uefi/bootx64.c. If you add a new bootloader milestone there,
+ * update this table OR regenerate via tools/post16-manifest/generate.sh
+ * (the manifest has names -> codes; this table is the inverse).
+ */
 static const struct post16_entry s_post16_names[] = {
-    { 0xB001, "EFI_MAIN" },     { 0xB010, "GOP" },
-    { 0xB020, "KERNEL_LOAD" },  { 0xB050, "EXIT_BS" },
-    { 0xB060, "PAGE_TABLES" },  { 0xB070, "KERNEL_JUMP" },
+    { 0xB001, "BL_ENTRY" },     { 0xB010, "BL_GOP" },
+    { 0xB020, "BL_KERNEL_OPEN" }, { 0xB021, "BL_KERNEL_LOAD" },
+    { 0xB030, "BL_RSDP" },      { 0xB040, "BL_MEMMAP" },
+    { 0xB050, "BL_EXIT_BS" },   { 0xB060, "BL_PAGE_TABLES" },
+    { 0xB070, "BL_KERNEL_JUMP" },
+    { 0xB080, "BL_USB_DISC" },  { 0xB081, "BL_USB_DISC_OK" },
+    { 0xB082, "BL_XHCI_DMA" },  { 0xB083, "BL_XHCI_DMA_OK" },
+    { 0xB084, "BL_XHCI_TAKEOVER" }, { 0xB085, "BL_XHCI_TAKEOVER_OK" },
+    { 0xB090, "BL_BOOT_DEV" },  { 0xB091, "BL_BOOT_DEV_OK" },
+    { 0xB092, "BL_BOOT_FS" },   { 0xB093, "BL_BOOT_FS_OK" },
+    { 0xB094, "BL_FALLBACK" },  { 0xB095, "BL_FALLBACK_OK" },
     { 0x0010, "SERIAL" },       { 0x0011, "SERIAL" },
     { 0x0012, "UEFI_RT" },      { 0x0013, "UEFI_RT" },
     { 0x0014, "UEFI_VARS" },    { 0x0016, "SECUREBOOT" },

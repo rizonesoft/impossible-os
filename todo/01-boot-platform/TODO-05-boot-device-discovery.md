@@ -72,7 +72,7 @@ Use UEFI `EFI_LOADED_IMAGE_PROTOCOL` to find which device the bootloader was loa
 - [x] Store `DeviceHandle` in a single bootloader global (or `boot_info` handoff struct) for `parse_boot_conf()` and for §3--§8 consumers -- `load_kernel()` refactored to use `g_boot_device_handle` instead of its own local LoadedImage lookup
 - [x] Log: `"[BOOT] Boot device: handle=0x%x"` on serial -- full 64-bit hex printed
 - [x] `POST16(0xB090)` on entry, `POST16(0xB091)` on success -- `POST16_BL_BOOT_DEV` / `POST16_BL_BOOT_DEV_OK` in `bootx64.c`
-- [x] Add matching `#define POST16_BL_DEV_*` names in `include/kernel/boot_init.h` in the `0xB000` bootloader range (and mirror in `bootx64.c` if locals remain) -- `POST16_BOOT_DEV` (0xB090) / `POST16_BOOT_DEV_OK` (0xB091) added; no collision with 0xB080-0xB085 USB/xHCI range
+- [x] Add matching `#define POST16_BL_*` names in `src/boot/uefi/bootx64.c` in the `0xB000` bootloader range -- `POST16_BL_BOOT_DEV` (0xB090) / `POST16_BL_BOOT_DEV_OK` (0xB091) added; no collision with 0xB080-0xB085 USB/xHCI range. Note: the 0xB0xx range is owned by `bootx64.c` (source of truth for serial-emitted codes); the previously-mirrored `POST16_BOOT_DEV*` defines in `include/kernel/boot_init.h` were removed as part of TODO-01 §10 POST16 manifest work (had 0 kernel callers and carried misleading semantic labels).
 - [x] Commit: `"boot: identify boot device via EFI_LOADED_IMAGE_PROTOCOL"` (6b2aa73e)
 
 **Test checkpoint:** Serial output shows `"Boot device: handle=0x..."` on all platforms (QEMU WHPX, TCG, VirtualBox, bare metal). Handle is non-zero. Verify on bare metal -- firmware LoadedImage behavior may differ from emulated.
@@ -90,7 +90,7 @@ Replace `LocateProtocol(SIMPLE_FILE_SYSTEM)` with `HandleProtocol(DeviceHandle, 
 - [x] In `load_kernel()`: same change -- already done in §1 (`bootx64.c:2450-2465`)
 - [x] If `DeviceHandle` doesn't have `SIMPLE_FILE_SYSTEM_PROTOCOL`: fall back to `LocateProtocol` with warning -- both `parse_boot_conf()` and `load_kernel()` have the same fallback pattern
 - [x] Log: `"[BOOT] Using boot device filesystem"` or `"[WARN] Boot device has no filesystem, using fallback"` -- both messages present
-- [x] `POST16(0xB092)` before filesystem open, `POST16(0xB093)` after success -- `POST16_BL_BOOT_FS` / `POST16_BL_BOOT_FS_OK` in `bootx64.c`, `POST16_BOOT_FS` / `POST16_BOOT_FS_OK` in `boot_init.h`
+- [x] `POST16(0xB092)` before filesystem open, `POST16(0xB093)` after success -- `POST16_BL_BOOT_FS` / `POST16_BL_BOOT_FS_OK` in `bootx64.c` (source of truth for 0xB0xx range; `boot_init.h` mirror removed in TODO-01 §10)
 - [x] Commit: `"boot: scope filesystem access to boot device -- no more random disk"` (d7ee0bcc)
 
 **Test checkpoint:** On QEMU with single disk, behavior unchanged. On multi-disk (SATA + NVMe test), kernel loads from correct device. Verify on bare metal multi-disk system -- firmware filesystem handle order differs from QEMU. If crash, check POST code: 0xB092 = filesystem open failed.
