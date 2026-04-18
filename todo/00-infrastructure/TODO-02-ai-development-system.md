@@ -36,8 +36,12 @@
 - [`.claude/skills/`](../../.claude/skills/) -- skill implementations and templates
 - [`scripts/copilot-review.sh`](../../scripts/copilot-review.sh) -- Copilot CLI review entry point
 - [`todo/TODO-00-INDEX.md`](../TODO-00-INDEX.md) -- root roadmap ownership
+- [`AGENTS.md`](../../AGENTS.md) -- cross-tool pointer (ships in §6; referenced here so Inputs is self-consistent after §6 lands)
+- [`CONTRIBUTING.md`](../../CONTRIBUTING.md) -- contributor-facing doc; candidate home for the §7 zero-trailer commit policy
 - -> XREF: [`00-infrastructure/TODO-01 §5`](TODO-01-developer-tooling-stack.md#5-git-hooks-and-local-automation-lifecycle) -- git hook lifecycle and CI/tooling contract (distinct from Claude Code harness hooks in `.claude/settings.json`)
 - -> XREF: [`00-infrastructure/TODO-03`](TODO-03-kernel-test-harness.md) -- kernel test harness (separate from the AI workflow regression pack owned here)
+- External reference: [Linux kernel Documentation/process/coding-assistants.rst](https://docs.kernel.org/process/coding-assistants.html) -- 2025-12 precedent for `Assisted-by:` trailers; §7 documents Impossible OS's deliberate divergence.
+- External reference: [AGENTS.md open standard](https://agents.md/) -- Linux Foundation-stewarded cross-tool instruction file; §6 adopts the convention.
 
 ## Outcome
 
@@ -45,18 +49,24 @@
 - A stable skill lifecycle: scaffold, document, validate, cross-link, and retire without drift -- and a clear "Claude-only" stance so no one ports skills sideways to an abandoned tool.
 - Hook routing and policy rules that are intentional and reviewable instead of encoded only in a large `settings.json` blob.
 - External-reviewer contract: Codex and Copilot are adversarial reviewers invoked from Claude skills, not competing instruction layers. Doctrine lives in `CLAUDE.md` alone.
-- An AI workflow regression pack that proves the repo still enforces completion-first behavior and required domain handoffs (complements [`scripts/test-tooling.sh`](../../scripts/test-tooling.sh) which already covers wrapper/hook/YAML drift).
+- Cross-tool pointer file (`AGENTS.md`) that makes the Authority Hierarchy discoverable from non-Claude tool surfaces (Codex CLI, Aider, Continue, Gemini-CLI, Zed) without duplicating doctrine.
+- Explicit AI-assist commit disclosure policy: zero-trailer stance documented in contrast to the Linux kernel 2025-12 `Assisted-by:` convention, with the stance-change condition named so the policy is author-by-decision, not oversight.
+- Autonomous-agent boundary policy: the repo explicitly states it does NOT accept autonomous coding-agent PRs (Copilot coding-agent, Devin, Cognition) and does NOT ship the files those workflows require (`copilot-setup-steps.yml`, `.github/agents/`, `.github/chatmodes/`). The refusal is documented, not implicit.
+- An AI workflow regression pack that proves the repo still enforces completion-first behavior, required domain handoffs, and the three new policy boundaries (cross-tool pointer, zero-trailer, autonomous-agent refusal). Complements [`scripts/test-tooling.sh`](../../scripts/test-tooling.sh) which already covers wrapper/hook/YAML drift.
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                      | Depends On   | Status |
-| --- | :---: | ------------------------------------------------ | ------------ | :----: |
-| 💎  |   1   | Canonical ownership and source-of-truth map      | --           |  [ ]   |
-| 💎  |   2   | Skill lifecycle, templates, and catalog rules    | §1           |  [ ]   |
-| 💎  |   3   | Hook routing and policy contract                 | §1           |  [ ]   |
-| 💎  |   4   | External-reviewer contract (Codex, Copilot)      | §1-§3        |  [ ]   |
-| 💎  |   5   | MCP, permissions, and extension boundary         | §1, §3, §4   |  [ ]   |
-| ⭐  |   6   | AI workflow regression suite                     | §1-§5        |  [ ]   |
+| ⭐  | Order | Deliverable                                        | Depends On   | Status |
+| --- | :---: | -------------------------------------------------- | ------------ | :----: |
+| 💎  |   1   | Canonical ownership and source-of-truth map        | --           |  [ ]   |
+| 💎  |   2   | Skill lifecycle, templates, and catalog rules      | §1           |  [ ]   |
+| 💎  |   3   | Hook routing and policy contract                   | §1           |  [ ]   |
+| 💎  |   4   | External-reviewer contract (Codex, Copilot)        | §1-§3        |  [ ]   |
+| 💎  |   5   | MCP, permissions, and extension boundary           | §1, §3, §4   |  [ ]   |
+| 💎  |   6   | `AGENTS.md` cross-tool pointer file                | §1, §4       |  [ ]   |
+| 💎  |   7   | AI-assist commit disclosure policy                 | §1           |  [ ]   |
+| ⭐  |   8   | Autonomous-agent boundary policy                   | §4, §5       |  [ ]   |
+| ⭐  |   9   | AI workflow regression suite                       | §1-§8        |  [ ]   |
 
 > 💎 = parity work: mature engineering repos document ownership, automation rules, and policy boundaries.
 > ⭐ = exclusive work: Impossible OS can treat its AI workflow as a first-class subsystem with regression checks, not as untracked prompt folklore.
@@ -140,7 +150,57 @@ Permissions and extensions are part of the architecture. They need clear boundar
 
 ---
 
-## 6. AI Workflow Regression Suite
+## 6. `AGENTS.md` Cross-Tool Pointer File
+
+The `AGENTS.md` convention emerged 2025 and was stewarded by the Agentic AI Foundation under the Linux Foundation (Aug 2025). It is tool-neutral and read by Codex, Copilot, Aider, Continue, Gemini-CLI, Zed, and others. Impossible OS uses `CLAUDE.md` as authoritative doctrine (Authority Hierarchy row 2), so `AGENTS.md` exists as a thin stub that (a) tells cross-tool readers where to find the real doctrine, (b) surfaces the subordinate-reviewer contract so tools used as reviewers see our rules, and (c) keeps the Claude-Code-only stance discoverable from the cross-tool entry point. `AGENTS.md` NEVER redefines doctrine; it points at `CLAUDE.md`.
+
+- [ ] Create `AGENTS.md` at repo root. First paragraph states: "Impossible OS uses Claude Code as its master/orchestrator. Doctrine lives in `CLAUDE.md` -- read it first. This file is a pointer for non-Claude tools (Codex, Copilot, Aider, Continue, Gemini-CLI, Zed) used in subordinate reviewer or reader roles."
+- [ ] Second paragraph: verbatim copy of the Authority Hierarchy one-sentence master statement + a compact 3-bullet summary of the 5 invariants (doctrine in `CLAUDE.md` only; reviewers return findings not edits; `CLAUDE.md` wins on conflict). Full table lives in `CLAUDE.md` + this TODO; `AGENTS.md` references both.
+- [ ] Third paragraph: "If you are an autonomous coding agent, stop here -- see §8 Autonomous-agent boundary policy. Impossible OS commits are authored by human + Claude Code only."
+- [ ] Link back to this TODO (`todo/00-infrastructure/TODO-02-ai-development-system.md`) as the authoritative AI-workflow roadmap.
+- [ ] Limit `AGENTS.md` to ~60 lines. Any new doctrine text that tempts addition here is a signal it belongs in `CLAUDE.md` instead.
+- [ ] Add regression-pack check (§9): `AGENTS.md` exists, points at `CLAUDE.md`, does not restate doctrine verbatim (drift guard).
+- [ ] Commit: `"docs/ai: add AGENTS.md cross-tool pointer to CLAUDE.md"`
+
+**Test checkpoint:** A Codex/Aider/Continue user pointed at the repo root reads `AGENTS.md`, follows the pointer to `CLAUDE.md`, and understands their role as subordinate reviewer without needing to re-learn doctrine. `AGENTS.md` remains under 60 lines at every commit.
+
+---
+
+## 7. AI-Assist Commit Disclosure Policy
+
+The Linux kernel merged `Documentation/process/coding-assistants.rst` on 2025-12-23 (Sasha Levin, approved by Corbet) requiring AI-assisted patches to carry an `Assisted-by: AGENT_NAME:MODEL_VERSION [TOOL]` trailer alongside the human `Signed-off-by:`. Fedora adopted a similar policy October 2025. Impossible OS is a kernel project and operates in the same space but has an explicit `feedback_no_coauthor` user preference: commits do NOT carry `Co-Authored-By: Claude` or equivalent attribution. This section documents the project's stance explicitly so it is neither accidental nor ambiguous, and names the condition under which the stance would change.
+
+- [ ] Create a short "AI-assisted commit policy" block in `CLAUDE.md` (or in `CONTRIBUTING.md` if a contributor-facing file exists) stating the current stance: (a) the project is Claude Code-orchestrated by design -- attribution is implicit in the project identity; (b) commits are NOT to carry `Co-Authored-By:`, `Assisted-by:`, or similar AI-attribution trailers; (c) this differs from the Linux-kernel 2025-12 convention intentionally; (d) the policy is authored-by-decision, not by oversight.
+- [ ] State the "stance change condition": if Impossible OS ever accepts external AI-assisted contributions from non-project-members, the project adopts `Assisted-by: TOOL:MODEL` trailers per the Linux kernel grammar. Until then, the zero-trailer stance stands.
+- [ ] Document the telltale-AI-patch screening bar: generic commits that don't match our stamp format, phantom helpers, pointless refactors "for consistency" without a named caller, commits that skip the Codex adversarial-review step when a section was implemented -- all caught by the existing review workflow (implement-todo-section steps 13-18). Name this as the project's equivalent of the Linux "AI slop" screening.
+- [ ] Cross-reference Linux's [`Documentation/process/coding-assistants.rst`](https://docs.kernel.org/process/coding-assistants.html) so a future maintainer comparing conventions sees the precedent and the diff.
+- [ ] Regression-pack check (§9): `CLAUDE.md` or `CONTRIBUTING.md` contains the zero-trailer policy AND the stance-change condition. If either disappears, fail with a specific repair pointer.
+- [ ] Commit: `"docs/ai: document zero-trailer AI-assist commit policy + stance-change condition"`
+
+**Test checkpoint:** A reviewer reading any recent commit sees no AI-attribution trailer. A future contributor asking "why no Co-Authored-By? why no Assisted-by?" finds a direct written answer in doctrine (CLAUDE.md / CONTRIBUTING.md), linked to the Linux precedent and the stance-change condition.
+
+---
+
+## 8. Autonomous-Agent Boundary Policy
+
+Copilot's coding-agent (the autonomous "file the issue, get a PR" agent), Devin, and equivalent autonomous agents operate by running tasks in sandboxes and opening PRs without per-step human authorship. Microsoft ships `.github/workflows/copilot-setup-steps.yml` + a default-on firewall allowlist for this mode. Impossible OS's Authority Hierarchy invariant #5 states "Claude Code is also the interactive agent. A human operator talks to Claude; Claude dispatches subordinates. Treating Codex or Copilot as a direct-edit or direct-commit tool violates the hierarchy." That invariant needs to be enforceable as policy, not just prose -- this section documents the boundary and what the repo explicitly does NOT ship.
+
+- [ ] Document in `CLAUDE.md` and `docs/infrastructure/ai-system.md` (ships with §1): Impossible OS does NOT use autonomous coding agents. No Copilot coding-agent, no Devin, no Cognition-style agents open PRs on this repo. Every commit is authored by a human + Claude Code interactive session.
+- [ ] State the reasons: (a) kernel-critical code requires the `implement-todo-section` Steps 13-18 review pipeline that autonomous agents don't follow; (b) the no-parallel-skill-trees invariant means autonomous agents would run without the domain code-quality gates + `receiving-code-review` discipline that are central to the project; (c) the `feedback_no_substandard_code` memory explicitly rejects "works on QEMU" shortcuts that autonomous agents produce by default.
+- [ ] Explicitly state what the repo does NOT ship as a consequence: no `.github/workflows/copilot-setup-steps.yml`, no Copilot coding-agent firewall allowlist, no `.github/agents/*.agent.md` profiles. These are legitimate files in repos that accept autonomous agents; their absence here is deliberate.
+- [ ] Name the "if this changes" condition: autonomous-agent support lands as a new TODO with its own review pipeline, firewall allowlist, and `copilot-setup-steps.yml` equivalent. Until then, any PR that appears to be autonomous-agent-authored fails review.
+- [ ] Name the MCP server policy as a corollary: MCP servers that can autonomously commit, push, or execute long-running tasks without per-step human approval are forbidden from this repo's `.claude/settings.json` and any user-local config used against this repo. Read-only MCP servers (filesystem, git-read, github-read) are fine.
+- [ ] Regression-pack check (§9): absence of `.github/workflows/copilot-setup-steps.yml`, absence of `.github/agents/` directory, absence of `.github/chatmodes/` directory. Presence of any of these three paths triggers a policy-drift finding.
+- [ ] Commit: `"docs/ai: document autonomous-agent boundary policy -- interactive only"`
+
+> [!TIP]
+> This is competitive work. Mature Win11/Linux repos document whether they accept autonomous-agent PRs; fewer document WHY and what they refuse to ship as a consequence. Making the refusal explicit (and linking it to the Authority Hierarchy) keeps the Claude-Code-only stance enforceable long-term.
+
+**Test checkpoint:** A maintainer can state the project's autonomous-agent stance in one sentence with a direct citation. A contributor attempting to enable Copilot coding-agent or Devin against this repo finds a documented refusal path before they waste cycles trying. The regression pack catches a drift where someone drops a `copilot-setup-steps.yml` into `.github/workflows/`.
+
+---
+
+## 9. AI Workflow Regression Suite
 
 This is the refinement step: test the workflow itself.
 
@@ -150,6 +210,9 @@ This is the refinement step: test the workflow itself.
 - [ ] Add an AI workflow regression pack (`scripts/test-ai-system.sh`) that validates key invariants:
   - **Authority Hierarchy present**: `todo/00-infrastructure/TODO-02-ai-development-system.md` and `docs/infrastructure/ai-system.md` both contain the "Claude Code is the master" statement and the 5 hierarchy invariants (grep for each invariant's first phrase). Drift or deletion = fail with a pointer to this section.
   - **Claude-Code-only declaration in CLAUDE.md**: `CLAUDE.md` names "Claude Code-only" and references the removal of `.cursor/` on 2026-04-18. If this line disappears, the authority doctrine has silently fragmented and the regression catches it.
+  - **`AGENTS.md` pointer file (§6)**: `AGENTS.md` exists at repo root, contains the phrase "Claude Code" and a link to `CLAUDE.md`, stays under 60 lines, and does NOT restate doctrine (byte-compare: `AGENTS.md` must be ~10x shorter than `CLAUDE.md` and must not copy any of `CLAUDE.md`'s doctrine paragraphs verbatim). Drift guard: a future edit that copy-pastes doctrine into `AGENTS.md` fails the length check.
+  - **Zero-trailer commit policy (§7)**: `CLAUDE.md` or `CONTRIBUTING.md` contains the "no `Co-Authored-By:` / no `Assisted-by:`" policy statement AND the stance-change condition. A scan of the last 100 commits via `git log --format=%B HEAD~100..HEAD` flags any commit body containing `Co-Authored-By:` / `Assisted-by:` / `AI-Author:` as a policy violation.
+  - **Autonomous-agent boundary (§8)**: `.github/workflows/copilot-setup-steps.yml` does NOT exist, `.github/agents/` does NOT exist, `.github/chatmodes/` does NOT exist. Presence of any of these three triggers a policy-drift finding with a pointer to §8.
   - **Skill catalog consistency**: every directory under `.claude/skills/` has a `SKILL.md` AND an entry in the CLAUDE.md Skills table AND (if auto-loading) an entry in `.claude/skills/README.md` / the system-reminder skill list. Orphan directories = fail.
   - **Doctrine presence**: CLAUDE.md contains the completion-first wording, the bare-metal-first paragraph, the no-Unicode-dashes rule, the no-live-boot-infra-in-tests rule, the SMP-from-day-one rule. Drop-word check against a short canonical list. (Why: these are the doctrine lines `CLAUDE.md` authoritatively owns; if any disappear, the hierarchy is hollow -- Claude-Code-the-master has no doctrine to enforce.)
   - **Root-index link integrity**: all AI-system links in `todo/TODO-00-INDEX.md`, `todo/00-infrastructure/INDEX.md`, and `CLAUDE.md` resolve to real files.
@@ -168,17 +231,21 @@ This is the refinement step: test the workflow itself.
 
 ## OS Comparison
 
-| ⭐ | Feature                         | 🪟 Win11 projects      | 🐧 Linux projects      | 🚀 Impossible OS |
-| --- | ------------------------------- | ---------------------- | ---------------------- | ----------------- |
-| 💎 | Repo-codified AI instructions   | ⚠️ Emerging practice   | ⚠️ Emerging practice   | ⬜ §1            |
-| 💎 | Skill/catalog ownership         | ❌ Often ad hoc        | ❌ Often ad hoc        | ⬜ §2            |
-| 💎 | Hook policy matrix              | ⚠️ Usually implicit    | ⚠️ Usually implicit    | ⬜ §3            |
-| 💎 | External-reviewer contract      | ❌ Rare                | ❌ Rare                | ⬜ §4            |
-| 💎 | Permissions/extension boundary  | ⚠️ Varies by repo      | ⚠️ Varies by repo      | ⬜ §5            |
-| ⭐ | AI workflow regression suite    | ❌ Rare in practice    | ❌ Rare in practice    | ⬜ §6            |
+| ⭐ | Feature                               | 🪟 Win11 projects                                         | 🐧 Linux projects                                              | 🚀 Impossible OS                                                        |
+| --- | ------------------------------------- | --------------------------------------------------------- | -------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| 💎 | Repo-codified AI instructions         | ✅ `.github/copilot-instructions.md` standard             | ⚠️ Emerging (AGENTS.md)                                        | ⬜ §1 ownership map + authoritative `CLAUDE.md`                         |
+| 💎 | Skill/catalog ownership               | ⚠️ `.github/chatmodes/` + `/prompts/` emerging            | ❌ Often ad hoc                                                | ⬜ §2 skill lifecycle + no-parallel-trees rule                          |
+| 💎 | Hook policy matrix                    | ⚠️ `.vscode/mcp.json` + IDE settings, usually implicit    | ⚠️ Usually implicit                                            | ⬜ §3 routing matrix + reminder-vs-block classification                 |
+| 💎 | External-reviewer contract            | ❌ Rare                                                   | ❌ Rare                                                        | ⬜ §4 Codex + Copilot reviewer-not-authority                            |
+| 💎 | Permissions/extension boundary        | ⚠️ Varies by repo                                         | ⚠️ Varies by repo                                              | ⬜ §5 allow/deny tiers + `.local.json` split                            |
+| 💎 | Cross-tool AI pointer (`AGENTS.md`)   | ⚠️ Emerging (GitHub awesome-copilot stub)                 | ✅ Linux Foundation-backed (Aug 2025) open standard            | ⬜ §6 thin pointer to `CLAUDE.md`; no doctrine duplication              |
+| 💎 | AI-assist commit disclosure           | ❌ No standard convention                                 | ✅ Linux kernel `Assisted-by:` trailer (2025-12)               | ⬜ §7 explicit zero-trailer policy + stance-change condition            |
+| ⭐ | Autonomous-agent boundary policy      | ⚠️ Copilot coding-agent + firewall allowlist available    | ❌ Rare -- no formal repo boundary policy                      | ⬜ §8 interactive-only; no coding-agent / Devin / copilot-setup-steps   |
+| ⭐ | AI workflow regression suite          | ❌ Rare in practice                                       | ❌ Rare in practice (Promptfoo/Guardrails for AI apps only)    | ⬜ §9 skill catalog + hierarchy + trailer-policy + boundary checks       |
 
 > **After §1-§5:** Impossible OS documents its (Claude Code-only) AI workflow as first-class infrastructure: explicit ownership, documented hooks, and a clear external-reviewer contract.
-> **After §6:** the repo surpasses typical public practice by testing the AI workflow itself as maintained infrastructure.
+> **After §6-§7:** reaches parity with the 2025-2026 Linux Foundation `AGENTS.md` standard and the Linux kernel's AI-assist commit policy, while preserving its zero-trailer stance explicitly.
+> **After §8-§9:** the repo surpasses typical public practice by stating its autonomous-agent boundary (what it refuses to ship as a consequence of the Authority Hierarchy) and by testing the AI workflow itself as maintained infrastructure.
 
 ## Unit Tests
 
@@ -187,8 +254,13 @@ This is the refinement step: test the workflow itself.
 - [ ] Create `scripts/test-ai-system.sh` with:
   - skill catalog consistency (every `.claude/skills/*` dir is indexed in CLAUDE.md + README)
   - doctrine-word-presence checks across `CLAUDE.md` (completion-first, bare-metal-first, SMP-from-day-one, no-Unicode-dashes, no-live-boot-infra-in-tests)
+  - Authority Hierarchy present in TODO-02 + `docs/infrastructure/ai-system.md` (ships with §1)
+  - `AGENTS.md` exists + under 60 lines + points to CLAUDE.md + does not restate doctrine (§6 regression)
+  - Zero-trailer policy documented + last-100-commits scan for `Co-Authored-By:` / `Assisted-by:` violations (§7 regression)
+  - Autonomous-agent boundary enforced: `.github/workflows/copilot-setup-steps.yml` / `.github/agents/` / `.github/chatmodes/` do NOT exist (§8 regression)
   - root/index link resolution for all AI-system roadmap files
   - no-`.cursor/`-residue check (removed 2026-04-18; should not reappear via copy-paste)
+  - no-parallel-skill-tree check (`.codex/skills/`, `.copilot/skills/`, etc. do not exist)
   - `.claude/settings.json` valid JSON
   - `.github/copilot-instructions.md` exists and references external-reviewer contract
 - [ ] Wire the AI regression pack into `make test-ai-system` + `.github/workflows/build.yml`
@@ -204,5 +276,8 @@ This is the refinement step: test the workflow itself.
 - [ ] `scripts/test-ai-system.sh` fails on missing links, skill-catalog drift, `.cursor/`-residue, hierarchy-block deletion, or parallel-skill-tree creation; passes on a healthy repo
 - [ ] Hook policy documentation explains which behaviors are reminders versus hard blocks
 - [ ] The Claude Code-only stance is stated once in `CLAUDE.md` and referenced from this TODO; no parallel skill tree exists under `.cursor/`, `.codex/`, or similar
+- [ ] `AGENTS.md` exists at repo root, under 60 lines, points to `CLAUDE.md`, does not duplicate doctrine (§6)
+- [ ] Zero-trailer AI-assist commit policy is documented in `CLAUDE.md` or `CONTRIBUTING.md`, with the stance-change condition named explicitly (§7). A commit-log scan finds zero `Co-Authored-By:` / `Assisted-by:` trailers in recent history.
+- [ ] Autonomous-agent boundary is documented: repo does NOT ship `.github/workflows/copilot-setup-steps.yml`, `.github/agents/`, or `.github/chatmodes/`; the refusal-to-ship is explicit, not accidental (§8)
 
-> **Test runner:** N/A (host-side shell + docs only; no kernel test surface) | validation: `bash scripts/test-ai-system.sh` (ships in §6) + [`build.yml`](../../.github/workflows/build.yml) CI step once §6 lands. Complements `bash scripts/test-tooling.sh` (owned by [TODO-01 §10](TODO-01-developer-tooling-stack.md#10-smoke-test-post16-assertions)).
+> **Test runner:** N/A (host-side shell + docs only; no kernel test surface) | validation: `bash scripts/test-ai-system.sh` (ships in §9) + [`build.yml`](../../.github/workflows/build.yml) CI step once §9 lands. Complements `bash scripts/test-tooling.sh` (owned by [TODO-01 §10](TODO-01-developer-tooling-stack.md#10-smoke-test-post16-assertions)).
