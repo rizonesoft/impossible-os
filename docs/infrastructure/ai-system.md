@@ -1,6 +1,6 @@
 # AI Development System -- Ownership Map
 
-> Canonical reference for who-owns-what across the Impossible OS AI surface. `CLAUDE.md` and `README.md` link here instead of restating ownership. Roadmap ownership lives in [TODO-02 AI Development System](../../todo/00-infrastructure/TODO-02-ai-development-system.md).
+> Canonical reference for who-owns-what across the Impossible OS AI surface. `CLAUDE.md` links here from its "Skills" section; [`docs/infrastructure/index.md`](index.md) lists this doc so it is discoverable from the Infrastructure landing page. Roadmap ownership lives in [TODO-02 AI Development System](../../todo/00-infrastructure/TODO-02-ai-development-system.md).
 
 ## Authority Hierarchy (read this first)
 

@@ -90,8 +90,8 @@ The first job is to state clearly which file owns what.
 
 > **Test runner:** N/A (docs-only) | validation: markdown links resolve, 4 stale refs removed (copilot-instructions.md `.cursor/` row, TODO-00-INDEX.md line 42, 00-infrastructure/INDEX.md line 32, CLAUDE.md Skills section updated with matrix link); §9 regression suite will add automated checks when it ships.
 
-> **Verified:** 2026-04-19 | 7/7 items | build N/A (docs-only) | 7 files changed | 4 stale Cursor refs swept
-> **Quality reviewed:** 2026-04-19 | Codex 1x (adversarial) | 3M+1L fixed (Cursor row in copilot-instructions, fake scripts/codex-companion.mjs path, 13->count-dropped, verbatim->mirrored stamp clarified), 0 open | scope: N/A (docs-only, no domain code-quality skill applies)
+> **Verified:** 2026-04-19 | commit `52b2a440` | 7/7 items | build N/A (docs-only) | 8 files changed | 5 stale Cursor refs swept
+> **Quality reviewed:** 2026-04-19 | Codex 3x (adversarial x2, consistency) | 4M+2L fixed (Cursor row in copilot-instructions, fake scripts/codex-companion.mjs path, stale 13-count dropped, verbatim->mirrored stamp, false README link claim, duplicate invariant #5 in §8), 0 open | scope: N/A (docs-only)
 
 ---
 
@@ -189,7 +189,7 @@ The Linux kernel merged `Documentation/process/coding-assistants.rst` on 2025-12
 
 ## 8. Autonomous-Agent Boundary Policy
 
-Copilot's coding-agent (the autonomous "file the issue, get a PR" agent), Devin, and equivalent autonomous agents operate by running tasks in sandboxes and opening PRs without per-step human authorship. Microsoft ships `.github/workflows/copilot-setup-steps.yml` + a default-on firewall allowlist for this mode. Impossible OS's Authority Hierarchy invariant #5 states "Claude Code is also the interactive agent. A human operator talks to Claude; Claude dispatches subordinates. Treating Codex or Copilot as a direct-edit or direct-commit tool violates the hierarchy." That invariant needs to be enforceable as policy, not just prose -- this section documents the boundary and what the repo explicitly does NOT ship.
+Copilot's coding-agent (the autonomous "file the issue, get a PR" agent), Devin, and equivalent autonomous agents operate by running tasks in sandboxes and opening PRs without per-step human authorship. Microsoft ships `.github/workflows/copilot-setup-steps.yml` + a default-on firewall allowlist for this mode. Authority Hierarchy invariant #5 (see top of this TODO) owns the interactive-agent boundary; this section documents how that boundary is enforced as repo policy and what the repo explicitly does NOT ship as a consequence.
 
 - [ ] Document in `CLAUDE.md` and `docs/infrastructure/ai-system.md` (ships with §1): Impossible OS does NOT use autonomous coding agents. No Copilot coding-agent, no Devin, no Cognition-style agents open PRs on this repo. Every commit is authored by a human + Claude Code interactive session.
 - [ ] State the reasons: (a) kernel-critical code requires the `implement-todo-section` Steps 13-18 review pipeline that autonomous agents don't follow; (b) the no-parallel-skill-trees invariant means autonomous agents would run without the domain code-quality gates + `receiving-code-review` discipline that are central to the project; (c) the `feedback_no_substandard_code` memory explicitly rejects "works on QEMU" shortcuts that autonomous agents produce by default.
