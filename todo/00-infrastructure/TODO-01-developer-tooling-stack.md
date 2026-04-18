@@ -367,10 +367,13 @@ Migrate `scripts/test-smoke.sh`'s boot-pattern match list from raw log-message s
 | 💎 | Named VM/debug profiles       | ⚠️ Often ad hoc           | ⚠️ Often ad hoc            | ✅ §4 -- machine-matrix.md + bare-metal row                                      |
 | 💎 | Managed local hooks           | ⚠️ Varies by repo         | ✅ Common in many repos    | ✅ §5 -- install-hooks.sh one-command bootstrap + sentinel-gated opt-in pre-push |
 | 💎 | Workflow/artifact policy      | ✅ Standard CI practice   | ✅ Standard CI practice    | ✅ §6 -- 5 workflows classified, wrapper-aligned, retention/runner policy codified |
-| ⭐ | One-command tooling doctor    | ❌ Rare in OS repos       | ❌ Rare in OS repos        | ⬜ §7                                                                            |
+| ⭐ | One-command tooling doctor    | ❌ Rare in OS repos       | ❌ Rare in OS repos        | ✅ §7 -- scripts/tooling-doctor.sh + structured JSON emitter                     |
+| 💎 | Unified launcher extra-args   | ⚠️ Per-script ad hoc      | ⚠️ Per-script ad hoc       | ✅ §8 -- `-ExtraArgs` surface uniform across every scenario launcher             |
+| ⭐ | Cross-reference drift gate    | ❌ Unenforced             | ❌ Unenforced              | ✅ §9 -- lint rejects numeric TODO shorthand outside `todo/`; CI-gated           |
+| ⭐ | Boot smoke assertions         | ⚠️ Log-string matches     | ⚠️ Log-string matches      | ✅ §10 -- POST16 manifest drift-detects; inverse-validated per emission          |
 
 > **After §1-§6:** Impossible OS reaches the same baseline as well-run Windows and Linux projects for setup, reproducible environments, wrappers, hooks, and CI policy.
-> **After §7:** the repo gains a cleaner operator experience than either baseline by shipping a first-class doctor/regression path for its own developer tooling.
+> **After §7-§10:** the repo pulls ahead of either baseline with a first-class operator doctor, drift-guarded cross-references, and boot assertions that cannot silently regress when a contributor edits a printf.
 
 ## Unit Tests
 

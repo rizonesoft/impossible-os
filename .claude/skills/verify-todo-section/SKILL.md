@@ -55,7 +55,7 @@ description: Verify an already-implemented TODO section through the full quality
    - **Cross-TODO sync:** reconcile reciprocally (downgrade only).
    - **Deferred-item check:** scan earlier sections for "deferred to §N" where N is this section. If not resolved, flag.
    - **Implementation Order row:** must match section state. Downgrade conservatively.
-   - **OS Comparison row:** must match section state. Downgrade if claimed Done but evidence shows Partial.
+   - **OS Comparison row:** must match section state. Downgrade if claimed Done but evidence shows Partial. If the Implementation Order table has an `[x]` entry for this section and the OS Comparison table is MISSING a row for it entirely, add one (missing row = drift, same as stale row). Also check that the post-OS-Comparison summary sentences cover this section; extend them if they cap out at an earlier §.
    - **Verified stamp + optional Accepted/Deferred stamp:** if ALL `[x]` items survived (no downgrades), add or update IMMEDIATELY after the **Test checkpoint** paragraph. Compact pipe-separated format -- each stamp is ONE line of pipe-separated fields, not a paragraph. No blank lines between stamp lines.
      ```
      > **Verified:** YYYY-MM-DD | commit `<hash>` | N/M items | build OK[ | <evidence token>]

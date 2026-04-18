@@ -82,7 +82,7 @@ description: Full review of a TODO section -- adversarial Codex, dead code, cons
 
 ### Phase 4: Stamp + Commit
 
-14. **Reconcile tables** -- IO row, OS Comparison row.
+14. **Reconcile tables** -- Implementation Order row, OS Comparison row. If the Implementation Order table has an `[x]` entry that does NOT have a corresponding row in the OS Comparison table, ADD the missing row (a missing row is as much drift as a stale one). Check that the post-OS-Comparison summary sentences cover the sections just shipped; if they cap out at an earlier §, extend them.
 
 15. **Accepted-XREF concreteness check (MANDATORY)** -- before writing any "Accepted" line in the stamp, prove every XREF target points at a **concrete, actionable `[ ]` checklist item** that would close the gap when marked `[x]`. A prose mention, an enum definition, or a section title alone is NOT a concrete item.
 
