@@ -1,6 +1,6 @@
 ---
 name: quality-review-section
-description: Deep quality review of an implemented TODO section -- industry standards compliance, optimization opportunities, architectural fitness, and Win11/Linux parity analysis. Unlike verify-todo-section (compliance audit), this skill asks "is it done RIGHT?" not just "is it done?" Use after verification passes, or when you want to improve an already-working section.
+description: Deep quality review of an implemented TODO section -- industry standards compliance, optimization opportunities, architectural fitness, and Win11/Linux parity analysis. Unlike review-todo-section (post-implementation quality sweep with stamps) or verify-todo-section (audit-mode over review), this skill asks "is it done RIGHT?" -- deep improvements to already-working code. Use after review passes, or when you want to improve an already-working section.
 ---
 
 # Quality Review Section
@@ -101,7 +101,7 @@ description: Deep quality review of an implemented TODO section -- industry stan
     ```
     > **Quality reviewed:** YYYY-MM-DD | Codex Nx (<kinds>) | <H>H+<M>M+<L>L fixed, <D> open | scope: <skill or "N/A (reason)">
     ```
-    If findings were deferred, add a `> **Accepted:**` (out-of-scope, owned elsewhere) or `> **Deferred:**` (in-scope, owned later) line on its OWN blockquote line between Verified and Quality reviewed. Each deferred line requires a severity tag `[Critical|H|M|L]` at the start and ends with a hook-enforced `(item: "..." at line N)` XREF parenthetical; optional `(reason: <short>)` when the defer-rationale is not obvious from the finding text. See `verify-todo-section` SKILL.md for the full field rules, Accepted-vs-Deferred semantic split, Verified evidence-token vocabulary, and `<details>` escape hatch. Do NOT re-paste per-finding prose into the Quality-reviewed line; counts + XREFs carry the audit trail.
+    If findings were deferred, add a `> **Accepted:**` (out-of-scope, owned elsewhere) or `> **Deferred:**` (in-scope, owned later) line on its OWN blockquote line between Verified and Quality reviewed. Each deferred line requires a severity tag `[Critical|H|M|L]` at the start and ends with a hook-enforced `(item: "..." at line N)` XREF parenthetical; optional `(reason: <short>)` when the defer-rationale is not obvious from the finding text. See `review-todo-section` SKILL.md step 16 for the full field rules, Accepted-vs-Deferred semantic split, Verified evidence-token vocabulary, and `<details>` escape hatch. Do NOT re-paste per-finding prose into the Quality-reviewed line; counts + XREFs carry the audit trail.
 
 13. **Commit and push** -- `"quality: <TODO> §N -- <summary>"`
 

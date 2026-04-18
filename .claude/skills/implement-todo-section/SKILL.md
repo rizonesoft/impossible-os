@@ -5,7 +5,7 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
 
 # Implement TODO Section
 
-> `verify-todo-section` has its own streamlined workflow (13 steps). The two skills share principles (HARD GATE, Codex review, scope-gap protocol, guardrails) but NOT step numbers. Editing this file does not require editing verify.
+> `review-todo-section` owns the full post-commit quality pipeline invoked at step 20. `verify-todo-section` is a thin audit-mode wrapper over review (same workflow, downgrade-only stance). Stamp field rules live in review; both this skill and verify reference them.
 
 ## Execution Discipline
 
@@ -135,7 +135,7 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
         - If the inbound entry is PARTIALLY resolved (you closed one of several concerns on the line): rewrite the line, dropping the resolved concern while preserving the remaining XREFs.
         - If uncertain, leave the entry and note the ambiguity in chat so the user can decide.
 
-      **Why this step exists:** otherwise Accepted/Deferred lines accumulate indefinitely and lose their value as a "what's still deferred on this section" scan target. The XREF target moving to `[x]` is exactly when the inbound reference becomes stale. (Semantic reminder: `Accepted:` = out-of-scope for the emitting section, owner is elsewhere; `Deferred:` = in-scope for the emitting TODO, owner is later. Both need sweeping when their target closes. See `verify-todo-section` SKILL.md for the full stamp field rules including severity tags and reason parentheticals.)
+      **Why this step exists:** otherwise Accepted/Deferred lines accumulate indefinitely and lose their value as a "what's still deferred on this section" scan target. The XREF target moving to `[x]` is exactly when the inbound reference becomes stale. (Semantic reminder: `Accepted:` = out-of-scope for the emitting section, owner is elsewhere; `Deferred:` = in-scope for the emitting TODO, owner is later. Both need sweeping when their target closes. See `review-todo-section` SKILL.md step 16 for the full stamp field rules including severity tags and reason parentheticals.)
     - Any checklist items in other sections affected by this implementation.
     - **PE export table sync:** if this section implemented new public APIs callable from user-mode, verify they're in `s_kernel32_exports[]`/`s_ntdll_exports[]` in `pe.c`.
     - **SSDT audit trigger:** if this section implemented or modified SSDT handlers, recommend running `/audit-ssdt` after commit to verify master table consistency.
@@ -177,9 +177,9 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
 >
 > **Pattern to watch for:** "Build passes, looks straightforward, I'll just commit." That thought is the signal to STOP. The straightforward changes are exactly the ones where review catches the bug you didn't think about.
 
-## Relationship to verify-todo-section
+## Relationship to review-todo-section and verify-todo-section
 
-`verify-todo-section` has its own streamlined 13-step workflow optimized for auditing existing code. The two skills share principles (HARD GATE, Codex review, scope-gap protocol, guardrails) and resources ([scope-gap-protocol.md](scope-gap-protocol.md), [build-evidence.md](build-evidence.md)) but NOT step numbers. Editing this file does not require editing verify, and vice versa.
+`review-todo-section` owns the post-commit quality pipeline (adversarial + quality Codex + domain gates + stamps). Step 20 of this skill invokes it. `verify-todo-section` is a thin audit-mode wrapper over review for auditing already-committed work (downgrade-only; never marks new `[x]`). All three skills share [scope-gap-protocol.md](scope-gap-protocol.md) and [build-evidence.md](build-evidence.md); stamp field rules live in review.
 
 ## Guardrails
 

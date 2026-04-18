@@ -27,7 +27,7 @@ Every live skill below has a matching row in [`../../CLAUDE.md`](../../CLAUDE.md
 | Skill                                        | Purpose                                                                 |
 | -------------------------------------------- | ----------------------------------------------------------------------- |
 | [`review-todo-section`](review-todo-section/)| Post-implementation review with MANDATORY Codex adversarial + quality   |
-| [`verify-todo-section`](verify-todo-section/)| Compliance audit -- is it done? (evidence-based, conservative)          |
+| [`verify-todo-section`](verify-todo-section/)| Audit-mode wrapper over review -- downgrade-only, never promotes to `[x]` |
 | [`quality-review-section`](quality-review-section/) | Is it done RIGHT? -- standards, optimization, Win11/Linux parity |
 | [`audit-ssdt`](audit-ssdt/)                  | SSDT registration vs master tables; insert missing prerequisite items   |
 
