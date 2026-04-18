@@ -1,3 +1,11 @@
+<!--
+SKILL.md template -- Shape A (Workflow skill).
+
+For code-quality skills (auto-loaded on path match, e.g. boot-code-quality,
+kernel-code-quality), use Shape B instead. See
+docs/infrastructure/skill-authoring.md "Skill Template (canonical sections)"
+for both shapes and which to pick.
+-->
 ---
 name: skill-slug-goes-here
 description: One-sentence verb-phrase of what this skill does. Use when <concrete trigger conditions>. Auto-loads when <file-path pattern or event> (optional; only if a harness hook invokes this skill).

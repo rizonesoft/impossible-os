@@ -51,13 +51,34 @@ The README under `.claude/skills/` is the in-tree catalog. Every live skill MUST
 
 ## Skill Template (canonical sections)
 
-Every SKILL.md MUST have these sections; order is the default but high-rigor skills may front-load a discipline callout.
+Two canonical shapes cover every skill in the repo. Pick the one that matches your skill's purpose.
 
-1. **Frontmatter** (`name`, `description`) -- structure described in step 2 above. **Description is the canonical trigger surface** -- if it states concrete invocation conditions (e.g. "Use when the user asks 'validate TODO-XX'"), the skill MAY omit `## Use This Skill When` in favour of a Pipeline-first layout.
+**Shape A -- Workflow skill** (most skills: TODO workflow, review, Codex dispatch, debugging). A mechanical procedure Claude executes on demand.
+
+1. **Frontmatter** (`name`, `description`) -- structure described in step 2 of Lifecycle above. The description is the canonical trigger surface; if it states concrete invocation conditions ("Use when..."), the `## Use This Skill When` section is optional.
 2. **`# Human Title`** -- H1 heading matching the skill's purpose.
-3. **`## Use This Skill When`** -- bullet list of concrete triggers. REQUIRED for new skills and for user-invoked skills whose description is short. OPTIONAL for high-rigor skills that lead with `## Execution Discipline` AND carry full trigger language in the frontmatter `description` field (current exceptions: `implement-todo-section`, `review-todo-section`). If the description does not state triggers, this section is not optional.
-4. **`## Workflow`** (or **`## Pipeline`**) -- numbered steps. Every skill prescribes a mechanical procedure; this is it.
-5. **`## Guardrails`** (or **`## Rules`**) -- what the skill must NOT do, what it must always do, what is non-negotiable.
+3. **`## Use This Skill When`** (required, with two exceptions below) -- bullet list of concrete triggers.
+   - **Exception 1 -- frontmatter trigger carry.** High-rigor skills that lead with `## Execution Discipline` and carry full trigger language in the frontmatter `description` MAY omit this section. Current exceptions: `implement-todo-section`, `review-todo-section`, `quality-review-section`.
+   - **Exception 2 -- auto-triggered.** Skills invoked by a harness hook (auto-load via `description` matcher or a PostToolUse hook reminder) have their triggers in `.claude/settings.json`; this section is still useful as human-readable context but is optional.
+4. **`## Workflow`** or **`## Pipeline`** -- numbered steps. The mechanical procedure.
+5. **`## Guardrails`** or **`## Rules`** -- what the skill must NOT do, what it must always do. Optional for skills whose workflow steps already encode the constraints inline (current: `debug-session`).
+
+**Shape B -- Code-quality skill** (5 skills: `boot-code-quality`, `kernel-code-quality`, `desktop-code-quality`, `shell-code-quality`, `userland-code-quality`). Pre-write/post-write gates for a specific source-tree area. Auto-loads on path match via `.claude/settings.json` hooks; never user-invoked.
+
+1. **Frontmatter** (`name`, `description`) -- `description` MUST end with "Auto-loads when editing <path>/ files." so the harness hook has a clear invariant to enforce.
+2. **`# Human Title`**.
+3. **`## When This Applies`** -- names the exact path-glob that triggers auto-load (e.g. "Every time you create or modify a `.c`/`.h`/`.asm` file under `src/boot/`.").
+4. **`## Pre-Write Checklist`** -- numbered gates (Gate 1, Gate 2, ...) that must pass before writing code. Each gate has its own `###` subheading with a checkbox list.
+5. **`## Post-Write Verification`** (optional) -- checks to run after code is written.
+6. **`## Self-Update Protocol`** (optional) -- rules for how the skill itself should be extended when new lessons land.
+
+Both shapes share universal constraints:
+
+- **No restated doctrine.** Link to CLAUDE.md sections instead; invariant is that CLAUDE.md is the only place a rule is defined.
+- **No Unicode en/em dashes** (U+2013, U+2014). ASCII `--` only, per the project rule in [`CLAUDE.md`](../../CLAUDE.md#no-unicode-dashes-enem-ascii-only).
+- **No `[Opus]` / `[Sonnet]` model tags** on headings; they drift as models change. Model Roles in CLAUDE.md owns the policy.
+
+If your skill needs a shape neither A nor B covers, update this document BEFORE shipping the skill -- the TODO-02 §9 regression suite enforces shape compliance, so unlisted shapes will be flagged.
 
 **Optional sections** (add when load-bearing, not for padding):
 

@@ -110,8 +110,8 @@ Skills need the same rigor as code: discoverable ownership, templates, and retir
 
 > **Test runner:** N/A (docs + catalog sync) | validation: `ls .claude/skills/ | wc -l` == rows in CLAUDE.md Skills table == rows in `.claude/skills/README.md`; §9 regression suite will assert this automatically when it ships.
 
-> **Verified:** 2026-04-19 | 6/6 items | build N/A (docs-only) | 7 files changed | 28/28/28 skill sync
-> **Quality reviewed:** 2026-04-19 | Codex 1x (adversarial) | 2M fixed (retirement sweep missed bare-name forms; `## Use This Skill When` contract contradicted 2 live high-rigor skills), 0 open | scope: N/A (docs-only)
+> **Verified:** 2026-04-19 | commit `eedc0868` | 6/6 items | build N/A (docs-only) | 7 files changed | 28/28/28 skill sync
+> **Quality reviewed:** 2026-04-19 | Codex 2x (adversarial, combined) | 3M fixed (retirement sweep missed bare-name forms; canonical section contract split into Shape A workflow + Shape B code-quality to match 28 live skills; TEMPLATE.md labelled Shape-A with Shape-B pointer), 0 open | scope: N/A (docs-only)
 
 ---
 
