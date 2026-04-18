@@ -113,26 +113,12 @@ typedef enum {
  * Hardware POST cards see the high byte on I/O port 0x80.
  * UEFI NVRAM stores the full 16-bit value for post-mortem. */
 
-/* UEFI Bootloader (0xB000–0xBFFF) */
-#define POST16_EFI_MAIN         0xB001
-#define POST16_EFI_MAIN_OK      0xB002
-#define POST16_GOP_INIT         0xB010
-#define POST16_GOP_INIT_OK      0xB011
-#define POST16_KERNEL_LOAD      0xB020
-#define POST16_KERNEL_LOAD_OK   0xB021
-#define POST16_EXIT_BS          0xB030
-#define POST16_EXIT_BS_OK       0xB031
-#define POST16_PAGE_TABLES      0xB040
-#define POST16_PAGE_TABLES_OK   0xB041
-#define POST16_KERNEL_JUMP      0xB050
-#define POST16_USB_DISC         0xB080  /* USB device discovery (before ExitBS) */
-#define POST16_USB_DISC_OK      0xB081
-#define POST16_BOOT_DEV         0xB090  /* Boot device identification via LoadedImage */
-#define POST16_BOOT_DEV_OK      0xB091
-#define POST16_BOOT_FS          0xB092  /* Boot device filesystem open */
-#define POST16_BOOT_FS_OK       0xB093
-#define POST16_BOOT_FALLBACK    0xB094  /* Device fallback chain */
-#define POST16_BOOT_FALLBACK_OK 0xB095
+/* UEFI Bootloader (0xB000-0xBFFF) -- owned by src/boot/uefi/bootx64.c.
+ * The bootloader defines its own POST16_BL_* constants locally and is the
+ * source of truth for serial-observable [BOOT] POST 0xNNNN emissions. The
+ * kernel does not emit codes in this range. See bootx64.c for the full set
+ * and tools/post16-manifest/generate.sh for the manifest that feeds the
+ * smoke test's required-set assertion. */
 
 /* Phase 0 -- Critical Init (0x0000–0x0FFF) */
 #define POST16_SERIAL           0x0010

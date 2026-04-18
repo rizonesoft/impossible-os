@@ -52,6 +52,7 @@ OVMF_VARS_SRC="/usr/share/OVMF/OVMF_VARS_4M.fd"
 OVMF_VARS_CP="$BUILD/OVMF_VARS_4M.fd"
 SERIAL_LOG="$BUILD/smoke-test.log"
 STRIPPED_LOG="$BUILD/smoke-test.stripped.log"
+POST16_MANIFEST="$BUILD/post16-manifest.env"
 TIMEOUT_SEC="${TIMEOUT_SEC:-30}"
 
 # Legacy smoke test: superseded by `bash scripts/test.sh`. Retained as a light
@@ -97,18 +98,52 @@ FAIL_PATTERNS=(
 )
 
 # ---- Bootloader + kernel presence checks (verified after boot) ----
-# These MUST appear in a healthy boot. Matched as fixed strings against the
-# ANSI-stripped log.
-BOOT_REQUIRED_PATTERNS=(
-    "[BOOT] ELF segment"
-    "[BOOT] Kernel found at"
-    "[BOOT] Watchdog: armed"
-    "[BOOT] Watchdog: disarmed"
+# Two layers, both must pass:
+#
+#   Layer 1 (CORE): POST16 code assertions from the source-of-truth manifest
+#                   at build/post16-manifest.env. Emitted by the bootloader's
+#                   post_code16() as "[BOOT] POST 0xNNNN" on serial. These
+#                   survive printf/klog rename drift because the #define
+#                   values in bootx64.c are the contract.
+#
+#   Layer 2 (RESIDUAL): a few string assertions that capture user-visible
+#                       boot signals (ExitBootServices OK, Phase 0 BOOT_INFO
+#                       banner, "Boot complete in", "C:\>"). These still
+#                       drift if someone renames a printf, but they catch
+#                       regressions the POST16 layer cannot (userland never
+#                       emits POST16 codes).
+#
+# The previous BOOT_REQUIRED_PATTERNS string list is kept below as the
+# fallback layer until the POST16 path has been proven on KVM + TCG +
+# VirtualBox + bare metal (per the developer tooling roadmap smoke-test
+# assertion section).
+
+# Layer 1 core assertions: manifest is sourced AFTER the build step (see
+# Step 1 below), because the build generates the manifest. Declare the
+# arrays up-front so 'set -u' doesn't trip later; they get populated by
+# sourcing build/post16-manifest.env post-build.
+POST16_REQUIRED=()
+POST16_REQUIRED_CODES=()
+
+# Layer 2 residual string assertions: user-visible end-to-end signals.
+BOOT_REQUIRED_STRING_SIGNALS=(
     "[BOOT] ExitBootServices OK"
     "[PHASE0] BOOT_INFO"
     "Boot complete in"
     'C:\>'
 )
+
+# Fallback layer: legacy string-pattern list kept in place until POST16 path
+# is proven across all four validation platforms. Logs residual diagnostics
+# (one line per miss) but does NOT fail the smoke test; the core assertion
+# is code-based. Remove after KVM+TCG+VBox+bare-metal all confirm stable.
+BOOT_FALLBACK_STRINGS=(
+    "[BOOT] ELF segment"
+    "[BOOT] Kernel found at"
+    "[BOOT] Watchdog: armed"
+    "[BOOT] Watchdog: disarmed"
+)
+
 # These patterns must NOT appear on a clean firmware boot.
 BOOT_ABSENT_PATTERNS=(
     "[BOOT] mmap: overlap resolved"
@@ -135,6 +170,29 @@ if [ "$BUILD_RESULT" != "=== BUILD OK ===" ]; then
     exit 1
 fi
 echo -e "  ${GREEN}✓${NC} Build succeeded"
+
+# Source the freshly-generated POST16 manifest. Hard-fail on missing,
+# empty, malformed, or length-mismatched arrays -- the manifest is the
+# core assertion for this smoke test; skipping it silently would defeat
+# the regression check.
+if [ ! -s "$POST16_MANIFEST" ]; then
+    echo -e "${RED}SMOKE TEST FAILED: $POST16_MANIFEST missing or empty${NC}"
+    echo -e "${DIM}  The build should have regenerated it; see build/build.log${NC}"
+    exit 1
+fi
+# shellcheck disable=SC1090
+source "$POST16_MANIFEST"
+if [ "${#POST16_REQUIRED[@]}" -eq 0 ]; then
+    echo -e "${RED}SMOKE TEST FAILED: POST16_REQUIRED empty after sourcing $POST16_MANIFEST${NC}"
+    echo -e "${DIM}  Manifest is malformed or corrupted. Run 'bash scripts/build.sh' to regenerate.${NC}"
+    exit 1
+fi
+if [ "${#POST16_REQUIRED[@]}" -ne "${#POST16_REQUIRED_CODES[@]}" ]; then
+    echo -e "${RED}SMOKE TEST FAILED: POST16_REQUIRED / POST16_REQUIRED_CODES length mismatch${NC}"
+    echo -e "${DIM}  Names=${#POST16_REQUIRED[@]} Codes=${#POST16_REQUIRED_CODES[@]}. Manifest corrupted.${NC}"
+    exit 1
+fi
+echo -e "  ${GREEN}✓${NC} POST16 manifest loaded (${#POST16_REQUIRED[@]} required codes)"
 
 # ---- Step 2: Boot in QEMU ----
 echo -e "${CYAN}[2/3]${NC} Booting in QEMU (headless, ${TIMEOUT_SEC}s timeout)..."
@@ -248,23 +306,53 @@ echo ""
 LOG_LINES=$(wc -l < "$SERIAL_LOG" 2>/dev/null || echo 0)
 echo -e "  ${DIM}Serial log: $SERIAL_LOG ($LOG_LINES lines; ANSI-stripped: $STRIPPED_LOG)${NC}"
 
-# ---- Bootloader + kernel presence checks ----
+# ---- Layer 1 (CORE): POST16 code assertions from manifest ----
+# Manifest was already validated non-empty and length-consistent in Step 1;
+# this loop just checks serial output.
 PATTERN_FAIL=false
-for pattern in "${BOOT_REQUIRED_PATTERNS[@]}"; do
+POST16_MISSING_COUNT=0
+for i in "${!POST16_REQUIRED[@]}"; do
+    name="${POST16_REQUIRED[$i]}"
+    code="${POST16_REQUIRED_CODES[$i]}"
+    # Match the bootloader's exact serial format: "[BOOT] POST 0xNNNN"
+    # with uppercase hex. Fixed-string match -- the brackets are literal.
+    if ! grep -qF -- "[BOOT] POST $code" "$STRIPPED_LOG" 2>/dev/null; then
+        echo -e "  ${RED}MISSING:${NC} POST16 $code ($name)"
+        PATTERN_FAIL=true
+        POST16_MISSING_COUNT=$((POST16_MISSING_COUNT + 1))
+    fi
+done
+echo -e "  ${DIM}POST16 core: ${#POST16_REQUIRED[@]} required, $POST16_MISSING_COUNT missing${NC}"
+
+# ---- Layer 2 (RESIDUAL): user-visible string signals ----
+for pattern in "${BOOT_REQUIRED_STRING_SIGNALS[@]}"; do
     if ! grep -qF -- "$pattern" "$STRIPPED_LOG" 2>/dev/null; then
         echo -e "  ${RED}MISSING:${NC} $pattern"
         PATTERN_FAIL=true
     fi
 done
+
+# ---- Fallback layer: advisory only, does NOT fail the smoke test ----
+# Kept until POST16 core is proven on KVM + TCG + VBox + bare metal.
+FALLBACK_MISS_COUNT=0
+for pattern in "${BOOT_FALLBACK_STRINGS[@]}"; do
+    if ! grep -qF -- "$pattern" "$STRIPPED_LOG" 2>/dev/null; then
+        echo -e "  ${YELLOW}fallback-miss:${NC} $pattern (advisory, not failing)"
+        FALLBACK_MISS_COUNT=$((FALLBACK_MISS_COUNT + 1))
+    fi
+done
+
+# ---- Absent patterns: must NOT appear ----
 for pattern in "${BOOT_ABSENT_PATTERNS[@]}"; do
     if grep -qF -- "$pattern" "$STRIPPED_LOG" 2>/dev/null; then
         echo -e "  ${RED}UNEXPECTED:${NC} $pattern"
         PATTERN_FAIL=true
     fi
 done
+
 if [ "$PATTERN_FAIL" = true ]; then
     BOOT_FAILED=true
-    FAIL_REASON="Bootloader pattern check failed (see MISSING/UNEXPECTED above)"
+    FAIL_REASON="Boot pattern check failed (see MISSING/UNEXPECTED above)"
 fi
 
 if [ "$BOOT_FAILED" = true ]; then

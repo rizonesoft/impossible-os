@@ -247,6 +247,21 @@ $(BOOT_ABI_MIRROR_JSON): $(BOOT_ABI_DUMPER_M)
 test-boot-info-abi: $(BOOT_ABI_KERNEL_JSON)
 	@bash tools/boot-info-manifest/test-drift-detection.sh
 
+## post16-manifest: Emit build/post16-manifest.env listing every POST16_*
+##                  #define from include/kernel/boot_init.h + src/boot/uefi/
+##                  bootx64.c, plus a POST16_REQUIRED array of codes the
+##                  smoke test asserts on serial. Fails the build on name
+##                  collisions or stale required-set entries. Sourced by
+##                  scripts/test-smoke.sh.
+POST16_MANIFEST := $(BUILD_DIR)/post16-manifest.env
+POST16_SOURCES  := include/kernel/boot_init.h src/boot/uefi/bootx64.c \
+                   tools/post16-manifest/generate.sh
+
+post16-manifest: $(POST16_MANIFEST)
+
+$(POST16_MANIFEST): $(POST16_SOURCES)
+	@BUILD_DIR=$(BUILD_DIR) bash tools/post16-manifest/generate.sh
+
 ## sysroot: Populate build/sysroot/ with system files and assets
 SYSROOT := $(BUILD_DIR)/sysroot
 sysroot: sysroot-dirs sysroot-fonts sysroot-wallpapers sysroot-cursors sysroot-icons

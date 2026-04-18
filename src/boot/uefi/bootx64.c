@@ -4203,10 +4203,14 @@ static inline void post_code16(UINT16 code)
 #define POST16_BL_KERNEL_LOAD   0xB021
 #define POST16_BL_RSDP          0xB030
 #define POST16_BL_MEMMAP        0xB040
-#define POST16_BL_USB_DISC      0xB080
-#define POST16_BL_USB_DISC_OK   0xB081
-#define POST16_BL_BOOT_DEV      0xB090  /* Boot device identification (§1) */
-#define POST16_BL_BOOT_DEV_OK   0xB091
+#define POST16_BL_USB_DISC          0xB080
+#define POST16_BL_USB_DISC_OK       0xB081
+#define POST16_BL_XHCI_DMA          0xB082  /* xHCI DMA alloc (§TODO-20) */
+#define POST16_BL_XHCI_DMA_OK       0xB083
+#define POST16_BL_XHCI_TAKEOVER     0xB084  /* xHCI controller takeover */
+#define POST16_BL_XHCI_TAKEOVER_OK  0xB085
+#define POST16_BL_BOOT_DEV          0xB090  /* Boot device identification (§1) */
+#define POST16_BL_BOOT_DEV_OK       0xB091
 /* POST16_BL_BOOT_FS / _OK (0xB092/0xB093) defined near top -- used by parse_boot_conf */
 #define POST16_BL_EXIT_BS       0xB050
 #define POST16_BL_PAGE_TABLES   0xB060
@@ -4969,16 +4973,16 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     post_code16(POST16_BL_USB_DISC_OK);
 
     /* Step 4f: Allocate persistent xHCI DMA structures */
-    post_code16(0xB082);
+    post_code16(POST16_BL_XHCI_DMA);
     serial_early_print("[BOOT] allocate_xhci_dma...\n");
     allocate_xhci_dma();
-    post_code16(0xB083);
+    post_code16(POST16_BL_XHCI_DMA_OK);
 
     /* Step 4g: Take over xHCI controller */
-    post_code16(0xB084);
+    post_code16(POST16_BL_XHCI_TAKEOVER);
     serial_early_print("[BOOT] xhci_controller_takeover...\n");
     xhci_controller_takeover();
-    post_code16(0xB085);
+    post_code16(POST16_BL_XHCI_TAKEOVER_OK);
 
     /* Step 5: Get UEFI memory map */
     post_code16(POST16_BL_MEMMAP);

@@ -289,9 +289,9 @@ printf ' %b%s  (%d parallel jobs)%b\n\n' "$DIM" "$(date '+%Y-%m-%d %H:%M:%S')" "
 # Step counter
 STEP=0
 if $DO_CLEAN; then
-    TOTAL=7  # clean + kernel + userland + efi + sign + abi + disk
+    TOTAL=8  # clean + kernel + userland + efi + sign + abi + post16 + disk
 else
-    TOTAL=6  # kernel + userland + efi + sign + abi + disk
+    TOTAL=7  # kernel + userland + efi + sign + abi + post16 + disk
 fi
 
 # Clean (optional)
@@ -345,6 +345,13 @@ run_step $STEP $TOTAL "EFI Signing" "sign-efi" || { print_errors; echo "=== BUIL
 # catches same-size reorders the asserts miss.
 STEP=$((STEP + 1))
 run_step $STEP $TOTAL "boot_info ABI" "boot-info-abi" || { print_errors; echo "=== BUILD FAILED ===" >> "$LOG"; exit 1; }
+
+# POST16 manifest: extract POST16_* #defines from include/kernel/boot_init.h
+# and src/boot/uefi/bootx64.c; emit build/post16-manifest.env for smoke-test
+# consumption. Fails the build on name/value collisions or required-set
+# drift (someone removed a define listed in POST16_REQUIRED_NAMES).
+STEP=$((STEP + 1))
+run_step $STEP $TOTAL "POST16 manifest" "post16-manifest" || { print_errors; echo "=== BUILD FAILED ===" >> "$LOG"; exit 1; }
 
 # System Disk
 STEP=$((STEP + 1))
