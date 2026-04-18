@@ -192,6 +192,25 @@ Do not present raw lines first. Present findings derived from the model.
 12. **Policy-scan pass (Phase 2a)** -- MANDATORY
     - Read [POLICIES.md](POLICIES.md) (local to this skill directory).
     - Walk each detector (P1.1 through P8.3). Skip strict-only detectors unless `--strict` was passed.
+    - **MECHANICAL RULE: run the detection regex, do NOT reason about whether hits exist.** For each detector, execute the exact grep/python scan from its Detection field against the full log. LLM-style "I read the log and didn't see any" judgment is FORBIDDEN -- it has failed before (2026-04-18: a mojibake `┬º` hit on a TEST-owned line was missed because the policy scan was qualitative, not mechanical). A single byte-level scan with `python3 -c "import sys; [print(i,l) for i,l in enumerate(open(path,'rb').read().splitlines(),1) if any(b>0x7E for b in l)]"` catches every non-ASCII hit in seconds; cheap, exhaustive, zero false-negatives.
+    - Recommended mechanical sweep (run once, covers P1.1/P1.2/P1.3):
+      ```bash
+      python3 -c "
+      import sys
+      for i, line in enumerate(open('<log>', 'rb').read().splitlines(), 1):
+          if any(b > 0x7E and b != 0x09 for b in line):
+              print(f'{i}: {line[:120].decode(\"utf-8\",errors=\"replace\")}')
+      "
+      ```
+      This returns every line with non-ASCII bytes. If zero hits: P1.1/P1.2/P1.3 all pass. If non-zero hits: classify each individually.
+    - For structured detectors (P2, P3, P6, P7, P8), run the relevant grep/count command:
+      - P2.2 entry/exit pairs: `grep -oE "POST 0x[0-9A-F]{4}"` then walk pairs against manifest
+      - P3.1 thread_create: `grep -nE "thread_create|kthread_create" <log>`
+      - P3.5 deferred pairs: `grep -E "DEFERRED\] .* (start|done)"` then pair by name
+      - P6.1 AP count: `grep -oE "SMP: [0-9]+ CPUs up"` vs `boot_info.cpu_count`
+      - P7.1 #NM: `grep -nE "#NM|vector 7"`
+      - P8.1 boot time: `grep -oE "Boot complete in [0-9.]+s"` -> compare to budget
+      - P8.3 repeat rate: canonicalize + dedup, flag groups with repeats > 100
     - For each hit, emit a `POLICY` finding with:
       - `policy_ref` set to the detector id (e.g. `P2.1`)
       - `severity` copied from the detector
@@ -199,6 +218,7 @@ Do not present raw lines first. Present findings derived from the model.
       - `evidence` including the first matching log line and the repeat count
       - `remediation` copied verbatim from the detector's Remediation field
     - Do NOT reinterpret the detector; follow what POLICIES.md says. If a detector's regex produces a false positive on the current log, record the finding with `confidence=0.50` and flag it for user review rather than silently dropping it.
+    - **Report each detector's scan result explicitly in the analysis** -- even "P1.2 section-sign: 0 hits" should appear in the dashboard, so it's visible that the detector ran. Silent omission looks identical to "forgot to check." Add a per-detector scan-result row to the report when running under `--strict` or at user request.
 
 13. **Accuracy cross-check pass (Phase 2b)** -- MANDATORY for non-truncated logs
     - For every `[OK]` / `[DONE]` / success line emitted by a subsystem, verify the matching POST16 exit pair is present (when `build/post16-manifest.env` is loaded). Mismatch = `ACCURACY` finding with `accuracy_claim = { log_claim: "PMM OK", code_reality: "POST16 0x0021 missing" }`.

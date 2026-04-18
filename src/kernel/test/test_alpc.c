@@ -1777,7 +1777,7 @@ static void test_alpc_setinfo_unknown_class(void)
                                  (uint64_t)(uintptr_t)&dummy,
                                  sizeof(dummy), 0, 0);
     TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_NOT_IMPLEMENTED,
-                   "unknown info class => NOT_IMPLEMENTED (pending §9)");
+                   "unknown info class => NOT_IMPLEMENTED (pending section 9)");
 
     NtClose(&task_current()->handle_table, h);
 }
