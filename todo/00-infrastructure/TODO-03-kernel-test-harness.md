@@ -37,6 +37,7 @@
 | 💎  |   2   | Deterministic race barrier (`test_race_barrier_t`)  | --            |  [ ]   |
 | 💎  |   3   | Scratch-buffer helper (`TEST_SCRATCH_KBUF`)         | --            |  [ ]   |
 | 💎  |   4   | Retrofit existing "Test gaps" stamps across `todo/` | §1, §2, §3    |  [ ]   |
+| 💎  |   5   | Test-scoped klog level demotion (`TEST_KLOG_SUPPRESS`) | T02 T04 §3 |  [ ]   |
 
 > 💎 = parity work -- Linux kernel self-test framework has `fault-injection` (`lib/fault-inject.c`), `kcsan`/`kasan` fences, and KUnit has `kunit_kzalloc()` scratch helpers. This TODO brings the same floor to the Impossible OS kernel test runner.
 
@@ -103,6 +104,27 @@ After §1-§3 ship, sweep the repo for `Test gaps (NO current owner)` blocks and
 - [ ] Commit: `"test: retrofit deferred ALPC §4 test gaps against new kernel test harness"` (and similar per-TODO commits as the sweep runs)
 
 **Test checkpoint:** `grep -rn "Test gaps (NO current owner)" todo/` shrinks to zero hits for gaps that §1-§3 can close; any remaining gaps have a clearly-unrelated reason documented.
+
+---
+
+## 5. Test-Scoped klog Level Demotion (`TEST_KLOG_SUPPRESS`)
+
+Tests that exercise error paths (validators, allocator failure rollback, bad-input rejection) currently emit the validator's `klog(LOG_ERROR, ...)` -- rendered as `[FAIL] subsys: ...` -- directly onto serial output during test runs. Diagnose-serial-log runs then see test-phase `[FAIL]` lines and have to hand-classify them as NOISE per-test, which (as the 2026-04-18 incident showed) leaks occasionally into "real" findings reports. The validator is dual-use: loud on real boot with bad input, quiet under test.
+
+**Files:** `src/kernel/test/test.h` (new macro), `src/kernel/test/test_runner.c` (save/restore).
+
+- [ ] `TEST_KLOG_SUPPRESS(subsystem)` block-scoped macro: on entry, saves current per-tag level via a new `klog_get_level(const char *subsys)` API and calls `klog_set_level(subsys, LOG_FATAL)` (LOG_FATAL is above any normal emitter, effectively silencing the subsystem). On exit (scope end), restores the saved level. Uses `__attribute__((cleanup))` so `TEST_ASSERT` early-return still restores.
+- [ ] Add `klog_get_level(const char *subsystem)` to `include/kernel/klog.h` + `src/kernel/klog.c` -- returns the current override value from the 32-entry override table or the global default if no override.
+- [ ] Retrofit `test_boot_payload.c` error-injection tests (lines around ~180 and across all 13 cases) to wrap each negative-test assertion in `TEST_KLOG_SUPPRESS("boot")`. Verify `[FAIL] boot: boot_payload:` lines disappear from the serial log during test runs while `[FAIL] boot: boot_payload:` on real-boot bad-payload paths remains loud.
+- [ ] Retrofit `test_uthread_rejects_kernel_task` in `test_sched.c` to wrap the `uthread_create(PID 0)` assertion in `TEST_KLOG_SUPPRESS("sched")`. Verify the `[FAIL] sched: uthread_create: PID 0 has no PEB` line disappears from test output.
+- [ ] Unit test: a wrapper calling `TEST_KLOG_SUPPRESS("mm")` around `klog(LOG_ERROR, "mm", "...")` emits nothing to serial; after the block, a subsequent `klog(LOG_ERROR, "mm", "...")` outside the block emits normally. Include a forced `TEST_ASSERT(0, ...)` inside the block to verify cleanup handler restores the level even on early exit.
+- [ ] Remove the affected entries from the "Known Test Noise" table in `.claude/skills/diagnose-serial-log/SKILL.md` once those sites are silenced at source.
+- [ ] Update `diagnose-serial-log/POLICIES.md` P4.3: after §5 ships, any test-phase `[FAIL]` line is a real finding (no more "NOISE because test-owned").
+- [ ] Commit: `"test: TEST_KLOG_SUPPRESS block-scoped klog level demotion"`
+
+**Test checkpoint:** A clean `bash scripts/test.sh` run produces zero `[FAIL]` lines in the test-phase window (between `=== KERNEL UNIT TESTS ===` and `N passed, M failed` summary) on a green tree. Diagnose-serial-log P4.3 FAIL/CRIT detector returns zero hits on the resulting serial log.
+
+**Filed by:** diagnose-serial-log 2026-04-18 on debug-tmp/all-tests-serial.log (17 FAIL lines across 5 canonicalized keys: 16 boot_payload, 1 sched uthread_create).
 
 ---
 

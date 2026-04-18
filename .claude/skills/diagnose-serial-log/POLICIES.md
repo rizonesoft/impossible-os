@@ -126,12 +126,14 @@ between default and strict-only.
 - **Strict-only:** no
 - **Remediation:** rewrite source as `TEST_PENDING(st == STATUS_NOT_IMPLEMENTED, "NtFooBar: no <subsystem> yet")`.
 
-### P4.3 Expected WARN / ERROR not demoted
-- **Rule:** per `diagnose-serial-log` skill's own noise rule: "Preferred fix for persistent noise: demote the log site from `LOG_WARN` or `LOG_ERROR` to `LOG_DEBUG` when the line is expected during tests."
-- **Detection:** any `[WARN]` / `[ERROR]` line appearing >= 3 times in the test phase with the same canonicalized key AND nearby `TEST:` test name that owns the error path (matches the Known Test Noise table in SKILL.md).
-- **Severity:** L
+### P4.3 Expected WARN / ERROR / FAIL / CRIT not demoted
+- **Rule:** per `diagnose-serial-log` skill's own noise rule and matching-order rule #4 ("POLICY findings are not NOISE"): test-owned error-path log lines should not stay at WARN/ERROR/FAIL/CRIT severity. Preferred fix: demote the emitter to `LOG_DEBUG` when the line is expected during tests, OR gate the severity on a non-test runtime check (context-aware logging).
+- **Detection:** any `[WARN]` / `[ERROR]` / `[FAIL]` / `[CRIT]` line appearing within the test phase (between `=== KERNEL UNIT TESTS ===` and the final `N passed, M failed` summary) with a nearby `TEST:` line that owns the error path. Thresholds:
+  - **FAIL / CRIT: flag every occurrence** (a single test-owned FAIL in the log is already a diagnostic problem; no repeat threshold).
+  - **WARN / ERROR: flag >= 3 repeats** of the same canonicalized key (one-offs are usually intentional single-fire test stubs).
+- **Severity:** L for WARN/ERROR, M for FAIL/CRIT (higher level = higher visual noise, higher cost of confusion when a real failure is hidden in the sea of fake ones).
 - **Strict-only:** no
-- **Remediation:** edit the emitter to `LOG_DEBUG` or gate on a non-test runtime check.
+- **Remediation:** edit the emitter to `LOG_DEBUG` unconditionally if the line has no real-boot diagnostic value. For **dual-use validators** (loud on real boot with bad input, quiet under test), introduce a context-aware log level: either thread a `log_level` hint through the validator (caller-controlled), add a `klog_test_mode` thread-local / per-CPU flag that demotes WARN+ to DEBUG during active test runs, or split the validator into a "validate-and-return-errno" core (silent) plus a separate "validate-and-log-fail" wrapper that real-boot callers use and tests bypass. Do NOT just silence the log site without understanding whether real-boot callers still need visibility.
 
 ---
 
