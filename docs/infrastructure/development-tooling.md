@@ -149,7 +149,7 @@ A committed VS Code devcontainer lives at `.devcontainer/devcontainer.json`. It 
 | Forwarded ports     | none                                                                     |
 | Privileged mode     | no (no `--cap-add`, no `seccomp=unconfined`; bootstrap profile only)     |
 
-**Usage:** open the repo in VS Code / Cursor with the Dev Containers extension installed, then "Reopen in Container". Equivalent CLI path: `devcontainer up --workspace-folder .` (Dev Containers CLI).
+**Usage:** open the repo in VS Code with the Dev Containers extension installed, then "Reopen in Container". Equivalent CLI path: `devcontainer up --workspace-folder .` (Dev Containers CLI).
 
 ### Container vs Non-Container Validation Boundary
 
@@ -697,7 +697,7 @@ Provides deep C code intelligence for editors.
 | Editor    | VS Code + clangd extension | `clangd.path` → `/usr/bin/clangd-19`                 |
 
 > [!WARNING]
-> **clangd is LSP, not MCP.** Attempting to add clangd as an MCP server causes it to hang -- the protocols are incompatible. Use clangd via the VS Code/Cursor clangd extension (LSP).
+> **clangd is LSP, not MCP.** Attempting to add clangd as an MCP server causes it to hang -- the protocols are incompatible. Use clangd via the VS Code clangd extension (LSP).
 
 > [!NOTE]
 > Bear only wraps the kernel build step (not userland/host tools) to avoid PIPESTATUS issues. Uses `bear --append --` to accumulate entries. `.clangd` uses `Index.Background: Build` for faster indexing.

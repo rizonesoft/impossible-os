@@ -174,7 +174,7 @@ Stop and ask before: security-sensitive changes, destructive operations, ABI cha
 
 ## Doc Sync
 
-When you change code or conventions, update `CLAUDE.md`, `.claude/skills/`, and affected TODO files in the same task. Each AI tool system (`.claude/`, `.cursor/`) is independent -- create skills directly for each tool, not synced from a shared layer.
+When you change code or conventions, update `CLAUDE.md`, `.claude/skills/`, and affected TODO files in the same task.
 
 ## Git Hooks
 
@@ -204,9 +204,7 @@ External review does not replace self-review. The agent must always perform its 
 
 ## Skills
 
-Claude Code skills live in `.claude/skills/`. They auto-load when Claude judges them relevant based on the `description` field. Each skill is self-contained.
-
-**Cursor** keeps a **small** skill set under `.cursor/skills/`: TODO **validate-todo-file**, **validate-todo-section**, and **gap-analysis-todo** only (see `.cursor/skills/README.md`). Rules: `.cursor/rules/todo-validate-gap-workflows.mdc`, `.cursor/rules/todo-workflows-always-pointer.mdc`. Hook: `.cursor/hooks.json` (`beforeReadFile` TODO reminder on `todo/**/TODO-*.md`). Implementation, SSDT wiring, unit tests, Codex/Copilot review loops, and domain code-quality checklists stay in **`.claude/skills/`** and **`.claude/settings.json`** for Claude Code. Do not `rsync -a --delete .claude/skills/ .cursor/skills/` unless you intend to restore a full mirror and maintain it.
+Claude Code skills live in `.claude/skills/`. They auto-load when Claude judges them relevant based on the `description` field. Each skill is self-contained. Impossible OS is Claude Code-only as of 2026-04-18; Cursor was removed because the parallel skill set created clutter without a corresponding productivity win.
 
 | Skill | Description |
 |---|---|
@@ -266,6 +264,5 @@ src/
 include/            All headers (mirrors src/)
 resources/          Fonts, icons, wallpapers
 todo/               Development roadmap (14 domains, 86 TODO files)
-.cursor/            Cursor AI system (rules + skills + hooks) -- independent
-.claude/            Claude Code AI system (skills) -- independent
+.claude/            Claude Code AI system (skills + settings + hooks)
 ```

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# External adversarial-style review for Cursor (and any CI shell).
+# External adversarial-style review from any shell (local or CI).
 # Prefer GitHub Copilot CLI when installed; otherwise print how to run Codex in Claude Code.
 #
 # Install Copilot CLI (see https://github.com/features/copilot/cli ):

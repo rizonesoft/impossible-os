@@ -33,7 +33,7 @@ document distros, sentinel tools, minimum versions, the devcontainer profile,
 idempotence, and scope boundaries. Re-check with `bash scripts/setup.sh --verify`;
 see version floors with `bash scripts/setup.sh --versions`.
 
-**Reproducible environment:** open the repo in VS Code / Cursor with the Dev
+**Reproducible environment:** open the repo in VS Code with the Dev
 Containers extension installed and "Reopen in Container" -- the devcontainer
 runs `bash scripts/setup.sh` on first start.
 

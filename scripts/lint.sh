@@ -228,7 +228,7 @@ if [ "$#" -eq 0 ]; then
         # Skip templates that TEACH the shorthand intentionally.
         case "$relpath" in
             .github/PULL_REQUEST_TEMPLATE.md) continue ;;
-            *.cursor/*|*.claude/*) continue ;;
+            *.claude/*) continue ;;
         esac
         if is_todo_xref_legacy "$relpath"; then
             warn "$relpath" "$linenum" "numeric TODO shorthand (legacy; tracked for cleanup)"
