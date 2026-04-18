@@ -141,6 +141,99 @@ Before writing any test code:
 - Read the implementation to understand edge cases (NULL handling, out-of-range, etc.)
 - Read an existing test file to match the exact pattern
 
+### 2a. Spec-vs-reality reconciliation (MANDATORY before writing any code)
+
+The TODO is a plan. The already-implemented test is reality. When they
+disagree, the plan does NOT automatically win. Before touching any test
+code, walk each `[ ]` item in the Unit Tests section and classify it
+against the current tree:
+
+1. **Item already implemented, spec matches reality** -- mark `[x]` with
+   an inline note `-- already at src/kernel/test/test_<file>.c:LINE`.
+   Do not re-write; do not modify the existing test. Move on.
+
+2. **Item not yet implemented, spec matches reality contract** -- normal
+   case. Proceed to step 3 and implement as described.
+
+3. **Item already implemented, spec DIFFERS from reality** -- STOP. Do
+   not edit the test to match the TODO yet. Classify the difference:
+
+   a. **TODO is stale; implementation is correct.** The TODO was written
+      against an older API, a different error code, a renamed function,
+      or an assertion pattern that the project has since improved. The
+      test works, covers the right behavior, and shipping the TODO diff
+      would either break the test or weaken its invariant. **ACTION:**
+      rewrite the TODO item text to match reality (same structure, same
+      item shape, different words/assertion/expected value). Mark `[x]`
+      with an inline note `-- reconciled: TODO item updated to match
+      <what-actually-ships>; previous text <one-line old spec>`.
+      Explain the reconciliation in the commit message body. Do NOT
+      silently flip the item without updating its text -- a future
+      reviewer reading the TODO should see what the test actually asserts.
+
+   b. **TODO is correct; test is a quick patch or outdated.** Rare, but
+      possible. The test passes, but it's asserting the wrong value (or
+      an older value the API used to return). The TODO captured a
+      deliberate API update that the test hasn't been revised for yet.
+      **ACTION:** rewrite the test to match the TODO, rebuild, confirm
+      the new assertion passes against the current API. If the new
+      assertion FAILS against the current API, you're in case (a)
+      instead, or the spec and the code are BOTH wrong (case d).
+
+   c. **Partial overlap: test covers some of the spec, spec adds more.**
+      **ACTION:** extend the existing test with the missing assertions
+      (keep every assertion already present -- they prove behavior that
+      someone intentionally added). Mark `[x]` only after the TODO's
+      full assertion list is covered.
+
+   d. **TODO change would cause a REGRESSION of real behavior.** The
+      spec's new assertion is less strict, weaker, or would mark a bug
+      as acceptable. Example: TODO says `TEST_ASSERT(ret == 0)` but the
+      current test says `TEST_ASSERT(ret == STATUS_VALID_BUT_DEGRADED)`
+      and the function actually returns `STATUS_VALID_BUT_DEGRADED`
+      today as a deliberate downgrade signal. Applying the TODO diff
+      would either (1) silently pass on a degraded return the project
+      used to catch, or (2) fail on correct code. **NEVER APPLY THIS
+      DIFF.** Leave the test untouched. Mark the TODO item with
+      `[ ]` still; add an inline `> **Rejected:**` note under the item:
+      `> **Rejected:** TODO item would regress existing coverage.
+      Reality: test at <file:line> asserts <what>; current implementation
+      returns <actual>. Applying the TODO diff would <specific regression>.
+      TODO item dropped; see commit <hash> for rationale.` Flag in chat
+      so the user can confirm the rejection, and **do not mark `[x]`
+      without user sign-off on the rejection.** Regressions dressed up
+      as "implementing the TODO" is exactly the failure mode this step
+      exists to prevent.
+
+4. **Item is ambiguous or contradicts itself.** E.g. the spec says "test
+   X returns NULL on bad input" but also "test X returns -1 on bad
+   input" in the same bullet. **ACTION:** grep the current code for
+   what X actually returns; pick the one that matches. Rewrite the TODO
+   item to remove the contradiction. Mark `[x]` with a reconciliation
+   note.
+
+**Core principle:** the TODO is a plan; the committed code is reality.
+When they disagree and applying the plan would weaken tested behavior,
+the plan is wrong. Keep the code. Update the TODO text to match reality.
+Never introduce a regression to satisfy a stale checklist.
+
+**What NOT to do in this step:**
+- Do not silently flip `[x]` when the test already exists but asserts
+  something different -- that hides the spec drift from future readers.
+- Do not "upgrade" a stronger existing assertion down to a weaker TODO
+  version. If the stronger version was a quiet improvement, the TODO
+  needs to be updated to match.
+- Do not delete existing tests just because the TODO's plan doesn't
+  include them. Existing tests are evidence that SOMEONE added that
+  assertion deliberately; the TODO is a wish list, not a scope fence.
+
+**Worked example:** TODO says `TEST_ASSERT(st == STATUS_NOT_IMPLEMENTED, "...")`,
+but the test file already has `TEST_PENDING(st == STATUS_NOT_IMPLEMENTED, "...")`.
+The TODO is stale (predates the TEST_PENDING macro introduction 2026-04-07).
+Case (a): rewrite the TODO item to use `TEST_PENDING`, mark `[x]`,
+inline note `-- reconciled: TODO updated from TEST_ASSERT to TEST_PENDING
+per feedback_mandatory_unit_tests / 2026-04-07 macro introduction`.
+
 ### 3. Create the test file
 
 Create `src/kernel/test/test_<name>.c` following this pattern:
@@ -305,13 +398,16 @@ If writing a test reveals a bug, fix the bug in the code under test using `kerne
 ### 9. Mark the TODO section complete
 
 Update the TODO file's `## Unit Tests` section:
-- Mark all `[ ]` checkboxes as `[x]`
-- Add a note:
+- Mark `[x]` only items that are satisfied by evidence (either by code that shipped this run OR by the step 2a reconciliation when an existing test already satisfied the item). An item from case 2a(d) (rejected regression) stays `[ ]` with the `> **Rejected:**` note until the user signs off.
+- For items whose text was rewritten in step 2a (cases a, c, d), the inline `-- reconciled: ...` note must appear alongside the `[x]` so a future reader can see that the item was updated to match reality, not silently flipped.
+- Add a summary note at the bottom of the section. Include the reconciliation count so drift is visible at a glance:
   ```
   > **Done:** N suites, M assertions -- registered in `test_runner_init()` (YYYY-MM-DD)
+  > **Reconciled:** K items rewritten to match reality (case a/c/d), R items rejected as regressions
   ```
+  Omit the `Reconciled:` line when K=0 and R=0. Omit the `Done:` line when the whole section was already-implemented cases 2a(1) -- write `> **Reconciled: N/N items already implemented (2026-MM-DD)`.
 
-If the TODO has an **Implementation Order table** with a row for unit tests, update its Status to `[x]`.
+If the TODO has an **Implementation Order table** with a row for unit tests, update its Status to `[x]` only when every Unit Tests item reached `[x]` (including the reconciled ones). A single `[ ]` rejected-as-regression item means the row stays `[/]` (partial) until the user confirms the rejection.
 
 ### 10. Commit
 
@@ -337,6 +433,8 @@ If the existing categories don't fit, add a new one:
 - Do not change other TODO sections
 - Do not skip assertions listed in the TODO -- implement all of them
 - If an assertion cannot be tested (e.g., requires hardware), note it in the TODO and mark it `[x]` with `(skipped: reason)`
+- **NEVER introduce a regression to satisfy a stale TODO item.** If the Unit Tests section asks for a weaker assertion than the existing test already has, or asks to change an assertion in a way that would mask real behavior, the TODO item is wrong (see step 2a case d). Reject the diff, leave the existing test untouched, flag the rejection in chat, and wait for user sign-off before any further action. Every TODO item that reaches `[x]` must strictly INCREASE or preserve test coverage -- never decrease it.
+- **Reconciliation notes are mandatory when the TODO item text changes.** If step 2a updates a TODO item's text to match the shipped test (cases a, c, d), the new text must be visible to a future reader and the inline `-- reconciled: ...` note explains WHY it changed. A silent flip `[x]` without a note is indistinguishable from a blind "marked done" lie.
 - If the TODO lists 30+ test cases, consider splitting into multiple test files grouped by sub-feature rather than one giant file
 - **Test isolation:** some subsystems (e.g., module registry `s_modules[]`, SSDT dispatch table) have no reset/cleanup mechanism. Tests that modify global state may affect later tests. Document this limitation in a comment and use unique values (e.g., unique base addresses) to avoid collisions with prior tests.
 - If tests add POST16 codes, verify they don't conflict with existing codes in `boot_init.h`
