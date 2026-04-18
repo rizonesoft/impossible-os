@@ -327,9 +327,9 @@ int ixfs_checksum_verify(struct ixfs_volume *vol, uint32_t block,
 
     computed = ixfs_crc32c(data, IXFS_BLOCK_SIZE);
     if (computed != stored) {
-        printk("[WARN] IXFS: checksum mismatch on block %u "
-               "(stored=0x%x, computed=0x%x)\n",
-               (uint64_t)block, (uint64_t)stored, (uint64_t)computed);
+        klog(LOG_WARN, "ixfs",
+             "checksum mismatch on block %u (stored=0x%x, computed=0x%x)",
+             (unsigned)block, (unsigned)stored, (unsigned)computed);
         return -1;
     }
     return 0;
