@@ -218,7 +218,7 @@ Claude Code skills live in `.claude/skills/`. They auto-load when Claude judges 
 | `/quality-review-section` | Deep quality review -- standards, optimization, Win11/Linux parity (is it done RIGHT?) |
 | `/review-todo-section` | Post-implementation review -- evidence mapping + MANDATORY quality Codex (perf/consistency/dead-code) |
 | `/implement-unit-tests` | Implement a TODO's Unit Tests section end-to-end |
-| `/diagnose-serial-log` | Parse serial log, classify WARN/FAIL/crash, trace to source, fix real bugs |
+| `/diagnose-serial-log` | Full serial-log audit: crashes, bugs, races, leaks, perf, POLICY violations (POLICIES.md), ACCURACY drift, baseline REGRESSION, SCOPE_CREEP; every fix gets Codex adversarial review |
 | `/debug-session` | Structured debug session with rubber-duck validation -- hypothesis, trace, rubber-duck review, fix, verify |
 | `/todo-pipeline` | 3-stage TODO prep: validate -> gap analysis -> validate (before implementation) |
 | `/codex-design-review` | Codex pre-implementation design review -- catches plan flaws before coding |
