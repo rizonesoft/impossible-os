@@ -59,7 +59,7 @@
 | ⭐  | Order | Deliverable                                        | Depends On   | Status |
 | --- | :---: | -------------------------------------------------- | ------------ | :----: |
 | 💎  |   1   | Canonical ownership and source-of-truth map        | --           |  [x]   |
-| 💎  |   2   | Skill lifecycle, templates, and catalog rules      | §1           |  [ ]   |
+| 💎  |   2   | Skill lifecycle, templates, and catalog rules      | §1           |  [x]   |
 | 💎  |   3   | Hook routing and policy contract                   | §1           |  [ ]   |
 | 💎  |   4   | External-reviewer contract (Codex, Copilot)        | §1-§3        |  [ ]   |
 | 💎  |   5   | MCP, permissions, and extension boundary           | §1, §3, §4   |  [ ]   |
@@ -99,14 +99,19 @@ The first job is to state clearly which file owns what.
 
 Skills need the same rigor as code: discoverable ownership, templates, and retirement rules.
 
-- [ ] Define a standard lifecycle for adding or editing skills: scaffold/template, `description` field wording (auto-load trigger matters; document how to write it), CLAUDE.md Skills table entry, mandatory-trigger table entry when applicable, XREF expectations, and validation path
-- [ ] Create or tighten a shared skill authoring template so new skills carry required sections consistently (frontmatter, "Use This Skill When", workflow, guardrails)
-- [ ] Document catalog hygiene rules: every live skill must appear in the CLAUDE.md Skills table + the `.claude/skills/README.md` list. A skill whose directory exists but is missing from both indexes is dead weight.
-- [ ] Document retirement/supersession rules for stale skills so old prompt blocks do not linger as false owners. Removal = delete the skill directory AND both index entries in the same commit.
-- [ ] Document the **"no parallel skill trees" rule** (Cursor-removal learning 2026-04-18): skills live under `.claude/skills/` only; do not create `.cursor/`, `.codex/`, `.other-tool/` skill directories; external tools invoke the Claude skill via the canonical skill entry
-- [ ] Commit: `"docs/ai: define skill lifecycle, template, and catalog rules"`
+- [x] 5-step lifecycle documented in [`docs/infrastructure/skill-authoring.md`](../../docs/infrastructure/skill-authoring.md): (1) scaffold from `TEMPLATE.md`; (2) write `description` field as action-verb + concrete triggers (auto-load signal is the description; document "Auto-loads when..." when a harness hook invokes it); (3) add row to CLAUDE.md Skills table; (4) add Mandatory Skill Triggers row + settings.json hook when the skill MUST run under specific conditions; (5) add row to `.claude/skills/README.md` catalog.
+- [x] Canonical template at [`.claude/skills/TEMPLATE.md`](../../.claude/skills/TEMPLATE.md): frontmatter (`name`, `description`), H1 title, `## Use This Skill When`, `## Workflow` (or Pipeline), `## Guardrails` (or Rules). Optional: `## Execution Discipline`, `## Additional Resources`, `## Relationship to <other-skill>`. Inline reminders (ASCII `--` only, no doctrine restatement, no `[Opus]`/`[Sonnet]` tags) live in a strip-before-commit HTML comment block.
+- [x] Catalog hygiene rules documented in `skill-authoring.md` "Catalog Hygiene" section: three canonical locations (`.claude/skills/<slug>/`, CLAUDE.md Skills table, `.claude/skills/README.md`) must stay in sync; a directory without matching index rows is drift. Ran the sync check -- 5 missing CLAUDE.md rows fixed in the same commit (added `audit-ssdt`, `codex-adversarial-review-section`, `gap-analysis-todo`, `kernel-code-quality`, `validate-todo-section`). Expanded `.claude/skills/README.md` from 3-line stub to full catalog grouping all 28 live skills.
+- [x] Retirement / supersession sweep documented as 7-step process in `skill-authoring.md` "Retirement / Supersession": `git rm -rf <slug>` + delete CLAUDE.md row + delete README.md row + delete Mandatory Skill Triggers row + delete settings.json hook + grep-and-clean XREF fallout + land in one commit. Renames = retire-old + add-new, not in-place edit.
+- [x] "No parallel skill trees" rule stated as a hard rule at the top of `skill-authoring.md`, linking to Authority Hierarchy invariant #2 in `ai-system.md`. Cross-referenced from CLAUDE.md Skills section via the new "Adding, editing, or retiring a skill" pointer line below the table.
+- [x] Commit: `"docs/ai: define skill lifecycle, template, and catalog rules"`
 
-**Test checkpoint:** A new skill can be scaffolded and registered by following one documented path. CLAUDE.md Skills table + `.claude/skills/README.md` + actual skill directories stay in sync. A skill directory without matching index entries is flagged by the regression pack (§6).
+**Test checkpoint:** A new skill can be scaffolded and registered by following one documented path ([`skill-authoring.md`](../../docs/infrastructure/skill-authoring.md) Lifecycle steps 1-5). CLAUDE.md Skills table + `.claude/skills/README.md` + actual skill directories stay in sync (verified: 28 directories, 28 CLAUDE.md rows, 28 README.md rows as of this commit). A skill directory without matching index entries will be flagged by the regression pack ([§9](#9-ai-workflow-regression-suite)).
+
+> **Test runner:** N/A (docs + catalog sync) | validation: `ls .claude/skills/ | wc -l` == rows in CLAUDE.md Skills table == rows in `.claude/skills/README.md`; §9 regression suite will assert this automatically when it ships.
+
+> **Verified:** 2026-04-19 | 6/6 items | build N/A (docs-only) | 7 files changed | 28/28/28 skill sync
+> **Quality reviewed:** 2026-04-19 | Codex 1x (adversarial) | 2M fixed (retirement sweep missed bare-name forms; `## Use This Skill When` contract contradicted 2 live high-rigor skills), 0 open | scope: N/A (docs-only)
 
 ---
 
@@ -240,7 +245,7 @@ This is the refinement step: test the workflow itself.
 | ⭐ | Feature                         | 🪟 Win11                                    | 🐧 Linux                                   | 🚀 Impossible OS                                         |
 | --- | ------------------------------- | ------------------------------------------- | ------------------------------------------- | -------------------------------------------------------- |
 | 💎 | Repo-codified AI instructions   | ✅ `.github/copilot-instructions.md`        | ⚠️ AGENTS.md emerging                      | ✅ §1 ownership map + `CLAUDE.md` authority              |
-| 💎 | Skill/catalog ownership         | ⚠️ `.github/chatmodes/` + `/prompts/`       | ❌ Ad hoc                                  | ⬜ §2 skill lifecycle; no parallel trees                 |
+| 💎 | Skill/catalog ownership         | ⚠️ `.github/chatmodes/` + `/prompts/`       | ❌ Ad hoc                                  | ✅ §2 skill lifecycle; no parallel trees                 |
 | 💎 | Hook policy matrix              | ⚠️ `.vscode/mcp.json` + IDE settings        | ⚠️ Implicit                                | ⬜ §3 routing; reminder vs block tiers                   |
 | 💎 | External-reviewer contract      | ❌ Rare                                     | ❌ Rare                                    | ⬜ §4 Codex + Copilot reviewer-not-authority             |
 | 💎 | Permissions/extension boundary  | ⚠️ Varies                                   | ⚠️ Varies                                  | ⬜ §5 allow/deny tiers + `.local.json` split             |

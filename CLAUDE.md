@@ -212,15 +212,19 @@ Claude Code skills live in `.claude/skills/`. They auto-load when Claude judges 
 | `/implement-ssdt-range` | Implement + wire a range of SSDT entries, mark Done [x] |
 | `/create-todo` | Create a new TODO file |
 | `/validate-todo-file` | Validate a TODO for structural gaps |
+| `/validate-todo-section` | Validate a single `[x]`/`[/]` section against code-truth evidence |
 | `/verify-todo-section` | Verify implemented section -- compliance audit (is it done?) |
 | `/quality-review-section` | Deep quality review -- standards, optimization, Win11/Linux parity (is it done RIGHT?) |
 | `/review-todo-section` | Post-implementation review -- evidence mapping + MANDATORY quality Codex (perf/consistency/dead-code) |
 | `/implement-unit-tests` | Implement a TODO's Unit Tests section end-to-end |
+| `/audit-ssdt` | Audit SSDT registration vs TODO-05/TODO-12 master tables; insert missing prerequisite items |
 | `/diagnose-serial-log` | Full serial-log audit: crashes, bugs, races, leaks, perf, POLICY violations (POLICIES.md), ACCURACY drift, baseline REGRESSION, SCOPE_CREEP; every fix gets Codex adversarial review |
 | `/debug-session` | Structured debug session with rubber-duck validation -- hypothesis, trace, rubber-duck review, fix, verify |
 | `/todo-pipeline` | 3-stage TODO prep: validate -> gap analysis -> validate (before implementation) |
+| `/gap-analysis-todo` | Deep gap analysis of a TODO vs Win11/Linux parity + cross-TODO overlap + code-truth audit |
 | `/codex-design-review` | Codex pre-implementation design review -- catches plan flaws before coding |
 | `/codex-review-todo` | Codex adversarial review of all implemented sections in a TODO |
+| `/codex-adversarial-review-section` | Codex adversarial review loop for a single section (up to 3 rounds) |
 | `/codex-fix-review` | Fix Codex findings, re-review until resolved (max 3 iterations) |
 | `/codex-test-coverage` | Codex test coverage gap analysis -- finds untested paths and missing assertions |
 | `/codex-impact-analysis` | Codex dependency impact analysis -- what breaks if you change X? |
@@ -228,9 +232,12 @@ Claude Code skills live in `.claude/skills/`. They auto-load when Claude judges 
 | `/codex-dead-code` | Codex dead code scanner -- unused functions, defines, types, declarations |
 | `/codex-perf-review` | Codex performance hot-path review -- ISR paths, lock times, O(n^2), allocations |
 | `/boot-code-quality` | Pre-flight checklist for UEFI boot code -- EBS boundary, table safety, fallbacks |
+| `/kernel-code-quality` | Auto-load checklist for kernel C -- SMP safety, memory rules, bare-metal, POST16 boot-path-only |
 | `/desktop-code-quality` | Pre-flight checklist for desktop compositor code (placeholder) |
 | `/shell-code-quality` | Pre-flight checklist for command shell code (placeholder) |
 | `/userland-code-quality` | Pre-flight checklist for user-mode applications (placeholder) |
+
+> Adding, editing, or retiring a skill: see [docs/infrastructure/skill-authoring.md](docs/infrastructure/skill-authoring.md) for the lifecycle, template, and catalog hygiene rules. Every live skill has a row here AND in [.claude/skills/README.md](.claude/skills/README.md); a directory without matching rows is drift.
 
 ## Mandatory Skill Triggers
 
