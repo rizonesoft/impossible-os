@@ -212,7 +212,6 @@ Claude Code skills live in `.claude/skills/`. They auto-load when Claude judges 
 | `/implement-ssdt-range` | Implement + wire a range of SSDT entries, mark Done [x] |
 | `/create-todo` | Create a new TODO file |
 | `/validate-todo-file` | Validate a TODO for structural gaps |
-| `/validate-todo-section` | Validate a single `[x]`/`[/]` section against code-truth evidence |
 | `/verify-todo-section` | Verify implemented section -- compliance audit (is it done?) |
 | `/quality-review-section` | Deep quality review -- standards, optimization, Win11/Linux parity (is it done RIGHT?) |
 | `/review-todo-section` | Post-implementation review -- evidence mapping + MANDATORY quality Codex (perf/consistency/dead-code) |
