@@ -168,8 +168,8 @@ This is the refinement step: test the workflow itself.
 
 ## OS Comparison
 
-| ⭐ | Feature                         | 🪟 Win11 projects       | 🐧 Linux projects      | 🚀 Impossible OS |
-| --- | ------------------------------- | ---------------------- | ---------------------- | ---------------- |
+| ⭐ | Feature                         | 🪟 Win11 projects      | 🐧 Linux projects      | 🚀 Impossible OS |
+| --- | ------------------------------- | ---------------------- | ---------------------- | ----------------- |
 | 💎 | Repo-codified AI instructions   | ⚠️ Emerging practice   | ⚠️ Emerging practice   | ⬜ §1            |
 | 💎 | Skill/catalog ownership         | ❌ Often ad hoc        | ❌ Often ad hoc        | ⬜ §2            |
 | 💎 | Hook policy matrix              | ⚠️ Usually implicit    | ⚠️ Usually implicit    | ⬜ §3            |
@@ -204,3 +204,5 @@ This is the refinement step: test the workflow itself.
 - [ ] `scripts/test-ai-system.sh` fails on missing links, skill-catalog drift, `.cursor/`-residue, hierarchy-block deletion, or parallel-skill-tree creation; passes on a healthy repo
 - [ ] Hook policy documentation explains which behaviors are reminders versus hard blocks
 - [ ] The Claude Code-only stance is stated once in `CLAUDE.md` and referenced from this TODO; no parallel skill tree exists under `.cursor/`, `.codex/`, or similar
+
+> **Test runner:** N/A (host-side shell + docs only; no kernel test surface) | validation: `bash scripts/test-ai-system.sh` (ships in §6) + [`build.yml`](../../.github/workflows/build.yml) CI step once §6 lands. Complements `bash scripts/test-tooling.sh` (owned by [TODO-01 §10](TODO-01-developer-tooling-stack.md#10-smoke-test-post16-assertions)).
