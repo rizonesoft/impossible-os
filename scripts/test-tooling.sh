@@ -139,10 +139,11 @@ done
 [ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[doctor + setup invariants]${NC}"
 assert_exit_zero "tooling-doctor --quiet exit 0" bash "$SCRIPT_DIR/tooling-doctor.sh" --quiet
 assert_exit_zero "setup --verify exit 0" bash "$SCRIPT_DIR/setup.sh" --verify
-if bash "$SCRIPT_DIR/lint.sh" --help 2>/dev/null | grep -qE 'Checks \(5\)'; then
-    t_pass "lint --help names 5 checks (post-prune)"
+if bash "$SCRIPT_DIR/lint.sh" --help 2>/dev/null | grep -qE 'Checks \(4\)'; then
+    t_pass "lint --help names 4 checks (post camelCase-removal)"
 else
-    t_fail "lint --help names 5 checks (post-prune)" "expected 'Checks (5)' in --help output"
+    t_fail "lint --help names 4 checks (post camelCase-removal)" \
+        "expected 'Checks (4)' in --help output; if a check was added or removed, update this assertion AND lint.sh's help text together"
 fi
 
 # ============================================================================
@@ -282,7 +283,135 @@ else
         assert_grep "$wf invokes bash scripts/test.sh" "$path" 'bash scripts/test.sh'
         assert_grep "$wf invokes bash scripts/setup.sh --verify" "$path" 'bash scripts/setup.sh --verify'
     done
+
+    # Maintenance / deployment workflows (pages, labeler, stale) are not
+    # build-participants so they don't need to invoke build.sh / test.sh,
+    # but they MUST parse as YAML (checked above) and MUST NOT reference
+    # the legacy ISO / make-test path that the §9 legacy-XREF sweep and
+    # the §3 wrapper contract retired.
+    for wf in pages.yml labeler.yml stale.yml; do
+        path="$REPO_ROOT/.github/workflows/$wf"
+        for stale in 'make test' 'run-tests\.sh' 'build/os-build\.iso'; do
+            if grep -qE "$stale" "$path" 2>/dev/null; then
+                t_fail "$wf rejects stale '$stale'" \
+                    "found a reference to $stale; §3 + §9 retired this; use the canonical wrapper path"
+            else
+                t_pass "$wf rejects stale '$stale'"
+            fi
+        done
+    done
 fi
+
+# ============================================================================
+# Supported-host profile + reproducible env + unsupported-host fallback (§2)
+# ============================================================================
+# The development-tooling.md is the single source of truth for which hosts
+# are supported and which require a shim. A promotion/demotion in that
+# table must be reflected in setup-deps.sh (distro install paths), the
+# wrapper contract doc section, and this regression. If setup-deps.sh ever
+# stops matching the profile matrix, new contributors on a best-effort
+# profile hit a silent install failure instead of the documented shim.
+
+[ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[supported-host profile + repro-env]${NC}"
+DEV_TOOLING_MD="$REPO_ROOT/docs/infrastructure/development-tooling.md"
+# Profile matrix must name every distro we claim to support or explicitly
+# reject. Missing row => silent support promise.
+for profile in 'Ubuntu/Debian' 'WSL2' 'devcontainer' 'Fedora' 'Arch' 'Native Windows' 'macOS'; do
+    assert_grep "dev-tooling.md names '$profile' in profile matrix" \
+        "$DEV_TOOLING_MD" "$profile"
+done
+# Unsupported-host policy paragraph must be explicit, not a silent omission.
+assert_grep "dev-tooling.md explicitly marks macOS Unsupported" \
+    "$DEV_TOOLING_MD" 'macOS[[:space:]]+.*(Unsupported|❌)'
+assert_grep "dev-tooling.md explicitly marks native Windows Unsupported" \
+    "$DEV_TOOLING_MD" 'Native Windows.*(Unsupported|❌)'
+assert_grep "dev-tooling.md names WSL2 as the Windows fallback" \
+    "$DEV_TOOLING_MD" 'WSL2[[:space:]]+(instead|Ubuntu)'
+# Reproducible environment: .devcontainer file must exist and be referenced
+# from the doc. Either half missing = broken reproducibility claim.
+if [ -f "$REPO_ROOT/.devcontainer/devcontainer.json" ]; then
+    t_pass ".devcontainer/devcontainer.json present"
+else
+    t_fail ".devcontainer/devcontainer.json present" \
+        "reproducible-environment claim in dev-tooling.md has no matching file"
+fi
+assert_grep "dev-tooling.md references .devcontainer" \
+    "$DEV_TOOLING_MD" '\.devcontainer'
+# Fedora/Arch best-effort path must have the shim procedure documented,
+# or best-effort users hit a silent --verify failure.
+assert_grep "dev-tooling.md documents Fedora/Arch shim procedure" \
+    "$DEV_TOOLING_MD" 'Fedora.*Arch.*Shim|Shim.*Procedure'
+
+# ============================================================================
+# Stale-command rejection (§3 wrapper contract + §9 legacy-XREF sweep)
+# ============================================================================
+# After §3 codified `bash scripts/build.sh` / `bash scripts/test.sh` as the
+# canonical surface, and §9 drained the legacy numeric-TODO shorthand, a
+# regression could easily re-introduce `make test` / `run-tests.sh` /
+# `build/os-build.iso` into a doc or README as if it were a primary
+# command. This group ensures those strings never reappear as primary
+# wrapper calls in the operator-facing docs. They remain allowed in
+# explicit legacy markers (e.g. the Makefile's `iso:` target, or a doc
+# paragraph explicitly titled "Legacy" or "Historical").
+
+[ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[stale-command rejection in operator docs]${NC}"
+# Files that speak to operators/contributors. If any of them re-adopts a
+# stale primary command, a new contributor will follow a broken path.
+OPERATOR_DOCS=(
+    "$REPO_ROOT/README.md"
+    "$REPO_ROOT/CONTRIBUTING.md"
+    "$REPO_ROOT/CLAUDE.md"
+    "$REPO_ROOT/docs/infrastructure/development-tooling.md"
+)
+# Forbidden primary-command patterns. These catch `make test`, `run-tests.sh`,
+# `build/os-build.iso` UNLESS the line is explicitly marked legacy (contains
+# the word "legacy" or "Legacy" or "retired" or "deprecated" on the same
+# line) or is inside a fenced doc block pinned as a historical reference.
+# grep -vE filters out legacy-marked lines, so a doc describing the retired
+# ISO path with "(legacy, retired)" remains acceptable.
+for doc in "${OPERATOR_DOCS[@]}"; do
+    if [ ! -f "$doc" ]; then
+        t_fail "operator doc present: $(basename "$doc")"
+        continue
+    fi
+    # `make test` as a primary recommendation. Allow:
+    #   - `make test-<something>` (test-mm, test-fs, test-tooling, etc.) --
+    #     legitimate category-filter shorthand
+    #   - `make test*` (with literal star, used in docs to describe the
+    #     shorthand family as a whole)
+    #   - lines explicitly describing delegation / passthrough / shorthand
+    #     relationship to `bash scripts/test.sh` (the doc's job is to
+    #     explain that `make test` forms exist and delegate)
+    #   - lines flagged as legacy / retired / deprecated / historical
+    # The word boundary is "non-identifier char" on both sides, so
+    # `make test.` / `make test\`` / `make test ` all match; `make test-mm`
+    # (hyphen is in the exclusion set) does not.
+    if grep -nE '(^|[^a-zA-Z])make[[:space:]]+test([^a-zA-Z0-9_-])' "$doc" 2>/dev/null \
+        | grep -viE 'legacy|retired|deprecated|historical|bash scripts/test\.sh|make test\*|shorthand|passthrough|delegates?' >/dev/null; then
+        t_fail "$(basename "$doc") rejects stale 'make test' as primary" \
+            "found 'make test' not marked legacy; use 'bash scripts/test.sh' per §3"
+    else
+        t_pass "$(basename "$doc") rejects stale 'make test' as primary"
+    fi
+    # `run-tests.sh` was retired in §3. Any mention outside a legacy marker
+    # means the operator will follow a dead path.
+    if grep -nE 'run-tests\.sh' "$doc" 2>/dev/null \
+        | grep -viE 'legacy|retired|deprecated|historical' >/dev/null; then
+        t_fail "$(basename "$doc") rejects stale 'run-tests.sh'" \
+            "found 'run-tests.sh' not marked legacy; script was retired in §3"
+    else
+        t_pass "$(basename "$doc") rejects stale 'run-tests.sh'"
+    fi
+    # `build/os-build.iso` was retired in §3. The GPT disk image
+    # `build/system-disk.img` replaced it.
+    if grep -nE 'build/os-build\.iso' "$doc" 2>/dev/null \
+        | grep -viE 'legacy|retired|deprecated|historical' >/dev/null; then
+        t_fail "$(basename "$doc") rejects stale 'build/os-build.iso'" \
+            "found 'build/os-build.iso' not marked legacy; use 'build/system-disk.img' per §3"
+    else
+        t_pass "$(basename "$doc") rejects stale 'build/os-build.iso'"
+    fi
+done
 
 # ============================================================================
 # boot_info ABI drift-detection harness surface contract
@@ -339,6 +468,53 @@ assert_grep "README.md mentions install-hooks.sh" \
     "$REPO_ROOT/README.md" 'install-hooks\.sh'
 assert_grep "development-tooling.md mentions tooling-doctor" \
     "$REPO_ROOT/docs/infrastructure/development-tooling.md" 'tooling-doctor'
+
+# ============================================================================
+# Build / test sentinel contract (surface-only; full runs in CI)
+# ============================================================================
+# The TODO's Unit Tests §3 and §4 bullets assert:
+#   - bash scripts/build.sh clean writes build/build.log; tail -1 equals
+#     '=== BUILD OK ==='
+#   - bash scripts/test.sh QUIET=1 keeps summary path, suppresses per-test
+#     PASS lines
+# Running these from this regression pack would take ~10 seconds (build) +
+# ~15 seconds (tests) per invocation, which crosses the "lightweight
+# regression" bar this script is sized for. They are validated by:
+#   - scripts/build.sh's own tail -1 check (writes === BUILD OK === and
+#     documents it in --help; any future commit that breaks the sentinel
+#     is caught by CI's build.yml or the smoke test).
+#   - scripts/test.sh's QUIET_MODE flag handling is checked via --help
+#     text grep below (surface contract); the per-test suppression
+#     behavior is covered end-to-end by CI running the full suite.
+# This section is a STATIC contract check, not a runtime exercise.
+
+[ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[build / test sentinel surface]${NC}"
+assert_grep "build.sh documents '=== BUILD OK ===' sentinel" \
+    "$SCRIPT_DIR/build.sh" '=== BUILD OK ==='
+assert_grep "build.sh --help advertises the sentinel to operators" \
+    "$SCRIPT_DIR/build.sh" 'tail -1 build/build\.log'
+assert_grep "test.sh advertises QUIET=1 in --help" \
+    "$SCRIPT_DIR/test.sh" 'QUIET=1'
+assert_grep "test.sh parses QUIET_MODE from args" \
+    "$SCRIPT_DIR/test.sh" 'QUIET=1\).*QUIET_MODE=1'
+# Codex-2026-04-18: it's not enough to PARSE the QUIET flag -- the
+# per-test result loop must actually GATE its [ OK ] output on it, or a
+# silent boot.conf-patching failure (kernel still emits TEST: lines)
+# defeats the --help contract "summary only". Assert the gate on the
+# host-side loop, not just the flag parse.
+assert_grep "test.sh gates per-test OK output on QUIET_MODE (host layer)" \
+    "$SCRIPT_DIR/test.sh" 'QUIET_MODE"? -eq 0 ?\]'
+# Kernel-side gate too: test_runner.c's g_quiet flag must guard the PASS
+# emissions. If someone rewrites the runner and drops the g_quiet check,
+# QUIET=1 becomes a lie at the source.
+assert_grep "test_runner.c implements g_quiet gate (kernel layer)" \
+    "$REPO_ROOT/src/kernel/test/test_runner.c" 'g_quiet'
+# Confirm the wrappers actually wire the sentinel write, not just
+# advertise it. A commit that replaces the sentinel with a different
+# string would silently pass CI's exit-code check but break the
+# operator-visible contract.
+assert_grep "build.sh WRITES the sentinel (not just mentions it)" \
+    "$SCRIPT_DIR/build.sh" 'echo "=== BUILD OK ===" >> .*LOG'
 
 # ============================================================================
 # Summary

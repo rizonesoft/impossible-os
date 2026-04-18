@@ -202,14 +202,19 @@ if [ -n "$SUITE_FILTER" ]; then
     echo ""
 fi
 
-# Show suite results
+# Show suite results. QUIET_MODE=1 suppresses per-test [ OK ] lines at the
+# host layer (belt-and-suspenders with the kernel's g_quiet gate in
+# test_runner.c -- if boot.conf patching silently fails and the kernel
+# emits TEST: lines anyway, the host still honors the --help contract
+# "summary only"). FAIL lines are ALWAYS shown regardless of QUIET so
+# real regressions cannot hide behind the suppress.
 { grep -E 'TEST:.*::' "$TEST_LOG" 2>/dev/null || true; } | while IFS= read -r line; do
     if [ -n "$SUITE_FILTER" ]; then
         echo "$line" | grep -qi "$SUITE_FILTER" || continue
     fi
     if echo "$line" | grep -q '\[FAIL\]'; then
         echo -e "  ${RED}FAIL${RESET}  $(echo "$line" | sed 's/.*TEST: //')"
-    else
+    elif [ "$QUIET_MODE" -eq 0 ]; then
         echo -e "  ${GREEN} OK ${RESET}  $(echo "$line" | sed 's/.*TEST: //')"
     fi
 done

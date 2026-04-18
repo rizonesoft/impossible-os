@@ -32,18 +32,18 @@
 
 | | Files | Lines |
 |---|---:|---:|
-| **Shell scripts** (`.sh`) | 29 | 5723 |
+| **Shell scripts** (`.sh`) | 29 | 5904 |
 | **Batch scripts** (`.bat`) | 39 | 358 |
 | **PowerShell** (`.ps1`) | 7 | 1081 |
-| **Makefile** | 1 | 967 |
+| **Makefile** | 1 | 976 |
 | **Linker scripts** (`.ld`/`.lds`) | 2 | 126 |
-| **Subtotal** | **78** | **8255** |
+| **Subtotal** | **78** | **8445** |
 
 ## Grand Total
 
 | | Files | Lines |
 |---|---:|---:|
-| **All project code** | **556** | **186168** |
+| **All project code** | **556** | **186358** |
 
 > Vendored code excluded: ~13886 lines (`stb_image.h`, `stb_truetype.h`, `efi.h`)
 
@@ -58,15 +58,15 @@
 
 | | Linux | Windows | Impossible OS |
 |---|---:|---:|---:|
-| **Lines of code** | ~28,000,000 | ~50,000,000 | 186,168 |
+| **Lines of code** | ~28,000,000 | ~50,000,000 | 186,358 |
 | **Developers** | ~1,000 active | ~5,000 peak | 1 |
 | **Time span** | 33 years | 40 years | 1 month(s), 13 day(s) |
 
-> At industry rates (10,000 LOC/developer/year -- COCOMO II), writing 186,168
+> At industry rates (10,000 LOC/developer/year -- COCOMO II), writing 186,358
 > lines of kernel code would take **158 developers** working for **1 month(s), 13 day(s)**.
 >
 > *The "impossible" in Impossible OS was supposed to be the name, not the development method.*
 
 ---
 
-*Last updated: 2026-04-18 23:01 · commit `de663b27`*
+*Last updated: 2026-04-18 23:19 · commit `ba441da9`*

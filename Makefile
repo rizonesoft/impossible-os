@@ -108,7 +108,7 @@ GENERATED_HDRS := include/build_info.h include/kernel/os_logo.h src/kernel/bsod_
 # Targets
 # ============================================================================
 
-.PHONY: all _increment_build boot boot-icon boot-font kernel host-tools sysroot userland iso uefi-boot sign-efi system-disk test-disks run run-test run-debug run-log run-usb-ci run-nvme run-nvme-ci clean assets validate-assets sysroot-dirs sysroot-fonts sysroot-wallpapers sysroot-cursors sysroot-icons test-mm test-fs test-ob test-security test-ipc test-sched test-boot test-abi test-storage test-exec test-x86 boot-info-abi test-boot-info-abi
+.PHONY: all _increment_build boot boot-icon boot-font kernel host-tools sysroot userland iso uefi-boot sign-efi system-disk test-disks run run-test run-debug run-log run-usb-ci run-nvme run-nvme-ci clean assets validate-assets sysroot-dirs sysroot-fonts sysroot-wallpapers sysroot-cursors sysroot-icons test-mm test-fs test-ob test-security test-ipc test-sched test-boot test-abi test-storage test-exec test-x86 boot-info-abi test-boot-info-abi test-tooling
 
 ## all: Build everything (kernel + userland + system disk + boot_info ABI manifest)
 all: _increment_build assets kernel userland uefi-boot boot-info-abi post16-manifest system-disk
@@ -246,6 +246,15 @@ $(BOOT_ABI_MIRROR_JSON): $(BOOT_ABI_DUMPER_M)
 ##                    Depends on the real kernel JSON being up to date.
 test-boot-info-abi: $(BOOT_ABI_KERNEL_JSON)
 	@bash tools/boot-info-manifest/test-drift-detection.sh
+
+## test-tooling: Run scripts/test-tooling.sh -- the host-side developer
+##               tooling regression pack (wrapper --help contract, hook
+##               lifecycle on a throwaway git repo, workflow YAML sanity,
+##               stale-command rejection in operator docs, supported-host
+##               profile matrix, build/test sentinel contract). Fast; no
+##               OS build or kernel test-run required.
+test-tooling:
+	@bash scripts/test-tooling.sh
 
 ## post16-manifest: Emit build/post16-manifest.env listing every POST16_*
 ##                  #define from include/kernel/boot_init.h + src/boot/uefi/
