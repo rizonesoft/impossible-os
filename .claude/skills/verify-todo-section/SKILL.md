@@ -56,20 +56,34 @@ description: Verify an already-implemented TODO section through the full quality
    - **Deferred-item check:** scan earlier sections for "deferred to §N" where N is this section. If not resolved, flag.
    - **Implementation Order row:** must match section state. Downgrade conservatively.
    - **OS Comparison row:** must match section state. Downgrade if claimed Done but evidence shows Partial.
-   - **Verified stamp + optional Accepted stamp:** if ALL `[x]` items survived (no downgrades), add or update IMMEDIATELY after the **Test checkpoint** paragraph. Three blockquote lines maximum, no blank lines between them:
+   - **Verified stamp + optional Accepted/Deferred stamp:** if ALL `[x]` items survived (no downgrades), add or update IMMEDIATELY after the **Test checkpoint** paragraph. Compact pipe-separated format -- each stamp is ONE line of pipe-separated fields, not a paragraph. No blank lines between stamp lines.
      ```
-     > **Verified:** YYYY-MM-DD -- <evidence summary>. Build clean.
-     > **Accepted:** <finding> -> XREF: NN-domain/TODO-XX §N (item: "..." at line N). <next finding> -> XREF: ... .
-     > **Quality reviewed:** YYYY-MM-DD -- <gates walked, quality-dispatch findings, fixes applied>.
+     > **Verified:** YYYY-MM-DD | commit `<hash>` | N/M items | build OK[ | <evidence token>]
+     > **Accepted:** [<sev>] <one-line finding> [(reason: <short>)] -> XREF: NN-domain/TODO-XX §N (item: "..." at line N)
+     > **Deferred:** [<sev>] <one-line finding> [(reason: <short>)] -> XREF: NN-domain/TODO-XX §N (item: "..." at line N)
+     > **Quality reviewed:** YYYY-MM-DD | Codex Nx (<kinds>) | <H>H+<M>M+<L>L fixed, <D> open | scope: <skill or "N/A (reason)">
      ```
-     The stamp format:
-     - `Verified` is always present on a passing verification.
-     - `Accepted` gets its OWN blockquote line between Verified and Quality reviewed when there ARE deferred findings. If NO findings were accepted (all fixed or rejected), OMIT the line entirely -- do NOT write `Accepted: none`.
-     - Every `Accepted` entry must reference a concrete `[ ]` checklist item at the target (`item: "<name>" at line N`), domain-qualified (e.g. `02-kernel-core/TODO-17`, never bare `TODO-17`).
-     - `Quality reviewed` is added when the quality pipeline ran (separate skill or inline in verify if extended).
-     - If re-verifying, REPLACE existing stamp lines in place; never duplicate.
-     - If any items were DOWNGRADED, do NOT add any stamp.
-     - **No blank line** between any of the three stamp lines. Keep them as adjacent blockquote lines.
+     Field rules:
+     - `N/M items` -- checklist items `[x]` vs total `[ ]+[/]+[x]` in the section (not including the `Commit:` line).
+     - `build OK` | `build FAIL` -- single token. Do NOT re-paste `=== BUILD OK ===`.
+     - **Evidence token vocabulary (pick one; keep scannable):** `smoke PASS (<platform> <time>)` for boot-path work; `tests N/M PASS` when a dedicated suite ran; `<N> sentinels` / `<N> fields` / `<N> rows` for structural counts; `manual` when validation is manual walkthrough. Free-form strings are still allowed but prefer the vocabulary for scannability. Skip the token entirely if nothing is surprising to report.
+     - Codex line: `Nx` is the dispatch count; `<kinds>` names the dispatches (`adversarial`, `quality`, `consistency`, `dead-code`, `perf`). Findings as `<H>H+<M>M+<L>L fixed, <D> open` (use actual counts; drop terms that are 0, e.g. `2M fixed, 0 open`). `scope:` names the domain code-quality skill applied OR `N/A (<reason>)` (examples: `N/A (docs-only)`, `N/A (bash + docs)`). Do NOT write the full "No domain code-quality skill applies (...)" sentence.
+     - **`Accepted:` vs `Deferred:` -- pick the right label; the semantic split matters for triage.** Both are hook-enforced identically, but they answer different triage questions:
+       - **`Accepted:`** -- finding valid but **out-of-scope for this section**; ownership is elsewhere. The XREF points to a concrete item in ANOTHER TODO section or file. Grep `Accepted:` when auditing ownership-transfer risk.
+       - **`Deferred:`** -- finding valid, **in-scope** for this TODO, but bigger than this commit. The XREF points to a later item in THIS section (or elsewhere in this TODO file). Grep `Deferred:` when auditing "we promised to come back to this."
+     - **Severity tag** `[Critical]` / `[H]` / `[M]` / `[L]` is REQUIRED on every Accepted and Deferred line. Matches the Codex finding severity. Enables `grep -r "Accepted:\s*\[H\]" todo/` for fast scope-risk triage.
+     - **Optional `(reason: <short>)`** -- include when the defer-rationale is not obvious from the finding text alone. Three common reasons worth naming: `scope` (finding valid but belongs to another owner), `infra` (needs bigger work unit; this commit can't absorb it), `not-functional-today` (hardware/deployment guarantees mean we're not racing a real bug). Free-form reasons are allowed; keep under ~10 words. Omit the parenthetical when the finding text alone explains the defer.
+     - **One XREF per concern.** If more than one finding is deferred, repeat the whole `> **Accepted:**` or `> **Deferred:**` line. Domain-qualified TODO name (e.g. `02-kernel-core/TODO-17`, never bare `TODO-17`). `(item: "<name>" at line N)` parenthetical is MANDATORY and hook-enforced -- a pre-commit hook rejects any Accepted/Deferred XREF without `item:` / `at line` / `retrofit` / `helper;` inside a parenthetical. OMIT the line entirely when nothing is deferred -- do NOT write `Accepted: none` or `Deferred: none`.
+     - If re-verifying, REPLACE existing stamp lines in place; never duplicate. If any items were DOWNGRADED, do NOT add any stamp.
+     - **Escape hatch (rare):** if per-finding prose is genuinely load-bearing (cross-review context the commit message won't capture), append a `<details>` block after the stamps. Example:
+       ```
+       > <details><summary>Finding detail</summary>
+       >
+       > - H1 <one line> -> fixed at file:line
+       > - M1 <one line> -> deferred (Deferred above)
+       > </details>
+       ```
+       Default is NO `<details>` block. Use only when the commit message and `[x]` marks genuinely can't carry the context.
    - Preserve formatting. No N.M subnumbering.
 
 ## HARD GATE: Steps 8-12 are MANDATORY before step 13

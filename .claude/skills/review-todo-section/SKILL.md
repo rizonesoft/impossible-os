@@ -107,16 +107,35 @@ description: Full review of a TODO section -- adversarial Codex, dead code, cons
 
     **Why this step exists:** without it, "Accepted with XREF" becomes a paper trail that someone later has to chase, find nothing actionable, and re-do the analysis. Every Accepted finding must be one `[x]` away from being fully closed.
 
-16. **Stamps** -- three distinct blockquote lines, no blank lines between:
+16. **Stamps** -- compact pipe-separated fields, one line per stamp, no blank lines between:
 
     ```
-    > **Verified:** YYYY-MM-DD -- <evidence map>. Build clean.
-    > **Accepted:** <finding 1> -> XREF: NN-domain/TODO-XX §N (item: "..." at line N). <finding 2> -> XREF: ... .
-    > **Quality reviewed:** YYYY-MM-DD -- <gates walked, fixes applied, dispatches summarised>.
+    > **Verified:** YYYY-MM-DD | commit `<hash>` | N/M items | build OK[ | <evidence token>]
+    > **Accepted:** [<sev>] <one-line finding> [(reason: <short>)] -> XREF: NN-domain/TODO-XX §N (item: "..." at line N)
+    > **Deferred:** [<sev>] <one-line finding> [(reason: <short>)] -> XREF: NN-domain/TODO-XX §N (item: "..." at line N)
+    > **Quality reviewed:** YYYY-MM-DD | Codex Nx (<kinds>) | <H>H+<M>M+<L>L fixed, <D> open | scope: <skill or "N/A (reason)">
     ```
 
-    - `> **Accepted:**` gets its OWN blockquote line between Verified and Quality reviewed. Do NOT bury accepted items inside the Quality-reviewed paragraph -- the user scans for deferred issues and a dedicated line is the whole point. If there are NO accepted items, OMIT the line entirely (don't write `Accepted: none`).
-    - Every Accepted XREF must reference a concrete item per step 15. Domain-qualified (e.g. `02-kernel-core/TODO-17`, not bare `TODO-17`).
+    Field rules:
+    - `N/M items` -- `[x]` count vs total `[ ]+[/]+[x]` in the section (exclude the `Commit:` line).
+    - `build OK` | `build FAIL` -- single token. Do NOT re-paste `=== BUILD OK ===`.
+    - **Evidence token vocabulary (pick one; keep scannable):** `smoke PASS (<platform> <time>)` for boot-path work; `tests N/M PASS` when a dedicated suite ran; `<N> sentinels` / `<N> fields` / `<N> rows` for structural counts; `manual` when validation is manual walkthrough. Free-form is still allowed; prefer the vocabulary. Skip if nothing surprising.
+    - Codex line: `Nx` is dispatch count; `<kinds>` names dispatches (`adversarial`, `quality`, `consistency`, `dead-code`, `perf`). Findings as `<H>H+<M>M+<L>L fixed, <D> open`; drop zero terms. `scope:` names the domain code-quality skill applied OR `N/A (<reason>)` like `N/A (docs-only)`. Do NOT write the full "No domain code-quality skill applies (...)" sentence.
+    - **`Accepted:` vs `Deferred:` -- pick the right label; the semantic split matters for triage.** Both are hook-enforced identically.
+      - **`Accepted:`** -- finding valid but **out-of-scope for this section**; ownership is elsewhere. XREF points to a concrete item in ANOTHER TODO section or file. Grep `Accepted:` when auditing ownership-transfer risk.
+      - **`Deferred:`** -- finding valid, **in-scope** for this TODO, but bigger than this commit. XREF points to a later item in THIS section or TODO file. Grep `Deferred:` when auditing "we promised to come back to this."
+    - **Severity tag** `[Critical]` / `[H]` / `[M]` / `[L]` is REQUIRED on every Accepted and Deferred line. Matches Codex finding severity. Enables `grep -r "Accepted:\s*\[H\]" todo/` for fast scope-risk triage.
+    - **Optional `(reason: <short>)`** -- include when the defer-rationale is not obvious from the finding. Common reasons: `scope` (belongs to another owner), `infra` (needs bigger work unit), `not-functional-today` (HW/deployment guarantees mean not racing a real bug). Keep under ~10 words. Omit when the finding text alone explains the defer.
+    - Gets its OWN blockquote line between Verified and Quality reviewed. One XREF per concern; repeat the line for multiple. Domain-qualified (e.g. `02-kernel-core/TODO-17`, never bare `TODO-17`). `(item: "<name>" at line N)` parenthetical is MANDATORY (hook-enforced, see step 15 grammar). If there are NO accepted/deferred items, OMIT both lines entirely -- do NOT write `Accepted: none`.
+    - **Escape hatch (rare):** if per-finding prose is genuinely load-bearing (cross-review context the commit message can't carry), append a `<details>` block after the stamps:
+      ```
+      > <details><summary>Finding detail</summary>
+      >
+      > - H1 <one line> -> fixed at file:line
+      > - M1 <one line> -> deferred (Deferred above)
+      > </details>
+      ```
+      Default is NO `<details>` block. Commit messages and `[x]` marks carry most audit weight; counts + XREFs carry the rest.
     - **Do NOT re-emit a `> **Test runner:**` line** -- the pre-stamp block written by `implement-todo-section` step 8 is the single source of truth. If the test count or bat file changed during review, edit the pre-stamp block in place instead of adding a second line.
 
 17. **Commit and push** -- `"review: <TODO> §N -- <summary>"`. If step 15 created or modified items in other TODO files, stage and commit those in the SAME commit as the stamp.

@@ -97,10 +97,11 @@ description: Deep quality review of an implemented TODO section -- industry stan
 
 11. **Report** -- summarize what was fixed vs accepted.
 
-12. **Quality stamp** -- add IMMEDIATELY after the Verified stamp (no blank line):
+12. **Quality stamp** -- add IMMEDIATELY after the Verified stamp (no blank line). Compact pipe-separated format -- one line of fields, not a paragraph:
     ```
-    > **Quality reviewed:** YYYY-MM-DD -- <summary>. Accepted: <items with domain-qualified XREFs, or "none">.
+    > **Quality reviewed:** YYYY-MM-DD | Codex Nx (<kinds>) | <H>H+<M>M+<L>L fixed, <D> open | scope: <skill or "N/A (reason)">
     ```
+    If findings were deferred, add a `> **Accepted:**` (out-of-scope, owned elsewhere) or `> **Deferred:**` (in-scope, owned later) line on its OWN blockquote line between Verified and Quality reviewed. Each deferred line requires a severity tag `[Critical|H|M|L]` at the start and ends with a hook-enforced `(item: "..." at line N)` XREF parenthetical; optional `(reason: <short>)` when the defer-rationale is not obvious from the finding text. See `verify-todo-section` SKILL.md for the full field rules, Accepted-vs-Deferred semantic split, Verified evidence-token vocabulary, and `<details>` escape hatch. Do NOT re-paste per-finding prose into the Quality-reviewed line; counts + XREFs carry the audit trail.
 
 13. **Commit and push** -- `"quality: <TODO> §N -- <summary>"`
 

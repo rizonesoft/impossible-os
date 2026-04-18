@@ -91,10 +91,10 @@ description: Validate a TODO file for structural completeness, Implementation Or
     - If the Unit Tests section is missing entirely, flag it and draft a skeleton.
     - If a section defers a feature on purpose, ensure the Unit Tests plan makes room for the later real assertion or a temporary `TEST_PENDING` pattern rather than silently dropping test ownership.
 13. **Test runner bat file.**
-    - At the bottom of the `## Verification` section, ensure there is a line: `**Test runner:** `scripts\debug\run-<suite>-tests.bat` (SUITE=<cat>)`.
+    - At the bottom of the `## Verification` section, ensure there is a one-line compact stamp: `**Test runner:** `scripts\debug\run-<suite>-tests.bat` (SUITE=<cat>) | N suites, 0 failures` (or `**Test runner:** N/A (<reason>) | validation: <how-verified>` for sections with no kernel test surface).
     - Determine the `TEST_CAT_*` category from the Unit Tests section (e.g., `TEST_CAT_MM` -> `mm`, `TEST_CAT_SCHED` -> `sched`).
     - Check if `scripts/debug/run-<suite>-tests.bat` exists on disk. If it does NOT exist, create it following the pattern in existing bat files (one-liner calling `run-qemu.ps1 -Accel whpx -TestOnly -TestSuite <suite>`).
-    - Add the line to the Verification section if missing.
+    - Add the line to the Verification section if missing. Prefer the single-line pipe-separated format over splitting across `**Test runner:**` + `**Expected:**` blockquote lines.
 14. If section completion state seems wrong, defer to `/validate-todo-section` for deep code-truth verification.
 
 15. **Code block compaction (MANDATORY).** Inline ` ```c ``` ` blocks are for SHOWING THE CONTRACT, not for pre-writing the implementation. A TODO is a plan; the header file and source file are the implementation. Duplicating struct definitions, enum tables, and function bodies in the TODO creates four problems: (a) the TODO drifts from the code, (b) the implementer copy-pastes from the TODO instead of designing the type fresh against current invariants, (c) the section bloats from ~10 lines to ~80, making the checklist unscannable, (d) future readers cannot tell the spec from a stale draft.

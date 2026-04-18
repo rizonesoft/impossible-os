@@ -30,21 +30,21 @@ Usage:
   bash scripts/lint.sh src/kernel/mm/     Lint a specific path (skips xref check)
   bash scripts/lint.sh --help             Show this help
 
-Checks (5):
+Checks (4):
   1. #pragma once or include guard in every .h
   2. Lines <= 120 characters (excludes comment lines)
   3. No trailing whitespace
-  4. snake_case function definitions (excludes Win32 API wrappers)
-  5. No numeric TODO shorthand (TODO-NN sectionN, DNN TNN) outside todo/**
+  4. No numeric TODO shorthand (TODO-NN sectionN, DNN TNN) outside todo/**
      except a baseline allowlist of pre-existing files (see the developer
      tooling stack roadmap -- Tooling Doctor section -- for the legacy-XREF
      sweep).
 
-Removed 2026-04-17: the old "functions > 50 lines" and "lowercase #define"
-warnings were warn-only, never triaged, and duplicated signal that Codex
-adversarial review + the domain code-quality skills already carry. Style
-review belongs with those tools; lint stays focused on drift-catching
-structural checks.
+Removed 2026-04-17: "functions > 50 lines" and "lowercase #define" warnings
+(warn-only, never triaged; duplicated Codex + domain code-quality coverage).
+Removed 2026-04-18: camelCase-function warning -- unsafe for a Win11-native
+OS where NT/Rtl/Ob/Se/Ke/Mm/Io/Ex API names are deliberately CamelCase.
+Style review belongs with Codex adversarial review + domain code-quality
+skills; lint stays focused on drift-catching structural checks.
 
 Exit codes:
   0 = clean
@@ -162,34 +162,7 @@ for file in "${FILES[@]}"; do
 done
 
 # ============================================================================
-# Check 4: camelCase function definitions (should be snake_case)
-# ============================================================================
-for file in "${FILES[@]}"; do
-    [[ "$file" != *.c ]] && continue
-    relpath="${file#"$REPO_ROOT"/}"
-
-    # Look for function definitions with camelCase names
-    # Pattern: type funcName( at start of line (not in comments)
-    while IFS= read -r match; do
-        linenum=$(echo "$match" | cut -d: -f1)
-        line=$(echo "$match" | cut -d: -f2-)
-        # Extract function name
-        func=$(echo "$line" | sed -E 's/.*[ \t\*]([a-zA-Z_][a-zA-Z0-9_]*)\s*\(.*/\1/')
-        # Check for camelCase: lowercase letter followed by uppercase
-        if echo "$func" | grep -qP '[a-z][A-Z]' 2>/dev/null; then
-            # Exclude known exceptions (Win32 API names like RegSetValueEx)
-            if echo "$func" | grep -qE '^(Reg|Hkey|HKEY)' 2>/dev/null; then
-                continue
-            fi
-            warn "$relpath" "$linenum" "function '$func' uses camelCase (prefer snake_case)"
-        fi
-    done < <(grep -nE '^[a-zA-Z_].*[a-zA-Z_][a-zA-Z0-9_]*\s*\(' "$file" 2>/dev/null \
-        | grep -vE '^\s*(//|/\*|\*|#|if|else|while|for|switch|return|typedef|struct|enum)' \
-        || true)
-done
-
-# ============================================================================
-# Check 5: Drift-prone TODO numeric shorthand outside todo/
+# Check 4: Drift-prone TODO numeric shorthand outside todo/
 # ============================================================================
 # Numeric XREFs (e.g. TODO-<num> <section-sign><num>, D<num> T<num> <section-sign><num>)
 # go stale silently when TODOs renumber. Inside todo/** the create-todo / validate-todo-file skills
