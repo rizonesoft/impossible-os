@@ -1,6 +1,6 @@
 # Skill Authoring Lifecycle
 
-> Canonical how-to for adding, editing, and retiring Claude Code skills in this repo. Authority for WHERE skills live and WHICH tool owns them lives in [`ai-system.md`](ai-system.md); this page owns the HOW. Roadmap ownership is [TODO-02 §2](../../todo/00-infrastructure/TODO-02-ai-development-system.md#2-skill-lifecycle-templates-and-catalog-rules).
+> Canonical how-to for adding, editing, and retiring Claude Code skills in this repo. Authority for WHERE skills live and WHICH tool owns them lives in [`ai-system.md`](ai-system.md); this page owns the HOW. Roadmap ownership is [Skill Lifecycle, Templates, and Catalog Rules](../../todo/00-infrastructure/TODO-02-ai-development-system.md#2-skill-lifecycle-templates-and-catalog-rules).
 
 ## No Parallel Skill Trees (hard rule)
 
@@ -78,7 +78,7 @@ Both shapes share universal constraints:
 - **No Unicode en/em dashes** (U+2013, U+2014). ASCII `--` only, per the project rule in [`CLAUDE.md`](../../CLAUDE.md#no-unicode-dashes-enem-ascii-only).
 - **No `[Opus]` / `[Sonnet]` model tags** on headings; they drift as models change. Model Roles in CLAUDE.md owns the policy.
 
-If your skill needs a shape neither A nor B covers, update this document BEFORE shipping the skill -- the TODO-02 §9 regression suite enforces shape compliance, so unlisted shapes will be flagged.
+If your skill needs a shape neither A nor B covers, update this document BEFORE shipping the skill -- the [AI Workflow Regression Suite](../../todo/00-infrastructure/TODO-02-ai-development-system.md#9-ai-workflow-regression-suite) enforces shape compliance, so unlisted shapes will be flagged.
 
 **Optional sections** (add when load-bearing, not for padding):
 
@@ -109,7 +109,7 @@ Three canonical locations must stay in sync. A skill that exists in only one is 
 - Every directory under `.claude/skills/` (except `README.md` itself) is a live skill with a `SKILL.md`.
 - Every live skill has exactly one row in the CLAUDE.md Skills table AND one row in `.claude/skills/README.md`.
 - A skill directory without matching index rows is dead weight; either index it or retire it. No silent orphans.
-- `§9` regression suite (TODO-02 §9) enforces this sync automatically.
+- The [AI Workflow Regression Suite](../../todo/00-infrastructure/TODO-02-ai-development-system.md#9-ai-workflow-regression-suite) enforces this sync automatically.
 
 ---
 
@@ -137,6 +137,6 @@ The same 7-step sweep applies to renames: treat a rename as retire-old + add-new
 ## See Also
 
 - [`ai-system.md`](ai-system.md) -- Authority Hierarchy, Claude Code-Only Stance, global-vs-tool-local doctrine split. This page is its how-to companion.
-- [TODO-02 AI Development System](../../todo/00-infrastructure/TODO-02-ai-development-system.md) -- roadmap ownership; §2 owns this document, §3 owns hook routing, §9 owns the regression suite that enforces the sync invariant.
+- [AI Development System roadmap](../../todo/00-infrastructure/TODO-02-ai-development-system.md) -- roadmap ownership; [Skill Lifecycle, Templates, and Catalog Rules](../../todo/00-infrastructure/TODO-02-ai-development-system.md#2-skill-lifecycle-templates-and-catalog-rules) owns this document, [Hook Routing and Policy Contract](../../todo/00-infrastructure/TODO-02-ai-development-system.md#3-hook-routing-and-policy-contract) owns hook routing, and the [AI Workflow Regression Suite](../../todo/00-infrastructure/TODO-02-ai-development-system.md#9-ai-workflow-regression-suite) enforces the sync invariant.
 - [`.claude/skills/TEMPLATE.md`](../../.claude/skills/TEMPLATE.md) -- the copy-pasteable skeleton referenced in step 1.
 - [`CLAUDE.md`](../../CLAUDE.md) -- doctrine; Skills table and Mandatory Skill Triggers table both live there.

@@ -1,6 +1,6 @@
 # AI Development System -- Ownership Map
 
-> Canonical reference for who-owns-what across the Impossible OS AI surface. `CLAUDE.md` links here from its "Skills" section; [`docs/infrastructure/index.md`](index.md) lists this doc so it is discoverable from the Infrastructure landing page. Roadmap ownership lives in [TODO-02 AI Development System](../../todo/00-infrastructure/TODO-02-ai-development-system.md).
+> Canonical reference for who-owns-what across the Impossible OS AI surface. `CLAUDE.md` links here from its "Skills" section; [`docs/infrastructure/index.md`](index.md) lists this doc so it is discoverable from the Infrastructure landing page. Roadmap ownership lives in the [AI Development System roadmap](../../todo/00-infrastructure/TODO-02-ai-development-system.md).
 
 ## Authority Hierarchy (read this first)
 
@@ -15,7 +15,7 @@
 | Codex (OpenAI plugin)             | Subordinate reviewer                             | Adversarial findings only; invoked from inside `codex-*` Claude skills; findings go through `receiving-code-review` before action  |
 | Copilot CLI                       | Subordinate reviewer                             | External PR-style review; invoked via `scripts/copilot-review.sh`; same `receiving-code-review` discipline                         |
 | `.github/copilot-instructions.md` | Copilot-CLI repo instructions                    | Only configures how Copilot answers when invoked; does NOT add new doctrine                                                        |
-| `.githooks/`                      | Git-time guards (distinct layer, see TODO-01 §5) | Pre-commit lint, post-commit COUNT, opt-in pre-push                                                                                |
+| `.githooks/`                      | Git-time guards (distinct layer; see [Git Hooks and Local Automation Lifecycle](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md#5-git-hooks-and-local-automation-lifecycle)) | Pre-commit lint, post-commit COUNT, opt-in pre-push                                                                                |
 
 ### Hierarchy invariants
 
@@ -33,7 +33,7 @@ As of 2026-04-18, Impossible OS is **Claude Code-only** for AI-assisted developm
 
 - **No `.cursor/`, no parallel skill sets.** Doctrine lives in `CLAUDE.md`; skills live in `.claude/skills/`. The previous `.cursor/` tree was removed because maintaining a parallel skill set under it created clutter without a corresponding productivity win.
 - **External reviewers are invoked from inside Claude skills, not from separate instruction layers.** Codex runs through the OpenAI Codex plugin when a `codex-*` skill dispatches it; Copilot runs through `scripts/copilot-review.sh` when Claude asks for a PR-style review. Neither tool reads its own instruction tree in this repo.
-- **If a new AI tool is added in the future, it goes through the external-reviewer contract** (§4 of TODO-02) and applies `receiving-code-review` discipline to its findings. New tools do not get their own instruction tree.
+- **If a new AI tool is added in the future, it goes through the [External-Reviewer Contract](../../todo/00-infrastructure/TODO-02-ai-development-system.md#4-external-reviewer-contract-codex-copilot)** and applies `receiving-code-review` discipline to its findings. New tools do not get their own instruction tree.
 
 ---
 
@@ -48,7 +48,7 @@ Global doctrine lives in `CLAUDE.md` and binds every layer (Claude, skills, hook
 | Product north star (Win11-compatible, complete, better) | [`CLAUDE.md` -- Product North Star](../../CLAUDE.md#product-north-star----complete-compatible-better)                                                                     |
 | Bare metal first; VMs are convenience                 | [`CLAUDE.md` -- Development Strategy](../../CLAUDE.md#development-strategy----bare-metal-first-smp-from-day-one)                                                          |
 | SMP-safe by default; no single-CPU assumptions        | [`CLAUDE.md` -- Development Strategy](../../CLAUDE.md#development-strategy----bare-metal-first-smp-from-day-one)                                                          |
-| POST16 is for boot-path code ONLY                     | [`CLAUDE.md` -- Bare Metal Gotchas](../../CLAUDE.md#bare-metal-gotchas) + [TODO-01 §10 POST16 Manifest](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md)   |
+| POST16 is for boot-path code ONLY                     | [`CLAUDE.md` -- Bare Metal Gotchas](../../CLAUDE.md#bare-metal-gotchas) + [Smoke-Test POST16 Assertions](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md#10-smoke-test-post16-assertions)   |
 | No Unicode en/em dashes in tracked files              | [`CLAUDE.md` -- No Unicode Dashes](../../CLAUDE.md#no-unicode-dashes-enem-ascii-only)                                                                                     |
 | Freestanding kernel (no stdlib, `kernel/types.h`)     | [`CLAUDE.md` -- Freestanding Kernel](../../CLAUDE.md#freestanding-kernel----no-stdlib)                                                                                    |
 | Win32 is the native API; POSIX via compat only        | [`CLAUDE.md` -- API Surface](../../CLAUDE.md#api-surface----win32-native)                                                                                                 |
@@ -85,7 +85,7 @@ Preserve the hierarchy by editing the ONE canonical location when a concept has 
 | Harness policy (hooks, permissions)              | [`.claude/settings.json`](../../.claude/settings.json)                                | Mandatory-Skill-Triggers table in `CLAUDE.md` (update when a hook is added that enforces a new rule)                                             |
 | Copilot CLI guidance                             | [`.github/copilot-instructions.md`](../../.github/copilot-instructions.md)            | `scripts/copilot-review.sh` (invocation only); never restate doctrine in the instructions file                                                   |
 | Codex dispatch templates                         | Individual `codex-*` skills under [`.claude/skills/`](../../.claude/skills/)          | Codex plugin config (external); never restate doctrine in plugin docs                                                                            |
-| Git-hook lifecycle (pre-commit lint, post-commit COUNT, pre-push) | [TODO-01 §5](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md) + [`.githooks/`](../../.githooks/) | `CONTRIBUTING.md` "Enable Git Hooks" section (copy-pastable install commands only); `CLAUDE.md` "Git Hooks" section (one-line pointer) |
+| Git-hook lifecycle (pre-commit lint, post-commit COUNT, pre-push) | [Git Hooks and Local Automation Lifecycle](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md#5-git-hooks-and-local-automation-lifecycle) + [`.githooks/`](../../.githooks/) | `CONTRIBUTING.md` "Enable Git Hooks" section (copy-pastable install commands only); `CLAUDE.md` "Git Hooks" section (one-line pointer) |
 | TODO workflow (validate, gap-analysis, implement, review) | [`.claude/skills/`](../../.claude/skills/) (the individual skill files are the SoT)   | `/todo-pipeline` orchestrator (references the individual skills; never inlines their content)                                                    |
 
 **When in doubt:** if the same fact appears in two places and they drift, the downstream consumer is the bug.
@@ -94,8 +94,8 @@ Preserve the hierarchy by editing the ONE canonical location when a concept has 
 
 ## See Also
 
-- [TODO-02 AI Development System](../../todo/00-infrastructure/TODO-02-ai-development-system.md) -- roadmap ownership, skill lifecycle (§2), hook policy (§3), reviewer contract (§4), permissions boundary (§5), cross-tool pointer (§6), commit-disclosure policy (§7), autonomous-agent boundary (§8), regression suite (§9).
+- [AI Development System roadmap](../../todo/00-infrastructure/TODO-02-ai-development-system.md) -- roadmap ownership, [Skill Lifecycle, Templates, and Catalog Rules](../../todo/00-infrastructure/TODO-02-ai-development-system.md#2-skill-lifecycle-templates-and-catalog-rules), [Hook Routing and Policy Contract](../../todo/00-infrastructure/TODO-02-ai-development-system.md#3-hook-routing-and-policy-contract), [External-Reviewer Contract](../../todo/00-infrastructure/TODO-02-ai-development-system.md#4-external-reviewer-contract-codex-copilot), [MCP, Permissions, and Extension Boundary](../../todo/00-infrastructure/TODO-02-ai-development-system.md#5-mcp-permissions-and-extension-boundary), [`AGENTS.md` Cross-Tool Pointer File](../../todo/00-infrastructure/TODO-02-ai-development-system.md#6-agentsmd-cross-tool-pointer-file), [AI-Assist Commit Disclosure Policy](../../todo/00-infrastructure/TODO-02-ai-development-system.md#7-ai-assist-commit-disclosure-policy), [Autonomous-Agent Boundary Policy](../../todo/00-infrastructure/TODO-02-ai-development-system.md#8-autonomous-agent-boundary-policy), and [AI Workflow Regression Suite](../../todo/00-infrastructure/TODO-02-ai-development-system.md#9-ai-workflow-regression-suite).
 - [Skill Authoring Lifecycle](skill-authoring.md) -- how to add, edit, or retire a skill; canonical SKILL.md template; catalog hygiene sync rules.
-- [TODO-01 §5 Git Hooks and Local Automation Lifecycle](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md) -- `.githooks/` are a separate layer from Claude Code harness hooks.
+- [Git Hooks and Local Automation Lifecycle](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md#5-git-hooks-and-local-automation-lifecycle) -- `.githooks/` are a separate layer from Claude Code harness hooks.
 - [Development Tooling](development-tooling.md) -- build system, test framework, host bootstrap contract. Complements this document: development-tooling.md owns the CI/build surface; ai-system.md owns the AI surface.
 - [`CLAUDE.md`](../../CLAUDE.md) -- the doctrine itself. This document is an index into CLAUDE.md, not a replacement.
