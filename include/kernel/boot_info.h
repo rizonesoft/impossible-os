@@ -459,14 +459,14 @@ struct boot_usb_controller {
  * bootloaders that emit payloads this kernel does not recognize. */
 enum boot_payload_type {
     BOOT_PAYLOAD_NONE              = 0,   /* empty slot */
-    BOOT_PAYLOAD_MODULE            = 1,   /* generic kernel module; owner 01-boot-platform/TODO-01 §5 */
-    BOOT_PAYLOAD_INITRD            = 2,   /* initrd/initramfs; owner 01-boot-platform/TODO-01 §5 */
-    BOOT_PAYLOAD_RECOVERY_IMAGE    = 3,   /* recovery env image; owner 01-boot-platform/TODO-22 */
-    BOOT_PAYLOAD_HIBERNATION_META  = 4,   /* hibernation metadata; owner 01-boot-platform/TODO-26 §5 */
-    BOOT_PAYLOAD_TPM_EVENT_LOG     = 5,   /* TPM TCG event log copy; owner 01-boot-platform/TODO-13 §1 */
-    BOOT_PAYLOAD_NETWORK_CONFIG    = 6,   /* network boot config blob; owner 01-boot-platform/TODO-25 §6 */
-    BOOT_PAYLOAD_RANDOM_SEED       = 7,   /* bootloader RNG seed; owner 01-boot-platform/TODO-12 §7 */
-    BOOT_PAYLOAD_USB_HANDOVER      = 8,   /* xHCI DMA state blob; owner 01-boot-platform/TODO-20 §4 */
+    BOOT_PAYLOAD_MODULE            = 1,   /* generic kernel module (owner: module and initrd handoff contract) */
+    BOOT_PAYLOAD_INITRD            = 2,   /* initrd / initramfs (owner: module and initrd handoff contract) */
+    BOOT_PAYLOAD_RECOVERY_IMAGE    = 3,   /* recovery env image (owner: recovery partition bootloader) */
+    BOOT_PAYLOAD_HIBERNATION_META  = 4,   /* hibernation metadata (owner: hibernation/resume handoff) */
+    BOOT_PAYLOAD_TPM_EVENT_LOG     = 5,   /* TPM TCG event log copy (owner: TPM measured boot event log parser) */
+    BOOT_PAYLOAD_NETWORK_CONFIG    = 6,   /* network boot config blob (owner: network boot provenance) */
+    BOOT_PAYLOAD_RANDOM_SEED       = 7,   /* bootloader RNG seed (owner: early entropy seed handoff) */
+    BOOT_PAYLOAD_USB_HANDOVER      = 8,   /* xHCI DMA state blob (owner: USB zero-delay handover DMA state) */
 };
 
 /* Descriptor flags (bitmask). New bits are ignored by older kernels if

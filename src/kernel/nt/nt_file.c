@@ -625,8 +625,8 @@ static NTSTATUS NtCancelIoFileEx_handler(
  * from Ob handles at a glance when debugging.
  *
  * Lock: each port has an internal spinlock that protects head/tail/count
- * /entries. Added 2026-04-15 (TODO-12 §5) when ALPC started posting
- * completion packets concurrently with user-mode NtSet/Remove.
+ * /entries. Added 2026-04-15 with the ALPC completion-list work when ALPC
+ * started posting completion packets concurrently with user-mode NtSet/Remove.
  */
 
 static IO_COMPLETION_PORT s_iocp_pool[16];

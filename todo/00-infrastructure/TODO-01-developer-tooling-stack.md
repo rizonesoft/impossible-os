@@ -60,7 +60,7 @@
 | 💎  |   6   | GitHub Actions and artifact policy alignment          | §2, §3, §4, §5 |  [x]   |
 | ⭐  |   7   | Tooling doctor and regression pack                    | §1-§6          |  [x]   |
 | 💎  |   8   | Unify specialist-launcher `-ExtraArgs` surface        | §4             |  [x]   |
-| 💎  |   9   | Legacy-XREF sweep (lint Check 5 -> 0 errors; CI gate) | §3, §6         |  [ ]   |
+| 💎  |   9   | Legacy-XREF sweep (lint Check 5 -> 0 errors; CI gate) | §3, §6         |  [x]   |
 | 💎  |  10   | Smoke-test POST16 assertions (boot-phase manifest)    | §3             |  [ ]   |
 
 > 💎 = parity work: Windows and Linux projects both rely on stable setup/build/test/CI contracts.
@@ -298,13 +298,25 @@ Scenario launchers under `scripts/machines/storage/` and `scripts/machines/fs/` 
 
 Rewrite the ~60 source / test / header / script files on the `scripts/lint.sh` `TODO_XREF_LEGACY_FILES` allowlist so they stop using numeric TODO shorthand (`TODO-NN §M`, `DNN TNN §N`, `TNN §N`) outside `todo/**`. Lint Check 5 (renumbered from Check 7 on 2026-04-17) already errors on new out-of-`todo/` drift, so this is a one-shot catch-up after which lint can become a CI gate.
 
-- [ ] For each file in the allowlist, rewrite numeric refs as either (a) a functional description of what the code does, or (b) a relative-path + heading anchor link into the canonical doc that owns the concern.
-- [ ] As each file is cleaned, remove it from `TODO_XREF_LEGACY_FILES` in `scripts/lint.sh`. Target: 0 entries.
-- [ ] Templates under `.claude/skills/**`, `.cursor/**`, `.github/PULL_REQUEST_TEMPLATE.md` intentionally teach the shorthand and stay excluded from the sweep.
-- [ ] Once the allowlist is empty, wire `bash scripts/lint.sh` as a required gate in `.github/workflows/build.yml` and `release.yml` (see the developer tooling roadmap -- GitHub Actions section -- for the existing insertion point, already commented as "Not yet wired" pending this sweep).
-- [ ] Commit: `"scripts: drop legacy numeric-TODO shorthand from tree; lint becomes CI gate"`
+- [x] For each file in the allowlist, rewrite numeric refs as either (a) a functional description of what the code does, or (b) a relative-path + heading anchor link into the canonical doc that owns the concern.
+- [x] As each file is cleaned, remove it from `TODO_XREF_LEGACY_FILES` in `scripts/lint.sh`. Target: 0 entries.
+- [x] Templates under `.claude/skills/**`, `.cursor/**`, `.github/PULL_REQUEST_TEMPLATE.md` intentionally teach the shorthand and stay excluded from the sweep.
+- [x] Once the allowlist is empty, wire `bash scripts/lint.sh` as a required gate in [`.github/workflows/build.yml`](../../.github/workflows/build.yml) and [`.github/workflows/release.yml`](../../.github/workflows/release.yml).
+- [x] Commit: `"scripts: drop legacy numeric-TODO shorthand from tree; lint becomes CI gate"`
 
 **Test checkpoint:** `bash scripts/lint.sh` exits 0 with zero errors on a clean tree (warnings acceptable). `.github/workflows/build.yml` and `release.yml` include `bash scripts/lint.sh` as a step; a PR that introduces new `TODO-NN §N` shorthand outside `todo/` fails CI.
+
+> **Notes:**
+> - Legacy allowlist drained: [`scripts/lint.sh`](../../scripts/lint.sh) `TODO_XREF_LEGACY_FILES` is `()` (empty). 60 files on the allowlist were swept; 55 contained refs that were rewritten (~130 instances total), 5 entries were stale/no-longer-applicable and removed without edits.
+> - Rewrite strategy: Rule 1 dropped the parenthetical (`/* capability (TODO-NN §M) */` -> `/* capability */`) when the surrounding prose already described the concern. Rule 2 rewrote load-bearing refs as a functional description + domain-qualified filename (`TODO-13 §1` -> `TPM measured-boot event log parser`) or, in markdown, as an anchor link (`[capability](../../todo/NN-domain/TODO-MM-*.md#N-slug)`). No regex-style mechanical replacement -- each edit was per-context because `§N` in a narrative comment is different from `§N` in a checklist cross-reference.
+> - Scope guards respected: `todo/**` untouched (shorthand legitimate inside TODOs), `.claude/skills/`, `.cursor/`, `.github/PULL_REQUEST_TEMPLATE.md` untouched (templates that teach the shorthand; already excluded at [`scripts/lint.sh`](../../scripts/lint.sh) lines 307-309).
+> - Third-party vendored code (`src/libs/cjson/`) added to `EXCLUDE_PATTERNS` so upstream cJSON line-length conventions don't red-light CI. Comment in the exclude block documents the policy.
+> - CI wiring: `Run style lint` step added to [`.github/workflows/build.yml`](../../.github/workflows/build.yml) at line 95 (after "Verify toolchain sentinels", before "Run tooling regression pack"). Mirrored in [`.github/workflows/release.yml`](../../.github/workflows/release.yml) at line 99 (after "Verify toolchain sentinels", before "Build OS (clean)"). A PR that introduces any numeric-TODO shorthand outside `todo/**` now fails both workflows with exit 1.
+> - Lint post-sweep: 0 errors, 278 warnings. All 278 remaining warnings are pre-existing Check 4 camelCase flags on NT/Rtl/Ob/Se/Ke API function names (`NtCreateEvent`, `RtlCreateAcl`, etc.) -- legitimate Win11-parity naming, out of scope per "don't change code semantics" guard. Lint exits 0 because warnings don't block.
+> - Two non-XREF error fixes landed in the same sweep (both were CI-gate blockers, so gating lint without fixing them would have been incomplete): line-length wraps in [`src/kernel/test/test_boot_info.c`](../../src/kernel/test/test_boot_info.c) (my §4 `test_suite_register_cat` calls exceeded 120 chars) and [`src/kernel/test/test_security.c`](../../src/kernel/test/test_security.c) (3 similar lines); `cJSON` vendored code excluded; one long comment on [`include/kernel/nt/ntstatus.h:72`](../../include/kernel/nt/ntstatus.h) moved above the `#define` to drop below 120 chars.
+
+> **Test runner:** N/A -- kernel-test surface unchanged. Validation is the CI runner itself (lint-as-gate).
+> **Expected:** `bash scripts/lint.sh` exits 0. 278 Check 4 warnings persist; out of scope (legitimate NT-API naming).
 
 ---
 

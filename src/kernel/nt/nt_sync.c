@@ -2,7 +2,7 @@
  * nt_sync.c -- NT synchronization object SSDT handlers
  *
  * Event, mutex (mutant), semaphore SSDT wrappers routing through the
- * Object Manager types established in TODO-03 section 6.  Also provides
+ * Object Manager sync types (event, mutex, semaphore).  Also provides
  * NtWaitForSingleObject (upgraded), NtWaitForMultipleObjects, and
  * NtSignalAndWaitForSingleObject.  Keyed events deferred to TODO-07.
  * ============================================================================ */

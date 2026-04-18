@@ -256,7 +256,7 @@ _Static_assert(sizeof(eif_import_t) == 8,
 
 ## elf2eif Conversion
 
-The `tools/elf2eif` converter (TODO-08 section 13) transforms standard ELF64 output into EIF:
+The `tools/elf2eif` converter transforms standard ELF64 output into EIF:
 
 1. Parse ELF64 `PT_LOAD` segments -> EIF segments
 2. Parse symbol table for `__imp_NtXxx` symbols -> extract SSDT numbers -> EIF import table

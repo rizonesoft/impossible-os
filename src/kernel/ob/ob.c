@@ -1,7 +1,8 @@
 /* ============================================================================
  * ob.c -- Object Manager: type registration, object allocation, init
  *
- * Implements the core Object Manager infrastructure (TODO-03 §1-§2, §4).
+ * Implements the core Object Manager infrastructure (type registry,
+ * object allocation, and namespace root setup).
  * ============================================================================ */
 
 #include "kernel/ob/ob.h"

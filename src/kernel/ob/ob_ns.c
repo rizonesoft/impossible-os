@@ -1,7 +1,7 @@
 /* ============================================================================
  * ob_ns.c -- Object namespace: directories, symlinks, path resolution
  *
- * Implements the hierarchical in-memory namespace (TODO-03 §4).
+ * Implements the hierarchical in-memory object namespace.
  * ============================================================================ */
 
 #include "kernel/ob/ob.h"

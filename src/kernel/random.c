@@ -12,7 +12,7 @@
  * ARCH: x86-64 specific -- the RDRAND instruction is x86-only. When the
  * ARM64 port lands (domain 16), the HAL will provide an arch-neutral
  * random_bytes() that dispatches to RDRAND on x86 and DRBG on ARM64.
- * -> XREF: 16-architecture-ports/TODO-01 §1
+ * -> XREF: 16-architecture-ports/TODO-01-arch-abstraction-layer.md
  * ============================================================================ */
 
 #include "kernel/random.h"

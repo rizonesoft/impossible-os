@@ -1,5 +1,5 @@
 /* ============================================================================
- * nt_timer.c -- Timer SSDT handlers + armed-timer queue (TODO-05 §19)
+ * nt_timer.c -- Timer SSDT handlers + armed-timer queue
  *
  * SSDT 0x007E-0x0083:
  *   NtCreateTimer(TimerHandle, DesiredAccess, ObjectAttributes, TimerType)
@@ -12,7 +12,7 @@
  *
  * NtSetTimer is logically 7-parameter; Period and ResumeTimer are packed
  * into a5 as (Period | ResumeTimer << 32) until the INT 0x2E / SYSCALL
- * entry is extended to read stack args (TODO-05 §3).
+ * entry is extended to read stack args.
  *
  * The armed-timer list is a singly-linked list of TIMER_OBJECT bodies,
  * head kept in this file. nt_timer_tick() walks it from the timer ISR
@@ -181,7 +181,7 @@ void nt_timer_detach(TIMER_OBJECT *to)
  *   negative => relative 100-ns units (standard NT convention)
  *   positive => absolute FILETIME; treated as relative from now until the
  *               boot-time FILETIME reference lands (-> XREF 02-kernel-core/
- *               TODO-07 §9 for absolute time wiring).
+ *               TODO-08-time-filetime-management.md for absolute time wiring).
  *   zero     => fire immediately.
  * Returns STATUS_SUCCESS on valid input. */
 static NTSTATUS compute_due_ns(int64_t due_time_100ns, uint64_t *out_due_ns)
@@ -217,7 +217,7 @@ static NTSTATUS compute_due_ns(int64_t due_time_100ns, uint64_t *out_due_ns)
     }
 
     /* Absolute FILETIME (100-ns since 1601). No boot-time FILETIME zero
-     * yet -- treat as "fire now" until XREF TODO-07 §9 lands. */
+     * yet -- treat as "fire now" until the time-subsystem XREF lands. */
     *out_due_ns = now;
     return STATUS_SUCCESS;
 }

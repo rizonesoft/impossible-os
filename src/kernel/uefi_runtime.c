@@ -480,9 +480,9 @@ boot_result_t uefi_vars_init(void)
     uefi_var_enumerate(count_var_cb, &total);
 
     /* BootOrder and BootCurrent: use boot_info fields populated by the
-     * bootloader pre-ExitBootServices (TODO-03 §6) instead of re-reading
-     * via runtime services.  Avoids duplicate firmware calls and works
-     * even if runtime variable services are degraded. */
+     * bootloader pre-ExitBootServices instead of re-reading via runtime
+     * services. Avoids duplicate firmware calls and works even if runtime
+     * variable services are degraded. */
     {
         uint8_t count = g_boot_info.uefi_boot_order_count;
         if (count > 0) {

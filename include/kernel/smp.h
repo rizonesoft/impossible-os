@@ -116,10 +116,10 @@ struct per_cpu_data {
     const char       *async_name;       /* step name for logging */
     void             *async_fn;         /* boot_result_t (*fn)(void) */
 
-    /* TSC offset for per-CPU correction (TODO-07 §3) */
+    /* TSC offset for per-CPU correction */
     int64_t           tsc_offset;       /* added to RDTSC on this core to match BSP */
 
-    /* KPTI CR3 pair (TODO-17 §3) -- updated on context switch */
+    /* KPTI CR3 pair -- updated on context switch */
     uint64_t          kernel_cr3;       /* full kernel PML4 (all mappings) */
     uint64_t          user_cr3;         /* sparse user PML4 (user + trampoline only) */
     uint64_t          kpti_scratch;     /* scratch for trampoline (save RAX during CR3 swap) */

@@ -1121,7 +1121,9 @@ void vmm_apply_nx_policy(void)
      * are kmalloc'd from the kernel heap, so user and kernel data share the
      * same 2 MiB pages.  Clearing U/S on kernel pages breaks user-mode stack
      * access.  SMEP/SMAP are skipped on bare metal for the same reason.
-     * See TODO-01-vmm-memory-protection.md §11 and TODO-04 advanced VM. */
+     * See 03-memory-concurrency/TODO-01-vmm-memory-protection.md and
+     * TODO-05-advanced-virtual-memory.md for the per-process page-table
+     * work that unlocks SMEP/SMAP on bare metal. */
 
     vmm_flush_tlb_all();
     klog(LOG_INFO, "mm", "NX policy applied: %u pages marked non-executable (text: 0x%x-0x%x)",

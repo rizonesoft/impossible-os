@@ -9,7 +9,7 @@
  * calls.  A single 21952-byte static struct boot_info lives in BSS and
  * is memset() before each test that needs a valid-looking buffer.
  *
- * XREF: 01-boot-platform/TODO-02-bootloader-error-recovery.md §16
+ * XREF: 01-boot-platform/TODO-03-bootloader-error-recovery.md §16
  * ============================================================================ */
 
 #ifdef KERNEL_TESTS
@@ -758,30 +758,52 @@ void test_register_boot_info(void)
     test_suite_register_cat("boot_info: combined NULL",        test_validate_combined_null,       TEST_CAT_BOOT);
     test_suite_register_cat("boot_info: combined bad magic",   test_validate_combined_bad_magic,  TEST_CAT_BOOT);
     test_suite_register_cat("boot_info: combined OK",          test_validate_combined_ok,         TEST_CAT_BOOT);
-    test_suite_register_cat("boot_info: combined misalign",    test_validate_combined_misaligned_short_circuits, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_info: combined misalign",
+                            test_validate_combined_misaligned_short_circuits, TEST_CAT_BOOT);
 
-    /* §4 typed payload descriptor array */
-    test_suite_register_cat("boot_payload: empty valid",           test_payload_empty_valid,                  TEST_CAT_BOOT);
-    test_suite_register_cat("boot_payload: count OOR",             test_payload_count_out_of_range,           TEST_CAT_BOOT);
-    test_suite_register_cat("boot_payload: prefix violated",       test_payload_prefix_violated,              TEST_CAT_BOOT);
-    test_suite_register_cat("boot_payload: range wrap",            test_payload_range_wrap,                   TEST_CAT_BOOT);
-    test_suite_register_cat("boot_payload: overlap boot_info",     test_payload_overlap_boot_info,            TEST_CAT_BOOT);
-    test_suite_register_cat("boot_payload: overlap framebuffer",   test_payload_overlap_framebuffer,          TEST_CAT_BOOT);
-    test_suite_register_cat("boot_payload: overlap rt_mmap",       test_payload_overlap_rt_mmap,              TEST_CAT_BOOT);
-    test_suite_register_cat("boot_payload: overlap usb_dma",       test_payload_overlap_usb_dma,              TEST_CAT_BOOT);
-    test_suite_register_cat("boot_payload: bad alignment",         test_payload_bad_alignment,                TEST_CAT_BOOT);
-    test_suite_register_cat("boot_payload: unknown type required", test_payload_unknown_type_required_fatal,  TEST_CAT_BOOT);
-    test_suite_register_cat("boot_payload: unknown type optional", test_payload_unknown_type_optional_accepted, TEST_CAT_BOOT);
-    test_suite_register_cat("boot_payload: unknown flags req",     test_payload_unknown_flags_required_fatal, TEST_CAT_BOOT);
-    test_suite_register_cat("boot_payload: total mismatch",        test_payload_total_mismatch,               TEST_CAT_BOOT);
-    test_suite_register_cat("boot_payload: two descriptors",       test_payload_two_descriptors_ok,           TEST_CAT_BOOT);
-    test_suite_register_cat("boot_payload: empty slot in prefix",  test_payload_empty_slot_in_prefix,         TEST_CAT_BOOT);
-    test_suite_register_cat("boot_payload: desc size pin",         test_payload_desc_size_pin,                TEST_CAT_BOOT);
-    test_suite_register_cat("boot_payload: phys not aligned",      test_payload_phys_unaligned_vs_required_alignment, TEST_CAT_BOOT);
-    test_suite_register_cat("boot_payload: total wrap",            test_payload_aggregate_total_wrap,         TEST_CAT_BOOT);
-    test_suite_register_cat("boot_payload: rt_mmap wrap",          test_payload_retained_rt_mmap_wrap_rejected, TEST_CAT_BOOT);
-    test_suite_register_cat("boot_payload: fb wrap",               test_payload_retained_fb_wrap_rejected,    TEST_CAT_BOOT);
-    test_suite_register_cat("boot_payload: overflow truncated",    test_payload_overflow_truncated_rejected,  TEST_CAT_BOOT);
+    /* Typed payload descriptor array: wire each validator path */
+    test_suite_register_cat("boot_payload: empty valid",
+                            test_payload_empty_valid, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_payload: count OOR",
+                            test_payload_count_out_of_range, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_payload: prefix violated",
+                            test_payload_prefix_violated, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_payload: range wrap",
+                            test_payload_range_wrap, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_payload: overlap boot_info",
+                            test_payload_overlap_boot_info, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_payload: overlap framebuffer",
+                            test_payload_overlap_framebuffer, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_payload: overlap rt_mmap",
+                            test_payload_overlap_rt_mmap, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_payload: overlap usb_dma",
+                            test_payload_overlap_usb_dma, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_payload: bad alignment",
+                            test_payload_bad_alignment, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_payload: unknown type required",
+                            test_payload_unknown_type_required_fatal, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_payload: unknown type optional",
+                            test_payload_unknown_type_optional_accepted, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_payload: unknown flags req",
+                            test_payload_unknown_flags_required_fatal, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_payload: total mismatch",
+                            test_payload_total_mismatch, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_payload: two descriptors",
+                            test_payload_two_descriptors_ok, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_payload: empty slot in prefix",
+                            test_payload_empty_slot_in_prefix, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_payload: desc size pin",
+                            test_payload_desc_size_pin, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_payload: phys not aligned",
+                            test_payload_phys_unaligned_vs_required_alignment, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_payload: total wrap",
+                            test_payload_aggregate_total_wrap, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_payload: rt_mmap wrap",
+                            test_payload_retained_rt_mmap_wrap_rejected, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_payload: fb wrap",
+                            test_payload_retained_fb_wrap_rejected, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_payload: overflow truncated",
+                            test_payload_overflow_truncated_rejected, TEST_CAT_BOOT);
 }
 
 #endif /* KERNEL_TESTS */

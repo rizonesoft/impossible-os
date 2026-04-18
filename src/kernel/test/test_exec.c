@@ -14,7 +14,7 @@
 #include "kernel/pe.h"
 #include "kernel/errno.h"
 
-/* ---- Exec dispatcher tests (TODO-08 §1) ---- */
+/* ---- Exec dispatcher tests ---- */
 
 static void test_exec_bad_magic(void)
 {
@@ -41,7 +41,7 @@ static void test_exec_errno(void)
     TEST_ASSERT_EQ(EINVAL, 22, "EINVAL == 22");
 }
 
-/* ---- Module registration tests (TODO-08 §6) ---- */
+/* ---- Module registration tests ---- */
 
 static void test_module_struct_size(void)
 {
@@ -130,7 +130,7 @@ static void test_module_count(void)
     TEST_ASSERT_NEQ((uint64_t)count, 0, "module count > 0 after registration");
 }
 
-/* ---- PE32+ parser tests (TODO-08 §7) ---- */
+/* ---- PE32+ parser tests ---- */
 
 /* Helper: build a minimal valid PE32+ header in a buffer.
  * Returns the total size written. Buffer must be >= 512 bytes. */
@@ -253,7 +253,7 @@ static void test_pe_validate_null(void)
     TEST_ASSERT_EQ(r.ok, 0, "pe_validate rejects NULL data");
 }
 
-/* ---- PE32+ section loader tests (TODO-08 §8) ---- */
+/* ---- PE32+ section loader tests ---- */
 
 static void test_pe_load_maps_and_returns_entry(void)
 {
@@ -292,7 +292,7 @@ static void test_pe_load_rejects_low_imagebase(void)
     TEST_ASSERT_EQ(entry, 0, "pe_load rejects low ImageBase");
 }
 
-/* ---- PE32+ import resolver tests (TODO-08 §9) ---- */
+/* ---- PE32+ import resolver tests ---- */
 
 static void test_pe_import_struct_sizes(void)
 {
@@ -300,7 +300,7 @@ static void test_pe_import_struct_sizes(void)
     TEST_ASSERT_EQ(sizeof(pe_export_entry_t), 16, "pe_export_entry_t == 16 bytes");
 }
 
-/* ---- EIF loader tests (TODO-08 §5) ---- */
+/* ---- EIF loader tests ---- */
 
 static void test_eif_bad_magic(void)
 {
@@ -337,12 +337,12 @@ static void test_eif_constants(void)
 
 void test_register_exec(void)
 {
-    /* Exec dispatcher tests (TODO-08 §1) */
+    /* Exec dispatcher tests */
     test_suite_register_cat("Exec: bad magic", test_exec_bad_magic, TEST_CAT_EXEC);
     test_suite_register_cat("Exec: null data", test_exec_null_data, TEST_CAT_EXEC);
     test_suite_register_cat("Exec: errno constants", test_exec_errno, TEST_CAT_EXEC);
 
-    /* Module registration tests (TODO-08 §6) */
+    /* Module registration tests */
     test_suite_register_cat("Exec: module struct size", test_module_struct_size, TEST_CAT_EXEC);
     test_suite_register_cat("Exec: module register+find", test_module_register_and_find, TEST_CAT_EXEC);
     test_suite_register_cat("Exec: module register NULL", test_module_register_null, TEST_CAT_EXEC);
@@ -350,7 +350,7 @@ void test_register_exec(void)
     test_suite_register_cat("Exec: module find NULL out", test_module_find_null_out, TEST_CAT_EXEC);
     test_suite_register_cat("Exec: module count", test_module_count, TEST_CAT_EXEC);
 
-    /* PE32+ parser tests (TODO-08 §7) */
+    /* PE32+ parser tests */
     test_suite_register_cat("PE: struct sizes", test_pe_struct_sizes, TEST_CAT_EXEC);
     test_suite_register_cat("PE: constants", test_pe_constants, TEST_CAT_EXEC);
     test_suite_register_cat("PE: validate valid PE32+", test_pe_validate_valid, TEST_CAT_EXEC);
@@ -359,15 +359,15 @@ void test_register_exec(void)
     test_suite_register_cat("PE: validate rejects bad magic", test_pe_validate_bad_magic, TEST_CAT_EXEC);
     test_suite_register_cat("PE: validate rejects NULL", test_pe_validate_null, TEST_CAT_EXEC);
 
-    /* PE32+ section loader tests (TODO-08 §8) */
+    /* PE32+ section loader tests */
     test_suite_register_cat("PE: load maps+returns entry", test_pe_load_maps_and_returns_entry, TEST_CAT_EXEC);
     test_suite_register_cat("PE: load registers module", test_pe_load_registers_module, TEST_CAT_EXEC);
     test_suite_register_cat("PE: load rejects low ImageBase", test_pe_load_rejects_low_imagebase, TEST_CAT_EXEC);
 
-    /* PE32+ import resolver tests (TODO-08 §9) */
+    /* PE32+ import resolver tests */
     test_suite_register_cat("PE: import struct sizes", test_pe_import_struct_sizes, TEST_CAT_EXEC);
 
-    /* EIF loader tests (TODO-08 §5) */
+    /* EIF loader tests */
     test_suite_register_cat("EIF: bad magic", test_eif_bad_magic, TEST_CAT_EXEC);
     test_suite_register_cat("EIF: too small", test_eif_too_small, TEST_CAT_EXEC);
     test_suite_register_cat("EIF: struct sizes", test_eif_struct_sizes, TEST_CAT_EXEC);

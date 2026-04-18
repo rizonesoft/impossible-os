@@ -80,10 +80,14 @@ warn() {
 # ---- Determine files to lint ----
 SEARCH_PATH="${1:-$REPO_ROOT/src $REPO_ROOT/include}"
 
-# Exclude third-party and auto-generated files
+# Exclude third-party and auto-generated files. Third-party libraries
+# carry their upstream style and line-length conventions -- we do not own
+# them, so we do not gate on them. Auto-generated headers are pure data
+# dumps with mechanical formatting.
 EXCLUDE_PATTERNS=(
     "stb_truetype"
     "stb_image"
+    "cJSON"
     "build_info.h"
     "os_logo.h"
     "bsod_icon.h"
@@ -204,70 +208,11 @@ if [ "$#" -eq 0 ]; then
     TODO_XREF_REGEX='(TODO-[0-9]+[[:space:]]*§[0-9]+|TODO-[0-9]+[[:space:]]+section[[:space:]]+[0-9]+|D[0-9]+[[:space:]]*T[0-9]+[[:space:]]*§?[0-9]+|\bT[0-9]+[[:space:]]*§[0-9]+)'
 
     # Paths with pre-existing legacy refs (warn-only until the sweep lands).
-    # Keep sorted alphabetically for easy audit.
-    TODO_XREF_LEGACY_FILES=(
-        "CHANGELOG.md"
-        "docs/specs/eif-format.md"
-        "include/kernel/acpi.h"
-        "include/kernel/elf.h"
-        "include/kernel/exec.h"
-        "include/kernel/ipc/alpc.h"
-        "include/kernel/nt/nt_alpc.h"
-        "include/kernel/nt/nt_lpc.h"
-        "include/kernel/nt/nt_registry.h"
-        "include/kernel/nt/nt_section.h"
-        "include/kernel/nt/nt_timer.h"
-        "include/kernel/random.h"
-        "include/kernel/smp.h"
-        "scripts/debug/run-error-screen-test.bat"
-        "scripts/test-smoke.sh"
-        "src/boot/uefi/bootx64.c"
-        "src/kernel/acpi.c"
-        "src/kernel/drivers/lapic.c"
-        "src/kernel/drivers/pit.c"
-        "src/kernel/drivers/xhci.c"
-        "src/kernel/exec.c"
-        "src/kernel/fs/gpt.c"
-        "src/kernel/ipc/alpc_port.c"
-        "src/kernel/isr_stubs.asm"
-        "src/kernel/klog_disk.c"
-        "src/kernel/main/boot_desktop.c"
-        "src/kernel/nt/nt_alpc.c"
-        "src/kernel/nt/nt_file.c"
-        "src/kernel/nt/nt_lpc.c"
-        "src/kernel/nt/nt_namespace.c"
-        "src/kernel/nt/nt_process.c"
-        "src/kernel/nt/nt_registry.c"
-        "src/kernel/nt/nt_section.c"
-        "src/kernel/nt/nt_sync.c"
-        "src/kernel/nt/nt_timer.c"
-        "src/kernel/nt/nt_token.c"
-        "src/kernel/ob/handle_table.c"
-        "src/kernel/ob/ob.c"
-        "src/kernel/ob/ob_event.c"
-        "src/kernel/ob/ob_file.c"
-        "src/kernel/ob/ob_mutex.c"
-        "src/kernel/ob/ob_ns.c"
-        "src/kernel/ob/ob_process.c"
-        "src/kernel/ob/ob_section.c"
-        "src/kernel/ob/ob_semaphore.c"
-        "src/kernel/ob/ob_thread.c"
-        "src/kernel/ob/ob_timer.c"
-        "src/kernel/random.c"
-        "src/kernel/sched/task.c"
-        "src/kernel/security/acl.c"
-        "src/kernel/security/default_sds.c"
-        "src/kernel/security/luid.c"
-        "src/kernel/security/privileges.c"
-        "src/kernel/security/sid.c"
-        "src/kernel/security/token.c"
-        "src/kernel/test/test_acpi_power.c"
-        "src/kernel/test/test_exec.c"
-        "src/kernel/test/test_ob.c"
-        "src/kernel/test/test_registry.c"
-        "src/kernel/test/test_security.c"
-        "src/kernel/uefi_runtime.c"
-    )
+    # Keep sorted alphabetically for easy audit. The legacy sweep landed
+    # with the developer-tooling stack Legacy-XREF Sweep item; this list
+    # is intentionally empty so any new numeric-TODO shorthand is flagged
+    # as an error.
+    TODO_XREF_LEGACY_FILES=()
 
     is_todo_xref_legacy() {
         local path="$1"

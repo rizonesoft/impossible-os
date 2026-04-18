@@ -22,7 +22,7 @@ extern isr_handler
 isr_common_stub:
     ; NOTE: clac (SMAP) removed -- causes #UD on CPUs without SMAP CPUID
     ; support (e.g. QEMU TCG). Re-add via alternatives patching when SMAP
-    ; is actually enabled (requires per-process page tables, TODO-06 §8).
+    ; is actually enabled (requires per-process page tables).
 
     ; ---- swapgs on ring-3 → ring-0 entry ----
     ; If we came from ring 3 (CS & 3 != 0), swap GS so the kernel sees

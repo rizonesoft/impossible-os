@@ -4,7 +4,7 @@
  * Tests object allocation, reference counting, handle table, namespace
  * lookup, handle duplication, inheritance, and directory enumeration.
  *
- * XREF: 00-infrastructure/TODO-02 §3
+ * XREF: 00-infrastructure/TODO-02-ai-development-system.md (unit tests)
  * ============================================================================ */
 
 #ifdef KERNEL_TESTS
@@ -1165,8 +1165,8 @@ static void test_nt_alpc_pending_features(void)
      * break here means a slot returned the wrong status
      * (mis-registration).
      *
-     * NtAlpcCreatePort (0x010F) is now REAL (TODO-12 §2 shipped the
-     * port type + \RPC Control + AlpcCreatePort); skip that slot here
+     * NtAlpcCreatePort (0x010F) is now REAL (the ALPC port-type +
+     * \RPC Control + AlpcCreatePort work shipped); skip that slot here
      * to keep the pending inventory honest. When dispatched with
      * null args it returns STATUS_INVALID_PARAMETER, not
      * STATUS_NOT_IMPLEMENTED.
@@ -1182,11 +1182,12 @@ static void test_nt_alpc_pending_features(void)
     uint32_t i;
     char msg[64];
     for (i = 0; i < sizeof(s_alpc_slots) / sizeof(s_alpc_slots[0]); i++) {
-        /* Slots retired by TODO-12 §2 and §3 -- they now return real
-         * statuses (INVALID_PARAMETER / INVALID_HANDLE / etc. on the
-         * null dispatch this test uses), not STATUS_NOT_IMPLEMENTED. */
-        if (s_alpc_slots[i].svc == SSDT_NtAlpcCreatePort)        continue; /* §2 */
-        if (s_alpc_slots[i].svc == SSDT_NtAlpcConnectPort)       continue; /* §3 */
+        /* Slots retired by the CreatePort + ConnectPort work -- they
+         * now return real statuses (INVALID_PARAMETER / INVALID_HANDLE /
+         * etc. on the null dispatch this test uses), not
+         * STATUS_NOT_IMPLEMENTED. */
+        if (s_alpc_slots[i].svc == SSDT_NtAlpcCreatePort)        continue;
+        if (s_alpc_slots[i].svc == SSDT_NtAlpcConnectPort)       continue;
         if (s_alpc_slots[i].svc == SSDT_NtAlpcAcceptConnectPort) continue; /* §3 */
         if (s_alpc_slots[i].svc == SSDT_NtAlpcDisconnectPort)    continue; /* §3 */
         if (s_alpc_slots[i].svc == SSDT_NtAlpcSendWaitReceivePort) continue; /* §4 */

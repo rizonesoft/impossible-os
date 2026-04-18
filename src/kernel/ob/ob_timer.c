@@ -1,7 +1,7 @@
 /* ============================================================================
  * ob_timer.c -- Timer object type: callbacks, ObCreateTimerEx / ObOpenTimer
  *
- * Implements TODO-03 §6: ObpTimerType with event signalling.
+ * ObpTimerType with event signalling.
  * Named timers live in \BaseNamedObjects and are looked up by
  * ObLookupObjectByName on open.
  * ============================================================================ */

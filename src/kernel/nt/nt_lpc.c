@@ -1,19 +1,19 @@
 /* ============================================================================
- * nt_lpc.c -- Legacy LPC port SSDT handlers (TODO-05 §20)
+ * nt_lpc.c -- Legacy LPC port SSDT handlers
  *
  * Reserves SSDT slots 0x0100-0x010E for the NT 3.x-5.x LPC syscall
  * surface. Each handler is a bounded stub that logs the call once and
- * returns a deferred-status sentinel until the LPC engine in
- * 03-memory-concurrency/TODO-08 §7 + 02-kernel-core/TODO-24 §8-§9 is
- * implemented.
+ * returns a deferred-status sentinel until the LPC engine work in
+ * 03-memory-concurrency/TODO-09-win32-ipc-extensions.md and the
+ * matching 02-kernel-core/TODO-24-alpc-message-ports.md items ship.
  *
- * SCOPE-GAP-ALLOWED: 15 handlers in this file intentionally return
- *                    STATUS_NOT_IMPLEMENTED pending TODO-08 §7 ALPC
- *                    engine. Retrofit path is a concrete checklist
- *                    item in TODO-08 §7 that enumerates each slot.
- *                    When that item ships, every handler body in this
- *                    file is replaced with a call into lpc.c and the
- *                    sentinel comments are removed.
+ * SCOPE-GAP-ALLOWED: 15 handlers in this file intentionally return the
+ *                    deferred-status sentinel pending the legacy-IPC
+ *                    LPC engine retrofit. The retrofit path is tracked
+ *                    as a concrete checklist item that enumerates each
+ *                    slot. When that item ships, every handler body in
+ *                    this file is replaced with a call into lpc.c and
+ *                    the sentinel comments are removed.
  *
  * Why register stubs rather than leave the default ssdt_stub_not_
  * implemented handler? Registering makes ownership visible in
@@ -34,7 +34,7 @@
  * gets announced. Adding a per-call klog here would just duplicate the
  * test signal and create N noise lines per boot.
  *
- * SCOPE-GAP-ALLOWED: pending TODO-08 §7 LPC engine retrofit (the
+ * SCOPE-GAP-ALLOWED: pending the legacy-IPC LPC engine retrofit (the
  * concrete checklist item there enumerates every slot). */
 #define LPC_STUB_BODY(name)                                                  \
     do {                                                                     \
@@ -45,7 +45,7 @@
     } while (0)
 
 /* ---- 0x0100 NtCreatePort -------------------------------------------------
- * Server creates an LPC server port. XREF: TODO-08 §7 retrofit item. */
+ * Server creates an LPC server port. XREF: legacy-IPC LPC engine retrofit. */
 static NTSTATUS NtCreatePort_handler(uint64_t a1, uint64_t a2, uint64_t a3,
                                      uint64_t a4, uint64_t a5, uint64_t a6)
 {
@@ -73,7 +73,7 @@ static NTSTATUS NtConnectPort_handler(uint64_t a1, uint64_t a2, uint64_t a3,
 }
 
 /* ---- 0x0103 NtSecureConnectPort ------------------------------------------
- * NtConnectPort with SID validation via SeAccessCheck (TODO-11 §5). */
+ * NtConnectPort with SID validation via SeAccessCheck. */
 static NTSTATUS NtSecureConnectPort_handler(uint64_t a1, uint64_t a2,
                                             uint64_t a3, uint64_t a4,
                                             uint64_t a5, uint64_t a6)

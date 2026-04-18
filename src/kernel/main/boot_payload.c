@@ -376,7 +376,7 @@ boot_result_t boot_payload_validate(const struct boot_info *info,
         }
         /* Optional unknown types / flag bits silently skip
          * type-specific validation for forward compatibility. The
-         * consumer (e.g. TODO-01 §5 boot_payload_find) sees the raw
+         * consumer (the future boot_payload_find query helper) sees the raw
          * type and chooses to ignore it. */
 
         /* Aggregate-size wrap guard. Each individual descriptor is

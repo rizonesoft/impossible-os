@@ -649,7 +649,8 @@ int acpi_enter_sleep_state(uint8_t state)
 
     /* Step 4: For S1, CPU halts here and resumes on wakeup interrupt.
      * For S3/S4, CPU loses context -- resume is via wakeup vector (not
-     * implemented yet; requires CPU state save in TODO-15 §3/§4). */
+     * implemented yet; requires CPU state save from the power-management
+     * sleep/resume roadmap). */
     __asm__ volatile ("sti; hlt");
 
     /* If we reach here, we woke up from S1 (or S3 resume vector jumped here) */

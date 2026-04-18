@@ -67,7 +67,7 @@ static void test_registry_string(void)
 }
 
 /* ============================================================================
- * NT-level SSDT registry tests (TODO-05 section 14)
+ * NT-level SSDT registry tests
  * Test the NtXxx handlers via ssdt_dispatch with proper OBJECT_ATTRIBUTES.
  * ============================================================================ */
 
@@ -474,7 +474,7 @@ static void test_nt_rename_key(void)
                       0, 0, 0, 0, 0);
 }
 
-/* Test: NtNotifyChangeKey returns STATUS_NOT_IMPLEMENTED (blocked on TODO-13 §3) */
+/* Test: NtNotifyChangeKey returns STATUS_NOT_IMPLEMENTED (blocked on watcher roadmap) */
 static void test_nt_notify_change_key_pending(void)
 {
     NTSTATUS status = ssdt_dispatch(SSDT_NtNotifyChangeKey,

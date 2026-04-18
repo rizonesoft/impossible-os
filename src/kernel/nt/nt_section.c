@@ -1,5 +1,5 @@
 /* ============================================================================
- * nt_section.c -- Section and mapped-file SSDT handlers (TODO-05 §18)
+ * nt_section.c -- Section and mapped-file SSDT handlers
  *
  * SSDT 0x005C-0x0062: NtCreateSection, NtOpenSection, NtMapViewOfSection,
  * NtUnmapViewOfSection, NtExtendSection, NtQuerySection,

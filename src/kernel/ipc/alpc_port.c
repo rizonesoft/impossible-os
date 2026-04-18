@@ -562,8 +562,9 @@ NTSTATUS AlpcConnectPort(HANDLE_TABLE *ht, const char *port_name,
     }
 
     /* SCOPE-GAP-ALLOWED: SeAccessCheck on server DACL with
-     * ALPC_PORT_CONNECT pending T11 §5 (security reference monitor).
-     * Concrete retrofit tracked at 11-security-reference-monitor/TODO-01 §5. */
+     * ALPC_PORT_CONNECT pending security reference monitor integration.
+     * Concrete retrofit tracked under 11-security-reference-monitor/
+     * 02-kernel-core/TODO-15-security-reference-monitor.md (SeAccessCheck wiring). */
 
     /* 2. Allocate client communication port; inherit attributes from
      * the named server connection port so MaxMessageLength /

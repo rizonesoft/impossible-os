@@ -77,7 +77,8 @@ struct elf64_phdr {
  * include/uapi/linux/auxvec.h). Used by glibc/musl crt and dynamic linker
  * to read process startup metadata from the initial user stack. The values
  * are a hard ABI contract: they must match Linux exactly or user-mode C
- * libraries will misinterpret the auxv block. -> XREF: TODO-04 §13 */
+ * libraries will misinterpret the auxv block.
+ * XREF: 00-infrastructure/TODO-04-usermode-test-framework.md (ELF auxv). */
 #define AT_NULL    0    /* end of vector (terminator) */
 #define AT_IGNORE  1    /* entry should be ignored */
 #define AT_EXECFD  2    /* file descriptor of program */

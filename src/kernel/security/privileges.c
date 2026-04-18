@@ -1,7 +1,7 @@
 /* ============================================================================
  * privileges.c -- Privilege LUID table and debug helpers
  *
- * Implements TODO-11 §2: privilege constants and PRIVILEGE_SET utilities.
+ * Privilege constants and PRIVILEGE_SET utilities for the security subsystem.
  * ============================================================================ */
 
 #include "kernel/security/privileges.h"

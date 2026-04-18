@@ -54,7 +54,7 @@
 - add debug boot mode -- show live text output instead of splash (`8a0777c`)
 - add early klog flush calls for USB debug logging (`6196e9d`)
 - set 720p boot splash font to 18px + clean build (`3946c83`)
-- bump splash font sizes + update TODO-010 section 4 (`a7ec39a`)
+- bump splash font sizes + update boot splash TODO (`a7ec39a`)
 - show splash text 200ms earlier + atlas font pre-bake (`18782ed`)
 - decouple font size from icon size -- restore 15px TTF at 720p (`cd437a7`)
 - revert icon to boot_256.png -- 4px clamp at 4K is acceptable (`980dcc3`)

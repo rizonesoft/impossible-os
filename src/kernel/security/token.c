@@ -1,7 +1,7 @@
 /* ============================================================================
  * token.c -- ACCESS_TOKEN Ob type registration and token creation
  *
- * Implements TODO-11 §4.1 + §4.2.
+ * ACCESS_TOKEN Ob type registration and token creation helpers.
  * ============================================================================ */
 
 #include "kernel/security/token.h"

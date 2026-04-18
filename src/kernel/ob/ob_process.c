@@ -1,7 +1,7 @@
 /* ============================================================================
  * ob_process.c -- Process object type: callbacks, namespace integration
  *
- * Implements TODO-03 §5: ObpProcessType wrapping task_t.
+ * ObpProcessType wrapping task_t.
  * Each process is inserted into \KernelObjects\Process<PID>.
  * ============================================================================ */
 

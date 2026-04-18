@@ -1,5 +1,5 @@
 /* ============================================================================
- * nt_namespace.c -- NT namespace syscall SSDT handlers (TODO-05 §17)
+ * nt_namespace.c -- NT namespace syscall SSDT handlers
  *
  * Wires 6 NtXxx directory/symlink operations into the SSDT (0x0120-0x0125):
  *   NtCreateDirectoryObject, NtOpenDirectoryObject, NtQueryDirectoryObject,
@@ -11,7 +11,8 @@
  *
  * NOTE on UNICODE_STRING: handlers cast OBJECT_ATTRIBUTES->ObjectName->Buffer
  * directly to const char* (kernel-wide ASCII pattern; UTF-16 decode tracked
- * in TODO-13 §4 reg_decode_unicode_string and the broader follow-on work).
+ * under reg_decode_unicode_string on the registry syscall roadmap and
+ * the broader follow-on work).
  * ============================================================================ */
 
 #include "kernel/nt/ssdt.h"

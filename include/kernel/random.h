@@ -7,7 +7,7 @@
  *
  * This is NOT a CSPRNG. Callers that need cryptographic-grade entropy
  * (key generation, session tokens) must use the kernel CSPRNG once it
- * lands -- see TODO-20 §5/§6.
+ * lands (see the kernel CSPRNG roadmap).
  *
  * The implementation gates RDRAND on cpu_has(CPU_FEATURE_RDRAND), retries
  * the instruction up to 10 times per 8-byte chunk on hardware backoff,
@@ -15,7 +15,7 @@
  *
  * ARCH: x86-64 specific. The HAL random source for ARM64 will live in
  *       arch/arm64/random.c when domain 16 lands.
- * -> XREF: 16-architecture-ports/TODO-01 §1 -- HAL random source
+ * -> XREF: 16-architecture-ports/TODO-01-arch-abstraction-layer.md -- HAL random source
  * ============================================================================ */
 
 #pragma once

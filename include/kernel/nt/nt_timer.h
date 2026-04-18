@@ -1,5 +1,5 @@
 /* ============================================================================
- * nt_timer.h -- Timer SSDT (TODO-05 §19)
+ * nt_timer.h -- Timer SSDT
  *
  * Registers NtCreateTimer, NtOpenTimer, NtSetTimer, NtCancelTimer,
  * NtQueryTimer, NtSetTimerEx at SSDT 0x007E-0x0083. Also exposes the

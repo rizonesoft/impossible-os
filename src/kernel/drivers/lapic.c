@@ -909,8 +909,8 @@ static uint64_t lapic_timer_handler(struct interrupt_frame *frame)
     }
 
     /* NT timer queue scan: fire/rearm any armed timers whose due_ns
-     * has been reached (TODO-05 §19). Safe from ISR -- uses irqsave
-     * spinlock and event_set() (documented IRQ-safe). */
+     * has been reached. Safe from ISR -- uses irqsave spinlock and
+     * event_set() (documented IRQ-safe). */
     {
         extern void nt_timer_tick(void);
         nt_timer_tick();

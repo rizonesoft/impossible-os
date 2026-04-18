@@ -4,7 +4,7 @@
  * Verifies the BlackBox partition is mounted as X:\ with all expected
  * directories, correct volume label, and available free space.
  *
- * XREF: 01-boot-platform/TODO-17-blackbox-service-partition.md §Unit Tests
+ * XREF: 01-boot-platform/TODO-24-blackbox-service-partition.md §Unit Tests
  * ============================================================================ */
 
 #ifdef KERNEL_TESTS

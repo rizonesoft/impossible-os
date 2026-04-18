@@ -1,5 +1,5 @@
 @echo off
-:: run-error-screen-test.bat -- Trigger boot error screen with QR code (TODO-02 §9/§13/§14)
+:: run-error-screen-test.bat -- Trigger boot error screen with QR code
 ::
 :: Sets error_screen_test=1 in boot.conf, which makes the bootloader
 :: call boot_fatal() before loading the kernel. Shows:

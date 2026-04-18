@@ -4,7 +4,7 @@
  * Tests SID comparison/formatting, ACL creation, token creation with
  * privilege verification.
  *
- * XREF: 00-infrastructure/TODO-02 §3
+ * XREF: 00-infrastructure/TODO-02-ai-development-system.md (unit tests)
  * ============================================================================ */
 
 #ifdef KERNEL_TESTS
@@ -535,9 +535,12 @@ void test_register_security(void)
     test_suite_register_cat("Security: privilege set to string", test_privilege_set_to_string, TEST_CAT_SECURITY);
     test_suite_register_cat("Security: NtAllocateLocallyUniqueId", test_nt_allocate_luid, TEST_CAT_SECURITY);
     test_suite_register_cat("Security: NtOpenProcessToken", test_nt_open_process_token, TEST_CAT_SECURITY);
-    test_suite_register_cat("Security: NtQueryInformationToken invalid", test_nt_query_token_invalid_handle, TEST_CAT_SECURITY);
-    test_suite_register_cat("Security: NtSetInformationToken read-only", test_nt_set_token_readonly, TEST_CAT_SECURITY);
-    test_suite_register_cat("Security: NtAdjustPrivilegesToken invalid", test_nt_adjust_privileges_invalid, TEST_CAT_SECURITY);
+    test_suite_register_cat("Security: NtQueryInformationToken invalid",
+                            test_nt_query_token_invalid_handle, TEST_CAT_SECURITY);
+    test_suite_register_cat("Security: NtSetInformationToken read-only",
+                            test_nt_set_token_readonly, TEST_CAT_SECURITY);
+    test_suite_register_cat("Security: NtAdjustPrivilegesToken invalid",
+                            test_nt_adjust_privileges_invalid, TEST_CAT_SECURITY);
     test_suite_register_cat("Security: token SSDT slots registered", test_nt_token_ssdt_registered, TEST_CAT_SECURITY);
 }
 

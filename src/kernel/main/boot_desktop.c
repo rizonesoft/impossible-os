@@ -95,9 +95,8 @@ void boot_phase3(void)
     /* --- IPC init (pipe, shmem, signal, alpc) --- */
     /* pipe_create/shmem_create already init lazily; the explicit pipe_init
      * call here is idempotent but gives the init sequencing a uniform
-     * entry point. alpc_init emits the ABI-present marker for the header
-     * shipped in TODO-12 section 1; port objects + syscalls arrive in
-     * later sections. */
+     * entry point. alpc_init emits the ABI-present marker for the ALPC
+     * header; port objects and syscalls arrive in later work. */
     (void)pipe_init();
     (void)alpc_init();
     kernel_subsystem_set_ready(SUBSYS_IPC, true);

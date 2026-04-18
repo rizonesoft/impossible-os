@@ -1,18 +1,19 @@
 /* ============================================================================
- * nt_token.c -- NT token syscall SSDT handlers (TODO-05 §16)
+ * nt_token.c -- NT token syscall SSDT handlers
  *
  * Wires 9 NtXxx token operations into the SSDT (0x00B0-0x00B7 + 0x00C3):
  * Token open, query, set, adjust privileges/groups, and LUID allocation.
  *
  * Handlers resolve HANDLE arguments to process/thread/token objects via the
  * OB handle table, then delegate to library functions in token.c and
- * luid.c.  Token creation/derivation and SRM access check live in §29.
+ * luid.c.  Token creation/derivation and SRM access check live in a later
+ * token-lifecycle slot.
  *
  * Scope-gap: thread-level impersonation tokens are not yet implemented
  * (struct thread has no impersonation_token field).  NtOpenThreadToken
  * returns the owning process's primary token as the thread token.  Full
- * impersonation support is tracked in TODO-11 §7 (process/thread token
- * assignment & impersonation).
+ * impersonation support is tracked on the security-reference-monitor
+ * impersonation roadmap (process/thread token assignment).
  * ============================================================================ */
 
 #include "kernel/nt/ssdt.h"
@@ -167,9 +168,9 @@ static NTSTATUS NtOpenProcessTokenEx_handler(uint64_t a1, uint64_t a2,
 /* a4 = HANDLE* TokenHandle (out)                                          */
 /*                                                                          */
 /* Impersonation tokens are per-thread in Windows; our threads do not yet  */
-/* have an impersonation slot (-> XREF TODO-11 §7).  Fall back to the      */
-/* owning process's primary token, which matches Windows behavior when     */
-/* no impersonation is active.                                             */
+/* have an impersonation slot (see the SRM impersonation roadmap).  Fall   */
+/* back to the owning process's primary token, which matches Windows       */
+/* behavior when no impersonation is active.                               */
 /* ======================================================================== */
 
 static NTSTATUS NtOpenThreadToken_handler(uint64_t a1, uint64_t a2,
@@ -263,7 +264,7 @@ static NTSTATUS NtQueryInformationToken_handler(uint64_t a1, uint64_t a2,
 /* We support TokenIntegrityLevel (write to IntegrityLevelSid); other      */
 /* classes that require ownership-transfer of SIDs/ACLs (Owner, Primary-   */
 /* Group, DefaultDacl) are rejected because the callee-owned-buffer        */
-/* contract needs per-token heap allocation -- tracked in TODO-11 §4.      */
+/* contract needs per-token heap allocation (token-mutation roadmap).      */
 /* ======================================================================== */
 
 static NTSTATUS NtSetInformationToken_handler(uint64_t a1, uint64_t a2,
@@ -289,9 +290,9 @@ static NTSTATUS NtSetInformationToken_handler(uint64_t a1, uint64_t a2,
      * TokenDefaultDacl, TokenIntegrityLevel) require deep-copying the
      * input payload into token-owned storage to avoid caller-buffer
      * lifetime/TOCTOU bugs.  Deep-copy with bounded SID/ACL validation
-     * and safe replacement of existing token fields is tracked in
-     * TODO-11 §4 (ACCESS_TOKEN mutation API).  All classes currently
-     * reject with STATUS_INVALID_INFO_CLASS, the correct NT response
+     * and safe replacement of existing token fields is tracked under the
+     * ACCESS_TOKEN mutation API roadmap.  All classes currently reject
+     * with STATUS_INVALID_INFO_CLASS, the correct NT response
      * when a class cannot be set; readers use NtQueryInformationToken. */
     (void)tok;
     (void)info_class;

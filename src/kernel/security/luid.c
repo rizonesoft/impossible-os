@@ -1,7 +1,7 @@
 /* ============================================================================
  * luid.c -- LUID allocator
  *
- * Implements TODO-11 §1.2: monotonically incrementing LUID counter.
+ * Monotonically incrementing LUID counter for the security subsystem.
  * ============================================================================ */
 
 #include "kernel/security/luid.h"

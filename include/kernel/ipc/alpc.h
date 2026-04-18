@@ -18,8 +18,8 @@
  *       - PORT_MESSAGE is 40 bytes. Windows x64 PORT_MESSAGE is 48 bytes
  *         and uses unions at offsets 32..47 for ClientViewSize /
  *         section transfer metadata; Impossible OS defers those 8
- *         bytes until TODO-12 section 6 wires view transfers, at which
- *         point PORT_MESSAGE may grow or gain a trailing union.
+ *         bytes until the ALPC view-transfer work wires view transfers,
+ *         at which point PORT_MESSAGE may grow or gain a trailing union.
  *     Consumers compile against THIS header, not Windows headers. A
  *     user-mode translation layer is out of scope for this section.
  *
@@ -35,8 +35,8 @@
  * i.e. 64 KiB minus 8 bytes of overhead reserve).
  *
  * This header does not declare the ALPC_PORT object or any syscall
- * entry points. Those ship in alpc_port.h (TODO-12 section 2) and
- * alpc_syscalls.h (TODO-12 section 8).
+ * entry points. Those ship in alpc_port.h and alpc_syscalls.h as part
+ * of the ALPC completion roadmap.
  * ============================================================================ */
 
 #pragma once
@@ -224,7 +224,7 @@ _Static_assert((ALPC_MSGFLG_REPLY_MESSAGE
               + ALPC_MSGFLG_WAIT_PENDING_CALLBACKS),
                "ALPC_MSGFLG_* bits must be non-overlapping");
 
-/* ---- ALPC_COMPLETION_LIST (TODO-12 §5.1) -----------------------------
+/* ---- ALPC_COMPLETION_LIST -----------------------------
  *
  * Lock-free single-producer / multi-consumer ring buffer for async
  * message notifications. Windows maps this structure into the server's

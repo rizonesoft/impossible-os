@@ -4,7 +4,7 @@
  * Tests UEFI runtime services availability, variable access, boot info
  * struct population, SMBIOS UUID, and Secure Boot registry mirror.
  *
- * XREF: 01-boot-platform/TODO-01-uefi-hardening-secureboot.md Unit Tests
+ * XREF: 01-boot-platform/TODO-02-uefi-hardening-secureboot.md Unit Tests
  * ============================================================================ */
 
 #ifdef KERNEL_TESTS

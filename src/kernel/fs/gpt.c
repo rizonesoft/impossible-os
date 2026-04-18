@@ -465,9 +465,9 @@ int guid_from_string(const char *str, struct gpt_guid *g)
 /* ---- GUID v4 Generation (random) ---- */
 
 /* RDRAND is provided by include/kernel/random.h (shared with kusd_time.c
- * and task.c auxv setup). When the kernel CSPRNG lands (TODO-20 §6), replace
+ * and task.c auxv setup). When the kernel CSPRNG lands, replace
  * rdrand_bytes() calls with kernel_random_bytes() at all sites.
- * -> XREF: 16-architecture-ports/TODO-01 §1 -- HAL random source */
+ * XREF: 16-architecture-ports/TODO-01-arch-abstraction-layer.md -- HAL random source */
 #include "kernel/random.h"
 
 /* XorShift64 PRNG fallback seeded from TSC */

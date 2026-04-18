@@ -1,7 +1,7 @@
 /* ============================================================================
  * ob_thread.c -- Thread object type: callbacks, namespace integration
  *
- * Implements TODO-03 §5: ObpThreadType wrapping thread sub-struct.
+ * ObpThreadType wrapping thread sub-struct.
  * Each thread is inserted into \KernelObjects\Thread<PID>.<TID>.
  * ============================================================================ */
 

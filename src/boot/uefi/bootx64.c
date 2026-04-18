@@ -3550,7 +3550,7 @@ static void jump_to_kernel(UINT64 entry_point)
 }
 
 /* ============================================================================
- * Pre-ExitBootServices USB Device Discovery (TODO-07 §5 Phase A)
+ * Pre-ExitBootServices USB Device Discovery (Phase A)
  *
  * Uses EFI_USB_IO_PROTOCOL to enumerate all USB devices while firmware is
  * active.  For each device, reads the device descriptor (VID, PID, class),
@@ -3704,7 +3704,7 @@ static void discover_usb_devices(void)
 }
 
 /* ============================================================================
- * TODO-09 §1: Allocate persistent xHCI DMA structures
+ * Allocate persistent xHCI DMA structures
  *
  * Find the xHCI controller via PCI scan, read capability registers to
  * determine structure sizes, and allocate DCBAA, scratchpad buffers,
@@ -3948,12 +3948,12 @@ found_xhci:
 }
 
 /* ============================================================================
- * TODO-09 §2: USBLEGSUP handoff + controller takeover
+ * USBLEGSUP handoff + controller takeover
  *
  * Take xHCI ownership from BIOS/firmware, halt the controller, reset it,
- * configure it to use our persistent DMA structures (from §1), and start it.
- * After this, the controller runs with our DCBAA/rings and is ready for §3
- * device enumeration.
+ * configure it to use our persistent DMA structures (allocated earlier), and
+ * start it. After this, the controller runs with our DCBAA/rings and is ready
+ * for device enumeration.
  * ============================================================================ */
 
 static inline void bl_mmio_write32(UINT64 base, UINT32 off, UINT32 val)
@@ -4324,9 +4324,9 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     /* Record bootloader entry time */
     g_boot_info_ptr->timing.bl_entry = boot_rdtsc();
 
-    /* Step 0: Identify boot device via EFI_LOADED_IMAGE_PROTOCOL (TODO-03 §1).
+    /* Step 0: Identify boot device via EFI_LOADED_IMAGE_PROTOCOL.
      * Store DeviceHandle globally so parse_boot_conf(), load_kernel(), and
-     * future §2-§12 consumers all use the same boot device handle. */
+     * all later boot consumers use the same boot device handle. */
     post_code16(POST16_BL_BOOT_DEV);
     {
         EFI_GUID li_guid = EFI_LOADED_IMAGE_PROTOCOL_GUID;
@@ -4961,20 +4961,20 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
         g_boot_info_ptr->timing.tsc_freq = (t1 - t0) * 1000;  /* Hz */
     }
 
-    /* Step 4e: Discover USB devices via UEFI firmware (TODO-07 §5 Phase A) */
+    /* Step 4e: Discover USB devices via UEFI firmware (Phase A) */
     post_code16(POST16_BL_USB_DISC);
     watchdog_reset();
     serial_early_print("[BOOT] discover_usb_devices...\n");
     discover_usb_devices();
     post_code16(POST16_BL_USB_DISC_OK);
 
-    /* Step 4f: Allocate persistent xHCI DMA structures (TODO-09 §1) */
+    /* Step 4f: Allocate persistent xHCI DMA structures */
     post_code16(0xB082);
     serial_early_print("[BOOT] allocate_xhci_dma...\n");
     allocate_xhci_dma();
     post_code16(0xB083);
 
-    /* Step 4g: Take over xHCI controller (TODO-09 §2) */
+    /* Step 4g: Take over xHCI controller */
     post_code16(0xB084);
     serial_early_print("[BOOT] xhci_controller_takeover...\n");
     xhci_controller_takeover();
@@ -5032,7 +5032,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
      * The UEFI spec allows the memory map to change between GetMemoryMap
      * and ExitBootServices (timer tick, firmware event). Retry with a
      * fresh map up to EBS_MAX_ATTEMPTS times (typical UEFI practice: 3-5).
-     * Locked at 4 per TODO-02-bootloader-error-recovery.md S2 agreement. */
+     * Locked at 4 per TODO-03-bootloader-error-recovery.md S2 agreement. */
 #define EBS_MAX_ATTEMPTS 4
     /* Disarm watchdog before ExitBootServices -- no longer needed (S11) */
     if (g_wd_armed) {

@@ -1,7 +1,7 @@
 /* ============================================================================
  * ob_event.c -- Event object type: callbacks, NtCreateEvent stub
  *
- * Implements TODO-03 §6: ObpEventType wrapping event_t.
+ * ObpEventType wrapping event_t.
  * ============================================================================ */
 
 #include "kernel/ob/ob_event.h"

@@ -76,7 +76,7 @@ int pit_tick_increment(void)
 
     /* NT timer queue scan AFTER releasing pit_lock -- nt_timer_tick()
      * takes its own irqsave spinlock and must not be nested under
-     * pit_lock to keep lock-order simple (TODO-05 §19). */
+     * pit_lock to keep lock-order simple. */
     {
         extern void nt_timer_tick(void);
         nt_timer_tick();

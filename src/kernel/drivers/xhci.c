@@ -246,7 +246,7 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
     POST16(0xD750);
     xhci_bios_handoff(hc);
 
-    /* ---- TODO-09 §5: Inherit controller from bootloader (zero-delay) ---- */
+    /* ---- Inherit controller from bootloader (zero-delay) ---- */
     /* If the bootloader allocated persistent DMA and took over the controller
      * (usb_handover_complete=1), skip ALL kernel init (halt/reset/DCBAA/rings).
      * The controller is still running with our DMA structures -- we just need
@@ -682,7 +682,7 @@ static void xhci_process_port_events(struct xhci_controller *hc)
                 xhci_enumerate_device(hc, port_id, speed);
             } else {
                 /* Device disconnected -- log for now (slot cleanup requires
-                 * Disable Slot command which is deferred to TODO-07 §5C full) */
+                 * a Disable Slot command, deferred to the xHCI full-stack work) */
                 klog(LOG_INFO, "xhci", "Hot-unplug: device removed from port %u",
                      (uint64_t)port_id);
             }
@@ -799,7 +799,7 @@ void xhci_setup_interrupts(void)
 
         /* MSI-X (cap ID 0x11) -- try if MSI not found */
         if (cap_id == 0x11) {
-            /* MSI-X is more complex; defer to TODO-02 §5 pci_enable_msix() */
+            /* MSI-X is more complex; defer to pci_enable_msix() */
             klog(LOG_DEBUG, "xhci", "MSI-X capability found -- deferring to pci_enable_msix()");
         }
 

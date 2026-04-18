@@ -96,8 +96,14 @@ jobs:
       - name: Verify toolchain sentinels
         run: bash scripts/setup.sh --verify
 
-      # scripts/lint.sh is NOT a release gate yet -- see build.yml for the
-      # reason (legacy-XREF sweep owned by TODO-01 §7).
+      # ── Style lint (release gate) ───────────────────────────────────────
+      # Same checks as build.yml: include-guards, line length, trailing
+      # whitespace, snake_case names, numeric-TODO-shorthand drift. The
+      # legacy-XREF sweep drained the pre-existing allowlist, so a release
+      # cut now fails if any new numeric-TODO shorthand slipped in outside
+      # todo/**.
+      - name: Run style lint
+        run: bash scripts/lint.sh
 
       # ── Build ───────────────────────────────────────────────────────────
       - name: Build OS (clean)

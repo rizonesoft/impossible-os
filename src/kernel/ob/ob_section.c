@@ -1,7 +1,7 @@
 /* ============================================================================
  * ob_section.c -- Section object type: callbacks, create/map/unmap
  *
- * Implements TODO-03 §7: ObpSectionType backed by contiguous physical pages.
+ * ObpSectionType backed by contiguous physical pages.
  *
  * Current memory model: all tasks share the kernel address space via
  * identity mapping, so map views return identity-mapped physical addresses.

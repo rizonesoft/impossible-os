@@ -217,7 +217,7 @@ void acpi_shutdown(void);
  * Does not return on success. */
 void acpi_reboot(void);
 
-/* ---- Consolidated MADT info (TODO-03 §1) ---- */
+/* ---- Consolidated MADT info ---- */
 
 struct acpi_irq_override {
     uint8_t  bus_irq;       /* ISA IRQ number */

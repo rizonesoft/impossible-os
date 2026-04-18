@@ -1,5 +1,5 @@
 /* ============================================================================
- * handle_table.c -- Per-process handle table (TODO-03 §3)
+ * handle_table.c -- Per-process handle table
  *
  * HANDLE values = slot_index * 4 (low 2 bits reserved for future use).
  * The table grows by doubling when full, up to HANDLE_TABLE_MAX_CAP.

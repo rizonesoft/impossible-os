@@ -29,7 +29,7 @@ static uint32_t      s_format_count;
  *   - exec_register_module() -- thread context (exec path)
  *   - exec_find_module_by_pc() -- thread or IRQ context (stack trace, crash)
  * Use irqsave variants for IRQ safety. NOT NMI-safe -- NMI crash dump
- * path needs a lockless fallback (TODO-16 §3 will provide one). */
+ * path needs a lockless fallback (see crash-dump roadmap). */
 
 static loaded_module_t s_modules[EXEC_MAX_MODULES];
 static uint32_t        s_module_count;

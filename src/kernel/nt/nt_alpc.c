@@ -1,24 +1,23 @@
 /* ============================================================================
- * nt_alpc.c -- Modern ALPC port SSDT handlers (TODO-05 §31)
+ * nt_alpc.c -- Modern ALPC port SSDT handlers
  *
  * Reserves SSDT slots 0x010F-0x011E for the Vista+ ALPC syscall
  * surface. Each handler is a bounded stub that logs the call once
  * (atomic one-time flag, load-fast / CAS-on-transition) and returns a
- * deferred-status sentinel until the ALPC engine in
- * 02-kernel-core/TODO-24 §8-§9 is implemented.
+ * deferred-status sentinel until the ALPC engine work in
+ * 02-kernel-core/TODO-24-alpc-message-ports.md is implemented.
  *
  * SCOPE-GAP-ALLOWED: 16 handlers in this file intentionally return
- *                    STATUS_NOT_IMPLEMENTED pending TODO-12 §8 ALPC
- *                    SSDT retrofit + §9 Query/Set/Cancel. Retrofit path
- *                    is a concrete checklist item in TODO-12 §8 that
- *                    enumerates each slot.
- *                    When that item ships, every handler body in this
- *                    file is replaced with a call into the ALPC
- *                    subsystem and the sentinel comments are removed.
+ *                    STATUS_NOT_IMPLEMENTED pending the ALPC SSDT
+ *                    retrofit and Query/Set/Cancel work on the ALPC
+ *                    completion roadmap. When that work ships, every
+ *                    handler body in this file is replaced with a call
+ *                    into the ALPC subsystem and the sentinel comments
+ *                    are removed.
  *
  * Registration helper (alpc_register_one) detects collisions with
  * ssdt_stub_not_implemented, captures ssdt_register return, and
- * per-slot logs failures -- mirroring the §20 LPC pattern.
+ * per-slot logs failures -- mirroring the legacy LPC pattern.
  * ============================================================================ */
 
 #include "kernel/nt/nt_alpc.h"
@@ -102,7 +101,7 @@ static NTSTATUS alpc_probe_and_split(OBJECT_ATTRIBUTES *oa,
 
     /* UNICODE_STRING.Buffer is declared uint16_t* but current kernel-wide
      * convention treats it as ASCII char* (see nt_decode_unicode_string
-     * retrofit tracked at TODO-13 §4). */
+     * retrofit on the registry syscall roadmap). */
     ascii = (const char *)us->Buffer;
 
     /* Verify prefix. Fail on any path not rooted at \RPC Control\ -- we
@@ -142,8 +141,8 @@ static NTSTATUS alpc_probe_and_split(OBJECT_ATTRIBUTES *oa,
  * incomplete?" gets announced. Adding a per-call klog here would just
  * duplicate the test signal and create N noise lines per boot.
  *
- * SCOPE-GAP-ALLOWED: pending TODO-12 §8 ALPC engine retrofit (the
- * concrete checklist item there enumerates every slot). */
+ * SCOPE-GAP-ALLOWED: pending ALPC engine retrofit on the ALPC
+ * completion roadmap (concrete checklist item enumerates every slot). */
 #define ALPC_STUB_BODY(name)                                                 \
     do {                                                                     \
         /* name is a bare identifier passed for documentation only;          \
@@ -153,14 +152,14 @@ static NTSTATUS alpc_probe_and_split(OBJECT_ATTRIBUTES *oa,
     } while (0)
 
 /* ---- 0x010F NtAlpcCreatePort -------------------------------------------- */
-/* Real implementation wired by TODO-12 §2. SCOPE-GAP-ALLOWED: the
- * remaining 15 NtAlpc* handlers below still stub out to the deferred
- * sentinel pending TODO-12 §8's engine retrofit; §2 moves only slot
+/* Real implementation wired by the ALPC CreatePort handler. SCOPE-GAP-ALLOWED:
+ * the remaining 15 NtAlpc* handlers below still stub out to the deferred
+ * sentinel pending the ALPC engine retrofit; CreatePort moves only slot
  * 0x010F out of the pending-features sweep in test_ob.c. User-mode
  * pointer validation (copy_to_user for the out-HANDLE, user-range check
- * on OBJECT_ATTRIBUTES) is §8's responsibility; for now the args are
- * treated as kernel pointers, which is what in-kernel callers (tests,
- * CSRSS bootstrap in §10) use today. */
+ * on OBJECT_ATTRIBUTES) is the engine-retrofit item's responsibility; for
+ * now the args are treated as kernel pointers, which is what in-kernel
+ * callers (tests, CSRSS bootstrap) use today. */
 static NTSTATUS NtAlpcCreatePort_handler(uint64_t a1, uint64_t a2, uint64_t a3,
                                          uint64_t a4, uint64_t a5, uint64_t a6)
 {
@@ -206,10 +205,10 @@ static NTSTATUS NtAlpcCreatePort_handler(uint64_t a1, uint64_t a2, uint64_t a3,
 }
 
 /* ---- 0x0110 NtAlpcConnectPort ------------------------------------------- */
-/* Real implementation wired by TODO-12 §3. SCOPE-GAP-ALLOWED: optional
- * OBJECT_ATTRIBUTES.SecurityDescriptor, RequiredServerSid, ConnMsg,
- * SendMsgAttr, RecvMsgAttr all deferred to §4-§7 -- the path parse +
- * leaf extraction reuses the §2 `alpc_probe_and_split` pattern. */
+/* Real implementation wired by the ALPC ConnectPort handler. SCOPE-GAP-ALLOWED:
+ * optional OBJECT_ATTRIBUTES.SecurityDescriptor, RequiredServerSid, ConnMsg,
+ * SendMsgAttr, RecvMsgAttr all deferred to later ALPC items -- the path parse
+ * plus leaf extraction reuses the `alpc_probe_and_split` pattern. */
 static NTSTATUS NtAlpcConnectPort_handler(uint64_t a1, uint64_t a2, uint64_t a3,
                                           uint64_t a4, uint64_t a5, uint64_t a6)
 {
@@ -283,8 +282,9 @@ static NTSTATUS NtAlpcConnectPortEx_handler(uint64_t a1, uint64_t a2,
 }
 
 /* ---- 0x0112 NtAlpcAcceptConnectPort ------------------------------------- */
-/* Real implementation wired by TODO-12 §3. SCOPE-GAP-ALLOWED: optional
- * PortContext, ConnectionMessage, ConnMsgAttr all deferred to §4-§5. */
+/* Real implementation wired by the ALPC AcceptConnect handler. SCOPE-GAP-ALLOWED:
+ * optional PortContext, ConnectionMessage, ConnMsgAttr all deferred to later
+ * ALPC items. */
 static NTSTATUS NtAlpcAcceptConnectPort_handler(uint64_t a1, uint64_t a2,
                                                 uint64_t a3, uint64_t a4,
                                                 uint64_t a5, uint64_t a6)
@@ -318,11 +318,12 @@ static NTSTATUS NtAlpcAcceptConnectPort_handler(uint64_t a1, uint64_t a2,
 }
 
 /* ---- 0x0113 NtAlpcSendWaitReceivePort ----------------------------------- */
-/* Real implementation wired by TODO-12 §4. SCOPE-GAP-ALLOWED: optional
- * ALPC_MESSAGE_ATTRIBUTES (SendMsgAttr/RecvMsgAttr) deferred to §6 -- §4
- * inline send+wait+reply does not consume them. NumberOfBytesTransferred
- * is implicit in recv_msg->DataLength after success and is not returned
- * separately. Timeout is uint32_t milliseconds rather than the Windows
+/* Real implementation wired by the ALPC SendWaitReceive handler. SCOPE-GAP-ALLOWED:
+ * optional ALPC_MESSAGE_ATTRIBUTES (SendMsgAttr/RecvMsgAttr) deferred to the
+ * message-attribute item -- inline send+wait+reply does not consume them.
+ * NumberOfBytesTransferred is implicit in recv_msg->DataLength after success
+ * and is not returned separately. Timeout is uint32_t milliseconds rather
+ * than the Windows
  * LARGE_INTEGER pointer convention; the sentinel 0 means "wait
  * forever" for the sync/receive paths and "no wait" for non-blocking
  * receive (matching §4 spec). */
@@ -378,7 +379,7 @@ static NTSTATUS NtAlpcSendWaitReceivePort_handler(uint64_t a1, uint64_t a2,
 }
 
 /* ---- 0x0114 NtAlpcDisconnectPort ---------------------------------------- */
-/* Real implementation wired by TODO-12 §3. Flags deferred. */
+/* Real implementation wired by the ALPC DisconnectPort handler. Flags deferred. */
 static NTSTATUS NtAlpcDisconnectPort_handler(uint64_t a1, uint64_t a2,
                                              uint64_t a3, uint64_t a4,
                                              uint64_t a5, uint64_t a6)
@@ -462,9 +463,11 @@ static NTSTATUS NtAlpcQueryInformation_handler(uint64_t a1, uint64_t a2,
 }
 
 /* ---- 0x011D NtAlpcSetInformation ---------------------------------------- */
-/* Real implementation wired by TODO-12 §5. Only
+/* Real implementation wired by the ALPC SetInformation handler. Only
  * AlpcAssociateCompletionPortInformation is handled here; other info
- * classes return STATUS_NOT_IMPLEMENTED pending §9 Query/Set classes.
+ * classes return a deferred-status sentinel pending the Query/Set class
+ * work. SCOPE-GAP-ALLOWED: remaining info classes tracked on the ALPC
+ * roadmap.
  *
  * Arg layout (a1=PortHandle, a2=InfoClass, a3=Info, a4=Length). */
 static NTSTATUS NtAlpcSetInformation_handler(uint64_t a1, uint64_t a2,
@@ -496,9 +499,9 @@ static NTSTATUS NtAlpcSetInformation_handler(uint64_t a1, uint64_t a2,
                                            local.CompletionKey);
     }
     default:
-        /* SCOPE-GAP-ALLOWED: remaining info classes land in TODO-12 §9
-         * (Query/Set/CancelMessage). The completion-port association is
-         * the only class §5 promises. */
+        /* SCOPE-GAP-ALLOWED: remaining info classes land with the ALPC
+         * Query/Set/CancelMessage work. The completion-port association
+         * is the only class this handler promises. */
         return STATUS_NOT_IMPLEMENTED;
     }
 }

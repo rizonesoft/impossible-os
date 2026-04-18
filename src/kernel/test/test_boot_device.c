@@ -5,7 +5,7 @@
  * identification (TODO-03 S1-S12). All tests are read-only checks on
  * g_boot_info -- no live boot infrastructure calls.
  *
- * XREF: 01-boot-platform/TODO-03-boot-device-discovery.md Unit Tests
+ * XREF: 01-boot-platform/TODO-05-boot-device-discovery.md Unit Tests
  * ============================================================================ */
 
 #ifdef KERNEL_TESTS

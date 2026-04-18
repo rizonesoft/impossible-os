@@ -1496,10 +1496,10 @@ int task_exec(const uint8_t *data, uint64_t size)
                  *   3. The LOG_WARN below makes degraded entropy observable.
                  *
                  * Once user binaries link against a libc compiled with
-                 * -fstack-protector (planned with TODO-08 dynamic loader),
+                 * -fstack-protector (planned with the dynamic loader work),
                  * this fallback MUST be replaced with a proper kernel
-                 * entropy source. The follow-up item is tracked in TODO-04
-                 * §13 (XREF: TODO-20 §5 -- kernel CSPRNG). */
+                 * entropy source. The follow-up item is tracked on the
+                 * userland stack-protector and kernel-CSPRNG roadmaps. */
                 uint32_t lo1, hi1, lo2, hi2;
                 __asm__ volatile ("rdtsc" : "=a"(lo1), "=d"(hi1));
                 /* Tiny delay to decorrelate the second sample */

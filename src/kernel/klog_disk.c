@@ -241,7 +241,7 @@ static void ensure_log_dirs(void)
 {
     struct vfs_node *root;
 
-    /* BlackBox (X:\Logs\) dirs are created by boot skeleton (TODO-17 §4).
+    /* BlackBox (X:\Logs\) dirs are created by the boot skeleton.
      * This function only creates the C:\Impossible\System\Logs\ tree
      * for the fallback path. */
     if (klog_using_blackbox)

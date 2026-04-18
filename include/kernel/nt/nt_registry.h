@@ -6,7 +6,7 @@
  * and NtQueryKey into the SSDT.  Each handler translates NT object-namespace
  * registry paths (\Registry\Machine\...) into Win32 RegXxx calls.
  *
- * TODO-05 section 14 (core CRUD).  Advanced operations in section 15.
+ * Core CRUD handlers live here; advanced operations ship separately.
  * ============================================================================ */
 
 #pragma once

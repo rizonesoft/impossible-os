@@ -1,7 +1,7 @@
 /* ============================================================================
  * ob_file.c -- File object type: callbacks, handle-based open/read
  *
- * Implements TODO-03 §5/§6: ObpFileType with VFS node wrapper and pipe support.
+ * ObpFileType with VFS node wrapper and pipe support.
  * ============================================================================ */
 
 #include "kernel/ob/ob_file.h"
@@ -61,7 +61,7 @@ void ob_file_type_init(void)
         .on_close  = file_on_close,
         .on_delete = file_on_delete,
         .on_open   = NULL,
-        .on_parse  = NULL,   /* full on_parse dispatch is TODO-05 §6 */
+        .on_parse  = NULL,   /* full on_parse dispatch lands with NT path parsing */
     });
 
     if (!ObpFileType)

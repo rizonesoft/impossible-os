@@ -1,8 +1,8 @@
 /* ============================================================================
  * acl.c -- ACL construction and debug helpers
  *
- * Implements TODO-11 §3.2: RtlCreateAcl, RtlAddAccessAllowedAce,
- * RtlAddAccessDeniedAce, RtlAddMandatoryAce, RtlGetAce, RtlAclToCStr.
+ * Provides RtlCreateAcl, RtlAddAccessAllowedAce, RtlAddAccessDeniedAce,
+ * RtlAddMandatoryAce, RtlGetAce, RtlAclToCStr.
  * ============================================================================ */
 
 #include "kernel/security/acl.h"

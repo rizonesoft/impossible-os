@@ -92,11 +92,14 @@ jobs:
       - name: Verify toolchain sentinels
         run: bash scripts/setup.sh --verify
 
-      # scripts/lint.sh is deliberately NOT wired as a CI gate yet: the repo
-      # carries ~60 files with numeric-TODO shorthand outside todo/ on the
-      # legacy allow-list, so adding lint to CI would red-light every PR.
-      # The cleanup is owned by TODO-01 §9 "Legacy-XREF sweep" and lint
-      # becomes a required gate once that item closes.
+      # ── Style lint (cheap, no build required) ─────────────────────────────
+      # Enforces include-guards, 120-char line length, trailing whitespace,
+      # snake_case function names, and -- most important for drift -- no
+      # numeric-TODO shorthand (TODO-NN sectionN, DNN TNN) outside todo/**.
+      # The legacy-XREF sweep drained the pre-existing allowlist, so any new
+      # drift is now a CI failure instead of a silent warning.
+      - name: Run style lint
+        run: bash scripts/lint.sh
 
       # ── Host-side tooling regression pack (cheap, no build required) ───────
       # Exercises the wrapper contract, hook lifecycle, and workflow YAML

@@ -585,7 +585,7 @@ static NTSTATUS NtAlertThread_handler(uint64_t a1, uint64_t a2, uint64_t a3,
                                       uint64_t a4, uint64_t a5, uint64_t a6)
 {
     (void)a1; (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
-    /* Alert system requires APC infrastructure (TODO-06 §11) */
+    /* Alert system requires APC infrastructure */
     return STATUS_SUCCESS;
 }
 
@@ -604,7 +604,7 @@ static NTSTATUS NtTestAlert_handler(uint64_t a1, uint64_t a2, uint64_t a3,
                                     uint64_t a4, uint64_t a5, uint64_t a6)
 {
     (void)a1; (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
-    /* Check pending APC -- requires APC infrastructure (TODO-06 §11) */
+    /* Check pending APC -- requires APC infrastructure */
     return STATUS_SUCCESS;
 }
 
@@ -659,7 +659,7 @@ static NTSTATUS NtSetContextThread_stub(uint64_t a1, uint64_t a2, uint64_t a3,
     return STATUS_NOT_IMPLEMENTED;
 }
 
-/* NtQueueApcThread (0x0043) -- needs APC from TODO-06 §11 */
+/* NtQueueApcThread (0x0043) -- needs APC infrastructure */
 static NTSTATUS NtQueueApcThread_stub(uint64_t a1, uint64_t a2, uint64_t a3,
                                       uint64_t a4, uint64_t a5, uint64_t a6)
 {

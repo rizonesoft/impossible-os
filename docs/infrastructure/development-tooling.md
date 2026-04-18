@@ -86,7 +86,7 @@ Owned elsewhere. Each row links to the owning TODO *file*; section anchors insid
 | Cross-compiler toolchain, SDK build system    | [SDK Build System TODO](../../todo/14-host-tools/TODO-01-sdk-build-system.md)                                                   |
 | Host profile matrix + reproducible container  | [Supported Host Profiles and Reproducible Environments](#supported-host-profiles-and-reproducible-environments) (below)         |
 | Build/test/lint/run wrapper contract          | [Developer Tooling Stack TODO](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md) -- "wrapper contract" section   |
-| VM/bare-metal launcher matrix                 | [`machine-matrix.md`](machine-matrix.md) -- canonical table (owned by [TODO-01 §4](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md#4-machine-launcher-and-debug-profile-matrix)) |
+| VM/bare-metal launcher matrix                 | [`machine-matrix.md`](machine-matrix.md) -- canonical table (owned by the [Machine Launcher and Debug Profile Matrix section](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md#4-machine-launcher-and-debug-profile-matrix)) |
 | Git hook lifecycle                            | [Developer Tooling Stack TODO](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md) -- "git hooks" section          |
 | CI workflow alignment                         | [GitHub Actions Workflows](#github-actions-workflows) -- canonical section (owned by the [GitHub Actions roadmap section](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md#6-github-actions-and-artifact-policy-alignment)) |
 | One-command `scripts/tooling-doctor.sh`       | [Developer Tooling Stack TODO](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md) -- "tooling doctor" section     |
@@ -474,7 +474,7 @@ The full launcher matrix -- with accelerator semantics, artifact paths, debugger
 | `scripts/machines/storage/`               | AHCI / VirtIO / NVMe / USB storage scenarios               |
 | `scripts/machines/fs/`                    | Filesystem-specific harnesses                              |
 
-Hyper-V certification is owned by release validation ([D15 T04 §3](../../todo/15-installer-release/TODO-04-release-qa.md)), not the developer matrix.
+Hyper-V certification is owned by release validation (see [Release QA roadmap -- Hyper-V Certification section](../../todo/15-installer-release/TODO-04-release-qa.md#hyper-v-certification-owned-by-release-validation)), not the developer matrix.
 
 ---
 
@@ -805,7 +805,7 @@ These are harness-side advisories, not git hooks. They surface test results to t
 
 ### Hook-manager decision
 
-The repo stays on **shell-managed** hooks (bash scripts under `.githooks/` routed via `core.hooksPath`) rather than adopting a declarative hook manager (lefthook, husky, pre-commit). Rationale: contributors already need `bash`, `clang-19`, `nasm`, and `qemu-system-x86_64` to build; adding a node/python hook-manager layer for two tiny scripts is net cost. If the hook count grows past ~5 or cross-language (YAML/markdown/Rust) gates land, this decision is revisited -- file that migration as a new TODO-01 §5 follow-up, not a silent swap.
+The repo stays on **shell-managed** hooks (bash scripts under `.githooks/` routed via `core.hooksPath`) rather than adopting a declarative hook manager (lefthook, husky, pre-commit). Rationale: contributors already need `bash`, `clang-19`, `nasm`, and `qemu-system-x86_64` to build; adding a node/python hook-manager layer for two tiny scripts is net cost. If the hook count grows past ~5 or cross-language (YAML/markdown/Rust) gates land, this decision is revisited -- file that migration in the [Git Hooks and Local Automation Lifecycle section](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md#5-git-hooks-and-local-automation-lifecycle), not a silent swap.
 
 ---
 

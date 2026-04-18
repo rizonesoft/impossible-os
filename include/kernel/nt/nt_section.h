@@ -1,5 +1,5 @@
 /* ============================================================================
- * nt_section.h -- Section object SSDT (TODO-05 §18)
+ * nt_section.h -- Section object SSDT
  *
  * Registers NtCreateSection, NtOpenSection, NtMapViewOfSection,
  * NtUnmapViewOfSection, NtExtendSection, NtQuerySection,

@@ -51,8 +51,7 @@ typedef struct exec_format {
 
 /* Per-module registration entry.
  * Populated by exec_register_module() for every loaded binary.
- * Consumed by: crash dump (TODO-16 §3), SEH unwind (TODO-10 §6),
- * debugger (TODO-18), and PEB->Ldr module walks. */
+ * Consumed by: crash dump, SEH unwind, debugger, and PEB->Ldr module walks. */
 typedef struct loaded_module {
     uint64_t    base_address;                   /* load VA */
     uint64_t    size_of_image;                  /* total mapped size */
