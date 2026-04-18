@@ -224,7 +224,10 @@ if [ "$#" -eq 0 ]; then
     }
 
     # Top-level roots to scan. Keep narrow so unrelated repos (node_modules,
-    # build artifacts, plugin marketplaces) are not traversed.
+    # build artifacts, plugin marketplaces) are not traversed. `.github/`
+    # is included so workflow YAML cannot sneak in shorthand that would
+    # then outlive a TODO renumbering. The PULL_REQUEST_TEMPLATE.md skip
+    # below preserves the intentional teaching template.
     TODO_XREF_ROOTS=(
         "$REPO_ROOT/src"
         "$REPO_ROOT/include"
@@ -232,6 +235,7 @@ if [ "$#" -eq 0 ]; then
         "$REPO_ROOT/docs"
         "$REPO_ROOT/user"
         "$REPO_ROOT/tools"
+        "$REPO_ROOT/.github"
         "$REPO_ROOT/README.md"
         "$REPO_ROOT/CONTRIBUTING.md"
         "$REPO_ROOT/CLAUDE.md"
@@ -263,6 +267,7 @@ if [ "$#" -eq 0 ]; then
             --include='*.c' --include='*.h' --include='*.asm' --include='*.S' \
             --include='*.sh' --include='*.md' --include='*.json' \
             --include='*.bat' --include='*.ps1' --include='*.py' \
+            --include='*.yml' --include='*.yaml' \
             --include='Makefile' --include='*.mk' \
             --exclude-dir='.git' --exclude-dir='build' --exclude-dir='node_modules' \
             "${TODO_XREF_EXISTING[@]}" 2>/dev/null \
