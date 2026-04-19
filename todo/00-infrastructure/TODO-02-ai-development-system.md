@@ -60,7 +60,7 @@
 | --- | :---: | -------------------------------------------------- | ------------ | :----: |
 | 💎  |   1   | Canonical ownership and source-of-truth map        | --           |  [x]   |
 | 💎  |   2   | Skill lifecycle, templates, and catalog rules      | §1           |  [x]   |
-| 💎  |   3   | Hook routing and policy contract                   | §1           |  [ ]   |
+| 💎  |   3   | Hook routing and policy contract                   | §1           |  [/]   |
 | 💎  |   4   | External-reviewer contract (Codex, Copilot)        | §1-§3        |  [ ]   |
 | 💎  |   5   | MCP, permissions, and extension boundary           | §1, §3, §4   |  [ ]   |
 | 💎  |   6   | `AGENTS.md` cross-tool pointer file                | §1, §4       |  [ ]   |
@@ -119,14 +119,21 @@ Skills need the same rigor as code: discoverable ownership, templates, and retir
 
 Hooks are part of the AI system, not invisible glue.
 
-- [ ] Audit `.claude/settings.json` hooks into a readable routing matrix: trigger (`PreToolUse`, `PostToolUse`, `Skill`, `Bash(git commit:*)`), matcher, owner, and intended reminder/gate behavior. One-line-per-hook summary rendered as a table in `docs/infrastructure/ai-system.md`.
-- [ ] Document mandatory-trigger hooks separately from advisory reminders: which hooks BLOCK (exit 2) the tool call, which emit `systemMessage` reminders only, which run post-hoc validation (post-commit unit test, post-commit boot smoke)
-- [ ] Split large hook concerns into named policy blocks in the routing matrix so edits do not require blind JSON surgery. The settings.json blob stays canonical; the matrix is the human-readable view
-- [ ] Document the **Claude Code-only hook boundary**: `.claude/settings.json` hooks are harness hooks (run at tool-call time); `.githooks/` are git hooks (run at commit/push time); `scripts/copilot-review.sh` has no hook surface, it's invoked manually or from inside a skill
-- [ ] Add explicit XREFs to [`00-infrastructure/TODO-01 §5`](TODO-01-developer-tooling-stack.md#5-git-hooks-and-local-automation-lifecycle) for git hook installation/CI surfaces that live outside the AI system itself
-- [ ] Commit: `"docs/ai: codify hook routing and policy contract"`
+- [x] Audited all 18 live harness hooks in `.claude/settings.json` into a one-line-per-hook routing matrix at [`docs/infrastructure/ai-system.md` "Hook Routing Matrix"](../../docs/infrastructure/ai-system.md#hook-routing-matrix). Each row names the trigger (`PreToolUse`/`PostToolUse` + matcher: `Edit|Write|MultiEdit`, `Bash`, `Skill`), the path / command filter, and the rule / reminder / validator purpose.
+- [x] Split the matrix into three effect-class tables: BLOCK (4 hooks -- Unicode dash ban, scope-gap protocol on C files, test-side-effect ban, Accepted/Deferred bare-XREF gate at commit), REMIND (12 hooks -- domain code-quality auto-load, section-commit GATE, completion-first on Skill entry, receiving-code-review after external review, validate-todo-file on TODO edits, TODO format check, test wiring / message uniqueness / TEST_PENDING reminders, CLAUDE.md sync, scope-gap dedup, Accepted-XREF concreteness warn), and POST-HOC VALIDATE (2 hooks -- post-commit unit tests via `scripts/test.sh` and boot smoke via `scripts/test-smoke.sh`).
+- [x] The `.claude/settings.json` JSON blob stays canonical -- the matrix is the human-readable view. Editing procedure documented in the "Editing hooks" sub-section: edit JSON first, update matrix row in the same commit, then §9 regression suite asserts the invariant.
+- [x] Harness-hooks vs git-hooks boundary stated explicitly in the new "Two hook layers -- do not confuse them" table at the top of the Routing Matrix: harness hooks run at tool-call time (`.claude/settings.json`); git hooks run at commit/push time (`.githooks/`, owned by TODO-01 §5); `scripts/copilot-review.sh` has no hook surface.
+- [x] XREF to [TODO-01 §5 Git Hooks and Local Automation Lifecycle](TODO-01-developer-tooling-stack.md#5-git-hooks-and-local-automation-lifecycle) added inline in the boundary table + in the See Also list.
+- [ ] Tighten hooks 8 and 9 matchers: replace the `tool_response.stdout`-based path detection with `git show --name-only --format= HEAD`. Current matchers miss pure-modification commits because standard `git commit` stdout only prints paths for `create mode` / `delete mode` lines. Caught by Codex review 2026-04-19; documented under "Known limitations" in ai-system.md. Fix: edit both hook bodies in `.claude/settings.json` to subprocess `git show --name-only --format= HEAD` and match against that file list; update the matrix rows 8-9 accordingly; delete the "Known limitations" paragraph.
+- [x] Commit: `"docs/ai: codify hook routing and policy contract"`
 
-**Test checkpoint:** For any given edit path or skill invocation, the responsible hook and its intended effect are documented. A maintainer can tell whether a behavior is a reminder or a block without reading minified JSON. The harness/git hook boundary is clear.
+**Test checkpoint:** For any given edit path or skill invocation, the responsible hook and its intended effect are documented. A maintainer can tell whether a behavior is a reminder or a block without reading minified JSON (three named tables: BLOCK / REMIND / POST-HOC VALIDATE). The harness/git hook boundary is clear and named in the "Two hook layers" table.
+
+> **Test runner:** N/A (docs-only) | validation: matrix row count (18) matches `.claude/settings.json` hook count (verified via python3 parse); BLOCK/REMIND/POST-HOC split is 4+12+2 = 18; §9 regression suite will automate this sync.
+
+> **Verified:** 2026-04-19 | 6/7 items | build N/A (docs-only) | 18/18 hook rows
+> **Deferred:** [H] Hooks 8+9 match `git commit` stdout rather than canonical file list; pure-modification commits can silently skip (reason: behavior fix out of scope for the docs-codification commit) -> XREF: 00-infrastructure/TODO-02 §3 (item: "Tighten hooks 8 and 9 matchers" at line 142)
+> **Quality reviewed:** 2026-04-19 | Codex 1x (adversarial) | 1H+1L fixed (row-length cap compaction; validator semantics documented honestly + concrete follow-up filed), 0 open | scope: N/A (docs-only)
 
 ---
 
@@ -246,7 +253,7 @@ This is the refinement step: test the workflow itself.
 | --- | ------------------------------- | ------------------------------------------- | ------------------------------------------- | -------------------------------------------------------- |
 | 💎 | Repo-codified AI instructions   | ✅ `.github/copilot-instructions.md`        | ⚠️ AGENTS.md emerging                      | ✅ §1 ownership map + `CLAUDE.md` authority              |
 | 💎 | Skill/catalog ownership         | ⚠️ `.github/chatmodes/` + `/prompts/`       | ❌ Ad hoc                                  | ✅ §2 skill lifecycle; no parallel trees                 |
-| 💎 | Hook policy matrix              | ⚠️ `.vscode/mcp.json` + IDE settings        | ⚠️ Implicit                                | ⬜ §3 routing; reminder vs block tiers                   |
+| 💎 | Hook policy matrix              | ⚠️ `.vscode/mcp.json` + IDE settings        | ⚠️ Implicit                                | ✅ §3 routing; reminder vs block tiers                   |
 | 💎 | External-reviewer contract      | ❌ Rare                                     | ❌ Rare                                    | ⬜ §4 Codex + Copilot reviewer-not-authority             |
 | 💎 | Permissions/extension boundary  | ⚠️ Varies                                   | ⚠️ Varies                                  | ⬜ §5 allow/deny tiers + `.local.json` split             |
 | 💎 | Cross-tool `AGENTS.md` pointer  | ⚠️ awesome-copilot stub                     | ✅ LF-backed (Aug 2025)                    | ⬜ §6 pointer to `CLAUDE.md`; no duplication             |

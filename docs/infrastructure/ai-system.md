@@ -92,6 +92,89 @@ Preserve the hierarchy by editing the ONE canonical location when a concept has 
 
 ---
 
+## Hook Routing Matrix
+
+Hooks are part of the AI system, not invisible glue. This matrix is the human-readable view of [`.claude/settings.json`](../../.claude/settings.json); the JSON blob stays canonical but is not the place to read from.
+
+### Two hook layers -- do not confuse them
+
+- **Harness hooks (Claude Code)** -- run at tool-call time (per Edit / Write / Bash / Skill invocation). Config: [`.claude/settings.json`](../../.claude/settings.json). Owned here (§3 of [TODO-02](../../todo/00-infrastructure/TODO-02-ai-development-system.md#3-hook-routing-and-policy-contract)).
+- **Git hooks** -- run at commit / push time. Config: [`.githooks/pre-commit`, `post-commit`, `pre-push`](../../.githooks/). Owned by [TODO-01 §5 Git Hooks and Local Automation Lifecycle](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md#5-git-hooks-and-local-automation-lifecycle).
+- [`scripts/copilot-review.sh`](../../scripts/copilot-review.sh) has no hook surface -- it is invoked manually or from inside a Claude skill; it is not a hook layer.
+
+### Effect classes + path-filter abbreviations
+
+Every harness hook falls into one of three classes:
+
+- **BLOCK** -- hook exits non-zero (`sys.exit(2)` or `permissionDecision=deny`) and stops the tool call. Reserved for state-corrupting rules.
+- **REMIND** -- hook emits `systemMessage`; tool call proceeds. Workflow nudges and sync invariants.
+- **POST-HOC** -- hook runs `scripts/test.sh` or `scripts/test-smoke.sh` after a successful tool call and reports the result. Advisory; never rolls back.
+
+Path-filter abbreviations used in the tables below:
+
+- `C-src` = `.c`/`.h`/`.asm`/`.S` under `src/kernel/`, `include/kernel/`, `src/boot/`, `src/desktop/`, `src/shell/`, `user/`, `src/apps/`.
+- `test_*.c` = `src/kernel/test/test_*.c` (excluding `test_runner.c`, `test_main.c`).
+- `todo/*.md` = any markdown file under `todo/`.
+- `skills/*.md` = any markdown under `.claude/skills/`.
+- `code-commit stdout` / `boot-commit stdout` = see [Known limitations](#known-limitations-post-hoc-validators) below.
+
+### BLOCK hooks (4)
+
+| #  | Trigger       | Filter                            | Rule                                                                                                                            |
+| -- | ------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| 2  | Pre: Edit     | any content                       | Reject em/en dash (U+2014, U+2013). [`CLAUDE.md`](../../CLAUDE.md#no-unicode-dashes-enem-ascii-only).                           |
+| 3  | Pre: Edit     | C-src                             | Reject new `TODO`/`FIXME`/`HACK`/stub markers without scope-gap resolution (see protocol under implement-todo-section/). |
+| 4  | Pre: Edit     | `test_*.c`                        | Reject live boot-infra calls (`boot_progress`, `vpd_*`, `panic`, subsystem `_init`). See CLAUDE.md "Test Code".            |
+| 5  | Pre: Bash     | `git commit` with staged `todo/`  | Reject bare `Accepted:`/`Deferred:` XREF. See [review step 15](../../.claude/skills/review-todo-section/SKILL.md). Soft XREFs = WARN. |
+
+### REMIND hooks (12)
+
+| #  | Trigger       | Filter                            | Reminder                                                                                                                        |
+| -- | ------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| 1  | Pre: Edit     | C-src                             | Auto-load matching domain code-quality skill (boot / kernel / desktop / shell / userland).                                      |
+| 6  | Pre: Bash     | `git commit` with src + TODO      | Section-commit GATE: confirm steps 13-18 of `/implement-todo-section` (Codex + build + validate) ran.                           |
+| 7  | Pre: Skill    | implement/review/quality/create   | Completion-first radar at skill entry (correctness, completeness, wiring, parity, superiority, ownership).                      |
+| 10 | Post: Bash    | copilot-review.sh / codex advers. | Apply `superpowers:receiving-code-review` to every finding (verify at file:line, Fix/Reject/Accept, never blind-implement).     |
+| 11 | Post: Edit    | `todo/*.md`                       | If structural edit, run `/validate-todo-file`.                                                                                  |
+| 12 | Post: Edit    | `todo/*.md`                       | TODO format CHECK (oversize C-blocks, `(N.M Title)` prefixes). validate-todo-file step 15.                                      |
+| 13 | Post: Edit    | `test_*.c`                        | Test wiring: every test fn must call `test_suite_register_cat()` and use an existing `TEST_CAT_*`.                              |
+| 14 | Post: Edit    | `test_*.c`                        | Test message uniqueness: `TEST_ASSERT` with literal msg in `for`/`while` must use per-iteration `snprintf`.                     |
+| 15 | Post: Edit    | `test_*.c`                        | `TEST_PENDING` REMINDER: tests asserting `STATUS_NOT_IMPLEMENTED` as expected must use `TEST_PENDING`, not `TEST_ASSERT`.       |
+| 16 | Post: Edit    | `skills/*.md`                     | CLAUDE.md sync: new/renamed skill needs rows in CLAUDE.md Skills table AND `.claude/skills/README.md`.                          |
+| 17 | Post: Edit    | `todo/*.md`                       | Scope-gap dedup: before filing new section/TODO, grep existing TODOs for overlap (scope-gap Branches C/D).                      |
+| 18 | Post: Edit    | `todo/*.md`                       | Accepted-XREF concreteness: new `Accepted:`/`Deferred:` must carry `(item: "..." at line N)`. Counterpart to hook 5 BLOCK.     |
+
+### POST-HOC VALIDATE hooks (2)
+
+| #  | Trigger       | Filter                            | Validator                                                                                                                       |
+| -- | ------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| 8  | Post: Bash    | `git commit`; code-commit stdout  | Runs `scripts/test.sh QUIET=1`; reports pass/fail. [`CLAUDE.md`](../../CLAUDE.md#testing----category-based-test-infrastructure). |
+| 9  | Post: Bash    | `git commit`; boot-commit stdout  | Runs `scripts/test-smoke.sh`; reports `SMOKE TEST PASSED` or fail. [`CLAUDE.md`](../../CLAUDE.md#smoke-test----end-to-end-boot-validation). |
+
+### Known limitations (post-hoc validators)
+
+**Hooks 8 and 9 match on `git commit` stdout, not the canonical commit file list.** `code-commit stdout` means "the git-commit stdout text contains any of `.c`/`.h`/`.asm`/`.ld`"; `boot-commit stdout` means "the stdout text contains any of the boot-path substrings (`src/boot/`, `src/kernel/main/boot_`, `src/kernel/idt.c`, ...)". Standard `git commit` output includes `create mode .../foo.c` / `delete mode` lines for added and removed files but does NOT list paths for pure modifications. Consequences:
+
+- Commits that only MODIFY existing source files may silently skip hooks 8 and 9 even though the code changed.
+- Commits that add a new boot-path source file always fire hook 9 because `create mode` includes the path.
+- A tighter matcher (`git show --name-only --format= HEAD`) would fix this; tracked as a `[ ]` item in [TODO-02 §3](../../todo/00-infrastructure/TODO-02-ai-development-system.md#3-hook-routing-and-policy-contract).
+
+### Reading the matrix
+
+- **"Did my edit fail because of a hook?"** Check the BLOCK table first -- those are the only hooks that can reject a tool call. REMIND hooks never fail an edit; they attach a message.
+- **"What happens when I commit kernel code?"** Hook 6 reminds about the section-commit GATE at PreToolUse (pre-commit text), hook 5 may BLOCK if your TODO has bare XREFs, and if the commit succeeds hooks 8 + (conditionally) 9 run tests and smoke.
+- **"Did I add a new skill correctly?"** Hook 16 reminds you to sync the CLAUDE.md Skills table; the authoring lifecycle in [skill-authoring.md](skill-authoring.md) has the full 5-step process.
+
+### Editing hooks
+
+`.claude/settings.json` is still the canonical source. When adding or removing a hook:
+
+1. Edit `.claude/settings.json`.
+2. Update the relevant table above in the same commit (row add / remove / modify). The matrix and the JSON must stay in sync -- [TODO-02 §9](../../todo/00-infrastructure/TODO-02-ai-development-system.md#9-ai-workflow-regression-suite) regression suite asserts this invariant.
+3. If the hook BLOCKS, document the exact failure signature (tag line + exit code) so a reader can recognize a block-fail in their terminal.
+
+---
+
 ## See Also
 
 - [AI Development System roadmap](../../todo/00-infrastructure/TODO-02-ai-development-system.md) -- roadmap ownership, [Skill Lifecycle, Templates, and Catalog Rules](../../todo/00-infrastructure/TODO-02-ai-development-system.md#2-skill-lifecycle-templates-and-catalog-rules), [Hook Routing and Policy Contract](../../todo/00-infrastructure/TODO-02-ai-development-system.md#3-hook-routing-and-policy-contract), [External-Reviewer Contract](../../todo/00-infrastructure/TODO-02-ai-development-system.md#4-external-reviewer-contract-codex-copilot), [MCP, Permissions, and Extension Boundary](../../todo/00-infrastructure/TODO-02-ai-development-system.md#5-mcp-permissions-and-extension-boundary), [`AGENTS.md` Cross-Tool Pointer File](../../todo/00-infrastructure/TODO-02-ai-development-system.md#6-agentsmd-cross-tool-pointer-file), [AI-Assist Commit Disclosure Policy](../../todo/00-infrastructure/TODO-02-ai-development-system.md#7-ai-assist-commit-disclosure-policy), [Autonomous-Agent Boundary Policy](../../todo/00-infrastructure/TODO-02-ai-development-system.md#8-autonomous-agent-boundary-policy), and [AI Workflow Regression Suite](../../todo/00-infrastructure/TODO-02-ai-development-system.md#9-ai-workflow-regression-suite).
