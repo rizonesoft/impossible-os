@@ -116,6 +116,9 @@ Minimal test harness for user-mode binaries: no kernel dependencies.
 > - Cross-TODO sync: this is foundation for §9 (`test_syscall.exe`) full-coverage test, §11 IPC test (uses `sys_pipe` + `sys_shmem_*`), §13 file I/O test (uses `sys_openfile` + `sys_readhandle` + `sys_opendirobj` + `sys_querydirobj`). All depend-on §2 in the Implementation Order table.
 > - Scope boundary: §2 owns ONLY the user-side header sync + the build-validating stub binary. §5 (SYS_FAULT_INJECT) defines a NEW syscall number not yet in the kernel header -- separate work. SYS_MMAP / SYS_MUNMAP wrappers wait for the kernel handler to land elsewhere.
 
+> **Verified:** 2026-04-20 | commit `302a45dc` | 6/6 items | build OK | 12 SYS_* defines + 10 wrappers + HANDLE typedef + LOG_* constants
+> **Quality reviewed:** 2026-04-20 | Codex 2x (adversarial, quality) | 1Critical fixed pre-commit, 0 open | scope: userland-code-quality
+
 ---
 
 ## 3. Kernel Test Launcher
