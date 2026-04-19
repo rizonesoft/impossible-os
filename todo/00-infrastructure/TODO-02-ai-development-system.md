@@ -267,7 +267,7 @@ The Linux kernel merged `Documentation/process/coding-assistants.rst` on 2025-12
 > - Canonical doc: [`CONTRIBUTING.md` -- AI-Assisted Commit Policy](../../CONTRIBUTING.md#ai-assisted-commit-policy-zero-trailer); `CLAUDE.md` pointer at [Commits -- zero AI-attribution trailers](../../CLAUDE.md#commits----zero-ai-attribution-trailers).
 > - Scope boundary: commit-disclosure policy + stance-change condition + screening-bar pointer. Autonomous-agent refusal lives in §8; regression enforcement of these invariants lives in §9.
 
-> **Verified:** 2026-04-19 | commit pending | 7/7 items | build N/A (docs-only) | 2 files edited; 1 policy block + 1 pointer block
+> **Verified:** 2026-04-19 | commit `6536677e` | 7/7 items | build N/A (docs-only) | 2 files edited; 1 policy block + 1 pointer block
 > **Quality reviewed:** 2026-04-19 | Codex 1x (adversarial) | 1M fixed (M: §9 regression check still defined a rolling `HEAD~100` scan that would flag the 9 legacy Copilot trailers the §7 Notes documented as pre-policy baseline -- would fail on a healthy repo until the commits aged out, or force ignoring the written §9 requirement. Replaced with an explicit §7-adoption anchor: resolve `ANCHOR=$(git log --diff-filter=A -S 'AI-Assisted Commit Policy' -- CONTRIBUTING.md | tail -1)` then `git log --format=%B $ANCHOR..HEAD`; also updated the §9 Unit Tests bullet to match), 0 open | scope: N/A (docs-only)
 
 ---
