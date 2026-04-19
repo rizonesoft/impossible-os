@@ -133,18 +133,32 @@ struct per_cpu_data {
      * exercise caller failure-cleanup paths. Released builds compile
      * the field out via KERNEL_TESTS -- zero runtime cost.
      *
-     * §6 extensions:
-     *   *_task_pid      -- when non-zero, countdown only fires for
-     *                      task whose pid matches. Closes the SMP-
-     *                      migration hole where a test migrating
-     *                      between arm and code-under-test could lose
-     *                      the armed injection.
+     * §6 extensions (ALL per-CPU; no cross-CPU broadcast):
+     *   *_task_pid      -- when non-zero, countdown only fires for the
+     *                      task whose pid matches on the SAME CPU.
+     *                      Foreign tasks on this CPU skip without
+     *                      consuming the countdown, so a test can
+     *                      isolate the injection to the intended
+     *                      consumer when helper kthreads share the
+     *                      CPU. SCOPE CAVEAT: a task that migrates
+     *                      to a DIFFERENT CPU before calling the
+     *                      allocator does NOT trigger, because the
+     *                      countdown lives only in the arming CPU's
+     *                      per_cpu_data. Test runner is sequential
+     *                      single-CPU so this matches usage; cross-
+     *                      CPU migration-aware filtering would need
+     *                      a future broadcast-to-all-CPUs variant.
      *   *_max_injections-- cap on total fires since last _set. 0 means
-     *                      no cap (classic single-shot). When the
-     *                      fired counter reaches this value, the hook
-     *                      stops firing even with countdown armed.
+     *                      no cap (classic single-shot). With a cap
+     *                      set, the hook auto-reloads countdown to 1
+     *                      after each fire while fired < max, so
+     *                      `max_injections_set(N)` + one `_next()`
+     *                      produces exactly N fires without manual
+     *                      re-arming.
      *   *_fired_counter -- internal: increments each time a trigger
-     *                      fires, reset by _max_injections_set.
+     *                      fires, reset by _max_injections_set AND
+     *                      _task_filter_set so the cap is relative
+     *                      to each arm-point.
      *
      * Every subsystem (kmalloc, pmm, vmm_map, copy_user) mirrors the
      * same 4-field layout. See 00-infrastructure/kernel-test-harness

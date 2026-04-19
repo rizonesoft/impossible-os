@@ -108,6 +108,56 @@ static void test_pmm_fault_inject_irql_gate(void)
                    "IRQ-context call did not increment injection counter");
 }
 
+/* Task-filter: armed for foreign PID, current-CPU alloc must NOT fire
+ * and countdown stays armed. Mirrors test_heap_fault_inject_task_filter
+ * exactly so a field mix-up in pmm_fault_should_fire is caught. */
+static void test_pmm_fault_inject_task_filter(void)
+{
+    uint64_t pre = pmm_alloc_fail_injections_triggered();
+
+    pmm_alloc_fail_next();
+    pmm_alloc_fail_task_filter_set(0xFFFFFFFFu);
+    uintptr_t a = pmm_alloc_frame();
+    TEST_ASSERT(a != 0, "task-filter skips non-matching task");
+    if (a) pmm_free_frame(a);
+    TEST_ASSERT_EQ(pmm_alloc_fail_injections_triggered(), pre,
+                   "pmm injection counter unchanged when task-filter blocks");
+
+    pmm_alloc_fail_task_filter_clear();
+    uintptr_t b = pmm_alloc_frame();
+    TEST_ASSERT(b == 0, "countdown preserved across filter-blocked calls -- fires now");
+    TEST_ASSERT_EQ(pmm_alloc_fail_injections_triggered() - pre, 1u,
+                   "exactly 1 pmm fire after filter clear");
+}
+
+/* Max-injections auto-reload: arm once, expect N fires. Mirror of the
+ * heap-side test -- catches auto-reload regressions in the pmm copy. */
+static void test_pmm_fault_inject_max_cap(void)
+{
+    uint64_t pre = pmm_alloc_fail_injections_triggered();
+    pmm_alloc_fail_max_injections_set(3);
+    pmm_alloc_fail_next();
+
+    int null_hits = 0;
+    uintptr_t frames[10] = {0};
+    for (int i = 0; i < 10; i++) {
+        frames[i] = pmm_alloc_frame();
+        if (!frames[i])
+            null_hits++;
+    }
+    TEST_ASSERT_EQ(null_hits, 3, "pmm max_injections=3 + single arm produces 3 NULLs");
+    TEST_ASSERT_EQ(pmm_alloc_fail_fired_counter(), 3u,
+                   "pmm fired_counter equals cap after auto-reload stops");
+    TEST_ASSERT_EQ(pmm_alloc_fail_injections_triggered() - pre, 3u,
+                   "pmm injection counter advanced by exactly 3");
+
+    /* Free the 7 allocations that succeeded. */
+    for (int i = 0; i < 10; i++)
+        if (frames[i]) pmm_free_frame(frames[i]);
+
+    pmm_alloc_fail_max_injections_clear();
+}
+
 /* Registration */
 void test_register_pmm(void)
 {
@@ -119,6 +169,10 @@ void test_register_pmm(void)
                             test_pmm_fault_inject_countdown, TEST_CAT_MM);
     test_suite_register_cat("PMM: fault-inject IRQL gate (IRQ context bypass)",
                             test_pmm_fault_inject_irql_gate, TEST_CAT_MM);
+    test_suite_register_cat("PMM: fault-inject task-filter",
+                            test_pmm_fault_inject_task_filter, TEST_CAT_MM);
+    test_suite_register_cat("PMM: fault-inject max-injections cap",
+                            test_pmm_fault_inject_max_cap, TEST_CAT_MM);
 }
 
 #endif /* KERNEL_TESTS */

@@ -193,7 +193,7 @@ Tests that exercise error paths (validators, allocator failure rollback, bad-inp
 
 **Test checkpoint:** `kmalloc_fail_task_filter_set(my_pid)` + foreign-PID kmalloc is NOT failed + countdown remains armed for a matching call. `kmalloc_fail_max_injections_set(3)` + arm-fire loop of 10 produces exactly 3 forced NULLs + 7 successes. `pmm_alloc_fail_next()` + `pmm_alloc_frame()` returns 0 + subsequent call succeeds + injection counter advances by 1. `copy_user_fail_next()` + `copy_to_user(dst, src, 16)` returns -1 without writing dst; next call returns 0 and copies 16 bytes.
 
-> **Test runner:** `scripts\debug\run-mm-tests.bat` (SUITE=mm) + `scripts\debug\run-x86-tests.bat` (SUITE=x86) | 7 new fault-inject suites, 0 failures (2 kmalloc + 3 pmm + 1 vmm + 1 copy_user)
+> **Test runner:** `scripts\debug\run-mm-tests.bat` (SUITE=mm) + `scripts\debug\run-x86-tests.bat` (SUITE=x86) | 13 new fault-inject suites, 0 failures (2 kmalloc + 5 pmm + 3 vmm + 3 copy_user: each non-kmalloc subsystem gained parallel task-filter + max-cap tests during review to close a copy-paste coverage gap)
 
 > **Notes:**
 > - Shipped 4 parallel fault-inject surfaces: kmalloc (§1 + §6 extensions), PMM, VMM `vmm_map_page`, copy_to_user/copy_from_user. Each has the same 4-field per-CPU state (countdown + task_pid + max_injections + fired_counter) and the same 9 public setters (`_countdown_set/clear/_next`, `_injections_triggered`, `_task_filter_set/clear`, `_max_injections_set/clear`, `_fired_counter`).
@@ -203,6 +203,9 @@ Tests that exercise error paths (validators, allocator failure rollback, bad-inp
 > - 7 new test suites exercise the new API surfaces: task-filter skip-then-fire, max-injections cap yielding exactly N fires in M calls, PMM `fail_next`/countdown/IRQL-gate, VMM `vmm_map_fail_next` round-trip, copy_to_user + copy_from_user error propagation.
 > - Downstream consumers: TODO-12 §5 `Test gaps` allocator-rollback test (needs >4 KiB allocation failure path) now unblocked via `pmm_alloc_fail_next()`; syscall error-propagation tests throughout `02-kernel-core` can use `copy_user_fail_next()`.
 > - Scope boundary: §6 owns the multi-allocator fault-inject extensions. §8 (heap-leak detection) is independent. `vmm_alloc_range()` referenced in the section spec doesn't exist under that name; the hook lives in the primary `vmm_map_page` primitive.
+
+> **Verified:** 2026-04-19 | commit `b1fbfc20` | 7/7 items | build OK | 13 fault-inject suites across 4 files (TEST_CAT_MM + TEST_CAT_X86); 4 subsystems x 9 setters = 36 public APIs
+> **Quality reviewed:** 2026-04-19 | Codex 4x (adversarial x2, quality x2) | 1H+3M+1L fixed, 0 open | scope: kernel-code-quality
 
 ---
 

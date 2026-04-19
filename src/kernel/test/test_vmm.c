@@ -180,6 +180,76 @@ static void test_vmm_map_fault_inject(void)
     vmm_unmap_page(test_virt, 1);
 }
 
+/* Task-filter mirror test -- foreign-PID arm must skip without
+ * consuming the countdown. */
+static void test_vmm_map_fault_inject_task_filter(void)
+{
+    uintptr_t frame = pmm_alloc_frame();
+    if (!frame) { TEST_SKIP("pmm_alloc_frame failed"); return; }
+
+    uint64_t pre = vmm_map_fail_injections_triggered();
+    uintptr_t va = 0x0000000200020000ULL;
+
+    vmm_map_fail_next();
+    vmm_map_fail_task_filter_set(0xFFFFFFFFu);
+    int r1 = vmm_map_page(va, frame, VMM_KERNEL_RW);
+    TEST_ASSERT_EQ(r1, 0, "task-filter skips non-matching task -- vmm_map_page succeeds");
+    TEST_ASSERT_EQ(vmm_map_fail_injections_triggered(), pre,
+                   "vmm_map injection counter unchanged when filter blocks");
+    vmm_unmap_page(va, 1);
+
+    vmm_map_fail_task_filter_clear();
+    /* Re-allocate a frame since the first one was freed via unmap_page. */
+    uintptr_t frame2 = pmm_alloc_frame();
+    if (!frame2) return;
+    int r2 = vmm_map_page(va, frame2, VMM_KERNEL_RW);
+    TEST_ASSERT_EQ(r2, -1, "countdown preserved -- fires after filter clear");
+    /* r2 == -1 means vmm_map_page rejected; free the frame we allocated. */
+    pmm_free_frame(frame2);
+    TEST_ASSERT_EQ(vmm_map_fail_injections_triggered() - pre, 1u,
+                   "exactly 1 vmm_map fire after filter clear");
+}
+
+/* Max-injections auto-reload for vmm_map. */
+static void test_vmm_map_fault_inject_max_cap(void)
+{
+    uint64_t pre = vmm_map_fail_injections_triggered();
+    vmm_map_fail_max_injections_set(3);
+    vmm_map_fail_next();
+
+    /* Allocate 10 dummy frames and try to map each. First 3 fail,
+     * last 7 succeed. */
+    uintptr_t va_base = 0x0000000200030000ULL;
+    int fail_hits = 0;
+    int mapped_count = 0;
+    uintptr_t mapped_vas[10] = {0};
+
+    for (int i = 0; i < 10; i++) {
+        uintptr_t frame = pmm_alloc_frame();
+        if (!frame) continue;
+        uintptr_t va = va_base + (uintptr_t)i * 0x1000;
+        int r = vmm_map_page(va, frame, VMM_KERNEL_RW);
+        if (r < 0) {
+            fail_hits++;
+            pmm_free_frame(frame);  /* vmm_map failed; free the frame */
+        } else {
+            mapped_vas[mapped_count++] = va;
+        }
+    }
+
+    TEST_ASSERT_EQ(fail_hits, 3, "vmm_map max_injections=3 produces 3 fails");
+    TEST_ASSERT_EQ(vmm_map_fail_fired_counter(), 3u,
+                   "vmm_map fired_counter equals cap");
+    TEST_ASSERT_EQ(vmm_map_fail_injections_triggered() - pre, 3u,
+                   "vmm_map injection counter advanced by exactly 3");
+
+    /* Cleanup: unmap + free-frame for each successful mapping. */
+    for (int i = 0; i < mapped_count; i++)
+        vmm_unmap_page(mapped_vas[i], 1);
+
+    vmm_map_fail_max_injections_clear();
+}
+
 void test_register_vmm(void)
 {
     test_suite_register_cat("VMM: map/read/unmap", test_vmm_map_roundtrip, TEST_CAT_MM);
@@ -190,6 +260,10 @@ void test_register_vmm(void)
                             test_vmm_map_user_page_roundtrip, TEST_CAT_MM);
     test_suite_register_cat("VMM: fault-inject vmm_map_fail_next",
                             test_vmm_map_fault_inject, TEST_CAT_MM);
+    test_suite_register_cat("VMM: fault-inject task-filter",
+                            test_vmm_map_fault_inject_task_filter, TEST_CAT_MM);
+    test_suite_register_cat("VMM: fault-inject max-injections cap",
+                            test_vmm_map_fault_inject_max_cap, TEST_CAT_MM);
 }
 
 #endif /* KERNEL_TESTS */

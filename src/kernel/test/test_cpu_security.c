@@ -999,6 +999,54 @@ static void test_copy_user_fault_inject(void)
                    "copy_user injection counter advanced by exactly 2");
 }
 
+/* Task-filter + max-injections mirror tests for copy_user (so a
+ * field-mix-up in copy_user_fault_should_fire is caught alongside
+ * the other 3 subsystems). */
+static void test_copy_user_fault_inject_task_filter(void)
+{
+    uint64_t pre = copy_user_fail_injections_triggered();
+    uint8_t src = 0x55, dst = 0xAA;
+
+    copy_user_fail_next();
+    copy_user_fail_task_filter_set(0xFFFFFFFFu);
+    int r1 = copy_to_user(&dst, &src, 1);
+    TEST_ASSERT_EQ(r1, 0, "task-filter skips non-matching task -- copy succeeds");
+    TEST_ASSERT_EQ(dst, 0x55, "copy wrote to dst (filter did not block the copy)");
+    TEST_ASSERT_EQ(copy_user_fail_injections_triggered(), pre,
+                   "copy_user injection counter unchanged when filter blocks");
+
+    dst = 0xAA;
+    copy_user_fail_task_filter_clear();
+    int r2 = copy_to_user(&dst, &src, 1);
+    TEST_ASSERT_EQ(r2, -1, "countdown preserved -- fires after filter clear");
+    TEST_ASSERT_EQ(dst, 0xAA, "dst unchanged on forced-fail copy");
+    TEST_ASSERT_EQ(copy_user_fail_injections_triggered() - pre, 1u,
+                   "exactly 1 copy_user fire after filter clear");
+}
+
+static void test_copy_user_fault_inject_max_cap(void)
+{
+    uint64_t pre = copy_user_fail_injections_triggered();
+    copy_user_fail_max_injections_set(3);
+    copy_user_fail_next();
+
+    uint8_t src = 0x55, dst;
+    int fail_hits = 0;
+    for (int i = 0; i < 10; i++) {
+        dst = 0xAA;
+        int r = copy_to_user(&dst, &src, 1);
+        if (r == -1)
+            fail_hits++;
+    }
+    TEST_ASSERT_EQ(fail_hits, 3, "copy_user max_injections=3 produces 3 failures");
+    TEST_ASSERT_EQ(copy_user_fail_fired_counter(), 3u,
+                   "copy_user fired_counter equals cap");
+    TEST_ASSERT_EQ(copy_user_fail_injections_triggered() - pre, 3u,
+                   "copy_user injection counter advanced by exactly 3");
+
+    copy_user_fail_max_injections_clear();
+}
+
 /* ---- Registration ---- */
 
 void test_register_x86(void)
@@ -1139,6 +1187,10 @@ void test_register_x86(void)
     /* Kernel-test-harness roadmap: copy_user fault injection */
     test_suite_register_cat("CPU security: copy_user fault-inject",
         test_copy_user_fault_inject, TEST_CAT_X86);
+    test_suite_register_cat("CPU security: copy_user fault-inject task-filter",
+        test_copy_user_fault_inject_task_filter, TEST_CAT_X86);
+    test_suite_register_cat("CPU security: copy_user fault-inject max-cap",
+        test_copy_user_fault_inject_max_cap, TEST_CAT_X86);
 }
 
 #endif /* KERNEL_TESTS */
