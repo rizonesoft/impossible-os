@@ -32,20 +32,39 @@
 
 | | Files | Lines |
 |---|---:|---:|
-| **Shell scripts** (`.sh`) | 29 | 5904 |
+| **Shell scripts** (`.sh`) | 29 | 5905 |
 | **Batch scripts** (`.bat`) | 39 | 358 |
 | **PowerShell** (`.ps1`) | 7 | 1081 |
-| **Makefile** | 1 | 976 |
+| **Python** (`.py`) | 7 | 964 |
+| **JavaScript** (`.js`) | 1 | 440 |
+| **Include fragments** (`.inc`) | 5 | 3002 |
+| **Makefile** | 3 | 1064 |
 | **Linker scripts** (`.ld`/`.lds`) | 2 | 126 |
-| **Subtotal** | **78** | **8445** |
+| **Subtotal** | **93** | **12940** |
+
+## Documentation & Project Metadata
+
+| | Files | Lines |
+|---|---:|---:|
+| **Markdown** (`.md`) | 339 | 86201 |
+| **JSON** (`.json`) | 3 | 203 |
+| **YAML** (`.yml`/`.yaml`) | 10 | 848 |
+| **HTML** (`.html`) | 17 | 1623 |
+| **CSS** (`.css`) | 5 | 74498 |
+| **Config** (`.cfg`/`.conf`) | 2 | 56 |
+| **Subtotal** | **376** | **163429** |
 
 ## Grand Total
 
 | | Files | Lines |
 |---|---:|---:|
-| **All project code** | **556** | **186358** |
+| **Core code + tooling** | **571** | **190853** |
+| **Supporting text + metadata** | **376** | **163429** |
+| **All counted text files** | **947** | **354282** |
 
 > Vendored code excluded: ~13886 lines (`stb_image.h`, `stb_truetype.h`, `efi.h`)
+>
+> Binary assets such as fonts, images, certificates, EFI blobs, and cursor resources are not line-counted.
 
 ---
 
@@ -58,15 +77,15 @@
 
 | | Linux | Windows | Impossible OS |
 |---|---:|---:|---:|
-| **Lines of code** | ~28,000,000 | ~50,000,000 | 186,358 |
+| **Core code + tooling lines** | ~28,000,000 | ~50,000,000 | 190,853 |
 | **Developers** | ~1,000 active | ~5,000 peak | 1 |
 | **Time span** | 33 years | 40 years | 1 month(s), 13 day(s) |
 
-> At industry rates (10,000 LOC/developer/year -- COCOMO II), writing 186,358
-> lines of kernel code would take **158 developers** working for **1 month(s), 13 day(s)**.
+> At industry rates (10,000 LOC/developer/year -- COCOMO II), writing 190,853
+> lines of core code and tooling would take **162 developers** working for **1 month(s), 13 day(s)**.
 >
 > *The "impossible" in Impossible OS was supposed to be the name, not the development method.*
 
 ---
 
-*Last updated: 2026-04-19 02:53 · commit `f11feec2`*
+*Last updated: 2026-04-19 02:57 · commit `18718975`*
