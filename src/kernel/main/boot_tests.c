@@ -13,6 +13,7 @@
 #include "kernel/boot_splash.h"
 #include "kernel/boot_info.h"
 #include "kernel/test/test.h"
+#include "kernel/test/test_usermode.h"
 #include "main/main_internal.h"
 
 void boot_tests_run(void)
@@ -38,6 +39,17 @@ void boot_tests_run(void)
 
         /* Restore normal logging so remaining boot output is visible */
         klog_set_level((const char *)0, LOG_DEBUG);
+
+        /* User-mode test launcher: runs every test_*.exe deployed at
+         * C:\ root sequentially in its own task. No-op if C:\ is not
+         * mounted or no matching binaries exist. Runs AFTER the
+         * kernel test runner so the [TEST] summary lands before
+         * [UTEST] lines on serial -- matches scripts/test.sh parser
+         * expectations (kernel TEST first, user-mode UTEST second).
+         * Owned by the user-mode test framework roadmap; this is the
+         * launcher entry point. */
+        if (g_boot_info.config.test)
+            test_usermode_run();
     }
 
     /* debug=0 and test=0: skip everything below */
