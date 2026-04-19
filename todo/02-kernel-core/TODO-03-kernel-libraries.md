@@ -356,7 +356,7 @@ After §1 through §7, freestanding libc and these libs unblock LZ4, miniz, cryp
 - [ ] **Platforms:** run verification matrix on QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 - [ ] Commit: `"libs: snprintf/vsnprintf, kmath, LZ4, miniz, Monocypher/CSPRNG, cJSON, Mbed TLS freestanding ports"`
 
-**Test runner:** `scripts\debug\run-exec-tests.bat` (SUITE=exec)
+**Test runner:** `scripts\debug\kernel\run-exec-tests.bat` (SUITE=exec)
 
 ---
 
@@ -364,7 +364,7 @@ After §1 through §7, freestanding libc and these libs unblock LZ4, miniz, cryp
 
 | Date | Action | Summary |
 | --- | --- | --- |
-| 2026-04-10 | validate | Removed ### N.M and model tags, ASCII `->`/`<=` sweep, Depends On uses §, fixed HTTP-TLS path to `07-networking/TODO-03-http-tls.md` §3, compact OS table after Implementation Order, §1/§4 status [x], per-section **Test checkpoint** + four platforms, Unit Tests -> `TEST_CAT_EXEC` + `test_runner.c`, added `scripts/debug/run-exec-tests.bat`, back-XREF on `TODO-32` Inputs, Goal aligned with libc snprintf present. **Parity:** Win11+Linux-strong rows covered by §2 through §7 except JSON row (Impossible leads). **Flag:** CRC32/AES unit bullets need real APIs from §4/§5 before tests compile. |
+| 2026-04-10 | validate | Removed ### N.M and model tags, ASCII `->`/`<=` sweep, Depends On uses §, fixed HTTP-TLS path to `07-networking/TODO-03-http-tls.md` §3, compact OS table after Implementation Order, §1/§4 status [x], per-section **Test checkpoint** + four platforms, Unit Tests -> `TEST_CAT_EXEC` + `test_runner.c`, added `scripts/debug/kernel/run-exec-tests.bat`, back-XREF on `TODO-32` Inputs, Goal aligned with libc snprintf present. **Parity:** Win11+Linux-strong rows covered by §2 through §7 except JSON row (Impossible leads). **Flag:** CRC32/AES unit bullets need real APIs from §4/§5 before tests compile. |
 | 2026-04-13 | validate | Moved `## OS Comparison` after §7 and before `## Unit Tests`; each §1 through §7 now ends with `- [ ] Commit:` / `- [x] Commit:` before `**Test checkpoint:**`; Inputs XREF fixes (T10 stack canary §12, T15 AppContainer §14, Argon2 -> D09 `TODO-06-security-accounts.md` §2); OS table re-padded; IMPORTANT callout blank line removed; §1 gap-analysis blockquote empty `>` lines removed; prior History row date un-bolded. **Parity:** unchanged intent (⬜ rows tracked in §2 through §7). **Blocked deps:** Implementation Order §4 through §7 still depend on open sections on source TODOs. |
 | 2026-04-13 | gap-analysis | 6 web + 2 Learn fetches (CNG alg IDs incl. ChaCha20-Poly1305 + SHA3 24H2; RtlCompressBuffer LZNT1/Xpress); code-truth: §1/§6 partial, §2 partial in `kmath.h` only, no lz4/miniz/monocypher/mbedtls dirs, no `test_register_klibs`; IO row §6 -> `[/]`; Outcome Argon2i to Argon2id; OS ⭐ CSPRNG façade row; Inputs D12 T01 COMPLEMENT; Unit Tests skip-gate; INDEX snprintf stale line; §1 gap block marked historical; INDEX line 47 substring; D12 T01 code-truth note; §2 kmath reconcile bullet. |
 | 2026-04-14 | validate | Idempotent pass: OS Comparison after §7 before Unit Tests; Commit before Test checkpoint §1-§7; fixed gap-analysis History pipe; parity footnote lines 63-64 colon style; Inputs paths and XREF targets checked; run-exec-tests.bat present. **Parity:** ⬜ rows still §2-§7. **Flag:** external IO deps open; §6 [/] per partial cJSON. |

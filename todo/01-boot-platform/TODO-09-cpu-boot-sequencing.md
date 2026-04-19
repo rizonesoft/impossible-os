@@ -317,7 +317,7 @@ Neither Windows nor Linux produces a consolidated, structured, per-CPU register 
 
 **Test checkpoint:** Every Verification bullet above holds on QEMU WHPX, QEMU TCG, VirtualBox, and bare metal; §2/§4/§5/§6--§9 items marked N/A until those sections ship stay documented in serial/klog gaps, not silent failures.
 
-**Test runner:** `scripts\debug\run-boot-tests.bat` (SUITE=boot)
+**Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot)
 
 ---
 

@@ -172,7 +172,7 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 
 > **Verified:** 2026-04-18 | commit `01991083` | 7/7 items | build OK | 225 fields, struct 23696, smoke 2.240s
 > **Quality reviewed:** 2026-04-18 | Codex 3x (design + adversarial + quality) | 4H+3M fixed, 0 open | scope: kernel-code-quality (11/11 gates pass)
-> **Test runner:** `scripts\debug\run-boot-tests.bat` (SUITE=boot) | 345 passed, 0 failed (21 new `boot_payload:` cases + 22 `boot_info:` cases)
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 345 passed, 0 failed (21 new `boot_payload:` cases + 22 `boot_info:` cases)
 
 ---
 
@@ -328,4 +328,4 @@ Media role, recovery, network boot, and resume each carry their own details, but
 - [ ] VirtualBox boots a matching image and logs the retained boot reservations plus typed payload descriptors without overlap warnings.
 - [ ] Bare metal boots a matching image with USB handoff and TPM log payloads present, and PMM retains those regions exactly once.
 
-**Test runner:** `scripts\debug\run-boot-tests.bat` (SUITE=boot)
+**Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot)

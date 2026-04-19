@@ -405,7 +405,7 @@ After §1 through §4, Impossible OS matches Windows-style STOP codes, `CONTEXT`
 
 **Test checkpoint:** Every Verification bullet above passes where hardware allows; `bash scripts/test.sh SUITE=boot` green for `test_crashdump_*`; `tail -1 build/build.log` is `=== BUILD OK ===`. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-**Test runner:** `scripts\debug\run-boot-tests.bat` (SUITE=boot); crash dump suites use `TEST_CAT_BOOT`.
+**Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot); crash dump suites use `TEST_CAT_BOOT`.
 
 ---
 

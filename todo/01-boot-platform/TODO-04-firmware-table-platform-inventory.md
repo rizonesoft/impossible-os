@@ -133,7 +133,7 @@
 
 ## Verification
 
-- [ ] `scripts/debug/run-boot-tests.bat`
+- [ ] `scripts/debug/kernel/run-boot-tests.bat`
 - [ ] QEMU OVMF with ACPI + SMBIOS + FPDT
 - [ ] VirtualBox EFI
 - [ ] Bare metal laptop and desktop

@@ -293,7 +293,7 @@ The scheduler currently stores `kernel_rsp` per-task (in `struct task`), not per
 - [ ] Dynamic user threads: multiple live threads receive distinct TEB and user-stack VAs even after slot reuse; no `tid * stride` aliasing
 - [ ] Commit: `"sched: enhanced scheduler -- priority, aging, CFS, RT, EDF, affinity, tick cal, cpufreq"`
 
-**Test runner:** `scripts\debug\run-sched-tests.bat` (SUITE=sched)
+**Test runner:** `scripts\debug\kernel\run-sched-tests.bat` (SUITE=sched)
 
 ## History
 

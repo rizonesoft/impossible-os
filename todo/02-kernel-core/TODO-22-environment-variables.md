@@ -588,7 +588,7 @@ The `source` / `.` command (section 8 above) remains a differentiator over Windo
 
 **Test checkpoint:** All bullets in this section pass on QEMU WHPX, QEMU TCG, VirtualBox, and bare metal where applicable; `bash scripts/test.sh SUITE=abi` green; `tail -1 build/build.log` is `=== BUILD OK ===`.
 
-**Test runner:** `scripts\debug\run-abi-tests.bat` (SUITE=abi)
+**Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi)
 
 ---
 

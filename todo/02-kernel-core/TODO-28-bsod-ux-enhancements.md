@@ -399,7 +399,7 @@ Windows shows "37% complete" during crash dump collection. When T27 implements b
 - [ ] F2 on BSOD: next boot defers last faulting module when T17 §6 module walk is safe; otherwise one serial line `F2 unavailable`
 - [ ] PC speaker beep audible during crash (QEMU + bare metal)
 
-**Test runner:** `scripts\debug\run-boot-tests.bat` (SUITE=boot)
+**Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot)
 
 ---
 

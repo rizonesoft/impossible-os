@@ -96,7 +96,7 @@
 
 **Test checkpoint:** Two tasks with distinct YMM patterns survive `schedule()` round-trip without corruption when `fpu_used` is set; never-FPU task keeps `xsave_area == NULL` and no XSAVE on switch. Serial boot unchanged vs pre-§1 baseline. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Test runner:** `scripts\debug\run-x86-tests.bat` (SUITE=x86) -- 10 suites, 0 failures expected. S1 tests: xcr0_active non-zero, xsave_size_max >= 512, xcr0 x87+SSE bits, CR4.OSXSAVE set.
+> **Test runner:** `scripts\debug\kernel\run-x86-tests.bat` (SUITE=x86) -- 10 suites, 0 failures expected. S1 tests: xcr0_active non-zero, xsave_size_max >= 512, xcr0 x87+SSE bits, CR4.OSXSAVE set.
 
 > **Verified:** 2026-04-13 -- all 13 items confirmed. 6 bugs found and fixed: (1) CLTS before XRSTOR in schedule(); (2) #NM handler loads clean FPU state via XRSTOR after allocation; (3) FPU save+restore in schedule_now() cooperative path; (4) MXCSR default 0x1F80 in task_alloc_xsave() (zeroed MXCSR unmasks SIMD exceptions, causing #XM vector 19; root cause of WHPX freeze); (5) FCW default 0x037F in task_alloc_xsave() (zeroed FCW unmasks x87 exceptions; masked on WHPX by XRSTOR init optimization, loaded directly by FXRSTOR on TCG); (6) CLTS before FXSAVE/XSAVE in both scheduler paths (not just before restore; all FPU instructions fault #NM when CR0.TS=1). Accepted: none.
 > **Quality reviewed:** 2026-04-13 -- kernel-code-quality 11 gates walked. G11: FCW 0x037F + MXCSR 0x1F80 per Intel SDM (not 0 from zeroed buffer). CR0.TS cleared before ALL FPU instructions (saves and restores). Cooperative + preemptive paths both handle FPU. Parity: matches Windows/Linux lazy FPU + MXCSR/FCW init. Accepted: none.
@@ -114,7 +114,7 @@
 
 **Test checkpoint:** On AVX2-class CPU, `memcpy_avx` / `memset_avx` byte-match scalar reference on 64 KiB; `vzeroupper` emitted at function end; dispatch falls back to SSE2 on TCG. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-**Test runner:** `scripts\debug\run-x86-tests.bat` (SUITE=x86, 16 suites expected, 0 failures)
+**Test runner:** `scripts\debug\kernel\run-x86-tests.bat` (SUITE=x86, 16 suites expected, 0 failures)
 
 > **Verified:** 2026-04-13 -- all 6 items confirmed. `memcpy_avx`/`memset_avx` at `memops.c` (vmovdqu/vpbroadcastb loops with vzeroupper). SSE2 fallbacks + dispatch in `memops_sse.c` (separate TU, compiled with `-msse2` only; split from `-mavx2` file because clang emits VEX-encoded instructions that crash TCG `qemu64`). `fb_blit_avx`/`fb_fill_avx` at `gfx_simd.c`. Framebuffer dispatch at `framebuffer.c`. 6 tests under TEST_CAT_X86. Codex adversarial: fb_blit bounds overflow fixed (overflow-safe clamping); test gates use `simd_avx2_ok`; fill broadcast hoisted. TCG crash fixed: SSE2 code must never be compiled with `-mavx2`. Accepted: AP XCR0 (XREF 01-boot-platform/TODO-09 §5); memops dispatch infrastructure-only until kernel_fpu_begin/end.
 > **Quality reviewed:** 2026-04-13 -- kernel-code-quality 11 gates walked. Intel SDM Vol. 1 Section 14.3 AVX/SSE transition compliant (vzeroupper on all 4 AVX functions). SSE2 and AVX2 in separate translation units (no VEX leakage to non-AVX CPUs). fb_blit bounds hardened. Fill loops broadcast once per call. Verified on WHPX (AVX2 path) and TCG (SSE2 fallback). Parity: matches Linux arch/x86/lib/memcpy_64.S dispatch + Windows NT RtlCopyMemory. Accepted: none.
@@ -133,7 +133,7 @@
 
 **Test checkpoint:** AVX-512 path disables when MPERF/APERF ratio drops >5% after micro-burst; AVX10/APX stubs log and continue without enabling. Test on: QEMU WHPX (has AVX-512 on Rocket Lake+), bare metal.
 
-> **Test runner:** `scripts\debug\run-x86-tests.bat` (SUITE=x86)
+> **Test runner:** `scripts\debug\kernel\run-x86-tests.bat` (SUITE=x86)
 > **Expected:** 23 suites, 0 failures
 
 > **Verified:** 2026-04-13 -- all 7 items confirmed. `simd_enable_avx512()` at `gfx_simd.c:332` reads MPERF/APERF via `msr_try_read()` before and after `simd_avx512_burst()` (1000-iter vpaddq ZMM loop in `gfx_simd_avx512.c`), clears XCR0 bits 5-7 on >5% frequency drop. XSAVE area uses `xsave_size_max` from §1 (`task.c:212`). `memcpy_avx512`/`memset_avx512` at `memops_avx512.c` (64B vmovdqu64 loop, vpbroadcastd fill, vzeroupper). `fb_blit_avx512`/`fb_fill_avx512` at `gfx_simd_avx512.c` (16 pixels/iter). Dispatch at `memops_sse.c:101-114` and `framebuffer.c:165-190` (AVX-512 -> AVX2 -> SSE2 -> scalar). AVX10 version logged from CPUID leaf 0x24 (`cpuid.c:316`). APX logged (`cpuid.c:325`). 7 tests under TEST_CAT_X86. Codex adversarial: vpbroadcastb->vpbroadcastd (AVX512F-only), post-burst msr_try_read, delta range guard (fail-closed for both MPERF and APERF), comment fix. Accepted: AP XCR0 (XREF 01-boot-platform/TODO-09 §5, same as §2 AVX2); framebuffer dimension overflow (pre-existing, not §4).
@@ -180,7 +180,7 @@
 
 **Test checkpoint:** `msr_read(MSR_IA32_EFER)` stable across calls; `msr_try_read(0xFFFFFFFF, &scratch)` survives without panic (returns -1 on TCG/bare metal where #GP fires, returns 0 on WHPX where hypervisor absorbs the read); boot completes with MSR layer linked. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Test runner:** `scripts\debug\run-x86-tests.bat` (SUITE=x86)
+> **Test runner:** `scripts\debug\kernel\run-x86-tests.bat` (SUITE=x86)
 > **Expected:** 29 suites, 0 failures
 >
 > **Verified:** 2026-04-12 -- all 6 items confirmed. `msr_read`/`msr_write` inline in `msr.h:16-28`. `msr_try_read` in `msr.c:48-89` with spinlock+irqsave+RIP check (Codex: SMP race + unrelated #GP swallowing fixed). 22 MSR constants in `msr.h`. smp.c (4 sites) + lapic.c (2 sites) migrated. `cpu_verify_hardening` uses `msr_read` (d825576d). Hyper-V MSR constants corrected per TLFS Table 2-2 (0x40000022=TSC, 0x40000023=APIC). `msr_write` memory clobber added. Accepted: none.
@@ -203,7 +203,7 @@
 
 **Test checkpoint:** After `cpu_enable_umip()`, CR4.UMIP is set (ring-3 SGDT #GP requires user-mode validation on WHPX/bare metal). CR4.PKE set, XCR0 bit 9 active, PKRU readable via RDPKRU, `pku_alloc_key`/`pku_free_key` round-trip, `pku_set_permissions` + readback, PTE key macros round-trip, PKRU XSAVE offset from CPUID. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Test runner:** `scripts\debug\run-x86-tests.bat` (SUITE=x86)
+> **Test runner:** `scripts\debug\kernel\run-x86-tests.bat` (SUITE=x86)
 > **Expected:** 37 suites, 0 failures
 
 > **Verified:** 2026-04-13 -- all 10 items confirmed. `cpu_enable_umip()` at `cpu_security.c:130` sets CR4.UMIP (bit 11). `cpu_enable_pku()` at `cpu_security.c:144` sets CR4.PKE (bit 22) after verifying XCR0 bit 9; sets `pku_enabled` flag. XCR0 PKRU gate fixed (`cpu_configure_xcr0` at `cpuid.c:363`: CPU_FEATURE_UMIP->CPU_FEATURE_PKU). PKRU XSAVE offset from CPUID 0x0D:9 at `cpuid.c:186-187`. `pku.c` kernel API: `pku_alloc_key` (spinlock bitmap, keys 1-15), `pku_free_key` (WRPKRU revoke before bitmap clear), `pku_set_permissions` (RDPKRU/WRPKRU), `pku_read` (RDPKRU); all gated on `pku_enabled`. PTE key macros at `vmm.h:27-28`. PKRU initial 0x55555554 at `task.c:267` with overflow-safe bounds check. `cpu_verify_hardening` at `cpu_security.c:228-243` verifies CR4.UMIP+CR4.PKE. 8 tests under TEST_CAT_X86. Codex adversarial: WRPKRU #UD guard fixed (pku_enabled flag instead of cpu_has); XSAVE offset overflow-safe bounds check. Accepted: AP XCR0 configuration (XREF 01-boot-platform/TODO-09 §5, pre-existing, same as §2/§4); per-thread PKRU restore on context switch (requires per-process page tables); cross-task key reuse isolation (requires thread-local PKRU context); user-mode SSDT wiring for pku_alloc/free (XREF TODO-12).
@@ -224,7 +224,7 @@
 
 **Test checkpoint:** `cpu_has(PAGE1GB)` gate respected; 1 GiB-aligned range uses single PDPTE PS path; `fb_swap()` TSC median drops >=5x after WC map on 1080p. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Test runner:** `scripts\debug\run-x86-tests.bat` (SUITE=x86)
+> **Test runner:** `scripts\debug\kernel\run-x86-tests.bat` (SUITE=x86)
 > **Expected:** 42 suites, 0 failures
 
 > **Verified:** 2026-04-13 -- all 8 items confirmed. `vmm_map_huge_1g()` at `vmm.c:847` with 1 GiB alignment validation, PAGE1GB CPUID gate, subtree-overwrite guard, full TLB flush. `vmm_promote_to_1g()` at `vmm.c:883` validates all 512 PDEs for address contiguity AND flag uniformity before promotion; builds PDPTE from validated PDE flags (preserves P/W/U/PS/NX). `vmm_get_physical()` at `vmm.c:300-305` resolves 1 GiB pages at PDPT level. PAT MSR, WC flag, and framebuffer WC mapping already done (boot_hw.c, vmm.c VMM_MMIO_WC, framebuffer.c). 5 tests under TEST_CAT_X86. Codex adversarial: vmm_get_physical 1 GiB resolution added; PDE flag-uniformity validation added; subtree-overwrite guard on vmm_map_huge_1g; vmm_flush_tlb_all instead of single invlpg. Accepted: post-SMP TLB shootdown for vmm_map_huge_1g (pre-SMP only currently, documented); vmm_split 1 GiB -> 512x2 MiB (not needed yet; split on demand when required).
@@ -286,7 +286,7 @@
 
 **Test checkpoint:** Serial shows `[topo] Zen:`, `[topo] Intel:`, or `[topo] Generic:` line; `g_cpu_topo[0].logical_id == 0`; `g_topo_cpu_count` matches `smp_cpu_count()`; `g_numa_nodes >= 1`; core_type is valid constant. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Test runner:** `scripts\debug\run-x86-tests.bat` (SUITE=x86)
+> **Test runner:** `scripts\debug\kernel\run-x86-tests.bat` (SUITE=x86)
 > **Expected:** 47 suites, 0 failures
 
 > **Verified:** 2026-04-13 -- all 7 items confirmed. `topology.c` and `topology.h` at `src/kernel/topology.c`, `include/kernel/topology.h`. `topology_init()` called from `boot_storage.c:175` after `smp_init()`. Zen path: BSP `compute_unit_id` as core_id, BSP `node_id` for NUMA; APs derive core_id from LAPIC ID, node_id/ccd_id=0 (per-AP CPUID deferred). Intel hybrid: BSP core type logged from leaf 0x1A; P/E masks left zero (per-AP CPUID required for accuracy). Leaf 0x1F: SMT/Core shift extraction with correct bit-range core_id formula. Fallback: all GENERIC. 5 tests under TEST_CAT_X86. Codex adversarial: offline CPU check added (is_online guard); SMT lp_count clamped to 255; false P/E mask publication prevented; CCD aliasing fixed. Accepted: per-AP CPUID (XREF 01-boot-platform/TODO-09 §5); ACPI SRAT NUMA (XREF D03); x2APIC 32-bit ID (pre-existing 8-bit truncation in lapic.c).
@@ -310,7 +310,7 @@
 
 **Test checkpoint:** `pmc_info` populated after init; `pmc_read` increments on tight loop (when available); `pmc_ipc()` returns non-zero fixed-point (when 2+ counters available); out-of-range slot rejected. Tests skip gracefully on WHPX if PMU MSRs are trapped. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Test runner:** `scripts\debug\run-x86-tests.bat` (SUITE=x86)
+> **Test runner:** `scripts\debug\kernel\run-x86-tests.bat` (SUITE=x86)
 > **Expected:** 51 suites, 0 failures
 
 > **Verified:** 2026-04-13 -- all 11 items confirmed. `pmc.c` and `pmc.h` at `src/kernel/pmc.c`, `include/kernel/pmc.h`. Intel path: CPUID 0x0A for version/count/width + `msr_try_read(PERF_GLOBAL_CTRL)` + `msr_write(PERFEVTSEL0)` write probe. AMD path: `msr_try_read(PERF_CTR0)` + `msr_write(PERF_CTL0)` write probe. `pmc_init()` at `boot_storage.c:181`. `pmc_start/read/stop` dispatch on `is_amd` flag. `pmc_ipc` with 8.8 fixed-point, overflow-safe clamp. 4 Intel + 4 AMD event constants. 4 tests under TEST_CAT_X86. Codex adversarial: AMD write probe added (was read-only, same class as Intel PERFEVTSEL fix). Accepted: PERF_GLOBAL_CTRL RMW race (single-caller at boot; SMP locking needed when exposed to multi-threaded callers); event API limited to bits 0-15 (full PERFEVTSEL passthrough deferred).
@@ -328,7 +328,7 @@
 
 **Test checkpoint:** OSVW: serial logs errata count when present (AMD only, skipped on Intel). RDTSCP: TSC_AUX = 0 on BSP verified by test; TSC non-zero; NULL pointer safe. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Test runner:** `scripts\debug\run-x86-tests.bat` (SUITE=x86)
+> **Test runner:** `scripts\debug\kernel\run-x86-tests.bat` (SUITE=x86)
 > **Expected:** 54 suites, 0 failures
 
 > **Verified:** 2026-04-13 -- all 5 items confirmed. OSVW: `cpuid.c:324-330` reads `MSR_AMD_OSVW_ID_LEN`/`MSR_AMD_OSVW_STATUS` via `msr_try_read`, gated on `CPU_FEATURE_OSVW` AND AMD vendor string. `cpu_has_erratum(n)` at `cpuid.h:165` with n>=64 UB guard. BSP TSC_AUX: `boot_hw.c:366-375` probes via `msr_try_read`, writes 0 only on success, sets `g_tsc_aux_available`. AP TSC_AUX: `smp.c:148-150` conditional on `g_tsc_aux_available`. `rdtscp_read()` at `cpuid.h:174` with NULL-safe cpu_id. 3 tests under TEST_CAT_X86. Codex adversarial: OSVW vendor gate + msr_try_read added (was raw msr_read); shift UB guard added in implementation. Accepted: TSC_AUX write after read probe (TSC_AUX is documented R/W on all implementations; the read probe catches hypervisors that trap the MSR entirely).
@@ -366,7 +366,7 @@
 
 **Test checkpoint:** Boot log shows AMD SVM or Intel VMX lines matching `cpuid -1` expectations on real silicon; `cpu_has` agrees with known host type. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Test runner:** `scripts\debug\run-x86-tests.bat` (SUITE=x86)
+> **Test runner:** `scripts\debug\kernel\run-x86-tests.bat` (SUITE=x86)
 > **Expected:** 56 suites, 0 failures
 
 > **Verified:** 2026-04-13 -- all 4 items confirmed. AMD SVM: `cpuid.c:300-308` parses CPUID 0x8000000A (gated on `max_ext_leaf >= 0x8000000A`), logs revision, NPT, ASIDs. Intel VT-x: `cpuid.c:310-321` reads `IA32_FEATURE_CONTROL` via `msr_try_read` (gated on Intel vendor), logs lock+enable status. Both exposed via `cpu_has`. 2 tests under TEST_CAT_X86. Codex: VT-x raw msr_read changed to msr_try_read; SVM gated on max_ext_leaf; test relaxed (presence is platform-dependent). Accepted: none.
@@ -513,7 +513,7 @@ After §1 through §13 done and §7 through §12 plus §14 through §16 planned,
 
 **Test checkpoint:** Manual or staged boot on QEMU WHPX, QEMU TCG, VirtualBox, and bare metal: each Verification bullet above observed (serial log, registry key, or measured ratio) with no regression on the non-FRED fallback path; FRED checks skipped or gated when `CPU_FEATURE_FRED` is absent.
 
-**Test runner:** `scripts\debug\run-boot-tests.bat` (SUITE=boot)
+**Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot)
 
 ---
 

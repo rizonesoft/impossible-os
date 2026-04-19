@@ -392,6 +392,6 @@ Wire user-mode test binaries into `make test`.
 
 **Test checkpoint:** End to end: clean tree -> `bash scripts/test.sh` is green -> a one-line change breaks a `test_*.exe` assertion -> the run fails with a visible `[UTEST] FAIL`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-**Test runner:** `scripts\debug\run-exec-tests.bat` (SUITE=exec) | suite count populated by §15 build integration once `test_*.exe` binaries ship; pending today
+**Test runner:** `scripts\debug\kernel\run-exec-tests.bat` (SUITE=exec) | suite count populated by §15 build integration once `test_*.exe` binaries ship; pending today
 
 ---

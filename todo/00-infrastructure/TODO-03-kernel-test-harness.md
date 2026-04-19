@@ -71,7 +71,7 @@ A per-CPU test-only countdown that causes `kmalloc` to return `NULL` on the next
 
 **Test checkpoint:** `kmalloc_fail_next()` + `kmalloc(16) == NULL` + subsequent `kmalloc(16) != NULL`. Verifies the per-CPU counter decrements correctly and auto-clears.
 
-> **Test runner:** `scripts\debug\run-mm-tests.bat` (SUITE=mm) | 5 new heap fault-injection suites, 0 failures
+> **Test runner:** `scripts\debug\kernel\run-mm-tests.bat` (SUITE=mm) | 5 new heap fault-injection suites, 0 failures
 
 > **Notes:**
 > - Shipped `kmalloc_fail_countdown(n)` / `_clear()` / `_next()` / `_injections_triggered()` in [`include/kernel/mm/heap.h`](../../include/kernel/mm/heap.h) + [`src/kernel/mm/heap.c`](../../src/kernel/mm/heap.c), all `#ifdef KERNEL_TESTS`-gated so release builds compile out the hook entirely.
@@ -101,7 +101,7 @@ A two-thread rendezvous primitive for tests that need to observe behaviour at a 
 
 **Test checkpoint:** Barrier release-a-first causes thread A's post-checkpoint branch to win consistently; release-b-first causes B's branch to win. Exercised over 100 iterations in the unit test to catch scheduler drift.
 
-> **Test runner:** `scripts\debug\run-sched-tests.bat` (SUITE=sched) | 3 new race-barrier suites added, 0 failures
+> **Test runner:** `scripts\debug\kernel\run-sched-tests.bat` (SUITE=sched) | 3 new race-barrier suites added, 0 failures
 
 > **Notes:**
 > - Shipped [`include/kernel/test/race_barrier.h`](../../include/kernel/test/race_barrier.h) + [`src/kernel/test/race_barrier.c`](../../src/kernel/test/race_barrier.c) (4 functions, ~60 lines, KERNEL_TESTS-gated so release builds drop the translation unit entirely).
@@ -130,7 +130,7 @@ A two-thread rendezvous primitive for tests that need to observe behaviour at a 
 
 **Test checkpoint:** A test that allocates 64 KiB via `TEST_SCRATCH_KBUF` leaves zero leaked bytes in the heap AND zero leaked pages in the PMM bitmap after the test runner moves on. Verified by the `Harness: scratch PMM route returns to pre-snapshot` and `Harness: scratch kmalloc route returns to pre-snapshot` pair-suites. Because `TEST_ASSERT` is non-longjmp in this runner, drain-on-fail is path-identical to drain-on-pass -- explicit forced-fail coverage was dropped during review to keep `scripts/test.sh`'s zero-failure gate green.
 
-> **Test runner:** `scripts\debug\run-boot-tests.bat` (SUITE=boot) | 5 new scratch-buffer suites, 0 failures
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 5 new scratch-buffer suites, 0 failures
 
 > **Notes:**
 > - Shipped [`include/kernel/test/scratch.h`](../../include/kernel/test/scratch.h) + [`src/kernel/test/scratch.c`](../../src/kernel/test/scratch.c) (~95 LOC incl docs, KERNEL_TESTS-gated). `TEST_SCRATCH_KBUF` macro + `test_scratch_alloc` / `test_scratch_free` primitives. Routes by size: `bytes <= 4096` → kmalloc; larger → `pmm_alloc_contiguous` (saves ~3% of the 2 MiB kernel heap per 64 KiB buffer).
@@ -157,7 +157,7 @@ After §1-§3, §5-§8 ship, sweep the repo for `Test gaps (NO current owner)` b
 
 **Test checkpoint:** `grep -rn "Test gaps (deferred to" todo/02-kernel-core/TODO-24-alpc-message-ports.md` returns zero hits (the block was removed); `make test-ipc` boot run shows the 3 new suite names in the §4 group with `[OK]` lines and zero failures.
 
-> **Test runner:** `scripts\debug\run-ipc-tests.bat` (SUITE=ipc) | 3 new alpc retrofit suites in TEST_CAT_IPC, 0 failures
+> **Test runner:** `scripts\debug\kernel\run-ipc-tests.bat` (SUITE=ipc) | 3 new alpc retrofit suites in TEST_CAT_IPC, 0 failures
 
 > **Notes:**
 > - Shipped 3 ALPC §4 retrofit test suites in [`src/kernel/test/test_alpc.c`](../../src/kernel/test/test_alpc.c): `alpc: kmalloc-fail in pending alloc rolls back PoolUsageBytes` (~85 LOC), `alpc: ReplyBodyCap clamps recv_buf_len > 65528` (~110 LOC), `alpc: two-port lock-order stress` (~120 LOC). All three close test gaps that were filed in TODO-24 §4 as "deferred to TODO-03 §6" because the kernel test harness lacked deterministic kmalloc-fault injection (§1), two-thread race fences (§2), and PMM-backed scratch buffers (§3) at the time §4 shipped.
@@ -192,7 +192,7 @@ Tests that exercise error paths (validators, allocator failure rollback, bad-inp
 
 **Filed by:** diagnose-serial-log 2026-04-18 on debug-tmp/all-tests-serial.log (17 FAIL lines across 5 canonicalized keys: 16 boot_payload, 1 sched uthread_create).
 
-> **Test runner:** `scripts\debug\run-boot-tests.bat` (SUITE=boot) | 4 new harness suites + 17 retrofitted source suites, 0 failures; 17 `[FAIL]` lines silenced from test-phase serial output
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 4 new harness suites + 17 retrofitted source suites, 0 failures; 17 `[FAIL]` lines silenced from test-phase serial output
 
 > **Notes:**
 > - Shipped `TEST_KLOG_SUPPRESS(subsystem)` in [`klog_suppress.h`](../../include/kernel/test/klog_suppress.h) + [`klog_suppress.c`](../../src/kernel/test/klog_suppress.c) (KERNEL_TESTS-gated). Demotes subsystem to `LOG_FATAL` for the remainder of the suite; §7 action drain restores on suite exit.
@@ -222,7 +222,7 @@ Tests that exercise error paths (validators, allocator failure rollback, bad-inp
 
 **Test checkpoint:** `kmalloc_fail_task_filter_set(my_pid)` + foreign-PID kmalloc is NOT failed + countdown remains armed for a matching call. `kmalloc_fail_max_injections_set(3)` + arm-fire loop of 10 produces exactly 3 forced NULLs + 7 successes. `pmm_alloc_fail_next()` + `pmm_alloc_frame()` returns 0 + subsequent call succeeds + injection counter advances by 1. `copy_user_fail_next()` + `copy_to_user(dst, src, 16)` returns -1 without writing dst; next call returns 0 and copies 16 bytes.
 
-> **Test runner:** `scripts\debug\run-mm-tests.bat` (SUITE=mm) + `scripts\debug\run-x86-tests.bat` (SUITE=x86) | 13 new fault-inject suites, 0 failures (2 kmalloc + 5 pmm + 3 vmm + 3 copy_user: each non-kmalloc subsystem gained parallel task-filter + max-cap tests during review to close a copy-paste coverage gap)
+> **Test runner:** `scripts\debug\kernel\run-mm-tests.bat` (SUITE=mm) + `scripts\debug\kernel\run-x86-tests.bat` (SUITE=x86) | 13 new fault-inject suites, 0 failures (2 kmalloc + 5 pmm + 3 vmm + 3 copy_user: each non-kmalloc subsystem gained parallel task-filter + max-cap tests during review to close a copy-paste coverage gap)
 
 > **Notes:**
 > - Shipped 4 parallel fault-inject surfaces: kmalloc (§1 + §6 extensions), PMM, VMM `vmm_map_page`, copy_to_user/copy_from_user. Each has the same 4-field per-CPU state (countdown + task_pid + max_injections + fired_counter) and the same 9 public setters (`_countdown_set/clear/_next`, `_injections_triggered`, `_task_filter_set/clear`, `_max_injections_set/clear`, `_fired_counter`).
@@ -252,7 +252,7 @@ KUnit built `kunit_kzalloc`, `kunit_kmalloc`, and its resource auto-free machine
 
 **Test checkpoint:** `[ OK ] TEST: Harness: 3 actions fired LIFO after suite exit :: LIFO: last-registered (0x3333) fires first`. `[ OK ] TEST: Harness: 32 actions drained after overflow :: exactly 32 actions drained`. `[ OK ] TEST: Harness: re-entrant add rejected during drain :: test_add_action during drain returned -1`. `[ OK ] TEST: Harness: runner force-lowered IRQL for drain :: action ran at PASSIVE_LEVEL after runner forced IRQL down`.
 
-> **Test runner:** `scripts\debug\run-boot-tests.bat` (SUITE=boot) | 9 new Harness suites, 0 failures
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 9 new Harness suites, 0 failures
 
 > **Notes:**
 > - Shipped `test_add_action(fn, ctx)` public API in [`include/kernel/test/test.h`](../../include/kernel/test/test.h) + impl in [`src/kernel/test/test_runner.c`](../../src/kernel/test/test_runner.c). 32-slot LIFO per-suite stack; NULL fn + full list + re-entrant-during-drain all return -1 with a `[WARN]` line.
@@ -281,7 +281,7 @@ Record `heap_stats().used_bytes` at test start and end; if the delta is non-zero
 
 **Test checkpoint:** `bash scripts/test.sh` summary line now includes `, L leaked`. The harness suite `Harness: leak detector reported > 64 bytes for kmalloc route` asserts the detector observed the expected delta; `Harness: scratch drain leaves last_leak_delta == 0` asserts drain-path cleanup is detected. L > 0 in the summary is advisory -- existing tests may surface previously-hidden leaks that will be retrofitted with `TEST_EXPECT_LEAK` or genuine leaks fixed in follow-up commits.
 
-> **Test runner:** `scripts\debug\run-boot-tests.bat` (SUITE=boot) | 6 new harness suites (kmalloc + scratch + leak-ignore pair patterns), 0 failures; summary line gains `, L leaked` column; existing tests may surface advisory [LEAK] lines to be retrofitted gradually
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 6 new harness suites (kmalloc + scratch + leak-ignore pair patterns), 0 failures; summary line gains `, L leaked` column; existing tests may surface advisory [LEAK] lines to be retrofitted gradually
 
 > **Notes:**
 > - Shipped per-test heap-leak detection in [`test_runner.c`](../../src/kernel/test/test_runner.c). Snapshots `heap_get_used()` before each suite body; re-reads after §7 action drain; emits `[LEAK]` / `[LEAK-OK]` / `[LEAK-SKIP]` based on opt-out flags.
@@ -329,7 +329,7 @@ After §1-§8 land (all shipped 2026-04-19), in-kernel test coverage reaches Lin
 - [x] `src/kernel/test/test_harness.c` sanity tests for §8 heap-leak detection (6 TEST_CAT_BOOT suites: kmalloc unfreed + TEST_EXPECT_LEAK pair, TEST_SCRATCH_KBUF drain pair, TEST_LEAK_IGNORE bypass pair; verify suites consume `test_runner_last_leak_delta()` and `g_test_state.leaked` to confirm classification without polluting the summary L counter)
 - [x] `src/kernel/test/test_alpc.c` adds 3 §4 retrofit suites in TEST_CAT_IPC (`alpc: kmalloc-fail in pending alloc rolls back PoolUsageBytes`, `alpc: ReplyBodyCap clamps recv_buf_len > 65528`, `alpc: two-port lock-order stress`) consuming TODO-03 §1 + §2 + §3 + §5 primitives to close the TODO-24 §4 deferred test gaps block
 
-> **Test runner:** `scripts\debug\run-boot-tests.bat` (SUITE=boot) + `scripts\debug\run-mm-tests.bat` (SUITE=mm) + `scripts\debug\run-ipc-tests.bat` (SUITE=ipc) | ~23 new test-harness + allocator + alpc-retrofit suites, 0 failures, summary shows `L=0` on green tree
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) + `scripts\debug\kernel\run-mm-tests.bat` (SUITE=mm) + `scripts\debug\kernel\run-ipc-tests.bat` (SUITE=ipc) | ~23 new test-harness + allocator + alpc-retrofit suites, 0 failures, summary shows `L=0` on green tree
 
 ---
 

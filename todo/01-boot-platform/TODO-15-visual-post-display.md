@@ -338,7 +338,7 @@ On crash, the VPD marks the active stage as failed. On next boot, the failure is
 - [ ] `include/kernel/hv_bar.h` deleted; no references to `HV_BAR` remain in codebase
 - [ ] Commit: `"boot: Visual POST Display complete -- two-tier diagnostics with NVRAM crash persistence"`
 
-**Test runner:** `scripts\debug\run-boot-tests.bat` (SUITE=boot) -- add `TEST_CAT_BOOT` suites when `test_vpd.c` lands (Unit Tests section).
+**Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) -- add `TEST_CAT_BOOT` suites when `test_vpd.c` lands (Unit Tests section).
 
 ## History
 

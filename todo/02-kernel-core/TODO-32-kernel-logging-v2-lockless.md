@@ -227,7 +227,7 @@ After §10 retires v1: Impossible OS is the only kernel combining lockless per-C
 
 ## Unit Tests
 
-> Wire into `test_runner_init()` via `test_register_klog_v2()` -- register in `src/kernel/test/test_runner.c`. New test category: `TEST_CAT_KLOG_V2` (add to `include/kernel/test/test.h` enum + `cat_names[]`/`cat_labels[]` in `test_runner.c` + `make test-klog-v2` target in `Makefile` + `bootx64.c` test_suite parser + `scripts/debug/run-klog-v2-tests.bat`).
+> Wire into `test_runner_init()` via `test_register_klog_v2()` -- register in `src/kernel/test/test_runner.c`. New test category: `TEST_CAT_KLOG_V2` (add to `include/kernel/test/test.h` enum + `cat_names[]`/`cat_labels[]` in `test_runner.c` + `make test-klog-v2` target in `Makefile` + `bootx64.c` test_suite parser + `scripts/debug/kernel/run-klog-v2-tests.bat`).
 
 - [ ] Create `src/kernel/test/test_klog_v2.c` with:
   - `test_klog_v2_ring_init` -- `klog_ring_v2_init` zeroes head/tail; `try_dequeue` returns -1 (empty)
@@ -257,14 +257,14 @@ After §10 retires v1: Impossible OS is the only kernel combining lockless per-C
 - [ ] Boot under `KLOG_V2=1` shows `klog v2: ring init OK on cpu 0..N` for every CPU
 - [ ] End-of-boot `klog_v2_get_stats()` reports zero drops on FATAL/ERROR/WARN, bounded drops on DEBUG (<5% under heavy test runs)
 - [ ] `make test-klog-v2 SUITE=klog_v2 QUIET=0` runs all unit tests; `=== N tests passed, 0 failed ===`
-- [ ] `scripts/debug/run-klog-v2-tests.bat` works on Windows QEMU
+- [ ] `scripts/debug/kernel/run-klog-v2-tests.bat` works on Windows QEMU
 - [ ] Hot-path benchmark: under 200 cycles per `KLOG_INFO` call (measure via `rdtsc` delta in `test_klog_v2_perf.c`)
 - [ ] Concurrent SMP enqueue: 4 kthreads on 4 CPUs each enqueue 10K entries; `perf` PMU reports zero false-sharing cache-line invalidations
 - [ ] Backpressure: throttle serial to 9600 baud; spam 10000 messages; FATAL latency stays under 50ms (via emergency path), DEBUG drops gracefully
 - [ ] Boot-survival: panic + reboot on QEMU WHPX; `X:\Logs\crash_recovery_v2.log` contains pre-panic markers
 - [ ] Verify on: QEMU WHPX (2 CPUs), QEMU TCG, VirtualBox, bare metal -- the per-CPU SPSC ring + atomic primitives behave identically across all platforms (no ordering surprises on real x86-64)
 
-**Test runner:** `scripts\debug\run-klog-v2-tests.bat` (SUITE=klog_v2)
+**Test runner:** `scripts\debug\kernel\run-klog-v2-tests.bat` (SUITE=klog_v2)
 
 ## History
 

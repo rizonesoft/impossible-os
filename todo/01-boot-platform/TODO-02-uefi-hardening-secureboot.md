@@ -295,7 +295,7 @@ UEFI firmware SetVariable can take 10-100ms+ for flash erase/write cycles. The c
 
 **Test checkpoint:** Repeat Verification bullets on a clean build after Unit Tests land; serial matches expected markers above on QEMU WHPX, QEMU TCG, VirtualBox, and bare metal.
 
-**Test runner:** `scripts\debug\run-boot-tests.bat` (SUITE=boot)
+**Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot)
 
 ---
 

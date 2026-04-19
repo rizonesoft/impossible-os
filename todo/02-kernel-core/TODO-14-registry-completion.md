@@ -657,7 +657,7 @@ Sections §8--10 + §13 deliver exclusive features that exceed Windows 11: incre
 
 **Test checkpoint:** Every unchecked Verification bullet above passes on QEMU WHPX, QEMU TCG, VirtualBox, and bare metal. When `test_registry_ext` lands, `bash scripts/test.sh SUITE=abi` (or `make test-abi`) shows new cases PASS.
 
-**Test runner:** `scripts\debug\run-abi-tests.bat` (SUITE=abi)
+**Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi)
 
 ---
 

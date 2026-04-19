@@ -277,7 +277,7 @@ Clean up all `#ifdef HYPERV_WORKAROUND` blocks now that correct ACPI/LAPIC/IOAPI
 - [ ] QEMU `-smp 4`: serial log shows `[SMP] AP1 online`, `[SMP] AP2 online`, `[SMP] AP3 online`; no Hyper-V workaround blocks compile
 - [ ] Commit: `"kernel: irq-timer-arch verified -- MADT APIC, IDT, UTS, LAPIC calibration"`
 
-**Test runner:** `scripts\debug\run-boot-tests.bat` (SUITE=boot)
+**Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot)
 
 ## History
 

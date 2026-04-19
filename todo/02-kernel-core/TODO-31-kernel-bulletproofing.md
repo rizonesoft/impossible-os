@@ -412,6 +412,6 @@ Five non-negotiable rules for correct framebuffer/GOP handling on real hardware.
 - [ ] Verify on QEMU WHPX, TCG, VirtualBox -- no regressions from guard pages
 - [ ] Bare metal: verify guard pages work on real hardware
 
-**Test runner:** `scripts\debug\run-abi-tests.bat` (SUITE=abi)
+**Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi)
 
 ---

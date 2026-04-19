@@ -211,7 +211,7 @@ block device(s):
   nvme0:
 ```
 
-**Test runner:** `scripts/debug/run-storage-tests.bat` (SUITE=storage)
+**Test runner:** `scripts/debug/kernel/run-storage-tests.bat` (SUITE=storage)
 
 ---
 

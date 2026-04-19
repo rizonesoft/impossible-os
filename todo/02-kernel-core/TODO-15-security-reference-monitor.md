@@ -113,7 +113,7 @@
 - [x] `NtAllocateLocallyUniqueId` -- monotonically incrementing counter, returned to user mode for dynamic LUID allocation
 - [x] Commit: `"kernel/security: SID primitives and well-known SID table"`
 
-> **Test runner:** `scripts\debug\run-security-tests.bat` (SUITE=security), 11 suites, 0 failures expected
+> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security), 11 suites, 0 failures expected
 
 > **Verified** (2026-04-13): SID struct at sid.h:25-30 matches Windows ABI (_Static_assert at sid.h:33-40). 13 well-known SIDs initialized in sid.c:34-50 with correct S-1-X-Y values. 7 SID utility functions implemented (RtlLengthSid, RtlEqualSid, RtlCopySid, RtlInitializeSid, RtlSubAuthoritySid, RtlConvertSidToString, RtlCreateServiceSid). LUID at luid.h:15-18, NtAllocateLocallyUniqueId at luid.c:13-19 (atomic counter, SMP-safe). All consumer functions guard with RtlValidSid. RtlInitializeSid clamps count to SID_MAX_SUB_AUTHORITIES. 48-bit authority formatting handles values above 32 bits. Build clean.
 > **Accepted:** FNV-1a service SID derivation (32-bit entropy, not Windows SHA-1 compatible; acceptable for < 100 services) -> XREF: 02-kernel-core/TODO-15 §16, 09-desktop-shell/TODO-07 §1. LUID 32-bit counter (HighPart always 0; wrap at ~4B allocations) -> XREF: 02-kernel-core/TODO-15 §16. RtlEqualSid uses memcmp (timing variable; no user-mode oracle exists) -> XREF: 02-kernel-core/TODO-15 §16, 09-desktop-shell/TODO-07 §1.
@@ -172,7 +172,7 @@
 - [x] `RtlPrivilegeSetToString(ps, buf, len)` -- debug helper
 - [x] Commit: `"kernel/security: privilege LUID table and PRIVILEGE_SET types"`
 
-> **Test runner:** `scripts\debug\run-security-tests.bat` (SUITE=security), 12 suites, 57 assertions, 0 failures
+> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security), 12 suites, 57 assertions, 0 failures
 > **Verified on WHPX** (2026-04-14): 57 tests passed, 0 failed (0.3s)
 
 > **Verified** (2026-04-14): 24 privilege LUID constants at privileges.h:46-69, all with HighPart=0 via SE_PRIVILEGE_LUID macro. LowPart values match Windows SDK exactly (gaps at 6,16,22,24,26,27 intentional). LUID_AND_ATTRIBUTES at privileges.h:79-82 (12 bytes, _Static_assert). PRIVILEGE_SET at privileges.h:89-93 (base 8 bytes, Control at offset 4, _Static_assert). TOKEN_PRIVILEGES at privileges.h:97-100 (base 4 bytes, _Static_assert). SE_PRIVILEGE_* attribute values match Windows SDK (ENABLED_BY_DEFAULT=1, ENABLED=2, REMOVED=4, USED_FOR_ACCESS=0x80000000). RtlPrivilegeLuidToName at privileges.c:71-84 (bounded scan, 24 entries). RtlPrivilegeSetToString at privileges.c:88-137 (remaining-length safe, len < 8 guard). All 24 privileges consumed in token.c SeCreateSystemToken/SeCreateUserToken. Build clean.

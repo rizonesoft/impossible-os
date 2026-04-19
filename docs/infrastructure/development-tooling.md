@@ -469,7 +469,7 @@ The full launcher matrix -- with accelerator semantics, artifact paths, debugger
 | `scripts/machines/run-qemu-1cpu.bat`      | Single-CPU profile for bisecting SMP bugs                  |
 | `scripts/machines/run-qemu.ps1`           | Windows PowerShell QEMU launcher (accel, smp, test flags)  |
 | `scripts/machines/run-vbox.sh/.ps1/.bat`  | VirtualBox (raw -> VDI conversion on each run)             |
-| `scripts/debug/run-secureboot.bat`        | Secure Boot (TCG + q35 + SMM + pflash; see matrix)         |
+| `scripts/debug/kernel/run-secureboot.bat`        | Secure Boot (TCG + q35 + SMM + pflash; see matrix)         |
 | `scripts/machines/reset-qemu-nvram.*`     | Clear OVMF_VARS (fresh EFI variable state)                 |
 | `scripts/machines/storage/`               | AHCI / VirtIO / NVMe / USB storage scenarios               |
 | `scripts/machines/fs/`                    | Filesystem-specific harnesses                              |
@@ -837,12 +837,12 @@ Every build/test workflow must invoke the canonical wrappers. Inline `apt-get`, 
 
 | Workflow | Artifact | Retention | Purpose |
 | --- | --- | --- | --- |
-| `build.yml` | `system-disk.img` | 7 days | Download and run the exact PR/commit build in QEMU. |
-| `build.yml` | `build.log` (always, even on failure) | 7 days | Failure diagnosis from CI without re-running locally. |
+| `build.yml` | `system-disk.img` | 1 day, manual `workflow_dispatch` only | Exact built image for one-off debugging when a maintainer explicitly requests it. |
+| `build.yml` | `build.log` + `test.log` (failure only) | 3 days | Failure diagnosis from CI without re-running locally. |
 | `release.yml` | `impossible-os-{tag}.zip` (attached to GitHub Release) | Permanent | Public release -- `system-disk.img` + `.vdi` + guides + `CHANGELOG.md`. |
 | `pages.yml` | Pages deployment | (managed by `actions/deploy-pages`) | Docs site. |
 
-Retention rules: PR-time artifacts keep **7 days** (enough to triage a failed run without paying for dead weight); release zips are attached to the release and live as long as the release does. Short retentions should never be shortened again without a stated reason -- "save quota" is not sufficient when 1-day retention blocks failure diagnosis after a weekend.
+Retention rules: normal push/PR CI stays artifact-light to avoid exhausting GitHub's shared quota. The large raw disk image is no longer uploaded on every run; it is an explicit manual-debug artifact only. Failure logs stay available for **3 days**, which is long enough to triage a broken run without paying permanent quota for every green build. Release zips are attached to the release and live as long as the release does.
 
 ### Runner tier
 

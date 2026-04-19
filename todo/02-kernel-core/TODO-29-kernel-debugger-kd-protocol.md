@@ -553,7 +553,7 @@ After §1-§14, WinDbg-compatible KD on COM1 plus user-mode debug SSDT surface. 
 - [ ] **Platforms:** repeat WinDbg serial checks on QEMU WHPX, QEMU TCG, VirtualBox, and bare metal (VM serial timing can hide IRQ races).
 - [ ] Commit: `"kernel/kd: WinDbg-compatible KD stub -- serial, packet framing, breakpoints, context, module list"`
 
-**Test runner:** `scripts\debug\run-boot-tests.bat` (SUITE=boot)
+**Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot)
 
 ---
 

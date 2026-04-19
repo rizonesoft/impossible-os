@@ -69,7 +69,7 @@ All QEMU launchers boot `build/system-disk.img` (GPT: EFI + BlackBox + IXFS) and
 
 ## Secure Boot
 
-### [`scripts/debug/run-secureboot.bat`](../../scripts/debug/run-secureboot.bat) -- Windows
+### [`scripts/debug/kernel/run-secureboot.bat`](../../scripts/debug/kernel/run-secureboot.bat) -- Windows
 
 - **Accelerator:** TCG + q35 + SMM + pflash.
 - **Use:** shim + MokManager + signed EFI Secure Boot validation. First run: enroll `MOK.cer` via MokManager. Subsequent runs boot with `SecureBoot=1`.

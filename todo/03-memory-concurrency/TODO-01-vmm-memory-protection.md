@@ -374,7 +374,7 @@ Expose per-process memory statistics: working set size, peak working set, page f
 - [ ] HPET quirk table: known-broken HPET vendor IDs are skipped with a log message
 - [ ] Commit: `"mm: VMM memory protection, W^X, demand paging, allocator safety tier"`
 
-**Test runner:** `scripts\debug\run-mm-tests.bat` (SUITE=mm)
+**Test runner:** `scripts\debug\kernel\run-mm-tests.bat` (SUITE=mm)
 
 ## History
 

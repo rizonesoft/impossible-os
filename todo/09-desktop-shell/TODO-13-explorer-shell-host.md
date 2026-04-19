@@ -66,7 +66,7 @@
 - QEMU headless: boot with `InstallerMode=0`; serial shows shell host started (marker TBD when implemented).
 - Flip `InstallerMode=1`; confirm `installer.exe` still replaces shell per [`../10-platform-services/TODO-11-installer-iso.md`](../10-platform-services/TODO-11-installer-iso.md).
 
-**Test runner:** `scripts/debug/run-boot-tests.bat` (SUITE=boot)
+**Test runner:** `scripts/debug/kernel/run-boot-tests.bat` (SUITE=boot)
 
 ## History
 

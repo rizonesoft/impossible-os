@@ -5,7 +5,7 @@
 
 ## Inputs
 
-- [`scripts/debug/run-boot-tests.bat`](../../scripts/debug/run-boot-tests.bat)
+- [`scripts/debug/kernel/run-boot-tests.bat`](../../scripts/debug/kernel/run-boot-tests.bat)
 - [`scripts/machines`](../../scripts/machines)
 - [`scripts/deploy`](../../scripts/deploy)
 - [`todo/01-boot-platform`](.)

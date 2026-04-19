@@ -250,4 +250,4 @@ Close the loop with operator-visible diagnostics, regression coverage, and expli
 - [ ] Verify on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal
 - [ ] Commit: `"kernel: complete configuration and policy plane"`
 
-**Test runner:** `scripts\debug\run-boot-tests.bat` (SUITE=boot)
+**Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot)

@@ -247,7 +247,7 @@ Linux `systemd-analyze plot` and Windows performance tooling expose boot as a hu
 - [ ] `spinner_create(SPINNER_MEDIUM, 0x0078D4)` in test harness → spinner renders in compositor frame
 - [ ] Commit: `"kernel: boot-diagnostics verified -- POST codes, panic forensics, QR code, vital signs, multi-instance spinner"`
 
-**Test runner:** `scripts\debug\run-boot-tests.bat` (SUITE=boot) -- add `TEST_CAT_BOOT` suites when `test_boot_diag.c` lands (Unit Tests section).
+**Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) -- add `TEST_CAT_BOOT` suites when `test_boot_diag.c` lands (Unit Tests section).
 
 ## History
 

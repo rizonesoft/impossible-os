@@ -352,7 +352,7 @@ Firmware boot entry **`Boot####`** variables hold an **`EFI_LOAD_OPTION`**: attr
 
 **Test checkpoint:** Every Verification bullet above passes on QEMU WHPX, QEMU TCG, VirtualBox, and bare metal; POST16 codes `0xB090`--`0xB095` localize bootloader failures as documented in §1--§5.
 
-**Test runner:** `scripts\debug\run-boot-tests.bat` (SUITE=boot)
+**Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot)
 
 ---
 

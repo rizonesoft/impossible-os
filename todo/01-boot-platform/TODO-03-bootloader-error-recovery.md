@@ -376,7 +376,7 @@ Add a QR code to the boot failure error screen (§9) that encodes a recovery URL
 - [x] `error_screen_test=1` boot.conf key triggers `boot_fatal()` before kernel load for QR/BSOD testing (halts instead of rebooting so screen stays visible)
 - [x] Commit: `"boot: QR code on boot error screen -- scan for recovery instructions"` (7e588e7e)
 
-**Test checkpoint:** Run `scripts/debug/run-error-screen-test.bat` (sets `error_screen_test=1`). Error screen shows QR code in bottom-right. Scan with phone -- URL `https://impossibleos.co/err/0003` appears. Verify QR is scannable at 1280x720 and 1920x1080 resolutions.
+**Test checkpoint:** Run `scripts/debug/kernel/run-error-screen-test.bat` (sets `error_screen_test=1`). Error screen shows QR code in bottom-right. Scan with phone -- URL `https://impossibleos.co/err/0003` appears. Verify QR is scannable at 1280x720 and 1920x1080 resolutions.
 
 > **Verified:** 2026-04-11 -- Codex adversarial found RS coefficients wrong + format placement wrong (both fixed). Post-fix Codex clean. Real-hardware testing found 3 additional bugs: (1) pixel colors 0xFF000000=blue in BGRX, (2) format bits MSB/LSB reversed (Codex was wrong about this), (3) V2 alphanumeric uppercase URL -- switched to V3 byte mode for lowercase. Accepted: none.
 > **Quality reviewed:** 2026-04-11 -- Switched to QR V3 byte mode after user feedback. Three V3 bugs fixed: zigzag loop skipped column pairs after timing column, zigzag direction formula wrong for cols < 6, byte padding added zero codeword when already aligned. All verified against segno: 0 differences. Accepted: none.
@@ -523,7 +523,7 @@ The pre-§18 error screen used UEFI text console (`ConOut`) with white-on-blue t
 - [x] Smoke test patterns added to `scripts/test-smoke.sh`: `BOOT_REQUIRED_PATTERNS` checks for ELF segment log, kernel found, watchdog arm/disarm, ExitBootServices OK, and boot_info header. `BOOT_ABSENT_PATTERNS` checks absence of ELF corrupt, EBS failure, mmap overlap warnings, and BOOT HALT on clean boots. Pattern verification runs automatically after the QEMU boot completes.
 - [x] Commit: `"test: bootloader smoke patterns + unit test cleanup"`
 
-> **Note:** Dedicated failure-injection scripts (`test-boot-elf-corrupt.sh`, `test-boot-missing-kernel.sh`, `test-boot-error-nvram.sh`) require headless QEMU with disk image manipulation and multi-boot NVRAM persistence. These are CI-only capabilities -- WSL has no working QEMU (feedback `feedback_no_qemu_wsl`). The smoke test patterns above cover the normal-boot positive case; failure injection testing is done manually on native Windows via `scripts/debug/run-boot-tests.bat` and `error_screen_test=1` in boot.conf.
+> **Note:** Dedicated failure-injection scripts (`test-boot-elf-corrupt.sh`, `test-boot-missing-kernel.sh`, `test-boot-error-nvram.sh`) require headless QEMU with disk image manipulation and multi-boot NVRAM persistence. These are CI-only capabilities -- WSL has no working QEMU (feedback `feedback_no_qemu_wsl`). The smoke test patterns above cover the normal-boot positive case; failure injection testing is done manually on native Windows via `scripts/debug/kernel/run-boot-tests.bat` and `error_screen_test=1` in boot.conf.
 
 **Test checkpoint:** `scripts/test-smoke.sh` passes all `BOOT_REQUIRED_PATTERNS` and `BOOT_ABSENT_PATTERNS` on a normal QEMU boot. `SUITE=boot` unit tests pass (300 total, including 22 boot_info validator tests). Manual `error_screen_test=1` validates the graphical BSOD layout on WHPX, TCG, and VBox.
 
@@ -546,7 +546,7 @@ The pre-§18 error screen used UEFI text console (`ConOut`) with white-on-blue t
 
 **Test checkpoint:** Every Verification bullet passes on QEMU WHPX, QEMU TCG, VirtualBox, and bare metal; serial shows no unexpected `[WARN]` / `[CRIT]` on clean boot after all sections land.
 
-**Test runner:** `scripts\debug\run-boot-tests.bat` (SUITE=boot)
+**Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot)
 
 ---
 

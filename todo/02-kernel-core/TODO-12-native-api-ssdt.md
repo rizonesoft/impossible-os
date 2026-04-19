@@ -466,7 +466,7 @@ Extended file operations: metadata queries, attribute modification, device I/O c
 
 **Test checkpoint:** `NtCreateKey` under `\Registry\Machine\Software\Test` returns `STATUS_SUCCESS`. `NtSetValueKey` + `NtQueryValueKey` round-trip succeeds. `NtDeleteKey` removes the key. `NtEnumerateKey` iterates subkeys correctly.
 
-> **Test runner:** `scripts\debug\run-abi-tests.bat` (SUITE=abi)
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi)
 > **Expected:** 9 suites (2 Win32 + 7 NT SSDT), 0 failures
 
 > **Verified** (2026-04-13): all 10 NtXxx handlers registered (SSDT 0x0090-0x009B), evidence mapped to nt_registry.c:730-739. NT path resolution (\Registry\Machine\...) functional. Predefined handle safety (RegIsPredefinedKey). NtDeleteKey returns STATUS_KEY_HAS_CHILDREN for non-empty keys. KeyFullInformation supported in NtEnumerateKey. ntdll exports sorted. Build clean.
@@ -490,7 +490,7 @@ Extended file operations: metadata queries, attribute modification, device I/O c
 
 **Test checkpoint:** `NtFlushKey` completes without error. `NtNotifyChangeKey` fires callback after `NtSetValueKey` on watched key. `NtSaveKey` + `NtRestoreKey` round-trip succeeds.
 
-> **Test runner:** `scripts\debug\run-abi-tests.bat` (SUITE=abi)
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi)
 > **Expected:** 5 new §15 tests (NtFlushKey, NtRenameKey, NtNotifyChangeKey blocked, NtUnloadKey invalid, advanced SSDT registered), 0 failures.
 
 > **Verified** (2026-04-14): 10 handlers registered at SSDT 0x009C-0x00A6 via nt_registry.c:1113-1122. 9 complete paths ([x]) route through registry.c helpers: NtFlushKey → registry_flush_checked with STATUS_REGISTRY_IO_FAILED propagation; NtRenameKey → RegRenameKey with case-only no-op + collision check; NtSaveKey/Ex + NtRestoreKey → vfs_get_path_from_node(bounded strlen, overflow-safe math, cycle detection) → hive_save/hive_load; NtLoadKey/Ex → mountpoint creation with rollback on hive_load failure; NtUnloadKey/Ex → RegUnloadHive recursive free. 1 stub ([/]): NtNotifyChangeKey returns STATUS_NOT_IMPLEMENTED with SCOPE-GAP-ALLOWED sentinel. 10 ntdll PE exports added (alphabetically sorted for binary search). Build clean.
@@ -516,7 +516,7 @@ Extended file operations: metadata queries, attribute modification, device I/O c
 
 **Test checkpoint:** `NtOpenProcessToken` returns valid token handle. `NtQueryInformationToken(TokenUser)` returns correct SID. `NtAdjustPrivilegesToken` enables/disables a privilege. `NtAllocateLocallyUniqueId` returns monotonically increasing LUIDs.
 
-> **Test runner:** `scripts\debug\run-security-tests.bat` (SUITE=security)
+> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security)
 > **Expected:** 6 new §16 tests (NtAllocateLocallyUniqueId via SSDT, NtOpenProcessToken, NtQueryInformationToken invalid handle, NtSetInformationToken read-only, NtAdjustPrivilegesToken invalid, token SSDT registration), 0 failures.
 
 > **Verified** (2026-04-14): 9 handlers registered at SSDT 0x00B0-0x00B7 + 0x00C3 via nt_token.c:480-497. NtOpenProcessToken/Ex route through resolve_process_handle → task->token → library NtOpenProcessToken. NtOpenThreadToken/Ex resolve via resolve_thread_handle, fall back to owning task's primary token (thread impersonation pending). NtQueryInformationToken routes 14 info classes through library. NtSetInformationToken rejects all classes with STATUS_INVALID_INFO_CLASS pending deep-copy setters. NtAdjust{Privileges,Groups}Token unpack TOKEN_PRIVILEGES/TOKEN_GROUPS with bounded counts (TOKEN_MAX_PRIVS=36, TOKEN_MAX_GROUPS=32) and 64-bit capacity math. NtAllocateLocallyUniqueId is a 1-line SSDT wrapper around luid.c. 10 ntdll PE exports added (sorted). 6 new tests in TEST_CAT_SECURITY. token.h cleaned: removed duplicate NTSTATUS defines, uses canonical kernel/nt/ntstatus.h. Build clean.
@@ -537,7 +537,7 @@ Namespace manipulation -- create, open, and query Ob directory objects and symbo
 
 **Test checkpoint:** `NtCreateDirectoryObject` creates `\Test`; `NtOpenDirectoryObject` opens it. `NtCreateSymbolicLinkObject` creates `\TestLink → \Test`; `NtQuerySymbolicLinkObject` returns `\Test`.
 
-> **Test runner:** `scripts\debug\run-ob-tests.bat` (SUITE=ob)
+> **Test runner:** `scripts\debug\kernel\run-ob-tests.bat` (SUITE=ob)
 > **Expected:** 5 new §17 tests (NT create+open directory roundtrip, open not found, symlink roundtrip, query wrong type, namespace SSDT registered), 0 failures.
 
 > **Verified** (2026-04-14): 6 handlers registered at SSDT 0x0120-0x0125 via nt_namespace.c:512-523. Create handlers (Directory, SymbolicLink) are atomic: allocate handle BEFORE inserting into namespace, clear OB_FLAG_PERMANENT on rollback so deref actually frees. Query handlers use ObpLookupHandle + type-check (ObpDirectoryType / ObpSymlinkType). NtQueryDirectoryObject ABI repacked: a4 carries (RestartScan << 8) | ReturnSingleEntry so Context (a5) and ReturnLength (a6) stay full 64-bit pointers. ReturnSingleEntry caps effective buf_count to 1. 10 ntdll PE exports added (sorted). 5 new tests in TEST_CAT_OB. Build clean.
@@ -565,7 +565,7 @@ Namespace manipulation -- create, open, and query Ob directory objects and symbo
 
 **Test checkpoint:** `NtCreateSection` with `SEC_COMMIT` creates pagefile-backed section. `NtMapViewOfSection` maps into current process; write/read round-trip. `NtUnmapViewOfSection` unmaps. File-backed section maps file contents correctly.
 
-> **Test runner:** `scripts\debug\run-ob-tests.bat` (SUITE=ob)
+> **Test runner:** `scripts\debug\kernel\run-ob-tests.bat` (SUITE=ob)
 > **Expected:** 5 new §18 tests (anon roundtrip, file-backed map, named open+query+extend, unmap bad base, SSDT slots registered), 0 failures. Note: full `bash scripts/test.sh SUITE=ob` may exceed 60s TCG boot budget on slow hosts; build verification `=== BUILD OK ===` plus OB suite on Windows QEMU per project norm.
 
 > **Codex (2026-04-14):** Fixed page-count overflow (64-bit math + `section_page_count_from_size`), per-section `spinlock_t` for views/size/phys, `oa_probe_ascii_name` for user `OBJECT_ATTRIBUTES`, NULL buffer guard in `ObQuerySectionObject`, file-backed create uses single validated `FILE_OBJECT` for `vfs_read` (no second lookup), `ObExtendSection` double-checked backing swap under lock.
@@ -597,7 +597,7 @@ Namespace manipulation -- create, open, and query Ob directory objects and symbo
 
 **Test checkpoint:** `NtCreateTimer` + `NtSetTimer` with relative 100ms due time fires. `NtCancelTimer` cancels before fire returns `STATUS_SUCCESS`. `NtQueryPerformanceCounter` returns monotonically increasing value. `NtQueryTimerResolution` reports correct LAPIC timer resolution.
 
-> **Test runner:** `scripts\debug\run-ob-tests.bat` (SUITE=ob)
+> **Test runner:** `scripts\debug\kernel\run-ob-tests.bat` (SUITE=ob)
 > **Expected:** 5 new §19 tests (create+query, set/cancel, open existing, wrong-type mismatch, SSDT slots registered), 0 failures. The actual fire-via-event test is exercised via `nt_timer_tick()` under WHPX; on TCG the PIT path is equivalent.
 
 > **Codex adversarial (2026-04-14):** Fixed `compute_due_ns` integer overflow with saturating 100-ns->ns conversion + saturated `now + rel_ns` add (cap `0x7FFFFFFFFFFFFFFF`); fixed `nt_timer_arm` missed-fire race by moving `event_reset()` BEFORE the armed-list insert (inside `s_armed_lock`) so any post-arm `event_set()` survives until consumed.
@@ -629,7 +629,7 @@ Namespace manipulation -- create, open, and query Ob directory objects and symbo
 
 **Test checkpoint:** All 15 LPC SSDT slots resolve to the registered handler (not the default `ssdt_stub_not_implemented`). Each handler returns `STATUS_NOT_IMPLEMENTED` until TODO-24 §8 LPC engine lands; functional round-trip (`NtCreatePort` + `NtConnectPort` + `NtRequestWaitReplyPort`) is exercised by TODO-24 §8 tests and TODO-24 §8-§9 tests.
 
-> **Test runner:** `scripts\debug\run-ob-tests.bat` (SUITE=ob)
+> **Test runner:** `scripts\debug\kernel\run-ob-tests.bat` (SUITE=ob)
 > **Expected:** 2 new §20 tests (LPC slots registered, LPC returns deferred-status), 0 failures.
 
 > **Codex adversarial (2026-04-14):** Three Medium findings, all fixed: (1) `nt_lpc_register_ssdt()` silently accepted `ssdt_register()` failures; replaced with per-slot `lpc_register_one()` helper that checks ssdt_get_table, detects collision with `ssdt_stub_not_implemented`, checks ssdt_register return, logs per-slot failures, and suppresses the success line when any of the 15 fail. (2) `test_nt_lpc_returns_deferred_status` only dispatched 5 of 15 slots; expanded to iterate all 15 so mis-registration to another non-stub handler in any unsampled slot is caught. (3) `LPC_STUB_BODY`'s `s_warned` was a non-atomic one-time flag -- replaced with atomic acquire/release so concurrent first-calls on multiple CPUs cannot double-log.
@@ -872,7 +872,7 @@ NtQueryDirectoryFile (§6) currently returns `FileNamesInformation` only (name +
 
 **Test checkpoint:** All 16 ALPC SSDT slots resolve to the registered handler (not the default `ssdt_stub_not_implemented`). Each handler returns `STATUS_NOT_IMPLEMENTED` until TODO-24 §8-§9 ALPC engine lands; functional round-trip (`NtAlpcCreatePort` + `NtAlpcConnectPort` + `NtAlpcSendWaitReceivePort`) and `\RPC Control\` namespace visibility are exercised by TODO-24 §8-§9 tests.
 
-> **Test runner:** `scripts\debug\run-ob-tests.bat` (SUITE=ob)
+> **Test runner:** `scripts\debug\kernel\run-ob-tests.bat` (SUITE=ob)
 > **Expected:** 2 new §31 tests (ALPC slots registered, ALPC returns deferred-status) + 1 cross-section PE export-sort invariant test, 0 failures.
 
 > **Codex adversarial (2026-04-14):** Two findings, both fixed: (1) `s_ntdll_exports[]` in `pe.c` was not strictly sorted (pre-existing drift plus my mis-insertion of `NtAcceptConnectPort` and `NtAlpc*` entries) -- `pe_lookup_export()` binary-searches the table, so any out-of-order pair silently breaks NTAPI import resolution. Resorted the full 82-entry table and added `pe_exports_sorted_check()` exposed via `pe.h`. (2) `nt_alpc_register_ssdt()` was fail-open -- logged failures but returned void; `boot_phase3` continued with a partial ALPC surface. Changed to return `int` (failure count); applied the same mirror fix to `nt_lpc_register_ssdt()`. Both returns are now accumulated in `boot_desktop.c` and a non-zero result escalates to `boot_halt("SSDT registration failed")`.

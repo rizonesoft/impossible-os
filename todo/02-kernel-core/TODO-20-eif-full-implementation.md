@@ -251,4 +251,4 @@ Currently the EIF dispatch table at 0x8F0000 is identity-mapped and shared. When
 - [ ] All POST16 codes appear in correct order on serial output (where still used); otherwise verify the same scenarios via documented `klog("eif", ...)` substrings from each section
 - [ ] Verify on: QEMU WHPX (2 CPUs), QEMU TCG, VirtualBox, bare metal
 
-**Test runner:** `scripts\debug\run-exec-tests.bat` (SUITE=exec)
+**Test runner:** `scripts\debug\kernel\run-exec-tests.bat` (SUITE=exec)
