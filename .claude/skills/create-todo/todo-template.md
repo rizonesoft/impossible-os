@@ -101,6 +101,10 @@ One-line intro explaining what this section does and why it matters.
   - Struct size: `sizeof(relevant_struct_t)` == expected bytes
   - Constants: `RELEVANT_MAX` == expected value
 - [ ] Register in `test_runner_init()`: `test_register_relevant()`
+- [ ] Author the matching test runner bat under the right subdir (the bat-runner subdirs split 2026-04-20 -- per-category bats live in subdirs, not at the `scripts/debug/` root):
+    - Kernel `TEST_CAT_*` -> `scripts/debug/kernel/run-<cat>-tests.bat`
+    - User-mode `test_*.exe` -> `scripts/debug/usermode/run-<binary>.bat`
+    - Desktop UI -> `scripts/debug/desktop/run-<test>.bat`
 - [ ] Commit: `"test: add relevant test suite"`
 
 ## Verification

@@ -64,7 +64,11 @@ description: Finalize a TODO file whose `## N.` implementation sections are all 
 - **No `[x]` on manual items.** Bare-metal / VirtualBox / native-Windows items stay `[ ]` with an explicit `(manual -- ...)` tag. The user ticks them off after running on the real platform.
 - **No section-level work.** If a `## N.` section has unshipped items, STOP -- user runs `/implement-todo-section` on that section first.
 - **No skipping `/implement-unit-tests`.** Even if the Unit Tests section looks partially wired, dispatch the skill; let it do the completeness check. Exception: the section explicitly documents no-kernel-test-surface in a `**Note:**` block, in which case capture that note in the report.
-- **Bat file / test category drift.** If the TODO's `## Unit Tests` names a `scripts/debug/kernel/run-<suite>-tests.bat` that doesn't exist, flag it -- `/implement-unit-tests` owns creating it per its workflow but this skill surfaces the gap.
+- **Bat file / test category drift.** If the TODO's `## Unit Tests` names a runner bat that doesn't exist on disk, flag it -- `/implement-unit-tests` owns creating it per its workflow but this skill surfaces the gap. The right subdir per layer (split 2026-04-20):
+  - Kernel `TEST_CAT_*` -> `scripts/debug/kernel/run-<suite>-tests.bat`
+  - User-mode `test_*.exe` -> `scripts/debug/usermode/run-<binary>.bat`
+  - Desktop UI -> `scripts/debug/desktop/run-<test>.bat`
+  Per-category bats at the `scripts/debug/` root are stale (root is reserved for `run-all-tests.bat` only) -- flag those for relocation.
 - **Commit discipline.** The close-out commit goes through the usual `Bash(git commit:*)` permission flow; the pre-commit hook 6 (section-commit GATE) does NOT fire here because this commit does not mix src + TODO edits -- it is a TODO-level close-out, not a section-implementation commit. The pre-commit lint hook still runs; TODO markdown passes as long as linters are clean.
 - **Never turn this into a broad file-wide cleanup.** Only the `## Unit Tests` and `## Verification` blocks get modified. Implementation Order, OS Comparison, Notes, and stamps on earlier sections are read-only here.
 

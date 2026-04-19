@@ -66,7 +66,11 @@ description: Full review of a TODO section -- adversarial Codex, dead code, cons
 11. **Test coverage check (CRITICAL)** -- verify unit tests exist for this section:
     - Grep for the section's functions/features in `src/kernel/test/test_*.c`. If no test file covers the section's code, flag as a finding.
     - Check that the correct `TEST_CAT_*` category is used (not piggy-backed onto an unrelated category).
-    - Verify a `scripts/debug/kernel/run-<category>-tests.bat` file exists for the test category.
+    - Verify the matching bat exists in the **right subdir** for the test layer (split 2026-04-20):
+        - Kernel `TEST_CAT_*` -> `scripts/debug/kernel/run-<category>-tests.bat`
+        - User-mode `test_*.exe` -> `scripts/debug/usermode/run-<binary>.bat`
+        - Desktop UI -> `scripts/debug/desktop/run-<test>.bat`
+      If absent, flag it and add the bat to the right subdir (the per-binary user-mode bats are owned by the user-mode test framework TODO and may legitimately not exist yet -- a `**Note:**` in the Unit Tests section explaining the deferral is the alternative). Per-category bats MUST NOT live at the `scripts/debug/` root; that location is reserved for `run-all-tests.bat`.
     - If tests are missing: either add them during this review (for simple read-only checks) or flag with `**Test gap:** <description> -- needs test_<name>.c` in the stamp.
     - If no kernel-side testable surface exists (pure UEFI bootloader code), verify the TODO section has a `**Note:** No kernel test surface -- validation via serial log on WHPX.` note.
 

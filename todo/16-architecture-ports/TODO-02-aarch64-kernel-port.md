@@ -153,7 +153,8 @@ Save/restore SIMD state on context switch.
 
 ## 10. QEMU AArch64 Test Suite
 
-- [ ] `scripts/debug/run-aarch64.ps1` -- QEMU `-machine virt -cpu cortex-a72 -m 2G`
+- [ ] `scripts/machines/run-aarch64.ps1` -- QEMU `-machine virt -cpu cortex-a72 -m 2G`. Lives alongside `scripts/machines/run-qemu.ps1` (the x86-64 launcher), not under `scripts/debug/` which is reserved for test-category bat runners.
+- [ ] `scripts/debug/kernel/run-all-kernel-tests-aarch64.bat` -- Windows-side wrapper that invokes `scripts/machines/run-aarch64.ps1` with `-TestOnly`, parallel to the existing x86-64 `run-all-kernel-tests.bat` / `run-all-kernel-tests-tcg.bat` / `run-all-kernel-tests-1cpu.bat` family.
 - [ ] Boot to serial output, all unit tests pass
 - [ ] `ARCH=aarch64 bash scripts/build.sh` -> `=== BUILD OK ===`
 - [ ] Commit: `"arch: AArch64 QEMU test runner + full test suite pass"`

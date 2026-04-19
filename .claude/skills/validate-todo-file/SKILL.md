@@ -91,10 +91,16 @@ description: Validate a TODO file for structural completeness, Implementation Or
     - Each test case must be a specific assertion (function + expected value). Flag vague "test that X works" items.
     - If the Unit Tests section is missing entirely, flag it and draft a skeleton.
     - If a section defers a feature on purpose, ensure the Unit Tests plan makes room for the later real assertion or a temporary `TEST_PENDING` pattern rather than silently dropping test ownership.
-13. **Test runner bat file.**
-    - At the bottom of the `## Verification` section, ensure there is a one-line compact stamp: `**Test runner:** `scripts\debug\kernel\run-<suite>-tests.bat` (SUITE=<cat>) | N suites, 0 failures` (or `**Test runner:** N/A (<reason>) | validation: <how-verified>` for sections with no kernel test surface).
-    - Determine the `TEST_CAT_*` category from the Unit Tests section (e.g., `TEST_CAT_MM` -> `mm`, `TEST_CAT_SCHED` -> `sched`).
-    - Check if `scripts/debug/kernel/run-<suite>-tests.bat` exists on disk. If it does NOT exist, create it following the pattern in existing bat files (one-liner calling `run-qemu.ps1 -Accel whpx -TestOnly -TestSuite <suite>`).
+13. **Test runner bat file (subdir-aware).**
+    - At the bottom of the `## Verification` section, ensure there is a one-line compact stamp pointing at the **right subdir** for the test layer (the bat-runner subdirs split 2026-04-20: kernel-side TEST_CAT into `scripts/debug/kernel/`, user-mode `test_*.exe` into `scripts/debug/usermode/`, desktop UI into `scripts/debug/desktop/`):
+        - **Kernel TEST_CAT_* suite:** `**Test runner:** `scripts\debug\kernel\run-<suite>-tests.bat` (SUITE=<cat>) | N suites, 0 failures`
+        - **User-mode test binary:** `**Test runner:** `scripts\debug\usermode\run-<binary>.bat` (utest_filter=<binary>) | N suites, 0 failures`
+        - **Desktop UI test:** `**Test runner:** `scripts\debug\desktop\run-<test>.bat` | N suites, 0 failures`
+        - **No test surface:** `**Test runner:** N/A (<reason>) | validation: <how-verified>`
+    - Determine the test layer from the Unit Tests section: `TEST_CAT_*` enum value -> kernel; `user/test/test_*.c` mention -> user-mode; `src/desktop/` test mention -> desktop. Then determine the suite/binary/test name accordingly (e.g., `TEST_CAT_MM` -> `mm`, `test_syscall.exe` -> `test_syscall`).
+    - Check if the matching bat exists on disk in the right subdir. If it does NOT exist, create it following the pattern in existing bat files. The relative path `%~dp0..\..\machines\run-qemu.ps1` is correct for any of the three subdirs (one extra `..\` for the directory split).
+    - **Aggregate runners (one per subdir):** if creating a NEW per-category bat, also confirm the matching `run-all-<layer>-tests.bat` aggregate exists in the same subdir (`kernel/run-all-kernel-tests.bat`, `usermode/run-all-usermode-tests.bat`, `desktop/run-all-desktop-tests.bat`). The root `scripts/debug/run-all-tests.bat` chains all three aggregates and uses `if exist` so missing per-layer aggregates are no-ops; create them only when at least one per-category bat exists in the subdir.
+    - **Forbidden:** putting a per-category test bat at the `scripts/debug/` root. That location is reserved for `run-all-tests.bat` (the cross-layer aggregate) only; everything else lives in a kernel/usermode/desktop subdir.
     - Add the line to the Verification section if missing. Prefer the single-line pipe-separated format over splitting across `**Test runner:**` + `**Expected:**` blockquote lines.
 14. If section completion state seems wrong, defer to `/review-todo-section` (full Codex + domain quality sweep) or to step 17 of `/implement-todo-section` (cheap code-truth reconciliation) depending on how deep the audit needs to go.
 

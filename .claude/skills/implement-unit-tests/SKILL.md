@@ -427,6 +427,24 @@ If the existing categories don't fit, add a new one:
 2. **`src/kernel/test/test_runner.c`**: Add entries to both `cat_names[]` and `cat_labels[]` at the matching index
 3. **`src/boot/uefi/bootx64.c`**: The bootloader parses `test_suite=<name>` strings to category indices -- add the new short name to the parser if you want `SUITE=<name>` to work from the command line
 4. **`Makefile`**: Add a `test-<name>:` phony target: `@bash scripts/test.sh SUITE=<name>`
+5. **`scripts/debug/kernel/run-<name>-tests.bat`**: Author the Windows-side bat runner so the new category can be invoked selectively from native Windows. Mirror the existing one-liner shape (e.g. `scripts/debug/kernel/run-mm-tests.bat`):
+   ```bat
+   @echo off
+   :: run-<name>-tests.bat -- <one-line category description>
+   powershell.exe -ExecutionPolicy Bypass -File "%~dp0..\..\machines\run-qemu.ps1" -Accel whpx -TestOnly -TestSuite <name>
+   pause
+   ```
+   The `%~dp0..\..\machines\run-qemu.ps1` relative path is correct for the `scripts/debug/kernel/` subdir (the extra `..\` accounts for the directory split done 2026-04-20). DO NOT put the bat at `scripts/debug/run-<name>-tests.bat` (that root location is reserved for the cross-category aggregate `run-all-tests.bat`).
+
+## Authoring runners for non-kernel tests
+
+This skill primarily owns kernel-side `TEST_CAT_*` tests. When the TODO's Unit Tests section is for a different test layer, the bat-runner subdir changes:
+
+- **Kernel TEST_CAT_* suite** (this skill's primary case): `scripts/debug/kernel/run-<cat>-tests.bat`. Compile-built into the kernel image, runs at boot under the in-kernel test runner, scraped via `[TEST]`/`[ OK ]`/`[FAIL]` serial lines. The "Adding a New Category" section above covers this.
+- **User-mode test binary** (`user/test/test_*.exe`): `scripts/debug/usermode/run-<binary>.bat`. One bat per binary, each passing `utest_filter=<binary>` to QEMU so the kernel test launcher runs ONLY that binary. Owned by the user-mode test framework TODO; this skill does NOT author these directly.
+- **Desktop UI test**: `scripts/debug/desktop/run-<test>.bat`. Empty subdir today; bats land when the desktop UI test framework TODO ships. This skill does NOT author these directly.
+
+For all three subdirs, the root-level `scripts/debug/run-all-tests.bat` aggregate runner already chains the per-category aggregates (`kernel/run-all-kernel-tests.bat`, `usermode/run-all-usermode-tests.bat`, `desktop/run-all-desktop-tests.bat`) with cleanly-skipped no-ops where the category aggregate does not yet exist. New per-category bats land beside the aggregate; the aggregate picks them up automatically via `if exist ...`.
 
 ## Guardrails
 

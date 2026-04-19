@@ -123,7 +123,7 @@ When `create-todo` is invoked from the scope-gap protocol, the workflow is the s
       - `- [ ] Register in test_runner_init(): test_register_<feature>()`
       - `- [ ] Commit: "test: add <feature> test suite"`
     - Derive test cases from the implementation sections' deliverables.
-    - **Check if a new test category is needed.** If the subsystem doesn't fit existing `TEST_CAT_*` categories, note that a new `TEST_CAT_<NAME>` enum entry, `cat_names[]`/`cat_labels[]` entries, and `make test-<name>` Makefile target are needed. Reference the `implement-unit-tests` skill for the full procedure.
+    - **Check if a new test category is needed.** If the subsystem doesn't fit existing `TEST_CAT_*` categories, note that a new `TEST_CAT_<NAME>` enum entry, `cat_names[]`/`cat_labels[]` entries, and `make test-<name>` Makefile target are needed -- AND a new bat runner under the **right subdir** for the test layer (the bat-runner subdirs split 2026-04-20: kernel-side `TEST_CAT_*` -> `scripts/debug/kernel/run-<cat>-tests.bat`; user-mode `test_*.exe` -> `scripts/debug/usermode/run-<binary>.bat`; desktop UI -> `scripts/debug/desktop/run-<test>.bat`). Per-category bats MUST NOT live at the `scripts/debug/` root; that location is reserved for `run-all-tests.bat`. Reference the `implement-unit-tests` skill for the full procedure.
 
 12. **Add the Verification section.**
     - Concrete platform-specific verification items, not vague "build and test."
