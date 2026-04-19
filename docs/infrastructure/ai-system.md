@@ -316,6 +316,65 @@ Skills (`.claude/skills/`) are the primary repo-tracked surface for workflows; s
 
 ---
 
+## Autonomous-Agent Boundary Policy
+
+Autonomous coding agents (Copilot coding-agent, Devin, Cognition, equivalent tools that run tasks in sandboxes and open PRs without per-step human authorship) are **refused** here. Impossible OS accepts commits only from human operators working interactively with Claude Code. This is Authority Hierarchy invariant #5 ("Claude Code is also the interactive agent. A human operator talks to Claude; Claude dispatches subordinates.") enforced as repo policy rather than implied.
+
+### Why
+
+- **Kernel-critical review pipeline.** Every section commit goes through `/implement-todo-section` steps 13-18 or `/review-todo-section` Phases 2-4: mandatory Codex adversarial + quality dispatches, `superpowers:receiving-code-review` discipline on every finding, domain code-quality gates (boot, kernel, desktop, shell, userland), scope-gap protocol, self-review radar. Autonomous agents run their own pipelines that do not follow this one; their output cannot be accepted as final-state code.
+- **No-parallel-skill-trees invariant.** Hierarchy invariant #2 says skills live only under `.claude/skills/`. Autonomous agents like Copilot coding-agent read `.github/agents/*.agent.md` or `.github/chatmodes/*.md` as their instruction surface; shipping either would violate the invariant and create a parallel doctrine layer.
+- **"Works on QEMU" rejection.** The `feedback_no_substandard_code` rule rejects emulator-only shortcuts and platform-specific workarounds. Autonomous agents produce those patterns by default because they cannot test on bare metal, VirtualBox, or WHPX the way the project requires.
+
+### What this repo deliberately does NOT ship (forbidden-path list)
+
+The following files would enable autonomous-agent workflows; their **absence is policy, not omission**. A future edit that adds any of these paths will fail the [AI Workflow Regression Suite](../../todo/00-infrastructure/TODO-02-ai-development-system.md#9-ai-workflow-regression-suite).
+
+| Forbidden path                                | What it enables in other repos                                                                 |
+| --------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `.github/workflows/copilot-setup-steps.yml`   | Copilot cloud-agent environment setup (dependency install, build, test, network allowlist).   |
+| `.github/agents/*.agent.md`                   | Agent-mode profiles (personas, tool allowlists, domain scopes) for Copilot cloud-agent.       |
+| `.github/chatmodes/*.md`                      | Copilot Chat custom modes shared across the repo.                                              |
+| `.github/instructions/*.instructions.md`      | Per-topic repo instructions consumed by Copilot cloud-agent + IDE-side Copilot.               |
+| Copilot cloud-agent firewall allowlist        | Outbound network policy for the autonomous agent's sandbox.                                    |
+
+### Files Copilot cloud-agent MAY read but are NOT autonomous-agent enablement
+
+These paths exist in the repo for other reasons. Their presence does NOT imply acceptance of autonomous-agent PRs. If GitHub-side Copilot cloud-agent is ever enabled (repo-level setting in GitHub UI, not a file), it would consume these inputs in reviewer-mode only; autonomous-PR authorship is still refused under §8.
+
+| Allowed path                          | Purpose here                                                                                 | NOT enablement because...                                                                                  |
+| ------------------------------------- | -------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| [`.github/copilot-instructions.md`](../../.github/copilot-instructions.md) | Copilot-CLI reviewer-mode instructions (see Authority Hierarchy table).  | Reviewer contract (§4), not authorship; output goes through `receiving-code-review`.                        |
+| [`AGENTS.md`](../../AGENTS.md)        | Cross-tool pointer file (§6); Linux Foundation AGENTS.md standard.                           | Explicit "Autonomous-agent stop sign" sub-section tells autonomous agents to stop before opening a PR.     |
+| [`CLAUDE.md`](../../CLAUDE.md)        | Doctrine source-of-truth.                                                                    | Read by Claude Code + cross-tool readers; does not authorize autonomous PR creation.                        |
+
+### GitHub-side enablement note (regression pack cannot detect)
+
+Copilot cloud-agent can be enabled at the **repository or organization level in the GitHub UI** (Settings -> Copilot -> Access policies, or equivalent). That enablement is NOT a file in the repo; the regression suite cannot detect it. Enforcement is procedural: the project owner (`rizonesoft/impossible-os` org admin) keeps cloud-agent access policies set to "disabled for this repo" and audits the Settings pane whenever the org-wide Copilot configuration changes. A cloud-agent-authored PR appearing on the repo despite this policy is a process bug, not a repo bug; close the PR with a citation to this section and re-check the Settings pane.
+
+### MCP-server corollary
+
+MCP servers that can autonomously commit, push, create PRs, or execute long-running tasks without per-step human approval are **forbidden** from `.claude/settings.json` and from any user-local config used against this repo. They are the same autonomous-agent pattern in a different wrapper.
+
+Read-only MCP servers (filesystem read, git read, GitHub read, docs search, Microsoft Learn) are fine -- they return findings that Claude reads under `receiving-code-review` discipline, same as Codex and Copilot. See [MCP server boundary](#mcp-server-boundary) in §5 for the full shared-vs-user-local split.
+
+### Stance-change condition
+
+If Impossible OS ever opts in to autonomous-agent support, adoption ships as a **new top-level TODO** with:
+
+- Its own review pipeline (equivalent to `/implement-todo-section` steps 13-18 running inside the autonomous-agent sandbox before a PR is opened).
+- A `.github/workflows/copilot-setup-steps.yml` (or equivalent) that wires the agent to the domain code-quality gates and mandatory Codex dispatches.
+- An explicit firewall allowlist for the agent's network access.
+- A revised [Authority Hierarchy](#authority-hierarchy-read-this-first) row acknowledging the new autonomous class (Claude Code stays master; the autonomous agent would be a subordinate contributor, not an authority).
+
+Until that TODO ships, every autonomous-agent-authored PR fails review. Any reviewer can cite this section and close the PR with the refusal reason.
+
+### Why this is a competitive edge
+
+Mature Windows and Linux repos document whether they accept autonomous-agent PRs; **fewer document WHY and what they refuse to ship as a consequence**. Making the refusal explicit (and linking it to the Authority Hierarchy) keeps the Claude-Code-only stance enforceable long-term rather than degrading silently one reviewer-accepts-a-PR at a time.
+
+---
+
 ## See Also
 
 - [AI Development System roadmap](../../todo/00-infrastructure/TODO-02-ai-development-system.md) -- roadmap ownership, [Skill Lifecycle, Templates, and Catalog Rules](../../todo/00-infrastructure/TODO-02-ai-development-system.md#2-skill-lifecycle-templates-and-catalog-rules), [Hook Routing and Policy Contract](../../todo/00-infrastructure/TODO-02-ai-development-system.md#3-hook-routing-and-policy-contract), [External-Reviewer Contract](../../todo/00-infrastructure/TODO-02-ai-development-system.md#4-external-reviewer-contract-codex-copilot), [MCP, Permissions, and Extension Boundary](../../todo/00-infrastructure/TODO-02-ai-development-system.md#5-mcp-permissions-and-extension-boundary), [`AGENTS.md` Cross-Tool Pointer File](../../todo/00-infrastructure/TODO-02-ai-development-system.md#6-agentsmd-cross-tool-pointer-file), [AI-Assist Commit Disclosure Policy](../../todo/00-infrastructure/TODO-02-ai-development-system.md#7-ai-assist-commit-disclosure-policy), [Autonomous-Agent Boundary Policy](../../todo/00-infrastructure/TODO-02-ai-development-system.md#8-autonomous-agent-boundary-policy), and [AI Workflow Regression Suite](../../todo/00-infrastructure/TODO-02-ai-development-system.md#9-ai-workflow-regression-suite).
