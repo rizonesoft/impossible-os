@@ -44,7 +44,7 @@
 
 | ⭐  | Order | Deliverable                                         | Depends On                         | Status |
 | --- | :---: | --------------------------------------------------- | ---------------------------------- | :----: |
-| 💎  |   1   | User-mode test assertion macro and harness          | --                                 |  [ ]   |
+| 💎  |   1   | User-mode test assertion macro and harness          | --                                 |  [x]   |
 | 💎  |   2   | Userland syscall.h parity with kernel INT 0x80 ABI  | --                                 |  [ ]   |
 | 💎  |   3   | Kernel test launcher (run `test_*.exe` in sequence) | §1                                 |  [ ]   |
 | 💎  |   4   | Launcher manifest, timeouts, TAP, and skip policy   | §3                                 |  [ ]   |
@@ -70,18 +70,24 @@
 
 Minimal test harness for user-mode binaries: no kernel dependencies.
 
-- [ ] Create `user/include/test.h`:
-  ```c
-  #define UTEST_ASSERT(cond, msg) do { \
-      if (cond) { sys_write(1, "[PASS] ", 7); sys_write(1, msg, strlen(msg)); sys_write(1, "\n", 1); } \
-      else { sys_write(1, "[FAIL] ", 7); sys_write(1, msg, strlen(msg)); sys_write(1, "\n", 1); g_fail++; } \
-  } while(0)
-  ```
-- [ ] `g_fail` counter -- exit with `sys_exit(g_fail)` at end of main
-- [ ] `UTEST_BEGIN(name)` / `UTEST_END()` -- print suite header/footer
-- [ ] Commit: `"test: user-mode test assertion macro (user/include/test.h)"`
+- [x] [`user/include/test.h`](../../user/include/test.h) -- header-only macros that single-eval `cond` and `msg` and emit the documented `[PASS]`/`[FAIL]`/`[UTEST-BEGIN]`/`[UTEST-END]` lines via `sys_write(1, ...)`. Includes `syscall.h` + `string.h` (no kernel headers, no stdlib).
+- [x] `g_fail` counter wired via `extern int g_fail` in the header + `UTEST_DEFINE_STATE()` macro that emits the single definition in the test binary's main TU. Test binaries do `return g_fail;` (or `sys_exit(g_fail)`) -- exit code 0 means all assertions held.
+- [x] `UTEST_BEGIN(name)` emits `[UTEST-BEGIN] <name>\n`; `UTEST_END()` emits `[UTEST-END] all pass\n` when `g_fail == 0`, `[UTEST-END] some FAIL\n` otherwise -- lets a human reading raw serial spot the verdict without scrolling per-FAIL lines.
+- [x] [`user/test/test_harness_smoke.c`](../../user/test/test_harness_smoke.c) -- §1 demonstrator binary (~35 LOC, all-PASS) proving the macro compiles, links against crt0+libc, and produces the documented output. Three assertions: arithmetic (`1+1==2`), libc (`strlen("hello")==5`), syscall (`sys_uptime() >= 0`). Returns `g_fail` so when §3 launcher ships and auto-discovers `test_*.exe`, exit code 0 means the harness itself is healthy.
+- [x] Makefile extension: `userland` target now also builds `test_harness_smoke.exe` from the new `build/user/test/` subdir and deploys it to `$(SYSROOT)/test_harness_smoke.exe` alongside `hello.exe` and `cmd.exe`. Same crt0+libc link recipe; no separate libc copy.
+- [x] Commit: `"test: user-mode test assertion macro (user/include/test.h)"`
 
 **Test checkpoint:** Compile a trivial test binary using `UTEST_ASSERT`; it runs and exits cleanly. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal (build host only for the compile step).
+
+> **Test runner:** N/A (header + smoke binary; not a kernel TEST_CAT) | validation: `bash scripts/build.sh` produces `build/sysroot/test_harness_smoke.exe` (23 KiB). End-to-end runtime validation lands once §3 launcher ships and auto-discovers `test_*.exe` on disk.
+
+> **Notes:**
+> - Shipped [`user/include/test.h`](../../user/include/test.h) (~85 LOC) + [`user/test/test_harness_smoke.c`](../../user/test/test_harness_smoke.c) (~35 LOC). Header-only design; macros are do/while(0)-wrapped with single-eval semantics on `cond` and `msg` so callers can compose with if/else without dangling-else gotchas and without double-evaluating side-effecting expressions.
+> - `g_fail` linkage: `extern int g_fail` in the header + `UTEST_DEFINE_STATE()` one-line macro that emits the single definition in the binary's main TU. Multi-TU test binaries see the extern in every TU and link against the one definition; single-TU test binaries (the typical case) just call `UTEST_DEFINE_STATE();` once at file scope.
+> - Output contract is the wire format the §3 kernel launcher will scrape: `[PASS] msg`, `[FAIL] msg`, `[UTEST-BEGIN] name`, `[UTEST-END] all pass` / `[UTEST-END] some FAIL`. Byte counts in the macros (7, 14, 21, 22) match the literal string lengths exactly.
+> - Smoke binary deploys to `C:\test_harness_smoke.exe` on the IXFS image. The §3 launcher will pick it up by directory glob; in the meantime the binary just sits as a benign 23 KiB file -- no harm, no automated runtime invocation yet.
+> - Downstream consumers: §9-§13 subsystem test binaries all `#include "test.h"` and use the same `UTEST_*` macros. §15 build integration extends the Makefile rule pattern from this section to the full `user/test/test_*.c` glob.
+> - Scope boundary: §1 owns ONLY the header + the demonstrator binary + the Makefile entry point. The kernel-side launcher (§3), per-test isolation (§6), JUnit XML/JSON output formats (§7), and test-type taxonomy (§8) are all separate sections that consume this foundation.
 
 ---
 
@@ -316,20 +322,20 @@ Wire user-mode test binaries into `make test`.
 
 ## OS Comparison
 
-| ⭐  | Feature              | 🪟 Win11             | 🐧 Linux                | 🚀 Impossible OS       |
-| --- | -------------------- | -------------------- | ----------------------- | ---------------------- |
-| 💎  | User-mode test bins  | ✅ HLK               | ✅ kselftest            | ⬜ §1-§14              |
-| 💎  | Syscall coverage     | ✅ NtDll             | ✅ ptrace selftest      | ⬜ §9                  |
-| 💎  | Auto launcher        | ✅ HLK               | ✅ run_kselftest        | ⬜ §3                  |
-| 💎  | TAP or CI parse      | ✅ HLK XML           | ✅ TAP kselftest        | ⬜ §4, §15             |
-| 💎  | JUnit XML / JSON     | ✅ HLK XML           | ⚠️ kselftest TAP only  | ⬜ §7                  |
-| 💎  | Timeouts or skips    | ✅ HLK               | ✅ LKFT skip            | ⬜ §4                  |
-| 💎  | ABI header sync      | ✅ SDK               | ✅ uapi                 | ⬜ §2                  |
-| 💎  | Per-test isolation   | ✅ HLK session reset | ✅ kselftest fork+tmp   | ⬜ §6                  |
-| 💎  | Stress / longhaul    | ✅ TAEF Loop+Stress  | ✅ LTP runtest/stress   | ⬜ §8 stress type      |
+| ⭐  | Feature              | 🪟 Win11             | 🐧 Linux                 | 🚀 Impossible OS       |
+| --- | -------------------- | --------------------- | ------------------------ | ----------------------- |
+| 💎  | User-mode test bins  | ✅ HLK               | ✅ kselftest             | ⬜ §1-§14              |
+| 💎  | Syscall coverage     | ✅ NtDll             | ✅ ptrace selftest       | ⬜ §9                  |
+| 💎  | Auto launcher        | ✅ HLK               | ✅ run_kselftest         | ⬜ §3                  |
+| 💎  | TAP or CI parse      | ✅ HLK XML           | ✅ TAP kselftest         | ⬜ §4, §15             |
+| 💎  | JUnit XML / JSON     | ✅ HLK XML           | ⚠️ kselftest TAP only    | ⬜ §7                  |
+| 💎  | Timeouts or skips    | ✅ HLK               | ✅ LKFT skip             | ⬜ §4                  |
+| 💎  | ABI header sync      | ✅ SDK               | ✅ uapi                  | ⬜ §2                  |
+| 💎  | Per-test isolation   | ✅ HLK session reset | ✅ kselftest fork+tmp    | ⬜ §6                  |
+| 💎  | Stress / longhaul    | ✅ TAEF Loop+Stress  | ✅ LTP runtest/stress    | ⬜ §8 stress type      |
 | 💎  | Perf regression      | ✅ perfview/PerfTest | ✅ perf + flame baseline | ⬜ §8 perf type        |
-| ⭐  | Fault-inject bridge  | ⚠️ AppVerifier hooks | ⚠️ debugfs failslab     | ⬜ §5 SYS_FAULT_INJECT |
-| ⭐  | Win32 on non-Win     | ❌ N/A               | ❌ Wine only            | ⬜ §14                 |
+| ⭐  | Fault-inject bridge  | ⚠️ AppVerifier hooks | ⚠️ debugfs failslab      | ⬜ §5 SYS_FAULT_INJECT |
+| ⭐  | Win32 on non-Win     | ❌ N/A               | ❌ Wine only             | ⬜ §14                 |
 
 > **Parity gaps:** 💎 rows with ⬜ map to the listed sections. **⭐ rows:** §5 fault-inject bridge gives a typed `test=1`-gated kernel-allocator probe surface that AppVerifier hooks Win32 for and Linux only exposes through debugfs; §14 Win32-on-non-Win depends on `D02T12 §6` Win32 thunk landing.
 

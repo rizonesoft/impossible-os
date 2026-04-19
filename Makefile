@@ -365,12 +365,15 @@ USER_CFLAGS := --target=x86_64-elf \
                -mno-mmx -mno-sse -mno-sse2 -std=gnu11 -O2 -g \
                -MMD -MP
 
-userland: $(SYSROOT)/hello.exe $(SYSROOT)/cmd.exe
+userland: $(SYSROOT)/hello.exe $(SYSROOT)/cmd.exe $(SYSROOT)/test_harness_smoke.exe
 
-$(SYSROOT)/hello.exe $(SYSROOT)/cmd.exe &: sysroot user/hello.c user/cmd.c user/lib/crt0.asm \
-                                           user/lib/string.c user/lib/stdlib.c user/lib/stdio.c \
-                                           user/lib/ctype.c user/lib/math.c user/user.ld
-	@mkdir -p $(BUILD_DIR)/user/lib
+$(SYSROOT)/hello.exe $(SYSROOT)/cmd.exe $(SYSROOT)/test_harness_smoke.exe &: sysroot user/hello.c user/cmd.c \
+                                                                              user/test/test_harness_smoke.c \
+                                                                              user/include/test.h \
+                                                                              user/lib/crt0.asm \
+                                                                              user/lib/string.c user/lib/stdlib.c user/lib/stdio.c \
+                                                                              user/lib/ctype.c user/lib/math.c user/user.ld
+	@mkdir -p $(BUILD_DIR)/user/lib $(BUILD_DIR)/user/test
 	$(AS) -f elf64 -g user/lib/crt0.asm -o $(BUILD_DIR)/user/lib/crt0.o
 	$(CC) $(USER_CFLAGS) -Iuser/include -c user/lib/string.c -o $(BUILD_DIR)/user/lib/string.o
 	$(CC) $(USER_CFLAGS) -Iuser/include -c user/lib/stdlib.c -o $(BUILD_DIR)/user/lib/stdlib.o
@@ -391,9 +394,13 @@ $(SYSROOT)/hello.exe $(SYSROOT)/cmd.exe &: sysroot user/hello.c user/cmd.c user/
 	$(CC) $(USER_CFLAGS) -Iuser/include -Iinclude -c user/cmd.c -o $(BUILD_DIR)/user/cmd.o
 	$(LD) -nostdlib -static -T user/user.ld -o $(BUILD_DIR)/user/cmd.exe \
 		$(BUILD_DIR)/user/lib/crt0.o $(BUILD_DIR)/user/cmd.o $(BUILD_DIR)/user/libc.a
+	$(CC) $(USER_CFLAGS) -Iuser/include -c user/test/test_harness_smoke.c -o $(BUILD_DIR)/user/test/test_harness_smoke.o
+	$(LD) -nostdlib -static -T user/user.ld -o $(BUILD_DIR)/user/test/test_harness_smoke.exe \
+		$(BUILD_DIR)/user/lib/crt0.o $(BUILD_DIR)/user/test/test_harness_smoke.o $(BUILD_DIR)/user/libc.a
 	@cp -f $(BUILD_DIR)/user/hello.exe $(SYSROOT)/hello.exe
 	@cp -f $(BUILD_DIR)/user/cmd.exe $(SYSROOT)/cmd.exe
-	@echo "[USER] hello.exe + cmd.exe → sysroot"
+	@cp -f $(BUILD_DIR)/user/test/test_harness_smoke.exe $(SYSROOT)/test_harness_smoke.exe
+	@echo "[USER] hello.exe + cmd.exe + test_harness_smoke.exe → sysroot"
 
 ## iso: Package kernel + sysroot into a bootable UEFI ISO via GRUB (optional)
 iso: $(ISO_FILE)
