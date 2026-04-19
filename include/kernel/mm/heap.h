@@ -63,4 +63,33 @@ void     kmalloc_fail_countdown_set(uint32_t n);
 void     kmalloc_fail_countdown_clear(void);
 void     kmalloc_fail_next(void);
 uint64_t kmalloc_fail_injections_triggered(void);
+
+/* §6 extensions (task-filter + total-hits cap).
+ *
+ * task filter: when armed with a non-zero pid, the countdown only
+ * decrements for the matching task. Sibling kthreads and foreign tasks
+ * on the same CPU skip the hook completely (no countdown consumption),
+ * so a test that spawns helper kthreads on the SAME CPU isolates the
+ * injection to the intended consumer. Scope is PER-CPU: the countdown
+ * state lives in the armed CPU's per_cpu_data, so a task that
+ * migrates to a different CPU before calling the allocator does NOT
+ * trigger -- the test runner is sequential single-CPU (see §7), so
+ * this matches the usage pattern; cross-CPU migration-aware testing
+ * would need a future broadcast-to-all-CPUs variant.
+ *
+ * max-injections cap (with auto-reload): setting max_injections=N and
+ * arming the countdown (via _next or _set(1)) causes the next N
+ * qualifying calls to return NULL. After each fire, the countdown
+ * auto-reloads to 1 while fired_counter < max_injections, then stays
+ * at 0 once the cap is reached. Delivers 'fail N of the next M calls'
+ * multi-fire from a single arm. max_injections=0 disables the cap
+ * (classic single-shot countdown semantics).
+ *
+ * Calling _task_filter_set(0) or _max_injections_set(0) disables the
+ * respective gate. Both gates default to 0 after reset. */
+void     kmalloc_fail_task_filter_set(uint32_t task_pid);
+void     kmalloc_fail_task_filter_clear(void);
+void     kmalloc_fail_max_injections_set(uint32_t max);
+void     kmalloc_fail_max_injections_clear(void);
+uint32_t kmalloc_fail_fired_counter(void);
 #endif /* KERNEL_TESTS */

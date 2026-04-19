@@ -23,9 +23,83 @@
 #include "kernel/mm/swap.h"
 #include "kernel/mm/mmap.h"
 #include "kernel/panic.h"
+#ifdef KERNEL_TESTS
+#include "kernel/smp.h"                 /* smp_this_cpu() for per-CPU countdown */
+#include "kernel/sched/irql.h"          /* KeGetCurrentIrql for thread-context gate */
+#include "kernel/sched/task.h"          /* task_current() for §6 task-filter gate */
+#endif
 
 /* Page table entry -- 64-bit */
 typedef uint64_t pte_t;
+
+#ifdef KERNEL_TESTS
+/* Test-only vmm_map fault injection (kernel-test-harness roadmap). Same shape as the
+ * kmalloc/pmm hooks: IRQL gate, task filter, max-injections cap,
+ * per-CPU countdown. On fire, vmm_map_page returns -1 without touching
+ * page tables, so the caller's partial-map rollback path is exercised. */
+static uint64_t s_vmm_map_fault_injections;
+
+static int vmm_map_fault_should_fire(void)
+{
+    if (KeGetCurrentIrql() != PASSIVE_LEVEL)
+        return 0;
+    struct per_cpu_data *pc = smp_this_cpu();
+    if (!pc || !pc->vmm_map_fail_countdown)
+        return 0;
+
+    if (pc->vmm_map_fail_task_pid != 0) {
+        struct task *t = task_current();
+        if (!t || t->pid != pc->vmm_map_fail_task_pid)
+            return 0;
+    }
+    if (pc->vmm_map_fail_max_injections != 0 &&
+        pc->vmm_map_fail_fired_counter >= pc->vmm_map_fail_max_injections) {
+        return 0;
+    }
+    if (--pc->vmm_map_fail_countdown != 0)
+        return 0;
+
+    __atomic_fetch_add(&s_vmm_map_fault_injections, 1ull, __ATOMIC_RELAXED);
+    pc->vmm_map_fail_fired_counter++;
+    /* §6 auto-reload for multi-fire: see the heap-side comment. */
+    if (pc->vmm_map_fail_max_injections != 0 &&
+        pc->vmm_map_fail_fired_counter < pc->vmm_map_fail_max_injections) {
+        pc->vmm_map_fail_countdown = 1;
+    }
+    return 1;
+}
+
+void vmm_map_fail_countdown_set(uint32_t n) { smp_this_cpu()->vmm_map_fail_countdown = n; }
+void vmm_map_fail_countdown_clear(void)    { smp_this_cpu()->vmm_map_fail_countdown = 0; }
+void vmm_map_fail_next(void)               { smp_this_cpu()->vmm_map_fail_countdown = 1; }
+uint64_t vmm_map_fail_injections_triggered(void)
+{
+    return __atomic_load_n(&s_vmm_map_fault_injections, __ATOMIC_RELAXED);
+}
+void vmm_map_fail_task_filter_set(uint32_t task_pid)
+{
+    struct per_cpu_data *pc = smp_this_cpu();
+    pc->vmm_map_fail_task_pid     = task_pid;
+    pc->vmm_map_fail_fired_counter = 0;
+}
+void vmm_map_fail_task_filter_clear(void)  { smp_this_cpu()->vmm_map_fail_task_pid = 0; }
+void vmm_map_fail_max_injections_set(uint32_t max)
+{
+    struct per_cpu_data *pc = smp_this_cpu();
+    pc->vmm_map_fail_max_injections = max;
+    pc->vmm_map_fail_fired_counter  = 0;
+}
+void vmm_map_fail_max_injections_clear(void)
+{
+    struct per_cpu_data *pc = smp_this_cpu();
+    pc->vmm_map_fail_max_injections = 0;
+    pc->vmm_map_fail_fired_counter  = 0;
+}
+uint32_t vmm_map_fail_fired_counter(void)
+{
+    return smp_this_cpu()->vmm_map_fail_fired_counter;
+}
+#endif /* KERNEL_TESTS */
 
 /* Number of entries per page table level */
 #define PT_ENTRIES 512
@@ -149,6 +223,13 @@ int vmm_map_page(uintptr_t virt, uintptr_t phys, uint64_t flags)
 {
     pte_t *pdpt, *pd, *pt;
     uint64_t pml4i, pdpti, pdi, pti;
+
+#ifdef KERNEL_TESTS
+    /* §6 fault-inject -- check BEFORE any page-table modification so a
+     * forced failure leaves PTE state byte-identical to a real OOM. */
+    if (vmm_map_fault_should_fire())
+        return -1;
+#endif
 
     /* Align addresses to page boundaries */
     virt &= ~((uintptr_t)0xFFF);

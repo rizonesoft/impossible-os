@@ -70,3 +70,25 @@ int copy_from_user(void *dst, const void *user_src, uint32_t len);
 
 /* Copy len bytes from kernel buffer to user-space. SMAP-safe. */
 int copy_to_user(void *user_dst, const void *src, uint32_t len);
+
+#ifdef KERNEL_TESTS
+/* ---- Test-only copy_to_user / copy_from_user fault injection
+ * (kernel-test-harness roadmap; mirrors the kmalloc / pmm / vmm_map
+ * fault-inject API).
+ * Arms a per-CPU countdown that forces the next (or Nth) copy_to_user
+ * or copy_from_user to return -1 WITHOUT attempting the real user-
+ * space memory access. Syscall tests use this to prove their error
+ * paths propagate a user-copy failure without corrupting kernel state.
+ *
+ * Same gates: PASSIVE_LEVEL only, optional task-pid filter, optional
+ * max-injections cap. Released builds compile out. */
+void     copy_user_fail_countdown_set(uint32_t n);
+void     copy_user_fail_countdown_clear(void);
+void     copy_user_fail_next(void);
+uint64_t copy_user_fail_injections_triggered(void);
+void     copy_user_fail_task_filter_set(uint32_t task_pid);
+void     copy_user_fail_task_filter_clear(void);
+void     copy_user_fail_max_injections_set(uint32_t max);
+void     copy_user_fail_max_injections_clear(void);
+uint32_t copy_user_fail_fired_counter(void);
+#endif /* KERNEL_TESTS */

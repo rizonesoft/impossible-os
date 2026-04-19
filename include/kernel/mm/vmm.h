@@ -41,6 +41,29 @@
 #include "kernel/boot_init.h"
 boot_result_t vmm_init(void);
 
+#ifdef KERNEL_TESTS
+/* ---- Test-only VMM mapping fault injection (kernel-test-harness
+ * roadmap; see include/kernel/mm/heap.h for the canonical API shape).
+ *
+ * Mirrors the kmalloc + pmm fault-inject API shape. Arms a per-CPU
+ * countdown that forces the next (or Nth) `vmm_map_page()` call to
+ * return -1 WITHOUT touching page tables. Tests use this to exercise
+ * partial-map rollback: mid-operation failure must unwind any pages
+ * that were already mapped before the failed call.
+ *
+ * Same gates as the other hooks: PASSIVE_LEVEL only, optional task-pid
+ * filter, optional max-injections cap. Released builds compile out. */
+void     vmm_map_fail_countdown_set(uint32_t n);
+void     vmm_map_fail_countdown_clear(void);
+void     vmm_map_fail_next(void);
+uint64_t vmm_map_fail_injections_triggered(void);
+void     vmm_map_fail_task_filter_set(uint32_t task_pid);
+void     vmm_map_fail_task_filter_clear(void);
+void     vmm_map_fail_max_injections_set(uint32_t max);
+void     vmm_map_fail_max_injections_clear(void);
+uint32_t vmm_map_fail_fired_counter(void);
+#endif /* KERNEL_TESTS */
+
 /* Map a single 4 KiB page: virtual address → physical address with flags */
 int vmm_map_page(uintptr_t virt, uintptr_t phys, uint64_t flags);
 

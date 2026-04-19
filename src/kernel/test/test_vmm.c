@@ -151,6 +151,35 @@ static void test_vmm_map_user_page_roundtrip(void)
                    "vmm_get_physical returns 0 after unmap");
 }
 
+/* §6 VMM map fault injection: arming vmm_map_fail_next() forces the
+ * next vmm_map_page() to return -1 without touching page tables.
+ * Subsequent calls succeed normally. */
+static void test_vmm_map_fault_inject(void)
+{
+    uintptr_t frame = pmm_alloc_frame();
+    if (!frame) {
+        TEST_SKIP("pmm_alloc_frame failed");
+        return;
+    }
+
+    uint64_t pre = vmm_map_fail_injections_triggered();
+    uintptr_t test_virt = 0x0000000200010000ULL;  /* above 4 GiB ID map */
+
+    vmm_map_fail_next();
+    int r1 = vmm_map_page(test_virt, frame, VMM_KERNEL_RW);
+    TEST_ASSERT_EQ(r1, -1,
+                   "armed vmm_map_fail_next forces vmm_map_page to return -1");
+
+    /* Second call (countdown now cleared) should succeed. */
+    int r2 = vmm_map_page(test_virt, frame, VMM_KERNEL_RW);
+    TEST_ASSERT_EQ(r2, 0, "auto-cleared after fire -- next vmm_map_page succeeds");
+
+    TEST_ASSERT_EQ(vmm_map_fail_injections_triggered() - pre, 1u,
+                   "vmm_map injection counter advanced by exactly 1");
+
+    vmm_unmap_page(test_virt, 1);
+}
+
 void test_register_vmm(void)
 {
     test_suite_register_cat("VMM: map/read/unmap", test_vmm_map_roundtrip, TEST_CAT_MM);
@@ -159,6 +188,8 @@ void test_register_vmm(void)
     test_suite_register_cat("VMM: guard page install", test_vmm_guard_page_install, TEST_CAT_MM);
     test_suite_register_cat("VMM: map_user_page roundtrip",
                             test_vmm_map_user_page_roundtrip, TEST_CAT_MM);
+    test_suite_register_cat("VMM: fault-inject vmm_map_fail_next",
+                            test_vmm_map_fault_inject, TEST_CAT_MM);
 }
 
 #endif /* KERNEL_TESTS */

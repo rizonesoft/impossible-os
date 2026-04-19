@@ -18,6 +18,11 @@
 #include "kernel/mm/user_range.h"
 #include "kernel/boot_info.h"
 #include "kernel/klog.h"
+#ifdef KERNEL_TESTS
+#include "kernel/smp.h"                 /* smp_this_cpu() for per-CPU countdown */
+#include "kernel/sched/irql.h"          /* KeGetCurrentIrql for thread-context gate */
+#include "kernel/sched/task.h"          /* task_current() for §6 task-filter gate */
+#endif
 /* Linker symbols */
 extern char __kernel_end[];
 
@@ -241,9 +246,107 @@ boot_result_t pmm_init(void)
     return (total_frames > 0 && total_frames > used_frames) ? BOOT_OK : BOOT_FATAL;
 }
 
+#ifdef KERNEL_TESTS
+/* Aggregate count across all CPUs of pmm_alloc_* calls that were forced
+ * to return 0 by the fault-injection hook. Updated with __atomic ops so
+ * tests on either CPU read a coherent value. */
+static uint64_t s_pmm_fault_injections;
+
+/* Check the per-CPU pmm-fault gate. Returns 1 if the current call should
+ * be forced to return 0 (and updates per-CPU bookkeeping), 0 otherwise.
+ * Same gate set as the kmalloc hook:
+ *   - IRQL must be PASSIVE_LEVEL.
+ *   - Task filter: non-zero kmalloc_fail_task_pid restricts firings.
+ *   - Max-injections cap: fired_counter < max (or max == 0).
+ *   - Countdown: --countdown == 0 triggers fire.
+ * On fire, increments s_pmm_fault_injections + fired_counter. */
+static int pmm_fault_should_fire(void)
+{
+    if (KeGetCurrentIrql() != PASSIVE_LEVEL)
+        return 0;
+    struct per_cpu_data *pc = smp_this_cpu();
+    if (!pc || !pc->pmm_alloc_fail_countdown)
+        return 0;
+
+    if (pc->pmm_alloc_fail_task_pid != 0) {
+        struct task *t = task_current();
+        if (!t || t->pid != pc->pmm_alloc_fail_task_pid)
+            return 0;
+    }
+    if (pc->pmm_alloc_fail_max_injections != 0 &&
+        pc->pmm_alloc_fail_fired_counter >=
+            pc->pmm_alloc_fail_max_injections) {
+        return 0;
+    }
+    if (--pc->pmm_alloc_fail_countdown != 0)
+        return 0;
+
+    __atomic_fetch_add(&s_pmm_fault_injections, 1ull, __ATOMIC_RELAXED);
+    pc->pmm_alloc_fail_fired_counter++;
+    /* §6 auto-reload for multi-fire: see the heap-side comment. */
+    if (pc->pmm_alloc_fail_max_injections != 0 &&
+        pc->pmm_alloc_fail_fired_counter <
+            pc->pmm_alloc_fail_max_injections) {
+        pc->pmm_alloc_fail_countdown = 1;
+    }
+    return 1;
+}
+
+void pmm_alloc_fail_countdown_set(uint32_t n)
+{
+    smp_this_cpu()->pmm_alloc_fail_countdown = n;
+}
+void pmm_alloc_fail_countdown_clear(void)
+{
+    smp_this_cpu()->pmm_alloc_fail_countdown = 0;
+}
+void pmm_alloc_fail_next(void)
+{
+    smp_this_cpu()->pmm_alloc_fail_countdown = 1;
+}
+uint64_t pmm_alloc_fail_injections_triggered(void)
+{
+    return __atomic_load_n(&s_pmm_fault_injections, __ATOMIC_RELAXED);
+}
+void pmm_alloc_fail_task_filter_set(uint32_t task_pid)
+{
+    struct per_cpu_data *pc = smp_this_cpu();
+    pc->pmm_alloc_fail_task_pid     = task_pid;
+    pc->pmm_alloc_fail_fired_counter = 0;
+}
+void pmm_alloc_fail_task_filter_clear(void)
+{
+    smp_this_cpu()->pmm_alloc_fail_task_pid = 0;
+}
+void pmm_alloc_fail_max_injections_set(uint32_t max)
+{
+    struct per_cpu_data *pc = smp_this_cpu();
+    pc->pmm_alloc_fail_max_injections = max;
+    pc->pmm_alloc_fail_fired_counter  = 0;
+}
+void pmm_alloc_fail_max_injections_clear(void)
+{
+    struct per_cpu_data *pc = smp_this_cpu();
+    pc->pmm_alloc_fail_max_injections = 0;
+    pc->pmm_alloc_fail_fired_counter  = 0;
+}
+uint32_t pmm_alloc_fail_fired_counter(void)
+{
+    return smp_this_cpu()->pmm_alloc_fail_fired_counter;
+}
+#endif /* KERNEL_TESTS */
+
 uintptr_t pmm_alloc_frame(void)
 {
     uint64_t i, bit;
+
+#ifdef KERNEL_TESTS
+    /* Test-only hook: forced-failure path leaves the bitmap unaltered,
+     * so tests observe a real OOM shape on return. See
+     * pmm_fault_should_fire() for the gate set. */
+    if (pmm_fault_should_fire())
+        return 0;
+#endif
 
     for (i = 0; i < bitmap_size; i++) {
         if (bitmap[i] == 0xFF)
@@ -274,7 +377,16 @@ uintptr_t pmm_alloc_contiguous(uint64_t count)
     uint64_t f;
 
     if (count == 0) return 0;
+    /* count==1 delegates to pmm_alloc_frame, which runs its own
+     * fault-inject check -- avoids double-decrementing the countdown
+     * for a single-frame call routed through _contiguous. */
     if (count == 1) return pmm_alloc_frame();
+
+#ifdef KERNEL_TESTS
+    if (pmm_fault_should_fire())
+        return 0;
+#endif
+
 
     for (f = 0; f < total_frames; f++) {
         if (bitmap_test(f)) {

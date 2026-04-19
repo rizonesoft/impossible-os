@@ -958,6 +958,47 @@ static void test_pmc_ipc(void)
     TEST_ASSERT(ipc > 0, "pmc_ipc returns non-zero fixed-point IPC");
 }
 
+/* §6 copy_user fault injection: arming copy_user_fail_next() forces
+ * the next copy_to_user OR copy_from_user to return -1 without
+ * attempting the real memory access. Proves syscall error paths
+ * propagate user-copy failure as a non-zero return without corrupting
+ * the source/destination buffers. */
+static void test_copy_user_fault_inject(void)
+{
+    uint64_t pre = copy_user_fail_injections_triggered();
+
+    /* Use a kernel-side buffer as the "user" target -- the fault-inject
+     * path returns BEFORE the SMAP-gated copy runs, so whether the
+     * target is user-mode or kernel-mode doesn't matter for this test. */
+    uint8_t kernel_src[16];
+    uint8_t kernel_dst[16];
+    for (int i = 0; i < 16; i++) {
+        kernel_src[i] = (uint8_t)i;
+        kernel_dst[i] = 0xAA;
+    }
+
+    copy_user_fail_next();
+    int r1 = copy_to_user(kernel_dst, kernel_src, 16);
+    TEST_ASSERT_EQ(r1, -1, "copy_to_user returns -1 when injection armed");
+    /* Fault-inject returns BEFORE the copy loop, so kernel_dst stays 0xAA. */
+    TEST_ASSERT_EQ(kernel_dst[0], 0xAA, "kernel_dst[0] unchanged by forced-fail copy");
+    TEST_ASSERT_EQ(kernel_dst[15], 0xAA, "kernel_dst[15] unchanged by forced-fail copy");
+
+    /* Second call (countdown cleared after fire) succeeds and copies. */
+    int r2 = copy_to_user(kernel_dst, kernel_src, 16);
+    TEST_ASSERT_EQ(r2, 0, "auto-cleared after fire -- next copy_to_user succeeds");
+    TEST_ASSERT_EQ(kernel_dst[0], 0, "successful copy wrote kernel_src[0]");
+    TEST_ASSERT_EQ(kernel_dst[15], 15, "successful copy wrote kernel_src[15]");
+
+    /* copy_from_user shares the same gate. */
+    copy_user_fail_next();
+    int r3 = copy_from_user(kernel_dst, kernel_src, 16);
+    TEST_ASSERT_EQ(r3, -1, "copy_from_user returns -1 when injection armed");
+
+    TEST_ASSERT_EQ(copy_user_fail_injections_triggered() - pre, 2u,
+                   "copy_user injection counter advanced by exactly 2");
+}
+
 /* ---- Registration ---- */
 
 void test_register_x86(void)
@@ -1094,6 +1135,10 @@ void test_register_x86(void)
         test_pmc_out_of_range, TEST_CAT_X86);
     test_suite_register_cat("PMC: pmc_ipc non-zero",
         test_pmc_ipc, TEST_CAT_X86);
+
+    /* Kernel-test-harness roadmap: copy_user fault injection */
+    test_suite_register_cat("CPU security: copy_user fault-inject",
+        test_copy_user_fault_inject, TEST_CAT_X86);
 }
 
 #endif /* KERNEL_TESTS */

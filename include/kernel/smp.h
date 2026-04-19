@@ -131,10 +131,50 @@ struct per_cpu_data {
      * On each kmalloc() call, a non-zero value decrements; when the
      * decrement crosses from 1 to 0, that allocation returns NULL to
      * exercise caller failure-cleanup paths. Released builds compile
-     * the field out via KERNEL_TESTS -- zero runtime cost. See
-     * 00-infrastructure/kernel-test-harness specification. */
+     * the field out via KERNEL_TESTS -- zero runtime cost.
+     *
+     * §6 extensions:
+     *   *_task_pid      -- when non-zero, countdown only fires for
+     *                      task whose pid matches. Closes the SMP-
+     *                      migration hole where a test migrating
+     *                      between arm and code-under-test could lose
+     *                      the armed injection.
+     *   *_max_injections-- cap on total fires since last _set. 0 means
+     *                      no cap (classic single-shot). When the
+     *                      fired counter reaches this value, the hook
+     *                      stops firing even with countdown armed.
+     *   *_fired_counter -- internal: increments each time a trigger
+     *                      fires, reset by _max_injections_set.
+     *
+     * Every subsystem (kmalloc, pmm, vmm_map, copy_user) mirrors the
+     * same 4-field layout. See 00-infrastructure/kernel-test-harness
+     * specification.
+     */
+
+    /* §1 + §6 -- kmalloc fault injection (hook in src/kernel/mm/heap.c). */
     uint32_t          kmalloc_fail_countdown;
-    uint32_t          _kmalloc_fail_pad;
+    uint32_t          kmalloc_fail_task_pid;
+    uint32_t          kmalloc_fail_max_injections;
+    uint32_t          kmalloc_fail_fired_counter;
+
+    /* §6 -- pmm fault injection (hook in src/kernel/mm/pmm.c). */
+    uint32_t          pmm_alloc_fail_countdown;
+    uint32_t          pmm_alloc_fail_task_pid;
+    uint32_t          pmm_alloc_fail_max_injections;
+    uint32_t          pmm_alloc_fail_fired_counter;
+
+    /* §6 -- vmm_map_page fault injection (hook in src/kernel/mm/vmm.c). */
+    uint32_t          vmm_map_fail_countdown;
+    uint32_t          vmm_map_fail_task_pid;
+    uint32_t          vmm_map_fail_max_injections;
+    uint32_t          vmm_map_fail_fired_counter;
+
+    /* §6 -- copy_to_user / copy_from_user fault injection (hook in
+     * src/kernel/cpu_security.c). */
+    uint32_t          copy_user_fail_countdown;
+    uint32_t          copy_user_fail_task_pid;
+    uint32_t          copy_user_fail_max_injections;
+    uint32_t          copy_user_fail_fired_counter;
 #endif
 };
 

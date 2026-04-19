@@ -21,6 +21,7 @@
 #ifdef KERNEL_TESTS
 #include "kernel/smp.h"                 /* smp_this_cpu() for per-CPU countdown */
 #include "kernel/sched/irql.h"          /* KeGetCurrentIrql for thread-context gate */
+#include "kernel/sched/task.h"          /* task_current() for §6 task-filter gate */
 #endif
 /* Heap size constants */
 #define HEAP_INITIAL_PAGES  512      /* 512 pages = 2 MiB */
@@ -172,6 +173,44 @@ uint64_t kmalloc_fail_injections_triggered(void)
 {
     return __atomic_load_n(&s_kmalloc_fault_injections, __ATOMIC_RELAXED);
 }
+
+/* §6 task-filter: when non-zero, countdown only decrements for the
+ * task whose pid matches. Resets fired_counter so a new filter starts
+ * with a clean cap budget. */
+void kmalloc_fail_task_filter_set(uint32_t task_pid)
+{
+    struct per_cpu_data *pc = smp_this_cpu();
+    pc->kmalloc_fail_task_pid    = task_pid;
+    pc->kmalloc_fail_fired_counter = 0;
+}
+
+void kmalloc_fail_task_filter_clear(void)
+{
+    smp_this_cpu()->kmalloc_fail_task_pid = 0;
+}
+
+/* §6 max-injections cap: once fired_counter reaches this value, the
+ * hook stops firing even when the countdown is armed. 0 disables the
+ * cap (classic single-shot countdown). _set also zeros the fired
+ * counter so the cap is relative to the arm-point. */
+void kmalloc_fail_max_injections_set(uint32_t max)
+{
+    struct per_cpu_data *pc = smp_this_cpu();
+    pc->kmalloc_fail_max_injections = max;
+    pc->kmalloc_fail_fired_counter  = 0;
+}
+
+void kmalloc_fail_max_injections_clear(void)
+{
+    struct per_cpu_data *pc = smp_this_cpu();
+    pc->kmalloc_fail_max_injections = 0;
+    pc->kmalloc_fail_fired_counter  = 0;
+}
+
+uint32_t kmalloc_fail_fired_counter(void)
+{
+    return smp_this_cpu()->kmalloc_fail_fired_counter;
+}
 #endif /* KERNEL_TESTS */
 
 void *kmalloc(size_t size)
@@ -194,13 +233,45 @@ void *kmalloc(size_t size)
      * thread-context test that armed it -- turning the test
      * nondeterministic and giving false confidence. Tests that want to
      * inject into IRQ-context allocations need a different harness
-     * scoped to that context; §1 is thread-context only. */
+     * scoped to that context; §1 is thread-context only.
+     *
+     * §6 gates, applied in order (each skips the fire without touching
+     * the countdown so subsequent qualifying calls can still fire):
+     *   1. Task filter: kmalloc_fail_task_pid != 0 requires
+     *      task_current()->pid match.
+     *   2. Max-injections cap: if fired_counter has reached the cap,
+     *      don't fire (even with countdown armed). Cap of 0 = no cap.
+     *   3. Countdown check: --countdown == 0 triggers the fire. */
     if (KeGetCurrentIrql() == PASSIVE_LEVEL) {
         struct per_cpu_data *pc = smp_this_cpu();
         if (pc && pc->kmalloc_fail_countdown) {
-            if (--pc->kmalloc_fail_countdown == 0) {
+            int may_fire = 1;
+
+            if (pc->kmalloc_fail_task_pid != 0) {
+                struct task *t = task_current();
+                if (!t || t->pid != pc->kmalloc_fail_task_pid)
+                    may_fire = 0;
+            }
+
+            if (may_fire && pc->kmalloc_fail_max_injections != 0 &&
+                pc->kmalloc_fail_fired_counter >=
+                    pc->kmalloc_fail_max_injections) {
+                may_fire = 0;
+            }
+
+            if (may_fire && --pc->kmalloc_fail_countdown == 0) {
                 __atomic_fetch_add(&s_kmalloc_fault_injections, 1ull,
                                    __ATOMIC_RELAXED);
+                pc->kmalloc_fail_fired_counter++;
+                /* §6 auto-reload: with a max-injections cap set and
+                 * not yet reached, re-arm countdown=1 so the next
+                 * qualifying call fires too. Delivers the 'fail N of
+                 * the next M calls' multi-fire semantic from one arm. */
+                if (pc->kmalloc_fail_max_injections != 0 &&
+                    pc->kmalloc_fail_fired_counter <
+                        pc->kmalloc_fail_max_injections) {
+                    pc->kmalloc_fail_countdown = 1;
+                }
                 return (void *)0;
             }
         }

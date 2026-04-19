@@ -156,6 +156,65 @@ static void test_heap_fault_inject_irql_gate(void)
                    "IRQ-context allocation did not increment injection counter");
 }
 
+/* §6 task-filter: when kmalloc_fail_task_filter_set(pid) is armed,
+ * only calls from the matching task fire the countdown. Calls from
+ * foreign tasks skip the hook without consuming the countdown. */
+static void test_heap_fault_inject_task_filter(void)
+{
+    uint64_t pre = kmalloc_fail_injections_triggered();
+
+    /* Arm for foreign PID -- task_current()->pid is the runner thread,
+     * so our kmalloc should SKIP the hook with countdown untouched. */
+    kmalloc_fail_next();
+    kmalloc_fail_task_filter_set(0xFFFFFFFFu);
+    void *a = kmalloc(16);
+    TEST_ASSERT(a != NULL,
+                "task-filter skips non-matching task -- kmalloc succeeds");
+    kfree(a);
+    TEST_ASSERT_EQ(kmalloc_fail_injections_triggered(), pre,
+                   "injection counter unchanged when task-filter does not match");
+
+    /* Verify the countdown is STILL armed -- foreign-task filter path
+     * must not consume the countdown. Clear the filter and expect the
+     * next kmalloc to fire. */
+    kmalloc_fail_task_filter_clear();
+    void *b = kmalloc(16);
+    TEST_ASSERT(b == NULL,
+                "countdown still armed after task-filter skip -- fires now");
+    uint64_t post = kmalloc_fail_injections_triggered();
+    TEST_ASSERT_EQ(post - pre, 1u, "exactly one forced NULL after filter clear");
+}
+
+/* §6 max-injections cap with auto-reload: arming max_injections_set(N)
+ * and kmalloc_fail_next() ONCE causes the next N calls to return NULL;
+ * subsequent calls succeed. Proves the hook auto-reloads the countdown
+ * between fires while the cap has not been reached, then stops. */
+static void test_heap_fault_inject_max_cap(void)
+{
+    uint64_t pre = kmalloc_fail_injections_triggered();
+
+    kmalloc_fail_max_injections_set(3);
+    kmalloc_fail_next();   /* single arm; auto-reload fires the rest */
+
+    int null_hits = 0;
+    for (int i = 0; i < 10; i++) {
+        void *p = kmalloc(16);
+        if (!p) {
+            null_hits++;
+        } else {
+            kfree(p);
+        }
+    }
+    TEST_ASSERT_EQ(null_hits, 3,
+                   "max_injections=3 + single arm produces exactly 3 NULLs via auto-reload");
+    TEST_ASSERT_EQ(kmalloc_fail_injections_triggered() - pre, 3u,
+                   "injection counter advanced by exactly 3");
+    TEST_ASSERT_EQ(kmalloc_fail_fired_counter(), 3u,
+                   "per-CPU fired counter equals cap after auto-reload stops");
+
+    kmalloc_fail_max_injections_clear();
+}
+
 /* Test: krealloc grows allocation */
 static void test_heap_realloc(void)
 {
@@ -194,6 +253,10 @@ void test_register_heap(void)
                             test_heap_fault_inject_no_state_change, TEST_CAT_MM);
     test_suite_register_cat("Heap: fault-inject IRQL gate (IRQ context bypass)",
                             test_heap_fault_inject_irql_gate, TEST_CAT_MM);
+    test_suite_register_cat("Heap: fault-inject task-filter",
+                            test_heap_fault_inject_task_filter, TEST_CAT_MM);
+    test_suite_register_cat("Heap: fault-inject max-injections cap",
+                            test_heap_fault_inject_max_cap, TEST_CAT_MM);
 }
 
 #endif /* KERNEL_TESTS */

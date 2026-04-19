@@ -13,7 +13,10 @@
 #include "kernel/test/test.h"
 #include "kernel/klog.h"
 #include "kernel/timer.h"
-#include "kernel/mm/heap.h"             /* kmalloc_fail_countdown_clear (hygiene) */
+#include "kernel/mm/heap.h"             /* kmalloc_fail_* (hygiene) */
+#include "kernel/mm/pmm.h"              /* pmm_alloc_fail_* (hygiene) */
+#include "kernel/mm/vmm.h"              /* vmm_map_fail_* (hygiene) */
+#include "kernel/cpu_security.h"        /* copy_user_fail_* (hygiene) */
 #include "kernel/sched/irql.h"          /* KeGetCurrentIrql / KeLowerIrql for action drain */
 
 /* ---- Category names (must match test_category_t order) ---- */
@@ -460,12 +463,22 @@ void test_runner_run(void)
          * are freed even on assertion-induced early return. */
         test_actions_drain();
 
-        /* Defensive hygiene: if a suite armed the kmalloc fault-injection
-         * countdown and then failed an assertion before it fired, clear
-         * the counter so the next suite does not inherit a "fail the
-         * next kmalloc" trap. Test author forgetfulness is the usual
-         * source. No-op when the countdown is already zero. */
+        /* Defensive hygiene: clear every fault-injection arm state so
+         * a suite that armed a countdown and then failed an assertion
+         * before it fired cannot poison the next suite. Each _clear()
+         * is a single-field zero write; no-op when already zero. */
         kmalloc_fail_countdown_clear();
+        kmalloc_fail_task_filter_clear();
+        kmalloc_fail_max_injections_clear();
+        pmm_alloc_fail_countdown_clear();
+        pmm_alloc_fail_task_filter_clear();
+        pmm_alloc_fail_max_injections_clear();
+        vmm_map_fail_countdown_clear();
+        vmm_map_fail_task_filter_clear();
+        vmm_map_fail_max_injections_clear();
+        copy_user_fail_countdown_clear();
+        copy_user_fail_task_filter_clear();
+        copy_user_fail_max_injections_clear();
 
         uint32_t suite_fails = g_test_state.failed - pre_fail;
         (void)(g_test_state.passed - pre_pass);
