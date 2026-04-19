@@ -758,12 +758,12 @@ bash scripts/install-hooks.sh --remove       # unset core.hooksPath + drop pre-p
 | Hook | Path | Default | Blocks | Re-run manually |
 | ---- | ---- | ------- | ------ | --------------- |
 | `pre-commit` | [`.githooks/pre-commit`](../../.githooks/pre-commit) | **always on** once `core.hooksPath` is set | commit, on lint failure | `bash scripts/lint.sh` |
-| `post-commit` | [`.githooks/post-commit`](../../.githooks/post-commit) | **always on** | nothing (amends commit with `COUNT.md`) | `bash .githooks/post-commit` (will amend `HEAD`) |
+| `post-commit` | [`.githooks/post-commit`](../../.githooks/post-commit) | **always on** | nothing (amends commit with `COUNT.md`) | `COUNT_ONLY=1 bash .githooks/post-commit` (refresh only) or `bash .githooks/post-commit` (will amend `HEAD`) |
 | `pre-push` | [`.githooks/pre-push`](../../.githooks/pre-push) -> [`scripts/hooks/pre-push`](../../scripts/hooks/pre-push) | **opt-in** via `.git/.impossible-os-prepush` sentinel | push, on build or test failure | `bash scripts/build.sh && bash scripts/test.sh` |
 
 Mandatory (`always on`) vs opt-in matters because wall-clock cost differs:
 - `pre-commit` runs in under a millisecond when no C/H files are staged, and over staged files only when they actually changed.
-- `post-commit` regenerates the source-line tally in `COUNT.md` and amends -- silent on success.
+- `post-commit` regenerates the tracked code + supporting-text tally in `COUNT.md` and amends -- silent on success.
 - `pre-push` rebuilds and runs the full test suite (~10s on KVM, longer on TCG). That is why it is opt-in. GitHub Actions is the mandatory gate at PR time; `--with-pre-push` is for contributors who prefer to catch failures locally before the push leaves their machine.
 
 ### Pre-commit lint gate (always on)
@@ -781,7 +781,7 @@ Bypass for one commit: `git commit --no-verify ...` (strongly discouraged; lint 
 
 ### Post-commit COUNT.md refresh (always on)
 
-Regenerates [`COUNT.md`](../../COUNT.md) after every commit and amends the commit to include the refresh. Recurses once via `SKIP_COUNT=1` when amending. Silent on success. Disable for one commit with `SKIP_COUNT=1 git commit ...`.
+Regenerates [`COUNT.md`](../../COUNT.md) after every commit and amends the commit to include the refresh. The report tracks core code/tooling plus human-readable supporting text formats such as markdown, JSON, YAML, HTML, CSS, and config files, while leaving binary assets out of the line totals. Recurses once via `SKIP_COUNT=1` when amending. Silent on success. Disable for one commit with `SKIP_COUNT=1 git commit ...`. For a manual refresh without amending `HEAD`, run `COUNT_ONLY=1 bash .githooks/post-commit`.
 
 ### Pre-push build + test gate (opt-in)
 

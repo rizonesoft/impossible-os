@@ -8,7 +8,8 @@
 # .git/hooks/ directory is ignored. The repo ships three hooks:
 #   - .githooks/pre-commit   always-on: lints staged .c/.h; blocks commit
 #                            on lint failure.
-#   - .githooks/post-commit  always-on: regenerates COUNT.md, amends commit.
+#   - .githooks/post-commit  always-on: regenerates COUNT.md (core code +
+#                            supporting text counts), amends commit.
 #   - .githooks/pre-push     opt-in: delegates to scripts/hooks/pre-push
 #                            (full build + test.sh) when
 #                            .git/.impossible-os-prepush sentinel exists;

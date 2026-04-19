@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# post-commit hook: regenerate COUNT.md with source code line counts.
+# post-commit hook: regenerate COUNT.md with code and supporting text counts.
 # Runs silently after every commit. Amends the commit to include the update.
 # To disable temporarily: SKIP_COUNT=1 git commit ...
+# Manual refresh without amend: COUNT_ONLY=1 bash .githooks/post-commit
 
 [ "${SKIP_COUNT:-}" = "1" ] && exit 0
 
@@ -36,6 +37,32 @@ count_lines() {
     echo "$files $total"
 }
 
+is_vendored() {
+    local f="$1"
+    local v
+    for v in "${VENDORED[@]}"; do
+        [ "$f" = "$v" ] && return 0
+    done
+    return 1
+}
+
+# Count tracked files matched by git pathspecs, excluding vendored files.
+count_tracked_lines() {
+    local total=0
+    local files=0
+    local rel
+    local f
+    while IFS= read -r rel; do
+        [ -z "$rel" ] && continue
+        f="$ROOT/$rel"
+        [ -f "$f" ] || continue
+        is_vendored "$f" && continue
+        total=$((total + $(wc -l < "$f")))
+        files=$((files + 1))
+    done < <(git -C "$ROOT" ls-files -- "$@")
+    echo "$files $total"
+}
+
 # Kernel / OS source code
 read -r c_files c_lines <<< "$(count_lines c "$ROOT/src" "$ROOT/include")"
 read -r h_files h_lines <<< "$(count_lines h "$ROOT/src" "$ROOT/include")"
@@ -51,12 +78,10 @@ sdk_lines=$((sdk_c_lines + sdk_h_lines))
 read -r sh_files sh_lines <<< "$(count_lines sh "$ROOT/scripts" "$ROOT/sdk/scripts")"
 read -r bat_files bat_lines <<< "$(count_lines bat "$ROOT/scripts")"
 read -r ps1_files ps1_lines <<< "$(count_lines ps1 "$ROOT/scripts")"
-
-mk_files=0; mk_lines=0
-if [ -f "$ROOT/Makefile" ]; then
-    mk_files=1
-    mk_lines=$(wc -l < "$ROOT/Makefile")
-fi
+read -r py_files py_lines <<< "$(count_tracked_lines '*.py')"
+read -r js_files js_lines <<< "$(count_tracked_lines '*.js')"
+read -r inc_files inc_lines <<< "$(count_tracked_lines '*.inc')"
+read -r mk_files mk_lines <<< "$(count_tracked_lines '*Makefile')"
 
 ld_files=0; ld_lines=0
 while IFS= read -r f; do
@@ -64,15 +89,28 @@ while IFS= read -r f; do
     ld_lines=$((ld_lines + $(wc -l < "$f")))
 done < <(find "$ROOT/src" -type f \( -name "*.ld" -o -name "*.lds" \) 2>/dev/null)
 
+# Documentation and repo metadata
+read -r md_files md_lines <<< "$(count_tracked_lines '*.md')"
+read -r json_files json_lines <<< "$(count_tracked_lines '*.json')"
+read -r yaml_files yaml_lines <<< "$(count_tracked_lines '*.yml' '*.yaml')"
+read -r html_files html_lines <<< "$(count_tracked_lines '*.html')"
+read -r css_files css_lines <<< "$(count_tracked_lines '*.css')"
+read -r cfg_files cfg_lines <<< "$(count_tracked_lines '*.cfg' '*.conf')"
+
 # Totals
 code_files=$((c_files + h_files + asm_files))
 code_lines=$((c_lines + h_lines + asm_lines))
 
-infra_files=$((sh_files + bat_files + ps1_files + mk_files + ld_files))
-infra_lines=$((sh_lines + bat_lines + ps1_lines + mk_lines + ld_lines))
+infra_files=$((sh_files + bat_files + ps1_files + py_files + js_files + inc_files + mk_files + ld_files))
+infra_lines=$((sh_lines + bat_lines + ps1_lines + py_lines + js_lines + inc_lines + mk_lines + ld_lines))
 
-total_files=$((code_files + sdk_files + infra_files))
-total_lines=$((code_lines + sdk_lines + infra_lines))
+support_files=$((md_files + json_files + yaml_files + html_files + css_files + cfg_files))
+support_lines=$((md_lines + json_lines + yaml_lines + html_lines + css_lines + cfg_lines))
+
+core_total_files=$((code_files + sdk_files + infra_files))
+core_total_lines=$((code_lines + sdk_lines + infra_lines))
+counted_total_files=$((core_total_files + support_files))
+counted_total_lines=$((core_total_lines + support_lines))
 
 # Count vendored lines
 vendored_lines=0
@@ -94,8 +132,8 @@ NOW_EPOCH=$(date +%s)
 ELAPSED_DAYS=$(( (NOW_EPOCH - FIRST_COMMIT_EPOCH) / 86400 ))
 [ "$ELAPSED_DAYS" -lt 1 ] && ELAPSED_DAYS=1
 
-# equivalent team size = total_lines * 365 / (industry_rate * elapsed_days)
-EQUIV_DEVS=$(( total_lines * 365 / (INDUSTRY_LOC_PER_YEAR * ELAPSED_DAYS) ))
+# equivalent team size = core_total_lines * 365 / (industry_rate * elapsed_days)
+EQUIV_DEVS=$(( core_total_lines * 365 / (INDUSTRY_LOC_PER_YEAR * ELAPSED_DAYS) ))
 
 # Format elapsed time
 ELAPSED_MONTHS=$(( ELAPSED_DAYS / 30 ))
@@ -113,6 +151,118 @@ fi
 # Format numbers with commas: 144054 -> 144,054
 fmt() { echo "$1" | sed ':a;s/\B[0-9]\{3\}\>$/,&/;ta'; }
 
+hyphens() {
+    local n="$1"
+    [ "$n" -lt 3 ] && n=3
+    printf '%*s' "$n" '' | tr ' ' '-'
+}
+
+right_sep() {
+    local n="$1"
+    [ "$n" -lt 3 ] && n=3
+    printf '%s:' "$(hyphens $((n - 1)))"
+}
+
+make_table3() {
+    local header1="$1"
+    local header2="$2"
+    local header3="$3"
+    shift 3
+    local rows=("$@")
+    local row c1 c2 c3
+    local w1=${#header1}
+    local w2=${#header2}
+    local w3=${#header3}
+
+    for row in "${rows[@]}"; do
+        IFS=$'\t' read -r c1 c2 c3 <<< "$row"
+        [ ${#c1} -gt "$w1" ] && w1=${#c1}
+        [ ${#c2} -gt "$w2" ] && w2=${#c2}
+        [ ${#c3} -gt "$w3" ] && w3=${#c3}
+    done
+
+    {
+        printf '| %-*s | %*s | %*s |\n' "$w1" "$header1" "$w2" "$header2" "$w3" "$header3"
+        printf '| %s | %s | %s |\n' "$(hyphens "$w1")" "$(right_sep "$w2")" "$(right_sep "$w3")"
+        for row in "${rows[@]}"; do
+            IFS=$'\t' read -r c1 c2 c3 <<< "$row"
+            printf '| %-*s | %*s | %*s |\n' "$w1" "$c1" "$w2" "$c2" "$w3" "$c3"
+        done
+    }
+}
+
+make_table4() {
+    local header1="$1"
+    local header2="$2"
+    local header3="$3"
+    local header4="$4"
+    shift 4
+    local rows=("$@")
+    local row c1 c2 c3 c4
+    local w1=${#header1}
+    local w2=${#header2}
+    local w3=${#header3}
+    local w4=${#header4}
+
+    for row in "${rows[@]}"; do
+        IFS=$'\t' read -r c1 c2 c3 c4 <<< "$row"
+        [ ${#c1} -gt "$w1" ] && w1=${#c1}
+        [ ${#c2} -gt "$w2" ] && w2=${#c2}
+        [ ${#c3} -gt "$w3" ] && w3=${#c3}
+        [ ${#c4} -gt "$w4" ] && w4=${#c4}
+    done
+
+    {
+        printf '| %-*s | %*s | %*s | %*s |\n' "$w1" "$header1" "$w2" "$header2" "$w3" "$header3" "$w4" "$header4"
+        printf '| %s | %s | %s | %s |\n' "$(hyphens "$w1")" "$(right_sep "$w2")" "$(right_sep "$w3")" "$(right_sep "$w4")"
+        for row in "${rows[@]}"; do
+            IFS=$'\t' read -r c1 c2 c3 c4 <<< "$row"
+            printf '| %-*s | %*s | %*s | %*s |\n' "$w1" "$c1" "$w2" "$c2" "$w3" "$c3" "$w4" "$c4"
+        done
+    }
+}
+
+kernel_table="$(make_table3 "" "Files" "Lines" \
+    $'**C sources** (`.c`)\t'"${c_files}"$'\t'"${c_lines}" \
+    $'**Headers** (`.h`)\t'"${h_files}"$'\t'"${h_lines}" \
+    $'**Assembly** (`.asm`)\t'"${asm_files}"$'\t'"${asm_lines}" \
+    $'**Subtotal**\t**'"${code_files}"$'**\t**'"${code_lines}"$'**')"
+
+sdk_table="$(make_table3 "" "Files" "Lines" \
+    $'**C sources** (`.c`)\t'"${sdk_c_files}"$'\t'"${sdk_c_lines}" \
+    $'**Headers** (`.h`)\t'"${sdk_h_files}"$'\t'"${sdk_h_lines}" \
+    $'**Subtotal**\t**'"${sdk_files}"$'**\t**'"${sdk_lines}"$'**')"
+
+infra_table="$(make_table3 "" "Files" "Lines" \
+    $'**Shell scripts** (`.sh`)\t'"${sh_files}"$'\t'"${sh_lines}" \
+    $'**Batch scripts** (`.bat`)\t'"${bat_files}"$'\t'"${bat_lines}" \
+    $'**PowerShell** (`.ps1`)\t'"${ps1_files}"$'\t'"${ps1_lines}" \
+    $'**Python** (`.py`)\t'"${py_files}"$'\t'"${py_lines}" \
+    $'**JavaScript** (`.js`)\t'"${js_files}"$'\t'"${js_lines}" \
+    $'**Include fragments** (`.inc`)\t'"${inc_files}"$'\t'"${inc_lines}" \
+    $'**Makefile**\t'"${mk_files}"$'\t'"${mk_lines}" \
+    $'**Linker scripts** (`.ld`/`.lds`)\t'"${ld_files}"$'\t'"${ld_lines}" \
+    $'**Subtotal**\t**'"${infra_files}"$'**\t**'"${infra_lines}"$'**')"
+
+support_table="$(make_table3 "" "Files" "Lines" \
+    $'**Markdown** (`.md`)\t'"${md_files}"$'\t'"${md_lines}" \
+    $'**JSON** (`.json`)\t'"${json_files}"$'\t'"${json_lines}" \
+    $'**YAML** (`.yml`/`.yaml`)\t'"${yaml_files}"$'\t'"${yaml_lines}" \
+    $'**HTML** (`.html`)\t'"${html_files}"$'\t'"${html_lines}" \
+    $'**CSS** (`.css`)\t'"${css_files}"$'\t'"${css_lines}" \
+    $'**Config** (`.cfg`/`.conf`)\t'"${cfg_files}"$'\t'"${cfg_lines}" \
+    $'**Subtotal**\t**'"${support_files}"$'**\t**'"${support_lines}"$'**')"
+
+grand_total_table="$(make_table3 "" "Files" "Lines" \
+    $'**Core code + tooling**\t**'"${core_total_files}"$'**\t**'"${core_total_lines}"$'**' \
+    $'**Supporting text + metadata**\t**'"${support_files}"$'**\t**'"${support_lines}"$'**' \
+    $'**All counted text files**\t**'"${counted_total_files}"$'**\t**'"${counted_total_lines}"$'**')"
+
+impossibility_table="$(make_table4 "" "Linux" "Windows" "Impossible OS" \
+    $'**Core code + tooling lines**\t~28,000,000\t~50,000,000\t'"$(fmt "${core_total_lines}")" \
+    $'**Developers**\t~1,000 active\t~5,000 peak\t1' \
+    $'**Time span**\t33 years\t40 years\t'"${ELAPSED_STR}")"
+
 cat > "$COUNT_FILE" << EOF
 # 📊 Impossible OS — Line Count
 
@@ -129,39 +279,27 @@ cat > "$COUNT_FILE" << EOF
 
 ## Kernel & OS Code
 
-| | Files | Lines |
-|---|---:|---:|
-| **C sources** (\`.c\`) | ${c_files} | ${c_lines} |
-| **Headers** (\`.h\`) | ${h_files} | ${h_lines} |
-| **Assembly** (\`.asm\`) | ${asm_files} | ${asm_lines} |
-| **Subtotal** | **${code_files}** | **${code_lines}** |
+${kernel_table}
 
 ## SDK Tools
 
-| | Files | Lines |
-|---|---:|---:|
-| **C sources** (\`.c\`) | ${sdk_c_files} | ${sdk_c_lines} |
-| **Headers** (\`.h\`) | ${sdk_h_files} | ${sdk_h_lines} |
-| **Subtotal** | **${sdk_files}** | **${sdk_lines}** |
+${sdk_table}
 
 ## Build System & Scripts
 
-| | Files | Lines |
-|---|---:|---:|
-| **Shell scripts** (\`.sh\`) | ${sh_files} | ${sh_lines} |
-| **Batch scripts** (\`.bat\`) | ${bat_files} | ${bat_lines} |
-| **PowerShell** (\`.ps1\`) | ${ps1_files} | ${ps1_lines} |
-| **Makefile** | ${mk_files} | ${mk_lines} |
-| **Linker scripts** (\`.ld\`/\`.lds\`) | ${ld_files} | ${ld_lines} |
-| **Subtotal** | **${infra_files}** | **${infra_lines}** |
+${infra_table}
+
+## Documentation & Project Metadata
+
+${support_table}
 
 ## Grand Total
 
-| | Files | Lines |
-|---|---:|---:|
-| **All project code** | **${total_files}** | **${total_lines}** |
+${grand_total_table}
 
 > Vendored code excluded: ~${vendored_lines} lines (\`stb_image.h\`, \`stb_truetype.h\`, \`efi.h\`)
+>
+> Binary assets such as fonts, images, certificates, EFI blobs, and cursor resources are not line-counted.
 
 ---
 
@@ -172,14 +310,10 @@ cat > "$COUNT_FILE" << EOF
 > Entire university courses teach that operating systems are a multi-decade, multi-hundred-
 > person endeavor. One developer apparently missed that lecture.*
 
-| | Linux | Windows | Impossible OS |
-|---|---:|---:|---:|
-| **Lines of code** | ~28,000,000 | ~50,000,000 | $(fmt ${total_lines}) |
-| **Developers** | ~1,000 active | ~5,000 peak | 1 |
-| **Time span** | 33 years | 40 years | ${ELAPSED_STR} |
+${impossibility_table}
 
-> At industry rates (10,000 LOC/developer/year -- COCOMO II), writing $(fmt ${total_lines})
-> lines of kernel code would take **${EQUIV_DEVS} developers** working for **${ELAPSED_STR}**.
+> At industry rates (10,000 LOC/developer/year -- COCOMO II), writing $(fmt ${core_total_lines})
+> lines of core code and tooling would take **${EQUIV_DEVS} developers** working for **${ELAPSED_STR}**.
 >
 > *The "impossible" in Impossible OS was supposed to be the name, not the development method.*
 
@@ -187,6 +321,8 @@ cat > "$COUNT_FILE" << EOF
 
 *Last updated: ${commit_date} · commit \`${commit_hash}\`*
 EOF
+
+[ "${COUNT_ONLY:-}" = "1" ] && exit 0
 
 # Amend the commit to include the updated COUNT.md
 # Use SKIP_COUNT to prevent infinite recursion
