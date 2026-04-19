@@ -28,7 +28,7 @@
 
 struct scratch_rec {
     void    *ptr;    /* pointer returned to user (matches buffer base) */
-    uint32_t pages;  /* 0 = kmalloc allocation, >0 = pmm page count */
+    uint64_t pages;  /* 0 = kmalloc allocation, >0 = pmm page count */
 };
 
 static struct scratch_rec s_recs[TEST_SCRATCH_MAX];
@@ -39,6 +39,17 @@ void *test_scratch_alloc(size_t bytes)
     if (bytes == 0)
         return (void *)0;
 
+    /* Reject requests whose ceiling-division would overflow size_t.
+     * pmm_alloc_contiguous couldn't satisfy anything near that size
+     * anyway (would need > SIZE_MAX - 4095 bytes of RAM); catching it
+     * here keeps the arithmetic below wrap-free and the pages field
+     * honest. */
+    if (bytes > ((size_t)-1) - (PMM_FRAME_SIZE - 1)) {
+        klog(LOG_WARN, "TEST",
+             "test_scratch_alloc: request too large (would overflow size_t)");
+        return (void *)0;
+    }
+
     if (s_rec_count >= TEST_SCRATCH_MAX) {
         klog(LOG_WARN, "TEST",
              "test_scratch_alloc: record table full (%u slots)",
@@ -47,20 +58,22 @@ void *test_scratch_alloc(size_t bytes)
     }
 
     void    *ptr;
-    uint32_t pages = 0;
+    uint64_t pages = 0;
 
     if (bytes <= PMM_FRAME_SIZE) {
         /* Fits in the heap per project <= 4 KiB kmalloc rule. */
         ptr = kmalloc(bytes);
     } else {
         /* Larger -- round up to page count and use PMM. Avoids
-         * dominating the ~2 MiB kernel heap with a single buffer. */
+         * dominating the ~2 MiB kernel heap with a single buffer.
+         * Keeps the page count as uint64_t end-to-end so pmm_free_frame
+         * gets the same count the alloc requested, no truncation. */
         uint64_t count = (bytes + PMM_FRAME_SIZE - 1) / PMM_FRAME_SIZE;
         uintptr_t phys = pmm_alloc_contiguous(count);
         if (!phys)
             return (void *)0;
         ptr   = (void *)phys;
-        pages = (uint32_t)count;
+        pages = count;
     }
 
     if (!ptr)
@@ -79,9 +92,9 @@ void test_scratch_free(void *ctx)
 
     for (uint8_t i = 0; i < s_rec_count; i++) {
         if (s_recs[i].ptr == ctx) {
-            uint32_t pages = s_recs[i].pages;
+            uint64_t pages = s_recs[i].pages;
             if (pages) {
-                for (uint32_t j = 0; j < pages; j++)
+                for (uint64_t j = 0; j < pages; j++)
                     pmm_free_frame((uintptr_t)ctx + (uintptr_t)j * PMM_FRAME_SIZE);
             } else {
                 kfree(ctx);
