@@ -70,6 +70,10 @@ typedef struct {
     uint32_t pending;       /* condition holds but feature is intentionally
                              * deferred (slot reserved before its subsystem
                              * ships) -- see TEST_PENDING below */
+    uint32_t leaked;        /* suite bodies that left non-zero heap delta
+                             * after the §7 action drain, absent an
+                             * explicit TEST_EXPECT_LEAK. Advisory until
+                             * all existing tests clean up. */
     uint32_t suite_count;
     uint32_t suites_passed;
     uint32_t suites_failed;
@@ -114,6 +118,42 @@ void _test_skip(const char *msg, const char *file, int line);
  * features are reserved-but-unimplemented at a glance. */
 void _test_pending(int condition, const char *msg,
                    const char *file, int line);
+
+/* Per-test heap-leak detection opt-out macros.
+ *
+ * TEST_EXPECT_LEAK(bytes, reason) -- the current test expects to leave
+ * at least `bytes` bytes on the heap after the §7 action drain. The
+ * classifier renders [LEAK-OK] (no counter bump) when the observed
+ * positive delta is >= `bytes`; otherwise the post-drain delta still
+ * triggers [LEAK]. `bytes` MUST be > 0; non-positive values are
+ * rejected as malformed and do NOT arm the opt-out (so a stale
+ * TEST_EXPECT_LEAK(-1, ...) cannot mask a real leak). Use for tests
+ * that register long-lived state (object type registration, SSDT slot
+ * reservation).
+ *
+ * TEST_LEAK_IGNORE(reason) -- the current test does not use the heap
+ * as its primary allocator (e.g. PMM or VMM tests). The delta check
+ * is bypassed entirely; renders as [LEAK-SKIP]. Reserve for tests
+ * that genuinely exercise a non-heap path; prefer TEST_EXPECT_LEAK
+ * over TEST_LEAK_IGNORE when the exact leak amount is known.
+ *
+ * Both macros take effect for the current suite only; state clears at
+ * the start of the next suite. */
+void _test_expect_leak(int64_t bytes, const char *reason);
+void _test_leak_ignore(const char *reason);
+
+#define TEST_EXPECT_LEAK(bytes, reason) \
+    _test_expect_leak((int64_t)(bytes), (reason))
+#define TEST_LEAK_IGNORE(reason) \
+    _test_leak_ignore((reason))
+
+/* Diagnostic: the signed heap-usage delta across the most-recently-
+ * completed suite (= heap_get_used() after action drain minus the
+ * snapshot taken before the suite body). Cleared to 0 when the next
+ * suite starts. Used by the harness regression tests to verify the
+ * detector actually observed a leak without having to emit a [LEAK]
+ * line that would pollute the summary L counter. */
+int64_t test_runner_last_leak_delta(void);
 
 /* Register a test-scoped cleanup action. Invoked in LIFO order after the
  * currently-running suite's body returns (pass or fail), before the
@@ -189,6 +229,9 @@ static inline void test_runner_init(void) {}
 
 static inline int test_add_action(void (*fn)(void *) __attribute__((unused)),
                                    void *ctx __attribute__((unused))) { return 0; }
+
+#define TEST_EXPECT_LEAK(bytes, reason) ((void)0)
+#define TEST_LEAK_IGNORE(reason)        ((void)0)
 
 #define TEST_ASSERT(cond, msg)      ((void)0)
 #define TEST_ASSERT_EQ(a, b, msg)   ((void)0)

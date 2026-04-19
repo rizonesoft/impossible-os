@@ -56,11 +56,42 @@ test_state_t g_test_state = {
     .failed        = 0,
     .skipped       = 0,
     .pending       = 0,
+    .leaked        = 0,
     .suite_count   = 0,
     .suites_passed = 0,
     .suites_failed = 0,
     .current_suite = "unknown",
 };
+
+/* Per-test heap-leak detection state. File-scope static (not in the
+ * public test_state_t) so the ABI stays minimal. Reset before each
+ * suite body; read after the §7 action drain completes. */
+static uint64_t    s_heap_used_at_entry;
+static int64_t     s_expected_leak_bytes;
+static int         s_leak_ignore;
+static const char *s_leak_reason;
+static int64_t     s_last_leak_delta;    /* diagnostic for harness tests */
+
+void _test_expect_leak(int64_t bytes, const char *reason)
+{
+    /* Clamp non-positive at the API boundary: a stale
+     * TEST_EXPECT_LEAK(-1, ...) or TEST_EXPECT_LEAK(0, ...) must NOT
+     * arm the opt-out. The classifier double-checks bytes > 0 before
+     * accepting a [LEAK-OK]. */
+    s_expected_leak_bytes = (bytes > 0) ? bytes : 0;
+    s_leak_reason         = reason;
+}
+
+void _test_leak_ignore(const char *reason)
+{
+    s_leak_ignore = 1;
+    s_leak_reason = reason;
+}
+
+int64_t test_runner_last_leak_delta(void)
+{
+    return s_last_leak_delta;
+}
 
 static test_category_t g_filter = TEST_CAT_ALL;
 static int             g_quiet  = 0;
@@ -455,6 +486,21 @@ void test_runner_run(void)
         /* Start each suite with an empty action stack. */
         test_actions_reset();
 
+        /* Per-test heap-leak snapshot. Reset opt-out flags so a suite
+         * that does NOT call TEST_EXPECT_LEAK / TEST_LEAK_IGNORE gets
+         * the strict (delta != 0 -> [LEAK]) contract.
+         *
+         * s_last_leak_delta is intentionally NOT reset here -- a verify
+         * suite reads the previous suite's delta via
+         * test_runner_last_leak_delta() inside its own body. The post-
+         * drain block below overwrites it with the current suite's
+         * delta after this body returns, so each suite reads the
+         * IMMEDIATELY-PRECEDING completed suite's value. */
+        s_heap_used_at_entry  = heap_get_used();
+        s_expected_leak_bytes = 0;
+        s_leak_ignore         = 0;
+        s_leak_reason         = (void *)0;
+
         s->fn();
 
         /* Drain any actions the suite registered via test_add_action().
@@ -462,6 +508,54 @@ void test_runner_run(void)
          * failed -- that's the whole point of the registry: resources
          * are freed even on assertion-induced early return. */
         test_actions_drain();
+
+        /* Leak check runs AFTER the action drain so tests that use
+         * TEST_SCRATCH_KBUF or TEST_KLOG_SUPPRESS (both register
+         * cleanup via §7) get clean delta=0. The delta is the signed
+         * difference in heap_get_used(); kmalloc includes block-
+         * header overhead so an intentional kmalloc(64) without
+         * kfree typically produces delta > 64. */
+        int64_t heap_after = (int64_t)heap_get_used();
+        s_last_leak_delta = heap_after - (int64_t)s_heap_used_at_entry;
+
+        if (s_leak_ignore) {
+            klog(LOG_INFO, "TEST",
+                 "%s :: [LEAK-SKIP] %s",
+                 s->name,
+                 s_leak_reason ? s_leak_reason : "(no reason)");
+        } else if (s_last_leak_delta > 0) {
+            /* Only positive deltas are leaks. A negative delta means
+             * the heap shrank during the suite (e.g. a verify suite
+             * frees a buffer the previous suite intentionally leaked,
+             * or a background kthread freed boot-path state). Silent
+             * by design -- not a leak. */
+            if (s_expected_leak_bytes > 0 &&
+                s_last_leak_delta >= s_expected_leak_bytes) {
+                /* TEST_EXPECT_LEAK armed with a positive byte count and
+                 * the observed positive delta meets-or-exceeds it. The
+                 * lower-bound match (>=) tolerates kmalloc block-header
+                 * overhead -- a kmalloc(64) unfreed surfaces as ~72-80
+                 * byte delta. Tests that need strict equality should
+                 * use TEST_ASSERT_EQ on heap_get_used() directly.
+                 *
+                 * Negative or zero `bytes` is rejected as malformed
+                 * (not an opt-out) so a stale TEST_EXPECT_LEAK(-1, ...)
+                 * or TEST_EXPECT_LEAK(0, ...) cannot mask a real leak. */
+                klog(LOG_INFO, "TEST",
+                     "%s :: [LEAK-OK] intentional %lu bytes (%s)",
+                     s->name,
+                     (uint64_t)(s_last_leak_delta > 0 ? s_last_leak_delta : -s_last_leak_delta),
+                     s_leak_reason ? s_leak_reason : "(no reason)");
+            } else {
+                klog(LOG_ERROR, "TEST",
+                     "%s :: [LEAK] leaked %lu bytes (entry %lu -> exit %lu)",
+                     s->name,
+                     (uint64_t)(s_last_leak_delta > 0 ? s_last_leak_delta : -s_last_leak_delta),
+                     s_heap_used_at_entry,
+                     (uint64_t)heap_after);
+                g_test_state.leaked++;
+            }
+        }
 
         /* Defensive hygiene: clear every fault-injection arm state so
          * a suite that armed a countdown and then failed an assertion
@@ -496,20 +590,27 @@ void test_runner_run(void)
     uint32_t total = g_test_state.passed + g_test_state.failed;
     uint32_t skipped = g_test_state.skipped;
     uint32_t pending = g_test_state.pending;
+    uint32_t leaked  = g_test_state.leaked;
 
     /* Single canonical summary including pending (deferred-feature
-     * stubs). The pending count lets a glance at the boot log answer
-     * "how many features are still incomplete?" without grepping. */
+     * stubs) and leaked (suites with non-zero heap_get_used delta
+     * absent TEST_EXPECT_LEAK). 'tests passed' prefix is load-bearing
+     * for scripts/test.sh's summary regex. Leaks are advisory until
+     * all existing tests reach L=0; then the runner will gate on them. */
     if (g_test_state.failed == 0) {
         klog(LOG_INFO, "TEST",
-             "=== %u tests passed, 0 failed, %u skipped, %u pending (%u.%us) ===",
+             "=== %u tests passed, 0 failed, %u skipped, %u pending, %u leaked (%u.%us) ===",
              (uint64_t)total, (uint64_t)skipped, (uint64_t)pending,
-             run_sec, run_frac);
+             (uint64_t)leaked, run_sec, run_frac);
     } else {
+        /* Failure form keeps the 'tests passed' prefix so
+         * scripts/test.sh:184's `=== [0-9]+ tests? passed` regex still
+         * extracts the summary line on a non-zero-failure run. The
+         * extra fields (FAILED count, of-total) are appended after. */
         klog(LOG_ERROR, "TEST",
-             "=== %u passed, %u FAILED, %u skipped, %u pending (of %u) (%u.%us) ===",
+             "=== %u tests passed, %u FAILED, %u skipped, %u pending, %u leaked (of %u) (%u.%us) ===",
              (uint64_t)g_test_state.passed, (uint64_t)g_test_state.failed,
-             (uint64_t)skipped, (uint64_t)pending,
+             (uint64_t)skipped, (uint64_t)pending, (uint64_t)leaked,
              (uint64_t)total, run_sec, run_frac);
     }
 }
