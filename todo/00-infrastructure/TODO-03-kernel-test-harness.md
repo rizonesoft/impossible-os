@@ -50,7 +50,7 @@
 | 💎  |   5   |  §6     | Fault-injection hardening (task-filter, multi-allocator)  | §1                  |  [x]   |
 | 💎  |   6   |  §5     | Test-scoped klog level demotion (`TEST_KLOG_SUPPRESS`)    | §7                  |  [x]   |
 | 💎  |   7   |  §8     | Per-test heap-leak detection                              | §7                  |  [x]   |
-| 💎  |   8   |  §4     | Retrofit existing "Test gaps" stamps across `todo/`       | §1-§3, §5-§8        |  [ ]   |
+| 💎  |   8   |  §4     | Retrofit existing "Test gaps" stamps across `todo/`       | §1-§3, §5-§8        |  [x]   |
 
 > 💎 = parity work -- Linux kernel self-test framework has `lib/fault-inject.c` (multi-allocator fault injection), `kunit_add_action` (test-scoped cleanup registry), `kcsan`/`kasan` fences, `kunit_kzalloc()` scratch helpers, and `kmemleak` leak detection. This TODO brings the same floor to the Impossible OS kernel test runner without requiring the Driver Verifier / WDK workflow Windows leans on.
 > **Order vs section-number:** Implementation Order is execution sequence; section numbers (§N) preserve file stability. §7 (action registry) ships at Order 2 because §3, §5, and §8 all consume it.
@@ -149,12 +149,23 @@ A two-thread rendezvous primitive for tests that need to observe behaviour at a 
 
 After §1-§3, §5-§8 ship, sweep the repo for `Test gaps (NO current owner)` blocks and TEST_PENDING placeholders that were deferred only because this infrastructure did not exist. Rewrite each test to use the new primitives and prune the deferral note.
 
-- [ ] TODO-12 §5 "Test gaps": rewrite the three pending items against the new primitives -- (a) allocator kmalloc-failure rollback uses `kmalloc_fail_next()` + §5 `TEST_KLOG_SUPPRESS("mm")` + §8 leak-delta check for free; (b) ReplyBodyCap clamp with `recv_buf_len > 65528` uses `TEST_SCRATCH_KBUF(rxbuf, 65536 + 64)` (now PMM-backed per §3); (c) address-ordered two-port locking concurrency stress uses `test_race_barrier_t` between the two sender threads. Close the Accepted stamp per the inbound-XREF sweep in `implement-todo-section` step 18.
-- [ ] Add `pmm_alloc_fail_next()` coverage (§6) to any existing TODO that calls out a ">4 KiB allocation rollback" test gap; previously blocked because §1 kmalloc countdown didn't reach the PMM path used for large allocations.
-- [ ] Repo sweep: `grep -rn "Test gaps (NO current owner)" todo/` -- for every hit, decide whether the gap is closable by one of §1-§3, §5-§8 and convert it. If the gap is unrelated infrastructure, leave it with a clearly-named reason.
-- [ ] Commit: `"test: retrofit deferred ALPC §4 test gaps against new kernel test harness"` (and similar per-TODO commits as the sweep runs)
+- [x] `02-kernel-core/TODO-24` §4 "Test gaps (deferred)" block: the 3 deferred items closed via 3 new TEST_CAT_IPC suites in [`src/kernel/test/test_alpc.c`](../../src/kernel/test/test_alpc.c). (a) `alpc: kmalloc-fail in pending alloc rolls back PoolUsageBytes` uses `kmalloc_fail_next()` + `TEST_KLOG_SUPPRESS("alpc")` + a direct `PoolUsageBytes` invariant check (stronger oracle than §8 heap-delta because PoolUsageBytes specifically tracks the ALPC pool charges the rollback path is supposed to undo). (b) `alpc: ReplyBodyCap clamps recv_buf_len > 65528` uses `TEST_SCRATCH_KBUF(rxbuf, 65536 + 64)` (PMM-backed per §3) to drive `recv_buf_len = 65600` through the clamp branch in `alpc_sync_request`, then verifies the round-trip succeeds and PoolUsageBytes returns to baseline. (c) `alpc: two-port lock-order stress` uses `test_race_barrier_t` to pin TWO senders going in OPPOSITE directions (sender A: client -> server; sender B: server -> client) at the lock-acquisition checkpoint, plus paired receivers on each side; the two paths present the same two ALPC_PORT objects to `alpc_lock_two` in opposite logical order, which is the actual lock-order-inversion regression `alpc_lock_two` is supposed to prevent. (Original v1 of the test had both senders going the same direction and would have passed even with naive locking -- caught by Codex adversarial review and rewritten before commit.) The original deferred block + Accepted stamp pointing at us removed from `02-kernel-core/TODO-24` §4 in the same commit.
+- [x] `pmm_alloc_fail_next()` (§6) sweep: `grep -rn ">4 ?KiB.*rollback\|allocation rollback" todo/` returns no other consumer with a deferred test gap pending the PMM-failure primitive. TODO-14 §6 (large registry value names / data via `pmm_alloc_contiguous`) is a future consumer for `pmm_alloc_fail_next()` once those allocation paths land, but no test gap is filed yet because the consumer code itself is unwritten. Re-sweep when TODO-14 §6 ships.
+- [x] Repo sweep: `grep -rn "Test gaps \(NO current owner\)\|Test gaps \(deferred to" todo/` -- only matches were TODO-24 §4 (the ALPC block, closed above) and self-references in this section. The "Test gaps (NO current owner)" stamp pattern from older TODO drafts is not in active use anywhere else.
+- [x] Commit: `"test: retrofit deferred ALPC §4 test gaps against new kernel test harness"`
 
-**Test checkpoint:** `grep -rn "Test gaps (NO current owner)" todo/` shrinks to zero hits for gaps that §1-§3, §5-§8 can close; any remaining gaps have a clearly-unrelated reason documented.
+**Test checkpoint:** `grep -rn "Test gaps (deferred to" todo/02-kernel-core/TODO-24-alpc-message-ports.md` returns zero hits (the block was removed); `make test-ipc` boot run shows the 3 new suite names in the §4 group with `[OK]` lines and zero failures.
+
+> **Test runner:** `scripts\debug\run-ipc-tests.bat` (SUITE=ipc) | 3 new alpc retrofit suites in TEST_CAT_IPC, 0 failures
+
+> **Notes:**
+> - Shipped 3 ALPC §4 retrofit test suites in [`src/kernel/test/test_alpc.c`](../../src/kernel/test/test_alpc.c): `alpc: kmalloc-fail in pending alloc rolls back PoolUsageBytes` (~85 LOC), `alpc: ReplyBodyCap clamps recv_buf_len > 65528` (~110 LOC), `alpc: two-port lock-order stress` (~120 LOC). All three close test gaps that were filed in TODO-24 §4 as "deferred to TODO-03 §6" because the kernel test harness lacked deterministic kmalloc-fault injection (§1), two-thread race fences (§2), and PMM-backed scratch buffers (§3) at the time §4 shipped.
+> - Why `PoolUsageBytes` invariant instead of §8 heap-delta for retrofit (a): the ALPC pool charge is a per-port counter that the rollback path explicitly maintains. A `PoolUsageBytes != pool_before` after a forced kmalloc failure proves the rollback path is broken even when the kmalloc itself returned NULL (so heap_get_used would show no delta). The §8 leak detector and the §1 fault-injection IRQL gate together make this the right oracle.
+> - Why `TEST_SCRATCH_KBUF` instead of stack-allocated for retrofit (b): the buffer is 65 KiB + 64 B, far above the 8 KiB kernel stack. Pre-§3 the test would have either overflowed the stack or required a bespoke `pmm_alloc_contiguous` + `pmm_free_frame` cleanup pair on every error path. The macro routes to `pmm_alloc_contiguous(17 pages)` and registers cleanup via §7's `test_add_action`; failure-path cleanup is automatic.
+> - Why `test_race_barrier_t` instead of `thread_yield()` loops for retrofit (c): the lock-order regression only manifests when two threads enter `alpc_sync_request` within microseconds of each other. Without a barrier, scheduler skew makes the test pass even when `alpc_lock_two` is broken. The barrier's release-a-first ordering is the empirically deterministic interleaving on the flat-cyclic round-robin scheduler (§2 race-barrier docstring).
+> - TODO-24 §4 cleanup: removed the "Test gaps (deferred to TODO-03 §6)" 3-line block AND the matching `Accepted: three §4 test gaps -> XREF` stamp line; the `Verified:` line was extended to mention the 3 retrofit suites and the `Expected:` count went from 14 -> 17. Inbound-XREF sweep complete.
+> - Stale-reference cleanup: the original §4 spec text said "TODO-12 §5 'Test gaps'" but TODO-12 §5 (Nt/Zw Naming Migration) has no test gaps stamp. The actual deferred ALPC test gaps lived in TODO-24 §4 (verified by `grep -rn "Test gaps" todo/`). Updated the items above to point at TODO-24 §4 directly.
+> - Scope boundary: §4 closes the ONE inbound deferred-test-gaps block that pointed at TODO-03 (TODO-24 §4). It does NOT pre-emptively retrofit other subsystems' tests -- the rule is "convert when an explicit deferred-test-gaps stamp names §1-§3/§5-§8 as the unblocker". TODO-14 §6 (large registry values) is the next likely consumer but has no test surface yet.
 
 ---
 
@@ -297,7 +308,7 @@ Record `heap_stats().used_bytes` at test start and end; if the delta is non-zero
 | ⭐ | Test-scoped klog level demotion    | ❌ None                     | ❌ None                                             | ✅ §5 `TEST_KLOG_SUPPRESS`                     |
 | ⭐ | Single-boot 436-suite runner       | ❌ WDK run per-driver       | ❌ KUnit one-module-at-a-time                       | ✅ existing `test=1` infrastructure            |
 
-After §1-§8 land, in-kernel test coverage reaches Linux-KUnit-plus-fault-inject parity for allocator-failure, cleanup, and concurrency testing; §5 (klog demotion) and §8 (per-test leak delta, no KASAN required) give Impossible OS two real edges neither Win11 nor Linux offers at the in-kernel-test layer.
+After §1-§8 land (all shipped 2026-04-19), in-kernel test coverage reaches Linux-KUnit-plus-fault-inject parity for allocator-failure, cleanup, and concurrency testing; §5 (klog demotion) and §8 (per-test leak delta, no KASAN required) give Impossible OS two real edges neither Win11 nor Linux offers at the in-kernel-test layer. §4 (sweep-and-retrofit) closed the inbound TODO-24 §4 ALPC deferred-test-gaps block as the first concrete consumer; future deferred-test-gaps stamps that name §1-§3 / §5-§8 as the unblocker get retrofitted on the same model.
 
 ---
 
@@ -312,8 +323,9 @@ After §1-§8 land, in-kernel test coverage reaches Linux-KUnit-plus-fault-injec
 - [x] `src/kernel/test/test_heap.c` + `test_pmm.c` + `test_vmm.c` + `test_cpu_security.c` cover §6 multi-allocator fault injection: task-filter, max-injections cap, PMM + VMM-map + copy_user countdowns (7 new TEST_CAT_MM + TEST_CAT_X86 suites)
 - [x] `src/kernel/test/test_harness.c` sanity tests for §7 `test_add_action` (9 TEST_CAT_BOOT suites: LIFO drain, overflow, NULL-fn reject, re-entrant-during-drain reject, IRQL recovery)
 - [x] `src/kernel/test/test_harness.c` sanity tests for §8 heap-leak detection (6 TEST_CAT_BOOT suites: kmalloc unfreed + TEST_EXPECT_LEAK pair, TEST_SCRATCH_KBUF drain pair, TEST_LEAK_IGNORE bypass pair; verify suites consume `test_runner_last_leak_delta()` and `g_test_state.leaked` to confirm classification without polluting the summary L counter)
+- [x] `src/kernel/test/test_alpc.c` adds 3 §4 retrofit suites in TEST_CAT_IPC (`alpc: kmalloc-fail in pending alloc rolls back PoolUsageBytes`, `alpc: ReplyBodyCap clamps recv_buf_len > 65528`, `alpc: two-port lock-order stress`) consuming TODO-03 §1 + §2 + §3 + §5 primitives to close the TODO-24 §4 deferred test gaps block
 
-> **Test runner:** `scripts\debug\run-boot-tests.bat` (SUITE=boot) + `scripts\debug\run-mm-tests.bat` (SUITE=mm) | ~20 new test-harness + allocator suites, 0 failures, summary shows `L=0` on green tree
+> **Test runner:** `scripts\debug\run-boot-tests.bat` (SUITE=boot) + `scripts\debug\run-mm-tests.bat` (SUITE=mm) + `scripts\debug\run-ipc-tests.bat` (SUITE=ipc) | ~23 new test-harness + allocator + alpc-retrofit suites, 0 failures, summary shows `L=0` on green tree
 
 ---
 

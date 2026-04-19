@@ -15,6 +15,10 @@
 #ifdef KERNEL_TESTS
 
 #include "kernel/test/test.h"
+#include "kernel/test/scratch.h"        /* TEST_SCRATCH_KBUF -- §4 retrofit (b) */
+#include "kernel/test/race_barrier.h"   /* test_race_barrier_t -- §4 retrofit (c) */
+#include "kernel/test/klog_suppress.h"  /* TEST_KLOG_SUPPRESS -- §4 retrofit (a) */
+#include "kernel/mm/heap.h"             /* kmalloc_fail_next -- §4 retrofit (a) */
 #include "kernel/ipc/alpc.h"
 #include "kernel/ipc/alpc_port.h"
 #include "kernel/nt/nt_types.h"
@@ -1511,6 +1515,438 @@ static void test_alpc_syscall_validation(void)
 }
 
 /* =========================================================================
+ * §4 retrofits -- ALPC-side test gaps closed by the kernel test harness
+ * primitives (kmalloc fault injection, race barrier, scratch helper,
+ * klog level demotion). The three gaps below were originally deferred
+ * because the kernel test harness lacked deterministic kmalloc-fault
+ * injection, two-thread race fences, and PMM-backed scratch buffers.
+ *
+ *   (a) Allocator kmalloc-failure rollback (uncharge-under-lock) using
+ *       `kmalloc_fail_next()` + `TEST_KLOG_SUPPRESS("alpc")`.
+ *   (b) ReplyBodyCap clamping with `recv_buf_len > 65528` using
+ *       `TEST_SCRATCH_KBUF` (PMM route, > 4 KiB).
+ *   (c) Address-ordered two-port locking concurrency stress using
+ *       `test_race_barrier_t` between two sender threads going in
+ *       opposite directions.
+ * =======================================================================*/
+
+/* ---- §4 retrofit (a): kmalloc-failure rollback uncharges under lock --- */
+
+static void test_alpc_kmalloc_fail_rollback(void)
+{
+    /* Arming kmalloc_fail_next() makes the very next kmalloc on this
+     * CPU return NULL. The first kmalloc inside alpc_sync_request is
+     * inside alpc_alloc_pending_reply, which has already incremented
+     * sender_port->PoolUsageBytes under the port lock before calling
+     * kmalloc. The rollback path must re-take the lock and decrement
+     * PoolUsageBytes back to its prior value. The leaked bytes / pool
+     * accounting is the regression we're locking down.
+     *
+     * Suppress alpc-subsystem klog noise -- the engine logs the
+     * INSUFFICIENT_RESOURCES path at LOG_DEBUG so this is purely
+     * cosmetic; the suppress proves the §5 primitive integrates with
+     * a real failure-path test. */
+    TEST_KLOG_SUPPRESS("alpc");
+
+    HANDLE server_comm = INVALID_HANDLE_VALUE;
+    HANDLE client_h = alpc_setup_pair("KmFailRb", &server_comm);
+    if (client_h == INVALID_HANDLE_VALUE)
+        return;
+
+    /* Snapshot the sender port's PoolUsageBytes via the handle table. */
+    HANDLE_TABLE_ENTRY *client_entry = ObpLookupHandle(
+        &task_current()->handle_table, client_h);
+    TEST_ASSERT_NOT_NULL(client_entry, "client port entry lookup");
+    if (!client_entry) {
+        alpc_teardown_pair(client_h, server_comm);
+        return;
+    }
+    ALPC_PORT *client_port = (ALPC_PORT *)client_entry->object;
+    uint64_t pool_before = client_port->PoolUsageBytes;
+
+    /* Build a small sync request -- the actual body length doesn't
+     * matter; only the allocator path does. */
+    uint8_t txbuf[sizeof(PORT_MESSAGE) + 16];
+    PORT_MESSAGE *tx = (PORT_MESSAGE *)txbuf;
+    for (uint32_t i = 0; i < sizeof(txbuf); i++) txbuf[i] = 0;
+    tx->TotalLength = sizeof(PORT_MESSAGE) + 16;
+    tx->DataLength  = 16;
+    tx->Type        = ALPC_MSG_TYPE_REQUEST;
+
+    uint8_t rxbuf[sizeof(PORT_MESSAGE) + 64];
+    PORT_MESSAGE *rx = (PORT_MESSAGE *)rxbuf;
+    for (uint32_t i = 0; i < sizeof(rxbuf); i++) rxbuf[i] = 0;
+
+    /* Arm the next-kmalloc-fails trap and immediately call the engine.
+     * The engine's first kmalloc is inside alpc_alloc_pending_reply,
+     * which is the function under test for the rollback path. */
+    kmalloc_fail_next();
+
+    NTSTATUS st = AlpcSendWaitReceivePort(&task_current()->handle_table,
+                                          client_h,
+                                          ALPC_MSGFLG_SYNC_REQUEST,
+                                          tx, rx, sizeof(rxbuf), 100);
+
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_INSUFFICIENT_RESOURCES,
+                   "kmalloc-fail in alpc_alloc_pending_reply -> INSUFFICIENT_RESOURCES");
+
+    /* The whole point of the test: PoolUsageBytes must be unchanged
+     * after the rollback. A leak would surface as a positive delta. */
+    TEST_ASSERT_EQ((uint64_t)client_port->PoolUsageBytes,
+                   (uint64_t)pool_before,
+                   "PoolUsageBytes restored on kmalloc rollback path");
+
+    alpc_teardown_pair(client_h, server_comm);
+}
+
+/* ---- §4 retrofit (b): ReplyBodyCap clamps to 65528 when recv > 65528 -- */
+
+static volatile NTSTATUS s_clamp_server_status;
+
+static void clamp_server_worker(void *arg)
+{
+    HANDLE server_comm = (HANDLE)(uintptr_t)arg;
+    uint8_t rxbuf[sizeof(PORT_MESSAGE) + 64];
+    PORT_MESSAGE *rx = (PORT_MESSAGE *)rxbuf;
+    for (uint32_t i = 0; i < sizeof(rxbuf); i++) rxbuf[i] = 0;
+
+    NTSTATUS st = AlpcSendWaitReceivePort(&task_current()->handle_table,
+                                          server_comm, 0,
+                                          (PORT_MESSAGE *)0, rx,
+                                          sizeof(rxbuf), 5000);
+    if (st != STATUS_SUCCESS) {
+        s_clamp_server_status = st;
+        s_sync_worker_done = 1;
+        return;
+    }
+
+    /* Reply with a 32-byte body. The reply size doesn't probe the
+     * clamp -- the clamp lives on the SENDER's pending-record cap.
+     * What we want is for the round-trip to complete cleanly so the
+     * client's PoolUsageBytes can be inspected post-completion. */
+    uint8_t txbuf[sizeof(PORT_MESSAGE) + 32];
+    PORT_MESSAGE *tx = (PORT_MESSAGE *)txbuf;
+    for (uint32_t i = 0; i < sizeof(txbuf); i++) txbuf[i] = 0;
+    tx->TotalLength = sizeof(PORT_MESSAGE) + 32;
+    tx->DataLength  = 32;
+    tx->Type        = ALPC_MSG_TYPE_REPLY;
+    tx->MessageId   = rx->MessageId;
+    for (uint32_t i = 0; i < 32; i++)
+        ((uint8_t *)tx + sizeof(PORT_MESSAGE))[i] = (uint8_t)i;
+
+    s_clamp_server_status = AlpcSendWaitReceivePort(&task_current()->handle_table,
+                                                    server_comm,
+                                                    ALPC_MSGFLG_REPLY_MESSAGE,
+                                                    tx, (PORT_MESSAGE *)0, 0, 0);
+    s_sync_worker_done = 1;
+}
+
+static void test_alpc_reply_body_cap_clamped(void)
+{
+    /* alpc_sync_request computes:
+     *   cap = recv_buf_len - sizeof(PORT_MESSAGE);
+     *   if (cap > ALPC_MAX_ALLOWED_MESSAGE_LENGTH) cap = ALPC_MAX_ALLOWED_MESSAGE_LENGTH;
+     *
+     * Pre-clamp this would overflow the pending record's inline body
+     * size. We pass recv_buf_len = 65536 + 64 (raw cap = 65600 > 65528),
+     * forcing the clamp branch. The PMM-backed TEST_SCRATCH_KBUF route
+     * is required because the buffer is > 4 KiB. After the round-trip,
+     * the sender port's PoolUsageBytes returns to its pre-call value
+     * because alpc_free_pending_reply uncharges the clamped allocation,
+     * not the raw caller-provided length. */
+    HANDLE server_comm = INVALID_HANDLE_VALUE;
+    HANDLE client_h = alpc_setup_pair("ClampPair", &server_comm);
+    if (client_h == INVALID_HANDLE_VALUE)
+        return;
+
+    HANDLE_TABLE_ENTRY *client_entry = ObpLookupHandle(
+        &task_current()->handle_table, client_h);
+    TEST_ASSERT_NOT_NULL(client_entry, "clamp: client port entry lookup");
+    if (!client_entry) {
+        alpc_teardown_pair(client_h, server_comm);
+        return;
+    }
+    ALPC_PORT *client_port = (ALPC_PORT *)client_entry->object;
+    uint64_t pool_before = client_port->PoolUsageBytes;
+
+    /* PMM-backed scratch -- 65 KiB + 64 B exceeds the 4 KiB kmalloc
+     * threshold, so test_scratch_alloc dispatches to
+     * pmm_alloc_contiguous(17 pages) and registers cleanup via
+     * test_add_action. */
+    TEST_SCRATCH_KBUF(rxbuf, 65536 + 64);
+    PORT_MESSAGE *rx = (PORT_MESSAGE *)rxbuf;
+    /* zero the header portion -- the full 65 KiB does not need
+     * pre-zero for the engine, only the header needs clean fields. */
+    for (uint32_t i = 0; i < sizeof(PORT_MESSAGE); i++)
+        ((uint8_t *)rx)[i] = 0;
+
+    s_clamp_server_status = STATUS_INVALID_PARAMETER;
+    s_sync_worker_done = 0;
+    int tid = kthread_create(clamp_server_worker,
+                             (void *)(uintptr_t)server_comm, 0);
+    TEST_ASSERT(tid >= 0, "clamp: server worker spawned");
+
+    uint8_t txbuf[sizeof(PORT_MESSAGE) + 16];
+    PORT_MESSAGE *tx = (PORT_MESSAGE *)txbuf;
+    for (uint32_t i = 0; i < sizeof(txbuf); i++) txbuf[i] = 0;
+    tx->TotalLength = sizeof(PORT_MESSAGE) + 16;
+    tx->DataLength  = 16;
+    tx->Type        = ALPC_MSG_TYPE_REQUEST;
+
+    /* recv_buf_len = 65536 + 64 -- forces the clamp branch in
+     * alpc_sync_request. Without the clamp, alpc_alloc_pending_reply
+     * would attempt to allocate ALPC_PENDING_REPLY + 65560 bytes,
+     * which exceeds the protocol ceiling. With the clamp, the alloc
+     * is bounded at ALPC_PENDING_REPLY + 65528 bytes. */
+    NTSTATUS st = AlpcSendWaitReceivePort(&task_current()->handle_table,
+                                          client_h,
+                                          ALPC_MSGFLG_SYNC_REQUEST,
+                                          tx, rx, 65536 + 64, 5000);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS,
+                   "clamped sync request returns SUCCESS");
+    TEST_ASSERT_EQ((uint32_t)rx->Type, (uint32_t)ALPC_MSG_TYPE_REPLY,
+                   "clamped path: reply Type=REPLY");
+    TEST_ASSERT_EQ((uint32_t)rx->DataLength, 32u,
+                   "clamped path: reply DataLength=32 (not 65528)");
+
+    thread_join((uint32_t)tid);
+    TEST_ASSERT_EQ((uint32_t)s_clamp_server_status, (uint32_t)STATUS_SUCCESS,
+                   "clamp: server reply succeeded");
+
+    /* Pool usage returned to baseline -- proves alpc_free_pending_reply
+     * uncharged the CLAMPED allocation size, not the raw recv_buf_len. */
+    TEST_ASSERT_EQ((uint64_t)client_port->PoolUsageBytes,
+                   (uint64_t)pool_before,
+                   "PoolUsageBytes restored after clamped pending free");
+
+    alpc_teardown_pair(client_h, server_comm);
+}
+
+/* ---- §4 retrofit (c): two-port lock-order concurrency stress ---------- */
+
+static test_race_barrier_t s_lock_order_barrier;
+
+/* The address-ordered double-lock in alpc_lock_two only matters when
+ * two threads enter alpc_sync_request from OPPOSITE endpoints of the
+ * same connected pair. Sender A sends client -> server (sender_port =
+ * client_port, peer = server_port); sender B sends server -> client
+ * (sender_port = server_port, peer = client_port). The two paths
+ * present the SAME two ALPC_PORT objects in OPPOSITE logical order;
+ * without alpc_lock_two normalizing by address, a naive
+ * `spin_lock(sender); spin_lock(peer);` would deadlock on real SMP.
+ *
+ * Test topology (4 kthreads):
+ *   - sender A (client -> server)    -- pinned at barrier 'a'
+ *   - sender B (server -> client)    -- pinned at barrier 'b'
+ *   - receiver A (drains server side, replies to A)
+ *   - receiver B (drains client side, replies to B)
+ *
+ * The race-barrier pins both senders at the moment just before
+ * alpc_sync_request enters alpc_lock_two. release(a_first=1) wakes
+ * them with a yield between -- empirically deterministic on the
+ * flat-cyclic round-robin scheduler. On single-CPU TCG/WHPX guests
+ * deadlock is impossible (spinlocks uncontended in cooperative
+ * yield); on SMP guests / bare metal the deadlock would manifest as
+ * the 5s timeout firing.
+ *
+ * Note that ALPC sync_request is bidirectional: both endpoints of a
+ * connected port pair can act as sender. This is the engine contract
+ * exercised by the existing reply-mismatch and accept-handshake
+ * tests; we just compose two concurrent direction-A and direction-B
+ * sends here. */
+
+static volatile NTSTATUS s_lo_sender_a_status;
+static volatile NTSTATUS s_lo_sender_b_status;
+static volatile NTSTATUS s_lo_recv_a_status;
+static volatile NTSTATUS s_lo_recv_b_status;
+static HANDLE            s_lo_client_h;
+static HANDLE            s_lo_server_comm;
+
+static void lock_order_sender_a(void *arg)
+{
+    /* client -> server direction: alpc_lock_two(client_port, server_port). */
+    (void)arg;
+    uint8_t txbuf[sizeof(PORT_MESSAGE) + 8];
+    PORT_MESSAGE *tx = (PORT_MESSAGE *)txbuf;
+    for (uint32_t i = 0; i < sizeof(txbuf); i++) txbuf[i] = 0;
+    tx->TotalLength = sizeof(PORT_MESSAGE) + 8;
+    tx->DataLength  = 8;
+    tx->Type        = ALPC_MSG_TYPE_REQUEST;
+    for (uint32_t i = 0; i < 8; i++)
+        ((uint8_t *)tx + sizeof(PORT_MESSAGE))[i] = (uint8_t)('A');
+
+    uint8_t rxbuf[sizeof(PORT_MESSAGE) + 32];
+    PORT_MESSAGE *rx = (PORT_MESSAGE *)rxbuf;
+    for (uint32_t i = 0; i < sizeof(rxbuf); i++) rxbuf[i] = 0;
+
+    test_race_barrier_arrive_a(&s_lock_order_barrier);
+
+    s_lo_sender_a_status = AlpcSendWaitReceivePort(&task_current()->handle_table,
+                                                   s_lo_client_h,
+                                                   ALPC_MSGFLG_SYNC_REQUEST,
+                                                   tx, rx, sizeof(rxbuf), 5000);
+}
+
+static void lock_order_sender_b(void *arg)
+{
+    /* server -> client direction: alpc_lock_two(server_port, client_port).
+     * Same two ALPC_PORT objects as sender A but in opposite logical
+     * order. alpc_lock_two normalizes by address; without it this is a
+     * lock-order inversion. */
+    (void)arg;
+    uint8_t txbuf[sizeof(PORT_MESSAGE) + 8];
+    PORT_MESSAGE *tx = (PORT_MESSAGE *)txbuf;
+    for (uint32_t i = 0; i < sizeof(txbuf); i++) txbuf[i] = 0;
+    tx->TotalLength = sizeof(PORT_MESSAGE) + 8;
+    tx->DataLength  = 8;
+    tx->Type        = ALPC_MSG_TYPE_REQUEST;
+    for (uint32_t i = 0; i < 8; i++)
+        ((uint8_t *)tx + sizeof(PORT_MESSAGE))[i] = (uint8_t)('B');
+
+    uint8_t rxbuf[sizeof(PORT_MESSAGE) + 32];
+    PORT_MESSAGE *rx = (PORT_MESSAGE *)rxbuf;
+    for (uint32_t i = 0; i < sizeof(rxbuf); i++) rxbuf[i] = 0;
+
+    test_race_barrier_arrive_b(&s_lock_order_barrier);
+
+    s_lo_sender_b_status = AlpcSendWaitReceivePort(&task_current()->handle_table,
+                                                   s_lo_server_comm,
+                                                   ALPC_MSGFLG_SYNC_REQUEST,
+                                                   tx, rx, sizeof(rxbuf), 5000);
+}
+
+static void lock_order_recv_a(void *arg)
+{
+    /* Drain on server side, reply to sender A's request. */
+    (void)arg;
+    uint8_t rxbuf[sizeof(PORT_MESSAGE) + 32];
+    PORT_MESSAGE *rx = (PORT_MESSAGE *)rxbuf;
+    for (uint32_t i = 0; i < sizeof(rxbuf); i++) rxbuf[i] = 0;
+
+    NTSTATUS st = AlpcSendWaitReceivePort(&task_current()->handle_table,
+                                          s_lo_server_comm, 0,
+                                          (PORT_MESSAGE *)0, rx,
+                                          sizeof(rxbuf), 5000);
+    if (st != STATUS_SUCCESS) {
+        s_lo_recv_a_status = st;
+        return;
+    }
+
+    uint8_t txbuf[sizeof(PORT_MESSAGE) + 8];
+    PORT_MESSAGE *tx = (PORT_MESSAGE *)txbuf;
+    for (uint32_t i = 0; i < sizeof(txbuf); i++) txbuf[i] = 0;
+    tx->TotalLength = sizeof(PORT_MESSAGE) + 8;
+    tx->DataLength  = 8;
+    tx->Type        = ALPC_MSG_TYPE_REPLY;
+    tx->MessageId   = rx->MessageId;
+    for (uint32_t i = 0; i < 8; i++)
+        ((uint8_t *)tx + sizeof(PORT_MESSAGE))[i] =
+            ((uint8_t *)rx + sizeof(PORT_MESSAGE))[i] ^ 0xFFu;
+
+    s_lo_recv_a_status = AlpcSendWaitReceivePort(&task_current()->handle_table,
+                                                 s_lo_server_comm,
+                                                 ALPC_MSGFLG_REPLY_MESSAGE,
+                                                 tx, (PORT_MESSAGE *)0, 0, 0);
+}
+
+static void lock_order_recv_b(void *arg)
+{
+    /* Drain on client side, reply to sender B's request. */
+    (void)arg;
+    uint8_t rxbuf[sizeof(PORT_MESSAGE) + 32];
+    PORT_MESSAGE *rx = (PORT_MESSAGE *)rxbuf;
+    for (uint32_t i = 0; i < sizeof(rxbuf); i++) rxbuf[i] = 0;
+
+    NTSTATUS st = AlpcSendWaitReceivePort(&task_current()->handle_table,
+                                          s_lo_client_h, 0,
+                                          (PORT_MESSAGE *)0, rx,
+                                          sizeof(rxbuf), 5000);
+    if (st != STATUS_SUCCESS) {
+        s_lo_recv_b_status = st;
+        return;
+    }
+
+    uint8_t txbuf[sizeof(PORT_MESSAGE) + 8];
+    PORT_MESSAGE *tx = (PORT_MESSAGE *)txbuf;
+    for (uint32_t i = 0; i < sizeof(txbuf); i++) txbuf[i] = 0;
+    tx->TotalLength = sizeof(PORT_MESSAGE) + 8;
+    tx->DataLength  = 8;
+    tx->Type        = ALPC_MSG_TYPE_REPLY;
+    tx->MessageId   = rx->MessageId;
+    for (uint32_t i = 0; i < 8; i++)
+        ((uint8_t *)tx + sizeof(PORT_MESSAGE))[i] =
+            ((uint8_t *)rx + sizeof(PORT_MESSAGE))[i] ^ 0xFFu;
+
+    s_lo_recv_b_status = AlpcSendWaitReceivePort(&task_current()->handle_table,
+                                                 s_lo_client_h,
+                                                 ALPC_MSGFLG_REPLY_MESSAGE,
+                                                 tx, (PORT_MESSAGE *)0, 0, 0);
+}
+
+static void test_alpc_two_port_lock_order_stress(void)
+{
+    HANDLE server_comm = INVALID_HANDLE_VALUE;
+    HANDLE client_h = alpc_setup_pair("LockOrder", &server_comm);
+    if (client_h == INVALID_HANDLE_VALUE)
+        return;
+
+    test_race_barrier_init(&s_lock_order_barrier);
+    s_lo_client_h    = client_h;
+    s_lo_server_comm = server_comm;
+    s_lo_sender_a_status = STATUS_INVALID_PARAMETER;
+    s_lo_sender_b_status = STATUS_INVALID_PARAMETER;
+    s_lo_recv_a_status   = STATUS_INVALID_PARAMETER;
+    s_lo_recv_b_status   = STATUS_INVALID_PARAMETER;
+
+    /* Spawn receivers first so they're blocked on AlpcSendWaitReceive
+     * (receive-only) when senders fire. Then spawn the two senders. */
+    int recv_a_tid = kthread_create(lock_order_recv_a, (void *)0, 0);
+    TEST_ASSERT(recv_a_tid >= 0, "lock-order: receiver A spawned");
+    int recv_b_tid = kthread_create(lock_order_recv_b, (void *)0, 0);
+    TEST_ASSERT(recv_b_tid >= 0, "lock-order: receiver B spawned");
+    int send_a_tid = kthread_create(lock_order_sender_a, (void *)0, 0);
+    TEST_ASSERT(send_a_tid >= 0, "lock-order: sender A spawned");
+    int send_b_tid = kthread_create(lock_order_sender_b, (void *)0, 0);
+    if (send_b_tid < 0) {
+        /* Slot pressure: release barrier so sender A is not parked
+         * forever, then join everyone so the test exits cleanly
+         * instead of deadlocking. */
+        test_race_barrier_release(&s_lock_order_barrier, /*a_first=*/1);
+        thread_join((uint32_t)send_a_tid);
+        thread_join((uint32_t)recv_a_tid);
+        thread_join((uint32_t)recv_b_tid);
+        TEST_ASSERT(send_b_tid >= 0, "lock-order: sender B spawned");
+        alpc_teardown_pair(client_h, server_comm);
+        return;
+    }
+
+    /* Both senders pinned at the barrier; release a-first. */
+    test_race_barrier_release(&s_lock_order_barrier, /*a_first=*/1);
+
+    thread_join((uint32_t)send_a_tid);
+    thread_join((uint32_t)send_b_tid);
+    thread_join((uint32_t)recv_a_tid);
+    thread_join((uint32_t)recv_b_tid);
+
+    /* If alpc_lock_two were broken (naive sender-then-peer locking),
+     * the opposite-direction senders would deadlock and the 5s
+     * AlpcSendWaitReceivePort timeout would fire on at least one
+     * worker -- the SUCCESS assertion below catches that regression. */
+    TEST_ASSERT_EQ((uint32_t)s_lo_sender_a_status, (uint32_t)STATUS_SUCCESS,
+                   "lock-order: sender A (client->server) sync_request SUCCESS");
+    TEST_ASSERT_EQ((uint32_t)s_lo_sender_b_status, (uint32_t)STATUS_SUCCESS,
+                   "lock-order: sender B (server->client) sync_request SUCCESS");
+    TEST_ASSERT_EQ((uint32_t)s_lo_recv_a_status, (uint32_t)STATUS_SUCCESS,
+                   "lock-order: receiver A reply SUCCESS");
+    TEST_ASSERT_EQ((uint32_t)s_lo_recv_b_status, (uint32_t)STATUS_SUCCESS,
+                   "lock-order: receiver B reply SUCCESS");
+    TEST_ASSERT_EQ((uint8_t)s_lock_order_barrier.release_timed_out, 0u,
+                   "lock-order: barrier release did not time out");
+
+    alpc_teardown_pair(client_h, server_comm);
+}
+
+/* =========================================================================
  * §5 Asynchronous Delivery & Completion List tests
  *
  * Covers:
@@ -1868,6 +2304,15 @@ void test_register_alpc(void)
                             test_alpc_sync_no_peer, TEST_CAT_IPC);
     test_suite_register_cat("alpc: NtAlpcSendWaitReceivePort syscall validation",
                             test_alpc_syscall_validation, TEST_CAT_IPC);
+    /* §4 retrofits -- closes the ALPC §4 deferred-test-gaps block via
+     * the kernel test-harness primitives (kmalloc fault inject, race
+     * barrier, PMM scratch helper, klog level demotion). */
+    test_suite_register_cat("alpc: kmalloc-fail in pending alloc rolls back PoolUsageBytes",
+                            test_alpc_kmalloc_fail_rollback, TEST_CAT_IPC);
+    test_suite_register_cat("alpc: ReplyBodyCap clamps recv_buf_len > 65528",
+                            test_alpc_reply_body_cap_clamped, TEST_CAT_IPC);
+    test_suite_register_cat("alpc: two-port lock-order stress (race-barrier paired senders)",
+                            test_alpc_two_port_lock_order_stress, TEST_CAT_IPC);
     /* §5 async delivery + waitable port */
     test_suite_register_cat("alpc: ALPC_COMPLETION_LIST_ITEM layout",
                             test_alpc_completion_list_item_layout, TEST_CAT_IPC);
