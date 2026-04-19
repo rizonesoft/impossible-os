@@ -22,6 +22,7 @@
 - `CLAUDE.md` "Test Code -- No Live Boot Infrastructure Calls" -- the hooks below must obey the same safety contract (no live boot-path mutation from tests)
 - `CLAUDE.md` "Freestanding Kernel -- kmalloc <= 4 KB" -- §3 dispatches to PMM for larger buffers to honour this rule
 - -> XREF: `T04 §3` -- user-mode test launcher is complementary; it runs user-mode binaries while this TODO stays in-kernel
+- -> XREF: `T04 §5` -- user-mode `SYS_FAULT_INJECT` bridge consumes §1 `kmalloc_fail_next()` and §6 PMM/VMM/copy_user countdowns under a `boot.conf test=1` gate so user-mode tests can probe kernel error paths without a debugfs-style escape hatch
 - -> XREF: `T01 §3, §7` -- canonical local test wrappers and host-side tooling regression policy keep repo-wide deferred-test sweeps on one supported entry path
 
 ---

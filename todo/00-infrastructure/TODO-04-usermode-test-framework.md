@@ -20,6 +20,7 @@
 - → XREF: `T05 §3, §7` -- desktop UI testing consumes the user-mode launcher foundation and CI-facing automation surfaces
 - → XREF: `D02T12 §6` -- NtCreateFile/NtReadFile/NtWriteFile/NtClose/NtOpenFile family that `test_win32.exe` (§10) exercises through the Win32 thunks once they are wired
 - → XREF: `D02T17 §1, §2, §5, §19` -- exec_load() multi-format dispatcher, enhanced ELF, EIF kernel loader, and PE delay-load that `test_syscall.exe` / `test_fileio.exe` / `test_process.exe` cover
+- → XREF: `T03 §1, §6` -- kernel-side `kmalloc_fail_next()` + multi-allocator countdowns that the §5 user-mode fault-injection bridge exposes through a privileged `SYS_FAULT_INJECT` syscall
 
 ---
 
@@ -28,11 +29,14 @@
 - `user/test/` directory with test binaries: `test_syscall.exe`, `test_libc.exe`, `test_ipc.exe`, etc.
 - Each test binary exercises one subsystem, prints `[PASS] name` or `[FAIL] name: reason`, exits 0/1.
 - Kernel test launcher: after boot, runs each `test_*.exe` in sequence, collects exit codes.
-- Serial output shows per-binary pass/fail summary.
+- Serial output shows per-binary pass/fail summary, with per-test heap/handle leak detection.
 - `make test` includes user-mode tests (builds test binaries, deploys to disk, boots, runs).
 - Adding a new user-mode test: create `user/test/test_foo.c`, add to Makefile -- done.
-- Ordered manifest, per-binary timeouts, and optional TAP or skip lines for CI-grade triage (§4).
-- `user/include/syscall.h` stays in lockstep with the kernel INT 0x80 table before §5-§9 expand coverage (§2).
+- Ordered manifest, per-binary timeouts, and optional TAP, JUnit XML, or JSON output for CI-grade triage (§4 + §7).
+- `user/include/syscall.h` stays in lockstep with the kernel INT 0x80 table before §9-§13 expand coverage (§2).
+- User-mode tests can probe kernel error paths via `SYS_FAULT_INJECT` (§5), reaching the §6 multi-allocator countdowns from TODO-03 §1/§6 without root-of-trust escapes outside `test=1` mode.
+- Per-test isolation: launcher scrubs disk + Registry test scratch state between binaries (§6) so one test's residue cannot mask another's bug.
+- Test-type taxonomy (§8): `test_smoke_*.exe`, `test_*.exe` (correctness), `test_stress_*.exe`, `test_perf_*.exe` -- launcher applies the right policy per type (fail-fast / run-all / loop-N / measure-and-assert).
 
 ---
 
@@ -44,17 +48,21 @@
 | 💎  |   2   | Userland syscall.h parity with kernel INT 0x80 ABI  | --                                 |  [ ]   |
 | 💎  |   3   | Kernel test launcher (run `test_*.exe` in sequence) | §1                                 |  [ ]   |
 | 💎  |   4   | Launcher manifest, timeouts, TAP, and skip policy   | §3                                 |  [ ]   |
-| 💎  |   5   | Syscall test binary (`test_syscall.exe`)            | §1, §2, §3                         |  [ ]   |
-| 💎  |   6   | Libc test binary (`test_libc.exe`)                  | §1, §3                             |  [ ]   |
-| 💎  |   7   | IPC test binary (`test_ipc.exe`)                    | §1, §2, §3                         |  [ ]   |
-| 💎  |   8   | Process lifecycle test (`test_process.exe`)         | §1, §3                             |  [ ]   |
-| 💎  |   9   | File I/O test (`test_fileio.exe`)                   | §1, §2, §3                         |  [ ]   |
-| ⭐  |  10   | Win32 API test binary (`test_win32.exe`)            | §1, §3, D02T12 §6                  |  [ ]   |
-| 💎  |  11   | Build integration: `make test` includes user tests  | §3, §4, §5, §6, §7, §8, §9, §10   |  [ ]   |
+| ⭐  |   5   | User-mode fault-injection bridge (SYS_FAULT_INJECT) | §1, §3, T03 §1, T03 §6             |  [ ]   |
+| 💎  |   6   | Per-test isolation + cleanup hook                   | §3, §4                             |  [ ]   |
+| 💎  |   7   | JUnit XML + JSON output formats                     | §4                                 |  [ ]   |
+| 💎  |   8   | Test type taxonomy (smoke/correctness/stress/perf)  | §3, §4                             |  [ ]   |
+| 💎  |   9   | Syscall test binary (`test_syscall.exe`)            | §1, §2, §3                         |  [ ]   |
+| 💎  |  10   | Libc test binary (`test_libc.exe`)                  | §1, §3                             |  [ ]   |
+| 💎  |  11   | IPC test binary (`test_ipc.exe`)                    | §1, §2, §3                         |  [ ]   |
+| 💎  |  12   | Process lifecycle test (`test_process.exe`)         | §1, §3                             |  [ ]   |
+| 💎  |  13   | File I/O test (`test_fileio.exe`)                   | §1, §2, §3                         |  [ ]   |
+| ⭐  |  14   | Win32 API test binary (`test_win32.exe`)            | §1, §3, D02T12 §6                  |  [ ]   |
+| 💎  |  15   | Build integration: `make test` includes user tests  | §3-§14                             |  [ ]   |
 
-> 💎 = parity: Linux kselftest and Windows HLK both use user-mode test binaries and machine-readable test orchestration.
-> ⭐ = exclusive: testing the Win32 API surface from user mode on a non-Windows kernel.
-> **Sequencing rule:** foundation work lands first (§1-§4), subsystem test binaries build on that foundation (§5-§10), and repo-wide integration closes the loop in §11.
+> 💎 = parity: Linux kselftest and Windows HLK both use user-mode test binaries, TAP/JUnit XML, machine-readable test orchestration, per-test isolation, and stress/perf categorisation.
+> ⭐ = exclusive: testing the Win32 API surface from user mode on a non-Windows kernel (§14); user-mode fault-injection bridge that reaches kernel allocator countdowns under a single `test=1` gate (§5).
+> **Sequencing rule:** foundation lands first (§1-§4), runner-side enhancements that every subsystem test consumes ship next (§5-§8), subsystem test binaries follow (§9-§14), and repo-wide build integration closes the loop in §15.
 
 ---
 
@@ -82,7 +90,7 @@ Minimal test harness for user-mode binaries: no kernel dependencies.
 `user/include/syscall.h` currently stops at `SYS_NETINFO`; kernel exposes `SYS_LOG`, pipes, shmem, mmap, and file/dir handles through `SYS_QUERYDIROBJ`. User-mode tests cannot compile until the headers and thin `sys_*` wrappers match.
 
 - [ ] Diff `user/include/syscall.h` against `include/kernel/sched/syscall.h` for every `#define SYS_` used on the INT 0x80 path (ignore the SSDT alias block at the bottom of the kernel header for this pass)
-- [ ] Add missing `#define` constants and `static inline` syscall wrappers for `SYS_LOG` through `SYS_QUERYDIROBJ`, plus `SYS_PIPE`, `SYS_SHMEM_CREATE`, `SYS_SHMEM_MAP`, `SYS_MMAP`, `SYS_MUNMAP` if §7-§9 need them
+- [ ] Add missing `#define` constants and `static inline` syscall wrappers for `SYS_LOG` through `SYS_QUERYDIROBJ`, plus `SYS_PIPE`, `SYS_SHMEM_CREATE`, `SYS_SHMEM_MAP`, `SYS_MMAP`, `SYS_MUNMAP` if §11-§13 need them
 - [ ] Rebuild `hello.exe` and a stub `user/test/test_syscall.c` that only calls `SYS_WRITE` to prove the header still links
 - [ ] Commit: `"test: sync user syscall.h with kernel INT 0x80 ABI for usermode harness"`
 
@@ -120,7 +128,74 @@ Parity with kselftest/LKFT-style automation: deterministic order, watchdogs, mac
 
 ---
 
-## 5. Syscall Test Binary
+## 5. User-Mode Fault-Injection Bridge
+
+Bridge `T03 §1` `kmalloc_fail_next()` and `T03 §6` PMM/VMM/copy_user countdowns to user mode so tests can probe error paths in syscalls (e.g., `test_fileio.exe` proves `SYS_OPENFILE` cleans up on `kmalloc` failure). Application Verifier solves the same problem on Win11 by hooking `CreateFileA`; we expose it via a privileged syscall guarded by the boot-time test gate so production user-mode binaries cannot break out.
+
+> [!TIP]
+> Linux exposes `failslab` only through `/sys/kernel/debug/failslab/*` files (debugfs); HLK Application Verifier hooks Win32 in the loader. A typed kernel-level bridge with a `test=1` gate gives the same coverage with a simpler audit story.
+
+> [!WARNING]
+> `SYS_FAULT_INJECT` MUST hard-fail with `STATUS_ACCESS_DENIED` when `boot.conf test=0`. Without that gate, a malicious user-mode binary could DoS the kernel by arming `kmalloc_fail_countdown` repeatedly. The gate check is the security-critical path; cover it in the regression test.
+
+- [ ] Add `SYS_FAULT_INJECT` (next free INT 0x80 number after the §2 sweep) with subcommand selectors: `FAULT_KMALLOC_NEXT`, `FAULT_KMALLOC_COUNTDOWN`, `FAULT_PMM_NEXT`, `FAULT_VMM_MAP_NEXT`, `FAULT_COPY_USER_NEXT`, `FAULT_CLEAR_ALL`
+- [ ] Kernel handler in `src/kernel/sched/syscall.c` checks `kernel_subsystem_ready(SUBSYS_TEST_MODE)` (or equivalent of `boot.conf test=1`); returns `STATUS_ACCESS_DENIED` when not in test mode
+- [ ] Each subcommand dispatches to the matching `T03 §1`/`§6` setter; arguments validated against `task_current()->pid` so a test can only fault-inject for itself (not arbitrary tasks)
+- [ ] User-mode wrapper `int utest_fault_inject(int kind, uint32_t countdown)` in `user/include/test.h`
+- [ ] Smoke regression: a tiny `user/test/test_faultinject.c` arms `FAULT_KMALLOC_NEXT` then calls `SYS_OPENFILE` on a non-existent path -- proves the test gate is honoured AND the next kmalloc returns NULL inside the kernel
+- [ ] Negative regression in `src/kernel/test/test_syscall.c` (TEST_CAT_EXEC): with `SUBSYS_TEST_MODE` cleared, `SYS_FAULT_INJECT` returns `STATUS_ACCESS_DENIED` and `kmalloc_fail_countdown` stays 0
+- [ ] Commit: `"test: SYS_FAULT_INJECT bridge -- user-mode probes kernel allocator countdowns under test=1 gate"`
+
+**Test checkpoint:** With `boot.conf test=1`: `test_faultinject.exe` arms the next-kmalloc trap, calls a syscall that allocates, observes `STATUS_INSUFFICIENT_RESOURCES`. With `test=0`: same binary's first call to `SYS_FAULT_INJECT` returns `STATUS_ACCESS_DENIED` and the syscall succeeds. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+---
+
+## 6. Per-Test Isolation + Cleanup Hook
+
+Right now §3's launcher just sequentially execs binaries. If `test_fileio.exe` leaves `C:\Temp\test-fileio-scratch` behind, `test_libc.exe` could trip on it. Linux kselftest forks per test so file descriptors leak nowhere; LTP uses unique temp dirs and unconditional cleanup. The launcher needs a per-test cleanup pass between binaries.
+
+- [ ] Reserve `C:\Temp\utest\<test-name>\` as the per-test scratch root; launcher creates it before each binary's task_create_user, deletes it after task_waitpid (whether PASS, FAIL, or timeout)
+- [ ] Reserve `HKLM\SOFTWARE\ImpossibleOS\Test\<test-name>\` as the per-test Registry scratch root; launcher deletes the subkey after each binary
+- [ ] Per-binary handle-leak detection: launcher snapshots the per-task handle table size before exec, asserts size returns to baseline after waitpid (extends `T03 §8` per-test heap-leak detection model to handle counts)
+- [ ] Optional `tests/usermode-cleanup.manifest` file listing additional paths/keys to scrub (e.g., DLL cache, network sockets) for tests that touch global state legitimately
+- [ ] Tests opt out via `boot.conf utest_isolation=0` for debugging only -- production runs always isolate
+- [ ] Commit: `"test: per-test isolation -- scratch dir + Registry subkey + handle-leak detection"`
+
+**Test checkpoint:** A binary that creates `C:\Temp\utest\test-foo\stale-file` and exits 0 leaves NO trace -- next binary's pre-exec snapshot of `C:\Temp\utest\` is empty. A binary that opens `C:\hello.txt` without closing it surfaces as `[UTEST] FAIL test_x: 1 handle leaked`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+---
+
+## 7. JUnit XML + JSON Output Formats
+
+§4 ships TAP, which is great for human reading but underspecified for CI tooling. JUnit XML is the de facto CI test-result format (GitLab, Jenkins, GitHub Actions, Azure DevOps all parse it natively). JSON gives downstream automation a typed schema for trend analysis.
+
+- [ ] Add `xml=1` flag to `boot.conf`: launcher emits `[UTEST-XML] <testsuite ...>` lines wrapping the §4 TAP block; one `<testcase>` per binary with `<failure message="...">stderr</failure>` for FAIL, `<skipped/>` for SKIP, attributes `name`, `classname` (=test type from §8), `time` (in seconds)
+- [ ] Add `json=1` flag: emit `[UTEST-JSON] {"name":"test_x","status":"PASS","time_ms":123,...}` one line per binary; final `[UTEST-JSON] {"summary":{...}}` line
+- [ ] `scripts/test.sh` post-processor: when `xml=1` was set, extract `[UTEST-XML]` lines from the serial log into `build/test-results.xml` (a real file CI tools can pick up via `actions/upload-artifact` or GitLab `artifacts.reports.junit`)
+- [ ] Document the schema in `docs/testing/usermode-output-formats.md` (already cited in §4 doc-only bullet) -- extend to cover XML + JSON shapes
+- [ ] Three flags are mutually compatible: a single run with `tap=1 xml=1 json=1` emits all three formats interleaved on serial; the post-processor splits them
+- [ ] Commit: `"test: usermode launcher emits JUnit XML + JSON in addition to TAP"`
+
+**Test checkpoint:** A run with `xml=1` produces `build/test-results.xml` that `xmllint --schema junit.xsd` validates against; a run with `json=1` emits JSON lines parseable by `jq -c '.name'`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+---
+
+## 8. Test Type Taxonomy: smoke / correctness / stress / perf
+
+A single "test_*.exe" pattern conflates very different test classes. TAEF distinguishes Loop Test Mode and Stress Test Mode; LTP separates `runtest/syscalls` from `runtest/stress`. Adopt a four-type taxonomy via filename prefix and per-type launcher policy.
+
+- [ ] Filename convention enforced by §3 launcher scan: `test_smoke_*.exe` (1-second suite that fast-fails on first error -- gates the rest of the run), `test_*.exe` (default correctness), `test_stress_*.exe` (loop body N times, default 1000 iterations or `stress_iters=N` from boot.conf), `test_perf_*.exe` (run once + assert latency/throughput against a baseline JSON file)
+- [ ] §4 manifest schema gains a `type=` column: `smoke`/`correctness`/`stress`/`perf`; if absent, infer from filename prefix
+- [ ] Launcher policy per type: smoke -> abort the run on first FAIL (boot fast-fail gate); correctness -> run all, report summary; stress -> wrap each test body in a loop, fail if N iterations don't all PASS; perf -> run once, parse `[PERF] <metric>=<value>` stderr lines from the binary, compare against `tests/perf-baseline.json`, FAIL if drift > tolerance
+- [ ] `tests/perf-baseline.json` lives in repo; per-host jitter tolerance (e.g., +/- 15% on TCG, +/- 5% on KVM) read from `boot.conf` per platform
+- [ ] `user/include/test.h` adds `UTEST_PERF(metric, value_ns)` macro that writes the `[PERF]` stderr line; stress tests just loop their existing `UTEST_ASSERT` calls
+- [ ] Commit: `"test: usermode test type taxonomy -- smoke/correctness/stress/perf with per-type policy"`
+
+**Test checkpoint:** A `test_smoke_boot.exe` that asserts `sys_uptime() > 0` runs first; if it FAILs, the rest of the run is skipped with `[UTEST] suite ABORT (smoke failed)`. A `test_stress_libc.exe` looping `strlen` 1000x stays green. A `test_perf_syscall.exe` reporting `[PERF] sys_yield_ns=400` PASSes against a 500ns baseline + 15% TCG tolerance. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+---
+
+## 9. Syscall Test Binary
 
 Exercise every implemented syscall from user mode.
 
@@ -143,7 +218,7 @@ Exercise every implemented syscall from user mode.
 
 ---
 
-## 6. Libc Test Binary
+## 10. Libc Test Binary
 
 Test string and formatting functions available in user mode.
 
@@ -160,7 +235,7 @@ Test string and formatting functions available in user mode.
 
 ---
 
-## 7. IPC Test Binary
+## 11. IPC Test Binary
 
 Test inter-process communication from user mode.
 
@@ -176,7 +251,7 @@ Test inter-process communication from user mode.
 
 ---
 
-## 8. Process Lifecycle Test
+## 12. Process Lifecycle Test
 
 Test fork, exec, waitpid from user mode.
 
@@ -191,7 +266,7 @@ Test fork, exec, waitpid from user mode.
 
 ---
 
-## 9. File I/O Test
+## 13. File I/O Test
 
 Test handle-based file operations.
 
@@ -208,9 +283,9 @@ Test handle-based file operations.
 
 ---
 
-## 10. Win32 API Test Binary
+## 14. Win32 API Test Binary
 
-Test Win32 API stubs once they are implemented (depends on `TODO-12 Native API SSDT` §6).
+Test Win32 API stubs once they are implemented (depends on `D02T12 §6`).
 
 - [ ] `user/test/test_win32.c`:
   - `GetCurrentProcessId()` -> returns PID > 0
@@ -220,11 +295,11 @@ Test Win32 API stubs once they are implemented (depends on `TODO-12 Native API S
   - `GetTickCount()` -> returns > 0
 - [ ] Commit: `"test: user-mode Win32 API test binary (test_win32.exe)"`
 
-**Test checkpoint:** After `TODO-12-native-api-ssdt.md §6` stubs exist, `test_win32.exe` exits 0 and serial shows `[UTEST] test_win32.exe: PASS`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** After `D02T12 §6` stubs exist, `test_win32.exe` exits 0 and serial shows `[UTEST] test_win32.exe: PASS`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
 ---
 
-## 11. Build Integration
+## 15. Build Integration
 
 Wire user-mode test binaries into `make test`.
 
@@ -241,26 +316,31 @@ Wire user-mode test binaries into `make test`.
 
 ## OS Comparison
 
-| ⭐ | Feature             | 🪟 Win11        | 🐧 Linux          | 🚀 Impossible OS |
-| --- | ------------------- | --------------- | ----------------- | ---------------- |
-| 💎 | User-mode test bins | ✅ HLK          | ✅ kselftest      | ⬜ §1-§10        |
-| 💎 | Syscall coverage    | ✅ NtDll        | ✅ ptrace selftest | ⬜ §5            |
-| 💎 | Auto launcher       | ✅ HLK          | ✅ run_kselftest  | ⬜ §3            |
-| 💎 | TAP or CI parse     | ✅ HLK XML      | ✅ TAP kselftest  | ⬜ §4, §11       |
-| 💎 | Timeouts or skips   | ✅ HLK          | ✅ LKFT skip      | ⬜ §4            |
-| 💎 | ABI header sync     | ✅ SDK          | ✅ uapi           | ⬜ §2            |
-| ⭐ | Win32 on non-Win    | ❌ N/A          | ❌ Wine only      | ⬜ §10           |
+| ⭐  | Feature              | 🪟 Win11             | 🐧 Linux                | 🚀 Impossible OS       |
+| --- | -------------------- | -------------------- | ----------------------- | ---------------------- |
+| 💎  | User-mode test bins  | ✅ HLK               | ✅ kselftest            | ⬜ §1-§14              |
+| 💎  | Syscall coverage     | ✅ NtDll             | ✅ ptrace selftest      | ⬜ §9                  |
+| 💎  | Auto launcher        | ✅ HLK               | ✅ run_kselftest        | ⬜ §3                  |
+| 💎  | TAP or CI parse      | ✅ HLK XML           | ✅ TAP kselftest        | ⬜ §4, §15             |
+| 💎  | JUnit XML / JSON     | ✅ HLK XML           | ⚠️ kselftest TAP only  | ⬜ §7                  |
+| 💎  | Timeouts or skips    | ✅ HLK               | ✅ LKFT skip            | ⬜ §4                  |
+| 💎  | ABI header sync      | ✅ SDK               | ✅ uapi                 | ⬜ §2                  |
+| 💎  | Per-test isolation   | ✅ HLK session reset | ✅ kselftest fork+tmp   | ⬜ §6                  |
+| 💎  | Stress / longhaul    | ✅ TAEF Loop+Stress  | ✅ LTP runtest/stress   | ⬜ §8 stress type      |
+| 💎  | Perf regression      | ✅ perfview/PerfTest | ✅ perf + flame baseline | ⬜ §8 perf type        |
+| ⭐  | Fault-inject bridge  | ⚠️ AppVerifier hooks | ⚠️ debugfs failslab     | ⬜ §5 SYS_FAULT_INJECT |
+| ⭐  | Win32 on non-Win     | ❌ N/A               | ❌ Wine only            | ⬜ §14                 |
 
-> **Parity gaps:** 💎 rows with ⬜ map to the listed sections. **⭐ row:** `TODO-12-native-api-ssdt.md §6` must land before §10 can turn real Win32 coverage on.
+> **Parity gaps:** 💎 rows with ⬜ map to the listed sections. **⭐ rows:** §5 fault-inject bridge gives a typed `test=1`-gated kernel-allocator probe surface that AppVerifier hooks Win32 for and Linux only exposes through debugfs; §14 Win32-on-non-Win depends on `D02T12 §6` Win32 thunk landing.
 
 ---
 
 ## Unit Tests
 
 > [!NOTE]
-> User-mode coverage is driven by `user/test/test_*.c` binaries and serial `[UTEST]` lines from §3 onward, not a dedicated `src/kernel/test/test_usermode.c` until a kernel-side wrapper is justified. §2 is header-only parity; §4 is launcher and serial-format policy.
+> User-mode coverage is driven by `user/test/test_*.c` binaries and serial `[UTEST]` lines from §3 onward, not a dedicated `src/kernel/test/test_usermode.c` until a kernel-side wrapper is justified. §2 is header-only parity; §4 + §7 + §8 are launcher and serial-format policy. The §5 `SYS_FAULT_INJECT` test-mode gate negative regression is the one kernel-side `TEST_CAT_EXEC` assertion that DOES belong in `src/kernel/test/test_syscall.c`.
 
-- [ ] Commit: `"test: N/A single TEST_CAT file -- usermode harness per §1-§11 and Verification"`
+- [ ] Commit: `"test: N/A single TEST_CAT file -- usermode harness per §1-§15 and Verification"`
 
 **Test checkpoint:** After §3 ships, `bash scripts/test.sh SUITE=exec` (see `CLAUDE.md`) parses `[UTEST]` PASS/FAIL alongside kernel `[TEST]` lines.
 
@@ -275,15 +355,6 @@ Wire user-mode test binaries into `make test`.
 
 **Test checkpoint:** End to end: clean tree -> `bash scripts/test.sh` is green -> a one-line change breaks a `test_*.exe` assertion -> the run fails with a visible `[UTEST] FAIL`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-**Test runner:** `scripts\debug\run-exec-tests.bat` (SUITE=exec) | suite count populated by §11 build integration once `test_*.exe` binaries ship; pending today
+**Test runner:** `scripts\debug\run-exec-tests.bat` (SUITE=exec) | suite count populated by §15 build integration once `test_*.exe` binaries ship; pending today
 
 ---
-
-## History
-
-| Date | Action | Summary |
-| --- | --- | --- |
-| 2026-04-16 | reorganize | Reordered this TODO into prerequisite-first execution flow: syscall ABI parity moved up to §2, launcher policy moved up to §4, consumer test binaries now run §5-§10, and build integration closes in §11. Updated the Implementation Order table and inbound/outbound XREF expectations accordingly. |
-| 2026-04-10 | validate | validate-todo-file: Inputs `CLAUDE.md` + `test.sh` (removed dead kernel-test-framework path); Win32 coverage depends on `TODO-12-native-api-ssdt.md §6`; subsystem test sections + Unit Tests + Verification checkpoints filled out with platforms; OS Comparison compact + parity note; History; `run-exec-tests.bat`; back-XREF added on TODO-05 Inputs. |
-| 2026-04-10 | gap-analysis | Added ABI parity and launcher manifest/TAP/skip work; Implementation Order and OS rows expanded; checklist gaps added in the subsystem test sections; Inputs kernel `syscall.h` + TODO-05 XREF; TODO-05 Inputs patched. |
-| 2026-04-10 | validate | validate-todo-file: fixed the TODO-05 launcher XREF, ensured the Win32 test row depends on the native API TODO, kept Unit Tests committed through §1-§11, and aligned Verification bullets with `CLAUDE.md`'s build-only Actions policy. |
