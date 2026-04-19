@@ -44,7 +44,7 @@
 | ⭐  | Order | Section | Deliverable                                               | Depends On          | Status |
 | --- | :---: | :-----: | --------------------------------------------------------- | ------------------- | :----: |
 | 💎  |   1   |  §1     | kmalloc fault injection (`kmalloc_fail_countdown`)        | --                  |  [x]   |
-| 💎  |   2   |  §7     | Test action/cleanup registry (`test_add_action`)          | --                  |  [ ]   |
+| 💎  |   2   |  §7     | Test action/cleanup registry (`test_add_action`)          | --                  |  [/]   |
 | 💎  |   3   |  §3     | Scratch-buffer helper (`TEST_SCRATCH_KBUF`)               | §7                  |  [ ]   |
 | 💎  |   4   |  §2     | Deterministic race barrier (`test_race_barrier_t`)        | --                  |  [x]   |
 | 💎  |   5   |  §6     | Fault-injection hardening (task-filter, multi-allocator)  | §1                  |  [ ]   |
@@ -185,15 +185,25 @@ Tests that exercise error paths (validators, allocator failure rollback, bad-inp
 
 KUnit built `kunit_kzalloc`, `kunit_kmalloc`, and its resource auto-free machinery on top of a general `kunit_add_action(fn, ctx)` primitive that executes cleanup callbacks in LIFO order at test exit -- pass or fail. §3 `TEST_SCRATCH_KBUF` and §5 `TEST_KLOG_SUPPRESS` are two of many possible consumers; making the primitive first-class unlocks cleaner test code across the board and matches Linux's proven model. Without it, every new test-scoped cleanup pattern reinvents list management inside the test runner.
 
-- [ ] Add `int test_add_action(void (*fn)(void *), void *ctx)` to `include/kernel/test/test.h`. Returns 0 on success, -1 (with a `klog(LOG_WARN, "TEST", ...)` line naming the test) if the per-test action list is full.
-- [ ] `struct test_state` in `src/kernel/test/test_runner.c` adds `uint8_t action_count` + `struct { void (*fn)(void*); void *ctx; } actions[32]`. `test_runner_run_one` drains actions in **LIFO** order AFTER the test body returns (pass or fail), BEFORE advancing to the next suite.
-- [ ] Action drain runs at PASSIVE_LEVEL. If a test left IRQL elevated, the runner logs `[WARN] TEST: <name> left IRQL elevated` and forcibly lowers IRQL before draining. Actions themselves must be non-blocking (documented constraint).
-- [ ] Migrate §3 `TEST_SCRATCH_KBUF` onto `test_add_action`: the macro becomes `void *name = test_scratch_alloc(size); test_add_action(test_scratch_free, name);`. Remove the bespoke per-test scratch list; §7 owns it.
-- [ ] Migrate §5 `TEST_KLOG_SUPPRESS` onto `test_add_action`: block-entry calls `test_add_action(restore_klog_level, saved_state_ptr)` where `saved_state_ptr` is a `struct { const char *subsys; klog_level_t prev; }` staged into `test_state` scratch. Replaces `__attribute__((cleanup))` with a visible action-log entry.
-- [ ] Sanity test in `src/kernel/test/test_runner.c`: a test registering 3 actions sees them invoked in reverse order after the body returns, even when the body hits `TEST_ASSERT(0)` and short-circuits. A test over-registering past 32 actions gets -1 from the 33rd and the existing 32 drain normally.
-- [ ] Commit: `"test: action/cleanup registry (test_add_action) + migrate §3 §5 onto it"`
+- [x] Added `int test_add_action(void (*fn)(void *), void *ctx)` to [`include/kernel/test/test.h`](../../include/kernel/test/test.h). Returns 0 on success, -1 on NULL fn / full list / re-entrant-during-drain (each -1 path emits a `[WARN] TEST: <suite> :: ...` line naming the suite).
+- [x] Per-suite action stack lives as file-scope static `s_test_actions` in [`src/kernel/test/test_runner.c`](../../src/kernel/test/test_runner.c) (kept out of public `test_state_t` so the ABI stays minimal): `uint8_t count`, `uint8_t draining`, `struct { fn; ctx } actions[32]`. `test_actions_reset()` runs before each suite body, `test_actions_drain()` runs after in **LIFO** order, before advancing to the next suite.
+- [x] Action drain runs at PASSIVE_LEVEL. If a suite left IRQL elevated (forgotten `KeLowerIrql` after `KeRaiseIrql`), the runner logs `[WARN] TEST: <suite> :: left IRQL elevated (<irql>) before drain` and force-lowers via `KeLowerIrql(PASSIVE_LEVEL)` so `kfree` / `klog` / blocking cleanup can run safely. Actions themselves must be non-blocking (documented in the header alongside the draining-reentrancy contract).
+- [ ] Migrate §3 `TEST_SCRATCH_KBUF` onto `test_add_action`: the macro becomes `void *name = test_scratch_alloc(size); test_add_action(test_scratch_free, name);`. Remove the bespoke per-test scratch list; §7 owns it. (Deferred: §3 has not shipped yet; this item closes when §3 lands using `test_add_action` from day one.)
+- [ ] Migrate §5 `TEST_KLOG_SUPPRESS` onto `test_add_action`: block-entry calls `test_add_action(restore_klog_level, saved_state_ptr)` where `saved_state_ptr` is a `struct { const char *subsys; klog_level_t prev; }` staged into `test_state` scratch. Replaces `__attribute__((cleanup))` with a visible action-log entry. (Deferred: §5 has not shipped yet; this item closes when §5 lands using `test_add_action` from day one.)
+- [x] Sanity tests in [`src/kernel/test/test_harness.c`](../../src/kernel/test/test_harness.c) (TEST_CAT_BOOT, 9 suites). Pair-style: register-suite registers actions + records observations into file-scope statics; verify-suite asserts on those observations after the runner's drain fires between suites. Coverage: (a) 3 actions fire LIFO by context value; (b) 33rd `test_add_action` returns -1, first 32 drain; (c) `test_add_action(NULL, ctx)` returns -1; (d) re-entrant `test_add_action` from an action body returns -1 (draining flag blocks it); (e) action observes `PASSIVE_LEVEL` even when the suite leaked `DISPATCH_LEVEL`, next suite also starts at PASSIVE.
+- [x] Commit: `"test: action/cleanup registry (test_add_action) + 9 harness suites"`
 
-**Test checkpoint:** `[ OK ] TEST: harness :: 3 actions fire in LIFO order for passing test`. `[ OK ] TEST: harness :: 3 actions fire in LIFO order after forced fail`. `[ OK ] TEST: harness :: action list full returns -1 and existing actions still drain`.
+**Test checkpoint:** `[ OK ] TEST: Harness: 3 actions fired LIFO after suite exit :: LIFO: last-registered (0x3333) fires first`. `[ OK ] TEST: Harness: 32 actions drained after overflow :: exactly 32 actions drained`. `[ OK ] TEST: Harness: re-entrant add rejected during drain :: test_add_action during drain returned -1`. `[ OK ] TEST: Harness: runner force-lowered IRQL for drain :: action ran at PASSIVE_LEVEL after runner forced IRQL down`.
+
+> **Test runner:** `scripts\debug\run-boot-tests.bat` (SUITE=boot) | 9 new Harness suites, 0 failures
+
+> **Notes:**
+> - Shipped `test_add_action(fn, ctx)` public API in [`include/kernel/test/test.h`](../../include/kernel/test/test.h) + impl in [`src/kernel/test/test_runner.c`](../../src/kernel/test/test_runner.c). 32-slot LIFO per-suite stack; NULL fn + full list + re-entrant-during-drain all return -1 with a `[WARN]` line.
+> - Runner integration: `test_actions_reset()` zeroes the stack before each suite body; `test_actions_drain()` fires after, force-lowering IRQL to PASSIVE_LEVEL first so elevated-IRQL leaks from one suite don't poison the next. Both hooks sit in the existing suite loop in `test_runner_run` (no new `test_runner_run_one` helper).
+> - Draining-reentrancy contract: `test_add_action` returns -1 while a drain is in progress. Prevents the pathological case where an action re-registers itself and the drain loop runs forever. Documented in header + enforced by a regression suite.
+> - Downstream consumers: §3 `TEST_SCRATCH_KBUF` and §5 `TEST_KLOG_SUPPRESS` will dispatch their cleanup through `test_add_action` from day one; the two "Migrate §3/§5" items in this section close as those sections ship. No bespoke per-test list code needed in either.
+> - Canonical doc: the header comment at [`include/kernel/test/test.h`](../../include/kernel/test/test.h) `test_add_action` block documents the API contract (return codes, reentrancy, IRQL, non-blocking); the impl header comment in [`src/kernel/test/test_runner.c`](../../src/kernel/test/test_runner.c) documents the single-CPU SMP assumption of the sequential test_runner.
+> - Scope boundary: §7 owns the generic registry. §3 (scratch-buffer) and §5 (klog-suppress) are consumers, not owned here. Generalised tracing of action history / debugfs-style introspection is out of scope.
 
 ---
 
@@ -221,7 +231,7 @@ Record `heap_stats().used_bytes` at test start and end; if the delta is non-zero
 | 💎 | Multi-allocator fault injection    | ⚠️ DV LRS (coarse)          | ✅ `failslab` + `fail_page_alloc` + `fail_usercopy` | ⬜ §6 pmm/vmm/copy_user countdowns             |
 | 💎 | Task-scoped fault injection        | ❌ Rare                     | ✅ `task_filter` (fault-inject)                     | ⬜ §6 `kmalloc_fail_task_filter`               |
 | 💎 | Deterministic concurrency testing  | ⚠️ TAEF with effort         | ⚠️ KCSAN (probabilistic)                            | ✅ §2 `test_race_barrier_t` (yield-ordered)    |
-| 💎 | Test-scoped cleanup registry       | ❌ Manual in TAEF           | ✅ `kunit_add_action`                               | ⬜ §7 `test_add_action`                        |
+| 💎 | Test-scoped cleanup registry       | ❌ Manual in TAEF           | ✅ `kunit_add_action`                               | ✅ §7 `test_add_action` (primitive shipped)    |
 | 💎 | Test-scoped scratch allocation     | ⚠️ Manual in TAEF           | ✅ `kunit_kzalloc` (kmalloc-only)                   | ⬜ §3 `TEST_SCRATCH_KBUF` (kmalloc + PMM)      |
 | 💎 | Per-test leak detection            | ⚠️ DV verifier pool checks  | ✅ `kmemleak` (kernel-wide)                         | ⬜ §8 heap_used delta (per-test, built-in)     |
 | ⭐ | Test-scoped klog level demotion    | ❌ None                     | ❌ None                                             | ⬜ §5 `TEST_KLOG_SUPPRESS`                     |
@@ -240,7 +250,7 @@ After §1-§8 land, in-kernel test coverage reaches Linux-KUnit-plus-fault-injec
 - [ ] `src/kernel/test/test_runner.c` sanity tests for §3 `TEST_SCRATCH_KBUF` (kmalloc path, PMM path, cleanup-on-failure path)
 - [ ] `src/kernel/test/test_boot_payload.c` + `test_sched.c` regression coverage for §5 `TEST_KLOG_SUPPRESS` (error-path klog lines disappear from test-window serial output)
 - [ ] `src/kernel/test/test_heap.c` + `test_pmm.c` + `test_mm.c` + `test_syscall.c` cover §6 multi-allocator fault injection: task-filter, total-hits cap, pmm/vmm/copy_user countdowns (min 1 fail-next + 1 IRQL-gate per allocator)
-- [ ] `src/kernel/test/test_runner.c` sanity tests for §7 `test_add_action` (LIFO drain on pass, LIFO drain on fail, over-registration returns -1 without corrupting list)
+- [x] `src/kernel/test/test_harness.c` sanity tests for §7 `test_add_action` (9 TEST_CAT_BOOT suites: LIFO drain, overflow, NULL-fn reject, re-entrant-during-drain reject, IRQL recovery)
 - [ ] `src/kernel/test/test_runner.c` sanity tests for §8 heap-leak detection (unfreed kmalloc flagged, `TEST_EXPECT_LEAK` tolerated, `TEST_LEAK_IGNORE` bypasses delta check)
 
 > **Test runner:** `scripts\debug\run-boot-tests.bat` (SUITE=boot) + `scripts\debug\run-mm-tests.bat` (SUITE=mm) | ~20 new test-harness + allocator suites, 0 failures, summary shows `L=0` on green tree

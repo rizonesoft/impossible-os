@@ -26,11 +26,14 @@
 #include "kernel/types.h"
 
 /* ---- Maximum limits ----
- * When suite_count approaches TEST_MAX_SUITES, revisit the testing
- * infrastructure: consider kunit-style conditional compilation,
+ * Raised 2026-04-19 from 512 to 1024 after the suite count hit 496
+ * (see kernel-test-harness roadmap, action-registry section) -- the
+ * old ceiling would silently drop the next ~3 TODO sections' tests.
+ * When suite_count approaches TEST_MAX_SUITES again, revisit the
+ * testing infrastructure: consider kunit-style conditional compilation,
  * parallel execution on SMP, or splitting into loadable test modules.
  * Current growth rate: ~5 suites per TODO section. */
-#define TEST_MAX_SUITES     512
+#define TEST_MAX_SUITES     1024
 #define TEST_MAX_NAME_LEN   32
 
 /* ---- Test categories for selective execution ---- */
@@ -112,6 +115,24 @@ void _test_skip(const char *msg, const char *file, int line);
 void _test_pending(int condition, const char *msg,
                    const char *file, int line);
 
+/* Register a test-scoped cleanup action. Invoked in LIFO order after the
+ * currently-running suite's body returns (pass or fail), before the
+ * runner advances to the next suite. Returns 0 on success, -1 if the
+ * per-suite action list is full (32 slots) or fn is NULL; a -1 also
+ * emits a `[WARN] TEST: <name> :: action list full` line so the test
+ * author sees it.
+ *
+ * Intended consumers: TEST_SCRATCH_KBUF (§3), TEST_KLOG_SUPPRESS (§5),
+ * and any future test-scoped resource that needs deterministic cleanup
+ * without adding bespoke list management to each test. Model follows
+ * Linux KUnit's `kunit_add_action`.
+ *
+ * Constraints: actions must be non-blocking (they run during the
+ * runner's sequential drain phase, not inside a yield-tolerant
+ * context). Actions run at PASSIVE_LEVEL; the runner forcibly lowers
+ * IRQL + warns if a suite left it elevated. */
+int test_add_action(void (*fn)(void *), void *ctx);
+
 /* Category name lookup */
 const char *test_category_name(test_category_t cat);
 
@@ -165,6 +186,9 @@ static inline void test_runner_set_filter(test_category_t cat __attribute__((unu
 static inline void test_runner_set_quiet(int quiet __attribute__((unused))) {}
 static inline void test_runner_run(void) {}
 static inline void test_runner_init(void) {}
+
+static inline int test_add_action(void (*fn)(void *) __attribute__((unused)),
+                                   void *ctx __attribute__((unused))) { return 0; }
 
 #define TEST_ASSERT(cond, msg)      ((void)0)
 #define TEST_ASSERT_EQ(a, b, msg)   ((void)0)

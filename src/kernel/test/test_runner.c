@@ -14,6 +14,7 @@
 #include "kernel/klog.h"
 #include "kernel/timer.h"
 #include "kernel/mm/heap.h"             /* kmalloc_fail_countdown_clear (hygiene) */
+#include "kernel/sched/irql.h"          /* KeGetCurrentIrql / KeLowerIrql for action drain */
 
 /* ---- Category names (must match test_category_t order) ---- */
 
@@ -198,6 +199,106 @@ void _test_pending(int condition, const char *msg,
     }
 }
 
+/* ---- Per-suite action/cleanup registry ----
+ *
+ * Each running suite gets a fresh 32-slot LIFO cleanup stack. Actions
+ * registered via test_add_action() fire in reverse registration order
+ * after the suite body returns, pass or fail. File-scope static keeps
+ * this out of the public test_state_t ABI and simplifies reset between
+ * suites to a single field assignment.
+ *
+ * SMP note: the test runner is sequential single-CPU (suites run one at
+ * a time on the test-runner thread), so no spinlock is needed on the
+ * action stack. If the runner ever fans out, this needs revisiting.
+ */
+#define TEST_MAX_ACTIONS  32
+
+static struct {
+    uint8_t count;
+    uint8_t draining;           /* 1 while test_actions_drain() is running */
+    struct {
+        void (*fn)(void *);
+        void *ctx;
+    } actions[TEST_MAX_ACTIONS];
+} s_test_actions;
+
+int test_add_action(void (*fn)(void *), void *ctx)
+{
+    if (!fn)
+        return -1;
+    /* Reject re-entrant registration during drain. Allowing it would let
+     * an action re-populate the slot the drain just vacated and spin the
+     * drain loop forever. The contract is: register from the suite body,
+     * drain when the body returns. Re-registration is a bug in the
+     * action callback; surfacing it via -1 + warning lets the test
+     * author fix it without hanging the runner. */
+    if (s_test_actions.draining) {
+        klog(LOG_WARN, "TEST",
+             "%s :: test_add_action called during drain -- rejected",
+             g_test_state.current_suite);
+        return -1;
+    }
+    if (s_test_actions.count >= TEST_MAX_ACTIONS) {
+        klog(LOG_WARN, "TEST", "%s :: action list full (%u slots)",
+             g_test_state.current_suite, (uint64_t)TEST_MAX_ACTIONS);
+        return -1;
+    }
+    uint8_t idx = s_test_actions.count++;
+    s_test_actions.actions[idx].fn  = fn;
+    s_test_actions.actions[idx].ctx = ctx;
+    return 0;
+}
+
+static void test_actions_reset(void)
+{
+    s_test_actions.count = 0;
+    s_test_actions.draining = 0;
+}
+
+static void test_actions_drain(void)
+{
+    /* IRQL hygiene: the drain runs at PASSIVE_LEVEL. A suite that left
+     * IRQL elevated (forgotten KeLowerIrql after KeRaiseIrql) would be
+     * unsafe to drain from: event_wait / kfree / klog assume PASSIVE.
+     * Warn + force-lower so the drain completes deterministically and
+     * the subsequent suite starts from a known IRQL. Doing nothing here
+     * is worse -- the next suite would inherit the elevated IRQL. */
+    KIRQL irql = KeGetCurrentIrql();
+    if (irql != PASSIVE_LEVEL) {
+        klog(LOG_WARN, "TEST", "%s :: left IRQL elevated (%u) before drain",
+             g_test_state.current_suite, (uint64_t)irql);
+        KeLowerIrql(PASSIVE_LEVEL);
+    }
+
+    /* Set draining flag so re-entrant test_add_action calls from inside
+     * an action callback are rejected instead of re-populating the
+     * stack and hanging the loop. See test_add_action() for rationale. */
+    s_test_actions.draining = 1;
+
+    /* LIFO drain: last registered runs first. After each callback,
+     * re-check IRQL -- a cleanup that raises DISPATCH_LEVEL and
+     * returns without lowering would otherwise poison every
+     * subsequent action AND the next suite (kfree/klog/event_wait
+     * all require PASSIVE). Per-iteration recovery keeps each
+     * action's promised runtime context intact. */
+    while (s_test_actions.count > 0) {
+        uint8_t idx = --s_test_actions.count;
+        void (*fn)(void *) = s_test_actions.actions[idx].fn;
+        void *ctx = s_test_actions.actions[idx].ctx;
+        if (fn)
+            fn(ctx);
+        KIRQL post = KeGetCurrentIrql();
+        if (post != PASSIVE_LEVEL) {
+            klog(LOG_WARN, "TEST",
+                 "%s :: action leaked IRQL (%u) -- lowering",
+                 g_test_state.current_suite, (uint64_t)post);
+            KeLowerIrql(PASSIVE_LEVEL);
+        }
+    }
+
+    s_test_actions.draining = 0;
+}
+
 /* ---- Register built-in test suites ---- */
 
 extern void test_register_pmm(void);
@@ -227,6 +328,7 @@ extern void test_register_blackbox(void);
 extern void test_register_acpi_power(void);
 extern void test_register_exec(void);
 extern void test_register_crashdump(void);
+extern void test_register_harness(void);
 
 void test_runner_init(void)
 {
@@ -255,6 +357,7 @@ void test_runner_init(void)
     test_register_klog();
     test_register_uefi_boot();
     test_register_boot_device();
+    test_register_harness();
 
     /* x86-64 Architecture (CPUID, MSR, KPTI, CPU security) */
     test_register_x86();
@@ -332,7 +435,16 @@ void test_runner_run(void)
         uint32_t pre_pass = g_test_state.passed;
         uint32_t pre_fail = g_test_state.failed;
 
+        /* Start each suite with an empty action stack. */
+        test_actions_reset();
+
         s->fn();
+
+        /* Drain any actions the suite registered via test_add_action().
+         * Runs regardless of whether the body's assertions passed or
+         * failed -- that's the whole point of the registry: resources
+         * are freed even on assertion-induced early return. */
+        test_actions_drain();
 
         /* Defensive hygiene: if a suite armed the kmalloc fault-injection
          * countdown and then failed an assertion before it fired, clear
