@@ -365,7 +365,7 @@ This is the refinement step: test the workflow itself.
 
 > AI workflow checks are host-side regression checks, not kernel `test_runner_init()` suites. They complement the wrapper/hook/YAML checks already in `scripts/test-tooling.sh` (owned by [TODO-01 §10](TODO-01-developer-tooling-stack.md#10-smoke-test-post16-assertions) Unit Tests) by covering the AI-specific surfaces.
 
-- [ ] Create `scripts/test-ai-system.sh` with:
+- [x] Create `scripts/test-ai-system.sh` with:
   - skill catalog consistency (every `.claude/skills/*` dir is indexed in CLAUDE.md + README)
   - doctrine-word-presence checks across `CLAUDE.md` (completion-first, bare-metal-first, SMP-from-day-one, no-Unicode-dashes, no-live-boot-infra-in-tests)
   - Authority Hierarchy present in TODO-02 + `docs/infrastructure/ai-system.md` (ships with §1)
@@ -377,21 +377,21 @@ This is the refinement step: test the workflow itself.
   - no-parallel-skill-tree check (`.codex/skills/`, `.copilot/skills/`, etc. do not exist)
   - `.claude/settings.json` valid JSON
   - `.github/copilot-instructions.md` exists and references external-reviewer contract
-- [ ] Wire the AI regression pack into `make test-ai-system` + `.github/workflows/build.yml`
-- [ ] Commit: `"test/ai: add regression checks for repo AI workflow"`
+- [x] Wire the AI regression pack into `make test-ai-system` + `.github/workflows/build.yml`
+- [x] Commit: `"test/ai: add regression checks for repo AI workflow"` -- shipped as `test/ai: add AI workflow regression suite` (commit `3c348e47`).
 
 ## Verification
 
-- [ ] **Authority Hierarchy is stated at the top of this TODO**, in `docs/infrastructure/ai-system.md` (once §1 lands), and in a one-sentence reference from `CLAUDE.md`. A contributor asking "is Claude Code the master?" finds a direct "yes, and here's what 'master' means" answer within 30 seconds.
+- [x] **Authority Hierarchy is stated at the top of this TODO**, in `docs/infrastructure/ai-system.md` (once §1 lands), and in a one-sentence reference from `CLAUDE.md`. A contributor asking "is Claude Code the master?" finds a direct "yes, and here's what 'master' means" answer within 30 seconds. -- TODO-02 line 7 carries the master statement + 5-invariant table; [`ai-system.md`](../../docs/infrastructure/ai-system.md#authority-hierarchy-read-this-first) opens with the mirrored table; `CLAUDE.md` lines 181 + 215 + 185 reference the Authority Hierarchy anchor three times in distinct contexts (zero-trailer policy, Claude Code-only stance, autonomous-agent boundary).
 - [x] The 5 hierarchy invariants (doctrine in `CLAUDE.md` only; skills in `.claude/skills/` only; reviewers return findings, never edits; `CLAUDE.md` wins on conflict; Claude Code is also the interactive agent) appear in both `TODO-02` and `ai-system.md`; `scripts/test-ai-system.sh` asserts both locations.
-- [ ] Root roadmap and `00-infrastructure/INDEX.md` point only at real AI/tooling TODO files
-- [ ] Ownership matrix clearly maps doctrine, skills, hooks, and permissions -- and opens with the Authority Hierarchy table before any other row
-- [ ] External-reviewer contract is documented and linked from every `codex-*` skill
-- [ ] `scripts/test-ai-system.sh` fails on missing links, skill-catalog drift, `.cursor/`-residue, hierarchy-block deletion, or parallel-skill-tree creation; passes on a healthy repo
-- [ ] Hook policy documentation explains which behaviors are reminders versus hard blocks
-- [ ] The Claude Code-only stance is stated once in `CLAUDE.md` and referenced from this TODO; no parallel skill tree exists under `.cursor/`, `.codex/`, or similar
-- [ ] `AGENTS.md` exists at repo root, under 60 lines, points to `CLAUDE.md`, does not duplicate doctrine (§6)
-- [ ] Zero-trailer AI-assist commit policy is documented in `CLAUDE.md` or `CONTRIBUTING.md`, with the stance-change condition named explicitly (§7). A commit-log scan finds zero `Co-Authored-By:` / `Assisted-by:` trailers in recent history.
-- [ ] Autonomous-agent boundary is documented: repo does NOT ship `.github/workflows/copilot-setup-steps.yml`, `.github/agents/`, or `.github/chatmodes/`; the refusal-to-ship is explicit, not accidental (§8)
+- [x] Root roadmap and `00-infrastructure/INDEX.md` point only at real AI/tooling TODO files -- §9 regression group 8 `[8/12] Root-index link integrity`: "36 link(s) across root indexes all resolve" + "AI-system links in CLAUDE.md all resolve" (72 PASS / 0 FAIL).
+- [x] Ownership matrix clearly maps doctrine, skills, hooks, and permissions -- and opens with the Authority Hierarchy table before any other row -- [`ai-system.md`](../../docs/infrastructure/ai-system.md) line 1 `# AI Development System -- Ownership Map`, line 5 `## Authority Hierarchy (read this first)` -- Authority is the first `##` heading, before any other content.
+- [x] External-reviewer contract is documented and linked from every `codex-*` skill -- 9/9 `codex-*` skills carry `receiving-code-review` or `external-reviewer-contract` reference (verified via `for f in .claude/skills/codex-*/SKILL.md; do grep -q 'receiving-code-review\|external-reviewer-contract' "$f"; done`).
+- [x] `scripts/test-ai-system.sh` fails on missing links, skill-catalog drift, `.cursor/`-residue, hierarchy-block deletion, or parallel-skill-tree creation; passes on a healthy repo -- current healthy-repo baseline: 72 PASS, 0 FAIL. §9 regression exercised 8 real issues during implementation (broken INDEX links, AGENTS.md ratio, anchor-filter drift, etc.).
+- [x] Hook policy documentation explains which behaviors are reminders versus hard blocks -- [`ai-system.md`](../../docs/infrastructure/ai-system.md#hook-routing-matrix) carries three section headings: `### BLOCK hooks (5)`, `### REMIND hooks (12)`, `### POST-HOC VALIDATE hooks (2)` -- 19 hooks total, each row in a single-source-of-truth table.
+- [x] The Claude Code-only stance is stated once in `CLAUDE.md` and referenced from this TODO; no parallel skill tree exists under `.cursor/`, `.codex/`, or similar -- `CLAUDE.md` line 215 "Impossible OS is Claude Code-only as of 2026-04-18"; `.cursor/skills/`, `.codex/skills/`, `.copilot/skills/`, `.windsurf/skills/`, `.aider/skills/`, `.continue/skills/` all absent (§9 regression group 10). NOTE: a tracked 0-byte `.codex` FILE (not a tree) remains from the 2026-04-06 `chore: remove Codex implementation skills` cleanup -- not a parallel skill tree, so V8 is satisfied, but flagged as hygiene.
+- [x] `AGENTS.md` exists at repo root, under 60 lines, points to `CLAUDE.md`, does not duplicate doctrine (§6) -- AGENTS.md is 35 lines (< 60 cap), contains 6 `CLAUDE.md` references, passes §9 regression byte-match group 3 (full-sentence phrases in AGENTS.md + TODO-02 + ai-system.md).
+- [x] Zero-trailer AI-assist commit policy is documented in `CLAUDE.md` or `CONTRIBUTING.md`, with the stance-change condition named explicitly (§7). A commit-log scan finds zero `Co-Authored-By:` / `Assisted-by:` trailers in recent history. -- §9 regression group 4 anchor-inclusive scan via `git interpret-trailers --parse`: "no NEW AI-attribution trailers since §7 adoption (inclusive of anchor)". One documented exception (`c6b30e0f`) carried forward as an advisory `NOTE`.
+- [x] Autonomous-agent boundary is documented: repo does NOT ship `.github/workflows/copilot-setup-steps.yml`, `.github/agents/`, or `.github/chatmodes/`; the refusal-to-ship is explicit, not accidental (§8) -- §9 regression group 5 confirms 4 forbidden paths absent (also `.github/instructions/`). `AGENTS.md` carries the "Autonomous-agent stop sign" section; `CLAUDE.md` section "Autonomous-agent boundary -- interactive only" makes the refusal explicit.
 
-> **Test runner:** N/A (host-side shell + docs only; no kernel test surface) | validation: `bash scripts/test-ai-system.sh` (ships in §9) + [`build.yml`](../../.github/workflows/build.yml) CI step once §9 lands. Complements `bash scripts/test-tooling.sh` (owned by [TODO-01 §10](TODO-01-developer-tooling-stack.md#10-smoke-test-post16-assertions)).
+> **Test runner:** `make test-ai-system` | expected: `72 checks passed, 0 failed`. Also runs pre-build in [`.github/workflows/build.yml`](../../.github/workflows/build.yml) step "Run AI workflow regression pack". Complements `bash scripts/test-tooling.sh` (owned by [TODO-01 §10](TODO-01-developer-tooling-stack.md#10-smoke-test-post16-assertions)).
