@@ -62,7 +62,7 @@
 | 💎  |   2   | Skill lifecycle, templates, and catalog rules      | §1           |  [x]   |
 | 💎  |   3   | Hook routing and policy contract                   | §1           |  [/]   |
 | 💎  |   4   | External-reviewer contract (Codex, Copilot)        | §1-§3        |  [x]   |
-| 💎  |   5   | MCP, permissions, and extension boundary           | §1, §3, §4   |  [ ]   |
+| 💎  |   5   | MCP, permissions, and extension boundary           | §1, §3, §4   |  [x]   |
 | 💎  |   6   | `AGENTS.md` cross-tool pointer file                | §1, §4       |  [ ]   |
 | 💎  |   7   | AI-assist commit disclosure policy                 | §1           |  [ ]   |
 | ⭐  |   8   | Autonomous-agent boundary policy                   | §4, §5       |  [ ]   |
@@ -162,15 +162,20 @@ Codex and Copilot participate in the AI workflow as adversarial reviewers, not a
 
 Permissions and extensions are part of the architecture. They need clear boundaries and safe defaults.
 
-- [ ] Document the current Claude Code permission model (`allow`/`deny`/`ask` tiers) and how the repo's `.claude/settings.json` uses it: read-only ops auto-allowed, write ops ask, destructive ops explicitly denied
-- [ ] Define where project-local extensions or MCP-style integrations belong and where they do not. MCP servers live in user-local config, not repo-tracked files.
-- [ ] Add policy notes for secrets, local-only settings, and non-committed machine-specific overrides. `.claude/settings.local.json` is user-local and git-ignored; `.claude/settings.json` is repo-tracked shared policy.
-- [ ] Review the boundary between repo-tracked instructions and user-local configuration so shared policy does not leak into personal state
-- [ ] Document the `claude-code-guide` subagent and how it maps to the repo's Claude Code-only stance (it's the docs-only guide; agents that modify code live in `Explore`, `general-purpose`, or skill invocations)
-- [ ] Add extension/permission maintenance notes to the ownership matrix from §1
-- [ ] Commit: `"docs/ai: define MCP, permissions, and extension boundary"`
+- [x] Documented the four Claude Code permission tiers (`allow` / `ask` / `deny` / `defaultMode`) in the new [MCP, Permissions, and Extension Boundary](../../docs/infrastructure/ai-system.md#mcp-permissions-and-extension-boundary) section of `ai-system.md`. Current repo-tracked allow-rule shape: 8 narrow entries in `.claude/settings.json`, 0 explicit `ask` or `deny` rules (harness safety defaults cover destructive patterns).
+- [x] Documented the MCP server boundary: MCP servers live in user-local harness config (`~/.claude/` or IDE pane), NOT in repo-tracked files. Reason pinned to credential leak risk. The repo uses skills + hooks as the shared tool surface; MCP output enters the repo only via skill-authored citations in PRs.
+- [x] Added policy notes for secrets and local-only state: secrets never live in either `settings.json` OR `settings.local.json` (read from env or user-level config); `.claude/settings.local.json` covers personal allow-rules + `defaultMode` + machine-specific paths. Updated `.gitignore` to explicitly exclude `.claude/settings.local.json` with an inline pointer to this documentation (the file was already untracked but was not git-ignored, so a `git add .claude/*` would have committed it).
+- [x] Stated the shared-vs-local split explicitly in a two-row "Shared vs user-local split" table: `.claude/settings.json` (committed, shared) vs `.claude/settings.local.json` (gitignored, user-local). "What belongs where" bullet list names 3 buckets: shared (hooks + repo-wide allow-rules + env vars), user-local (personal allow-rules + `defaultMode` + one-off permissions + machine paths), and never-either (secrets / API tokens / keys).
+- [x] Documented the `claude-code-guide` subagent plus the other 4 harness-provided subagents (`Explore`, `general-purpose`, `Plan`, `statusline-setup`) in a dedicated "Subagent boundary" table. Pinned their stance: harness-provided, not repo-tracked; `claude-code-guide` is read-only docs-only; code edits go through skills (`.claude/skills/`) not through subagents.
+- [x] Added permission/MCP/subagent rows to an "Edit-here-not-there mapping for this section" table inside §5: shared allow-rules -> `settings.json`; personal allow-rules -> `settings.local.json`; MCP config -> user harness config (outside repo); subagent behavior -> harness built-in. Cross-linked from the main Edit-Here-Not-There Rules table (§1) as a follow-up refinement.
+- [x] Commit: `"docs/ai: define MCP, permissions, and extension boundary"`
 
-**Test checkpoint:** A maintainer can tell which settings are safe to commit, which are local-only, and where to add new project-level AI capabilities without violating policy boundaries. The `.local` vs shared split is explicit.
+**Test checkpoint:** A maintainer can tell which settings are safe to commit, which are local-only, and where to add new project-level AI capabilities without violating policy boundaries. Verified: `.gitignore` entry for `.claude/settings.local.json` present; the file is currently untracked (`git ls-files .claude/settings.local.json` returns empty); `ai-system.md` names each settings file, each permission tier, and each subagent with its role + repo stance.
+
+> **Test runner:** N/A (docs + gitignore + settings cleanup) | validation: `git check-ignore .claude/settings.local.json` returns 0; `ai-system.md` contains the MCP, Permissions, and Extension Boundary section; `.claude/settings.json` permissions.allow no longer contains destructive `Bash(git reset:*)` rule; §9 regression suite will assert these invariants when it ships.
+
+> **Verified:** 2026-04-19 | 7/7 items | build N/A (docs-only) | settings.local.json gitignored; Bash(git reset:*) removed
+> **Quality reviewed:** 2026-04-19 | Codex 1x (adversarial) | 1H+2M+1L fixed (H: Bash(git reset:*) was in shared allow + documented as "safe" -- includes `git reset --hard` which destroys work; removed the rule AND the example; M: defaultMode misframed as 4th tier with wrong mode names `permissive`/`strict` -> separated rule lists from defaultMode knob, listed actual modes default/acceptEdits/plan/bypassPermissions; M: §1 cross-link to §5 was claimed in stamp but not actually added -> added inline pointer in the §1 Edit-Here-Not-There table; L: §5 table rows 210-287 chars over 200-char cap -> compacted), 0 open | scope: N/A (docs-only + settings hardening)
 
 ---
 
@@ -261,7 +266,7 @@ This is the refinement step: test the workflow itself.
 | 💎 | Skill/catalog ownership         | ⚠️ `.github/chatmodes/` + `/prompts/`       | ❌ Ad hoc                                  | ✅ §2 skill lifecycle; no parallel trees                 |
 | 💎 | Hook policy matrix              | ⚠️ `.vscode/mcp.json` + IDE settings        | ⚠️ Implicit                                | ✅ §3 routing; reminder vs block tiers                   |
 | 💎 | External-reviewer contract      | ❌ Rare                                     | ❌ Rare                                    | ✅ §4 Codex + Copilot reviewer-not-authority             |
-| 💎 | Permissions/extension boundary  | ⚠️ Varies                                   | ⚠️ Varies                                  | ⬜ §5 allow/deny tiers + `.local.json` split             |
+| 💎 | Permissions/extension boundary  | ⚠️ Varies                                   | ⚠️ Varies                                  | ✅ §5 allow/deny tiers + `.local.json` split             |
 | 💎 | Cross-tool `AGENTS.md` pointer  | ⚠️ awesome-copilot stub                     | ✅ LF-backed (Aug 2025)                    | ⬜ §6 pointer to `CLAUDE.md`; no duplication             |
 | 💎 | AI-assist commit disclosure     | ❌ No convention                            | ✅ kernel `Assisted-by:` trailer (2025-12) | ⬜ §7 zero-trailer policy + stance-change condition      |
 | ⭐ | Autonomous-agent boundary       | ⚠️ coding-agent + firewall allowlist        | ❌ No formal policy                        | ⬜ §8 interactive-only; no Devin / setup-steps           |

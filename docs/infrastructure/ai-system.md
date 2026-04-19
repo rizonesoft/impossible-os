@@ -82,7 +82,7 @@ Preserve the hierarchy by editing the ONE canonical location when a concept has 
 | Doctrine (north star, SMP, bare metal, testing rules) | [`CLAUDE.md`](../../CLAUDE.md)                                                        | Any skill header that mentions the same rule (read-only reference); the ai-system.md Global-Doctrine table above (update the link target only)   |
 | Skill workflow (steps, gates, guardrails)        | [`.claude/skills/<skill>/SKILL.md`](../../.claude/skills/)                            | Skill catalog table in `CLAUDE.md` (update the one-line description only when a skill is added/renamed/retired)                                  |
 | Skill lifecycle (how to add/edit/retire)         | [`docs/infrastructure/skill-authoring.md`](skill-authoring.md)                        | [`.claude/skills/TEMPLATE.md`](../../.claude/skills/TEMPLATE.md) (scaffold only -- structural changes go to skill-authoring.md first)            |
-| Harness policy (hooks, permissions)              | [`.claude/settings.json`](../../.claude/settings.json)                                | Mandatory-Skill-Triggers table in `CLAUDE.md` (update when a hook is added that enforces a new rule)                                             |
+| Harness policy (hooks, permissions)              | [`.claude/settings.json`](../../.claude/settings.json) + [§5 boundary](#mcp-permissions-and-extension-boundary) | Mandatory-Skill-Triggers table in `CLAUDE.md` (update when a hook is added that enforces a new rule)                                             |
 | Copilot CLI guidance                             | [`.github/copilot-instructions.md`](../../.github/copilot-instructions.md)            | `scripts/copilot-review.sh` (invocation only); never restate doctrine in the instructions file                                                   |
 | Codex dispatch templates                         | Individual `codex-*` skills under [`.claude/skills/`](../../.claude/skills/)          | Codex plugin config (external); never restate doctrine in plugin docs                                                                            |
 | Git-hook lifecycle (pre-commit lint, post-commit COUNT, pre-push) | [Git Hooks and Local Automation Lifecycle](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md#5-git-hooks-and-local-automation-lifecycle) + [`.githooks/`](../../.githooks/) | `CONTRIBUTING.md` "Enable Git Hooks" section (copy-pastable install commands only); `CLAUDE.md` "Git Hooks" section (one-line pointer) |
@@ -243,6 +243,75 @@ If a proposal does NOT fit this contract (e.g. a tool that wants to commit direc
 ### Discoverability back from skills
 
 Every `codex-*` skill under `.claude/skills/` carries a one-line pointer back to this contract section (see each skill's "External-Reviewer Contract" note near the top). A maintainer reading `codex-dead-code/SKILL.md` can trace the "reviewer, not authority" rule back to this section in one link.
+
+---
+
+## MCP, Permissions, and Extension Boundary
+
+Permissions and extensions are part of the AI surface. They need explicit boundaries so shared policy stays reviewable and personal state never leaks into the repo.
+
+### Permission model (Claude Code harness)
+
+Claude Code distinguishes three rule lists from one separate fallback mode:
+
+| Concept       | Kind           | Meaning                                                                          |
+| ------------- | -------------- | -------------------------------------------------------------------------------- |
+| `allow`       | Rule list      | Matching tool call proceeds without prompting.                                   |
+| `ask`         | Rule list      | Matching tool call prompts for approval each time.                               |
+| `deny`        | Rule list      | Matching tool call is always blocked.                                            |
+| `defaultMode` | Single setting | Fallback posture when no rule matches. Documented modes: `default`, `acceptEdits`, `plan`, `bypassPermissions`. |
+
+A specific rule in `allow`/`ask`/`deny` always beats `defaultMode`. The three rule lists AND `defaultMode` can each appear in either `.claude/settings.json` (shared) or `.claude/settings.local.json` (user-local); `defaultMode` is only set per-user so posture does not silently change for other contributors.
+
+**Current repo allow-rule shape:** 7 entries in `.claude/settings.json` `permissions.allow`, narrowly scoped. No shared `ask` or `deny` rules (harness safety defaults cover destructive patterns). Additions go through the same review as any other code change; destructive command families (`git reset`, `rm`, `mv` across tracked files) do NOT belong in shared `allow` -- route them through `ask` so the user confirms intent per call.
+
+### Shared vs user-local split
+
+Two settings files live under `.claude/`. They must never mix.
+
+| File                                                            | Tracked?        | Purpose                                                                                  |
+| --------------------------------------------------------------- | --------------- | ---------------------------------------------------------------------------------------- |
+| [`.claude/settings.json`](../../.claude/settings.json)          | ✅ committed    | Shared repo policy: hooks, narrow allow-rules, env vars every contributor needs.          |
+| `.claude/settings.local.json`                                   | ❌ gitignored   | User-local: personal allow-rules, `defaultMode`, machine-specific paths. Never shared.    |
+
+The `.gitignore` explicitly excludes `.claude/settings.local.json`. A CI check (future work, see [TODO-02 §9](../../todo/00-infrastructure/TODO-02-ai-development-system.md#9-ai-workflow-regression-suite)) will assert the file stays untracked.
+
+**What belongs where:**
+
+- **Shared (`settings.json`):** hook definitions (`.claude/settings.json` hooks run for every contributor), hook commands, repo-wide allow-rules for patterns that are universally safe (`Bash(git reset:*)`), environment variables needed by hooks (if any).
+- **User-local (`settings.local.json`):** personal allow-rules for commands you use often (`Bash(python3:*)`, domain-specific grep patterns), `defaultMode` posture (`plan` / `permissive` / `strict`), one-off session-driven permissions, machine-specific paths (`/home/<user>/...`).
+- **Never either:** secrets (API tokens, keys). The harness reads those from the environment or from user-level config outside this repo.
+
+### MCP server boundary
+
+MCP (Model Context Protocol) servers (Ahrefs, Gmail, Notion, Microsoft Learn, etc.) are **user-local infrastructure**. They live in the user's Claude Code harness config (typically `~/.claude/` or the IDE extension's config pane), not in the repo. The repo neither installs nor depends on them.
+
+- **No repo-tracked MCP config.** Do not commit MCP server definitions to `.claude/settings.json` or any other tracked file. Reason: MCP servers carry auth tokens and personal data; sharing them through the repo would leak credentials.
+- **MCP findings through skills.** If an MCP server is used during development (e.g. fetching Microsoft Learn docs while researching a Win32 API), the finding enters the repo via a Claude skill's output (doc text, citation in a PR) -- not via the MCP server itself being committed.
+- **If the repo ever needs a shared tool surface beyond skills and hooks**, the extension model is: write a shell script under `scripts/` that reads from standard input / returns structured output, invoke it from a skill. That pattern keeps the surface repo-tracked, reviewable, and independent of any specific MCP server.
+
+### Subagent boundary
+
+Claude Code ships a handful of built-in subagents (`claude-code-guide`, `Explore`, `general-purpose`, `Plan`, `statusline-setup`). These are harness-provided and do NOT count as repo-tracked AI surface.
+
+| Subagent            | Role                                                                                                      | Repo stance                                                      |
+| ------------------- | --------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `claude-code-guide` | Read-only guide for "how do I use Claude Code / the Claude API / the SDK?" questions                      | Not used for repo work. Never edits code.                        |
+| `Explore`           | Fast exploration agent (Glob / Grep / Read / WebFetch / WebSearch) for codebase questions                 | Useful for open-ended "how does X work?" queries. Read-only.     |
+| `general-purpose`   | Full-tool-access agent for multi-step research or lookups that would otherwise burn parent context        | Used when a task legitimately needs >3 search-rounds in isolation. |
+| `Plan`              | Software-architect agent for designing implementation strategies                                          | Overlaps with `codex-design-review`; prefer Codex on kernel code. |
+| `statusline-setup`  | One-shot status line configuration helper                                                                 | Cosmetic only.                                                   |
+
+Skills (`.claude/skills/`) are the primary repo-tracked surface for workflows; subagents complement them for exploration and context preservation. Neither bypasses the `receiving-code-review` gate on external-reviewer output.
+
+### Edit-here-not-there mapping for this section
+
+| Concept                              | Canonical edit location                                   | Downstream consumers (do NOT edit here)                                            |
+| ------------------------------------ | --------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| Shared allow-rules / hooks           | [`.claude/settings.json`](../../.claude/settings.json)    | [Hook Routing Matrix](#hook-routing-matrix) (update row; JSON stays canonical).    |
+| Personal allow-rules / `defaultMode` | `.claude/settings.local.json` (user-local; gitignored)    | Never propagate to shared config.                                                  |
+| MCP server config                    | User harness config (outside the repo)                    | Never commit to `.claude/settings.json`.                                           |
+| Subagent behavior                    | Claude Code harness (built-in)                            | Do not override in repo; use skills for repo-specific workflows.                   |
 
 ---
 

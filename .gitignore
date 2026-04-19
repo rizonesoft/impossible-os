@@ -61,3 +61,9 @@ sdk/build/
 
 # Extracted debug logs
 /debug/
+
+# Claude Code user-local harness overrides (personal permissions, scratch rules).
+# Shared repo policy lives in .claude/settings.json; per-user overrides go in
+# .claude/settings.local.json (never committed). See
+# docs/infrastructure/ai-system.md "MCP, Permissions, and Extension Boundary".
+.claude/settings.local.json

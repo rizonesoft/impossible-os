@@ -1,7 +1,6 @@
 {
   "permissions": {
     "allow": [
-      "Bash(git reset:*)",
       "Bash(grep -n \"bus fault\\\\|crash\\\\|hang\\\\|timeout\" /home/derickpayne/impossible-os/src/kernel/drivers/*.c)",
       "Bash(grep -E \"\\\\.\\(c|h\\)$\")",
       "Bash(grep -l \"## OS Comparison\" todo/**/*.md)",
