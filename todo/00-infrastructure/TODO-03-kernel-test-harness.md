@@ -205,6 +205,11 @@ KUnit built `kunit_kzalloc`, `kunit_kmalloc`, and its resource auto-free machine
 > - Canonical doc: the header comment at [`include/kernel/test/test.h`](../../include/kernel/test/test.h) `test_add_action` block documents the API contract (return codes, reentrancy, IRQL, non-blocking); the impl header comment in [`src/kernel/test/test_runner.c`](../../src/kernel/test/test_runner.c) documents the single-CPU SMP assumption of the sequential test_runner.
 > - Scope boundary: §7 owns the generic registry. §3 (scratch-buffer) and §5 (klog-suppress) are consumers, not owned here. Generalised tracing of action history / debugfs-style introspection is out of scope.
 
+> **Verified:** 2026-04-19 | commit `8a34cc1b` | 5/7 items | build OK | 11 harness suites added (registry + LIFO + overflow + NULL + re-entrant + IRQL x2 levels)
+> **Deferred:** [L] Migrate §3 TEST_SCRATCH_KBUF onto test_add_action (reason: §3 not shipped yet; closes automatically when §3 uses test_add_action from day one) -> XREF: 00-infrastructure/TODO-03 §3 (item: "TEST_SCRATCH_KBUF(name, size) expands to void *name = test_scratch_alloc(size); test_add_action(test_scratch_free, name)" at line 123)
+> **Deferred:** [L] Migrate §5 TEST_KLOG_SUPPRESS onto test_add_action (reason: §5 not shipped yet; closes automatically when §5 uses test_add_action from day one) -> XREF: 00-infrastructure/TODO-03 §5 (item: "TEST_KLOG_SUPPRESS(subsystem) block-scoped macro ... saved state via test_add_action(restore_klog_level, saved)" at line 153)
+> **Quality reviewed:** 2026-04-19 | Codex 4x (coverage, adversarial x2, quality) | 1H+7M fixed, 0 open | scope: kernel-code-quality
+
 ---
 
 ## 8. Per-Test Heap-Leak Detection

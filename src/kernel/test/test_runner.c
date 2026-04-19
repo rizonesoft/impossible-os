@@ -224,8 +224,15 @@ static struct {
 
 int test_add_action(void (*fn)(void *), void *ctx)
 {
-    if (!fn)
+    if (!fn) {
+        /* Warn on the same %s :: ... convention as the other -1 paths
+         * so a silent drop during test authoring shows up in the boot
+         * log rather than hiding behind a forgotten return-value check. */
+        klog(LOG_WARN, "TEST",
+             "%s :: test_add_action NULL fn -- rejected",
+             g_test_state.current_suite);
         return -1;
+    }
     /* Reject re-entrant registration during drain. Allowing it would let
      * an action re-populate the slot the drain just vacated and spin the
      * drain loop forever. The contract is: register from the suite body,
@@ -262,12 +269,17 @@ static void test_actions_drain(void)
      * unsafe to drain from: event_wait / kfree / klog assume PASSIVE.
      * Warn + force-lower so the drain completes deterministically and
      * the subsequent suite starts from a known IRQL. Doing nothing here
-     * is worse -- the next suite would inherit the elevated IRQL. */
+     * is worse -- the next suite would inherit the elevated IRQL.
+     *
+     * Ordering matters: capture the leaked level, KeLowerIrql FIRST,
+     * THEN klog. klog reaches into spinlock-protected ring buffers and
+     * disk-flush paths that assume PASSIVE; logging before the lower
+     * would be the exact unsafe pattern this guard is meant to prevent. */
     KIRQL irql = KeGetCurrentIrql();
     if (irql != PASSIVE_LEVEL) {
+        KeLowerIrql(PASSIVE_LEVEL);
         klog(LOG_WARN, "TEST", "%s :: left IRQL elevated (%u) before drain",
              g_test_state.current_suite, (uint64_t)irql);
-        KeLowerIrql(PASSIVE_LEVEL);
     }
 
     /* Set draining flag so re-entrant test_add_action calls from inside
@@ -287,12 +299,14 @@ static void test_actions_drain(void)
         void *ctx = s_test_actions.actions[idx].ctx;
         if (fn)
             fn(ctx);
+        /* Same ordering rule as the pre-loop check: lower FIRST, log
+         * after, so the klog itself runs at PASSIVE. */
         KIRQL post = KeGetCurrentIrql();
         if (post != PASSIVE_LEVEL) {
+            KeLowerIrql(PASSIVE_LEVEL);
             klog(LOG_WARN, "TEST",
                  "%s :: action leaked IRQL (%u) -- lowering",
                  g_test_state.current_suite, (uint64_t)post);
-            KeLowerIrql(PASSIVE_LEVEL);
         }
     }
 
