@@ -99,7 +99,7 @@ Hooks are part of the AI system, not invisible glue. This matrix is the human-re
 ### Two hook layers -- do not confuse them
 
 - **Harness hooks (Claude Code)** -- run at tool-call time (per Edit / Write / Bash / Skill invocation). Config: [`.claude/settings.json`](../../.claude/settings.json). Owned here (§3 of [TODO-02](../../todo/00-infrastructure/TODO-02-ai-development-system.md#3-hook-routing-and-policy-contract)).
-- **Git hooks** -- run at commit / push time. Config: [`.githooks/pre-commit`, `post-commit`, `pre-push`](../../.githooks/). Owned by [TODO-01 §5 Git Hooks and Local Automation Lifecycle](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md#5-git-hooks-and-local-automation-lifecycle).
+- **Git hooks** -- run at commit / push time. Config: [`.githooks/pre-commit`, `post-commit`, `pre-push`](../../.githooks/). Owned by [Git Hooks and Local Automation Lifecycle](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md#5-git-hooks-and-local-automation-lifecycle).
 - [`scripts/copilot-review.sh`](../../scripts/copilot-review.sh) has no hook surface -- it is invoked manually or from inside a Claude skill; it is not a hook layer.
 
 ### Effect classes + path-filter abbreviations
@@ -157,7 +157,7 @@ Path-filter abbreviations used in the tables below:
 
 - Commits that only MODIFY existing source files may silently skip hooks 8 and 9 even though the code changed.
 - Commits that add a new boot-path source file always fire hook 9 because `create mode` includes the path.
-- A tighter matcher (`git show --name-only --format= HEAD`) would fix this; tracked as a `[ ]` item in [TODO-02 §3](../../todo/00-infrastructure/TODO-02-ai-development-system.md#3-hook-routing-and-policy-contract).
+- A tighter matcher (`git show --name-only --format= HEAD`) would fix this; tracked in the [Hook Routing and Policy Contract](../../todo/00-infrastructure/TODO-02-ai-development-system.md#3-hook-routing-and-policy-contract) roadmap section.
 
 ### Reading the matrix
 
@@ -170,7 +170,7 @@ Path-filter abbreviations used in the tables below:
 `.claude/settings.json` is still the canonical source. When adding or removing a hook:
 
 1. Edit `.claude/settings.json`.
-2. Update the relevant table above in the same commit (row add / remove / modify). The matrix and the JSON must stay in sync -- [TODO-02 §9](../../todo/00-infrastructure/TODO-02-ai-development-system.md#9-ai-workflow-regression-suite) regression suite asserts this invariant.
+2. Update the relevant table above in the same commit (row add / remove / modify). The matrix and the JSON must stay in sync -- the [AI Workflow Regression Suite](../../todo/00-infrastructure/TODO-02-ai-development-system.md#9-ai-workflow-regression-suite) asserts this invariant.
 3. If the hook BLOCKS, document the exact failure signature (tag line + exit code) so a reader can recognize a block-fail in their terminal.
 
 ---
