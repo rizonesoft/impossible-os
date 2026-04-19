@@ -149,6 +149,9 @@ Kernel-side mechanism to run user-mode test binaries and collect results.
 > - Verification limitation on WSL TCG: the existing `scripts/test.sh` waits for `=== N tests passed` from the kernel summary then sleeps 1s + kills QEMU. WSL TCG runs user-mode binaries slowly enough that the launcher's spawned binary may not finish in that 1s grace -- per-binary `[UTEST]` lines may be cut off mid-run on `bash scripts/test.sh`. The launcher CODE is correct (proven by `Task 3 ("test_syscall.exe") created` + `ELF auxv` + `PID 3 -> entry 0x800000` lines on serial); full round-trip PASS/FAIL surfacing on WSL needs §15's `scripts/test.sh` extension to wait for the `[UTEST] === N passed` summary too. Native Windows runs via `scripts\debug\usermode\run-all-usermode-tests.bat` (which goes through `run-qemu.ps1` and waits until QEMU exits naturally) get the full round-trip.
 > - Scope boundary: §3 owns the launcher itself (scan + spawn + wait + log + summary). §4 owns the boot.conf `utest_filter=` parameter parser + the launcher manifest + per-binary timeouts + TAP/SKIP output. §6 owns per-test isolation (scratch dir, Registry, handle-leak detection). §7 owns JUnit XML / JSON output formats. §15 owns the `scripts/test.sh` parser extension that lets WSL boot-test runs pick up `[UTEST]` lines.
 
+> **Verified:** 2026-04-20 | commit `5e576ce4` | 9/10 items + 1 [/] (utest_filter consumer-hook ready, parser owned by §4) | build OK | launcher loads test_*.exe via VFS scan + task_create + task_exec + task_waitpid; ELF auxv + PID 3 -> entry serial-traced
+> **Quality reviewed:** 2026-04-20 | Codex 2x (adversarial, quality) | 2H+2M fixed, 1Critical rejected (code evidence: matches canonical exec_loader_func / shell_loader_func pattern that works in production; would need scheduler-level fix to be robust against degenerate single-task kernel, out of §3 scope) | scope: kernel-code-quality
+
 ---
 
 ## 4. Launcher Manifest, Timeouts, and CI-Friendly Output

@@ -25,6 +25,7 @@
 #include "kernel/types.h"
 #include "kernel/klog.h"
 #include "kernel/mm/heap.h"
+#include "kernel/mm/pmm.h"
 #include "kernel/fs/vfs.h"
 #include "kernel/sched/task.h"
 #include "kernel/test/test_usermode.h"
@@ -163,19 +164,33 @@ static void utest_loader_func(void)
     }
 
     uint32_t size = file->size;
-    uint8_t *buf = (uint8_t *)kmalloc(size);
-    if (!buf) {
-        klog(LOG_ERROR, "UTEST", "%s: kmalloc(%u) failed", path, (uint64_t)size);
+
+    /* Stage the binary in PMM-backed contiguous pages, NOT kmalloc.
+     * CLAUDE.md (Freestanding Kernel rules): kmalloc is for <=4 KB;
+     * larger uses pmm_alloc_contiguous. Test binaries are 23+ KB
+     * (way above the kmalloc ceiling); using kmalloc would carve
+     * large transient blocks out of the 2 MiB heap and fragment it
+     * across repeated test runs. PMM pages are identity-mapped, so
+     * the physical address is also a valid kernel virtual pointer.
+     * (Codex H1 quality, 2026-04-20.) */
+    uint32_t pages = (size + 4095u) / 4096u;
+    uintptr_t buf_phys = pmm_alloc_contiguous(pages);
+    if (!buf_phys) {
+        klog(LOG_ERROR, "UTEST",
+             "%s: pmm_alloc_contiguous(%u pages) failed",
+             path, (uint64_t)pages);
         vfs_close(file);
         task_exit(-3);
     }
+    uint8_t *buf = (uint8_t *)buf_phys;
 
     int n = vfs_read(file, 0, size, buf);
     vfs_close(file);
     if (n <= 0 || (uint32_t)n != size) {
         klog(LOG_ERROR, "UTEST", "%s: vfs_read short (n=%d size=%u)",
              path, (int64_t)n, (uint64_t)size);
-        kfree(buf);
+        for (uint32_t p = 0; p < pages; p++)
+            pmm_free_frame(buf_phys + (uintptr_t)p * 4096u);
         task_exit(-4);
     }
 
@@ -185,18 +200,32 @@ static void utest_loader_func(void)
      * task_exec returns 0 the staging buffer is no longer needed.
      * Free it now (Codex M1, 2026-04-20) before the for(;;)hlt;
      * yields control to the prepared user-mode frame; otherwise every
-     * passing test leaks its full file size from the kernel heap. */
+     * passing test leaks its full file size of pages from PMM. */
     int rc = task_exec(buf, size);
     if (rc < 0) {
         klog(LOG_ERROR, "UTEST", "%s: task_exec failed", path);
-        kfree(buf);
+        for (uint32_t p = 0; p < pages; p++)
+            pmm_free_frame(buf_phys + (uintptr_t)p * 4096u);
         task_exit(-5);
     }
-    kfree(buf);
+    for (uint32_t p = 0; p < pages; p++)
+        pmm_free_frame(buf_phys + (uintptr_t)p * 4096u);
 
     /* Unreachable in practice; task_exec iretq's into user mode on the
-     * next scheduling tick. The hlt loop is just a defensive yield in
-     * case scheduling is ever delayed. */
+     * next scheduling tick. The hlt loop is the canonical exec-loader
+     * tail (matches exec_loader_func in src/kernel/main/test_threads.c
+     * and shell_loader_func used to spawn cmd.exe at boot). It works
+     * because dpc_thread, sys_wq, and the parent-in-TASK_WAITING are
+     * all in the task table -- find_next_task picks one of them, and
+     * when it later yields back the loader is rescheduled with
+     * exec_pending=1, which the scheduler honours by restoring the
+     * prepared frame. The same pattern would hang on a degenerate
+     * single-task kernel; protecting against that needs a scheduler-
+     * level fix (task_exec becoming non-returning, or schedule()
+     * special-casing exec_pending on a same-task pick) and is out
+     * of §3 scope. (Codex Critical quality 2026-04-20: rejected with
+     * code evidence -- this matches the canonical pattern that works
+     * in production for hello.exe and cmd.exe.) */
     for (;;)
         __asm__ volatile("hlt");
 }
