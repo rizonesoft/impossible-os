@@ -70,10 +70,15 @@ A per-CPU test-only countdown that causes `kmalloc` to return `NULL` on the next
 
 **Test checkpoint:** `kmalloc_fail_next()` + `kmalloc(16) == NULL` + subsequent `kmalloc(16) != NULL`. Verifies the per-CPU counter decrements correctly and auto-clears.
 
-> **Test runner:** `scripts\debug\run-mm-tests.bat` (SUITE=mm)
-> **Expected:** 5 new heap fault-injection suites pass, 0 failures
+> **Test runner:** `scripts\debug\run-mm-tests.bat` (SUITE=mm) | 5 new heap fault-injection suites, 0 failures
 
-> **Verified:** 2026-04-15 -- Evidence mapped: `include/kernel/smp.h` (per_cpu_data.kmalloc_fail_countdown + _pad, #ifdef KERNEL_TESTS gated), `include/kernel/mm/heap.h` (4 prototypes under KERNEL_TESTS), `src/kernel/mm/heap.c` (s_kmalloc_fault_injections static counter + 4 helpers + in-kmalloc hook with `KeGetCurrentIrql() == PASSIVE_LEVEL` gate + `ifdef KERNEL_TESTS` include block), `src/kernel/test/test_runner.c` (include + auto-clear after every suite), `src/kernel/test/test_heap.c` (5 new TEST_CAT_MM suites: fail_next, countdown(3), clear-disarms, no-state-change, IRQL-gate). Build clean (`=== BUILD OK ===`). Existing asm-referenced per_cpu_data offsets at smp.h:131-145 (self=0, syscall_rsp0=24, user_rsp_scratch=32, kernel_cr3=104, user_cr3=112, kpti_scratch=120, kpti_syscall_target=128, kpti_isr_target=136) unchanged -- new fields live at offset 144+ inside the KERNEL_TESTS-only tail.
+> **Notes:**
+> - Shipped `kmalloc_fail_countdown(n)` / `_clear()` / `_next()` / `_injections_triggered()` in [`include/kernel/mm/heap.h`](../../include/kernel/mm/heap.h) + [`src/kernel/mm/heap.c`](../../src/kernel/mm/heap.c), all `#ifdef KERNEL_TESTS`-gated so release builds compile out the hook entirely.
+> - Per-CPU storage lives in [`include/kernel/smp.h`](../../include/kernel/smp.h) `struct per_cpu_data` as a KERNEL_TESTS-only tail (offset 144+); existing asm-referenced offsets (0, 24, 32, 104, 112, 120, 128, 136) untouched, so boot-path ABI is preserved.
+> - Hook fires BEFORE the block-list walk in `kmalloc`, so a forced NULL leaves heap state unaltered. Thread-context gate (`KeGetCurrentIrql() == PASSIVE_LEVEL`) stops an ISR/DPC/spinlock-holding caller from stealing a pending injection armed by a different thread-context test on the same CPU.
+> - Test-runner auto-clear in [`src/kernel/test/test_runner.c`](../../src/kernel/test/test_runner.c) after every suite prevents cross-suite poisoning when a test armed a countdown and then hit `TEST_ASSERT` before the trap fired.
+> - Downstream consumers: §6 extends this countdown model to PMM / VMM / copy_user with symmetric APIs; §3 `TEST_SCRATCH_KBUF` uses `kmalloc_fail_next()` in its failure-path regression; TODO-12 §5 `Test gaps` entries for allocator failure rollback close via §4 retrofit using this primitive.
+> - Scope boundary: §1 only wires the kmalloc path. PMM / VMM / copy_user countdowns and task-filter + total-hits cap ship in §6.
 > **Quality reviewed:** 2026-04-15 -- kernel-code-quality Gates 1-11 walked clean (no stdlib, SMP-safe via per-CPU storage + RELAXED atomic global counter, no MMIO, every allocation check'd). Codex step-13 adversarial found 1 Medium (IRQ-context kmalloc on same CPU could steal pending injection) fixed pre-commit by `KeGetCurrentIrql() == PASSIVE_LEVEL` gate with regression test (`Heap: fault-inject IRQL gate`). Codex step-8 quality dispatch (dead-code + consistency + perf) returned no findings: all new surface consistently KERNEL_TESTS-gated, static counter reachable via test suites, pre-existing per_cpu_data offsets intact, hot-path cost confined to test builds (3-4 instructions in non-armed case, zero in release builds).
 
 ---
@@ -222,8 +227,7 @@ After §1-§8 land, in-kernel test coverage reaches Linux-KUnit-plus-fault-injec
 - [ ] `src/kernel/test/test_runner.c` sanity tests for §7 `test_add_action` (LIFO drain on pass, LIFO drain on fail, over-registration returns -1 without corrupting list)
 - [ ] `src/kernel/test/test_runner.c` sanity tests for §8 heap-leak detection (unfreed kmalloc flagged, `TEST_EXPECT_LEAK` tolerated, `TEST_LEAK_IGNORE` bypasses delta check)
 
-> **Test runner:** `scripts\debug\run-boot-tests.bat` (SUITE=boot) | `scripts\debug\run-mm-tests.bat` (SUITE=mm)
-> **Expected:** ~20 new test-harness + allocator suites pass, 0 failures, end-of-run summary line shows `L=0` on green tree
+> **Test runner:** `scripts\debug\run-boot-tests.bat` (SUITE=boot) + `scripts\debug\run-mm-tests.bat` (SUITE=mm) | ~20 new test-harness + allocator suites, 0 failures, summary shows `L=0` on green tree
 
 ---
 
