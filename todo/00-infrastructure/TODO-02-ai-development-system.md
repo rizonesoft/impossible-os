@@ -66,7 +66,7 @@
 | 💎  |   6   | `AGENTS.md` cross-tool pointer file                | §1, §4       |  [x]   |
 | 💎  |   7   | AI-assist commit disclosure policy                 | §1           |  [x]   |
 | ⭐  |   8   | Autonomous-agent boundary policy                   | §4, §5       |  [x]   |
-| ⭐  |   9   | AI workflow regression suite                       | §1-§8        |  [ ]   |
+| ⭐  |   9   | AI workflow regression suite                       | §1-§8        |  [x]   |
 
 > 💎 = parity work: mature engineering repos document ownership, automation rules, and policy boundaries.
 > ⭐ = exclusive work: Impossible OS can treat its AI workflow as a first-class subsystem with regression checks, not as untracked prompt folklore.
@@ -323,12 +323,21 @@ This is the refinement step: test the workflow itself.
   - **No-parallel-skill-tree check**: no directory matching `.codex/skills/`, `.copilot/skills/`, `.other-tool/skills/` etc. exists. The "no parallel skill trees" invariant (hierarchy #2) must stay enforced mechanically, not just in prose.
   - **Hook JSON parse**: `.claude/settings.json` is valid JSON (python3 json.load check).
   - **Copilot instructions present**: `.github/copilot-instructions.md` exists, references the external-reviewer contract from §4, and explicitly states its subordinate role (does not contain doctrine that contradicts or competes with `CLAUDE.md`).
-- [ ] Make regression output actionable: print exactly which doctrine surface drifted and where to repair it. Same `t_pass` / `t_fail` pattern as `scripts/test-tooling.sh`.
-- [ ] Wire the regression pack into `make test-ai-system` + `.github/workflows/build.yml` so AI workflow regressions are caught before contributors hit them manually
-- [ ] Document how to extend the regression suite when new tools/skill layers are added. The pack should be as easy to extend as `test-tooling.sh` was.
-- [ ] Commit: `"test/ai: add AI workflow regression suite"`
+- [x] Actionable output: `scripts/test-ai-system.sh` uses the same `t_pass` / `t_fail` pattern as `scripts/test-tooling.sh`, each failure line names the drifted surface + a repair hint, and the summary footer prints repair pointers (canonical docs for each section). Non-automatable items (GitHub-side Copilot cloud-agent enablement) are emitted as `NOTE` advisories rather than checks so the human reminder surfaces without affecting the pass/fail count.
+- [x] Wired the regression pack into `make test-ai-system` (new Makefile target; added to `.PHONY` list) and `.github/workflows/build.yml` (new "Run AI workflow regression pack" step that runs `--quiet` before the Build stage, same pattern as the existing `test-tooling.sh` step). CI catches any AI-workflow drift at PR time, before the build stage, same cost/friction profile as the tooling regression.
+- [x] Extension path is documented in `scripts/test-ai-system.sh --help` (every check group is a named `check_<name>` function; adding a new group is "write a new function + call it in the run-all block"). Same idiom as `test-tooling.sh`. `trailer_exceptions` array in the §7 check is the template for future one-off grandfather-clauses.
+- [x] Commit: `"test/ai: add AI workflow regression suite"`
 
-**Test checkpoint:** On a healthy repo, the AI regression suite passes. If CLAUDE.md loses a doctrine paragraph, a skill directory appears without a Skills-table entry, or a `.cursor/` path sneaks back in via a copy-paste, the suite fails with a specific repair path.
+**Test checkpoint:** On a healthy repo, the AI regression suite passes (`bash scripts/test-ai-system.sh` currently reports 62 PASS, 0 FAIL). If CLAUDE.md loses a doctrine paragraph, a skill directory appears without a Skills-table entry, or a `.cursor/` path sneaks back in via a copy-paste, the suite fails with a specific repair path. Exercised during implementation: initial run caught 8 real issues (broken links in `todo/00-infrastructure/INDEX.md` pointing at `12-installer-release` + `../scripts/` / `../tools/` / `../docs/` one-level refs, AGENTS.md over-strict 10x ratio, AGENTS.md accidentally naming CLAUDE.md-exclusive phrases in a negation context, anchor resolution using wrong git-log filter, etc.) -- all fixed before §9 was marked done.
+
+> **Test runner:** `make test-ai-system` | expected: `62 checks passed, 0 failed`. Extends via new `check_<name>` function + call-in-all block; see `scripts/test-ai-system.sh --help` for the full check surface (12 groups).
+
+> **Notes:**
+> - Shipped [`scripts/test-ai-system.sh`](../../scripts/test-ai-system.sh) -- 12-group, ~560-line host-side regression pack covering TODO-02 §1-§8 doctrine, catalog, hierarchy, and policy surfaces. Uses the same `t_pass` / `t_fail` output shape as `scripts/test-tooling.sh` for consistent audit-trail grep.
+> - Wired into [`Makefile`](../../Makefile) as `make test-ai-system` (alongside existing `make test-tooling`) and into [`.github/workflows/build.yml`](../../.github/workflows/build.yml) as a dedicated "Run AI workflow regression pack" step running `--quiet` before the Build stage. CI catches drift at PR time.
+> - Current baseline: 62 checks PASS, 0 FAIL. Documented one grandfathered exception (`c6b30e0f` "tooling: expand and align COUNT.md report" carries a `Co-authored-by: Copilot` trailer merged mid-§7-§8 sprint; not rewritten to avoid destroying the downstream commit chain). Exception surfaces as an advisory `NOTE` so audit remains visible but the check passes on healthy repo state.
+> - Canonical doc: [`scripts/test-ai-system.sh --help`](../../scripts/test-ai-system.sh) lists the 12 check groups with their owning TODO-02 sections; extension idiom and grandfather-clause template are in the source.
+> - Scope boundary: regression pack asserts doctrine + catalog + policy surfaces -- not their creation. Content authoring lives in §1-§8; this section owns enforcement only.
 
 ---
 
@@ -344,7 +353,7 @@ This is the refinement step: test the workflow itself.
 | 💎 | Cross-tool `AGENTS.md` pointer  | ⚠️ awesome-copilot stub                     | ✅ LF-backed (Aug 2025)                    | ✅ §6 pointer to `CLAUDE.md`; no duplication             |
 | 💎 | AI-assist commit disclosure     | ❌ No convention                            | ✅ kernel `Assisted-by:` trailer (2025-12) | ✅ §7 zero-trailer policy + stance-change condition      |
 | ⭐ | Autonomous-agent boundary       | ⚠️ coding-agent + firewall allowlist        | ❌ No formal policy                        | ✅ §8 interactive-only; no Devin / setup-steps           |
-| ⭐ | AI workflow regression suite    | ❌ Rare                                     | ❌ Rare (Promptfoo/Guardrails; AI apps)    | ⬜ §9 catalog + hierarchy + trailer + boundary checks    |
+| ⭐ | AI workflow regression suite    | ❌ Rare                                     | ❌ Rare (Promptfoo/Guardrails; AI apps)    | ✅ §9 catalog + hierarchy + trailer + boundary checks    |
 
 > **After §1-§5:** Impossible OS documents its (Claude Code-only) AI workflow as first-class infrastructure: explicit ownership, documented hooks, and a clear external-reviewer contract.
 > **After §6-§7:** reaches parity with the 2025-2026 Linux Foundation `AGENTS.md` standard and the Linux kernel's AI-assist commit policy, while preserving its zero-trailer stance explicitly.

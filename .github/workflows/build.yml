@@ -108,6 +108,15 @@ jobs:
       - name: Run tooling regression pack
         run: bash scripts/test-tooling.sh --quiet
 
+      # AI workflow regression pack (TODO-02 §9). Checks doctrine presence,
+      # Authority Hierarchy integrity, AGENTS.md file contract, zero-trailer
+      # commit policy, autonomous-agent boundary, skill catalog sync,
+      # index-link integrity, and related surfaces. Runs before the build so
+      # AI-workflow drift is caught at PR time rather than after the user
+      # notices a broken invariant.
+      - name: Run AI workflow regression pack
+        run: bash scripts/test-ai-system.sh --quiet
+
       # ── Build ───────────────────────────────────────────────────────────────
       - name: Build OS (clean)
         run: bash scripts/build.sh clean

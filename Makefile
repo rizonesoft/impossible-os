@@ -108,7 +108,7 @@ GENERATED_HDRS := include/build_info.h include/kernel/os_logo.h src/kernel/bsod_
 # Targets
 # ============================================================================
 
-.PHONY: all _increment_build boot boot-icon boot-font kernel host-tools sysroot userland iso uefi-boot sign-efi system-disk test-disks run run-test run-debug run-log run-usb-ci run-nvme run-nvme-ci clean assets validate-assets sysroot-dirs sysroot-fonts sysroot-wallpapers sysroot-cursors sysroot-icons test-mm test-fs test-ob test-security test-ipc test-sched test-boot test-abi test-storage test-exec test-x86 boot-info-abi test-boot-info-abi test-tooling
+.PHONY: all _increment_build boot boot-icon boot-font kernel host-tools sysroot userland iso uefi-boot sign-efi system-disk test-disks run run-test run-debug run-log run-usb-ci run-nvme run-nvme-ci clean assets validate-assets sysroot-dirs sysroot-fonts sysroot-wallpapers sysroot-cursors sysroot-icons test-mm test-fs test-ob test-security test-ipc test-sched test-boot test-abi test-storage test-exec test-x86 boot-info-abi test-boot-info-abi test-tooling test-ai-system
 
 ## all: Build everything (kernel + userland + system disk + boot_info ABI manifest)
 all: _increment_build assets kernel userland uefi-boot boot-info-abi post16-manifest system-disk
@@ -255,6 +255,16 @@ test-boot-info-abi: $(BOOT_ABI_KERNEL_JSON)
 ##               OS build or kernel test-run required.
 test-tooling:
 	@bash scripts/test-tooling.sh
+
+## test-ai-system: Run scripts/test-ai-system.sh -- AI workflow regression
+##                 pack (Authority Hierarchy, Claude-Code-only declaration,
+##                 AGENTS.md file contract, zero-trailer commit policy,
+##                 autonomous-agent boundary, skill catalog sync, doctrine
+##                 presence, index-link integrity, no-Cursor-residue, no-
+##                 parallel-skill-trees, settings.json JSON parse, Copilot
+##                 subordinate-role check). Fast; docs + git-log scans only.
+test-ai-system:
+	@bash scripts/test-ai-system.sh
 
 ## post16-manifest: Emit build/post16-manifest.env listing every POST16_*
 ##                  #define from include/kernel/boot_init.h + src/boot/uefi/

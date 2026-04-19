@@ -11,13 +11,13 @@ This domain tracks the tooling and workflow work that supports the whole project
 ## Does Not Belong Here
 
 - Bootloader or kernel feature implementation. Put that in [01 Boot Platform](../01-boot-platform/INDEX.md), [02 Kernel Core](../02-kernel-core/INDEX.md), or [03 Memory Concurrency](../03-memory-concurrency/INDEX.md).
-- Installer and release media work. Put that in [12 Installer Release](../12-installer-release/INDEX.md).
+- Installer and release media work. Put that in [15 Installer Release](../15-installer-release/INDEX.md).
 
 ## Likely Source Areas
 
-- [scripts](../scripts/)
-- [tools](../tools/)
-- [docs](../docs/)
+- [scripts](../../scripts/)
+- [tools](../../tools/)
+- [docs](../../docs/)
 
 ## Epics
 
