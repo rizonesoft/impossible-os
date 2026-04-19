@@ -266,7 +266,7 @@ Record `heap_stats().used_bytes` at test start and end; if the delta is non-zero
 
 **Test checkpoint:** `bash scripts/test.sh` summary line now includes `, L leaked`. The harness suite `Harness: leak detector reported > 64 bytes for kmalloc route` asserts the detector observed the expected delta; `Harness: scratch drain leaves last_leak_delta == 0` asserts drain-path cleanup is detected. L > 0 in the summary is advisory -- existing tests may surface previously-hidden leaks that will be retrofitted with `TEST_EXPECT_LEAK` or genuine leaks fixed in follow-up commits.
 
-> **Test runner:** `scripts\debug\run-boot-tests.bat` (SUITE=boot) | 4 new harness suites, 0 failures; summary line gains `, L leaked` column; existing tests may surface advisory [LEAK] lines to be retrofitted gradually
+> **Test runner:** `scripts\debug\run-boot-tests.bat` (SUITE=boot) | 6 new harness suites (kmalloc + scratch + leak-ignore pair patterns), 0 failures; summary line gains `, L leaked` column; existing tests may surface advisory [LEAK] lines to be retrofitted gradually
 
 > **Notes:**
 > - Shipped per-test heap-leak detection in [`test_runner.c`](../../src/kernel/test/test_runner.c). Snapshots `heap_get_used()` before each suite body; re-reads after §7 action drain; emits `[LEAK]` / `[LEAK-OK]` / `[LEAK-SKIP]` based on opt-out flags.
@@ -274,8 +274,12 @@ Record `heap_stats().used_bytes` at test start and end; if the delta is non-zero
 > - Diagnostic: `test_runner_last_leak_delta()` exposes the most recent suite's signed delta to harness regressions. Used by the §8 verify suites to prove the detector ran correctly without emitting a [LEAK] line (which would pollute the summary L counter).
 > - Summary line: added `, %u leaked` to both zero-failure and failure forms. The existing `=== N tests passed, 0 failed` prefix is preserved so `scripts/test.sh`'s regex gate still matches.
 > - Order of operations in the suite loop: snapshot -> reset opt-out flags -> `s->fn()` -> `test_actions_drain()` -> leak check -> `kmalloc_fail_*_clear()` hygiene. The leak check runs AFTER the drain so primitives like `TEST_SCRATCH_KBUF` and `TEST_KLOG_SUPPRESS` (both use `test_add_action` for cleanup) observe zero delta.
+> - Only positive post-drain deltas are classified as leaks. Negative deltas (heap shrank) are silent by design: a verify suite that frees a previously-leaked buffer or a background kthread freeing boot-path state would otherwise spuriously trip [LEAK]. The signed value is still visible via `test_runner_last_leak_delta()` for harness diagnostics.
 > - Downstream: with §4 retrofit (the only remaining `[ ]` section), existing TODO `Test gaps (NO current owner)` entries can now use per-test leak detection as the oracle for "did this test actually leak?" -- previously required manual heap-stat inspection.
 > - Scope boundary: §8 owns the heap-side delta check only. PMM / VMM detection is out of scope (use `TEST_LEAK_IGNORE` for non-heap-primary tests). Cross-test leak detection (e.g. global state accumulation across the whole run) is also out of scope; §8 is per-suite only.
+
+> **Verified:** 2026-04-19 | commit `603ea0a4` | 7/7 items | build OK | 6 new BOOT harness suites (kmalloc + scratch + leak-ignore pair patterns)
+> **Quality reviewed:** 2026-04-19 | Codex 2x (adversarial, quality) | 3H+2M+2L fixed, 0 open | scope: kernel-code-quality
 
 ---
 
@@ -307,7 +311,7 @@ After §1-§8 land, in-kernel test coverage reaches Linux-KUnit-plus-fault-injec
 - [x] `src/kernel/test/test_boot_info.c` (16 payload-negative tests) + `test_peb_teb.c` (`test_uthread_rejects_kernel_task`) wrap their assertions in `TEST_KLOG_SUPPRESS`; 4 `TEST_CAT_BOOT` harness suites in `test_harness.c` prove demote + restore (including the no-pre-existing-override regression)
 - [x] `src/kernel/test/test_heap.c` + `test_pmm.c` + `test_vmm.c` + `test_cpu_security.c` cover §6 multi-allocator fault injection: task-filter, max-injections cap, PMM + VMM-map + copy_user countdowns (7 new TEST_CAT_MM + TEST_CAT_X86 suites)
 - [x] `src/kernel/test/test_harness.c` sanity tests for §7 `test_add_action` (9 TEST_CAT_BOOT suites: LIFO drain, overflow, NULL-fn reject, re-entrant-during-drain reject, IRQL recovery)
-- [x] `src/kernel/test/test_harness.c` sanity tests for §8 heap-leak detection (4 TEST_CAT_BOOT suites: kmalloc unfreed + TEST_EXPECT_LEAK pair, TEST_SCRATCH_KBUF drain pair; verify suites consume `test_runner_last_leak_delta()` to confirm classification without polluting the summary L counter)
+- [x] `src/kernel/test/test_harness.c` sanity tests for §8 heap-leak detection (6 TEST_CAT_BOOT suites: kmalloc unfreed + TEST_EXPECT_LEAK pair, TEST_SCRATCH_KBUF drain pair, TEST_LEAK_IGNORE bypass pair; verify suites consume `test_runner_last_leak_delta()` and `g_test_state.leaked` to confirm classification without polluting the summary L counter)
 
 > **Test runner:** `scripts\debug\run-boot-tests.bat` (SUITE=boot) + `scripts\debug\run-mm-tests.bat` (SUITE=mm) | ~20 new test-harness + allocator suites, 0 failures, summary shows `L=0` on green tree
 

@@ -149,10 +149,13 @@ void _test_leak_ignore(const char *reason);
 
 /* Diagnostic: the signed heap-usage delta across the most-recently-
  * completed suite (= heap_get_used() after action drain minus the
- * snapshot taken before the suite body). Cleared to 0 when the next
- * suite starts. Used by the harness regression tests to verify the
- * detector actually observed a leak without having to emit a [LEAK]
- * line that would pollute the summary L counter. */
+ * snapshot taken before the suite body). Carried across the suite
+ * boundary intact: a "verify" suite reads the IMMEDIATELY-PRECEDING
+ * completed suite's delta during its own body, then the post-drain
+ * step at the end of the verify suite overwrites it with the verify
+ * suite's own delta. Used by the harness regression tests to verify
+ * the detector actually observed a leak without having to emit a
+ * [LEAK] line that would pollute the summary L counter. */
 int64_t test_runner_last_leak_delta(void);
 
 /* Register a test-scoped cleanup action. Invoked in LIFO order after the

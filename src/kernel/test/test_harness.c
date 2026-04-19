@@ -474,9 +474,12 @@ static void test_harness_klog_suppress_no_override_leak_verify(void)
  * enough (1 klog + 1 counter increment) that code review covers it.
  * ------------------------------------------------------------------------- */
 
+/* g_leak_test_buf carries the leaked allocation across the
+ * register/verify suite boundary so the verify suite can free it. The
+ * delta values themselves are read-once-and-asserted-on, so they live
+ * as locals in their respective verify functions. */
 static uint8_t *g_leak_test_buf;
-static int64_t g_leak_test_delta_kmalloc_route;
-static int64_t g_leak_test_delta_scratch_route;
+static uint8_t *g_leak_ignore_test_buf;
 
 static void test_harness_leak_detect_kmalloc(void)
 {
@@ -493,12 +496,12 @@ static void test_harness_leak_detect_kmalloc_verify(void)
     /* The previous suite ended with a leaked 64-byte allocation.
      * The detector observed it, wrote the delta into the diagnostic
      * getter, and classified as [LEAK-OK] per TEST_EXPECT_LEAK. */
-    g_leak_test_delta_kmalloc_route = test_runner_last_leak_delta();
+    int64_t delta = test_runner_last_leak_delta();
 
     /* kmalloc adds a block-header so the observed delta is > 64;
      * we only assert it's strictly positive (proves detection
      * observed a real leak). */
-    TEST_ASSERT(g_leak_test_delta_kmalloc_route >= 64,
+    TEST_ASSERT(delta >= 64,
                 "detector saw >= 64 bytes of heap growth from the unfreed kmalloc");
 
     /* Clean up the leak for subsequent suites. */
@@ -520,9 +523,42 @@ static void test_harness_leak_detect_scratch_clean(void)
 
 static void test_harness_leak_detect_scratch_verify(void)
 {
-    g_leak_test_delta_scratch_route = test_runner_last_leak_delta();
-    TEST_ASSERT_EQ(g_leak_test_delta_scratch_route, 0,
+    int64_t delta = test_runner_last_leak_delta();
+    TEST_ASSERT_EQ(delta, 0,
                    "TEST_SCRATCH_KBUF + action drain -> zero heap delta");
+}
+
+/* TEST_LEAK_IGNORE regression -- prove the [LEAK-SKIP] branch fires
+ * AND no counter bump occurs even with a positive heap delta. The
+ * paired verify suite reads g_test_state.leaked before/after to
+ * confirm the bypass actually held. Closes the M1 finding from the
+ * §8 quality review (TEST_LEAK_IGNORE was implemented but had no
+ * caller exercising the bypass). */
+static uint32_t g_leak_ignore_pre_count;
+
+static void test_harness_leak_detect_ignore(void)
+{
+    g_leak_ignore_pre_count = g_test_state.leaked;
+    TEST_LEAK_IGNORE("harness: bypass test for [LEAK-SKIP] branch");
+    /* Force a real positive heap delta so the bypass path is the
+     * thing keeping g_test_state.leaked unchanged. */
+    g_leak_ignore_test_buf = (uint8_t *)kmalloc(64);
+    TEST_ASSERT_NOT_NULL(g_leak_ignore_test_buf,
+                         "kmalloc(64) for leak-ignore bypass test");
+}
+
+static void test_harness_leak_detect_ignore_verify(void)
+{
+    /* If TEST_LEAK_IGNORE worked, the leaked counter is unchanged
+     * even though the previous suite had a >64-byte positive delta. */
+    TEST_ASSERT_EQ(g_test_state.leaked, g_leak_ignore_pre_count,
+                   "TEST_LEAK_IGNORE prevented [LEAK] counter bump despite real delta");
+
+    /* Clean up the buffer for hygiene. */
+    if (g_leak_ignore_test_buf) {
+        kfree(g_leak_ignore_test_buf);
+        g_leak_ignore_test_buf = (void *)0;
+    }
 }
 
 /* Registration */
@@ -578,6 +614,10 @@ void test_register_harness(void)
                             test_harness_leak_detect_scratch_clean, TEST_CAT_BOOT);
     test_suite_register_cat("Harness: scratch drain leaves last_leak_delta == 0",
                             test_harness_leak_detect_scratch_verify, TEST_CAT_BOOT);
+    test_suite_register_cat("Harness: TEST_LEAK_IGNORE bypasses delta check",
+                            test_harness_leak_detect_ignore, TEST_CAT_BOOT);
+    test_suite_register_cat("Harness: leaked counter unchanged after TEST_LEAK_IGNORE",
+                            test_harness_leak_detect_ignore_verify, TEST_CAT_BOOT);
 }
 
 #endif /* KERNEL_TESTS */
