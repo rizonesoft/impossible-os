@@ -12,6 +12,7 @@
 #ifdef KERNEL_TESTS
 
 #include "kernel/test/test.h"
+#include "kernel/test/klog_suppress.h"   /* silence "sched: uthread_create PID 0 has no PEB" klog */
 #include "kernel/ob/peb.h"
 
 /* snprintf is not in freestanding kernel headers; declared extern at file
@@ -755,9 +756,12 @@ static void test_uthread_stack_layout(void)
                 "USER_THREAD_STACK_BASE below TEB region");
 }
 
-/* uthread_create should reject kernel tasks (no PEB in PID 0) */
+/* uthread_create should reject kernel tasks (no PEB in PID 0). The
+ * rejection path emits klog(LOG_ERROR, "sched", ...) which would
+ * surface as a test-phase [FAIL] line without the suppression. */
 static void test_uthread_rejects_kernel_task(void)
 {
+    TEST_KLOG_SUPPRESS("sched");
     int tid = uthread_create(kthread_test_entry, (void *)0, 0);
     TEST_ASSERT(tid == -1,
                 "uthread_create rejects kernel task (no PEB)");

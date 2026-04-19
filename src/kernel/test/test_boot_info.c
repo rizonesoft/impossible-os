@@ -15,6 +15,7 @@
 #ifdef KERNEL_TESTS
 
 #include "kernel/test/test.h"
+#include "kernel/test/klog_suppress.h"   /* silence boot_payload [FAIL] klog on negative tests */
 #include "kernel/boot_info.h"
 #include "kernel/boot_init.h"
 
@@ -312,6 +313,7 @@ static void test_payload_empty_valid(void)
 
 static void test_payload_count_out_of_range(void)
 {
+    TEST_KLOG_SUPPRESS("boot");
     enum boot_payload_error err = BOOT_PAYLOAD_ERR_OK;
 
     bi_payload_zero();
@@ -325,6 +327,7 @@ static void test_payload_count_out_of_range(void)
 
 static void test_payload_prefix_violated(void)
 {
+    TEST_KLOG_SUPPRESS("boot");
     enum boot_payload_error err = BOOT_PAYLOAD_ERR_OK;
 
     bi_payload_zero();
@@ -342,6 +345,7 @@ static void test_payload_prefix_violated(void)
 
 static void test_payload_range_wrap(void)
 {
+    TEST_KLOG_SUPPRESS("boot");
     enum boot_payload_error err = BOOT_PAYLOAD_ERR_OK;
 
     bi_payload_zero();
@@ -359,6 +363,7 @@ static void test_payload_range_wrap(void)
 
 static void test_payload_overlap_boot_info(void)
 {
+    TEST_KLOG_SUPPRESS("boot");
     enum boot_payload_error err = BOOT_PAYLOAD_ERR_OK;
 
     bi_payload_zero();
@@ -378,6 +383,7 @@ static void test_payload_overlap_boot_info(void)
 
 static void test_payload_overlap_framebuffer(void)
 {
+    TEST_KLOG_SUPPRESS("boot");
     enum boot_payload_error err = BOOT_PAYLOAD_ERR_OK;
 
     bi_payload_zero();
@@ -403,6 +409,7 @@ static void test_payload_overlap_framebuffer(void)
 
 static void test_payload_overlap_rt_mmap(void)
 {
+    TEST_KLOG_SUPPRESS("boot");
     enum boot_payload_error err = BOOT_PAYLOAD_ERR_OK;
 
     bi_payload_zero();
@@ -429,6 +436,7 @@ static void test_payload_overlap_rt_mmap(void)
 
 static void test_payload_overlap_usb_dma(void)
 {
+    TEST_KLOG_SUPPRESS("boot");
     enum boot_payload_error err = BOOT_PAYLOAD_ERR_OK;
 
     bi_payload_zero();
@@ -450,6 +458,7 @@ static void test_payload_overlap_usb_dma(void)
 
 static void test_payload_bad_alignment(void)
 {
+    TEST_KLOG_SUPPRESS("boot");
     enum boot_payload_error err = BOOT_PAYLOAD_ERR_OK;
 
     bi_payload_zero();
@@ -469,6 +478,7 @@ static void test_payload_bad_alignment(void)
 
 static void test_payload_unknown_type_required_fatal(void)
 {
+    TEST_KLOG_SUPPRESS("boot");
     enum boot_payload_error err = BOOT_PAYLOAD_ERR_OK;
 
     bi_payload_zero();
@@ -509,6 +519,7 @@ static void test_payload_unknown_type_optional_accepted(void)
 
 static void test_payload_unknown_flags_required_fatal(void)
 {
+    TEST_KLOG_SUPPRESS("boot");
     enum boot_payload_error err = BOOT_PAYLOAD_ERR_OK;
 
     bi_payload_zero();
@@ -529,6 +540,7 @@ static void test_payload_unknown_flags_required_fatal(void)
 
 static void test_payload_total_mismatch(void)
 {
+    TEST_KLOG_SUPPRESS("boot");
     enum boot_payload_error err = BOOT_PAYLOAD_ERR_OK;
 
     bi_payload_zero();
@@ -604,6 +616,7 @@ static void test_payload_desc_size_pin(void)
 
 static void test_payload_phys_unaligned_vs_required_alignment(void)
 {
+    TEST_KLOG_SUPPRESS("boot");
     enum boot_payload_error err = BOOT_PAYLOAD_ERR_OK;
 
     bi_payload_zero();
@@ -625,6 +638,7 @@ static void test_payload_phys_unaligned_vs_required_alignment(void)
 
 static void test_payload_aggregate_total_wrap(void)
 {
+    TEST_KLOG_SUPPRESS("boot");
     enum boot_payload_error err = BOOT_PAYLOAD_ERR_OK;
 
     bi_payload_zero();
@@ -657,6 +671,7 @@ static void test_payload_aggregate_total_wrap(void)
 
 static void test_payload_retained_rt_mmap_wrap_rejected(void)
 {
+    TEST_KLOG_SUPPRESS("boot");
     enum boot_payload_error err = BOOT_PAYLOAD_ERR_OK;
 
     bi_payload_zero();
@@ -684,6 +699,7 @@ static void test_payload_retained_rt_mmap_wrap_rejected(void)
 
 static void test_payload_overflow_truncated_rejected(void)
 {
+    TEST_KLOG_SUPPRESS("boot");
     enum boot_payload_error err = BOOT_PAYLOAD_ERR_OK;
 
     bi_payload_zero();
@@ -708,6 +724,7 @@ static void test_payload_overflow_truncated_rejected(void)
 
 static void test_payload_retained_fb_wrap_rejected(void)
 {
+    TEST_KLOG_SUPPRESS("boot");
     enum boot_payload_error err = BOOT_PAYLOAD_ERR_OK;
 
     bi_payload_zero();

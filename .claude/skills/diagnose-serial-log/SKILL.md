@@ -408,7 +408,15 @@ Treat this section as rules, not loose prose. The list below is a fast-path cach
 | `pe: 32-bit PE (i386) rejected` | `test_pe_validate_32bit` |
 | `ob: PID 0 handle quota exhausted` | handle quota test |
 | `TEST: (level pass test -- expected WARN)` | klog level test |
-| `sched: uthread_create: PID 0 has no PEB` | `test_uthread_rejects_kernel_task` |
+
+Retired entries (silenced at source by `TEST_KLOG_SUPPRESS` -- no longer
+appear in serial; delete any review report matching these):
+
+- `sched: uthread_create: PID 0 has no PEB` (was owned by
+  `test_uthread_rejects_kernel_task`; wrapped 2026-04-19 kernel-test-
+  harness roadmap).
+- `boot: boot_payload: ...` (16 variants owned by
+  `test_boot_info.c` payload-negative tests; wrapped 2026-04-19 same).
 
 ### Known Expected Platform Limitations
 

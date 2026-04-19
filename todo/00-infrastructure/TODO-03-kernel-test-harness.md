@@ -44,11 +44,11 @@
 | ⭐  | Order | Section | Deliverable                                               | Depends On          | Status |
 | --- | :---: | :-----: | --------------------------------------------------------- | ------------------- | :----: |
 | 💎  |   1   |  §1     | kmalloc fault injection (`kmalloc_fail_countdown`)        | --                  |  [x]   |
-| 💎  |   2   |  §7     | Test action/cleanup registry (`test_add_action`)          | --                  |  [/]   |
+| 💎  |   2   |  §7     | Test action/cleanup registry (`test_add_action`)          | --                  |  [x]   |
 | 💎  |   3   |  §3     | Scratch-buffer helper (`TEST_SCRATCH_KBUF`)               | §7                  |  [x]   |
 | 💎  |   4   |  §2     | Deterministic race barrier (`test_race_barrier_t`)        | --                  |  [x]   |
 | 💎  |   5   |  §6     | Fault-injection hardening (task-filter, multi-allocator)  | §1                  |  [x]   |
-| 💎  |   6   |  §5     | Test-scoped klog level demotion (`TEST_KLOG_SUPPRESS`)    | §7                  |  [ ]   |
+| 💎  |   6   |  §5     | Test-scoped klog level demotion (`TEST_KLOG_SUPPRESS`)    | §7                  |  [x]   |
 | 💎  |   7   |  §8     | Per-test heap-leak detection                              | §7                  |  [ ]   |
 | 💎  |   8   |  §4     | Retrofit existing "Test gaps" stamps across `todo/`       | §1-§3, §5-§8        |  [ ]   |
 
@@ -164,18 +164,29 @@ Tests that exercise error paths (validators, allocator failure rollback, bad-inp
 
 **Files:** `src/kernel/test/test.h` (new macro), `src/kernel/test/test_runner.c` (save/restore).
 
-- [ ] `TEST_KLOG_SUPPRESS(subsystem)` block-scoped macro: on entry, saves current per-tag level via a new `klog_get_level(const char *subsys)` API and calls `klog_set_level(subsys, LOG_FATAL)` (LOG_FATAL is above any normal emitter, effectively silencing the subsystem). On exit, the saved state is restored via §7 `test_add_action(restore_klog_level, saved)` so `TEST_ASSERT` early-return still restores (preferred over `__attribute__((cleanup))` because action drain is explicit in the test log).
-- [ ] Add `klog_get_level(const char *subsystem)` to `include/kernel/klog.h` + `src/kernel/klog.c` -- returns the current override value from the 32-entry override table or the global default if no override.
-- [ ] Retrofit `test_boot_payload.c` error-injection tests (lines around ~180 and across all 13 cases) to wrap each negative-test assertion in `TEST_KLOG_SUPPRESS("boot")`. Verify `[FAIL] boot: boot_payload:` lines disappear from the serial log during test runs while `[FAIL] boot: boot_payload:` on real-boot bad-payload paths remains loud.
-- [ ] Retrofit `test_uthread_rejects_kernel_task` in `test_sched.c` to wrap the `uthread_create(PID 0)` assertion in `TEST_KLOG_SUPPRESS("sched")`. Verify the `[FAIL] sched: uthread_create: PID 0 has no PEB` line disappears from test output.
-- [ ] Unit test: a wrapper calling `TEST_KLOG_SUPPRESS("mm")` around `klog(LOG_ERROR, "mm", "...")` emits nothing to serial; after the block, a subsequent `klog(LOG_ERROR, "mm", "...")` outside the block emits normally. Include a forced `TEST_ASSERT(0, ...)` inside the block to verify cleanup handler restores the level even on early exit.
-- [ ] Remove the affected entries from the "Known Test Noise" table in `.claude/skills/diagnose-serial-log/SKILL.md` once those sites are silenced at source.
-- [ ] Update `diagnose-serial-log/POLICIES.md` P4.3: after §5 ships, any test-phase `[FAIL]` line is a real finding (no more "NOISE because test-owned").
-- [ ] Commit: `"test: TEST_KLOG_SUPPRESS block-scoped klog level demotion"`
+- [x] `TEST_KLOG_SUPPRESS(subsystem)` block-scoped macro in [`include/kernel/test/klog_suppress.h`](../../include/kernel/test/klog_suppress.h). On entry, snapshots BOTH the effective level AND whether an explicit override existed, then calls `klog_set_level(subsys, LOG_FATAL)` to silence the subsystem. On exit the §7 action drain restores via `klog_set_level(subsystem, prev_level)` when a pre-existing override existed, or `klog_remove_override(subsystem)` when the suppress created the only override (so the tag goes back to following the global default exactly).
+- [x] Added `klog_get_level`, `klog_has_override`, and `klog_remove_override` to [`include/kernel/klog.h`](../../include/kernel/klog.h) + [`src/kernel/klog.c`](../../src/kernel/klog.c). The had-override flag + remove primitive was added in review to fix the restore-semantics gap that Codex caught -- without them, every suppress on a tag with no pre-existing override would leak a permanent override entry and break later global-default propagation.
+- [x] Retrofitted [`src/kernel/test/test_boot_info.c`](../../src/kernel/test/test_boot_info.c) -- 16 payload-negative tests each start with `TEST_KLOG_SUPPRESS("boot")`. `[FAIL] boot: boot_payload:` lines no longer appear on serial during test runs; real-boot validator still emits loudly against a bad payload (level is restored at suite exit).
+- [x] Retrofitted [`test_uthread_rejects_kernel_task`](../../src/kernel/test/test_peb_teb.c) -- wraps the `uthread_create(PID 0)` assertion in `TEST_KLOG_SUPPRESS("sched")`. `[FAIL] sched: uthread_create:` line gone from test output.
+- [x] Unit test: 4 new `TEST_CAT_BOOT` suites in [`test_harness.c`](../../src/kernel/test/test_harness.c) pair pattern: (a) begin-suite asserts `klog_get_level` returns `LOG_FATAL` after suppress; (b) verify-suite asserts level restored AND no lingering override; (c) begin-suite asserts suppress creates a temp override when none pre-existed; (d) verify-suite asserts override removed on drain. The (c)+(d) pair is the regression Codex recommended for distinguishing effective-level restore from override-state restore.
+- [x] Updated [`.claude/skills/diagnose-serial-log/SKILL.md`](../../.claude/skills/diagnose-serial-log/SKILL.md) "Known Test Noise" table -- retired the `sched: uthread_create:` + `boot: boot_payload:` entries (silenced at source now).
+- [x] Updated [`.claude/skills/diagnose-serial-log/POLICIES.md`](../../.claude/skills/diagnose-serial-log/POLICIES.md) P4.3 -- names `TEST_KLOG_SUPPRESS` as the canonical remediation. Test-phase `[FAIL]` lines are now real findings (no more "NOISE because test-owned").
+- [x] Commit: `"test: TEST_KLOG_SUPPRESS block-scoped klog level demotion"`
 
-**Test checkpoint:** A clean `bash scripts/test.sh` run produces zero `[FAIL]` lines in the test-phase window (between `=== KERNEL UNIT TESTS ===` and `N passed, M failed` summary) on a green tree. Diagnose-serial-log P4.3 FAIL/CRIT detector returns zero hits on the resulting serial log.
+**Test checkpoint:** A clean `bash scripts/test.sh` run produces zero `[FAIL] boot: boot_payload:` and zero `[FAIL] sched: uthread_create:` lines in the test-phase window. Diagnose-serial-log P4.3 FAIL/CRIT detector returns zero hits on those keys. Harness regression suites in `test_harness.c` confirm override-state restoration (no overrides leaked after drain when none existed before).
 
 **Filed by:** diagnose-serial-log 2026-04-18 on debug-tmp/all-tests-serial.log (17 FAIL lines across 5 canonicalized keys: 16 boot_payload, 1 sched uthread_create).
+
+> **Test runner:** `scripts\debug\run-boot-tests.bat` (SUITE=boot) | 4 new harness suites + 17 retrofitted source suites, 0 failures; 17 `[FAIL]` lines silenced from test-phase serial output
+
+> **Notes:**
+> - Shipped `TEST_KLOG_SUPPRESS(subsystem)` in [`klog_suppress.h`](../../include/kernel/test/klog_suppress.h) + [`klog_suppress.c`](../../src/kernel/test/klog_suppress.c) (KERNEL_TESTS-gated). Demotes subsystem to `LOG_FATAL` for the remainder of the suite; §7 action drain restores on suite exit.
+> - Restore semantics preserve override-state: if the tag had NO pre-existing override, suppress creates a temporary one that is REMOVED (not just reset) on drain so the tag resumes following the global default. If the tag HAD an override, its prior value is restored. Critical distinction -- the effective-level-only version that Codex caught pre-commit would have leaked permanent overrides for every test.
+> - New klog APIs: `klog_get_level`, `klog_has_override`, `klog_remove_override`. The latter two were added in review to fix the restore-semantics finding and are useful on their own for any future save/restore caller.
+> - Retrofitted 17 error-path tests: 16 `boot_payload` negative tests in `test_boot_info.c` + 1 `uthread_create(PID 0)` test in `test_peb_teb.c`. Each triggered 1 `[FAIL]` line; all now silenced at source.
+> - Diagnose-serial-log docs updated: `SKILL.md` noise table retires the silenced keys; `POLICIES.md` P4.3 names `TEST_KLOG_SUPPRESS` as the canonical remediation for test-phase WARN/ERROR/FAIL/CRIT.
+> - Closes §7's Deferred item "Migrate §5 TEST_KLOG_SUPPRESS onto test_add_action": §5 used `test_add_action` from day one for cleanup registration.
+> - Scope boundary: §5 owns the block-scoped klog demotion primitive + the two retrofit sites the filed-by incident named. Other test-phase noise sites (exec/pe/ob in the SKILL.md noise table) are NOT retrofitted here -- they're separate incidents each best handled as its own one-line wrap when the owning test is next edited.
 
 ---
 
@@ -217,7 +228,7 @@ KUnit built `kunit_kzalloc`, `kunit_kmalloc`, and its resource auto-free machine
 - [x] Per-suite action stack lives as file-scope static `s_test_actions` in [`src/kernel/test/test_runner.c`](../../src/kernel/test/test_runner.c) (kept out of public `test_state_t` so the ABI stays minimal): `uint8_t count`, `uint8_t draining`, `struct { fn; ctx } actions[32]`. `test_actions_reset()` runs before each suite body, `test_actions_drain()` runs after in **LIFO** order, before advancing to the next suite.
 - [x] Action drain runs at PASSIVE_LEVEL. If a suite left IRQL elevated (forgotten `KeLowerIrql` after `KeRaiseIrql`), the runner logs `[WARN] TEST: <suite> :: left IRQL elevated (<irql>) before drain` and force-lowers via `KeLowerIrql(PASSIVE_LEVEL)` so `kfree` / `klog` / blocking cleanup can run safely. Actions themselves must be non-blocking (documented in the header alongside the draining-reentrancy contract).
 - [x] Migrate §3 `TEST_SCRATCH_KBUF` onto `test_add_action`: §3 shipped 2026-04-19 using `test_add_action` from day one (the macro expansion calls `test_add_action(test_scratch_free, name)` explicitly with rollback-on-failure semantics); no bespoke per-test scratch list was ever needed.
-- [ ] Migrate §5 `TEST_KLOG_SUPPRESS` onto `test_add_action`: block-entry calls `test_add_action(restore_klog_level, saved_state_ptr)` where `saved_state_ptr` is a `struct { const char *subsys; klog_level_t prev; }` staged into `test_state` scratch. Replaces `__attribute__((cleanup))` with a visible action-log entry. (Deferred: §5 has not shipped yet; this item closes when §5 lands using `test_add_action` from day one.)
+- [x] Migrate §5 `TEST_KLOG_SUPPRESS` onto `test_add_action`: §5 shipped 2026-04-19 using `test_add_action` from day one (cleanup record is kmalloc'd in `klog_suppress_begin`, registered via `test_add_action(klog_suppress_restore, rec)`); no bespoke per-test cleanup needed.
 - [x] Sanity tests in [`src/kernel/test/test_harness.c`](../../src/kernel/test/test_harness.c) (TEST_CAT_BOOT, 9 suites). Pair-style: register-suite registers actions + records observations into file-scope statics; verify-suite asserts on those observations after the runner's drain fires between suites. Coverage: (a) 3 actions fire LIFO by context value; (b) 33rd `test_add_action` returns -1, first 32 drain; (c) `test_add_action(NULL, ctx)` returns -1; (d) re-entrant `test_add_action` from an action body returns -1 (draining flag blocks it); (e) action observes `PASSIVE_LEVEL` even when the suite leaked `DISPATCH_LEVEL`, next suite also starts at PASSIVE.
 - [x] Commit: `"test: action/cleanup registry (test_add_action) + 9 harness suites"`
 
@@ -233,8 +244,7 @@ KUnit built `kunit_kzalloc`, `kunit_kmalloc`, and its resource auto-free machine
 > - Canonical doc: the header comment at [`include/kernel/test/test.h`](../../include/kernel/test/test.h) `test_add_action` block documents the API contract (return codes, reentrancy, IRQL, non-blocking); the impl header comment in [`src/kernel/test/test_runner.c`](../../src/kernel/test/test_runner.c) documents the single-CPU SMP assumption of the sequential test_runner.
 > - Scope boundary: §7 owns the generic registry. §3 (scratch-buffer) and §5 (klog-suppress) are consumers, not owned here. Generalised tracing of action history / debugfs-style introspection is out of scope.
 
-> **Verified:** 2026-04-19 | commit `8a34cc1b` | 6/7 items | build OK | 11 harness suites added (registry + LIFO + overflow + NULL + re-entrant + IRQL x2 levels); §3 migration closed 2026-04-19 when §3 shipped
-> **Deferred:** [L] Migrate §5 TEST_KLOG_SUPPRESS onto test_add_action (reason: §5 not shipped yet; closes automatically when §5 uses test_add_action from day one) -> XREF: 00-infrastructure/TODO-03 §5 (item: "TEST_KLOG_SUPPRESS(subsystem) block-scoped macro ... saved state via test_add_action(restore_klog_level, saved)" at line 153)
+> **Verified:** 2026-04-19 | commit `8a34cc1b` | 7/7 items | build OK | 11 harness suites added (registry + LIFO + overflow + NULL + re-entrant + IRQL x2 levels); §3 + §5 migrations closed 2026-04-19 when those sections shipped
 > **Quality reviewed:** 2026-04-19 | Codex 4x (coverage, adversarial x2, quality) | 1H+7M fixed, 0 open | scope: kernel-code-quality
 
 ---
@@ -266,7 +276,7 @@ Record `heap_stats().used_bytes` at test start and end; if the delta is non-zero
 | 💎 | Test-scoped cleanup registry       | ❌ Manual in TAEF           | ✅ `kunit_add_action`                               | ✅ §7 `test_add_action` (primitive shipped)    |
 | 💎 | Test-scoped scratch allocation     | ⚠️ Manual in TAEF           | ✅ `kunit_kzalloc` (kmalloc-only)                   | ✅ §3 `TEST_SCRATCH_KBUF` (kmalloc + PMM)      |
 | 💎 | Per-test leak detection            | ⚠️ DV verifier pool checks  | ✅ `kmemleak` (kernel-wide)                         | ⬜ §8 heap_used delta (per-test, built-in)     |
-| ⭐ | Test-scoped klog level demotion    | ❌ None                     | ❌ None                                             | ⬜ §5 `TEST_KLOG_SUPPRESS`                     |
+| ⭐ | Test-scoped klog level demotion    | ❌ None                     | ❌ None                                             | ✅ §5 `TEST_KLOG_SUPPRESS`                     |
 | ⭐ | Single-boot 436-suite runner       | ❌ WDK run per-driver       | ❌ KUnit one-module-at-a-time                       | ✅ existing `test=1` infrastructure            |
 
 After §1-§8 land, in-kernel test coverage reaches Linux-KUnit-plus-fault-inject parity for allocator-failure, cleanup, and concurrency testing; §5 (klog demotion) and §8 (per-test leak delta, no KASAN required) give Impossible OS two real edges neither Win11 nor Linux offers at the in-kernel-test layer.
@@ -280,7 +290,7 @@ After §1-§8 land, in-kernel test coverage reaches Linux-KUnit-plus-fault-injec
 - [x] `src/kernel/test/test_heap.c` covers §1 `kmalloc_fail_next` + `kmalloc_fail_countdown_set(N)` + IRQL gate (5 suites; shipped with §1)
 - [x] `src/kernel/test/test_sched.c` covers §2 `test_race_barrier_t` release-a-first and release-b-first orderings (100-iteration drift check) + init-clears-state sanity
 - [x] `src/kernel/test/test_harness.c` sanity tests for §3 `TEST_SCRATCH_KBUF` (7 TEST_CAT_BOOT suites: kmalloc route, PMM route, forced-fail cleanup, rollback-on-full-action-stack)
-- [ ] `src/kernel/test/test_boot_payload.c` + `test_sched.c` regression coverage for §5 `TEST_KLOG_SUPPRESS` (error-path klog lines disappear from test-window serial output)
+- [x] `src/kernel/test/test_boot_info.c` (16 payload-negative tests) + `test_peb_teb.c` (`test_uthread_rejects_kernel_task`) wrap their assertions in `TEST_KLOG_SUPPRESS`; 4 `TEST_CAT_BOOT` harness suites in `test_harness.c` prove demote + restore (including the no-pre-existing-override regression)
 - [x] `src/kernel/test/test_heap.c` + `test_pmm.c` + `test_vmm.c` + `test_cpu_security.c` cover §6 multi-allocator fault injection: task-filter, max-injections cap, PMM + VMM-map + copy_user countdowns (7 new TEST_CAT_MM + TEST_CAT_X86 suites)
 - [x] `src/kernel/test/test_harness.c` sanity tests for §7 `test_add_action` (9 TEST_CAT_BOOT suites: LIFO drain, overflow, NULL-fn reject, re-entrant-during-drain reject, IRQL recovery)
 - [ ] `src/kernel/test/test_runner.c` sanity tests for §8 heap-leak detection (unfreed kmalloc flagged, `TEST_EXPECT_LEAK` tolerated, `TEST_LEAK_IGNORE` bypasses delta check)

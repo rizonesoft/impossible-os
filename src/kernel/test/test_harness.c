@@ -19,10 +19,12 @@
 
 #include "kernel/test/test.h"
 #include "kernel/test/scratch.h" /* TEST_SCRATCH_KBUF for scratch-buffer tests */
+#include "kernel/test/klog_suppress.h" /* TEST_KLOG_SUPPRESS for klog-demotion tests */
 #include "kernel/types.h"
 #include "kernel/sched/irql.h"  /* KeGetCurrentIrql / KeRaiseIrql for IRQL recovery test */
 #include "kernel/mm/heap.h"     /* heap_get_used for delta checks */
 #include "kernel/mm/pmm.h"      /* pmm_get_used_frames for pmm delta checks */
+#include "kernel/klog.h"        /* klog_get_level / klog_set_level for suppress tests */
 
 /* ---------------------------------------------------------------------------
  * LIFO drain observation -- suite A registers, suite B verifies.
@@ -380,6 +382,75 @@ static void test_harness_scratch_rollback(void)
      * the action registry is not corrupted by the rejected insertion. */
 }
 
+/* ---------------------------------------------------------------------------
+ * TEST_KLOG_SUPPRESS -- block-scoped klog level demotion.
+ *
+ * Raises the subsystem's minimum level to LOG_FATAL for the remainder
+ * of the current suite, then the §7 action drain restores it after
+ * suite exit. Register-suite snapshots the level BEFORE and AFTER
+ * calling the macro; verify-suite asserts the level was restored on
+ * drain (proving the action registration works end-to-end).
+ * ------------------------------------------------------------------------- */
+
+static volatile uint32_t g_klog_level_before_begin;
+static volatile uint32_t g_klog_level_after_begin;
+static volatile uint32_t g_klog_level_after_drain;
+
+static void test_harness_klog_suppress_begin(void)
+{
+    /* Pick a tag that is not used elsewhere in the test run so the
+     * override-table lookup is deterministic. */
+    const char *tag = "_test_suppress";
+
+    g_klog_level_before_begin = (uint32_t)klog_get_level(tag);
+    TEST_KLOG_SUPPRESS(tag);
+    g_klog_level_after_begin = (uint32_t)klog_get_level(tag);
+
+    TEST_ASSERT_EQ(g_klog_level_after_begin, (uint32_t)LOG_FATAL,
+                   "klog_get_level returns LOG_FATAL after TEST_KLOG_SUPPRESS");
+    TEST_ASSERT(g_klog_level_after_begin > g_klog_level_before_begin,
+                "post-suppress level strictly higher than pre-suppress");
+}
+
+static void test_harness_klog_suppress_restored(void)
+{
+    const char *tag = "_test_suppress";
+    g_klog_level_after_drain = (uint32_t)klog_get_level(tag);
+
+    TEST_ASSERT_EQ(g_klog_level_after_drain, g_klog_level_before_begin,
+                   "klog level restored to pre-suppress value after drain");
+    TEST_ASSERT_EQ(klog_has_override(tag), 0,
+                   "no lingering override: tag follows global default again "
+                   "(would fail if suppress_begin blindly called klog_set_level on restore)");
+}
+
+/* Distinguish effective-level restore from true override-state restore:
+ * the suppress on a tag with no pre-existing override must NOT create
+ * a permanent override on restore. Otherwise a later klog_set_level("",
+ * LOG_DEBUG) global change would not propagate to the tag. */
+static volatile uint32_t g_klog_suppress_override_pre;
+static volatile uint32_t g_klog_suppress_override_during;
+
+static void test_harness_klog_suppress_no_override_leak(void)
+{
+    const char *tag = "_test_suppress_leak";
+    g_klog_suppress_override_pre = (uint32_t)klog_has_override(tag);
+    TEST_ASSERT_EQ(g_klog_suppress_override_pre, 0,
+                   "test tag has no pre-existing override");
+
+    TEST_KLOG_SUPPRESS(tag);
+    g_klog_suppress_override_during = (uint32_t)klog_has_override(tag);
+    TEST_ASSERT_EQ(g_klog_suppress_override_during, 1,
+                   "TEST_KLOG_SUPPRESS creates a temporary override");
+}
+
+static void test_harness_klog_suppress_no_override_leak_verify(void)
+{
+    const char *tag = "_test_suppress_leak";
+    TEST_ASSERT_EQ(klog_has_override(tag), 0,
+                   "override removed on drain -- tag again follows global default");
+}
+
 /* Registration */
 void test_register_harness(void)
 {
@@ -417,6 +488,14 @@ void test_register_harness(void)
                             test_harness_scratch_pmm_verify, TEST_CAT_BOOT);
     test_suite_register_cat("Harness: scratch rollback on full action stack",
                             test_harness_scratch_rollback, TEST_CAT_BOOT);
+    test_suite_register_cat("Harness: TEST_KLOG_SUPPRESS demotes level",
+                            test_harness_klog_suppress_begin, TEST_CAT_BOOT);
+    test_suite_register_cat("Harness: klog level restored after action drain",
+                            test_harness_klog_suppress_restored, TEST_CAT_BOOT);
+    test_suite_register_cat("Harness: TEST_KLOG_SUPPRESS no pre-existing override -> creates temp",
+                            test_harness_klog_suppress_no_override_leak, TEST_CAT_BOOT);
+    test_suite_register_cat("Harness: klog override removed on drain when none pre-existed",
+                            test_harness_klog_suppress_no_override_leak_verify, TEST_CAT_BOOT);
 }
 
 #endif /* KERNEL_TESTS */

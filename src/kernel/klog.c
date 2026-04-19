@@ -679,6 +679,56 @@ void klog_set_level(const char *subsystem, log_level_t min_level)
     }
 }
 
+log_level_t klog_get_level(const char *subsystem)
+{
+    uint32_t i;
+
+    if (!subsystem || !subsystem[0])
+        return s_global_min;
+
+    /* Return existing override if one is active. */
+    for (i = 0; i < s_override_count; i++) {
+        if (str_eq(s_overrides[i].tag, subsystem))
+            return s_overrides[i].min_level;
+    }
+
+    /* No per-subsystem override -- fall back to the global default. */
+    return s_global_min;
+}
+
+int klog_has_override(const char *subsystem)
+{
+    uint32_t i;
+
+    if (!subsystem || !subsystem[0])
+        return 0;
+    for (i = 0; i < s_override_count; i++) {
+        if (str_eq(s_overrides[i].tag, subsystem))
+            return 1;
+    }
+    return 0;
+}
+
+void klog_remove_override(const char *subsystem)
+{
+    uint32_t i;
+
+    if (!subsystem || !subsystem[0])
+        return;
+    for (i = 0; i < s_override_count; i++) {
+        if (str_eq(s_overrides[i].tag, subsystem)) {
+            /* Shift the tail over this slot. Preserves order so any
+             * stable iteration elsewhere (currently none) doesn't
+             * skip entries. */
+            uint32_t j;
+            for (j = i; j + 1 < s_override_count; j++)
+                s_overrides[j] = s_overrides[j + 1];
+            s_override_count--;
+            return;
+        }
+    }
+}
+
 void klog_load_levels_from_registry(void)
 {
     /* Known subsystem tags to check in registry */

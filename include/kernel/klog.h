@@ -70,6 +70,25 @@ void klog_set_screen_level(log_level_t min_level);
  * Up to 32 subsystem overrides can be active simultaneously. */
 void klog_set_level(const char *subsystem, log_level_t min_level);
 
+/* Get the current per-subsystem minimum log level.
+ * Returns the active override for `subsystem` if one exists, otherwise
+ * the global default. NULL or "" returns the global default directly.
+ * Used by test infrastructure (TEST_KLOG_SUPPRESS) to save-restore
+ * per-subsystem levels around an error-path test. */
+log_level_t klog_get_level(const char *subsystem);
+
+/* Query whether an explicit override exists for `subsystem`. Returns
+ * 1 if a klog_set_level(subsystem, ...) is active for this tag, 0 if
+ * the subsystem falls back to the global default. Used by
+ * TEST_KLOG_SUPPRESS so restore can either remove the temporary
+ * override (when none existed) or restore its value (when it did). */
+int klog_has_override(const char *subsystem);
+
+/* Remove the explicit override for `subsystem`, making the tag follow
+ * the global default again. No-op if no override exists. NULL / "" is
+ * a no-op (the global default cannot be removed). */
+void klog_remove_override(const char *subsystem);
+
 /* Load per-subsystem log levels from Registry.
  * Reads HKLM\SYSTEM\Logs\Levels\<subsystem> for each known tag.
  * Call after registry_init(). */
