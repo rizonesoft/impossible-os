@@ -116,7 +116,7 @@ Path-filter abbreviations used in the tables below:
 - `test_*.c` = `src/kernel/test/test_*.c` (excluding `test_runner.c`, `test_main.c`).
 - `todo/*.md` = any markdown file under `todo/`.
 - `skills/*.md` = any markdown under `.claude/skills/`.
-- `code-commit stdout` / `boot-commit stdout` = see [Known limitations](#known-limitations-post-hoc-validators) below.
+- `HEAD files (code)` / `HEAD files (boot)` = files listed by `git show --name-only --format= HEAD` (post-commit), filtered by extension (`.c`/`.h`/`.asm`/`.ld`) or boot-path prefix. Canonical commit file list; catches pure-modification commits that `git commit` stdout omits.
 
 ### BLOCK hooks (5)
 
@@ -149,16 +149,8 @@ Path-filter abbreviations used in the tables below:
 
 | #  | Trigger       | Filter                            | Validator                                                                                                                       |
 | -- | ------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| 9  | Post: Bash    | `git commit`; code-commit stdout  | Runs `scripts/test.sh QUIET=1`; reports pass/fail. [`CLAUDE.md`](../../CLAUDE.md#testing----category-based-test-infrastructure). |
-| 10 | Post: Bash    | `git commit`; boot-commit stdout  | Runs `scripts/test-smoke.sh`; reports `SMOKE TEST PASSED` or fail. [`CLAUDE.md`](../../CLAUDE.md#smoke-test----end-to-end-boot-validation). |
-
-### Known limitations (post-hoc validators)
-
-**Hooks 9 and 10 match on `git commit` stdout, not the canonical commit file list.** `code-commit stdout` means "the git-commit stdout text contains any of `.c`/`.h`/`.asm`/`.ld`"; `boot-commit stdout` means "the stdout text contains any of the boot-path substrings (`src/boot/`, `src/kernel/main/boot_`, `src/kernel/idt.c`, ...)". Standard `git commit` output includes `create mode .../foo.c` / `delete mode` lines for added and removed files but does NOT list paths for pure modifications. Consequences:
-
-- Commits that only MODIFY existing source files may silently skip hooks 9 and 10 even though the code changed.
-- Commits that add a new boot-path source file always fire hook 10 because `create mode` includes the path.
-- A tighter matcher (`git show --name-only --format= HEAD`) would fix this; tracked in the [Hook Routing and Policy Contract](../../todo/00-infrastructure/TODO-02-ai-development-system.md#3-hook-routing-and-policy-contract) roadmap section.
+| 9  | Post: Bash    | `git commit`; HEAD files (code)   | Runs `scripts/test.sh QUIET=1`; reports pass/fail. [`CLAUDE.md`](../../CLAUDE.md#testing----category-based-test-infrastructure). |
+| 10 | Post: Bash    | `git commit`; HEAD files (boot)   | Runs `scripts/test-smoke.sh`; reports `SMOKE TEST PASSED` or fail. [`CLAUDE.md`](../../CLAUDE.md#smoke-test----end-to-end-boot-validation). |
 
 ### Reading the matrix
 

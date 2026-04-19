@@ -60,7 +60,7 @@
 | --- | :---: | -------------------------------------------------- | ------------ | :----: |
 | 💎  |   1   | Canonical ownership and source-of-truth map        | --           |  [x]   |
 | 💎  |   2   | Skill lifecycle, templates, and catalog rules      | §1           |  [x]   |
-| 💎  |   3   | Hook routing and policy contract                   | §1           |  [/]   |
+| 💎  |   3   | Hook routing and policy contract                   | §1           |  [x]   |
 | 💎  |   4   | External-reviewer contract (Codex, Copilot)        | §1-§3        |  [x]   |
 | 💎  |   5   | MCP, permissions, and extension boundary           | §1, §3, §4   |  [x]   |
 | 💎  |   6   | `AGENTS.md` cross-tool pointer file                | §1, §4       |  [x]   |
@@ -137,7 +137,7 @@ Hooks are part of the AI system, not invisible glue.
 - [x] The `.claude/settings.json` JSON blob stays canonical -- the matrix is the human-readable view. Editing procedure documented in the "Editing hooks" sub-section: edit JSON first, update matrix row in the same commit, then §9 regression suite asserts the invariant.
 - [x] Harness-hooks vs git-hooks boundary stated explicitly in the new "Two hook layers -- do not confuse them" table at the top of the Routing Matrix: harness hooks run at tool-call time (`.claude/settings.json`); git hooks run at commit/push time (`.githooks/`, owned by TODO-01 §5); `scripts/copilot-review.sh` has no hook surface.
 - [x] XREF to [TODO-01 §5 Git Hooks and Local Automation Lifecycle](TODO-01-developer-tooling-stack.md#5-git-hooks-and-local-automation-lifecycle) added inline in the boundary table + in the See Also list.
-- [ ] Tighten the post-commit unit-test + boot-smoke matchers (hook rows 9-10 in the matrix after 2026-04-19 renumbering; these are the two POST-HOC validators): replace the `tool_response.stdout`-based path detection with `git show --name-only --format= HEAD`. Current matchers miss pure-modification commits because standard `git commit` stdout only prints paths for `create mode` / `delete mode` lines. Caught by Codex review 2026-04-19; documented under "Known limitations" in ai-system.md. Fix: edit both hook bodies in `.claude/settings.json` to subprocess `git show --name-only --format= HEAD` and match against that file list; update the matrix rows accordingly; delete the "Known limitations" paragraph.
+- [x] Tighten the post-commit unit-test + boot-smoke matchers (hook rows 9-10 in the matrix; the two POST-HOC validators): both hooks now subprocess `git show --name-only --format= HEAD` and match against that file list (ext filter for hook 9, path-prefix filter for hook 10) instead of scanning `tool_response.stdout`. Pure-modification commits are no longer missed, and boot-path prefix matching is now tighter (`startswith` on per-file list, not substring in a stdout blob). Matrix rows 9-10 Filter column updated to `HEAD files (code)` / `HEAD files (boot)`; abbreviation legend refreshed; "Known limitations" paragraph deleted from ai-system.md. Originally caught by Codex review 2026-04-19.
 - [x] Commit: `"docs/ai: codify hook routing and policy contract"`
 
 **Test checkpoint:** For any given edit path or skill invocation, the responsible hook and its intended effect are documented. A maintainer can tell whether a behavior is a reminder or a block without reading minified JSON (three named tables: BLOCK / REMIND / POST-HOC VALIDATE). The harness/git hook boundary is clear and named in the "Two hook layers" table.
@@ -146,15 +146,14 @@ Hooks are part of the AI system, not invisible glue.
 
 > **Notes:**
 > - Shipped Hook Routing Matrix in [`ai-system.md`](../../docs/infrastructure/ai-system.md#hook-routing-matrix) covering all live harness hooks in three effect-class tables: BLOCK (5: Unicode-dash ban, numeric-TODO-shorthand ban on non-`todo` `.md`, scope-gap-protocol on C-src, test-side-effect ban, bare-`Accepted:`/`Deferred:` XREF gate), REMIND (12), POST-HOC VALIDATE (2: post-commit unit-tests + boot-smoke).
-> - Path-filter abbreviations (`C-src`, `test_*.c`, `todo/*.md`, `skills/*.md`, `code-commit stdout`, `boot-commit stdout`) defined once above the tables so every row fits under the 200-char cap without shrinking the column padding.
+> - Path-filter abbreviations (`C-src`, `test_*.c`, `todo/*.md`, `skills/*.md`, `HEAD files (code)`, `HEAD files (boot)`) defined once above the tables so every row fits under the 200-char cap without shrinking the column padding.
 > - Two hook layers block states the harness-vs-git-hook boundary explicitly: `.claude/settings.json` runs at tool-call time; `.githooks/` runs at commit/push time (owned by TODO-01 §5); `scripts/copilot-review.sh` has no hook surface at all.
-> - Known limitations paragraph documents the stdout-based matcher on hooks 9+10 honestly: pure-modification commits can silently skip the post-commit validators. Concrete follow-up item filed in this section (`git show --name-only --format= HEAD` replacement) as the tighter matcher.
+> - Post-commit matchers for hooks 9+10 now subprocess `git show --name-only --format= HEAD` and match against that canonical file list (ext filter for hook 9, path-prefix filter for hook 10). Earlier design scanned `tool_response.stdout`, which only included `create mode`/`delete mode` lines; pure-modification commits silently skipped the post-commit validators. The "Known limitations" paragraph that documented the earlier gap has been deleted from ai-system.md now that the gap is closed.
 > - Canonical source: [`.claude/settings.json`](../../.claude/settings.json) (JSON stays the source of truth; matrix is the human-readable view). Editing procedure: edit JSON first, update the matching matrix row in the same commit, rely on §9 to assert the sync.
 > - Scope boundary: harness hooks only. Git hooks (`.githooks/pre-commit`, `post-commit`, `pre-push`) live under TODO-01 §5.
 
-> **Verified:** 2026-04-19 | commit `98f2350b` | 6/7 items | build N/A (docs-only) | 18/18 hook rows
-> **Deferred:** [H] Post-commit unit-test + boot-smoke matchers match `git commit` stdout rather than canonical file list; pure-modification commits can silently skip (reason: behavior fix out of scope for the docs-codification commit) -> XREF: 00-infrastructure/TODO-02 §3 (item: "Tighten the post-commit unit-test + boot-smoke matchers" at line 127)
-> **Quality reviewed:** 2026-04-19 | Codex 2x (adversarial x2) | 1H+1M+2L fixed (H: hooks 8+9 semantics -> Known Limitations + follow-up; M: C-src abbreviation missed `.cpp`; L: row-length cap compaction; L: Deferred XREF line-number fix), 0 open | scope: N/A (docs-only)
+> **Verified:** 2026-04-19 | commit `98f2350b` | 7/7 items | build N/A (docs-only) | 18/18 hook rows
+> **Quality reviewed:** 2026-04-19 | Codex 2x (adversarial x2) | 2H+1M+2L fixed (H: hooks 8+9 semantics -> Known Limitations + follow-up, resolved in a later commit when the tighter matchers shipped; H: post-commit matcher tightened to `git show --name-only --format= HEAD`; M: C-src abbreviation missed `.cpp`; L: row-length cap compaction; L: Deferred XREF line-number fix), 0 open | scope: N/A (docs-only)
 
 ---
 
