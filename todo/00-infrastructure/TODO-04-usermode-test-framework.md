@@ -37,7 +37,7 @@
 - User-mode tests can probe kernel error paths via `SYS_FAULT_INJECT` (§5), reaching the §6 multi-allocator countdowns from TODO-03 §1/§6 without root-of-trust escapes outside `test=1` mode.
 - Per-test isolation: launcher scrubs disk + Registry test scratch state between binaries (§6) so one test's residue cannot mask another's bug.
 - Test-type taxonomy (§8): `test_smoke_*.exe`, `test_*.exe` (correctness), `test_stress_*.exe`, `test_perf_*.exe` -- launcher applies the right policy per type (fail-fast / run-all / loop-N / measure-and-assert).
-- Per-binary `scripts/debug/usermode/run-<name>.bat` runners (§15) parallel the kernel-side `scripts/debug/run-<cat>-tests.bat` family: one bat per `test_*.exe` binary plus a `run-all.bat` aggregate. Each bat passes `utest_filter=<binary>` (§4) to QEMU so a single user-mode test can be invoked selectively without rebuilding.
+- Per-binary `scripts/debug/usermode/run-<name>.bat` runners (§15) parallel the kernel-side `scripts/debug/kernel/run-<cat>-tests.bat` family: one bat per `test_*.exe` binary plus a `run-all.bat` aggregate. Each bat passes `utest_filter=<binary>` (§4) to QEMU so a single user-mode test can be invoked selectively without rebuilding.
 
 ---
 
@@ -334,7 +334,7 @@ Wire user-mode test binaries into `make test`.
 - [ ] `make test` target: include user-mode tests after kernel unit tests
 - [ ] `scripts/test.sh`: parse serial for `[UTEST]` lines alongside `[TEST]` kernel lines
 - [ ] When §4 `tap=1` is enabled in `boot.conf`, parse TAP `ok` / `not ok` / `# SKIP` lines into the same summary as `[UTEST]`
-- [ ] Author per-binary bat files under `scripts/debug/usermode/` (parallel to the kernel-side `scripts/debug/run-<cat>-tests.bat` family). One bat per `test_*.exe` binary that exists at the end of §1-§14, plus an aggregate runner. Each bat passes `utest_filter=<binary>` to QEMU via `run-qemu.ps1` so the §3 launcher runs ONLY that one binary:
+- [ ] Author per-binary bat files under `scripts/debug/usermode/` (parallel to the kernel-side `scripts/debug/kernel/run-<cat>-tests.bat` family). One bat per `test_*.exe` binary that exists at the end of §1-§14, plus an aggregate runner. Each bat passes `utest_filter=<binary>` to QEMU via `run-qemu.ps1` so the §3 launcher runs ONLY that one binary:
     - `scripts/debug/usermode/run-test_harness_smoke.bat` (§1 smoke)
     - `scripts/debug/usermode/run-test_syscall.bat` (§9 full syscall coverage; the §2 stub is a build-only smoke and shares the same name)
     - `scripts/debug/usermode/run-test_libc.bat` (§10)
@@ -343,7 +343,7 @@ Wire user-mode test binaries into `make test`.
     - `scripts/debug/usermode/run-test_fileio.bat` (§13)
     - `scripts/debug/usermode/run-test_win32.bat` (§14, lights up only after `D02T12 §6`)
     - `scripts/debug/usermode/run-all.bat` (no filter; runs every `test_*.exe`)
-- [ ] Bat-file template: one-liner mirroring `scripts/debug/run-<cat>-tests.bat` shape -- `powershell.exe -ExecutionPolicy Bypass -File scripts\debug\run-qemu.ps1 -Accel whpx -TestOnly -BootArg "utest_filter=<binary>"` (or whatever pass-through arg `run-qemu.ps1` exposes). New `-BootArg` flag may need to land in `run-qemu.ps1` if it does not already accept arbitrary boot.conf overrides.
+- [ ] Bat-file template: one-liner mirroring `scripts/debug/kernel/run-<cat>-tests.bat` shape -- `powershell.exe -ExecutionPolicy Bypass -File "%~dp0..\..\machines\run-qemu.ps1" -Accel whpx -TestOnly -BootArg "utest_filter=<binary>"` (the `%~dp0..\..\machines\run-qemu.ps1` relative path matches the kernel/ bats after the 2026-04-20 directory split). New `-BootArg` flag may need to land in `run-qemu.ps1` if it does not already accept arbitrary boot.conf overrides.
 - [ ] Update each subsystem-test section's `> **Test runner:**` line to point at the matching `scripts/debug/usermode/run-<binary>.bat` instead of the kernel-side bat. Sections §9-§14 each get their own runner stamp.
 - [ ] Commit: `"test: build integration -- user-mode tests in make test, CI, and per-binary bat runners"`
 

@@ -62,13 +62,13 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
    - The expected test category (e.g. `TEST_CAT_EXEC`)
    - Which specific assertions are required for this section
    
-   Create the test file / registration function if it doesn't exist yet. Do NOT piggy-back tests onto an unrelated test file just because it's convenient. If the subsystem doesn't fit existing `TEST_CAT_*` categories, create a new one (enum in `test.h`, names/labels in `test_runner.c`, `make test-*` target in Makefile, `bootx64.c` test_suite parser, AND `scripts/debug/run-<cat>-tests.bat`). Then add/update assertions and confirm build passes.
+   Create the test file / registration function if it doesn't exist yet. Do NOT piggy-back tests onto an unrelated test file just because it's convenient. If the subsystem doesn't fit existing `TEST_CAT_*` categories, create a new one (enum in `test.h`, names/labels in `test_runner.c`, `make test-*` target in Makefile, `bootx64.c` test_suite parser, AND `scripts/debug/kernel/run-<cat>-tests.bat`). Then add/update assertions and confirm build passes.
    
    > **CRITICAL (incident 2026-04-12): Every section MUST have at least one unit test wired.** Multiple sections (TODO-03 §1-§12, TODO-17 §1-§3) shipped without tests, requiring after-the-fact test creation. Tests catch real bugs -- the TODO-19 §1 review found 3 critical FPU context switch bugs that unit tests would have caught earlier. If the section has no testable surface (pure bootloader UEFI code with no kernel-side fields), document why in the TODO section with `**Note:** No kernel test surface -- validation via serial log on WHPX.`
    
    - **After wiring tests, add a one-line note to the TODO section** documenting which bat file to run and expected results. Compact pipe-separated format:
      ```
-     > **Test runner:** `scripts\debug\run-<category>-tests.bat` (SUITE=<cat>) | N suites, 0 failures
+     > **Test runner:** `scripts\debug\kernel\run-<category>-tests.bat` (SUITE=<cat>) | N suites, 0 failures
      ```
      For sections with no kernel test surface (pure UEFI boot code, docs-only):
      ```

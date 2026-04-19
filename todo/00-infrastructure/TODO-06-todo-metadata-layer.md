@@ -181,7 +181,7 @@ Wire the validator into the repo's CI surface so graph drift is caught before hu
 - [ ] Wire tests into [`scripts/test-tooling.sh`](../../scripts/test-tooling.sh) via a new `test_todo_graph()` function; runs under `make test-tooling`.
 - [ ] Commit: `"test/todo-graph: add generator + validator + query tests"`
 
-> **Test runner:** `bash scripts/test-tooling.sh` (group: `test_todo_graph`) | expected: all `t_pass`, 0 `t_fail`. For host-side tests this replaces the kernel `scripts/debug/run-<cat>-tests.bat` pattern; the test surface is shell/python, not kernel C.
+> **Test runner:** `bash scripts/test-tooling.sh` (group: `test_todo_graph`) | expected: all `t_pass`, 0 `t_fail`. For host-side tests this replaces the kernel `scripts/debug/kernel/run-<cat>-tests.bat` pattern; the test surface is shell/python, not kernel C.
 
 ## Verification
 

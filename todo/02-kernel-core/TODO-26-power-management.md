@@ -893,7 +893,7 @@ After §1 through §21, Impossible OS reaches parity for laptop-grade power on r
 
 **Test checkpoint:** Every Verification bullet above passes where hardware allows; `bash scripts/test.sh SUITE=boot` green for ACPI power tests; `tail -1 build/build.log` is `=== BUILD OK ===`. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-**Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot); `test_acpi_power.c` uses `TEST_CAT_BOOT`. When `test_power.c` lands, add `TEST_CAT_POWER` and `scripts\debug\run-power-tests.bat` (see Unit Tests section).
+**Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot); `test_acpi_power.c` uses `TEST_CAT_BOOT`. When `test_power.c` lands, add `TEST_CAT_POWER` and `scripts\debug\kernel\run-power-tests.bat` (see Unit Tests section).
 
 ---
 

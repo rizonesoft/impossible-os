@@ -191,7 +191,7 @@ Surfaced here so new contributors can find them instead of tripping over them:
 
 - **`run-qemu-kvm.bat` forces WHPX**, not KVM. Name is historical and stays to avoid breaking muscle memory. `run-qemu-kvm.sh` does use KVM.
 - **`run-secureboot.bat` lives under `scripts/debug/`**, not `scripts/machines/`. Logically a machine profile; consolidation under `scripts/machines/` is follow-up work.
-- **`scripts/debug/run-*-tests.bat` are not machine profiles** -- they are category-specific test runners that wrap `run-qemu.ps1 -TestOnly -TestSuite <cat>`. Owned by the [Wrapper Contract section of the developer tooling roadmap](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md#3-build-test-lint-and-run-wrapper-contract).
+- **`scripts/debug/kernel/run-*-tests.bat` are not machine profiles** -- they are category-specific test runners that wrap `run-qemu.ps1 -TestOnly -TestSuite <cat>`. Owned by the [Wrapper Contract section of the developer tooling roadmap](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md#3-build-test-lint-and-run-wrapper-contract).
 - **Filesystem and storage harnesses are Windows-first.** No `.sh` equivalents today; Linux contributors invoke `run-qemu.sh` with extra `-drive ...` manually, or run the Windows-side scripts from WSL2.
 
 ---
