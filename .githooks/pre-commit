@@ -1,42 +1,44 @@
 #!/usr/bin/env bash
 # ============================================================================
-# .githooks/pre-commit — Lint staged .c and .h files before commit
+# .githooks/pre-commit -- Run scripts/lint.sh before commit
+#
+# Previous behavior (pre-2026-04-19): filtered to staged .c/.h files only,
+# which let numeric-TODO shorthand and trailing-whitespace violations in
+# .sh, .yml, .md, and .json ship because the filter skipped them entirely.
+# TODO-02 §9's test-ai-system.sh was committed with 11 lint errors because
+# of that gap; CI would have caught it, but a local pre-commit hook that
+# only covers C/H is a false sense of safety.
+#
+# Current behavior: run `scripts/lint.sh` with no args (full-repo scan) when
+# anything is staged. This matches CI exactly -- if lint passes here, it
+# passes in `.github/workflows/build.yml` Run style lint step.
 #
 # Install: git config core.hooksPath .githooks
+#   or:    bash scripts/install-hooks.sh
 # ============================================================================
 
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# Collect staged .c and .h files (ignore deleted files)
-STAGED_FILES=$(git diff --cached --name-only --diff-filter=d -- '*.c' '*.h' 2>/dev/null || true)
-
-if [ -z "$STAGED_FILES" ]; then
-    # No C/H files staged — nothing to lint
+# If nothing is staged (e.g., `git commit --allow-empty`), skip.
+if git diff --cached --quiet --exit-code 2>/dev/null; then
     exit 0
 fi
 
-# Convert to absolute paths (one per line → space-separated)
-ABS_FILES=""
-while IFS= read -r file; do
-    ABS_FILES="$ABS_FILES $REPO_ROOT/$file"
-done <<< "$STAGED_FILES"
-
-FILE_COUNT=$(echo "$STAGED_FILES" | wc -l)
-
 echo ""
-echo "Pre-commit: linting $FILE_COUNT staged C/H file(s)..."
+echo "Pre-commit: running scripts/lint.sh (full-repo, matches CI)..."
 echo ""
 
-# Run the project linter on the staged files only
-if bash "$REPO_ROOT/scripts/lint.sh" $ABS_FILES; then
+if bash "$REPO_ROOT/scripts/lint.sh"; then
     echo ""
     echo -e "\033[32mPre-commit lint passed\033[0m"
     exit 0
 else
     echo ""
     echo -e "\033[31mFix lint errors before committing\033[0m"
-    echo "  Hint: run 'bash scripts/lint.sh' to see all violations"
+    echo "  Hint: 'bash scripts/lint.sh' shows all violations."
+    echo "  Hint: numeric TODO shorthand (TODO-NN §N, DNN TNN) must stay inside todo/."
+    echo "        Use capability names or anchor links in other files."
     exit 1
 fi

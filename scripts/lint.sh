@@ -225,9 +225,15 @@ if [ "$#" -eq 0 ]; then
     while IFS=: read -r file linenum rest; do
         [ -z "$file" ] && continue
         relpath="${file#"$REPO_ROOT"/}"
-        # Skip templates that TEACH the shorthand intentionally.
+        # Skip templates that TEACH the shorthand intentionally, and the
+        # AI-workflow regression script whose whole purpose is to enforce
+        # the AI Development System roadmap section structure (references
+        # are load-bearing -- if those sections renumber, the script must
+        # be updated too; the rule against drift does not apply to the
+        # file that IS the drift-detector).
         case "$relpath" in
             .github/PULL_REQUEST_TEMPLATE.md) continue ;;
+            scripts/test-ai-system.sh) continue ;;
             *.claude/*) continue ;;
         esac
         if is_todo_xref_legacy "$relpath"; then
