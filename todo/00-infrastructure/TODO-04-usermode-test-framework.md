@@ -37,6 +37,7 @@
 - User-mode tests can probe kernel error paths via `SYS_FAULT_INJECT` (§5), reaching the §6 multi-allocator countdowns from TODO-03 §1/§6 without root-of-trust escapes outside `test=1` mode.
 - Per-test isolation: launcher scrubs disk + Registry test scratch state between binaries (§6) so one test's residue cannot mask another's bug.
 - Test-type taxonomy (§8): `test_smoke_*.exe`, `test_*.exe` (correctness), `test_stress_*.exe`, `test_perf_*.exe` -- launcher applies the right policy per type (fail-fast / run-all / loop-N / measure-and-assert).
+- Per-binary `scripts/debug/usermode/run-<name>.bat` runners (§15) parallel the kernel-side `scripts/debug/run-<cat>-tests.bat` family: one bat per `test_*.exe` binary plus a `run-all.bat` aggregate. Each bat passes `utest_filter=<binary>` (§4) to QEMU so a single user-mode test can be invoked selectively without rebuilding.
 
 ---
 
@@ -130,6 +131,7 @@ Kernel-side mechanism to run user-mode test binaries and collect results.
 - [ ] Log: `"[UTEST] test_syscall.exe: %s (exit=%d)"` with PASS/FAIL based on exit code
 - [ ] Summary: `"[UTEST] %u passed, %u failed of %u user-mode tests"`
 - [ ] Triggered by `test=1` in `boot.conf` (same gate as kernel unit tests)
+- [ ] Honour the §4 `utest_filter=<name|glob>` boot.conf parameter when scanning -- if set, run ONLY binaries whose filename matches; if unset (default) run them all. Used by the per-binary bat files in §15.
 - [ ] Commit: `"test: kernel test launcher -- run user-mode test_*.exe and collect results"`
 
 **Test checkpoint:** Deploy `test_syscall.exe` to the disk image. Boot with `test=1` -> serial shows `[UTEST] test_syscall.exe: PASS`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
@@ -144,10 +146,11 @@ Parity with kselftest/LKFT-style automation: deterministic order, watchdogs, mac
 - [ ] Add per-binary wall-clock timeout in the launcher wait path -- kill task and emit `[UTEST] name: FAIL (timeout)` on expiry
 - [ ] Add optional `tap=1` in `boot.conf` so the launcher prints minimal TAP lines (`ok N - name` / `not ok N - name`) around each binary for `scripts/test.sh`
 - [ ] Define `SKIP reason` line contract from tests: launcher records skip without failing the suite; `scripts/test.sh` counts skips separately from FAIL
+- [ ] Add `utest_filter=<name|glob>` boot.conf parameter (parallel to the existing `test_suite=<cat>` knob): when set, the §3 launcher runs ONLY binaries whose filename matches the literal name or `*`-glob. Empty / unset = run all. Used by the per-binary bat files in §15 to invoke a single test selectively (e.g. `utest_filter=test_syscall.exe` from `scripts/debug/usermode/run-test_syscall.bat`). Glob matching is a tiny `fnmatch`-style helper, not full POSIX.
 - [ ] Add `docs/testing/usermode-env-matrix.md` documenting QEMU WHPX vs TCG vs VirtualBox vs bare metal expectations for user-mode timing and known skip reasons (doc only)
-- [ ] Commit: `"test: usermode launcher manifest, timeouts, TAP, and skip policy"`
+- [ ] Commit: `"test: usermode launcher manifest, timeouts, TAP, skip policy, and utest_filter"`
 
-**Test checkpoint:** With a manifest listing two dummy binaries, kill one via timeout mid-run: summary shows 1 FAIL(timeout) and the remaining binaries still execute. With `tap=1`, serial contains `ok 1` style lines parseable by TAP consumers. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** With a manifest listing two dummy binaries, kill one via timeout mid-run: summary shows 1 FAIL(timeout) and the remaining binaries still execute. With `tap=1`, serial contains `ok 1` style lines parseable by TAP consumers. With `utest_filter=test_syscall.exe`, the summary line names exactly one binary executed. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
 ---
 
@@ -331,9 +334,20 @@ Wire user-mode test binaries into `make test`.
 - [ ] `make test` target: include user-mode tests after kernel unit tests
 - [ ] `scripts/test.sh`: parse serial for `[UTEST]` lines alongside `[TEST]` kernel lines
 - [ ] When §4 `tap=1` is enabled in `boot.conf`, parse TAP `ok` / `not ok` / `# SKIP` lines into the same summary as `[UTEST]`
-- [ ] Commit: `"test: build integration -- user-mode tests in make test and CI"`
+- [ ] Author per-binary bat files under `scripts/debug/usermode/` (parallel to the kernel-side `scripts/debug/run-<cat>-tests.bat` family). One bat per `test_*.exe` binary that exists at the end of §1-§14, plus an aggregate runner. Each bat passes `utest_filter=<binary>` to QEMU via `run-qemu.ps1` so the §3 launcher runs ONLY that one binary:
+    - `scripts/debug/usermode/run-test_harness_smoke.bat` (§1 smoke)
+    - `scripts/debug/usermode/run-test_syscall.bat` (§9 full syscall coverage; the §2 stub is a build-only smoke and shares the same name)
+    - `scripts/debug/usermode/run-test_libc.bat` (§10)
+    - `scripts/debug/usermode/run-test_ipc.bat` (§11)
+    - `scripts/debug/usermode/run-test_process.bat` (§12)
+    - `scripts/debug/usermode/run-test_fileio.bat` (§13)
+    - `scripts/debug/usermode/run-test_win32.bat` (§14, lights up only after `D02T12 §6`)
+    - `scripts/debug/usermode/run-all.bat` (no filter; runs every `test_*.exe`)
+- [ ] Bat-file template: one-liner mirroring `scripts/debug/run-<cat>-tests.bat` shape -- `powershell.exe -ExecutionPolicy Bypass -File scripts\debug\run-qemu.ps1 -Accel whpx -TestOnly -BootArg "utest_filter=<binary>"` (or whatever pass-through arg `run-qemu.ps1` exposes). New `-BootArg` flag may need to land in `run-qemu.ps1` if it does not already accept arbitrary boot.conf overrides.
+- [ ] Update each subsystem-test section's `> **Test runner:**` line to point at the matching `scripts/debug/usermode/run-<binary>.bat` instead of the kernel-side bat. Sections §9-§14 each get their own runner stamp.
+- [ ] Commit: `"test: build integration -- user-mode tests in make test, CI, and per-binary bat runners"`
 
-**Test checkpoint:** `bash scripts/test.sh` (full or `SUITE=exec`) ends with a combined kernel `[TEST]` summary plus an `[UTEST]` user summary; a missing binary or non-zero exit fails the run. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** `bash scripts/test.sh` (full or `SUITE=exec`) ends with a combined kernel `[TEST]` summary plus an `[UTEST]` user summary; a missing binary or non-zero exit fails the run. Running `scripts\debug\usermode\run-test_syscall.bat` on Windows boots QEMU WHPX, runs ONLY `test_syscall.exe`, and prints the binary's `[UTEST-BEGIN]` / `[PASS]` / `[UTEST-END]` lines on serial; `run-all.bat` runs every binary in manifest order. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
 ---
 
