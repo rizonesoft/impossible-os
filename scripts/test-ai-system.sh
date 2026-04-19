@@ -41,8 +41,9 @@ What this tests (12 check groups; owned by TODO-02 sections 1-8):
   2. Claude-Code-only declaration in CLAUDE.md, with the .cursor/
      removal date preserved.
   3. AGENTS.md file contract: exists, links CLAUDE.md, <=60 lines,
-     Authority section byte-matches TODO-02 canonical, no CLAUDE.md-
-     exclusive doctrine imports, >=10x shorter than CLAUDE.md.
+     Authority section full-sentence phrases byte-match TODO-02 +
+     ai-system.md canonical block, no CLAUDE.md-exclusive doctrine
+     imports, >=5x shorter than CLAUDE.md (10x aspirational).
   4. Zero-trailer commit policy (§7) present in CLAUDE.md +
      CONTRIBUTING.md; commit-body scan from the §7 adoption anchor
      forward flags Co-Authored-By: / Assisted-by: / AI-Author: as
@@ -206,28 +207,60 @@ check_agents_md() {
     else
         t_fail "AGENTS.md <=60 lines" "actual: $agents_lines"
     fi
-    # Substantially shorter than CLAUDE.md. Threshold: >=5x (practical
-    # given CLAUDE.md ~280 lines + AGENTS.md 60-line cap -> ratio floor ~4.7x).
-    # The intent is a hard-to-drift proxy for "AGENTS.md is not a doctrine
-    # copy"; combined with the must-not-copy phrase check below, 5x is enough.
-    claude_lines=$(wc -l < CLAUDE.md)
-    local ratio=$((claude_lines / (agents_lines > 0 ? agents_lines : 1)))
+    # Substantially shorter than CLAUDE.md. Threshold: >=5x floor
+    # (aspirational 10x target per TODO-02 §6; floor of 5x keeps a hard
+    # proxy for "AGENTS.md is not a doctrine copy" while allowing AGENTS.md
+    # to grow in proportion to CLAUDE.md without false failures). Combined
+    # with the must-not-copy phrase check below and the byte-match check
+    # that follows, 5x is the operative guardrail.
+    claude_lines=$(wc -l < CLAUDE.md | tr -d ' ')
+    agents_lines=$(echo "$agents_lines" | tr -d ' ')
+    if [ "${agents_lines:-0}" -le 0 ]; then
+        t_fail "AGENTS.md has non-zero line count" "wc -l returned '$agents_lines'"
+        return
+    fi
+    local ratio=$((claude_lines / agents_lines))
     if [ "$ratio" -ge 5 ]; then
         t_pass "AGENTS.md at least 5x shorter than CLAUDE.md (ratio: ${ratio}x)"
     else
         t_fail "AGENTS.md at least 5x shorter than CLAUDE.md" \
                "actual ratio: ${ratio}x (CLAUDE.md=$claude_lines, AGENTS.md=$agents_lines) -- trim AGENTS.md or document why CLAUDE.md shrank"
     fi
-    # Must-match: Authority master statement + 3 invariants byte-match canonical
-    local master="Claude Code is the master."
-    assert_fixed_string "AGENTS.md Authority has master statement" "AGENTS.md" "$master"
-    # 3 invariants AGENTS.md inlines
-    assert_fixed_string "AGENTS.md Authority has invariant: doctrine in CLAUDE.md" \
-        "AGENTS.md" "Doctrine lives in"
-    assert_fixed_string "AGENTS.md Authority has invariant: external reviewers return findings" \
-        "AGENTS.md" "External reviewers return findings"
+    # Must-match: Authority section full-sentence phrases byte-identical in
+    # both files. Substring checks like "Doctrine lives in" pass even if the
+    # sentence is reworded around the first phrase; these full-sentence
+    # phrases fail on any wording drift between AGENTS.md and the canonical
+    # 5-invariant block in TODO-02 / ai-system.md. Dropping each to a sub-
+    # string check hid a real drift (AGENTS.md "not edits" vs TODO-02
+    # "never edits") until the §9 review surfaced it.
+    local todo="todo/00-infrastructure/TODO-02-ai-development-system.md"
+    local doc="docs/infrastructure/ai-system.md"
+    # Full-sentence canonical phrases that must appear verbatim in AGENTS.md,
+    # TODO-02, AND ai-system.md. Pulled from the canonical 5-invariant block
+    # (TODO-02 lines 21, 23 and the parallel paragraph in ai-system.md).
+    local canonical_phrases=(
+        "doctrine files tell Claude what to do, skills tell Claude how to do it, external reviewers tell Claude what might be wrong"
+        "Nothing outside Claude Code edits code, commits, or makes scope decisions autonomously"
+        "Doctrine lives in \`CLAUDE.md\`. Nowhere else."
+        "External reviewers return findings, never edits."
+    )
+    for phrase in "${canonical_phrases[@]}"; do
+        for f in AGENTS.md "$todo" "$doc"; do
+            if grep -qF -- "$phrase" "$f" 2>/dev/null; then
+                t_pass "byte-match: $(basename "$f") carries \"${phrase:0:50}...\""
+            else
+                t_fail "byte-match: $(basename "$f") carries canonical phrase" \
+                       "phrase not found verbatim in $f: \"$phrase\""
+            fi
+        done
+    done
+    # No-parallel-skill-trees phrasing differs between AGENTS.md (bullet)
+    # and TODO-02 (table cell). Check only that AGENTS.md has it.
     assert_fixed_string "AGENTS.md Authority has invariant: no parallel skill trees" \
         "AGENTS.md" "No parallel skill trees"
+    # Master statement (shared verbatim in AGENTS.md + TODO-02).
+    local master="Claude Code is the master."
+    assert_fixed_string "AGENTS.md carries master statement" "AGENTS.md" "$master"
     # Must-not-copy: CLAUDE.md-exclusive doctrine paragraphs
     local forbidden_phrases=(
         "Bare Metal First"
@@ -277,28 +310,45 @@ check_zero_trailer_policy() {
     local trailer_exceptions=(
         "c6b30e0f:Copilot-authored PR merged mid-§7-§8 sprint on 2026-04-19; post-anchor but pre-§9 enforcement; not rewritten to avoid destroying downstream commit chain."
     )
-    local trailer_hits
-    trailer_hits=$(git log --format='%H %B__END__' "$anchor..HEAD" 2>/dev/null \
-                    | awk '
-                        BEGIN{RS="__END__\n"}
-                        /^([a-f0-9]+) /{
-                            hash=$1
-                            body=$0
-                            if (match(body, /(^|\n)(Co-[Aa]uthored-[Bb]y|Assisted-[Bb]y|AI-Author):/)) print hash
-                        }
-                      ')
+    # Inclusive range: scan the anchor commit itself plus every commit after.
+    # Earlier version used `$anchor..HEAD` which EXCLUDES the anchor, so a
+    # forbidden trailer ON the §7 adoption commit would slip through. Use
+    # `${anchor}^..HEAD` when the anchor has a parent; otherwise scan HEAD
+    # back to (and including) the root commit.
+    local range
+    if git rev-parse --verify --quiet "${anchor}^" >/dev/null 2>&1; then
+        range="${anchor}^..HEAD"
+    else
+        range="HEAD"
+    fi
+    # Parse trailers via `git interpret-trailers --parse` per commit. This is
+    # the Git-official definition of "trailer" (last paragraph, RFC-822-style
+    # "Key: value" lines). Unlike regex-on-raw-body it ignores
+    # Co-Authored-By: occurrences inside code blocks or quoted diffs, and is
+    # robust to arbitrary body content (no awk multi-char RS hazard).
+    local trailer_hits=""
+    local commit
+    while IFS= read -r commit; do
+        [ -z "$commit" ] && continue
+        local trailers
+        trailers=$(git log -1 --format='%B' "$commit" 2>/dev/null \
+                   | git interpret-trailers --parse 2>/dev/null \
+                   | grep -E '^(Co-[Aa]uthored-[Bb]y|Assisted-[Bb]y|AI-Author):' || true)
+        if [ -n "$trailers" ]; then
+            trailer_hits="$trailer_hits ${commit:0:8}"
+        fi
+    done < <(git log --format='%H' "$range" 2>/dev/null)
     # Filter out declared exceptions.
     local real_hits=""
     for hit in $trailer_hits; do
-        local short="${hit:0:8}"
         local matched=0
         for excp in "${trailer_exceptions[@]}"; do
-            if [[ "${excp%%:*}" == "$short" ]]; then
+            if [[ "${excp%%:*}" == "$hit" ]]; then
                 matched=1
                 break
             fi
         done
-        [ "$matched" = "0" ] && real_hits="$real_hits $short"
+        [ "$matched" = "0" ] && real_hits="$real_hits $hit"
     done
     # Report exceptions (advisory) and real drift (hard fail).
     if [ -n "$real_hits" ]; then
@@ -307,7 +357,7 @@ check_zero_trailer_policy() {
         t_fail "no NEW AI-attribution trailers since §7 adoption" \
                "found $count post-anchor commit(s) with Co-Authored-By: / Assisted-by: / AI-Author: trailer:$real_hits"
     else
-        t_pass "no NEW AI-attribution trailers since §7 adoption"
+        t_pass "no NEW AI-attribution trailers since §7 adoption (inclusive of anchor)"
     fi
     if [ "${#trailer_exceptions[@]}" -gt 0 ]; then
         for excp in "${trailer_exceptions[@]}"; do
@@ -350,16 +400,90 @@ check_autonomous_agent_boundary() {
 # ============================================================================
 check_skill_catalog() {
     section "[6/12] Skill catalog consistency (TODO-02 §2)"
-    local dir_count claude_rows readme_rows
-    dir_count=$(ls .claude/skills/ 2>/dev/null | grep -vE '^(README\.md|TEMPLATE\.md)$' | wc -l | tr -d ' ')
-    claude_rows=$(awk '/^## Skills/,/^> Adding/' CLAUDE.md | grep -c '^| `/')
-    readme_rows=$(grep -c '^| \[`' .claude/skills/README.md 2>/dev/null || echo 0)
-    if [ "$dir_count" = "$claude_rows" ] && [ "$claude_rows" = "$readme_rows" ]; then
-        t_pass "catalog sync: $dir_count directories == $claude_rows CLAUDE.md rows == $readme_rows README.md rows"
-    else
-        t_fail "catalog sync: directories/CLAUDE.md/README.md out of sync" \
-               "dirs=$dir_count CLAUDE.md=$claude_rows README.md=$readme_rows"
+    # Set-based check: extract the sorted set of skill names from the
+    # directory, the CLAUDE.md Skills table, and .claude/skills/README.md,
+    # then diff the sets. Count-only comparison (the earlier form) passed
+    # if any rename + add-stale-row kept the totals equal, silently letting
+    # drift ship. Set compare names the exact offenders.
+    local tmpdir
+    if ! tmpdir=$(mktemp -d 2>/dev/null) || [ -z "$tmpdir" ] || [ ! -d "$tmpdir" ]; then
+        t_fail "catalog: tempdir creation" "mktemp -d failed -- cannot run set-compare"
+        return
     fi
+    # Cleanup on all return paths (early fail or success). Local trap:
+    # bash traps are function-global, so we use a trailing rm -rf and also
+    # guard with a return-tracker function-level flag.
+    # Directories under .claude/skills/.
+    if ! find .claude/skills -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null \
+        | sort > "$tmpdir/dirs"; then
+        t_fail "catalog: dirs extraction" "find failed"
+        rm -rf "$tmpdir"
+        return
+    fi
+    # CLAUDE.md table rows look like:  | `/skill-name` | description |
+    # Extract the `/skill-name` token. Anchor the block between `## Skills`
+    # and the next `##`-level heading (tolerates the sentinel `> Adding...`
+    # paragraph moving or being renamed).
+    awk '/^## Skills/{flag=1; next} /^## /{flag=0} flag' CLAUDE.md \
+        | grep -oE '^\| `/[a-z0-9:-]+`' \
+        | sed -E 's@^\| `/@@; s@`$@@' \
+        | sort > "$tmpdir/claude" || {
+            t_fail "catalog: CLAUDE.md extraction" "pipeline failed"
+            rm -rf "$tmpdir"
+            return
+        }
+    # README.md table rows look like:  | [`skill-name`](skill-name/) | ...
+    grep -oE '^\| \[`[a-z0-9:-]+`\]' .claude/skills/README.md 2>/dev/null \
+        | sed -E 's@^\| \[`@@; s@`\]$@@' \
+        | sort > "$tmpdir/readme" || {
+            t_fail "catalog: README.md extraction" "pipeline failed"
+            rm -rf "$tmpdir"
+            return
+        }
+    # Require that each extracted file has at least one entry. Empty sets
+    # trivially satisfy comm -23/-13, so a silent extraction failure (no
+    # matches due to regex drift, missing file, reformatted table) would
+    # produce a false "set-equal" PASS.
+    if [ ! -s "$tmpdir/dirs" ] || [ ! -s "$tmpdir/claude" ] || [ ! -s "$tmpdir/readme" ]; then
+        t_fail "catalog: non-empty extraction" \
+               "dirs=$(wc -l < "$tmpdir/dirs") claude=$(wc -l < "$tmpdir/claude") readme=$(wc -l < "$tmpdir/readme") -- one or more extractions empty (regex drift or file reformatted?)"
+        rm -rf "$tmpdir"
+        return
+    fi
+    local dirs_only claude_only readme_only
+    dirs_only=$(comm -23 "$tmpdir/dirs" "$tmpdir/claude" | head -5 | tr '\n' ' ')
+    claude_only=$(comm -13 "$tmpdir/dirs" "$tmpdir/claude" | head -5 | tr '\n' ' ')
+    readme_dir_diff=$(comm -23 "$tmpdir/dirs" "$tmpdir/readme" | head -5 | tr '\n' ' ')
+    readme_extra=$(comm -13 "$tmpdir/dirs" "$tmpdir/readme" | head -5 | tr '\n' ' ')
+    local dir_count claude_count readme_count
+    dir_count=$(wc -l < "$tmpdir/dirs" | tr -d ' ')
+    claude_count=$(wc -l < "$tmpdir/claude" | tr -d ' ')
+    readme_count=$(wc -l < "$tmpdir/readme" | tr -d ' ')
+    local synced=1
+    if [ -n "$dirs_only" ]; then
+        t_fail "catalog: skill dirs missing from CLAUDE.md Skills table" \
+               "unlisted: $dirs_only"
+        synced=0
+    fi
+    if [ -n "$claude_only" ]; then
+        t_fail "catalog: CLAUDE.md Skills table has rows without a dir" \
+               "stale: $claude_only"
+        synced=0
+    fi
+    if [ -n "$readme_dir_diff" ]; then
+        t_fail "catalog: skill dirs missing from .claude/skills/README.md" \
+               "unlisted: $readme_dir_diff"
+        synced=0
+    fi
+    if [ -n "$readme_extra" ]; then
+        t_fail "catalog: README.md rows without a dir" \
+               "stale: $readme_extra"
+        synced=0
+    fi
+    if [ "$synced" = "1" ]; then
+        t_pass "catalog sync: $dir_count skills == $claude_count CLAUDE.md rows == $readme_count README.md rows (set-equal)"
+    fi
+    rm -rf "$tmpdir"
     # Every skill directory has a SKILL.md.
     local orphans=0
     local orphan_list=""

@@ -13,7 +13,7 @@ Impossible OS uses **Claude Code** as its master / orchestrator. Doctrine lives 
 **Claude Code is the master.** Everything else in the AI surface is subordinate: doctrine files tell Claude what to do, skills tell Claude how to do it, external reviewers tell Claude what might be wrong. Nothing outside Claude Code edits code, commits, or makes scope decisions autonomously.
 
 - **Doctrine lives in `CLAUDE.md`. Nowhere else.** Skills, tool instructions, and reviewer prompts reference doctrine but never redefine it. On conflict, `CLAUDE.md` wins.
-- **External reviewers return findings, not edits.** Codex, Copilot, and any future reviewer tool emit analysis that Claude Code reads under `superpowers:receiving-code-review` discipline: verify at file:line, classify Fix / Reject / Accept, never blind-implement.
+- **External reviewers return findings, never edits.** Codex, Copilot, and any future reviewer tool emit analysis that Claude Code reads under `superpowers:receiving-code-review` discipline: verify at file:line, classify Fix / Reject / Accept, never blind-implement.
 - **No parallel skill trees.** `.claude/skills/` is the only skill directory in this repo. External tools participate through Claude skills that dispatch them, not through their own `.cursor/` / `.codex/` / `.<tool>/` trees.
 
 Full table and the other two invariants: [Authority Hierarchy in ai-system.md](docs/infrastructure/ai-system.md#authority-hierarchy-read-this-first) and [the AI Development System roadmap](todo/00-infrastructure/TODO-02-ai-development-system.md).
