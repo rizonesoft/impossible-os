@@ -110,16 +110,21 @@ static void test_sched_cooperative_yield_fairness(void)
 
 static void test_sched_kthread_slot_reuse(void)
 {
-    int i;
+    int i, fail_count = 0;
 
     g_thread_ran = 0;
     for (i = 0; i < THREAD_MAX + 4; i++) {
         int tid = kthread_create(test_thread_entry, NULL, 0);
-        TEST_ASSERT(tid >= 0, "joined kthread slot can be reused past THREAD_MAX");
-        if (tid < 0)
-            return;
+        if (tid < 0) {
+            fail_count++;
+            break;
+        }
         thread_join((uint32_t)tid);
     }
+    /* One assertion covers all iterations -- avoids 20+ identical
+     * [ OK ] lines on the serial log. */
+    TEST_ASSERT_EQ(fail_count, 0,
+                   "joined kthread slot reused past THREAD_MAX without failure");
 }
 
 /* ---------------------------------------------------------------------------
@@ -212,30 +217,38 @@ static int race_barrier_run_once(int a_first)
     return g_race_barrier_winner == expected_winner;
 }
 
+/* The iteration loops accumulate counts and assert ONCE at the end.
+ * Asserting per-iteration emits 100 identical [ OK ] lines on the
+ * serial log per test -- noise that obscures real signal. The final
+ * assertions still surface any failure via the exact count. */
 static void test_sched_race_barrier_a_first(void)
 {
-    int hits = 0;
+    int hits = 0, setup_fail = 0;
     const int iterations = 100;
     int i;
     for (i = 0; i < iterations; i++) {
         int r = race_barrier_run_once(/*a_first=*/1);
-        TEST_ASSERT(r >= 0, "race_barrier_run_once did not hit -1 on any iteration");
-        if (r == 1) hits++;
+        if (r < 0) setup_fail++;
+        else if (r == 1) hits++;
     }
+    TEST_ASSERT_EQ(setup_fail, 0,
+                   "race_barrier_run_once succeeded every iteration (a_first=1)");
     TEST_ASSERT_EQ(hits, iterations,
                    "release(a_first=1) wakes A first on every iteration");
 }
 
 static void test_sched_race_barrier_b_first(void)
 {
-    int hits = 0;
+    int hits = 0, setup_fail = 0;
     const int iterations = 100;
     int i;
     for (i = 0; i < iterations; i++) {
         int r = race_barrier_run_once(/*a_first=*/0);
-        TEST_ASSERT(r >= 0, "race_barrier_run_once did not hit -1 on any iteration");
-        if (r == 1) hits++;
+        if (r < 0) setup_fail++;
+        else if (r == 1) hits++;
     }
+    TEST_ASSERT_EQ(setup_fail, 0,
+                   "race_barrier_run_once succeeded every iteration (a_first=0)");
     TEST_ASSERT_EQ(hits, iterations,
                    "release(a_first=0) wakes B first on every iteration");
 }
