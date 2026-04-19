@@ -89,6 +89,9 @@ Minimal test harness for user-mode binaries: no kernel dependencies.
 > - Downstream consumers: §9-§13 subsystem test binaries all `#include "test.h"` and use the same `UTEST_*` macros. §15 build integration extends the Makefile rule pattern from this section to the full `user/test/test_*.c` glob.
 > - Scope boundary: §1 owns ONLY the header + the demonstrator binary + the Makefile entry point. The kernel-side launcher (§3), per-test isolation (§6), JUnit XML/JSON output formats (§7), and test-type taxonomy (§8) are all separate sections that consume this foundation.
 
+> **Verified:** 2026-04-20 | commit `a2ca91a4` | 6/6 items | build OK | smoke binary 23 KiB deployed to sysroot
+> **Quality reviewed:** 2026-04-20 | Codex 2x (adversarial, quality) | 0 findings, 0 open | scope: userland-code-quality
+
 ---
 
 ## 2. Userland syscall.h Parity with Kernel INT 0x80 ABI
