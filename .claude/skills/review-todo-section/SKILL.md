@@ -5,6 +5,8 @@ description: Full review of a TODO section -- adversarial Codex, dead code, cons
 
 # Review TODO Section
 
+> **External-Reviewer Contract:** This skill dispatches Codex as part of its workflow. Every finding goes through `superpowers:receiving-code-review` (verify at file:line, Fix / Reject / Accept, never blind-implement). Canonical contract: [docs/infrastructure/ai-system.md#external-reviewer-contract-codex-copilot](../../../docs/infrastructure/ai-system.md#external-reviewer-contract-codex-copilot).
+
 > **NO CODE SHIPS WITHOUT BEING EXAMINED FROM EVERY ANGLE.**
 >
 > You have been observed cutting corners: skipping Codex dispatches, self-reviewing instead of dispatching, accepting "clean" without running quality gates, folding separate concerns into a single shallow pass. This skill exists because your judgment about which steps to skip has been wrong repeatedly.

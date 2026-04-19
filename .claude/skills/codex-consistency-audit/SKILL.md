@@ -5,6 +5,8 @@ description: Codex-driven cross-file consistency audit. Verifies that constants,
 
 # Codex Consistency Audit
 
+> **External-Reviewer Contract:** Codex is a subordinate reviewer, not authority. Every finding from this skill goes through `superpowers:receiving-code-review` (verify at file:line, Fix / Reject / Accept, never blind-implement). Canonical contract: [docs/infrastructure/ai-system.md#external-reviewer-contract-codex-copilot](../../../docs/infrastructure/ai-system.md#external-reviewer-contract-codex-copilot).
+
 ## Use This Skill When
 
 - A subsystem has structs shared across C and assembly files.

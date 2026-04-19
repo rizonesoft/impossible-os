@@ -5,6 +5,8 @@ description: Codex-driven dependency impact analysis. Before changing a function
 
 # Codex Impact Analysis
 
+> **External-Reviewer Contract:** Codex is a subordinate reviewer, not authority. Every finding from this skill goes through `superpowers:receiving-code-review` (verify at file:line, Fix / Reject / Accept, never blind-implement). Canonical contract: [docs/infrastructure/ai-system.md#external-reviewer-contract-codex-copilot](../../../docs/infrastructure/ai-system.md#external-reviewer-contract-codex-copilot).
+
 ## Use This Skill When
 
 - About to change a function signature (add/remove/reorder parameters).

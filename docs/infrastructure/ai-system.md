@@ -175,6 +175,77 @@ Path-filter abbreviations used in the tables below:
 
 ---
 
+## External-Reviewer Contract (Codex, Copilot)
+
+Codex and Copilot participate in the AI workflow as **adversarial reviewers**, not authoritative instruction layers. The hierarchy invariant #3 ("External reviewers return findings, never edits") pins the rule; this section names the contract concretely so a contributor or a new reviewer tool can be wired without guessing.
+
+### Reviewer, not authority (the invariant)
+
+- **Codex** (OpenAI plugin) returns adversarial findings to Claude. Claude reads the findings, applies [`superpowers:receiving-code-review`](https://github.com/anthropics/superpowers) discipline to each one (verify at file:line, classify Fix / Reject / Accept, never blind-implement), and decides what ships. Codex never edits repo state directly.
+- **Copilot CLI** (`scripts/copilot-review.sh`) provides PR-style review for docs and non-kernel code paths. Same `receiving-code-review` gate on output. Copilot is NOT used as a first-class reviewer for kernel-critical changes because it lacks the deep-context read Codex gives.
+- Neither tool edits doctrine. Neither tool is documented as "authority" anywhere in the repo. If a future config file surfaces contradicting this, the other layer is the bug ([Authority Hierarchy invariant #4](#hierarchy-invariants)).
+
+### Codex dispatch surface
+
+Codex is invoked from inside Claude skills via the OpenAI Codex plugin binary at `~/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs`. Two surfaces: nine **angle-owner** `codex-*` skills that each own one adversarial angle, and seven **workflow-consumer** skills that dispatch Codex directly as part of a larger pipeline (e.g. step 13 of `/implement-todo-section`).
+
+**Angle-owner skills (9):**
+
+| Skill                                                                        | Adversarial angle                                                       |
+| ---------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| [`codex-design-review`](../../.claude/skills/codex-design-review/)           | Pre-impl plan review: feasibility, edge cases, SMP hazards, arch.       |
+| [`codex-adversarial-review-section`](../../.claude/skills/codex-adversarial-review-section/) | Single-section adversarial loop (<=3 rounds) until no unresolved H/C. |
+| [`codex-review-todo`](../../.claude/skills/codex-review-todo/)               | Adversarial review across all implemented sections of a TODO.           |
+| [`codex-fix-review`](../../.claude/skills/codex-fix-review/)                 | Fix findings and re-run until clean (<=3 iterations).                   |
+| [`codex-test-coverage`](../../.claude/skills/codex-test-coverage/)           | Untested error paths, missing boundaries, uncovered branches.           |
+| [`codex-impact-analysis`](../../.claude/skills/codex-impact-analysis/)       | What breaks if you change function X / struct Y / constant Z?           |
+| [`codex-consistency-audit`](../../.claude/skills/codex-consistency-audit/)   | Struct offsets, constants, API contracts, registration tables.          |
+| [`codex-dead-code`](../../.claude/skills/codex-dead-code/)                   | Unreachable functions, unused defines, orphaned types, stale decls.     |
+| [`codex-perf-review`](../../.claude/skills/codex-perf-review/)               | ISR paths, spinlock hold times, alloc-in-loop, O(n^2) algorithms.       |
+
+**Workflow-consumer skills (7) that also dispatch Codex directly:**
+
+| Skill                                                                                        | Why it dispatches Codex                                                              |
+| -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| [`implement-todo-section`](../../.claude/skills/implement-todo-section/)                    | Step 13 adversarial review, step 20 quality dispatch (dead-code + consistency + perf). |
+| [`review-todo-section`](../../.claude/skills/review-todo-section/)                          | Phase 2 mandatory adversarial, Phase 3 mandatory quality.                            |
+| [`quality-review-section`](../../.claude/skills/quality-review-section/)                    | Deep quality review dispatch (standards / optimization angles).                      |
+| [`verify-todo-section`](../../.claude/skills/verify-todo-section/)                          | Inherits review-todo-section's pipeline under audit-mode overrides.                  |
+| [`implement-unit-tests`](../../.claude/skills/implement-unit-tests/)                        | Step 7 test coverage gap analysis.                                                   |
+| [`implement-ssdt-range`](../../.claude/skills/implement-ssdt-range/)                        | Per-entry adversarial review during SSDT range implementation.                       |
+| [`debug-session`](../../.claude/skills/debug-session/)                                      | Hypothesis validation dispatch before fixing.                                        |
+| [`diagnose-serial-log`](../../.claude/skills/diagnose-serial-log/)                          | Codex adversarial review on every fix per step 21.                                   |
+
+Every skill in both tables carries the `> **External-Reviewer Contract:**` pointer blockquote at the top of its SKILL.md, so a maintainer can one-link-trace to this section from any reviewer entry point.
+
+### Copilot invocation surface
+
+[`scripts/copilot-review.sh`](../../scripts/copilot-review.sh) is a 33-line wrapper. If GitHub Copilot CLI is installed (`npm install -g @github/copilot`), it runs the prompt non-interactively via `copilot --allow-all -p`; otherwise it prints how to install + falls back to pointing at the Codex plugin path. Usage:
+
+```bash
+bash scripts/copilot-review.sh "Full review prompt with file paths and severity rubric"
+```
+
+No dedicated Claude skill dispatches Copilot (9 skills dispatch Codex; zero dispatch Copilot). This is deliberate: Copilot runs only when a human explicitly asks for a PR-style second opinion, typically on docs or non-kernel code. Kernel-critical review goes through the `codex-*` skills.
+
+### Adding a new reviewer tool
+
+If a future AI tool (Aider, Continue, Gemini-CLI, etc.) joins the reviewer set, it goes through the same contract:
+
+1. **No parallel instruction tree.** The tool does not get its own `.cursor/` / `.codex/` / `.<tool>/` skill directory ([Authority Hierarchy invariant #2](#hierarchy-invariants)).
+2. **Invocation from inside a Claude skill.** The tool is dispatched from a new `tool-*` skill under `.claude/skills/`, or from a shell script under `scripts/` that follows the same contract as `scripts/copilot-review.sh`.
+3. **Output through `receiving-code-review`.** Every finding is verified at file:line by Claude before any edit. Same Fix / Reject / Accept classification.
+4. **Subordinate-reviewer row added to the Authority Hierarchy table.** `docs/infrastructure/ai-system.md` table grows a row; the tool's role is pinned as "Subordinate reviewer", not "authority".
+5. **Roadmap ownership.** The adoption ships as a new section in [TODO-02](../../todo/00-infrastructure/TODO-02-ai-development-system.md) with the same review pipeline.
+
+If a proposal does NOT fit this contract (e.g. a tool that wants to commit directly), reject it at the roadmap stage. The [Autonomous-Agent Boundary Policy](../../todo/00-infrastructure/TODO-02-ai-development-system.md#8-autonomous-agent-boundary-policy) in TODO-02 §8 owns that refusal explicitly.
+
+### Discoverability back from skills
+
+Every `codex-*` skill under `.claude/skills/` carries a one-line pointer back to this contract section (see each skill's "External-Reviewer Contract" note near the top). A maintainer reading `codex-dead-code/SKILL.md` can trace the "reviewer, not authority" rule back to this section in one link.
+
+---
+
 ## See Also
 
 - [AI Development System roadmap](../../todo/00-infrastructure/TODO-02-ai-development-system.md) -- roadmap ownership, [Skill Lifecycle, Templates, and Catalog Rules](../../todo/00-infrastructure/TODO-02-ai-development-system.md#2-skill-lifecycle-templates-and-catalog-rules), [Hook Routing and Policy Contract](../../todo/00-infrastructure/TODO-02-ai-development-system.md#3-hook-routing-and-policy-contract), [External-Reviewer Contract](../../todo/00-infrastructure/TODO-02-ai-development-system.md#4-external-reviewer-contract-codex-copilot), [MCP, Permissions, and Extension Boundary](../../todo/00-infrastructure/TODO-02-ai-development-system.md#5-mcp-permissions-and-extension-boundary), [`AGENTS.md` Cross-Tool Pointer File](../../todo/00-infrastructure/TODO-02-ai-development-system.md#6-agentsmd-cross-tool-pointer-file), [AI-Assist Commit Disclosure Policy](../../todo/00-infrastructure/TODO-02-ai-development-system.md#7-ai-assist-commit-disclosure-policy), [Autonomous-Agent Boundary Policy](../../todo/00-infrastructure/TODO-02-ai-development-system.md#8-autonomous-agent-boundary-policy), and [AI Workflow Regression Suite](../../todo/00-infrastructure/TODO-02-ai-development-system.md#9-ai-workflow-regression-suite).

@@ -61,7 +61,7 @@
 | 💎  |   1   | Canonical ownership and source-of-truth map        | --           |  [x]   |
 | 💎  |   2   | Skill lifecycle, templates, and catalog rules      | §1           |  [x]   |
 | 💎  |   3   | Hook routing and policy contract                   | §1           |  [/]   |
-| 💎  |   4   | External-reviewer contract (Codex, Copilot)        | §1-§3        |  [ ]   |
+| 💎  |   4   | External-reviewer contract (Codex, Copilot)        | §1-§3        |  [x]   |
 | 💎  |   5   | MCP, permissions, and extension boundary           | §1, §3, §4   |  [ ]   |
 | 💎  |   6   | `AGENTS.md` cross-tool pointer file                | §1, §4       |  [ ]   |
 | 💎  |   7   | AI-assist commit disclosure policy                 | §1           |  [ ]   |
@@ -141,14 +141,20 @@ Hooks are part of the AI system, not invisible glue.
 
 Codex and Copilot participate in the AI workflow as adversarial reviewers, not as authoritative instruction layers. That contract must be explicit so doctrine drift stays impossible.
 
-- [ ] Document the external-reviewer role: Codex is invoked from within Claude skills (via the OpenAI Codex plugin at `/home/<user>/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs`); Copilot is invoked via `scripts/copilot-review.sh`. Both return findings that Claude applies `superpowers:receiving-code-review` discipline to. Neither edits doctrine.
-- [ ] Document the nine Claude skills that dispatch Codex: `codex-adversarial-review-section`, `codex-consistency-audit`, `codex-dead-code`, `codex-design-review`, `codex-fix-review`, `codex-impact-analysis`, `codex-perf-review`, `codex-review-todo`, `codex-test-coverage`. Each has a specific adversarial angle; the skill knows which angles belong in its prompt.
-- [ ] Document Copilot's narrower scope: PR-style review comments, mostly for docs and non-kernel code paths. Not used as a first-class reviewer for kernel-critical changes because it lacks the deep-context read Codex gives.
-- [ ] State the "reviewer, not authority" invariant: `receiving-code-review` discipline says Codex can be wrong, findings must be technically verified before acted on, false positives rejected with code evidence. This applies identically to Copilot.
-- [ ] Add XREFs from every Codex-invoking Claude skill back to this section so the role is discoverable from the skills themselves
-- [ ] Commit: `"docs/ai: define external-reviewer contract for Codex and Copilot"`
+- [x] Documented the external-reviewer role in the new [External-Reviewer Contract](../../docs/infrastructure/ai-system.md#external-reviewer-contract-codex-copilot) section of `ai-system.md`. Codex is invoked from within Claude skills via the OpenAI Codex plugin binary (`~/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs`); Copilot is invoked via `scripts/copilot-review.sh`. Both return findings that Claude applies `superpowers:receiving-code-review` discipline to -- no doctrine edits.
+- [x] Documented the 9 Codex-dispatching Claude skills in a dedicated table under "Codex dispatch surface": `codex-design-review`, `codex-adversarial-review-section`, `codex-review-todo`, `codex-fix-review`, `codex-test-coverage`, `codex-impact-analysis`, `codex-consistency-audit`, `codex-dead-code`, `codex-perf-review`. Each row names the specific adversarial angle the skill owns.
+- [x] Documented Copilot's narrower scope in the "Copilot invocation surface" sub-section: 33-line `scripts/copilot-review.sh` wrapper, PR-style review for docs + non-kernel code, zero dedicated skill dispatches (deliberate -- kernel-critical review goes through `codex-*` skills).
+- [x] Stated the "reviewer, not authority" invariant in the lead sub-section; pinned Authority Hierarchy invariant #3 as the hierarchy rule and invariant #4 as the conflict-resolution rule.
+- [x] Added a one-line `> **External-Reviewer Contract:**` blockquote to the top of every skill that dispatches Codex: 9 angle-owner `codex-*` skills + 8 workflow-consumer skills (`implement-todo-section`, `implement-ssdt-range`, `implement-unit-tests`, `review-todo-section`, `verify-todo-section`, `quality-review-section`, `debug-session`, `diagnose-serial-log`) = 17 total. Verified: `grep -l 'External-Reviewer Contract:' .claude/skills/*/SKILL.md | wc -l` == 17. Codex review caught this -- my first draft only listed the 9 codex-* skills; follow-up grep of `codex-companion.mjs` found 7 direct invokers outside that set that also needed the contract pointer.
+- [x] Added an "Adding a new reviewer tool" sub-section naming the 5-step contract any new AI reviewer must pass through before being adopted (no parallel instruction tree, invocation from inside a Claude skill, `receiving-code-review` on output, Authority Hierarchy row, TODO-02 roadmap ownership). Links forward to [§8 Autonomous-Agent Boundary Policy](#8-autonomous-agent-boundary-policy) for the refusal path.
+- [x] Commit: `"docs/ai: define external-reviewer contract for Codex and Copilot"`
 
-**Test checkpoint:** A maintainer reading any `codex-*` skill can trace back to the canonical external-reviewer contract. Codex/Copilot findings are always applied via `receiving-code-review`, never blindly. Neither tool is documented as "authority" anywhere in the repo.
+**Test checkpoint:** A maintainer reading any `codex-*` skill sees the External-Reviewer Contract blockquote at the top and can one-link-trace back to the canonical contract section in `ai-system.md`. Codex/Copilot findings are always applied via `receiving-code-review`, never blindly. Neither tool is documented as "authority" anywhere in the repo (verified: `grep -rn 'Codex.*authority\|Copilot.*authority' CLAUDE.md docs/ .claude/skills/` returns only the negation "not authority" / "never authority").
+
+> **Test runner:** N/A (docs + skill metadata) | validation: 17/17 Codex-dispatching skills carry the contract pointer (`grep -l 'External-Reviewer Contract:' .claude/skills/*/SKILL.md | wc -l`); table rows in `ai-system.md` all under 200-char cap; §9 regression suite will assert these invariants automatically when it ships.
+
+> **Verified:** 2026-04-19 | 7/7 items | build N/A (docs-only) | 17 back-pointers wired
+> **Quality reviewed:** 2026-04-19 | Codex 1x (adversarial) | 1M+1L fixed (M: Codex-dispatch surface initially listed only 9 codex-* skills but 7 workflow-consumer skills also dispatch Codex directly -- added back-pointers + expanded the "Codex dispatch surface" sub-section to name both groupings; L: table rows 206-208 chars -- compacted to stay under 200-char cap), 0 open | scope: N/A (docs-only)
 
 ---
 
@@ -254,7 +260,7 @@ This is the refinement step: test the workflow itself.
 | 💎 | Repo-codified AI instructions   | ✅ `.github/copilot-instructions.md`        | ⚠️ AGENTS.md emerging                      | ✅ §1 ownership map + `CLAUDE.md` authority              |
 | 💎 | Skill/catalog ownership         | ⚠️ `.github/chatmodes/` + `/prompts/`       | ❌ Ad hoc                                  | ✅ §2 skill lifecycle; no parallel trees                 |
 | 💎 | Hook policy matrix              | ⚠️ `.vscode/mcp.json` + IDE settings        | ⚠️ Implicit                                | ✅ §3 routing; reminder vs block tiers                   |
-| 💎 | External-reviewer contract      | ❌ Rare                                     | ❌ Rare                                    | ⬜ §4 Codex + Copilot reviewer-not-authority             |
+| 💎 | External-reviewer contract      | ❌ Rare                                     | ❌ Rare                                    | ✅ §4 Codex + Copilot reviewer-not-authority             |
 | 💎 | Permissions/extension boundary  | ⚠️ Varies                                   | ⚠️ Varies                                  | ⬜ §5 allow/deny tiers + `.local.json` split             |
 | 💎 | Cross-tool `AGENTS.md` pointer  | ⚠️ awesome-copilot stub                     | ✅ LF-backed (Aug 2025)                    | ⬜ §6 pointer to `CLAUDE.md`; no duplication             |
 | 💎 | AI-assist commit disclosure     | ❌ No convention                            | ✅ kernel `Assisted-by:` trailer (2025-12) | ⬜ §7 zero-trailer policy + stance-change condition      |

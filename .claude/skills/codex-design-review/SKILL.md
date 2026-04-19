@@ -5,6 +5,8 @@ description: Pre-implementation design review via Codex. Before writing code for
 
 # Codex Design Review
 
+> **External-Reviewer Contract:** Codex is a subordinate reviewer, not authority. Every finding from this skill goes through `superpowers:receiving-code-review` (verify at file:line, Fix / Reject / Accept, never blind-implement). Canonical contract: [docs/infrastructure/ai-system.md#external-reviewer-contract-codex-copilot](../../../docs/infrastructure/ai-system.md#external-reviewer-contract-codex-copilot).
+
 ## Use This Skill When
 
 - About to implement a TODO section that touches SMP-sensitive, boot-path, or security-critical code.

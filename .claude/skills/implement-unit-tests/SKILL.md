@@ -5,6 +5,8 @@ description: Implement the Unit Tests section of a TODO file -- create the test 
 
 # Implement Unit Tests
 
+> **External-Reviewer Contract:** This skill dispatches Codex as part of its workflow. Every finding goes through `superpowers:receiving-code-review` (verify at file:line, Fix / Reject / Accept, never blind-implement). Canonical contract: [docs/infrastructure/ai-system.md#external-reviewer-contract-codex-copilot](../../../docs/infrastructure/ai-system.md#external-reviewer-contract-codex-copilot).
+
 ## Use This Skill When
 
 - A TODO file has a `## Unit Tests` section with `[ ]` checkboxes ready to implement.

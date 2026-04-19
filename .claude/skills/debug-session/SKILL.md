@@ -5,6 +5,8 @@ description: Structured kernel debugging session with adversarial review validat
 
 # Debug Session
 
+> **External-Reviewer Contract:** This skill dispatches Codex as part of its workflow. Every finding goes through `superpowers:receiving-code-review` (verify at file:line, Fix / Reject / Accept, never blind-implement). Canonical contract: [docs/infrastructure/ai-system.md#external-reviewer-contract-codex-copilot](../../../docs/infrastructure/ai-system.md#external-reviewer-contract-codex-copilot).
+
 ## Use This Skill When
 
 - The user describes unexpected kernel behavior: crash, hang, panic, wrong output, test failure, regression.

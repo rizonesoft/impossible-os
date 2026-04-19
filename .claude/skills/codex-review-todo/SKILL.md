@@ -5,6 +5,8 @@ description: Run a Codex adversarial review against all implemented sections of 
 
 # Codex Adversarial Review -- TODO Implementation Audit
 
+> **External-Reviewer Contract:** Codex is a subordinate reviewer, not authority. Every finding from this skill goes through `superpowers:receiving-code-review` (verify at file:line, Fix / Reject / Accept, never blind-implement). Canonical contract: [docs/infrastructure/ai-system.md#external-reviewer-contract-codex-copilot](../../../docs/infrastructure/ai-system.md#external-reviewer-contract-codex-copilot).
+
 ## Use This Skill When
 
 - A TODO file has completed sections (`[x]`) that need adversarial review against the actual code.

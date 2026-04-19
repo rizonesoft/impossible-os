@@ -5,6 +5,8 @@ description: Deep quality review of an implemented TODO section -- industry stan
 
 # Quality Review Section
 
+> **External-Reviewer Contract:** This skill dispatches Codex as part of its workflow. Every finding goes through `superpowers:receiving-code-review` (verify at file:line, Fix / Reject / Accept, never blind-implement). Canonical contract: [docs/infrastructure/ai-system.md#external-reviewer-contract-codex-copilot](../../../docs/infrastructure/ai-system.md#external-reviewer-contract-codex-copilot).
+
 ## Execution Discipline
 
 > This is a QUALITY audit, not a compliance audit. The section already works and is verified. The question is: does it match industry standards, is it optimally implemented, and could it be done better?

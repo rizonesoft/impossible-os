@@ -5,6 +5,8 @@ description: Codex-driven dead code scanner. Finds unreachable functions, unused
 
 # Codex Dead Code Scanner
 
+> **External-Reviewer Contract:** Codex is a subordinate reviewer, not authority. Every finding from this skill goes through `superpowers:receiving-code-review` (verify at file:line, Fix / Reject / Accept, never blind-implement). Canonical contract: [docs/infrastructure/ai-system.md#external-reviewer-contract-codex-copilot](../../../docs/infrastructure/ai-system.md#external-reviewer-contract-codex-copilot).
+
 ## Use This Skill When
 
 - A TODO has been completed and you want to clean up leftover scaffolding.

@@ -5,6 +5,8 @@ description: Analyze serial logs with a structured event model. Detect crashes, 
 
 # Diagnose Serial Log
 
+> **External-Reviewer Contract:** This skill dispatches Codex as part of its workflow. Every finding goes through `superpowers:receiving-code-review` (verify at file:line, Fix / Reject / Accept, never blind-implement). Canonical contract: [docs/infrastructure/ai-system.md#external-reviewer-contract-codex-copilot](../../../docs/infrastructure/ai-system.md#external-reviewer-contract-codex-copilot).
+
 ## Use This Skill When
 
 - The user pastes serial output or points to a log file (for example `build/test-probe.log`, `debug-tmp/*.log`, `build/smoke-test.stripped.log`).

@@ -5,6 +5,8 @@ description: Implement and wire a range of SSDT entries (main or shadow table). 
 
 # Implement SSDT Range
 
+> **External-Reviewer Contract:** This skill dispatches Codex as part of its workflow. Every finding goes through `superpowers:receiving-code-review` (verify at file:line, Fix / Reject / Accept, never blind-implement). Canonical contract: [docs/infrastructure/ai-system.md#external-reviewer-contract-codex-copilot](../../../docs/infrastructure/ai-system.md#external-reviewer-contract-codex-copilot).
+
 ## Use This Skill When
 
 - The user pastes or references an SSDT range block (e.g., "implement 0x1020-0x1027 GDI Text").

@@ -5,6 +5,8 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
 
 # Implement TODO Section
 
+> **External-Reviewer Contract:** This skill dispatches Codex as part of its workflow. Every finding goes through `superpowers:receiving-code-review` (verify at file:line, Fix / Reject / Accept, never blind-implement). Canonical contract: [docs/infrastructure/ai-system.md#external-reviewer-contract-codex-copilot](../../../docs/infrastructure/ai-system.md#external-reviewer-contract-codex-copilot).
+
 > `review-todo-section` owns the full post-commit quality pipeline invoked at step 20. `verify-todo-section` is a thin audit-mode wrapper over review (same workflow, downgrade-only stance). Stamp field rules live in review; both this skill and verify reference them.
 
 ## Execution Discipline
