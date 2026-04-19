@@ -23,6 +23,7 @@
 - → XREF: `TODO-21-process-model-extensions.md §3` -- `exec_load()` (§1) must set `task->program_break` to end of BSS so brk/sbrk (TODO-21 §3) can extend from the correct address
 - → XREF: `TODO-20-eif-full-implementation.md` -- completes EIF beyond §5 basic loader: segment permissions, ASLR, API version gating, metadata parsing, LZ4 decompression, module registration, import stubs. §13 (elf2eif) and §17 (code signing) remain here.
 - → XREF: `TODO-28-bsod-ux-enhancements.md` §12: F2 last-driver deferral consumes module registry and `exec_find_module_by_pc()` from §6
+- → XREF: `00-infrastructure/TODO-04-usermode-test-framework.md §5, §8, §9` -- `test_syscall.exe` / `test_process.exe` / `test_fileio.exe` exercise `exec_load()` (§1) + ELF loader (§2) + EIF kernel loader (§5) + PE delay-load (§19) from user mode
 
 ## Outcome
 

@@ -18,8 +18,8 @@
 - `include/kernel/sched/syscall.h` -- authoritative INT 0x80 syscall numbers for §2 parity work
 - → XREF: `T01 §3, §4, §6` -- launcher docs, machine-profile matrix, and CI wrapper policy should reuse the canonical developer tooling contract instead of inventing a second runner surface
 - → XREF: `T05 §3, §7` -- desktop UI testing consumes the user-mode launcher foundation and CI-facing automation surfaces
-- → XREF: `02-kernel-core/TODO-12-native-api-ssdt.md §6` -- Win32 and NtXxx coverage expands here once the SSDT surface is implemented
-- → XREF: `02-kernel-core/TODO-17-binary-system.md` -- ELF/PE/EIF loader tested here
+- → XREF: `D02T12 §6` -- NtCreateFile/NtReadFile/NtWriteFile/NtClose/NtOpenFile family that `test_win32.exe` (§10) exercises through the Win32 thunks once they are wired
+- → XREF: `D02T17 §1, §2, §5, §19` -- exec_load() multi-format dispatcher, enhanced ELF, EIF kernel loader, and PE delay-load that `test_syscall.exe` / `test_fileio.exe` / `test_process.exe` cover
 
 ---
 
@@ -49,7 +49,7 @@
 | 💎  |   7   | IPC test binary (`test_ipc.exe`)                    | §1, §2, §3                         |  [ ]   |
 | 💎  |   8   | Process lifecycle test (`test_process.exe`)         | §1, §3                             |  [ ]   |
 | 💎  |   9   | File I/O test (`test_fileio.exe`)                   | §1, §2, §3                         |  [ ]   |
-| ⭐  |  10   | Win32 API test binary (`test_win32.exe`)            | §1, §3, `TODO-12-native-api-ssdt.md §6` |  [ ]   |
+| ⭐  |  10   | Win32 API test binary (`test_win32.exe`)            | §1, §3, D02T12 §6                  |  [ ]   |
 | 💎  |  11   | Build integration: `make test` includes user tests  | §3, §4, §5, §6, §7, §8, §9, §10   |  [ ]   |
 
 > 💎 = parity: Linux kselftest and Windows HLK both use user-mode test binaries and machine-readable test orchestration.
@@ -275,7 +275,7 @@ Wire user-mode test binaries into `make test`.
 
 **Test checkpoint:** End to end: clean tree -> `bash scripts/test.sh` is green -> a one-line change breaks a `test_*.exe` assertion -> the run fails with a visible `[UTEST] FAIL`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-**Test runner:** `scripts\debug\run-exec-tests.bat` (SUITE=exec)
+**Test runner:** `scripts\debug\run-exec-tests.bat` (SUITE=exec) | suite count populated by §11 build integration once `test_*.exe` binaries ship; pending today
 
 ---
 
