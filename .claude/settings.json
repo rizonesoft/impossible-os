@@ -4,7 +4,6 @@
       "Bash(grep -n \"bus fault\\\\|crash\\\\|hang\\\\|timeout\" /home/derickpayne/impossible-os/src/kernel/drivers/*.c)",
       "Bash(grep -E \"\\\\.\\(c|h\\)$\")",
       "Bash(grep -l \"## OS Comparison\" todo/**/*.md)",
-      "Bash(python3 -c \":*)",
       "Bash(TIMEOUT=30 bash scripts/test.sh QUIET=1:*)",
       "Edit(/.claude/skills/validate-todo-file/**)",
       "Edit(/.claude/skills/implement-todo-section/**)"

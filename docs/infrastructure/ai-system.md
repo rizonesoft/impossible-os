@@ -187,7 +187,7 @@ Codex and Copilot participate in the AI workflow as **adversarial reviewers**, n
 
 ### Codex dispatch surface
 
-Codex is invoked from inside Claude skills via the OpenAI Codex plugin binary at `~/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs`. Two surfaces: nine **angle-owner** `codex-*` skills that each own one adversarial angle, and seven **workflow-consumer** skills that dispatch Codex directly as part of a larger pipeline (e.g. step 13 of `/implement-todo-section`).
+Codex is invoked from inside Claude skills via the OpenAI Codex plugin binary at `~/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs`. Three surfaces: nine **angle-owner** `codex-*` skills that each own one adversarial angle, seven **workflow-consumer** skills that dispatch Codex directly as part of a larger pipeline (e.g. step 13 of `/implement-todo-section`), and one **inheritor** (`verify-todo-section`) that inherits Codex dispatches through `review-todo-section` without calling `codex-companion.mjs` itself. Total: 9 + 7 + 1 = 17 skills carry the External-Reviewer Contract pointer.
 
 **Angle-owner skills (9):**
 
@@ -203,7 +203,7 @@ Codex is invoked from inside Claude skills via the OpenAI Codex plugin binary at
 | [`codex-dead-code`](../../.claude/skills/codex-dead-code/)                   | Unreachable functions, unused defines, orphaned types, stale decls.     |
 | [`codex-perf-review`](../../.claude/skills/codex-perf-review/)               | ISR paths, spinlock hold times, alloc-in-loop, O(n^2) algorithms.       |
 
-**Workflow-consumer skills (7) that also dispatch Codex directly:**
+**Workflow-consumer skills that dispatch Codex directly (7) + inheritor (1):**
 
 | Skill                                                                                        | Why it dispatches Codex                                                              |
 | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
@@ -263,7 +263,7 @@ Claude Code distinguishes three rule lists from one separate fallback mode:
 
 A specific rule in `allow`/`ask`/`deny` always beats `defaultMode`. The three rule lists AND `defaultMode` can each appear in either `.claude/settings.json` (shared) or `.claude/settings.local.json` (user-local); `defaultMode` is only set per-user so posture does not silently change for other contributors.
 
-**Current repo allow-rule shape:** 7 entries in `.claude/settings.json` `permissions.allow`, narrowly scoped. No shared `ask` or `deny` rules (harness safety defaults cover destructive patterns). Additions go through the same review as any other code change; destructive command families (`git reset`, `rm`, `mv` across tracked files) do NOT belong in shared `allow` -- route them through `ask` so the user confirms intent per call.
+**Current repo allow-rule shape:** 6 entries in `.claude/settings.json` `permissions.allow`, narrowly scoped (read-only grep patterns, bounded `scripts/test.sh` invocation, scoped `Edit(.claude/skills/<name>/**)`). No shared `ask` or `deny` rules (harness safety defaults cover destructive patterns). Additions go through the same review as any other code change; destructive command families (`git reset`, `rm`, `mv` across tracked files) AND arbitrary-code-execution wrappers (`python3 -c :*`, `bash -c :*`) do NOT belong in shared `allow` -- route them through `ask` so the user confirms intent per call.
 
 ### Shared vs user-local split
 
@@ -278,8 +278,8 @@ The `.gitignore` explicitly excludes `.claude/settings.local.json`. A CI check (
 
 **What belongs where:**
 
-- **Shared (`settings.json`):** hook definitions (`.claude/settings.json` hooks run for every contributor), hook commands, repo-wide allow-rules for patterns that are universally safe (`Bash(git reset:*)`), environment variables needed by hooks (if any).
-- **User-local (`settings.local.json`):** personal allow-rules for commands you use often (`Bash(python3:*)`, domain-specific grep patterns), `defaultMode` posture (`plan` / `permissive` / `strict`), one-off session-driven permissions, machine-specific paths (`/home/<user>/...`).
+- **Shared (`settings.json`):** hook definitions (`.claude/settings.json` hooks run for every contributor), hook commands, narrow read-only allow-rules (e.g. specific grep patterns, bounded `Bash(TIMEOUT=30 bash scripts/test.sh QUIET=1:*)` invocations, scoped `Edit(.claude/skills/<name>/**)`), environment variables needed by hooks (if any).
+- **User-local (`settings.local.json`):** personal allow-rules for commands you use often (broad `Bash(python3:*)` or `Bash(python3 -c :*)`, domain-specific grep patterns), `defaultMode` posture (supported modes: `default`, `acceptEdits`, `plan`, `bypassPermissions`), one-off session-driven permissions, machine-specific paths (`/home/<user>/...`).
 - **Never either:** secrets (API tokens, keys). The harness reads those from the environment or from user-level config outside this repo.
 
 ### MCP server boundary
