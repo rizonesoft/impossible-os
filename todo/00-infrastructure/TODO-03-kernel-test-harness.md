@@ -46,7 +46,7 @@
 | 💎  |   1   |  §1     | kmalloc fault injection (`kmalloc_fail_countdown`)        | --                  |  [x]   |
 | 💎  |   2   |  §7     | Test action/cleanup registry (`test_add_action`)          | --                  |  [ ]   |
 | 💎  |   3   |  §3     | Scratch-buffer helper (`TEST_SCRATCH_KBUF`)               | §7                  |  [ ]   |
-| 💎  |   4   |  §2     | Deterministic race barrier (`test_race_barrier_t`)        | --                  |  [ ]   |
+| 💎  |   4   |  §2     | Deterministic race barrier (`test_race_barrier_t`)        | --                  |  [x]   |
 | 💎  |   5   |  §6     | Fault-injection hardening (task-filter, multi-allocator)  | §1                  |  [ ]   |
 | 💎  |   6   |  §5     | Test-scoped klog level demotion (`TEST_KLOG_SUPPRESS`)    | §7                  |  [ ]   |
 | 💎  |   7   |  §8     | Per-test heap-leak detection                              | §7                  |  [ ]   |
@@ -89,16 +89,26 @@ A per-CPU test-only countdown that causes `kmalloc` to return `NULL` on the next
 
 A two-thread rendezvous primitive for tests that need to observe behaviour at a specific interleaving (e.g. "sender reaches just before event_set; receiver reaches just after event_wait returns"). Without this, concurrency tests can only observe eventual behaviour, not specific orderings.
 
-- [ ] `typedef struct test_race_barrier { spinlock_t lock; event_t a_reached; event_t b_reached; uint8_t a_arrived; uint8_t b_arrived; } test_race_barrier_t;`
-- [ ] `void test_race_barrier_init(test_race_barrier_t *)` -- initialise both events as AUTO_RESET.
-- [ ] `void test_race_barrier_arrive_a(test_race_barrier_t *)` -- thread A marks itself arrived, signals `a_reached`, then waits on `b_reached`. Returns only when both threads have reached the checkpoint.
-- [ ] `void test_race_barrier_arrive_b(test_race_barrier_t *)` -- symmetric for thread B.
-- [ ] `void test_race_barrier_release(test_race_barrier_t *, int a_first)` -- test decides the release order: if `a_first=1`, wake A's `a_reached` first, yield, then wake B.
-- [ ] Unit test in `src/kernel/test/test_sched.c`: two worker kthreads reach a barrier, test releases A first and asserts A's post-barrier work observes the expected state; then reset and release B first and assert the symmetric observation.
-- [ ] Document the hazard: do NOT hold other spinlocks while calling `test_race_barrier_arrive_*` -- the wait inside the barrier yields.
-- [ ] Commit: `"test/sched: deterministic race barrier for two-thread interleaving tests"`
+- [x] `typedef struct test_race_barrier { spinlock_t lock; event_t a_reached; event_t b_reached; uint8_t a_arrived; uint8_t b_arrived; } test_race_barrier_t;` -- defined in [`include/kernel/test/race_barrier.h`](../../include/kernel/test/race_barrier.h); events used as release signals from the driver, `a_arrived` / `b_arrived` carry the worker-to-driver arrival signal polled by release().
+- [x] `void test_race_barrier_init(test_race_barrier_t *)` -- initialises both events as `EVENT_AUTO_RESET`, zeroes both arrived flags, resets the spinlock flag ([`race_barrier.c`](../../src/kernel/test/race_barrier.c)).
+- [x] `void test_race_barrier_arrive_a(test_race_barrier_t *)` -- sets `a_arrived` under `spin_lock_irqsave`, releases the lock, then `event_wait(&a_reached)`. Lock is released BEFORE the wait to avoid deadlocking other takers during the event_wait yield.
+- [x] `void test_race_barrier_arrive_b(test_race_barrier_t *)` -- symmetric: sets `b_arrived`, then `event_wait(&b_reached)`.
+- [x] `void test_race_barrier_release(test_race_barrier_t *, int a_first)` -- cooperative-yield polls both arrived flags under the spinlock until both are set, then wakes in chosen order with `thread_yield()` between the two `event_set` calls so the first woken worker advances past its checkpoint before the second is signalled. Header documents the yield-based "empirically deterministic on 2-CPU round-robin; not a hard SMP guarantee" caveat.
+- [x] Unit test in [`src/kernel/test/test_sched.c`](../../src/kernel/test/test_sched.c): three new `TEST_CAT_SCHED` suites -- `race-barrier release(a_first=1) wins 100x`, `race-barrier release(a_first=0) wins 100x`, `race-barrier init clears state`. The 100-iteration count is the empirical determinism check the header calls out. Helper `race_barrier_run_once` handles partial `kthread_create` failure by signalling the parked worker's release event before `thread_join` so a failure path never hangs the suite (Codex step-9 finding).
+- [x] Header documents the hazard: do NOT hold another spinlock while calling `arrive_a` / `arrive_b` -- the lock is released before `event_wait` but the hazard stands for composition with caller-held locks.
+- [x] Commit: `"test/sched: deterministic race barrier for two-thread interleaving tests"`
 
 **Test checkpoint:** Barrier release-a-first causes thread A's post-checkpoint branch to win consistently; release-b-first causes B's branch to win. Exercised over 100 iterations in the unit test to catch scheduler drift.
+
+> **Test runner:** `scripts\debug\run-sched-tests.bat` (SUITE=sched) | 3 new race-barrier suites added, 0 failures
+
+> **Notes:**
+> - Shipped [`include/kernel/test/race_barrier.h`](../../include/kernel/test/race_barrier.h) + [`src/kernel/test/race_barrier.c`](../../src/kernel/test/race_barrier.c) (4 functions, ~60 lines, KERNEL_TESTS-gated so release builds drop the translation unit entirely).
+> - Uses existing primitives only (`spinlock_t`, `event_t` AUTO_RESET, `thread_yield`); no new kernel subsystem surface. Arrive functions release the spinlock BEFORE `event_wait` to honour the "don't yield under a lock" hazard.
+> - Release-ordering guarantee is yield-based best-effort under the flat-cyclic round-robin scheduler: on WHPX-2-CPU the 100-iteration test expects 100% match for the chosen order. Regression would surface as sporadic order-inversions (would fail the `hits == iterations` assertion), not a hang.
+> - Partial-create cleanup: if the second `kthread_create` fails, the first worker is already parked on its release event; the test helper signals the event before `thread_join` so slot-pressure failure paths surface as a `TEST_ASSERT(r >= 0)` fail rather than a deadlock. Fix landed from Codex step-9 [H] finding before commit.
+> - Downstream consumers: §7 `test_add_action` will convert the barrier cleanup to a registered action once that section ships; TODO-12 §5 `Test gaps` two-port lock-ordering concurrency test closes via §4 retrofit using this primitive.
+> - Scope boundary: §2 owns the two-thread deterministic rendezvous. §7 owns the generic test-scoped cleanup registry; §6 owns SMP ordering hardening (task-filter keeps worker pairs scheduling-predictable); wider concurrency harnesses remain with specific domain tests.
 
 ---
 
@@ -206,7 +216,7 @@ Record `heap_stats().used_bytes` at test start and end; if the delta is non-zero
 | 💎 | Slab/kmalloc fault injection       | ⚠️ DV Low-Resources (heavy) | ✅ `failslab` + fail-nth                            | ✅ §1 `kmalloc_fail_countdown`                 |
 | 💎 | Multi-allocator fault injection    | ⚠️ DV LRS (coarse)          | ✅ `failslab` + `fail_page_alloc` + `fail_usercopy` | ⬜ §6 pmm/vmm/copy_user countdowns             |
 | 💎 | Task-scoped fault injection        | ❌ Rare                     | ✅ `task_filter` (fault-inject)                     | ⬜ §6 `kmalloc_fail_task_filter`               |
-| 💎 | Deterministic concurrency testing  | ⚠️ TAEF with effort         | ⚠️ KCSAN (probabilistic)                            | ⬜ §2 `test_race_barrier_t` (deterministic)    |
+| 💎 | Deterministic concurrency testing  | ⚠️ TAEF with effort         | ⚠️ KCSAN (probabilistic)                            | ✅ §2 `test_race_barrier_t` (yield-ordered)    |
 | 💎 | Test-scoped cleanup registry       | ❌ Manual in TAEF           | ✅ `kunit_add_action`                               | ⬜ §7 `test_add_action`                        |
 | 💎 | Test-scoped scratch allocation     | ⚠️ Manual in TAEF           | ✅ `kunit_kzalloc` (kmalloc-only)                   | ⬜ §3 `TEST_SCRATCH_KBUF` (kmalloc + PMM)      |
 | 💎 | Per-test leak detection            | ⚠️ DV verifier pool checks  | ✅ `kmemleak` (kernel-wide)                         | ⬜ §8 heap_used delta (per-test, built-in)     |
@@ -222,7 +232,7 @@ After §1-§8 land, in-kernel test coverage reaches Linux-KUnit-plus-fault-injec
 > Boot tests run with `test=1` in `boot.conf`.
 
 - [x] `src/kernel/test/test_heap.c` covers §1 `kmalloc_fail_next` + `kmalloc_fail_countdown_set(N)` + IRQL gate (5 suites; shipped with §1)
-- [ ] `src/kernel/test/test_sched.c` covers §2 `test_race_barrier_t` release-a-first and release-b-first orderings (100-iteration drift check)
+- [x] `src/kernel/test/test_sched.c` covers §2 `test_race_barrier_t` release-a-first and release-b-first orderings (100-iteration drift check) + init-clears-state sanity
 - [ ] `src/kernel/test/test_runner.c` sanity tests for §3 `TEST_SCRATCH_KBUF` (kmalloc path, PMM path, cleanup-on-failure path)
 - [ ] `src/kernel/test/test_boot_payload.c` + `test_sched.c` regression coverage for §5 `TEST_KLOG_SUPPRESS` (error-path klog lines disappear from test-window serial output)
 - [ ] `src/kernel/test/test_heap.c` + `test_pmm.c` + `test_mm.c` + `test_syscall.c` cover §6 multi-allocator fault injection: task-filter, total-hits cap, pmm/vmm/copy_user countdowns (min 1 fail-next + 1 IRQL-gate per allocator)

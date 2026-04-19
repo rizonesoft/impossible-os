@@ -5,6 +5,7 @@
 #ifdef KERNEL_TESTS
 
 #include "kernel/test/test.h"
+#include "kernel/test/race_barrier.h"
 #include "kernel/sched/task.h"
 #include "kernel/types.h"
 
@@ -121,6 +122,131 @@ static void test_sched_kthread_slot_reuse(void)
     }
 }
 
+/* ---------------------------------------------------------------------------
+ * Deterministic race-barrier tests -- see include/kernel/test/race_barrier.h.
+ *
+ * Two kthreads (A and B) reach a test_race_barrier_t and park on their
+ * release events. The main test thread calls release(a_first) to choose
+ * which worker runs its post-barrier branch first, then observes a
+ * "winner" integer written by the awakened thread. Repeating the
+ * rendezvous 100 times per direction catches scheduler drift that might
+ * let the nominally-second thread sneak ahead on a lucky tick.
+ * ------------------------------------------------------------------------- */
+
+static test_race_barrier_t g_race_barrier;
+/* Order-of-post-checkpoint log: first worker to write becomes winner=1
+ * or winner=2. Written with simple volatile assignments; no atomics
+ * needed because the release() -> yield -> release() sequence serialises
+ * the two writes by construction. */
+static volatile int g_race_barrier_winner;
+static volatile int g_race_barrier_a_ran;
+static volatile int g_race_barrier_b_ran;
+
+static void race_barrier_worker_a(void *arg)
+{
+    (void)arg;
+    test_race_barrier_arrive_a(&g_race_barrier);
+    /* First worker to reach this line records the ordering. */
+    if (g_race_barrier_winner == 0)
+        g_race_barrier_winner = 1;
+    g_race_barrier_a_ran = 1;
+}
+
+static void race_barrier_worker_b(void *arg)
+{
+    (void)arg;
+    test_race_barrier_arrive_b(&g_race_barrier);
+    if (g_race_barrier_winner == 0)
+        g_race_barrier_winner = 2;
+    g_race_barrier_b_ran = 1;
+}
+
+/* Run one rendezvous with the given release order. Returns 1 if the
+ * observed winner matches the requested order, 0 if the ordering missed,
+ * -1 on a setup failure (kthread_create shortage, worker never ran).
+ *
+ * Partial-create cleanup: if A creates but B fails, A is already parked
+ * inside arrive_a() waiting on a_reached. We MUST signal a_reached
+ * before joining A, otherwise thread_join hangs waiting on a worker
+ * that has no path forward. Symmetric handling is unnecessary because
+ * B is only created after A succeeded -- if B fails, A exists; if A
+ * fails, we return immediately without creating B. */
+static int race_barrier_run_once(int a_first)
+{
+    test_race_barrier_init(&g_race_barrier);
+    g_race_barrier_winner = 0;
+    g_race_barrier_a_ran = 0;
+    g_race_barrier_b_ran = 0;
+
+    int ta = kthread_create(race_barrier_worker_a, NULL, 0);
+    if (ta < 0)
+        return -1;
+
+    int tb = kthread_create(race_barrier_worker_b, NULL, 0);
+    if (tb < 0) {
+        /* A is already parked inside arrive_a(). Unblock it so
+         * thread_join() can reap the slot instead of deadlocking. */
+        event_set(&g_race_barrier.a_reached);
+        thread_join((uint32_t)ta);
+        return -1;
+    }
+
+    test_race_barrier_release(&g_race_barrier, a_first);
+
+    thread_join((uint32_t)ta);
+    thread_join((uint32_t)tb);
+
+    if (!g_race_barrier_a_ran || !g_race_barrier_b_ran)
+        return -1;
+
+    int expected_winner = a_first ? 1 : 2;
+    return g_race_barrier_winner == expected_winner;
+}
+
+static void test_sched_race_barrier_a_first(void)
+{
+    int hits = 0;
+    const int iterations = 100;
+    int i;
+    for (i = 0; i < iterations; i++) {
+        int r = race_barrier_run_once(/*a_first=*/1);
+        TEST_ASSERT(r >= 0, "race_barrier_run_once did not hit -1 on any iteration");
+        if (r == 1) hits++;
+    }
+    TEST_ASSERT_EQ(hits, iterations,
+                   "release(a_first=1) wakes A first on every iteration");
+}
+
+static void test_sched_race_barrier_b_first(void)
+{
+    int hits = 0;
+    const int iterations = 100;
+    int i;
+    for (i = 0; i < iterations; i++) {
+        int r = race_barrier_run_once(/*a_first=*/0);
+        TEST_ASSERT(r >= 0, "race_barrier_run_once did not hit -1 on any iteration");
+        if (r == 1) hits++;
+    }
+    TEST_ASSERT_EQ(hits, iterations,
+                   "release(a_first=0) wakes B first on every iteration");
+}
+
+/* Sanity check: barrier init leaves both arrival flags clear and both
+ * events unsignalled so a second rendezvous on the same barrier starts
+ * from a known-good state. Exercises init() in isolation. */
+static void test_sched_race_barrier_init_clears_state(void)
+{
+    test_race_barrier_init(&g_race_barrier);
+    TEST_ASSERT_EQ(g_race_barrier.a_arrived, 0,
+                   "init clears a_arrived");
+    TEST_ASSERT_EQ(g_race_barrier.b_arrived, 0,
+                   "init clears b_arrived");
+    TEST_ASSERT_EQ(event_is_set(&g_race_barrier.a_reached), 0,
+                   "init leaves a_reached unsignalled");
+    TEST_ASSERT_EQ(event_is_set(&g_race_barrier.b_reached), 0,
+                   "init leaves b_reached unsignalled");
+}
+
 /* Registration */
 void test_register_sched(void)
 {
@@ -135,6 +261,13 @@ void test_register_sched(void)
                             TEST_CAT_SCHED);
     test_suite_register_cat("Sched: joined kthread slot reuse (regression)",
                             test_sched_kthread_slot_reuse, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: race-barrier release(a_first=1) wins 100x",
+                            test_sched_race_barrier_a_first, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: race-barrier release(a_first=0) wins 100x",
+                            test_sched_race_barrier_b_first, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: race-barrier init clears state",
+                            test_sched_race_barrier_init_clears_state,
+                            TEST_CAT_SCHED);
 }
 
 #endif /* KERNEL_TESTS */
