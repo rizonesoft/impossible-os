@@ -1616,7 +1616,6 @@ static void clamp_server_worker(void *arg)
                                           sizeof(rxbuf), 5000);
     if (st != STATUS_SUCCESS) {
         s_clamp_server_status = st;
-        s_sync_worker_done = 1;
         return;
     }
 
@@ -1638,7 +1637,6 @@ static void clamp_server_worker(void *arg)
                                                     server_comm,
                                                     ALPC_MSGFLG_REPLY_MESSAGE,
                                                     tx, (PORT_MESSAGE *)0, 0, 0);
-    s_sync_worker_done = 1;
 }
 
 static void test_alpc_reply_body_cap_clamped(void)
@@ -1681,7 +1679,6 @@ static void test_alpc_reply_body_cap_clamped(void)
         ((uint8_t *)rx)[i] = 0;
 
     s_clamp_server_status = STATUS_INVALID_PARAMETER;
-    s_sync_worker_done = 0;
     int tid = kthread_create(clamp_server_worker,
                              (void *)(uintptr_t)server_comm, 0);
     TEST_ASSERT(tid >= 0, "clamp: server worker spawned");
@@ -1735,25 +1732,38 @@ static test_race_barrier_t s_lock_order_barrier;
  * without alpc_lock_two normalizing by address, a naive
  * `spin_lock(sender); spin_lock(peer);` would deadlock on real SMP.
  *
- * Test topology (4 kthreads):
+ * Test topology (4 kthreads per iteration):
  *   - sender A (client -> server)    -- pinned at barrier 'a'
  *   - sender B (server -> client)    -- pinned at barrier 'b'
  *   - receiver A (drains server side, replies to A)
  *   - receiver B (drains client side, replies to B)
  *
- * The race-barrier pins both senders at the moment just before
- * alpc_sync_request enters alpc_lock_two. release(a_first=1) wakes
- * them with a yield between -- empirically deterministic on the
- * flat-cyclic round-robin scheduler. On single-CPU TCG/WHPX guests
- * deadlock is impossible (spinlocks uncontended in cooperative
- * yield); on SMP guests / bare metal the deadlock would manifest as
- * the 5s timeout firing.
+ * SCOPE LIMITATION (Codex quality review, 2026-04-19): the
+ * race_barrier pins the senders BEFORE they enter
+ * AlpcSendWaitReceivePort, not at the alpc_lock_two acquisition
+ * point itself. In the cooperative single-CPU case (TCG without
+ * -smp), sender A can run through validation, alloc, and the lock
+ * acquire/release cycle BEFORE sender B is rescheduled, so the
+ * test cannot deterministically pin the lock window. To compensate:
  *
- * Note that ALPC sync_request is bidirectional: both endpoints of a
- * connected port pair can act as sender. This is the engine contract
- * exercised by the existing reply-mismatch and accept-handshake
- * tests; we just compose two concurrent direction-A and direction-B
- * sends here. */
+ *   - On single-CPU it is a smoke test for opposite-direction
+ *     sync_request semantics (which is itself useful coverage --
+ *     no other §4 test exercises both directions of a single pair
+ *     in the same suite).
+ *   - On 2-CPU WHPX / KVM-multi-cpu / bare metal, both senders
+ *     hit alpc_sync_request within microseconds of each other,
+ *     and the inner work is brief enough that the lock acquisition
+ *     windows OVERLAP probabilistically. We loop the
+ *     spawn-release-join cycle 4 times to multiply the catch rate
+ *     for a true lock-order regression.
+ *
+ * Deterministic lock-window pinning would require a test-only hook
+ * inside alpc_lock_two (a yield between the two spin_lock calls in
+ * the broken / unpatched form). That belongs with future ALPC SMP
+ * hardening once the engine grows test instrumentation; out of the
+ * test-harness retrofit scope tracked here. */
+
+#define LOCK_ORDER_STRESS_ITERS 4
 
 static volatile NTSTATUS s_lo_sender_a_status;
 static volatile NTSTATUS s_lo_sender_b_status;
@@ -1890,58 +1900,69 @@ static void test_alpc_two_port_lock_order_stress(void)
     if (client_h == INVALID_HANDLE_VALUE)
         return;
 
-    test_race_barrier_init(&s_lock_order_barrier);
     s_lo_client_h    = client_h;
     s_lo_server_comm = server_comm;
-    s_lo_sender_a_status = STATUS_INVALID_PARAMETER;
-    s_lo_sender_b_status = STATUS_INVALID_PARAMETER;
-    s_lo_recv_a_status   = STATUS_INVALID_PARAMETER;
-    s_lo_recv_b_status   = STATUS_INVALID_PARAMETER;
 
-    /* Spawn receivers first so they're blocked on AlpcSendWaitReceive
-     * (receive-only) when senders fire. Then spawn the two senders. */
-    int recv_a_tid = kthread_create(lock_order_recv_a, (void *)0, 0);
-    TEST_ASSERT(recv_a_tid >= 0, "lock-order: receiver A spawned");
-    int recv_b_tid = kthread_create(lock_order_recv_b, (void *)0, 0);
-    TEST_ASSERT(recv_b_tid >= 0, "lock-order: receiver B spawned");
-    int send_a_tid = kthread_create(lock_order_sender_a, (void *)0, 0);
-    TEST_ASSERT(send_a_tid >= 0, "lock-order: sender A spawned");
-    int send_b_tid = kthread_create(lock_order_sender_b, (void *)0, 0);
-    if (send_b_tid < 0) {
-        /* Slot pressure: release barrier so sender A is not parked
-         * forever, then join everyone so the test exits cleanly
-         * instead of deadlocking. */
+    /* Loop the concurrent spawn-release-join cycle to multiply the
+     * SMP catch rate for a true lock-order regression. Each iteration
+     * spawns 4 fresh kthreads and reinitialises the barrier. On
+     * single-CPU TCG this is just a slightly more expensive smoke
+     * test (~4 sync round-trips); on multi-CPU guests it raises the
+     * probability of overlapping lock acquisition windows. */
+    for (int iter = 0; iter < LOCK_ORDER_STRESS_ITERS; iter++) {
+        test_race_barrier_init(&s_lock_order_barrier);
+        s_lo_sender_a_status = STATUS_INVALID_PARAMETER;
+        s_lo_sender_b_status = STATUS_INVALID_PARAMETER;
+        s_lo_recv_a_status   = STATUS_INVALID_PARAMETER;
+        s_lo_recv_b_status   = STATUS_INVALID_PARAMETER;
+
+        /* Spawn receivers first so they're blocked on
+         * AlpcSendWaitReceive (receive-only) when senders fire. */
+        int recv_a_tid = kthread_create(lock_order_recv_a, (void *)0, 0);
+        TEST_ASSERT(recv_a_tid >= 0, "lock-order: receiver A spawned");
+        int recv_b_tid = kthread_create(lock_order_recv_b, (void *)0, 0);
+        TEST_ASSERT(recv_b_tid >= 0, "lock-order: receiver B spawned");
+        int send_a_tid = kthread_create(lock_order_sender_a, (void *)0, 0);
+        TEST_ASSERT(send_a_tid >= 0, "lock-order: sender A spawned");
+        int send_b_tid = kthread_create(lock_order_sender_b, (void *)0, 0);
+        if (send_b_tid < 0) {
+            /* Slot pressure: release barrier so sender A is not
+             * parked forever, then join everyone so the test exits
+             * cleanly instead of deadlocking. */
+            test_race_barrier_release(&s_lock_order_barrier, /*a_first=*/1);
+            thread_join((uint32_t)send_a_tid);
+            thread_join((uint32_t)recv_a_tid);
+            thread_join((uint32_t)recv_b_tid);
+            TEST_ASSERT(send_b_tid >= 0, "lock-order: sender B spawned");
+            alpc_teardown_pair(client_h, server_comm);
+            return;
+        }
+
+        /* Both senders pinned at the barrier; release a-first. */
         test_race_barrier_release(&s_lock_order_barrier, /*a_first=*/1);
+
         thread_join((uint32_t)send_a_tid);
+        thread_join((uint32_t)send_b_tid);
         thread_join((uint32_t)recv_a_tid);
         thread_join((uint32_t)recv_b_tid);
-        TEST_ASSERT(send_b_tid >= 0, "lock-order: sender B spawned");
-        alpc_teardown_pair(client_h, server_comm);
-        return;
+
+        /* If alpc_lock_two were broken (naive sender-then-peer
+         * locking), the opposite-direction senders would deadlock
+         * on SMP and the 5s AlpcSendWaitReceivePort timeout would
+         * fire on at least one worker -- the SUCCESS assertion
+         * catches that regression. We assert per-iteration so a
+         * mid-loop regression surfaces with the iteration count. */
+        TEST_ASSERT_EQ((uint32_t)s_lo_sender_a_status, (uint32_t)STATUS_SUCCESS,
+                       "lock-order: sender A (client->server) sync_request SUCCESS");
+        TEST_ASSERT_EQ((uint32_t)s_lo_sender_b_status, (uint32_t)STATUS_SUCCESS,
+                       "lock-order: sender B (server->client) sync_request SUCCESS");
+        TEST_ASSERT_EQ((uint32_t)s_lo_recv_a_status, (uint32_t)STATUS_SUCCESS,
+                       "lock-order: receiver A reply SUCCESS");
+        TEST_ASSERT_EQ((uint32_t)s_lo_recv_b_status, (uint32_t)STATUS_SUCCESS,
+                       "lock-order: receiver B reply SUCCESS");
+        TEST_ASSERT_EQ((uint8_t)s_lock_order_barrier.release_timed_out, 0u,
+                       "lock-order: barrier release did not time out");
     }
-
-    /* Both senders pinned at the barrier; release a-first. */
-    test_race_barrier_release(&s_lock_order_barrier, /*a_first=*/1);
-
-    thread_join((uint32_t)send_a_tid);
-    thread_join((uint32_t)send_b_tid);
-    thread_join((uint32_t)recv_a_tid);
-    thread_join((uint32_t)recv_b_tid);
-
-    /* If alpc_lock_two were broken (naive sender-then-peer locking),
-     * the opposite-direction senders would deadlock and the 5s
-     * AlpcSendWaitReceivePort timeout would fire on at least one
-     * worker -- the SUCCESS assertion below catches that regression. */
-    TEST_ASSERT_EQ((uint32_t)s_lo_sender_a_status, (uint32_t)STATUS_SUCCESS,
-                   "lock-order: sender A (client->server) sync_request SUCCESS");
-    TEST_ASSERT_EQ((uint32_t)s_lo_sender_b_status, (uint32_t)STATUS_SUCCESS,
-                   "lock-order: sender B (server->client) sync_request SUCCESS");
-    TEST_ASSERT_EQ((uint32_t)s_lo_recv_a_status, (uint32_t)STATUS_SUCCESS,
-                   "lock-order: receiver A reply SUCCESS");
-    TEST_ASSERT_EQ((uint32_t)s_lo_recv_b_status, (uint32_t)STATUS_SUCCESS,
-                   "lock-order: receiver B reply SUCCESS");
-    TEST_ASSERT_EQ((uint8_t)s_lock_order_barrier.release_timed_out, 0u,
-                   "lock-order: barrier release did not time out");
 
     alpc_teardown_pair(client_h, server_comm);
 }

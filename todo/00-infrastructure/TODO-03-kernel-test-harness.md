@@ -167,6 +167,9 @@ After §1-§3, §5-§8 ship, sweep the repo for `Test gaps (NO current owner)` b
 > - Stale-reference cleanup: the original §4 spec text said "TODO-12 §5 'Test gaps'" but TODO-12 §5 (Nt/Zw Naming Migration) has no test gaps stamp. The actual deferred ALPC test gaps lived in TODO-24 §4 (verified by `grep -rn "Test gaps" todo/`). Updated the items above to point at TODO-24 §4 directly.
 > - Scope boundary: §4 closes the ONE inbound deferred-test-gaps block that pointed at TODO-03 (TODO-24 §4). It does NOT pre-emptively retrofit other subsystems' tests -- the rule is "convert when an explicit deferred-test-gaps stamp names §1-§3/§5-§8 as the unblocker". TODO-14 §6 (large registry values) is the next likely consumer but has no test surface yet.
 
+> **Verified:** 2026-04-19 | commit `c8585687` | 4/4 items | build OK | 3 new IPC retrofit suites (kmalloc-fail rollback / ReplyBodyCap clamp / two-port lock-order stress)
+> **Quality reviewed:** 2026-04-19 | Codex 2x (adversarial, quality) | 1H+1L fixed pre-commit, 1H+1L fixed in review (test (c) loop iter + dead s_sync_worker_done writes) | scope: kernel-code-quality
+
 ---
 
 ## 5. Test-Scoped klog Level Demotion (`TEST_KLOG_SUPPRESS`)
