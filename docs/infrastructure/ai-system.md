@@ -112,7 +112,7 @@ Every harness hook falls into one of three classes:
 
 Path-filter abbreviations used in the tables below:
 
-- `C-src` = `.c`/`.h`/`.asm`/`.S` under `src/kernel/`, `include/kernel/`, `src/boot/`, `src/desktop/`, `src/shell/`, `user/`, `src/apps/`.
+- `C-src` = `.c`/`.h`/`.cpp`/`.asm`/`.S` under `src/kernel/`, `include/kernel/`, `src/boot/`, `src/desktop/`, `src/shell/`, `user/`, `src/apps/`.
 - `test_*.c` = `src/kernel/test/test_*.c` (excluding `test_runner.c`, `test_main.c`).
 - `todo/*.md` = any markdown file under `todo/`.
 - `skills/*.md` = any markdown under `.claude/skills/`.

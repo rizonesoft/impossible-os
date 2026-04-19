@@ -131,9 +131,9 @@ Hooks are part of the AI system, not invisible glue.
 
 > **Test runner:** N/A (docs-only) | validation: matrix row count (18) matches `.claude/settings.json` hook count (verified via python3 parse); BLOCK/REMIND/POST-HOC split is 4+12+2 = 18; §9 regression suite will automate this sync.
 
-> **Verified:** 2026-04-19 | 6/7 items | build N/A (docs-only) | 18/18 hook rows
-> **Deferred:** [H] Hooks 8+9 match `git commit` stdout rather than canonical file list; pure-modification commits can silently skip (reason: behavior fix out of scope for the docs-codification commit) -> XREF: 00-infrastructure/TODO-02 §3 (item: "Tighten hooks 8 and 9 matchers" at line 142)
-> **Quality reviewed:** 2026-04-19 | Codex 1x (adversarial) | 1H+1L fixed (row-length cap compaction; validator semantics documented honestly + concrete follow-up filed), 0 open | scope: N/A (docs-only)
+> **Verified:** 2026-04-19 | commit `98f2350b` | 6/7 items | build N/A (docs-only) | 18/18 hook rows
+> **Deferred:** [H] Hooks 8+9 match `git commit` stdout rather than canonical file list; pure-modification commits can silently skip (reason: behavior fix out of scope for the docs-codification commit) -> XREF: 00-infrastructure/TODO-02 §3 (item: "Tighten hooks 8 and 9 matchers" at line 127)
+> **Quality reviewed:** 2026-04-19 | Codex 2x (adversarial x2) | 1H+1M+2L fixed (H: hooks 8+9 semantics -> Known Limitations + follow-up; M: C-src abbreviation missed `.cpp`; L: row-length cap compaction; L: Deferred XREF line-number fix), 0 open | scope: N/A (docs-only)
 
 ---
 
