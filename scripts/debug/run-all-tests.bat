@@ -1,4 +1,55 @@
 @echo off
-:: run-all-tests.bat -- Run all kernel unit test suites, then shutdown
-powershell.exe -ExecutionPolicy Bypass -File "%~dp0..\machines\run-qemu.ps1" -Accel whpx -TestOnly
+:: run-all-tests.bat -- Run every Impossible OS test category in sequence
+::
+:: Boots QEMU once for each category that has a runner directory:
+::   1. kernel\run-all-kernel-tests.bat   -- every TEST_CAT_* suite
+::   2. usermode\run-all-usermode-tests.bat -- every test_*.exe binary
+::      (no-op until the user-mode test framework's launcher ships)
+::   3. desktop\run-all-desktop-tests.bat   -- every desktop UI test
+::      (no-op until the desktop UI test framework ships)
+::
+:: For development iteration on a single subsystem, prefer the
+:: per-category bat files in the matching subdirectory -- they finish
+:: in seconds where this aggregate runner takes minutes.
+::
+:: To run the historical "all kernel tests in one boot" behaviour
+:: (what this file used to do before the kernel\ + usermode\ + desktop\
+:: split), call kernel\run-all-kernel-tests.bat directly.
+::
+:: Each category aggregate is invoked unconditionally; if a category
+:: directory has no aggregate yet, the corresponding line is a no-op.
+
+setlocal
+set DEBUG=%~dp0
+
+echo.
+echo === [1/3] Kernel test suites ===
+echo.
+if exist "%DEBUG%kernel\run-all-kernel-tests.bat" (
+    call "%DEBUG%kernel\run-all-kernel-tests.bat"
+) else (
+    echo [SKIP] %DEBUG%kernel\run-all-kernel-tests.bat not found
+)
+
+echo.
+echo === [2/3] User-mode test binaries ===
+echo.
+if exist "%DEBUG%usermode\run-all-usermode-tests.bat" (
+    call "%DEBUG%usermode\run-all-usermode-tests.bat"
+) else (
+    echo [SKIP] %DEBUG%usermode\run-all-usermode-tests.bat not found ^(user-mode test framework not yet implemented^)
+)
+
+echo.
+echo === [3/3] Desktop UI tests ===
+echo.
+if exist "%DEBUG%desktop\run-all-desktop-tests.bat" (
+    call "%DEBUG%desktop\run-all-desktop-tests.bat"
+) else (
+    echo [SKIP] %DEBUG%desktop\run-all-desktop-tests.bat not found ^(desktop UI test framework not yet implemented^)
+)
+
+echo.
+echo === All test categories invoked ===
+endlocal
 pause

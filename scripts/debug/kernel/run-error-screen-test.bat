@@ -14,5 +14,5 @@
 :: Prerequisites:
 ::   - QEMU installed on Windows
 ::   - bash scripts/build.sh (builds system-disk.img)
-powershell.exe -ExecutionPolicy Bypass -File "%~dp0..\machines\run-qemu.ps1" -Accel whpx -ErrorScreenTest
+powershell.exe -ExecutionPolicy Bypass -File "%~dp0..\..\machines\run-qemu.ps1" -Accel whpx -ErrorScreenTest
 pause

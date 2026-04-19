@@ -17,7 +17,7 @@
 ::   - keys/MOK.key + keys/MOK.cer generated (see docs/guides/secure-boot-keys.md)
 ::   - bash scripts/build.sh (signs EFI + copies MOK.cer to ESP)
 
-set BUILD=%~dp0..\..\build
+set BUILD=%~dp0..\..\..\build
 set SB_CODE=%BUILD%\OVMF_CODE_4M.secboot.fd
 set SB_VARS_SRC=%BUILD%\OVMF_VARS_4M.ms.fd
 set SB_VARS=%TEMP%\OVMF_VARS_secureboot.fd
