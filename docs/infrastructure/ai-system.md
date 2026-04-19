@@ -118,52 +118,53 @@ Path-filter abbreviations used in the tables below:
 - `skills/*.md` = any markdown under `.claude/skills/`.
 - `code-commit stdout` / `boot-commit stdout` = see [Known limitations](#known-limitations-post-hoc-validators) below.
 
-### BLOCK hooks (4)
+### BLOCK hooks (5)
 
 | #  | Trigger       | Filter                            | Rule                                                                                                                            |
 | -- | ------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
 | 2  | Pre: Edit     | any content                       | Reject em/en dash (U+2014, U+2013). [`CLAUDE.md`](../../CLAUDE.md#no-unicode-dashes-enem-ascii-only).                           |
-| 3  | Pre: Edit     | C-src                             | Reject new `TODO`/`FIXME`/`HACK`/stub markers without scope-gap resolution (see protocol under implement-todo-section/). |
-| 4  | Pre: Edit     | `test_*.c`                        | Reject live boot-infra calls (`boot_progress`, `vpd_*`, `panic`, subsystem `_init`). See CLAUDE.md "Test Code".            |
-| 5  | Pre: Bash     | `git commit` with staged `todo/`  | Reject bare `Accepted:`/`Deferred:` XREF. See [review step 15](../../.claude/skills/review-todo-section/SKILL.md). Soft XREFs = WARN. |
+| 3  | Pre: Edit     | `.md` outside `todo/`/`.claude/`  | Reject numeric TODO shorthand (`TODO-NN section N`, `DNN TNN section N`). Mirror of `scripts/lint.sh` Check 4 at edit time.    |
+| 4  | Pre: Edit     | C-src                             | Reject new `TODO`/`FIXME`/`HACK`/stub markers without scope-gap resolution (see protocol under implement-todo-section/). |
+| 5  | Pre: Edit     | `test_*.c`                        | Reject live boot-infra calls (`boot_progress`, `vpd_*`, `panic`, subsystem `_init`). See CLAUDE.md "Test Code".            |
+| 6  | Pre: Bash     | `git commit` with staged `todo/`  | Reject bare `Accepted:`/`Deferred:` XREF. See [review step 15](../../.claude/skills/review-todo-section/SKILL.md). Soft XREFs = WARN. |
 
 ### REMIND hooks (12)
 
 | #  | Trigger       | Filter                            | Reminder                                                                                                                        |
 | -- | ------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
 | 1  | Pre: Edit     | C-src                             | Auto-load matching domain code-quality skill (boot / kernel / desktop / shell / userland).                                      |
-| 6  | Pre: Bash     | `git commit` with src + TODO      | Section-commit GATE: confirm steps 13-18 of `/implement-todo-section` (Codex + build + validate) ran.                           |
-| 7  | Pre: Skill    | implement/review/quality/create   | Completion-first radar at skill entry (correctness, completeness, wiring, parity, superiority, ownership).                      |
-| 10 | Post: Bash    | copilot-review.sh / codex advers. | Apply `superpowers:receiving-code-review` to every finding (verify at file:line, Fix/Reject/Accept, never blind-implement).     |
-| 11 | Post: Edit    | `todo/*.md`                       | If structural edit, run `/validate-todo-file`.                                                                                  |
-| 12 | Post: Edit    | `todo/*.md`                       | TODO format CHECK (oversize C-blocks, `(N.M Title)` prefixes). validate-todo-file step 15.                                      |
-| 13 | Post: Edit    | `test_*.c`                        | Test wiring: every test fn must call `test_suite_register_cat()` and use an existing `TEST_CAT_*`.                              |
-| 14 | Post: Edit    | `test_*.c`                        | Test message uniqueness: `TEST_ASSERT` with literal msg in `for`/`while` must use per-iteration `snprintf`.                     |
-| 15 | Post: Edit    | `test_*.c`                        | `TEST_PENDING` REMINDER: tests asserting `STATUS_NOT_IMPLEMENTED` as expected must use `TEST_PENDING`, not `TEST_ASSERT`.       |
-| 16 | Post: Edit    | `skills/*.md`                     | CLAUDE.md sync: new/renamed skill needs rows in CLAUDE.md Skills table AND `.claude/skills/README.md`.                          |
-| 17 | Post: Edit    | `todo/*.md`                       | Scope-gap dedup: before filing new section/TODO, grep existing TODOs for overlap (scope-gap Branches C/D).                      |
-| 18 | Post: Edit    | `todo/*.md`                       | Accepted-XREF concreteness: new `Accepted:`/`Deferred:` must carry `(item: "..." at line N)`. Counterpart to hook 5 BLOCK.     |
+| 7  | Pre: Bash     | `git commit` with src + TODO      | Section-commit GATE: confirm steps 13-18 of `/implement-todo-section` (Codex + build + validate) ran.                           |
+| 8  | Pre: Skill    | implement/review/quality/create   | Completion-first radar at skill entry (correctness, completeness, wiring, parity, superiority, ownership).                      |
+| 11 | Post: Bash    | copilot-review.sh / codex advers. | Apply `superpowers:receiving-code-review` to every finding (verify at file:line, Fix/Reject/Accept, never blind-implement).     |
+| 12 | Post: Edit    | `todo/*.md`                       | If structural edit, run `/validate-todo-file`.                                                                                  |
+| 13 | Post: Edit    | `todo/*.md`                       | TODO format CHECK (oversize C-blocks, `(N.M Title)` prefixes). validate-todo-file step 15.                                      |
+| 14 | Post: Edit    | `test_*.c`                        | Test wiring: every test fn must call `test_suite_register_cat()` and use an existing `TEST_CAT_*`.                              |
+| 15 | Post: Edit    | `test_*.c`                        | Test message uniqueness: `TEST_ASSERT` with literal msg in `for`/`while` must use per-iteration `snprintf`.                     |
+| 16 | Post: Edit    | `test_*.c`                        | `TEST_PENDING` REMINDER: tests asserting `STATUS_NOT_IMPLEMENTED` as expected must use `TEST_PENDING`, not `TEST_ASSERT`.       |
+| 17 | Post: Edit    | `skills/*.md`                     | CLAUDE.md sync: new/renamed skill needs rows in CLAUDE.md Skills table AND `.claude/skills/README.md`.                          |
+| 18 | Post: Edit    | `todo/*.md`                       | Scope-gap dedup: before filing new section/TODO, grep existing TODOs for overlap (scope-gap Branches C/D).                      |
+| 19 | Post: Edit    | `todo/*.md`                       | Accepted-XREF concreteness: new `Accepted:`/`Deferred:` must carry `(item: "..." at line N)`. Counterpart to hook 6 BLOCK.     |
 
 ### POST-HOC VALIDATE hooks (2)
 
 | #  | Trigger       | Filter                            | Validator                                                                                                                       |
 | -- | ------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| 8  | Post: Bash    | `git commit`; code-commit stdout  | Runs `scripts/test.sh QUIET=1`; reports pass/fail. [`CLAUDE.md`](../../CLAUDE.md#testing----category-based-test-infrastructure). |
-| 9  | Post: Bash    | `git commit`; boot-commit stdout  | Runs `scripts/test-smoke.sh`; reports `SMOKE TEST PASSED` or fail. [`CLAUDE.md`](../../CLAUDE.md#smoke-test----end-to-end-boot-validation). |
+| 9  | Post: Bash    | `git commit`; code-commit stdout  | Runs `scripts/test.sh QUIET=1`; reports pass/fail. [`CLAUDE.md`](../../CLAUDE.md#testing----category-based-test-infrastructure). |
+| 10 | Post: Bash    | `git commit`; boot-commit stdout  | Runs `scripts/test-smoke.sh`; reports `SMOKE TEST PASSED` or fail. [`CLAUDE.md`](../../CLAUDE.md#smoke-test----end-to-end-boot-validation). |
 
 ### Known limitations (post-hoc validators)
 
-**Hooks 8 and 9 match on `git commit` stdout, not the canonical commit file list.** `code-commit stdout` means "the git-commit stdout text contains any of `.c`/`.h`/`.asm`/`.ld`"; `boot-commit stdout` means "the stdout text contains any of the boot-path substrings (`src/boot/`, `src/kernel/main/boot_`, `src/kernel/idt.c`, ...)". Standard `git commit` output includes `create mode .../foo.c` / `delete mode` lines for added and removed files but does NOT list paths for pure modifications. Consequences:
+**Hooks 9 and 10 match on `git commit` stdout, not the canonical commit file list.** `code-commit stdout` means "the git-commit stdout text contains any of `.c`/`.h`/`.asm`/`.ld`"; `boot-commit stdout` means "the stdout text contains any of the boot-path substrings (`src/boot/`, `src/kernel/main/boot_`, `src/kernel/idt.c`, ...)". Standard `git commit` output includes `create mode .../foo.c` / `delete mode` lines for added and removed files but does NOT list paths for pure modifications. Consequences:
 
-- Commits that only MODIFY existing source files may silently skip hooks 8 and 9 even though the code changed.
-- Commits that add a new boot-path source file always fire hook 9 because `create mode` includes the path.
+- Commits that only MODIFY existing source files may silently skip hooks 9 and 10 even though the code changed.
+- Commits that add a new boot-path source file always fire hook 10 because `create mode` includes the path.
 - A tighter matcher (`git show --name-only --format= HEAD`) would fix this; tracked in the [Hook Routing and Policy Contract](../../todo/00-infrastructure/TODO-02-ai-development-system.md#3-hook-routing-and-policy-contract) roadmap section.
 
 ### Reading the matrix
 
 - **"Did my edit fail because of a hook?"** Check the BLOCK table first -- those are the only hooks that can reject a tool call. REMIND hooks never fail an edit; they attach a message.
-- **"What happens when I commit kernel code?"** Hook 6 reminds about the section-commit GATE at PreToolUse (pre-commit text), hook 5 may BLOCK if your TODO has bare XREFs, and if the commit succeeds hooks 8 + (conditionally) 9 run tests and smoke.
-- **"Did I add a new skill correctly?"** Hook 16 reminds you to sync the CLAUDE.md Skills table; the authoring lifecycle in [skill-authoring.md](skill-authoring.md) has the full 5-step process.
+- **"What happens when I commit kernel code?"** Hook 7 reminds about the section-commit GATE at PreToolUse (pre-commit text), hook 6 may BLOCK if your TODO has bare XREFs, and if the commit succeeds hooks 9 + (conditionally) 10 run tests and smoke.
+- **"Did I add a new skill correctly?"** Hook 17 reminds you to sync the CLAUDE.md Skills table; the authoring lifecycle in [skill-authoring.md](skill-authoring.md) has the full 5-step process.
 
 ### Editing hooks
 
@@ -238,7 +239,7 @@ If a future AI tool (Aider, Continue, Gemini-CLI, etc.) joins the reviewer set, 
 4. **Subordinate-reviewer row added to the Authority Hierarchy table.** `docs/infrastructure/ai-system.md` table grows a row; the tool's role is pinned as "Subordinate reviewer", not "authority".
 5. **Roadmap ownership.** The adoption ships as a new section in [TODO-02](../../todo/00-infrastructure/TODO-02-ai-development-system.md) with the same review pipeline.
 
-If a proposal does NOT fit this contract (e.g. a tool that wants to commit directly), reject it at the roadmap stage. The [Autonomous-Agent Boundary Policy](../../todo/00-infrastructure/TODO-02-ai-development-system.md#8-autonomous-agent-boundary-policy) in TODO-02 §8 owns that refusal explicitly.
+If a proposal does NOT fit this contract (e.g. a tool that wants to commit directly), reject it at the roadmap stage. The [Autonomous-Agent Boundary Policy](../../todo/00-infrastructure/TODO-02-ai-development-system.md#8-autonomous-agent-boundary-policy) owns that refusal explicitly.
 
 ### Discoverability back from skills
 
@@ -274,7 +275,7 @@ Two settings files live under `.claude/`. They must never mix.
 | [`.claude/settings.json`](../../.claude/settings.json)          | ✅ committed    | Shared repo policy: hooks, narrow allow-rules, env vars every contributor needs.          |
 | `.claude/settings.local.json`                                   | ❌ gitignored   | User-local: personal allow-rules, `defaultMode`, machine-specific paths. Never shared.    |
 
-The `.gitignore` explicitly excludes `.claude/settings.local.json`. A CI check (future work, see [TODO-02 §9](../../todo/00-infrastructure/TODO-02-ai-development-system.md#9-ai-workflow-regression-suite)) will assert the file stays untracked.
+The `.gitignore` explicitly excludes `.claude/settings.local.json`. A CI check (future work, see [AI Workflow Regression Suite](../../todo/00-infrastructure/TODO-02-ai-development-system.md#9-ai-workflow-regression-suite)) will assert the file stays untracked.
 
 **What belongs where:**
 
