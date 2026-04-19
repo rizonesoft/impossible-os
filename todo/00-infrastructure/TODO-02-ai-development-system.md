@@ -310,7 +310,7 @@ This is the refinement step: test the workflow itself.
 > [!TIP]
 > Public Windows and Linux projects may publish contribution rules, but they rarely ship a regression pack that checks whether the AI assistance layer still enforces the project's own doctrine. The existing `scripts/test-tooling.sh` already covers wrapper/hook/YAML drift; this pack complements it by covering skill catalog + doctrine surfaces specifically.
 
-- [ ] Add an AI workflow regression pack (`scripts/test-ai-system.sh`) that validates key invariants:
+- [x] Add an AI workflow regression pack (`scripts/test-ai-system.sh`) that validates key invariants:
   - **Authority Hierarchy present**: `todo/00-infrastructure/TODO-02-ai-development-system.md` and `docs/infrastructure/ai-system.md` both contain the "Claude Code is the master" statement and the 5 hierarchy invariants (grep for each invariant's first phrase). Drift or deletion = fail with a pointer to this section.
   - **Claude-Code-only declaration in CLAUDE.md**: `CLAUDE.md` names "Claude Code-only" and references the removal of `.cursor/` on 2026-04-18. If this line disappears, the authority doctrine has silently fragmented and the regression catches it.
   - **`AGENTS.md` pointer file (§6)**: `AGENTS.md` exists at repo root, contains the phrase "Claude Code" and a link to `CLAUDE.md`, stays under 60 lines. Doctrine enforcement is two-sided because §6 intentionally inlines ONE section (master statement + 3-bullet hierarchy summary) verbatim from TODO-02 for cross-tool readers; everything else is pointer-only. (a) **Must-match:** the `## Authority` section in `AGENTS.md` must byte-match the canonical master-statement paragraph + 3 of the 5 invariants in [the AI Development System roadmap Authority Hierarchy block](#authority-hierarchy-read-this-first). Drift fails this check. (b) **Must-not-copy:** no other CLAUDE.md-exclusive doctrine paragraph (bare-metal-first, SMP-from-day-one, POST16-boot-path, no-Unicode-dashes, Bare-Metal-Gotchas entries, Safety-Gates, test-code no-live-boot-infra) appears in `AGENTS.md`. A future edit that imports one of those paragraphs fails the check. (c) **Length:** `AGENTS.md` must be at least ~10x shorter than `CLAUDE.md`.
@@ -338,6 +338,9 @@ This is the refinement step: test the workflow itself.
 > - Current baseline: 62 checks PASS, 0 FAIL. Documented one grandfathered exception (`c6b30e0f` "tooling: expand and align COUNT.md report" carries a `Co-authored-by: Copilot` trailer merged mid-§7-§8 sprint; not rewritten to avoid destroying the downstream commit chain). Exception surfaces as an advisory `NOTE` so audit remains visible but the check passes on healthy repo state.
 > - Canonical doc: [`scripts/test-ai-system.sh --help`](../../scripts/test-ai-system.sh) lists the 12 check groups with their owning TODO-02 sections; extension idiom and grandfather-clause template are in the source.
 > - Scope boundary: regression pack asserts doctrine + catalog + policy surfaces -- not their creation. Content authoring lives in §1-§8; this section owns enforcement only.
+
+> **Verified:** 2026-04-19 | commit `3c348e47` | 5/5 items | build N/A (host-side tooling) | 12 check groups; 62 checks PASS, 0 FAIL
+> **Quality reviewed:** 2026-04-19 | Codex N/A (implementation-time gates) | 8H+0M+0L fixed, 0 open | scope: N/A (host-side bash regression pack)
 
 ---
 
