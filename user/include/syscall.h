@@ -5,29 +5,86 @@
  *   RAX = syscall number
  *   RDI = arg1, RSI = arg2, RDX = arg3
  *   Return value in RAX
+ *
+ * Authoritative source for INT 0x80 syscall numbers + handler signatures:
+ *   include/kernel/sched/syscall.h  (the SYS_* defines + dispatch table)
+ *   src/kernel/sched/syscall.c      (syscall_handler_80() switch body)
+ *
+ * When the kernel adds, removes, or renumbers a SYS_* constant on the INT 0x80
+ * path, this header MUST be patched in lockstep. Wrappers below are thin and
+ * stateless; one inline `static long sys_<name>(...)` per syscall maps the
+ * userland C signature to the (a1, a2, a3) register slots. Syscalls that the
+ * kernel currently leaves unwired (default branch returns -1) get a #define
+ * but NO wrapper, so user code does not get fooled into calling a stub.
+ *
+ * The SSDT alias block at the bottom of the kernel header (`SYS_NT_*`) is
+ * NOT mirrored here -- those are SSDT service numbers used by the INT 0x2E
+ * compatibility path, not the INT 0x80 fast path. Native API tests live in
+ * a separate test binary that goes through ntdll thunks.
  * ============================================================================ */
 
 #pragma once
 
 #include "types.h"
 
+/* HANDLE: kernel's per-task handle-table index. Mirrors
+ * include/kernel/ob/handle_table.h:22 (int32_t HANDLE) so the user-mode
+ * caller can store the return value of sys_openfile() / sys_pipe() /
+ * sys_opendirobj() / sys_shmem_create() in the same slot the kernel
+ * writes to its handle-table entries. */
+typedef int32_t HANDLE;
+#define INVALID_HANDLE_VALUE ((HANDLE)-1)
+
+/* Log levels (must match include/kernel/klog.h log_level_t). Used by
+ * sys_log() so user-mode tests can route LOG_INFO / LOG_WARN / LOG_ERROR
+ * lines through the kernel klog ring without managing a private logger.
+ *
+ * SECURITY: LOG_FATAL is REJECTED by the kernel SYS_LOG handler from
+ * user mode -- klog(LOG_FATAL, ...) enters an infinite hlt loop, and
+ * exposing that to ring 3 would let any user binary halt the OS with
+ * a one-line call. Pass LOG_DEBUG..LOG_ERROR only; LOG_FATAL returns
+ * -1 from sys_log(). The constant is kept here for kernel-header
+ * parity and to make the rejection contract explicit. */
+#define LOG_DEBUG 0
+#define LOG_INFO  1
+#define LOG_WARN  2
+#define LOG_ERROR 3
+#define LOG_FATAL 4   /* Kernel-only; sys_log(LOG_FATAL, ...) returns -1 */
+
 /* Syscall numbers (must match kernel syscall.h) */
-#define SYS_WRITE    1
-#define SYS_READ     2
-#define SYS_EXIT     3
-#define SYS_YIELD    4
-#define SYS_FORK     5
-#define SYS_EXEC     6
-#define SYS_WAITPID  7
-#define SYS_READFILE 8
-#define SYS_READDIR  9
-#define SYS_GETPROCS 10
-#define SYS_KILL     11
-#define SYS_UPTIME   12
-#define SYS_REBOOT   13
-#define SYS_SHUTDOWN 14
-#define SYS_PING     15
-#define SYS_NETINFO  16
+#define SYS_WRITE        1
+#define SYS_READ         2
+#define SYS_EXIT         3
+#define SYS_YIELD        4
+#define SYS_FORK         5
+#define SYS_EXEC         6
+#define SYS_WAITPID      7
+#define SYS_READFILE     8
+#define SYS_READDIR      9
+#define SYS_GETPROCS    10
+#define SYS_KILL        11
+#define SYS_UPTIME      12
+#define SYS_REBOOT      13
+#define SYS_SHUTDOWN    14
+#define SYS_PING        15
+#define SYS_NETINFO     16
+#define SYS_LOG         17
+#define SYS_PIPE        33
+#define SYS_SIGNAL      34
+#define SYS_SHMEM_CREATE 35
+#define SYS_SHMEM_MAP    36
+#define SYS_MMAP         37   /* Defined in kernel header but NOT wired in
+                               * syscall_handler_80() yet -- a call falls
+                               * through the default branch and returns -1.
+                               * No user-mode wrapper provided to avoid
+                               * misleading callers. Wrapper lands when the
+                               * kernel handler does. */
+#define SYS_MUNMAP       38   /* Same: kernel-header-only, no handler yet. */
+#define SYS_OPENFILE     39
+#define SYS_CLOSEHANDLE  40
+#define SYS_READHANDLE   41
+#define SYS_OPENDIROBJ   42
+#define SYS_QUERYDIROBJ  43
 
 /* Task states (must match kernel task.h) */
 #define TASK_READY    0
@@ -167,4 +224,104 @@ static inline long sys_ping(unsigned int ip, int seq)
 static inline long sys_netinfo(struct user_net_config *buf, size_t size)
 {
     return syscall2(SYS_NETINFO, (long)buf, (long)size);
+}
+
+/* --- Logging --- */
+
+/* Route a user-mode log line through the kernel klog ring as
+ * `[<level>] user: <msg>`. `len` is bytes (NOT including a NUL); kernel
+ * silently caps at 120 bytes and rejects level > LOG_FATAL with -1. */
+static inline long sys_log(int level, const char *msg, size_t len)
+{
+    return syscall3(SYS_LOG, level, (long)msg, (long)len);
+}
+
+/* --- IPC: pipes + shared memory --- */
+
+/* Create an anonymous pipe pair. fds[0] = read end, fds[1] = write end.
+ * Both handles are owned by the calling task's handle table. Returns 0
+ * on success; -1 if the pointer is NULL or the kernel could not create
+ * the pipe. The caller MUST sys_closehandle() each end. */
+static inline long sys_pipe(HANDLE fds[2])
+{
+    return syscall1(SYS_PIPE, (long)fds);
+}
+
+/* Install (or query) a signal handler. Returns the previous handler
+ * cast to long; the kernel handler stub itself is currently a no-op
+ * for everything except SIGKILL/SIGTERM unwinding. */
+static inline long sys_signal(int sig, void *handler)
+{
+    return syscall2(SYS_SIGNAL, sig, (long)handler);
+}
+
+/* Create a named or anonymous shared-memory section of `size` bytes.
+ * Returns the section HANDLE, or INVALID_HANDLE_VALUE on failure
+ * (NULL name + non-zero size still works -- creates anonymous). */
+static inline HANDLE sys_shmem_create(const char *name, uint32_t size)
+{
+    return (HANDLE)syscall2(SYS_SHMEM_CREATE, (long)name, (long)size);
+}
+
+/* Map a previously-created shmem section into the current process's
+ * address space. Returns the mapped user virtual address, or 0 on
+ * failure (kernel returns 0 from ObMapViewOfSection). The mapping
+ * lives until the process exits or sys_closehandle(sh) is called
+ * (close drops the mapping refcount). */
+static inline uintptr_t sys_shmem_map(HANDLE sh)
+{
+    return (uintptr_t)syscall1(SYS_SHMEM_MAP, (long)sh);
+}
+
+/* --- Object-Manager-backed file + directory handles --- */
+
+/* Open a file by Windows-style canonical path (e.g. "C:\\hello.txt").
+ * `access` is a Windows-style ACCESS_MASK bitfield interpreted by the
+ * kernel's ob_create_file_handle. Returns the file HANDLE, or
+ * INVALID_HANDLE_VALUE on failure. */
+static inline HANDLE sys_openfile(const char *path, uint32_t access)
+{
+    return (HANDLE)syscall2(SYS_OPENFILE, (long)path, (long)access);
+}
+
+/* Close any handle (file, pipe, shmem section, dir object). Returns
+ * 0 on success, -1 on failure (already-closed, foreign handle, etc.). */
+static inline long sys_closehandle(HANDLE handle)
+{
+    return syscall1(SYS_CLOSEHANDLE, (long)handle);
+}
+
+/* Read up to `size` bytes from `handle` into `buf`. Returns the byte
+ * count on success (may be < size at EOF), -1 on failure. Works on
+ * file handles + pipe-read-end handles. */
+static inline long sys_readhandle(HANDLE handle, void *buf, uint32_t size)
+{
+    return syscall3(SYS_READHANDLE, (long)handle, (long)buf, (long)size);
+}
+
+/* Open an Object Manager directory by namespace path (e.g. "\\" for the
+ * root, "\\RPC Control" for ALPC-style port directories). Returns the
+ * directory HANDLE for use with sys_querydirobj(), or
+ * INVALID_HANDLE_VALUE on failure. */
+static inline HANDLE sys_opendirobj(const char *path, uint32_t access)
+{
+    return (HANDLE)syscall2(SYS_OPENDIROBJ, (long)path, (long)access);
+}
+
+/* Enumerate entries under a directory object handle. The kernel ABI
+ * packs `count` (low 16 bits) and `ctx` (high 16 bits) into arg3 to
+ * stay within the 3-register INT 0x80 calling convention; the wrapper
+ * does that pack and the inverse unpack on return. On success returns
+ * the number of entries written into `buf`; the OUT `*ctx_inout` is
+ * updated with the resume cookie for the next call. Returns -1 on
+ * failure; `*ctx_inout` is left untouched then. */
+static inline long sys_querydirobj(HANDLE dir, void *buf, uint16_t count,
+                                   uint16_t *ctx_inout)
+{
+    long packed = ((long)(*ctx_inout) << 16) | (long)count;
+    long ret = syscall3(SYS_QUERYDIROBJ, (long)dir, (long)buf, packed);
+    if (ret < 0)
+        return ret;
+    *ctx_inout = (uint16_t)((uint64_t)ret >> 16);
+    return (long)((uint64_t)ret & 0xFFFFu);
 }

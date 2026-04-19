@@ -380,11 +380,24 @@ static uint64_t syscall_handler(struct interrupt_frame *frame)
         break;
     }
     case SYS_LOG: {
-        /* arg1 = level (0-4), arg2 = msg pointer, arg3 = msg length */
+        /* arg1 = level (LOG_DEBUG..LOG_ERROR ONLY for user mode);
+         * arg2 = msg pointer; arg3 = msg length.
+         *
+         * SECURITY: LOG_FATAL is REJECTED from user mode because
+         * klog(LOG_FATAL, ...) enters an infinite hlt loop in
+         * src/kernel/klog.c:1023-1028, which any unprivileged user
+         * process could otherwise weaponize as a one-line OS halt.
+         * Kernel-only callers that legitimately need fatal-halt
+         * semantics call panic()/KeBugCheckEx() directly, not
+         * SYS_LOG. The cap is `>= LOG_FATAL` (not `> LOG_FATAL`)
+         * so a future user-mode fault-injection bridge probe (the
+         * SYS_FAULT_INJECT design tracked under the user-mode test
+         * framework roadmap) cannot escalate by passing 4 instead
+         * of 5. */
         log_level_t lvl = (log_level_t)arg1;
         const char *msg = (const char *)arg2;
         uint32_t len = (uint32_t)arg3;
-        if (lvl > LOG_FATAL || !msg || len == 0) { ret = -1; break; }
+        if (lvl >= LOG_FATAL || !msg || len == 0) { ret = -1; break; }
         if (len > 120) len = 120;
         /* Copy to temp buffer and null-terminate */
         {

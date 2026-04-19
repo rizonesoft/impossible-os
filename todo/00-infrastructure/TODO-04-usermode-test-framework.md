@@ -45,7 +45,7 @@
 | ⭐  | Order | Deliverable                                         | Depends On                         | Status |
 | --- | :---: | --------------------------------------------------- | ---------------------------------- | :----: |
 | 💎  |   1   | User-mode test assertion macro and harness          | --                                 |  [x]   |
-| 💎  |   2   | Userland syscall.h parity with kernel INT 0x80 ABI  | --                                 |  [ ]   |
+| 💎  |   2   | Userland syscall.h parity with kernel INT 0x80 ABI  | --                                 |  [x]   |
 | 💎  |   3   | Kernel test launcher (run `test_*.exe` in sequence) | §1                                 |  [ ]   |
 | 💎  |   4   | Launcher manifest, timeouts, TAP, and skip policy   | §3                                 |  [ ]   |
 | ⭐  |   5   | User-mode fault-injection bridge (SYS_FAULT_INJECT) | §1, §3, T03 §1, T03 §6             |  [ ]   |
@@ -98,12 +98,23 @@ Minimal test harness for user-mode binaries: no kernel dependencies.
 
 `user/include/syscall.h` currently stops at `SYS_NETINFO`; kernel exposes `SYS_LOG`, pipes, shmem, mmap, and file/dir handles through `SYS_QUERYDIROBJ`. User-mode tests cannot compile until the headers and thin `sys_*` wrappers match.
 
-- [ ] Diff `user/include/syscall.h` against `include/kernel/sched/syscall.h` for every `#define SYS_` used on the INT 0x80 path (ignore the SSDT alias block at the bottom of the kernel header for this pass)
-- [ ] Add missing `#define` constants and `static inline` syscall wrappers for `SYS_LOG` through `SYS_QUERYDIROBJ`, plus `SYS_PIPE`, `SYS_SHMEM_CREATE`, `SYS_SHMEM_MAP`, `SYS_MMAP`, `SYS_MUNMAP` if §11-§13 need them
-- [ ] Rebuild `hello.exe` and a stub `user/test/test_syscall.c` that only calls `SYS_WRITE` to prove the header still links
-- [ ] Commit: `"test: sync user syscall.h with kernel INT 0x80 ABI for usermode harness"`
+- [x] Diffed [`user/include/syscall.h`](../../user/include/syscall.h) against [`include/kernel/sched/syscall.h`](../../include/kernel/sched/syscall.h). The user header was missing 12 SYS_* constants + matching wrappers: `SYS_LOG` (17), `SYS_PIPE` (33), `SYS_SIGNAL` (34), `SYS_SHMEM_CREATE` (35), `SYS_SHMEM_MAP` (36), `SYS_MMAP` (37), `SYS_MUNMAP` (38), `SYS_OPENFILE` (39), `SYS_CLOSEHANDLE` (40), `SYS_READHANDLE` (41), `SYS_OPENDIROBJ` (42), `SYS_QUERYDIROBJ` (43). The SSDT alias block (`SYS_NT_*`) is intentionally NOT mirrored -- those are SSDT service numbers used by INT 0x2E (compatibility path), not INT 0x80.
+- [x] Added the 12 `#define` constants + 10 `static inline sys_*` wrappers in [`user/include/syscall.h`](../../user/include/syscall.h). `SYS_MMAP` and `SYS_MUNMAP` get the `#define` for kernel-header parity but NO wrapper -- the kernel `syscall_handler_80()` switch does not implement them yet (falls through to default returning -1), and exposing wrappers would mislead callers into thinking the path works. Parallel additions: `HANDLE` typedef + `INVALID_HANDLE_VALUE` (mirroring [`include/kernel/ob/handle_table.h`](../../include/kernel/ob/handle_table.h) lines 17, 22) so callers can store the return value of `sys_openfile`/`sys_pipe`/`sys_opendirobj`/`sys_shmem_create` in the right type, and `LOG_DEBUG`..`LOG_FATAL` constants (mirroring [`include/kernel/klog.h`](../../include/kernel/klog.h) `log_level_t`).
+- [x] Rebuilt `hello.exe` (~45 KiB) and added [`user/test/test_syscall.c`](../../user/test/test_syscall.c) (3 assertions: `sys_write` returns byte count; `sys_log(LOG_FATAL)` returns -1 -- security regression; `sys_log(LOG_INFO)` returns 0). `bash scripts/build.sh` -> `=== BUILD OK ===`; `build/sysroot/test_syscall.exe` deployed (22 KiB) alongside `hello.exe` / `cmd.exe` / `test_harness_smoke.exe`.
+- [x] **SECURITY (Codex critical, fixed pre-commit):** the original `SYS_LOG` kernel handler accepted `lvl > LOG_FATAL` (i.e. only rejected lvl > 4) but `klog(LOG_FATAL, ...)` enters an infinite hlt loop ([`src/kernel/klog.c:1023-1028`](../../src/kernel/klog.c)) -- a one-line OS halt from any user binary. Patched [`src/kernel/sched/syscall.c`](../../src/kernel/sched/syscall.c) `SYS_LOG` case to reject `lvl >= LOG_FATAL`; documented the rejection in both the kernel handler comment and the user header `LOG_FATAL` define.
+- [x] `_Static_assert`-style header comment at the top of [`user/include/syscall.h`](../../user/include/syscall.h) names `include/kernel/sched/syscall.h` + `src/kernel/sched/syscall.c` as the authoritative source for INT 0x80 numbers + handler signatures.
+- [x] Commit: `"test: sync user syscall.h with kernel INT 0x80 ABI for usermode harness"`
 
 **Test checkpoint:** `clang` user-mode build of `test_syscall.c` succeeds with no undefined `sys_*` reference; `_Static_assert` or a comment at the top of `user/include/syscall.h` points maintainers at `include/kernel/sched/syscall.h` as the source of truth. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal (compile step on dev host is enough for PASS).
+
+> **Test runner:** N/A (header-only parity + 30 LOC user-mode stub) | validation: `bash scripts/build.sh` -> BUILD OK; `build/sysroot/test_syscall.exe` (22 KiB) deployed; runtime PASS observed once §3 launcher ships and the binary's 3 assertions run on a real boot.
+
+> **Notes:**
+> - Shipped 12 new `SYS_*` constants + 10 `static inline sys_*` wrappers in [`user/include/syscall.h`](../../user/include/syscall.h). HANDLE typedef + LOG_LEVEL constants added with explicit kernel-header citation lines so future ABI drift surfaces in code review. SYS_MMAP / SYS_MUNMAP intentionally have no wrapper because the kernel handler is unwired; documented inline.
+> - `sys_querydirobj` packs `(ctx << 16) | count` into the single arg3 slot to match the kernel's 3-register INT 0x80 ABI; the wrapper does the pack and the inverse unpack on return so callers see a normal 4-arg C signature. The pack/unpack contract is documented inline; if the kernel ever moves to a 4+ register fast path this wrapper changes in lockstep.
+> - **Security boundary fix (Codex critical):** kernel SYS_LOG handler now rejects `lvl >= LOG_FATAL` (was `> LOG_FATAL`). Without the fix, `sys_log(LOG_FATAL, ...)` from any user binary would halt the OS. Regression assertion lives in [`user/test/test_syscall.c`](../../user/test/test_syscall.c); when §3 launcher runs the binary, it'll observe `sys_log(LOG_FATAL, ...) == -1` -- if the assertion FAILs, the binary is alive only because the hlt loop didn't execute, which IS the bug we want surfaced.
+> - Cross-TODO sync: this is foundation for §9 (`test_syscall.exe`) full-coverage test, §11 IPC test (uses `sys_pipe` + `sys_shmem_*`), §13 file I/O test (uses `sys_openfile` + `sys_readhandle` + `sys_opendirobj` + `sys_querydirobj`). All depend-on §2 in the Implementation Order table.
+> - Scope boundary: §2 owns ONLY the user-side header sync + the build-validating stub binary. §5 (SYS_FAULT_INJECT) defines a NEW syscall number not yet in the kernel header -- separate work. SYS_MMAP / SYS_MUNMAP wrappers wait for the kernel handler to land elsewhere.
 
 ---
 
