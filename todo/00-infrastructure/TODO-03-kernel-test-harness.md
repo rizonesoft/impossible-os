@@ -79,7 +79,9 @@ A per-CPU test-only countdown that causes `kmalloc` to return `NULL` on the next
 > - Test-runner auto-clear in [`src/kernel/test/test_runner.c`](../../src/kernel/test/test_runner.c) after every suite prevents cross-suite poisoning when a test armed a countdown and then hit `TEST_ASSERT` before the trap fired.
 > - Downstream consumers: §6 extends this countdown model to PMM / VMM / copy_user with symmetric APIs; §3 `TEST_SCRATCH_KBUF` uses `kmalloc_fail_next()` in its failure-path regression; TODO-12 §5 `Test gaps` entries for allocator failure rollback close via §4 retrofit using this primitive.
 > - Scope boundary: §1 only wires the kmalloc path. PMM / VMM / copy_user countdowns and task-filter + total-hits cap ship in §6.
-> **Quality reviewed:** 2026-04-15 -- kernel-code-quality Gates 1-11 walked clean (no stdlib, SMP-safe via per-CPU storage + RELAXED atomic global counter, no MMIO, every allocation check'd). Codex step-13 adversarial found 1 Medium (IRQ-context kmalloc on same CPU could steal pending injection) fixed pre-commit by `KeGetCurrentIrql() == PASSIVE_LEVEL` gate with regression test (`Heap: fault-inject IRQL gate`). Codex step-8 quality dispatch (dead-code + consistency + perf) returned no findings: all new surface consistently KERNEL_TESTS-gated, static counter reachable via test suites, pre-existing per_cpu_data offsets intact, hot-path cost confined to test builds (3-4 instructions in non-armed case, zero in release builds).
+
+> **Verified:** 2026-04-19 | commit `ea9c40e7` | 6/6 items | build OK | tests 5/5 PASS (TEST_CAT_MM)
+> **Quality reviewed:** 2026-04-19 | Codex 2x (adversarial, quality) | 0 findings, 0 open | scope: kernel-code-quality
 
 ---
 
