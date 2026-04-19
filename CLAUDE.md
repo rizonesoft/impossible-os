@@ -218,6 +218,7 @@ Claude Code skills live in `.claude/skills/`. They auto-load when Claude judges 
 |---|---|
 | `/implement-todo-section` | Implement one TODO section end-to-end |
 | `/implement-ssdt-range` | Implement + wire a range of SSDT entries, mark Done [x] |
+| `/complete-todo-file` | Finalize a TODO whose `## N.` sections are all shipped: runs `/implement-unit-tests`, executes `## Verification` items, flags manual-only, closes out |
 | `/create-todo` | Create a new TODO file |
 | `/validate-todo-file` | Validate a TODO for structural gaps |
 | `/verify-todo-section` | Audit-mode wrapper over `/review-todo-section` (downgrade-only; never promotes to `[x]`) |

@@ -21,6 +21,7 @@ Every live skill below has a matching row in [`../../CLAUDE.md`](../../CLAUDE.md
 | [`implement-todo-section`](implement-todo-section/) | Execute one section end-to-end with HARD GATE review pipeline     |
 | [`implement-ssdt-range`](implement-ssdt-range/) | Implement + wire a range of SSDT entries, mark Done `[x]`             |
 | [`implement-unit-tests`](implement-unit-tests/) | Ship a TODO's Unit Tests section end-to-end                           |
+| [`complete-todo-file`](complete-todo-file/) | Finalize a TODO: dispatches `implement-unit-tests` + runs automatable Verification items + flags manual-only + closes out |
 
 ### Review + verification
 

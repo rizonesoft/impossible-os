@@ -134,7 +134,7 @@ Path-filter abbreviations used in the tables below:
 | -- | ------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
 | 1  | Pre: Edit     | C-src                             | Auto-load matching domain code-quality skill (boot / kernel / desktop / shell / userland).                                      |
 | 7  | Pre: Bash     | `git commit` with src + TODO      | Section-commit GATE: confirm steps 13-18 of `/implement-todo-section` (Codex + build + validate) ran.                           |
-| 8  | Pre: Skill    | implement/review/quality/create   | Completion-first radar at skill entry (correctness, completeness, wiring, parity, superiority, ownership).                      |
+| 8  | Pre: Skill    | implement / review / quality / create / complete-todo-file | Completion-first radar at skill entry (correctness, completeness, wiring, parity, superiority, ownership; for complete-todo-file: no PASS without execution). |
 | 11 | Post: Bash    | copilot-review.sh / codex advers. | Apply `superpowers:receiving-code-review` to every finding (verify at file:line, Fix/Reject/Accept, never blind-implement).     |
 | 12 | Post: Edit    | `todo/*.md`                       | If structural edit, run `/validate-todo-file`.                                                                                  |
 | 13 | Post: Edit    | `todo/*.md`                       | TODO format CHECK (oversize C-blocks, `(N.M Title)` prefixes). validate-todo-file step 15.                                      |
