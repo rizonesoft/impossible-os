@@ -13,54 +13,54 @@
 
 ## Kernel & OS Code
 
-| | Files | Lines |
-|---|---:|---:|
-| **C sources** (`.c`) | 264 | 136103 |
-| **Headers** (`.h`) | 198 | 39030 |
-| **Assembly** (`.asm`) | 9 | 1061 |
-| **Subtotal** | **471** | **176194** |
+|                       |   Files |      Lines |
+| --------------------- | ------: | ---------: |
+| **C sources** (`.c`)  |     264 |     136103 |
+| **Headers** (`.h`)    |     198 |      39030 |
+| **Assembly** (`.asm`) |       9 |       1061 |
+| **Subtotal**          | **471** | **176194** |
 
 ## SDK Tools
 
-| | Files | Lines |
-|---|---:|---:|
-| **C sources** (`.c`) | 4 | 1481 |
-| **Headers** (`.h`) | 3 | 238 |
-| **Subtotal** | **7** | **1719** |
+|                      | Files |    Lines |
+| -------------------- | ----: | -------: |
+| **C sources** (`.c`) |     4 |     1481 |
+| **Headers** (`.h`)   |     3 |      238 |
+| **Subtotal**         | **7** | **1719** |
 
 ## Build System & Scripts
 
-| | Files | Lines |
-|---|---:|---:|
-| **Shell scripts** (`.sh`) | 29 | 5905 |
-| **Batch scripts** (`.bat`) | 39 | 358 |
-| **PowerShell** (`.ps1`) | 7 | 1081 |
-| **Python** (`.py`) | 7 | 964 |
-| **JavaScript** (`.js`) | 1 | 440 |
-| **Include fragments** (`.inc`) | 5 | 3002 |
-| **Makefile** | 3 | 1064 |
-| **Linker scripts** (`.ld`/`.lds`) | 2 | 126 |
-| **Subtotal** | **93** | **12940** |
+|                                   |  Files |     Lines |
+| --------------------------------- | -----: | --------: |
+| **Shell scripts** (`.sh`)         |     29 |      5905 |
+| **Batch scripts** (`.bat`)        |     39 |       358 |
+| **PowerShell** (`.ps1`)           |      7 |      1081 |
+| **Python** (`.py`)                |      7 |       964 |
+| **JavaScript** (`.js`)            |      1 |       440 |
+| **Include fragments** (`.inc`)    |      5 |      3002 |
+| **Makefile**                      |      3 |      1064 |
+| **Linker scripts** (`.ld`/`.lds`) |      2 |       126 |
+| **Subtotal**                      | **93** | **12940** |
 
 ## Documentation & Project Metadata
 
-| | Files | Lines |
-|---|---:|---:|
-| **Markdown** (`.md`) | 339 | 86201 |
-| **JSON** (`.json`) | 3 | 203 |
-| **YAML** (`.yml`/`.yaml`) | 10 | 848 |
-| **HTML** (`.html`) | 17 | 1623 |
-| **CSS** (`.css`) | 5 | 74498 |
-| **Config** (`.cfg`/`.conf`) | 2 | 56 |
-| **Subtotal** | **376** | **163429** |
+|                             |   Files |      Lines |
+| --------------------------- | ------: | ---------: |
+| **Markdown** (`.md`)        |     339 |      86264 |
+| **JSON** (`.json`)          |       3 |        203 |
+| **YAML** (`.yml`/`.yaml`)   |      10 |        848 |
+| **HTML** (`.html`)          |      17 |       1623 |
+| **CSS** (`.css`)            |       5 |      74498 |
+| **Config** (`.cfg`/`.conf`) |       2 |         56 |
+| **Subtotal**                | **376** | **163492** |
 
 ## Grand Total
 
-| | Files | Lines |
-|---|---:|---:|
-| **Core code + tooling** | **571** | **190853** |
-| **Supporting text + metadata** | **376** | **163429** |
-| **All counted text files** | **947** | **354282** |
+|                                |   Files |      Lines |
+| ------------------------------ | ------: | ---------: |
+| **Core code + tooling**        | **571** | **190853** |
+| **Supporting text + metadata** | **376** | **163492** |
+| **All counted text files**     | **947** | **354345** |
 
 > Vendored code excluded: ~13886 lines (`stb_image.h`, `stb_truetype.h`, `efi.h`)
 >
@@ -75,11 +75,11 @@
 > Entire university courses teach that operating systems are a multi-decade, multi-hundred-
 > person endeavor. One developer apparently missed that lecture.*
 
-| | Linux | Windows | Impossible OS |
-|---|---:|---:|---:|
-| **Core code + tooling lines** | ~28,000,000 | ~50,000,000 | 190,853 |
-| **Developers** | ~1,000 active | ~5,000 peak | 1 |
-| **Time span** | 33 years | 40 years | 1 month(s), 13 day(s) |
+|                               |         Linux |     Windows |         Impossible OS |
+| ----------------------------- | ------------: | ----------: | --------------------: |
+| **Core code + tooling lines** |   ~28,000,000 | ~50,000,000 |               190,853 |
+| **Developers**                | ~1,000 active | ~5,000 peak |                     1 |
+| **Time span**                 |      33 years |    40 years | 1 month(s), 13 day(s) |
 
 > At industry rates (10,000 LOC/developer/year -- COCOMO II), writing 190,853
 > lines of core code and tooling would take **162 developers** working for **1 month(s), 13 day(s)**.
@@ -88,4 +88,4 @@
 
 ---
 
-*Last updated: 2026-04-19 02:57 · commit `18718975`*
+*Last updated: 2026-04-19 03:09 · commit `abda56c0`*

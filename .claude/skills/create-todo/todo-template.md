@@ -120,6 +120,16 @@ One-line intro explaining what this section does and why it matters.
 - Add child-TODO sections only when the topic truly needs multiple files or shared verification.
 - Use flat numbered sections (`## 1. Title`) -- not sub-sections (`### 1.1 Title`).
 - Every section needs: checklist items (max 8-10), Commit line, Test checkpoint.
+- Every section that ships gets a `> **Notes:**` block (added by `implement-todo-section` step 10) between the `> **Test runner:**` line and the `> **Verified:**` stamp. Template:
+  ```markdown
+  > **Notes:**
+  > - What shipped: <filename> (purpose; key knob/count).
+  > - How it runs / integrates: <invocation path; idempotence; CI/hook wiring>. (Skip for pure docs.)
+  > - Downstream effects: <other TODOs satisfied or unblocked; stamp sweeps enabled>.
+  > - Canonical doc: [<name>](<path>).
+  > - Scope boundary: <what this section does NOT own; pointers to owning §N or TODO-NN>.
+  ```
+  3-6 bullets, one line each. Human-readable counterpart to the Verified / Quality-reviewed stamps. Sections still `[ ]` (not shipped yet) MUST NOT have a Notes block.
 - `Depends On` column always uses `§N` notation, never bare numbers.
 - The `> [!IMPORTANT] Current state:` callout after Goal is mandatory -- it's the implementer's starting context.
 - The OS Comparison table is **mandatory** -- populate from actual Win11/Linux research. **Do not** add `<!-- Sources: ... -->` URL comment blocks in the file. **Order:** keep `## OS Comparison` after every `## N.` implementation section and immediately before `## Unit Tests` (not directly under Implementation Order).

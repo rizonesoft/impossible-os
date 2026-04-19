@@ -90,6 +90,14 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
     - **Cross-TODO sync:** when this section references or satisfies external TODO requirements, update those TODOs in the same run.
     - Preserve existing formatting (table headers, icons, column structure).
     - **No N.M subnumbering:** never add `### N.M`, `**N.M ...**`, or extra heading levels that carve one `## N.` into sub-chapters. Keep **one continuous** `- [ ]` list under each `## N.`; put grouping in bullet wording. Need more structure -- add a new `##` section with the next number, not `17.1`/`17.2`.
+    - **Write a `> **Notes:**` block** (MANDATORY for sections marked `[x]` or `[/]` that shipped any artifact). Placement: immediately after the pre-stamp `> **Test runner:**` line, before the `> **Verified:**` stamp. 3-6 bullets, each one line. Canonical shape:
+      - **What shipped** -- name the concrete artifact (filename + one-phrase purpose) and any key knob/count (line count, sentinel count, hook count, etc.).
+      - **How it runs / integrates** -- invocation path, idempotence claim, how it fires (hook / skill / CI). Skip if the artifact is pure docs.
+      - **Downstream effects** -- other TODOs it satisfies or unblocks, stamp sweeps it enables.
+      - **Canonical doc** -- single link to the authoritative file for this section's subject (usually `docs/<area>/<topic>.md` or `CLAUDE.md` anchor). One link, not three.
+      - **Scope boundary** -- name what this section does NOT own, with pointers (e.g. "§7 owns X; TODO-XX §N owns Y").
+      - For docs-only sections, collapse "How it runs" and "Downstream effects" into one "Structure / consumers" bullet.
+      Purpose: a contributor six months from now reading the section can see what landed without chasing stamp fields or link-clicking. The stamps are the machine-readable audit trail; Notes is the human-readable "what's in this section" summary.
 11. **Update Implementation Order table** -- `[x]` (fully done) or `[/]` (in progress).
 12. **Update OS Comparison table** -- replace placeholders with concrete descriptions. `Planned` -> `Done` or `Partial`. **If the section added a capability not yet represented in the table, ADD a row** (do not just update existing rows). Scan the Implementation Order table and confirm every `[x]` row has a corresponding row in OS Comparison; a missing row is as much drift as a stale one. Also update the post-table summary sentences if they cap out before the section just shipped. **Do not** add or extend `<!-- Sources: ... -->` URL comment blocks; cite new research in the PR or chat only.
 13. **Codex adversarial review** (MANDATORY -- NO EXCEPTIONS) -- dispatch to Codex plugin. If Codex responds with "no diff available", re-dispatch with actual file content (read 100-200 relevant lines). A shallow response requires re-prompting.

@@ -139,6 +139,7 @@ description: Full review of a TODO section -- adversarial Codex, dead code, cons
       ```
       Default is NO `<details>` block. Commit messages and `[x]` marks carry most audit weight; counts + XREFs carry the rest.
     - **Do NOT re-emit a `> **Test runner:**` line** -- the pre-stamp block written by `implement-todo-section` step 8 is the single source of truth. If the test count or bat file changed during review, edit the pre-stamp block in place instead of adding a second line.
+    - **Verify the `> **Notes:**` block is present** (MANDATORY for sections marked `[x]` or `[/]`). Canonical order of the pre-stamp + stamp region: Test checkpoint paragraph -> blank -> `> **Test runner:**` -> blank -> `> **Notes:**` -> blank -> `> **Verified:**` -> `> **Accepted:**` (if any) -> `> **Deferred:**` (if any) -> `> **Quality reviewed:**`. If the Notes block is missing, ADD it now using the grammar in `implement-todo-section` step 10 (3-6 bullets: what shipped, how it runs/integrates, downstream effects, canonical doc pointer, scope boundary). The stamps are the machine-readable audit trail; Notes is the human-readable "what's in this section" summary, and both must be present whether the section landed through implement or review first.
 
 17. **Commit and push** -- `"review: <TODO> §N -- <summary>"`. If step 15 created or modified items in other TODO files, stage and commit those in the SAME commit as the stamp.
 

@@ -90,6 +90,12 @@ The first job is to state clearly which file owns what.
 
 > **Test runner:** N/A (docs-only) | validation: markdown links resolve, 4 stale refs removed (copilot-instructions.md `.cursor/` row, TODO-00-INDEX.md line 42, 00-infrastructure/INDEX.md line 32, CLAUDE.md Skills section updated with matrix link); §9 regression suite will add automated checks when it ships.
 
+> **Notes:**
+> - Shipped [`docs/infrastructure/ai-system.md`](../../docs/infrastructure/ai-system.md) as the canonical AI-system ownership map: Authority Hierarchy table, 5 hierarchy invariants, Claude Code-Only Stance, Global-vs-Tool-Local doctrine split, Edit-Here-Not-There Rules (8 rows covering doctrine, skills, harness policy, Copilot CLI, Codex templates, git-hook lifecycle, TODO workflow, skill lifecycle).
+> - `CLAUDE.md` Skills section now links to `ai-system.md`; `docs/infrastructure/index.md` has a row; stale Cursor references swept in 4 places (`.github/copilot-instructions.md` dropped `.cursor/` row; `todo/TODO-00-INDEX.md` + `todo/00-infrastructure/INDEX.md` summaries; duplicate invariant #5 in §8 replaced with pointer).
+> - Canonical doc: [`docs/infrastructure/ai-system.md`](../../docs/infrastructure/ai-system.md). `CLAUDE.md` (doctrine) and this TODO (roadmap) are the upstream sources; the doc is the index into them, never a substitute.
+> - Scope boundary: ownership map only. Skill catalog sync is §2; hook routing §3; reviewer contract §4; MCP/permissions §5; AGENTS.md pointer §6; regression automation §9.
+
 > **Verified:** 2026-04-19 | commit `52b2a440` | 7/7 items | build N/A (docs-only) | 8 files changed | 5 stale Cursor refs swept
 > **Quality reviewed:** 2026-04-19 | Codex 3x (adversarial x2, consistency) | 4M+2L fixed (Cursor row in copilot-instructions, fake scripts/codex-companion.mjs path, stale 13-count dropped, verbatim->mirrored stamp, false README link claim, duplicate invariant #5 in §8), 0 open | scope: N/A (docs-only)
 
@@ -109,6 +115,13 @@ Skills need the same rigor as code: discoverable ownership, templates, and retir
 **Test checkpoint:** A new skill can be scaffolded and registered by following one documented path ([`skill-authoring.md`](../../docs/infrastructure/skill-authoring.md) Lifecycle steps 1-5). CLAUDE.md Skills table + `.claude/skills/README.md` + actual skill directories stay in sync (verified: 28 directories, 28 CLAUDE.md rows, 28 README.md rows as of this commit). A skill directory without matching index entries will be flagged by the regression pack ([§9](#9-ai-workflow-regression-suite)).
 
 > **Test runner:** N/A (docs + catalog sync) | validation: `ls .claude/skills/ | wc -l` == rows in CLAUDE.md Skills table == rows in `.claude/skills/README.md`; §9 regression suite will assert this automatically when it ships.
+
+> **Notes:**
+> - Shipped [`docs/infrastructure/skill-authoring.md`](../../docs/infrastructure/skill-authoring.md): 5-step add lifecycle, 2 canonical SKILL.md shapes (Shape A workflow, Shape B code-quality) covering all live skills, catalog hygiene sync rules, 7-step retirement sweep with 4-shape grep recipe (slash / bare / markdown-path / `settings.json`).
+> - New scaffold [`TEMPLATE.md`](../../.claude/skills/TEMPLATE.md) under `.claude/skills/`; `README.md` expanded from 3-line stub to grouped catalog (TODO workflow, review, Codex dispatch, domain code-quality, debugging groups).
+> - `CLAUDE.md` Skills table gained 5 rows that existed on disk but were missing from the catalog (`audit-ssdt`, `codex-adversarial-review-section`, `gap-analysis-todo`, `kernel-code-quality`, `validate-todo-section`); catalog sync invariant verified at the time: 28 skill directories == 28 CLAUDE.md rows == 28 README.md rows (`validate-todo-section` later retired; current count 27/27/27 after that follow-up).
+> - Canonical doc: [`skill-authoring.md`](../../docs/infrastructure/skill-authoring.md). Edit-Here-Not-There row in `ai-system.md` routes lifecycle changes to this doc; scaffold-only changes go to `TEMPLATE.md`.
+> - Scope boundary: skill catalog + lifecycle + retirement only. Hook routing is §3; reviewer contract §4; regression enforcement of the sync invariant is §9.
 
 > **Verified:** 2026-04-19 | commit `eedc0868` | 6/6 items | build N/A (docs-only) | 7 files changed | 28/28/28 skill sync
 > **Quality reviewed:** 2026-04-19 | Codex 2x (adversarial, combined) | 3M fixed (retirement sweep missed bare-name forms; canonical section contract split into Shape A workflow + Shape B code-quality to match 28 live skills; TEMPLATE.md labelled Shape-A with Shape-B pointer), 0 open | scope: N/A (docs-only)
@@ -130,6 +143,14 @@ Hooks are part of the AI system, not invisible glue.
 **Test checkpoint:** For any given edit path or skill invocation, the responsible hook and its intended effect are documented. A maintainer can tell whether a behavior is a reminder or a block without reading minified JSON (three named tables: BLOCK / REMIND / POST-HOC VALIDATE). The harness/git hook boundary is clear and named in the "Two hook layers" table.
 
 > **Test runner:** N/A (docs-only) | validation: matrix row count matches `.claude/settings.json` hook count (verified via python3 parse); current split 5 BLOCK + 12 REMIND + 2 POST-HOC = 19; §9 regression suite will automate this sync.
+
+> **Notes:**
+> - Shipped Hook Routing Matrix in [`ai-system.md`](../../docs/infrastructure/ai-system.md#hook-routing-matrix) covering all live harness hooks in three effect-class tables: BLOCK (5: Unicode-dash ban, numeric-TODO-shorthand ban on non-`todo` `.md`, scope-gap-protocol on C-src, test-side-effect ban, bare-`Accepted:`/`Deferred:` XREF gate), REMIND (12), POST-HOC VALIDATE (2: post-commit unit-tests + boot-smoke).
+> - Path-filter abbreviations (`C-src`, `test_*.c`, `todo/*.md`, `skills/*.md`, `code-commit stdout`, `boot-commit stdout`) defined once above the tables so every row fits under the 200-char cap without shrinking the column padding.
+> - Two hook layers block states the harness-vs-git-hook boundary explicitly: `.claude/settings.json` runs at tool-call time; `.githooks/` runs at commit/push time (owned by TODO-01 §5); `scripts/copilot-review.sh` has no hook surface at all.
+> - Known limitations paragraph documents the stdout-based matcher on hooks 9+10 honestly: pure-modification commits can silently skip the post-commit validators. Concrete follow-up item filed in this section (`git show --name-only --format= HEAD` replacement) as the tighter matcher.
+> - Canonical source: [`.claude/settings.json`](../../.claude/settings.json) (JSON stays the source of truth; matrix is the human-readable view). Editing procedure: edit JSON first, update the matching matrix row in the same commit, rely on §9 to assert the sync.
+> - Scope boundary: harness hooks only. Git hooks (`.githooks/pre-commit`, `post-commit`, `pre-push`) live under TODO-01 §5.
 
 > **Verified:** 2026-04-19 | commit `98f2350b` | 6/7 items | build N/A (docs-only) | 18/18 hook rows
 > **Deferred:** [H] Post-commit unit-test + boot-smoke matchers match `git commit` stdout rather than canonical file list; pure-modification commits can silently skip (reason: behavior fix out of scope for the docs-codification commit) -> XREF: 00-infrastructure/TODO-02 §3 (item: "Tighten the post-commit unit-test + boot-smoke matchers" at line 127)
@@ -153,6 +174,13 @@ Codex and Copilot participate in the AI workflow as adversarial reviewers, not a
 
 > **Test runner:** N/A (docs + skill metadata) | validation: 17/17 Codex-dispatching skills carry the contract pointer (`grep -l 'External-Reviewer Contract:' .claude/skills/*/SKILL.md | wc -l`); table rows in `ai-system.md` all under 200-char cap; §9 regression suite will assert these invariants automatically when it ships.
 
+> **Notes:**
+> - Shipped [External-Reviewer Contract](../../docs/infrastructure/ai-system.md#external-reviewer-contract-codex-copilot) section in `ai-system.md` with 5 sub-sections: Reviewer-not-authority invariant, Codex dispatch surface (9 angle-owner + 7 direct consumer + 1 inheritor = 17), Copilot invocation surface (33-line `scripts/copilot-review.sh` wrapper, PR-style review for docs + non-kernel), 5-step Adding-a-new-reviewer-tool contract, Discoverability-back-from-skills.
+> - 17 skills gained a one-line `> **External-Reviewer Contract:**` blockquote linking back to the canonical contract section: 9 codex-* angle owners + 7 direct workflow consumers (`implement-todo-section`, `implement-ssdt-range`, `implement-unit-tests`, `review-todo-section`, `quality-review-section`, `debug-session`, `diagnose-serial-log`) + 1 inheritor (`verify-todo-section`, which picks up the pointer via `review-todo-section`'s workflow).
+> - Authority Hierarchy Codex row in both `ai-system.md` and this TODO updated to name the 17-dispatcher split explicitly (previously said only "codex-* Claude skills" which was stale once the surface expanded).
+> - Canonical doc: [External-Reviewer Contract](../../docs/infrastructure/ai-system.md#external-reviewer-contract-codex-copilot).
+> - Scope boundary: reviewer-dispatch surface + `receiving-code-review` discipline + contract for future reviewer tools. Autonomous-agent refusal lives in §8; the [Autonomous-Agent Boundary Policy](#8-autonomous-agent-boundary-policy) is the downstream owner.
+
 > **Verified:** 2026-04-19 | commit `1097c3d3` | 7/7 items | build N/A (docs-only) | 17 back-pointers wired
 > **Quality reviewed:** 2026-04-19 | Codex 2x (adversarial x2) | 2M+1L fixed (M: Codex-dispatch surface initially listed only 9 codex-* skills -> added back-pointers + expanded surface to name both groupings; M: Authority Hierarchy table Codex row + Claude-Code-Only-Stance prose still said "invoked from inside codex-* Claude skills" which contradicted §4's 17-skill count -> updated both to name the 17-dispatcher split; L: table rows 206-208 chars -> compacted under 200-char cap), 0 open | scope: N/A (docs-only)
 
@@ -174,6 +202,14 @@ Permissions and extensions are part of the architecture. They need clear boundar
 
 > **Test runner:** N/A (docs + gitignore + settings cleanup) | validation: `git check-ignore .claude/settings.local.json` returns 0; `ai-system.md` contains the MCP, Permissions, and Extension Boundary section; `.claude/settings.json` permissions.allow no longer contains destructive `Bash(git reset:*)` rule; §9 regression suite will assert these invariants when it ships.
 
+> **Notes:**
+> - Shipped [MCP, Permissions, and Extension Boundary](../../docs/infrastructure/ai-system.md#mcp-permissions-and-extension-boundary) section in `ai-system.md` with 5 sub-sections: Permission model (3 rule lists `allow`/`ask`/`deny` + `defaultMode` knob with actual modes `default`/`acceptEdits`/`plan`/`bypassPermissions`), Shared-vs-user-local split, MCP server boundary (user-local only; credential leak risk pinned), Subagent boundary table (5 harness subagents with role + repo stance), Edit-here-not-there mapping.
+> - `.gitignore` gained `.claude/settings.local.json` entry with inline pointer to the new doc (file was previously untracked but not explicitly ignored; any `git add .claude/*` would have leaked personal permissions).
+> - Tightened `.claude/settings.json` `permissions.allow`: removed `Bash(git reset:*)` (auto-approved destructive `git reset --hard`) and `Bash(python3 -c :*)` (auto-approved arbitrary Python code execution = equivalent bypass in a less obvious wrapper). Final count: 6 narrow entries (3 scoped grep patterns, 1 bounded `scripts/test.sh`, 2 scoped `Edit(.claude/skills/<name>/**)`).
+> - MCP server boundary pinned to user-local harness config; never repo-tracked. Reason: MCP servers carry auth tokens + personal data; sharing through the repo would leak credentials. If a shared tool surface is needed, it goes through a `scripts/` wrapper invoked by a Claude skill, not MCP.
+> - Canonical doc: [MCP, Permissions, and Extension Boundary](../../docs/infrastructure/ai-system.md#mcp-permissions-and-extension-boundary). Edit-Here-Not-There mapping inside the section names: shared allow-rules/hooks -> `.claude/settings.json`; personal allow-rules/`defaultMode` -> `.claude/settings.local.json`; MCP config -> user harness; subagent behavior -> harness built-in.
+> - Scope boundary: permissions model + shared-vs-local split + MCP boundary + subagent roles. Hook routing owned by §3; external-reviewer contract by §4; git hooks (different layer) by TODO-01 §5.
+
 > **Verified:** 2026-04-19 | commit `998925be` | 7/7 items | build N/A (docs-only) | 6 shared allow-rules; settings.local.json gitignored
 > **Quality reviewed:** 2026-04-19 | Codex 2x (adversarial x2) | 2H+4M+2L fixed (H: `Bash(git reset:*)` in shared allow -> removed rule + example; H: `Bash(python3 -c :*)` in shared allow auto-approved arbitrary code execution -> removed; M: defaultMode misframed as 4th tier with wrong mode names -> separated rule lists + listed actual modes default/acceptEdits/plan/bypassPermissions; M: §1 cross-link to §5 claimed but not added -> added inline pointer; M: stale `Bash(git reset:*)` still named as "safe" shared example after initial fix -> replaced with real safe examples; M: Codex dispatch count mixed 7 consumers vs 8 table rows (verify inherits via review; not a direct caller) -> reframed as 9 angle-owner + 7 direct consumers + 1 inheritor = 17 back-pointers; L: §5 table rows over 200-char cap -> compacted; L: "7 entries" stale after python3 removal -> updated to 6), 0 open | scope: N/A (docs-only + settings hardening)
 
@@ -194,6 +230,13 @@ The `AGENTS.md` convention emerged 2025 and was stewarded by the Agentic AI Foun
 **Test checkpoint:** A Codex/Aider/Continue user pointed at the repo root reads `AGENTS.md`, follows the pointer to `CLAUDE.md`, and understands their role as subordinate reviewer without needing to re-learn doctrine. `AGENTS.md` is 35 lines, well under the 60-line cap. The new numeric-TODO-shorthand PreToolUse BLOCK hook (hook 3) caught two numeric-shorthand link texts in my first draft and rejected the write, so the file shipped without any drift-prone references.
 
 > **Test runner:** N/A (docs-only) | validation: `wc -l AGENTS.md` == 35 (<= 60 cap); `grep -c 'CLAUDE.md' AGENTS.md` >= 3 (pointer integrity); `bash scripts/lint.sh` clean (no numeric TODO shorthand); §9 regression suite will automate these checks when it ships.
+
+> **Notes:**
+> - Shipped [`AGENTS.md`](../../AGENTS.md) at repo root (35 lines; under 60-line cap) as the cross-tool pointer following Linux Foundation's AGENTS.md open standard (Aug 2025). Five sections: lead paragraph (Claude Code master + CLAUDE.md doctrine pointer), "What to do" 3 steps, "Authority" (master statement + 3-bullet invariant summary), "Autonomous-agent stop sign", "Where the roadmap lives", "What NOT to put here".
+> - Intentional duplication: the Authority section byte-matches the canonical master-statement paragraph + 3 of the 5 invariants from the TODO-02 Authority Hierarchy block. Rationale: a tool reading ONLY `AGENTS.md` (never clicking through) still sees the core rules. §9 regression check enforces the byte-match + forbids CLAUDE.md-exclusive doctrine imports + the length cap.
+> - Autonomous-agent stop sign distinguishes autonomous agents (refused) from reviewer-mode use (proceed under `receiving-code-review`). Forward-links to [§8 Autonomous-Agent Boundary Policy](#8-autonomous-agent-boundary-policy) for the full refusal path.
+> - Canonical doc: [`AGENTS.md`](../../AGENTS.md). Zero doctrine paragraphs beyond the Authority section; if something is tempting to add, it belongs in `CLAUDE.md` instead.
+> - Scope boundary: cross-tool pointer only. Autonomous-agent policy is §8; regression enforcement is §9.
 
 > **Verified:** 2026-04-19 | commit `1ea11ede` | 7/7 items | build N/A (docs-only) | 35/60 lines; 1 new root file
 > **Quality reviewed:** 2026-04-19 | Codex 2x (adversarial x2) | 2M fixed (M: 5 prose `--` separators violated CLAUDE.md No-Unicode-Dashes sub-rule -> rewrote as `;` / `:`; M: AGENTS.md line 35 claimed regression suite "enforces" the no-duplication invariant but §9 hasn't shipped yet + the existing §9 check wording only guarded CLAUDE.md doctrine not the intentional TODO-02 master-statement copy -> rewrote line 35 with "will enforce when it ships" and broadened §9's AGENTS.md check to a three-part invariant: (a) byte-match Authority section against TODO-02 canonical, (b) forbid CLAUDE.md-exclusive doctrine imports, (c) length cap), 0 open | scope: N/A (docs-only)
