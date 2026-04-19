@@ -63,7 +63,7 @@
 | 💎  |   3   | Hook routing and policy contract                   | §1           |  [/]   |
 | 💎  |   4   | External-reviewer contract (Codex, Copilot)        | §1-§3        |  [x]   |
 | 💎  |   5   | MCP, permissions, and extension boundary           | §1, §3, §4   |  [x]   |
-| 💎  |   6   | `AGENTS.md` cross-tool pointer file                | §1, §4       |  [ ]   |
+| 💎  |   6   | `AGENTS.md` cross-tool pointer file                | §1, §4       |  [x]   |
 | 💎  |   7   | AI-assist commit disclosure policy                 | §1           |  [ ]   |
 | ⭐  |   8   | Autonomous-agent boundary policy                   | §4, §5       |  [ ]   |
 | ⭐  |   9   | AI workflow regression suite                       | §1-§8        |  [ ]   |
@@ -183,15 +183,17 @@ Permissions and extensions are part of the architecture. They need clear boundar
 
 The `AGENTS.md` convention emerged 2025 and was stewarded by the Agentic AI Foundation under the Linux Foundation (Aug 2025). It is tool-neutral and read by Codex, Copilot, Aider, Continue, Gemini-CLI, Zed, and others. Impossible OS uses `CLAUDE.md` as authoritative doctrine (Authority Hierarchy row 2), so `AGENTS.md` exists as a thin stub that (a) tells cross-tool readers where to find the real doctrine, (b) surfaces the subordinate-reviewer contract so tools used as reviewers see our rules, and (c) keeps the Claude-Code-only stance discoverable from the cross-tool entry point. `AGENTS.md` NEVER redefines doctrine; it points at `CLAUDE.md`.
 
-- [ ] Create `AGENTS.md` at repo root. First paragraph states: "Impossible OS uses Claude Code as its master/orchestrator. Doctrine lives in `CLAUDE.md` -- read it first. This file is a pointer for non-Claude tools (Codex, Copilot, Aider, Continue, Gemini-CLI, Zed) used in subordinate reviewer or reader roles."
-- [ ] Second paragraph: verbatim copy of the Authority Hierarchy one-sentence master statement + a compact 3-bullet summary of the 5 invariants (doctrine in `CLAUDE.md` only; reviewers return findings not edits; `CLAUDE.md` wins on conflict). Full table lives in `CLAUDE.md` + this TODO; `AGENTS.md` references both.
-- [ ] Third paragraph: "If you are an autonomous coding agent, stop here -- see §8 Autonomous-agent boundary policy. Impossible OS commits are authored by human + Claude Code only."
-- [ ] Link back to this TODO (`todo/00-infrastructure/TODO-02-ai-development-system.md`) as the authoritative AI-workflow roadmap.
-- [ ] Limit `AGENTS.md` to ~60 lines. Any new doctrine text that tempts addition here is a signal it belongs in `CLAUDE.md` instead.
-- [ ] Add regression-pack check (§9): `AGENTS.md` exists, points at `CLAUDE.md`, does not restate doctrine verbatim (drift guard).
-- [ ] Commit: `"docs/ai: add AGENTS.md cross-tool pointer to CLAUDE.md"`
+- [x] Created [`AGENTS.md`](../../AGENTS.md) at repo root. First paragraph names Claude Code as master/orchestrator, points at `CLAUDE.md` as the doctrine source-of-truth, and frames the file as a pointer for non-Claude tools (Codex, Copilot, Aider, Continue, Gemini-CLI, Zed) in subordinate reviewer or reader roles.
+- [x] "Authority (3-bullet summary of the 5 invariants)" section in `AGENTS.md`: carries the verbatim master statement + a compact 3-bullet summary (doctrine in `CLAUDE.md` only + on conflict wins; external reviewers return findings not edits with `receiving-code-review` discipline; no parallel skill trees). Full table pointed at [Authority Hierarchy in ai-system.md](../../docs/infrastructure/ai-system.md#authority-hierarchy-read-this-first) and the AI Development System roadmap; `AGENTS.md` references both instead of duplicating.
+- [x] "Autonomous-agent stop sign" section: states Impossible OS does not accept autonomous-agent PRs (Copilot coding-agent, Devin, Cognition), that commits are authored by human + Claude Code only, and links forward to the [Autonomous-Agent Boundary Policy](#8-autonomous-agent-boundary-policy) for the full reasoning. Distinguishes autonomous agents (stop) from reviewer-mode use (proceed under `receiving-code-review`).
+- [x] "Where the roadmap lives" section: named anchor links to the [AI Development System roadmap](../../todo/00-infrastructure/TODO-02-ai-development-system.md), `CLAUDE.md`, and `docs/infrastructure/ai-system.md`. Zero numeric-shorthand refs (the new PreToolUse hook 3 would have blocked them -- it actually did block my first draft and caught two offending link-text shorthands before the file was written).
+- [x] `AGENTS.md` is 35 lines long (well under the ~60-line cap). A final "What NOT to put in this file" section names the cap invariant and points at the regression-pack check.
+- [x] Regression-pack assertions for §9: already filed in the §9 checklist ("`AGENTS.md` exists at repo root, contains the phrase `Claude Code` and a link to `CLAUDE.md`, stays under 60 lines, and does NOT restate doctrine"). No change needed here; §9 owns the check surface.
+- [x] Commit: `"docs/ai: add AGENTS.md cross-tool pointer to CLAUDE.md"`
 
-**Test checkpoint:** A Codex/Aider/Continue user pointed at the repo root reads `AGENTS.md`, follows the pointer to `CLAUDE.md`, and understands their role as subordinate reviewer without needing to re-learn doctrine. `AGENTS.md` remains under 60 lines at every commit.
+**Test checkpoint:** A Codex/Aider/Continue user pointed at the repo root reads `AGENTS.md`, follows the pointer to `CLAUDE.md`, and understands their role as subordinate reviewer without needing to re-learn doctrine. `AGENTS.md` is 35 lines, well under the 60-line cap. The new numeric-TODO-shorthand PreToolUse BLOCK hook (hook 3) caught two numeric-shorthand link texts in my first draft and rejected the write, so the file shipped without any drift-prone references.
+
+> **Test runner:** N/A (docs-only) | validation: `wc -l AGENTS.md` == 35 (<= 60 cap); `grep -c 'CLAUDE.md' AGENTS.md` >= 3 (pointer integrity); `bash scripts/lint.sh` clean (no numeric TODO shorthand); §9 regression suite will automate these checks when it ships.
 
 ---
 
@@ -267,7 +269,7 @@ This is the refinement step: test the workflow itself.
 | 💎 | Hook policy matrix              | ⚠️ `.vscode/mcp.json` + IDE settings        | ⚠️ Implicit                                | ✅ §3 routing; reminder vs block tiers                   |
 | 💎 | External-reviewer contract      | ❌ Rare                                     | ❌ Rare                                    | ✅ §4 Codex + Copilot reviewer-not-authority             |
 | 💎 | Permissions/extension boundary  | ⚠️ Varies                                   | ⚠️ Varies                                  | ✅ §5 allow/deny tiers + `.local.json` split             |
-| 💎 | Cross-tool `AGENTS.md` pointer  | ⚠️ awesome-copilot stub                     | ✅ LF-backed (Aug 2025)                    | ⬜ §6 pointer to `CLAUDE.md`; no duplication             |
+| 💎 | Cross-tool `AGENTS.md` pointer  | ⚠️ awesome-copilot stub                     | ✅ LF-backed (Aug 2025)                    | ✅ §6 pointer to `CLAUDE.md`; no duplication             |
 | 💎 | AI-assist commit disclosure     | ❌ No convention                            | ✅ kernel `Assisted-by:` trailer (2025-12) | ⬜ §7 zero-trailer policy + stance-change condition      |
 | ⭐ | Autonomous-agent boundary       | ⚠️ coding-agent + firewall allowlist        | ❌ No formal policy                        | ⬜ §8 interactive-only; no Devin / setup-steps           |
 | ⭐ | AI workflow regression suite    | ❌ Rare                                     | ❌ Rare (Promptfoo/Guardrails; AI apps)    | ⬜ §9 catalog + hierarchy + trailer + boundary checks    |
