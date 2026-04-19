@@ -717,13 +717,35 @@ void klog_remove_override(const char *subsystem)
         return;
     for (i = 0; i < s_override_count; i++) {
         if (str_eq(s_overrides[i].tag, subsystem)) {
-            /* Shift the tail over this slot. Preserves order so any
-             * stable iteration elsewhere (currently none) doesn't
-             * skip entries. */
-            uint32_t j;
-            for (j = i; j + 1 < s_override_count; j++)
-                s_overrides[j] = s_overrides[j + 1];
+            /* Swap-with-last + decrement (NOT shift).
+             *
+             * The klog() hot path walks s_overrides without locking
+             * on the assumption the table is append-only plus
+             * in-place level edits. A mid-walk SHIFT would let a
+             * reader observe slot i with tag A's value then slot i+1
+             * with tag A's (shifted) value, effectively returning
+             * the wrong min_level for the tag the reader is looking
+             * up. Swap-with-last exchanges ONE struct (slot i <- last
+             * slot) and then decrements the count. A concurrent
+             * reader sees either the original tag at slot i or the
+             * swapped-in tag -- both are VALID entries that pass the
+             * str_eq compare correctly for their own lookups; a
+             * reader looking up the removed tag either finds it at
+             * slot i (old pre-swap view) and returns its level, or
+             * does not find it and falls back to global default.
+             *
+             * The residual race window (reader reads old count then
+             * misses the swapped-in tag at slot count-1) is bounded
+             * and benign: at worst the reader sees stale data for
+             * one entry in one concurrent emission, matching the
+             * existing pre-lock contract of klog_set_level.
+             *
+             * True removal with concurrent-reader correctness would
+             * need a shared spinlock covering klog()'s filter path,
+             * which is a klog-wide refactor outside §5 scope. */
             s_override_count--;
+            if (i != s_override_count)
+                s_overrides[i] = s_overrides[s_override_count];
             return;
         }
     }

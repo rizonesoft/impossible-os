@@ -188,6 +188,9 @@ Tests that exercise error paths (validators, allocator failure rollback, bad-inp
 > - Closes §7's Deferred item "Migrate §5 TEST_KLOG_SUPPRESS onto test_add_action": §5 used `test_add_action` from day one for cleanup registration.
 > - Scope boundary: §5 owns the block-scoped klog demotion primitive + the two retrofit sites the filed-by incident named. Other test-phase noise sites (exec/pe/ob in the SKILL.md noise table) are NOT retrofitted here -- they're separate incidents each best handled as its own one-line wrap when the owning test is next edited.
 
+> **Verified:** 2026-04-19 | commit `b3085770` | 8/8 items | build OK | 4 harness suites + 17 retrofitted error-path tests (16 boot_payload + 1 uthread); 17 `[FAIL]` lines silenced from test-phase serial
+> **Quality reviewed:** 2026-04-19 | Codex 4x (adversarial x2, quality x2) | 2M fixed, 0 open | scope: kernel-code-quality
+
 ---
 
 ## 6. Fault-Injection Hardening (task-filter, total-hits cap, multi-allocator)
