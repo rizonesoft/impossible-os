@@ -40,6 +40,10 @@ This domain tracks the tooling and workflow work that supports the whole project
   exercising the real syscall interface.
 - [TODO-05 Desktop & UI Test Framework](./TODO-05-desktop-ui-test-framework.md) - Framebuffer
   snapshots, input injection, terminal verification, visual regression CI, WM state introspection.
+- [TODO-06 TODO Metadata Layer](./TODO-06-todo-metadata-layer.md) - Stable-ID frontmatter
+  on every TODO file + generator/validator/query CLI that builds a derived graph cache. Fixes
+  the renumbering-drift and stale-XREF pain exposed by TODO-02 §1-§3 work. Canonical markdown
+  stays authoritative; the cache is a read-only projection.
 
 ## Completed / Doc-converted
 
