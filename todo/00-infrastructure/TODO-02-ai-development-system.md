@@ -12,7 +12,7 @@
 | `CLAUDE.md`               | Doctrine source-of-truth (file)                | Product north star, workflow rules, safety constraints, policy |
 | `.claude/skills/`         | Workflow source-of-truth (directory)           | How Claude executes a specific task (implement, review, verify, diagnose) |
 | `.claude/settings.json`   | Harness policy source-of-truth (file)          | Permissions, hook reminders, pre/post-tool-use gates |
-| Codex (OpenAI plugin)     | Subordinate reviewer                           | Adversarial findings only; invoked from inside `codex-*` Claude skills; findings go through `receiving-code-review` before action |
+| Codex (OpenAI plugin)     | Subordinate reviewer                           | Adversarial findings only; invoked from inside Claude skills (17 dispatchers: 9 angle-owner `codex-*` + 8 workflow-consumer, see §4); findings go through `receiving-code-review` before action |
 | Copilot CLI               | Subordinate reviewer                           | External PR-style review; invoked via `scripts/copilot-review.sh`; same `receiving-code-review` discipline |
 | `.github/copilot-instructions.md` | Copilot-CLI repo instructions        | Only configures how Copilot answers when invoked; does NOT add new doctrine |
 | `.githooks/`              | Git-time guards (distinct layer, see TODO-01 §5) | Pre-commit lint, post-commit COUNT, opt-in pre-push |
@@ -153,8 +153,8 @@ Codex and Copilot participate in the AI workflow as adversarial reviewers, not a
 
 > **Test runner:** N/A (docs + skill metadata) | validation: 17/17 Codex-dispatching skills carry the contract pointer (`grep -l 'External-Reviewer Contract:' .claude/skills/*/SKILL.md | wc -l`); table rows in `ai-system.md` all under 200-char cap; §9 regression suite will assert these invariants automatically when it ships.
 
-> **Verified:** 2026-04-19 | 7/7 items | build N/A (docs-only) | 17 back-pointers wired
-> **Quality reviewed:** 2026-04-19 | Codex 1x (adversarial) | 1M+1L fixed (M: Codex-dispatch surface initially listed only 9 codex-* skills but 7 workflow-consumer skills also dispatch Codex directly -- added back-pointers + expanded the "Codex dispatch surface" sub-section to name both groupings; L: table rows 206-208 chars -- compacted to stay under 200-char cap), 0 open | scope: N/A (docs-only)
+> **Verified:** 2026-04-19 | commit `1097c3d3` | 7/7 items | build N/A (docs-only) | 17 back-pointers wired
+> **Quality reviewed:** 2026-04-19 | Codex 2x (adversarial x2) | 2M+1L fixed (M: Codex-dispatch surface initially listed only 9 codex-* skills -> added back-pointers + expanded surface to name both groupings; M: Authority Hierarchy table Codex row + Claude-Code-Only-Stance prose still said "invoked from inside codex-* Claude skills" which contradicted §4's 17-skill count -> updated both to name the 17-dispatcher split; L: table rows 206-208 chars -> compacted under 200-char cap), 0 open | scope: N/A (docs-only)
 
 ---
 
