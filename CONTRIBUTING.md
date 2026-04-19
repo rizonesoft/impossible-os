@@ -156,6 +156,16 @@ build: migrate from GCC to Clang-19 + LLD
 docs: professional README with feature table
 ```
 
+### AI-Assisted Commit Policy (zero trailer)
+
+Impossible OS is a Claude Code-orchestrated project (see [docs/infrastructure/ai-system.md](docs/infrastructure/ai-system.md) Authority Hierarchy). AI assistance is implicit in the project's identity, not a per-commit attribution concern. Commits in this repo therefore:
+
+- **Do NOT carry `Co-Authored-By: Claude` or similar attribution trailers.** Every commit here is authored by a human operator working with Claude Code; the combined authorship is the repo's default mode of operation, not a special case per commit.
+- **Do NOT carry `Assisted-by: TOOL:MODEL` trailers** (the Linux kernel 2025-12 convention from [Documentation/process/coding-assistants.rst](https://docs.kernel.org/process/coding-assistants.html), Sasha Levin / Jonathan Corbet; Fedora adopted a similar policy in October 2025). Impossible OS's divergence from that convention is deliberate, not an oversight. See the stance-change condition below.
+- **The screening bar for AI slop is the existing review workflow**, not a commit-trailer check. [`/implement-todo-section`](.claude/skills/implement-todo-section/) steps 13-18 and [`/review-todo-section`](.claude/skills/review-todo-section/) run mandatory Codex adversarial + quality dispatches on every section commit; the scope-gap protocol, domain code-quality gates, and `superpowers:receiving-code-review` discipline catch phantom helpers, pointless refactors "for consistency", and stub-behind-stamp patterns before they reach `main`. If a commit looks like AI slop in review, the review pipeline was skipped; the fix is to re-run it, not to add a trailer.
+
+**Stance-change condition.** This zero-trailer stance stands as long as Impossible OS only accepts contributions from project members working interactively with Claude Code. If the project ever opens to external AI-assisted contributions from non-project-members (e.g. community PRs from contributors using Codex CLI, Aider, Copilot coding-agent, Cursor, etc.), the project adopts the Linux-kernel `Assisted-by: TOOL:MODEL [AGENT_NAME]` trailer grammar at that point. Until then, any commit in this repo carrying such a trailer is the policy bug, not the commit; the trailer gets removed via `git commit --amend` or interactive rebase before merge.
+
 ---
 
 ## 🔄 Pull Request Process
