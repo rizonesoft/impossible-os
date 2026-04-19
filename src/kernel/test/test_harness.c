@@ -18,8 +18,11 @@
 #ifdef KERNEL_TESTS
 
 #include "kernel/test/test.h"
+#include "kernel/test/scratch.h" /* TEST_SCRATCH_KBUF for scratch-buffer tests */
 #include "kernel/types.h"
 #include "kernel/sched/irql.h"  /* KeGetCurrentIrql / KeRaiseIrql for IRQL recovery test */
+#include "kernel/mm/heap.h"     /* heap_get_used for delta checks */
+#include "kernel/mm/pmm.h"      /* pmm_get_used_frames for pmm delta checks */
 
 /* ---------------------------------------------------------------------------
  * LIFO drain observation -- suite A registers, suite B verifies.
@@ -247,6 +250,161 @@ static void test_harness_verify_action_leak_recovery(void)
                    "next suite after action-leak chain starts at PASSIVE_LEVEL");
 }
 
+/* ---------------------------------------------------------------------------
+ * TEST_SCRATCH_KBUF -- kmalloc route + PMM route + cleanup-on-failure.
+ *
+ * The three scratch tests must not leave any allocation behind after
+ * the action drain fires. A subsequent verify suite compares heap and
+ * PMM counters against a snapshot taken before the scratch test ran.
+ * Forced-fail case asserts 0 (explicit failure injection) WITHOUT
+ * leaking the buffer -- the §7 action drain still runs, which is the
+ * whole point of the primitive.
+ * ------------------------------------------------------------------------- */
+
+static volatile uint64_t g_scratch_heap_pre;
+static volatile uint64_t g_scratch_pmm_pre;
+static volatile uint64_t g_scratch_heap_post;
+static volatile uint64_t g_scratch_pmm_post;
+/* Sample heap/pmm usage mid-suite to confirm the alloc actually
+ * landed on its intended allocator (otherwise a test that claims
+ * 'PMM path' might silently hit kmalloc and pass for the wrong
+ * reason). */
+static volatile uint64_t g_scratch_heap_during_small;
+static volatile uint64_t g_scratch_pmm_during_big;
+
+/* Case A: 64 KiB via PMM + intentional TEST_ASSERT(0). TEST_ASSERT is
+ * NOT longjmp-style (see test_runner _test_assert); it records a
+ * failure and returns normally. The action drain runs on suite exit
+ * unconditionally, so the 64 KiB must come back even on this path.
+ * Verify-suite later compares heap + PMM counters; both must match
+ * the pre-snapshot. The intentional failure surfaces as ONE [FAIL]
+ * line in the boot log's test summary -- that's the honest proof
+ * that cleanup works even when the suite body failed. If the test
+ * harness ever grows an expected-failure mechanism this can switch
+ * to it; for now the single accepted failure is the cost of proving
+ * the drain-after-fail contract. */
+static void test_harness_scratch_forced_fail(void)
+{
+    g_scratch_heap_pre = heap_get_used();
+    g_scratch_pmm_pre  = pmm_get_used_frames();
+
+    TEST_SCRATCH_KBUF(buf, 65536);
+    (void)buf;
+    TEST_ASSERT(0,
+                "INTENTIONAL forced-fail -- proves action drain runs after TEST_ASSERT(0)");
+}
+
+static void test_harness_scratch_forced_fail_verify(void)
+{
+    g_scratch_heap_post = heap_get_used();
+    g_scratch_pmm_post  = pmm_get_used_frames();
+
+    TEST_ASSERT_EQ(g_scratch_heap_post, g_scratch_heap_pre,
+                   "heap_get_used returned to pre-scratch snapshot");
+    TEST_ASSERT_EQ(g_scratch_pmm_post, g_scratch_pmm_pre,
+                   "pmm_get_used_frames returned to pre-scratch snapshot");
+}
+
+/* Case B: 512 bytes -- routes to kmalloc. Mid-suite heap_get_used
+ * should be > pre-snapshot (proving kmalloc was hit); PMM counter
+ * must NOT change (proving PMM was NOT hit). Post-drain both return
+ * to pre-snapshot. */
+static void test_harness_scratch_kmalloc_route(void)
+{
+    g_scratch_heap_pre = heap_get_used();
+    g_scratch_pmm_pre  = pmm_get_used_frames();
+
+    TEST_SCRATCH_KBUF(small, 512);
+    (void)small;
+
+    /* Sample mid-suite so the verify step can prove the heap actually
+     * grew (kmalloc path was taken). */
+    g_scratch_heap_during_small = heap_get_used();
+
+    TEST_ASSERT(g_scratch_heap_during_small > g_scratch_heap_pre,
+                "512-byte scratch grew heap_get_used (kmalloc route)");
+    TEST_ASSERT_EQ(pmm_get_used_frames(), g_scratch_pmm_pre,
+                   "512-byte scratch did NOT touch PMM (kmalloc route)");
+}
+
+static void test_harness_scratch_kmalloc_verify(void)
+{
+    TEST_ASSERT_EQ(heap_get_used(), g_scratch_heap_pre,
+                   "heap_get_used returned to pre-snapshot after kmalloc scratch drain");
+    TEST_ASSERT_EQ(pmm_get_used_frames(), g_scratch_pmm_pre,
+                   "pmm frames unchanged across kmalloc scratch suite");
+}
+
+/* Case C: 64 KiB -- routes to PMM. Mid-suite pmm_get_used_frames
+ * should be > pre-snapshot by 16 (65536 / 4096); heap must NOT
+ * change. Post-drain both return. */
+static void test_harness_scratch_pmm_route(void)
+{
+    g_scratch_heap_pre = heap_get_used();
+    g_scratch_pmm_pre  = pmm_get_used_frames();
+
+    TEST_SCRATCH_KBUF(big, 65536);
+    (void)big;
+
+    g_scratch_pmm_during_big = pmm_get_used_frames();
+
+    TEST_ASSERT_EQ(g_scratch_pmm_during_big, g_scratch_pmm_pre + 16,
+                   "64 KiB scratch grew pmm_get_used_frames by exactly 16 pages");
+    TEST_ASSERT_EQ(heap_get_used(), g_scratch_heap_pre,
+                   "64 KiB scratch did NOT touch heap (PMM route)");
+}
+
+static void test_harness_scratch_pmm_verify(void)
+{
+    TEST_ASSERT_EQ(heap_get_used(), g_scratch_heap_pre,
+                   "heap unchanged across PMM scratch suite");
+    TEST_ASSERT_EQ(pmm_get_used_frames(), g_scratch_pmm_pre,
+                   "pmm_get_used_frames returned to pre-snapshot after PMM scratch drain");
+}
+
+/* Case D: rollback path -- when test_add_action rejects registration
+ * (action stack full), the TEST_SCRATCH_KBUF macro must free the
+ * allocation before returning. We can't exercise the macro's rollback
+ * directly from a test body because the macro calls `return`; instead
+ * we exercise the PRIMITIVE (test_scratch_free called manually after
+ * test_scratch_alloc + a failed test_add_action) which is what the
+ * macro's rollback path invokes. This proves the unwind path leaves
+ * heap_get_used at its pre-snapshot value. */
+static void scratch_rollback_noop_action(void *ctx)
+{
+    (void)ctx;
+}
+
+static void test_harness_scratch_rollback(void)
+{
+    uint64_t heap_pre = heap_get_used();
+
+    /* Fill the 32-slot action stack so the next test_add_action returns -1. */
+    int filler_ok = 0;
+    for (int i = 0; i < 32; i++) {
+        if (test_add_action(scratch_rollback_noop_action, NULL) == 0)
+            filler_ok++;
+    }
+    TEST_ASSERT_EQ(filler_ok, 32, "all 32 filler actions registered");
+
+    /* Attempt a scratch allocation + registration path (not via macro). */
+    void *buf = test_scratch_alloc(512);
+    TEST_ASSERT_NOT_NULL(buf, "test_scratch_alloc succeeded despite full action stack");
+    if (!buf)
+        return;
+
+    int r = test_add_action(test_scratch_free, buf);
+    TEST_ASSERT_EQ(r, -1, "test_add_action rejects with -1 when stack is full");
+
+    /* Manual rollback -- exactly what the macro's rollback branch does. */
+    test_scratch_free(buf);
+
+    TEST_ASSERT_EQ(heap_get_used(), heap_pre,
+                   "heap returned to pre-snapshot after manual scratch rollback");
+    /* The 32 filler actions still drain normally on suite exit (LIFO);
+     * the action registry is not corrupted by the rejected insertion. */
+}
+
 /* Registration */
 void test_register_harness(void)
 {
@@ -274,6 +432,20 @@ void test_register_harness(void)
                             test_harness_register_action_leak, TEST_CAT_BOOT);
     test_suite_register_cat("Harness: per-action IRQL recovery between callbacks",
                             test_harness_verify_action_leak_recovery, TEST_CAT_BOOT);
+    test_suite_register_cat("Harness: TEST_SCRATCH_KBUF forced-fail",
+                            test_harness_scratch_forced_fail, TEST_CAT_BOOT);
+    test_suite_register_cat("Harness: scratch forced-fail leaks nothing post-drain",
+                            test_harness_scratch_forced_fail_verify, TEST_CAT_BOOT);
+    test_suite_register_cat("Harness: TEST_SCRATCH_KBUF kmalloc route (512 B)",
+                            test_harness_scratch_kmalloc_route, TEST_CAT_BOOT);
+    test_suite_register_cat("Harness: scratch kmalloc route returns to pre-snapshot",
+                            test_harness_scratch_kmalloc_verify, TEST_CAT_BOOT);
+    test_suite_register_cat("Harness: TEST_SCRATCH_KBUF PMM route (64 KiB)",
+                            test_harness_scratch_pmm_route, TEST_CAT_BOOT);
+    test_suite_register_cat("Harness: scratch PMM route returns to pre-snapshot",
+                            test_harness_scratch_pmm_verify, TEST_CAT_BOOT);
+    test_suite_register_cat("Harness: scratch rollback on full action stack",
+                            test_harness_scratch_rollback, TEST_CAT_BOOT);
 }
 
 #endif /* KERNEL_TESTS */

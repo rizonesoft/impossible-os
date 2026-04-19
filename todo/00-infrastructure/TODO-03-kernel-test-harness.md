@@ -45,7 +45,7 @@
 | --- | :---: | :-----: | --------------------------------------------------------- | ------------------- | :----: |
 | 💎  |   1   |  §1     | kmalloc fault injection (`kmalloc_fail_countdown`)        | --                  |  [x]   |
 | 💎  |   2   |  §7     | Test action/cleanup registry (`test_add_action`)          | --                  |  [/]   |
-| 💎  |   3   |  §3     | Scratch-buffer helper (`TEST_SCRATCH_KBUF`)               | §7                  |  [ ]   |
+| 💎  |   3   |  §3     | Scratch-buffer helper (`TEST_SCRATCH_KBUF`)               | §7                  |  [x]   |
 | 💎  |   4   |  §2     | Deterministic race barrier (`test_race_barrier_t`)        | --                  |  [x]   |
 | 💎  |   5   |  §6     | Fault-injection hardening (task-filter, multi-allocator)  | §1                  |  [ ]   |
 | 💎  |   6   |  §5     | Test-scoped klog level demotion (`TEST_KLOG_SUPPRESS`)    | §7                  |  [ ]   |
@@ -120,14 +120,25 @@ A two-thread rendezvous primitive for tests that need to observe behaviour at a 
 
 `TEST_SCRATCH_KBUF(name, size)` declares a `size`-byte scratch buffer and registers a cleanup handler that frees it on test exit (including early `return` via `TEST_ASSERT` macros). Solves the "I need 64 KiB but stack is 8 KiB" case without leaking on assertion failure. Respects the `kmalloc <= 4 KB` project rule: for `size > 4096`, dispatches to `pmm_alloc_contiguous()` instead so a 64 KiB test buffer does not consume 3% of the 2 MiB kernel heap per test.
 
-- [ ] `TEST_SCRATCH_KBUF(name, size)` expands to: `void *name = test_scratch_alloc(size); TEST_ASSERT_NOT_NULL(name, "scratch alloc " #name);` with the cleanup registered via §7 `test_add_action`.
-- [ ] `void *test_scratch_alloc(size_t bytes)` -- when `bytes <= 4096` calls `kmalloc`; when larger calls `pmm_alloc_contiguous((bytes + 4095) / 4096, 0)` and records the page count alongside the pointer for correct free.
-- [ ] `void test_scratch_free(void *ctx)` -- the paired free routine registered via `test_add_action`; looks up the page count (or kmalloc-size bit) to route to `kfree` vs `pmm_free_contiguous`.
-- [ ] Migration: once §7 ships, `TEST_SCRATCH_KBUF` becomes `void *name = test_scratch_alloc(size); test_add_action(test_scratch_free, name);` -- no bespoke per-test list needed (§7 owns it).
-- [ ] Unit test: (a) `TEST_SCRATCH_KBUF(buf, 65536)` + immediate `TEST_ASSERT(0, "forced fail")` leaks zero bytes in both heap stats and PMM free-page count; (b) `TEST_SCRATCH_KBUF(small, 512)` uses kmalloc (verifiable by heap delta != 0 during the test, zero after exit); (c) `TEST_SCRATCH_KBUF(big, 65536)` uses PMM (verifiable by pmm_used_pages delta during, zero after exit).
-- [ ] Commit: `"test: scratch-buffer helper (kmalloc <= 4 KiB, pmm_alloc_contiguous larger) registered via test_add_action"`
+- [x] `TEST_SCRATCH_KBUF(name, size)` in [`include/kernel/test/scratch.h`](../../include/kernel/test/scratch.h) expands to `void *name = test_scratch_alloc((size)); TEST_ASSERT_NOT_NULL(name, "scratch alloc " #name); if (!(name)) return; if (test_add_action(test_scratch_free, (name)) < 0) { test_scratch_free((name)); TEST_ASSERT(0, ...); return; }` -- KUnit-style REQUIRE semantics so NULL alloc or failed registration terminates the test safely instead of faulting on a NULL buffer or leaking.
+- [x] `void *test_scratch_alloc(size_t bytes)` in [`src/kernel/test/scratch.c`](../../src/kernel/test/scratch.c) -- `bytes <= PMM_FRAME_SIZE` uses `kmalloc(bytes)`; larger rounds up to pages via `pmm_alloc_contiguous((bytes + 4095) / 4096)`. Sidecar `s_recs[32]` records `(ptr, pages)` for routed free. Record-table full returns NULL + `[WARN]`.
+- [x] `void test_scratch_free(void *ctx)` -- `ctx == NULL` is a safe no-op; linear scan of `s_recs` routes to `kfree` when `pages == 0` or loops `pmm_free_frame(ctx + j*4096)` when `pages > 0`. Record removed via swap-with-last (O(1)). Unknown ptr logs a `[WARN]` (possible double-free or foreign pointer).
+- [x] Migration: §7 shipped with `test_add_action`; `TEST_SCRATCH_KBUF` uses it directly in the macro expansion -- no bespoke per-test scratch list ever existed.
+- [x] Unit test -- 7 `TEST_CAT_BOOT` suites in [`src/kernel/test/test_harness.c`](../../src/kernel/test/test_harness.c) (pair pattern): (a) forced-fail case (`TEST_SCRATCH_KBUF(buf, 65536)` + `TEST_ASSERT(0, ...)` -- one intentional `[FAIL]` surfaces in the summary, and the follow-up verify suite proves heap + PMM counters returned to pre-snapshot); (b) kmalloc route (`TEST_SCRATCH_KBUF(small, 512)` -- mid-suite heap grew, PMM did not; post-drain both clean); (c) PMM route (`TEST_SCRATCH_KBUF(big, 65536)` -- mid-suite PMM grew by exactly 16 pages, heap unchanged; post-drain both clean); (d) rollback regression -- fills the action stack to 32, proves `test_add_action` returns -1 and `test_scratch_free` cleans up heap state independently of the macro.
+- [x] Commit: `"test: scratch-buffer helper (kmalloc <= 4 KiB, pmm_alloc_contiguous larger) registered via test_add_action"`
 
-**Test checkpoint:** A test that allocates 64 KiB via `TEST_SCRATCH_KBUF` and forces-fails leaves zero leaked bytes in the heap AND zero leaked pages in the PMM bitmap after the test runner moves on.
+**Test checkpoint:** A test that allocates 64 KiB via `TEST_SCRATCH_KBUF` and forces-fails leaves zero leaked bytes in the heap AND zero leaked pages in the PMM bitmap after the test runner moves on. Exercised by the `Harness: scratch forced-fail leaks nothing post-drain` verify suite; forced-fail path surfaces as one expected `[FAIL]` line in the boot log (documented intentional failure).
+
+> **Test runner:** `scripts\debug\run-boot-tests.bat` (SUITE=boot) | 7 new scratch-buffer suites added, 1 INTENTIONAL [FAIL] (forced-fail coverage)
+
+> **Notes:**
+> - Shipped [`include/kernel/test/scratch.h`](../../include/kernel/test/scratch.h) + [`src/kernel/test/scratch.c`](../../src/kernel/test/scratch.c) (~95 LOC incl docs, KERNEL_TESTS-gated). `TEST_SCRATCH_KBUF` macro + `test_scratch_alloc` / `test_scratch_free` primitives. Routes by size: `bytes <= 4096` → kmalloc; larger → `pmm_alloc_contiguous` (saves ~3% of the 2 MiB kernel heap per 64 KiB buffer).
+> - Sidecar `s_recs[32]` maps returned pointer → `(pages, mode)`. File-scope static, no spinlock (matches §7's sequential test-runner invariant). Swap-with-last record removal keeps free O(1) inside a 32-entry bound.
+> - KUnit-style REQUIRE semantics: the macro calls `return` on alloc NULL or `test_add_action` -1. Prevents callers from dereferencing a NULL buffer after a non-longjmp `TEST_ASSERT_NOT_NULL`, and prevents orphaned allocations when the action stack is full. Documented prominently in the header.
+> - Closes §7's Deferred item "Migrate §3 TEST_SCRATCH_KBUF onto test_add_action": the macro uses `test_add_action` from day one, no bespoke scratch list ever existed.
+> - Downstream consumers: TODO-12 §5 `Test gaps` ReplyBodyCap clamping test (needs > 65528-byte scratch buffer) now unblocked via §4 retrofit using `TEST_SCRATCH_KBUF`. Any test that needs > 4 KiB scratch without stack overflow can adopt this primitive.
+> - Canonical doc: the header comment in [`include/kernel/test/scratch.h`](../../include/kernel/test/scratch.h) documents size-routing, REQUIRE semantics, and the in-action-callback usage restriction.
+> - Scope boundary: §3 owns scratch buffer dispatch. §7 owns the cleanup registry it uses. §8 (heap-leak detection) will cross-check this primitive's drain cleanliness as an independent observer when that section ships.
 
 ---
 
@@ -188,7 +199,7 @@ KUnit built `kunit_kzalloc`, `kunit_kmalloc`, and its resource auto-free machine
 - [x] Added `int test_add_action(void (*fn)(void *), void *ctx)` to [`include/kernel/test/test.h`](../../include/kernel/test/test.h). Returns 0 on success, -1 on NULL fn / full list / re-entrant-during-drain (each -1 path emits a `[WARN] TEST: <suite> :: ...` line naming the suite).
 - [x] Per-suite action stack lives as file-scope static `s_test_actions` in [`src/kernel/test/test_runner.c`](../../src/kernel/test/test_runner.c) (kept out of public `test_state_t` so the ABI stays minimal): `uint8_t count`, `uint8_t draining`, `struct { fn; ctx } actions[32]`. `test_actions_reset()` runs before each suite body, `test_actions_drain()` runs after in **LIFO** order, before advancing to the next suite.
 - [x] Action drain runs at PASSIVE_LEVEL. If a suite left IRQL elevated (forgotten `KeLowerIrql` after `KeRaiseIrql`), the runner logs `[WARN] TEST: <suite> :: left IRQL elevated (<irql>) before drain` and force-lowers via `KeLowerIrql(PASSIVE_LEVEL)` so `kfree` / `klog` / blocking cleanup can run safely. Actions themselves must be non-blocking (documented in the header alongside the draining-reentrancy contract).
-- [ ] Migrate §3 `TEST_SCRATCH_KBUF` onto `test_add_action`: the macro becomes `void *name = test_scratch_alloc(size); test_add_action(test_scratch_free, name);`. Remove the bespoke per-test scratch list; §7 owns it. (Deferred: §3 has not shipped yet; this item closes when §3 lands using `test_add_action` from day one.)
+- [x] Migrate §3 `TEST_SCRATCH_KBUF` onto `test_add_action`: §3 shipped 2026-04-19 using `test_add_action` from day one (the macro expansion calls `test_add_action(test_scratch_free, name)` explicitly with rollback-on-failure semantics); no bespoke per-test scratch list was ever needed.
 - [ ] Migrate §5 `TEST_KLOG_SUPPRESS` onto `test_add_action`: block-entry calls `test_add_action(restore_klog_level, saved_state_ptr)` where `saved_state_ptr` is a `struct { const char *subsys; klog_level_t prev; }` staged into `test_state` scratch. Replaces `__attribute__((cleanup))` with a visible action-log entry. (Deferred: §5 has not shipped yet; this item closes when §5 lands using `test_add_action` from day one.)
 - [x] Sanity tests in [`src/kernel/test/test_harness.c`](../../src/kernel/test/test_harness.c) (TEST_CAT_BOOT, 9 suites). Pair-style: register-suite registers actions + records observations into file-scope statics; verify-suite asserts on those observations after the runner's drain fires between suites. Coverage: (a) 3 actions fire LIFO by context value; (b) 33rd `test_add_action` returns -1, first 32 drain; (c) `test_add_action(NULL, ctx)` returns -1; (d) re-entrant `test_add_action` from an action body returns -1 (draining flag blocks it); (e) action observes `PASSIVE_LEVEL` even when the suite leaked `DISPATCH_LEVEL`, next suite also starts at PASSIVE.
 - [x] Commit: `"test: action/cleanup registry (test_add_action) + 9 harness suites"`
@@ -205,8 +216,7 @@ KUnit built `kunit_kzalloc`, `kunit_kmalloc`, and its resource auto-free machine
 > - Canonical doc: the header comment at [`include/kernel/test/test.h`](../../include/kernel/test/test.h) `test_add_action` block documents the API contract (return codes, reentrancy, IRQL, non-blocking); the impl header comment in [`src/kernel/test/test_runner.c`](../../src/kernel/test/test_runner.c) documents the single-CPU SMP assumption of the sequential test_runner.
 > - Scope boundary: §7 owns the generic registry. §3 (scratch-buffer) and §5 (klog-suppress) are consumers, not owned here. Generalised tracing of action history / debugfs-style introspection is out of scope.
 
-> **Verified:** 2026-04-19 | commit `8a34cc1b` | 5/7 items | build OK | 11 harness suites added (registry + LIFO + overflow + NULL + re-entrant + IRQL x2 levels)
-> **Deferred:** [L] Migrate §3 TEST_SCRATCH_KBUF onto test_add_action (reason: §3 not shipped yet; closes automatically when §3 uses test_add_action from day one) -> XREF: 00-infrastructure/TODO-03 §3 (item: "TEST_SCRATCH_KBUF(name, size) expands to void *name = test_scratch_alloc(size); test_add_action(test_scratch_free, name)" at line 123)
+> **Verified:** 2026-04-19 | commit `8a34cc1b` | 6/7 items | build OK | 11 harness suites added (registry + LIFO + overflow + NULL + re-entrant + IRQL x2 levels); §3 migration closed 2026-04-19 when §3 shipped
 > **Deferred:** [L] Migrate §5 TEST_KLOG_SUPPRESS onto test_add_action (reason: §5 not shipped yet; closes automatically when §5 uses test_add_action from day one) -> XREF: 00-infrastructure/TODO-03 §5 (item: "TEST_KLOG_SUPPRESS(subsystem) block-scoped macro ... saved state via test_add_action(restore_klog_level, saved)" at line 153)
 > **Quality reviewed:** 2026-04-19 | Codex 4x (coverage, adversarial x2, quality) | 1H+7M fixed, 0 open | scope: kernel-code-quality
 
@@ -237,7 +247,7 @@ Record `heap_stats().used_bytes` at test start and end; if the delta is non-zero
 | 💎 | Task-scoped fault injection        | ❌ Rare                     | ✅ `task_filter` (fault-inject)                     | ⬜ §6 `kmalloc_fail_task_filter`               |
 | 💎 | Deterministic concurrency testing  | ⚠️ TAEF with effort         | ⚠️ KCSAN (probabilistic)                            | ✅ §2 `test_race_barrier_t` (yield-ordered)    |
 | 💎 | Test-scoped cleanup registry       | ❌ Manual in TAEF           | ✅ `kunit_add_action`                               | ✅ §7 `test_add_action` (primitive shipped)    |
-| 💎 | Test-scoped scratch allocation     | ⚠️ Manual in TAEF           | ✅ `kunit_kzalloc` (kmalloc-only)                   | ⬜ §3 `TEST_SCRATCH_KBUF` (kmalloc + PMM)      |
+| 💎 | Test-scoped scratch allocation     | ⚠️ Manual in TAEF           | ✅ `kunit_kzalloc` (kmalloc-only)                   | ✅ §3 `TEST_SCRATCH_KBUF` (kmalloc + PMM)      |
 | 💎 | Per-test leak detection            | ⚠️ DV verifier pool checks  | ✅ `kmemleak` (kernel-wide)                         | ⬜ §8 heap_used delta (per-test, built-in)     |
 | ⭐ | Test-scoped klog level demotion    | ❌ None                     | ❌ None                                             | ⬜ §5 `TEST_KLOG_SUPPRESS`                     |
 | ⭐ | Single-boot 436-suite runner       | ❌ WDK run per-driver       | ❌ KUnit one-module-at-a-time                       | ✅ existing `test=1` infrastructure            |
@@ -252,7 +262,7 @@ After §1-§8 land, in-kernel test coverage reaches Linux-KUnit-plus-fault-injec
 
 - [x] `src/kernel/test/test_heap.c` covers §1 `kmalloc_fail_next` + `kmalloc_fail_countdown_set(N)` + IRQL gate (5 suites; shipped with §1)
 - [x] `src/kernel/test/test_sched.c` covers §2 `test_race_barrier_t` release-a-first and release-b-first orderings (100-iteration drift check) + init-clears-state sanity
-- [ ] `src/kernel/test/test_runner.c` sanity tests for §3 `TEST_SCRATCH_KBUF` (kmalloc path, PMM path, cleanup-on-failure path)
+- [x] `src/kernel/test/test_harness.c` sanity tests for §3 `TEST_SCRATCH_KBUF` (7 TEST_CAT_BOOT suites: kmalloc route, PMM route, forced-fail cleanup, rollback-on-full-action-stack)
 - [ ] `src/kernel/test/test_boot_payload.c` + `test_sched.c` regression coverage for §5 `TEST_KLOG_SUPPRESS` (error-path klog lines disappear from test-window serial output)
 - [ ] `src/kernel/test/test_heap.c` + `test_pmm.c` + `test_mm.c` + `test_syscall.c` cover §6 multi-allocator fault injection: task-filter, total-hits cap, pmm/vmm/copy_user countdowns (min 1 fail-next + 1 IRQL-gate per allocator)
 - [x] `src/kernel/test/test_harness.c` sanity tests for §7 `test_add_action` (9 TEST_CAT_BOOT suites: LIFO drain, overflow, NULL-fn reject, re-entrant-during-drain reject, IRQL recovery)
