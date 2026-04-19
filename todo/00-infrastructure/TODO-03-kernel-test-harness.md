@@ -106,9 +106,13 @@ A two-thread rendezvous primitive for tests that need to observe behaviour at a 
 > - Shipped [`include/kernel/test/race_barrier.h`](../../include/kernel/test/race_barrier.h) + [`src/kernel/test/race_barrier.c`](../../src/kernel/test/race_barrier.c) (4 functions, ~60 lines, KERNEL_TESTS-gated so release builds drop the translation unit entirely).
 > - Uses existing primitives only (`spinlock_t`, `event_t` AUTO_RESET, `thread_yield`); no new kernel subsystem surface. Arrive functions release the spinlock BEFORE `event_wait` to honour the "don't yield under a lock" hazard.
 > - Release-ordering guarantee is yield-based best-effort under the flat-cyclic round-robin scheduler: on WHPX-2-CPU the 100-iteration test expects 100% match for the chosen order. Regression would surface as sporadic order-inversions (would fail the `hits == iterations` assertion), not a hang.
-> - Partial-create cleanup: if the second `kthread_create` fails, the first worker is already parked on its release event; the test helper signals the event before `thread_join` so slot-pressure failure paths surface as a `TEST_ASSERT(r >= 0)` fail rather than a deadlock. Fix landed from Codex step-9 [H] finding before commit.
+> - Defensive bounding: arrive_a/arrive_b use `event_wait_timeout(10 s)` (not `event_wait`) to avoid the event.c check-enqueue-block lost-wakeup race; `release()` has a 1,000,000-yield budget and unconditionally event_sets both events + sets a `release_timed_out` flag on timeout; test helper fast-fails via that flag. Runner cannot hang if a worker never arrives.
+> - Partial-create cleanup: if the second `kthread_create` fails, the first worker is already parked on its release event; the test helper signals the event before `thread_join` so slot-pressure failure paths surface as a `TEST_ASSERT(r >= 0)` fail rather than a deadlock.
 > - Downstream consumers: §7 `test_add_action` will convert the barrier cleanup to a registered action once that section ships; TODO-12 §5 `Test gaps` two-port lock-ordering concurrency test closes via §4 retrofit using this primitive.
 > - Scope boundary: §2 owns the two-thread deterministic rendezvous. §7 owns the generic test-scoped cleanup registry; §6 owns SMP ordering hardening (task-filter keeps worker pairs scheduling-predictable); wider concurrency harnesses remain with specific domain tests.
+
+> **Verified:** 2026-04-19 | commit `3c1a03cc` | 7/7 items | build OK | 3 sched suites added (release-a-first/100, release-b-first/100, init-clears-state)
+> **Quality reviewed:** 2026-04-19 | Codex 4x (coverage, adversarial x2, quality) | 3H+1M fixed, 1H rejected, 0 open | scope: kernel-code-quality
 
 ---
 

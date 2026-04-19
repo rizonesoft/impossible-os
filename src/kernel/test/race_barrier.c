@@ -46,6 +46,16 @@
  * than scheduler pressure. */
 #define TEST_RACE_BARRIER_WAIT_MS  10000u
 
+/* Driver-side yield budget for release(). Each iteration of the poll
+ * loop costs one thread_yield(); on a healthy 2-CPU system the arrival
+ * flags go high within a handful of yields. 1,000,000 is far beyond any
+ * legitimate wait (roughly 1 second of CPU time on a modern machine)
+ * and exists purely to turn a worker-never-arrived scenario (scheduler
+ * regression, kthread never dispatched, fault before arrive_a) into a
+ * bounded test failure instead of an indefinite hang. Codex post-commit
+ * review flagged the unbounded poll as [H]; this budget closes it. */
+#define TEST_RACE_BARRIER_RELEASE_YIELDS  1000000u
+
 void test_race_barrier_init(test_race_barrier_t *b)
 {
     b->lock.flag = 0;
@@ -53,6 +63,7 @@ void test_race_barrier_init(test_race_barrier_t *b)
     event_init(&b->b_reached, "race_barrier_b", EVENT_AUTO_RESET, 0);
     b->a_arrived = 0;
     b->b_arrived = 0;
+    b->release_timed_out = 0;
 }
 
 void test_race_barrier_arrive_a(test_race_barrier_t *b)
@@ -81,14 +92,16 @@ void test_race_barrier_arrive_b(test_race_barrier_t *b)
 
 void test_race_barrier_release(test_race_barrier_t *b, int a_first)
 {
-    /* Cooperative spin until both workers are parked on their events.
-     * This polls under the spinlock for a consistent snapshot; the lock
-     * is released around thread_yield() so workers can take it for their
-     * own arrival updates. */
-    for (;;) {
-        uint64_t irq_flags;
-        int both_arrived;
+    /* Bounded cooperative spin until both workers are parked on their
+     * events. The lock is released around thread_yield() so workers can
+     * take it for their own arrival updates. Yield budget turns a
+     * worker-never-arrives scenario into a test failure rather than a
+     * hang (see TEST_RACE_BARRIER_RELEASE_YIELDS rationale above). */
+    uint32_t budget = TEST_RACE_BARRIER_RELEASE_YIELDS;
+    int both_arrived = 0;
 
+    while (budget > 0) {
+        uint64_t irq_flags;
         spin_lock_irqsave(&b->lock, &irq_flags);
         both_arrived = b->a_arrived && b->b_arrived;
         spin_unlock_irqrestore(&b->lock, irq_flags);
@@ -97,6 +110,26 @@ void test_race_barrier_release(test_race_barrier_t *b, int a_first)
             break;
 
         thread_yield();
+        budget--;
+    }
+
+    if (!both_arrived) {
+        /* Timeout: mark the barrier timed-out so the test driver can
+         * assert on it after thread_join, then unconditionally fire
+         * both release events. Workers that actually arrived (but
+         * never got their wake because we timed out before event_set)
+         * need to be released so the subsequent thread_join doesn't
+         * deadlock. Workers that never arrived are unaffected -- they
+         * were never parked in arrive_a/arrive_b and the event_set
+         * here is a no-op from their point of view (AUTO_RESET state
+         * latches for a future event_wait_timeout that never comes). */
+        uint64_t irq_flags;
+        spin_lock_irqsave(&b->lock, &irq_flags);
+        b->release_timed_out = 1;
+        spin_unlock_irqrestore(&b->lock, irq_flags);
+        event_set(&b->a_reached);
+        event_set(&b->b_reached);
+        return;
     }
 
     /* Wake in chosen order. The yield between the two sets lets the first

@@ -193,6 +193,15 @@ static int race_barrier_run_once(int a_first)
 
     test_race_barrier_release(&g_race_barrier, a_first);
 
+    /* If release() timed out waiting for arrivals, both workers were
+     * unconditionally signalled so join() won't deadlock -- but this
+     * rendezvous is a failed setup, not a valid ordering check. */
+    if (g_race_barrier.release_timed_out) {
+        thread_join((uint32_t)ta);
+        thread_join((uint32_t)tb);
+        return -1;
+    }
+
     thread_join((uint32_t)ta);
     thread_join((uint32_t)tb);
 
@@ -241,6 +250,8 @@ static void test_sched_race_barrier_init_clears_state(void)
                    "init clears a_arrived");
     TEST_ASSERT_EQ(g_race_barrier.b_arrived, 0,
                    "init clears b_arrived");
+    TEST_ASSERT_EQ(g_race_barrier.release_timed_out, 0,
+                   "init clears release_timed_out");
     TEST_ASSERT_EQ(event_is_set(&g_race_barrier.a_reached), 0,
                    "init leaves a_reached unsignalled");
     TEST_ASSERT_EQ(event_is_set(&g_race_barrier.b_reached), 0,

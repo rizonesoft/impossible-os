@@ -70,10 +70,11 @@
 
 typedef struct test_race_barrier {
     spinlock_t lock;
-    event_t    a_reached;     /* AUTO_RESET; release() sets this to wake A */
-    event_t    b_reached;     /* AUTO_RESET; release() sets this to wake B */
-    uint8_t    a_arrived;     /* 1 after thread A calls arrive_a() */
-    uint8_t    b_arrived;     /* 1 after thread B calls arrive_b() */
+    event_t    a_reached;          /* AUTO_RESET; release() sets this to wake A */
+    event_t    b_reached;          /* AUTO_RESET; release() sets this to wake B */
+    uint8_t    a_arrived;          /* 1 after thread A calls arrive_a() */
+    uint8_t    b_arrived;          /* 1 after thread B calls arrive_b() */
+    uint8_t    release_timed_out;  /* 1 if release() exhausted its yield budget */
 } test_race_barrier_t;
 
 /* Initialise both events as AUTO_RESET, clear arrival flags, reset lock. */
