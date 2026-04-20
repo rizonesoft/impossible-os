@@ -313,6 +313,59 @@ int64_t sys_fault_inject_dispatch(uint32_t kind, uint32_t countdown)
     }
 }
 
+/* ---- Shared syscall-entry IRQL wrappers -------------------------- *
+ *
+ * Both INT 0x80 (Linux-style) and INT 0x2E (NT compatibility) are
+ * software interrupts, not hardware IRQs. The shared IDT isr_handler
+ * raises `pcpu->current_irql` to vector_to_irql(vec) for every vector
+ * >= 32, so syscalls land with current_irql == 8 (INT 0x80) or
+ * DISPATCH_LEVEL (INT 0x2E). Both are higher than mutex_lock's
+ * APC_LEVEL ceiling and higher than the fault-injection hook's
+ * PASSIVE_LEVEL gate. Neither is correct for a syscall body -- syscalls
+ * run on behalf of a user thread and should execute at its logical
+ * IRQL. Lower on entry, restore software bookkeeping on exit WITHOUT
+ * reprogramming TPR (the IDT raise is pure software bookkeeping, TPR
+ * was never actually raised). Leaked-raise guard detects a callee
+ * that called KeRaiseIrql and missed its matching lower -- without
+ * this, the direct restore would mask a stuck TPR and silently
+ * reintroduce the "low-priority IRQs masked after a syscall" class
+ * of failure.
+ *
+ * History: split out of the INT 0x80 body (2026-04-20 adjacent fix)
+ * after Codex quality review identified that INT 0x2E had the same
+ * bug and factoring prevents drift between the two paths. */
+
+static KIRQL syscall_lower_entry_irql(void)
+{
+    KIRQL entry_irql = KeGetCurrentIrql();
+    if (entry_irql > PASSIVE_LEVEL)
+        KeLowerIrql(PASSIVE_LEVEL);
+    return entry_irql;
+}
+
+static void syscall_restore_entry_irql(KIRQL entry_irql, uint64_t syscall_nr)
+{
+    struct per_cpu_data *pc;
+
+    if (entry_irql <= PASSIVE_LEVEL)
+        return;
+
+    pc = smp_this_cpu();
+    if (pc->current_irql != PASSIVE_LEVEL) {
+        /* Leaked-raise invariant violated: a callee raised IRQL and
+         * never matched-lower. Force TPR back to PASSIVE before we
+         * overwrite the software bookkeeping so we don't leave the
+         * CPU's low-priority IRQs masked. */
+        klog(LOG_ERROR, "sys",
+             "IRQL leaked through syscall body: current=%u expected=PASSIVE"
+             " (syscall_nr=%u, pid=%u) -- forcing lower",
+             (uint64_t)pc->current_irql, syscall_nr,
+             (uint64_t)task_current()->pid);
+        KeLowerIrql(PASSIVE_LEVEL);
+    }
+    pc->current_irql = entry_irql;
+}
+
 static uint64_t syscall_handler(struct interrupt_frame *frame)
 {
     uint64_t syscall_nr = frame->rax;
@@ -320,26 +373,7 @@ static uint64_t syscall_handler(struct interrupt_frame *frame)
     uint64_t arg2 = frame->rsi;
     uint64_t arg3 = frame->rdx;
     int64_t ret = -1;
-    KIRQL entry_irql;
-
-    /* Lower IRQL to PASSIVE_LEVEL for the duration of the syscall body.
-     *
-     * INT 0x80 is a software interrupt, not a hardware IRQ -- the IDT's
-     * vector_to_irql() treats it as a device interrupt (group 8 -> IRQL 8)
-     * because it doesn't special-case software vectors. Keeping IRQL=8 for
-     * syscall bodies blocks mutex_lock (APC_LEVEL ceiling), blocks the §1
-     * fault-injection hook (PASSIVE_LEVEL gate), and has no benefit --
-     * syscalls run on behalf of the user thread and should execute at its
-     * logical IRQL.
-     *
-     * Paired with the restore below; KeLowerIrql clamps when current is
-     * already <= target, so this is a no-op on any re-entry path that
-     * already dropped the IRQL first. Same fix-class as the §3 task_exit
-     * IRQL leak (2026-04-20) -- that was the forever-yield case, this is
-     * the per-syscall case, both blocked by the same IDT raise. */
-    entry_irql = KeGetCurrentIrql();
-    if (entry_irql > PASSIVE_LEVEL)
-        KeLowerIrql(PASSIVE_LEVEL);
+    KIRQL entry_irql = syscall_lower_entry_irql();
 
     switch (syscall_nr) {
     case SYS_WRITE: {
@@ -565,26 +599,7 @@ static uint64_t syscall_handler(struct interrupt_frame *frame)
         break;
     }
 
-    /* Restore the software IRQL bookkeeping WITHOUT reprogramming TPR.
-     *
-     * Codex quality H1, 2026-04-20: KeRaiseIrql(entry_irql) would
-     * program TPR to the synthetic DIRQL=8 for INT 0x80 and the IDT's
-     * post-handler irql_restore (idt.c line ~320) only reassigns
-     * pcpu->current_irql without re-touching TPR, so TPR would stay
-     * pinned at 8 across every syscall -- masking legacy device IRQs
-     * for the rest of the CPU's runtime.
-     *
-     * The correct behavior: TPR was never actually raised on INT 0x80
-     * entry (the IDT's raise is pure software bookkeeping -- it
-     * updates pcpu->current_irql only). Hardware interrupt masking
-     * during the syscall body is provided by the CPU's IF flag
-     * (cleared automatically on interrupt gate entry). So we should
-     * leave TPR at PASSIVE (where our KeLowerIrql put it) and just
-     * restore the software bookkeeping so the IDT's conditional
-     * `if (current != prev) current = prev` sees the state it expects.
-     * Writing pcpu->current_irql directly bypasses TPR. */
-    if (entry_irql > PASSIVE_LEVEL)
-        smp_this_cpu()->current_irql = entry_irql;
+    syscall_restore_entry_irql(entry_irql, syscall_nr);
 
     frame->rax = (uint64_t)ret;
     return (uint64_t)frame;
@@ -603,6 +618,13 @@ static uint64_t syscall_handler_2e(struct interrupt_frame *frame)
     extern uint32_t RtlNtStatusToDosError(NTSTATUS);
     extern struct thread *thread_current(void);
     NTSTATUS result;
+    /* Same syscall-entry IRQL wrap as INT 0x80 -- INT 0x2E is a
+     * software interrupt too. Without this, ssdt_dispatch runs at
+     * DISPATCH_LEVEL (vector_to_irql(0x2E) = 2 via the ISA-legacy
+     * range branch), blocking mutex_lock on any NT path and blocking
+     * the §5 fault-injection hooks from firing on NT-mediated
+     * allocator calls. (Codex quality review 2026-04-20.) */
+    KIRQL entry_irql = syscall_lower_entry_irql();
     ssdt_set_previous_mode(1);  /* UserMode -- INT 0x2E always from ring 3 */
     result = ssdt_dispatch(
         (uint32_t)frame->rax,   /* service number */
@@ -620,6 +642,7 @@ static uint64_t syscall_handler_2e(struct interrupt_frame *frame)
             teb->LastErrorValue = RtlNtStatusToDosError(result);
         }
     }
+    syscall_restore_entry_irql(entry_irql, (uint64_t)frame->rax);
     frame->rax = (uint64_t)result;
     return (uint64_t)frame;
 }
