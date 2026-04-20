@@ -206,7 +206,7 @@ static const char *level_prefix[] = {
 #define ANSI_RED      "\033[31m"
 #define ANSI_BOLD_RED "\033[1;31m"
 #define ANSI_CYAN     "\033[36m"
-#define ANSI_MAGENTA  "\033[35m"
+#define ANSI_MAGENTA  "\033[95m"  /* bright magenta -- readable vs dark 35m */
 
 static const char *level_ansi[] = {
     ANSI_DGREY,     /* LOG_DEBUG  [INFO] */
