@@ -1866,10 +1866,18 @@ void task_cleanup(uint32_t pid)
             kfree(tasks[pid].stack_base);
         } else {
             /* PMM-allocated stack with guard page at stack_base - 4096.
-             * Free guard + N stack pages back to PMM. */
+             * MUST uninstall the guard BEFORE freeing the frame: the
+             * guard install cleared the identity-map PTE for that VA,
+             * so handing the physical frame back to PMM without first
+             * restoring the PTE means the next pmm_alloc that returns
+             * the same frame faults at zero_page (or wherever the
+             * caller writes). Discovered 2026-04-20 via Boot Tests:
+             * #PF write at CR2=guard_phys, RIP in zero_page, after
+             * task_cleanup freed the guard frame. */
             uintptr_t base = (uintptr_t)tasks[pid].stack_base;
             uint32_t pages = (TASK_STACK_SIZE / 4096) + 1;  /* +1 for guard */
             uint32_t p;
+            vmm_uninstall_guard_page(base - 4096);
             for (p = 0; p < pages; p++)
                 pmm_free_frame((base - 4096) + (uintptr_t)p * 4096);
         }

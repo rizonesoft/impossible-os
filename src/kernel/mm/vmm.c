@@ -945,6 +945,35 @@ int vmm_install_guard_page(uintptr_t virt, const char *label)
     return 0;
 }
 
+int vmm_uninstall_guard_page(uintptr_t virt)
+{
+    uintptr_t page = virt & ~((uintptr_t)0xFFF);
+    uint32_t i;
+    int found = 0;
+
+    /* Remove from the guard table (compact-on-delete to keep lookups O(N)
+     * tight). If `virt` is not registered, this is a no-op success -- the
+     * caller may legitimately call us on a page that was never guarded
+     * (e.g. task_create_user kernel stacks have no guard). */
+    for (i = 0; i < guard_page_count; i++) {
+        if (guard_pages[i].addr == page) {
+            uint32_t j;
+            for (j = i; j + 1 < guard_page_count; j++)
+                guard_pages[j] = guard_pages[j + 1];
+            guard_page_count--;
+            found = 1;
+            break;
+        }
+    }
+    if (!found)
+        return 0;
+
+    /* Restore identity mapping at `virt`. The frame physically backing
+     * the VA in the boot identity map is `virt` itself. We re-map it as
+     * Present + Writable, kernel-only (no User bit). */
+    return vmm_map_page(page, page, VMM_FLAG_PRESENT | VMM_FLAG_WRITABLE);
+}
+
 /* --- 1 GiB huge page support --- */
 
 int vmm_map_huge_1g(uintptr_t virt, uintptr_t phys, uint64_t flags)

@@ -131,6 +131,15 @@ int vmm_split_huge_page(uintptr_t virt);
  * On hit, panic_screen shows the label instead of generic "PAGE_FAULT". */
 int vmm_install_guard_page(uintptr_t virt, const char *label);
 
+/* Reverse of vmm_install_guard_page: restore the identity mapping at
+ * `virt` (Present + Writable, kernel-only) and remove the entry from
+ * the guard-page table. MUST be called before returning the underlying
+ * physical frame to PMM -- otherwise the next pmm_alloc that hands out
+ * the same frame will fault when its zero/init writer dereferences the
+ * (still-not-present) virtual address. Idempotent: if `virt` is not a
+ * registered guard, returns 0 without touching the page tables. */
+int vmm_uninstall_guard_page(uintptr_t virt);
+
 /* Change protection flags on an already-mapped page.
  * Updates the PTE flags without changing the physical address.
  * Flushes the TLB entry. Returns 0 on success, -1 if page not mapped. */
