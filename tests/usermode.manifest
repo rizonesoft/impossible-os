@@ -1,0 +1,24 @@
+# Impossible OS user-mode test manifest
+# =====================================
+#
+# Deployed by `make userland` to C:\tests\usermode.manifest.
+# Read by the kernel-side launcher in src/kernel/test/test_usermode.c
+# (TODO-04 §3 + §4). One filename per line, `#` starts a comment,
+# blank lines are ignored. Order in this file is the execution order
+# -- the launcher honours it so tests can declare deterministic
+# dependencies (e.g. run a smoke first, then subsystem coverage).
+#
+# Behavior:
+#   - First §1 smoke so a broken UTEST harness itself fails loud.
+#   - Then §2 (build-validating) syscall stub.
+#   - Future §9-§15 binaries append here as they ship.
+#
+# Binaries not listed here are STILL run (via directory glob) when
+# this manifest is absent OR when the §4 UTEST_MANIFEST_MAX cap is
+# tripped. The manifest is a priority list, not a restriction list.
+#
+# To restrict the run to ONE binary, set `utest_filter=test_foo.exe`
+# in boot.conf (TODO-04 §4). Glob matching is supported: `test_smoke_*.exe`.
+
+test_harness_smoke.exe
+test_syscall.exe

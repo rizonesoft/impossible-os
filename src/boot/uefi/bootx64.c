@@ -1968,6 +1968,20 @@ static void parse_conf_kv(struct boot_config *cfg,
     else if (ascii_streq(key, "ob_handle_trace")) {
         cfg->ob_handle_trace = (UINT8)ascii_atoi(val);
     }
+    else if (ascii_streq(key, "tap")) {
+        cfg->tap = (UINT8)ascii_atoi(val);
+    }
+    else if (ascii_streq(key, "utest_timeout_ms")) {
+        UINTN ms = (UINTN)ascii_atoi(val);
+        if (ms > 0xFFFF) ms = 0xFFFF;  /* clamp to uint16_t */
+        cfg->utest_timeout_ms = (UINT16)ms;
+    }
+    else if (ascii_streq(key, "utest_filter")) {
+        UINTN i;
+        for (i = 0; i < sizeof(cfg->utest_filter) - 1 && val[i]; i++)
+            cfg->utest_filter[i] = val[i];
+        cfg->utest_filter[i] = '\0';
+    }
     else if (ascii_streq(key, "boot_mode")) {
         if      (ascii_streq(val, "normal"))   cfg->boot_mode = 0;
         else if (ascii_streq(val, "safe"))     cfg->boot_mode = 1;

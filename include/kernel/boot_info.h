@@ -292,7 +292,11 @@ struct boot_gop_mode {
  *    17      15   _reserved[]
  *    32     256   cmdline          <-- STABLE ABI offset
  *   288       1   config_found
- *   289     223   _pad[]
+ *   289       1   tap                (S4: TODO-04 user-mode TAP mode)
+ *   290       2   _pad_align         (align uint16_t)
+ *   292       2   utest_timeout_ms
+ *   294      64   utest_filter[]
+ *   358     154   _pad[]
  *   ---     ---
  *   512 total (sector-aligned)
  */
@@ -335,16 +339,29 @@ struct boot_config {
     char     cmdline[BOOT_CONF_CMDLINE_MAX];
     /* Status */
     uint8_t  config_found;     /* 1 if boot.conf was successfully parsed */
+    /* User-mode test launcher knobs (S4 of TODO-04). All fields zero by
+     * default -- a boot.conf without these keys matches the pre-S4
+     * behavior exactly. */
+    uint8_t  tap;              /* 1 = emit TAP (ok/not ok/1..N) lines around each binary */
+    uint8_t  _pad_utest[2];    /* align the uint16_t below */
+    uint16_t utest_timeout_ms; /* per-binary wall-clock timeout; 0 = default (10s) */
+    char     utest_filter[64]; /* glob/literal filter; empty = run every test_*.exe */
     /* Pad to 512 bytes total (sector-aligned). */
-    uint8_t  _pad[223];
+    uint8_t  _pad[154];
 };
 
 /* Compile-time enforcement of bootloader ABI contract.
- * If you add a field, shrink _reserved[] to keep cmdline at offset 32. */
+ * If you add a field, shrink _reserved[] / _pad[] to keep stable offsets. */
 _Static_assert(__builtin_offsetof(struct boot_config, cmdline) == 32,
     "cmdline must be at byte offset 32 -- bootloader ABI contract");
 _Static_assert(__builtin_offsetof(struct boot_config, config_found) == 288,
     "config_found must be at byte offset 288 -- after cmdline[256]");
+_Static_assert(__builtin_offsetof(struct boot_config, tap) == 289,
+    "tap must be at byte offset 289 (TODO-04 S4 stable ABI)");
+_Static_assert(__builtin_offsetof(struct boot_config, utest_timeout_ms) == 292,
+    "utest_timeout_ms must be at byte offset 292 (TODO-04 S4 stable ABI)");
+_Static_assert(__builtin_offsetof(struct boot_config, utest_filter) == 294,
+    "utest_filter must be at byte offset 294 (TODO-04 S4 stable ABI)");
 _Static_assert(sizeof(struct boot_config) == 512,
     "boot_config must be exactly 512 bytes (sector-aligned)");
 

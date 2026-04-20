@@ -1,15 +1,26 @@
 /* ============================================================================
  * test_usermode.c -- Kernel-side launcher for user-mode test binaries
  *
- * §3 of TODO-04. See include/kernel/test/test_usermode.h for the API
- * contract; this TU implements scan + spawn + wait + report.
+ * Ships §3 (baseline spawn-and-wait) and §4 (manifest, timeouts, TAP,
+ * SKIP, filter) of TODO-04. See include/kernel/test/test_usermode.h
+ * for the public API contract.
  *
  * Sequencing: the launcher is single-threaded by design. Binaries run
  * one at a time so a leaked file handle, dirty Registry key, or stuck
  * process from binary N cannot perturb binary N+1's run. Per-test
- * isolation hardening (per-test scratch dir, per-binary handle-leak
- * detection) is owned by §6; this section just gets the basic
- * sequence right.
+ * isolation hardening (scratch dir + handle-leak detection) is owned
+ * by §6; this file gets the basic sequence + watchdog right.
+ *
+ * Preemptive scheduling: test_usermode_run() enables the scheduler
+ * for the duration of the launcher run and disables it on return.
+ * Without this, a test_*.exe that spins in user mode without making
+ * any syscall would block CPU 0 forever -- cooperative yield() cannot
+ * wrest control back from a spinning user task, and the timeout
+ * watchdog below depends on the launcher periodically regaining the
+ * CPU to check uptime_ms(). Wrapped in enable/disable so the rest of
+ * boot_phase3 (which assumes single-threaded init order) is
+ * unaffected. Mirrors the sys_wq creation wrapper at
+ * boot_desktop.c:86.
  *
  * The path-passing trick:
  *   task_create(loader_func, name) launches a kernel task that runs
@@ -18,8 +29,8 @@
  *   task_create call), opens the file, kmalloc's a buffer, and then
  *   calls task_exec(buf, size) to morph the kernel task into a user
  *   task running the binary. Same pattern as exec_loader_func in
- *   src/kernel/main/test_threads.c. Single-threaded launch + waitpid
- *   means there is no race on s_pending_test_path.
+ *   src/kernel/main/test_threads.c. Single-threaded launch + polled
+ *   wait means there is no race on s_pending_test_path.
  * ============================================================================ */
 
 #include "kernel/types.h"
@@ -28,6 +39,8 @@
 #include "kernel/mm/pmm.h"
 #include "kernel/fs/vfs.h"
 #include "kernel/sched/task.h"
+#include "kernel/ipc/signal.h"
+#include "kernel/timer.h"
 #include "kernel/test/test_usermode.h"
 
 /* ---- Internal state -------------------------------------------------- */
@@ -38,12 +51,41 @@
  * Volatile because the loader runs in a different scheduling slot. */
 static volatile const char *s_pending_test_path;
 
-/* Filter set by §4 (when it lands); NULL means "run every test_*.exe". */
+/* Filter set by §4 -- NULL means "run every test_*.exe". */
 static const char *s_filter;
+
+/* Per-binary wall-clock timeout in ms. 0 = default. */
+static uint32_t s_timeout_ms;
+
+/* TAP mode: 1 = emit `ok N - name` / `not ok N - name` / `1..N` plan. */
+static int s_tap_mode;
+
+/* Defaults matching the §4 test checkpoint: 10s wall clock is long
+ * enough for a trivial test_*.exe on WHPX TCG (launch overhead plus
+ * ELF load plus a few syscalls is <2s), short enough that a genuine
+ * hang is caught in one boot cycle. */
+#define UTEST_DEFAULT_TIMEOUT_MS 10000u
+/* Grace period after SIGKILL before we force state=DEAD. */
+#define UTEST_KILL_GRACE_MS       500u
+/* Max binaries a single manifest can list; beyond this, extras fall
+ * through to the directory-glob fallback. 128 is ~2x the §9-§15
+ * planned binary set and matches what a future stress-test batch
+ * would realistically enumerate. */
+#define UTEST_MANIFEST_MAX        128u
 
 void test_usermode_set_filter(const char *filter)
 {
     s_filter = (filter && filter[0]) ? filter : (const char *)0;
+}
+
+void test_usermode_set_timeout_ms(uint32_t ms)
+{
+    s_timeout_ms = ms;
+}
+
+void test_usermode_set_tap(int enable)
+{
+    s_tap_mode = enable ? 1 : 0;
 }
 
 /* ---- Tiny string helpers (no libc deps in kernel) -------------------- */
@@ -84,33 +126,34 @@ static int u_ends_with(const char *s, const char *suffix)
 }
 
 /* fnmatch-style `*` glob (single wildcard supported, anywhere). The
- * actual full POSIX implementation is overkill -- the §4 spec calls
- * for "literal name or `*`-glob" and that's exactly what tests need
- * (`test_smoke_*.exe` etc.). NULL pattern matches everything. */
-static int u_glob_match(const char *pattern, const char *name)
+ * §4 spec calls for "literal name or `*`-glob" and that's exactly
+ * what tests need (`test_smoke_*.exe` etc.). NULL pattern matches
+ * everything. Exposed for unit tests (u_glob_match_public). */
+int test_usermode_glob_match(const char *pattern, const char *name);
+int test_usermode_glob_match(const char *pattern, const char *name)
 {
+    const char *star;
+    uint32_t prefix_len, suffix_len, name_len;
+    const char *suffix;
+
     if (!pattern)
         return 1;
-    /* Locate the wildcard, if any. */
-    const char *star = pattern;
+    star = pattern;
     while (*star && *star != '*') star++;
     if (!*star) {
-        /* No wildcard -- literal compare. */
         const char *p = pattern, *n = name;
         while (*p && *n && *p == *n) { p++; n++; }
         return *p == 0 && *n == 0;
     }
-    /* Pattern is "<prefix>*<suffix>". Both halves must match. */
-    uint32_t prefix_len = (uint32_t)(star - pattern);
-    const char *suffix = star + 1;
-    uint32_t name_len = 0;
+    prefix_len = (uint32_t)(star - pattern);
+    suffix = star + 1;
+    name_len = 0;
     while (name[name_len]) name_len++;
     if (name_len < prefix_len)
         return 0;
     if (u_strncmp(pattern, name, prefix_len) != 0)
         return 0;
-    /* Suffix must match the END of name (after the prefix). */
-    uint32_t suffix_len = 0;
+    suffix_len = 0;
     while (suffix[suffix_len]) suffix_len++;
     if (suffix_len > name_len - prefix_len)
         return 0;
@@ -119,8 +162,6 @@ static int u_glob_match(const char *pattern, const char *name)
 
 static int u_is_test_binary(const char *name)
 {
-    /* `test_*.exe` -- prefix `test_`, suffix `.exe`. Excludes the
-     * production hello.exe / cmd.exe / etc. */
     if (!u_starts_with(name, "test_"))
         return 0;
     if (!u_ends_with(name, ".exe"))
@@ -128,15 +169,208 @@ static int u_is_test_binary(const char *name)
     return 1;
 }
 
+/* Stricter gate used for manifest entries: the file is user-provided
+ * text and u_run_one concatenates `C:\<name>` before vfs_open+task_exec,
+ * so entries must stay in the C:\ root and must not contain path
+ * separators, drive-letter colons, or upwards traversal components.
+ * The glob-discovery path is already implicitly safe because vfs_readdir
+ * returns one directory entry at a time, but the manifest path has no
+ * such guard. (Codex adversarial review M1, 2026-04-20.) */
+static int u_is_valid_manifest_name(const char *name)
+{
+    const char *p;
+
+    if (!name || !name[0])
+        return 0;
+    if (!u_is_test_binary(name))
+        return 0;
+    /* Reject path-shaped inputs. `.` and `..` can never be a valid
+     * binary because they fail u_is_test_binary above, but an attacker
+     * could still try `test_.._foo.exe` -- we forbid any `..` substring
+     * as defense-in-depth. Same for `\`, `/`, and `:` which are the
+     * three path-structure characters on the Windows-convention path. */
+    for (p = name; *p; p++) {
+        if (*p == '\\' || *p == '/' || *p == ':')
+            return 0;
+        if ((unsigned char)*p < 0x20)  /* control byte */
+            return 0;
+        if (p[0] == '.' && p[1] == '.')
+            return 0;
+    }
+    return 1;
+}
+
+static uint64_t u_uptime_ms(void)
+{
+    return uptime_ns() / 1000000ULL;
+}
+
+/* ---- Manifest parser ------------------------------------------------ *
+ *
+ * Manifest format: one `test_*.exe` filename per line; `#` starts a
+ * line comment; leading/trailing whitespace ignored; blank lines
+ * skipped. First line that is not blank/comment is the first binary
+ * to run, in file order. Maximum UTEST_MANIFEST_MAX binaries per
+ * manifest -- a tripped cap logs a warning and falls back to the
+ * directory glob for the remainder.
+ *
+ * Location: `C:\tests\usermode.manifest`. Absent = launcher falls
+ * back to scanning C:\ root (legacy behavior). Makefile userland
+ * target deploys the manifest file if `tests/usermode.manifest`
+ * exists in the source tree.
+ *
+ * We store parsed entries in a file-scope static array of pointers
+ * plus a single arena buffer for the filename text. The arena is
+ * allocated once per test_usermode_run() invocation from the heap
+ * and freed before return, so no permanent allocation survives.
+ * ------------------------------------------------------------------ */
+
+#define UTEST_MANIFEST_ARENA_BYTES 8192u  /* 128 entries * avg 64 bytes */
+
+struct manifest_state {
+    const char *names[UTEST_MANIFEST_MAX];
+    uint32_t    count;
+    char       *arena;         /* heap-allocated; NULL if not loaded */
+    uint32_t    arena_used;
+    uint32_t    arena_cap;
+    int         overflowed;    /* 1 = hit UTEST_MANIFEST_MAX cap */
+};
+
+static int u_manifest_load(struct manifest_state *ms)
+{
+    struct vfs_node *f;
+    uint8_t *buf;
+    int n;
+    uint32_t size;
+
+    ms->count       = 0;
+    ms->arena       = (char *)0;
+    ms->arena_used  = 0;
+    ms->arena_cap   = 0;
+    ms->overflowed  = 0;
+
+    f = vfs_open("C:\\tests\\usermode.manifest", VFS_O_READ);
+    if (!f)
+        return 0;  /* absent is normal */
+
+    size = f->size;
+    /* Cap at ARENA - 1 to guarantee room for a sentinel NUL at
+     * arena[size]. Otherwise a file of exactly ARENA bytes whose last
+     * line lacks a trailing newline lets the in-place tokenizer's
+     * `*line_end = '\0'` write at arena[size], which is past the end
+     * of the kmalloc allocation. Codex adversarial review H1,
+     * 2026-04-20: kernel-heap OOB write triggered by a user-provided
+     * file. */
+    if (size == 0 || size >= UTEST_MANIFEST_ARENA_BYTES) {
+        vfs_close(f);
+        if (size >= UTEST_MANIFEST_ARENA_BYTES)
+            klog(LOG_WARN, "UTEST",
+                 "manifest size %u >= %u -- falling back to glob",
+                 (uint64_t)size, (uint64_t)UTEST_MANIFEST_ARENA_BYTES);
+        return 0;
+    }
+
+    ms->arena_cap = UTEST_MANIFEST_ARENA_BYTES;
+    ms->arena     = (char *)kmalloc(ms->arena_cap);
+    if (!ms->arena) {
+        vfs_close(f);
+        klog(LOG_WARN, "UTEST", "manifest kmalloc failed -- falling back to glob");
+        return 0;
+    }
+    buf = (uint8_t *)ms->arena;
+
+    n = vfs_read(f, 0, size, buf);
+    vfs_close(f);
+    if (n <= 0 || (uint32_t)n != size) {
+        klog(LOG_WARN, "UTEST", "manifest short read -- falling back to glob");
+        kfree(ms->arena);
+        ms->arena = (char *)0;
+        return 0;
+    }
+
+    /* In-place tokenize: walk lines, trim ws + comments, NUL-terminate,
+     * append pointer to names[]. The arena buffer's raw content is
+     * safe to overwrite -- we're done reading the source file. */
+    {
+        char *p = ms->arena;
+        char *end = ms->arena + n;
+        while (p < end) {
+            char *line_start;
+            char *line_end;
+            /* Skip leading ws on the line. */
+            while (p < end && (*p == ' ' || *p == '\t' || *p == '\r'))
+                p++;
+            if (p >= end) break;
+            if (*p == '\n') { p++; continue; }       /* blank line */
+            if (*p == '#') {                         /* comment */
+                while (p < end && *p != '\n') p++;
+                continue;
+            }
+            line_start = p;
+            while (p < end && *p != '\n' && *p != '\r' && *p != '#')
+                p++;
+            line_end = p;
+            /* Strip trailing ws. */
+            while (line_end > line_start &&
+                   (line_end[-1] == ' ' || line_end[-1] == '\t'))
+                line_end--;
+            /* Skip the rest of the line (comment tail or EOL). */
+            while (p < end && *p != '\n') p++;
+            if (p < end) { *p = '\0'; p++; }
+            /* Everything from line_start..line_end is the binary name. */
+            if (line_end > line_start) {
+                if (ms->count >= UTEST_MANIFEST_MAX) {
+                    ms->overflowed = 1;
+                    break;
+                }
+                /* Terminate the name in-place. Safe because size was
+                 * capped at ARENA - 1 in the file-read guard above, so
+                 * arena[size] is always within the 8192-byte kmalloc
+                 * even when the last line has no trailing newline. */
+                *line_end = '\0';
+                /* Enforce the manifest trust boundary: even a valid
+                 * test_*.exe suffix does not grant write-access to the
+                 * C:\ path concatenation later. Reject path-shaped or
+                 * control-byte entries here so the manifest can never
+                 * dispatch an arbitrary vfs_open call. (Codex M1,
+                 * 2026-04-20.) */
+                if (!u_is_valid_manifest_name(line_start)) {
+                    klog(LOG_WARN, "UTEST",
+                         "manifest: rejecting invalid entry '%s'",
+                         line_start);
+                    continue;
+                }
+                ms->names[ms->count++] = line_start;
+            }
+        }
+    }
+
+    if (ms->overflowed)
+        klog(LOG_WARN, "UTEST",
+             "manifest entries truncated at %u -- tail runs via glob",
+             (uint64_t)UTEST_MANIFEST_MAX);
+
+    return ms->count > 0 ? 1 : 0;
+}
+
+static void u_manifest_free(struct manifest_state *ms)
+{
+    if (ms->arena) {
+        kfree(ms->arena);
+        ms->arena = (char *)0;
+    }
+    ms->count = 0;
+}
+
 /* ---- Task entry: the loader that morphs into the test binary ---------
  *
  * Failure paths use task_exit(STATUS) -- a plain `return` from a kernel
- * task only sets TASK_DEAD but never wakes the parent's task_waitpid
- * (Codex H1, 2026-04-20). task_exit is the canonical wakeup path.
- * Status codes:
+ * task only sets TASK_DEAD but never wakes the parent's polling
+ * watchdog (Codex H1, 2026-04-20). task_exit is the canonical wakeup
+ * path. Status codes:
  *   -1: NULL pending path (launcher bug)
  *   -2: vfs_open failed
- *   -3: kmalloc failed
+ *   -3: pmm_alloc_contiguous failed
  *   -4: vfs_read short / size mismatch
  *   -5: task_exec failed
  * The launcher renders any negative exit code as `[UTEST] <name>: FAIL
@@ -146,35 +380,27 @@ static int u_is_test_binary(const char *name)
 
 static void utest_loader_func(void)
 {
-    /* Snapshot the path immediately so a future launcher invocation
-     * cannot race us if it set s_pending_test_path again before we
-     * consumed it. (Today the launcher waits in task_waitpid for us,
-     * but defending against future API changes is cheap.) */
     const char *path = (const char *)s_pending_test_path;
+    struct vfs_node *file;
+    uint32_t size, pages, p;
+    uintptr_t buf_phys;
+    uint8_t *buf;
+    int n, rc;
 
     if (!path || !path[0]) {
         klog(LOG_ERROR, "UTEST", "loader: NULL pending path");
         task_exit(-1);
     }
 
-    struct vfs_node *file = vfs_open(path, VFS_O_READ);
+    file = vfs_open(path, VFS_O_READ);
     if (!file) {
         klog(LOG_ERROR, "UTEST", "%s: vfs_open failed", path);
         task_exit(-2);
     }
 
-    uint32_t size = file->size;
-
-    /* Stage the binary in PMM-backed contiguous pages, NOT kmalloc.
-     * CLAUDE.md (Freestanding Kernel rules): kmalloc is for <=4 KB;
-     * larger uses pmm_alloc_contiguous. Test binaries are 23+ KB
-     * (way above the kmalloc ceiling); using kmalloc would carve
-     * large transient blocks out of the 2 MiB heap and fragment it
-     * across repeated test runs. PMM pages are identity-mapped, so
-     * the physical address is also a valid kernel virtual pointer.
-     * (Codex H1 quality, 2026-04-20.) */
-    uint32_t pages = (size + 4095u) / 4096u;
-    uintptr_t buf_phys = pmm_alloc_contiguous(pages);
+    size  = file->size;
+    pages = (size + 4095u) / 4096u;
+    buf_phys = pmm_alloc_contiguous(pages);
     if (!buf_phys) {
         klog(LOG_ERROR, "UTEST",
              "%s: pmm_alloc_contiguous(%u pages) failed",
@@ -182,14 +408,14 @@ static void utest_loader_func(void)
         vfs_close(file);
         task_exit(-3);
     }
-    uint8_t *buf = (uint8_t *)buf_phys;
+    buf = (uint8_t *)buf_phys;
 
-    int n = vfs_read(file, 0, size, buf);
+    n = vfs_read(file, 0, size, buf);
     vfs_close(file);
     if (n <= 0 || (uint32_t)n != size) {
         klog(LOG_ERROR, "UTEST", "%s: vfs_read short (n=%d size=%u)",
              path, (int64_t)n, (uint64_t)size);
-        for (uint32_t p = 0; p < pages; p++)
+        for (p = 0; p < pages; p++)
             pmm_free_frame(buf_phys + (uintptr_t)p * 4096u);
         task_exit(-4);
     }
@@ -197,140 +423,369 @@ static void utest_loader_func(void)
     /* task_exec stages an iretq frame for user mode (consumed on the
      * next scheduling switch). It DOES NOT take ownership of `buf` --
      * exec_load() inside copies the binary into user pages, so once
-     * task_exec returns 0 the staging buffer is no longer needed.
-     * Free it now (Codex M1, 2026-04-20) before the for(;;)hlt;
-     * yields control to the prepared user-mode frame; otherwise every
-     * passing test leaks its full file size of pages from PMM. */
-    int rc = task_exec(buf, size);
+     * task_exec returns 0 the staging buffer is no longer needed. */
+    rc = task_exec(buf, size);
     if (rc < 0) {
         klog(LOG_ERROR, "UTEST", "%s: task_exec failed", path);
-        for (uint32_t p = 0; p < pages; p++)
+        for (p = 0; p < pages; p++)
             pmm_free_frame(buf_phys + (uintptr_t)p * 4096u);
         task_exit(-5);
     }
-    for (uint32_t p = 0; p < pages; p++)
+    for (p = 0; p < pages; p++)
         pmm_free_frame(buf_phys + (uintptr_t)p * 4096u);
 
-    /* Force a cooperative reschedule. The exec_pending=1 frame is
-     * consumed when the scheduler picks this task again; yield() goes
-     * through schedule_now() which switches even when the preemptive
-     * sched_enabled flag is OFF. CRITICAL: do NOT replace this with
-     * `for(;;) hlt;` -- boot_tests_run() runs INSIDE boot_phase3 BEFORE
-     * scheduler_enable() at boot_desktop.c:384, so PIT-driven preemption
-     * does not fire and HLT would block the CPU forever waiting for an
-     * interrupt that is never routed to schedule(). This is a real
-     * boot-time freeze observed 2026-04-20 on Windows QEMU when the
-     * launcher first shipped with the canonical exec_loader_func tail
-     * (which works ONLY because exec_loader_func runs AFTER scheduler
-     * enable). yield() works whether sched_enabled is 0 or 1. */
+    /* Force a cooperative reschedule so the prepared user-mode iretq
+     * frame is consumed. yield() goes through schedule_now() which
+     * switches regardless of the preemptive sched_enabled flag.
+     * CRITICAL: do NOT replace this with `for(;;) hlt;` -- a user-mode
+     * spinloop would block forever if we relied on HLT here. (§3
+     * regression, 2026-04-20.) */
     for (;;)
         yield();
 }
 
-/* ---- Public entry: scan + run + report ------------------------------- */
+/* ---- Polled wait with timeout -------------------------------------- *
+ *
+ * Replaces task_waitpid in the §4 path. Semantics:
+ *  - Returns normally with the child's exit_status if the child
+ *    reaches TASK_DEAD before the deadline.
+ *  - On timeout: send SIGKILL, wait KILL_GRACE_MS for cooperative
+ *    tear-down, then force state=TASK_DEAD + exit_status=TIMEOUT.
+ *    The exit_status the caller sees is always UTEST_EXIT_TIMEOUT
+ *    on the timeout path (overwrites SIGKILL's -9).
+ *  - Caller still owns task_cleanup() for the child pid afterward.
+ *
+ * Needs preemptive scheduling to be enabled (see top-of-file comment
+ * on scheduler_enable wrap) -- otherwise yield() gives control to a
+ * spinning user task and never comes back. The launcher wraps the
+ * whole run in scheduler_enable/disable so this function is safe.
+ * ------------------------------------------------------------------ */
+
+static int32_t u_wait_with_timeout(uint32_t pid, uint32_t timeout_ms,
+                                   int *out_timed_out)
+{
+    struct task *t = task_get_by_pid(pid);
+    uint64_t deadline, grace_deadline;
+
+    *out_timed_out = 0;
+
+    if (!t)
+        return -1;
+
+    if (timeout_ms == 0)
+        timeout_ms = UTEST_DEFAULT_TIMEOUT_MS;
+
+    deadline = u_uptime_ms() + (uint64_t)timeout_ms;
+
+    while (t->state != TASK_DEAD) {
+        if (u_uptime_ms() >= deadline) {
+            *out_timed_out = 1;
+            break;
+        }
+        yield();
+    }
+
+    if (*out_timed_out) {
+        /* Cooperative kill first -- gives the task a chance to run
+         * its signal_check on the next kernel entry, unwind cleanly,
+         * and set its own exit_status. */
+        signal_send(pid, SIGKILL);
+        grace_deadline = u_uptime_ms() + (uint64_t)UTEST_KILL_GRACE_MS;
+        while (t->state != TASK_DEAD && u_uptime_ms() < grace_deadline)
+            yield();
+        /* Forceful fallback: a user-mode spinloop with no syscall
+         * never runs signal_check, so SIGKILL alone cannot land. We
+         * have to mark the task DEAD ourselves.
+         *
+         * Safe in this kernel because task dispatch uses a single
+         * global `current_task` ([src/kernel/sched/task.c]) -- APs do
+         * not run scheduled tasks, so no other CPU can be dispatching
+         * the child while the launcher (currently executing) decides
+         * to force-kill. The existing signal_send() writes t->state
+         * unlocked under the same assumption (ipc/signal.c:41).
+         *
+         * Defensive guard: refuse to force-kill ourselves; would
+         * leave the running task DEAD and trip a cascading crash.
+         * Codex H2, 2026-04-20. */
+        if (t->state != TASK_DEAD && t != task_current()) {
+            t->state = TASK_DEAD;
+        }
+        /* Either way, surface TIMEOUT so the launcher log / TAP / bat
+         * output names the actual reason rather than SIGKILL's -9. */
+        t->exit_status = UTEST_EXIT_TIMEOUT;
+    }
+
+    return t->exit_status;
+}
+
+/* ---- Per-binary run: spawn, wait, log, cleanup --------------------- *
+ *
+ * Called from test_usermode_run for each binary (either from the
+ * manifest or from the directory glob). Fills out_* with the
+ * verdict so the caller can aggregate counters and emit TAP lines.
+ * out_verdict values: 0 = PASS, 1 = FAIL, 2 = SKIP.
+ * ------------------------------------------------------------------ */
+
+static void u_run_one(const char *name, uint32_t test_num, uint32_t *counters,
+                      int *out_verdict)
+{
+    char name_copy[VFS_MAX_NAME];
+    char path[VFS_MAX_NAME + 4];
+    uint32_t ni, pi;
+    int pid;
+    int32_t exit_status;
+    int timed_out = 0;
+
+    /* Snapshot `name` into launcher-owned storage BEFORE spawning.
+     * The caller may have passed in a VFS dirent or manifest arena
+     * pointer -- child syscalls (SYS_READDIR, our own kfree at end of
+     * run) can invalidate either. */
+    for (ni = 0; name[ni] && ni < sizeof(name_copy) - 1; ni++)
+        name_copy[ni] = name[ni];
+    name_copy[ni] = '\0';
+
+    /* Build C:\<name>. */
+    path[0] = 'C'; path[1] = ':'; path[2] = '\\';
+    pi = 3;
+    for (ni = 0; name_copy[ni] && pi < sizeof(path) - 1; ni++)
+        path[pi++] = name_copy[ni];
+    path[pi] = '\0';
+
+    s_pending_test_path = path;
+
+    pid = task_create(utest_loader_func, name_copy);
+    if (pid < 0) {
+        klog(LOG_ERROR, "UTEST", "%s: task_create failed", name_copy);
+        counters[1]++;  /* failed */
+        *out_verdict = 1;
+        if (s_tap_mode)
+            klog(LOG_INFO, "UTEST",
+                 "not ok %u - %s # task_create failed",
+                 (uint64_t)test_num, name_copy);
+        return;
+    }
+
+    exit_status = u_wait_with_timeout((uint32_t)pid,
+                                      s_timeout_ms, &timed_out);
+
+    if (exit_status == 0) {
+        counters[0]++;  /* passed */
+        *out_verdict = 0;
+        klog(LOG_INFO, "UTEST", "%s: PASS (exit=0)", name_copy);
+        if (s_tap_mode)
+            klog(LOG_INFO, "UTEST", "ok %u - %s",
+                 (uint64_t)test_num, name_copy);
+    } else if (exit_status == UTEST_EXIT_SKIP) {
+        counters[2]++;  /* skipped */
+        *out_verdict = 2;
+        klog(LOG_INFO, "UTEST", "%s: SKIP (exit=77)", name_copy);
+        if (s_tap_mode)
+            klog(LOG_INFO, "UTEST", "ok %u - %s # SKIP",
+                 (uint64_t)test_num, name_copy);
+    } else if (timed_out) {
+        counters[1]++;  /* failed (timeout) */
+        *out_verdict = 1;
+        klog(LOG_ERROR, "UTEST", "%s: FAIL (timeout after %ums)",
+             name_copy, (uint64_t)(s_timeout_ms ? s_timeout_ms
+                                                : UTEST_DEFAULT_TIMEOUT_MS));
+        if (s_tap_mode)
+            klog(LOG_INFO, "UTEST",
+                 "not ok %u - %s # timeout",
+                 (uint64_t)test_num, name_copy);
+    } else {
+        counters[1]++;  /* failed */
+        *out_verdict = 1;
+        klog(LOG_ERROR, "UTEST", "%s: FAIL (exit=%d)",
+             name_copy, (int64_t)exit_status);
+        if (s_tap_mode)
+            klog(LOG_INFO, "UTEST",
+                 "not ok %u - %s # exit=%d",
+                 (uint64_t)test_num, name_copy, (int64_t)exit_status);
+    }
+
+    task_cleanup((uint32_t)pid);
+}
+
+/* ---- Enumerate binaries via directory glob (fallback path) --------- */
+
+struct glob_state {
+    struct vfs_node *root;
+    uint32_t         idx;
+};
+
+static const char *u_glob_next(struct glob_state *gs,
+                               char *out_name, uint32_t out_cap)
+{
+    struct vfs_dirent *de;
+
+    while ((de = vfs_readdir(gs->root, gs->idx)) != (struct vfs_dirent *)0) {
+        gs->idx++;
+        if (de->type & VFS_DIRECTORY)
+            continue;
+        if (!u_is_test_binary(de->name))
+            continue;
+        /* Snapshot the name -- de->name is shared dirent storage. */
+        {
+            uint32_t i;
+            for (i = 0; de->name[i] && i < out_cap - 1; i++)
+                out_name[i] = de->name[i];
+            out_name[i] = '\0';
+        }
+        return out_name;
+    }
+    return (const char *)0;
+}
+
+/* ---- Public entry: scan + run + report ----------------------------- */
 
 void test_usermode_run(void)
 {
+    struct manifest_state manifest;
+    struct vfs_node      *root;
+    uint32_t              counters[3] = { 0, 0, 0 }; /* pass, fail, skip */
+    uint32_t              total_planned = 0;
+    uint32_t              total_ran = 0;
+    uint32_t              skipped_by_filter = 0;
+    int                   use_manifest;
+    char                  scratch_name[VFS_MAX_NAME];
+    uint32_t              i;
+
     if (!vfs_is_mounted('C')) {
         klog(LOG_DEBUG, "UTEST", "C:\\ not mounted -- skipping user-mode tests");
         return;
     }
 
-    struct vfs_node *root = vfs_get_drive_root('C');
+    root = vfs_get_drive_root('C');
     if (!root || !root->ops || !root->ops->readdir) {
         klog(LOG_DEBUG, "UTEST", "C:\\ root has no readdir -- skipping");
         return;
     }
 
-    uint32_t passed = 0;
-    uint32_t failed = 0;
-    uint32_t total  = 0;
-    uint32_t skipped = 0;
+    /* Enable preemptive scheduler for the timeout watchdog. Pair with
+     * scheduler_disable before returning so boot_phase3 continues in
+     * its expected non-preemptive state. */
+    scheduler_enable();
 
-    /* Scan the C:\ root directory. The launcher does NOT recurse into
-     * subdirectories -- by convention all test_*.exe binaries deploy
-     * to the root (see Makefile userland target). */
-    uint32_t idx = 0;
-    struct vfs_dirent *de;
-    while ((de = vfs_readdir(root, idx)) != (struct vfs_dirent *)0) {
-        idx++;
-        if (de->type & VFS_DIRECTORY)
-            continue;
-        if (!u_is_test_binary(de->name))
-            continue;
+    use_manifest = u_manifest_load(&manifest);
 
-        /* Apply §4 filter (today: s_filter is always NULL until §4
-         * ships the boot.conf utest_filter parser; the helper handles
-         * NULL by matching everything). */
-        if (!u_glob_match(s_filter, de->name)) {
-            skipped++;
-            klog(LOG_DEBUG, "UTEST", "%s: SKIP (filter)", de->name);
-            continue;
+    /* First pass: count planned binaries (post-filter) so the TAP
+     * plan line can emit `1..N` once, up-front. Both manifest and
+     * glob paths apply the same filter. */
+    if (use_manifest) {
+        for (i = 0; i < manifest.count; i++) {
+            if (test_usermode_glob_match(s_filter, manifest.names[i]))
+                total_planned++;
         }
-
-        total++;
-
-        /* Snapshot de->name into a launcher-owned stable buffer
-         * BEFORE spawning the child. VFS readdir implementations
-         * return shared/static dirent storage (IXFS uses vol->dirent;
-         * NTFS a static buffer; FAT32 likewise) -- the user-mode
-         * test we're about to spawn could call SYS_READDIR /
-         * NtQueryDirectoryFile, overwrite the shared dirent, and
-         * make us log PASS/FAIL against the wrong filename + park
-         * tasks[pid].name pointing at garbage. (Codex M2, 2026-04-20.) */
-        char name_copy[VFS_MAX_NAME];
-        uint32_t ni;
-        for (ni = 0; de->name[ni] && ni < sizeof(name_copy) - 1; ni++)
-            name_copy[ni] = de->name[ni];
-        name_copy[ni] = '\0';
-
-        /* Build the C:\<name> path inline. Path + name_copy must outlive
-         * the spawned task because they stay in s_pending_test_path /
-         * tasks[pid].name until the task's loader consumes them and the
-         * launcher logs the result. Single-threaded launcher waits in
-         * task_waitpid before next iteration, so both buffers' lifetimes
-         * span one spawn/wait cycle. */
-        char path[VFS_MAX_NAME + 4];
-        path[0] = 'C'; path[1] = ':'; path[2] = '\\';
-        uint32_t pi = 3;
-        for (ni = 0; name_copy[ni] && pi < sizeof(path) - 1; ni++)
-            path[pi++] = name_copy[ni];
-        path[pi] = '\0';
-
-        s_pending_test_path = path;
-
-        int pid = task_create(utest_loader_func, name_copy);
-        if (pid < 0) {
-            klog(LOG_ERROR, "UTEST", "%s: task_create failed", name_copy);
-            failed++;
-            continue;
-        }
-
-        int32_t exit_status = task_waitpid((uint32_t)pid);
-        if (exit_status == 0) {
-            passed++;
-            klog(LOG_INFO, "UTEST", "%s: PASS (exit=0)", name_copy);
-        } else {
-            failed++;
-            klog(LOG_ERROR, "UTEST", "%s: FAIL (exit=%d)",
-                 name_copy, (int64_t)exit_status);
+    }
+    /* Always also include glob-discovered binaries when the manifest
+     * was absent OR overflowed. If the manifest is authoritative (no
+     * overflow) we skip the glob. */
+    if (!use_manifest || manifest.overflowed) {
+        struct glob_state gs = { root, 0 };
+        while (u_glob_next(&gs, scratch_name, sizeof(scratch_name))) {
+            /* When overflowed, skip binaries already listed in the
+             * manifest to avoid double-running. */
+            if (manifest.overflowed) {
+                int already = 0;
+                for (i = 0; i < manifest.count; i++) {
+                    if (u_strncmp(manifest.names[i], scratch_name,
+                                  VFS_MAX_NAME) == 0) {
+                        already = 1;
+                        break;
+                    }
+                }
+                if (already) continue;
+            }
+            if (test_usermode_glob_match(s_filter, scratch_name))
+                total_planned++;
         }
     }
 
-    if (total == 0 && skipped == 0) {
-        klog(LOG_DEBUG, "UTEST",
-             "no test_*.exe found at C:\\ -- skipping summary");
+    if (total_planned == 0) {
+        if (s_filter)
+            klog(LOG_DEBUG, "UTEST",
+                 "no test_*.exe matches filter '%s' -- skipping",
+                 s_filter);
+        else
+            klog(LOG_DEBUG, "UTEST",
+                 "no test_*.exe found at C:\\ -- skipping summary");
+        u_manifest_free(&manifest);
+        scheduler_disable();
         return;
     }
 
-    if (skipped > 0) {
+    /* TAP plan line (emitted once before any test) */
+    if (s_tap_mode)
+        klog(LOG_INFO, "UTEST", "1..%u", (uint64_t)total_planned);
+
+    /* Second pass: actually run. Manifest order takes precedence so
+     * tests can declare a deterministic execution order. */
+    if (use_manifest) {
+        for (i = 0; i < manifest.count; i++) {
+            int verdict;
+            const char *nm = manifest.names[i];
+            if (!test_usermode_glob_match(s_filter, nm)) {
+                skipped_by_filter++;
+                klog(LOG_DEBUG, "UTEST", "%s: SKIP (filter)", nm);
+                continue;
+            }
+            total_ran++;
+            u_run_one(nm, total_ran, counters, &verdict);
+        }
+    }
+
+    if (!use_manifest || manifest.overflowed) {
+        struct glob_state gs = { root, 0 };
+        while (u_glob_next(&gs, scratch_name, sizeof(scratch_name))) {
+            int verdict;
+            if (manifest.overflowed) {
+                int already = 0;
+                for (i = 0; i < manifest.count; i++) {
+                    if (u_strncmp(manifest.names[i], scratch_name,
+                                  VFS_MAX_NAME) == 0) {
+                        already = 1;
+                        break;
+                    }
+                }
+                if (already) continue;
+            }
+            if (!test_usermode_glob_match(s_filter, scratch_name)) {
+                skipped_by_filter++;
+                klog(LOG_DEBUG, "UTEST", "%s: SKIP (filter)", scratch_name);
+                continue;
+            }
+            total_ran++;
+            u_run_one(scratch_name, total_ran, counters, &verdict);
+        }
+    }
+
+    u_manifest_free(&manifest);
+    scheduler_disable();
+
+    /* Summary. Counters: [0]=pass, [1]=fail, [2]=skip(exit=77). */
+    if (skipped_by_filter > 0) {
         klog(LOG_INFO, "UTEST",
-             "=== %u passed, %u failed of %u total (%u skipped by filter) ===",
-             (uint64_t)passed, (uint64_t)failed,
-             (uint64_t)total, (uint64_t)skipped);
+             "=== %u passed, %u failed, %u skipped of %u total "
+             "(%u filtered) ===",
+             (uint64_t)counters[0], (uint64_t)counters[1],
+             (uint64_t)counters[2], (uint64_t)total_ran,
+             (uint64_t)skipped_by_filter);
     } else {
         klog(LOG_INFO, "UTEST",
-             "=== %u passed, %u failed of %u total ===",
-             (uint64_t)passed, (uint64_t)failed, (uint64_t)total);
+             "=== %u passed, %u failed, %u skipped of %u total ===",
+             (uint64_t)counters[0], (uint64_t)counters[1],
+             (uint64_t)counters[2], (uint64_t)total_ran);
     }
 }
+
+/* ---- Test-only exports --------------------------------------------- *
+ *
+ * Thin wrappers around file-local helpers so kernel unit tests can
+ * exercise them without promoting the helpers to the public header.
+ * The main public API (test_usermode_run + setters) stays minimal. */
+#ifdef KERNEL_TESTS
+int test_usermode_is_valid_manifest_name(const char *name)
+{
+    return u_is_valid_manifest_name(name);
+}
+#endif

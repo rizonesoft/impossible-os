@@ -37,5 +37,26 @@ void test_usermode_run(void);
  * "run all". Glob via the literal `*` wildcard at any position
  * (e.g. "test_smoke_*.exe" matches `test_smoke_boot.exe`). The
  * pointed-to string must outlive test_usermode_run(); the launcher
- * does not copy it. Owned by §4 once the boot.conf field exists. */
+ * does not copy it. */
 void test_usermode_set_filter(const char *filter);
+
+/* Set per-binary wall-clock timeout in milliseconds. 0 = use the
+ * built-in default (10 000 ms). A binary that does not reach
+ * TASK_DEAD by the deadline is killed (SIGKILL then force-DEAD) and
+ * reported as FAIL (timeout). */
+void test_usermode_set_timeout_ms(uint32_t ms);
+
+/* Enable TAP (Test Anything Protocol) emission around each binary.
+ * When enabled, the launcher emits a `1..N` plan, `ok N - name` /
+ * `not ok N - name` / `ok N - name # SKIP <reason>` lines parsable by
+ * kselftest-style tooling. Disabled by default. */
+void test_usermode_set_tap(int enable);
+
+/* Contract for SKIP: a test binary reports "this test is not
+ * applicable here" by exiting with status 77 (kselftest convention).
+ * The launcher counts it as SKIPPED, not FAIL. Any other non-zero
+ * exit is FAIL. */
+#define UTEST_EXIT_SKIP    77
+/* Synthetic exit the launcher assigns when a binary is killed for
+ * exceeding its wall-clock timeout. */
+#define UTEST_EXIT_TIMEOUT (-6)

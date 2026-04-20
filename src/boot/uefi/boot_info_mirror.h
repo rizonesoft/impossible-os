@@ -77,7 +77,13 @@ struct boot_config {
     UINT8   _reserved[12];     /* future fields -- zero-filled by defaults */
     char    cmdline[BOOT_CONF_CMDLINE_MAX];
     UINT8   config_found;
-    UINT8   _pad[223];         /* pad to 512 bytes total (sector-aligned) */
+    /* User-mode test launcher knobs (S4 of TODO-04). Mirror of kernel
+     * struct boot_config; zero-init = pre-S4 behavior. */
+    UINT8   tap;
+    UINT8   _pad_utest[2];     /* align the UINT16 below */
+    UINT16  utest_timeout_ms;
+    char    utest_filter[64];
+    UINT8   _pad[154];         /* pad to 512 bytes total (sector-aligned) */
 };
 
 /* Mirror of kernel/boot_info.h static asserts -- catches drift between
@@ -86,6 +92,12 @@ _Static_assert(__builtin_offsetof(struct boot_config, cmdline) == 32,
     "cmdline must be at byte offset 32 -- kernel ABI contract");
 _Static_assert(__builtin_offsetof(struct boot_config, config_found) == 288,
     "config_found must be at byte offset 288 -- after cmdline[256]");
+_Static_assert(__builtin_offsetof(struct boot_config, tap) == 289,
+    "tap must be at byte offset 289 -- TODO-04 S4 stable ABI");
+_Static_assert(__builtin_offsetof(struct boot_config, utest_timeout_ms) == 292,
+    "utest_timeout_ms must be at byte offset 292 -- TODO-04 S4 stable ABI");
+_Static_assert(__builtin_offsetof(struct boot_config, utest_filter) == 294,
+    "utest_filter must be at byte offset 294 -- TODO-04 S4 stable ABI");
 _Static_assert(sizeof(struct boot_config) == 512,
     "boot_config must be exactly 512 bytes (sector-aligned)");
 

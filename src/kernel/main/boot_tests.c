@@ -46,10 +46,21 @@ void boot_tests_run(void)
          * kernel test runner so the [TEST] summary lands before
          * [UTEST] lines on serial -- matches scripts/test.sh parser
          * expectations (kernel TEST first, user-mode UTEST second).
-         * Owned by the user-mode test framework roadmap; this is the
-         * launcher entry point. */
-        if (g_boot_info.config.test)
+         *
+         * S4 knobs from boot.conf get pushed into the launcher here
+         * so the launcher itself stays decoupled from g_boot_info --
+         * the kernel tests in test_boot_init can drive the API
+         * directly without setting up a fake config. */
+        if (g_boot_info.config.test) {
+            if (g_boot_info.config.utest_filter[0])
+                test_usermode_set_filter(g_boot_info.config.utest_filter);
+            if (g_boot_info.config.utest_timeout_ms)
+                test_usermode_set_timeout_ms(
+                    g_boot_info.config.utest_timeout_ms);
+            if (g_boot_info.config.tap)
+                test_usermode_set_tap(1);
             test_usermode_run();
+        }
     }
 
     /* debug=0 and test=0: skip everything below */

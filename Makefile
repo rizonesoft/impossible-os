@@ -316,6 +316,7 @@ $(SYSROOT)/.dirs-stamp:
 	@mkdir -p $(SYSROOT)/Users/Default/Pictures
 	@mkdir -p $(SYSROOT)/Recycle
 	@mkdir -p "$(SYSROOT)/Program Files"
+	@mkdir -p $(SYSROOT)/tests
 	@echo -n "Hello from Impossible OS!" > $(SYSROOT)/hello.txt
 	@echo -n "IXFS root filesystem" > $(SYSROOT)/readme.txt
 	@touch $@
@@ -406,7 +407,9 @@ $(SYSROOT)/hello.exe $(SYSROOT)/cmd.exe $(SYSROOT)/test_harness_smoke.exe $(SYSR
 	@cp -f $(BUILD_DIR)/user/cmd.exe $(SYSROOT)/cmd.exe
 	@cp -f $(BUILD_DIR)/user/test/test_harness_smoke.exe $(SYSROOT)/test_harness_smoke.exe
 	@cp -f $(BUILD_DIR)/user/test/test_syscall.exe $(SYSROOT)/test_syscall.exe
-	@echo "[USER] hello.exe + cmd.exe + test_harness_smoke.exe + test_syscall.exe → sysroot"
+	@mkdir -p $(SYSROOT)/tests
+	@cp -f tests/usermode.manifest $(SYSROOT)/tests/usermode.manifest
+	@echo "[USER] hello.exe + cmd.exe + test_harness_smoke.exe + test_syscall.exe + tests/usermode.manifest -> sysroot"
 
 ## iso: Package kernel + sysroot into a bootable UEFI ISO via GRUB (optional)
 iso: $(ISO_FILE)
