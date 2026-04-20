@@ -211,23 +211,20 @@ static void utest_loader_func(void)
     for (uint32_t p = 0; p < pages; p++)
         pmm_free_frame(buf_phys + (uintptr_t)p * 4096u);
 
-    /* Unreachable in practice; task_exec iretq's into user mode on the
-     * next scheduling tick. The hlt loop is the canonical exec-loader
-     * tail (matches exec_loader_func in src/kernel/main/test_threads.c
-     * and shell_loader_func used to spawn cmd.exe at boot). It works
-     * because dpc_thread, sys_wq, and the parent-in-TASK_WAITING are
-     * all in the task table -- find_next_task picks one of them, and
-     * when it later yields back the loader is rescheduled with
-     * exec_pending=1, which the scheduler honours by restoring the
-     * prepared frame. The same pattern would hang on a degenerate
-     * single-task kernel; protecting against that needs a scheduler-
-     * level fix (task_exec becoming non-returning, or schedule()
-     * special-casing exec_pending on a same-task pick) and is out
-     * of §3 scope. (Codex Critical quality 2026-04-20: rejected with
-     * code evidence -- this matches the canonical pattern that works
-     * in production for hello.exe and cmd.exe.) */
+    /* Force a cooperative reschedule. The exec_pending=1 frame is
+     * consumed when the scheduler picks this task again; yield() goes
+     * through schedule_now() which switches even when the preemptive
+     * sched_enabled flag is OFF. CRITICAL: do NOT replace this with
+     * `for(;;) hlt;` -- boot_tests_run() runs INSIDE boot_phase3 BEFORE
+     * scheduler_enable() at boot_desktop.c:384, so PIT-driven preemption
+     * does not fire and HLT would block the CPU forever waiting for an
+     * interrupt that is never routed to schedule(). This is a real
+     * boot-time freeze observed 2026-04-20 on Windows QEMU when the
+     * launcher first shipped with the canonical exec_loader_func tail
+     * (which works ONLY because exec_loader_func runs AFTER scheduler
+     * enable). yield() works whether sched_enabled is 0 or 1. */
     for (;;)
-        __asm__ volatile("hlt");
+        yield();
 }
 
 /* ---- Public entry: scan + run + report ------------------------------- */
