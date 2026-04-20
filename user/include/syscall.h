@@ -85,6 +85,19 @@ typedef int32_t HANDLE;
 #define SYS_READHANDLE   41
 #define SYS_OPENDIROBJ   42
 #define SYS_QUERYDIROBJ  43
+#define SYS_FAULT_INJECT 44  /* sys_fault_inject(kind, countdown, flags)
+                              * user-mode fault-injection bridge.
+                              * Only works when boot.conf test=1; otherwise
+                              * the kernel handler returns STATUS_ACCESS_DENIED. */
+
+/* Subcommand selectors for SYS_FAULT_INJECT. Must match kernel
+ * include/kernel/sched/syscall.h. */
+#define FAULT_KMALLOC_NEXT       1
+#define FAULT_KMALLOC_COUNTDOWN  2
+#define FAULT_PMM_NEXT           3
+#define FAULT_VMM_MAP_NEXT       4
+#define FAULT_COPY_USER_NEXT     5
+#define FAULT_CLEAR_ALL          6
 
 /* Task states (must match kernel task.h) */
 #define TASK_READY    0
@@ -324,4 +337,22 @@ static inline long sys_querydirobj(HANDLE dir, void *buf, uint16_t count,
         return ret;
     *ctx_inout = (uint16_t)((uint64_t)ret >> 16);
     return (long)((uint64_t)ret & 0xFFFFu);
+}
+
+/* User-mode fault-injection bridge. Arms the kernel
+ * allocator countdowns under the test=1 gate. kind = FAULT_* selector,
+ * countdown = N-th call to fail (ignored for FAULT_KMALLOC_NEXT which
+ * always sets N=1 and for FAULT_CLEAR_ALL).
+ *
+ * Returns 0 on success. Returns -1 (STATUS_ACCESS_DENIED) when
+ * boot.conf test=0 -- the kernel hard-fails the syscall so a
+ * production user-mode binary cannot arm the countdowns. Returns -1
+ * for unknown `kind` values as well.
+ *
+ * The kernel automatically sets the task filter to the caller's own
+ * PID, so a test can ONLY fault-inject for itself (never arm a trap
+ * that a sibling kthread or launcher task would consume). */
+static inline long sys_fault_inject(uint32_t kind, uint32_t countdown)
+{
+    return syscall3(SYS_FAULT_INJECT, (long)kind, (long)countdown, 0L);
 }

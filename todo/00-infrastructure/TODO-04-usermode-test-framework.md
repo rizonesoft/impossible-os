@@ -51,7 +51,7 @@
 | 💎  |   2   | Userland syscall.h parity with kernel INT 0x80 ABI  | --                                 |  [x]   |
 | 💎  |   3   | Kernel test launcher (run `test_*.exe` in sequence) | §1                                 |  [x]   |
 | 💎  |   4   | Launcher manifest, timeouts, TAP, and skip policy   | §3                                 |  [x]   |
-| ⭐  |   5   | User-mode fault-injection bridge (SYS_FAULT_INJECT) | §1, §3, T03 §1, T03 §6             |  [ ]   |
+| ⭐  |   5   | User-mode fault-injection bridge (SYS_FAULT_INJECT) | §1, §3, T03 §1, T03 §6             |  [x]   |
 | 💎  |   6   | Per-test isolation + cleanup hook                   | §3, §4                             |  [ ]   |
 | 💎  |   7   | JUnit XML + JSON output formats                     | §4                                 |  [ ]   |
 | 💎  |   8   | Test type taxonomy (smoke/correctness/stress/perf)  | §3, §4                             |  [ ]   |
@@ -199,15 +199,27 @@ Bridge `T03 §1` `kmalloc_fail_next()` and `T03 §6` PMM/VMM/copy_user countdown
 > [!WARNING]
 > `SYS_FAULT_INJECT` MUST hard-fail with `STATUS_ACCESS_DENIED` when `boot.conf test=0`. Without that gate, a malicious user-mode binary could DoS the kernel by arming `kmalloc_fail_countdown` repeatedly. The gate check is the security-critical path; cover it in the regression test.
 
-- [ ] Add `SYS_FAULT_INJECT` (next free INT 0x80 number after the §2 sweep) with subcommand selectors: `FAULT_KMALLOC_NEXT`, `FAULT_KMALLOC_COUNTDOWN`, `FAULT_PMM_NEXT`, `FAULT_VMM_MAP_NEXT`, `FAULT_COPY_USER_NEXT`, `FAULT_CLEAR_ALL`
-- [ ] Kernel handler in `src/kernel/sched/syscall.c` checks `kernel_subsystem_ready(SUBSYS_TEST_MODE)` (or equivalent of `boot.conf test=1`); returns `STATUS_ACCESS_DENIED` when not in test mode
-- [ ] Each subcommand dispatches to the matching `T03 §1`/`§6` setter; arguments validated against `task_current()->pid` so a test can only fault-inject for itself (not arbitrary tasks)
-- [ ] User-mode wrapper `int utest_fault_inject(int kind, uint32_t countdown)` in `user/include/test.h`
-- [ ] Smoke regression: a tiny `user/test/test_faultinject.c` arms `FAULT_KMALLOC_NEXT` then calls `SYS_OPENFILE` on a non-existent path -- proves the test gate is honoured AND the next kmalloc returns NULL inside the kernel
-- [ ] Negative regression in `src/kernel/test/test_syscall.c` (TEST_CAT_EXEC): with `SUBSYS_TEST_MODE` cleared, `SYS_FAULT_INJECT` returns `STATUS_ACCESS_DENIED` and `kmalloc_fail_countdown` stays 0
-- [ ] Commit: `"test: SYS_FAULT_INJECT bridge -- user-mode probes kernel allocator countdowns under test=1 gate"`
+- [x] `SYS_FAULT_INJECT = 44` added to [`include/kernel/sched/syscall.h`](../../include/kernel/sched/syscall.h) + mirrored in [`user/include/syscall.h`](../../user/include/syscall.h). Six subcommand selectors shipped: `FAULT_KMALLOC_NEXT`, `FAULT_KMALLOC_COUNTDOWN`, `FAULT_PMM_NEXT`, `FAULT_VMM_MAP_NEXT`, `FAULT_COPY_USER_NEXT`, `FAULT_CLEAR_ALL`. Next free number after §2's sweep ended at 43.
+- [x] Kernel handler `sys_fault_inject_dispatch()` in [`src/kernel/sched/syscall.c`](../../src/kernel/sched/syscall.c) (non-static so unit tests can call it without an INT 0x80 round-trip). Gate: `if (!g_boot_info.config.test) return -1;`. Implementation uses `g_boot_info.config.test` directly rather than a new `SUBSYS_TEST_MODE` slot because the flag is the canonical source of truth; adding a redundant kernel_subsystem_* mirror would drift against the boot.conf parser. Deny path logs `[sys] SYS_FAULT_INJECT denied (test=0) kind=... pid=...` at LOG_WARN so a hostile caller shows up in the boot log instead of silently bouncing.
+- [x] Each subcommand wires `task_current()->pid` as the T03 §6 task filter BEFORE arming the countdown so a test can only trap its own kernel-side allocations. `FAULT_PMM_NEXT` was initially un-filtered (Codex M1, 2026-04-20); fixed to match the other selectors. `FAULT_CLEAR_ALL` symmetrically clears all four task filters + countdowns.
+- [x] User-mode wrapper `utest_fault_inject(kind, countdown)` in [`user/include/test.h`](../../user/include/test.h) + thin raw syscall `sys_fault_inject()` in [`user/include/syscall.h`](../../user/include/syscall.h). Returns 0 on success, -1 on gate-deny / unknown kind / invalid countdown.
+- [x] [`user/test/test_faultinject.c`](../../user/test/test_faultinject.c) smoke binary: opens `C:\hello.txt` without a trap (baseline), arms `FAULT_KMALLOC_NEXT`, re-opens SAME file (must return `INVALID_HANDLE_VALUE` because the kernel's `ob_create_file_handle` kmalloc hits the forced NULL), `CLEAR_ALL`, final open must succeed. Proves the trap actually fires rather than accepting any -1 (Codex L1, 2026-04-20 rewrote the earlier nonexistent-path version). SKIPs with exit=77 when `test=0` so it's manifest-safe on either boot policy.
+- [x] Four kernel negative regressions added in [`src/kernel/test/test_usermode_launcher.c`](../../src/kernel/test/test_usermode_launcher.c) (TEST_CAT_EXEC): gate denies with `config.test=0` AND `kmalloc_fail_injections_triggered()` stays unchanged; `FAULT_CLEAR_ALL` succeeds under `test=1`; unknown kind rejected; `FAULT_KMALLOC_COUNTDOWN` with countdown=0 rejected. Uses save/restore of `g_boot_info.config.test` (a pure data field, allowed under CLAUDE.md's live-boot-call ban).
+- [x] Commit: `"test: SYS_FAULT_INJECT bridge -- user-mode probes kernel allocator countdowns under test=1 gate"`
 
-**Test checkpoint:** With `boot.conf test=1`: `test_faultinject.exe` arms the next-kmalloc trap, calls a syscall that allocates, observes `STATUS_INSUFFICIENT_RESOURCES`. With `test=0`: same binary's first call to `SYS_FAULT_INJECT` returns `STATUS_ACCESS_DENIED` and the syscall succeeds. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** On KVM / WSL TCG: `bash scripts/test.sh QUIET=1 SUITE=exec` reports 107 kernel tests pass (up from 102 pre-§5), and the `[UTEST]` launcher log shows `test_faultinject.exe: PASS (exit=0)` with all five user-side assertions green (`FAULT_CLEAR_ALL under test=1`, baseline open, arm, trap fired -> `INVALID_HANDLE_VALUE`, disarm + re-open). With `test=0`: `test_faultinject.exe` exits 77 and the launcher counts it as SKIPPED, not FAIL. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-exec-tests.bat` (SUITE=exec) | 28 suites under TEST_CAT_EXEC (4 new for §5 gate regressions), 0 failures
+
+> **Notes:**
+> - Shipped syscall `SYS_FAULT_INJECT = 44` with six subcommand selectors and a typed bridge to all four T03 fault-injection countdowns (kmalloc, PMM, VMM, copy_user). Gate: `g_boot_info.config.test`; self-PID task filter applied to all four selectors. Kernel dispatcher + user-mode wrapper both one function; total §5 surface is <130 LOC of new kernel C plus ~90 LOC of user-side test code.
+> - Unplanned adjacent fix applied inline (Codex quality H1, 2026-04-20): `syscall_handler` now lowers IRQL from the IDT-raised `vector_to_irql(0x80)=8` to PASSIVE_LEVEL at entry, restores the software bookkeeping on exit WITHOUT reprogramming TPR. Same class of bug as the §3 `task_exit` IRQL leak: INT 0x80 is a software interrupt, not a hardware IRQ, and should run at the user thread's logical IRQL so that kmalloc's PASSIVE-gated fault-injection hook and mutex_lock's APC-level ceiling both work as designed. Explicit `pcpu->current_irql = entry_irql` on exit bypasses `KeRaiseIrql` so TPR stays at PASSIVE (where `KeLowerIrql` put it), preventing the CPU from permanently masking low-priority device IRQs after the first syscall.
+> - Codex adversarial review (2 passes): M1 (FAULT_PMM_NEXT missing task filter) fixed; L1 (smoke test false-positive using nonexistent path) fixed; H1 (TPR stuck at 8 after syscall) fixed. No open findings.
+> - Downstream effects: unblocks §9-§14 test binaries to probe their own error paths deterministically (e.g. `test_fileio.exe` can arm `FAULT_KMALLOC_NEXT` right before `sys_openfile` to assert cleanup is correct on allocator failure). The syscall IRQL fix also unblocks any future kernel mutex usage from syscall handlers.
+> - Canonical doc: [tests/usermode.manifest](../../tests/usermode.manifest) lists the binary; [docs/testing/usermode-env-matrix.md](../../docs/testing/usermode-env-matrix.md) section §4 describes the SKIP-on-test=0 contract this binary relies on.
+> - Scope boundary: §5 owns the bridge + gate + self-PID isolation + smoke regression. Per-test cleanup of armed-but-not-fired countdowns between binaries is §6's job (per-test isolation hook). JUnit XML / JSON emission of fault-inject results is §7. Test-type taxonomy (stress class forcing multiple injections) is §8.
+
+> **Verified:** 2026-04-20 | commit `<pending>` | 7/7 items | build OK | tests 107/107 PASS (up from 102) + smoke PASS (KVM 2.34s); full arm -> trap -> disarm round-trip exercised end-to-end through `test_faultinject.exe` via INT 0x80
 
 ---
 
@@ -420,7 +432,7 @@ Wire user-mode test binaries into `make test`.
 | 💎  | Per-test isolation   | ✅ HLK session reset | ✅ kselftest fork+tmp    | ⬜ §6                  |
 | 💎  | Stress / longhaul    | ✅ TAEF Loop+Stress  | ✅ LTP runtest/stress    | ⬜ §8 stress type      |
 | 💎  | Perf regression      | ✅ perfview/PerfTest | ✅ perf + flame baseline | ⬜ §8 perf type        |
-| ⭐  | Fault-inject bridge  | ⚠️ AppVerifier hooks | ⚠️ debugfs failslab      | ⬜ §5 SYS_FAULT_INJECT |
+| ⭐  | Fault-inject bridge  | ⚠️ AppVerifier hooks | ⚠️ debugfs failslab      | ✅ §5 SYS_FAULT_INJECT |
 | ⭐  | Win32 on non-Win     | ❌ N/A               | ❌ Wine only             | ⬜ §14                 |
 
 > **Parity gaps:** 💎 rows with ⬜ map to the listed sections. **⭐ rows:** §5 fault-inject bridge gives a typed `test=1`-gated kernel-allocator probe surface that AppVerifier hooks Win32 for and Linux only exposes through debugfs; §14 Win32-on-non-Win depends on `D02T12 §6` Win32 thunk landing.

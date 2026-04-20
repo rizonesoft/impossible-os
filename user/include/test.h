@@ -81,3 +81,22 @@ extern int g_fail;
             sys_write(1, "[UTEST-END] some FAIL\n", 22);                     \
         }                                                                    \
     } while (0)
+
+/* Fault-injection bridge. Thin wrapper around the raw
+ * SYS_FAULT_INJECT syscall that reads clean in test sources. `kind` is
+ * one of the FAULT_* selectors from syscall.h; `countdown` is the N-th
+ * subsequent kernel call to fail (ignored for FAULT_KMALLOC_NEXT /
+ * FAULT_PMM_NEXT / FAULT_VMM_MAP_NEXT / FAULT_COPY_USER_NEXT which all
+ * behave as countdown=1, and for FAULT_CLEAR_ALL which disarms).
+ *
+ * Returns 0 on success, -1 when the kernel hard-fails. The primary
+ * -1 cause is boot.conf test=0 -- the gate is enforced server-side
+ * in src/kernel/sched/syscall.c so user-mode binaries cannot poison
+ * kernel allocators on a production boot. A test binary that needs
+ * to be robust against running under test=0 should SKIP (exit 77)
+ * instead of FAIL when this returns -1. */
+static inline int utest_fault_inject(unsigned int kind,
+                                     unsigned int countdown)
+{
+    return (int)sys_fault_inject((uint32_t)kind, (uint32_t)countdown);
+}

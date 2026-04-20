@@ -39,6 +39,24 @@
 #define SYS_READHANDLE   41 /* sys_readhandle(handle, buf, size) → bytes / -1 */
 #define SYS_OPENDIROBJ   42 /* NtOpenDirectoryObject(name, access, &handle) → 0 / -1 */
 #define SYS_QUERYDIROBJ  43 /* NtQueryDirectoryObject(handle, buf, count, &ctx, &ret) → 0 / -1 */
+#define SYS_FAULT_INJECT 44 /* sys_fault_inject(kind, countdown, flags) → 0 / -1
+                             * (test=1 gated, self-pid scoped) -- see the
+                             * user-mode fault-injection bridge section in
+                             * the user-mode test framework TODO */
+
+/* ---- SYS_FAULT_INJECT subcommand selectors ----
+ * All fault-injection countdowns are per-CPU + task-filtered. The
+ * `countdown` argument is the N-th call to fail (N=1 => next call).
+ * `pmm_fail_next` variants reuse the existing kernel-test-harness fault
+ * injection APIs; the user-mode bridge just forwards the countdown +
+ * the caller's own PID as the task filter so a test can only DoS
+ * itself. */
+#define FAULT_KMALLOC_NEXT       1  /* arg2 ignored; fail next kmalloc      */
+#define FAULT_KMALLOC_COUNTDOWN  2  /* arg2 = N; fail the N-th kmalloc      */
+#define FAULT_PMM_NEXT           3  /* fail next pmm_alloc_frame            */
+#define FAULT_VMM_MAP_NEXT       4  /* fail next vmm_map_page               */
+#define FAULT_COPY_USER_NEXT     5  /* fail next copy_from_user/to_user     */
+#define FAULT_CLEAR_ALL          6  /* disarm every countdown + filter      */
 
 /* --- SSDT index aliases for transition ---
  * These map existing SYS_* names to their SSDT NtXxx equivalents.

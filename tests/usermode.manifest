@@ -22,3 +22,4 @@
 
 test_harness_smoke.exe
 test_syscall.exe
+test_faultinject.exe

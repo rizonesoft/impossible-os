@@ -20,12 +20,18 @@
 
 #include "kernel/test/test.h"
 #include "kernel/test/test_usermode.h"
+#include "kernel/sched/syscall.h"
+#include "kernel/mm/heap.h"
+#include "kernel/boot_info.h"
 
 /* Exposed by src/kernel/test/test_usermode.c for unit-test use. Kept as
  * forward declarations here rather than promoted to the public header
  * because their only non-test consumer is the launcher itself. */
 int test_usermode_glob_match(const char *pattern, const char *name);
 int test_usermode_is_valid_manifest_name(const char *name);
+
+/* Exposed by src/kernel/sched/syscall.c for §5 gate regression tests. */
+int64_t sys_fault_inject_dispatch(uint32_t kind, uint32_t countdown);
 
 /* ---- Glob matcher: NULL pattern ------------------------------------- */
 
@@ -226,6 +232,89 @@ static void test_setter_api_no_crash(void)
     TEST_ASSERT(1, "setter API accepts documented edge cases without crashing");
 }
 
+/* ---- §5 SYS_FAULT_INJECT gate regression ---------------------------- *
+ *
+ * The fault-inject syscall MUST hard-fail with -1 (STATUS_ACCESS_DENIED
+ * at the INT 0x80 return-value channel) when boot.conf test=0. Without
+ * that gate, a user-mode binary could arm kmalloc_fail_countdown
+ * repeatedly and DoS the kernel from non-test boots. The regression
+ * saves + restores `g_boot_info.config.test` around the probe so the
+ * surrounding test harness (which runs under test=1 via the boot
+ * flow) is unaffected.
+ *
+ * ALLOWED per CLAUDE.md "Test Code -- No Live Boot Infrastructure":
+ *   - pure data field on g_boot_info (not an _init() re-invocation)
+ *   - sys_fault_inject_dispatch() is a pure dispatch helper; calling it
+ *     does not touch VPD / framebuffer / serial state
+ *   - save + restore wrapper around the config bit
+ * --------------------------------------------------------------------- */
+
+static void test_fault_inject_gate_denies_when_test_is_off(void)
+{
+    uint8_t saved_test = g_boot_info.config.test;
+    uint64_t fired_before = kmalloc_fail_injections_triggered();
+    int64_t rc;
+
+    g_boot_info.config.test = 0;
+    rc = sys_fault_inject_dispatch(FAULT_KMALLOC_NEXT, 0);
+    TEST_ASSERT_EQ((uint64_t)rc, (uint64_t)(uint64_t)-1LL,
+                   "SYS_FAULT_INJECT returns -1 when config.test=0");
+
+    /* Arming was supposed to be blocked, so the cumulative
+     * fired-counter must not have budged. If it did, the gate let
+     * an injection through. */
+    TEST_ASSERT_EQ(kmalloc_fail_injections_triggered(), fired_before,
+                   "gate blocked: kmalloc fired-counter unchanged");
+
+    g_boot_info.config.test = saved_test;
+}
+
+static void test_fault_inject_clear_works_under_test_mode(void)
+{
+    uint8_t saved_test = g_boot_info.config.test;
+    int64_t rc;
+
+    /* Normal-path round-trip under test=1: CLEAR_ALL is the safest
+     * probe -- it disarms every countdown + filter without firing
+     * anything, so running this assertion cannot perturb sibling
+     * tests' fault-inject state. */
+    g_boot_info.config.test = 1;
+    rc = sys_fault_inject_dispatch(FAULT_CLEAR_ALL, 0);
+    TEST_ASSERT_EQ((uint64_t)rc, 0ULL,
+                   "FAULT_CLEAR_ALL returns 0 under config.test=1");
+
+    g_boot_info.config.test = saved_test;
+}
+
+static void test_fault_inject_rejects_unknown_kind(void)
+{
+    uint8_t saved_test = g_boot_info.config.test;
+    int64_t rc;
+
+    g_boot_info.config.test = 1;
+    /* kind values above FAULT_CLEAR_ALL (6) are unassigned; dispatcher
+     * must -1 them so a future ABI extension can't be forged against
+     * an older kernel. */
+    rc = sys_fault_inject_dispatch(99, 0);
+    TEST_ASSERT_EQ((uint64_t)rc, (uint64_t)(uint64_t)-1LL,
+                   "unknown kind=99 returns -1 even under test=1");
+
+    g_boot_info.config.test = saved_test;
+}
+
+static void test_fault_inject_kmalloc_countdown_requires_nonzero(void)
+{
+    uint8_t saved_test = g_boot_info.config.test;
+    int64_t rc;
+
+    g_boot_info.config.test = 1;
+    rc = sys_fault_inject_dispatch(FAULT_KMALLOC_COUNTDOWN, 0);
+    TEST_ASSERT_EQ((uint64_t)rc, (uint64_t)(uint64_t)-1LL,
+                   "FAULT_KMALLOC_COUNTDOWN with countdown=0 returns -1");
+
+    g_boot_info.config.test = saved_test;
+}
+
 /* ---- Registration --------------------------------------------------- */
 
 void test_register_usermode_launcher(void);
@@ -261,6 +350,18 @@ void test_register_usermode_launcher(void)
                             test_manifest_rejects_non_test_binaries, TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: manifest rejects control bytes",
                             test_manifest_rejects_control_bytes, TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: fault-inject gate denies when test=0",
+                            test_fault_inject_gate_denies_when_test_is_off,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: fault-inject CLEAR_ALL under test=1",
+                            test_fault_inject_clear_works_under_test_mode,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: fault-inject rejects unknown kind",
+                            test_fault_inject_rejects_unknown_kind,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: FAULT_KMALLOC_COUNTDOWN requires N>=1",
+                            test_fault_inject_kmalloc_countdown_requires_nonzero,
+                            TEST_CAT_EXEC);
 }
 
 #endif /* KERNEL_TESTS */

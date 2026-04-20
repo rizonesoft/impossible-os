@@ -11,12 +11,17 @@
 #include "kernel/vectors.h"
 #include "kernel/nt/ntstatus.h"
 #include "kernel/sched/task.h"
+#include "kernel/sched/irql.h"
+#include "kernel/smp.h"
 #include "kernel/klog.h"
 #include "kernel/drivers/keyboard.h"
 #include "kernel/drivers/serial.h"
 
 #include "kernel/fs/vfs.h"
 #include "kernel/mm/heap.h"
+#include "kernel/mm/pmm.h"
+#include "kernel/mm/vmm.h"
+#include "kernel/cpu_security.h"
 #include "kernel/timer.h"
 #include "kernel/net/net.h"
 #include "kernel/acpi.h"
@@ -27,6 +32,7 @@
 #include "kernel/ob/ob_section.h"
 #include "kernel/ob/ob.h"
 #include "kernel/ob/teb.h"
+#include "kernel/boot_info.h"
 #include "desktop/terminal.h"
 
 /* --- Port I/O helper --- */
@@ -231,6 +237,82 @@ static NTSTATUS sys_getprocs(uint64_t buf_ptr, uint64_t buf_size,
  *   - Functions with byte counts: return bytes_out on success, -1 on error
  *   - Functions with 0/-1:       return 0 on NT_SUCCESS, -1 on error */
 
+/* ---- SYS_FAULT_INJECT dispatch (user-mode fault-injection bridge) - *
+ *
+ * Bridges the kernel-test-harness allocator countdowns (kmalloc,
+ * PMM, VMM, copy_user) to user-mode tests. Two hard security gates:
+ *   1. boot.conf test=1 required  (g_boot_info.config.test)
+ *   2. countdown is armed with the caller's own PID as the task filter,
+ *      so a test can ONLY fault-inject for itself -- sibling kthreads
+ *      and the launcher task never consume the trap.
+ *
+ * Exposed non-static so kernel unit tests can invoke the dispatch
+ * directly (with a save/restore wrapper around config.test) without
+ * re-implementing the gate logic. Not part of the public kernel API.
+ * ------------------------------------------------------------------ */
+
+int64_t sys_fault_inject_dispatch(uint32_t kind, uint32_t countdown);
+int64_t sys_fault_inject_dispatch(uint32_t kind, uint32_t countdown)
+{
+    uint32_t pid;
+
+    /* Gate: deny unless boot.conf test=1. NT_STATUS_ACCESS_DENIED
+     * surfaces to user mode as -1 via the syscall return-value path;
+     * the klog line names the denied kind so a hostile caller shows up
+     * in the boot log instead of silently bouncing. */
+    if (!g_boot_info.config.test) {
+        klog(LOG_WARN, "sys",
+             "SYS_FAULT_INJECT denied (test=0) kind=%u pid=%u",
+             (uint64_t)kind, (uint64_t)task_current()->pid);
+        return -1;
+    }
+
+    pid = task_current()->pid;
+
+    switch (kind) {
+    case FAULT_KMALLOC_NEXT:
+        kmalloc_fail_task_filter_set(pid);
+        kmalloc_fail_next();
+        return 0;
+    case FAULT_KMALLOC_COUNTDOWN:
+        if (countdown == 0)
+            return -1;
+        kmalloc_fail_task_filter_set(pid);
+        kmalloc_fail_countdown_set(countdown);
+        return 0;
+    case FAULT_PMM_NEXT:
+        /* Same self-PID isolation contract as the other selectors:
+         * without the filter, a foreign task_*.exe, a sibling kthread,
+         * or the launcher's own kmalloc calls on the same CPU would
+         * consume the pending trap (Codex M1, 2026-04-20). */
+        pmm_alloc_fail_task_filter_set(pid);
+        pmm_alloc_fail_next();
+        return 0;
+    case FAULT_VMM_MAP_NEXT:
+        vmm_map_fail_task_filter_set(pid);
+        vmm_map_fail_next();
+        return 0;
+    case FAULT_COPY_USER_NEXT:
+        copy_user_fail_task_filter_set(pid);
+        copy_user_fail_next();
+        return 0;
+    case FAULT_CLEAR_ALL:
+        kmalloc_fail_countdown_clear();
+        kmalloc_fail_task_filter_clear();
+        pmm_alloc_fail_countdown_clear();
+        pmm_alloc_fail_task_filter_clear();
+        vmm_map_fail_countdown_clear();
+        vmm_map_fail_task_filter_clear();
+        copy_user_fail_countdown_clear();
+        copy_user_fail_task_filter_clear();
+        return 0;
+    default:
+        klog(LOG_WARN, "sys", "SYS_FAULT_INJECT unknown kind=%u pid=%u",
+             (uint64_t)kind, (uint64_t)pid);
+        return -1;
+    }
+}
+
 static uint64_t syscall_handler(struct interrupt_frame *frame)
 {
     uint64_t syscall_nr = frame->rax;
@@ -238,6 +320,26 @@ static uint64_t syscall_handler(struct interrupt_frame *frame)
     uint64_t arg2 = frame->rsi;
     uint64_t arg3 = frame->rdx;
     int64_t ret = -1;
+    KIRQL entry_irql;
+
+    /* Lower IRQL to PASSIVE_LEVEL for the duration of the syscall body.
+     *
+     * INT 0x80 is a software interrupt, not a hardware IRQ -- the IDT's
+     * vector_to_irql() treats it as a device interrupt (group 8 -> IRQL 8)
+     * because it doesn't special-case software vectors. Keeping IRQL=8 for
+     * syscall bodies blocks mutex_lock (APC_LEVEL ceiling), blocks the §1
+     * fault-injection hook (PASSIVE_LEVEL gate), and has no benefit --
+     * syscalls run on behalf of the user thread and should execute at its
+     * logical IRQL.
+     *
+     * Paired with the restore below; KeLowerIrql clamps when current is
+     * already <= target, so this is a no-op on any re-entry path that
+     * already dropped the IRQL first. Same fix-class as the §3 task_exit
+     * IRQL leak (2026-04-20) -- that was the forever-yield case, this is
+     * the per-syscall case, both blocked by the same IDT raise. */
+    entry_irql = KeGetCurrentIrql();
+    if (entry_irql > PASSIVE_LEVEL)
+        KeLowerIrql(PASSIVE_LEVEL);
 
     switch (syscall_nr) {
     case SYS_WRITE: {
@@ -453,12 +555,36 @@ static uint64_t syscall_handler(struct interrupt_frame *frame)
             ret = -1;
         break;
     }
+    case SYS_FAULT_INJECT:
+        ret = sys_fault_inject_dispatch((uint32_t)arg1, (uint32_t)arg2);
+        break;
     default:
         klog(LOG_WARN, "sys", "Unknown syscall %u from PID %u",
                syscall_nr, (uint64_t)task_current()->pid);
         ret = -1;
         break;
     }
+
+    /* Restore the software IRQL bookkeeping WITHOUT reprogramming TPR.
+     *
+     * Codex quality H1, 2026-04-20: KeRaiseIrql(entry_irql) would
+     * program TPR to the synthetic DIRQL=8 for INT 0x80 and the IDT's
+     * post-handler irql_restore (idt.c line ~320) only reassigns
+     * pcpu->current_irql without re-touching TPR, so TPR would stay
+     * pinned at 8 across every syscall -- masking legacy device IRQs
+     * for the rest of the CPU's runtime.
+     *
+     * The correct behavior: TPR was never actually raised on INT 0x80
+     * entry (the IDT's raise is pure software bookkeeping -- it
+     * updates pcpu->current_irql only). Hardware interrupt masking
+     * during the syscall body is provided by the CPU's IF flag
+     * (cleared automatically on interrupt gate entry). So we should
+     * leave TPR at PASSIVE (where our KeLowerIrql put it) and just
+     * restore the software bookkeeping so the IDT's conditional
+     * `if (current != prev) current = prev` sees the state it expects.
+     * Writing pcpu->current_irql directly bypasses TPR. */
+    if (entry_irql > PASSIVE_LEVEL)
+        smp_this_cpu()->current_irql = entry_irql;
 
     frame->rax = (uint64_t)ret;
     return (uint64_t)frame;
