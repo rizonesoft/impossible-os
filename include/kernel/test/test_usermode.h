@@ -76,6 +76,35 @@ void test_usermode_set_xml(int enable);
  * schema for downstream trend analysis. Disabled by default. */
 void test_usermode_set_json(int enable);
 
+/* Test-type taxonomy (§8 of TODO-04). The launcher derives the type
+ * from the binary filename prefix:
+ *   `test_smoke_*.exe`   -> UTEST_TYPE_SMOKE    (phase 0: FAIL aborts run)
+ *   `test_stress_*.exe`  -> UTEST_TYPE_STRESS   (classname=stress; binary loops internally)
+ *   `test_perf_*.exe`    -> UTEST_TYPE_PERF     (classname=perf; test owns baseline)
+ *   anything else        -> UTEST_TYPE_CORRECTNESS (default)
+ * An optional `type=<name>` token in the manifest entry overrides
+ * the filename-derived default (future-proofing for binaries that
+ * want to declare a different policy).
+ *
+ * Stress note: the launcher spawns each binary exactly once. Stress
+ * iteration is the BINARY's responsibility (see user/test/
+ * test_stress_libc.c). Kernel task slots are monotonic so a
+ * launcher-side loop would exhaust TASK_MAX (32) after ~20 binaries. */
+typedef enum {
+    UTEST_TYPE_CORRECTNESS = 0,
+    UTEST_TYPE_SMOKE       = 1,
+    UTEST_TYPE_STRESS      = 2,
+    UTEST_TYPE_PERF        = 3
+} utest_type_t;
+
+/* RESERVED -- boot.conf `stress_iters=<N>` is plumbed through this
+ * setter but currently has no consumer (stress binaries hardcode
+ * their iteration count). When a future env-passing syscall lands,
+ * the launcher will forward this value to the child so a stress
+ * binary can query its desired iteration count at runtime. 0 =
+ * default. */
+void test_usermode_set_stress_iters(uint32_t n);
+
 /* Contract for SKIP: a test binary reports "this test is not
  * applicable here" by exiting with status 77 (kselftest convention).
  * The launcher counts it as SKIPPED, not FAIL. Any other non-zero

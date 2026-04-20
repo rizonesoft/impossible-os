@@ -68,6 +68,9 @@ void boot_tests_run(void)
                 test_usermode_set_xml(1);
             if (g_boot_info.config.json)
                 test_usermode_set_json(1);
+            if (g_boot_info.config.stress_iters)
+                test_usermode_set_stress_iters(
+                    g_boot_info.config.stress_iters);
             test_usermode_run();
         }
     }

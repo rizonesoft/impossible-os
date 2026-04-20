@@ -3,23 +3,31 @@
 #
 # Deployed by `make userland` to C:\tests\usermode.manifest.
 # Read by the kernel-side launcher in src/kernel/test/test_usermode.c
-# (TODO-04 §3 + §4). One filename per line, `#` starts a comment,
-# blank lines are ignored. Order in this file is the execution order
-# -- the launcher honours it so tests can declare deterministic
-# dependencies (e.g. run a smoke first, then subsystem coverage).
+# (TODO-04 §3 + §4 + §8). One filename per line, `#` starts a comment,
+# blank lines are ignored. Order in this file is the priority order
+# WITHIN a phase -- the launcher runs smokes (phase 0) then non-smokes
+# (phase 1), so a smoke listed below a correctness test still runs first.
 #
-# Behavior:
-#   - First §1 smoke so a broken UTEST harness itself fails loud.
-#   - Then §2 (build-validating) syscall stub.
-#   - Future §9-§15 binaries append here as they ship.
-#
-# Binaries not listed here are STILL run (via directory glob) when
-# this manifest is absent OR when the §4 UTEST_MANIFEST_MAX cap is
-# tripped. The manifest is a priority list, not a restriction list.
+# §8 test-type taxonomy: the type is inferred from the filename prefix
+#   test_smoke_*.exe   -> UTEST_TYPE_SMOKE       (phase 0; FAIL aborts run)
+#   test_stress_*.exe  -> UTEST_TYPE_STRESS      (phase 1; looped stress_iters times)
+#   test_perf_*.exe    -> UTEST_TYPE_PERF        (phase 1; emits [PERF] lines)
+#   anything else      -> UTEST_TYPE_CORRECTNESS (phase 1; default)
+# An optional `type=<name>` attribute on the line overrides the
+# filename-derived default, e.g.:
+#   test_foo.exe type=smoke     # force `test_foo.exe` into the smoke phase
 #
 # To restrict the run to ONE binary, set `utest_filter=test_foo.exe`
 # in boot.conf (TODO-04 §4). Glob matching is supported: `test_smoke_*.exe`.
 
+# §8 smoke phase -- one fast-fail gate for catastrophic boot regressions.
+test_smoke_boot.exe
+
+# §1 harness self-test + correctness suites.
 test_harness_smoke.exe
 test_syscall.exe
 test_faultinject.exe
+
+# §8 stress + perf phase -- run after all correctness passes.
+test_stress_libc.exe
+test_perf_syscall.exe

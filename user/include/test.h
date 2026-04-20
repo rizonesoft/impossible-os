@@ -105,6 +105,52 @@ extern int g_fail;
         sys_write(1, "\n", 1);                                               \
     } while (0)
 
+/* Performance-report macro for `test_perf_*.exe` binaries. Emits one
+ * `[PERF] <metric>=<value_ns>` line on stdout so operators and future
+ * log-parsers can track timings over time. The value is ALWAYS in
+ * nanoseconds by convention (even when the test measures milliseconds
+ * -- convert at the call site) so all metrics share a single unit.
+ *
+ * Today the macro only reports; baseline-comparison against
+ * `tests/perf-baseline.json` is done by the test itself via existing
+ * UTEST_ASSERT against a hardcoded threshold. A future libc JSON
+ * helper will read the baseline file and let perf tests do
+ * automated drift checking; until that ships, perf tests either
+ * hardcode the threshold or only report for trend analysis.
+ *
+ * Usage:
+ *   uint64_t before = sys_uptime_ns();
+ *   sys_yield();
+ *   uint64_t after  = sys_uptime_ns();
+ *   UTEST_PERF("sys_yield_ns", after - before);
+ *   UTEST_ASSERT(after - before < 500, "sys_yield < 500ns baseline+15%"); */
+#define UTEST_PERF(metric, value_ns)                                         \
+    do {                                                                     \
+        const char *_utest_pm = (metric);                                    \
+        size_t _utest_plen = strlen(_utest_pm);                              \
+        char _utest_vbuf[24];                                                \
+        uint64_t _utest_v = (uint64_t)(value_ns);                            \
+        uint32_t _utest_vi = 0;                                              \
+        if (_utest_v == 0) { _utest_vbuf[_utest_vi++] = '0'; }               \
+        else {                                                               \
+            char _utest_tmp[24];                                             \
+            uint32_t _utest_ti = 0;                                          \
+            while (_utest_v && _utest_ti < sizeof(_utest_tmp)) {              \
+                _utest_tmp[_utest_ti++] = (char)('0' + (_utest_v % 10));     \
+                _utest_v /= 10;                                              \
+            }                                                                \
+            while (_utest_ti && _utest_vi < sizeof(_utest_vbuf))             \
+                _utest_vbuf[_utest_vi++] = _utest_tmp[--_utest_ti];           \
+        }                                                                    \
+        sys_write(1, UTEST_COLOR_ON, UTEST_COLOR_ON_LEN);                    \
+        sys_write(1, "[PERF] ", 7);                                          \
+        sys_write(1, _utest_pm, _utest_plen);                                \
+        sys_write(1, "=", 1);                                                \
+        sys_write(1, _utest_vbuf, _utest_vi);                                \
+        sys_write(1, UTEST_COLOR_OFF, UTEST_COLOR_OFF_LEN);                  \
+        sys_write(1, "\n", 1);                                               \
+    } while (0)
+
 /* Fault-injection bridge. Thin wrapper around the raw
  * SYS_FAULT_INJECT syscall that reads clean in test sources. `kind` is
  * one of the FAULT_* selectors from syscall.h; `countdown` is the N-th

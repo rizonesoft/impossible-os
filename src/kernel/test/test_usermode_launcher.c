@@ -41,6 +41,12 @@ int test_usermode_json_escape(const char *src, char *dst, uint32_t cap);
 /* Exposed by src/kernel/sched/syscall.c for §5 gate regression tests. */
 int64_t sys_fault_inject_dispatch(uint32_t kind, uint32_t countdown);
 
+/* §8 taxonomy helpers -- integer-returning thin wrappers so the unit
+ * test binds against a stable ABI without pulling in utest_type_t. */
+int test_usermode_type_for_name(const char *name);
+int test_usermode_type_from_attr(const char *val);
+const char *test_usermode_type_label(int type);
+
 /* ---- Glob matcher: NULL pattern ------------------------------------- */
 
 static void test_glob_null_pattern_matches_everything(void)
@@ -522,6 +528,139 @@ static void test_path_join_overflow(void)
                 "out_cap < 3 rejected");
 }
 
+/* ---- §8 taxonomy: filename prefix inference ------------------------- */
+
+/* Mirror of utest_type_t (see include/kernel/test/test_usermode.h) -- kept
+ * local so the unit test does not have to include the taxonomy header. */
+#define UT_CORRECTNESS 0
+#define UT_SMOKE       1
+#define UT_STRESS      2
+#define UT_PERF        3
+
+static void test_type_for_name_prefix_inference(void)
+{
+    TEST_ASSERT(test_usermode_type_for_name("test_smoke_boot.exe") == UT_SMOKE,
+                "test_smoke_* -> UTEST_TYPE_SMOKE");
+    TEST_ASSERT(test_usermode_type_for_name("test_smoke_.exe") == UT_SMOKE,
+                "test_smoke_ (empty middle) -> UTEST_TYPE_SMOKE");
+    TEST_ASSERT(test_usermode_type_for_name("test_stress_libc.exe") == UT_STRESS,
+                "test_stress_* -> UTEST_TYPE_STRESS");
+    TEST_ASSERT(test_usermode_type_for_name("test_perf_syscall.exe") == UT_PERF,
+                "test_perf_* -> UTEST_TYPE_PERF");
+    TEST_ASSERT(test_usermode_type_for_name("test_syscall.exe") == UT_CORRECTNESS,
+                "test_* (no specific prefix) -> UTEST_TYPE_CORRECTNESS");
+    TEST_ASSERT(test_usermode_type_for_name("test_harness_smoke.exe") == UT_CORRECTNESS,
+                "test_harness_smoke.exe keeps correctness (prefix is test_harness_, not test_smoke_)");
+}
+
+static void test_type_for_name_prefix_boundaries(void)
+{
+    /* Near-miss: a test named `test_smoke.exe` (no trailing underscore)
+     * MUST NOT match -- the convention requires `test_smoke_<body>.exe`.
+     * Same idea for stress and perf. */
+    TEST_ASSERT(test_usermode_type_for_name("test_smoke.exe") == UT_CORRECTNESS,
+                "test_smoke.exe (no trailing _) -> correctness");
+    TEST_ASSERT(test_usermode_type_for_name("test_stress.exe") == UT_CORRECTNESS,
+                "test_stress.exe (no trailing _) -> correctness");
+    TEST_ASSERT(test_usermode_type_for_name("test_perf.exe") == UT_CORRECTNESS,
+                "test_perf.exe (no trailing _) -> correctness");
+    /* A wholly unrelated name gets the default type, not a crash. */
+    TEST_ASSERT(test_usermode_type_for_name("hello.exe") == UT_CORRECTNESS,
+                "hello.exe (no test_ prefix) -> correctness");
+    TEST_ASSERT(test_usermode_type_for_name("") == UT_CORRECTNESS,
+                "empty name -> correctness (no crash)");
+}
+
+/* ---- §8 taxonomy: manifest type= attribute parsing ------------------ */
+
+static void test_type_from_attr_known_values(void)
+{
+    TEST_ASSERT(test_usermode_type_from_attr("smoke") == UT_SMOKE,
+                "type=smoke -> UTEST_TYPE_SMOKE");
+    TEST_ASSERT(test_usermode_type_from_attr("stress") == UT_STRESS,
+                "type=stress -> UTEST_TYPE_STRESS");
+    TEST_ASSERT(test_usermode_type_from_attr("perf") == UT_PERF,
+                "type=perf -> UTEST_TYPE_PERF");
+    TEST_ASSERT(test_usermode_type_from_attr("correctness") == UT_CORRECTNESS,
+                "type=correctness -> UTEST_TYPE_CORRECTNESS");
+}
+
+static void test_type_from_attr_unknown_values(void)
+{
+    /* Unknown attribute values fall back to correctness (warn-and-continue
+     * so a future schema addition doesn't brick older kernels). */
+    TEST_ASSERT(test_usermode_type_from_attr("Smoke") == UT_CORRECTNESS,
+                "case mismatch (Smoke) -> correctness (exact match only)");
+    TEST_ASSERT(test_usermode_type_from_attr("SMOKE") == UT_CORRECTNESS,
+                "case mismatch (SMOKE) -> correctness");
+    TEST_ASSERT(test_usermode_type_from_attr("benchmark") == UT_CORRECTNESS,
+                "unknown value (benchmark) -> correctness");
+    TEST_ASSERT(test_usermode_type_from_attr("") == UT_CORRECTNESS,
+                "empty value -> correctness");
+    TEST_ASSERT(test_usermode_type_from_attr("smoke_extra") == UT_CORRECTNESS,
+                "trailing garbage (smoke_extra) -> correctness (exact match)");
+}
+
+/* ---- §8 taxonomy: type label round-trip ----------------------------- */
+
+static void test_type_label_matches_enum(void)
+{
+    const char *l;
+    l = test_usermode_type_label(UT_SMOKE);
+    TEST_ASSERT(l && l[0] == 's' && l[1] == 'm' && l[2] == 'o' &&
+                l[3] == 'k' && l[4] == 'e' && l[5] == '\0',
+                "label(SMOKE) == \"smoke\"");
+    l = test_usermode_type_label(UT_STRESS);
+    TEST_ASSERT(l && l[0] == 's' && l[1] == 't' && l[2] == 'r' &&
+                l[3] == 'e' && l[4] == 's' && l[5] == 's' && l[6] == '\0',
+                "label(STRESS) == \"stress\"");
+    l = test_usermode_type_label(UT_PERF);
+    TEST_ASSERT(l && l[0] == 'p' && l[1] == 'e' && l[2] == 'r' &&
+                l[3] == 'f' && l[4] == '\0',
+                "label(PERF) == \"perf\"");
+    l = test_usermode_type_label(UT_CORRECTNESS);
+    TEST_ASSERT(l && l[0] == 'c' && l[1] == 'o' && l[2] == 'r',
+                "label(CORRECTNESS) starts with \"cor\"");
+    /* Round-trip: passing any enum value yields a non-NULL label. The
+     * default branch catches future enum extensions without crashing. */
+    l = test_usermode_type_label(99);
+    TEST_ASSERT(l != (const char *)0,
+                "label(unknown int) returns a non-NULL fallback label");
+}
+
+/* ---- §8 taxonomy: ABI stability check ------------------------------- */
+
+static void test_type_enum_values_stable(void)
+{
+    /* Integer values of the enum are an ABI contract -- the boot.conf
+     * `stress_iters` parser, the launcher manifest, and XML/JSON classname
+     * all depend on them being exactly these. If someone reorders the
+     * enum in include/kernel/test/test_usermode.h, this fires. */
+    TEST_ASSERT(test_usermode_type_for_name("test_smoke_boot.exe") == 1,
+                "UTEST_TYPE_SMOKE integer value == 1");
+    TEST_ASSERT(test_usermode_type_for_name("test_stress_foo.exe") == 2,
+                "UTEST_TYPE_STRESS integer value == 2");
+    TEST_ASSERT(test_usermode_type_for_name("test_perf_foo.exe") == 3,
+                "UTEST_TYPE_PERF integer value == 3");
+    TEST_ASSERT(test_usermode_type_for_name("test_anything.exe") == 0,
+                "UTEST_TYPE_CORRECTNESS integer value == 0");
+}
+
+/* ---- §8: stress_iters boot-config field -----------------------------*/
+
+static void test_stress_iters_boot_config_has_nonzero_room(void)
+{
+    /* The field is uint16 (0-65535). The setter interprets 0 as "use
+     * built-in default" so the parser always lands a representable
+     * value; this test just proves the field exists + survives through
+     * the setter without crash. */
+    test_usermode_set_stress_iters(0);       /* reset */
+    test_usermode_set_stress_iters(100);
+    test_usermode_set_stress_iters(65535);
+    TEST_ASSERT(1, "set_stress_iters(0/100/65535) no-crash");
+    test_usermode_set_stress_iters(0);       /* leave in default state */
+}
+
 /* ---- Registration --------------------------------------------------- */
 
 void test_register_usermode_launcher(void);
@@ -587,6 +726,21 @@ void test_register_usermode_launcher(void)
                             test_xml_escape_specials, TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: JSON escape covers quote/backslash/TAB/LF/ctrl",
                             test_json_escape_specials, TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: type_for_name prefix inference",
+                            test_type_for_name_prefix_inference, TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: type_for_name prefix boundaries",
+                            test_type_for_name_prefix_boundaries, TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: type_from_attr known values",
+                            test_type_from_attr_known_values, TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: type_from_attr unknown falls back to correctness",
+                            test_type_from_attr_unknown_values, TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: type_label matches enum",
+                            test_type_label_matches_enum, TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: taxonomy enum values are stable ABI",
+                            test_type_enum_values_stable, TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: set_stress_iters accepts 0/100/65535",
+                            test_stress_iters_boot_config_has_nonzero_room,
+                            TEST_CAT_EXEC);
 }
 
 #endif /* KERNEL_TESTS */

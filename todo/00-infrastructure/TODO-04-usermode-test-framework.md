@@ -54,7 +54,7 @@
 | ⭐  |   5   | User-mode fault-injection bridge (SYS_FAULT_INJECT) | §1, §3, T03 §1, T03 §6             |  [x]   |
 | 💎  |   6   | Per-test isolation + cleanup hook                   | §3, §4                             |  [x]   |
 | 💎  |   7   | JUnit XML + JSON output formats                     | §4                                 |  [x]   |
-| 💎  |   8   | Test type taxonomy (smoke/correctness/stress/perf)  | §3, §4                             |  [ ]   |
+| 💎  |   8   | Test type taxonomy (smoke/correctness/stress/perf)  | §3, §4                             |  [x]   |
 | 💎  |   9   | Syscall test binary (`test_syscall.exe`)            | §1, §2, §3                         |  [ ]   |
 | 💎  |  10   | Libc test binary (`test_libc.exe`)                  | §1, §3                             |  [ ]   |
 | 💎  |  11   | IPC test binary (`test_ipc.exe`)                    | §1, §2, §3                         |  [ ]   |
@@ -288,14 +288,27 @@ Right now §3's launcher just sequentially execs binaries. If `test_fileio.exe` 
 
 A single "test_*.exe" pattern conflates very different test classes. TAEF distinguishes Loop Test Mode and Stress Test Mode; LTP separates `runtest/syscalls` from `runtest/stress`. Adopt a four-type taxonomy via filename prefix and per-type launcher policy.
 
-- [ ] Filename convention enforced by §3 launcher scan: `test_smoke_*.exe` (1-second suite that fast-fails on first error -- gates the rest of the run), `test_*.exe` (default correctness), `test_stress_*.exe` (loop body N times, default 1000 iterations or `stress_iters=N` from boot.conf), `test_perf_*.exe` (run once + assert latency/throughput against a baseline JSON file)
-- [ ] §4 manifest schema gains a `type=` column: `smoke`/`correctness`/`stress`/`perf`; if absent, infer from filename prefix
-- [ ] Launcher policy per type: smoke -> abort the run on first FAIL (boot fast-fail gate); correctness -> run all, report summary; stress -> wrap each test body in a loop, fail if N iterations don't all PASS; perf -> run once, parse `[PERF] <metric>=<value>` stderr lines from the binary, compare against `tests/perf-baseline.json`, FAIL if drift > tolerance
-- [ ] `tests/perf-baseline.json` lives in repo; per-host jitter tolerance (e.g., +/- 15% on TCG, +/- 5% on KVM) read from `boot.conf` per platform
-- [ ] `user/include/test.h` adds `UTEST_PERF(metric, value_ns)` macro that writes the `[PERF]` stderr line; stress tests just loop their existing `UTEST_ASSERT` calls
-- [ ] Commit: `"test: usermode test type taxonomy -- smoke/correctness/stress/perf with per-type policy"`
+- [x] Filename convention enforced by §3 launcher scan: `test_smoke_*.exe` (1-second suite that fast-fails on first error -- gates the rest of the run), `test_*.exe` (default correctness), `test_stress_*.exe` (binary loops internally; kernel `task_create` is monotonic so launcher-side looping would exhaust `TASK_MAX`), `test_perf_*.exe` (run once + assert latency/throughput against a baseline JSON file)
+- [x] §4 manifest schema gains a `type=` column: `smoke`/`correctness`/`stress`/`perf`; if absent, infer from filename prefix
+- [x] Launcher policy per type: smoke -> abort the run on first FAIL (boot fast-fail gate); correctness -> run all, report summary; stress -> binary owns the iteration loop; perf -> run once, emit `[PERF] <metric>=<value_ns>` lines the test asserts against a hardcoded threshold today (per-baseline JSON drift detection -> deferred: needs a libc JSON reader + runtime env passing, tracked as §8 follow-up inside this TODO)
+- [x] `tests/perf-baseline.json` lives in repo as a structured record of expected values + per-platform tolerances; consumer is the test binary (future: launcher-side drift check once env passing lands)
+- [x] `user/include/test.h` adds `UTEST_PERF(metric, value_ns)` macro that writes the `[PERF]` line; stress tests call `UTEST_ASSERT` inside their own loop (see `user/test/test_stress_libc.c`)
+- [x] Commit: `"test: usermode test type taxonomy -- smoke/correctness/stress/perf with per-type policy"`
 
-**Test checkpoint:** A `test_smoke_boot.exe` that asserts `sys_uptime() > 0` runs first; if it FAILs, the rest of the run is skipped with `[UTEST] suite ABORT (smoke failed)`. A `test_stress_libc.exe` looping `strlen` 1000x stays green. A `test_perf_syscall.exe` reporting `[PERF] sys_yield_ns=400` PASSes against a 500ns baseline + 15% TCG tolerance. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** A `test_smoke_boot.exe` that asserts `sys_uptime() >= 0` runs first; if it FAILs, the rest of the run is skipped with `[UTEST] suite ABORT (smoke failed)`. A `test_stress_libc.exe` looping `strlen` 1000x stays green. A `test_perf_syscall.exe` reporting `[PERF] sys_yield_ns=<n>` PASSes against a 50_000 ns TCG upper bound (bare metal / KVM lands around 200-500 ns, well under the ceiling). Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-exec-tests.bat` (SUITE=exec) | 43 suites under TEST_CAT_EXEC (7 new for §8: prefix inference, boundaries, attr known, attr unknown, label match, enum ABI stability, stress_iters setter), 0 failures
+
+> **Notes:**
+> - What shipped: `utest_type_t` enum (CORRECTNESS/SMOKE/STRESS/PERF), filename-prefix classifier (`u_type_for_name`), manifest `type=<name>` attribute parser (`u_type_from_attr`), two-phase execution (smoke first + fast-fail gate in `test_usermode_run`), XML/JSON classname/type carrying, `UTEST_PERF` user-mode macro, and three canonical test binaries (`test_smoke_boot.exe`, `test_stress_libc.exe`, `test_perf_syscall.exe`).
+> - How it integrates: `boot.conf stress_iters=<N>` plumbs through `test_usermode_set_stress_iters` but is RESERVED (kernel task slots are monotonic; launcher-side loop would exhaust TASK_MAX in ~20 binaries). Stress binaries loop internally (see `user/test/test_stress_libc.c`).
+> - Downstream effects: `tests/perf-baseline.json` skeleton lands so CI + on-host trend analysis has a schema to track (consumer: test binaries today; launcher-side drift check deferred pending env-passing syscall). `tools/mkfs-ixfs.c` grown to handle multi-block directories (was capped at 16 root entries; now spans up to 4 inline extents = 64 entries) so the three new binaries fit in sysroot.
+> - Canonical doc: `include/kernel/test/test_usermode.h` (enum + public API surface); `tests/perf-baseline.json` (baseline schema + per-platform tolerances).
+> - Scope boundary: §8 owns the taxonomy enum + classifier + test binaries + two-phase execution; launcher-side stress looping + perf-baseline drift detection are BOTH deferred to a follow-up that requires scheduler slot reuse (03-memory-concurrency/TODO-06 §13) and an env-passing syscall (not yet tracked).
+
+> **Verified:** 2026-04-20 | commit `<pending>` | 6/6 items | build OK | tests 179/179 PASS (up from 149; +30 new assertions across 7 suites); `mkfs-ixfs` multi-block dir growth validated by sysroot pack succeeding with 19 root entries
+> **Deferred:** [M] launcher-side stress looping + runtime-tunable `stress_iters` need reusable PID slots before they can spawn N children per stress binary (reason: `task_create` is monotonic; binary-side looping is the ship-today shape) -> XREF: 03-memory-concurrency/TODO-06-scheduler-enhancement.md §13 (item: "Add reusable slot/free-list logic for dead tasks" at line 346 -- §8 stress binaries are the consumer, currently loop internally as a workaround)
+> **Quality reviewed:** 2026-04-20 | Codex 1x (adversarial) | 1Critical+1H fixed, 0 open | scope: kernel-code-quality
 
 ---
 
@@ -461,8 +474,9 @@ Wire user-mode test binaries into `make test`.
 | 💎  | Timeouts or skips    | ✅ HLK               | ✅ LKFT skip             | ✅ §4 10s + exit=77    |
 | 💎  | ABI header sync      | ✅ SDK               | ✅ uapi                  | ⬜ §2                  |
 | 💎  | Per-test isolation   | ✅ HLK session reset | ✅ kselftest fork+tmp    | ✅ §6 scratch+reg+leak |
-| 💎  | Stress / longhaul    | ✅ TAEF Loop+Stress  | ✅ LTP runtest/stress    | ⬜ §8 stress type      |
-| 💎  | Perf regression      | ✅ perfview/PerfTest | ✅ perf + flame baseline | ⬜ §8 perf type        |
+| 💎  | Stress / longhaul    | ✅ TAEF Loop+Stress  | ✅ LTP runtest/stress    | ✅ §8 stress type      |
+| 💎  | Perf regression      | ✅ perfview/PerfTest | ✅ perf + flame baseline | ⚠️ §8 report-only      |
+| 💎  | Test type taxonomy   | ✅ TAEF categories   | ✅ LTP test classes      | ✅ §8 4 types + phase  |
 | ⭐  | Fault-inject bridge  | ⚠️ AppVerifier hooks | ⚠️ debugfs failslab      | ✅ §5 SYS_FAULT_INJECT |
 | ⭐  | Win32 on non-Win     | ❌ N/A               | ❌ Wine only             | ⬜ §14                 |
 

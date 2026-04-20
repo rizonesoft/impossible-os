@@ -89,7 +89,8 @@ struct boot_config {
     /* CI output format knobs (S7 of TODO-04). */
     UINT8   xml;
     UINT8   json;
-    UINT8   _pad_utest3[2];
+    /* Test-type taxonomy (S8 of TODO-04). */
+    UINT16  stress_iters;
     UINT8   _pad[146];         /* pad to 512 bytes total (sector-aligned) */
 };
 
@@ -111,6 +112,8 @@ _Static_assert(__builtin_offsetof(struct boot_config, xml) == 362,
     "xml must be at byte offset 362 -- TODO-04 S7 stable ABI");
 _Static_assert(__builtin_offsetof(struct boot_config, json) == 363,
     "json must be at byte offset 363 -- TODO-04 S7 stable ABI");
+_Static_assert(__builtin_offsetof(struct boot_config, stress_iters) == 364,
+    "stress_iters must be at byte offset 364 -- TODO-04 S8 stable ABI");
 _Static_assert(sizeof(struct boot_config) == 512,
     "boot_config must be exactly 512 bytes (sector-aligned)");
 

@@ -223,14 +223,15 @@ static void dir_add_entry(uint32_t parent_ino, const char *name,
                           uint32_t child_ino)
 {
     struct ixfs_inode *parent = inode_ptr(parent_ino);
-    uint32_t blk;
     struct ixfs_dir_entry *de;
-    uint32_t i, max_entries;
+    uint32_t ext_idx, blk_in_ext;
+    uint32_t slot_in_blk;
     uint8_t *data;
+    uint32_t total_slots = 0;
 
     if (parent->i_extent_count == 0 || parent->i_extents[0].e_count == 0) {
         /* Allocate first directory data block */
-        blk = alloc_block();
+        uint32_t blk = alloc_block();
         memset(block_ptr(blk), 0, IXFS_BLOCK_SIZE);
         parent->i_extents[0].e_start = blk;
         parent->i_extents[0].e_count = 1;
@@ -238,27 +239,71 @@ static void dir_add_entry(uint32_t parent_ino, const char *name,
         parent->i_blocks = 1;
     }
 
-    blk = (uint32_t)parent->i_extents[0].e_start;
-    data = block_ptr(blk);
-    max_entries = (uint32_t)DIRENTS_PER_BLOCK;
-
-    /* Find first free slot */
-    for (i = 0; i < max_entries; i++) {
-        de = (struct ixfs_dir_entry *)(data +
-             i * sizeof(struct ixfs_dir_entry));
-        if (de->d_inode == 0) {
-            de->d_inode = child_ino;
-            strncpy(de->d_name, name, IXFS_MAX_NAME - 1);
-            de->d_name[IXFS_MAX_NAME - 1] = '\0';
-            parent->i_size = (uint64_t)(i + 1) *
-                             sizeof(struct ixfs_dir_entry);
-            return;
+    /* Walk every allocated block across every used extent; place the new
+     * entry in the first empty slot. Matches the runtime readdir walk. */
+    for (ext_idx = 0; ext_idx < parent->i_extent_count; ext_idx++) {
+        for (blk_in_ext = 0;
+             blk_in_ext < parent->i_extents[ext_idx].e_count;
+             blk_in_ext++) {
+            uint32_t blk = (uint32_t)parent->i_extents[ext_idx].e_start
+                           + blk_in_ext;
+            data = block_ptr(blk);
+            for (slot_in_blk = 0;
+                 slot_in_blk < (uint32_t)DIRENTS_PER_BLOCK;
+                 slot_in_blk++) {
+                de = (struct ixfs_dir_entry *)(data +
+                     slot_in_blk * sizeof(struct ixfs_dir_entry));
+                if (de->d_inode == 0) {
+                    de->d_inode = child_ino;
+                    strncpy(de->d_name, name, IXFS_MAX_NAME - 1);
+                    de->d_name[IXFS_MAX_NAME - 1] = '\0';
+                    parent->i_size = (uint64_t)(total_slots + slot_in_blk + 1) *
+                                     sizeof(struct ixfs_dir_entry);
+                    return;
+                }
+            }
+            total_slots += (uint32_t)DIRENTS_PER_BLOCK;
         }
     }
 
-    fprintf(stderr, "mkfs-ixfs: directory full (max %u entries)\n",
-            max_entries);
-    exit(1);
+    /* All existing blocks full -- grow the directory. Try to extend the
+     * last extent if the next block is contiguous; otherwise start a new
+     * extent. IXFS_INLINE_EXTENTS = 4, so at 16 entries per block we can
+     * reach 64 entries (enough for the sysroot root and then some). */
+    {
+        uint32_t last = parent->i_extent_count - 1;
+        uint32_t next_blk = (uint32_t)parent->i_extents[last].e_start
+                            + parent->i_extents[last].e_count;
+        uint32_t actual_blk = alloc_block();
+        memset(block_ptr(actual_blk), 0, IXFS_BLOCK_SIZE);
+
+        if (actual_blk == next_blk) {
+            /* Contiguous -- just widen the extent. */
+            parent->i_extents[last].e_count++;
+        } else {
+            /* Non-contiguous -- need a new extent. */
+            if (parent->i_extent_count >= IXFS_INLINE_EXTENTS) {
+                fprintf(stderr,
+                        "mkfs-ixfs: directory full (%u entries across %u inline extents;"
+                        " indirect blocks not yet supported in mkfs)\n",
+                        total_slots, IXFS_INLINE_EXTENTS);
+                exit(1);
+            }
+            parent->i_extents[parent->i_extent_count].e_start = actual_blk;
+            parent->i_extents[parent->i_extent_count].e_count = 1;
+            parent->i_extent_count++;
+        }
+        parent->i_blocks++;
+
+        /* Place the entry in the freshly allocated block, slot 0. */
+        data = block_ptr(actual_blk);
+        de = (struct ixfs_dir_entry *)data;
+        de->d_inode = child_ino;
+        strncpy(de->d_name, name, IXFS_MAX_NAME - 1);
+        de->d_name[IXFS_MAX_NAME - 1] = '\0';
+        parent->i_size = (uint64_t)(total_slots + 1) *
+                         sizeof(struct ixfs_dir_entry);
+    }
 }
 
 static uint32_t create_directory(uint32_t parent_ino, const char *name)

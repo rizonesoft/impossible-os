@@ -357,7 +357,11 @@ struct boot_config {
      * test.sh splits them into separate artifacts. */
     uint8_t  xml;              /* 1 = emit [UTEST-XML] JUnit XML lines */
     uint8_t  json;             /* 1 = emit [UTEST-JSON] lines (per-binary + summary) */
-    uint8_t  _pad_utest3[2];   /* align future fields */
+    /* Test-type taxonomy (S8 of TODO-04). stress_iters = how many
+     * times the launcher re-runs a `test_stress_*.exe` binary; 0
+     * means use the built-in default (100 on TCG-slow paths, 1000
+     * on faster accelerators). Range 0-65535 (uint16). */
+    uint16_t stress_iters;     /* per-binary stress-loop iteration count; 0 = default */
     /* Pad to 512 bytes total (sector-aligned). */
     uint8_t  _pad[146];
 };
@@ -380,6 +384,8 @@ _Static_assert(__builtin_offsetof(struct boot_config, xml) == 362,
     "xml must be at byte offset 362 (TODO-04 S7 stable ABI)");
 _Static_assert(__builtin_offsetof(struct boot_config, json) == 363,
     "json must be at byte offset 363 (TODO-04 S7 stable ABI)");
+_Static_assert(__builtin_offsetof(struct boot_config, stress_iters) == 364,
+    "stress_iters must be at byte offset 364 (TODO-04 S8 stable ABI)");
 _Static_assert(sizeof(struct boot_config) == 512,
     "boot_config must be exactly 512 bytes (sector-aligned)");
 

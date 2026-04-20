@@ -338,6 +338,7 @@ Mirror of §12 applied to tasks (processes): the current `tasks[TASK_MAX]` stora
 
 > [!NOTE]
 > → XREF: [`00-infrastructure/TODO-04-usermode-test-framework.md §4`](../00-infrastructure/TODO-04-usermode-test-framework.md) -- user-mode test launcher is the first consumer to hit the ceiling once §9-§15 binaries ship.
+> → XREF: [`00-infrastructure/TODO-04-usermode-test-framework.md §8`](../00-infrastructure/TODO-04-usermode-test-framework.md) -- stress binaries currently loop internally because a launcher-side loop of N spawns would exhaust TASK_MAX; once this section lands, §8 can promote `stress_iters` from "reserved" to a runtime-tunable launcher policy.
 > → XREF: `§12` -- thread-table dynamic growth, same design shape applied to threads; this section consumes the same allocator-backed VA pattern for task-level TEB/kernel-stack placement.
 
 - [ ] Replace `static struct task tasks[TASK_MAX]; static uint32_t num_tasks` in [`src/kernel/sched/task.c`](../../src/kernel/sched/task.c) with growable task storage (`task_capacity`, explicit `live_task_count`, reusable PID free-list). `num_tasks` must stop meaning both "highest used slot" and "number of live tasks".

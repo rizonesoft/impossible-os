@@ -1,0 +1,33 @@
+{
+  "_comment": "Impossible OS user-mode perf baselines. Populated by test_perf_*.exe binaries emitting [PERF] <metric>=<value_ns> lines (see user/include/test.h UTEST_PERF). Today the consumer is the test itself -- binaries hardcode thresholds via UTEST_ASSERT. A future libc JSON helper (TODO-04 §8 deferred) will read this file and let the launcher auto-FAIL on drift > tolerance. Until then, this file is a structured record of expected values for trend analysis in CI and on bare metal.",
+  "_schema_version": 1,
+  "_units": "nanoseconds",
+  "_platforms": {
+    "tcg": {
+      "_comment": "QEMU TCG: slowest runner, WSL2 default. Pure x86 emulation, no hardware assist.",
+      "tolerance_pct": 15
+    },
+    "kvm": {
+      "_comment": "QEMU KVM: hardware-accelerated Linux host. ~2s boot in smoke-test.sh.",
+      "tolerance_pct": 10
+    },
+    "whpx": {
+      "_comment": "QEMU WHPX: Windows Hypervisor Platform, primary validation target.",
+      "tolerance_pct": 10
+    },
+    "bare": {
+      "_comment": "Bare metal: authoritative, tightest tolerance.",
+      "tolerance_pct": 5
+    }
+  },
+  "metrics": {
+    "sys_yield_ns": {
+      "_owner": "user/test/test_perf_syscall.c",
+      "_description": "INT 0x80 round-trip to SYS_YIELD handler (returns 0); median of 16 samples.",
+      "tcg":  { "expected": 6000,  "ceiling": 50000 },
+      "kvm":  { "expected": 300,   "ceiling": 500 },
+      "whpx": { "expected": 300,   "ceiling": 500 },
+      "bare": { "expected": 200,   "ceiling": 300 }
+    }
+  }
+}

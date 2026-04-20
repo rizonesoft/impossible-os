@@ -74,6 +74,11 @@ static int s_isolation_enabled = 1;
 static int s_xml_mode;
 static int s_json_mode;
 
+/* §8 test-type taxonomy: stress iteration count (0 = built-in default).
+ * Set from boot.conf `stress_iters=<N>` via test_usermode_set_stress_iters. */
+static uint32_t s_stress_iters;
+#define UTEST_STRESS_DEFAULT_ITERS 100u
+
 /* UTEST color-scope flag. Set by the launcher around each spawn
  * (task_create -> task_cleanup); read by klog's color picker so every
  * kernel subsystem line emitted WHILE a user-mode test binary is the
@@ -131,6 +136,11 @@ void test_usermode_set_xml(int enable)
 void test_usermode_set_json(int enable)
 {
     s_json_mode = enable ? 1 : 0;
+}
+
+void test_usermode_set_stress_iters(uint32_t n)
+{
+    s_stress_iters = n;
 }
 
 /* ---- Tiny string helpers (no libc deps in kernel) -------------------- */
@@ -248,6 +258,63 @@ static int u_is_valid_manifest_name(const char *name)
 static uint64_t u_uptime_ms(void)
 {
     return uptime_ns() / 1000000ULL;
+}
+
+/* ---- §8 test-type taxonomy ----------------------------------------- *
+ *
+ * The launcher classifies each binary by filename prefix so it can
+ * apply per-type policy: smoke runs FIRST with abort-on-FAIL, stress
+ * loops N times, perf gets `classname="perf"` in the XML/JSON output.
+ * An optional manifest `type=<value>` attribute overrides the
+ * filename-derived default (for binaries that want to declare a
+ * different policy or migrate without renaming).
+ *
+ * Prefix matching: `test_smoke_` beats `test_stress_` beats
+ * `test_perf_` beats bare `test_`. All four prefixes are
+ * case-sensitive (test_*.exe is lowercase by convention). Any
+ * name that matches u_is_test_binary but none of the typed
+ * prefixes defaults to UTEST_TYPE_CORRECTNESS.
+ * --------------------------------------------------------------------- */
+
+static utest_type_t u_type_for_name(const char *name)
+{
+    if (u_starts_with(name, "test_smoke_"))  return UTEST_TYPE_SMOKE;
+    if (u_starts_with(name, "test_stress_")) return UTEST_TYPE_STRESS;
+    if (u_starts_with(name, "test_perf_"))   return UTEST_TYPE_PERF;
+    return UTEST_TYPE_CORRECTNESS;
+}
+
+/* Human-readable type label for the `classname` attribute in XML and
+ * the `"type"` field in JSON. Kept short and hyphen-free so CI tools
+ * can group by it without escaping. */
+static const char *u_type_label(utest_type_t t)
+{
+    switch (t) {
+    case UTEST_TYPE_SMOKE:       return "smoke";
+    case UTEST_TYPE_STRESS:      return "stress";
+    case UTEST_TYPE_PERF:        return "perf";
+    case UTEST_TYPE_CORRECTNESS:
+    default:                     return "correctness";
+    }
+}
+
+/* Exact case-sensitive string equality. */
+static int u_streq(const char *a, const char *b)
+{
+    while (*a && *a == *b) { a++; b++; }
+    return *a == *b;
+}
+
+/* Parse a manifest `type=<value>` attribute. Returns the enum for
+ * known names, or UTEST_TYPE_CORRECTNESS for unrecognized inputs
+ * (warn-and-continue). */
+static utest_type_t u_type_from_attr(const char *val)
+{
+    if (u_streq(val, "smoke"))       return UTEST_TYPE_SMOKE;
+    if (u_streq(val, "stress"))      return UTEST_TYPE_STRESS;
+    if (u_streq(val, "perf"))        return UTEST_TYPE_PERF;
+    if (u_streq(val, "correctness")) return UTEST_TYPE_CORRECTNESS;
+    return UTEST_TYPE_CORRECTNESS;
 }
 
 /* ---- §6 per-test isolation helpers --------------------------------- *
@@ -782,13 +849,14 @@ static void u_cleanup_manifest_apply(void)
 #define UTEST_MANIFEST_ARENA_PAGES 2u     /* 2 x 4 KiB */
 
 struct manifest_state {
-    const char *names[UTEST_MANIFEST_MAX];
-    uint32_t    count;
-    char       *arena;         /* pmm_alloc_contiguous()'d; NULL if not loaded */
-    uintptr_t   arena_phys;    /* matching physical base for pmm_free_frame loop */
-    uint32_t    arena_used;
-    uint32_t    arena_cap;
-    int         overflowed;    /* 1 = hit UTEST_MANIFEST_MAX cap */
+    const char  *names[UTEST_MANIFEST_MAX];
+    utest_type_t types[UTEST_MANIFEST_MAX]; /* §8: type per entry */
+    uint32_t     count;
+    char        *arena;         /* pmm_alloc_contiguous()'d; NULL if not loaded */
+    uintptr_t    arena_phys;    /* matching physical base for pmm_free_frame loop */
+    uint32_t     arena_used;
+    uint32_t     arena_cap;
+    int          overflowed;    /* 1 = hit UTEST_MANIFEST_MAX cap */
 };
 
 static int u_manifest_load(struct manifest_state *ms)
@@ -881,30 +949,62 @@ static int u_manifest_load(struct manifest_state *ms)
             /* Skip the rest of the line (comment tail or EOL). */
             while (p < end && *p != '\n') p++;
             if (p < end) { *p = '\0'; p++; }
-            /* Everything from line_start..line_end is the binary name. */
+            /* Everything from line_start..line_end is the raw line
+             * payload: a whitespace-delimited list of tokens where
+             * the first is the binary name and subsequent tokens are
+             * `key=value` attributes. Today only `type=<smoke|stress|
+             * perf|correctness>` is recognized (§8 of TODO-04); other
+             * key/value pairs are silently ignored so a future schema
+             * addition doesn't break older kernels. */
             if (line_end > line_start) {
+                char *name_start;
+                char *tok = line_start;
+                utest_type_t entry_type;
                 if (ms->count >= UTEST_MANIFEST_MAX) {
                     ms->overflowed = 1;
                     break;
                 }
-                /* Terminate the name in-place. Safe because size was
-                 * capped at ARENA - 1 in the file-read guard above, so
-                 * arena[size] is always within the 8192-byte kmalloc
-                 * even when the last line has no trailing newline. */
+                /* Terminate the line in-place; safe by the ARENA-1
+                 * cap above. */
                 *line_end = '\0';
-                /* Enforce the manifest trust boundary: even a valid
-                 * test_*.exe suffix does not grant write-access to the
-                 * C:\ path concatenation later. Reject path-shaped or
-                 * control-byte entries here so the manifest can never
-                 * dispatch an arbitrary vfs_open call. (Codex M1,
-                 * 2026-04-20.) */
-                if (!u_is_valid_manifest_name(line_start)) {
+
+                /* Extract the first token (binary name). Stops at
+                 * first whitespace inside the line. */
+                name_start = tok;
+                while (*tok && *tok != ' ' && *tok != '\t')
+                    tok++;
+                if (*tok) {
+                    *tok++ = '\0';
+                    /* Skip over any run of whitespace between tokens. */
+                    while (*tok == ' ' || *tok == '\t') tok++;
+                }
+                /* Default: infer type from filename prefix. */
+                entry_type = u_type_for_name(name_start);
+                /* Walk remaining tokens, honouring `type=<value>`. */
+                while (*tok) {
+                    char *kv_end = tok;
+                    while (*kv_end && *kv_end != ' ' && *kv_end != '\t')
+                        kv_end++;
+                    if (*kv_end) { *kv_end = '\0'; kv_end++; }
+                    if (tok[0] == 't' && tok[1] == 'y' && tok[2] == 'p' &&
+                        tok[3] == 'e' && tok[4] == '=') {
+                        entry_type = u_type_from_attr(tok + 5);
+                    }
+                    tok = kv_end;
+                    while (*tok == ' ' || *tok == '\t') tok++;
+                }
+                /* Enforce the manifest trust boundary on the bare
+                 * name: test_*.exe, no path separators, no `..`,
+                 * no control bytes. (Codex M1, 2026-04-20.) */
+                if (!u_is_valid_manifest_name(name_start)) {
                     klog(LOG_WARN, "UTEST",
                          "manifest: rejecting invalid entry '%s'",
-                         line_start);
+                         name_start);
                     continue;
                 }
-                ms->names[ms->count++] = line_start;
+                ms->names[ms->count] = name_start;
+                ms->types[ms->count] = entry_type;
+                ms->count++;
             }
         }
     }
@@ -1287,7 +1387,9 @@ static void u_emit_xml_suite_close(uint32_t passed, uint32_t failed,
 
 /* Emit one `<testcase>` element for a binary. `verdict` is 0=PASS,
  * 1=FAIL, 2=SKIP. `reason` may be NULL; otherwise it's the
- * launcher-formatted reason string for FAIL/SKIP.
+ * launcher-formatted reason string for FAIL/SKIP. `type` is the §8
+ * taxonomy value that maps to the XML `classname` attribute (and
+ * the JSON `type` field in the sibling emitter).
  *
  * Overflow contract: every u_append / u_xml_escape call is checked.
  * If any returns 0, we bail to an `overflow` label that emits a
@@ -1297,8 +1399,9 @@ static void u_emit_xml_suite_close(uint32_t passed, uint32_t failed,
  * Codex quality M 2026-04-20: glob-discovered names up to VFS_MAX_NAME
  * (256 chars) could otherwise exceed the line buffer and corrupt the
  * assembled XML file downstream. */
-static void u_emit_xml_testcase(const char *name, int verdict,
-                                 uint64_t time_ms, const char *reason)
+static void u_emit_xml_testcase(const char *name, utest_type_t type,
+                                 int verdict, uint64_t time_ms,
+                                 const char *reason)
 {
     char line[512];
     uint32_t pos = 0;
@@ -1312,7 +1415,9 @@ static void u_emit_xml_testcase(const char *name, int verdict,
 
     APP("[UTEST-XML] <testcase name=\"");
     APP_XML(name);
-    APP("\" classname=\"correctness\" time=\"");
+    APP("\" classname=\"");
+    APP(u_type_label(type));
+    APP("\" time=\"");
     APP(time_buf);
     APP("\"");
 
@@ -1354,8 +1459,9 @@ overflow:
 
 /* Emit one `[UTEST-JSON] {...}` per binary. Overflow-safe via the same
  * goto-fallback pattern as u_emit_xml_testcase. */
-static void u_emit_json_testcase(const char *name, int verdict,
-                                  uint64_t time_ms, const char *reason)
+static void u_emit_json_testcase(const char *name, utest_type_t type,
+                                  int verdict, uint64_t time_ms,
+                                  const char *reason)
 {
     char line[512];
     uint32_t pos = 0;
@@ -1374,6 +1480,8 @@ static void u_emit_json_testcase(const char *name, int verdict,
 
     APP("[UTEST-JSON] {\"name\":\"");
     APP_JSON(name);
+    APP("\",\"type\":\"");
+    APP(u_type_label(type));
     APP("\",\"status\":\"");
     APP(status);
     APP("\",\"time_ms\":");
@@ -1428,7 +1536,38 @@ static void u_emit_json_summary(uint32_t passed, uint32_t failed,
  * out_verdict values: 0 = PASS, 1 = FAIL, 2 = SKIP.
  * ------------------------------------------------------------------ */
 
-static void u_run_one(const char *name, uint32_t test_num, uint32_t *counters,
+/* Inner helper: spawn + wait for ONE invocation of a binary. Returns
+ * the child's exit status (or timeout/verdict markers) via out_*.
+ * Kept as a helper so u_run_one stays readable now that the §7 XML/JSON
+ * + §6 isolation contract live around it. */
+static void u_spawn_one(const char *name_copy, const char *path,
+                        int *out_pid, int32_t *out_exit_status,
+                        int *out_timed_out, uint32_t *out_leaked,
+                        int have_stem)
+{
+    int pid;
+
+    s_pending_test_path = path;
+
+    pid = task_create(utest_loader_func, name_copy);
+    *out_pid = pid;
+    if (pid < 0) {
+        *out_exit_status = -1;
+        *out_timed_out   = 0;
+        *out_leaked      = 0;
+        return;
+    }
+    *out_exit_status = u_wait_with_timeout((uint32_t)pid,
+                                           s_timeout_ms, out_timed_out);
+    /* Snapshot leaks BEFORE task_cleanup destroys the handle table.
+     * Callers must then run task_cleanup; the destructive reap happens
+     * even later (§6 contract: vfs_unlink needs the child's handles
+     * closed first). */
+    *out_leaked = have_stem ? u_isolation_snapshot_leaks((uint32_t)pid) : 0u;
+}
+
+static void u_run_one(const char *name, utest_type_t type,
+                      uint32_t test_num, uint32_t *counters,
                       int *out_verdict)
 {
     char name_copy[VFS_MAX_NAME];
@@ -1438,14 +1577,15 @@ static void u_run_one(const char *name, uint32_t test_num, uint32_t *counters,
     int  have_stem;
     int  isolation_failed = 0;
     uint32_t ni, pi;
-    int pid;
-    int32_t exit_status;
+    int pid = -1;
+    int32_t exit_status = 0;
     int timed_out = 0;
-    uint32_t leaked;
+    uint32_t leaked = 0;
     uint64_t start_ms;
     uint64_t end_ms;
 
     reason[0] = '\0';
+    (void)type; /* used below for XML/JSON classname only */
 
     /* Snapshot `name` into launcher-owned storage BEFORE spawning.
      * The caller may have passed in a VFS dirent or manifest arena
@@ -1478,26 +1618,32 @@ static void u_run_one(const char *name, uint32_t test_num, uint32_t *counters,
      * bottom of u_run_one after task_cleanup. */
     s_utest_color_active = 1;
 
-    s_pending_test_path = path;
-
     start_ms = u_uptime_ms();
 
-    pid = task_create(utest_loader_func, name_copy);
+    /* Single spawn per binary. Stress policy is IN-BINARY, not
+     * launcher-side: stress binaries iterate inside main() (see
+     * user/test/test_stress_libc.c for the canonical shape). The
+     * launcher does NOT loop spawning per-iteration because task
+     * slots in the kernel are monotonic (`num_tasks++` in task_create
+     * with no reuse in task_cleanup); a 100-iteration launcher loop
+     * would exhaust TASK_MAX (32) after ~20 binaries. The
+     * s_stress_iters boot.conf knob is RESERVED for a future
+     * env-passing syscall that lets stress binaries query the desired
+     * iteration count at runtime. Codex adversarial review critical,
+     * 2026-04-20. */
+    u_spawn_one(name_copy, path, &pid, &exit_status,
+                &timed_out, &leaked, have_stem);
+
     if (pid < 0) {
         klog(LOG_ERROR, "UTEST", "%s: task_create failed", name_copy);
-        counters[1]++;  /* failed */
+        counters[1]++;
         *out_verdict = 1;
         if (s_tap_mode)
             klog(LOG_INFO, "UTEST",
                  "not ok %u - %s # task_create failed",
                  (uint64_t)test_num, name_copy);
-        u_emit_xml_testcase(name_copy, 1, 0, "task_create failed");
-        u_emit_json_testcase(name_copy, 1, 0, "task_create failed");
-        /* No task was ever dispatched, so no leaked handles are
-         * possible. Reap the scratch dir + Registry subkey we created
-         * in u_isolation_setup (task_cleanup isn't called on this
-         * path, but there's nothing to clean up from the task side
-         * either -- only the launcher's own setup artifacts). */
+        u_emit_xml_testcase(name_copy, type, 1, 0, "task_create failed");
+        u_emit_json_testcase(name_copy, type, 1, 0, "task_create failed");
         s_utest_color_active = 0;
         if (have_stem) {
             u_isolation_reap(stem);
@@ -1505,17 +1651,6 @@ static void u_run_one(const char *name, uint32_t test_num, uint32_t *counters,
         }
         return;
     }
-
-    exit_status = u_wait_with_timeout((uint32_t)pid,
-                                      s_timeout_ms, &timed_out);
-
-    /* Snapshot the leak count BEFORE task_cleanup destroys the handle
-     * table. The destructive cleanup (u_isolation_reap) runs AFTER
-     * task_cleanup so the child's handles are already closed -- a
-     * leaked handle on a file inside the scratch dir would otherwise
-     * block its unlink (vfs_unlink rejects ref_count > 0). Codex
-     * quality H1, 2026-04-20. */
-    leaked = have_stem ? u_isolation_snapshot_leaks((uint32_t)pid) : 0u;
 
     if (exit_status == 0) {
         counters[0]++;  /* passed */
@@ -1668,9 +1803,9 @@ static void u_run_one(const char *name, uint32_t test_num, uint32_t *counters,
      * is the wall-clock elapsed from task_create to just before this
      * emit. */
     end_ms = u_uptime_ms();
-    u_emit_xml_testcase(name_copy, *out_verdict, end_ms - start_ms,
+    u_emit_xml_testcase(name_copy, type, *out_verdict, end_ms - start_ms,
                         reason[0] ? reason : (const char *)0);
-    u_emit_json_testcase(name_copy, *out_verdict, end_ms - start_ms,
+    u_emit_json_testcase(name_copy, type, *out_verdict, end_ms - start_ms,
                          reason[0] ? reason : (const char *)0);
 }
 
@@ -1834,44 +1969,90 @@ void test_usermode_run(void)
 
     run_start_ms = u_uptime_ms();
 
-    /* Second pass: actually run. Manifest order takes precedence so
-     * tests can declare a deterministic execution order. */
-    if (use_manifest) {
-        for (i = 0; i < manifest.count; i++) {
-            int verdict;
-            const char *nm = manifest.names[i];
-            if (!test_usermode_glob_match(s_filter, nm)) {
-                skipped_by_filter++;
-                klog(LOG_DEBUG, "UTEST", "%s: SKIP (filter)", nm);
-                continue;
+    /* §8 two-phase execution: smoke binaries always run FIRST, and a
+     * single smoke FAIL aborts the rest of the suite. Everything else
+     * runs in the second phase in manifest-then-glob order.
+     *
+     * Phase 1: smokes only. Both manifest and glob sources are walked
+     * but only entries whose derived type is UTEST_TYPE_SMOKE actually
+     * dispatch. A FAIL or SKIP in this phase sets smoke_failed and
+     * skips phase 2.
+     *
+     * Phase 2: everything non-smoke. Same walk order.
+     *
+     * Filter-skipped binaries contribute to skipped_by_filter in
+     * phase 1 only, to avoid double counting. */
+    {
+        int smoke_failed = 0;
+        int phase;
+        for (phase = 0; phase < 2; phase++) {
+            int want_smoke = (phase == 0);
+            if (smoke_failed && phase == 1) {
+                klog(LOG_ERROR, "UTEST",
+                     "suite ABORT (smoke failed) -- skipping %u non-smoke binaries",
+                     (uint64_t)(total_planned - total_ran));
+                break;
             }
-            total_ran++;
-            u_run_one(nm, total_ran, counters, &verdict);
-        }
-    }
-
-    if (!use_manifest || manifest.overflowed) {
-        struct glob_state gs = { root, 0 };
-        while (u_glob_next(&gs, scratch_name, sizeof(scratch_name))) {
-            int verdict;
-            if (manifest.overflowed) {
-                int already = 0;
+            if (use_manifest) {
                 for (i = 0; i < manifest.count; i++) {
-                    if (u_strncmp(manifest.names[i], scratch_name,
-                                  VFS_MAX_NAME) == 0) {
-                        already = 1;
-                        break;
+                    int verdict;
+                    const char *nm = manifest.names[i];
+                    utest_type_t type = manifest.types[i];
+                    int is_smoke = (type == UTEST_TYPE_SMOKE);
+                    if (is_smoke != want_smoke) continue;
+                    if (!test_usermode_glob_match(s_filter, nm)) {
+                        if (phase == 0) {
+                            skipped_by_filter++;
+                            klog(LOG_DEBUG, "UTEST",
+                                 "%s: SKIP (filter)", nm);
+                        }
+                        continue;
                     }
+                    total_ran++;
+                    u_run_one(nm, type, total_ran, counters, &verdict);
+                    if (want_smoke && verdict != 0)
+                        smoke_failed = 1;
                 }
-                if (already) continue;
             }
-            if (!test_usermode_glob_match(s_filter, scratch_name)) {
-                skipped_by_filter++;
-                klog(LOG_DEBUG, "UTEST", "%s: SKIP (filter)", scratch_name);
-                continue;
+            if (!use_manifest || manifest.overflowed) {
+                struct glob_state gs = { root, 0 };
+                while (u_glob_next(&gs, scratch_name, sizeof(scratch_name))) {
+                    int verdict;
+                    utest_type_t type = u_type_for_name(scratch_name);
+                    int is_smoke = (type == UTEST_TYPE_SMOKE);
+                    if (is_smoke != want_smoke) continue;
+                    if (manifest.overflowed) {
+                        int already = 0;
+                        for (i = 0; i < manifest.count; i++) {
+                            if (u_strncmp(manifest.names[i], scratch_name,
+                                          VFS_MAX_NAME) == 0) {
+                                already = 1;
+                                break;
+                            }
+                        }
+                        if (already) continue;
+                    }
+                    if (!test_usermode_glob_match(s_filter, scratch_name)) {
+                        if (phase == 0) {
+                            skipped_by_filter++;
+                            klog(LOG_DEBUG, "UTEST",
+                                 "%s: SKIP (filter)", scratch_name);
+                        }
+                        continue;
+                    }
+                    total_ran++;
+                    u_run_one(scratch_name, type, total_ran, counters,
+                              &verdict);
+                    if (want_smoke && verdict != 0)
+                        smoke_failed = 1;
+                }
             }
-            total_ran++;
-            u_run_one(scratch_name, total_ran, counters, &verdict);
+            if (smoke_failed && want_smoke) {
+                /* Short-circuit immediately: rest of phase-0 smokes
+                 * would still run, but the spec is "fast-fail gate":
+                 * one smoke FAIL aborts the whole suite. */
+                break;
+            }
         }
     }
 
@@ -1948,5 +2129,24 @@ int test_usermode_json_escape(const char *src, char *dst, uint32_t cap)
     if (cap == 0) return 0;
     dst[0] = '\0';
     return u_json_escape(dst, &pos, cap, src);
+}
+
+/* §8 taxonomy helpers -- return integer for ABI-stable test binding. */
+int test_usermode_type_for_name(const char *name);
+int test_usermode_type_for_name(const char *name)
+{
+    return (int)u_type_for_name(name);
+}
+
+int test_usermode_type_from_attr(const char *val);
+int test_usermode_type_from_attr(const char *val)
+{
+    return (int)u_type_from_attr(val);
+}
+
+const char *test_usermode_type_label(int type);
+const char *test_usermode_type_label(int type)
+{
+    return u_type_label((utest_type_t)type);
 }
 #endif

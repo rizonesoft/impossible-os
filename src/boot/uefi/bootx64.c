@@ -1992,6 +1992,11 @@ static void parse_conf_kv(struct boot_config *cfg,
     else if (ascii_streq(key, "json")) {
         cfg->json = (UINT8)ascii_atoi(val);
     }
+    else if (ascii_streq(key, "stress_iters")) {
+        UINTN n = (UINTN)ascii_atoi(val);
+        if (n > 0xFFFF) n = 0xFFFF;
+        cfg->stress_iters = (UINT16)n;
+    }
     else if (ascii_streq(key, "boot_mode")) {
         if      (ascii_streq(val, "normal"))   cfg->boot_mode = 0;
         else if (ascii_streq(val, "safe"))     cfg->boot_mode = 1;
