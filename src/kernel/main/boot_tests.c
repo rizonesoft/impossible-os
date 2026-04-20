@@ -64,6 +64,10 @@ void boot_tests_run(void)
              * user-visible "production runs always isolate" contract. */
             if (g_boot_info.config.utest_isolation == 0)
                 test_usermode_set_isolation(0);
+            if (g_boot_info.config.xml)
+                test_usermode_set_xml(1);
+            if (g_boot_info.config.json)
+                test_usermode_set_json(1);
             test_usermode_run();
         }
     }

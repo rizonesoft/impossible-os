@@ -61,6 +61,21 @@ void test_usermode_set_tap(int enable);
  * `utest_isolation=0` toggles this via test_usermode_set_isolation(). */
 void test_usermode_set_isolation(int enable);
 
+/* Enable JUnit XML output: the launcher emits one
+ * `[UTEST-XML] <testsuite ...>` opener, one `[UTEST-XML] <testcase
+ * ...>` per binary with `<failure>` / `<skipped/>` children where
+ * appropriate, and one `[UTEST-XML] </testsuite>` closer. scripts/
+ * test.sh extracts these lines into `build/test-results.xml` for CI
+ * tools (GitLab junit reports, GitHub Actions upload-artifact, Jenkins
+ * junit plugin). Orthogonal to TAP and JSON -- all three can be on
+ * simultaneously. Disabled by default. */
+void test_usermode_set_xml(int enable);
+
+/* Enable JSON-line output: one `[UTEST-JSON] {"name":...}` record per
+ * binary + one `[UTEST-JSON] {"summary":{...}}` at the end. Typed
+ * schema for downstream trend analysis. Disabled by default. */
+void test_usermode_set_json(int enable);
+
 /* Contract for SKIP: a test binary reports "this test is not
  * applicable here" by exiting with status 77 (kselftest convention).
  * The launcher counts it as SKIPPED, not FAIL. Any other non-zero

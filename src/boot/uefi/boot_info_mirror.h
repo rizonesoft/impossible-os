@@ -86,7 +86,11 @@ struct boot_config {
     /* Per-test isolation knob (S6 of TODO-04). */
     UINT8   utest_isolation;
     UINT8   _pad_utest2[3];
-    UINT8   _pad[150];         /* pad to 512 bytes total (sector-aligned) */
+    /* CI output format knobs (S7 of TODO-04). */
+    UINT8   xml;
+    UINT8   json;
+    UINT8   _pad_utest3[2];
+    UINT8   _pad[146];         /* pad to 512 bytes total (sector-aligned) */
 };
 
 /* Mirror of kernel/boot_info.h static asserts -- catches drift between
@@ -103,6 +107,10 @@ _Static_assert(__builtin_offsetof(struct boot_config, utest_filter) == 294,
     "utest_filter must be at byte offset 294 -- TODO-04 S4 stable ABI");
 _Static_assert(__builtin_offsetof(struct boot_config, utest_isolation) == 358,
     "utest_isolation must be at byte offset 358 -- TODO-04 S6 stable ABI");
+_Static_assert(__builtin_offsetof(struct boot_config, xml) == 362,
+    "xml must be at byte offset 362 -- TODO-04 S7 stable ABI");
+_Static_assert(__builtin_offsetof(struct boot_config, json) == 363,
+    "json must be at byte offset 363 -- TODO-04 S7 stable ABI");
 _Static_assert(sizeof(struct boot_config) == 512,
     "boot_config must be exactly 512 bytes (sector-aligned)");
 

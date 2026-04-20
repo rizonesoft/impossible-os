@@ -1986,6 +1986,12 @@ static void parse_conf_kv(struct boot_config *cfg,
     else if (ascii_streq(key, "utest_isolation")) {
         cfg->utest_isolation = (UINT8)ascii_atoi(val);
     }
+    else if (ascii_streq(key, "xml")) {
+        cfg->xml = (UINT8)ascii_atoi(val);
+    }
+    else if (ascii_streq(key, "json")) {
+        cfg->json = (UINT8)ascii_atoi(val);
+    }
     else if (ascii_streq(key, "boot_mode")) {
         if      (ascii_streq(val, "normal"))   cfg->boot_mode = 0;
         else if (ascii_streq(val, "safe"))     cfg->boot_mode = 1;

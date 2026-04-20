@@ -69,12 +69,16 @@ EOF
 SUITE_FILTER=""
 SUITE_CATEGORY=""
 QUIET_MODE=0
+XML_MODE=0
+JSON_MODE=0
 for arg in "$@"; do
     case "$arg" in
         -h|--help) print_help; exit 0 ;;
         SUITE=*)  SUITE_FILTER="${arg#SUITE=}"
                   SUITE_CATEGORY="$SUITE_FILTER" ;;
         QUIET=1)  QUIET_MODE=1 ;;
+        XML=1)    XML_MODE=1 ;;
+        JSON=1)   JSON_MODE=1 ;;
     esac
 done
 
@@ -93,6 +97,12 @@ if [ -n "$SUITE_CATEGORY" ]; then
 fi
 if [ "$QUIET_MODE" -eq 1 ]; then
     PATCH_ARGS="$PATCH_ARGS test_quiet 1"
+fi
+if [ "$XML_MODE" -eq 1 ]; then
+    PATCH_ARGS="$PATCH_ARGS xml 1"
+fi
+if [ "$JSON_MODE" -eq 1 ]; then
+    PATCH_ARGS="$PATCH_ARGS json 1"
 fi
 bash "$PROJECT/scripts/patch-boot-conf.sh" $PATCH_ARGS > /dev/null
 
@@ -223,6 +233,63 @@ done
 { grep -E '\[FAIL\]' "$TEST_LOG" 2>/dev/null | grep -v '::' || true; } | while IFS= read -r line; do
     echo -e "  ${RED}FAIL${RESET}  $(echo "$line" | sed 's/.*TEST: //')"
 done
+
+# --- Step 6: User-mode test JUnit XML post-processor ---
+#
+# The kernel-side launcher emits `[UTEST-XML] <testcase ...>` lines on
+# serial when boot.conf `xml=1` is set. Those lines don't form a valid
+# XML document on their own because the launcher doesn't know the final
+# tests=/failures=/skipped= counts until the suite ends, so we filled
+# the opening <testsuite> header with placeholder zeros and emitted a
+# separate `[UTEST-XML-SUMMARY] tests=N failures=N ...` line at the
+# end. This step grep-extracts both streams and assembles a valid JUnit
+# XML file at build/test-results.xml for CI tools (GitLab
+# artifacts.reports.junit, GitHub Actions actions/upload-artifact,
+# Jenkins junit plugin).
+#
+# No-op when no `[UTEST-XML]` lines are present (xml= was not enabled).
+
+XML_OUT="$PROJECT/build/test-results.xml"
+if grep -q '\[UTEST-XML\]' "$TEST_LOG" 2>/dev/null; then
+    # Strip ANSI + klog wrapper prefix (timestamp, [cpu:N], level badge,
+    # UTEST subsystem tag) in one sed pass. Everything after the first
+    # `[UTEST-XML] ` or `[UTEST-XML-SUMMARY] ` marker is the payload.
+    STRIPPED=$(sed -E 's/\x1b\[[0-9;]*m//g' "$TEST_LOG")
+
+    # Extract the summary numbers (tests=N failures=N skipped=N time=S.MMM).
+    SUM_LINE=$(echo "$STRIPPED" | sed -n 's/.*\[UTEST-XML-SUMMARY\] //p' |
+               grep -E '^tests=[0-9]+ failures=[0-9]+ skipped=[0-9]+ time=' |
+               tail -1 || true)
+
+    if [ -n "$SUM_LINE" ]; then
+        XML_TESTS=$(echo "$SUM_LINE" | sed -E 's/.*tests=([0-9]+).*/\1/')
+        XML_FAIL=$(echo "$SUM_LINE" | sed -E 's/.*failures=([0-9]+).*/\1/')
+        XML_SKIP=$(echo "$SUM_LINE" | sed -E 's/.*skipped=([0-9]+).*/\1/')
+        XML_TIME=$(echo "$SUM_LINE" | sed -E 's/.*time=([0-9.]+).*/\1/')
+    else
+        XML_TESTS=0; XML_FAIL=0; XML_SKIP=0; XML_TIME=0
+    fi
+
+    {
+        echo '<?xml version="1.0" encoding="UTF-8"?>'
+        echo "<testsuite name=\"impossible-os-usermode\" tests=\"${XML_TESTS}\" failures=\"${XML_FAIL}\" skipped=\"${XML_SKIP}\" errors=\"0\" time=\"${XML_TIME}\">"
+        # Strip the klog prefix + `[UTEST-XML] ` marker. Keep only the
+        # <testcase ...> / <testcase ...>...</testcase> payloads. Skip
+        # the placeholder <testsuite ...> opener and the </testsuite>
+        # closer emitted by the launcher: we already wrote fresh ones
+        # with the real counts above.
+        #
+        # `|| true` keeps the pipeline exit code 0 when zero testcases
+        # are present -- an empty suite is a valid state (filter
+        # matched nothing, test=0, etc.) and the script must continue
+        # to the final verdict + cleanup trap. Without this, set -e
+        # would abort the entire test.sh run before the normal path.
+        echo "$STRIPPED" | sed -n 's/.*\[UTEST-XML\] //p' |
+            grep -E '^<testcase' || true
+        echo '</testsuite>'
+    } > "$XML_OUT"
+    echo -e "${CYAN}[TEST]${RESET} JUnit XML written: $XML_OUT (tests=${XML_TESTS} failures=${XML_FAIL} skipped=${XML_SKIP})"
+fi
 
 # Final verdict
 echo ""

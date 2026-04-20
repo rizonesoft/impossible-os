@@ -35,6 +35,8 @@ int test_usermode_derive_test_name(const char *name_in,
 int test_usermode_path_join(const char *parent, const char *name,
                             char *out, uint32_t out_cap);
 int test_usermode_path_has_traversal(const char *p);
+int test_usermode_xml_escape(const char *src, char *dst, uint32_t cap);
+int test_usermode_json_escape(const char *src, char *dst, uint32_t cap);
 
 /* Exposed by src/kernel/sched/syscall.c for §5 gate regression tests. */
 int64_t sys_fault_inject_dispatch(uint32_t kind, uint32_t countdown);
@@ -405,6 +407,58 @@ static void test_path_has_traversal_catches_variants(void)
                 "empty string accepted (caller's job to reject empty paths)");
 }
 
+/* §7 XML/JSON escape regressions. User-provided strings (test names,
+ * reason messages) go through u_xml_escape and u_json_escape before
+ * being wrapped in attribute / string quotes; these tests pin the
+ * five XML attribute-value specials + the JSON-required set so a
+ * future refactor can't silently drop coverage. */
+static void test_xml_escape_specials(void)
+{
+    char out[128];
+    TEST_ASSERT(test_usermode_xml_escape("a&b<c>d\"e'f", out, sizeof(out)),
+                "xml_escape handles all five specials");
+    TEST_ASSERT(ul_streq(out, "a&amp;b&lt;c&gt;d&quot;e&apos;f"),
+                "xml_escape produces the expected entity sequence");
+    /* Control bytes < 0x20 (except tab/LF/CR) must be dropped. */
+    TEST_ASSERT(test_usermode_xml_escape("a\x01" "b", out, sizeof(out)),
+                "xml_escape accepts control-byte input");
+    TEST_ASSERT(ul_streq(out, "ab"),
+                "xml_escape silently drops SOH (XML 1.0 forbids it)");
+    /* Tab/LF/CR are legal and pass through. */
+    TEST_ASSERT(test_usermode_xml_escape("a\tb\nc\rd", out, sizeof(out)),
+                "xml_escape accepts tab/LF/CR pass-through");
+    TEST_ASSERT(ul_streq(out, "a\tb\nc\rd"),
+                "xml_escape leaves tab/LF/CR literal");
+    /* Overflow must return 0 without buffer overrun. */
+    {
+        char tiny[8];
+        TEST_ASSERT(test_usermode_xml_escape("aaaaaaaa&", tiny, sizeof(tiny)) == 0,
+                    "xml_escape rejects overflow");
+    }
+}
+
+static void test_json_escape_specials(void)
+{
+    char out[128];
+    TEST_ASSERT(test_usermode_json_escape("a\"b\\c", out, sizeof(out)),
+                "json_escape handles quote + backslash");
+    TEST_ASSERT(ul_streq(out, "a\\\"b\\\\c"),
+                "json_escape wraps both with backslash");
+    TEST_ASSERT(test_usermode_json_escape("a\nb\rc\td", out, sizeof(out)),
+                "json_escape handles LF/CR/TAB");
+    TEST_ASSERT(ul_streq(out, "a\\nb\\rc\\td"),
+                "json_escape emits C-style \\n \\r \\t");
+    TEST_ASSERT(test_usermode_json_escape("a\x01" "b", out, sizeof(out)),
+                "json_escape handles generic control bytes");
+    TEST_ASSERT(ul_streq(out, "a\\u0001b"),
+                "json_escape emits 4-digit \\u00HH for SOH");
+    {
+        char tiny[4];
+        TEST_ASSERT(test_usermode_json_escape("aaaaaa\"", tiny, sizeof(tiny)) == 0,
+                    "json_escape rejects overflow");
+    }
+}
+
 /* Manifest HKLM guard regression (Codex H2 2026-04-20): `HKLM\`
  * with an empty subkey would otherwise hit RegDeleteTree(HKLM, "")
  * which wipes ALL children of HKEY_LOCAL_MACHINE. The test verifies
@@ -529,6 +583,10 @@ void test_register_usermode_launcher(void)
     test_suite_register_cat("UTEST: path_has_traversal catches `..` variants",
                             test_path_has_traversal_catches_variants,
                             TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: XML escape covers 5 specials + control-byte drop",
+                            test_xml_escape_specials, TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: JSON escape covers quote/backslash/TAB/LF/ctrl",
+                            test_json_escape_specials, TEST_CAT_EXEC);
 }
 
 #endif /* KERNEL_TESTS */

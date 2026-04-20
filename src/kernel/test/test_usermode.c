@@ -67,6 +67,13 @@ static int s_tap_mode;
  * utest_isolation=0 flips it off for debugging broken cleanup hooks. */
 static int s_isolation_enabled = 1;
 
+/* §7 CI-friendly output formats. Orthogonal to TAP (§4) and to each
+ * other: any subset can be enabled and all enabled formats emit
+ * interleaved on serial, tagged with distinct `[UTEST-XML]` /
+ * `[UTEST-JSON]` prefixes so scripts/test.sh can split them by grep. */
+static int s_xml_mode;
+static int s_json_mode;
+
 /* UTEST color-scope flag. Set by the launcher around each spawn
  * (task_create -> task_cleanup); read by klog's color picker so every
  * kernel subsystem line emitted WHILE a user-mode test binary is the
@@ -114,6 +121,16 @@ void test_usermode_set_tap(int enable)
 void test_usermode_set_isolation(int enable)
 {
     s_isolation_enabled = enable ? 1 : 0;
+}
+
+void test_usermode_set_xml(int enable)
+{
+    s_xml_mode = enable ? 1 : 0;
+}
+
+void test_usermode_set_json(int enable)
+{
+    s_json_mode = enable ? 1 : 0;
 }
 
 /* ---- Tiny string helpers (no libc deps in kernel) -------------------- */
@@ -1075,6 +1092,334 @@ static int32_t u_wait_with_timeout(uint32_t pid, uint32_t timeout_ms,
     return t->exit_status;
 }
 
+/* ---- §7 CI-friendly output format helpers ------------------------- *
+ *
+ * XML attribute escaping covers the five spec-required characters
+ * (`&`, `<`, `>`, `"`, `'`) plus control bytes (< 0x20, except tab/LF
+ * which XML 1.0 allows in attributes). JSON string escaping covers
+ * `"`, `\`, and control bytes (< 0x20) per RFC 8259. Both writers use
+ * a bounded output buffer with explicit length check on every append.
+ *
+ * Names today come from u_is_valid_manifest_name (no special chars),
+ * so escape never triggers on the happy path; reason strings are
+ * launcher-formatted (`exit=N`, `timeout`, `N handle(s) leaked`) and
+ * equally safe. The escape is defense-in-depth for future consumers.
+ * --------------------------------------------------------------------- */
+
+/* Append `src` to `dst[*pos]`, bounded by `cap`. Returns 1 on
+ * success, 0 if `src` would overflow. Leaves dst NUL-terminated. */
+static int u_append(char *dst, uint32_t *pos, uint32_t cap, const char *src)
+{
+    uint32_t p = *pos;
+    while (*src) {
+        if (p + 1 >= cap) return 0;
+        dst[p++] = *src++;
+    }
+    dst[p] = '\0';
+    *pos = p;
+    return 1;
+}
+
+/* Append a hex escape like `&#x1F;` (XML) or `\u001f` (JSON) for a
+ * control byte c (< 0x20). */
+static int u_append_hex2(char *dst, uint32_t *pos, uint32_t cap,
+                         const char *prefix, const char *suffix, uint8_t c)
+{
+    static const char hex[] = "0123456789abcdef";
+    char buf[8];
+    uint32_t i = 0;
+    while (prefix[i]) { buf[i] = prefix[i]; i++; }
+    buf[i++] = hex[(c >> 4) & 0xF];
+    buf[i++] = hex[c & 0xF];
+    /* JSON wants 4-digit \u escape; we always pass "\u00" as prefix +
+     * two hex digits, matching the JSON spec. For XML the prefix is
+     * "&#x" and suffix is ";" -- we emit the suffix via the caller. */
+    buf[i] = '\0';
+    if (!u_append(dst, pos, cap, buf)) return 0;
+    return u_append(dst, pos, cap, suffix);
+}
+
+/* Escape `src` into XML attribute-value text. Writes into
+ * `dst[*pos..cap]`. Returns 1 on success, 0 on overflow. */
+static int u_xml_escape(char *dst, uint32_t *pos, uint32_t cap, const char *src)
+{
+    while (*src) {
+        unsigned char c = (unsigned char)*src++;
+        const char *rep = (const char *)0;
+        switch (c) {
+        case '&':  rep = "&amp;"; break;
+        case '<':  rep = "&lt;"; break;
+        case '>':  rep = "&gt;"; break;
+        case '"':  rep = "&quot;"; break;
+        case '\'': rep = "&apos;"; break;
+        default: break;
+        }
+        if (rep) {
+            if (!u_append(dst, pos, cap, rep)) return 0;
+            continue;
+        }
+        /* Control bytes other than tab/LF/CR are illegal in XML 1.0
+         * even as entity references; skip them silently. (Our inputs
+         * never contain them today.) */
+        if (c < 0x20 && c != '\t' && c != '\n' && c != '\r')
+            continue;
+        if (*pos + 1 >= cap) return 0;
+        dst[(*pos)++] = (char)c;
+        dst[*pos] = '\0';
+    }
+    return 1;
+}
+
+/* Escape `src` into a JSON string-body (the bytes BETWEEN the two
+ * double-quotes). Writes into `dst[*pos..cap]`. */
+static int u_json_escape(char *dst, uint32_t *pos, uint32_t cap, const char *src)
+{
+    while (*src) {
+        unsigned char c = (unsigned char)*src++;
+        switch (c) {
+        case '\"':
+            if (!u_append(dst, pos, cap, "\\\"")) return 0;
+            continue;
+        case '\\':
+            if (!u_append(dst, pos, cap, "\\\\")) return 0;
+            continue;
+        case '\n':
+            if (!u_append(dst, pos, cap, "\\n")) return 0;
+            continue;
+        case '\r':
+            if (!u_append(dst, pos, cap, "\\r")) return 0;
+            continue;
+        case '\t':
+            if (!u_append(dst, pos, cap, "\\t")) return 0;
+            continue;
+        default: break;
+        }
+        if (c < 0x20) {
+            if (!u_append_hex2(dst, pos, cap, "\\u00", "", c)) return 0;
+            continue;
+        }
+        if (*pos + 1 >= cap) return 0;
+        dst[(*pos)++] = (char)c;
+        dst[*pos] = '\0';
+    }
+    return 1;
+}
+
+/* Append a decimal unsigned integer. */
+static int u_append_uint(char *dst, uint32_t *pos, uint32_t cap, uint64_t v)
+{
+    char buf[24];
+    uint32_t i = 0;
+    if (v == 0) return u_append(dst, pos, cap, "0");
+    while (v) {
+        if (i >= sizeof(buf)) return 0;
+        buf[i++] = (char)('0' + (v % 10));
+        v /= 10;
+    }
+    while (i--) {
+        if (*pos + 1 >= cap) return 0;
+        dst[(*pos)++] = buf[i];
+    }
+    dst[*pos] = '\0';
+    return 1;
+}
+
+/* Render milliseconds as `S.MMM` (seconds with 3-digit millisecond
+ * fraction) for the XML `time` attribute. */
+static void u_format_seconds(char *dst, uint32_t cap, uint64_t ms)
+{
+    uint32_t pos = 0;
+    uint64_t secs = ms / 1000ull;
+    uint64_t frac = ms % 1000ull;
+    u_append_uint(dst, &pos, cap, secs);
+    if (pos + 4 < cap) {
+        dst[pos++] = '.';
+        dst[pos++] = (char)('0' + (frac / 100) % 10);
+        dst[pos++] = (char)('0' + (frac / 10) % 10);
+        dst[pos++] = (char)('0' + frac % 10);
+        dst[pos] = '\0';
+    }
+}
+
+/* ---- §7 emit helpers ---------------------------------------------- */
+
+static void u_emit_xml_suite_open(void)
+{
+    if (!s_xml_mode) return;
+    /* Attributes (tests/failures/skipped/time) are re-filled by
+     * scripts/test.sh's post-processor because we don't yet know the
+     * final counts; emit a placeholder header so the XML envelope is
+     * recognizable even without post-processing. */
+    klog(LOG_INFO, "UTEST",
+         "[UTEST-XML] <testsuite name=\"impossible-os-usermode\" tests=\"0\" "
+         "failures=\"0\" skipped=\"0\" errors=\"0\" time=\"0\">");
+}
+
+static void u_emit_xml_suite_close(uint32_t passed, uint32_t failed,
+                                   uint32_t skipped, uint64_t total_ms)
+{
+    char line[160];
+    uint32_t pos = 0;
+    char time_buf[24];
+    uint32_t tests = passed + failed + skipped;
+
+    if (!s_xml_mode) return;
+    /* Emit a summary line (not a valid XML fragment on its own --
+     * scripts/test.sh patches the opening <testsuite ...> from these
+     * numbers). Separate line prefixed with [UTEST-XML-SUMMARY] so the
+     * post-processor can grep for it distinctly from the <testcase>
+     * and closer lines. */
+    u_append(line, &pos, sizeof(line),
+             "[UTEST-XML-SUMMARY] tests=");
+    u_append_uint(line, &pos, sizeof(line), tests);
+    u_append(line, &pos, sizeof(line), " failures=");
+    u_append_uint(line, &pos, sizeof(line), failed);
+    u_append(line, &pos, sizeof(line), " skipped=");
+    u_append_uint(line, &pos, sizeof(line), skipped);
+    u_format_seconds(time_buf, sizeof(time_buf), total_ms);
+    u_append(line, &pos, sizeof(line), " time=");
+    u_append(line, &pos, sizeof(line), time_buf);
+    klog(LOG_INFO, "UTEST", "%s", line);
+    (void)passed;
+
+    klog(LOG_INFO, "UTEST", "[UTEST-XML] </testsuite>");
+}
+
+/* Emit one `<testcase>` element for a binary. `verdict` is 0=PASS,
+ * 1=FAIL, 2=SKIP. `reason` may be NULL; otherwise it's the
+ * launcher-formatted reason string for FAIL/SKIP.
+ *
+ * Overflow contract: every u_append / u_xml_escape call is checked.
+ * If any returns 0, we bail to an `overflow` label that emits a
+ * minimal self-closing `<testcase name="..." classname="overflow"/>`
+ * record so the CI artifact stays well-formed. The binary is logged
+ * via LOG_WARN so the author knows their name/reason was too long.
+ * Codex quality M 2026-04-20: glob-discovered names up to VFS_MAX_NAME
+ * (256 chars) could otherwise exceed the line buffer and corrupt the
+ * assembled XML file downstream. */
+static void u_emit_xml_testcase(const char *name, int verdict,
+                                 uint64_t time_ms, const char *reason)
+{
+    char line[512];
+    uint32_t pos = 0;
+    char time_buf[24];
+
+    if (!s_xml_mode) return;
+    u_format_seconds(time_buf, sizeof(time_buf), time_ms);
+
+    #define APP(s)     do { if (!u_append(line, &pos, sizeof(line), (s))) goto overflow; } while (0)
+    #define APP_XML(s) do { if (!u_xml_escape(line, &pos, sizeof(line), (s))) goto overflow; } while (0)
+
+    APP("[UTEST-XML] <testcase name=\"");
+    APP_XML(name);
+    APP("\" classname=\"correctness\" time=\"");
+    APP(time_buf);
+    APP("\"");
+
+    if (verdict == 0) {
+        APP("/>");
+    } else {
+        APP(">");
+        if (verdict == 2) {
+            APP("<skipped");
+            if (reason && reason[0]) {
+                APP(" message=\"");
+                APP_XML(reason);
+                APP("\"");
+            }
+            APP("/>");
+        } else {
+            APP("<failure");
+            if (reason && reason[0]) {
+                APP(" message=\"");
+                APP_XML(reason);
+                APP("\"");
+            }
+            APP("/>");
+        }
+        APP("</testcase>");
+    }
+    klog(LOG_INFO, "UTEST", "%s", line);
+    #undef APP
+    #undef APP_XML
+    return;
+
+overflow:
+    klog(LOG_WARN, "UTEST",
+         "XML emit overflow for '%s' -- emitting minimal <testcase/> fallback",
+         name);
+    klog(LOG_INFO, "UTEST",
+         "[UTEST-XML] <testcase name=\"overflow\" classname=\"overflow\" time=\"0\"/>");
+}
+
+/* Emit one `[UTEST-JSON] {...}` per binary. Overflow-safe via the same
+ * goto-fallback pattern as u_emit_xml_testcase. */
+static void u_emit_json_testcase(const char *name, int verdict,
+                                  uint64_t time_ms, const char *reason)
+{
+    char line[512];
+    uint32_t pos = 0;
+    const char *status;
+
+    if (!s_json_mode) return;
+    switch (verdict) {
+    case 0: status = "PASS"; break;
+    case 2: status = "SKIP"; break;
+    default: status = "FAIL"; break;
+    }
+
+    #define APP(s)      do { if (!u_append(line, &pos, sizeof(line), (s))) goto overflow; } while (0)
+    #define APP_JSON(s) do { if (!u_json_escape(line, &pos, sizeof(line), (s))) goto overflow; } while (0)
+    #define APP_UINT(v) do { if (!u_append_uint(line, &pos, sizeof(line), (uint64_t)(v))) goto overflow; } while (0)
+
+    APP("[UTEST-JSON] {\"name\":\"");
+    APP_JSON(name);
+    APP("\",\"status\":\"");
+    APP(status);
+    APP("\",\"time_ms\":");
+    APP_UINT(time_ms);
+    if (reason && reason[0]) {
+        APP(",\"reason\":\"");
+        APP_JSON(reason);
+        APP("\"");
+    }
+    APP("}");
+    klog(LOG_INFO, "UTEST", "%s", line);
+    #undef APP
+    #undef APP_JSON
+    #undef APP_UINT
+    return;
+
+overflow:
+    klog(LOG_WARN, "UTEST",
+         "JSON emit overflow for '%s' -- emitting minimal fallback record",
+         name);
+    klog(LOG_INFO, "UTEST",
+         "[UTEST-JSON] {\"name\":\"overflow\",\"status\":\"FAIL\",\"time_ms\":0}");
+}
+
+static void u_emit_json_summary(uint32_t passed, uint32_t failed,
+                                uint32_t skipped, uint64_t total_ms)
+{
+    char line[200];
+    uint32_t pos = 0;
+
+    if (!s_json_mode) return;
+    u_append(line, &pos, sizeof(line),
+             "[UTEST-JSON] {\"summary\":{\"passed\":");
+    u_append_uint(line, &pos, sizeof(line), passed);
+    u_append(line, &pos, sizeof(line), ",\"failed\":");
+    u_append_uint(line, &pos, sizeof(line), failed);
+    u_append(line, &pos, sizeof(line), ",\"skipped\":");
+    u_append_uint(line, &pos, sizeof(line), skipped);
+    u_append(line, &pos, sizeof(line), ",\"total\":");
+    u_append_uint(line, &pos, sizeof(line), passed + failed + skipped);
+    u_append(line, &pos, sizeof(line), ",\"time_ms\":");
+    u_append_uint(line, &pos, sizeof(line), total_ms);
+    u_append(line, &pos, sizeof(line), "}}");
+    klog(LOG_INFO, "UTEST", "%s", line);
+}
+
 /* ---- Per-binary run: spawn, wait, log, cleanup --------------------- *
  *
  * Called from test_usermode_run for each binary (either from the
@@ -1089,6 +1434,7 @@ static void u_run_one(const char *name, uint32_t test_num, uint32_t *counters,
     char name_copy[VFS_MAX_NAME];
     char path[VFS_MAX_NAME + 4];
     char stem[VFS_MAX_NAME];
+    char reason[96];
     int  have_stem;
     int  isolation_failed = 0;
     uint32_t ni, pi;
@@ -1096,6 +1442,10 @@ static void u_run_one(const char *name, uint32_t test_num, uint32_t *counters,
     int32_t exit_status;
     int timed_out = 0;
     uint32_t leaked;
+    uint64_t start_ms;
+    uint64_t end_ms;
+
+    reason[0] = '\0';
 
     /* Snapshot `name` into launcher-owned storage BEFORE spawning.
      * The caller may have passed in a VFS dirent or manifest arena
@@ -1130,6 +1480,8 @@ static void u_run_one(const char *name, uint32_t test_num, uint32_t *counters,
 
     s_pending_test_path = path;
 
+    start_ms = u_uptime_ms();
+
     pid = task_create(utest_loader_func, name_copy);
     if (pid < 0) {
         klog(LOG_ERROR, "UTEST", "%s: task_create failed", name_copy);
@@ -1139,6 +1491,8 @@ static void u_run_one(const char *name, uint32_t test_num, uint32_t *counters,
             klog(LOG_INFO, "UTEST",
                  "not ok %u - %s # task_create failed",
                  (uint64_t)test_num, name_copy);
+        u_emit_xml_testcase(name_copy, 1, 0, "task_create failed");
+        u_emit_json_testcase(name_copy, 1, 0, "task_create failed");
         /* No task was ever dispatched, so no leaked handles are
          * possible. Reap the scratch dir + Registry subkey we created
          * in u_isolation_setup (task_cleanup isn't called on this
@@ -1187,6 +1541,14 @@ static void u_run_one(const char *name, uint32_t test_num, uint32_t *counters,
             klog(LOG_INFO, "UTEST",
                  "not ok %u - %s # timeout",
                  (uint64_t)test_num, name_copy);
+        {
+            uint32_t rp = 0;
+            u_append(reason, &rp, sizeof(reason), "timeout after ");
+            u_append_uint(reason, &rp, sizeof(reason),
+                          s_timeout_ms ? s_timeout_ms
+                                       : UTEST_DEFAULT_TIMEOUT_MS);
+            u_append(reason, &rp, sizeof(reason), "ms");
+        }
     } else {
         counters[1]++;  /* failed */
         *out_verdict = 1;
@@ -1196,6 +1558,18 @@ static void u_run_one(const char *name, uint32_t test_num, uint32_t *counters,
             klog(LOG_INFO, "UTEST",
                  "not ok %u - %s # exit=%d",
                  (uint64_t)test_num, name_copy, (int64_t)exit_status);
+        {
+            uint32_t rp = 0;
+            u_append(reason, &rp, sizeof(reason), "exit=");
+            if (exit_status < 0) {
+                u_append(reason, &rp, sizeof(reason), "-");
+                u_append_uint(reason, &rp, sizeof(reason),
+                              (uint64_t)(-(int64_t)exit_status));
+            } else {
+                u_append_uint(reason, &rp, sizeof(reason),
+                              (uint64_t)exit_status);
+            }
+        }
     }
 
     /* Handle leaks escalate a PASS to FAIL (§6 test checkpoint:
@@ -1266,12 +1640,38 @@ static void u_run_one(const char *name, uint32_t test_num, uint32_t *counters,
                 klog(LOG_INFO, "UTEST",
                      "not ok %u - %s # isolation failed",
                      (uint64_t)test_num, name_copy);
+            {
+                uint32_t rp = 0;
+                u_append(reason, &rp, sizeof(reason), "isolation failed");
+            }
         } else {
             klog(LOG_WARN, "UTEST",
                  "%s: isolation failed (scratch/registry state may persist)",
                  name_copy);
         }
     }
+
+    /* Handle-leak reason: only fill `reason` when we escalated from
+     * PASS. For FAIL/SKIP the exit-code or timeout reason already
+     * dominates; adding the leak count to a JSON blob would be nice
+     * but would require a structured reason schema and is a §7
+     * nice-to-have, not a correctness issue. */
+    if (reason[0] == '\0' && leaked > 0 && *out_verdict == 1) {
+        uint32_t rp = 0;
+        u_append(reason, &rp, sizeof(reason), "");
+        u_append_uint(reason, &rp, sizeof(reason), leaked);
+        u_append(reason, &rp, sizeof(reason), " handle(s) leaked");
+    }
+
+    /* §7 XML + JSON per-binary emit: one pair per run, reason string
+     * reflects the final verdict including any escalations. time_ms
+     * is the wall-clock elapsed from task_create to just before this
+     * emit. */
+    end_ms = u_uptime_ms();
+    u_emit_xml_testcase(name_copy, *out_verdict, end_ms - start_ms,
+                        reason[0] ? reason : (const char *)0);
+    u_emit_json_testcase(name_copy, *out_verdict, end_ms - start_ms,
+                         reason[0] ? reason : (const char *)0);
 }
 
 /* ---- Enumerate binaries via directory glob (fallback path) --------- */
@@ -1316,6 +1716,8 @@ void test_usermode_run(void)
     uint32_t              skipped_by_filter = 0;
     int                   use_manifest;
     char                  scratch_name[VFS_MAX_NAME];
+    uint64_t              run_start_ms;
+    uint64_t              run_end_ms;
     uint32_t              i;
 
     if (!vfs_is_mounted('C')) {
@@ -1407,6 +1809,14 @@ void test_usermode_run(void)
     if (s_tap_mode)
         klog(LOG_INFO, "UTEST", "1..%u", (uint64_t)total_planned);
 
+    /* §7 XML envelope opener. The testsuite attributes are filled in
+     * by scripts/test.sh post-processing using the emitted
+     * [UTEST-XML-SUMMARY] line; the raw launcher doesn't know the
+     * final counts yet. */
+    u_emit_xml_suite_open();
+
+    run_start_ms = u_uptime_ms();
+
     /* Second pass: actually run. Manifest order takes precedence so
      * tests can declare a deterministic execution order. */
     if (use_manifest) {
@@ -1451,6 +1861,8 @@ void test_usermode_run(void)
     u_manifest_free(&manifest);
     scheduler_disable();
 
+    run_end_ms = u_uptime_ms();
+
     /* Summary. Counters: [0]=pass, [1]=fail, [2]=skip(exit=77). */
     if (skipped_by_filter > 0) {
         klog(LOG_INFO, "UTEST",
@@ -1465,6 +1877,14 @@ void test_usermode_run(void)
              (uint64_t)counters[0], (uint64_t)counters[1],
              (uint64_t)counters[2], (uint64_t)total_ran);
     }
+
+    /* §7 summary emissions: close the XML envelope and drop the final
+     * JSON summary record. Both are no-ops if the respective modes
+     * were never enabled. */
+    u_emit_xml_suite_close(counters[0], counters[1], counters[2],
+                           run_end_ms - run_start_ms);
+    u_emit_json_summary(counters[0], counters[1], counters[2],
+                        run_end_ms - run_start_ms);
 }
 
 /* ---- Test-only exports --------------------------------------------- *
@@ -1493,5 +1913,23 @@ int test_usermode_path_join(const char *parent, const char *name,
 int test_usermode_path_has_traversal(const char *p)
 {
     return u_path_has_traversal(p);
+}
+
+int test_usermode_xml_escape(const char *src, char *dst, uint32_t cap);
+int test_usermode_xml_escape(const char *src, char *dst, uint32_t cap)
+{
+    uint32_t pos = 0;
+    if (cap == 0) return 0;
+    dst[0] = '\0';
+    return u_xml_escape(dst, &pos, cap, src);
+}
+
+int test_usermode_json_escape(const char *src, char *dst, uint32_t cap);
+int test_usermode_json_escape(const char *src, char *dst, uint32_t cap)
+{
+    uint32_t pos = 0;
+    if (cap == 0) return 0;
+    dst[0] = '\0';
+    return u_json_escape(dst, &pos, cap, src);
 }
 #endif
