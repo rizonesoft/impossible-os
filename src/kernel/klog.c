@@ -206,6 +206,7 @@ static const char *level_prefix[] = {
 #define ANSI_RED      "\033[31m"
 #define ANSI_BOLD_RED "\033[1;31m"
 #define ANSI_CYAN     "\033[36m"
+#define ANSI_MAGENTA  "\033[35m"
 
 static const char *level_ansi[] = {
     ANSI_DGREY,     /* LOG_DEBUG  [INFO] */
@@ -955,21 +956,32 @@ void klog(log_level_t level, const char *subsystem, const char *fmt, ...)
          * For badge-only levels: reset after [LEVEL], rest is default.
          * For full-line levels:  reset after message, whole tail colored.
          * Special: "TEST" subsystem -- badge keeps level color,
-         *          subsystem + message text is cyan. */
+         *          subsystem + message text is cyan.
+         * Special: "UTEST" subsystem (user-mode test launcher) --
+         *          badge keeps level color, subsystem + message text
+         *          is magenta so kernel TEST and user-mode UTEST lines
+         *          remain visually distinct in the same boot log. */
         {
             int is_test = (subsystem && subsystem[0] == 'T' &&
                            subsystem[1] == 'E' && subsystem[2] == 'S' &&
                            subsystem[3] == 'T' &&
                            (subsystem[4] == '\0' || subsystem[4] == ':'));
+            int is_utest = (subsystem && subsystem[0] == 'U' &&
+                            subsystem[1] == 'T' && subsystem[2] == 'E' &&
+                            subsystem[3] == 'S' && subsystem[4] == 'T' &&
+                            (subsystem[5] == '\0' || subsystem[5] == ':'));
 
             /* Badge: normal level color */
             LS(level_ansi[level]);
             LS(level_prefix[level]);
             LS(ANSI_RESET);
 
-            /* Subsystem + message: cyan for TEST, else default or full-line */
-            if (is_test) {
-                LS(ANSI_CYAN);
+            /* Subsystem + message:
+             *   TEST  -> cyan
+             *   UTEST -> magenta
+             *   else  -> default (or full-line color for WARN/ERROR/FATAL) */
+            if (is_test || is_utest) {
+                LS(is_test ? ANSI_CYAN : ANSI_MAGENTA);
                 if (subsystem[0]) { LS(subsystem); LS(": "); }
                 LS(snapshot.message);
                 LS(ANSI_RESET);
@@ -1000,7 +1012,13 @@ void klog(log_level_t level, const char *subsystem, const char *fmt, ...)
                           subsystem[1] == 'E' && subsystem[2] == 'S' &&
                           subsystem[3] == 'T' &&
                           (subsystem[4] == '\0' || subsystem[4] == ':'));
-        uint32_t fb_color = fb_is_test ? FB_COLOR_CYAN : level_color[level];
+        int fb_is_utest = (subsystem && subsystem[0] == 'U' &&
+                           subsystem[1] == 'T' && subsystem[2] == 'E' &&
+                           subsystem[3] == 'S' && subsystem[4] == 'T' &&
+                           (subsystem[5] == '\0' || subsystem[5] == ':'));
+        uint32_t fb_color = fb_is_test  ? FB_COLOR_CYAN
+                          : fb_is_utest ? FB_COLOR_MAGENTA
+                          : level_color[level];
 
         fb_set_color(fb_color, FB_COLOR_BG_DEFAULT);
         fb_str(level_prefix[level]);
