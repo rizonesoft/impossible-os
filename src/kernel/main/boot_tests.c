@@ -59,6 +59,11 @@ void boot_tests_run(void)
                     g_boot_info.config.utest_timeout_ms);
             if (g_boot_info.config.tap)
                 test_usermode_set_tap(1);
+            /* Per-test isolation defaults ON; honour an explicit 0 in
+             * boot.conf as the only way to disable it. Matches the
+             * user-visible "production runs always isolate" contract. */
+            if (g_boot_info.config.utest_isolation == 0)
+                test_usermode_set_isolation(0);
             test_usermode_run();
         }
     }

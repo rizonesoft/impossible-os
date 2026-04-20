@@ -414,6 +414,7 @@ $(SYSROOT)/hello.exe $(SYSROOT)/cmd.exe $(SYSROOT)/test_harness_smoke.exe $(SYSR
 	@cp -f $(BUILD_DIR)/user/test/test_faultinject.exe $(SYSROOT)/test_faultinject.exe
 	@mkdir -p $(SYSROOT)/tests
 	@cp -f tests/usermode.manifest $(SYSROOT)/tests/usermode.manifest
+	@cp -f tests/usermode-cleanup.manifest $(SYSROOT)/tests/usermode-cleanup.manifest
 	@echo "[USER] hello.exe + cmd.exe + test_harness_smoke.exe + test_syscall.exe + test_faultinject.exe + tests/usermode.manifest -> sysroot"
 
 ## iso: Package kernel + sysroot into a bootable UEFI ISO via GRUB (optional)

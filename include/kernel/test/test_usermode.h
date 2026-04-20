@@ -53,6 +53,14 @@ void test_usermode_set_timeout_ms(uint32_t ms);
  * kselftest-style tooling. Disabled by default. */
 void test_usermode_set_tap(int enable);
 
+/* Enable or disable per-test isolation. When enabled (default), the
+ * launcher creates C:\Temp\utest\<name>\ as a scratch root, deletes
+ * HKLM\SOFTWARE\ImpossibleOS\Test\<name> before and after each run,
+ * snapshots the task's handle-table count, and logs a WARN on leak.
+ * Disable only for debugging broken cleanup hooks; boot.conf
+ * `utest_isolation=0` toggles this via test_usermode_set_isolation(). */
+void test_usermode_set_isolation(int enable);
+
 /* Contract for SKIP: a test binary reports "this test is not
  * applicable here" by exiting with status 77 (kselftest convention).
  * The launcher counts it as SKIPPED, not FAIL. Any other non-zero

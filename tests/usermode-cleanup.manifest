@@ -1,0 +1,32 @@
+# Impossible OS user-mode test CROSS-TEST cleanup manifest
+# ========================================================
+#
+# Deployed by `make userland` to C:\tests\usermode-cleanup.manifest.
+# Read by the kernel-side launcher in
+#   src/kernel/test/test_usermode.c -> u_cleanup_manifest_apply()
+# AFTER the per-test scratch dir + Registry subkey teardown, so any
+# entries listed here are wiped between every binary in addition to
+# the automatic C:\Temp\utest\<name>\ + HKLM\SOFTWARE\ImpossibleOS\Test\<name>
+# scrub that every binary gets automatically.
+#
+# When to add an entry:
+#   - The test legitimately touches global state OUTSIDE its per-test
+#     scratch dir (DLL cache, network sockets-on-disk, shared caches).
+#   - A prior run's leftover could affect a later binary's assertions.
+#
+# When NOT to add an entry:
+#   - State inside C:\Temp\utest\<name>\ -- already isolated.
+#   - State inside HKLM\SOFTWARE\ImpossibleOS\Test\<name>\ -- already isolated.
+#   - Files that live in the read-only sysroot (C:\hello.txt).
+#
+# Format: one absolute path per line. Two prefixes recognized:
+#   C:\<path>       -- vfs_unlink / recursive tree delete
+#   HKLM\<subkey>   -- RegDeleteTree under HKEY_LOCAL_MACHINE
+# `#` starts a line comment. Blank lines ignored.
+#
+# Example (disabled by default; uncomment when a test needs it):
+# C:\Impossible\Temp\dll-cache
+# HKLM\SOFTWARE\ImpossibleOS\NetworkState
+
+# (no entries today -- the §9-§15 test binaries live inside their
+# per-test scratch roots and don't need cross-test cleanup)

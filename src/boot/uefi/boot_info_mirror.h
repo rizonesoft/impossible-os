@@ -83,7 +83,10 @@ struct boot_config {
     UINT8   _pad_utest[2];     /* align the UINT16 below */
     UINT16  utest_timeout_ms;
     char    utest_filter[64];
-    UINT8   _pad[154];         /* pad to 512 bytes total (sector-aligned) */
+    /* Per-test isolation knob (S6 of TODO-04). */
+    UINT8   utest_isolation;
+    UINT8   _pad_utest2[3];
+    UINT8   _pad[150];         /* pad to 512 bytes total (sector-aligned) */
 };
 
 /* Mirror of kernel/boot_info.h static asserts -- catches drift between
@@ -98,6 +101,8 @@ _Static_assert(__builtin_offsetof(struct boot_config, utest_timeout_ms) == 292,
     "utest_timeout_ms must be at byte offset 292 -- TODO-04 S4 stable ABI");
 _Static_assert(__builtin_offsetof(struct boot_config, utest_filter) == 294,
     "utest_filter must be at byte offset 294 -- TODO-04 S4 stable ABI");
+_Static_assert(__builtin_offsetof(struct boot_config, utest_isolation) == 358,
+    "utest_isolation must be at byte offset 358 -- TODO-04 S6 stable ABI");
 _Static_assert(sizeof(struct boot_config) == 512,
     "boot_config must be exactly 512 bytes (sector-aligned)");
 

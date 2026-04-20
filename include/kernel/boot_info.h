@@ -346,8 +346,13 @@ struct boot_config {
     uint8_t  _pad_utest[2];    /* align the uint16_t below */
     uint16_t utest_timeout_ms; /* per-binary wall-clock timeout; 0 = default (10s) */
     char     utest_filter[64]; /* glob/literal filter; empty = run every test_*.exe */
+    /* Per-test isolation (S6 of TODO-04). Default 1 (on); set to 0 in
+     * boot.conf for debugging a broken cleanup hook. Production test
+     * runs always isolate. */
+    uint8_t  utest_isolation;  /* 0 = disable scratch-dir + Registry wipe + handle-leak */
+    uint8_t  _pad_utest2[3];   /* align following struct fields */
     /* Pad to 512 bytes total (sector-aligned). */
-    uint8_t  _pad[154];
+    uint8_t  _pad[150];
 };
 
 /* Compile-time enforcement of bootloader ABI contract.
@@ -362,6 +367,8 @@ _Static_assert(__builtin_offsetof(struct boot_config, utest_timeout_ms) == 292,
     "utest_timeout_ms must be at byte offset 292 (TODO-04 S4 stable ABI)");
 _Static_assert(__builtin_offsetof(struct boot_config, utest_filter) == 294,
     "utest_filter must be at byte offset 294 (TODO-04 S4 stable ABI)");
+_Static_assert(__builtin_offsetof(struct boot_config, utest_isolation) == 358,
+    "utest_isolation must be at byte offset 358 (TODO-04 S6 stable ABI)");
 _Static_assert(sizeof(struct boot_config) == 512,
     "boot_config must be exactly 512 bytes (sector-aligned)");
 

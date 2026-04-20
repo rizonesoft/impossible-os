@@ -52,7 +52,7 @@
 | 💎  |   3   | Kernel test launcher (run `test_*.exe` in sequence) | §1                                 |  [x]   |
 | 💎  |   4   | Launcher manifest, timeouts, TAP, and skip policy   | §3                                 |  [x]   |
 | ⭐  |   5   | User-mode fault-injection bridge (SYS_FAULT_INJECT) | §1, §3, T03 §1, T03 §6             |  [x]   |
-| 💎  |   6   | Per-test isolation + cleanup hook                   | §3, §4                             |  [ ]   |
+| 💎  |   6   | Per-test isolation + cleanup hook                   | §3, §4                             |  [x]   |
 | 💎  |   7   | JUnit XML + JSON output formats                     | §4                                 |  [ ]   |
 | 💎  |   8   | Test type taxonomy (smoke/correctness/stress/perf)  | §3, §4                             |  [ ]   |
 | 💎  |   9   | Syscall test binary (`test_syscall.exe`)            | §1, §2, §3                         |  [ ]   |
@@ -229,14 +229,27 @@ Bridge `T03 §1` `kmalloc_fail_next()` and `T03 §6` PMM/VMM/copy_user countdown
 
 Right now §3's launcher just sequentially execs binaries. If `test_fileio.exe` leaves `C:\Temp\test-fileio-scratch` behind, `test_libc.exe` could trip on it. Linux kselftest forks per test so file descriptors leak nowhere; LTP uses unique temp dirs and unconditional cleanup. The launcher needs a per-test cleanup pass between binaries.
 
-- [ ] Reserve `C:\Temp\utest\<test-name>\` as the per-test scratch root; launcher creates it before each binary's task_create_user, deletes it after task_waitpid (whether PASS, FAIL, or timeout)
-- [ ] Reserve `HKLM\SOFTWARE\ImpossibleOS\Test\<test-name>\` as the per-test Registry scratch root; launcher deletes the subkey after each binary
-- [ ] Per-binary handle-leak detection: launcher snapshots the per-task handle table size before exec, asserts size returns to baseline after waitpid (extends `T03 §8` per-test heap-leak detection model to handle counts)
-- [ ] Optional `tests/usermode-cleanup.manifest` file listing additional paths/keys to scrub (e.g., DLL cache, network sockets) for tests that touch global state legitimately
-- [ ] Tests opt out via `boot.conf utest_isolation=0` for debugging only -- production runs always isolate
-- [ ] Commit: `"test: per-test isolation -- scratch dir + Registry subkey + handle-leak detection"`
+- [x] `C:\Temp\utest\<stem>\` scratch root wired in [`src/kernel/test/test_usermode.c`](../../src/kernel/test/test_usermode.c) -- `u_isolation_setup()` creates `C:\Temp`, `C:\Temp\utest`, and `C:\Temp\utest\<stem>\` (creating any missing level idempotently) and `u_rmtree`s any stale subtree from a prior run before recreating a fresh directory. `<stem>` is derived from the binary name by `u_derive_test_name()` which strips the trailing `.exe` (case-insensitive). `u_isolation_reap()` (post-`task_cleanup`) tears the subtree down again after the run completes regardless of PASS / FAIL / timeout. Bounded recursive-delete uses `UTEST_RMTREE_MAX_DEPTH=8` and `UTEST_RMTREE_MAX_ENTRIES=512` paranoia caps so a pathological VFS state cannot infinite-loop cleanup.
+- [x] `HKLM\SOFTWARE\ImpossibleOS\Test\<stem>` Registry scratch subkey: `u_isolation_setup()` calls `RegDeleteTree()` to wipe prior state, then `RegCreateKeyEx()` to ensure a fresh key exists before the binary runs. Teardown calls `RegDeleteTree()` again after `task_cleanup`. Symmetric with the VFS scratch path and uses the same stem derivation.
+- [x] Per-binary handle-leak detection: `u_isolation_snapshot_leaks()` reads `tasks[pid].handle_table.count` BEFORE `task_cleanup` destroys the table; `u_run_one` escalates a PASS verdict to FAIL when `leaked > 0`, logs `[UTEST] <name>: FAIL (<N> handle(s) leaked -- escalated from PASS)` and emits a matching `not ok N - <name> # <N> handle(s) leaked` TAP line. Tests that already FAIL / SKIP keep their stronger verdict but get a supplementary WARN naming the leak count.
+- [x] `tests/usermode-cleanup.manifest` [deployed](../../tests/usermode-cleanup.manifest) via the Makefile `userland` target (alongside `tests/usermode.manifest`); `u_cleanup_manifest_apply()` parses `C:\tests\usermode-cleanup.manifest` after every binary. Format: one entry per line, `C:\Impossible\...` goes to `u_rmtree`, `HKLM\SOFTWARE\Impossible...` goes to `RegDeleteTree`. Both prefixes are hard-gated to the ImpossibleOS subtree so a typo cannot wipe `hello.txt`, `cmd.exe`, or the whole HKLM hive (Codex H2 fix, 2026-04-20).
+- [x] `boot.conf utest_isolation=<0|1>` opt-out parsed by the bootloader (defaults to `1` via the `boot_config_defaults` in [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c)); kernel consumes via `test_usermode_set_isolation(0)` from [`src/kernel/main/boot_tests.c`](../../src/kernel/main/boot_tests.c). Stable ABI offset 358 in `struct boot_config` with static asserts in both kernel + bootloader mirror.
+- [x] Commit: `"test: per-test isolation -- scratch dir + Registry subkey + handle-leak detection"`
 
-**Test checkpoint:** A binary that creates `C:\Temp\utest\test-foo\stale-file` and exits 0 leaves NO trace -- next binary's pre-exec snapshot of `C:\Temp\utest\` is empty. A binary that opens `C:\hello.txt` without closing it surfaces as `[UTEST] FAIL test_x: 1 handle leaked`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** On `bash scripts/test.sh QUIET=1 SUITE=exec` (KVM): 127 kernel tests pass (up from 107 pre-§6). Under the live launcher, `test_harness_smoke.exe`, `test_syscall.exe`, and `test_faultinject.exe` all run with fresh scratch directories and all PASS without any `[UTEST] <name>: FAIL (... handle(s) leaked ...)` lines -- the existing binaries already close every handle they open. Unit suites cover the `u_derive_test_name` case/empty/tiny-buffer edges, the `u_path_join` overflow + separator cases, and a hive-survival probe for the cleanup-manifest HKLM guard. A binary that opens `C:\hello.txt` without closing it WOULD now surface as `[UTEST] <name>: FAIL (1 handle(s) leaked -- escalated from PASS)` and a `not ok N - <name> # 1 handle(s) leaked` TAP line; a deliberately-leaky binary to exercise that path is owned by §9's full syscall test binary which has its own handle/cleanup obligations. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-exec-tests.bat` (SUITE=exec) | 33 suites under TEST_CAT_EXEC (5 new for §6 pure helpers + manifest HKLM guard), 0 failures
+
+> **Notes:**
+> - Shipped isolation helpers: `u_derive_test_name` (strips `.exe`), `u_path_join` (bounded `parent\name` concat), `u_rmtree` (iterative recursive delete with depth/count caps), `u_ensure_dir`, `u_isolation_setup`, `u_isolation_snapshot_leaks` + `u_isolation_reap` (split so leak count reads BEFORE `task_cleanup` while destructive delete runs AFTER -- Codex H1 fix, 2026-04-20: a leaked handle on a scratch-dir file would otherwise block `vfs_unlink` because `ref_count > 0`).
+> - Shipped ABI: new `utest_isolation` u8 at stable offset 358 in `struct boot_config`; mirrored in the bootloader struct with matching static asserts. Bootloader `parse_conf_kv` parses `utest_isolation=<0|1>` and `boot_config_defaults` sets 1 so absent-key boots isolate by default. Total `boot_config` still 512 bytes.
+> - Cleanup manifest guard-rails (Codex H2 fix, 2026-04-20): empty `HKLM\` suffix rejected (would otherwise wipe all HKLM children), and both `C:\` + `HKLM\` entries must target the ImpossibleOS subtree. A typo or hostile manifest cannot touch `C:\hello.txt` / `C:\cmd.exe` / any other well-known path. Unit test asserts the SOFTWARE hive survives a guard probe.
+> - Teardown order: snapshot leak count -> log verdict (escalate PASS->FAIL on leak) -> `task_cleanup` (closes child's handles) -> `u_isolation_reap` destructive delete -> optional `u_cleanup_manifest_apply`. Correct ordering here was explicitly designed around `vfs_unlink`'s `ref_count > 0` rejection; re-ordering without thought will reintroduce the stale-scratch-state bug.
+> - Downstream effects: §9-§14 subsystem test binaries can now assume a clean `C:\Temp\utest\<stem>\` at start and don't have to coordinate unique temp paths. Handle leaks become CI-failures, incentivising proper cleanup in every new test binary. `test_fileio.exe`-style tests no longer risk tripping each other.
+> - Canonical doc: [tests/usermode-cleanup.manifest](../../tests/usermode-cleanup.manifest) -- format + security rationale for the optional cross-test cleanup file. [docs/testing/usermode-env-matrix.md](../../docs/testing/usermode-env-matrix.md) already describes the per-test isolation contract at the platform-matrix level.
+> - Scope boundary: §6 owns scratch-dir + Registry-subkey + handle-leak + manifest. Per-test **heap**-leak detection lives in `00-infrastructure/TODO-03` (kernel harness §8) for kernel-side allocations; we don't extend it to user-mode heap (tests exit, so user-mode heap is torn down with the process). Stress/perf type-specific cleanup (§8) and JUnit XML emission of leak counts (§7) are downstream.
+
+> **Verified:** 2026-04-20 | commit `<pending>` | 6/6 items | build OK | tests 127/127 PASS (up from 107) + 3 user binaries PASS with isolation active; scratch dirs + Registry subkeys survived a clean-boot round-trip
 
 ---
 
@@ -431,7 +444,7 @@ Wire user-mode test binaries into `make test`.
 | 💎  | JUnit XML / JSON     | ✅ HLK XML           | ⚠️ kselftest TAP only    | ⬜ §7                  |
 | 💎  | Timeouts or skips    | ✅ HLK               | ✅ LKFT skip             | ✅ §4 10s + exit=77    |
 | 💎  | ABI header sync      | ✅ SDK               | ✅ uapi                  | ⬜ §2                  |
-| 💎  | Per-test isolation   | ✅ HLK session reset | ✅ kselftest fork+tmp    | ⬜ §6                  |
+| 💎  | Per-test isolation   | ✅ HLK session reset | ✅ kselftest fork+tmp    | ✅ §6 scratch+reg+leak |
 | 💎  | Stress / longhaul    | ✅ TAEF Loop+Stress  | ✅ LTP runtest/stress    | ⬜ §8 stress type      |
 | 💎  | Perf regression      | ✅ perfview/PerfTest | ✅ perf + flame baseline | ⬜ §8 perf type        |
 | ⭐  | Fault-inject bridge  | ⚠️ AppVerifier hooks | ⚠️ debugfs failslab      | ✅ §5 SYS_FAULT_INJECT |

@@ -43,6 +43,7 @@
 #include "kernel/ob/ob_process.h"
 #include "kernel/timer.h"
 #include "kernel/test/test_usermode.h"
+#include "registry.h"
 
 /* ---- Internal state -------------------------------------------------- */
 
@@ -60,6 +61,11 @@ static uint32_t s_timeout_ms;
 
 /* TAP mode: 1 = emit `ok N - name` / `not ok N - name` / `1..N` plan. */
 static int s_tap_mode;
+
+/* §6 per-test isolation: 1 = scratch dir + Registry wipe + handle-leak
+ * detection around each binary. Default 1 (ON); boot.conf
+ * utest_isolation=0 flips it off for debugging broken cleanup hooks. */
+static int s_isolation_enabled = 1;
 
 /* Defaults matching the §4 test checkpoint: 10s wall clock is long
  * enough for a trivial test_*.exe on WHPX TCG (launch overhead plus
@@ -87,6 +93,11 @@ void test_usermode_set_timeout_ms(uint32_t ms)
 void test_usermode_set_tap(int enable)
 {
     s_tap_mode = enable ? 1 : 0;
+}
+
+void test_usermode_set_isolation(int enable)
+{
+    s_isolation_enabled = enable ? 1 : 0;
 }
 
 /* ---- Tiny string helpers (no libc deps in kernel) -------------------- */
@@ -204,6 +215,432 @@ static int u_is_valid_manifest_name(const char *name)
 static uint64_t u_uptime_ms(void)
 {
     return uptime_ns() / 1000000ULL;
+}
+
+/* ---- §6 per-test isolation helpers --------------------------------- *
+ *
+ * For each binary the launcher creates a fresh scratch directory and
+ * wipes a Registry subkey so leftover state cannot cross-pollute the
+ * next binary. After the binary exits (PASS, FAIL, or timeout) the
+ * launcher tears both down and records the task's final handle-table
+ * count as a handle-leak signal. Opt out via boot.conf
+ * utest_isolation=0 (consumed via test_usermode_set_isolation).
+ * --------------------------------------------------------------------- */
+
+/* Scratch root paths. `<name>` is the test binary filename minus the
+ * ".exe" suffix (derived in u_derive_test_name below). Both roots use
+ * backslash separators to match the Win32-native path convention. */
+#define UTEST_SCRATCH_ROOT_L1 "C:\\Temp"
+#define UTEST_SCRATCH_ROOT_L2 "C:\\Temp\\utest"
+#define UTEST_REG_ROOT_L1     "SOFTWARE"
+#define UTEST_REG_ROOT_L2     "SOFTWARE\\ImpossibleOS"
+#define UTEST_REG_ROOT_L3     "SOFTWARE\\ImpossibleOS\\Test"
+
+/* Hard caps on the iterative recursive-delete loop. The scratch dir is
+ * launcher-owned and tests should not create deep hierarchies in it;
+ * these caps exist as a paranoia floor against pathological FS state
+ * that would otherwise infinite-loop the cleanup. */
+#define UTEST_RMTREE_MAX_ENTRIES 512u
+#define UTEST_RMTREE_MAX_DEPTH     8u
+
+/* Strip a trailing ".exe" (case-insensitive) from `name_in` into
+ * `out[out_cap]`. Returns 1 on success, 0 if the suffix was absent or
+ * the resulting name would be empty / won't fit. `out` is always
+ * NUL-terminated on success. */
+static int u_derive_test_name(const char *name_in, char *out, uint32_t out_cap)
+{
+    uint32_t n = 0;
+    uint32_t i;
+
+    if (!name_in || !out || out_cap < 2)
+        return 0;
+    while (name_in[n]) n++;
+    if (n < 5)   /* minimum "a.exe" is 5 chars; below that no stem remains */
+        return 0;
+    /* Match ".exe" / ".EXE" / mixed case at the tail. */
+    if (name_in[n - 4] != '.' ||
+        (name_in[n - 3] != 'e' && name_in[n - 3] != 'E') ||
+        (name_in[n - 2] != 'x' && name_in[n - 2] != 'X') ||
+        (name_in[n - 1] != 'e' && name_in[n - 1] != 'E'))
+        return 0;
+    if (n - 4 >= out_cap)
+        return 0;
+    for (i = 0; i < n - 4; i++)
+        out[i] = name_in[i];
+    out[i] = '\0';
+    return 1;
+}
+
+/* Concat `parent\name` into `out[out_cap]`. Returns 1 on success, 0 on
+ * overflow or empty input. */
+static int u_path_join(const char *parent, const char *name,
+                       char *out, uint32_t out_cap)
+{
+    uint32_t pi = 0;
+    uint32_t ni = 0;
+
+    if (!parent || !name || !out || out_cap < 3)
+        return 0;
+    while (parent[pi] && pi < out_cap - 2) {
+        out[pi] = parent[pi];
+        pi++;
+    }
+    if (parent[pi] != '\0' || pi == 0)
+        return 0;  /* parent truncated or empty */
+    if (out[pi - 1] != '\\' && out[pi - 1] != '/') {
+        if (pi >= out_cap - 2)
+            return 0;
+        out[pi++] = '\\';
+    }
+    while (name[ni] && pi < out_cap - 1)
+        out[pi++] = name[ni++];
+    if (name[ni] != '\0')
+        return 0;  /* name truncated */
+    out[pi] = '\0';
+    return 1;
+}
+
+/* Iterative recursive delete of a VFS path (file or directory). Safe
+ * to call on a path that doesn't exist. Returns 0 on full cleanup, -1
+ * if anything failed (but the launcher treats this as non-fatal -- a
+ * best-effort cleanup is still better than leaking across binaries). */
+static int u_rmtree(const char *path, uint32_t depth)
+{
+    struct vfs_node *n;
+    uint8_t is_dir;
+
+    if (depth > UTEST_RMTREE_MAX_DEPTH) {
+        klog(LOG_WARN, "UTEST", "rmtree: depth > %u at '%s' -- aborting",
+             (uint64_t)UTEST_RMTREE_MAX_DEPTH, path);
+        return -1;
+    }
+
+    n = vfs_open(path, VFS_O_READ);
+    if (!n)
+        return 0;  /* absent -- nothing to do */
+    is_dir = (uint8_t)(n->type & VFS_DIRECTORY);
+    vfs_close(n);
+
+    if (is_dir) {
+        uint32_t pass;
+        /* Loop: readdir[0] -> skip "."/".." -> recurse + unlink the
+         * first real child -> restart readdir. Bounded by
+         * UTEST_RMTREE_MAX_ENTRIES so a pathological FS state cannot
+         * infinite-loop cleanup. */
+        for (pass = 0; pass < UTEST_RMTREE_MAX_ENTRIES; pass++) {
+            struct vfs_node *dir;
+            struct vfs_dirent *de;
+            uint32_t idx;
+            int found_real;
+            char child_path[VFS_MAX_NAME + 64];
+            char child_name[VFS_MAX_NAME];
+            uint32_t ci;
+
+            dir = vfs_open(path, VFS_O_READ);
+            if (!dir || !dir->ops || !dir->ops->readdir) {
+                if (dir) vfs_close(dir);
+                break;
+            }
+
+            found_real = 0;
+            for (idx = 0; (de = dir->ops->readdir(dir, idx)) != (struct vfs_dirent *)0;
+                 idx++) {
+                /* Skip "." and ".." which some VFS backends include. */
+                if (de->name[0] == '.' &&
+                    (de->name[1] == '\0' ||
+                     (de->name[1] == '.' && de->name[2] == '\0')))
+                    continue;
+                /* Snapshot the name (shared dirent storage). */
+                for (ci = 0; de->name[ci] && ci < sizeof(child_name) - 1; ci++)
+                    child_name[ci] = de->name[ci];
+                child_name[ci] = '\0';
+                found_real = 1;
+                break;
+            }
+            vfs_close(dir);
+            if (!found_real)
+                break;
+
+            if (!u_path_join(path, child_name, child_path, sizeof(child_path))) {
+                klog(LOG_WARN, "UTEST",
+                     "rmtree: path join overflowed for '%s\\%s' -- stopping",
+                     path, child_name);
+                return -1;
+            }
+            u_rmtree(child_path, depth + 1);
+        }
+    }
+
+    return vfs_unlink(path);
+}
+
+/* Ensure a VFS directory exists. `parent` is the enclosing path, `full`
+ * is the target. Tries to create; ignores errors (the target may
+ * already exist). Returns 1 if the target is a directory after the
+ * call, 0 otherwise. */
+static int u_ensure_dir(const char *full)
+{
+    struct vfs_node *n = vfs_open(full, VFS_O_READ);
+    if (n) {
+        int is_dir = (n->type & VFS_DIRECTORY) != 0;
+        vfs_close(n);
+        return is_dir;
+    }
+    if (vfs_create(full, VFS_DIRECTORY) != 0)
+        return 0;
+    n = vfs_open(full, VFS_O_READ);
+    if (!n)
+        return 0;
+    {
+        int is_dir = (n->type & VFS_DIRECTORY) != 0;
+        vfs_close(n);
+        return is_dir;
+    }
+}
+
+/* Pre-exec isolation: wipe stale state, create fresh scratch + Registry
+ * subkey for `<name>`. Non-fatal -- logs WARN on failure and proceeds
+ * without the isolated state rather than blocking the test run. */
+static void u_isolation_setup(const char *test_name)
+{
+    char path[VFS_MAX_NAME + 64];
+    char reg_key[VFS_MAX_NAME + 64];
+
+    if (!vfs_is_mounted('C'))
+        return;
+
+    /* L1 + L2 roots are shared across all binaries; create once, ignore
+     * if they already exist. */
+    (void)u_ensure_dir(UTEST_SCRATCH_ROOT_L1);
+    (void)u_ensure_dir(UTEST_SCRATCH_ROOT_L2);
+
+    /* Per-test scratch: wipe any leftover from a prior run, recreate
+     * fresh. u_rmtree on a missing path is a no-op; vfs_create is
+     * tolerated on race. */
+    if (!u_path_join(UTEST_SCRATCH_ROOT_L2, test_name, path, sizeof(path))) {
+        klog(LOG_WARN, "UTEST",
+             "isolation: path join overflow for scratch '%s'", test_name);
+        return;
+    }
+    (void)u_rmtree(path, 0);
+    if (vfs_create(path, VFS_DIRECTORY) != 0) {
+        klog(LOG_WARN, "UTEST",
+             "isolation: failed to create scratch dir '%s'", path);
+    }
+
+    /* Registry subkey: HKLM\SOFTWARE\ImpossibleOS\Test\<name>.
+     * RegCreateKeyEx is idempotent (open-or-create); RegDeleteTree
+     * scrubs any prior content first so a previous run's dirty state
+     * cannot bleed through. */
+    {
+        uint32_t pi = 0;
+        uint32_t ni = 0;
+        while (UTEST_REG_ROOT_L3[pi] && pi < sizeof(reg_key) - 2)
+            reg_key[pi] = UTEST_REG_ROOT_L3[pi], pi++;
+        if (pi < sizeof(reg_key) - 2)
+            reg_key[pi++] = '\\';
+        while (test_name[ni] && pi < sizeof(reg_key) - 1)
+            reg_key[pi++] = test_name[ni++];
+        reg_key[pi] = '\0';
+        if (ni != 0 && test_name[ni] == '\0') {
+            /* Clear any stale state, then ensure a fresh key exists. */
+            (void)RegDeleteTree(HKEY_LOCAL_MACHINE, reg_key);
+            {
+                HKEY scratch = (HKEY)(uintptr_t)0;
+                uint32_t disp = 0;
+                if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, reg_key, 0,
+                                   (char *)0, 0, 0, (void *)0,
+                                   &scratch, &disp) == 0 && scratch)
+                    (void)RegCloseKey(scratch);
+            }
+        }
+    }
+}
+
+/* Post-exec isolation: read handle leak count (MUST be called BEFORE
+ * task_cleanup -- once cleanup runs the handle table is gone). The
+ * physical scratch + Registry tear-down has to wait until AFTER
+ * task_cleanup closes the child's handles, because vfs_unlink rejects
+ * targets with ref_count > 0: a leaked open handle on a file in the
+ * scratch dir would otherwise block its deletion and leave stale state
+ * for the next run (Codex quality H1, 2026-04-20). Split into two
+ * phases accordingly: u_isolation_snapshot_leaks for the count-before-
+ * teardown, u_isolation_reap for the delete-after-cleanup. */
+static uint32_t u_isolation_snapshot_leaks(uint32_t child_pid)
+{
+    struct task *child = task_get_by_pid(child_pid);
+    return child ? child->handle_table.count : 0u;
+}
+
+static void u_isolation_reap(const char *test_name)
+{
+    char path[VFS_MAX_NAME + 64];
+    char reg_key[VFS_MAX_NAME + 64];
+
+    if (!vfs_is_mounted('C'))
+        return;
+
+    if (u_path_join(UTEST_SCRATCH_ROOT_L2, test_name, path, sizeof(path))) {
+        (void)u_rmtree(path, 0);
+    }
+
+    {
+        uint32_t pi = 0;
+        uint32_t ni = 0;
+        while (UTEST_REG_ROOT_L3[pi] && pi < sizeof(reg_key) - 2)
+            reg_key[pi] = UTEST_REG_ROOT_L3[pi], pi++;
+        if (pi < sizeof(reg_key) - 2)
+            reg_key[pi++] = '\\';
+        while (test_name[ni] && pi < sizeof(reg_key) - 1)
+            reg_key[pi++] = test_name[ni++];
+        reg_key[pi] = '\0';
+        if (ni != 0 && test_name[ni] == '\0')
+            (void)RegDeleteTree(HKEY_LOCAL_MACHINE, reg_key);
+    }
+}
+
+/* ---- Optional `tests/usermode-cleanup.manifest` ------------------- *
+ *
+ * Format: one path or Registry key per line, `#` starts a comment.
+ * A line starting with `C:\` is deleted via vfs-rmtree (file or
+ * directory). A line starting with `HKLM\` is deleted via
+ * RegDeleteTree. Any other prefix is logged and skipped. Called once
+ * per binary AFTER the per-test scratch + Registry teardown.
+ *
+ * Scope: tests that legitimately touch global state (e.g. DLL cache,
+ * network sockets) can enumerate the paths/keys to scrub here.
+ * --------------------------------------------------------------------- */
+
+#define UTEST_CLEANUP_ARENA_BYTES 4096u
+#define UTEST_CLEANUP_ARENA_PAGES 1u
+
+static void u_cleanup_manifest_apply(void)
+{
+    struct vfs_node *f;
+    uintptr_t arena_phys;
+    char *arena;
+    uint32_t size;
+    int n;
+    char *p;
+    char *end;
+
+    if (!vfs_is_mounted('C'))
+        return;
+
+    f = vfs_open("C:\\tests\\usermode-cleanup.manifest", VFS_O_READ);
+    if (!f)
+        return;  /* absent = normal */
+
+    size = f->size;
+    if (size == 0 || size >= UTEST_CLEANUP_ARENA_BYTES) {
+        vfs_close(f);
+        if (size >= UTEST_CLEANUP_ARENA_BYTES)
+            klog(LOG_WARN, "UTEST",
+                 "cleanup manifest %u bytes >= %u -- skipping",
+                 (uint64_t)size, (uint64_t)UTEST_CLEANUP_ARENA_BYTES);
+        return;
+    }
+
+    arena_phys = pmm_alloc_contiguous(UTEST_CLEANUP_ARENA_PAGES);
+    if (!arena_phys) {
+        vfs_close(f);
+        klog(LOG_WARN, "UTEST", "cleanup manifest: pmm alloc failed");
+        return;
+    }
+    arena = (char *)arena_phys;
+
+    n = vfs_read(f, 0, size, (uint8_t *)arena);
+    vfs_close(f);
+    if (n <= 0 || (uint32_t)n != size) {
+        pmm_free_frame(arena_phys);
+        return;
+    }
+
+    /* In-place tokenize by newline and process each entry. */
+    p = arena;
+    end = arena + n;
+    while (p < end) {
+        char *line_start;
+        char *line_end;
+        while (p < end && (*p == ' ' || *p == '\t' || *p == '\r'))
+            p++;
+        if (p >= end) break;
+        if (*p == '\n') { p++; continue; }
+        if (*p == '#') {
+            while (p < end && *p != '\n') p++;
+            continue;
+        }
+        line_start = p;
+        while (p < end && *p != '\n' && *p != '\r' && *p != '#')
+            p++;
+        line_end = p;
+        while (line_end > line_start &&
+               (line_end[-1] == ' ' || line_end[-1] == '\t'))
+            line_end--;
+        while (p < end && *p != '\n') p++;
+        if (p < end) { *p = '\0'; p++; }
+        if (line_end == line_start) continue;
+        *line_end = '\0';
+
+        if (line_start[0] == 'C' && line_start[1] == ':' &&
+            line_start[2] == '\\') {
+            /* Guard: cleanup manifest C:\ entries must live under
+             * `C:\Impossible\` or the per-test scratch root so a typo
+             * / malicious manifest cannot wipe hello.txt or cmd.exe
+             * during a test boot. The per-test scratch at
+             * `C:\Temp\utest\<stem>` is already scrubbed automatically
+             * -- the cleanup manifest is for state OUTSIDE that root
+             * (docs say DLL cache, etc.), which lives in
+             * `C:\Impossible\` on this OS. */
+            if (!(line_start[3] == 'I' && line_start[4] == 'm' &&
+                  line_start[5] == 'p' && line_start[6] == 'o' &&
+                  line_start[7] == 's' && line_start[8] == 's' &&
+                  line_start[9] == 'i' && line_start[10] == 'b' &&
+                  line_start[11] == 'l' && line_start[12] == 'e' &&
+                  line_start[13] == '\\')) {
+                klog(LOG_WARN, "UTEST",
+                     "cleanup manifest: rejecting C:\\ entry outside C:\\Impossible\\ -- '%s'",
+                     line_start);
+                continue;
+            }
+            (void)u_rmtree(line_start, 0);
+        } else if (line_start[0] == 'H' && line_start[1] == 'K' &&
+                   line_start[2] == 'L' && line_start[3] == 'M' &&
+                   line_start[4] == '\\') {
+            const char *sub = line_start + 5;
+            /* Guard: reject empty suffix (`HKLM\\` alone) -- Codex H2,
+             * 2026-04-20: RegDeleteTree with an empty lpSubKey wipes
+             * every child of HKEY_LOCAL_MACHINE, i.e. the whole
+             * registry, which is catastrophic even under test=1.
+             * Also restrict to the ImpossibleOS test subtree to bound
+             * the blast radius. */
+            if (sub[0] == '\0') {
+                klog(LOG_WARN, "UTEST",
+                     "cleanup manifest: rejecting bare 'HKLM\\' (would wipe root) -- '%s'",
+                     line_start);
+                continue;
+            }
+            if (!(sub[0] == 'S' && sub[1] == 'O' && sub[2] == 'F' &&
+                  sub[3] == 'T' && sub[4] == 'W' && sub[5] == 'A' &&
+                  sub[6] == 'R' && sub[7] == 'E' && sub[8] == '\\' &&
+                  sub[9] == 'I' && sub[10] == 'm' && sub[11] == 'p' &&
+                  sub[12] == 'o' && sub[13] == 's' && sub[14] == 's' &&
+                  sub[15] == 'i' && sub[16] == 'b' && sub[17] == 'l' &&
+                  sub[18] == 'e')) {
+                klog(LOG_WARN, "UTEST",
+                     "cleanup manifest: rejecting HKLM entry outside SOFTWARE\\Impossible -- '%s'",
+                     line_start);
+                continue;
+            }
+            (void)RegDeleteTree(HKEY_LOCAL_MACHINE, sub);
+        } else {
+            klog(LOG_WARN, "UTEST",
+                 "cleanup manifest: unknown prefix '%s' -- skipped",
+                 line_start);
+        }
+    }
+
+    pmm_free_frame(arena_phys);
 }
 
 /* ---- Manifest parser ------------------------------------------------ *
@@ -554,10 +991,13 @@ static void u_run_one(const char *name, uint32_t test_num, uint32_t *counters,
 {
     char name_copy[VFS_MAX_NAME];
     char path[VFS_MAX_NAME + 4];
+    char stem[VFS_MAX_NAME];
+    int  have_stem;
     uint32_t ni, pi;
     int pid;
     int32_t exit_status;
     int timed_out = 0;
+    uint32_t leaked;
 
     /* Snapshot `name` into launcher-owned storage BEFORE spawning.
      * The caller may have passed in a VFS dirent or manifest arena
@@ -574,6 +1014,16 @@ static void u_run_one(const char *name, uint32_t test_num, uint32_t *counters,
         path[pi++] = name_copy[ni];
     path[pi] = '\0';
 
+    /* Derive the §6 scratch-dir / Registry-key stem from the binary
+     * name (`test_syscall.exe` -> `test_syscall`). If the name doesn't
+     * match the *.exe shape we skip isolation for this run (this
+     * shouldn't happen today because u_is_test_binary() gated entry,
+     * but defending against the filter being loosened later is cheap). */
+    have_stem = s_isolation_enabled &&
+                u_derive_test_name(name_copy, stem, sizeof(stem));
+    if (have_stem)
+        u_isolation_setup(stem);
+
     s_pending_test_path = path;
 
     pid = task_create(utest_loader_func, name_copy);
@@ -585,11 +1035,28 @@ static void u_run_one(const char *name, uint32_t test_num, uint32_t *counters,
             klog(LOG_INFO, "UTEST",
                  "not ok %u - %s # task_create failed",
                  (uint64_t)test_num, name_copy);
+        /* No task was ever dispatched, so no leaked handles are
+         * possible. Reap the scratch dir + Registry subkey we created
+         * in u_isolation_setup (task_cleanup isn't called on this
+         * path, but there's nothing to clean up from the task side
+         * either -- only the launcher's own setup artifacts). */
+        if (have_stem) {
+            u_isolation_reap(stem);
+            u_cleanup_manifest_apply();
+        }
         return;
     }
 
     exit_status = u_wait_with_timeout((uint32_t)pid,
                                       s_timeout_ms, &timed_out);
+
+    /* Snapshot the leak count BEFORE task_cleanup destroys the handle
+     * table. The destructive cleanup (u_isolation_reap) runs AFTER
+     * task_cleanup so the child's handles are already closed -- a
+     * leaked handle on a file inside the scratch dir would otherwise
+     * block its unlink (vfs_unlink rejects ref_count > 0). Codex
+     * quality H1, 2026-04-20. */
+    leaked = have_stem ? u_isolation_snapshot_leaks((uint32_t)pid) : 0u;
 
     if (exit_status == 0) {
         counters[0]++;  /* passed */
@@ -626,7 +1093,46 @@ static void u_run_one(const char *name, uint32_t test_num, uint32_t *counters,
                  (uint64_t)test_num, name_copy, (int64_t)exit_status);
     }
 
+    /* Handle leaks escalate a PASS to FAIL (§6 test checkpoint:
+     * "A binary that opens C:\\hello.txt without closing it surfaces
+     * as [UTEST] FAIL test_x: 1 handle leaked"). Tests that already
+     * FAIL/SKIP keep their stronger verdict -- we don't upgrade a
+     * SKIP to FAIL just because it also leaked.
+     *
+     * The rationale for escalation over a WARN: leaking a handle
+     * across process exit is the same class of bug as leaking memory,
+     * and Linux kselftest / Windows HLK both treat resource leaks as
+     * test failures. A passing binary that leaks is lying about its
+     * cleanup invariant; surfacing that as FAIL makes CI reject it. */
+    if (have_stem && leaked > 0 && *out_verdict == 0) {
+        *out_verdict = 1;
+        counters[0]--;  /* undo PASS */
+        counters[1]++;  /* record FAIL */
+        klog(LOG_ERROR, "UTEST",
+             "%s: FAIL (%u handle(s) leaked -- escalated from PASS)",
+             name_copy, (uint64_t)leaked);
+        if (s_tap_mode)
+            klog(LOG_INFO, "UTEST",
+                 "not ok %u - %s # %u handle(s) leaked",
+                 (uint64_t)test_num, name_copy, (uint64_t)leaked);
+    } else if (have_stem && leaked > 0) {
+        /* Already FAIL/SKIP: just note the leak as extra context. */
+        klog(LOG_WARN, "UTEST",
+             "%s: %u handle(s) leaked (open at exit)",
+             name_copy, (uint64_t)leaked);
+    }
+
     task_cleanup((uint32_t)pid);
+
+    /* Destructive cleanup runs AFTER task_cleanup: the child's handles
+     * are now closed (ob_handle_table_destroy ran inside task_cleanup),
+     * so vfs_unlink can reach files that were held open at exit. Any
+     * failure to delete after this point is a genuine FS or Registry
+     * bug, not a ref_count race. */
+    if (have_stem) {
+        u_isolation_reap(stem);
+        u_cleanup_manifest_apply();
+    }
 }
 
 /* ---- Enumerate binaries via directory glob (fallback path) --------- */
@@ -831,5 +1337,17 @@ void test_usermode_run(void)
 int test_usermode_is_valid_manifest_name(const char *name)
 {
     return u_is_valid_manifest_name(name);
+}
+
+int test_usermode_derive_test_name(const char *name_in,
+                                   char *out, uint32_t out_cap)
+{
+    return u_derive_test_name(name_in, out, out_cap);
+}
+
+int test_usermode_path_join(const char *parent, const char *name,
+                            char *out, uint32_t out_cap)
+{
+    return u_path_join(parent, name, out, out_cap);
 }
 #endif

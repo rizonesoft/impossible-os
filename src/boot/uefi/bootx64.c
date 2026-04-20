@@ -1897,6 +1897,7 @@ static void boot_config_defaults(struct boot_config *cfg)
     cfg->test_suite     = 0xFF; /* all categories */
     cfg->test_quiet     = 0;    /* verbose (show PASS lines) */
     cfg->deferred       = 1;    /* defer non-critical inits by default */
+    cfg->utest_isolation = 1;   /* per-test isolation ON (opt-out only via boot.conf) */
     cfg->cmdline[0]     = '\0';
     cfg->config_found   = 0;
 }
@@ -1981,6 +1982,9 @@ static void parse_conf_kv(struct boot_config *cfg,
         for (i = 0; i < sizeof(cfg->utest_filter) - 1 && val[i]; i++)
             cfg->utest_filter[i] = val[i];
         cfg->utest_filter[i] = '\0';
+    }
+    else if (ascii_streq(key, "utest_isolation")) {
+        cfg->utest_isolation = (UINT8)ascii_atoi(val);
     }
     else if (ascii_streq(key, "boot_mode")) {
         if      (ascii_streq(val, "normal"))   cfg->boot_mode = 0;
