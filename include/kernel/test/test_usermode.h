@@ -16,9 +16,10 @@
  * with task_waitpid before scanning the next, so binaries run
  * sequentially and isolated from one another.
  *
- * The §4 `utest_filter=<name|glob>` boot.conf parameter is honoured by
- * test_usermode_set_filter() once §4 ships the boot.conf field; today
- * the launcher always runs every test_*.exe match.
+ * The `utest_filter=<name|glob>` boot.conf parameter is honoured by
+ * test_usermode_set_filter() via boot_tests_run's wire-up; the
+ * launcher runs every match when unset, or only globs matching the
+ * filter string when set.
  * ============================================================================ */
 
 #pragma once

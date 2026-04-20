@@ -40,6 +40,7 @@
 #include "kernel/fs/vfs.h"
 #include "kernel/sched/task.h"
 #include "kernel/ipc/signal.h"
+#include "kernel/ob/ob_process.h"
 #include "kernel/timer.h"
 #include "kernel/test/test_usermode.h"
 
@@ -221,16 +222,19 @@ static uint64_t u_uptime_ms(void)
  *
  * We store parsed entries in a file-scope static array of pointers
  * plus a single arena buffer for the filename text. The arena is
- * allocated once per test_usermode_run() invocation from the heap
- * and freed before return, so no permanent allocation survives.
+ * allocated once per test_usermode_run() invocation from PMM (8 KiB
+ * exceeds kmalloc's 4 KiB ceiling per CLAUDE.md Freestanding Kernel
+ * rules) and freed before return, so no permanent allocation survives.
  * ------------------------------------------------------------------ */
 
 #define UTEST_MANIFEST_ARENA_BYTES 8192u  /* 128 entries * avg 64 bytes */
+#define UTEST_MANIFEST_ARENA_PAGES 2u     /* 2 x 4 KiB */
 
 struct manifest_state {
     const char *names[UTEST_MANIFEST_MAX];
     uint32_t    count;
-    char       *arena;         /* heap-allocated; NULL if not loaded */
+    char       *arena;         /* pmm_alloc_contiguous()'d; NULL if not loaded */
+    uintptr_t   arena_phys;    /* matching physical base for pmm_free_frame loop */
     uint32_t    arena_used;
     uint32_t    arena_cap;
     int         overflowed;    /* 1 = hit UTEST_MANIFEST_MAX cap */
@@ -245,6 +249,7 @@ static int u_manifest_load(struct manifest_state *ms)
 
     ms->count       = 0;
     ms->arena       = (char *)0;
+    ms->arena_phys  = 0;
     ms->arena_used  = 0;
     ms->arena_cap   = 0;
     ms->overflowed  = 0;
@@ -258,9 +263,8 @@ static int u_manifest_load(struct manifest_state *ms)
      * arena[size]. Otherwise a file of exactly ARENA bytes whose last
      * line lacks a trailing newline lets the in-place tokenizer's
      * `*line_end = '\0'` write at arena[size], which is past the end
-     * of the kmalloc allocation. Codex adversarial review H1,
-     * 2026-04-20: kernel-heap OOB write triggered by a user-provided
-     * file. */
+     * of the allocation. Codex adversarial review H1, 2026-04-20:
+     * kernel-heap OOB write triggered by a user-provided file. */
     if (size == 0 || size >= UTEST_MANIFEST_ARENA_BYTES) {
         vfs_close(f);
         if (size >= UTEST_MANIFEST_ARENA_BYTES)
@@ -270,21 +274,30 @@ static int u_manifest_load(struct manifest_state *ms)
         return 0;
     }
 
-    ms->arena_cap = UTEST_MANIFEST_ARENA_BYTES;
-    ms->arena     = (char *)kmalloc(ms->arena_cap);
-    if (!ms->arena) {
+    /* 8 KiB arena uses pmm_alloc_contiguous (CLAUDE.md Freestanding
+     * Kernel rules: kmalloc is for <=4 KiB, larger buffers go through
+     * PMM). Physical pages are identity-mapped in the kernel VA, so
+     * the physical base doubles as a valid kernel virtual pointer. */
+    ms->arena_cap  = UTEST_MANIFEST_ARENA_BYTES;
+    ms->arena_phys = pmm_alloc_contiguous(UTEST_MANIFEST_ARENA_PAGES);
+    if (!ms->arena_phys) {
         vfs_close(f);
-        klog(LOG_WARN, "UTEST", "manifest kmalloc failed -- falling back to glob");
+        klog(LOG_WARN, "UTEST",
+             "manifest pmm_alloc_contiguous(%u pages) failed -- falling back to glob",
+             (uint64_t)UTEST_MANIFEST_ARENA_PAGES);
         return 0;
     }
+    ms->arena = (char *)ms->arena_phys;
     buf = (uint8_t *)ms->arena;
 
     n = vfs_read(f, 0, size, buf);
     vfs_close(f);
     if (n <= 0 || (uint32_t)n != size) {
         klog(LOG_WARN, "UTEST", "manifest short read -- falling back to glob");
-        kfree(ms->arena);
-        ms->arena = (char *)0;
+        for (uint32_t p = 0; p < UTEST_MANIFEST_ARENA_PAGES; p++)
+            pmm_free_frame(ms->arena_phys + (uintptr_t)p * 4096u);
+        ms->arena      = (char *)0;
+        ms->arena_phys = 0;
         return 0;
     }
 
@@ -356,8 +369,11 @@ static int u_manifest_load(struct manifest_state *ms)
 static void u_manifest_free(struct manifest_state *ms)
 {
     if (ms->arena) {
-        kfree(ms->arena);
-        ms->arena = (char *)0;
+        uint32_t p;
+        for (p = 0; p < UTEST_MANIFEST_ARENA_PAGES; p++)
+            pmm_free_frame(ms->arena_phys + (uintptr_t)p * 4096u);
+        ms->arena      = (char *)0;
+        ms->arena_phys = 0;
     }
     ms->count = 0;
 }
@@ -504,10 +520,17 @@ static int32_t u_wait_with_timeout(uint32_t pid, uint32_t timeout_ms,
          * to force-kill. The existing signal_send() writes t->state
          * unlocked under the same assumption (ipc/signal.c:41).
          *
+         * Mirror task_exit()'s Object-Manager teardown by calling
+         * ob_process_mark_dead(pid) FIRST so the permanent Process
+         * object flag is cleared and task_cleanup() can reclaim the
+         * namespace entry. Without this the \\KernelObjects\\Process
+         * <PID> entry leaks across every timed-out run (Codex quality
+         * H1, 2026-04-20).
+         *
          * Defensive guard: refuse to force-kill ourselves; would
-         * leave the running task DEAD and trip a cascading crash.
-         * Codex H2, 2026-04-20. */
+         * leave the running task DEAD and trip a cascading crash. */
         if (t->state != TASK_DEAD && t != task_current()) {
+            ob_process_mark_dead(pid);
             t->state = TASK_DEAD;
         }
         /* Either way, surface TIMEOUT so the launcher log / TAP / bat
@@ -712,6 +735,27 @@ void test_usermode_run(void)
         u_manifest_free(&manifest);
         scheduler_disable();
         return;
+    }
+
+    /* Pre-flight task-slot budget check: task_create uses monotonic
+     * pid = num_tasks++ and rejects once num_tasks == TASK_MAX. Slots
+     * never come back today (owner: [scheduler enhancement TODO] §13).
+     * Emitting `1..total_planned` when we know the tail would hit
+     * task_create failures produces misleading TAP output. Clamp the
+     * plan to the available budget, log a WARN naming the ceiling, and
+     * let u_run_one surface the remaining binaries as task_create-fail
+     * FAILs (deterministic, named, not silent). Codex quality H2,
+     * 2026-04-20. */
+    {
+        uint32_t live = task_count();
+        uint32_t budget = (live < TASK_MAX) ? (TASK_MAX - live) : 0u;
+        if (budget < total_planned) {
+            klog(LOG_WARN, "UTEST",
+                 "plan %u exceeds free task slots %u (TASK_MAX=%u, live=%u) "
+                 "-- tail will FAIL with task_create-failed until TODO-06 S13",
+                 (uint64_t)total_planned, (uint64_t)budget,
+                 (uint64_t)TASK_MAX, (uint64_t)live);
+        }
     }
 
     /* TAP plan line (emitted once before any test) */

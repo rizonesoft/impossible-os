@@ -21,6 +21,7 @@
 - → XREF: `D02T12 §6` -- NtCreateFile/NtReadFile/NtWriteFile/NtClose/NtOpenFile family that `test_win32.exe` (§10) exercises through the Win32 thunks once they are wired
 - → XREF: `D02T17 §1, §2, §5, §19` -- exec_load() multi-format dispatcher, enhanced ELF, EIF kernel loader, and PE delay-load that §15's `test_loader_elf.exe` / `test_loader_pe.exe` / `test_loader_eif.exe` exercise end-to-end from user mode
 - → XREF: `T03 §1, §6` -- kernel-side `kmalloc_fail_next()` + multi-allocator countdowns that the §5 user-mode fault-injection bridge exposes through a privileged `SYS_FAULT_INJECT` syscall
+- → XREF: [`03-memory-concurrency/TODO-06-scheduler-enhancement.md §13`](../03-memory-concurrency/TODO-06-scheduler-enhancement.md) -- dynamic task table + reusable PID slot allocation; today's `tasks[TASK_MAX]` monotonic-`num_tasks` design caps the launcher at 31 sequential binaries (Codex adversarial re-review of §4, 2026-04-20). Becomes a hard blocker once §9-§15 ship.
 
 ---
 
@@ -177,11 +178,14 @@ Parity with kselftest/LKFT-style automation: deterministic order, watchdogs, mac
 > - Shipped launcher: rewrote [`src/kernel/test/test_usermode.c`](../../src/kernel/test/test_usermode.c) from the §3 baseline (~230 LOC) to a §4 launcher (~640 LOC) that loads + parses the manifest, polls tasks with a wall-clock watchdog, emits TAP/SKIP lines, and wraps the whole run in `scheduler_enable`/`scheduler_disable` (needed because cooperative `yield()` cannot wrest control from a spinning user task).
 > - Shipped tests: [`src/kernel/test/test_usermode_launcher.c`](../../src/kernel/test/test_usermode_launcher.c) (~230 LOC) covers 15 suites under TEST_CAT_EXEC. No live-launcher calls (HARD BAN per CLAUDE.md); tests hit the pure helpers + contract constants only.
 > - Codex adversarial review applied: 3 findings (H1 manifest OOB write at exactly ARENA_BYTES, H2 SMP force-DEAD safety, M1 manifest path traversal). H1 fixed (cap at ARENA-1 + sentinel NUL). M1 fixed (`u_is_valid_manifest_name` rejects `..`, `\\`, `/`, `:`, control bytes). H2 rejected with evidence (kernel's single global `current_task` means APs don't dispatch scheduled tasks) + defensive "not self" guard added.
+> - Post-commit quality review + domain gate walk applied 3 additional fixes: Gate 1 (manifest arena switched from `kmalloc(8192)` to `pmm_alloc_contiguous(2 pages)` per CLAUDE.md's 4 KiB kmalloc ceiling); quality H1 (timeout force-DEAD now calls `ob_process_mark_dead(pid)` so the permanent Process object is reclaimed, mirroring `task_exit()`'s teardown order); quality H2 (pre-flight WARN when the plan exceeds `TASK_MAX - task_count()` so a 128-entry manifest does not silently emit a misleading `1..N` plan it cannot fulfil). Task-slot scope-gap accepted with concrete owner added in the scheduler enhancement TODO.
 > - Downstream effects: unblocks the §15 binary-format coverage gate, the §8 test-type taxonomy (stress/perf use timeout caps), and `D00 T05 §21`'s inbound XREF to this section for the shared timeout/TAP/SKIP policy in the desktop UI framework.
 > - Canonical doc: [docs/testing/usermode-env-matrix.md](../../docs/testing/usermode-env-matrix.md) -- platform expectations + escape-hatch policy for the whole user-mode test layer.
 > - Scope boundary: §4 owns the launcher-side policy surface. Per-test isolation (§6) owns the scratch-dir + handle-leak detection hooks; JUnit XML / JSON formats (§7) are a downstream of the TAP wire-format this section establishes; test-type taxonomy (§8) layers policy-per-type on top of the timeout knob shipped here.
 
-> **Verified:** 2026-04-20 | commit `<pending>` | 7/7 items | build OK | tests 102/102 PASS (up from 59); manifest + TAP + SKIP + filter all exercised via kernel unit suites + live `[UTEST]` run
+> **Verified:** 2026-04-20 | commit `11e816fb` | 7/7 items | build OK | tests 102/102 PASS (up from 59); manifest + TAP + SKIP + filter all exercised via kernel unit suites + live `[UTEST]` run
+> **Accepted:** [M] manifest advertises 128 entries but `tasks[TASK_MAX=32]` is append-only until scheduler slot reuse ships (reason: scope) -> XREF: 03-memory-concurrency/TODO-06-scheduler-enhancement.md §13 (item: "Dynamic task table + reusable PID slot allocation" at top of section)
+> **Quality reviewed:** 2026-04-20 | Codex 2x (adversarial, quality) | 2H+1M fixed, 0 open | scope: kernel-code-quality
 
 ---
 
@@ -409,9 +413,9 @@ Wire user-mode test binaries into `make test`.
 | 💎  | Multi-format loader  | ✅ PE + .NET via HLK | ✅ ELF + a.out kselftest | ⬜ §15 ELF+PE32+ +EIF  |
 | 💎  | Syscall coverage     | ✅ NtDll             | ✅ ptrace selftest       | ⬜ §9                  |
 | 💎  | Auto launcher        | ✅ HLK               | ✅ run_kselftest         | ⬜ §3                  |
-| 💎  | TAP or CI parse      | ✅ HLK XML           | ✅ TAP kselftest         | ⬜ §4, §16             |
+| 💎  | TAP or CI parse      | ✅ HLK XML           | ✅ TAP kselftest         | ⚠️ §4 TAP; §16 parser  |
 | 💎  | JUnit XML / JSON     | ✅ HLK XML           | ⚠️ kselftest TAP only    | ⬜ §7                  |
-| 💎  | Timeouts or skips    | ✅ HLK               | ✅ LKFT skip             | ⬜ §4                  |
+| 💎  | Timeouts or skips    | ✅ HLK               | ✅ LKFT skip             | ✅ §4 10s + exit=77    |
 | 💎  | ABI header sync      | ✅ SDK               | ✅ uapi                  | ⬜ §2                  |
 | 💎  | Per-test isolation   | ✅ HLK session reset | ✅ kselftest fork+tmp    | ⬜ §6                  |
 | 💎  | Stress / longhaul    | ✅ TAEF Loop+Stress  | ✅ LTP runtest/stress    | ⬜ §8 stress type      |
