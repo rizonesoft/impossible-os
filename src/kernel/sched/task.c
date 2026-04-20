@@ -1906,9 +1906,20 @@ void task_cleanup(uint32_t pid)
         }
     }
 
-    /* Free user stack */
+    /* Free user stack.
+     *
+     * Same heap-vs-user-VA hazard as the kernel stack above: this field
+     * is set by task_create_user to a kmalloc'd buffer, but task_exec
+     * REPLACES it with `(uint8_t *)(USER_ELF_END - USER_STACK_SIZE)` --
+     * a user-mode VA inside the per-process page table, NOT a heap
+     * pointer. Passing that VA to kfree dereferences `va - HEADER_SIZE`
+     * as a struct block_header (garbage from user space), corrupting
+     * the free-list and hanging the next allocator call. heap_owns()
+     * gates the kfree to only the kmalloc case; the user-VA case is
+     * already torn down with the per-process PML4 below. */
     if (tasks[pid].user_stack_base) {
-        kfree(tasks[pid].user_stack_base);
+        if (heap_owns(tasks[pid].user_stack_base))
+            kfree(tasks[pid].user_stack_base);
         tasks[pid].user_stack_base = (uint8_t *)0;
     }
 
