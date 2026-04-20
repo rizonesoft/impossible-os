@@ -1690,7 +1690,15 @@ static const char *u_glob_next(struct glob_state *gs,
         gs->idx++;
         if (de->type & VFS_DIRECTORY)
             continue;
-        if (!u_is_test_binary(de->name))
+        /* Apply the SAME validator used for manifest entries: both
+         * must reject path separators, control bytes, and `..`
+         * components. Without the stricter gate, a directory entry
+         * like `test_bad\nline.exe` would pass `u_is_test_binary`
+         * (prefix+suffix only) and split a subsequent [UTEST-XML]
+         * testcase record across physical log lines, corrupting the
+         * post-processed JUnit XML. Codex adversarial 2026-04-20
+         * quality M2. */
+        if (!u_is_valid_manifest_name(de->name))
             continue;
         /* Snapshot the name -- de->name is shared dirent storage. */
         {
@@ -1779,6 +1787,15 @@ void test_usermode_run(void)
         else
             klog(LOG_DEBUG, "UTEST",
                  "no test_*.exe found at C:\\ -- skipping summary");
+        /* §7 empty-suite artifact contract: when xml=1 or json=1 the
+         * CI integration expects a parseable file regardless of
+         * whether any binary ran. Emit a zero-test envelope so
+         * scripts/test.sh always produces a valid build/test-results.xml
+         * and tooling doesn't fail on missing artifact. Codex quality
+         * M1 2026-04-20. */
+        u_emit_xml_suite_open();
+        u_emit_xml_suite_close(0, 0, 0, 0);
+        u_emit_json_summary(0, 0, 0, 0);
         u_manifest_free(&manifest);
         scheduler_disable();
         return;
