@@ -306,7 +306,7 @@ A single "test_*.exe" pattern conflates very different test classes. TAEF distin
 > - Canonical doc: `include/kernel/test/test_usermode.h` (enum + public API surface); `tests/perf-baseline.json` (baseline schema + per-platform tolerances).
 > - Scope boundary: §8 owns the taxonomy enum + classifier + test binaries + two-phase execution; launcher-side stress looping + perf-baseline drift detection are BOTH deferred to a follow-up that requires scheduler slot reuse (03-memory-concurrency/TODO-06 §13) and an env-passing syscall (not yet tracked).
 
-> **Verified:** 2026-04-20 | commit `<pending>` | 6/6 items | build OK | tests 179/179 PASS (up from 149; +30 new assertions across 7 suites); `mkfs-ixfs` multi-block dir growth validated by sysroot pack succeeding with 19 root entries
+> **Verified:** 2026-04-20 | commit `06b9246d` | 6/6 items | build OK | tests 179/179 PASS (up from 149; +30 new assertions across 7 suites); `mkfs-ixfs` multi-block dir growth validated by sysroot pack succeeding with 19 root entries
 > **Deferred:** [M] launcher-side stress looping + runtime-tunable `stress_iters` need reusable PID slots before they can spawn N children per stress binary (reason: `task_create` is monotonic; binary-side looping is the ship-today shape) -> XREF: 03-memory-concurrency/TODO-06-scheduler-enhancement.md §13 (item: "Add reusable slot/free-list logic for dead tasks" at line 346 -- §8 stress binaries are the consumer, currently loop internally as a workaround)
 > **Quality reviewed:** 2026-04-20 | Codex 1x (adversarial) | 1Critical+1H fixed, 0 open | scope: kernel-code-quality
 
