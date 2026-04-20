@@ -357,11 +357,16 @@ struct boot_config {
      * test.sh splits them into separate artifacts. */
     uint8_t  xml;              /* 1 = emit [UTEST-XML] JUnit XML lines */
     uint8_t  json;             /* 1 = emit [UTEST-JSON] lines (per-binary + summary) */
-    /* Test-type taxonomy (S8 of TODO-04). stress_iters = how many
-     * times the launcher re-runs a `test_stress_*.exe` binary; 0
-     * means use the built-in default (100 on TCG-slow paths, 1000
-     * on faster accelerators). Range 0-65535 (uint16). */
-    uint16_t stress_iters;     /* per-binary stress-loop iteration count; 0 = default */
+    /* Test-type taxonomy (S8 of TODO-04). stress_iters is RESERVED:
+     * it is parsed from boot.conf and plumbed through
+     * test_usermode_set_stress_iters, but has no consumer today.
+     * Stress binaries (test_stress_*.exe) loop internally because
+     * kernel task_create is monotonic -- a launcher-side loop of N
+     * spawns would exhaust TASK_MAX after ~20 binaries. When a future
+     * env-passing syscall lands, this value will be forwarded to the
+     * child so a stress binary can query its desired runtime iteration
+     * count. Range 0-65535 (uint16); 0 = default. */
+    uint16_t stress_iters;     /* reserved (see comment above); 0 = default */
     /* Pad to 512 bytes total (sector-aligned). */
     uint8_t  _pad[146];
 };

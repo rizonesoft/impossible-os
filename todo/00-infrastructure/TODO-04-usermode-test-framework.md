@@ -308,7 +308,8 @@ A single "test_*.exe" pattern conflates very different test classes. TAEF distin
 
 > **Verified:** 2026-04-20 | commit `06b9246d` | 6/6 items | build OK | tests 179/179 PASS (up from 149; +30 new assertions across 7 suites); `mkfs-ixfs` multi-block dir growth validated by sysroot pack succeeding with 19 root entries
 > **Deferred:** [M] launcher-side stress looping + runtime-tunable `stress_iters` need reusable PID slots before they can spawn N children per stress binary (reason: `task_create` is monotonic; binary-side looping is the ship-today shape) -> XREF: 03-memory-concurrency/TODO-06-scheduler-enhancement.md §13 (item: "Add reusable slot/free-list logic for dead tasks" at line 346 -- §8 stress binaries are the consumer, currently loop internally as a workaround)
-> **Quality reviewed:** 2026-04-20 | Codex 1x (adversarial) | 1Critical+1H fixed, 0 open | scope: kernel-code-quality
+> **Deferred:** [M] `stress_iters` boot.conf + boot_info field + setter currently have no runtime consumer (reason: reserved-by-design for ABI stability; removing and re-adding would churn `BOOT_INFO_VERSION` once env-passing lands) -> XREF: 03-memory-concurrency/TODO-06-scheduler-enhancement.md §13 (item: "Add reusable slot/free-list logic for dead tasks" at line 346 -- reusable slots is the prerequisite that lets `stress_iters` gain a consumer, same XREF chain as the line above)
+> **Quality reviewed:** 2026-04-20 | Codex 3x (adversarial x2, quality) | 1Critical+2H+1M+1L fixed, 0 open | scope: kernel-code-quality
 
 ---
 

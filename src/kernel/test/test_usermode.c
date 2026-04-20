@@ -1652,30 +1652,23 @@ static void u_run_one(const char *name, utest_type_t type,
         return;
     }
 
+    /* Compute preliminary verdict + reason from the child's exit
+     * status. Escalations for leaked handles and isolation failures
+     * apply BELOW; the single [UTEST]/TAP/XML/JSON emit happens at the
+     * bottom so external consumers never see a contradictory "ok N
+     * ... not ok N" pair for the same test_num. Codex adversarial
+     * Phase-2, 2026-04-20: a PASS log emitted here was immediately
+     * flipped to FAIL when the §6 leak check fired, producing two
+     * lines for the same run. */
     if (exit_status == 0) {
-        counters[0]++;  /* passed */
+        counters[0]++;  /* passed (may be rolled back by escalations) */
         *out_verdict = 0;
-        klog(LOG_INFO, "UTEST", "%s: PASS (exit=0)", name_copy);
-        if (s_tap_mode)
-            klog(LOG_INFO, "UTEST", "ok %u - %s",
-                 (uint64_t)test_num, name_copy);
     } else if (exit_status == UTEST_EXIT_SKIP) {
         counters[2]++;  /* skipped */
         *out_verdict = 2;
-        klog(LOG_INFO, "UTEST", "%s: SKIP (exit=77)", name_copy);
-        if (s_tap_mode)
-            klog(LOG_INFO, "UTEST", "ok %u - %s # SKIP",
-                 (uint64_t)test_num, name_copy);
     } else if (timed_out) {
         counters[1]++;  /* failed (timeout) */
         *out_verdict = 1;
-        klog(LOG_ERROR, "UTEST", "%s: FAIL (timeout after %ums)",
-             name_copy, (uint64_t)(s_timeout_ms ? s_timeout_ms
-                                                : UTEST_DEFAULT_TIMEOUT_MS));
-        if (s_tap_mode)
-            klog(LOG_INFO, "UTEST",
-                 "not ok %u - %s # timeout",
-                 (uint64_t)test_num, name_copy);
         {
             uint32_t rp = 0;
             u_append(reason, &rp, sizeof(reason), "timeout after ");
@@ -1687,12 +1680,6 @@ static void u_run_one(const char *name, utest_type_t type,
     } else {
         counters[1]++;  /* failed */
         *out_verdict = 1;
-        klog(LOG_ERROR, "UTEST", "%s: FAIL (exit=%d)",
-             name_copy, (int64_t)exit_status);
-        if (s_tap_mode)
-            klog(LOG_INFO, "UTEST",
-                 "not ok %u - %s # exit=%d",
-                 (uint64_t)test_num, name_copy, (int64_t)exit_status);
         {
             uint32_t rp = 0;
             u_append(reason, &rp, sizeof(reason), "exit=");
@@ -1722,18 +1709,6 @@ static void u_run_one(const char *name, utest_type_t type,
         *out_verdict = 1;
         counters[0]--;  /* undo PASS */
         counters[1]++;  /* record FAIL */
-        klog(LOG_ERROR, "UTEST",
-             "%s: FAIL (%u handle(s) leaked -- escalated from PASS)",
-             name_copy, (uint64_t)leaked);
-        if (s_tap_mode)
-            klog(LOG_INFO, "UTEST",
-                 "not ok %u - %s # %u handle(s) leaked",
-                 (uint64_t)test_num, name_copy, (uint64_t)leaked);
-    } else if (have_stem && leaked > 0) {
-        /* Already FAIL/SKIP: just note the leak as extra context. */
-        klog(LOG_WARN, "UTEST",
-             "%s: %u handle(s) leaked (open at exit)",
-             name_copy, (uint64_t)leaked);
     }
 
     task_cleanup((uint32_t)pid);
@@ -1763,26 +1738,13 @@ static void u_run_one(const char *name, utest_type_t type,
      * verdict: a PASS becomes FAIL so CI surfaces the broken
      * invariant. Already-FAIL/SKIP keeps its stronger verdict plus a
      * WARN noting the isolation breach. Codex quality M 2026-04-20. */
-    if (isolation_failed) {
-        if (*out_verdict == 0) {
-            *out_verdict = 1;
-            counters[0]--;
-            counters[1]++;
-            klog(LOG_ERROR, "UTEST",
-                 "%s: FAIL (isolation failed -- escalated from PASS)",
-                 name_copy);
-            if (s_tap_mode)
-                klog(LOG_INFO, "UTEST",
-                     "not ok %u - %s # isolation failed",
-                     (uint64_t)test_num, name_copy);
-            {
-                uint32_t rp = 0;
-                u_append(reason, &rp, sizeof(reason), "isolation failed");
-            }
-        } else {
-            klog(LOG_WARN, "UTEST",
-                 "%s: isolation failed (scratch/registry state may persist)",
-                 name_copy);
+    if (isolation_failed && *out_verdict == 0) {
+        *out_verdict = 1;
+        counters[0]--;
+        counters[1]++;
+        {
+            uint32_t rp = 0;
+            u_append(reason, &rp, sizeof(reason), "isolation failed");
         }
     }
 
@@ -1796,6 +1758,73 @@ static void u_run_one(const char *name, utest_type_t type,
         u_append(reason, &rp, sizeof(reason), "");
         u_append_uint(reason, &rp, sizeof(reason), leaked);
         u_append(reason, &rp, sizeof(reason), " handle(s) leaked");
+    }
+
+    /* Single verdict emit: exactly one [UTEST] line and (when TAP is
+     * on) one TAP line per binary. All escalations have applied above,
+     * so `*out_verdict`, `reason`, and `leaked`/`isolation_failed` are
+     * their final values. Codex adversarial Phase-2 2026-04-20:
+     * emitting inside the raw exit-status branches produced a PASS
+     * followed by a FAIL (escalation) for the same test_num. */
+    if (*out_verdict == 0) {
+        klog(LOG_INFO, "UTEST", "%s: PASS (exit=0)", name_copy);
+        if (s_tap_mode)
+            klog(LOG_INFO, "UTEST", "ok %u - %s",
+                 (uint64_t)test_num, name_copy);
+    } else if (*out_verdict == 2) {
+        klog(LOG_INFO, "UTEST", "%s: SKIP (exit=77)", name_copy);
+        if (s_tap_mode)
+            klog(LOG_INFO, "UTEST", "ok %u - %s # SKIP",
+                 (uint64_t)test_num, name_copy);
+    } else if (have_stem && leaked > 0 && exit_status == 0 && !timed_out &&
+               !isolation_failed) {
+        /* Escalated from PASS by leak detection only. */
+        klog(LOG_ERROR, "UTEST",
+             "%s: FAIL (%u handle(s) leaked -- escalated from PASS)",
+             name_copy, (uint64_t)leaked);
+        if (s_tap_mode)
+            klog(LOG_INFO, "UTEST",
+                 "not ok %u - %s # %u handle(s) leaked",
+                 (uint64_t)test_num, name_copy, (uint64_t)leaked);
+    } else if (isolation_failed && exit_status == 0 && !timed_out) {
+        /* Escalated from PASS by isolation failure only. */
+        klog(LOG_ERROR, "UTEST",
+             "%s: FAIL (isolation failed -- escalated from PASS)",
+             name_copy);
+        if (s_tap_mode)
+            klog(LOG_INFO, "UTEST",
+                 "not ok %u - %s # isolation failed",
+                 (uint64_t)test_num, name_copy);
+    } else if (timed_out) {
+        klog(LOG_ERROR, "UTEST", "%s: FAIL (timeout after %ums)",
+             name_copy, (uint64_t)(s_timeout_ms ? s_timeout_ms
+                                                : UTEST_DEFAULT_TIMEOUT_MS));
+        if (s_tap_mode)
+            klog(LOG_INFO, "UTEST",
+                 "not ok %u - %s # timeout",
+                 (uint64_t)test_num, name_copy);
+    } else {
+        klog(LOG_ERROR, "UTEST", "%s: FAIL (exit=%d)",
+             name_copy, (int64_t)exit_status);
+        if (s_tap_mode)
+            klog(LOG_INFO, "UTEST",
+                 "not ok %u - %s # exit=%d",
+                 (uint64_t)test_num, name_copy, (int64_t)exit_status);
+    }
+
+    /* Extra WARN context for leaks / isolation failures that ride on
+     * top of an already-FAIL/SKIP verdict (exit_status != 0). The
+     * primary verdict line above already reflects the dominant
+     * reason (exit / timeout). */
+    if (have_stem && leaked > 0 && !(exit_status == 0 && !timed_out)) {
+        klog(LOG_WARN, "UTEST",
+             "%s: %u handle(s) leaked (open at exit)",
+             name_copy, (uint64_t)leaked);
+    }
+    if (isolation_failed && !(exit_status == 0 && !timed_out)) {
+        klog(LOG_WARN, "UTEST",
+             "%s: isolation failed (scratch/registry state may persist)",
+             name_copy);
     }
 
     /* §7 XML + JSON per-binary emit: one pair per run, reason string
@@ -1991,6 +2020,16 @@ void test_usermode_run(void)
                 klog(LOG_ERROR, "UTEST",
                      "suite ABORT (smoke failed) -- skipping %u non-smoke binaries",
                      (uint64_t)(total_planned - total_ran));
+                /* TAP contract: if the plan `1..N` was emitted but we
+                 * will not produce N results, emit a `Bail out!` record
+                 * so TAP consumers (scripts/test.sh, kselftest-style
+                 * runners, CI parsers) treat the run as aborted
+                 * instead of "missing N-K results = malformed".
+                 * Codex quality Phase-2, 2026-04-20. */
+                if (s_tap_mode)
+                    klog(LOG_INFO, "UTEST",
+                         "Bail out! smoke failed -- %u non-smoke binaries skipped",
+                         (uint64_t)(total_planned - total_ran));
                 break;
             }
             if (use_manifest) {
