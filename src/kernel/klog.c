@@ -206,7 +206,22 @@ static const char *level_prefix[] = {
 #define ANSI_RED      "\033[31m"
 #define ANSI_BOLD_RED "\033[1;31m"
 #define ANSI_CYAN     "\033[36m"
-#define ANSI_MAGENTA  "\033[95m"  /* bright magenta -- readable vs dark 35m */
+#define ANSI_MAGENTA  "\033[95m"  /* legacy fallback (no longer routed to) */
+
+/* Test-runner palette (24-bit truecolor, terminal-side):
+ *   Kernel TEST   = #D2A8FF  light lavender
+ *   User UTEST    = #84B2E9  light blue
+ *   Desktop DTEST = #C586B5  pink-mauve  (reserved -- DTEST runner
+ *                                          ships with the desktop
+ *                                          UI test framework) */
+#define ANSI_TEST_KERNEL  "\033[38;2;210;168;255m"  /* D2A8FF */
+#define ANSI_TEST_USER    "\033[38;2;132;178;233m"  /* 84B2E9 */
+#define ANSI_TEST_DESKTOP "\033[38;2;197;134;181m"  /* C586B5 */
+
+/* Framebuffer (24-bit ARGB) mirrors of the above. */
+#define FB_TEST_KERNEL  0x00D2A8FFu
+#define FB_TEST_USER    0x0084B2E9u
+#define FB_TEST_DESKTOP 0x00C586B5u
 
 static const char *level_ansi[] = {
     ANSI_DGREY,     /* LOG_DEBUG  [INFO] */
@@ -955,33 +970,41 @@ void klog(log_level_t level, const char *subsystem, const char *fmt, ...)
         /* Colored level prefix + subsystem + pre-formatted message.
          * For badge-only levels: reset after [LEVEL], rest is default.
          * For full-line levels:  reset after message, whole tail colored.
-         * Special: "TEST" subsystem -- badge keeps level color,
-         *          subsystem + message text is cyan.
-         * Special: "UTEST" subsystem (user-mode test launcher) --
-         *          badge keeps level color, subsystem + message text
-         *          is magenta so kernel TEST and user-mode UTEST lines
-         *          remain visually distinct in the same boot log. */
+         * Special test-runner subsystems keep the level-colored badge but
+         * recolor the subsystem + message text so the three test layers
+         * are visually distinct in a mixed boot log:
+         *   "TEST"  (kernel)      -> #D2A8FF  light lavender
+         *   "UTEST" (user mode)   -> #84B2E9  light blue
+         *   "DTEST" (desktop UI)  -> #C586B5  pink-mauve (reserved) */
         {
-            int is_test = (subsystem && subsystem[0] == 'T' &&
-                           subsystem[1] == 'E' && subsystem[2] == 'S' &&
-                           subsystem[3] == 'T' &&
-                           (subsystem[4] == '\0' || subsystem[4] == ':'));
-            int is_utest = (subsystem && subsystem[0] == 'U' &&
-                            subsystem[1] == 'T' && subsystem[2] == 'E' &&
-                            subsystem[3] == 'S' && subsystem[4] == 'T' &&
-                            (subsystem[5] == '\0' || subsystem[5] == ':'));
+            const char *test_color = (const char *)0;
+            int s4_term, s5_term;
+
+            if (subsystem) {
+                s4_term = (subsystem[4] == '\0' || subsystem[4] == ':');
+                s5_term = (subsystem[5] == '\0' || subsystem[5] == ':');
+
+                if (subsystem[0] == 'T' && subsystem[1] == 'E' &&
+                    subsystem[2] == 'S' && subsystem[3] == 'T' && s4_term) {
+                    test_color = ANSI_TEST_KERNEL;
+                } else if (subsystem[0] == 'U' && subsystem[1] == 'T' &&
+                           subsystem[2] == 'E' && subsystem[3] == 'S' &&
+                           subsystem[4] == 'T' && s5_term) {
+                    test_color = ANSI_TEST_USER;
+                } else if (subsystem[0] == 'D' && subsystem[1] == 'T' &&
+                           subsystem[2] == 'E' && subsystem[3] == 'S' &&
+                           subsystem[4] == 'T' && s5_term) {
+                    test_color = ANSI_TEST_DESKTOP;
+                }
+            }
 
             /* Badge: normal level color */
             LS(level_ansi[level]);
             LS(level_prefix[level]);
             LS(ANSI_RESET);
 
-            /* Subsystem + message:
-             *   TEST  -> cyan
-             *   UTEST -> magenta
-             *   else  -> default (or full-line color for WARN/ERROR/FATAL) */
-            if (is_test || is_utest) {
-                LS(is_test ? ANSI_CYAN : ANSI_MAGENTA);
+            if (test_color) {
+                LS(test_color);
                 if (subsystem[0]) { LS(subsystem); LS(": "); }
                 LS(snapshot.message);
                 LS(ANSI_RESET);
@@ -1008,17 +1031,24 @@ void klog(log_level_t level, const char *subsystem, const char *fmt, ...)
 
     /* ---- Output to framebuffer if level >= screen threshold ---- */
     if (level >= screen_min_level) {
-        int fb_is_test = (subsystem && subsystem[0] == 'T' &&
-                          subsystem[1] == 'E' && subsystem[2] == 'S' &&
-                          subsystem[3] == 'T' &&
-                          (subsystem[4] == '\0' || subsystem[4] == ':'));
-        int fb_is_utest = (subsystem && subsystem[0] == 'U' &&
-                           subsystem[1] == 'T' && subsystem[2] == 'E' &&
-                           subsystem[3] == 'S' && subsystem[4] == 'T' &&
-                           (subsystem[5] == '\0' || subsystem[5] == ':'));
-        uint32_t fb_color = fb_is_test  ? FB_COLOR_CYAN
-                          : fb_is_utest ? FB_COLOR_MAGENTA
-                          : level_color[level];
+        uint32_t fb_color = level_color[level];
+
+        if (subsystem) {
+            int s4 = (subsystem[4] == '\0' || subsystem[4] == ':');
+            int s5 = (subsystem[5] == '\0' || subsystem[5] == ':');
+            if (subsystem[0] == 'T' && subsystem[1] == 'E' &&
+                subsystem[2] == 'S' && subsystem[3] == 'T' && s4) {
+                fb_color = FB_TEST_KERNEL;
+            } else if (subsystem[0] == 'U' && subsystem[1] == 'T' &&
+                       subsystem[2] == 'E' && subsystem[3] == 'S' &&
+                       subsystem[4] == 'T' && s5) {
+                fb_color = FB_TEST_USER;
+            } else if (subsystem[0] == 'D' && subsystem[1] == 'T' &&
+                       subsystem[2] == 'E' && subsystem[3] == 'S' &&
+                       subsystem[4] == 'T' && s5) {
+                fb_color = FB_TEST_DESKTOP;
+            }
+        }
 
         fb_set_color(fb_color, FB_COLOR_BG_DEFAULT);
         fb_str(level_prefix[level]);
