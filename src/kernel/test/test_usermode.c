@@ -67,6 +67,22 @@ static int s_tap_mode;
  * utest_isolation=0 flips it off for debugging broken cleanup hooks. */
 static int s_isolation_enabled = 1;
 
+/* UTEST color-scope flag. Set by the launcher around each spawn
+ * (task_create -> task_cleanup); read by klog's color picker so every
+ * kernel subsystem line emitted WHILE a user-mode test binary is the
+ * live task (sched/exec/elf/signal/etc.) renders in the UTEST color
+ * instead of the default per-level color. The launcher is
+ * single-threaded on a single CPU at boot_tests_run time, so one
+ * global suffices -- no per-CPU ABI churn. Exposed to klog via
+ * test_usermode_color_active() below. */
+static volatile int s_utest_color_active;
+
+int test_usermode_color_active(void);
+int test_usermode_color_active(void)
+{
+    return s_utest_color_active;
+}
+
 /* Defaults matching the §4 test checkpoint: 10s wall clock is long
  * enough for a trivial test_*.exe on WHPX TCG (launch overhead plus
  * ELF load plus a few syscalls is <2s), short enough that a genuine
@@ -1106,6 +1122,12 @@ static void u_run_one(const char *name, uint32_t test_num, uint32_t *counters,
     if (have_stem && u_isolation_setup(stem) != 0)
         isolation_failed = 1;
 
+    /* Open color scope: all kernel klog output WHILE this binary is
+     * dispatched (sched / exec / elf / signal / etc.) renders in the
+     * UTEST color via the per-line override in klog.c. Closed at the
+     * bottom of u_run_one after task_cleanup. */
+    s_utest_color_active = 1;
+
     s_pending_test_path = path;
 
     pid = task_create(utest_loader_func, name_copy);
@@ -1122,6 +1144,7 @@ static void u_run_one(const char *name, uint32_t test_num, uint32_t *counters,
          * in u_isolation_setup (task_cleanup isn't called on this
          * path, but there's nothing to clean up from the task side
          * either -- only the launcher's own setup artifacts). */
+        s_utest_color_active = 0;
         if (have_stem) {
             u_isolation_reap(stem);
             u_cleanup_manifest_apply();
@@ -1205,6 +1228,14 @@ static void u_run_one(const char *name, uint32_t test_num, uint32_t *counters,
     }
 
     task_cleanup((uint32_t)pid);
+
+    /* Close color scope: subsequent klog lines (the launcher's own
+     * `[UTEST] <name>: PASS/FAIL` and the cleanup WARNs) still route
+     * through the subsystem-name "UTEST" path and get the UTEST color
+     * that way; we only need the global override while OTHER
+     * subsystems (sched/exec/elf) are emitting on behalf of the
+     * spawned binary. */
+    s_utest_color_active = 0;
 
     /* Destructive cleanup runs AFTER task_cleanup: the child's handles
      * are now closed (ob_handle_table_destroy ran inside task_cleanup),

@@ -41,8 +41,8 @@ int signal_send(uint32_t pid, int sig)
         t->state = TASK_READY;
     }
 
-    printk("[SIG] Signal %d sent to PID %u\n",
-           (uint64_t)(uint32_t)sig, (uint64_t)pid);
+    klog(LOG_DEBUG, "sig", "Signal %d sent to PID %u",
+         (uint64_t)(uint32_t)sig, (uint64_t)pid);
 
     return 0;
 }

@@ -42,6 +42,21 @@
 extern int g_fail;
 #define UTEST_DEFINE_STATE() int g_fail = 0
 
+/* 24-bit truecolor ANSI wrap matching the kernel klog UTEST palette
+ * (#84B2E9 light blue). Wrapping every [PASS]/[FAIL]/[UTEST-BEGIN]/
+ * [UTEST-END] line keeps the visual grouping with the kernel-side
+ * UTEST klog lines so a boot log is one coherent blue band for the
+ * whole test-launcher stream. scripts/test.sh strips ANSI via sed
+ * before parsing, so color is never on the analysis hot path.
+ *
+ * The byte counts in each sys_write below match the literal string
+ * lengths; updating the color sequence requires updating every
+ * matching count. \033[38;2;132;178;233m is 19 bytes; \033[0m is 4. */
+#define UTEST_COLOR_ON  "\033[38;2;132;178;233m"
+#define UTEST_COLOR_OFF "\033[0m"
+#define UTEST_COLOR_ON_LEN  19
+#define UTEST_COLOR_OFF_LEN 4
+
 /* Core assertion: emit [PASS]/[FAIL] line on stdout, count fails. The
  * macro is do/while(0)-wrapped so it composes with `if`/`else` without
  * the dangling-else gotcha. `cond` and `msg` are evaluated exactly once. */
@@ -49,13 +64,16 @@ extern int g_fail;
     do {                                                                     \
         const char *_utest_m = (msg);                                        \
         size_t _utest_mlen = strlen(_utest_m);                               \
+        sys_write(1, UTEST_COLOR_ON, UTEST_COLOR_ON_LEN);                    \
         if (cond) {                                                          \
             sys_write(1, "[PASS] ", 7);                                      \
             sys_write(1, _utest_m, _utest_mlen);                             \
+            sys_write(1, UTEST_COLOR_OFF, UTEST_COLOR_OFF_LEN);              \
             sys_write(1, "\n", 1);                                           \
         } else {                                                             \
             sys_write(1, "[FAIL] ", 7);                                      \
             sys_write(1, _utest_m, _utest_mlen);                             \
+            sys_write(1, UTEST_COLOR_OFF, UTEST_COLOR_OFF_LEN);               \
             sys_write(1, "\n", 1);                                           \
             g_fail++;                                                        \
         }                                                                    \
@@ -65,8 +83,10 @@ extern int g_fail;
 #define UTEST_BEGIN(name)                                                    \
     do {                                                                     \
         const char *_utest_n = (name);                                       \
+        sys_write(1, UTEST_COLOR_ON, UTEST_COLOR_ON_LEN);                    \
         sys_write(1, "[UTEST-BEGIN] ", 14);                                  \
         sys_write(1, _utest_n, strlen(_utest_n));                            \
+        sys_write(1, UTEST_COLOR_OFF, UTEST_COLOR_OFF_LEN);                  \
         sys_write(1, "\n", 1);                                               \
     } while (0)
 
@@ -75,11 +95,14 @@ extern int g_fail;
  * verdict without scrolling for every [FAIL] line. */
 #define UTEST_END()                                                          \
     do {                                                                     \
+        sys_write(1, UTEST_COLOR_ON, UTEST_COLOR_ON_LEN);                    \
         if (g_fail == 0) {                                                   \
-            sys_write(1, "[UTEST-END] all pass\n", 21);                      \
+            sys_write(1, "[UTEST-END] all pass", 20);                        \
         } else {                                                             \
-            sys_write(1, "[UTEST-END] some FAIL\n", 22);                     \
+            sys_write(1, "[UTEST-END] some FAIL", 21);                       \
         }                                                                    \
+        sys_write(1, UTEST_COLOR_OFF, UTEST_COLOR_OFF_LEN);                  \
+        sys_write(1, "\n", 1);                                               \
     } while (0)
 
 /* Fault-injection bridge. Thin wrapper around the raw

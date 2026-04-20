@@ -998,6 +998,22 @@ void klog(log_level_t level, const char *subsystem, const char *fmt, ...)
                 }
             }
 
+            /* UTEST color scope: when the user-mode test launcher has
+             * the scope flag active (between task_create and
+             * task_cleanup for a test_*.exe), every kernel klog line
+             * emitted in that window -- regardless of its subsystem
+             * tag -- was produced on behalf of that binary's spawn /
+             * exec_load / ELF segment loads / signal delivery. Render
+             * them in the UTEST color so the visual grouping in the
+             * boot log matches the logical grouping. The TEST/UTEST/
+             * DTEST subsystem-name overrides above still win if a
+             * nested test harness explicitly tags its output. */
+            if (!test_color && subsystem) {
+                extern int test_usermode_color_active(void);
+                if (test_usermode_color_active())
+                    test_color = ANSI_TEST_USER;
+            }
+
             /* Badge: normal level color */
             LS(level_ansi[level]);
             LS(level_prefix[level]);
