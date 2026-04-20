@@ -373,6 +373,25 @@ uint64_t heap_get_total(void)
     return total_heap_size;
 }
 
+/* Returns 1 if `ptr` falls inside the kmalloc heap range, 0 otherwise.
+ * Used by callers that may be holding a pointer that could be either
+ * kmalloc-allocated or PMM-allocated (e.g., task_cleanup's stack_base
+ * which is kmalloc'd by task_create_user but pmm_alloc_contiguous'd by
+ * task_create + task_exec). Avoids passing PMM pointers to kfree, which
+ * would dereference garbage as a block_header and corrupt the free list.
+ *
+ * Discovered 2026-04-20: the user-mode test launcher's task_cleanup hung
+ * indefinitely on `kfree(stack_base)` because stack_base was a PMM
+ * pointer from task_exec, not a kmalloc pointer. */
+int heap_owns(const void *ptr)
+{
+    uintptr_t addr = (uintptr_t)ptr;
+    uintptr_t base = (uintptr_t)heap_start_block;
+    if (addr < base) return 0;
+    if (addr >= base + total_heap_size) return 0;
+    return 1;
+}
+
 uint64_t heap_get_used(void)
 {
     return used_bytes;

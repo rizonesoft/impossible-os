@@ -28,6 +28,12 @@ uint64_t heap_get_total(void);
 uint64_t heap_get_used(void);
 uint64_t heap_get_free(void);
 
+/* Returns 1 if `ptr` is inside the kmalloc heap range, 0 if it is
+ * elsewhere (likely a PMM pointer or NULL). Cheap 2-comparison check.
+ * Use when a pointer could come from either kmalloc or PMM and you
+ * need to pick the right free path. */
+int heap_owns(const void *ptr);
+
 #ifdef KERNEL_TESTS
 /* ---- Test-only kmalloc fault injection (00-infrastructure kernel test
  * harness §1) -----------------------------------------------------------

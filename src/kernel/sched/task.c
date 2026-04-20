@@ -33,6 +33,7 @@
 #include "kernel/timer.h"
 #include "kernel/vectors.h"
 #include "kernel/sched/spinlock.h"
+#include "kernel/sched/irql.h"
 #include "kernel/elf.h"
 #include "kernel/random.h"
 #include "kernel/boot_init.h"
@@ -80,6 +81,12 @@ static void task_wrapper(void)
     klog(LOG_DEBUG, "sched", "Task %u (\"%s\") exited",
            (uint64_t)tasks[current_task].pid,
            tasks[current_task].name ? tasks[current_task].name : "?");
+
+    /* Same IRQL-cleanup as task_exit: see the long comment in task_exit
+     * below. Forces PASSIVE so the next task scheduled on this CPU
+     * starts at the right level even though we never return from this
+     * forever-yield (so the IDT's irql_restore block is bypassed). */
+    KeLowerIrql(PASSIVE_LEVEL);
 
     /* Yield forever -- yield() via INT 0x81 always works,
      * whether preemptive scheduler is enabled or not. */
@@ -1755,6 +1762,32 @@ void task_exit(int32_t status)
         }
     }
 
+    /* Force IRQL back to PASSIVE_LEVEL before abandoning context.
+     *
+     * Why: when sys_exit reaches us via INT 0x80, the IDT raises IRQL
+     * to vector_to_irql(0x80) = 8 and is supposed to lower it back
+     * in idt.c:318 (irql_restore block). The forever-yield below
+     * means the IDT handler NEVER returns -- the irql_restore block
+     * is bypassed and the next task scheduled on this CPU inherits
+     * IRQL=8, which then trips mutex_lock's APC_LEVEL guard. Same
+     * problem for any future caller invoking task_exit from inside
+     * a raised-IRQL context.
+     *
+     * Lowering here is safe because: (a) per-CPU current_irql is
+     * the only state that needs cleanup; (b) task_exit() is an
+     * invariant on "we own no spinlocks and no IRQL-elevated state
+     * is load-bearing" -- a task exiting while holding a spinlock
+     * is a different bug we'd want surfaced via the IRQL violation
+     * NOT silenced; (c) KeLowerIrql clamps when old_irql > cur, so
+     * if IRQL is already PASSIVE this is a no-op.
+     *
+     * Discovered 2026-04-20 via the user-mode test launcher: a
+     * spawned test_*.exe binary calling sys_exit triggered
+     * `IRQL violation in mutex_lock: CPU 0 at IRQL 8, max=1`
+     * immediately after Task N exit, blocking the launcher's
+     * subsequent klog calls and breaking the rest of boot. */
+    KeLowerIrql(PASSIVE_LEVEL);
+
     /* Yield away forever */
     for (;;)
         yield();
@@ -1810,9 +1843,36 @@ void task_cleanup(uint32_t pid)
     /* Close all handles and free handle table */
     ob_handle_table_destroy(&tasks[pid].handle_table);
 
-    /* Free kernel stack (task-level, thread 0) */
+    /* Free kernel stack (task-level, thread 0).
+     *
+     * stack_base may have come from EITHER allocator depending on the
+     * task's history:
+     *   - task_create_user: kmalloc(TASK_STACK_SIZE) -- in heap
+     *   - task_create:      pmm_alloc_contiguous(N+1) with guard page below
+     *                       (stack_base = guard_base + 4096)
+     *   - task_exec:        replaces with the same PMM+guard pattern
+     * Calling kfree on a PMM pointer dereferences ptr - HEADER_SIZE as a
+     * struct block_header (garbage), then walks coalesce_free_blocks
+     * which can corrupt the heap free-list and hang. heap_owns() checks
+     * if stack_base is in the kmalloc range; if not, fall back to PMM
+     * free using the known TASK_STACK_SIZE + guard-below convention.
+     *
+     * Discovered 2026-04-20: the user-mode test launcher's task_cleanup
+     * hung in kfree -> coalesce_free_blocks because the test_*.exe task
+     * was spawned via task_create + task_exec (both PMM stack paths),
+     * so kfree got a PMM pointer. */
     if (tasks[pid].stack_base) {
-        kfree(tasks[pid].stack_base);
+        if (heap_owns(tasks[pid].stack_base)) {
+            kfree(tasks[pid].stack_base);
+        } else {
+            /* PMM-allocated stack with guard page at stack_base - 4096.
+             * Free guard + N stack pages back to PMM. */
+            uintptr_t base = (uintptr_t)tasks[pid].stack_base;
+            uint32_t pages = (TASK_STACK_SIZE / 4096) + 1;  /* +1 for guard */
+            uint32_t p;
+            for (p = 0; p < pages; p++)
+                pmm_free_frame((base - 4096) + (uintptr_t)p * 4096);
+        }
         tasks[pid].stack_base = (uint8_t *)0;
     }
     tasks[pid].threads[0].kernel_rsp = 0;
