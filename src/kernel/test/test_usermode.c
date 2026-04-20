@@ -302,8 +302,9 @@ static int u_path_join(const char *parent, const char *name,
 
 /* Iterative recursive delete of a VFS path (file or directory). Safe
  * to call on a path that doesn't exist. Returns 0 on full cleanup, -1
- * if anything failed (but the launcher treats this as non-fatal -- a
- * best-effort cleanup is still better than leaking across binaries). */
+ * if anything failed. Callers MUST check the return value and WARN on
+ * failure so partial deletion does not silently let the next binary
+ * reuse stale scratch state (Codex quality M 2026-04-20). */
 static int u_rmtree(const char *path, uint32_t depth)
 {
     struct vfs_node *n;
@@ -327,7 +328,7 @@ static int u_rmtree(const char *path, uint32_t depth)
          * first real child -> restart readdir. Bounded by
          * UTEST_RMTREE_MAX_ENTRIES so a pathological FS state cannot
          * infinite-loop cleanup. */
-        for (pass = 0; pass < UTEST_RMTREE_MAX_ENTRIES; pass++) {
+        for (pass = 0; pass <= UTEST_RMTREE_MAX_ENTRIES; pass++) {
             struct vfs_node *dir;
             struct vfs_dirent *de;
             uint32_t idx;
@@ -335,6 +336,20 @@ static int u_rmtree(const char *path, uint32_t depth)
             char child_path[VFS_MAX_NAME + 64];
             char child_name[VFS_MAX_NAME];
             uint32_t ci;
+
+            if (pass == UTEST_RMTREE_MAX_ENTRIES) {
+                /* Cap exhausted -- directory still populated. Do NOT
+                 * fall through to vfs_unlink: an attempt to delete a
+                 * non-empty directory will fail, and more importantly
+                 * we'd hide the cap-exhaustion in an ambiguous -1.
+                 * Surface the cap hit explicitly so the caller can
+                 * mark the run FAIL instead of letting stale state
+                 * bleed through. */
+                klog(LOG_WARN, "UTEST",
+                     "rmtree: cap %u entries reached at '%s' -- partial cleanup",
+                     (uint64_t)UTEST_RMTREE_MAX_ENTRIES, path);
+                return -1;
+            }
 
             dir = vfs_open(path, VFS_O_READ);
             if (!dir || !dir->ops || !dir->ops->readdir) {
@@ -367,7 +382,8 @@ static int u_rmtree(const char *path, uint32_t depth)
                      path, child_name);
                 return -1;
             }
-            u_rmtree(child_path, depth + 1);
+            if (u_rmtree(child_path, depth + 1) != 0)
+                return -1;  /* propagate cap / depth failures */
         }
     }
 
@@ -399,15 +415,19 @@ static int u_ensure_dir(const char *full)
 }
 
 /* Pre-exec isolation: wipe stale state, create fresh scratch + Registry
- * subkey for `<name>`. Non-fatal -- logs WARN on failure and proceeds
- * without the isolated state rather than blocking the test run. */
-static void u_isolation_setup(const char *test_name)
+ * subkey for `<name>`. Returns 0 on clean setup, -1 if anything failed
+ * in a way that leaves stale state behind (cap-exhausted rmtree,
+ * failed vfs_create). Caller treats -1 as a signal that the binary's
+ * verdict should escalate to FAIL because the isolation contract
+ * was violated. */
+static int u_isolation_setup(const char *test_name)
 {
     char path[VFS_MAX_NAME + 64];
     char reg_key[VFS_MAX_NAME + 64];
+    int rc = 0;
 
     if (!vfs_is_mounted('C'))
-        return;
+        return 0;  /* no C:\ mount = nothing to isolate = not an error */
 
     /* L1 + L2 roots are shared across all binaries; create once, ignore
      * if they already exist. */
@@ -415,17 +435,25 @@ static void u_isolation_setup(const char *test_name)
     (void)u_ensure_dir(UTEST_SCRATCH_ROOT_L2);
 
     /* Per-test scratch: wipe any leftover from a prior run, recreate
-     * fresh. u_rmtree on a missing path is a no-op; vfs_create is
-     * tolerated on race. */
+     * fresh. u_rmtree on a missing path is a no-op. If the pre-clear
+     * rmtree fails (cap exhaustion, vfs error), the next vfs_create
+     * may succeed at the existing-dir level but the contents are
+     * still stale -- flag that so the caller can fail the run. */
     if (!u_path_join(UTEST_SCRATCH_ROOT_L2, test_name, path, sizeof(path))) {
         klog(LOG_WARN, "UTEST",
              "isolation: path join overflow for scratch '%s'", test_name);
-        return;
+        return -1;
     }
-    (void)u_rmtree(path, 0);
+    if (u_rmtree(path, 0) != 0) {
+        klog(LOG_WARN, "UTEST",
+             "isolation: pre-clear of '%s' failed -- stale state may remain",
+             path);
+        rc = -1;
+    }
     if (vfs_create(path, VFS_DIRECTORY) != 0) {
         klog(LOG_WARN, "UTEST",
              "isolation: failed to create scratch dir '%s'", path);
+        rc = -1;
     }
 
     /* Registry subkey: HKLM\SOFTWARE\ImpossibleOS\Test\<name>.
@@ -455,6 +483,8 @@ static void u_isolation_setup(const char *test_name)
             }
         }
     }
+
+    return rc;
 }
 
 /* Post-exec isolation: read handle leak count (MUST be called BEFORE
@@ -472,16 +502,22 @@ static uint32_t u_isolation_snapshot_leaks(uint32_t child_pid)
     return child ? child->handle_table.count : 0u;
 }
 
-static void u_isolation_reap(const char *test_name)
+static int u_isolation_reap(const char *test_name)
 {
     char path[VFS_MAX_NAME + 64];
     char reg_key[VFS_MAX_NAME + 64];
+    int rc = 0;
 
     if (!vfs_is_mounted('C'))
-        return;
+        return 0;
 
     if (u_path_join(UTEST_SCRATCH_ROOT_L2, test_name, path, sizeof(path))) {
-        (void)u_rmtree(path, 0);
+        if (u_rmtree(path, 0) != 0) {
+            klog(LOG_WARN, "UTEST",
+                 "isolation: post-run rmtree of '%s' failed -- stale scratch remains",
+                 path);
+            rc = -1;
+        }
     }
 
     {
@@ -497,6 +533,8 @@ static void u_isolation_reap(const char *test_name)
         if (ni != 0 && test_name[ni] == '\0')
             (void)RegDeleteTree(HKEY_LOCAL_MACHINE, reg_key);
     }
+
+    return rc;
 }
 
 /* ---- Optional `tests/usermode-cleanup.manifest` ------------------- *
@@ -513,6 +551,31 @@ static void u_isolation_reap(const char *test_name)
 
 #define UTEST_CLEANUP_ARENA_BYTES 4096u
 #define UTEST_CLEANUP_ARENA_PAGES 1u
+
+/* Reject path-traversal components in a cleanup-manifest entry.
+ * Returns 1 if the path contains any `..` component (after a `\`, `/`,
+ * or at the start of the string), 0 if it is clean. Called for both
+ * the `C:\...` and `HKLM\...` lines -- a `..` there is either an
+ * attacker or a typo; either way reject.
+ *
+ * Codex adversarial review H3 (2026-04-20): before this guard the raw
+ * prefix check authorized `C:\Impossible\..\hello.txt` because the VFS
+ * walker resolves real `..` entries in IXFS directories, so the delete
+ * escapes outside the allowed subtree. The prefix match alone is not
+ * a containment primitive; we have to ban the characters that let the
+ * walker leave the subtree. */
+static int u_path_has_traversal(const char *p)
+{
+    int at_component_start = 1;
+    while (*p) {
+        if (at_component_start && p[0] == '.' && p[1] == '.' &&
+            (p[2] == '\0' || p[2] == '\\' || p[2] == '/'))
+            return 1;
+        at_component_start = (*p == '\\' || *p == '/');
+        p++;
+    }
+    return 0;
+}
 
 static void u_cleanup_manifest_apply(void)
 {
@@ -603,6 +666,16 @@ static void u_cleanup_manifest_apply(void)
                      line_start);
                 continue;
             }
+            /* Reject `..` components -- a path like
+             * `C:\Impossible\..\hello.txt` passes the prefix gate but
+             * the VFS walker would escape outside the subtree. Codex
+             * H3, 2026-04-20. */
+            if (u_path_has_traversal(line_start)) {
+                klog(LOG_WARN, "UTEST",
+                     "cleanup manifest: rejecting C:\\ entry with '..' traversal -- '%s'",
+                     line_start);
+                continue;
+            }
             (void)u_rmtree(line_start, 0);
         } else if (line_start[0] == 'H' && line_start[1] == 'K' &&
                    line_start[2] == 'L' && line_start[3] == 'M' &&
@@ -629,6 +702,14 @@ static void u_cleanup_manifest_apply(void)
                   sub[18] == 'e')) {
                 klog(LOG_WARN, "UTEST",
                      "cleanup manifest: rejecting HKLM entry outside SOFTWARE\\Impossible -- '%s'",
+                     line_start);
+                continue;
+            }
+            /* Same `..` defense applies to Registry paths even though
+             * reg_walk_path is stricter -- defense in depth. */
+            if (u_path_has_traversal(sub)) {
+                klog(LOG_WARN, "UTEST",
+                     "cleanup manifest: rejecting HKLM entry with '..' traversal -- '%s'",
                      line_start);
                 continue;
             }
@@ -993,6 +1074,7 @@ static void u_run_one(const char *name, uint32_t test_num, uint32_t *counters,
     char path[VFS_MAX_NAME + 4];
     char stem[VFS_MAX_NAME];
     int  have_stem;
+    int  isolation_failed = 0;
     uint32_t ni, pi;
     int pid;
     int32_t exit_status;
@@ -1021,8 +1103,8 @@ static void u_run_one(const char *name, uint32_t test_num, uint32_t *counters,
      * but defending against the filter being loosened later is cheap). */
     have_stem = s_isolation_enabled &&
                 u_derive_test_name(name_copy, stem, sizeof(stem));
-    if (have_stem)
-        u_isolation_setup(stem);
+    if (have_stem && u_isolation_setup(stem) != 0)
+        isolation_failed = 1;
 
     s_pending_test_path = path;
 
@@ -1130,8 +1212,34 @@ static void u_run_one(const char *name, uint32_t test_num, uint32_t *counters,
      * failure to delete after this point is a genuine FS or Registry
      * bug, not a ref_count race. */
     if (have_stem) {
-        u_isolation_reap(stem);
+        if (u_isolation_reap(stem) != 0)
+            isolation_failed = 1;
         u_cleanup_manifest_apply();
+    }
+
+    /* Isolation contract violated: if setup or reap left stale state
+     * behind (rmtree cap exhausted, vfs_create failed), the next
+     * binary can no longer assume a clean scratch dir. Escalate the
+     * verdict: a PASS becomes FAIL so CI surfaces the broken
+     * invariant. Already-FAIL/SKIP keeps its stronger verdict plus a
+     * WARN noting the isolation breach. Codex quality M 2026-04-20. */
+    if (isolation_failed) {
+        if (*out_verdict == 0) {
+            *out_verdict = 1;
+            counters[0]--;
+            counters[1]++;
+            klog(LOG_ERROR, "UTEST",
+                 "%s: FAIL (isolation failed -- escalated from PASS)",
+                 name_copy);
+            if (s_tap_mode)
+                klog(LOG_INFO, "UTEST",
+                     "not ok %u - %s # isolation failed",
+                     (uint64_t)test_num, name_copy);
+        } else {
+            klog(LOG_WARN, "UTEST",
+                 "%s: isolation failed (scratch/registry state may persist)",
+                 name_copy);
+        }
     }
 }
 
@@ -1349,5 +1457,10 @@ int test_usermode_path_join(const char *parent, const char *name,
                             char *out, uint32_t out_cap)
 {
     return u_path_join(parent, name, out, out_cap);
+}
+
+int test_usermode_path_has_traversal(const char *p)
+{
+    return u_path_has_traversal(p);
 }
 #endif

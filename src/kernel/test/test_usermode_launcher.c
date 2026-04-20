@@ -34,6 +34,7 @@ int test_usermode_derive_test_name(const char *name_in,
                                    char *out, uint32_t out_cap);
 int test_usermode_path_join(const char *parent, const char *name,
                             char *out, uint32_t out_cap);
+int test_usermode_path_has_traversal(const char *p);
 
 /* Exposed by src/kernel/sched/syscall.c for §5 gate regression tests. */
 int64_t sys_fault_inject_dispatch(uint32_t kind, uint32_t countdown);
@@ -379,6 +380,31 @@ static void test_path_join_adds_separator(void)
                 "no duplicate separator when parent already ends in \\");
 }
 
+/* u_path_has_traversal regression (Codex H3 2026-04-20): the raw
+ * prefix check in u_cleanup_manifest_apply was bypassable by
+ * `C:\Impossible\..\hello.txt`. The traversal guard must catch every
+ * variant of a `..` component; these cases cover the common
+ * separator + position combinations. */
+static void test_path_has_traversal_catches_variants(void)
+{
+    TEST_ASSERT(test_usermode_path_has_traversal("C:\\Impossible\\..\\hello.txt") == 1,
+                "rejects leading subtree + \\..\\hello.txt");
+    TEST_ASSERT(test_usermode_path_has_traversal("C:\\Impossible\\..") == 1,
+                "rejects trailing \\.. ");
+    TEST_ASSERT(test_usermode_path_has_traversal("..\\Impossible") == 1,
+                "rejects leading ..\\");
+    TEST_ASSERT(test_usermode_path_has_traversal("SOFTWARE/../Impossible") == 1,
+                "rejects mixed / separator with ..");
+    TEST_ASSERT(test_usermode_path_has_traversal("C:\\Impossible\\a..b\\c.txt") == 0,
+                "allows `a..b` as a single component (no separator before)");
+    TEST_ASSERT(test_usermode_path_has_traversal("C:\\Impossible\\...\\c.txt") == 0,
+                "allows `...` (three dots) -- not a `..` component");
+    TEST_ASSERT(test_usermode_path_has_traversal("C:\\Impossible\\foo") == 0,
+                "happy path accepted");
+    TEST_ASSERT(test_usermode_path_has_traversal("") == 0,
+                "empty string accepted (caller's job to reject empty paths)");
+}
+
 /* Manifest HKLM guard regression (Codex H2 2026-04-20): `HKLM\`
  * with an empty subkey would otherwise hit RegDeleteTree(HKLM, "")
  * which wipes ALL children of HKEY_LOCAL_MACHINE. The test verifies
@@ -499,6 +525,9 @@ void test_register_usermode_launcher(void)
                             test_path_join_overflow, TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: manifest HKLM guard protects SOFTWARE hive",
                             test_manifest_hklm_guard_rejects_empty,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: path_has_traversal catches `..` variants",
+                            test_path_has_traversal_catches_variants,
                             TEST_CAT_EXEC);
 }
 
