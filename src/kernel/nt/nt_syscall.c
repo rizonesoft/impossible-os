@@ -250,6 +250,11 @@ static NTSTATUS NtWriteFile(uint64_t a1, uint64_t a2, uint64_t a3,
                 fo->offset = *byte_offset;
 
             if (fo->pipe_id >= 0) {
+                /* Pipe direction gate: only the write-end may write.
+                 * Mirror of the INT 0x80 SYS_WRITEHANDLE gate in
+                 * ob_file_write. Codex quality 2026-04-21 H1. */
+                if (fo->pipe_end != PIPE_WRITE)
+                    goto write_bad_handle;
                 int64_t written = pipe_write(fo->pipe_id, buf, (uint32_t)len);
                 if (written < 0)
                     goto write_bad_handle;
@@ -261,6 +266,10 @@ static NTSTATUS NtWriteFile(uint64_t a1, uint64_t a2, uint64_t a3,
             }
 
             if (fo->vfs_node) {
+                /* VFS access gate: require VFS_O_WRITE in the open
+                 * access mask. Same check as ob_file_write. */
+                if (!(fo->access & VFS_O_WRITE))
+                    goto write_bad_handle;
                 int64_t written = vfs_write(fo->vfs_node,
                     (uint32_t)fo->offset, (uint32_t)len,
                     (const uint8_t *)buf);
@@ -343,6 +352,11 @@ static NTSTATUS NtReadFile(uint64_t a1, uint64_t a2, uint64_t a3,
                 fo->offset = *byte_offset;
 
             if (fo->pipe_id >= 0) {
+                /* Pipe direction gate: only the read-end may read.
+                 * Mirror of the ob_file_read gate. Codex quality
+                 * 2026-04-21 H1. */
+                if (fo->pipe_end != PIPE_READ)
+                    goto read_bad_handle;
                 int64_t bytes = pipe_read(fo->pipe_id, dst, (uint32_t)len);
                 if (bytes < 0)
                     goto read_bad_handle;
@@ -354,6 +368,10 @@ static NTSTATUS NtReadFile(uint64_t a1, uint64_t a2, uint64_t a3,
             }
 
             if (fo->vfs_node) {
+                /* VFS access gate: require VFS_O_READ in the open
+                 * access mask. Same check as ob_file_read. */
+                if (!(fo->access & VFS_O_READ))
+                    goto read_bad_handle;
                 int64_t bytes = vfs_read(fo->vfs_node,
                     (uint32_t)fo->offset, (uint32_t)len,
                     (uint8_t *)dst);

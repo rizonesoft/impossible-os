@@ -402,8 +402,9 @@ Test inter-process communication from user mode.
 > - Canonical doc: [user/include/syscall.h](../../user/include/syscall.h) (wrapper signatures); [include/kernel/ob/ob_file.h](../../include/kernel/ob/ob_file.h) + [include/kernel/ob/ob_section.h](../../include/kernel/ob/ob_section.h) (kernel surface).
 > - Scope boundary: §11 owns user-mode IPC coverage; cross-task pipe IPC (fork + pipe share) is §12's job; unnamed section handles only -- named-section tests land in a later section.
 
-> **Verified:** 2026-04-21 | commit `b28ead1f` | 3/3 items | build OK | tests 179/179 PASS, smoke test 2.43s; 2 new syscalls wired (SYS_WRITEHANDLE + SYS_UNMAPVIEW), 4 defensive gates added to ob_file_read/write
-> **Quality reviewed:** 2026-04-21 | Codex 1x (adversarial) | 1H+2M fixed, 0 open | scope: userland-code-quality + kernel-code-quality (cross-domain: the kernel gate fixes live in ob_file.c)
+> **Verified:** 2026-04-21 | commit `b28ead1f` | 3/3 items | build OK | tests 179/179 PASS, smoke test 2.51s; 2 new syscalls wired (SYS_WRITEHANDLE + SYS_UNMAPVIEW), 4 defensive gates added to ob_file_read/write, matching gates added to NtReadFile/NtWriteFile (SSDT path)
+> **Accepted:** [M] `SYS_UNMAPVIEW` requires the section handle still be open because `ObUnmapViewOfSectionByBase` scans the handle table to find the view (reason: pre-existing OB design) -> XREF: 02-kernel-core/TODO-05-object-manager.md §3 (item: "Walk section views on task_cleanup to drop leaked view pins" -- added this commit, captures both the unreachability-after-close defect and the task-exit leak; the view-base index in the preceding bullet is its prerequisite)
+> **Quality reviewed:** 2026-04-21 | Codex 2x (adversarial, quality) | 2H+3M fixed, 0 open | scope: userland-code-quality + kernel-code-quality (cross-domain: gate fixes in ob_file.c and nt_syscall.c, new INT 0x80 syscalls in syscall.c)
 
 ---
 
