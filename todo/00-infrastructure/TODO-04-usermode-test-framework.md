@@ -374,7 +374,7 @@ Test string and formatting functions available in user mode.
 > - Scope boundary: §10 owns the libc surface probe; §9 owns the syscall ABI surface, §11 owns IPC, §12 owns process lifecycle, §13 owns file I/O.
 
 > **Verified:** 2026-04-21 | commit `f8d6f9d8` | 2/2 items | build OK | 1 binary (47 KiB) deployed via `make userland`; 179/179 kernel unit tests PASS (unchanged); 4 per-binary bats from §8/§9 + new §10 bat now exist on disk
-> **Quality reviewed:** 2026-04-21 | Codex 1x (adversarial) | 1H+1M fixed, 0 open | scope: userland-code-quality
+> **Quality reviewed:** 2026-04-21 | Codex 2x (adversarial, quality) | 1H+3M fixed, 0 open | scope: userland-code-quality
 
 ---
 

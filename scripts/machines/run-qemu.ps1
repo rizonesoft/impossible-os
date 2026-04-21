@@ -27,7 +27,8 @@ Param(
     [int]$Smp = 0,  # 0 = auto (2 for WHPX/KVM, 1 for TCG)
     [switch]$DebugTests,  # boot with debug=1 (unit + boot tests)
     [switch]$TestOnly,    # boot with test=1 (unit tests, then shutdown)
-    [string]$TestSuite = '',  # category filter: mm, fs, ob, security, ipc, sched, boot, abi, storage
+    [ValidateSet('', 'mm', 'fs', 'sched', 'ob', 'security', 'ipc', 'boot', 'abi', 'storage', 'exec', 'x86')]
+    [string]$TestSuite = '',  # category filter: must match a kernel TEST_CAT_* enum
     [switch]$Quiet,       # suppress PASS lines, show FAIL + summary only
     [string]$ExtraArgs = '',  # additional QEMU arguments (e.g., "-machine pc,i8042=on")
     [switch]$CrashTest,   # boot with crash_test=1 (deliberate BSOD after desktop)
@@ -145,21 +146,25 @@ $QemuArgs += @(
 # current invocation joins $PatchArgs with spaces into a bash -c string
 # argument, so a value containing `;`, backticks, `$(...)`, `&`, `|`,
 # `\n`, etc would execute inside WSL. sed-side metacharacters (/ & \)
-# corrupt the replacement instead. A strict allowlist catches both
-# classes of input without having to harden the three consumers
-# separately. Codex adversarial 2026-04-21 H1.
+# corrupt the replacement instead.
 #
-# Pattern: alphanumeric, underscore, dash, dot, asterisk (glob),
-# colon, equals, comma. If a future boot.conf field needs wider
-# characters, revisit this gate AND the sed replacement logic.
-$PatchValuePattern = '^[A-Za-z0-9_.*:=,-]+$'
+# -TestSuite: enforced via ValidateSet on the param attribute above
+# (exact match against the kernel TEST_CAT_* enum names). This catches
+# typos like `boot*` or `fs,ob` at parse time instead of letting them
+# silently fall through to the kernel's invalid-suite sentinel. Codex
+# quality 2026-04-21 M2.
+#
+# -UtestFilter: must be (a) shell/sed-safe and (b) <= 63 chars so it
+# fits in struct boot_config.utest_filter[64] without silent truncation
+# in the bootloader copy. The pattern allows literal binary names
+# ("test_libc.exe") or single-`*` globs ("test_smoke_*.exe") -- the
+# launcher's `test_usermode_glob_match()` honours exactly this subset.
+# Codex quality 2026-04-21 M1.
+$UtestFilterPattern = '^[A-Za-z0-9_.*-]{1,63}$'
 
-if ($TestSuite -and $TestSuite -notmatch $PatchValuePattern) {
-    Write-Host "Invalid -TestSuite value: '$TestSuite' (only alphanumerics + _.-*:=, allowed)" -ForegroundColor Red
-    pause; exit 1
-}
-if ($UtestFilter -and $UtestFilter -notmatch $PatchValuePattern) {
-    Write-Host "Invalid -UtestFilter value: '$UtestFilter' (only alphanumerics + _.-*:=, allowed)" -ForegroundColor Red
+if ($UtestFilter -and $UtestFilter -notmatch $UtestFilterPattern) {
+    Write-Host "Invalid -UtestFilter value: '$UtestFilter'" -ForegroundColor Red
+    Write-Host "  Must be 1-63 chars, alphanumerics + . _ - * only (literal name or single-* glob)" -ForegroundColor Red
     pause; exit 1
 }
 
