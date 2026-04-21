@@ -111,3 +111,11 @@ Before writing any boot code, walk through these gates. Each gate is pass/fail.
 - [ ] **No "works on QEMU" shortcuts.** QEMU/OVMF is lenient. Real firmware (AMI, Phoenix, Insyde) is not. If the spec says check a field, check it -- even if QEMU doesn't care.
 - [ ] **Fix immediately, don't defer.** If you notice sub-standard code during implementation or review, fix it in the same commit. Do not accept it as "forward-reserve" or "future enhancement." Sub-standard code that works today breaks on the next firmware update.
 - [ ] **Validate all fields the spec defines for a structure.** If you're parsing a UEFI table node and only checking 2 of 4 defined fields, you're cutting corners. Check all fields that affect correctness.
+
+### Gate 14: Fixed-Size Parse Buffers
+
+> **Incident 2026-04-21:** Editing `resources/boot/boot.conf` grew the file past the bootloader's hardcoded 4096-byte read buffer. The bootloader WARN-and-truncated at 4096 bytes, silently dropping the patch-appended `test=1` line at EOF. Every `test=1` boot then saw `test=0` and ran zero tests. A `[WARN]` line plus a normal-looking boot is too easy to miss.
+
+- [ ] **Fixed-size parse buffers hard-fail on overflow.** If you read a config file, cmdline, cert blob, or any other parsed input into a stack/static buffer, calling `[WARN] ...truncating` + continuing is a footgun. `boot_fatal()` (or `panic()` on the kernel side) with the actual byte count vs the cap. Silent truncation of the tail is exactly how this incident hid.
+- [ ] **Check the consumer cap BEFORE editing a tracked resource file.** When adding content to anything parsed at boot (e.g. `resources/boot/boot.conf`, future `resources/boot/cmdline.txt`), `grep` for the buffer declaration in the consumer (`bootx64.c` buf[8192] today) and verify your addition keeps the file under it. Allocator-backed (`AllocatePool`) buffers are preferred over stack caps for any file we expect to grow.
+- [ ] **Document the cap next to the buffer.** A comment like `/* cap raised from 4096 -> 8192 (2026-04-21): ... */` on the buffer declaration makes the invariant discoverable by anyone editing the consumer later.
