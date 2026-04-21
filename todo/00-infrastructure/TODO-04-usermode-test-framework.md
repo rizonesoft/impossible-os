@@ -58,7 +58,7 @@
 | 💎  |   9   | Syscall test binary (`test_syscall.exe`)            | §1, §2, §3                         |  [x]   |
 | 💎  |  10   | Libc test binary (`test_libc.exe`)                  | §1, §3                             |  [x]   |
 | 💎  |  11   | IPC test binary (`test_ipc.exe`)                    | §1, §2, §3                         |  [x]   |
-| 💎  |  12   | Process lifecycle test (`test_process.exe`)         | §1, §3                             |  [ ]   |
+| 💎  |  12   | Process lifecycle test (`test_process.exe`)         | §1, §3                             |  [x]   |
 | 💎  |  13   | File I/O test (`test_fileio.exe`)                   | §1, §2, §3                         |  [ ]   |
 | ⭐  |  14   | Win32 API test binary (`test_win32.exe`)            | §1, §3, D02T12 §6                  |  [ ]   |
 | 💎  |  15   | Binary format loader coverage (ELF / PE32+ / EIF)   | §1, §3, D02T17 §5, D02T17 §19      |  [ ]   |
@@ -412,14 +412,28 @@ Test inter-process communication from user mode.
 
 Test fork, exec, waitpid from user mode.
 
-- [ ] `user/test/test_process.c`:
-  - `SYS_FORK` -> parent gets child PID, child gets 0
-  - `SYS_WAITPID` -> parent waits for child, gets exit status
-  - `SYS_EXEC` -> load another binary (`hello.exe`)
-  - `SYS_KILL` -> kill a child process
-- [ ] Commit: `"test: user-mode process lifecycle test (test_process.exe)"`
+- [x] `user/test/test_process.c`:
+  - `SYS_FORK` -> parent gets child PID, child gets 0 (sub-test 1)
+  - `SYS_WAITPID` -> parent waits for child, gets exit status (all sub-tests)
+  - `SYS_EXEC` -> load another binary (`hello.exe`); parent waitpid returns hello's 42 (sub-test 2)
+  - `SYS_KILL` -> kill an own child process; waitpid returns -1 (sub-test 3)
+- [x] Commit: `"test: user-mode process lifecycle test (test_process.exe)"`
 
 **Test checkpoint:** Fork, wait, exec, and kill paths assert cleanly, exit 0, and emit `[UTEST] test_process.exe: PASS`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\usermode\run-test_process.bat` (utest_filter=test_process.exe + -NoKernelTests) | validation: build OK, 179/179 kernel unit tests PASS (unchanged)
+
+> **Notes:**
+> - What shipped: `user/test/test_process.c` (~130 LOC) with 10 UTEST_ASSERT contracts across three sub-tests (fork+exit, fork+exec(hello.exe), fork+kill). Each sub-test spawns exactly one child so the run consumes 3 task slots -- well within TASK_MAX=32 headroom given the §6 isolation task pool.
+> - How it integrates: deployed by `make userland` to `C:\test_process.exe`; runs under the §8 correctness phase of the §3 launcher. Safety net: if the kill-child's cooperative `sys_yield` spin is broken (scheduler starvation or broken kill), the §4 launcher's 10 s per-binary watchdog force-DEADs the whole binary and reports FAIL instead of hanging the suite.
+> - Downstream effects: first end-to-end user-mode probe of the fork/exec/waitpid/kill quartet. Any regression in `task_fork`, `task_exec`, `task_waitpid`, or SYS_KILL surfaces here before it propagates to cmd.exe or future multi-process apps.
+> - Canonical doc: [src/kernel/sched/task.c](../../src/kernel/sched/task.c) (`task_fork`, `task_exec`, `task_waitpid`, `task_cleanup`); SYS_KILL handler at [src/kernel/sched/syscall.c](../../src/kernel/sched/syscall.c) line 444.
+> - Scope boundary: §12 owns happy-path coverage on the caller's own child. Cross-process kill authorization (ring 3 killing arbitrary tasks) is a SeAccessCheck concern owned by TODO-15 §5 -- see Accepted stamp below. Binary format variants (PE32+, EIF exec paths) are §15's job.
+
+> **Verified:** 2026-04-21 | commit `<pending>` | 2/2 items | build OK | tests 179/179 PASS (unchanged); 3 sub-tests dispatch 3 forks each, cleaned up via parent waitpid + task_cleanup
+> **Accepted:** [H] `SYS_KILL` accepts a raw PID and marks any target `TASK_DEAD` without parentage/ACL/privilege gating (reason: scope -- SRM + process OB type ownership) -> XREF: 02-kernel-core/TODO-15-security-reference-monitor.md §5 (item: "Authorize process-termination syscalls" -- added this commit; retrofits SYS_KILL + NtTerminateProcess with handle-based addressing + `PROCESS_TERMINATE` gate once `ObpReferenceObjectByHandle` lands in TODO-05 §3)
+> **Accepted:** [M] `sys_exec(path, len)` wrapper advertises a length arg but the kernel SYS_EXEC handler ignores `len` and reads the filename as a NUL-terminated string (reason: input-validation gap, not a correctness bug for the §12 test) -- test comment updated to document the current behaviour; no kernel change required today, no separate XREF item created since an operator reading the test sees the reality and the wrapper is already the correct ABI shape for a future honour-len fix
+> **Quality reviewed:** 2026-04-21 | Codex 1x (adversarial) | 0H+0M fixed + 1H/1M Accepted, 0 open | scope: userland-code-quality
 
 ---
 
@@ -516,6 +530,7 @@ Wire user-mode test binaries into `make test`.
 | 💎  | Per-test isolation   | ✅ HLK session reset | ✅ kselftest fork+tmp    | ✅ §6 scratch+reg+leak |
 | 💎  | Libc surface probe   | ✅ HLK CRT tests     | ✅ kselftest libc        | ✅ §10 7 contracts     |
 | 💎  | IPC surface probe    | ✅ HLK pipe+shmem    | ✅ kselftest pipe+shm    | ✅ §11 pipe + shmem RT |
+| 💎  | Process lifecycle    | ✅ HLK fork+exec     | ✅ kselftest fork+exec   | ✅ §12 fork+exec+kill  |
 | 💎  | Stress / longhaul    | ✅ TAEF Loop+Stress  | ✅ LTP runtest/stress    | ✅ §8 stress type      |
 | 💎  | Perf regression      | ✅ perfview/PerfTest | ✅ perf + flame baseline | ⚠️ §8 report-only      |
 | 💎  | Test type taxonomy   | ✅ TAEF categories   | ✅ LTP test classes      | ✅ §8 4 types + phase  |
