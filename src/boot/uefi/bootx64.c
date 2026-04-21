@@ -2121,8 +2121,14 @@ static void parse_boot_conf(void)
         return;
     }
 
-    /* Read entire file (cap at 4096 bytes -- S7 validation) */
-    char buf[4096];
+    /* Read entire file. Cap raised from 4096 -> 8192 (2026-04-21):
+     * the previous 4 KiB cap silently truncated boot.conf when in-tree
+     * comments grew past 4096 bytes, which dropped the patch-appended
+     * `test=1` line at end-of-file and made test runs no-op without
+     * any visible warning. Buffer lives on the bootloader's stack so
+     * 8 KiB is fine; if a future boot.conf needs more, switch to
+     * gBS->AllocatePool. */
+    char buf[8192];
     UINTN buf_size = sizeof(buf) - 1;
     status = conf_file->Read(conf_file, &buf_size, buf);
     conf_file->Close(conf_file);
@@ -2133,11 +2139,18 @@ static void parse_boot_conf(void)
         return;
     }
 
-    /* Warn if file was larger than buffer (truncated) */
+    /* Hard-fail if file overflows even the new buffer. Silent truncation
+     * already cost us once -- a `[WARN]` line followed by a successful
+     * boot is too easy to miss. boot_fatal renders the overflow as an
+     * obvious error screen with the actual byte count so the operator
+     * sees exactly why config did not apply. */
     if (buf_size >= sizeof(buf) - 1) {
-        serial_early_print("[WARN] boot.conf too large (");
+        serial_early_print("[FATAL] boot.conf exceeds buffer cap of 8191 bytes -- read=");
         serial_early_print_uint((UINT32)buf_size);
-        serial_early_print(" bytes), truncating\n");
+        serial_early_print(" bytes; trim the file or raise the cap\n");
+        boot_fatal(BOOT_ERR_CONF_INVALID,
+                   "boot.conf overflows 8 KiB buffer",
+                   "Trim resources/boot/boot.conf or raise the bootloader buf cap.");
     }
 
     buf[buf_size] = '\0';
