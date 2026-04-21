@@ -2121,41 +2121,109 @@ static void parse_boot_conf(void)
         return;
     }
 
-    /* Read entire file. Cap raised from 4096 -> 8192 (2026-04-21):
-     * the previous 4 KiB cap silently truncated boot.conf when in-tree
-     * comments grew past 4096 bytes, which dropped the patch-appended
-     * `test=1` line at end-of-file and made test runs no-op without
-     * any visible warning. Buffer lives on the bootloader's stack so
-     * 8 KiB is fine; if a future boot.conf needs more, switch to
-     * gBS->AllocatePool. */
-    char buf[8192];
-    UINTN buf_size = sizeof(buf) - 1;
+    /* Read entire file into a pool-allocated buffer sized to the file
+     * (2026-04-21): the previous fixed stack buffer silently truncated
+     * boot.conf when in-tree comments grew past the cap, dropping the
+     * patch-appended `test=1` line at end-of-file and making every
+     * `test=1` boot a no-op without any visible warning. Now we query
+     * the file size via GetInfo first, then AllocatePool exactly that
+     * many bytes plus a terminator. The only cap is a sanity ceiling
+     * that rejects a corrupt/malicious filesystem claiming a
+     * multi-GiB boot.conf. See `boot-code-quality` Gate 14.
+     *
+     * BOOT_CONF_SANITY_CAP: 1 MiB. Any legitimate boot.conf is under
+     * 100 KiB; a file past this cap means fs corruption or a test
+     * disk shipping garbage, and we'd rather boot_fatal than burn
+     * half of bootloader memory on it. */
+    #define BOOT_CONF_SANITY_CAP (1024u * 1024u)
+
+    UINT64 file_size = 0;
+    {
+        EFI_GUID file_info_guid = EFI_FILE_INFO_ID;
+        UINTN info_size = 0;
+        /* Size-query probe: GetInfo returns EFI_BUFFER_TOO_SMALL and
+         * fills info_size with the canonical EFI_FILE_INFO size
+         * (which includes the variable-length FileName tail). Callers
+         * MUST allocate exactly info_size -- a smaller buffer yields
+         * a truncated FileInfo, a larger one wastes pool but still
+         * returns the same fields. */
+        status = conf_file->GetInfo(conf_file, &file_info_guid,
+                                    &info_size, (VOID *)0);
+        if (status != EFI_BUFFER_TOO_SMALL || info_size == 0) {
+            serial_early_print("[BOOT] boot.conf GetInfo size-probe failed - using defaults\n");
+            conf_file->Close(conf_file);
+            root_dir->Close(root_dir);
+            return;
+        }
+        VOID *info_buf = (VOID *)0;
+        status = gBS->AllocatePool(EfiLoaderData, info_size, &info_buf);
+        if (EFI_ERROR(status) || !info_buf) {
+            serial_early_print("[BOOT] boot.conf info AllocatePool failed - using defaults\n");
+            conf_file->Close(conf_file);
+            root_dir->Close(root_dir);
+            return;
+        }
+        status = conf_file->GetInfo(conf_file, &file_info_guid,
+                                    &info_size, info_buf);
+        if (EFI_ERROR(status)) {
+            serial_early_print("[BOOT] boot.conf GetInfo read failed - using defaults\n");
+            gBS->FreePool(info_buf);
+            conf_file->Close(conf_file);
+            root_dir->Close(root_dir);
+            return;
+        }
+        file_size = ((EFI_FILE_INFO *)info_buf)->FileSize;
+        gBS->FreePool(info_buf);
+    }
+
+    if (file_size == 0) {
+        serial_early_print("[BOOT] boot.conf empty - using defaults\n");
+        conf_file->Close(conf_file);
+        root_dir->Close(root_dir);
+        return;
+    }
+    if (file_size > BOOT_CONF_SANITY_CAP) {
+        serial_early_print("[FATAL] boot.conf implausibly large -- FileSize=");
+        serial_early_print_uint((UINT32)file_size);
+        serial_early_print(" bytes (cap=1 MiB); filesystem likely corrupt\n");
+        conf_file->Close(conf_file);
+        root_dir->Close(root_dir);
+        boot_fatal(BOOT_ERR_CONF_INVALID,
+                   "boot.conf exceeds 1 MiB sanity cap",
+                   "Filesystem likely corrupt; boot.conf claimed >1 MiB.");
+    }
+
+    char *buf = (char *)0;
+    status = gBS->AllocatePool(EfiLoaderData, (UINTN)file_size + 1,
+                               (VOID **)&buf);
+    if (EFI_ERROR(status) || !buf) {
+        serial_early_print("[BOOT] boot.conf AllocatePool failed - using defaults\n");
+        conf_file->Close(conf_file);
+        root_dir->Close(root_dir);
+        return;
+    }
+
+    UINTN buf_size = (UINTN)file_size;
     status = conf_file->Read(conf_file, &buf_size, buf);
     conf_file->Close(conf_file);
     root_dir->Close(root_dir);
 
     if (EFI_ERROR(status) || buf_size == 0) {
         serial_early_print("[BOOT] boot.conf read error - using defaults\n");
+        gBS->FreePool(buf);
         return;
     }
 
-    /* Hard-fail if file overflows even the new buffer. Silent truncation
-     * already cost us once -- a `[WARN]` line followed by a successful
-     * boot is too easy to miss. boot_fatal renders the overflow as an
-     * obvious error screen with the actual byte count so the operator
-     * sees exactly why config did not apply. */
-    if (buf_size >= sizeof(buf) - 1) {
-        serial_early_print("[FATAL] boot.conf exceeds buffer cap of 8191 bytes -- read=");
-        serial_early_print_uint((UINT32)buf_size);
-        serial_early_print(" bytes; trim the file or raise the cap\n");
-        boot_fatal(BOOT_ERR_CONF_INVALID,
-                   "boot.conf overflows 8 KiB buffer",
-                   "Trim resources/boot/boot.conf or raise the bootloader buf cap.");
-    }
-
+    /* EFI_FILE_PROTOCOL.Read may legitimately return fewer bytes than
+     * FileSize if the underlying FAT chain truncated -- trim the
+     * declared length to whatever actually landed so the parser does
+     * not walk off a short read. No boot_fatal: this is a soft error,
+     * not a cap overflow. */
     buf[buf_size] = '\0';
 
-    serial_early_print("[BOOT] boot.conf loaded\n");
+    serial_early_print("[BOOT] boot.conf loaded (");
+    serial_early_print_uint((UINT32)buf_size);
+    serial_early_print(" bytes)\n");
 
     /* Parse line by line */
     char *pos = buf;
@@ -2214,6 +2282,7 @@ static void parse_boot_conf(void)
     }
 
     cfg->config_found = 1;
+    gBS->FreePool(buf);
 }
 
 /* ============================================================================
