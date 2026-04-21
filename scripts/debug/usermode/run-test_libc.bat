@@ -1,5 +1,5 @@
 @echo off
-:: run-test-libc.bat -- §10 libc coverage binary (test_libc.exe)
+:: run-test_libc.bat -- §10 libc coverage binary (test_libc.exe)
 ::
 :: Smoke-checks user/include/string.h + stdio.h: strlen, strcmp x2,
 :: memcpy, memset, snprintf. -NoKernelTests sets boot.conf

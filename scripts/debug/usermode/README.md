@@ -31,7 +31,7 @@ Two prerequisites from the [user-mode test framework TODO](../../../todo/00-infr
 2. **Build-integration section** authors per-binary bat files here:
 
    ```bat
-   :: scripts\debug\usermode\run-test-syscall.bat (example, future)
+   :: scripts\debug\usermode\run-test_syscall.bat (example, future)
    powershell.exe -ExecutionPolicy Bypass -File ^
        "%~dp0..\..\machines\run-qemu.ps1" ^
        -Accel whpx -TestOnly -BootArg "utest_filter=test_syscall.exe usermode_only=1"
