@@ -110,17 +110,46 @@ int main(void)
                          "hello.txt content matches 'Hello from Impossible OS!'");
         }
 
+        /* ---- 3b. EOF probe: second read drains to EOF ---------- *
+         * NtReadFile returns STATUS_END_OF_FILE when offset >= file
+         * size. Win32 ReadFile must translate that to a SUCCESSFUL
+         * 0-byte read (TRUE + nread=0) -- callers reserve FALSE for
+         * genuine I/O errors. A regression that collapsed EOF into
+         * FALSE would silently break any sequential reader that
+         * uses read-until-zero as its termination condition.
+         * Review Codex 2026-04-22 M2. */
+        char eof_buf[FILE_BUF_SIZE];
+        DWORD eof_read = 999;  /* sentinel to detect unset */
+        BOOL eof_ok = ReadFile(fh, eof_buf, FILE_BUF_SIZE, &eof_read,
+                               (LPOVERLAPPED)0);
+        UTEST_ASSERT(eof_ok == TRUE,
+                     "ReadFile at EOF returns TRUE (not FALSE)");
+        UTEST_ASSERT(eof_read == 0,
+                     "ReadFile at EOF sets *lpNumberOfBytesRead to 0");
+
         /* ---- 4. CloseHandle + double-close --------------------- *
          * First close must succeed (TRUE). Second close on the same
          * stale handle must fail (FALSE) because ob_close_handle
          * freed the slot and the handle-table lookup now rejects
-         * the int32_t index. Mirrors §13's post-close invalidation
+         * the int32_t index. Mirrors the post-close invalidation
          * probe at the Win32 API layer. */
         UTEST_ASSERT(CloseHandle(fh) == TRUE,
                      "CloseHandle(file) returns TRUE");
         UTEST_ASSERT(CloseHandle(fh) == FALSE,
                      "CloseHandle on already-closed handle returns FALSE");
     }
+
+    /* ---- 4b. CloseHandle sentinel rejects --------------------- *
+     * Win32 convention: CloseHandle((HANDLE)NULL) and
+     * CloseHandle(INVALID_HANDLE_VALUE) both return FALSE. The
+     * NULL-handle guard prevents accidentally closing slot 0 (the
+     * kernel's handle-table indexes 0 as a valid slot); the
+     * INVALID_HANDLE_VALUE guard catches the classic
+     * uninitialized-sentinel mistake. Review Codex 2026-04-22 H1. */
+    UTEST_ASSERT(CloseHandle((HANDLE)0) == FALSE,
+                 "CloseHandle((HANDLE)NULL) returns FALSE");
+    UTEST_ASSERT(CloseHandle(INVALID_HANDLE_VALUE) == FALSE,
+                 "CloseHandle(INVALID_HANDLE_VALUE) returns FALSE");
 
     /* ---- 5. GetTickCount + monotonicity ---------------------------- *
      * KUSER_SHARED_DATA->TickCountLowDeprecated starts at 0 and only

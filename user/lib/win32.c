@@ -39,6 +39,12 @@
 #define SSDT_NtOpenFile       0x0011
 #define SSDT_NtReadFile       0x0012
 
+/* NT status codes (mirror of include/kernel/nt/ntstatus.h). STATUS_END_OF_FILE
+ * is specifically treated by ReadFile as a successful 0-byte read, per
+ * Win32 convention -- callers use the return FALSE path for real I/O
+ * errors (access denied, bad handle), not for normal termination. */
+#define STATUS_END_OF_FILE  ((NTSTATUS)0xC0000011)
+
 /* ---- NT types (mirror of kernel headers) --------------------------------- */
 
 typedef int32_t NTSTATUS;
@@ -368,6 +374,17 @@ BOOL ReadFile(HANDLE       hFile,
                                (uint64_t)(uintptr_t)&iosb,
                                (uint64_t)(uintptr_t)lpBuffer,
                                (uint64_t)nNumberOfBytesToRead);
+    /* STATUS_END_OF_FILE is a SUCCESSFUL 0-byte read per Win32
+     * ReadFile contract -- callers use FALSE to mean genuine I/O
+     * failure (access denied, bad handle), not "reached end of
+     * stream." NtReadFile sets iosb.Information = 0 on EOF, so the
+     * trailing `*lpNumberOfBytesRead = 0` already reflects that.
+     * Codex review 2026-04-22 M2. */
+    if (rc == STATUS_END_OF_FILE) {
+        if (lpNumberOfBytesRead)
+            *lpNumberOfBytesRead = 0;
+        return TRUE;
+    }
     if (!NT_SUCCESS(rc)) {
         if (lpNumberOfBytesRead)
             *lpNumberOfBytesRead = 0;
@@ -384,10 +401,23 @@ BOOL ReadFile(HANDLE       hFile,
  * any error (STATUS_INVALID_HANDLE on double-close, etc.) -> FALSE.
  * The raw int32_t handle value is sign-extended through the uintptr_t
  * cast so the kernel's handle-table lookup treats (HANDLE)-1 correctly
- * on the INVALID_HANDLE_VALUE path. */
+ * on the INVALID_HANDLE_VALUE path.
+ *
+ * Win32 boundary rejects two sentinel values BEFORE calling the kernel:
+ *   - (HANDLE)0 / NULL_HANDLE -- Win32 convention; Windows kernel32
+ *     returns FALSE + SetLastError(ERROR_INVALID_HANDLE). Without this
+ *     guard, the kernel's ObpLookupHandle treats handle=0 as slot 0
+ *     (idx = handle / 4 = 0), which IS a valid slot -- so a caller
+ *     passing a zero-initialized HANDLE would silently close the first
+ *     object allocated in the process. Codex review 2026-04-22 H1.
+ *   - (HANDLE)-1 / INVALID_HANDLE_VALUE -- the kernel rejects negative
+ *     handles already, but catching it here makes the Win32 contract
+ *     explicit and saves a syscall round-trip. */
 
 BOOL CloseHandle(HANDLE hObject)
 {
+    if (hObject == NULL_HANDLE || hObject == INVALID_HANDLE_VALUE)
+        return FALSE;
     NTSTATUS rc = syscall_ssdt(SSDT_NtClose,
                                (uint64_t)(uintptr_t)hObject,
                                0, 0, 0);

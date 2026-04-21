@@ -132,8 +132,18 @@ HANDLE ObpAllocateHandle(HANDLE_TABLE *table, void *object,
         return INVALID_HANDLE_VALUE;
     }
 
-    /* Find a free slot */
-    for (i = 0; i < table->capacity; i++) {
+    /* Find a free slot.
+     *
+     * Slot 0 is deliberately reserved (scan starts at i=1) so that
+     * `HANDLE = i * 4 = 0` is never a valid handle value. This matches
+     * Windows semantics where (HANDLE)0 == NULL means "no handle" and
+     * CloseHandle(NULL) returns FALSE. Without the reservation the
+     * first CreateFile would return handle 0, and Win32 callers
+     * (user/lib/win32.c CloseHandle) could not distinguish it from an
+     * uninitialized sentinel -- rejecting NULL at the Win32 boundary
+     * would then break legitimate closes. Codex quality review
+     * 2026-04-22 Critical. */
+    for (i = 1; i < table->capacity; i++) {
         if (!table->entries[i].object)
             goto found;
     }
