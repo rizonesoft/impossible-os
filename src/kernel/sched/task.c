@@ -1043,7 +1043,22 @@ int task_fork(struct interrupt_frame *frame)
     tasks[child_pid].rsp = (uint64_t)sp;
     tasks[child_pid].stack_base = kstack;
     tasks[child_pid].kernel_rsp = (uint64_t)(kstack + TASK_STACK_SIZE);
+    /* Initialize thread 0 (main). Mirrors task_create_user -- without
+     * these the child is invisible to find_next_task because
+     * num_threads stays at 0 from the zero-init slot and the
+     * scheduler's `thread_idx >= num_threads` guard skips the task
+     * entirely. Root cause of the 2026-04-21 test_process fork-hang:
+     * forked children were created but never dispatched. */
+    tasks[child_pid].num_threads = 1;
+    tasks[child_pid].threads[0].id = 0;
+    tasks[child_pid].threads[0].state = THREAD_READY;
+    tasks[child_pid].threads[0].stack_base = (uint8_t *)0;
+    tasks[child_pid].threads[0].stack_size = 0;
+    tasks[child_pid].threads[0].parent_task = child_pid;
+    tasks[child_pid].threads[0].join_tid = -1;
+    tasks[child_pid].threads[0].priority = THREAD_PRIO_NORMAL;
     tasks[child_pid].threads[0].kernel_rsp = tasks[child_pid].kernel_rsp;
+    tasks[child_pid].threads[0].rsp = (uint64_t)sp;
     tasks[child_pid].user_stack_base = ustack;
     tasks[child_pid].name = tasks[parent_pid_val].name;
     tasks[child_pid].parent_pid = parent_pid_val;
@@ -1096,12 +1111,23 @@ int task_fork(struct interrupt_frame *frame)
                     vmm_set_user_page(user_cr3, addr);
             }
             /* Mark child's user stack as User. The stack is kmalloc'd
-             * above so sits inside the kernel-heap identity map; only
-             * the User bit needs flipping. */
-            for (addr = (uintptr_t)ustack;
-                 addr < (uintptr_t)ustack + USER_STACK_SIZE;
-                 addr += 4096)
-                vmm_set_user_page(user_cr3, addr);
+             * so it is 16-byte aligned but NOT page-aligned -- the
+             * byte `ustack + USER_STACK_SIZE` (the stack TOP, where
+             * RSP starts) can easily land in the next 4 KiB page not
+             * covered by the literal range. Round DOWN the start and
+             * UP the end so every page the stack touches gets its
+             * User bit set. Without this, the first ring-3 push lands
+             * on a kernel-only page and #PFs silently before any user
+             * code runs. Root cause of the 2026-04-21 test_process
+             * fork-hang on WHPX + KVM. */
+            {
+                uintptr_t ustack_lo = (uintptr_t)ustack
+                                      & ~(uintptr_t)0xFFFu;
+                uintptr_t ustack_hi = ((uintptr_t)ustack + USER_STACK_SIZE
+                                       + 0xFFFu) & ~(uintptr_t)0xFFFu;
+                for (addr = ustack_lo; addr < ustack_hi; addr += 4096)
+                    vmm_set_user_page(user_cr3, addr);
+            }
             tasks[child_pid].cr3 = user_cr3;
         } else {
             tasks[child_pid].cr3 = 0;
