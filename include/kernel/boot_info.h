@@ -367,8 +367,23 @@ struct boot_config {
      * child so a stress binary can query its desired runtime iteration
      * count. Range 0-65535 (uint16); 0 = default. */
     uint16_t stress_iters;     /* reserved (see comment above); 0 = default */
+    /* Test-runner skip knobs (S10 of TODO-04 follow-up). Both default 0
+     * for back-compat: a plain `test=1` boot still walks the kernel
+     * TEST_CAT_* sweep AND fires the user-mode launcher in sequence.
+     * Set to 1 in boot.conf (or via -NoKernelTests / -NoUsermodeTests
+     * in run-qemu.ps1) to suppress one half so an aggregate runner
+     * targets exactly the layer it claims:
+     *   - run-all-kernel-tests.bat   -> test_usermode_skip=1 (kernel only)
+     *   - run-all-usermode-tests.bat -> test_kernel_skip=1   (usermode only)
+     *   - per-binary usermode bats   -> test_kernel_skip=1 + utest_filter
+     * debug=1 always runs both halves regardless (the human "show me
+     * everything" path). Setting both flags to 1 under test=1 is a
+     * no-op boot. */
+    uint8_t  test_kernel_skip;   /* 1 = skip kernel TEST_CAT_* suites under test=1 */
+    uint8_t  test_usermode_skip; /* 1 = skip user-mode launcher under test=1 */
+    uint8_t  _pad_test_skip[2];
     /* Pad to 512 bytes total (sector-aligned). */
-    uint8_t  _pad[146];
+    uint8_t  _pad[142];
 };
 
 /* Compile-time enforcement of bootloader ABI contract.
@@ -391,6 +406,10 @@ _Static_assert(__builtin_offsetof(struct boot_config, json) == 363,
     "json must be at byte offset 363 (TODO-04 S7 stable ABI)");
 _Static_assert(__builtin_offsetof(struct boot_config, stress_iters) == 364,
     "stress_iters must be at byte offset 364 (TODO-04 S8 stable ABI)");
+_Static_assert(__builtin_offsetof(struct boot_config, test_kernel_skip) == 366,
+    "test_kernel_skip must be at byte offset 366 (TODO-04 S10 follow-up stable ABI)");
+_Static_assert(__builtin_offsetof(struct boot_config, test_usermode_skip) == 367,
+    "test_usermode_skip must be at byte offset 367 (TODO-04 S10 follow-up stable ABI)");
 _Static_assert(sizeof(struct boot_config) == 512,
     "boot_config must be exactly 512 bytes (sector-aligned)");
 

@@ -33,7 +33,9 @@ Param(
     [string]$ExtraArgs = '',  # additional QEMU arguments (e.g., "-machine pc,i8042=on")
     [switch]$CrashTest,   # boot with crash_test=1 (deliberate BSOD after desktop)
     [switch]$ErrorScreenTest,  # boot with error_screen_test=1 (trigger boot_fatal for QR/BSOD)
-    [string]$UtestFilter = ''  # limit §3 user-mode launcher to one binary/glob (e.g. "test_syscall.exe" or "test_smoke_*.exe")
+    [string]$UtestFilter = '', # limit §3 user-mode launcher to one binary/glob (e.g. "test_syscall.exe" or "test_smoke_*.exe")
+    [switch]$NoKernelTests,    # set test_kernel_skip=1: skip kernel TEST_CAT_* sweep, run only the user-mode launcher
+    [switch]$NoUsermodeTests   # set test_usermode_skip=1: skip user-mode launcher, run only the kernel TEST_CAT_* sweep
 )
 
 $ErrorActionPreference = "Stop"
@@ -171,10 +173,12 @@ if ($UtestFilter -and $UtestFilter -notmatch $UtestFilterPattern) {
 # Patch boot.conf if debug/test mode requested
 $PatchArgs = @()
 if ($DebugTests) { $PatchArgs += @('debug', '1') }
-if ($TestOnly -or $TestSuite -or $UtestFilter) { $PatchArgs += @('test', '1') }
+if ($TestOnly -or $TestSuite -or $UtestFilter -or $NoKernelTests -or $NoUsermodeTests) { $PatchArgs += @('test', '1') }
 if ($TestSuite) { $PatchArgs += @('test_suite', $TestSuite) }
 if ($Quiet)     { $PatchArgs += @('test_quiet', '1') }
 if ($UtestFilter) { $PatchArgs += @('utest_filter', $UtestFilter) }
+if ($NoKernelTests) { $PatchArgs += @('test_kernel_skip', '1') }
+if ($NoUsermodeTests) { $PatchArgs += @('test_usermode_skip', '1') }
 if ($CrashTest) { $PatchArgs += @('crash_test', '1') }
 if ($ErrorScreenTest) { $PatchArgs += @('error_screen_test', '1') }
 

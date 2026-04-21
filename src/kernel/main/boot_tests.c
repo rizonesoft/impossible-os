@@ -20,6 +20,24 @@ void boot_tests_run(void)
 {
     /* test=1 or debug=1: run unit tests, then continue booting to desktop. */
     if (g_boot_info.config.test || g_boot_info.config.debug) {
+        /* §10 follow-up of TODO-04: per-aggregate test_*_skip knobs.
+         * test_kernel_skip=1   skips the kernel TEST_CAT_* sweep so a
+         *                      usermode-only iteration bat (e.g.
+         *                      run-all-usermode-tests.bat or any
+         *                      run-test_<name>.bat) does not pay for it.
+         * test_usermode_skip=1 skips test_usermode_run() so the kernel
+         *                      aggregate (run-all-kernel-tests.bat) is
+         *                      genuinely kernel-only and the cross-layer
+         *                      sweep (run-all-tests.bat) does not run
+         *                      every test_*.exe twice.
+         * Default 0/0 = back-compat (every `test=1` run does both halves
+         * sequentially). debug=1 always runs both halves regardless --
+         * that mode is the human "show me everything" path. */
+        int run_kernel_tests   = g_boot_info.config.debug ||
+                                 !g_boot_info.config.test_kernel_skip;
+        int run_usermode_tests = g_boot_info.config.debug ||
+                                 !g_boot_info.config.test_usermode_skip;
+
         /* Apply category filter and quiet mode from boot.conf */
         uint8_t suite_val = g_boot_info.config.test_suite;
         if (suite_val < TEST_CAT_COUNT)
@@ -28,14 +46,29 @@ void boot_tests_run(void)
         if (g_boot_info.config.test_quiet)
             test_runner_set_quiet(1);
 
+        /* Surface skip decisions BEFORE the LOG_WARN filter clamps
+         * non-TEST output -- otherwise the LOG_INFO klog below is
+         * suppressed exactly when the operator most needs to see why
+         * a `test=1` boot ran zero suites. Codex M2, 2026-04-21. */
+        if (g_boot_info.config.test) {
+            if (!run_kernel_tests)
+                klog(LOG_WARN, "TEST",
+                     "Kernel TEST_CAT_* sweep skipped (test_kernel_skip=1)");
+            if (!run_usermode_tests)
+                klog(LOG_WARN, "TEST",
+                     "User-mode launcher skipped (test_usermode_skip=1)");
+        }
+
         /* Suppress non-TEST boot chatter during test mode */
         if (g_boot_info.config.test) {
             klog_set_level((const char *)0, LOG_WARN);
             klog_set_level("TEST", LOG_DEBUG);
         }
 
-        test_runner_init();
-        test_runner_run();
+        if (run_kernel_tests) {
+            test_runner_init();
+            test_runner_run();
+        }
 
         /* Restore normal logging so remaining boot output is visible */
         klog_set_level((const char *)0, LOG_DEBUG);
@@ -51,7 +84,7 @@ void boot_tests_run(void)
          * so the launcher itself stays decoupled from g_boot_info --
          * the kernel tests in test_boot_init can drive the API
          * directly without setting up a fake config. */
-        if (g_boot_info.config.test) {
+        if (g_boot_info.config.test && run_usermode_tests) {
             if (g_boot_info.config.utest_filter[0])
                 test_usermode_set_filter(g_boot_info.config.utest_filter);
             if (g_boot_info.config.utest_timeout_ms)

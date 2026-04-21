@@ -37,11 +37,7 @@ echo.
 if exist "%DEBUG%usermode\run-all-usermode-tests.bat" (
     call "%DEBUG%usermode\run-all-usermode-tests.bat"
 ) else (
-    echo [SKIP] No usermode-only aggregate -- the kernel run above already triggered
-    echo        the user-mode test launcher because boot.conf test=1 fires both
-    echo        test_runner_run^(^) and test_usermode_run^(^). Per-binary iteration
-    echo        runners live in usermode\run-^<binary^>.bat ^(each one also re-runs
-    echo        the kernel suite -- a future test_kernel=0 knob could change this^).
+    echo [SKIP] %DEBUG%usermode\run-all-usermode-tests.bat not found
 )
 
 echo.

@@ -91,7 +91,11 @@ struct boot_config {
     UINT8   json;
     /* Test-type taxonomy (S8 of TODO-04). */
     UINT16  stress_iters;
-    UINT8   _pad[146];         /* pad to 512 bytes total (sector-aligned) */
+    /* Test-runner skip knobs (S10 follow-up). */
+    UINT8   test_kernel_skip;
+    UINT8   test_usermode_skip;
+    UINT8   _pad_test_skip[2];
+    UINT8   _pad[142];         /* pad to 512 bytes total (sector-aligned) */
 };
 
 /* Mirror of kernel/boot_info.h static asserts -- catches drift between
@@ -114,6 +118,10 @@ _Static_assert(__builtin_offsetof(struct boot_config, json) == 363,
     "json must be at byte offset 363 -- TODO-04 S7 stable ABI");
 _Static_assert(__builtin_offsetof(struct boot_config, stress_iters) == 364,
     "stress_iters must be at byte offset 364 -- TODO-04 S8 stable ABI");
+_Static_assert(__builtin_offsetof(struct boot_config, test_kernel_skip) == 366,
+    "test_kernel_skip must be at byte offset 366 -- TODO-04 S10 follow-up stable ABI");
+_Static_assert(__builtin_offsetof(struct boot_config, test_usermode_skip) == 367,
+    "test_usermode_skip must be at byte offset 367 -- TODO-04 S10 follow-up stable ABI");
 _Static_assert(sizeof(struct boot_config) == 512,
     "boot_config must be exactly 512 bytes (sector-aligned)");
 

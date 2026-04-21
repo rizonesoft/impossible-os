@@ -1997,6 +1997,12 @@ static void parse_conf_kv(struct boot_config *cfg,
         if (n > 0xFFFF) n = 0xFFFF;
         cfg->stress_iters = (UINT16)n;
     }
+    else if (ascii_streq(key, "test_kernel_skip")) {
+        cfg->test_kernel_skip = (UINT8)ascii_atoi(val);
+    }
+    else if (ascii_streq(key, "test_usermode_skip")) {
+        cfg->test_usermode_skip = (UINT8)ascii_atoi(val);
+    }
     else if (ascii_streq(key, "boot_mode")) {
         if      (ascii_streq(val, "normal"))   cfg->boot_mode = 0;
         else if (ascii_streq(val, "safe"))     cfg->boot_mode = 1;
