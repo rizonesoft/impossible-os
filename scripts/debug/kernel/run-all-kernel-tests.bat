@@ -11,12 +11,8 @@
 :: during development -- they are faster because the test runner
 :: short-circuits on SUITE mismatch.
 ::
-:: For the full Impossible OS test sweep (kernel + usermode + desktop),
-:: use scripts\debug\run-all-tests.bat at the parent directory level.
-::
 :: -NoUsermodeTests sets boot.conf test_usermode_skip=1 so this aggregate
-:: is genuinely kernel-only -- the parent cross-layer sweep then chains
-:: this with usermode\run-all-usermode-tests.bat without running every
-:: test_*.exe twice.
+:: is genuinely kernel-only -- run usermode\run-all-usermode-tests.bat
+:: separately for the user-mode layer.
 powershell.exe -ExecutionPolicy Bypass -File "%~dp0..\..\machines\run-qemu.ps1" -Accel whpx -TestOnly -NoUsermodeTests
 pause

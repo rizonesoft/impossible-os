@@ -7,8 +7,7 @@
 :: kernel TEST_CAT_* sweep first.
 ::
 :: For per-binary iteration use one of the run-test_<name>.bat files
-:: in this directory. For the cross-layer sweep use the parent
-:: scripts\debug\run-all-tests.bat which chains all three layers
-:: (kernel + usermode + desktop).
+:: in this directory. For kernel-side TEST_CAT_* suites run
+:: scripts\debug\kernel\run-all-kernel-tests.bat separately.
 powershell.exe -ExecutionPolicy Bypass -File "%~dp0..\..\machines\run-qemu.ps1" -Accel whpx -TestOnly -NoKernelTests
 pause

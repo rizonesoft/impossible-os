@@ -2003,9 +2003,6 @@ static void parse_conf_kv(struct boot_config *cfg,
     else if (ascii_streq(key, "test_usermode_skip")) {
         cfg->test_usermode_skip = (UINT8)ascii_atoi(val);
     }
-    else if (ascii_streq(key, "test_auto_shutdown")) {
-        cfg->test_auto_shutdown = (UINT8)ascii_atoi(val);
-    }
     else if (ascii_streq(key, "boot_mode")) {
         if      (ascii_streq(val, "normal"))   cfg->boot_mode = 0;
         else if (ascii_streq(val, "safe"))     cfg->boot_mode = 1;

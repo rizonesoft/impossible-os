@@ -382,19 +382,8 @@ struct boot_config {
     uint8_t  test_kernel_skip;   /* 1 = skip kernel TEST_CAT_* suites under test=1 */
     uint8_t  test_usermode_skip; /* 1 = skip user-mode launcher under test=1 */
     uint8_t  _pad_test_skip[2];
-    /* Test-mode auto-shutdown: when 1 AND test=1, the kernel calls
-     * acpi_shutdown() immediately after the test runner finishes
-     * (both kernel TEST_CAT_* and user-mode launcher), before boot
-     * continues to desktop. Used by scripts/debug/run-all-tests.bat
-     * so each layer's QEMU session exits automatically and the bat
-     * chain proceeds to the next layer -- otherwise the QEMU window
-     * stayed open forever and the aggregate never progressed past
-     * the kernel layer. Default 0 preserves interactive behaviour
-     * (operator reads the log + closes the window manually). */
-    uint8_t  test_auto_shutdown;
-    uint8_t  _pad_test_auto_shutdown[3];
     /* Pad to 512 bytes total (sector-aligned). */
-    uint8_t  _pad[138];
+    uint8_t  _pad[142];
 };
 
 /* Compile-time enforcement of bootloader ABI contract.
@@ -421,8 +410,6 @@ _Static_assert(__builtin_offsetof(struct boot_config, test_kernel_skip) == 366,
     "test_kernel_skip must be at byte offset 366 (TODO-04 S10 follow-up stable ABI)");
 _Static_assert(__builtin_offsetof(struct boot_config, test_usermode_skip) == 367,
     "test_usermode_skip must be at byte offset 367 (TODO-04 S10 follow-up stable ABI)");
-_Static_assert(__builtin_offsetof(struct boot_config, test_auto_shutdown) == 370,
-    "test_auto_shutdown must be at byte offset 370 (stable ABI)");
 _Static_assert(sizeof(struct boot_config) == 512,
     "boot_config must be exactly 512 bytes (sector-aligned)");
 

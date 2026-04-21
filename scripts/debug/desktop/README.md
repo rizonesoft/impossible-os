@@ -8,6 +8,6 @@ When that TODO ships, per-test bat files (and a `run-all-desktop-tests.bat`
 aggregate) land here, parallel to the layout in
 [`scripts\debug\kernel\`](../kernel/) and [`scripts\debug\usermode\`](../usermode/).
 
-The root-level [`scripts\debug\run-all-tests.bat`](../run-all-tests.bat)
-already invokes this directory (currently a no-op, since it is empty);
-once the bat files exist, it will pick them up automatically.
+Once the bat files exist, run them directly from this directory or
+add a `run-all-desktop-tests.bat` aggregate alongside them (mirroring
+the kernel and usermode patterns).

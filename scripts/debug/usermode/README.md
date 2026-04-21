@@ -49,6 +49,8 @@ launcher scans `C:\` for `test_*.exe` and runs each, emitting per-binary
 `[UTEST] <name>: PASS|FAIL (exit=N)` lines + a `[UTEST] === N passed,
 N failed of N total ===` summary on serial.
 
-The root-level [`scripts\debug\run-all-tests.bat`](../run-all-tests.bat)
-chains this directory; the chain is a silent no-op while the directory
-is empty.
+For the full user-mode sweep run
+[`run-all-usermode-tests.bat`](run-all-usermode-tests.bat) directly;
+for kernel-side suites run
+[`scripts\debug\kernel\run-all-kernel-tests.bat`](../kernel/run-all-kernel-tests.bat)
+separately.
