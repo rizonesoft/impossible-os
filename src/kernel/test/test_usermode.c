@@ -851,6 +851,14 @@ static void u_cleanup_manifest_apply(void)
 struct manifest_state {
     const char  *names[UTEST_MANIFEST_MAX];
     utest_type_t types[UTEST_MANIFEST_MAX]; /* §8: type per entry */
+    /* §12 follow-up: expected total task_create cost for this binary,
+     * including nested sys_fork calls. Default 1 (the launcher-spawned
+     * task itself). Manifest entries tag fork-heavy binaries with
+     * `expects_tasks=<N>` so the pre-flight budget check sums actual
+     * slot consumption instead of counting binaries. Clamped to
+     * 1..255 -- a binary claiming more than 255 task slots almost
+     * certainly has a bug. */
+    uint8_t      expects_tasks[UTEST_MANIFEST_MAX];
     uint32_t     count;
     char        *arena;         /* pmm_alloc_contiguous()'d; NULL if not loaded */
     uintptr_t    arena_phys;    /* matching physical base for pmm_free_frame loop */
@@ -978,9 +986,12 @@ static int u_manifest_load(struct manifest_state *ms)
                     /* Skip over any run of whitespace between tokens. */
                     while (*tok == ' ' || *tok == '\t') tok++;
                 }
-                /* Default: infer type from filename prefix. */
+                /* Default: infer type from filename prefix. Default
+                 * expects_tasks to 1 (launcher task only). */
                 entry_type = u_type_for_name(name_start);
-                /* Walk remaining tokens, honouring `type=<value>`. */
+                uint32_t entry_expects = 1u;
+                /* Walk remaining tokens, honouring `type=<value>` and
+                 * `expects_tasks=<N>`. */
                 while (*tok) {
                     char *kv_end = tok;
                     while (*kv_end && *kv_end != ' ' && *kv_end != '\t')
@@ -989,6 +1000,22 @@ static int u_manifest_load(struct manifest_state *ms)
                     if (tok[0] == 't' && tok[1] == 'y' && tok[2] == 'p' &&
                         tok[3] == 'e' && tok[4] == '=') {
                         entry_type = u_type_from_attr(tok + 5);
+                    } else if (tok[0] == 'e' && tok[1] == 'x' &&
+                               tok[2] == 'p' && tok[3] == 'e' &&
+                               tok[4] == 'c' && tok[5] == 't' &&
+                               tok[6] == 's' && tok[7] == '_' &&
+                               tok[8] == 't' && tok[9] == 'a' &&
+                               tok[10] == 's' && tok[11] == 'k' &&
+                               tok[12] == 's' && tok[13] == '=') {
+                        /* Inline decimal parse -- up to 3 digits fit in
+                         * the 1..255 uint8 slot without overflow. */
+                        const char *p = tok + 14;
+                        uint32_t n = 0;
+                        while (*p >= '0' && *p <= '9' && n < 10000u)
+                            n = n * 10u + (uint32_t)(*p++ - '0');
+                        if (n == 0) n = 1;        /* 0 makes no sense */
+                        if (n > 255u) n = 255u;   /* uint8 ceiling */
+                        entry_expects = n;
                     }
                     tok = kv_end;
                     while (*tok == ' ' || *tok == '\t') tok++;
@@ -1004,6 +1031,7 @@ static int u_manifest_load(struct manifest_state *ms)
                 }
                 ms->names[ms->count] = name_start;
                 ms->types[ms->count] = entry_type;
+                ms->expects_tasks[ms->count] = (uint8_t)entry_expects;
                 ms->count++;
             }
         }
@@ -1886,6 +1914,12 @@ void test_usermode_run(void)
     uint32_t              total_planned = 0;
     uint32_t              total_ran = 0;
     uint32_t              skipped_by_filter = 0;
+    /* Sum of expected task_create costs across planned binaries. A
+     * plain `test_*.exe` costs 1 slot; fork-heavy binaries like
+     * test_process.exe tag `expects_tasks=<N>` in the manifest so the
+     * pre-flight budget check reflects real TASK_MAX pressure. Codex
+     * quality 2026-04-21. */
+    uint32_t              total_task_budget = 0;
     int                   use_manifest;
     char                  scratch_name[VFS_MAX_NAME];
     uint64_t              run_start_ms;
@@ -1915,8 +1949,10 @@ void test_usermode_run(void)
      * glob paths apply the same filter. */
     if (use_manifest) {
         for (i = 0; i < manifest.count; i++) {
-            if (test_usermode_glob_match(s_filter, manifest.names[i]))
+            if (test_usermode_glob_match(s_filter, manifest.names[i])) {
                 total_planned++;
+                total_task_budget += manifest.expects_tasks[i];
+            }
         }
     }
     /* Always also include glob-discovered binaries when the manifest
@@ -1938,8 +1974,14 @@ void test_usermode_run(void)
                 }
                 if (already) continue;
             }
-            if (test_usermode_glob_match(s_filter, scratch_name))
+            if (test_usermode_glob_match(s_filter, scratch_name)) {
                 total_planned++;
+                /* Glob-discovered binaries have no manifest metadata
+                 * so assume the default 1-task cost. Fork-heavy
+                 * binaries should be declared in the manifest with
+                 * expects_tasks=<N>. */
+                total_task_budget += 1u;
+            }
         }
     }
 
@@ -1977,12 +2019,19 @@ void test_usermode_run(void)
     {
         uint32_t live = task_count();
         uint32_t budget = (live < TASK_MAX) ? (TASK_MAX - live) : 0u;
-        if (budget < total_planned) {
+        /* Compare against total_task_budget (sum of per-binary
+         * expects_tasks), not total_planned, so fork-heavy binaries
+         * like test_process.exe get counted accurately. Codex quality
+         * 2026-04-21: previously the check compared against
+         * total_planned (one slot per binary) and missed the extra
+         * slots consumed by nested sys_fork. */
+        if (budget < total_task_budget) {
             klog(LOG_WARN, "UTEST",
-                 "plan %u exceeds free task slots %u (TASK_MAX=%u, live=%u) "
-                 "-- tail will FAIL with task_create-failed until TODO-06 S13",
-                 (uint64_t)total_planned, (uint64_t)budget,
-                 (uint64_t)TASK_MAX, (uint64_t)live);
+                 "plan %u binaries need %u task slots, only %u free "
+                 "(TASK_MAX=%u, live=%u) -- tail will FAIL with "
+                 "task_create-failed until scheduler slot reuse ships",
+                 (uint64_t)total_planned, (uint64_t)total_task_budget,
+                 (uint64_t)budget, (uint64_t)TASK_MAX, (uint64_t)live);
         }
     }
 
