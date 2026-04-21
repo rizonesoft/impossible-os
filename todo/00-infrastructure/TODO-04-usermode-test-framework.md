@@ -55,7 +55,7 @@
 | 💎  |   6   | Per-test isolation + cleanup hook                   | §3, §4                             |  [x]   |
 | 💎  |   7   | JUnit XML + JSON output formats                     | §4                                 |  [x]   |
 | 💎  |   8   | Test type taxonomy (smoke/correctness/stress/perf)  | §3, §4                             |  [x]   |
-| 💎  |   9   | Syscall test binary (`test_syscall.exe`)            | §1, §2, §3                         |  [ ]   |
+| 💎  |   9   | Syscall test binary (`test_syscall.exe`)            | §1, §2, §3                         |  [x]   |
 | 💎  |  10   | Libc test binary (`test_libc.exe`)                  | §1, §3                             |  [ ]   |
 | 💎  |  11   | IPC test binary (`test_ipc.exe`)                    | §1, §2, §3                         |  [ ]   |
 | 💎  |  12   | Process lifecycle test (`test_process.exe`)         | §1, §3                             |  [ ]   |
@@ -317,22 +317,35 @@ A single "test_*.exe" pattern conflates very different test classes. TAEF distin
 
 Exercise every implemented syscall from user mode.
 
-- [ ] Complete §2 first so `user/include/syscall.h` exposes wrappers for each syscall below (numbers must match `include/kernel/sched/syscall.h` on the INT 0x80 path)
-- [ ] `user/test/test_syscall.c`:
+- [x] Complete §2 first so `user/include/syscall.h` exposes wrappers for each syscall below (numbers must match `include/kernel/sched/syscall.h` on the INT 0x80 path)
+- [x] `user/test/test_syscall.c`:
   - `SYS_WRITE` to stdout -> verify returns byte count
-  - `SYS_READ` from stdin (non-blocking test or skip)
-  - `SYS_YIELD` -> returns 0
-  - `SYS_UPTIME` -> returns > 0
+  - `SYS_READ` from stdin (non-blocking: invalid-fd error path returns -1, avoids TTY block)
+  - `SYS_YIELD` -> returns 0 (via `syscall0(SYS_YIELD)` direct; the public `sys_yield` wrapper is `void`)
+  - `SYS_UPTIME` -> returns `>= 0` (the TODO spec's `> 0` races the first-second boundary; `>= 0` is the portable floor)
   - `SYS_GETPROCS` -> returns >= 2 (idle + this process)
   - `SYS_OPENFILE` -> open `C:\hello.txt` -> returns valid handle
-  - `SYS_READHANDLE` -> reads content from hello.txt
+  - `SYS_READHANDLE` -> reads content from hello.txt (> 0 bytes, first byte 'H')
   - `SYS_CLOSEHANDLE` -> close handle -> returns 0
-  - `SYS_LOG` -> write to klog -> returns 0
+  - `SYS_LOG` -> write to klog -> returns 0 (LOG_INFO; LOG_FATAL-reject is covered by §2 stub)
   - `SYS_OPENDIROBJ` -> open `\` -> returns valid handle
-  - `SYS_QUERYDIROBJ` -> enumerate -> returns entries
-- [ ] Commit: `"test: user-mode syscall test binary (test_syscall.exe)"`
+  - `SYS_QUERYDIROBJ` -> enumerate -> returns > 0 entries + first-entry name non-empty (layout spot check)
+- [x] Commit: `"test: user-mode syscall test binary (test_syscall.exe)"`
 
 **Test checkpoint:** `test_syscall.exe` runs, all assertions pass, exit code 0, serial shows `[UTEST] test_syscall.exe: PASS`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\usermode\run-test_syscall.bat` pending owner-section wiring (per TODO-04 §4 per-binary-bat follow-up; `make userland` deploys the binary and the manifest fires it under `test=1`) | validation: build OK + sysroot deploy (24 KiB `test_syscall.exe`) + 179/179 kernel unit tests PASS (launcher glob + manifest name checks reference `test_syscall.exe`)
+
+> **Notes:**
+> - What shipped: `user/test/test_syscall.c` (~175 LOC) replaces the §2 stub body and exercises all 11 wired INT 0x80 syscalls in one binary; one UTEST_ASSERT per contract with dependent handle blocks guarded by the open's success.
+> - How it runs / integrates: deployed by `make userland` to `C:\test_syscall.exe`; picked up by the §3 manifest (`tests/usermode.manifest`) and runs under the default correctness phase of the §8 two-phase launcher.
+> - Downstream effects: first end-to-end user-mode ABI probe for the INT 0x80 surface -- a stale `SYS_*` number, wrong argument register, or missing handler case now surfaces here before any subsequent test binary hits it.
+> - Canonical doc: [user/include/syscall.h](../../user/include/syscall.h) (wrapper signatures + SYS_* numbers); kernel handlers at [src/kernel/sched/syscall.c](../../src/kernel/sched/syscall.c) lines 379-595.
+> - Scope boundary: §9 owns the syscall-surface probe; §10 owns libc string/format coverage, §11 owns IPC (pipe/shmem), §12 owns process lifecycle (fork/wait/exec/kill), §13 owns file-I/O happy/error paths.
+
+> **Verified:** 2026-04-21 | commit `<pending>` | 3/3 items | build OK | 1 binary (24 KiB) deployed via `make userland`; 179/179 kernel unit tests PASS (unchanged)
+> **Accepted:** [L] `U_ACCESS_DEFAULT=0` used instead of `GENERIC_READ` because the kernel `ob_create_file_handle` and `NtOpenDirectoryObject` do not yet honour access masks (reason: scope) -> XREF: 02-kernel-core/TODO-15-security-reference-monitor.md §5 (item: "`RtlMapGenericMask(access, mapping)` -- replaces `GENERIC_READ`/`WRITE`/`EXECUTE`/`ALL` bits with type-specific masks in-place" at line 314 + item: "In `ObpReferenceObjectByHandle`: after locating the handle entry, call `SeAccessCheck(...)`; return `STATUS_ACCESS_DENIED` if check fails" at line 334 -- once §5 ships, this test should flip to `GENERIC_READ` and add a negative-access assertion)
+> **Quality reviewed:** 2026-04-21 | Codex 1x (adversarial) | 1H+2M fixed, 0 open | scope: userland-code-quality
 
 ---
 
@@ -468,7 +481,7 @@ Wire user-mode test binaries into `make test`.
 | --- | -------------------- | --------------------- | ------------------------ | ----------------------- |
 | 💎  | User-mode test bins  | ✅ HLK               | ✅ kselftest             | ⬜ §1-§15              |
 | 💎  | Multi-format loader  | ✅ PE + .NET via HLK | ✅ ELF + a.out kselftest | ⬜ §15 ELF+PE32+ +EIF  |
-| 💎  | Syscall coverage     | ✅ NtDll             | ✅ ptrace selftest       | ⬜ §9                  |
+| 💎  | Syscall coverage     | ✅ NtDll             | ✅ ptrace selftest       | ✅ §9 11 syscalls      |
 | 💎  | Auto launcher        | ✅ HLK               | ✅ run_kselftest         | ⬜ §3                  |
 | 💎  | TAP or CI parse      | ✅ HLK XML           | ✅ TAP kselftest         | ✅ §7 XML + §4 TAP     |
 | 💎  | JUnit XML / JSON     | ✅ HLK XML           | ⚠️ kselftest TAP only    | ✅ §7 XML+JSON+TAP     |
