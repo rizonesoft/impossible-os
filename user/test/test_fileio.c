@@ -69,16 +69,20 @@ UTEST_DEFINE_STATE();
  * the stack frame. */
 #define FILE_BUF_SIZE 64
 
-/* Opaque struct mirroring the kernel's OBJECT_DIRECTORY_INFORMATION
- * row shape (name[64] + type_name[32] = 96 bytes). Only used as an
- * opaque byte region for §13's enumeration probe -- we just confirm
- * the kernel wrote non-zero bytes into the first entry's name field.
- * The §9 test_syscall.exe already asserts layout offsets; there is
- * no reason to re-assert them here. */
+/* Mirror of the kernel's OBJECT_DIRECTORY_INFORMATION row shape
+ * (name[64] + type_name[32] = 96 bytes). Re-asserted here so
+ * test_fileio.exe is self-sufficient: a kernel-side layout drift
+ * surfaces in this binary alone, not only in test_syscall.exe. The
+ * review Codex 2026-04-21 M2 caught the false-confidence risk of
+ * relying on §9 for layout guarantees this binary depends on. */
 struct u_obj_dir_info {
     char name[64];
     char type_name[32];
 };
+_Static_assert(sizeof(struct u_obj_dir_info) == 96,
+    "u_obj_dir_info mirrors kernel OBJECT_DIRECTORY_INFORMATION size");
+_Static_assert(__builtin_offsetof(struct u_obj_dir_info, type_name) == 64,
+    "u_obj_dir_info.type_name at offset 64 matches kernel layout");
 
 int main(void)
 {
@@ -134,10 +138,70 @@ int main(void)
          * and ob_reference_object_by_handle should reject it. If the
          * read path silently re-resolves a freed kernel object (or a
          * slot got reused without us noticing), this returns >= 0 and
-         * surfaces the bug. -1 is the sole success. */
+         * surfaces the bug. -1 is the sole success.
+         *
+         * Fill buf with a sentinel byte pattern BEFORE the post-close
+         * read so a failure that still writes to caller memory (stale
+         * ref -> type-confused copy) is caught -- not just the return
+         * value. Review Codex 2026-04-21 M1 required this hardening:
+         * "after_close < 0" alone passes even if the kernel corrupts
+         * user memory along the way. */
+        const uint8_t SENTINEL = 0xA5u;
+        {
+            uint32_t i;
+            for (i = 0; i < FILE_BUF_SIZE; i++)
+                ((uint8_t *)buf)[i] = SENTINEL;
+        }
         long after_close = sys_readhandle(fh, buf, FILE_BUF_SIZE);
         UTEST_ASSERT(after_close < 0,
                      "sys_readhandle on closed handle returns < 0");
+
+        /* Buffer integrity: every byte must still be the sentinel.
+         * A single differing byte proves the kernel wrote to caller
+         * memory on the failure path -- a correctness bug regardless
+         * of the return code. */
+        {
+            int clean = 1;
+            uint32_t i;
+            for (i = 0; i < FILE_BUF_SIZE; i++) {
+                if (((uint8_t *)buf)[i] != SENTINEL) {
+                    clean = 0;
+                    break;
+                }
+            }
+            UTEST_ASSERT(clean == 1,
+                         "failed sys_readhandle leaves caller buffer unchanged");
+        }
+    }
+
+    /* ---- 2b. Negative access coverage: write-only open rejects reads -- *
+     * Codex review 2026-04-21 H1: the happy-path probe only proves
+     * that bit 0x01 (U_OPEN_READ) opens hello.txt readably. Without
+     * exercising the opposite mode, an access-gate regression that
+     * accepts ANY non-zero mask (or flips VFS_O_WRITE into VFS_O_READ)
+     * would still pass.
+     *
+     * Review Codex 2026-04-21 M2 tightened this further: the probe
+     * MUST NOT silently degrade to a no-op if the open ever starts
+     * failing. IXFS is read-write today and vfs_open accepts a
+     * WRITE-only handle on any file, so the open is expected to
+     * succeed unconditionally. If a future share-mode / ACL / policy
+     * change makes write-only open fail, that MUST surface as a FAIL
+     * here so the operator updates this fixture -- not as a silent
+     * loss of read-reject coverage. The subsequent read-reject
+     * assertion then proves ob_file.c:144's `!(fo->access & VFS_O_READ)`
+     * branch is still honoured. */
+    HANDLE wh = sys_openfile("C:\\hello.txt", U_OPEN_WRITE);
+    UTEST_ASSERT(wh != INVALID_HANDLE_VALUE,
+                 "sys_openfile(\"C:\\\\hello.txt\", WRITE-only) succeeds "
+                 "(if this FAILs, update the test fixture -- open policy changed)");
+    if (wh != INVALID_HANDLE_VALUE) {
+        char wbuf[16];
+        long wread = sys_readhandle(wh, wbuf, sizeof(wbuf));
+        UTEST_ASSERT(wread < 0,
+                     "sys_readhandle on WRITE-only handle returns < 0");
+        UTEST_ASSERT(sys_closehandle(wh) == 0,
+                     "sys_closehandle(write-only handle) returns 0");
     }
 
     /* ---- 3. Error path: open nonexistent file ---------------------- *

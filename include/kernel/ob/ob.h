@@ -180,11 +180,21 @@ int NtQueryObject(HANDLE_TABLE *ht, HANDLE handle,
 
 /* --- NtOpenDirectoryObject / NtQueryDirectoryObject ---------------------- */
 
-/* Directory entry info returned by NtQueryDirectoryObject */
+/* Directory entry info returned by NtQueryDirectoryObject.
+ * Layout is ABI for user-mode sys_querydirobj callers: the same 96
+ * bytes are copied across the INT 0x80 boundary unchanged. User
+ * mirrors in user/test/test_syscall.c + user/test/test_fileio.c
+ * redeclare this struct and _Static_assert the same invariants --
+ * the kernel-side asserts below make the producer side also
+ * drift-detected, so neither side can reorder/pad silently. */
 typedef struct {
     char name[64];       /* object component name (OB_NAME_MAX) */
     char type_name[32];  /* object type name ("File", "Process", etc.) */
 } OBJECT_DIRECTORY_INFORMATION;
+_Static_assert(sizeof(OBJECT_DIRECTORY_INFORMATION) == 96,
+    "OBJECT_DIRECTORY_INFORMATION is a 96-byte ABI row (name[64]+type_name[32])");
+_Static_assert(__builtin_offsetof(OBJECT_DIRECTORY_INFORMATION, type_name) == 64,
+    "OBJECT_DIRECTORY_INFORMATION.type_name at offset 64");
 
 /* NtOpenDirectoryObject -- open a namespace directory by path.
  * Returns 0 on success (*out_handle set), -1 on failure. */

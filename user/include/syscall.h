@@ -310,9 +310,22 @@ static inline long sys_unmapview(uintptr_t base)
 /* --- Object-Manager-backed file + directory handles --- */
 
 /* Open a file by Windows-style canonical path (e.g. "C:\\hello.txt").
- * `access` is a Windows-style ACCESS_MASK bitfield interpreted by the
- * kernel's ob_create_file_handle. Returns the file HANDLE, or
- * INVALID_HANDLE_VALUE on failure. */
+ *
+ * `access` is forwarded verbatim to `ob_create_file_handle`. Today
+ * the kernel gates `sys_readhandle` on the VFS bit `VFS_O_READ` (0x01)
+ * and `sys_writehandle` on `VFS_O_WRITE` (0x02) -- see
+ * src/kernel/ob/ob_file.c. The Windows `ACCESS_MASK` semantics
+ * (GENERIC_READ = 0x80000000 mapped via RtlMapGenericMask +
+ * SeAccessCheck) are NOT yet implemented; that mapping is deferred
+ * to the Security Reference Monitor roadmap. Until SRM lands,
+ * callers must pass raw VFS bits:
+ *   0x01  -- read (required for sys_readhandle to succeed)
+ *   0x02  -- write (required for sys_writehandle to succeed)
+ *   0x03  -- read+write
+ * Once SRM ships this wrapper's contract flips to full Win32
+ * ACCESS_MASK and GENERIC_READ/WRITE/EXECUTE/ALL start working.
+ *
+ * Returns the file HANDLE, or INVALID_HANDLE_VALUE on failure. */
 static inline HANDLE sys_openfile(const char *path, uint32_t access)
 {
     return (HANDLE)syscall2(SYS_OPENFILE, (long)path, (long)access);
