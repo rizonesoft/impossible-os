@@ -30,6 +30,15 @@
 /* PD index for the 2 MiB region containing user ELF (0x800000 >> 21 = 4) */
 #define USER_PD_INDEX   (USER_ELF_BASE >> 21)
 
+/* Shmem / section view user-VA range (distinct from USER_ELF range).
+ * Each user task has a private 256 MiB bump region for MapViewOfSection
+ * allocations. Shmem sections get mapped here with User+Writable PTEs
+ * so the user binary can read/write them without the USER_ELF range's
+ * image-only invariant. task_exec resets the per-task bump pointer to
+ * the base so a fresh process image starts fresh. */
+#define SECTION_VIEW_BASE   0x10000000UL   /* 256 MiB */
+#define SECTION_VIEW_LIMIT  0x20000000UL   /* 512 MiB -- 256 MiB range */
+
 /* Compile-time sanity checks */
 _Static_assert(USER_ELF_BASE == 0x800000, "USER_ELF_BASE must be 0x800000");
 _Static_assert(USER_ELF_SIZE == 0x100000, "USER_ELF_SIZE must be 1 MiB");

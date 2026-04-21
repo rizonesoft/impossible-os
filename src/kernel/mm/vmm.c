@@ -621,7 +621,17 @@ void vmm_set_user_page(uintptr_t pml4_phys, uintptr_t virt)
  * XREF: 02-kernel-core/TODO-11-peb-teb-user-abi.md §14 (consumer)
  */
 
-int vmm_map_user_page(uintptr_t cr3, uintptr_t virt, uintptr_t phys)
+/* Core map-at-user-VA routine shared by vmm_map_user_page (zero-fill)
+ * and vmm_share_user_page (preserve existing frame content). Handles
+ * PML4/PDPT/PD/PT walk + split + User-bit propagation + PT_OWNED
+ * tagging. Caller chooses whether the backing frame is zeroed.
+ *
+ * `zero_frame`: 1 = pre-zero the backing frame before mapping (prevents
+ *              kernel data leak to user mode -- the default for fresh
+ *              PMM allocations). 0 = preserve frame content (shared
+ *              memory sections, existing named mappings). */
+static int map_user_page_impl(uintptr_t cr3, uintptr_t virt, uintptr_t phys,
+                              int zero_frame)
 {
     pte_t *pml4, *pdpt, *pd, *pt;
     uint64_t pml4i, pdpti, pdi, pti;
@@ -636,10 +646,12 @@ int vmm_map_user_page(uintptr_t cr3, uintptr_t virt, uintptr_t phys)
     pdi   = pd_index(virt);
     pti   = pt_index(virt);
 
-    /* Zero-fill the frame BEFORE mapping -- prevent kernel data leaking
-     * to user mode.  The frame is identity-mapped so (uint8_t *)phys is
-     * a valid kernel pointer. */
-    zero_page(phys);
+    /* Zero-fill the frame BEFORE mapping -- prevents kernel data
+     * leaking to user mode.  The frame is identity-mapped so
+     * (uint8_t *)phys is a valid kernel pointer. Shared-memory
+     * callers skip this (zero_frame=0) so pre-written data survives. */
+    if (zero_frame)
+        zero_page(phys);
 
     /* --- Walk / create PML4 -> PDPT --- */
     if (pml4[pml4i] & VMM_FLAG_PRESENT) {
@@ -695,10 +707,22 @@ int vmm_map_user_page(uintptr_t cr3, uintptr_t virt, uintptr_t phys)
         pt = (pte_t *)f;
     }
 
-    /* --- Install final PTE --- */
-    if (pt[pti] & VMM_FLAG_PRESENT) {
+    /* --- Install final PTE ---
+     *
+     * Reject ONLY if a user-visible mapping already exists at this VA --
+     * overlapping user mappings would hide each other and mask caller
+     * bugs, so the failure must surface. A present PTE WITHOUT the User
+     * bit (typical: a kernel identity-map slice left behind by a fresh
+     * huge-page split above) is not a real caller-observable mapping;
+     * overwriting it with the new user PTE is correct and expected.
+     * The previous check rejected EVERY present PTE, which made
+     * map_user_page_impl fail on the first call for any VA in a
+     * freshly-split 2 MiB region because the split initialised all
+     * 512 PTEs with the old huge-page identity mapping (Present +
+     * Writable, User=0). */
+    if ((pt[pti] & VMM_FLAG_PRESENT) && (pt[pti] & VMM_FLAG_USER)) {
         klog(LOG_ERROR, "mm",
-             "vmm_map_user_page: VA 0x%lx already mapped (PTE=0x%lx)",
+             "vmm_map_user_page: VA 0x%lx already mapped to user (PTE=0x%lx)",
              (uint64_t)virt, (uint64_t)pt[pti]);
         return -1;  /* caller must unmap first */
     }
@@ -711,6 +735,16 @@ int vmm_map_user_page(uintptr_t cr3, uintptr_t virt, uintptr_t phys)
 
     vmm_flush_tlb(virt);
     return 0;
+}
+
+int vmm_map_user_page(uintptr_t cr3, uintptr_t virt, uintptr_t phys)
+{
+    return map_user_page_impl(cr3, virt, phys, /*zero_frame=*/1);
+}
+
+int vmm_share_user_page(uintptr_t cr3, uintptr_t virt, uintptr_t phys)
+{
+    return map_user_page_impl(cr3, virt, phys, /*zero_frame=*/0);
 }
 
 void vmm_remap_user_page(uintptr_t pml4_phys, uintptr_t virt,
@@ -752,6 +786,33 @@ void vmm_remap_user_page(uintptr_t pml4_phys, uintptr_t virt,
      * not free) or private (its own concern). */
     pt[pti] = new_phys | VMM_FLAG_PRESENT | VMM_FLAG_WRITABLE
                        | VMM_FLAG_USER | VMM_FLAG_PAGE_OWNED;
+}
+
+void vmm_unshare_user_page(uintptr_t cr3, uintptr_t virt)
+{
+    pte_t *pml4, *pdpt, *pd, *pt;
+    uint64_t pml4i, pdpti, pdi, pti;
+
+    virt &= ~((uintptr_t)0xFFF);
+
+    pml4  = (pte_t *)cr3;
+    pml4i = pml4_index(virt);
+    pdpti = pdpt_index(virt);
+    pdi   = pd_index(virt);
+    pti   = pt_index(virt);
+
+    if (!(pml4[pml4i] & VMM_FLAG_PRESENT)) return;
+    pdpt = (pte_t *)(pml4[pml4i] & PTE_ADDR_MASK);
+    if (!(pdpt[pdpti] & VMM_FLAG_PRESENT)) return;
+    pd = (pte_t *)(pdpt[pdpti] & PTE_ADDR_MASK);
+    if (!(pd[pdi] & VMM_FLAG_PRESENT)) return;
+    if (pd[pdi] & VMM_FLAG_HUGE) return;
+    pt = (pte_t *)(pd[pdi] & PTE_ADDR_MASK);
+
+    pt[pti] = 0;
+    vmm_flush_tlb(virt);
+    /* Deliberately do NOT pmm_free_frame -- the frame belongs to a
+     * SECTION_OBJECT and must outlive this task's view. */
 }
 
 void vmm_unmap_user_page(uintptr_t cr3, uintptr_t virt)

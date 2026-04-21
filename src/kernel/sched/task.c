@@ -1738,6 +1738,14 @@ int task_exec(const uint8_t *data, uint64_t size)
         tasks[pid].user_auxv = (void *)ustk;
         tasks[pid].user_auxv_pairs = naux;
 
+        /* Reset the section-view bump allocator so the new image's
+         * first MapViewOfSection / sys_shmem_map starts at
+         * SECTION_VIEW_BASE regardless of any mappings the prior
+         * image installed. The prior image's section-view PTEs are
+         * in the old cr3, which task_exec replaces further down,
+         * so they're reclaimed with it. */
+        tasks[pid].next_section_view_va = 0;
+
         /* envp NULL terminator */
         ustk--;
         *ustk = 0;

@@ -11,6 +11,8 @@
 #include "kernel/ob/ob.h"
 #include "kernel/ob/ob_file.h"
 #include "kernel/mm/pmm.h"
+#include "kernel/mm/vmm.h"
+#include "kernel/mm/user_range.h"
 #include "kernel/sched/task.h"
 #include "kernel/sched/spinlock.h"
 #include "kernel/fs/vfs.h"
@@ -379,7 +381,79 @@ uintptr_t ObMapViewOfSectionFull(HANDLE_TABLE *ht, HANDLE section_handle,
         return 0;
     }
 
-    map_base = so->phys_base + (uintptr_t)section_offset_bytes;
+    /* Resolve the target task and decide which kind of mapping to install:
+     *
+     *   - USER task (cr3 != 0) -- install per-task PTEs at a bump-allocated
+     *     VA in the SECTION_VIEW_BASE range (0x10000000+). Section frames
+     *     get User+Writable bits only in THIS task's address space, so
+     *     other processes cannot touch them through the same VA. Return
+     *     the user VA so the caller can dereference it. Required for
+     *     sys_shmem_map to produce a pointer the user binary can write to.
+     *
+     *   - KERNEL task (cr3 == 0) -- return the identity-mapped physical
+     *     address as before. Kernel consumers (tests, ipc.c kernel-side
+     *     paths) dereference via kernel identity map; no user PTE needed.
+     *
+     * The previous implementation ALWAYS returned `so->phys_base + offset`,
+     * which works for kernel callers but handed user callers a kernel
+     * VA they could not dereference without a #PF. Observed 2026-04-22
+     * as test_ipc's sys_shmem_map round-trip panic'd on the first write
+     * with CR2 = the returned phys address, User-bit error. */
+    struct task *t = (view_owner_pid < TASK_MAX) ?
+                     task_get_by_pid(view_owner_pid) : (struct task *)0;
+
+    if (t && t->cr3) {
+        /* User task: install the view at a bump-allocated VA. */
+        uintptr_t user_va;
+        uint32_t pages = (span + PMM_FRAME_SIZE - 1) / PMM_FRAME_SIZE;
+        uint32_t pi;
+
+        /* Initialize the bump pointer lazily on first view. */
+        if (t->next_section_view_va == 0)
+            t->next_section_view_va = SECTION_VIEW_BASE;
+
+        /* Check we have room in the view range. */
+        if (t->next_section_view_va
+            + (uintptr_t)pages * PMM_FRAME_SIZE > SECTION_VIEW_LIMIT) {
+            so->views[i].in_use = 0;  /* roll back the slot */
+            spin_unlock_irqrestore(&so->lk, irqf);
+            klog(LOG_WARN, "ob",
+                 "Section view VA range exhausted for PID %u (limit 0x%x)",
+                 (uint64_t)view_owner_pid, (uint64_t)SECTION_VIEW_LIMIT);
+            return 0;
+        }
+
+        user_va = t->next_section_view_va;
+        t->next_section_view_va += (uintptr_t)pages * PMM_FRAME_SIZE;
+
+        /* Install PTEs for each page of the view in the task's cr3.
+         * vmm_share_user_page preserves existing frame content (no
+         * zero-fill) because section backing may already hold data
+         * from other mappers or named-section initialization. */
+        for (pi = 0; pi < pages; pi++) {
+            uintptr_t va_pi   = user_va   + (uintptr_t)pi * PMM_FRAME_SIZE;
+            uintptr_t phys_pi = so->phys_base
+                              + (uintptr_t)section_offset_bytes
+                              + (uintptr_t)pi * PMM_FRAME_SIZE;
+            if (vmm_share_user_page(t->cr3, va_pi, phys_pi) != 0) {
+                /* Partial mapping failure -- roll back installed PTEs.
+                 * Leave already-mapped entries; caller will sys_unmapview
+                 * eventually. The bump pointer stays advanced (simple,
+                 * bounded loss). */
+                so->views[i].in_use = 0;
+                spin_unlock_irqrestore(&so->lk, irqf);
+                klog(LOG_WARN, "ob",
+                     "ObMapViewOfSection: vmm_share_user_page failed at VA 0x%x",
+                     (uint64_t)va_pi);
+                return 0;
+            }
+        }
+
+        map_base = user_va;
+    } else {
+        /* Kernel consumer -- identity-mapped physical address works. */
+        map_base = so->phys_base + (uintptr_t)section_offset_bytes;
+    }
 
     so->views[i].task_pid       = view_owner_pid;
     so->views[i].base_addr      = map_base;
@@ -473,9 +547,39 @@ int ObUnmapViewOfSectionByBase(HANDLE_TABLE *ht, uint32_t view_owner_pid,
             spin_lock_irqsave(&so->lk, &irqf);
             idx = section_find_view_index(so, view_owner_pid, base_address);
             if (idx >= 0) {
+                /* Snapshot the view's VA range + pid under the lock so the
+                 * PTE teardown can happen after the unlock (vmm_unshare_user_page
+                 * may do its own TLB operations that would deadlock against
+                 * other per-section waiters if held). */
+                uintptr_t view_base  = so->views[(uint32_t)idx].base_addr;
+                uint32_t  view_bytes = so->views[(uint32_t)idx].view_bytes;
+                uint32_t  view_pid   = so->views[(uint32_t)idx].task_pid;
+
                 so->views[(uint32_t)idx].in_use = 0;
                 so->map_count--;
                 spin_unlock_irqrestore(&so->lk, irqf);
+
+                /* Tear down the per-task PTEs that ObMapViewOfSectionFull
+                 * installed via vmm_share_user_page. Skip for kernel-task
+                 * mappings (cr3 == 0) where no user PTEs exist. The phys
+                 * frames themselves stay alive -- vmm_unshare_user_page
+                 * does NOT pmm_free_frame; the section's on_delete
+                 * callback reclaims them when the last handle closes. */
+                struct task *t = (view_pid < TASK_MAX) ?
+                                 task_get_by_pid(view_pid) : (struct task *)0;
+                if (t && t->cr3 &&
+                    view_base >= SECTION_VIEW_BASE &&
+                    view_base <  SECTION_VIEW_LIMIT) {
+                    uint32_t pages =
+                        (view_bytes + PMM_FRAME_SIZE - 1) / PMM_FRAME_SIZE;
+                    uint32_t pi;
+                    for (pi = 0; pi < pages; pi++) {
+                        vmm_unshare_user_page(
+                            t->cr3,
+                            view_base + (uintptr_t)pi * PMM_FRAME_SIZE);
+                    }
+                }
+
                 /* Drop the pin that ObMapViewOfSectionFull took. */
                 ObDereferenceObject(so);
                 return 0;

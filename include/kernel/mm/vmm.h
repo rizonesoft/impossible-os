@@ -111,9 +111,24 @@ void vmm_set_user_page(uintptr_t pml4_phys, uintptr_t virt);
  * Returns 0 on success, -1 on allocation failure. */
 int vmm_map_user_page(uintptr_t cr3, uintptr_t virt, uintptr_t phys);
 
+/* Map an EXISTING physical frame at a user VA in a per-process PML4.
+ * Same as vmm_map_user_page but does NOT zero-fill the frame -- used for
+ * MapViewOfSection / sys_shmem_map where the backing frame may already
+ * contain shared-memory data from another process or a named section.
+ * Creates intermediate tables as needed with User+Writable flags; auto-
+ * splits huge pages.  Returns 0 on success, -1 on allocation failure. */
+int vmm_share_user_page(uintptr_t cr3, uintptr_t virt, uintptr_t phys);
+
 /* Unmap a user page from a per-process PML4.  Clears the PTE, frees the
  * physical frame via pmm_free_frame().  Does NOT free intermediate tables. */
 void vmm_unmap_user_page(uintptr_t cr3, uintptr_t virt);
+
+/* Clear a user PTE WITHOUT freeing the backing physical frame.  Used by
+ * sys_unmapview / ObUnmapViewOfSection to tear down a section view
+ * that vmm_share_user_page installed -- the phys frame is owned by the
+ * SECTION_OBJECT and must stay alive for other mappers; only this
+ * task's PTE goes away. Flushes the TLB for `virt`. */
+void vmm_unshare_user_page(uintptr_t cr3, uintptr_t virt);
 
 /* Replace an existing user PTE with a fresh physical frame, tagging it
  * as private (PAGE_OWNED). Used by task_exec to isolate a forked child's

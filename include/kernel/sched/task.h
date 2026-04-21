@@ -168,6 +168,16 @@ struct task {
     void    *user_auxv;                  /* user-space VA of first AT_TYPE qword (0 if none) */
     uint32_t user_auxv_pairs;            /* number of (type, value) pairs including AT_NULL */
     uint32_t _auxv_pad;
+    /* --- User-mode section-view VA bump allocator ---
+     * Per-task bump pointer for MapViewOfSection / sys_shmem_map. The
+     * task's private user address space has a dedicated range starting
+     * at SECTION_VIEW_BASE (0x10000000) that is NOT in the USER_ELF
+     * region -- mapping a shmem frame there installs User-bit PTEs
+     * independent of the image range. Each view bumps the pointer by
+     * its page-rounded size; no reclaim on unmap (simple, no
+     * fragmentation, bounded by SECTION_VIEW_LIMIT). Resets on
+     * task_exec (fresh process image starts fresh). */
+    uintptr_t next_section_view_va;      /* 0 = uninitialized, >0 = next free VA */
 };
 
 /* Task entry function type */
