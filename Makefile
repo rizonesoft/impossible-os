@@ -366,9 +366,9 @@ USER_CFLAGS := --target=x86_64-elf \
                -mno-mmx -mno-sse -mno-sse2 -std=gnu11 -O2 -g \
                -MMD -MP
 
-userland: $(SYSROOT)/hello.exe $(SYSROOT)/cmd.exe $(SYSROOT)/test_harness_smoke.exe $(SYSROOT)/test_syscall.exe $(SYSROOT)/test_faultinject.exe $(SYSROOT)/test_smoke_boot.exe $(SYSROOT)/test_stress_libc.exe $(SYSROOT)/test_perf_syscall.exe $(SYSROOT)/test_libc.exe $(SYSROOT)/test_ipc.exe $(SYSROOT)/test_process.exe $(SYSROOT)/test_fileio.exe
+userland: $(SYSROOT)/hello.exe $(SYSROOT)/cmd.exe $(SYSROOT)/test_harness_smoke.exe $(SYSROOT)/test_syscall.exe $(SYSROOT)/test_faultinject.exe $(SYSROOT)/test_smoke_boot.exe $(SYSROOT)/test_stress_libc.exe $(SYSROOT)/test_perf_syscall.exe $(SYSROOT)/test_libc.exe $(SYSROOT)/test_ipc.exe $(SYSROOT)/test_process.exe $(SYSROOT)/test_fileio.exe $(SYSROOT)/test_win32.exe
 
-$(SYSROOT)/hello.exe $(SYSROOT)/cmd.exe $(SYSROOT)/test_harness_smoke.exe $(SYSROOT)/test_syscall.exe $(SYSROOT)/test_faultinject.exe $(SYSROOT)/test_smoke_boot.exe $(SYSROOT)/test_stress_libc.exe $(SYSROOT)/test_perf_syscall.exe $(SYSROOT)/test_libc.exe $(SYSROOT)/test_ipc.exe $(SYSROOT)/test_process.exe $(SYSROOT)/test_fileio.exe &: sysroot user/hello.c user/cmd.c \
+$(SYSROOT)/hello.exe $(SYSROOT)/cmd.exe $(SYSROOT)/test_harness_smoke.exe $(SYSROOT)/test_syscall.exe $(SYSROOT)/test_faultinject.exe $(SYSROOT)/test_smoke_boot.exe $(SYSROOT)/test_stress_libc.exe $(SYSROOT)/test_perf_syscall.exe $(SYSROOT)/test_libc.exe $(SYSROOT)/test_ipc.exe $(SYSROOT)/test_process.exe $(SYSROOT)/test_fileio.exe $(SYSROOT)/test_win32.exe &: sysroot user/hello.c user/cmd.c \
                                                                               user/test/test_harness_smoke.c \
                                                                               user/test/test_syscall.c \
                                                                               user/test/test_faultinject.c \
@@ -379,11 +379,14 @@ $(SYSROOT)/hello.exe $(SYSROOT)/cmd.exe $(SYSROOT)/test_harness_smoke.exe $(SYSR
                                                                               user/test/test_ipc.c \
                                                                               user/test/test_process.c \
                                                                               user/test/test_fileio.c \
+                                                                              user/test/test_win32.c \
                                                                               user/include/test.h \
                                                                               user/include/syscall.h \
+                                                                              user/include/win32.h \
                                                                               user/lib/crt0.asm \
                                                                               user/lib/string.c user/lib/stdlib.c user/lib/stdio.c \
-                                                                              user/lib/ctype.c user/lib/math.c user/user.ld
+                                                                              user/lib/ctype.c user/lib/math.c \
+                                                                              user/lib/win32.c user/user.ld
 	@mkdir -p $(BUILD_DIR)/user/lib $(BUILD_DIR)/user/test
 	$(AS) -f elf64 -g user/lib/crt0.asm -o $(BUILD_DIR)/user/lib/crt0.o
 	$(CC) $(USER_CFLAGS) -Iuser/include -c user/lib/string.c -o $(BUILD_DIR)/user/lib/string.o
@@ -391,12 +394,14 @@ $(SYSROOT)/hello.exe $(SYSROOT)/cmd.exe $(SYSROOT)/test_harness_smoke.exe $(SYSR
 	$(CC) $(USER_CFLAGS) -Iuser/include -c user/lib/stdio.c -o $(BUILD_DIR)/user/lib/stdio.o
 	$(CC) $(USER_CFLAGS) -Iuser/include -c user/lib/ctype.c -o $(BUILD_DIR)/user/lib/ctype.o
 	$(CC) $(USER_CFLAGS) -Iuser/include -c user/lib/math.c -o $(BUILD_DIR)/user/lib/math.o
+	$(CC) $(USER_CFLAGS) -Iuser/include -c user/lib/win32.c -o $(BUILD_DIR)/user/lib/win32.o
 	$(AR) rcs $(BUILD_DIR)/user/libc.a \
 		$(BUILD_DIR)/user/lib/string.o \
 		$(BUILD_DIR)/user/lib/stdlib.o \
 		$(BUILD_DIR)/user/lib/stdio.o \
 		$(BUILD_DIR)/user/lib/ctype.o \
-		$(BUILD_DIR)/user/lib/math.o
+		$(BUILD_DIR)/user/lib/math.o \
+		$(BUILD_DIR)/user/lib/win32.o
 	@echo "[LIBC] $(BUILD_DIR)/user/libc.a created"
 	@# Build user-mode ELF programs (linked against crt0 + libc)
 	$(CC) $(USER_CFLAGS) -Iuser/include -c user/hello.c -o $(BUILD_DIR)/user/hello.o
@@ -435,6 +440,9 @@ $(SYSROOT)/hello.exe $(SYSROOT)/cmd.exe $(SYSROOT)/test_harness_smoke.exe $(SYSR
 	$(CC) $(USER_CFLAGS) -Iuser/include -c user/test/test_fileio.c -o $(BUILD_DIR)/user/test/test_fileio.o
 	$(LD) -nostdlib -static -T user/user.ld -o $(BUILD_DIR)/user/test/test_fileio.exe \
 		$(BUILD_DIR)/user/lib/crt0.o $(BUILD_DIR)/user/test/test_fileio.o $(BUILD_DIR)/user/libc.a
+	$(CC) $(USER_CFLAGS) -Iuser/include -c user/test/test_win32.c -o $(BUILD_DIR)/user/test/test_win32.o
+	$(LD) -nostdlib -static -T user/user.ld -o $(BUILD_DIR)/user/test/test_win32.exe \
+		$(BUILD_DIR)/user/lib/crt0.o $(BUILD_DIR)/user/test/test_win32.o $(BUILD_DIR)/user/libc.a
 	@cp -f $(BUILD_DIR)/user/hello.exe $(SYSROOT)/hello.exe
 	@cp -f $(BUILD_DIR)/user/cmd.exe $(SYSROOT)/cmd.exe
 	@cp -f $(BUILD_DIR)/user/test/test_harness_smoke.exe $(SYSROOT)/test_harness_smoke.exe
@@ -447,11 +455,12 @@ $(SYSROOT)/hello.exe $(SYSROOT)/cmd.exe $(SYSROOT)/test_harness_smoke.exe $(SYSR
 	@cp -f $(BUILD_DIR)/user/test/test_ipc.exe $(SYSROOT)/test_ipc.exe
 	@cp -f $(BUILD_DIR)/user/test/test_process.exe $(SYSROOT)/test_process.exe
 	@cp -f $(BUILD_DIR)/user/test/test_fileio.exe $(SYSROOT)/test_fileio.exe
+	@cp -f $(BUILD_DIR)/user/test/test_win32.exe $(SYSROOT)/test_win32.exe
 	@mkdir -p $(SYSROOT)/tests
 	@cp -f tests/usermode.manifest $(SYSROOT)/tests/usermode.manifest
 	@cp -f tests/usermode-cleanup.manifest $(SYSROOT)/tests/usermode-cleanup.manifest
 	@cp -f tests/perf-baseline.json $(SYSROOT)/tests/perf-baseline.json
-	@echo "[USER] hello/cmd + test_{harness_smoke,syscall,faultinject,smoke_boot,stress_libc,perf_syscall,libc,ipc,process,fileio}.exe + manifests -> sysroot"
+	@echo "[USER] hello/cmd + test_{harness_smoke,syscall,faultinject,smoke_boot,stress_libc,perf_syscall,libc,ipc,process,fileio,win32}.exe + manifests -> sysroot"
 
 ## iso: Package kernel + sysroot into a bootable UEFI ISO via GRUB (optional)
 iso: $(ISO_FILE)

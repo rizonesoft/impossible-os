@@ -33,6 +33,7 @@ test_ipc.exe
 # count for 1 (launcher task) + 3 (forked children) = 4 slots.
 test_process.exe expects_tasks=4
 test_fileio.exe
+test_win32.exe
 test_faultinject.exe
 
 # §8 stress + perf phase -- run after all correctness passes.

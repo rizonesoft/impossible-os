@@ -60,7 +60,7 @@
 | 💎  |  11   | IPC test binary (`test_ipc.exe`)                    | §1, §2, §3                         |  [x]   |
 | 💎  |  12   | Process lifecycle test (`test_process.exe`)         | §1, §3                             |  [x]   |
 | 💎  |  13   | File I/O test (`test_fileio.exe`)                   | §1, §2, §3                         |  [x]   |
-| ⭐  |  14   | Win32 API test binary (`test_win32.exe`)            | §1, §3, D02T12 §6                  |  [ ]   |
+| ⭐  |  14   | Win32 API test binary (`test_win32.exe`)            | §1, §3, D02T12 §6                  |  [x]   |
 | 💎  |  15   | Binary format loader coverage (ELF / PE32+ / EIF)   | §1, §3, D02T17 §5, D02T17 §19      |  [ ]   |
 | 💎  |  16   | Build integration: `make test` includes user tests  | §3-§15                             |  [ ]   |
 
@@ -469,17 +469,27 @@ Test handle-based file operations.
 
 ## 14. Win32 API Test Binary
 
-Test Win32 API stubs once they are implemented (depends on `D02T12 §6`).
+First Impossible-OS probe of the Win32 API surface from ring 3 -- proves the "Win32 native" orientation works end-to-end at the source level without the PE32+ dynamic linker (§15). Depends on `D02T12 §6` (NtCreateFile / NtReadFile / NtClose handlers).
 
-- [ ] `user/test/test_win32.c`:
-  - `GetCurrentProcessId()` -> returns PID > 0
-  - `CreateFile("C:\\hello.txt", GENERIC_READ, ...)` -> valid handle
-  - `ReadFile(handle, buf, size, &read, NULL)` -> reads data
-  - `CloseHandle(handle)` -> returns TRUE
-  - `GetTickCount()` -> returns > 0
-- [ ] Commit: `"test: user-mode Win32 API test binary (test_win32.exe)"`
+- [x] Minimal user-space Win32 shim ([`user/include/win32.h`](../../user/include/win32.h), [`user/lib/win32.c`](../../user/lib/win32.c)): types (HANDLE via syscall.h, BOOL / DWORD / LPOVERLAPPED / LPSECURITY_ATTRIBUTES), constants (GENERIC_READ/WRITE/ALL, OPEN_EXISTING / CREATE_NEW / CREATE_ALWAYS / OPEN_ALWAYS / TRUNCATE_EXISTING, FILE_SHARE_*, FILE_ATTRIBUTE_NORMAL), and 5 functions routed through the SYSCALL fast path into `ssdt_dispatch`. Linked statically into `libc.a`.
+- [x] [`user/test/test_win32.c`](../../user/test/test_win32.c) with 8 UTEST_ASSERT contracts:
+  - `GetCurrentProcessId()` -> returns PID > 0 (reads TEB.ClientId.UniqueProcess at `gs:0x40`)
+  - `CreateFileA("C:\\hello.txt", GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL)` -> valid handle (routes to `NtOpenFile` via SYSCALL; Win32 GenericMask mapped client-side to VFS_O_READ until SRM ships)
+  - `ReadFile(handle, buf, 64, &read, NULL)` -> TRUE, `read == 25`, byte-for-byte match of `"Hello from Impossible OS!"`
+  - `CloseHandle(handle)` -> TRUE; double-close returns FALSE (handle-invalidation probe at the Win32 layer)
+  - `GetTickCount()` -> returns > 0 and is monotonically non-decreasing (reads KUSER_SHARED_DATA at `0x7FFE0000` + TickCountMultiplier math)
+- [x] Commit: `"test: user-mode Win32 API test binary (test_win32.exe)"`
 
-**Test checkpoint:** After `D02T12 §6` stubs exist, `test_win32.exe` exits 0 and serial shows `[UTEST] test_win32.exe: PASS`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** `test_win32.exe` exits 0 and serial shows `UTEST: test_win32.exe: PASS (exit=0)`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\usermode\run-test_win32.bat` (utest_filter=test_win32.exe + -NoKernelTests) | validation: build OK, test_win32.exe deployed to `C:\test_win32.exe` + registered in `tests/usermode.manifest`
+
+> **Notes:**
+> - What shipped: `user/include/win32.h` (~180 LOC), `user/lib/win32.c` (~350 LOC), `user/test/test_win32.c` (~130 LOC). 5 Win32 functions (`GetCurrentProcessId`, `GetTickCount`, `CreateFileA`, `ReadFile`, `CloseHandle`) + 8 UTEST_ASSERTs across 5 probes. Layout `_Static_assert`s on UNICODE_STRING (16 bytes, Buffer at 8), OBJECT_ATTRIBUTES (48 bytes, ObjectName at 16, Attributes at 24, SecurityDescriptor at 32), IO_STATUS_BLOCK (16 bytes, Information at 8) catch any kernel/user ABI drift at compile time.
+> - How it integrates: `user/lib/win32.c` compiles into `build/user/libc.a` and every user binary inherits the Win32 shim. `test_win32.exe` is deployed by `make userland` to `C:\test_win32.exe` and runs under the §8 correctness phase of the §3 launcher. Per-binary runner: `scripts\debug\usermode\run-test_win32.bat`. SYSCALL fast path reaches `ssdt_dispatch` with 4 register args; CreateFileA routes to `NtOpenFile` (SSDT 0x0011) which bakes FILE_OPEN into the disposition and tolerates a5=a6=0 for read-only opens.
+> - Downstream effects: first Win32-idiomatic user binary in the tree. Future userland tests (test_registry, test_threadapi, future Win32-only ports) can include `win32.h` and call the same shim without re-implementing syscall-level thunks. Also establishes the client-side GenericMask -> VFS bit translation pattern that migrates into the kernel once SRM (TODO-15 §5) lands.
+> - Canonical doc: [user/include/win32.h](../../user/include/win32.h) (API contract) + [user/lib/win32.c](../../user/lib/win32.c) (implementation + ABI static asserts). Kernel-side: [src/kernel/sched/syscall_entry.asm](../../src/kernel/sched/syscall_entry.asm) (SYSCALL entry), [src/kernel/nt/nt_syscall.c](../../src/kernel/nt/nt_syscall.c) (NtOpenFile / NtReadFile / NtClose handlers), [include/kernel/nt/nt_types.h](../../include/kernel/nt/nt_types.h) (canonical OBJECT_ATTRIBUTES / IO_STATUS_BLOCK layout).
+> - Scope boundary: §14 owns Win32-level CreateFile(OPEN_EXISTING) / ReadFile(sync) / CloseHandle / GetCurrentProcessId / GetTickCount. NOT in scope: CreateProcess, WaitForSingleObject, VirtualAlloc, registry APIs, CreateFile with CREATE_* / TRUNCATE_* dispositions (requires SYSCALL-arg extension past 4 regs), async ReadFile with OVERLAPPED, the Unicode-W variants, and full kernel32.dll via the PE32+ dynamic linker (§15). A thicker Win32 layer that supports those callers is the §15 territory once PE32+ imports land.
 
 ---
 
@@ -515,7 +525,7 @@ Wire user-mode test binaries into `make test`.
     - `scripts/debug/usermode/run-test_ipc.bat` (§11)
     - `scripts/debug/usermode/run-test_process.bat` (§12)
     - `scripts/debug/usermode/run-test_fileio.bat` (§13)
-    - `scripts/debug/usermode/run-test_win32.bat` (§14, lights up only after `D02T12 §6`)
+    - `scripts/debug/usermode/run-test_win32.bat` (§14)
     - `scripts/debug/usermode/run-test_loader_elf.bat` (§15)
     - `scripts/debug/usermode/run-test_loader_pe.bat` (§15)
     - `scripts/debug/usermode/run-test_loader_eif.bat` (§15)
@@ -549,7 +559,7 @@ Wire user-mode test binaries into `make test`.
 | 💎  | Perf regression      | ✅ perfview/PerfTest | ✅ perf + flame baseline | ⚠️ §8 report-only      |
 | 💎  | Test type taxonomy   | ✅ TAEF categories   | ✅ LTP test classes      | ✅ §8 4 types + phase  |
 | ⭐  | Fault-inject bridge  | ⚠️ AppVerifier hooks | ⚠️ debugfs failslab      | ✅ §5 SYS_FAULT_INJECT |
-| ⭐  | Win32 on non-Win     | ❌ N/A               | ❌ Wine only             | ⬜ §14                 |
+| ⭐  | Win32 on non-Win     | ❌ N/A               | ❌ Wine only             | ✅ §14 statically linked |
 
 > **Parity gaps:** 💎 rows with ⬜ map to the listed sections. **⭐ rows:** §5 fault-inject bridge gives a typed `test=1`-gated kernel-allocator probe surface that AppVerifier hooks Win32 for and Linux only exposes through debugfs; §14 Win32-on-non-Win depends on `D02T12 §6` Win32 thunk landing.
 
