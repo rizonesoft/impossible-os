@@ -1404,6 +1404,46 @@ int task_exec(const uint8_t *data, uint64_t size)
         return -1;
     }
 
+    /* Fork+exec isolation (2026-04-21): a forked child inherits its
+     * parent's per-process cr3, which identity-maps the USER_ELF range
+     * to the same physical frames the parent is actively running from.
+     * exec_load writes the new binary to those VAs -- corrupting the
+     * parent's code in-place. Before loading, replace the child's
+     * image-range PTEs with PRIVATE physical frames so the new binary
+     * lands in the child's own memory. The replacement is tagged
+     * PAGE_OWNED so vmm_destroy_user_pml4 frees the private frames on
+     * task exit. Launcher-spawned tasks (cr3=0 at entry) skip this
+     * step -- there's no parent sharing physical VAs with them, and
+     * the classic identity-mapped load is the right shape. */
+    if (tasks[pid].cr3) {
+        uintptr_t va;
+        for (va = USER_ELF_BASE; va < USER_ELF_END; va += 4096) {
+            uintptr_t new_phys = pmm_alloc_frame();
+            if (!new_phys) {
+                klog(LOG_ERROR, "sched",
+                     "task_exec: OOM allocating private frame for "
+                     "VA 0x%x -- forked-exec isolation degraded",
+                     (uint64_t)va);
+                /* Partial isolation still protects the pages we did
+                 * remap. Continue without aborting -- exec_load will
+                 * fall back to identity writes for unremapped pages
+                 * and may corrupt parent, but refusing exec is worse. */
+                break;
+            }
+            /* Zero the frame so the new binary's uninitialized BSS
+             * doesn't inherit whatever was in the frame before.
+             * pmm_alloc_frame returns an identity-mapped phys, so
+             * writing via (uintptr_t)new_phys is safe in kernel mode. */
+            {
+                uint64_t *p = (uint64_t *)new_phys;
+                uint32_t i;
+                for (i = 0; i < 512; i++) p[i] = 0;
+            }
+            vmm_remap_user_page(tasks[pid].cr3, va, new_phys);
+            vmm_flush_tlb(va);
+        }
+    }
+
     /* Load the binary via multi-format dispatcher (ELF, PE32+, EIF) */
     entry = exec_load(data, size, &exec_err);
     if (entry == 0) {
@@ -1475,58 +1515,64 @@ int task_exec(const uint8_t *data, uint64_t size)
     }
     tasks[pid].user_stack_base = (uint8_t *)(USER_ELF_END - USER_STACK_SIZE);
 
-    /* Recreate per-process PML4: mark loaded image pages as User.
-     * Uses the module list to determine the image range (format-agnostic).
-     * vmm_set_user_page auto-splits 2 MiB huge pages on demand.
-     *
-     * ORDER IS LOAD-BEARING (2026-04-21):
-     *   1. Create new cr3.
-     *   2. Mark image + stack User in new cr3.
-     *   3. Install new cr3 into tasks[pid].cr3 AND the live CR3 register.
-     *   4. THEN destroy the old cr3.
-     * The previous order (destroy old, then populate new, then assign)
-     * was a latent use-after-free on any task_exec path where the caller
-     * had a prior per-process cr3 (fork -> exec). The CPU's CR3 register
-     * still pointed at the freed PML4 frame after step 1, so subsequent
-     * page walks hit arbitrary physical memory. Launcher path was
-     * unaffected because task_create tasks have cr3=0 (kernel_pml4
-     * active) so "destroy old" was a no-op. Forked-then-exec'd children
-     * hit it on every sys_exec and silently hung. */
-    {
+    /* Per-process PML4 handling (2026-04-21, revised):
+     *   - Forked-exec: the child already has a per-process cr3 from
+     *     task_fork. The pre-exec remap loop above replaced its
+     *     image-range PTEs with private PAGE_OWNED frames, and
+     *     exec_load wrote the new binary into them. REUSE that cr3 --
+     *     creating a fresh one would orphan the private frames (new
+     *     cr3's PT starts identity-mapped, not pointing at the frames
+     *     we just populated), and destroying the old cr3 would free
+     *     the private frames the new binary depends on.
+     *   - Launcher-exec: the task enters with cr3=0 (kernel_pml4
+     *     active). No prior per-process cr3 exists; build a fresh
+     *     one and install it. No destroy needed (nothing to free).
+     * This split replaced the single "always create + destroy" path
+     * that caused both the 2026-04-21 WHPX crash (destroy freed
+     * shared kernel PTs; see mm/vmm.c) and the fork+exec parent-
+     * image-corruption bug the remap loop above addresses. */
+    if (tasks[pid].cr3) {
+        /* Forked-exec path: the pre-exec remap loop above already
+         * replaced the image-range PTEs with private PAGE_OWNED frames
+         * in tasks[pid].cr3, and exec_load wrote the new binary into
+         * them. Creating a fresh cr3 here would orphan those frames
+         * (the new cr3 starts with identity mappings) -- the binary's
+         * code would disappear at the next CR3 switch. Reuse the
+         * existing cr3 and just ensure User bits cover the new image's
+         * full extent (hello.exe may be larger than test_process.exe). */
+        uintptr_t addr;
+        loaded_module_t img_mod;
+        if (exec_find_module_by_pc(entry, &img_mod) == 0) {
+            uintptr_t img_base = (uintptr_t)img_mod.base_address;
+            uintptr_t img_end = img_base + (uintptr_t)img_mod.size_of_image;
+            for (addr = img_base; addr < img_end; addr += 4096)
+                vmm_set_user_page(tasks[pid].cr3, addr);
+        }
+    } else {
+        /* Launcher-spawned task (cr3=0 at entry): build a fresh
+         * per-process cr3 from scratch. No prior per-process cr3 to
+         * destroy, no parent sharing identity-mapped VAs -- the new
+         * binary's writes at USER_ELF_BASE+ land in kernel-identity
+         * frames (shared with any future exec's pre-write state,
+         * fine since no other task references them). */
         uintptr_t user_cr3 = vmm_create_user_pml4();
         if (user_cr3) {
             uintptr_t addr;
-
-            /* Look up module to get the image range */
             loaded_module_t img_mod;
             if (exec_find_module_by_pc(entry, &img_mod) == 0) {
-                /* Mark all image pages as User */
                 uintptr_t img_base = (uintptr_t)img_mod.base_address;
                 uintptr_t img_end = img_base + (uintptr_t)img_mod.size_of_image;
                 for (addr = img_base; addr < img_end; addr += 4096)
                     vmm_set_user_page(user_cr3, addr);
             } else {
-                /* Fallback: mark ELF range as User (should not happen) */
                 klog(LOG_WARN, "sched",
                      "task_exec: no module found for entry 0x%x, using ELF range",
                      entry);
                 for (addr = USER_ELF_BASE; addr < USER_ELF_END; addr += 4096)
                     vmm_set_user_page(user_cr3, addr);
             }
-
-            /* Install new cr3 BEFORE destroying the old one. Update
-             * tasks[pid].cr3 first, then switch the live CR3 register
-             * so subsequent memory accesses (peb_alloc_for_task,
-             * teb_alloc_for_task, OB registrations) walk the new
-             * page tables. */
-            uintptr_t old_cr3 = tasks[pid].cr3;
             tasks[pid].cr3 = user_cr3;
             __asm__ volatile("mov %0, %%cr3" : : "r"(user_cr3) : "memory");
-
-            /* Now safe to destroy the old cr3 -- no longer referenced
-             * by either the task struct or the live CR3 register. */
-            if (old_cr3)
-                vmm_destroy_user_pml4(old_cr3);
         } else {
             klog(LOG_WARN, "sched", "task_exec: PML4 creation failed for PID %u",
                  (uint64_t)pid);

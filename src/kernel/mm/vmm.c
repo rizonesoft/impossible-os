@@ -713,6 +713,47 @@ int vmm_map_user_page(uintptr_t cr3, uintptr_t virt, uintptr_t phys)
     return 0;
 }
 
+void vmm_remap_user_page(uintptr_t pml4_phys, uintptr_t virt,
+                         uintptr_t new_phys)
+{
+    pte_t *pml4, *pdpt, *pd, *pt;
+    uint64_t pml4i, pdpti, pdi, pti;
+
+    virt     &= ~((uintptr_t)0xFFF);
+    new_phys &= ~((uintptr_t)0xFFF);
+
+    pml4  = (pte_t *)pml4_phys;
+    pml4i = pml4_index(virt);
+    pdpti = pdpt_index(virt);
+    pdi   = pd_index(virt);
+    pti   = pt_index(virt);
+
+    if (!(pml4[pml4i] & VMM_FLAG_PRESENT)) return;
+    pdpt = (pte_t *)(pml4[pml4i] & PTE_ADDR_MASK);
+    if (!pdpt) return;
+
+    if (!(pdpt[pdpti] & VMM_FLAG_PRESENT)) return;
+    pd = (pte_t *)(pdpt[pdpti] & PTE_ADDR_MASK);
+    if (!pd) return;
+
+    /* A huge page here would mean the PT hasn't been split yet. Caller is
+     * expected to have triggered a split (vmm_create_user_pml4 does this
+     * for USER_PD_INDEX). Silently bail rather than split on the fly --
+     * task_exec is the only caller today and operates exclusively on
+     * the already-split user ELF range. */
+    if (pd[pdi] & VMM_FLAG_HUGE) return;
+
+    pt = (pte_t *)(pd[pdi] & PTE_ADDR_MASK);
+    if (!pt) return;
+
+    /* Tag PAGE_OWNED so vmm_destroy_user_pml4 will free the new frame on
+     * process exit. Do NOT free the previous PTE's frame here: the caller
+     * knows whether the old frame was identity-mapped (kernel-owned, must
+     * not free) or private (its own concern). */
+    pt[pti] = new_phys | VMM_FLAG_PRESENT | VMM_FLAG_WRITABLE
+                       | VMM_FLAG_USER | VMM_FLAG_PAGE_OWNED;
+}
+
 void vmm_unmap_user_page(uintptr_t cr3, uintptr_t virt)
 {
     pte_t *pml4, *pdpt, *pd, *pt;
@@ -783,8 +824,24 @@ void vmm_destroy_user_pml4(uintptr_t pml4_phys)
                 if ((pd[i] & VMM_FLAG_PRESENT) && !(pd[i] & VMM_FLAG_HUGE) &&
                     (pd[i] & VMM_FLAG_PT_OWNED)) {
                     uintptr_t pt_phys = pd[i] & PTE_ADDR_MASK;
-                    if (pt_phys)
+                    /* Before freeing the PT itself, walk its 512 PTEs and
+                     * reclaim any private physical frame tagged PAGE_OWNED.
+                     * Set by vmm_remap_user_page for fork+exec isolation.
+                     * Identity-mapped PTEs (PAGE_OWNED=0) are kernel-owned
+                     * and must NOT be freed. */
+                    if (pt_phys) {
+                        pte_t *pt = (pte_t *)pt_phys;
+                        uint32_t j;
+                        for (j = 0; j < PT_ENTRIES; j++) {
+                            if ((pt[j] & VMM_FLAG_PRESENT) &&
+                                (pt[j] & VMM_FLAG_PAGE_OWNED)) {
+                                uintptr_t pg_phys = pt[j] & PTE_ADDR_MASK;
+                                if (pg_phys)
+                                    pmm_free_frame(pg_phys);
+                            }
+                        }
                         pmm_free_frame(pt_phys);
+                    }
                 }
             }
             pmm_free_frame((uintptr_t)pd);

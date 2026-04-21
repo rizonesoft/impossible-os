@@ -26,6 +26,13 @@
  * from kernel_pml4 (which may reference kernel-allocated PTs -- e.g.
  * heap guard pages) are NOT freed from under the kernel. */
 #define VMM_FLAG_PT_OWNED   (1ULL << 9)
+/* OS-available bit 10 (AVL). Tags PTEs whose physical frame was allocated
+ * as a PER-PROCESS private page (not the kernel identity map). Set by
+ * vmm_remap_user_page on fork+exec isolation. vmm_destroy_user_pml4 walks
+ * every owned PT and frees any PTE carrying this flag, so private user
+ * pages don't leak when the process exits. Kernel identity-mapped pages
+ * (PAGE_OWNED=0) are left alone. */
+#define VMM_FLAG_PAGE_OWNED (1ULL << 10)
 #define VMM_FLAG_NX         (1ULL << 63)  /* No-Execute */
 
 /* Protection Key (PKU): 4-bit key in PTE bits 62:59.
@@ -107,6 +114,16 @@ int vmm_map_user_page(uintptr_t cr3, uintptr_t virt, uintptr_t phys);
 /* Unmap a user page from a per-process PML4.  Clears the PTE, frees the
  * physical frame via pmm_free_frame().  Does NOT free intermediate tables. */
 void vmm_unmap_user_page(uintptr_t cr3, uintptr_t virt);
+
+/* Replace an existing user PTE with a fresh physical frame, tagging it
+ * as private (PAGE_OWNED). Used by task_exec to isolate a forked child's
+ * image range from the shared identity-mapped physical frames so the
+ * child's ELF loader writes don't corrupt the parent's code. Caller must
+ * have already ensured the PT exists (e.g. via vmm_create_user_pml4 for
+ * the default USER_ELF range). Idempotent-per-call: overwrites whatever
+ * PTE is there; the caller owns the previous PTE's frame. */
+void vmm_remap_user_page(uintptr_t pml4_phys, uintptr_t virt,
+                         uintptr_t new_phys);
 
 /* Free a per-process PML4 and all intermediate tables (not physical data pages). */
 void vmm_destroy_user_pml4(uintptr_t pml4_phys);
