@@ -366,9 +366,9 @@ USER_CFLAGS := --target=x86_64-elf \
                -mno-mmx -mno-sse -mno-sse2 -std=gnu11 -O2 -g \
                -MMD -MP
 
-userland: $(SYSROOT)/hello.exe $(SYSROOT)/cmd.exe $(SYSROOT)/test_harness_smoke.exe $(SYSROOT)/test_syscall.exe $(SYSROOT)/test_faultinject.exe $(SYSROOT)/test_smoke_boot.exe $(SYSROOT)/test_stress_libc.exe $(SYSROOT)/test_perf_syscall.exe $(SYSROOT)/test_libc.exe $(SYSROOT)/test_ipc.exe $(SYSROOT)/test_process.exe
+userland: $(SYSROOT)/hello.exe $(SYSROOT)/cmd.exe $(SYSROOT)/test_harness_smoke.exe $(SYSROOT)/test_syscall.exe $(SYSROOT)/test_faultinject.exe $(SYSROOT)/test_smoke_boot.exe $(SYSROOT)/test_stress_libc.exe $(SYSROOT)/test_perf_syscall.exe $(SYSROOT)/test_libc.exe $(SYSROOT)/test_ipc.exe $(SYSROOT)/test_process.exe $(SYSROOT)/test_fileio.exe
 
-$(SYSROOT)/hello.exe $(SYSROOT)/cmd.exe $(SYSROOT)/test_harness_smoke.exe $(SYSROOT)/test_syscall.exe $(SYSROOT)/test_faultinject.exe $(SYSROOT)/test_smoke_boot.exe $(SYSROOT)/test_stress_libc.exe $(SYSROOT)/test_perf_syscall.exe $(SYSROOT)/test_libc.exe $(SYSROOT)/test_ipc.exe $(SYSROOT)/test_process.exe &: sysroot user/hello.c user/cmd.c \
+$(SYSROOT)/hello.exe $(SYSROOT)/cmd.exe $(SYSROOT)/test_harness_smoke.exe $(SYSROOT)/test_syscall.exe $(SYSROOT)/test_faultinject.exe $(SYSROOT)/test_smoke_boot.exe $(SYSROOT)/test_stress_libc.exe $(SYSROOT)/test_perf_syscall.exe $(SYSROOT)/test_libc.exe $(SYSROOT)/test_ipc.exe $(SYSROOT)/test_process.exe $(SYSROOT)/test_fileio.exe &: sysroot user/hello.c user/cmd.c \
                                                                               user/test/test_harness_smoke.c \
                                                                               user/test/test_syscall.c \
                                                                               user/test/test_faultinject.c \
@@ -378,6 +378,7 @@ $(SYSROOT)/hello.exe $(SYSROOT)/cmd.exe $(SYSROOT)/test_harness_smoke.exe $(SYSR
                                                                               user/test/test_libc.c \
                                                                               user/test/test_ipc.c \
                                                                               user/test/test_process.c \
+                                                                              user/test/test_fileio.c \
                                                                               user/include/test.h \
                                                                               user/include/syscall.h \
                                                                               user/lib/crt0.asm \
@@ -431,6 +432,9 @@ $(SYSROOT)/hello.exe $(SYSROOT)/cmd.exe $(SYSROOT)/test_harness_smoke.exe $(SYSR
 	$(CC) $(USER_CFLAGS) -Iuser/include -c user/test/test_process.c -o $(BUILD_DIR)/user/test/test_process.o
 	$(LD) -nostdlib -static -T user/user.ld -o $(BUILD_DIR)/user/test/test_process.exe \
 		$(BUILD_DIR)/user/lib/crt0.o $(BUILD_DIR)/user/test/test_process.o $(BUILD_DIR)/user/libc.a
+	$(CC) $(USER_CFLAGS) -Iuser/include -c user/test/test_fileio.c -o $(BUILD_DIR)/user/test/test_fileio.o
+	$(LD) -nostdlib -static -T user/user.ld -o $(BUILD_DIR)/user/test/test_fileio.exe \
+		$(BUILD_DIR)/user/lib/crt0.o $(BUILD_DIR)/user/test/test_fileio.o $(BUILD_DIR)/user/libc.a
 	@cp -f $(BUILD_DIR)/user/hello.exe $(SYSROOT)/hello.exe
 	@cp -f $(BUILD_DIR)/user/cmd.exe $(SYSROOT)/cmd.exe
 	@cp -f $(BUILD_DIR)/user/test/test_harness_smoke.exe $(SYSROOT)/test_harness_smoke.exe
@@ -442,11 +446,12 @@ $(SYSROOT)/hello.exe $(SYSROOT)/cmd.exe $(SYSROOT)/test_harness_smoke.exe $(SYSR
 	@cp -f $(BUILD_DIR)/user/test/test_libc.exe $(SYSROOT)/test_libc.exe
 	@cp -f $(BUILD_DIR)/user/test/test_ipc.exe $(SYSROOT)/test_ipc.exe
 	@cp -f $(BUILD_DIR)/user/test/test_process.exe $(SYSROOT)/test_process.exe
+	@cp -f $(BUILD_DIR)/user/test/test_fileio.exe $(SYSROOT)/test_fileio.exe
 	@mkdir -p $(SYSROOT)/tests
 	@cp -f tests/usermode.manifest $(SYSROOT)/tests/usermode.manifest
 	@cp -f tests/usermode-cleanup.manifest $(SYSROOT)/tests/usermode-cleanup.manifest
 	@cp -f tests/perf-baseline.json $(SYSROOT)/tests/perf-baseline.json
-	@echo "[USER] hello/cmd + test_{harness_smoke,syscall,faultinject,smoke_boot,stress_libc,perf_syscall,libc,ipc,process}.exe + manifests -> sysroot"
+	@echo "[USER] hello/cmd + test_{harness_smoke,syscall,faultinject,smoke_boot,stress_libc,perf_syscall,libc,ipc,process,fileio}.exe + manifests -> sysroot"
 
 ## iso: Package kernel + sysroot into a bootable UEFI ISO via GRUB (optional)
 iso: $(ISO_FILE)

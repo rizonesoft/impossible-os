@@ -44,18 +44,26 @@ _Static_assert(sizeof(struct u_obj_dir_info) == 96,
 _Static_assert(__builtin_offsetof(struct u_obj_dir_info, type_name) == 64,
     "u_obj_dir_info.type_name at offset 64 matches kernel layout");
 
-/* Access-mask note (Codex adversarial 2026-04-21 H1): the INT 0x80
- * `sys_openfile` and `sys_opendirobj` paths pass the raw mask through
- * to the kernel's ob_create_file_handle / NtOpenDirectoryObject, but
- * neither today translates `GENERIC_READ` (0x80000000) into a
- * VFS_O_READ gate or rejects unknown bits -- access-mask enforcement
- * is a TODO that sits at the OB layer, not this test. Using `0` here
- * matches the value the current kernel actually honours and avoids
- * giving false confidence that a GENERIC_READ path is being
- * exercised. When the OB access check ships, this test should swap
- * in the real mask + a negative assertion that an access-denied
- * handle fails. */
-#define U_ACCESS_DEFAULT 0u
+/* Access-mask constants (2026-04-21 revised). The original §9 stamp
+ * claimed the kernel "does not yet honour access masks" and used 0,
+ * which made sys_readhandle return -1 unconditionally because
+ * src/kernel/ob/ob_file.c:144 gates VFS reads on fo->access carrying
+ * VFS_O_READ (0x01). The original claim was only true for the Win32
+ * GENERIC_READ bit mapping (still deferred to the Security Reference
+ * Monitor roadmap's RtlMapGenericMask + SeAccessCheck); the low-level
+ * VFS_O_READ /
+ * VFS_O_WRITE bits ARE enforced today. Mirror those bits here; once
+ * SRM lands this test should also add a negative assertion that an
+ * access-denied handle fails. Directory opens (NtOpenDirectoryObject)
+ * still run through the OB dispatcher without a low-level read gate,
+ * so 0 remains correct there.
+ *
+ * These are the same bit values as include/kernel/fs/vfs.h
+ * VFS_O_READ / VFS_O_WRITE; user code cannot include that kernel
+ * header, so the constants are duplicated. */
+#define U_OPEN_READ           0x01u
+#define U_OPEN_WRITE          0x02u
+#define U_DIR_ACCESS_DEFAULT  0u
 
 int main(void)
 {
@@ -109,7 +117,7 @@ int main(void)
      * Gate the dependent calls on the open succeeding so a single
      * regression in sys_openfile produces ONE FAIL, not four. Codex
      * adversarial 2026-04-21 M1. */
-    HANDLE fh = sys_openfile("C:\\hello.txt", U_ACCESS_DEFAULT);
+    HANDLE fh = sys_openfile("C:\\hello.txt", U_OPEN_READ);
     UTEST_ASSERT(fh != INVALID_HANDLE_VALUE,
                  "sys_openfile(\"C:\\\\hello.txt\") returns valid HANDLE");
     if (fh != INVALID_HANDLE_VALUE) {
@@ -146,7 +154,7 @@ int main(void)
      * "\\" is the root of the Object Manager namespace (NT-style).
      * A healthy kernel has Device/KernelObjects/BaseNamedObjects
      * children populated at boot. */
-    HANDLE dh = sys_opendirobj("\\", U_ACCESS_DEFAULT);
+    HANDLE dh = sys_opendirobj("\\", U_DIR_ACCESS_DEFAULT);
     UTEST_ASSERT(dh != INVALID_HANDLE_VALUE,
                  "sys_opendirobj(\"\\\\\") returns valid HANDLE");
     if (dh != INVALID_HANDLE_VALUE) {

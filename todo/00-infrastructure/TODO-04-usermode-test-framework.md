@@ -59,7 +59,7 @@
 | 💎  |  10   | Libc test binary (`test_libc.exe`)                  | §1, §3                             |  [x]   |
 | 💎  |  11   | IPC test binary (`test_ipc.exe`)                    | §1, §2, §3                         |  [x]   |
 | 💎  |  12   | Process lifecycle test (`test_process.exe`)         | §1, §3                             |  [x]   |
-| 💎  |  13   | File I/O test (`test_fileio.exe`)                   | §1, §2, §3                         |  [ ]   |
+| 💎  |  13   | File I/O test (`test_fileio.exe`)                   | §1, §2, §3                         |  [x]   |
 | ⭐  |  14   | Win32 API test binary (`test_win32.exe`)            | §1, §3, D02T12 §6                  |  [ ]   |
 | 💎  |  15   | Binary format loader coverage (ELF / PE32+ / EIF)   | §1, §3, D02T17 §5, D02T17 §19      |  [ ]   |
 | 💎  |  16   | Build integration: `make test` includes user tests  | §3-§15                             |  [ ]   |
@@ -344,7 +344,7 @@ Exercise every implemented syscall from user mode.
 > - Scope boundary: §9 owns the syscall-surface probe; §10 owns libc string/format coverage, §11 owns IPC (pipe/shmem), §12 owns process lifecycle (fork/wait/exec/kill), §13 owns file-I/O happy/error paths.
 
 > **Verified:** 2026-04-21 | commit `fd0b3122` | 3/3 items | build OK | 1 binary (24 KiB) deployed via `make userland`; 179/179 kernel unit tests PASS (unchanged)
-> **Accepted:** [L] `U_ACCESS_DEFAULT=0` used instead of `GENERIC_READ` because the kernel `ob_create_file_handle` and `NtOpenDirectoryObject` do not yet honour access masks (reason: scope) -> XREF: 02-kernel-core/TODO-15-security-reference-monitor.md §5 (item: "`RtlMapGenericMask(access, mapping)` -- replaces `GENERIC_READ`/`WRITE`/`EXECUTE`/`ALL` bits with type-specific masks in-place" at line 314 + item: "In `ObpReferenceObjectByHandle`: after locating the handle entry, call `SeAccessCheck(...)`; return `STATUS_ACCESS_DENIED` if check fails" at line 334 -- once §5 ships, this test should flip to `GENERIC_READ` and add a negative-access assertion)
+> **Accepted:** [L] `GENERIC_READ` bit mapping deferred to SRM -- this test uses the low-level `VFS_O_READ` (0x01) mask directly because `src/kernel/ob/ob_file.c:144` DOES enforce that bit today on `sys_readhandle`. The §13 work (2026-04-21) revealed the original stamp's claim that "the kernel does not yet honour access masks" was only true for the Win32 `GENERIC_READ` -> VFS bit translation (still deferred); the raw VFS bits are enforced. Using 0 made `[FAIL] sys_readhandle reads > 0 bytes from C:\hello.txt` visible in every run -- now fixed by passing `U_OPEN_READ = 0x01` here and in §13. Directory opens keep the 0 mask since `NtOpenDirectoryObject` has no equivalent low-level read gate yet (reason: scope) -> XREF: 02-kernel-core/TODO-15-security-reference-monitor.md §5 (item: "`RtlMapGenericMask(access, mapping)` -- replaces `GENERIC_READ`/`WRITE`/`EXECUTE`/`ALL` bits with type-specific masks in-place" at line 314 + item: "In `ObpReferenceObjectByHandle`: after locating the handle entry, call `SeAccessCheck(...)`; return `STATUS_ACCESS_DENIED` if check fails" at line 334 -- once §5 ships, this test should flip to `GENERIC_READ`, add a negative-access assertion, and flip the directory-open mask to the equivalent directory `GENERIC_READ`)
 > **Quality reviewed:** 2026-04-21 | Codex 2x (adversarial, quality) | 1H+2M fixed, 0 open | scope: userland-code-quality
 
 ---
@@ -441,16 +441,25 @@ Test fork, exec, waitpid from user mode.
 
 Test handle-based file operations.
 
-- [ ] Complete §2 first so `SYS_OPENFILE`, `SYS_READHANDLE`, `SYS_CLOSEHANDLE`, `SYS_OPENDIROBJ`, and `SYS_QUERYDIROBJ` wrappers exist before compiling this binary
-- [ ] `user/test/test_fileio.c`:
+- [x] Complete §2 first so `SYS_OPENFILE`, `SYS_READHANDLE`, `SYS_CLOSEHANDLE`, `SYS_OPENDIROBJ`, and `SYS_QUERYDIROBJ` wrappers exist before compiling this binary -- all five wrappers live in [user/include/syscall.h](../../user/include/syscall.h) since §9
+- [x] `user/test/test_fileio.c`:
   - Open `C:\hello.txt` -> valid handle
-  - Read contents -> matches expected
-  - Close handle -> handle becomes invalid
+  - Read contents -> matches expected (25-byte byte-for-byte compare, not just "starts with 'H'")
+  - Close handle -> handle becomes invalid (post-close `sys_readhandle` MUST return < 0)
   - Open nonexistent file -> `INVALID_HANDLE_VALUE`
-  - Open directory object -> enumerate entries
-- [ ] Commit: `"test: user-mode file I/O test (test_fileio.exe)"`
+  - Open directory object -> enumerate entries (OB root `\\`, >= 1 non-empty entry)
+- [x] Commit: `"test: user-mode file I/O test (test_fileio.exe)"`
 
 **Test checkpoint:** Open, read, close, and error paths match expectations, exit 0, and serial shows `[UTEST] test_fileio.exe: PASS`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\usermode\run-test_fileio.bat` (utest_filter=test_fileio.exe + -NoKernelTests) | validation: build OK, test_fileio.exe deployed to `C:\test_fileio.exe` + registered in `tests/usermode.manifest`
+
+> **Notes:**
+> - What shipped: `user/test/test_fileio.c` (~155 LOC) with 9 UTEST_ASSERT contracts across four probes: happy-path `sys_openfile`/`sys_readhandle`/byte-for-byte match on 25-byte `"Hello from Impossible OS!"` payload/`sys_closehandle`; post-close `sys_readhandle` returning `< 0` (handle invalidation); `sys_openfile("C:\this_file_definitely_does_not_exist.bin")` returning `INVALID_HANDLE_VALUE`; `sys_opendirobj("\\")` + `sys_querydirobj` returning `>= 1` non-empty entry.
+> - How it integrates: deployed by `make userland` to `C:\test_fileio.exe`; runs under the §8 correctness phase of the §3 launcher alongside `test_syscall.exe` / `test_process.exe` / `test_ipc.exe`. Manifest entry `test_fileio.exe` (no `expects_tasks=` tag -- only one user task so the §3 launcher budget check counts it as 1). Per-binary runner: `scripts\debug\usermode\run-test_fileio.bat`.
+> - Downstream effects: first focused user-mode probe of the `ob_close_handle -> read returns -1` invalidation contract and the `ob_create_file_handle -> INVALID_HANDLE_VALUE` negative path. Catches a class of bugs §9's "starts with 'H'" smoke probe would miss (content truncation, partial read, stale handle slot reuse).
+> - Canonical doc: [src/kernel/ob/ob_file.c](../../src/kernel/ob/ob_file.c) (`ob_file_read`, close path); [src/kernel/sched/syscall.c](../../src/kernel/sched/syscall.c) SYS_OPENFILE/SYS_READHANDLE/SYS_CLOSEHANDLE/SYS_OPENDIROBJ/SYS_QUERYDIROBJ handlers.
+> - Scope boundary: §13 owns file-I/O happy-path + close-invalidation + nonexistent-path + OB-root-enumeration. Write-side coverage (`sys_writehandle` on a writable file handle) is deferred until the OB file-write path supports non-pipe writes -- tracked by the `sys_writehandle` comment in [user/include/syscall.h](../../user/include/syscall.h) and by §11's pipe-write coverage. Handle-leak detection across process exit is §6's territory.
 
 ---
 
@@ -531,6 +540,7 @@ Wire user-mode test binaries into `make test`.
 | 💎  | Libc surface probe   | ✅ HLK CRT tests     | ✅ kselftest libc        | ✅ §10 7 contracts     |
 | 💎  | IPC surface probe    | ✅ HLK pipe+shmem    | ✅ kselftest pipe+shm    | ✅ §11 pipe + shmem RT |
 | 💎  | Process lifecycle    | ✅ HLK fork+exec     | ✅ kselftest fork+exec   | ✅ §12 fork+exec+kill  |
+| 💎  | File I/O surface     | ✅ HLK filesys tests | ✅ kselftest openat etc. | ✅ §13 open+read+enum  |
 | 💎  | Stress / longhaul    | ✅ TAEF Loop+Stress  | ✅ LTP runtest/stress    | ✅ §8 stress type      |
 | 💎  | Perf regression      | ✅ perfview/PerfTest | ✅ perf + flame baseline | ⚠️ §8 report-only      |
 | 💎  | Test type taxonomy   | ✅ TAEF categories   | ✅ LTP test classes      | ✅ §8 4 types + phase  |
