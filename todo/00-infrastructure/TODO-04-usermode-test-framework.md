@@ -343,7 +343,7 @@ Exercise every implemented syscall from user mode.
 > - Canonical doc: [user/include/syscall.h](../../user/include/syscall.h) (wrapper signatures + SYS_* numbers); kernel handlers at [src/kernel/sched/syscall.c](../../src/kernel/sched/syscall.c) lines 379-595.
 > - Scope boundary: §9 owns the syscall-surface probe; §10 owns libc string/format coverage, §11 owns IPC (pipe/shmem), §12 owns process lifecycle (fork/wait/exec/kill), §13 owns file-I/O happy/error paths.
 
-> **Verified:** 2026-04-21 | commit `<pending>` | 3/3 items | build OK | 1 binary (24 KiB) deployed via `make userland`; 179/179 kernel unit tests PASS (unchanged)
+> **Verified:** 2026-04-21 | commit `fd0b3122` | 3/3 items | build OK | 1 binary (24 KiB) deployed via `make userland`; 179/179 kernel unit tests PASS (unchanged)
 > **Accepted:** [L] `U_ACCESS_DEFAULT=0` used instead of `GENERIC_READ` because the kernel `ob_create_file_handle` and `NtOpenDirectoryObject` do not yet honour access masks (reason: scope) -> XREF: 02-kernel-core/TODO-15-security-reference-monitor.md §5 (item: "`RtlMapGenericMask(access, mapping)` -- replaces `GENERIC_READ`/`WRITE`/`EXECUTE`/`ALL` bits with type-specific masks in-place" at line 314 + item: "In `ObpReferenceObjectByHandle`: after locating the handle entry, call `SeAccessCheck(...)`; return `STATUS_ACCESS_DENIED` if check fails" at line 334 -- once §5 ships, this test should flip to `GENERIC_READ` and add a negative-access assertion)
 > **Quality reviewed:** 2026-04-21 | Codex 1x (adversarial) | 1H+2M fixed, 0 open | scope: userland-code-quality
 
