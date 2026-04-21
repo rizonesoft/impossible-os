@@ -19,6 +19,13 @@
 #define VMM_FLAG_DIRTY      (1ULL << 6)
 #define VMM_FLAG_HUGE       (1ULL << 7)   /* 2 MiB page (PD level) */
 #define VMM_FLAG_GLOBAL     (1ULL << 8)
+/* OS-available bit 9 (AVL). Tags PD entries whose PT frame was allocated
+ * by vmm_create_user_pml4 / vmm_set_user_page / vmm_map_user_page on
+ * BEHALF of a per-process PML4. vmm_destroy_user_pml4 only frees PT
+ * frames whose PD entry carries this flag, so PD entries cloned as-is
+ * from kernel_pml4 (which may reference kernel-allocated PTs -- e.g.
+ * heap guard pages) are NOT freed from under the kernel. */
+#define VMM_FLAG_PT_OWNED   (1ULL << 9)
 #define VMM_FLAG_NX         (1ULL << 63)  /* No-Execute */
 
 /* Protection Key (PKU): 4-bit key in PTE bits 62:59.

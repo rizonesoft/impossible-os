@@ -526,9 +526,11 @@ uintptr_t vmm_create_user_pml4(void)
         pt[guard_idx] = 0;
     }
 
-    /* Replace the huge page PD entry with the fine-grained PT */
+    /* Replace the huge page PD entry with the fine-grained PT.
+     * Tag PT_OWNED so vmm_destroy_user_pml4 knows this PT frame was
+     * allocated on behalf of this user pml4 and is safe to free. */
     pd[USER_PD_INDEX] = pt_phys | VMM_FLAG_PRESENT | VMM_FLAG_WRITABLE
-                                | VMM_FLAG_USER;
+                                | VMM_FLAG_USER | VMM_FLAG_PT_OWNED;
 
     /* Copy remaining kernel PDPT entries (PDPT[1..3] for 1-4 GiB) */
     for (i = 0; i < PT_ENTRIES; i++)
@@ -591,7 +593,10 @@ void vmm_set_user_page(uintptr_t pml4_phys, uintptr_t virt)
         pt = (pte_t *)pt_frame;
         for (j = 0; j < PT_ENTRIES; j++)
             pt[j] = (huge_phys + (uintptr_t)j * VMM_PAGE_SIZE) | old_flags;
-        pd[pdi] = pt_frame | VMM_FLAG_PRESENT | VMM_FLAG_WRITABLE | VMM_FLAG_USER;
+        /* Tag PT_OWNED so vmm_destroy_user_pml4 can safely free this
+         * PT frame on process exit. */
+        pd[pdi] = pt_frame | VMM_FLAG_PRESENT | VMM_FLAG_WRITABLE
+                          | VMM_FLAG_USER | VMM_FLAG_PT_OWNED;
     }
 
     pt = (pte_t *)(pd[pdi] & PTE_ADDR_MASK);
@@ -660,7 +665,12 @@ int vmm_map_user_page(uintptr_t cr3, uintptr_t virt, uintptr_t phys)
         pd = (pte_t *)f;
     }
 
-    /* --- Walk / create PD -> PT (handle huge page split) --- */
+    /* --- Walk / create PD -> PT (handle huge page split) ---
+     *
+     * Any PT frame we allocate here (either via huge-page split or via
+     * a fresh frame when PD entry is empty) is tagged PT_OWNED so
+     * vmm_destroy_user_pml4 will reclaim it. Entries cloned from
+     * kernel_pml4 (non-huge, PT_OWNED=0) are preserved. */
     if (pd[pdi] & VMM_FLAG_PRESENT) {
         if (pd[pdi] & VMM_FLAG_HUGE) {
             /* Split 2 MiB huge page into 512 x 4 KiB PTEs */
@@ -672,7 +682,7 @@ int vmm_map_user_page(uintptr_t cr3, uintptr_t virt, uintptr_t phys)
             pt = (pte_t *)pt_frame;
             for (j = 0; j < PT_ENTRIES; j++)
                 pt[j] = (huge_phys + (uintptr_t)j * VMM_PAGE_SIZE) | old_flags;
-            pd[pdi] = pt_frame | user_rw;
+            pd[pdi] = pt_frame | user_rw | VMM_FLAG_PT_OWNED;
         } else {
             pt = (pte_t *)(pd[pdi] & PTE_ADDR_MASK);
             pd[pdi] |= VMM_FLAG_USER;
@@ -681,7 +691,7 @@ int vmm_map_user_page(uintptr_t cr3, uintptr_t virt, uintptr_t phys)
         uintptr_t f = pmm_alloc_frame();
         if (!f) return -1;
         zero_page(f);
-        pd[pdi] = f | user_rw;
+        pd[pdi] = f | user_rw | VMM_FLAG_PT_OWNED;
         pt = (pte_t *)f;
     }
 
@@ -751,16 +761,28 @@ void vmm_destroy_user_pml4(uintptr_t pml4_phys)
     if (pdpt) {
         pd = (pte_t *)(pdpt[0] & PTE_ADDR_MASK);
         if (pd) {
-            /* Free ALL split PTs (not just USER_PD_INDEX).
-             * vmm_set_user_page() auto-splits any PD entry on demand,
-             * so we must scan all 512 PD entries for non-huge PTs. */
+            /* Free ONLY PT frames tagged PT_OWNED.
+             *
+             * vmm_create_user_pml4 clones kernel_pml4's 0-1 GiB PD
+             * entries verbatim (line ~511). The kernel may have split
+             * some of its own PD entries into 4 KiB PTs for guard
+             * pages (kernel/AP/IST stack guards, heap-end guard). Those
+             * cloned PD entries still point at KERNEL-allocated PTs
+             * that must NEVER be freed from a per-process destroy path
+             * or kernel memory accesses through those VAs start
+             * walking into freed frames. The old "free everything
+             * non-huge" loop corrupted the kernel heap on any
+             * fork->exec path because the child's cloned PD inherited
+             * kernel guard PTs and destroy freed them.
+             *
+             * vmm_create_user_pml4, vmm_set_user_page, and
+             * vmm_map_user_page all set PT_OWNED on any PT frame they
+             * allocate, so this check exactly catches user-owned PTs
+             * without disturbing shared kernel mappings. */
             for (i = 0; i < PT_ENTRIES; i++) {
-                if ((pd[i] & VMM_FLAG_PRESENT) && !(pd[i] & VMM_FLAG_HUGE)) {
+                if ((pd[i] & VMM_FLAG_PRESENT) && !(pd[i] & VMM_FLAG_HUGE) &&
+                    (pd[i] & VMM_FLAG_PT_OWNED)) {
                     uintptr_t pt_phys = pd[i] & PTE_ADDR_MASK;
-                    /* Only free PTs that we allocated (not the kernel's).
-                     * Kernel PD entries are huge pages -- anything split
-                     * into a PT was allocated by vmm_create_user_pml4 or
-                     * vmm_set_user_page and must be freed. */
                     if (pt_phys)
                         pmm_free_frame(pt_phys);
                 }
