@@ -37,10 +37,7 @@ UTEST_DEFINE_STATE();
 /* Literal file name for sys_exec. The kernel SYS_EXEC handler today
  * ignores the length argument (see src/kernel/sched/syscall.c -- it
  * calls vfs_finddir with the raw pointer and reads until NUL) so the
- * length here is wrapper-ABI filler, not a semantic boundary. The
- * wrapper's 2-arg signature is retained for a future kernel-side
- * honour-len fix; tracked in the §12 Accepted XREF so this test's
- * harness stays correct when that lands. */
+ * length here is wrapper-ABI filler, not a semantic boundary. */
 #define HELLO_EXE_NAME    "hello.exe"
 #define HELLO_EXE_NAMELEN 9
 

@@ -1477,14 +1477,25 @@ int task_exec(const uint8_t *data, uint64_t size)
 
     /* Recreate per-process PML4: mark loaded image pages as User.
      * Uses the module list to determine the image range (format-agnostic).
-     * vmm_set_user_page auto-splits 2 MiB huge pages on demand. */
+     * vmm_set_user_page auto-splits 2 MiB huge pages on demand.
+     *
+     * ORDER IS LOAD-BEARING (2026-04-21):
+     *   1. Create new cr3.
+     *   2. Mark image + stack User in new cr3.
+     *   3. Install new cr3 into tasks[pid].cr3 AND the live CR3 register.
+     *   4. THEN destroy the old cr3.
+     * The previous order (destroy old, then populate new, then assign)
+     * was a latent use-after-free on any task_exec path where the caller
+     * had a prior per-process cr3 (fork -> exec). The CPU's CR3 register
+     * still pointed at the freed PML4 frame after step 1, so subsequent
+     * page walks hit arbitrary physical memory. Launcher path was
+     * unaffected because task_create tasks have cr3=0 (kernel_pml4
+     * active) so "destroy old" was a no-op. Forked-then-exec'd children
+     * hit it on every sys_exec and silently hung. */
     {
         uintptr_t user_cr3 = vmm_create_user_pml4();
         if (user_cr3) {
             uintptr_t addr;
-            /* Destroy old PML4 if present */
-            if (tasks[pid].cr3)
-                vmm_destroy_user_pml4(tasks[pid].cr3);
 
             /* Look up module to get the image range */
             loaded_module_t img_mod;
@@ -1503,7 +1514,19 @@ int task_exec(const uint8_t *data, uint64_t size)
                     vmm_set_user_page(user_cr3, addr);
             }
 
+            /* Install new cr3 BEFORE destroying the old one. Update
+             * tasks[pid].cr3 first, then switch the live CR3 register
+             * so subsequent memory accesses (peb_alloc_for_task,
+             * teb_alloc_for_task, OB registrations) walk the new
+             * page tables. */
+            uintptr_t old_cr3 = tasks[pid].cr3;
             tasks[pid].cr3 = user_cr3;
+            __asm__ volatile("mov %0, %%cr3" : : "r"(user_cr3) : "memory");
+
+            /* Now safe to destroy the old cr3 -- no longer referenced
+             * by either the task struct or the live CR3 register. */
+            if (old_cr3)
+                vmm_destroy_user_pml4(old_cr3);
         } else {
             klog(LOG_WARN, "sched", "task_exec: PML4 creation failed for PID %u",
                  (uint64_t)pid);
