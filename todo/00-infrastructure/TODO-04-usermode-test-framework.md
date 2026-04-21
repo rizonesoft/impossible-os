@@ -56,7 +56,7 @@
 | 💎  |   7   | JUnit XML + JSON output formats                     | §4                                 |  [x]   |
 | 💎  |   8   | Test type taxonomy (smoke/correctness/stress/perf)  | §3, §4                             |  [x]   |
 | 💎  |   9   | Syscall test binary (`test_syscall.exe`)            | §1, §2, §3                         |  [x]   |
-| 💎  |  10   | Libc test binary (`test_libc.exe`)                  | §1, §3                             |  [ ]   |
+| 💎  |  10   | Libc test binary (`test_libc.exe`)                  | §1, §3                             |  [x]   |
 | 💎  |  11   | IPC test binary (`test_ipc.exe`)                    | §1, §2, §3                         |  [ ]   |
 | 💎  |  12   | Process lifecycle test (`test_process.exe`)         | §1, §3                             |  [ ]   |
 | 💎  |  13   | File I/O test (`test_fileio.exe`)                   | §1, §2, §3                         |  [ ]   |
@@ -353,16 +353,28 @@ Exercise every implemented syscall from user mode.
 
 Test string and formatting functions available in user mode.
 
-- [ ] `user/test/test_libc.c`:
+- [x] `user/test/test_libc.c`:
   - `strlen("hello")` -> 5
   - `strcmp("abc", "abc")` -> 0
   - `strcmp("abc", "abd")` -> negative
-  - `memcpy` round-trip
-  - `memset` + verify
-  - `snprintf(buf, 32, "%d", 42)` -> `"42"`
-- [ ] Commit: `"test: user-mode libc test binary (test_libc.exe)"`
+  - `memcpy` round-trip (16-byte pattern via `memcmp`)
+  - `memset` + verify (32-byte 0x5A fill, spot-check first/middle/last)
+  - `snprintf(buf, 32, "%d", 42)` -> `"42"` (return == 2 AND content "42\0")
+- [x] Commit: `"test: user-mode libc test binary (test_libc.exe)"`
 
 **Test checkpoint:** Boot with `test=1`, launcher runs `test_libc.exe`, it exits 0, and serial shows `[UTEST] test_libc.exe: PASS`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\usermode\run-test_libc.bat` (utest_filter=test_libc.exe via new `-UtestFilter` param to run-qemu.ps1) | validation: build OK + sysroot deploy (47 KiB `test_libc.exe`) + 179/179 kernel unit tests PASS
+
+> **Notes:**
+> - What shipped: `user/test/test_libc.c` (~90 LOC) -- 7 UTEST_ASSERT contracts across strlen/strcmp/memcpy/memset/snprintf, the libc surface every other user binary (cmd.exe, hello.exe, every test_*.exe) links against.
+> - How it integrates: deployed by `make userland` to `C:\test_libc.exe`; picked up by the §3 manifest (`tests/usermode.manifest`) and runs in the §8 correctness phase under the launcher.
+> - Downstream effects: ships with the **first round of user-mode bat runners** (`scripts/debug/usermode/run-test_{libc,syscall,smoke_boot,stress_libc,perf_syscall}.bat`) that the §3-§9 stamps already referenced; new `-UtestFilter` param on [`scripts/machines/run-qemu.ps1`](../../scripts/machines/run-qemu.ps1) plumbs through to `boot.conf utest_filter=<glob>`. The misleading `run-all-usermode-tests.bat` aggregate was deleted (kernel `test=1` already fires both halves; an honest aggregate needs a future `test_kernel=0` knob).
+> - Canonical doc: [user/include/string.h](../../user/include/string.h) + [user/include/stdio.h](../../user/include/stdio.h) (function signatures); implementation in [user/lib/string.c](../../user/lib/string.c) + [user/lib/stdio.c](../../user/lib/stdio.c).
+> - Scope boundary: §10 owns the libc surface probe; §9 owns the syscall ABI surface, §11 owns IPC, §12 owns process lifecycle, §13 owns file I/O.
+
+> **Verified:** 2026-04-21 | commit `<pending>` | 2/2 items | build OK | 1 binary (47 KiB) deployed via `make userland`; 179/179 kernel unit tests PASS (unchanged); 4 per-binary bats from §8/§9 + new §10 bat now exist on disk
+> **Quality reviewed:** 2026-04-21 | Codex 1x (adversarial) | 1H+1M fixed, 0 open | scope: userland-code-quality
 
 ---
 
@@ -488,6 +500,7 @@ Wire user-mode test binaries into `make test`.
 | 💎  | Timeouts or skips    | ✅ HLK               | ✅ LKFT skip             | ✅ §4 10s + exit=77    |
 | 💎  | ABI header sync      | ✅ SDK               | ✅ uapi                  | ⬜ §2                  |
 | 💎  | Per-test isolation   | ✅ HLK session reset | ✅ kselftest fork+tmp    | ✅ §6 scratch+reg+leak |
+| 💎  | Libc surface probe   | ✅ HLK CRT tests     | ✅ kselftest libc        | ✅ §10 7 contracts     |
 | 💎  | Stress / longhaul    | ✅ TAEF Loop+Stress  | ✅ LTP runtest/stress    | ✅ §8 stress type      |
 | 💎  | Perf regression      | ✅ perfview/PerfTest | ✅ perf + flame baseline | ⚠️ §8 report-only      |
 | 💎  | Test type taxonomy   | ✅ TAEF categories   | ✅ LTP test classes      | ✅ §8 4 types + phase  |

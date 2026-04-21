@@ -31,7 +31,8 @@ Param(
     [switch]$Quiet,       # suppress PASS lines, show FAIL + summary only
     [string]$ExtraArgs = '',  # additional QEMU arguments (e.g., "-machine pc,i8042=on")
     [switch]$CrashTest,   # boot with crash_test=1 (deliberate BSOD after desktop)
-    [switch]$ErrorScreenTest  # boot with error_screen_test=1 (trigger boot_fatal for QR/BSOD)
+    [switch]$ErrorScreenTest,  # boot with error_screen_test=1 (trigger boot_fatal for QR/BSOD)
+    [string]$UtestFilter = ''  # limit §3 user-mode launcher to one binary/glob (e.g. "test_syscall.exe" or "test_smoke_*.exe")
 )
 
 $ErrorActionPreference = "Stop"
@@ -139,12 +140,36 @@ $QemuArgs += @(
     '-no-reboot'
 )
 
+# Validate user-controlled boot.conf values BEFORE they flow into the
+# WSL `bash -c` bridge + patch-boot-conf.sh's sed REPLACEMENT. The
+# current invocation joins $PatchArgs with spaces into a bash -c string
+# argument, so a value containing `;`, backticks, `$(...)`, `&`, `|`,
+# `\n`, etc would execute inside WSL. sed-side metacharacters (/ & \)
+# corrupt the replacement instead. A strict allowlist catches both
+# classes of input without having to harden the three consumers
+# separately. Codex adversarial 2026-04-21 H1.
+#
+# Pattern: alphanumeric, underscore, dash, dot, asterisk (glob),
+# colon, equals, comma. If a future boot.conf field needs wider
+# characters, revisit this gate AND the sed replacement logic.
+$PatchValuePattern = '^[A-Za-z0-9_.*:=,-]+$'
+
+if ($TestSuite -and $TestSuite -notmatch $PatchValuePattern) {
+    Write-Host "Invalid -TestSuite value: '$TestSuite' (only alphanumerics + _.-*:=, allowed)" -ForegroundColor Red
+    pause; exit 1
+}
+if ($UtestFilter -and $UtestFilter -notmatch $PatchValuePattern) {
+    Write-Host "Invalid -UtestFilter value: '$UtestFilter' (only alphanumerics + _.-*:=, allowed)" -ForegroundColor Red
+    pause; exit 1
+}
+
 # Patch boot.conf if debug/test mode requested
 $PatchArgs = @()
 if ($DebugTests) { $PatchArgs += @('debug', '1') }
-if ($TestOnly -or $TestSuite) { $PatchArgs += @('test', '1') }
+if ($TestOnly -or $TestSuite -or $UtestFilter) { $PatchArgs += @('test', '1') }
 if ($TestSuite) { $PatchArgs += @('test_suite', $TestSuite) }
 if ($Quiet)     { $PatchArgs += @('test_quiet', '1') }
+if ($UtestFilter) { $PatchArgs += @('utest_filter', $UtestFilter) }
 if ($CrashTest) { $PatchArgs += @('crash_test', '1') }
 if ($ErrorScreenTest) { $PatchArgs += @('error_screen_test', '1') }
 
