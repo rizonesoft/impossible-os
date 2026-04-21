@@ -440,6 +440,31 @@ static inline uint64_t read_cr3(void)
     return val;
 }
 
+/* --- Hang-proof hex writer for the unconditional panic-reason dump ---
+ *
+ * Writes a 64-bit value as "0x<hex>" directly to serial via
+ * serial_putchar(). No locks, no buffers, no formatting library --
+ * so even if klog, printk, the heap, or the compositor lock are
+ * corrupted, this still produces readable output. Used only by the
+ * top-of-panic dump (before async isolation, ownership, readiness,
+ * or framebuffer); elsewhere printk("%x") is fine. */
+static void serial_write_hex(uint64_t v)
+{
+    extern void serial_putchar(char c);
+    static const char d[] = "0123456789ABCDEF";
+    serial_putchar('0');
+    serial_putchar('x');
+    int leading = 1;
+    int i;
+    for (i = 60; i >= 0; i -= 4) {
+        uint32_t nib = (uint32_t)((v >> i) & 0xFu);
+        if (leading && nib == 0 && i > 0)
+            continue;
+        leading = 0;
+        serial_putchar(d[nib]);
+    }
+}
+
 /* Simple integer to decimal string (for countdown display) */
 static void itoa_simple(uint32_t val, char *buf)
 {
@@ -672,6 +697,58 @@ void panic_screen(struct interrupt_frame *frame, uint64_t error_code,
 
     /* Disable interrupts to prevent further exceptions */
     __asm__ volatile ("cli");
+
+    /* --- UNCONDITIONAL serial dump of the panic reason, FIRST ---
+     *
+     * Every panic MUST print its reason to serial BEFORE any other
+     * work, so a reader of the serial log can always see WHY the
+     * system panicked, even if downstream panic steps (async
+     * isolation, ownership claim, readiness dump, VPD, NVRAM,
+     * framebuffer BSOD, compositor unlock) hang or deadlock.
+     *
+     * Uses serial_write() directly -- no printk, no klog, no
+     * framebuffer, no locks. If this itself hangs the panic is SO
+     * broken that serial itself is dead, in which case no output
+     * could have been captured anyway.
+     *
+     * Why this landed 2026-04-22: operators kept seeing boot logs
+     * end at the readiness-dump `[OK] TPM` line with no panic header
+     * after -- because the readiness dump fires BEFORE any "[PANIC]"
+     * marker, and any hang in the subsequent fb/printk/compositor
+     * path swallowed the actual reason. Panic MUST be observable
+     * even under the most hostile downstream state. */
+    {
+        serial_write("\n\n[PANIC] ");
+        serial_write(description ? description : "(no description)");
+        if (file) {
+            serial_write("\n  at ");
+            serial_write(file);
+        }
+        serial_write("\n");
+
+        if (frame) {
+            serial_write("  RIP=");
+            serial_write_hex(frame->rip);
+            serial_write(" CS=");
+            serial_write_hex(frame->cs);
+            serial_write(" ERR=");
+            serial_write_hex(error_code);
+            serial_write("\n  CR2=");
+            serial_write_hex(read_cr2());
+            serial_write(" CR3=");
+            serial_write_hex(read_cr3());
+            serial_write("\n");
+            serial_write("  RAX=");     serial_write_hex(frame->rax);
+            serial_write(" RBX=");      serial_write_hex(frame->rbx);
+            serial_write(" RCX=");      serial_write_hex(frame->rcx);
+            serial_write(" RDX=");      serial_write_hex(frame->rdx);
+            serial_write("\n  RSI=");   serial_write_hex(frame->rsi);
+            serial_write(" RDI=");      serial_write_hex(frame->rdi);
+            serial_write(" RBP=");      serial_write_hex(frame->rbp);
+            serial_write(" RSP=");      serial_write_hex(frame->rsp);
+            serial_write("\n");
+        }
+    }
 
     /* --- Async init fault isolation ---
      * If this CPU is executing an async boot init step, don't crash the
