@@ -7,14 +7,19 @@
 ::   3. Desktop UI tests (placeholder -- framework not yet implemented)
 ::
 :: IMPORTANT: this bat invokes scripts/machines/run-qemu.ps1 DIRECTLY
-:: rather than call'ing the per-layer aggregate bats. The child bats
-:: each end with `pause` for interactive UX (operator sees results
-:: before the QEMU window closes), which BLOCKS the chain -- after the
-:: first child returned, the user had to press a key before the next
-:: child started, and if they were away or closed the window the chain
-:: silently stopped. Running the PowerShell directly keeps the chain
-:: moving automatically; a single pause at the bottom preserves the
-:: "see the summary before the window closes" UX at the chain level.
+:: rather than call'ing the per-layer aggregate bats, and passes
+:: -TestAutoShutdown so each QEMU session EXITS automatically after
+:: its tests finish. The child bats each end with `pause` for
+:: interactive UX (operator sees results before the QEMU window
+:: closes), which BLOCKS the chain; and without auto-shutdown QEMU
+:: stayed open forever after tests (boot continued to desktop and
+:: idled there), which ALSO blocked the chain.
+::
+:: With -TestAutoShutdown and direct PowerShell invocation, the
+:: kernel calls acpi_shutdown() right after the test runner
+:: completes; QEMU exits; PowerShell returns; the next layer starts
+:: automatically. A single pause at the bottom preserves the "see
+:: the summary before the window closes" UX at the chain level.
 ::
 :: For development iteration on a single category, prefer the
 :: per-category bats in kernel\, usermode\, or desktop\ subdirs --
@@ -26,12 +31,12 @@ set MACHINES=%~dp0..\machines
 echo.
 echo === [1/3] Kernel test suites ===
 echo.
-powershell.exe -ExecutionPolicy Bypass -File "%MACHINES%\run-qemu.ps1" -Accel whpx -TestOnly -NoUsermodeTests
+powershell.exe -ExecutionPolicy Bypass -File "%MACHINES%\run-qemu.ps1" -Accel whpx -TestOnly -NoUsermodeTests -TestAutoShutdown
 
 echo.
 echo === [2/3] User-mode test binaries ===
 echo.
-powershell.exe -ExecutionPolicy Bypass -File "%MACHINES%\run-qemu.ps1" -Accel whpx -TestOnly -NoKernelTests
+powershell.exe -ExecutionPolicy Bypass -File "%MACHINES%\run-qemu.ps1" -Accel whpx -TestOnly -NoKernelTests -TestAutoShutdown
 
 echo.
 echo === [3/3] Desktop UI tests ===

@@ -106,6 +106,27 @@ void boot_tests_run(void)
                     g_boot_info.config.stress_iters);
             test_usermode_run();
         }
+
+        /* test_auto_shutdown: used by scripts/debug/run-all-tests.bat
+         * so each QEMU session exits automatically and the bat chain
+         * can progress to the next layer. Without this knob, QEMU
+         * stayed open after tests finished (boot continued to desktop
+         * and idled there forever), which made the aggregate runner
+         * silently stop after the first layer. Fires AFTER both the
+         * kernel TEST_CAT_* sweep and the user-mode launcher have
+         * run (or been skipped) so every enabled test layer produces
+         * its output before the session exits. Default 0 preserves
+         * interactive per-category runs where the operator wants to
+         * read the log before the window closes. */
+        if (g_boot_info.config.test_auto_shutdown) {
+            klog(LOG_INFO, "TEST",
+                 "test_auto_shutdown=1 -- shutting down after test run");
+            klog_disk_flush();
+            extern void acpi_shutdown(void);
+            acpi_shutdown();
+            /* acpi_shutdown should not return; belt-and-braces hlt. */
+            for (;;) __asm__ volatile("cli; hlt");
+        }
     }
 
     /* debug=0 and test=0: skip everything below */
