@@ -69,6 +69,7 @@ typedef int32_t HANDLE;
 #define SYS_PING        15
 #define SYS_NETINFO     16
 #define SYS_LOG         17
+#define SYS_GETPID      18
 #define SYS_PIPE        33
 #define SYS_SIGNAL      34
 #define SYS_SHMEM_CREATE 35
@@ -251,6 +252,11 @@ static inline long sys_netinfo(struct user_net_config *buf, size_t size)
 }
 
 /* --- Logging --- */
+
+/* Returns the calling task's PID (>= 1; PID 0 is the kernel idle
+ * task which never runs user code). Kernel handler in
+ * src/kernel/sched/syscall.c returns task_current()->pid. */
+static inline long sys_getpid(void) { return syscall0(SYS_GETPID); }
 
 /* Route a user-mode log line through the kernel klog ring as
  * `[<level>] user: <msg>`. `len` is bytes (NOT including a NUL); kernel

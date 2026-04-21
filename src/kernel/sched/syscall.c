@@ -484,6 +484,17 @@ static uint64_t syscall_handler(struct interrupt_frame *frame)
         ret = 0;
         break;
     }
+    case SYS_GETPID: {
+        /* Returns the calling task's PID. Trivial read-only query,
+         * no arg validation needed. Mirrors Win32 GetCurrentProcessId
+         * semantics -- the Win32 shim in user/lib/win32.c routes
+         * through this syscall instead of reading TEB.ClientId.
+         * UniqueProcess via gs:0x40 so the path only depends on the
+         * proven INT 0x80 surface. */
+        struct task *t = task_current();
+        ret = t ? (int64_t)t->pid : 0;
+        break;
+    }
     case SYS_PIPE: {
         HANDLE *user_handles = (HANDLE *)arg1;
         HANDLE pipe_handles[2];
