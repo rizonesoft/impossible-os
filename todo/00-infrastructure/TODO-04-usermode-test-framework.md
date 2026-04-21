@@ -334,7 +334,7 @@ Exercise every implemented syscall from user mode.
 
 **Test checkpoint:** `test_syscall.exe` runs, all assertions pass, exit code 0, serial shows `[UTEST] test_syscall.exe: PASS`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Test runner:** `scripts\debug\usermode\run-test_syscall.bat` pending owner-section wiring (per TODO-04 §4 per-binary-bat follow-up; `make userland` deploys the binary and the manifest fires it under `test=1`) | validation: build OK + sysroot deploy (24 KiB `test_syscall.exe`) + 179/179 kernel unit tests PASS (launcher glob + manifest name checks reference `test_syscall.exe`)
+> **Test runner:** `scripts\debug\usermode\run-test-syscall.bat` pending owner-section wiring (per TODO-04 §4 per-binary-bat follow-up; `make userland` deploys the binary and the manifest fires it under `test=1`) | validation: build OK + sysroot deploy (24 KiB `test_syscall.exe`) + 179/179 kernel unit tests PASS (launcher glob + manifest name checks reference `test_syscall.exe`)
 
 > **Notes:**
 > - What shipped: `user/test/test_syscall.c` (~175 LOC) replaces the §2 stub body and exercises all 11 wired INT 0x80 syscalls in one binary; one UTEST_ASSERT per contract with dependent handle blocks guarded by the open's success.
@@ -364,12 +364,12 @@ Test string and formatting functions available in user mode.
 
 **Test checkpoint:** Boot with `test=1`, launcher runs `test_libc.exe`, it exits 0, and serial shows `[UTEST] test_libc.exe: PASS`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Test runner:** `scripts\debug\usermode\run-test_libc.bat` (utest_filter=test_libc.exe via new `-UtestFilter` param to run-qemu.ps1) | validation: build OK + sysroot deploy (47 KiB `test_libc.exe`) + 179/179 kernel unit tests PASS
+> **Test runner:** `scripts\debug\usermode\run-test-libc.bat` (utest_filter=test_libc.exe via new `-UtestFilter` param to run-qemu.ps1) | validation: build OK + sysroot deploy (47 KiB `test_libc.exe`) + 179/179 kernel unit tests PASS
 
 > **Notes:**
 > - What shipped: `user/test/test_libc.c` (~90 LOC) -- 7 UTEST_ASSERT contracts across strlen/strcmp/memcpy/memset/snprintf, the libc surface every other user binary (cmd.exe, hello.exe, every test_*.exe) links against.
 > - How it integrates: deployed by `make userland` to `C:\test_libc.exe`; picked up by the §3 manifest (`tests/usermode.manifest`) and runs in the §8 correctness phase under the launcher.
-> - Downstream effects: ships with the **first round of user-mode bat runners** (`scripts/debug/usermode/run-test_{libc,syscall,smoke_boot,stress_libc,perf_syscall}.bat`) that the §3-§9 stamps already referenced; new `-UtestFilter` param on [`scripts/machines/run-qemu.ps1`](../../scripts/machines/run-qemu.ps1) plumbs through to `boot.conf utest_filter=<glob>`. Follow-up landed same day: paired `test_kernel_skip` + `test_usermode_skip` boot.conf knobs (offsets 366/367) + `-NoKernelTests` / `-NoUsermodeTests` switches let the per-binary bats run usermode-only and let the cross-layer aggregate run each layer exactly once.
+> - Downstream effects: ships with the **first round of user-mode bat runners** (`scripts/debug/usermode/run-test-{libc,syscall,smoke-boot,stress-libc,perf-syscall}.bat`) that the §3-§9 stamps already referenced; new `-UtestFilter` param on [`scripts/machines/run-qemu.ps1`](../../scripts/machines/run-qemu.ps1) plumbs through to `boot.conf utest_filter=<glob>`. Follow-up landed same day: paired `test_kernel_skip` + `test_usermode_skip` boot.conf knobs (offsets 366/367) + `-NoKernelTests` / `-NoUsermodeTests` switches let the per-binary bats run usermode-only and let the cross-layer aggregate run each layer exactly once.
 > - Canonical doc: [user/include/string.h](../../user/include/string.h) + [user/include/stdio.h](../../user/include/stdio.h) (function signatures); implementation in [user/lib/string.c](../../user/lib/string.c) + [user/lib/stdio.c](../../user/lib/stdio.c).
 > - Scope boundary: §10 owns the libc surface probe; §9 owns the syscall ABI surface, §11 owns IPC, §12 owns process lifecycle, §13 owns file I/O.
 
@@ -392,7 +392,7 @@ Test inter-process communication from user mode.
 
 **Test checkpoint:** `test_ipc.exe` completes pipe + shmem checks, exits 0, and serial shows `[UTEST] test_ipc.exe: PASS`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Test runner:** `scripts\debug\usermode\run-test_ipc.bat` (utest_filter=test_ipc.exe + -NoKernelTests) | validation: build OK, 179/179 kernel unit tests PASS, 2.43s smoke test
+> **Test runner:** `scripts\debug\usermode\run-test-ipc.bat` (utest_filter=test_ipc.exe + -NoKernelTests) | validation: build OK, 179/179 kernel unit tests PASS, 2.43s smoke test
 
 > **Notes:**
 > - What shipped: `user/test/test_ipc.c` (~125 LOC) with 12 UTEST_ASSERT contracts covering SYS_PIPE write/read round-trip, SYS_SHMEM_CREATE/MAP/unmap, and handle cleanup on every path.
@@ -421,7 +421,7 @@ Test fork, exec, waitpid from user mode.
 
 **Test checkpoint:** Fork, wait, exec, and kill paths assert cleanly, exit 0, and emit `[UTEST] test_process.exe: PASS`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Test runner:** `scripts\debug\usermode\run-test_process.bat` (utest_filter=test_process.exe + -NoKernelTests) | validation: build OK, 179/179 kernel unit tests PASS (unchanged)
+> **Test runner:** `scripts\debug\usermode\run-test-process.bat` (utest_filter=test_process.exe + -NoKernelTests) | validation: build OK, 179/179 kernel unit tests PASS (unchanged)
 
 > **Notes:**
 > - What shipped: `user/test/test_process.c` (~130 LOC) with 10 UTEST_ASSERT contracts across three sub-tests (fork+exit, fork+exec(hello.exe), fork+kill). Each sub-test spawns exactly one child so the run consumes 3 task slots -- well within TASK_MAX=32 headroom given the §6 isolation task pool.
@@ -479,7 +479,7 @@ The launcher's spawned binaries are all crt0+libc ELF; the PE32+ and EIF loader 
 - [ ] [`user/test/test_loader_eif.c`](../../user/test/test_loader_eif.c): trivial main returning 0; Makefile recipe wraps the ELF or flat output in an `EIF!` header (4-byte magic + payload per the EIF format owned by `D02T17 §5`). Binary must start with `EIF!` so [`src/kernel/exec.c`](../../src/kernel/exec.c) line 62 routes to `eif_load`.
 - [ ] All three binaries: ZERO syscalls beyond `SYS_EXIT(0)`. The goal is to exercise the LOADER, not the syscall ABI -- §9 owns syscall coverage. Exit code 0 -> launcher logs `[UTEST] test_loader_<fmt>.exe: PASS`.
 - [ ] §3 launcher emits a `format=<NAME>` line per binary so the boot log surfaces which loader picked each one. Plumb the format name out of `exec_load` (it already knows -- see `s_formats[i].name` in [`src/kernel/exec.c`](../../src/kernel/exec.c) line 122) through `task_exec` into `test_usermode.c`'s per-binary log: `klog(LOG_INFO, "UTEST", "%s: format=%s", name, fmt)`. Without this, a regression that silently routed PE binaries through the ELF loader would still print PASS.
-- [ ] Per-binary bats land under `scripts/debug/usermode/` per §16 (`run-test_loader_elf.bat`, `run-test_loader_pe.bat`, `run-test_loader_eif.bat`).
+- [ ] Per-binary bats land under `scripts/debug/usermode/` per §16 (`run-test-loader-elf.bat`, `run-test-loader-pe.bat`, `run-test-loader-eif.bat`).
 - [ ] Commit: `"test: user-mode binary format loader coverage (ELF + PE32+ + EIF)"`
 
 **Test checkpoint:** All three binaries exit 0; serial shows three `format=ELF` / `format=PE32+` / `format=EIF` lines from the launcher, proving each format hit its registered loader. A regression that drops the PE or EIF registration in `exec.c` would surface as `format=ELF` for the wrong binary or as a launcher load failure (`exec_load` returns ENOEXEC -> launcher prints `FAIL (exit=-5)`). Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
@@ -496,22 +496,22 @@ Wire user-mode test binaries into `make test`.
 - [ ] `scripts/test.sh`: parse serial for `[UTEST]` lines alongside `[TEST]` kernel lines
 - [ ] When §4 `tap=1` is enabled in `boot.conf`, parse TAP `ok` / `not ok` / `# SKIP` lines into the same summary as `[UTEST]`
 - [ ] Author per-binary bat files under `scripts/debug/usermode/` (parallel to the kernel-side `scripts/debug/kernel/run-<cat>-tests.bat` family). One bat per `test_*.exe` binary that exists at the end of §1-§15, plus an aggregate runner. Each bat passes `utest_filter=<binary>` to QEMU via `run-qemu.ps1` so the §3 launcher runs ONLY that one binary:
-    - `scripts/debug/usermode/run-test_harness_smoke.bat` (§1 smoke)
-    - `scripts/debug/usermode/run-test_syscall.bat` (§9 full syscall coverage; the §2 stub is a build-only smoke and shares the same name)
-    - `scripts/debug/usermode/run-test_libc.bat` (§10)
-    - `scripts/debug/usermode/run-test_ipc.bat` (§11)
-    - `scripts/debug/usermode/run-test_process.bat` (§12)
-    - `scripts/debug/usermode/run-test_fileio.bat` (§13)
-    - `scripts/debug/usermode/run-test_win32.bat` (§14, lights up only after `D02T12 §6`)
-    - `scripts/debug/usermode/run-test_loader_elf.bat` (§15)
-    - `scripts/debug/usermode/run-test_loader_pe.bat` (§15)
-    - `scripts/debug/usermode/run-test_loader_eif.bat` (§15)
+    - `scripts/debug/usermode/run-test-harness-smoke.bat` (§1 smoke)
+    - `scripts/debug/usermode/run-test-syscall.bat` (§9 full syscall coverage; the §2 stub is a build-only smoke and shares the same name)
+    - `scripts/debug/usermode/run-test-libc.bat` (§10)
+    - `scripts/debug/usermode/run-test-ipc.bat` (§11)
+    - `scripts/debug/usermode/run-test-process.bat` (§12)
+    - `scripts/debug/usermode/run-test-fileio.bat` (§13)
+    - `scripts/debug/usermode/run-test-win32.bat` (§14, lights up only after `D02T12 §6`)
+    - `scripts/debug/usermode/run-test-loader-elf.bat` (§15)
+    - `scripts/debug/usermode/run-test-loader-pe.bat` (§15)
+    - `scripts/debug/usermode/run-test-loader-eif.bat` (§15)
     - `scripts/debug/usermode/run-all.bat` (no filter; runs every `test_*.exe`)
 - [ ] Bat-file template: one-liner mirroring `scripts/debug/kernel/run-<cat>-tests.bat` shape -- `powershell.exe -ExecutionPolicy Bypass -File "%~dp0..\..\machines\run-qemu.ps1" -Accel whpx -TestOnly -BootArg "utest_filter=<binary>"` (the `%~dp0..\..\machines\run-qemu.ps1` relative path matches the kernel/ bats after the 2026-04-20 directory split). New `-BootArg` flag may need to land in `run-qemu.ps1` if it does not already accept arbitrary boot.conf overrides.
 - [ ] Update each subsystem-test section's `> **Test runner:**` line to point at the matching `scripts/debug/usermode/run-<binary>.bat` instead of the kernel-side bat. Sections §9-§15 each get their own runner stamp.
 - [ ] Commit: `"test: build integration -- user-mode tests in make test, CI, and per-binary bat runners"`
 
-**Test checkpoint:** `bash scripts/test.sh` (full or `SUITE=exec`) ends with a combined kernel `[TEST]` summary plus an `[UTEST]` user summary; a missing binary or non-zero exit fails the run. Running `scripts\debug\usermode\run-test_syscall.bat` on Windows boots QEMU WHPX, runs ONLY `test_syscall.exe`, and prints the binary's `[UTEST-BEGIN]` / `[PASS]` / `[UTEST-END]` lines on serial; `run-all.bat` runs every binary in manifest order. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** `bash scripts/test.sh` (full or `SUITE=exec`) ends with a combined kernel `[TEST]` summary plus an `[UTEST]` user summary; a missing binary or non-zero exit fails the run. Running `scripts\debug\usermode\run-test-syscall.bat` on Windows boots QEMU WHPX, runs ONLY `test_syscall.exe`, and prints the binary's `[UTEST-BEGIN]` / `[PASS]` / `[UTEST-END]` lines on serial; `run-all.bat` runs every binary in manifest order. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
 ---
 

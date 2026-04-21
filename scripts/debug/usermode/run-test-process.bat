@@ -1,5 +1,5 @@
 @echo off
-:: run-test_process.bat -- §12 process-lifecycle binary (test_process.exe)
+:: run-test-process.bat -- §12 process-lifecycle binary (test_process.exe)
 ::
 :: Exercises SYS_FORK + SYS_EXEC + SYS_WAITPID + SYS_KILL with three
 :: child forks per run. -NoKernelTests skips the kernel TEST_CAT_*

@@ -1,5 +1,5 @@
 @echo off
-:: run-test_ipc.bat -- §11 IPC coverage binary (test_ipc.exe)
+:: run-test-ipc.bat -- §11 IPC coverage binary (test_ipc.exe)
 ::
 :: Exercises SYS_PIPE + SYS_SHMEM_CREATE + SYS_SHMEM_MAP with a full
 :: write/read round-trip through each channel. -NoKernelTests skips

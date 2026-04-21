@@ -1,5 +1,5 @@
 @echo off
-:: run-test_perf_syscall.bat -- §8 perf binary (test_perf_syscall.exe)
+:: run-test-perf-syscall.bat -- §8 perf binary (test_perf_syscall.exe)
 ::
 :: RDTSC-based sys_yield latency; emits [PERF] sys_yield_ns=<n> line
 :: scraped by XML/JSON output. -NoKernelTests skips the kernel

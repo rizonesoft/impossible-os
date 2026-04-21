@@ -1,5 +1,5 @@
 @echo off
-:: run-test_stress_libc.bat -- §8 stress binary (test_stress_libc.exe)
+:: run-test-stress-libc.bat -- §8 stress binary (test_stress_libc.exe)
 ::
 :: In-binary 1000-iteration loop over strlen/strcmp/memcpy/memset;
 :: classname=stress in XML + JSON output. -NoKernelTests skips the
