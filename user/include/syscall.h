@@ -89,6 +89,17 @@ typedef int32_t HANDLE;
                               * user-mode fault-injection bridge.
                               * Only works when boot.conf test=1; otherwise
                               * the kernel handler returns STATUS_ACCESS_DENIED. */
+#define SYS_WRITEHANDLE  45  /* sys_writehandle(handle, buf, size) -- mirror of
+                              * SYS_READHANDLE; routes through ob_file_write
+                              * so pipe write-ends and future file write
+                              * paths go through the OB handle table. */
+#define SYS_UNMAPVIEW    46  /* sys_unmapview(addr) -- release a shmem view
+                              * mapped by sys_shmem_map. Drops both the
+                              * view slot and the section ObReferenceObject
+                              * pin that the map path took. Without this
+                              * call, mapped sections leak across process
+                              * exit because task_cleanup does not walk
+                              * section views. */
 
 /* Subcommand selectors for SYS_FAULT_INJECT. Must match kernel
  * include/kernel/sched/syscall.h. */
@@ -279,11 +290,21 @@ static inline HANDLE sys_shmem_create(const char *name, uint32_t size)
 /* Map a previously-created shmem section into the current process's
  * address space. Returns the mapped user virtual address, or 0 on
  * failure (kernel returns 0 from ObMapViewOfSection). The mapping
- * lives until the process exits or sys_closehandle(sh) is called
- * (close drops the mapping refcount). */
+ * must be torn down with sys_unmapview(addr) BEFORE the process
+ * exits; sys_closehandle(sh) drops the handle-table ref but does
+ * NOT drop the view pin (that's what sys_unmapview is for). */
 static inline uintptr_t sys_shmem_map(HANDLE sh)
 {
     return (uintptr_t)syscall1(SYS_SHMEM_MAP, (long)sh);
+}
+
+/* Release a shmem view mapped by sys_shmem_map. Drops the view slot
+ * AND the ObReferenceObject pin that the map path took, so the
+ * backing PMM frames can be reclaimed when the handle is closed.
+ * Returns 0 on success, -1 if no view at that address. */
+static inline long sys_unmapview(uintptr_t base)
+{
+    return syscall1(SYS_UNMAPVIEW, (long)base);
 }
 
 /* --- Object-Manager-backed file + directory handles --- */
@@ -310,6 +331,16 @@ static inline long sys_closehandle(HANDLE handle)
 static inline long sys_readhandle(HANDLE handle, void *buf, uint32_t size)
 {
     return syscall3(SYS_READHANDLE, (long)handle, (long)buf, (long)size);
+}
+
+/* Write up to `size` bytes from `buf` to `handle`. Returns the byte
+ * count written on success, -1 on failure (bad handle, type mismatch,
+ * pipe closed). Mirror of sys_readhandle; works on pipe-write-end
+ * handles today and on file-write handles once the OB file path
+ * supports writes end-to-end. */
+static inline long sys_writehandle(HANDLE handle, const void *buf, uint32_t size)
+{
+    return syscall3(SYS_WRITEHANDLE, (long)handle, (long)buf, (long)size);
 }
 
 /* Open an Object Manager directory by namespace path (e.g. "\\" for the

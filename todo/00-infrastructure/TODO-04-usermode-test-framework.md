@@ -57,7 +57,7 @@
 | 💎  |   8   | Test type taxonomy (smoke/correctness/stress/perf)  | §3, §4                             |  [x]   |
 | 💎  |   9   | Syscall test binary (`test_syscall.exe`)            | §1, §2, §3                         |  [x]   |
 | 💎  |  10   | Libc test binary (`test_libc.exe`)                  | §1, §3                             |  [x]   |
-| 💎  |  11   | IPC test binary (`test_ipc.exe`)                    | §1, §2, §3                         |  [ ]   |
+| 💎  |  11   | IPC test binary (`test_ipc.exe`)                    | §1, §2, §3                         |  [x]   |
 | 💎  |  12   | Process lifecycle test (`test_process.exe`)         | §1, §3                             |  [ ]   |
 | 💎  |  13   | File I/O test (`test_fileio.exe`)                   | §1, §2, §3                         |  [ ]   |
 | ⭐  |  14   | Win32 API test binary (`test_win32.exe`)            | §1, §3, D02T12 §6                  |  [ ]   |
@@ -382,15 +382,28 @@ Test string and formatting functions available in user mode.
 
 Test inter-process communication from user mode.
 
-- [ ] Complete §2 first so `SYS_PIPE`, `SYS_SHMEM_CREATE`, and `SYS_SHMEM_MAP` wrappers exist in userland before compiling this binary
-- [ ] `user/test/test_ipc.c`:
-  - `SYS_PIPE` -> two handles, write to one, read from the other
+- [x] Complete §2 first so `SYS_PIPE`, `SYS_SHMEM_CREATE`, and `SYS_SHMEM_MAP` wrappers exist in userland before compiling this binary
+- [x] `user/test/test_ipc.c`:
+  - `SYS_PIPE` -> two handles, write to one (via new `SYS_WRITEHANDLE`), read from the other (via `SYS_READHANDLE`); "PIPE-OK" round-trip byte-checked
   - `SYS_SHMEM_CREATE` -> returns handle
-  - `SYS_SHMEM_MAP` -> returns non-zero address
-  - Write to shared memory, verify data
-- [ ] Commit: `"test: user-mode IPC test binary (test_ipc.exe)"`
+  - `SYS_SHMEM_MAP` -> returns non-zero address; `sys_unmapview` released before close to drop the view pin
+  - Write to shared memory, verify data (2x uint32 marker + LE byte-order spot-check)
+- [x] Commit: `"test: user-mode IPC test binary (test_ipc.exe)"`
 
 **Test checkpoint:** `test_ipc.exe` completes pipe + shmem checks, exits 0, and serial shows `[UTEST] test_ipc.exe: PASS`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\usermode\run-test_ipc.bat` (utest_filter=test_ipc.exe + -NoKernelTests) | validation: build OK, 179/179 kernel unit tests PASS, 2.43s smoke test
+
+> **Notes:**
+> - What shipped: `user/test/test_ipc.c` (~125 LOC) with 12 UTEST_ASSERT contracts covering SYS_PIPE write/read round-trip, SYS_SHMEM_CREATE/MAP/unmap, and handle cleanup on every path.
+> - Adjacent work shipped under Branch A: the section required user-mode pipe writes, which the pre-existing SYS_WRITE rejected (stdout-only). Added **SYS_WRITEHANDLE (45)** as mirror of SYS_READHANDLE via `ob_file_write()`, and **SYS_UNMAPVIEW (46)** so the test can release the ObReferenceObject pin that `ObMapViewOfSectionFull` takes (task_cleanup does not walk section views). Both new syscalls get header defines + user wrappers (`sys_writehandle`, `sys_unmapview`).
+> - Hardening landed in `ob_file_read` + `ob_file_write`: pipe direction is now gated (`pipe_end == PIPE_READ`/`PIPE_WRITE`) and file access mask checked (`VFS_O_READ`/`VFS_O_WRITE`). VFS write now advances `fo->offset` on positive writes -- previously sequential writes landed at byte 0 every time.
+> - Downstream effects: `SYS_WRITEHANDLE` unblocks future file-write tests and any user binary needing non-stdout writes. `SYS_UNMAPVIEW` is the INT 0x80 counterpart to `NtUnmapViewOfSection` in the SSDT path.
+> - Canonical doc: [user/include/syscall.h](../../user/include/syscall.h) (wrapper signatures); [include/kernel/ob/ob_file.h](../../include/kernel/ob/ob_file.h) + [include/kernel/ob/ob_section.h](../../include/kernel/ob/ob_section.h) (kernel surface).
+> - Scope boundary: §11 owns user-mode IPC coverage; cross-task pipe IPC (fork + pipe share) is §12's job; unnamed section handles only -- named-section tests land in a later section.
+
+> **Verified:** 2026-04-21 | commit `<pending>` | 3/3 items | build OK | tests 179/179 PASS, smoke test 2.43s; 2 new syscalls wired (SYS_WRITEHANDLE + SYS_UNMAPVIEW), 4 defensive gates added to ob_file_read/write
+> **Quality reviewed:** 2026-04-21 | Codex 1x (adversarial) | 1H+2M fixed, 0 open | scope: userland-code-quality + kernel-code-quality (cross-domain: the kernel gate fixes live in ob_file.c)
 
 ---
 
@@ -501,6 +514,7 @@ Wire user-mode test binaries into `make test`.
 | 💎  | ABI header sync      | ✅ SDK               | ✅ uapi                  | ⬜ §2                  |
 | 💎  | Per-test isolation   | ✅ HLK session reset | ✅ kselftest fork+tmp    | ✅ §6 scratch+reg+leak |
 | 💎  | Libc surface probe   | ✅ HLK CRT tests     | ✅ kselftest libc        | ✅ §10 7 contracts     |
+| 💎  | IPC surface probe    | ✅ HLK pipe+shmem    | ✅ kselftest pipe+shm    | ✅ §11 pipe + shmem RT |
 | 💎  | Stress / longhaul    | ✅ TAEF Loop+Stress  | ✅ LTP runtest/stress    | ✅ §8 stress type      |
 | 💎  | Perf regression      | ✅ perfview/PerfTest | ✅ perf + flame baseline | ⚠️ §8 report-only      |
 | 💎  | Test type taxonomy   | ✅ TAEF categories   | ✅ LTP test classes      | ✅ §8 4 types + phase  |

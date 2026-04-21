@@ -27,6 +27,7 @@ test_smoke_boot.exe
 test_harness_smoke.exe
 test_syscall.exe
 test_libc.exe
+test_ipc.exe
 test_faultinject.exe
 
 # §8 stress + perf phase -- run after all correctness passes.

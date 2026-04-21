@@ -43,6 +43,18 @@
                              * (test=1 gated, self-pid scoped) -- see the
                              * user-mode fault-injection bridge section in
                              * the user-mode test framework TODO */
+#define SYS_WRITEHANDLE  45 /* sys_writehandle(handle, buf, size) → bytes / -1
+                             * mirror of SYS_READHANDLE; routes through
+                             * ob_file_write() so pipe write-ends and future
+                             * file write paths go through the OB handle
+                             * table like their read siblings. */
+#define SYS_UNMAPVIEW    46 /* sys_unmapview(addr) → 0 / -1
+                             * Drops the section view + ObReferenceObject pin
+                             * that SYS_SHMEM_MAP took. Without this,
+                             * task_cleanup leaves mapped sections pinned
+                             * until reboot because handle_table destroy
+                             * does NOT walk section views. Mirror of
+                             * NtUnmapViewOfSection on the INT 0x80 path. */
 
 /* ---- SYS_FAULT_INJECT subcommand selectors ----
  * All fault-injection countdowns are per-CPU + task-filtered. The

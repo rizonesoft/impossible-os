@@ -565,6 +565,20 @@ static uint64_t syscall_handler(struct interrupt_frame *frame)
         ret = ob_file_read(&task_current()->handle_table, handle, buf, size);
         break;
     }
+    case SYS_WRITEHANDLE: {
+        HANDLE handle = (HANDLE)(int32_t)arg1;
+        const void *buf = (const void *)arg2;
+        uint32_t size = (uint32_t)arg3;
+        ret = ob_file_write(&task_current()->handle_table, handle, buf, size);
+        break;
+    }
+    case SYS_UNMAPVIEW: {
+        uintptr_t base = (uintptr_t)arg1;
+        ret = (int64_t)ObUnmapViewOfSectionByBase(
+                   &task_current()->handle_table,
+                   task_current()->pid, base);
+        break;
+    }
     case SYS_OPENDIROBJ: {
         const char *path = (const char *)arg1;
         uint32_t access = (uint32_t)arg2;

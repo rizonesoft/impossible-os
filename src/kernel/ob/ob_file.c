@@ -127,12 +127,21 @@ int64_t ob_file_read(HANDLE_TABLE *ht, HANDLE h, void *buf, uint32_t size)
 
     fo = (FILE_OBJECT *)entry->object;
 
-    /* Pipe read path */
-    if (fo->pipe_id >= 0)
+    /* Pipe read path -- only the read-end handle is allowed to read.
+     * Reject writes on a write-end or mis-tagged handle with -1 rather
+     * than blocking on an empty ring / corrupting ring state. Codex
+     * adversarial 2026-04-21 H1. */
+    if (fo->pipe_id >= 0) {
+        if (fo->pipe_end != PIPE_READ)
+            return -1;
         return (int64_t)pipe_read(fo->pipe_id, buf, size);
+    }
 
-    /* VFS read path */
+    /* VFS read path -- require VFS_O_READ in the handle's access mask.
+     * A handle opened WRITE-only has no business reading the file. */
     if (!fo->vfs_node)
+        return -1;
+    if (!(fo->access & VFS_O_READ))
         return -1;
 
     bytes = vfs_read(fo->vfs_node, (uint32_t)fo->offset, size, (uint8_t *)buf);
@@ -147,6 +156,7 @@ int64_t ob_file_write(HANDLE_TABLE *ht, HANDLE h, const void *buf, uint32_t size
     HANDLE_TABLE_ENTRY *entry;
     OBJECT_HEADER *hdr;
     FILE_OBJECT *fo;
+    int64_t bytes;
 
     if (!ht || !buf || size == 0)
         return -1;
@@ -161,16 +171,36 @@ int64_t ob_file_write(HANDLE_TABLE *ht, HANDLE h, const void *buf, uint32_t size
 
     fo = (FILE_OBJECT *)entry->object;
 
-    /* Pipe write path */
-    if (fo->pipe_id >= 0)
+    /* Pipe write path -- only the write-end handle is allowed to write.
+     * Writing to a read-end handle would corrupt the ring's readable
+     * semaphore count and let a malicious caller forge data into a
+     * pipe it should only be able to drain. Codex adversarial
+     * 2026-04-21 H1. */
+    if (fo->pipe_id >= 0) {
+        if (fo->pipe_end != PIPE_WRITE)
+            return -1;
         return (int64_t)pipe_write(fo->pipe_id, buf, size);
+    }
 
-    /* VFS write path */
+    /* VFS write path -- require VFS_O_WRITE in the handle's access
+     * mask. Without this gate, sys_writehandle could mutate a file
+     * opened with VFS_O_READ only, turning a read-only handle into a
+     * write handle. Codex adversarial 2026-04-21 H1. */
     if (!fo->vfs_node)
         return -1;
+    if (!(fo->access & VFS_O_WRITE))
+        return -1;
 
-    return (int64_t)vfs_write(fo->vfs_node, (uint32_t)fo->offset, size,
-                              (const uint8_t *)buf);
+    bytes = (int64_t)vfs_write(fo->vfs_node, (uint32_t)fo->offset, size,
+                               (const uint8_t *)buf);
+    /* Advance the file offset on a positive write so repeated
+     * sys_writehandle calls stream instead of overwriting byte 0.
+     * Mirrors ob_file_read's post-read offset bump and the NT-path
+     * NtWriteFile semantics. Codex adversarial 2026-04-21 M1. */
+    if (bytes > 0)
+        fo->offset += (uint64_t)bytes;
+
+    return bytes;
 }
 
 /* --- Pipe handle creation ------------------------------------------------ */
