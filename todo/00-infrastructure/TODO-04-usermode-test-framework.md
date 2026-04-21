@@ -402,7 +402,7 @@ Test inter-process communication from user mode.
 > - Canonical doc: [user/include/syscall.h](../../user/include/syscall.h) (wrapper signatures); [include/kernel/ob/ob_file.h](../../include/kernel/ob/ob_file.h) + [include/kernel/ob/ob_section.h](../../include/kernel/ob/ob_section.h) (kernel surface).
 > - Scope boundary: §11 owns user-mode IPC coverage; cross-task pipe IPC (fork + pipe share) is §12's job; unnamed section handles only -- named-section tests land in a later section.
 
-> **Verified:** 2026-04-21 | commit `<pending>` | 3/3 items | build OK | tests 179/179 PASS, smoke test 2.43s; 2 new syscalls wired (SYS_WRITEHANDLE + SYS_UNMAPVIEW), 4 defensive gates added to ob_file_read/write
+> **Verified:** 2026-04-21 | commit `b28ead1f` | 3/3 items | build OK | tests 179/179 PASS, smoke test 2.43s; 2 new syscalls wired (SYS_WRITEHANDLE + SYS_UNMAPVIEW), 4 defensive gates added to ob_file_read/write
 > **Quality reviewed:** 2026-04-21 | Codex 1x (adversarial) | 1H+2M fixed, 0 open | scope: userland-code-quality + kernel-code-quality (cross-domain: the kernel gate fixes live in ob_file.c)
 
 ---
