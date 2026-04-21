@@ -1060,6 +1060,57 @@ int task_fork(struct interrupt_frame *frame)
         tasks[parent_pid_val].threads[0].kernel_gs_base;
     num_tasks++;
 
+    /* Per-process page table: clone kernel PML4 + mark image + new
+     * user stack as User. Without this the child inherits cr3=0 from
+     * struct-zero-init, the scheduler falls back to kernel CR3 (which
+     * has no User bit on image pages under the per-process PT regime
+     * added by KPTI prep), and the child's first ring-3 instruction
+     * faults silently before touching any user code. Mirror of the
+     * task_exec() PML4 bring-up, minus the destroy-old step (child
+     * has no prior cr3). Bug surfaced by the user-mode process-
+     * lifecycle test on QEMU WHPX 2026-04-21 (forks succeeded but
+     * children never ran). */
+    {
+        uintptr_t user_cr3 = vmm_create_user_pml4();
+        if (user_cr3) {
+            uintptr_t addr;
+            /* Resolve the parent's current image via the interrupt
+             * frame's saved RIP -- parent was executing user code
+             * when it INT 0x80'd into fork, so rip is inside the
+             * parent's loaded ELF. Mark every image page User in
+             * the child's cr3. */
+            loaded_module_t img_mod;
+            if (exec_find_module_by_pc(frame->rip, &img_mod) == 0) {
+                uintptr_t img_base = (uintptr_t)img_mod.base_address;
+                uintptr_t img_end  = img_base +
+                                     (uintptr_t)img_mod.size_of_image;
+                for (addr = img_base; addr < img_end; addr += 4096)
+                    vmm_set_user_page(user_cr3, addr);
+            } else {
+                /* Fallback: mark the whole ELF range. Matches the
+                 * task_exec() fallback shape. */
+                klog(LOG_WARN, "sched",
+                     "task_fork: no module for rip=0x%x, using ELF range",
+                     frame->rip);
+                for (addr = USER_ELF_BASE; addr < USER_ELF_END; addr += 4096)
+                    vmm_set_user_page(user_cr3, addr);
+            }
+            /* Mark child's user stack as User. The stack is kmalloc'd
+             * above so sits inside the kernel-heap identity map; only
+             * the User bit needs flipping. */
+            for (addr = (uintptr_t)ustack;
+                 addr < (uintptr_t)ustack + USER_STACK_SIZE;
+                 addr += 4096)
+                vmm_set_user_page(user_cr3, addr);
+            tasks[child_pid].cr3 = user_cr3;
+        } else {
+            tasks[child_pid].cr3 = 0;
+            klog(LOG_WARN, "sched",
+                 "task_fork: per-process PML4 failed for child PID %u",
+                 (uint64_t)child_pid);
+        }
+    }
+
     /* Register forked process and main thread with Object Manager */
     ob_process_create(&tasks[child_pid]);
     ob_thread_create(&tasks[child_pid].threads[0], child_pid);

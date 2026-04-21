@@ -15,10 +15,10 @@
 
 |                       |   Files |      Lines |
 | --------------------- | ------: | ---------: |
-| **C sources** (`.c`)  |     270 |     142346 |
+| **C sources** (`.c`)  |     270 |     142397 |
 | **Headers** (`.h`)    |     202 |      39817 |
 | **Assembly** (`.asm`) |       9 |       1061 |
-| **Subtotal**          | **481** | **183224** |
+| **Subtotal**          | **481** | **183275** |
 
 ## SDK Tools
 
@@ -58,9 +58,9 @@
 
 |                                |   Files |      Lines |
 | ------------------------------ | ------: | ---------: |
-| **Core code + tooling**        | **591** | **198977** |
+| **Core code + tooling**        | **591** | **199028** |
 | **Supporting text + metadata** | **382** | **164667** |
-| **All counted text files**     | **973** | **363644** |
+| **All counted text files**     | **973** | **363695** |
 
 > Vendored code excluded: ~13886 lines (`stb_image.h`, `stb_truetype.h`, `efi.h`)
 >
@@ -77,15 +77,15 @@
 
 |                               |         Linux |     Windows |         Impossible OS |
 | ----------------------------- | ------------: | ----------: | --------------------: |
-| **Core code + tooling lines** |   ~28,000,000 | ~50,000,000 |               198,977 |
+| **Core code + tooling lines** |   ~28,000,000 | ~50,000,000 |               199,028 |
 | **Developers**                | ~1,000 active | ~5,000 peak |                     1 |
 | **Time span**                 |      33 years |    40 years | 1 month(s), 16 day(s) |
 
-> At industry rates (10,000 LOC/developer/year -- COCOMO II), writing 198,977
+> At industry rates (10,000 LOC/developer/year -- COCOMO II), writing 199,028
 > lines of core code and tooling would take **157 developers** working for **1 month(s), 16 day(s)**.
 >
 > *The "impossible" in Impossible OS was supposed to be the name, not the development method.*
 
 ---
 
-*Last updated: 2026-04-21 21:47 · commit `4ea16f44`*
+*Last updated: 2026-04-21 21:59 · commit `ed3596ad`*
