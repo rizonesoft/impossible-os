@@ -199,6 +199,11 @@ NTSTATUS NtTraceControl(uint64_t function_code, uint64_t in_buffer,
     }
 
     NTSTATUS status = STATUS_SUCCESS;
+    /* -9 LEAK retrofit: ETW_FUNC_STOP(IDLE) now releases the buffer.
+     * Defer kfree to after the spinlock drop so the allocator is not
+     * called under an IRQ-off spinlock. NULL means "no release
+     * needed" (all other cases). */
+    uint8_t *release_buf = (uint8_t *)0;
 
     switch ((uint32_t)function_code) {
     case ETW_FUNC_START:
@@ -211,15 +216,40 @@ NTSTATUS NtTraceControl(uint64_t function_code, uint64_t in_buffer,
         break;
 
     case ETW_FUNC_STOP:
-        if (sess->state != ETW_STATE_RUNNING) {
-            status = STATUS_UNSUCCESSFUL;
-        } else {
+        /* -9 LEAK retrofit (Codex follow-up): unify teardown semantics
+         * with NtStopTrace. Three states worth handling:
+         *   RUNNING -> IDLE: transition; keep buffer so the session
+         *                    can be restarted via ETW_FUNC_START.
+         *                    Same behavior as before this fix.
+         *   IDLE   -> RELEASED: free buffer + clear magic so the slot
+         *                    is reusable. Without this path, a caller
+         *                    that stopped once then stopped again (or
+         *                    never started) had no way to free the
+         *                    4 KiB buffer -- fixed by NtStopTrace(IDLE)
+         *                    but ETW_FUNC_STOP(IDLE) still rejected.
+         *                    Now both surfaces behave identically.
+         *   STOPPING -> rejected: transient, may be mid-flush on
+         *                    another CPU. Same rejection as before. */
+        if (sess->state == ETW_STATE_RUNNING) {
             sess->state = ETW_STATE_STOPPING;
             klog(LOG_DEBUG, "etw", "session %u stopped (%u events, %u dropped)",
                  (uint64_t)sess->handle,
                  (uint64_t)sess->events_written,
                  (uint64_t)sess->events_dropped);
             sess->state = ETW_STATE_IDLE;
+        } else if (sess->state == ETW_STATE_IDLE) {
+            /* Release buffer + clear magic; defer kfree until after
+             * the spinlock is dropped (matches NtStopTrace's pattern
+             * and avoids holding an IRQ-off spinlock across the
+             * heap allocator's free path). */
+            release_buf = sess->buffer;
+            sess->buffer = (uint8_t *)0;
+            sess->magic  = 0;
+            klog(LOG_DEBUG, "etw",
+                 "session %u released from IDLE via NtTraceControl(STOP)",
+                 (uint64_t)sess->handle);
+        } else {
+            status = STATUS_UNSUCCESSFUL;
         }
         break;
 
@@ -252,6 +282,10 @@ NTSTATUS NtTraceControl(uint64_t function_code, uint64_t in_buffer,
     }
 
     spin_unlock_irqrestore(&s_etw_lock, irq_flags);
+    /* -9 LEAK retrofit: kfree outside the spinlock (see release_buf
+     * declaration comment). NULL when no release was needed. */
+    if (release_buf)
+        kfree(release_buf);
     return status;
 }
 
@@ -359,16 +393,36 @@ NTSTATUS NtStopTrace(uint64_t trace_handle, uint64_t instance_name,
         return STATUS_INVALID_HANDLE;
     }
 
-    if (sess->state != ETW_STATE_RUNNING) {
+    /* -9 LEAK retrofit: previously this returned STATUS_UNSUCCESSFUL
+     * for any non-RUNNING state, which meant a caller that created a
+     * session via NtCreateTrace and then never started it had NO way
+     * to free its 4 KiB buffer -- NtStopTrace refused, no NtCloseTrace
+     * exists, and slot reuse only happens when magic is cleared.
+     * Result: 4096-byte leak per orphan session. test_etw_create_trace
+     * and test_etw_event_not_running both hit this path on KVM.
+     *
+     * Fix: NtStopTrace is now permissive for IDLE sessions too. An
+     * IDLE session has no pending writes so the release path simply
+     * frees the buffer + clears magic without a STATE_STOPPING
+     * transition. Matches Windows' "stop releases the session" docs
+     * and Linux's kfree-on-any-state cleanup convention. STOPPING
+     * transient remains rejected because its buffer may be mid-
+     * flush by another CPU. */
+    if (sess->state != ETW_STATE_RUNNING && sess->state != ETW_STATE_IDLE) {
         spin_unlock_irqrestore(&s_etw_lock, irq_flags);
         return STATUS_UNSUCCESSFUL;
     }
 
+    uint8_t running = (sess->state == ETW_STATE_RUNNING);
     sess->state = ETW_STATE_STOPPING;
-    klog(LOG_DEBUG, "etw", "session %u stopped (%u events, %u dropped)",
-         (uint64_t)sess->handle,
-         (uint64_t)sess->events_written,
-         (uint64_t)sess->events_dropped);
+    if (running)
+        klog(LOG_DEBUG, "etw", "session %u stopped (%u events, %u dropped)",
+             (uint64_t)sess->handle,
+             (uint64_t)sess->events_written,
+             (uint64_t)sess->events_dropped);
+    else
+        klog(LOG_DEBUG, "etw", "session %u stopped from IDLE (never started)",
+             (uint64_t)sess->handle);
 
     /* Release session: free buffer and clear magic so slot can be reused.
      * This makes the 8-session limit concurrent, not lifetime-per-boot. */

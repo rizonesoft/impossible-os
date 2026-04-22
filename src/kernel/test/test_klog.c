@@ -311,6 +311,21 @@ static void test_etw_event_not_running(void)
                       (uint64_t)&payload, 0, 0);
     TEST_ASSERT_EQ(s, STATUS_INVALID_PARAMETER,
                    "NtTraceEvent fails on non-running session");
+
+    /* -9 LEAK retrofit: free the 4 KiB session buffer. Before
+     * the NtStopTrace permissive-IDLE fix, there was no way to
+     * free a never-started session, so this test leaked 4096 bytes
+     * per run. Now NtStopTrace accepts IDLE and cleans up.
+     * Assertion locks in the fix: if NtStopTrace regresses back to
+     * STATUS_UNSUCCESSFUL for IDLE sessions, this test fails loud.
+     * Follow-up assertion: subsequent NtFlushTrace returns
+     * INVALID_HANDLE proving magic was cleared + slot reusable. */
+    s = ssdt_dispatch(SSDT_NtStopTrace, handle, 0, 0, 0, 0, 0);
+    TEST_ASSERT_EQ(s, STATUS_SUCCESS,
+                   "NtStopTrace(IDLE) releases the session (-9 leak fix gate)");
+    s = ssdt_dispatch(SSDT_NtFlushTrace, handle, 0, 0, 0, 0, 0);
+    TEST_ASSERT_EQ(s, STATUS_INVALID_HANDLE,
+                   "Post-stop NtFlushTrace returns INVALID_HANDLE (slot cleared)");
 }
 
 /* ---- ETW: SSDT slots are registered (not stub) ---- */
