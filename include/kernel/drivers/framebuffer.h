@@ -80,17 +80,31 @@ uint32_t fb_get_stride(void);
 /* ---- Snapshot ---- */
 
 /* Return the number of bytes a fb_snapshot() caller must allocate in dest_buf
- * to capture the current frame: width * height * 4 (BGRA). Returns 0 when the
+ * to capture the current frame: width * height * 4. Returns 0 when the
  * framebuffer is not yet initialized. Callers should use pmm_alloc_contiguous
  * for the buffer since a 1280x720 snapshot is 3.5 MiB. */
 uint64_t fb_snapshot_size(void);
 
-/* Copy the current back buffer into dest_buf as a tightly-packed BGRA bitmap
- * (width * height * 4 bytes). On success *width and *height are set to the
- * framebuffer dimensions. Returns 0 on success, -1 on invalid args or
- * uninitialized framebuffer. Caller must size dest_buf >= fb_snapshot_size().
- * Kernel test code calls this after the compositor has rendered to verify
- * the screen is not black / not broken. */
+/* Copy the current back buffer into dest_buf as a tightly-packed 32-bit
+ * bitmap (width * height * 4 bytes). The channel order is the native GOP
+ * pixel format the bootloader negotiated: BGRX on all shipping hardware
+ * today, though fb_init also accepts RGBX per the guardrail at
+ * framebuffer.c:218. Callers should treat the data as raw framebuffer
+ * bytes and reuse the FB_COLOR_* constants in this header for any per-pixel
+ * comparison; do NOT assume strict BGRA semantics.
+ *
+ * On success *width and *height are set to the framebuffer dimensions.
+ * Returns 0 on success, -1 on invalid args or uninitialized framebuffer.
+ * Caller must size dest_buf >= fb_snapshot_size().
+ *
+ * Concurrency: fb_snapshot does NOT hold a lock across the copy. A
+ * concurrent fb_blit / fb_put_pixel / spinner_advance on any CPU (or in
+ * an IRQ callback on this one) can tear the snapshot. Callers needing a
+ * stable frame must quiesce writers first (e.g., stop the boot splash
+ * spinner, or hold a compositor-wide snapshot mutex once the desktop
+ * test-isolation layer wires one). Kernel test code calls this after
+ * the compositor has rendered to verify the screen is not black /
+ * not broken. */
 int fb_snapshot(void *dest_buf, uint32_t *width, uint32_t *height);
 
 /* ---- Compositor lock ---- */

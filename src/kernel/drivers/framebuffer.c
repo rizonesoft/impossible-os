@@ -861,20 +861,25 @@ int fb_snapshot(void *dest_buf, uint32_t *width, uint32_t *height)
     if ((uint64_t)fb_width > 0xFFFFFFFFu)
         return -1;
 
-    /* Caller-visible layout is always tightly packed BGRA so tests can do
-     * straightforward pixel arithmetic. Copy row-by-row unconditionally:
-     * (1) handles stride-padded hw pitches correctly, (2) keeps the
-     * per-call count inside uint32_t even on pathological total pixel
-     * counts, (3) the extra loop overhead is trivial at realistic screen
-     * sizes (fewer than 10K iterations per frame). */
+    /* Caller-visible layout is tightly packed 32-bit pixels. Fast path:
+     * when the back buffer is contiguous (stride == width) AND the total
+     * pixel count fits in uint32_t (the mem_cpy32 count type), issue a
+     * single bulk copy so the SIMD memcpy dispatch fires once instead of
+     * per-row. Fallback path: row-by-row copy for stride-padded buffers
+     * or pathological >= 2^32-pixel totals. */
     uint32_t *dst = (uint32_t *)dest_buf;
     uint32_t w   = fb_width;
     uint32_t h   = fb_height;
 
-    for (uint32_t y = 0; y < h; y++)
-        mem_cpy32(dst + (uint64_t)y * w,
-                  back_buf + (uint64_t)y * fb_stride,
-                  w);
+    uint64_t total_px = (uint64_t)w * (uint64_t)h;
+    if (fb_stride == w && total_px <= 0xFFFFFFFFu) {
+        mem_cpy32(dst, back_buf, (uint32_t)total_px);
+    } else {
+        for (uint32_t y = 0; y < h; y++)
+            mem_cpy32(dst + (uint64_t)y * w,
+                      back_buf + (uint64_t)y * fb_stride,
+                      w);
+    }
 
     *width  = w;
     *height = h;

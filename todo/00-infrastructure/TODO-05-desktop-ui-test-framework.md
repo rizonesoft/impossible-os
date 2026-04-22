@@ -89,7 +89,8 @@ Capture the current framebuffer contents as a raw bitmap for comparison.
 > - Canonical doc: the `fb_snapshot()` / `fb_snapshot_size()` contract in `include/kernel/drivers/framebuffer.h` (Snapshot block).
 > - Scope boundary: §1 ships only the kernel-side bitmap copy. §2 owns the QEMU monitor `screendump` path, §6 owns pixel-diff comparison, §13 owns the per-output `fb_snapshot_monitor(index, ...)` extension, §15 owns the on-failure artifact capture that consumes this API.
 > **Verified:** 2026-04-22 | commit `d5fc4596` | 5/5 items | build OK + smoke PASS (KVM 2.41s) | tests 1840/1840 PASS, 0 leaked (KVM)
-> **Quality reviewed:** 2026-04-22 | Codex 1x (adversarial) | 1H+1M fixed | scope: kernel-code-quality
+> **Accepted:** [M] `fb_snapshot()` copies the back buffer without a read-side lock; torn captures possible under an active compositor (reason: proper quiesce needs every writer to honor a new mutex) -> XREF: 00-infrastructure/TODO-05 §15 (item: "Add snapshot-time quiesce for `fb_snapshot()` so failure captures under an active compositor are not torn" at line 350)
+> **Quality reviewed:** 2026-04-22 | Codex 2x (adversarial, quality) | 1H+2M+1L fixed, 1M open | scope: kernel-code-quality
 
 ---
 
@@ -347,6 +348,7 @@ Per-test fresh-desktop isolation and automatic artifact bundles on failure, so a
 - [ ] CI uploads `build/test-artifacts/` on job failure (GHA `actions/upload-artifact@v4`); retention per `T01 §6` policy
 - [ ] Local retention: keep most recent 10 failure bundles; older bundles auto-pruned
 - [ ] Re-running a failing test replaces the prior bundle, does NOT append (avoids stale artifact drift)
+- [ ] Add snapshot-time quiesce for `fb_snapshot()` so failure captures under an active compositor are not torn. Today `src/kernel/drivers/framebuffer.c:fb_snapshot()` does a lockless row copy; §1 relies on `spinner_stop()` + pre-compositor test timing. §15 ships the first caller that runs under active rendering, so add a read-side lock (or compositor flush barrier) that `fb_blit` / `fb_put_pixel` / `spinner_advance` writers honor, then drop the header caveat. Codex quality review of §1 (2026-04-22) accepted the race here.
 - [ ] Commit: `"test: per-test isolation + crash artifact capture"`
 
 **Test checkpoint:** Deliberately fail a desktop test: `build/test-artifacts/<test>/` contains `screen.png`, `serial.log`, `etw.bin`, `wm.json`. Re-run the same failing test: the prior bundle is replaced, not appended; directory contents match the second run only.
