@@ -450,7 +450,7 @@ GNOME Shell tests against fixed virtual monitors at multiple DPIs; Win11 CI is s
 > - 6 new `TEST_CAT_DESKTOP` suites (+14 assertions): output_count baseline (1..3 range), fb_snapshot_monitor OOB rejection with NULL / index-at-count / index+10 / UINT32_MAX, boot_config.test_monitors_count 0..3 range, PARSER exact-mapping for integer forms 0/1/2/3/4 and comma-list 1..4 entries (kernel-side mirror of bootloader parser; stays in lock-step by code review).
 > - Canonical doc: `include/kernel/drivers/framebuffer.h` (output-count + snapshot contract), `src/boot/uefi/bootx64.c` (parser -- integer form + geometry list).
 > - Scope boundary: §13 ships the kernel-side + boot.conf + runner-shape surface. §15 owns the virtio-gpu multi-output driver prerequisite, §7 owns the visual-regression workflow the matrix rows consume, §1 owns the single-output fb_snapshot the §13 API builds on.
-> **Verified:** 2026-04-22 | 4/6 items + 1 partial | build OK | tests 38/38 suites 191/191 assertions PASS (KVM) | 2 items explicitly deferred to §15 virtio-gpu prereq
+> **Verified:** 2026-04-22 | commit `65a360bd` | 4/6 items + 1 partial | build OK | tests 38/38 suites 191/191 assertions PASS (KVM) | 2 items explicitly deferred to §15 virtio-gpu prereq
 > **Deferred:** [M] multi-monitor matrix rows + per-output non-black smoke require the virtio-gpu multi-output driver (reason: standalone ~1500-LOC graphics-stack work, outgrows UI-test framework scope) -> XREF: 00-infrastructure/TODO-05 §15 (item: "Ship a virtio-gpu multi-output driver" at line 488)
 > **Quality reviewed:** 2026-04-22 | Codex 1x (adversarial) | 2H+1M+0L fixed, 0 open | scope: kernel-code-quality
 
