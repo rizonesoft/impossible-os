@@ -11,6 +11,7 @@
 
 #include "kernel/types.h"
 #include "kernel/klog.h"
+#include "kernel/cpuid_platform.h"
 #include "kernel/mm/heap.h"
 #include "kernel/timer.h"
 #include "kernel/drivers/framebuffer.h"
@@ -388,6 +389,30 @@ void boot_phase3(void)
         int i;
         for (i = 0; i < 200; i++)
             yield();
+    }
+
+    /* --- Compositor mode gating (TODO-05 headless compositor) ---
+     * `compositor=headless` in boot.conf suppresses real VSYNC + fb_swap
+     * so tests can drive frames deterministically via
+     * compositor_step_frames(N). Refuse the flag on bare metal: the
+     * user expects the monitor to show the desktop and headless would
+     * silently leave them with a black screen. Hypervisors (QEMU /
+     * VBox / WHPX) are the only supported headless platforms. */
+    if (g_boot_info.config.compositor == 1) {
+        if (platform_get() == PLATFORM_BARE_METAL) {
+            /* Route through boot_halt() so a physical monitor actually
+             * shows the misconfig message. klog(LOG_FATAL, ...) already
+             * halts internally -- calling boot_halt first paints the
+             * framebuffer halt screen before klog's own halt trips.
+             * Codex [M] §12 review: the prior klog-then-hlt path left
+             * the screen black on the only platform where the user
+             * needs to see the reason. */
+            boot_halt("boot.conf compositor=headless rejected on bare metal "
+                      "(physical display present; use compositor=normal)");
+        }
+        klog(LOG_INFO, "compositor",
+             "headless mode enabled via boot.conf (no fb_swap, no VSYNC)");
+        compositor_set_headless(1);
     }
 
     /* --- Compositor event loop (never returns) --- */

@@ -26,8 +26,97 @@
 #include "main/main_internal.h"
 #include "kernel/cpuid_platform.h"
 
+/* Headless state + test seed. All reads/writes are plain volatile
+ * because tests + compositor thread never race on them today:
+ * `compositor_set_headless` is called from boot_desktop.c BEFORE the
+ * compositor loop starts, and `compositor_step_frames` is called
+ * either from the test phase (pre-compositor) or from a thread while
+ * the compositor is HLT-idling in headless mode. */
+static volatile int      s_compositor_headless = 0;
+static volatile uint64_t s_compositor_test_seed = 0;
+
+void compositor_set_headless(int headless)
+{
+    s_compositor_headless = headless ? 1 : 0;
+}
+
+int compositor_is_headless(void)
+{
+    return s_compositor_headless;
+}
+
+void compositor_set_test_seed(uint64_t seed)
+{
+    s_compositor_test_seed = seed;
+}
+
+uint64_t compositor_get_test_seed(void)
+{
+    return s_compositor_test_seed;
+}
+
+uint32_t compositor_step_frames(uint32_t n)
+{
+    /* Hard reject when the normal compositor loop might be running:
+     * step_frames walks `windows[]` and dereferences per-window
+     * framebuffer pointers, which `wm_destroy_window()` frees under
+     * the main compositor's `scheduler_disable()` guard. Running a
+     * second presenter concurrently with compositor_run() can
+     * produce use-after-free, torn composites, double swaps, and
+     * corrupt frame-stats. Headless mode suppresses compositor_run
+     * so step_frames is the only presenter -- that is the only safe
+     * configuration for this entry point. Codex [H] adversarial
+     * review of §12 required this refusal. */
+    if (!s_compositor_headless)
+        return 0;
+
+    /* Same scheduler_disable pattern the main compositor uses around
+     * wm_process_pending_closes + wm_composite so even headless-mode
+     * callers that race a concurrent wm_mark_dirty() / destroy on
+     * another CPU never observe a torn windows[] traversal. */
+    uint32_t i;
+    for (i = 0; i < n; i++) {
+        uint64_t vsync_ns = mono_ns();
+
+        scheduler_disable();
+        wm_process_pending_closes();
+        wm_mark_dirty_internal();
+        wm_composite();
+        /* Skip the real framebuffer swap when running headless. The
+         * composite still touches the WM back buffer so tests can
+         * hash the output via fb_snapshot(), but no VRAM flip
+         * happens -- that is exactly the speed win headless mode
+         * buys. Under headless we always skip; the branch here is
+         * belt + suspenders for the future case where step_frames
+         * is wired into a live-display debug path. */
+        if (!s_compositor_headless)
+            fb_swap();
+        scheduler_enable();
+
+        /* Advance the §10 frame-timing oracle. Present timestamp is
+         * sampled AFTER the optional swap so `last_present_qpc`
+         * reflects the point the work is done, matching the main
+         * compositor loop's call-site. */
+        wm_frame_stats_on_present(vsync_ns, mono_ns());
+    }
+    return i;
+}
+
 void compositor_run(void)
 {
+    if (s_compositor_headless) {
+        /* Headless mode: the BSP's real compositor loop is
+         * suppressed. Tests / external drivers own frame
+         * advancement via compositor_step_frames(). The function
+         * must NOT return because boot_desktop.c calls it as a
+         * never-returns tail; HLT-idle until a panic or shutdown. */
+        klog(LOG_INFO, "compositor",
+             "headless mode: BSP idles -- tests drive "
+             "compositor_step_frames() for rendering");
+        for (;;)
+            __asm__ volatile ("sti; hlt");
+    }
+
     fb_fill_rect(0, 0, fb_get_width(), fb_get_height(), 0x00000000);
 
     int32_t prev_mx = -1, prev_my = -1;

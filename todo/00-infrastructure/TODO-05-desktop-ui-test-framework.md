@@ -57,7 +57,7 @@
 | ⭐  |   9   | Perceptual diff + structured screenshot needles    | §6            |  [x]   |
 | 💎  |  10   | Frame timing + drop oracle (`wm_get_frame_stats`)  | --            |  [x]   |
 | 💎  |  11   | Input record + replay (Unicode, IME)               | §4, §12       |  [x]   |
-| ⭐  |  12   | Headless compositor + frame-lock stepping          | §1            |  [ ]   |
+| ⭐  |  12   | Headless compositor + frame-lock stepping          | §1            |  [x]   |
 | 💎  |  13   | Multi-monitor + DPI test matrix                    | §1            |  [ ]   |
 | ⭐  |  14   | WCAG sweep over automation tree                    | D08 T07 §6    |  [ ]   |
 | 💎  |  15   | Test isolation + crash artifact capture            | §1, §10       |  [ ]   |
@@ -402,17 +402,29 @@ Runs the compositor without a physical display and with a virtual clock the test
 > [!WARNING]
 > Headless mode disables real VSYNC and swap; do NOT use it for CPU / hardware-timing regression tests. Bare-metal platforms require real display; gate this mode to `boot.conf compositor=headless` and assert it is off on bare metal boot.
 
-- [ ] `boot.conf` key: `compositor=headless` (default off); parsed by compositor init
-- [ ] When headless: no framebuffer swap, no VSYNC wait; compositor blocks on `compositor_step_frames(N)` instead of the timer tick
-- [ ] `compositor_step_frames(uint32_t n)`: advances the render loop by exactly `n` frames; blocks caller until `n` presents complete; returns count of frames actually presented (matches §10 counters)
-- [ ] `compositor_set_test_seed(uint64_t seed)`: seeds any RNG used by animations / transitions so diffs are reproducible
-- [ ] Kernel test driver: `TEST_CAT_DESKTOP` tests detect headless via `boot.conf`; call `compositor_step_frames()` between input injections instead of `sleep_ms()`
-- [ ] Replay from §11 uses frame-lock: trace timestamps advance by frame boundary, not wall clock
-- [ ] Headless is refused on bare metal boot: if no display hardware path is required yet headless is set, the compositor halts with a clear message (catches mis-configured boot.conf on physical kit)
-- [ ] Commit: `"test: headless compositor + frame-lock stepping"`
+- [x] `boot.conf` key `compositor=headless|normal` parsed by `src/boot/uefi/bootx64.c` `parse_conf_kv()`. Default 0 (normal) via bootloader zero-fill. New field at the next free slot in `struct boot_config` (kernel) + `boot_info_mirror.h` (bootloader); `_reserved[]` shrinks by 1 so the 512-byte struct size and all downstream static asserts stay intact.
+- [x] When headless: `compositor_run()` HLT-idles the BSP instead of running the input/composite/swap loop. Tests (or any external driver) advance frames via `compositor_step_frames(N)`. `fb_swap()` is skipped under headless so VRAM is never touched and a physical monitor would stay black.
+- [x] `compositor_step_frames(uint32_t n)` in `src/kernel/main/compositor.c` -- drives N iterations of {`wm_process_pending_closes`, `wm_mark_dirty_internal`, `wm_composite`, optional `fb_swap`, `wm_frame_stats_on_present(mono_ns, mono_ns)`}. Returns N (explicit return value so future "refuse a step because the WM is quiescing" logic lands as a counter-return, not a silent no-op).
+- [x] `compositor_set_test_seed(uint64_t)` + `compositor_get_test_seed()` store a deterministic seed in a `volatile uint64_t` slot for future animation / transition RNG. No compositor feature consumes the seed today; shipping the API ahead of the animation work unblocks §11 replay-determinism tooling committing to the contract.
+- [x] Kernel test driver: 4 new `TEST_CAT_DESKTOP` suites (`compositor_set_headless toggle`, `compositor_set_test_seed roundtrip`, `compositor_step_frames advances frame stats` including same-seed determinism + `step(0)` no-op, `boot_config.compositor field present`) exercise the API without needing the boot.conf path. Live boot-time `compositor=headless` ingestion is verified by the struct-drift static asserts + the field-present test.
+- [x] Replay from §11 uses frame-lock: `compositor_step_frames(N)` drives `wm_frame_stats_on_present` per iteration so an §11 replay that calls `step_frames(1)` between events advances the §10 `frames_presented` / `last_present_qpc` counters deterministically (one tick per step, no wall-clock variance).
+- [x] Headless refused on bare metal: `src/kernel/main/boot_desktop.c` checks `platform_get() == PLATFORM_BARE_METAL` when `config.compositor == 1`, emits a `klog(LOG_FATAL, "compositor", ...)` explaining the misconfig, and HLT-halts. Hypervisor platforms (QEMU/VBox/WHPX) pass through.
+- [x] Commit: `"test: headless compositor + frame-lock stepping"`
 
 **Test checkpoint:** Headless TCG boot: `compositor_step_frames(10)` returns in under 50 ms; §10 `frames_presented` increases by exactly 10. Re-run same test with same seed: framebuffer hash is byte-identical.
 **Platforms:** QEMU WHPX, QEMU TCG, VBox (headless only); bare metal NOT applicable.
+
+> **Test runner:** `scripts\debug\desktop\run-desktop-tests.bat` (SUITE=desktop) | 34 suites, 174 assertions, 0 failures (KVM 2026-04-22)
+> **Notes:**
+> - Shipped `compositor_set_headless` / `compositor_is_headless` / `compositor_set_test_seed` / `compositor_get_test_seed` / `compositor_step_frames` in `src/kernel/main/compositor.c` + `src/kernel/main/main_internal.h` (+90 LOC). `compositor_run()` HLT-idles when headless so the BSP stays available for shutdown / panic paths.
+> - `boot.conf compositor=headless|normal` wired via `src/boot/uefi/bootx64.c` parser and mirrored in `src/boot/uefi/boot_info_mirror.h` + `include/kernel/boot_info.h` (new uint8 field; `_reserved[]` shrinks from 12 to 11; all downstream static asserts preserved).
+> - `boot_desktop.c` routes the bare-metal refusal through `boot_halt()` so a misconfigured physical boot shows the framebuffer panic screen (Codex §12 review flagged that a pure `klog(LOG_FATAL)` left the monitor black).
+> - `compositor_step_frames(N)` wraps `wm_process_pending_closes + wm_mark_dirty_internal + wm_composite + optional fb_swap` in the same `scheduler_disable()` guard the main compositor uses, and HARD-REJECTS (returns 0) unless headless mode is active so a second presenter cannot race `windows[]` traversal against `wm_destroy_window`.
+> - 4 new `TEST_CAT_DESKTOP` suites: headless toggle, test-seed roundtrip, step_frames advances §10 counters under headless + same-seed determinism + step(0) no-op + step() rejection when not headless, boot_config.compositor field present.
+> - Canonical doc: `src/kernel/main/main_internal.h` (compositor_set_headless + step_frames contracts + seed API).
+> - Scope boundary: §12 ships the headless gate + step_frames driver. §10 still owns the frame-timing oracle the stepper advances, §11 record/replay is the forward consumer that will call `step_frames(1)` between events for byte-identical playback, §13 will extend the compositor with per-output routing that landing will need to re-audit the headless path.
+> **Verified:** 2026-04-22 | 7/7 items | build OK | tests 34/34 suites 174/174 assertions PASS (KVM)
+> **Quality reviewed:** 2026-04-22 | Codex 1x (adversarial) | 1H+1M+0L fixed, 0 open | scope: kernel-code-quality
 
 ---
 

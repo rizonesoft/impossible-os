@@ -1949,6 +1949,12 @@ static void parse_conf_kv(struct boot_config *cfg,
     else if (ascii_streq(key, "test_quiet")) {
         cfg->test_quiet = (UINT8)ascii_atoi(val);
     }
+    else if (ascii_streq(key, "compositor")) {
+        /* Desktop UI test framework, headless compositor section. */
+        if      (ascii_streq(val, "headless")) cfg->compositor = 1;
+        else if (ascii_streq(val, "normal"))   cfg->compositor = 0;
+        else                                   cfg->compositor = (UINT8)ascii_atoi(val);
+    }
     else if (ascii_streq(key, "diag_delay")) {
         cfg->diag_delay = (UINT8)ascii_atoi(val);
     }

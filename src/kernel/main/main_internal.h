@@ -42,8 +42,44 @@ void boot_tests_run(void);
 /* boot_desktop.c -- Font/icon/cursor/WM/desktop init, demo window */
 void boot_desktop_init(void);
 
-/* compositor.c -- Main compositor event loop (never returns) */
+/* compositor.c -- Main compositor event loop.
+ * Normal mode: never returns (runs as the BSP idle/main kernel thread).
+ * Headless mode (boot.conf `compositor=headless`): the function HLT-
+ * idles the BSP so tests / external drivers own frame advancement via
+ * `compositor_step_frames()`. Bare-metal boot REJECTS headless mode;
+ * see boot_desktop.c for the refusal path. */
 void compositor_run(void);
+
+/* Headless compositor + frame-lock stepping (TODO-05 desktop UI test
+ * framework, headless compositor section). The set/get knobs are
+ * always safe to call; `compositor_step_frames` is REJECTED (returns
+ * 0) when headless mode is off, so it cannot race the main compositor
+ * loop -- Codex §12 review hardened this after the original "also
+ * works while compositor_run is live" contract was found unsafe. */
+
+/* Switch the compositor to headless mode. Must be called BEFORE
+ * compositor_run() to suppress the infinite display loop. Normal
+ * callers leave headless off (default 0). */
+void compositor_set_headless(int headless);
+int  compositor_is_headless(void);
+
+/* Set the deterministic seed used for future animation / transition
+ * RNG so byte-identical replay is possible under §12's virtual
+ * clock. Today no compositor feature consumes the seed; the API slot
+ * lands ahead of animation work so trace tooling can commit to the
+ * contract. */
+void     compositor_set_test_seed(uint64_t seed);
+uint64_t compositor_get_test_seed(void);
+
+/* Drive exactly `n` compositor frames: mark dirty, composite, present
+ * (skipping real fb_swap in headless mode), advance the §10 frame-
+ * stats counters. Returns the number of frames actually presented.
+ * Returns 0 when headless mode is OFF: running step_frames
+ * concurrently with the main compositor loop would race windows[]
+ * traversal against wm_destroy_window. Callers who want frame-locked
+ * stepping MUST first `compositor_set_headless(1)` (which
+ * suppresses the real display loop). */
+uint32_t compositor_step_frames(uint32_t n);
 
 /* ---- Helpers shared across boot modules ---- */
 

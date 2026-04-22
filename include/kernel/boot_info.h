@@ -331,10 +331,15 @@ struct boot_config {
     uint8_t  config_version;   /* 0 = unversioned (legacy), 1+ = versioned */
     /* Error screen test (S14) -- trigger boot_fatal from bootloader for QR/BSOD testing */
     uint8_t  error_screen_test; /* 1 = call boot_fatal() before kernel load */
+    /* Compositor mode (TODO-05 desktop UI test framework, headless
+     * compositor section). 0 = normal display + VSYNC + swap (default);
+     * 1 = headless: no fb_swap, no real VSYNC wait, tests drive frames
+     * via compositor_step_frames(N). Bare-metal boot rejects 1. */
+    uint8_t  compositor;
     /* Reserved -- new config fields go here without shifting cmdline.
      * Bootloader zero-fills the entire struct, so new fields default to 0
      * in older bootloaders that don't know about them. */
-    uint8_t  _reserved[12];
+    uint8_t  _reserved[11];
     /* Command line (offset 32 -- stable across versions) */
     char     cmdline[BOOT_CONF_CMDLINE_MAX];
     /* Status */

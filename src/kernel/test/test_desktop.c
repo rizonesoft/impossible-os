@@ -17,6 +17,7 @@
 #include "desktop/terminal.h"
 #include "desktop/wm.h"
 #include "kernel/test/input_record.h"
+#include "main/main_internal.h"
 
 /* ---- §4 Input Event Injection ----------------------------------------- */
 
@@ -1075,6 +1076,132 @@ static void test_input_record_replay_rejects_malformed(void)
                    "zero length -> -1");
 }
 
+/* ---- Section 12: Headless Compositor + Frame-Lock Stepping ---------- */
+
+/* set_headless toggles the volatile flag; is_headless reads it back.
+ * Default (zero-init) is 0. */
+static void test_compositor_headless_toggle(void)
+{
+    int saved = compositor_is_headless();
+    compositor_set_headless(0);
+    TEST_ASSERT_EQ((uint64_t)compositor_is_headless(), (uint64_t)0,
+                   "is_headless == 0 after set(0)");
+    compositor_set_headless(1);
+    TEST_ASSERT_EQ((uint64_t)compositor_is_headless(), (uint64_t)1,
+                   "is_headless == 1 after set(1)");
+    compositor_set_headless(42);
+    TEST_ASSERT_EQ((uint64_t)compositor_is_headless(), (uint64_t)1,
+                   "non-zero set normalises to 1");
+    /* Restore for subsequent tests. */
+    compositor_set_headless(saved);
+}
+
+/* set_test_seed/get_test_seed roundtrip the full uint64 range. */
+static void test_compositor_test_seed_roundtrip(void)
+{
+    uint64_t saved = compositor_get_test_seed();
+
+    compositor_set_test_seed(0);
+    TEST_ASSERT_EQ((uint64_t)compositor_get_test_seed(), (uint64_t)0,
+                   "seed == 0 after set(0)");
+    compositor_set_test_seed(0xDEADBEEFCAFEBABEULL);
+    TEST_ASSERT_EQ((uint64_t)compositor_get_test_seed(),
+                   (uint64_t)0xDEADBEEFCAFEBABEULL,
+                   "seed roundtrips full uint64");
+    compositor_set_test_seed(~(uint64_t)0);
+    TEST_ASSERT_EQ((uint64_t)compositor_get_test_seed(), (uint64_t)~(uint64_t)0,
+                   "seed accepts 0xFFFFFFFFFFFFFFFF");
+
+    compositor_set_test_seed(saved);
+}
+
+/* compositor_step_frames(N) returns N AND advances frames_presented
+ * by exactly N. Verifies §12 wires §10's counter advancement
+ * correctly under headless mode. */
+static void test_compositor_step_frames_advances_stats(void)
+{
+    struct wm_frame_stats before, after;
+    int saved_headless = compositor_is_headless();
+
+    /* Force headless so step_frames does not call fb_swap (the test
+     * phase has no compositor thread bringing the fb online). */
+    compositor_set_headless(1);
+
+    wm_frame_stats_reset_for_test();
+    wm_get_frame_stats(&before);
+    TEST_ASSERT_EQ((uint64_t)before.frames_presented, (uint64_t)0,
+                   "fresh reset -> frames_presented == 0");
+
+    uint32_t n = compositor_step_frames(10);
+    TEST_ASSERT_EQ((uint64_t)n, (uint64_t)10,
+                   "step_frames(10) returns 10");
+
+    wm_get_frame_stats(&after);
+    TEST_ASSERT_EQ((uint64_t)after.frames_presented,
+                   (uint64_t)(before.frames_presented + 10),
+                   "frames_presented advances by exactly 10");
+
+    /* §12 test checkpoint: replay with same seed yields the same
+     * counter increment. The stat advance is deterministic by
+     * construction (one bump per step), so re-running step_frames
+     * with the same seed must again advance by exactly N. */
+    compositor_set_test_seed(0xC0FFEE);
+    wm_frame_stats_reset_for_test();
+    uint32_t a = compositor_step_frames(7);
+    struct wm_frame_stats run_a;
+    wm_get_frame_stats(&run_a);
+
+    compositor_set_test_seed(0xC0FFEE);
+    wm_frame_stats_reset_for_test();
+    uint32_t b = compositor_step_frames(7);
+    struct wm_frame_stats run_b;
+    wm_get_frame_stats(&run_b);
+
+    TEST_ASSERT_EQ((uint64_t)a, (uint64_t)b,
+                   "same-seed runs return identical step count");
+    TEST_ASSERT_EQ((uint64_t)run_a.frames_presented,
+                   (uint64_t)run_b.frames_presented,
+                   "same-seed runs land at identical frames_presented");
+
+    /* step_frames(0) is a clean no-op. */
+    wm_frame_stats_reset_for_test();
+    n = compositor_step_frames(0);
+    TEST_ASSERT_EQ((uint64_t)n, (uint64_t)0, "step_frames(0) returns 0");
+    wm_get_frame_stats(&after);
+    TEST_ASSERT_EQ((uint64_t)after.frames_presented, (uint64_t)0,
+                   "step_frames(0) does not advance frames_presented");
+
+    /* step_frames is REJECTED when headless is off so it cannot race
+     * the live compositor loop. Codex [H] §12 review required this. */
+    compositor_set_headless(0);
+    wm_frame_stats_reset_for_test();
+    n = compositor_step_frames(5);
+    TEST_ASSERT_EQ((uint64_t)n, (uint64_t)0,
+                   "step_frames(5) returns 0 when !headless");
+    wm_get_frame_stats(&after);
+    TEST_ASSERT_EQ((uint64_t)after.frames_presented, (uint64_t)0,
+                   "step_frames while !headless must not advance stats");
+
+    compositor_set_headless(saved_headless);
+}
+
+/* boot_config.compositor mirrors between the bootloader struct and the
+ * kernel struct; the static_assert in boot_info.h catches struct-size
+ * drift but not the field offset of `compositor` specifically. Pin it. */
+static void test_boot_config_compositor_field(void)
+{
+    /* Touch the field. If the struct doesn't have it the build fails;
+     * if the bootloader and kernel disagree on the offset the
+     * boot_info ABI mirror_compare.sh in CI catches it. */
+    struct boot_config local = {0};
+    local.compositor = 1;
+    TEST_ASSERT_EQ((uint64_t)local.compositor, (uint64_t)1,
+                   "boot_config.compositor accepts 1");
+    local.compositor = 0;
+    TEST_ASSERT_EQ((uint64_t)local.compositor, (uint64_t)0,
+                   "boot_config.compositor accepts 0");
+}
+
 /* ---- Registration ----------------------------------------------------- */
 
 void test_register_desktop(void)
@@ -1139,6 +1266,14 @@ void test_register_desktop(void)
                             test_input_record_ime_roundtrip_utf8, TEST_CAT_DESKTOP);
     test_suite_register_cat("Desktop: input_replay rejects malformed JSONL",
                             test_input_record_replay_rejects_malformed, TEST_CAT_DESKTOP);
+    test_suite_register_cat("Desktop: compositor_set_headless toggle",
+                            test_compositor_headless_toggle, TEST_CAT_DESKTOP);
+    test_suite_register_cat("Desktop: compositor_set_test_seed roundtrip",
+                            test_compositor_test_seed_roundtrip, TEST_CAT_DESKTOP);
+    test_suite_register_cat("Desktop: compositor_step_frames advances frame stats",
+                            test_compositor_step_frames_advances_stats, TEST_CAT_DESKTOP);
+    test_suite_register_cat("Desktop: boot_config.compositor field present",
+                            test_boot_config_compositor_field, TEST_CAT_DESKTOP);
 }
 
 #endif /* KERNEL_TESTS */

@@ -74,7 +74,10 @@ struct boot_config {
     UINT8   ob_handle_trace;   /* 1 = log every handle alloc/free to klog */
     UINT8   config_version;    /* 0 = legacy, 1+ = versioned (S7) */
     UINT8   error_screen_test; /* 1 = call boot_fatal() before kernel load (S14) */
-    UINT8   _reserved[12];     /* future fields -- zero-filled by defaults */
+    /* Desktop UI test framework, headless compositor section:
+     * 0 = normal display (default), 1 = headless. */
+    UINT8   compositor;
+    UINT8   _reserved[11];     /* future fields -- zero-filled by defaults */
     char    cmdline[BOOT_CONF_CMDLINE_MAX];
     UINT8   config_found;
     /* User-mode test launcher knobs (S4 of TODO-04). Mirror of kernel
