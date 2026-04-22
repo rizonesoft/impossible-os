@@ -374,26 +374,23 @@ void keyboard_inject_scancode(uint8_t scancode)
 
 void keyboard_reset_state(void)
 {
-    /* Modifier latches and the E0 continuation flag sit in file-static
-     * scalars; a stuck modifier or orphan prefix from a prior injection
-     * sequence would change the character produced by the next scancode
-     * (e.g. 0x1E becomes Ctrl-A instead of 'a'). Clear them all before
-     * handing control back to the next test. Capslock toggles are also
-     * reset here because they latch persistently via a single keystroke
-     * and tests cannot reliably un-toggle them blind.
-     *
-     * Also drain the ring buffer under the same lock that kb_buffer_push
-     * uses so a concurrent IRQ-side write cannot leave a stale character
-     * behind after the drain. */
+    /* Single critical section over the buffer indices AND the modifier /
+     * prefix scalars. Splitting them was racy: an IRQ between the drain
+     * and the flag clear could push a fresh character into the just-drained
+     * buffer (kb_buffer_push runs under kb_lock so that part is safe) OR
+     * latch a modifier / E0 prefix that the lockless second half then
+     * clobbers, leaving the IRQ handler with mismatched expectations on
+     * the next byte. spin_lock_irqsave masks local IRQs so the hardware
+     * IRQ1 handler cannot race this CPU at all; the lock itself handles
+     * cross-CPU mutual exclusion. Codex [H] quality review. */
     uint64_t flags;
     spin_lock_irqsave(&kb_lock, &flags);
-    kb_head = 0;
-    kb_tail = 0;
-    spin_unlock_irqrestore(&kb_lock, flags);
-
+    kb_head     = 0;
+    kb_tail     = 0;
     shift_held  = 0;
     ctrl_held   = 0;
     alt_held    = 0;
     capslock_on = 0;
     e0_prefix   = 0;
+    spin_unlock_irqrestore(&kb_lock, flags);
 }
