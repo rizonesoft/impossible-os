@@ -35,7 +35,10 @@ Param(
     [switch]$ErrorScreenTest,  # boot with error_screen_test=1 (trigger boot_fatal for QR/BSOD)
     [string]$UtestFilter = '', # limit user-mode launcher to one binary/glob (e.g. "test_syscall.exe" or "test_smoke_*.exe")
     [switch]$NoKernelTests,    # set test_kernel_skip=1: skip kernel TEST_CAT_* sweep, run only the user-mode launcher
-    [switch]$NoUsermodeTests   # set test_usermode_skip=1: skip user-mode launcher, run only the kernel TEST_CAT_* sweep
+    [switch]$NoUsermodeTests,  # set test_usermode_skip=1: skip user-mode launcher, run only the kernel TEST_CAT_* sweep
+    [switch]$Monitor,          # expose QEMU HMP monitor on 127.0.0.1:$MonitorPort for scripts/qemu-screenshot.sh (desktop-UI screendump)
+    [ValidateRange(1, 65535)]
+    [int]$MonitorPort = 4444   # HMP monitor TCP port; only used when -Monitor is set
 )
 
 $ErrorActionPreference = "Stop"
@@ -142,6 +145,14 @@ $QemuArgs += @(
     '-rtc', 'base=localtime',
     '-no-reboot'
 )
+
+# HMP monitor exposure -- scripts/qemu-screenshot.sh connects here to
+# issue `screendump` commands. Only wired when -Monitor is explicitly
+# passed so normal WHPX runs do not expose an unsolicited TCP listener.
+# `server,nowait` means QEMU accepts one client without blocking boot.
+if ($Monitor) {
+    $QemuArgs += '-monitor', "telnet:127.0.0.1:${MonitorPort},server,nowait"
+}
 
 # Validate user-controlled boot.conf values BEFORE they flow into the
 # WSL `bash -c` bridge + patch-boot-conf.sh's sed REPLACEMENT. The

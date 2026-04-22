@@ -47,7 +47,7 @@
 | ⭐  | Order | Deliverable                                        | Depends On    | Status |
 | --- | :---: | -------------------------------------------------- | ------------- | :----: |
 | 💎  |   1   | Framebuffer snapshot API (kernel-side capture)     | --            |  [x]   |
-| 💎  |   2   | QEMU framebuffer dump (screendump via monitor)     | --            |  [ ]   |
+| 💎  |   2   | QEMU framebuffer dump (screendump via monitor)     | --            |  [x]   |
 | 💎  |   3   | Desktop smoke test (non-black screen after boot)   | §1, §2        |  [ ]   |
 | 💎  |   4   | Input event injection (key press, mouse click)     | --            |  [ ]   |
 | 💎  |   5   | Terminal output verification                       | §4            |  [ ]   |
@@ -98,14 +98,24 @@ Capture the current framebuffer contents as a raw bitmap for comparison.
 
 Use QEMU's monitor interface to capture screenshots from outside the VM.
 
-- [ ] QEMU flag: `-monitor telnet:127.0.0.1:4444,server,nowait`
-- [ ] Script: `scripts/qemu-screenshot.sh` connects to monitor, sends `screendump build/screenshot.ppm`
-- [ ] Converts PPM to PNG: `convert build/screenshot.ppm build/screenshot.png` (ImageMagick)
-- [ ] Alternative: use `-chardev file` to dump framebuffer directly
-- [ ] Commit: `"test: QEMU screendump capture via monitor protocol"`
+- [x] QEMU flag: `-monitor telnet:127.0.0.1:4444,server,nowait` wired as opt-in `-Monitor` + `-MonitorPort` switch in `scripts/machines/run-qemu.ps1` (`ValidateRange(1,65535)` on the port)
+- [x] Script: `scripts/qemu-screenshot.sh` connects to monitor, sends `screendump <path>.ppm`, polls for size stability, converts PPM to PNG, validates magic + dimensions + liveness floor
+- [x] Converts PPM to PNG: ImageMagick `convert` + `identify`; preflight errors if either tool is missing
+- [/] Alternative: use `-chardev file` to dump framebuffer directly. HMP `screendump` path is sufficient for §3 / §6 / §15 consumers; the `-chardev file` path is kept open for future direct-mode needs but not wired today
+- [x] Commit: `"test: QEMU screendump capture via monitor protocol"`
 
 **Test checkpoint:** Boot QEMU, run script; `build/screenshot.png` exists, file size > 100 KiB, PNG magic bytes present, decoded width and height match configured framebuffer mode.
 **Platforms:** QEMU WHPX, QEMU TCG only (monitor-protocol dependent; not usable on VBox or bare metal).
+
+> **Test runner:** N/A (host-side shell script; no kernel test surface) | validation: `bash scripts/qemu-screenshot.sh <out.png>` against a QEMU instance launched with `-Monitor` (run-qemu.ps1) or `-monitor telnet:127.0.0.1:4444,server,nowait` (manual). KVM end-to-end 2026-04-22: 1280x720 PNG, 1.09 MiB, exit 0.
+> **Notes:**
+> - Shipped `scripts/qemu-screenshot.sh` (150 LOC bash): HMP-safe path sanitization (rejects `\n\r\t`, `;|&` and backtick that could split or escape the monitor command), `nc`-driven `screendump` over telnet with configurable host/port, deterministic size-stability flush poll (3 identical 50 ms samples, 5 s deadline), ImageMagick `convert` for PPM-to-PNG, `identify` for dimension check, five distinct exit codes (1=tool missing, 2=monitor unreachable, 3=PPM missing, 4=convert failed, 5=PNG validation failed).
+> - Added `-Monitor` switch and `-MonitorPort` int (default 4444, `ValidateRange(1,65535)`) to `scripts/machines/run-qemu.ps1`; opt-in wiring keeps normal WHPX runs from exposing an unsolicited TCP listener.
+> - Validated end-to-end on KVM: boot + HMP screendump + PNG conversion + dimension readback = 1280x720 / 1.09 MiB / exit 0 in under 10 s. Injection negative test (path with embedded newline) rejected with exit 1.
+> - Canonical doc: `scripts/qemu-screenshot.sh` header comment block + the `-Monitor` switch doc in `run-qemu.ps1`.
+> - Scope boundary: §2 owns capture; §3 (Desktop Smoke Test) owns the boot-to-READY wait + higher-level invocation; §6 (Reference Screenshot Comparison) owns pixel diff; §15 (Crash Artifact Capture) owns on-failure auto-screenshot.
+> **Verified:** 2026-04-22 | commit `PENDING` | 4/4 items + 1 documented alt | build OK | KVM end-to-end PASS (1280x720, 1.09 MiB, exit 0) + injection reject PASS
+> **Quality reviewed:** 2026-04-22 | Codex 1x (adversarial) | 1H+2M fixed | scope: N/A (host-side shell; kernel-code-quality does not apply)
 
 ---
 
