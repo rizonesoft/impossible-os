@@ -186,8 +186,31 @@ typedef struct __attribute__((packed)) {
     /* 0x330 */ uint32_t     Cookie;
     /* 0x334 */ uint32_t     CookiePad[1];
     /* 0x338 */ int64_t      ConsoleSessionFgProcessId;
-    /* 0x340 */ uint8_t      _pad_to_page[0x1000 - 0x340];
+    /* 0x340 -- TODO-04 -18 self-describing ABI header:
+     * Typed 32-byte block at the START of the reserved padding area
+     * (past Windows 11's documented KUSD layout at 0x340). Placed
+     * AFTER the Windows-compatible portion so a hypothetical
+     * drop-in of Microsoft's KUSD layout on top of ours would not
+     * clobber the ABI header -- any real Win11 KUSD ABI field lands
+     * between 0x340 and the next Microsoft revision. User libc
+     * validates the magic + hash in crt_init BEFORE dereferencing
+     * any other KUSD field; this is the runtime gate that pairs
+     * with the compile-time _Static_asserts below. */
+    /* 0x340 */ uint32_t     AbiMagic;         /* 'KUSD' = 0x4453554B */
+    /* 0x344 */ uint16_t     AbiVersion;       /* layout version number */
+    /* 0x346 */ uint16_t     AbiStructSize;    /* sizeof(KUSER_SHARED_DATA) pre-pad */
+    /* 0x348 */ uint64_t     AbiLayoutHash;    /* IMPOSSIBLE_OS_ABI_HASH */
+    /* 0x350 */ uint64_t     AbiBuildTimestamp;/* unix epoch at kernel build */
+    /* 0x358 */ uint32_t     AbiReserved0;     /* future */
+    /* 0x35C */ uint32_t     AbiReserved1;     /* future */
+    /* 0x360 */ uint8_t      _pad_to_page[0x1000 - 0x360];
 } KUSER_SHARED_DATA;
+
+/* Magic constant used by the kernel kusd_init() writer and every
+ * user-mode reader. Picked so a little-endian u32 read spells "KUSD"
+ * in a hex dump (0x4453554B -> bytes 4B 55 53 44 -> "KUSD"). */
+#define KUSD_ABI_MAGIC        0x4453554BU
+#define KUSD_ABI_VERSION      1U
 
 /* ---- Offset checks (binary compatibility with Windows x64) -------------- */
 
@@ -221,6 +244,16 @@ _Static_assert(__builtin_offsetof(KUSER_SHARED_DATA, TickCount) == 0x320,
     "KUSD: TickCount must be at offset 0x320");
 _Static_assert(__builtin_offsetof(KUSER_SHARED_DATA, Cookie) == 0x330,
     "KUSD: Cookie must be at offset 0x330");
+_Static_assert(__builtin_offsetof(KUSER_SHARED_DATA, AbiMagic) == 0x340,
+    "KUSD: -18 AbiMagic must be at offset 0x340");
+_Static_assert(__builtin_offsetof(KUSER_SHARED_DATA, AbiVersion) == 0x344,
+    "KUSD: -18 AbiVersion must be at offset 0x344");
+_Static_assert(__builtin_offsetof(KUSER_SHARED_DATA, AbiStructSize) == 0x346,
+    "KUSD: -18 AbiStructSize must be at offset 0x346");
+_Static_assert(__builtin_offsetof(KUSER_SHARED_DATA, AbiLayoutHash) == 0x348,
+    "KUSD: -18 AbiLayoutHash must be at offset 0x348");
+_Static_assert(__builtin_offsetof(KUSER_SHARED_DATA, AbiBuildTimestamp) == 0x350,
+    "KUSD: -18 AbiBuildTimestamp must be at offset 0x350");
 _Static_assert(sizeof(KUSER_SHARED_DATA) == 0x1000,
     "KUSD: struct must be exactly one page (4096 bytes)");
 

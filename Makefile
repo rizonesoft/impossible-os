@@ -394,7 +394,7 @@ $(SYSROOT)/hello.exe $(SYSROOT)/cmd.exe $(SYSROOT)/test_harness_smoke.exe $(SYSR
                                                                               user/lib/crt0.asm \
                                                                               user/lib/string.c user/lib/stdlib.c user/lib/stdio.c \
                                                                               user/lib/ctype.c user/lib/math.c \
-                                                                              user/lib/win32.c user/user.ld
+                                                                              user/lib/win32.c user/lib/crt_init.c user/user.ld
 	@mkdir -p $(BUILD_DIR)/user/lib $(BUILD_DIR)/user/test
 	$(AS) -f elf64 -g user/lib/crt0.asm -o $(BUILD_DIR)/user/lib/crt0.o
 	$(CC) $(USER_CFLAGS) -Iuser/include -c user/lib/string.c -o $(BUILD_DIR)/user/lib/string.o
@@ -403,13 +403,15 @@ $(SYSROOT)/hello.exe $(SYSROOT)/cmd.exe $(SYSROOT)/test_harness_smoke.exe $(SYSR
 	$(CC) $(USER_CFLAGS) -Iuser/include -c user/lib/ctype.c -o $(BUILD_DIR)/user/lib/ctype.o
 	$(CC) $(USER_CFLAGS) -Iuser/include -c user/lib/math.c -o $(BUILD_DIR)/user/lib/math.o
 	$(CC) $(USER_CFLAGS) -Iuser/include -c user/lib/win32.c -o $(BUILD_DIR)/user/lib/win32.o
+	$(CC) $(USER_CFLAGS) -Iuser/include -c user/lib/crt_init.c -o $(BUILD_DIR)/user/lib/crt_init.o
 	$(AR) rcs $(BUILD_DIR)/user/libc.a \
 		$(BUILD_DIR)/user/lib/string.o \
 		$(BUILD_DIR)/user/lib/stdlib.o \
 		$(BUILD_DIR)/user/lib/stdio.o \
 		$(BUILD_DIR)/user/lib/ctype.o \
 		$(BUILD_DIR)/user/lib/math.o \
-		$(BUILD_DIR)/user/lib/win32.o
+		$(BUILD_DIR)/user/lib/win32.o \
+		$(BUILD_DIR)/user/lib/crt_init.o
 	@echo "[LIBC] $(BUILD_DIR)/user/libc.a created"
 	@# Build user-mode ELF programs (linked against crt0 + libc)
 	$(CC) $(USER_CFLAGS) -Iuser/include -c user/hello.c -o $(BUILD_DIR)/user/hello.o

@@ -58,6 +58,7 @@
 #define SYS_FAULT_INJECT         44
 #define SYS_WRITEHANDLE          45
 #define SYS_UNMAPVIEW            46
+#define SYS_ABI_HANDSHAKE        47
 #define FAULT_KMALLOC_NEXT       1
 #define FAULT_KMALLOC_COUNTDOWN  2
 #define FAULT_PMM_NEXT           3
@@ -89,3 +90,12 @@
 #define STATUS_INVALID_HANDLE            0xC0000008
 #define STATUS_ACCESS_DENIED             0xC0000022
 
+/* ---- ABI fingerprint (FNV-1a 64-bit) --------------------------------------------------------- */
+/* Hash over the sorted tuple of (SYS_*, SSDT_*, TEB offsets, KUSD
+ * offsets). Kernel emits the same hash via SYS_ABI_HANDSHAKE; user
+ * crt0 calls that syscall and aborts with EX_ABI_MISMATCH = 0x42 on
+ * disagreement. A kernel-side renumber that slipped through review
+ * but skipped this generator surfaces at process start, not at the
+ * first syscall with corrupted semantics. */
+#define IMPOSSIBLE_OS_ABI_HASH   0x541DD518D1B89D67ULL
+#define EX_ABI_MISMATCH          0x42

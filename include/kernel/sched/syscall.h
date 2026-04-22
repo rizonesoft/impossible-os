@@ -56,6 +56,15 @@
                              * until reboot because handle_table destroy
                              * does NOT walk section views. Mirror of
                              * NtUnmapViewOfSection on the INT 0x80 path. */
+#define SYS_ABI_HANDSHAKE 47 /* sys_abi_handshake() -> IMPOSSIBLE_OS_ABI_HASH
+                              * Returns the kernel's 64-bit ABI fingerprint
+                              * FNV-1a over the SYS_ SSDT_ TEB KUSD layout.
+                              * User crt0 compares the returned value against
+                              * the hash it was compiled with; mismatch means
+                              * EX_ABI_MISMATCH=0x42 abort BEFORE any other
+                              * syscall with corrupted semantics. Section 17
+                              * drift generator guarantees the values match
+                              * at build time; this is the runtime gate. */
 
 /* ---- SYS_FAULT_INJECT subcommand selectors ----
  * All fault-injection countdowns are per-CPU + task-filtered. The

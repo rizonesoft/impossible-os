@@ -8,6 +8,7 @@
  * ============================================================================ */
 
 #include "kernel/nt/kusd.h"
+#include "kernel/abi_hash.h"   /* IMPOSSIBLE_OS_ABI_HASH for -18 AbiLayoutHash */
 #include "libc/string.h"
 #include "kernel/mm/pmm.h"
 #include "kernel/mm/vmm.h"
@@ -157,6 +158,20 @@ void kusd_init(void)
 
     /* Security cookie (RDRAND-seeded) */
     g_kusd->Cookie = kusd_rdrand32();
+
+    /* -18 self-describing ABI header at 0x340. Written AFTER every
+     * Windows-compatible field above so user-mode readers see a
+     * fully-initialized page when AbiMagic turns non-zero. Writes
+     * from high offset to low so the magic lands last -- crt_init
+     * can treat magic==KUSD_ABI_MAGIC as "header is complete"
+     * without a separate ready flag. */
+    g_kusd->AbiBuildTimestamp = 0;  /* future: plumb from build.sh; 0 today */
+    g_kusd->AbiReserved0      = 0;
+    g_kusd->AbiReserved1      = 0;
+    g_kusd->AbiLayoutHash     = IMPOSSIBLE_OS_ABI_HASH;
+    g_kusd->AbiStructSize     = 0x340;  /* size of Win-compat portion */
+    g_kusd->AbiVersion        = KUSD_ABI_VERSION;
+    g_kusd->AbiMagic          = KUSD_ABI_MAGIC;  /* WRITE LAST: makes header complete */
 
     s_kusd_ready = 1;
 

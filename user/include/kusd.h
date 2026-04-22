@@ -59,7 +59,23 @@ typedef struct user_kusd {
     /* 0x0320 */ USER_KSYSTEM_TIME TickCount;
     /* 0x032C */ uint8_t           _pad_032C[0x330 - 0x32C];
     /* 0x0330 */ uint32_t          Cookie;
+    /* 0x0334 */ uint8_t           _pad_0334[0x340 - 0x334];
+    /* 0x0340 -- TODO-04 -18 self-describing ABI header.
+     * User crt_init() validates AbiMagic + AbiLayoutHash before any
+     * other KUSD field read. Layout mirror of include/kernel/nt/kusd.h
+     * pinned by _Static_assert below. */
+    /* 0x0340 */ uint32_t          AbiMagic;
+    /* 0x0344 */ uint16_t          AbiVersion;
+    /* 0x0346 */ uint16_t          AbiStructSize;
+    /* 0x0348 */ uint64_t          AbiLayoutHash;
+    /* 0x0350 */ uint64_t          AbiBuildTimestamp;
+    /* 0x0358 */ uint32_t          AbiReserved0;
+    /* 0x035C */ uint32_t          AbiReserved1;
 } USER_KUSD;
+
+/* Magic constant -- must match include/kernel/nt/kusd.h. */
+#define USER_KUSD_ABI_MAGIC    0x4453554BU
+#define USER_KUSD_ABI_VERSION  1U
 
 _Static_assert(__builtin_offsetof(USER_KUSD, TickCountLowDeprecated) == 0x000,
                "USER_KUSD.TickCountLowDeprecated must match kernel KUSD at 0x000 "
@@ -75,3 +91,7 @@ _Static_assert(__builtin_offsetof(USER_KUSD, TickCount) == 0x320,
 _Static_assert(__builtin_offsetof(USER_KUSD, Cookie) == 0x330,
                "USER_KUSD.Cookie must match kernel KUSD at 0x330 "
                "(load-bearing for stack-cookie seed derivation)");
+_Static_assert(__builtin_offsetof(USER_KUSD, AbiMagic) == 0x340,
+               "USER_KUSD.AbiMagic must match kernel KUSD at 0x340");
+_Static_assert(__builtin_offsetof(USER_KUSD, AbiLayoutHash) == 0x348,
+               "USER_KUSD.AbiLayoutHash must match kernel KUSD at 0x348");

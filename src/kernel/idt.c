@@ -320,6 +320,35 @@ irql_restore:
     if (vec >= 32 && pcpu->current_irql != prev_irql)
         pcpu->current_irql = prev_irql;
 
+    /* ---- -18 iretq invariants ----
+     * Before the asm stub's swapgs + iretq returns to ring 3, verify
+     * the two selector invariants that are cheap to check from C (the
+     * frame pointer the stub will consume is whatever we return in
+     * `result`). Full ring-3 invariant suite (MSR_KERNEL_GS_BASE, CR3,
+     * RSP-in-user-stack) requires per-CPU cached task info that does
+     * not exist yet; filing those three as a -18 follow-up so the
+     * two-that-can-ship today are not gated on the three-that-need-
+     * infra. A failure here LOG_FATALs with a named panic; silent
+     * "return to ring 3 with wrong DPL" is exactly the class of bug
+     * this section was filed to eliminate. */
+    {
+        struct interrupt_frame *final_frame =
+            (struct interrupt_frame *)(uintptr_t)result;
+        uint64_t cs_rpl = final_frame->cs & 3;
+        uint64_t ss_rpl = final_frame->ss & 3;
+        if (cs_rpl == 3) {
+            if (ss_rpl != 3)
+                klog(LOG_FATAL, "idt",
+                     "iretq: CS.DPL=3 but SS.DPL=%u (frame CS=0x%X SS=0x%X)",
+                     (uint64_t)ss_rpl,
+                     final_frame->cs, final_frame->ss);
+        } else if (cs_rpl != 0) {
+            klog(LOG_FATAL, "idt",
+                 "iretq: CS.DPL=%u (neither ring 0 nor ring 3) -- frame corrupt",
+                 (uint64_t)cs_rpl);
+        }
+    }
+
     return result;
 }
 
