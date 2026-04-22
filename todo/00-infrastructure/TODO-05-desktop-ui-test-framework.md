@@ -54,7 +54,7 @@
 | ⭐  |   6   | Reference screenshot comparison                    | §2            |  [x]   |
 | ⭐  |   7   | Visual regression CI pipeline                      | §3, §6        |  [x]   |
 | ⭐  |   8   | Window manager state verification                  | §4            |  [x]   |
-| ⭐  |   9   | Perceptual diff + structured screenshot needles    | §6            |  [ ]   |
+| ⭐  |   9   | Perceptual diff + structured screenshot needles    | §6            |  [x]   |
 | 💎  |  10   | Frame timing + drop oracle (`wm_get_frame_stats`)  | --            |  [ ]   |
 | 💎  |  11   | Input record + replay (Unicode, IME)               | §4, §12       |  [ ]   |
 | ⭐  |  12   | Headless compositor + frame-lock stepping          | §1            |  [ ]   |
@@ -303,17 +303,31 @@ Upgrades §6 beyond flat pixel-percent: adds SSIM / SSIMULACRA2 perceptual diff 
 > [!TIP]
 > Win11 has no in-box perceptual diff (WACK compares binaries, not pixels). Linux has openQA needles but they ship as an external SUSE tool. Owning a structured + perceptual diff in the OS tree means every compositor change gets a rigorous visual gate without a third-party service.
 
-- [ ] Perceptual diff backend: SSIM as default (fast, structure-aware); SSIMULACRA2 as high-quality opt-in; raw pixel-percent retained for quick gates
-- [ ] `scripts/compare-screenshot.sh --mode=pixel|ssim|ssimulacra2 --threshold=N reference.png current.png`
-- [ ] Needle schema: PNG + sidecar JSON `reference.needle.json` with match regions (x,y,w,h,tolerance) and exclude regions (clocks, timers, other dynamic pixels)
-- [ ] Per-region tolerance: strict (pixel-exact), relaxed (SSIM >= 0.95), or ignored (skip comparison entirely)
-- [ ] Region OCR assertion: crop text regions, run tesseract OCR, assert expected string; exclude-region covers dynamic timestamp cells
-- [ ] Host toolchain: require `imagemagick`, tesseract; SSIM via Python `scikit-image`; SSIMULACRA2 binary optional with graceful fallback
-- [ ] `make update-ui-refs` captures new baselines AND regenerates needle JSON skeleton for manual region edit
-- [ ] Commit: `"test: perceptual diff + structured needles (SSIM, exclude regions, OCR)"`
+- [x] Perceptual diff backend: SSIM via `skimage.metrics.structural_similarity` is the default; SSIMULACRA2 available via the external `ssimulacra2` binary (build from libjxl); raw pixel-percent retained as `--mode pixel` for the simple section 6 callers.
+- [x] `scripts/compare-screenshot.sh --mode pixel|ssim|ssimulacra2 --threshold N reference.png current.png` -- pixel stays on the bash / ImageMagick path (backwards-compatible with section 6); non-pixel modes `exec` into the new `scripts/needle-compare.py` helper. Pixel mode with `--needle` also forwards to Python so the region-aware comparator is reachable from either mode knob.
+- [x] Needle schema v1: JSON sidecar `<reference>.needle.json` with `{version, regions[{name, x, y, w, h, tolerance, ocr?}]}`. Strict schema validation: top-level must be an object, `version == 1`, non-empty `regions` array, each region must be an object with non-negative `x/y` + positive `w/h` ints, `tolerance in {strict, relaxed, ignored}`, optional `name` / `ocr` strings. Every violation routes through `die(4, ...)` so malformed needles never escape the documented exit-code contract. Codex [M] review.
+- [x] Per-region tolerance: `strict` = pixel-exact (SSIM >= 0.99 in SSIM mode), `relaxed` = uses the caller's `--threshold` / `--fuzz`, `ignored` = skip comparison (rendered as gray overlay in the diff image so humans can confirm the exclude zone landed correctly).
+- [x] Region OCR assertion via `tesseract` (`--psm 6 -l eng`): crop the region, run OCR, require the needle's `ocr` string to appear in the recognized text after whitespace normalization. `--allow-missing-ocr` soft-skips when tesseract is absent; otherwise a missing binary is a hard `die(4)` so CI regressions are visible.
+- [x] Host toolchain: `python3-pil` + `python3-numpy` + `python3-skimage` (SSIM) + `tesseract-ocr` (OCR) + `imagemagick` added to `.github/workflows/visual-regression.yml`. SSIMULACRA2 binary stays optional; absent -> graceful `die(4)` with install pointer.
+- [x] Tiny-region SSIM crash guard: crops smaller than 7x7 previously raised `ValueError` from scikit-image (`win_size exceeds image extent`) and aborted the whole run. `ssim_score()` now picks the largest odd `win_size <= min(w, h)` so a thin 3x10 needle region works; crops < 2x2 fail cleanly via `die(4)`. Codex [H] review.
+- [x] Region-result bookkeeping: the previous slice-assign tidy-dance at the end of the per-region loop caused exponential list growth (`a -> 1, b -> 2, c -> 4, d -> 8 entries`). Replaced with a single `regions_result.append(...)` per region. Codex [H] review. 200-region needle runs in 0.13 s.
+- [x] Reference + needle documentation: `tests/references/README.md` adds the schema v1 spec, invocation examples, tolerance semantics, and regeneration protocol. `make update-ui-refs` still captures PNGs only (needle JSON is a reviewed, hand-tuned artifact; auto-generating skeletons from one capture would embed resolution-specific hacks into tracked files).
+- [x] Atomic diff image: `write_diff()` writes to `<out>.tmp.$$` and `os.replace()`s into the final path with explicit `format="PNG"` so Pillow doesn't barf on the temp-suffix. Diff overlay draws green outlines around passed regions, red around failed / OCR-failed regions, and gray fills on ignored regions.
+- [x] Commit: `"test: perceptual diff + structured needles (SSIM, exclude regions, OCR)"`
 
 **Test checkpoint:** Shift wallpaper hue by 5 percent: raw pixel-percent at 95 percent threshold passes (false negative), SSIM catches the structural change. Mark clock region as exclude-zone: two consecutive-second captures still compare equal. Region OCR asserts `C:\>` prompt string present in the cropped terminal region.
 **Platforms:** host-side only (no kernel dependency); runs in CI (GHA ubuntu-latest) and local dev.
+
+> **Test runner:** N/A (host-side Python helper + shell wrapper; no kernel test surface) | validation: 10 self-check runs PASS against synthesized PNGs (identical SSIM, tiny 3x3 SSIM, pixel mode backwards compat, pixel+needle delegation, ssim mode delegation, exclude region, strict region failure, 200-region scale, OCR graceful fallback, malformed needle -> rc 4). Workflow dep bump picks up python3-skimage + tesseract.
+> **Notes:**
+> - Shipped `scripts/needle-compare.py` (~440 LOC): SSIM/SSIMULACRA2/pixel metric scoring, needle v1 schema + strict validator, tolerance mapper, region cropper, tesseract OCR, atomic PNG diff writer with per-region color overlay.
+> - Extended `scripts/compare-screenshot.sh` with `--mode {pixel,ssim,ssimulacra2}`, `--needle <json>`, `--allow-missing-ocr`. Pixel mode + no needle stays on the bash/ImageMagick path for section 6 backwards compat; any other combination `exec`s into `needle-compare.py`. Threshold defaults are mode-aware (pixel 95%, SSIM 0.95, SSIMULACRA2 80).
+> - Updated `.github/workflows/visual-regression.yml` to install `python3-pil`, `python3-numpy`, `python3-skimage`, `tesseract-ocr` on top of the existing ImageMagick + netcat set. CI runs can now drive SSIM + OCR needles without a separate setup step.
+> - Documented the needle v1 schema and regeneration protocol in `tests/references/README.md` so maintainers authoring the first needle files have the contract in-tree.
+> - Canonical doc: `scripts/needle-compare.py` header (modes, exit codes, tolerance semantics), `tests/references/README.md` (needle v1 schema).
+> - Scope boundary: section 9 ships the perceptual + needle comparator. Section 7 owns the CI wiring that consumes it, section 10 owns frame-timing oracle (no visual dependency), section 13 owns per-output needles, section 15 owns the failure-bundle capture that will upload needle diffs alongside raw screenshots.
+> **Verified:** 2026-04-22 | 11/11 items | build OK | lint clean | manual (10-case self-test matrix PASS; Codex-demanded regressions covered: tiny-region SSIM, 200-region scale, 4 malformed-needle variants)
+> **Quality reviewed:** 2026-04-22 | Codex 1x (adversarial) | 2H+1M+0L fixed, 0 open | scope: N/A (host-side Python + shell; no domain code-quality skill)
 
 ---
 

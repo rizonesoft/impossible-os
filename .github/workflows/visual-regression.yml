@@ -97,6 +97,10 @@ jobs:
             qemu-system-x86 \
             gcc \
             python3-yaml \
+            python3-pil \
+            python3-numpy \
+            python3-skimage \
+            tesseract-ocr \
             imagemagick \
             netcat-openbsd
 

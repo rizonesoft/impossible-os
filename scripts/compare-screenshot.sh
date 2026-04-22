@@ -14,10 +14,15 @@
 # Usage:
 #   bash scripts/compare-screenshot.sh <reference.png> <current.png> [diff.png]
 #       [--threshold <pct>] [--fuzz <pct>]
+#       [--mode pixel|ssim|ssimulacra2] [--needle <sidecar.json>]
+#       [--allow-missing-ocr]
 #
 # Defaults:
 #   diff.png     <current>.diff.png  (sibling of current)
-#   --threshold  95   (require >= 95 percent identical for pass)
+#   --mode       pixel (bash / ImageMagick path; other modes delegate
+#                to scripts/needle-compare.py for SSIM, SSIMULACRA2, and
+#                openQA-style needle support)
+#   --threshold  95   (pixel: percent identical; SSIM: 0..1; SSIMULACRA2: 0..100)
 #   --fuzz       2    (anti-alias tolerance: per-pixel channel delta budget)
 #
 # Output:
@@ -74,8 +79,11 @@ usage() {
 REFERENCE=""
 CURRENT=""
 DIFF_OUT=""
-THRESHOLD="95"
+THRESHOLD=""      # empty = let needle-compare.py pick a mode-specific default
 FUZZ="2"
+MODE="pixel"
+NEEDLE=""
+ALLOW_MISSING_OCR=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -89,6 +97,18 @@ while [ $# -gt 0 ]; do
             FUZZ="$2"; shift 2 ;;
         --fuzz=*)
             FUZZ="${1#*=}"; shift ;;
+        --mode)
+            [ $# -ge 2 ] || die 1 "--mode needs a value"
+            MODE="$2"; shift 2 ;;
+        --mode=*)
+            MODE="${1#*=}"; shift ;;
+        --needle)
+            [ $# -ge 2 ] || die 1 "--needle needs a value"
+            NEEDLE="$2"; shift 2 ;;
+        --needle=*)
+            NEEDLE="${1#*=}"; shift ;;
+        --allow-missing-ocr)
+            ALLOW_MISSING_OCR="--allow-missing-ocr"; shift ;;
         -h|--help)
             usage 0 ;;
         -*)
@@ -109,6 +129,46 @@ done
 
 [ -n "$REFERENCE" ] || die 1 "missing <reference.png> argument (try --help)"
 [ -n "$CURRENT" ]   || die 1 "missing <current.png> argument (try --help)"
+
+# Mode dispatch: SSIM, SSIMULACRA2, and any needle-based comparison all
+# require the Python helper. The bash path only handles flat pixel-percent.
+case "$MODE" in
+    pixel)
+        # Continue below with the ImageMagick path.
+        ;;
+    ssim|ssimulacra2)
+        # Delegate to needle-compare.py; carry threshold/fuzz/needle as
+        # forwarded flags. An empty --threshold lets needle-compare.py
+        # pick a mode-specific default (ssim=0.95, ssimulacra2=80).
+        PY_ARGS=()
+        PY_ARGS+=(--mode "$MODE")
+        [ -n "$THRESHOLD" ] && PY_ARGS+=(--threshold "$THRESHOLD")
+        PY_ARGS+=(--fuzz "$FUZZ")
+        [ -n "$NEEDLE" ] && PY_ARGS+=(--needle "$NEEDLE")
+        [ -n "$ALLOW_MISSING_OCR" ] && PY_ARGS+=("$ALLOW_MISSING_OCR")
+        PY_ARGS+=("$REFERENCE" "$CURRENT")
+        [ -n "$DIFF_OUT" ] && PY_ARGS+=("$DIFF_OUT")
+        exec python3 "$SCRIPT_DIR/needle-compare.py" "${PY_ARGS[@]}"
+        ;;
+    *)
+        die 1 "unknown --mode: $MODE (expected: pixel, ssim, ssimulacra2)" ;;
+esac
+
+# Pixel-mode + needle: the pixel comparator can honor the needle schema
+# too, but the region-aware comparison lives in needle-compare.py. When
+# a caller passes --needle even with --mode=pixel, forward to Python so
+# they get the region tolerance / exclude / OCR support.
+if [ -n "$NEEDLE" ]; then
+    PY_ARGS=(--mode pixel --fuzz "$FUZZ" --needle "$NEEDLE")
+    [ -n "$THRESHOLD" ] && PY_ARGS+=(--threshold "$THRESHOLD")
+    [ -n "$ALLOW_MISSING_OCR" ] && PY_ARGS+=("$ALLOW_MISSING_OCR")
+    PY_ARGS+=("$REFERENCE" "$CURRENT")
+    [ -n "$DIFF_OUT" ] && PY_ARGS+=("$DIFF_OUT")
+    exec python3 "$SCRIPT_DIR/needle-compare.py" "${PY_ARGS[@]}"
+fi
+
+# Flat-pixel pass: default threshold 95 when caller did not set one.
+[ -z "$THRESHOLD" ] && THRESHOLD="95"
 
 # Validate numeric inputs. The values flow into ImageMagick command lines
 # and into awk numeric coercion, so reject anything that is not a strict
