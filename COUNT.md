@@ -15,10 +15,10 @@
 
 |                       |   Files |      Lines |
 | --------------------- | ------: | ---------: |
-| **C sources** (`.c`)  |     273 |     144244 |
+| **C sources** (`.c`)  |     273 |     144252 |
 | **Headers** (`.h`)    |     204 |      40114 |
 | **Assembly** (`.asm`) |       9 |       1095 |
-| **Subtotal**          | **486** | **185453** |
+| **Subtotal**          | **486** | **185461** |
 
 ## SDK Tools
 
@@ -58,9 +58,9 @@
 
 |                                |   Files |      Lines |
 | ------------------------------ | ------: | ---------: |
-| **Core code + tooling**        | **607** | **201991** |
+| **Core code + tooling**        | **607** | **201999** |
 | **Supporting text + metadata** | **382** | **165127** |
-| **All counted text files**     | **989** | **367118** |
+| **All counted text files**     | **989** | **367126** |
 
 > Vendored code excluded: ~13886 lines (`stb_image.h`, `stb_truetype.h`, `efi.h`)
 >
@@ -77,15 +77,15 @@
 
 |                               |         Linux |     Windows |         Impossible OS |
 | ----------------------------- | ------------: | ----------: | --------------------: |
-| **Core code + tooling lines** |   ~28,000,000 | ~50,000,000 |               201,991 |
+| **Core code + tooling lines** |   ~28,000,000 | ~50,000,000 |               201,999 |
 | **Developers**                | ~1,000 active | ~5,000 peak |                     1 |
-| **Time span**                 |      33 years |    40 years | 1 month(s), 16 day(s) |
+| **Time span**                 |      33 years |    40 years | 1 month(s), 17 day(s) |
 
-> At industry rates (10,000 LOC/developer/year -- COCOMO II), writing 201,991
-> lines of core code and tooling would take **160 developers** working for **1 month(s), 16 day(s)**.
+> At industry rates (10,000 LOC/developer/year -- COCOMO II), writing 201,999
+> lines of core code and tooling would take **156 developers** working for **1 month(s), 17 day(s)**.
 >
 > *The "impossible" in Impossible OS was supposed to be the name, not the development method.*
 
 ---
 
-*Last updated: 2026-04-22 16:35 · commit `9ee1dd60`*
+*Last updated: 2026-04-22 19:00 · commit `2a9a7ba2`*

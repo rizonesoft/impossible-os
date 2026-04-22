@@ -59,10 +59,18 @@ void boot_tests_run(void)
                      "User-mode launcher skipped (test_usermode_skip=1)");
         }
 
-        /* Suppress non-TEST boot chatter during test mode */
+        /* Suppress non-TEST boot chatter during test mode.
+         * All three test-runner subsystems (kernel TEST, user-mode UTEST,
+         * desktop DTEST) need the LOG_DEBUG override so their LOG_INFO
+         * per-assertion lines are not dropped by the global LOG_WARN
+         * ceiling. Missing DTEST override was a real bug surfaced when
+         * `SUITE=desktop` filtered the run: 17 assertion lines emitted
+         * silently because only TEST had the override. */
         if (g_boot_info.config.test) {
             klog_set_level((const char *)0, LOG_WARN);
-            klog_set_level("TEST", LOG_DEBUG);
+            klog_set_level("TEST",  LOG_DEBUG);
+            klog_set_level("UTEST", LOG_DEBUG);
+            klog_set_level("DTEST", LOG_DEBUG);
         }
 
         if (run_kernel_tests) {
