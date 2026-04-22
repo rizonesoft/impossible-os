@@ -38,8 +38,17 @@ Param(
     [switch]$NoUsermodeTests,  # set test_usermode_skip=1: skip user-mode launcher, run only the kernel TEST_CAT_* sweep
     [switch]$Monitor,          # expose QEMU HMP monitor on 127.0.0.1:$MonitorPort for scripts/qemu-screenshot.sh (desktop-UI screendump)
     [ValidateRange(1, 65535)]
-    [int]$MonitorPort = 4444   # HMP monitor TCP port; only used when -Monitor is set
+    [int]$MonitorPort = 4444   # HMP monitor TCP port; auto-enables -Monitor if set explicitly
 )
+
+# UX consistency: if the caller explicitly passed -MonitorPort but forgot
+# -Monitor, the non-default port would be silently ignored and the screenshot
+# script would later fail with an unexplained "monitor unreachable" error.
+# Treat an explicit -MonitorPath as implicitly enabling -Monitor so the two
+# switches cannot contradict each other. Codex [L] quality review.
+if ($PSBoundParameters.ContainsKey('MonitorPort') -and -not $Monitor) {
+    $Monitor = $true
+}
 
 $ErrorActionPreference = "Stop"
 

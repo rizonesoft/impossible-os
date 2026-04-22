@@ -20,11 +20,17 @@
 #
 # Exit codes:
 #   0  success; prints `OK: <path> (<w>x<h>, <bytes> bytes)`
-#   1  tooling missing (ImageMagick `convert`, `identify`, or `nc`)
-#   2  monitor unreachable / screendump command failed
-#   3  PPM not produced or empty
-#   4  PNG conversion failed
-#   5  PNG validation failed (too small / bad magic / dimensions missing)
+#   1  precondition failure: tooling missing (ImageMagick `convert`,
+#      `identify`, `nc`), invalid output path (HMP-unsafe chars), or
+#      cannot create the output directory
+#   2  monitor unreachable within QEMU_MONITOR_TIMEOUT seconds (no TCP
+#      accept); note that `screendump` HMP command errors surface as
+#      code 3 because nc output is not parsed -- the kernel-written PPM
+#      either lands on disk or it does not
+#   3  PPM not produced or empty after the size-stability poll
+#   4  PNG conversion failed (ImageMagick `convert` error, zero-byte output)
+#   5  PNG validation failed (too small vs liveness floor, bad magic,
+#      dimensions unreadable)
 
 set -u
 
@@ -95,14 +101,14 @@ rm -f "$PPM_PATH" "$OUTPUT_PNG"
 info "dumping framebuffer via $HOST:$PORT -> $PPM_PATH"
 
 # HMP echoes "(qemu) " at the prompt and processes commands line-by-line.
-# `sleep` gives QEMU time to flush before nc closes the socket. `screendump`
-# is synchronous inside QEMU but the file write can lag after the ack.
-#
-# Using printf + pipeline (not heredoc) so the nc stdin stream is well-formed
-# on all shells; `-q 1` tells nc to exit 1s after EOF, which gives the PPM
-# writer time to finish.
+# `quit` tells QEMU to disconnect the monitor (not shut down the VM); HMP
+# processes the preceding `screendump` before honoring `quit`, so the
+# socket can close immediately after. `nc -q 0` exits as soon as stdin
+# EOFs without the default 1-second drain delay -- save that second per
+# capture. Post-disconnect flush latency is caught by the deterministic
+# size-stability poll below, not by blocking here (Codex [M] quality).
 if ! printf 'screendump %s\nquit\n' "$PPM_PATH" \
-    | timeout "$MONITOR_TIMEOUT" nc -q 1 "$HOST" "$PORT" >/dev/null 2>&1; then
+    | timeout "$MONITOR_TIMEOUT" nc -q 0 "$HOST" "$PORT" >/dev/null 2>&1; then
     die 2 "monitor at $HOST:$PORT did not respond within ${MONITOR_TIMEOUT}s (is QEMU running with -monitor telnet:$HOST:$PORT,server,nowait ?)"
 fi
 

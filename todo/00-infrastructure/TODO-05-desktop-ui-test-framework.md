@@ -115,7 +115,7 @@ Use QEMU's monitor interface to capture screenshots from outside the VM.
 > - Canonical doc: `scripts/qemu-screenshot.sh` header comment block + the `-Monitor` switch doc in `run-qemu.ps1`.
 > - Scope boundary: §2 owns capture; §3 (Desktop Smoke Test) owns the boot-to-READY wait + higher-level invocation; §6 (Reference Screenshot Comparison) owns pixel diff; §15 (Crash Artifact Capture) owns on-failure auto-screenshot.
 > **Verified:** 2026-04-22 | commit `d5c9bb9b` | 4/4 items + 1 documented alt | build OK | KVM end-to-end PASS (1280x720, 1.09 MiB, exit 0) + injection reject PASS
-> **Quality reviewed:** 2026-04-22 | Codex 1x (adversarial) | 1H+2M fixed | scope: N/A (host-side shell; kernel-code-quality does not apply)
+> **Quality reviewed:** 2026-04-22 | Codex 2x (adversarial, quality) | 1H+4M+1L fixed | scope: N/A (host-side shell; kernel-code-quality does not apply)
 
 ---
 
