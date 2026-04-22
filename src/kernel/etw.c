@@ -468,6 +468,73 @@ NTSTATUS NtFlushTrace(uint64_t trace_handle, uint64_t instance_name,
     return STATUS_SUCCESS;
 }
 
+/* ---- Kernel-local event emission ---------------------------------------- */
+
+#include "desktop/wm.h"   /* for struct wm_frame_stats in etw_emit_wm_frame_presented */
+
+void etw_emit_kernel_event(uint16_t event_id, uint8_t level,
+                           const void *payload, uint32_t payload_size)
+{
+    if (payload_size > ETW_MAX_EVENT_SIZE)
+        return;  /* oversized payload: drop silently (emit path must not fail) */
+
+    uint64_t irq_flags;
+    spin_lock_irqsave(&s_etw_lock, &irq_flags);
+
+    /* Walk every session and write into the ones that are RUNNING.
+     * Hot-path idle case (no running session) pays one cache miss +
+     * one atomic lock pair -- the compositor can afford that per
+     * frame. Subsystems that fire faster (per-IRQ) should gate on a
+     * global "any-session-running" atomic before calling. */
+    for (uint32_t i = 0; i < ETW_MAX_SESSIONS; i++) {
+        etw_session_t *sess = &s_sessions[i];
+        if (sess->magic != ETW_SESSION_MAGIC)
+            continue;
+        if (sess->state != ETW_STATE_RUNNING)
+            continue;
+
+        uint32_t record_size = (uint32_t)(sizeof(etw_event_header_t) + payload_size);
+
+        /* Wrap around on overflow: overwrite oldest events, matching
+         * the circular-buffer discipline in NtTraceEvent. */
+        if (sess->buf_head + record_size > sess->buf_size)
+            sess->buf_head = 0;
+
+        if (record_size > sess->buf_size) {
+            sess->events_dropped++;
+            continue;
+        }
+
+        etw_event_header_t *hdr = (etw_event_header_t *)(sess->buffer + sess->buf_head);
+        hdr->timestamp    = (uint32_t)system_get_ticks();
+        hdr->event_id     = event_id;
+        hdr->level        = level;
+        hdr->cpu_id       = 0;   /* populated when smp_this_cpu is wired into ETW */
+        hdr->pid          = 0;
+        hdr->payload_size = payload_size;
+
+        if (payload_size > 0 && payload) {
+            memcpy(sess->buffer + sess->buf_head + sizeof(etw_event_header_t),
+                   payload, (size_t)payload_size);
+        }
+
+        sess->buf_head += record_size;
+        sess->events_written++;
+    }
+
+    spin_unlock_irqrestore(&s_etw_lock, irq_flags);
+}
+
+void etw_emit_wm_frame_presented(const struct wm_frame_stats *stats)
+{
+    if (!stats)
+        return;
+    /* Level 4 = "information" in the 0=critical..5=verbose scale.
+     * WM_FRAME_PRESENTED is high-volume observability, not an alert. */
+    etw_emit_kernel_event(ETW_EVT_WM_FRAME_PRESENTED, 4,
+                          stats, (uint32_t)sizeof(*stats));
+}
+
 /* ---- SSDT registration --------------------------------------------------- */
 
 void etw_register_ssdt(void)

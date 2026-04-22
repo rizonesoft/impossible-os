@@ -677,6 +677,146 @@ static void test_wm_reset_clears_deferred_close(void)
                    "fresh window survives drain");
 }
 
+/* ---- Section 10: Frame Timing and Drop Oracle ----------------------- */
+
+/* Fresh reset zeroes every counter; seqlock snapshot is consistent. */
+static void test_wm_frame_stats_reset_zeros_counters(void)
+{
+    struct wm_frame_stats s;
+
+    wm_frame_stats_reset_for_test();
+    wm_get_frame_stats(&s);
+    TEST_ASSERT_EQ((uint64_t)s.frames_presented, (uint64_t)0,
+                   "reset -> frames_presented == 0");
+    TEST_ASSERT_EQ((uint64_t)s.frames_queued, (uint64_t)0,
+                   "reset -> frames_queued == 0");
+    TEST_ASSERT_EQ((uint64_t)s.frames_late, (uint64_t)0,
+                   "reset -> frames_late == 0");
+    TEST_ASSERT_EQ((uint64_t)s.frames_dropped, (uint64_t)0,
+                   "reset -> frames_dropped == 0");
+    TEST_ASSERT_EQ((uint64_t)s.last_vsync_qpc, (uint64_t)0,
+                   "reset -> last_vsync_qpc == 0");
+    TEST_ASSERT_EQ((uint64_t)s.last_present_qpc, (uint64_t)0,
+                   "reset -> last_present_qpc == 0");
+}
+
+/* Present under budget advances presented + last_*; stays below late. */
+static void test_wm_frame_stats_on_present_under_budget(void)
+{
+    struct wm_frame_stats s;
+    uint64_t t0 = 1000000ULL;         /* 1 ms */
+    uint64_t t1 = t0 + 10000000ULL;   /* t0 + 10 ms -- under 16.67 ms budget */
+
+    wm_frame_stats_reset_for_test();
+    wm_frame_stats_on_present(t0, t1);
+    wm_get_frame_stats(&s);
+
+    TEST_ASSERT_EQ((uint64_t)s.frames_presented, (uint64_t)1,
+                   "one present -> frames_presented == 1");
+    TEST_ASSERT_EQ((uint64_t)s.frames_late, (uint64_t)0,
+                   "under-budget present -> frames_late == 0");
+    TEST_ASSERT_EQ((uint64_t)s.last_vsync_qpc, t0,
+                   "last_vsync_qpc == provided vsync stamp");
+    TEST_ASSERT_EQ((uint64_t)s.last_present_qpc, t1,
+                   "last_present_qpc == provided present stamp");
+}
+
+/* Present over 16.67 ms budget bumps frames_late. */
+static void test_wm_frame_stats_on_present_over_budget(void)
+{
+    struct wm_frame_stats s;
+    uint64_t t0 = 0ULL;
+    uint64_t t1 = 20000000ULL;  /* 20 ms -- exceeds 16.67 ms budget */
+
+    wm_frame_stats_reset_for_test();
+    wm_frame_stats_on_present(t0, t1);
+    wm_get_frame_stats(&s);
+
+    TEST_ASSERT_EQ((uint64_t)s.frames_presented, (uint64_t)1,
+                   "over-budget still counts as presented");
+    TEST_ASSERT_EQ((uint64_t)s.frames_late, (uint64_t)1,
+                   "over-budget present -> frames_late == 1");
+}
+
+/* Queue + coalesce: mark_dirty on a clean frame increments queued;
+ * mark_dirty on an already-dirty frame increments queued AND dropped. */
+static void test_wm_frame_stats_queue_and_drop(void)
+{
+    struct wm_frame_stats s;
+
+    wm_frame_stats_reset_for_test();
+
+    /* First mark: was clean, count only queued. */
+    wm_frame_stats_on_mark_dirty(/* was_already_dirty */ 0);
+    wm_get_frame_stats(&s);
+    TEST_ASSERT_EQ((uint64_t)s.frames_queued, (uint64_t)1,
+                   "first mark -> queued == 1");
+    TEST_ASSERT_EQ((uint64_t)s.frames_dropped, (uint64_t)0,
+                   "first mark -> dropped == 0");
+
+    /* Second mark while still dirty: queued++, dropped++. */
+    wm_frame_stats_on_mark_dirty(/* was_already_dirty */ 1);
+    wm_get_frame_stats(&s);
+    TEST_ASSERT_EQ((uint64_t)s.frames_queued, (uint64_t)2,
+                   "second mark (already dirty) -> queued == 2");
+    TEST_ASSERT_EQ((uint64_t)s.frames_dropped, (uint64_t)1,
+                   "second mark (already dirty) -> dropped == 1");
+}
+
+/* Monotonic progression across multiple presents: counters never
+ * decrease, last_present_qpc advances. */
+static void test_wm_frame_stats_counters_monotonic(void)
+{
+    struct wm_frame_stats a, b;
+
+    wm_frame_stats_reset_for_test();
+    wm_frame_stats_on_present(100ULL, 200ULL);
+    wm_get_frame_stats(&a);
+
+    wm_frame_stats_on_present(300ULL, 400ULL);
+    wm_get_frame_stats(&b);
+
+    TEST_ASSERT(b.frames_presented >= a.frames_presented,
+                "frames_presented never decreases");
+    TEST_ASSERT_EQ((uint64_t)b.frames_presented,
+                   (uint64_t)(a.frames_presented + 1),
+                   "second present advances by exactly 1");
+    TEST_ASSERT(b.last_present_qpc > a.last_present_qpc,
+                "last_present_qpc advances with fresh timestamps");
+}
+
+/* NULL out-pointer guard: wm_get_frame_stats must not crash on NULL. */
+static void test_wm_frame_stats_null_guard(void)
+{
+    wm_frame_stats_reset_for_test();
+    wm_get_frame_stats((struct wm_frame_stats *)0);
+    /* If we're still running, the guard worked. */
+    TEST_ASSERT(1, "wm_get_frame_stats(NULL) is a safe no-op");
+}
+
+/* wm_mark_dirty path end-to-end: public entry point bumps queued +
+ * dropped when called twice in a row. Exercises the real dirty-flag
+ * coalescing logic in src/desktop/wm.c. */
+static void test_wm_mark_dirty_bumps_queued(void)
+{
+    struct wm_frame_stats before, after;
+
+    wm_frame_stats_reset_for_test();
+    wm_get_frame_stats(&before);
+
+    /* First call: sets needs_redraw. was_already_dirty state read by
+     * wm_mark_dirty() determines whether drop fires. */
+    wm_mark_dirty();
+    wm_mark_dirty();  /* second call now sees needs_redraw == 1 */
+
+    wm_get_frame_stats(&after);
+    TEST_ASSERT_EQ((uint64_t)after.frames_queued,
+                   (uint64_t)(before.frames_queued + 2),
+                   "two wm_mark_dirty calls -> queued += 2");
+    TEST_ASSERT(after.frames_dropped >= before.frames_dropped + 1,
+                "second mark while already dirty drops at least one");
+}
+
 /* ---- Registration ----------------------------------------------------- */
 
 void test_register_desktop(void)
@@ -715,6 +855,20 @@ void test_register_desktop(void)
                             test_wm_alt_f4_closes_focused_window, TEST_CAT_DESKTOP);
     test_suite_register_cat("Desktop: wm_test_reset clears deferred-close state",
                             test_wm_reset_clears_deferred_close, TEST_CAT_DESKTOP);
+    test_suite_register_cat("Desktop: wm_frame_stats_reset_for_test zeroes counters",
+                            test_wm_frame_stats_reset_zeros_counters, TEST_CAT_DESKTOP);
+    test_suite_register_cat("Desktop: frame_stats on-present under budget",
+                            test_wm_frame_stats_on_present_under_budget, TEST_CAT_DESKTOP);
+    test_suite_register_cat("Desktop: frame_stats on-present over budget -> frames_late",
+                            test_wm_frame_stats_on_present_over_budget, TEST_CAT_DESKTOP);
+    test_suite_register_cat("Desktop: frame_stats queue + coalesce drops",
+                            test_wm_frame_stats_queue_and_drop, TEST_CAT_DESKTOP);
+    test_suite_register_cat("Desktop: frame_stats counters monotonic across presents",
+                            test_wm_frame_stats_counters_monotonic, TEST_CAT_DESKTOP);
+    test_suite_register_cat("Desktop: wm_get_frame_stats NULL guard",
+                            test_wm_frame_stats_null_guard, TEST_CAT_DESKTOP);
+    test_suite_register_cat("Desktop: wm_mark_dirty bumps queued + drops on coalesce",
+                            test_wm_mark_dirty_bumps_queued, TEST_CAT_DESKTOP);
 }
 
 #endif /* KERNEL_TESTS */

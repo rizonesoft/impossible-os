@@ -28,6 +28,8 @@
 #include "gfx.h"
 #include "kernel/drivers/mouse.h"
 #include "kernel/mm/pmm.h"
+#include "kernel/etw.h"
+#include "kernel/sched/seqlock.h"
 #include "desktop/desktop.h"
 
 /* ---- Internal state ---- */
@@ -62,12 +64,6 @@ static void str_copy(char *dst, const char *src, uint32_t max)
     dst[i] = '\0';
 }
 
-/* Mark the screen as needing a redraw */
-static void mark_dirty(void)
-{
-    needs_redraw = 1;
-}
-
 /* Free N contiguous pages starting at the given physical address */
 static void pmm_free_pages(uintptr_t base, uint32_t count)
 {
@@ -76,11 +72,45 @@ static void pmm_free_pages(uintptr_t base, uint32_t count)
         pmm_free_frame(base + i * 4096);
 }
 
-/* Public version for external callers (e.g., cursor movement) */
+/* Public entry point: every external or internal WM-state mutation
+ * routes through here so the frame-stats oracle sees the queue. The
+ * counter advance happens inside wm_frame_stats_on_mark_dirty(),
+ * which serializes on a seqlock so concurrent callers on different
+ * CPUs observe the same prior-dirty state consistently.
+ *
+ * Codex [H] review of section 10 required routing all compositor
+ * mutations (create/destroy/move/resize/raise/focus, plus the drag
+ * and hover paths) through this single counted entry point instead
+ * of a bypass `static void mark_dirty()` helper. */
 void wm_mark_dirty(void)
+{
+    /* Observe prior dirty FIRST so "already-dirty" reflects the
+     * state BEFORE this call, matching the drop semantics (a new
+     * request that coalesces into an unserviced prior request is
+     * the drop). The read-and-set does not need seqlock protection
+     * because wm_frame_stats_on_mark_dirty() snapshots the flag
+     * again inside its own writer critical section. */
+    int was_dirty = (int)needs_redraw;
+    needs_redraw = 1;
+    wm_frame_stats_on_mark_dirty(was_dirty);
+}
+
+/* Silent variant: compositor-internal repaint requests (e.g., after
+ * wm_process_pending_closes() tears a window down). Does not advance
+ * the frame-stats oracle so frames_queued reflects real external
+ * invalidations only. */
+void wm_mark_dirty_internal(void)
 {
     needs_redraw = 1;
 }
+
+/* Backwards-compatible alias for the pre-section-10 static helper
+ * name so existing call sites inside wm.c (create/destroy/move/
+ * resize/raise/focus/drag/hover) keep the same short spelling
+ * while routing through the counted public entry point. Static +
+ * inline to keep the original calling convention and avoid churn
+ * in ~9 unrelated call sites. */
+static inline void mark_dirty(void) { wm_mark_dirty(); }
 
 int wm_needs_redraw(void)
 {
@@ -498,6 +528,88 @@ int wm_get_window_rect(int handle, int32_t *x, int32_t *y,
  * When the queue widens to multiple pending handles, replace with an
  * atomic ring buffer and update the concurrency contract in wm.h. */
 static volatile int pending_close_handle = -1;
+
+/* ---- Frame timing + drop oracle (desktop UI test section 10) -------- */
+
+/* 60 Hz frame budget in nanoseconds: 1,000,000,000 / 60 = 16,666,667.
+ * Presents that complete after this budget count as late. */
+#define WM_FRAME_BUDGET_NS 16666667ULL
+
+/* Seqlock-protected stats so cross-thread readers (tests, namespace
+ * pseudo-file, ETW consumers) never observe a torn snapshot while a
+ * compositor / input / window-manipulation thread is mid-update.
+ * Codex [H] review of section 10 required using the kernel's real
+ * seqlock_t primitive (spinlock-backed writer exclusion + IRQ-safe
+ * flag save/restore) instead of the prior hand-rolled counter, which
+ * allowed two concurrent writers to corrupt the counter and leave
+ * readers spinning on an odd sequence forever. */
+static seqlock_t s_frame_lock = SEQLOCK_INIT;
+static struct wm_frame_stats s_frame_stats = {0};
+
+void wm_get_frame_stats(struct wm_frame_stats *out)
+{
+    uint64_t seq;
+    if (!out)
+        return;
+    do {
+        seq = seqlock_read_begin(&s_frame_lock);
+        *out = s_frame_stats;
+    } while (seqlock_read_retry(&s_frame_lock, seq));
+}
+
+void wm_frame_stats_on_mark_dirty(int was_already_dirty)
+{
+    seqlock_write_lock(&s_frame_lock);
+    s_frame_stats.frames_queued++;
+    if (was_already_dirty)
+        s_frame_stats.frames_dropped++;
+    seqlock_write_unlock(&s_frame_lock);
+}
+
+void wm_frame_stats_on_present(uint64_t vsync_ns, uint64_t present_ns)
+{
+    uint64_t elapsed = (present_ns >= vsync_ns)
+                       ? (present_ns - vsync_ns) : 0ULL;
+    int late = (elapsed > WM_FRAME_BUDGET_NS) ? 1 : 0;
+    struct wm_frame_stats snapshot;
+
+    seqlock_write_lock(&s_frame_lock);
+    s_frame_stats.frames_presented++;
+    s_frame_stats.last_vsync_qpc   = vsync_ns;
+    s_frame_stats.last_present_qpc = present_ns;
+    if (late)
+        s_frame_stats.frames_late++;
+    /* Capture a stable snapshot INSIDE the writer critical section so
+     * the ETW emit below operates on a coherent view of the present
+     * that just completed. Codex [M] review: previously we passed
+     * `&s_frame_stats` out through the unlock boundary, and
+     * etw_emit_kernel_event copied it later under s_etw_lock with no
+     * serialization against a concurrent mark_dirty writer, allowing
+     * the WM_FRAME_PRESENTED payload to include updates from AFTER
+     * the reported present. */
+    snapshot = s_frame_stats;
+    seqlock_write_unlock(&s_frame_lock);
+
+    /* ETW emit: walk every running session and write a
+     * WM_FRAME_PRESENTED record with the captured snapshot. No-op
+     * when no session is active so the compositor hot path stays
+     * under a single s_etw_lock acquire in the idle case. */
+    etw_emit_wm_frame_presented(&snapshot);
+}
+
+#ifdef KERNEL_TESTS
+void wm_frame_stats_reset_for_test(void)
+{
+    seqlock_write_lock(&s_frame_lock);
+    s_frame_stats.frames_presented  = 0;
+    s_frame_stats.frames_queued     = 0;
+    s_frame_stats.frames_late       = 0;
+    s_frame_stats.frames_dropped    = 0;
+    s_frame_stats.last_vsync_qpc    = 0;
+    s_frame_stats.last_present_qpc  = 0;
+    seqlock_write_unlock(&s_frame_lock);
+}
+#endif
 
 void wm_close_focused_window(void)
 {

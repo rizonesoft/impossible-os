@@ -115,8 +115,17 @@ void wm_focus_window(int handle);
  * Call this once per frame. The caller should call fb_swap() afterward. */
 void wm_composite(void);
 
-/* Force a redraw on the next wm_composite() call. */
+/* Force a redraw on the next wm_composite() call. Counts as a queued
+ * frame event for the frame-stats oracle; use wm_mark_dirty_internal()
+ * for compositor-internal reinvalidation that should NOT bump the
+ * external queued-frame counter. */
 void wm_mark_dirty(void);
+
+/* Compositor-internal dirty mark: sets needs_redraw without advancing
+ * the frame-stats oracle. Used by the compositor loop when pending
+ * close drains or similar self-initiated invalidations need a full
+ * repaint without masquerading as a new external frame request. */
+void wm_mark_dirty_internal(void);
 
 /* Check if a redraw is pending (content changed). */
 int wm_needs_redraw(void);
@@ -127,6 +136,55 @@ uint32_t *wm_get_framebuffer(int handle);
 /* Get the client area dimensions. */
 uint32_t wm_get_client_width(int handle);
 uint32_t wm_get_client_height(int handle);
+
+/* ---- Frame timing + drop oracle (desktop UI test section 10) ---- */
+
+/* Monotonic frame counters. Parity with Win11
+ * DwmGetCompositionTimingInfo and Linux Wayland presentation-time
+ * protocol. All values are monotonic since boot (or since the last
+ * wm_frame_stats_reset_for_test call under KERNEL_TESTS).
+ *
+ * `last_vsync_qpc` / `last_present_qpc` are mono_ns() timestamps
+ * ("QPC" in the field name is a Win32-terminology nod; the unit is
+ * nanoseconds, not the raw QueryPerformanceCounter tick count, because
+ * our monotonic clock normalizes away TSC/HPET source differences). */
+struct wm_frame_stats {
+    uint64_t frames_presented;
+    uint64_t frames_queued;
+    uint64_t frames_late;
+    uint64_t frames_dropped;
+    uint64_t last_vsync_qpc;
+    uint64_t last_present_qpc;
+};
+
+/* SMP-safe snapshot of the frame stats. Readers loop over a seqlock
+ * so a concurrent compositor thread updating the counters mid-read
+ * does not produce a torn mix of old + new field values. The out
+ * pointer must not be NULL. */
+void wm_get_frame_stats(struct wm_frame_stats *out);
+
+/* Writer-side: called by wm_mark_dirty() whenever the compositor is
+ * notified of a render-needing change. `was_already_dirty` is 1 when
+ * the previous mark has not yet been composited (the new mark is
+ * coalesced and counts as a drop). */
+void wm_frame_stats_on_mark_dirty(int was_already_dirty);
+
+/* Writer-side: called by the compositor once per successful present
+ * (post fb_swap()). `vsync_ns` is the monotonic timestamp at frame
+ * start; `present_ns` is the timestamp right after the back-buffer
+ * flip. If `present_ns - vsync_ns` exceeds the 16.67 ms 60 Hz budget,
+ * frames_late is bumped. This is the single place frames_presented
+ * advances. */
+void wm_frame_stats_on_present(uint64_t vsync_ns, uint64_t present_ns);
+
+#ifdef KERNEL_TESTS
+/* Test-only: zero every counter so a TEST_CAT_DESKTOP case can
+ * exercise monotonic progress from a known baseline. Paired with
+ * wm_frame_stats_on_mark_dirty / wm_frame_stats_on_present which
+ * stay callable from tests to synthesize deterministic frame history
+ * without waiting for the real compositor loop. */
+void wm_frame_stats_reset_for_test(void);
+#endif
 
 /* ---- Introspection (test framework -- desktop UI test section 8) ---- */
 

@@ -12,6 +12,7 @@
 #include "kernel/drivers/virtio_input.h"
 #include "kernel/drivers/vbox_mouse.h"
 #include "kernel/drivers/rtc.h"
+#include "kernel/time/mono_clock.h"
 #include "kernel/timer.h"
 #include "kernel/sched/task.h"
 #include "kernel/klog.h"
@@ -135,6 +136,14 @@ void compositor_run(void)
         if (need_full) {
             /* Full composite needed */
 
+            /* Frame-timing oracle: stamp vsync at the start of frame
+             * work so `wm_frame_stats_on_present()` below can measure
+             * the full composite + swap budget. mono_ns() is the
+             * highest-resolution monotonic clock the kernel has
+             * (invariant TSC when present, HPET / LAPIC fallback),
+             * matching what Win11 QueryPerformanceCounter exposes. */
+            uint64_t vsync_ns = mono_ns();
+
             /* Skip terminal re-render during drag */
             if (!wm_is_dragging()) {
                 terminal_render();
@@ -148,7 +157,7 @@ void compositor_run(void)
              * races. */
             scheduler_disable();
             wm_process_pending_closes();
-            wm_mark_dirty();
+            wm_mark_dirty_internal();
 
             /* Restore cursor, full composite, draw cursor, flip */
             cursor_restore();
@@ -193,6 +202,13 @@ void compositor_run(void)
                 }
             }
             scheduler_enable();
+
+            /* Frame-timing oracle: one present completed. `present_ns -
+             * vsync_ns` > 16.67 ms bumps frames_late; the counter
+             * advance is the ONLY writer of frames_presented. Also
+             * emits the WM_FRAME_PRESENTED ETW event into any
+             * RUNNING session (no-op otherwise). */
+            wm_frame_stats_on_present(vsync_ns, mono_ns());
 
             prev_mx = mx;
             prev_my = my;

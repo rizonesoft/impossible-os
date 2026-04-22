@@ -143,3 +143,31 @@ NTSTATUS NtStopTrace(uint64_t trace_handle, uint64_t instance_name,
 NTSTATUS NtFlushTrace(uint64_t trace_handle, uint64_t instance_name,
                       uint64_t properties, uint64_t a4,
                       uint64_t a5, uint64_t a6);
+
+/* ---- Kernel-local event emission ---------------------------------------- */
+
+/* Event IDs reserved for kernel-subsystem emitters. Keep in this
+ * header so providers and consumers share the enum; values are
+ * stable once shipped. */
+#define ETW_EVT_WM_FRAME_PRESENTED  0x1001
+
+/* Emit a kernel event into every running ETW session. Iterates the
+ * session table under s_etw_lock, writes an etw_event_header_t +
+ * payload record into each RUNNING session, and returns. No-op when
+ * no session is in RUNNING state so hot-path callers (compositor
+ * per-frame) pay only one atomic lock-acquire cost in the idle case.
+ *
+ * `event_id`    -- provider-defined (ETW_EVT_*).
+ * `level`       -- severity 0..5 (0=critical, 5=verbose).
+ * `payload`     -- caller-supplied byte buffer; may be NULL if size=0.
+ * `payload_size`-- 0..ETW_MAX_EVENT_SIZE. Oversized payloads drop. */
+void etw_emit_kernel_event(uint16_t event_id, uint8_t level,
+                           const void *payload, uint32_t payload_size);
+
+/* Thin wrapper around etw_emit_kernel_event for the §10 frame-timing
+ * oracle: writes the current wm_frame_stats snapshot as the payload.
+ * The wm.h forward declaration of `struct wm_frame_stats` keeps this
+ * header from dragging desktop/ into every kernel consumer; callers
+ * already #include desktop/wm.h when they have a snapshot to emit. */
+struct wm_frame_stats;
+void etw_emit_wm_frame_presented(const struct wm_frame_stats *stats);
