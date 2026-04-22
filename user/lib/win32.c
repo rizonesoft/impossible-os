@@ -90,24 +90,28 @@ DWORD GetCurrentProcessId(void)
 
 DWORD GetTickCount(void)
 {
-    /* Read KUSER_SHARED_DATA at 0x7FFE0000 for millisecond-resolution
-     * tick count. TickCountLowDeprecated is bumped by the timer ISR
-     * every tick; TickCountMultiplier converts ticks to 100ns units
-     * via (tick * mult) >> 24 -> 100ns, divide by 10000 for ms. The
-     * KUSD page is mapped user-RO at crt_init so this is a direct
-     * load, no ring transition.
+    /* Read KUSER_SHARED_DATA at 0x7FFE0000 for 10 ms-resolution tick
+     * count. `TickCountLowDeprecated` is bumped every kernel timer
+     * tick (`src/kernel/time/kusd_time.c:235`); one unit == 10 ms
+     * (matches `tick_count = interrupt_time / 100000` in the same
+     * file). The `TickCountMultiplier` field is published for
+     * Windows-compatible software that wants to compute ms via the
+     * `(tick * mult) >> 24` formula, but our own GetTickCount does
+     * not need it: multiplying the 10 ms units by 10 gives ms
+     * directly, with no off-by-one on the first tick and no rounding
+     * loss on any tick (the prior `/ 10000` divisor reduced the
+     * shifted value by 4 orders of magnitude, so the first ~64
+     * ticks all reported 0 ms -- the `GetTickCount > 0` test
+     * checkpoint in `user/test/test_win32.c` caught this).
      *
-     * Fall back to sys_uptime * 1000 if KUSD fields are still 0 (the
-     * timer hasn't ticked yet, which on TCG boot can happen before
-     * user tests run). The fallback gives SECOND resolution via
-     * syscall which is slower but matches the previous contract. */
+     * Fall back to `sys_uptime() * 1000` when the KUSD tick is still
+     * 0 (no timer IRQ has fired yet). Guaranteed >0 per the
+     * "kernel timer alive" invariant. */
     volatile const USER_KUSD *kusd = (volatile const USER_KUSD *)USER_KUSD_VA;
     uint32_t tick = kusd->TickCountLowDeprecated;
-    uint32_t mult = kusd->TickCountMultiplier;
-    if (tick && mult) {
-        /* (tick * mult) >> 24 -> 100ns units; / 10000 -> ms. */
-        uint64_t hundred_ns = ((uint64_t)tick * mult) >> 24;
-        return (DWORD)(hundred_ns / 10000ULL);
+    if (tick) {
+        /* Each tick unit is 10 ms -- see kusd_time.c:212. */
+        return (DWORD)((uint64_t)tick * 10ULL);
     }
     long secs = sys_uptime();
     if (secs <= 0)
