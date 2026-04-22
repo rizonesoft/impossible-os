@@ -1013,11 +1013,20 @@ uint64_t schedule(struct interrupt_frame *frame)
                      "wrote=0x%X read=0x%X (task=%u thread=%u)",
                      new_gs, rb,
                      (uint64_t)next_task, (uint64_t)next_thread);
-        } else if (tasks[next_task].teb) {
-            klog(LOG_ERROR, "sched",
-                 "ring-3 task %u thread %u has TEB=%p but kernel_gs_base=0",
+        } else if (tasks[next_task].teb ||
+                   tasks[next_task].threads[next_thread].teb) {
+            /* Fail-closed matching the preemptive path above.
+             * Codex HF 2026-04-22: this site was previously LOG_ERROR +
+             * continue, which meant a `GetCurrentProcessId` caller
+             * that had migrated to the gs:0x40 native fast path would
+             * #PF in user mode at CR2=0x40. Promote to LOG_FATAL so
+             * both scheduler paths enforce the same invariant. */
+            klog(LOG_FATAL, "sched",
+                 "ring-3 task %u thread %u has TEB but kernel_gs_base=0 "
+                 "(task.teb=%p thread.teb=%p)",
                  (uint64_t)next_task, (uint64_t)next_thread,
-                 (uint64_t)(uintptr_t)tasks[next_task].teb);
+                 (uint64_t)(uintptr_t)tasks[next_task].teb,
+                 (uint64_t)(uintptr_t)tasks[next_task].threads[next_thread].teb);
         }
     }
 

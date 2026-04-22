@@ -81,9 +81,14 @@ static inline uint64_t read_gs_qword(unsigned long offset)
  *    the &line buffer pointer from a prior assignment but it
  *    actually held whatever scratch value syscall_dispatch_fast
  *    left behind.
- *  - r10: the input constraint holds the value going in; we do not
- *    read r10 after the asm, so no clobber needed (register var is
- *    statement-scoped).
+ *  - r10: modeled as a read-write operand (`"+r"(r10)`) so clang
+ *    treats the register as dead after the asm. The local
+ *    `register ... __asm__("r10")` binding alone does NOT imply that
+ *    contract -- LLVM is free to keep an unrelated live value in r10
+ *    across the asm, which would reproduce exactly the rdi stale-
+ *    register class-of-miscompile we just fixed (Codex 2026-04-22).
+ *    Using `+r` forces the compiler to treat the register as
+ *    clobbered without conflicting with the `register` binding.
  *  - memory: the kernel may have mutated anything via pointer
  *    arguments.
  *
@@ -98,8 +103,8 @@ static inline uint64_t do_syscall_nt(uint64_t service, uint64_t arg1)
     register uint64_t r10 __asm__("r10") = arg1;
     __asm__ volatile (
         "syscall"
-        : "=a"(ret)
-        : "a"(service), "r"(r10)
+        : "=a"(ret), "+r"(r10)
+        : "a"(service)
         : "rcx", "r11", "rdx", "rsi", "rdi", "r8", "r9", "memory"
     );
     return ret;
