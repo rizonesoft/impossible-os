@@ -1,12 +1,15 @@
 /* ============================================================================
  * wcag.c -- WCAG 2.2 sweep driver skeleton (the desktop UI test framework WCAG section).
  *
- * Consumer of the accessibility automation tree. The tree provider is
- * still `[ ]`; until it ships, `wcag_sweep_run()` has no nodes to
- * walk and returns 0 findings. This file exists so the test harness
- * can wire `make test-wcag` end-to-end today -- the moment the tree
- * lands, the walk loop inside this function lights up without
- * changing a single call site.
+ * Consumer of the accessibility automation tree. The tree provider
+ * is still `[ ]`; until it ships, `wcag_sweep_run()` returns the
+ * sentinel `WCAG_SWEEP_PROVIDER_MISSING` (distinct from a real
+ * 0-findings sweep against a clean desktop, per the Codex quality
+ * review). `wcag_provider_ready()` is the single flip point. This
+ * file exists so the test harness can wire `make test-wcag`
+ * end-to-end today -- the moment the tree lands,
+ * `wcag_provider_ready()` flips to 1 and the walk loop inside
+ * `wcag_sweep_run()` lights up without changing a single call site.
  * ============================================================================ */
 
 #include "kernel/test/wcag.h"
