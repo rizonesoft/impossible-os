@@ -201,14 +201,18 @@ void compositor_run(void)
                     fb_swap();
                 }
             }
-            scheduler_enable();
 
-            /* Frame-timing oracle: one present completed. `present_ns -
-             * vsync_ns` > 16.67 ms bumps frames_late; the counter
-             * advance is the ONLY writer of frames_presented. Also
-             * emits the WM_FRAME_PRESENTED ETW event into any
-             * RUNNING session (no-op otherwise). */
+            /* Frame-timing oracle: take the present timestamp and
+             * snapshot the counters BEFORE reopening preemption so
+             * the WM_FRAME_PRESENTED payload cannot absorb
+             * wm_mark_dirty() calls that arrive on another CPU for
+             * the NEXT frame. Codex [M] review of §10 required this
+             * ordering: scheduler_enable() used to run first,
+             * leaving a window where other writers updated
+             * s_frame_stats before the present snapshot copy. */
             wm_frame_stats_on_present(vsync_ns, mono_ns());
+
+            scheduler_enable();
 
             prev_mx = mx;
             prev_my = my;

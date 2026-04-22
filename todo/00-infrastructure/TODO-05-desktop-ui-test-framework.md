@@ -356,9 +356,9 @@ Parity for Win11 `DwmGetCompositionTimingInfo` and Linux Wayland `presentation-t
 > - Every WM-state mutation (create/destroy/move/resize/raise/focus + drag/hover) now counts. The prior `static void mark_dirty()` bypass was replaced with `static inline void mark_dirty(void) { wm_mark_dirty(); }` so all internal invalidations are visible to the oracle; only `wm_mark_dirty_internal()` stays silent for compositor-internal repaints.
 > - Canonical doc: `include/desktop/wm.h` (frame-stats contract + concurrency note), `include/kernel/etw.h` (ETW_EVT_WM_FRAME_PRESENTED + `etw_emit_kernel_event`).
 > - Scope boundary: §10 ships kernel-side counters + ETW emit. §13 owns per-output stats for multi-monitor, §15 owns the `\\?\ObjectManager\FrameStats` pseudo-file exposure (tracked concrete item there; 300-LOC Ob driver work is out of single-section scope), §11 record/replay will consume this for drop-free playback assertions.
-> **Verified:** 2026-04-22 | 7/8 items | build OK | tests 1847+7=1854/1854 PASS, 0 leaked (KVM desktop suite 24/24 suites, 106/106 assertions)
+> **Verified:** 2026-04-22 | commit `36ff0a9c` | 7/8 items | build OK | tests 1854/1854 PASS, 0 leaked (KVM desktop suite 24/24 suites, 106/106 assertions)
 > **Deferred:** [L] `\\?\ObjectManager\FrameStats` pseudo-file not shipped (reason: 300-LOC Ob driver work larger than a single-section scope; kernel-side counters + ETW emit ship today) -> XREF: 00-infrastructure/TODO-05 §15 (item: "Expose `\\?\ObjectManager\FrameStats` as a read-only pseudo-file" at line 385)
-> **Quality reviewed:** 2026-04-22 | Codex 1x (adversarial) | 1H+2M+0L fixed, 0 open | scope: kernel-code-quality
+> **Quality reviewed:** 2026-04-22 | Codex 2x (adversarial, quality) | 2H+3M+0L fixed, 0 open | scope: kernel-code-quality
 
 ---
 

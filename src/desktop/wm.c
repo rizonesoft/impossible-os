@@ -74,34 +74,35 @@ static void pmm_free_pages(uintptr_t base, uint32_t count)
 
 /* Public entry point: every external or internal WM-state mutation
  * routes through here so the frame-stats oracle sees the queue. The
- * counter advance happens inside wm_frame_stats_on_mark_dirty(),
- * which serializes on a seqlock so concurrent callers on different
- * CPUs observe the same prior-dirty state consistently.
+ * read-and-set of needs_redraw uses __atomic_exchange_n so two CPUs
+ * racing into wm_mark_dirty() cannot both observe a clean (0) prior
+ * state -- exactly one wins the "first mark" and the other records
+ * a drop. Codex [H] §10 review: the prior draft read `needs_redraw`
+ * and then wrote it in two distinct volatile accesses, allowing
+ * concurrent callers to miss drops and the compositor's flag clear
+ * to overwrite a concurrent mark.
  *
- * Codex [H] review of section 10 required routing all compositor
+ * Codex [H] review of section 10 also required routing all compositor
  * mutations (create/destroy/move/resize/raise/focus, plus the drag
  * and hover paths) through this single counted entry point instead
  * of a bypass `static void mark_dirty()` helper. */
 void wm_mark_dirty(void)
 {
-    /* Observe prior dirty FIRST so "already-dirty" reflects the
-     * state BEFORE this call, matching the drop semantics (a new
-     * request that coalesces into an unserviced prior request is
-     * the drop). The read-and-set does not need seqlock protection
-     * because wm_frame_stats_on_mark_dirty() snapshots the flag
-     * again inside its own writer critical section. */
-    int was_dirty = (int)needs_redraw;
-    needs_redraw = 1;
-    wm_frame_stats_on_mark_dirty(was_dirty);
+    uint8_t was_dirty = __atomic_exchange_n(&needs_redraw,
+                                            (uint8_t)1,
+                                            __ATOMIC_SEQ_CST);
+    wm_frame_stats_on_mark_dirty((int)was_dirty);
 }
 
 /* Silent variant: compositor-internal repaint requests (e.g., after
  * wm_process_pending_closes() tears a window down). Does not advance
  * the frame-stats oracle so frames_queued reflects real external
- * invalidations only. */
+ * invalidations only. Same atomic publish semantics as wm_mark_dirty
+ * so the compositor's atomic-exchange consumer never loses this
+ * mark to a concurrent reader/writer. */
 void wm_mark_dirty_internal(void)
 {
-    needs_redraw = 1;
+    __atomic_store_n(&needs_redraw, (uint8_t)1, __ATOMIC_SEQ_CST);
 }
 
 /* Backwards-compatible alias for the pre-section-10 static helper
@@ -114,7 +115,7 @@ static inline void mark_dirty(void) { wm_mark_dirty(); }
 
 int wm_needs_redraw(void)
 {
-    return needs_redraw;
+    return (int)__atomic_load_n(&needs_redraw, __ATOMIC_SEQ_CST);
 }
 
 /* Get the total outer width/height including decorations */
@@ -216,7 +217,7 @@ void wm_init(void)
 
     focused_window = -1;
     prev_buttons = 0;
-    needs_redraw = 1;
+    __atomic_store_n(&needs_redraw, (uint8_t)1, __ATOMIC_SEQ_CST);
     wm_ready = 1;
 
     /* Lock the framebuffer console -- all text output now goes to serial only.
@@ -1047,11 +1048,14 @@ void wm_composite(void)
     if (!wm_ready)
         return;
 
-    /* Only redraw if something changed */
-    if (!needs_redraw)
+    /* Only redraw if something changed. Atomic exchange(0) atomically
+     * reads the prior dirty state and clears it, so a concurrent
+     * wm_mark_dirty() on another CPU cannot have its new mark
+     * clobbered by a delayed `needs_redraw = 0` store. Codex [H] §10
+     * review: the prior volatile read + distinct store allowed
+     * mark-vs-clear races to silently drop a repaint request. */
+    if (!__atomic_exchange_n(&needs_redraw, (uint8_t)0, __ATOMIC_SEQ_CST))
         return;
-
-    needs_redraw = 0;
 
     /* Get sorted windows (bottom to top) */
     get_sorted_order(order, &count);
