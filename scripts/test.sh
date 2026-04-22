@@ -162,10 +162,14 @@ QEMU_PID=$!
 # Two completion markers:
 #   1. Kernel TEST runner: `=== N tests passed ...` -- always required.
 #   2. User-mode UTEST launcher: `UTEST: === N passed, N failed, N skipped
-#      of N total` -- ALSO required when XML=1 or JSON=1 because the §7
-#      machine-readable streams are emitted during the user-mode run;
-#      killing QEMU too early produces an incomplete artifact that CI
-#      would consume as truthful. Codex quality 2026-04-20.
+#      of N total` -- ALSO required when (a) XML=1/JSON=1 (machine-readable
+#      streams need a clean envelope) OR (b) any `UTEST:` line has appeared
+#      on serial. Case (b) means the launcher started; killing QEMU before
+#      it finishes would silently drop user-mode regressions because Step 5b
+#      would see HAS_UTEST=0 and the gate would stay kernel-only. Pure
+#      kernel-only runs (test_kernel_skip=0 + no usermode binaries / boot
+#      where launcher never starts) emit zero `UTEST:` lines, so this gate
+#      is a no-op for them. Codex adversarial 2026-04-22.
 ELAPSED=0
 FOUND=0
 while [ "$ELAPSED" -lt "$TIMEOUT" ]; do
@@ -173,10 +177,15 @@ while [ "$ELAPSED" -lt "$TIMEOUT" ]; do
     ELAPSED=$((ELAPSED + 1))
     if [ -f "$TEST_LOG" ] && grep -q '=== .* tests\? passed' "$TEST_LOG" 2>/dev/null; then
         FOUND=1
-        # If XML or JSON mode is on, also wait for the user-mode
-        # summary line; otherwise 1s grace is sufficient for the
-        # trailing kernel output to flush.
-        if [ "$XML_MODE" -eq 1 ] || [ "$JSON_MODE" -eq 1 ]; then
+        UMODE_NEEDED=0
+        [ "$XML_MODE" -eq 1 ] && UMODE_NEEDED=1
+        [ "$JSON_MODE" -eq 1 ] && UMODE_NEEDED=1
+        # If any UTEST: line has appeared, the launcher has started;
+        # require its summary too so a mid-run panic cannot exit green.
+        if [ "$UMODE_NEEDED" -eq 0 ] && grep -q 'UTEST:' "$TEST_LOG" 2>/dev/null; then
+            UMODE_NEEDED=1
+        fi
+        if [ "$UMODE_NEEDED" -eq 1 ]; then
             if grep -q 'UTEST: === .* passed, .* failed, .* skipped of' \
                     "$TEST_LOG" 2>/dev/null; then
                 sleep 1
@@ -254,6 +263,90 @@ done
     echo -e "  ${RED}FAIL${RESET}  $(echo "$line" | sed 's/.*TEST: //')"
 done
 
+# --- Step 5b: User-mode UTEST results ---
+#
+# The §3 launcher emits one verdict line per binary as
+# `UTEST: <name>: PASS (exit=0)` / `FAIL (exit=N)` / `SKIP (exit=77)` /
+# `TIMEOUT` / `ISOLATION` / `LEAK`, plus a final
+# `UTEST: === N passed, N failed, N skipped of N total ===` summary.
+# When boot.conf `tap=1` is set, the launcher ADDITIONALLY emits TAP
+# producer lines (`UTEST: 1..N`, `UTEST: ok N - name`, `UTEST: not ok N - name # ...`).
+# We display a per-binary verdict block (kernel TEST style: green OK,
+# red FAIL) and fold any UTEST FAIL count into the final exit code so
+# `make test` exits non-zero when ANY user-mode binary regressed --
+# the kernel TEST summary alone does not catch user-mode failures.
+HAS_UTEST=0
+grep -qE 'UTEST: === [0-9]+ passed' "$TEST_LOG" 2>/dev/null && HAS_UTEST=1
+
+UTEST_PASS=0
+UTEST_FAIL=0
+UTEST_SKIP=0
+
+if [ "$HAS_UTEST" -eq 1 ]; then
+    echo ""
+    echo -e "${CYAN}[UTEST]${RESET} User-mode test binaries:"
+
+    # Per-binary verdict lines (`UTEST: <name>: <STATUS> ...`). Skip the
+    # informational `format=` plumb-through and the framing summary lines
+    # that the loop below would otherwise echo as ambiguous "OK" entries.
+    { grep -E 'UTEST: [^ ]+\.exe: (PASS|FAIL|SKIP|TIMEOUT|ISOLATION|LEAK|format=)' \
+          "$TEST_LOG" 2>/dev/null || true; } | while IFS= read -r line; do
+        verdict=$(echo "$line" | sed -E 's/.*UTEST: //')
+        if echo "$verdict" | grep -qE ': (FAIL|TIMEOUT|ISOLATION|LEAK)'; then
+            echo -e "  ${RED}FAIL${RESET}  $verdict"
+        elif echo "$verdict" | grep -q ': SKIP'; then
+            [ "$QUIET_MODE" -eq 0 ] && echo -e "  ${YELLOW}SKIP${RESET}  $verdict"
+        elif echo "$verdict" | grep -q ': PASS'; then
+            [ "$QUIET_MODE" -eq 0 ] && echo -e "  ${GREEN} OK ${RESET}  $verdict"
+        elif echo "$verdict" | grep -q 'format='; then
+            # Show `<name>: format=<FMT>` lines in QUIET too so a loader-
+            # routing regression surfaces even when per-binary OK lines
+            # are suppressed. Cheap (one line per loader-coverage binary).
+            echo -e "  ${CYAN}FMT ${RESET}  $verdict"
+        fi
+    done
+
+    # TAP producer lines (`UTEST: ok N - name` / `not ok N - name # ...` /
+    # `1..N` plan). When `tap=1` was set in boot.conf, both the verdict
+    # lines above AND these TAP lines are emitted; show TAP separately so
+    # downstream TAP consumers (CI, tap-junit) can also lift them straight
+    # from the host log without the launcher's wrapper formatting.
+    HAS_TAP=0
+    grep -qE 'UTEST: (ok|not ok|1\.\.[0-9]+)' "$TEST_LOG" 2>/dev/null && HAS_TAP=1
+    if [ "$HAS_TAP" -eq 1 ] && [ "$QUIET_MODE" -eq 0 ]; then
+        echo -e "  ${CYAN}TAP${RESET} producer stream:"
+        grep -E 'UTEST: (ok|not ok|1\.\.[0-9]+)' "$TEST_LOG" 2>/dev/null |
+            sed -E 's/.*UTEST: /    /'
+    fi
+
+    # Pull the launcher's authoritative summary numbers.
+    UTEST_SUM=$(grep -E 'UTEST: === [0-9]+ passed, [0-9]+ failed, [0-9]+ skipped of [0-9]+ total' \
+                "$TEST_LOG" 2>/dev/null | tail -1 || true)
+    if [ -n "$UTEST_SUM" ]; then
+        UTEST_PASS=$(echo "$UTEST_SUM" | sed -E 's/.*=== ([0-9]+) passed.*/\1/')
+        UTEST_FAIL=$(echo "$UTEST_SUM" | sed -E 's/.*passed, ([0-9]+) failed.*/\1/')
+        UTEST_SKIP=$(echo "$UTEST_SUM" | sed -E 's/.*failed, ([0-9]+) skipped.*/\1/')
+        echo -e "  ${CYAN}[UTEST]${RESET} ${UTEST_PASS} passed, ${UTEST_FAIL} failed, ${UTEST_SKIP} skipped"
+    fi
+
+    # Cross-check the launcher summary against the per-binary verdict
+    # stream. If a binary printed FAIL/TIMEOUT/ISOLATION/LEAK but the
+    # summary says 0 failed, trust the per-binary count (fail-closed).
+    # Covers a launcher counter bug or a malformed summary line -- the
+    # data to fail correctly is already on serial; dropping it would
+    # re-introduce the false-green the Step 5b gate was meant to close.
+    # `grep -c` exits 1 when zero matches; set -euo pipefail would abort
+    # the run, so swallow the exit + guarantee an integer with `|| true`
+    # and a `:-0` default.
+    UTEST_FAIL_OBSERVED=$({ grep -cE 'UTEST: [^ ]+\.exe: (FAIL|TIMEOUT|ISOLATION|LEAK)' \
+                            "$TEST_LOG" 2>/dev/null || true; } | head -1)
+    UTEST_FAIL_OBSERVED=${UTEST_FAIL_OBSERVED:-0}
+    if [ "$UTEST_FAIL_OBSERVED" -gt "${UTEST_FAIL:-0}" ]; then
+        echo -e "  ${RED}[UTEST]${RESET} summary says ${UTEST_FAIL:-0} failed but ${UTEST_FAIL_OBSERVED} FAIL/TIMEOUT/ISOLATION/LEAK lines on serial -- trusting per-binary count"
+        UTEST_FAIL=$UTEST_FAIL_OBSERVED
+    fi
+fi
+
 # --- Step 6: User-mode test JUnit XML post-processor ---
 #
 # The kernel-side launcher emits `[UTEST-XML] <testcase ...>` lines on
@@ -328,15 +421,28 @@ if [ "$HAS_XML" -eq 1 ]; then
     echo -e "${CYAN}[TEST]${RESET} JUnit XML written: $XML_OUT (tests=${XML_TESTS} failures=${XML_FAIL} skipped=${XML_SKIP})"
 fi
 
-# Final verdict
+# Final verdict -- kernel TEST and user-mode UTEST failures both gate exit.
+# A user-mode binary regression (e.g. PE loader segfaulting at _start)
+# would otherwise hide behind a green kernel summary; folding UTEST_FAIL
+# into the gate makes `make test` and CI fail loudly when ANY tier breaks.
 echo ""
-if [ "${FAILED:-0}" = "0" ] || [ -z "$FAILED" ]; then
-    echo -e "${GREEN}${BOLD}PASS: ${PASSED} tests passed${RESET}"
+TOTAL_FAIL=$((${FAILED:-0} + ${UTEST_FAIL:-0}))
+TOTAL_PASS=$((${PASSED:-0} + ${UTEST_PASS:-0}))
+if [ "$TOTAL_FAIL" = "0" ]; then
+    if [ "${UTEST_PASS:-0}" -gt 0 ]; then
+        echo -e "${GREEN}${BOLD}PASS: ${PASSED} kernel + ${UTEST_PASS} user-mode tests passed${RESET}"
+    else
+        echo -e "${GREEN}${BOLD}PASS: ${PASSED} tests passed${RESET}"
+    fi
     # Update coverage report on success
     bash "$PROJECT/scripts/test-coverage.sh" --save --quiet
     exit 0
 else
-    TOTAL=$((PASSED + FAILED))
-    echo -e "${RED}${BOLD}FAIL: ${FAILED} of ${TOTAL} failed${RESET}"
+    TOTAL=$((TOTAL_PASS + TOTAL_FAIL))
+    if [ "${UTEST_FAIL:-0}" -gt 0 ]; then
+        echo -e "${RED}${BOLD}FAIL: ${FAILED} kernel + ${UTEST_FAIL} user-mode of ${TOTAL} failed${RESET}"
+    else
+        echo -e "${RED}${BOLD}FAIL: ${FAILED} of ${TOTAL} failed${RESET}"
+    fi
     exit 1
 fi
