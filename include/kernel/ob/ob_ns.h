@@ -68,6 +68,22 @@ void *ObpLookupDirectory(const char *path, const char **remaining);
 int ObInsertObject(void *object, const char *name, void *directory);
 
 /*
+ * ObpRemoveFromDirectory -- reverse of ObInsertObject. Removes `object` from
+ * `directory`'s entry list, frees the directory-entry node, clears
+ * OB_FLAG_NAMED on the header, and drops the directory's reference on the
+ * object. After the deref, if the object's ref count hits zero AND the
+ * PERMANENT flag has been cleared (via ObMakeTemporaryObject), the object
+ * is destroyed and its body freed -- this is the call that closes the
+ * "dir holds a ref forever" leak class TODO-03 -9 surfaced.
+ *
+ * Returns 0 on success, -1 if `object` is not in `directory` (caller bug).
+ * Narrow-scope helper: only the subsystem-specific mark-dead paths
+ * (ob_thread_mark_dead, ob_process_mark_dead, ...) should call this.
+ * General OB consumers should go through NtClose / ObMakeTemporaryObject.
+ */
+int ObpRemoveFromDirectory(void *directory, void *object);
+
+/*
  * ObLookupObjectByName -- resolve a full path to an object.
  *
  * Walks the namespace, follows symlinks, calls type->on_parse for

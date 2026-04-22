@@ -7,6 +7,7 @@
 
 #include "kernel/ob/ob_process.h"
 #include "kernel/ob/ob.h"
+#include "kernel/ob/ob_ns.h"
 #include "kernel/sched/task.h"
 #include "kernel/klog.h"
 
@@ -88,12 +89,23 @@ void ob_process_create(struct task *t)
 void ob_process_mark_dead(uint32_t pid)
 {
     void *body = NULL;
+    void *ko_dir = NULL;
     char path[64];
 
     snprintf(path, sizeof(path), "\\KernelObjects\\Process%u", pid);
 
     if (ObLookupObjectByName(path, ObpProcessType, 0, &body) == 0 && body) {
         ObMakeTemporaryObject(body);
-        ObDereferenceObject(body);  /* release lookup ref */
+        /* Mirror of ob_thread_mark_dead: -9 LEAK retrofit.
+         * ObMakeTemporaryObject alone only clears PERMANENT; the
+         * \KernelObjects directory still holds the PROCESS_OBJECT's
+         * ref via the inserted entry node. Explicit unlink drops
+         * both the entry allocation and the dir's ref. */
+        if (ObLookupObjectByName("\\KernelObjects", ObpDirectoryType, 0,
+                                 &ko_dir) == 0 && ko_dir) {
+            ObpRemoveFromDirectory(ko_dir, body);
+            ObDereferenceObject(ko_dir);  /* release lookup ref on dir */
+        }
+        ObDereferenceObject(body);  /* release lookup ref on body */
     }
 }

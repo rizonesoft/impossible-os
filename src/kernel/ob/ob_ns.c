@@ -71,6 +71,75 @@ void *ob_ns_create_symlink(const char *target)
     return body;
 }
 
+/* --- ObpRemoveFromDirectory ---------------------------------------------- */
+
+int ObpRemoveFromDirectory(void *directory, void *object)
+{
+    OBJECT_DIRECTORY *dir = (OBJECT_DIRECTORY *)directory;
+    OBJECT_DIRECTORY_ENTRY **pp;
+    OBJECT_DIRECTORY_ENTRY *entry;
+    uint64_t rflags;
+
+    if (!directory || !object)
+        return -1;
+
+    /* Codex -9 [H] fix: the OB namespace today has ZERO locking (see
+     * dir_find, ObInsertObject, ObLookupObjectByName, NtQueryDirectoryObject --
+     * all walk raw pointers). Inserts never FREE memory so the
+     * pre-existing readers survive an insert-race; my remove is the
+     * first mutator that does free, so a timer-preempted reader mid-
+     * traversal could UAF the just-freed entry node.
+     *
+     * Minimal-blast-radius fix: disable IRQs around the unlink + free
+     * + header clear + deref sequence so a timer-tick preemption
+     * cannot switch to a reader during the critical window. Single-
+     * CPU scheduler is safe with this alone (no concurrent reader
+     * reachable without preemption). True cross-CPU safety requires
+     * adding a spinlock to OBJECT_DIRECTORY and wrapping every
+     * reader under the same lock -- filed as a -9 follow-up item
+     * for a broader namespace-locking pass.
+     *
+     * Saving/restoring RFLAGS instead of bare cli/sti preserves the
+     * caller's interrupt state if we were ever reached from an
+     * interrupts-already-disabled context (paranoia: today the only
+     * caller is ob_thread_mark_dead from thread_exit which runs in
+     * PASSIVE/APC IRQL with IRQs on). */
+    __asm__ volatile ("pushfq; popq %0; cli" : "=r"(rflags) :: "memory");
+
+    /* Scan the singly-linked list for the entry pointing at `object`.
+     * Two-pointer removal (track the predecessor's next-field address)
+     * avoids a separate "find then unlink" pass. */
+    pp = &dir->first;
+    while (*pp) {
+        if ((*pp)->object == object) {
+            entry = *pp;
+            *pp = entry->next;
+            dir->count--;
+            /* Clear OB_FLAG_NAMED and the name pointer BEFORE freeing
+             * the entry. The name string lived inside the entry
+             * node, so after kfree a stale header->name would dangle;
+             * clearing while IRQs are off makes the header state
+             * consistent from any post-preemption reader's POV. */
+            {
+                OBJECT_HEADER *hdr = OB_HEADER_FROM_BODY(object);
+                hdr->flags &= ~OB_FLAG_NAMED;
+                hdr->name = (const char *)0;
+            }
+            kfree(entry);
+            /* Drop the reference the dir held (from ObInsertObject).
+             * This may trigger on_delete + body free if the object
+             * has OB_FLAG_PERMANENT cleared and no other refs. */
+            ObDereferenceObject(object);
+            /* Restore caller's IRQ state. */
+            __asm__ volatile ("pushq %0; popfq" :: "r"(rflags) : "memory", "cc");
+            return 0;
+        }
+        pp = &(*pp)->next;
+    }
+    __asm__ volatile ("pushq %0; popfq" :: "r"(rflags) : "memory", "cc");
+    return -1;  /* not found */
+}
+
 /* --- ObInsertObject ------------------------------------------------------ */
 
 int ObInsertObject(void *object, const char *name, void *directory)

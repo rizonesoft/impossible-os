@@ -7,6 +7,7 @@
 
 #include "kernel/ob/ob_thread.h"
 #include "kernel/ob/ob.h"
+#include "kernel/ob/ob_ns.h"
 #include "kernel/sched/task.h"
 #include "kernel/klog.h"
 
@@ -90,11 +91,26 @@ void ob_thread_mark_dead(uint32_t task_pid, uint32_t tid)
 {
     void *body = NULL;
     char path[64];
+    void *ko_dir = NULL;
 
     snprintf(path, sizeof(path), "\\KernelObjects\\Thread%u.%u", task_pid, tid);
 
     if (ObLookupObjectByName(path, ObpThreadType, 0, &body) == 0 && body) {
         ObMakeTemporaryObject(body);
-        ObDereferenceObject(body);  /* release lookup ref */
+        /* -9 LEAK retrofit: removing from the namespace is what
+         * actually frees the entry node + drops the dir's ref on
+         * the THREAD_OBJECT. `ObMakeTemporaryObject` alone only
+         * clears the PERMANENT flag; without the explicit unlink,
+         * the \KernelObjects directory keeps the object pinned
+         * until the whole directory is destroyed (effectively the
+         * lifetime of the test-runner PID 0 -- never). 144 bytes
+         * per kthread accumulating over the test run were the
+         * Sched + PEB/TEB [LEAK] lines §9 was filed to close. */
+        if (ObLookupObjectByName("\\KernelObjects", ObpDirectoryType, 0,
+                                 &ko_dir) == 0 && ko_dir) {
+            ObpRemoveFromDirectory(ko_dir, body);
+            ObDereferenceObject(ko_dir);  /* release lookup ref on dir */
+        }
+        ObDereferenceObject(body);  /* release lookup ref on body */
     }
 }
