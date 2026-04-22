@@ -2066,6 +2066,21 @@ void test_usermode_run(void)
      * final counts yet. */
     u_emit_xml_suite_open();
 
+    /* Opening banner, matching the kernel test runner's shape so mixed
+     * boot logs visually separate the kernel TEST_CAT_* sweep from the
+     * user-mode launcher. The closing summary at the end of this
+     * function already follows the same `=== N passed ... ===` form. */
+    klog(LOG_INFO, "UTEST",
+         "============ USER-MODE TEST BINARIES ============");
+    if (s_filter && s_filter[0])
+        klog(LOG_INFO, "UTEST",
+             "=== Running %u binary/binaries [filter='%s'] ===",
+             (uint64_t)total_planned, s_filter);
+    else
+        klog(LOG_INFO, "UTEST",
+             "=== Running %u binary/binaries ===",
+             (uint64_t)total_planned);
+
     run_start_ms = u_uptime_ms();
 
     /* §8 two-phase execution: smoke binaries always run FIRST, and a
