@@ -1267,6 +1267,98 @@ static void test_nt_alpc_pending_features(void)
     }
 }
 
+/* ============================================================================
+ * Namespace locking regression test (-9 line 328)
+ * ============================================================================ */
+
+#include "kernel/sched/task.h"
+
+/* Worker thread: rapidly insert + unlink a named object in a test
+ * directory. Runs while the main thread repeatedly enumerates the same
+ * directory via NtQueryDirectoryObject. The stress exercises the new
+ * per-directory spinlock: without it, a timer-preempted enumerator
+ * would UAF a freed OBJECT_DIRECTORY_ENTRY. */
+
+static volatile int s_ns_stress_stop;
+static void *s_ns_stress_dir;
+static const OBJECT_TYPE *s_ns_stress_type;
+
+static void ns_stress_worker(void *arg)
+{
+    (void)arg;
+    uint32_t i;
+    for (i = 0; i < 200 && !s_ns_stress_stop; i++) {
+        void *body = ob_alloc_object(s_ns_stress_type);
+        if (!body)
+            break;
+        if (ObInsertObject(body, "StressNode", s_ns_stress_dir) == 0)
+            ObpRemoveFromDirectory(s_ns_stress_dir, body);
+        ObDereferenceObject(body);
+    }
+}
+
+static void test_ob_ns_locking_stress(void)
+{
+    /* Create a private test directory + object type so the stress
+     * doesn't pollute \BaseNamedObjects or race other suites. */
+    void *ko_dir = NULL;
+    if (ObLookupObjectByName("\\KernelObjects", ObpDirectoryType, 0,
+                             &ko_dir) != 0 || !ko_dir) {
+        TEST_SKIP("KernelObjects root not available for stress test");
+        return;
+    }
+
+    void *testdir = ob_ns_create_directory(ko_dir);
+    TEST_ASSERT(testdir != NULL, "stress test directory created");
+    if (!testdir) {
+        ObDereferenceObject(ko_dir);
+        return;
+    }
+    TEST_ASSERT(ObInsertObject(testdir, "NsStressDir", ko_dir) == 0,
+                "stress dir inserted into \\KernelObjects");
+
+    static const OBJECT_TYPE stress_tmpl = {
+        .name = "NsStressObj", .body_size = 16,
+    };
+    s_ns_stress_type = ob_create_type(&stress_tmpl);
+    TEST_ASSERT(s_ns_stress_type != NULL, "stress type created");
+    s_ns_stress_dir  = testdir;
+    s_ns_stress_stop = 0;
+
+    int tid = kthread_create(ns_stress_worker, (void *)0, 0);
+    TEST_ASSERT(tid >= 0, "stress worker spawned");
+
+    /* Main thread: enumerate the directory repeatedly. Each iteration
+     * acquires + releases dir->lock; interleavings with the worker's
+     * Insert/Remove prove the list never tears. */
+    HANDLE_TABLE ht;
+    ob_handle_table_init(&ht);
+    HANDLE dh = ObpAllocateHandle(&ht, testdir, 0, 0);
+    TEST_ASSERT(dh >= 0, "stress dir handle allocated");
+
+    uint32_t iterations = 0;
+    OBJECT_DIRECTORY_INFORMATION info;
+    uint32_t ctx = 0, ret = 0;
+    while (iterations < 500) {
+        ctx = 0;
+        (void)NtQueryDirectoryObject(&ht, dh, &info, 1, &ctx, &ret);
+        iterations++;
+    }
+    TEST_ASSERT_EQ(iterations, 500u, "500 enumeration iterations completed");
+
+    s_ns_stress_stop = 1;
+    thread_join((uint32_t)tid);
+
+    /* Teardown: drop dir from KernelObjects, clear PERMANENT, drop
+     * creation ref so the testdir body is freed. */
+    ObpFreeHandle(&ht, dh);
+    ObpRemoveFromDirectory(ko_dir, testdir);
+    ObMakeTemporaryObject(testdir);
+    ObDereferenceObject(testdir);
+    ObDereferenceObject(ko_dir);
+    ob_handle_table_destroy(&ht);
+}
+
 /* ---- Registration ---- */
 
 void test_register_ob(void)
@@ -1303,6 +1395,7 @@ void test_register_ob(void)
     test_suite_register_cat("OB: NT ALPC slots registered", test_nt_alpc_slots_registered, TEST_CAT_OB);
     test_suite_register_cat("OB: NT ALPC pending features", test_nt_alpc_pending_features, TEST_CAT_OB);
     test_suite_register_cat("OB: PE ntdll exports sorted", test_pe_ntdll_exports_sorted, TEST_CAT_OB);
+    test_suite_register_cat("OB: namespace locking stress", test_ob_ns_locking_stress, TEST_CAT_OB);
 }
 
 #endif /* KERNEL_TESTS */

@@ -447,30 +447,40 @@ int NtQueryDirectoryObject(HANDLE_TABLE *ht, HANDLE dir_handle,
     filled = 0;
     idx = 0;
 
-    for (e = dir->first; e && filled < buffer_count; e = e->next, idx++) {
-        if (idx < skip)
-            continue;
+    /* Hold dir->lock for the full enumeration so the list cannot be
+     * mutated underneath us by a concurrent ObInsertObject /
+     * ObpRemoveFromDirectory on another CPU. buffer_count is bounded
+     * at the Win32 syscall layer (typically a single entry), so the
+     * lock hold time stays short. */
+    {
+        uint64_t irqf;
+        spin_lock_irqsave(&dir->lock, &irqf);
+        for (e = dir->first; e && filled < buffer_count; e = e->next, idx++) {
+            if (idx < skip)
+                continue;
 
-        /* Copy entry name */
-        {
-            uint32_t i;
-            for (i = 0; i < 63 && e->name[i]; i++)
-                buffer[filled].name[i] = e->name[i];
-            buffer[filled].name[i] = '\0';
+            /* Copy entry name */
+            {
+                uint32_t i;
+                for (i = 0; i < 63 && e->name[i]; i++)
+                    buffer[filled].name[i] = e->name[i];
+                buffer[filled].name[i] = '\0';
+            }
+
+            /* Copy type name from object header */
+            {
+                OBJECT_HEADER *obj_hdr = OB_HEADER_FROM_BODY(e->object);
+                const char *tname = (obj_hdr->type && obj_hdr->type->name)
+                                  ? obj_hdr->type->name : "Unknown";
+                uint32_t i;
+                for (i = 0; i < 31 && tname[i]; i++)
+                    buffer[filled].type_name[i] = tname[i];
+                buffer[filled].type_name[i] = '\0';
+            }
+
+            filled++;
         }
-
-        /* Copy type name from object header */
-        {
-            OBJECT_HEADER *obj_hdr = OB_HEADER_FROM_BODY(e->object);
-            const char *tname = (obj_hdr->type && obj_hdr->type->name)
-                              ? obj_hdr->type->name : "Unknown";
-            uint32_t i;
-            for (i = 0; i < 31 && tname[i]; i++)
-                buffer[filled].type_name[i] = tname[i];
-            buffer[filled].type_name[i] = '\0';
-        }
-
-        filled++;
+        spin_unlock_irqrestore(&dir->lock, irqf);
     }
 
     *context = idx;

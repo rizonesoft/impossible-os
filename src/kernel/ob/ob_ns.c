@@ -46,6 +46,7 @@ void *ob_ns_create_directory(void *parent)
     dir->first  = NULL;
     dir->count  = 0;
     dir->parent = parent;
+    dir->lock   = (spinlock_t)SPINLOCK_INIT;
 
     OBJECT_HEADER *hdr = OB_HEADER_FROM_BODY(body);
     hdr->flags |= OB_FLAG_PERMANENT | OB_FLAG_KERNEL_ONLY;
@@ -77,67 +78,55 @@ int ObpRemoveFromDirectory(void *directory, void *object)
 {
     OBJECT_DIRECTORY *dir = (OBJECT_DIRECTORY *)directory;
     OBJECT_DIRECTORY_ENTRY **pp;
-    OBJECT_DIRECTORY_ENTRY *entry;
-    uint64_t rflags;
+    OBJECT_DIRECTORY_ENTRY *entry = NULL;
+    uint64_t irqf;
 
     if (!directory || !object)
         return -1;
 
-    /* Codex -9 [H] fix: the OB namespace today has ZERO locking (see
-     * dir_find, ObInsertObject, ObLookupObjectByName, NtQueryDirectoryObject --
-     * all walk raw pointers). Inserts never FREE memory so the
-     * pre-existing readers survive an insert-race; my remove is the
-     * first mutator that does free, so a timer-preempted reader mid-
-     * traversal could UAF the just-freed entry node.
-     *
-     * Minimal-blast-radius fix: disable IRQs around the unlink + free
-     * + header clear + deref sequence so a timer-tick preemption
-     * cannot switch to a reader during the critical window. Single-
-     * CPU scheduler is safe with this alone (no concurrent reader
-     * reachable without preemption). True cross-CPU safety requires
-     * adding a spinlock to OBJECT_DIRECTORY and wrapping every
-     * reader under the same lock -- filed as a -9 follow-up item
-     * for a broader namespace-locking pass.
-     *
-     * Saving/restoring RFLAGS instead of bare cli/sti preserves the
-     * caller's interrupt state if we were ever reached from an
-     * interrupts-already-disabled context (paranoia: today the only
-     * caller is ob_thread_mark_dead from thread_exit which runs in
-     * PASSIVE/APC IRQL with IRQs on). */
-    __asm__ volatile ("pushfq; popq %0; cli" : "=r"(rflags) :: "memory");
+    /* Serialize with every other reader + writer on this directory via
+     * dir->lock (added in the -9 namespace-locking pass). The lock is
+     * IRQ-safe because ob_thread_mark_dead / ob_process_mark_dead can
+     * be called from any context that does handle teardown, and the
+     * previous bare cli/sti implementation proved that IRQ-level
+     * preemption must not reach a partially-unlinked entry. Drop the
+     * lock BEFORE ObDereferenceObject -- on_delete callbacks may
+     * allocate / take other locks / schedule, none of which are safe
+     * while holding a spinlock. */
+    spin_lock_irqsave(&dir->lock, &irqf);
 
-    /* Scan the singly-linked list for the entry pointing at `object`.
-     * Two-pointer removal (track the predecessor's next-field address)
-     * avoids a separate "find then unlink" pass. */
+    /* Two-pointer removal: track the predecessor's next-field address
+     * so unlink is a single pointer write. */
     pp = &dir->first;
     while (*pp) {
         if ((*pp)->object == object) {
             entry = *pp;
             *pp = entry->next;
             dir->count--;
-            /* Clear OB_FLAG_NAMED and the name pointer BEFORE freeing
-             * the entry. The name string lived inside the entry
-             * node, so after kfree a stale header->name would dangle;
-             * clearing while IRQs are off makes the header state
-             * consistent from any post-preemption reader's POV. */
+            /* Clear OB_FLAG_NAMED + hdr->name BEFORE freeing the entry.
+             * The name string lived inside the entry node; after kfree
+             * a stale header->name would dangle. Done under the lock
+             * so any reader that is waiting sees a consistent header
+             * on the next lookup. */
             {
                 OBJECT_HEADER *hdr = OB_HEADER_FROM_BODY(object);
                 hdr->flags &= ~OB_FLAG_NAMED;
                 hdr->name = (const char *)0;
             }
-            kfree(entry);
-            /* Drop the reference the dir held (from ObInsertObject).
-             * This may trigger on_delete + body free if the object
-             * has OB_FLAG_PERMANENT cleared and no other refs. */
-            ObDereferenceObject(object);
-            /* Restore caller's IRQ state. */
-            __asm__ volatile ("pushq %0; popfq" :: "r"(rflags) : "memory", "cc");
-            return 0;
+            break;
         }
         pp = &(*pp)->next;
     }
-    __asm__ volatile ("pushq %0; popfq" :: "r"(rflags) : "memory", "cc");
-    return -1;  /* not found */
+    spin_unlock_irqrestore(&dir->lock, irqf);
+
+    if (!entry)
+        return -1;  /* not found */
+
+    /* Safe to free + deref outside the lock: the entry has been
+     * unlinked so no concurrent reader can reach it. */
+    kfree(entry);
+    ObDereferenceObject(object);
+    return 0;
 }
 
 /* --- ObInsertObject ------------------------------------------------------ */
@@ -147,6 +136,7 @@ int ObInsertObject(void *object, const char *name, void *directory)
     OBJECT_DIRECTORY *dir = (OBJECT_DIRECTORY *)directory;
     OBJECT_DIRECTORY_ENTRY *entry;
     size_t name_len;
+    uint64_t irqf;
 
     if (!object || !name || !directory)
         return -1;
@@ -155,14 +145,9 @@ int ObInsertObject(void *object, const char *name, void *directory)
     if (name_len == 0 || name_len >= OB_NAME_MAX)
         return -1;
 
-    /* Check for duplicate */
-    if (dir_find(dir, name, name_len))
-        return -1;
-
-    if (dir->count >= OB_DIR_MAX_ENTRIES)
-        return -1;
-
-    /* Allocate entry node */
+    /* Allocate outside the lock: kmalloc may take the heap spinlock
+     * and the heap is a higher-layer resource. We fill the node and
+     * commit it atomically under dir->lock. */
     entry = (OBJECT_DIRECTORY_ENTRY *)kmalloc(sizeof(OBJECT_DIRECTORY_ENTRY));
     if (!entry)
         return -1;
@@ -171,34 +156,74 @@ int ObInsertObject(void *object, const char *name, void *directory)
     entry->name[OB_NAME_MAX - 1] = '\0';
     entry->object = object;
 
-    /* Prepend to linked list */
+    spin_lock_irqsave(&dir->lock, &irqf);
+
+    /* Re-check duplicate + capacity under the lock so a concurrent
+     * insert of the same name cannot slip through. */
+    if (dir_find(dir, name, name_len) || dir->count >= OB_DIR_MAX_ENTRIES) {
+        spin_unlock_irqrestore(&dir->lock, irqf);
+        kfree(entry);
+        return -1;
+    }
+
+    /* Codex -9 [H] fix: take the directory-owned reference BEFORE
+     * publishing the entry. Previously we linked into dir->first
+     * first, dropped the lock, then called ObReferenceObject -- a
+     * window where another CPU could find the object by name and
+     * call ObpRemoveFromDirectory (dropping the creation ref, since
+     * no dir ref exists yet) leading to a UAF on the delayed
+     * ObReferenceObject. ObReferenceObject is an atomic increment,
+     * safe to call with the spinlock held. */
+    ObReferenceObject(object);
+
+    /* Prepend to linked list + commit the header fields under the lock
+     * so any concurrent reader either sees the old state (entry not in
+     * list) or the new state (entry linked with OB_FLAG_NAMED set). */
     entry->next = dir->first;
     dir->first = entry;
     dir->count++;
 
-    /* Mark the object as named */
-    OBJECT_HEADER *hdr = OB_HEADER_FROM_BODY(object);
-    hdr->flags |= OB_FLAG_NAMED;
-    hdr->name = entry->name;
+    {
+        OBJECT_HEADER *hdr = OB_HEADER_FROM_BODY(object);
+        hdr->flags |= OB_FLAG_NAMED;
+        hdr->name = entry->name;
+    }
 
-    /* Hold a reference for the namespace entry */
-    ObReferenceObject(object);
+    spin_unlock_irqrestore(&dir->lock, irqf);
 
     return 0;
 }
 
 /* --- ObpLookupDirectory -------------------------------------------------- */
 
+/*
+ * Codex -9 [H] fix: ObpLookupDirectory now returns a REFERENCED
+ * directory. Caller MUST call ObDereferenceObject on the returned
+ * body when done. This pins intermediate + final directories across
+ * the parent's lock release so a concurrent ObMakeTemporaryObject +
+ * ObDereferenceObject on a test-created directory cannot free the
+ * body out from under us.
+ *
+ * Invariant inside the loop: `cur_dir` always owns exactly one
+ * reference. We start by ref'ing the root (even though it is
+ * PERMANENT, this keeps the invariant uniform). Each advance takes a
+ * new reference on the child under the parent's lock, then drops the
+ * old `cur_dir` reference after unlock.
+ */
 void *ObpLookupDirectory(const char *path, const char **remaining)
 {
     void *cur_dir = ObpRootDirectory;
     const char *p = path;
     uint32_t symlink_count = 0;
+    uint64_t irqf;
 
     if (!cur_dir || !path) {
         if (remaining) *remaining = path;
         return NULL;
     }
+
+    /* Take the initial ref on the root so the invariant holds. */
+    ObReferenceObject(cur_dir);
 
     /* Skip leading backslash */
     if (*p == '\\')
@@ -209,7 +234,13 @@ void *ObpLookupDirectory(const char *path, const char **remaining)
         size_t seg_len;
         OBJECT_DIRECTORY *dir;
         OBJECT_DIRECTORY_ENTRY *entry;
-        OBJECT_HEADER *hdr;
+        /* Captured + ref'd under the lock so the body stays alive
+         * across the unlock. We drop the ref at end-of-iteration for
+         * non-advanced types (non-dir, non-symlink); for advanced
+         * types we transfer the ref into `cur_dir`. */
+        void *entry_object = NULL;
+        const OBJECT_TYPE *entry_type = NULL;
+        char sym_target[OB_SYMLINK_MAX];
 
         /* Find end of this path component */
         while (*p && *p != '\\')
@@ -222,57 +253,77 @@ void *ObpLookupDirectory(const char *path, const char **remaining)
         }
 
         dir = (OBJECT_DIRECTORY *)cur_dir;
+        spin_lock_irqsave(&dir->lock, &irqf);
         entry = dir_find(dir, seg_start, seg_len);
+        if (entry) {
+            entry_object = entry->object;
+            entry_type   = OB_HEADER_FROM_BODY(entry_object)->type;
+            /* Pin the entry object across the unlock. */
+            ObReferenceObject(entry_object);
+            if (entry_type == ObpSymlinkType) {
+                OBJECT_SYMBOLIC_LINK *sl =
+                    (OBJECT_SYMBOLIC_LINK *)entry_object;
+                strncpy(sym_target, sl->target, OB_SYMLINK_MAX - 1);
+                sym_target[OB_SYMLINK_MAX - 1] = '\0';
+            }
+        }
+        spin_unlock_irqrestore(&dir->lock, irqf);
 
         if (!entry) {
-            /* No match -- return current dir with remaining path */
+            /* No match -- return current dir (caller owns the ref) */
             if (remaining) *remaining = seg_start;
             return cur_dir;
         }
 
-        hdr = OB_HEADER_FROM_BODY(entry->object);
-
         /* Follow symlinks only when more path follows this component.
          * If the symlink is the final path component, stop at the parent
          * directory and return remaining = segment name so
-         * ObLookupObjectByName can open the symlink object (NtOpenSymbolicLinkObject). */
-        if (hdr->type == ObpSymlinkType) {
+         * ObLookupObjectByName can open the symlink object
+         * (NtOpenSymbolicLinkObject). */
+        if (entry_type == ObpSymlinkType) {
             if (*p == '\0') {
-                if (remaining)
-                    *remaining = seg_start;
-                return cur_dir;
-            }
-            if (++symlink_count > OB_SYMLINK_DEPTH) {
+                ObDereferenceObject(entry_object); /* drop symlink ref */
                 if (remaining) *remaining = seg_start;
                 return cur_dir;
             }
-            OBJECT_SYMBOLIC_LINK *sl = (OBJECT_SYMBOLIC_LINK *)entry->object;
-            /* Resolve the symlink target from root */
+            if (++symlink_count > OB_SYMLINK_DEPTH) {
+                ObDereferenceObject(entry_object);
+                if (remaining) *remaining = seg_start;
+                return cur_dir;
+            }
+            /* Resolve the symlink target from root. MUST be outside
+             * the parent dir's lock -- the recursive walk locks other
+             * directories, and holding one lock across a recursive
+             * acquisition would deadlock. */
             const char *sym_rem = NULL;
-            void *target_dir = ObpLookupDirectory(sl->target, &sym_rem);
+            void *target_dir = ObpLookupDirectory(sym_target, &sym_rem);
+            ObDereferenceObject(entry_object); /* symlink body done with */
             if (!target_dir) {
                 if (remaining) *remaining = seg_start;
                 return cur_dir;
             }
-            /* If symlink resolved fully and there's more path, continue from target */
             if (sym_rem && *sym_rem) {
+                ObDereferenceObject(target_dir);
                 if (remaining) *remaining = seg_start;
                 return cur_dir;
             }
+            /* Transfer ref: drop old cur_dir, adopt target_dir. */
+            ObDereferenceObject(cur_dir);
             cur_dir = target_dir;
-            /* Skip separator after this component */
             if (*p == '\\') p++;
             continue;
         }
 
         /* Must be a directory to continue walking */
-        if (hdr->type != ObpDirectoryType) {
-            /* Non-directory found -- return parent dir with remaining */
+        if (entry_type != ObpDirectoryType) {
+            ObDereferenceObject(entry_object); /* drop non-dir ref */
             if (remaining) *remaining = seg_start;
             return cur_dir;
         }
 
-        cur_dir = entry->object;
+        /* Transfer ref: drop old cur_dir, adopt entry_object. */
+        ObDereferenceObject(cur_dir);
+        cur_dir = entry_object;
 
         /* Skip separator */
         if (*p == '\\')
@@ -302,17 +353,21 @@ int ObLookupObjectByName(const char *path, const OBJECT_TYPE *type,
 
     *result = NULL;
 
+    /* ObpLookupDirectory returns a REF-OWNED dir; we MUST deref before
+     * returning (except when we hand the ref off to the caller, which
+     * happens only in the "path resolves to this directory" case). */
     dir = ObpLookupDirectory(path, &remaining);
     if (!dir)
         return -1;
 
     /* If fully resolved, the path names a directory itself */
     if (!remaining || !*remaining) {
-        /* The path resolved to a directory -- check type match */
         hdr = OB_HEADER_FROM_BODY(dir);
-        if (type && hdr->type != type)
+        if (type && hdr->type != type) {
+            ObDereferenceObject(dir);
             return -1;
-        ObReferenceObject(dir);
+        }
+        /* Transfer the ref we already own to the caller. */
         *result = dir;
         return 0;
     }
@@ -327,31 +382,52 @@ int ObLookupObjectByName(const char *path, const OBJECT_TYPE *type,
     {
         size_t i;
         for (i = 0; i < rem_len; i++) {
-            if (remaining[i] == '\\')
+            if (remaining[i] == '\\') {
+                ObDereferenceObject(dir);
                 return -1;  /* unresolved intermediate component */
+            }
         }
     }
 
     dobj = (OBJECT_DIRECTORY *)dir;
-    entry = dir_find(dobj, remaining, rem_len);
-    if (!entry)
-        return -1;
+    {
+        uint64_t irqf;
+        void *entry_object = NULL;
+        const OBJECT_TYPE *entry_type = NULL;
+        int type_mismatch = 0;
+        int is_leaf_symlink = 0;
+        char sym_target[OB_SYMLINK_MAX];
 
-    /* Follow symlink at leaf level unless caller asked for the symlink type
-     * (NtOpenSymbolicLinkObject stops at the link; other lookups resolve). */
-    hdr = OB_HEADER_FROM_BODY(entry->object);
-    if (hdr->type == ObpSymlinkType && type != ObpSymlinkType) {
-        OBJECT_SYMBOLIC_LINK *sl = (OBJECT_SYMBOLIC_LINK *)entry->object;
-        return ObLookupObjectByName(sl->target, type, access, result);
+        spin_lock_irqsave(&dobj->lock, &irqf);
+        entry = dir_find(dobj, remaining, rem_len);
+        if (entry) {
+            entry_object = entry->object;
+            entry_type   = OB_HEADER_FROM_BODY(entry_object)->type;
+            if (entry_type == ObpSymlinkType && type != ObpSymlinkType) {
+                OBJECT_SYMBOLIC_LINK *sl =
+                    (OBJECT_SYMBOLIC_LINK *)entry_object;
+                strncpy(sym_target, sl->target, OB_SYMLINK_MAX - 1);
+                sym_target[OB_SYMLINK_MAX - 1] = '\0';
+                is_leaf_symlink = 1;
+            } else if (type && entry_type != type) {
+                type_mismatch = 1;
+            } else {
+                /* Ref under the lock so the body we hand back is
+                 * guaranteed alive until the caller derefs. */
+                ObReferenceObject(entry_object);
+            }
+        }
+        spin_unlock_irqrestore(&dobj->lock, irqf);
+
+        ObDereferenceObject(dir);  /* drop the owned parent-dir ref */
+
+        if (!entry || type_mismatch)
+            return -1;
+        if (is_leaf_symlink)
+            return ObLookupObjectByName(sym_target, type, access, result);
+        *result = entry_object;
+        return 0;
     }
-
-    /* Type check */
-    if (type && hdr->type != type)
-        return -1;
-
-    ObReferenceObject(entry->object);
-    *result = entry->object;
-    return 0;
 }
 
 /* --- Helper: create and insert a sub-directory --------------------------- */

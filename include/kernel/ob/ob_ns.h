@@ -8,6 +8,7 @@
 #pragma once
 
 #include "kernel/types.h"
+#include "kernel/sched/spinlock.h"
 
 /* Forward declarations -- full defs need ob.h which includes us */
 struct object_header;
@@ -35,6 +36,7 @@ typedef struct object_directory {
     OBJECT_DIRECTORY_ENTRY *first;   /* head of entry linked list */
     uint32_t                count;   /* number of entries */
     void                   *parent;  /* parent directory body (NULL for root) */
+    spinlock_t              lock;    /* guards first/count + inbound header ops */
 } OBJECT_DIRECTORY;
 
 /* --- OBJECT_SYMBOLIC_LINK body ------------------------------------------- */
