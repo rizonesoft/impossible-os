@@ -481,7 +481,7 @@ Consumes the deterministic automation transport from `D08 T07 §6`. Runs WCAG 2.
 > - Impl Order row is `[/]` (in progress) not `[x]` because the section's user-visible outcome -- a WCAG gate that can fail on contrast regressions -- cannot land until the provider exists. Flipping to `[x]` on scaffolding alone would be false-completeness.
 > - Canonical doc: `include/kernel/test/wcag.h` (rule IDs, finding schema, severity contract, CI gate semantics).
 > - Scope boundary: §14 owns the test-framework consumer + CI gate surface. `D08 T07 §6` owns the automation tree provider; see its Implementation Order row (`[ ]` today). §15 test-isolation harness remains the parallel last-section to ship before the TODO closes.
-> **Verified:** 2026-04-22 | commit `<pending>` | 5/7 items + 2 blocked | build OK | tests 41/41 suites, 206/206 PASS + 1 PENDING (KVM)
+> **Verified:** 2026-04-22 | commit `47e9e004` | 5/7 items + 2 blocked | build OK | tests 42/42 suites, 207/207 PASS + 1 PENDING (KVM)
 > **Accepted:** [M] WCAG sweep body + `test_ui_tree_walk` require the D08 T07 §6 automation tree provider (reason: pure-consumer section, cannot iterate a tree that doesn't exist) -> XREF: 08-graphics-ui/TODO-07 §6 (item: "§6 Deterministic automation transport for testing and assistive tooling" at line 38)
 > **Quality reviewed:** 2026-04-22 | Codex 1x (adversarial) | 1M fixed, 0 open | scope: kernel-code-quality -- Codex [M] found the pending test couldn't distinguish "provider missing" from "provider wired with 0 findings"; fixed by adding `wcag_provider_ready()` + `WCAG_SWEEP_PROVIDER_MISSING` sentinel so test gates on provider-presence independently of finding count. Full quality pass lands with the provider-integration commit.
 
