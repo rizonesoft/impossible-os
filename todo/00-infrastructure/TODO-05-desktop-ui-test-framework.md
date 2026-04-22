@@ -423,8 +423,8 @@ Runs the compositor without a physical display and with a virtual clock the test
 > - 4 new `TEST_CAT_DESKTOP` suites: headless toggle, test-seed roundtrip, step_frames advances §10 counters under headless + same-seed determinism + step(0) no-op + step() rejection when not headless, boot_config.compositor field present.
 > - Canonical doc: `src/kernel/main/main_internal.h` (compositor_set_headless + step_frames contracts + seed API).
 > - Scope boundary: §12 ships the headless gate + step_frames driver. §10 still owns the frame-timing oracle the stepper advances, §11 record/replay is the forward consumer that will call `step_frames(1)` between events for byte-identical playback, §13 will extend the compositor with per-output routing that landing will need to re-audit the headless path.
-> **Verified:** 2026-04-22 | 7/7 items | build OK | tests 34/34 suites 174/174 assertions PASS (KVM)
-> **Quality reviewed:** 2026-04-22 | Codex 1x (adversarial) | 1H+1M+0L fixed, 0 open | scope: kernel-code-quality
+> **Verified:** 2026-04-22 | commit `20fe6071` | 7/7 items | build OK | tests 34/34 suites 174/174 assertions PASS (KVM)
+> **Quality reviewed:** 2026-04-22 | Codex 2x (adversarial, quality) | 2H+1M+0L fixed, 0 open | scope: kernel-code-quality
 
 ---
 

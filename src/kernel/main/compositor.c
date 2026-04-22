@@ -91,13 +91,15 @@ uint32_t compositor_step_frames(uint32_t n)
          * is wired into a live-display debug path. */
         if (!s_compositor_headless)
             fb_swap();
-        scheduler_enable();
 
-        /* Advance the §10 frame-timing oracle. Present timestamp is
-         * sampled AFTER the optional swap so `last_present_qpc`
-         * reflects the point the work is done, matching the main
-         * compositor loop's call-site. */
+        /* Advance the §10 frame-timing oracle BEFORE scheduler_enable
+         * so the present snapshot cannot absorb mark_dirty bumps from
+         * the next frame arriving on another CPU. Matches the
+         * compositor_run ordering (see §10 quality review that moved
+         * on_present inside the scheduler_disable window). Codex [H]
+         * §12 quality review required this alignment. */
         wm_frame_stats_on_present(vsync_ns, mono_ns());
+        scheduler_enable();
     }
     return i;
 }
