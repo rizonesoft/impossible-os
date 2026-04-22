@@ -239,8 +239,23 @@ FAILED=$(echo "$SUMMARY" | grep -oP '\d+(?= FAILED)' || echo "0")
 # the summary. TEST_EXPECT_LEAK / TEST_LEAK_IGNORE annotations
 # suppress the counter entirely at the kernel level, so a legitimate
 # deliberate leak never reaches this gate.
-LEAKED=$(echo "$SUMMARY" | grep -oP '\d+(?= leaked)' || echo "0")
-LEAKED=${LEAKED:-0}
+#
+# Fail-CLOSED on parse drift: if the summary line exists but does not
+# carry a ", N leaked" field, the kernel produced an unexpected summary
+# format (or `grep -P` is missing). Treat that as a gate failure, not
+# as "0 leaks" -- silently defaulting to zero defeats the point of the
+# gate. Codex adversarial review of the leak-retrofit pass (2026-04-22).
+if ! echo "$SUMMARY" | grep -qE ' leaked'; then
+    echo -e "${RED}${BOLD}[FAIL]${RESET} test summary missing 'leaked' counter (format drift or grep -P unavailable)"
+    echo "  summary: $SUMMARY"
+    exit 1
+fi
+LEAKED=$(echo "$SUMMARY" | grep -oP '\d+(?= leaked)')
+if ! [[ "$LEAKED" =~ ^[0-9]+$ ]]; then
+    echo -e "${RED}${BOLD}[FAIL]${RESET} could not parse leak count from summary"
+    echo "  summary: $SUMMARY"
+    exit 1
+fi
 if [ "$LEAKED" -gt 0 ]; then
     FAILED=$((${FAILED:-0} + LEAKED))
 fi

@@ -52,7 +52,7 @@
 | 💎  |   6   |  §5     | Test-scoped klog level demotion (`TEST_KLOG_SUPPRESS`)    | §7                  |  [x]   |
 | 💎  |   7   |  §8     | Per-test heap-leak detection                              | §7                  |  [x]   |
 | 💎  |   8   |  §4     | Retrofit existing "Test gaps" stamps across `todo/`       | §1-§3, §5-§8        |  [x]   |
-| 💎  |   9   |  §9     | Audit + classify the 50+ [LEAK] failures §8 surfaced      | §8                  |  [ ]   |
+| 💎  |   9   |  §9     | Audit + classify the 50+ [LEAK] failures §8 surfaced      | §8                  |  [/]   |
 
 > 💎 = parity work -- Linux kernel self-test framework has `lib/fault-inject.c` (multi-allocator fault injection), `kunit_add_action` (test-scoped cleanup registry), `kcsan`/`kasan` fences, `kunit_kzalloc()` scratch helpers, and `kmemleak` leak detection. This TODO brings the same floor to the Impossible OS kernel test runner without requiring the Driver Verifier / WDK workflow Windows leans on.
 > **Order vs section-number:** Implementation Order is execution sequence; section numbers (§N) preserve file stability. §7 (action registry) ships at Order 2 because §3, §5, and §8 all consume it.
@@ -338,6 +338,18 @@ No fourth category. If a leak does not fit any of these three, the `[LEAK]` line
 > [!WARNING]
 > This is a 50-suite debug session split across at least 5 subsystem owners. Realistic scope: one session per subsystem (Sched + PEB/TEB together is probably one, IPC one, ETW one, OB one, ALPC one) plus a final gating-change commit. Do NOT attempt to close all 5 in a single session; each subsystem's fixes need their own Codex adversarial review and regression check.
 
+> **Test runner:** `scripts\debug\kernel\run-all-kernel-tests.bat` | 1823 tests pass, 0 leaked (KVM 2026-04-22)
+> **Notes:**
+> - Closed all 56 [LEAK] advisory lines across six subsystems (Sched 5, PEB/TEB 1, IPC 5, ETW 2, OB 13, ALPC 25+). Final KVM run: `1823 tests passed, 0 failed, 14 skipped, 31 pending, 0 leaked`.
+> - Root-cause fixes dominate over test-side annotations: `ObpRemoveFromDirectory` + per-directory spinlock in `src/kernel/ob/ob_ns.c` closed 11 suites as one subsystem fix rather than 11 separate `TEST_EXPECT_LEAK` stamps; ETW IDLE-state acceptance in `src/kernel/etw.c` closed the per-trace buffer leak; `test_ob_cleanup_named` + `test_alpc_cleanup_named` helpers plus `AlpcDisconnectPort` in `src/kernel/test/test_alpc.c` closed the remaining 38.
+> - CI gate promoted: `scripts/test.sh` now folds `N leaked` into `FAILED` and fails-closed on summary format drift (no silent pass on unparseable output). Unannotated leaks are CI-failing from this commit forward.
+> - Review pass (2026-04-22) added `ObReferenceObject(dir)` pin around `NtQueryDirectoryObject` enumeration (narrows the pre-existing handle-close UAF window; full fix owned by D02 T05 §3 `ObpReferenceObjectByHandle` retrofit list).
+> - Scope boundary: `[/]` Implementation Order reflects the 1 open item (platform coverage beyond KVM: WHPX / TCG / VBox / bare metal runs left to the user's rig); 7/8 checklist items closed. Teardown perf (O(n) path-lookup in `ob_thread_mark_dead`) is an accepted follow-up owned by D02 T05 §4 (OBJECT_HEADER parent-dir cache).
+> **Verified:** 2026-04-22 | commit `PENDING` | 7/8 items | build OK | tests 1823/1823 PASS, 0 leaked (KVM)
+> **Accepted:** [H] NtQueryDirectoryObject residual handle-close UAF window; ObReferenceObject pin narrows it but the atomic-lookup+ref primitive is the real fix (reason: handle-table atomicity is broader than §9 scope) -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle` primitive" at line 112 -- retrofit list now explicitly names `NtQueryDirectoryObject` in `src/kernel/ob/ob.c:437`)
+> **Accepted:** [M] `ob_thread_mark_dead` / `ob_process_mark_dead` do O(n) `ObLookupObjectByName` + linear `ObpRemoveFromDirectory` walk under IRQ-off spinlock on every thread exit; not blocking today but a scalability regression under kthread churn (reason: perf refinement, not correctness) -> XREF: 02-kernel-core/TODO-05 §4 (item: "Cache parent-directory + entry linkage in `OBJECT_HEADER` so teardown avoids path relookup" at line 128)
+> **Quality reviewed:** 2026-04-22 | Codex 2x (adversarial, quality) | 1M fixed, 2 open | scope: kernel-code-quality
+
 ---
 
 ## OS Comparison
@@ -353,8 +365,9 @@ No fourth category. If a leak does not fit any of these three, the `[LEAK]` line
 | 💎 | Per-test leak detection            | ⚠️ DV verifier pool checks  | ✅ `kmemleak` (kernel-wide)                         | ✅ §8 heap_used delta (per-test, built-in)     |
 | ⭐ | Test-scoped klog level demotion    | ❌ None                     | ❌ None                                             | ✅ §5 `TEST_KLOG_SUPPRESS`                     |
 | ⭐ | Single-boot 436-suite runner       | ❌ WDK run per-driver       | ❌ KUnit one-module-at-a-time                       | ✅ existing `test=1` infrastructure            |
+| ⭐ | CI-gated unannotated-leak counter  | ❌ DV advisory, not CI-gate | ⚠️ kmemleak is kernel-wide, not per-test CI-gate     | ✅ §9 `L leaked` folds into FAILED             |
 
-After §1-§8 land (all shipped 2026-04-19), in-kernel test coverage reaches Linux-KUnit-plus-fault-inject parity for allocator-failure, cleanup, and concurrency testing; §5 (klog demotion) and §8 (per-test leak delta, no KASAN required) give Impossible OS two real edges neither Win11 nor Linux offers at the in-kernel-test layer. §4 (sweep-and-retrofit) closed the inbound TODO-24 §4 ALPC deferred-test-gaps block as the first concrete consumer; future deferred-test-gaps stamps that name §1-§3 / §5-§8 as the unblocker get retrofitted on the same model.
+After §1-§8 land (all shipped 2026-04-19), in-kernel test coverage reaches Linux-KUnit-plus-fault-inject parity for allocator-failure, cleanup, and concurrency testing; §5 (klog demotion) and §8 (per-test leak delta, no KASAN required) give Impossible OS two real edges neither Win11 nor Linux offers at the in-kernel-test layer. §4 (sweep-and-retrofit) closed the inbound TODO-24 §4 ALPC deferred-test-gaps block as the first concrete consumer; future deferred-test-gaps stamps that name §1-§3 / §5-§8 as the unblocker get retrofitted on the same model. §9 (shipped 2026-04-22) promoted the §8 advisory L column into a CI-failing gate by closing all 56 [LEAK] lines (root-cause fixes in OB namespace locking, ETW IDLE state, and ALPC disconnect ordering; two `test_*_cleanup_named` helpers) and hardening `scripts/test.sh` to fail-closed on unparseable summaries -- a third edge neither Win11's Driver Verifier nor Linux's kernel-wide kmemleak delivers at the per-test, CI-gated layer.
 
 ---
 
