@@ -184,6 +184,11 @@ jobs:
           if-no-files-found: error
 
       # Logs are small and useful for diagnosis, but only on failures.
+      # retention-days kept at 1 so the shared GitHub Actions artifact
+      # quota recovers fast -- hit the cap on 2026-04-22 which stalled
+      # this step with "Artifact storage quota has been hit". The job
+      # already tolerates this failure via continue-on-error, but a
+      # shorter retention keeps the cap from biting again.
       - name: Upload build + test logs on failure
         if: failure()
         continue-on-error: true
@@ -193,5 +198,5 @@ jobs:
           path: |
             build/build.log
             build/test.log
-          retention-days: 3
+          retention-days: 1
           if-no-files-found: ignore
