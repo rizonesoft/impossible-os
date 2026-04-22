@@ -59,7 +59,7 @@
 | 💎  |  11   | Input record + replay (Unicode, IME)               | §4, §12       |  [x]   |
 | ⭐  |  12   | Headless compositor + frame-lock stepping          | §1            |  [x]   |
 | 💎  |  13   | Multi-monitor + DPI test matrix                    | §1            |  [/]   |
-| ⭐  |  14   | WCAG sweep over automation tree                    | D08 T07 §6    |  [ ]   |
+| ⭐  |  14   | WCAG sweep over automation tree                    | D08 T07 §6    |  [/]   |
 | 💎  |  15   | Test isolation + crash artifact capture            | §1, §10       |  [ ]   |
 
 > 💎 = parity -- Windows has the Windows App Certification Kit (WACK), UI Automation, DwmGetCompositionTimingInfo, SendInput; Linux has dogtail, LDTP, openQA, libinput record/replay, AT-SPI2.
@@ -463,21 +463,27 @@ Consumes the deterministic automation transport from `D08 T07 §6`. Runs WCAG 2.
 > [!TIP]
 > The accessibility tree provider is NOT owned here: `D08 T07 §6` ships it. §14 is the test-framework consumer that turns the tree into a pass/fail gate.
 
-- [ ] XREF: tree provider owned by `D08 T07 §6`; §14 is pure consumer -- do not re-own or duplicate the provider
-- [ ] `test_ui_tree_walk(void (*cb)(automation_node_t *, void *), void *ctx)`: iterates every automation node reachable from the root after boot-complete
-- [ ] WCAG rule set (subset applicable to a compositor shell):
-      - 1.4.3 contrast: text node foreground / background >= 4.5:1 (>= 3:1 for large text)
-      - 1.4.11 non-text contrast: control boundary >= 3:1 against adjacent color
-      - 2.1.1 keyboard: every actionable node has a tab-reachable path
-      - 2.4.3 focus order: tab traversal reaches focusable nodes in logical order (no trap, no skip)
-      - 4.1.2 name / role / value: every node has name + role set; value on inputs
-- [ ] Rule violations produce structured findings: `{rule_id, node_id, severity, message}` on serial + JSON artifact
-- [ ] CI gate: job fails if any `severity=error` rule fires; `severity=warn` is report-only
-- [ ] `make test-wcag` runs the sweep against the boot-complete desktop
-- [ ] Commit: `"test: WCAG sweep consumer over automation tree"`
+- [x] XREF confirmed: tree provider owned by `D08 T07 §6` (currently `[ ]` -- not started). §14 stays pure consumer; this section ships the test-framework scaffolding that lights up the moment D08 T07 §6 lands.
+- [ ] `test_ui_tree_walk(cb, ctx)` -- BLOCKED on D08 T07 §6 (automation_node_t type and root iterator not yet defined). When the provider ships, the walk body goes in `src/kernel/test/wcag.c wcag_sweep_run()` at the documented insertion point.
+- [x] WCAG rule enum in `include/kernel/test/wcag.h`: `WCAG_RULE_1_4_3_CONTRAST` / `WCAG_RULE_1_4_11_NONTEXT` / `WCAG_RULE_2_1_1_KEYBOARD` / `WCAG_RULE_2_4_3_FOCUS_ORDER` / `WCAG_RULE_4_1_2_NAME_ROLE`. Values stable; append-only going forward. Rule semantics documented in the header comment blocks.
+- [x] Structured finding schema: `wcag_finding_t { wcag_rule_id_t rule_id; uint32_t node_id; wcag_severity_t severity; const char *message; }` in `include/kernel/test/wcag.h`. JSON artifact format is the natural serialization of this struct; CI runner drops when the sweep can actually produce findings.
+- [x] CI gate contract: `wcag_severity_t` {`WCAG_SEV_INFO`, `WCAG_SEV_WARN`, `WCAG_SEV_ERROR`}; runner fails the job on any `WCAG_SEV_ERROR` finding; `WCAG_SEV_WARN` is report-only. Enum + doc in the header.
+- [x] `make test-wcag` wired in `Makefile` (runs under `TEST_CAT_DESKTOP`). Today the sweep returns 0 findings because `wcag_sweep_run()` has no tree to walk; TEST_PENDING entry in `test_desktop.c` flags this as blocked on D08 T07 §6 so the boot log surfaces the block until the provider lands.
+- [x] Commit: `"test: WCAG sweep consumer over automation tree"` (ships the rule enum + finding struct + sweep skeleton + Make target; the actual rule loops remain blocked on D08 T07 §6).
 
 **Test checkpoint:** Boot desktop: `test_ui_tree_walk` reaches at least taskbar + terminal + gallery nodes. WCAG 1.4.3 contrast rule: all default-theme text passes >= 4.5:1. Inject a broken theme (white text on light-gray bg): rule fails with the offending node id on serial.
 **Platforms:** QEMU WHPX, QEMU TCG, VBox, bare metal (tree is pure kernel-side data; no framebuffer dependency).
+
+> **Test runner:** `scripts\debug\desktop\run-desktop-tests.bat` (SUITE=desktop) | 42 suites, 207 assertions + 1 pending (WCAG provider blocker), 0 failures (KVM 2026-04-22). Dedicated `make test-wcag` target alias runs the same suite.
+> **Notes:**
+> - Shipped: `include/kernel/test/wcag.h` (rule ID enum, severity enum, `wcag_finding_t` struct, sweep + rule-name function signatures) + `src/kernel/test/wcag.c` (sweep skeleton returning 0 findings until provider lands) + `make test-wcag` Makefile target + 3 new `TEST_CAT_DESKTOP` suites (+10 assertions) covering the rule-name table, the pending-provider sweep, and NULL-safe call shapes.
+> - NOT shipped (blocked on D08 T07 §6): the actual automation tree walk + 5 WCAG rule-check loops + the `{taskbar, terminal, gallery} reached` checkpoint assertion. `src/kernel/test/wcag.c:wcag_sweep_run()` has a documented insertion point for the rule loop; today the function is a no-op returning 0 findings.
+> - Impl Order row is `[/]` (in progress) not `[x]` because the section's user-visible outcome -- a WCAG gate that can fail on contrast regressions -- cannot land until the provider exists. Flipping to `[x]` on scaffolding alone would be false-completeness.
+> - Canonical doc: `include/kernel/test/wcag.h` (rule IDs, finding schema, severity contract, CI gate semantics).
+> - Scope boundary: §14 owns the test-framework consumer + CI gate surface. `D08 T07 §6` owns the automation tree provider; see its Implementation Order row (`[ ]` today). §15 test-isolation harness remains the parallel last-section to ship before the TODO closes.
+> **Verified:** 2026-04-22 | commit `<pending>` | 5/7 items + 2 blocked | build OK | tests 41/41 suites, 206/206 PASS + 1 PENDING (KVM)
+> **Accepted:** [M] WCAG sweep body + `test_ui_tree_walk` require the D08 T07 §6 automation tree provider (reason: pure-consumer section, cannot iterate a tree that doesn't exist) -> XREF: 08-graphics-ui/TODO-07 §6 (item: "§6 Deterministic automation transport for testing and assistive tooling" at line 38)
+> **Quality reviewed:** 2026-04-22 | Codex 1x (adversarial) | 1M fixed, 0 open | scope: kernel-code-quality -- Codex [M] found the pending test couldn't distinguish "provider missing" from "provider wired with 0 findings"; fixed by adding `wcag_provider_ready()` + `WCAG_SWEEP_PROVIDER_MISSING` sentinel so test gates on provider-presence independently of finding count. Full quality pass lands with the provider-integration commit.
 
 ---
 
@@ -523,7 +529,7 @@ Per-test fresh-desktop isolation and automatic artifact bundles on failure, so a
 | 💎 | Input record + replay           | ⚠️ PSR deprecated in 24H2      | ✅ libinput record/replay     | ✅ §11 JSONL trace + UTF-8 IME commit byte-identical replay |
 | ⭐ | Headless compositor + vclock    | ❌ DWM display-coupled         | ⚠️ wlroots headless only      | ✅ §12 compositor=headless + step_frames + test_seed |
 | 💎 | Multi-monitor + DPI test matrix | ⚠️ manual                      | ✅ GNOME virtual monitors     | ⚠️ §13 API surface + matrix runner (single-output today; virtio-gpu prereq in §15) |
-| ⭐ | WCAG sweep gated in CI          | ⚠️ A11y Insights external      | ⚠️ Orca partial               | ⬜ §14                    |
+| ⭐ | WCAG sweep gated in CI          | ⚠️ A11y Insights external      | ⚠️ Orca partial               | ⚠️ §14 rule enum + finding schema + `make test-wcag` (blocked on `D08 T07 §6`) |
 | ⭐ | Crash artifact auto-capture     | ⚠️ ad hoc per team             | ⚠️ ad hoc per team            | ⬜ §15                    |
 
 Sections 1-12 have shipped. Sections 1 through 5 give basic automated desktop testing (kernel-side fb snapshot, host-side QEMU screendump, smoke test, input injection, terminal-buffer readback). Sections 6 through 9 add visual + perceptual regression: pixel-percent comparator with sibling-needle auto-discovery (§6), GHA workflow + matrix runner (§7), kernel-side WM introspection + Alt+F4 deferred close (§8), and SSIM / SSIMULACRA2 + openQA-style needles with OCR (§9). Section 10 ships the DwmGetCompositionTimingInfo-equivalent frame-timing oracle (counters + ETW). Section 11 ships the Unicode- and IME-correct record/replay JSONL surface that beats both libinput and PSR. Section 12 ships the headless compositor + frame-lock stepping that no shipping OS offers in-tree. Section 13 is partial (`[/]`): the test-framework API surface + matrix runner shape land today; the actual multi-monitor scanout requires the §15 virtio-gpu multi-output driver prerequisite. Sections 14 (WCAG sweep) and 15 (per-test isolation + crash artifact bundle) remain to ship.

@@ -108,7 +108,7 @@ GENERATED_HDRS := include/build_info.h include/kernel/os_logo.h src/kernel/bsod_
 # Targets
 # ============================================================================
 
-.PHONY: all _increment_build boot boot-icon boot-font kernel host-tools sysroot userland iso uefi-boot sign-efi system-disk test-disks run run-test run-debug run-log run-usb-ci run-nvme run-nvme-ci clean assets validate-assets sysroot-dirs sysroot-fonts sysroot-wallpapers sysroot-cursors sysroot-icons test-mm test-fs test-ob test-security test-ipc test-sched test-boot test-abi test-storage test-exec test-x86 test-desktop test-visual update-ui-refs boot-info-abi test-boot-info-abi test-tooling test-ai-system
+.PHONY: all _increment_build boot boot-icon boot-font kernel host-tools sysroot userland iso uefi-boot sign-efi system-disk test-disks run run-test run-debug run-log run-usb-ci run-nvme run-nvme-ci clean assets validate-assets sysroot-dirs sysroot-fonts sysroot-wallpapers sysroot-cursors sysroot-icons test-mm test-fs test-ob test-security test-ipc test-sched test-boot test-abi test-storage test-exec test-x86 test-desktop test-visual test-wcag update-ui-refs boot-info-abi test-boot-info-abi test-tooling test-ai-system
 
 ## all: Build everything (kernel + userland + system disk + boot_info ABI manifest)
 all: _increment_build check-abi assets kernel userland uefi-boot boot-info-abi post16-manifest system-disk
@@ -676,6 +676,13 @@ test-desktop: all
 ## test-visual: Run the visual regression suite (compare live captures vs tests/references/)
 test-visual: all
 	@bash scripts/test-visual-regression.sh
+
+## test-wcag: Run the WCAG 2.2 accessibility sweep (the desktop UI test framework WCAG section).
+## Blocked on the accessibility automation tree provider; today the sweep
+## has no nodes to walk and emits 0 findings. When the provider lands,
+## the same Make target lights up without further plumbing.
+test-wcag: all
+	@bash scripts/test.sh SUITE=desktop QUIET=1
 
 ## update-ui-refs: Re-seed tests/references/ from a live boot (review + commit manually)
 update-ui-refs: all
