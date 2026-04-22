@@ -301,7 +301,15 @@ Record `heap_stats().used_bytes` at test start and end; if the delta is non-zero
 
 ## 9. Audit + Classify the 50+ [LEAK] Failures §8 Surfaced
 
-§8 shipped the per-test heap-leak detector with a **Note** that "existing tests may surface previously-hidden leaks that will be retrofitted with `TEST_EXPECT_LEAK` or genuine leaks fixed in follow-up commits." This section IS that follow-up. `bash scripts/test.sh` on TCG surfaces ~55 [LEAK] advisory lines spanning six subsystems; KVM surfaces fewer (timing-sensitive). The detector is not the bug -- the detector is doing its job. The retrofit work is triaging each leak as **real** (bug to fix), **intentional** (annotate with `TEST_EXPECT_LEAK` + reason), or **detector-edge-case** (annotate with `TEST_LEAK_IGNORE` + reason, narrow scope).
+§8 shipped the per-test heap-leak detector with a **Note** that "existing tests may surface previously-hidden leaks that will be retrofitted with `TEST_EXPECT_LEAK` or genuine leaks fixed in follow-up commits." This section IS that follow-up. `bash scripts/test.sh` on TCG surfaces ~55 [LEAK] advisory lines spanning six subsystems; KVM surfaces fewer (timing-sensitive). The detector is not the bug; the detector is doing its job.
+
+**Every [LEAK] failure must close along exactly one of three paths** (verify-before-commit contract: no [LEAK] line ships without a named category):
+
+1. **Real leak** (missing `ObDereferenceObject`, unreleased control block, wrong close path, etc.). Fix the subsystem. Commit message names the specific allocation site and the missing free/dereference. After fix, `bash scripts/test.sh` shows the [LEAK] line GONE (no annotation in the test source).
+2. **Intentional leak** (shared fixture, long-lived state that outlives the test by design, boot-path state that a test incidentally touched). Annotate with `TEST_EXPECT_LEAK(<bytes>, "<reason>")` at the test site. The `<reason>` must be a full sentence explaining WHY the leak is intentional so `git blame` answers "why this annotation?" without context from the commit. After annotation, `bash scripts/test.sh` shows `[LEAK-OK]` (classifier matched) instead of `[LEAK]` (unexplained).
+3. **Detector edge case** (test exercises a non-heap allocator (PMM / VMM directly) so `heap_get_used()` is the wrong oracle, or test is deliberately probing the leak classifier itself). Annotate with `TEST_LEAK_IGNORE("<narrow reason>")` at the test site. Reason must name the SPECIFIC allocator path that bypasses the heap so a future maintainer does not broaden the scope. After annotation, `bash scripts/test.sh` shows `[LEAK-SKIP]` instead of `[LEAK]`.
+
+No fourth category. If a leak does not fit any of these three, the `[LEAK]` line stays until it does. The post-retrofit gating change (final checklist item) makes `[LEAK]` without classification a CI-failing line.
 
 > [!NOTE]
 > §8's Notes explicitly scope leaks as ADVISORY: runner exit code is unaffected by the `L` column. A `[LEAK]` line today does not fail CI -- it pollutes the summary without gating. This section closes that visual debt and, more importantly, fixes real leaks surfaced by the retrofit that would otherwise accumulate silently in production.
