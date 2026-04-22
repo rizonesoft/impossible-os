@@ -518,7 +518,7 @@ Per-test fresh-desktop isolation and automatic artifact bundles on failure, so a
 > - NOT shipped here (blocked on existing items): `test_desktop_capture_on_fail()` (needs the post-desktop-init test harness so `fb_snapshot` runs on an active compositor and artifact writer can open files on `X:\`); local 10-bundle retention policy; replace-not-append semantics. All three are strictly downstream of the capture hook.
 > - Canonical doc: `include/kernel/test/test_desktop_reset.h` (reset contract + test_add_action wrapper).
 > - Scope boundary: section 15 ships the isolation half. Capture hook + retention + artifact content format wait on the post-desktop-init harness prereq (same deferred list, directly below). The seven other cross-section deferrals in this section's list stay owned by their XREF'd targets.
-> **Verified:** 2026-04-23 | commit `<pending>` | 2/5 core items + 3 capture-hook-blocked | build OK | tests 46/46 suites, 223/223 PASS + 1 PENDING (KVM)
+> **Verified:** 2026-04-23 | commit `fbf55b4a` | 2/5 core items + 3 capture-hook-blocked | build OK | tests 46/46 suites, 223/223 PASS + 1 PENDING (KVM)
 > **Accepted:** [M] capture hook + retention + replace-not-append blocked on the post-desktop-init test harness (reason: kernel tests run before VFS is writable today; filesystem access requires late-phase execution) -> XREF: 00-infrastructure/TODO-05 §15 (item: "Ship a post-desktop-init test harness that can drive `terminal_*` APIs and cmd.exe with the WM actually initialized" at line 506)
 > **Quality reviewed:** 2026-04-23 | Codex 1x (adversarial) | 2H+0M+0L fixed, 0 open | scope: kernel-code-quality
 
