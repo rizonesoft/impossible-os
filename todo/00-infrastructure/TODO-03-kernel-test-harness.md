@@ -52,6 +52,7 @@
 | 💎  |   6   |  §5     | Test-scoped klog level demotion (`TEST_KLOG_SUPPRESS`)    | §7                  |  [x]   |
 | 💎  |   7   |  §8     | Per-test heap-leak detection                              | §7                  |  [x]   |
 | 💎  |   8   |  §4     | Retrofit existing "Test gaps" stamps across `todo/`       | §1-§3, §5-§8        |  [x]   |
+| 💎  |   9   |  §9     | Audit + classify the 50+ [LEAK] failures §8 surfaced      | §8                  |  [ ]   |
 
 > 💎 = parity work -- Linux kernel self-test framework has `lib/fault-inject.c` (multi-allocator fault injection), `kunit_add_action` (test-scoped cleanup registry), `kcsan`/`kasan` fences, `kunit_kzalloc()` scratch helpers, and `kmemleak` leak detection. This TODO brings the same floor to the Impossible OS kernel test runner without requiring the Driver Verifier / WDK workflow Windows leans on.
 > **Order vs section-number:** Implementation Order is execution sequence; section numbers (§N) preserve file stability. §7 (action registry) ships at Order 2 because §3, §5, and §8 all consume it.
@@ -295,6 +296,40 @@ Record `heap_stats().used_bytes` at test start and end; if the delta is non-zero
 
 > **Verified:** 2026-04-19 | commit `603ea0a4` | 7/7 items | build OK | 6 new BOOT harness suites (kmalloc + scratch + leak-ignore pair patterns)
 > **Quality reviewed:** 2026-04-19 | Codex 2x (adversarial, quality) | 3H+2M+2L fixed, 0 open | scope: kernel-code-quality
+
+---
+
+## 9. Audit + Classify the 50+ [LEAK] Failures §8 Surfaced
+
+§8 shipped the per-test heap-leak detector with a **Note** that "existing tests may surface previously-hidden leaks that will be retrofitted with `TEST_EXPECT_LEAK` or genuine leaks fixed in follow-up commits." This section IS that follow-up. `bash scripts/test.sh` on TCG surfaces ~55 [LEAK] advisory lines spanning six subsystems; KVM surfaces fewer (timing-sensitive). The detector is not the bug -- the detector is doing its job. The retrofit work is triaging each leak as **real** (bug to fix), **intentional** (annotate with `TEST_EXPECT_LEAK` + reason), or **detector-edge-case** (annotate with `TEST_LEAK_IGNORE` + reason, narrow scope).
+
+> [!NOTE]
+> §8's Notes explicitly scope leaks as ADVISORY: runner exit code is unaffected by the `L` column. A `[LEAK]` line today does not fail CI -- it pollutes the summary without gating. This section closes that visual debt and, more importantly, fixes real leaks surfaced by the retrofit that would otherwise accumulate silently in production.
+
+**Inventory of current [LEAK] failures** (KVM 2026-04-22 + TCG 2026-04-22 combined; absence on either platform is noted):
+
+- **Sched (5 suites, TCG-only):** `Sched: create thread`, `Sched: cooperative-yield fairness (regression)`, `Sched: joined kthread slot reuse (regression)`, `Sched: race-barrier release(a_first=0/1) wins 100x`. Leak sizes 64-13 KiB per suite. Likely real: scheduler teardown race on TCG where kthread reaping does not complete before the suite's post-drain heap snapshot -- same-suite second run shows different byte counts.
+- **ETW (2 suites):** `ETW: NtCreateTrace`, `ETW: event not running`. Consistent 4 KiB delta each -- likely a per-trace control block not freed on NtCloseTrace (or not called in the FAIL path).
+- **OB (13 suites):** handle table, duplicate handle, handle inherit, query directory, type stats, callbacks, handle quota, NT create+open directory, NT symlink roundtrip, NT section named open+query+extend, NT timer create+query / set+cancel / open existing. Deltas 160-2160 bytes. Pattern: tests that create Ob objects + close handles but don't `ObDereferenceObject` the final pin.
+- **PEB/TEB (1 suite):** `PEB/TEB: kthread_create smoke`. 64 bytes -- likely the same kthread-teardown-race symptom as Sched.
+- **IPC (5 suites):** kernel threads, mutex, semaphore, pipe, shared memory. Consistent 128 bytes each -- likely a shared-per-suite fixture allocation (kthread?) that counts as leak on the first leaker and propagates.
+- **ALPC (25+ suites):** every ALPC test leaks 768-3400 bytes. Highest-density subsystem; suggests either (a) port+thread tear-down leaks a common-case allocation, or (b) the ALPC test fixtures don't use `TEST_SCRATCH_KBUF` / `test_add_action` drain so non-heap state accumulates per-suite.
+
+- [ ] Run `bash scripts/test.sh` on QEMU WHPX (2 CPUs) + QEMU TCG + VirtualBox + bare metal and capture the `[LEAK]` lines from each to a triage sheet. Same leaks on all 4 platforms = real; platform-specific = timing-sensitive teardown race. This is the first filter before any code changes.
+- [ ] Sched suite audit: all 5 leaking `Sched:` suites use `thread_create` / `kthread_create`. Verify whether the test harness waits for the thread to fully reap before checking heap delta. If not, either add a `test_add_action` that joins + waits, or annotate the suites with `TEST_EXPECT_LEAK(<size>, "kthread reap pending at post-drain window -- not observable in single-CPU sync path")`. Commit: `"test+sched: account kthread reap window in -9 leak retrofit"`
+- [ ] PEB/TEB kthread_create smoke: same root cause class as Sched suite above; fix together.
+- [ ] IPC 5-suite audit: if the 128-byte consistent delta is a shared fixture, find the allocation site (grep `kmalloc` in the per-suite setup), either migrate to `TEST_SCRATCH_KBUF` (auto-freed by drain) or `TEST_EXPECT_LEAK(128, ...)` with a concrete reason.
+- [ ] ETW 2-suite audit: trace control block lifecycle. `NtCreateTrace` allocates; `NtCloseTrace` frees. Verify tests call the close path on every exit, including FAIL paths. If a real leak (missing close), fix the ETW subsystem; if test structure, add `test_add_action` for the close.
+- [ ] OB 13-suite audit: grep each leaking suite for `ObCreate*` + `ObClose*` / `ObDereferenceObject` pairing. The pattern likely misses a final dereference after close-handle (close-handle is user-visible, dereference is the kernel pin). Fix by adding the dereference (real subsystem fix) -- these are the most likely REAL leaks. When fixing, add a regression comment citing the specific Ob call chain.
+- [ ] ALPC 25+ suite audit: highest-volume source. If the fix is structural (test fixture change), one commit covers all 25. If each suite leaks a different allocation, file each distinct leak as its own sub-fix.
+- [ ] After each subsystem lands a fix, re-run `bash scripts/test.sh` and verify the `L leaked` column decreases correspondingly. The target is `L = 0` on both KVM and TCG; any residual MUST have an explicit `TEST_EXPECT_LEAK` or `TEST_LEAK_IGNORE` with a committed-in-source reason.
+- [ ] Post-retrofit: change the runner to fail CI on `L > 0` unless every non-zero leak carries an annotation. Currently `L` is advisory (§8 Notes); after §9 completes, make it gating so future regressions can't re-introduce silent leaks.
+- [ ] Commit: `"test: -9 [LEAK] retrofit complete -- L column is now CI-gating"`
+
+**Test checkpoint:** `bash scripts/test.sh` on QEMU WHPX + QEMU TCG + VirtualBox + bare metal reports `=== N tests passed, 0 failed, S skipped, P pending, 0 leaked (X.Xs) ===` (the `, 0 leaked` is the new invariant). Every previously-leaking suite either (a) has a concrete subsystem fix with commit hash in this section's stamps, or (b) carries a `TEST_EXPECT_LEAK(<bytes>, "<reason>")` with the reason visible in `git blame`. Runner exit code gates on `L > 0` without an annotation.
+
+> [!WARNING]
+> This is a 50-suite debug session split across at least 5 subsystem owners. Realistic scope: one session per subsystem (Sched + PEB/TEB together is probably one, IPC one, ETW one, OB one, ALPC one) plus a final gating-change commit. Do NOT attempt to close all 5 in a single session; each subsystem's fixes need their own Codex adversarial review and regression check.
 
 ---
 
