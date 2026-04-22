@@ -16,6 +16,7 @@
 #include "kernel/types.h"
 #include "desktop/terminal.h"
 #include "desktop/wm.h"
+#include "kernel/test/input_record.h"
 
 /* ---- §4 Input Event Injection ----------------------------------------- */
 
@@ -817,6 +818,245 @@ static void test_wm_mark_dirty_bumps_queued(void)
                 "second mark while already dirty drops at least one");
 }
 
+/* ---- Section 11: Input Record and Replay ---------------------------- */
+
+/* record_begin allocates, record_stop returns count, record_release
+ * frees. Double-begin returns -2; double-release is a no-op. */
+static void test_input_record_begin_stop_release(void)
+{
+    int rc;
+
+    input_record_release();  /* clean slate */
+    rc = input_record_begin(16);
+    TEST_ASSERT_EQ((uint64_t)rc, (uint64_t)0, "first begin returns 0");
+
+    rc = input_record_begin(16);
+    TEST_ASSERT_EQ((uint64_t)rc, (uint64_t)-2, "double begin returns -2");
+
+    TEST_ASSERT_EQ((uint64_t)input_record_count(), (uint64_t)0,
+                   "empty record -> count == 0");
+
+    rc = input_record_stop();
+    TEST_ASSERT_EQ((uint64_t)rc, (uint64_t)0, "stop returns captured count (0)");
+
+    input_record_release();
+    input_record_release();  /* idempotent */
+    TEST_ASSERT_EQ((uint64_t)input_record_count(), (uint64_t)0,
+                   "post-release count == 0");
+}
+
+/* Capture is tee-mode: calls while inactive are no-ops; calls while
+ * active append to the buffer. */
+static void test_input_record_key_mouse_ime_capture(void)
+{
+    uint8_t commit_bytes[3] = {0xE4, 0xBD, 0xA0};  /* U+4F60 "ni" */
+
+    input_record_release();
+
+    /* Inactive: recording primitives are no-ops. */
+    input_record_key(0x1E, 'a');
+    TEST_ASSERT_EQ((uint64_t)input_record_count(), (uint64_t)0,
+                   "inactive record_key is a no-op");
+
+    TEST_ASSERT_EQ((uint64_t)input_record_begin(16), (uint64_t)0,
+                   "begin OK");
+
+    input_record_key(0x1E, 'a');
+    input_record_mouse(100, 200, 1);
+    input_record_ime_compose(0x4F60, 0);
+    input_record_ime_commit(commit_bytes, 3);
+
+    TEST_ASSERT_EQ((uint64_t)input_record_count(), (uint64_t)4,
+                   "4 events captured");
+
+    const input_event_t *evts = input_record_events();
+    TEST_ASSERT(evts != (const input_event_t *)0, "events ptr non-null");
+    TEST_ASSERT_EQ((uint64_t)evts[0].kind, (uint64_t)INPUT_EVT_KEY, "event 0 is key");
+    TEST_ASSERT_EQ((uint64_t)evts[0].payload.key.codepoint, (uint64_t)'a',
+                   "key codepoint preserved");
+    TEST_ASSERT_EQ((uint64_t)evts[1].kind, (uint64_t)INPUT_EVT_MOUSE, "event 1 is mouse");
+    TEST_ASSERT_EQ((uint64_t)evts[1].payload.mouse.x, (uint64_t)100, "mouse x");
+    TEST_ASSERT_EQ((uint64_t)evts[2].kind, (uint64_t)INPUT_EVT_IME_COMPOSE,
+                   "event 2 is ime_compose");
+    TEST_ASSERT_EQ((uint64_t)evts[2].payload.ime_compose.codepoint, (uint64_t)0x4F60,
+                   "compose codepoint");
+    TEST_ASSERT_EQ((uint64_t)evts[3].kind, (uint64_t)INPUT_EVT_IME_COMMIT,
+                   "event 3 is ime_commit");
+    TEST_ASSERT_EQ((uint64_t)evts[3].payload.ime_commit.len, (uint64_t)3,
+                   "commit len matches");
+    TEST_ASSERT_EQ((uint64_t)evts[3].payload.ime_commit.utf8[0], (uint64_t)0xE4,
+                   "commit byte 0 preserved");
+
+    input_record_stop();
+    input_record_release();
+}
+
+/* Capacity ceiling: events past capacity are dropped (not overwritten,
+ * so tests see a deterministic event count). */
+static void test_input_record_capacity_drops(void)
+{
+    int i;
+    input_record_release();
+    TEST_ASSERT_EQ((uint64_t)input_record_begin(4), (uint64_t)0, "begin with cap=4");
+
+    for (i = 0; i < 10; i++)
+        input_record_key((uint8_t)i, (uint32_t)('a' + i));
+
+    TEST_ASSERT_EQ((uint64_t)input_record_count(), (uint64_t)4,
+                   "capacity-4 ring stops at 4 events (no overwrite)");
+    input_record_stop();
+    input_record_release();
+}
+
+/* Serialize -> parse -> replay roundtrip: records three key events,
+ * serializes to JSONL, parses back via input_replay_from_jsonl() with
+ * speed=0/1 (as-fast-as-possible), and verifies the replayed
+ * characters landed in the terminal input ring. */
+static void test_input_record_serialize_roundtrip(void)
+{
+    char buf[4096];
+    int  len;
+
+    input_record_release();
+    terminal_test_force_open();
+
+    /* Drain the terminal input ring from any prior test. */
+    while (terminal_trygetchar() != 0) { /* drain */ }
+
+    TEST_ASSERT_EQ((uint64_t)input_record_begin(8), (uint64_t)0, "begin OK");
+
+    /* Record "dir" + Enter. scancode_normal[0x20]='d', 0x17='i',
+     * 0x13='r', 0x1C='\n'. We use keyboard_inject_scancode for capture
+     * via the in-test record API to pair record + replay, not the real
+     * IRQ path. */
+    input_record_key(0x20, 'd');
+    input_record_key(0x17, 'i');
+    input_record_key(0x13, 'r');
+    input_record_key(0x1C, '\n');
+
+    TEST_ASSERT_EQ((uint64_t)input_record_count(), (uint64_t)4, "4 events recorded");
+
+    len = input_record_serialize(buf, (int)sizeof(buf));
+    TEST_ASSERT(len > 0, "serialize returned positive length");
+    TEST_ASSERT(len < (int)sizeof(buf), "serialize fit in dest buffer");
+
+    input_record_stop();
+    input_record_release();
+
+    /* Replay parses the JSONL and drives keyboard_inject_scancode,
+     * which pushes characters to terminal_key_input. Use 0/1 = run
+     * as fast as possible so the test does not wait wall-clock time. */
+    int replayed = input_replay_from_jsonl(buf, len, 0, 1);
+    TEST_ASSERT_EQ((uint64_t)replayed, (uint64_t)4, "replay processed 4 events");
+
+    /* Pull characters off the ring and compare. */
+    char got[5] = {0,0,0,0,0};
+    int gi;
+    for (gi = 0; gi < 4; gi++) {
+        got[gi] = terminal_trygetchar();
+    }
+    TEST_ASSERT_EQ((uint64_t)(uint8_t)got[0], (uint64_t)'d', "byte 0 == 'd'");
+    TEST_ASSERT_EQ((uint64_t)(uint8_t)got[1], (uint64_t)'i', "byte 1 == 'i'");
+    TEST_ASSERT_EQ((uint64_t)(uint8_t)got[2], (uint64_t)'r', "byte 2 == 'r'");
+    TEST_ASSERT_EQ((uint64_t)(uint8_t)got[3], (uint64_t)'\n', "byte 3 == '\\n'");
+
+    terminal_test_force_close();
+}
+
+/* IME commit roundtrip: records a CJK codepoint's UTF-8 bytes,
+ * serializes to the hex-string format, parses back, replays;
+ * terminal_key_input receives the same UTF-8 byte sequence.
+ * Matches the §11 test checkpoint "Record CJK via IME composition;
+ * replay; committed UTF-8 string matches original byte sequence." */
+static void test_input_record_ime_roundtrip_utf8(void)
+{
+    /* U+4F60 "ni" (hello), UTF-8: E4 BD A0 */
+    uint8_t ni[3] = {0xE4, 0xBD, 0xA0};
+    /* U+597D "hao" (good),  UTF-8: E5 A5 BD */
+    uint8_t hao[3] = {0xE5, 0xA5, 0xBD};
+    char buf[1024];
+    int  len;
+
+    input_record_release();
+    terminal_test_force_open();
+    while (terminal_trygetchar() != 0) { /* drain */ }
+
+    TEST_ASSERT_EQ((uint64_t)input_record_begin(4), (uint64_t)0, "begin OK");
+
+    input_record_ime_commit(ni, 3);
+    input_record_ime_commit(hao, 3);
+
+    TEST_ASSERT_EQ((uint64_t)input_record_count(), (uint64_t)2, "2 commits captured");
+    len = input_record_serialize(buf, (int)sizeof(buf));
+    TEST_ASSERT(len > 0, "serialize succeeded");
+
+    input_record_stop();
+    input_record_release();
+
+    int replayed = input_replay_from_jsonl(buf, len, 0, 1);
+    TEST_ASSERT_EQ((uint64_t)replayed, (uint64_t)2, "replay 2 IME commits");
+
+    /* Pull 6 UTF-8 bytes out of the terminal input ring and verify
+     * byte-for-byte equality with the original commit sequence. */
+    uint8_t got[6];
+    int gi;
+    for (gi = 0; gi < 6; gi++) {
+        got[gi] = (uint8_t)terminal_trygetchar();
+    }
+
+    TEST_ASSERT_EQ((uint64_t)got[0], (uint64_t)0xE4, "byte 0 of 'ni'");
+    TEST_ASSERT_EQ((uint64_t)got[1], (uint64_t)0xBD, "byte 1 of 'ni'");
+    TEST_ASSERT_EQ((uint64_t)got[2], (uint64_t)0xA0, "byte 2 of 'ni'");
+    TEST_ASSERT_EQ((uint64_t)got[3], (uint64_t)0xE5, "byte 0 of 'hao'");
+    TEST_ASSERT_EQ((uint64_t)got[4], (uint64_t)0xA5, "byte 1 of 'hao'");
+    TEST_ASSERT_EQ((uint64_t)got[5], (uint64_t)0xBD, "byte 2 of 'hao'");
+
+    terminal_test_force_close();
+}
+
+/* Compute C-string length without pulling in a libc dependency. */
+static int tr_strlen(const char *s)
+{
+    int n = 0;
+    while (s[n] != '\0') n++;
+    return n;
+}
+
+/* Malformed JSONL -> -1. Verifies every parse-failure branch wired
+ * through input_replay_from_jsonl rejects rather than silently
+ * replaying. */
+static void test_input_record_replay_rejects_malformed(void)
+{
+    const char *cases[] = {
+        /* missing kind */
+        "{\"ts_ns\":0}\n",
+        /* unknown kind */
+        "{\"ts_ns\":0,\"kind\":\"laser\"}\n",
+        /* mouse missing x */
+        "{\"ts_ns\":0,\"kind\":\"mouse\",\"y\":0,\"buttons\":0}\n",
+        /* unknown key */
+        "{\"ts_ns\":0,\"kind\":\"key\",\"scancode\":0,\"codepoint\":0,\"laser\":1}\n",
+    };
+    const char *names[] = {"missing kind", "unknown kind",
+                           "mouse missing x", "unknown key"};
+    unsigned i;
+    for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        int rc = input_replay_from_jsonl(cases[i], tr_strlen(cases[i]), 0, 1);
+        TEST_ASSERT_EQ((uint64_t)(int64_t)rc, (uint64_t)(int64_t)-1,
+                       names[i]);
+    }
+
+    /* NULL input -> -1. */
+    int rc_null = input_replay_from_jsonl((const char *)0, 10, 0, 1);
+    TEST_ASSERT_EQ((uint64_t)(int64_t)rc_null, (uint64_t)(int64_t)-1,
+                   "NULL jsonl -> -1");
+
+    /* Zero length -> -1. */
+    int rc_zero = input_replay_from_jsonl("{}", 0, 0, 1);
+    TEST_ASSERT_EQ((uint64_t)(int64_t)rc_zero, (uint64_t)(int64_t)-1,
+                   "zero length -> -1");
+}
+
 /* ---- Registration ----------------------------------------------------- */
 
 void test_register_desktop(void)
@@ -869,6 +1109,18 @@ void test_register_desktop(void)
                             test_wm_frame_stats_null_guard, TEST_CAT_DESKTOP);
     test_suite_register_cat("Desktop: wm_mark_dirty bumps queued + drops on coalesce",
                             test_wm_mark_dirty_bumps_queued, TEST_CAT_DESKTOP);
+    test_suite_register_cat("Desktop: input_record begin/stop/release lifecycle",
+                            test_input_record_begin_stop_release, TEST_CAT_DESKTOP);
+    test_suite_register_cat("Desktop: input_record captures key/mouse/IME",
+                            test_input_record_key_mouse_ime_capture, TEST_CAT_DESKTOP);
+    test_suite_register_cat("Desktop: input_record capacity drops (no overwrite)",
+                            test_input_record_capacity_drops, TEST_CAT_DESKTOP);
+    test_suite_register_cat("Desktop: input_record serialize + replay roundtrip (dir+Enter)",
+                            test_input_record_serialize_roundtrip, TEST_CAT_DESKTOP);
+    test_suite_register_cat("Desktop: input_record IME CJK commit UTF-8 byte-identical",
+                            test_input_record_ime_roundtrip_utf8, TEST_CAT_DESKTOP);
+    test_suite_register_cat("Desktop: input_replay rejects malformed JSONL",
+                            test_input_record_replay_rejects_malformed, TEST_CAT_DESKTOP);
 }
 
 #endif /* KERNEL_TESTS */
