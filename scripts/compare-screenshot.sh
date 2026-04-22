@@ -130,11 +130,39 @@ done
 [ -n "$REFERENCE" ] || die 1 "missing <reference.png> argument (try --help)"
 [ -n "$CURRENT" ]   || die 1 "missing <current.png> argument (try --help)"
 
+# Sibling needle auto-discovery at the WRAPPER level so the common call
+# shape `bash scripts/compare-screenshot.sh reference.png current.png`
+# honors a committed `<reference>.needle.json`. Without this, pixel-mode
+# runs silently ignored sidecars even though tests/references/README.md
+# documents auto-discovery. Codex [H] quality review of section 6.
+# Explicit --needle always wins.
+if [ -z "$NEEDLE" ]; then
+    SIBLING="${REFERENCE%.png}.needle.json"
+    if [ -f "$SIBLING" ]; then
+        info "auto-discovered sibling needle: $SIBLING"
+        NEEDLE="$SIBLING"
+    fi
+fi
+
+# Preflight python3 before any delegated path so interpreter absence
+# stays inside the documented 0..5 exit-code range (exit 1 = preflight
+# failure) instead of leaking shell exit 127 from the exec. Codex [M].
+need_python=0
+case "$MODE" in
+    ssim|ssimulacra2) need_python=1 ;;
+esac
+[ -n "$NEEDLE" ] && need_python=1
+if [ "$need_python" = "1" ] && ! command -v python3 >/dev/null 2>&1; then
+    die 1 "need python3 for --mode=$MODE / --needle; install python3 and retry"
+fi
+
 # Mode dispatch: SSIM, SSIMULACRA2, and any needle-based comparison all
-# require the Python helper. The bash path only handles flat pixel-percent.
+# require the Python helper. The bash path only handles flat pixel-percent
+# without a needle.
 case "$MODE" in
     pixel)
-        # Continue below with the ImageMagick path.
+        # Continue below with the ImageMagick path unless a needle (either
+        # explicit or auto-discovered above) forces the Python route.
         ;;
     ssim|ssimulacra2)
         # Delegate to needle-compare.py; carry threshold/fuzz/needle as

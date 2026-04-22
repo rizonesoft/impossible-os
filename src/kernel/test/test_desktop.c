@@ -643,6 +643,40 @@ static void test_wm_alt_f4_closes_focused_window(void)
                    "Alt+F4 on empty WM is a no-op");
 }
 
+/* Reset path: a deferred-close enqueue from one test must NOT leak into
+ * the next. Codex [M] §8 quality review demanded a regression so the
+ * seam stays deterministic across test order. */
+static void test_wm_reset_clears_deferred_close(void)
+{
+    int handle;
+
+    /* Seed: install a window, focus it, enqueue Alt+F4 (does NOT
+     * destroy yet -- destruction is deferred). */
+    wm_test_reset();
+    keyboard_reset_state();
+    handle = wm_test_install_window(0, 0, 320, 240);
+    TEST_ASSERT(handle >= 0, "first install OK");
+    wm_test_set_focused(handle);
+    keyboard_inject_scancode(0x38);  /* LALT press */
+    keyboard_inject_scancode(0x3E);  /* F4 press -> enqueue */
+    keyboard_inject_scancode(0xB8);  /* LALT release */
+
+    /* wm_test_reset MUST drop the queued close so a fresh window slot
+     * isn't destroyed by the stale enqueue. */
+    wm_test_reset();
+    handle = wm_test_install_window(50, 50, 400, 200);
+    TEST_ASSERT(handle >= 0, "post-reset install OK");
+    TEST_ASSERT_EQ((uint64_t)wm_get_window_count(), (uint64_t)1,
+                   "post-reset count == 1 (fresh install only)");
+
+    /* If the seam leaked the prior enqueue, this drain would destroy
+     * our just-installed window. */
+    TEST_ASSERT_EQ((uint64_t)wm_process_pending_closes(), (uint64_t)0,
+                   "drain after wm_test_reset is a no-op");
+    TEST_ASSERT_EQ((uint64_t)wm_get_window_count(), (uint64_t)1,
+                   "fresh window survives drain");
+}
+
 /* ---- Registration ----------------------------------------------------- */
 
 void test_register_desktop(void)
@@ -679,6 +713,8 @@ void test_register_desktop(void)
                             test_wm_window_rect_roundtrip, TEST_CAT_DESKTOP);
     test_suite_register_cat("Desktop: Alt+F4 closes focused window (inject path)",
                             test_wm_alt_f4_closes_focused_window, TEST_CAT_DESKTOP);
+    test_suite_register_cat("Desktop: wm_test_reset clears deferred-close state",
+                            test_wm_reset_clears_deferred_close, TEST_CAT_DESKTOP);
 }
 
 #endif /* KERNEL_TESTS */

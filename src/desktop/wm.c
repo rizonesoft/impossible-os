@@ -540,6 +540,10 @@ void wm_test_reset(void)
         windows[i].dragging = 0;
     }
     focused_window = -1;
+    /* Drop any deferred-close request from a prior test so a fresh
+     * synthetic window installed in slot 0 cannot be destroyed by a
+     * stale enqueue. Codex [M] quality review of section 8. */
+    pending_close_handle = -1;
 }
 
 int wm_test_install_window(int32_t x, int32_t y, uint32_t w, uint32_t h)

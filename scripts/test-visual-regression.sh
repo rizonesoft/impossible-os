@@ -132,6 +132,7 @@ TOTAL=0
 PASSED=0
 FAILED=0
 CAPTURE_ERRORS=0
+CONFIG_ERRORS=0
 COMPARE_INTERNAL=0
 MISSING_REFS=0
 SUMMARY_ROWS=()
@@ -140,9 +141,19 @@ for name in $SCENARIOS_CSV; do
     TOTAL=$((TOTAL + 1))
     info "--- scenario: $name ---"
 
-    if ! scenario_capture "$name"; then
-        CAPTURE_ERRORS=$((CAPTURE_ERRORS + 1))
-        SUMMARY_ROWS+=("| $name | ❌ CAPTURE | -- | -- |")
+    scenario_capture "$name"; cap_rc=$?
+    if [ "$cap_rc" -ne 0 ]; then
+        # Distinguish config errors (rc=1: bad scenario name / dispatcher
+        # rejection) from real boot/capture failures (rc=2). Codex [M]
+        # quality review of section 7: collapsing both into CAPTURE_ERRORS
+        # sent maintainers debugging QEMU when the real fix was a typo.
+        if [ "$cap_rc" = "1" ]; then
+            CONFIG_ERRORS=$((CONFIG_ERRORS + 1))
+            SUMMARY_ROWS+=("| $name | ❌ CONFIG | -- | unknown scenario / dispatcher rejection |")
+        else
+            CAPTURE_ERRORS=$((CAPTURE_ERRORS + 1))
+            SUMMARY_ROWS+=("| $name | ❌ CAPTURE | -- | rc=$cap_rc |")
+        fi
         continue
     fi
 
@@ -214,29 +225,41 @@ done
 
 # --- Step 5: emit summary -------------------------------------------------
 
-EFFECTIVE_TOTAL=$((TOTAL - MISSING_REFS))
+# Headline always uses TOTAL as the denominator so a partially-gated
+# run (some scenarios missing baselines) cannot read as a full pass.
+# Codex [H] quality review of section 7: previously we computed
+# EFFECTIVE_TOTAL = TOTAL - MISSING_REFS and reported `1/1 visual
+# checks passed` even when 1 of 2 scenarios was never gated.
 STATUS_ICON="✅"
-STATUS_LINE="UI Tests: ${PASSED}/${EFFECTIVE_TOTAL} visual checks passed"
+STATUS_LINE="UI Tests: ${PASSED}/${TOTAL} visual checks passed"
 FINAL_RC=0
 
-# Ordering matters: capture errors (infrastructure boot failure) outrank
-# compare-internal harness errors which outrank product regressions.
-# Missing-refs advisory stays green but gets its own GHA warning below.
-if [ "$CAPTURE_ERRORS" -gt 0 ]; then
+# Ordering: config errors (typo / dispatcher rejection) outrank capture
+# (boot infra), which outrank compare-internal (harness), which outrank
+# product regressions. Missing-refs is advisory but still surfaced in
+# the headline so partial coverage is visible without opening the
+# Summary tab.
+if [ "$CONFIG_ERRORS" -gt 0 ]; then
+    STATUS_ICON="❌"
+    STATUS_LINE="UI Tests: CONFIG error in ${CONFIG_ERRORS}/${TOTAL} scenario(s) -- check scenario names"
+    FINAL_RC=1
+elif [ "$CAPTURE_ERRORS" -gt 0 ]; then
     STATUS_ICON="❌"
     STATUS_LINE="UI Tests: capture failed for ${CAPTURE_ERRORS}/${TOTAL} scenario(s)"
     FINAL_RC=2
 elif [ "$COMPARE_INTERNAL" -gt 0 ]; then
     STATUS_ICON="❌"
-    STATUS_LINE="UI Tests: HARNESS error in ${COMPARE_INTERNAL}/${EFFECTIVE_TOTAL} scenario(s) -- not a product regression"
+    STATUS_LINE="UI Tests: HARNESS error in ${COMPARE_INTERNAL}/${TOTAL} scenario(s) -- not a product regression"
     FINAL_RC=4
 elif [ "$FAILED" -gt 0 ]; then
     STATUS_ICON="❌"
-    STATUS_LINE="UI Tests: MISMATCH -- ${FAILED}/${EFFECTIVE_TOTAL} scenario(s) regressed"
+    STATUS_LINE="UI Tests: MISMATCH -- ${FAILED}/${TOTAL} scenario(s) regressed"
     FINAL_RC=3
-elif [ "$MISSING_REFS" = "$TOTAL" ] && [ "$UPDATE_REFS" != "1" ]; then
+elif [ "$MISSING_REFS" -gt 0 ] && [ "$UPDATE_REFS" != "1" ]; then
+    # Partial coverage: some scenarios passed, some have no baseline.
+    # Headline reports the gating gap so it's visible at a glance.
     STATUS_ICON="⚠️"
-    STATUS_LINE="UI Tests: no references committed yet -- run 'make update-ui-refs' to seed"
+    STATUS_LINE="UI Tests: ${PASSED}/${TOTAL} passed -- ${MISSING_REFS} scenario(s) ungated (no reference yet)"
     FINAL_RC=0
 fi
 
