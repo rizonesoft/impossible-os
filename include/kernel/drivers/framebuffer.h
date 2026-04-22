@@ -77,6 +77,22 @@ uint32_t fb_get_height(void);
 uint32_t *fb_get_backbuffer(void);
 uint32_t fb_get_stride(void);
 
+/* ---- Snapshot ---- */
+
+/* Return the number of bytes a fb_snapshot() caller must allocate in dest_buf
+ * to capture the current frame: width * height * 4 (BGRA). Returns 0 when the
+ * framebuffer is not yet initialized. Callers should use pmm_alloc_contiguous
+ * for the buffer since a 1280x720 snapshot is 3.5 MiB. */
+uint64_t fb_snapshot_size(void);
+
+/* Copy the current back buffer into dest_buf as a tightly-packed BGRA bitmap
+ * (width * height * 4 bytes). On success *width and *height are set to the
+ * framebuffer dimensions. Returns 0 on success, -1 on invalid args or
+ * uninitialized framebuffer. Caller must size dest_buf >= fb_snapshot_size().
+ * Kernel test code calls this after the compositor has rendered to verify
+ * the screen is not black / not broken. */
+int fb_snapshot(void *dest_buf, uint32_t *width, uint32_t *height);
+
 /* ---- Compositor lock ---- */
 /* When locked, fb_putchar/fb_draw_char become no-ops.
  * Call fb_lock_compositor() when the WM compositor takes over the screen. */

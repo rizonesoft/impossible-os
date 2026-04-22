@@ -833,6 +833,54 @@ uint32_t fb_get_height(void) { return fb_height; }
 uint32_t *fb_get_backbuffer(void) { return back_buf; }
 uint32_t fb_get_stride(void) { return fb_stride; }
 
+uint64_t fb_snapshot_size(void)
+{
+    if (!fb_ready || fb_width == 0 || fb_height == 0)
+        return 0;
+
+    /* Overflow guard: uint32_t * uint32_t * 4 can wrap uint64_t only on
+     * absurd geometries (>= 2^31 pixels per axis). Refuse those: no GOP
+     * mode in practice exceeds 16K x 16K, and silently returning a
+     * wrapped size would let callers under-allocate. */
+    uint64_t pixels = (uint64_t)fb_width * (uint64_t)fb_height;
+    if (pixels > (0xFFFFFFFFFFFFFFFFULL / 4u))
+        return 0;
+    return pixels * 4u;
+}
+
+int fb_snapshot(void *dest_buf, uint32_t *width, uint32_t *height)
+{
+    if (!dest_buf || !width || !height)
+        return -1;
+    if (!fb_ready || !back_buf || fb_width == 0 || fb_height == 0)
+        return -1;
+
+    /* Reject geometries where a single row would not fit in the
+     * mem_cpy32 count type (uint32_t). A >= 2^32-pixel row is pathological
+     * but the check costs nothing and keeps the copy counts honest. */
+    if ((uint64_t)fb_width > 0xFFFFFFFFu)
+        return -1;
+
+    /* Caller-visible layout is always tightly packed BGRA so tests can do
+     * straightforward pixel arithmetic. Copy row-by-row unconditionally:
+     * (1) handles stride-padded hw pitches correctly, (2) keeps the
+     * per-call count inside uint32_t even on pathological total pixel
+     * counts, (3) the extra loop overhead is trivial at realistic screen
+     * sizes (fewer than 10K iterations per frame). */
+    uint32_t *dst = (uint32_t *)dest_buf;
+    uint32_t w   = fb_width;
+    uint32_t h   = fb_height;
+
+    for (uint32_t y = 0; y < h; y++)
+        mem_cpy32(dst + (uint64_t)y * w,
+                  back_buf + (uint64_t)y * fb_stride,
+                  w);
+
+    *width  = w;
+    *height = h;
+    return 0;
+}
+
 void fb_lock_compositor(void)
 {
     compositor_locked = 1;

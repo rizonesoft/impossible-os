@@ -1943,6 +1943,7 @@ static void parse_conf_kv(struct boot_config *cfg,
         else if (ascii_streq(val, "storage"))  cfg->test_suite = 8;
         else if (ascii_streq(val, "exec"))     cfg->test_suite = 9;
         else if (ascii_streq(val, "x86"))      cfg->test_suite = 10;
+        else if (ascii_streq(val, "desktop"))  cfg->test_suite = 11;
         else                                   cfg->test_suite = 0xFF;
     }
     else if (ascii_streq(key, "test_quiet")) {

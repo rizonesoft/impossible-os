@@ -33,6 +33,7 @@ static const char *cat_names[] = {
     [TEST_CAT_STORAGE]  = "storage",
     [TEST_CAT_EXEC]     = "exec",
     [TEST_CAT_X86]      = "x86",
+    [TEST_CAT_DESKTOP]  = "desktop",
 };
 
 static const char *cat_labels[] = {
@@ -47,6 +48,7 @@ static const char *cat_labels[] = {
     [TEST_CAT_STORAGE]  = "Storage Drivers",
     [TEST_CAT_EXEC]     = "Binary System",
     [TEST_CAT_X86]      = "x86-64 Architecture",
+    [TEST_CAT_DESKTOP]  = "Desktop UI",
 };
 
 /* ---- Global test state ---- */
@@ -70,6 +72,14 @@ static uint64_t    s_heap_used_at_entry;
 static int64_t     s_expected_leak_bytes;
 static int         s_leak_ignore;
 static const char *s_leak_reason;
+
+/* Klog subsystem tag for the currently-running suite. "TEST" by default,
+ * flipped to "DTEST" while a TEST_CAT_DESKTOP suite is active so the
+ * klog.c test-runner coloring path recolors those lines pink-mauve
+ * (#C586B5). The comment block at klog.c:976 documents the three test
+ * layers (TEST kernel, UTEST user-mode, DTEST desktop). */
+static const char *s_current_tag = "TEST";
+static const char *test_tag(void) { return s_current_tag; }
 static int64_t     s_last_leak_delta;    /* diagnostic for harness tests */
 
 void _test_expect_leak(int64_t bytes, const char *reason)
@@ -167,10 +177,10 @@ void _test_assert(int condition, const char *msg, const char *file, int line)
     if (condition) {
         g_test_state.passed++;
         if (!g_quiet)
-            klog(LOG_INFO, "TEST", "%s :: %s", g_test_state.current_suite, msg);
+            klog(LOG_INFO, test_tag(), "%s :: %s", g_test_state.current_suite, msg);
     } else {
         g_test_state.failed++;
-        klog(LOG_ERROR, "TEST", "%s :: %s  (%s:%d)",
+        klog(LOG_ERROR, test_tag(), "%s :: %s  (%s:%d)",
              g_test_state.current_suite, msg, file, line);
     }
 }
@@ -181,10 +191,10 @@ void _test_assert_eq(uint64_t a, uint64_t b, const char *msg,
     if (a == b) {
         g_test_state.passed++;
         if (!g_quiet)
-            klog(LOG_INFO, "TEST", "%s :: %s", g_test_state.current_suite, msg);
+            klog(LOG_INFO, test_tag(), "%s :: %s", g_test_state.current_suite, msg);
     } else {
         g_test_state.failed++;
-        klog(LOG_ERROR, "TEST", "%s :: %s  (got %u, expected %u)  (%s:%d)",
+        klog(LOG_ERROR, test_tag(), "%s :: %s  (got %u, expected %u)  (%s:%d)",
              g_test_state.current_suite, msg, a, b, file, line);
     }
 }
@@ -195,10 +205,10 @@ void _test_assert_neq(uint64_t a, uint64_t b, const char *msg,
     if (a != b) {
         g_test_state.passed++;
         if (!g_quiet)
-            klog(LOG_INFO, "TEST", "%s :: %s", g_test_state.current_suite, msg);
+            klog(LOG_INFO, test_tag(), "%s :: %s", g_test_state.current_suite, msg);
     } else {
         g_test_state.failed++;
-        klog(LOG_ERROR, "TEST", "%s :: %s  (both are %u)  (%s:%d)",
+        klog(LOG_ERROR, test_tag(), "%s :: %s  (both are %u)  (%s:%d)",
              g_test_state.current_suite, msg, a, file, line);
     }
 }
@@ -209,7 +219,7 @@ void _test_skip(const char *msg, const char *file, int line)
     (void)line;
     g_test_state.skipped++;
     if (!g_quiet)
-        klog(LOG_WARN, "TEST", "%s :: SKIP: %s",
+        klog(LOG_WARN, test_tag(), "%s :: SKIP: %s",
              g_test_state.current_suite, msg);
 }
 
@@ -223,11 +233,11 @@ void _test_pending(int condition, const char *msg,
 {
     if (condition) {
         g_test_state.pending++;
-        klog(LOG_WARN, "TEST", "%s :: [STUB] %s",
+        klog(LOG_WARN, test_tag(), "%s :: [STUB] %s",
              g_test_state.current_suite, msg);
     } else {
         g_test_state.failed++;
-        klog(LOG_ERROR, "TEST",
+        klog(LOG_ERROR, test_tag(),
              "%s :: PENDING-CONTRACT BROKEN: %s  (%s:%d)",
              g_test_state.current_suite, msg, file, line);
     }
@@ -262,7 +272,7 @@ int test_add_action(void (*fn)(void *), void *ctx)
         /* Warn on the same %s :: ... convention as the other -1 paths
          * so a silent drop during test authoring shows up in the boot
          * log rather than hiding behind a forgotten return-value check. */
-        klog(LOG_WARN, "TEST",
+        klog(LOG_WARN, test_tag(),
              "%s :: test_add_action NULL fn -- rejected",
              g_test_state.current_suite);
         return -1;
@@ -274,13 +284,13 @@ int test_add_action(void (*fn)(void *), void *ctx)
      * action callback; surfacing it via -1 + warning lets the test
      * author fix it without hanging the runner. */
     if (s_test_actions.draining) {
-        klog(LOG_WARN, "TEST",
+        klog(LOG_WARN, test_tag(),
              "%s :: test_add_action called during drain -- rejected",
              g_test_state.current_suite);
         return -1;
     }
     if (s_test_actions.count >= TEST_MAX_ACTIONS) {
-        klog(LOG_WARN, "TEST", "%s :: action list full (%u slots)",
+        klog(LOG_WARN, test_tag(), "%s :: action list full (%u slots)",
              g_test_state.current_suite, (uint64_t)TEST_MAX_ACTIONS);
         return -1;
     }
@@ -312,7 +322,7 @@ static void test_actions_drain(void)
     KIRQL irql = KeGetCurrentIrql();
     if (irql != PASSIVE_LEVEL) {
         KeLowerIrql(PASSIVE_LEVEL);
-        klog(LOG_WARN, "TEST", "%s :: left IRQL elevated (%u) before drain",
+        klog(LOG_WARN, test_tag(), "%s :: left IRQL elevated (%u) before drain",
              g_test_state.current_suite, (uint64_t)irql);
     }
 
@@ -338,7 +348,7 @@ static void test_actions_drain(void)
         KIRQL post = KeGetCurrentIrql();
         if (post != PASSIVE_LEVEL) {
             KeLowerIrql(PASSIVE_LEVEL);
-            klog(LOG_WARN, "TEST",
+            klog(LOG_WARN, test_tag(),
                  "%s :: action leaked IRQL (%u) -- lowering",
                  g_test_state.current_suite, (uint64_t)post);
         }
@@ -379,10 +389,11 @@ extern void test_register_usermode_launcher(void);
 extern void test_register_fastpath_hardening(void);
 extern void test_register_crashdump(void);
 extern void test_register_harness(void);
+extern void test_register_desktop(void);
 
 void test_runner_init(void)
 {
-    klog(LOG_INFO, "TEST", "============ KERNEL UNIT TESTS ============");
+    klog(LOG_INFO, test_tag(), "============ KERNEL UNIT TESTS ============");
 
     /* MM */
     test_register_pmm();
@@ -440,7 +451,10 @@ void test_runner_init(void)
     test_register_blackbox();
     test_register_acpi_power();
 
-    klog(LOG_INFO, "TEST", "%u suite(s) registered",
+    /* Desktop UI */
+    test_register_desktop();
+
+    klog(LOG_INFO, test_tag(), "%u suite(s) registered",
          (uint64_t)g_test_state.suite_count);
 }
 
@@ -459,10 +473,10 @@ void test_runner_run(void)
     }
 
     if (g_filter != TEST_CAT_ALL && g_filter < TEST_CAT_COUNT) {
-        klog(LOG_INFO, "TEST", "=== Running %u suite(s) [%s] ===",
+        klog(LOG_INFO, test_tag(), "=== Running %u suite(s) [%s] ===",
              (uint64_t)run_count, cat_labels[g_filter]);
     } else {
-        klog(LOG_INFO, "TEST", "=== Running %u suite(s) ===",
+        klog(LOG_INFO, test_tag(), "=== Running %u suite(s) ===",
              (uint64_t)run_count);
     }
 
@@ -478,11 +492,16 @@ void test_runner_run(void)
         /* Print category header on first suite in each category */
         if (s->cat < TEST_CAT_COUNT && s->cat != current_cat) {
             current_cat = s->cat;
-            klog(LOG_INFO, "TEST", "--- [%s] %s ---",
+            klog(LOG_INFO, test_tag(), "--- [%s] %s ---",
                  cat_names[current_cat], cat_labels[current_cat]);
         }
 
         g_test_state.current_suite = s->name;
+
+        /* Flip the klog subsystem tag so desktop suites render in the
+         * #C586B5 pink-mauve band (klog.c DTEST route) instead of the
+         * default #D2A8FF kernel-test lavender. */
+        s_current_tag = (s->cat == TEST_CAT_DESKTOP) ? "DTEST" : "TEST";
 
         uint32_t pre_pass = g_test_state.passed;
         uint32_t pre_fail = g_test_state.failed;
@@ -523,7 +542,7 @@ void test_runner_run(void)
         s_last_leak_delta = heap_after - (int64_t)s_heap_used_at_entry;
 
         if (s_leak_ignore) {
-            klog(LOG_INFO, "TEST",
+            klog(LOG_INFO, test_tag(),
                  "%s :: [LEAK-SKIP] %s",
                  s->name,
                  s_leak_reason ? s_leak_reason : "(no reason)");
@@ -545,13 +564,13 @@ void test_runner_run(void)
                  * Negative or zero `bytes` is rejected as malformed
                  * (not an opt-out) so a stale TEST_EXPECT_LEAK(-1, ...)
                  * or TEST_EXPECT_LEAK(0, ...) cannot mask a real leak. */
-                klog(LOG_INFO, "TEST",
+                klog(LOG_INFO, test_tag(),
                      "%s :: [LEAK-OK] intentional %lu bytes (%s)",
                      s->name,
                      (uint64_t)(s_last_leak_delta > 0 ? s_last_leak_delta : -s_last_leak_delta),
                      s_leak_reason ? s_leak_reason : "(no reason)");
             } else {
-                klog(LOG_ERROR, "TEST",
+                klog(LOG_ERROR, test_tag(),
                      "%s :: [LEAK] leaked %lu bytes (entry %lu -> exit %lu)",
                      s->name,
                      (uint64_t)(s_last_leak_delta > 0 ? s_last_leak_delta : -s_last_leak_delta),
@@ -586,6 +605,10 @@ void test_runner_run(void)
         else
             g_test_state.suites_passed++;
     }
+
+    /* Restore default tag so the final summary renders in the kernel
+     * test color even after the last-run suite was a desktop suite. */
+    s_current_tag = "TEST";
 
     /* ---- Summary ---- */
     uint64_t run_ms   = (system_get_ticks() - run_start) * 10;
