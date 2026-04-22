@@ -88,7 +88,7 @@ Capture the current framebuffer contents as a raw bitmap for comparison.
 > - 3 suites cover §1: `Desktop: fb_snapshot_size nonzero` (3 asserts), `Desktop: fb_snapshot NULL args rejected` (3 asserts), `Desktop: fb_snapshot roundtrip (sentinel corners)` (11 asserts). The roundtrip test calls `spinner_stop()` to quiesce the IRQ-driven boot-splash spinner before writing sentinels into the four back-buffer corners, snapshotting, and comparing corner pixels in the output buffer.
 > - Canonical doc: the `fb_snapshot()` / `fb_snapshot_size()` contract in `include/kernel/drivers/framebuffer.h` (Snapshot block).
 > - Scope boundary: §1 ships only the kernel-side bitmap copy. §2 owns the QEMU monitor `screendump` path, §6 owns pixel-diff comparison, §13 owns the per-output `fb_snapshot_monitor(index, ...)` extension, §15 owns the on-failure artifact capture that consumes this API.
-> **Verified:** 2026-04-22 | commit `PENDING` | 5/5 items | build OK + smoke PASS (KVM 2.41s) | tests 1840/1840 PASS, 0 leaked (KVM)
+> **Verified:** 2026-04-22 | commit `d5fc4596` | 5/5 items | build OK + smoke PASS (KVM 2.41s) | tests 1840/1840 PASS, 0 leaked (KVM)
 > **Quality reviewed:** 2026-04-22 | Codex 1x (adversarial) | 1H+1M fixed | scope: kernel-code-quality
 
 ---
