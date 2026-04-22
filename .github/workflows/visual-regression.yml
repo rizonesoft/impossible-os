@@ -1,0 +1,165 @@
+# =============================================================================
+# Impossible OS -- Visual Regression
+#
+# Implements TODO-05-desktop-ui-test-framework.md the visual regression CI
+# pipeline section. Builds the OS, boots QEMU headless (TCG on
+# ubuntu-latest; no KVM on GHA runners), captures the desktop framebuffer
+# via the HMP monitor, compares against the PNGs in tests/references/,
+# and fails the job when any scenario drops below the reference-comparison
+# tolerance. Diff images from any mismatch are uploaded as a job artifact
+# for triage.
+#
+# The reference set is seeded by a maintainer running
+# `make update-ui-refs` on a known-good build; without committed
+# references, this job is advisory (prints a warning and exits 0). See
+# tests/references/README.md for the capture recipe.
+# =============================================================================
+
+name: Visual Regression
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      update_refs:
+        description: 'Capture new baselines and upload as an artifact (do NOT commit here; review locally first)'
+        required: false
+        default: false
+        type: boolean
+
+# Split concurrency groups so a maintainer-triggered workflow_dispatch
+# (baseline seeding) does not cancel the ordinary push/PR validation run
+# on the same ref. Codex [M] adversarial review. `cancel-in-progress` is
+# kept only for the validation path where newer push events should
+# supersede older ones; seeding runs never cancel each other because each
+# one is an intentional maintainer action.
+concurrency:
+  group: visual-regression-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
+
+permissions:
+  contents: read
+
+env:
+  LLVM_VERSION: "19"
+
+jobs:
+  visual-regression:
+    name: Visual regression (TCG)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # LLVM + deps mirror the build workflow so caching is shared across jobs.
+      - name: Cache LLVM toolchain
+        id: cache-llvm
+        uses: actions/cache@v4
+        with:
+          path: |
+            /usr/lib/llvm-${{ env.LLVM_VERSION }}
+            /usr/bin/clang-${{ env.LLVM_VERSION }}
+            /usr/bin/ld.lld-${{ env.LLVM_VERSION }}
+            /usr/bin/llvm-objcopy-${{ env.LLVM_VERSION }}
+            /usr/bin/llvm-ar-${{ env.LLVM_VERSION }}
+            /usr/bin/llvm-nm-${{ env.LLVM_VERSION }}
+          key: llvm-${{ env.LLVM_VERSION }}-${{ runner.os }}-v2
+
+      - name: Install LLVM ${{ env.LLVM_VERSION }}
+        if: steps.cache-llvm.outputs.cache-hit != 'true'
+        run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
+          echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-${{ env.LLVM_VERSION }} main" \
+            | sudo tee /etc/apt/sources.list.d/llvm.list
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            clang-${{ env.LLVM_VERSION }} \
+            lld-${{ env.LLVM_VERSION }} \
+            llvm-${{ env.LLVM_VERSION }}
+
+      # imagemagick + netcat are the visual-regression-specific extras;
+      # everything else is needed for the build step.
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            nasm \
+            mtools \
+            dosfstools \
+            ovmf \
+            qemu-system-x86 \
+            gcc \
+            python3-yaml \
+            imagemagick \
+            netcat-openbsd
+
+      - name: Verify toolchain sentinels
+        run: bash scripts/setup.sh --verify
+
+      - name: Build OS
+        run: bash scripts/build.sh
+
+      - name: Verify build sentinel
+        run: |
+          LAST=$(tail -1 build/build.log)
+          if [ "$LAST" != "=== BUILD OK ===" ]; then
+            echo "::error::Build did not complete successfully"
+            tail -30 build/build.log
+            exit 1
+          fi
+
+      # Visual regression. test-visual-regression.sh writes its markdown
+      # summary to $GITHUB_STEP_SUMMARY automatically when that env var is
+      # set (which GHA populates). Exit codes:
+      #   0  all scenarios pass OR no references committed yet (advisory)
+      #   2  at least one scenario failed to boot / capture
+      #   3  at least one scenario compared below threshold (regression)
+      #   4  ImageMagick compare reported an internal error
+      - name: Run visual regression (or seed refs on manual dispatch)
+        id: visual
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] \
+             && [ "${{ inputs.update_refs }}" = "true" ]; then
+            bash scripts/test-visual-regression.sh --accel tcg --update-refs
+          else
+            bash scripts/test-visual-regression.sh --accel tcg
+          fi
+
+      # On failure, upload every PNG the runner produced: the captures
+      # (build/visual-*.png), the diffs (build/visual-*.diff.png), the
+      # test-desktop screenshot (build/desktop-smoke.png), and the serial
+      # log tail for triage. Retention is short since diff images are
+      # triage-only; reference images live in tree.
+      - name: Upload capture + diff artifacts on failure
+        if: failure()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-regression-diffs
+          path: |
+            build/visual-*.png
+            build/visual-*.diff.png
+            build/desktop-smoke.png
+            build/desktop-smoke-*.log
+          retention-days: 7
+          if-no-files-found: warn
+
+      # On workflow_dispatch with update_refs=true, upload the fresh
+      # tests/references/ snapshot so a maintainer can download, inspect,
+      # and commit intentionally. Do NOT auto-commit from CI.
+      - name: Upload fresh references (manual dispatch only)
+        if: github.event_name == 'workflow_dispatch' && inputs.update_refs
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: tests-references-fresh
+          path: tests/references/
+          retention-days: 7
+          if-no-files-found: error

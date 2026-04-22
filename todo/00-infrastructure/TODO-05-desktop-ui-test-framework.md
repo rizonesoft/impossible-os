@@ -52,7 +52,7 @@
 | 💎  |   4   | Input event injection (key press, mouse click)     | --            |  [x]   |
 | 💎  |   5   | Terminal output verification                       | §4            |  [x]   |
 | ⭐  |   6   | Reference screenshot comparison                    | §2            |  [x]   |
-| ⭐  |   7   | Visual regression CI pipeline                      | §3, §6        |  [ ]   |
+| ⭐  |   7   | Visual regression CI pipeline                      | §3, §6        |  [x]   |
 | ⭐  |   8   | Window manager state verification                  | §4            |  [ ]   |
 | ⭐  |   9   | Perceptual diff + structured screenshot needles    | §6            |  [ ]   |
 | 💎  |  10   | Frame timing + drop oracle (`wm_get_frame_stats`)  | --            |  [ ]   |
@@ -237,18 +237,33 @@ Compare current screenshots against known-good reference images.
 
 Run desktop tests in CI and catch visual regressions.
 
-- [ ] GitHub Actions step: boot QEMU headless with VNC or `-display none`
-- [ ] After DESKTOP_READY: capture screenshot via monitor
-- [ ] Compare against stored reference images
-- [ ] Upload diff images as artifacts on failure
-- [ ] Add to step summary: `### UI Tests: 3/3 visual checks passed ✅`
-- [ ] Update reference images: `make update-ui-refs` captures new baselines
-- [ ] Commit: `"ci: visual regression testing; screenshot comparison in GitHub Actions"`
+- [x] `.github/workflows/visual-regression.yml` -- new GHA workflow: caches LLVM, installs deps (ImageMagick + netcat alongside the build set), builds OS, runs `scripts/test-visual-regression.sh --accel tcg`, uploads diff artifacts on failure. Boots QEMU with `-display none` via the delegated `scripts/test-desktop.sh` call.
+- [x] Capture after DESKTOP_READY: reuses `scripts/test-desktop.sh` for the boot + first-paint wait + `screendump` via HMP monitor, then copies `build/desktop-smoke.png` into `build/visual-<scenario>.png` for the comparison step.
+- [x] Compare against stored reference images via `scripts/compare-screenshot.sh` (§6) at the default 95% threshold / 2% fuzz.
+- [x] Upload diff images as artifacts on failure: `build/visual-*.png`, `build/visual-*.diff.png`, `build/desktop-smoke.png`, and the serial log tail; 7-day retention.
+- [x] Step summary: `scripts/test-visual-regression.sh` writes the markdown block (`### UI Tests: N/M visual checks passed ✅` plus a per-scenario table) to `$GITHUB_STEP_SUMMARY` when GHA sets it, and to stdout otherwise.
+- [x] `make update-ui-refs` captures new baselines by running the runner with `--update-refs`, which copies each `build/visual-<scenario>.png` into `tests/references/<scenario>-<WxH>.png`. `workflow_dispatch` with `update_refs=true` runs the same path in CI and uploads the fresh reference set as an artifact for review (NOT auto-committed).
+- [x] `make test-visual` shortcut for the local run; both targets are listed in `.PHONY`.
+- [x] Four-level exit code surface documented in the runner header: 0 pass (or advisory pristine state), 2 capture/boot failure, 3 product regression, 4 harness/compare internal error. Compare-internal failures (dim mismatch, decode error) are tracked separately from true mismatches so the workflow surfaces "harness broken" vs "screenshot regressed" as distinct states. Codex [H] adversarial review.
+- [x] Pristine baseline-set handling: when `tests/references/` has no PNG for the expected `<scenario>-<WxH>.png`, the job exits 0 AND emits a `::warning title=Visual regression gate advisory::` annotation so the Checks tab surfaces that gating is off until a maintainer seeds the set. Codex [M].
+- [x] Concurrency group keyed by event name AND ref so a manual `update_refs=true` dispatch on `main` does not cancel the regular push/PR validation on the same ref; `cancel-in-progress` stays true for push/PR but false for `workflow_dispatch`. Codex [M].
+- [x] Commit: `"ci: visual regression testing; screenshot comparison in GitHub Actions"`
 
 **Test checkpoint:** Intentional compositor diff in a PR triggers visual-regression job; job exits non-zero, uploads diff PNG, step summary shows `MISMATCH`. Clean PR (no compositor changes) exits zero with `### UI Tests: N/N visual checks passed`.
 **Platforms:** GitHub Actions `ubuntu-latest` TCG runner only (per T01 §6 policy). No WHPX / VBox / bare-metal CI path; those remain local.
 
 **Regression risk:** MEDIUM; reference images are environment-dependent (QEMU version, font rendering). Use generous tolerance (95%) and update refs when intentional changes land.
+
+> **Test runner:** N/A (host-side CI workflow + shell runner; no kernel test surface) | validation: runner dry-run PASS for unknown-scenario path (rc=2), compare internal-error routing PASS (`compare-screenshot.sh` rc=3 on dim mismatch routes through `COMPARE_INTERNAL` bucket to runner rc=4), lint clean, `scripts/test-tooling.sh --quiet` 81/81 PASS, `scripts/test-ai-system.sh --quiet` 72/72 PASS. First real CI run seeds baselines via `workflow_dispatch update_refs=true`.
+> **Notes:**
+> - Shipped `.github/workflows/visual-regression.yml` (CI job) + `scripts/test-visual-regression.sh` (host runner, ~220 LOC) + two Makefile targets (`test-visual`, `update-ui-refs`). The workflow installs the extra ImageMagick / netcat deps on top of the build baseline, builds the OS, and runs the visual-regression runner against the committed reference set.
+> - Runner design: a scenario table (currently just `idle`, extendable by editing `scenario_capture()`) drives boot + capture + compare; each scenario leaves its capture at `build/visual-<scenario>.png` and its diff at `build/visual-<scenario>.diff.png`. The runner emits `::warning::` annotations when no baseline exists and writes a GitHub-formatted step-summary table listing `Scenario | Result | Identical | Artifact` for every scenario.
+> - Tolerance reuses §6 defaults (`--threshold 95`, `--fuzz 2`), overridable via `VR_THRESHOLD` / `VR_FUZZ`. Harness errors (compare rc 3/4) are tracked in a separate `COMPARE_INTERNAL` bucket and route to runner exit 4, distinct from product regressions (runner exit 3).
+> - Reference-seeding path: `make update-ui-refs` (local) or `workflow_dispatch` with `update_refs=true` (CI, uploads as artifact, does not auto-commit). Maintainers inspect the artifact or local output, then intentionally commit the PNG(s) under `tests/references/`.
+> - Canonical doc: `.github/workflows/visual-regression.yml` (pipeline structure, triggers, artifact policy), `scripts/test-visual-regression.sh` header (scenarios table + exit codes), `tests/references/README.md` (reference naming + update recipe).
+> - Scope boundary: §7 ships the CI wiring + runner + reference-seeding knobs. §6 owns the pixel-diff primitive, §9 owns SSIM + openQA-style exclude regions, §13 owns per-monitor references for multi-output configurations, §15 owns the failure-bundle consumer that will also store the rejected diffs.
+> **Verified:** 2026-04-22 | 10/10 items | build OK | lint clean | manual (runner dry-run PASS, compare-internal routing PASS, no-refs advisory + `::warning::` verified)
+> **Quality reviewed:** 2026-04-22 | Codex 1x (adversarial) | 1H+2M+0L fixed, 0 open | scope: N/A (host-side CI workflow + shell runner; no domain code-quality skill)
 
 ---
 
