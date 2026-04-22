@@ -163,10 +163,15 @@ jobs:
 
       # ── Unit tests ──────────────────────────────────────────────────────────
       # GHA ubuntu-latest does not expose /dev/kvm reliably -- test.sh falls
-      # back to TCG. Job-level timeout-minutes caps runaway runs. Serial
-      # output goes to build/test.log, uploaded on failure below.
+      # back to TCG. TCG on the shared runner is ~10x slower than KVM, so
+      # the default 60s TIMEOUT is too tight once the suite crosses ~400
+      # registered cases (the desktop UI frame-timing oracle work on
+      # 2026-04-22 landed the 587th suite and pushed the TCG run past
+      # the 60s wall). Bump to 300s; the job-level `timeout-minutes: 15`
+      # still caps runaway runs. Serial output goes to build/test.log,
+      # uploaded on failure below.
       - name: Run unit tests
-        run: bash scripts/test.sh QUIET=1
+        run: TIMEOUT=300 bash scripts/test.sh QUIET=1
 
       # ── Optional disk-image artifact (manual runs only) ────────────────────
       # The raw disk image is by far the largest CI artifact and quickly burns

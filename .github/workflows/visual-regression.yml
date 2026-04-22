@@ -152,7 +152,7 @@ jobs:
             build/visual-*.diff.png
             build/desktop-smoke.png
             build/desktop-smoke-*.log
-          retention-days: 7
+          retention-days: 1
           if-no-files-found: warn
 
       # On workflow_dispatch with update_refs=true, upload the fresh
