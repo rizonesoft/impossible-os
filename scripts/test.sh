@@ -233,6 +233,17 @@ fi
 # Extract numbers
 PASSED=$(echo "$SUMMARY" | grep -oP '\d+(?= tests? passed)' || echo "0")
 FAILED=$(echo "$SUMMARY" | grep -oP '\d+(?= FAILED)' || echo "0")
+# -9 CI-gating: leaks were advisory while the retrofit was in flight;
+# now that every existing suite reaches L=0, promote unannotated leaks
+# into the failure count so a new regression cannot silently pollute
+# the summary. TEST_EXPECT_LEAK / TEST_LEAK_IGNORE annotations
+# suppress the counter entirely at the kernel level, so a legitimate
+# deliberate leak never reaches this gate.
+LEAKED=$(echo "$SUMMARY" | grep -oP '\d+(?= leaked)' || echo "0")
+LEAKED=${LEAKED:-0}
+if [ "$LEAKED" -gt 0 ]; then
+    FAILED=$((${FAILED:-0} + LEAKED))
+fi
 
 # Show individual test results (filtered by suite if requested)
 echo ""

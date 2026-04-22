@@ -599,8 +599,11 @@ void test_runner_run(void)
     /* Single canonical summary including pending (deferred-feature
      * stubs) and leaked (suites with non-zero heap_get_used delta
      * absent TEST_EXPECT_LEAK). 'tests passed' prefix is load-bearing
-     * for scripts/test.sh's summary regex. Leaks are advisory until
-     * all existing tests reach L=0; then the runner will gate on them. */
+     * for scripts/test.sh's summary regex. scripts/test.sh parses the
+     * 'N leaked' number and folds it into FAILED -- any unannotated
+     * leak fails the test run (TODO-03 -9 CI-gating flip). Suites
+     * with intentional leaks use TEST_EXPECT_LEAK / TEST_LEAK_IGNORE
+     * which suppresses the counter at the kernel level. */
     if (g_test_state.failed == 0) {
         klog(LOG_INFO, "TEST",
              "=== %u tests passed, 0 failed, %u skipped, %u pending, %u leaked (%u.%us) ===",
