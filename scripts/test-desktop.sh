@@ -204,13 +204,27 @@ NONBLACK_PCT=""
 TOP_NONBLACK=""
 TASKBAR_DELTA=""
 
+LAST_CAPTURE_RC=0
 for attempt in $(seq 1 "$MAX_ATTEMPTS"); do
     info "capturing screenshot (attempt $attempt/$MAX_ATTEMPTS)..."
-    if ! QEMU_MONITOR_PORT="$MONITOR_PORT" \
-         QEMU_SCREENSHOT_MIN=0 \
-         bash "$SCRIPT_DIR/qemu-screenshot.sh" "$PNG"; then
-        fail "screenshot capture failed (attempt $attempt)"
-        exit 3
+    QEMU_MONITOR_PORT="$MONITOR_PORT" \
+    QEMU_SCREENSHOT_MIN=0 \
+        bash "$SCRIPT_DIR/qemu-screenshot.sh" "$PNG"
+    LAST_CAPTURE_RC=$?
+    if [ "$LAST_CAPTURE_RC" -ne 0 ]; then
+        # Precondition failures (exit 1 = tool missing, invalid path) are
+        # not retriable -- surface immediately. Transient monitor/PPM/PNG
+        # errors (exit 2/3/4/5) can legitimately recover on a later attempt
+        # if the VM is still in the paint window; keep retrying until the
+        # last attempt, then surface the final error code.
+        # Codex [M] quality review.
+        if [ "$LAST_CAPTURE_RC" = "1" ] || [ "$attempt" -ge "$MAX_ATTEMPTS" ]; then
+            fail "screenshot capture failed (attempt $attempt, exit $LAST_CAPTURE_RC)"
+            exit 3
+        fi
+        warn "capture failed with exit $LAST_CAPTURE_RC -- retrying in ${ATTEMPT_SLEEP}s..."
+        sleep "$ATTEMPT_SLEEP"
+        continue
     fi
 
     # Full-frame "non-black" percentage. ImageMagick -threshold 6%
