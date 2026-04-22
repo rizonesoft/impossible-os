@@ -1448,9 +1448,11 @@ int task_exec(const uint8_t *data, uint64_t size)
      * exec_load_fmt also publishes the matched format name (pointer
      * into the static format-registry table) which we stash on the
      * task so the launcher can log which loader picked this binary.
-     * Populated BEFORE success is confirmed so the name is visible
-     * even if downstream task_exec steps fail -- exec_load_fmt
-     * writes NULL on failure, so a NULL loaded_format survives. */
+     * Cleared FIRST so a failing re-exec on an already-exec'd task
+     * does not leave the previous image's format name behind --
+     * readers of loaded_format must see NULL on failure, not stale
+     * state from the last successful exec. */
+    tasks[pid].loaded_format = (const char *)0;
     const char *fmt_name = (const char *)0;
     entry = exec_load_fmt(data, size, &exec_err, &fmt_name);
     if (entry == 0) {

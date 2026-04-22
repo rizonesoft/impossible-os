@@ -521,6 +521,10 @@ The launcher's spawned binaries are all crt0+libc ELF; the PE32+ and EIF loader 
 > - Canonical docs: `D02T17 §5` (EIF format spec), [`src/kernel/exec.c`](../../src/kernel/exec.c) (magic-byte dispatch registry), [`scripts/build-eif.py`](../../scripts/build-eif.py) (EIF build tool for any future flat-binary test fixture).
 > - Scope boundary: §15 owns loader-selection coverage; §9 owns syscall coverage; `D02T17 §10` owns PE base relocation; `D02T17 §8` owns PE per-process PML4 so PE loads do not mutate shared `kernel_pml4` (Codex [M] finding Accepted via XREF).
 
+> **Verified:** 2026-04-22 | commit `f0279dc0` | 7/7 items | build OK | smoke PASS (KVM 2.1s) | 3 loader binaries PASS
+> **Accepted:** [H] PE loader still maps images into shared `kernel_pml4` and `get_or_create_table()` leaves persistent User-bit upgrades on upper tables after rollback (reason: needs per-process PML4 infra, architectural scope) -> XREF: 02-kernel-core/TODO-17 §8 (item: "Map PE images into a per-process PML4 instead of the shared `kernel_pml4`" at line 213)
+> **Quality reviewed:** 2026-04-22 | Codex 2x (adversarial, quality) | 2H+1M fixed, 1H open | scope: userland-code-quality
+
 ---
 
 ## 16. Build Integration
