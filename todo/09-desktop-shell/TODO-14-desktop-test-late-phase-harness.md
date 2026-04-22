@@ -38,7 +38,7 @@
 | 5 | Virtio-GPU multi-output driver (scope-migration candidate to 08-graphics-ui) | -- | [ ] |
 | 6 | `\\?\ObjectManager\FrameStats` Ob pseudo-file | -- | [ ] |
 | 7 | QEMU HMP monitor UNIX-socket hardening (Linux shared hosts) | -- | [x] |
-| 8 | `scripts/test-visual-regression.sh` shared-session refactor | -- | [ ] |
+| 8 | `scripts/test-visual-regression.sh` shared-session refactor | -- | [x] |
 
 ## 1. Post-Desktop-Init Test Harness
 
@@ -154,14 +154,24 @@ TODO-05 §10 shipped the kernel-side counters + `wm_get_frame_stats()` reader. T
 
 `scripts/test-visual-regression.sh` delegates every scenario to `scripts/test-desktop.sh`, which boots a fresh QEMU instance per scenario. Fine for the current single `idle` scenario; linear-in-count for the §11 record/replay cases and §13 multi-monitor cases once those land in CI.
 
-- [ ] Refactor `scripts/test-visual-regression.sh` around a single QEMU session: boot once, run N scenarios, capture screenshot per scenario, teardown once.
-- [ ] Expose a per-scenario "needs fresh boot" property (comment or dedicated config file) for the cases that genuinely require kernel-state isolation; those still boot a fresh VM.
-- [ ] Inject the per-scenario setup between scenarios via `qemu-input.sh sendstring` + HMP `screendump` (UNIX socket from §7); avoid full reboot where possible.
-- [ ] Preserve the current single-scenario `idle` baseline behavior when `SCENARIOS` is unset or has one entry.
-- [ ] Commit: `"scripts: visual-regression shared-session capture loop"`
+- [x] Refactored `scripts/test-visual-regression.sh` around `session_start()` / `session_stop()` helpers that boot QEMU once with a per-PID UNIX socket (`/tmp/qemu-mon-visual-reg-$$.sock`), wait for DESKTOP_READY, and host all scenario captures against the shared socket via `qemu-screenshot.sh --socket`. Single EXIT/INT/TERM trap guarantees teardown + socket cleanup.
+- [x] `scenario_needs_fresh_boot()` function declares per-scenario isolation need. Any scenario that returns 0 (i.e. needs fresh boot) triggers the whole run to fall back to `scenario_capture_fresh()` (test-desktop.sh delegation) so shared-session state never bleeds into a scenario that demanded isolation. Today all scenarios are shared-session-friendly; future scenarios that touch non-idempotent state just flip the case-arm.
+- [x] `scenario_setup()` hook runs BETWEEN scenario captures against the shared session via `qemu-input.sh sendstring`/`sendkey` over the same socket. Idle is a no-op. Framework in place; future scenarios add case arms.
+- [x] Baseline preserved: `SCENARIO_COUNT <= 1` routes through `scenario_capture_fresh()` which keeps the existing test-desktop.sh invocation verbatim. `--update-refs` also forces fresh-boot per scenario so committed baselines are never tainted by cross-scenario state. `VR_FORCE_FRESH=1` debug override available.
+- [x] Commit: `"scripts: visual-regression shared-session capture loop"`
 
-**Test checkpoint:** `scripts/test-visual-regression.sh` with 3 scenarios completes in less than `3 * (single-scenario-wall-time)`; wall-time savings come from amortized boot. Per-scenario screenshots differ as expected; no false-match from stale VM state.
+**Test checkpoint:** `scripts/test-visual-regression.sh --scenarios "idle idle"` shows one `DESKTOP_READY` line + two capture blocks (shared session). `scripts/test-visual-regression.sh` (single scenario, default) shows the existing test-desktop.sh path unchanged. `VR_FORCE_FRESH=1` or a needs_fresh_boot scenario reverts to per-scenario boot. All paths clean up socket + OVMF_VARS on EXIT/INT/TERM.
 **Platforms:** Host-side.
+
+> **Test runner:** N/A (host-side script change) | validation: `bash scripts/test-visual-regression.sh --accel tcg --scenarios "idle idle"` confirms one QEMU boot + N captures over the shared socket; single-scenario `idle` run preserves test-desktop.sh delegation; `ls /tmp/qemu-mon-visual-reg-*.sock` empty after run.
+> **Notes:**
+> - Shipped `session_start()` + `session_stop()` helpers that inline the boot / DESKTOP_READY-wait / teardown sequence from test-desktop.sh against a per-PID UNIX socket (`/tmp/qemu-mon-visual-reg-$$.sock`). Single trap on EXIT/INT/TERM guarantees cleanup.
+> - Scenario table split into `scenario_capture_fresh()` (fresh VM per scenario, used for single-scenario / update-refs / needs_fresh_boot / VR_FORCE_FRESH paths) and `scenario_capture_shared()` (uses the running session via `qemu-screenshot.sh --socket`, with `scenario_setup()` called first for input-driven scenarios).
+> - `qemu-input.sh` gained `--socket <path>` / `QEMU_MONITOR_SOCKET` support mirroring the §7 hardening in `qemu-screenshot.sh`; the shared-session setup hook invokes it over the same socket so cross-user HMP access stays blocked.
+> - Baseline preserved: `SCENARIOS="idle"` (default) runs `scenario_capture_fresh` exactly as before -- CI wall-time is identical for the one-scenario case today. Multi-scenario runs pay the boot cost once instead of N times.
+> - Canonical doc: `scripts/test-visual-regression.sh` header (session model + scenarios table); `scripts/qemu-input.sh` header (socket env var).
+> - Scope boundary: §8 owns the host-side test driver. It does NOT extend the scenarios list (still just `idle` today); new scenarios land alongside §11 record/replay fixtures (TODO-14 §3) and §13 multi-monitor work. §7 hardening is an upstream dependency -- shared-session relies on the UNIX-socket transport.
+> **Verified:** 2026-04-23 | 5/5 items | build OK (script-only) | manual: single-scenario baseline PASS + shared-session 2-scenario run confirmed (one DESKTOP_READY, two captures)
 
 ## OS Comparison
 
@@ -174,7 +184,7 @@ TODO-05 §10 shipped the kernel-side counters + `wm_get_frame_stats()` reader. T
 | 💎 | Virtio-GPU multi-output               | ⚠️ Hyper-V virtual display    | ✅ virtio-gpu + KMS               | ⚠️ §5 planned (matrix rows SKIPped)     |
 | ⭐ | OS-level frame-stats pseudo-file      | ❌ DwmGetCompositionTimingInfo API only | ❌ no pseudo-file          | ⚠️ §6 planned (counters ship today)     |
 | 💎 | CI monitor socket security            | N/A (vmconnect.exe)           | ✅ QEMU `-monitor unix:` common   | ✅ Done §7 unix sock + 0600 perms       |
-| ⭐ | Shared-session visual regression      | ⚠️ Playwright-style per tool  | ⚠️ openQA per-test VM default     | ⚠️ §8 planned (linear-boot today)       |
+| ⭐ | Shared-session visual regression      | ⚠️ Playwright-style per tool  | ⚠️ openQA per-test VM default     | ✅ Done §8 amortized boot + fresh opt-in |
 
 ## Unit Tests
 

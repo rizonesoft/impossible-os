@@ -17,8 +17,13 @@
 # `ctrl-a`/`alt-f4`/etc. See QEMU docs for the full keymap table.
 #
 # Environment:
-#   QEMU_MONITOR_HOST     default 127.0.0.1
-#   QEMU_MONITOR_PORT     default 4444
+#   QEMU_MONITOR_HOST     default 127.0.0.1 (TCP mode)
+#   QEMU_MONITOR_PORT     default 4444      (TCP mode)
+#   QEMU_MONITOR_SOCKET   UNIX-socket path; when set, `nc -U <path>` is
+#                         used instead of TCP. The `--socket <path>` flag
+#                         sets the same variable. Linux shared-host CI
+#                         should prefer this over TCP to avoid cross-user
+#                         monitor access.
 #   QEMU_MONITOR_TIMEOUT  seconds, default 5
 #
 # Exit codes:
@@ -27,6 +32,19 @@
 #   2  monitor unreachable within timeout
 
 set -u
+
+SOCKET_PATH="${QEMU_MONITOR_SOCKET:-}"
+
+# Parse --socket BEFORE positional args so it works at any position.
+POSITIONAL=()
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --socket) SOCKET_PATH="$2"; shift 2 ;;
+        --socket=*) SOCKET_PATH="${1#--socket=}"; shift ;;
+        *) POSITIONAL+=("$1"); shift ;;
+    esac
+done
+set -- "${POSITIONAL[@]+"${POSITIONAL[@]}"}"
 
 HOST="${QEMU_MONITOR_HOST:-127.0.0.1}"
 PORT="${QEMU_MONITOR_PORT:-4444}"
@@ -141,18 +159,30 @@ build_hmp() {
 CMD_STREAM=$(build_hmp "$@") || exit $?
 [ -n "$CMD_STREAM" ] || die 1 "internal: build_hmp produced empty command stream"
 
-info "sending to $HOST:$PORT:"
-printf '  %s\n' "$CMD_STREAM" | sed -e 's/^/    /'
-
 # --- Send to monitor ----------------------------------------------------
 
-# Same nc invocation pattern as qemu-screenshot.sh: -q 0 exits on EOF
-# immediately; do NOT send `quit` because that exits QEMU entirely rather
-# than closing the monitor connection. `server,nowait` keeps the monitor
-# listening for subsequent clients.
-if ! printf '%s' "$CMD_STREAM" \
-    | timeout "$MONITOR_TIMEOUT" nc -q 0 "$HOST" "$PORT" >/dev/null 2>&1; then
-    die 2 "monitor at $HOST:$PORT did not respond within ${MONITOR_TIMEOUT}s (is QEMU running with -monitor telnet:$HOST:$PORT,server,nowait ?)"
+# Transport selection mirrors qemu-screenshot.sh: UNIX socket when set,
+# TCP fallback otherwise. `nc -q 0` exits on EOF immediately; do NOT send
+# `quit` because that exits QEMU entirely rather than closing the
+# monitor connection. `server,nowait` keeps the monitor listening for
+# subsequent clients.
+if [ -n "$SOCKET_PATH" ]; then
+    if [ ! -S "$SOCKET_PATH" ]; then
+        die 2 "monitor socket not found or not a socket: $SOCKET_PATH"
+    fi
+    info "sending to unix:$SOCKET_PATH:"
+    printf '  %s\n' "$CMD_STREAM" | sed -e 's/^/    /'
+    if ! printf '%s' "$CMD_STREAM" \
+        | timeout "$MONITOR_TIMEOUT" nc -q 0 -U "$SOCKET_PATH" >/dev/null 2>&1; then
+        die 2 "monitor at unix:$SOCKET_PATH did not respond within ${MONITOR_TIMEOUT}s"
+    fi
+else
+    info "sending to $HOST:$PORT:"
+    printf '  %s\n' "$CMD_STREAM" | sed -e 's/^/    /'
+    if ! printf '%s' "$CMD_STREAM" \
+        | timeout "$MONITOR_TIMEOUT" nc -q 0 "$HOST" "$PORT" >/dev/null 2>&1; then
+        die 2 "monitor at $HOST:$PORT did not respond within ${MONITOR_TIMEOUT}s (is QEMU running with -monitor telnet:$HOST:$PORT,server,nowait ?)"
+    fi
 fi
 
 info "ok"
