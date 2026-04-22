@@ -172,7 +172,7 @@ Simulate keyboard and mouse events from kernel test code or QEMU monitor.
 > - Test-checkpoint dependency: the full `dir` + Enter -> `terminal_get_buffer()` roundtrip lives in §5 Terminal Output Verification (which creates `terminal_get_buffer()` itself). §4 validates the INJECTION mechanics in isolation; §5 validates the end-to-end pipeline.
 > - Canonical doc: `include/kernel/drivers/keyboard.h` (new `keyboard_reset_state()` declaration) + `scripts/qemu-input.sh` header comment block.
 > - Scope boundary: §4 owns kernel + host injection primitives. §5 consumes them for the terminal roundtrip. §8 (WM state introspection) will add receive-side assertions. §11 (Input Record and Replay) extends into trace capture / replay; the split press/release primitives were added specifically so §11 can record state edges faithfully.
-> **Verified:** 2026-04-22 | commit `PENDING` | 5/5 items | build OK | tests 29/29 PASS (TEST_CAT_DESKTOP, KVM)
+> **Verified:** 2026-04-22 | commit `e1b81ec2` | 5/5 items | build OK | tests 29/29 PASS (TEST_CAT_DESKTOP, KVM)
 > **Quality reviewed:** 2026-04-22 | Codex 1x (adversarial) | 2H+1M fixed | scope: kernel-code-quality
 
 ---
