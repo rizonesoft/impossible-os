@@ -100,6 +100,10 @@ static void test_ob_handle_table(void)
     HANDLE_TABLE_ENTRY *gone = ObpLookupHandle(&ht, h);
     TEST_ASSERT(gone == (void *)0 || gone->object == (void *)0,
                 "handle slot is empty after free");
+
+    /* -9 LEAK retrofit: drop creation ref + free entries array. */
+    ObDereferenceObject(body);
+    ob_handle_table_destroy(&ht);
 }
 
 /* ---- Named object: insert + lookup via ObLookupObjectByName ---- */
@@ -137,6 +141,10 @@ static void test_ob_duplicate_handle(void)
                 "duplicate handle still valid after source closed");
 
     ObpFreeHandle(&dst_ht, dst_h);
+    /* -9 LEAK retrofit. */
+    ObDereferenceObject(body);
+    ob_handle_table_destroy(&src_ht);
+    ob_handle_table_destroy(&dst_ht);
 }
 
 /* ---- ob_handle_table_inherit ---- */
@@ -159,6 +167,10 @@ static void test_ob_handle_inherit(void)
 
     ObpFreeHandle(&parent, h);
     ObpFreeHandle(&child, h);
+    /* -9 LEAK retrofit. */
+    ObDereferenceObject(body);
+    ob_handle_table_destroy(&parent);
+    ob_handle_table_destroy(&child);
 }
 
 /* ---- NtQueryDirectoryObject: enumerate root ---- */
@@ -180,6 +192,8 @@ static void test_ob_query_directory(void)
                 "root directory has >= 3 entries (Device, KernelObjects, BaseNamedObjects)");
 
     ObpFreeHandle(&ht, dir_h);
+    /* -9 LEAK retrofit. */
+    ob_handle_table_destroy(&ht);
 }
 
 /* ---- Per-type object and handle statistics (§12) ---- */
@@ -256,6 +270,7 @@ static void test_ob_type_stats(void)
     ObpFreeHandle(&ht, h2);
     ObDereferenceObject(o1);
     ObDereferenceObject(o2);
+    ob_handle_table_destroy(&ht);
 }
 
 /* ---- Object callbacks -- handle operation filtering (S13) ---- */
@@ -348,6 +363,7 @@ static void test_ob_callbacks(void)
     ObpFreeHandle(&ht, h);
     ObpFreeHandle(&ht, h2);
     ObDereferenceObject(obj);
+    ob_handle_table_destroy(&ht);
 }
 
 /* ---- Tagged reference tracing (S15) ---- */
@@ -454,6 +470,7 @@ static void test_ob_handle_quota(void)
     ObpFreeHandle(&ht, h2);
     ObpFreeHandle(&ht, h4);
     ObDereferenceObject(obj);
+    ob_handle_table_destroy(&ht);
 }
 
 /* ============================================================================
@@ -483,6 +500,34 @@ static void s17_build_oa(OBJECT_ATTRIBUTES *oa, UNICODE_STRING *us,
     oa->_pad2 = 0;
     oa->SecurityDescriptor = (void *)0;
     oa->SecurityQualityOfService = (void *)0;
+}
+
+/* -9 LEAK retrofit helper: unlink a named object from \BaseNamedObjects.
+ *
+ * NtClose drops the creator's handle ref, but named objects are pinned in
+ * the directory by the OB_FLAG_PERMANENT bit + the dir entry's own ref on
+ * the body. ObMakeTemporaryObject clears PERMANENT; ObpRemoveFromDirectory
+ * unlinks the OBJECT_DIRECTORY_ENTRY node, frees it, and drops the dir's
+ * ref on the body. Callers pass the exact OBJECT_TYPE so ObLookupObjectByName
+ * never follows a symlink (would return the target instead of the link body).
+ */
+static void test_ob_cleanup_named(const char *leaf,
+                                  const OBJECT_TYPE *type)
+{
+    char path[128];
+    void *body = NULL;
+    void *bno = NULL;
+
+    snprintf(path, sizeof(path), "\\BaseNamedObjects\\%s", leaf);
+    if (ObLookupObjectByName(path, type, 0, &body) != 0 || !body)
+        return;
+    ObMakeTemporaryObject(body);
+    if (ObLookupObjectByName("\\BaseNamedObjects", ObpDirectoryType, 0,
+                             &bno) == 0 && bno) {
+        ObpRemoveFromDirectory(bno, body);
+        ObDereferenceObject(bno);
+    }
+    ObDereferenceObject(body);
 }
 
 /* Test: NtCreateDirectoryObject + NtOpenDirectoryObject round-trip */
@@ -520,6 +565,12 @@ static void test_nt_create_open_directory(void)
         TEST_ASSERT(status == STATUS_OBJECT_NAME_COLLISION,
                     "Duplicate create returns STATUS_OBJECT_NAME_COLLISION");
     }
+
+    /* -9 LEAK retrofit cleanup. Drop both handles then unlink the
+     * directory from \BaseNamedObjects so the dir entry + body are freed. */
+    ssdt_dispatch(SSDT_NtClose, (uint64_t)create_h, 0, 0, 0, 0, 0);
+    ssdt_dispatch(SSDT_NtClose, (uint64_t)open_h, 0, 0, 0, 0, 0);
+    test_ob_cleanup_named("NtDirTest", ObpDirectoryType);
 }
 
 /* Test: NtOpenDirectoryObject on non-existent path */
@@ -590,6 +641,14 @@ static void test_nt_symlink_roundtrip(void)
         TEST_ASSERT(target_buf[0] == '\\' && target_buf[1] == 'B',
                     "Query returns target starting with \\B");
     }
+
+    /* -9 LEAK retrofit cleanup. Drop handles then unlink. Pass
+     * ObpSymlinkType so ObLookupObjectByName returns the link body
+     * itself -- without the type hint the lookup would follow the link
+     * to \BaseNamedObjects and we'd attempt to remove the root dir. */
+    ssdt_dispatch(SSDT_NtClose, (uint64_t)link_h, 0, 0, 0, 0, 0);
+    ssdt_dispatch(SSDT_NtClose, (uint64_t)open_h, 0, 0, 0, 0, 0);
+    test_ob_cleanup_named("NtSymLinkTest", ObpSymlinkType);
 }
 
 /* Test: NtQuerySymbolicLinkObject rejects non-symlink handle */
@@ -817,6 +876,9 @@ static void test_nt_section_named_open_query_extend(void)
     TEST_ASSERT(NT_SUCCESS(st), "NtClose open section");
     st = ssdt_dispatch(SSDT_NtClose, (uint64_t)cr, 0, 0, 0, 0, 0);
     TEST_ASSERT(NT_SUCCESS(st), "NtClose create section");
+
+    /* -9 LEAK retrofit cleanup -- unlink from \BaseNamedObjects. */
+    test_ob_cleanup_named("SectNamedX1", ObpSectionType);
 }
 
 static void test_nt_section_unmap_bad_base(void)
@@ -896,6 +958,8 @@ static void test_nt_timer_create_and_query(void)
     TEST_ASSERT(bi.RemainingTime.QuadPart == 0, "unarmed RemainingTime==0");
 
     ssdt_dispatch(SSDT_NtClose, (uint64_t)th, 0, 0, 0, 0, 0);
+    /* -9 LEAK retrofit. */
+    test_ob_cleanup_named("TimerTest19A", ObpTimerType);
 }
 
 static void test_nt_timer_set_cancel(void)
@@ -958,6 +1022,8 @@ static void test_nt_timer_set_cancel(void)
     TEST_ASSERT(current_state == 0, "second cancel: current state 0");
 
     ssdt_dispatch(SSDT_NtClose, (uint64_t)th, 0, 0, 0, 0, 0);
+    /* -9 LEAK retrofit. */
+    test_ob_cleanup_named("TimerTest19B", ObpTimerType);
 }
 
 static void test_nt_timer_open_existing(void)
@@ -988,6 +1054,8 @@ static void test_nt_timer_open_existing(void)
 
     ssdt_dispatch(SSDT_NtClose, (uint64_t)oh, 0, 0, 0, 0, 0);
     ssdt_dispatch(SSDT_NtClose, (uint64_t)ch, 0, 0, 0, 0, 0);
+    /* -9 LEAK retrofit. */
+    test_ob_cleanup_named("TimerTest19C", ObpTimerType);
 }
 
 static void test_nt_timer_wrong_type(void)
