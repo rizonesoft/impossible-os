@@ -17,6 +17,7 @@
  * the offending byte index baked in (per implement-unit-tests skill). */
 extern int snprintf(char *buf, size_t size, const char *fmt, ...);
 #include "kernel/cpu_security.h"
+#include "kernel/cpuid_platform.h"
 #include "kernel/topology.h"
 #include "kernel/pmc.h"
 #include "kernel/kpti.h"
@@ -914,6 +915,16 @@ static void test_pmc_info_valid(void)
 
 static void test_pmc_start_stop(void)
 {
+    /* TCG emulates the PMU MSRs but does not actually count instructions
+     * during a busy loop, so the counter stays at 0 and the post-spin
+     * `val > 0` assertion fires on the GHA TCG runner. The hardware
+     * (real CPU under KVM/WHPX/bare metal) does count, so skip only on
+     * TCG. Detected via CPUID 0x40000000 -> "TCGTCGTCGTCG" (see
+     * src/kernel/cpuid_platform.c:175). */
+    if (platform_is_tcg()) {
+        TEST_SKIP("PMC counters are unreliable on QEMU TCG");
+        return;
+    }
     if (!g_pmc_info.available) {
         TEST_SKIP("PMC not available");
         return;
@@ -950,6 +961,13 @@ static void test_pmc_out_of_range(void)
 
 static void test_pmc_ipc(void)
 {
+    /* Same TCG caveat as test_pmc_start_stop -- counters stay at 0 on
+     * the emulator, so the IPC ratio computation returns 0 and trips
+     * the assertion. Skip on TCG; KVM/WHPX/bare metal still exercise it. */
+    if (platform_is_tcg()) {
+        TEST_SKIP("PMC IPC ratio is 0 on QEMU TCG (counters do not advance)");
+        return;
+    }
     if (!g_pmc_info.available || g_pmc_info.num_counters < 2) {
         TEST_SKIP("PMC IPC requires 2+ counters");
         return;
