@@ -28,6 +28,10 @@
 #include "kernel/ob/ob_ns.h"
 #include "kernel/sched/task.h"
 
+/* snprintf is not in freestanding kernel headers; declared extern here
+ * at file scope for the -9 LEAK retrofit cleanup helper. */
+extern int snprintf(char *buf, size_t size, const char *fmt, ...);
+
 /* ---- Layout (PORT_MESSAGE is 40 bytes, fields at documented offsets) ---- */
 
 static void test_alpc_port_message_layout(void)
@@ -208,6 +212,37 @@ static void test_alpc_rpc_control_directory(void)
         ObDereferenceObject(dir);
 }
 
+/* -9 LEAK retrofit helper: unlink a named port from \RPC Control.
+ *
+ * AlpcCreatePort puts the port at ref=2 (handle + namespace entry).
+ * Closing the handle drops to ref=1 but the directory entry still
+ * pins the port body. Unlike \KernelObjects entries (set PERMANENT),
+ * ObInsertObject does NOT set OB_FLAG_PERMANENT -- so
+ * ObMakeTemporaryObject is a no-op here; only ObpRemoveFromDirectory
+ * drops the pinning ref + frees the entry node.
+ *
+ * Idempotent: returns quietly if the port is already gone (lookup
+ * fails). This lets paired-test helpers unlink once even when a
+ * test intentionally created-and-destroyed a port.
+ */
+static void test_alpc_cleanup_named(const char *leaf)
+{
+    char path[96];
+    void *body = (void *)0;
+    void *rpc_dir = (void *)0;
+
+    snprintf(path, sizeof(path), "\\RPC Control\\%s", leaf);
+    if (ObLookupObjectByName(path, ObpAlpcPortType, 0, &body) != 0 || !body)
+        return;
+    ObMakeTemporaryObject(body);
+    if (ObLookupObjectByName("\\RPC Control", ObpDirectoryType, 0,
+                             &rpc_dir) == 0 && rpc_dir) {
+        ObpRemoveFromDirectory(rpc_dir, body);
+        ObDereferenceObject(rpc_dir);
+    }
+    ObDereferenceObject(body);
+}
+
 static void test_alpc_create_unnamed_port(void)
 {
     HANDLE h = INVALID_HANDLE_VALUE;
@@ -248,6 +283,8 @@ static void test_alpc_create_named_port(void)
     }
     if (h != INVALID_HANDLE_VALUE)
         NtClose(&task_current()->handle_table, h);
+    /* -9 LEAK retrofit. */
+    test_alpc_cleanup_named("TestPort");
 }
 
 static void test_alpc_duplicate_name_rejected(void)
@@ -267,6 +304,8 @@ static void test_alpc_duplicate_name_rejected(void)
                    "duplicate-name handle left INVALID");
     if (h1 != INVALID_HANDLE_VALUE)
         NtClose(&task_current()->handle_table, h1);
+    /* -9 LEAK retrofit. */
+    test_alpc_cleanup_named("DupPort");
 }
 
 static void test_alpc_null_handle_table_rejected(void)
@@ -371,6 +410,8 @@ static void test_alpc_syscall_full_path(void)
         ObDereferenceObject(body);
     if (out != INVALID_HANDLE_VALUE)
         NtClose(&task_current()->handle_table, out);
+    /* -9 LEAK retrofit. */
+    test_alpc_cleanup_named("TestPortSyscall");
 }
 
 /* =========================================================================
@@ -443,6 +484,7 @@ static void test_alpc_accept_handshake(void)
     TEST_ASSERT(tid >= 0, "kthread_create(connect worker) succeeds");
     if (tid < 0) {
         NtClose(&task_current()->handle_table, server_conn);
+        test_alpc_cleanup_named("HsServer");
         return;
     }
 
@@ -486,11 +528,17 @@ static void test_alpc_accept_handshake(void)
                        "cross-link: client_comm->ConnectedPort == server_comm");
     }
 
+    /* -9 LEAK retrofit: break the ConnectedPort cross-link refs before
+     * handle close so the comm ports can cascade-free via on_delete. */
+    if (server_comm != INVALID_HANDLE_VALUE)
+        (void)AlpcDisconnectPort(&task_current()->handle_table, server_comm);
+
     if (server_comm != INVALID_HANDLE_VALUE)
         NtClose(&task_current()->handle_table, server_comm);
     if (s_conn_client_handle != INVALID_HANDLE_VALUE)
         NtClose(&task_current()->handle_table, s_conn_client_handle);
     NtClose(&task_current()->handle_table, server_conn);
+    test_alpc_cleanup_named("HsServer");
 }
 
 static void test_alpc_reject_handshake(void)
@@ -513,6 +561,7 @@ static void test_alpc_reject_handshake(void)
     TEST_ASSERT(tid >= 0, "reject: kthread_create succeeds");
     if (tid < 0) {
         NtClose(&task_current()->handle_table, server_conn);
+        test_alpc_cleanup_named("RjServer");
         return;
     }
 
@@ -535,6 +584,8 @@ static void test_alpc_reject_handshake(void)
                    "client handle rolled back on reject");
 
     NtClose(&task_current()->handle_table, server_conn);
+    /* -9 LEAK retrofit. */
+    test_alpc_cleanup_named("RjServer");
 }
 
 static void test_alpc_disconnect_queues_close_msg(void)
@@ -559,6 +610,7 @@ static void test_alpc_disconnect_queues_close_msg(void)
     if (tid < 0) {
         TEST_ASSERT(0, "disc kthread_create");
         NtClose(&task_current()->handle_table, server_conn);
+        test_alpc_cleanup_named("DcServer");
         return;
     }
 
@@ -594,6 +646,8 @@ static void test_alpc_disconnect_queues_close_msg(void)
     if (s_conn_client_handle != INVALID_HANDLE_VALUE)
         NtClose(&task_current()->handle_table, s_conn_client_handle);
     NtClose(&task_current()->handle_table, server_conn);
+    /* -9 LEAK retrofit. */
+    test_alpc_cleanup_named("DcServer");
 }
 
 static void test_alpc_connect_timeout(void)
@@ -622,6 +676,8 @@ static void test_alpc_connect_timeout(void)
                    "timeout path must NOT publish a handle");
 
     NtClose(&task_current()->handle_table, server_conn);
+    /* -9 LEAK retrofit. */
+    test_alpc_cleanup_named("TimeoutSrv");
 }
 
 static void test_alpc_accept_timeout(void)
@@ -648,6 +704,8 @@ static void test_alpc_accept_timeout(void)
                    "timeout path leaves out-handle INVALID");
 
     NtClose(&task_current()->handle_table, server_conn);
+    /* -9 LEAK retrofit. */
+    test_alpc_cleanup_named("AcceptTimeoutSrv");
 }
 
 static void test_alpc_disconnect_unconnected(void)
@@ -664,6 +722,8 @@ static void test_alpc_disconnect_unconnected(void)
     TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS,
                    "disconnect with no peer SUCCESS");
     NtClose(&task_current()->handle_table, h);
+    /* -9 LEAK retrofit. */
+    test_alpc_cleanup_named("LonelyDc");
 }
 
 static void test_alpc_syscall_bad_prefix_rejected(void)
@@ -707,6 +767,9 @@ static volatile HANDLE   s_sync_server_conn;
 static const char       *s_sync_target_name;
 static volatile NTSTATUS s_sync_send_status;
 static volatile int      s_sync_worker_done;
+/* -9 LEAK retrofit: the leaf name used by alpc_setup_pair so
+ * alpc_teardown_pair can unlink the named port from \RPC Control. */
+static const char       *s_sync_server_leaf;
 
 /* §4 connect-worker (file-static; replaces inline GCC-nested-function
  * pattern that clang -- the project compiler -- does not support). */
@@ -750,6 +813,7 @@ static HANDLE alpc_setup_pair(const char *server_name, HANDLE *server_comm)
 
     s_sync_server_conn = server_conn;
     s_sync_target_name = path;
+    s_sync_server_leaf = server_name;
 
     /* Worker calls AlpcConnectPort; we accept inline. */
     s_sync_client_handle = INVALID_HANDLE_VALUE;
@@ -768,17 +832,49 @@ static HANDLE alpc_setup_pair(const char *server_name, HANDLE *server_comm)
 
     *server_comm = sc;
     client_h = s_sync_client_handle;
+
+    /* -9 LEAK retrofit: if setup never produced a client handle (worker
+     * failed to connect, or accept timed out), callers bail without
+     * invoking alpc_teardown_pair. Clean up server_conn + the named
+     * entry here so the failure path cannot leak. */
+    if (client_h == INVALID_HANDLE_VALUE) {
+        if (sc != INVALID_HANDLE_VALUE)
+            NtClose(&task_current()->handle_table, sc);
+        NtClose(&task_current()->handle_table, server_conn);
+        s_sync_server_conn = INVALID_HANDLE_VALUE;
+        test_alpc_cleanup_named(server_name);
+        s_sync_server_leaf = (const char *)0;
+    }
     return client_h;
 }
 
 static void alpc_teardown_pair(HANDLE client_h, HANDLE server_comm)
 {
     HANDLE_TABLE *ht = &task_current()->handle_table;
+
+    /* -9 LEAK retrofit: explicitly disconnect both sides before closing
+     * handles. ConnectedPort cross-links each hold a ref on the peer
+     * (set at alpc_port.c:786-792); handle close alone drops only the
+     * handle ref, leaving the comm ports pinning each other at ref=1
+     * forever. AlpcDisconnectPort clears the caller's ConnectedPort +
+     * drops that ref, so once both sides disconnect neither comm port
+     * has an inbound cross-link and the final handle close cascades
+     * into on_delete + body free. */
+    if (client_h != INVALID_HANDLE_VALUE)
+        (void)AlpcDisconnectPort(ht, client_h);
+    if (server_comm != INVALID_HANDLE_VALUE)
+        (void)AlpcDisconnectPort(ht, server_comm);
+
     if (client_h != INVALID_HANDLE_VALUE) NtClose(ht, client_h);
     if (server_comm != INVALID_HANDLE_VALUE) NtClose(ht, server_comm);
     if (s_sync_server_conn != INVALID_HANDLE_VALUE)
         NtClose(ht, s_sync_server_conn);
     s_sync_server_conn = INVALID_HANDLE_VALUE;
+    /* Unlink the named connection port from \RPC Control. */
+    if (s_sync_server_leaf) {
+        test_alpc_cleanup_named(s_sync_server_leaf);
+        s_sync_server_leaf = (const char *)0;
+    }
 }
 
 /* ---- §4.1 Datagram send delivers to peer's MessageQueue --------------- */
@@ -1083,7 +1179,10 @@ static void test_alpc_pool_quota_exceeded(void)
 
     HANDLE client_h = s_sync_client_handle;
     if (client_h == INVALID_HANDLE_VALUE) {
+        if (server_comm != INVALID_HANDLE_VALUE)
+            NtClose(&task_current()->handle_table, server_comm);
         NtClose(&task_current()->handle_table, server_conn);
+        test_alpc_cleanup_named("TightPool");
         return;
     }
 
@@ -1101,9 +1200,12 @@ static void test_alpc_pool_quota_exceeded(void)
     TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_INSUFFICIENT_RESOURCES,
                    "send exceeding MaxPoolUsage => INSUFFICIENT_RESOURCES");
 
+    /* -9 LEAK retrofit: disconnect to break the cross-link ref cycle. */
+    (void)AlpcDisconnectPort(&task_current()->handle_table, server_comm);
     NtClose(&task_current()->handle_table, client_h);
     NtClose(&task_current()->handle_table, server_comm);
     NtClose(&task_current()->handle_table, server_conn);
+    test_alpc_cleanup_named("TightPool");
 }
 
 /* ---- §4.8 Receive-only path: FIFO + truncation ------------------------ */
@@ -1461,6 +1563,8 @@ static void test_alpc_sync_no_peer(void)
                    "sync send with no peer => PORT_DISCONNECTED");
 
     NtClose(&task_current()->handle_table, h);
+    /* -9 LEAK retrofit. */
+    test_alpc_cleanup_named("NoPeer");
 }
 
 /* ---- §4.12 NtAlpcSendWaitReceivePort syscall validation -------------- */
@@ -2021,7 +2125,10 @@ static void test_alpc_waitable_port_signal(void)
     thread_join((uint32_t)tid);
     HANDLE client_h = s_sync_client_handle;
     if (client_h == INVALID_HANDLE_VALUE) {
+        if (server_comm != INVALID_HANDLE_VALUE)
+            NtClose(&task_current()->handle_table, server_comm);
         NtClose(&task_current()->handle_table, server_conn);
+        test_alpc_cleanup_named("WaitPort");
         return;
     }
 
@@ -2068,9 +2175,12 @@ static void test_alpc_waitable_port_signal(void)
     TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_TIMEOUT,
                    "waitable drained => TIMEOUT again");
 
+    /* -9 LEAK retrofit: break cross-link before close. */
+    (void)AlpcDisconnectPort(&task_current()->handle_table, server_comm);
     NtClose(&task_current()->handle_table, client_h);
     NtClose(&task_current()->handle_table, server_comm);
     NtClose(&task_current()->handle_table, server_conn);
+    test_alpc_cleanup_named("WaitPort");
 }
 
 /* ---- §5.3 Non-waitable port rejected ---------------------------------- */
@@ -2093,6 +2203,8 @@ static void test_alpc_nonwaitable_rejects(void)
                    "non-waitable port rejects NtWaitForSingleObject");
 
     NtClose(&task_current()->handle_table, h);
+    /* -9 LEAK retrofit. */
+    test_alpc_cleanup_named("NotWaitable");
 }
 
 /* ---- §5.1/§5.2 NtAlpcSetInformation: AssociateCompletionPort --------- */
@@ -2124,7 +2236,12 @@ static void test_alpc_associate_completion_port(void)
     thread_join((uint32_t)tid);
     HANDLE client_h = s_sync_client_handle;
     if (client_h == INVALID_HANDLE_VALUE) {
+        if (server_comm != INVALID_HANDLE_VALUE)
+            NtClose(&task_current()->handle_table, server_comm);
         NtClose(&task_current()->handle_table, server_conn);
+        if (iocp != INVALID_HANDLE_VALUE)
+            NtClose(&task_current()->handle_table, iocp);
+        test_alpc_cleanup_named("IocpPort");
         return;
     }
 
@@ -2184,9 +2301,13 @@ static void test_alpc_associate_completion_port(void)
     TEST_ASSERT_EQ((uint32_t)rx->DataLength, 8u,
                    "iocp: body DataLength intact");
 
+    /* -9 LEAK retrofit: break cross-link + drop IOCP handle. */
+    (void)AlpcDisconnectPort(&task_current()->handle_table, server_comm);
     NtClose(&task_current()->handle_table, client_h);
     NtClose(&task_current()->handle_table, server_comm);
     NtClose(&task_current()->handle_table, server_conn);
+    NtClose(&task_current()->handle_table, iocp);
+    test_alpc_cleanup_named("IocpPort");
 }
 
 /* ---- SetInfo with bad IOCP handle ------------------------------------- */
@@ -2214,6 +2335,8 @@ static void test_alpc_associate_bad_iocp(void)
                    "bad IOCP handle => INVALID_HANDLE");
 
     NtClose(&task_current()->handle_table, h);
+    /* -9 LEAK retrofit. */
+    test_alpc_cleanup_named("BadIocp");
 }
 
 /* ---- SetInfo unknown info class --------------------------------------- */
@@ -2237,6 +2360,8 @@ static void test_alpc_setinfo_unknown_class(void)
                    "unknown info class => NOT_IMPLEMENTED (pending section 9)");
 
     NtClose(&task_current()->handle_table, h);
+    /* -9 LEAK retrofit. */
+    test_alpc_cleanup_named("BadClass");
 }
 
 /* ---- Registration ------------------------------------------------------ */
