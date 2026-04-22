@@ -719,7 +719,10 @@ uint64_t schedule_now(struct interrupt_frame *frame)
              (uint64_t)next_task,
              (uint64_t)(uptime() - tasks[next_task].exec_pending_tick));
     }
-    tasks[next_task].exec_pending = 0;  /* clear on switch-in */
+    /* Release-store so a future cross-CPU acquirer in the save-gate
+     * above sees the zero together with every write that preceded
+     * this point (rsp, state, kernel_gs_base). */
+    __atomic_store_n(&tasks[next_task].exec_pending, 0u, __ATOMIC_RELEASE);
     tasks[next_task].exec_pending_tick = 0;
     current_task = next_task;
     current_thread = next_thread;
@@ -749,15 +752,72 @@ uint64_t schedule_now(struct interrupt_frame *frame)
 
     /* KERNEL_GS_BASE switch: save prev thread's TEB, load next thread's TEB.
      * swapgs in the ISR stub handles ring transition; this handles
-     * switching between threads with different TEBs (same or different task). */
+     * switching between threads with different TEBs (same or different task).
+     *
+     * Two TODO-04 -17 hardening pieces are baked in here:
+     *
+     * (1) Exec-pending save-gate: when prev_task is still exec_pending
+     *     (task_exec set kernel_gs_base = TEB but the first switch-in
+     *     has not yet programmed the MSR), skip the save-before-write.
+     *     The MSR holds the stale kernel value from before task_exec,
+     *     and saving it here would overwrite the TEB pointer. On the
+     *     FIRST ring-3 entry swapgs would then put 0 into user GS_BASE
+     *     and every `gs:<off>` read page-faults at CR2=<off>. Root cause
+     *     of the original "silent gs:0x40 hang on WHPX" -- the probe
+     *     binary surfaced it as CR2=0x30 at user RIP, the TEB address
+     *     was known good on the task but the thread slot got zeroed.
+     *
+     * (2) MSR readback invariant: after msr_write, re-read and fatal-log
+     *     on mismatch. Converts a hypervisor that silently swallows the
+     *     MSR write into a visible named crash at the write site --
+     *     better than the silent TEB corruption that previously had no
+     *     diagnostic surface. Cost: one RDMSR per context switch (~30
+     *     cycles). Always-on, no debug-build gate. */
     if (prev_task != next_task || prev_thread != next_thread) {
         uint64_t new_gs = tasks[next_task].threads[next_thread].kernel_gs_base;
-        tasks[prev_task].threads[prev_thread].kernel_gs_base =
-            msr_read(MSR_IA32_KERNEL_GS_BASE);
+        /* Atomic-load exec_pending: Impossible OS's scheduler today is
+         * single-CPU (global `current_task` cursor, no per-CPU run
+         * queues), so a cross-CPU race is not reachable at this point.
+         * The __atomic_load here is belt-and-suspenders for the future
+         * SMP scheduler redesign -- when per-CPU run queues land, the
+         * exec_pending flag handoff between CPU-A (switching away from
+         * prev) and CPU-B (switching in to prev, clearing the flag)
+         * needs acquire-semantics visibility so the save-gate cannot
+         * clobber the TEB-primed thread slot. */
+        if (!__atomic_load_n(&tasks[prev_task].exec_pending,
+                             __ATOMIC_ACQUIRE)) {
+            tasks[prev_task].threads[prev_thread].kernel_gs_base =
+                msr_read(MSR_IA32_KERNEL_GS_BASE);
+        }
         /* NULL guard: kernel threads have kernel_gs_base == 0; writing 0
          * would clobber the MSR for no benefit (no swapgs on ring-0 return). */
-        if (new_gs)
+        if (new_gs) {
             msr_write(MSR_IA32_KERNEL_GS_BASE, new_gs);
+            uint64_t rb = msr_read(MSR_IA32_KERNEL_GS_BASE);
+            if (rb != new_gs)
+                klog(LOG_FATAL, "sched",
+                     "MSR_KERNEL_GS_BASE corrupted on preemptive switch: "
+                     "wrote=0x%X read=0x%X (task=%u thread=%u)",
+                     new_gs, rb,
+                     (uint64_t)next_task, (uint64_t)next_thread);
+        } else if (tasks[next_task].teb ||
+                   tasks[next_task].threads[next_thread].teb) {
+            /* TEB exists on the task OR on the specific thread but its
+             * kernel_gs_base slot is 0. This is FAIL-CLOSED: returning
+             * to ring 3 with GS_BASE=0 guarantees a user-mode page
+             * fault on the first `gs:<off>` read with no useful
+             * diagnostic. Panic now so the corruption is named at the
+             * scheduler, not later in user code. Two checks because
+             * tasks[].teb is the main-thread TEB and threads[tid].teb
+             * covers secondary threads; either one non-NULL is enough
+             * to prove ring-3 intent. */
+            klog(LOG_FATAL, "sched",
+                 "ring-3 task %u thread %u has TEB but kernel_gs_base=0 "
+                 "(task.teb=%p thread.teb=%p)",
+                 (uint64_t)next_task, (uint64_t)next_thread,
+                 (uint64_t)(uintptr_t)tasks[next_task].teb,
+                 (uint64_t)(uintptr_t)tasks[next_task].threads[next_thread].teb);
+        }
     }
 
     /* FPU/SIMD restore for cooperative path (mirrors preemptive schedule) */
@@ -899,7 +959,7 @@ uint64_t schedule(struct interrupt_frame *frame)
              (uint64_t)next_task,
              (uint64_t)(uptime() - tasks[next_task].exec_pending_tick));
     }
-    tasks[next_task].exec_pending = 0;
+    __atomic_store_n(&tasks[next_task].exec_pending, 0u, __ATOMIC_RELEASE);
     tasks[next_task].exec_pending_tick = 0;
     current_task = next_task;
     current_thread = next_thread;
@@ -926,13 +986,39 @@ uint64_t schedule(struct interrupt_frame *frame)
             __asm__ volatile("mov %0, %%cr3" : : "r"(new_cr3) : "memory");
     }
 
-    /* KERNEL_GS_BASE switch: save prev thread's TEB, load next thread's TEB */
+    /* KERNEL_GS_BASE switch -- same two -17 hardening pieces as
+     * schedule_now(): exec_pending save-gate + MSR readback invariant. */
     if (prev_task != next_task || prev_thread != next_thread) {
         uint64_t new_gs = tasks[next_task].threads[next_thread].kernel_gs_base;
-        tasks[prev_task].threads[prev_thread].kernel_gs_base =
-            msr_read(MSR_IA32_KERNEL_GS_BASE);
-        if (new_gs)
+        /* Atomic-load exec_pending: Impossible OS's scheduler today is
+         * single-CPU (global `current_task` cursor, no per-CPU run
+         * queues), so a cross-CPU race is not reachable at this point.
+         * The __atomic_load here is belt-and-suspenders for the future
+         * SMP scheduler redesign -- when per-CPU run queues land, the
+         * exec_pending flag handoff between CPU-A (switching away from
+         * prev) and CPU-B (switching in to prev, clearing the flag)
+         * needs acquire-semantics visibility so the save-gate cannot
+         * clobber the TEB-primed thread slot. */
+        if (!__atomic_load_n(&tasks[prev_task].exec_pending,
+                             __ATOMIC_ACQUIRE)) {
+            tasks[prev_task].threads[prev_thread].kernel_gs_base =
+                msr_read(MSR_IA32_KERNEL_GS_BASE);
+        }
+        if (new_gs) {
             msr_write(MSR_IA32_KERNEL_GS_BASE, new_gs);
+            uint64_t rb = msr_read(MSR_IA32_KERNEL_GS_BASE);
+            if (rb != new_gs)
+                klog(LOG_FATAL, "sched",
+                     "MSR_KERNEL_GS_BASE corrupted on cooperative switch: "
+                     "wrote=0x%X read=0x%X (task=%u thread=%u)",
+                     new_gs, rb,
+                     (uint64_t)next_task, (uint64_t)next_thread);
+        } else if (tasks[next_task].teb) {
+            klog(LOG_ERROR, "sched",
+                 "ring-3 task %u thread %u has TEB=%p but kernel_gs_base=0",
+                 (uint64_t)next_task, (uint64_t)next_thread,
+                 (uint64_t)(uintptr_t)tasks[next_task].teb);
+        }
     }
 
     /* Return the correct RSP */
@@ -1855,7 +1941,11 @@ int task_exec(const uint8_t *data, uint64_t size)
     tasks[pid].stack_base = new_kstack;
     tasks[pid].kernel_rsp = (uint64_t)(new_kstack + TASK_STACK_SIZE);
     tasks[pid].threads[0].kernel_rsp = tasks[pid].kernel_rsp;
-    tasks[pid].exec_pending = 1;  /* prevent scheduler from overwriting this frame */
+    /* Release-store pairs with the __atomic_load_n ACQUIRE in the
+     * scheduler save-gate: any CPU observing exec_pending=1 also sees
+     * the iretq frame writes above, so the save-gate can safely skip
+     * the msr_read clobber of threads[0].kernel_gs_base. */
+    __atomic_store_n(&tasks[pid].exec_pending, 1u, __ATOMIC_RELEASE);
     tasks[pid].exec_pending_tick = uptime();  /* for stuck detection */
 
     /* Allocate PEB in user address space */

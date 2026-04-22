@@ -23,6 +23,14 @@
 # §8 smoke phase -- one fast-fail gate for catastrophic boot regressions.
 test_smoke_boot.exe
 
+# -17 fast-path transport probes (gs:TEB, KUSD, syscall->SSDT).
+# Runs early in the correctness phase so a broken ring-3 transition
+# surfaces as FAIL on this binary, not as a silent hang in a later
+# test that depends on any of the three fast paths. Exit code is a
+# bitmap of failing probes (0 = all PASS); launcher reports the
+# bitmap in its verdict line.
+test_fastpath.exe
+
 # §1 harness self-test + correctness suites.
 test_harness_smoke.exe
 test_syscall.exe

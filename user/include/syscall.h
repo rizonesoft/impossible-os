@@ -51,65 +51,13 @@ typedef int32_t HANDLE;
 #define LOG_ERROR 3
 #define LOG_FATAL 4   /* Kernel-only; sys_log(LOG_FATAL, ...) returns -1 */
 
-/* Syscall numbers (must match kernel syscall.h) */
-#define SYS_WRITE        1
-#define SYS_READ         2
-#define SYS_EXIT         3
-#define SYS_YIELD        4
-#define SYS_FORK         5
-#define SYS_EXEC         6
-#define SYS_WAITPID      7
-#define SYS_READFILE     8
-#define SYS_READDIR      9
-#define SYS_GETPROCS    10
-#define SYS_KILL        11
-#define SYS_UPTIME      12
-#define SYS_REBOOT      13
-#define SYS_SHUTDOWN    14
-#define SYS_PING        15
-#define SYS_NETINFO     16
-#define SYS_LOG         17
-#define SYS_GETPID      18
-#define SYS_PIPE        33
-#define SYS_SIGNAL      34
-#define SYS_SHMEM_CREATE 35
-#define SYS_SHMEM_MAP    36
-#define SYS_MMAP         37   /* Defined in kernel header but NOT wired in
-                               * syscall_handler_80() yet -- a call falls
-                               * through the default branch and returns -1.
-                               * No user-mode wrapper provided to avoid
-                               * misleading callers. Wrapper lands when the
-                               * kernel handler does. */
-#define SYS_MUNMAP       38   /* Same: kernel-header-only, no handler yet. */
-#define SYS_OPENFILE     39
-#define SYS_CLOSEHANDLE  40
-#define SYS_READHANDLE   41
-#define SYS_OPENDIROBJ   42
-#define SYS_QUERYDIROBJ  43
-#define SYS_FAULT_INJECT 44  /* sys_fault_inject(kind, countdown, flags)
-                              * user-mode fault-injection bridge.
-                              * Only works when boot.conf test=1; otherwise
-                              * the kernel handler returns STATUS_ACCESS_DENIED. */
-#define SYS_WRITEHANDLE  45  /* sys_writehandle(handle, buf, size) -- mirror of
-                              * SYS_READHANDLE; routes through ob_file_write
-                              * so pipe write-ends and future file write
-                              * paths go through the OB handle table. */
-#define SYS_UNMAPVIEW    46  /* sys_unmapview(addr) -- release a shmem view
-                              * mapped by sys_shmem_map. Drops both the
-                              * view slot and the section ObReferenceObject
-                              * pin that the map path took. Without this
-                              * call, mapped sections leak across process
-                              * exit because task_cleanup does not walk
-                              * section views. */
-
-/* Subcommand selectors for SYS_FAULT_INJECT. Must match kernel
- * include/kernel/sched/syscall.h. */
-#define FAULT_KMALLOC_NEXT       1
-#define FAULT_KMALLOC_COUNTDOWN  2
-#define FAULT_PMM_NEXT           3
-#define FAULT_VMM_MAP_NEXT       4
-#define FAULT_COPY_USER_NEXT     5
-#define FAULT_CLEAR_ALL          6
+/* Syscall numbers + FAULT_* subcommand selectors come from the
+ * generated abi_numbers.h. Hand-copied `#define SYS_* <N>` here was
+ * the original root cause of TODO-04 -17: a kernel-side renumber would
+ * silently drift from this file and user binaries would hit the wrong
+ * handler at runtime. Regeneration + `make check-abi` catches drift
+ * at build time; do not re-add the hand copies. */
+#include "abi_numbers.h"
 
 /* Task states (must match kernel task.h) */
 #define TASK_READY    0

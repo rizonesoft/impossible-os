@@ -111,7 +111,7 @@ GENERATED_HDRS := include/build_info.h include/kernel/os_logo.h src/kernel/bsod_
 .PHONY: all _increment_build boot boot-icon boot-font kernel host-tools sysroot userland iso uefi-boot sign-efi system-disk test-disks run run-test run-debug run-log run-usb-ci run-nvme run-nvme-ci clean assets validate-assets sysroot-dirs sysroot-fonts sysroot-wallpapers sysroot-cursors sysroot-icons test-mm test-fs test-ob test-security test-ipc test-sched test-boot test-abi test-storage test-exec test-x86 boot-info-abi test-boot-info-abi test-tooling test-ai-system
 
 ## all: Build everything (kernel + userland + system disk + boot_info ABI manifest)
-all: _increment_build assets kernel userland uefi-boot boot-info-abi post16-manifest system-disk
+all: _increment_build check-abi assets kernel userland uefi-boot boot-info-abi post16-manifest system-disk
 	@echo "[VERSION] Impossible OS v$(VERSION_RAW).$(BUILD_NUMBER) ($(GIT_BRANCH)@$(GIT_HASH), $(BUILD_TIME))"
 
 ## assets: Unified asset pipeline — validate + generate headers + populate sysroot
@@ -366,9 +366,9 @@ USER_CFLAGS := --target=x86_64-elf \
                -mno-mmx -mno-sse -mno-sse2 -std=gnu11 -O2 -g \
                -MMD -MP
 
-userland: $(SYSROOT)/hello.exe $(SYSROOT)/cmd.exe $(SYSROOT)/test_harness_smoke.exe $(SYSROOT)/test_syscall.exe $(SYSROOT)/test_faultinject.exe $(SYSROOT)/test_smoke_boot.exe $(SYSROOT)/test_stress_libc.exe $(SYSROOT)/test_perf_syscall.exe $(SYSROOT)/test_libc.exe $(SYSROOT)/test_ipc.exe $(SYSROOT)/test_process.exe $(SYSROOT)/test_fileio.exe $(SYSROOT)/test_win32.exe $(SYSROOT)/test_loader_elf.exe $(SYSROOT)/test_loader_pe.exe $(SYSROOT)/test_loader_eif.exe
+userland: $(SYSROOT)/hello.exe $(SYSROOT)/cmd.exe $(SYSROOT)/test_harness_smoke.exe $(SYSROOT)/test_syscall.exe $(SYSROOT)/test_faultinject.exe $(SYSROOT)/test_smoke_boot.exe $(SYSROOT)/test_stress_libc.exe $(SYSROOT)/test_perf_syscall.exe $(SYSROOT)/test_libc.exe $(SYSROOT)/test_ipc.exe $(SYSROOT)/test_process.exe $(SYSROOT)/test_fileio.exe $(SYSROOT)/test_win32.exe $(SYSROOT)/test_loader_elf.exe $(SYSROOT)/test_loader_pe.exe $(SYSROOT)/test_loader_eif.exe $(SYSROOT)/test_fastpath.exe
 
-$(SYSROOT)/hello.exe $(SYSROOT)/cmd.exe $(SYSROOT)/test_harness_smoke.exe $(SYSROOT)/test_syscall.exe $(SYSROOT)/test_faultinject.exe $(SYSROOT)/test_smoke_boot.exe $(SYSROOT)/test_stress_libc.exe $(SYSROOT)/test_perf_syscall.exe $(SYSROOT)/test_libc.exe $(SYSROOT)/test_ipc.exe $(SYSROOT)/test_process.exe $(SYSROOT)/test_fileio.exe $(SYSROOT)/test_win32.exe $(SYSROOT)/test_loader_elf.exe $(SYSROOT)/test_loader_pe.exe $(SYSROOT)/test_loader_eif.exe &: sysroot user/hello.c user/cmd.c \
+$(SYSROOT)/hello.exe $(SYSROOT)/cmd.exe $(SYSROOT)/test_harness_smoke.exe $(SYSROOT)/test_syscall.exe $(SYSROOT)/test_faultinject.exe $(SYSROOT)/test_smoke_boot.exe $(SYSROOT)/test_stress_libc.exe $(SYSROOT)/test_perf_syscall.exe $(SYSROOT)/test_libc.exe $(SYSROOT)/test_ipc.exe $(SYSROOT)/test_process.exe $(SYSROOT)/test_fileio.exe $(SYSROOT)/test_win32.exe $(SYSROOT)/test_loader_elf.exe $(SYSROOT)/test_loader_pe.exe $(SYSROOT)/test_loader_eif.exe $(SYSROOT)/test_fastpath.exe &: sysroot user/hello.c user/cmd.c \
                                                                               user/test/test_harness_smoke.c \
                                                                               user/test/test_syscall.c \
                                                                               user/test/test_faultinject.c \
@@ -383,9 +383,13 @@ $(SYSROOT)/hello.exe $(SYSROOT)/cmd.exe $(SYSROOT)/test_harness_smoke.exe $(SYSR
                                                                               user/test/test_loader_elf.c \
                                                                               user/test/test_loader_pe.c \
                                                                               user/test/test_loader_eif.asm \
+                                                                              user/test/test_fastpath.c \
                                                                               scripts/build-eif.py \
                                                                               user/include/test.h \
                                                                               user/include/syscall.h \
+                                                                              user/include/abi_numbers.h \
+                                                                              user/include/teb.h \
+                                                                              user/include/kusd.h \
                                                                               user/include/win32.h \
                                                                               user/lib/crt0.asm \
                                                                               user/lib/string.c user/lib/stdlib.c user/lib/stdio.c \
@@ -468,6 +472,12 @@ $(SYSROOT)/hello.exe $(SYSROOT)/cmd.exe $(SYSROOT)/test_harness_smoke.exe $(SYSR
 	python3 scripts/build-eif.py \
 		$(BUILD_DIR)/user/test/test_loader_eif.bin \
 		$(BUILD_DIR)/user/test/test_loader_eif.exe
+	@# Fast-path transport hardening probe (-17). ELF crt0+libc, five
+	@# isolated probes; exit code is OR of FAIL bits so a drifted probe
+	@# names itself in the launcher's exit-code verdict.
+	$(CC) $(USER_CFLAGS) -Iuser/include -c user/test/test_fastpath.c -o $(BUILD_DIR)/user/test/test_fastpath.o
+	$(LD) -nostdlib -static -T user/user.ld -o $(BUILD_DIR)/user/test/test_fastpath.exe \
+		$(BUILD_DIR)/user/lib/crt0.o $(BUILD_DIR)/user/test/test_fastpath.o $(BUILD_DIR)/user/libc.a
 	@cp -f $(BUILD_DIR)/user/hello.exe $(SYSROOT)/hello.exe
 	@cp -f $(BUILD_DIR)/user/cmd.exe $(SYSROOT)/cmd.exe
 	@cp -f $(BUILD_DIR)/user/test/test_harness_smoke.exe $(SYSROOT)/test_harness_smoke.exe
@@ -484,6 +494,7 @@ $(SYSROOT)/hello.exe $(SYSROOT)/cmd.exe $(SYSROOT)/test_harness_smoke.exe $(SYSR
 	@cp -f $(BUILD_DIR)/user/test/test_loader_elf.exe $(SYSROOT)/test_loader_elf.exe
 	@cp -f $(BUILD_DIR)/user/test/test_loader_pe.exe  $(SYSROOT)/test_loader_pe.exe
 	@cp -f $(BUILD_DIR)/user/test/test_loader_eif.exe $(SYSROOT)/test_loader_eif.exe
+	@cp -f $(BUILD_DIR)/user/test/test_fastpath.exe $(SYSROOT)/test_fastpath.exe
 	@mkdir -p $(SYSROOT)/tests
 	@cp -f tests/usermode.manifest $(SYSROOT)/tests/usermode.manifest
 	@cp -f tests/usermode-cleanup.manifest $(SYSROOT)/tests/usermode-cleanup.manifest
@@ -617,6 +628,14 @@ run-test: all
 ##          make test TIMEOUT=120      # longer timeout
 test: all
 	@bash scripts/test.sh $(if $(SUITE),SUITE=$(SUITE)) $(if $(QUIET),QUIET=$(QUIET))
+
+## check-abi: Verify user/include/abi_numbers.h is in sync with kernel
+## source (include/kernel/sched/syscall.h + nt/service_numbers.h + nt/ntstatus.h).
+## Fails the build when a kernel-side SYS_*/SSDT_*/STATUS_* renumber forgot
+## to regenerate the user header -- silent drift was TODO-04 -17's original
+## root cause. Safe to run standalone or chain in front of `make test`.
+check-abi:
+	@python3 scripts/gen-user-abi.py --check
 
 ## Per-category test targets
 test-mm: all
