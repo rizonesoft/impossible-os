@@ -632,21 +632,21 @@ The ring-0↔3 fast paths (`gs:`-relative TEB reads, `KUSER_SHARED_DATA` at 0x7F
 
 | ⭐  | Feature              | 🪟 Win11             | 🐧 Linux                 | 🚀 Impossible OS         |
 | --- | -------------------- | --------------------- | ------------------------ | ------------------------- |
-| 💎  | User-mode test bins  | ✅ HLK               | ✅ kselftest             | ⬜ §1-§15                |
+| 💎  | User-mode test bins  | ✅ HLK               | ✅ kselftest             | ✅ §1-§15 15 binaries    |
 | 💎  | Multi-format loader  | ✅ PE + .NET via HLK | ✅ ELF + a.out kselftest | ✅ §15 ELF+PE32+ +EIF    |
 | 💎  | Syscall coverage     | ✅ NtDll             | ✅ ptrace selftest       | ✅ §9 11 syscalls        |
-| 💎  | Auto launcher        | ✅ HLK               | ✅ run_kselftest         | ⬜ §3                    |
+| 💎  | Auto launcher        | ✅ HLK               | ✅ run_kselftest         | ✅ §3 manifest-driven    |
 | 💎  | TAP or CI parse      | ✅ HLK XML           | ✅ TAP kselftest         | ✅ §7 XML + §4 TAP       |
 | 💎  | JUnit XML / JSON     | ✅ HLK XML           | ⚠️ kselftest TAP only    | ✅ §7 XML+JSON+TAP       |
 | 💎  | Timeouts or skips    | ✅ HLK               | ✅ LKFT skip             | ✅ §4 10s + exit=77      |
-| 💎  | ABI header sync      | ✅ SDK               | ✅ uapi                  | ⬜ §2                    |
+| 💎  | ABI header sync      | ✅ SDK               | ✅ uapi                  | ✅ §2+§17 gen+static asr |
 | 💎  | Per-test isolation   | ✅ HLK session reset | ✅ kselftest fork+tmp    | ✅ §6 scratch+reg+leak   |
 | 💎  | Libc surface probe   | ✅ HLK CRT tests     | ✅ kselftest libc        | ✅ §10 7 contracts       |
 | 💎  | IPC surface probe    | ✅ HLK pipe+shmem    | ✅ kselftest pipe+shm    | ✅ §11 pipe + shmem RT   |
 | 💎  | Process lifecycle    | ✅ HLK fork+exec     | ✅ kselftest fork+exec   | ✅ §12 fork+exec+kill    |
 | 💎  | File I/O surface     | ✅ HLK filesys tests | ✅ kselftest openat etc. | ✅ §13 open+read+enum    |
 | 💎  | Stress / longhaul    | ✅ TAEF Loop+Stress  | ✅ LTP runtest/stress    | ✅ §8 stress type        |
-| 💎  | Perf regression      | ✅ perfview/PerfTest | ✅ perf + flame baseline | ⚠️ §8 report-only        |
+| 💎  | Perf regression      | ✅ perfview/PerfTest | ✅ perf + flame baseline | ⚠️ §8 threshold-only     |
 | 💎  | Test type taxonomy   | ✅ TAEF categories   | ✅ LTP test classes      | ✅ §8 4 types + phase    |
 | ⭐  | Fault-inject bridge  | ⚠️ AppVerifier hooks | ⚠️ debugfs failslab      | ✅ §5 SYS_FAULT_INJECT   |
 | ⭐  | Win32 on non-Win     | ❌ N/A               | ❌ Wine only             | ✅ §14 statically linked |
@@ -658,7 +658,7 @@ The ring-0↔3 fast paths (`gs:`-relative TEB reads, `KUSER_SHARED_DATA` at 0x7F
 | ⭐  | Transition ring dump | ⚠️ opt-in perf/xperf | ⚠️ opt-in perf/ftrace    | ⬜ §18 always-on panic   |
 | ⭐  | Transport fuzz in CI | ❌ external TAEF     | ❌ external syzkaller    | ⬜ §18 fuzz at boot      |
 
-> **Parity gaps:** 💎 rows with ⬜ map to the listed sections. **⭐ rows:** §5 fault-inject bridge gives a typed `test=1`-gated kernel-allocator probe surface that AppVerifier hooks Win32 for and Linux only exposes through debugfs; §14 Win32-on-non-Win depends on `D02T12 §6` Win32 thunk landing; §17 closes the fast-path stability floor (probes + ABI generator + invariant panic) so TEB/KUSD/syscall transports are as robust as Win11 TEB reads and Linux vDSO calls; §18 puts Impossible OS past both competitors by baking versioned ABI handshake, self-describing KUSD, always-on ring-3 invariants, always-on transition ring-buffer dumps, and in-boot transport fuzzing into the baseline kernel -- capabilities that on Win11 and Linux require opt-in profilers, external fuzzers, or debug-only builds.
+> **Parity state (§1-§17 shipped):** every 💎 parity row is ✅ except `Perf regression`, which is ⚠️ because §8 asserts against hardcoded thresholds rather than tracking a historical baseline over time -- threshold regressions fail the run, but silent drift below the threshold would not. Closing that to full ✅ needs launcher-side `tests/perf-baseline.json` drift detection, which is deferred to §8 follow-up pending an env-passing syscall (tracked inline in §8's Deferred stamp). **⭐ exclusives:** §5 fault-inject bridge gives a typed `test=1`-gated kernel-allocator probe surface that AppVerifier hooks Win32 for and Linux only exposes through debugfs; §14 Win32-on-non-Win depends on `D02T12 §6` Win32 thunk landing; §17 closes the fast-path stability floor (probes + ABI generator + invariant panic) so TEB/KUSD/syscall transports are as robust as Win11 TEB reads and Linux vDSO calls; §18 will put Impossible OS past both competitors by baking versioned ABI handshake, self-describing KUSD, always-on ring-3 invariants, always-on transition ring-buffer dumps, and in-boot transport fuzzing into the baseline kernel -- capabilities that on Win11 and Linux require opt-in profilers, external fuzzers, or debug-only builds.
 
 ---
 
