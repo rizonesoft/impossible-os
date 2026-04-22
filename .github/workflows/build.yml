@@ -3,7 +3,8 @@
 #
 # Runs on every push to main and on pull requests.
 # Builds the full OS disk image using the project's build.sh wrapper.
-# Uploads build/system-disk.img as a downloadable artifact.
+# Normal CI does NOT upload the disk image; a manual workflow_dispatch can opt in
+# when someone explicitly needs the exact built image for debugging.
 # ──────────────────────────────────────────────────────────────────────────────
 
 name: Build
@@ -13,6 +14,13 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      upload_disk_image:
+        description: 'Upload build/system-disk.img as a CI artifact'
+        required: false
+        default: false
+        type: boolean
 
 # Cancel in-progress builds when a newer push arrives
 concurrency:
@@ -160,20 +168,24 @@ jobs:
       - name: Run unit tests
         run: bash scripts/test.sh QUIET=1
 
-      # ── Upload build artifact ───────────────────────────────────────────────
-      # continue-on-error: artifact upload is best-effort -- don't fail the
-      # build if GitHub storage quota is temporarily exhausted.
-      - name: Upload disk image
+      # ── Optional disk-image artifact (manual runs only) ────────────────────
+      # The raw disk image is by far the largest CI artifact and quickly burns
+      # through GitHub's shared artifact quota. Keep normal push/PR runs
+      # artifact-free; when someone truly needs the exact built image, use
+      # workflow_dispatch with upload_disk_image=true.
+      - name: Upload disk image (manual opt-in)
+        if: github.event_name == 'workflow_dispatch' && inputs.upload_disk_image
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: system-disk
           path: build/system-disk.img
-          retention-days: 7
+          retention-days: 1
           if-no-files-found: error
 
-      - name: Upload build + test logs
-        if: always()
+      # Logs are small and useful for diagnosis, but only on failures.
+      - name: Upload build + test logs on failure
+        if: failure()
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
@@ -181,5 +193,5 @@ jobs:
           path: |
             build/build.log
             build/test.log
-          retention-days: 7
+          retention-days: 3
           if-no-files-found: ignore

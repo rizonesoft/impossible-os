@@ -40,6 +40,8 @@
 
 #include "win32.h"
 #include "syscall.h"
+#include "teb.h"
+#include "kusd.h"
 
 /* VFS access bits -- match include/kernel/fs/vfs.h. ob_file_read /
  * ob_file_write gate on these in the kernel; duplicated in
@@ -51,15 +53,27 @@
 
 /* ---- GetCurrentProcessId ------------------------------------------------ *
  *
- * Routes through SYS_GETPID (INT 0x80, service 18). PID 0 is the kernel
- * idle task which never runs user code, so the returned value is always
- * >= 1 for a live user process. The syscall is stateless and has no
- * failure mode -- it simply reads task_current()->pid. */
+ * Win11-compatible native fast path: reads TEB.ClientId.UniqueProcess
+ * via `movq %gs:0x40, %rax`. Zero syscall, zero ring transition.
+ * TODO-04 -17 probe 3 proved the path works end-to-end (gs:0x40 equals
+ * sys_getpid on every binary), and user/include/teb.h pins the offset
+ * at compile time so a kernel TEB layout change fails the build with
+ * a named _Static_assert instead of a silent wrong-PID drift.
+ *
+ * Why no INT 0x80 fallback: the fallback hid exactly the kind of
+ * regression -17 was designed to surface. If gs:0x40 ever returns
+ * something that is not the task PID again (wrong MSR programming,
+ * wrong TEB layout, swapgs-imbalance bug), the probe binary fails
+ * loud on its next boot -- BEFORE this shim hands a bad DWORD to a
+ * Win32 caller. */
 
 DWORD GetCurrentProcessId(void)
 {
-    long pid = sys_getpid();
-    return (DWORD)(pid < 0 ? 0 : pid);
+    uint64_t pid;
+    _Static_assert(__builtin_offsetof(USER_TEB, ClientId.UniqueProcess) == 0x40,
+                   "GetCurrentProcessId hard-codes gs:0x40 -- layout drift");
+    __asm__ volatile ("movq %%gs:0x40, %0" : "=r"(pid));
+    return (DWORD)pid;
 }
 
 /* ---- GetTickCount ------------------------------------------------------- *

@@ -58,14 +58,40 @@ static inline uint64_t read_gs_qword(unsigned long offset)
 }
 
 /* Invoke the SYSCALL instruction with Win64 ABI: rax = service,
- * r10 = arg1. Returns rax (NTSTATUS). Clobbers rcx, r11 per SYSCALL
- * architectural contract and rax/r10 per our argument load.
+ * r10 = arg1. Returns rax (NTSTATUS).
  *
- * Currently unused (probe 5 is SKIP-gated pending a sysret path bug
- * investigation; see probe 5 comments in main). Keep the helper here
- * so flipping the SKIP back off in main is a one-line change when
- * the sysret fix lands -- the probe contract does not change. */
-__attribute__((unused))
+ * CLOBBER LIST (fixes the probe-5 "post-sysret #PF at CR2=0" bug):
+ *  - rcx, r11: architecturally clobbered by SYSCALL/SYSRET (CPU
+ *    saves user RIP -> rcx, user RFLAGS -> r11 on entry, and sysret
+ *    restores them on exit, so user's old values are gone).
+ *  - rdx, rsi, rdi, r8, r9: the kernel's syscall_entry.asm stub
+ *    TRANSLATES Win64-ABI args into SysV-ABI slots before calling
+ *    the C dispatcher:
+ *        rdi = rax (service)        r8 = r9 (user arg4)
+ *        rsi = r10 (user arg1)      r9 = 0  (SysV arg6)
+ *        rdx already arg2           rcx = r8 (user arg3)
+ *    The C call uses SysV calling convention, which treats rdi/rsi/
+ *    rdx/rcx/r8/r9/r10/r11 as caller-saved. NONE of them are
+ *    restored to user values before sysret -- only rcx/r11 are
+ *    handled by the CPU itself. If the clobber list omits them,
+ *    clang keeps treating them as live across this asm and later
+ *    code reads stale-from-its-POV but actually-scratch-value
+ *    registers. The original bug surfaced as user-RIP=0x800440 in
+ *    format_hex64 with CR2=0, because clang thought rdi still held
+ *    the &line buffer pointer from a prior assignment but it
+ *    actually held whatever scratch value syscall_dispatch_fast
+ *    left behind.
+ *  - r10: the input constraint holds the value going in; we do not
+ *    read r10 after the asm, so no clobber needed (register var is
+ *    statement-scoped).
+ *  - memory: the kernel may have mutated anything via pointer
+ *    arguments.
+ *
+ * Callee-saved registers that SURVIVE a syscall (user code can rely
+ * on them): rax (holds return), rbx, rbp, rsp, r12, r13, r14, r15.
+ * The syscall_entry.asm stub pushes/pops all of these around the
+ * dispatcher call, so they are guaranteed preserved. */
+__attribute__((always_inline))
 static inline uint64_t do_syscall_nt(uint64_t service, uint64_t arg1)
 {
     uint64_t ret;
@@ -74,7 +100,7 @@ static inline uint64_t do_syscall_nt(uint64_t service, uint64_t arg1)
         "syscall"
         : "=a"(ret)
         : "a"(service), "r"(r10)
-        : "rcx", "r11", "memory"
+        : "rcx", "r11", "rdx", "rsi", "rdi", "r8", "r9", "memory"
     );
     return ret;
 }
@@ -187,26 +213,26 @@ int main(void)
     log_line("fastpath: probe 4: PASS");
 
     /* ---- Probe 5: SYSCALL into SSDT_NtClose ----------------------- */
-    /* KNOWN BROKEN (2026-04-22): the sysret path corrupts user RSP or
-     * RIP such that a page fault fires INSIDE format_hex64 at CR2=0x0
-     * immediately after return. The kernel SSDT_NtClose handler has
-     * not been reached. Disabled from the exit-code gate so CI stays
-     * green; the ENTER line still lands on serial so a human
-     * debugging the sysret path sees where the probe got. When the
-     * bug is fixed (separate session -- look for "sysret user RSP
-     * corruption" anchor in src/kernel/sched/syscall_entry.asm), flip
-     * this back on and expect `fail_bits |= FAIL_PROBE_5` on failure. */
+    /* Root-caused + fixed 2026-04-22: the original "post-sysret #PF at
+     * CR2=0 inside format_hex64" was a clobber-list bug in
+     * do_syscall_nt -- see the 30-line comment on that function. Once
+     * rdi/rsi/rdx/r8/r9 were added to the clobber list, clang stops
+     * assuming those registers survive the asm block and the caller's
+     * stack-local pointers round-trip correctly. */
     log_line("fastpath: probe 5: ENTER syscall SSDT_NtClose(0xFFFFFFFF)");
-    log_line("fastpath: probe 5: SKIP known-broken sysret path (tracked separately)");
+    uint64_t status = do_syscall_nt(SSDT_NtClose, 0xFFFFFFFFULL);
+    format_hex64(line, "fastpath: probe 5: NTSTATUS=", status);
+    log_line(line);
+    if (status != STATUS_INVALID_HANDLE) {
+        log_line("fastpath: probe 5: FAIL expected STATUS_INVALID_HANDLE");
+        fail_bits |= FAIL_PROBE_5;
+    } else {
+        log_line("fastpath: probe 5: PASS");
+    }
 
     /* ---- Summary --------------------------------------------------- */
-    /* Honest accounting: probe 5 is SKIP today (known-broken sysret);
-     * count probes 1-4 as the pass denominator and the skip as a
-     * distinct state. A misleading "5/5 PASS" for a run that never
-     * exercised the syscall fast path would paper over exactly the
-     * kind of partial coverage this probe exists to surface. */
     if (fail_bits == 0) {
-        log_line("fastpath: 4/4 active probes PASS, 1 SKIP (probe 5 syscall)");
+        log_line("fastpath: 5/5 probes PASS");
     } else {
         format_hex64(line, "fastpath: FAIL bitmap=", (uint64_t)fail_bits);
         log_line(line);
