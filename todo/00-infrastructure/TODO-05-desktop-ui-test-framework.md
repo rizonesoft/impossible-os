@@ -291,7 +291,7 @@ Verify WM state without screenshots -- pure data inspection.
 > - Test seam: `KERNEL_TESTS`-gated `wm_test_reset` / `wm_test_install_window` / `wm_test_set_focused` let Phase-3 kernel tests exercise the APIs without allocating real framebuffers. The 4 new suites add 25 assertions: count tracks installs+resets, focus tracks set_focused and clears on destroy, rect roundtrips and rejects NULL / oob / inactive handles, and Alt+F4 specifically validates that destruction is deferred (`count==2` post-inject pre-drain, `count==1` post-drain).
 > - Canonical doc: `include/desktop/wm.h` (Introspection block + concurrency contract), `src/desktop/wm.c` (deferred-close implementation with rationale).
 > - Scope boundary: section 8 ships kernel-side introspection + Alt+F4 deferred close. Section 9 owns perceptual diff / needles, section 10 owns the frame-timing oracle, section 11 owns Unicode record+replay that will also use this drain path for non-Alt-F4 close sources, section 15 owns the multi-handle close queue widening + failure-capture hook.
-> **Verified:** 2026-04-22 | 9/9 items | build OK | tests 1847/1847 PASS, 0 leaked (KVM desktop suite 16/16 suites, 79/79 assertions)
+> **Verified:** 2026-04-22 | commit `0e6ab6c3` | 9/9 items | build OK | tests 1847/1847 PASS, 0 leaked (KVM desktop suite 16/16 suites, 79/79 assertions)
 > **Quality reviewed:** 2026-04-22 | Codex 1x (adversarial) | 2H+1M+0L fixed, 0 open | scope: kernel-code-quality
 
 ---
