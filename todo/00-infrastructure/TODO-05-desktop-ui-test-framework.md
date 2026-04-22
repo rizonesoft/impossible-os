@@ -228,7 +228,7 @@ Compare current screenshots against known-good reference images.
 > - Tolerance knobs (`--threshold`, `--fuzz`) default to 95% / 2% per the checkpoint; both are validated with a strict regex + `[0, 100]` range check so a malformed value cannot silently coerce to 0 via awk and disable the gate.
 > - Canonical doc: `scripts/compare-screenshot.sh` header (argument, exit-code, and output-format contract) and `tests/references/README.md` (naming + update recipe).
 > - Scope boundary: §6 ships the pixel-diff tool + reference convention. §7 owns CI wiring + baseline capture automation, §9 owns perceptual diff (SSIM) and openQA-style exclude regions, §13 owns per-monitor references, §15 owns the failure-bundle consumer that stores the rejected diff alongside `screen.png`.
-> **Verified:** 2026-04-22 | 9/9 items | build OK | manual (7 self-check runs PASS against synthesized PNGs; lint clean)
+> **Verified:** 2026-04-22 | commit `a19593e0` | 9/9 items | build OK | manual (7 self-check runs PASS against synthesized PNGs; lint clean)
 > **Quality reviewed:** 2026-04-22 | Codex 1x (adversarial) | 1H+1M+0L fixed, 0 open | scope: N/A (host-side shell script; no domain code-quality skill)
 
 ---
