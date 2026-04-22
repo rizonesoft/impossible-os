@@ -145,7 +145,7 @@ Verify the desktop actually rendered after boot: not a black screen or crash.
 > - End-to-end KVM validation: PASS path 7 s boot + 1 attempt + emits `Desktop smoke test: PASS (rendered, 72% non-black)`; FAIL path (forced) iterates all 4 attempts, emits `Desktop smoke test: FAIL (screen is black or >90% single color)`, exit 4. Both wordings match the TODO checkpoint verbatim.
 > - Canonical doc: `scripts/test-desktop.sh` header comment block (CLI flags, env vars, exit-code taxonomy, shared-host security caveat).
 > - Scope boundary: §3 owns the binary-level "did the desktop paint?" gate. §6 owns pixel-level reference-image diff; §9 owns perceptual / structured-needle comparison; §15 owns on-failure artifact capture consuming this same capture path.
-> **Verified:** 2026-04-22 | commit `PENDING` | 6/6 items | build OK | KVM end-to-end: PASS 7 s + 72% non-black / FAIL-path 4 retries + exit 4
+> **Verified:** 2026-04-22 | commit `f52954fd` | 6/6 items | build OK | KVM end-to-end: PASS 7 s + 72% non-black / FAIL-path 4 retries + exit 4
 > **Accepted:** [M] HMP monitor on 127.0.0.1:<port> with `server,nowait` is reachable by any local user on multi-tenant hosts (reason: UNIX-socket migration spans §2, §3, and run-qemu.ps1; larger than a single-section smoke test) -> XREF: 00-infrastructure/TODO-05 §15 (item: "Harden QEMU monitor exposure for shared-host CI" at line 374)
 > **Quality reviewed:** 2026-04-22 | Codex 1x (adversarial) | 2H fixed, 1M open | scope: N/A (host-side shell; kernel-code-quality does not apply)
 
