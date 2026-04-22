@@ -141,8 +141,13 @@ void compositor_run(void)
                 gallery_render();
             }
 
-            /* Prevent preemption during draw+swap */
+            /* Drain any deferred window-close requests before painting
+             * so Alt+F4 (keyboard IRQ posts; see wm_close_focused_window)
+             * takes effect within one frame. Done under scheduler_disable
+             * below to keep wm_destroy_window out of compositor-traversal
+             * races. */
             scheduler_disable();
+            wm_process_pending_closes();
             wm_mark_dirty();
 
             /* Restore cursor, full composite, draw cursor, flip */

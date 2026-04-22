@@ -18,6 +18,7 @@
 #include "kernel/ipc/signal.h"
 #include "kernel/sched/spinlock.h"
 #include "desktop/terminal.h"
+#include "desktop/wm.h"
 
 /* --- Port I/O --- */
 #define KB_DATA_PORT  0x60
@@ -107,6 +108,7 @@ static const char scancode_shifted[0x59] = {
 #define SC_LALT_PRESS     0x38
 #define SC_LALT_RELEASE   0xB8
 #define SC_CAPSLOCK       0x3A
+#define SC_F4             0x3E    /* Alt+F4 closes the focused window */
 
 /* --- IRQ 1 handler (via irq_register API) --- */
 static void keyboard_irq_callback(uint8_t vector, void *ctx)
@@ -196,6 +198,18 @@ static void keyboard_irq_callback(uint8_t vector, void *ctx)
         break;
     }
 
+    /* Alt+F4: close the focused window. Trap before the release/range
+     * filter so a one-shot Alt+F4 press fires exactly once (the press
+     * goes through; the matching 0xBE release falls through and is
+     * swallowed by the release check below). F4's scancode_normal[]
+     * entry is 0, so allowing it past the filter would produce no char;
+     * handling it here keeps the key out of the terminal input ring
+     * too. */
+    if (alt_held && scancode == SC_F4) {
+        wm_close_focused_window();
+        return;
+    }
+
     /* Ignore key releases (bit 7 set) */
     if (scancode & 0x80)
         return;
@@ -236,7 +250,6 @@ static void keyboard_irq_callback(uint8_t vector, void *ctx)
             kb_buffer_push(c);
     }
 
-    (void)alt_held;  /* suppress unused warning (reserved for future use) */
     /* EOI handled by irq_dispatch_wrapper */
 }
 
@@ -349,6 +362,14 @@ void keyboard_inject_scancode(uint8_t scancode)
     case SC_LALT_RELEASE:  alt_held = 0;    return;
     case SC_CAPSLOCK:      capslock_on = !capslock_on; return;
     default: break;
+    }
+
+    /* Alt+F4 closes the focused window. Mirrors the IRQ path above so
+     * the inject harness (test framework section 4) exercises the same
+     * code path as the real i8042 IRQ. */
+    if (alt_held && scancode == SC_F4) {
+        wm_close_focused_window();
+        return;
     }
 
     if (scancode & 0x80) return;  /* release */

@@ -128,6 +128,66 @@ uint32_t *wm_get_framebuffer(int handle);
 uint32_t wm_get_client_width(int handle);
 uint32_t wm_get_client_height(int handle);
 
+/* ---- Introspection (test framework -- desktop UI test section 8) ---- */
+
+/* Count currently-active windows (0 when WM is uninitialized or all
+ * slots are free). Used by tests and diagnostics to assert WM state
+ * without snapshotting the framebuffer. */
+int wm_get_window_count(void);
+
+/* Return the handle of the currently-focused window, or -1 if no window
+ * has focus (no windows exist, or focus was just cleared). */
+int wm_get_focused_window(void);
+
+/* Fill `*x`, `*y`, `*w`, `*h` with the outer (decoration-inclusive)
+ * position and client-area size of `handle`. Returns 0 on success,
+ * -1 when handle is out-of-range or inactive, -2 when any out-pointer
+ * is NULL. On failure the out-pointers are not written. */
+int wm_get_window_rect(int handle, int32_t *x, int32_t *y,
+                       uint32_t *w, uint32_t *h);
+
+/* Post a deferred close request for whichever window is currently
+ * focused. IRQ-safe: only records the focused handle into a single-slot
+ * pending-close queue. Actual destruction happens on the next call to
+ * wm_process_pending_closes() from thread context, NOT from the IRQ
+ * that posted the request.
+ *
+ * Why deferred: wm_destroy_window() calls pmm_free_pages(), and the
+ * compositor walks the windows[] array without IRQ masking. Running
+ * destruction directly from the keyboard IRQ races both the PMM bitmap
+ * and the compositor's traversal; Codex [H] adversarial review of
+ * the desktop UI test framework WM-state-verification section flagged
+ * the earlier direct-destroy draft. */
+void wm_close_focused_window(void);
+
+/* Drain the pending-close queue in thread context and destroy any
+ * window whose close was requested since the last drain. Called once
+ * per compositor frame (before wm_composite) so Alt+F4 user-visible
+ * latency stays within one frame. Returns the number of windows
+ * actually destroyed (0 or 1 today; coalesced multi-close can land
+ * once the queue is widened). */
+int wm_process_pending_closes(void);
+
+#ifdef KERNEL_TESTS
+/* Test-only seam: initialize WM state without allocating framebuffers or
+ * calling wm_init(). Lets kernel tests exercise wm_get_* on a synthetic
+ * window set in Phase 3, before boot_desktop.c brings the compositor up.
+ * Paired with wm_test_install_window / wm_test_set_focused. */
+void wm_test_reset(void);
+
+/* Install a synthetic window at the next free slot (or `-1` if full).
+ * No framebuffer is allocated; only `x/y/width/height/active/flags` are
+ * set. The returned handle is stable across subsequent installs in the
+ * same run. Returns -1 on overflow. */
+int wm_test_install_window(int32_t x, int32_t y, uint32_t w, uint32_t h);
+
+/* Force `focused_window` to the given handle without dispatching any
+ * side-effects (no mark_dirty, no flag toggles on other slots beyond
+ * the focus bit). The handle must refer to a slot marked active by
+ * wm_test_install_window. */
+void wm_test_set_focused(int handle);
+#endif
+
 /* Write a pixel to a window's client-area framebuffer. */
 void wm_put_pixel(int handle, uint32_t x, uint32_t y, uint32_t color);
 

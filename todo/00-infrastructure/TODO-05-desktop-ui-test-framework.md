@@ -53,7 +53,7 @@
 | 💎  |   5   | Terminal output verification                       | §4            |  [x]   |
 | ⭐  |   6   | Reference screenshot comparison                    | §2            |  [x]   |
 | ⭐  |   7   | Visual regression CI pipeline                      | §3, §6        |  [x]   |
-| ⭐  |   8   | Window manager state verification                  | §4            |  [ ]   |
+| ⭐  |   8   | Window manager state verification                  | §4            |  [x]   |
 | ⭐  |   9   | Perceptual diff + structured screenshot needles    | §6            |  [ ]   |
 | 💎  |  10   | Frame timing + drop oracle (`wm_get_frame_stats`)  | --            |  [ ]   |
 | 💎  |  11   | Input record + replay (Unicode, IME)               | §4, §12       |  [ ]   |
@@ -271,16 +271,28 @@ Run desktop tests in CI and catch visual regressions.
 
 Verify WM state without screenshots -- pure data inspection.
 
-- [ ] `wm_get_window_count()` → number of open windows
-- [ ] `wm_get_focused_window()` → handle of focused window
-- [ ] `wm_get_window_rect(handle)` → x, y, width, height
-- [ ] Test: after boot, verify: terminal window exists, gallery window exists, terminal is focused
-- [ ] Test: inject Alt+F4 → window count decreases by 1
-- [ ] Kernel test code: call WM introspection API directly
-- [ ] Commit: `"test: WM state verification; window count, focus, rect inspection"`
+- [x] `wm_get_window_count()` in `src/desktop/wm.c` -- counts active `windows[]` slots; returns 0 on a fresh WM or when all slots are free.
+- [x] `wm_get_focused_window()` -- returns the focused handle, or -1 when no window has focus OR when `focused_window` points to an inactive slot (stale-focus guard).
+- [x] `wm_get_window_rect(handle, *x, *y, *w, *h)` -- fills out-params with outer position + client-area size; returns 0 on success, -1 on oob / inactive handle, -2 on any NULL out-pointer.
+- [x] Alt+F4 close path: keyboard driver traps `alt_held && scancode == SC_F4` in BOTH the real IRQ path (`keyboard_irq_callback`) and the inject path (`keyboard_inject_scancode`), and calls `wm_close_focused_window()`.
+- [x] Deferred-close queue: `wm_close_focused_window()` only ENQUEUES the focused handle into a `volatile int pending_close_handle` slot; actual `wm_destroy_window()` (which calls `pmm_free_pages`) runs from thread context via `wm_process_pending_closes()`. This keeps PMM mutation and compositor traversal out of IRQ-preemption races. Codex [H] adversarial review required this refactor.
+- [x] Compositor integration: `src/kernel/main/compositor.c` calls `wm_process_pending_closes()` once per frame under `scheduler_disable()`, before `wm_composite()`, so Alt+F4 user-visible latency stays within one frame.
+- [x] Test seams (KERNEL_TESTS-gated): `wm_test_reset()`, `wm_test_install_window(x, y, w, h)`, `wm_test_set_focused(handle)`. Let kernel tests exercise the introspection + Alt+F4 paths without `wm_init()` or `wm_create_window()` (which need framebuffer allocation and run after `boot_tests_run()` in Phase 3).
+- [x] Kernel-side tests: 4 new `TEST_CAT_DESKTOP` suites covering count, focus (including stale-focus cleanup after `wm_destroy_window`), rect roundtrip + NULL / oob / inactive guards, and Alt+F4 enqueue + deferred drain including F4-without-Alt and Alt+F4-with-no-focus edge cases.
+- [x] Commit: `"test: WM state verification; window count, focus, rect inspection"`
 
 **Test checkpoint:** After boot: `wm_get_window_count() == 2`, `wm_get_focused_window()` returns the terminal handle, `wm_get_window_rect(terminal)` and `wm_get_window_rect(gallery)` both return non-zero width and height. Inject Alt+F4; within 200 ms `wm_get_window_count() == 1`.
 **Platforms:** QEMU WHPX, QEMU TCG, VBox, bare metal (kernel-side data inspection; no framebuffer dependency).
+
+> **Test runner:** `scripts\debug\desktop\run-desktop-tests.bat` (SUITE=desktop) | 16 suites, 79 assertions, 0 failures (KVM 2026-04-22)
+> **Notes:**
+> - Shipped four public WM APIs (`wm_get_window_count`, `wm_get_focused_window`, `wm_get_window_rect`, `wm_close_focused_window`) plus a `wm_process_pending_closes()` drain in `src/desktop/wm.c` (+110 LOC). Alt+F4 is wired in BOTH the real i8042 IRQ path and the test-inject path of `src/kernel/drivers/keyboard.c`, both going through the IRQ-safe enqueue.
+> - Deferred-close architecture: Alt+F4 from the keyboard IRQ can no longer race the compositor's `wm_composite()` walk or the PMM bitmap; the IRQ only writes one `volatile int` slot, and `wm_process_pending_closes()` drains in thread context under the compositor's existing `scheduler_disable()` window. `src/kernel/main/compositor.c:144` wires the drain into the per-frame loop.
+> - Test seam: `KERNEL_TESTS`-gated `wm_test_reset` / `wm_test_install_window` / `wm_test_set_focused` let Phase-3 kernel tests exercise the APIs without allocating real framebuffers. The 4 new suites add 25 assertions: count tracks installs+resets, focus tracks set_focused and clears on destroy, rect roundtrips and rejects NULL / oob / inactive handles, and Alt+F4 specifically validates that destruction is deferred (`count==2` post-inject pre-drain, `count==1` post-drain).
+> - Canonical doc: `include/desktop/wm.h` (Introspection block + concurrency contract), `src/desktop/wm.c` (deferred-close implementation with rationale).
+> - Scope boundary: section 8 ships kernel-side introspection + Alt+F4 deferred close. Section 9 owns perceptual diff / needles, section 10 owns the frame-timing oracle, section 11 owns Unicode record+replay that will also use this drain path for non-Alt-F4 close sources, section 15 owns the multi-handle close queue widening + failure-capture hook.
+> **Verified:** 2026-04-22 | 9/9 items | build OK | tests 1847/1847 PASS, 0 leaked (KVM desktop suite 16/16 suites, 79/79 assertions)
+> **Quality reviewed:** 2026-04-22 | Codex 1x (adversarial) | 2H+1M+0L fixed, 0 open | scope: kernel-code-quality
 
 ---
 

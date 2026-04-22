@@ -15,6 +15,7 @@
 #include "kernel/mm/pmm.h"
 #include "kernel/types.h"
 #include "desktop/terminal.h"
+#include "desktop/wm.h"
 
 /* ---- §4 Input Event Injection ----------------------------------------- */
 
@@ -455,6 +456,193 @@ static void test_input_inject_mouse_click_clamps_out_of_bounds(void)
                    "y clamped to 0");
 }
 
+/* ---- Section 8: Window Manager State Verification -------------------- */
+
+/* wm_get_window_count reports 0 on a freshly-reset WM, matches the
+ * install count as synthetic windows are added, and drops back to 0
+ * after wm_test_reset(). Exercises the pure count path without any
+ * framebuffer allocation. */
+static void test_wm_window_count_tracks_installs(void)
+{
+    int h1, h2, h3;
+
+    wm_test_reset();
+    TEST_ASSERT_EQ((uint64_t)wm_get_window_count(), (uint64_t)0,
+                   "empty WM reports 0 windows");
+
+    h1 = wm_test_install_window(0, 0, 320, 240);
+    TEST_ASSERT(h1 >= 0, "first install returns a valid handle");
+    TEST_ASSERT_EQ((uint64_t)wm_get_window_count(), (uint64_t)1,
+                   "one window installed -> count == 1");
+
+    h2 = wm_test_install_window(40, 40, 400, 200);
+    h3 = wm_test_install_window(80, 80, 300, 180);
+    TEST_ASSERT(h2 >= 0 && h3 >= 0, "subsequent installs return handles");
+    TEST_ASSERT_EQ((uint64_t)wm_get_window_count(), (uint64_t)3,
+                   "three windows installed -> count == 3");
+
+    wm_test_reset();
+    TEST_ASSERT_EQ((uint64_t)wm_get_window_count(), (uint64_t)0,
+                   "wm_test_reset zeroes the count");
+}
+
+/* wm_get_focused_window returns -1 on a fresh WM, the focused handle
+ * after wm_test_set_focused, and -1 again once the focused window is
+ * destroyed (stale-focus protection inside the API). */
+static void test_wm_focused_window_tracks_focus(void)
+{
+    int terminal_h, gallery_h;
+
+    wm_test_reset();
+    TEST_ASSERT_EQ((uint64_t)wm_get_focused_window(), (uint64_t)-1,
+                   "empty WM reports no focus");
+
+    terminal_h = wm_test_install_window(50, 30, 640, 320);
+    gallery_h  = wm_test_install_window(200, 100, 480, 300);
+    TEST_ASSERT(terminal_h >= 0 && gallery_h >= 0 && terminal_h != gallery_h,
+                "two distinct synthetic windows installed");
+
+    wm_test_set_focused(terminal_h);
+    TEST_ASSERT_EQ((uint64_t)wm_get_focused_window(), (uint64_t)terminal_h,
+                   "focus returns the terminal handle");
+
+    wm_test_set_focused(gallery_h);
+    TEST_ASSERT_EQ((uint64_t)wm_get_focused_window(), (uint64_t)gallery_h,
+                   "focus tracks the most recent set_focused call");
+
+    /* Destroying the focused window must clear focused_window back to -1;
+     * wm_destroy_window already handles this. Verify the guard inside
+     * wm_get_focused_window catches a stale handle. */
+    wm_destroy_window(gallery_h);
+    TEST_ASSERT_EQ((uint64_t)wm_get_focused_window(), (uint64_t)-1,
+                   "destroying the focused window clears focus");
+}
+
+/* wm_get_window_rect fills the out-params with the installed rect,
+ * rejects NULL out-pointers with -2, and rejects inactive/oob handles
+ * with -1. */
+static void test_wm_window_rect_roundtrip(void)
+{
+    int h;
+    int32_t x = -1, y = -1;
+    uint32_t w = 0, ht = 0;
+    int rc;
+
+    wm_test_reset();
+    h = wm_test_install_window(50, 30, 640, 320);
+    TEST_ASSERT(h >= 0, "installed a window");
+
+    rc = wm_get_window_rect(h, &x, &y, &w, &ht);
+    TEST_ASSERT_EQ((uint64_t)rc, (uint64_t)0, "rc == 0 on success");
+    TEST_ASSERT_EQ((uint64_t)x,  (uint64_t)50,  "x matches install");
+    TEST_ASSERT_EQ((uint64_t)y,  (uint64_t)30,  "y matches install");
+    TEST_ASSERT_EQ((uint64_t)w,  (uint64_t)640, "width matches install");
+    TEST_ASSERT_EQ((uint64_t)ht, (uint64_t)320, "height matches install");
+
+    /* NULL out-param -> -2 */
+    rc = wm_get_window_rect(h, (int32_t *)0, &y, &w, &ht);
+    TEST_ASSERT_EQ((uint64_t)rc, (uint64_t)-2,
+                   "NULL x -> -2");
+
+    /* Out-of-range handle -> -1 */
+    rc = wm_get_window_rect(9999, &x, &y, &w, &ht);
+    TEST_ASSERT_EQ((uint64_t)rc, (uint64_t)-1,
+                   "oob handle -> -1");
+
+    /* Negative handle -> -1 */
+    rc = wm_get_window_rect(-1, &x, &y, &w, &ht);
+    TEST_ASSERT_EQ((uint64_t)rc, (uint64_t)-1,
+                   "negative handle -> -1");
+
+    /* Inactive handle -> -1 */
+    wm_destroy_window(h);
+    rc = wm_get_window_rect(h, &x, &y, &w, &ht);
+    TEST_ASSERT_EQ((uint64_t)rc, (uint64_t)-1,
+                   "inactive handle -> -1");
+}
+
+/* Alt+F4 close path: install two windows, focus the terminal, inject
+ * Alt+F4 via keyboard_inject_scancode, then drain the pending-close
+ * queue the way the compositor does every frame. Verifies that:
+ *   (a) Alt+F4 only ENQUEUES the close (nothing destroyed synchronously),
+ *       so the real IRQ handler stays out of PMM / compositor races;
+ *   (b) wm_process_pending_closes() actually tears the window down;
+ *   (c) modifiers / non-focused states behave correctly.
+ * Addresses Codex [H] review findings: IRQ-context destruction was the
+ * original design; this test now targets the deferred-drain path used
+ * by compositor.c. */
+static void test_wm_alt_f4_closes_focused_window(void)
+{
+    int terminal_h, gallery_h;
+
+    wm_test_reset();
+    keyboard_reset_state();
+
+    terminal_h = wm_test_install_window(50, 30, 640, 320);
+    gallery_h  = wm_test_install_window(200, 100, 480, 300);
+    TEST_ASSERT(terminal_h >= 0 && gallery_h >= 0,
+                "two synthetic windows installed");
+
+    wm_test_set_focused(terminal_h);
+    TEST_ASSERT_EQ((uint64_t)wm_get_window_count(), (uint64_t)2,
+                   "pre-Alt+F4: count == 2");
+
+    /* Alt press, then F4 press, then Alt release. F4 with alt_held == 1
+     * posts a deferred close -- window count stays at 2 until the drain
+     * runs. */
+    keyboard_inject_scancode(0x38);  /* LALT press */
+    keyboard_inject_scancode(0x3E);  /* F4 press -> wm_close_focused_window */
+    keyboard_inject_scancode(0xB8);  /* LALT release */
+
+    TEST_ASSERT_EQ((uint64_t)wm_get_window_count(), (uint64_t)2,
+                   "post-Alt+F4 pre-drain: count still 2 (close deferred)");
+    TEST_ASSERT_EQ((uint64_t)wm_get_focused_window(), (uint64_t)terminal_h,
+                   "post-Alt+F4 pre-drain: focus unchanged");
+
+    /* Drain the pending-close queue the way compositor.c does every
+     * frame. Must destroy exactly one window (the focused one). */
+    {
+        int destroyed = wm_process_pending_closes();
+        TEST_ASSERT_EQ((uint64_t)destroyed, (uint64_t)1,
+                       "drain destroys the one pending window");
+    }
+
+    TEST_ASSERT_EQ((uint64_t)wm_get_window_count(), (uint64_t)1,
+                   "post-drain: count == 1");
+    TEST_ASSERT_EQ((uint64_t)wm_get_focused_window(), (uint64_t)-1,
+                   "post-drain: focus cleared by wm_destroy_window");
+
+    /* Gallery is still around, just no longer focused. */
+    {
+        int32_t gx = -1, gy = -1;
+        uint32_t gw = 0, gh = 0;
+        int rc = wm_get_window_rect(gallery_h, &gx, &gy, &gw, &gh);
+        TEST_ASSERT_EQ((uint64_t)rc, (uint64_t)0,
+                       "gallery window still reachable after drain");
+        TEST_ASSERT_EQ((uint64_t)gw, (uint64_t)480,
+                       "gallery width preserved");
+    }
+
+    /* F4 without alt_held does NOT enqueue a close. */
+    wm_test_set_focused(gallery_h);
+    keyboard_inject_scancode(0x3E);  /* F4 press, no alt */
+    TEST_ASSERT_EQ((uint64_t)wm_process_pending_closes(), (uint64_t)0,
+                   "F4 without Alt does not enqueue a close");
+    TEST_ASSERT_EQ((uint64_t)wm_get_window_count(), (uint64_t)1,
+                   "F4 alone does NOT close a window");
+
+    /* Alt+F4 with no focused window is a silent no-op (enqueue rejects
+     * the -1 handle). */
+    wm_destroy_window(gallery_h);
+    keyboard_inject_scancode(0x38);
+    keyboard_inject_scancode(0x3E);
+    keyboard_inject_scancode(0xB8);
+    TEST_ASSERT_EQ((uint64_t)wm_process_pending_closes(), (uint64_t)0,
+                   "drain after Alt+F4 with no focus destroys nothing");
+    TEST_ASSERT_EQ((uint64_t)wm_get_window_count(), (uint64_t)0,
+                   "Alt+F4 on empty WM is a no-op");
+}
+
 /* ---- Registration ----------------------------------------------------- */
 
 void test_register_desktop(void)
@@ -483,6 +671,14 @@ void test_register_desktop(void)
                             test_terminal_buffer_contains_guards, TEST_CAT_DESKTOP);
     test_suite_register_cat("Desktop: terminal dir roundtrip (synthesized)",
                             test_terminal_dir_roundtrip_synthesized, TEST_CAT_DESKTOP);
+    test_suite_register_cat("Desktop: wm_get_window_count tracks installs",
+                            test_wm_window_count_tracks_installs, TEST_CAT_DESKTOP);
+    test_suite_register_cat("Desktop: wm_get_focused_window tracks focus",
+                            test_wm_focused_window_tracks_focus, TEST_CAT_DESKTOP);
+    test_suite_register_cat("Desktop: wm_get_window_rect roundtrip + guards",
+                            test_wm_window_rect_roundtrip, TEST_CAT_DESKTOP);
+    test_suite_register_cat("Desktop: Alt+F4 closes focused window (inject path)",
+                            test_wm_alt_f4_closes_focused_window, TEST_CAT_DESKTOP);
 }
 
 #endif /* KERNEL_TESTS */

@@ -449,6 +449,132 @@ uint32_t wm_get_client_height(int handle)
     return windows[handle].height;
 }
 
+/* ---- Introspection (desktop UI test framework section 8) ------------ */
+
+int wm_get_window_count(void)
+{
+    int count = 0;
+    uint32_t i;
+    for (i = 0; i < WM_MAX_WINDOWS; i++)
+        if (windows[i].active)
+            count++;
+    return count;
+}
+
+int wm_get_focused_window(void)
+{
+    /* focused_window is the single source of truth; the WM_FLAG_FOCUSED
+     * bit is maintained in parallel for the compositor. A stale handle
+     * (focused_window set but the slot is no longer active) returns -1
+     * so callers never operate on a destroyed window. */
+    if (focused_window < 0 || focused_window >= WM_MAX_WINDOWS)
+        return -1;
+    if (!windows[focused_window].active)
+        return -1;
+    return focused_window;
+}
+
+int wm_get_window_rect(int handle, int32_t *x, int32_t *y,
+                       uint32_t *w, uint32_t *h)
+{
+    if (!x || !y || !w || !h)
+        return -2;
+    if (handle < 0 || handle >= WM_MAX_WINDOWS || !windows[handle].active)
+        return -1;
+    *x = windows[handle].x;
+    *y = windows[handle].y;
+    *w = windows[handle].width;
+    *h = windows[handle].height;
+    return 0;
+}
+
+/* Single-slot pending-close queue. A `volatile int` is enough: the IRQ
+ * writer and the compositor-thread reader never access this from
+ * different CPUs at the same time today (keyboard IRQ routes to the
+ * BSP only, compositor runs on the BSP only), and a lost update just
+ * means "the user pressed Alt+F4 twice within one frame and one of
+ * them closed a window that the next frame would have closed anyway"
+ * -- both outcomes are indistinguishable from the user's perspective.
+ * When the queue widens to multiple pending handles, replace with an
+ * atomic ring buffer and update the concurrency contract in wm.h. */
+static volatile int pending_close_handle = -1;
+
+void wm_close_focused_window(void)
+{
+    /* IRQ-safe enqueue. Read focused_window directly (not via
+     * wm_get_window_rect guards) so the stale-handle check happens in
+     * wm_process_pending_closes(); a NULL window here just means the
+     * drain will see -1 and no-op. */
+    int h = focused_window;
+    if (h < 0 || h >= WM_MAX_WINDOWS)
+        return;
+    pending_close_handle = h;
+}
+
+int wm_process_pending_closes(void)
+{
+    int h = pending_close_handle;
+    if (h < 0)
+        return 0;
+    pending_close_handle = -1;
+    if (h >= WM_MAX_WINDOWS || !windows[h].active)
+        return 0;
+    wm_destroy_window(h);
+    return 1;
+}
+
+#ifdef KERNEL_TESTS
+void wm_test_reset(void)
+{
+    uint32_t i;
+    for (i = 0; i < WM_MAX_WINDOWS; i++) {
+        windows[i].active = 0;
+        windows[i].framebuffer = (uint32_t *)0;
+        windows[i].acrylic_cache = (uint32_t *)0;
+        windows[i].flags = 0;
+        windows[i].x = 0;
+        windows[i].y = 0;
+        windows[i].width = 0;
+        windows[i].height = 0;
+        windows[i].z_order = 0;
+        windows[i].dragging = 0;
+    }
+    focused_window = -1;
+}
+
+int wm_test_install_window(int32_t x, int32_t y, uint32_t w, uint32_t h)
+{
+    uint32_t i;
+    for (i = 0; i < WM_MAX_WINDOWS; i++) {
+        if (!windows[i].active) {
+            windows[i].active = 1;
+            windows[i].x = x;
+            windows[i].y = y;
+            windows[i].width = w;
+            windows[i].height = h;
+            windows[i].framebuffer = (uint32_t *)0;
+            windows[i].acrylic_cache = (uint32_t *)0;
+            windows[i].flags = WM_FLAG_VISIBLE | WM_FLAG_DECORATED;
+            windows[i].z_order = (int32_t)i;
+            windows[i].dragging = 0;
+            return (int)i;
+        }
+    }
+    return -1;
+}
+
+void wm_test_set_focused(int handle)
+{
+    uint32_t i;
+    if (handle < 0 || handle >= WM_MAX_WINDOWS || !windows[handle].active)
+        return;
+    for (i = 0; i < WM_MAX_WINDOWS; i++)
+        windows[i].flags &= ~WM_FLAG_FOCUSED;
+    windows[handle].flags |= WM_FLAG_FOCUSED;
+    focused_window = handle;
+}
+#endif
+
 void wm_put_pixel(int handle, uint32_t x, uint32_t y, uint32_t color)
 {
     struct wm_window *w;
