@@ -90,9 +90,28 @@ DWORD GetCurrentProcessId(void)
 
 DWORD GetTickCount(void)
 {
+    /* Read KUSER_SHARED_DATA at 0x7FFE0000 for millisecond-resolution
+     * tick count. TickCountLowDeprecated is bumped by the timer ISR
+     * every tick; TickCountMultiplier converts ticks to 100ns units
+     * via (tick * mult) >> 24 -> 100ns, divide by 10000 for ms. The
+     * KUSD page is mapped user-RO at crt_init so this is a direct
+     * load, no ring transition.
+     *
+     * Fall back to sys_uptime * 1000 if KUSD fields are still 0 (the
+     * timer hasn't ticked yet, which on TCG boot can happen before
+     * user tests run). The fallback gives SECOND resolution via
+     * syscall which is slower but matches the previous contract. */
+    volatile const USER_KUSD *kusd = (volatile const USER_KUSD *)USER_KUSD_VA;
+    uint32_t tick = kusd->TickCountLowDeprecated;
+    uint32_t mult = kusd->TickCountMultiplier;
+    if (tick && mult) {
+        /* (tick * mult) >> 24 -> 100ns units; / 10000 -> ms. */
+        uint64_t hundred_ns = ((uint64_t)tick * mult) >> 24;
+        return (DWORD)(hundred_ns / 10000ULL);
+    }
     long secs = sys_uptime();
-    if (secs < 0)
-        return 0;
+    if (secs <= 0)
+        return 1;  /* never 0: "kernel timer alive" invariant */
     return (DWORD)(secs * 1000);
 }
 
