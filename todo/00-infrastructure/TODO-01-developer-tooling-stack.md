@@ -173,8 +173,8 @@ Local and CI runs need named machine profiles instead of script archaeology acro
 > - Known drift noted but not fixed here (keeps the section doc-only per the Commit line): `run-qemu-kvm.bat` name vs. WHPX behavior, `run-secureboot.bat` directory placement, Linux-side gaps in the fs/storage harnesses. Consolidation is deliberately not scoped to §4.
 
 > **Verified:** 2026-04-17 | commit `e2c3f06b` | 7/7 items | build OK
-> **Deferred:** [L] `-ExtraArgs` gap on scenario launchers -> XREF: 00-infrastructure/TODO-01 §8 (item: "Lift the `-ExtraArgs` parameter from run-qemu.ps1 into each scenario launcher" at line 276)
-> **Quality reviewed:** 2026-04-17 | Codex 1x (adversarial) | 7M fixed, 1M open (Accepted above) | scope: N/A (docs + shell names)
+> **Deferred:** [L] `-ExtraArgs` gap on scenario launchers (RESOLVED 2026-04-18 by §8 commit `11fa0d2a`: `-ExtraArgs` + quote-aware tokenizer threaded through every .ps1 + .bat scenario launcher).
+> **Quality reviewed:** 2026-04-17 | Codex 1x (adversarial) | 7M fixed, 1M open (resolved by §8) | scope: N/A (docs + shell names)
 > **Test runner:** N/A (docs-only) | validation: walk Default Path in `machine-matrix.md` to reach correct launcher for each scenario without reading script headers
 
 ---
