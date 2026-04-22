@@ -526,20 +526,20 @@ Per-test fresh-desktop isolation and automatic artifact bundles on failure, so a
 
 ## OS Comparison
 
-| ⭐ | Feature                         | 🪟 Win11                       | 🐧 Linux                      | 🚀 Impossible OS          |
-|----|---------------------------------|---------------------------------|-------------------------------|----------------------------|
-| 💎 | UI automation framework         | ✅ UI Automation + WACK        | ⚠️ dogtail/LDTP               | ✅ §4 inject + §5 terminal readback (semantic tree owned by D08 T07 §6) |
-| 💎 | Automated boot UI test          | ✅ Internal CI                 | ⚠️ openQA (SUSE)              | ✅ §3 desktop smoke (taskbar distinct + non-black gate) |
-| ⭐ | Pixel-level visual CI           | ❌ Not in public CI            | ❌ Not standard               | ✅ §6 compare-screenshot.sh + §7 GHA visual-regression workflow |
-| ⭐ | WM state introspection          | ⚠️ spy++ (manual)              | ⚠️ xdotool                    | ✅ §8 wm_get_window_count + focused + rect; Alt+F4 deferred close |
-| 💎 | Frame timing + drop counters    | ✅ DwmGetCompositionTimingInfo | ⚠️ presentation-time protocol | ✅ §10 wm_get_frame_stats seqlock + ETW WM_FRAME_PRESENTED |
-| 💎 | Structured screenshot needles   | ⚠️ ad hoc per team             | ✅ openQA needles             | ✅ §9 needle-compare.py JSON sidecar (regions, OCR, exclude zones) |
-| ⭐ | Perceptual diff (SSIM/SSIMv2)   | ❌ pixel or binary only        | ❌ pixel only                 | ✅ §9 SSIM (scikit-image) + SSIMULACRA2 (libjxl bin) modes |
-| 💎 | Input record + replay           | ⚠️ PSR deprecated in 24H2      | ✅ libinput record/replay     | ✅ §11 JSONL trace + UTF-8 IME commit byte-identical replay |
-| ⭐ | Headless compositor + vclock    | ❌ DWM display-coupled         | ⚠️ wlroots headless only      | ✅ §12 compositor=headless + step_frames + test_seed |
-| 💎 | Multi-monitor + DPI test matrix | ⚠️ manual                      | ✅ GNOME virtual monitors     | ⚠️ §13 API surface + matrix runner (single-output today; virtio-gpu prereq in §15) |
-| ⭐ | WCAG sweep gated in CI          | ⚠️ A11y Insights external      | ⚠️ Orca partial               | ⚠️ §14 rule enum + finding schema + `make test-wcag` (blocked on `D08 T07 §6`) |
-| ⭐ | Crash artifact auto-capture     | ⚠️ ad hoc per team             | ⚠️ ad hoc per team            | ⚠️ §15 test_desktop_reset + GHA artifact upload wired (capture hook blocked on post-desktop-init harness) |
+| ⭐ | Feature                         | 🪟 Win11                       | 🐧 Linux                      | 🚀 Impossible OS       |
+|----|---------------------------------|---------------------------------|-------------------------------|------------------------|
+| 💎 | UI automation framework         | ✅ UI Automation + WACK        | ⚠️ dogtail/LDTP               | ✅ §4 + §5             |
+| 💎 | Automated boot UI test          | ✅ Internal CI                 | ⚠️ openQA (SUSE)              | ✅ §3 smoke            |
+| ⭐ | Pixel-level visual CI           | ❌ Not in public CI            | ❌ Not standard               | ✅ §6 + §7 GHA         |
+| ⭐ | WM state introspection          | ⚠️ spy++ (manual)              | ⚠️ xdotool                    | ✅ §8 + Alt+F4         |
+| 💎 | Frame timing + drop counters    | ✅ DwmGetCompositionTimingInfo | ⚠️ presentation-time protocol | ✅ §10 + ETW           |
+| 💎 | Structured screenshot needles   | ⚠️ ad hoc per team             | ✅ openQA needles             | ✅ §9 JSON + OCR       |
+| ⭐ | Perceptual diff (SSIM/SSIMv2)   | ❌ pixel or binary only        | ❌ pixel only                 | ✅ §9 SSIM + SSIMv2    |
+| 💎 | Input record + replay           | ⚠️ PSR deprecated in 24H2      | ✅ libinput record/replay     | ✅ §11 + IME UTF-8     |
+| ⭐ | Headless compositor + vclock    | ❌ DWM display-coupled         | ⚠️ wlroots headless only      | ✅ §12 step_frames     |
+| 💎 | Multi-monitor + DPI test matrix | ⚠️ manual                      | ✅ GNOME virtual monitors     | ⚠️ §13 (virtio-gpu)    |
+| ⭐ | WCAG sweep gated in CI          | ⚠️ A11y Insights external      | ⚠️ Orca partial               | ⚠️ §14 (D08 T07 §6)    |
+| ⭐ | Crash artifact auto-capture     | ⚠️ ad hoc per team             | ⚠️ ad hoc per team            | ⚠️ §15 (harness)       |
 
 Sections 1-12 have shipped. Sections 1 through 5 give basic automated desktop testing (kernel-side fb snapshot, host-side QEMU screendump, smoke test, input injection, terminal-buffer readback). Sections 6 through 9 add visual + perceptual regression: pixel-percent comparator with sibling-needle auto-discovery (§6), GHA workflow + matrix runner (§7), kernel-side WM introspection + Alt+F4 deferred close (§8), and SSIM / SSIMULACRA2 + openQA-style needles with OCR (§9). Section 10 ships the DwmGetCompositionTimingInfo-equivalent frame-timing oracle (counters + ETW). Section 11 ships the Unicode- and IME-correct record/replay JSONL surface that beats both libinput and PSR. Section 12 ships the headless compositor + frame-lock stepping that no shipping OS offers in-tree. Section 13 is partial (`[/]`): the test-framework API surface + matrix runner shape land today; the actual multi-monitor scanout requires the §15 virtio-gpu multi-output driver prerequisite. Sections 14 (WCAG sweep) and 15 (per-test isolation + crash artifact bundle) remain to ship.
 
