@@ -51,6 +51,18 @@ bash scripts/compare-screenshot.sh --mode ssim reference.png current.png
 bash scripts/compare-screenshot.sh --mode pixel --needle desktop-idle.needle.json reference.png current.png
 ```
 
+When a sibling `<reference>.needle.json` exists next to the reference
+PNG (for example `tests/references/desktop-idle-1280x720.png` paired
+with `tests/references/desktop-idle-1280x720.needle.json`), it is
+auto-discovered and applied even when `--needle` is not passed.
+Explicit `--needle` always wins.
+
+SSIMULACRA2 mode spawns an external subprocess per scored region, so
+it only supports a single scored region per run; multi-region needles
+must use `--mode ssim` or `--mode pixel`. An attempted multi-region
+SSIMULACRA2 invocation exits 1 with a clear message pointing at the
+alternative modes.
+
 Non-pixel modes delegate to `scripts/needle-compare.py`, which uses
 Python + scikit-image (for SSIM), Pillow (for cropping + diff image),
 and optionally tesseract (for region OCR) and the external

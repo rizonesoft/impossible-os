@@ -335,10 +335,14 @@ def main():
     if args.mode == "ssimulacra2" and not (0 <= args.threshold <= 100):
         die(1, f"ssimulacra2 threshold must be in [0, 100], got {args.threshold}")
 
-    if not os.path.isfile(args.reference):
-        die(2, f"reference image missing: {args.reference}")
-    if not os.path.isfile(args.current):
-        die(2, f"current image missing: {args.current}")
+    # Separate existence/readability (exit 2) from decode failure (exit 4)
+    # so callers that bucket fixture errors independently from broken PNGs
+    # can tell them apart. Codex [M] quality review.
+    for role, path in (("reference", args.reference), ("current", args.current)):
+        if not os.path.isfile(path):
+            die(2, f"{role} image missing: {path}")
+        if not os.access(path, os.R_OK):
+            die(2, f"{role} image not readable: {path} (permissions?)")
 
     diff_path = args.diff or (os.path.splitext(args.current)[0] + ".diff.png")
     os.makedirs(os.path.dirname(os.path.abspath(diff_path)) or ".", exist_ok=True)
@@ -347,6 +351,11 @@ def main():
         ref_img = Image.open(args.reference)
         cur_img = Image.open(args.current)
         ref_img.load(); cur_img.load()
+    except (PermissionError, IsADirectoryError) as e:
+        # These are still "readability" failures -- exit 2 -- even though
+        # the earlier os.access() check passed: races, TOCTOU, or a
+        # directory named like a file.
+        die(2, f"failed to open inputs: {e}")
     except Exception as e:
         die(4, f"failed to decode inputs: {e}")
 
@@ -361,14 +370,28 @@ def main():
     else:
         norm_thresh = args.threshold / 100.0
 
+    # Auto-discover a sibling `<reference>.needle.json` when --needle was
+    # not passed. Without this, a committed sidecar was silently ignored
+    # and clock/OCR regions never applied -- Codex [H] quality review.
+    # Explicit --needle always wins. When the caller really wants the
+    # full-frame fallback even with a sibling present, they can pass
+    # --needle /dev/null (fails schema validation cleanly), or we can
+    # add an --no-needle flag later if anyone needs it.
+    resolved_needle = args.needle
+    if resolved_needle is None:
+        sibling = os.path.splitext(args.reference)[0] + ".needle.json"
+        if os.path.isfile(sibling):
+            info(f"auto-discovered sibling needle: {sibling}")
+            resolved_needle = sibling
+
     needle = None
-    if args.needle:
+    if resolved_needle:
         try:
-            with open(args.needle, "r", encoding="utf-8") as f:
+            with open(resolved_needle, "r", encoding="utf-8") as f:
                 needle = json.load(f)
         except Exception as e:
-            die(4, f"failed to parse needle JSON {args.needle}: {e}")
-        validate_needle(needle, args.needle)
+            die(4, f"failed to parse needle JSON {resolved_needle}: {e}")
+        validate_needle(needle, resolved_needle)
 
     # No needle: one global region covering the whole image.
     if needle is None:
@@ -378,6 +401,20 @@ def main():
             "w": ref_img.size[0], "h": ref_img.size[1],
             "tolerance": TOL_RELAXED,
         }]}
+
+    # SSIMULACRA2 mode scores via an external subprocess + two PNG
+    # temp-writes per region. Multi-region needles therefore multiply
+    # wall time by region count (subprocess startup + encode cost),
+    # exactly where structured needles are supposed to reduce work.
+    # Reject upfront with a clear pointer to the alternative modes
+    # that DO support regions in-process. Codex [M] quality review.
+    if args.mode == "ssimulacra2":
+        scored = [r for r in needle["regions"]
+                  if r.get("tolerance", TOL_RELAXED) != TOL_IGNORED]
+        if len(scored) > 1:
+            die(1, f"--mode ssimulacra2 supports only one scored region "
+                   f"per run (got {len(scored)}); use --mode ssim for "
+                   f"multi-region needles, or split into per-region runs")
 
     info(f"mode={args.mode} threshold={args.threshold} "
          f"regions={len(needle['regions'])} size={ref_img.size[0]}x{ref_img.size[1]}")
