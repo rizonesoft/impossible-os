@@ -326,7 +326,7 @@ Upgrades §6 beyond flat pixel-percent: adds SSIM / SSIMULACRA2 perceptual diff 
 > - Documented the needle v1 schema and regeneration protocol in `tests/references/README.md` so maintainers authoring the first needle files have the contract in-tree.
 > - Canonical doc: `scripts/needle-compare.py` header (modes, exit codes, tolerance semantics), `tests/references/README.md` (needle v1 schema).
 > - Scope boundary: section 9 ships the perceptual + needle comparator. Section 7 owns the CI wiring that consumes it, section 10 owns frame-timing oracle (no visual dependency), section 13 owns per-output needles, section 15 owns the failure-bundle capture that will upload needle diffs alongside raw screenshots.
-> **Verified:** 2026-04-22 | 11/11 items | build OK | lint clean | manual (10-case self-test matrix PASS; Codex-demanded regressions covered: tiny-region SSIM, 200-region scale, 4 malformed-needle variants)
+> **Verified:** 2026-04-22 | commit `725f0ab1` | 11/11 items | build OK | lint clean | manual (10-case self-test matrix PASS; Codex-demanded regressions covered: tiny-region SSIM, 200-region scale, 4 malformed-needle variants)
 > **Quality reviewed:** 2026-04-22 | Codex 1x (adversarial) | 2H+1M+0L fixed, 0 open | scope: N/A (host-side Python + shell; no domain code-quality skill)
 
 ---
