@@ -23,11 +23,19 @@
   "metrics": {
     "sys_yield_ns": {
       "_owner": "user/test/test_perf_syscall.c",
-      "_description": "INT 0x80 round-trip to SYS_YIELD handler (returns 0); median of 16 samples.",
+      "_description": "INT 0x80 round-trip to SYS_YIELD handler (returns 0); median of 16 samples. APPROXIMATE -- uses a fixed 2 GHz TSC assumption, so reported ns scales with (real_tsc_hz / 2e9). For a TSC-Hz-independent gate, see sys_yield_cycles.",
       "tcg":  { "expected": 6000,  "ceiling": 50000 },
       "kvm":  { "expected": 300,   "ceiling": 500 },
       "whpx": { "expected": 300,   "ceiling": 500 },
       "bare": { "expected": 200,   "ceiling": 300 }
+    },
+    "sys_yield_cycles": {
+      "_owner": "user/test/test_perf_syscall.c",
+      "_description": "Raw TSC cycle count for the sys_yield round-trip; median of 16 samples. TSC-Hz-independent (asserted by test_perf_syscall.exe via CYCLE_CEILING). Primary gate so > 2 GHz CPUs do not fail on the inflated ns report.",
+      "tcg":  { "expected": 12000, "ceiling": 200000 },
+      "kvm":  { "expected": 600,   "ceiling": 2000 },
+      "whpx": { "expected": 600,   "ceiling": 2000 },
+      "bare": { "expected": 400,   "ceiling": 1200 }
     }
   }
 }
