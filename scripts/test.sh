@@ -125,8 +125,13 @@ trap cleanup EXIT INT TERM
 cp "$OVMF_VARS" "$OVMF_VARS_CP"
 rm -f "$TEST_LOG"
 
-# Detect acceleration: KVM > TCG
-if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
+# Detect acceleration: KVM > TCG. `FORCE_TCG=1` overrides for runs that
+# must exercise the software-emulation path (device emulation bugs,
+# leak-detector platform-coverage sweeps, etc.).
+if [ "${FORCE_TCG:-0}" = "1" ]; then
+    ACCEL_ARGS="-accel tcg -cpu Haswell"
+    ACCEL_NAME="TCG (FORCE_TCG=1)"
+elif [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
     ACCEL_ARGS="-accel kvm -cpu host"
     ACCEL_NAME="KVM"
 else
@@ -321,9 +326,16 @@ if [ "$HAS_UTEST" -eq 1 ]; then
         if echo "$verdict" | grep -qE ': (FAIL|TIMEOUT|ISOLATION|LEAK)'; then
             echo -e "  ${RED}FAIL${RESET}  $verdict"
         elif echo "$verdict" | grep -q ': SKIP'; then
-            [ "$QUIET_MODE" -eq 0 ] && echo -e "  ${YELLOW}SKIP${RESET}  $verdict"
+            # `|| true` so the while loop body's last command is always
+            # success-exit. Under `set -e`, a quiet-mode branch where
+            # the short-circuit `&&` evaluates to false trips the loop
+            # on the final iteration (QUIET_MODE=1 + a UTEST: PASS line
+            # at EOF would end the stream with exit 1, firing the
+            # cleanup trap with ec=1). Codex adversarial caught this
+            # when forcing a TCG run via FORCE_TCG=1 QUIET=1.
+            { [ "$QUIET_MODE" -eq 0 ] && echo -e "  ${YELLOW}SKIP${RESET}  $verdict"; } || true
         elif echo "$verdict" | grep -q ': PASS'; then
-            [ "$QUIET_MODE" -eq 0 ] && echo -e "  ${GREEN} OK ${RESET}  $verdict"
+            { [ "$QUIET_MODE" -eq 0 ] && echo -e "  ${GREEN} OK ${RESET}  $verdict"; } || true
         elif echo "$verdict" | grep -q 'format='; then
             # Show `<name>: format=<FMT>` lines in QUIET too so a loader-
             # routing regression surfaces even when per-binary OK lines
