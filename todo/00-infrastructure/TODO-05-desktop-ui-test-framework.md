@@ -51,7 +51,7 @@
 | 💎  |   3   | Desktop smoke test (non-black screen after boot)   | §1, §2        |  [x]   |
 | 💎  |   4   | Input event injection (key press, mouse click)     | --            |  [x]   |
 | 💎  |   5   | Terminal output verification                       | §4            |  [x]   |
-| ⭐  |   6   | Reference screenshot comparison                    | §2            |  [ ]   |
+| ⭐  |   6   | Reference screenshot comparison                    | §2            |  [x]   |
 | ⭐  |   7   | Visual regression CI pipeline                      | §3, §6        |  [ ]   |
 | ⭐  |   8   | Window manager state verification                  | §4            |  [ ]   |
 | ⭐  |   9   | Perceptual diff + structured screenshot needles    | §6            |  [ ]   |
@@ -208,16 +208,28 @@ Verify the terminal window displays correct text after commands.
 
 Compare current screenshots against known-good reference images.
 
-- [ ] Store reference screenshots in `tests/references/` (PNG format)
-- [ ] `scripts/compare-screenshot.sh reference.png current.png` → pixel diff
-- [ ] Tolerance: allow up to 5% pixel difference (anti-aliasing, timing variations)
-- [ ] Output: diff image highlighting changed pixels + percentage difference
-- [ ] Pass: `"Visual match: 99.2% identical (threshold: 95%)"`
-- [ ] Fail: `"Visual MISMATCH: 72% identical (expected 95%+)"` + upload diff image
-- [ ] Commit: `"test: reference screenshot comparison with tolerance"`
+- [x] Reference screenshots live in `tests/references/` (PNG, naming convention `<scenario>-<resolution>.png`) with a `README.md` that documents the capture recipe (`run-qemu --monitor` + `qemu-screenshot.sh`) and the update protocol.
+- [x] `scripts/compare-screenshot.sh <reference.png> <current.png> [diff.png] [--threshold N] [--fuzz N]` -- ImageMagick `compare -metric AE -fuzz <pct>%` across both inputs, emits a diff image highlighting changed pixels, prints percent-identical to 2 decimal places.
+- [x] Tolerance is configurable: default `--threshold 95` (allow up to 5% different pixels) + `--fuzz 2` (per-channel anti-alias budget). Both percentages are validated against a strict `^[0-9]+(\.[0-9]+)?$` regex and range-checked to `[0, 100]` so `.`, `1.2.3`, or `150` are rejected with exit 1 before hitting ImageMagick.
+- [x] Diff image output: `compare` always writes the diff (all-white on a perfect match, red overlay elsewhere). Written atomically via a `.tmp.$$` path + `mv -f` and a cleanup trap so a stale diff never survives a failed run. A pre-run `rm -f` removes any previous artifact before compare starts.
+- [x] Pass format: `"Visual match: <pct>% identical (threshold: <T>%)"` on stdout, exit 0.
+- [x] Fail format: `"Visual MISMATCH: <pct>% identical (expected <T>%+) -- diff: <path>"` on stderr, exit 5; the diff image path echoed is always the current run's output (atomic rename guarantees it).
+- [x] Five-level exit code surface: 0 pass, 1 tooling/bad args, 2 missing input, 3 dimension mismatch, 4 compare/decode failure, 5 visual regression. Documented in the script header; lets CI distinguish "script broken" from "screenshot regressed".
+- [x] ImageMagick decoder pinning: both inputs and the diff output are referenced as `png:<path>` so ImageMagick never heuristically selects `ephemeral:`, `msl:`, or `ghostscript` coders on a mis-named file.
+- [x] Commit: `"test: reference screenshot comparison with tolerance"`
 
 **Test checkpoint:** Boot, capture screenshot, save as reference; second boot comparison returns >= 95% identical. Change wallpaper; comparison drops below 95% and emits diff image path.
 **Platforms:** QEMU WHPX, QEMU TCG only (monitor-protocol dependent; not usable on VBox or bare metal).
+
+> **Test runner:** N/A (host-side shell script; no kernel test surface) | validation: 7 self-check runs (identical, subtle/fuzz-absorbed, 3% diff, 10% diff, dimension mismatch, stale-diff replacement, strict threshold parsing) against synthesized PNG fixtures. End-to-end vs a real QEMU capture is wired into §7's CI pipeline.
+> **Notes:**
+> - Shipped `scripts/compare-screenshot.sh` (~200 LOC bash): ImageMagick `compare -metric AE -fuzz <pct>%` for the pixel count, `identify` for dimension checks, awk for percent-identical math (bash has no float), atomic `.tmp.$$` + `mv -f` + `trap` for the diff artifact so CI never triages a stale file.
+> - Wired `tests/references/` as the canonical reference-PNG location with a `README.md` naming convention, capture recipe (`qemu-screenshot.sh`), and tolerance rationale. No reference images committed yet -- §7 CI is the first consumer and will seed `desktop-idle-1280x720.png` from a golden boot.
+> - Tolerance knobs (`--threshold`, `--fuzz`) default to 95% / 2% per the checkpoint; both are validated with a strict regex + `[0, 100]` range check so a malformed value cannot silently coerce to 0 via awk and disable the gate.
+> - Canonical doc: `scripts/compare-screenshot.sh` header (argument, exit-code, and output-format contract) and `tests/references/README.md` (naming + update recipe).
+> - Scope boundary: §6 ships the pixel-diff tool + reference convention. §7 owns CI wiring + baseline capture automation, §9 owns perceptual diff (SSIM) and openQA-style exclude regions, §13 owns per-monitor references, §15 owns the failure-bundle consumer that stores the rejected diff alongside `screen.png`.
+> **Verified:** 2026-04-22 | 9/9 items | build OK | manual (7 self-check runs PASS against synthesized PNGs; lint clean)
+> **Quality reviewed:** 2026-04-22 | Codex 1x (adversarial) | 1H+1M+0L fixed, 0 open | scope: N/A (host-side shell script; no domain code-quality skill)
 
 ---
 
