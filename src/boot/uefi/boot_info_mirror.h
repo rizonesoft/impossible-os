@@ -77,7 +77,10 @@ struct boot_config {
     /* Desktop UI test framework, headless compositor section:
      * 0 = normal display (default), 1 = headless. */
     UINT8   compositor;
-    UINT8   _reserved[11];     /* future fields -- zero-filled by defaults */
+    /* Multi-monitor test-matrix expected output count:
+     * 0 = whatever the hardware offers, 1..3 = hard-assert exact count. */
+    UINT8   test_monitors_count;
+    UINT8   _reserved[10];     /* future fields -- zero-filled by defaults */
     char    cmdline[BOOT_CONF_CMDLINE_MAX];
     UINT8   config_found;
     /* User-mode test launcher knobs (S4 of TODO-04). Mirror of kernel

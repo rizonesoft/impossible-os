@@ -107,6 +107,29 @@ uint64_t fb_snapshot_size(void);
  * not broken. */
 int fb_snapshot(void *dest_buf, uint32_t *width, uint32_t *height);
 
+/* ---- Multi-output snapshot (TODO-05 multi-monitor test matrix) ---- */
+
+/* Number of framebuffer outputs currently addressable. Returns 1 today:
+ * every shipping path (GOP, Bochs VGA) exposes a single scanout. The
+ * API slot exists so callers can iterate outputs without a compile-
+ * time assumption about count; when a virtio-gpu multi-output driver
+ * lands (see the TODO-05 test-isolation section's virtio-gpu prereq
+ * item), this returns the negotiated `max_outputs` value. */
+uint32_t fb_get_output_count(void);
+
+/* Per-output variant of fb_snapshot. `index` must be in [0, output_count).
+ * `dest_buf` / `width` / `height` follow the same contract as
+ * fb_snapshot. Returns 0 on success, -1 on invalid args or uninit fb,
+ * -2 when `index >= fb_get_output_count()`.
+ *
+ * Single-output today (`index == 0` behaves exactly like fb_snapshot).
+ * When multi-output support ships, each index captures that output's
+ * back buffer. The test-matrix runner in
+ * `scripts/debug/desktop/run-all-desktop-tests.bat` drives every
+ * configured output through this call. */
+int fb_snapshot_monitor(uint32_t index, void *dest_buf,
+                        uint32_t *width, uint32_t *height);
+
 /* ---- Compositor lock ---- */
 /* When locked, fb_putchar/fb_draw_char become no-ops.
  * Call fb_lock_compositor() when the WM compositor takes over the screen. */

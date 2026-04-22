@@ -1955,6 +1955,38 @@ static void parse_conf_kv(struct boot_config *cfg,
         else if (ascii_streq(val, "normal"))   cfg->compositor = 0;
         else                                   cfg->compositor = (UINT8)ascii_atoi(val);
     }
+    else if (ascii_streq(key, "test_monitors")) {
+        /* Desktop UI multi-monitor matrix section. Accepts either a
+         * plain integer count (`test_monitors=2` -> count=2) or the
+         * full geometry list form (`1920x1080@96,1920x1080@144,...`)
+         * which is comma-counted. The geometry form is forward-compat
+         * for the virtio-gpu multi-output driver that will consume the
+         * per-monitor WxH@DPI metadata; today both forms collapse to a
+         * count. Counts > 3 clamp to 0 = "use hardware default".
+         * Codex [H] §13 review: the prior implementation comma-counted
+         * even pure-integer input, so `test_monitors=2` was parsed as
+         * count=1 and silently broke the documented contract. */
+        UINT8 count = 0;
+        int all_digits = (*val != '\0');
+        const char *p = val;
+        while (*p) {
+            if (*p < '0' || *p > '9') { all_digits = 0; break; }
+            p++;
+        }
+        if (all_digits) {
+            UINTN v = ascii_atoi(val);
+            count = (v > 3) ? 0 : (UINT8)v;
+        } else {
+            count = (*val != '\0') ? 1 : 0;
+            const char *q = val;
+            while (*q) {
+                if (*q == ',') count++;
+                q++;
+            }
+            if (count > 3) count = 0;
+        }
+        cfg->test_monitors_count = count;
+    }
     else if (ascii_streq(key, "diag_delay")) {
         cfg->diag_delay = (UINT8)ascii_atoi(val);
     }

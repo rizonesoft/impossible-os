@@ -336,10 +336,18 @@ struct boot_config {
      * 1 = headless: no fb_swap, no real VSYNC wait, tests drive frames
      * via compositor_step_frames(N). Bare-metal boot rejects 1. */
     uint8_t  compositor;
+    /* Multi-monitor test-matrix expected output count (TODO-05 desktop
+     * UI test framework, multi-monitor matrix section). 0 = use
+     * whatever the hardware negotiates (default). 1..3 = assert the
+     * display stack came up with exactly this many outputs; a mismatch
+     * between the boot.conf expectation and the driver's reported
+     * count is a hard fail. Today fb_get_output_count() always returns
+     * 1 until the virtio-gpu multi-output driver lands. */
+    uint8_t  test_monitors_count;
     /* Reserved -- new config fields go here without shifting cmdline.
      * Bootloader zero-fills the entire struct, so new fields default to 0
      * in older bootloaders that don't know about them. */
-    uint8_t  _reserved[11];
+    uint8_t  _reserved[10];
     /* Command line (offset 32 -- stable across versions) */
     char     cmdline[BOOT_CONF_CMDLINE_MAX];
     /* Status */

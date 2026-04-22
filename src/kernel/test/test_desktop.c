@@ -17,6 +17,7 @@
 #include "desktop/terminal.h"
 #include "desktop/wm.h"
 #include "kernel/test/input_record.h"
+#include "kernel/boot_info.h"
 #include "main/main_internal.h"
 
 /* ---- §4 Input Event Injection ----------------------------------------- */
@@ -1202,6 +1203,128 @@ static void test_boot_config_compositor_field(void)
                    "boot_config.compositor accepts 0");
 }
 
+/* ---- Section 13: Multi-Monitor + DPI Matrix (API surface only) ------ */
+
+/* fb_get_output_count is 1 today (single-output hardware path) and
+ * MUST return 1 until the virtio-gpu multi-output driver lands. The
+ * test pins the contract so a future driver that returns 0 (missing
+ * init) or garbage doesn't silently bypass the matrix runner. */
+static void test_fb_output_count_is_nonzero(void)
+{
+    uint32_t n = fb_get_output_count();
+    TEST_ASSERT(n >= 1,
+                "fb_get_output_count() returns at least 1 (single-output baseline)");
+    /* Matrix tests rely on this being <= 3; the virtio-gpu driver will
+     * negotiate max_outputs=3 when wired. */
+    TEST_ASSERT(n <= 3,
+                "fb_get_output_count() <= 3 (matrix cap)");
+}
+
+/* fb_snapshot_monitor(0, ...) routes to fb_snapshot when single-output.
+ * For indices >= output_count, returns -2 (E_INVALID_INDEX). */
+static void test_fb_snapshot_monitor_rejects_oob(void)
+{
+    uint32_t w = 0, h = 0;
+    uint32_t count = fb_get_output_count();
+
+    /* NULL out-args still reject with -1 (same as fb_snapshot). */
+    int rc = fb_snapshot_monitor(0, (void *)0, &w, &h);
+    TEST_ASSERT_EQ((uint64_t)(int64_t)rc, (uint64_t)(int64_t)-1,
+                   "NULL dest rejected with -1");
+
+    rc = fb_snapshot_monitor(count, (void *)&w, &w, &h);
+    TEST_ASSERT_EQ((uint64_t)(int64_t)rc, (uint64_t)(int64_t)-2,
+                   "index == output_count returns -2 (OOB)");
+
+    rc = fb_snapshot_monitor(count + 10, (void *)&w, &w, &h);
+    TEST_ASSERT_EQ((uint64_t)(int64_t)rc, (uint64_t)(int64_t)-2,
+                   "index far past output_count returns -2");
+
+    rc = fb_snapshot_monitor(0xFFFFFFFFu, (void *)&w, &w, &h);
+    TEST_ASSERT_EQ((uint64_t)(int64_t)rc, (uint64_t)(int64_t)-2,
+                   "UINT32_MAX index rejected");
+}
+
+/* boot_config.test_monitors_count must be a valid count (0..3) after
+ * bootloader parse. Zero = "use hardware default" (clamped by the
+ * parser when value > 3 as well). */
+static void test_boot_config_test_monitors_count(void)
+{
+    /* Read the live value; the bootloader already parsed boot.conf.
+     * Default is 0 (not set). We don't force a specific boot.conf
+     * for this test -- we just verify the field is accessible and
+     * carries a sane (<=3) value. */
+    uint8_t n = g_boot_info.config.test_monitors_count;
+    TEST_ASSERT(n <= 3,
+                "test_monitors_count must be 0..3 (parser clamps to 0 when >3)");
+}
+
+/* Kernel-side mirror of the bootloader's test_monitors parser so the
+ * exact-mapping semantics can be unit-tested without booting. The
+ * logic MUST stay in lock-step with `src/boot/uefi/bootx64.c`
+ * `parse_conf_kv()` test_monitors handler. Codex §13 review demanded
+ * positive tests after the prior implementation mis-parsed
+ * `test_monitors=2` as count=1. */
+static uint8_t test_parse_test_monitors(const char *val)
+{
+    uint8_t count = 0;
+    int all_digits = (*val != '\0');
+    const char *p = val;
+    while (*p) {
+        if (*p < '0' || *p > '9') { all_digits = 0; break; }
+        p++;
+    }
+    if (all_digits) {
+        /* ascii_atoi equivalent: base-10, no sign, no overflow guard
+         * beyond the count > 3 clamp that follows. */
+        uint64_t v = 0;
+        const char *q = val;
+        while (*q) { v = v * 10 + (uint64_t)(*q - '0'); q++; }
+        count = (v > 3) ? 0 : (uint8_t)v;
+    } else {
+        count = (*val != '\0') ? 1 : 0;
+        const char *q = val;
+        while (*q) {
+            if (*q == ',') count++;
+            q++;
+        }
+        if (count > 3) count = 0;
+    }
+    return count;
+}
+
+/* Exact-mapping regression for the bootloader parser. Pure-integer
+ * form: "1"->1, "2"->2, "3"->3, "4"->0 (clamped); geometry list
+ * form: count the comma-separated entries. Codex [H] §13 review. */
+static void test_test_monitors_parser_exact_mapping(void)
+{
+    /* Pure-integer form */
+    TEST_ASSERT_EQ((uint64_t)test_parse_test_monitors("1"), (uint64_t)1,
+                   "test_monitors=1 -> count 1");
+    TEST_ASSERT_EQ((uint64_t)test_parse_test_monitors("2"), (uint64_t)2,
+                   "test_monitors=2 -> count 2");
+    TEST_ASSERT_EQ((uint64_t)test_parse_test_monitors("3"), (uint64_t)3,
+                   "test_monitors=3 -> count 3");
+    TEST_ASSERT_EQ((uint64_t)test_parse_test_monitors("4"), (uint64_t)0,
+                   "test_monitors=4 -> 0 (clamp)");
+    TEST_ASSERT_EQ((uint64_t)test_parse_test_monitors("0"), (uint64_t)0,
+                   "test_monitors=0 -> 0");
+    TEST_ASSERT_EQ((uint64_t)test_parse_test_monitors(""),  (uint64_t)0,
+                   "test_monitors empty -> 0");
+
+    /* Geometry list form -- counts comma-separated entries. */
+    TEST_ASSERT_EQ((uint64_t)test_parse_test_monitors("1920x1080@96"),
+                   (uint64_t)1, "single geometry -> 1");
+    TEST_ASSERT_EQ((uint64_t)test_parse_test_monitors("1920x1080@96,1920x1080@144"),
+                   (uint64_t)2, "two geometries -> 2");
+    TEST_ASSERT_EQ((uint64_t)test_parse_test_monitors(
+                       "1920x1080@96,1920x1080@144,3840x2160@192"),
+                   (uint64_t)3, "three geometries -> 3");
+    TEST_ASSERT_EQ((uint64_t)test_parse_test_monitors(
+                       "a,b,c,d"),
+                   (uint64_t)0, "four entries -> 0 (clamp)");
+}
+
 /* ---- Registration ----------------------------------------------------- */
 
 void test_register_desktop(void)
@@ -1274,6 +1397,14 @@ void test_register_desktop(void)
                             test_compositor_step_frames_advances_stats, TEST_CAT_DESKTOP);
     test_suite_register_cat("Desktop: boot_config.compositor field present",
                             test_boot_config_compositor_field, TEST_CAT_DESKTOP);
+    test_suite_register_cat("Desktop: fb_get_output_count nonzero baseline",
+                            test_fb_output_count_is_nonzero, TEST_CAT_DESKTOP);
+    test_suite_register_cat("Desktop: fb_snapshot_monitor rejects out-of-range indices",
+                            test_fb_snapshot_monitor_rejects_oob, TEST_CAT_DESKTOP);
+    test_suite_register_cat("Desktop: boot_config.test_monitors_count 0..3 range",
+                            test_boot_config_test_monitors_count, TEST_CAT_DESKTOP);
+    test_suite_register_cat("Desktop: test_monitors parser exact mapping (kernel mirror)",
+                            test_test_monitors_parser_exact_mapping, TEST_CAT_DESKTOP);
 }
 
 #endif /* KERNEL_TESTS */

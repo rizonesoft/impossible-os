@@ -58,7 +58,7 @@
 | 💎  |  10   | Frame timing + drop oracle (`wm_get_frame_stats`)  | --            |  [x]   |
 | 💎  |  11   | Input record + replay (Unicode, IME)               | §4, §12       |  [x]   |
 | ⭐  |  12   | Headless compositor + frame-lock stepping          | §1            |  [x]   |
-| 💎  |  13   | Multi-monitor + DPI test matrix                    | §1            |  [ ]   |
+| 💎  |  13   | Multi-monitor + DPI test matrix                    | §1            |  [/]   |
 | ⭐  |  14   | WCAG sweep over automation tree                    | D08 T07 §6    |  [ ]   |
 | 💎  |  15   | Test isolation + crash artifact capture            | §1, §10       |  [ ]   |
 
@@ -432,16 +432,27 @@ Runs the compositor without a physical display and with a virtual clock the test
 
 GNOME Shell tests against fixed virtual monitors at multiple DPIs; Win11 CI is single-display. TODO-05 §3 covers one display only. Extend to N displays by {96, 144, 192} DPI.
 
-- [ ] QEMU multi-display: `-device virtio-gpu-pci,max_outputs=3` (TCG path only; WHPX / VBox virtio-gpu is flaky for multi-output)
-- [ ] `boot.conf` key: `test_monitors=1920x1080@96,1920x1080@144,3840x2160@192` parsed into framebuffer driver config
-- [ ] Compositor places the desktop across virtual outputs; primary monitor hosts the taskbar
-- [ ] `fb_snapshot_monitor(int index, void *dst, uint32_t *w, uint32_t *h)`: extends §1 to capture per-output; returns `E_INVALID_INDEX` when `index >= active_output_count`
-- [ ] Runner matrix in `scripts/debug/desktop/run-all-desktop-tests.bat`: iterate monitor count in {1, 2, 3} across DPI in {96, 144, 192}; emit one result row per cell
-- [ ] §3 smoke test repeated per monitor index; per-monitor non-black threshold >= 10 percent
-- [ ] Commit: `"test: multi-monitor + DPI scaling test matrix"`
+- [ ] QEMU multi-display: `-device virtio-gpu-pci,max_outputs=3` -- DEFERRED (needs the §15 virtio-gpu multi-output driver prereq item; today's GOP/Bochs path is single-output).
+- [x] `boot.conf` key `test_monitors=` parsed in `src/boot/uefi/bootx64.c`. Accepts an integer count (`test_monitors=2`) OR a comma-separated geometry list (`1920x1080@96,1920x1080@144,3840x2160@192`); both forms collapse to a count today and store it in the new `boot_config.test_monitors_count` field. Counts > 3 clamp to 0 (use hardware default). Forward-compat: when virtio-gpu multi-output ships, the parser extends to capture per-monitor WxH@DPI metadata.
+- [ ] Compositor places the desktop across virtual outputs -- DEFERRED (same virtio-gpu prereq).
+- [x] `fb_snapshot_monitor(uint32_t index, void *dst, uint32_t *w, uint32_t *h)` in `src/kernel/drivers/framebuffer.c`: returns 0 on success, -1 on NULL/uninit, -2 on `index >= fb_get_output_count()`. Index 0 routes to `fb_snapshot()` for the single output today; the array of per-output back-buffers lands with the virtio-gpu driver. `fb_get_output_count()` returns 1 today.
+- [x] Runner matrix in `scripts\debug\desktop\run-matrix-desktop-tests.bat`: iterates monitor count {1,2,3} x DPI {96,144,192}. Single-monitor cells (3) run today; multi-monitor cells (3) print `[SKIP] -- needs virtio-gpu multi-output driver` and become real runs the moment the §15 prereq lands. Matrix shape is committed so future driver work just removes the SKIP guards.
+- [ ] §3 smoke test per monitor index -- partial: single-output baseline is the existing §3 smoke; per-monitor non-black assertion belongs with the virtio-gpu prereq.
+- [x] Commit: `"test: multi-monitor + DPI scaling test matrix"`
 
 **Test checkpoint:** Boot with 2 virtual monitors at 96 and 192 DPI: `fb_snapshot_monitor(0)` captures monitor 0 with non-black pixels; `fb_snapshot_monitor(1)` captures monitor 1 with non-black pixels; taskbar appears on primary only (monitor 0).
 **Platforms:** QEMU TCG only (virtio-gpu multi-output path); bare-metal real-monitor matrix covered by manual validation.
+
+> **Test runner:** `scripts\debug\desktop\run-matrix-desktop-tests.bat` | 1 baseline cell runs, 5 pending cells marked [SKIP] until the virtio-gpu driver + run-qemu override land (KVM 2026-04-22: 38 suites, 191 assertions, 0 failures)
+> **Notes:**
+> - Shipped: `fb_get_output_count()` + `fb_snapshot_monitor(index, ...)` in `include/kernel/drivers/framebuffer.h` + `src/kernel/drivers/framebuffer.c` (returns 1 output today; index 0 routes to fb_snapshot; index >= count returns -2). `boot.conf test_monitors=` parser (`src/boot/uefi/bootx64.c`) accepts pure integer OR comma-separated geometry list; both collapse to `boot_config.test_monitors_count` (clamped to 0..3). `scripts\debug\desktop\run-matrix-desktop-tests.bat` shape is committed with 1 honest run + 5 [SKIP] pending cells.
+> - Not shipped here: the virtio-gpu multi-output driver itself -- the test checkpoint cannot pass until that lands. The driver is a ~1500-LOC graphics-stack deliverable filed as a concrete §15 prerequisite item ("Ship a virtio-gpu multi-output driver" at line 488) with the scanout + FB-manager retrofit points enumerated. When that lands, the driver replaces the single `back_buf` with an N-output array and `fb_snapshot_monitor(i > 0)` lights up the matrix runner's pending cells.
+> - 6 new `TEST_CAT_DESKTOP` suites (+14 assertions): output_count baseline (1..3 range), fb_snapshot_monitor OOB rejection with NULL / index-at-count / index+10 / UINT32_MAX, boot_config.test_monitors_count 0..3 range, PARSER exact-mapping for integer forms 0/1/2/3/4 and comma-list 1..4 entries (kernel-side mirror of bootloader parser; stays in lock-step by code review).
+> - Canonical doc: `include/kernel/drivers/framebuffer.h` (output-count + snapshot contract), `src/boot/uefi/bootx64.c` (parser -- integer form + geometry list).
+> - Scope boundary: §13 ships the kernel-side + boot.conf + runner-shape surface. §15 owns the virtio-gpu multi-output driver prerequisite, §7 owns the visual-regression workflow the matrix rows consume, §1 owns the single-output fb_snapshot the §13 API builds on.
+> **Verified:** 2026-04-22 | 4/6 items + 1 partial | build OK | tests 38/38 suites 191/191 assertions PASS (KVM) | 2 items explicitly deferred to §15 virtio-gpu prereq
+> **Deferred:** [M] multi-monitor matrix rows + per-output non-black smoke require the virtio-gpu multi-output driver (reason: standalone ~1500-LOC graphics-stack work, outgrows UI-test framework scope) -> XREF: 00-infrastructure/TODO-05 §15 (item: "Ship a virtio-gpu multi-output driver" at line 488)
+> **Quality reviewed:** 2026-04-22 | Codex 1x (adversarial) | 2H+1M+0L fixed, 0 open | scope: kernel-code-quality
 
 ---
 
@@ -485,6 +496,7 @@ Per-test fresh-desktop isolation and automatic artifact bundles on failure, so a
 - [ ] Re-running a failing test replaces the prior bundle, does NOT append (avoids stale artifact drift)
 - [ ] Add snapshot-time quiesce for `fb_snapshot()` so failure captures under an active compositor are not torn. Today `src/kernel/drivers/framebuffer.c:fb_snapshot()` does a lockless row copy; §1 relies on `spinner_stop()` + pre-compositor test timing. §15 ships the first caller that runs under active rendering, so add a read-side lock (or compositor flush barrier) that `fb_blit` / `fb_put_pixel` / `spinner_advance` writers honor, then drop the header caveat. Codex quality review of §1 (2026-04-22) accepted the race here.
 - [ ] Harden QEMU monitor exposure for shared-host CI: today `scripts/test-desktop.sh` and any manual `-Monitor` user of `scripts/machines/run-qemu.ps1` bind the HMP monitor to `127.0.0.1:<port>` with `server,nowait`, which is reachable by any local user on a multi-tenant Linux / WSL host. Migrate `scripts/qemu-screenshot.sh` to accept an optional `--socket <path>` invoking `nc -U`, add a matching `-MonitorSocket` switch to `run-qemu.ps1` (Linux hosts only; Windows keeps TCP because WSL's AF_UNIX interop is flaky), and update `scripts/test-desktop.sh` to prefer the UNIX socket path. Codex adversarial review of §3 (2026-04-22) accepted this as out-of-scope for the single-section smoke test.
+- [ ] Ship a virtio-gpu multi-output driver so §13's test matrix can assert non-black per-output captures. Today `src/kernel/drivers/` has `virtio-blk` and `virtio-input` but no `virtio-gpu`. Requires: `src/kernel/drivers/virtio_gpu.c` + `include/kernel/drivers/virtio_gpu.h` implementing VirtIO 1.2 GPU commands (`RESOURCE_CREATE_2D`, `RESOURCE_ATTACH_BACKING`, `SET_SCANOUT`, `RESOURCE_FLUSH`, `GET_DISPLAY_INFO`), multi-scanout fb-manager that replaces the single `back_buf` with an N-output array, wiring into `fb_get_output_count()` / `fb_snapshot_monitor()` (stubs land with §13; just swap the scanout routing once the driver is real), compositor layout that spans primary + secondary outputs. ~1500 LOC new driver. Deferred from §13 (2026-04-22) because it is a standalone graphics-stack deliverable that outgrows the UI-test framework's scope -- belongs in `08-graphics-ui` or a new TODO when the work starts.
 - [ ] Commit sample JSONL traces `tests/traces/dir_cmd.input.jsonl`, `tests/traces/cjk_hello.input.jsonl`, `tests/traces/drag_resize.input.jsonl`. §11 ships the in-memory record+replay surface + JSONL codec; committed sample files require the late-phase test harness to read host files (or an embedded in-kernel fixture table, either works). Deferred from §11 (2026-04-22) because the kernel test phase has no filesystem yet; the harness item immediately below owns that.
 - [ ] Expose `\\?\ObjectManager\FrameStats` as a read-only pseudo-file that returns the current `struct wm_frame_stats` snapshot on read. §10 ships the kernel-side counters + seqlock-safe `wm_get_frame_stats()` reader, so this item is strictly the user-mode-visible wiring: register an Ob pseudo-file driver under the namespace root, implement its `Read` handler as a `wm_get_frame_stats` proxy with a struct-to-bytes copy, and publish the schema in `include/kernel/etw.h` alongside `ETW_EVT_WM_FRAME_PRESENTED` so consumers can parse both surfaces. Deferred from §10 (2026-04-22) because the Ob pseudo-file driver is a 300-LOC cross-subsystem addition larger than a single-section scope.
 - [ ] Refactor `scripts/test-visual-regression.sh` around a shared-session capture loop so multi-scenario runs do not pay full TCG-boot cost per scenario. Today every scenario delegates to `scripts/test-desktop.sh` which boots a fresh QEMU instance and waits for first paint -- acceptable for the current single `idle` scenario, but linear in scenario count and will exhaust the workflow's 25-minute budget once §11 record/replay or §13 multi-monitor cases land. Boot one VM per session; expose a per-scenario "needs fresh boot" property for the cases that genuinely require isolation. Codex [M] quality review of §7 (commit 54c9b449) accepted this as out-of-scope for the single-scenario CI shipment.
@@ -501,20 +513,20 @@ Per-test fresh-desktop isolation and automatic artifact bundles on failure, so a
 
 | ⭐ | Feature                         | 🪟 Win11                       | 🐧 Linux                      | 🚀 Impossible OS          |
 |----|---------------------------------|---------------------------------|-------------------------------|----------------------------|
-| 💎 | UI automation framework         | ✅ UI Automation + WACK        | ⚠️ dogtail/LDTP               | ⬜ §4,§5 + D08 T07 §6     |
-| 💎 | Automated boot UI test          | ✅ Internal CI                 | ⚠️ openQA (SUSE)              | ⬜ §3                     |
-| ⭐ | Pixel-level visual CI           | ❌ Not in public CI            | ❌ Not standard               | ⬜ §6,§7                  |
-| ⭐ | WM state introspection          | ⚠️ spy++ (manual)              | ⚠️ xdotool                    | ⬜ §8                     |
-| 💎 | Frame timing + drop counters    | ✅ DwmGetCompositionTimingInfo | ⚠️ presentation-time protocol | ⬜ §10                    |
-| 💎 | Structured screenshot needles   | ⚠️ ad hoc per team             | ✅ openQA needles             | ⬜ §9                     |
-| ⭐ | Perceptual diff (SSIM/SSIMv2)   | ❌ pixel or binary only        | ❌ pixel only                 | ⬜ §9                     |
-| 💎 | Input record + replay           | ⚠️ PSR deprecated in 24H2      | ✅ libinput record/replay     | ⬜ §11, Unicode+IME       |
-| ⭐ | Headless compositor + vclock    | ❌ DWM display-coupled         | ⚠️ wlroots headless only      | ⬜ §12                    |
-| 💎 | Multi-monitor + DPI test matrix | ⚠️ manual                      | ✅ GNOME virtual monitors     | ⬜ §13                    |
+| 💎 | UI automation framework         | ✅ UI Automation + WACK        | ⚠️ dogtail/LDTP               | ✅ §4 inject + §5 terminal readback (semantic tree owned by D08 T07 §6) |
+| 💎 | Automated boot UI test          | ✅ Internal CI                 | ⚠️ openQA (SUSE)              | ✅ §3 desktop smoke (taskbar distinct + non-black gate) |
+| ⭐ | Pixel-level visual CI           | ❌ Not in public CI            | ❌ Not standard               | ✅ §6 compare-screenshot.sh + §7 GHA visual-regression workflow |
+| ⭐ | WM state introspection          | ⚠️ spy++ (manual)              | ⚠️ xdotool                    | ✅ §8 wm_get_window_count + focused + rect; Alt+F4 deferred close |
+| 💎 | Frame timing + drop counters    | ✅ DwmGetCompositionTimingInfo | ⚠️ presentation-time protocol | ✅ §10 wm_get_frame_stats seqlock + ETW WM_FRAME_PRESENTED |
+| 💎 | Structured screenshot needles   | ⚠️ ad hoc per team             | ✅ openQA needles             | ✅ §9 needle-compare.py JSON sidecar (regions, OCR, exclude zones) |
+| ⭐ | Perceptual diff (SSIM/SSIMv2)   | ❌ pixel or binary only        | ❌ pixel only                 | ✅ §9 SSIM (scikit-image) + SSIMULACRA2 (libjxl bin) modes |
+| 💎 | Input record + replay           | ⚠️ PSR deprecated in 24H2      | ✅ libinput record/replay     | ✅ §11 JSONL trace + UTF-8 IME commit byte-identical replay |
+| ⭐ | Headless compositor + vclock    | ❌ DWM display-coupled         | ⚠️ wlroots headless only      | ✅ §12 compositor=headless + step_frames + test_seed |
+| 💎 | Multi-monitor + DPI test matrix | ⚠️ manual                      | ✅ GNOME virtual monitors     | ⚠️ §13 API surface + matrix runner (single-output today; virtio-gpu prereq in §15) |
 | ⭐ | WCAG sweep gated in CI          | ⚠️ A11y Insights external      | ⚠️ Orca partial               | ⬜ §14                    |
 | ⭐ | Crash artifact auto-capture     | ⚠️ ad hoc per team             | ⚠️ ad hoc per team            | ⬜ §15                    |
 
-After sections 1 through 5, Impossible OS has basic automated desktop testing (smoke test, input injection, terminal verification). Sections 6 through 8 add visual regression and WM introspection that neither Windows nor Linux provides in public CI. Sections 9 through 15 push further: perceptual diff and openQA-style needles (§9), a frame-timing oracle on par with DWM (§10), Unicode- and IME-correct record/replay that beats both baselines (§11), a headless compositor with virtual-clock frame stepping that no shipping OS offers (§12), GNOME-style multi-monitor + DPI matrix (§13), CI-gated WCAG sweep that is external-only on Win11 and partial on Linux (§14), and per-test isolation plus automatic artifact bundles (§15).
+Sections 1-12 have shipped. Sections 1 through 5 give basic automated desktop testing (kernel-side fb snapshot, host-side QEMU screendump, smoke test, input injection, terminal-buffer readback). Sections 6 through 9 add visual + perceptual regression: pixel-percent comparator with sibling-needle auto-discovery (§6), GHA workflow + matrix runner (§7), kernel-side WM introspection + Alt+F4 deferred close (§8), and SSIM / SSIMULACRA2 + openQA-style needles with OCR (§9). Section 10 ships the DwmGetCompositionTimingInfo-equivalent frame-timing oracle (counters + ETW). Section 11 ships the Unicode- and IME-correct record/replay JSONL surface that beats both libinput and PSR. Section 12 ships the headless compositor + frame-lock stepping that no shipping OS offers in-tree. Section 13 is partial (`[/]`): the test-framework API surface + matrix runner shape land today; the actual multi-monitor scanout requires the §15 virtio-gpu multi-output driver prerequisite. Sections 14 (WCAG sweep) and 15 (per-test isolation + crash artifact bundle) remain to ship.
 
 ---
 

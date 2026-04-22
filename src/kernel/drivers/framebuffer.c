@@ -886,6 +886,28 @@ int fb_snapshot(void *dest_buf, uint32_t *width, uint32_t *height)
     return 0;
 }
 
+/* ---- Multi-output stubs (single-output today) ----------------------- */
+
+uint32_t fb_get_output_count(void)
+{
+    /* Every shipping display path (GOP, Bochs VGA) exposes a single
+     * scanout. When the virtio-gpu multi-output driver lands, return
+     * the negotiated `max_outputs` here -- callers already iterate
+     * [0, count) so the surface change is a one-line swap in this
+     * function plus scanout routing in the driver. See the multi-
+     * monitor matrix row of the §15 test-isolation prerequisites. */
+    return 1;
+}
+
+int fb_snapshot_monitor(uint32_t index, void *dest_buf,
+                        uint32_t *width, uint32_t *height)
+{
+    if (index >= fb_get_output_count())
+        return -2;
+    /* Index 0 with single-output hardware is exactly fb_snapshot. */
+    return fb_snapshot(dest_buf, width, height);
+}
+
 void fb_lock_compositor(void)
 {
     compositor_locked = 1;
