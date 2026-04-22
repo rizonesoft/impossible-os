@@ -31,6 +31,13 @@ test_smoke_boot.exe
 # bitmap in its verdict line.
 test_fastpath.exe
 
+# -19 3-way transport fuzz (1000 iters each of INT 0x80 / SYSCALL /
+# INT 0x2E calling NtClose(INVALID_HANDLE)). Any transport-level
+# regression surfaces as FAIL on THIS binary with the specific
+# iter + transport in the UTEST line; §19 transition ring captures
+# the last 64 ring-3 crossings at the next panic for replay.
+test_fastpath_fuzz.exe
+
 # §1 harness self-test + correctness suites.
 test_harness_smoke.exe
 test_syscall.exe

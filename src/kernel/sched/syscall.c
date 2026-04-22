@@ -676,7 +676,18 @@ static uint64_t syscall_handler_2e(struct interrupt_frame *frame)
         }
     }
     syscall_restore_entry_irql(entry_irql, (uint64_t)frame->rax);
-    frame->rax = (uint64_t)result;
+    /* -19 NTSTATUS zero-extension fix: NTSTATUS is a signed 32-bit
+     * type; writing `(uint64_t)result` into a 64-bit frame slot
+     * sign-extends the top bit. For negative NTSTATUS values (every
+     * STATUS_* error in the 0xC0000000+ range), the user-mode
+     * reader saw 0xFFFFFFFF<code> instead of 0x00000000<code>. The
+     * SYSCALL fast path avoids this because its C function returns
+     * NTSTATUS as a 32-bit value and the x86-64 ABI's `mov eax, ...`
+     * zero-extends into rax. Match that behavior by explicitly
+     * truncating + zero-extending here. Found by -19 3-way fuzz
+     * (test_fastpath_fuzz.exe detecting the int2e vs SYSCALL
+     * divergence). */
+    frame->rax = (uint64_t)(uint32_t)result;
     return (uint64_t)frame;
 }
 

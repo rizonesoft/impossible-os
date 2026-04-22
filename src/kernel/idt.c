@@ -18,6 +18,7 @@
 #include "kernel/drivers/lapic.h"
 #include "kernel/panic.h"
 #include "kernel/sched/irql.h"
+#include "kernel/sched/transition_ring.h"   /* §19 fast-path transition ring */
 #include "kernel/smp.h"
 
 /* IDT entry (16 bytes in Long Mode) */
@@ -248,6 +249,16 @@ uint64_t isr_handler(struct interrupt_frame *frame)
         }
     }
 
+    /* ---- §19 transition ring: record ring-3 -> ring-0 entry ----
+     * Only record when coming from ring 3 (user mode). Covers INT
+     * 0x80, INT 0x2E, and hardware IRQs that preempted user code.
+     * Kernel-internal exceptions and timer ticks taken in kernel
+     * mode do not count as fast-path transitions and would bloat
+     * the ring with noise. */
+    if ((frame->cs & 3) == 3)
+        transition_ring_record(TRANSITION_DIR_TO_KERNEL,
+                               frame->rip, frame->rsp);
+
     /* ---- IRQL raise for hardware interrupts (vectors 32+) ----
      * CPU exceptions (0-31) are synchronous faults and run at the
      * IRQL of the faulting code -- do not raise. */
@@ -342,6 +353,13 @@ irql_restore:
                      "iretq: CS.DPL=3 but SS.DPL=%u (frame CS=0x%X SS=0x%X)",
                      (uint64_t)ss_rpl,
                      final_frame->cs, final_frame->ss);
+            /* §19 transition ring: record ring-0 -> ring-3 exit.
+             * Pairs with the TO_KERNEL record at function entry so
+             * each user-mode crossing leaves a matched entry/exit
+             * pair in the ring, letting a dump show exactly which
+             * transition sequence preceded the panic. */
+            transition_ring_record(TRANSITION_DIR_TO_USER,
+                                   final_frame->rip, final_frame->rsp);
         } else if (cs_rpl != 0) {
             klog(LOG_FATAL, "idt",
                  "iretq: CS.DPL=%u (neither ring 0 nor ring 3) -- frame corrupt",

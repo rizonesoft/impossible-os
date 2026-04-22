@@ -96,6 +96,15 @@ void smp_early_bsp_init(void)
             for (;;) __asm__ volatile("cli; hlt");
         }
     }
+
+    /* §19 fast-path transition ring: initialize BSP ring now that
+     * gs:0 is valid. transition_ring_record is a no-op until the
+     * init marker is set, so any pre-init ring-3 transition is
+     * safely dropped rather than crashing. */
+    {
+        extern void transition_ring_init_this_cpu(void);
+        transition_ring_init_this_cpu();
+    }
 }
 
 /* ---- Delay helpers ---- */
@@ -161,6 +170,14 @@ void ap_entry(uint32_t cpu_index)
     pcpu->preempt_count = 0;
     pcpu->current_irql  = PASSIVE_LEVEL;
     pcpu->current_task  = (void *)0;
+
+    /* §19 fast-path transition ring: initialize AP ring now that
+     * gs points at this AP's per_cpu_data. Same idempotent no-op
+     * rule as BSP init above. */
+    {
+        extern void transition_ring_init_this_cpu(void);
+        transition_ring_init_this_cpu();
+    }
 
     /* Memory barrier to ensure all writes are visible before incrementing count */
     smp_mb();

@@ -190,7 +190,39 @@ struct per_cpu_data {
     uint32_t          copy_user_fail_max_injections;
     uint32_t          copy_user_fail_fired_counter;
 #endif
+
+    /* §19 -- per-CPU fast-path transition ring.
+     *
+     * Each entry is a snapshot of the register state captured at a
+     * ring-0 <-> ring-3 boundary crossing. Used to reconstruct the
+     * last 64 transitions on this CPU at panic time, turning a
+     * silent user-mode hang into a replayable trace.
+     *
+     * Lock-free by construction: only the owning CPU writes to its
+     * own ring; other CPUs (panic dump on the crashing CPU) read
+     * only AFTER the CPU is quiesced by the panic recursion guard.
+     * `head` is a write index that wraps at TRANSITION_RING_SIZE.
+     * TSC is monotonically non-decreasing on the same CPU (x86-64
+     * constant-TSC guarantee), so dumping oldest-first = dumping in
+     * chronological order. */
+    uint32_t                transition_head;
+    uint32_t                transition_init_marker;  /* 0xC0CAF00D when initialized */
+    struct transition_entry {
+        uint64_t tsc;               /* RDTSC snapshot at the transition */
+        uint32_t thread_id;         /* current task PID (or 0 for idle) */
+        uint32_t direction;         /* 0 = TO_KERNEL, 1 = TO_USER */
+        uint64_t cr3;               /* live CR3 at capture time */
+        uint64_t rip;               /* user RIP (from iret frame or saved user RIP) */
+        uint64_t rsp;               /* user RSP (from iret frame or scratch) */
+        uint64_t gs_base;           /* MSR_IA32_GS_BASE at capture */
+        uint64_t kernel_gs_base;    /* MSR_IA32_KERNEL_GS_BASE at capture */
+    } transition_ring[64];
 };
+
+#define TRANSITION_RING_SIZE         64
+#define TRANSITION_DIR_TO_KERNEL     0u
+#define TRANSITION_DIR_TO_USER       1u
+#define TRANSITION_INIT_MARKER       0xC0CAF00DU
 
 /* Compile-time enforcement of assembly-referenced struct offsets */
 _Static_assert(__builtin_offsetof(struct per_cpu_data, self) == 0,

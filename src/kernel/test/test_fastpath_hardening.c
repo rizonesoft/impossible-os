@@ -24,6 +24,7 @@
 #include "kernel/test/test.h"
 #include "kernel/abi_hash.h"
 #include "kernel/nt/kusd.h"
+#include "kernel/smp.h"           /* -19 transition ring fields */
 
 /* g_kusd is declared in src/kernel/time/kusd_time.c. The test reads
  * from it without mutating any field -- safe per the "no live boot
@@ -85,6 +86,24 @@ static void test_kusd_abi_hash_matches_kernel(void)
                    "KUSD AbiLayoutHash == IMPOSSIBLE_OS_ABI_HASH");
 }
 
+static void test_transition_ring_initialized(void)
+{
+    /* -19 ring init oracle: BSP ran transition_ring_init_this_cpu()
+     * during smp_early_bsp_init. Read-only check of the marker --
+     * no live init call per CLAUDE.md "no live boot infrastructure
+     * calls" rule. */
+    struct per_cpu_data *pcpu = smp_this_cpu();
+    TEST_ASSERT_NEQ((uint64_t)(uintptr_t)pcpu, (uint64_t)0,
+                    "smp_this_cpu returns valid per-CPU struct");
+    if (!pcpu)
+        return;
+    TEST_ASSERT_EQ((uint64_t)pcpu->transition_init_marker,
+                   (uint64_t)TRANSITION_INIT_MARKER,
+                   "-19 transition ring init marker set on BSP");
+    TEST_ASSERT_EQ((uint64_t)TRANSITION_RING_SIZE, (uint64_t)64,
+                   "-19 transition ring sized to 64 entries");
+}
+
 static void test_kusd_abi_header_offsets(void)
 {
     /* Belt-and-suspenders: the user-side header relies on these
@@ -112,6 +131,8 @@ void test_register_fastpath_hardening(void)
                             test_kusd_abi_hash_matches_kernel, TEST_CAT_EXEC);
     test_suite_register_cat("KUSD: -18 header offsets pinned",
                             test_kusd_abi_header_offsets, TEST_CAT_EXEC);
+    test_suite_register_cat("RING: -19 transition ring initialized",
+                            test_transition_ring_initialized, TEST_CAT_EXEC);
 }
 
 #endif /* KERNEL_TESTS */

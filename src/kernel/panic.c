@@ -30,6 +30,8 @@
 #include "bsod_icon.h"
 #include "kernel/symtab.h"
 #include "kernel/boot_init.h"
+#include "kernel/sched/transition_ring.h"   /* §19 fast-path transition ring dump */
+#include "kernel/smp.h"
 #include "kernel/drivers/serial.h"
 #include "kernel/smp.h"
 #include "kernel/barrier.h"
@@ -780,6 +782,15 @@ void panic_screen(struct interrupt_frame *frame, uint64_t error_code,
     if (panic_try_claim_owner()) {
         panic_capture_fpu_state();
         panic_build_context(frame, &g_panic_context);
+
+        /* §19 fast-path transition ring: dump the last 64 ring-3
+         * transitions on THIS CPU (the crashing one) BEFORE any
+         * other panic output. If the crash root cause is "user
+         * task returned with bad state after transition N", that
+         * transition is visible in the ring. Only the owner CPU
+         * runs this -- the secondary-panic park above ensures no
+         * concurrent writer on another CPU could race the dump. */
+        transition_ring_dump_to_serial(smp_this_cpu());
     } else {
         /* Secondary panic CPU -- park without touching global crash state.
          * The owner CPU will handle BSOD rendering and dump writing. */

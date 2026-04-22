@@ -26,6 +26,7 @@ bits 64
 
 global syscall_entry
 extern syscall_dispatch_fast
+extern transition_ring_record   ; §19 fast-path transition ring hook
 
 syscall_entry:
     ; ---- Entry: ring 3 -> ring 0 ----
@@ -53,6 +54,28 @@ syscall_entry:
     ; Safe to enable interrupts now (on kernel stack with saved state)
     sti
 
+    ; ---- §19 transition ring: record SYSCALL entry ----
+    ; transition_ring_record(direction=TO_KERNEL, user_rip, user_rsp)
+    ;   SysV args:  rdi, rsi, rdx. Preserve rax/r10/rdx across the call
+    ;   since the dispatcher call below consumes them as service/arg1/arg2.
+    ;
+    ; After the 9-push sequence above (lines 43-51), the kernel stack
+    ; holds: [rsp+0x30]=r11(user RFLAGS), [rsp+0x38]=rcx(user RIP),
+    ; [rsp+0x40]=user RSP. Our 3 extra pushes (rax,r10,rdx) shift all
+    ; offsets by +0x18, so user RIP is at [rsp+0x50]. User RSP is
+    ; read from the stable per-CPU scratch slot instead of the stack
+    ; copy, which avoids the shift arithmetic entirely.
+    push rax                            ; save service
+    push r10                            ; save arg1
+    push rdx                            ; save arg2
+    xor edi, edi                        ; direction = TRANSITION_DIR_TO_KERNEL (0)
+    mov rsi, [rsp+0x50]                 ; user RIP from stacked rcx
+    mov rdx, [gs:PCPU_USER_RSP_SCRATCH] ; user RSP from per-CPU scratch
+    call transition_ring_record
+    pop rdx                             ; restore arg2
+    pop r10                             ; restore arg1
+    pop rax                             ; restore service
+
     ; Call C dispatcher
     ; syscall_dispatch_fast(number, a1, a2, a3, a4, a5)
     ; SysV x86-64: rdi, rsi, rdx, rcx, r8, r9
@@ -69,6 +92,17 @@ syscall_entry:
 
     ; ---- Exit: ring 0 -> ring 3 ----
     cli                                 ; disable interrupts for sysret
+
+    ; ---- §19 transition ring: record SYSCALL exit ----
+    ; Stack is still the full 9-push frame (no extra pushes here).
+    ; User RIP at [rsp+0x38], user RSP at [rsp+0x40]. RAX holds the
+    ; NTSTATUS return; preserve it across the call.
+    push rax                            ; save NTSTATUS for sysret caller
+    mov edi, 1                          ; direction = TRANSITION_DIR_TO_USER (1)
+    mov rsi, [rsp+0x40]                 ; user RIP (rcx slot, shifted by +8 for our rax push)
+    mov rdx, [rsp+0x48]                 ; user RSP (user_rsp slot, shifted by +8)
+    call transition_ring_record
+    pop rax                             ; restore NTSTATUS
 
     ; Restore callee-save registers (reverse push order)
     pop r15
