@@ -205,3 +205,23 @@ jobs:
             build/test.log
           retention-days: 1
           if-no-files-found: ignore
+
+      # Per-test crash-artifact bundles written by the desktop UI test
+      # framework's isolation section (screen.png + serial.log + etw.bin
+      # + wm.json when an assertion fails inside TEST_CAT_DESKTOP). The
+      # capture hook itself is still blocked on the post-desktop-init
+      # test harness (tracked in the same section's Deferred list), so
+      # today this step is a forward-compat wiring: the upload runs on
+      # failure and uploads nothing (`if-no-files-found: ignore`) when
+      # the capture hook has not yet populated build/test-artifacts/.
+      # Retention stays at 1 day to share the quota recovery with the
+      # logs step above.
+      - name: Upload desktop test-artifacts on failure
+        if: failure()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-test-artifacts
+          path: build/test-artifacts/
+          retention-days: 1
+          if-no-files-found: ignore

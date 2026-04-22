@@ -482,6 +482,14 @@ void test_runner_run(void)
 
     test_category_t current_cat = TEST_CAT_COUNT; /* sentinel: no category printed yet */
 
+    /* Forward decl: TEST_CAT_DESKTOP auto-isolation. Codex [H] section
+     * 15 review -- wiring the reset into the runner so every desktop
+     * suite starts from a known baseline without each test having to
+     * register the action manually. Symbol lives in
+     * src/kernel/test/test_desktop_reset.c under KERNEL_TESTS; both
+     * are compiled together so the link is always satisfied. */
+    extern void test_desktop_reset(void);
+
     for (uint32_t i = 0; i < g_test_state.suite_count; i++) {
         test_suite_t *s = &g_test_state.suites[i];
 
@@ -523,6 +531,16 @@ void test_runner_run(void)
         s_expected_leak_bytes = 0;
         s_leak_ignore         = 0;
         s_leak_reason         = (void *)0;
+
+        /* Per-category auto-isolation. TEST_CAT_DESKTOP suites touch
+         * shared WM / keyboard / terminal / compositor globals; reset
+         * that state before every desktop suite so a leak from an
+         * earlier suite cannot poison the next. Other categories do
+         * not need equivalent hooks today (kernel subsystem tests
+         * already have their own scratch allocator / heap snapshot
+         * infrastructure). */
+        if (s->cat == TEST_CAT_DESKTOP)
+            test_desktop_reset();
 
         s->fn();
 

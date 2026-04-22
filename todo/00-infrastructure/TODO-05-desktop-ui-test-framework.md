@@ -60,7 +60,7 @@
 | ⭐  |  12   | Headless compositor + frame-lock stepping          | §1            |  [x]   |
 | 💎  |  13   | Multi-monitor + DPI test matrix                    | §1            |  [/]   |
 | ⭐  |  14   | WCAG sweep over automation tree                    | D08 T07 §6    |  [/]   |
-| 💎  |  15   | Test isolation + crash artifact capture            | §1, §10       |  [ ]   |
+| 💎  |  15   | Test isolation + crash artifact capture            | §1, §10       |  [/]   |
 
 > 💎 = parity -- Windows has the Windows App Certification Kit (WACK), UI Automation, DwmGetCompositionTimingInfo, SendInput; Linux has dogtail, LDTP, openQA, libinput record/replay, AT-SPI2.
 > ⭐ = exclusive -- pixel-level visual regression in CI for an OS-level compositor; perceptual diff; headless-with-virtual-clock compositor; WCAG gating in CI; Unicode/IME-correct record/replay.
@@ -491,15 +491,11 @@ Consumes the deterministic automation transport from `D08 T07 §6`. Runs WCAG 2.
 
 Per-test fresh-desktop isolation and automatic artifact bundles on failure, so a developer can diagnose a flake from CI logs without re-running.
 
-- [ ] `test_desktop_reset()`: closes non-essential windows; reseeds compositor RNG via §12 `compositor_set_test_seed()`; clears input queues; invoked automatically between `TEST_CAT_DESKTOP` cases
-- [ ] Failure hook: `TEST_ASSERT_*` failures inside `TEST_CAT_DESKTOP` invoke `test_desktop_capture_on_fail(const char *test_name)` which writes to `build/test-artifacts/<test>/`:
-      - `screen.png` via `fb_snapshot()` (§1)
-      - `serial.log`: last 1 MiB of serial tail
-      - `etw.bin`: last 1 MiB of ETW buffer
-      - `wm.json`: window list + focus + rects snapshot
-- [ ] CI uploads `build/test-artifacts/` on job failure (GHA `actions/upload-artifact@v4`); retention per `T01 §6` policy
-- [ ] Local retention: keep most recent 10 failure bundles; older bundles auto-pruned
-- [ ] Re-running a failing test replaces the prior bundle, does NOT append (avoids stale artifact drift)
+- [x] `test_desktop_reset()` + `test_desktop_reset_action(ctx)` wrapper in `include/kernel/test/test_desktop_reset.h` + `src/kernel/test/test_desktop_reset.c`: zeroes WM slots/focus/pending-close queue, keyboard modifier latches + input ring, terminal ring drain, compositor test seed + headless flag. Idempotent. TEST_CAT_DESKTOP suites call it via `test_add_action(test_desktop_reset_action, NULL)` at the top of the body so it fires as the suite cleanup action.
+- [ ] Failure hook `test_desktop_capture_on_fail(const char *test_name)` that writes `screen.png` + `serial.log` + `etw.bin` + `wm.json` to `build/test-artifacts/<test>/` -- BLOCKED on the "post-desktop-init test harness" item below. Today's kernel tests run in Phase 3 before VFS is writable; the capture hook needs late-phase test execution so `fb_snapshot()` can land on an active compositor and the artifact writer can open files on `X:\test-artifacts\<test>\`.
+- [x] CI uploads `build/test-artifacts/` on job failure -- new step in `.github/workflows/build.yml` "Upload desktop test-artifacts on failure" using `actions/upload-artifact@v4` with 1-day retention and `if-no-files-found: ignore` so it stays a no-op today (capture hook pending) and lights up the moment the late-phase harness starts populating the directory.
+- [ ] Local retention: keep most recent 10 failure bundles -- BLOCKED on the capture hook (no bundles exist yet).
+- [ ] Re-running replaces prior bundle -- BLOCKED on the capture hook (same reason).
 - [ ] Add snapshot-time quiesce for `fb_snapshot()` so failure captures under an active compositor are not torn. Today `src/kernel/drivers/framebuffer.c:fb_snapshot()` does a lockless row copy; §1 relies on `spinner_stop()` + pre-compositor test timing. §15 ships the first caller that runs under active rendering, so add a read-side lock (or compositor flush barrier) that `fb_blit` / `fb_put_pixel` / `spinner_advance` writers honor, then drop the header caveat. Codex quality review of §1 (2026-04-22) accepted the race here.
 - [ ] Harden QEMU monitor exposure for shared-host CI: today `scripts/test-desktop.sh` and any manual `-Monitor` user of `scripts/machines/run-qemu.ps1` bind the HMP monitor to `127.0.0.1:<port>` with `server,nowait`, which is reachable by any local user on a multi-tenant Linux / WSL host. Migrate `scripts/qemu-screenshot.sh` to accept an optional `--socket <path>` invoking `nc -U`, add a matching `-MonitorSocket` switch to `run-qemu.ps1` (Linux hosts only; Windows keeps TCP because WSL's AF_UNIX interop is flaky), and update `scripts/test-desktop.sh` to prefer the UNIX socket path. Codex adversarial review of §3 (2026-04-22) accepted this as out-of-scope for the single-section smoke test.
 - [ ] Ship a virtio-gpu multi-output driver so §13's test matrix can assert non-black per-output captures. Today `src/kernel/drivers/` has `virtio-blk` and `virtio-input` but no `virtio-gpu`. Requires: `src/kernel/drivers/virtio_gpu.c` + `include/kernel/drivers/virtio_gpu.h` implementing VirtIO 1.2 GPU commands (`RESOURCE_CREATE_2D`, `RESOURCE_ATTACH_BACKING`, `SET_SCANOUT`, `RESOURCE_FLUSH`, `GET_DISPLAY_INFO`), multi-scanout fb-manager that replaces the single `back_buf` with an N-output array, wiring into `fb_get_output_count()` / `fb_snapshot_monitor()` (stubs land with §13; just swap the scanout routing once the driver is real), compositor layout that spans primary + secondary outputs. ~1500 LOC new driver. Deferred from §13 (2026-04-22) because it is a standalone graphics-stack deliverable that outgrows the UI-test framework's scope -- belongs in `08-graphics-ui` or a new TODO when the work starts.
@@ -512,6 +508,19 @@ Per-test fresh-desktop isolation and automatic artifact bundles on failure, so a
 
 **Test checkpoint:** Deliberately fail a desktop test: `build/test-artifacts/<test>/` contains `screen.png`, `serial.log`, `etw.bin`, `wm.json`. Re-run the same failing test: the prior bundle is replaced, not appended; directory contents match the second run only.
 **Platforms:** QEMU WHPX, QEMU TCG, VBox, bare metal.
+
+> **Test runner:** `scripts\debug\desktop\run-desktop-tests.bat` (SUITE=desktop) | 46 suites, 223 assertions + 1 pending, 0 failures (KVM 2026-04-23). CI artifact upload wired via `.github/workflows/build.yml` "Upload desktop test-artifacts on failure" step.
+> **Notes:**
+> - Shipped: `include/kernel/test/test_desktop_reset.h` + `src/kernel/test/test_desktop_reset.c` (~50 LOC). Public `test_desktop_reset()` clears WM slots/focus/pending-close, keyboard modifier latches + input ring, terminal handle + grid + input ring (via `terminal_test_force_open` + `force_close` cycle so prior test's force-open leak can't redirect later keyboard injects), compositor test seed + headless flag. Idempotent.
+> - Runner integration: `src/kernel/test/test_runner.c` auto-invokes `test_desktop_reset()` before every `TEST_CAT_DESKTOP` suite body (forward-decl extern inside the dispatch function). Existing 42 desktop suites now get isolation for free without touching a single test file -- Codex section 15 review required this so the reset couldn't be relied on only by new tests.
+> - GHA CI upload: new `.github/workflows/build.yml` step uploads `build/test-artifacts/` on failure with 1-day retention + `if-no-files-found: ignore`. Pure no-op today until the late-phase capture hook populates the directory; lights up automatically when that lands.
+> - 4 new `TEST_CAT_DESKTOP` suites (+16 assertions): reset clears all 5 subsystems, reset is idempotent, reset closes leaked terminal (regression for the Codex [H] leak-poisoning finding -- proves a prior suite's force-open + `polluted content` write does NOT survive the reset and keyboard_inject routes to kb buffer not terminal ring), reset_action wrapper matches direct call.
+> - NOT shipped here (blocked on existing items): `test_desktop_capture_on_fail()` (needs the post-desktop-init test harness so `fb_snapshot` runs on an active compositor and artifact writer can open files on `X:\`); local 10-bundle retention policy; replace-not-append semantics. All three are strictly downstream of the capture hook.
+> - Canonical doc: `include/kernel/test/test_desktop_reset.h` (reset contract + test_add_action wrapper).
+> - Scope boundary: section 15 ships the isolation half. Capture hook + retention + artifact content format wait on the post-desktop-init harness prereq (same deferred list, directly below). The seven other cross-section deferrals in this section's list stay owned by their XREF'd targets.
+> **Verified:** 2026-04-23 | commit `<pending>` | 2/5 core items + 3 capture-hook-blocked | build OK | tests 46/46 suites, 223/223 PASS + 1 PENDING (KVM)
+> **Accepted:** [M] capture hook + retention + replace-not-append blocked on the post-desktop-init test harness (reason: kernel tests run before VFS is writable today; filesystem access requires late-phase execution) -> XREF: 00-infrastructure/TODO-05 §15 (item: "Ship a post-desktop-init test harness that can drive `terminal_*` APIs and cmd.exe with the WM actually initialized" at line 506)
+> **Quality reviewed:** 2026-04-23 | Codex 1x (adversarial) | 2H+0M+0L fixed, 0 open | scope: kernel-code-quality
 
 ---
 
@@ -530,7 +539,7 @@ Per-test fresh-desktop isolation and automatic artifact bundles on failure, so a
 | ⭐ | Headless compositor + vclock    | ❌ DWM display-coupled         | ⚠️ wlroots headless only      | ✅ §12 compositor=headless + step_frames + test_seed |
 | 💎 | Multi-monitor + DPI test matrix | ⚠️ manual                      | ✅ GNOME virtual monitors     | ⚠️ §13 API surface + matrix runner (single-output today; virtio-gpu prereq in §15) |
 | ⭐ | WCAG sweep gated in CI          | ⚠️ A11y Insights external      | ⚠️ Orca partial               | ⚠️ §14 rule enum + finding schema + `make test-wcag` (blocked on `D08 T07 §6`) |
-| ⭐ | Crash artifact auto-capture     | ⚠️ ad hoc per team             | ⚠️ ad hoc per team            | ⬜ §15                    |
+| ⭐ | Crash artifact auto-capture     | ⚠️ ad hoc per team             | ⚠️ ad hoc per team            | ⚠️ §15 test_desktop_reset + GHA artifact upload wired (capture hook blocked on post-desktop-init harness) |
 
 Sections 1-12 have shipped. Sections 1 through 5 give basic automated desktop testing (kernel-side fb snapshot, host-side QEMU screendump, smoke test, input injection, terminal-buffer readback). Sections 6 through 9 add visual + perceptual regression: pixel-percent comparator with sibling-needle auto-discovery (§6), GHA workflow + matrix runner (§7), kernel-side WM introspection + Alt+F4 deferred close (§8), and SSIM / SSIMULACRA2 + openQA-style needles with OCR (§9). Section 10 ships the DwmGetCompositionTimingInfo-equivalent frame-timing oracle (counters + ETW). Section 11 ships the Unicode- and IME-correct record/replay JSONL surface that beats both libinput and PSR. Section 12 ships the headless compositor + frame-lock stepping that no shipping OS offers in-tree. Section 13 is partial (`[/]`): the test-framework API surface + matrix runner shape land today; the actual multi-monitor scanout requires the §15 virtio-gpu multi-output driver prerequisite. Sections 14 (WCAG sweep) and 15 (per-test isolation + crash artifact bundle) remain to ship.
 

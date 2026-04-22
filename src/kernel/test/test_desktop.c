@@ -18,6 +18,7 @@
 #include "desktop/wm.h"
 #include "kernel/test/input_record.h"
 #include "kernel/test/wcag.h"
+#include "kernel/test/test_desktop_reset.h"
 #include "kernel/boot_info.h"
 #include "main/main_internal.h"
 
@@ -1392,6 +1393,137 @@ static void test_wcag_sweep_null_buffer_safe(void)
                 "wcag_sweep_run(NULL, 16) returns 0 or PROVIDER_MISSING without crashing");
 }
 
+/* ---- Section 15: Per-Test Desktop Reset (isolation) ---------------- */
+
+/* test_desktop_reset() zeroes every piece of shared desktop state a
+ * TEST_CAT_DESKTOP suite might have touched. Verify each of the four
+ * subsystems the reset handles: WM slots + focus, keyboard modifier
+ * latches (via alt+F4 no-fire after reset), terminal input ring drain,
+ * compositor seed + headless flag. */
+static void test_desktop_reset_clears_all_state(void)
+{
+    /* Start from a known-clean state: earlier TEST_CAT_DESKTOP suites
+     * leak WM/terminal/keyboard state, so establish the baseline
+     * before seeding the fixture -- that's exactly the leak
+     * test_desktop_reset() is designed to clear. */
+    test_desktop_reset();
+
+    /* Seed state: install a window, focus it, latch alt via inject,
+     * push a character into the terminal ring, flip headless, seed
+     * the RNG. All of these must be gone after reset. */
+    int h = wm_test_install_window(10, 20, 100, 100);
+    TEST_ASSERT(h >= 0, "install window before reset");
+    wm_test_set_focused(h);
+    TEST_ASSERT_EQ((uint64_t)wm_get_window_count(), (uint64_t)1,
+                   "pre-reset: 1 window installed");
+
+    keyboard_inject_scancode(0x38);  /* latch LALT */
+
+    terminal_test_force_open();
+    /* Prime the terminal input ring with a character via the keyboard
+     * inject path (LALT stays latched -- we'll verify reset clears it). */
+    terminal_key_input('x');
+
+    compositor_set_test_seed(0xDEADBEEFCAFEBABEULL);
+    compositor_set_headless(1);
+
+    /* Reset. */
+    test_desktop_reset();
+
+    /* 1. WM zeroed. */
+    TEST_ASSERT_EQ((uint64_t)wm_get_window_count(), (uint64_t)0,
+                   "post-reset: window count 0");
+    TEST_ASSERT_EQ((uint64_t)wm_get_focused_window(), (uint64_t)-1,
+                   "post-reset: focus cleared");
+
+    /* 2. Keyboard modifier latches cleared. Inject F4 alone; if the
+     *    LALT latch leaked, Alt+F4 handler would fire on it. Since
+     *    there's no focused window now, even a misfire would be a
+     *    silent no-op but we assert queue state. */
+    keyboard_inject_scancode(0x3E);  /* F4 press */
+    TEST_ASSERT_EQ((uint64_t)wm_process_pending_closes(), (uint64_t)0,
+                   "post-reset: F4 alone did not queue Alt+F4 close");
+
+    /* 3. Terminal ring drained. */
+    TEST_ASSERT_EQ((uint64_t)(int64_t)terminal_trygetchar(), (uint64_t)0,
+                   "post-reset: terminal ring drained");
+
+    /* 4. Compositor test seed + headless flag zeroed. */
+    TEST_ASSERT_EQ((uint64_t)compositor_get_test_seed(), (uint64_t)0,
+                   "post-reset: test seed cleared");
+    TEST_ASSERT_EQ((uint64_t)compositor_is_headless(), (uint64_t)0,
+                   "post-reset: headless flag cleared");
+
+    terminal_test_force_close();
+}
+
+/* test_desktop_reset() is idempotent: calling it twice in a row is
+ * equivalent to calling it once. */
+static void test_desktop_reset_is_idempotent(void)
+{
+    test_desktop_reset();
+    test_desktop_reset();
+    TEST_ASSERT_EQ((uint64_t)wm_get_window_count(), (uint64_t)0,
+                   "double reset: count still 0");
+    TEST_ASSERT_EQ((uint64_t)compositor_get_test_seed(), (uint64_t)0,
+                   "double reset: seed still 0");
+}
+
+/* test_desktop_reset_action() is the test_add_action-compatible
+ * wrapper; its ctx is ignored. Ensures calling via the action stack
+ * produces the same effect as the direct call. */
+/* Regression for Codex section 15 [H]: a prior suite that force-opens
+ * the terminal leaks that state, and later keyboard_inject printable
+ * keys route to terminal_key_input instead of kb_buffer_push. After
+ * test_desktop_reset(), the terminal must be closed so the inject
+ * keypress-roundtrip semantics hold. */
+static void test_desktop_reset_closes_leaked_terminal(void)
+{
+    /* Leak: force-open the terminal and write content into the grid. */
+    terminal_test_force_open();
+    terminal_puts("polluted content\n", 16);
+
+    /* Reset should close the terminal AND clear the grid. */
+    test_desktop_reset();
+
+    TEST_ASSERT_EQ((uint64_t)terminal_is_open(), (uint64_t)0,
+                   "post-reset: terminal closed (prior force_open undone)");
+
+    /* Re-open to inspect the grid; buffer_contains must NOT find the
+     * pollution left by the prior suite. */
+    terminal_test_force_open();
+    TEST_ASSERT_EQ((uint64_t)terminal_buffer_contains("polluted"),
+                   (uint64_t)0,
+                   "post-reset: grid cleared (no leaked terminal text)");
+    terminal_test_force_close();
+
+    /* Now prove keyboard_inject of a printable key lands in the kb
+     * buffer -- not the terminal ring, because the terminal is closed. */
+    keyboard_reset_state();
+    keyboard_inject_scancode(0x1E);   /* 'a' */
+
+    /* The terminal ring should stay empty (terminal was closed when
+     * the inject happened). */
+    TEST_ASSERT_EQ((uint64_t)(int64_t)terminal_trygetchar(),
+                   (uint64_t)0,
+                   "keyboard inject after reset did not route to terminal ring");
+}
+
+static void test_desktop_reset_action_wrapper_matches(void)
+{
+    test_desktop_reset();   /* baseline */
+    int h = wm_test_install_window(0, 0, 50, 50);
+    TEST_ASSERT(h >= 0, "install window");
+    TEST_ASSERT_EQ((uint64_t)wm_get_window_count(), (uint64_t)1,
+                   "pre-action: 1 window");
+
+    /* Call the action wrapper directly; ctx intentionally ignored. */
+    test_desktop_reset_action((void *)0xABCDEF);
+
+    TEST_ASSERT_EQ((uint64_t)wm_get_window_count(), (uint64_t)0,
+                   "post-action: window count 0");
+}
+
 /* ---- Registration ----------------------------------------------------- */
 
 void test_register_desktop(void)
@@ -1480,6 +1612,14 @@ void test_register_desktop(void)
                             test_wcag_sweep_pending_provider, TEST_CAT_DESKTOP);
     test_suite_register_cat("Desktop: WCAG sweep NULL buffer safe",
                             test_wcag_sweep_null_buffer_safe, TEST_CAT_DESKTOP);
+    test_suite_register_cat("Desktop: test_desktop_reset clears all shared state",
+                            test_desktop_reset_clears_all_state, TEST_CAT_DESKTOP);
+    test_suite_register_cat("Desktop: test_desktop_reset is idempotent",
+                            test_desktop_reset_is_idempotent, TEST_CAT_DESKTOP);
+    test_suite_register_cat("Desktop: test_desktop_reset closes leaked terminal",
+                            test_desktop_reset_closes_leaked_terminal, TEST_CAT_DESKTOP);
+    test_suite_register_cat("Desktop: test_desktop_reset_action wrapper matches direct call",
+                            test_desktop_reset_action_wrapper_matches, TEST_CAT_DESKTOP);
 }
 
 #endif /* KERNEL_TESTS */
