@@ -262,7 +262,7 @@ Run desktop tests in CI and catch visual regressions.
 > - Reference-seeding path: `make update-ui-refs` (local) or `workflow_dispatch` with `update_refs=true` (CI, uploads as artifact, does not auto-commit). Maintainers inspect the artifact or local output, then intentionally commit the PNG(s) under `tests/references/`.
 > - Canonical doc: `.github/workflows/visual-regression.yml` (pipeline structure, triggers, artifact policy), `scripts/test-visual-regression.sh` header (scenarios table + exit codes), `tests/references/README.md` (reference naming + update recipe).
 > - Scope boundary: §7 ships the CI wiring + runner + reference-seeding knobs. §6 owns the pixel-diff primitive, §9 owns SSIM + openQA-style exclude regions, §13 owns per-monitor references for multi-output configurations, §15 owns the failure-bundle consumer that will also store the rejected diffs.
-> **Verified:** 2026-04-22 | 10/10 items | build OK | lint clean | manual (runner dry-run PASS, compare-internal routing PASS, no-refs advisory + `::warning::` verified)
+> **Verified:** 2026-04-22 | commit `54c9b449` | 10/10 items | build OK | lint clean | manual (runner dry-run PASS, compare-internal routing PASS, no-refs advisory + `::warning::` verified)
 > **Quality reviewed:** 2026-04-22 | Codex 1x (adversarial) | 1H+2M+0L fixed, 0 open | scope: N/A (host-side CI workflow + shell runner; no domain code-quality skill)
 
 ---
