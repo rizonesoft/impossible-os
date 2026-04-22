@@ -48,7 +48,7 @@
 | --- | :---: | -------------------------------------------------- | ------------- | :----: |
 | 💎  |   1   | Framebuffer snapshot API (kernel-side capture)     | --            |  [x]   |
 | 💎  |   2   | QEMU framebuffer dump (screendump via monitor)     | --            |  [x]   |
-| 💎  |   3   | Desktop smoke test (non-black screen after boot)   | §1, §2        |  [ ]   |
+| 💎  |   3   | Desktop smoke test (non-black screen after boot)   | §1, §2        |  [x]   |
 | 💎  |   4   | Input event injection (key press, mouse click)     | --            |  [ ]   |
 | 💎  |   5   | Terminal output verification                       | §4            |  [ ]   |
 | ⭐  |   6   | Reference screenshot comparison                    | §2            |  [ ]   |
@@ -126,16 +126,28 @@ Verify the desktop actually rendered after boot: not a black screen or crash.
 > [!NOTE]
 > Either §1 (kernel-side `fb_snapshot()`) or §2 (QEMU `screendump`) satisfies the prerequisite. Prefer §2 for CI / host-side runs; §1 is required for bare metal and VBox where the monitor protocol is unavailable. Richer per-pixel validation is owned by §6 (reference screenshot comparison).
 
-- [ ] After boot completes (serial shows `DESKTOP_READY`): capture screenshot
-- [ ] Verify: at least 10% of pixels are non-black (desktop rendered)
-- [ ] Verify: top-left region has taskbar colors (not wallpaper-only)
-- [ ] Script: `scripts/test-desktop.sh` -- boot QEMU, wait for DESKTOP_READY, screendump, analyze
-- [ ] Pass: `"Desktop smoke test: PASS (rendered, %u%% non-black)"`
-- [ ] Fail: `"Desktop smoke test: FAIL (screen is black or >90% single color)"`
-- [ ] Commit: `"test: desktop smoke test; verify screen renders after boot"`
+- [x] After boot completes (serial shows `DESKTOP_READY`): capture screenshot via `scripts/qemu-screenshot.sh`; bounded retry loop (4 attempts on KVM/WHPX, 8 on TCG) handles compositor paint-after-marker timing
+- [x] Verify: at least 10% of pixels are non-black via `convert -threshold 6% -format '%[fx:100*mean]'`; floor configurable via `DESKTOP_MIN_NONBLACK_PCT`
+- [x] Verify: top-left 400x40 region mean delta vs full-frame mean >= 3% (`DESKTOP_TASKBAR_DISTINCT`); identifies taskbar painting distinct colors over wallpaper
+- [x] Script: `scripts/test-desktop.sh` -- boots QEMU (KVM auto-detect, TCG fallback), waits for `DESKTOP_READY` on serial, screendumps via §2, analyzes via ImageMagick, emits TODO-exact PASS/FAIL strings
+- [x] Pass: emits exactly `"Desktop smoke test: PASS (rendered, %u%% non-black)"`
+- [x] Fail: emits exactly `"Desktop smoke test: FAIL (screen is black or >90% single color)"`
+- [x] Commit: `"test: desktop smoke test; verify screen renders after boot"`
 
 **Test checkpoint:** Normal boot; desktop smoke test passes (non-black >= 10%, taskbar pixels present). Break compositor (force all-black); test fails with `"Desktop smoke test: FAIL"` on serial within one screendump cycle.
 **Platforms:** QEMU WHPX, QEMU TCG, VBox (via §1), bare metal (via §1). §2 path QEMU-only.
+
+> **Test runner:** N/A (host-side shell orchestrator; no kernel test surface) | validation: `bash scripts/test-desktop.sh` (KVM end-to-end 2026-04-22: PASS in 7s, 72% non-black, taskbar delta 48.7% | FAIL-path forced via DESKTOP_MIN_NONBLACK_PCT=200: emits exact TODO FAIL wording after 4 retries, exit 4).
+> **Notes:**
+> - Shipped `scripts/test-desktop.sh` (~200 LOC bash): launches QEMU with per-PID monitor port (44000-44999 range, prevents concurrent-run collisions) and per-PID OVMF vars, polls serial log for `DESKTOP_READY` with configurable boot timeout, delegates capture to `scripts/qemu-screenshot.sh`, analyzes via ImageMagick `convert -threshold 6%` for non-black percentage and cropped 400x40 top-left region for taskbar distinctness. Six distinct exit codes.
+> - Bounded retry loop: 4 attempts (KVM/WHPX, 1 s apart) or 8 attempts (TCG, 3 s apart) cover the gap between `DESKTOP_READY` serial marker and first full paint without a hardcoded long sleep. Happy path passes on attempt 1 in under 1 s of analysis overhead.
+> - Fix rolled into §2's `scripts/qemu-screenshot.sh`: removed the `quit` HMP command that was silently shutting down the entire VM after each screendump. The monitor now stays listening for subsequent captures in the same QEMU session, which is what §3's retry loop and §15's failure-screenshot consumer both need.
+> - End-to-end KVM validation: PASS path 7 s boot + 1 attempt + emits `Desktop smoke test: PASS (rendered, 72% non-black)`; FAIL path (forced) iterates all 4 attempts, emits `Desktop smoke test: FAIL (screen is black or >90% single color)`, exit 4. Both wordings match the TODO checkpoint verbatim.
+> - Canonical doc: `scripts/test-desktop.sh` header comment block (CLI flags, env vars, exit-code taxonomy, shared-host security caveat).
+> - Scope boundary: §3 owns the binary-level "did the desktop paint?" gate. §6 owns pixel-level reference-image diff; §9 owns perceptual / structured-needle comparison; §15 owns on-failure artifact capture consuming this same capture path.
+> **Verified:** 2026-04-22 | commit `PENDING` | 6/6 items | build OK | KVM end-to-end: PASS 7 s + 72% non-black / FAIL-path 4 retries + exit 4
+> **Accepted:** [M] HMP monitor on 127.0.0.1:<port> with `server,nowait` is reachable by any local user on multi-tenant hosts (reason: UNIX-socket migration spans §2, §3, and run-qemu.ps1; larger than a single-section smoke test) -> XREF: 00-infrastructure/TODO-05 §15 (item: "Harden QEMU monitor exposure for shared-host CI" at line 374)
+> **Quality reviewed:** 2026-04-22 | Codex 1x (adversarial) | 2H fixed, 1M open | scope: N/A (host-side shell; kernel-code-quality does not apply)
 
 ---
 
@@ -359,6 +371,7 @@ Per-test fresh-desktop isolation and automatic artifact bundles on failure, so a
 - [ ] Local retention: keep most recent 10 failure bundles; older bundles auto-pruned
 - [ ] Re-running a failing test replaces the prior bundle, does NOT append (avoids stale artifact drift)
 - [ ] Add snapshot-time quiesce for `fb_snapshot()` so failure captures under an active compositor are not torn. Today `src/kernel/drivers/framebuffer.c:fb_snapshot()` does a lockless row copy; §1 relies on `spinner_stop()` + pre-compositor test timing. §15 ships the first caller that runs under active rendering, so add a read-side lock (or compositor flush barrier) that `fb_blit` / `fb_put_pixel` / `spinner_advance` writers honor, then drop the header caveat. Codex quality review of §1 (2026-04-22) accepted the race here.
+- [ ] Harden QEMU monitor exposure for shared-host CI: today `scripts/test-desktop.sh` and any manual `-Monitor` user of `scripts/machines/run-qemu.ps1` bind the HMP monitor to `127.0.0.1:<port>` with `server,nowait`, which is reachable by any local user on a multi-tenant Linux / WSL host. Migrate `scripts/qemu-screenshot.sh` to accept an optional `--socket <path>` invoking `nc -U`, add a matching `-MonitorSocket` switch to `run-qemu.ps1` (Linux hosts only; Windows keeps TCP because WSL's AF_UNIX interop is flaky), and update `scripts/test-desktop.sh` to prefer the UNIX socket path. Codex adversarial review of §3 (2026-04-22) accepted this as out-of-scope for the single-section smoke test.
 - [ ] Commit: `"test: per-test isolation + crash artifact capture"`
 
 **Test checkpoint:** Deliberately fail a desktop test: `build/test-artifacts/<test>/` contains `screen.png`, `serial.log`, `etw.bin`, `wm.json`. Re-run the same failing test: the prior bundle is replaced, not appended; directory contents match the second run only.

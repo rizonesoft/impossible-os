@@ -101,13 +101,17 @@ rm -f "$PPM_PATH" "$OUTPUT_PNG"
 info "dumping framebuffer via $HOST:$PORT -> $PPM_PATH"
 
 # HMP echoes "(qemu) " at the prompt and processes commands line-by-line.
-# `quit` tells QEMU to disconnect the monitor (not shut down the VM); HMP
-# processes the preceding `screendump` before honoring `quit`, so the
-# socket can close immediately after. `nc -q 0` exits as soon as stdin
-# EOFs without the default 1-second drain delay -- save that second per
-# capture. Post-disconnect flush latency is caught by the deterministic
-# size-stability poll below, not by blocking here (Codex [M] quality).
-if ! printf 'screendump %s\nquit\n' "$PPM_PATH" \
+# Do NOT send `quit` here: the HMP `quit` command exits the entire VM
+# (not "disconnect this monitor"), which breaks any caller that wants to
+# take multiple screenshots in one QEMU session. Closing the TCP stream
+# from our side is enough -- `server,nowait` keeps the monitor listening
+# for the next client. `nc -q 0` exits immediately after EOF so we are
+# not paying the default 1-second drain. Post-disconnect flush latency
+# for the PPM file is caught by the deterministic size-stability poll
+# below, not by blocking here. Codex findings from earlier review; the
+# multi-capture retry loop in test-desktop.sh revealed that `quit` was
+# killing QEMU.
+if ! printf 'screendump %s\n' "$PPM_PATH" \
     | timeout "$MONITOR_TIMEOUT" nc -q 0 "$HOST" "$PORT" >/dev/null 2>&1; then
     die 2 "monitor at $HOST:$PORT did not respond within ${MONITOR_TIMEOUT}s (is QEMU running with -monitor telnet:$HOST:$PORT,server,nowait ?)"
 fi
