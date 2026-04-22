@@ -37,7 +37,7 @@
 | 4 | Snapshot-time read-side sync (fb + terminal) | §1 | [ ] |
 | 5 | Virtio-GPU multi-output driver (scope-migration candidate to 08-graphics-ui) | -- | [ ] |
 | 6 | `\\?\ObjectManager\FrameStats` Ob pseudo-file | -- | [ ] |
-| 7 | QEMU HMP monitor UNIX-socket hardening (Linux shared hosts) | -- | [ ] |
+| 7 | QEMU HMP monitor UNIX-socket hardening (Linux shared hosts) | -- | [x] |
 | 8 | `scripts/test-visual-regression.sh` shared-session refactor | -- | [ ] |
 
 ## 1. Post-Desktop-Init Test Harness
@@ -131,14 +131,24 @@ TODO-05 §10 shipped the kernel-side counters + `wm_get_frame_stats()` reader. T
 
 `scripts/test-desktop.sh` and manual `-Monitor` consumers of `scripts/machines/run-qemu.ps1` bind the QEMU HMP monitor to `127.0.0.1:<port>` with `server,nowait`. On a shared Linux / WSL host, any local user can connect and issue `quit` or `screendump`. Migrate to UNIX sockets on Linux.
 
-- [ ] `scripts/qemu-screenshot.sh`: accept an optional `--socket <path>` argument; when set, pipe the `screendump` HMP command through `nc -U <path>` instead of `nc <host> <port>`.
-- [ ] `scripts/machines/run-qemu.ps1`: add `-MonitorSocket <path>` switch (Linux hosts only -- Windows keeps TCP because WSL's AF_UNIX interop is flaky across host/guest). When set, emit `-monitor unix:<path>,server,nowait` instead of the TCP form.
-- [ ] `scripts/test-desktop.sh`: prefer the UNIX socket path when `uname -s` is Linux; fall back to TCP on Windows / Cygwin.
-- [ ] Document the socket path convention (`/tmp/qemu-mon-$$-<pid>.sock` or similar; cleanup on script exit via trap).
-- [ ] Commit: `"scripts: qemu hmp monitor via unix socket on linux hosts"`
+- [x] `scripts/qemu-screenshot.sh`: `--socket <path>` flag + `QEMU_MONITOR_SOCKET` env var. When set, transport switches to `nc -U <path>` and the script verifies the socket exists before piping the `screendump` command. Path is positional-arg-order independent.
+- [x] `scripts/machines/run-qemu.ps1`: `-MonitorSocket <path>` switch. When set, emits `-monitor unix:<path>,server,nowait` instead of the telnet TCP form. Auto-enables `-Monitor` (matches the existing `-MonitorPort` UX). Documented as Linux/WSL-only because Windows-native QEMU's UNIX-socket support across the WSL boundary is flaky; Windows keeps TCP by default.
+- [x] `scripts/test-desktop.sh`: `uname -s` gates transport selection. `Linux` / `Darwin` -> UNIX socket at `/tmp/qemu-mon-desktop-smoke-$$.sock` (per-PID, no collision); anything else -> TCP fallback. `DESKTOP_MONITOR_TCP=1` forces TCP for debugging. Cleanup trap removes the socket on EXIT/INT/TERM even if QEMU already cleaned its end.
+- [x] Socket path convention: `/tmp/qemu-mon-<role>-$$.sock` (test-desktop.sh uses `desktop-smoke` for `<role>`). QEMU creates with the invoking user's uid + 0600 by default, so other local users cannot connect; the trap-based cleanup prevents stale sockets.
+- [x] Commit: `"scripts: qemu hmp monitor via unix socket on linux hosts"`
 
-**Test checkpoint:** `scripts/test-desktop.sh` on Linux uses a UNIX socket; `netstat -tln | grep 127.0.0.1:444` (or whatever port range was used) finds nothing while the test is running. Windows runs keep working on TCP.
+**Test checkpoint:** `scripts/test-desktop.sh` on Linux uses a UNIX socket; `ss -tln | grep 127.0.0.1:44` (or whatever port range was used) finds nothing while the test is running, and `ls -l /tmp/qemu-mon-desktop-smoke-*.sock` shows a 0600-perm socket file owned by the invoking user. Windows runs keep working on TCP via the same `qemu-screenshot.sh` invocation.
 **Platforms:** Host-side; Linux + WSL2 + macOS primary, Windows opt-out kept on TCP.
+
+> **Test runner:** N/A (host-side script change) | validation: `bash scripts/test-desktop.sh --accel tcg` on a Linux host shows `monitor=unix` in the boot line; `lsof -p $(pgrep -f qemu-system-x86_64)` lists the UNIX socket and no TCP listener on the per-PID port.
+> **Notes:**
+> - `qemu-screenshot.sh`: `--socket <path>` (or `QEMU_MONITOR_SOCKET` env) routes the HMP `screendump` command through `nc -U` and validates the socket file exists before piping. TCP path unchanged when neither is set.
+> - `test-desktop.sh`: per-PID UNIX socket at `/tmp/qemu-mon-desktop-smoke-$$.sock` is the default on Linux/macOS; per-PID TCP port (44000+pid%1000) is the fallback on Windows/Cygwin and when `DESKTOP_MONITOR_TCP=1`. Cleanup trap removes the socket on every exit path.
+> - `run-qemu.ps1`: `-MonitorSocket <path>` switch added; auto-enables `-Monitor`. Windows-native QEMU support for UNIX sockets across the WSL boundary is flaky; the switch exists for users who know they want it (PowerShell Core on Linux, or QEMU builds with named-pipe-as-socket support).
+> - Hardening result: shared-host CI no longer exposes the HMP monitor on a 127.0.0.1 TCP port reachable by any other local user. The socket is created with the invoking user's uid + 0600 perms, so only that user can issue HMP commands.
+> - Canonical doc: `scripts/qemu-screenshot.sh` header (env vars + flag); `scripts/test-desktop.sh` security note block.
+> - Scope boundary: §7 hardens HMP monitor exposure for the existing test-desktop + qemu-screenshot stack. §8 (visual-regression refactor) and TODO-05 §7 (visual-regression workflow) consume the same hardening when they invoke `test-desktop.sh`; no extra changes needed there.
+> **Verified:** 2026-04-23 | 5/5 items | build OK (script-only) | manual smoke validated
 
 ## 8. Visual Regression Shared-Session Refactor
 
@@ -163,7 +173,7 @@ TODO-05 §10 shipped the kernel-side counters + `wm_get_frame_stats()` reader. T
 | 💎 | Snapshot-time reader sync             | ✅ DWM quiesce                | ✅ wlroots frame barrier          | ⚠️ §4 planned (single-threaded today)   |
 | 💎 | Virtio-GPU multi-output               | ⚠️ Hyper-V virtual display    | ✅ virtio-gpu + KMS               | ⚠️ §5 planned (matrix rows SKIPped)     |
 | ⭐ | OS-level frame-stats pseudo-file      | ❌ DwmGetCompositionTimingInfo API only | ❌ no pseudo-file          | ⚠️ §6 planned (counters ship today)     |
-| 💎 | CI monitor socket security            | N/A (vmconnect.exe)           | ✅ QEMU `-monitor unix:` common   | ⚠️ §7 planned (TCP on 127.0.0.1 today)  |
+| 💎 | CI monitor socket security            | N/A (vmconnect.exe)           | ✅ QEMU `-monitor unix:` common   | ✅ Done §7 unix sock + 0600 perms       |
 | ⭐ | Shared-session visual regression      | ⚠️ Playwright-style per tool  | ⚠️ openQA per-test VM default     | ⚠️ §8 planned (linear-boot today)       |
 
 ## Unit Tests

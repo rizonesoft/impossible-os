@@ -13,16 +13,21 @@
 #   DESKTOP_MIN_NONBLACK_PCT   non-black floor, default 10 (per TODO)
 #   DESKTOP_TASKBAR_DISTINCT   min mean-delta between top-left and full frame, default 3.0
 #   DESKTOP_BOOT_TIMEOUT       seconds to wait for DESKTOP_READY, default 60
-#   DESKTOP_MONITOR_PORT       HMP port; default is PID-derived in the
-#                              44000-44999 range so concurrent invocations
-#                              do not collide
+#   DESKTOP_MONITOR_PORT       HMP TCP port (TCP mode only); default is
+#                              PID-derived in the 44000-44999 range so
+#                              concurrent invocations do not collide
+#   DESKTOP_MONITOR_TCP        set to 1 to force TCP mode on Linux; unset
+#                              to use UNIX socket (recommended on shared
+#                              hosts). Windows/Cygwin always uses TCP.
 #
-# Security note: the HMP monitor binds to 127.0.0.1 with `server,nowait`.
-# On a multi-tenant Linux host (shared WSL, build farm), any other local
-# user can connect and send monitor commands. This harness is intended for
-# local single-user development and CI runners; on shared infrastructure,
-# prefer a UNIX-domain monitor socket (qemu-screenshot.sh would need `nc
-# -U` support), not covered here.
+# Security: on Linux the HMP monitor now binds to a per-PID UNIX socket
+# at /tmp/qemu-mon-desktop-smoke-$$.sock (0600 permissions via QEMU's
+# default socket creation), so only the invoking user can issue monitor
+# commands. Previously the monitor bound to 127.0.0.1:<port> with
+# `server,nowait`, which let any other local user on a shared WSL / build
+# farm host connect and send `quit` / `system_powerdown`. On Windows /
+# Cygwin hosts TCP is kept because WSL's AF_UNIX interop is flaky across
+# the WSL/Windows boundary.
 #
 # Exit codes:
 #   0  PASS (desktop rendered, taskbar distinct)
@@ -60,11 +65,29 @@ done
 MIN_NONBLACK_PCT="${DESKTOP_MIN_NONBLACK_PCT:-10}"
 TASKBAR_DISTINCT_MIN="${DESKTOP_TASKBAR_DISTINCT:-3.0}"
 
-# Per-run monitor port so two concurrent invocations (manual rerun after
-# SIGKILL, parallel CI jobs on one host) cannot collide on one TCP
-# listener. 44000 + (pid % 1000) gives ~1000 distinct slots before
-# collision, enough for any realistic concurrency on a dev box.
-MONITOR_PORT="${DESKTOP_MONITOR_PORT:-$((44000 + ($$ % 1000)))}"
+# Per-run monitor transport so two concurrent invocations (manual rerun
+# after SIGKILL, parallel CI jobs on one host) cannot collide. UNIX-socket
+# mode uses a per-PID path under /tmp; TCP mode uses a per-PID port in the
+# 44000-44999 range (pid % 1000 gives ~1000 distinct slots).
+#
+# Transport selection: UNIX socket on Linux (default), TCP on Windows /
+# Cygwin and when DESKTOP_MONITOR_TCP=1 is set.
+UNAME_S="$(uname -s 2>/dev/null || echo unknown)"
+case "$UNAME_S" in
+    Linux*)    HOST_IS_LINUX=1 ;;
+    Darwin*)   HOST_IS_LINUX=1 ;;
+    *)         HOST_IS_LINUX=0 ;;
+esac
+
+if [ "${DESKTOP_MONITOR_TCP:-0}" = "1" ] || [ "$HOST_IS_LINUX" = "0" ]; then
+    MONITOR_TRANSPORT="tcp"
+    MONITOR_PORT="${DESKTOP_MONITOR_PORT:-$((44000 + ($$ % 1000)))}"
+    MONITOR_SOCKET=""
+else
+    MONITOR_TRANSPORT="unix"
+    MONITOR_PORT=""
+    MONITOR_SOCKET="/tmp/qemu-mon-desktop-smoke-$$.sock"
+fi
 
 DISK="$BUILD_DIR/system-disk.img"
 OVMF_CODE="/usr/share/OVMF/OVMF_CODE_4M.fd"
@@ -95,8 +118,14 @@ cleanup() {
         wait "$QEMU_PID" 2>/dev/null || true
     fi
     # Remove per-run temp files but keep the user-facing PNG + the stable
-    # build/desktop-smoke.log symlink (if we created one).
+    # build/desktop-smoke.log symlink (if we created one). The UNIX socket
+    # (if we created one) must be removed even when QEMU already cleaned
+    # its end -- a stale socket path left in /tmp is world-readable and
+    # another invocation's pid collision would fail `connect()`.
     rm -f "$OVMF_VARS_CP"
+    if [ -n "$MONITOR_SOCKET" ] && [ -S "$MONITOR_SOCKET" ]; then
+        rm -f "$MONITOR_SOCKET"
+    fi
     exit "$ec"
 }
 trap cleanup EXIT INT TERM
@@ -135,7 +164,21 @@ esac
 
 # --- Step 3: launch QEMU -------------------------------------------------
 
-info "booting QEMU ($ACCEL, ${TIMEOUT}s timeout)..."
+info "booting QEMU ($ACCEL, ${TIMEOUT}s timeout, monitor=${MONITOR_TRANSPORT})..."
+
+# Transport-specific monitor arg: unix:<path> on Linux (user-only socket),
+# telnet:127.0.0.1:<port> on Windows/Cygwin fallback. QEMU creates the
+# UNIX socket with the invoking user's uid + 0600 perms by default, so
+# other local users cannot connect -- that is the shared-host hardening
+# delta vs the old TCP listener.
+if [ "$MONITOR_TRANSPORT" = "unix" ]; then
+    # Remove any stale socket with this name; QEMU refuses to bind on
+    # top of an existing socket (EADDRINUSE).
+    rm -f "$MONITOR_SOCKET"
+    MONITOR_ARG="unix:${MONITOR_SOCKET},server,nowait"
+else
+    MONITOR_ARG="telnet:127.0.0.1:${MONITOR_PORT},server,nowait"
+fi
 
 # shellcheck disable=SC2086 -- ACCEL_ARGS is pre-split intentionally
 qemu-system-x86_64 $ACCEL_ARGS \
@@ -149,7 +192,7 @@ qemu-system-x86_64 $ACCEL_ARGS \
     -device bochs-display,xres=1280,yres=720 \
     -display none \
     -serial file:"$SERIAL_LOG" \
-    -monitor "telnet:127.0.0.1:${MONITOR_PORT},server,nowait" \
+    -monitor "$MONITOR_ARG" \
     -netdev user,id=net0 \
     -device rtl8139,netdev=net0 \
     -rtc base=localtime \
@@ -207,9 +250,15 @@ TASKBAR_DELTA=""
 LAST_CAPTURE_RC=0
 for attempt in $(seq 1 "$MAX_ATTEMPTS"); do
     info "capturing screenshot (attempt $attempt/$MAX_ATTEMPTS)..."
-    QEMU_MONITOR_PORT="$MONITOR_PORT" \
-    QEMU_SCREENSHOT_MIN=0 \
-        bash "$SCRIPT_DIR/qemu-screenshot.sh" "$PNG"
+    if [ "$MONITOR_TRANSPORT" = "unix" ]; then
+        QEMU_MONITOR_SOCKET="$MONITOR_SOCKET" \
+        QEMU_SCREENSHOT_MIN=0 \
+            bash "$SCRIPT_DIR/qemu-screenshot.sh" "$PNG"
+    else
+        QEMU_MONITOR_PORT="$MONITOR_PORT" \
+        QEMU_SCREENSHOT_MIN=0 \
+            bash "$SCRIPT_DIR/qemu-screenshot.sh" "$PNG"
+    fi
     LAST_CAPTURE_RC=$?
     if [ "$LAST_CAPTURE_RC" -ne 0 ]; then
         # Precondition failures (exit 1 = tool missing, invalid path) are

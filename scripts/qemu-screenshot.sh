@@ -11,10 +11,16 @@
 #
 # Usage:
 #   bash scripts/qemu-screenshot.sh [output.png]
+#   bash scripts/qemu-screenshot.sh --socket /tmp/qemu-mon.sock [output.png]
 #
 # Environment:
-#   QEMU_MONITOR_HOST     default 127.0.0.1
-#   QEMU_MONITOR_PORT     default 4444
+#   QEMU_MONITOR_HOST     default 127.0.0.1 (TCP mode)
+#   QEMU_MONITOR_PORT     default 4444      (TCP mode)
+#   QEMU_MONITOR_SOCKET   UNIX-socket path; when set, overrides TCP mode
+#                         and `nc -U <path>` is used instead of TCP. The
+#                         `--socket <path>` flag sets the same variable.
+#                         Linux shared-host CI should prefer this over
+#                         TCP to avoid cross-user monitor access.
 #   QEMU_MONITOR_TIMEOUT  seconds, default 5
 #   QEMU_SCREENSHOT_MIN   minimum PNG size in bytes, default 100*1024 (100 KiB)
 #
@@ -37,7 +43,21 @@ set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-OUTPUT_PNG="${1:-$PROJECT_ROOT/build/screenshot.png}"
+# --socket <path> parses BEFORE the positional PNG arg so both orderings work:
+#   qemu-screenshot.sh --socket /tmp/x.sock out.png
+#   qemu-screenshot.sh out.png --socket /tmp/x.sock
+SOCKET_PATH="${QEMU_MONITOR_SOCKET:-}"
+POSITIONAL=()
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --socket) SOCKET_PATH="$2"; shift 2 ;;
+        --socket=*) SOCKET_PATH="${1#--socket=}"; shift ;;
+        -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
+        *) POSITIONAL+=("$1"); shift ;;
+    esac
+done
+
+OUTPUT_PNG="${POSITIONAL[0]:-$PROJECT_ROOT/build/screenshot.png}"
 PPM_PATH="${OUTPUT_PNG%.png}.ppm"
 
 HOST="${QEMU_MONITOR_HOST:-127.0.0.1}"
@@ -98,22 +118,41 @@ rm -f "$PPM_PATH" "$OUTPUT_PNG"
 
 # --- Step 2: screendump via HMP monitor ----------------------------------
 
-info "dumping framebuffer via $HOST:$PORT -> $PPM_PATH"
+# Socket transport selection:
+#   - QEMU_MONITOR_SOCKET / --socket set -> UNIX domain socket via `nc -U`.
+#     Required mode on shared-host Linux / WSL CI, where a TCP listener
+#     on 127.0.0.1:<port> is reachable by any other local user and can
+#     silently issue `quit` / `stop` / `system_powerdown` to our VM.
+#   - Unset -> fall back to TCP (local dev default; Windows hosts keep
+#     TCP because WSL's AF_UNIX interop across the WSL/Windows boundary
+#     is flaky).
+if [ -n "$SOCKET_PATH" ]; then
+    if [ ! -S "$SOCKET_PATH" ]; then
+        die 2 "monitor socket not found or not a socket: $SOCKET_PATH (is QEMU running with -monitor unix:$SOCKET_PATH,server,nowait ?)"
+    fi
+    info "dumping framebuffer via unix:$SOCKET_PATH -> $PPM_PATH"
+    MONITOR_DESC="unix:$SOCKET_PATH"
+    NC_CMD=(nc -q 0 -U "$SOCKET_PATH")
+else
+    info "dumping framebuffer via $HOST:$PORT -> $PPM_PATH"
+    MONITOR_DESC="$HOST:$PORT"
+    NC_CMD=(nc -q 0 "$HOST" "$PORT")
+fi
 
 # HMP echoes "(qemu) " at the prompt and processes commands line-by-line.
 # Do NOT send `quit` here: the HMP `quit` command exits the entire VM
 # (not "disconnect this monitor"), which breaks any caller that wants to
-# take multiple screenshots in one QEMU session. Closing the TCP stream
-# from our side is enough -- `server,nowait` keeps the monitor listening
-# for the next client. `nc -q 0` exits immediately after EOF so we are
-# not paying the default 1-second drain. Post-disconnect flush latency
-# for the PPM file is caught by the deterministic size-stability poll
-# below, not by blocking here. Codex findings from earlier review; the
+# take multiple screenshots in one QEMU session. Closing the stream from
+# our side is enough -- `server,nowait` keeps the monitor listening for
+# the next client. `nc -q 0` exits immediately after EOF so we are not
+# paying the default 1-second drain. Post-disconnect flush latency for
+# the PPM file is caught by the deterministic size-stability poll below,
+# not by blocking here. Codex findings from earlier review; the
 # multi-capture retry loop in test-desktop.sh revealed that `quit` was
 # killing QEMU.
 if ! printf 'screendump %s\n' "$PPM_PATH" \
-    | timeout "$MONITOR_TIMEOUT" nc -q 0 "$HOST" "$PORT" >/dev/null 2>&1; then
-    die 2 "monitor at $HOST:$PORT did not respond within ${MONITOR_TIMEOUT}s (is QEMU running with -monitor telnet:$HOST:$PORT,server,nowait ?)"
+    | timeout "$MONITOR_TIMEOUT" "${NC_CMD[@]}" >/dev/null 2>&1; then
+    die 2 "monitor at $MONITOR_DESC did not respond within ${MONITOR_TIMEOUT}s"
 fi
 
 # Deterministic flush detection: poll file size until it stabilizes across

@@ -38,15 +38,19 @@ Param(
     [switch]$NoUsermodeTests,  # set test_usermode_skip=1: skip user-mode launcher, run only the kernel TEST_CAT_* sweep
     [switch]$Monitor,          # expose QEMU HMP monitor on 127.0.0.1:$MonitorPort for scripts/qemu-screenshot.sh (desktop-UI screendump)
     [ValidateRange(1, 65535)]
-    [int]$MonitorPort = 4444   # HMP monitor TCP port; auto-enables -Monitor if set explicitly
+    [int]$MonitorPort = 4444,  # HMP monitor TCP port; auto-enables -Monitor if set explicitly
+    [string]$MonitorSocket = ''  # HMP monitor UNIX-socket path (Linux/WSL QEMU builds only); auto-enables -Monitor when set. Windows-native QEMU keeps TCP because WSL's AF_UNIX interop across the WSL/Windows boundary is flaky.
 )
 
-# UX consistency: if the caller explicitly passed -MonitorPort but forgot
-# -Monitor, the non-default port would be silently ignored and the screenshot
-# script would later fail with an unexplained "monitor unreachable" error.
-# Treat an explicit -MonitorPath as implicitly enabling -Monitor so the two
-# switches cannot contradict each other. Codex [L] quality review.
+# UX consistency: if the caller explicitly passed -MonitorPort or
+# -MonitorSocket but forgot -Monitor, the non-default transport would be
+# silently ignored and the screenshot script would later fail with an
+# unexplained "monitor unreachable" error. Treat explicit settings as
+# implicitly enabling -Monitor. Codex [L] quality review.
 if ($PSBoundParameters.ContainsKey('MonitorPort') -and -not $Monitor) {
+    $Monitor = $true
+}
+if ($MonitorSocket -and -not $Monitor) {
     $Monitor = $true
 }
 
@@ -159,8 +163,18 @@ $QemuArgs += @(
 # issue `screendump` commands. Only wired when -Monitor is explicitly
 # passed so normal WHPX runs do not expose an unsolicited TCP listener.
 # `server,nowait` means QEMU accepts one client without blocking boot.
+#
+# Transport: -MonitorSocket takes precedence (UNIX domain socket, only
+# reachable by the invoking user -- preferred on shared Linux hosts) and
+# falls through to TCP otherwise. Windows-native QEMU keeps TCP because
+# WSL's AF_UNIX interop across the WSL/Windows boundary is flaky and
+# Windows named-pipe syntax would need a different QEMU arg anyway.
 if ($Monitor) {
-    $QemuArgs += '-monitor', "telnet:127.0.0.1:${MonitorPort},server,nowait"
+    if ($MonitorSocket) {
+        $QemuArgs += '-monitor', "unix:${MonitorSocket},server,nowait"
+    } else {
+        $QemuArgs += '-monitor', "telnet:127.0.0.1:${MonitorPort},server,nowait"
+    }
 }
 
 # Validate user-controlled boot.conf values BEFORE they flow into the
