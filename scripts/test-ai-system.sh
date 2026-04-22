@@ -309,6 +309,7 @@ check_zero_trailer_policy() {
     # Zero entries is the target state; add only as a one-time grandfather.
     local trailer_exceptions=(
         "c6b30e0f:Copilot-authored PR merged mid-§7-§8 sprint on 2026-04-19; post-anchor but pre-§9 enforcement; not rewritten to avoid destroying downstream commit chain."
+        "e4454a2b:Copilot-authored PR merged 2026-04-22 (re-enabled fastpath probe + trimmed CI artifacts) carrying Co-authored-by trailer; not rewritten because -17 WHPX validation stamp + -18 fast-path observability work built on top, and rebasing would destroy that chain."
     )
     # Inclusive range: scan the anchor commit itself plus every commit after.
     # Earlier version used `$anchor..HEAD` which EXCLUDES the anchor, so a
