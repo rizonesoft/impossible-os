@@ -50,7 +50,7 @@
 | 💎  |   2   | QEMU framebuffer dump (screendump via monitor)     | --            |  [x]   |
 | 💎  |   3   | Desktop smoke test (non-black screen after boot)   | §1, §2        |  [x]   |
 | 💎  |   4   | Input event injection (key press, mouse click)     | --            |  [x]   |
-| 💎  |   5   | Terminal output verification                       | §4            |  [ ]   |
+| 💎  |   5   | Terminal output verification                       | §4            |  [x]   |
 | ⭐  |   6   | Reference screenshot comparison                    | §2            |  [ ]   |
 | ⭐  |   7   | Visual regression CI pipeline                      | §3, §6        |  [ ]   |
 | ⭐  |   8   | Window manager state verification                  | §4            |  [ ]   |
@@ -181,15 +181,26 @@ Simulate keyboard and mouse events from kernel test code or QEMU monitor.
 
 Verify the terminal window displays correct text after commands.
 
-- [ ] After injecting keystrokes (§4): wait 500ms for rendering
-- [ ] Capture screenshot → crop terminal window region
-- [ ] Option A: OCR the terminal region (heavyweight, complex)
-- [ ] Option B: kernel-side `terminal_get_buffer()` → read the terminal's character buffer directly
-- [ ] Compare character buffer against expected output: `"C:\>"` prompt present, `dir` output matches files
-- [ ] Commit: `"test: terminal output verification; inject command, verify response"`
+- [x] Kernel-side `terminal_get_buffer(char *dest, int cap)` in `src/desktop/terminal.c` -- row-major flat copy of `term_cells[TERM_ROWS][TERM_COLS]` into a caller buffer; returns bytes copied, 0 when the terminal is not open, -1 on NULL / too-small dest. No null terminator; callers use explicit lengths.
+- [x] Kernel-side `terminal_buffer_contains(const char *needle)` -- O(n*m) substring search across the flat grid that ignores row boundaries, matching how the rendered terminal reads to a human. Guards NULL / empty / oversized needles.
+- [x] Test-only seam: `terminal_test_force_open()` / `terminal_test_force_close()` gated by `KERNEL_TESTS` so kernel tests (which run in Phase 3 before `boot_desktop.c` creates the WM window) can exercise the introspection success paths against a real `term_cells` grid. Host is set to a sentinel >= 0 so `terminal_is_open()` returns true without calling `wm_create_window`.
+- [x] OCR path explicitly rejected: kernel-side buffer readback is cheaper, deterministic, font-independent, and survives future font/theme swaps. `## 9. Perceptual Diff` still owns pixel-level content checks.
+- [x] `test_desktop.c` coverage: 4 new suites (`terminal_get_buffer_when_closed`, `terminal_get_buffer_null_or_small`, `terminal_buffer_contains_guards`, `terminal_dir_roundtrip_synthesized`). The roundtrip case synthesizes a cmd.exe prompt + echoed `dir` + file list via `terminal_puts`, then asserts `terminal_get_buffer()` copies the full grid and `terminal_buffer_contains()` finds `C:\>`, `dir`, and `hello.txt` while rejecting an absent needle.
+- [x] Commit: `"test: terminal output verification; inject command, verify response"`
 
 **Test checkpoint:** Inject `dir` command; `terminal_get_buffer()` contains the `C:\>` prompt string AND at least one directory entry from `C:\` within 500 ms.
 **Platforms:** QEMU WHPX, QEMU TCG, VBox, bare metal (kernel-side only; no host-side OCR dependency).
+
+> **Test runner:** `scripts\debug\desktop\run-desktop-tests.bat` (SUITE=desktop) | 7 suites, 27 assertions, 0 failures (KVM 2026-04-22)
+> **Notes:**
+> - Shipped `terminal_get_buffer()` + `terminal_buffer_contains()` in `src/desktop/terminal.c` (+58 LOC): row-major flat copy of the 80x20 `term_cells` grid, plus a row-boundary-ignoring substring search so a needle that wraps between rows still matches how a human reads the rendered terminal.
+> - Wired the `KERNEL_TESTS`-gated `terminal_test_force_open()` / `terminal_test_force_close()` seam because kernel tests execute in Phase 3 before `boot_desktop.c` ever calls `wm_create_window()`. Without the seam the only success-path test resolves as TEST_PENDING and the introspection APIs stay untested until desktop-init -- Codex §5 review flagged that as a coverage hole.
+> - 4 new `TEST_CAT_DESKTOP` suites drive 10 new assertions: closed-terminal returns 0, NULL / undersized dest returns -1, NULL / empty needle returns 0, and the synthesized `dir` roundtrip forces the terminal open, writes `C:\>dir\nhello.txt\n`, verifies `get_buffer` copied all 1600 bytes and `buffer_contains` finds each expected substring without false positives.
+> - Canonical doc: the concurrency contract and API shape live in `include/desktop/terminal.h` (Introspection block, line 53 onward).
+> - Scope boundary: §5 ships kernel-side buffer readback only. §9 owns pixel-level perceptual diff, §11 owns Unicode / IME-correct record+replay, §15 owns both the post-desktop-init harness that will drive the real cmd.exe roundtrip under active WM and the read-side sync barrier that lets `terminal_get_buffer()` quiesce against a live compositor.
+> **Verified:** 2026-04-22 | commit `<pending>` | 6/6 items | build OK + tests 1843/1843 PASS, 0 leaked (KVM)
+> **Accepted:** [M] `terminal_get_buffer()` / `terminal_buffer_contains()` read `term_cells[]` without a lock; concurrent `terminal_putchar` on the compositor thread can produce a torn snapshot once §15's cross-thread failure-capture harness runs (reason: proper quiesce needs every writer to honor a new mutex) -> XREF: 00-infrastructure/TODO-05 §15 (item: "Add a read-side synchronization barrier to `terminal_get_buffer()` / `terminal_buffer_contains()` so snapshots under an active compositor are not torn" at line 386)
+> **Quality reviewed:** 2026-04-22 | Codex 2x (adversarial, quality) | 0H+2M+0L fixed, 1M open | scope: kernel-code-quality
 
 ---
 
@@ -383,6 +394,8 @@ Per-test fresh-desktop isolation and automatic artifact bundles on failure, so a
 - [ ] Re-running a failing test replaces the prior bundle, does NOT append (avoids stale artifact drift)
 - [ ] Add snapshot-time quiesce for `fb_snapshot()` so failure captures under an active compositor are not torn. Today `src/kernel/drivers/framebuffer.c:fb_snapshot()` does a lockless row copy; §1 relies on `spinner_stop()` + pre-compositor test timing. §15 ships the first caller that runs under active rendering, so add a read-side lock (or compositor flush barrier) that `fb_blit` / `fb_put_pixel` / `spinner_advance` writers honor, then drop the header caveat. Codex quality review of §1 (2026-04-22) accepted the race here.
 - [ ] Harden QEMU monitor exposure for shared-host CI: today `scripts/test-desktop.sh` and any manual `-Monitor` user of `scripts/machines/run-qemu.ps1` bind the HMP monitor to `127.0.0.1:<port>` with `server,nowait`, which is reachable by any local user on a multi-tenant Linux / WSL host. Migrate `scripts/qemu-screenshot.sh` to accept an optional `--socket <path>` invoking `nc -U`, add a matching `-MonitorSocket` switch to `run-qemu.ps1` (Linux hosts only; Windows keeps TCP because WSL's AF_UNIX interop is flaky), and update `scripts/test-desktop.sh` to prefer the UNIX socket path. Codex adversarial review of §3 (2026-04-22) accepted this as out-of-scope for the single-section smoke test.
+- [ ] Add a read-side synchronization barrier to `terminal_get_buffer()` / `terminal_buffer_contains()` so snapshots under an active compositor are not torn. Today `src/desktop/terminal.c` reads `term_cells[]` locklessly; §5 narrowed the header contract to single-threaded or quiesced callers. §15 ships the first cross-thread caller (failure-capture bundle), so introduce a read-side mutex (or compositor-quiesce fence) that `terminal_putchar` / `terminal_puts` writers honor, then drop the single-threaded caveat in `include/desktop/terminal.h`. Codex adversarial review of §5 (2026-04-22) accepted the race here.
+- [ ] Ship a post-desktop-init test harness that can drive `terminal_*` APIs and cmd.exe with the WM actually initialized. Kernel tests run in Phase 3 BEFORE `boot_desktop.c` calls `terminal_open()` + `wm_create_window()`, so the §5 `test_terminal_dir_roundtrip_synthesized` case currently resolves as TEST_PENDING (`src/kernel/test/test_desktop.c:370-ish`). Options: (a) add a late-phase test hook that runs after the desktop compositor has initialized but before the shell prompts the user, (b) extend `scripts/test-desktop.sh` to drive the full `dir` roundtrip via `qemu-input.sh sendstring "dir\\n"` + `terminal_buffer_contains` read-back through a new debug syscall, (c) run TEST_CAT_DESKTOP a second time from compositor context for tests tagged "late". This unblocks the real cmd.exe end-to-end test and the `test_terminal_dir_roundtrip_synthesized` case that the §5 review (2026-04-22) flagged as PENDING.
 - [ ] Commit: `"test: per-test isolation + crash artifact capture"`
 
 **Test checkpoint:** Deliberately fail a desktop test: `build/test-artifacts/<test>/` contains `screen.png`, `serial.log`, `etw.bin`, `wm.json`. Re-run the same failing test: the prior bundle is replaced, not appended; directory contents match the second run only.

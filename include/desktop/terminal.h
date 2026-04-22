@@ -49,3 +49,44 @@ int terminal_get_handle(void);
 
 /* Render the terminal contents to its WM window. Call once per frame. */
 void terminal_render(void);
+
+/* ---- Introspection (test framework -- desktop UI test framework §5) ---- */
+
+/* Copy the terminal's text grid into dest as a flat TERM_ROWS*TERM_COLS
+ * byte array (row-major, row N starts at dest[N*TERM_COLS]). No null
+ * terminator is written; use explicit lengths. dest_capacity must be at
+ * least TERM_ROWS*TERM_COLS. Returns the number of bytes written on
+ * success, 0 when the terminal is not open, -1 when dest is NULL or
+ * dest_capacity is too small.
+ *
+ * Concurrency: reads term_cells locklessly, so a concurrent
+ * terminal_putchar on another thread can produce a torn snapshot. Safe
+ * under either (a) single-threaded callers, as in the current kernel
+ * test phase which runs before the desktop compositor starts, or (b) a
+ * quiesced state where terminal writers have been paused. Richer locking
+ * is scheduled in the desktop test-isolation layer; see the desktop UI
+ * test framework TODO's isolation/artifact section for the concrete
+ * hardening plan. */
+int terminal_get_buffer(char *dest, int dest_capacity);
+
+/* Return 1 if the terminal's text grid currently contains the NUL-
+ * terminated substring `needle`, 0 otherwise. The search ignores row
+ * boundaries: a needle that spans the end of one row and the start of
+ * the next is found. Returns 0 if needle is NULL / empty / longer than
+ * TERM_ROWS*TERM_COLS or when the terminal is not open. Same concurrency
+ * caveat as terminal_get_buffer. */
+int terminal_buffer_contains(const char *needle);
+
+#ifdef KERNEL_TESTS
+/* Test-only harness: initialize the terminal's internal state without
+ * creating a WM window. Lets the kernel test phase (which runs before
+ * the compositor starts and before wm_create_window works) exercise the
+ * terminal_get_buffer / terminal_buffer_contains success paths against a
+ * populated term_cells grid. Sets term_handle to a sentinel so
+ * terminal_is_open() returns true; terminal_render must NOT be called
+ * in this mode because there is no real window to render into.
+ * Paired with terminal_test_force_close() which resets term_handle to
+ * -1 without a WM call. */
+void terminal_test_force_open(void);
+void terminal_test_force_close(void);
+#endif

@@ -215,6 +215,96 @@ char terminal_trygetchar(void)
     return c;
 }
 
+/* ---- Introspection (desktop UI test framework §5) ------------------ */
+
+int terminal_get_buffer(char *dest, int dest_capacity)
+{
+    int need = TERM_ROWS * TERM_COLS;
+    int r;
+
+    if (!dest || dest_capacity < need)
+        return -1;
+
+    if (term_handle < 0)
+        return 0;   /* terminal not open; honest zero-byte snapshot */
+
+    /* term_cells is row-major; copy row-by-row into the flat dest. The
+     * terminal driver lives in desktop-land where the compositor owns
+     * mutation, not interrupt context, so a plain copy is safe at test
+     * time (tests run in Phase 3 before the desktop compositor thread
+     * starts). */
+    for (r = 0; r < TERM_ROWS; r++)
+        term_memcpy(dest + r * TERM_COLS, term_cells[r], TERM_COLS);
+
+    return need;
+}
+
+int terminal_buffer_contains(const char *needle)
+{
+    int need_total = TERM_ROWS * TERM_COLS;
+    int nlen = 0;
+    int i, j;
+
+    if (!needle || term_handle < 0)
+        return 0;
+
+    while (needle[nlen] != '\0')
+        nlen++;
+
+    if (nlen == 0 || nlen > need_total)
+        return 0;
+
+    /* Walk the flat grid looking for a contiguous match. Row boundaries
+     * are invisible to the search -- a needle that straddles them is
+     * still found, matching how the rendered terminal reads to a human
+     * (rows wrap, there are no null-terminators between them). */
+    for (i = 0; i + nlen <= need_total; i++) {
+        int match = 1;
+        for (j = 0; j < nlen; j++) {
+            int row = (i + j) / TERM_COLS;
+            int col = (i + j) % TERM_COLS;
+            if (term_cells[row][col] != needle[j]) {
+                match = 0;
+                break;
+            }
+        }
+        if (match)
+            return 1;
+    }
+    return 0;
+}
+
+#ifdef KERNEL_TESTS
+/* Test-only harness: initialize internal state without calling
+ * wm_create_window. Bypasses the WM dependency so kernel tests (which
+ * run in Phase 3 before the compositor starts) can exercise the
+ * introspection API's success paths against a real term_cells grid.
+ * Do NOT call terminal_render under this mode -- there is no backing
+ * WM window. See include/desktop/terminal.h for the full contract. */
+void terminal_test_force_open(void)
+{
+    int r, c;
+
+    /* Sentinel handle: anything >= 0 makes terminal_is_open() return 1. */
+    term_handle = 0x7FFFFFFE;
+
+    for (r = 0; r < TERM_ROWS; r++)
+        for (c = 0; c < TERM_COLS; c++)
+            term_cells[r][c] = ' ';
+
+    cursor_row = 0;
+    cursor_col = 0;
+    ring_head = 0;
+    ring_tail = 0;
+    term_dirty = 0;
+}
+
+void terminal_test_force_close(void)
+{
+    term_handle = -1;
+}
+#endif
+
 /* ---- Rendering ---- */
 
 void terminal_render(void)

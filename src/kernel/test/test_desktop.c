@@ -14,6 +14,7 @@
 #include "kernel/drivers/mouse.h"
 #include "kernel/mm/pmm.h"
 #include "kernel/types.h"
+#include "desktop/terminal.h"
 
 /* ---- §4 Input Event Injection ----------------------------------------- */
 
@@ -275,6 +276,164 @@ static void test_input_inject_mouse_press_observable(void)
                    "release clears button mask");
 }
 
+/* ---- §5 Terminal Output Verification (test cases) --------------------- */
+
+/* Mini strlen so we do not depend on libc in kernel-test builds. */
+static int tstr_len(const char *s)
+{
+    int n = 0;
+    while (s && s[n] != '\0') n++;
+    return n;
+}
+
+/* Fast strstr for bounded kernel-test ranges (non-recursive, O(n*m)). */
+static int tstr_contains(const char *hay, int hay_len, const char *needle)
+{
+    int nlen = tstr_len(needle);
+    if (nlen == 0 || nlen > hay_len) return 0;
+    for (int i = 0; i + nlen <= hay_len; i++) {
+        int match = 1;
+        for (int j = 0; j < nlen; j++) {
+            if (hay[i + j] != needle[j]) { match = 0; break; }
+        }
+        if (match) return 1;
+    }
+    return 0;
+}
+
+/* terminal_get_buffer returns 0 when the terminal window is closed. */
+static void test_terminal_get_buffer_when_closed(void)
+{
+    /* Kernel tests run in Phase 3 BEFORE the desktop compositor opens the
+     * Command Prompt window (boot_desktop.c opens it after the test sweep
+     * finishes). So `terminal_is_open()` is guaranteed false here unless a
+     * prior test left it open; either way, test the closed-path contract. */
+    if (terminal_is_open())
+        terminal_close();
+
+    char buf[TERM_ROWS * TERM_COLS];
+    int rc = terminal_get_buffer(buf, sizeof(buf));
+
+    TEST_ASSERT_EQ((uint64_t)rc, (uint64_t)0,
+                   "closed terminal returns 0 bytes (not -1)");
+}
+
+/* terminal_get_buffer rejects NULL / undersized dest args. */
+static void test_terminal_get_buffer_null_or_small(void)
+{
+    char tiny[16];
+
+    TEST_ASSERT_EQ((uint64_t)(int64_t)terminal_get_buffer((char *)0, 4096),
+                   (uint64_t)(int64_t)-1,
+                   "NULL dest rejected with -1");
+    TEST_ASSERT_EQ((uint64_t)(int64_t)terminal_get_buffer(tiny, (int)sizeof(tiny)),
+                   (uint64_t)(int64_t)-1,
+                   "undersized dest rejected with -1");
+}
+
+/* terminal_buffer_contains is safe to call in every state; it returns 0
+ * rather than crashing on NULL/empty needles or a closed terminal. */
+static void test_terminal_buffer_contains_guards(void)
+{
+    if (terminal_is_open())
+        terminal_close();
+
+    TEST_ASSERT_EQ((uint64_t)terminal_buffer_contains((const char *)0),
+                   (uint64_t)0,
+                   "NULL needle returns 0");
+    TEST_ASSERT_EQ((uint64_t)terminal_buffer_contains(""),
+                   (uint64_t)0,
+                   "empty needle returns 0");
+    TEST_ASSERT_EQ((uint64_t)terminal_buffer_contains("anything"),
+                   (uint64_t)0,
+                   "closed terminal never contains anything");
+}
+
+/* End-to-end pipeline test: open terminal, simulate cmd.exe prompt and
+ * input echo, verify terminal_get_buffer / terminal_buffer_contains see
+ * the expected substrings.
+ *
+ * The real cmd.exe roundtrip (keystroke -> input ring -> cmd.exe drains
+ * -> cmd.exe echoes -> cmd.exe runs `dir` -> terminal paints file list)
+ * requires cmd.exe to be running, which only happens AFTER the kernel
+ * test phase completes. So we stand in for cmd.exe here: terminal_puts
+ * for the prompt and echo, plus a sample file-list line. The test
+ * validates the entire get_buffer / contains API chain exactly as §15
+ * (Test Isolation and Crash Artifact Capture) will use it once the
+ * full cmd.exe driver is wired. */
+static void test_terminal_dir_roundtrip_synthesized(void)
+{
+    /* Kernel tests run in Phase 3 BEFORE the WM initializes, so
+     * terminal_open() would fail. Use the test-only seam
+     * terminal_test_force_open() to populate internal state without
+     * a backing WM window. The seam is #ifdef KERNEL_TESTS-gated and
+     * cannot be invoked from production code paths. Codex [M] review:
+     * the success path MUST execute in the current test pipeline to
+     * catch regressions in the read helpers. */
+    terminal_test_force_open();
+    TEST_ASSERT(terminal_is_open(),
+                "terminal_test_force_open makes is_open() return true");
+
+    /* 1. cmd.exe would paint the prompt. */
+    const char *prompt = "C:\\>";
+    terminal_puts(prompt, tstr_len(prompt));
+
+    /* 2. User types 'dir' + Enter via the §4 keypress injector. Route
+     *    the bytes straight into terminal_key_input so they land on the
+     *    input ring where cmd.exe would read them. */
+    terminal_key_input('d');
+    terminal_key_input('i');
+    terminal_key_input('r');
+    terminal_key_input('\n');
+
+    /* 3. Simulate cmd.exe draining the input ring and echoing each
+     *    character back to the display. In production this happens on
+     *    cmd.exe's read loop. */
+    char c;
+    while ((c = terminal_trygetchar()) != 0) {
+        if (c == '\n')
+            terminal_putchar('\n');
+        else
+            terminal_putchar(c);
+    }
+
+    /* 4. Simulate cmd.exe running `dir` and printing a sample line. */
+    const char *file_line = "hello.txt";
+    terminal_puts(file_line, tstr_len(file_line));
+
+    /* 5. Read back via get_buffer; the full TERM_ROWS*TERM_COLS grid must
+     *    now contain both the prompt and the echoed + output bytes. */
+    char snapshot[TERM_ROWS * TERM_COLS];
+    int copied = terminal_get_buffer(snapshot, sizeof(snapshot));
+
+    TEST_ASSERT_EQ((uint64_t)copied, (uint64_t)(TERM_ROWS * TERM_COLS),
+                   "get_buffer copied the full grid");
+
+    TEST_ASSERT(tstr_contains(snapshot, copied, "C:\\>"),
+                "snapshot contains the C:\\> prompt");
+    TEST_ASSERT(tstr_contains(snapshot, copied, "dir"),
+                "snapshot contains the echoed 'dir' command");
+    TEST_ASSERT(tstr_contains(snapshot, copied, "hello.txt"),
+                "snapshot contains the synthesized dir output entry");
+
+    /* 6. terminal_buffer_contains matches what get_buffer + tstr_contains
+     *    report. Both helpers must stay consistent. */
+    TEST_ASSERT(terminal_buffer_contains("C:\\>"),
+                "buffer_contains(C:\\>) matches");
+    TEST_ASSERT(terminal_buffer_contains("dir"),
+                "buffer_contains(dir) matches");
+    TEST_ASSERT(terminal_buffer_contains("hello.txt"),
+                "buffer_contains(hello.txt) matches");
+    TEST_ASSERT(!terminal_buffer_contains("definitely-not-in-term"),
+                "buffer_contains(absent string) returns 0");
+
+    /* Release the test-forced open state so the real boot_desktop.c
+     * terminal_open() later can run cleanly. */
+    terminal_test_force_close();
+    TEST_ASSERT(!terminal_is_open(),
+                "terminal_test_force_close releases is_open() state");
+}
+
 /* mouse_inject_state clamps coordinates against fb_get_width/height. A
  * coordinate far outside the framebuffer must land at the edge, not
  * wrap, not retain the requested value, and not underflow. */
@@ -316,6 +475,14 @@ void test_register_desktop(void)
                             test_input_inject_mouse_press_observable, TEST_CAT_DESKTOP);
     test_suite_register_cat("Desktop: test_inject_mouse_click clamps out-of-bounds",
                             test_input_inject_mouse_click_clamps_out_of_bounds, TEST_CAT_DESKTOP);
+    test_suite_register_cat("Desktop: terminal_get_buffer closed returns 0",
+                            test_terminal_get_buffer_when_closed, TEST_CAT_DESKTOP);
+    test_suite_register_cat("Desktop: terminal_get_buffer NULL/undersized rejected",
+                            test_terminal_get_buffer_null_or_small, TEST_CAT_DESKTOP);
+    test_suite_register_cat("Desktop: terminal_buffer_contains guards",
+                            test_terminal_buffer_contains_guards, TEST_CAT_DESKTOP);
+    test_suite_register_cat("Desktop: terminal dir roundtrip (synthesized)",
+                            test_terminal_dir_roundtrip_synthesized, TEST_CAT_DESKTOP);
 }
 
 #endif /* KERNEL_TESTS */

@@ -16,6 +16,7 @@
 - -> XREF: `TODO-05-widget-library-core.md §8` -- control accessibility stubs are the seed data for the full semantics/provider layer
 - -> XREF: `TODO-15-win32k-shadow-ssdt.md §21,§22` -- USER IME, accessibility, and automation-facing syscalls consume the shared foundation
 - -> XREF: `D06 T03 §2,§3` -- IME and accessibility events build on the existing key-event and focus-routing pipeline
+- -> XREF: `D00 T05 §14` -- WCAG sweep consumer; the test framework walks the §6 automation tree and gates CI on contrast / keyboard / focus rules
 
 ## Outcome
 

@@ -21,6 +21,7 @@
 - → XREF: `08-graphics-ui/TODO-09` -- DPI scale factor + `WM_DPI_CHANGED` broadcast; §2 depends on that
 - → XREF: `08-graphics-ui/TODO-07` -- animation engine (`anim_set_enabled()`); §9 reduced motion depends on that
 - → XREF: `09-desktop-shell/TODO-11 §5` -- `ease.cpl` stub registered in Control Panel; §4 implements it
+- → XREF: `D00 T05 §4, §11` -- the desktop UI test framework reuses `mouse_event_inject()` (§6) for input injection and record/replay; do not redefine the primitive in the test framework
 
 ## Outcome
 
