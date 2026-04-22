@@ -168,6 +168,15 @@ struct task {
     void    *user_auxv;                  /* user-space VA of first AT_TYPE qword (0 if none) */
     uint32_t user_auxv_pairs;            /* number of (type, value) pairs including AT_NULL */
     uint32_t _auxv_pad;
+    /* --- Loaded binary format name (set by task_exec) ---
+     * Points at a static string from the exec format registry (e.g.
+     * "ELF", "PE32+", "EIF"). Read by the user-mode launcher
+     * (test_usermode.c) to surface which loader picked the binary
+     * in the `UTEST: <name>: format=<fmt>` per-binary log line,
+     * so a regression that silently routes PE binaries through the
+     * ELF loader surfaces even when the binary itself exits 0.
+     * NULL until the first successful task_exec on this task. */
+    const char *loaded_format;
     /* --- User-mode section-view VA bump allocator ---
      * Per-task bump pointer for MapViewOfSection / sys_shmem_map. The
      * task's private user address space has a dedicated range starting

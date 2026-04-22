@@ -138,8 +138,16 @@ static const exec_format_t *match_format(const uint8_t *data, uint64_t size)
 
 uint64_t exec_load(const uint8_t *data, uint64_t size, int *err)
 {
+    return exec_load_fmt(data, size, err, (const char **)0);
+}
+
+uint64_t exec_load_fmt(const uint8_t *data, uint64_t size, int *err,
+                       const char **out_fmt_name)
+{
     const exec_format_t *fmt;
     uint64_t entry;
+
+    if (out_fmt_name) *out_fmt_name = (const char *)0;
 
     if (!data || size < 4) {
         if (err) *err = ENOEXEC;
@@ -166,6 +174,12 @@ uint64_t exec_load(const uint8_t *data, uint64_t size, int *err)
         if (err) *err = ENOEXEC;
         return 0;
     }
+
+    /* Publish the matched format name BEFORE returning success so
+     * the caller (task_exec) can stash it in the task struct for
+     * launcher-side format-coverage reporting. Pointer aliases the
+     * static format-registry entry so it stays valid forever. */
+    if (out_fmt_name) *out_fmt_name = fmt->name;
 
     if (err) *err = 0;
     return entry;

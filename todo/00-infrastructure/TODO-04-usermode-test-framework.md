@@ -61,7 +61,7 @@
 | 💎  |  12   | Process lifecycle test (`test_process.exe`)         | §1, §3                             |  [x]   |
 | 💎  |  13   | File I/O test (`test_fileio.exe`)                   | §1, §2, §3                         |  [x]   |
 | ⭐  |  14   | Win32 API test binary (`test_win32.exe`)            | §1, §3, D02T12 §6                  |  [x]   |
-| 💎  |  15   | Binary format loader coverage (ELF / PE32+ / EIF)   | §1, §3, D02T17 §5, D02T17 §19      |  [ ]   |
+| 💎  |  15   | Binary format loader coverage (ELF / PE32+ / EIF)   | §1, §3, D02T17 §5, D02T17 §19      |  [x]   |
 | 💎  |  16   | Build integration: `make test` includes user tests  | §3-§15                             |  [ ]   |
 
 > 💎 = parity: Linux kselftest and Windows HLK both use user-mode test binaries, TAP/JUnit XML, machine-readable test orchestration, per-test isolation, and stress/perf categorisation.
@@ -502,15 +502,24 @@ First Impossible-OS probe of the Win32 API surface from ring 3 -- proves the "Wi
 
 The launcher's spawned binaries are all crt0+libc ELF; the PE32+ and EIF loader paths registered in [`src/kernel/exec.c`](../../src/kernel/exec.c) ship live but never see a user-mode binary. Win11 HLK and Linux kselftest both exercise every supported binary format from user space. Kernel-side `test_exec.c` covers the PE32+ parser at the buffer level but does not load and run a PE process end-to-end. Build a tiny test binary in each format and assert that `exec_load`'s magic-byte dispatch picked the right loader for each one.
 
-- [ ] [`user/test/test_loader_elf.c`](../../user/test/test_loader_elf.c): trivial main returning 0; built by the existing crt0+libc ELF link recipe. Sanity baseline that proves the ELF path runs end-to-end inside the format-coverage triplet, distinct from §1's smoke binary.
-- [ ] [`user/test/test_loader_pe.c`](../../user/test/test_loader_pe.c): trivial main returning 0; Makefile recipe uses `lld-link` (or `clang --target=x86_64-pc-windows-msvc`) to emit a minimal PE32+ executable. Binary must start with `MZ` magic so [`src/kernel/exec.c`](../../src/kernel/exec.c) line 70 routes to `pe_load`.
-- [ ] [`user/test/test_loader_eif.c`](../../user/test/test_loader_eif.c): trivial main returning 0; Makefile recipe wraps the ELF or flat output in an `EIF!` header (4-byte magic + payload per the EIF format owned by `D02T17 §5`). Binary must start with `EIF!` so [`src/kernel/exec.c`](../../src/kernel/exec.c) line 62 routes to `eif_load`.
-- [ ] All three binaries: ZERO syscalls beyond `SYS_EXIT(0)`. The goal is to exercise the LOADER, not the syscall ABI -- §9 owns syscall coverage. Exit code 0 -> launcher logs `[UTEST] test_loader_<fmt>.exe: PASS`.
-- [ ] §3 launcher emits a `format=<NAME>` line per binary so the boot log surfaces which loader picked each one. Plumb the format name out of `exec_load` (it already knows -- see `s_formats[i].name` in [`src/kernel/exec.c`](../../src/kernel/exec.c) line 122) through `task_exec` into `test_usermode.c`'s per-binary log: `klog(LOG_INFO, "UTEST", "%s: format=%s", name, fmt)`. Without this, a regression that silently routed PE binaries through the ELF loader would still print PASS.
-- [ ] Per-binary bats land under `scripts/debug/usermode/` per §16 (`run-test_loader_elf.bat`, `run-test_loader_pe.bat`, `run-test_loader_eif.bat`).
-- [ ] Commit: `"test: user-mode binary format loader coverage (ELF + PE32+ + EIF)"`
+- [x] [`user/test/test_loader_elf.c`](../../user/test/test_loader_elf.c): trivial main returning 0; built by the existing crt0+libc ELF link recipe. Sanity baseline that proves the ELF path runs end-to-end inside the format-coverage triplet, distinct from §1's smoke binary.
+- [x] [`user/test/test_loader_pe.c`](../../user/test/test_loader_pe.c): trivial `_start` calling INT 0x80 SYS_EXIT(0); Makefile recipe uses `clang-19 --target=x86_64-pc-windows-msvc` + `lld-link` to emit a minimal PE32+ executable with `MZ` magic, routed by [`src/kernel/exec.c`](../../src/kernel/exec.c) to `pe_load`.
+- [x] [`user/test/test_loader_eif.asm`](../../user/test/test_loader_eif.asm): flat NASM entry doing INT 0x80 SYS_EXIT(0); [`scripts/build-eif.py`](../../scripts/build-eif.py) wraps the raw code in a 64-byte EIF header + 32-byte segment table per `D02T17 §5`. Binary starts with `EIF!` (file-order bytes 0x45 0x49 0x46 0x21, little-endian `EIF_MAGIC = 0x21464945`), routed by [`src/kernel/exec.c`](../../src/kernel/exec.c) to `eif_load`.
+- [x] All three binaries: ZERO syscalls beyond `SYS_EXIT(0)`. Exit code 0 -> launcher logs `[UTEST] test_loader_<fmt>.exe: PASS`.
+- [x] §3 launcher emits a `format=<NAME>` line per binary: `exec_load_fmt` returns the matched format name pointer out-param; `task_exec` stashes it in `tasks[pid].loaded_format`; [`src/kernel/test/test_usermode.c`](../../src/kernel/test/test_usermode.c) reads it and emits `klog(LOG_INFO, "UTEST", "%s: format=%s", name, fmt)` before the verdict. A regression that silently routed PE binaries through the ELF loader would surface as `format=ELF` for `test_loader_pe.exe`.
+- [x] Per-binary bats landed under `scripts/debug/usermode/` (`run-test_loader_elf.bat`, `run-test_loader_pe.bat`, `run-test_loader_eif.bat`).
+- [x] Commit: `"test: user-mode binary format loader coverage (ELF + PE32+ + EIF)"`
 
 **Test checkpoint:** All three binaries exit 0; serial shows three `format=ELF` / `format=PE32+` / `format=EIF` lines from the launcher, proving each format hit its registered loader. A regression that drops the PE or EIF registration in `exec.c` would surface as `format=ELF` for the wrong binary or as a launcher load failure (`exec_load` returns ENOEXEC -> launcher prints `FAIL (exit=-5)`). Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\usermode\run-test_loader_elf.bat`, `run-test_loader_pe.bat`, `run-test_loader_eif.bat` (one per binary) | 3 binaries, 0 failures
+
+> **Notes:**
+> - Three loader-coverage binaries ship: [`user/test/test_loader_elf.c`](../../user/test/test_loader_elf.c) (crt0+libc ELF), [`user/test/test_loader_pe.c`](../../user/test/test_loader_pe.c) (freestanding PE32+ via `lld-link`), [`user/test/test_loader_eif.asm`](../../user/test/test_loader_eif.asm) (NASM flat wrapped by [`scripts/build-eif.py`](../../scripts/build-eif.py)). Each is the minimum that still proves its magic-byte dispatch path.
+> - Format surfacing: `exec_load_fmt()` out-param plumbs the matched `s_formats[i].name` pointer into `tasks[pid].loaded_format`; [`src/kernel/test/test_usermode.c`](../../src/kernel/test/test_usermode.c) emits `UTEST: <name>: format=<NAME>` before the per-binary verdict so a loader-routing regression surfaces in the log even when the binary still exits 0.
+> - Implementation surfaced three kernel bugs, all fixed root-cause (no workarounds): (1) `EIF_MAGIC` byte-order inverted so file-on-disk "EIF!" never matched the constant; (2) `vmm.c get_or_create_table()` did not propagate the User bit into intermediate PML4/PDPT/PD entries, so `vmm_map_page(..., VMM_FLAG_USER)` silently produced supervisor-only intermediate tables for non-ELF-range addresses; (3) `task_exec()` only set User on the image range, not the user stack -- PE's 8 KiB `SizeOfImage` left the stack kernel-only and PE's first push faulted at `_start`.
+> - Canonical docs: `D02T17 §5` (EIF format spec), [`src/kernel/exec.c`](../../src/kernel/exec.c) (magic-byte dispatch registry), [`scripts/build-eif.py`](../../scripts/build-eif.py) (EIF build tool for any future flat-binary test fixture).
+> - Scope boundary: §15 owns loader-selection coverage; §9 owns syscall coverage; `D02T17 §10` owns PE base relocation; `D02T17 §8` owns PE per-process PML4 so PE loads do not mutate shared `kernel_pml4` (Codex [M] finding Accepted via XREF).
 
 ---
 
@@ -548,7 +557,7 @@ Wire user-mode test binaries into `make test`.
 | ⭐  | Feature              | 🪟 Win11             | 🐧 Linux                 | 🚀 Impossible OS       |
 | --- | -------------------- | --------------------- | ------------------------ | ----------------------- |
 | 💎  | User-mode test bins  | ✅ HLK               | ✅ kselftest             | ⬜ §1-§15              |
-| 💎  | Multi-format loader  | ✅ PE + .NET via HLK | ✅ ELF + a.out kselftest | ⬜ §15 ELF+PE32+ +EIF  |
+| 💎  | Multi-format loader  | ✅ PE + .NET via HLK | ✅ ELF + a.out kselftest | ✅ §15 ELF+PE32+ +EIF  |
 | 💎  | Syscall coverage     | ✅ NtDll             | ✅ ptrace selftest       | ✅ §9 11 syscalls      |
 | 💎  | Auto launcher        | ✅ HLK               | ✅ run_kselftest         | ⬜ §3                  |
 | 💎  | TAP or CI parse      | ✅ HLK XML           | ✅ TAP kselftest         | ✅ §7 XML + §4 TAP     |

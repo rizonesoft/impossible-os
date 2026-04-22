@@ -1680,6 +1680,27 @@ static void u_run_one(const char *name, utest_type_t type,
         return;
     }
 
+    /* Format-coverage line: emit the binary-format name the exec
+     * dispatcher matched for this binary (ELF / PE32+ / EIF) BEFORE
+     * task_cleanup so the name is always visible regardless of
+     * PASS/FAIL/timeout/leak verdict. The name string aliases a
+     * static entry in the format registry (see exec.c s_formats[])
+     * so it stays valid for the lifetime of the kernel; no copy
+     * needed. A binary whose format field stays NULL means
+     * exec_load_fmt failed before matching -- covered by the
+     * "task_exec failed" path in u_spawn_one which already logged
+     * FAIL (exit=-5), so we skip the format line there.
+     *
+     * Without this line, a regression that silently routed PE
+     * binaries through the ELF loader would still print PASS --
+     * the whole point of the format-coverage probe. */
+    {
+        struct task *t = task_get_by_pid((uint32_t)pid);
+        const char *fmt = (t && t->loaded_format) ? t->loaded_format : (const char *)0;
+        if (fmt)
+            klog(LOG_INFO, "UTEST", "%s: format=%s", name_copy, fmt);
+    }
+
     /* Compute preliminary verdict + reason from the child's exit
      * status. Escalations for leaked handles and isolation failures
      * apply BELOW; the single [UTEST]/TAP/XML/JSON emit happens at the

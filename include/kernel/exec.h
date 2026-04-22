@@ -81,6 +81,18 @@ int exec_register_format(const exec_format_t *fmt);
  * Sets *err to ENOEXEC (bad format) or ENOMEM (allocation failure). */
 uint64_t exec_load(const uint8_t *data, uint64_t size, int *err);
 
+/* Same as exec_load but also returns the matched format name via
+ * `*out_fmt_name` (e.g. "ELF", "PE32+", "EIF"). Writes to the out-param
+ * on EVERY call: on success with the chosen loader's name, on failure
+ * with (const char *)0. Used by task_exec to stash the format in the
+ * task struct so the user-mode launcher can log which loader picked
+ * each binary without re-inspecting the magic bytes. Pointer aliases
+ * into the static format-registry table (s_formats); lifetime is
+ * forever. Passing NULL for out_fmt_name collapses to the same
+ * behavior as exec_load. */
+uint64_t exec_load_fmt(const uint8_t *data, uint64_t size, int *err,
+                       const char **out_fmt_name);
+
 /* Load a binary from a VFS path.
  * Opens the file, reads it into a kernel buffer, calls exec_load().
  * Returns entry point address on success, 0 on failure.

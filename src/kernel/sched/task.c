@@ -1444,12 +1444,20 @@ int task_exec(const uint8_t *data, uint64_t size)
         }
     }
 
-    /* Load the binary via multi-format dispatcher (ELF, PE32+, EIF) */
-    entry = exec_load(data, size, &exec_err);
+    /* Load the binary via multi-format dispatcher (ELF, PE32+, EIF).
+     * exec_load_fmt also publishes the matched format name (pointer
+     * into the static format-registry table) which we stash on the
+     * task so the launcher can log which loader picked this binary.
+     * Populated BEFORE success is confirmed so the name is visible
+     * even if downstream task_exec steps fail -- exec_load_fmt
+     * writes NULL on failure, so a NULL loaded_format survives. */
+    const char *fmt_name = (const char *)0;
+    entry = exec_load_fmt(data, size, &exec_err, &fmt_name);
     if (entry == 0) {
         klog(LOG_DEBUG, "sched", "exec_load failed (err=%u)", (uint64_t)exec_err);
         return -1;
     }
+    tasks[pid].loaded_format = fmt_name;
 
     /* Register module if the loader didn't already (PE registers in pe_load).
      * For ELF/EIF, register with the identity-mapped user ELF range. */
@@ -1548,6 +1556,15 @@ int task_exec(const uint8_t *data, uint64_t size)
             for (addr = img_base; addr < img_end; addr += 4096)
                 vmm_set_user_page(tasks[pid].cr3, addr);
         }
+        /* Same stack-User-bit guarantee as the launcher branch below:
+         * fork+exec of a non-ELF image (PE32+/EIF, module size smaller
+         * than full USER_ELF range) would otherwise leave the stack
+         * kernel-only and fault at the _start prologue's first push. */
+        for (addr = USER_ELF_END - USER_STACK_SIZE;
+             addr < USER_ELF_END;
+             addr += 4096) {
+            vmm_set_user_page(tasks[pid].cr3, addr);
+        }
     } else {
         /* Launcher-spawned task (cr3=0 at entry): build a fresh
          * per-process cr3 from scratch. No prior per-process cr3 to
@@ -1571,6 +1588,31 @@ int task_exec(const uint8_t *data, uint64_t size)
                 for (addr = USER_ELF_BASE; addr < USER_ELF_END; addr += 4096)
                     vmm_set_user_page(user_cr3, addr);
             }
+
+            /* Mark the user stack pages User regardless of image
+             * range. task_exec builds the ring-3 iretq frame with
+             * RSP at the top of this region (USER_ELF_END -
+             * USER_STACK_SIZE..USER_ELF_END) and the task's FIRST
+             * user-mode instruction typically pushes a callee-save
+             * register there (the Win64 CRT-less _start prologue
+             * does exactly this); without the User bit that push
+             * faults with ERR=0x7 (present + write + user) at the
+             * entry+1 instruction. ELF binaries happened to work
+             * because their registered module size covers the
+             * whole 1 MiB USER_ELF range including the stack; PE
+             * (ImageBase != USER_ELF_BASE, SizeOfImage = 8 KiB)
+             * and EIF (sub-KiB code segments) do not. Marking the
+             * stack explicitly makes the user-stack mapping
+             * independent of each format's image-size convention.
+             * Bug surfaced by user-mode binary format loader probe (PE).
+             * Stack is always at the top of USER_ELF range per
+             * task.h (USER_ELF_END - USER_STACK_SIZE .. USER_ELF_END). */
+            for (addr = USER_ELF_END - USER_STACK_SIZE;
+                 addr < USER_ELF_END;
+                 addr += 4096) {
+                vmm_set_user_page(user_cr3, addr);
+            }
+
             tasks[pid].cr3 = user_cr3;
             __asm__ volatile("mov %0, %%cr3" : : "r"(user_cr3) : "memory");
         } else {

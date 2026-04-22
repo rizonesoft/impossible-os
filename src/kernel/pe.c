@@ -703,7 +703,11 @@ uint64_t pe_load(const uint8_t *data, uint64_t size)
         return 0;
     }
 
-    /* Validate each section fits within SizeOfImage */
+    /* Validate each section fits within SizeOfImage AND its raw-data
+     * range fits within the file. Doing both in 64-bit arithmetic
+     * before any copy prevents uint32 wraparound (raw_ptr + raw_sz
+     * overflowing past 4 GiB) from smuggling a section whose raw
+     * bytes lie outside the input buffer. */
     {
         uint16_t s;
         for (s = 0; s < v.num_sections; s++) {
@@ -711,13 +715,25 @@ uint64_t pe_load(const uint8_t *data, uint64_t size)
                 (const uint8_t *)&v.sections[s].VirtualAddress);
             uint32_t sec_vsize = read_u32(
                 (const uint8_t *)&v.sections[s].VirtualSize);
+            uint32_t raw_ptr = read_u32(
+                (const uint8_t *)&v.sections[s].PointerToRawData);
+            uint32_t raw_sz = read_u32(
+                (const uint8_t *)&v.sections[s].SizeOfRawData);
             uint64_t sec_end = (uint64_t)sec_rva + sec_vsize;
+            uint64_t raw_end = (uint64_t)raw_ptr + raw_sz;
 
             if (sec_end < sec_rva || sec_end > size_of_image) {
                 klog(LOG_ERROR, "pe",
                      "Section %u RVA 0x%x + VSize 0x%x exceeds SizeOfImage 0x%x",
                      (uint64_t)s, (uint64_t)sec_rva,
                      (uint64_t)sec_vsize, (uint64_t)size_of_image);
+                return 0;
+            }
+            if (raw_sz != 0 && (raw_end < raw_ptr || raw_end > size)) {
+                klog(LOG_ERROR, "pe",
+                     "Section %u raw 0x%x + 0x%x exceeds file size 0x%x",
+                     (uint64_t)s, (uint64_t)raw_ptr,
+                     (uint64_t)raw_sz, size);
                 return 0;
             }
         }

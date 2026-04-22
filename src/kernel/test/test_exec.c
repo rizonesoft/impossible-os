@@ -327,7 +327,7 @@ static void test_eif_struct_sizes(void)
 
 static void test_eif_constants(void)
 {
-    TEST_ASSERT_EQ(EIF_MAGIC, 0x45494621, "EIF_MAGIC == 0x45494621");
+    TEST_ASSERT_EQ(EIF_MAGIC, 0x21464945, "EIF_MAGIC == 0x21464945 (file-order LE 'EIF!')");
     TEST_ASSERT_EQ(EIF_VERSION, 1, "EIF_VERSION == 1");
     TEST_ASSERT_EQ(EIF_ARCH_X86_64, 1, "EIF_ARCH_X86_64 == 1");
     TEST_ASSERT_EQ(EIF_FLAG_SIGNED, 8, "EIF_FLAG_SIGNED == 8");

@@ -366,9 +366,9 @@ USER_CFLAGS := --target=x86_64-elf \
                -mno-mmx -mno-sse -mno-sse2 -std=gnu11 -O2 -g \
                -MMD -MP
 
-userland: $(SYSROOT)/hello.exe $(SYSROOT)/cmd.exe $(SYSROOT)/test_harness_smoke.exe $(SYSROOT)/test_syscall.exe $(SYSROOT)/test_faultinject.exe $(SYSROOT)/test_smoke_boot.exe $(SYSROOT)/test_stress_libc.exe $(SYSROOT)/test_perf_syscall.exe $(SYSROOT)/test_libc.exe $(SYSROOT)/test_ipc.exe $(SYSROOT)/test_process.exe $(SYSROOT)/test_fileio.exe $(SYSROOT)/test_win32.exe
+userland: $(SYSROOT)/hello.exe $(SYSROOT)/cmd.exe $(SYSROOT)/test_harness_smoke.exe $(SYSROOT)/test_syscall.exe $(SYSROOT)/test_faultinject.exe $(SYSROOT)/test_smoke_boot.exe $(SYSROOT)/test_stress_libc.exe $(SYSROOT)/test_perf_syscall.exe $(SYSROOT)/test_libc.exe $(SYSROOT)/test_ipc.exe $(SYSROOT)/test_process.exe $(SYSROOT)/test_fileio.exe $(SYSROOT)/test_win32.exe $(SYSROOT)/test_loader_elf.exe $(SYSROOT)/test_loader_pe.exe $(SYSROOT)/test_loader_eif.exe
 
-$(SYSROOT)/hello.exe $(SYSROOT)/cmd.exe $(SYSROOT)/test_harness_smoke.exe $(SYSROOT)/test_syscall.exe $(SYSROOT)/test_faultinject.exe $(SYSROOT)/test_smoke_boot.exe $(SYSROOT)/test_stress_libc.exe $(SYSROOT)/test_perf_syscall.exe $(SYSROOT)/test_libc.exe $(SYSROOT)/test_ipc.exe $(SYSROOT)/test_process.exe $(SYSROOT)/test_fileio.exe $(SYSROOT)/test_win32.exe &: sysroot user/hello.c user/cmd.c \
+$(SYSROOT)/hello.exe $(SYSROOT)/cmd.exe $(SYSROOT)/test_harness_smoke.exe $(SYSROOT)/test_syscall.exe $(SYSROOT)/test_faultinject.exe $(SYSROOT)/test_smoke_boot.exe $(SYSROOT)/test_stress_libc.exe $(SYSROOT)/test_perf_syscall.exe $(SYSROOT)/test_libc.exe $(SYSROOT)/test_ipc.exe $(SYSROOT)/test_process.exe $(SYSROOT)/test_fileio.exe $(SYSROOT)/test_win32.exe $(SYSROOT)/test_loader_elf.exe $(SYSROOT)/test_loader_pe.exe $(SYSROOT)/test_loader_eif.exe &: sysroot user/hello.c user/cmd.c \
                                                                               user/test/test_harness_smoke.c \
                                                                               user/test/test_syscall.c \
                                                                               user/test/test_faultinject.c \
@@ -380,6 +380,10 @@ $(SYSROOT)/hello.exe $(SYSROOT)/cmd.exe $(SYSROOT)/test_harness_smoke.exe $(SYSR
                                                                               user/test/test_process.c \
                                                                               user/test/test_fileio.c \
                                                                               user/test/test_win32.c \
+                                                                              user/test/test_loader_elf.c \
+                                                                              user/test/test_loader_pe.c \
+                                                                              user/test/test_loader_eif.asm \
+                                                                              scripts/build-eif.py \
                                                                               user/include/test.h \
                                                                               user/include/syscall.h \
                                                                               user/include/win32.h \
@@ -443,6 +447,27 @@ $(SYSROOT)/hello.exe $(SYSROOT)/cmd.exe $(SYSROOT)/test_harness_smoke.exe $(SYSR
 	$(CC) $(USER_CFLAGS) -Iuser/include -c user/test/test_win32.c -o $(BUILD_DIR)/user/test/test_win32.o
 	$(LD) -nostdlib -static -T user/user.ld -o $(BUILD_DIR)/user/test/test_win32.exe \
 		$(BUILD_DIR)/user/lib/crt0.o $(BUILD_DIR)/user/test/test_win32.o $(BUILD_DIR)/user/libc.a
+	@# Binary-format loader coverage binaries (one per registered format).
+	@# ELF: the existing crt0+libc+main pattern -- proves the ELF loader
+	@# path runs end-to-end independently of the smoke binary.
+	$(CC) $(USER_CFLAGS) -Iuser/include -c user/test/test_loader_elf.c -o $(BUILD_DIR)/user/test/test_loader_elf.o
+	$(LD) -nostdlib -static -T user/user.ld -o $(BUILD_DIR)/user/test/test_loader_elf.exe \
+		$(BUILD_DIR)/user/lib/crt0.o $(BUILD_DIR)/user/test/test_loader_elf.o $(BUILD_DIR)/user/libc.a
+	@# PE32+: clang --target=x86_64-pc-windows-msvc + lld-link (no ELF
+	@# toolchain). Entry point is _start; no CRT, no Windows runtime.
+	@# --subsystem:console + /nodefaultlib keep the binary self-contained.
+	clang-19 --target=x86_64-pc-windows-msvc -ffreestanding -nostdlib \
+		-fno-stack-protector -mno-red-zone -O2 \
+		-fuse-ld=lld-link -Wl,/entry:_start -Wl,/subsystem:console \
+		-Wl,/nodefaultlib -o $(BUILD_DIR)/user/test/test_loader_pe.exe \
+		user/test/test_loader_pe.c
+	@# EIF: NASM -f bin emits raw x86-64 code, then scripts/build-eif.py
+	@# wraps it in a 64-byte EIF header + 32-byte segment descriptor.
+	@# No CRT, no linker -- the EIF format is its own container.
+	$(AS) -f bin user/test/test_loader_eif.asm -o $(BUILD_DIR)/user/test/test_loader_eif.bin
+	python3 scripts/build-eif.py \
+		$(BUILD_DIR)/user/test/test_loader_eif.bin \
+		$(BUILD_DIR)/user/test/test_loader_eif.exe
 	@cp -f $(BUILD_DIR)/user/hello.exe $(SYSROOT)/hello.exe
 	@cp -f $(BUILD_DIR)/user/cmd.exe $(SYSROOT)/cmd.exe
 	@cp -f $(BUILD_DIR)/user/test/test_harness_smoke.exe $(SYSROOT)/test_harness_smoke.exe
@@ -456,11 +481,14 @@ $(SYSROOT)/hello.exe $(SYSROOT)/cmd.exe $(SYSROOT)/test_harness_smoke.exe $(SYSR
 	@cp -f $(BUILD_DIR)/user/test/test_process.exe $(SYSROOT)/test_process.exe
 	@cp -f $(BUILD_DIR)/user/test/test_fileio.exe $(SYSROOT)/test_fileio.exe
 	@cp -f $(BUILD_DIR)/user/test/test_win32.exe $(SYSROOT)/test_win32.exe
+	@cp -f $(BUILD_DIR)/user/test/test_loader_elf.exe $(SYSROOT)/test_loader_elf.exe
+	@cp -f $(BUILD_DIR)/user/test/test_loader_pe.exe  $(SYSROOT)/test_loader_pe.exe
+	@cp -f $(BUILD_DIR)/user/test/test_loader_eif.exe $(SYSROOT)/test_loader_eif.exe
 	@mkdir -p $(SYSROOT)/tests
 	@cp -f tests/usermode.manifest $(SYSROOT)/tests/usermode.manifest
 	@cp -f tests/usermode-cleanup.manifest $(SYSROOT)/tests/usermode-cleanup.manifest
 	@cp -f tests/perf-baseline.json $(SYSROOT)/tests/perf-baseline.json
-	@echo "[USER] hello/cmd + test_{harness_smoke,syscall,faultinject,smoke_boot,stress_libc,perf_syscall,libc,ipc,process,fileio,win32}.exe + manifests -> sysroot"
+	@echo "[USER] hello/cmd + test_{harness_smoke,syscall,faultinject,smoke_boot,stress_libc,perf_syscall,libc,ipc,process,fileio,win32,loader_{elf,pe,eif}}.exe + manifests -> sysroot"
 
 ## iso: Package kernel + sysroot into a bootable UEFI ISO via GRUB (optional)
 iso: $(ISO_FILE)

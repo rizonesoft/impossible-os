@@ -11,7 +11,21 @@
 
 /* ---- Magic and architecture --------------------------------------------- */
 
-#define EIF_MAGIC         0x45494621  /* "EIF!" little-endian */
+/* EIF magic bytes "EIF!" in file order at offset 0:
+ *   file bytes: 'E' (0x45), 'I' (0x49), 'F' (0x46), '!' (0x21)
+ *   read as little-endian uint32:
+ *     p[0] | (p[1]<<8) | (p[2]<<16) | (p[3]<<24)
+ *     = 0x45 | (0x49<<8) | (0x46<<16) | (0x21<<24)
+ *     = 0x21464945
+ * Previous value 0x45494621 was the "EIF!" string packed as a
+ * uint32 MSB-first (big-endian) which produced file bytes
+ * 0x21 0x46 0x49 0x45 (= "!FIE") -- contradicting exec.c's magic
+ * byte-array {'E','I','F','!'} which expects the ASCII order in
+ * the file. Kernel-side tests never fed a real EIF binary through
+ * the exec dispatcher + eif_load, so the mismatch was latent until
+ * the user-mode binary format loader probe shipped a real EIF
+ * test binary. */
+#define EIF_MAGIC         0x21464945  /* "EIF!" as file-order LE u32 */
 #define EIF_VERSION       1           /* current format version */
 
 #define EIF_ARCH_X86_64   1

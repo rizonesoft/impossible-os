@@ -34,6 +34,18 @@ test_ipc.exe
 test_process.exe expects_tasks=4
 test_fileio.exe
 test_win32.exe
+# §15 binary-format loader coverage: one binary per registered format.
+# Launcher emits `UTEST: <name>: format=<NAME>` before the verdict so a
+# regression that silently routes the wrong loader surfaces even when
+# the binary exits 0. ELF + EIF target USER_ELF_BASE (0x800000) via
+# the per-process cr3's pre-split PT; PE targets its ImageBase via
+# vmm_map_page which now propagates User at every intermediate
+# table level (fix in src/kernel/mm/vmm.c get_or_create_table,
+# 2026-04-22). Three-format coverage runs here as a unit so a
+# kernel regression in any loader surfaces on the same boot.
+test_loader_elf.exe
+test_loader_pe.exe
+test_loader_eif.exe
 test_faultinject.exe
 
 # §8 stress + perf phase -- run after all correctness passes.

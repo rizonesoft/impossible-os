@@ -186,15 +186,27 @@ static void zero_page(uintptr_t phys_addr)
  * If 'create' is true and the entry doesn't exist, allocates a new frame.
  * Returns pointer to the next-level table, or NULL on failure.
  */
-static pte_t *get_or_create_table(pte_t *table, uint64_t index, int create)
+static pte_t *get_or_create_table(pte_t *table, uint64_t index, int create,
+                                   uint64_t leaf_flags)
 {
     pte_t entry = table[index];
 
-    /* If already present, return the physical address as a pointer */
+    /* If already present, return the physical address as a pointer --
+     * and propagate the User bit upward if the caller is installing a
+     * user-mode leaf PTE. Intermediate levels (PML4/PDPT/PD) must have
+     * the User bit set at EVERY level for ring-3 page walks to
+     * succeed; without this, a leaf PTE with VMM_FLAG_USER still
+     * faults on user-mode access because the CPU's page walk rejects
+     * the first kernel-only intermediate entry. Bug surfaced by the
+     * user-mode binary format loader coverage probe with PE (ERR=0x15:
+     * present + user + instruction fetch at ImageBase). */
     if (entry & VMM_FLAG_PRESENT) {
         /* If it's a huge page (2 MiB), we can't drill down further */
         if (entry & VMM_FLAG_HUGE)
             return (pte_t *)0;
+
+        if (leaf_flags & VMM_FLAG_USER)
+            table[index] = entry | VMM_FLAG_USER;
 
         return (pte_t *)(entry & PTE_ADDR_MASK);
     }
@@ -211,8 +223,15 @@ static pte_t *get_or_create_table(pte_t *table, uint64_t index, int create)
     /* Zero the new table */
     zero_page(new_frame);
 
-    /* Install the entry: present + writable (+ user if needed later) */
-    table[index] = new_frame | VMM_FLAG_PRESENT | VMM_FLAG_WRITABLE;
+    /* Install the entry: present + writable, plus User if the leaf
+     * is a user-mode mapping. x86-64 requires User at every level
+     * for ring-3 walks; without this the CPU faults with ERR=0x15
+     * (present + user + instr fetch) on the first user access that
+     * traverses this freshly-created intermediate table. */
+    uint64_t intermediate = VMM_FLAG_PRESENT | VMM_FLAG_WRITABLE;
+    if (leaf_flags & VMM_FLAG_USER)
+        intermediate |= VMM_FLAG_USER;
+    table[index] = new_frame | intermediate;
 
     return (pte_t *)new_frame;
 }
@@ -240,18 +259,22 @@ int vmm_map_page(uintptr_t virt, uintptr_t phys, uint64_t flags)
     pdi   = pd_index(virt);
     pti   = pt_index(virt);
 
-    /* Walk/create PML4 → PDPT */
-    pdpt = get_or_create_table(kernel_pml4, pml4i, 1);
+    /* Walk/create PML4 → PDPT. Pass `flags` so the User bit
+     * propagates upward when the caller is installing a user-mode
+     * leaf PTE (PE loader at ImageBase, MMIO maps, guard-page
+     * splits, etc.). See get_or_create_table for why every level
+     * must carry User when the leaf does. */
+    pdpt = get_or_create_table(kernel_pml4, pml4i, 1, flags);
     if (!pdpt) return -1;
 
     /* Walk/create PDPT → PD */
-    pd = get_or_create_table(pdpt, pdpti, 1);
+    pd = get_or_create_table(pdpt, pdpti, 1, flags);
     if (!pd) return -1;
 
     /* Walk/create PD → PT
      * Note: if PD[pdi] is a 2 MiB huge page, we can't create a PT here.
      * In that case we'd need to split the huge page -- for now, fail. */
-    pt = get_or_create_table(pd, pdi, 1);
+    pt = get_or_create_table(pd, pdi, 1, flags);
     if (!pt) return -1;
 
     /* Clear NX flag if CPU doesn't support it (older hardware) */
@@ -281,13 +304,13 @@ void vmm_unmap_page(uintptr_t virt, int free_frame)
     pti   = pt_index(virt);
 
     /* Walk PML4 → PDPT (don't create) */
-    pdpt = get_or_create_table(kernel_pml4, pml4i, 0);
+    pdpt = get_or_create_table(kernel_pml4, pml4i, 0, 0);
     if (!pdpt) return;
 
-    pd = get_or_create_table(pdpt, pdpti, 0);
+    pd = get_or_create_table(pdpt, pdpti, 0, 0);
     if (!pd) return;
 
-    pt = get_or_create_table(pd, pdi, 0);
+    pt = get_or_create_table(pd, pdi, 0, 0);
     if (!pt) return;
 
     /* Get the physical address before clearing */
@@ -318,16 +341,16 @@ int vmm_protect(uintptr_t virt, uint64_t new_flags)
     pti   = pt_index(virt);
 
     /* Walk without creating */
-    pdpt = get_or_create_table(kernel_pml4, pml4i, 0);
+    pdpt = get_or_create_table(kernel_pml4, pml4i, 0, 0);
     if (!pdpt) return -1;
-    pd = get_or_create_table(pdpt, pdpti, 0);
+    pd = get_or_create_table(pdpt, pdpti, 0, 0);
     if (!pd) return -1;
 
     /* Cannot protect pages inside a 2 MiB huge page -- must split first */
     if (pd[pdi] & VMM_FLAG_HUGE)
         return -1;
 
-    pt = get_or_create_table(pd, pdi, 0);
+    pt = get_or_create_table(pd, pdi, 0, 0);
     if (!pt) return -1;
     if (!(pt[pti] & VMM_FLAG_PRESENT))
         return -1;
@@ -377,7 +400,7 @@ uintptr_t vmm_get_physical(uintptr_t virt)
     offset = virt & 0xFFF;
 
     /* Walk PML4 -> PDPT */
-    pdpt = get_or_create_table(kernel_pml4, pml4i, 0);
+    pdpt = get_or_create_table(kernel_pml4, pml4i, 0, 0);
     if (!pdpt) return 0;
 
     /* Check for 1 GiB huge page at PDPT level */
@@ -386,7 +409,7 @@ uintptr_t vmm_get_physical(uintptr_t virt)
         return gib_base + (virt & GIB_ALIGN_MASK);
     }
 
-    pd = get_or_create_table(pdpt, pdpti, 0);
+    pd = get_or_create_table(pdpt, pdpti, 0, 0);
     if (!pd) return 0;
 
     /* Check for 2 MiB huge page at PD level */
@@ -395,7 +418,7 @@ uintptr_t vmm_get_physical(uintptr_t virt)
         return huge_base + (virt & 0x1FFFFF);   /* offset within 2 MiB page */
     }
 
-    pt = get_or_create_table(pd, pdi, 0);
+    pt = get_or_create_table(pd, pdi, 0, 0);
     if (!pt) return 0;
 
     if (!(pt[pti] & VMM_FLAG_PRESENT))
@@ -1018,7 +1041,7 @@ int vmm_split_huge_page(uintptr_t virt)
     pdpti = pdpt_index(virt);
     pdi   = pd_index(virt);
 
-    pdpt = get_or_create_table(kernel_pml4, pml4i, 0);
+    pdpt = get_or_create_table(kernel_pml4, pml4i, 0, 0);
     if (!pdpt) return -1;
 
     /* If the PDPT entry is a 1 GiB huge page, split it into 512 x 2 MiB
@@ -1043,7 +1066,7 @@ int vmm_split_huge_page(uintptr_t virt)
              (uint64_t)(gib_phys));
     }
 
-    pd = get_or_create_table(pdpt, pdpti, 0);
+    pd = get_or_create_table(pdpt, pdpti, 0, 0);
     if (!pd) return -1;
 
     /* Not a huge page -- already split or not present */
@@ -1135,7 +1158,7 @@ int vmm_map_huge_1g(uintptr_t virt, uintptr_t phys, uint64_t flags)
     pdpti = pdpt_index(virt);
 
     /* Walk PML4 to PDPT (create if needed) */
-    pdpt = get_or_create_table(kernel_pml4, pml4i, 1);
+    pdpt = get_or_create_table(kernel_pml4, pml4i, 1, 0);
     if (!pdpt)
         return -1;
 
