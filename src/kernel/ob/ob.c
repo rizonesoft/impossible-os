@@ -10,6 +10,7 @@
 #include "kernel/ob/ob_trace.h"
 #include "kernel/ob/ob_ns.h"
 #include "kernel/ob/ob_file.h"
+#include "kernel/ob/ob_info_file.h"
 #include "kernel/ob/ob_process.h"
 #include "kernel/ob/ob_thread.h"
 #include "kernel/ob/ob_event.h"
@@ -508,6 +509,7 @@ boot_result_t ob_init(void)
     klog(LOG_INFO, "ob", "Object Manager initializing...");
 
     ob_file_type_init();
+    ob_info_file_type_init();
     ob_process_type_init();
     ob_thread_type_init();
     ObpDirectoryType = ob_create_type(&(OBJECT_TYPE){

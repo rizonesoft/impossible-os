@@ -29,6 +29,7 @@
 #include "kernel/drivers/mouse.h"
 #include "kernel/mm/pmm.h"
 #include "kernel/etw.h"
+#include "kernel/ob/ob_info_file.h"
 #include "kernel/sched/seqlock.h"
 #include "desktop/desktop.h"
 
@@ -219,6 +220,12 @@ void wm_init(void)
     prev_buttons = 0;
     __atomic_store_n(&needs_redraw, (uint8_t)1, __ATOMIC_SEQ_CST);
     wm_ready = 1;
+
+    /* Register the `\ObjectManager\FrameStats` info-file. Idempotent
+     * against re-init in tests. The info-file registry lives in the
+     * Object Manager (Phase 2) which is up by the time wm_init runs
+     * in Phase 3. */
+    wm_framestats_register_info_file();
 
     /* Lock the framebuffer console -- all text output now goes to serial only.
      * The compositor exclusively owns the back buffer from this point. */
@@ -547,6 +554,13 @@ static volatile int pending_close_handle = -1;
 static seqlock_t s_frame_lock = SEQLOCK_INIT;
 static struct wm_frame_stats s_frame_stats = {0};
 
+/* Pin the on-wire schema pinned in kernel/etw.h to the C struct size.
+ * A mismatch here is a silent reader/writer ABI drift: consumers of
+ * ETW_EVT_WM_FRAME_PRESENTED or the FrameStats pseudo-file would parse
+ * a different byte count than the kernel writes. */
+_Static_assert(sizeof(struct wm_frame_stats) == ETW_WM_FRAME_STATS_SIZE,
+               "wm_frame_stats size drifted; bump ETW_WM_FRAME_STATS_LAYOUT_VERSION");
+
 void wm_get_frame_stats(struct wm_frame_stats *out)
 {
     uint64_t seq;
@@ -556,6 +570,36 @@ void wm_get_frame_stats(struct wm_frame_stats *out)
         seq = seqlock_read_begin(&s_frame_lock);
         *out = s_frame_stats;
     } while (seqlock_read_retry(&s_frame_lock, seq));
+}
+
+/* ob_info_file callback for `\ObjectManager\FrameStats`. Snapshots the
+ * current counters via wm_get_frame_stats (seqlock-coherent), then
+ * memcpy-slices the requested [offset, offset+size) window into the
+ * caller buffer. ob_info_file_read already enforced `offset < size`
+ * and clamped `size` to not read past the declared file size, so we
+ * only need to return the clamped byte count here. */
+static int32_t wm_framestats_info_read(uint8_t *buf, uint32_t size,
+                                       uint32_t offset)
+{
+    if (!buf)
+        return -1;
+    struct wm_frame_stats snap;
+    wm_get_frame_stats(&snap);
+    const uint8_t *src = (const uint8_t *)&snap;
+    for (uint32_t i = 0; i < size; i++)
+        buf[i] = src[offset + i];
+    return (int32_t)size;
+}
+
+void wm_framestats_register_info_file(void)
+{
+    /* Idempotent against the KERNEL_TESTS reset path: ob_info_file
+     * registration fails -1 on a duplicate name, which is how we
+     * detect "already registered" without exposing another query
+     * surface. A second register from a late phase therefore no-ops
+     * silently, which is what a boot-phase-3 retry wants. */
+    (void)ob_info_file_register("FrameStats", wm_framestats_info_read,
+                                (uint32_t)sizeof(struct wm_frame_stats));
 }
 
 void wm_frame_stats_on_mark_dirty(int was_already_dirty)

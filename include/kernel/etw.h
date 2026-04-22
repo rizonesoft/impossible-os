@@ -151,6 +151,30 @@ NTSTATUS NtFlushTrace(uint64_t trace_handle, uint64_t instance_name,
  * stable once shipped. */
 #define ETW_EVT_WM_FRAME_PRESENTED  0x1001
 
+/* Byte layout of `struct wm_frame_stats` (include/desktop/wm.h). This
+ * is the on-wire schema for both the ETW_EVT_WM_FRAME_PRESENTED payload
+ * AND the `\ObjectManager\FrameStats` pseudo-file read surface (see
+ * include/kernel/ob/ob_info_file.h). Any future field additions must
+ * append (not reorder) and bump ETW_WM_FRAME_STATS_LAYOUT_VERSION so
+ * consumers can detect schema rev.
+ *
+ * Layout (little-endian, natural alignment; all fields uint64_t):
+ *   offset  field
+ *   0x00    frames_presented
+ *   0x08    frames_queued
+ *   0x10    frames_late
+ *   0x18    frames_dropped
+ *   0x20    last_vsync_qpc     (monotonic nanoseconds, not raw QPC ticks)
+ *   0x28    last_present_qpc
+ *   ----
+ *   total   0x30 bytes (48)
+ *
+ * A pseudo-file read of sizeof(struct wm_frame_stats) bytes returns a
+ * seqlock-coherent snapshot (same helper as the ETW emit path).
+ */
+#define ETW_WM_FRAME_STATS_LAYOUT_VERSION  1u
+#define ETW_WM_FRAME_STATS_SIZE            48u  /* bytes */
+
 /* Emit a kernel event into every running ETW session. Iterates the
  * session table under s_etw_lock, writes an etw_event_header_t +
  * payload record into each RUNNING session, and returns. No-op when

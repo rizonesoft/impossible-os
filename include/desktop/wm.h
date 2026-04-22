@@ -163,6 +163,12 @@ struct wm_frame_stats {
  * pointer must not be NULL. */
 void wm_get_frame_stats(struct wm_frame_stats *out);
 
+/* Register `\ObjectManager\FrameStats` as an Ob info-file whose read
+ * callback returns a seqlock-coherent wm_frame_stats snapshot. Called
+ * from boot_desktop Phase 3 after ob_init + wm_init are both ready.
+ * Idempotent: duplicate-name register returns -1 silently. */
+void wm_framestats_register_info_file(void);
+
 /* Writer-side: called by wm_mark_dirty() whenever the compositor is
  * notified of a render-needing change. `was_already_dirty` is 1 when
  * the previous mark has not yet been composited (the new mark is

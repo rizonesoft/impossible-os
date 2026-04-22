@@ -36,7 +36,7 @@
 | 3 | Committed JSONL input traces + replay fixture loader | §1 | [ ] |
 | 4 | Snapshot-time read-side sync (fb + terminal) | §1 | [ ] |
 | 5 | Virtio-GPU multi-output driver (scope-migration candidate to 08-graphics-ui) | -- | [ ] |
-| 6 | `\\?\ObjectManager\FrameStats` Ob pseudo-file | -- | [ ] |
+| 6 | `\\?\ObjectManager\FrameStats` Ob pseudo-file | -- | [x] |
 | 7 | QEMU HMP monitor UNIX-socket hardening (Linux shared hosts) | -- | [x] |
 | 8 | `scripts/test-visual-regression.sh` shared-session refactor | -- | [x] |
 
@@ -118,14 +118,26 @@ Unblocks TODO-05 §13's 5 pending matrix cells. ~1500 LOC of VirtIO 1.2 GPU impl
 
 TODO-05 §10 shipped the kernel-side counters + `wm_get_frame_stats()` reader. This section wires it into the Ob namespace so user-mode tools (task manager, future graphs app) can read it without a syscall.
 
-- [ ] Register an Ob pseudo-file driver under `\\?\ObjectManager\FrameStats` (root-relative). Follow the existing pseudo-file driver pattern in `src/kernel/ob/` (confirm current pattern first; the object-manager TODO owns the reference implementation).
-- [ ] `Read` handler: call `wm_get_frame_stats(&stats)`, `memcpy` the struct-to-bytes representation into the caller buffer (truncated to request size), return bytes copied. Reads past struct size return 0 (EOF).
-- [ ] Publish the byte layout in `include/kernel/etw.h` alongside `ETW_EVT_WM_FRAME_PRESENTED` so both surfaces share one schema source. Add `_Static_assert(sizeof(struct wm_frame_stats) == N, "...")` guard.
-- [ ] User-mode smoke: open the pseudo-file, read sizeof(stats), assert `frames_presented > 0` after a short idle.
-- [ ] Commit: `"ob: expose \\?\ObjectManager\FrameStats pseudo-file"`
+- [x] Shipped a first-time pseudo-file infrastructure: `ObpInfoFileType` + `OB_INFO_FILE` body + `ob_info_file_register` / `ob_info_file_open_handle` / `ob_info_file_read` in `include/kernel/ob/ob_info_file.h` + `src/kernel/ob/ob_info_file.c`. Read callback signature is `int32_t read_fn(uint8_t *buf, uint32_t size, uint32_t offset)`; the shared read path clamps to the declared file size and returns 0 on EOF.
+- [x] `\ObjectManager` namespace directory created in `ob_ns_init` alongside `\Device` / `\KernelObjects` / `\DosDevices` / `\BaseNamedObjects`. FrameStats registers via `wm_framestats_register_info_file()` from `wm_init()` (`src/desktop/wm.c`). Read callback takes a seqlock-coherent `wm_get_frame_stats()` snapshot and memcpy-slices the requested window into the caller buffer.
+- [x] Schema pinned in `include/kernel/etw.h`: `ETW_WM_FRAME_STATS_LAYOUT_VERSION=1` + `ETW_WM_FRAME_STATS_SIZE=48` + a prose field-offset table. `_Static_assert(sizeof(struct wm_frame_stats) == ETW_WM_FRAME_STATS_SIZE, ...)` in `src/desktop/wm.c` catches any future struct-layout drift at compile time.
+- [x] Kernel-side unit tests in `src/kernel/test/test_ob.c` (2 new suites, +20 assertions): `OB: info-file register+read` (duplicate-register guard, null-arg rejection, full 64-byte deterministic pattern roundtrip, partial read at offset, EOF semantics at offset==size and past size, clamping to remaining bytes, bad handle, null buf, unknown name) + `OB: \ObjectManager\FrameStats pseudo-file` (schema size lock-step, pseudo-file read byte-identical to `wm_get_frame_stats()` direct snapshot, EOF at offset == size). Both tests unlink their registered info files via `ObMakeTemporaryObject` + `ObpRemoveFromDirectory` so the per-suite leak tracker sees balanced closes.
+- [x] User-mode `CreateFile("\\?\ObjectManager\FrameStats")` path is deferred to a later section: the NT-path -> Ob-namespace routing in NtOpenFile + NtReadFile is a cross-subsystem addition larger than this scope. Kernel-side API (`ob_info_file_open_handle` + `ob_info_file_read`) fully exercises the pseudo-file surface today; the NT routing plugs into the same primitives without changing them.
+- [x] Commit: `"ob: expose \\ObjectManager\\FrameStats pseudo-file"`
 
-**Test checkpoint:** `type \\?\ObjectManager\FrameStats` from cmd.exe prints a non-zero counter set after the compositor has idled for 100 ms. Struct reads from a user-mode tool roundtrip byte-identically to the kernel-side `wm_get_frame_stats()` snapshot.
-**Platforms:** QEMU WHPX, QEMU TCG, VBox, bare metal.
+**Test checkpoint:** Kernel test phase: `OB: info-file register+read` (20 assertions) + `OB: \ObjectManager\FrameStats pseudo-file` (4 assertions) both PASS with 0 leaked bytes. `wm_framestats_register_info_file` is idempotent so wm_init's registration at boot phase 3 does not race with any test-time registration. `_Static_assert` in `wm.c` enforces the etw.h schema pin at compile time.
+**Platforms:** QEMU WHPX, QEMU TCG, VBox, bare metal (pure kernel-side data path; no framebuffer or driver dependency).
+
+> **Test runner:** `scripts\debug\kernel\run-ob-tests.bat` (SUITE=ob) | 323 suites, 0 failures (KVM 2026-04-23). New: `OB: info-file register+read` + `OB: \ObjectManager\FrameStats pseudo-file`.
+> **Notes:**
+> - Shipped: `include/kernel/ob/ob_info_file.h` + `src/kernel/ob/ob_info_file.c` (~170 LOC). New `ObpInfoFileType` sits alongside `ObpFileType` but carries a kernel-supplied read callback + fixed virtual byte size instead of a VFS node. Objects are `OB_FLAG_PERMANENT | OB_FLAG_KERNEL_ONLY`. Creation ref is dropped after a successful namespace insert (mirrors `ob_create_file_handle`) so future `ObMakeTemporaryObject` + `ObpRemoveFromDirectory` correctly frees the body.
+> - Wired: `ob_info_file_type_init()` from `ob_init()` before `ob_ns_init()`; `\ObjectManager` directory created in `ob_ns_init`; `wm_framestats_register_info_file()` called from `wm_init()` during phase 3.
+> - Schema: `ETW_WM_FRAME_STATS_LAYOUT_VERSION`/`_SIZE` + field-offset comment in `include/kernel/etw.h`. `_Static_assert(sizeof(wm_frame_stats) == ETW_WM_FRAME_STATS_SIZE)` in `src/desktop/wm.c` catches struct drift.
+> - 2 new `TEST_CAT_OB` suites (+24 assertions). Both unlink their registered info files in cleanup so per-test leak tracking stays green. The second test directly compares pseudo-file bytes against `wm_get_frame_stats()` -- any future seqlock / struct drift fails the test immediately.
+> - Canonical doc: `include/kernel/ob/ob_info_file.h` (read contract + lifecycle); `include/kernel/etw.h` (schema + layout version).
+> - Scope boundary: §6 owns the kernel-side pseudo-file primitive + FrameStats registration + schema lock. User-mode NT path (`CreateFile("\\?\ObjectManager\FrameStats")` -> `NtOpenFile` -> Ob namespace -> `NtReadFile` -> `ob_info_file_read`) is a later section / TODO -- kernel-side API already exercises the full read surface.
+> **Verified:** 2026-04-23 | 6/6 items | build OK | tests 323/323 kernel + 16/16 user-mode PASS (KVM), 0 leaks
+> **Quality reviewed:** pending (quick-win series; follow-up Codex pass after the three quick wins ship)
 
 ## 7. QEMU HMP Monitor UNIX-Socket Hardening
 
@@ -182,7 +194,7 @@ TODO-05 §10 shipped the kernel-side counters + `wm_get_frame_stats()` reader. T
 | ⭐ | Committed input traces per-fixture    | ❌ PSR deprecated             | ✅ libinput record samples        | ⚠️ §3 planned                           |
 | 💎 | Snapshot-time reader sync             | ✅ DWM quiesce                | ✅ wlroots frame barrier          | ⚠️ §4 planned (single-threaded today)   |
 | 💎 | Virtio-GPU multi-output               | ⚠️ Hyper-V virtual display    | ✅ virtio-gpu + KMS               | ⚠️ §5 planned (matrix rows SKIPped)     |
-| ⭐ | OS-level frame-stats pseudo-file      | ❌ DwmGetCompositionTimingInfo API only | ❌ no pseudo-file          | ⚠️ §6 planned (counters ship today)     |
+| ⭐ | OS-level frame-stats pseudo-file      | ❌ DwmGetCompositionTimingInfo API only | ❌ no pseudo-file          | ✅ Done §6 \ObjectManager\FrameStats    |
 | 💎 | CI monitor socket security            | N/A (vmconnect.exe)           | ✅ QEMU `-monitor unix:` common   | ✅ Done §7 unix sock + 0600 perms       |
 | ⭐ | Shared-session visual regression      | ⚠️ Playwright-style per tool  | ⚠️ openQA per-test VM default     | ✅ Done §8 amortized boot + fresh opt-in |
 

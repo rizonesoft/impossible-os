@@ -470,6 +470,12 @@ void ob_ns_init(void)
     kernel_objects_dir = ns_mkdir(ObpRootDirectory, "KernelObjects");
     dos_devices_dir    = ns_mkdir(ObpRootDirectory, "DosDevices");
     bno_dir            = ns_mkdir(ObpRootDirectory, "BaseNamedObjects");
+    /* \ObjectManager -- root for kernel-metadata pseudo-files (info
+     * files registered via ob_info_file_register). Created here at
+     * namespace init time so the first info-file register is pure
+     * insert + no dir-allocate; also keeps it out of any test-phase
+     * leak-tracking window. */
+    (void)ns_mkdir(ObpRootDirectory, "ObjectManager");
 
     /* \Sessions\0\BaseNamedObjects -- alias for user-mode named objects */
     sessions_dir = ns_mkdir(ObpRootDirectory, "Sessions");

@@ -22,7 +22,11 @@ extern int snprintf(char *buf, size_t size, const char *fmt, ...);
 #include "kernel/ob/ob_callback.h"
 #include "kernel/ob/ob_trace.h"
 #include "kernel/ob/ob_ns.h"
+#include "kernel/ob/ob_info_file.h"
 #include "kernel/ob/handle_table.h"
+#include "kernel/etw.h"
+#include "desktop/wm.h"
+#include "kernel/sched/task.h"
 
 /* ---- Test type with on_delete callback ---- */
 
@@ -1359,6 +1363,192 @@ static void test_ob_ns_locking_stress(void)
     ob_handle_table_destroy(&ht);
 }
 
+/* ---- Info-file pseudo-file type (\ObjectManager\<name>) ---------------- */
+
+/* Deterministic test callback: fills buf with [offset, offset+size) of a
+ * 64-byte sequence where byte i = (uint8_t)i. Lets the roundtrip test
+ * verify both the offset-slicing in ob_info_file_read AND that the
+ * callback receives the right offset argument. */
+static int32_t test_info_read_pattern(uint8_t *buf, uint32_t size,
+                                      uint32_t offset)
+{
+    if (!buf)
+        return -1;
+    for (uint32_t i = 0; i < size; i++)
+        buf[i] = (uint8_t)(offset + i);
+    return (int32_t)size;
+}
+
+static void test_ob_info_file_register_and_read(void)
+{
+    /* The wm_framestats_register_info_file path registers "FrameStats";
+     * this test uses a distinct name so both tests can coexist without
+     * the duplicate-name guard rejecting. */
+    int rc = ob_info_file_register("TestInfoPattern",
+                                   test_info_read_pattern, 64);
+    TEST_ASSERT_EQ(rc, 0, "ob_info_file_register TestInfoPattern");
+
+    /* Duplicate register must refuse with -1 (duplicate-name guard). */
+    rc = ob_info_file_register("TestInfoPattern",
+                               test_info_read_pattern, 64);
+    TEST_ASSERT_EQ(rc, -1, "duplicate register rejected");
+
+    /* Bad args: null callback, null name, zero size -> -1. */
+    TEST_ASSERT_EQ(ob_info_file_register(NULL,
+                                         test_info_read_pattern, 64),
+                   -1, "null name rejected");
+    TEST_ASSERT_EQ(ob_info_file_register("X", NULL, 64),
+                   -1, "null callback rejected");
+    TEST_ASSERT_EQ(ob_info_file_register("X",
+                                         test_info_read_pattern, 0),
+                   -1, "zero size rejected");
+
+    /* Open + read full pattern. */
+    HANDLE_TABLE *ht = &task_current()->handle_table;
+    HANDLE h = ob_info_file_open_handle(ht, "TestInfoPattern");
+    TEST_ASSERT(h != INVALID_HANDLE_VALUE, "open TestInfoPattern");
+
+    uint8_t buf[64];
+    for (uint32_t i = 0; i < sizeof(buf); i++)
+        buf[i] = 0xFF;
+
+    int32_t n = ob_info_file_read(ht, h, buf, 64, 0);
+    TEST_ASSERT_EQ(n, 64, "read full 64 bytes");
+    for (uint32_t i = 0; i < 64; i++) {
+        char msg[48];
+        snprintf(msg, sizeof(msg), "buf[%u] == %u", i, i);
+        TEST_ASSERT_EQ((uint32_t)buf[i], i, msg);
+    }
+
+    /* Partial read at offset 16, size 8 -> buf[0..8] == 16..23. */
+    n = ob_info_file_read(ht, h, buf, 8, 16);
+    TEST_ASSERT_EQ(n, 8, "partial read 8 bytes at offset 16");
+    for (uint32_t i = 0; i < 8; i++) {
+        char msg[48];
+        snprintf(msg, sizeof(msg), "buf[%u] == %u after offset read", i, 16 + i);
+        TEST_ASSERT_EQ((uint32_t)buf[i], 16 + i, msg);
+    }
+
+    /* EOF: offset == size returns 0. */
+    n = ob_info_file_read(ht, h, buf, 16, 64);
+    TEST_ASSERT_EQ(n, 0, "read at offset == size returns EOF (0)");
+
+    /* EOF: offset > size returns 0 too. */
+    n = ob_info_file_read(ht, h, buf, 16, 100);
+    TEST_ASSERT_EQ(n, 0, "read past size returns EOF (0)");
+
+    /* Clamp: request 64 bytes at offset 32 -> only 32 bytes left. */
+    n = ob_info_file_read(ht, h, buf, 64, 32);
+    TEST_ASSERT_EQ(n, 32, "read clamps to remaining bytes");
+
+    /* Bad handle -> -1. */
+    n = ob_info_file_read(ht, (HANDLE)0xdeadbeef, buf, 16, 0);
+    TEST_ASSERT_EQ(n, -1, "bad handle returns -1");
+
+    /* NULL buf -> -1. */
+    n = ob_info_file_read(ht, h, NULL, 16, 0);
+    TEST_ASSERT_EQ(n, -1, "null buf returns -1");
+
+    /* Unknown name -> INVALID_HANDLE_VALUE. */
+    HANDLE bad = ob_info_file_open_handle(ht, "NoSuchPseudoFile");
+    TEST_ASSERT(bad == INVALID_HANDLE_VALUE,
+                "open unknown name returns INVALID_HANDLE_VALUE");
+
+    ObpFreeHandle(ht, h);
+
+    /* -- Cleanup -- unlink the PERMANENT test info file so leak
+     * tracking sees a clean close. Same pattern as test_ob_cleanup_named
+     * for \BaseNamedObjects entries: clear PERMANENT via
+     * ObMakeTemporaryObject, then ObpRemoveFromDirectory drops the
+     * directory's ref which lets the body free on the next deref. */
+    {
+        void *body = NULL;
+        void *om = NULL;
+        if (ObLookupObjectByName("\\ObjectManager\\TestInfoPattern",
+                                 ObpInfoFileType, 0, &body) == 0 && body) {
+            ObMakeTemporaryObject(body);
+            if (ObLookupObjectByName("\\ObjectManager", ObpDirectoryType,
+                                     0, &om) == 0 && om) {
+                ObpRemoveFromDirectory(om, body);
+                ObDereferenceObject(om);
+            }
+            ObDereferenceObject(body);
+        }
+    }
+}
+
+static void test_ob_framestats_pseudo_file(void)
+{
+    /* Manually register the FrameStats info file. In production this
+     * runs from wm_init() during boot_phase3, but the kernel test phase
+     * runs in phase 3 BEFORE boot_desktop_init is called, so we have to
+     * drive it ourselves. Idempotent: a second register from wm_init
+     * later during normal boot will no-op. */
+    wm_framestats_register_info_file();
+
+    HANDLE_TABLE *ht = &task_current()->handle_table;
+    HANDLE h = ob_info_file_open_handle(ht, "FrameStats");
+    TEST_ASSERT(h != INVALID_HANDLE_VALUE, "open \\ObjectManager\\FrameStats");
+
+    /* Byte-wise read of the full struct. In the kernel test phase the
+     * compositor has never run, so every counter is 0. This test is
+     * about the PLUMBING (schema + read path), not compositor liveness;
+     * the late-phase harness owns the "frames_presented > 0 after
+     * idle" check. */
+    uint8_t buf[ETW_WM_FRAME_STATS_SIZE];
+    for (uint32_t i = 0; i < sizeof(buf); i++)
+        buf[i] = 0xAA;  /* poison so a short read is visible */
+
+    int32_t n = ob_info_file_read(ht, h, buf, ETW_WM_FRAME_STATS_SIZE, 0);
+    TEST_ASSERT_EQ(n, (int32_t)ETW_WM_FRAME_STATS_SIZE,
+                   "read returns full schema size");
+
+    /* Schema lock-step: the C struct AND the etw.h constant are the same
+     * size (static_assert in wm.c also enforces this at compile time). */
+    TEST_ASSERT_EQ((uint32_t)sizeof(struct wm_frame_stats),
+                   ETW_WM_FRAME_STATS_SIZE,
+                   "sizeof(wm_frame_stats) == ETW_WM_FRAME_STATS_SIZE");
+
+    /* Snapshot via the direct API and compare byte-for-byte with the
+     * pseudo-file read -- they MUST produce identical output since both
+     * paths share wm_get_frame_stats under the seqlock. Any drift here
+     * is an ABI regression. */
+    struct wm_frame_stats direct;
+    wm_get_frame_stats(&direct);
+    const uint8_t *direct_bytes = (const uint8_t *)&direct;
+    for (uint32_t i = 0; i < ETW_WM_FRAME_STATS_SIZE; i++) {
+        char msg[56];
+        snprintf(msg, sizeof(msg),
+                 "pseudo-file byte %u matches direct snapshot", i);
+        TEST_ASSERT_EQ((uint32_t)buf[i], (uint32_t)direct_bytes[i], msg);
+    }
+
+    /* EOF at offset == size. */
+    n = ob_info_file_read(ht, h, buf, 16, ETW_WM_FRAME_STATS_SIZE);
+    TEST_ASSERT_EQ(n, 0, "read at EOF returns 0");
+
+    ObpFreeHandle(ht, h);
+
+    /* -- Cleanup -- unlink FrameStats from \ObjectManager so per-test
+     * leak tracking sees a balanced close. In production boot, wm_init
+     * will re-register FrameStats during phase 3 via the idempotent
+     * wm_framestats_register_info_file path. */
+    {
+        void *body = NULL;
+        void *om = NULL;
+        if (ObLookupObjectByName("\\ObjectManager\\FrameStats",
+                                 ObpInfoFileType, 0, &body) == 0 && body) {
+            ObMakeTemporaryObject(body);
+            if (ObLookupObjectByName("\\ObjectManager", ObpDirectoryType,
+                                     0, &om) == 0 && om) {
+                ObpRemoveFromDirectory(om, body);
+                ObDereferenceObject(om);
+            }
+            ObDereferenceObject(body);
+        }
+    }
+}
+
 /* ---- Registration ---- */
 
 void test_register_ob(void)
@@ -1396,6 +1586,8 @@ void test_register_ob(void)
     test_suite_register_cat("OB: NT ALPC pending features", test_nt_alpc_pending_features, TEST_CAT_OB);
     test_suite_register_cat("OB: PE ntdll exports sorted", test_pe_ntdll_exports_sorted, TEST_CAT_OB);
     test_suite_register_cat("OB: namespace locking stress", test_ob_ns_locking_stress, TEST_CAT_OB);
+    test_suite_register_cat("OB: info-file register+read", test_ob_info_file_register_and_read, TEST_CAT_OB);
+    test_suite_register_cat("OB: \\ObjectManager\\FrameStats pseudo-file", test_ob_framestats_pseudo_file, TEST_CAT_OB);
 }
 
 #endif /* KERNEL_TESTS */
