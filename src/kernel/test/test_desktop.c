@@ -1034,11 +1034,29 @@ static void test_input_record_replay_rejects_malformed(void)
         "{\"ts_ns\":0,\"kind\":\"laser\"}\n",
         /* mouse missing x */
         "{\"ts_ns\":0,\"kind\":\"mouse\",\"y\":0,\"buttons\":0}\n",
-        /* unknown key */
+        /* mouse missing buttons */
+        "{\"ts_ns\":0,\"kind\":\"mouse\",\"x\":0,\"y\":0}\n",
+        /* key missing scancode (Codex §11 quality finding -- prior
+         * draft accepted this and replayed scancode=0). */
+        "{\"ts_ns\":0,\"kind\":\"key\",\"codepoint\":97}\n",
+        /* key missing codepoint */
+        "{\"ts_ns\":0,\"kind\":\"key\",\"scancode\":30}\n",
+        /* ime_compose missing codepoint */
+        "{\"ts_ns\":0,\"kind\":\"ime_compose\",\"candidate\":0}\n",
+        /* ime_compose missing candidate */
+        "{\"ts_ns\":0,\"kind\":\"ime_compose\",\"codepoint\":0x4F60}\n",
+        /* ime_commit missing utf8 */
+        "{\"ts_ns\":0,\"kind\":\"ime_commit\"}\n",
+        /* unknown key in payload */
         "{\"ts_ns\":0,\"kind\":\"key\",\"scancode\":0,\"codepoint\":0,\"laser\":1}\n",
     };
     const char *names[] = {"missing kind", "unknown kind",
-                           "mouse missing x", "unknown key"};
+                           "mouse missing x", "mouse missing buttons",
+                           "key missing scancode", "key missing codepoint",
+                           "ime_compose missing codepoint",
+                           "ime_compose missing candidate",
+                           "ime_commit missing utf8",
+                           "unknown key"};
     unsigned i;
     for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
         int rc = input_replay_from_jsonl(cases[i], tr_strlen(cases[i]), 0, 1);

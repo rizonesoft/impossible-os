@@ -381,7 +381,7 @@ Extends §4 from one-shot inject to full record + replay traces. Linux `libinput
 **Test checkpoint:** Record 3-second shell session typing `dir<Enter>`; replay; `terminal_get_buffer()` contents match byte-for-byte. Record CJK via IME composition; replay; committed UTF-8 string matches original byte sequence.
 **Platforms:** QEMU WHPX, QEMU TCG, VBox, bare metal (capture works everywhere). Deterministic replay requires §12 headless mode.
 
-> **Test runner:** `scripts\debug\desktop\run-desktop-tests.bat` (SUITE=desktop) | 30 suites, 151 assertions, 0 failures (KVM 2026-04-22)
+> **Test runner:** `scripts\debug\desktop\run-desktop-tests.bat` (SUITE=desktop) | 30 suites, 157 assertions, 0 failures (KVM 2026-04-22)
 > **Notes:**
 > - Shipped `include/kernel/test/input_record.h` + `src/kernel/test/input_record.c` (+630 LOC): in-memory ring buffer of `input_event_t` records, freestanding JSONL encoder + parser, replay driver that fans out to `keyboard_inject_scancode` / `mouse_inject_state` / `terminal_key_input`.
 > - SMP-safe writers: `spin_lock_irqsave(&s_rec_lock, ...)` wraps every append + begin/stop/release, so keyboard IRQ + compositor thread + test thread can all call the capture entry points concurrently without racing the ring state or freeing a buffer another CPU is mid-write on.
@@ -391,7 +391,7 @@ Extends §4 from one-shot inject to full record + replay traces. Linux `libinput
 > - Scope boundary: §11 ships the in-memory record/replay + JSONL codec. §15 owns the file-I/O harness for committed `tests/traces/*.input.jsonl` sample fixtures, §12 owns the virtual-clock headless mode that gives byte-identical replay, §4 continues owning the one-shot inject primitives that §11 is a downstream consumer of, `D10 T06 §6` owns the `mouse_event_inject` rename whose existing `mouse_inject_state` is the primitive we call.
 > **Verified:** 2026-04-22 | 7/7 items | build OK | tests 30/30 suites 151/151 assertions PASS (KVM)
 > **Deferred:** [L] sample JSONL traces not committed (reason: kernel test phase has no filesystem; harness work belongs with §15) -> XREF: 00-infrastructure/TODO-05 §15 (item: "Commit sample JSONL traces `tests/traces/dir_cmd.input.jsonl`" at line 400)
-> **Quality reviewed:** 2026-04-22 | Codex 1x (adversarial) | 3H+1M+0L fixed, 0 open | scope: kernel-code-quality
+> **Quality reviewed:** 2026-04-22 | Codex 2x (adversarial, quality) | 5H+2M+0L fixed, 0 open | scope: kernel-code-quality
 
 ---
 

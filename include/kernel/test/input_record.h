@@ -118,11 +118,10 @@ const input_event_t *input_record_events(void);
 int input_replay_from_jsonl(const char *jsonl, int jsonl_len,
                             uint32_t speed_num, uint32_t speed_den);
 
-/* ---- Test-only direct replay from the in-memory buffer ---------------- */
-
-#ifdef KERNEL_TESTS
-/* Replay directly from the event buffer without going through the
- * JSONL codec; useful when a test wants to verify that the injection
- * primitives fire correctly without the serialize/parse roundtrip. */
-int input_replay_direct(uint32_t speed_num, uint32_t speed_den);
-#endif
+/* The earlier draft also exposed `input_replay_direct()` for tests
+ * that wanted to skip the JSONL codec. It was removed in the §11
+ * quality pass: the JSONL roundtrip path is what production traces
+ * use, has the monotonicity + delta-cap safety, and is what the
+ * tests now exercise (see test_input_record_serialize_roundtrip in
+ * src/kernel/test/test_desktop.c). Bring back direct replay only
+ * with the same timing-safety helpers wired in. */

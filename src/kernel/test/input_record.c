@@ -341,11 +341,29 @@ int input_record_serialize(char *dest, int dest_capacity)
 {
     uint32_t i;
     int pos = 0;
+    /* Snapshot s_buf + s_count under the lock so a concurrent
+     * input_record_release() cannot free the buffer mid-walk. Codex
+     * [H] quality review: prior draft read s_count and dereferenced
+     * s_buf without synchronization, racing the begin/release
+     * generation counter. The snapshot pointer is valid only as
+     * long as the SAME session exists -- callers serialize between
+     * stop() and release() which is the documented contract. */
+    uint64_t flags;
+    input_event_t *snap_buf;
+    uint32_t       snap_count;
 
     if (!dest || dest_capacity <= 0) return -1;
 
-    for (i = 0; i < s_count; i++) {
-        const input_event_t *e = &s_buf[i];
+    spin_lock_irqsave(&s_rec_lock, &flags);
+    snap_buf   = s_buf;
+    snap_count = s_count;
+    spin_unlock_irqrestore(&s_rec_lock, flags);
+
+    if (!snap_buf || snap_count == 0)
+        return 0;
+
+    for (i = 0; i < snap_count; i++) {
+        const input_event_t *e = &snap_buf[i];
         int saved = pos;
 
         /* Common prefix. */
@@ -490,10 +508,17 @@ static int parse_one(const char *src, int len, int *pos, input_event_t *out)
     out->kind = 0;
     out->ts_ns = 0;
 
-    /* Parse "key":value pairs until '}'. */
+    /* Parse "key":value pairs until '}'. Track presence of every
+     * payload field so per-kind validation below can reject events
+     * that are missing required fields. Codex [H] quality review of
+     * §11: prior draft only validated mouse x/y and silently treated
+     * absent key/codepoint/candidate/utf8 as zero, turning truncated
+     * traces into silent input corruption rather than a hard reject. */
     int saw_kind = 0;
     int saw_ts   = 0;
-    int saw_x = 0, saw_y = 0;
+    int saw_x = 0, saw_y = 0, saw_buttons = 0;
+    int saw_scancode = 0, saw_codepoint = 0;
+    int saw_candidate = 0, saw_utf8 = 0;
     int32_t mx = 0, my = 0;
     uint8_t mb = 0;
     uint8_t scancode = 0;
@@ -527,10 +552,12 @@ static int parse_one(const char *src, int len, int *pos, input_event_t *out)
             uint64_t v;
             if (sr_parse_u64(src, len, pos, &v) != 0 || v > 0xFF) return -1;
             scancode = (uint8_t)v;
+            saw_scancode = 1;
         } else if (sr_streq_n(key, klen, "codepoint")) {
             uint64_t v;
             if (sr_parse_u64(src, len, pos, &v) != 0 || v > 0x10FFFF) return -1;
             codepoint = (uint32_t)v;
+            saw_codepoint = 1;
         } else if (sr_streq_n(key, klen, "x")) {
             if (sr_parse_i32(src, len, pos, &mx) != 0) return -1;
             saw_x = 1;
@@ -541,10 +568,12 @@ static int parse_one(const char *src, int len, int *pos, input_event_t *out)
             uint64_t v;
             if (sr_parse_u64(src, len, pos, &v) != 0 || v > 0xFF) return -1;
             mb = (uint8_t)v;
+            saw_buttons = 1;
         } else if (sr_streq_n(key, klen, "candidate")) {
             uint64_t v;
             if (sr_parse_u64(src, len, pos, &v) != 0 || v > 0xFFFF) return -1;
             candidate = (uint16_t)v;
+            saw_candidate = 1;
         } else if (sr_streq_n(key, klen, "utf8")) {
             const char *vs = (const char *)0; int vlen = 0;
             if (sr_parse_value_string(src, len, pos, &vs, &vlen) != 0) return -1;
@@ -557,6 +586,7 @@ static int parse_one(const char *src, int len, int *pos, input_event_t *out)
                 if (hi < 0 || lo < 0) return -1;
                 utf8[j] = (uint8_t)((hi << 4) | lo);
             }
+            saw_utf8 = 1;
         } else {
             /* Unknown key: refuse rather than silently skip so a
              * malformed trace cannot ship a malicious payload through
@@ -576,21 +606,23 @@ static int parse_one(const char *src, int len, int *pos, input_event_t *out)
 
     switch (kind_id) {
     case INPUT_EVT_KEY:
+        if (!saw_scancode || !saw_codepoint) return -1;
         out->payload.key.scancode = scancode;
         out->payload.key.codepoint = codepoint;
         break;
     case INPUT_EVT_MOUSE:
-        if (!saw_x || !saw_y) return -1;
+        if (!saw_x || !saw_y || !saw_buttons) return -1;
         out->payload.mouse.x = mx;
         out->payload.mouse.y = my;
         out->payload.mouse.buttons = mb;
         break;
     case INPUT_EVT_IME_COMPOSE:
+        if (!saw_codepoint || !saw_candidate) return -1;
         out->payload.ime_compose.codepoint = codepoint;
         out->payload.ime_compose.candidate = candidate;
         break;
     case INPUT_EVT_IME_COMMIT:
-        if (utf8_len == 0) return -1;
+        if (!saw_utf8 || utf8_len == 0) return -1;
         {
             int k;
             for (k = 0; k < 4; k++)
@@ -664,30 +696,10 @@ int input_replay_from_jsonl(const char *jsonl, int jsonl_len,
     return replayed;
 }
 
-#ifdef KERNEL_TESTS
-int input_replay_direct(uint32_t speed_num, uint32_t speed_den)
-{
-    uint32_t i;
-    uint64_t base_ts = 0, base_mono = 0;
-    int have_base = 0;
-
-    if (!s_buf) return -1;
-
-    for (i = 0; i < s_count; i++) {
-        const input_event_t *e = &s_buf[i];
-        if (!have_base) {
-            base_ts = e->ts_ns;
-            base_mono = mono_ns();
-            have_base = 1;
-        } else if (speed_den != 0 && speed_num != 0) {
-            uint64_t delta = e->ts_ns - base_ts;
-            if (delta != 0 && delta > (~(uint64_t)0) / speed_den) return -3;
-            uint64_t scaled = (delta * speed_den) / (speed_num ? speed_num : 1);
-            uint64_t target = base_mono + scaled;
-            while (mono_ns() < target) { /* spin */ }
-        }
-        replay_event(e);
-    }
-    return (int)s_count;
-}
-#endif
+/* Earlier `input_replay_direct()` removed during §11 quality review:
+ * it bypassed monotonicity + delta-cap checks of the JSONL replay
+ * path AND had no test coverage. The JSONL roundtrip used by the
+ * test_input_record_serialize_roundtrip suite exercises both
+ * record AND replay through the production format; reintroduce a
+ * direct-replay helper only if a future caller needs it AND wires
+ * it through the same timing-safety logic. */
