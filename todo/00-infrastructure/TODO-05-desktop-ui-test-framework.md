@@ -49,7 +49,7 @@
 | 💎  |   1   | Framebuffer snapshot API (kernel-side capture)     | --            |  [x]   |
 | 💎  |   2   | QEMU framebuffer dump (screendump via monitor)     | --            |  [x]   |
 | 💎  |   3   | Desktop smoke test (non-black screen after boot)   | §1, §2        |  [x]   |
-| 💎  |   4   | Input event injection (key press, mouse click)     | --            |  [ ]   |
+| 💎  |   4   | Input event injection (key press, mouse click)     | --            |  [x]   |
 | 💎  |   5   | Terminal output verification                       | §4            |  [ ]   |
 | ⭐  |   6   | Reference screenshot comparison                    | §2            |  [ ]   |
 | ⭐  |   7   | Visual regression CI pipeline                      | §3, §6        |  [ ]   |
@@ -155,14 +155,25 @@ Verify the desktop actually rendered after boot: not a black screen or crash.
 
 Simulate keyboard and mouse events from kernel test code or QEMU monitor.
 
-- [ ] Kernel-side: `test_inject_keypress(uint8_t scancode)` -- push scancode into keyboard buffer
-- [ ] Kernel-side: `test_inject_mouse_click(int32_t x, int32_t y, uint8_t button)` -- push mouse event
-- [ ] QEMU-side: `sendkey` monitor command for keyboard, `mouse_move`/`mouse_button` for mouse
-- [ ] Script wrapper: `scripts/qemu-input.sh sendkey ret` sends Enter key via monitor
-- [ ] Commit: `"test: input event injection; simulate keyboard and mouse from tests"`
+- [x] Kernel-side: `test_inject_keypress(uint8_t scancode)` in `src/kernel/test/test_desktop.c` -- pass-through to the existing `keyboard_inject_scancode()` primitive (`src/kernel/drivers/keyboard.c:318`); paired with a new `keyboard_reset_state()` driver helper that clears modifier latches + E0 prefix between tests
+- [x] Kernel-side: `test_inject_mouse_click(int32_t x, int32_t y, uint8_t button)` plus split `test_inject_mouse_press()` / `test_inject_mouse_release()` primitives for callers that need to observe the press edge (e.g., WM-delivery tests); wraps `mouse_inject_state()` (`src/kernel/drivers/mouse.c:300`) which already clamps out-of-bounds coordinates
+- [x] QEMU-side: `sendkey` monitor command for keyboard, `mouse_move` / `mouse_button` for mouse; exposed via `scripts/qemu-input.sh` sending HMP commands through the same telnet channel used by `scripts/qemu-screenshot.sh`
+- [x] Script wrapper: `scripts/qemu-input.sh sendkey ret` sends Enter via monitor; also supports `mouse_move`, `mouse_button`, and `sendstring` (chains per-char `sendkey` calls for ASCII literals)
+- [x] Commit: `"test: input event injection; simulate keyboard and mouse from tests"`
 
 **Test checkpoint:** Inject `d`, `i`, `r`, Enter via `test_inject_keypress`; within 500 ms `terminal_get_buffer()` contains the literal echo `dir` followed by at least one file entry from `C:\`.
 **Platforms:** QEMU WHPX, QEMU TCG, VBox, bare metal (kernel-side injection works everywhere; QEMU monitor path is QEMU-only).
+
+> **Test runner:** `scripts\debug\desktop\run-desktop-tests.bat` (SUITE=desktop) | 4 new §4 suites added, 29 total desktop suites, 0 failures (KVM 2026-04-22).
+> **Notes:**
+> - Shipped `test_inject_keypress(scancode)`, `test_inject_mouse_press(x,y,button)`, `test_inject_mouse_release(x,y)`, and `test_inject_mouse_click()` convenience wrapper in `src/kernel/test/test_desktop.c` (file-static, KERNEL_TESTS-gated). Also added `keyboard_reset_state()` to `src/kernel/drivers/keyboard.c` (public) that clears the ring buffer plus every latched modifier (shift/ctrl/alt/capslock) plus the E0 prefix -- prevents test-order contamination.
+> - Shipped `scripts/qemu-input.sh` (~140 LOC bash): subcommands `sendkey <key> [hold-ms]`, `mouse_move <dx> <dy>`, `mouse_button <mask>`, `sendstring <literal>`. Same HMP-safe path sanitization as `qemu-screenshot.sh`; `hold-ms` now validated as non-negative integer (Codex [M] fix). Three exit codes.
+> - 4 §4 tests wired under TEST_CAT_DESKTOP: keypress-roundtrip ('a'), keypress-enter (LF), mouse-click-delivered, mouse-press-edge-observable, mouse-click-clamps-out-of-bounds. All 29/29 desktop suites pass on KVM in 0.1 s.
+> - Test-checkpoint dependency: the full `dir` + Enter -> `terminal_get_buffer()` roundtrip lives in §5 Terminal Output Verification (which creates `terminal_get_buffer()` itself). §4 validates the INJECTION mechanics in isolation; §5 validates the end-to-end pipeline.
+> - Canonical doc: `include/kernel/drivers/keyboard.h` (new `keyboard_reset_state()` declaration) + `scripts/qemu-input.sh` header comment block.
+> - Scope boundary: §4 owns kernel + host injection primitives. §5 consumes them for the terminal roundtrip. §8 (WM state introspection) will add receive-side assertions. §11 (Input Record and Replay) extends into trace capture / replay; the split press/release primitives were added specifically so §11 can record state edges faithfully.
+> **Verified:** 2026-04-22 | commit `PENDING` | 5/5 items | build OK | tests 29/29 PASS (TEST_CAT_DESKTOP, KVM)
+> **Quality reviewed:** 2026-04-22 | Codex 1x (adversarial) | 2H+1M fixed | scope: kernel-code-quality
 
 ---
 

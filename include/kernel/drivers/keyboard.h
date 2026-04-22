@@ -35,3 +35,10 @@ char keyboard_trygetchar(void);
  * Processes modifiers, lookup tables, and pushes into the ring buffer
  * exactly as if the scan code came from the PS/2 IRQ handler. */
 void keyboard_inject_scancode(uint8_t scancode);
+
+/* Reset all latched keyboard state: ring buffer plus every modifier
+ * (shift / ctrl / alt / capslock) and any pending 0xE0 prefix. Used by
+ * test infrastructure between injection sequences so a stuck modifier
+ * or orphan prefix from a prior test cannot contaminate the next one.
+ * Safe to call at any time; does not touch hardware registers. */
+void keyboard_reset_state(void);

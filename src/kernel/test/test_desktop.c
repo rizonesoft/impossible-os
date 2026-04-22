@@ -1,15 +1,59 @@
 /* ============================================================================
  * test_desktop.c -- Desktop UI test framework (TEST_CAT_DESKTOP)
  *
- * TODO-05-desktop-ui-test-framework.md §1: Framebuffer Snapshot API
+ * TODO-05-desktop-ui-test-framework.md
+ *   §1: Framebuffer Snapshot API
+ *   §4: Input Event Injection
  * ============================================================================ */
 
 #ifdef KERNEL_TESTS
 
 #include "kernel/test/test.h"
 #include "kernel/drivers/framebuffer.h"
+#include "kernel/drivers/keyboard.h"
+#include "kernel/drivers/mouse.h"
 #include "kernel/mm/pmm.h"
 #include "kernel/types.h"
+
+/* ---- §4 Input Event Injection ----------------------------------------- */
+
+/* Test-scoped keypress injection: thin pass-through to the existing
+ * keyboard_inject_scancode() primitive (src/kernel/drivers/keyboard.c:318).
+ * The existing primitive already honors modifier latching, E0 prefixes,
+ * key-release bit 7, and the scancode-to-ASCII lookup table; a test wrapper
+ * would duplicate behavior. Exposed here under a test-friendly name so the
+ * TODO's specified API (`test_inject_keypress`) is addressable. */
+static void test_inject_keypress(uint8_t scancode)
+{
+    keyboard_inject_scancode(scancode);
+}
+
+/* Test-scoped mouse press/release primitives: absolute (x, y) + button
+ * state. Wraps mouse_inject_state() (src/kernel/drivers/mouse.c:300); the
+ * existing primitive already clamps out-of-bounds coordinates against the
+ * current framebuffer dimensions. Button encoding follows
+ * MOUSE_BTN_LEFT/RIGHT/MIDDLE from mouse.h. Split into press + release so
+ * callers that need to observe the press state between the two events
+ * can do so (e.g., tests that verify the compositor actually sees the
+ * press edge, not just the final released state). */
+static void test_inject_mouse_press(int32_t x, int32_t y, uint8_t button)
+{
+    mouse_inject_state(x, y, button);
+}
+
+static void test_inject_mouse_release(int32_t x, int32_t y)
+{
+    mouse_inject_state(x, y, 0);
+}
+
+/* Convenience full-click wrapper: press + release in one call. Callers who
+ * need compositor-visible press edges should use the split primitives with
+ * a yield / state check between them. Codex [H] review note. */
+static void test_inject_mouse_click(int32_t x, int32_t y, uint8_t button)
+{
+    test_inject_mouse_press(x, y, button);
+    test_inject_mouse_release(x, y);
+}
 
 /* ---- §1 Framebuffer Snapshot API -------------------------------------- */
 
@@ -143,6 +187,115 @@ static void test_fb_snapshot_roundtrip(void)
         pmm_free_frame(phys + i * 4096);
 }
 
+/* ---- §4 Input Event Injection (test cases) --------------------------- */
+
+/* Reset the keyboard to a known state before each injection test. Clears
+ * the ring buffer AND every latched modifier (shift/ctrl/alt/capslock)
+ * AND any pending E0 prefix. Without the full reset, a test-order
+ * dependency would creep in: a prior test that injected a modifier press
+ * without a matching release would corrupt the next test's scancode
+ * (e.g. 0x1E -> Ctrl-A instead of 'a'). Codex [H] adversarial review. */
+static void drain_keyboard_buffer(void)
+{
+    keyboard_reset_state();
+}
+
+/* test_inject_keypress(scancode) drives the same code path as a real IRQ1
+ * handler call, so the downstream character ends up in the same ring buffer
+ * that keyboard_trygetchar() consumes. Inject 'A' scancode (0x1E), verify
+ * the buffer returns 'a' (no shift held) within one attempt. */
+static void test_input_inject_keypress_roundtrip(void)
+{
+    drain_keyboard_buffer();
+
+    test_inject_keypress(0x1E);              /* scancode for 'a' */
+    char c = keyboard_trygetchar();
+
+    TEST_ASSERT_EQ((uint64_t)(unsigned char)c, (uint64_t)'a',
+                   "scancode 0x1E round-trips to 'a' in kb_buffer");
+}
+
+/* test_inject_keypress should accept and process the Enter scancode (0x1C)
+ * so the §5 terminal-roundtrip test can chain keypresses. */
+static void test_input_inject_keypress_enter(void)
+{
+    drain_keyboard_buffer();
+
+    test_inject_keypress(0x1C);              /* Enter */
+    char c = keyboard_trygetchar();
+
+    /* Enter maps to '\n' (LF, 10) via scancode_normal[0x1C] in
+     * src/kernel/drivers/keyboard.c. Do NOT assume CR -- that was the
+     * DOS convention; Impossible OS follows the Linux line-discipline
+     * convention of emitting LF from the keyboard layer. Shells that
+     * echo "\r\n" produce the CR themselves. */
+    TEST_ASSERT_EQ((uint64_t)(unsigned char)c, (uint64_t)'\n',
+                   "Enter scancode round-trips to LF");
+}
+
+/* test_inject_mouse_click(x, y, button) performs a press + release pair so
+ * the post-call mouse_get_state() reflects the cursor at (x, y) with
+ * buttons == 0 (released). Position is clamped by mouse_inject_state()
+ * against the current framebuffer dimensions -- so a coordinate well within
+ * the typical 1280x720 mode lands verbatim. */
+static void test_input_inject_mouse_click_delivered(void)
+{
+    test_inject_mouse_click(100, 200, MOUSE_BTN_LEFT);
+
+    struct mouse_state s = mouse_get_state();
+
+    TEST_ASSERT_EQ((uint64_t)s.x, (uint64_t)100,
+                   "click x coordinate preserved");
+    TEST_ASSERT_EQ((uint64_t)s.y, (uint64_t)200,
+                   "click y coordinate preserved");
+    TEST_ASSERT_EQ((uint64_t)s.buttons, (uint64_t)0,
+                   "click ends with buttons released");
+}
+
+/* Split press/release primitives: the press must be observable between
+ * the two calls. This catches callers that mistakenly use the combined
+ * click() wrapper and lose the press edge because the compositor never
+ * gets to see the pressed state. */
+static void test_input_inject_mouse_press_observable(void)
+{
+    test_inject_mouse_press(300, 150, MOUSE_BTN_RIGHT);
+
+    struct mouse_state mid = mouse_get_state();
+    TEST_ASSERT_EQ((uint64_t)mid.buttons, (uint64_t)MOUSE_BTN_RIGHT,
+                   "press state visible between press and release");
+    TEST_ASSERT_EQ((uint64_t)mid.x, (uint64_t)300,
+                   "press state preserves x");
+    TEST_ASSERT_EQ((uint64_t)mid.y, (uint64_t)150,
+                   "press state preserves y");
+
+    test_inject_mouse_release(300, 150);
+
+    struct mouse_state end = mouse_get_state();
+    TEST_ASSERT_EQ((uint64_t)end.buttons, (uint64_t)0,
+                   "release clears button mask");
+}
+
+/* mouse_inject_state clamps coordinates against fb_get_width/height. A
+ * coordinate far outside the framebuffer must land at the edge, not
+ * wrap, not retain the requested value, and not underflow. */
+static void test_input_inject_mouse_click_clamps_out_of_bounds(void)
+{
+    uint32_t w = fb_get_width();
+    uint32_t h = fb_get_height();
+
+    TEST_ASSERT(w > 0 && h > 0, "framebuffer dimensions populated");
+
+    /* Way past the right edge; also negative y to test both clamps. */
+    test_inject_mouse_click((int32_t)(w + 10000), -500, MOUSE_BTN_LEFT);
+
+    struct mouse_state s = mouse_get_state();
+
+    TEST_ASSERT_EQ((uint64_t)s.x, (uint64_t)(w - 1),
+                   "x clamped to width - 1");
+    TEST_ASSERT_EQ((uint64_t)s.y, (uint64_t)0,
+                   "y clamped to 0");
+}
+
 /* ---- Registration ----------------------------------------------------- */
 
 void test_register_desktop(void)
@@ -153,6 +306,16 @@ void test_register_desktop(void)
                             test_fb_snapshot_null_args, TEST_CAT_DESKTOP);
     test_suite_register_cat("Desktop: fb_snapshot roundtrip (sentinel corners)",
                             test_fb_snapshot_roundtrip, TEST_CAT_DESKTOP);
+    test_suite_register_cat("Desktop: test_inject_keypress roundtrip ('a')",
+                            test_input_inject_keypress_roundtrip, TEST_CAT_DESKTOP);
+    test_suite_register_cat("Desktop: test_inject_keypress Enter -> LF",
+                            test_input_inject_keypress_enter, TEST_CAT_DESKTOP);
+    test_suite_register_cat("Desktop: test_inject_mouse_click delivered",
+                            test_input_inject_mouse_click_delivered, TEST_CAT_DESKTOP);
+    test_suite_register_cat("Desktop: test_inject_mouse press edge observable",
+                            test_input_inject_mouse_press_observable, TEST_CAT_DESKTOP);
+    test_suite_register_cat("Desktop: test_inject_mouse_click clamps out-of-bounds",
+                            test_input_inject_mouse_click_clamps_out_of_bounds, TEST_CAT_DESKTOP);
 }
 
 #endif /* KERNEL_TESTS */
