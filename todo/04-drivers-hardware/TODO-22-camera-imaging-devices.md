@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: camera-imaging-devices
+domain: 04-drivers-hardware
+status: active
+title: "TODO-22 -- Camera, Video Capture & Imaging Devices"
+---
+
 # TODO-22 -- Camera, Video Capture & Imaging Devices
 
 > **Goal:** Add the hardware driver layer for webcams, laptop cameras, capture devices, scanners, privacy LEDs, and imaging controls. User applications and media frameworks live elsewhere; this TODO owns kernel device discovery, streaming buffers, frame formats, privacy enforcement, and scanner/camera class integration.

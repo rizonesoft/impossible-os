@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: device-manager
+domain: 04-drivers-hardware
+status: active
+title: "TODO-07 -- Device Manager & Driver Diagnostics"
+---
+
 # TODO-07 -- Device Manager & Driver Diagnostics
 
 > **Goal:** Build the live Device Manager GUI and associated diagnostics APIs that give Impossible OS a native hardware-visibility advantage over both Windows (static tree, no live counters) and Linux (CLI-only via `lspci`/`lsusb`) -- covering a PCI device registry, embedded PCI ID database, live interrupt counters, driver health reporting, `/sys/devices` and `/sys/interrupts` VFS files, a composited Device Manager window with auto-refreshing rates, the `SetupDi` Win32 device enumeration API, USB tree integration, `lspci`/`lsusb` shell commands, and driver hot-unload/reload.

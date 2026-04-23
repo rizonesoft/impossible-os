@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: bluetooth
+domain: 04-drivers-hardware
+status: active
+title: "TODO-16 -- Bluetooth Full Stack"
+---
+
 # TODO-16 -- Bluetooth Full Stack
 
 > **Goal:** Build the complete Bluetooth stack -- HCI transport layer, chipset firmware loading (Intel AX200-BT, Realtek RTL8761B), L2CAP, SDP, HID profile, A2DP/SBC audio streaming with AVRCP, RFCOMM/SPP, BLE/GATT, pairing manager, and system UI (`bluetooth.cpl`, `btctl` shell) -- enabling wireless keyboards, mice, headphones, and game controllers essential on every modern laptop.

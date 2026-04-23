@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: i2c-touchpad
+domain: 04-drivers-hardware
+status: active
+title: "TODO-12 -- I2C/SMBus Bus & Precision Touchpad"
+---
+
 # TODO-12 -- I2C/SMBus Bus & Precision Touchpad
 
 > **Goal:** Add an I2C/SMBus host controller driver, ACPI I2C device enumeration, HID-over-I2C transport, HID report descriptor parser, Microsoft Precision Touchpad (PTP) multi-touch support, a gesture engine, Synaptics/ELAN PS/2 touchpad driver, vendor quirks, a touchpad control panel, and diagnostic shell commands -- making Impossible OS a first-class laptop OS.

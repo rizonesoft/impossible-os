@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: wifi-drivers
+domain: 04-drivers-hardware
+status: active
+title: "TODO-15 -- WiFi Hardware Drivers"
+---
+
 # TODO-15 -- WiFi Hardware Drivers
 
 > **Goal:** Implement the complete WiFi hardware driver layer -- a `wifi_device_t` vtable abstraction, four real-hardware drivers (RTL8188/8192 USB, RTL8821CE/8822BE PCIe, Intel AX200/AX210 iwlwifi, MediaTek MT7921/MT7922), a WPA2-PSK EAPOL supplicant with CCMP decryption, 802.11 frame layer, scan/association state machine, power management, and `netsh wlan` + `ncpa.cpl` WiFi UI integration -- making Impossible OS functional on any laptop or device that lacks Ethernet.

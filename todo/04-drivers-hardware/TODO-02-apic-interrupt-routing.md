@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: apic-interrupt-routing
+domain: 04-drivers-hardware
+status: active
+title: "TODO-02 -- APIC Architecture & Advanced Interrupt Routing"
+---
+
 # TODO-02 -- APIC Architecture & Advanced Interrupt Routing
 
 > **Goal:** Complete the advanced interrupt subsystem on top of the working base xAPIC/IOAPIC: x2APIC MSR mode, LAPIC timer calibration via HPET, TLB shootdown IPI (hardware side), NMI watchdog via PMI counter overflow, MSI vector allocation, and a per-vector interrupt profiler exposed at `/sys/interrupts`.

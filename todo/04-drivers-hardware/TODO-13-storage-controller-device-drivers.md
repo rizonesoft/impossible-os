@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: storage-controller-device-drivers
+domain: 04-drivers-hardware
+status: active
+title: "TODO-13 -- Storage Controller & Removable Media Drivers"
+---
+
 # TODO-13 -- Storage Controller & Removable Media Drivers
 
 > **Goal:** Complete post-boot storage-controller coverage beyond the boot-critical NVMe/USB path: AHCI/SATA parity, ATA/ATAPI cleanup, VirtIO-blk production polish, SD/eMMC/SDHCI, USB card readers, optical/media devices, multipath identity, health reporting, and safe surprise removal. Filesystem semantics stay in `05-storage-filesystems`; this TODO owns the hardware block-device drivers.

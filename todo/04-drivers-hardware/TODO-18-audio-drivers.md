@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: audio-drivers
+domain: 04-drivers-hardware
+status: active
+title: "TODO-18 -- Audio Drivers"
+---
+
 # TODO-18 -- Audio Drivers
 
 > **Goal:** Deliver hardware-level PCM playback drivers behind a clean `audio_device_t` vtable that the audio mixing subsystem (a separate desktop-domain TODO) will build on top of -- covering AC97, Intel HDA, VirtIO Sound, and USB Audio Class 1.0 playback, plus hot-plug device switching and a path to convert all drivers to loadable `.kmod` modules.

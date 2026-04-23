@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: usb-stack
+domain: 04-drivers-hardware
+status: active
+title: "TODO-10 -- USB Stack Completion"
+---
+
 # TODO-10 -- USB Stack Completion
 
 > **Goal:** Complete the USB stack -- adding a transport-agnostic USB core abstraction layer, isochronous and string descriptor support, hot-plug event handling, hub class driver, EHCI fallback, Bluetooth HCI via USB, CDC-ECM Ethernet, and CDC-ACM serial -- reaching parity with Windows 11's `USBXHCI.sys`/`HIDCLASS.sys`/`USBSTOR.sys` and Linux's `xhci_hcd`/`usbhid`/`usb-storage`.

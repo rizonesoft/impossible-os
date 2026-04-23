@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: firmware-loader-device-blobs
+domain: 04-drivers-hardware
+status: active
+title: "TODO-06 -- Firmware Loader & Device Blob Policy"
+---
+
 # TODO-06 -- Firmware Loader & Device Blob Policy
 
 > **Goal:** Provide a safe, auditable firmware-loading subsystem for drivers that require device microcode or configuration blobs: WiFi, Bluetooth, GPU, touchpad, NICs, storage controllers, cameras, and future DSP/NPU devices. The loader must handle licensing metadata, version selection, integrity, rollback, and diagnostics without embedding opaque blobs in kernel code.

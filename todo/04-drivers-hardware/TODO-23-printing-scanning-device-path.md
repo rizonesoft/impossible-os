@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: printing-scanning-device-path
+domain: 04-drivers-hardware
+status: active
+title: "TODO-23 -- Printing, Scanning & Imaging Peripheral Device Path"
+---
+
 # TODO-23 -- Printing, Scanning & Imaging Peripheral Device Path
 
 > **Goal:** Own the hardware-facing path for printers, scanners, and multifunction peripherals: USB printer class, IPP-over-USB discovery, legacy parallel printers, scanner class boundaries, device permissions, status reporting, and handoff to the user-mode spooler/image stack. Rendering, print queues, and applications belong outside this domain.

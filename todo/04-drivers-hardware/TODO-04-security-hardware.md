@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: security-hardware
+domain: 04-drivers-hardware
+status: active
+title: "TODO-04 -- Security Hardware & DMA Safety"
+---
+
 # TODO-04 -- Security Hardware & DMA Safety
 
 > **Goal:** Add the hardware-rooted security primitives that Windows 11 (Secure Boot + TPM + VBS) and Linux (IOMMU + CET + RNG) rely on -- RDRAND/RDSEED entropy, IOMMU/VT-d DMA isolation, a bounce buffer manager for 32-bit DMA devices, a complete TPM 2.0 command driver, Secure Boot variable exposure, Intel CET shadow stacks, SMEP+SMAP enforcement on all APs, and a boot-time kernel integrity check via TPM PCR extension.

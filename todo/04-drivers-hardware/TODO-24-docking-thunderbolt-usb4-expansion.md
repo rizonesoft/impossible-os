@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: docking-thunderbolt-usb4-expansion
+domain: 04-drivers-hardware
+status: active
+title: "TODO-24 -- Docking, Thunderbolt, USB4 & External Expansion"
+---
+
 # TODO-24 -- Docking, Thunderbolt, USB4 & External Expansion
 
 > **Goal:** Support modern external expansion: USB-C docks, Thunderbolt/USB4 topology, alternate-mode display handoff, eGPU boundaries, PCIe tunneling security, device authorization, hot-plug storms, dock power/events, and external-device diagnostics. This TODO does not implement every tunneled device driver; it owns the expansion fabric and policy.

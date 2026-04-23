@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: acpi-power-management
+domain: 04-drivers-hardware
+status: active
+title: "TODO-03 -- ACPI Full Subsystem & Power Management"
+---
+
 # TODO-03 -- ACPI Full Subsystem & Power Management
 
 > **Goal:** Evolve from the working minimal ACPI stub (RSDP/XSDT/MADT/FADT/shutdown-reboot) into a complete OSPM system: ACPICA AML interpreter, S3 suspend/resume, battery status, CPU DVFS, power button SCI, per-core thermal monitoring, C-state idle, S4 hibernate, a clean shutdown orchestrator, and Registry-backed power profiles.

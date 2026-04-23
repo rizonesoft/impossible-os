@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: core-driver-enhancements
+domain: 04-drivers-hardware
+status: active
+title: "TODO-08 -- Core Built-in Driver Enhancements"
+---
+
 # TODO-08 -- Core Built-in Driver Enhancements
 
 > **Goal:** Complete the remaining built-in (statically linked) driver gaps that must be available before or without a filesystem: HPET timer, PCIe ECAM extended config, capability chain scanner, MSI/MSI-X interrupt routing, and PCIe hot-plug detection.

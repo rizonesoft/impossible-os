@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: driver-hardware-certification-matrix
+domain: 04-drivers-hardware
+status: active
+title: "TODO-25 -- Driver Hardware Certification Matrix"
+---
+
 # TODO-25 -- Driver Hardware Certification Matrix
 
 > **Goal:** Turn driver support into a certifiable hardware surface. Every driver promise needs a VM test, fixture, or bare-metal checklist covering enumeration, probe, I/O, suspend/resume, hot-plug, error recovery, diagnostics, and removal. This is the release gate for the `04-drivers-hardware` domain.

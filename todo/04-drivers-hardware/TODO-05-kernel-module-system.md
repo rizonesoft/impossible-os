@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: kernel-module-system
+domain: 04-drivers-hardware
+status: active
+title: "TODO-05 -- Kernel Module System"
+---
+
 # TODO-05 -- Kernel Module System
 
 > **Goal:** Build the loadable `.kmod` infrastructure every non-boot driver depends on: a kernel symbol table, an ELF relocatable object loader, a module build system, a driver model with PCI match tables and HAL vtables, boot-time auto-load from `C:\Impossible\System\Drivers\`, and RTL8139 converted to the first loadable module as a proof-of-concept.

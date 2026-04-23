@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: pci-pcie-pnp-resource-manager
+domain: 04-drivers-hardware
+status: active
+title: "TODO-01 -- PCI/PCIe, PnP & Resource Manager"
+---
+
 # TODO-01 -- PCI/PCIe, PnP & Resource Manager
 
 > **Goal:** Own the full PCI/PCIe and Plug and Play substrate that every hardware driver depends on: bus enumeration, bridge windows, BAR sizing, resource assignment, IRQ routing, ACPI device correlation, driver binding, hot-plug, power state coordination, and persistent device identity. This replaces scattered assumptions and the stale cross-reference to a non-existent kernel-core PCI TODO.

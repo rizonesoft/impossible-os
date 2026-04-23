@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: hypervisor-abstraction
+domain: 04-drivers-hardware
+status: active
+title: "TODO-09 -- Hypervisor Abstraction Layer"
+---
+
 # TODO-09 -- Hypervisor Abstraction Layer
 
 > **Goal:** Build a unified cross-hypervisor abstraction layer so Impossible OS works identically in VirtualBox, QEMU/KVM, Hyper-V, and on bare metal -- completing guest-additions support (display resize, HGCM, shared folders, shared clipboard, VirtIO GPU/9P, Hyper-V synthetic HID/video) and adding a clean `hv.h` backend dispatch table that eliminates all hypervisor-specific `if/else` chains from the kernel core.

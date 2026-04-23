@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: hardware-monitoring-sensors
+domain: 04-drivers-hardware
+status: active
+title: "TODO-19 -- Hardware Monitoring, Sensors & Environmental Devices"
+---
+
 # TODO-19 -- Hardware Monitoring, Sensors & Environmental Devices
 
 > **Goal:** Add a hardware-monitoring and sensor class stack for temperature, fan, voltage, battery-side sensors, ambient light, accelerometers, tablet/lid posture sensors, chassis intrusion, jack detection, and platform-specific embedded-controller readings. This makes laptops, desktops, tablets, and workstations observable without each driver inventing private APIs.

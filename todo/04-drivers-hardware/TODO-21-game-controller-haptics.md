@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: game-controller-haptics
+domain: 04-drivers-hardware
+status: active
+title: "TODO-21 -- Game Controllers, HID Force Feedback & Haptics"
+---
+
 # TODO-21 -- Game Controllers, HID Force Feedback & Haptics
 
 > **Goal:** Support modern game controllers and haptic devices: USB HID gamepads, XInput-compatible pads, Bluetooth controllers, force feedback, LEDs, battery reporting, low-latency event routing, calibration, and per-device profiles. This complements keyboard/mouse input without forcing controllers through ad hoc HID paths.

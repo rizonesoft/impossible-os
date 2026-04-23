@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: gpu-display-drivers
+domain: 04-drivers-hardware
+status: active
+title: "TODO-17 -- GPU & Display Drivers"
+---
+
 # TODO-17 -- GPU & Display Drivers
 
 > **Goal:** Deliver modesetting, 2D acceleration, and hardware cursor for all primary development targets (VMSVGA, VirtIO-GPU, Bochs/BGA) as loadable modules behind a clean `display_device_t` vtable, ensure the existing VBE/GOP framebuffer registers as a fallback, and add P3/P4 modesetting stubs for Intel HD/UHD iGPU and AMD APU Vega/RDNA to position the OS for real-hardware display support.

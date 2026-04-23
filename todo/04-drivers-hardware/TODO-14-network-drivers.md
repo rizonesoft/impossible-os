@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: network-drivers
+domain: 04-drivers-hardware
+status: active
+title: "TODO-14 -- Network Drivers"
+---
+
 # TODO-14 -- Network Drivers
 
 > **Goal:** Expand the Impossible OS wired NIC roster beyond the working RTL8139 by delivering Intel e1000, VirtIO-net, RTL8169/8111, Intel igc (2.5 GbE), and RTL8125 (2.5 GbE) as loadable `.kmod` modules, add a WiFi 802.11 MAC-layer stub plus Intel iwlwifi and Realtek rtw89 device stubs, and maintain a complete license-tracking record for all ported files.

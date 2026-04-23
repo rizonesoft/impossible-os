@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: serial-parallel-debug-io
+domain: 04-drivers-hardware
+status: active
+title: "TODO-20 -- Serial, Parallel, GPIO/SPI & Debug I/O Devices"
+---
+
 # TODO-20 -- Serial, Parallel, GPIO/SPI & Debug I/O Devices
 
 > **Goal:** Turn early serial logging into a production I/O device stack for UARTs, PCI/USB serial adapters, parallel/LPT ports, GPIO/SPI controllers, debug consoles, and industrial/embedded devices. Early boot COM output remains in boot code; this TODO owns runtime character-device drivers and debug-console arbitration.

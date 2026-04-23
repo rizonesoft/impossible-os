@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: input-system
+domain: 04-drivers-hardware
+status: active
+title: "TODO-11 -- Input System Enhancement"
+---
+
 # TODO-11 -- Input System Enhancement
 
 > **Goal:** Complete the input stack beyond the working PS/2 basic, VirtualBox absolute, and VirtIO tablet drivers: Intellimouse scroll and 5-button extension, packet resync, mouse acceleration, raw input grab API, keyboard layout system with dead keys and Unicode, layout switching with system-tray indicator, and sticky keys + typematic configuration.
