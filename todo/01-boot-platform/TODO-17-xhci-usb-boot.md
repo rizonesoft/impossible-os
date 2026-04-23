@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: xhci-usb-boot
+domain: 01-boot-platform
+status: active
+title: "TODO-17 -- xHCI, USB Storage & USB HID (Boot-Critical)"
+---
+
 # TODO-17 -- xHCI, USB Storage & USB HID (Boot-Critical)
 
 > **Goal:** USB boot that works on 95%+ of hardware. This TODO owns the baseline xHCI controller path, MSC transport, block-device registration, post-boot hot-plug, and broad hardware compatibility. The pre-ExitBootServices persistent-DMA handover path is consolidated under [TODO-20](TODO-20-usb-zero-delay-handover.md).

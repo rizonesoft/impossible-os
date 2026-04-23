@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: network-pxe-http-boot
+domain: 01-boot-platform
+status: active
+title: "TODO-25 -- Network / PXE / HTTP Boot"
+---
+
 # TODO-25 -- Network / PXE / HTTP Boot
 
 > **Goal:** Boot from the network when local media is absent, intentionally bypassed, or used only as a thin bootstrap. The boot device enum already reserves `network`, and fallback-chain prose mentions network devices, but there is no PXE/HTTP/TFTP implementation. This TODO covers firmware-assisted network boot, bootloader network clients, kernel handoff of network provenance, and recovery integration.

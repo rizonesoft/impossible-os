@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: firmware-table-platform-inventory
+domain: 01-boot-platform
+status: active
+title: "TODO-04 -- Firmware Table & Platform Inventory"
+---
+
 # TODO-04 -- Firmware Table & Platform Inventory
 
 > **Goal:** Make firmware-provided platform data complete, validated, and queryable. The bootloader already copies UEFI configuration-table entries and the kernel has helpers for ACPI, SMBIOS, memory attributes, runtime properties, conformance profiles, ESRT, DTB, and FPDT. This TODO owns the generic firmware inventory layer that discovers, validates, logs, and publishes those tables without mixing policy into each consumer.

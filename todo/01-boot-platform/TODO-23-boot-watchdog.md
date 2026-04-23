@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: boot-watchdog
+domain: 01-boot-platform
+status: active
+title: "TODO-23 -- Boot Watchdog & Hang Detection"
+---
+
 # TODO-23 -- Boot Watchdog & Hang Detection
 
 > **Goal:** Detect and recover from boot hangs automatically. If any boot phase takes longer than its expected maximum, a hardware or software watchdog triggers a reboot. Combined with A/B rollback (TODO-21), this means a hung boot = automatic reboot = automatic rollback to working version. No infinite hang, no user intervention. Models: embedded systems watchdog best practices, systemd watchdog integration.

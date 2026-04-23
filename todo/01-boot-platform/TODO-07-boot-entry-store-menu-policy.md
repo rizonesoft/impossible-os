@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: boot-entry-store-menu-policy
+domain: 01-boot-platform
+status: active
+title: "TODO-07 -- Boot Entry Store, Menu & Policy"
+---
+
 # TODO-07 -- Boot Entry Store, Menu & Policy
 
 > **Goal:** Provide a complete boot-entry model: multiple OS entries, kernel variants, A/B slots, recovery, safe mode, test mode, BootNext one-shot overrides, timeout policy, and a user-visible boot menu. This complements UEFI BootOrder reading by adding an OS-owned entry store that the bootloader can interpret predictably.

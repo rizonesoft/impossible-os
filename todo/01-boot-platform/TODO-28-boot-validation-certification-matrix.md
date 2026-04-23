@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: boot-validation-certification-matrix
+domain: 01-boot-platform
+status: active
+title: "TODO-28 -- Boot Validation & Hardware Certification Matrix"
+---
+
 # TODO-28 -- Boot Validation & Hardware Certification Matrix
 
 > **Goal:** Turn the boot platform from a set of feature TODOs into a certified boot surface. Every boot promise needs an automated or manual gate: QEMU WHPX/TCG, VirtualBox, Hyper-V, USB 2/3, NVMe, SATA, Secure Boot, TPM, network boot, A/B rollback, recovery, watchdog, hibernation, and bare-metal classes.

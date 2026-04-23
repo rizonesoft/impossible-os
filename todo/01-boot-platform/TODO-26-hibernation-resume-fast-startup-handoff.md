@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: hibernation-resume-fast-startup-handoff
+domain: 01-boot-platform
+status: active
+title: "TODO-26 -- Hibernation Resume & Fast Startup Boot Handoff"
+---
+
 # TODO-26 -- Hibernation Resume & Fast Startup Boot Handoff
 
 > **Goal:** Teach the boot platform how to resume from an S4 hibernation image or fast-startup image before doing a normal cold boot. Power management owns writing the hibernation image, but the boot path owns detecting it, validating it, selecting resume versus cold boot, and handing the image to the kernel safely.

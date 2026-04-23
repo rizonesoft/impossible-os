@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: uefi-hardening-secureboot
+domain: 01-boot-platform
+status: active
+title: "TODO-02 -- UEFI Bootloader Hardening & Secure Boot"
+---
+
 # TODO-02 -- UEFI Bootloader Hardening & Secure Boot
 
 > **Goal:** Harden the UEFI boot path with runtime service preservation, variable access, GOP resolution auto-detection, SMBIOS hardware inventory, Secure Boot shim chain-loading, boot UX polish, and serial log standardization. This is the complete core boot experience -- the OS boots reliably on QEMU, VirtualBox, and bare metal with Secure Boot support.

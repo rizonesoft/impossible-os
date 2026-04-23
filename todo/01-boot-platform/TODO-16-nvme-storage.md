@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: nvme-storage
+domain: 01-boot-platform
+status: active
+title: "TODO-16 -- NVMe Storage Driver (Boot-Critical)"
+---
+
 # TODO-16 -- NVMe Storage Driver (Boot-Critical)
 
 > **Goal:** Access NVMe SSDs as block devices so the OS can boot from internal storage on modern laptops. Most laptops manufactured after 2018 use NVMe as the primary (or only) storage -- without this driver, bare metal can only boot from USB or SATA.

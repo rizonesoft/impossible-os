@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: visual-post-display
+domain: 01-boot-platform
+status: active
+title: "TODO-15 -- Visual POST Display (VPD)"
+---
+
 # TODO-15 -- Visual POST Display (VPD)
 
 > **Goal:** Replace the crude `HV_BAR` colored pixel bars with a production-grade Visual POST Display -- a two-tier boot progress visualization with embedded micro-font, TSC timing, status indicators, and UEFI NVRAM crash persistence. The VPD is the single visual diagnostic system for every boot: it owns the pre-splash black-screen phase, integrates seamlessly into the splash, and on crash-restart shows exactly where the previous boot failed -- all without serial, all configurable, all platforms.

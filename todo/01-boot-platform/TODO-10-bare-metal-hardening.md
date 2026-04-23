@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: bare-metal-hardening
+domain: 01-boot-platform
+status: active
+title: "TODO-10 -- Bare Metal Boot Hardening"
+---
+
 # TODO-10 -- Bare Metal Boot Hardening
 
 > **Goal:** Make the kernel boot reliably on any x86-64 bare-metal hardware. After this TODO, the boot sequence is robust against absent hardware, misconfigured firmware, and platform-specific quirks through correct gating, fallback behavior, and bare-metal-first validation. Rich POST/VPD diagnostics stay owned by the dedicated diagnostics TODOs referenced below.

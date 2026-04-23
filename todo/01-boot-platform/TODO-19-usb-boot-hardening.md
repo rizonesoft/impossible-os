@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: usb-boot-hardening
+domain: 01-boot-platform
+status: active
+title: "TODO-19 -- USB Boot Hardening & Fail-Safe Pipeline"
+---
+
 # TODO-19 -- USB Boot Hardening & Fail-Safe Pipeline
 
 > **Goal:** Make USB boot bulletproof. The current USB boot path has a 2-second sleep hack masking a timing race, REQUEST SENSE retry logic that's partially wired, klog_disk_flush that hangs 10+ minutes on USB 2.0, no USB transport error recovery (stall/halt handling), no bulk transfer timeouts, and no EHCI/UHCI fallback for legacy hardware. This TODO is the single fail-safe pipeline for all USB boot fragility: proper SCSI retry, USB transport stall recovery, bounded bulk transfer timeouts, bounded klog flush with single-pass routing and deferred mode, boot media speed detection, slow-media-aware IXFS tests, EHCI fallback, and flush progress display. Works on USB 2.0 (EHCI), 3.0 (xHCI), 3.1, and 3.2 with zero sleep hacks and zero hangs.

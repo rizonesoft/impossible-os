@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: usb-zero-delay-handover
+domain: 01-boot-platform
+status: active
+title: "TODO-20 -- Zero-Delay USB Boot (Pre-ExitBootServices Driver Loading)"
+---
+
 # TODO-20 -- Zero-Delay USB Boot (Pre-ExitBootServices Driver Loading)
 
 > **Goal:** Eliminate all post-ExitBootServices USB initialization latency by loading the xHCI driver's DMA structures inside the UEFI bootloader while firmware is still active. The bootloader allocates DCBAA, device contexts, and transfer rings in `EfiLoaderData` memory (survives ExitBootServices), performs USBLEGSUP handoff while firmware USB is running, and passes persistent controller state to the kernel. The kernel inherits the controller without halt/reset -- USB devices are available instantly. This is how Windows `winload.efi` + `iusb3xhc.sys` achieves zero-delay USB boot.

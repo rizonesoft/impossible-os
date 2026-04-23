@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: early-entropy-random-seed
+domain: 01-boot-platform
+status: active
+title: "TODO-12 -- Early Entropy & Random Seed Handoff"
+---
+
 # TODO-12 -- Early Entropy & Random Seed Handoff
 
 > **Goal:** Provide trustworthy randomness as early as possible. Secure Boot, TPM, code integrity, log integrity, ASLR, stack canaries, and cryptographic services all need entropy, but the boot platform currently has no owned plan for firmware RNG, CPU RNG, TPM RNG, seed carryover, or early-kernel CSPRNG seeding.

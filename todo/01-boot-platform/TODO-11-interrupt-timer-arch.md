@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: interrupt-timer-arch
+domain: 01-boot-platform
+status: active
+title: "TODO-11 -- Interrupt Architecture & Unified Timer Subsystem"
+---
+
 # TODO-11 -- Interrupt Architecture & Unified Timer Subsystem
 
 > **Goal:** Define the authoritative Phase 1 interrupt and timer architecture: ACPI MADT first, LAPIC/IOAPIC before legacy PIC enable paths where applicable, full 256-vector IDT coverage, dynamic GSI/vector registration (`irq_request_gsi`), and a unified timer HAL (`uptime_ns()`) choosing HPET, LAPIC, or PIT. Historical bug class: PIT before IOAPIC routing on PCAT_COMPAT machines; that init order is fixed in tree. Remaining work: HPET wired into UTS (`hpet_ns` / `hpet_init` exist; not `g_system_timer` yet), IRQ affinity and driver migration to `irq_request_gsi`, shell tools (`irq list`, `boot-timeline`), and unit tests below.

@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: alternate-boot-protocols
+domain: 01-boot-platform
+status: active
+title: "TODO-08 -- Alternate Boot Protocols & Compatibility Boundary"
+---
+
 # TODO-08 -- Alternate Boot Protocols & Compatibility Boundary
 
 > **Goal:** Decide and enforce how non-primary boot protocols work. The tree still contains Multiboot2 structures and parser code, while the product documentation says UEFI/GPT/ESP is required. This TODO either brings alternate boot protocols to a defined compatibility level or fences them off so they cannot silently rot.

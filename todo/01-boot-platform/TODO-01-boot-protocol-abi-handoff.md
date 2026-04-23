@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: boot-protocol-abi-handoff
+domain: 01-boot-platform
+status: active
+title: "TODO-01 -- Boot Protocol ABI & Handoff Contract"
+---
+
 # TODO-01 -- Boot Protocol ABI & Handoff Contract
 
 > **Goal:** Make the bootloader-to-kernel contract explicit, versioned, testable, and complete. `struct boot_info` has become the central ABI for memory maps, framebuffer, config tables, runtime services, TPM logs, USB handoff, timing, boot device identity, serial, and future modules. This TODO owns the full handoff schema so no field is added without versioning, ownership, validation, and cross-build drift protection.

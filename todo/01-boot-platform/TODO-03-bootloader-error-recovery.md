@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: bootloader-error-recovery
+domain: 01-boot-platform
+status: active
+title: "TODO-03 -- Bootloader Error Recovery & ELF Hardening"
+---
+
 # TODO-03 -- Bootloader Error Recovery & ELF Hardening
 
 > **Goal:** Eliminate every silent failure in `bootx64.c`. The bootloader currently has 15+ fragility points where errors cause infinite HLT loops with no visible output, corrupt memory from unchecked ELF segments, or silently use wrong defaults. After this TODO: every failure produces a visible error message on screen and serial with actionable information, serial port detection uses ACPI SPCR when available, the UEFI watchdog timer guards against hangs, memory map descriptors are validated for consistency, boot errors persist in NVRAM for cross-boot diagnostics, and the error screen includes a QR code for recovery. The bootloader never hangs silently -- it either boots or tells you exactly why it can't.

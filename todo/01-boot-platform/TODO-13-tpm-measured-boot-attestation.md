@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: tpm-measured-boot-attestation
+domain: 01-boot-platform
+status: active
+title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
+---
+
 # TODO-13 -- TPM Measured Boot, PCR Replay & Attestation
 
 > **Goal:** Complete the measured-boot trust chain from firmware through bootloader and kernel. The bootloader retrieves the TCG event log and the kernel parses it, but true integrity requires PCR replay, TPM2 PCR reads, baseline enrollment, sealed storage, and diagnostics. This TODO turns the current TPM presence/event-count code into a full boot integrity feature.

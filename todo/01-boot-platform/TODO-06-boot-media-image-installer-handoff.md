@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: boot-media-image-installer-handoff
+domain: 01-boot-platform
+status: active
+title: "TODO-06 -- Boot Media, Image Pipeline & Installer Handoff"
+---
+
 # TODO-06 -- Boot Media, Image Pipeline & Installer Handoff
 
 > **Goal:** Make every bootable artifact reproducible, validated, and understood by the boot platform: raw disk, USB image, VHD/VHDX, hybrid ISO, recovery image, installer image, and signed release media. The bootloader should know when it is running from installer/recovery media and hand that state to the kernel cleanly.

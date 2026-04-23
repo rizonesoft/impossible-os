@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: uefi-advanced
+domain: 01-boot-platform
+status: active
+title: "TODO-27 -- UEFI Advanced Features"
+---
+
 # TODO-27 -- UEFI Advanced Features
 
 > **Goal:** Advanced UEFI boot features beyond the core boot path: UEFI capsule firmware updates, W^X memory enforcement on UEFI runtime regions, multi-GPU GOP enumeration, extended Secure Boot state variables with enforcement policy, extended SMBIOS type parsing, DBX revocation list synchronization, and advanced multi-OS menu integration. These are production polish features -- the OS boots and runs correctly without them.

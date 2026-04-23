@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: cpu-boot-sequencing
+domain: 01-boot-platform
+status: active
+title: "TODO-09 -- CPU Boot Sequencing & AP Hardening"
+---
+
 # TODO-09 -- CPU Boot Sequencing & AP Hardening
 
 > **Goal:** Establish the correct activation order for CPU security and context features during boot phases 0 and 1, replicate that activation on every Application Processor (AP), validate AP feature consistency, pin safety-critical CR4 bits against post-boot modification, synchronize MTRR/PAT cache policy on each AP, and provide a comprehensive CPU register state audit trail. The feature implementations themselves live in `02-kernel-core/TODO-10-kernel-security-hardening.md` (security hardening) and `02-kernel-core/TODO-09-x86-64-architecture.md` (x86-64 architecture); this TODO owns the boot-sequencing contract between them -- what activates, in what phase, who ensures APs match the BSP, and what happens when they don't.

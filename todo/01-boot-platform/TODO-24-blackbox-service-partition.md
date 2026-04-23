@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: blackbox-service-partition
+domain: 01-boot-platform
+status: active
+title: "TODO-24 -- BlackBox Service Partition"
+---
+
 # TODO-24 -- BlackBox Service Partition
 
 > **Goal:** Add a 128 MiB FAT32 "BlackBox" partition to the GPT disk layout, mounted as `X:\`. All kernel logs, crash dumps, boot timelines, diagnostic snapshots, and portable tools live here -- separate from the IXFS system volume. FAT32 gives crash resilience (survives IXFS corruption), cross-platform readability (Windows/Linux/macOS mount it natively), and clean separation of OS files from diagnostic data.
