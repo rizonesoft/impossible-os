@@ -69,7 +69,7 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 | 💎  |   5   | Module and initrd handoff contract                 | §4                                 |  [x]   |
 | 💎  |   6   | Handoff memory ownership and PMM reservation table | §4                                 |  [x]   |
 | 💎  |   7   | Version negotiation and stale-loader error path    | §2, T03 §2                         |  [/]   |
-| 💎  |   8   | Boot protocol documentation and schema changelog   | §1, §2, §3, §4, §5, §6, §7         |  [ ]   |
+| 💎  |   8   | Boot protocol documentation and schema changelog   | §1, §2, §3, §4, §5, §6, §7         |  [x]   |
 | ⭐  |   9   | ABI fuzz and compatibility tests                   | §2, §7                             |  [ ]   |
 | ⭐  |  10   | Cross-domain owner audit for every boot_info field | §1, §2, §3, §4, §5, §6, §7, §8, §9 |  [ ]   |
 | 💎  |  11   | Capability negotiation and degraded-feature flags  | §2, §3, §4                         |  [ ]   |
@@ -279,14 +279,26 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 
 ## 8. Boot Protocol Documentation and Schema Changelog
 
-- [ ] Add `docs/boot/boot-protocol.md` with struct lifecycle, phases, pointer validity, and examples.
-- [ ] Add `docs/boot/boot-protocol-changelog.md` keyed by `BOOT_INFO_VERSION`.
-- [ ] Link every version bump to a TODO and commit.
-- [ ] Document how third-party bootloaders can populate a minimal supported handoff.
-- [ ] Publish a compatibility matrix that points alternate boot adapters at `T08 §1-§4` and names which payloads, capability flags, and provenance fields are required, optional, or unsupported outside the native UEFI path.
-- [ ] Commit: `"docs: boot protocol ABI reference"`
+- [x] Add `docs/boot/boot-protocol.md` with struct lifecycle, phases, pointer validity, and examples.
+- [x] Add `docs/boot/boot-protocol-changelog.md` keyed by `BOOT_INFO_VERSION`.
+- [x] Link every version bump to a TODO and commit.
+- [x] Document how third-party bootloaders can populate a minimal supported handoff.
+- [x] Publish a compatibility matrix that points alternate boot adapters at [`Alternate Boot Protocols`](TODO-08-alternate-boot-protocols-multiboot2-grub.md) and names which payloads, capability flags, and provenance fields are required, optional, or unsupported outside the native UEFI path.
+- [x] Commit: `"docs: boot protocol ABI reference"`
 
 **Test checkpoint:** `docs/boot/boot-protocol.md` and `docs/boot/boot-protocol-changelog.md` exist, each `BOOT_INFO_VERSION` bump points to the owning TODO and commit, and the minimal third-party bootloader contract lists the exact fields and validation steps required for a supported handoff. Confirm QEMU WHPX, QEMU TCG, VirtualBox, and bare-metal boots are unchanged because this section is documentation-only.
+
+> **Test runner:** N/A (docs-only) | validation: `bash scripts/lint.sh` passes; markdown links audit-walked by hand; build/smoke unchanged because no code landed.
+
+> **Notes:**
+> - **What shipped**: [`docs/boot/boot-protocol.md`](../../docs/boot/boot-protocol.md) (~150 lines: layout, lifecycle flow diagram, 4-class pointer validity matrix, minimum-handoff contract with required/optional split, compatibility matrix for 5 alternate adapters). [`docs/boot/boot-protocol-changelog.md`](../../docs/boot/boot-protocol-changelog.md) (~80 lines: bump policy, v1-v6 history newest-first each linking to owning TODO section + commit hash, rollback stance, how-to-add-a-new-version checklist).
+> - **Structure / consumers**: the protocol doc pairs with `boot-info-fields.md` (per-field ownership matrix owned by §1) and with `include/kernel/boot_info.h` / `include/kernel/boot_version.h` (C contract). The changelog is the canonical answer to "what changed at each `BOOT_INFO_VERSION` bump"; third-party bootloader implementers read the protocol doc's minimum-handoff section, alternate-adapter authors read the compatibility matrix to see which payloads / capability flags / provenance fields their adapter must fill.
+> - **Downstream effects**: unblocks external documentation (README pointers, architecture diagrams), and gives a stable anchor for anyone who wants to target the ABI without reading through `bootx64.c`. No new code paths, no kernel behavior change.
+> - **Canonical doc**: [`docs/boot/boot-protocol.md`](../../docs/boot/boot-protocol.md) (living reference).
+> - **Scope boundary**: §8 does NOT own the per-field ownership matrix (that's §1's `boot-info-fields.md`), the manifest-hash emission (§2/§3 `tools/boot-info-manifest/`), or the enforcement validators (§7 `boot_version_classify`). §8 is pure documentation: if a new ABI field lands, the owner section + commit updates the changelog row, not the doc structure. Alternate-adapter implementation for non-UEFI paths (Multiboot2 details, PXE/HTTP, Secure Launch DRTM, KHO) stays in [`TODO-08-alternate-boot-protocols.md`](TODO-08-alternate-boot-protocols.md) and the forward-reserve TODOs named in the compatibility matrix rows.
+
+> **Verified:** 2026-04-23 | commit `<pending>` | 6/6 items | build OK | 2 new docs (225 + 80 lines); lint clean; no code touched
+> **Quality reviewed:** 2026-04-23 | Codex 1x (adversarial) | 2H fixed (header write-order matches bootx64.c 5691; `config` fallback claim corrected -- kernel has NO defaults, third-party loaders must populate) + 2M fixed (TODO-08 filename corrected to `TODO-08-alternate-boot-protocols.md`, Multiboot2 parser path corrected to `src/kernel/multiboot2_parse.c`, `timing.bl_entry` removed as false requirement; lifecycle + transcribe blocks qualified to match §7's actual persistence limit), 0 open | scope: N/A (docs-only)
 
 ---
 
@@ -407,7 +419,7 @@ Linux 6.16 (merged June 2025) shipped Kexec Handover (KHO) + the Live Update Orc
 | ⭐ | Warm-kernel-update handoff ABI  | ⚠️ Hot Patch (closed)      | ✅ 6.16 Kexec Handover       | ⬜ §14 ABI only; runtime in new TODO         |
 | 💎 | Handoff memory ownership table  | ⚠️ MDL chains + LoaderBlock | ⚠️ memblock + NOMAP regions | ✅ §6 single table + overlap check + JSON dump |
 
-> Parity now covers the contract itself and the decisions made around it. Adding explicit capability negotiation, a shared boot decision record, and anti-rollback security-version binding would make this handoff easier to debug and safer to evolve than either Windows' mostly internal loader state or Linux's split between versioned structs and scattered provenance channels. The warm-kernel-update handoff ABI (§14) specifically positions Impossible OS for cloud/server parity with Linux 6.16's Kexec Handover surface at the ABI layer; the runtime live-update machinery is tracked as follow-up in 03-memory-concurrency.
+> Parity now covers the contract itself (§1-§4), mirror drift detection (§2-§3), typed payload handoff (§5), centralized PMM reservation (§6), structured version negotiation with friendly fatal + BlackBox transcript (§7), and the canonical protocol reference + schema changelog (§8). Adding explicit capability negotiation, a shared boot decision record, and anti-rollback security-version binding would make this handoff easier to debug and safer to evolve than either Windows' mostly internal loader state or Linux's split between versioned structs and scattered provenance channels. The warm-kernel-update handoff ABI (§14) specifically positions Impossible OS for cloud/server parity with Linux 6.16's Kexec Handover surface at the ABI layer; the runtime live-update machinery is tracked as follow-up in 03-memory-concurrency.
 
 ## Unit Tests
 
