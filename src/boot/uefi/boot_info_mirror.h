@@ -241,7 +241,7 @@ struct boot_usb_controller {
 #define BOOT_INFO_MAGIC    0x49504F53  /* "IPOS" */
 #define BOOT_INFO_VERSION  7  /* v7 adds caps_required/present/degraded */
 
-/* Typed payload descriptor array (§4) -- must match kernel/boot_info.h. */
+/* Typed payload descriptor array -- must match kernel/boot_info.h. */
 #define BOOT_PAYLOAD_MAX  32
 
 /* enum boot_payload_type mirror (value-for-value identical to
@@ -411,7 +411,7 @@ struct boot_info {
     UINT32  hv_flags;
     char    hv_vendor[16];
 
-    /* Typed payload descriptor array (§4). Two invariants enforced by
+    /* Typed payload descriptor array. Two invariants enforced by
      * the kernel validator (see boot_payload_validate() in
      * src/kernel/main/boot_payload.c; contract lives in the kernel
      * header):

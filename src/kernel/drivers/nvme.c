@@ -2,8 +2,8 @@
  * nvme.c -- NVMe storage driver
  *
  * §1: PCI scan, BAR0 UC mapping, CAP/VS read, controller disable/enable.
- * §2: Admin Queue setup, Identify Controller + Identify Namespace.
- * §3: I/O Queue creation, sector read/write via polled completion.
+ * Admin Queue setup, Identify Controller + Identify Namespace.
+ * I/O Queue creation, sector read/write via polled completion.
  * ============================================================================ */
 
 #include "kernel/drivers/nvme.h"

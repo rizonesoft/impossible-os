@@ -327,18 +327,13 @@ if [ "$#" -eq 0 ]; then
         scripts/debug/desktop/run-matrix-desktop-tests.bat
         scripts/lint.sh
         scripts/test-tooling.sh
-        src/boot/uefi/boot_info_mirror.h
         src/boot/uefi/bootx64.c
         src/boot/uefi/efi.h
-        src/desktop/wm.c
         src/kernel/acpi.c
         src/kernel/cpu_security.c
-        src/kernel/drivers/nvme.c
-        src/kernel/drivers/xhci.c
         src/kernel/elf.c
         src/kernel/exec.c
         src/kernel/fs/gpt.c
-        src/kernel/fs/partition.c
         src/kernel/fs/vfs.c
         src/kernel/idt.c
         src/kernel/ipc/alpc_port.c

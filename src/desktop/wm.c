@@ -78,7 +78,7 @@ static void pmm_free_pages(uintptr_t base, uint32_t count)
  * read-and-set of needs_redraw uses __atomic_exchange_n so two CPUs
  * racing into wm_mark_dirty() cannot both observe a clean (0) prior
  * state -- exactly one wins the "first mark" and the other records
- * a drop. Codex [H] §10 review: the prior draft read `needs_redraw`
+ * a drop. Codex [H] review: the prior draft read `needs_redraw`
  * and then wrote it in two distinct volatile accesses, allowing
  * concurrent callers to miss drops and the compositor's flag clear
  * to overwrite a concurrent mark.
@@ -1095,7 +1095,7 @@ void wm_composite(void)
     /* Only redraw if something changed. Atomic exchange(0) atomically
      * reads the prior dirty state and clears it, so a concurrent
      * wm_mark_dirty() on another CPU cannot have its new mark
-     * clobbered by a delayed `needs_redraw = 0` store. Codex [H] §10
+     * clobbered by a delayed `needs_redraw = 0` store. Codex [H]
      * review: the prior volatile read + distinct store allowed
      * mark-vs-clear races to silently drop a repaint request. */
     if (!__atomic_exchange_n(&needs_redraw, (uint8_t)0, __ATOMIC_SEQ_CST))

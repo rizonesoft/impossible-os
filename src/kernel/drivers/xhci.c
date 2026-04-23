@@ -392,7 +392,7 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
 
 full_init:
 
-    /* ---- §1.2: Controller initialization sequence ---- */
+    /* ---- Controller initialization sequence ---- */
 
     /* Step 1: Read HCSPARAMS2 for scratchpad buffer count */
     {
@@ -641,7 +641,7 @@ int xhci_init(void)
     return num_controllers;
 }
 
-/* ---- §5 Phase C: Interrupt-driven hot-plug -------------------------------- */
+/* ---- Phase C: Interrupt-driven hot-plug ---------------------------------- */
 
 static uint8_t xhci_irq_vector = 0;
 
