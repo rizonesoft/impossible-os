@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: fat32-hardening-vfs-semantics
+domain: 05-storage-filesystems
+status: active
+title: "TODO-04 -- FAT32 Hardening & VFS Win32 Semantics"
+---
+
 # TODO-04 -- FAT32 Hardening & VFS Win32 Semantics
 
 > **Goal:** Harden FAT32 from working R/W to spec-correct: BPB strict validation, FSInfo mount-time fallback, dual-FAT compare-and-repair, LFN write, proper FILETIME timestamps, and an in-kernel fsck. Then layer the VFS Win32 semantics that all user-mode code depends on: case-insensitive path resolution, share-mode enforcement, delete-on-close, byte-range locks, and feature-spoofing stubs.

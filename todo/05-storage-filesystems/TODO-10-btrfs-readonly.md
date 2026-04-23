@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: btrfs-readonly
+domain: 05-storage-filesystems
+status: active
+title: "TODO-10 -- Btrfs Read-Only Driver"
+---
+
 # TODO-10 -- Btrfs Read-Only Driver
 
 > **Goal:** Implement a read-only Btrfs driver -- superblock CRC32C verification, B-tree node format, chunk tree logical→physical address translation, generic tree search + walk, root tree enumeration with subvolume discovery, inode reader, extent data decoder with zlib/LZO/Zstd decompression, directory reader, symlinks + xattrs, and VFS registration. Full write support is deferred -- the CoW B-tree write path is ~50 K lines in Linux; read-only delivers 90% of the value and makes NAS drives, Fedora, and openSUSE volumes accessible.

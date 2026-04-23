@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: ext4-readwrite
+domain: 05-storage-filesystems
+status: active
+title: "TODO-09 -- ext4 Read/Write Driver"
+---
+
 # TODO-09 -- ext4 Read/Write Driver
 
 > **Goal:** Implement a complete ext4 read/write driver -- superblock + block group descriptors, inode reader, extent tree decoder (with triple-indirect fallback), htree directory B+ tree, file read (including inline data), JBD2 journal replay on mount, file write wrapped in JBD2 transactions, extent tree mutation, directory write, create/delete/rename, extended attributes, and VFS registration with fsck. Windows 11 still cannot natively read ext4; this is a genuine differentiator that lets users with Linux dual-boots or Linux-formatted USB drives access their files.

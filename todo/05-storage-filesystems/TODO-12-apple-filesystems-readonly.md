@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: apple-filesystems-readonly
+domain: 05-storage-filesystems
+status: active
+title: "TODO-12 -- Apple Filesystems: APFS & HFS+ (Read-Only)"
+---
+
 # TODO-12 -- Apple Filesystems: APFS & HFS+ (Read-Only)
 
 > **Goal:** Implement read-only drivers for APFS (Apple File System) and HFS+ (Mac OS Extended) -- the two Apple filesystems encountered on external drives shared with macOS users. APFS: container superblock → checkpoint → object map B-tree → volume superblock → filesystem B-tree → inodes, extents, directories, xattrs. HFS+: volume header → journal replay → Catalog B-tree → directory + file read. Both mount unconditionally read-only. GPT partition GUIDs for both already exist in `gpt.c`.

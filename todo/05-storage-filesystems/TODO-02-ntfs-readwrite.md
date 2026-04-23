@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: ntfs-readwrite
+domain: 05-storage-filesystems
+status: active
+title: "TODO-02 -- NTFS Read/Write Driver"
+---
+
 # TODO-02 -- NTFS Read/Write Driver
 
 > **Goal:** Complete the three remaining NTFS write pillars -- B+ tree directory mutation, full data write/truncate path, and volume formatter -- plus wire dirty-volume recovery into mount, implement `$Secure` security descriptors, and add an end-to-end format/crash/replay test. This delivers full read/write access to any Windows-formatted external drive.

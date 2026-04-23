@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: ixfs-advanced-enterprise
+domain: 05-storage-filesystems
+status: active
+title: "TODO-07 -- IXFS Advanced Storage, Reliability & Enterprise"
+---
+
 # TODO-07 -- IXFS Advanced Storage, Reliability & Enterprise
 
 > **Goal:** Deliver the features that make IXFS genuinely superior to NTFS and competitive with ZFS/Btrfs: transparent LZ4/Zstd compression, inline block deduplication, reflink instant copy, online defragmentation, sparse files, real-time TRIM, online volume resize, self-healing metadata, automatic scheduled snapshots, per-file AES-256-XTS encryption, USN change journal, disk quotas, filesystem-native storage tiering, a volume health dashboard, and a comprehensive test suite.

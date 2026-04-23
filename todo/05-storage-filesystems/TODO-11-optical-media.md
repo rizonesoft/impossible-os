@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: optical-media
+domain: 05-storage-filesystems
+status: active
+title: "TODO-11 -- Optical Media: ISO 9660, Joliet & UDF"
+---
+
 # TODO-11 -- Optical Media: ISO 9660, Joliet & UDF
 
 > **Goal:** Complete the ATAPI/SCSI command layer for optical drives (READ TOC, DISC INFO, TRACK INFO), then build read-only filesystem drivers for ISO 9660 (base + Rock Ridge), Joliet (UCS-2BE names), and UDF (DVD/Blu-ray). Add an auto-probe chain that selects the richest format (UDF > Joliet > ISO 9660). Expose disc metadata via `GetVolumeInformationW`. All three formats are physically read-only. Audio CD raw-sector read is included as a foundation for a future CD ripping feature.

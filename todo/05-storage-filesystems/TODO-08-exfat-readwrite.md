@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: exfat-readwrite
+domain: 05-storage-filesystems
+status: active
+title: "TODO-08 -- exFAT Read/Write Driver"
+---
+
 # TODO-08 -- exFAT Read/Write Driver
 
 > **Goal:** Implement a complete exFAT read/write driver -- VBR parser + boot checksum, Allocation Bitmap, Up-Case Table, directory entry sets (File/Stream/Filename), directory read, file read (FAT-chain and NoFatChain fast path), file write, create/delete/rename, timestamp encoding, VFS registration with `vfs_probe()`, fsck, and 64-bit large file support. Without this, the OS cannot use the majority of USB drives and SD cards sold today.

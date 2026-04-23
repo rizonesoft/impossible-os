@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: partition-tools-storage-suite
+domain: 05-storage-filesystems
+status: active
+title: "TODO-13 -- Partition Management & Storage Tools"
+---
+
 # TODO-13 -- Partition Management & Storage Tools
 
 > **Goal:** Deliver the complete partition management and disk tool suite: GPT + MBR partition write APIs, the `diskpart` interactive CLI, `chkdsk` / `defrag` / `sfc` / `recover` / `diskuse` / `snapshot` CLI commands, and a Disk Management GUI. Block devices work and filesystems mount -- this TODO turns raw disk infrastructure into a fully operational partition and storage administration layer.

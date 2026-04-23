@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: win32-file-io-api
+domain: 05-storage-filesystems
+status: active
+title: "TODO-05 -- Win32 File I/O API & IRP Layer"
+---
+
 # TODO-05 -- Win32 File I/O API & IRP Layer
 
 > **Goal:** Build the complete Win32 I/O subsystem from scratch -- IRP engine, MDL, file handle table, `CreateFile`/`ReadFile`/`WriteFile`, directory APIs, file management, metadata, async I/O + APC, filter manager stub, file change notifications, and `GetDiskFreeSpaceEx` -- then migrate all kernel and shell internal files from raw `vfs_open`/`vfs_read`/`vfs_write` calls to the new Win32 layer. This is the **P0 blocker for all user-mode programs**.

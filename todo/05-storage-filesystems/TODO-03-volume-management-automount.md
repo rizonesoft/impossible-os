@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: volume-management-automount
+domain: 05-storage-filesystems
+status: active
+title: "TODO-03 -- Volume Management & Auto-mount"
+---
+
 # TODO-03 -- Volume Management & Auto-mount
 
 > **Goal:** Replace the hardcoded `partition_mount_filesystems()` path with a proper volume manager: a priority-ordered filesystem probe chain, dynamic drive-letter assignment, USB hot-plug mount/unmount with desktop toasts, manual `mount`/`umount` shell commands, Win32 volume query APIs, optical drive support, and `FSCTL_*` volume control ioctls.

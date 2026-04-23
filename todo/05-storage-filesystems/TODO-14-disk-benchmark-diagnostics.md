@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: disk-benchmark-diagnostics
+domain: 05-storage-filesystems
+status: active
+title: "TODO-14 -- Disk Benchmark & I/O Diagnostics"
+---
+
 # TODO-14 -- Disk Benchmark & I/O Diagnostics
 
 > **Goal:** Build the benchmark tool and diagnostic APIs that give Impossible OS native hardware-visibility: `diskbench` CLI (sequential/random/mixed with TSC-delta latency percentiles and queue-depth sweep), a real-time Disk Benchmark GUI, SMART extended diagnostics with health scoring, a generic `blkdev_stats_t` I/O metrics layer (generalizing VirtIO-only telemetry to all drivers), a per-device 64-bucket latency histogram, a VFS hot-path profiler, and a background storage health monitor daemon. Neither Windows nor Linux ships a built-in disk benchmark in their default install -- this is a first-class hardware-visibility exclusive.

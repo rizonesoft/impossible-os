@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: block-storage-hardening
+domain: 05-storage-filesystems
+status: active
+title: "TODO-01 -- Block Storage Hardening"
+---
+
 # TODO-01 -- Block Storage Hardening
 
 > **Goal:** Harden the working VirtIO-blk and AHCI drivers to production quality: add flush/write-back, error recovery, NCQ, SMART, per-device I/O metrics, and a block-level LRU sector cache -- providing the reliable, measurable foundation that all filesystem drivers depend on.

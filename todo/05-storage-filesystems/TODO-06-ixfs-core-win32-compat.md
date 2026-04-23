@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: ixfs-core-win32-compat
+domain: 05-storage-filesystems
+status: active
+title: "TODO-06 -- IXFS Core Foundation & Win32 Compatibility"
+---
+
 # TODO-06 -- IXFS Core Foundation & Win32 Compatibility
 
 > **Goal:** First verify every IXFS subsystem is correct against its spec (and fix two known doc bugs), then upgrade inodes from 128-byte v2 to 256-byte v3, and finally implement the complete Win32 compatibility layer -- case-insensitive paths, ADS, security descriptors, hard links, symlinks, EAs, object IDs, and a v3 format tool. **This is the P0 blocker for all Win32 apps that touch the filesystem.**
