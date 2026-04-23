@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: wm-completion
+domain: 06-desktop-foundation
+status: active
+title: "TODO-01 -- Window Manager Completion"
+---
+
 # TODO-01 -- Window Manager Completion
 
 > **Goal:** Complete the window manager so windows can be minimized, maximized, restored, snapped to edges, and resized by dragging edges. Add Alt+Tab task switcher and global hotkeys. The WM prototype works -- this hardens it into a production desktop.

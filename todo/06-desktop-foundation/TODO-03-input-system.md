@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: input-system
+domain: 06-desktop-foundation
+status: active
+title: "TODO-03 -- Input System"
+---
+
 # TODO-03 -- Input System
 
 > **Goal:** Build a proper input routing system: modifier key tracking (Shift, Ctrl, Alt, Win), keyboard focus with Tab navigation between controls, and a global hotkey dispatch table. Currently input is ad-hoc -- mouse clicks route through `wm_handle_mouse()` and keyboard goes directly to the terminal.

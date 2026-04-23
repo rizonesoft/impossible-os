@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: control-library
+domain: 06-desktop-foundation
+status: active
+title: "TODO-04 -- Control Library Completion"
+---
+
 # TODO-04 -- Control Library Completion
 
 > **Goal:** Add the missing essential controls: checkbox, radio button, combobox (dropdown), listbox, and progress bar. Also add a reusable context menu (popup menu) control. The existing 4 controls (button, label, textbox, scrollbar) are production-quality -- these extend the library.

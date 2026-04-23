@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: desktop-icons
+domain: 06-desktop-foundation
+status: active
+title: "TODO-06 -- Desktop Icon System"
+---
+
 # TODO-06 -- Desktop Icon System
 
 > **Goal:** A complete desktop icon system: special folder icons, user-created shortcuts, file type icons, grid layout, drag-to-reposition, rename, delete, and right-click context menu per icon. The current desktop has 3 hardcoded icons (Computer, Recycle Bin, Control Panel) -- this makes icons a real, dynamic system.

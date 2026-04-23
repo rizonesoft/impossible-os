@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: compositor-optimization
+domain: 06-desktop-foundation
+status: active
+title: "TODO-02 -- Compositor Optimization"
+---
+
 # TODO-02 -- Compositor Optimization
 
 > **Goal:** Replace the full-screen redraw compositor with dirty-rect tracking so only changed regions are redrawn. Target: 60fps compositing on 1280x720, <5ms per frame on idle desktop (only clock ticks).

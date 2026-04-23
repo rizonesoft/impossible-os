@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: desktop-shell
+domain: 06-desktop-foundation
+status: active
+title: "TODO-05 -- Desktop Shell Completion"
+---
+
 # TODO-05 -- Desktop Shell Completion
 
 > **Goal:** Make the desktop shell functional: desktop icon clicks launch apps, right-click menu works, taskbar reflects window state (minimize/restore on click), start menu items launch programs, and power button triggers shutdown. The visual elements exist -- this wires them to actions.
