@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: advanced-allocator
+domain: 03-memory-concurrency
+status: active
+title: "TODO-03 -- Advanced Kernel Allocator"
+---
+
 # TODO-03 -- Advanced Kernel Allocator
 
 > **Goal:** Build the most self-defending kernel memory allocator in existence. Start with parity (growable heap, SLAB caches, vmalloc, NonPagedPool/PagedPool, tagged allocation, memory pressure, live stats) then go beyond both Windows and Linux with out-of-band metadata, type-isolated pools, probabilistic guard pages, production quarantine, per-page header encoding, zero-on-free, and lock-free SMP fast paths. Every allocation is tagged, every free is verified, every overflow is caught -- in production, not just in debug builds.

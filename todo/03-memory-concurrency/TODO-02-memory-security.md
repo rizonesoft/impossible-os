@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: memory-security
+domain: 03-memory-concurrency
+status: active
+title: "TODO-02 -- Memory Security Hardening"
+---
+
 # TODO-02 -- Memory Security Hardening
 
 > **Goal:** Harden the process and kernel address space against the full class of modern exploit techniques -- ASLR and KASLR eliminate fixed-address attacks, SMEP/SMAP cut off ret2user and user-data pivots, NX/DEP enforces execute-never on all data pages, KPTI mitigates Meltdown-class side-channel leaks, CET shadow stacks protect return addresses, and a security layout report exposes the current state to diagnostics and the registry.

@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: scheduler-enhancement
+domain: 03-memory-concurrency
+status: active
+title: "TODO-06 -- Scheduler Enhancement"
+---
+
 # TODO-06 -- Scheduler Enhancement
 
 > **Goal:** Evolve the current round-robin dispatcher into a production-quality scheduler: O(1) priority queues, starvation-proof dynamic aging, CFS vruntime fair sharing, `SCHED_FIFO`/`SCHED_RR`/`SCHED_DEADLINE` real-time classes, CPU affinity, accurate tick calibration via RDTSC+HPET, a unified `/sys/sched` stats view, CPU frequency scaling hooks for ACPI P-states, and dynamic resource-driven thread limits instead of a tiny fixed per-process slot ceiling.

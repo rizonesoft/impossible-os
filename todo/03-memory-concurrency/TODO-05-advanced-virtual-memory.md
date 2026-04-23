@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: advanced-virtual-memory
+domain: 03-memory-concurrency
+status: active
+title: "TODO-05 -- Advanced Virtual Memory"
+---
+
 # TODO-05 -- Advanced Virtual Memory
 
 > **Goal:** Complete the upper tier of the virtual memory model: COW `fork()`, 2 MiB and 1 GiB huge pages, `madvise` / `MEM_RESET` hints, Win32 Section Object multi-view mappings, per-process memory limits via Job Objects, a zero-copy DMA buffer pool for storage and network drivers, compressed memory (zRAM-style), NUMA-aware PMM, and a transparent huge pages collapser.

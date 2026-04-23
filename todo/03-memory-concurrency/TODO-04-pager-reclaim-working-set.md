@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: pager-reclaim-working-set
+domain: 03-memory-concurrency
+status: active
+title: "TODO-04 -- Pager, Reclaim, and Working Set Manager"
+---
+
 # TODO-04 -- Pager, Reclaim, and Working Set Manager
 
 > **Goal:** Complete the memory-manager layer between basic `MEM_COMMIT` support and advanced VM features: pagefile ownership, working-set residency, background reclaim, dirty-page writeback, lazy file-backed faults, replacement policy, and user-visible trim/control APIs. When this TODO is done, Impossible OS has one canonical owner for how anonymous pages, mapped-file pages, transition pages, compressed pages, and pagefile-backed pages move through the system under memory pressure.

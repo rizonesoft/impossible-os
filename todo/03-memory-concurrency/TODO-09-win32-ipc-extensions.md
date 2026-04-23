@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: win32-ipc-extensions
+domain: 03-memory-concurrency
+status: active
+title: "TODO-09 -- Win32 IPC Extensions & Async I/O"
+---
+
 # TODO-09 -- Win32 IPC Extensions & Async I/O
 
 > **Goal:** Implement the Win32 IPC layer required before the Win32 subsystem (CSRSS, Win32k) can function: named pipes (NPFS), mailslots (MSFS), I/O completion ports (IOCP) with a DMA-backed worker pool, Object Manager–backed named sync objects, LPC/ALPC ports, and `ImpossibleRing` -- a two-ring async submission interface providing io_uring parity.

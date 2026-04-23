@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: vmm-memory-protection
+domain: 03-memory-concurrency
+status: active
+title: "TODO-01 -- VMM Memory Protection & Diagnostics"
+---
+
 # TODO-01 -- VMM Memory Protection & Diagnostics
 
 > **Goal:** PMM, VMM, heap, swap, and mmap foundations exist. This TODO hardens and extends the memory model: Win32-compatible `mprotect` / `VirtualAlloc` / `VirtualFree`, demand paging (reserve vs. commit), W^X enforcement, `NtQueryVirtualMemory`, and a full allocator safety tier: build-time lint, canaries, leak detector, and PMM statistics. Pager, pagefile, and working-set policy are owned by `TODO-10`.

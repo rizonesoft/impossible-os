@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: smp-phase2
+domain: 03-memory-concurrency
+status: active
+title: "TODO-07 -- SMP Phase 2"
+---
+
 # TODO-07 -- SMP Phase 2
 
 > **Goal:** Complete the remaining work to make the scheduler and memory system truly SMP-correct on top of the existing Phase 1 AP bringup (LAPIC/IOAPIC, per-CPU data structures). Covers SMP-safe atomics, TLB shootdown IPIs, per-CPU run queues, work-stealing load balancing, adaptive mutex spinning, per-CPU RCU, CPU hotplug, `READ_ONCE`/`WRITE_ONCE` discipline, and CPU feature intersection across APs.

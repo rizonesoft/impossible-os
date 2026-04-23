@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: advanced-sync
+domain: 03-memory-concurrency
+status: active
+title: "TODO-08 -- Advanced Synchronisation Primitives"
+---
+
 # TODO-08 -- Advanced Synchronisation Primitives
 
 > **Goal:** Complete the remaining unimplemented synchronisation and threading primitives from the old `TODO-020.01-Synchronization.md`: FIFO ticket locks, preemption count, thread-local storage via `FS` base MSR, user-space futexes, `pthread_once`/`call_once`, `pthread_barrier_t`, thread cancellation, `WaitForMultipleObjects`-style multi-wait, and a unified `_timeout(ms)` API across all blocking primitives.

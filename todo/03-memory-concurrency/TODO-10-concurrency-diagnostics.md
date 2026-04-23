@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: concurrency-diagnostics
+domain: 03-memory-concurrency
+status: active
+title: "TODO-10 -- Concurrency & Memory Diagnostics"
+---
+
 # TODO-10 -- Concurrency & Memory Diagnostics
 
 > **Goal:** Add every runtime and build-time diagnostic needed to catch concurrency bugs, memory corruption, and liveness failures before they reach production: thread stack guard pages, preemption count, heap canaries + SLAB red zones, lockdep, kernel watchdog, KCSAN data-race detector, graphical deadlock visualisation, named lock browser, KASAN kernel address sanitiser, and a unified `/sys/mem` memory observability interface.
