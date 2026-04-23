@@ -285,14 +285,45 @@ must_reject(lambda d: d.pop("title"), "missing required title")
 must_reject(lambda d: d.update(schema_version="1"), "string schema_version")
 must_reject(lambda d: d.update(schema_version=2), "future schema_version (Codex H2)")
 must_reject(lambda d: d.update(depends_on=["Bad_ID"]), "uppercase depends_on element")
+must_reject(lambda d: d.update(created_at="2026-04-23T00:00:00Z"), "hand-authored created_at (Codex M1)")
+must_reject(lambda d: d.update(last_active_at="2026-04-23T00:00:00Z"), "hand-authored last_active_at (Codex M1)")
 sys.exit(0)
 PY
 RC=$?
 if [ "$RC" = "0" ]; then
-    t_pass "schema sidecar valid + authoritative example validates + 8 negatives reject"
+    t_pass "schema sidecar valid + authoritative example validates + 10 negatives reject"
 else
     t_fail "schema sidecar regression (rc=$RC, log=$TMP_DIR/schema-sidecar.log)"
     cat "$TMP_DIR/schema-sidecar.log" >&2 2>/dev/null || true
+fi
+
+# ----------------------------------------------------------------------
+# Test 6e: generator parser ALSO rejects hand-authored cache-only fields
+# with the forbidden-field FATAL category (mirrors the schema sidecar's
+# not/anyOf/required clause). Codex pass 3 H1: schema and generator
+# must enforce the same contract or the system is split-brained.
+# ----------------------------------------------------------------------
+FORBID_ROOT="$TMP_DIR/forbid-tree"
+mkdir -p "$FORBID_ROOT/01-test"
+cat > "$FORBID_ROOT/01-test/TODO-01-forbid-created.md" <<'EOF'
+---
+schema_version: 1
+id: forbid-created-fixture
+domain: 01-test
+status: draft
+title: Hand-authored created_at must be FATAL
+created_at: "2026-04-23T00:00:00Z"
+---
+
+# Body
+EOF
+RC=0
+python3 "$BUILD_PY" --quiet --root "$FORBID_ROOT" --output "$TMP_DIR/cache-forbid.json" --repo-root "$REPO_ROOT" \
+    >"$TMP_DIR/forbid.log" 2>&1 || RC=$?
+if [ "$RC" = "1" ] && grep -q "forbidden-field.*created_at" "$TMP_DIR/forbid.log" && [ ! -e "$TMP_DIR/cache-forbid.json" ]; then
+    t_pass "generator rejects hand-authored created_at as forbidden-field FATAL"
+else
+    t_fail "generator forbidden-field check broken (rc=$RC, log=$(cat $TMP_DIR/forbid.log))"
 fi
 
 # ----------------------------------------------------------------------

@@ -52,14 +52,14 @@ Optional fields surface as cache entries when present and as `unknown-field` war
 | `superseded_by`   | string    | Single id. Set when this TODO's `status` is `superseded`. Validator surfaces a chain when traversing supersession.                                  |
 | `file_patterns`   | string\[] | Glob patterns marking source paths this TODO owns. Linux MAINTAINERS-style `F:` parity. Powers the `code <id>` query (query-CLI section).            |
 
-## Auto-Derived Fields (Generator-Maintained, NOT Hand-Authored)
+## Auto-Derived Fields (Cache-Only, NOT Hand-Authored, NOT in Frontmatter)
 
-These fields are computed by the generator from `git log` during cache emission. Do NOT set them in frontmatter; the generator overwrites with the actual git timestamps.
+These fields are computed by the generator from `git log` and emitted into `build/todo-cache.json` ONLY. They MUST NOT appear in hand-authored frontmatter; the JSON Schema sidecar enforces this with a `not/anyOf/required` clause that REJECTS frontmatter containing either field. The fields are documented here so the cache schema is self-describing and downstream consumers (`scripts/todo-graph/validate.py`, `query.py`) know what to expect when reading the cache.
 
 | Field             | Type    | Source                                                                                                                                          |
 | ----------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `created_at`      | string  | ISO 8601 UTC. First-commit timestamp for the file (`git log --reverse --format=%ct -- <file>`, taking the first hit).                            |
-| `last_active_at`  | string  | ISO 8601 UTC. Last-commit timestamp for the file (`git log -1 --format=%ct -- <file>`).                                                          |
+| `created_at`      | string  | ISO 8601 UTC. First-commit timestamp for the file (`git log --reverse --format=%ct -- <file>`, taking the first hit). Cache-only.                |
+| `last_active_at`  | string  | ISO 8601 UTC. Last-commit timestamp for the file (`git log -1 --format=%ct -- <file>`). Cache-only.                                              |
 
 The generator uses a single batched `git log -- todo` call to fill these for every file in one pass; the per-file fork overhead is amortized.
 
@@ -83,7 +83,8 @@ The generator's full error catalog (1:1 with the parser branches) is:
 | `invalid-id`         | `id` fails the kebab-case regex `^[a-z][a-z0-9-]{0,58}[a-z0-9]$`                                                      | FATAL    |
 | `missing-required`   | Any of `schema_version`, `id`, `domain`, `status`, `title` absent                                                     | FATAL    |
 | `schema-version`     | `schema_version` not int OR > supported by current generator (forward-incompatible)                                   | FATAL    |
-| `unknown-field`      | Top-level field not listed in Required + Optional + Auto-Derived                                                      | WARNING  |
+| `forbidden-field`    | Hand-authored frontmatter contains `created_at` or `last_active_at` (cache-only fields, not allowed in source)        | FATAL    |
+| `unknown-field`      | Top-level field not listed in Required + Optional                                                                     | WARNING  |
 
 FATAL categories print `[build.py] FAIL <file>: <category>: <message>` to stderr, exit the build with code 1, and do NOT write the cache file. WARNING categories print `[build.py] WARN ...` (suppressed under `--quiet`) but the build still succeeds.
 

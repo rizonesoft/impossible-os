@@ -2,7 +2,7 @@
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://impossible-os/docs/infrastructure/todo-metadata.schema.json",
     "title": "Impossible OS TODO Frontmatter",
-    "description": "Canonical schema for the YAML frontmatter block carried by every file under todo/**/*.md. Mirrors docs/infrastructure/todo-metadata.md (the human-readable spec). Editors (VS Code YAML extension, Zed YAML, Obsidian YAML-schema plugin) consume this via the per-file $schema field for autocomplete and inline diagnostics. The generator at scripts/todo-graph/build.py implements both this schema and the spec doc; behavior is the union of the two.",
+    "description": "Canonical schema for the YAML frontmatter block carried by every file under todo/**/*.md. Mirrors docs/infrastructure/todo-metadata.md (the human-readable spec). Programmatic validators (the generator at scripts/todo-graph/build.py, CI lint via remark-lint-frontmatter-schema, ad-hoc jsonschema.validate calls) follow the per-file $schema field to load this sidecar. The stock Red Hat YAML language server does NOT auto-detect $schema as a schema directive in markdown frontmatter; editor-time diagnostics require remark-lint-frontmatter-schema or markdown-yaml-embedded-langservers. The §6 CI gate in todo/00-infrastructure/TODO-06-todo-metadata-layer.md is the authoritative line of defense.",
     "type": "object",
     "additionalProperties": true,
     "required": [
@@ -87,16 +87,13 @@
             },
             "uniqueItems": true,
             "description": "Glob patterns marking source paths this TODO owns. Linux MAINTAINERS-style F: parity. Powers the code <id> query (query-CLI section)."
-        },
-        "created_at": {
-            "type": "string",
-            "format": "date-time",
-            "description": "ISO 8601 UTC. AUTO-DERIVED by the generator from git log --reverse (first-commit timestamp). Do NOT hand-author; the generator overwrites."
-        },
-        "last_active_at": {
-            "type": "string",
-            "format": "date-time",
-            "description": "ISO 8601 UTC. AUTO-DERIVED by the generator from git log -1 (last-commit timestamp). Do NOT hand-author; the generator overwrites."
         }
-    }
+    },
+    "not": {
+        "anyOf": [
+            { "required": ["created_at"] },
+            { "required": ["last_active_at"] }
+        ]
+    },
+    "$comment": "created_at and last_active_at are cache-only fields the generator computes from git log during cache emission; they MUST NOT appear in hand-authored frontmatter. The not/anyOf clause enforces that contract at the schema layer."
 }

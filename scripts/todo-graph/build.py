@@ -308,10 +308,24 @@ def validate_frontmatter(fm: dict) -> list:
                     "(forward-incompatible; upgrade scripts/todo-graph/build.py)",
                 )
             )
+    # FATAL: cache-only auto-derived fields must NOT appear in hand-authored
+    # frontmatter (mirrors the JSON Schema sidecar's not/anyOf/required clause
+    # at docs/infrastructure/todo-metadata.schema.json). The generator computes
+    # both from git log and emits them into build/todo-cache.json only.
+    for cache_only in ("created_at", "last_active_at"):
+        if cache_only in fm:
+            errors.append(
+                (
+                    "forbidden-field",
+                    f"field '{cache_only}' is auto-derived (cache-only); "
+                    "MUST NOT appear in hand-authored frontmatter "
+                    "(see docs/infrastructure/todo-metadata.md Auto-Derived Fields)",
+                )
+            )
     # Warnings (don't fail the build)
-    known = set(REQUIRED_FIELDS) | set(OPTIONAL_FIELDS) | {"created_at", "last_active_at"}
+    known = set(REQUIRED_FIELDS) | set(OPTIONAL_FIELDS)
     for field in fm:
-        if field not in known:
+        if field not in known and field not in ("created_at", "last_active_at"):
             errors.append(("unknown-field", f"unknown optional field '{field}' (forward-compat warning)"))
     return errors
 
