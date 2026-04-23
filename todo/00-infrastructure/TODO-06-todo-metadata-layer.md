@@ -73,7 +73,7 @@ Define the YAML frontmatter block that every TODO file MUST carry going forward.
 > - Downstream effects: unblocks §3 (validator status-transition + `$schema` reachability checks consume the schema), §5 (back-fill migration writes frontmatter against this exact spec), §6 (CI gate validates each TODO against the sidecar). [`docs/infrastructure/index.md`](../../docs/infrastructure/index.md) Documents table now lists the spec doc.
 > - Canonical doc: [`docs/infrastructure/todo-metadata.md`](../../docs/infrastructure/todo-metadata.md). The JSON Schema sidecar is the machine-readable counterpart; both files are the two-layer doctrine for what's allowed in TODO frontmatter.
 > - Scope boundary: this section ships the spec + sidecar only. The generator parsing logic is §2 (already shipped). The graph-integrity validation (stale XREF, dangling dep, status-transition gates) is §3. Back-filling existing 86 TODO files with frontmatter is §5.
-> **Verified:** 2026-04-23 | <commit> | 6/6 items | build OK | 13/13 sub-tests PASS, schema valid + 8 negatives reject
+> **Verified:** 2026-04-23 | commit `943935fe` | 6/6 items | build OK | 13/13 sub-tests PASS, schema valid + 8 negatives reject
 > **Quality reviewed:** 2026-04-23 | Codex 1x (adversarial) | 2H+1M fixed, 0 open | scope: N/A (docs + JSON Schema, no kernel domain)
 
 ---
