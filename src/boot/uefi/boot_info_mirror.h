@@ -239,7 +239,7 @@ struct boot_usb_controller {
 
 /* ABI header -- must match kernel/boot_info.h */
 #define BOOT_INFO_MAGIC    0x49504F53  /* "IPOS" */
-#define BOOT_INFO_VERSION  6  /* boot section 4: typed payload descriptor array */
+#define BOOT_INFO_VERSION  7  /* v7 adds caps_required/present/degraded */
 
 /* Typed payload descriptor array (§4) -- must match kernel/boot_info.h. */
 #define BOOT_PAYLOAD_MAX  32
@@ -268,6 +268,19 @@ struct boot_usb_controller {
 #define BOOT_PRODUCER_UEFI          1u
 #define BOOT_PRODUCER_MULTIBOOT2    2u
 #define BOOT_PRODUCER_KERNEL_TEST   3u
+
+/* BOOT_CAP_* mirror -- bitmasks value-for-value identical to
+ * include/kernel/boot_info.h. Bootloader populates caps_required /
+ * caps_present / caps_degraded using these. */
+#define BOOT_CAP_PAYLOAD_DESCRIPTORS  (1ull << 0)
+#define BOOT_CAP_RUNTIME_SERVICES     (1ull << 1)
+#define BOOT_CAP_SECURE_BOOT_STATE    (1ull << 2)
+#define BOOT_CAP_TPM_EVENT_LOG        (1ull << 3)
+#define BOOT_CAP_USB_HANDOVER         (1ull << 4)
+#define BOOT_CAP_MEDIA_ROLE           (1ull << 5)
+#define BOOT_CAP_NETWORK_PROVENANCE   (1ull << 6)
+#define BOOT_CAP_RESUME_METADATA      (1ull << 7)
+#define BOOT_CAP_ALT_PROTOCOL_ADAPTER (1ull << 8)
 
 struct boot_payload_desc {
     UINT32 type;         /* enum boot_payload_type */
@@ -417,6 +430,16 @@ struct boot_info {
     UINT32  payload_count;
     UINT32  payload_overflow;
     UINT64  payload_total_bytes;
+
+    /* Capability negotiation. Contract lives in the kernel header;
+     * the loader populates caps_present (bits for fields it actually
+     * wrote), caps_required (bits it asserts the kernel must support),
+     * and caps_degraded (bits for known capabilities it could not
+     * provide). Kernel's boot_caps_validate() rejects unknown-required
+     * and contradictory combinations. */
+    UINT64  caps_required;
+    UINT64  caps_present;
+    UINT64  caps_degraded;
 };
 
 /* ABI compile-time guards -- catch bootloader/kernel struct drift at build */

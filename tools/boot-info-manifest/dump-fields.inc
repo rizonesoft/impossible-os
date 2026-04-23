@@ -304,3 +304,8 @@ F(payload_descriptors[0]._reserved);
 F(payload_count);
 F(payload_overflow);
 F(payload_total_bytes);
+
+/* ---- Capability negotiation (v7) ---- */
+F(caps_required);
+F(caps_present);
+F(caps_degraded);

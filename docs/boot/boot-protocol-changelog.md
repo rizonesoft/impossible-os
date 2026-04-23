@@ -33,7 +33,16 @@ Both halves of the ABI (the kernel header at `include/kernel/boot_info.h` and th
 
 ## Versions
 
-### v6 (current) -- Typed payload descriptor array
+### v7 (current) -- Capability negotiation
+
+- **Commit**: pending ([Capability Negotiation and Degraded-Feature Flags](../../todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md#11-capability-negotiation-and-degraded-feature-flags))
+- **TODO**: [Capability Negotiation and Degraded-Feature Flags](../../todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md#11-capability-negotiation-and-degraded-feature-flags)
+- **Fields added**: `caps_required`, `caps_present`, `caps_degraded` (three `uint64_t` bitmasks appended to `struct boot_info` after `payload_total_bytes`).
+- **Manifest**: 228 fields, `struct_size = 23720` bytes.
+- **Kernel canonical SHA-256**: `a44cc0c61ce7...` (produced by `tools/boot-info-manifest/dump-kernel.c`; kernel and mirror must agree).
+- **Why**: establish a forward-compatible handshake between loader and kernel so optional capabilities (runtime services, TPM event log, USB handover, media role, network provenance, resume metadata, alt-protocol adapter) can be independently published OR marked degraded with a safe fallback, without requiring a version bump for every future capability bit. Unknown `caps_required` bits are rejected (stale-kernel-on-newer-loader gate); unknown bits in `caps_present` / `caps_degraded` are tolerated so older kernels can boot against newer loaders that opportunistically populate reserved bits. Validator: [`boot_caps_validate`](../../src/kernel/main/boot_caps.c) wired from `boot_hw.c` after `boot_payload_validate`.
+
+### v6 -- Typed payload descriptor array
 
 - **Commit**: [`01991083`](https://github.com/rizonesoft/impossible-os/commit/01991083) "boot: add typed payload descriptors"
 - **TODO**: [Optional Payload Descriptor Array](../../todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md#4-optional-payload-descriptor-array)

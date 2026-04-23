@@ -5685,6 +5685,81 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     serial_early_print("[BOOT] setup_page_tables...\n");
     setup_page_tables();
 
+    /* Capability negotiation: advertise what this bootloader actually
+     * produced. caps_required is left at 0 (this bootloader does not
+     * demand any kernel-side feature beyond what BOOT_INFO_VERSION
+     * already gates). For every known capability bit
+     * we either set it in caps_present (feature was populated) or in
+     * caps_degraded (producer intentionally skipped or could not
+     * supply), but never both -- the kernel validator rejects the
+     * overlap. */
+    {
+        UINT64 present  = 0;
+        UINT64 degraded = 0;
+
+        /* Typed payload descriptor array (§4) -- always published, even
+         * when the packed prefix is empty (count=0 is still valid). */
+        present |= BOOT_CAP_PAYLOAD_DESCRIPTORS;
+
+        /* UEFI runtime services */
+        if (g_boot_info_ptr->uefi_rt_available)
+            present  |= BOOT_CAP_RUNTIME_SERVICES;
+        else
+            degraded |= BOOT_CAP_RUNTIME_SERVICES;
+
+        /* Secure boot state: `secure_boot_enabled` is kernel-populated
+         * AFTER handoff (the kernel queries the UEFI RT variable itself
+         * during Phase 0). The bootloader has not yet established the
+         * field, so it MUST advertise the capability as degraded here;
+         * kernel-side refinement (promoting to caps_present once the
+         * variable read succeeds) is a separate follow-up in the
+         * capability-consumer path. */
+        degraded |= BOOT_CAP_SECURE_BOOT_STATE;
+
+        /* TPM measured-boot event log. Kernel consumers treat the log
+         * as valid only when BOTH the pointer AND the size are
+         * nonzero -- advertising present on a nonzero pointer alone
+         * would let a consumer dereference a zero-length buffer. */
+        if (g_boot_info_ptr->tpm_available &&
+            g_boot_info_ptr->tpm_event_log != 0 &&
+            g_boot_info_ptr->tpm_event_log_size != 0)
+            present  |= BOOT_CAP_TPM_EVENT_LOG;
+        else
+            degraded |= BOOT_CAP_TPM_EVENT_LOG;
+
+        /* USB handover: xHCI BIOS->OS ownership transfer + DMA state */
+        if (g_boot_info_ptr->usb_handover_complete)
+            present  |= BOOT_CAP_USB_HANDOVER;
+        else
+            degraded |= BOOT_CAP_USB_HANDOVER;
+
+        /* Media role: boot device type + presence */
+        if (g_boot_info_ptr->boot_media_present && g_boot_info_ptr->boot_device_type != 0)
+            present  |= BOOT_CAP_MEDIA_ROLE;
+        else
+            degraded |= BOOT_CAP_MEDIA_ROLE;
+
+        /* Network provenance: not populated by this bootloader yet
+         * (PXE/HTTP boot path is future work). Advertise as degraded so
+         * downstream consumers can pick a safe fallback. */
+        degraded |= BOOT_CAP_NETWORK_PROVENANCE;
+
+        /* Resume metadata (S4 hibernation): not populated yet. */
+        degraded |= BOOT_CAP_RESUME_METADATA;
+
+        /* Alternate protocol adapter: the bit advertises presence of a
+         * non-native protocol shim (Multiboot2 / PXE / HTTP boot /
+         * Secure Launch) between firmware and kernel. This bootloader
+         * is native UEFI, so no adapter was interposed -- the feature
+         * is absent by design. Classify as degraded; a real adapter
+         * (TODO-08) would set this bit in caps_present instead. */
+        degraded |= BOOT_CAP_ALT_PROTOCOL_ADAPTER;
+
+        g_boot_info_ptr->caps_required = 0ull;
+        g_boot_info_ptr->caps_present  = present;
+        g_boot_info_ptr->caps_degraded = degraded;
+    }
+
     /* S15: Populate ABI header as the final step before kernel handoff.
      * Written last so any late modifications to boot_info don't overwrite it. */
     g_boot_info_ptr->header.magic   = BOOT_INFO_MAGIC;

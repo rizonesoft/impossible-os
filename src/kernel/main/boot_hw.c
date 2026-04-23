@@ -157,6 +157,20 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
                  (uint64_t)g_boot_info.payload_total_bytes);
     }
 
+    /* Capability negotiation: reject stale-kernel-on-newer-loader
+     * (unknown required bits) and producer contradictions (required &
+     * degraded, present & degraded) before any capability-gated
+     * subsystem inspects caps_present / caps_degraded. */
+    {
+        enum boot_caps_error cerr = BOOT_CAPS_ERR_OK;
+        if (boot_caps_validate(&g_boot_info, &cerr) != BOOT_OK) {
+            klog(LOG_ERROR, "boot",
+                 "boot_caps_validate failed (err=%u); halting before capability consumers run",
+                 (uint64_t)cerr);
+            boot_halt("boot_caps: capability negotiation invariants violated");
+        }
+    }
+
     /* S13: Log previous boot error if one was persisted in NVRAM */
     if (g_boot_info.last_boot_error != 0)
         klog(LOG_WARN, "UEFI",

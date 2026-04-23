@@ -210,6 +210,16 @@ Bootloader publishes typed physical payloads that are consumed by kernel subsyst
 | `payload_overflow` | bootx64 | P0 | boot log | handoff | boot-protocol-abi-handoff §4 | `0 | 1`; set to 1 when the producer had more typed payloads than the array can hold. |
 | `payload_total_bytes` | bootx64 | P0 | validator | handoff | boot-protocol-abi-handoff §4 | Must equal the sum of `length` for every occupied slot in the packed prefix; validator rejects a mismatch. |
 
+### Capability negotiation (§11)
+
+Tri-word bitmask negotiation between bootloader and kernel. `caps_required` asserts "producer could not have booted without this feature"; `caps_present` advertises "producer populated or supplied this feature"; `caps_degraded` advertises "producer intentionally skipped this feature and substituted a safe fallback". The classify+halt validator [`boot_caps_validate`](../../src/kernel/main/boot_caps.c) is wired from [`src/kernel/main/boot_hw.c`](../../src/kernel/main/boot_hw.c) after `boot_payload_validate` and BEFORE any capability-gated consumer runs. Known-bit mask is `BOOT_CAP_MASK_KNOWN`; bits outside the mask in `caps_required` reject (stale-kernel-on-newer-loader); unknown bits in `caps_present` / `caps_degraded` are tolerated for forward compat.
+
+| Field | Producer | First valid | Consumer | Lifetime | Owning roadmap | Validation |
+| --- | --- | --- | --- | --- | --- | --- |
+| `caps_required` | bootx64 | P0 | validator (`boot_caps_validate`) | handoff | boot-protocol-abi-handoff §11 | All set bits MUST be in `BOOT_CAP_MASK_KNOWN`; halts with "unknown required bits" otherwise. No bit may be set in both `caps_required` and `caps_degraded`. |
+| `caps_present` | bootx64 | P0 | capability-gated consumers (runtime services, TPM log, USB handover, etc.) | handoff | boot-protocol-abi-handoff §11 | Unknown bits tolerated (forward compat). No bit may be set in both `caps_present` and `caps_degraded`. Every bit in `BOOT_CAP_MASK_KNOWN` must appear in `caps_present OR caps_degraded` (no unclassified known bits). |
+| `caps_degraded` | bootx64 | P0 | boot log, health orchestrator | handoff | boot-protocol-abi-handoff §11 | Unknown bits tolerated. Must not intersect `caps_required` or `caps_present`. Complements `caps_present` to cover every known bit. |
+
 ## Nested struct: `boot_payload_desc`
 
 48-byte ABI-pinned descriptor. Kernel enum `boot_payload_type` maps well-known values (MODULE, INITRD, RECOVERY_IMAGE, HIBERNATION_META, TPM_EVENT_LOG, NETWORK_CONFIG, RANDOM_SEED, USB_HANDOVER); unknown values are SKIPPED for type-specific validation unless `BOOT_PAYLOAD_FLAG_REQUIRED` is set on the descriptor (required-unknown forces a fatal boot failure).

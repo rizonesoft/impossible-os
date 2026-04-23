@@ -63,7 +63,7 @@
  *   - Bootloader writes sizeof(struct boot_info) into header.size at
  *     compile time -- a size mismatch means the structs diverged. */
 #define BOOT_INFO_MAGIC    0x49504F53  /* "IPOS" (Impossible OS) */
-#define BOOT_INFO_VERSION  6           /* §4: typed payload descriptor array */
+#define BOOT_INFO_VERSION  7           /* v7 adds caps_required/present/degraded */
 
 /* Upper bound for pre-copy address validation: the UEFI bootloader
  * identity-maps [0, 4 GiB) with 2 MiB pages in setup_page_tables()
@@ -172,6 +172,80 @@ boot_result_t boot_payload_validate(const struct boot_info *info,
  * pass values from `enum boot_payload_type` directly -- they decay to
  * uint32_t exactly; the validator already stores type as uint32_t for
  * the same ABI-stability reason. */
+/* Capability negotiation and degraded-feature flags.
+ *
+ * Boot_info carries three capability words that let the loader and
+ * kernel distinguish optional data from required data, and let
+ * alternate boot adapters (Multiboot2, PXE/HTTP, future Secure Launch)
+ * explicitly declare what they could NOT provide instead of silently
+ * zeroing fields. Policy, in priority order:
+ *
+ *   1. `caps_required` is a bitmask of features the loader asserts the
+ *      kernel MUST support. The kernel checks each set bit against
+ *      BOOT_CAP_MASK_KNOWN. If any required bit is not in the known
+ *      set, boot halts BEFORE Phase 0 consumes unsupported data. This
+ *      is the "stale kernel on newer loader" failure gate.
+ *   2. `caps_present` is a bitmask of features the loader ACTUALLY
+ *      populated. Bits here mean the companion fields (payload
+ *      descriptors, runtime services pointer, TPM event log, etc.)
+ *      are valid and non-zero. Unknown bits are ignored (forward
+ *      compatibility): older kernels can safely boot against newer
+ *      loaders.
+ *   3. `caps_degraded` is a bitmask of KNOWN capabilities the loader
+ *      could NOT provide. Alternate boot adapters (Multiboot2, PXE,
+ *      etc.) MUST set these bits for every feature they skipped, so
+ *      the kernel's per-subsystem init can log a specific
+ *      `capability degraded: <name>` reason instead of guessing from
+ *      zero-valued fields.
+ *
+ * The invariants (validated by boot_caps_validate):
+ *   - `caps_required & ~BOOT_CAP_MASK_KNOWN == 0` (no unknown required
+ *     bits)
+ *   - `caps_required & caps_degraded == 0` (required ^ degraded is a
+ *     producer bug: "required but not provided" is a hard fail)
+ *   - `caps_present & caps_degraded == 0` (same bit cannot be both
+ *     present and degraded; contradictory)
+ *   - Unknown bits in `caps_present` or `caps_degraded` are SILENTLY
+ *     IGNORED (forward compatibility; unknown-optional policy).
+ */
+#define BOOT_CAP_PAYLOAD_DESCRIPTORS  (1ull << 0)  /* typed payload descriptor array populated + validated */
+#define BOOT_CAP_RUNTIME_SERVICES     (1ull << 1)  /* uefi_runtime_services + uefi_rt_available set */
+#define BOOT_CAP_SECURE_BOOT_STATE    (1ull << 2)  /* secure_boot_enabled reflects firmware state */
+#define BOOT_CAP_TPM_EVENT_LOG        (1ull << 3)  /* tpm_event_log populated from EFI_TCG2_PROTOCOL */
+#define BOOT_CAP_USB_HANDOVER         (1ull << 4)  /* usb_controller.active + DMA state handed off */
+#define BOOT_CAP_MEDIA_ROLE           (1ull << 5)  /* boot_device classification + removable-media flags */
+#define BOOT_CAP_NETWORK_PROVENANCE   (1ull << 6)  /* reserved for network-boot provenance */
+#define BOOT_CAP_RESUME_METADATA      (1ull << 7)  /* reserved for hibernation/resume handoff */
+#define BOOT_CAP_ALT_PROTOCOL_ADAPTER (1ull << 8)  /* 1 = non-native-UEFI adapter (Multiboot2/etc.) */
+
+#define BOOT_CAP_MASK_KNOWN \
+    (BOOT_CAP_PAYLOAD_DESCRIPTORS   | BOOT_CAP_RUNTIME_SERVICES   | \
+     BOOT_CAP_SECURE_BOOT_STATE     | BOOT_CAP_TPM_EVENT_LOG      | \
+     BOOT_CAP_USB_HANDOVER          | BOOT_CAP_MEDIA_ROLE         | \
+     BOOT_CAP_NETWORK_PROVENANCE    | BOOT_CAP_RESUME_METADATA    | \
+     BOOT_CAP_ALT_PROTOCOL_ADAPTER)
+
+enum boot_caps_error {
+    BOOT_CAPS_ERR_OK                 = 0,
+    BOOT_CAPS_ERR_NULL_INFO          = 1,  /* info pointer is NULL */
+    BOOT_CAPS_ERR_UNKNOWN_REQUIRED   = 2,  /* caps_required has bits outside MASK_KNOWN */
+    BOOT_CAPS_ERR_REQUIRED_DEGRADED  = 3,  /* required bit is also set in caps_degraded */
+    BOOT_CAPS_ERR_PRESENT_DEGRADED   = 4,  /* caps_present & caps_degraded != 0 */
+    BOOT_CAPS_ERR_UNCLASSIFIED_KNOWN = 5,  /* a known bit is in NEITHER caps_present nor caps_degraded */
+};
+
+/* Validate capability words. On BOOT_FATAL the specific failure is
+ * written to *out_error (when non-NULL) and a LOG_FATAL line names
+ * the offending bitmask delta + classification. Called from Phase 0
+ * AFTER boot_payload_validate succeeds and BEFORE any subsystem
+ * consumes a capability-gated field. */
+boot_result_t boot_caps_validate(const struct boot_info *info,
+                                 enum boot_caps_error *out_error);
+
+/* Human-readable name for a single BOOT_CAP_* bit. Returns
+ * "reserved(0xNN)" for bits outside BOOT_CAP_MASK_KNOWN. */
+const char *boot_caps_bit_name(uint64_t cap_bit);
+
 const struct boot_payload_desc *
 boot_payload_find(const struct boot_info *info,
                   uint32_t type,
@@ -761,6 +835,12 @@ struct boot_info {
     uint32_t payload_count;         /* 0..BOOT_PAYLOAD_MAX; packed-prefix length */
     uint32_t payload_overflow;      /* 1 if bootloader had > BOOT_PAYLOAD_MAX payloads */
     uint64_t payload_total_bytes;   /* sum of length for all occupied slots */
+
+    /* Capability negotiation -- see BOOT_CAP_* bitmasks and
+     * boot_caps_validate() contract above. */
+    uint64_t caps_required;         /* bits loader asserts kernel MUST support */
+    uint64_t caps_present;          /* bits for features loader actually populated */
+    uint64_t caps_degraded;         /* known-but-not-provided bits (adapter degradation) */
 };
 
 /* Compile-time enforcement of ABI header layout (S15) */
