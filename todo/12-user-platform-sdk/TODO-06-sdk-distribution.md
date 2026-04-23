@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: sdk-distribution
+domain: 12-user-platform-sdk
+status: active
+title: "TODO-06 -- SDK Distribution & Developer Experience"
+---
+
 # TODO-06 -- SDK Distribution & Developer Experience
 
 > **Goal:** Package the SDK into a distributable ZIP, build developer tooling (sampling

@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: elf-reloc-kernel-modules
+domain: 12-user-platform-sdk
+status: active
+title: "TODO-03 -- ELF Relocations & Kernel Module System"
+---
+
 # TODO-03 -- ELF Relocations & Kernel Module System
 
 > **Goal:** Build the ELF relocation engine powering two subsystems: loadable kernel

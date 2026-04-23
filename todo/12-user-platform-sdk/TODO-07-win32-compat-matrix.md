@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: win32-compat-matrix
+domain: 12-user-platform-sdk
+status: active
+title: "TODO-07 -- Win32 Compatibility Matrix & Bring-Up Ladder"
+---
+
 # TODO-07 -- Win32 Compatibility Matrix & Bring-Up Ladder
 
 > **Goal:** Create the compatibility tracking system and progressive test-program

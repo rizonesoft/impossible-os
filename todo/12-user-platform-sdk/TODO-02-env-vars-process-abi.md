@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: env-vars-process-abi
+domain: 12-user-platform-sdk
+status: active
+title: "TODO-02 -- Environment Variables & Process ABI"
+---
+
 # TODO-02 -- Environment Variables & Process ABI
 
 > **Goal:** Wire the per-process environment, `%VAR%` expansion, file-association command

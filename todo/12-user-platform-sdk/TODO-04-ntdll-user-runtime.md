@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: ntdll-user-runtime
+domain: 12-user-platform-sdk
+status: active
+title: "TODO-04 -- NTDLL & User-Mode Runtime"
+---
+
 # TODO-04 -- NTDLL & User-Mode Runtime
 
 > **Goal:** Build `ntdll.dll` -- the user-mode runtime sitting between every Win32 program

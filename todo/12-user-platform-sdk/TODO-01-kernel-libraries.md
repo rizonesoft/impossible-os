@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: kernel-libraries
+domain: 12-user-platform-sdk
+status: active
+title: "TODO-01 -- Kernel Embedded Libraries"
+---
+
 # TODO-01 -- Kernel Embedded Libraries
 
 > **Goal:** Port and consolidate all embedded third-party libraries -- string/math libc,

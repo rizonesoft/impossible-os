@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: win32-subsystem
+domain: 12-user-platform-sdk
+status: active
+title: "TODO-05 -- Win32 Subsystem Server (CSRSS)"
+---
+
 # TODO-05 -- Win32 Subsystem Server (CSRSS)
 
 > **Goal:** Build the Win32 subsystem server that bridges user-mode processes and the
