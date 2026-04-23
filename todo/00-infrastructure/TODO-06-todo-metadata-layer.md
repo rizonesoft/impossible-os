@@ -42,7 +42,7 @@
 | 💎  |   3   |  §5     | Back-fill frontmatter across existing 86 TODO files      | §1, §2          |  [ ]   |
 | ⭐  |   4   |  §3     | Validator: stale XREF / dangling dep / orphan / cycle / bat / status / schema | §2 |  [ ]   |
 | ⭐  |   5   |  §4     | Query CLI: ready / blocked / blocking / backlinks / deferred / stale / stats / code | §2 |  [ ]   |
-| ⭐  |   6   |  §6     | CI gate on `todo/` commits + diff mode + auto-rewrite hook | §3, §4        |  [ ]   |
+| ⭐  |   6   |  §6     | CI gate on `todo/` commits + diff mode + auto-rewrite hook                          | §3, §4        |  [ ]   |
 | ⭐  |   7   |  §7     | Visualization output (mermaid / dot / ascii / gantt / markdown) | §2, §4    |  [ ]   |
 
 > 💎 = parity work -- Linux kernel has MAINTAINERS + get_maintainer.pl (person-ownership mapping without a dep graph); Windows has no public equivalent. §1 (frontmatter), §2 (generator), §5 (migration) bring us to partial Linux parity plus graph metadata neither OS ships.
@@ -76,6 +76,8 @@ Define the YAML frontmatter block that every TODO file MUST carry going forward.
 
 **Test checkpoint:** A human reading `docs/infrastructure/todo-metadata.md` can author a new TODO's frontmatter without guessing. The schema doc names all required + optional fields with examples, parsing rules, and id naming constraints. `docs/infrastructure/todo-metadata.schema.json` validates cleanly as JSON Schema Draft 2020-12 via `python3 -c 'import jsonschema; jsonschema.Draft202012Validator.check_schema(json.load(open(".../*.schema.json")))'`. No code yet for the generator -- pure spec + schema sidecar.
 
+---
+
 ## 2. Generator and Cache Format
 
 Build the parser that reads every TODO, extracts graph data, and emits a read-only cache. Markdown remains canonical; the cache is regenerated on demand and gitignored.
@@ -91,6 +93,8 @@ Build the parser that reads every TODO, extracts graph data, and emits a read-on
 - [ ] Commit: `"scripts/todo-graph: add cache generator (frontmatter + XREF extraction + git timestamps)"`
 
 **Test checkpoint:** `python3 scripts/todo-graph/build.py` succeeds in under 2s, emits `build/todo-cache.json` parseable by `python3 -c 'import json; json.load(open("build/todo-cache.json"))'`. Node count matches `find todo -name 'TODO-*.md' | wc -l`. Running twice with no source changes produces byte-identical output.
+
+---
 
 ## 3. Validator (stale XREF / dangling dep / orphan / cycle / bat / status / schema)
 
@@ -111,6 +115,8 @@ The validator consumes the cache and reports graph-integrity violations. This is
 - [ ] Commit: `"scripts/todo-graph: add validator (stale XREF, dangling dep, orphan, cycle, bat, status, schema)"`
 
 **Test checkpoint:** `python3 scripts/todo-graph/validate.py` on a clean repo exits 0 with `0 failures` summary. Artificially break an XREF (edit one `depends_on:` to reference a nonexistent id), validator exits 1 and prints the exact file + bad ref. `--fix-line-numbers` corrects a deliberately stale `(item: "..." at line N)` parenthetical back to the real line without changing any item names.
+
+---
 
 ## 4. Query CLI (ready / blocked / blocking / by-domain / backlinks / deferred / orphans / stale / stats / code)
 
@@ -136,6 +142,8 @@ Human-facing commands that answer "what can I work on?" and "what references thi
 
 **Test checkpoint:** `todo-graph ready` prints a non-empty list on a repo with at least one ready TODO. `todo-graph backlinks ai-development-system` lists every TODO that references it (expected: at least this TODO via `depends_on`, plus any other explicit XREFs). `todo-graph orphans` returns files that are genuinely unreferenced (should be a short list on a well-linked repo).
 
+---
+
 ## 5. Migration: Back-Fill Frontmatter on Existing TODOs
 
 One-time sweep that adds frontmatter to every existing TODO file without disturbing the content below. Mechanical, scripted, reviewable.
@@ -149,6 +157,8 @@ One-time sweep that adds frontmatter to every existing TODO file without disturb
 - [ ] Commit: `"todo: back-fill frontmatter across 14 domains (migration complete)"` (final commit; individual batches get per-domain commit messages)
 
 **Test checkpoint:** After migration, `find todo -name 'TODO-*.md' -not -name 'TODO-00-INDEX.md' | xargs -I{} head -1 {} | sort -u` shows only `---` (every TODO starts with frontmatter). `todo-graph validate` reports 0 "no-frontmatter" failures. Running the migration script a second time produces zero diff (idempotent).
+
+---
 
 ## 6. CI Gate and Make Target
 
@@ -164,6 +174,8 @@ Wire the validator into the repo's CI surface so graph drift is caught before hu
 - [ ] Commit: `"ci/todo-graph: gate todo/ commits on graph validation (with diff + auto-rewrite)"`
 
 **Test checkpoint:** `make todo-graph` on a clean repo exits 0. A PR that introduces a stale XREF fails the CI `todo-graph` step with a clear failure line naming the file and bad ref. Disabling the pre-push opt-in and pushing a bad ref still fails at PR time via the Actions workflow.
+
+---
 
 ## 7. Visualization Output (mermaid / graphviz / ascii / gantt / markdown)
 
@@ -209,6 +221,8 @@ Render the TODO dependency graph in formats GitHub, terminals, and external dash
 >
 > **MCP-server mode for AI agents** (taskmd 2026 ships `taskmd mcp start` for Claude / Cursor / Aider integration): out of scope for this TODO; deferred to a future TODO under `00-infrastructure` once the `query.py` surface stabilizes. The `$schema` sidecar (§1) already gives editor agents a structured surface; the MCP layer is the AI-agent-direct equivalent.
 
+---
+
 ## Unit Tests
 
 > Host-side tooling -- no kernel `test_runner_init()` wiring. Tests are bash + python scripts co-located with the generator/validator under `scripts/todo-graph/tests/`.
@@ -251,6 +265,8 @@ Render the TODO dependency graph in formats GitHub, terminals, and external dash
 - [ ] Commit: `"test/todo-graph: add generator + validator + query + render + schema tests"`
 
 > **Test runner:** `bash scripts/test-tooling.sh` (group: `test_todo_graph`) | expected: all `t_pass`, 0 `t_fail`. For host-side tests this replaces the kernel `scripts/debug/kernel/run-<cat>-tests.bat` pattern; the test surface is shell/python, not kernel C.
+
+---
 
 ## Verification
 
