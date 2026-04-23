@@ -318,7 +318,7 @@ Expose §4's query surface over the Model Context Protocol so Claude Code, Curso
 > - Downstream effects: closes the TODO-06 roadmap. §4's query surface is now accessible from any MCP-aware AI agent (Claude Code, Cursor, Aider, Windsurf, Zed, etc.) without per-agent prompt engineering. Agents discover the 12 tools via MCP's `list_tools` introspection; calling `stats` or `ready` returns the same JSON payload as the CLI. Combined with §7's clickable mermaid dashboard, contributors and agents share a common view of the dependency graph.
 > - Canonical doc: the script's module docstring + sub-test headers 13a-13c in `test_build.sh` + the new "Claude Code MCP Servers" subsection in `docs/infrastructure/development-tooling.md`.
 > - Scope boundary: this section ships the read-only transport + manifest + docs. Write operations (`mark-done`, `set-status`, `add-dependency`) are out of scope and stay manual via the markdown files. `render` is NOT exposed as an MCP tool today -- visualization is human-facing; adding it is a trivial one-liner if an agent ever needs it, but the read-only constraint explicitly scopes §8 to query subcommands.
-> **Verified:** 2026-04-23 | commit `<§8 commit>` | 9/9 items | 104/104 sub-tests PASS, 2 Codex rounds closed (4 findings fixed, 0 open)
+> **Verified:** 2026-04-23 | commit `d67a596c` | 9/9 items | 104/104 sub-tests PASS, 2 Codex rounds closed (4 findings fixed, 0 open)
 > **Quality reviewed:** 2026-04-23 | Codex 2x (adversarial, verify) | 1H+3M fixed, 0 open | scope: N/A (host-side Python tooling + optional MCP SDK, no kernel domain)
 
 ---
