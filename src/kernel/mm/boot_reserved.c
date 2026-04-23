@@ -137,26 +137,39 @@ boot_result_t boot_reserved_populate_from_info(const struct boot_info *info,
 
     /* 2. xHCI DMA pages (DCBAA, command ring, event ring, ERST, etc.).
      *    Each page is its own entry so overlap detection can flag a
-     *    producer bug that points two slots at the same page. */
+     *    producer bug that points two slots at the same page.
+     *
+     *    Bootloader caveat (src/boot/uefi/bootx64.c around line 4491):
+     *    the producer records `scratchpad_base_phys` in BOTH
+     *    `scratchpad_base_phys` and `dma_pages[]`. If we registered
+     *    both as-is, the 4 KiB DMA-page entry for sp_base_addr would
+     *    overlap the contiguous scratchpad entry that also covers
+     *    sp_base_addr+4096, failing populate on every xHCI system
+     *    with scratchpads. Skip the scratchpad base address from the
+     *    DMA-page loop; the scratchpad entry below covers it and all
+     *    remaining scratchpad pages. */
     if (info->usb_controller.active && info->usb_controller.dma_page_count > 0u) {
         uint32_t n = info->usb_controller.dma_page_count;
         if (n > BOOT_USB_MAX_DMA_PAGES)
             n = BOOT_USB_MAX_DMA_PAGES;
+        uint64_t sp_base = info->usb_controller.scratchpad_base_phys;
+        uint32_t sp_count = info->usb_controller.scratchpad_page_count;
+        int have_scratchpad = (sp_base != 0u && sp_count > 0u);
         uint32_t u;
         for (u = 0u; u < n; u++) {
             uint64_t page = info->usb_controller.dma_pages[u];
             if (page == 0u)
                 continue;  /* zero = unused slot */
+            if (have_scratchpad && page == sp_base)
+                continue;  /* scratchpad covers this page below */
             if (add_or_fatal(page, 4096ull,
                              BOOT_RESERVED_USB_DMA_PAGE, u, out_err) != BOOT_OK)
                 return BOOT_FATAL;
         }
         /* 3. xHCI scratchpad contiguous pages. */
-        if (info->usb_controller.scratchpad_base_phys != 0u &&
-            info->usb_controller.scratchpad_page_count > 0u) {
-            uint64_t slen = (uint64_t)info->usb_controller.scratchpad_page_count
-                            * 4096ull;
-            if (add_or_fatal(info->usb_controller.scratchpad_base_phys, slen,
+        if (have_scratchpad) {
+            uint64_t slen = (uint64_t)sp_count * 4096ull;
+            if (add_or_fatal(sp_base, slen,
                              BOOT_RESERVED_USB_SCRATCHPAD, 0u, out_err) != BOOT_OK)
                 return BOOT_FATAL;
         }
@@ -197,7 +210,21 @@ boot_result_t boot_reserved_populate_from_info(const struct boot_info *info,
             const struct boot_rt_mem_entry *rt = &info->rt_mmap[i];
             if (rt->phys_addr == 0u || rt->num_pages == 0u)
                 continue;
-            uint64_t rt_len = (uint64_t)rt->num_pages * 4096ull;
+            /* num_pages is uint64_t; multiplying by 4096 without a
+             * pre-guard can wrap. A producer bug or corrupt handoff
+             * with num_pages above UINT64_MAX / 4096 would land a tiny
+             * reservation and leave the rest of the runtime region
+             * free for reclaim -- silent corruption when
+             * SetVirtualAddressMap later touches it. */
+            if (rt->num_pages > ((uint64_t)-1 / 4096ull)) {
+                if (out_err != (enum boot_reserved_error *)0)
+                    *out_err = BOOT_RESERVED_ERR_RANGE_WRAP;
+                klog(LOG_ERROR, "mm",
+                     "boot_reserved: rt_mmap[%u] num_pages=%u wraps on *4096",
+                     (uint64_t)i, rt->num_pages);
+                return BOOT_FATAL;
+            }
+            uint64_t rt_len = rt->num_pages * 4096ull;
             if (add_or_fatal(rt->phys_addr, rt_len,
                              BOOT_RESERVED_RT_MMAP, i, out_err) != BOOT_OK)
                 return BOOT_FATAL;

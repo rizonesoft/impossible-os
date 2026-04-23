@@ -160,6 +160,58 @@ static void test_boot_reserved_range_wrap_rejected(void)
                    "err=RANGE_WRAP");
 }
 
+static void test_boot_reserved_xhci_scratchpad_no_self_overlap(void)
+{
+    br_zero_fixture();
+
+    /* Model the real bootloader handoff: scratchpad_base_phys is
+     * ALSO recorded in dma_pages[] (src/boot/uefi/bootx64.c near
+     * line 4491). Without the de-dup guard, populate would register
+     * sp_base as a 4 KiB DMA page AND as the first 4 KiB of the
+     * scratchpad contiguous region -> overlap -> fatal on every
+     * xHCI system. This test locks the correct behavior: both
+     * entries are accepted and the scratchpad entry covers
+     * sp_base alone. */
+    s_br_buf.usb_controller.active                = 1;
+    s_br_buf.usb_controller.dma_page_count        = 3u;
+    s_br_buf.usb_controller.dma_pages[0]          = 0x200000ull;  /* DCBAA */
+    s_br_buf.usb_controller.dma_pages[1]          = 0x201000ull;  /* cmd ring */
+    s_br_buf.usb_controller.dma_pages[2]          = 0x202000ull;  /* sp_base also here */
+    s_br_buf.usb_controller.scratchpad_base_phys  = 0x202000ull;
+    s_br_buf.usb_controller.scratchpad_page_count = 2u;           /* 8 KiB total */
+
+    enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
+    boot_result_t r = boot_reserved_populate_from_info(&s_br_buf, &err);
+
+    TEST_ASSERT_EQ((int)r, (int)BOOT_OK,
+                   "xHCI scratchpad self-overlap de-duped");
+    TEST_ASSERT_EQ((int)err, (int)BOOT_RESERVED_ERR_OK, "err=OK");
+    /* Expect: boot_info + 2 DMA pages (DCBAA, cmd ring; sp_base skipped)
+     * + 1 scratchpad entry = 4 regions. */
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_count(), (unsigned long)4,
+                   "sp_base de-duped from DMA loop");
+}
+
+static void test_boot_reserved_rt_mmap_num_pages_wrap(void)
+{
+    TEST_KLOG_SUPPRESS("mm");
+    br_zero_fixture();
+
+    /* num_pages above UINT64_MAX / 4096 wraps on multiplication. A
+     * naive implementation would happily record a tiny length and
+     * leave the rest of the runtime range free. The validator must
+     * catch this before the multiply. */
+    s_br_buf.rt_mmap_count = 1u;
+    s_br_buf.rt_mmap[0].phys_addr = 0x100000000ull;
+    s_br_buf.rt_mmap[0].num_pages = ((uint64_t)-1 / 4096ull) + 1ull;
+
+    enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
+    boot_result_t r = boot_reserved_populate_from_info(&s_br_buf, &err);
+    TEST_ASSERT_EQ((int)r, (int)BOOT_FATAL, "num_pages wrap rejected");
+    TEST_ASSERT_EQ((int)err, (int)BOOT_RESERVED_ERR_RANGE_WRAP,
+                   "err=RANGE_WRAP (pre-multiply)");
+}
+
 static void test_boot_reserved_rt_mmap_count_oor(void)
 {
     TEST_KLOG_SUPPRESS("mm");
@@ -237,6 +289,12 @@ void test_register_boot_reserved(void)
                             TEST_CAT_BOOT);
     test_suite_register_cat("boot_reserved: rt_mmap count OOR",
                             test_boot_reserved_rt_mmap_count_oor,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("boot_reserved: rt_mmap num_pages wrap",
+                            test_boot_reserved_rt_mmap_num_pages_wrap,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("boot_reserved: xHCI scratchpad self-overlap",
+                            test_boot_reserved_xhci_scratchpad_no_self_overlap,
                             TEST_CAT_BOOT);
     test_suite_register_cat("boot_reserved: NULL info rejected",
                             test_boot_reserved_null_info, TEST_CAT_BOOT);

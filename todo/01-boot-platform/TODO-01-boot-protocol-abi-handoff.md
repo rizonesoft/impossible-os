@@ -238,7 +238,7 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 
 **Test checkpoint:** Early PMM logs enumerate every retained boot region exactly once, overlap attempts fail before free-memory handoff, and BlackBox captures the reservation dump for post-boot inspection. Verify the reservation table on QEMU WHPX, QEMU TCG, VirtualBox, and bare metal.
 
-> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 439 kernel + 16 user-mode PASS on KVM 2026-04-23 (7 new `boot_reserved:` assertions covering happy path, FLAG_RESERVED filter, overlap, range wrap, rt_mmap OOR, NULL info, payload-vs-PMM-internal); smoke PASS 2.260s on KVM
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 444 kernel + 16 user-mode PASS on KVM 2026-04-23 (9 `boot_reserved:` assertions covering happy path, FLAG_RESERVED filter, overlap, range wrap, rt_mmap OOR, NULL info, payload-vs-PMM-internal, rt_mmap num_pages multiplication wrap, xHCI scratchpad self-overlap de-dup); smoke PASS 2.090s on KVM
 
 > **Notes:**
 > - **What shipped**: `include/kernel/mm/boot_reserved.h` + `src/kernel/mm/boot_reserved.c` (~330 LOC). A single file-static `s_table[128]` of `struct boot_reserved_region` (phys_start, length, kind, source_index). Seven region kinds: `BOOT_INFO`, `USB_DMA_PAGE`, `USB_SCRATCHPAD`, `TPM_EVENT_LOG`, `FRAMEBUFFER`, `RT_MMAP`, `PAYLOAD`. Six error classes covering overlap, range wrap, count OOR, NULL info, zero length.
@@ -247,8 +247,8 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 > - **Canonical doc**: `include/kernel/mm/boot_reserved.h` (API contract + failure modes).
 > - **Scope boundary**: §6 does NOT describe the first 1 MiB / kernel image / bitmap / USER_ELF in the table -- those are PMM-internal and reserved by the existing direct `pmm_mark_region_used()` calls in `pmm_init`. The table scope is strictly boot_info-derived regions per the spec's item-2 list. "Survival logs" in that list refers to the klog disk buffer, which is written live to `X:\Diag\klog.txt` by the existing klog disk writer and does not need a RAM reservation.
 
-> **Verified:** 2026-04-23 | commit `9fb4ccc8` | 5/5 items | build OK | 439 kernel + 16 user-mode PASS on KVM, smoke PASS 2.260s
-> **Quality reviewed:** 2026-04-23 | Codex 1x (adversarial) | 1H fixed (payload vs PMM-internal overlap check) + 1M fixed (64-bit phys/length via %llx in JSON dump), 0 open | scope: kernel-code-quality
+> **Verified:** 2026-04-23 | commit `9fb4ccc8` | 5/5 items | build OK | 444 kernel + 16 user-mode PASS on KVM, smoke PASS 2.090s
+> **Quality reviewed:** 2026-04-23 | Codex 3x (implement-adversarial + review-adversarial + review-quality) | 3H fixed (payload vs PMM-internal overlap check, rt_mmap num_pages u64*4096 pre-multiply wrap, xHCI scratchpad self-overlap dedupe) + 1M fixed (64-bit phys/length via %llx in JSON dump), 0 open | scope: kernel-code-quality
 
 ---
 
