@@ -95,11 +95,22 @@ static int range_end_overflows(uint64_t start, uint64_t len)
     return len > (uint64_t)-1 - start;
 }
 
-static int descriptor_is_occupied(const struct boot_payload_desc *d)
+/* A valid empty slot is type=NONE with every other field zero. Any
+ * deviation is ABI drift: a bootloader bug setting random bytes in an
+ * unused slot, or a future field being populated without a matching
+ * type enum assignment. Either way the validator must reject it so
+ * the invariant "NONE means empty" stays intact for type-keyed
+ * consumers that scan the full array. */
+static int descriptor_is_empty_slot(const struct boot_payload_desc *d)
 {
-    if (d == (const struct boot_payload_desc *)0)
-        return 0;
-    return d->length != 0u || d->type != (uint32_t)BOOT_PAYLOAD_NONE;
+    return d->type == (uint32_t)BOOT_PAYLOAD_NONE &&
+           d->flags == 0u &&
+           d->phys_start == 0u &&
+           d->length == 0u &&
+           d->alignment == 0u &&
+           d->checksum == 0u &&
+           d->producer_id == 0u &&
+           d->_reserved == 0u;
 }
 
 static int type_is_known(uint32_t type)
@@ -285,30 +296,40 @@ boot_result_t boot_payload_validate(const struct boot_info *info,
         return BOOT_FATAL;
     }
 
-    /* §2 packed-prefix: scan the FULL array. Any occupied slot past
-     * payload_count is a rejected invariant violation -- this closes
-     * the footgun where consumers scan the full array while the
-     * validator only walked payload_count. */
+    /* §2 packed-prefix + NONE-emptiness: scan the FULL array.
+     *
+     * The ABI contract is now two-part:
+     *   (a) Every type=BOOT_PAYLOAD_NONE slot MUST be fully zero --
+     *       anywhere in the array, including past payload_count. A
+     *       NONE slot with residual flags / phys_start / length /
+     *       alignment is ABI drift and gets rejected so type-keyed
+     *       consumers cannot be tricked into skipping a slot that
+     *       actually carries metadata.
+     *   (b) Every type != NONE slot MUST be inside the packed prefix
+     *       (i < payload_count). An occupied slot past payload_count
+     *       is a rejected invariant violation -- this closes the
+     *       footgun where consumers scan the full array while the
+     *       validator only walked payload_count. */
     for (i = 0u; i < BOOT_PAYLOAD_MAX; i++) {
         const struct boot_payload_desc *d = &info->payload_descriptors[i];
-        int occupied = descriptor_is_occupied(d);
 
-        if (i >= info->payload_count) {
-            if (occupied) {
-                payload_log_failure(i, BOOT_PAYLOAD_ERR_PREFIX_VIOLATED, d);
+        if (d->type == (uint32_t)BOOT_PAYLOAD_NONE) {
+            /* NONE slot: must be FULLY zero regardless of position. */
+            if (!descriptor_is_empty_slot(d)) {
+                payload_log_failure(i, BOOT_PAYLOAD_ERR_NONE_NOT_EMPTY, d);
                 if (out_error != (enum boot_payload_error *)0)
-                    *out_error = BOOT_PAYLOAD_ERR_PREFIX_VIOLATED;
+                    *out_error = BOOT_PAYLOAD_ERR_NONE_NOT_EMPTY;
                 return BOOT_FATAL;
             }
             continue;
         }
 
-        if (!occupied) {
-            /* Empty slot within the packed prefix is allowed -- lets a
-             * producer signal "slot reserved but payload deferred"
-             * without shifting indices. payload_total_bytes will not
-             * include it (length == 0). */
-            continue;
+        /* type != NONE: must be inside the packed prefix. */
+        if (i >= info->payload_count) {
+            payload_log_failure(i, BOOT_PAYLOAD_ERR_PREFIX_VIOLATED, d);
+            if (out_error != (enum boot_payload_error *)0)
+                *out_error = BOOT_PAYLOAD_ERR_PREFIX_VIOLATED;
+            return BOOT_FATAL;
         }
 
         /* §3a range overflow. phys_start + length must fit uint64_t. */

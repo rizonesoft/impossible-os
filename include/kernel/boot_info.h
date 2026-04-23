@@ -130,6 +130,14 @@ enum boot_payload_error {
     BOOT_PAYLOAD_ERR_UNKNOWN_FLAGS       = 10, /* unknown flag bits with FLAG_REQUIRED set */
     BOOT_PAYLOAD_ERR_TOTAL_MISMATCH      = 11, /* payload_total_bytes != recomputed sum */
     BOOT_PAYLOAD_ERR_OVERFLOW_TRUNCATED  = 12, /* payload_overflow != 0 -- producer dropped payloads */
+    BOOT_PAYLOAD_ERR_NONE_NOT_EMPTY      = 13, /* type=NONE but slot carries
+                                                * data (any of flags,
+                                                * phys_start, length,
+                                                * alignment, checksum,
+                                                * producer_id, _reserved
+                                                * non-zero); ABI contract
+                                                * requires NONE == fully
+                                                * zeroed empty slot. */
 };
 
 /* Forward declaration so the validator prototype can reference
@@ -568,14 +576,17 @@ enum boot_payload_producer {
 };
 
 struct boot_payload_desc {
-    uint32_t type;         /* enum boot_payload_type (u32 for ABI stability) */
-    uint32_t flags;        /* BOOT_PAYLOAD_FLAG_* bitmask */
-    uint64_t phys_start;   /* physical address of payload */
-    uint64_t length;       /* size in bytes; 0 or type=BOOT_PAYLOAD_NONE = empty slot */
-    uint64_t alignment;    /* required natural alignment (power of 2); 0 = none */
-    uint64_t checksum;     /* CRC-32C in low 32 bits if FLAG_CHECKSUMMED; else 0 */
-    uint32_t producer_id;  /* enum boot_payload_producer */
-    uint32_t _reserved;    /* pad to 48 bytes */
+    /* enum boot_payload_type (u32 for ABI stability).
+     * type=BOOT_PAYLOAD_NONE means empty slot; ALL other fields MUST be
+     * zero or the validator rejects with BOOT_PAYLOAD_ERR_NONE_NOT_EMPTY. */
+    uint32_t type;
+    uint32_t flags;        /* BOOT_PAYLOAD_FLAG_* bitmask; must be 0 when type=NONE */
+    uint64_t phys_start;   /* physical address of payload; must be 0 when type=NONE */
+    uint64_t length;       /* size in bytes; must be 0 when type=NONE */
+    uint64_t alignment;    /* required natural alignment (power of 2); 0 = none. Must be 0 when type=NONE. */
+    uint64_t checksum;     /* CRC-32C in low 32 bits if FLAG_CHECKSUMMED; else 0. Must be 0 when type=NONE. */
+    uint32_t producer_id;  /* enum boot_payload_producer; must be 0 when type=NONE */
+    uint32_t _reserved;    /* pad to 48 bytes; must be 0 always */
 };
 
 _Static_assert(sizeof(struct boot_payload_desc) == 48,

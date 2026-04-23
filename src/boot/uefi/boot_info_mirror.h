@@ -373,9 +373,21 @@ struct boot_info {
     UINT32  hv_flags;
     char    hv_vendor[16];
 
-    /* Typed payload descriptor array (§4). packed-prefix invariant:
-     * payload_count is the prefix length; occupied slots beyond that
-     * index are rejected by the kernel validator. */
+    /* Typed payload descriptor array (§4). Two invariants enforced by
+     * the kernel validator (see boot_payload_validate() in
+     * src/kernel/main/boot_payload.c; contract lives in the kernel
+     * header):
+     *   (1) Packed-prefix: type != BOOT_PAYLOAD_NONE only inside
+     *       [0, payload_count). An occupied slot past payload_count is
+     *       rejected (BOOT_PAYLOAD_ERR_PREFIX_VIOLATED).
+     *   (2) NONE-is-empty: type == BOOT_PAYLOAD_NONE MUST have every
+     *       other field zero (flags, phys_start, length, alignment,
+     *       checksum, producer_id, _reserved). Residual metadata in a
+     *       NONE slot is rejected (BOOT_PAYLOAD_ERR_NONE_NOT_EMPTY).
+     * The current UEFI bootloader satisfies both trivially: it emits
+     * payload_count=0 after the full efi_memset(g_boot_info_ptr, 0,
+     * sizeof(struct boot_info)) at handoff alloc time. Any future
+     * producer must uphold both invariants before publishing. */
     struct boot_payload_desc payload_descriptors[BOOT_PAYLOAD_MAX];
     UINT32  payload_count;
     UINT32  payload_overflow;

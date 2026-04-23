@@ -604,6 +604,76 @@ static void test_payload_empty_slot_in_prefix(void)
                    "err=OK (empty slot in prefix)");
 }
 
+static void test_payload_none_with_length_rejected(void)
+{
+    TEST_KLOG_SUPPRESS("boot");
+    enum boot_payload_error err = BOOT_PAYLOAD_ERR_OK;
+
+    bi_payload_zero();
+    /* ABI contract: type=BOOT_PAYLOAD_NONE means empty slot. A descriptor
+     * with type=NONE but non-zero length is ABI drift -- the old code path
+     * treated it as occupied and silently validated it, but type-keyed
+     * consumers would skip it entirely. Reject at the validator. */
+    s_test_buf.payload_count              = 1;
+    s_test_buf.payload_descriptors[0].type       = BOOT_PAYLOAD_NONE;
+    s_test_buf.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
+    s_test_buf.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
+    s_test_buf.payload_descriptors[0].length     = SAFE_PAYLOAD_LEN;
+    s_test_buf.payload_total_bytes        = SAFE_PAYLOAD_LEN;
+
+    TEST_ASSERT_EQ(boot_payload_validate(&s_test_buf, &err), BOOT_FATAL,
+                   "type=NONE with non-zero length rejected");
+    TEST_ASSERT_EQ((int)err, (int)BOOT_PAYLOAD_ERR_NONE_NOT_EMPTY,
+                   "err=NONE_NOT_EMPTY");
+}
+
+static void test_payload_none_with_flags_rejected(void)
+{
+    TEST_KLOG_SUPPRESS("boot");
+    enum boot_payload_error err = BOOT_PAYLOAD_ERR_OK;
+
+    bi_payload_zero();
+    /* type=NONE + length=0 but flags != 0 -- must still be rejected.
+     * A lenient validator that only checked 'length != 0' would let this
+     * pass as an empty slot while the flags carry unchecked metadata. */
+    s_test_buf.payload_count                  = 1;
+    s_test_buf.payload_descriptors[0].type    = BOOT_PAYLOAD_NONE;
+    s_test_buf.payload_descriptors[0].flags   = BOOT_PAYLOAD_FLAG_REQUIRED;
+    /* all other fields stay zero */
+
+    TEST_ASSERT_EQ(boot_payload_validate(&s_test_buf, &err), BOOT_FATAL,
+                   "type=NONE + length=0 + flags!=0 rejected");
+    TEST_ASSERT_EQ((int)err, (int)BOOT_PAYLOAD_ERR_NONE_NOT_EMPTY,
+                   "err=NONE_NOT_EMPTY (flags smuggling)");
+}
+
+static void test_payload_none_past_prefix_with_phys_start_rejected(void)
+{
+    TEST_KLOG_SUPPRESS("boot");
+    enum boot_payload_error err = BOOT_PAYLOAD_ERR_OK;
+
+    bi_payload_zero();
+    /* Slot 0 inside packed prefix, slot 1 past payload_count with
+     * type=NONE, length=0, but non-zero phys_start. The old loop
+     * treated this as 'unoccupied, skip' -- the new loop rejects any
+     * NONE slot that is not fully zeroed, regardless of position. */
+    s_test_buf.payload_count              = 1;
+    s_test_buf.payload_descriptors[0].type       = BOOT_PAYLOAD_MODULE;
+    s_test_buf.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
+    s_test_buf.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
+    s_test_buf.payload_descriptors[0].length     = SAFE_PAYLOAD_LEN;
+    s_test_buf.payload_total_bytes        = SAFE_PAYLOAD_LEN;
+
+    /* Slot 1 past prefix -- type NONE + length 0 but phys_start set */
+    s_test_buf.payload_descriptors[1].type       = BOOT_PAYLOAD_NONE;
+    s_test_buf.payload_descriptors[1].phys_start = 0xDEADBEEFull;
+
+    TEST_ASSERT_EQ(boot_payload_validate(&s_test_buf, &err), BOOT_FATAL,
+                   "type=NONE past prefix with phys_start!=0 rejected");
+    TEST_ASSERT_EQ((int)err, (int)BOOT_PAYLOAD_ERR_NONE_NOT_EMPTY,
+                   "err=NONE_NOT_EMPTY (past-prefix smuggling)");
+}
+
 static void test_payload_desc_size_pin(void)
 {
     /* Guard against any accidental change to boot_payload_desc layout.
@@ -809,6 +879,12 @@ void test_register_boot_info(void)
                             test_payload_two_descriptors_ok, TEST_CAT_BOOT);
     test_suite_register_cat("boot_payload: empty slot in prefix",
                             test_payload_empty_slot_in_prefix, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_payload: NONE with length rejected",
+                            test_payload_none_with_length_rejected, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_payload: NONE with flags rejected",
+                            test_payload_none_with_flags_rejected, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_payload: NONE past prefix with phys_start rejected",
+                            test_payload_none_past_prefix_with_phys_start_rejected, TEST_CAT_BOOT);
     test_suite_register_cat("boot_payload: desc size pin",
                             test_payload_desc_size_pin, TEST_CAT_BOOT);
     test_suite_register_cat("boot_payload: phys not aligned",
