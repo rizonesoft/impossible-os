@@ -6,6 +6,7 @@ CompileFlags:
   Add:
     - "--target=x86_64-elf"
     - "-nostdlib"
+    - "-nostdinc"
     - "-ffreestanding"
     - "-mno-red-zone"
 

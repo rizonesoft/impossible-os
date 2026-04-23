@@ -20,19 +20,8 @@
 #
 # Claude Code wiring: .mcp.json (repo root) registers the `todo-graph`
 # entry via `python3 scripts/todo-graph/mcp_server.py`. Verify with
-# `claude mcp list`. Cursor: copy the cursor.json snippet below into
-# ~/.cursor/mcp.json.
-#
-# Cursor snippet (drop into ~/.cursor/mcp.json):
-#   {
-#     "mcpServers": {
-#       "todo-graph": {
-#         "command": "python3",
-#         "args": ["scripts/todo-graph/mcp_server.py"],
-#         "cwd": "/path/to/impossible-os"
-#       }
-#     }
-#   }
+# `claude mcp list`. Other MCP-aware agents can register via the
+# standard `mcpServers` block in scripts/todo-graph/mcp.json.
 #
 # Cache freshness: every tool call checks build/todo-cache.json mtime
 # vs the newest todo/**/*.md mtime. On mismatch, it regenerates by

@@ -48,6 +48,7 @@ title: "TODO-02 -- AI Development System"
 - [`CONTRIBUTING.md`](../../CONTRIBUTING.md) -- contributor-facing doc; candidate home for the §7 zero-trailer commit policy
 - -> XREF: [`00-infrastructure/TODO-01 §5`](TODO-01-developer-tooling-stack.md#5-git-hooks-and-local-automation-lifecycle) -- git hook lifecycle and CI/tooling contract (distinct from Claude Code harness hooks in `.claude/settings.json`)
 - -> XREF: [`00-infrastructure/TODO-03`](TODO-03-kernel-test-harness.md) -- kernel test harness (separate from the AI workflow regression pack owned here)
+- -> XREF: [`00-infrastructure/TODO-07 §7, §9`](TODO-07-lsp-mcp-bridge.md#7-six-mcp-tools-hover-definition-references-diagnostics-workspacedocument-symbol) -- new read-only MCP server (`lsp-bridge`); its repo-tracked `.claude/mcp.json` manifest and grep-audit boundary are the concrete compliance case for §5's MCP server boundary and §8's autonomous-agent read-only allowance. §7 defines the six read-only tools; §9 wires the manifest + boundary audit.
 - External reference: [Linux kernel Documentation/process/coding-assistants.rst](https://docs.kernel.org/process/coding-assistants.html) -- 2025-12 precedent for `Assisted-by:` trailers; §7 documents Impossible OS's deliberate divergence.
 - External reference: [AGENTS.md open standard](https://agents.md/) -- Linux Foundation-stewarded cross-tool instruction file; §6 adopts the convention.
 

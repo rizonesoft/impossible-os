@@ -44,6 +44,12 @@ This domain tracks the tooling and workflow work that supports the whole project
   on every TODO file + generator/validator/query CLI that builds a derived graph cache. Fixes
   the renumbering-drift and stale-XREF pain exposed by TODO-02 §1-§3 work. Canonical markdown
   stays authoritative; the cache is a read-only projection.
+- [TODO-07 LSP to MCP Bridge](./TODO-07-lsp-mcp-bridge.md) - Host-side MCP server that proxies
+  five language servers (clangd for C/H, asm-lsp for NASM, bash-language-server, pyright,
+  PowerShellEditorServices) and exposes six read-only MCP tools (hover, definition, references,
+  diagnostics, workspace-symbol, document-symbol). Gives Claude Code + any MCP-aware agent
+  compiler-grade code intelligence across every language the repo uses. XREFs: TODO-01 §1
+  (dep tier), TODO-02 §5/§8 (MCP + autonomous-agent boundary), TODO-06 §8 (FastMCP precedent).
 
 ## Completed / Doc-converted
 

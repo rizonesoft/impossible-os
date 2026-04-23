@@ -2,8 +2,7 @@
   "//": "MCP server manifest for scripts/todo-graph/mcp_server.py (TODO-06 §8).",
   "//1": "Exposes the read-only query surface (ready/blocked/blocking/by-domain/",
   "//2": "backlinks/deferred/deferred-by/orphans/stale/stats/code/code-by) as MCP",
-  "//3": "tools. Claude Code loads this via .claude/mcp.json pointing at this file.",
-  "//4": "Cursor users can copy `mcpServers.todo-graph` into ~/.cursor/mcp.json.",
+  "//3": "tools. Claude Code loads this via .mcp.json pointing at this file.",
   "mcpServers": {
     "todo-graph": {
       "command": "python3",

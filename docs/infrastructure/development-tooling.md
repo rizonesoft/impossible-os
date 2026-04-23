@@ -257,7 +257,7 @@ scripts/debug/
 
 ## Overview
 
-Impossible OS uses a single-script build system (`bash scripts/build.sh`) that wraps a Makefile-based pipeline. The toolchain is Clang-19/LLD-19 targeting `x86_64-elf` in freestanding mode. The development environment includes incremental builds with parallel compilation, automated QEMU testing, a kernel unit test framework, an asset pipeline with validation, and code intelligence via clangd + Srclight.
+Impossible OS uses a single-script build system (`bash scripts/build.sh`) that wraps a Makefile-based pipeline. The toolchain is Clang-19/LLD-19 targeting `x86_64-elf` in freestanding mode. The development environment includes incremental builds with parallel compilation, automated QEMU testing, a kernel unit test framework, an asset pipeline with validation, and code intelligence via clangd (LSP).
 
 ```mermaid
 graph TD
@@ -992,8 +992,6 @@ bash scripts/todo-graph/mcp_server.py --self-test   # prints `OK: 12 tools regis
 ```
 
 The MCP SDK is OPTIONAL per [`scripts/setup-deps.sh`](../../scripts/setup-deps.sh); without it the server exits cleanly and Claude Code simply lists zero tools. `make todo-graph-mcp` launches the stdio server in the foreground for ad-hoc testing.
-
-**Cursor:** copy the `mcpServers` block from [`scripts/todo-graph/mcp.json`](../../scripts/todo-graph/mcp.json) into `~/.cursor/mcp.json`.
 
 **Read-only by design.** `mark-done`, `set-status`, `add-dependency` are NOT exposed; write operations stay manual via the markdown files. The cache freshness check rebuilds `build/todo-cache.json` in-process on every tool call when a `todo/**/*.md` file is newer than the cache (~0.5s budget; bounded by `build.py`'s existing perf gate).
 

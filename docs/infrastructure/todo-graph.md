@@ -27,6 +27,9 @@ flowchart TD
   todo_00_infrastructure_TODO_06_todo_metadata_layer_md_2681a1["todo-metadata-layer<br/>TODO-06"]
   class todo_00_infrastructure_TODO_06_todo_metadata_layer_md_2681a1 active
   click todo_00_infrastructure_TODO_06_todo_metadata_layer_md_2681a1 "https://github.com/rizonesoft/impossible-os/blob/main/todo/00-infrastructure/TODO-06-todo-metadata-layer.md"
+  todo_00_infrastructure_TODO_07_lsp_mcp_bridge_md_38ff90["lsp-mcp-bridge<br/>TODO-07"]
+  class todo_00_infrastructure_TODO_07_lsp_mcp_bridge_md_38ff90 draft
+  click todo_00_infrastructure_TODO_07_lsp_mcp_bridge_md_38ff90 "https://github.com/rizonesoft/impossible-os/blob/main/todo/00-infrastructure/TODO-07-lsp-mcp-bridge.md"
   todo_01_boot_platform_TODO_01_boot_protocol_abi_handoff_md_27e791["boot-protocol-abi-handoff<br/>TODO-01"]
   class todo_01_boot_platform_TODO_01_boot_protocol_abi_handoff_md_27e791 active
   click todo_01_boot_platform_TODO_01_boot_protocol_abi_handoff_md_27e791 "https://github.com/rizonesoft/impossible-os/blob/main/todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md"
@@ -680,6 +683,14 @@ flowchart TD
   click todo_18_future_research_TODO_06_android_app_compatibility_md_178c48 "https://github.com/rizonesoft/impossible-os/blob/main/todo/18-future-research/TODO-06-android-app-compatibility.md"
   todo_00_infrastructure_TODO_03_kernel_test_harness_md_ce30cb -.->|accepted| todo_02_kernel_core_TODO_05_object_manager_md_832dce
   todo_00_infrastructure_TODO_03_kernel_test_harness_md_ce30cb -.->|accepted| todo_02_kernel_core_TODO_05_object_manager_md_832dce
+  todo_00_infrastructure_TODO_04_usermode_test_framework_md_e9b087 -.->|accepted| todo_03_memory_concurrency_TODO_06_scheduler_enhancement_md_6ebc55
+  todo_00_infrastructure_TODO_04_usermode_test_framework_md_e9b087 -.->|accepted| todo_03_memory_concurrency_TODO_06_scheduler_enhancement_md_6ebc55
+  todo_00_infrastructure_TODO_04_usermode_test_framework_md_e9b087 -.->|deferred| todo_03_memory_concurrency_TODO_06_scheduler_enhancement_md_6ebc55
+  todo_00_infrastructure_TODO_04_usermode_test_framework_md_e9b087 -.->|deferred| todo_03_memory_concurrency_TODO_06_scheduler_enhancement_md_6ebc55
+  todo_00_infrastructure_TODO_04_usermode_test_framework_md_e9b087 -.->|accepted| todo_02_kernel_core_TODO_15_security_reference_monitor_md_0a75cb
+  todo_00_infrastructure_TODO_04_usermode_test_framework_md_e9b087 -.->|accepted| todo_02_kernel_core_TODO_05_object_manager_md_832dce
+  todo_00_infrastructure_TODO_04_usermode_test_framework_md_e9b087 -.->|accepted| todo_02_kernel_core_TODO_15_security_reference_monitor_md_0a75cb
+  todo_00_infrastructure_TODO_04_usermode_test_framework_md_e9b087 -.->|accepted| todo_02_kernel_core_TODO_15_security_reference_monitor_md_0a75cb
   todo_00_infrastructure_TODO_04_usermode_test_framework_md_e9b087 -.->|accepted| todo_02_kernel_core_TODO_17_binary_system_md_ae6ab8
   todo_00_infrastructure_TODO_05_desktop_ui_test_framework_md_e8b1df -.->|accepted| todo_09_desktop_shell_TODO_14_desktop_test_late_phase_harness_md_b895a6
   todo_00_infrastructure_TODO_05_desktop_ui_test_framework_md_e8b1df -.->|accepted| todo_09_desktop_shell_TODO_14_desktop_test_late_phase_harness_md_b895a6
