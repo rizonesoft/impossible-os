@@ -911,6 +911,212 @@ else
     t_fail "validate: \$schema escape-path check broken (rc=$V_RC, out=$V_OUT)"
 fi
 
+# Sub-test 8k: multi-XREF stamp line. Each (item: ...) clause must bind
+# to its OWN -> XREF: target, not the first one on the line. Codex pass
+# 8 H1: fix_line_numbers previously used a single re.search for the
+# whole line, so the second clause resolved against the first target
+# (wrong file). Codex pass 9 H2 strengthens this test: targets place
+# their items at DIFFERENT line numbers so wrong-binding produces wrong
+# number; oracle asserts EXACT rewritten text, not just "999 absent".
+V_TREE="$TMP_DIR/v-multi-xref"
+v_run "$V_TREE"
+mkdir -p "$V_TREE/todo/01-test"
+# TODO-01 target: Alpha item sits at line 11 (after 10 lines of header).
+cat > "$V_TREE/todo/01-test/TODO-01-atgt.md" <<'EOF'
+# TODO-01 -- Target A
+
+## Implementation Order
+
+| ⭐ | Order | Section | Deliverable | Depends On | Status |
+| --- | --- | --- | --- | --- | --- |
+| 💎 | 1 | §1 | First | -- | [x] |
+
+## 1. First
+
+- [ ] Alpha item in target A
+- [ ] Commit
+EOF
+# TODO-02 target: Beta item pushed to line 15 via padding so the two
+# targets produce DIFFERENT line numbers. A broken impl that resolved
+# Beta against TODO-01 would return line 11 (where Alpha sits), not 15.
+cat > "$V_TREE/todo/01-test/TODO-02-btgt.md" <<'EOF'
+# TODO-02 -- Target B (padded so Beta lands at a different line)
+
+Extra padding line 1.
+
+Extra padding line 2.
+
+## Implementation Order
+
+| ⭐ | Order | Section | Deliverable | Depends On | Status |
+| --- | --- | --- | --- | --- | --- |
+| 💎 | 1 | §1 | First | -- | [x] |
+
+## 1. First
+
+- [ ] Beta item in target B
+- [ ] Commit
+EOF
+cat > "$V_TREE/todo/01-test/TODO-03-multi.md" <<'EOF'
+# TODO-03 -- Source with multi-XREF stamp
+
+## Implementation Order
+
+| ⭐ | Order | Section | Deliverable | Depends On | Status |
+| --- | --- | --- | --- | --- | --- |
+| 💎 | 1 | §1 | First | -- | [x] |
+
+## 1. First
+
+- [x] Commit
+
+> **Verified:** 2026-04-23 | commit `abc1234` | 1/1 items | build OK
+> **Accepted:** [L] a thing -> XREF: TODO-01 (item: "Alpha item in target A" at line 999) -> XREF: TODO-02 (item: "Beta item in target B" at line 999)
+EOF
+python3 "$BUILD_PY" --quiet --root "$V_TREE/todo" --output "$V_TREE/cache.json" --repo-root "$V_TREE" >/dev/null 2>&1
+python3 "$VALIDATE_PY" --cache "$V_TREE/cache.json" --repo-root "$V_TREE" --fix-line-numbers --write --quiet >/dev/null 2>&1
+# Compute expected lines dynamically (independent of manual counting).
+ALPHA_LINE=$(grep -nF "Alpha item in target A" "$V_TREE/todo/01-test/TODO-01-atgt.md" | head -1 | cut -d: -f1)
+BETA_LINE=$(grep -nF "Beta item in target B" "$V_TREE/todo/01-test/TODO-02-btgt.md" | head -1 | cut -d: -f1)
+MULTI_TEXT=$(cat "$V_TREE/todo/01-test/TODO-03-multi.md")
+if [ "$ALPHA_LINE" != "$BETA_LINE" ] \
+    && echo "$MULTI_TEXT" | grep -qF "\"Alpha item in target A\" at line $ALPHA_LINE" \
+    && echo "$MULTI_TEXT" | grep -qF "\"Beta item in target B\" at line $BETA_LINE"; then
+    t_pass "validate: multi-XREF stamp: Alpha->$ALPHA_LINE, Beta->$BETA_LINE (distinct targets)"
+else
+    t_fail "validate: multi-XREF binding broken (alpha=$ALPHA_LINE beta=$BETA_LINE text=$(echo "$MULTI_TEXT" | tail -2))"
+fi
+
+# Sub-test 8k2: two stamp clauses with IDENTICAL literal text
+# `(item: "Epsilon" at line 999)` bound to DIFFERENT targets. str.replace
+# would rewrite both clauses to the first resolved line; the span-slice
+# rebuild (pass 9 H1) keeps them distinct. Each target file contains
+# "Epsilon" on exactly one line at a DIFFERENT line number so the
+# ambiguity guard doesn't fire and the rewrite binds to distinct lines.
+V_TREE="$TMP_DIR/v-shared-clause"
+v_run "$V_TREE"
+mkdir -p "$V_TREE/todo/01-test"
+# Target A: Epsilon at line 3.
+cat > "$V_TREE/todo/01-test/TODO-01-asrc.md" <<'EOF'
+# TODO-01 -- Target A
+
+- [ ] Epsilon unique in A
+EOF
+# Target B: Epsilon at line 9 (padded).
+cat > "$V_TREE/todo/01-test/TODO-02-bsrc.md" <<'EOF'
+# TODO-02 -- Target B
+
+Padding line one.
+Padding line two.
+Padding line three.
+Padding line four.
+Padding line five.
+Padding line six.
+- [ ] Epsilon unique in B
+EOF
+cat > "$V_TREE/todo/01-test/TODO-03-source.md" <<'EOF'
+# TODO-03 -- Source
+
+## Implementation Order
+
+| ⭐ | Order | Section | Deliverable | Depends On | Status |
+| --- | --- | --- | --- | --- | --- |
+| 💎 | 1 | §1 | First | -- | [x] |
+
+## 1. First
+
+- [x] Commit
+
+> **Verified:** 2026-04-23 | commit `abc1234` | 1/1 items | build OK
+> **Accepted:** [L] dup test -> XREF: TODO-01 (item: "Epsilon unique in A" at line 999) -> XREF: TODO-02 (item: "Epsilon unique in B" at line 999)
+EOF
+python3 "$BUILD_PY" --quiet --root "$V_TREE/todo" --output "$V_TREE/cache.json" --repo-root "$V_TREE" >/dev/null 2>&1
+python3 "$VALIDATE_PY" --cache "$V_TREE/cache.json" --repo-root "$V_TREE" --fix-line-numbers --write --quiet 2>/dev/null
+A_LINE=$(grep -nF "Epsilon unique in A" "$V_TREE/todo/01-test/TODO-01-asrc.md" | head -1 | cut -d: -f1)
+B_LINE=$(grep -nF "Epsilon unique in B" "$V_TREE/todo/01-test/TODO-02-bsrc.md" | head -1 | cut -d: -f1)
+STAMP=$(grep "Accepted:" "$V_TREE/todo/01-test/TODO-03-source.md")
+# Assert EXACT rewritten text: each clause must cite its own target's line.
+if [ "$A_LINE" != "$B_LINE" ] \
+    && echo "$STAMP" | grep -qF "\"Epsilon unique in A\" at line $A_LINE" \
+    && echo "$STAMP" | grep -qF "\"Epsilon unique in B\" at line $B_LINE"; then
+    t_pass "validate: span-slice rewrite preserves distinct targets for clauses (A=$A_LINE, B=$B_LINE)"
+else
+    t_fail "validate: span-slice rewrite broken (A=$A_LINE B=$B_LINE stamp=$STAMP)"
+fi
+
+# Sub-test 8m: stale cache shape (pre-pass-6 opaque-string depends_on)
+# triggers an auto-rebuild instead of crashing with AttributeError.
+# Codex pass 9 M1.
+V_TREE="$TMP_DIR/v-stale-cache"
+v_run "$V_TREE"
+mkdir -p "$V_TREE/todo/01-test"
+cat > "$V_TREE/todo/01-test/TODO-01-clean.md" <<'EOF'
+# TODO-01 -- Clean
+
+## Implementation Order
+
+| ⭐ | Order | Section | Deliverable | Depends On | Status |
+| --- | --- | --- | --- | --- | --- |
+| 💎 | 1 | §1 | First | §2 | [x] |
+| 💎 | 2 | §2 | Second | -- | [x] |
+
+## 1. First
+
+- [x] Commit
+
+## 2. Second
+
+- [x] Commit
+EOF
+# Hand-craft a STALE cache (pre-pass-6 shape: depends_on as string list)
+cat > "$V_TREE/cache.json" <<'EOF'
+[
+  {
+    "id": null,
+    "schema_version": null,
+    "domain": "01-test",
+    "status": "no-frontmatter",
+    "title": "TODO-01 -- Clean",
+    "file_path": "todo/01-test/TODO-01-clean.md",
+    "created_at": null,
+    "last_active_at": null,
+    "sections": [
+      {"n": 1, "deliverable": "First", "depends_on": ["\u00a72"], "status": "x"},
+      {"n": 2, "deliverable": "Second", "depends_on": [], "status": "x"}
+    ],
+    "section_headings": [{"n": 1, "title": "First"}, {"n": 2, "title": "Second"}],
+    "inputs_xrefs": [],
+    "stamps_xrefs": []
+  }
+]
+EOF
+V_OUT=$(python3 "$VALIDATE_PY" --cache "$V_TREE/cache.json" --repo-root "$V_TREE" 2>&1)
+V_RC=$?
+# Validator should detect stale shape, rebuild, and then exit cleanly.
+if [ "$V_RC" = "0" ] && echo "$V_OUT" | grep -q "stale.*rebuilding"; then
+    t_pass "validate: stale cache shape triggers auto-rebuild instead of AttributeError"
+else
+    t_fail "validate: stale-cache detection broken (rc=$V_RC, out=$V_OUT)"
+fi
+
+# Sub-test 8l: schema-reachability tolerates UTF-8 BOM + CRLF frontmatter.
+# Codex pass 8 M1: without BOM/CRLF normalization, a Windows-authored
+# TODO with a BOM and a bad $schema path would silently bypass check 7.
+V_TREE="$TMP_DIR/v-schema-bom"
+v_run "$V_TREE"
+mkdir -p "$V_TREE/todo/01-test"
+# Write with explicit BOM + CRLF and an escape-path $schema.
+printf '\xef\xbb\xbf---\r\n$schema: ../../../../../../../../../../../../etc/passwd\r\nschema_version: 1\r\nid: bom-crlf-test\r\ndomain: 01-test\r\nstatus: draft\r\ntitle: BOM+CRLF\r\n---\r\n\r\n# Body\r\n\r\n## Implementation Order\r\n\r\n| \xe2\xad\x90 | Order | Section | Deliverable | Depends On | Status |\r\n| --- | --- | --- | --- | --- | --- |\r\n| \xf0\x9f\x92\x8e | 1 | \xc2\xa71 | First | -- | [x] |\r\n\r\n## 1. First\r\n\r\n- [x] Commit\r\n' \
+    > "$V_TREE/todo/01-test/TODO-01-bom.md"
+python3 "$BUILD_PY" --quiet --root "$V_TREE/todo" --output "$V_TREE/cache.json" --repo-root "$V_TREE" >/dev/null 2>&1
+V_OUT=$(python3 "$VALIDATE_PY" --cache "$V_TREE/cache.json" --repo-root "$V_TREE" 2>&1)
+V_RC=$?
+if [ "$V_RC" = "1" ] && echo "$V_OUT" | grep -q "schema-reachability.*OUTSIDE the repo"; then
+    t_pass "validate: schema-reachability rejects escape path in BOM+CRLF frontmatter"
+else
+    t_fail "validate: BOM+CRLF schema check broken (rc=$V_RC, out=$V_OUT)"
+fi
+
 # ----------------------------------------------------------------------
 # Test 7: performance budget (under 2s wall-clock per the generator spec).
 # ----------------------------------------------------------------------

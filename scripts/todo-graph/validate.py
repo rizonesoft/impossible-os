@@ -117,19 +117,60 @@ class Finding:
 # --- Cache loader --------------------------------------------------------
 
 def load_or_rebuild_cache(cache_path: Path, repo_root: Path, quiet: bool) -> list:
-    """Load build/todo-cache.json. If absent, invoke build.py to regenerate."""
-    if not cache_path.exists():
-        if not quiet:
+    """Load build/todo-cache.json. If absent, invoke build.py to regenerate.
+    If the cache was produced by an older build.py (opaque-string
+    depends_on instead of dict-shape {target, sections[int]}), force a
+    rebuild instead of crashing downstream with AttributeError when the
+    validator dereferences grp.get(...). Codex pass 9 M1."""
+    need_rebuild = not cache_path.exists()
+    if not need_rebuild:
+        try:
+            nodes = json.loads(cache_path.read_text(encoding="utf-8"))
+            if _cache_shape_is_stale(nodes):
+                if not quiet:
+                    sys.stderr.write(
+                        f"[validate.py] cache at {cache_path} is stale (pre-pass-6 "
+                        "sections[].depends_on shape); rebuilding via build.py\n"
+                    )
+                need_rebuild = True
+        except (OSError, json.JSONDecodeError) as exc:
+            if not quiet:
+                sys.stderr.write(f"[validate.py] cache at {cache_path} unreadable ({exc}); rebuilding\n")
+            need_rebuild = True
+    if need_rebuild:
+        if not cache_path.exists() and not quiet:
             sys.stderr.write(f"[validate.py] cache absent at {cache_path}; rebuilding via build.py\n")
+        # Locate build.py via validate.py's own directory (they're siblings);
+        # don't assume repo_root/scripts/todo-graph/ since --repo-root for
+        # regression fixtures points at a synthetic tree.
+        build_py = Path(__file__).resolve().parent / "build.py"
+        if not build_py.exists():
+            sys.stderr.write(f"[validate.py] FATAL: build.py not found next to validate.py ({build_py})\n")
+            sys.exit(2)
         result = subprocess.run(
-            [sys.executable, str(repo_root / "scripts/todo-graph/build.py"),
-             "--quiet", "--output", str(cache_path)],
+            [sys.executable, str(build_py),
+             "--quiet", "--output", str(cache_path),
+             "--root", str(repo_root / "todo"),
+             "--repo-root", str(repo_root)],
             cwd=str(repo_root),
         )
         if result.returncode != 0:
             sys.stderr.write(f"[validate.py] FATAL: build.py failed (exit {result.returncode})\n")
             sys.exit(2)
     return json.loads(cache_path.read_text(encoding="utf-8"))
+
+
+def _cache_shape_is_stale(nodes: list) -> bool:
+    """Return True when sections[].depends_on still carries the pre-pass-6
+    opaque-string shape instead of the expected {target, sections[]} dict
+    shape. A non-empty dep-group that is a plain string is the tell."""
+    for n in nodes or []:
+        for s in n.get("sections", []) or []:
+            for grp in s.get("depends_on", []) or []:
+                if not isinstance(grp, dict):
+                    return True
+                return False  # first dict means the shape has migrated
+    return False
 
 
 def load_file_snapshot(repo_root: Path, nodes: list) -> dict:
@@ -483,7 +524,12 @@ def check_schema_reachability(nodes: list, snapshot: dict, repo_root: Path) -> l
     """The cache build doesn't currently surface a per-node `$schema` value
     (it's a frontmatter convenience, not a node field). Re-read each file's
     frontmatter to find the line `$schema: <path>` and verify reachability.
-    Skipped on files without frontmatter."""
+    Skipped on files without frontmatter.
+
+    Normalizes UTF-8 BOM + CRLF line endings the same way build.py does
+    (Codex pass 8 M1: otherwise Windows-authored TODOs with BOM or CRLF
+    frontmatter silently bypass this check and an escape-path $schema
+    value would go unnoticed)."""
     findings: list = []
     schema_re = re.compile(r"^\$schema:\s*(.+?)\s*$")
     for n in nodes:
@@ -491,6 +537,11 @@ def check_schema_reachability(nodes: list, snapshot: dict, repo_root: Path) -> l
             continue
         rel = n["file_path"]
         text = snapshot.get(rel, "")
+        # Match build.py's split_frontmatter() tolerances.
+        if text.startswith("\ufeff"):
+            text = text[1:]
+        if "\r\n" in text:
+            text = text.replace("\r\n", "\n")
         if not text.startswith("---\n"):
             continue
         end = text.find("\n---\n", 4)
@@ -555,14 +606,39 @@ def fix_line_numbers(nodes: list, snapshot: dict, id_index: dict, path_index: di
                 continue
             rest = stamp.group("rest")
             updated_rest = rest
+            # Build a list of (pos, target) pairs for every `-> XREF:` on
+            # this line so each `(item: ...)` clause resolves against the
+            # NEAREST preceding target, not always the first one. Multi-
+            # XREF Accepted/Deferred lines carry up to 6 clauses in the
+            # wild (e.g. TODO-12 SSDT stamps). Codex pass 8 H1 + pass 9 H1:
+            # MUST also rebuild the line by SLICING against match offsets
+            # rather than str.replace, because two clauses can share the
+            # exact same literal text `(item: "X" at line 5)` bound to
+            # different targets; str.replace would rewrite both to the
+            # first resolved line.
+            xref_positions: list = []
+            for m in re.finditer(r"->\s*XREF:\s*(\S+)", rest):
+                xref_positions.append((m.start(), m.group(1).rstrip(",")))
+            if not xref_positions:
+                new_lines.append(ln)
+                continue
+            # Accumulate (span_start, span_end, replacement_text) pairs
+            # so we can rebuild updated_rest in one pass at the end.
+            rewrites: list = []
             for item_match in ITEM_LINE_RE.finditer(rest):
                 name = item_match.group("name")
                 stored_n = int(item_match.group("n"))
-                # Find target file: use the first XREF target on this line.
-                xref_match = re.search(r"->\s*XREF:\s*(\S+)", rest)
-                if not xref_match:
+                item_pos = item_match.start()
+                # Pick the XREF target immediately preceding this item's
+                # position. Linear scan is fine; at most ~6 clauses per line.
+                xref_target = None
+                for pos, tgt in xref_positions:
+                    if pos <= item_pos:
+                        xref_target = tgt
+                    else:
+                        break
+                if xref_target is None:
                     continue
-                xref_target = xref_match.group(1).rstrip(",")
                 target_file = resolve_xref_target(xref_target, rel, id_index, path_index)
                 if target_file is None:
                     unresolvable_targets += 1
@@ -590,16 +666,35 @@ def fix_line_numbers(nodes: list, snapshot: dict, id_index: dict, path_index: di
                 actual_n = hits[0]
                 if actual_n == stored_n:
                     continue
-                old_clause = item_match.group(0)
                 new_clause = f'(item: "{name}" at line {actual_n})'
-                updated_rest = updated_rest.replace(old_clause, new_clause)
+                rewrites.append((item_match.start(), item_match.end(), new_clause))
                 updates_total += 1
                 modified = True
                 if not quiet:
                     print(f"[validate.py] {'WRITE' if write else 'DRY-RUN'} "
                           f"{rel}: {name!r} {stored_n} -> {actual_n}")
+            # Rebuild updated_rest by slicing at match offsets so two
+            # clauses with identical literal text bound to different
+            # targets each resolve to their own line (Codex pass 9 H1).
+            if rewrites:
+                parts: list = []
+                cursor = 0
+                for start, end, replacement in sorted(rewrites):
+                    parts.append(rest[cursor:start])
+                    parts.append(replacement)
+                    cursor = end
+                parts.append(rest[cursor:])
+                updated_rest = "".join(parts)
             if modified and updated_rest != rest:
-                new_lines.append(ln.replace(rest, updated_rest))
+                # Preserve the stamp-line prefix `> **Accepted:** ` etc. by
+                # slicing at the original match boundary rather than a
+                # line-wide str.replace (the rest-span could theoretically
+                # appear twice in the line, though not in practice).
+                prefix_end = ln.rfind(rest)
+                if prefix_end >= 0:
+                    new_lines.append(ln[:prefix_end] + updated_rest + ln[prefix_end + len(rest):])
+                else:
+                    new_lines.append(ln)
             else:
                 new_lines.append(ln)
         if modified and write:
