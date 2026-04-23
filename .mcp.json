@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "todo-graph": {
+      "command": "python3",
+      "args": ["scripts/todo-graph/mcp_server.py"]
+    }
+  }
+}

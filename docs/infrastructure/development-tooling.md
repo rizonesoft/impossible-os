@@ -982,7 +982,7 @@ scripts/
 
 ## Claude Code MCP Servers
 
-The repo ships one Model Context Protocol (MCP) server at [`scripts/todo-graph/mcp_server.py`](../../scripts/todo-graph/mcp_server.py), registered with Claude Code via [`.claude/mcp.json`](../../.claude/mcp.json). It exposes the read-only [`query.py`](../../scripts/todo-graph/query.py) surface (12 subcommands: `ready`, `blocked`, `blocking`, `by-domain`, `backlinks`, `deferred`, `deferred-by`, `orphans`, `stale`, `stats`, `code`, `code-by`) as MCP tools so agents can answer "what can I work on?" and "what references this?" without shelling out.
+The repo ships one Model Context Protocol (MCP) server at [`scripts/todo-graph/mcp_server.py`](../../scripts/todo-graph/mcp_server.py), registered with Claude Code via [`.mcp.json`](../../.mcp.json) at the repo root (Claude Code's project-scope config location -- NOT `.claude/mcp.json`; verify with `claude mcp list`). It exposes the read-only [`query.py`](../../scripts/todo-graph/query.py) surface (12 subcommands: `ready`, `blocked`, `blocking`, `by-domain`, `backlinks`, `deferred`, `deferred-by`, `orphans`, `stale`, `stats`, `code`, `code-by`) as MCP tools so agents can answer "what can I work on?" and "what references this?" without shelling out.
 
 **Install:**
 

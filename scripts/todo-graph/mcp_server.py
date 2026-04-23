@@ -18,9 +18,10 @@
 #   python3 scripts/todo-graph/mcp_server.py              # stdio server
 #   python3 scripts/todo-graph/mcp_server.py --self-test  # CI sanity check
 #
-# Claude Code wiring: .claude/mcp.json points its `todo-graph` entry at
-# this file via `python3 scripts/todo-graph/mcp_server.py`. Cursor:
-# copy the cursor.json snippet below into ~/.cursor/mcp.json.
+# Claude Code wiring: .mcp.json (repo root) registers the `todo-graph`
+# entry via `python3 scripts/todo-graph/mcp_server.py`. Verify with
+# `claude mcp list`. Cursor: copy the cursor.json snippet below into
+# ~/.cursor/mcp.json.
 #
 # Cursor snippet (drop into ~/.cursor/mcp.json):
 #   {
