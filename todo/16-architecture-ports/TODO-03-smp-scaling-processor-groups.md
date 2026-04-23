@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: smp-scaling-processor-groups
+domain: 16-architecture-ports
+status: active
+title: "TODO-03 -- SMP Scaling & Processor Groups"
+---
+
 # TODO-03 -- SMP Scaling & Processor Groups
 
 > **Goal:** Scale the kernel beyond 16 CPUs to support up to 256+ cores via Windows-style processor groups. Each group holds up to 64 logical processors; APIs that take a single CPU number get group-aware variants. This unblocks server-class hardware and future many-core ARM platforms.

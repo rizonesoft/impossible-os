@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: aarch64-kernel-port
+domain: 16-architecture-ports
+status: active
+title: "TODO-02 -- AArch64 Kernel Port"
+---
+
 # TODO-02 -- AArch64 Kernel Port
 
 > **Goal:** Port the Impossible OS kernel to ARM64 (AArch64). Boot via UEFI AA64, bring up GICv3 interrupt controller, generic timer, PSCI SMP, TTBR page tables, SVC syscall entry, and NEON/SVE context save/restore. When complete, the same kernel source tree builds for both x86-64 and AArch64, boots on QEMU virt machine, and runs the test suite.

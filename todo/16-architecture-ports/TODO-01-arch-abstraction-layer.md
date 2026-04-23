@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: arch-abstraction-layer
+domain: 16-architecture-ports
+status: active
+title: "TODO-01 -- Architecture Abstraction Layer"
+---
+
 # TODO-01 -- Architecture Abstraction Layer
 
 > **Goal:** Extract all x86-64-specific code behind a clean HAL (Hardware Abstraction Layer) so the kernel compiles for multiple architectures from a single codebase. Create `arch/x86_64/` and `arch/aarch64/` source trees, move ~15 arch-specific files, define ~20 HAL function prototypes, and add `ARCH=` build system support. After this TODO, the x86-64 kernel builds and boots identically through the new arch/ structure -- zero functional change, pure refactor.
