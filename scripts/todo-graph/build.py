@@ -35,7 +35,6 @@
 
 import argparse
 import json
-import os
 import re
 import subprocess
 import sys
@@ -66,9 +65,6 @@ OPTIONAL_FIELDS = (
     "file_patterns",
 )
 SUPPORTED_SCHEMA_VERSION = 1
-
-# Stamp severity tags accepted in `[Critical]` / `[H]` / `[M]` / `[L]` form.
-SEVERITY_RE = re.compile(r"^\[(Critical|H|M|L)\]$")
 
 # `> **Accepted:**` / `> **Deferred:**` line header. Captures kind +
 # optional severity. The XREF clauses themselves are extracted in a
@@ -156,9 +152,24 @@ def collect_git_timestamps(repo_root: Path, files: list) -> dict:
 
     created = {}
     last_active = {}
+    # Path-limit the log walk to `todo/` so runtime scales with TODO
+    # history alone, not total-repo history. Without `-- todo/` the
+    # `--reverse` walk visits every commit in the repo (kernel churn,
+    # docs churn, scripts churn) before producing the first TODO
+    # timestamp, which makes the 2s budget brittle as the repo grows.
+    # Codex quality review caught this: a full-repo scan was the
+    # observed bottleneck once commit count crosses ~10x.
     try:
         result = subprocess.run(
-            ["git", "log", "--name-only", "--format=COMMIT %H %ct", "--reverse"],
+            [
+                "git",
+                "log",
+                "--name-only",
+                "--format=COMMIT %H %ct",
+                "--reverse",
+                "--",
+                "todo",
+            ],
             cwd=str(repo_root),
             capture_output=True,
             text=True,
@@ -248,7 +259,7 @@ def split_frontmatter(content: str):
     return fm, body, None
 
 
-def validate_frontmatter(fm: dict, file_path: str) -> list:
+def validate_frontmatter(fm: dict) -> list:
     """Return list of (category, message) tuples. Empty list = clean.
 
     Categories from §2 error catalog:
@@ -536,7 +547,7 @@ def build_node(file_path: Path, repo_root: Path, timestamps: dict, content: str)
         fm = None
 
     if fm is not None:
-        fm_errors = validate_frontmatter(fm, rel)
+        fm_errors = validate_frontmatter(fm)
         # Treat non-warning categories as errors.
         for cat, msg in fm_errors:
             if cat == "unknown-field":

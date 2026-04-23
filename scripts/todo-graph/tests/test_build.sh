@@ -140,8 +140,11 @@ fi
 python3 - "$CACHE_RUN_A" <<'PY' 2>"$TMP_DIR/schema.log"
 import json, sys
 nodes = json.load(open(sys.argv[1]))
-required = {"id", "domain", "status", "title", "file_path",
-            "created_at", "last_active_at", "sections",
+# Every node MUST carry these keys; schema_version is included so a
+# future regression that drops the cache versioning field surfaces
+# here instead of slipping through unnoticed (Codex quality M1).
+required = {"id", "schema_version", "domain", "status", "title",
+            "file_path", "created_at", "last_active_at", "sections",
             "section_headings", "inputs_xrefs", "stamps_xrefs"}
 for n in nodes:
     missing = required - set(n.keys())
@@ -163,7 +166,81 @@ else
 fi
 
 # ----------------------------------------------------------------------
-# Test 6: performance budget (under 2s wall-clock per the generator spec).
+# Test 6a: TRULY malformed YAML (unclosed fence) reports `malformed-yaml`.
+# Test 2 above only exercises semantic validation (invalid-id /
+# unknown-status); the YAML itself parses. This fixture has an unclosed
+# fence so the YAML parser path is the one that fires. Codex quality M2
+# caught the gap.
+# ----------------------------------------------------------------------
+MAL_ROOT="$TMP_DIR/mal-tree"
+mkdir -p "$MAL_ROOT/01-test"
+cat > "$MAL_ROOT/01-test/TODO-01-unclosed.md" <<'EOF'
+---
+id: unclosed-fence
+schema_version: 1
+domain: 01-test
+status: draft
+title: Missing closing fence
+
+# Body content but no closing --- separator above
+EOF
+RC=0
+python3 "$BUILD_PY" --quiet --root "$MAL_ROOT" --output "$TMP_DIR/cache-mal.json" --repo-root "$REPO_ROOT" \
+    >"$TMP_DIR/mal.log" 2>&1 || RC=$?
+if [ "$RC" = "1" ] && grep -q "malformed-yaml\|opening --- has no closing" "$TMP_DIR/mal.log"; then
+    t_pass "unclosed frontmatter fence reports malformed-yaml category"
+else
+    t_fail "unclosed fence: expected malformed-yaml category, got rc=$RC log='$(cat $TMP_DIR/mal.log)'"
+fi
+
+# ----------------------------------------------------------------------
+# Test 6b: BOM-prefixed frontmatter is parsed as valid (not silently
+# dropped to no-frontmatter). Codex quality M2 + the BOM fix that
+# landed during adversarial review.
+# ----------------------------------------------------------------------
+BOM_ROOT="$TMP_DIR/bom-tree"
+mkdir -p "$BOM_ROOT/01-test"
+# Write with explicit UTF-8 BOM prefix.
+printf '\xef\xbb\xbf---\nschema_version: 1\nid: bom-test\ndomain: 01-test\nstatus: draft\ntitle: BOM fixture\n---\n\n# BOM fixture body\n' \
+    > "$BOM_ROOT/01-test/TODO-01-bom.md"
+python3 "$BUILD_PY" --quiet --root "$BOM_ROOT" --output "$TMP_DIR/cache-bom.json" --repo-root "$REPO_ROOT" \
+    >"$TMP_DIR/bom.log" 2>&1
+if [ -f "$TMP_DIR/cache-bom.json" ]; then
+    BOM_STATUS=$(python3 -c "import json; print(json.load(open('$TMP_DIR/cache-bom.json'))[0]['status'])")
+    BOM_ID=$(python3 -c "import json; print(json.load(open('$TMP_DIR/cache-bom.json'))[0]['id'])")
+    if [ "$BOM_STATUS" = "draft" ] && [ "$BOM_ID" = "bom-test" ]; then
+        t_pass "BOM-prefixed frontmatter parsed (id=bom-test, status=draft)"
+    else
+        t_fail "BOM frontmatter mis-parsed: id=$BOM_ID status=$BOM_STATUS (expected bom-test/draft)"
+    fi
+else
+    t_fail "BOM frontmatter: cache not written (BOM strip path likely broken)"
+fi
+
+# ----------------------------------------------------------------------
+# Test 6c: CRLF-line-ended frontmatter is parsed as valid. Same risk
+# class as BOM (Windows editors).
+# ----------------------------------------------------------------------
+CRLF_ROOT="$TMP_DIR/crlf-tree"
+mkdir -p "$CRLF_ROOT/01-test"
+printf -- '---\r\nschema_version: 1\r\nid: crlf-test\r\ndomain: 01-test\r\nstatus: draft\r\ntitle: CRLF fixture\r\n---\r\n\r\n# CRLF body\r\n' \
+    > "$CRLF_ROOT/01-test/TODO-01-crlf.md"
+python3 "$BUILD_PY" --quiet --root "$CRLF_ROOT" --output "$TMP_DIR/cache-crlf.json" --repo-root "$REPO_ROOT" \
+    >"$TMP_DIR/crlf.log" 2>&1
+if [ -f "$TMP_DIR/cache-crlf.json" ]; then
+    CRLF_STATUS=$(python3 -c "import json; print(json.load(open('$TMP_DIR/cache-crlf.json'))[0]['status'])")
+    CRLF_ID=$(python3 -c "import json; print(json.load(open('$TMP_DIR/cache-crlf.json'))[0]['id'])")
+    if [ "$CRLF_STATUS" = "draft" ] && [ "$CRLF_ID" = "crlf-test" ]; then
+        t_pass "CRLF-line-ended frontmatter parsed (id=crlf-test, status=draft)"
+    else
+        t_fail "CRLF frontmatter mis-parsed: id=$CRLF_ID status=$CRLF_STATUS (expected crlf-test/draft)"
+    fi
+else
+    t_fail "CRLF frontmatter: cache not written (CRLF normalize path likely broken)"
+fi
+
+# ----------------------------------------------------------------------
+# Test 7: performance budget (under 2s wall-clock per the generator spec).
 # ----------------------------------------------------------------------
 START_NS=$(date +%s%N)
 python3 "$BUILD_PY" --quiet --output "$TMP_DIR/cache-perf.json" >/dev/null 2>&1
