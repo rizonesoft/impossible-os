@@ -327,17 +327,17 @@ Expose §4's query surface over the Model Context Protocol so Claude Code, Curso
 
 | ⭐ | Feature                                      | 🪟 Win11                          | 🐧 Linux                                | 🚀 Impossible OS                          |
 | --- | -------------------------------------------- | --------------------------------- | --------------------------------------- | ----------------------------------------- |
-| 💎 | Structured ownership metadata                | ⚠️ CODEOWNERS                     | ✅ MAINTAINERS + get_maintainer.pl      | ⬜ §1 frontmatter + §5 migration           |
+| 💎 | Structured ownership metadata                | ⚠️ CODEOWNERS                     | ✅ MAINTAINERS + get_maintainer.pl      | ✅ §1 frontmatter on 223/223 TODOs (§5)    |
 | ⭐ | Cross-file dependency graph                  | ❌ Project boards (DB)            | ❌ Ad hoc cover letters                 | ✅ §2 generator + JSON cache (0.4s)        |
-| ⭐ | Stale-XREF / cycle validator                 | ❌ None                           | ❌ None                                 | ⬜ §3 validator (7 checks)                 |
-| ⭐ | "Ready to work" / backlinks queries          | ❌ Manual board filters           | ❌ None in-tree                         | ⬜ §4 query CLI (10 subcommands)           |
-| 💎 | CI gate on dep-graph integrity               | ⚠️ Per repo                       | ❌ Rare                                 | ⬜ §6 GHA + diff + rewrite hook            |
-| ⭐ | Canonical-markdown + derived-cache invariant | ❌ DB-first                       | ❌ Flat MAINTAINERS                     | ⬜ §1-§2 mirrors settings.json pattern     |
+| ⭐ | Stale-XREF / cycle validator                 | ❌ None                           | ❌ None                                 | ✅ §3 validator (8 checks, incl duplicate-id) |
+| ⭐ | "Ready to work" / backlinks queries          | ❌ Manual board filters           | ❌ None in-tree                         | ✅ §4 query CLI (12 subcommands)           |
+| 💎 | CI gate on dep-graph integrity               | ⚠️ Per repo                       | ❌ Rare                                 | ✅ §6 GHA workflow + --diff + auto-rewrite hook |
+| ⭐ | Canonical-markdown + derived-cache invariant | ❌ DB-first                       | ❌ Flat MAINTAINERS                     | ✅ §1-§2 mirrors settings.json pattern     |
 | 💎 | Editor-time frontmatter validation           | ❌ None                           | ⚠️ Hugo/Jekyll JSON Schema              | ⚠️ §1 sidecar; §6 CI is the gate          |
-| ⭐ | Mermaid/dot graph render                     | ❌ Manual board views             | ❌ None in-tree                         | ⬜ §7 render CLI (5 formats)               |
-| ⭐ | Critical-path / "most-blocking" rank         | ⚠️ TaskJuggler external           | ⚠️ TaskJuggler external                 | ⬜ §4 `blocking` subcommand                |
-| ⭐ | Stale-TODO / git-aware tracking              | ❌ Manual board filters           | ❌ None in-tree                         | ⬜ §1 git timestamps + §4 `stale`          |
-| ⭐ | Source-file backlinks (`code <id>`)          | ❌ Manual board links             | ⚠️ MAINTAINERS `F:` (people)            | ⬜ §1 `file_patterns` + §4 `code <id>`     |
+| ⭐ | Mermaid/dot graph render                     | ❌ Manual board views             | ❌ None in-tree                         | ✅ §7 render CLI (5 formats) + docs/infrastructure/todo-graph.md |
+| ⭐ | Critical-path / "most-blocking" rank         | ⚠️ TaskJuggler external           | ⚠️ TaskJuggler external                 | ✅ §4 `blocking` subcommand                |
+| ⭐ | Stale-TODO / git-aware tracking              | ❌ Manual board filters           | ❌ None in-tree                         | ✅ §1 git timestamps + §4 `stale`          |
+| ⭐ | Source-file backlinks (`code <id>`)          | ❌ Manual board links             | ⚠️ MAINTAINERS `F:` (people)            | ✅ §1 `file_patterns` + §4 `code <id>`     |
 | ⭐ | AI-agent MCP / autocomplete surface          | ❌ Closed                         | ❌ None                                 | ✅ §8 MCP server (12 read-only tools)      |
 
 > **After §1-§3:** Impossible OS has full Linux-parity ownership metadata plus the dep-graph that neither OS ships, plus automated cross-file XREF integrity checks AND a CI-gated JSON Schema sidecar (consumed by `remark-lint-frontmatter-schema`; no Linux equivalent for project plans). Editor-time diagnostics are best-effort developer convenience via `markdown-yaml-embedded-langservers`; the §6 CI gate is the authoritative line of defense.
