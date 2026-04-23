@@ -339,7 +339,11 @@ void boot_version_blackbox_transcribe(void)
     path[pi] = '\0';
 
     int transcript_written = 0;
-    struct vfs_node *f = vfs_open(path, VFS_O_WRITE);
+    /* VFS_O_TRUNC resets the file length to 0 before we write. The
+     * filename is fixed across boots (boot-proto-fault.txt), so an
+     * earlier, longer transcript could otherwise leave stale tail
+     * bytes past the end of a newer, shorter transcript. */
+    struct vfs_node *f = vfs_open(path, VFS_O_WRITE | VFS_O_TRUNC);
     if (f) {
         /* vfs_write returns the number of bytes actually written (or
          * -1 on error). Only treat the transcript as committed when

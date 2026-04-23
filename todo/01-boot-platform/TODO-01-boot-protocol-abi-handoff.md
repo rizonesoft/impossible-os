@@ -273,7 +273,7 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 > - **Scope boundary**: §7 does NOT own the bootloader-side pre-jump display (item 2 -- requires kernel ELF `.bootproto` section + bootloader ELF-section scan), the manifest-hash embed into the kernel binary (item 3 partial -- requires Makefile rule emitting a generated header), nor the §13 anti-rollback policy (item 5 -- slots reserved, populated when §13 ships). Kernel-side fatal rendering + late-boot BlackBox transcription are in scope and shipped.
 
 > **Verified:** 2026-04-23 | commit `f69533fe` | 3/5 items (2 deferred via in-line notes) | build OK | 469 kernel + 16 user-mode PASS on KVM, smoke PASS 2.260s
-> **Quality reviewed:** 2026-04-23 | Codex 1x (adversarial) | 2H fixed (NVRAM persist removed from fatal path since uefi_runtime_init runs later in Phase 0; transcript-delete gated on confirmed `vfs_write` success), 0 open | scope: kernel-code-quality
+> **Quality reviewed:** 2026-04-23 | Codex 2x (implement-adversarial + review-quality) | 2H fixed (NVRAM persist removed from fatal path since uefi_runtime_init runs later in Phase 0; transcript-delete gated on confirmed `vfs_write` success) + 1M fixed (VFS_O_TRUNC on transcript open so a shorter newer transcript cannot leave stale tail bytes from a longer prior fault), 0 open | scope: kernel-code-quality
 
 ---
 
