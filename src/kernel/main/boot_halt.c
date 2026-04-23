@@ -6,7 +6,7 @@
  * string using an inline 8×8 bitmap font.  Always prints to serial too.
  * Does not return.
  *
- * XREF: 02-kernel-core/TODO-01-kernel-init-sequencing.md §7 (failure policy)
+ * XREF: 02-kernel-core/TODO-01-kernel-init-sequencing.md (failure policy)
  * ============================================================================ */
 
 #include "kernel/boot_halt.h"

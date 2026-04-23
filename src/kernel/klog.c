@@ -758,7 +758,7 @@ void klog_remove_override(const char *subsystem)
              *
              * True removal with concurrent-reader correctness would
              * need a shared spinlock covering klog()'s filter path,
-             * which is a klog-wide refactor outside §5 scope. */
+             * which is a klog-wide refactor outside this section's scope. */
             s_override_count--;
             if (i != s_override_count)
                 s_overrides[i] = s_overrides[s_override_count];

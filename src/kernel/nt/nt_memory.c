@@ -365,7 +365,7 @@ static NTSTATUS NtFlushVirtualMemory_handler(uint64_t a1, uint64_t a2,
     return STATUS_SUCCESS;
 }
 
-/* ---- AWE stubs (0x0059-0x005B) -- deferred to TODO-04-mem §4 ----------- */
+/* ---- AWE stubs (0x0059-0x005B) -- deferred to TODO-04-mem ------------- */
 static NTSTATUS NtAWE_stub(uint64_t a1, uint64_t a2, uint64_t a3,
                             uint64_t a4, uint64_t a5, uint64_t a6)
 {

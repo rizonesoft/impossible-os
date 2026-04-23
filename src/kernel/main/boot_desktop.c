@@ -417,7 +417,7 @@ void boot_phase3(void)
              * shows the misconfig message. klog(LOG_FATAL, ...) already
              * halts internally -- calling boot_halt first paints the
              * framebuffer halt screen before klog's own halt trips.
-             * Codex [M] §12 review: the prior klog-then-hlt path left
+             * Codex [M] review: the prior klog-then-hlt path left
              * the screen black on the only platform where the user
              * needs to see the reason. */
             boot_halt("boot.conf compositor=headless rejected on bare metal "

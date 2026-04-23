@@ -20,7 +20,7 @@ void boot_tests_run(void)
 {
     /* test=1 or debug=1: run unit tests, then continue booting to desktop. */
     if (g_boot_info.config.test || g_boot_info.config.debug) {
-        /* §10 follow-up of TODO-04: per-aggregate test_*_skip knobs.
+        /* Per-aggregate test_*_skip knobs follow-up (see TODO-04):
          * test_kernel_skip=1   skips the kernel TEST_CAT_* sweep so a
          *                      usermode-only iteration bat (e.g.
          *                      run-all-usermode-tests.bat or any

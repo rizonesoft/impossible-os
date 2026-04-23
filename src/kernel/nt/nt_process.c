@@ -206,7 +206,7 @@ static NTSTATUS NtOpenThread_handler(uint64_t a1, uint64_t a2, uint64_t a3,
 }
 
 /* ---- NtTerminateProcess (0x0033) ----------------------------------------
- * Upgraded from §5: proper handle lookup.
+ * Upgraded: proper handle lookup.
  * a1 = HANDLE, a2 = NTSTATUS ExitStatus.
  * ----------------------------------------------------------------------- */
 static NTSTATUS NtTerminateProcess_handler(uint64_t a1, uint64_t a2, uint64_t a3,

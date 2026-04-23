@@ -350,18 +350,11 @@ if [ "$#" -eq 0 ]; then
         src/kernel/fs/gpt.c
         src/kernel/fs/partition.c
         src/kernel/fs/vfs.c
-        src/kernel/icon_store.c
         src/kernel/idt.c
         src/kernel/ipc/alpc_port.c
-        src/kernel/json.c
-        src/kernel/klog.c
-        src/kernel/main/boot_desktop.c
-        src/kernel/main/boot_halt.c
         src/kernel/main/boot_hw.c
         src/kernel/main/boot_payload.c
-        src/kernel/main/boot_progress.c
         src/kernel/main/boot_recovery.c
-        src/kernel/main/boot_tests.c
         src/kernel/main/boot_version.c
         src/kernel/main/compositor.c
         src/kernel/main/main_internal.h
@@ -369,10 +362,7 @@ if [ "$#" -eq 0 ]; then
         src/kernel/mm/heap.c
         src/kernel/mm/pmm.c
         src/kernel/mm/vmm.c
-        src/kernel/msr.c
         src/kernel/nt/nt_alpc.c
-        src/kernel/nt/nt_memory.c
-        src/kernel/nt/nt_process.c
         src/kernel/nt/nt_registry.c
         src/kernel/nt/nt_sync.c
         src/kernel/nt/nt_syscall.c

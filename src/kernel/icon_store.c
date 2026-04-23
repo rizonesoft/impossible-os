@@ -9,7 +9,7 @@
  *      Cached in an LRU table keyed by (icon_id, size, color).
  *
  *   2. IRES-based: full-color icons loaded from icons.ires at boot.
- *      Pre-rendered BGRA bitmaps at multiple sizes. (Stub until §4.5)
+ *      Pre-rendered BGRA bitmaps at multiple sizes. (Stub until atlas lands)
  *
  * Memory: cached bitmaps use kmalloc for small icons (≤4 KB), PMM for
  * large icons (>4 KB). See rules.md: PMM is default for large allocs.
