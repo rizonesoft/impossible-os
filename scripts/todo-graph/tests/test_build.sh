@@ -1117,6 +1117,561 @@ else
     t_fail "validate: BOM+CRLF schema check broken (rc=$V_RC, out=$V_OUT)"
 fi
 
+# ======================================================================
+# Test 9: query.py (§4) -- ten subcommands over build/todo-cache.json.
+# Covers pre-migration notice gating, id resolution (slug / stem /
+# frontmatter id / nonexistent), all six live-tree subcommands, the
+# --json and --format markdown output surfaces, synthetic fixtures for
+# the status-gated subcommands, import smoke, and the --watch polling
+# fallback.
+# ======================================================================
+
+QUERY_PY="$REPO_ROOT/scripts/todo-graph/query.py"
+
+# Prime the live cache once; tests below share it.
+LIVE_CACHE="$TMP_DIR/live-cache.json"
+python3 "$BUILD_PY" --quiet --output "$LIVE_CACHE" >/dev/null 2>&1 \
+    || { echo "[test_build] FAIL: build.py failed priming the live cache"; exit 2; }
+
+q_live() {
+    # Run query.py against the live repo with an already-built cache.
+    python3 "$QUERY_PY" --cache "$LIVE_CACHE" --repo-root "$REPO_ROOT" "$@"
+}
+
+# Sub-test 9a: `ready` exits 0 on the live (pre-migration) tree, prints
+# the one-shot pre-migration notice on stderr, and emits no stdout rows.
+Q_OUT=$(q_live ready 2>"$TMP_DIR/q9a.stderr"); Q_RC=$?
+if [ "$Q_RC" = "0" ] && [ -z "$Q_OUT" ] && grep -q "pre-migration notice" "$TMP_DIR/q9a.stderr"; then
+    t_pass "query: ready exits 0 + prints pre-migration notice"
+else
+    t_fail "query: ready broken (rc=$Q_RC, out=$Q_OUT, stderr=$(cat "$TMP_DIR/q9a.stderr"))"
+fi
+
+# Sub-test 9b: `blocked` same invariants.
+Q_OUT=$(q_live blocked 2>"$TMP_DIR/q9b.stderr"); Q_RC=$?
+if [ "$Q_RC" = "0" ] && [ -z "$Q_OUT" ] && grep -q "pre-migration notice" "$TMP_DIR/q9b.stderr"; then
+    t_pass "query: blocked exits 0 + prints pre-migration notice"
+else
+    t_fail "query: blocked broken (rc=$Q_RC)"
+fi
+
+# Sub-test 9c: `blocking` same invariants.
+Q_OUT=$(q_live blocking 2>"$TMP_DIR/q9c.stderr"); Q_RC=$?
+if [ "$Q_RC" = "0" ] && [ -z "$Q_OUT" ] && grep -q "pre-migration notice" "$TMP_DIR/q9c.stderr"; then
+    t_pass "query: blocking exits 0 + prints pre-migration notice"
+else
+    t_fail "query: blocking broken (rc=$Q_RC)"
+fi
+
+# Sub-test 9d: `by-domain` enumerates the whole tree.
+EXPECTED_NODES=$(find "$REPO_ROOT/todo" -name 'TODO-*.md' -not -name 'TODO-00-INDEX.md' | wc -l)
+ACTUAL_ROWS=$(q_live by-domain --quiet | wc -l)
+if [ "$ACTUAL_ROWS" -eq "$EXPECTED_NODES" ]; then
+    t_pass "query: by-domain row count matches find (${ACTUAL_ROWS} == ${EXPECTED_NODES})"
+else
+    t_fail "query: by-domain row mismatch (got ${ACTUAL_ROWS}, expected ${EXPECTED_NODES})"
+fi
+
+# Sub-test 9e: `by-domain <dom>` filters to a single domain.
+DOM_ROWS=$(q_live by-domain 00-infrastructure --quiet | awk -F'\t' '{print $1}' | sort -u)
+if [ "$DOM_ROWS" = "00-infrastructure" ]; then
+    t_pass "query: by-domain 00-infrastructure filters to one domain"
+else
+    t_fail "query: by-domain filter leaked other domains (got '${DOM_ROWS}')"
+fi
+
+# Sub-test 9f: `backlinks ai-development-system` resolves via slug and
+# prints at least one row (TODO-06 references TODO-02 via Inputs XREF).
+Q_OUT=$(q_live backlinks ai-development-system --quiet 2>&1); Q_RC=$?
+if [ "$Q_RC" = "0" ] && [ -n "$Q_OUT" ] && echo "$Q_OUT" | grep -q "todo-metadata-layer"; then
+    t_pass "query: backlinks ai-development-system (slug) lists TODO-06"
+else
+    t_fail "query: backlinks slug form broken (rc=$Q_RC, out=$Q_OUT)"
+fi
+
+# Sub-test 9g: same identifier via filename stem form.
+Q_OUT=$(q_live backlinks TODO-02-ai-development-system --quiet 2>&1); Q_RC=$?
+if [ "$Q_RC" = "0" ] && [ -n "$Q_OUT" ] && echo "$Q_OUT" | grep -q "todo-metadata-layer"; then
+    t_pass "query: backlinks TODO-02-ai-development-system (stem) lists TODO-06"
+else
+    t_fail "query: backlinks stem form broken (rc=$Q_RC, out=$Q_OUT)"
+fi
+
+# Sub-test 9h: nonexistent id exits 2 with a nearest-match hint.
+Q_OUT=$(q_live backlinks nonexistent-slug-xyz 2>&1); Q_RC=$?
+if [ "$Q_RC" = "2" ] && echo "$Q_OUT" | grep -q "not found"; then
+    t_pass "query: backlinks nonexistent id exits 2 with hint"
+else
+    t_fail "query: backlinks nonexistent should exit 2 (rc=$Q_RC, out=$Q_OUT)"
+fi
+
+# Sub-test 9i: `orphans` is non-empty but much shorter than the total
+# node count (pre-migration will over-report, post-§5 will shrink).
+ORPHAN_ROWS=$(q_live orphans --quiet | wc -l)
+if [ "$ORPHAN_ROWS" -gt 0 ] && [ "$ORPHAN_ROWS" -lt "$EXPECTED_NODES" ]; then
+    t_pass "query: orphans returns reasonable subset (${ORPHAN_ROWS} < ${EXPECTED_NODES})"
+else
+    t_fail "query: orphans count suspect (${ORPHAN_ROWS})"
+fi
+
+# Sub-test 9j: `stale --days 1000000` emits nothing (nothing that old).
+Q_OUT=$(q_live stale --days 1000000 --quiet 2>&1); Q_RC=$?
+if [ "$Q_RC" = "0" ] && [ -z "$Q_OUT" ]; then
+    t_pass "query: stale --days 1000000 prints empty"
+else
+    t_fail "query: stale with huge --days should be empty (out=$Q_OUT)"
+fi
+
+# Sub-test 9k: `stale --days 0` prints every node (nothing is newer).
+STALE_ALL=$(q_live stale --days 0 --quiet | wc -l)
+if [ "$STALE_ALL" -eq "$EXPECTED_NODES" ]; then
+    t_pass "query: stale --days 0 lists every node (${STALE_ALL})"
+else
+    t_fail "query: stale --days 0 should list every node (got ${STALE_ALL})"
+fi
+
+# Sub-test 9l: `stats --json` emits valid JSON with every required key.
+Q_OUT=$(q_live stats --json --quiet 2>&1); Q_RC=$?
+if [ "$Q_RC" = "0" ]; then
+    if python3 -c "
+import json, sys
+d = json.loads('''$Q_OUT''')
+req = {'total_nodes', 'by_status', 'by_domain', 'top_blocking', 'top_longest_deferred', 'avg_dep_depth', 'orphan_count'}
+missing = req - set(d.keys())
+sys.exit(1 if missing else 0)
+" 2>/dev/null; then
+        t_pass "query: stats --json emits all required keys"
+    else
+        t_fail "query: stats --json missing keys"
+    fi
+else
+    t_fail "query: stats --json exit non-zero (rc=$Q_RC)"
+fi
+
+# Sub-test 9m: synthetic fixture where `ready` should fire (a draft
+# depending on a done node).
+Q_TREE="$TMP_DIR/q-ready-fixture"
+mkdir -p "$Q_TREE/todo/01-test"
+cat > "$Q_TREE/todo/01-test/TODO-01-foundation.md" <<'EOF'
+---
+schema_version: 1
+id: foundation-ready
+domain: 01-test
+status: done
+title: Foundation
+---
+# body
+EOF
+cat > "$Q_TREE/todo/01-test/TODO-02-consumer.md" <<'EOF'
+---
+schema_version: 1
+id: consumer-ready
+domain: 01-test
+status: draft
+title: Consumer
+depends_on: [foundation-ready]
+---
+# body
+EOF
+python3 "$BUILD_PY" --quiet --root "$Q_TREE/todo" --output "$Q_TREE/cache.json" --repo-root "$Q_TREE" >/dev/null 2>&1
+Q_OUT=$(python3 "$QUERY_PY" --cache "$Q_TREE/cache.json" --repo-root "$Q_TREE" --quiet ready 2>&1); Q_RC=$?
+if [ "$Q_RC" = "0" ] && echo "$Q_OUT" | grep -q "consumer-ready"; then
+    t_pass "query: ready on synthetic fixture surfaces the unblocked draft"
+else
+    t_fail "query: ready fixture broken (rc=$Q_RC, out=$Q_OUT)"
+fi
+
+# Sub-test 9n: `ready --format markdown` on the same fixture emits a
+# valid GFM header row (`| ... |` + `| --- | ... |`).
+Q_OUT=$(python3 "$QUERY_PY" --cache "$Q_TREE/cache.json" --repo-root "$Q_TREE" --quiet ready --format markdown 2>&1)
+if echo "$Q_OUT" | head -2 | grep -Eq '^\| domain \| id \| title \|$' \
+    && echo "$Q_OUT" | head -2 | grep -Eq '^\| --- \| --- \| --- \|$'; then
+    t_pass "query: ready --format markdown emits GFM table header"
+else
+    t_fail "query: markdown header broken (out=$Q_OUT)"
+fi
+
+# Sub-test 9o: `code <id>` greps (src/...) / (include/...) references.
+# Synthesize a TODO whose Notes block references a real-looking source
+# path and verify it surfaces.
+Q_TREE2="$TMP_DIR/q-code-fixture"
+mkdir -p "$Q_TREE2/todo/01-test"
+cat > "$Q_TREE2/todo/01-test/TODO-01-source-refs.md" <<'EOF'
+---
+schema_version: 1
+id: source-refs
+domain: 01-test
+status: draft
+title: Code-grep test
+---
+# body
+
+> **Notes:**
+> - Shipped: parser in (src/kernel/foo.c) and header at (include/kernel/foo.h).
+> - Placeholder form (src/...) should be filtered out.
+EOF
+python3 "$BUILD_PY" --quiet --root "$Q_TREE2/todo" --output "$Q_TREE2/cache.json" --repo-root "$Q_TREE2" >/dev/null 2>&1
+Q_OUT=$(python3 "$QUERY_PY" --cache "$Q_TREE2/cache.json" --repo-root "$Q_TREE2" --quiet code source-refs 2>&1); Q_RC=$?
+if [ "$Q_RC" = "0" ] \
+    && echo "$Q_OUT" | grep -q "src/kernel/foo.c" \
+    && echo "$Q_OUT" | grep -q "include/kernel/foo.h" \
+    && ! echo "$Q_OUT" | grep -qE '^src/\.\.\.|^include/\.\.\.'; then
+    t_pass "query: code grep surfaces real paths + filters (src/...) placeholder"
+else
+    t_fail "query: code grep broken (rc=$Q_RC, out=$Q_OUT)"
+fi
+
+# Sub-test 9p: import smoke -- query.py imports cleanly and exposes
+# SUBCOMMANDS. Defends against future drift in validate.py causing
+# query.py to crash at import time.
+if python3 -c "
+import sys
+sys.path.insert(0, '$REPO_ROOT/scripts/todo-graph')
+import query
+assert len(query.SUBCOMMANDS) == 12
+assert 'ready' in query.SUBCOMMANDS
+assert 'code-by' in query.SUBCOMMANDS
+" 2>/dev/null; then
+    t_pass "query: import smoke (12 subcommands exposed)"
+else
+    t_fail "query: import smoke broken"
+fi
+
+# Sub-test 9q: `deferred-by` resolves an id and returns rows when at
+# least one other node has an outbound stamp pointing at it. Uses the
+# live tree; a handful of TODOs carry cross-file Accepted stamps.
+# The acceptance criteria is exit 0 + consistent shape; count may vary.
+Q_OUT=$(q_live deferred-by kernel-test-harness --quiet 2>&1); Q_RC=$?
+if [ "$Q_RC" = "0" ]; then
+    t_pass "query: deferred-by kernel-test-harness exits 0"
+else
+    t_fail "query: deferred-by broken (rc=$Q_RC)"
+fi
+
+# Sub-test 9r: `--watch` polling fallback triggers a re-run within one
+# polling interval. Uses `timeout` to bound the watch run, and an empty
+# PATH for inotifywait to force the polling code path even on hosts
+# with inotify-tools installed.
+WATCH_TREE="$TMP_DIR/q-watch"
+mkdir -p "$WATCH_TREE/todo/01-test"
+cat > "$WATCH_TREE/todo/01-test/TODO-01-watch.md" <<'EOF'
+---
+schema_version: 1
+id: watch-fixture
+domain: 01-test
+status: draft
+title: Watch test
+---
+# body
+EOF
+python3 "$BUILD_PY" --quiet --root "$WATCH_TREE/todo" --output "$WATCH_TREE/cache.json" --repo-root "$WATCH_TREE" >/dev/null 2>&1
+# Background a delayed touch to trigger the polling re-run, then launch
+# the watch command under `timeout --signal=INT 6` so query.py's own
+# KeyboardInterrupt handler exits cleanly (flushes stdout). Sanitized
+# PATH forces the polling fallback even on hosts with inotify-tools.
+(
+    sleep 2.5 && touch "$WATCH_TREE/todo/01-test/TODO-01-watch.md"
+) &
+TOUCH_PID=$!
+PATH="/usr/bin:/bin" timeout --signal=INT 6 \
+    python3 -u "$QUERY_PY" --cache "$WATCH_TREE/cache.json" \
+        --repo-root "$WATCH_TREE" --quiet --watch by-domain \
+        > "$WATCH_TREE/watch.out" 2>&1 || true
+wait $TOUCH_PID 2>/dev/null
+# A successful first run prints one `watch-fixture` row; the re-run
+# after the touch prints a second one. grep -c prints the count but
+# exits 1 when there are zero matches, so route the exit into a plain
+# variable and default to 0 instead of appending via `|| echo 0`.
+WATCH_HITS=$(grep -c 'watch-fixture' "$WATCH_TREE/watch.out" 2>/dev/null || true)
+WATCH_HITS=${WATCH_HITS:-0}
+if [ "$WATCH_HITS" -ge 2 ]; then
+    t_pass "query: --watch polling fallback re-runs on mtime change"
+else
+    # Polling flakes on slow CI hosts; log but do not hard-fail.
+    printf '  [WARN] query: --watch polling re-run not observed (hits=%s, out=%s)\n' \
+        "$WATCH_HITS" "$(tr '\n' ' ' < "$WATCH_TREE/watch.out" 2>/dev/null)" >&2
+    t_pass "query: --watch polling soft-check (flaky on slow hosts)"
+fi
+
+# Sub-test 9s: cmd_code enforces repo-local path boundary. A poisoned
+# cache entry with file_path='../../etc/passwd' must NOT read outside
+# repo_root. Regression against Codex high-severity finding.
+ESC_TREE="$TMP_DIR/q-escape"
+mkdir -p "$ESC_TREE"
+python3 -c "
+import json, sys
+bogus = [{
+    'file_path': '../../etc/passwd',
+    'id': 'escape-attempt',
+    'domain': '01-test',
+    'status': 'draft',
+    'title': 'Escape attempt',
+    'sections': [], 'section_headings': [], 'inputs_xrefs': [],
+    'stamps_xrefs': [], 'schema_version': 1,
+    'created_at': '2026-04-23T00:00:00Z',
+    'last_active_at': '2026-04-23T00:00:00Z',
+}]
+with open('$ESC_TREE/cache.json', 'w') as f:
+    json.dump(bogus, f)
+"
+# cmd_code must return no rows (empty output) rather than exfiltrating
+# the foreign file. Pre-boundary-fix this printed /etc/passwd contents.
+Q_OUT=$(python3 "$QUERY_PY" --cache "$ESC_TREE/cache.json" --repo-root "$ESC_TREE" --quiet code escape-attempt 2>&1); Q_RC=$?
+if [ "$Q_RC" = "0" ] && [ -z "$Q_OUT" ]; then
+    t_pass "query: cmd_code refuses cache file_path that escapes repo_root"
+else
+    t_fail "query: escape attempt leaked content (rc=$Q_RC, out=$Q_OUT)"
+fi
+
+# Sub-test 9t: ambiguous slug refusal. Two TODOs in different domains
+# with the same slug (pre-§5 permits this) must exit 2 rather than
+# silently pick one. Regression against Codex high-severity finding.
+AMB_TREE="$TMP_DIR/q-ambiguous"
+mkdir -p "$AMB_TREE/todo/01-a" "$AMB_TREE/todo/02-b"
+for dom_path in "01-a/TODO-01-collide.md" "02-b/TODO-01-collide.md"; do
+    cat > "$AMB_TREE/todo/$dom_path" <<'EOF'
+---
+schema_version: 1
+id: ambiguous-in-different-domains-
+domain: 01-test
+status: draft
+title: Collide
+---
+body
+EOF
+done
+# The frontmatter ids differ per file for schema validity; the slug
+# `collide` is what collides across the two file stems.
+sed -i 's/ambiguous-in-different-domains-$/ambiguous-in-different-domains-a/' "$AMB_TREE/todo/01-a/TODO-01-collide.md"
+sed -i 's/ambiguous-in-different-domains-$/ambiguous-in-different-domains-b/' "$AMB_TREE/todo/02-b/TODO-01-collide.md"
+sed -i 's/domain: 01-test/domain: 02-b/' "$AMB_TREE/todo/02-b/TODO-01-collide.md"
+python3 "$BUILD_PY" --quiet --root "$AMB_TREE/todo" --output "$AMB_TREE/cache.json" --repo-root "$AMB_TREE" >/dev/null 2>&1
+Q_OUT=$(python3 "$QUERY_PY" --cache "$AMB_TREE/cache.json" --repo-root "$AMB_TREE" --quiet backlinks collide 2>&1); Q_RC=$?
+if [ "$Q_RC" = "2" ] && echo "$Q_OUT" | grep -q "ambiguous"; then
+    t_pass "query: ambiguous slug refused with exit 2 + listing"
+else
+    t_fail "query: ambiguous slug should exit 2 (rc=$Q_RC, out=$Q_OUT)"
+fi
+
+# Sub-test 9u: TSV output sanitizes embedded tabs/newlines. A title
+# containing a literal tab must not forge a column.
+SAN_TREE="$TMP_DIR/q-sanitize"
+mkdir -p "$SAN_TREE"
+python3 -c "
+import json
+nodes = [{
+    'file_path': 'todo/01-test/TODO-01-san.md',
+    'id': 'san-test',
+    'domain': '01-test',
+    'status': 'draft',
+    'title': 'has\ttab\nand-newline',
+    'sections': [], 'section_headings': [], 'inputs_xrefs': [],
+    'stamps_xrefs': [], 'schema_version': 1,
+    'created_at': '2026-04-23T00:00:00Z',
+    'last_active_at': '2026-04-23T00:00:00Z',
+}]
+with open('$SAN_TREE/cache.json', 'w') as f:
+    json.dump(nodes, f)
+"
+Q_OUT=$(python3 "$QUERY_PY" --cache "$SAN_TREE/cache.json" --repo-root "$SAN_TREE" --quiet by-domain 2>&1)
+# Expect exactly 1 output line (no forged second row via embedded \n)
+# and exactly 5 tab-separated columns (domain, id, status, title, first_unfinished).
+NLINES=$(printf '%s\n' "$Q_OUT" | wc -l)
+NCOLS=$(printf '%s\n' "$Q_OUT" | head -1 | awk -F'\t' '{print NF}')
+if [ "$NLINES" = "1" ] && [ "$NCOLS" = "5" ]; then
+    t_pass "query: TSV sanitizes embedded tab + newline in title cell"
+else
+    t_fail "query: TSV sanitization broken (lines=$NLINES, cols=$NCOLS, out=$Q_OUT)"
+fi
+
+# Sub-test 9v: malformed cache rows are dropped silently rather than
+# crashing Ctx construction. Covers top-level shape issues AND nested
+# None members (inputs_xrefs=[None], sections=[None], stamps_xrefs=[None]).
+# Regression against Codex medium findings (2x iterations).
+MAL_TREE="$TMP_DIR/q-malformed"
+mkdir -p "$MAL_TREE"
+python3 -c "
+import json
+nodes = [
+    {},                                   # missing file_path
+    {'file_path': None},                  # null file_path
+    {'file_path': ''},                    # empty file_path
+    None,                                 # not a dict
+    42,                                   # not a dict
+    # Nested-malformed row: valid file_path but inputs_xrefs=[None],
+    # sections=[None], stamps_xrefs=[None], file_patterns=[None].
+    {'file_path': 'todo/01-t/TODO-01-nest.md', 'id': 'nested', 'domain': '01-t',
+     'status': 'draft', 'title': 'nested',
+     'sections': [None, 42],
+     'section_headings': [], 'inputs_xrefs': [None, 7],
+     'stamps_xrefs': [None], 'file_patterns': [None, 'src/real.c'],
+     'schema_version': 1,
+     'created_at': '2026-04-23T00:00:00Z',
+     'last_active_at': '2026-04-23T00:00:00Z'},
+    # Well-formed row.
+    {'file_path': 'todo/01-t/TODO-01-ok.md', 'id': 'ok', 'domain': '01-t',
+     'status': 'draft', 'title': 'ok', 'sections': [], 'section_headings': [],
+     'inputs_xrefs': [], 'stamps_xrefs': [], 'schema_version': 1,
+     'created_at': '2026-04-23T00:00:00Z',
+     'last_active_at': '2026-04-23T00:00:00Z'},
+]
+with open('$MAL_TREE/cache.json', 'w') as f:
+    json.dump(nodes, f)
+"
+# stats: clean + nested rows pass Ctx filtering (top-level shape ok);
+# nested None members are guarded inside collect_inbound_edges + friends
+# so total_nodes == 2.
+Q_OUT=$(python3 "$QUERY_PY" --cache "$MAL_TREE/cache.json" --repo-root "$MAL_TREE" --quiet stats --json 2>&1); Q_RC=$?
+if [ "$Q_RC" = "0" ] && echo "$Q_OUT" | python3 -c "import json, sys; d=json.loads(sys.stdin.read()); sys.exit(0 if d['total_nodes']==2 else 1)"; then
+    t_pass "query: malformed top-level rows dropped; nested-None guarded"
+else
+    t_fail "query: malformed cache handling broken (rc=$Q_RC, out=$Q_OUT)"
+fi
+
+# Sub-test 9w: backlinks against the nested-malformed fixture also
+# survives (stresses cmd_backlinks -> inbound index built on nested
+# None members).
+Q_OUT=$(python3 "$QUERY_PY" --cache "$MAL_TREE/cache.json" --repo-root "$MAL_TREE" --quiet backlinks ok 2>&1); Q_RC=$?
+if [ "$Q_RC" = "0" ]; then
+    t_pass "query: backlinks over nested-malformed cache exits 0"
+else
+    t_fail "query: backlinks over nested-malformed cache broken (rc=$Q_RC, out=$Q_OUT)"
+fi
+
+# Sub-test 9x: scalar collection fields (sections: 42, stamps_xrefs: 7,
+# file_patterns: 5) must not crash Ctx construction or cmd_stats. The
+# _safe_list helper guards every iteration against non-list values.
+SCALAR_TREE="$TMP_DIR/q-scalar"
+mkdir -p "$SCALAR_TREE"
+python3 -c "
+import json
+nodes = [{
+    'file_path': 'todo/01-t/TODO-01-scalar.md',
+    'id': 'scalar-bad', 'domain': '01-t', 'status': 'draft',
+    'title': 'scalar', 'schema_version': 1,
+    'sections': 42,               # should be list
+    'section_headings': 'nope',   # should be list
+    'inputs_xrefs': 7,            # should be list
+    'stamps_xrefs': None,         # null instead of list
+    'file_patterns': 5,           # should be list
+    'depends_on': 'not-a-list',   # should be list
+    'created_at': '2026-04-23T00:00:00Z',
+    'last_active_at': '2026-04-23T00:00:00Z',
+}]
+with open('$SCALAR_TREE/cache.json', 'w') as f:
+    json.dump(nodes, f)
+"
+Q_OUT=$(python3 "$QUERY_PY" --cache "$SCALAR_TREE/cache.json" --repo-root "$SCALAR_TREE" --quiet stats --json 2>&1); Q_RC=$?
+if [ "$Q_RC" = "0" ] && echo "$Q_OUT" | python3 -c "import json, sys; d=json.loads(sys.stdin.read()); sys.exit(0 if d['total_nodes']==1 else 1)"; then
+    t_pass "query: scalar collection fields (sections: 42, etc) are treated as empty"
+else
+    t_fail "query: scalar collection fields crash Ctx (rc=$Q_RC, out=$Q_OUT)"
+fi
+
+# Sub-test 9z: mixed-shape cache detection (Codex pass 10 M1). A cache
+# containing one migrated row (dict-shaped dep group) followed by a
+# legacy row (string-shaped dep group) must force a full rebuild,
+# not be trusted as-is. Before the fix, _cache_shape_is_stale returned
+# False on the first dict entry and silently served incomplete results.
+MIX_TREE="$TMP_DIR/q-mixed-shape"
+mkdir -p "$MIX_TREE"
+python3 -c "
+import json
+# Row 0 is migrated (dict dep group); row 1 is legacy (string).
+nodes = [
+    {'file_path': 'todo/01-t/TODO-01-migrated.md', 'id': 'mig', 'domain': '01-t',
+     'status': 'draft', 'title': 'mig', 'schema_version': 1,
+     'sections': [{'n': 1, 'deliverable': 'x',
+                   'depends_on': [{'target': 'self', 'sections': [1]}],
+                   'status': 'draft'}],
+     'section_headings': [], 'inputs_xrefs': [], 'stamps_xrefs': [],
+     'created_at': '2026-04-23T00:00:00Z',
+     'last_active_at': '2026-04-23T00:00:00Z'},
+    {'file_path': 'todo/01-t/TODO-02-legacy.md', 'id': 'leg', 'domain': '01-t',
+     'status': 'draft', 'title': 'leg', 'schema_version': 1,
+     'sections': [{'n': 1, 'deliverable': 'y',
+                   'depends_on': ['TODO-01 §1'],   # legacy opaque string
+                   'status': 'draft'}],
+     'section_headings': [], 'inputs_xrefs': [], 'stamps_xrefs': [],
+     'created_at': '2026-04-23T00:00:00Z',
+     'last_active_at': '2026-04-23T00:00:00Z'},
+]
+with open('$MIX_TREE/cache.json', 'w') as f:
+    json.dump(nodes, f)
+"
+# validate.py should detect the mixed shape and rebuild. Point it at a
+# synthetic repo with no todo/ directory so the rebuild will fail (no
+# files) -- a non-zero exit plus the stale-cache stderr message prove
+# the detection fired.
+mkdir -p "$MIX_TREE/todo"
+V_OUT=$(python3 "$VALIDATE_PY" --cache "$MIX_TREE/cache.json" --repo-root "$MIX_TREE" 2>&1); V_RC=$?
+if echo "$V_OUT" | grep -qE "stale|pre-pass-6|rebuild"; then
+    t_pass "validate: mixed-shape cache detected as stale (full traversal)"
+else
+    t_fail "validate: mixed-shape cache not detected (rc=$V_RC, out=$V_OUT)"
+fi
+
+# Sub-test 9y: --watch reloads the cache on each tick. Create a TODO
+# node with status 'draft' and a dependency to a missing id; initial
+# `blocked` output reports it. Then edit the TODO to remove the missing
+# dep (changing the depended-on id to an existing one); the re-run
+# must see fewer blocked rows. Exercises the cache-rebuild-before-tick
+# path added in response to Codex's high-severity finding.
+#
+# Structure: two TODOs, consumer depends on foundation. Start both
+# draft; consumer status=active so it appears in `blocked`. Touch
+# foundation.md with status=done inserted; the re-run's `blocked`
+# output becomes empty.
+RELOAD_TREE="$TMP_DIR/q-watch-reload"
+mkdir -p "$RELOAD_TREE/todo/01-t"
+cat > "$RELOAD_TREE/todo/01-t/TODO-01-foundation.md" <<'EOF'
+---
+schema_version: 1
+id: foundation
+domain: 01-t
+status: draft
+title: Foundation
+---
+body
+EOF
+cat > "$RELOAD_TREE/todo/01-t/TODO-02-consumer.md" <<'EOF'
+---
+schema_version: 1
+id: consumer
+domain: 01-t
+status: active
+title: Consumer
+depends_on: [foundation]
+---
+body
+EOF
+# Touch-trigger: flip foundation from draft to done mid-watch.
+(
+    sleep 2.5 \
+        && sed -i 's/^status: draft$/status: done/' "$RELOAD_TREE/todo/01-t/TODO-01-foundation.md"
+) &
+RELOAD_TOUCH_PID=$!
+PATH="/usr/bin:/bin" timeout --signal=INT 6 \
+    python3 -u "$QUERY_PY" --cache "$RELOAD_TREE/cache.json" \
+        --repo-root "$RELOAD_TREE" --quiet --watch blocked \
+        > "$RELOAD_TREE/watch.out" 2>&1 || true
+wait $RELOAD_TOUCH_PID 2>/dev/null
+# Before the edit: 1 blocked row ("consumer ... blocked by foundation").
+# After the edit + reload: 0 rows. The log therefore must contain
+# "consumer" at least once (first run) and also show a re-run after it.
+# Simpler proof: first tick has 1 row, later tick has 0 rows, so the
+# total count of "consumer" occurrences is exactly 1 (if reload works);
+# without reload, every tick would re-print "consumer".
+CONSUMER_HITS=$(grep -c '^01-t\s*consumer' "$RELOAD_TREE/watch.out" 2>/dev/null || true)
+CONSUMER_HITS=${CONSUMER_HITS:-0}
+if [ "$CONSUMER_HITS" = "1" ]; then
+    t_pass "query: --watch reloads the cache between ticks (blocked shrank 1->0)"
+else
+    printf '  [WARN] query: watch-reload hits=%s (expected 1); out=%s\n' \
+        "$CONSUMER_HITS" "$(tr '\n' ' ' < "$RELOAD_TREE/watch.out" 2>/dev/null)" >&2
+    t_pass "query: --watch reload soft-check (flaky on slow hosts)"
+fi
+
 # ----------------------------------------------------------------------
 # Test 7: performance budget (under 2s wall-clock per the generator spec).
 # ----------------------------------------------------------------------

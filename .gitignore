@@ -23,6 +23,10 @@ serial.log
 
 # OS-specific
 .DS_Store
+
+# Python (host-side tooling under scripts/)
+__pycache__/
+*.pyc
 Thumbs.db
 .build_number
 

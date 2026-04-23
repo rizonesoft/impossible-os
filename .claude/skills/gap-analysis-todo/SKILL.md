@@ -83,6 +83,7 @@ description: Deep gap analysis of a TODO file against all overlapping TODOs -- f
 
 12. **Cross-TODO overlap check.**
     - Use Grep to search ALL domains for keywords from the TODO's section titles and deliverables.
+    - **Query wiring:** `python3 scripts/todo-graph/query.py backlinks <id>` enumerates inbound XREFs programmatically (depends_on, satisfies, Inputs XREF, Accepted/Deferred stamps, Implementation Order dep groups). Use this to short-circuit the keyword grep when the target already carries a stable slug (pre-§5: filename slug; post-§5: frontmatter id).
     - For each match, classify the relationship:
       - **SUPERSEDES** -- this TODO replaces the other section entirely.
       - **COMPLEMENT** -- both contribute different aspects. Ensure bidirectional `-> XREF:`.

@@ -163,13 +163,31 @@ def load_or_rebuild_cache(cache_path: Path, repo_root: Path, quiet: bool) -> lis
 def _cache_shape_is_stale(nodes: list) -> bool:
     """Return True when sections[].depends_on still carries the pre-pass-6
     opaque-string shape instead of the expected {target, sections[]} dict
-    shape. A non-empty dep-group that is a plain string is the tell."""
+    shape. A non-empty dep-group that is a plain string is the tell.
+
+    Scans the ENTIRE cache (Codex pass 10 M1): previously this returned
+    False on the first dict-shaped entry seen, which mis-classified a
+    mixed cache (some migrated rows, some legacy rows) as fresh. Any
+    legacy string entry anywhere in the cache now forces a rebuild.
+
+    Robust against malformed caches (non-dict nodes / non-dict sections):
+    they don't prove anything about the shape, so skip them instead of
+    crashing. Downstream Ctx._validate_nodes drops malformed rows."""
     for n in nodes or []:
-        for s in n.get("sections", []) or []:
-            for grp in s.get("depends_on", []) or []:
+        if not isinstance(n, dict):
+            continue
+        sections = n.get("sections")
+        if not isinstance(sections, list):
+            continue
+        for s in sections:
+            if not isinstance(s, dict):
+                continue
+            deps = s.get("depends_on")
+            if not isinstance(deps, list):
+                continue
+            for grp in deps:
                 if not isinstance(grp, dict):
                     return True
-                return False  # first dict means the shape has migrated
     return False
 
 
