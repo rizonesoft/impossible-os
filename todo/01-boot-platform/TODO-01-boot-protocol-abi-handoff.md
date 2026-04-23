@@ -130,7 +130,7 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 > - Non-functional: no runtime kernel / bootloader code changed beyond the extraction. Smoke test passes on KVM (2.110s to `C:\>`).
 
 > **Verified:** 2026-04-17 | commit `97bcc762` | 5/5 items | build OK | 213 fields, struct_size 22144, version 5
-> **Re-verified:** 2026-04-23 | commit `<pending>` | 5/5 items | build OK | 225 fields, struct_size 23696, version 6 (refreshed after §4 boot_config / §5 typed payload ABI bumps); canonical SHA-256 rework (H1) + drift-harness baseline regen (M1) applied in pass 3
+> **Re-verified:** 2026-04-23 | commit `efadd326` | 5/5 items | build OK | 225 fields, struct_size 23696, version 6 (refreshed after §4 boot_config / §5 typed payload ABI bumps); canonical SHA-256 rework (H1) + drift-harness baseline regen (M1) applied in pass 3
 > **Quality reviewed:** 2026-04-17 | Codex 2x (adversarial + quality) | 1H+1M+2L fixed, 0 open | scope: N/A (host tools + layout-preserving refactor)
 > **Quality re-reviewed:** 2026-04-23 | Codex 2x (adversarial pass 3 + quality pass 3) | 1H+1M fixed, 0 open | scope: N/A (host tools -- hash canonicalization + test harness)
 > **Test runner:** `make test-boot-info-abi` | 7/7 scenarios PASS (5 mutations + control + sha256 canonicality invariant); `bash scripts/build.sh` runs the compare step every build as the first-line gate
