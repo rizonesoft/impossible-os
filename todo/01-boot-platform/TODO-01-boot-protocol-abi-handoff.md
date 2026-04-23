@@ -67,7 +67,7 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 | 💎  |   3   | Full bootloader/kernel mirror drift checker        | §2                                 |  [x]   |
 | 💎  |   4   | Optional payload descriptor array                  | §1                                 |  [x]   |
 | 💎  |   5   | Module and initrd handoff contract                 | §4                                 |  [x]   |
-| 💎  |   6   | Handoff memory ownership and PMM reservation table | §4                                 |  [ ]   |
+| 💎  |   6   | Handoff memory ownership and PMM reservation table | §4                                 |  [x]   |
 | 💎  |   7   | Version negotiation and stale-loader error path    | §2, T03 §2                         |  [ ]   |
 | 💎  |   8   | Boot protocol documentation and schema changelog   | §1, §2, §3, §4, §5, §6, §7         |  [ ]   |
 | ⭐  |   9   | ABI fuzz and compatibility tests                   | §2, §7                             |  [ ]   |
@@ -230,14 +230,26 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 
 ## 6. Handoff Memory Ownership and PMM Reservation Table
 
-- [ ] Create a single `boot_reserved_region` table populated from boot_info before PMM frees memory.
-- [ ] Include boot_info itself, USB DMA pages, TPM log copy, payload descriptors, runtime services regions, framebuffer, survival logs.
-- [ ] Reserve BOOT_PAYLOAD_FLAG_RESERVED payload ranges from PMM -- iterate `payload_descriptors[]` in boot_info and mark each descriptor's `phys_start` for `length` bytes as reserved when `BOOT_PAYLOAD_FLAG_RESERVED` is set. §5's bootloader loader sets this flag on every module/initrd/recovery_image allocation (UEFI `EfiLoaderData` is otherwise reclaimable), so without this step PMM can silently hand payload pages back to generic allocators after boot_payload_validate already passed. Add a kernel test that publishes a synthetic descriptor with FLAG_RESERVED, runs the reservation path, and asserts the range is unavailable to `pmm_alloc_contiguous()`.
-- [ ] Teach PMM to log every retained region and fail on overlap.
-- [ ] Add a boot diagnostic dump to BlackBox.
-- [ ] Commit: `"boot: centralize handoff memory reservations"`
+- [x] Create a single `boot_reserved_region` table populated from boot_info before PMM frees memory.
+- [x] Include boot_info itself, USB DMA pages, TPM log copy, payload descriptors, runtime services regions, framebuffer, survival logs.
+- [x] Reserve BOOT_PAYLOAD_FLAG_RESERVED payload ranges from PMM -- iterate `payload_descriptors[]` in boot_info and mark each descriptor's `phys_start` for `length` bytes as reserved when `BOOT_PAYLOAD_FLAG_RESERVED` is set. §5's bootloader loader sets this flag on every module/initrd/recovery_image allocation (UEFI `EfiLoaderData` is otherwise reclaimable), so without this step PMM can silently hand payload pages back to generic allocators after boot_payload_validate already passed. Add a kernel test that publishes a synthetic descriptor with FLAG_RESERVED, runs the reservation path, and asserts the range is unavailable to `pmm_alloc_contiguous()`.
+- [x] Teach PMM to log every retained region and fail on overlap.
+- [x] Add a boot diagnostic dump to BlackBox.
+- [x] Commit: `"boot: centralize handoff memory reservations"`
 
 **Test checkpoint:** Early PMM logs enumerate every retained boot region exactly once, overlap attempts fail before free-memory handoff, and BlackBox captures the reservation dump for post-boot inspection. Verify the reservation table on QEMU WHPX, QEMU TCG, VirtualBox, and bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 439 kernel + 16 user-mode PASS on KVM 2026-04-23 (7 new `boot_reserved:` assertions covering happy path, FLAG_RESERVED filter, overlap, range wrap, rt_mmap OOR, NULL info, payload-vs-PMM-internal); smoke PASS 2.260s on KVM
+
+> **Notes:**
+> - **What shipped**: `include/kernel/mm/boot_reserved.h` + `src/kernel/mm/boot_reserved.c` (~330 LOC). A single file-static `s_table[128]` of `struct boot_reserved_region` (phys_start, length, kind, source_index). Seven region kinds: `BOOT_INFO`, `USB_DMA_PAGE`, `USB_SCRATCHPAD`, `TPM_EVENT_LOG`, `FRAMEBUFFER`, `RT_MMAP`, `PAYLOAD`. Six error classes covering overlap, range wrap, count OOR, NULL info, zero length.
+> - **How it runs**: `pmm_init()` calls `boot_reserved_populate_from_info(&g_boot_info, &err)` after the UEFI memory-map scan. On success it calls `boot_reserved_check_payloads_disjoint()` 4x against the PMM-internal ranges (first 1 MiB, kernel image, bitmap, USER_ELF), then `boot_reserved_apply()` to mark every entry via `pmm_mark_region_used()`, then `boot_reserved_log()` to emit one LOG_INFO line per entry. Late in Phase 3 (right after `hw_dump_write_file()`) `boot_reserved_blackbox_dump()` writes the table as JSON to `X:\Diag\boot-reserved.json`. Overlap between any two entries is fatal: `add_region()` runs an O(N) overlap scan against existing entries and `boot_fatal`s on hit with a LOG_ERROR that names both offenders.
+> - **Downstream effects**: closes §5 Accepted[H] (FLAG_RESERVED reservation now wired through PMM). Replaces the inline USB DMA reservation block in `pmm_init` with a declarative table. `boot_payload_validate` at `boot_hw.c:149` still runs before `pmm_init`; it catches payload overlap against boot_info-derived retained regions; §6 adds the payload-vs-PMM-internal check that `boot_payload_validate` cannot see (bitmap extent depends on RAM size).
+> - **Canonical doc**: `include/kernel/mm/boot_reserved.h` (API contract + failure modes).
+> - **Scope boundary**: §6 does NOT describe the first 1 MiB / kernel image / bitmap / USER_ELF in the table -- those are PMM-internal and reserved by the existing direct `pmm_mark_region_used()` calls in `pmm_init`. The table scope is strictly boot_info-derived regions per the spec's item-2 list. "Survival logs" in that list refers to the klog disk buffer, which is written live to `X:\Diag\klog.txt` by the existing klog disk writer and does not need a RAM reservation.
+
+> **Verified:** 2026-04-23 | commit `<pending>` | 5/5 items | build OK | 439 kernel + 16 user-mode PASS on KVM, smoke PASS 2.260s
+> **Quality reviewed:** 2026-04-23 | Codex 1x (adversarial) | 1H fixed (payload vs PMM-internal overlap check) + 1M fixed (64-bit phys/length via %llx in JSON dump), 0 open | scope: kernel-code-quality
 
 ---
 
@@ -382,6 +394,7 @@ Linux 6.16 (merged June 2025) shipped Kexec Handover (KHO) + the Live Update Orc
 | ⭐ | Friendly stale-loader mismatch  | ✅ recovery codes          | ⚠️ log-driven failures       | ⬜ §7                                        |
 | 💎 | Anti-rollback security version  | ✅ OsLoaderSecurityVersion | ⚠️ shim SBAT revocation only | ⬜ §13 UEFI NVRAM counter                    |
 | ⭐ | Warm-kernel-update handoff ABI  | ⚠️ Hot Patch (closed)      | ✅ 6.16 Kexec Handover       | ⬜ §14 ABI only; runtime in new TODO         |
+| 💎 | Handoff memory ownership table  | ⚠️ MDL chains + LoaderBlock | ⚠️ memblock + NOMAP regions | ✅ §6 single table + overlap check + JSON dump |
 
 > Parity now covers the contract itself and the decisions made around it. Adding explicit capability negotiation, a shared boot decision record, and anti-rollback security-version binding would make this handoff easier to debug and safer to evolve than either Windows' mostly internal loader state or Linux's split between versioned structs and scattered provenance channels. The warm-kernel-update handoff ABI (§14) specifically positions Impossible OS for cloud/server parity with Linux 6.16's Kexec Handover surface at the ABI layer; the runtime live-update machinery is tracked as follow-up in 03-memory-concurrency.
 

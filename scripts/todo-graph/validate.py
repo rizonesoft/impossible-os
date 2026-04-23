@@ -248,9 +248,10 @@ def build_path_index(nodes: list) -> dict:
 
 
 def resolve_xref_target(target: str, source_file: str, id_index: dict, path_index: dict) -> Optional[str]:
-    """Resolve a target token (T17, D02T19, TODO-08, 02-kernel-core/TODO-19,
-    full filename, or a frontmatter id) to a cache file_path. Returns None
-    when no resolution succeeds.
+    """Resolve a target token (T17, D02T19, D14, TODO-08, 02-kernel-core/TODO-19,
+    full filename with or without .md, ./ or ../ relative paths, optional
+    #anchor fragments, or a frontmatter id) to a cache file_path. Returns
+    None when no resolution succeeds.
 
     The same-domain `T<num>` form is resolved relative to source_file's
     domain folder; absent that, no resolution (do NOT scan all domains for
@@ -259,6 +260,27 @@ def resolve_xref_target(target: str, source_file: str, id_index: dict, path_inde
     if not target:
         return None
     target = target.strip().strip("`").strip()
+    # Strip markdown anchor fragments (#section-heading) BEFORE resolution.
+    # Anchors target subsections on GitHub; they are never part of a file id
+    # or filename. Applying this up front lets every resolution step below
+    # work uniformly whether the caller passed a fragment or not.
+    if "#" in target:
+        target = target.split("#", 1)[0]
+    # Drop trailing slash that some authors include on path-form XREFs.
+    target = target.rstrip("/")
+    if not target:
+        return None
+    # Normalize D<d>/T<n>  (slash-separator) and D<d> T<n> (space-separator)
+    # into the canonical D<dd>T<nn> form used by COMPACT_DT_RE. Also
+    # zero-pads 1-digit domains (D2 -> D02, D2T6 -> D02T06) so the rest of
+    # the resolver has one shape to match.
+    slash_m = re.match(r"^D(\d{1,2})/T(\d{1,2})$", target)
+    if slash_m:
+        target = f"D{int(slash_m.group(1)):02d}T{int(slash_m.group(2))}"
+    else:
+        pad_m = re.match(r"^D(\d)(T\d{1,2})?$", target)
+        if pad_m:
+            target = f"D{int(pad_m.group(1)):02d}" + (pad_m.group(2) or "")
     # 1. Frontmatter id (post-§5 migration)
     if target in id_index:
         return id_index[target]
@@ -275,13 +297,42 @@ def resolve_xref_target(target: str, source_file: str, id_index: dict, path_inde
             src_dom = src_parts[-2][:2]
             return path_index["by_dn"].get((src_dom, int(m.group("num"))))
         return None
-    # 4. Full domain path: 02-kernel-core/TODO-19
+    # 3a. Domain-only compact: D14 -- resolve to the domain's INDEX.md.
+    # Authors use `D14` to reference an entire domain's scope; the INDEX.md
+    # is the canonical landing page. Must come after D<n>T<n> (step 2) so
+    # `D02T19` doesn't match the D-only branch.
+    m = COMPACT_D_RE.match(target)
+    if m:
+        dom = m.group("dom")
+        # Find any file in this domain, walk back to the INDEX.md sibling.
+        for (d, _n), fp in path_index["by_dn"].items():
+            if d == dom:
+                idx = str(Path(fp).parent / "INDEX.md")
+                return idx
+        return None
+    # 4. Full domain path: 02-kernel-core/TODO-19 (with or without -name, .md)
     m = DOMAIN_PATH_RE.match(target)
+    if m:
+        dom, num = m.group("dom"), int(m.group("num"))
+        return path_index["by_dn"].get((dom, num))
+    # 4a. Full domain path with -name[.md] suffix: 02-kernel-core/TODO-19-foo
+    # or 02-kernel-core/TODO-19-foo.md. Common surface form in Inputs XREFs
+    # and stamp links. Extract domain + TODO number, resolve via by_dn.
+    m = re.match(r"^(?P<dom>\d{2})-[a-z0-9-]+/TODO-(?P<num>\d{1,2})-[a-z0-9-]+(?:\.md)?$", target)
     if m:
         dom, num = m.group("dom"), int(m.group("num"))
         return path_index["by_dn"].get((dom, num))
     # 5. Bare TODO-NN (resolved against source_file's domain)
     m = TODO_NN_RE.match(target)
+    if m:
+        src_parts = Path(source_file).parts
+        if len(src_parts) >= 2:
+            src_dom = src_parts[-2][:2]
+            return path_index["by_dn"].get((src_dom, int(m.group("num"))))
+        return None
+    # 5a. TODO-NN-name[.md] (same-domain filename with slug and/or .md).
+    # Resolves against source_file's domain since no domain prefix is given.
+    m = re.match(r"^TODO-(?P<num>\d{1,2})-[a-z0-9-]+(?:\.md)?$", target)
     if m:
         src_parts = Path(source_file).parts
         if len(src_parts) >= 2:
@@ -296,10 +347,27 @@ def resolve_xref_target(target: str, source_file: str, id_index: dict, path_inde
         stem = target[:-3]
         if stem in path_index["by_filename"]:
             return path_index["by_filename"][stem]
-    # 8. Already a path-like form (00-domain/TODO-NN-name.md or with #anchor)
-    candidate = target.split("#")[0]  # strip anchor
-    if candidate in {n_path for n_path in path_index["by_filename"].values()}:
-        return candidate
+    # 8. Relative-path forms (./TODO-..., ../NN-dom/TODO-..., etc.).
+    # Normalize against source_file's directory using filesystem semantics,
+    # then match the normalized path against the cache. Works for any depth
+    # of `..` traversal without having to enumerate surface forms.
+    if target.startswith(("./", "../")) or "/" in target:
+        src_dir = Path(source_file).parent
+        try:
+            resolved = (src_dir / target).resolve(strict=False)
+            # Cache paths are stored relative to the repo root (todo/...),
+            # so rebuild a relative form starting at `todo/`.
+            parts = resolved.parts
+            if "todo" in parts:
+                idx = parts.index("todo")
+                rel_path = "/".join(parts[idx:])
+                if rel_path in set(path_index["by_filename"].values()):
+                    return rel_path
+        except (OSError, ValueError):
+            pass
+    # 9. Already a path-like form (00-domain/TODO-NN-name.md).
+    if target in set(path_index["by_filename"].values()):
+        return target
     # No resolution.
     return None
 

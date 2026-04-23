@@ -1,0 +1,246 @@
+/* ============================================================================
+ * test_boot_reserved.c -- unit tests for the boot-protocol handoff
+ * memory ownership / PMM reservation table (boot_reserved module).
+ *
+ * Covers:
+ *   - populate_from_info happy path (3 typical regions: boot_info, TPM,
+ *     framebuffer) -> count + ordering match boot_info.
+ *   - payload descriptors with BOOT_PAYLOAD_FLAG_RESERVED are added;
+ *     descriptors without RESERVED are skipped.
+ *   - overlap between two retained regions returns BOOT_RESERVED_ERR_OVERLAP.
+ *   - range wrap returns BOOT_RESERVED_ERR_RANGE_WRAP.
+ *   - rt_mmap_count > BOOT_RT_MMAP_MAX returns BOOT_RESERVED_ERR_COUNT_OOR.
+ *   - payload_count > BOOT_PAYLOAD_MAX returns BOOT_RESERVED_ERR_COUNT_OOR.
+ *   - NULL info returns BOOT_RESERVED_ERR_NULL_INFO.
+ *
+ * All tests use a stack-allocated struct boot_info fixture and call
+ * boot_reserved_reset_for_test() before each scenario. pmm_mark_region
+ * _used is live and safe (writes a bitmap byte); tests never call
+ * boot_reserved_apply() because that would mutate real PMM state.
+ * ============================================================================ */
+
+#include "kernel/test/test.h"
+#include "kernel/test/klog_suppress.h"
+#include "kernel/mm/boot_reserved.h"
+#include "kernel/boot_info.h"
+/* libc/string.h not needed; fixture is zeroed by scalar loop. */
+
+/* BSS-resident fixture: struct boot_info is ~23 KiB. Allocating on the
+ * test stack would blow past IST sizes on some configurations.  */
+static struct boot_info s_br_buf;
+
+static void br_zero_fixture(void)
+{
+    uint64_t *p = (uint64_t *)&s_br_buf;
+    uint32_t i;
+    for (i = 0u; i < sizeof(s_br_buf) / sizeof(uint64_t); i++)
+        p[i] = 0u;
+    /* Header magic + size must be valid so populate doesn't misread,
+     * but boot_reserved doesn't consult them directly; zero is fine. */
+    boot_reserved_reset_for_test();
+}
+
+static void test_boot_reserved_populate_happy_path(void)
+{
+    br_zero_fixture();
+
+    /* TPM event log at 1 MiB, 4 KiB. */
+    s_br_buf.tpm_event_log      = 0x100000u;
+    s_br_buf.tpm_event_log_size = 0x1000u;
+
+    /* Framebuffer at 0xE0000000, pitch=1920*4, height=1080 -> 8 MiB. */
+    s_br_buf.fb.addr        = 0xE0000000u;
+    s_br_buf.fb.pitch       = 1920u * 4u;
+    s_br_buf.fb.height      = 1080u;
+    s_br_buf.fb_available   = 1;
+
+    enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
+    boot_result_t r = boot_reserved_populate_from_info(&s_br_buf, &err);
+
+    TEST_ASSERT_EQ((int)r, (int)BOOT_OK, "populate happy path -> BOOT_OK");
+    TEST_ASSERT_EQ((int)err, (int)BOOT_RESERVED_ERR_OK, "err=OK");
+    /* Expect 3 entries: boot_info, TPM, framebuffer. */
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_count(), (unsigned long)3,
+                   "3 regions registered");
+
+    const struct boot_reserved_region *b = boot_reserved_get(0);
+    TEST_ASSERT_EQ((unsigned long)b->kind,
+                   (unsigned long)BOOT_RESERVED_BOOT_INFO,
+                   "entry 0 is boot_info");
+
+    const struct boot_reserved_region *t = boot_reserved_get(1);
+    TEST_ASSERT_EQ((unsigned long)t->kind,
+                   (unsigned long)BOOT_RESERVED_TPM_EVENT_LOG,
+                   "entry 1 is tpm_event_log");
+    TEST_ASSERT_EQ((unsigned long)t->phys_start, (unsigned long)0x100000ul,
+                   "TPM phys_start matches");
+    TEST_ASSERT_EQ((unsigned long)t->length, (unsigned long)0x1000ul,
+                   "TPM length matches");
+
+    const struct boot_reserved_region *f = boot_reserved_get(2);
+    TEST_ASSERT_EQ((unsigned long)f->kind,
+                   (unsigned long)BOOT_RESERVED_FRAMEBUFFER,
+                   "entry 2 is framebuffer");
+    TEST_ASSERT_EQ((unsigned long)f->length,
+                   (unsigned long)(1920ul * 4ul * 1080ul),
+                   "fb length = pitch * height");
+}
+
+static void test_boot_reserved_payload_reserved_flag(void)
+{
+    br_zero_fixture();
+
+    /* One payload with FLAG_RESERVED set (section 5 bootloader). */
+    s_br_buf.payload_count                       = 2;
+    s_br_buf.payload_descriptors[0].type         = BOOT_PAYLOAD_MODULE;
+    s_br_buf.payload_descriptors[0].flags        = BOOT_PAYLOAD_FLAG_VALID |
+                                                   BOOT_PAYLOAD_FLAG_RESERVED;
+    s_br_buf.payload_descriptors[0].phys_start   = 0x2000000ull;
+    s_br_buf.payload_descriptors[0].length       = 0x1000ull;
+
+    /* One payload without FLAG_RESERVED -- must NOT be added. */
+    s_br_buf.payload_descriptors[1].type         = BOOT_PAYLOAD_INITRD;
+    s_br_buf.payload_descriptors[1].flags        = BOOT_PAYLOAD_FLAG_VALID;
+    s_br_buf.payload_descriptors[1].phys_start   = 0x3000000ull;
+    s_br_buf.payload_descriptors[1].length       = 0x1000ull;
+    s_br_buf.payload_total_bytes                 = 0x2000ull;
+
+    enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
+    boot_result_t r = boot_reserved_populate_from_info(&s_br_buf, &err);
+    TEST_ASSERT_EQ((int)r, (int)BOOT_OK, "two-payload fixture populates OK");
+
+    /* Expected: 1 boot_info + 1 RESERVED payload = 2 entries (INITRD
+     * without RESERVED must not appear). */
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_count(), (unsigned long)2,
+                   "only FLAG_RESERVED payloads counted");
+
+    const struct boot_reserved_region *p = boot_reserved_get(1);
+    TEST_ASSERT_EQ((unsigned long)p->kind,
+                   (unsigned long)BOOT_RESERVED_PAYLOAD,
+                   "entry 1 is payload");
+    TEST_ASSERT_EQ((unsigned long)p->phys_start,
+                   (unsigned long)0x2000000ul,
+                   "reserved-payload phys_start matches");
+    TEST_ASSERT_EQ((unsigned long)p->source_index, (unsigned long)0,
+                   "source_index is the descriptor array index");
+}
+
+static void test_boot_reserved_overlap_rejected(void)
+{
+    TEST_KLOG_SUPPRESS("mm");
+    br_zero_fixture();
+
+    /* Place the TPM event log at the same physical address as the
+     * struct boot_info copy (0x10000). populate_from_info adds
+     * boot_info first, then the TPM entry overlaps -> error. */
+    s_br_buf.tpm_event_log      = 0x10000u;
+    s_br_buf.tpm_event_log_size = 0x1000u;
+
+    enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
+    boot_result_t r = boot_reserved_populate_from_info(&s_br_buf, &err);
+    TEST_ASSERT_EQ((int)r, (int)BOOT_FATAL,
+                   "overlap with boot_info rejected");
+    TEST_ASSERT_EQ((int)err, (int)BOOT_RESERVED_ERR_OVERLAP,
+                   "err=OVERLAP");
+}
+
+static void test_boot_reserved_range_wrap_rejected(void)
+{
+    TEST_KLOG_SUPPRESS("mm");
+    br_zero_fixture();
+
+    /* TPM event log near UINT64_MAX with length that wraps. */
+    s_br_buf.tpm_event_log      = 0xFFFFFFFFFFFFF000ull;
+    s_br_buf.tpm_event_log_size = 0x4000u;  /* wraps past UINT64_MAX */
+
+    enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
+    boot_result_t r = boot_reserved_populate_from_info(&s_br_buf, &err);
+    TEST_ASSERT_EQ((int)r, (int)BOOT_FATAL, "range-wrap rejected");
+    TEST_ASSERT_EQ((int)err, (int)BOOT_RESERVED_ERR_RANGE_WRAP,
+                   "err=RANGE_WRAP");
+}
+
+static void test_boot_reserved_rt_mmap_count_oor(void)
+{
+    TEST_KLOG_SUPPRESS("mm");
+    br_zero_fixture();
+
+    /* rt_mmap_count above the table cap -- producer bug; refuse rather
+     * than truncate. */
+    s_br_buf.rt_mmap_count = BOOT_RT_MMAP_MAX + 1u;
+
+    enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
+    boot_result_t r = boot_reserved_populate_from_info(&s_br_buf, &err);
+    TEST_ASSERT_EQ((int)r, (int)BOOT_FATAL, "rt_mmap_count > MAX rejected");
+    TEST_ASSERT_EQ((int)err, (int)BOOT_RESERVED_ERR_COUNT_OOR,
+                   "err=COUNT_OOR");
+}
+
+static void test_boot_reserved_null_info(void)
+{
+    boot_reserved_reset_for_test();
+
+    enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
+    boot_result_t r = boot_reserved_populate_from_info(NULL, &err);
+    TEST_ASSERT_EQ((int)r, (int)BOOT_FATAL, "NULL info rejected");
+    TEST_ASSERT_EQ((int)err, (int)BOOT_RESERVED_ERR_NULL_INFO,
+                   "err=NULL_INFO");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_count(), (unsigned long)0,
+                   "table untouched on NULL");
+}
+
+static void test_boot_reserved_payload_vs_pmm_internal(void)
+{
+    br_zero_fixture();
+
+    /* Reserved payload at 0x2000000 (32 MiB), 4 KiB long. */
+    s_br_buf.payload_count                       = 1;
+    s_br_buf.payload_descriptors[0].type         = BOOT_PAYLOAD_MODULE;
+    s_br_buf.payload_descriptors[0].flags        = BOOT_PAYLOAD_FLAG_VALID |
+                                                   BOOT_PAYLOAD_FLAG_RESERVED;
+    s_br_buf.payload_descriptors[0].phys_start   = 0x2000000ull;
+    s_br_buf.payload_descriptors[0].length       = 0x1000ull;
+    s_br_buf.payload_total_bytes                 = 0x1000ull;
+
+    enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
+    TEST_ASSERT_EQ((int)boot_reserved_populate_from_info(&s_br_buf, &err),
+                   (int)BOOT_OK, "payload fixture populates OK");
+
+    /* Disjoint PMM-internal range returns 0 (no collision). */
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_check_payloads_disjoint(
+                       0ull, 0x100000ull, "low_mem_1mb"),
+                   (unsigned long)0,
+                   "payload disjoint from first 1 MiB");
+
+    /* Overlapping PMM-internal range returns (s_table_idx + 1) of
+     * colliding entry. boot_info occupies s_table[0]; the payload we
+     * added is s_table[1], so hit value is 2 (1-based). */
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_check_payloads_disjoint(
+                       0x2000000ull, 0x2000ull, "fake_bitmap"),
+                   (unsigned long)2,
+                   "payload overlap returns s_table_idx+1 (colliding entry)");
+}
+
+void test_register_boot_reserved(void)
+{
+    test_suite_register_cat("boot_reserved: populate happy path",
+                            test_boot_reserved_populate_happy_path,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("boot_reserved: payload FLAG_RESERVED filter",
+                            test_boot_reserved_payload_reserved_flag,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("boot_reserved: overlap rejected",
+                            test_boot_reserved_overlap_rejected,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("boot_reserved: range wrap rejected",
+                            test_boot_reserved_range_wrap_rejected,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("boot_reserved: rt_mmap count OOR",
+                            test_boot_reserved_rt_mmap_count_oor,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("boot_reserved: NULL info rejected",
+                            test_boot_reserved_null_info, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_reserved: payload vs PMM-internal",
+                            test_boot_reserved_payload_vs_pmm_internal,
+                            TEST_CAT_BOOT);
+}

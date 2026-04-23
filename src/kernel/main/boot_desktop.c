@@ -13,6 +13,7 @@
 #include "kernel/klog.h"
 #include "kernel/cpuid_platform.h"
 #include "kernel/mm/heap.h"
+#include "kernel/mm/boot_reserved.h"
 #include "kernel/timer.h"
 #include "kernel/drivers/framebuffer.h"
 #include "kernel/drivers/ahci.h"
@@ -273,6 +274,11 @@ void boot_phase3(void)
 
     /* Write hardware inventory to X:\Diag\hwdump.txt */
     hw_dump_write_file();
+
+    /* Boot protocol section 6: dump the boot_reserved region table to
+     * X:\Diag\boot-reserved.json so a post-boot user can audit
+     * exactly which physical ranges the PMM kept reserved. */
+    boot_reserved_blackbox_dump();
 
     /* Report degraded subsystems.  Names come from kernel_subsystem_name() --
      * single source of truth in boot_init.c.  Loop bound is SUBSYS_COUNT,

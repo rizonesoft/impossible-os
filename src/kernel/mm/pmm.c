@@ -16,6 +16,7 @@
 
 #include "kernel/mm/pmm.h"
 #include "kernel/mm/user_range.h"
+#include "kernel/mm/boot_reserved.h"
 #include "kernel/boot_info.h"
 #include "kernel/klog.h"
 #ifdef KERNEL_TESTS
@@ -209,27 +210,46 @@ boot_result_t pmm_init(void)
         }
     }
 
-    /* USB xHCI DMA pages (allocated by bootloader in EfiLoaderData).
-     * EfiLoaderData is normally marked free above, so these pages would be
-     * reclaimed.  Reserve them so the kernel can inherit the DMA state. */
-    if (g_boot_info.usb_controller.active && g_boot_info.usb_controller.dma_page_count > 0) {
-        uint32_t ui;
-        /* Reserve individual DMA pages (DCBAA, cmd ring, evt ring, ERST, etc.) */
-        for (ui = 0; ui < g_boot_info.usb_controller.dma_page_count; ui++) {
-            uint64_t page = g_boot_info.usb_controller.dma_pages[ui];
-            if (page != 0)
-                pmm_mark_region_used((uintptr_t)page, 4096);
+    /* bone authoritative pass that
+     * captures every boot_info-derived retained region (struct boot_info,
+     * USB DMA + scratchpad, TPM event log, framebuffer, UEFI runtime
+     * memory, §5 typed payloads with FLAG_RESERVED), detects overlap,
+     * and applies to the PMM bitmap. Replaces the previous inline USB
+     * DMA reservation block. */
+    {
+        enum boot_reserved_error br_err = BOOT_RESERVED_ERR_OK;
+        if (boot_reserved_populate_from_info((const struct boot_info *)&g_boot_info, &br_err) != BOOT_OK) {
+            klog(LOG_FATAL, "mm",
+                 "PMM: boot_reserved populate failed (err=%u); "
+                 "bootloader/kernel disagree on a retained region",
+                 (uint64_t)br_err);
+            return BOOT_FATAL;
         }
-        /* Reserve contiguous scratchpad buffer region */
-        if (g_boot_info.usb_controller.scratchpad_base_phys &&
-            g_boot_info.usb_controller.scratchpad_page_count > 0) {
-            pmm_mark_region_used(
-                (uintptr_t)g_boot_info.usb_controller.scratchpad_base_phys,
-                (uint64_t)g_boot_info.usb_controller.scratchpad_page_count * 4096);
+        /* boot_payload_validate ran before PMM init and cross-checked
+         * payloads against boot_info/USB/TPM/FB/rt_mmap. It could not
+         * see the PMM-internal reservations that depend on RAM size
+         * (bitmap extent) or USER_ELF range. Check now before apply
+         * so a bootloader-loaded payload that happens to land on the
+         * bitmap or USER_ELF fails boot with a clear diagnostic,
+         * rather than silently getting clobbered by the bitmap
+         * initializer or corrupted by a user-process load. */
+        if (boot_reserved_check_payloads_disjoint(0ull, 0x100000ull,
+                                                  "low_mem_1mb") != 0u ||
+            boot_reserved_check_payloads_disjoint((uint64_t)0x100000ull,
+                                                  (uint64_t)(kernel_end_phys - 0x100000ull),
+                                                  "kernel_image") != 0u ||
+            boot_reserved_check_payloads_disjoint((uint64_t)kernel_end_phys,
+                                                  (uint64_t)(bitmap_end - kernel_end_phys),
+                                                  "pmm_bitmap") != 0u ||
+            boot_reserved_check_payloads_disjoint((uint64_t)USER_ELF_BASE,
+                                                  (uint64_t)USER_ELF_SIZE,
+                                                  "user_elf") != 0u) {
+            klog(LOG_FATAL, "mm",
+                 "PMM: payload range collides with PMM-internal region");
+            return BOOT_FATAL;
         }
-        klog(LOG_INFO, "mm", "PMM: reserved %u xHCI DMA pages + %u scratchpad pages",
-             (uint64_t)g_boot_info.usb_controller.dma_page_count,
-             (uint64_t)g_boot_info.usb_controller.scratchpad_page_count);
+        boot_reserved_apply();
+        boot_reserved_log();
     }
 
     /* Log UEFI memory map summary */

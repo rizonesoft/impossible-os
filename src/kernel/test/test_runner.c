@@ -369,6 +369,7 @@ extern void test_register_sched(void);
 extern void test_register_registry(void);
 extern void test_register_boot_init(void);
 extern void test_register_boot_info(void);
+extern void test_register_boot_reserved(void);
 extern void test_register_klog(void);
 extern void test_register_uefi_boot(void);
 extern void test_register_boot_device(void);
@@ -415,6 +416,7 @@ void test_runner_init(void)
     /* Boot */
     test_register_boot_init();
     test_register_boot_info();
+    test_register_boot_reserved();
     test_register_klog();
     test_register_uefi_boot();
     test_register_boot_device();

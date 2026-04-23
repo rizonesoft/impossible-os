@@ -478,15 +478,35 @@ def extract_section_headings(body: str) -> list:
 # under whichever target they follow (or "self" for sections at the start).
 _DEP_TARGET_RE = re.compile(
     r"^("
-    r"D\d{2}T\d{1,2}|"   # cross-domain compact: D02T19
-    r"D\d{2}\s*T\d{1,2}|"  # same with space: D02 T19
-    r"D\d{2}|"            # cross-domain only (rare): D14
-    r"T\d{1,2}|"           # same-domain compact: T17
-    r"TODO-\d{1,2}|"       # explicit TODO-NN
-    r"\d{2}-[a-z0-9-]+/TODO-\d{1,2}|"  # full path: 02-kernel-core/TODO-19
+    r"D\d{1,2}T\d{1,2}|"   # cross-domain compact: D02T19 (1-digit D also ok)
+    r"D\d{1,2}\s*T\d{1,2}|"  # same with space: D02 T19
+    r"D\d{1,2}/T\d{1,2}|"    # same with slash: D02/T19 (used by some authors)
+    r"D\d{1,2}|"            # cross-domain only (rare): D14
+    r"T\d{1,2}|"            # same-domain compact: T17
+    r"TODO-\d{1,2}(?:-[a-z0-9-]+)?(?:\.md)?|"  # TODO-NN, TODO-NN-name, .md
+    r"\.\.?/\S+|"           # relative path: ./foo or ../bar
+    r"\d{2}-[a-z0-9-]+/TODO-\d{1,2}(?:-[a-z0-9-]+)?(?:\.md)?"  # full domain path
     r")$"
 )
 _DEP_SECTION_RE = re.compile(r"^§(\d+)$")
+# Characters authors use as a range separator: ASCII hyphen-minus (0x2D),
+# Unicode en dash (U+2013), and Unicode em dash (U+2014). Assembled via
+# chr() so the source stays ASCII-dash-only per CLAUDE.md.
+_DEP_RANGE_DASHES = "-" + chr(0x2013) + chr(0x2014)
+# Range notation shorthand: `section-range` where the separator is any
+# dash character above, or a two-dot ellipsis. The second half may or may
+# not carry a leading section sign. Authors use this as compact shorthand;
+# we expand the sequence so each member passes through _DEP_SECTION_RE.
+_DEP_RANGE_RE = re.compile(
+    r"^§(\d+)\s*(?:[" + _DEP_RANGE_DASHES + r"]|\.\.)\s*§?(\d+)$"
+)
+# Squished target+section tokens: a target followed immediately by the
+# section sign then a digit, with no separating whitespace. Authors sometimes
+# omit the space between the file reference and the section indicator;
+# pre-split these so the rest of the tokenizer handles each half normally.
+_DEP_SQUISHED_RE = re.compile(
+    r"^(?P<target>D\d{1,2}(?:/?T\d{1,2})?|T\d{1,2}|TODO-\d{1,2})§(?P<sec>\d+)$"
+)
 
 
 def _parse_dep_cell(depends_cell: Optional[str]) -> list:
@@ -502,6 +522,37 @@ def _parse_dep_cell(depends_cell: Optional[str]) -> list:
             tok = tok.strip().strip("`").strip()
             if tok:
                 raw_tokens.append(tok)
+    # Pre-split squished target+section tokens (D02T06 + section + 3 -->
+    # D02T06, section+3) so the range/section logic below sees the
+    # expected shape. Runs before range expansion because a squished token
+    # never contains a range separator.
+    split_squished: list = []
+    for tok in raw_tokens:
+        m = _DEP_SQUISHED_RE.match(tok)
+        if m:
+            split_squished.append(m.group("target"))
+            split_squished.append("§" + m.group("sec"))
+        else:
+            split_squished.append(tok)
+    raw_tokens = split_squished
+    # Expand range tokens (`section-range-end`) into the full consecutive
+    # list. `§1..§6` or `§1-6` or `§1--§6` all become §1 §2 §3 §4 §5 §6.
+    # Degrades gracefully if start > end: emits just the start as a single
+    # section so downstream grammar is unchanged.
+    expanded: list = []
+    for tok in raw_tokens:
+        m = _DEP_RANGE_RE.match(tok)
+        if m:
+            start = int(m.group(1))
+            end = int(m.group(2))
+            if end < start:
+                expanded.append("§" + str(start))
+            else:
+                for n in range(start, end + 1):
+                    expanded.append("§" + str(n))
+        else:
+            expanded.append(tok)
+    raw_tokens = expanded
     # Join bare D<dom> followed by T<num> into a single D<dom>T<num> token
     # so the space-separated form (`D02 T19 §1`) parses identically to the
     # tight form (`D02T19 §1`); TODO-06 §1 documents both as accepted.
@@ -511,7 +562,7 @@ def _parse_dep_cell(depends_cell: Optional[str]) -> list:
         cur = raw_tokens[i]
         nxt = raw_tokens[i + 1] if i + 1 < len(raw_tokens) else None
         if (
-            re.match(r"^D\d{2}$", cur)
+            re.match(r"^D\d{1,2}$", cur)
             and nxt is not None
             and re.match(r"^T\d{1,2}$", nxt)
         ):
@@ -539,8 +590,18 @@ def _parse_dep_cell(depends_cell: Optional[str]) -> list:
             current_target = tok
             have_seen_anything = True
             continue
-        # Unrecognized token: keep it as a target with no sections so the
-        # validator can flag it (better than silently dropping).
+        # Unrecognized token: if it looks like prose or a role descriptor
+        # (VFS, heap, mutex, (none), atomics, etc.) skip it silently.
+        # These are annotation, not file references, and emitting them as
+        # opaque targets produces thousands of false-positive stale-xref
+        # findings. A malformed file reference that starts with something
+        # file-ish (TODO-, D, T, digits, path prefix) will still fail
+        # _DEP_TARGET_RE but gets kept below so the validator can flag it.
+        looks_file_ish = bool(re.match(
+            r"^(?:TODO-|D\d|T\d|\d{2}-|\.{1,2}/)", tok
+        ))
+        if not looks_file_ish:
+            continue
         if have_seen_anything:
             groups.append({"target": current_target, "sections": list(current_sections)})
             current_sections = []

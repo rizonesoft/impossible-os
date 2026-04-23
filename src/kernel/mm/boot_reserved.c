@@ -1,0 +1,395 @@
+/* ============================================================================
+ * Single authoritative table of boot_info-derived physical regions
+ * that PMM must NOT hand back to the free-page pool after boot.
+ * Populated from boot_info in pmm_init, applied to the PMM bitmap via
+ * pmm_mark_region_used(), logged at LOG_INFO for post-boot audit, and
+ * mirrored to X:\Diag\boot-reserved.json via BlackBox once the disk
+ * writer is alive.
+ *
+ * Scope boundary: this module covers struct boot_info, USB DMA pages
+ * + scratchpad, TPM event log, framebuffer, every UEFI runtime memory
+ * region, and every §5 payload descriptor with BOOT_PAYLOAD_FLAG_RESERVED.
+ * PMM-internal reservations (first 1 MiB, kernel image, bitmap, user
+ * ELF) stay as direct `pmm_mark_region_used()` calls inside pmm_init --
+ * they are not boot_info-driven and the handoff audit does not need
+ * to re-describe the kernel's own layout.
+ *
+ * Overlap between any two entries is a build-time boot_fatal: a real
+ * overlap means the bootloader and kernel disagree on who owns the
+ * range, and that ambiguity historically caused USB DMA pages to be
+ * reclaimed by unrelated allocators. Overlap detection runs O(N)
+ * against the existing entries on every add; N <= 128 and the cost is
+ * negligible at boot.
+ * ============================================================================ */
+
+#include "kernel/mm/boot_reserved.h"
+#include "kernel/mm/pmm.h"
+#include "kernel/mm/heap.h"
+#include "kernel/boot_info.h"
+#include "kernel/klog.h"
+#include "kernel/fs/vfs.h"
+#include "libc/string.h"
+
+/* Bootloader writes struct boot_info here. Literal kept local to avoid
+ * pulling a private header; the value is ABI-pinned. */
+#define BOOT_INFO_PHYS_ADDR  0x10000ull
+
+static struct boot_reserved_region s_table[BOOT_RESERVED_MAX];
+static uint32_t s_count;
+
+static const char *kind_name(uint32_t kind)
+{
+    switch (kind) {
+    case BOOT_RESERVED_BOOT_INFO:      return "boot_info";
+    case BOOT_RESERVED_USB_DMA_PAGE:   return "usb_dma_page";
+    case BOOT_RESERVED_USB_SCRATCHPAD: return "usb_scratchpad";
+    case BOOT_RESERVED_TPM_EVENT_LOG:  return "tpm_event_log";
+    case BOOT_RESERVED_FRAMEBUFFER:    return "framebuffer";
+    case BOOT_RESERVED_RT_MMAP:        return "rt_mmap";
+    case BOOT_RESERVED_PAYLOAD:        return "payload";
+    default:                           return "unknown";
+    }
+}
+
+static int range_end_overflows(uint64_t start, uint64_t len)
+{
+    if (len == 0u)
+        return 0;
+    return len > (uint64_t)-1 - start;
+}
+
+static int ranges_overlap(uint64_t a_start, uint64_t a_len,
+                          uint64_t b_start, uint64_t b_len)
+{
+    if (a_len == 0u || b_len == 0u)
+        return 0;
+    uint64_t a_end = a_start + a_len;
+    uint64_t b_end = b_start + b_len;
+    return a_start < b_end && b_start < a_end;
+}
+
+/* Append one reservation. Rejects zero-length, range wrap, table
+ * overflow, and any overlap with an existing entry. On overlap the
+ * caller gets enough context via klog to identify both offenders. */
+static enum boot_reserved_error add_region(uint64_t phys_start,
+                                           uint64_t length,
+                                           uint32_t kind,
+                                           uint32_t source_index)
+{
+    if (length == 0u)
+        return BOOT_RESERVED_ERR_ZERO_LENGTH;
+    if (range_end_overflows(phys_start, length))
+        return BOOT_RESERVED_ERR_RANGE_WRAP;
+    if (s_count >= BOOT_RESERVED_MAX)
+        return BOOT_RESERVED_ERR_COUNT_OOR;
+
+    uint32_t i;
+    for (i = 0u; i < s_count; i++) {
+        const struct boot_reserved_region *e = &s_table[i];
+        if (ranges_overlap(phys_start, length, e->phys_start, e->length)) {
+            klog(LOG_ERROR, "mm",
+                 "boot_reserved: overlap -- new kind=%s phys=0x%x+%u "
+                 "vs existing kind=%s phys=0x%x+%u",
+                 (uint64_t)(uintptr_t)kind_name(kind),
+                 phys_start, length,
+                 (uint64_t)(uintptr_t)kind_name(e->kind),
+                 e->phys_start, e->length);
+            return BOOT_RESERVED_ERR_OVERLAP;
+        }
+    }
+
+    s_table[s_count].phys_start   = phys_start;
+    s_table[s_count].length       = length;
+    s_table[s_count].kind         = kind;
+    s_table[s_count].source_index = source_index;
+    s_count++;
+    return BOOT_RESERVED_ERR_OK;
+}
+
+static boot_result_t add_or_fatal(uint64_t phys_start, uint64_t length,
+                                  uint32_t kind, uint32_t source_index,
+                                  enum boot_reserved_error *out_err)
+{
+    enum boot_reserved_error e = add_region(phys_start, length, kind, source_index);
+    if (e != BOOT_RESERVED_ERR_OK) {
+        if (out_err != (enum boot_reserved_error *)0)
+            *out_err = e;
+        return BOOT_FATAL;
+    }
+    return BOOT_OK;
+}
+
+boot_result_t boot_reserved_populate_from_info(const struct boot_info *info,
+                                               enum boot_reserved_error *out_err)
+{
+    if (out_err != (enum boot_reserved_error *)0)
+        *out_err = BOOT_RESERVED_ERR_OK;
+    if (info == (const struct boot_info *)0) {
+        if (out_err != (enum boot_reserved_error *)0)
+            *out_err = BOOT_RESERVED_ERR_NULL_INFO;
+        return BOOT_FATAL;
+    }
+
+    /* 1. struct boot_info at 0x10000. */
+    if (add_or_fatal(BOOT_INFO_PHYS_ADDR, (uint64_t)sizeof(struct boot_info),
+                     BOOT_RESERVED_BOOT_INFO, 0u, out_err) != BOOT_OK)
+        return BOOT_FATAL;
+
+    /* 2. xHCI DMA pages (DCBAA, command ring, event ring, ERST, etc.).
+     *    Each page is its own entry so overlap detection can flag a
+     *    producer bug that points two slots at the same page. */
+    if (info->usb_controller.active && info->usb_controller.dma_page_count > 0u) {
+        uint32_t n = info->usb_controller.dma_page_count;
+        if (n > BOOT_USB_MAX_DMA_PAGES)
+            n = BOOT_USB_MAX_DMA_PAGES;
+        uint32_t u;
+        for (u = 0u; u < n; u++) {
+            uint64_t page = info->usb_controller.dma_pages[u];
+            if (page == 0u)
+                continue;  /* zero = unused slot */
+            if (add_or_fatal(page, 4096ull,
+                             BOOT_RESERVED_USB_DMA_PAGE, u, out_err) != BOOT_OK)
+                return BOOT_FATAL;
+        }
+        /* 3. xHCI scratchpad contiguous pages. */
+        if (info->usb_controller.scratchpad_base_phys != 0u &&
+            info->usb_controller.scratchpad_page_count > 0u) {
+            uint64_t slen = (uint64_t)info->usb_controller.scratchpad_page_count
+                            * 4096ull;
+            if (add_or_fatal(info->usb_controller.scratchpad_base_phys, slen,
+                             BOOT_RESERVED_USB_SCRATCHPAD, 0u, out_err) != BOOT_OK)
+                return BOOT_FATAL;
+        }
+    }
+
+    /* 4. TPM event log copy. */
+    if (info->tpm_event_log != 0u && info->tpm_event_log_size > 0u) {
+        if (add_or_fatal((uint64_t)info->tpm_event_log,
+                         (uint64_t)info->tpm_event_log_size,
+                         BOOT_RESERVED_TPM_EVENT_LOG, 0u, out_err) != BOOT_OK)
+            return BOOT_FATAL;
+    }
+
+    /* 5. Linear framebuffer. pitch * height bounds the consumed bytes
+     *    (pitch already includes bytes-per-pixel). UINT32 * UINT32
+     *    fits UINT64 so no overflow guard needed beyond add_region's. */
+    if (info->fb_available && info->fb.addr != 0u &&
+        info->fb.pitch > 0u && info->fb.height > 0u) {
+        uint64_t fb_len = (uint64_t)info->fb.pitch * (uint64_t)info->fb.height;
+        if (add_or_fatal((uint64_t)info->fb.addr, fb_len,
+                         BOOT_RESERVED_FRAMEBUFFER, 0u, out_err) != BOOT_OK)
+            return BOOT_FATAL;
+    }
+
+    /* 6. UEFI runtime memory map regions. Each length is
+     *    num_pages * 4096; add_region's wrap check guards the product. */
+    if (info->rt_mmap_count > BOOT_RT_MMAP_MAX) {
+        if (out_err != (enum boot_reserved_error *)0)
+            *out_err = BOOT_RESERVED_ERR_COUNT_OOR;
+        klog(LOG_ERROR, "mm",
+             "boot_reserved: rt_mmap_count=%u > BOOT_RT_MMAP_MAX=%u",
+             (uint64_t)info->rt_mmap_count, (uint64_t)BOOT_RT_MMAP_MAX);
+        return BOOT_FATAL;
+    }
+    {
+        uint32_t i;
+        for (i = 0u; i < info->rt_mmap_count; i++) {
+            const struct boot_rt_mem_entry *rt = &info->rt_mmap[i];
+            if (rt->phys_addr == 0u || rt->num_pages == 0u)
+                continue;
+            uint64_t rt_len = (uint64_t)rt->num_pages * 4096ull;
+            if (add_or_fatal(rt->phys_addr, rt_len,
+                             BOOT_RESERVED_RT_MMAP, i, out_err) != BOOT_OK)
+                return BOOT_FATAL;
+        }
+    }
+
+    /* 7. §5 typed payloads with BOOT_PAYLOAD_FLAG_RESERVED set. */
+    if (info->payload_count > BOOT_PAYLOAD_MAX) {
+        if (out_err != (enum boot_reserved_error *)0)
+            *out_err = BOOT_RESERVED_ERR_COUNT_OOR;
+        klog(LOG_ERROR, "mm",
+             "boot_reserved: payload_count=%u > BOOT_PAYLOAD_MAX=%u",
+             (uint64_t)info->payload_count, (uint64_t)BOOT_PAYLOAD_MAX);
+        return BOOT_FATAL;
+    }
+    {
+        uint32_t i;
+        for (i = 0u; i < info->payload_count; i++) {
+            const struct boot_payload_desc *d = &info->payload_descriptors[i];
+            if ((d->flags & BOOT_PAYLOAD_FLAG_RESERVED) == 0u)
+                continue;
+            if (d->length == 0u)
+                continue;
+            if (add_or_fatal(d->phys_start, d->length,
+                             BOOT_RESERVED_PAYLOAD, i, out_err) != BOOT_OK)
+                return BOOT_FATAL;
+        }
+    }
+
+    return BOOT_OK;
+}
+
+void boot_reserved_apply(void)
+{
+    uint32_t i;
+    for (i = 0u; i < s_count; i++) {
+        const struct boot_reserved_region *e = &s_table[i];
+        pmm_mark_region_used((uintptr_t)e->phys_start, e->length);
+    }
+}
+
+uint32_t boot_reserved_check_payloads_disjoint(uint64_t start,
+                                               uint64_t len,
+                                               const char *label)
+{
+    uint32_t i;
+    if (len == 0u)
+        return 0u;
+    for (i = 0u; i < s_count; i++) {
+        const struct boot_reserved_region *e = &s_table[i];
+        if (e->kind != (uint32_t)BOOT_RESERVED_PAYLOAD)
+            continue;
+        if (ranges_overlap(e->phys_start, e->length, start, len)) {
+            klog(LOG_ERROR, "mm",
+                 "boot_reserved: payload[%u] phys=0x%x+%u overlaps "
+                 "PMM-internal region %s 0x%x+%u",
+                 (uint64_t)i, e->phys_start, e->length,
+                 (uint64_t)(uintptr_t)(label ? label : "?"),
+                 start, len);
+            return i + 1u;
+        }
+    }
+    return 0u;
+}
+
+void boot_reserved_log(void)
+{
+    uint32_t i;
+    klog(LOG_INFO, "mm",
+         "boot_reserved: %u retained region(s) populated from boot_info",
+         (uint64_t)s_count);
+    for (i = 0u; i < s_count; i++) {
+        const struct boot_reserved_region *e = &s_table[i];
+        klog(LOG_INFO, "mm",
+             "  [%u] kind=%s src=%u phys=0x%x len=%u",
+             (uint64_t)i,
+             (uint64_t)(uintptr_t)kind_name(e->kind),
+             (uint64_t)e->source_index,
+             e->phys_start, e->length);
+    }
+}
+
+/* X:\Diag\boot-reserved.json writer. Called late in Phase 3 (next to
+ * hw_dump_write_file) where IXFS + X:\ are mounted and vfs_write is
+ * safe. Early-boot callers can invoke this function; it no-ops when
+ * klog_using_blackbox is 0 (e.g. during a test that never brings up
+ * storage). Idempotent: overwrites the file on every call. */
+void boot_reserved_blackbox_dump(void)
+{
+    extern int klog_using_blackbox;
+    extern const char *klog_dir;
+    if (!klog_using_blackbox)
+        return;  /* No BlackBox partition; log-only path remains. */
+
+    const char *diag_dir = "X:\\Diag\\";
+    /* Max size: each entry costs ~110 chars of JSON; with 128 entries
+     * + 100 bytes of header/footer/framing we need ~14 KiB. Round up
+     * to 16 KiB -- this is a one-shot heap buffer released after the
+     * write. */
+    const uint32_t max_sz = 16384u;
+    char *buf = (char *)kmalloc(max_sz);
+    if (!buf) {
+        klog(LOG_WARN, "mm",
+             "boot_reserved_blackbox_dump: kmalloc(%u) failed",
+             (uint64_t)max_sz);
+        return;
+    }
+
+    uint32_t pos = 0u;
+    uint32_t i;
+    int n;
+    char line[192];
+    const char *open_hdr = "{\n  \"retained_regions\": [\n";
+    for (i = 0u; open_hdr[i] && pos < max_sz - 1u; i++)
+        buf[pos++] = open_hdr[i];
+
+    for (i = 0u; i < s_count; i++) {
+        const struct boot_reserved_region *e = &s_table[i];
+        /* Use %llx for phys_start + length so 64-bit values above 4 GiB
+         * are not truncated. Hex strings keep the JSON readable and
+         * let parsers distinguish overlong tokens from real numbers. */
+        n = snprintf(line, sizeof(line),
+                     "    { \"kind\": \"%s\", \"phys\": \"0x%llx\", "
+                     "\"length\": \"0x%llx\", \"src\": %u }%s\n",
+                     kind_name(e->kind),
+                     (unsigned long long)e->phys_start,
+                     (unsigned long long)e->length,
+                     e->source_index,
+                     (i + 1u < s_count) ? "," : "");
+        if (n < 0 || (uint32_t)n >= sizeof(line))
+            continue;  /* truncation: skip the malformed line */
+        int j;
+        for (j = 0; j < n && pos < max_sz - 1u; j++)
+            buf[pos++] = line[j];
+    }
+
+    const char *close_hdr = "  ]\n}\n";
+    for (i = 0u; close_hdr[i] && pos < max_sz - 1u; i++)
+        buf[pos++] = close_hdr[i];
+
+    /* Create file via parent-dir handle to avoid the FAT32 dir-cache
+     * re-walk bug documented in hw_dump_write_file. */
+    {
+        struct vfs_node *dir = vfs_open(diag_dir, VFS_O_READ);
+        if (dir && dir->ops && dir->ops->create)
+            dir->ops->create(dir, "boot-reserved.json", VFS_FILE);
+    }
+
+    char path[64];
+    int pi = 0;
+    int j;
+    for (j = 0; diag_dir[j] && pi < (int)sizeof(path) - 1; j++)
+        path[pi++] = diag_dir[j];
+    const char *fn = "boot-reserved.json";
+    for (j = 0; fn[j] && pi < (int)sizeof(path) - 1; j++)
+        path[pi++] = fn[j];
+    path[pi] = '\0';
+
+    struct vfs_node *f = vfs_open(path, VFS_O_WRITE);
+    if (f) {
+        vfs_write(f, 0, pos, (const uint8_t *)buf);
+        vfs_close(f);
+        klog(LOG_INFO, "mm",
+             "boot_reserved: dumped %u region(s) to %s",
+             (uint64_t)s_count, (uint64_t)(uintptr_t)path);
+    }
+    kfree(buf);
+    (void)klog_dir;  /* reserved for the headless-klog fallback path */
+}
+
+uint32_t boot_reserved_count(void)
+{
+    return s_count;
+}
+
+const struct boot_reserved_region *boot_reserved_get(uint32_t index)
+{
+    if (index >= s_count)
+        return (const struct boot_reserved_region *)0;
+    return &s_table[index];
+}
+
+#ifdef KERNEL_TESTS
+void boot_reserved_reset_for_test(void)
+{
+    uint32_t i;
+    for (i = 0u; i < BOOT_RESERVED_MAX; i++) {
+        s_table[i].phys_start   = 0u;
+        s_table[i].length       = 0u;
+        s_table[i].kind         = 0u;
+        s_table[i].source_index = 0u;
+    }
+    s_count = 0u;
+}
+#endif
