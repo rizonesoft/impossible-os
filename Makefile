@@ -259,6 +259,16 @@ $(BOOT_ABI_DUMPER_M): tools/boot-info-manifest/dump-mirror.c \
 boot-info-abi: $(BOOT_ABI_KERNEL_JSON) $(BOOT_ABI_MIRROR_JSON)
 	$(BOOT_ABI_HOST_ARCH_GATE)
 	@bash tools/boot-info-manifest/compare.sh $(BOOT_ABI_KERNEL_JSON) $(BOOT_ABI_MIRROR_JSON)
+	@bash tools/boot-info-manifest/check-doc-coverage.sh
+
+## boot-info-doc-coverage: standalone entry for the doc coverage gate
+##                         (already invoked by the boot-info-abi target;
+##                         expose as a separate make target so operators
+##                         can run just the coverage check without
+##                         rebuilding the manifest dumpers).
+.PHONY: boot-info-doc-coverage
+boot-info-doc-coverage:
+	@bash tools/boot-info-manifest/check-doc-coverage.sh
 
 $(BOOT_ABI_KERNEL_JSON): $(BOOT_ABI_DUMPER_K)
 	@$< > $@
