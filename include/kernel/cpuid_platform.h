@@ -2,7 +2,7 @@
  * cpuid_platform.h -- CPUID-based Platform Detection
  *
  * Detects whether the OS is running on bare metal or a hypervisor, and if so,
- * which hypervisor.  Used by the Unified Timer Subsystem (§6) to select the
+ * which hypervisor.  Used by the Unified Timer Subsystem to select the
  * right timer backend and calibration strategy.
  *
  * Detection method:

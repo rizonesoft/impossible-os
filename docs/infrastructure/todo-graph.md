@@ -273,7 +273,7 @@ flowchart TD
   todo_04_drivers_hardware_TODO_10_usb_stack_md_c41a84["usb-stack<br/>TODO-10"]
   class todo_04_drivers_hardware_TODO_10_usb_stack_md_c41a84 active
   click todo_04_drivers_hardware_TODO_10_usb_stack_md_c41a84 "https://github.com/rizonesoft/impossible-os/blob/main/todo/04-drivers-hardware/TODO-10-usb-stack.md"
-  todo_04_drivers_hardware_TODO_11_input_system_md_a64a2a["input-system<br/>TODO-11"]
+  todo_04_drivers_hardware_TODO_11_input_system_md_a64a2a["input-system-drivers<br/>TODO-11"]
   class todo_04_drivers_hardware_TODO_11_input_system_md_a64a2a active
   click todo_04_drivers_hardware_TODO_11_input_system_md_a64a2a "https://github.com/rizonesoft/impossible-os/blob/main/todo/04-drivers-hardware/TODO-11-input-system.md"
   todo_04_drivers_hardware_TODO_12_i2c_touchpad_md_9db485["i2c-touchpad<br/>TODO-12"]
@@ -396,16 +396,16 @@ flowchart TD
   todo_07_networking_TODO_06_ntp_status_winsock_md_a84c0c["ntp-status-winsock<br/>TODO-06"]
   class todo_07_networking_TODO_06_ntp_status_winsock_md_a84c0c active
   click todo_07_networking_TODO_06_ntp_status_winsock_md_a84c0c "https://github.com/rizonesoft/impossible-os/blob/main/todo/07-networking/TODO-06-ntp-status-winsock.md"
-  todo_07_networking_TODO_07_web_browser_md_ee3197["web-browser<br/>TODO-07"]
+  todo_07_networking_TODO_07_web_browser_md_ee3197["web-browser-networking<br/>TODO-07"]
   class todo_07_networking_TODO_07_web_browser_md_ee3197 active
   click todo_07_networking_TODO_07_web_browser_md_ee3197 "https://github.com/rizonesoft/impossible-os/blob/main/todo/07-networking/TODO-07-web-browser.md"
   todo_07_networking_TODO_08_ssh_ftp_clients_md_d03e11["ssh-ftp-clients<br/>TODO-08"]
   class todo_07_networking_TODO_08_ssh_ftp_clients_md_d03e11 active
   click todo_07_networking_TODO_08_ssh_ftp_clients_md_d03e11 "https://github.com/rizonesoft/impossible-os/blob/main/todo/07-networking/TODO-08-ssh-ftp-clients.md"
-  todo_07_networking_TODO_09_email_client_md_5e20b9["email-client<br/>TODO-09"]
+  todo_07_networking_TODO_09_email_client_md_5e20b9["email-client-networking<br/>TODO-09"]
   class todo_07_networking_TODO_09_email_client_md_5e20b9 active
   click todo_07_networking_TODO_09_email_client_md_5e20b9 "https://github.com/rizonesoft/impossible-os/blob/main/todo/07-networking/TODO-09-email-client.md"
-  todo_07_networking_TODO_10_pdf_viewer_md_549fa6["pdf-viewer<br/>TODO-10"]
+  todo_07_networking_TODO_10_pdf_viewer_md_549fa6["pdf-viewer-networking<br/>TODO-10"]
   class todo_07_networking_TODO_10_pdf_viewer_md_549fa6 active
   click todo_07_networking_TODO_10_pdf_viewer_md_549fa6 "https://github.com/rizonesoft/impossible-os/blob/main/todo/07-networking/TODO-10-pdf-viewer.md"
   todo_07_networking_TODO_11_syslog_forwarding_md_8694c5["syslog-forwarding<br/>TODO-11"]
@@ -489,7 +489,7 @@ flowchart TD
   todo_09_desktop_shell_TODO_09_file_manager_md_e444bc["file-manager<br/>TODO-09"]
   class todo_09_desktop_shell_TODO_09_file_manager_md_e444bc active
   click todo_09_desktop_shell_TODO_09_file_manager_md_e444bc "https://github.com/rizonesoft/impossible-os/blob/main/todo/09-desktop-shell/TODO-09-file-manager.md"
-  todo_09_desktop_shell_TODO_10_notepad_md_0f5e6e["notepad<br/>TODO-10"]
+  todo_09_desktop_shell_TODO_10_notepad_md_0f5e6e["notepad-shell-host<br/>TODO-10"]
   class todo_09_desktop_shell_TODO_10_notepad_md_0f5e6e active
   click todo_09_desktop_shell_TODO_10_notepad_md_0f5e6e "https://github.com/rizonesoft/impossible-os/blob/main/todo/09-desktop-shell/TODO-10-notepad.md"
   todo_09_desktop_shell_TODO_11_control_panel_md_e1e4fc["control-panel<br/>TODO-11"]
@@ -588,7 +588,7 @@ flowchart TD
   todo_11_apps_TODO_13_calendar_utilities_md_90f622["calendar-utilities<br/>TODO-13"]
   class todo_11_apps_TODO_13_calendar_utilities_md_90f622 active
   click todo_11_apps_TODO_13_calendar_utilities_md_90f622 "https://github.com/rizonesoft/impossible-os/blob/main/todo/11-apps/TODO-13-calendar-utilities.md"
-  todo_12_user_platform_sdk_TODO_01_kernel_libraries_md_c7c1f1["kernel-libraries<br/>TODO-01"]
+  todo_12_user_platform_sdk_TODO_01_kernel_libraries_md_c7c1f1["kernel-libraries-sdk<br/>TODO-01"]
   class todo_12_user_platform_sdk_TODO_01_kernel_libraries_md_c7c1f1 active
   click todo_12_user_platform_sdk_TODO_01_kernel_libraries_md_c7c1f1 "https://github.com/rizonesoft/impossible-os/blob/main/todo/12-user-platform-sdk/TODO-01-kernel-libraries.md"
   todo_12_user_platform_sdk_TODO_02_env_vars_process_abi_md_725aaf["env-vars-process-abi<br/>TODO-02"]

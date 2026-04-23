@@ -66,7 +66,7 @@ typedef struct {
     void          *Environment;    /* offset 0x80 -- UTF-16 env block */
 } RTL_USER_PROCESS_PARAMETERS;
 
-/* ---- PEB_LDR_DATA (stub -- full implementation in §8) -------------------- */
+/* ---- PEB_LDR_DATA (stub; full loader-data implementation pending) -------- */
 
 typedef struct peb_ldr_data {
     uint32_t   Length;                            /* offset 0x00 */

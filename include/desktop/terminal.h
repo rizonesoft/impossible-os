@@ -50,7 +50,7 @@ int terminal_get_handle(void);
 /* Render the terminal contents to its WM window. Call once per frame. */
 void terminal_render(void);
 
-/* ---- Introspection (test framework -- desktop UI test framework §5) ---- */
+/* ---- Introspection (desktop UI test framework hook) ---- */
 
 /* Copy the terminal's text grid into dest as a flat TERM_ROWS*TERM_COLS
  * byte array (row-major, row N starts at dest[N*TERM_COLS]). No null

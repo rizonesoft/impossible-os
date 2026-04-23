@@ -139,11 +139,11 @@ done
 [ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[doctor + setup invariants]${NC}"
 assert_exit_zero "tooling-doctor --quiet exit 0" bash "$SCRIPT_DIR/tooling-doctor.sh" --quiet
 assert_exit_zero "setup --verify exit 0" bash "$SCRIPT_DIR/setup.sh" --verify
-if bash "$SCRIPT_DIR/lint.sh" --help 2>/dev/null | grep -qE 'Checks \(4\)'; then
-    t_pass "lint --help names 4 checks (post camelCase-removal)"
+if bash "$SCRIPT_DIR/lint.sh" --help 2>/dev/null | grep -qE 'Checks \(5\)'; then
+    t_pass "lint --help names 5 checks (post section-ref gate)"
 else
-    t_fail "lint --help names 4 checks (post camelCase-removal)" \
-        "expected 'Checks (4)' in --help output; if a check was added or removed, update this assertion AND lint.sh's help text together"
+    t_fail "lint --help names 5 checks (post section-ref gate)" \
+        "expected 'Checks (5)' in --help output; if a check was added or removed, update this assertion AND lint.sh's help text together"
 fi
 
 # ============================================================================

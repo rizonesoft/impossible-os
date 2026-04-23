@@ -188,7 +188,7 @@ NTSTATUS NtFlushTrace(uint64_t trace_handle, uint64_t instance_name,
 void etw_emit_kernel_event(uint16_t event_id, uint8_t level,
                            const void *payload, uint32_t payload_size);
 
-/* Thin wrapper around etw_emit_kernel_event for the §10 frame-timing
+/* Thin wrapper around etw_emit_kernel_event for the frame-timing
  * oracle: writes the current wm_frame_stats snapshot as the payload.
  * The wm.h forward declaration of `struct wm_frame_stats` keeps this
  * header from dragging desktop/ into every kernel consumer; callers

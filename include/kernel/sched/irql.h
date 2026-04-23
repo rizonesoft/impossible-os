@@ -132,7 +132,7 @@ uint32_t irql_to_tpr(KIRQL irql);
 
 /* Check that the current IRQL is at most max_irql.  Logs a diagnostic on
  * violation.  Called from blocking primitives to catch illegal waits at
- * elevated IRQL.  Full enforcement (hard traps) deferred to §8. */
+ * elevated IRQL.  Full enforcement (hard traps) deferred. */
 void _irql_check_max(KIRQL max_irql, const char *caller);
 
 /* Assert: current IRQL must allow blocking (at most APC_LEVEL).

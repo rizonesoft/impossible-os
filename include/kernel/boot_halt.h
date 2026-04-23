@@ -13,5 +13,5 @@
  * - Does not return.
  *
  * Safe to call from any kernel phase, including before fb_init().
- * XREF: 02-kernel-core/TODO-01-kernel-init-sequencing.md §7 */
+ * XREF: 02-kernel-core/TODO-01-kernel-init-sequencing.md */
 void boot_halt(const char *reason);

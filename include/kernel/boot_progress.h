@@ -5,7 +5,7 @@
  * a 32-entry stage history (capped), elapsed-ms timing, and splash progress
  * forwarding. Used by panic forensics and boot timing reports.
  *
- * XREF: 01-boot-platform/TODO-14-boot-diagnostics.md §2
+ * XREF: 01-boot-platform/TODO-14-boot-diagnostics.md
  * ============================================================================ */
 
 #pragma once

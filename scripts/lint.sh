@@ -303,34 +303,24 @@ if [ "$#" -eq 0 ]; then
     # here -- check the lint output and replace the §N with a feature
     # name or a doc anchor link before adding.
     BARE_SECTION_LEGACY_FILES=(
-        include/desktop/terminal.h
         include/kernel/atomic.h
-        include/kernel/boot_halt.h
         include/kernel/boot_info.h
-        include/kernel/boot_progress.h
         include/kernel/boot_version.h
-        include/kernel/cpuid_platform.h
         include/kernel/drivers/nvme.h
         include/kernel/drivers/virtio/blk.h
         include/kernel/drivers/virtio/virtio.h
         include/kernel/elf.h
-        include/kernel/etw.h
         include/kernel/exec.h
         include/kernel/fs/vfs.h
         include/kernel/ipc/alpc.h
         include/kernel/ipc/alpc_port.h
         include/kernel/mm/boot_reserved.h
         include/kernel/mm/heap.h
-        include/kernel/msr.h
         include/kernel/nt/nt_file.h
         include/kernel/ob/ob.h
         include/kernel/ob/ob_type.h
-        include/kernel/ob/peb.h
         include/kernel/pe.h
-        include/kernel/sched/irql.h
         include/kernel/sched/task.h
-        include/kernel/sched/transition_ring.h
-        include/kernel/security/pku.h
         include/kernel/smp.h
         include/kernel/test/input_record.h
         include/kernel/test/klog_suppress.h

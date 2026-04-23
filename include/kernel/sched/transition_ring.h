@@ -14,7 +14,7 @@
  *
  * Why always-on instead of opt-in perf/ftrace: Windows xperf and Linux
  * perf both require external configuration before a user-mode hang.
- * When the hang actually happens, the tracing isn't running. §19's ring
+ * When the hang actually happens, the tracing isn't running. The ring
  * is baked into every panic, so the data is there the first time it
  * matters -- no second repro needed.
  *
