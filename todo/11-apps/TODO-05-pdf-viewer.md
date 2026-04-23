@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: pdf-viewer
+domain: 11-apps
+status: active
+title: "TODO-05 -- PDF Viewer"
+---
+
 # TODO-05 -- PDF Viewer
 
 > **Goal:** Build `pdfview.exe` -- a PDF 1.x viewer for Impossible OS that parses cross-reference

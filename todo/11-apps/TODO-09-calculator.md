@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: calculator
+domain: 11-apps
+status: active
+title: "TODO-09 -- Calculator"
+---
+
 # TODO-09 -- Calculator
 
 > **Goal:** Build `calc.exe` -- a three-mode calculator (Standard, Scientific, Programmer) with a

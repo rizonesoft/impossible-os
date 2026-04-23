@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: photos-image-viewer
+domain: 11-apps
+status: active
+title: "TODO-11 -- Photos (Image Viewer)"
+---
+
 # TODO-11 -- Photos (Image Viewer)
 
 > **Goal:** Build `photos.exe` -- the system image viewer for JPEG, PNG, BMP, GIF, and WEBP.

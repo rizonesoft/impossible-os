@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: screenshot-archive
+domain: 11-apps
+status: active
+title: "TODO-12 -- Screenshot Tool & Archive Manager"
+---
+
 # TODO-12 -- Screenshot Tool & Archive Manager
 
 > **Goal:** Build `sniptool.exe` (screenshot + annotation) and `archiver.exe` (ZIP manager),

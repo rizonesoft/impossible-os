@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: email-client
+domain: 11-apps
+status: active
+title: "TODO-04 -- Email Client"
+---
+
 # TODO-04 -- Email Client
 
 > **Goal:** Build `mail.exe` -- a production-quality email client for Impossible OS with SMTP,

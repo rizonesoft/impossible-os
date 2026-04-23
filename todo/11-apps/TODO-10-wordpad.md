@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: wordpad
+domain: 11-apps
+status: active
+title: "TODO-10 -- WordPad (Rich Text Editor)"
+---
+
 # TODO-10 -- WordPad (Rich Text Editor)
 
 > **Goal:** Build `wordpad.exe` -- a rich text editor bridging Notepad and a full word processor.

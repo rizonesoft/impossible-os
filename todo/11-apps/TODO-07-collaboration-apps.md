@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: collaboration-apps
+domain: 11-apps
+status: active
+title: "TODO-07 -- Collaboration & Network Client Apps"
+---
+
 # TODO-07 -- Collaboration & Network Client Apps
 
 > **Goal:** Deliver the remaining network client apps needed for Windows 11 / Linux parity:

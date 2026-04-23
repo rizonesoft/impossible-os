@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: ftp-wget-wifi
+domain: 11-apps
+status: active
+title: "TODO-02 -- FTP Client, wget/curl & WiFi"
+---
+
 # TODO-02 -- FTP Client, wget/curl & WiFi
 
 **Domain:** `10-apps`

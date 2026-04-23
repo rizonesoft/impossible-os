@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: ssh-client
+domain: 11-apps
+status: active
+title: "TODO-03 -- SSH Client"
+---
+
 # TODO-03 -- SSH Client
 
 > **Goal:** Build `ssh.exe` -- a complete SSH2 client for Impossible OS, delivering secure remote

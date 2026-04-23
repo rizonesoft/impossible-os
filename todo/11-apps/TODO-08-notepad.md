@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: notepad
+domain: 11-apps
+status: active
+title: "TODO-08 -- Notepad"
+---
+
 # TODO-08 -- Notepad
 
 > **Goal:** Ship `notepad.exe` -- Impossible OS's primary text editor, covering the gap buffer

@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: video-player
+domain: 11-apps
+status: active
+title: "TODO-06 -- Video Player"
+---
+
 # TODO-06 -- Video Player
 
 > **Goal:** Build `player.exe` -- a video player for Impossible OS backed by **pl_mpeg** (public

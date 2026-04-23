@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: calendar-utilities
+domain: 11-apps
+status: active
+title: "TODO-13 -- Calendar, Sticky Notes & Utility Apps"
+---
+
 # TODO-13 -- Calendar, Sticky Notes & Utility Apps
 
 > **Goal:** Deliver the remaining accessory suite: Calendar app with recurring events and

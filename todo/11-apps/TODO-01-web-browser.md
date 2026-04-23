@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: web-browser
+domain: 11-apps
+status: active
+title: "TODO-01 -- Web Browser"
+---
+
 # TODO-01 -- Web Browser
 
 **Domain:** `10-apps`
