@@ -1672,6 +1672,99 @@ else
     t_pass "query: --watch reload soft-check (flaky on slow hosts)"
 fi
 
+# Sub-test 9aa: --cache outside repo_root disables auto-rebuild so a
+# typo/hostile fixture cannot weaponize `watch` into overwriting arbitrary
+# host files. Regression against post-commit Codex pass 11 finding.
+OOR_TREE="$TMP_DIR/q-oor"
+OOR_CACHE="$TMP_DIR/external-elsewhere/cache.json"
+mkdir -p "$OOR_TREE" "$(dirname "$OOR_CACHE")"
+# Pre-populate a minimal valid cache at the out-of-repo path.
+python3 -c "
+import json
+nodes = [{'file_path': 'todo/01-t/TODO-01-ok.md', 'id': 'ok', 'domain': '01-t',
+          'status': 'draft', 'title': 'ok', 'sections': [], 'section_headings': [],
+          'inputs_xrefs': [], 'stamps_xrefs': [], 'schema_version': 1,
+          'created_at': '2026-04-23T00:00:00Z',
+          'last_active_at': '2026-04-23T00:00:00Z'}]
+with open('$OOR_CACHE', 'w') as f:
+    json.dump(nodes, f)
+"
+# Run in watch mode briefly; the auto-rebuild path must warn + skip.
+PATH="/usr/bin:/bin" timeout --signal=INT 3 \
+    python3 -u "$QUERY_PY" --cache "$OOR_CACHE" --repo-root "$OOR_TREE" \
+        --watch by-domain > "$OOR_TREE/watch.out" 2>&1 || true
+if grep -q "outside repo_root" "$OOR_TREE/watch.out"; then
+    t_pass "query: --cache outside repo_root disables auto-rebuild (watch mode)"
+else
+    t_fail "query: external --cache should refuse rebuild (out=$(cat "$OOR_TREE/watch.out" 2>/dev/null))"
+fi
+
+# Sub-test 9bb: stem collisions (two TODOs with the same filename stem
+# across domains) exit 2 with a listing rather than silently picking one.
+# Regression against post-commit Codex pass 11 finding.
+STEM_TREE="$TMP_DIR/q-stem"
+mkdir -p "$STEM_TREE/todo/01-a" "$STEM_TREE/todo/02-b"
+# Two files with the identical stem `TODO-01-collide` in different domains.
+cat > "$STEM_TREE/todo/01-a/TODO-01-collide.md" <<'EOF'
+---
+schema_version: 1
+id: stem-collide-a
+domain: 01-a
+status: draft
+title: Collide A
+---
+body
+EOF
+cat > "$STEM_TREE/todo/02-b/TODO-01-collide.md" <<'EOF'
+---
+schema_version: 1
+id: stem-collide-b
+domain: 02-b
+status: draft
+title: Collide B
+---
+body
+EOF
+python3 "$BUILD_PY" --quiet --root "$STEM_TREE/todo" --output "$STEM_TREE/cache.json" --repo-root "$STEM_TREE" >/dev/null 2>&1
+Q_OUT=$(python3 "$QUERY_PY" --cache "$STEM_TREE/cache.json" --repo-root "$STEM_TREE" --quiet backlinks TODO-01-collide 2>&1); Q_RC=$?
+if [ "$Q_RC" = "2" ] && echo "$Q_OUT" | grep -q "multiple filename stems"; then
+    t_pass "query: ambiguous filename stem refused with exit 2 + listing"
+else
+    t_fail "query: stem collision should exit 2 (rc=$Q_RC, out=$Q_OUT)"
+fi
+
+# Sub-test 9cc: stats.top_longest_deferred uses the same outbound-resolution
+# filter as cmd_deferred. A node with a self-pointing (same file_path)
+# deferred stamp must NOT appear in stats.top_longest_deferred.
+# Regression against post-commit Codex pass 11 finding.
+SELF_TREE="$TMP_DIR/q-self-deferred"
+mkdir -p "$SELF_TREE"
+python3 -c "
+import json
+nodes = [{'file_path': 'todo/01-t/TODO-01-self.md', 'id': 'self-def', 'domain': '01-t',
+          'status': 'draft', 'title': 'self-deferred', 'schema_version': 1,
+          'sections': [], 'section_headings': [], 'inputs_xrefs': [],
+          # Stamp points at the SAME file -> not truly outbound.
+          'stamps_xrefs': [{'kind': 'deferred', 'severity': 'M',
+                             'target_path': 'TODO-01-self',
+                             'target_section': '§1', 'item_name': 'self'}],
+          'created_at': '2026-04-23T00:00:00Z',
+          'last_active_at': '2026-04-23T00:00:00Z'}]
+with open('$SELF_TREE/cache.json', 'w') as f:
+    json.dump(nodes, f)
+"
+Q_OUT=$(python3 "$QUERY_PY" --cache "$SELF_TREE/cache.json" --repo-root "$SELF_TREE" --quiet stats --json 2>&1); Q_RC=$?
+if [ "$Q_RC" = "0" ] && echo "$Q_OUT" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+# A self-pointing stamp must NOT promote the node into top_longest_deferred.
+sys.exit(0 if len(d['top_longest_deferred']) == 0 else 1)
+"; then
+    t_pass "query: stats.top_longest_deferred excludes self-pointing stamps"
+else
+    t_fail "query: stats.top_longest_deferred still includes self-pointing (rc=$Q_RC, out=$Q_OUT)"
+fi
+
 # ----------------------------------------------------------------------
 # Test 7: performance budget (under 2s wall-clock per the generator spec).
 # ----------------------------------------------------------------------

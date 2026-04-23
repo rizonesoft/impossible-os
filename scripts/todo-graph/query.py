@@ -131,7 +131,7 @@ def _validate_nodes(nodes: list) -> list:
 class Ctx:
     __slots__ = (
         "nodes", "id_index", "path_index", "slug_index", "slug_collisions",
-        "inbound", "repo_root", "quiet", "pre_notice_fired",
+        "stem_collisions", "inbound", "repo_root", "quiet", "pre_notice_fired",
     )
 
     def __init__(self, nodes, repo_root, quiet):
@@ -139,6 +139,7 @@ class Ctx:
         self.id_index = build_id_index(self.nodes)
         self.path_index = build_path_index(self.nodes)
         self.slug_index, self.slug_collisions = build_slug_index(self.nodes)
+        self.stem_collisions = _build_stem_collisions(self.nodes)
         self.repo_root = repo_root
         self.quiet = quiet
         self.pre_notice_fired = False
@@ -161,6 +162,22 @@ class Ctx:
                 "§5 back-fill. Showing 0 results.\n"
             )
         self.pre_notice_fired = True
+
+
+def _build_stem_collisions(nodes: list) -> dict:
+    """Return {stem: [file_paths]} for every filename stem that appears
+    more than once. Mirrors build_slug_index's collision tracking --
+    validate.build_path_index silently overwrites on duplicate stems,
+    so we track ambiguity separately here and refuse stem-based
+    resolution when >1 file shares the stem."""
+    seen: dict = {}
+    for n in nodes:
+        rel = n.get("file_path")
+        if not rel:
+            continue
+        stem = Path(rel).stem
+        seen.setdefault(stem, []).append(rel)
+    return {s: paths for s, paths in seen.items() if len(paths) > 1}
 
 
 # ----------------------------------------------------------------------
@@ -302,8 +319,18 @@ def resolve_id_to_node(target: str, ctx: Ctx) -> Optional[dict]:
 
     # 1. Frontmatter id
     fp = ctx.id_index.get(t)
-    # 2. Filename stem
+    # 2. Filename stem (with ambiguity check -- validate.build_path_index
+    # silently overwrites on duplicate stems, so we refuse here rather
+    # than silently returning whichever node was indexed last).
     if not fp:
+        stem_collisions = ctx.stem_collisions.get(t)
+        if stem_collisions and len(stem_collisions) > 1:
+            sys.stderr.write(
+                f"[query.py] error: id '{t}' matches multiple filename stems:\n"
+                + "\n".join(f"  - {p}" for p in stem_collisions) + "\n"
+                + "[query.py] disambiguate by passing the full file_path.\n"
+            )
+            sys.exit(2)
         fp = ctx.path_index["by_filename"].get(t)
     # 3. Slug (with ambiguity check)
     if not fp:
@@ -312,7 +339,7 @@ def resolve_id_to_node(target: str, ctx: Ctx) -> Optional[dict]:
             sys.stderr.write(
                 f"[query.py] error: id '{t}' is ambiguous; matches:\n"
                 + "\n".join(f"  - {p}" for p in collisions) + "\n"
-                + "[query.py] disambiguate by passing the full filename stem or file_path.\n"
+                + "[query.py] disambiguate by passing the full file_path.\n"
             )
             sys.exit(2)
         fp = ctx.slug_index.get(t)
@@ -623,15 +650,26 @@ def cmd_stats(ctx: Ctx, args) -> tuple:
         for r in blocking_rows[:3]
     ]
 
-    # top_longest_deferred: rank nodes with >=1 outbound kind=deferred stamp
-    # by oldest last_active_at (proxy for how long the deferral has sat).
+    # top_longest_deferred: rank nodes with >=1 genuinely-outbound
+    # kind=deferred stamp (resolves to a DIFFERENT node) by oldest
+    # last_active_at. Uses the same outbound-resolution filter as
+    # cmd_deferred so `stats` and `deferred <id>` cannot contradict each
+    # other (unresolved or self-pointing stamps don't qualify).
     deferred_nodes = []
     for n in ctx.nodes:
-        has_deferred = any(
-            (isinstance(x, dict) and x.get("kind") == "deferred")
-            for x in (_safe_list(n.get("stamps_xrefs")))
-        )
-        if not has_deferred:
+        has_outbound_deferred = False
+        for x in _safe_list(n.get("stamps_xrefs")):
+            if not isinstance(x, dict):
+                continue
+            if x.get("kind") != "deferred":
+                continue
+            tgt = _resolve_edge_target(
+                x.get("target_path"), n["file_path"], ctx.id_index, ctx.path_index,
+            )
+            if tgt and tgt != n["file_path"]:
+                has_outbound_deferred = True
+                break
+        if not has_outbound_deferred:
             continue
         t = _parse_iso(n.get("last_active_at"))
         if not t:
@@ -967,13 +1005,41 @@ def _build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _cache_path_is_writable_from_here(cache_path: Path, repo_root: Path) -> bool:
+    """Return True only when cache_path is safely under repo_root. The
+    watch-mode auto-rebuild writes to cache_path via build.py; accepting
+    arbitrary user-supplied absolute paths would turn a supposedly
+    read-only query into a file-write primitive anywhere on disk. Users
+    pointing at an external cache for inspection (e.g. a CI fixture)
+    simply skip the rebuild and get read-only behavior."""
+    try:
+        cp_resolved = cache_path.resolve(strict=False)
+        rr_resolved = repo_root.resolve(strict=False)
+        cp_resolved.relative_to(rr_resolved)
+        return True
+    except (OSError, ValueError):
+        return False
+
+
 def _rebuild_cache(cache_path: Path, repo_root: Path, quiet: bool) -> None:
     """Force-rebuild build/todo-cache.json by shelling out to build.py.
     Used between --watch ticks so the query reflects the user's latest
     TODO edits (load_or_rebuild_cache alone won't trigger a rebuild for
     a schema-stable cache; it only regenerates on absence or stale shape).
     Errors bubble up as a stderr notice but don't abort the watch loop --
-    a transient build failure should not kill an interactive watcher."""
+    a transient build failure should not kill an interactive watcher.
+
+    Refuses to write outside repo_root. A user who pointed --cache at an
+    external path may inspect that cache read-only, but auto-rebuild is
+    disabled so a typo or hostile fixture cannot overwrite arbitrary
+    host files via the watch loop."""
+    if not _cache_path_is_writable_from_here(cache_path, repo_root):
+        if not quiet:
+            sys.stderr.write(
+                f"[query.py] WARN: --cache {cache_path} is outside repo_root "
+                f"{repo_root}; skipping auto-rebuild (read-only mode)\n"
+            )
+        return
     build_py = Path(__file__).resolve().parent / "build.py"
     if not build_py.exists():
         if not quiet:
