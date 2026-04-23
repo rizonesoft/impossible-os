@@ -5,7 +5,7 @@
 # Owner: TODO-06 §3 (Validator) in todo/00-infrastructure/.
 # Consumer of: build/todo-cache.json (produced by scripts/todo-graph/build.py).
 #
-# Runs seven graph-integrity checks on the cache and the live TODO files.
+# Runs eight graph-integrity checks on the cache and the live TODO files.
 # Each check is independent; failures are tagged by category and printed in
 # the t_pass / t_fail style used by scripts/test-tooling.sh. Exit 0 iff
 # zero failures; exit 1 otherwise so CI (TODO-06 §6) can gate on it.
@@ -27,6 +27,9 @@
 #      status: draft must NOT have all-rows-[x] (promote to done).
 #   7. $schema reachability: per-file frontmatter `$schema` must point
 #      at an existing file (skipped when the field is absent).
+#   8. Duplicate id: frontmatter `id` must be globally unique across
+#      the todo tree. Added 2026-04-23 (§6) to catch rename-into-
+#      collision PRs that build_id_index would otherwise mask.
 #
 # CLI:
 #   validate.py [--cache PATH] [--quiet] [--warnings-only]
@@ -737,6 +740,239 @@ def fix_line_numbers(nodes: list, snapshot: dict, id_index: dict, path_index: di
 
 # --- main ----------------------------------------------------------------
 
+# ----------------------------------------------------------------------
+# Check 8: duplicate-id -- the schema enforces id format but NOT global
+# uniqueness. A PR that renames alpha -> beta while another node already
+# uses id=beta silently overwrites in build_id_index (dict), masking the
+# collision from every downstream query. Codex pass 15 H2 (TODO-06 §6).
+# ----------------------------------------------------------------------
+
+def check_duplicate_id(nodes: list) -> list:
+    findings: list = []
+    by_id: dict = {}
+    for n in nodes:
+        nid = n.get("id")
+        if not nid:
+            continue
+        by_id.setdefault(nid, []).append(n.get("file_path") or "(unknown-path)")
+    for nid, paths in sorted(by_id.items()):
+        if len(paths) <= 1:
+            continue
+        # Report once per duplicated id against its first path; include
+        # the full collision list in the detail for triage.
+        findings.append(Finding(
+            "duplicate-id", paths[0],
+            f"id '{nid}' is claimed by {len(paths)} files: {', '.join(paths)}",
+            severity="FAIL",
+        ))
+    return findings
+
+
+# ----------------------------------------------------------------------
+# --diff mode (TODO-06 §6): compare current cache vs BASELINE.
+# ----------------------------------------------------------------------
+
+def _orphans(nodes: list, id_index: dict, path_index: dict) -> set:
+    """Return the set of file_paths with zero inbound edges across all
+    kinds (frontmatter + Implementation Order + Inputs XREF + stamps).
+    Self-references don't count. Mirrors query.py's orphan logic at a
+    file_path granularity."""
+    inbound_targets: set = set()
+    for n in nodes:
+        src = n.get("file_path")
+        for ref in (n.get("depends_on") or []) + (n.get("satisfies") or []):
+            tgt = id_index.get(ref)
+            if tgt and tgt != src:
+                inbound_targets.add(tgt)
+        sby = n.get("superseded_by")
+        if sby:
+            tgt = id_index.get(sby)
+            if tgt and tgt != src:
+                inbound_targets.add(tgt)
+        for x in (n.get("inputs_xrefs") or []):
+            if isinstance(x, dict):
+                tgt = resolve_xref_target(
+                    (x.get("target_path") or "").split("#", 1)[0].strip(),
+                    src, id_index, path_index,
+                )
+                if tgt and tgt != src:
+                    inbound_targets.add(tgt)
+        for x in (n.get("stamps_xrefs") or []):
+            if isinstance(x, dict):
+                tgt = resolve_xref_target(
+                    (x.get("target_path") or "").split("#", 1)[0].strip(),
+                    src, id_index, path_index,
+                )
+                if tgt and tgt != src:
+                    inbound_targets.add(tgt)
+        for sec in (n.get("sections") or []):
+            if not isinstance(sec, dict):
+                continue
+            for grp in sec.get("depends_on") or []:
+                if not isinstance(grp, dict):
+                    continue
+                tgt_tok = grp.get("target")
+                if not tgt_tok or tgt_tok == "self":
+                    continue
+                tgt = resolve_xref_target(tgt_tok, src, id_index, path_index)
+                if tgt and tgt != src:
+                    inbound_targets.add(tgt)
+    all_paths = {n.get("file_path") for n in nodes if n.get("file_path")}
+    return all_paths - inbound_targets
+
+
+_STATUS_ORDER = {
+    None: 0,
+    "draft": 1,
+    "active": 2,
+    "blocked": 1,  # blocked is peer to draft, not a downgrade destination
+    "done": 3,
+    "superseded": 3,
+}
+
+
+def _status_rank(s) -> int:
+    return _STATUS_ORDER.get(s, 0)
+
+
+def _count_stale_xrefs(nodes: list, id_index: dict, path_index: dict) -> set:
+    """Return the set of (source_file_path, xref_raw) tuples for every
+    XREF that fails to resolve. Used by --diff to spot newly-introduced
+    unresolvable refs without re-running the full check_stale_xref."""
+    stale: set = set()
+    for n in nodes:
+        src = n.get("file_path") or ""
+        for field in ("depends_on", "satisfies"):
+            for ref in (n.get(field) or []):
+                if ref not in id_index:
+                    stale.add((src, f"{field}:{ref}"))
+        sby = n.get("superseded_by")
+        if sby and sby not in id_index:
+            stale.add((src, f"superseded_by:{sby}"))
+        for x in (n.get("inputs_xrefs") or []):
+            if not isinstance(x, dict):
+                continue
+            raw = (x.get("target_path") or "").split("#", 1)[0].strip()
+            if raw and resolve_xref_target(raw, src, id_index, path_index) is None:
+                stale.add((src, f"inputs:{raw}"))
+        for x in (n.get("stamps_xrefs") or []):
+            if not isinstance(x, dict):
+                continue
+            raw = (x.get("target_path") or "").split("#", 1)[0].strip()
+            if raw and resolve_xref_target(raw, src, id_index, path_index) is None:
+                stale.add((src, f"stamps:{raw}"))
+        for sec in (n.get("sections") or []):
+            if not isinstance(sec, dict):
+                continue
+            for grp in sec.get("depends_on") or []:
+                if not isinstance(grp, dict):
+                    continue
+                tgt = grp.get("target")
+                if not tgt or tgt == "self":
+                    continue
+                if resolve_xref_target(tgt, src, id_index, path_index) is None:
+                    stale.add((src, f"sections:{tgt}"))
+    return stale
+
+
+def diff_caches(baseline_path: Path, current_nodes: list, quiet: bool) -> list:
+    """Return a list of Finding objects describing regressions the PR
+    introduced: added orphans, new broken backlinks (ids present in
+    baseline but missing in current), status downgrades (done -> active,
+    etc), and newly stale XREFs. Each finding is tagged under a single
+    `graph-delta` check name so it surfaces consistently in CI output."""
+    findings: list = []
+    try:
+        baseline_nodes = json.loads(baseline_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        findings.append(Finding(
+            "graph-delta", str(baseline_path),
+            f"baseline cache unreadable: {exc}", severity="FAIL",
+        ))
+        return findings
+    if not isinstance(baseline_nodes, list):
+        findings.append(Finding(
+            "graph-delta", str(baseline_path),
+            f"baseline cache is not a list; got {type(baseline_nodes).__name__}",
+            severity="FAIL",
+        ))
+        return findings
+
+    base_idx = build_id_index(baseline_nodes)
+    base_paths = build_path_index(baseline_nodes)
+    cur_idx = build_id_index(current_nodes)
+    cur_paths = build_path_index(current_nodes)
+
+    # 1. Broken backlinks: an id present in baseline but missing from current
+    # AND still referenced by some CURRENT node's depends_on / satisfies /
+    # superseded_by is a regression. Codex pass 15 H1: a bare
+    # `missing_ids = base_idx - cur_idx` check produced false positives
+    # when a PR corrected a typo id that nobody referenced. Only flag
+    # removals that an active reference still points at.
+    missing_ids = set(base_idx) - set(cur_idx)
+    if missing_ids:
+        cur_referenced_ids: set = set()
+        cur_ref_sources: dict = {}
+        for n in current_nodes:
+            src = n.get("file_path") or ""
+            for field in ("depends_on", "satisfies"):
+                for ref in (n.get(field) or []):
+                    cur_referenced_ids.add(ref)
+                    cur_ref_sources.setdefault(ref, []).append(f"{src}:{field}")
+            sby = n.get("superseded_by")
+            if sby:
+                cur_referenced_ids.add(sby)
+                cur_ref_sources.setdefault(sby, []).append(f"{src}:superseded_by")
+        for mid in sorted(missing_ids & cur_referenced_ids):
+            sources = ", ".join(cur_ref_sources.get(mid, ["(unknown)"])[:3])
+            findings.append(Finding(
+                "graph-delta", base_idx[mid],
+                f"broken-backlink: id '{mid}' removed from current cache; "
+                f"still referenced by: {sources}",
+                severity="FAIL",
+            ))
+
+    # 2. Added orphans: file_paths that had inbound edges in baseline but
+    # are orphaned in the current cache.
+    base_orphans = _orphans(baseline_nodes, base_idx, base_paths)
+    cur_orphans = _orphans(current_nodes, cur_idx, cur_paths)
+    new_orphans = cur_orphans - base_orphans
+    for fp in sorted(new_orphans):
+        findings.append(Finding(
+            "graph-delta", fp,
+            "added-orphan: had inbound edges in baseline; none in current",
+            severity="FAIL",
+        ))
+
+    # 3. Status downgrades: same id, rank(current) < rank(baseline).
+    base_status = {n["id"]: n.get("status") for n in baseline_nodes if n.get("id")}
+    cur_status = {n["id"]: n.get("status") for n in current_nodes if n.get("id")}
+    for nid, cur_s in cur_status.items():
+        if nid not in base_status:
+            continue
+        base_s = base_status[nid]
+        if _status_rank(cur_s) < _status_rank(base_s):
+            fp = cur_idx.get(nid, "")
+            findings.append(Finding(
+                "graph-delta", fp,
+                f"status-downgrade: '{nid}' went from '{base_s}' to '{cur_s}'",
+                severity="FAIL",
+            ))
+
+    # 4. Newly stale XREFs: XREFs that resolved in baseline but not now.
+    base_stale = _count_stale_xrefs(baseline_nodes, base_idx, base_paths)
+    cur_stale = _count_stale_xrefs(current_nodes, cur_idx, cur_paths)
+    new_stale = cur_stale - base_stale
+    for src, tok in sorted(new_stale):
+        findings.append(Finding(
+            "graph-delta", src,
+            f"newly-stale-xref: '{tok}' resolved in baseline but not in current",
+            severity="FAIL",
+        ))
+
+    return findings
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description="TODO graph integrity validator (consumes build/todo-cache.json)"
@@ -754,6 +990,11 @@ def main() -> int:
                          "DRY-RUN by default. Add --write to actually rewrite files.")
     ap.add_argument("--write", action="store_true",
                     help="Required with --fix-line-numbers to actually mutate files")
+    ap.add_argument("--diff", default=None, metavar="BASELINE",
+                    help="Compare the current cache against BASELINE and report "
+                         "regressions the PR introduced: added orphans, broken "
+                         "backlinks, status downgrades, newly stale XREFs. "
+                         "Exit 1 if any regression appears, 0 otherwise.")
     args = ap.parse_args()
 
     if args.write and not args.fix_line_numbers:
@@ -810,6 +1051,7 @@ def main() -> int:
         ("bat-alignment", check_bat_alignment, (nodes, snapshot, repo_root)),
         ("status-transition", check_status_transition, (nodes,)),
         ("schema-reachability", check_schema_reachability, (nodes, snapshot, repo_root)),
+        ("duplicate-id", check_duplicate_id, (nodes,)),
     ]:
         findings = check_fn(*args_tuple)
         check_results.append((name, findings))
@@ -837,10 +1079,34 @@ def main() -> int:
                     for f in warns:
                         print(f"    {f.format()}")
 
+    # --diff: run graph-delta check against BASELINE. A delta finding
+    # counts as a failure even if all 7 primary checks pass; this is
+    # the "this PR makes the graph worse" signal for code review.
+    delta_fail = 0
+    if args.diff:
+        baseline_path = Path(args.diff)
+        if not baseline_path.is_absolute():
+            baseline_path = (repo_root / baseline_path).resolve()
+        deltas = diff_caches(baseline_path, nodes, args.quiet)
+        delta_fails = [f for f in deltas if f.severity == "FAIL"]
+        if not delta_fails:
+            if not args.quiet:
+                print("  [PASS] graph-delta")
+        else:
+            delta_fail = len(delta_fails)
+            print(f"  [FAIL] graph-delta: {delta_fail} regression(s) vs {baseline_path}")
+            for f in delta_fails:
+                print(f"    {f.format()}")
+        fail_count += delta_fail
+
     # Trailing summary
     total_pass = sum(1 for _, f in check_results if not [x for x in f if x.severity == "FAIL"])
     total = len(check_results)
-    print(f"[validate.py] {total_pass}/{total} checks passed, {fail_count} failure(s), {warn_count} warning(s)")
+    if args.diff:
+        print(f"[validate.py] {total_pass}/{total} checks passed, {fail_count} failure(s) "
+              f"({delta_fail} graph-delta vs baseline), {warn_count} warning(s)")
+    else:
+        print(f"[validate.py] {total_pass}/{total} checks passed, {fail_count} failure(s), {warn_count} warning(s)")
     return 0 if fail_count == 0 else 1
 
 

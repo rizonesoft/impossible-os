@@ -67,6 +67,11 @@ status() {
     echo "Pre-push gate  : $pre_push_state"
     echo "Always-on hooks: $always_on"
     echo "Opt-in hooks   : pre-push (gated by sentinel above)"
+    echo
+    echo "Pre-push gate runs (when enabled):"
+    echo "  1. bash scripts/todo-graph/build-and-validate.sh --keep-cache (todo-graph CI gate)"
+    echo "  2. bash scripts/build.sh (kernel + userland build)"
+    echo "  3. bash scripts/test.sh (TCG unit tests)"
 }
 
 set_hooks_path() {

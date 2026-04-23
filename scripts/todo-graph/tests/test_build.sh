@@ -2118,6 +2118,229 @@ else
     t_fail "migrate: live tree still has $LIVE_NO_FM no-frontmatter nodes"
 fi
 
+# ======================================================================
+# Test 11: build-and-validate.sh wrapper + validate.py --diff mode (§6).
+# Covers the CI-gate wrapper, the Makefile-reachable entry point, and
+# the PR diff surface that reports "this PR makes the graph worse".
+# ======================================================================
+
+BNV_SH="$REPO_ROOT/scripts/todo-graph/build-and-validate.sh"
+
+# Sub-test 11a: wrapper rejects unknown flags with exit 2.
+BNV_OUT=$(bash "$BNV_SH" --bogus-flag 2>&1); BNV_RC=$?
+if [ "$BNV_RC" = "2" ] && echo "$BNV_OUT" | grep -q "unknown flag"; then
+    t_pass "build-and-validate: unknown flag exits 2"
+else
+    t_fail "build-and-validate: unknown flag handling broken (rc=$BNV_RC)"
+fi
+
+# Sub-test 11b: --help prints usage without running build or validate.
+BNV_OUT=$(bash "$BNV_SH" --help 2>&1); BNV_RC=$?
+if [ "$BNV_RC" = "0" ] && echo "$BNV_OUT" | grep -q "Exit code: validator"; then
+    t_pass "build-and-validate: --help prints usage + exits 0"
+else
+    t_fail "build-and-validate: --help broken (rc=$BNV_RC)"
+fi
+
+# Sub-test 11c: wrapper deletes the cache on exit unless --keep-cache.
+rm -f "$REPO_ROOT/build/todo-cache.json" 2>/dev/null || true
+bash "$BNV_SH" --quiet --warnings-only >/dev/null 2>&1 || true
+if [ ! -f "$REPO_ROOT/build/todo-cache.json" ]; then
+    t_pass "build-and-validate: cache deleted on exit (default)"
+else
+    t_fail "build-and-validate: cache leaked (default should delete)"
+fi
+
+# Sub-test 11d: --keep-cache leaves the cache in place.
+bash "$BNV_SH" --quiet --warnings-only --keep-cache >/dev/null 2>&1 || true
+if [ -f "$REPO_ROOT/build/todo-cache.json" ]; then
+    t_pass "build-and-validate: --keep-cache preserves cache"
+else
+    t_fail "build-and-validate: --keep-cache broken"
+fi
+
+# Sub-test 11e: wrapper exit code propagates the validator's. Use a
+# synthetic tree with a deliberate dangling-section drift to force a
+# validator FAIL and assert the wrapper exits 1.
+BNV_TREE="$TMP_DIR/bnv-drift"
+mkdir -p "$BNV_TREE/todo/01-t" "$BNV_TREE/scripts/todo-graph"
+cat > "$BNV_TREE/todo/01-t/TODO-01-drift.md" <<'EOF'
+---
+schema_version: 1
+id: bnv-drift
+domain: 01-t
+status: active
+title: "drift"
+---
+# body
+## Implementation Order
+
+| ⭐ | Order | Section | Deliverable | Depends On | Status |
+| --- | :---: | :-----: | ---- | ---- | :---: |
+| 💎 | 1 | §1 | a | §99 | [x] |
+
+## 1. a
+
+- [x] commit
+EOF
+# Invoke the wrapper directly against the synthetic tree. The wrapper
+# itself hard-codes paths relative to its own scripts dir, so we just
+# use the top-level wrapper + --cache override via env isn't supported
+# today -- we test the equivalent via the build.py + validate.py pair
+# directly (the wrapper just chains these two). This proves the
+# chaining contract: a bad tree's validator exit code flows through.
+python3 "$BUILD_PY" --quiet --root "$BNV_TREE/todo" --output "$BNV_TREE/cache.json" --repo-root "$BNV_TREE" >/dev/null 2>&1
+V_OUT=$(python3 "$VALIDATE_PY" --cache "$BNV_TREE/cache.json" --repo-root "$BNV_TREE" --quiet 2>&1); V_RC=$?
+if [ "$V_RC" = "1" ] && echo "$V_OUT" | grep -q "dangling-section"; then
+    t_pass "build-and-validate: validator exit 1 propagates drift ($V_RC)"
+else
+    t_fail "build-and-validate: drift propagation broken (rc=$V_RC)"
+fi
+
+# Sub-test 11f: validate.py --diff reports 0 regressions when baseline
+# equals current cache.
+BASE_CACHE="$TMP_DIR/diff-base.json"
+CUR_CACHE="$TMP_DIR/diff-cur.json"
+python3 "$BUILD_PY" --quiet --output "$BASE_CACHE" >/dev/null 2>&1
+cp "$BASE_CACHE" "$CUR_CACHE"
+DIFF_OUT=$(python3 "$VALIDATE_PY" --cache "$CUR_CACHE" --warnings-only --quiet --diff "$BASE_CACHE" 2>&1)
+if echo "$DIFF_OUT" | grep -q "0 graph-delta vs baseline"; then
+    t_pass "validate --diff: identical caches -> 0 graph-delta"
+else
+    t_fail "validate --diff: identical-cache delta broken (out=$DIFF_OUT)"
+fi
+
+# Sub-test 11g: --diff setup. Ensures DIFF_TREE exists for downstream
+# tests. No assertion of its own -- the broken-backlink scenarios are
+# covered by 11g2 (typo rename, no referrer -> pass) and 11g3
+# (referenced removal -> fail with source).
+DIFF_TREE="$TMP_DIR/diff-break"
+mkdir -p "$DIFF_TREE"
+
+# Sub-test 11g2: typo-id correction (nobody references the old id)
+# must NOT trigger broken-backlink. Codex pass 15 H1 regression.
+python3 -c "
+import json
+# Baseline has 'typo-id' with no inbound refs.
+baseline = [
+    {'file_path': 'todo/01-t/TODO-01-a.md', 'id': 'typo-id', 'domain': '01-t',
+     'status': 'active', 'title': 'A', 'schema_version': 1,
+     'sections': [], 'section_headings': [], 'inputs_xrefs': [],
+     'stamps_xrefs': [], 'created_at': '2026-04-23T00:00:00Z',
+     'last_active_at': '2026-04-23T00:00:00Z'},
+    {'file_path': 'todo/01-t/TODO-02-b.md', 'id': 'beta', 'domain': '01-t',
+     'status': 'active', 'title': 'B', 'schema_version': 1,
+     'sections': [], 'section_headings': [], 'inputs_xrefs': [],
+     'stamps_xrefs': [], 'created_at': '2026-04-23T00:00:00Z',
+     'last_active_at': '2026-04-23T00:00:00Z'},
+]
+# Current: typo corrected -> 'correct-id'. Beta unchanged.
+current = [dict(baseline[0], id='correct-id'), baseline[1]]
+with open('$DIFF_TREE/base3.json', 'w') as f: json.dump(baseline, f)
+with open('$DIFF_TREE/cur3.json', 'w') as f: json.dump(current, f)
+"
+DIFF_OUT=$(python3 "$VALIDATE_PY" --cache "$DIFF_TREE/cur3.json" --repo-root "$DIFF_TREE" --quiet --warnings-only --diff "$DIFF_TREE/base3.json" 2>&1); DIFF_RC=$?
+if ! echo "$DIFF_OUT" | grep -q "broken-backlink"; then
+    t_pass "validate --diff: typo-id correction does NOT false-positive as broken-backlink"
+else
+    t_fail "validate --diff: typo correction flagged as broken-backlink (out=$DIFF_OUT)"
+fi
+
+# Sub-test 11g3: removed id that IS referenced by another node MUST
+# fire broken-backlink with the referring source.
+python3 -c "
+import json
+baseline = [
+    {'file_path': 'todo/01-t/TODO-01-a.md', 'id': 'alpha', 'domain': '01-t',
+     'status': 'active', 'title': 'A', 'schema_version': 1,
+     'sections': [], 'section_headings': [], 'inputs_xrefs': [],
+     'stamps_xrefs': [], 'created_at': '2026-04-23T00:00:00Z',
+     'last_active_at': '2026-04-23T00:00:00Z'},
+    {'file_path': 'todo/01-t/TODO-02-b.md', 'id': 'beta', 'domain': '01-t',
+     'status': 'active', 'title': 'B', 'schema_version': 1,
+     'depends_on': ['alpha'],
+     'sections': [], 'section_headings': [], 'inputs_xrefs': [],
+     'stamps_xrefs': [], 'created_at': '2026-04-23T00:00:00Z',
+     'last_active_at': '2026-04-23T00:00:00Z'},
+]
+# Current: alpha removed but beta still depends on it.
+current = [baseline[1]]
+with open('$DIFF_TREE/base4.json', 'w') as f: json.dump(baseline, f)
+with open('$DIFF_TREE/cur4.json', 'w') as f: json.dump(current, f)
+"
+DIFF_OUT=$(python3 "$VALIDATE_PY" --cache "$DIFF_TREE/cur4.json" --repo-root "$DIFF_TREE" --quiet --warnings-only --diff "$DIFF_TREE/base4.json" 2>&1); DIFF_RC=$?
+if [ "$DIFF_RC" = "1" ] && echo "$DIFF_OUT" | grep -q "broken-backlink: id 'alpha'" \
+    && echo "$DIFF_OUT" | grep -q "still referenced by:"; then
+    t_pass "validate --diff: removed id WITH live referrer fires broken-backlink"
+else
+    t_fail "validate --diff: referenced-removal detection broken (out=$DIFF_OUT)"
+fi
+
+# Sub-test 11j: duplicate-id check (new 8th primary check). A cache
+# where two nodes share the same frontmatter id must FAIL. Codex
+# pass 15 H2: build_id_index silently overwrites dict collisions, so
+# a rename-into-collision PR was previously invisible.
+DUP_TREE="$TMP_DIR/v-dup-id"
+mkdir -p "$DUP_TREE/todo/01-test"
+cat > "$DUP_TREE/todo/01-test/TODO-01-first.md" <<'EOF'
+---
+schema_version: 1
+id: dup-id
+domain: 01-test
+status: active
+title: "first"
+---
+body
+EOF
+cat > "$DUP_TREE/todo/01-test/TODO-02-second.md" <<'EOF'
+---
+schema_version: 1
+id: dup-id
+domain: 01-test
+status: active
+title: "second"
+---
+body
+EOF
+python3 "$BUILD_PY" --quiet --root "$DUP_TREE/todo" --output "$DUP_TREE/cache.json" --repo-root "$DUP_TREE" >/dev/null 2>&1
+DUP_OUT=$(python3 "$VALIDATE_PY" --cache "$DUP_TREE/cache.json" --repo-root "$DUP_TREE" --quiet 2>&1); DUP_RC=$?
+if [ "$DUP_RC" = "1" ] && echo "$DUP_OUT" | grep -q "duplicate-id.*'dup-id' is claimed by 2 files"; then
+    t_pass "validate: duplicate-id check fires on 2 nodes sharing id"
+else
+    t_fail "validate: duplicate-id check broken (rc=$DUP_RC, out=$DUP_OUT)"
+fi
+
+# Sub-test 11h: --diff detects status-downgrade (done -> active).
+python3 -c "
+import json
+baseline = [{'file_path': 'todo/01-t/TODO-01-a.md', 'id': 'alpha', 'domain': '01-t',
+    'status': 'done', 'title': 'A', 'schema_version': 1,
+    'sections': [], 'section_headings': [], 'inputs_xrefs': [],
+    'stamps_xrefs': [], 'created_at': '2026-04-23T00:00:00Z',
+    'last_active_at': '2026-04-23T00:00:00Z'}]
+current = [{'file_path': 'todo/01-t/TODO-01-a.md', 'id': 'alpha', 'domain': '01-t',
+    'status': 'active', 'title': 'A', 'schema_version': 1,
+    'sections': [], 'section_headings': [], 'inputs_xrefs': [],
+    'stamps_xrefs': [], 'created_at': '2026-04-23T00:00:00Z',
+    'last_active_at': '2026-04-23T00:00:00Z'}]
+with open('$DIFF_TREE/base2.json', 'w') as f: json.dump(baseline, f)
+with open('$DIFF_TREE/cur2.json', 'w') as f: json.dump(current, f)
+"
+DIFF_OUT=$(python3 "$VALIDATE_PY" --cache "$DIFF_TREE/cur2.json" --repo-root "$DIFF_TREE" --quiet --warnings-only --diff "$DIFF_TREE/base2.json" 2>&1); DIFF_RC=$?
+if [ "$DIFF_RC" = "1" ] && echo "$DIFF_OUT" | grep -q "status-downgrade.*done.*active"; then
+    t_pass "validate --diff: detects status-downgrade (done -> active)"
+else
+    t_fail "validate --diff: status-downgrade detection broken (out=$DIFF_OUT)"
+fi
+
+# Sub-test 11i: make todo-graph works on the live tree (wrapper exit
+# propagates via the make target's exit code).
+if cd "$REPO_ROOT" && make -n todo-graph >/dev/null 2>&1; then
+    t_pass "make: 'todo-graph' target is wired (dry-run OK)"
+else
+    t_fail "make: 'todo-graph' target missing or broken"
+fi
+
 # ----------------------------------------------------------------------
 # Test 7: performance budget (under 2s wall-clock per the generator spec).
 # ----------------------------------------------------------------------

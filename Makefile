@@ -108,7 +108,7 @@ GENERATED_HDRS := include/build_info.h include/kernel/os_logo.h src/kernel/bsod_
 # Targets
 # ============================================================================
 
-.PHONY: all _increment_build boot boot-icon boot-font kernel host-tools sysroot userland iso uefi-boot sign-efi system-disk test-disks run run-test run-debug run-log run-usb-ci run-nvme run-nvme-ci clean assets validate-assets sysroot-dirs sysroot-fonts sysroot-wallpapers sysroot-cursors sysroot-icons test-mm test-fs test-ob test-security test-ipc test-sched test-boot test-abi test-storage test-exec test-x86 test-desktop test-visual test-wcag update-ui-refs boot-info-abi test-boot-info-abi test-tooling test-ai-system
+.PHONY: all _increment_build boot boot-icon boot-font kernel host-tools sysroot userland iso uefi-boot sign-efi system-disk test-disks run run-test run-debug run-log run-usb-ci run-nvme run-nvme-ci clean assets validate-assets sysroot-dirs sysroot-fonts sysroot-wallpapers sysroot-cursors sysroot-icons test-mm test-fs test-ob test-security test-ipc test-sched test-boot test-abi test-storage test-exec test-x86 test-desktop test-visual test-wcag update-ui-refs boot-info-abi test-boot-info-abi test-tooling test-ai-system todo-graph todo-graph-ready todo-graph-blocked
 
 ## all: Build everything (kernel + userland + system disk + boot_info ABI manifest)
 all: _increment_build check-abi assets kernel userland uefi-boot boot-info-abi post16-manifest system-disk
@@ -246,6 +246,28 @@ $(BOOT_ABI_MIRROR_JSON): $(BOOT_ABI_DUMPER_M)
 ##                    Depends on the real kernel JSON being up to date.
 test-boot-info-abi: $(BOOT_ABI_KERNEL_JSON)
 	@bash tools/boot-info-manifest/test-drift-detection.sh
+
+## todo-graph: Rebuild build/todo-cache.json and run the 7-check graph
+##              validator. Owned by the TODO metadata layer CI-gate
+##              section. Exit 0 if every check
+##              passes; exit 1 on drift (stale XREF, dangling §N, orphan
+##              row, dep cycle, missing bat, status mismatch, $schema
+##              unreachable). Cache is deleted on exit unless the wrapper
+##              is passed --keep-cache.
+todo-graph:
+	@bash scripts/todo-graph/build-and-validate.sh
+
+## todo-graph-ready: List draft TODOs whose depends_on are all done.
+##                   Human-readable tsv (domain, id, title). Also
+##                   available via `python3 scripts/todo-graph/query.py
+##                   ready --format markdown` for PR descriptions.
+todo-graph-ready:
+	@python3 scripts/todo-graph/query.py ready
+
+## todo-graph-blocked: List active TODOs with at least one unmet dep.
+##                     Each line includes the comma-separated blocker ids.
+todo-graph-blocked:
+	@python3 scripts/todo-graph/query.py blocked
 
 ## test-tooling: Run scripts/test-tooling.sh -- the host-side developer
 ##               tooling regression pack (wrapper --help contract, hook

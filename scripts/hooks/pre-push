@@ -16,9 +16,22 @@ RESET='\033[0m'
 
 echo -e "${YELLOW}[pre-push]${RESET} Running kernel tests before push..."
 
-# Build first — fast fail
+# TODO graph validation (TODO-06 §6). Cheap fast-fail before the full
+# build + test cycle: rebuild build/todo-cache.json and run the 7-check
+# validator. Catches stale XREFs, dangling sections, orphan rows, dep
+# cycles, missing test bats, and status mismatches that would otherwise
+# be surfaced only at PR time via .github/workflows/todo-graph.yml.
+# --keep-cache leaves the cache on disk so subsequent local queries
+# (make todo-graph-ready / blocked) do not need a rebuild.
+if ! bash scripts/todo-graph/build-and-validate.sh --keep-cache --quiet; then
+    echo -e "${RED}${BOLD}[pre-push] TODO GRAPH VALIDATION FAILED${RESET}: push blocked"
+    echo "  Run 'bash scripts/todo-graph/build-and-validate.sh' to see details."
+    exit 1
+fi
+
+# Build first, fast fail
 if ! bash scripts/build.sh > /dev/null 2>&1; then
-    echo -e "${RED}${BOLD}[pre-push] BUILD FAILED${RESET} — push blocked"
+    echo -e "${RED}${BOLD}[pre-push] BUILD FAILED${RESET}: push blocked"
     echo "  Run 'bash scripts/build.sh' to see errors."
     exit 1
 fi

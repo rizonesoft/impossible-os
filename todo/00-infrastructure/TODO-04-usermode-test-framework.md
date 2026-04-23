@@ -505,7 +505,7 @@ First Impossible-OS probe of the Win32 API surface from ring 3 -- proves the "Wi
 > - Scope boundary: §14 owns Win32-level CreateFile(OPEN_EXISTING) / ReadFile(sync) / CloseHandle / GetCurrentProcessId / GetTickCount. NOT in scope: CreateProcess, WaitForSingleObject, VirtualAlloc, registry APIs, CreateFile with CREATE_* / TRUNCATE_* dispositions (requires SYSCALL-arg extension past 4 regs), async ReadFile with OVERLAPPED, the Unicode-W variants, and full kernel32.dll via the PE32+ dynamic linker (§15). A thicker Win32 layer that supports those callers is the §15 territory once PE32+ imports land.
 
 > **Verified:** 2026-04-22 | commit `86a4edf4` (initial) + follow-up | 3/3 items | build OK | 12 UTEST_ASSERTs across 7 probes; 1800/1800 kernel unit tests PASS; `test_win32.exe` (~24 KiB) deployed; smoke PASS (KVM 2.22 s)
-> **Accepted:** [H] Win32 shim routes every call through INT 0x80 (proven path) instead of the Windows-native transport (`gs:0x40` / KUSD / `syscall` -> `ssdt_dispatch`) because all three fast paths hung silently in the first revision on WHPX -- public API unchanged, future migration is a single-file swap (reason: infra -- needs isolated fast-path probes before migration) -> XREF: 00-infrastructure/TODO-04 §2 (item: "Verify the user-mode fast paths that user/lib/win32.c routed around" at line 110)
+> **Accepted:** [H] Win32 shim routes every call through INT 0x80 (proven path) instead of the Windows-native transport (`gs:0x40` / KUSD / `syscall` -> `ssdt_dispatch`) because all three fast paths hung silently in the first revision on WHPX -- public API unchanged, future migration is a single-file swap (reason: infra -- needs isolated fast-path probes before migration) -> XREF: 00-infrastructure/TODO-04 §2 (item: "Verify the user-mode fast paths that user/lib/win32.c routed around" at line 508)
 > **Quality reviewed:** 2026-04-22 | Codex 3x (adversarial, adversarial-post-fix, quality) | 1Critical+1H+2M fixed (slot-0 reservation, CloseHandle sentinels, ReadFile EOF, OBJECT_ATTRIBUTES + UNICODE_STRING ABI layout; transport rewritten from SYSCALL to INT 0x80 after silent WHPX hang) + 1H Accepted (fast-path probes), 0 open | scope: userland-code-quality
 
 ---
@@ -534,7 +534,7 @@ The launcher's spawned binaries are all crt0+libc ELF; the PE32+ and EIF loader 
 > - Scope boundary: §15 owns loader-selection coverage; §9 owns syscall coverage; `D02T17 §10` owns PE base relocation; `D02T17 §8` owns PE per-process PML4 so PE loads do not mutate shared `kernel_pml4` (Codex [M] finding Accepted via XREF).
 
 > **Verified:** 2026-04-22 | commit `f0279dc0` | 7/7 items | build OK | smoke PASS (KVM 2.1s) | 3 loader binaries PASS
-> **Accepted:** [H] PE loader still maps images into shared `kernel_pml4` and `get_or_create_table()` leaves persistent User-bit upgrades on upper tables after rollback (reason: needs per-process PML4 infra, architectural scope) -> XREF: 02-kernel-core/TODO-17 §8 (item: "Map PE images into a per-process PML4 instead of the shared `kernel_pml4`" at line 213)
+> **Accepted:** [H] PE loader still maps images into shared `kernel_pml4` and `get_or_create_table()` leaves persistent User-bit upgrades on upper tables after rollback (reason: needs per-process PML4 infra, architectural scope) -> XREF: 02-kernel-core/TODO-17 §8 (item: "Map PE images into a per-process PML4 instead of the shared `kernel_pml4`" at line 221)
 > **Quality reviewed:** 2026-04-22 | Codex 2x (adversarial, quality) | 2H+1M fixed, 1H open | scope: userland-code-quality
 
 ---

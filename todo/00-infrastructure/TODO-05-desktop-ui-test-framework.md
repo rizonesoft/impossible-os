@@ -490,7 +490,7 @@ Consumes the deterministic automation transport from `D08 T07 §6`. Runs WCAG 2.
 > - Canonical doc: `include/kernel/test/wcag.h` (rule IDs, finding schema, severity contract, CI gate semantics).
 > - Scope boundary: §14 owns the test-framework consumer + CI gate surface. `D08 T07 §6` owns the automation tree provider; see its Implementation Order row (`[ ]` today). §15 test-isolation harness remains the parallel last-section to ship before the TODO closes.
 > **Verified:** 2026-04-22 | commit `47e9e004` | 5/7 items + 2 blocked | build OK | tests 42/42 suites, 207/207 PASS + 1 PENDING (KVM)
-> **Accepted:** [M] WCAG sweep body + `test_ui_tree_walk` require the D08 T07 §6 automation tree provider (reason: pure-consumer section, cannot iterate a tree that doesn't exist) -> XREF: 08-graphics-ui/TODO-07 §6 (item: "§6 Deterministic automation transport for testing and assistive tooling" at line 38)
+> **Accepted:** [M] WCAG sweep body + `test_ui_tree_walk` require the D08 T07 §6 automation tree provider (reason: pure-consumer section, cannot iterate a tree that doesn't exist) -> XREF: 08-graphics-ui/TODO-07 §6 (item: "§6 Deterministic automation transport for testing and assistive tooling" at line 46)
 > **Quality reviewed:** 2026-04-22 | Codex 2x (adversarial, quality) | 1M fixed, 0 open | scope: kernel-code-quality -- adversarial [M] found the pending test couldn't distinguish "provider missing" from "provider wired with 0 findings"; fixed by adding `wcag_provider_ready()` + `WCAG_SWEEP_PROVIDER_MISSING` sentinel. Quality pass verdict: approve (no material findings; one doc-drift nit fixed inline).
 
 ---

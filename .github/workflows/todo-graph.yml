@@ -1,0 +1,83 @@
+# ============================================================================
+# Impossible OS -- TODO Graph Validation
+#
+# Runs the todo-graph build + validator on every push / PR that touches
+# `todo/**/*.md`. Owned by the TODO metadata layer CI-gate section.
+#
+# Design: separate from build.yml so unrelated kernel-only PRs don't
+# trigger this pass, and a stale-XREF in a TODO doesn't block the OS
+# build. Paths filter at the workflow `on:` level (matches the spec's
+# "unrelated commits don't burn CI minutes" requirement).
+#
+# Exit code: validator's. The 7 primary checks run on every push; PRs
+# additionally run `--diff` against the PR base branch's cache so
+# reviewers see "this PR makes the graph worse" findings first.
+# ============================================================================
+
+name: TODO graph
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'todo/**/*.md'
+      - 'scripts/todo-graph/**'
+      - '.github/workflows/todo-graph.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'todo/**/*.md'
+      - 'scripts/todo-graph/**'
+      - '.github/workflows/todo-graph.yml'
+
+concurrency:
+  group: todo-graph-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: build + validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history so the PR base (--diff baseline) is reachable
+
+      - name: Install PyYAML (build.py dependency)
+        run: python3 -m pip install --quiet PyYAML jsonschema
+
+      # Primary gate: rebuild the cache and run the 7 graph-integrity
+      # checks. Fails if any check fails (stale XREF, dangling section,
+      # orphan IO row, dep cycle, missing bat, status mismatch, or
+      # unreachable $schema).
+      - name: Build + validate todo-graph
+        run: bash scripts/todo-graph/build-and-validate.sh --keep-cache
+
+      # PR-only: build the baseline cache from the PR base SHA and run
+      # --diff mode. Surfaces "this PR makes the graph worse" findings
+      # (added orphans, newly stale XREFs, status downgrades) separate
+      # from pre-existing drift.
+      - name: Diff vs PR base (pull_request only)
+        if: github.event_name == 'pull_request'
+        run: |
+          set -e
+          BASE_REF="${{ github.event.pull_request.base.sha }}"
+          git fetch --depth=1 origin "$BASE_REF" || true
+          BASELINE_DIR="$(mktemp -d)"
+          git worktree add "$BASELINE_DIR" "$BASE_REF"
+          python3 scripts/todo-graph/build.py \
+              --quiet \
+              --root "$BASELINE_DIR/todo" \
+              --output "$BASELINE_DIR/baseline-cache.json" \
+              --repo-root "$BASELINE_DIR"
+          python3 scripts/todo-graph/validate.py \
+              --cache build/todo-cache.json \
+              --quiet \
+              --diff "$BASELINE_DIR/baseline-cache.json"
+          git worktree remove --force "$BASELINE_DIR"
