@@ -323,7 +323,7 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 > - **Scope boundary**: §9 owns the kernel-side ABI fuzz coverage. The stale-image CI harness (Makefile rules for `BOOT_INFO_VERSION - 1` builds + `scripts/debug/stale-abi-fixtures/` runner + `.github/workflows/build.yml` step) is a remaining sub-item in this section; when it ships, items 2 and 3 flip to `[x]` and the implementation note gets a commit-hash stamp.
 
 > **Verified:** 2026-04-23 | commit `3ec06bb3` | 3/6 items (+ 2 [/] + 1 new [ ] harness owner) | build OK | 472 kernel + 16 user-mode PASS on KVM (2 new fuzz suites: addr sweep 256 iters, header perturb 32 iters)
-> **Quality reviewed:** 2026-04-23 | Codex 1x (adversarial) | 1M fixed (per-iteration snprintf context added so any fuzz failure is reproducible from the serial log alone; previously aggregate `mismatches == 32` check dropped which perturbation class / delta regressed), 0 open | scope: kernel-code-quality
+> **Quality reviewed:** 2026-04-23 | Codex 2x (implement-adversarial + review-quality) | 2M fixed (per-iteration snprintf context for header + addr fuzz; address sweep extended 4 -> 7 classes so size>UINT16_MAX / range-wraparound / over-max-addr reject paths are explicitly forced every iteration, and class-2 known-good path asserts BOOT_OK per-iter instead of only feeding the aggregate accept counter), 0 open | scope: kernel-code-quality
 
 ---
 

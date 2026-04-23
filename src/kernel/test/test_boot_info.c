@@ -312,37 +312,75 @@ static void test_validate_addr_fuzz_sweep(void)
     uint32_t iter;
     for (iter = 0u; iter < 256u; iter++) {
         uint64_t raw = fuzz_rand();
-        /* Cover four classes per iteration by varying the seed space:
-         *   - address below BOOT_INFO_MIN_ADDR (below 0x1000)
-         *   - address inside the early map
-         *   - size at u16 extremes (0, 1, UINT16_MAX)
-         *   - random combinations */
+        /* Per-iteration class cycles through every documented reject
+         * path plus a known-accept + a random case. class=2
+         * (known-accept) is asserted as BOOT_OK per iteration so a
+         * regression that rejects the valid space surfaces
+         * immediately instead of blending into the aggregate
+         * counter. */
         uintptr_t addr = (uintptr_t)(raw & 0xFFFFFFFFull);
         size_t sz = (size_t)((raw >> 32) & 0xFFFFull);
-
-        /* Rewrite some iterations into KNOWN-REJECTED / KNOWN-OK
-         * patterns so the sweep guarantees both sides get exercise. */
-        switch (iter & 0x3u) {
+        uint32_t class_id = (uint32_t)(iter % 7u);
+        /* Forced-reject flag: true if this class is known-rejected
+         * (asserted below). Forced-accept flag: true if known-OK.
+         * Non-forced class (6) is random; invariant check covers it. */
+        int forced_reject = 0;
+        int forced_accept = 0;
+        switch (class_id) {
         case 0:
-            /* Known reject: NULL or below-floor. */
+            /* Reject: NULL or below-floor. */
             addr = (iter & 0x4u) ? 0ull : 0x0800ull;
+            sz   = sizeof(struct boot_info);
+            forced_reject = 1;
             break;
         case 1:
-            /* Known reject: misaligned by 1 byte above a valid base. */
+            /* Reject: misaligned by 1 byte above a valid base. */
             addr = 0x10000ull + 1ull;
-            sz = sizeof(struct boot_info);
+            sz   = sizeof(struct boot_info);
+            forced_reject = 1;
             break;
         case 2:
-            /* Known accept: 8-byte aligned inside early map, size > 8. */
+            /* Accept: 8-byte aligned inside early map, size >=
+             * sizeof(header), end within early-map ceiling. */
             addr = 0x20000ull + ((raw >> 48) & 0xFF0u);
-            sz = 16ull + ((raw >> 56) & 0xFu) * 8ull;
-            if (sz < 16u) sz = 16u;
+            sz   = 16u + (size_t)((raw >> 56) & 0xFu) * 8u;
+            if (sz < sizeof(struct boot_info_header))
+                sz = sizeof(struct boot_info_header);
+            forced_accept = 1;
             break;
         case 3:
-            /* Random: let it land wherever; just ensure the validator
-             * picks the right side without crashing. */
-            addr &= ~(uintptr_t)7;  /* force 8-byte alignment */
-            if (sz < 8u) sz = 8u;
+            /* Reject: size > UINT16_MAX. boot_info_validate_addr
+             * requires size fits uint16_t so the header-size field
+             * can round-trip it. 65536 is the smallest overflow. */
+            addr = 0x40000ull;
+            sz   = 65536u + (size_t)((raw >> 48) & 0x3FFu);
+            forced_reject = 1;
+            break;
+        case 4: {
+            /* Reject: range wraparound. addr near UINT64_MAX with
+             * size that makes start + size wrap past zero. */
+            addr = (uintptr_t)((uint64_t)-8);
+            sz   = 256u;
+            forced_reject = 1;
+            break;
+        }
+        case 5:
+            /* Reject: addr beyond BOOT_INFO_EARLY_MAP_END. The caller
+             * passes BOOT_INFO_EARLY_MAP_END as max_addr, so any
+             * address at or above the 4 GiB ceiling must reject. */
+            addr = (uintptr_t)(BOOT_INFO_EARLY_MAP_END +
+                               ((raw >> 56) & 0xFF0u));
+            sz   = sizeof(struct boot_info);
+            forced_reject = 1;
+            break;
+        case 6:
+            /* Random: let it land wherever, 8-byte aligned, size at
+             * least sizeof(header). The invariant check below still
+             * catches any floor/alignment/size violation the PRNG
+             * produces. */
+            addr &= ~(uintptr_t)7;
+            if (sz < sizeof(struct boot_info_header))
+                sz = sizeof(struct boot_info_header);
             break;
         }
 
@@ -353,25 +391,40 @@ static void test_validate_addr_fuzz_sweep(void)
         else
             rejected++;
 
-        /* Invariant checks on the classification: if addr < 0x1000,
-         * must be rejected; if sz < sizeof(struct boot_info_header),
-         * must be rejected; if (addr & 7), must be rejected. Per-
-         * iteration context in the assertion message so a failure
-         * on any platform is reproducible from the log alone: iter
-         * index + the synthesized (addr, sz, class) + observed
-         * return value. */
-        if (addr < 0x1000ull || sz < sizeof(struct boot_info_header) ||
-            (addr & 7u) != 0u) {
-            if (r != BOOT_FATAL) {
+        /* Per-iteration assertion. forced_reject class MUST reject;
+         * forced_accept class MUST accept; random class obeys the
+         * documented invariants (floor / alignment / size). */
+        if (forced_reject && r != BOOT_FATAL) {
+            char fuzz_msg[160];
+            snprintf(fuzz_msg, sizeof(fuzz_msg),
+                     "fuzz[%u class=%u]: addr=0x%llx sz=%llu "
+                     "returned %d (expected BOOT_FATAL)",
+                     (unsigned int)iter, (unsigned int)class_id,
+                     (unsigned long long)addr,
+                     (unsigned long long)sz, (int)r);
+            TEST_ASSERT_EQ((int)r, (int)BOOT_FATAL, fuzz_msg);
+        }
+        if (forced_accept && r != BOOT_OK) {
+            char fuzz_msg[160];
+            snprintf(fuzz_msg, sizeof(fuzz_msg),
+                     "fuzz[%u class=2 known-good]: addr=0x%llx sz=%llu "
+                     "returned %d (expected BOOT_OK)",
+                     (unsigned int)iter,
+                     (unsigned long long)addr,
+                     (unsigned long long)sz, (int)r);
+            TEST_ASSERT_EQ((int)r, (int)BOOT_OK, fuzz_msg);
+        }
+        if (!forced_reject && !forced_accept) {
+            if ((addr < 0x1000ull ||
+                 sz < sizeof(struct boot_info_header) ||
+                 (addr & 7u) != 0u) && r != BOOT_FATAL) {
                 char fuzz_msg[160];
                 snprintf(fuzz_msg, sizeof(fuzz_msg),
-                         "fuzz[%u]: malformed addr=0x%llx sz=%llu class=%u "
+                         "fuzz[%u random]: malformed addr=0x%llx sz=%llu "
                          "returned %d (expected BOOT_FATAL)",
                          (unsigned int)iter,
                          (unsigned long long)addr,
-                         (unsigned long long)sz,
-                         (unsigned int)(iter & 0x3u),
-                         (int)r);
+                         (unsigned long long)sz, (int)r);
                 TEST_ASSERT_EQ((int)r, (int)BOOT_FATAL, fuzz_msg);
             }
         }
