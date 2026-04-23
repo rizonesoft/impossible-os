@@ -3,9 +3,14 @@
 # Target: x86-64, UEFI-only (GRUB + Multiboot2)
 # ============================================================================
 
-# Tools (LLVM toolchain — Clang is a universal cross-compiler via --target)
+# Tools (LLVM toolchain: Clang is a universal cross-compiler via --target)
 CC      := clang-19
 HOST_CC := gcc
+
+# Host-arch gate for boot_info ABI manifest dumpers lives inside each
+# recipe: it probes $(HOST_CC) -dumpmachine at execution time so a
+# command-line override (make HOST_MACHINE=x86_64 ...) cannot spoof it.
+# See BOOT_ABI_HOST_ARCH_GATE below.
 AS      := nasm
 LD      := ld.lld-19
 OBJCOPY := llvm-objcopy-19
@@ -214,13 +219,27 @@ BOOT_ABI_DUMPER_M    := $(BUILD_DIR)/tools/dump-boot-info-mirror
 BOOT_ABI_HEADERS     := include/kernel/boot_info.h include/kernel/types.h \
                         include/kernel/boot_init.h src/boot/uefi/boot_info_mirror.h
 
+# Shared recipe fragment: fails closed if HOST_CC is not x86_64. -m64 alone
+# is insufficient (ppc64le/s390x accept it), so we gate on dumpmachine too.
+# The probe runs $(HOST_CC) at RECIPE execution time inside a single shell
+# line so `make HOST_MACHINE=x86_64 ...` cannot spoof the decision -- there
+# is no HOST_MACHINE make variable consulted here.
+define BOOT_ABI_HOST_ARCH_GATE
+	@_host_machine="$$($(HOST_CC) -dumpmachine 2>/dev/null || echo unknown)"; \
+	case "$$_host_machine" in \
+	    x86_64*|amd64*) ;; \
+	    *) echo "error: HOST_CC ($(HOST_CC)) dumpmachine='$$_host_machine' is not x86_64 -- boot_info ABI dumpers require an x86_64 host so their layout matches the kernel's clang --target=x86_64-elf layout" >&2; exit 2 ;; \
+	esac
+endef
+
 $(BOOT_ABI_DUMPER_K): tools/boot-info-manifest/dump-kernel.c \
                       tools/boot-info-manifest/dump-common.h \
                       tools/boot-info-manifest/dump-fields.inc \
                       include/kernel/boot_info.h include/kernel/types.h \
                       include/kernel/boot_init.h
 	@mkdir -p $(BUILD_DIR)/tools
-	$(HOST_CC) -O2 -I include -I tools/boot-info-manifest -o $@ $<
+	$(BOOT_ABI_HOST_ARCH_GATE)
+	$(HOST_CC) -m64 -O2 -I include -I tools/boot-info-manifest -o $@ $<
 	@echo "[TOOL] $@ built"
 
 $(BOOT_ABI_DUMPER_M): tools/boot-info-manifest/dump-mirror.c \
@@ -228,10 +247,17 @@ $(BOOT_ABI_DUMPER_M): tools/boot-info-manifest/dump-mirror.c \
                       tools/boot-info-manifest/dump-fields.inc \
                       src/boot/uefi/boot_info_mirror.h
 	@mkdir -p $(BUILD_DIR)/tools
-	$(HOST_CC) -O2 -I src/boot/uefi -I tools/boot-info-manifest -o $@ $<
+	$(BOOT_ABI_HOST_ARCH_GATE)
+	$(HOST_CC) -m64 -O2 -I src/boot/uefi -I tools/boot-info-manifest -o $@ $<
 	@echo "[TOOL] $@ built"
 
+# boot-info-abi re-runs the host-arch gate on every invocation, even when
+# the JSONs are timestamp-fresh (cached from a prior run, prewritten by a
+# user, or left from a stale build tree). Without this, `make boot-info-abi`
+# could report PASS on artifacts produced by a non-x86_64 host that never
+# tripped the dumper-recipe gate. A PASS must always require a fresh probe.
 boot-info-abi: $(BOOT_ABI_KERNEL_JSON) $(BOOT_ABI_MIRROR_JSON)
+	$(BOOT_ABI_HOST_ARCH_GATE)
 	@bash tools/boot-info-manifest/compare.sh $(BOOT_ABI_KERNEL_JSON) $(BOOT_ABI_MIRROR_JSON)
 
 $(BOOT_ABI_KERNEL_JSON): $(BOOT_ABI_DUMPER_K)
@@ -244,7 +270,10 @@ $(BOOT_ABI_MIRROR_JSON): $(BOOT_ABI_DUMPER_M)
 ##                    intentionally-mutated mirror fixtures and verifies
 ##                    compare.sh reports the expected first-mismatch field.
 ##                    Depends on the real kernel JSON being up to date.
+# Belt-and-suspenders: the harness self-gates, but re-probe at the Make
+# entry point too so the policy is consistent across both phonies.
 test-boot-info-abi: $(BOOT_ABI_KERNEL_JSON)
+	$(BOOT_ABI_HOST_ARCH_GATE)
 	@bash tools/boot-info-manifest/test-drift-detection.sh
 
 ## todo-graph: Rebuild build/todo-cache.json and run the 7-check graph

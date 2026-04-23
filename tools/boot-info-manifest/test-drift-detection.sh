@@ -64,6 +64,20 @@ if ! command -v "$HOST_CC" >/dev/null 2>&1; then
     echo "error: host compiler '$HOST_CC' not found; set HOST_CC or install gcc" >&2
     exit 2
 fi
+
+# Host-arch gate. The ABI dumpers compile include/kernel/boot_info.h using
+# HOST_CC layout rules, so HOST_CC must produce x86_64 System V ABI to match
+# the target kernel (clang --target=x86_64-elf). -m64 alone is too weak
+# (ppc64le/s390x accept it); we require dumpmachine to say x86_64 / amd64.
+# Fails closed: no fallback, no silent wrong-ABI validation.
+HOST_MACHINE="$("$HOST_CC" -dumpmachine 2>/dev/null || echo unknown)"
+case "$HOST_MACHINE" in
+    x86_64*|amd64*) ;;
+    *)
+        echo "error: HOST_CC ($HOST_CC) dumpmachine='$HOST_MACHINE' is not x86_64 -- drift-detection requires an x86_64 host so fixture manifests match the kernel's clang --target=x86_64-elf layout" >&2
+        exit 2
+        ;;
+esac
 if ! command -v python3 >/dev/null 2>&1; then
     echo "error: python3 required for compare.sh" >&2
     exit 2
@@ -80,7 +94,7 @@ mkdir -p "$BUILD_DIR/tools"
 if command -v make >/dev/null 2>&1 && \
    make -C "$REPO_ROOT" --no-print-directory "build/boot-info-abi.kernel.json" >/dev/null 2>&1; then
     :  # make regenerated it
-elif "$HOST_CC" -O2 \
+elif "$HOST_CC" -m64 -O2 \
         -I "$REPO_ROOT/include" \
         -I "$REPO_ROOT/tools/boot-info-manifest" \
         -o "$BUILD_DIR/tools/dump-boot-info-kernel" \
@@ -188,7 +202,9 @@ run_case() {
     # Compile against the mutated header by putting $work first on the
     # include path. -I tools/boot-info-manifest picks up dump-common.h +
     # dump-fields.inc unmodified.
-    if ! "$HOST_CC" -O2 \
+    # -m64 matches the Makefile's ABI pin so the fixture mirror dumper
+    # produces x86_64 SysV layout identical to the real bootloader's view.
+    if ! "$HOST_CC" -m64 -O2 \
             -I "$work" \
             -I "$REPO_ROOT/tools/boot-info-manifest" \
             -o "$dumper" "$DUMPER_SRC" 2> "$work/cc.log"; then
@@ -286,7 +302,7 @@ run_case "rt-mmap-num-pages-shrink" \
 control_dir="$TMPDIR/control"
 mkdir -p "$control_dir"
 cp "$MIRROR_HDR" "$control_dir/boot_info_mirror.h"
-if ! "$HOST_CC" -O2 \
+if ! "$HOST_CC" -m64 -O2 \
         -I "$control_dir" \
         -I "$REPO_ROOT/tools/boot-info-manifest" \
         -o "$control_dir/dump-fixture" "$DUMPER_SRC" 2> "$control_dir/cc.log"; then
