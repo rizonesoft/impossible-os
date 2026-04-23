@@ -7,8 +7,8 @@
  *
  *   {
  *     "view": "kernel" | "mirror",
- *     "version": 5,
- *     "struct_size": 22184,
+ *     "version": 6,
+ *     "struct_size": 23696,
  *     "fields": [
  *       { "name": "header.magic",        "offset": 0,     "size": 4 },
  *       { "name": "header.version",      "offset": 4,     "size": 2 },
@@ -19,11 +19,23 @@
  *     "sha256": "deadbeef..."
  *   }
  *
- * The SHA-256 is computed by walking the emitted JSON body (without the
- * sha256 line itself) -- a single-value change-detection token for
- * release notes and CI dashboards. The comparison script
+ * The SHA-256 is a CANONICAL, VIEW-INDEPENDENT ABI-version token computed
+ * from the tuple (version, struct_size, per-field (name, offset, size)) in
+ * emission order. It is NOT a hash of the JSON bytes -- changing the "view"
+ * label, JSON indentation, or the sha256 line itself must not change the
+ * hash. That way the kernel and mirror views produce IDENTICAL sha256 on
+ * happy path, and the token can be quoted in release notes / CI dashboards
+ * as a single-line ABI fingerprint. The comparison script
  * tools/boot-info-manifest/compare.sh only compares the fields[] array;
- * the sha256 is advisory.
+ * the sha256 is advisory for humans.
+ *
+ * Canonical byte stream fed to SHA-256:
+ *   "BOOTINFO-ABI-V1\n"
+ *   "version=<v>\n"
+ *   "struct_size=<s>\n"
+ *   "field=<name>,<offset>,<size>\n"   one line per field, in F() order
+ * Nothing else. The "V1" suffix lets future schema revisions bump the token
+ * format without colliding with earlier hashes.
  *
  * No external dependencies. OpenSSL / libcrypto are avoided so this builds
  * on a fresh Ubuntu runner with just `clang-19`. SHA-256 is a small
@@ -131,20 +143,24 @@ static void sha256_final(sha256_ctx *c, uint8_t out[32]) {
     }
 }
 
-/* --- JSON emission with SHA-256 accumulation ----------------------------- */
+/* --- JSON emission + canonical SHA-256 accumulation ---------------------- */
 
-/* g_body is the JSON body hashed for the sha256 line. Every manifest_write*
- * call appends to both stdout and the hash context so the SHA stays in
- * sync with whatever the compare script reads. */
+/* Two independent sinks:
+ *   - stdout: the pretty-printed JSON that compare.sh parses. Includes the
+ *     "view" label so humans reading the file know which side produced it.
+ *   - g_sha: the canonical ABI fingerprint. View-independent, whitespace-
+ *     independent, JSON-layout-independent. Only the ABI tuple (version,
+ *     struct_size, per-field name/offset/size) feeds the hash.
+ * Kernel and mirror MUST produce identical sha256 on a matching ABI. */
+
 static sha256_ctx g_sha;
 static int g_fields_emitted;
 
-static void manifest_write(const char *s) {
+static void manifest_out(const char *s) {
     fputs(s, stdout);
-    sha256_update(&g_sha, s, strlen(s));
 }
 
-static void manifest_writef(const char *fmt, ...) {
+static void manifest_outf(const char *fmt, ...) {
     char buf[512];
     va_list ap;
     va_start(ap, fmt);
@@ -154,13 +170,35 @@ static void manifest_writef(const char *fmt, ...) {
         fprintf(stderr, "manifest: vsnprintf truncated (%d)\n", n);
         exit(2);
     }
-    manifest_write(buf);
+    manifest_out(buf);
+}
+
+/* Feed a single line into the canonical hash. Every caller includes its own
+ * trailing \n so the hash sees a deterministic delimited stream. */
+static void canonical_line(const char *fmt, ...) {
+    char buf[512];
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    if (n < 0 || (size_t)n >= sizeof(buf)) {
+        fprintf(stderr, "manifest: canonical vsnprintf truncated (%d)\n", n);
+        exit(2);
+    }
+    sha256_update(&g_sha, buf, (size_t)n);
 }
 
 static void manifest_begin(const char *view, unsigned version, size_t struct_size) {
     sha256_init(&g_sha);
     g_fields_emitted = 0;
-    manifest_writef(
+
+    /* Canonical hash input -- NEVER include `view` or any JSON formatting. */
+    canonical_line("BOOTINFO-ABI-V1\n");
+    canonical_line("version=%u\n", version);
+    canonical_line("struct_size=%zu\n", struct_size);
+
+    /* Human/tooling JSON -- keeps the view label for readability. */
+    manifest_outf(
         "{\n"
         "  \"view\": \"%s\",\n"
         "  \"version\": %u,\n"
@@ -170,18 +208,24 @@ static void manifest_begin(const char *view, unsigned version, size_t struct_siz
 }
 
 static void manifest_field(const char *name, size_t offset, size_t size) {
-    if (g_fields_emitted > 0) manifest_write(",\n");
-    manifest_writef(
+    /* Canonical form is a fixed delimited tuple; no quoting games, no
+     * whitespace. sha256_update receives the same bytes regardless of which
+     * dumper emitted the field. */
+    canonical_line("field=%s,%zu,%zu\n", name, offset, size);
+
+    if (g_fields_emitted > 0) manifest_out(",\n");
+    manifest_outf(
         "    { \"name\": \"%s\", \"offset\": %zu, \"size\": %zu }",
         name, offset, size);
     g_fields_emitted++;
 }
 
 static void manifest_end(void) {
-    manifest_write("\n  ],\n");
-    /* Seal the hash BEFORE writing the sha256 line so the line itself is
-     * not part of the input. Reproducers can validate by stripping the
-     * sha256 line from the JSON and re-hashing. */
+    manifest_out("\n  ],\n");
+    /* Seal the canonical hash. The sha256 line itself is never hashed,
+     * and there is no "strip the sha256 line and re-hash" reproducer --
+     * reproducers just rebuild the canonical tuple stream from the fields
+     * array directly. */
     uint8_t digest[32];
     sha256_final(&g_sha, digest);
     char hex[65];
@@ -191,7 +235,6 @@ static void manifest_end(void) {
         hex[i*2 + 1] = H[digest[i] & 0xF];
     }
     hex[64] = 0;
-    /* Write directly to stdout; do not hash this line. */
     printf("  \"sha256\": \"%s\"\n}\n", hex);
 }
 

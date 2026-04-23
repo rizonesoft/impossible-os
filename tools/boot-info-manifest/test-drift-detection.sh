@@ -64,12 +64,34 @@ if ! command -v "$HOST_CC" >/dev/null 2>&1; then
     echo "error: host compiler '$HOST_CC' not found; set HOST_CC or install gcc" >&2
     exit 2
 fi
-if [ ! -f "$KERNEL_JSON" ]; then
-    echo "error: $KERNEL_JSON missing -- run 'bash scripts/build.sh' first" >&2
-    exit 2
-fi
 if ! command -v python3 >/dev/null 2>&1; then
     echo "error: python3 required for compare.sh" >&2
+    exit 2
+fi
+
+# Regenerate KERNEL_JSON from current sources before running mutation cases.
+# Without this, the harness would validate against a stale baseline that may
+# no longer match the real boot_info/mirror headers -- a mutation could flag
+# the wrong field, or match the stale JSON and falsely pass. Prefer the
+# Makefile path (has full header-dependency tracking); fall back to compiling
+# the dumper inline if `make` is unavailable in a stripped build env.
+[ "$QUIET" = "0" ] && echo "${CYAN}[boot_info ABI drift detection]${NC} regenerating kernel baseline..."
+mkdir -p "$BUILD_DIR/tools"
+if command -v make >/dev/null 2>&1 && \
+   make -C "$REPO_ROOT" --no-print-directory "build/boot-info-abi.kernel.json" >/dev/null 2>&1; then
+    :  # make regenerated it
+elif "$HOST_CC" -O2 \
+        -I "$REPO_ROOT/include" \
+        -I "$REPO_ROOT/tools/boot-info-manifest" \
+        -o "$BUILD_DIR/tools/dump-boot-info-kernel" \
+        "$REPO_ROOT/tools/boot-info-manifest/dump-kernel.c" 2>/dev/null; then
+    "$BUILD_DIR/tools/dump-boot-info-kernel" > "$KERNEL_JSON"
+else
+    echo "error: failed to rebuild kernel ABI baseline ($KERNEL_JSON)" >&2
+    exit 2
+fi
+if [ ! -f "$KERNEL_JSON" ]; then
+    echo "error: $KERNEL_JSON missing after regen attempt" >&2
     exit 2
 fi
 
@@ -276,6 +298,19 @@ else
     else
         t_fail "control (unmutated mirror)" \
             "unmutated mirror disagrees with kernel JSON -- either the real mirror drifted or test harness broke"
+    fi
+
+    # Canonical-hash invariant: on a matching ABI, kernel and mirror views
+    # MUST produce the same sha256. If this ever diverges, the canonical
+    # accumulator in dump-common.h regressed into hashing view-dependent
+    # bytes (what Codex pass 2 H1 originally caught). Guard it at test time.
+    k_hash="$(grep -o '"sha256": "[^"]*"' "$KERNEL_JSON" | head -1 | cut -d'"' -f4)"
+    m_hash="$(grep -o '"sha256": "[^"]*"' "$control_dir/mirror.json" | head -1 | cut -d'"' -f4)"
+    if [ -n "$k_hash" ] && [ "$k_hash" = "$m_hash" ]; then
+        t_pass "control (kernel sha256 == mirror sha256: ${k_hash:0:12}...)"
+    else
+        t_fail "control (sha256 canonicality)" \
+            "kernel sha256 '$k_hash' != mirror sha256 '$m_hash' -- canonical hash regressed into view-dependent bytes"
     fi
 fi
 
