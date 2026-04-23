@@ -250,7 +250,7 @@ Wire the validator into the repo's CI surface so graph drift is caught before hu
 > - Downstream effects: closes the TODO-06 roadmap's primary CI gate. §7 (visualization) can now assume a clean graph on main; §8 (MCP server) can rely on duplicate-id and stale-xref failures being caught before they poison the query surface. Also hardens existing `--fix-line-numbers` usage by making drift detection automatic on Claude edits.
 > - Canonical doc: the wrapper's header comment + workflow comments + pre-stamp Notes in §3/§6 + the `[`sub-test 11a-11j headers in `scripts/todo-graph/tests/test_build.sh`.
 > - Scope boundary: this section ships the gate surface (wrapper + make + CI workflow + auto-rewrite hook + pre-push). Actually fixing the 16 pre-existing drift failures inherited from §3's baseline belongs to the per-TODO owners, not §6. The optional PR-comment action (posts failing XREFs inline) is deferred -- the Actions-log surfacing already names file + bad-ref clearly, which is enough for the MVP; if it proves insufficient in practice, a small github-script follow-up can post a comment without reopening this section.
-> **Verified:** 2026-04-23 | commit `<§6 commit>` | 8/8 items | 88/88 sub-tests PASS, 3 Codex rounds closed (3 findings fixed + 1 false-positive rejected with evidence)
+> **Verified:** 2026-04-23 | commit `195b3d92` | 8/8 items | 88/88 sub-tests PASS, 3 Codex rounds closed (3 findings fixed + 1 false-positive rejected with evidence)
 > **Quality reviewed:** 2026-04-23 | Codex 3x (adversarial + logic + verify) | 2H+1M fixed, 0 open | scope: N/A (host-side CI/bash/YAML/hooks, no kernel domain)
 
 ---
