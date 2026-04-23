@@ -296,7 +296,7 @@ done
 
 # --- Step 5b: User-mode UTEST results ---
 #
-# The §3 launcher emits one verdict line per binary as
+# The scenario launcher emits one verdict line per binary as
 # `UTEST: <name>: PASS (exit=0)` / `FAIL (exit=N)` / `SKIP (exit=77)` /
 # `TIMEOUT` / `ISOLATION` / `LEAK`, plus a final
 # `UTEST: === N passed, N failed, N skipped of N total ===` summary.

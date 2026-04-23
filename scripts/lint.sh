@@ -333,22 +333,13 @@ if [ "$#" -eq 0 ]; then
         scripts/debug/usermode/run-all-usermode-tests.bat
         scripts/debug/usermode/run-test_faultinject.bat
         scripts/debug/usermode/run-test_harness_smoke.bat
-        scripts/debug/usermode/run-test_perf_syscall.bat
-        scripts/debug/usermode/run-test_process.bat
-        scripts/debug/usermode/run-test_smoke_boot.bat
-        scripts/debug/usermode/run-test_stress_libc.bat
         scripts/debug/usermode/run-test_syscall.bat
-        scripts/debug/usermode/run-test_win32.bat
         scripts/lint.sh
-        scripts/make-ntfs-test.sh
         scripts/qemu-screenshot.sh
         scripts/test-tooling.sh
-        scripts/test-visual-regression.sh
-        scripts/test.sh
         src/boot/uefi/boot_info_mirror.h
         src/boot/uefi/bootx64.c
         src/boot/uefi/efi.h
-        src/desktop/terminal.c
         src/desktop/wm.c
         src/kernel/acpi.c
         src/kernel/cpu_security.c

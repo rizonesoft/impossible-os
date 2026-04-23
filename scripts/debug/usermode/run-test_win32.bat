@@ -1,5 +1,5 @@
 @echo off
-:: run-test_win32.bat -- §14 Win32 API binary (test_win32.exe)
+:: run-test_win32.bat -- Win32 API binary (test_win32.exe)
 ::
 :: Exercises the Win32 shim (user/lib/win32.c) from ring 3:
 ::   - GetCurrentProcessId  (TEB.ClientId.UniqueProcess via gs:0x40)

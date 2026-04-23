@@ -35,7 +35,7 @@
 #       [--scenarios "idle [other...]"] [--update-refs]
 #
 # Environment:
-#   VR_THRESHOLD   percent-identical floor, default 95 (per §6 tolerance)
+#   VR_THRESHOLD   percent-identical floor, default 95 (tolerance)
 #   VR_FUZZ        per-channel fuzz, default 2
 #   VR_FORCE_FRESH set to 1 to disable shared-session mode (every scenario
 #                  boots fresh via test-desktop.sh). Useful when a bug in

@@ -215,7 +215,7 @@ char terminal_trygetchar(void)
     return c;
 }
 
-/* ---- Introspection (desktop UI test framework §5) ------------------ */
+/* ---- Introspection (desktop UI test framework hook) ------------------ */
 
 int terminal_get_buffer(char *dest, int dest_capacity)
 {

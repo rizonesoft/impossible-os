@@ -155,7 +155,7 @@ if $HAVE_NTFS3G; then
             echo -n "File number $i in large directory." > "$MNT/manyfiles/file_$i.txt"
         done
 
-        # ---- LZNT1 Compression Test Files (§9.1) ----
+        # ---- LZNT1 Compression Test Files (NTFS compression tests) ----
         # ntfs-3g compresses files when the directory has the compressed flag
         COMPRESS_OK=false
         mkdir -p "$MNT/compressed" 2>/dev/null
