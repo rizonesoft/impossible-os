@@ -192,8 +192,19 @@ boot_result_t boot_payload_validate(const struct boot_info *info,
  *                        BootNext set, media removable/present,
  *                        rollback + recovery + resume-invalidation
  *                        triggers, network insecure, manifest /
- *                        measured-boot status). Forward-compatible:
- *                        unknown bits are tolerated.
+ *                        measured-boot status). **Closed** mask:
+ *                        every bit in BOOT_SOURCE_FLAG_MASK_KNOWN
+ *                        maps to a kernel-side policy and the
+ *                        validator hard-rejects bits outside it.
+ *                        Unlike caps_present / caps_degraded there
+ *                        is NO forward-compat tolerance -- adding a
+ *                        new flag requires a BOOT_INFO_VERSION bump
+ *                        AND a kernel-side interpreter for the new
+ *                        bit. This is the single "ABI footgun"
+ *                        difference between decision flags and
+ *                        capability bits; producers that need a
+ *                        future decision input must coordinate the
+ *                        version bump with the kernel first.
  *   boot_fallback_depth -- how many fallbacks were traversed before
  *                          the selected path was reached. 0 = primary
  *                          choice took; N > 0 = Nth fallback (capped
@@ -236,8 +247,12 @@ enum boot_reason_code {
 #define BOOT_REASON_CODE_MAX  BOOT_REASON_FALLBACK
 
 /* BOOT_SOURCE_FLAG_* bitmask bits -- inputs that drove the decision.
- * Unknown bits are tolerated (forward compat); bits in BOOT_SOURCE_FLAG
- * _MASK_KNOWN are recognized today.  */
+ * BOOT_SOURCE_FLAG_MASK_KNOWN is a CLOSED mask: validator hard-rejects
+ * any bit outside it. Adding a new flag requires a BOOT_INFO_VERSION
+ * bump AND a matching kernel-side interpreter -- there is NO
+ * forward-compat tolerance here (unlike caps_present / caps_degraded).
+ * See the v8 comment block above for the full contract and the
+ * rationale for the stricter stance.  */
 #define BOOT_SOURCE_FLAG_BOOT_NEXT_SET            (1u << 0)  /* BootNext variable was populated */
 #define BOOT_SOURCE_FLAG_BOOT_CURRENT_MISMATCH    (1u << 1)  /* BootCurrent != expected primary entry */
 #define BOOT_SOURCE_FLAG_MEDIA_REMOVABLE          (1u << 2)  /* boot media flagged removable */

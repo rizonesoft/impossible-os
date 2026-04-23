@@ -273,6 +273,27 @@ static void test_boot_decision_reason_requires_flag(void)
     TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_DECISION_ERR_REASON_FLAG, "err=REASON_FLAG");
 }
 
+static void test_boot_decision_boot_current_mismatch_fixture(void)
+{
+    TEST_KLOG_SUPPRESS("boot");
+    dec_zero();
+    /* Firmware landed on a non-primary Boot#### entry without
+     * BootNext: path stays NORMAL but BOOT_CURRENT_MISMATCH flag MUST
+     * be set so consumers can distinguish this from an ordinary cold
+     * boot. Validator accepts; the flag is informational and compatible
+     * with reason=NORMAL (R5 path-agnostic). */
+    s_dec_buf.boot_path           = BOOT_PATH_NORMAL;
+    s_dec_buf.boot_reason         = BOOT_REASON_NORMAL;
+    s_dec_buf.boot_source_flags   = BOOT_SOURCE_FLAG_BOOT_CURRENT_MISMATCH |
+                                    BOOT_SOURCE_FLAG_MEDIA_PRESENT;
+    s_dec_buf.boot_fallback_depth = 0u;
+
+    enum boot_decision_error err = BOOT_DECISION_ERR_OK;
+    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_OK,              "boot_current_mismatch -> OK");
+    TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_DECISION_ERR_OK, "err=OK");
+}
+
 static void test_boot_decision_fallback_class_reasons_accepted(void)
 {
     TEST_KLOG_SUPPRESS("boot");
@@ -365,6 +386,8 @@ void test_register_boot_decision(void)
                             test_boot_decision_fallback_requires_fallback_reason, TEST_CAT_BOOT);
     test_suite_register_cat("boot_decision: reason requires matching flag (R7)",
                             test_boot_decision_reason_requires_flag, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_decision: BootCurrent mismatch fixture",
+                            test_boot_decision_boot_current_mismatch_fixture, TEST_CAT_BOOT);
     test_suite_register_cat("boot_decision: fallback-class reason accepted",
                             test_boot_decision_fallback_class_reasons_accepted, TEST_CAT_BOOT);
     test_suite_register_cat("boot_decision: name helpers",

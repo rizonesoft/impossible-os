@@ -15,10 +15,10 @@
 
 |                       |   Files |      Lines |
 | --------------------- | ------: | ---------: |
-| **C sources** (`.c`)  |     285 |     151158 |
-| **Headers** (`.h`)    |     210 |      41349 |
+| **C sources** (`.c`)  |     285 |     151204 |
+| **Headers** (`.h`)    |     210 |      41364 |
 | **Assembly** (`.asm`) |       9 |       1095 |
-| **Subtotal**          | **504** | **193602** |
+| **Subtotal**          | **504** | **193663** |
 
 ## SDK Tools
 
@@ -58,9 +58,9 @@
 
 |                                |    Files |      Lines |
 | ------------------------------ | -------: | ---------: |
-| **Core code + tooling**        |  **643** | **220442** |
+| **Core code + tooling**        |  **643** | **220503** |
 | **Supporting text + metadata** |  **394** | **169948** |
-| **All counted text files**     | **1037** | **390390** |
+| **All counted text files**     | **1037** | **390451** |
 
 > Vendored code excluded: ~13886 lines (`stb_image.h`, `stb_truetype.h`, `efi.h`)
 >
@@ -77,15 +77,15 @@
 
 |                               |         Linux |     Windows |         Impossible OS |
 | ----------------------------- | ------------: | ----------: | --------------------: |
-| **Core code + tooling lines** |   ~28,000,000 | ~50,000,000 |               220,442 |
+| **Core code + tooling lines** |   ~28,000,000 | ~50,000,000 |               220,503 |
 | **Developers**                | ~1,000 active | ~5,000 peak |                     1 |
 | **Time span**                 |      33 years |    40 years | 1 month(s), 18 day(s) |
 
-> At industry rates (10,000 LOC/developer/year -- COCOMO II), writing 220,442
+> At industry rates (10,000 LOC/developer/year -- COCOMO II), writing 220,503
 > lines of core code and tooling would take **167 developers** working for **1 month(s), 18 day(s)**.
 >
 > *The "impossible" in Impossible OS was supposed to be the name, not the development method.*
 
 ---
 
-*Last updated: 2026-04-24 01:12 · commit `272afeb9`*
+*Last updated: 2026-04-24 01:33 · commit `961472cc`*

@@ -5775,6 +5775,29 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
             src_flags |= BOOT_SOURCE_FLAG_MEDIA_REMOVABLE;
         if (g_boot_info_ptr->boot_media_present)
             src_flags |= BOOT_SOURCE_FLAG_MEDIA_PRESENT;
+        /* BOOT_CURRENT_MISMATCH: firmware landed on a non-primary
+         * Boot#### entry without an explicit BootNext override. That
+         * is exactly the "fallthrough to a secondary entry" condition
+         * recovery + attestation consumers need to see; without this
+         * flag those cases would be indistinguishable from an ordinary
+         * cold boot. Gates:
+         *   - BootOrder populated (count > 0). No list -> nothing to
+         *     compare against.
+         *   - BootCurrent is actually known. uefi_boot_current defaults
+         *     to 0xFFFF when GetVariable(BootCurrent) is absent or
+         *     fails; comparing 0xFFFF vs BootOrder[0] would false-
+         *     positive on firmware that exposes BootOrder but not
+         *     BootCurrent (rare but observed on OVMF builds).
+         *   - Not an operator BootNext selection. If BootNext was used,
+         *     BootCurrent is whatever the operator picked and
+         *     "mismatch" is meaningless. */
+        if (g_boot_info_ptr->uefi_boot_order_count > 0 &&
+            g_boot_info_ptr->uefi_boot_current != 0xFFFF &&
+            !g_boot_info_ptr->uefi_boot_next_valid &&
+            g_boot_info_ptr->uefi_boot_current !=
+                g_boot_info_ptr->uefi_boot_order[0]) {
+            src_flags |= BOOT_SOURCE_FLAG_BOOT_CURRENT_MISMATCH;
+        }
         /* Rollback / recovery / resume-invalidation / network-insecure /
          * manifest-failed / measured-boot-failed flags stay clear on
          * this loader; the paths that would set them (rollback store,
