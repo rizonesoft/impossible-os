@@ -347,6 +347,9 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 > - **Canonical doc**: [`docs/boot/boot-info-fields.md`](../../docs/boot/boot-info-fields.md) (the matrix the gate enforces coverage for).
 > - **Scope boundary**: §10 owns the audit + drift gate. Adding new roadmap sections, renaming TODO files, or refactoring the matrix structure stays with §1 (the matrix owner). A reverse-direction check (matrix has row, manifest does not) is NOT shipped -- if a field is removed from the ABI, the `compare.sh` diff + `_Static_assert` pins already fail the build at the struct level, so a stale matrix row is harmless and self-evident in code review. Filing a reverse check as a future item if a need appears.
 
+> **Verified:** 2026-04-23 | commit `d6ea16a9` | 6/6 items | build OK | 225 manifest fields all have owning matrix rows; row-level negative tests verified (remove `usb_controller.active` / `config_found` / `boot_framebuffer.type` / `boot_usb_endpoint.address` / `mem_lower_kb` all trip the gate).
+> **Quality reviewed:** 2026-04-23 | Codex 3x (implement-adversarial + implement-re-adversarial + review-quality) | 4H fixed (bash tail-segment fallback masked nested fields, bash whole-file substring fallback let prose satisfy coverage, Python nested-array-of-struct regex was swallowed by the generic outer-element branch, legacy summary table was erroneously accepted as ownership) + 1M drive-by fixed (`scripts/test-coverage.sh` multi-line `test_suite_register_cat(...)` calls were dropped from the coverage report's suite-name column; changed grep pipeline to pre-join with `tr '\n' ' '`, regenerated `docs/test-coverage/coverage.md`), 0 open | scope: N/A (host-tools: shell + python drift gate)
+
 ---
 
 ## 11. Capability Negotiation and Degraded-Feature Flags

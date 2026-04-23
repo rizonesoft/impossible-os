@@ -52,8 +52,16 @@ for f in "$TEST_DIR"/test_*.c; do
     # Count test_suite_register / test_suite_register_cat calls
     suites=$(grep -c 'test_suite_register' "$f" 2>/dev/null) || suites=0
 
-    # Extract suite names (join with ", ")
-    suite_list=$(grep -oP 'test_suite_register(_cat)?\("[^"]*",\s*\K\w+' "$f" 2>/dev/null | tr '\n' ',' | sed 's/,$//' | sed 's/,/, /g' || echo "")
+    # Extract suite names (join with ", "). The canonical multi-line
+    # registration form places the callback on the line AFTER the
+    # string literal (matching the clang-format / readability style
+    # for long string args). A plain line-based `grep -oP` cannot
+    # match across the newline, so pre-join the file into one long
+    # line with `tr '\n' ' '` before running the PCRE. Keeps counting
+    # (via `grep -c 'test_suite_register' "$f"` above) and enumeration
+    # using the same grammar so the coverage report never drops suites
+    # silently.
+    suite_list=$(tr '\n' ' ' < "$f" | grep -oP 'test_suite_register(_cat)?\("[^"]*",\s*\K\w+' 2>/dev/null | tr '\n' ',' | sed 's/,$//' | sed 's/,/, /g' || echo "")
 
     FILES+=("$basename.c")
     SUITES+=("$suites")
