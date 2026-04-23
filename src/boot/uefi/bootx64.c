@@ -1953,8 +1953,14 @@ static UINT32 g_staged_payload_overflow = 0;
 static void stage_payload(UINT32 type, const char *path)
 {
     if (path == (const char *)0 || path[0] == '\0') {
-        serial_early_print("[BOOT] stage_payload: empty path (ignored)\n");
-        return;
+        /* Defense in depth: parse_conf_kv's payload-key branches
+         * already boot_fatal on empty value, so this path is
+         * unreachable today. If a future caller forgets that
+         * contract, fail hard here too rather than silently losing a
+         * payload. */
+        boot_fatal(BOOT_ERR_CONF_INVALID,
+                   "stage_payload: empty path",
+                   "Caller passed a NULL or empty path; see parse_conf_kv.");
     }
     if (g_staged_payload_count >= BOOT_PAYLOAD_STAGE_MAX) {
         g_staged_payload_overflow++;
@@ -2184,18 +2190,36 @@ static void parse_conf_kv(struct boot_config *cfg,
         /* section 5 typed payload: early kernel module file. Value is
          * an ESP-relative path like '\\EFI\\ImpossibleOS\\mod\\net.kmod'.
          * Multiple module= lines are allowed; each stages one MODULE
-         * descriptor. */
+         * descriptor. Empty value is a hard error (test-checkpoint
+         * contract: "missing or malformed entries fail"). */
+        if (val[0] == '\0') {
+            boot_fatal(BOOT_ERR_CONF_INVALID,
+                       "boot.conf: module= with empty path",
+                       "Remove the line or give it a valid ESP-relative path.");
+        }
         stage_payload(BOOT_PAYLOAD_MODULE, val);
     }
     else if (ascii_streq(key, "initrd")) {
         /* section 5 typed payload: initrd/initramfs. One or more
-         * initrd= lines stage INITRD descriptors in order. */
+         * initrd= lines stage INITRD descriptors in order. Empty
+         * value is a hard error. */
+        if (val[0] == '\0') {
+            boot_fatal(BOOT_ERR_CONF_INVALID,
+                       "boot.conf: initrd= with empty path",
+                       "Remove the line or give it a valid ESP-relative path.");
+        }
         stage_payload(BOOT_PAYLOAD_INITRD, val);
     }
     else if (ascii_streq(key, "recovery_image")) {
         /* section 5 typed payload: recovery env image. Typically one
          * recovery_image= line, but the staging layer accepts multiple
-         * (e.g. recovery + installer bundle). */
+         * (e.g. recovery + installer bundle). Empty value is a hard
+         * error. */
+        if (val[0] == '\0') {
+            boot_fatal(BOOT_ERR_CONF_INVALID,
+                       "boot.conf: recovery_image= with empty path",
+                       "Remove the line or give it a valid ESP-relative path.");
+        }
         stage_payload(BOOT_PAYLOAD_RECOVERY_IMAGE, val);
     }
     else {
@@ -2449,7 +2473,32 @@ static void parse_boot_conf(void)
         while (*pos && *pos != '\n') pos++;
         if (*pos == '\n') pos++;
 
-        /* Parse this key=value */
+        /* Pre-gate empty-value detection for section 5 payload keys.
+         * The `ki > 0 && vi > 0` gate below exists to preserve today's
+         * behavior for NON-payload keys: a stray `cmdline=` later in
+         * boot.conf must not clear an earlier `cmdline=foo`, and a
+         * trailing `test_suite=` must not reset to 0xFF. But the
+         * section 5 test-checkpoint contract requires `module=` /
+         * `initrd=` / `recovery_image=` with empty value to FAIL boot
+         * with a specific diagnostic, which means we cannot silently
+         * drop empty-value lines for those three keys. Detect them
+         * BEFORE the gate, boot_fatal on empty value; everything else
+         * goes through the original gate. */
+        if (ki > 0 && vi == 0) {
+            if (ascii_streq(key, "module") ||
+                ascii_streq(key, "initrd") ||
+                ascii_streq(key, "recovery_image")) {
+                serial_early_print("[FATAL] boot.conf: '");
+                serial_early_print(key);
+                serial_early_print("' with empty value\n");
+                boot_fatal(BOOT_ERR_CONF_INVALID,
+                           "boot.conf: payload key with empty value",
+                           "module=/initrd=/recovery_image= require a non-empty ESP-relative path.");
+            }
+        }
+
+        /* Parse this key=value (original gate preserved for non-payload
+         * keys so existing empty-value semantics do not regress). */
         if (ki > 0 && vi > 0)
             parse_conf_kv(cfg, key, val);
     }
