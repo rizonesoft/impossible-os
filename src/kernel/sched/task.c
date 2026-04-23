@@ -1161,7 +1161,7 @@ int task_fork(struct interrupt_frame *frame)
     tasks[child_pid].wait_pid = -1;
     tasks[child_pid].exec_pending = 0;
     ob_handle_table_init(&tasks[child_pid].handle_table);
-    /* Copy parent's KERNEL_GS_BASE (TEB address) -- §6 will allocate
+    /* Copy parent's KERNEL_GS_BASE (TEB address) -- will allocate
      * a new TEB for the child and update this field. */
     tasks[child_pid].kernel_gs_base = tasks[parent_pid_val].kernel_gs_base;
     /* Mirror into threads[0] for per-thread GS swap */
@@ -1340,7 +1340,7 @@ static PEB *peb_alloc_for_task(uint32_t pid, uintptr_t image_base,
         peb_build_ustr(&pp->CurrentDirectoryDosPath, &buf, "C:\\");
     }
 
-    /* Standard handles: INVALID for now (§6 wires real console handles) */
+    /* Standard handles: INVALID for now (wires real console handles) */
     pp->StandardInput = UHANDLE_INVALID;
     pp->StandardOutput = UHANDLE_INVALID;
     pp->StandardError = UHANDLE_INVALID;
@@ -1734,7 +1734,7 @@ int task_exec(const uint8_t *data, uint64_t size)
      * _start sees argc at [rsp]. Current crt0 ignores argc/argv but this
      * layout is ready for a future crt0 (or glibc/musl) that parses them.
      *
-     * §13: extended auxv carries AT_RANDOM (16-byte stack canary seed),
+     *: extended auxv carries AT_RANDOM (16-byte stack canary seed),
      * AT_PHDR/PHENT/PHNUM (program headers for dynamic linker),
      * AT_BASE (=0, no interpreter), AT_UID/EUID/GID/EGID (=0), AT_SECURE
      * (=0), AT_HWCAP (raw CPUID 1 EDX), AT_HWCAP2 (=0).
@@ -1766,7 +1766,7 @@ int task_exec(const uint8_t *data, uint64_t size)
         }
         uint64_t argv0_addr = (uint64_t)ustk;
 
-        /* §13: push 16 random bytes for AT_RANDOM. glibc/musl read exactly
+        /*: push 16 random bytes for AT_RANDOM. glibc/musl read exactly
          * 16 bytes from the address pushed in AT_RANDOM as the seed for
          * __stack_chk_guard. Without this, dynamically linked binaries
          * compiled with -fstack-protector use a zero or constant canary,
@@ -1813,7 +1813,7 @@ int task_exec(const uint8_t *data, uint64_t size)
         }
         at_random_addr = (uint64_t)ustk;
 
-        /* §13: detect ELF and extract program-header metadata for the auxv.
+        /*: detect ELF and extract program-header metadata for the auxv.
          * Non-ELF formats (PE/EIF) leave phdr_vaddr/phnum/phent at 0 -- the
          * AT_PHDR/PHENT/PHNUM entries are still emitted but with zero values
          * (the loader ignores zero AT_PHDR per Linux ABI). */
@@ -1824,7 +1824,7 @@ int task_exec(const uint8_t *data, uint64_t size)
                                          &phdr_vaddr, &phnum, &phent);
         }
 
-        /* §13: build AT_HWCAP from raw CPUID leaf 1 EDX. This matches what
+        /*: build AT_HWCAP from raw CPUID leaf 1 EDX. This matches what
          * Linux x86_64 does -- it passes EDX through directly without
          * inventing bit positions. AT_HWCAP2 is set to 0 because the leaf 7
          * mapping has more divergence risk and glibc/musl on x86_64 read
@@ -1835,7 +1835,7 @@ int task_exec(const uint8_t *data, uint64_t size)
             hwcap = edx;
         }
 
-        /* §13: emit auxv pairs into a local array, then bulk-copy onto the
+        /*: emit auxv pairs into a local array, then bulk-copy onto the
          * stack. Pair count is computed at emission time -- no hard-coded
          * stack subtraction count to drift out of sync (Codex F4). */
         uint64_t auxv[64];  /* 32 pairs max; we use 16 */
@@ -1987,7 +1987,7 @@ int task_exec(const uint8_t *data, uint64_t size)
              (uint64_t)p->OSBuildNumber,
              (uint64_t)p->NumberOfProcessors);
     }
-    /* ---- §10: Register PEB/TEB in Ob namespace ----
+    /* ----: Register PEB/TEB in Ob namespace ----
      * Insert as named objects under \KernelObjects\Process<PID>\ so
      * user-mode tools can enumerate all processes via NtQueryDirectoryObject.
      * This is an Impossible OS exclusive -- neither Windows nor Linux

@@ -262,10 +262,10 @@ fi
 
 # ============================================================================
 # Check 5: Bare "section sign + number" in code comments without external-spec
-# qualifier. `§11`, `(§4)`, `§1.3` inside a .c / .h / .asm / .py / .sh file
-# almost always refers to a TODO section; those break silently when the
-# owning TODO renumbers. External-spec citations (UEFI §X, Intel SDM §Y,
-# NTFS §Z, ACPI §W, etc.) stay legal because they point at stable published
+# qualifier. A bare section-sign glyph followed by a digit inside a .c / .h /
+# .asm / .py / .sh file almost always refers to a TODO section; those break
+# silently when the owning TODO renumbers. External-spec citations (UEFI,
+# Intel SDM, NTFS, ACPI) stay legal because they point at stable published
 # standards.
 #
 # Allowed tokens on the same line: UEFI, Intel, SDM, AMD, APM, RFC <n>,
@@ -302,94 +302,7 @@ if [ "$#" -eq 0 ]; then
     # sorted alphabetically for easy audit. Any new file must NOT land
     # here -- check the lint output and replace the §N with a feature
     # name or a doc anchor link before adding.
-    BARE_SECTION_LEGACY_FILES=(
-        include/kernel/atomic.h
-        include/kernel/boot_info.h
-        include/kernel/boot_version.h
-        include/kernel/drivers/nvme.h
-        include/kernel/drivers/virtio/blk.h
-        include/kernel/drivers/virtio/virtio.h
-        include/kernel/exec.h
-        include/kernel/fs/vfs.h
-        include/kernel/ipc/alpc.h
-        include/kernel/ipc/alpc_port.h
-        include/kernel/mm/boot_reserved.h
-        include/kernel/mm/heap.h
-        include/kernel/nt/nt_file.h
-        include/kernel/ob/ob.h
-        include/kernel/sched/task.h
-        include/kernel/smp.h
-        include/kernel/test/input_record.h
-        include/kernel/test/klog_suppress.h
-        include/kernel/test/test.h
-        include/kernel/time/wall_clock.h
-        include/registry.h
-        scripts/debug/desktop/run-matrix-desktop-tests.bat
-        scripts/lint.sh
-        scripts/test-tooling.sh
-        src/boot/uefi/bootx64.c
-        src/boot/uefi/efi.h
-        src/kernel/acpi.c
-        src/kernel/cpu_security.c
-        src/kernel/elf.c
-        src/kernel/exec.c
-        src/kernel/fs/gpt.c
-        src/kernel/fs/vfs.c
-        src/kernel/idt.c
-        src/kernel/ipc/alpc_port.c
-        src/kernel/main/boot_hw.c
-        src/kernel/main/boot_payload.c
-        src/kernel/main/boot_recovery.c
-        src/kernel/main/boot_version.c
-        src/kernel/main/compositor.c
-        src/kernel/main/main_internal.h
-        src/kernel/mm/boot_reserved.c
-        src/kernel/mm/heap.c
-        src/kernel/mm/pmm.c
-        src/kernel/mm/vmm.c
-        src/kernel/nt/nt_alpc.c
-        src/kernel/nt/nt_registry.c
-        src/kernel/nt/nt_sync.c
-        src/kernel/nt/nt_syscall.c
-        src/kernel/panic.c
-        src/kernel/pe.c
-        src/kernel/registry.c
-        src/kernel/sched/irql.c
-        src/kernel/sched/syscall_entry.asm
-        src/kernel/sched/task.c
-        src/kernel/security/token.c
-        src/kernel/smp/smp.c
-        src/kernel/test/input_record.c
-        src/kernel/test/test_alpc.c
-        src/kernel/test/test_boot_info.c
-        src/kernel/test/test_boot_init.c
-        src/kernel/test/test_harness.c
-        src/kernel/test/test_heap.c
-        src/kernel/test/test_klog.c
-        src/kernel/test/test_nt_types.c
-        src/kernel/test/test_ob.c
-        src/kernel/test/test_peb_teb.c
-        src/kernel/test/test_runner.c
-        src/kernel/test/test_security.c
-        src/kernel/test/test_usermode.c
-        src/kernel/test/test_usermode_launcher.c
-        src/kernel/time/wall_clock.c
-        src/kernel/timer.c
-        src/kernel/tpm.c
-        src/kernel/uefi_runtime.c
-        tools/boot-info-manifest/check-doc-coverage.py
-        user/include/test.h
-        user/lib/win32.c
-        user/test/test_fileio.c
-        user/test/test_harness_smoke.c
-        user/test/test_ipc.c
-        user/test/test_libc.c
-        user/test/test_loader_pe.c
-        user/test/test_process.c
-        user/test/test_stress_libc.c
-        user/test/test_syscall.c
-        user/test/test_win32.c
-    )
+    BARE_SECTION_LEGACY_FILES=()
 
     is_bare_section_legacy() {
         local path="$1"

@@ -1,5 +1,5 @@
 /* ============================================================================
- * test_ipc.c -- §11 user-mode IPC coverage binary
+ * test_ipc.c -- user-mode IPC coverage binary
  *
  * Exercises the two ring-3 IPC channels the kernel exposes today:
  *   - SYS_PIPE         -- anonymous pipe pair; write one end, read the other
@@ -7,15 +7,15 @@
  *   - SYS_SHMEM_MAP    -- map the section into this task's address space
  *
  * Each assertion guards its dependents so one broken syscall produces one
- * FAIL instead of a cascade (same discipline as §9 test_syscall). Handle
- * cleanup runs on every path so the §6 launcher isolation check stays at
+ * FAIL instead of a cascade (same discipline as test_syscall). Handle
+ * cleanup runs on every path so the launcher isolation check stays at
  * zero leaked handles (leak -> PASS escalates to FAIL with "1 handle(s)
  * leaked" in the launcher summary).
  *
  * Non-blocking policy: the pipe write fits in one kernel-buffer frame
  * (kernel pipe ring is 4 KiB today), so sys_readhandle on the read end
  * returns immediately after the write. No fork is used -- cross-task
- * pipe IPC is §12's job.
+ * pipe IPC is's job.
  *
  * Linked against the same crt0 + libc as every other user binary.
  * ============================================================================ */

@@ -113,7 +113,7 @@ boot_result_t boot_info_validate_header(const struct boot_info_header *hdr,
 boot_result_t boot_info_validate(const void *p,
                                  size_t kernel_struct_size);
 
-/* §4 payload descriptor validator error classes. Kept near the
+/* payload descriptor validator error classes. Kept near the
  * validator prototype so callers and tests do not have to forward into
  * the struct boot_info region of the header. */
 enum boot_payload_error {
@@ -615,11 +615,11 @@ struct boot_usb_controller {
     uint32_t alloc_fail_page;    /* DEBUG: which page# failed */
 };
 
-/* --- Typed payload descriptor array (§4) ---
+/* --- Typed payload descriptor array ---
  * Bootloader enumerates optional physical payloads (modules, initrd,
  * recovery image, hibernation metadata, TPM log copy, network config,
  * random seed, USB handover state) and publishes them here for kernel
- * consumers in §5, §6, §11, §13, §20, §25, §26.
+ * consumers in.
  *
  * Contract:
  *   - payload_descriptors is a fixed-size array; payload_count is the
@@ -655,7 +655,7 @@ enum boot_payload_type {
 
 /* Descriptor flags (bitmask). New bits are ignored by older kernels if
  * not listed in BOOT_PAYLOAD_FLAG_MASK_KNOWN, which is how capability
- * negotiation (§11) will extend this surface without a version bump. */
+ * negotiation will extend this surface without a version bump. */
 #define BOOT_PAYLOAD_FLAG_VALID        (1u << 0)  /* 1 = descriptor is valid and should be processed */
 #define BOOT_PAYLOAD_FLAG_CHECKSUMMED  (1u << 1)  /* 1 = checksum low 32 bits carry CRC-32C of payload */
 #define BOOT_PAYLOAD_FLAG_REQUIRED     (1u << 2)  /* 1 = unknown type aborts boot instead of skipping */
@@ -797,7 +797,7 @@ struct boot_info {
     /* NVRAM boot error from previous boot (S13); 0 = last boot OK */
     uint32_t last_boot_error;
 
-    /* Boot device info (§3: populated by bootloader from LoadedImage) */
+    /* Boot device info (populated by bootloader from LoadedImage) */
     uint8_t  boot_device_type;      /* 0=unknown, 1=SATA, 2=NVMe, 3=USB, 4=network */
     uint8_t  _boot_dev_pad[3];      /* alignment */
     char     boot_device_path[128]; /* UEFI device path text (DevicePathToText) */
@@ -810,11 +810,11 @@ struct boot_info {
     uint8_t  _boot_var_pad[2];      /* alignment */
     uint16_t uefi_boot_order[16];   /* first 16 entries of BootOrder variable */
 
-    /* Boot partition info (§7: extracted from device path HardDrive node) */
+    /* Boot partition info (extracted from device path HardDrive node) */
     uint8_t  boot_partition_guid[16]; /* raw GUID bytes (GPT) or 4-byte MBR sig in [0..3] */
     uint8_t  boot_partition_style;    /* 0=unknown, 1=MBR, 2=GPT */
 
-    /* Removable media info (§8: from EFI_BLOCK_IO_PROTOCOL.Media) */
+    /* Removable media info (from EFI_BLOCK_IO_PROTOCOL.Media) */
     uint8_t  boot_device_removable;  /* 0=fixed, 1=removable (USB/SD/external) */
     uint8_t  boot_media_present;     /* 0=no media, 1=media inserted */
     uint8_t  _rem_pad;               /* alignment */
@@ -826,7 +826,7 @@ struct boot_info {
     uint32_t hv_flags;              /* hypervisor feature flags (HV_FLAG_*) */
     char     hv_vendor[16];         /* hypervisor vendor string (null-terminated) */
 
-    /* Typed payload descriptor array (§4). See boot_payload_desc above.
+    /* Typed payload descriptor array. See boot_payload_desc above.
      * Bootloader MUST populate payload_count as the packed-prefix length;
      * the kernel validator rejects any occupied slot at index >=
      * payload_count. payload_total_bytes MUST equal the sum of length for
@@ -886,6 +886,6 @@ _Static_assert(__builtin_offsetof(struct boot_info, uefi_boot_current) == 22056,
 /* Global boot info -- populated by multiboot2_parse() or UEFI bootloader */
 extern struct boot_info g_boot_info;
 
-/* §9: Populate HKLM\SYSTEM\Boot\Device\ from g_boot_info.
+/*: Populate HKLM\SYSTEM\Boot\Device\ from g_boot_info.
  * Called from registry_populate_defaults() after registry_init(). */
 void boot_device_populate_registry(void);

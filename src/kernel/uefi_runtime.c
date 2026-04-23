@@ -522,7 +522,7 @@ boot_result_t uefi_vars_init(void)
 }
 
 /* ============================================================================
- * System Reset (§1.3)
+ * System Reset
  *
  * ResetSystem() is a UEFI runtime service that handles all platform-specific
  * details for shutdown, reboot, and power cycling.  Preferred over direct
@@ -569,7 +569,7 @@ void uefi_reset(uint32_t reset_type)
 }
 
 /* ============================================================================
- * RTC Time Services (§2.1)
+ * RTC Time Services
  *
  * GetTime/SetTime/GetWakeupTime wrappers.
  * ============================================================================ */
@@ -673,7 +673,7 @@ boot_result_t uefi_time_init(void)
 }
 
 /* ============================================================================
- * Secure Boot State Detection (§5.1)
+ * Secure Boot State Detection
  *
  * Reads UEFI NVRAM variables to determine Secure Boot state.
  * ============================================================================ */
@@ -837,7 +837,7 @@ int uefi_secureboot_pk_present(void) { return s_sb_pk_present; }
 int uefi_secureboot_kek_present(void) { return s_sb_kek_present; }
 
 /* ============================================================================
- * Secure Boot Key Management (§5.2)
+ * Secure Boot Key Management
  *
  * Reads and parses db/dbx/dbt signature databases.
  * Walking EFI_SIGNATURE_LIST chains to enumerate trust entries.
@@ -1116,7 +1116,7 @@ const struct crypto_agility_info *uefi_crypto_agility_info(void)
 }
 
 /* ============================================================================
- * Capsule Firmware Update (§6.1)
+ * Capsule Firmware Update
  *
  * ╔══════════════════════════════════════════════════════════════════════╗
  * ║  ⚠️  DANGER -- READ EVERY WORD BEFORE MODIFYING THIS SECTION  ⚠️     ║

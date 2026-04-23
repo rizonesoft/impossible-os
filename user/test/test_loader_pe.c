@@ -25,8 +25,8 @@
  * cross-compiling from Linux. Tiny hand-assembled entry is the
  * whole binary.
  *
- * Scope: this is §15 format-coverage only. No user-mode Win32 API
- * surface -- that is §14's test_win32.exe (which ALSO happens to
+ * Scope: this is format-coverage only. No user-mode Win32 API
+ * surface -- that is's test_win32.exe (which ALSO happens to
  * be ELF-linked today because Impossible OS does not yet have a
  * user-mode PE32+ loader for C programs; §15's binary proves the
  * kernel PE loader works, not the Win32 API on top of it).

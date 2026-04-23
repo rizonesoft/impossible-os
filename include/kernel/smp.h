@@ -108,7 +108,7 @@ struct per_cpu_data {
     uint32_t is_online;         /* 1 when AP has finished init */
     void    *current_task;      /* pointer to current thread (future) */
 
-    /* Async boot init work dispatch (§13) */
+    /* Async boot init work dispatch */
     volatile uint8_t  in_async_work;    /* 1 while AP is executing async init */
     volatile uint8_t  async_done;       /* 1 when async work completed */
     volatile uint8_t  async_result;     /* boot_result_t from async work */
@@ -133,7 +133,7 @@ struct per_cpu_data {
      * exercise caller failure-cleanup paths. Released builds compile
      * the field out via KERNEL_TESTS -- zero runtime cost.
      *
-     * §6 extensions (ALL per-CPU; no cross-CPU broadcast):
+     * extensions (ALL per-CPU; no cross-CPU broadcast):
      *   *_task_pid      -- when non-zero, countdown only fires for the
      *                      task whose pid matches on the SAME CPU.
      *                      Foreign tasks on this CPU skip without
@@ -165,25 +165,25 @@ struct per_cpu_data {
      * specification.
      */
 
-    /* §1 + §6 -- kmalloc fault injection (hook in src/kernel/mm/heap.c). */
+    /* + -- kmalloc fault injection (hook in src/kernel/mm/heap.c). */
     uint32_t          kmalloc_fail_countdown;
     uint32_t          kmalloc_fail_task_pid;
     uint32_t          kmalloc_fail_max_injections;
     uint32_t          kmalloc_fail_fired_counter;
 
-    /* §6 -- pmm fault injection (hook in src/kernel/mm/pmm.c). */
+    /* -- pmm fault injection (hook in src/kernel/mm/pmm.c). */
     uint32_t          pmm_alloc_fail_countdown;
     uint32_t          pmm_alloc_fail_task_pid;
     uint32_t          pmm_alloc_fail_max_injections;
     uint32_t          pmm_alloc_fail_fired_counter;
 
-    /* §6 -- vmm_map_page fault injection (hook in src/kernel/mm/vmm.c). */
+    /* -- vmm_map_page fault injection (hook in src/kernel/mm/vmm.c). */
     uint32_t          vmm_map_fail_countdown;
     uint32_t          vmm_map_fail_task_pid;
     uint32_t          vmm_map_fail_max_injections;
     uint32_t          vmm_map_fail_fired_counter;
 
-    /* §6 -- copy_to_user / copy_from_user fault injection (hook in
+    /* -- copy_to_user / copy_from_user fault injection (hook in
      * src/kernel/cpu_security.c). */
     uint32_t          copy_user_fail_countdown;
     uint32_t          copy_user_fail_task_pid;
@@ -191,7 +191,7 @@ struct per_cpu_data {
     uint32_t          copy_user_fail_fired_counter;
 #endif
 
-    /* §19 -- per-CPU fast-path transition ring.
+    /* -- per-CPU fast-path transition ring.
      *
      * Each entry is a snapshot of the register state captured at a
      * ring-0 <-> ring-3 boundary crossing. Used to reconstruct the

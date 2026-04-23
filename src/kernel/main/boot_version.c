@@ -8,8 +8,8 @@
  * Scope boundary: this module handles kernel-side classification,
  * fatal rendering, NVRAM persistence, and late-boot BlackBox
  * transcription. Bootloader-side pre-jump version display (the other
- * half of §7 item 2) is a separate artifact that needs kernel ELF
- * parsing and is tracked as a remaining §7 checklist item. §13
+ * half of item 2) is a separate artifact that needs kernel ELF
+ * parsing and is tracked as a remaining checklist item.
  * anti-rollback integration populates the loader_sec_ver slots when
  * that section ships.
  * ============================================================================ */
@@ -162,9 +162,9 @@ void boot_version_render_fatal(const struct boot_version_fault *fault)
      * stale-loader path this function was designed for. The fault is
      * fully diagnosed on serial + framebuffer via klog(LOG_FATAL)
      * above; post-halt persistence is covered by the bootloader-side
-     * pre-jump NVRAM write tracked as a remaining §7 checklist item.
+     * pre-jump NVRAM write tracked as a remaining checklist item.
      * If a FUTURE caller with uefi_runtime already live (for example,
-     * §13 anti-rollback post-SetVirtualAddressMap) wants NVRAM
+     * anti-rollback post-SetVirtualAddressMap) wants NVRAM
      * persistence, it can call boot_version_persist_nvram(fault)
      * directly before invoking render_fatal. */
     (void)fault;  /* fall through to halt */
@@ -302,7 +302,7 @@ void boot_version_blackbox_transcribe(void)
     if (rec.fault_class == BOOT_VERSION_FAULT_SEC_ROLLBACK) {
         pos = append_line(buf, pos, max_sz, "");
         pos = append_line(buf, pos, max_sz,
-                          "Anti-rollback refusal (§13):");
+                          "Anti-rollback refusal:");
         pos = append_str(buf, pos, max_sz, "  observed security version: ");
         pos = append_dec(buf, pos, max_sz,
                          (uint64_t)rec.observed_loader_sec_ver);

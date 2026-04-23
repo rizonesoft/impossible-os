@@ -9,7 +9,7 @@
  * Menu: [R] Retry, [C] Serial console, [P] Power off.
  * Polls PS/2 keyboard via port 0x60/0x64 (interrupts may be broken).
  *
- * XREF: 02-kernel-core/TODO-01-kernel-init-sequencing.md §9
+ * XREF: 02-kernel-core/TODO-01-kernel-init-sequencing.md
  * ============================================================================ */
 
 #include "kernel/boot_recovery.h"
@@ -195,7 +195,7 @@ static void draw_hex16(volatile uint32_t *fb, uint32_t pitch,
  * Single source of truth: kernel_subsystem_name() in boot_init.c.
  * Previously this file maintained a duplicate names[] table that drifted
  * out of sync when SUBSYS_COUNT grew (caught by Codex 2026-04-08 during
- * the §2 Phase 0 propagation fix -- C zero-fills missing initializers,
+ * the Phase 0 propagation fix -- C zero-fills missing initializers,
  * so the static_assert on size was satisfied while the new slots quietly
  * returned NULL pointers that would crash draw_string() at recovery
  * time). The duplicate table is gone; both call sites now read from one

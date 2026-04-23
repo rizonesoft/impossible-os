@@ -347,7 +347,7 @@ static void test_etw_ssdt_registered(void)
                 "SSDT 0x01D1 (NtTraceControl) is not a stub");
 }
 
-/* ---- §8: Crash persistence -- CRC roundtrip + header validation ---- */
+/* ----: Crash persistence -- CRC roundtrip + header validation ---- */
 
 static void test_klog_crash_entry_layout(void)
 {
@@ -407,7 +407,7 @@ static void test_klog_crash_capacity(void)
                 "crash capacity <= ring size (no overflow)");
 }
 
-/* ---- §9: Per-entry context -- deeper assertions ---- */
+/* ----: Per-entry context -- deeper assertions ---- */
 
 static void test_klog_ctx_tid_populated(void)
 {

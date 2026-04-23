@@ -3,7 +3,7 @@
  *
  * All kernel timekeeping routes through g_system_timer.  This file provides
  * the hardware-agnostic wrappers that delegate to whichever backend
- * (PIT or LAPIC) was selected by timer_hal_init() (§6.4).
+ * (PIT or LAPIC) was selected by timer_hal_init().
  *
  * Before g_system_timer is set, all functions are safe no-ops:
  *   - sleep_ms() returns immediately
@@ -16,7 +16,7 @@
 #include "kernel/boot_info.h"
 #include "kernel/drivers/framebuffer.h"
 
-/* THE single source of truth -- set once by timer_hal_init() (§6.4) */
+/* THE single source of truth -- set once by timer_hal_init() */
 timer_driver_t *g_system_timer = (timer_driver_t *)0;
 
 void sleep_ms(uint32_t ms)

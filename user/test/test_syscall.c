@@ -1,5 +1,5 @@
 /* ============================================================================
- * test_syscall.c -- §9 syscall coverage binary for user/include/syscall.h
+ * test_syscall.c -- syscall coverage binary for user/include/syscall.h
  *
  * Exercises every currently-wired INT 0x80 syscall from ring 3 and asserts
  * a plausible return value. The point is end-to-end ABI validation: if
@@ -19,9 +19,9 @@
  * SYS_READ happy-path coverage lives in the interactive cmd.exe shell.
  *
  * Pre-reqs (all shipped):
- *   - §2 INT 0x80 ABI sync (all 11 sys_* wrappers exist in syscall.h)
- *   - §3 launcher (runs this binary + scrapes [PASS]/[FAIL] lines)
- *   - §6 isolation (scratch dir + handle-leak detection)
+ * - INT 0x80 ABI sync (all 11 sys_* wrappers exist in syscall.h)
+ * - launcher (runs this binary + scrapes [PASS]/[FAIL] lines)
+ * - isolation (scratch dir + handle-leak detection)
  *   - C:\hello.txt deployed by make userland (25 bytes)
  * ============================================================================ */
 
@@ -44,7 +44,7 @@ _Static_assert(sizeof(struct u_obj_dir_info) == 96,
 _Static_assert(__builtin_offsetof(struct u_obj_dir_info, type_name) == 64,
     "u_obj_dir_info.type_name at offset 64 matches kernel layout");
 
-/* Access-mask constants (2026-04-21 revised). The original §9 stamp
+/* Access-mask constants (2026-04-21 revised). The original stamp
  * claimed the kernel "does not yet honour access masks" and used 0,
  * which made sys_readhandle return -1 unconditionally because
  * src/kernel/ob/ob_file.c:144 gates VFS reads on fo->access carrying
@@ -90,7 +90,7 @@ int main(void)
 
     /* ---- SYS_YIELD: returns 0 --------------------------------------- *
      * The public user wrapper `sys_yield()` drops the kernel return
-     * value on the floor (void signature). To honour §9's "returns 0"
+     * value on the floor (void signature). To honour's "returns 0"
      * assertion we call syscall0(SYS_YIELD) directly and verify. */
     UTEST_ASSERT(syscall0(SYS_YIELD) == 0,
                  "syscall0(SYS_YIELD) returns 0");
@@ -144,7 +144,7 @@ int main(void)
     /* ---- SYS_LOG: LOG_INFO returns 0 ------------------------------- *
      * The klog ring absorbs a "[INFO] user: ..." line. The kernel
      * handler rejects LOG_FATAL (would halt the OS) and that
-     * regression is separately covered by the §2 stub; here we only
+     * regression is separately covered by the stub; here we only
      * verify the normal path. Literal length is 24 bytes (string
      * length, no NUL); kernel caps at 120 so we are well clear. */
     UTEST_ASSERT(sys_log(LOG_INFO, "test_syscall: SYS_LOG OK", 24) == 0,
@@ -178,10 +178,10 @@ int main(void)
                          "first root dir entry has non-empty name");
         }
 
-        /* Close the dir handle too so the §6 leak check stays at zero.
+        /* Close the dir handle too so the leak check stays at zero.
          * Failing to close here would trip the launcher's handle-leak
          * escalation ("FAIL (1 handle(s) leaked -- escalated from PASS)"),
-         * which is the exact signal §6 ships. */
+         * which is the exact signal ships. */
         UTEST_ASSERT(sys_closehandle(dh) == 0,
                      "sys_closehandle(dir) returns 0");
     }

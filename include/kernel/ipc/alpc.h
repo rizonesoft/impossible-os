@@ -230,7 +230,7 @@ _Static_assert((ALPC_MSGFLG_REPLY_MESSAGE
  * message notifications. Windows maps this structure into the server's
  * address space so the consumer can check for incoming messages without
  * a syscall. Impossible OS defines the on-the-wire layout now; the
- * full shared-VA mapping path lives in §6 (port sections), and §5's
+ * full shared-VA mapping path lives in (port sections), and's
  * IOCP bridge (io_completion_post) implements the kernel-side wake
  * while leaving actual message bodies on MessageQueue.
  *
@@ -266,8 +266,8 @@ _Static_assert(__builtin_offsetof(ALPC_COMPLETION_LIST_ITEM, PortContext) == 8,
 _Static_assert(__builtin_offsetof(ALPC_COMPLETION_LIST_ITEM, MessageFlags) == 16,
                "ALPC_COMPLETION_LIST_ITEM.MessageFlags at offset 16");
 
-/* ALPC_COMPLETION_LIST is an ABI contract for §6 port sections. Frozen
- * now so §6 consumers read the same layout the test suite locks. The
+/* ALPC_COMPLETION_LIST is an ABI contract for port sections. Frozen
+ * now so consumers read the same layout the test suite locks. The
  * header (without flexible tail) is 32 bytes -- one cache line on x86-64
  * -- so the first Items[] element starts on a 32-byte boundary and SPMC
  * atomic updates to ProducerHead/ConsumerHead do not share a line with

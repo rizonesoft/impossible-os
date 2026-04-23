@@ -1,6 +1,6 @@
 /* ============================================================================
  * input_record.h -- Input event record + replay for the desktop UI test
- * framework (TODO-05-desktop-ui-test-framework.md §11).
+ * framework (TODO-05-desktop-ui-test-framework.md).
  *
  * Captures keyboard / mouse / IME events into an in-memory ring buffer,
  * serializes to JSONL for hand-inspection or committed sample traces,
@@ -16,11 +16,11 @@
  *
  * Platform notes:
  *   * Timestamps come from mono_ns(); stable across TSC/HPET source.
- *   * Deterministic replay requires §12 headless mode (virtual clock);
+ * * Deterministic replay requires headless mode (virtual clock);
  *     wall-clock replay with speed=1.0 is best-effort and will drift
  *     under load. speed=0.0 runs events as fast as the scheduler allows.
  *   * Trace buffers live in kmalloc'd memory (no filesystem I/O in the
- *     kernel-side test phase). Host-side save-to-file is §15's job.
+ * kernel-side test phase). Host-side save-to-file is's job.
  * ============================================================================ */
 
 #pragma once
@@ -119,7 +119,7 @@ int input_replay_from_jsonl(const char *jsonl, int jsonl_len,
                             uint32_t speed_num, uint32_t speed_den);
 
 /* The earlier draft also exposed `input_replay_direct()` for tests
- * that wanted to skip the JSONL codec. It was removed in the §11
+ * that wanted to skip the JSONL codec. It was removed in the
  * quality pass: the JSONL roundtrip path is what production traces
  * use, has the monotonicity + delta-cap safety, and is what the
  * tests now exercise (see test_input_record_serialize_roundtrip in

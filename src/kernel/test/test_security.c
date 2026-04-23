@@ -130,7 +130,7 @@ static void test_privilege_name(void)
     }
 }
 
-/* ---- Struct size assertions (bulletproofing §12) ---- */
+/* ---- Struct size assertions (bulletproofing) ---- */
 
 static void test_security_struct_sizes(void)
 {
@@ -140,7 +140,7 @@ static void test_security_struct_sizes(void)
     TEST_ASSERT_EQ(sizeof(ACCESS_DENIED_ACE), 12, "ACCESS_DENIED_ACE is 12 bytes");
     TEST_ASSERT_EQ(sizeof(SID), 8, "SID base is 8 bytes");
 
-    /* Privilege structs (§2) */
+    /* Privilege structs */
     TEST_ASSERT_EQ(sizeof(LUID_AND_ATTRIBUTES), 12, "LUID_AND_ATTRIBUTES is 12 bytes");
     TEST_ASSERT_EQ(sizeof(PRIVILEGE_SET), 8, "PRIVILEGE_SET base is 8 bytes");
     TEST_ASSERT_EQ(sizeof(TOKEN_PRIVILEGES), 4, "TOKEN_PRIVILEGES base is 4 bytes");
@@ -354,7 +354,7 @@ static void test_sid_valid_reject(void)
 }
 
 /* ============================================================================
- * §16 NT token syscall tests (SSDT dispatch path)
+ * NT token syscall tests (SSDT dispatch path)
  * ============================================================================ */
 
 #include "kernel/nt/ssdt.h"

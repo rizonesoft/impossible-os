@@ -23,7 +23,7 @@
 static exec_format_t s_formats[EXEC_MAX_FORMATS];
 static uint32_t      s_format_count;
 
-/* ---- Global module registry (§6) ----------------------------------------
+/* ---- Global module registry ----------------------------------------
  * Fixed-size array protected by a spinlock. Sorted by base_address for
  * binary search in exec_find_module_by_pc(). Accessed from:
  *   - exec_register_module() -- thread context (exec path)
@@ -235,7 +235,7 @@ uint64_t exec_load_path(const char *path, int *err)
     return entry;
 }
 
-/* ---- Module registration (§6) ------------------------------------------- */
+/* ---- Module registration ------------------------------------------- */
 
 /* Insert 'mod' into the sorted s_modules[] array at index 'pos'.
  * Caller must hold s_module_lock. */
@@ -378,7 +378,7 @@ int exec_register_module(process_t *proc, const loaded_module_t *mod)
     /* ---- Insert into PEB->Ldr lists ----
      * Per-process Ldr insertion is safe without a per-process lock because
      * exec_register_module() is called from the exec path (task_exec),
-     * which is serial per-process. When multi-threaded DLL loading (§14)
+     * which is serial per-process. When multi-threaded DLL loading
      * is implemented, a per-process loader lock will be needed here. */
     if (proc && proc->task && proc->task->peb) {
         PEB *peb = (PEB *)proc->task->peb;

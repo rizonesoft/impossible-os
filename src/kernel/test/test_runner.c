@@ -67,7 +67,7 @@ test_state_t g_test_state = {
 
 /* Per-test heap-leak detection state. File-scope static (not in the
  * public test_state_t) so the ABI stays minimal. Reset before each
- * suite body; read after the §7 action drain completes. */
+ * suite body; read after the action drain completes. */
 static uint64_t    s_heap_used_at_entry;
 static int64_t     s_expected_leak_bytes;
 static int         s_leak_ignore;
@@ -558,7 +558,7 @@ void test_runner_run(void)
 
         /* Leak check runs AFTER the action drain so tests that use
          * TEST_SCRATCH_KBUF or TEST_KLOG_SUPPRESS (both register
-         * cleanup via §7) get clean delta=0. The delta is the signed
+         * cleanup via) get clean delta=0. The delta is the signed
          * difference in heap_get_used(); kmalloc includes block-
          * header overhead so an intentional kmalloc(64) without
          * kfree typically produces delta > 64. */

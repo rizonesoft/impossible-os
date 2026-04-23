@@ -22,7 +22,7 @@
 #ifdef KERNEL_TESTS
 #include "kernel/smp.h"                 /* smp_this_cpu() for per-CPU countdown */
 #include "kernel/sched/irql.h"          /* KeGetCurrentIrql for thread-context gate */
-#include "kernel/sched/task.h"          /* task_current() for §6 task-filter gate */
+#include "kernel/sched/task.h" /* task_current() for task-filter gate */
 #endif
 /* Linker symbols */
 extern char __kernel_end[];
@@ -213,7 +213,7 @@ boot_result_t pmm_init(void)
     /* bone authoritative pass that
      * captures every boot_info-derived retained region (struct boot_info,
      * USB DMA + scratchpad, TPM event log, framebuffer, UEFI runtime
-     * memory, §5 typed payloads with FLAG_RESERVED), detects overlap,
+     * memory, typed payloads with FLAG_RESERVED), detects overlap,
      * and applies to the PMM bitmap. Replaces the previous inline USB
      * DMA reservation block. */
     {
@@ -303,7 +303,7 @@ static int pmm_fault_should_fire(void)
 
     __atomic_fetch_add(&s_pmm_fault_injections, 1ull, __ATOMIC_RELAXED);
     pc->pmm_alloc_fail_fired_counter++;
-    /* §6 auto-reload for multi-fire: see the heap-side comment. */
+    /* auto-reload for multi-fire: see the heap-side comment. */
     if (pc->pmm_alloc_fail_max_injections != 0 &&
         pc->pmm_alloc_fail_fired_counter <
             pc->pmm_alloc_fail_max_injections) {

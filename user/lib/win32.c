@@ -20,11 +20,11 @@
  * surface has been proven end-to-end by test_syscall.exe,
  * test_libc.exe, test_ipc.exe, test_process.exe, and test_fileio.exe.
  * Routing every Win32 call through the same proven dispatch keeps
- * the shim honest -- the Win32 API CONTRACT is what §14 probes, not
+ * the shim honest -- the Win32 API CONTRACT is what probes, not
  * the underlying transport.
  *
  * When the SYSCALL fast path + KUSD + gs:0x40 are later verified by
- * dedicated probes (owner TODO item in §2's Inputs), this shim can
+ * dedicated probes (owner TODO item in's Inputs), this shim can
  * migrate to the fast path without changing its public API. Until
  * then, the slight per-call overhead of INT 0x80 is the right trade
  * for "every Win32 caller actually works."

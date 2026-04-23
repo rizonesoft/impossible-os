@@ -1,7 +1,7 @@
 /* ============================================================================
  * cpu_security.c -- CPU security feature activation
  *
- * XREF: 02-kernel-core/TODO-10-kernel-security-hardening.md §1-§2
+ * XREF: 02-kernel-core/TODO-10-kernel-security-hardening.md -
  * ============================================================================ */
 
 #include "kernel/cpu_security.h"
@@ -14,7 +14,7 @@
 #ifdef KERNEL_TESTS
 #include "kernel/smp.h"                 /* smp_this_cpu() for per-CPU countdown */
 #include "kernel/sched/irql.h"          /* KeGetCurrentIrql for thread-context gate */
-#include "kernel/sched/task.h"          /* task_current() for §6 task-filter gate */
+#include "kernel/sched/task.h" /* task_current() for task-filter gate */
 #endif
 
 /* ---- CR4 bit definitions ---- */
@@ -104,7 +104,7 @@ void cpu_enable_smap(void)
 /* ---- User-space copy helpers (SMAP-safe) ---- */
 
 #ifdef KERNEL_TESTS
-/* §6 copy_user fault injection (hook used by both copy_to_user and
+/* copy_user fault injection (hook used by both copy_to_user and
  * copy_from_user below). Same gate set as the kmalloc/pmm/vmm hooks:
  * PASSIVE_LEVEL only, optional task-pid filter, optional max-injections
  * cap, per-CPU countdown. On fire, caller returns -1 without touching
@@ -134,7 +134,7 @@ static int copy_user_fault_should_fire(void)
 
     __atomic_fetch_add(&s_copy_user_fault_injections, 1ull, __ATOMIC_RELAXED);
     pc->copy_user_fail_fired_counter++;
-    /* §6 auto-reload for multi-fire: see the heap-side comment. */
+    /* auto-reload for multi-fire: see the heap-side comment. */
     if (pc->copy_user_fail_max_injections != 0 &&
         pc->copy_user_fail_fired_counter <
             pc->copy_user_fail_max_injections) {
@@ -182,7 +182,7 @@ int copy_from_user(void *dst, const void *user_src, uint32_t len)
     uint32_t i;
 
 #ifdef KERNEL_TESTS
-    /* §6 fault-inject -- return -1 BEFORE touching user memory so the
+    /* fault-inject -- return -1 BEFORE touching user memory so the
      * SMAP STAC/CLAC pair is skipped and the error path is exercised
      * identically to a real user-copy fault. */
     if (copy_user_fault_should_fire())

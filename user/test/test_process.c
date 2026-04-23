@@ -1,9 +1,9 @@
 /* ============================================================================
- * test_process.c -- §12 user-mode process-lifecycle coverage binary
+ * test_process.c -- user-mode process-lifecycle coverage binary
  *
  * Exercises the fork/exec/waitpid/kill quartet from ring 3. Each sub-test
  * spawns exactly one child so the total task slots consumed per run is
- * 3 -- well within TASK_MAX headroom given the §6 isolation task pool.
+ * 3 -- well within TASK_MAX headroom given the isolation task pool.
  *
  * Design:
  *   1. fork + exit(42)  -- child diverges via sys_exit(42); parent
@@ -19,7 +19,7 @@
  *   3. fork + kill      -- child spins `while(1) sys_yield()`; parent
  *                          calls sys_kill(child_pid). Kernel SYS_KILL
  *                          sets the child's exit_status to -1; parent
- *                          waitpid returns -1. Safety net: the §4
+ * waitpid returns -1. Safety net: the
  *                          launcher's 10s per-binary timeout kills the
  *                          whole test binary if kill is broken and the
  *                          child spins forever.

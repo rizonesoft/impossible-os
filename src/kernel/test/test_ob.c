@@ -200,7 +200,7 @@ static void test_ob_query_directory(void)
     ob_handle_table_destroy(&ht);
 }
 
-/* ---- Per-type object and handle statistics (§12) ---- */
+/* ---- Per-type object and handle statistics ---- */
 
 static void test_ob_type_stats(void)
 {
@@ -478,7 +478,7 @@ static void test_ob_handle_quota(void)
 }
 
 /* ============================================================================
- * §17 NT namespace syscall tests (SSDT dispatch path)
+ * NT namespace syscall tests (SSDT dispatch path)
  * ============================================================================ */
 
 #include "kernel/nt/ssdt.h"
@@ -712,7 +712,7 @@ static void test_nt_namespace_ssdt_registered(void)
 
 
 /* ============================================================================
- * §18 NT section / mapped file syscall tests
+ * NT section / mapped file syscall tests
  * ============================================================================ */
 
 #include "kernel/fs/vfs.h"
@@ -922,7 +922,7 @@ static void test_nt_section_ssdt_registered(void)
 }
 
 /* ============================================================================
- * §19 NT timer syscall tests
+ * NT timer syscall tests
  * ============================================================================ */
 
 #include "kernel/nt/nt_timer.h"
@@ -1110,7 +1110,7 @@ static void test_nt_timer_ssdt_registered(void)
 }
 
 /* ============================================================================
- * §20 NT legacy LPC SSDT stub-wiring tests
+ * NT legacy LPC SSDT stub-wiring tests
  * ============================================================================ */
 
 #include "kernel/nt/nt_lpc.h"
@@ -1177,7 +1177,7 @@ static void test_nt_lpc_pending_features(void)
 }
 
 /* ============================================================================
- * §31 NT modern ALPC SSDT stub-wiring tests
+ * NT modern ALPC SSDT stub-wiring tests
  * ============================================================================ */
 
 #include "kernel/nt/nt_alpc.h"
@@ -1260,10 +1260,10 @@ static void test_nt_alpc_pending_features(void)
          * STATUS_NOT_IMPLEMENTED. */
         if (s_alpc_slots[i].svc == SSDT_NtAlpcCreatePort)        continue;
         if (s_alpc_slots[i].svc == SSDT_NtAlpcConnectPort)       continue;
-        if (s_alpc_slots[i].svc == SSDT_NtAlpcAcceptConnectPort) continue; /* §3 */
-        if (s_alpc_slots[i].svc == SSDT_NtAlpcDisconnectPort)    continue; /* §3 */
-        if (s_alpc_slots[i].svc == SSDT_NtAlpcSendWaitReceivePort) continue; /* §4 */
-        if (s_alpc_slots[i].svc == SSDT_NtAlpcSetInformation)     continue; /* §5 (partial: AssociateCompletionPort) */
+        if (s_alpc_slots[i].svc == SSDT_NtAlpcAcceptConnectPort) continue; /* */
+        if (s_alpc_slots[i].svc == SSDT_NtAlpcDisconnectPort) continue; /* */
+        if (s_alpc_slots[i].svc == SSDT_NtAlpcSendWaitReceivePort) continue; /* */
+        if (s_alpc_slots[i].svc == SSDT_NtAlpcSetInformation) continue; /* (partial: AssociateCompletionPort) */
         NTSTATUS st = ssdt_dispatch(s_alpc_slots[i].svc, 0, 0, 0, 0, 0, 0);
         snprintf(msg, sizeof(msg), "%s (0x%x): no ALPC engine yet",
                  s_alpc_slots[i].name, (uint64_t)s_alpc_slots[i].svc);

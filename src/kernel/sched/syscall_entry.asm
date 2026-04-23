@@ -26,7 +26,7 @@ bits 64
 
 global syscall_entry
 extern syscall_dispatch_fast
-extern transition_ring_record   ; §19 fast-path transition ring hook
+extern transition_ring_record; fast-path transition ring hook
 
 syscall_entry:
     ; ---- Entry: ring 3 -> ring 0 ----
@@ -54,7 +54,7 @@ syscall_entry:
     ; Safe to enable interrupts now (on kernel stack with saved state)
     sti
 
-    ; ---- §19 transition ring: record SYSCALL entry ----
+    ; ---- transition ring: record SYSCALL entry ----
     ; transition_ring_record(direction=TO_KERNEL, user_rip, user_rsp)
     ;   SysV args:  rdi, rsi, rdx. Preserve rax/r10/rdx across the call
     ;   since the dispatcher call below consumes them as service/arg1/arg2.
@@ -93,7 +93,7 @@ syscall_entry:
     ; ---- Exit: ring 0 -> ring 3 ----
     cli                                 ; disable interrupts for sysret
 
-    ; ---- §19 transition ring: record SYSCALL exit ----
+    ; ---- transition ring: record SYSCALL exit ----
     ; Stack is still the full 9-push frame (no extra pushes here).
     ; User RIP at [rsp+0x38], user RSP at [rsp+0x40]. RAX holds the
     ; NTSTATUS return; preserve it across the call.

@@ -25,9 +25,9 @@
 #define VIRTIO_BLK_T_OUT      1     /* write */
 #define VIRTIO_BLK_T_FLUSH    4     /* flush volatile cache to persistent storage */
 #define VIRTIO_BLK_T_GET_ID   8     /* retrieve device serial number (20 bytes) */
-#define VIRTIO_BLK_T_DISCARD  11    /* discard (TRIM) -- unmap sectors (§5.2.6.1) */
-#define VIRTIO_BLK_T_WRITE_ZEROES 13 /* write zeroes (§5.2.6.1) */
-#define VIRTIO_BLK_T_GET_LIFETIME 10 /* get device lifetime metrics (§5.2.6) */
+#define VIRTIO_BLK_T_DISCARD 11 /* discard (TRIM) -- unmap sectors (.6.1) */
+#define VIRTIO_BLK_T_WRITE_ZEROES 13 /* write zeroes (.6.1) */
+#define VIRTIO_BLK_T_GET_LIFETIME 10 /* get device lifetime metrics (.6) */
 #define VIRTIO_BLK_T_SECURE_ERASE 14 /* secure erase (crypto wipe) sectors */
 #define VIRTIO_BLK_T_ZONE_REPORT  16 /* report zone descriptors */
 #define VIRTIO_BLK_T_ZONE_OPEN    18 /* open zone for writing */
@@ -130,7 +130,7 @@ struct virtio_blk_lifetime {
     uint16_t device_lifetime_est_typ_b; /* MLC wear: same encoding as typ_a */
 } __attribute__((packed));
 
-/* Pre-EOL info constants (§5.2.6) */
+/* Pre-EOL info constants (.6) */
 #define VIRTIO_BLK_PRE_EOL_UNDEFINED 0  /* Not defined */
 #define VIRTIO_BLK_PRE_EOL_NORMAL    1  /* Normal (<80% consumed) */
 #define VIRTIO_BLK_PRE_EOL_WARNING   2  /* Warning (80% consumed) */

@@ -14,7 +14,7 @@
 #include "kernel/ob/ob_type.h"
 #include "kernel/ob/handle_table.h"
 
-/* Forward-declare -- implemented in §8 (security descriptor integration) */
+/* Forward-declare -- implemented in (security descriptor integration) */
 typedef struct security_descriptor SECURITY_DESCRIPTOR;
 
 /* --- Object flags -------------------------------------------------------- */
@@ -26,7 +26,7 @@ typedef struct security_descriptor SECURITY_DESCRIPTOR;
 
 /* --- OBJECT_HEADER ------------------------------------------------------- */
 
-/* Forward declaration for trace info (§15) */
+/* Forward declaration for trace info */
 struct ob_trace_info;
 
 typedef struct object_header {
@@ -34,8 +34,8 @@ typedef struct object_header {
     uint32_t             handle_count;  /* number of open handles */
     const OBJECT_TYPE   *type;          /* type descriptor */
     const char          *name;          /* namespace name (NULL if unnamed) */
-    SECURITY_DESCRIPTOR *security;      /* NULL until §8 */
-    struct ob_trace_info *trace;        /* NULL unless type tracing enabled (§15) */
+    SECURITY_DESCRIPTOR *security; /* NULL until */
+    struct ob_trace_info *trace; /* NULL unless type tracing enabled */
     uint32_t             flags;         /* OB_FLAG_* */
     uint32_t             _pad;          /* align body to 8 bytes */
 } OBJECT_HEADER;

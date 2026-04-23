@@ -222,7 +222,7 @@ static NTSTATUS NtAlpcConnectPort_handler(uint64_t a1, uint64_t a2, uint64_t a3,
     NTSTATUS st;
     HANDLE h;
 
-    (void)a4;                                      /* Flags -- §4+ */
+    (void)a4; /* Flags -- + */
     (void)a6;
 
     if (!out_handle)
@@ -233,7 +233,7 @@ static NTSTATUS NtAlpcConnectPort_handler(uint64_t a1, uint64_t a2, uint64_t a3,
         return st;
 
     if (port_attrs) {
-        /* Validate + discard; §3 does not persist caller-supplied port
+        /* Validate + discard; does not persist caller-supplied port
          * attrs on the client-comm port. They're caller intent for the
          * server connection, not our concern here. */
         st = ProbeForReadIfUser(port_attrs, sizeof(ALPC_PORT_ATTRIBUTES), 8);
@@ -326,7 +326,7 @@ static NTSTATUS NtAlpcAcceptConnectPort_handler(uint64_t a1, uint64_t a2,
  * than the Windows
  * LARGE_INTEGER pointer convention; the sentinel 0 means "wait
  * forever" for the sync/receive paths and "no wait" for non-blocking
- * receive (matching §4 spec). */
+ * receive (matching spec). */
 static NTSTATUS NtAlpcSendWaitReceivePort_handler(uint64_t a1, uint64_t a2,
                                                   uint64_t a3, uint64_t a4,
                                                   uint64_t a5, uint64_t a6)

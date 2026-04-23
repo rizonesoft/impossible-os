@@ -26,7 +26,7 @@
 #ifdef KERNEL_TESTS
 #include "kernel/smp.h"                 /* smp_this_cpu() for per-CPU countdown */
 #include "kernel/sched/irql.h"          /* KeGetCurrentIrql for thread-context gate */
-#include "kernel/sched/task.h"          /* task_current() for §6 task-filter gate */
+#include "kernel/sched/task.h" /* task_current() for task-filter gate */
 #endif
 
 /* Page table entry -- 64-bit */
@@ -61,7 +61,7 @@ static int vmm_map_fault_should_fire(void)
 
     __atomic_fetch_add(&s_vmm_map_fault_injections, 1ull, __ATOMIC_RELAXED);
     pc->vmm_map_fail_fired_counter++;
-    /* §6 auto-reload for multi-fire: see the heap-side comment. */
+    /* auto-reload for multi-fire: see the heap-side comment. */
     if (pc->vmm_map_fail_max_injections != 0 &&
         pc->vmm_map_fail_fired_counter < pc->vmm_map_fail_max_injections) {
         pc->vmm_map_fail_countdown = 1;
@@ -244,7 +244,7 @@ int vmm_map_page(uintptr_t virt, uintptr_t phys, uint64_t flags)
     uint64_t pml4i, pdpti, pdi, pti;
 
 #ifdef KERNEL_TESTS
-    /* §6 fault-inject -- check BEFORE any page-table modification so a
+    /* fault-inject -- check BEFORE any page-table modification so a
      * forced failure leaves PTE state byte-identical to a real OOM. */
     if (vmm_map_fault_should_fire())
         return -1;
@@ -640,8 +640,8 @@ void vmm_set_user_page(uintptr_t pml4_phys, uintptr_t virt)
  * at a chosen VA.  Required by uthread_create (per-thread user stacks)
  * and future VirtualAlloc(MEM_COMMIT).
  *
- * XREF: 03-memory-concurrency/TODO-01-vmm-memory-protection.md §12
- * XREF: 02-kernel-core/TODO-11-peb-teb-user-abi.md §14 (consumer)
+ * XREF: 03-memory-concurrency/TODO-01-vmm-memory-protection.md
+ * XREF: 02-kernel-core/TODO-11-peb-teb-user-abi.md (consumer)
  */
 
 /* Core map-at-user-VA routine shared by vmm_map_user_page (zero-fill)

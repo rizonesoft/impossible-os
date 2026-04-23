@@ -41,7 +41,7 @@ static void elf_memzero(uint8_t *dst, uint64_t n)
  * metadata-only walker called from task_exec) call into this helper, so the
  * two paths cannot disagree about what AT_PHDR points at. The exec dispatcher
  * (exec.c) intentionally only carries the entry point through its loader
- * callback, per the §13 design choice to keep the dispatcher contract additive
+ * callback, per the design choice to keep the dispatcher contract additive
  * (PE/EIF would otherwise need a metadata-fill no-op). */
 static int elf_compute_phdr_info(const struct elf64_header *hdr,
                                   const uint8_t *data,
@@ -246,7 +246,7 @@ struct elf_load_result elf_load(const uint8_t *data, uint64_t size)
     result.load_end = load_end;
     result.success = 1;
 
-    /* §13: derive auxv phdr metadata from the parsed program headers.
+    /*: derive auxv phdr metadata from the parsed program headers.
      * Failure here is non-fatal -- the binary still runs, but AT_PHDR will
      * be 0 in the auxv (dynamic linker can't use it). */
     if (!elf_compute_phdr_info(hdr, data,
@@ -367,7 +367,7 @@ struct elf_load_result elf_load(const uint8_t *data, uint64_t size)
     return result;
 }
 
-/* §13: cheap metadata-only walker for the ELF program header table.
+/*: cheap metadata-only walker for the ELF program header table.
  *
  * Used by task_exec() after exec_load() has already loaded the binary via
  * the format dispatcher. The dispatcher contract only carries 'entry' back,

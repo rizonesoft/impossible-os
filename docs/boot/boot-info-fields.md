@@ -199,7 +199,7 @@ These fields live inside `struct boot_info` but the **bootloader never writes th
 | `hv_flags`            | kernel (CPUID hypervisor leaf + per-vendor probe) | K (after CPUID init in Phase 0) | platform detection, MSR trap workarounds | runtime | kernel-init-sequencing | `HV_FLAG_*` bits. |
 | `hv_vendor[16]`       | kernel (CPUID 0x40000000) | K | platform detection, boot log | runtime | kernel-init-sequencing | Null-terminated ASCII; zero if none. |
 
-### Typed payload descriptor array (§4)
+### Typed payload descriptor array
 
 Bootloader publishes typed physical payloads that are consumed by kernel subsystems after handoff. The packed-prefix invariant + overlap / range / unknown-required validator lives in [`src/kernel/main/boot_payload.c`](../../src/kernel/main/boot_payload.c) and is wired from [`src/kernel/main/boot_hw.c`](../../src/kernel/main/boot_hw.c) immediately after the boot_info copy.
 
@@ -210,7 +210,7 @@ Bootloader publishes typed physical payloads that are consumed by kernel subsyst
 | `payload_overflow` | bootx64 | P0 | boot log | handoff | boot-protocol-abi-handoff §4 | `0 | 1`; set to 1 when the producer had more typed payloads than the array can hold. |
 | `payload_total_bytes` | bootx64 | P0 | validator | handoff | boot-protocol-abi-handoff §4 | Must equal the sum of `length` for every occupied slot in the packed prefix; validator rejects a mismatch. |
 
-### Capability negotiation (§11)
+### Capability negotiation
 
 Tri-word bitmask negotiation between bootloader and kernel. `caps_required` asserts "producer could not have booted without this feature"; `caps_present` advertises "producer populated or supplied this feature"; `caps_degraded` advertises "producer intentionally skipped this feature and substituted a safe fallback". The classify+halt validator [`boot_caps_validate`](../../src/kernel/main/boot_caps.c) is wired from [`src/kernel/main/boot_hw.c`](../../src/kernel/main/boot_hw.c) after `boot_payload_validate` and BEFORE any capability-gated consumer runs. Known-bit mask is `BOOT_CAP_MASK_KNOWN`; bits outside the mask in `caps_required` reject (stale-kernel-on-newer-loader); unknown bits in `caps_present` / `caps_degraded` are tolerated for forward compat.
 

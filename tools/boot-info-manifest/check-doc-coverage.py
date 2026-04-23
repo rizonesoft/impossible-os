@@ -80,8 +80,8 @@ TOPLEVEL_SECTIONS: list[str] = [
     "Boot partition",
     "Removable media",
     "Kernel-populated fields",
-    "Typed payload descriptor array (§4)",
-    "Capability negotiation (§11)",
+    "Typed payload descriptor array",
+    "Capability negotiation",
     # NOTE: do NOT add `Legacy / Multiboot2-only fields` -- it is a
     # summary table only.
 ]

@@ -9,7 +9,7 @@
  * calls.  A single 21952-byte static struct boot_info lives in BSS and
  * is memset() before each test that needs a valid-looking buffer.
  *
- * XREF: 01-boot-platform/TODO-03-bootloader-error-recovery.md §16
+ * XREF: 01-boot-platform/TODO-03-bootloader-error-recovery.md
  * ============================================================================ */
 
 #ifdef KERNEL_TESTS
@@ -18,7 +18,7 @@
 #include "kernel/test/klog_suppress.h"   /* silence boot_payload [FAIL] klog on negative tests */
 #include "kernel/boot_info.h"
 #include "kernel/boot_init.h"
-#include "libc/string.h"                 /* snprintf for §9 fuzz per-iter context messages */
+#include "libc/string.h" /* snprintf for fuzz per-iter context messages */
 
 /* Production-shape buffer: real sizeof(struct boot_info) so the range
  * check exercises the same arithmetic boot_phase0() runs.  Aligned to
@@ -276,7 +276,7 @@ static void test_validate_combined_misaligned_short_circuits(void)
 }
 
 /* ============================================================================
- * §9 parametric fuzz for boot_info_validate_addr.
+ * parametric fuzz for boot_info_validate_addr.
  *
  * The discrete tests above pin every NAMED failure mode. This sweep
  * covers a pseudo-random space of (address, size) pairs and asserts
@@ -501,7 +501,7 @@ static void test_validate_header_fuzz_perturbations(void)
 }
 
 /* ============================================================================
- * §4 -- Typed payload descriptor array validator
+ * -- Typed payload descriptor array validator
  *
  * Exercises boot_payload_validate() against the in-BSS s_test_buf with
  * synthetic descriptor layouts. All tests run on a zero-initialized
@@ -1105,7 +1105,7 @@ static void test_payload_overflow_truncated_rejected(void)
     bi_payload_zero();
     /* Producer reports it had MORE payloads than fit: the prefix
      * (count=1, one valid descriptor, total matches) is internally
-     * consistent, but payload_overflow=1 flags dropped payloads. §4's
+     * consistent, but payload_overflow=1 flags dropped payloads.'s
      * contract refuses the handoff so a consumer can never silently
      * treat a truncated set as complete. */
     s_test_buf.payload_count              = 1;

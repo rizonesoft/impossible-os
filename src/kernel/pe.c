@@ -3,7 +3,7 @@
  *
  * Validates PE32+ (Windows x64) executables: DOS header, PE signature,
  * COFF header, Optional Header, and section table bounds.
- * Section loading (§8) and import resolution (§9) are separate passes.
+ * Section loading and import resolution are separate passes.
  * ============================================================================ */
 
 #include "kernel/pe.h"
@@ -170,7 +170,7 @@ extern void *memset(void *s, int c, uint64_t n);
 /* Maximum number of PE sections (Windows linker typically emits < 20) */
 #define PE_MAX_SECTIONS     96
 
-/* ---- Kernel-side Win32 export tables (§9) -------------------------------
+/* ---- Kernel-side Win32 export tables -------------------------------
  * Each table maps function names to SSDT service numbers. Tables are sorted
  * by name for binary search. Export entries are const -- no mutable state. */
 
@@ -384,7 +384,7 @@ static uint32_t pe_strnlen(const char *s, uint32_t max)
     return i;
 }
 
-/* ---- Import resolver (§9) ----------------------------------------------- */
+/* ---- Import resolver ----------------------------------------------- */
 
 /* Resolve imports for one DLL. Returns number of resolved imports, or -1 on error. */
 static int pe_resolve_dll_imports(uint64_t image_base, uint32_t size_of_image,
@@ -486,7 +486,7 @@ static int pe_resolve_dll_imports(uint64_t image_base, uint32_t size_of_image,
         }
 
         /* Write SSDT thunk address into IAT.
-         * IAT pages were mapped in §8, so image_base + iat_offset is valid
+         * IAT pages were mapped in, so image_base + iat_offset is valid
          * for any offset within size_of_image (already bounds-checked above).
          * Write via the physical frame address (identity-mapped). */
         uintptr_t iat_phys = vmm_get_physical(
@@ -544,7 +544,7 @@ static int pe_resolve_imports(uint64_t image_base, uint32_t size_of_image,
 
     POST16(0xD80E);
 
-    /* The mapped image is at image_base (identity-mapped after §8 mapping) */
+    /* The mapped image is at image_base (identity-mapped after mapping) */
     const uint8_t *mapped_image = (const uint8_t *)image_base;
 
     int total_resolved = 0;
@@ -606,7 +606,7 @@ static void pe_rollback(uint64_t image_base, uint32_t pages_mapped)
     }
 }
 
-/* ---- Section loader (§8) ------------------------------------------------
+/* ---- Section loader ------------------------------------------------
  *
  * SMP note: PMM and VMM do not currently have spinlocks. This is a
  * pre-existing system-wide limitation (ELF loader has the same issue).
@@ -829,7 +829,7 @@ uint64_t pe_load(const uint8_t *data, uint64_t size)
         }
     }
 
-    /* ---- Resolve imports (§9) ---- */
+    /* ---- Resolve imports ---- */
     {
         int import_ret = pe_resolve_imports(image_base, size_of_image,
                                             num_rva_sizes, v.opt);
@@ -875,7 +875,7 @@ uint64_t pe_load(const uint8_t *data, uint64_t size)
              (uint64_t)v.num_sections);
     }
 
-    /* ---- Register module (§6) ---- */
+    /* ---- Register module ---- */
     {
         loaded_module_t mod;
         uint8_t *mp = (uint8_t *)&mod;

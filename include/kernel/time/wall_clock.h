@@ -22,13 +22,13 @@ void KeSetSystemTime(FILETIME new_time);
 
 /* Sub-microsecond precise wall time via TSC/HPET interpolation.
  * Currently identical to KeQuerySystemTime() since both use mono_ns().
- * Will diverge when §12 (KUSER_SHARED_DATA) adds a coarse tick path. */
+ * Will diverge when (KUSER_SHARED_DATA) adds a coarse tick path. */
 FILETIME KeQuerySystemTimePrecise(void);
 
 /* Returns 1 if wall clock has been initialized. */
 int wall_clock_ready(void);
 
-/* ---- Kernel time service API (§6) ---------------------------------------- */
+/* ---- Kernel time service API ---------------------------------------- */
 
 /* 100 ns tick count since boot (same as mono_filetime_units()). */
 void KeQueryTickCount(uint64_t *tick_count);
@@ -43,7 +43,7 @@ void KeDelayExecutionThread(FILETIME interval);
 /* Returns 1 when KeQuerySystemTime() is usable. */
 int time_service_ready(void);
 
-/* ---- Interrupt time APIs (§7) -------------------------------------------- */
+/* ---- Interrupt time APIs -------------------------------------------- */
 
 /* 100 ns since boot, including suspend bias. Monotonically increasing. */
 uint64_t KeQueryInterruptTime(void);
@@ -54,7 +54,7 @@ uint64_t KeQueryInterruptTimePrecise(uint64_t *qpc_value);
 /* Interrupt time minus suspend bias. Pauses during S3/S4. */
 uint64_t KeQueryUnbiasedInterruptTime(void);
 
-/* Add suspend bias (called from S3/S4 resume path -- §14). */
+/* Add suspend bias (called from S3/S4 resume path --). */
 void ke_suspend_bias_update(uint64_t bias_100ns);
 
 /* Register NtQuerySystemTime/NtSetSystemTime/NtQueryPerformanceCounter in SSDT. */

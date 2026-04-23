@@ -72,7 +72,7 @@ typedef struct {
                              * deferred (slot reserved before its subsystem
                              * ships) -- see TEST_PENDING below */
     uint32_t leaked;        /* suite bodies that left non-zero heap delta
-                             * after the §7 action drain, absent an
+                             * after the action drain, absent an
                              * explicit TEST_EXPECT_LEAK. Advisory until
                              * all existing tests clean up. */
     uint32_t suite_count;
@@ -123,7 +123,7 @@ void _test_pending(int condition, const char *msg,
 /* Per-test heap-leak detection opt-out macros.
  *
  * TEST_EXPECT_LEAK(bytes, reason) -- the current test expects to leave
- * at least `bytes` bytes on the heap after the §7 action drain. The
+ * at least `bytes` bytes on the heap after the action drain. The
  * classifier renders [LEAK-OK] (no counter bump) when the observed
  * positive delta is >= `bytes`; otherwise the post-drain delta still
  * triggers [LEAK]. `bytes` MUST be > 0; non-positive values are
@@ -166,7 +166,7 @@ int64_t test_runner_last_leak_delta(void);
  * emits a `[WARN] TEST: <name> :: action list full` line so the test
  * author sees it.
  *
- * Intended consumers: TEST_SCRATCH_KBUF (§3), TEST_KLOG_SUPPRESS (§5),
+ * Intended consumers: TEST_SCRATCH_KBUF, TEST_KLOG_SUPPRESS,
  * and any future test-scoped resource that needs deterministic cleanup
  * without adding bespoke list management to each test. Model follows
  * Linux KUnit's `kunit_add_action`.

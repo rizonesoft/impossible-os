@@ -206,7 +206,7 @@ uint32_t tpm_event_count(void)
 }
 
 /* ============================================================================
- * Boot Integrity Verification (§9.2)
+ * Boot Integrity Verification
  *
  * Stub implementation -- provides the framework and data structures for
  * boot chain verification.  Currently reports status as BOOT_INTEGRITY_NO_CRYPTO
@@ -251,7 +251,7 @@ boot_result_t tpm_integrity_init(void)
     s_integrity_report.event_count = s_event_count;
     s_integrity_report.tpm_version = (uint8_t)s_version;
 
-    /* Check Secure Boot state (from §5.1) */
+    /* Check Secure Boot state (from.1) */
     /* Forward declaration not needed -- we call uefi_secureboot_enabled()
      * via its extern linkage.  But since we don't include uefi_runtime.h
      * here to avoid circular deps, we just check boot_info. */

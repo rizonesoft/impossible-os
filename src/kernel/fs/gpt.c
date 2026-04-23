@@ -616,7 +616,7 @@ static void serialize_header(const struct gpt_header *hdr, uint8_t *buf,
     write_le32(buf + 16, crc);
 }
 
-/* ---- §2.3 Backup Sync on Write ---- */
+/* ---- Backup Sync on Write ---- */
 
 int gpt_sync_backup(const struct blkdev *dev,
                     const struct gpt_header *primary_hdr,
@@ -714,7 +714,7 @@ struct gpt_table gpt_parse(const struct blkdev *dev, const void *sector0)
     tbl.valid = 0;
     tbl.count = 0;
 
-    /* §3.1: Use device sector size instead of assuming 512 */
+    /*: Use device sector size instead of assuming 512 */
     sec_sz = dev->sector_size;
     if (sec_sz < 512)
         sec_sz = 512;  /* Minimum per UEFI spec */
@@ -746,7 +746,7 @@ struct gpt_table gpt_parse(const struct blkdev *dev, const void *sector0)
             goto out_free;
         }
 
-        /* §7.1 Hybrid MBR Detection:
+        /* Hybrid MBR Detection:
          * Standard PMBR: 0xEE entry spans entire disk, slots 2-4 are empty.
          * Hybrid MBR: 0xEE is partial AND other non-zero entries exist.
          * Always prefer GPT -- log warning for hybrid. */
@@ -784,7 +784,7 @@ struct gpt_table gpt_parse(const struct blkdev *dev, const void *sector0)
     /* Step 3: Parse and validate header (signature + CRC32) */
     primary_ok = (parse_header(hdr_sect, &hdr, sec_sz) == 0);
 
-    /* §2.1 Backup Header Fallback: if primary fails, try backup at last LBA */
+    /* Backup Header Fallback: if primary fails, try backup at last LBA */
     if (!primary_ok) {
         if (dev->sector_count == 0) {
             serial_write("[GPT] Primary header corrupt, no sector count for backup\n");
@@ -919,7 +919,7 @@ struct gpt_table gpt_parse(const struct blkdev *dev, const void *sector0)
         }
     }
 
-    /* §2.2 Auto-recover primary header from valid backup */
+    /* Auto-recover primary header from valid backup */
     if (using_backup) {
         struct gpt_header primary_hdr;
         uint64_t primary_entry_lba = GPT_HEADER_LBA + 1; /* LBA 2 */

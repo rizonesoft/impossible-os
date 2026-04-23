@@ -133,7 +133,7 @@ struct task {
     uint32_t    parent_pid;     /* PID of parent (0 for init) */
     int32_t     exit_status;    /* exit code (set on TASK_DEAD) */
     int32_t     wait_pid;       /* PID we're waiting on (-1 = none) */
-    /* exec_pending state machine (bulletproofing §14):
+    /* exec_pending state machine (bulletproofing):
      *   task_exec():  exec_pending = 1, exec_pending_tick = uptime()
      *   schedule():   exec_pending = 0 on switch-in (frame consumed)
      *   Stuck:        if exec_pending && (uptime() - exec_pending_tick) > 10 -> force-clear + WARN
@@ -151,8 +151,8 @@ struct task {
     /* --- Signal state --- */
     struct signal_state signals;         /* per-task signal handlers + pending mask */
     /* --- Object Manager handle table --- */
-    HANDLE_TABLE handle_table;           /* per-process handle table (§3) */
-    uint32_t     total_handles_created;  /* cumulative handle allocs for diagnostics (§14) */
+    HANDLE_TABLE handle_table; /* per-process handle table */
+    uint32_t total_handles_created; /* cumulative handle allocs for diagnostics */
     /* --- Security token --- */
     void *token;                         /* ACCESS_TOKEN * (NULL until SRM assigns one) */
     /* --- User-mode ABI --- */
@@ -164,7 +164,7 @@ struct task {
     uint8_t  tls_expansion_allocated;    /* 1 if expansion array has been demand-allocated */
     uintptr_t tls_expansion_phys;        /* physical base of expansion pages (for free) */
     uintptr_t tls_expansion_virt;        /* virtual base of expansion pages (for unmap) */
-    /* --- ELF auxv (§13) --- */
+    /* --- ELF auxv --- */
     void    *user_auxv;                  /* user-space VA of first AT_TYPE qword (0 if none) */
     uint32_t user_auxv_pairs;            /* number of (type, value) pairs including AT_NULL */
     uint32_t _auxv_pad;

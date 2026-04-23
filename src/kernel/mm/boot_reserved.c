@@ -8,7 +8,7 @@
  *
  * Scope boundary: this module covers struct boot_info, USB DMA pages
  * + scratchpad, TPM event log, framebuffer, every UEFI runtime memory
- * region, and every §5 payload descriptor with BOOT_PAYLOAD_FLAG_RESERVED.
+ * region, and every payload descriptor with BOOT_PAYLOAD_FLAG_RESERVED.
  * PMM-internal reservations (first 1 MiB, kernel image, bitmap, user
  * ELF) stay as direct `pmm_mark_region_used()` calls inside pmm_init --
  * they are not boot_info-driven and the handoff audit does not need
@@ -231,7 +231,7 @@ boot_result_t boot_reserved_populate_from_info(const struct boot_info *info,
         }
     }
 
-    /* 7. §5 typed payloads with BOOT_PAYLOAD_FLAG_RESERVED set. */
+    /* 7. typed payloads with BOOT_PAYLOAD_FLAG_RESERVED set. */
     if (info->payload_count > BOOT_PAYLOAD_MAX) {
         if (out_err != (enum boot_reserved_error *)0)
             *out_err = BOOT_RESERVED_ERR_COUNT_OOR;

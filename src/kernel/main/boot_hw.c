@@ -81,7 +81,7 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
             boot_halt("boot_info: unsafe mbi pointer");
         }
 
-        /* S16 phase 2: header field validation via §7 boot_version
+        /* S16 phase 2: header field validation via boot_version
          * classifier. Observed + expected magic/version/size go into
          * a boot_version_fault record; on mismatch boot_version
          * _render_fatal prints the record (LOG_FATAL), attempts NVRAM
@@ -137,7 +137,7 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
         }
     }
 
-    /* §4 typed payload descriptor array: validate the packed-prefix,
+    /* typed payload descriptor array: validate the packed-prefix,
      * overlap, range, alignment, total-bytes, and unknown-required
      * invariants before any subsystem consumes payloads. Empty array
      * (zero producers today outside the multiboot2 module handoff)
@@ -177,7 +177,7 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
              "Previous boot failed: code=0x%04X",
              (uint64_t)g_boot_info.last_boot_error);
 
-    /* §3: Log boot device info from boot_info */
+    /*: Log boot device info from boot_info */
     if (g_boot_info.boot_device_path[0] != '\0')
         klog(LOG_INFO, "UEFI", "Booted from: %s (type=%u)",
              g_boot_info.boot_device_path,
@@ -481,7 +481,7 @@ void boot_hw_init(uint64_t magic, uint64_t mbi)
     boot_phase0(magic, mbi);
 }
 
-/* ---- §9: Boot device Registry population --------------------------------
+/* ----: Boot device Registry population --------------------------------
  * Called from registry_populate_defaults() in Phase 2 after registry_init().
  * Populates HKLM\SYSTEM\Boot\Device\ with boot provenance fields from
  * g_boot_info (set by bootloader pre-ExitBootServices). */

@@ -36,7 +36,7 @@
 /* ---- ALPC port access rights ------------------------------------------ */
 /*
  * Per-object-type access masks (no central registry -- see
- * ob_section.h SECTION_MAP_* for the established pattern). §7 wires
+ * ob_section.h SECTION_MAP_* for the established pattern). wires
  * SeAccessCheck on these with the server port's DACL; until then
  * they're informational.
  */
@@ -48,7 +48,7 @@ struct task;
 struct access_token;
 
 /* Forward declarations for future sections -- keep ALPC_PORT stable here
- * so §11 / §12 can extend without redefining the struct layout. */
+ * so / can extend without redefining the struct layout. */
 struct alpc_message_zone;   /* populated in section 11 */
 
 /* ---- ALPC_PORT_TYPE ---------------------------------------------------- */
@@ -130,7 +130,7 @@ typedef struct alpc_pending_queue {
  * while later sections grow it; the internal layout is NOT an ABI
  * contract -- consumers treat ALPC_PORT as opaque and only the public
  * API in this header crosses translation units. No `_Static_assert`
- * on sizeof(ALPC_PORT) until layout stabilises after §4-§12.
+ * on sizeof(ALPC_PORT) until layout stabilises after -.
  */
 typedef struct alpc_port_stats {
     uint64_t MessagesReceived;
@@ -160,7 +160,7 @@ typedef struct alpc_port {
                                                  * PoolUsageBytes */
 
     ALPC_MSG_QUEUE         MessageQueue;       /* pending inbound */
-    ALPC_PENDING_QUEUE     PendingQueue;       /* awaiting reply -- §4 */
+    ALPC_PENDING_QUEUE PendingQueue; /* awaiting reply -- */
     ALPC_MSG_QUEUE         ConnectionQueue;   /* connection requests (server) */
 
     uint64_t               PoolUsageBytes;     /* tracked under Lock; charged
@@ -171,14 +171,14 @@ typedef struct alpc_port {
     uint64_t               NextMessageId;     /* monotonically increasing */
     void                  *PortContext;       /* opaque user data */
 
-    ALPC_PORT_ATTRIBUTES   Attributes;         /* 80 bytes, §1 */
+    ALPC_PORT_ATTRIBUTES Attributes; /* 80 bytes, */
 
     struct task           *OwnerTask;         /* creator/connector */
     event_t                WaitQueue;          /* cross-task wakeup (server:
                                                  * connection arrived;
                                                  * client/comm: message
                                                  * arrived); auto-reset */
-    struct access_token   *ClientToken;       /* captured on accept -- §7 */
+    struct access_token *ClientToken; /* captured on accept -- */
 
     /* Future extensions: keep these at the end so adding to them does
      * not disturb earlier field offsets. Section 6 grows SectionList,
@@ -187,11 +187,11 @@ typedef struct alpc_port {
         void *Head;
         void *Tail;
         uint32_t Count;
-    }                      SectionList;       /* empty until §6 */
-    struct alpc_message_zone *MessageZone;   /* NULL until §11 */
-    ALPC_PORT_STATS        Stats;              /* zero-init until §12 */
+    } SectionList; /* empty until */
+    struct alpc_message_zone *MessageZone; /* NULL until */
+    ALPC_PORT_STATS Stats; /* zero-init until */
 
-    /* §5 Async delivery & waitable port.
+    /* Async delivery & waitable port.
      * CompletionPortHandle is set (non-INVALID) when a user-space I/O
      * Completion Port has been associated via
      * NtAlpcSetInformation(AlpcAssociateCompletionPortInformation). Once
@@ -225,10 +225,10 @@ typedef struct alpc_port {
     uint8_t                _pad_tail[7];
 } ALPC_PORT;
 
-/* §5 NtAlpcSetInformation: ALPC_PORT_INFORMATION_CLASS values.
+/* NtAlpcSetInformation: ALPC_PORT_INFORMATION_CLASS values.
  * AlpcAssociateCompletionPortInformation wires an IOCP to the port so
  * future sends post a completion notification in addition to landing on
- * MessageQueue. Other values land with §9 (NtAlpcQueryInformation). */
+ * MessageQueue. Other values land with (NtAlpcQueryInformation). */
 typedef enum {
     AlpcAssociateCompletionPortInformation = 0,
 } ALPC_PORT_INFORMATION_CLASS;
@@ -340,7 +340,7 @@ NTSTATUS AlpcAcceptConnectPort(HANDLE_TABLE *ht,
  */
 NTSTATUS AlpcDisconnectPort(HANDLE_TABLE *ht, HANDLE port_handle);
 
-/* ---- §4 Synchronous Send+Wait+Receive Engine -------------------------- */
+/* ---- Synchronous Send+Wait+Receive Engine -------------------------- */
 
 /*
  * AlpcAllocateMessage -- allocate a queueable message entry charged
@@ -379,7 +379,7 @@ static inline uint8_t *ALPC_MSG_BODY(PORT_MESSAGE_ENTRY *entry)
 }
 
 /*
- * AlpcSendWaitReceivePort -- the §4 core. Routes to one of four paths
+ * AlpcSendWaitReceivePort -- the core. Routes to one of four paths
  * based on (send_msg, flags):
  *
  *   receive-only  : send_msg == NULL. Dequeues from port->MessageQueue,
@@ -430,7 +430,7 @@ NTSTATUS AlpcSendWaitReceivePort(HANDLE_TABLE *ht, HANDLE port_handle,
                                  uint32_t recv_buf_len,
                                  uint32_t timeout_ms);
 
-/* ---- §5 Asynchronous delivery & completion list ---------------------- */
+/* ---- Asynchronous delivery & completion list ---------------------- */
 
 /*
  * AlpcAssociateCompletionPort -- attach an I/O completion port to an

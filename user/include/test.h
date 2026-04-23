@@ -2,10 +2,10 @@
  * test.h -- Minimal user-mode test assertion harness
  *
  * Header-only macros for writing user-mode test binaries (test_*.exe). The
- * binaries get launched by the kernel test runner once §3 ships; for now
- * the harness is consumed by the §1 smoke binary in user/test/.
+ * binaries get launched by the kernel test runner once ships; for now
+ * the harness is consumed by the smoke binary in user/test/.
  *
- * Output contract (matches what the §3 launcher will scrape):
+ * Output contract (matches what the launcher will scrape):
  *   [PASS] <msg>             -- assertion held
  *   [FAIL] <msg>             -- assertion failed; g_fail incremented
  *   [UTEST-BEGIN] <name>     -- suite header

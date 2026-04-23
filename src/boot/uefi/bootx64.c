@@ -101,7 +101,7 @@ typedef struct {
 static EFI_SYSTEM_TABLE    *gST;
 static EFI_BOOT_SERVICES   *gBS;
 static EFI_HANDLE           gImageHandle;
-static EFI_HANDLE           g_boot_device_handle;  /* §1: boot device from LoadedImage */
+static EFI_HANDLE g_boot_device_handle; /*: boot device from LoadedImage */
 
 /* Boot info -- placed at a known physical address (64 KiB) */
 #define BOOT_INFO_PHYS_ADDR  0x10000
@@ -132,12 +132,12 @@ static UINT32  g_conf_res_height = 0;
 static inline void post_code(UINT8 code);
 static inline void post_code16(UINT16 code);
 
-/* 16-bit POST codes for boot device filesystem scoping (§2).
+/* 16-bit POST codes for boot device filesystem scoping.
  * Placed here so parse_boot_conf() can reference them; the remaining
  * bootloader POST16 codes live near efi_main() where they're used. */
 #define POST16_BL_BOOT_FS       0xB092
 #define POST16_BL_BOOT_FS_OK    0xB093
-#define POST16_BL_FALLBACK      0xB094  /* Device fallback chain (§5) */
+#define POST16_BL_FALLBACK 0xB094 /* Device fallback chain */
 #define POST16_BL_FALLBACK_OK   0xB095
 
 /* --- Helper: memory ops --- */
@@ -2074,7 +2074,7 @@ static void parse_conf_kv(struct boot_config *cfg,
          * for the virtio-gpu multi-output driver that will consume the
          * per-monitor WxH@DPI metadata; today both forms collapse to a
          * count. Counts > 3 clamp to 0 = "use hardware default".
-         * Codex [H] §13 review: the prior implementation comma-counted
+         * Codex [H] review: the prior implementation comma-counted
          * even pure-integer input, so `test_monitors=2` was parsed as
          * count=1 and silently broke the documented contract. */
         UINT8 count = 0;
@@ -2277,7 +2277,7 @@ static void parse_boot_conf(void)
 
     serial_early_print("[BOOT] parse_boot_conf...\n");
 
-    /* Open filesystem from boot device (§2: scoped to boot volume).
+    /* Open filesystem from boot device (scoped to boot volume).
      * Fall back to LocateProtocol if device handle is absent or lacks
      * SimpleFS -- same pattern as load_kernel(). */
     post_code16(POST16_BL_BOOT_FS);
@@ -2724,7 +2724,7 @@ static void load_staged_payloads(void)
          * generic kernel memory, silently corrupting the module /
          * initrd / recovery image AFTER boot_payload_validate already
          * passed. PMM reservation of these ranges is owned by the
-         * Handoff Memory Ownership section (see XREF in §5 Notes). */
+         * Handoff Memory Ownership section (see XREF in Notes). */
         d->flags       = BOOT_PAYLOAD_FLAG_VALID | BOOT_PAYLOAD_FLAG_RESERVED;
         d->phys_start  = (UINT64)payload_addr;
         d->length      = file_size;
@@ -2770,7 +2770,7 @@ static EFI_STATUS load_kernel(UINT64 *entry_point)
     Elf64_Phdr *phdr;
     UINT16 i;
 
-    /* Use global g_boot_device_handle (set in efi_main §1) to get the
+    /* Use global g_boot_device_handle (set in efi_main) to get the
      * boot device's filesystem.  Fall back to LocateProtocol if the
      * handle was not resolved OR if the handle lacks SimpleFS (e.g.
      * PXE boot, partition handle without filesystem driver). */
@@ -2838,7 +2838,7 @@ static EFI_STATUS load_kernel(UINT64 *entry_point)
             }
         }
         if (!found) {
-            /* §5: Device fallback chain -- kernel not on boot device,
+            /*: Device fallback chain -- kernel not on boot device,
              * try all other filesystems before giving up. */
             root_dir->Close(root_dir);
             post_code16(POST16_BL_FALLBACK);
@@ -4796,7 +4796,7 @@ static inline void post_code16(UINT16 code)
 #define POST16_BL_XHCI_DMA_OK       0xB083
 #define POST16_BL_XHCI_TAKEOVER     0xB084  /* xHCI controller takeover */
 #define POST16_BL_XHCI_TAKEOVER_OK  0xB085
-#define POST16_BL_BOOT_DEV          0xB090  /* Boot device identification (§1) */
+#define POST16_BL_BOOT_DEV 0xB090 /* Boot device identification */
 #define POST16_BL_BOOT_DEV_OK       0xB091
 /* POST16_BL_BOOT_FS / _OK (0xB092/0xB093) defined near top -- used by parse_boot_conf */
 #define POST16_BL_EXIT_BS       0xB050
@@ -4944,8 +4944,8 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
         }
     }
 
-    /* §3: Populate boot device path from DevicePathToText protocol.
-     * Type stays 0 (unknown) until §4 parses the device path nodes. */
+    /*: Populate boot device path from DevicePathToText protocol.
+     * Type stays 0 (unknown) until parses the device path nodes. */
     g_boot_info_ptr->boot_device_type = 0;
     g_boot_info_ptr->boot_device_path[0] = '\0';
     if (g_boot_device_handle) {
@@ -4957,7 +4957,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
 
         dp_s = gBS->HandleProtocol(g_boot_device_handle, &dp_guid, (VOID **)&dp);
         if (!EFI_ERROR(dp_s) && dp) {
-            /* §3: Convert device path to text for boot_info */
+            /*: Convert device path to text for boot_info */
             dp_s = gBS->LocateProtocol(&dptt_guid, (VOID *)0, (VOID **)&dptt);
             if (!EFI_ERROR(dp_s) && dptt) {
                 CHAR16 *text = dptt->ConvertDevicePathToText(dp, 0, 0);
@@ -4976,7 +4976,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                 serial_early_print("[BOOT] DevicePathToText not available\n");
             }
 
-            /* §4: Classify device type from the TEXT path string.
+            /*: Classify device type from the TEXT path string.
              * The raw device path from HandleProtocol on a partition handle
              * starts at the HD() node -- it doesn't include parent Messaging
              * nodes (Sata/NVMe/USB). But DevicePathToText returns the full
@@ -5005,7 +5005,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                 }
             }
 
-            /* §7: Walk raw device path nodes to extract partition GUID.
+            /*: Walk raw device path nodes to extract partition GUID.
              * The HD() node IS present in the partition handle's device path. */
             g_boot_info_ptr->boot_partition_style = 0;
             {
@@ -5023,7 +5023,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                     if (node_len < 4) break;
                     if (walked + node_len > DP_MAX_WALK) break;
 
-                    /* §7: Media/HardDrive -> partition GUID + style.
+                    /*: Media/HardDrive -> partition GUID + style.
                      * UEFI spec Table 10-58: HardDrive DP node is 42 bytes.
                      * Offset 24: PartitionSignature (16 bytes)
                      * Offset 40: MBRType (0x01=MBR, 0x02=GPT)
@@ -5068,7 +5068,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                 serial_early_print("\n");
             }
 
-            /* §7: Log partition GUID or MBR signature */
+            /*: Log partition GUID or MBR signature */
             if (g_boot_info_ptr->boot_partition_style == 2) {
                 const UINT8 *g = g_boot_info_ptr->boot_partition_guid;
                 /* Check for all-zero GUID */
@@ -5108,9 +5108,9 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
         }
     }
 
-    /* §8 + §11: Removable media detection AND pre-boot device health check.
+    /* +: Removable media detection AND pre-boot device health check.
      * Single HandleProtocol(BlockIO) call for both. Reads: RemovableMedia,
-     * MediaPresent (§8), BlockSize, LastBlock, ReadOnly, LogicalPartition (§11).
+     * MediaPresent, BlockSize, LastBlock, ReadOnly, LogicalPartition.
      * If BlockIO unavailable, USB defaults to removable (safe for cache policy). */
     g_boot_info_ptr->boot_media_present = 1;
     g_boot_info_ptr->boot_device_removable =
@@ -5125,13 +5125,13 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
         if (!EFI_ERROR(bio_s) && bio && bio->Media) {
             EFI_BLOCK_IO_MEDIA *m = bio->Media;
 
-            /* §8: Removable + MediaPresent */
+            /*: Removable + MediaPresent */
             g_boot_info_ptr->boot_device_removable =
                 m->RemovableMedia ? 1 : 0;
             g_boot_info_ptr->boot_media_present =
                 m->MediaPresent ? 1 : 0;
 
-            /* §11: Capacity */
+            /*: Capacity */
             {
                 UINT64 total_bytes = 0;
                 UINT32 mib = 0;
@@ -5159,12 +5159,12 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                 serial_early_print(")\n");
             }
 
-            /* §11: ReadOnly warning (abnormal on fixed non-USB disks) */
+            /*: ReadOnly warning (abnormal on fixed non-USB disks) */
             if (m->ReadOnly && g_boot_info_ptr->boot_device_type != 3)
                 serial_early_print("[WARN] Boot disk is read-only "
                                    "-- possible hardware failure\n");
 
-            /* §11: LogicalPartition diagnostic */
+            /*: LogicalPartition diagnostic */
             if (m->LogicalPartition)
                 serial_early_print("[BOOT] Boot device is a logical partition "
                                    "(not whole disk)\n");
@@ -5174,7 +5174,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
         }
     }
 
-    /* §8 logging */
+    /* logging */
     if (g_boot_info_ptr->boot_device_removable)
         serial_early_print("[BOOT] Boot device is removable "
                            "-- write-caching will be disabled by default\n");
@@ -5372,7 +5372,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
      * buffer. All failures are fatal: a missing payload == boot fail. */
     load_staged_payloads();
 
-    /* §10: Boot device enumeration log -- gated behind verbose=1 in boot.conf
+    /*: Boot device enumeration log -- gated behind verbose=1 in boot.conf
      * to avoid per-handle Open/Close overhead on firmware with many devices.
      * Runs after parse_boot_conf so the flag is available. */
     if (g_boot_info_ptr->config.verbose) {

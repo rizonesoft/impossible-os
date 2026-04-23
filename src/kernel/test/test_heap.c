@@ -156,7 +156,7 @@ static void test_heap_fault_inject_irql_gate(void)
                    "IRQ-context allocation did not increment injection counter");
 }
 
-/* §6 task-filter: when kmalloc_fail_task_filter_set(pid) is armed,
+/* task-filter: when kmalloc_fail_task_filter_set(pid) is armed,
  * only calls from the matching task fire the countdown. Calls from
  * foreign tasks skip the hook without consuming the countdown. */
 static void test_heap_fault_inject_task_filter(void)
@@ -185,7 +185,7 @@ static void test_heap_fault_inject_task_filter(void)
     TEST_ASSERT_EQ(post - pre, 1u, "exactly one forced NULL after filter clear");
 }
 
-/* §6 max-injections cap with auto-reload: arming max_injections_set(N)
+/* max-injections cap with auto-reload: arming max_injections_set(N)
  * and kmalloc_fail_next() ONCE causes the next N calls to return NULL;
  * subsequent calls succeed. Proves the hook auto-reloads the countdown
  * between fires while the cap has not been reached, then stops. */

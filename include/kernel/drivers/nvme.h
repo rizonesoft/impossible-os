@@ -123,7 +123,7 @@ struct nvme_controller {
     uint8_t             ver_minor;
     uint8_t             ver_ter;
 
-    /* §2: Admin queue */
+    /*: Admin queue */
     uintptr_t           admin_sq_phys;
     uintptr_t           admin_cq_phys;
     volatile struct nvme_sqe *admin_sq;
@@ -132,7 +132,7 @@ struct nvme_controller {
     uint16_t            admin_cq_head;
     uint8_t             admin_cq_phase;
 
-    /* §3: I/O queue (QID=1) */
+    /*: I/O queue (QID=1) */
     uintptr_t           io_sq_phys;
     uintptr_t           io_cq_phys;
     volatile struct nvme_sqe *io_sq;
@@ -142,7 +142,7 @@ struct nvme_controller {
     uint8_t             io_cq_phase;
     uint8_t             io_queue_active;
 
-    /* §4: Namespace info */
+    /*: Namespace info */
     uint64_t            ns_lba_count;
     uint32_t            ns_sector_size;
     char                model[41];      /* 40 chars + NUL */

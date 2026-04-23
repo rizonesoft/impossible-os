@@ -2,10 +2,10 @@
 :: run-matrix-desktop-tests.bat -- multi-monitor + DPI test matrix entry
 :: point for the desktop UI test framework (section 13).
 ::
-:: HONESTY NOTE (Codex §13 review 2026-04-22): the 6-cell matrix this
+:: HONESTY NOTE (Codex review 2026-04-22): the 6-cell matrix this
 :: script will eventually iterate is mostly unbuildable today because
 :: (a) the virtio-gpu multi-output driver has not landed (tracked as a
-:: §15 prerequisite), and (b) run-qemu.ps1 has no -ExtraBootConf
+:: prerequisite), and (b) run-qemu.ps1 has no -ExtraBootConf
 :: override path to inject per-cell `test_monitors=N` or DPI knobs
 :: yet. An earlier draft of this file printed three [RUN] rows that
 :: launched the same QEMU command each time; that was a
@@ -14,7 +14,7 @@
 :: stays committed so the follow-up work below just flips SKIP lines
 :: into real invocations.
 ::
-:: Follow-up (do these together with the §15 virtio-gpu prereq):
+:: Follow-up (do these together with the virtio-gpu prereq):
 ::   1. Add -ExtraBootConf "key=val;key=val" to run-qemu.ps1 so each
 ::      row can set `test_monitors=N` (and future `test_dpi=...`).
 ::   2. Swap the SKIP lines below for real invocations that pass per-
@@ -44,7 +44,7 @@ if errorlevel 1 set /a FAILED+=1
 
 :: -- Pending cells: require the virtio-gpu multi-output driver + a
 :: boot.conf override plumbing in run-qemu.ps1. Marked SKIP until both
-:: prerequisites ship (see §15 virtio-gpu item + follow-up above).
+:: prerequisites ship (see virtio-gpu item + follow-up above).
 set /a TOTAL+=5
 set /a SKIPPED+=5
 echo [SKIP] monitors=1 dpi=144       -- needs DPI boot-knob + run-qemu override

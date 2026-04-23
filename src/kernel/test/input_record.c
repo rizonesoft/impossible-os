@@ -28,7 +28,7 @@ static int            s_active = 0;     /* 1 between begin() and stop() */
  * terminal commits from compositor, test IME injections from Phase 3
  * tests). All reads/writes of the session state above go through this
  * lock with spin_lock_irqsave so IRQ context cannot race a test-thread
- * begin/release. Codex [H] adversarial review of §11. */
+ * begin/release. Codex [H] adversarial review of. */
 static spinlock_t     s_rec_lock = SPINLOCK_INIT;
 
 /* Malformed-trace safety ceiling: reject replay-time inter-event
@@ -108,7 +108,7 @@ static int sr_append_hex8(char *dest, int cap, int *pos, uint8_t v)
 
 /* Parse a uint64 starting at `*pos`; advance `*pos` past the digits.
  * Returns 0 on success, -1 if no digits found OR if accumulated value
- * would overflow uint64. Codex [H] adversarial review of §11: the
+ * would overflow uint64. Codex [H] adversarial review of: the
  * prior unchecked `v * 10 + digit` silently wrapped on 20+ digit
  * input, so later range checks on the result were defeated (a
  * 0xFFFFFFFFFFFFFFFF + 1 wrap could pass an `x <= 0xFF` check). */
@@ -511,7 +511,7 @@ static int parse_one(const char *src, int len, int *pos, input_event_t *out)
     /* Parse "key":value pairs until '}'. Track presence of every
      * payload field so per-kind validation below can reject events
      * that are missing required fields. Codex [H] quality review of
-     * §11: prior draft only validated mouse x/y and silently treated
+     *: prior draft only validated mouse x/y and silently treated
      * absent key/codepoint/candidate/utf8 as zero, turning truncated
      * traces into silent input corruption rather than a hard reject. */
     int saw_kind = 0;
@@ -664,7 +664,7 @@ int input_replay_from_jsonl(const char *jsonl, int jsonl_len,
          * would unsigned-underflow in (evt.ts_ns - base_ts) and the
          * busy-wait would spin for the rest of the uint64 range
          * (~584 years) before producing a single event. Reject
-         * instead. Codex [M] adversarial review of §11. */
+         * instead. Codex [M] adversarial review of. */
         if (have_base && evt.ts_ns < prev_ts) return -1;
         prev_ts = evt.ts_ns;
 
@@ -696,7 +696,7 @@ int input_replay_from_jsonl(const char *jsonl, int jsonl_len,
     return replayed;
 }
 
-/* Earlier `input_replay_direct()` removed during §11 quality review:
+/* Earlier `input_replay_direct()` removed during quality review:
  * it bypassed monotonicity + delta-cap checks of the JSONL replay
  * path AND had no test coverage. The JSONL roundtrip used by the
  * test_input_record_serialize_roundtrip suite exercises both

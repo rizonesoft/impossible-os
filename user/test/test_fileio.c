@@ -1,5 +1,5 @@
 /* ============================================================================
- * test_fileio.c -- §13 user-mode file I/O coverage binary
+ * test_fileio.c -- user-mode file I/O coverage binary
  *
  * Exercises the handle-based file-I/O surface from ring 3:
  *   sys_openfile  -- happy path + nonexistent-path error path
@@ -7,8 +7,8 @@
  *   sys_closehandle -- followed by a post-close read that MUST fail
  *   sys_opendirobj + sys_querydirobj -- enumerate the OB root
  *
- * Scope vs §9: test_syscall.exe smoke-tests one [PASS] per syscall
- * along a representative happy path. §13 pushes further -- it asserts
+ * Scope vs: test_syscall.exe smoke-tests one [PASS] per syscall
+ * along a representative happy path. pushes further -- it asserts
  *   (a) the read buffer EQUALS the canonical "Hello from Impossible OS!"
  *       payload (length + byte-for-byte), catching any partial-read or
  *       truncation regression that "starts with 'H'" would miss; and
@@ -17,8 +17,8 @@
  *       ref keeps the kernel file object reachable.
  *
  * Why this lives in its own binary instead of piggy-backing on
- * test_syscall.c: §13's item "Open nonexistent file -> INVALID_HANDLE_VALUE"
- * is a deliberate NEGATIVE path test, and §9 is already large. Keeping
+ * test_syscall.c:'s item "Open nonexistent file -> INVALID_HANDLE_VALUE"
+ * is a deliberate NEGATIVE path test, and is already large. Keeping
  * it separate lets the launcher timeline show file-I/O regressions
  * distinct from general-syscall regressions.
  *
@@ -41,7 +41,7 @@ UTEST_DEFINE_STATE();
  * VFS_O_READ, and sys_openfile(path, 0) produces a handle that the
  * read path rejects with -1. Any future change to VFS_O_READ must
  * update this constant too (the kernel + user values are compared
- * in the §2 syscall ABI header, not here -- this is the per-test
+ * in the syscall ABI header, not here -- this is the per-test
  * mirror so the probe's intent is explicit). A `U_OPEN_READ`
  * style zero-value token is deliberately avoided: "default" is
  * ambiguous now that access is enforced, and a zero mask is not
@@ -74,7 +74,7 @@ UTEST_DEFINE_STATE();
  * test_fileio.exe is self-sufficient: a kernel-side layout drift
  * surfaces in this binary alone, not only in test_syscall.exe. The
  * review Codex 2026-04-21 M2 caught the false-confidence risk of
- * relying on §9 for layout guarantees this binary depends on. */
+ * relying on for layout guarantees this binary depends on. */
 struct u_obj_dir_info {
     char name[64];
     char type_name[32];
@@ -92,7 +92,7 @@ int main(void)
      * Single unified sub-test. Each assertion is gated on the prior
      * one succeeding so a regression in sys_openfile produces ONE
      * FAIL (the open) instead of cascading through read + compare +
-     * close with false failures. Same pattern the §9 Codex adversarial
+     * close with false failures. Same pattern the Codex adversarial
      * round required (M1). */
     HANDLE fh = sys_openfile("C:\\hello.txt", U_OPEN_READ);
     UTEST_ASSERT(fh != INVALID_HANDLE_VALUE,
@@ -221,7 +221,7 @@ int main(void)
      * "\\" is the OB namespace root. At boot-time the kernel populates
      * Device / KernelObjects / BaseNamedObjects / RPC Control, so a
      * healthy enumeration returns >= 1 entry and the first entry's
-     * name is non-empty. Full ABI layout is asserted in §9's
+     * name is non-empty. Full ABI layout is asserted in's
      * test_syscall; this is a functional enumeration smoke test. */
     HANDLE dh = sys_opendirobj("\\", U_DIR_ACCESS_DEFAULT);
     UTEST_ASSERT(dh != INVALID_HANDLE_VALUE,

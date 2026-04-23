@@ -5,8 +5,8 @@
  * NTSTATUS returns and SSDT_HANDLER signatures. Each function is registered
  * at the SSDT index defined in service_numbers.h.
  *
- * §5: existing SYS_* wrappers with NtXxx naming and NTSTATUS returns.
- * §6: proper NtCreateFile/NtOpenFile/NtReadFile/NtWriteFile/NtClose via OB.
+ *: existing SYS_* wrappers with NtXxx naming and NTSTATUS returns.
+ *: proper NtCreateFile/NtOpenFile/NtReadFile/NtWriteFile/NtClose via OB.
  * The INT 0x80 handler continues to work for backward compatibility.
  * ============================================================================ */
 
@@ -429,7 +429,7 @@ read_bad_handle:
     return STATUS_SUCCESS;
 }
 
-/* NtTerminateProcess moved to nt_process.c (§7) */
+/* NtTerminateProcess moved to nt_process.c */
 
 /* ---- NtYieldExecution ---------------------------------------------------
  * SSDT 0x0044 -- wraps SYS_YIELD.
@@ -443,7 +443,7 @@ static NTSTATUS NtYieldExecution(uint64_t a1, uint64_t a2, uint64_t a3,
     return STATUS_SUCCESS;
 }
 
-/* NtWaitForSingleObject moved to nt_sync.c (§8) -- now handles all object types */
+/* NtWaitForSingleObject moved to nt_sync.c -- now handles all object types */
 
 /* ---- NtQueryDirectoryFile -----------------------------------------------
  * SSDT 0x0017.
@@ -951,7 +951,7 @@ static NTSTATUS Nt_Close(uint64_t a1, uint64_t a2, uint64_t a3,
 
 void nt_syscall_register_ssdt(void)
 {
-    /* File I/O (§6) */
+    /* File I/O */
     ssdt_register(SSDT_NtCreateFile,            (SSDT_HANDLER)NtCreateFile_handler);
     ssdt_register(SSDT_NtOpenFile,              (SSDT_HANDLER)NtOpenFile_handler);
     ssdt_register(SSDT_NtReadFile,              (SSDT_HANDLER)NtReadFile);
@@ -959,13 +959,13 @@ void nt_syscall_register_ssdt(void)
     ssdt_register(SSDT_NtQueryDirectoryFile,    (SSDT_HANDLER)NtQueryDirectoryFile);
     ssdt_register(SSDT_NtCreateNamedPipeFile,   (SSDT_HANDLER)NtCreateNamedPipeFile);
 
-    /* Core object operations (NtWaitForSingleObject moved to nt_sync.c §8) */
+    /* Core object operations (NtWaitForSingleObject moved to nt_sync.c) */
     ssdt_register(SSDT_NtClose,                 (SSDT_HANDLER)Nt_Close);
 
-    /* Process and thread (NtTerminateProcess moved to nt_process.c §7) */
+    /* Process and thread (NtTerminateProcess moved to nt_process.c) */
     ssdt_register(SSDT_NtYieldExecution,        (SSDT_HANDLER)NtYieldExecution);
 
-    /* System information (§10) */
+    /* System information */
     ssdt_register(SSDT_NtQuerySystemInformation, (SSDT_HANDLER)NtQuerySystemInformation);
     ssdt_register(SSDT_NtSetSystemInformation,   (SSDT_HANDLER)NtSetSystemInformation);
 

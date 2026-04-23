@@ -4,7 +4,7 @@
  * TEST_KLOG_SUPPRESS(subsystem) raises the subsystem's minimum log level
  * to LOG_FATAL (effectively silencing everything below) for the
  * remainder of the current test suite, then restores the prior level
- * when the §7 action drain fires at suite exit.
+ * when the action drain fires at suite exit.
  *
  * Purpose: tests that exercise error paths (validators, allocator
  * failure rollback, bad-input rejection) otherwise emit `[FAIL]
@@ -19,7 +19,7 @@
  *       TEST_KLOG_SUPPRESS("boot");
  *       TEST_ASSERT(validator_rejects_bad_input(&bad), "rejected");
  *       // no [FAIL] boot: ... line on the serial log; at suite exit
- *       // the §7 action drain restores the prior level.
+ * // the action drain restores the prior level.
  *   }
  *
  * Implementation:
@@ -37,7 +37,7 @@
  *
  * KERNEL_TESTS-gated -- release builds drop the translation unit
  * entirely. Must NOT be called during a drain (test_add_action rejects
- * re-entry in that window -- see §7 draining flag contract).
+ * re-entry in that window -- see draining flag contract).
  * ============================================================================ */
 
 #pragma once

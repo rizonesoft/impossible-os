@@ -38,10 +38,10 @@ int test_usermode_path_has_traversal(const char *p);
 int test_usermode_xml_escape(const char *src, char *dst, uint32_t cap);
 int test_usermode_json_escape(const char *src, char *dst, uint32_t cap);
 
-/* Exposed by src/kernel/sched/syscall.c for §5 gate regression tests. */
+/* Exposed by src/kernel/sched/syscall.c for gate regression tests. */
 int64_t sys_fault_inject_dispatch(uint32_t kind, uint32_t countdown);
 
-/* §8 taxonomy helpers -- integer-returning thin wrappers so the unit
+/* taxonomy helpers -- integer-returning thin wrappers so the unit
  * test binds against a stable ABI without pulling in utest_type_t. */
 int test_usermode_type_for_name(const char *name);
 int test_usermode_type_from_attr(const char *val);
@@ -246,7 +246,7 @@ static void test_setter_api_no_crash(void)
     TEST_ASSERT(1, "setter API accepts documented edge cases without crashing");
 }
 
-/* ---- §5 SYS_FAULT_INJECT gate regression ---------------------------- *
+/* ---- SYS_FAULT_INJECT gate regression ---------------------------- *
  *
  * The fault-inject syscall MUST hard-fail with -1 (STATUS_ACCESS_DENIED
  * at the INT 0x80 return-value channel) when boot.conf test=0. Without
@@ -329,7 +329,7 @@ static void test_fault_inject_kmalloc_countdown_requires_nonzero(void)
     g_boot_info.config.test = saved_test;
 }
 
-/* ---- §6 per-test isolation pure helpers ---------------------------- */
+/* ---- per-test isolation pure helpers ---------------------------- */
 
 /* Local streq (no libc). Returns 1 on match. */
 static int ul_streq(const char *a, const char *b)
@@ -413,7 +413,7 @@ static void test_path_has_traversal_catches_variants(void)
                 "empty string accepted (caller's job to reject empty paths)");
 }
 
-/* §7 XML/JSON escape regressions. User-provided strings (test names,
+/* XML/JSON escape regressions. User-provided strings (test names,
  * reason messages) go through u_xml_escape and u_json_escape before
  * being wrapped in attribute / string quotes; these tests pin the
  * five XML attribute-value specials + the JSON-required set so a
@@ -528,7 +528,7 @@ static void test_path_join_overflow(void)
                 "out_cap < 3 rejected");
 }
 
-/* ---- §8 taxonomy: filename prefix inference ------------------------- */
+/* ---- taxonomy: filename prefix inference ------------------------- */
 
 /* Mirror of utest_type_t (see include/kernel/test/test_usermode.h) -- kept
  * local so the unit test does not have to include the taxonomy header. */
@@ -571,7 +571,7 @@ static void test_type_for_name_prefix_boundaries(void)
                 "empty name -> correctness (no crash)");
 }
 
-/* ---- §8 taxonomy: manifest type= attribute parsing ------------------ */
+/* ---- taxonomy: manifest type= attribute parsing ------------------ */
 
 static void test_type_from_attr_known_values(void)
 {
@@ -601,7 +601,7 @@ static void test_type_from_attr_unknown_values(void)
                 "trailing garbage (smoke_extra) -> correctness (exact match)");
 }
 
-/* ---- §8 taxonomy: type label round-trip ----------------------------- */
+/* ---- taxonomy: type label round-trip ----------------------------- */
 
 static void test_type_label_matches_enum(void)
 {
@@ -628,7 +628,7 @@ static void test_type_label_matches_enum(void)
                 "label(unknown int) returns a non-NULL fallback label");
 }
 
-/* ---- §8 taxonomy: ABI stability check ------------------------------- */
+/* ---- taxonomy: ABI stability check ------------------------------- */
 
 static void test_type_enum_values_stable(void)
 {
@@ -646,7 +646,7 @@ static void test_type_enum_values_stable(void)
                 "UTEST_TYPE_CORRECTNESS integer value == 0");
 }
 
-/* ---- §8: stress_iters boot-config field -----------------------------*/
+/* ----: stress_iters boot-config field -----------------------------*/
 
 static void test_stress_iters_boot_config_has_nonzero_room(void)
 {

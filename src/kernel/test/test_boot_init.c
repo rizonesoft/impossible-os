@@ -140,7 +140,7 @@ static void test_post_codes_nonzero_and_unique(void)
     TEST_ASSERT(POST16_BOOT_OK != POST16_BOOT_FAILED, "BOOT_OK != BOOT_FAILED");
 }
 
-/* ---- §1 ABI: kernel_subsys_t enum layout ----
+/* ---- ABI: kernel_subsys_t enum layout ----
  *
  * Pin numeric values that other code uses by index (g_subsys_ready[],
  * crash-dump readers, recovery decoders).  Reordering would silently
@@ -158,7 +158,7 @@ static void test_subsys_enum_layout(void)
     TEST_ASSERT_EQ(SUBSYS_COUNT,     25, "SUBSYS_COUNT == 25 (sentinel)");
 }
 
-/* ---- §1 BOOT_STEP readiness mapping ----
+/* ---- BOOT_STEP readiness mapping ----
  *
  * BOOT_STEP must mark a subsystem ready ONLY for BOOT_OK or BOOT_DEGRADED.
  * BOOT_FATAL and BOOT_DEFERRED must leave the subsystem NOT ready so
@@ -196,7 +196,7 @@ static void test_boot_step_readiness_mapping(void)
     kernel_subsystem_set_ready(SUBSYS_PMM, saved);
 }
 
-/* ---- §1 kernel_subsystem_dump() smoke test ----
+/* ---- kernel_subsystem_dump() smoke test ----
  *
  * Dump must run to completion without crashing.  We deliberately do NOT
  * assert that klog_get_seq() advances: kernel_subsystem_dump() emits 26
@@ -208,7 +208,7 @@ static void test_boot_step_readiness_mapping(void)
  * outcome that does NOT indicate a dump bug.  The real protection here
  * is "the call returns" (no infinite loop, no crash, no fault).  The
  * earlier "advanced by at least 1" assertion was flaky and fired during
- * the §2 propagation test run on the user's i5-11600K box on 2026-04-08.
+ * the propagation test run on the user's i5-11600K box on 2026-04-08.
  */
 static void test_kernel_subsystem_dump_emits(void)
 {
@@ -217,7 +217,7 @@ static void test_kernel_subsystem_dump_emits(void)
     TEST_ASSERT(true, "kernel_subsystem_dump completes without crashing");
 }
 
-/* ---- §1 POSTCODE_* (8-bit phase) constants ----
+/* ---- POSTCODE_* (8-bit phase) constants ----
  *
  * Pin sentinel values used by serial diagnostics and verify the
  * Phase 0/Phase 1 starting points are non-overlapping.
@@ -331,7 +331,7 @@ static void test_async_ipi_vector(void)
                 "ASYNC_INIT != TLB_SHOOTDOWN (0xFE)");
 }
 
-/* ---- §2 kernel_subsystem_apply_result() helper ----
+/* ---- kernel_subsystem_apply_result() helper ----
  *
  * The Phase 0 propagation fix factors the boot_result_t -> {ready,
  * degraded_mask} mapping into kernel_subsystem_apply_result() so that
@@ -405,7 +405,7 @@ static void test_subsys_apply_result_dual_channel(void)
         (g_boot_info.degraded_mask & ~(1u << SUBSYS_TPM)) | saved_mask_bit;
 }
 
-/* ---- §2 Phase 0 propagation slots ----
+/* ---- Phase 0 propagation slots ----
  *
  * Verify that the four new Phase 0 readiness slots (UEFI_VARS, UEFI_TIME,
  * SECUREBOOT, TPM) integrate with the readiness oracle the same way every

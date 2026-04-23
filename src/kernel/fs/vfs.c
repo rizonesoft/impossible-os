@@ -211,7 +211,7 @@ int vfs_unmount(char drive_letter)
     return 0;
 }
 
-/* --- Opportunistic locks (§14) --- */
+/* --- Opportunistic locks --- */
 
 int vfs_request_oplock(struct vfs_node *node, uint32_t owner_id, uint8_t level)
 {
@@ -266,7 +266,7 @@ void vfs_break_oplock(struct vfs_node *node, uint32_t access)
     }
 }
 
-/* --- Byte-range locks (§10) --- */
+/* --- Byte-range locks --- */
 
 int vfs_lock_file(struct vfs_node *node, uint32_t owner_id,
                   uint64_t offset, uint64_t length, int exclusive)
@@ -408,21 +408,21 @@ struct vfs_node *vfs_open(const char *path, uint32_t flags)
             return (struct vfs_node *)0;
     }
 
-    /* Oplock break (§14): break existing oplock before share-mode check */
+    /* Oplock break: break existing oplock before share-mode check */
     if (node->type & VFS_FILE)
         vfs_break_oplock(node, flags);
 
-    /* Delete-on-close check (§9): reject new openers on marked nodes */
+    /* Delete-on-close check: reject new openers on marked nodes */
     if (node->delete_on_close && !(flags & VFS_O_DELETE_ON_CLOSE))
         return (struct vfs_node *)0;  /* STATUS_DELETE_PENDING */
 
-    /* Share-mode check (§8): only for files, not directories */
+    /* Share-mode check: only for files, not directories */
     if ((node->type & VFS_FILE) && node->ref_count > 0) {
         if (vfs_check_sharing(node, flags, share) != 0)
             return (struct vfs_node *)0;
     }
 
-    /* Mark for delete-on-close (§9) */
+    /* Mark for delete-on-close */
     if (flags & VFS_O_DELETE_ON_CLOSE)
         node->delete_on_close = 1;
 
@@ -455,7 +455,7 @@ int vfs_close(struct vfs_node *node)
     if (node->type & VFS_FILE)
         vfs_remove_handle(node, node->flags);
 
-    /* Delete-on-close: if last handle and marked, trigger delete (§9) */
+    /* Delete-on-close: if last handle and marked, trigger delete */
     if (node->delete_on_close && node->ref_count == 0) {
         if (node->parent && node->parent->ops && node->parent->ops->unlink)
             node->parent->ops->unlink(node->parent, node->name);
@@ -831,7 +831,7 @@ uint32_t vfs_get_path_from_node(const struct vfs_node *node,
     return pos;
 }
 
-/* --- Win32 feature-spoofing stubs (§11) --- */
+/* --- Win32 feature-spoofing stubs --- */
 
 uint32_t vfs_query_volume_flags(char drive_letter, char *fs_name, uint32_t name_max)
 {

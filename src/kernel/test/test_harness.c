@@ -258,7 +258,7 @@ static void test_harness_verify_action_leak_recovery(void)
  * Each register-suite snapshots heap + PMM counters, allocates via
  * TEST_SCRATCH_KBUF, and samples mid-suite counters to prove the
  * correct allocator was hit. The follow-up verify-suite asserts
- * heap + PMM returned to the pre-snapshot after the §7 action drain
+ * heap + PMM returned to the pre-snapshot after the action drain
  * fires between suites. The rollback suite at the end exercises
  * the test_scratch_free path manually when the action stack is full.
  * ------------------------------------------------------------------------- */
@@ -273,7 +273,7 @@ static volatile uint64_t g_scratch_heap_during_small;
 static volatile uint64_t g_scratch_pmm_during_big;
 
 /* Drain-after-failure coverage note: TEST_ASSERT is NOT longjmp-style
- * in this runner -- suite bodies always return normally and the §7
+ * in this runner -- suite bodies always return normally and the
  * action drain fires identically on pass and on fail (same code path
  * in test_runner_run). A dedicated "forced-fail" suite that would
  * increment the global failed counter breaks scripts/test.sh's
@@ -386,7 +386,7 @@ static void test_harness_scratch_rollback(void)
  * TEST_KLOG_SUPPRESS -- block-scoped klog level demotion.
  *
  * Raises the subsystem's minimum level to LOG_FATAL for the remainder
- * of the current suite, then the §7 action drain restores it after
+ * of the current suite, then the action drain restores it after
  * suite exit. Register-suite snapshots the level BEFORE and AFTER
  * calling the macro; verify-suite asserts the level was restored on
  * drain (proving the action registration works end-to-end).
@@ -452,10 +452,10 @@ static void test_harness_klog_suppress_no_override_leak_verify(void)
 }
 
 /* ---------------------------------------------------------------------------
- * Per-test heap-leak detection (§8).
+ * Per-test heap-leak detection.
  *
  * The detector snapshots heap_get_used() before the suite body and
- * re-reads it after the §7 action drain. A non-zero delta absent
+ * re-reads it after the action drain. A non-zero delta absent
  * TEST_EXPECT_LEAK/IGNORE logs [LEAK] and increments the leaked
  * counter. Three tests:
  *   1. Deliberate kmalloc(64) without kfree + TEST_EXPECT_LEAK.
@@ -513,7 +513,7 @@ static void test_harness_leak_detect_kmalloc_verify(void)
 
 static void test_harness_leak_detect_scratch_clean(void)
 {
-    /* TEST_SCRATCH_KBUF auto-frees via §7 action drain on suite exit.
+    /* TEST_SCRATCH_KBUF auto-frees via action drain on suite exit.
      * The detector then observes zero delta -- no [LEAK] line, no
      * counter bump, last_leak_delta == 0. Proves the drain-path
      * cleanup is visible to the leak detector end-to-end. */
@@ -532,7 +532,7 @@ static void test_harness_leak_detect_scratch_verify(void)
  * AND no counter bump occurs even with a positive heap delta. The
  * paired verify suite reads g_test_state.leaked before/after to
  * confirm the bypass actually held. Closes the M1 finding from the
- * §8 quality review (TEST_LEAK_IGNORE was implemented but had no
+ * quality review (TEST_LEAK_IGNORE was implemented but had no
  * caller exercising the bypass). */
 static uint32_t g_leak_ignore_pre_count;
 

@@ -1,5 +1,5 @@
 /* ============================================================================
- * test_win32.c -- §14 user-mode Win32 API coverage binary
+ * test_win32.c -- user-mode Win32 API coverage binary
  *
  * Exercises the Win32 shim (user/lib/win32.c) from ring 3:
  *
@@ -13,7 +13,7 @@
  *                                match against the canonical payload.
  *   4. CloseHandle            -- returns TRUE; double-close returns
  *                                FALSE (invalidation probe, mirrors
- *                                §13's post-close test at the Win32
+ *'s post-close test at the Win32
  *                                layer).
  *   5. GetTickCount           -- returns monotonically non-decreasing
  *                                millisecond count from
@@ -25,13 +25,13 @@
  * This is Impossible OS's first user-mode probe of the Win32 API
  * surface -- it proves the CLAUDE.md "Win32 native" orientation works
  * end-to-end at the source level WITHOUT the PE32+ dynamic linker
- * (§15), because user/lib/win32.c is linked statically with the ELF
+ *, because user/lib/win32.c is linked statically with the ELF
  * test binary.
  *
- * Scope boundary: §14 is the Win32-level sibling of §9 (raw INT 0x80
- * probe) and §13 (handle-based file I/O). Async ReadFile, CreateProcess,
+ * Scope boundary: is the Win32-level sibling of (raw INT 0x80
+ * probe) and (handle-based file I/O). Async ReadFile, CreateProcess,
  * VirtualAlloc, registry APIs, WaitForSingleObject, and the full
- * Unicode-W variants are NOT in scope -- they belong either with §15
+ * Unicode-W variants are NOT in scope -- they belong either with
  * (PE32+ dynamic linker) or with their respective kernel32 feature
  * TODOs.
  * ============================================================================ */

@@ -4,11 +4,11 @@
  * Section 2 of TODO-12. Registers the ALPC Port Object Manager type,
  * creates the \RPC Control namespace directory, and exposes a
  * kernel-side helper that both the NT syscall retrofit
- * (NtAlpcCreatePort) and future in-kernel servers (CSRSS in §10) use.
+ * (NtAlpcCreatePort) and future in-kernel servers (CSRSS in) use.
  *
  * Queue and sync state is initialised empty; messages flow starting
- * in §4. The DeleteProcedure drains all three queues defensively so a
- * port closed before §4 ships (or reached from a fault path) still
+ * in. The DeleteProcedure drains all three queues defensively so a
+ * port closed before ships (or reached from a fault path) still
  * cleans up without leaking message entries.
  * ============================================================================ */
 
@@ -26,14 +26,14 @@ const OBJECT_TYPE *ObpAlpcPortType;
 static void *s_rpc_control_dir;
 static uint8_t s_inited;
 
-/* Forward declarations for §5 helpers used by §3 AlpcDisconnectPort and
- * the §4 engine before their definitions appear below. */
+/* Forward declarations for helpers used by AlpcDisconnectPort and
+ * the engine before their definitions appear below. */
 static void msg_queue_enqueue_locked(ALPC_PORT *port, PORT_MESSAGE_ENTRY *entry);
 static void alpc_notify_completion_port(ALPC_PORT *peer,
                                         uint64_t message_id,
                                         uint32_t data_len);
 
-/* Forward declaration: full definition lives with the §3 connection
+/* Forward declaration: full definition lives with the connection
  * state machine below. alpc_port_on_delete needs the layout to drain
  * ConnectionQueue correctly; publishing the typedef up here lets on_delete
  * signal waiters without moving the whole block. */
@@ -222,13 +222,13 @@ static void alpc_port_on_delete(void *body)
 
     /* ClientToken is owned by the process (tied to task lifetime), not
      * refcount-owned by the port -- see token.h notes. Just NULL it out
-     * here; do not call ObDereferenceObject on it. Future §7 may
+     * here; do not call ObDereferenceObject on it. Future may
      * capture a duplicated token that IS refcount-owned, at which
      * point the drop path becomes ObDereferenceObject. */
     (void)tok;
 
-    /* MessageZone is NULL until §11; the drop path is a no-op today. */
-    /* SectionList is empty until §6; no traversal needed. */
+    /* MessageZone is NULL until; the drop path is a no-op today. */
+    /* SectionList is empty until; no traversal needed. */
 
     klog(LOG_DEBUG, "alpc", "port deleted: type=%u", (uint64_t)p->PortType);
 }
@@ -295,8 +295,8 @@ boot_result_t alpc_port_init(void)
  * Called from AlpcCreatePort before the port is allocated. Rejects:
  *   - unknown Flags bits (anything outside the 4 declared ALPC_PORTFLG_*)
  *   - ALPC_PORTFLG_SYSTEM_PROCESS: reserved for a privileged kernel
- *     path; will gain an SeAccessCheck in §7 once token capture is up.
- *     For §2, the only legitimate caller is the kernel itself, and the
+ * path; will gain an SeAccessCheck in once token capture is up.
+ * For, the only legitimate caller is the kernel itself, and the
  *     kernel does not set this flag today -- so any caller passing it
  *     is either confused or malicious.
  *   - non-zero reserved pad fields (Pad0/Pad1/Pad2): catch uninitialised
@@ -313,7 +313,7 @@ static NTSTATUS alpc_validate_attrs(const ALPC_PORT_ATTRIBUTES *attrs)
                   | ALPC_PORTFLG_WAITABLE_PORT
                   | ALPC_PORTFLG_ALLOW_DUP_OBJECT;
     /* ALPC_PORTFLG_SYSTEM_PROCESS intentionally excluded: privileged
-     * bit, §7 gates it via SeAccessCheck once token capture ships. */
+     * bit, gates it via SeAccessCheck once token capture ships. */
 
     if (attrs->Flags & ~allowed_flags)
         return STATUS_INVALID_PARAMETER;
@@ -390,7 +390,7 @@ NTSTATUS AlpcCreatePort(HANDLE_TABLE *ht, const char *name,
     port->OwnerTask     = task_current();
     port->NextMessageId = 1;
     event_init(&port->WaitQueue, "alpc_port_wait", EVENT_AUTO_RESET, 0);
-    /* §5.3: SignalledEvent is manual-reset so NtWaitForSingleObject on
+    /*: SignalledEvent is manual-reset so NtWaitForSingleObject on
      * the port sees "queue non-empty" until the consumer explicitly
      * drains. event_reset on the 1 -> 0 dequeue transition clears it. */
     event_init(&port->SignalledEvent, "alpc_port_signal",
@@ -440,7 +440,7 @@ NTSTATUS AlpcCreatePort(HANDLE_TABLE *ht, const char *name,
 }
 
 /* =========================================================================
- * §3 Connection state machine
+ * Connection state machine
  *
  * Design:
  *   - Client pre-allocates its own client_comm port + handle so the accept
@@ -927,7 +927,7 @@ NTSTATUS AlpcDisconnectPort(HANDLE_TABLE *ht, HANDLE port_handle)
         close_msg->Header.Type        = ALPC_MSG_TYPE_PORT_CLOSED;
 
         spin_lock_irqsave(&peer->Lock, &irqf);
-        /* Route through the shared enqueue helper so §5.3's SignalledEvent
+        /* Route through the shared enqueue helper so.3's SignalledEvent
          * tracks MessageQueue.Count transitions across every producer,
          * including disconnect's PORT_CLOSED marker. A waitable peer
          * must wake on teardown, not only on normal sends. */
@@ -993,7 +993,7 @@ NTSTATUS AlpcDisconnectPort(HANDLE_TABLE *ht, HANDLE port_handle)
 }
 
 /* =========================================================================
- * §4 Synchronous Send+Wait+Receive Engine
+ * Synchronous Send+Wait+Receive Engine
  *
  * Ownership model (resolves the v1/v2 design-review criticals):
  *   - Inbound message entry (PORT_MESSAGE_ENTRY): queue-owned. Lives on
@@ -1176,7 +1176,7 @@ static uint32_t alpc_effective_max_message(const ALPC_PORT *p)
 /* Append `entry` to `port->MessageQueue` under `port->Lock`. Caller
  * holds the lock.
  *
- * Side effect for §5.3: on the 0 -> 1 transition, set port->SignalledEvent
+ * Side effect for: on the 0 -> 1 transition, set port->SignalledEvent
  * (manual-reset) iff the port is waitable. The event is strictly tied
  * to MessageQueue.Count > 0; edge transitions happen under the same
  * lock that guards Count so the event state can never disagree with the
@@ -1200,7 +1200,7 @@ static void msg_queue_enqueue_locked(ALPC_PORT *port, PORT_MESSAGE_ENTRY *entry)
 /* Dequeue front of `port->MessageQueue` under `port->Lock`. Returns
  * NULL if empty. Caller holds the lock.
  *
- * Side effect for §5.3: on the 1 -> 0 transition, clear
+ * Side effect for: on the 1 -> 0 transition, clear
  * port->SignalledEvent so subsequent NtWaitForSingleObject blocks again. */
 static PORT_MESSAGE_ENTRY *msg_queue_dequeue_locked(ALPC_PORT *port)
 {
@@ -1271,8 +1271,8 @@ static void alpc_fill_client_id(CLIENT_ID *cid)
 {
     struct task *t = task_current();
     cid->UniqueProcess = t ? (uint64_t)t->pid : 0u;
-    cid->UniqueThread  = 0;  /* §4 reserves thread id; full value lands
-                              * with §7 token capture / TEB integration */
+    cid->UniqueThread = 0; /* reserves thread id; full value lands
+                              * with token capture / TEB integration */
 }
 
 /* ---- Receive-only path ------------------------------------------------ */
@@ -1403,7 +1403,7 @@ static NTSTATUS alpc_datagram_send(ALPC_PORT *sender_port,
     entry = (PORT_MESSAGE_ENTRY *)0;
 
     event_set(&peer->WaitQueue);
-    /* §5.2 async wake: if the peer associated an IOCP, push a notification
+    /* async wake: if the peer associated an IOCP, push a notification
      * packet in addition to the MessageQueue enqueue. Must run AFTER the
      * regular event_set so a receiver that observed WaitQueue still sees
      * the matching IOCP entry. */
@@ -1528,7 +1528,7 @@ static NTSTATUS alpc_sync_request(ALPC_PORT *sender_port,
     alpc_unlock_two(first, second, irqf, irqf2);
 
     event_set(&peer->WaitQueue);
-    /* §5.2: also notify peer's associated IOCP if any. Sync request +
+    /*: also notify peer's associated IOCP if any. Sync request +
      * completion port is a valid combination; the IOCP wake is purely
      * an advisory signal to the receiver that a message (request) is
      * ready. The sender still blocks on pending->ReplyWait as usual. */
@@ -1649,7 +1649,7 @@ static NTSTATUS alpc_reply(ALPC_PORT *replier_port, PORT_MESSAGE *send_msg)
     return STATUS_SUCCESS;
 }
 
-/* ---- §5 Async delivery: IOCP notification helper --------------------
+/* ---- Async delivery: IOCP notification helper --------------------
  *
  * Called after a successful enqueue on peer->MessageQueue to wake a
  * server that associated an IOCP. The ALPC message itself STAYS on
@@ -1693,7 +1693,7 @@ static void alpc_notify_completion_port(ALPC_PORT *peer,
          * once the IOCP is saturated. Count every drop, but only log
          * the FIRST failure per port -- future drops bump the counter
          * silently and stay observable via ALPC_PORT.DroppedNotifications
-         * (surfaced by §12 alpcmon / ALPC_PORT_STATS). */
+         * (surfaced by alpcmon / ALPC_PORT_STATS). */
         uint64_t dropped;
         spin_lock_irqsave(&peer->Lock, &irqf);
         dropped = peer->DroppedNotifications++;
@@ -1708,7 +1708,7 @@ static void alpc_notify_completion_port(ALPC_PORT *peer,
     }
 }
 
-/* ---- AlpcAssociateCompletionPort (§5.1 public helper) --------------- */
+/* ---- AlpcAssociateCompletionPort (public helper) --------------- */
 
 NTSTATUS AlpcAssociateCompletionPort(HANDLE_TABLE *ht, HANDLE port_handle,
                                      HANDLE completion_port, uint64_t key)

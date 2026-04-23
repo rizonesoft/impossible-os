@@ -36,7 +36,7 @@ int heap_owns(const void *ptr);
 
 #ifdef KERNEL_TESTS
 /* ---- Test-only kmalloc fault injection (00-infrastructure kernel test
- * harness §1) -----------------------------------------------------------
+ * harness) -----------------------------------------------------------
  *
  * Arm the per-CPU counter so the N-th subsequent kmalloc() on THIS CPU
  * returns NULL instead of touching the real allocator. Used by unit
@@ -70,7 +70,7 @@ void     kmalloc_fail_countdown_clear(void);
 void     kmalloc_fail_next(void);
 uint64_t kmalloc_fail_injections_triggered(void);
 
-/* §6 extensions (task-filter + total-hits cap).
+/* extensions (task-filter + total-hits cap).
  *
  * task filter: when armed with a non-zero pid, the countdown only
  * decrements for the matching task. Sibling kthreads and foreign tasks
@@ -79,7 +79,7 @@ uint64_t kmalloc_fail_injections_triggered(void);
  * injection to the intended consumer. Scope is PER-CPU: the countdown
  * state lives in the armed CPU's per_cpu_data, so a task that
  * migrates to a different CPU before calling the allocator does NOT
- * trigger -- the test runner is sequential single-CPU (see §7), so
+ * trigger -- the test runner is sequential single-CPU (see), so
  * this matches the usage pattern; cross-CPU migration-aware testing
  * would need a future broadcast-to-all-CPUs variant.
  *

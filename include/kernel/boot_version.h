@@ -13,7 +13,7 @@
  * payload validator, typed payload find, runtime services mapping)
  * reads fields by offset. A silently-truncated boot_info copy would
  * hand typed consumers stale bytes from a prior boot's memory, which
- * is exactly the class of drift the §2/§3 manifest detector was built
+ * is exactly the class of drift the /manifest detector was built
  * to catch post-commit. Enforcing strict equality at runtime closes
  * the last window (a user deploying mismatched binaries).
  *
@@ -56,7 +56,7 @@ enum boot_version_fault_class {
     BOOT_VERSION_FAULT_BAD_MAGIC   = 2,  /* header.magic mismatches BOOT_INFO_MAGIC */
     BOOT_VERSION_FAULT_BAD_VERSION = 3,  /* header.version != BOOT_INFO_VERSION */
     BOOT_VERSION_FAULT_BAD_SIZE    = 4,  /* header.size != sizeof(struct boot_info) */
-    BOOT_VERSION_FAULT_SEC_ROLLBACK = 5, /* RESERVED for §13 anti-rollback */
+    BOOT_VERSION_FAULT_SEC_ROLLBACK = 5, /* RESERVED for anti-rollback */
 };
 
 /* Fixed 48-byte layout. Pinned so the NVRAM record can be read by a
@@ -73,8 +73,8 @@ struct boot_version_fault {
     uint16_t expected_version;         /* BOOT_INFO_VERSION */
     uint32_t observed_size;            /* header.size as seen by kernel */
     uint32_t expected_size;            /* sizeof(struct boot_info) */
-    /* §13 anti-rollback forward-compat slots. Zero today; populated
-     * by §13 when the anti-rollback gate is integrated. Distinct
+    /* anti-rollback forward-compat slots. Zero today; populated
+     * by when the anti-rollback gate is integrated. Distinct
      * fault_class value (BOOT_VERSION_FAULT_SEC_ROLLBACK) tells
      * transcribers "this is a rollback refusal, not structural ABI
      * drift" -- different operator response (rollback refusal means

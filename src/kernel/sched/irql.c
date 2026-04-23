@@ -122,9 +122,9 @@ void KeLowerIrql(KIRQL old_irql)
         __asm__ volatile("sti" ::: "memory");
     }
 
-    /* TODO (§5): If lowering below DISPATCH_LEVEL and DPC queue is
-     * non-empty, drain pending DPCs before returning to caller.
-     * This is the standard NT DPC dispatch point. */
+    /* DPC drain pending: If lowering below DISPATCH_LEVEL and the DPC
+     * queue is non-empty, drain pending DPCs before returning to
+     * caller. This is the standard NT DPC dispatch point. */
 }
 
 /* ---- Debug assertion: IRQL contract check -------------------------------- */

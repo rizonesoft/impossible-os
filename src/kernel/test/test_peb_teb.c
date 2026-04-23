@@ -632,7 +632,7 @@ static void test_user_auxv_populated(void)
      * Skip ONLY when PID 2 is structurally not a user task (no PEB, no
      * user stack) -- e.g., the slot is unused or holds a kernel thread.
      * If PID 2 IS a user task (has a PEB) but user_auxv is NULL, that's
-     * a §13 regression and we MUST fail rather than silently skip. */
+     * a regression and we MUST fail rather than silently skip. */
     struct task *t = task_get_by_pid(2);
     if (!t) {
         TEST_SKIP("PID 2 does not exist (early boot or pre-exec)");
@@ -644,7 +644,7 @@ static void test_user_auxv_populated(void)
     }
     /* PID 2 is a user task -- user_auxv MUST be populated by task_exec.
      * NULL here means task_exec built the user stack but failed to record
-     * the auxv pointer, which is exactly the §13 failure mode this test
+     * the auxv pointer, which is exactly the failure mode this test
      * exists to catch. */
     TEST_ASSERT(t->user_auxv != (void *)0,
                 "PID 2 user task has user_auxv recorded by task_exec");
@@ -724,7 +724,7 @@ static void test_user_auxv_populated(void)
     }
 }
 
-/* ---- §14 uthread_create / kthread_create ---- */
+/* ---- uthread_create / kthread_create ---- */
 
 /* kthread_create should work from kernel test context (PID 0) */
 static volatile int g_kthread_test_ran = 0;
@@ -767,7 +767,7 @@ static void test_uthread_rejects_kernel_task(void)
                 "uthread_create rejects kernel task (no PEB)");
 }
 
-/* ---- §15 Per-thread TEB fields ---- */
+/* ---- Per-thread TEB fields ---- */
 
 /* struct thread must have per-thread teb and kernel_gs_base fields */
 _Static_assert(sizeof(((struct thread *)0)->teb) == sizeof(void *),

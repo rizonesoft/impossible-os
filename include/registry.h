@@ -228,7 +228,7 @@ void registry_populate_defaults(void);
 #define REG_CREATED_NEW_KEY      0x00000001
 #define REG_OPENED_EXISTING_KEY  0x00000002
 
-/* ---- Win32-Compatible Key Operations (§2.1) ---- */
+/* ---- Win32-Compatible Key Operations ---- */
 
 /* Open a sub-key relative to hKey.  Walks backslash-separated path.
  * Follows REG_LINK keys transparently.
@@ -288,7 +288,7 @@ reg_key_t *reg_resolve_predefined(HKEY hkey);
 #define RRF_RT_ANY           0x0000FFFF   /* Accept any type               */
 #define RRF_NOEXPAND         0x10000000   /* Don't expand REG_EXPAND_SZ    */
 
-/* ---- Win32-Compatible Value Operations (§2.2) ---- */
+/* ---- Win32-Compatible Value Operations ---- */
 
 /* Set or create a named value under hKey.
  * NULL/empty valueName = default "(Default)" value. */
@@ -309,7 +309,7 @@ long RegGetValue(HKEY hKey, const char *lpSubKey, const char *lpValue,
 /* Delete a named value from hKey. */
 long RegDeleteValue(HKEY hKey, const char *lpValueName);
 
-/* ---- Win32-Compatible Enumeration (§2.3) ---- */
+/* ---- Win32-Compatible Enumeration ---- */
 
 /* Enumerate child keys by 0-based index.
  * Returns key name, name size, and last write time.
@@ -337,7 +337,7 @@ long RegQueryInfoKey(HKEY hKey, char *lpClass, uint32_t *lpcchClass,
                      uint32_t *lpcbMaxValueLen, uint32_t *lpcbSecurityDescriptor,
                      uint64_t *lpftLastWriteTime);
 
-/* ---- Typed Convenience Helpers (§2.4) ---- */
+/* ---- Typed Convenience Helpers ---- */
 
 /* Read/write REG_DWORD (uint32_t) */
 long RegGetDword(HKEY hKey, const char *lpValueName, uint32_t *pValue);
@@ -358,7 +358,7 @@ long RegReadKeyValue(HKEY hRootKey, const char *lpPath,
                      const char *lpValueName, uint32_t *lpType,
                      uint8_t *lpData, uint32_t *lpcbData);
 
-/* ---- Hive File Format (§4.1) ---- */
+/* ---- Hive File Format ---- */
 
 #define HIVE_MAGIC         0x48474552U   /* "REGH" in little-endian */
 #define HIVE_VERSION       1
@@ -389,7 +389,7 @@ int hive_save(reg_key_t *root, const char *filepath);
  * On corrupt file: logs warning, returns -1 (caller uses defaults). */
 int hive_load(const char *filepath, reg_key_t *root);
 
-/* ---- Hive Disk Layout (§4.2) ---- */
+/* ---- Hive Disk Layout ---- */
 
 #define REG_HIVE_DIR   "C:\\Impossible\\System\\Config\\Registry"
 #define REG_HIVE_COUNT 4    /* SYSTEM, SOFTWARE, HARDWARE, DEFAULT */

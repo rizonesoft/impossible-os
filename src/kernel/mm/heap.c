@@ -21,7 +21,7 @@
 #ifdef KERNEL_TESTS
 #include "kernel/smp.h"                 /* smp_this_cpu() for per-CPU countdown */
 #include "kernel/sched/irql.h"          /* KeGetCurrentIrql for thread-context gate */
-#include "kernel/sched/task.h"          /* task_current() for §6 task-filter gate */
+#include "kernel/sched/task.h" /* task_current() for task-filter gate */
 #endif
 /* Heap size constants */
 #define HEAP_INITIAL_PAGES  512      /* 512 pages = 2 MiB */
@@ -174,7 +174,7 @@ uint64_t kmalloc_fail_injections_triggered(void)
     return __atomic_load_n(&s_kmalloc_fault_injections, __ATOMIC_RELAXED);
 }
 
-/* §6 task-filter: when non-zero, countdown only decrements for the
+/* task-filter: when non-zero, countdown only decrements for the
  * task whose pid matches. Resets fired_counter so a new filter starts
  * with a clean cap budget. */
 void kmalloc_fail_task_filter_set(uint32_t task_pid)
@@ -189,7 +189,7 @@ void kmalloc_fail_task_filter_clear(void)
     smp_this_cpu()->kmalloc_fail_task_pid = 0;
 }
 
-/* §6 max-injections cap: once fired_counter reaches this value, the
+/* max-injections cap: once fired_counter reaches this value, the
  * hook stops firing even when the countdown is armed. 0 disables the
  * cap (classic single-shot countdown). _set also zeros the fired
  * counter so the cap is relative to the arm-point. */
@@ -233,9 +233,9 @@ void *kmalloc(size_t size)
      * thread-context test that armed it -- turning the test
      * nondeterministic and giving false confidence. Tests that want to
      * inject into IRQ-context allocations need a different harness
-     * scoped to that context; §1 is thread-context only.
+     * scoped to that context; is thread-context only.
      *
-     * §6 gates, applied in order (each skips the fire without touching
+     * gates, applied in order (each skips the fire without touching
      * the countdown so subsequent qualifying calls can still fire):
      *   1. Task filter: kmalloc_fail_task_pid != 0 requires
      *      task_current()->pid match.
@@ -263,7 +263,7 @@ void *kmalloc(size_t size)
                 __atomic_fetch_add(&s_kmalloc_fault_injections, 1ull,
                                    __ATOMIC_RELAXED);
                 pc->kmalloc_fail_fired_counter++;
-                /* §6 auto-reload: with a max-injections cap set and
+                /* auto-reload: with a max-injections cap set and
                  * not yet reached, re-arm countdown=1 so the next
                  * qualifying call fires too. Delivers the 'fail N of
                  * the next M calls' multi-fire semantic from one arm. */

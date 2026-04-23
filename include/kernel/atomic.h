@@ -11,7 +11,7 @@
  * for stronger guarantees when needed (seqlock write path, RCU pointer publish).
  *
  * Used by: rwlock_t (reader_count, writer_held, writer_pending), mutex_t
- * (locked flag), kernel object reference counts, ticket locks (§23), and
+ * (locked flag), kernel object reference counts, ticket locks, and
  * lock-free ring buffers.
  * ============================================================================ */
 
@@ -77,7 +77,7 @@ static inline int atomic_dec_and_test(atomic_t *a) {
  * atomic_cmpxchg -- Compare-and-swap (CAS)
  *
  * Atomically: if *a == old, write new and return old; otherwise return the
- * current value.  This is the primitive used by spinlocks (§6) and
+ * current value. This is the primitive used by spinlocks and
  * lock-free ring buffers.
  *
  * After a successful CAS that acquires a lock, a barrier() is sufficient
@@ -94,7 +94,7 @@ static inline int32_t atomic_cmpxchg(atomic_t *a, int32_t old_val, int32_t new_v
 /* ---------------------------------------------------------------------------
  * atomic_fetch_add -- Atomic add, returns old value
  *
- * Used by ticket locks (§23): each waiter atomically fetches-and-increments
+ * Used by ticket locks: each waiter atomically fetches-and-increments
  * `next_ticket` to obtain its unique ticket number.
  * ------------------------------------------------------------------------- */
 static inline int32_t atomic_fetch_add(atomic_t *a, int32_t delta) {

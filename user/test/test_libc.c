@@ -1,12 +1,12 @@
 /* ============================================================================
- * test_libc.c -- §10 user-mode libc coverage binary
+ * test_libc.c -- user-mode libc coverage binary
  *
  * Smoke-checks the string + formatting surface that user/include/string.h
  * and user/include/stdio.h promise. Every user binary (cmd.exe,
  * hello.exe, every test_*.exe) links against the same libc.a, so a
  * regression in strlen/strcmp/memcpy/memset/snprintf breaks ring 3
  * wholesale -- this test is the early-warning tripwire for those
- * regressions under the §3 launcher.
+ * regressions under the launcher.
  *
  * Linked against the same crt0 + libc as every other user binary. No
  * kernel headers; no malloc; no live syscalls beyond what the

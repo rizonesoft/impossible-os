@@ -66,7 +66,7 @@ static reg_key_t   *reg_root_hkcc;    /* HKEY_CURRENT_CONFIG */
 
 static uint8_t      registry_ready = 0;
 
-/* Forward declaration (defined in §4.2) */
+/* Forward declaration (defined in.2) */
 void registry_mark_dirty(reg_key_t *key);
 
 /* ---- FNV-1a hash (32-bit) ---- */
@@ -585,7 +585,7 @@ const char *reg_key_get_link_target(const reg_key_t *key)
 }
 
 /* ============================================================================
- * §2.1  Win32-Compatible Key Operations
+ * Win32-Compatible Key Operations
  * ============================================================================ */
 
 /* ---- Handle pool ---- */
@@ -1101,7 +1101,7 @@ long RegDeleteTree(HKEY hKey, const char *lpSubKey)
 }
 
 /* ============================================================================
- * §2.2  Win32-Compatible Value Operations
+ * Win32-Compatible Value Operations
  * ============================================================================ */
 
 /* ---- Helper: memcpy ---- */
@@ -1348,7 +1348,7 @@ long RegDeleteValue(HKEY hKey, const char *lpValueName)
 }
 
 /* ============================================================================
- * §2.3  Win32-Compatible Enumeration
+ * Win32-Compatible Enumeration
  * ============================================================================ */
 
 /* ---- Helper: get child key by 0-based index ---- */
@@ -1547,7 +1547,7 @@ long RegQueryInfoKey(HKEY hKey, char *lpClass, uint32_t *lpcchClass,
 }
 
 /* ============================================================================
- * §2.4  Typed Convenience Helpers
+ * Typed Convenience Helpers
  * ============================================================================ */
 
 /* ---- REG_DWORD ---- */
@@ -1655,7 +1655,7 @@ long RegReadKeyValue(HKEY hRootKey, const char *lpPath,
 }
 
 /* ============================================================================
- * §3.2  Populate Factory Defaults (Win32 paths)
+ * Populate Factory Defaults (Win32 paths)
  * ============================================================================ */
 
 /* CPUID helper */
@@ -1853,12 +1853,12 @@ void registry_populate_defaults(void)
     /* Populate Secure Boot state key (HKLM\SYSTEM\SecureBoot\State) */
     uefi_secureboot_populate_registry();
 
-    /* §9: Populate boot device provenance (HKLM\SYSTEM\Boot\Device\*) */
+    /*: Populate boot device provenance (HKLM\SYSTEM\Boot\Device\*) */
     boot_device_populate_registry();
 }
 
 /* ============================================================================
- * §4.1  Hive File Format -- Disk Persistence
+ * Hive File Format -- Disk Persistence
  *
  * Each root tree (SYSTEM, HARDWARE, etc.) is stored as a separate .hive file.
  * Format: [4096-byte header] [key/value records in depth-first order]
@@ -2505,7 +2505,7 @@ fail:
 }
 
 /* ============================================================================
- * §4.2  Hive File Disk Layout
+ * Hive File Disk Layout
  *
  * Each HKLM sub-tree and HKU\Default gets its own .hive file under
  * C:\Impossible\System\Config\Registry\

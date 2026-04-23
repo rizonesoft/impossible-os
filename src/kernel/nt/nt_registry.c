@@ -125,8 +125,8 @@ static const char *reg_oa_path(OBJECT_ATTRIBUTES *oa)
     return (const char *)oa->ObjectName->Buffer;
 }
 
-/* ---- Helper: tombstone-aware HKEY resolver (shared by §14 and §15) ----
- * Forward-declared here; implementation in the §15 block at file-end. */
+/* ---- Helper: tombstone-aware HKEY resolver (shared by and) ----
+ * Forward-declared here; implementation in the block at file-end. */
 static reg_key_t *resolve_hkey(HKEY hkey);
 
 /* ---- Helper: convert Win32 error to NTSTATUS ---------------------------- */
@@ -766,7 +766,7 @@ static NTSTATUS NtQueryKey_handler(uint64_t a1, uint64_t a2, uint64_t a3,
 }
 
 /* ============================================================================
- * §15 Advanced Registry Operations
+ * Advanced Registry Operations
  * ============================================================================ */
 
 /* ---- Helper: resolve HKEY handle to reg_key_t safely -------------------- */
@@ -1106,7 +1106,7 @@ static NTSTATUS NtUnloadKey_handler(uint64_t a1, uint64_t a2, uint64_t a3,
 
 void nt_registry_register_ssdt(void)
 {
-    /* §14 Core CRUD */
+    /* Core CRUD */
     ssdt_register(SSDT_NtCreateKey,         (SSDT_HANDLER)NtCreateKey_handler);
     ssdt_register(SSDT_NtOpenKey,           (SSDT_HANDLER)NtOpenKey_handler);
     ssdt_register(SSDT_NtOpenKeyEx,         (SSDT_HANDLER)NtOpenKeyEx_handler);
@@ -1118,7 +1118,7 @@ void nt_registry_register_ssdt(void)
     ssdt_register(SSDT_NtEnumerateValueKey, (SSDT_HANDLER)NtEnumerateValueKey_handler);
     ssdt_register(SSDT_NtQueryKey,          (SSDT_HANDLER)NtQueryKey_handler);
 
-    /* §15 Advanced: flush / notify / rename / save / restore / hive load */
+    /* Advanced: flush / notify / rename / save / restore / hive load */
     ssdt_register(SSDT_NtFlushKey,          (SSDT_HANDLER)NtFlushKey_handler);
     ssdt_register(SSDT_NtNotifyChangeKey,   (SSDT_HANDLER)NtNotifyChangeKey_handler);
     ssdt_register(SSDT_NtRenameKey,         (SSDT_HANDLER)NtRenameKey_handler);

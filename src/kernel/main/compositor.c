@@ -66,7 +66,7 @@ uint32_t compositor_step_frames(uint32_t n)
      * corrupt frame-stats. Headless mode suppresses compositor_run
      * so step_frames is the only presenter -- that is the only safe
      * configuration for this entry point. Codex [H] adversarial
-     * review of §12 required this refusal. */
+     * review of required this refusal. */
     if (!s_compositor_headless)
         return 0;
 
@@ -92,12 +92,12 @@ uint32_t compositor_step_frames(uint32_t n)
         if (!s_compositor_headless)
             fb_swap();
 
-        /* Advance the §10 frame-timing oracle BEFORE scheduler_enable
+        /* Advance the frame-timing oracle BEFORE scheduler_enable
          * so the present snapshot cannot absorb mark_dirty bumps from
          * the next frame arriving on another CPU. Matches the
-         * compositor_run ordering (see §10 quality review that moved
+         * compositor_run ordering (see quality review that moved
          * on_present inside the scheduler_disable window). Codex [H]
-         * §12 quality review required this alignment. */
+         * quality review required this alignment. */
         wm_frame_stats_on_present(vsync_ns, mono_ns());
         scheduler_enable();
     }
@@ -297,7 +297,7 @@ void compositor_run(void)
              * snapshot the counters BEFORE reopening preemption so
              * the WM_FRAME_PRESENTED payload cannot absorb
              * wm_mark_dirty() calls that arrive on another CPU for
-             * the NEXT frame. Codex [M] review of §10 required this
+             * the NEXT frame. Codex [M] review of required this
              * ordering: scheduler_enable() used to run first,
              * leaving a window where other writers updated
              * s_frame_stats before the present snapshot copy. */

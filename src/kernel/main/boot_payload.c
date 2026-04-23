@@ -1,5 +1,5 @@
 /* ============================================================================
- * boot_payload.c -- validator for the §4 typed payload descriptor array.
+ * boot_payload.c -- validator for the typed payload descriptor array.
  *
  * Called from boot_hw.c after the header copy + pre-copy validation are
  * complete and g_boot_info is populated. Runs every policy documented
@@ -269,7 +269,7 @@ boot_result_t boot_payload_validate(const struct boot_info *info,
         return BOOT_FATAL;
     }
 
-    /* §1 count bound. Rejected before any slot iteration so we do not
+    /* count bound. Rejected before any slot iteration so we do not
      * leak per-slot error classes on a malformed count. */
     if (info->payload_count > BOOT_PAYLOAD_MAX) {
         klog(LOG_ERROR, "boot",
@@ -286,8 +286,8 @@ boot_result_t boot_payload_validate(const struct boot_info *info,
      * truncated handoff lets a future security-sensitive payload
      * (random seed, TPM log, hibernation metadata, recovery image) get
      * silently dropped while consumers still think they processed the
-     * full set. §4 refuses the handoff outright; a degraded policy
-     * ("warn but continue for optional payloads only") is §11
+     * full set. refuses the handoff outright; a degraded policy
+     * ("warn but continue for optional payloads only") is
      * capability-negotiation territory, not this ABI's contract. */
     if (info->payload_overflow != 0u) {
         klog(LOG_ERROR, "boot",
@@ -299,7 +299,7 @@ boot_result_t boot_payload_validate(const struct boot_info *info,
         return BOOT_FATAL;
     }
 
-    /* §2 packed-prefix + NONE-emptiness: scan the FULL array.
+    /* packed-prefix + NONE-emptiness: scan the FULL array.
      *
      * The ABI contract is now two-part:
      *   (a) Every type=BOOT_PAYLOAD_NONE slot MUST be fully zero --
@@ -335,7 +335,7 @@ boot_result_t boot_payload_validate(const struct boot_info *info,
             return BOOT_FATAL;
         }
 
-        /* §3a range overflow. phys_start + length must fit uint64_t. */
+        /* a range overflow. phys_start + length must fit uint64_t. */
         if (d->length > (uint64_t)-1 - d->phys_start) {
             payload_log_failure(i, BOOT_PAYLOAD_ERR_RANGE_WRAP, d);
             if (out_error != (enum boot_payload_error *)0)
@@ -343,7 +343,7 @@ boot_result_t boot_payload_validate(const struct boot_info *info,
             return BOOT_FATAL;
         }
 
-        /* §3b alignment. 0 = "no requirement"; any other value must be
+        /* b alignment. 0 = "no requirement"; any other value must be
          * both a power of 2 AND honored by phys_start. Without the
          * phys_start check the ABI promise "alignment describes this
          * payload's natural alignment" becomes un-enforceable -- a
@@ -365,7 +365,7 @@ boot_result_t boot_payload_validate(const struct boot_info *info,
             }
         }
 
-        /* §3c generic overlap. Every occupied descriptor is checked
+        /* c generic overlap. Every occupied descriptor is checked
          * against every retained region regardless of type -- unknown
          * or future types still cannot stomp boot_info, runtime
          * memory, USB DMA, or the framebuffer. */
@@ -380,7 +380,7 @@ boot_result_t boot_payload_validate(const struct boot_info *info,
             }
         }
 
-        /* §3d unknown-type / unknown-flags policy. The REQUIRED flag
+        /* d unknown-type / unknown-flags policy. The REQUIRED flag
          * forces strict checking for forward-compatibility control:
          * a newer bootloader marking a payload REQUIRED tells this
          * kernel "fail boot rather than silently ignoring me". */
@@ -417,7 +417,7 @@ boot_result_t boot_payload_validate(const struct boot_info *info,
         total += d->length;
     }
 
-    /* §4 recompute total. Reject a producer that reports a bogus sum. */
+    /* recompute total. Reject a producer that reports a bogus sum. */
     if (info->payload_total_bytes != total) {
         klog(LOG_ERROR, "boot",
              "boot_payload: payload_total_bytes=%lu disagrees with "

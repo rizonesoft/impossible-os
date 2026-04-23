@@ -20,7 +20,7 @@ typedef PROCESS_OBJECT process_t;
 /* ---- Format loader function type ----------------------------------------
  * Takes raw file data + size, returns entry point on success or 0 on failure.
  * The loader is responsible for copying segments into the user address range
- * using the existing identity mapping (or VMM-backed pages in future §2). */
+ * using the existing identity mapping (or VMM-backed pages in future). */
 typedef uint64_t (*exec_loader_fn)(const uint8_t *data, uint64_t size);
 
 /* ---- Format descriptor -------------------------------------------------- */
@@ -35,7 +35,7 @@ typedef struct exec_format {
     exec_loader_fn  loader;                 /* format-specific loader */
 } exec_format_t;
 
-/* ---- Module list (§6) --------------------------------------------------- */
+/* ---- Module list --------------------------------------------------- */
 
 /* Binary format identifiers */
 #define EXEC_FMT_ELF  0
@@ -99,7 +99,7 @@ uint64_t exec_load_fmt(const uint8_t *data, uint64_t size, int *err,
  * Sets *err to ENOENT (not found), ENOEXEC, or ENOMEM. */
 uint64_t exec_load_path(const char *path, int *err);
 
-/* ---- Module registration (§6) ------------------------------------------- */
+/* ---- Module registration ------------------------------------------- */
 
 /* Register a loaded module in the global crash registry and the per-process
  * PEB->Ldr module list (for PE32+ modules).
@@ -129,7 +129,7 @@ uint32_t exec_iterate_modules(loaded_module_t *out, uint32_t max_count);
 /* Lockless variant for crash dump / NMI context.
  * Same interface as exec_iterate_modules() but skips the spinlock.
  * ONLY safe when called from a panic path where ALL other CPUs have
- * been halted via IPI FREEZE (see §5 crash dump writer). If called
+ * been halted via IPI FREEZE (see crash dump writer). If called
  * while another CPU is still running exec_register_module(), the copy
  * may contain torn entries. The caller MUST ensure global CPU freeze
  * before invoking this. */

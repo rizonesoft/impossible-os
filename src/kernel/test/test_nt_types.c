@@ -483,7 +483,7 @@ static void test_nt_syscall_ssdt_registered(void)
     TEST_ASSERT_EQ(s, STATUS_INVALID_PARAMETER,
                    "NtMapViewOfSection SSDT registered (NULL base)");
 
-    /* NtQuerySystemInformation with invalid class -- NOT_IMPLEMENTED (§10) */
+    /* NtQuerySystemInformation with invalid class -- NOT_IMPLEMENTED */
     s = ssdt_dispatch(SSDT_NtQuerySystemInformation, 0xFF, 0, 0, 0, 0, 0);
     TEST_ASSERT_EQ(s, STATUS_NOT_IMPLEMENTED,
                    "NtQuerySystemInformation SSDT registered (bad class)");
@@ -523,7 +523,7 @@ static void test_nt_syscall_ssdt_alias_values(void)
                    "SYS_NT_CLOSE == SSDT_NtClose");
 }
 
-/* ---- NT file I/O (§6) -- NtCreateFile / NtOpenFile SSDT tests ---- */
+/* ---- NT file I/O -- NtCreateFile / NtOpenFile SSDT tests ---- */
 
 static void test_nt_create_file_ssdt_registered(void)
 {
@@ -561,7 +561,7 @@ static void test_nt_file_constants(void)
     TEST_ASSERT_EQ(SSDT_NtOpenFile,   0x0011, "SSDT_NtOpenFile == 0x0011");
 }
 
-/* ---- NT process/thread lifecycle (§7) tests ---- */
+/* ---- NT process/thread lifecycle tests ---- */
 
 static void test_nt_process_ssdt_registered(void)
 {
@@ -625,7 +625,7 @@ static void test_nt_thread_info_classes(void)
     }
 }
 
-/* ---- NT sync objects (§8) tests ---- */
+/* ---- NT sync objects tests ---- */
 
 static void test_nt_sync_ssdt_registered(void)
 {
@@ -673,7 +673,7 @@ static void test_nt_sync_constants(void)
     TEST_ASSERT_EQ(STATUS_ABANDONED,   0x80, "STATUS_ABANDONED == 0x80");
 }
 
-/* ---- NT virtual memory (§9) tests ---- */
+/* ---- NT virtual memory tests ---- */
 
 static void test_nt_vm_ssdt_registered(void)
 {
@@ -724,7 +724,7 @@ static void test_nt_vm_constants(void)
                    "MEMORY_BASIC_INFORMATION size == 48");
 }
 
-/* ---- NT system/process information (§10) tests ---- */
+/* ---- NT system/process information tests ---- */
 
 static void test_nt_sysinfo_classes(void)
 {
@@ -1103,23 +1103,23 @@ void test_register_nt_types(void)
     test_suite_register_cat("NT: syscall SSDT registered", test_nt_syscall_ssdt_registered, TEST_CAT_ABI);
     test_suite_register_cat("NT: SYS_NT_* alias values", test_nt_syscall_ssdt_alias_values, TEST_CAT_ABI);
 
-    /* NT file I/O tests (§6) */
+    /* NT file I/O tests */
     test_suite_register_cat("NT: NtCreateFile/NtOpenFile SSDT", test_nt_create_file_ssdt_registered, TEST_CAT_ABI);
     test_suite_register_cat("NT: file I/O constants", test_nt_file_constants, TEST_CAT_ABI);
 
-    /* NT process/thread lifecycle tests (§7) */
+    /* NT process/thread lifecycle tests */
     test_suite_register_cat("NT: process/thread SSDT registered", test_nt_process_ssdt_registered, TEST_CAT_ABI);
     test_suite_register_cat("NT: thread info classes", test_nt_thread_info_classes, TEST_CAT_ABI);
 
-    /* NT sync objects tests (§8) */
+    /* NT sync objects tests */
     test_suite_register_cat("NT: sync SSDT registered", test_nt_sync_ssdt_registered, TEST_CAT_ABI);
     test_suite_register_cat("NT: sync constants", test_nt_sync_constants, TEST_CAT_ABI);
 
-    /* NT virtual memory tests (§9) */
+    /* NT virtual memory tests */
     test_suite_register_cat("NT: VM SSDT registered", test_nt_vm_ssdt_registered, TEST_CAT_ABI);
     test_suite_register_cat("NT: VM constants", test_nt_vm_constants, TEST_CAT_ABI);
 
-    /* NT system information tests (§10) */
+    /* NT system information tests */
     test_suite_register_cat("NT: NtQuerySystemInfo classes", test_nt_sysinfo_classes, TEST_CAT_ABI);
     test_suite_register_cat("NT: NtQueryProcessInfo classes", test_nt_procinfo_classes, TEST_CAT_ABI);
 
@@ -1135,7 +1135,7 @@ void test_register_nt_types(void)
     test_suite_register_cat("NT: IOCP create/post/dequeue roundtrip",
                             test_nt_iocp_roundtrip, TEST_CAT_ABI);
 
-    /* IOSB + LastError tests (§11) */
+    /* IOSB + LastError tests */
     test_suite_register_cat("NT: RtlNtStatusToDosError success",
                             test_rtl_status_to_dos_success, TEST_CAT_ABI);
     test_suite_register_cat("NT: RtlNtStatusToDosError known",
@@ -1143,7 +1143,7 @@ void test_register_nt_types(void)
     test_suite_register_cat("NT: RtlNtStatusToDosError unknown",
                             test_rtl_status_to_dos_unknown, TEST_CAT_ABI);
 
-    /* ZwXxx alias layer tests (§12) */
+    /* ZwXxx alias layer tests */
     test_suite_register_cat("NT: ZwClose kernel dispatch",
                             test_zw_close_kernel_dispatch, TEST_CAT_ABI);
     test_suite_register_cat("NT: ProbeForRead user range",

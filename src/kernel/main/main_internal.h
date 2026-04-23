@@ -11,7 +11,7 @@
 #include "kernel/boot_init.h"
 
 /* ---- Formal boot phase entry points ------------------------------------- */
-/* These replace the legacy boot_*_init() functions once §§2–5 are complete. */
+/* These replace the legacy boot_*_init() functions once §–5 are complete. */
 
 /* boot_init.c -- Critical init: serial, memory, klog, CPUID */
 void boot_phase0(uint64_t magic, uint64_t mbi);
@@ -25,7 +25,7 @@ void boot_phase2(void);
 /* boot_desktop.c -- User platform: scheduler, IPC, exec loader, desktop */
 void boot_phase3(void);
 
-/* ---- Legacy boot phase entry points (active until §§2–5 land) ---------- */
+/* ---- Legacy boot phase entry points (active until §–5 land) ---------- */
 
 /* boot_hw.c -- Memory managers, CPUID, SIMD, disk drivers, block devices */
 void boot_hw_init(uint64_t magic, uint64_t mbi);
@@ -54,7 +54,7 @@ void compositor_run(void);
  * framework, headless compositor section). The set/get knobs are
  * always safe to call; `compositor_step_frames` is REJECTED (returns
  * 0) when headless mode is off, so it cannot race the main compositor
- * loop -- Codex §12 review hardened this after the original "also
+ * loop -- Codex review hardened this after the original "also
  * works while compositor_run is live" contract was found unsafe. */
 
 /* Switch the compositor to headless mode. Must be called BEFORE
@@ -64,7 +64,7 @@ void compositor_set_headless(int headless);
 int  compositor_is_headless(void);
 
 /* Set the deterministic seed used for future animation / transition
- * RNG so byte-identical replay is possible under §12's virtual
+ * RNG so byte-identical replay is possible under's virtual
  * clock. Today no compositor feature consumes the seed; the API slot
  * lands ahead of animation work so trace tooling can commit to the
  * contract. */
@@ -72,7 +72,7 @@ void     compositor_set_test_seed(uint64_t seed);
 uint64_t compositor_get_test_seed(void);
 
 /* Drive exactly `n` compositor frames: mark dirty, composite, present
- * (skipping real fb_swap in headless mode), advance the §10 frame-
+ * (skipping real fb_swap in headless mode), advance the frame-
  * stats counters. Returns the number of frames actually presented.
  * Returns 0 when headless mode is OFF: running step_frames
  * concurrently with the main compositor loop would race windows[]

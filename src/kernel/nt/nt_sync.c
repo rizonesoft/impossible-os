@@ -22,7 +22,7 @@
 #include "kernel/ob/ob_mutex.h"
 #include "kernel/ob/ob_semaphore.h"
 #include "kernel/ob/ob_process.h"
-#include "kernel/ipc/alpc_port.h"       /* ObpAlpcPortType + ALPC_PORT for waitable ports (§5.3) */
+#include "kernel/ipc/alpc_port.h" /* ObpAlpcPortType + ALPC_PORT for waitable ports */
 #include "kernel/klog.h"
 #include "kernel/timer.h"
 
@@ -469,7 +469,7 @@ static NTSTATUS wait_on_handle(HANDLE handle, uint32_t timeout_ms)
         /* event_wait_timeout returns 1 on signalled, 0 on timeout.
          * (Prior inversion here -- `== 0 ? SUCCESS : TIMEOUT` -- would
          * have reported timeouts as SUCCESS and vice versa; caught
-         * during the ALPC §5 design review.) */
+         * during the ALPC design review.) */
         return event_wait_timeout(&eo->event, timeout_ms)
                ? STATUS_SUCCESS : STATUS_TIMEOUT;
     }
@@ -518,7 +518,7 @@ static NTSTATUS wait_on_handle(HANDLE handle, uint32_t timeout_ms)
 
     /* ALPC Port: signalled when MessageQueue is non-empty. Only valid
      * when the port was created with ALPC_PORTFLG_WAITABLE_PORT (TODO-12
-     * §5.3). Non-waitable ALPC ports fall through to OBJECT_TYPE_MISMATCH
+     *.3). Non-waitable ALPC ports fall through to OBJECT_TYPE_MISMATCH
      * so the caller learns the port is not wait-compatible. */
     if (hdr->type == ObpAlpcPortType) {
         ALPC_PORT *port = (ALPC_PORT *)entry->object;
@@ -689,7 +689,7 @@ void nt_sync_register_ssdt(void)
     ssdt_register(SSDT_NtReleaseSemaphore,  (SSDT_HANDLER)NtReleaseSemaphore_handler);
     ssdt_register(SSDT_NtQuerySemaphore,    (SSDT_HANDLER)NtQuerySemaphore_handler);
 
-    /* Wait (0x0006-0x0008) -- override §5 NtWaitForSingleObject */
+    /* Wait (0x0006-0x0008) -- override NtWaitForSingleObject */
     ssdt_register(SSDT_NtWaitForSingleObject,          (SSDT_HANDLER)NtWaitForSingleObject_handler);
     ssdt_register(SSDT_NtWaitForMultipleObjects,       (SSDT_HANDLER)NtWaitForMultipleObjects_handler);
     ssdt_register(SSDT_NtSignalAndWaitForSingleObject, (SSDT_HANDLER)NtSignalAndWait_handler);

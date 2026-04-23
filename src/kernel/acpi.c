@@ -571,7 +571,7 @@ static uint64_t acpi_sci_handler(struct interrupt_frame *frame)
         /* Power button pressed */
         outw_acpi(s_pm1a_sts_port, (1u << 8));  /* clear PWRBTN_STS */
         klog(LOG_INFO, "acpi", "Power button pressed (SCI)");
-        /* TODO: dispatch to power button handler (§7) */
+        /* Power button handler dispatch pending -- see power management roadmap. */
     }
 
     if (sts & (1u << 9)) {

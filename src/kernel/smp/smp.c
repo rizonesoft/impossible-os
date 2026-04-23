@@ -72,8 +72,8 @@ void smp_early_bsp_init(void)
     cpu_data[0].irq_count     = 0;
     cpu_data[0].preempt_count = 0;
 
-    /* KPTI §3: Initialize CR3 pair. kernel_cr3 = current boot PML4.
-     * user_cr3 = kernel_cr3 (no isolation until §6 allocates sparse PML4). */
+    /* KPTI: Initialize CR3 pair. kernel_cr3 = current boot PML4.
+     * user_cr3 = kernel_cr3 (no isolation until allocates sparse PML4). */
     {
         uint64_t cr3_val;
         __asm__ volatile("mov %%cr3, %0" : "=r"(cr3_val));
@@ -97,7 +97,7 @@ void smp_early_bsp_init(void)
         }
     }
 
-    /* §19 fast-path transition ring: initialize BSP ring now that
+    /* fast-path transition ring: initialize BSP ring now that
      * gs:0 is valid. transition_ring_record is a no-op until the
      * init marker is set, so any pre-init ring-3 transition is
      * safely dropped rather than crashing. */
@@ -134,8 +134,8 @@ void ap_entry(uint32_t cpu_index)
     pcpu = &cpu_data[cpu_index];
     pcpu->self = pcpu;  /* self-pointer for gs:0 access */
 
-    /* KPTI §3: AP gets same kernel CR3 as BSP (shared boot PML4).
-     * user_cr3 = kernel_cr3 until §6 allocates per-process PML4. */
+    /* KPTI: AP gets same kernel CR3 as BSP (shared boot PML4).
+     * user_cr3 = kernel_cr3 until allocates per-process PML4. */
     {
         uint64_t cr3_val;
         __asm__ volatile("mov %%cr3, %0" : "=r"(cr3_val));
@@ -171,7 +171,7 @@ void ap_entry(uint32_t cpu_index)
     pcpu->current_irql  = PASSIVE_LEVEL;
     pcpu->current_task  = (void *)0;
 
-    /* §19 fast-path transition ring: initialize AP ring now that
+    /* fast-path transition ring: initialize AP ring now that
      * gs points at this AP's per_cpu_data. Same idempotent no-op
      * rule as BSP init above. */
     {

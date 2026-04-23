@@ -30,7 +30,7 @@
 #include "bsod_icon.h"
 #include "kernel/symtab.h"
 #include "kernel/boot_init.h"
-#include "kernel/sched/transition_ring.h"   /* §19 fast-path transition ring dump */
+#include "kernel/sched/transition_ring.h" /* fast-path transition ring dump */
 #include "kernel/smp.h"
 #include "kernel/drivers/serial.h"
 #include "kernel/smp.h"
@@ -783,7 +783,7 @@ void panic_screen(struct interrupt_frame *frame, uint64_t error_code,
         panic_capture_fpu_state();
         panic_build_context(frame, &g_panic_context);
 
-        /* §19 fast-path transition ring: dump the last 64 ring-3
+        /* fast-path transition ring: dump the last 64 ring-3
          * transitions on THIS CPU (the crashing one) BEFORE any
          * other panic output. If the crash root cause is "user
          * task returned with bad state after transition N", that

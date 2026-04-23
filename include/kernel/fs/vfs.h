@@ -118,12 +118,12 @@ struct vfs_node {
     struct vfs_ops  *ops;        /* filesystem operations */
     void            *fs_data;    /* filesystem-private data */
     struct vfs_node *parent;     /* parent directory */
-    /* Share-mode enforcement (§8) */
+    /* Share-mode enforcement */
     vfs_open_handle_t open_handles[VFS_MAX_HANDLES];
-    uint8_t          delete_on_close;  /* 1 = delete when last handle closes (§9) */
-    /* Byte-range locks (§10) */
+    uint8_t delete_on_close; /* 1 = delete when last handle closes */
+    /* Byte-range locks */
     vfs_lock_t       locks[VFS_MAX_LOCKS];
-    /* Opportunistic locks (§14) */
+    /* Opportunistic locks */
     uint8_t          oplock_level;   /* VFS_OPLOCK_NONE/LEVEL1/LEVEL2 */
     uint32_t         oplock_owner;   /* owner_id of exclusive oplock holder */
 };
@@ -201,7 +201,7 @@ int vfs_is_mounted(char drive_letter);
  * Called internally by vfs_open(); exposed for testing. */
 int vfs_check_sharing(struct vfs_node *node, uint32_t access, uint32_t share);
 
-/* --- Win32 feature-spoofing stubs (§11) --- */
+/* --- Win32 feature-spoofing stubs --- */
 
 /* Volume filesystem attribute flags (Win32 FILE_FS_ATTRIBUTE_INFORMATION) */
 #define VFS_VOL_UNICODE_ON_DISK       0x00000004

@@ -1,13 +1,13 @@
 /* ============================================================================
- * test_harness_smoke.c -- §1 smoke binary for user/include/test.h
+ * test_harness_smoke.c -- smoke binary for user/include/test.h
  *
  * Proves the assertion macro compiles, links against syscall + libc, and
  * produces the documented [UTEST-BEGIN] / [PASS] / [UTEST-END] lines.
- * Designed to PASS unconditionally so when §3 launcher ships and picks
+ * Designed to PASS unconditionally so when launcher ships and picks
  * this up automatically, exit code 0 means "the harness itself is healthy".
  *
  * The FAIL-path of UTEST_ASSERT is exercised by code review of test.h
- * and by the §15 build-integration "deliberate-fail" smoke (if added);
+ * and by the build-integration "deliberate-fail" smoke (if added);
  * a runtime FAIL here would just trip the launcher unnecessarily.
  *
  * Linked against the same crt0 + libc as hello.exe / cmd.exe.

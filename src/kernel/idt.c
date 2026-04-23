@@ -18,7 +18,7 @@
 #include "kernel/drivers/lapic.h"
 #include "kernel/panic.h"
 #include "kernel/sched/irql.h"
-#include "kernel/sched/transition_ring.h"   /* §19 fast-path transition ring */
+#include "kernel/sched/transition_ring.h" /* fast-path transition ring */
 #include "kernel/smp.h"
 
 /* IDT entry (16 bytes in Long Mode) */
@@ -249,7 +249,7 @@ uint64_t isr_handler(struct interrupt_frame *frame)
         }
     }
 
-    /* ---- §19 transition ring: record ring-3 -> ring-0 entry ----
+    /* ---- transition ring: record ring-3 -> ring-0 entry ----
      * Only record when coming from ring 3 (user mode). Covers INT
      * 0x80, INT 0x2E, and hardware IRQs that preempted user code.
      * Kernel-internal exceptions and timer ticks taken in kernel
@@ -353,7 +353,7 @@ irql_restore:
                      "iretq: CS.DPL=3 but SS.DPL=%u (frame CS=0x%X SS=0x%X)",
                      (uint64_t)ss_rpl,
                      final_frame->cs, final_frame->ss);
-            /* §19 transition ring: record ring-0 -> ring-3 exit.
+            /* transition ring: record ring-0 -> ring-3 exit.
              * Pairs with the TO_KERNEL record at function entry so
              * each user-mode crossing leaves a matched entry/exit
              * pair in the ring, letting a dump show exactly which

@@ -147,7 +147,7 @@ int wall_clock_ready(void)
     return s_ready;
 }
 
-/* ---- Kernel time service API (§6) ---------------------------------------- */
+/* ---- Kernel time service API ---------------------------------------- */
 
 void KeQueryTickCount(uint64_t *tick_count)
 {
@@ -175,7 +175,7 @@ int time_service_ready(void)
     return s_ready;
 }
 
-/* ---- Interrupt time APIs (§7) -------------------------------------------- */
+/* ---- Interrupt time APIs -------------------------------------------- */
 
 static volatile uint64_t s_interrupt_time_bias;  /* cumulative suspend bias */
 
@@ -204,7 +204,7 @@ void ke_suspend_bias_update(uint64_t bias_100ns)
     __atomic_fetch_add(&s_interrupt_time_bias, bias_100ns, __ATOMIC_SEQ_CST);
 }
 
-/* ---- SSDT handlers (§9) ------------------------------------------------- */
+/* ---- SSDT handlers ------------------------------------------------- */
 
 /* NtQuerySystemTime(SystemTime) -- SSDT 0x00F0 */
 static NTSTATUS nt_query_system_time(uint64_t out_ptr, uint64_t a2,

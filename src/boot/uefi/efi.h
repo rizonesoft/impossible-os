@@ -757,7 +757,7 @@ typedef struct EFI_BLOCK_IO_PROTOCOL {
     EFI_BLOCK_FLUSH         FlushBlocks;
 } EFI_BLOCK_IO_PROTOCOL;
 
-/* --- Device Path Protocol (§3: boot device path) --- */
+/* --- Device Path Protocol (boot device path) --- */
 
 typedef struct {
     UINT8  Type;
@@ -770,7 +770,7 @@ typedef struct {
     { 0x8BE4DF61, 0x93CA, 0x11D2, \
       { 0xAA, 0x0D, 0x00, 0xE0, 0x98, 0x03, 0x2B, 0x8C } }
 
-/* Device path node type/subtype constants (§4: boot device type detection) */
+/* Device path node type/subtype constants (boot device type detection) */
 #define EFI_DP_TYPE_MESSAGING    0x03
 #define EFI_DP_TYPE_MEDIA        0x04
 #define EFI_DP_TYPE_END          0x7F
@@ -785,7 +785,7 @@ typedef struct {
 
 #define EFI_DP_SUBTYPE_END_ENTIRE 0xFF
 
-/* --- Device Path To Text Protocol (§3: human-readable device path) --- */
+/* --- Device Path To Text Protocol (human-readable device path) --- */
 
 #define EFI_DEVICE_PATH_TO_TEXT_PROTOCOL_GUID \
     { 0x8b843e20, 0x8132, 0x4852, \

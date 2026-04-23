@@ -115,7 +115,7 @@ assert_grep() {
 }
 
 # ============================================================================
-# Wrapper --help contract (§3)
+# Wrapper --help contract
 # ============================================================================
 
 [ "$QUIET" = "0" ] && echo -e "${DIM}[wrapper --help contract]${NC}"
@@ -275,7 +275,7 @@ else
         fi
     done
 
-    # Wrapper alignment (§6): build.yml + release.yml invoke the canonical
+    # Wrapper alignment: build.yml + release.yml invoke the canonical
     # wrappers. Absence here means CI and local flow have diverged.
     for wf in build.yml release.yml; do
         path="$REPO_ROOT/.github/workflows/$wf"
@@ -287,14 +287,14 @@ else
     # Maintenance / deployment workflows (pages, labeler, stale) are not
     # build-participants so they don't need to invoke build.sh / test.sh,
     # but they MUST parse as YAML (checked above) and MUST NOT reference
-    # the legacy ISO / make-test path that the §9 legacy-XREF sweep and
-    # the §3 wrapper contract retired.
+    # the legacy ISO / make-test path that the legacy-XREF sweep and
+    # the wrapper contract retired.
     for wf in pages.yml labeler.yml stale.yml; do
         path="$REPO_ROOT/.github/workflows/$wf"
         for stale in 'make test' 'run-tests\.sh' 'build/os-build\.iso'; do
             if grep -qE "$stale" "$path" 2>/dev/null; then
                 t_fail "$wf rejects stale '$stale'" \
-                    "found a reference to $stale; §3 + §9 retired this; use the canonical wrapper path"
+                    "found a reference to $stale; + retired this; use the canonical wrapper path"
             else
                 t_pass "$wf rejects stale '$stale'"
             fi
@@ -303,7 +303,7 @@ else
 fi
 
 # ============================================================================
-# Supported-host profile + reproducible env + unsupported-host fallback (§2)
+# Supported-host profile + reproducible env + unsupported-host fallback
 # ============================================================================
 # The development-tooling.md is the single source of truth for which hosts
 # are supported and which require a shim. A promotion/demotion in that
@@ -343,10 +343,10 @@ assert_grep "dev-tooling.md documents Fedora/Arch shim procedure" \
     "$DEV_TOOLING_MD" 'Fedora.*Arch.*Shim|Shim.*Procedure'
 
 # ============================================================================
-# Stale-command rejection (§3 wrapper contract + §9 legacy-XREF sweep)
+# Stale-command rejection (wrapper contract + legacy-XREF sweep)
 # ============================================================================
-# After §3 codified `bash scripts/build.sh` / `bash scripts/test.sh` as the
-# canonical surface, and §9 drained the legacy numeric-TODO shorthand, a
+# After codified `bash scripts/build.sh` / `bash scripts/test.sh` as the
+# canonical surface, and drained the legacy numeric-TODO shorthand, a
 # regression could easily re-introduce `make test` / `run-tests.sh` /
 # `build/os-build.iso` into a doc or README as if it were a primary
 # command. This group ensures those strings never reappear as primary
@@ -389,25 +389,25 @@ for doc in "${OPERATOR_DOCS[@]}"; do
     if grep -nE '(^|[^a-zA-Z])make[[:space:]]+test([^a-zA-Z0-9_-])' "$doc" 2>/dev/null \
         | grep -viE 'legacy|retired|deprecated|historical|bash scripts/test\.sh|make test\*|shorthand|passthrough|delegates?' >/dev/null; then
         t_fail "$(basename "$doc") rejects stale 'make test' as primary" \
-            "found 'make test' not marked legacy; use 'bash scripts/test.sh' per §3"
+            "found 'make test' not marked legacy; use 'bash scripts/test.sh' per "
     else
         t_pass "$(basename "$doc") rejects stale 'make test' as primary"
     fi
-    # `run-tests.sh` was retired in §3. Any mention outside a legacy marker
+    # `run-tests.sh` was retired in. Any mention outside a legacy marker
     # means the operator will follow a dead path.
     if grep -nE 'run-tests\.sh' "$doc" 2>/dev/null \
         | grep -viE 'legacy|retired|deprecated|historical' >/dev/null; then
         t_fail "$(basename "$doc") rejects stale 'run-tests.sh'" \
-            "found 'run-tests.sh' not marked legacy; script was retired in §3"
+            "found 'run-tests.sh' not marked legacy; script was retired in "
     else
         t_pass "$(basename "$doc") rejects stale 'run-tests.sh'"
     fi
-    # `build/os-build.iso` was retired in §3. The GPT disk image
+    # `build/os-build.iso` was retired in. The GPT disk image
     # `build/system-disk.img` replaced it.
     if grep -nE 'build/os-build\.iso' "$doc" 2>/dev/null \
         | grep -viE 'legacy|retired|deprecated|historical' >/dev/null; then
         t_fail "$(basename "$doc") rejects stale 'build/os-build.iso'" \
-            "found 'build/os-build.iso' not marked legacy; use 'build/system-disk.img' per §3"
+            "found 'build/os-build.iso' not marked legacy; use 'build/system-disk.img' per "
     else
         t_pass "$(basename "$doc") rejects stale 'build/os-build.iso'"
     fi
@@ -472,7 +472,7 @@ assert_grep "development-tooling.md mentions tooling-doctor" \
 # ============================================================================
 # Build / test sentinel contract (surface-only; full runs in CI)
 # ============================================================================
-# The TODO's Unit Tests §3 and §4 bullets assert:
+# The TODO's Unit Tests and bullets assert:
 #   - bash scripts/build.sh clean writes build/build.log; tail -1 equals
 #     '=== BUILD OK ==='
 #   - bash scripts/test.sh QUIET=1 keeps summary path, suppresses per-test
@@ -532,7 +532,7 @@ if [ -x "$TODO_GRAPH_TEST" ]; then
     # Capture the "[test_build] N/N passed, 0 failed" summary so the
     # aggregate runner's message tracks the current sub-test count
     # instead of drifting (prior hard-coded "37 sub-tests" went stale
-    # as §3-§8 + review passes added more sub-tests through 105+).
+    # as -+ review passes added more sub-tests through 105+).
     TG_OUT=$("$TODO_GRAPH_TEST" 2>&1)
     TG_RC=$?
     TG_SUMMARY=$(printf '%s\n' "$TG_OUT" | grep -E '^\[test_build\] ' | tail -1)

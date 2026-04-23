@@ -4,7 +4,7 @@
  *
  * Scope: boot_info-driven regions only (struct boot_info itself, USB
  * DMA pages + scratchpad, TPM event log, framebuffer, UEFI runtime
- * memory map, §5 typed payloads with BOOT_PAYLOAD_FLAG_RESERVED).
+ * memory map, typed payloads with BOOT_PAYLOAD_FLAG_RESERVED).
  *
  * OUT of scope (handled directly by pmm_init's existing calls): first
  * 1 MiB legacy area, kernel image, bitmap itself, user-mode ELF
@@ -43,7 +43,7 @@ enum boot_reserved_kind {
     BOOT_RESERVED_TPM_EVENT_LOG    = 4,  /* copied TCG event log */
     BOOT_RESERVED_FRAMEBUFFER      = 5,  /* linear GOP framebuffer */
     BOOT_RESERVED_RT_MMAP          = 6,  /* UEFI runtime services region */
-    BOOT_RESERVED_PAYLOAD          = 7,  /* §5 typed payload with FLAG_RESERVED */
+    BOOT_RESERVED_PAYLOAD = 7, /* typed payload with FLAG_RESERVED */
 };
 
 struct boot_reserved_region {
@@ -73,7 +73,7 @@ boot_result_t boot_reserved_populate_from_info(const struct boot_info *info,
 void boot_reserved_apply(void);
 
 /* Scan every BOOT_RESERVED_PAYLOAD entry for overlap with the given
- * range. Used by pmm_init to check §5 bootloader-loaded payloads
+ * range. Used by pmm_init to check bootloader-loaded payloads
  * against the PMM-internal reservations (first 1 MiB, kernel image,
  * bitmap, USER_ELF range) that boot_payload_validate() cannot see
  * (it runs before pmm_init has computed the bitmap layout).

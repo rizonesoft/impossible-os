@@ -7,7 +7,7 @@
  * maximum inline message length, and non-overlap of ALPC_PORTFLG_* and
  * ALPC_MSGFLG_* bit groups.
  *
- * §2 adds port-object tests: ObpAlpcPortType registration, \RPC Control
+ * adds port-object tests: ObpAlpcPortType registration, \RPC Control
  * namespace entry, AlpcCreatePort success paths (named + unnamed), and
  * namespace lookup of a named port.
  * ============================================================================ */
@@ -15,10 +15,10 @@
 #ifdef KERNEL_TESTS
 
 #include "kernel/test/test.h"
-#include "kernel/test/scratch.h"        /* TEST_SCRATCH_KBUF -- §4 retrofit (b) */
-#include "kernel/test/race_barrier.h"   /* test_race_barrier_t -- §4 retrofit (c) */
-#include "kernel/test/klog_suppress.h"  /* TEST_KLOG_SUPPRESS -- §4 retrofit (a) */
-#include "kernel/mm/heap.h"             /* kmalloc_fail_next -- §4 retrofit (a) */
+#include "kernel/test/scratch.h" /* TEST_SCRATCH_KBUF -- retrofit (b) */
+#include "kernel/test/race_barrier.h" /* test_race_barrier_t -- retrofit (c) */
+#include "kernel/test/klog_suppress.h" /* TEST_KLOG_SUPPRESS -- retrofit (a) */
+#include "kernel/mm/heap.h" /* kmalloc_fail_next -- retrofit (a) */
 #include "kernel/ipc/alpc.h"
 #include "kernel/ipc/alpc_port.h"
 #include "kernel/nt/nt_types.h"
@@ -183,7 +183,7 @@ static void test_alpc_sqos_layout(void)
                    "CONTEXT_TRACKING_DYNAMIC == 1");
 }
 
-/* ---- §2 Port object tests ---------------------------------------------- */
+/* ---- Port object tests ---------------------------------------------- */
 
 static void test_alpc_port_type_registered(void)
 {
@@ -339,7 +339,7 @@ static void test_alpc_embedded_backslash_rejected(void)
 
 static void test_alpc_privileged_flag_rejected(void)
 {
-    /* ALPC_PORTFLG_SYSTEM_PROCESS is privileged; §7 gates it via
+    /* ALPC_PORTFLG_SYSTEM_PROCESS is privileged; gates it via
      * SeAccessCheck. Until then, reject from everywhere so it cannot
      * be set via user-mode. */
     ALPC_PORT_ATTRIBUTES attrs;
@@ -382,7 +382,7 @@ static void test_alpc_syscall_full_path(void)
      * (a) the path-split logic peels "\\RPC Control\\" and passes only
      * "TestPortSyscall" to AlpcCreatePort, and (b) the resulting port
      * is findable at the original full path. This is the exact test the
-     * §2 Codex review asked for. */
+     * Codex review asked for. */
     HANDLE out = 0;
     UNICODE_STRING name_us;
     OBJECT_ATTRIBUTES oa;
@@ -415,7 +415,7 @@ static void test_alpc_syscall_full_path(void)
 }
 
 /* =========================================================================
- * §3 Connection state machine tests
+ * Connection state machine tests
  * =======================================================================*/
 
 /* Simple pattern: static state set by the main thread, consumed by the
@@ -749,9 +749,9 @@ static void test_alpc_syscall_bad_prefix_rejected(void)
 }
 
 /* =========================================================================
- * §4 Synchronous Send+Wait+Receive Engine tests
+ * Synchronous Send+Wait+Receive Engine tests
  *
- * Each test sets up a connected pair via the §3 handshake, then drives
+ * Each test sets up a connected pair via the handshake, then drives
  * AlpcSendWaitReceivePort on both endpoints. Worker threads run the
  * client side via kthread_create so the cooperative-yield scheduler
  * can interleave server and client.
@@ -759,7 +759,7 @@ static void test_alpc_syscall_bad_prefix_rejected(void)
 
 #include "kernel/sched/task.h"
 
-/* Shared state for §4 worker threads. The framework runs suites
+/* Shared state for worker threads. The framework runs suites
  * sequentially on a single thread pool, so a single set of statics is
  * safe. */
 static volatile HANDLE   s_sync_client_handle;
@@ -771,7 +771,7 @@ static volatile int      s_sync_worker_done;
  * alpc_teardown_pair can unlink the named port from \RPC Control. */
 static const char       *s_sync_server_leaf;
 
-/* §4 connect-worker (file-static; replaces inline GCC-nested-function
+/* connect-worker (file-static; replaces inline GCC-nested-function
  * pattern that clang -- the project compiler -- does not support). */
 static void s4_connect_worker(void *arg)
 {
@@ -785,7 +785,7 @@ static void s4_connect_worker(void *arg)
 
 static HANDLE alpc_setup_pair(const char *server_name, HANDLE *server_comm)
 {
-    /* Convenience: build a fully connected server/client pair using §3
+    /* Convenience: build a fully connected server/client pair using
      * primitives. Returns the client communication handle. The server
      * connection handle is exposed via s_sync_server_conn so the test
      * can NtClose it afterwards. */
@@ -877,7 +877,7 @@ static void alpc_teardown_pair(HANDLE client_h, HANDLE server_comm)
     }
 }
 
-/* ---- §4.1 Datagram send delivers to peer's MessageQueue --------------- */
+/* ---- Datagram send delivers to peer's MessageQueue --------------- */
 
 static void test_alpc_datagram_delivery(void)
 {
@@ -924,7 +924,7 @@ static void test_alpc_datagram_delivery(void)
     alpc_teardown_pair(client_h, server_comm);
 }
 
-/* ---- §4.2 Sync request + reply round-trip ----------------------------- */
+/* ---- Sync request + reply round-trip ----------------------------- */
 
 static void sync_server_worker(void *arg)
 {
@@ -1014,7 +1014,7 @@ static void test_alpc_sync_request_reply(void)
     alpc_teardown_pair(client_h, server_comm);
 }
 
-/* ---- §4.3 Reply with bogus MessageId ---------------------------------- */
+/* ---- Reply with bogus MessageId ---------------------------------- */
 
 static void test_alpc_reply_mismatch(void)
 {
@@ -1044,7 +1044,7 @@ static void test_alpc_reply_mismatch(void)
     alpc_teardown_pair(client_h, server_comm);
 }
 
-/* ---- §4.4 Datagram exceeding MaxMessageLength ------------------------- */
+/* ---- Datagram exceeding MaxMessageLength ------------------------- */
 
 static void test_alpc_send_too_large(void)
 {
@@ -1072,7 +1072,7 @@ static void test_alpc_send_too_large(void)
     alpc_teardown_pair(client_h, server_comm);
 }
 
-/* ---- §4.5 Receive on empty queue with timeout=0 ----------------------- */
+/* ---- Receive on empty queue with timeout=0 ----------------------- */
 
 static void test_alpc_receive_empty_no_wait(void)
 {
@@ -1093,7 +1093,7 @@ static void test_alpc_receive_empty_no_wait(void)
     alpc_teardown_pair(client_h, server_comm);
 }
 
-/* ---- §4.6 Disconnect wakes blocked sync waiter ------------------------ */
+/* ---- Disconnect wakes blocked sync waiter ------------------------ */
 
 static void disconnect_after_delay_worker(void *arg)
 {
@@ -1145,7 +1145,7 @@ static void test_alpc_sync_wait_disconnect(void)
     alpc_teardown_pair(client_h, server_comm);
 }
 
-/* ---- §4.7 Pool quota exceeded ----------------------------------------- */
+/* ---- Pool quota exceeded ----------------------------------------- */
 
 static void test_alpc_pool_quota_exceeded(void)
 {
@@ -1208,7 +1208,7 @@ static void test_alpc_pool_quota_exceeded(void)
     test_alpc_cleanup_named("TightPool");
 }
 
-/* ---- §4.8 Receive-only path: FIFO + truncation ------------------------ */
+/* ---- Receive-only path: FIFO + truncation ------------------------ */
 
 static void test_alpc_receive_fifo_truncation(void)
 {
@@ -1295,7 +1295,7 @@ static void test_alpc_receive_fifo_truncation(void)
     alpc_teardown_pair(client_h, server_comm);
 }
 
-/* ---- §4.9 Sync timeout + late reply mismatch -------------------------- */
+/* ---- Sync timeout + late reply mismatch -------------------------- */
 
 static void test_alpc_sync_timeout_late_reply(void)
 {
@@ -1371,7 +1371,7 @@ static void test_alpc_sync_timeout_late_reply(void)
     alpc_teardown_pair(client_h, server_comm);
 }
 
-/* ---- §4.10 Disconnect-then-send returns DISCONNECTED ----------------- */
+/* ---- Disconnect-then-send returns DISCONNECTED ----------------- */
 
 static void test_alpc_disconnect_then_send(void)
 {
@@ -1411,7 +1411,7 @@ static void test_alpc_disconnect_then_send(void)
     alpc_teardown_pair(client_h, server_comm);
 }
 
-/* ---- §4.10a PORT_CLOSED marker is uncharged (regression) ------------- */
+/* ----.10a PORT_CLOSED marker is uncharged (regression) ------------- */
 
 static void test_alpc_port_closed_marker_uncharged(void)
 {
@@ -1478,7 +1478,7 @@ static void test_alpc_port_closed_marker_uncharged(void)
     alpc_teardown_pair(client_h, server_comm);
 }
 
-/* ---- §4.10b Remote disconnect then send => DISCONNECTED -------------- */
+/* ----.10b Remote disconnect then send => DISCONNECTED -------------- */
 
 static void test_alpc_remote_disconnect_then_send(void)
 {
@@ -1532,7 +1532,7 @@ static void test_alpc_remote_disconnect_then_send(void)
     alpc_teardown_pair(client_h, server_comm);
 }
 
-/* ---- §4.11 Sync request with no peer (server connection port) -------- */
+/* ---- Sync request with no peer (server connection port) -------- */
 
 static void test_alpc_sync_no_peer(void)
 {
@@ -1567,7 +1567,7 @@ static void test_alpc_sync_no_peer(void)
     test_alpc_cleanup_named("NoPeer");
 }
 
-/* ---- §4.12 NtAlpcSendWaitReceivePort syscall validation -------------- */
+/* ---- NtAlpcSendWaitReceivePort syscall validation -------------- */
 
 static void test_alpc_syscall_validation(void)
 {
@@ -1619,7 +1619,7 @@ static void test_alpc_syscall_validation(void)
 }
 
 /* =========================================================================
- * §4 retrofits -- ALPC-side test gaps closed by the kernel test harness
+ * retrofits -- ALPC-side test gaps closed by the kernel test harness
  * primitives (kmalloc fault injection, race barrier, scratch helper,
  * klog level demotion). The three gaps below were originally deferred
  * because the kernel test harness lacked deterministic kmalloc-fault
@@ -1634,7 +1634,7 @@ static void test_alpc_syscall_validation(void)
  *       opposite directions.
  * =======================================================================*/
 
-/* ---- §4 retrofit (a): kmalloc-failure rollback uncharges under lock --- */
+/* ---- retrofit (a): kmalloc-failure rollback uncharges under lock --- */
 
 static void test_alpc_kmalloc_fail_rollback(void)
 {
@@ -1648,7 +1648,7 @@ static void test_alpc_kmalloc_fail_rollback(void)
      *
      * Suppress alpc-subsystem klog noise -- the engine logs the
      * INSUFFICIENT_RESOURCES path at LOG_DEBUG so this is purely
-     * cosmetic; the suppress proves the §5 primitive integrates with
+     * cosmetic; the suppress proves the primitive integrates with
      * a real failure-path test. */
     TEST_KLOG_SUPPRESS("alpc");
 
@@ -1703,7 +1703,7 @@ static void test_alpc_kmalloc_fail_rollback(void)
     alpc_teardown_pair(client_h, server_comm);
 }
 
-/* ---- §4 retrofit (b): ReplyBodyCap clamps to 65528 when recv > 65528 -- */
+/* ---- retrofit (b): ReplyBodyCap clamps to 65528 when recv > 65528 -- */
 
 static volatile NTSTATUS s_clamp_server_status;
 
@@ -1823,7 +1823,7 @@ static void test_alpc_reply_body_cap_clamped(void)
     alpc_teardown_pair(client_h, server_comm);
 }
 
-/* ---- §4 retrofit (c): two-port lock-order concurrency stress ---------- */
+/* ---- retrofit (c): two-port lock-order concurrency stress ---------- */
 
 static test_race_barrier_t s_lock_order_barrier;
 
@@ -1852,7 +1852,7 @@ static test_race_barrier_t s_lock_order_barrier;
  *
  *   - On single-CPU it is a smoke test for opposite-direction
  *     sync_request semantics (which is itself useful coverage --
- *     no other §4 test exercises both directions of a single pair
+ * no other test exercises both directions of a single pair
  *     in the same suite).
  *   - On 2-CPU WHPX / KVM-multi-cpu / bare metal, both senders
  *     hit alpc_sync_request within microseconds of each other,
@@ -2072,7 +2072,7 @@ static void test_alpc_two_port_lock_order_stress(void)
 }
 
 /* =========================================================================
- * §5 Asynchronous Delivery & Completion List tests
+ * Asynchronous Delivery & Completion List tests
  *
  * Covers:
  *   - ALPC_COMPLETION_LIST_ITEM ABI (sizeof lock)
@@ -2097,7 +2097,7 @@ static void test_alpc_completion_list_item_layout(void)
                    "ALPC_COMPLETION_LIST_ITEM.MessageFlags at offset 16");
 }
 
-/* ---- §5.3 Waitable port: NtWaitForSingleObject signalled on msg ------ */
+/* ---- Waitable port: NtWaitForSingleObject signalled on msg ------ */
 
 static void test_alpc_waitable_port_signal(void)
 {
@@ -2183,7 +2183,7 @@ static void test_alpc_waitable_port_signal(void)
     test_alpc_cleanup_named("WaitPort");
 }
 
-/* ---- §5.3 Non-waitable port rejected ---------------------------------- */
+/* ---- Non-waitable port rejected ---------------------------------- */
 
 static void test_alpc_nonwaitable_rejects(void)
 {
@@ -2207,7 +2207,7 @@ static void test_alpc_nonwaitable_rejects(void)
     test_alpc_cleanup_named("NotWaitable");
 }
 
-/* ---- §5.1/§5.2 NtAlpcSetInformation: AssociateCompletionPort --------- */
+/* ----.1/NtAlpcSetInformation: AssociateCompletionPort --------- */
 
 static void test_alpc_associate_completion_port(void)
 {
@@ -2404,7 +2404,7 @@ void test_register_alpc(void)
                             test_alpc_syscall_full_path, TEST_CAT_IPC);
     test_suite_register_cat("alpc: syscall bad prefix rejected",
                             test_alpc_syscall_bad_prefix_rejected, TEST_CAT_IPC);
-    /* §3 connection state machine */
+    /* connection state machine */
     test_suite_register_cat("alpc: connect to nonexistent",
                             test_alpc_connect_nonexistent, TEST_CAT_IPC);
     test_suite_register_cat("alpc: connect type mismatch",
@@ -2421,7 +2421,7 @@ void test_register_alpc(void)
                             test_alpc_accept_timeout, TEST_CAT_IPC);
     test_suite_register_cat("alpc: disconnect unconnected noop",
                             test_alpc_disconnect_unconnected, TEST_CAT_IPC);
-    /* §4 send+wait+receive engine */
+    /* send+wait+receive engine */
     test_suite_register_cat("alpc: datagram delivery (2 threads)",
                             test_alpc_datagram_delivery, TEST_CAT_IPC);
     test_suite_register_cat("alpc: sync request+reply round-trip",
@@ -2450,7 +2450,7 @@ void test_register_alpc(void)
                             test_alpc_sync_no_peer, TEST_CAT_IPC);
     test_suite_register_cat("alpc: NtAlpcSendWaitReceivePort syscall validation",
                             test_alpc_syscall_validation, TEST_CAT_IPC);
-    /* §4 retrofits -- closes the ALPC §4 deferred-test-gaps block via
+    /* retrofits -- closes the ALPC deferred-test-gaps block via
      * the kernel test-harness primitives (kmalloc fault inject, race
      * barrier, PMM scratch helper, klog level demotion). */
     test_suite_register_cat("alpc: kmalloc-fail in pending alloc rolls back PoolUsageBytes",
@@ -2459,7 +2459,7 @@ void test_register_alpc(void)
                             test_alpc_reply_body_cap_clamped, TEST_CAT_IPC);
     test_suite_register_cat("alpc: two-port lock-order stress (race-barrier paired senders)",
                             test_alpc_two_port_lock_order_stress, TEST_CAT_IPC);
-    /* §5 async delivery + waitable port */
+    /* async delivery + waitable port */
     test_suite_register_cat("alpc: ALPC_COMPLETION_LIST_ITEM layout",
                             test_alpc_completion_list_item_layout, TEST_CAT_IPC);
     test_suite_register_cat("alpc: waitable port signal/drain",

@@ -1,7 +1,7 @@
 /* ============================================================================
  * test_usermode.c -- Kernel-side launcher for user-mode test binaries
  *
- * Ships §3 (baseline spawn-and-wait) and §4 (manifest, timeouts, TAP,
+ * Ships (baseline spawn-and-wait) and (manifest, timeouts, TAP,
  * SKIP, filter) of TODO-04. See include/kernel/test/test_usermode.h
  * for the public API contract.
  *
@@ -9,7 +9,7 @@
  * one at a time so a leaked file handle, dirty Registry key, or stuck
  * process from binary N cannot perturb binary N+1's run. Per-test
  * isolation hardening (scratch dir + handle-leak detection) is owned
- * by §6; this file gets the basic sequence + watchdog right.
+ * by; this file gets the basic sequence + watchdog right.
  *
  * Preemptive scheduling: test_usermode_run() enables the scheduler
  * for the duration of the launcher run and disables it on return.
@@ -53,7 +53,7 @@
  * Volatile because the loader runs in a different scheduling slot. */
 static volatile const char *s_pending_test_path;
 
-/* Filter set by §4 -- NULL means "run every test_*.exe". */
+/* Filter set by -- NULL means "run every test_*.exe". */
 static const char *s_filter;
 
 /* Per-binary wall-clock timeout in ms. 0 = default. */
@@ -62,19 +62,19 @@ static uint32_t s_timeout_ms;
 /* TAP mode: 1 = emit `ok N - name` / `not ok N - name` / `1..N` plan. */
 static int s_tap_mode;
 
-/* §6 per-test isolation: 1 = scratch dir + Registry wipe + handle-leak
+/* per-test isolation: 1 = scratch dir + Registry wipe + handle-leak
  * detection around each binary. Default 1 (ON); boot.conf
  * utest_isolation=0 flips it off for debugging broken cleanup hooks. */
 static int s_isolation_enabled = 1;
 
-/* §7 CI-friendly output formats. Orthogonal to TAP (§4) and to each
+/* CI-friendly output formats. Orthogonal to TAP and to each
  * other: any subset can be enabled and all enabled formats emit
  * interleaved on serial, tagged with distinct `[UTEST-XML]` /
  * `[UTEST-JSON]` prefixes so scripts/test.sh can split them by grep. */
 static int s_xml_mode;
 static int s_json_mode;
 
-/* §8 test-type taxonomy: stress iteration count (0 = built-in default).
+/* test-type taxonomy: stress iteration count (0 = built-in default).
  * Set from boot.conf `stress_iters=<N>` via test_usermode_set_stress_iters. */
 static uint32_t s_stress_iters;
 #define UTEST_STRESS_DEFAULT_ITERS 100u
@@ -95,7 +95,7 @@ int test_usermode_color_active(void)
     return s_utest_color_active;
 }
 
-/* Defaults matching the §4 test checkpoint: 10s wall clock is long
+/* Defaults matching the test checkpoint: 10s wall clock is long
  * enough for a trivial test_*.exe on WHPX TCG (launch overhead plus
  * ELF load plus a few syscalls is <2s), short enough that a genuine
  * hang is caught in one boot cycle. */
@@ -103,7 +103,7 @@ int test_usermode_color_active(void)
 /* Grace period after SIGKILL before we force state=DEAD. */
 #define UTEST_KILL_GRACE_MS       500u
 /* Max binaries a single manifest can list; beyond this, extras fall
- * through to the directory-glob fallback. 128 is ~2x the §9-§15
+ * through to the directory-glob fallback. 128 is ~2x the -
  * planned binary set and matches what a future stress-test batch
  * would realistically enumerate. */
 #define UTEST_MANIFEST_MAX        128u
@@ -260,7 +260,7 @@ static uint64_t u_uptime_ms(void)
     return uptime_ns() / 1000000ULL;
 }
 
-/* ---- §8 test-type taxonomy ----------------------------------------- *
+/* ---- test-type taxonomy ----------------------------------------- *
  *
  * The launcher classifies each binary by filename prefix so it can
  * apply per-type policy: smoke runs FIRST with abort-on-FAIL, stress
@@ -317,7 +317,7 @@ static utest_type_t u_type_from_attr(const char *val)
     return UTEST_TYPE_CORRECTNESS;
 }
 
-/* ---- §6 per-test isolation helpers --------------------------------- *
+/* ---- per-test isolation helpers --------------------------------- *
  *
  * For each binary the launcher creates a fresh scratch directory and
  * wipes a Registry subkey so leftover state cannot cross-pollute the
@@ -850,8 +850,8 @@ static void u_cleanup_manifest_apply(void)
 
 struct manifest_state {
     const char  *names[UTEST_MANIFEST_MAX];
-    utest_type_t types[UTEST_MANIFEST_MAX]; /* §8: type per entry */
-    /* §12 follow-up: expected total task_create cost for this binary,
+    utest_type_t types[UTEST_MANIFEST_MAX]; /*: type per entry */
+    /* follow-up: expected total task_create cost for this binary,
      * including nested sys_fork calls. Default 1 (the launcher-spawned
      * task itself). Manifest entries tag fork-heavy binaries with
      * `expects_tasks=<N>` so the pre-flight budget check sums actual
@@ -961,7 +961,7 @@ static int u_manifest_load(struct manifest_state *ms)
              * payload: a whitespace-delimited list of tokens where
              * the first is the binary name and subsequent tokens are
              * `key=value` attributes. Today only `type=<smoke|stress|
-             * perf|correctness>` is recognized (§8 of TODO-04); other
+             * perf|correctness>` is recognized (of TODO-04); other
              * key/value pairs are silently ignored so a future schema
              * addition doesn't break older kernels. */
             if (line_end > line_start) {
@@ -1133,7 +1133,7 @@ static void utest_loader_func(void)
      * frame is consumed. yield() goes through schedule_now() which
      * switches regardless of the preemptive sched_enabled flag.
      * CRITICAL: do NOT replace this with `for(;;) hlt;` -- a user-mode
-     * spinloop would block forever if we relied on HLT here. (§3
+     * spinloop would block forever if we relied on HLT here. (
      * regression, 2026-04-20.) */
     for (;;)
         yield();
@@ -1141,7 +1141,7 @@ static void utest_loader_func(void)
 
 /* ---- Polled wait with timeout -------------------------------------- *
  *
- * Replaces task_waitpid in the §4 path. Semantics:
+ * Replaces task_waitpid in the path. Semantics:
  *  - Returns normally with the child's exit_status if the child
  *    reaches TASK_DEAD before the deadline.
  *  - On timeout: send SIGKILL, wait KILL_GRACE_MS for cooperative
@@ -1220,7 +1220,7 @@ static int32_t u_wait_with_timeout(uint32_t pid, uint32_t timeout_ms,
     return t->exit_status;
 }
 
-/* ---- §7 CI-friendly output format helpers ------------------------- *
+/* ---- CI-friendly output format helpers ------------------------- *
  *
  * XML attribute escaping covers the five spec-required characters
  * (`&`, `<`, `>`, `"`, `'`) plus control bytes (< 0x20, except tab/LF
@@ -1369,7 +1369,7 @@ static void u_format_seconds(char *dst, uint32_t cap, uint64_t ms)
     }
 }
 
-/* ---- §7 emit helpers ---------------------------------------------- */
+/* ---- emit helpers ---------------------------------------------- */
 
 static void u_emit_xml_suite_open(void)
 {
@@ -1415,7 +1415,7 @@ static void u_emit_xml_suite_close(uint32_t passed, uint32_t failed,
 
 /* Emit one `<testcase>` element for a binary. `verdict` is 0=PASS,
  * 1=FAIL, 2=SKIP. `reason` may be NULL; otherwise it's the
- * launcher-formatted reason string for FAIL/SKIP. `type` is the §8
+ * launcher-formatted reason string for FAIL/SKIP. `type` is the
  * taxonomy value that maps to the XML `classname` attribute (and
  * the JSON `type` field in the sibling emitter).
  *
@@ -1566,8 +1566,8 @@ static void u_emit_json_summary(uint32_t passed, uint32_t failed,
 
 /* Inner helper: spawn + wait for ONE invocation of a binary. Returns
  * the child's exit status (or timeout/verdict markers) via out_*.
- * Kept as a helper so u_run_one stays readable now that the §7 XML/JSON
- * + §6 isolation contract live around it. */
+ * Kept as a helper so u_run_one stays readable now that the XML/JSON
+ * + isolation contract live around it. */
 static void u_spawn_one(const char *name_copy, const char *path,
                         int *out_pid, int32_t *out_exit_status,
                         int *out_timed_out, uint32_t *out_leaked,
@@ -1589,7 +1589,7 @@ static void u_spawn_one(const char *name_copy, const char *path,
                                            s_timeout_ms, out_timed_out);
     /* Snapshot leaks BEFORE task_cleanup destroys the handle table.
      * Callers must then run task_cleanup; the destructive reap happens
-     * even later (§6 contract: vfs_unlink needs the child's handles
+     * even later (contract: vfs_unlink needs the child's handles
      * closed first). */
     *out_leaked = have_stem ? u_isolation_snapshot_leaks((uint32_t)pid) : 0u;
 }
@@ -1630,7 +1630,7 @@ static void u_run_one(const char *name, utest_type_t type,
         path[pi++] = name_copy[ni];
     path[pi] = '\0';
 
-    /* Derive the §6 scratch-dir / Registry-key stem from the binary
+    /* Derive the scratch-dir / Registry-key stem from the binary
      * name (`test_syscall.exe` -> `test_syscall`). If the name doesn't
      * match the *.exe shape we skip isolation for this run (this
      * shouldn't happen today because u_is_test_binary() gated entry,
@@ -1707,7 +1707,7 @@ static void u_run_one(const char *name, utest_type_t type,
      * bottom so external consumers never see a contradictory "ok N
      * ... not ok N" pair for the same test_num. Codex adversarial
      * Phase-2, 2026-04-20: a PASS log emitted here was immediately
-     * flipped to FAIL when the §6 leak check fired, producing two
+     * flipped to FAIL when the leak check fired, producing two
      * lines for the same run. */
     if (exit_status == 0) {
         counters[0]++;  /* passed (may be rolled back by escalations) */
@@ -1743,7 +1743,7 @@ static void u_run_one(const char *name, utest_type_t type,
         }
     }
 
-    /* Handle leaks escalate a PASS to FAIL (§6 test checkpoint:
+    /* Handle leaks escalate a PASS to FAIL (test checkpoint:
      * "A binary that opens C:\\hello.txt without closing it surfaces
      * as [UTEST] FAIL test_x: 1 handle leaked"). Tests that already
      * FAIL/SKIP keep their stronger verdict -- we don't upgrade a
@@ -1800,7 +1800,7 @@ static void u_run_one(const char *name, utest_type_t type,
     /* Handle-leak reason: only fill `reason` when we escalated from
      * PASS. For FAIL/SKIP the exit-code or timeout reason already
      * dominates; adding the leak count to a JSON blob would be nice
-     * but would require a structured reason schema and is a §7
+     * but would require a structured reason schema and is a
      * nice-to-have, not a correctness issue. */
     if (reason[0] == '\0' && leaked > 0 && *out_verdict == 1) {
         uint32_t rp = 0;
@@ -1876,7 +1876,7 @@ static void u_run_one(const char *name, utest_type_t type,
              name_copy);
     }
 
-    /* §7 XML + JSON per-binary emit: one pair per run, reason string
+    /* XML + JSON per-binary emit: one pair per run, reason string
      * reflects the final verdict including any escalations. time_ms
      * is the wall-clock elapsed from task_create to just before this
      * emit. */
@@ -2014,7 +2014,7 @@ void test_usermode_run(void)
         else
             klog(LOG_DEBUG, "UTEST",
                  "no test_*.exe found at C:\\ -- skipping summary");
-        /* §7 empty-suite artifact contract: when xml=1 or json=1 the
+        /* empty-suite artifact contract: when xml=1 or json=1 the
          * CI integration expects a parseable file regardless of
          * whether any binary ran. Emit a zero-test envelope so
          * scripts/test.sh always produces a valid build/test-results.xml
@@ -2030,7 +2030,7 @@ void test_usermode_run(void)
 
     /* Pre-flight task-slot budget check: task_create uses monotonic
      * pid = num_tasks++ and rejects once num_tasks == TASK_MAX. Slots
-     * never come back today (owner: [scheduler enhancement TODO] §13).
+     * never come back today (owner: [scheduler enhancement TODO]).
      * Emitting `1..total_planned` when we know the tail would hit
      * task_create failures produces misleading TAP output. Clamp the
      * plan to the available budget, log a WARN naming the ceiling, and
@@ -2060,7 +2060,7 @@ void test_usermode_run(void)
     if (s_tap_mode)
         klog(LOG_INFO, "UTEST", "1..%u", (uint64_t)total_planned);
 
-    /* §7 XML envelope opener. The testsuite attributes are filled in
+    /* XML envelope opener. The testsuite attributes are filled in
      * by scripts/test.sh post-processing using the emitted
      * [UTEST-XML-SUMMARY] line; the raw launcher doesn't know the
      * final counts yet. */
@@ -2083,7 +2083,7 @@ void test_usermode_run(void)
 
     run_start_ms = u_uptime_ms();
 
-    /* §8 two-phase execution: smoke binaries always run FIRST, and a
+    /* two-phase execution: smoke binaries always run FIRST, and a
      * single smoke FAIL aborts the rest of the suite. Everything else
      * runs in the second phase in manifest-then-glob order.
      *
@@ -2200,7 +2200,7 @@ void test_usermode_run(void)
              (uint64_t)counters[2], (uint64_t)total_ran);
     }
 
-    /* §7 summary emissions: close the XML envelope and drop the final
+    /* summary emissions: close the XML envelope and drop the final
      * JSON summary record. Both are no-ops if the respective modes
      * were never enabled. */
     u_emit_xml_suite_close(counters[0], counters[1], counters[2],
@@ -2255,7 +2255,7 @@ int test_usermode_json_escape(const char *src, char *dst, uint32_t cap)
     return u_json_escape(dst, &pos, cap, src);
 }
 
-/* §8 taxonomy helpers -- return integer for ABI-stable test binding. */
+/* taxonomy helpers -- return integer for ABI-stable test binding. */
 int test_usermode_type_for_name(const char *name);
 int test_usermode_type_for_name(const char *name)
 {

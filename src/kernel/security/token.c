@@ -216,7 +216,7 @@ ACCESS_TOKEN *SeCreateUserToken(const SID *user_sid, int admin)
 }
 
 /* ============================================================================
- * Token mutation functions (§4.4)
+ * Token mutation functions
  * ============================================================================ */
 
 /* --- NtDuplicateToken ---------------------------------------------------- */
@@ -413,7 +413,7 @@ int32_t NtAdjustGroupsToken(ACCESS_TOKEN *token, int reset_to_default,
 }
 
 /* ============================================================================
- * Token query functions (§4.3)
+ * Token query functions
  * ============================================================================ */
 
 extern void *memcpy(void *dst, const void *src, size_t n);

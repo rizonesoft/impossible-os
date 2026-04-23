@@ -1,12 +1,12 @@
 /* ============================================================================
- * test_stress_libc.c -- §8 stress binary: libc string surface under repetition
+ * test_stress_libc.c -- stress binary: libc string surface under repetition
  *
  * The launcher (src/kernel/test/test_usermode.c u_run_one) spawns every
  * test binary exactly once; the stress policy is IN-BINARY, not
  * launcher-side. Rationale: the kernel's task_create monotonically
  * increments `num_tasks` with no slot reuse in task_cleanup, so a
  * launcher-side loop of N spawns would exhaust TASK_MAX (32) after
- * ~20 binaries. See the Codex finding in §8 stamps.
+ * ~20 binaries. See the Codex finding in stamps.
  *
  * This body loops the entire libc string surface 1000 times inside
  * ONE process, matching the user-mode test framework stress-taxonomy
