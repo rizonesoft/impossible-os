@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: kernel-test-harness
+domain: 00-infrastructure
+status: active
+title: "TODO-03 -- Kernel Test Harness"
+---
+
 # TODO-03 -- Kernel Test Harness
 
 > **Goal:** Kernel-internal test-time infrastructure that subsystem unit tests (under `src/kernel/test/test_*.c`) can opt into when they need to exercise rare control flow: allocator failure rollback, deterministic race windows between cooperating threads, and bulk scratch buffers that exceed the 8 KiB kernel stack. Each existing subsystem tests the hot path; the hooks in this TODO close the remaining corners without having to stand up a whole kernel debugger.

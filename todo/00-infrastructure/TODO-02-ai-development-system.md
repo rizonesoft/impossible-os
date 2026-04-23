@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: ai-development-system
+domain: 00-infrastructure
+status: active
+title: "TODO-02 -- AI Development System"
+---
+
 # TODO-02 -- AI Development System
 
 > **Goal:** Turn the repo's AI workflow into an explicit, maintainable system instead of a pile of overlapping instructions. Impossible OS is **Claude Code-only** as of 2026-04-18; Cursor was removed because maintaining a parallel skill set under `.cursor/` created clutter without a corresponding productivity win. This TODO defines the canonical source-of-truth map for the Claude + Copilot + Codex surfaces that remain, the skill lifecycle, hook policy, and a regression check that proves the AI layer still matches repo doctrine.

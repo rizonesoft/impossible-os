@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: developer-tooling-stack
+domain: 00-infrastructure
+status: active
+title: "TODO-01 -- Developer Tooling Stack"
+---
+
 # TODO-01 -- Developer Tooling Stack
 
 > **Goal:** Consolidate the repository's host-side developer workflow into one explicit contract: setup, build, run, debug, test, hooks, and GitHub automation all use the same paths, flags, logs, and operator expectations. Today the scripts work, but the rules live across `README.md`, `CLAUDE.md`, ad hoc shell wrappers, and workflow YAML. This TODO turns that into one maintained roadmap so local developer flow, CI, and release-adjacent tooling stop drifting.

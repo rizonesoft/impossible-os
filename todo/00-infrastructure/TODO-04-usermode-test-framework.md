@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: usermode-test-framework
+domain: 00-infrastructure
+status: active
+title: "TODO-04 -- User-Mode Test Framework"
+---
+
 # TODO-04 -- User-Mode Test Framework
 
 > **Goal:** A test harness for user-mode code: syscalls, libc functions, Win32 API stubs, ELF/PE/EIF loading, process lifecycle, and IPC. Test programs are compiled as regular user-mode binaries (`test_*.exe`), deployed to the IXFS system disk, and executed by the kernel after boot. Each test binary exercises one subsystem, writes pass/fail results to stdout (SYS_WRITE), and exits with 0 (pass) or non-zero (fail). The kernel test runner launches each binary, captures its output and exit code, and reports results to serial. This is how Windows HLK and Linux kselftest work: real user-mode programs exercising the real syscall interface.
