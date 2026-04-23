@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: ssdt-master-table
+domain: 02-kernel-core
+status: active
+title: "SSDT Master Table"
+---
+
 # SSDT Master Table
 
 > Service numbers organized by functional range. Each range has headroom for future additions. Endpoints marked `→ TODO-XX` are implemented in that TODO and registered here.
