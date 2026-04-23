@@ -186,10 +186,23 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
 >
 > **This step is NEVER skippable.** Not for "straightforward plumbing." Not for "Codex already ran in step 13." Not for "same pattern as the previous section." Step 13 reviews the diff in isolation during implementation; step 20 reviews the committed code in full context -- they catch different classes of bugs. The pattern of "looks simple, I'll skip the review" is the exact signal to NOT skip. (Incident 2026-04-12: §2 review skipped, user had to ask for it.)
 
-20. **Invoke `/review-todo-section`** on the section just committed. This runs:
-    - Phase 1: evidence mapping + test checkpoint verification (skips adversarial Codex since step 13 already ran it)
-    - Phase 2: quality review with MANDATORY Codex perf/consistency/dead-code dispatch
-    - Fixes from the review are committed separately (the skill handles its own commit).
+20. **Invoke `/review-todo-section`** on the section just committed. **This is the LITERAL next tool call after `git push` succeeds** -- not "soon after", not "if the code feels risky", not "after checking whether it is needed". Invocation format:
+
+    ```
+    Skill(name="review-todo-section", args="<todo path> §<N> <title>")
+    ```
+
+    e.g. `Skill(name="review-todo-section", args="todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md §11 Capability Negotiation and Degraded-Feature Flags")`.
+
+    The pipeline runs:
+    - Phase 1: evidence mapping + scope-gap audit + test checkpoint verification + build
+    - Phase 2: MANDATORY Codex adversarial dispatch (separate from step 13; reviews the committed code in full context)
+    - Phase 3: domain code-quality gates walked explicitly + MANDATORY Codex quality dispatch (dead-code + consistency + performance) + test coverage check + self-review
+    - Phase 4: stamp with Verified + Quality reviewed, commit review fixes, push.
+
+    **Enforcement:** A PreToolUse hook in `.claude/settings.json` watches `git log HEAD` after a section-ship commit (diff contains a `[x]` flip in the Implementation Order table, commit message does NOT start with `review:`/`todo:`/`docs:`, same commit did NOT add a `**Verified:**` stamp). When those conditions hold, the hook BLOCKS every Edit / Write / non-review Skill / non-script Bash call with exit 2 and a message telling the agent to invoke this skill next. Read / Grep / Glob / script Bash stay free so the review pipeline itself can run. Opt-out for legitimate false positives (revert commits, stamp-only edits, etc.): `SKIP_REVIEW_HOOK=1` env var on the blocked tool call.
+
+    The hook is the enforcement layer; this skill prose is the explanation. The pattern "I already ran Codex during step 13, the review is paperwork" IS the failure mode -- step 13 and step 20 are different pipelines with different scopes.
 
 ## HARD GATE: Steps 13-18 are MANDATORY before step 19
 

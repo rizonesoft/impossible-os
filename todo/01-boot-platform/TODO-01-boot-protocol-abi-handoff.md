@@ -477,19 +477,19 @@ The capability negotiation ABI shipped in §11 advertises what the bootloader po
 
 ## OS Comparison
 
-| ⭐ | Feature                         | 🪟 Win11                    | 🐧 Linux                     | 🚀 Impossible OS                             |
-| --- | ------------------------------- | --------------------------- | ----------------------------- | -------------------------------------------- |
-| 💎 | Versioned loader/kernel ABI     | ✅ LPB + extensions         | ✅ boot_params + kernel_info | ⚠️ §1 shipped; §7 §8 open                    |
-| 💎 | Typed initrd and module handoff | ✅ ramdisk + boot drivers   | ✅ initrd + initramfs        | ✅ §4 ABI + §5 producer/consumer shipped     |
-| ⭐ | Generated ABI manifest          | ⚠️ internal only            | ⚠️ docs + CI                 | ✅ §2 + §3 manifest + drift detector shipped |
-| ⭐ | Field-level ownership map       | ⚠️ internal ownership       | ⚠️ scattered docs            | ⚠️ §1 matrix shipped; §10 audit open         |
-| 💎 | Capability negotiation          | ✅ loader extensions        | ✅ version + flags           | ✅ §11 required/present/degraded + validator |
-| 💎 | Boot provenance decision record | ✅ boot status + resume     | ⚠️ cmdline + logs            | ✅ §12 path/reason + validator + Registry |
+| ⭐ | Feature                         | 🪟 Win11                    | 🐧 Linux                     | 🚀 Impossible OS                                 |
+| --- | ------------------------------- | --------------------------- | ----------------------------- | ------------------------------------------------ |
+| 💎 | Versioned loader/kernel ABI     | ✅ LPB + extensions         | ✅ boot_params + kernel_info | ⚠️ §1 shipped; §7 §8 open                        |
+| 💎 | Typed initrd and module handoff | ✅ ramdisk + boot drivers   | ✅ initrd + initramfs        | ✅ §4 ABI + §5 producer/consumer shipped         |
+| ⭐ | Generated ABI manifest          | ⚠️ internal only            | ⚠️ docs + CI                 | ✅ §2 + §3 manifest + drift detector shipped     |
+| ⭐ | Field-level ownership map       | ⚠️ internal ownership       | ⚠️ scattered docs            | ⚠️ §1 matrix shipped; §10 audit open             |
+| 💎 | Capability negotiation          | ✅ loader extensions        | ✅ version + flags           | ✅ §11 required/present/degraded + validator     |
+| 💎 | Boot provenance decision record | ✅ boot status + resume     | ⚠️ cmdline + logs            | ✅ §12 path/reason + validator + Registry        |
 | ⭐ | Friendly stale-loader mismatch  | ✅ recovery codes           | ⚠️ log-driven failures       | ⚠️ §7 kernel fatal + BlackBox transcribe shipped |
-| 💎 | Anti-rollback security version  | ✅ OsLoaderSecurityVersion  | ⚠️ shim SBAT revocation only | ⬜ §13 UEFI NVRAM counter                    |
-| ⭐ | Warm-kernel-update handoff ABI  | ⚠️ Hot Patch (closed)       | ✅ 6.16 Kexec Handover       | ⬜ §14 ABI only; runtime in new TODO         |
-| 💎 | Handoff memory ownership table  | ⚠️ MDL chains + LoaderBlock | ⚠️ memblock + NOMAP regions | ✅ §6 single table + overlap check + JSON dump |
-| ⭐ | Authoritative capability gates  | ⚠️ advisory to drivers      | ⚠️ advisory to drivers       | ⬜ §15 consumer retrofit to caps_present |
+| 💎 | Anti-rollback security version  | ✅ OsLoaderSecurityVersion  | ⚠️ shim SBAT revocation only | ⬜ §13 UEFI NVRAM counter                        |
+| ⭐ | Warm-kernel-update handoff ABI  | ⚠️ Hot Patch (closed)       | ✅ 6.16 Kexec Handover       | ⬜ §14 ABI only; runtime in new TODO             |
+| 💎 | Handoff memory ownership table  | ⚠️ MDL chains + LoaderBlock | ⚠️ memblock + NOMAP regions  | ✅ §6 single table + overlap check + JSON dump   |
+| ⭐ | Authoritative capability gates  | ⚠️ advisory to drivers      | ⚠️ advisory to drivers       | ⬜ §15 consumer retrofit to caps_present         |
 
 > Parity now covers the contract itself (§1-§4), mirror drift detection (§2-§3), typed payload handoff (§5), centralized PMM reservation (§6), structured version negotiation with friendly fatal + BlackBox transcript (§7), and the canonical protocol reference + schema changelog (§8). Adding explicit capability negotiation, a shared boot decision record, and anti-rollback security-version binding would make this handoff easier to debug and safer to evolve than either Windows' mostly internal loader state or Linux's split between versioned structs and scattered provenance channels. The warm-kernel-update handoff ABI (§14) specifically positions Impossible OS for cloud/server parity with Linux 6.16's Kexec Handover surface at the ABI layer; the runtime live-update machinery is tracked as follow-up in 03-memory-concurrency.
 
