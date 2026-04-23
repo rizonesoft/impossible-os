@@ -325,12 +325,7 @@ if [ "$#" -eq 0 ]; then
         include/kernel/time/wall_clock.h
         include/registry.h
         scripts/debug/desktop/run-matrix-desktop-tests.bat
-        scripts/debug/usermode/run-all-usermode-tests.bat
-        scripts/debug/usermode/run-test_faultinject.bat
-        scripts/debug/usermode/run-test_harness_smoke.bat
-        scripts/debug/usermode/run-test_syscall.bat
         scripts/lint.sh
-        scripts/qemu-screenshot.sh
         scripts/test-tooling.sh
         src/boot/uefi/boot_info_mirror.h
         src/boot/uefi/bootx64.c

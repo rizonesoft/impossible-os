@@ -1,8 +1,8 @@
 @echo off
 :: run-all-usermode-tests.bat -- Boot once, run every user-mode test_*.exe
 ::
-:: -TestOnly + -NoKernelTests + (no -UtestFilter) makes the §3 launcher
-:: walk every test_*.exe deployed at C:\ via the §4 manifest (smoke
+:: -TestOnly + -NoKernelTests + (no -UtestFilter) makes the scenario launcher
+:: walk every test_*.exe deployed at C:\ via the deployment manifest (smoke
 :: phase first, then correctness/stress/perf) WITHOUT re-running the
 :: kernel TEST_CAT_* sweep first.
 ::

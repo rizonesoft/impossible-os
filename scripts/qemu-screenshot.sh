@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # qemu-screenshot.sh -- capture a PNG of the live QEMU framebuffer via monitor protocol
 #
-# TODO-05-desktop-ui-test-framework.md §2 QEMU Framebuffer Dump.
+# todo/04-desktop-ui/TODO-05-desktop-ui-test-framework.md (QEMU Framebuffer Dump).
 #
 # Connects to a QEMU HMP monitor (telnet, default 127.0.0.1:4444), issues a
 # `screendump <ppm>` command, waits for QEMU to flush the PPM file, converts
@@ -204,7 +204,7 @@ PNG_BYTES=$(stat -c%s "$OUTPUT_PNG" 2>/dev/null || wc -c <"$OUTPUT_PNG")
 # The size floor is a CONTENT-liveness heuristic, not a format-validity gate.
 # PNG compresses strongly for low-entropy frames (all-black, solid splash,
 # pre-paint desktop), so a small file often means the framebuffer had no
-# meaningful content yet. Default 100 KiB matches the TODO §2 test checkpoint
+# meaningful content yet. Default 100 KiB matches the Framebuffer Dump test checkpoint
 # wording ("file size > 100 KiB") and empirically separates a blank capture
 # (~1.2 KiB) from a real desktop (>500 KiB). Callers who want a pure
 # format-validity check (e.g., early boot splash comparisons) can override
