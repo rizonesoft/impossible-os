@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: audio-system
+domain: 10-platform-services
+status: active
+title: "TODO-01 -- Audio System & Media Player"
+---
+
 # TODO-01 -- Audio System & Media Player
 
 > **Goal:** Build the complete software audio stack -- abstraction layer, multi-stream mixer, codec decoders (WAV/MP3/OGG/FLAC), unified loader, and the media player app + volume control UI on top. Hardware drivers live in `04-drivers-hardware/TODO-18-audio-drivers.md`.

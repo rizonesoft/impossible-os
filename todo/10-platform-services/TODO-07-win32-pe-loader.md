@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: win32-pe-loader
+domain: 10-platform-services
+status: active
+title: "TODO-07 -- Native Win32 Execution & PE Loader"
+---
+
 # TODO-07 -- Native Win32 Execution & PE Loader
 
 > **Goal:** Impossible OS is natively Win32 -- PE32+ is the native binary format and Win32 is the native API. This TODO fixes ring-3 execution (current ABI is `INT 0x80` / Linux-style, no STAR/LSTAR setup), migrates to Windows x64 syscall ABI (`SYSCALL` + RCX/RDX/R8/R9), and delivers the full PE loader stack that makes Win32 user-mode programs work natively.

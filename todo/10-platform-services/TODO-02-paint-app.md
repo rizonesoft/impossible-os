@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: paint-app
+domain: 10-platform-services
+status: active
+title: "TODO-02 -- Paint App & Image Tools"
+---
+
 # TODO-02 -- Paint App & Image Tools
 
 > **Goal:** Build the bitmap drawing application -- a full Windows Paint equivalent that exercises the complete GFX/widget stack. The drawing primitives, image loader, and compositing engine are already done; this TODO delivers the interactive canvas, tools, color system, undo/redo, and file I/O on top.

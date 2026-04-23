@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: long-term-features
+domain: 10-platform-services
+status: active
+title: "TODO-12 -- Long-Term Features"
+---
+
 # TODO-12 -- Long-Term Features
 
 **Domain:** `10-platform-services`

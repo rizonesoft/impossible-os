@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: restore-recovery
+domain: 10-platform-services
+status: active
+title: "TODO-04 -- System Restore, Recovery & Observability"
+---
+
 # TODO-04 -- System Restore, Recovery & Observability
 
 > **Goal:** Make Impossible OS survivable when things go wrong -- restore points, system rollback, the F8 recovery environment, factory reset, startup repair, first-boot setup wizard, event log, crash dump viewer, and disk cleanup. This is the full OS safety net.

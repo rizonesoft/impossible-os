@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: linux-compat
+domain: 10-platform-services
+status: active
+title: "TODO-10 -- Linux ELF Compatibility Layer"
+---
+
 # TODO-10 -- Linux ELF Compatibility Layer
 
 **Domain:** `10-platform-services`

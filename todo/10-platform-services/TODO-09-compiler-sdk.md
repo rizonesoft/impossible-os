@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: compiler-sdk
+domain: 10-platform-services
+status: active
+title: "TODO-09 -- C/C++ Compiler & SDK"
+---
+
 # TODO-09 -- C/C++ Compiler & SDK
 
 **Domain:** `10-platform-services`

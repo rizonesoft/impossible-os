@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: screensaver-widgets-display
+domain: 10-platform-services
+status: active
+title: "TODO-05 -- Screensaver, Widgets & Display"
+---
+
 # TODO-05 -- Screensaver, Widgets & Display
 
 > **Goal:** Add the idle/lock experience, desktop widget layer, and display management that round out the desktop shell. The compositor, GFX library, and GOP mode list are already available -- this TODO builds the user-facing idle, decoration, and display features directly on top.

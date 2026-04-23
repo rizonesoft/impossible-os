@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: accessibility
+domain: 10-platform-services
+status: active
+title: "TODO-06 -- Accessibility Features"
+---
+
 # TODO-06 -- Accessibility Features
 
 > **Goal:** Ensure Impossible OS is usable for users with visual, motor, and cognitive needs -- a requirement for any production-grade OS. The theme system, DPI layer, and animation engine are foundations; this TODO wires eight accessibility features and their unified Control Panel applet on top of them.

@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: win32-api-surface
+domain: 10-platform-services
+status: active
+title: "TODO-08 -- Win32 API Surface Completion"
+---
+
 # TODO-08 -- Win32 API Surface Completion
 
 **Domain:** `10-platform-services`

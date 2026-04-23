@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: updates-packages
+domain: 10-platform-services
+status: active
+title: "TODO-03 -- System Updates & IPKG Package Manager"
+---
+
 # TODO-03 -- System Updates & IPKG Package Manager
 
 > **Goal:** Make Impossible OS self-maintaining -- deliver the update check/download/verify/apply pipeline and the IPKG package format with installer, uninstaller, and `appwiz.cpl` list. After this TODO the OS can update itself and users can install third-party apps without manual file copying.
