@@ -529,10 +529,17 @@ assert_grep "build.sh WRITES the sentinel (not just mentions it)" \
 [ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[todo-graph]${NC}"
 TODO_GRAPH_TEST="$REPO_ROOT/scripts/todo-graph/tests/test_build.sh"
 if [ -x "$TODO_GRAPH_TEST" ]; then
-    if "$TODO_GRAPH_TEST" >/dev/null 2>&1; then
-        t_pass "scripts/todo-graph/tests/test_build.sh PASS (37 sub-tests)"
+    # Capture the "[test_build] N/N passed, 0 failed" summary so the
+    # aggregate runner's message tracks the current sub-test count
+    # instead of drifting (prior hard-coded "37 sub-tests" went stale
+    # as §3-§8 + review passes added more sub-tests through 105+).
+    TG_OUT=$("$TODO_GRAPH_TEST" 2>&1)
+    TG_RC=$?
+    TG_SUMMARY=$(printf '%s\n' "$TG_OUT" | grep -E '^\[test_build\] ' | tail -1)
+    if [ "$TG_RC" = "0" ]; then
+        t_pass "scripts/todo-graph/tests/test_build.sh PASS (${TG_SUMMARY:-summary unavailable})"
     else
-        t_fail "scripts/todo-graph/tests/test_build.sh FAIL (run directly for details)"
+        t_fail "scripts/todo-graph/tests/test_build.sh FAIL (${TG_SUMMARY:-run directly for details})"
     fi
 else
     t_fail "scripts/todo-graph/tests/test_build.sh not found or not executable"
