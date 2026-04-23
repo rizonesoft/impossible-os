@@ -57,7 +57,7 @@ void transition_ring_init_this_cpu(void)
     pcpu->transition_head = 0;
     /* Set marker LAST so a partial init can be detected as "not yet
      * initialized" by the dump path -- mirrors the KUSD
-     * AbiMagic-written-last invariant from §18. */
+     * AbiMagic-written-last invariant. */
     pcpu->transition_init_marker = TRANSITION_INIT_MARKER;
 }
 

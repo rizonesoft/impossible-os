@@ -105,7 +105,7 @@ void ob_thread_mark_dead(uint32_t task_pid, uint32_t tid)
          * until the whole directory is destroyed (effectively the
          * lifetime of the test-runner PID 0 -- never). 144 bytes
          * per kthread accumulating over the test run were the
-         * Sched + PEB/TEB [LEAK] lines §9 was filed to close. */
+         * Sched + PEB/TEB [LEAK] lines the thread-lifetime retrofit was filed to close. */
         if (ObLookupObjectByName("\\KernelObjects", ObpDirectoryType, 0,
                                  &ko_dir) == 0 && ko_dir) {
             ObpRemoveFromDirectory(ko_dir, body);

@@ -19,7 +19,7 @@
  *     observes the state change on the next re-read. The 10-second
  *     timeout is a safety net against a genuinely buggy release; on a
  *     healthy run the worker observes state=1 within one yield round.
- *     Fixing event_wait itself is out of scope for §2; the broader event
+ *     Fixing event_wait itself is out of scope here; the broader event
  *     subsystem tightening belongs with the kernel event APIs.
  *
  *   - release() polls both arrived flags under the spinlock. Polling with

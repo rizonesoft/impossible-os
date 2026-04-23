@@ -201,7 +201,7 @@ int32_t ObDereferenceObject(void *body)
 int ObReferenceObjectByPointer(void *body, const OBJECT_TYPE *expected_type,
                                uint32_t access)
 {
-    (void)access;  /* used by §8 security checks */
+    (void)access;  /* used by security-check retrofit */
 
     OBJECT_HEADER *hdr = OB_HEADER_FROM_BODY(body);
     if (hdr->type != expected_type)

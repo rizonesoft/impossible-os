@@ -13,7 +13,7 @@
  * closed-form simplification of the Fluent EasyEase cubic-bezier
  * (0.33, 0.0, 0.67, 1.0).  All math is integer-only -- no FPU/SSE.
  *
- * Part of the Progressive Spinner component (TODO-010.97 §2).
+ * Part of the Progressive Spinner component.
  * ============================================================================ */
 
 #include "kernel/spinner.h"

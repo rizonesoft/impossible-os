@@ -366,24 +366,15 @@ if [ "$#" -eq 0 ]; then
         src/kernel/nt/nt_registry.c
         src/kernel/nt/nt_sync.c
         src/kernel/nt/nt_syscall.c
-        src/kernel/ob/ob.c
-        src/kernel/ob/ob_ns.c
-        src/kernel/ob/ob_thread.c
         src/kernel/panic.c
         src/kernel/pe.c
         src/kernel/registry.c
         src/kernel/sched/irql.c
-        src/kernel/sched/syscall.c
         src/kernel/sched/syscall_entry.asm
         src/kernel/sched/task.c
-        src/kernel/sched/transition_ring.c
-        src/kernel/security/pku.c
         src/kernel/security/token.c
         src/kernel/smp/smp.c
-        src/kernel/spinner.c
         src/kernel/test/input_record.c
-        src/kernel/test/race_barrier.c
-        src/kernel/test/test_acpi_power.c
         src/kernel/test/test_alpc.c
         src/kernel/test/test_boot_info.c
         src/kernel/test/test_boot_init.c

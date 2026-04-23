@@ -346,7 +346,7 @@ int ObLookupObjectByName(const char *path, const OBJECT_TYPE *type,
     OBJECT_HEADER *hdr;
     size_t rem_len;
 
-    (void)access;  /* used by §8 security checks */
+    (void)access;  /* used by security-check retrofit */
 
     if (!path || !result)
         return -1;

@@ -655,7 +655,7 @@ static uint64_t syscall_handler_2e(struct interrupt_frame *frame)
      * software interrupt too. Without this, ssdt_dispatch runs at
      * DISPATCH_LEVEL (vector_to_irql(0x2E) = 2 via the ISA-legacy
      * range branch), blocking mutex_lock on any NT path and blocking
-     * the §5 fault-injection hooks from firing on NT-mediated
+     * the fault-injection hooks from firing on NT-mediated
      * allocator calls. (Codex quality review 2026-04-20.) */
     KIRQL entry_irql = syscall_lower_entry_irql();
     ssdt_set_previous_mode(1);  /* UserMode -- INT 0x2E always from ring 3 */
