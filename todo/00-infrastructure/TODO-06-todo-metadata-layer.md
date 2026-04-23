@@ -35,15 +35,15 @@
 
 ## Implementation Order
 
-| ⭐  | Order | Section | Deliverable                                              | Depends On      | Status |
-| --- | :---: | :-----: | -------------------------------------------------------- | --------------- | :----: |
-| 💎  |   1   |  §1     | Frontmatter schema + spec doc                            | --              |  [ ]   |
-| 💎  |   2   |  §2     | `scripts/todo-graph/build.py` generator + cache format   | §1              |  [ ]   |
-| 💎  |   3   |  §5     | Back-fill frontmatter across existing 86 TODO files      | §1, §2          |  [ ]   |
-| ⭐  |   4   |  §3     | Validator: stale XREF / dangling dep / orphan / cycle / bat / status / schema | §2 |  [ ]   |
-| ⭐  |   5   |  §4     | Query CLI: ready / blocked / blocking / backlinks / deferred / stale / stats / code | §2 |  [ ]   |
-| ⭐  |   6   |  §6     | CI gate on `todo/` commits + diff mode + auto-rewrite hook                          | §3, §4        |  [ ]   |
-| ⭐  |   7   |  §7     | Visualization output (mermaid / dot / ascii / gantt / markdown) | §2, §4    |  [ ]   |
+| ⭐  | Order | Section | Deliverable                                                                         | Depends On | Status |
+| --- | :---: | :-----: | ----------------------------------------------------------------------------------- | ---------- | :----: |
+| 💎  |   1   |  §1     | Frontmatter schema + spec doc                                                       | --         |  [ ]   |
+| 💎  |   2   |  §2     | `scripts/todo-graph/build.py` generator + cache format                              | §1         |  [x]   |
+| 💎  |   3   |  §5     | Back-fill frontmatter across existing 86 TODO files                                 | §1, §2     |  [ ]   |
+| ⭐  |   4   |  §3     | Validator: stale XREF / dangling dep / orphan / cycle / bat / status / schema       | §2         |  [ ]   |
+| ⭐  |   5   |  §4     | Query CLI: ready / blocked / blocking / backlinks / deferred / stale / stats / code | §2         |  [ ]   |
+| ⭐  |   6   |  §6     | CI gate on `todo/` commits + diff mode + auto-rewrite hook                          | §3, §4     |  [ ]   |
+| ⭐  |   7   |  §7     | Visualization output (mermaid / dot / ascii / gantt / markdown)                     | §2, §4     |  [ ]   |
 
 > 💎 = parity work -- Linux kernel has MAINTAINERS + get_maintainer.pl (person-ownership mapping without a dep graph); Windows has no public equivalent. §1 (frontmatter), §2 (generator), §5 (migration) bring us to partial Linux parity plus graph metadata neither OS ships.
 > ⭐ = competitive edge -- neither Win11 nor mainline Linux ships a first-class TODO dependency graph. §3 (validator), §4 (query CLI), §6 (CI gate), §7 (visualization) are new ground; the surface has direct value for any contributor scanning "what can I work on next?".
@@ -82,17 +82,28 @@ Define the YAML frontmatter block that every TODO file MUST carry going forward.
 
 Build the parser that reads every TODO, extracts graph data, and emits a read-only cache. Markdown remains canonical; the cache is regenerated on demand and gitignored.
 
-- [ ] Create `scripts/todo-graph/build.py`: walks `todo/**/*.md`, parses frontmatter + Implementation Order table rows (section number, deliverable, depends-on, status) + Inputs XREFs (`-> XREF: ...`) + Accepted/Deferred stamp XREFs. Emits `build/todo-cache.json` (schema below).
-- [ ] Cache schema: JSON array of node objects. Each node: `{id, schema_version, domain, status, title, file_path, created_at, last_active_at, owners?, file_patterns?, sections: [{n, deliverable, depends_on: ["§N"...], status}], inputs_xrefs: [{target_id, target_section}], stamps_xrefs: [{kind: "accepted"|"deferred", severity, target_id, target_section, item_name?}]}`. The `created_at` / `last_active_at` fields come from `git log` during build (first-commit timestamp for `created_at`; last-commit-touching-the-file timestamp for `last_active_at`) so the author doesn't maintain them.
-- [ ] Add `scripts/todo-graph/` to `.gitignore` for the `build/todo-cache.json` output only; keep the scripts themselves tracked.
-- [ ] Build must be fast: under 2s wall-clock for the current ~86 TODO files on a dev machine. Use stdlib-only Python (no yaml package dep; hand-roll a YAML parser for the limited frontmatter subset we support, or require `python3-yaml` in `scripts/setup-deps.sh`). `git log` calls are batched: one `git log --name-only --format='%H %ct'` invocation gives creation + last-active timestamps for every file in one pass.
-- [ ] Error catalog (`build.py` rejects and prints `file:line` + category): (1) malformed YAML (unclosed fence, tab indentation, duplicate key); (2) unknown `status` enum value (not one of `draft`/`active`/`blocked`/`done`/`superseded`); (3) invalid `id` regex match (must satisfy `^[a-z][a-z0-9-]{0,58}[a-z0-9]$`); (4) missing required field (`schema_version`, `id`, `domain`, `status`, `title`); (5) `schema_version` larger than the generator supports (forward-incompatible schema). Unknown optional fields produce a WARNING but do not fail the build (forward-compat for older generators reading newer TODOs).
-- [ ] Back-compat: files without frontmatter parse into a node with `id = null`, `status = "no-frontmatter"`; the validator surfaces these but doesn't fail on them during the migration window (§5).
-- [ ] Exit code: 0 on clean parse of all files, 1 on any file's frontmatter malformed (with file + line). Generator never edits TODO files.
-- [ ] Hand-verify the cache against the repo: count of nodes == count of `todo/**/*.md` (excluding `INDEX.md`, `TODO-00-INDEX.md`); every node has a non-empty `sections` list (every TODO has at least §1 or a top-level Commit); `created_at <= last_active_at` for every node.
-- [ ] Commit: `"scripts/todo-graph: add cache generator (frontmatter + XREF extraction + git timestamps)"`
+- [x] Created [`scripts/todo-graph/build.py`](../../scripts/todo-graph/build.py) (~390 LOC): walks `todo/**/*.md` (excludes `INDEX.md` + `TODO-00-INDEX.md`), parses frontmatter + Implementation Order rows (section column / deliverable / depends-on / status) + Inputs XREFs + Accepted/Deferred stamp XREFs. Emits `build/todo-cache.json`. Tolerates both 5-column and 6-column Implementation Order layouts (with/without explicit Section column).
+- [x] Cache schema implemented as specified: each node carries `id`, `schema_version`, `domain`, `status`, `title`, `file_path`, `created_at`, `last_active_at`, optional `owners`/`file_patterns`/`depends_on`/`satisfies`/`superseded_by`, plus `sections: [{n, deliverable, depends_on, status}]`, `section_headings: [{n, title}]` (added so the validator can later catch orphaned `## N.` body sections), `inputs_xrefs: [{target_path, target_section}]`, `stamps_xrefs: [{kind, severity, target_path, target_section, item_name?}]`. Note: emitted as `target_path` rather than `target_id` because pre-migration TODOs have no stable id; the validator section will resolve `target_path` -> `target_id` once frontmatter back-fill ships. Field meaning preserved.
+- [x] `.gitignore` already excludes `build/` (line 2), so `build/todo-cache.json` is gitignored automatically; no edit needed. The `scripts/todo-graph/` source directory is tracked by default. Spec wording suggested adding the directory to `.gitignore` as a stand-in for the build artifact; the existing `build/` rule subsumes it cleanly.
+- [x] Performance: 0.68s wall-clock for the live 223 TODO files (well under the 2s target; spec assumed ~86 files but the repo has grown). PyYAML used per the spec's allowed alternative (already declared in [`scripts/setup-deps.sh`](../../scripts/setup-deps.sh) line 205-206). `git log --name-only --format='COMMIT %H %ct' --reverse` runs ONCE; build.py walks the output to fill both `created_at` (first-seen-per-path) and `last_active_at` (last-seen-per-path) in a single pass, no per-file fork overhead.
+- [x] Error catalog implemented with all 5 categories: `malformed-yaml` (unclosed fence, tab indentation via dedicated pre-check, PyYAML errors with re-based line numbers), `unknown-status`, `invalid-id` (regex), `missing-required`, `schema-version` (both non-int AND > supported version). Unknown optional fields emit `unknown-field` WARNING (visible in stderr unless `--quiet`) but do not fail the build, satisfying the forward-compat requirement.
+- [x] Back-compat: no-frontmatter files produce nodes with `id=null`, `status="no-frontmatter"`. Today all 223 TODO files take this path (frontmatter back-fill is the migration-section's job). Validator section will surface the count.
+- [x] Exit code: 0 on clean parse, 1 on any malformed-frontmatter / unknown-status / invalid-id / missing-required / schema-version-too-high failure. **Cache is NOT written when fatal errors fire** (verified via the regression suite's "fail-closed" assertion) so a partial cache cannot mask a regression. Generator never edits TODO files.
+- [x] Hand-verified via the regression suite (`scripts/todo-graph/tests/test_build.sh`, 9 sub-tests): node count matches `find todo -name 'TODO-*.md' -not -name 'TODO-00-INDEX.md' | wc -l` (currently 223), every node has the required schema keys, `created_at <= last_active_at` invariant holds across all 223 nodes, two consecutive runs produce byte-identical output.
+- [x] Commit: `"scripts/todo-graph: add cache generator (frontmatter + XREF extraction + git timestamps)"`
 
-**Test checkpoint:** `python3 scripts/todo-graph/build.py` succeeds in under 2s, emits `build/todo-cache.json` parseable by `python3 -c 'import json; json.load(open("build/todo-cache.json"))'`. Node count matches `find todo -name 'TODO-*.md' | wc -l`. Running twice with no source changes produces byte-identical output.
+**Test checkpoint:** `python3 scripts/todo-graph/build.py` succeeds in 0.68s on the live 223-file tree, emits `build/todo-cache.json` (parseable JSON, sorted keys for determinism). Node count = 223 = `find todo -name 'TODO-*.md' -not -name 'TODO-00-INDEX.md' | wc -l`. `md5sum` of two consecutive runs matches byte-for-byte. Synthetic fixture with malformed frontmatter (invalid id + unknown status) exits 1 with `[FAIL]` lines naming both categories and does NOT write the cache.
+
+> **Test runner:** `bash scripts/todo-graph/tests/test_build.sh` (also covered by `bash scripts/test-tooling.sh` aggregate via the `[todo-graph]` block) | 9/9 sub-tests PASS, 0 fail; 82/82 aggregate tooling tests PASS.
+
+> **Notes:**
+> - Shipped: [`scripts/todo-graph/build.py`](../../scripts/todo-graph/build.py) (~390 LOC, stdlib + PyYAML) emitting `build/todo-cache.json`. CLI: `--root`, `--output`, `--quiet`, `--repo-root`. Single `git log` call batches timestamps for all 223 files; total wall-clock 0.68s.
+> - Cache is sorted by `file_path` and serialized with `sort_keys=True` + trailing newline so re-runs are byte-identical (md5 verified). Idempotency is the contract for downstream `validate.py --diff <baseline>` and CI artifact comparisons.
+> - Error catalog: 5 fail-closing categories (`malformed-yaml`, `unknown-status`, `invalid-id`, `missing-required`, `schema-version`) print `file:category:message` to stderr and the cache file is NOT written when any file fails. `unknown-field` is a WARNING (forward-compat for newer generators reading older TODOs).
+> - Back-compat: today's 223/223 files have no frontmatter (the migration-section's job to back-fill); they parse into `{id: null, status: "no-frontmatter"}` nodes. Validator section surfaces these.
+> - Test surface: [`scripts/todo-graph/tests/test_build.sh`](../../scripts/todo-graph/tests/test_build.sh) (9 sub-tests covering clean run, malformed-frontmatter rejection + fail-closed, idempotency, node-count match, schema sanity, perf budget); wired into [`scripts/test-tooling.sh`](../../scripts/test-tooling.sh) `[todo-graph]` block so the aggregate `make test-tooling` + CI `tooling regression pack` step gates this.
+> - Canonical doc: the script's docstring + `scripts/todo-graph/tests/test_build.sh` header. Frontmatter spec is the schema-and-spec section; this section owns the parser only.
+> - Scope boundary: this section ships the parser + cache emission only. The validator (graph-integrity checks like stale XREF, dangling section ref, dependency cycle) is the validator-section's job; the validator consumes `build/todo-cache.json` as its input. Migration of existing TODOs to carry frontmatter is the back-fill section's job.
 
 ---
 
@@ -203,7 +214,7 @@ Render the TODO dependency graph in formats GitHub, terminals, and external dash
 | ⭐ | Feature                              | 🪟 Win11                          | 🐧 Linux                                 | 🚀 Impossible OS                           |
 | --- | ------------------------------------ | --------------------------------- | ---------------------------------------- | ------------------------------------------ |
 | 💎 | Structured ownership metadata        | ⚠️ CODEOWNERS (GitHub)           | ✅ MAINTAINERS + get_maintainer.pl       | ⬜ §1 frontmatter + §5 migration            |
-| ⭐ | Cross-file dependency graph          | ❌ GitHub Projects (external DB) | ❌ Ad hoc (e.g. patch series cover)      | ⬜ §2 generator + JSON cache                |
+| ⭐ | Cross-file dependency graph          | ❌ GitHub Projects (external DB) | ❌ Ad hoc (e.g. patch series cover)      | ✅ Done §2 generator + JSON cache (0.68s)   |
 | ⭐ | Stale-XREF / cycle validator         | ❌ None                           | ❌ None                                  | ⬜ §3 validator (seven checks)              |
 | ⭐ | "Ready to work" / backlinks queries  | ❌ Project board filters (manual) | ❌ None in-tree                          | ⬜ §4 query CLI (10 subcommands)            |
 | 💎 | CI gate on dep-graph integrity       | ⚠️ Varies by repo                | ❌ Rare                                  | ⬜ §6 GHA + diff mode + auto-rewrite hook   |

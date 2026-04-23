@@ -517,6 +517,28 @@ assert_grep "build.sh WRITES the sentinel (not just mentions it)" \
     "$SCRIPT_DIR/build.sh" 'echo "=== BUILD OK ===" >> .*LOG'
 
 # ============================================================================
+# todo-graph regression suite
+# ============================================================================
+#
+# scripts/todo-graph/build.py is host-side Python tooling owned by the
+# TODO-metadata-layer plan in todo/00-infrastructure/. The dedicated
+# regression suite (test_build.sh) lives next to the script and exercises
+# the generator against the live todo/ tree + a synthetic malformed
+# fixture. Shell out to it as a single combined check so failures bubble
+# into this aggregate runner without re-implementing each assertion.
+[ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[todo-graph]${NC}"
+TODO_GRAPH_TEST="$REPO_ROOT/scripts/todo-graph/tests/test_build.sh"
+if [ -x "$TODO_GRAPH_TEST" ]; then
+    if "$TODO_GRAPH_TEST" >/dev/null 2>&1; then
+        t_pass "scripts/todo-graph/tests/test_build.sh PASS (9 sub-tests)"
+    else
+        t_fail "scripts/todo-graph/tests/test_build.sh FAIL (run directly for details)"
+    fi
+else
+    t_fail "scripts/todo-graph/tests/test_build.sh not found or not executable"
+fi
+
+# ============================================================================
 # Summary
 # ============================================================================
 
