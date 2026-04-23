@@ -297,7 +297,7 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 > - **Canonical doc**: [`docs/boot/boot-protocol.md`](../../docs/boot/boot-protocol.md) (living reference).
 > - **Scope boundary**: §8 does NOT own the per-field ownership matrix (that's §1's `boot-info-fields.md`), the manifest-hash emission (§2/§3 `tools/boot-info-manifest/`), or the enforcement validators (§7 `boot_version_classify`). §8 is pure documentation: if a new ABI field lands, the owner section + commit updates the changelog row, not the doc structure. Alternate-adapter implementation for non-UEFI paths (Multiboot2 details, PXE/HTTP, Secure Launch DRTM, KHO) stays in [`TODO-08-alternate-boot-protocols.md`](TODO-08-alternate-boot-protocols.md) and the forward-reserve TODOs named in the compatibility matrix rows.
 
-> **Verified:** 2026-04-23 | commit `<pending>` | 6/6 items | build OK | 2 new docs (225 + 80 lines); lint clean; no code touched
+> **Verified:** 2026-04-23 | commit `e78d0875` | 6/6 items | build OK | 2 new docs (225 + 80 lines); lint clean; no code touched
 > **Quality reviewed:** 2026-04-23 | Codex 1x (adversarial) | 2H fixed (header write-order matches bootx64.c 5691; `config` fallback claim corrected -- kernel has NO defaults, third-party loaders must populate) + 2M fixed (TODO-08 filename corrected to `TODO-08-alternate-boot-protocols.md`, Multiboot2 parser path corrected to `src/kernel/multiboot2_parse.c`, `timing.bl_entry` removed as false requirement; lifecycle + transcribe blocks qualified to match §7's actual persistence limit), 0 open | scope: N/A (docs-only)
 
 ---
