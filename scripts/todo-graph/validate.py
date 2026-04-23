@@ -1,0 +1,735 @@
+#!/usr/bin/env python3
+# ============================================================================
+# scripts/todo-graph/validate.py -- TODO graph integrity validator
+#
+# Owner: TODO-06 §3 (Validator) in todo/00-infrastructure/.
+# Consumer of: build/todo-cache.json (produced by scripts/todo-graph/build.py).
+#
+# Runs seven graph-integrity checks on the cache and the live TODO files.
+# Each check is independent; failures are tagged by category and printed in
+# the t_pass / t_fail style used by scripts/test-tooling.sh. Exit 0 iff
+# zero failures; exit 1 otherwise so CI (TODO-06 §6) can gate on it.
+#
+#   1. Stale XREF: every depends_on / satisfies / Inputs XREF / Accepted+
+#      Deferred XREF must resolve to an existing id-or-file in the cache.
+#   2. Dangling section ref: every §N inside an Implementation Order
+#      Depends-On cell must resolve to a real `## N.` heading in the
+#      target file (catches renumbering drift).
+#   3. Orphaned IO row: every Implementation Order row needs a matching
+#      `## N.` body section, and vice versa. Drift on either side fails.
+#   4. Dependency cycle: build the depends_on digraph from frontmatter
+#      and run DFS; report any cycle by printing the cycle path.
+#   5. Test-runner bat alignment: every `**Test runner:**` line that
+#      names a `scripts\debug\<layer>\run-<name>-tests.bat` path must
+#      resolve to a real file on disk. N/A / No-test-surface sentinels
+#      are exempt.
+#   6. Status-transition audit: status: done requires every IO row [x];
+#      status: draft must NOT have all-rows-[x] (promote to done).
+#   7. $schema reachability: per-file frontmatter `$schema` must point
+#      at an existing file (skipped when the field is absent).
+#
+# CLI:
+#   validate.py [--cache PATH] [--quiet] [--warnings-only]
+#               [--fix-line-numbers [--write]]
+#
+# --warnings-only:    downgrade check-1 stale-XREF FAILs to WARNs during
+#                     migration (frontmatter back-fill is §5; before then,
+#                     every XREF resolves via filename instead of id).
+# --fix-line-numbers: re-resolve every `(item: "NAME" at line N)`
+#                     parenthetical to the current line of the named
+#                     item. By default DRY-RUN: prints proposed rewrites
+#                     and exits without touching files. Add --write to
+#                     actually rewrite. FAILs if the named item resolves
+#                     to multiple lines (no first-match-wins; Codex pass
+#                     6 M1: ambiguity must surface, not be hidden).
+#
+# Performance: runs in <2s on the live 223-file tree. All file reads are
+# done once at startup (single in-memory snapshot per run; Codex pass 6 M1
+# atomic-snapshot contract) so cache-based and direct-reread checks
+# observe the same repo state.
+# ============================================================================
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import subprocess
+import sys
+from pathlib import Path
+from typing import Optional
+
+
+# --- Constants -----------------------------------------------------------
+
+VALID_TEST_LAYERS = ("kernel", "usermode", "desktop")
+
+# `**Test runner:**` line variants. We accept both the canonical
+# `> **Test runner:** ` blockquote form and the un-blockquoted form, with
+# an optional backtick-quoted bat path. The path uses Windows-style
+# backslashes per the project convention.
+TEST_RUNNER_LINE_RE = re.compile(
+    r"^\s*>?\s*\*\*Test runner:\*\*\s*(?P<rest>.+)$"
+)
+TEST_RUNNER_BAT_RE = re.compile(
+    # Backtick-quoted path under scripts/debug/<layer>/run-...bat.
+    # Accepts BOTH `\` (Windows-canonical per the project convention) AND
+    # `/` separators since both forms appear in tracked TODOs.
+    r"`scripts[\\/]+debug[\\/]+(?P<layer>[a-z]+)[\\/]+(?P<bat>run-[a-z0-9_-]+\.bat)`",
+    re.IGNORECASE,
+)
+
+# `(item: "NAME" at line N)` parenthetical inside Accepted/Deferred stamps.
+ITEM_LINE_RE = re.compile(r'\(item:\s*"(?P<name>[^"]+)"\s+at\s+line\s+(?P<n>\d+)\)')
+
+# Stamp body matcher: pulls everything after `> **Accepted:**` or
+# `> **Deferred:**` so we can locate the `(item: ... at line ...)` clause
+# AND the XREF target on the same line. Used by --fix-line-numbers.
+STAMP_LINE_RE = re.compile(
+    r"^\s*>\s*\*\*(?P<kind>Accepted|Deferred):\*\*\s+(?P<rest>.+)$"
+)
+
+# Resolver patterns mirror build.py's _DEP_TARGET_RE so the validator and
+# parser agree on what a target token looks like.
+COMPACT_DT_RE = re.compile(r"^D(?P<dom>\d{2})T(?P<num>\d{1,2})$")
+COMPACT_T_RE = re.compile(r"^T(?P<num>\d{1,2})$")
+COMPACT_D_RE = re.compile(r"^D(?P<dom>\d{2})$")
+DOMAIN_PATH_RE = re.compile(r"^(?P<dom>\d{2})-[a-z0-9-]+/TODO-(?P<num>\d{1,2})$")
+TODO_NN_RE = re.compile(r"^TODO-(?P<num>\d{1,2})$")
+TODO_FILENAME_RE = re.compile(r"^TODO-(?P<num>\d{1,2})-")
+
+
+# --- Finding type --------------------------------------------------------
+
+class Finding:
+    __slots__ = ("check", "file", "detail", "severity")
+
+    def __init__(self, check: str, file: str, detail: str, severity: str = "FAIL"):
+        self.check = check
+        self.file = file
+        self.detail = detail
+        self.severity = severity
+
+    def format(self) -> str:
+        return f"[{self.severity}] {self.check}: {self.file}: {self.detail}"
+
+
+# --- Cache loader --------------------------------------------------------
+
+def load_or_rebuild_cache(cache_path: Path, repo_root: Path, quiet: bool) -> list:
+    """Load build/todo-cache.json. If absent, invoke build.py to regenerate."""
+    if not cache_path.exists():
+        if not quiet:
+            sys.stderr.write(f"[validate.py] cache absent at {cache_path}; rebuilding via build.py\n")
+        result = subprocess.run(
+            [sys.executable, str(repo_root / "scripts/todo-graph/build.py"),
+             "--quiet", "--output", str(cache_path)],
+            cwd=str(repo_root),
+        )
+        if result.returncode != 0:
+            sys.stderr.write(f"[validate.py] FATAL: build.py failed (exit {result.returncode})\n")
+            sys.exit(2)
+    return json.loads(cache_path.read_text(encoding="utf-8"))
+
+
+def load_file_snapshot(repo_root: Path, nodes: list) -> dict:
+    """Read every TODO file's text ONCE at startup and return a mapping
+    file_path -> text. Single in-memory snapshot per run so all checks (and
+    --fix-line-numbers, if enabled) observe identical repo state. Codex
+    pass 6 M1 atomic-snapshot contract."""
+    snapshot = {}
+    for n in nodes:
+        rel = n.get("file_path")
+        if not rel:
+            continue
+        full = repo_root / rel
+        try:
+            snapshot[rel] = full.read_text(encoding="utf-8")
+        except (FileNotFoundError, OSError) as exc:
+            sys.stderr.write(f"[validate.py] WARN: cannot read {rel}: {exc}\n")
+            snapshot[rel] = ""
+    return snapshot
+
+
+# --- XREF resolver -------------------------------------------------------
+
+def build_id_index(nodes: list) -> dict:
+    """Return {id: file_path} for every node carrying a non-null id. Used
+    by check 1 (stale-XREF) to look up frontmatter id references."""
+    return {n["id"]: n["file_path"] for n in nodes if n.get("id")}
+
+
+def build_path_index(nodes: list) -> dict:
+    """Return {(domain, todo_number): file_path} for every node, plus
+    {filename_stem: file_path} for unambiguous filename references.
+    Used by the resolver below for compact-form XREFs."""
+    by_dn = {}
+    by_filename = {}
+    for n in nodes:
+        rel = n.get("file_path")
+        if not rel:
+            continue
+        # path like 02-kernel-core/TODO-19-foo.md
+        parts = Path(rel).parts
+        if len(parts) >= 2 and parts[-2].startswith(("00-", "01-", "02-", "03-", "04-",
+                                                      "05-", "06-", "07-", "08-", "09-",
+                                                      "10-", "11-", "12-", "13-", "14-",
+                                                      "15-", "16-", "17-", "18-")):
+            dom = parts[-2][:2]  # "02" from "02-kernel-core"
+            m = re.match(r"TODO-(\d{1,2})-", parts[-1])
+            if m:
+                by_dn[(dom, int(m.group(1)))] = rel
+        # filename stem (TODO-19-foo)
+        stem = Path(rel).stem
+        by_filename[stem] = rel
+    return {"by_dn": by_dn, "by_filename": by_filename}
+
+
+def resolve_xref_target(target: str, source_file: str, id_index: dict, path_index: dict) -> Optional[str]:
+    """Resolve a target token (T17, D02T19, TODO-08, 02-kernel-core/TODO-19,
+    full filename, or a frontmatter id) to a cache file_path. Returns None
+    when no resolution succeeds.
+
+    The same-domain `T<num>` form is resolved relative to source_file's
+    domain folder; absent that, no resolution (do NOT scan all domains for
+    a same-domain compact form -- the spec wants the author to use the
+    cross-domain `D<dom>T<num>` form when crossing folders)."""
+    if not target:
+        return None
+    target = target.strip().strip("`").strip()
+    # 1. Frontmatter id (post-§5 migration)
+    if target in id_index:
+        return id_index[target]
+    # 2. Cross-domain compact: D02T19
+    m = COMPACT_DT_RE.match(target)
+    if m:
+        dom, num = m.group("dom"), int(m.group("num"))
+        return path_index["by_dn"].get((dom, num))
+    # 3. Same-domain compact: T17 (resolved against source_file's domain)
+    m = COMPACT_T_RE.match(target)
+    if m:
+        src_parts = Path(source_file).parts
+        if len(src_parts) >= 2:
+            src_dom = src_parts[-2][:2]
+            return path_index["by_dn"].get((src_dom, int(m.group("num"))))
+        return None
+    # 4. Full domain path: 02-kernel-core/TODO-19
+    m = DOMAIN_PATH_RE.match(target)
+    if m:
+        dom, num = m.group("dom"), int(m.group("num"))
+        return path_index["by_dn"].get((dom, num))
+    # 5. Bare TODO-NN (resolved against source_file's domain)
+    m = TODO_NN_RE.match(target)
+    if m:
+        src_parts = Path(source_file).parts
+        if len(src_parts) >= 2:
+            src_dom = src_parts[-2][:2]
+            return path_index["by_dn"].get((src_dom, int(m.group("num"))))
+        return None
+    # 6. Filename stem (TODO-19-foo) -- exact match against any domain
+    if target in path_index["by_filename"]:
+        return path_index["by_filename"][target]
+    # 7. Filename stem with .md suffix
+    if target.endswith(".md"):
+        stem = target[:-3]
+        if stem in path_index["by_filename"]:
+            return path_index["by_filename"][stem]
+    # 8. Already a path-like form (00-domain/TODO-NN-name.md or with #anchor)
+    candidate = target.split("#")[0]  # strip anchor
+    if candidate in {n_path for n_path in path_index["by_filename"].values()}:
+        return candidate
+    # No resolution.
+    return None
+
+
+# --- Check 1: Stale XREF -------------------------------------------------
+
+def check_stale_xref(nodes: list, id_index: dict, path_index: dict, warnings_only: bool) -> list:
+    findings: list = []
+    sev_xref = "WARN" if warnings_only else "FAIL"
+    for n in nodes:
+        rel = n["file_path"]
+        # Frontmatter depends_on / satisfies (resolve via id only)
+        for field in ("depends_on", "satisfies"):
+            for ref in n.get(field, []) or []:
+                if ref not in id_index:
+                    findings.append(Finding(
+                        "stale-xref", rel,
+                        f"frontmatter {field}: '{ref}' does not resolve to any TODO id",
+                        severity=sev_xref,
+                    ))
+        # Inputs XREFs (resolve via target_path; covers compact + path forms)
+        for x in n.get("inputs_xrefs", []) or []:
+            tp = x.get("target_path")
+            if not tp:
+                continue
+            if resolve_xref_target(tp, rel, id_index, path_index) is None:
+                findings.append(Finding(
+                    "stale-xref", rel,
+                    f"Inputs XREF target '{tp}' does not resolve to any TODO file",
+                    severity=sev_xref,
+                ))
+        # Accepted/Deferred stamp XREFs
+        for x in n.get("stamps_xrefs", []) or []:
+            tp = x.get("target_path")
+            if not tp:
+                continue
+            if resolve_xref_target(tp, rel, id_index, path_index) is None:
+                kind = x.get("kind", "stamp")
+                findings.append(Finding(
+                    "stale-xref", rel,
+                    f"{kind} XREF target '{tp}' does not resolve to any TODO file",
+                    severity=sev_xref,
+                ))
+        # Implementation Order Depends-On cross-file targets (Codex pass 7 H1).
+        # check_dangling_section_ref skips unresolved targets so the bare
+        # broken-target case (e.g. `Depends On: TODO-99 §1` where TODO-99
+        # doesn't exist) needs catching here. Self-targets are skipped
+        # since the source file always resolves to itself.
+        for sec in n.get("sections", []) or []:
+            for grp in sec.get("depends_on", []) or []:
+                target = grp.get("target")
+                if not target or target == "self":
+                    continue
+                if resolve_xref_target(target, rel, id_index, path_index) is None:
+                    findings.append(Finding(
+                        "stale-xref", rel,
+                        f"IO row {sec.get('n')} Depends-On target '{target}' "
+                        "does not resolve to any TODO file",
+                        severity=sev_xref,
+                    ))
+    return findings
+
+
+# --- Check 2: Dangling section ref ---------------------------------------
+
+def check_dangling_section_ref(nodes: list, id_index: dict, path_index: dict) -> list:
+    """Every §N in an Implementation Order Depends-On group must resolve to
+    a real `## N.` heading in the target file (self by default; the dep
+    parser splits cross-file groups so the binding is preserved)."""
+    findings: list = []
+    headings_by_file: dict = {n["file_path"]: {h["n"] for h in n.get("section_headings", [])}
+                              for n in nodes}
+    for n in nodes:
+        rel = n["file_path"]
+        for sec in n.get("sections", []) or []:
+            for grp in sec.get("depends_on", []) or []:
+                target = grp.get("target", "self")
+                sections = grp.get("sections", []) or []
+                if target == "self":
+                    target_file = rel
+                else:
+                    target_file = resolve_xref_target(target, rel, id_index, path_index)
+                if target_file is None:
+                    # check_stale_xref will report the unresolved target;
+                    # check 2 only flags missing §N in resolved files.
+                    continue
+                target_headings = headings_by_file.get(target_file, set())
+                for sn in sections:
+                    if sn not in target_headings:
+                        findings.append(Finding(
+                            "dangling-section", rel,
+                            f"§{sn} in IO row {sec.get('n')} Depends-On (target={target}) "
+                            f"does not match any `## {sn}.` heading in {target_file}",
+                        ))
+    return findings
+
+
+# --- Check 3: Orphaned Implementation Order row --------------------------
+
+def check_orphaned_io_row(nodes: list) -> list:
+    findings: list = []
+    for n in nodes:
+        rel = n["file_path"]
+        row_ns = {s["n"] for s in n.get("sections", []) or [] if s.get("n") is not None}
+        head_ns = {h["n"] for h in n.get("section_headings", []) or []}
+        # Master-table TODOs (e.g. todo/10-platform-services/TODO-A...) use
+        # named `## Tier 1` / `## Methodology` headings instead of the
+        # standard `## N.` numbered form. When a file has IO rows but ZERO
+        # numbered headings, the per-row check would always fail; treat that
+        # as a non-standard format and skip rather than spam the operator.
+        if row_ns and not head_ns:
+            continue
+        for orphan in row_ns - head_ns:
+            findings.append(Finding(
+                "orphan-io-row", rel,
+                f"Implementation Order row §{orphan} has no matching `## {orphan}.` body section",
+            ))
+        for orphan in head_ns - row_ns:
+            findings.append(Finding(
+                "orphan-io-row", rel,
+                f"`## {orphan}.` body section has no matching Implementation Order row",
+            ))
+    return findings
+
+
+# --- Check 4: Dependency cycle -------------------------------------------
+
+def check_dependency_cycle(nodes: list, id_index: dict) -> list:
+    """Build a depends_on digraph from frontmatter and report any cycle.
+    Vacuous pass when no node has frontmatter (today's pre-migration state).
+    Uses Tarjan-style DFS with grey/black coloring."""
+    findings: list = []
+    if not id_index:
+        return findings  # no frontmatter yet; nothing to graph
+    graph: dict = {}
+    for n in nodes:
+        if n.get("id"):
+            graph[n["id"]] = [d for d in (n.get("depends_on") or []) if d in id_index]
+    GREY, BLACK = 1, 2
+    color: dict = {}
+    cycle_path: list = []
+
+    def dfs(node, stack):
+        if color.get(node) == BLACK:
+            return False
+        if color.get(node) == GREY:
+            # Found a cycle. Slice stack from where node first appears.
+            try:
+                start = stack.index(node)
+                cycle_path.extend(stack[start:] + [node])
+            except ValueError:
+                cycle_path.extend([node])
+            return True
+        color[node] = GREY
+        stack.append(node)
+        for nxt in graph.get(node, []):
+            if dfs(nxt, stack):
+                return True
+        stack.pop()
+        color[node] = BLACK
+        return False
+
+    for start_node in graph:
+        if color.get(start_node) is None:
+            if dfs(start_node, []):
+                findings.append(Finding(
+                    "dependency-cycle", "<graph>",
+                    f"cycle in depends_on graph: {' -> '.join(cycle_path)}",
+                ))
+                return findings  # one cycle is enough; author breaks it
+    return findings
+
+
+# --- Check 5: Test-runner bat alignment ----------------------------------
+
+def check_bat_alignment(nodes: list, snapshot: dict, repo_root: Path) -> list:
+    """For every Test runner line that NAMES a `scripts/debug/<layer>/run-*.bat`
+    path, verify the bat exists on disk. Lines that reference host-side
+    runners (`bash scripts/test.sh`, `make test-X`, `bash scripts/build.sh`,
+    "build-time check" prose, etc.) are out of scope for this check;
+    bat-alignment is specifically about the Windows-side per-category bat
+    files split into kernel/usermode/desktop subdirs on 2026-04-20."""
+    findings: list = []
+    for n in nodes:
+        rel = n["file_path"]
+        text = snapshot.get(rel, "")
+        for ln in text.splitlines():
+            if not TEST_RUNNER_LINE_RE.match(ln):
+                continue
+            for m in TEST_RUNNER_BAT_RE.finditer(ln):
+                layer = m.group("layer").lower()
+                bat = m.group("bat")
+                if layer not in VALID_TEST_LAYERS:
+                    findings.append(Finding(
+                        "bat-alignment", rel,
+                        f"Test runner layer '{layer}' not in {VALID_TEST_LAYERS} "
+                        "(per the 2026-04-20 kernel/usermode/desktop split)",
+                    ))
+                    continue
+                bat_path = repo_root / "scripts" / "debug" / layer / bat
+                if not bat_path.exists():
+                    findings.append(Finding(
+                        "bat-alignment", rel,
+                        f"Test runner bat does not exist on disk: scripts/debug/{layer}/{bat}",
+                    ))
+    return findings
+
+
+# --- Check 6: Status-transition audit ------------------------------------
+
+def check_status_transition(nodes: list) -> list:
+    findings: list = []
+    for n in nodes:
+        st = n.get("status")
+        if st in (None, "no-frontmatter"):
+            continue  # nothing to audit until §5 migration
+        rel = n["file_path"]
+        rows = [s for s in n.get("sections", []) or [] if s.get("status") in {"x", " ", "/"}]
+        if not rows:
+            continue  # nothing to compare against
+        all_done = all(s.get("status") == "x" for s in rows)
+        any_done = any(s.get("status") == "x" for s in rows)
+        any_pending = any(s.get("status") in {" ", "/"} for s in rows)
+        if st == "done" and any_pending:
+            n_pend = sum(1 for s in rows if s.get("status") in {" ", "/"})
+            findings.append(Finding(
+                "status-transition", rel,
+                f"frontmatter status: done but {n_pend}/{len(rows)} Implementation Order "
+                "rows are not [x] (mark rows or downgrade status)",
+            ))
+        if st == "draft" and all_done:
+            findings.append(Finding(
+                "status-transition", rel,
+                f"frontmatter status: draft but all {len(rows)} Implementation Order rows "
+                "are [x] (promote to status: active or status: done)",
+            ))
+    return findings
+
+
+# --- Check 7: $schema reachability ---------------------------------------
+
+def check_schema_reachability(nodes: list, snapshot: dict, repo_root: Path) -> list:
+    """The cache build doesn't currently surface a per-node `$schema` value
+    (it's a frontmatter convenience, not a node field). Re-read each file's
+    frontmatter to find the line `$schema: <path>` and verify reachability.
+    Skipped on files without frontmatter."""
+    findings: list = []
+    schema_re = re.compile(r"^\$schema:\s*(.+?)\s*$")
+    for n in nodes:
+        if n.get("status") == "no-frontmatter":
+            continue
+        rel = n["file_path"]
+        text = snapshot.get(rel, "")
+        if not text.startswith("---\n"):
+            continue
+        end = text.find("\n---\n", 4)
+        if end < 0:
+            continue
+        for ln in text[4:end].splitlines():
+            m = schema_re.match(ln)
+            if not m:
+                continue
+            schema_ref = m.group(1).strip().strip("'\"")
+            if not schema_ref:
+                continue
+            # Resolve relative to the TODO file's directory.
+            todo_dir = (repo_root / rel).parent
+            target = (todo_dir / schema_ref).resolve()
+            # Codex pass 7 M1: reject paths that resolve OUTSIDE repo_root.
+            # A crafted value like `../../../../etc/passwd` would otherwise
+            # pass if the host file happens to exist, making validation
+            # host-dependent and defeating the trust boundary.
+            repo_root_resolved = repo_root.resolve()
+            try:
+                target.relative_to(repo_root_resolved)
+            except ValueError:
+                findings.append(Finding(
+                    "schema-reachability", rel,
+                    f"$schema points at {schema_ref} which resolves OUTSIDE the repo "
+                    f"({target}); must point at a repo-local file",
+                ))
+                break
+            if not target.exists():
+                findings.append(Finding(
+                    "schema-reachability", rel,
+                    f"$schema points at {schema_ref} which resolves to {target} (does not exist)",
+                ))
+            break  # one $schema per file
+    return findings
+
+
+# --- --fix-line-numbers --------------------------------------------------
+
+def fix_line_numbers(nodes: list, snapshot: dict, id_index: dict, path_index: dict,
+                     repo_root: Path, write: bool, quiet: bool) -> tuple:
+    """Re-resolve every `(item: "NAME" at line N)` in stamps. Returns
+    `(updates_total, ambiguities, unresolvable_targets)`. Codex pass 6 M1
+    contract: FAIL on non-unique item-name match (no first-match-wins);
+    never invent a new item; require explicit --write to actually mutate.
+    Codex pass 7 H2: ambiguity must surface as a non-zero exit so CI
+    cannot silently treat a refused rewrite as success."""
+    updates_total = 0
+    files_modified: dict = {}
+    ambiguities = 0
+    unresolvable_targets = 0
+    for n in nodes:
+        rel = n["file_path"]
+        text = snapshot.get(rel, "")
+        new_lines: list = []
+        modified = False
+        for ln in text.splitlines():
+            stamp = STAMP_LINE_RE.match(ln)
+            if not stamp:
+                new_lines.append(ln)
+                continue
+            rest = stamp.group("rest")
+            updated_rest = rest
+            for item_match in ITEM_LINE_RE.finditer(rest):
+                name = item_match.group("name")
+                stored_n = int(item_match.group("n"))
+                # Find target file: use the first XREF target on this line.
+                xref_match = re.search(r"->\s*XREF:\s*(\S+)", rest)
+                if not xref_match:
+                    continue
+                xref_target = xref_match.group(1).rstrip(",")
+                target_file = resolve_xref_target(xref_target, rel, id_index, path_index)
+                if target_file is None:
+                    unresolvable_targets += 1
+                    continue
+                target_text = snapshot.get(target_file)
+                if target_text is None:
+                    target_text = (repo_root / target_file).read_text(encoding="utf-8")
+                    snapshot[target_file] = target_text
+                # Find the literal item name in the target file. Match must
+                # be UNIQUE; ambiguity is a hard fail per Codex pass 6 M1.
+                hits: list = []
+                for ix, target_ln in enumerate(target_text.splitlines(), start=1):
+                    if name in target_ln:
+                        hits.append(ix)
+                if len(hits) == 0:
+                    continue  # never invent
+                if len(hits) > 1:
+                    ambiguities += 1
+                    sys.stderr.write(
+                        f"[validate.py] FAIL fix-line-numbers: ambiguous item_name "
+                        f"{name!r} matches lines {hits} in {target_file} "
+                        f"(stamp at {rel}); refusing to rewrite\n"
+                    )
+                    continue
+                actual_n = hits[0]
+                if actual_n == stored_n:
+                    continue
+                old_clause = item_match.group(0)
+                new_clause = f'(item: "{name}" at line {actual_n})'
+                updated_rest = updated_rest.replace(old_clause, new_clause)
+                updates_total += 1
+                modified = True
+                if not quiet:
+                    print(f"[validate.py] {'WRITE' if write else 'DRY-RUN'} "
+                          f"{rel}: {name!r} {stored_n} -> {actual_n}")
+            if modified and updated_rest != rest:
+                new_lines.append(ln.replace(rest, updated_rest))
+            else:
+                new_lines.append(ln)
+        if modified and write:
+            new_text = "\n".join(new_lines)
+            if text.endswith("\n") and not new_text.endswith("\n"):
+                new_text += "\n"
+            (repo_root / rel).write_text(new_text, encoding="utf-8")
+            files_modified[rel] = True
+    if ambiguities > 0 and write:
+        sys.stderr.write(
+            f"[validate.py] {ambiguities} ambiguous item_name(s) refused; "
+            "fix duplicates manually then re-run\n"
+        )
+    if not quiet:
+        sys.stderr.write(
+            f"[validate.py] fix-line-numbers: {updates_total} update(s), "
+            f"{ambiguities} ambiguous, {unresolvable_targets} unresolvable target(s); "
+            f"mode={'WRITE' if write else 'DRY-RUN'}\n"
+        )
+    return (updates_total, ambiguities, unresolvable_targets)
+
+
+# --- main ----------------------------------------------------------------
+
+def main() -> int:
+    ap = argparse.ArgumentParser(
+        description="TODO graph integrity validator (consumes build/todo-cache.json)"
+    )
+    ap.add_argument("--cache", default="build/todo-cache.json",
+                    help="Path to cache file (default: build/todo-cache.json)")
+    ap.add_argument("--repo-root", default=None,
+                    help="Repo root (default: walk up from cwd to find scripts/todo-graph)")
+    ap.add_argument("--quiet", action="store_true",
+                    help="Suppress per-check PASS lines; print only failures + summary")
+    ap.add_argument("--warnings-only", action="store_true",
+                    help="Downgrade check-1 stale-XREF FAILs to WARNs (migration mode)")
+    ap.add_argument("--fix-line-numbers", action="store_true",
+                    help="Re-resolve (item: \"NAME\" at line N) parentheticals; "
+                         "DRY-RUN by default. Add --write to actually rewrite files.")
+    ap.add_argument("--write", action="store_true",
+                    help="Required with --fix-line-numbers to actually mutate files")
+    args = ap.parse_args()
+
+    if args.write and not args.fix_line_numbers:
+        sys.stderr.write("[validate.py] FATAL: --write requires --fix-line-numbers\n")
+        return 2
+
+    # Resolve repo root. When --repo-root is explicit (regression tests using
+    # synthetic fixture trees without a scripts/todo-graph dir), trust it.
+    # When auto-discovering, walk up from cwd until we find the real repo.
+    if args.repo_root:
+        repo_root = Path(args.repo_root).resolve()
+    else:
+        cwd = Path.cwd().resolve()
+        repo_root = cwd
+        for _ in range(8):
+            if (repo_root / "scripts/todo-graph/build.py").exists():
+                break
+            if repo_root.parent == repo_root:
+                break
+            repo_root = repo_root.parent
+        if not (repo_root / "scripts/todo-graph/build.py").exists():
+            sys.stderr.write(f"[validate.py] FATAL: cannot find scripts/todo-graph/build.py from {repo_root}\n")
+            return 2
+
+    cache_path = Path(args.cache)
+    if not cache_path.is_absolute():
+        cache_path = repo_root / cache_path
+    nodes = load_or_rebuild_cache(cache_path, repo_root, args.quiet)
+
+    snapshot = load_file_snapshot(repo_root, nodes)
+    id_index = build_id_index(nodes)
+    path_index = build_path_index(nodes)
+
+    if args.fix_line_numbers:
+        _updates, ambig, _unres = fix_line_numbers(
+            nodes, snapshot, id_index, path_index,
+            repo_root, write=args.write, quiet=args.quiet,
+        )
+        # Codex pass 7 H2: ambiguity is a hard failure. --write that refused
+        # to rewrite because of non-unique item-name match must exit non-zero
+        # so CI or hooks cannot silently treat a refused rewrite as success.
+        if ambig > 0:
+            return 1
+        return 0
+
+    # Run all 7 checks.
+    all_findings: list = []
+    check_results: list = []
+    for name, check_fn, args_tuple in [
+        ("stale-xref", check_stale_xref, (nodes, id_index, path_index, args.warnings_only)),
+        ("dangling-section", check_dangling_section_ref, (nodes, id_index, path_index)),
+        ("orphan-io-row", check_orphaned_io_row, (nodes,)),
+        ("dependency-cycle", check_dependency_cycle, (nodes, id_index)),
+        ("bat-alignment", check_bat_alignment, (nodes, snapshot, repo_root)),
+        ("status-transition", check_status_transition, (nodes,)),
+        ("schema-reachability", check_schema_reachability, (nodes, snapshot, repo_root)),
+    ]:
+        findings = check_fn(*args_tuple)
+        check_results.append((name, findings))
+        all_findings.extend(findings)
+
+    # Print findings + per-check pass/fail summary.
+    fail_count = 0
+    warn_count = 0
+    for name, findings in check_results:
+        fails = [f for f in findings if f.severity == "FAIL"]
+        warns = [f for f in findings if f.severity == "WARN"]
+        if not fails and not warns:
+            if not args.quiet:
+                print(f"  [PASS] {name}")
+        else:
+            if fails:
+                fail_count += len(fails)
+                print(f"  [FAIL] {name}: {len(fails)} failure(s)")
+                for f in fails:
+                    print(f"    {f.format()}")
+            if warns:
+                warn_count += len(warns)
+                if not args.quiet:
+                    print(f"  [WARN] {name}: {len(warns)} warning(s)")
+                    for f in warns:
+                        print(f"    {f.format()}")
+
+    # Trailing summary
+    total_pass = sum(1 for _, f in check_results if not [x for x in f if x.severity == "FAIL"])
+    total = len(check_results)
+    print(f"[validate.py] {total_pass}/{total} checks passed, {fail_count} failure(s), {warn_count} warning(s)")
+    return 0 if fail_count == 0 else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

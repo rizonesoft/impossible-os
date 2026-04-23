@@ -468,9 +468,96 @@ def extract_section_headings(body: str) -> list:
     return out
 
 
+# Token classes inside an Implementation Order Depends-On cell. A target
+# token names a different file (cross-file dep); a section token names a
+# section number. Parser walks tokens left-to-right and groups sections
+# under whichever target they follow (or "self" for sections at the start).
+_DEP_TARGET_RE = re.compile(
+    r"^("
+    r"D\d{2}T\d{1,2}|"   # cross-domain compact: D02T19
+    r"D\d{2}\s*T\d{1,2}|"  # same with space: D02 T19
+    r"D\d{2}|"            # cross-domain only (rare): D14
+    r"T\d{1,2}|"           # same-domain compact: T17
+    r"TODO-\d{1,2}|"       # explicit TODO-NN
+    r"\d{2}-[a-z0-9-]+/TODO-\d{1,2}|"  # full path: 02-kernel-core/TODO-19
+    r")$"
+)
+_DEP_SECTION_RE = re.compile(r"^§(\d+)$")
+
+
+def _parse_dep_cell(depends_cell: Optional[str]) -> list:
+    """Parse one Depends-On cell into a list of {target, sections} groups.
+    See extract_implementation_order docstring for grammar + examples."""
+    if not depends_cell or depends_cell.strip() in {"--", "-", ""}:
+        return []
+    # Split on commas first; then for each comma-piece, further split on
+    # whitespace so `TODO-08 §8` becomes ["TODO-08", "§8"]. Strip backticks.
+    raw_tokens: list = []
+    for chunk in depends_cell.split(","):
+        for tok in chunk.strip().strip("`").split():
+            tok = tok.strip().strip("`").strip()
+            if tok:
+                raw_tokens.append(tok)
+    # Join bare D<dom> followed by T<num> into a single D<dom>T<num> token
+    # so the space-separated form (`D02 T19 §1`) parses identically to the
+    # tight form (`D02T19 §1`); TODO-06 §1 documents both as accepted.
+    joined: list = []
+    i = 0
+    while i < len(raw_tokens):
+        cur = raw_tokens[i]
+        nxt = raw_tokens[i + 1] if i + 1 < len(raw_tokens) else None
+        if (
+            re.match(r"^D\d{2}$", cur)
+            and nxt is not None
+            and re.match(r"^T\d{1,2}$", nxt)
+        ):
+            joined.append(cur + nxt)
+            i += 2
+        else:
+            joined.append(cur)
+            i += 1
+    raw_tokens = joined
+    groups: list = []
+    current_target = "self"
+    current_sections: list = []
+    have_seen_anything = False
+    for tok in raw_tokens:
+        sec_match = _DEP_SECTION_RE.match(tok)
+        if sec_match:
+            current_sections.append(int(sec_match.group(1)))
+            have_seen_anything = True
+            continue
+        # Anything that looks like a target token starts a new group.
+        if _DEP_TARGET_RE.match(tok):
+            if have_seen_anything:
+                groups.append({"target": current_target, "sections": list(current_sections)})
+                current_sections = []
+            current_target = tok
+            have_seen_anything = True
+            continue
+        # Unrecognized token: keep it as a target with no sections so the
+        # validator can flag it (better than silently dropping).
+        if have_seen_anything:
+            groups.append({"target": current_target, "sections": list(current_sections)})
+            current_sections = []
+        current_target = tok
+        have_seen_anything = True
+    if have_seen_anything:
+        groups.append({"target": current_target, "sections": list(current_sections)})
+    return groups
+
+
 def extract_implementation_order(body: str) -> list:
     """Walk under `## Implementation Order` and return list of section dicts:
-       {n: int|None, deliverable: str, depends_on: [str], status: str}.
+       {n: int|None, deliverable: str, depends_on: [DepGroup], status: str}.
+
+    Each DepGroup is `{target: "self"|"<compact-form>", sections: [int]}`. A
+    plain `§1, §2` cell yields `[{target: "self", sections: [1, 2]}]`. A
+    cross-file cell like `TODO-08 §8, §9` yields a SINGLE group `[{target:
+    "TODO-08", sections: [8, 9]}]` -- the bare `§9` rides on the preceding
+    target rather than dangling against the source file (Codex pass 6 H1:
+    parsing `TODO-08 §8, §9` as two opaque tokens loses the binding).
+    Multi-target cells like `TODO-08 §8, TODO-09 §1` yield two groups.
 
     Tolerates both 5-column tables (icon | order | deliverable | depends |
     status) and 6-column (icon | order | section | deliverable | depends |
@@ -535,17 +622,15 @@ def extract_implementation_order(body: str) -> list:
                 n = int(order_cell.strip("`"))
             except ValueError:
                 pass
-        # Parse depends list. Tokens are comma-separated section refs
-        # (§-prefixed, optionally with a TNN cross-domain prefix) or the
-        # ASCII `--` / `-` placeholder for "no deps". CLAUDE.md No-
-        # Unicode-Dashes rule means any TODO using a real em or en dash
+        # Parse depends list into structured groups. A bare cell like
+        # `§1, §2` becomes one group `{target: self, sections: [1, 2]}`. A
+        # cross-file cell like `TODO-08 §8, §9` becomes one group `{target:
+        # TODO-08, sections: [8, 9]}` (the bare `§9` rides on the preceding
+        # target). A multi-target cell like `TODO-08 §8, TODO-09 §1` yields
+        # two groups. The ASCII `--` / `-` cell is "no deps". CLAUDE.md
+        # No-Unicode-Dashes rule means any TODO using a real em or en dash
         # here is itself a lint violation; we detect ASCII forms only.
-        deps = []
-        if depends_cell and depends_cell not in {"--", "-", ""}:
-            for tok in depends_cell.split(","):
-                tok = tok.strip().strip("`").strip()
-                if tok:
-                    deps.append(tok)
+        deps = _parse_dep_cell(depends_cell)
         # Status normalization: extract `[ ]`/`[x]`/`[/]`
         status_norm = ""
         if status_cell:

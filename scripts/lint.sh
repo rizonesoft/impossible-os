@@ -234,6 +234,7 @@ if [ "$#" -eq 0 ]; then
         case "$relpath" in
             .github/PULL_REQUEST_TEMPLATE.md) continue ;;
             scripts/test-ai-system.sh) continue ;;
+            scripts/todo-graph/*) continue ;;
             *.claude/*) continue ;;
         esac
         if is_todo_xref_legacy "$relpath"; then
