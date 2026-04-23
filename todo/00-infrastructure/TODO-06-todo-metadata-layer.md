@@ -45,8 +45,8 @@
 | ⭐  |   6   |  §6     | CI gate on `todo/` commits + diff mode + auto-rewrite hook | §3, §4        |  [ ]   |
 | ⭐  |   7   |  §7     | Visualization output (mermaid / dot / ascii / gantt / markdown) | §2, §4    |  [ ]   |
 
-> 💎 = parity work -- Linux kernel has MAINTAINERS + get_maintainer.pl (person-ownership mapping without a dep graph); Windows has no public equivalent. §1-§3 (frontmatter + generator + migration) bring us to partial Linux parity plus graph metadata neither OS ships.
-> ⭐ = competitive edge -- neither Win11 nor mainline Linux ships a first-class TODO dependency graph. §3-§6 are new ground; the surface has direct value for any contributor scanning "what can I work on next?".
+> 💎 = parity work -- Linux kernel has MAINTAINERS + get_maintainer.pl (person-ownership mapping without a dep graph); Windows has no public equivalent. §1 (frontmatter), §2 (generator), §5 (migration) bring us to partial Linux parity plus graph metadata neither OS ships.
+> ⭐ = competitive edge -- neither Win11 nor mainline Linux ships a first-class TODO dependency graph. §3 (validator), §4 (query CLI), §6 (CI gate), §7 (visualization) are new ground; the surface has direct value for any contributor scanning "what can I work on next?".
 > **Order vs section-number:** Implementation Order is the execution sequence; file-order numbering (§1 schema, §2 generator, §3 validator, §4 query, §5 migration, §6 CI, §7 visualization) is grouped by kind so readers of the file can scan logically. §5 (migration) ships at Order 3 because §3 (validator) is easier to debug against a repo where all files already carry frontmatter. §7 (visualization) ships last because it consumes both the cache (§2) and the query CLI (§4); shipping it earlier would burn rework when the cache schema settles.
 
 ---
@@ -92,7 +92,7 @@ Build the parser that reads every TODO, extracts graph data, and emits a read-on
 
 **Test checkpoint:** `python3 scripts/todo-graph/build.py` succeeds in under 2s, emits `build/todo-cache.json` parseable by `python3 -c 'import json; json.load(open("build/todo-cache.json"))'`. Node count matches `find todo -name 'TODO-*.md' | wc -l`. Running twice with no source changes produces byte-identical output.
 
-## 3. Validator (stale XREF / dangling dep / orphan / cycle)
+## 3. Validator (stale XREF / dangling dep / orphan / cycle / bat / status / schema)
 
 The validator consumes the cache and reports graph-integrity violations. This is what closes the gap the pre-commit hook 5 cannot: cross-file XREF integrity.
 
@@ -112,7 +112,7 @@ The validator consumes the cache and reports graph-integrity violations. This is
 
 **Test checkpoint:** `python3 scripts/todo-graph/validate.py` on a clean repo exits 0 with `0 failures` summary. Artificially break an XREF (edit one `depends_on:` to reference a nonexistent id), validator exits 1 and prints the exact file + bad ref. `--fix-line-numbers` corrects a deliberately stale `(item: "..." at line N)` parenthetical back to the real line without changing any item names.
 
-## 4. Query CLI (ready / blocked / by-domain / backlinks / orphans)
+## 4. Query CLI (ready / blocked / blocking / by-domain / backlinks / deferred / orphans / stale / stats / code)
 
 Human-facing commands that answer "what can I work on?" and "what references this?" without manual grep sweeps.
 
