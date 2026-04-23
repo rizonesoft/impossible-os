@@ -542,6 +542,13 @@ V_TREE="$TMP_DIR/v-clean"
 v_run "$V_TREE"
 mkdir -p "$V_TREE/todo/01-test"
 cat > "$V_TREE/todo/01-test/TODO-01-clean.md" <<'EOF'
+---
+schema_version: 1
+id: fm-clean
+domain: 01-test
+status: active
+title: "fixture clean"
+---
 # TODO-01 -- Clean fixture
 
 ## Inputs
@@ -590,6 +597,13 @@ V_TREE="$TMP_DIR/v-dangling"
 v_run "$V_TREE"
 mkdir -p "$V_TREE/todo/01-test"
 cat > "$V_TREE/todo/01-test/TODO-01-dangling.md" <<'EOF'
+---
+schema_version: 1
+id: fm-dangling
+domain: 01-test
+status: active
+title: "fixture dangling"
+---
 # TODO-01 -- Dangling section
 
 ## Implementation Order
@@ -622,6 +636,13 @@ V_TREE="$TMP_DIR/v-orphan"
 v_run "$V_TREE"
 mkdir -p "$V_TREE/todo/01-test"
 cat > "$V_TREE/todo/01-test/TODO-01-orphan.md" <<'EOF'
+---
+schema_version: 1
+id: fm-orphan
+domain: 01-test
+status: active
+title: "fixture orphan"
+---
 # TODO-01 -- Orphan row
 
 ## Implementation Order
@@ -650,6 +671,13 @@ V_TREE="$TMP_DIR/v-bat"
 v_run "$V_TREE"
 mkdir -p "$V_TREE/todo/01-test"
 cat > "$V_TREE/todo/01-test/TODO-01-bat.md" <<'EOF'
+---
+schema_version: 1
+id: fm-bat
+domain: 01-test
+status: active
+title: "fixture bat"
+---
 # TODO-01 -- Bad bat
 
 ## Implementation Order
@@ -679,6 +707,13 @@ V_TREE="$TMP_DIR/v-warn"
 v_run "$V_TREE"
 mkdir -p "$V_TREE/todo/01-test"
 cat > "$V_TREE/todo/01-test/TODO-01-stalexref.md" <<'EOF'
+---
+schema_version: 1
+id: fm-stalexref
+domain: 01-test
+status: active
+title: "fixture stalexref"
+---
 # TODO-01 -- Stale XREF
 
 ## Inputs
@@ -715,6 +750,13 @@ V_TREE="$TMP_DIR/v-fix"
 v_run "$V_TREE"
 mkdir -p "$V_TREE/todo/01-test"
 cat > "$V_TREE/todo/01-test/TODO-01-target.md" <<'EOF'
+---
+schema_version: 1
+id: fm-target
+domain: 01-test
+status: active
+title: "fixture target"
+---
 # TODO-01 -- Target
 
 ## Implementation Order
@@ -729,6 +771,13 @@ cat > "$V_TREE/todo/01-test/TODO-01-target.md" <<'EOF'
 - [ ] Commit
 EOF
 cat > "$V_TREE/todo/01-test/TODO-02-source.md" <<'EOF'
+---
+schema_version: 1
+id: fm-source
+domain: 01-test
+status: active
+title: "fixture source"
+---
 # TODO-02 -- Source carrying drifted stamp
 
 ## Implementation Order
@@ -761,6 +810,13 @@ V_TREE="$TMP_DIR/v-fix-ambig"
 v_run "$V_TREE"
 mkdir -p "$V_TREE/todo/01-test"
 cat > "$V_TREE/todo/01-test/TODO-01-ambig-target.md" <<'EOF'
+---
+schema_version: 1
+id: fm-ambig-target
+domain: 01-test
+status: active
+title: "fixture ambig-target"
+---
 # TODO-01 -- Ambig target (item appears twice)
 
 ## Implementation Order
@@ -776,6 +832,13 @@ cat > "$V_TREE/todo/01-test/TODO-01-ambig-target.md" <<'EOF'
 - [ ] Commit
 EOF
 cat > "$V_TREE/todo/01-test/TODO-02-ambig-source.md" <<'EOF'
+---
+schema_version: 1
+id: fm-ambig-source
+domain: 01-test
+status: active
+title: "fixture ambig-source"
+---
 # TODO-02 -- Source
 
 ## Implementation Order
@@ -808,6 +871,13 @@ V_TREE="$TMP_DIR/v-broken-target"
 v_run "$V_TREE"
 mkdir -p "$V_TREE/todo/01-test"
 cat > "$V_TREE/todo/01-test/TODO-01-broken.md" <<'EOF'
+---
+schema_version: 1
+id: fm-broken
+domain: 01-test
+status: active
+title: "fixture broken"
+---
 # TODO-01 -- Broken cross-file IO dep
 
 ## Implementation Order
@@ -835,6 +905,13 @@ V_TREE="$TMP_DIR/v-ambig-exit"
 v_run "$V_TREE"
 mkdir -p "$V_TREE/todo/01-test"
 cat > "$V_TREE/todo/01-test/TODO-01-atarget.md" <<'EOF'
+---
+schema_version: 1
+id: fm-atarget
+domain: 01-test
+status: active
+title: "fixture atarget"
+---
 # TODO-01 -- Target (ambig)
 
 ## Implementation Order
@@ -850,6 +927,13 @@ cat > "$V_TREE/todo/01-test/TODO-01-atarget.md" <<'EOF'
 - [ ] Commit
 EOF
 cat > "$V_TREE/todo/01-test/TODO-02-asource.md" <<'EOF'
+---
+schema_version: 1
+id: fm-asource
+domain: 01-test
+status: active
+title: "fixture asource"
+---
 # TODO-02 -- Source
 
 ## Implementation Order
@@ -923,6 +1007,13 @@ v_run "$V_TREE"
 mkdir -p "$V_TREE/todo/01-test"
 # TODO-01 target: Alpha item sits at line 11 (after 10 lines of header).
 cat > "$V_TREE/todo/01-test/TODO-01-atgt.md" <<'EOF'
+---
+schema_version: 1
+id: fm-atgt
+domain: 01-test
+status: active
+title: "fixture atgt"
+---
 # TODO-01 -- Target A
 
 ## Implementation Order
@@ -940,6 +1031,13 @@ EOF
 # targets produce DIFFERENT line numbers. A broken impl that resolved
 # Beta against TODO-01 would return line 11 (where Alpha sits), not 15.
 cat > "$V_TREE/todo/01-test/TODO-02-btgt.md" <<'EOF'
+---
+schema_version: 1
+id: fm-btgt
+domain: 01-test
+status: active
+title: "fixture btgt"
+---
 # TODO-02 -- Target B (padded so Beta lands at a different line)
 
 Extra padding line 1.
@@ -958,6 +1056,13 @@ Extra padding line 2.
 - [ ] Commit
 EOF
 cat > "$V_TREE/todo/01-test/TODO-03-multi.md" <<'EOF'
+---
+schema_version: 1
+id: fm-multi
+domain: 01-test
+status: active
+title: "fixture multi"
+---
 # TODO-03 -- Source with multi-XREF stamp
 
 ## Implementation Order
@@ -998,12 +1103,26 @@ v_run "$V_TREE"
 mkdir -p "$V_TREE/todo/01-test"
 # Target A: Epsilon at line 3.
 cat > "$V_TREE/todo/01-test/TODO-01-asrc.md" <<'EOF'
+---
+schema_version: 1
+id: fm-asrc
+domain: 01-test
+status: active
+title: "fixture asrc"
+---
 # TODO-01 -- Target A
 
 - [ ] Epsilon unique in A
 EOF
 # Target B: Epsilon at line 9 (padded).
 cat > "$V_TREE/todo/01-test/TODO-02-bsrc.md" <<'EOF'
+---
+schema_version: 1
+id: fm-bsrc
+domain: 01-test
+status: active
+title: "fixture bsrc"
+---
 # TODO-02 -- Target B
 
 Padding line one.
@@ -1015,6 +1134,13 @@ Padding line six.
 - [ ] Epsilon unique in B
 EOF
 cat > "$V_TREE/todo/01-test/TODO-03-source.md" <<'EOF'
+---
+schema_version: 1
+id: fm-source
+domain: 01-test
+status: active
+title: "fixture source"
+---
 # TODO-03 -- Source
 
 ## Implementation Order
@@ -1051,6 +1177,13 @@ V_TREE="$TMP_DIR/v-stale-cache"
 v_run "$V_TREE"
 mkdir -p "$V_TREE/todo/01-test"
 cat > "$V_TREE/todo/01-test/TODO-01-clean.md" <<'EOF'
+---
+schema_version: 1
+id: fm-clean
+domain: 01-test
+status: active
+title: "fixture clean"
+---
 # TODO-01 -- Clean
 
 ## Implementation Order
@@ -1138,27 +1271,61 @@ q_live() {
     python3 "$QUERY_PY" --cache "$LIVE_CACHE" --repo-root "$REPO_ROOT" "$@"
 }
 
-# Sub-test 9a: `ready` exits 0 on the live (pre-migration) tree, prints
-# the one-shot pre-migration notice on stderr, and emits no stdout rows.
-Q_OUT=$(q_live ready 2>"$TMP_DIR/q9a.stderr"); Q_RC=$?
-if [ "$Q_RC" = "0" ] && [ -z "$Q_OUT" ] && grep -q "pre-migration notice" "$TMP_DIR/q9a.stderr"; then
-    t_pass "query: ready exits 0 + prints pre-migration notice"
+# Sub-test 9a/b/c: status-gated subcommands on a SYNTHETIC pre-migration
+# tree print the one-shot notice + empty body. The live tree is now
+# fully frontmatter-migrated (TODO-06 §5), so the notice no longer
+# fires against the real cache -- we synthesize a majority-no-frontmatter
+# cache instead. Each subcommand verifies exit=0 + empty stdout + the
+# notice string on stderr.
+PREMIG_TREE="$TMP_DIR/q-premig"
+mkdir -p "$PREMIG_TREE"
+python3 -c "
+import json
+# 4 no-frontmatter nodes + 1 with frontmatter -> majority no-fm triggers notice.
+nodes = []
+for i in range(1, 5):
+    nodes.append({
+        'file_path': f'todo/01-t/TODO-0{i}-nofm.md',
+        'id': None, 'domain': '01-t', 'status': 'no-frontmatter',
+        'title': f'legacy-{i}', 'schema_version': None,
+        'sections': [], 'section_headings': [], 'inputs_xrefs': [],
+        'stamps_xrefs': [], 'created_at': '2026-04-01T00:00:00Z',
+        'last_active_at': '2026-04-01T00:00:00Z',
+    })
+nodes.append({
+    'file_path': 'todo/01-t/TODO-05-fm.md',
+    'id': 'has-fm', 'domain': '01-t', 'status': 'draft',
+    'title': 'fm', 'schema_version': 1,
+    'sections': [], 'section_headings': [], 'inputs_xrefs': [],
+    'stamps_xrefs': [], 'created_at': '2026-04-01T00:00:00Z',
+    'last_active_at': '2026-04-01T00:00:00Z',
+})
+with open('$PREMIG_TREE/cache.json', 'w') as f:
+    json.dump(nodes, f)
+"
+q_pre() {
+    python3 "$QUERY_PY" --cache "$PREMIG_TREE/cache.json" --repo-root "$PREMIG_TREE" "$@"
+}
+# The notice fires on majority-no-fm; output may still list the single
+# frontmatter-bearing node in its results (real pre-migration trees
+# would have nothing resolvable). Assertion: exit=0 + notice present.
+Q_OUT=$(q_pre ready 2>"$TMP_DIR/q9a.stderr"); Q_RC=$?
+if [ "$Q_RC" = "0" ] && grep -q "pre-migration notice" "$TMP_DIR/q9a.stderr"; then
+    t_pass "query: ready emits pre-migration notice when majority no-fm"
 else
-    t_fail "query: ready broken (rc=$Q_RC, out=$Q_OUT, stderr=$(cat "$TMP_DIR/q9a.stderr"))"
+    t_fail "query: ready broken (rc=$Q_RC, stderr=$(cat "$TMP_DIR/q9a.stderr"))"
 fi
 
-# Sub-test 9b: `blocked` same invariants.
-Q_OUT=$(q_live blocked 2>"$TMP_DIR/q9b.stderr"); Q_RC=$?
-if [ "$Q_RC" = "0" ] && [ -z "$Q_OUT" ] && grep -q "pre-migration notice" "$TMP_DIR/q9b.stderr"; then
-    t_pass "query: blocked exits 0 + prints pre-migration notice"
+Q_OUT=$(q_pre blocked 2>"$TMP_DIR/q9b.stderr"); Q_RC=$?
+if [ "$Q_RC" = "0" ] && grep -q "pre-migration notice" "$TMP_DIR/q9b.stderr"; then
+    t_pass "query: blocked emits pre-migration notice when majority no-fm"
 else
     t_fail "query: blocked broken (rc=$Q_RC)"
 fi
 
-# Sub-test 9c: `blocking` same invariants.
-Q_OUT=$(q_live blocking 2>"$TMP_DIR/q9c.stderr"); Q_RC=$?
-if [ "$Q_RC" = "0" ] && [ -z "$Q_OUT" ] && grep -q "pre-migration notice" "$TMP_DIR/q9c.stderr"; then
-    t_pass "query: blocking exits 0 + prints pre-migration notice"
+Q_OUT=$(q_pre blocking 2>"$TMP_DIR/q9c.stderr"); Q_RC=$?
+if [ "$Q_RC" = "0" ] && grep -q "pre-migration notice" "$TMP_DIR/q9c.stderr"; then
+    t_pass "query: blocking emits pre-migration notice when majority no-fm"
 else
     t_fail "query: blocking broken (rc=$Q_RC)"
 fi
@@ -1763,6 +1930,192 @@ sys.exit(0 if len(d['top_longest_deferred']) == 0 else 1)
     t_pass "query: stats.top_longest_deferred excludes self-pointing stamps"
 else
     t_fail "query: stats.top_longest_deferred still includes self-pointing (rc=$Q_RC, out=$Q_OUT)"
+fi
+
+# ======================================================================
+# Test 10: migrate-add-frontmatter.py (§5) -- back-fill migration.
+# Covers the script's derivation rules (id from stem, domain from parent,
+# title from H1), --dry-run preview, idempotence, and the build.py
+# "missing-frontmatter" FATAL that replaces the old back-compat path.
+# ======================================================================
+
+MIGRATE_PY="$REPO_ROOT/scripts/todo-graph/migrate-add-frontmatter.py"
+
+# Sub-test 10a: --dry-run prints the block but does not mutate the file.
+MIG_TREE="$TMP_DIR/m-dry"
+mkdir -p "$MIG_TREE/todo/01-t"
+cat > "$MIG_TREE/todo/01-t/TODO-01-dry-run-fixture.md" <<'EOF'
+# TODO-01 -- Dry Run Fixture
+
+Body content.
+EOF
+ORIG_HEAD=$(head -1 "$MIG_TREE/todo/01-t/TODO-01-dry-run-fixture.md")
+MIG_OUT=$(python3 "$MIGRATE_PY" --root "$MIG_TREE/todo" --dry-run 2>&1)
+NEW_HEAD=$(head -1 "$MIG_TREE/todo/01-t/TODO-01-dry-run-fixture.md")
+if echo "$MIG_OUT" | grep -q "id: dry-run-fixture" \
+    && echo "$MIG_OUT" | grep -q "domain: 01-t" \
+    && echo "$MIG_OUT" | grep -q "would-add=1" \
+    && [ "$ORIG_HEAD" = "$NEW_HEAD" ]; then
+    t_pass "migrate: --dry-run previews frontmatter without mutating file"
+else
+    t_fail "migrate: --dry-run broke (orig=$ORIG_HEAD, new=$NEW_HEAD, out=$MIG_OUT)"
+fi
+
+# Sub-test 10b: real run prepends frontmatter; second run is idempotent.
+python3 "$MIGRATE_PY" --root "$MIG_TREE/todo" >/dev/null 2>&1
+SECOND=$(python3 "$MIGRATE_PY" --root "$MIG_TREE/todo" 2>&1)
+FIRST_LINE=$(head -1 "$MIG_TREE/todo/01-t/TODO-01-dry-run-fixture.md")
+if [ "$FIRST_LINE" = "---" ] && echo "$SECOND" | grep -q "already-fm=1" \
+    && ! echo "$SECOND" | grep -q "added="; then
+    t_pass "migrate: real run prepends --- + idempotent on re-run"
+else
+    t_fail "migrate: idempotence broke (first=$FIRST_LINE, second=$SECOND)"
+fi
+
+# Sub-test 10c: derived frontmatter passes the §2 generator cleanly.
+python3 "$BUILD_PY" --quiet --root "$MIG_TREE/todo" --output "$MIG_TREE/cache.json" --repo-root "$MIG_TREE" >/dev/null 2>&1
+if python3 -c "
+import json, sys
+nodes = json.load(open('$MIG_TREE/cache.json'))
+n = next((x for x in nodes if x.get('id') == 'dry-run-fixture'), None)
+sys.exit(0 if (n and n.get('status') == 'active' and n.get('domain') == '01-t') else 1)
+"; then
+    t_pass "migrate: generated frontmatter parses cleanly via build.py"
+else
+    t_fail "migrate: build.py rejected migrated fixture"
+fi
+
+# Sub-test 10d: master-table TODOs (TODO-A-, TODO-B-, TODO-C-) also
+# migrate correctly -- regression against the first-pass miss where
+# the slug regex only matched TODO-NN-.
+MT_TREE="$TMP_DIR/m-mtbl"
+mkdir -p "$MT_TREE/todo/01-t"
+cat > "$MT_TREE/todo/01-t/TODO-A-Master-Table-Sample.md" <<'EOF'
+# TODO-A -- Master Table Sample
+EOF
+python3 "$MIGRATE_PY" --root "$MT_TREE/todo" >/dev/null 2>&1
+if head -6 "$MT_TREE/todo/01-t/TODO-A-Master-Table-Sample.md" | grep -q "id: master-table-sample"; then
+    t_pass "migrate: master-table TODO-A- files get a lowercased kebab id"
+else
+    t_fail "migrate: master-table slug regex broke"
+fi
+
+# Sub-test 10e: build.py now FAILs hard on a file missing frontmatter
+# (post-§5 back-compat path removed). Regression against accidentally
+# re-introducing the id=None / status='no-frontmatter' escape valve.
+FAIL_TREE="$TMP_DIR/m-noframe"
+mkdir -p "$FAIL_TREE/todo/01-t"
+cat > "$FAIL_TREE/todo/01-t/TODO-01-no-frame.md" <<'EOF'
+# TODO-01 -- Has no frontmatter
+EOF
+BUILD_OUT=$(python3 "$BUILD_PY" --quiet --root "$FAIL_TREE/todo" --output "$FAIL_TREE/cache.json" --repo-root "$FAIL_TREE" 2>&1); BUILD_RC=$?
+if [ "$BUILD_RC" = "1" ] \
+    && echo "$BUILD_OUT" | grep -q "missing-frontmatter" \
+    && [ ! -f "$FAIL_TREE/cache.json" ]; then
+    t_pass "build.py: missing frontmatter is FATAL post-§5 (cache NOT written)"
+else
+    t_fail "build.py: should FAIL on missing frontmatter (rc=$BUILD_RC, cache exists=$(test -f "$FAIL_TREE/cache.json" && echo yes || echo no))"
+fi
+
+# Sub-test 10g: titles with backslashes produce valid YAML. Codex pass
+# 12 H1 regression -- a naive `replace('"', '\\"')` would emit
+# `title: "C:\Temp"` which PyYAML rejects (\T is not a legal escape).
+ESC_TREE="$TMP_DIR/m-yaml-esc"
+mkdir -p "$ESC_TREE/todo/01-t"
+cat > "$ESC_TREE/todo/01-t/TODO-01-backslash.md" <<'EOF'
+# TODO-01 -- C:\Temp\path with "quotes" and \backslash
+EOF
+python3 "$MIGRATE_PY" --root "$ESC_TREE/todo" >/dev/null 2>&1
+if python3 "$BUILD_PY" --quiet --root "$ESC_TREE/todo" --output "$ESC_TREE/cache.json" --repo-root "$ESC_TREE" 2>/dev/null \
+    && python3 -c "
+import json, sys
+nodes = json.load(open('$ESC_TREE/cache.json'))
+n = next((x for x in nodes if x.get('id') == 'backslash'), None)
+sys.exit(0 if n and 'C:' in (n.get('title') or '') else 1)
+"; then
+    t_pass "migrate: backslash titles emit valid YAML (generator parses cleanly)"
+else
+    t_fail "migrate: YAML escape broken on backslash title"
+fi
+
+# Sub-test 10h: --status rejects unknown values via argparse choices.
+# Codex pass 12 H2: a bulk `--status blockedd` typo would poison every
+# migrated file under the old permissive code path.
+BAD_STATUS_OUT=$(python3 "$MIGRATE_PY" --root "$ESC_TREE/todo" --status blockedd 2>&1); BAD_STATUS_RC=$?
+if [ "$BAD_STATUS_RC" = "2" ] && echo "$BAD_STATUS_OUT" | grep -q "invalid choice"; then
+    t_pass "migrate: --status rejects unknown value via argparse choices"
+else
+    t_fail "migrate: --status should reject unknown value (rc=$BAD_STATUS_RC)"
+fi
+
+# Sub-test 10i: idempotence detection tolerates BOM + leading blank
+# lines before the --- fence. Codex pass 12 M1 -- a file authored with
+# a BOM and a drift-inserted blank line should NOT get a second
+# frontmatter block prepended.
+BOM_TREE="$TMP_DIR/m-bom"
+mkdir -p "$BOM_TREE/todo/01-t"
+printf '\xef\xbb\xbf\n---\nschema_version: 1\nid: bom-already-fm\ndomain: 01-t\nstatus: active\ntitle: "with BOM"\n---\n\n# TODO-01 -- with BOM\n' > "$BOM_TREE/todo/01-t/TODO-01-with-bom.md"
+MIG_OUT=$(python3 "$MIGRATE_PY" --root "$BOM_TREE/todo" 2>&1)
+BLOCK_COUNT=$(grep -c '^---$' "$BOM_TREE/todo/01-t/TODO-01-with-bom.md")
+if echo "$MIG_OUT" | grep -q "already-fm=1" && [ "$BLOCK_COUNT" = "2" ]; then
+    t_pass "migrate: BOM + leading blank line is detected as existing frontmatter"
+else
+    t_fail "migrate: BOM detection broke (mig=$MIG_OUT, block-count=$BLOCK_COUNT)"
+fi
+
+# Sub-test 10j: pre-existing `.<name>.tmp` sidecar is NOT clobbered by
+# the atomic-write path. Codex pass 13 M1 regression -- the old fixed
+# `<name>.md.tmp` would silently overwrite an existing sidecar; the
+# fix switches to tempfile.mkstemp for a unique name.
+SIDE_TREE="$TMP_DIR/m-sidecar"
+mkdir -p "$SIDE_TREE/todo/01-t"
+cat > "$SIDE_TREE/todo/01-t/TODO-01-sidecar.md" <<'EOF'
+# TODO-01 -- Sidecar Test
+EOF
+# Pre-create the literal sidecar that the old code path would clobber.
+echo "this is a sibling temp file" > "$SIDE_TREE/todo/01-t/TODO-01-sidecar.md.tmp"
+python3 "$MIGRATE_PY" --root "$SIDE_TREE/todo" >/dev/null 2>&1
+# Sibling must still exist with its original content.
+if [ "$(cat "$SIDE_TREE/todo/01-t/TODO-01-sidecar.md.tmp" 2>/dev/null)" = "this is a sibling temp file" ] \
+    && head -1 "$SIDE_TREE/todo/01-t/TODO-01-sidecar.md" | grep -q '^---$'; then
+    t_pass "migrate: pre-existing .tmp sidecar preserved by unique-temp-name write"
+else
+    t_fail "migrate: sidecar clobbered (sidecar=$(cat "$SIDE_TREE/todo/01-t/TODO-01-sidecar.md.tmp" 2>/dev/null | head -1))"
+fi
+
+# Sub-test 10k: UnicodeEncodeError (or any non-OSError exception) in
+# the write path cleans up the temp file. Codex pass 14 M1 regression
+# -- an invalid Unicode scalar in the TODO body would leak a hidden
+# .TODO-*.tmp under the old `except OSError:` handler.
+ENC_TREE="$TMP_DIR/m-encode"
+mkdir -p "$ENC_TREE/todo/01-t"
+# Write a file containing a lone surrogate (invalid in UTF-8). Use
+# Python to emit the bytes directly.
+python3 -c "
+import codecs
+body = '# TODO-01 -- has bad utf8 in body\n\ud800 surrogate\n'
+with open('$ENC_TREE/todo/01-t/TODO-01-encode.md', 'w', encoding='utf-8', errors='surrogatepass') as f:
+    f.write(body)
+"
+python3 "$MIGRATE_PY" --root "$ENC_TREE/todo" >/dev/null 2>&1 || true
+# A leaked temp would be `.TODO-01-encode.md.<RANDOM>.tmp`. Assert none remain.
+LEAKED=$(find "$ENC_TREE/todo/01-t" -name '.TODO-01-encode.md.*.tmp' 2>/dev/null | wc -l)
+if [ "$LEAKED" = "0" ]; then
+    t_pass "migrate: UnicodeEncodeError path cleans up temp file (no leak)"
+else
+    t_fail "migrate: temp file leaked on encode error ($LEAKED temp files)"
+fi
+
+# Sub-test 10f: live tree post-migration has zero no-frontmatter nodes.
+LIVE_NO_FM=$(python3 -c "
+import json
+nodes = json.load(open('$LIVE_CACHE'))
+print(sum(1 for n in nodes if n.get('status') == 'no-frontmatter'))
+")
+if [ "$LIVE_NO_FM" = "0" ]; then
+    t_pass "migrate: live tree has 0 no-frontmatter nodes post-migration"
+else
+    t_fail "migrate: live tree still has $LIVE_NO_FM no-frontmatter nodes"
 fi
 
 # ----------------------------------------------------------------------

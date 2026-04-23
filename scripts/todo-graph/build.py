@@ -315,15 +315,19 @@ def validate_frontmatter(fm: dict) -> list:
     """Return list of (category, message) tuples. Empty list = clean.
 
     Categories from §2 error catalog (mirrors docs/infrastructure/todo-metadata.md):
-      malformed-yaml    (handled separately in split_frontmatter; also covers
-                         circular YAML alias cycles via _has_yaml_cycle)
-      unknown-status    : status not in VALID_STATUSES
-      invalid-id        : id fails regex
-      missing-required  : a REQUIRED_FIELDS entry absent
-      schema-version    : schema_version not int OR > SUPPORTED_SCHEMA_VERSION
-      forbidden-field   : hand-authored cache-only field (created_at /
+      malformed-yaml     (handled separately in split_frontmatter; also covers
+                          circular YAML alias cycles via _has_yaml_cycle)
+      missing-frontmatter: file has no frontmatter block at all. Post-§5
+                          (back-fill migration, 2026-04-23) this is FATAL
+                          instead of a back-compat `status=no-frontmatter`
+                          node.
+      unknown-status     : status not in VALID_STATUSES
+      invalid-id         : id fails regex
+      missing-required   : a REQUIRED_FIELDS entry absent
+      schema-version     : schema_version not int OR > SUPPORTED_SCHEMA_VERSION
+      forbidden-field    : hand-authored cache-only field (created_at /
                           last_active_at) present
-      invalid-field     : optional field present but wrong type/shape
+      invalid-field      : optional field present but wrong type/shape
                           (mirrors the JSON Schema sidecar's per-field
                           constraints so generator + schema agree)
     Unknown optional fields produce a WARNING (returned with category
@@ -793,15 +797,28 @@ def build_node(file_path: Path, repo_root: Path, timestamps: dict, content: str)
             if opt in fm:
                 node[opt] = fm[opt]
     else:
-        # Back-compat: no-frontmatter node. Per the generator spec:
-        # id=None, status="no-frontmatter". The validator section will
-        # surface these but the generator does not fail on them during
-        # the migration window owned by the back-fill section.
+        # TODO-06 §5 (back-fill migration) closed 2026-04-23: every
+        # TODO-*.md under todo/ now carries a frontmatter block. Missing
+        # frontmatter is FATAL -- a file without the block either means
+        # the author forgot to run the template OR the file was renamed
+        # without updating the block. Hard-fail instead of silently
+        # producing an id=None node (which would then ambush downstream
+        # stats/backlinks/orphans queries with a mysterious `None` entry).
+        errors.append((
+            "missing-frontmatter",
+            f"{rel}: TODO file has no frontmatter block. "
+            "Run `python3 scripts/todo-graph/migrate-add-frontmatter.py "
+            f"--root {Path(rel).parent}` or add the block manually -- see "
+            "docs/infrastructure/todo-metadata.md for the schema.",
+        ))
+        # Return a placeholder node so downstream code that expects a
+        # dict doesn't crash; main() sees the error and refuses to
+        # write the cache.
         node = {
             "id": None,
             "schema_version": None,
             "domain": domain,
-            "status": "no-frontmatter",
+            "status": None,
             "title": title_from_h1,
             "file_path": rel,
             "created_at": created_at,

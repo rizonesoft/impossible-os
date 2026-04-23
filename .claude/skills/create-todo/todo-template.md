@@ -3,6 +3,14 @@
 Use this as the default starting point for a new leaf TODO.
 
 ```markdown
+---
+schema_version: 1
+id: <kebab-case-slug>
+domain: <NN-domain>
+status: draft
+title: "TODO-NN -- Short Name"
+---
+
 # TODO-NN -- Short Name
 
 > **Goal:** One short paragraph describing the current state, the change to make, and the end state.
