@@ -895,7 +895,7 @@ uint32_t fb_get_output_count(void)
      * the negotiated `max_outputs` here -- callers already iterate
      * [0, count) so the surface change is a one-line swap in this
      * function plus scanout routing in the driver. See the multi-
-     * monitor matrix row of the §15 test-isolation prerequisites. */
+     * monitor matrix row of the test-isolation prerequisites. */
     return 1;
 }
 

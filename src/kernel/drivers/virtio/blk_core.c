@@ -71,7 +71,7 @@ void virtio_blk_config_irq(uint8_t vector, void *ctx)
     }
 }
 
-/* ---- Live config change handling (§14.1) ---- */
+/* ---- Live config change handling ---- */
 
 /* Atomically re-read device configuration using config_generation loop.
  * Detects changes to capacity, topology, and writeback mode.

@@ -1,7 +1,7 @@
 /* ============================================================================
  * blk_packed.c -- Packed Virtqueue Support
  *
- * §8.1 -- 💎 Impossible OS Exclusive
+ * 💎 Impossible OS Exclusive
  *
  * The packed virtqueue (VirtIO 1.1 §2.7) replaces the split layout's three
  * separate memory regions (descriptor table, available ring, used ring) with

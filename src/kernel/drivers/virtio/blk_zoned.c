@@ -1,7 +1,7 @@
 /* ============================================================================
  * blk_zoned.c -- Zoned Block Device (ZBD/ZNS) Support
  *
- * §11.1 -- 💎 Impossible OS Exclusive
+ * 💎 Impossible OS Exclusive
  *
  * Zoned block devices divide the disk into sequential-write-only zones,
  * matching SMR (Shingled Magnetic Recording) drives and ZNS (Zoned Namespace)

@@ -1,7 +1,7 @@
 /* ============================================================================
  * blk_merge.c -- I/O Request Coalescing Layer
  *
- * §18.1 -- 🚀 Impossible OS Exclusive
+ * 🚀 Impossible OS Exclusive
  *
  * Neither Windows viostor nor Linux virtio-blk merge adjacent I/O requests
  * at the VirtIO driver level -- Linux relies on blk-mq merge logic (above

@@ -737,7 +737,7 @@ int xhci_enumerate_device(struct xhci_controller *hc,
     return 0;
 }
 
-/* ---- MSC Identification & Endpoint Configuration (§2.2) ----------------- */
+/* ---- MSC Identification & Endpoint Configuration ----------------------- */
 
 int xhci_msc_identify(struct xhci_controller *hc, struct xhci_device *dev)
 {

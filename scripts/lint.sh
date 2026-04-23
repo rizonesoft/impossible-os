@@ -343,19 +343,9 @@ if [ "$#" -eq 0 ]; then
         src/desktop/wm.c
         src/kernel/acpi.c
         src/kernel/cpu_security.c
-        src/kernel/drivers/framebuffer.c
         src/kernel/drivers/nvme.c
-        src/kernel/drivers/virtio/blk_core.c
-        src/kernel/drivers/virtio/blk_crypto.c
-        src/kernel/drivers/virtio/blk_merge.c
-        src/kernel/drivers/virtio/blk_packed.c
-        src/kernel/drivers/virtio/blk_prefetch.c
-        src/kernel/drivers/virtio/blk_zoned.c
-        src/kernel/drivers/virtio/virtio.c
         src/kernel/drivers/xhci.c
-        src/kernel/drivers/xhci_dev.c
         src/kernel/elf.c
-        src/kernel/etw.c
         src/kernel/exec.c
         src/kernel/fs/gpt.c
         src/kernel/fs/partition.c

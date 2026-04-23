@@ -157,7 +157,7 @@ NTSTATUS NtTraceEvent(uint64_t trace_handle, uint64_t flags,
     hdr->timestamp    = (uint32_t)system_get_ticks();
     hdr->event_id     = (uint16_t)(flags & 0xFFFF);
     hdr->level        = (uint8_t)((flags >> 16) & 0xFF);
-    hdr->cpu_id       = 0;  /* will be populated from smp_this_cpu() when §9 adds per-entry context */
+    hdr->cpu_id       = 0;  /* will be populated from smp_this_cpu() when per-entry context is added */
     hdr->pid          = 0;  /* same as above */
     hdr->payload_size = (uint32_t)field_size;
 

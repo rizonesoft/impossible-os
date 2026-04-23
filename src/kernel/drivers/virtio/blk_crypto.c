@@ -1,7 +1,7 @@
 /* ============================================================================
  * blk_crypto.c -- Inline Encryption Support
  *
- * §21.1 -- 🚀 Impossible OS Exclusive
+ * 🚀 Impossible OS Exclusive
  *
  * Neither Windows viostor nor Linux virtio-blk implement VirtIO-level inline
  * encryption -- Windows uses BitLocker (software), Linux uses blk-crypto

@@ -387,7 +387,7 @@ void virtq_kick(struct virtqueue *vq)
         /* Wrapping subtract: notify if we just crossed the threshold */
         if ((uint16_t)(new_idx - event - 1) < 1) {
             if (vq->notify_data) {
-                /* NOTIFICATION_DATA (§2.7.25): pack queue index + avail idx
+                /* NOTIFICATION_DATA (VirtIO 1.2 spec): pack queue index + avail idx
                  * Split VQ format: low 16 = vqn, high 16 = next_avail_idx */
                 uint32_t data = ((uint32_t)vq->queue_idx & 0xFFFF) |
                                 ((uint32_t)vq->avail->idx << 16);

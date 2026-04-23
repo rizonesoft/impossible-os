@@ -1,7 +1,7 @@
 /* ============================================================================
  * blk_prefetch.c -- Predictive Sequential Read-Ahead
  *
- * §17.1 -- 🚀 Impossible OS Exclusive
+ * 🚀 Impossible OS Exclusive
  *
  * Detects sequential read patterns and speculatively prefetches ahead.
  * Neither Windows viostor nor Linux virtio-blk implement driver-level
