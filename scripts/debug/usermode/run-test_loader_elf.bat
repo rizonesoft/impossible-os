@@ -1,5 +1,5 @@
 @echo off
-:: run-test_loader_elf.bat -- §15 binary-format loader coverage: ELF
+:: run-test_loader_elf.bat -- binary-format loader coverage: ELF
 ::
 :: Runs only test_loader_elf.exe and exits. The launcher emits
 :: `UTEST: test_loader_elf.exe: format=ELF` before the PASS verdict

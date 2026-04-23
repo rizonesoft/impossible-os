@@ -76,7 +76,7 @@ void test_usermode_set_xml(int enable);
  * schema for downstream trend analysis. Disabled by default. */
 void test_usermode_set_json(int enable);
 
-/* Test-type taxonomy (§8 of TODO-04). The launcher derives the type
+/* Test-type taxonomy (user-mode test framework). The launcher derives the type
  * from the binary filename prefix:
  *   `test_smoke_*.exe`   -> UTEST_TYPE_SMOKE    (phase 0: FAIL aborts run)
  *   `test_stress_*.exe`  -> UTEST_TYPE_STRESS   (classname=stress; binary loops internally)

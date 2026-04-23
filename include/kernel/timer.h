@@ -7,7 +7,7 @@
  * the driver files themselves.
  *
  * The global pointer `g_system_timer` is set once during early boot by
- * timer_hal_init() (§6.4) and never changes.  Before it is set, the
+ * timer_hal_init() and never changes.  Before it is set, the
  * functions below are safe to call -- they return immediately / return 0.
  * ============================================================================ */
 

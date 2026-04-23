@@ -326,23 +326,13 @@ if [ "$#" -eq 0 ]; then
         include/kernel/test/klog_suppress.h
         include/kernel/test/scratch.h
         include/kernel/test/test.h
-        include/kernel/test/test_usermode.h
         include/kernel/time/wall_clock.h
-        include/kernel/timer.h
-        include/kernel/tpm.h
         include/kernel/uefi_runtime.h
-        include/kernel/vpd.h
         include/registry.h
         scripts/debug/desktop/run-matrix-desktop-tests.bat
         scripts/debug/usermode/run-all-usermode-tests.bat
-        scripts/debug/usermode/run-test_fastpath_fuzz.bat
         scripts/debug/usermode/run-test_faultinject.bat
-        scripts/debug/usermode/run-test_fileio.bat
         scripts/debug/usermode/run-test_harness_smoke.bat
-        scripts/debug/usermode/run-test_ipc.bat
-        scripts/debug/usermode/run-test_libc.bat
-        scripts/debug/usermode/run-test_loader_eif.bat
-        scripts/debug/usermode/run-test_loader_elf.bat
         scripts/debug/usermode/run-test_perf_syscall.bat
         scripts/debug/usermode/run-test_process.bat
         scripts/debug/usermode/run-test_smoke_boot.bat

@@ -1,5 +1,5 @@
 @echo off
-:: run-test_fileio.bat -- §13 file-I/O binary (test_fileio.exe)
+:: run-test_fileio.bat -- file-I/O coverage binary (test_fileio.exe)
 ::
 :: Exercises SYS_OPENFILE + SYS_READHANDLE + SYS_CLOSEHANDLE +
 :: SYS_OPENDIROBJ + SYS_QUERYDIROBJ from ring 3:

@@ -1,5 +1,5 @@
 @echo off
-:: run-test_loader_eif.bat -- §15 binary-format loader coverage: EIF
+:: run-test_loader_eif.bat -- binary-format loader coverage: EIF
 ::
 :: Runs only test_loader_eif.exe and exits. Binary is produced by
 :: nasm -f bin + scripts/build-eif.py (NO linker; the EIF header is

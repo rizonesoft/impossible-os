@@ -23,7 +23,7 @@ int tpm_version(void);
 /* Returns the number of measured boot events in the event log. */
 uint32_t tpm_event_count(void);
 
-/* ---- Boot Integrity Verification API (§9.2) ----
+/* ---- Boot Integrity Verification API ----
  *
  * Verifies that measured boot values (PCR digests from the TCG event log)
  * match expected golden values.  This is the foundation for:

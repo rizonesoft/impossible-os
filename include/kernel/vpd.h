@@ -3,7 +3,7 @@
  *
  * Two-tier boot progress visualization:
  *   Tier 1 (pre-splash): direct VRAM writes using vpd_font.h micro-font
- *   Tier 2 (post-splash): integrates with splash via fb driver (TODO §7-§8)
+ *   Tier 2 (post-splash): integrates with splash via fb driver
  *
  * Tier 1 is active from g_boot_info parse until boot_splash_init() takes over.
  * ============================================================================ */
