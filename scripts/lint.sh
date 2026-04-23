@@ -283,6 +283,20 @@ if [ "$#" -eq 0 ]; then
     BARE_SECTION_RE='§[0-9]'
     SPEC_TOKENS_RE='(UEFI|Intel|SDM|AMD|APM|RFC [0-9]|ACPI [0-9]|NTFS|FAT[0-9]|NVMe|PCIe?|PE/COFF|PE32|COFF|USB [0-9]|xHCI|EHCI|OHCI|UHCI|VirtIO|SMBIOS|IEEE|NIST|TCG|WHEA|HPET|MP Spec|spec |specification)'
 
+    # Path-based spec-code exemption: files whose WHOLE JOB is implementing
+    # an external standard carry §N refs to that standard per-line without
+    # repeating the standard's name (the file scope provides the context).
+    # Add directories/paths here only when every §N ref in the file truly
+    # points at the named external standard.
+    is_bare_section_spec_code() {
+        local path="$1"
+        case "$path" in
+            # NTFS on-disk format spec (Linux-NTFS + Microsoft NTFS reference).
+            src/kernel/fs/ntfs/*|include/kernel/fs/ntfs.h) return 0 ;;
+        esac
+        return 1
+    }
+
     # Files with pre-existing bare §N refs (WARN-only; tracked for cleanup
     # in todo/00-infrastructure/TODO-01-developer-tooling-stack.md). Keep
     # sorted alphabetically for easy audit. Any new file must NOT land
@@ -302,7 +316,6 @@ if [ "$#" -eq 0 ]; then
         include/kernel/elf.h
         include/kernel/etw.h
         include/kernel/exec.h
-        include/kernel/fs/ntfs.h
         include/kernel/fs/vfs.h
         include/kernel/ipc/alpc.h
         include/kernel/ipc/alpc_port.h
@@ -374,23 +387,6 @@ if [ "$#" -eq 0 ]; then
         src/kernel/etw.c
         src/kernel/exec.c
         src/kernel/fs/gpt.c
-        src/kernel/fs/ntfs/ntfs_attr.c
-        src/kernel/fs/ntfs/ntfs_attr_write.c
-        src/kernel/fs/ntfs/ntfs_bitmap.c
-        src/kernel/fs/ntfs/ntfs_cache.c
-        src/kernel/fs/ntfs/ntfs_data_write.c
-        src/kernel/fs/ntfs/ntfs_file_ops.c
-        src/kernel/fs/ntfs/ntfs_index_delete.c
-        src/kernel/fs/ntfs/ntfs_index_helpers.c
-        src/kernel/fs/ntfs/ntfs_index_insert.c
-        src/kernel/fs/ntfs/ntfs_io.c
-        src/kernel/fs/ntfs/ntfs_journal.c
-        src/kernel/fs/ntfs/ntfs_metadata.c
-        src/kernel/fs/ntfs/ntfs_mft_alloc.c
-        src/kernel/fs/ntfs/ntfs_recovery.c
-        src/kernel/fs/ntfs/ntfs_runlist.c
-        src/kernel/fs/ntfs/ntfs_sysfiles.c
-        src/kernel/fs/ntfs/ntfs_test.c
         src/kernel/fs/partition.c
         src/kernel/fs/vfs.c
         src/kernel/icon_store.c
@@ -501,6 +497,10 @@ if [ "$#" -eq 0 ]; then
             scripts/todo-graph/*) continue ;;
             *.claude/*) continue ;;
         esac
+        # Path-based spec-code exemption (NTFS etc.).
+        if is_bare_section_spec_code "$relpath"; then
+            continue
+        fi
         if is_bare_section_legacy "$relpath"; then
             warn "$relpath" "$linenum" "bare section ref (legacy; tracked for cleanup)"
         else
