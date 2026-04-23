@@ -95,10 +95,14 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 > - Legacy / Multiboot2-only retain/deprecate decisions codified: `mem_lower_kb` / `mem_upper_kb` -> **deprecate** (no kernel consumer today; UEFI mmap supersedes them; flagged for removal in a future `BOOT_INFO_VERSION` bump). `module_start` / `module_end` / `module_available` -> **retain as compatibility aliases** per §4's explicit direction ("Keep legacy single `module_start/module_end` as compatibility aliases until consumers migrate"). Multiboot2 retire/retain itself remains owned by [alternate boot protocols roadmap](../../todo/01-boot-platform/TODO-08-alternate-boot-protocols.md).
 > - [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h) file-top comment rewritten to point at the new doc as single source of truth. Per-field policy prose is NOT duplicated inline; the header keeps only ABI-critical static asserts (header offset 0, `uint16_t header.size` fit, six pinned offset mirrors) + the `boot_config` offset table that is load-bearing for the UEFI-kernel bootloader ABI contract.
 > - §2 (Generated ABI Manifest and Offset Fingerprint) builds on this matrix next: the producer/consumer columns here feed the manifest diff.
+> - Matrix maintenance contract: when `struct boot_info` or any nested struct gains a field in ANOTHER TODO's section, the owning section MUST update this matrix in the same commit. A Codex pass 2026-04-23 found 14 missing `boot_config` fields that had landed via TODO-04 test-framework sections (`tap`, `utest_timeout_ms`, `utest_filter`, `utest_isolation`, `xml`, `json`, `stress_iters`, `test_kernel_skip`, `test_usermode_skip`, and their pads) + TODO-05 desktop-UI-test-framework sections (`compositor`, `test_monitors_count`); drift was silent because no CI gate checks doc coverage against the live struct. Re-reviewed sections: TODO-04 and TODO-05 owners should back-reference this invariant in their own completion gates; §10 (Cross-Domain Owner Audit for Every boot_info Field) closes the loop by making coverage explicit.
 
 > **Verified:** 2026-04-17 | commit `8aae7a1b` | 5/5 items | build OK | full nested-struct matrix
+> **Re-verified:** 2026-04-23 | matrix refreshed for 14 `boot_config` fields added by TODO-04 + TODO-05 after original ship; `_reserved[12]` -> `_reserved[10]`, `_pad[223]` -> `_pad[142]` corrected; `test_suite` validation column updated for `9`=exec, `10`=x86, `11`=desktop; `test_monitors_count` row downgraded to "parsed/stored; no runtime consumer today" matching current code-truth. `BOOT_INFO_VERSION` remains 6 (layout unchanged; only doc coverage).
 > **Accepted:** [M] USB scratchpad count field unclamped against `BOOT_USB_MAX_SCRATCHPADS` (reason: not-functional-today -- all target HW reports <= 16) -> XREF: 01-boot-platform/TODO-20 §1 (item: "USB scratchpad clamp" at line 51 -- clamp in `src/boot/uefi/bootx64.c` near HCSParams2 read, log serial warning on clamp, update canonical matrix `max_scratchpads` row) -- [TODO-20 §1 anchor](../../todo/01-boot-platform/TODO-20-usb-zero-delay-handover.md#1-bootloader-allocates-xhci-dma-structures)
+> **Deferred:** [H] Drift-prevention gate is documentation-only, so the same 14-field silent-drift failure mode can recur (reason: infra -- needs a build-time diff between `tools/boot-info-manifest/dump-fields.inc` and the matrix) -> XREF: 01-boot-platform/TODO-01 §10 (item: "Add a build-time drift gate that diffs the live struct boot_info field set" -- new item filed this review, spells out the `check-doc-coverage.sh` script and `scripts/build.sh` hook)
 > **Quality reviewed:** 2026-04-17 | Codex 2x (adversarial + consistency) | 5M fixed, 0 open | scope: N/A (docs + one header comment)
+> **Quality re-reviewed:** 2026-04-23 | Codex 2x (adversarial + quality post-commit) | 1H+2M fixed, 1H deferred (drift gate -> §10) | scope: N/A (docs refresh)
 > **Test runner:** N/A (docs-only) | validation: structural -- doc exists, every top-level field has a row, build clean proves header asserts pass
 
 ---
@@ -256,6 +260,7 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 - [ ] Trace legacy scalar aliases such as `module_start/module_end` to their current Multiboot2-only producer in `src/kernel/multiboot2_parse.c` and either mark them compatibility-only (`T08 §3`) or retire them once typed payloads land.
 - [ ] Remove or deprecate fields with no owner and no consumer.
 - [ ] Update `GAP-ANALYSIS.md` closure table when all fields have owners.
+- [ ] Add a build-time drift gate that diffs the live `struct boot_info` field set (via [`tools/boot-info-manifest/dump-fields.inc`](../../tools/boot-info-manifest/dump-fields.inc), the machine-readable field enumeration shared by the kernel + mirror dumpers) against the canonical matrix at [`docs/boot/boot-info-fields.md`](../../docs/boot/boot-info-fields.md). On mismatch, fail the build with the first missing or extra field named. Wire via a new `tools/boot-info-manifest/check-doc-coverage.sh` script invoked by `scripts/build.sh` after the `boot_info ABI` stage. Closes the silent-drift failure mode found by Codex re-review 2026-04-23 where 14 `boot_config` fields (added by TODO-04 test-framework + TODO-05 desktop-UI sections) were absent from the matrix because no gate enforced coverage.
 - [ ] Commit: `"docs: close boot_info ownership audit"`
 
 **Test checkpoint:** Every `boot_info` field in `include/kernel/boot_info.h` resolves to one owner section or deprecation note, `todo/01-boot-platform/GAP-ANALYSIS.md` reflects the closure state, and no field remains ownerless in docs or comments. Confirm QEMU WHPX, QEMU TCG, VirtualBox, and bare-metal boots still consume the audited fields without behavior changes.
@@ -341,17 +346,17 @@ Linux 6.16 (merged June 2025) shipped Kexec Handover (KHO) + the Live Update Orc
 
 ## OS Comparison
 
-| ⭐ | Feature                         | 🪟 Win11                  | 🐧 Linux                     | 🚀 Impossible OS                             |
-| --- | ------------------------------- | ------------------------- | ----------------------------- | -------------------------------------------- |
-| 💎 | Versioned loader/kernel ABI     | ✅ LPB + extensions       | ✅ boot_params + kernel_info | ⚠️ §1 shipped; §7 §8 open                    |
-| 💎 | Typed initrd and module handoff | ✅ ramdisk + boot drivers | ✅ initrd + initramfs        | ⚠️ §4 ABI + validator shipped; §5 API open   |
-| ⭐ | Generated ABI manifest          | ⚠️ internal only          | ⚠️ docs + CI                 | ✅ §2 + §3 manifest + drift detector shipped |
-| ⭐ | Field-level ownership map       | ⚠️ internal ownership     | ⚠️ scattered docs            | ⚠️ §1 matrix shipped; §10 audit open         |
-| 💎 | Capability negotiation          | ✅ loader extensions      | ✅ version + flags           | ⬜ §11                                       |
-| 💎 | Boot provenance decision record | ✅ boot status + resume   | ⚠️ cmdline + logs            | ⬜ §12                                       |
-| ⭐ | Friendly stale-loader mismatch  | ✅ recovery codes         | ⚠️ log-driven failures       | ⬜ §7                                        |
+| ⭐ | Feature                         | 🪟 Win11                   | 🐧 Linux                     | 🚀 Impossible OS                             |
+| --- | ------------------------------- | -------------------------- | ----------------------------- | -------------------------------------------- |
+| 💎 | Versioned loader/kernel ABI     | ✅ LPB + extensions        | ✅ boot_params + kernel_info | ⚠️ §1 shipped; §7 §8 open                    |
+| 💎 | Typed initrd and module handoff | ✅ ramdisk + boot drivers  | ✅ initrd + initramfs        | ⚠️ §4 ABI + validator shipped; §5 API open   |
+| ⭐ | Generated ABI manifest          | ⚠️ internal only           | ⚠️ docs + CI                 | ✅ §2 + §3 manifest + drift detector shipped |
+| ⭐ | Field-level ownership map       | ⚠️ internal ownership      | ⚠️ scattered docs            | ⚠️ §1 matrix shipped; §10 audit open         |
+| 💎 | Capability negotiation          | ✅ loader extensions       | ✅ version + flags           | ⬜ §11                                       |
+| 💎 | Boot provenance decision record | ✅ boot status + resume    | ⚠️ cmdline + logs            | ⬜ §12                                       |
+| ⭐ | Friendly stale-loader mismatch  | ✅ recovery codes          | ⚠️ log-driven failures       | ⬜ §7                                        |
 | 💎 | Anti-rollback security version  | ✅ OsLoaderSecurityVersion | ⚠️ shim SBAT revocation only | ⬜ §13 UEFI NVRAM counter                    |
-| ⭐ | Warm-kernel-update handoff ABI  | ⚠️ Hot Patch (closed)     | ✅ 6.16 Kexec Handover       | ⬜ §14 ABI only; runtime in new TODO         |
+| ⭐ | Warm-kernel-update handoff ABI  | ⚠️ Hot Patch (closed)      | ✅ 6.16 Kexec Handover       | ⬜ §14 ABI only; runtime in new TODO         |
 
 > Parity now covers the contract itself and the decisions made around it. Adding explicit capability negotiation, a shared boot decision record, and anti-rollback security-version binding would make this handoff easier to debug and safer to evolve than either Windows' mostly internal loader state or Linux's split between versioned structs and scattered provenance channels. The warm-kernel-update handoff ABI (§14) specifically positions Impossible OS for cloud/server parity with Linux 6.16's Kexec Handover surface at the ABI layer; the runtime live-update machinery is tracked as follow-up in 03-memory-concurrency.
 

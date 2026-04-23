@@ -346,7 +346,7 @@ Mirror struct in [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c). `cm
 | `postcode`          | bootx64 | P0 | POST code emission | runtime | kernel-init-sequencing | `0` off, `1` auto, `2` always. |
 | `postbars`          | bootx64 | P0 | Visual POST Display | runtime | kernel-init-sequencing | `0` off, `1` on (integrated), `2` diag (full). |
 | `test`              | bootx64 | P0 | unit-test runner | runtime | kernel-test-harness | `0 | 1`. |
-| `test_suite`        | bootx64 | P0 | test category filter | runtime | kernel-test-harness | 0-8 specific category, `0xFF` all (default). |
+| `test_suite`        | bootx64 | P0 | test category filter | runtime | kernel-test-harness | Category: `0`=mm, `1`=fs, `2`=sched, `3`=ob, `4`=security, `5`=ipc, `6`=boot, `7`=abi, `8`=storage, `9`=exec, `10`=x86, `11`=desktop; `0xFF` = all (default). Parsed from `boot.conf` `test_suite=<name>` in `src/boot/uefi/bootx64.c`. |
 | `test_quiet`        | bootx64 | P0 | test runner output | runtime | kernel-test-harness | `0 | 1`. |
 | `diag_delay`        | bootx64 | P0 | boot diagnostics | runtime | bootloader-error-recovery | Seconds to pause on each diag screen; `0` skip. |
 | `diag_splash`       | bootx64 | P0 | boot diagnostics | runtime | bootloader-error-recovery | `0 | 1`. |
@@ -356,10 +356,24 @@ Mirror struct in [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c). `cm
 | `ob_handle_trace`   | bootx64 | P0 | Object Manager tracing | runtime | object-manager | `0 | 1`. |
 | `config_version`    | bootx64 | P0 | parser metadata | runtime | boot-entry-store-menu-policy | `0` unversioned (legacy), `1+` versioned. |
 | `error_screen_test` | bootx64 | P0 | deliberate `boot_fatal` before kernel load | boot | bootloader-error-recovery | `0 | 1`. |
-| `_reserved[12]`     | bootx64 (zero fill) | P0 | none (room for new flags) | -- | boot-entry-store-menu-policy | Zero; new flags consume bytes here without shifting `cmdline`. |
+| `compositor`          | bootx64 | P0 | desktop compositor init | runtime | desktop-ui-test-framework | `0` normal display + VSYNC; `1` headless (no `fb_swap`, no VSYNC, test-driven frames via `compositor_step_frames(N)`). Bare-metal boot rejects `1`. |
+| `test_monitors_count` | bootx64 | P0 | parsed/stored; no runtime consumer today | runtime | desktop-ui-test-framework | `0` = no assertion (default); `1..3` = expected output count for future multi-monitor matrix. Parser-only today; the display-stack hard-fail path lands with the virtio-gpu multi-output driver + [`desktop-ui-test-framework`](../../todo/00-infrastructure/TODO-05-desktop-ui-test-framework.md) matrix section. |
+| `_reserved[10]`     | bootx64 (zero fill) | P0 | none (room for new flags) | -- | boot-entry-store-menu-policy | Zero; new flags consume bytes here without shifting `cmdline`. |
 | `cmdline[256]`      | bootx64 | P0 | kernel command line parser | runtime | boot-entry-store-menu-policy | Null-terminated; offset 32 is pinned ABI. |
 | `config_found`      | bootx64 | P0 | fallback gate | runtime | boot-entry-store-menu-policy | `0 | 1`. |
-| `_pad[223]`         | bootx64 (zero fill) | P0 | none (sector alignment) | -- | boot-entry-store-menu-policy | Zero; pads struct to 512 bytes. |
+| `tap`               | bootx64 | P0 | user-mode test launcher | runtime | usermode-test-framework | `0 | 1`; emit TAP (`ok`/`not ok`/`1..N`) lines around each binary. |
+| `_pad_utest[2]`     | bootx64 (zero fill) | P0 | alignment (`uint16_t` follows) | -- | usermode-test-framework | Zero. |
+| `utest_timeout_ms`  | bootx64 | P0 | user-mode test launcher | runtime | usermode-test-framework | Per-binary wall-clock timeout in ms; `0` = default (10 s). |
+| `utest_filter[64]`  | bootx64 | P0 | user-mode test launcher | runtime | usermode-test-framework | Null-terminated glob/literal filter; empty = run every `test_*.exe`. |
+| `utest_isolation`   | bootx64 | P0 | user-mode test launcher | runtime | usermode-test-framework | `0` disable scratch-dir + Registry wipe + handle-leak check; default `1`. Production runs must stay `1`. |
+| `_pad_utest2[3]`    | bootx64 (zero fill) | P0 | alignment | -- | usermode-test-framework | Zero. |
+| `xml`               | bootx64 | P0 | user-mode test launcher | runtime | usermode-test-framework | `0 | 1`; emit `[UTEST-XML]` JUnit XML lines. Orthogonal to `tap`/`json`. |
+| `json`              | bootx64 | P0 | user-mode test launcher | runtime | usermode-test-framework | `0 | 1`; emit `[UTEST-JSON]` lines (per-binary + summary). |
+| `stress_iters`      | bootx64 | P0 | reserved (future env-passing syscall) | runtime | usermode-test-framework | `uint16_t`; parsed and plumbed through `test_usermode_set_stress_iters`, no consumer today. `0` = default. |
+| `test_kernel_skip`  | bootx64 | P0 | test-runner skip knob | runtime | usermode-test-framework | `0 | 1`; skip kernel `TEST_CAT_*` suites under `test=1`. Default `0`; set by `run-all-usermode-tests.bat` + per-binary bats. |
+| `test_usermode_skip`| bootx64 | P0 | test-runner skip knob | runtime | usermode-test-framework | `0 | 1`; skip user-mode launcher under `test=1`. Default `0`; set by `run-all-kernel-tests.bat`. |
+| `_pad_test_skip[2]` | bootx64 (zero fill) | P0 | alignment | -- | usermode-test-framework | Zero. |
+| `_pad[142]`         | bootx64 (zero fill) | P0 | none (sector alignment) | -- | boot-entry-store-menu-policy | Zero; pads struct to 512 bytes. |
 
 ## Nested struct: `boot_usb_endpoint`
 
