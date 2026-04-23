@@ -44,10 +44,11 @@
 | ⭐  |   5   |  §4     | Query CLI: ready / blocked / blocking / backlinks / deferred / stale / stats / code | §2         |  [ ]   |
 | ⭐  |   6   |  §6     | CI gate on `todo/` commits + diff mode + auto-rewrite hook                          | §3, §4     |  [ ]   |
 | ⭐  |   7   |  §7     | Visualization output (mermaid / dot / ascii / gantt / markdown)                     | §2, §4     |  [ ]   |
+| ⭐  |   8   |  §8     | MCP server (read-only AI-agent transport over §4)                                   | §4         |  [ ]   |
 
 > 💎 = parity work -- Linux kernel has MAINTAINERS + get_maintainer.pl (person-ownership mapping without a dep graph); Windows has no public equivalent. §1 (frontmatter), §2 (generator), §5 (migration) bring us to partial Linux parity plus graph metadata neither OS ships.
-> ⭐ = competitive edge -- neither Win11 nor mainline Linux ships a first-class TODO dependency graph. §3 (validator), §4 (query CLI), §6 (CI gate), §7 (visualization) are new ground; the surface has direct value for any contributor scanning "what can I work on next?".
-> **Order vs section-number:** Implementation Order is the execution sequence; file-order numbering (§1 schema, §2 generator, §3 validator, §4 query, §5 migration, §6 CI, §7 visualization) is grouped by kind so readers of the file can scan logically. §5 (migration) ships at Order 3 because §3 (validator) is easier to debug against a repo where all files already carry frontmatter. §7 (visualization) ships last because it consumes both the cache (§2) and the query CLI (§4); shipping it earlier would burn rework when the cache schema settles.
+> ⭐ = competitive edge -- neither Win11 nor mainline Linux ships a first-class TODO dependency graph. §3 (validator), §4 (query CLI), §6 (CI gate), §7 (visualization), §8 (MCP server) are new ground; the surface has direct value for any contributor scanning "what can I work on next?".
+> **Order vs section-number:** Implementation Order is the execution sequence; file-order numbering (§1 schema, §2 generator, §3 validator, §4 query, §5 migration, §6 CI, §7 visualization, §8 MCP server) is grouped by kind so readers of the file can scan logically. §5 (migration) ships at Order 3 because §3 (validator) is easier to debug against a repo where all files already carry frontmatter. §7 (visualization) and §8 (MCP server) ship last because both consume the §4 query CLI; shipping either earlier would burn rework when the query surface settles.
 
 ---
 
@@ -212,28 +213,48 @@ Render the TODO dependency graph in formats GitHub, terminals, and external dash
 
 ---
 
+## 8. MCP Server (AI-Agent Transport over the Cache)
+
+Expose §4's query surface over the Model Context Protocol so Claude Code, Cursor, Aider, and any other MCP-aware agent can call `ready` / `blocked` / `blocking` / `backlinks` / `deferred` / `orphans` / `stale` / `stats` / `code` directly without shelling out to `python3 scripts/todo-graph/query.py`. The cache is the contract; this section ships the transport. taskmd 2026 ships `taskmd mcp start` for the same purpose; matching that surface keeps Impossible OS competitive in the AI-agent-developer-experience axis where Win11 (closed) and Linux (none in-tree) both score ❌.
+
+> [!TIP]
+> A read-only MCP server is the cheapest possible AI-agent integration: ~150 LOC of `mcp` Python SDK glue, no auth, no write operations, no new dependencies beyond `mcp[cli]` (already a common dev-machine package via the Python MCP SDK). Every `query.py` subcommand becomes an MCP tool with the same name + flags; agents discover the surface via MCP's `list_tools` introspection without any prompt-engineering on the agent side.
+
+- [ ] Create `scripts/todo-graph/mcp_server.py` (~150 LOC). Imports `query` as a module (no subprocess shell-out) and registers each of §4's 10 subcommands (`ready`, `blocked`, `blocking`, `by-domain`, `backlinks`, `deferred`, `orphans`, `stale`, `stats`, `code`) as an MCP tool via the `mcp` Python SDK. Each tool's parameters mirror the CLI's flags 1:1 (`--json` always on, `--format` defaults to JSON for MCP transport). Read-only by design: `mark-done`, `set-status`, `add-dependency` are NOT exposed; write operations stay manual via the markdown files.
+- [ ] Tool descriptions are copied from each subcommand's `--help` text via Python's `argparse` introspection so the MCP `list_tools` surface stays in sync with the CLI without hand-maintenance. If `argparse.ArgumentParser` doesn't carry a docstring for a subcommand, the MCP server fails closed at startup with a clear `[mcp_server.py] FAIL: subcommand <name> has no description` message rather than shipping a tool with empty MCP metadata.
+- [ ] Cache freshness: server checks `build/todo-cache.json` mtime on every tool call; if older than the newest `todo/**/*.md` mtime, regenerates by importing `build` as a module and calling its `main()` in-process. Bounded by the existing 0.5s build budget so per-call latency stays well under 1s. Optional `--no-auto-rebuild` flag for users who want to gate rebuilds via a separate `make todo-graph` step.
+- [ ] Add `scripts/todo-graph/mcp.json` server manifest registering the server with Claude Code (`.claude/mcp.json` references it) plus a copy-pasteable Cursor `cursor.json` snippet in the docstring header. The manifest declares the `python3 scripts/todo-graph/mcp_server.py` command, the `cwd: <repo-root>`, and read-only environment.
+- [ ] Add a Makefile target `make todo-graph-mcp` that starts the server in the foreground for ad-hoc testing (Claude Code launches it as a subprocess via `.claude/mcp.json` in normal use). Document one-line installation in [`docs/infrastructure/development-tooling.md#claude-code-mcp-servers`](../../docs/infrastructure/development-tooling.md) (new subsection if absent).
+- [ ] Add `python3-mcp` (or whatever the Python MCP SDK package name resolves to per `scripts/setup-deps.sh`'s host-detection pattern) as an OPTIONAL host dep. Script must skip cleanly with a clear "MCP SDK not installed; AI-agent integration unavailable" message rather than crashing the installer.
+- [ ] Add a regression sub-test in [`scripts/todo-graph/tests/test_build.sh`](../../scripts/todo-graph/tests/test_build.sh) (or a sibling `test_mcp_server.sh` if the test count grows past ~25): start the server in subprocess mode with stdin/stdout pipes, send a `tools/list` MCP request, assert it returns 10 tool definitions, then send a `tools/call` for `stats` and assert the response is parseable JSON with non-zero `total` count. Skip cleanly with a t_pass SKIP message when the MCP SDK module is absent.
+- [ ] Update OS Comparison "AI-agent MCP / autocomplete surface" row from `⚠️` to `✅ §8 MCP server (10 read-only tools)`. Update the post-OS-Comparison `MCP-server mode for AI agents` blockquote to note the work has shipped and name §8 as the owner.
+- [ ] Commit: `"scripts/todo-graph: add MCP server (read-only query surface for Claude/Cursor/Aider)"`
+
+**Test checkpoint:** `python3 scripts/todo-graph/mcp_server.py --self-test` exits 0 and prints `[mcp_server.py] OK: 10 tools registered, cache fresh`. With Claude Code's `/mcp` slash command, the `todo-graph` server appears in the list and exposes 10 tools. Calling `tools/call` for `ready` from an MCP client returns the same JSON payload as `python3 scripts/todo-graph/query.py ready --json`. Server startup wall-clock under 200ms; per-tool-call latency under 50ms when the cache is fresh, under 1s when it needs a rebuild.
+
+---
+
 ## OS Comparison
 
-| ⭐ | Feature                              | 🪟 Win11                          | 🐧 Linux                                 | 🚀 Impossible OS                           |
-| --- | ------------------------------------ | --------------------------------- | ---------------------------------------- | ------------------------------------------ |
-| 💎 | Structured ownership metadata        | ⚠️ CODEOWNERS (GitHub)           | ✅ MAINTAINERS + get_maintainer.pl       | ⬜ §1 frontmatter + §5 migration            |
-| ⭐ | Cross-file dependency graph          | ❌ GitHub Projects (external DB) | ❌ Ad hoc (e.g. patch series cover)      | ✅ Done §2 generator + JSON cache (0.68s)   |
-| ⭐ | Stale-XREF / cycle validator         | ❌ None                           | ❌ None                                  | ⬜ §3 validator (seven checks)              |
-| ⭐ | "Ready to work" / backlinks queries  | ❌ Project board filters (manual) | ❌ None in-tree                          | ⬜ §4 query CLI (10 subcommands)            |
-| 💎 | CI gate on dep-graph integrity       | ⚠️ Varies by repo                | ❌ Rare                                  | ⬜ §6 GHA + diff mode + auto-rewrite hook   |
-| ⭐ | Canonical-markdown + derived-cache invariant | ❌ DB-first (Project boards)      | ❌ Flat MAINTAINERS (no derived view)    | ⬜ §1-§2 mirrors settings.json vs ai-system.md pattern |
-| 💎 | Editor-time frontmatter validation   | ❌ None                           | ⚠️ Hugo/Jekyll JSON Schema (per-tool)    | ⚠️ §1 sidecar via remark-lint or markdown-yaml-embedded-LS; §6 CI is the gate |
-| ⭐ | Mermaid/dot graph render             | ❌ Project board views (manual)   | ❌ None in-tree                          | ⬜ §7 render CLI (5 formats incl. Gantt)   |
-| ⭐ | Critical-path / "most-blocking" rank | ⚠️ TaskJuggler external           | ⚠️ TaskJuggler external                  | ⬜ §4 `blocking` subcommand                 |
-| ⭐ | Stale-TODO / git-aware tracking      | ❌ Project board filters          | ❌ None in-tree                          | ⬜ §1 git-derived timestamps + §4 `stale`   |
-| ⭐ | Source-file backlinks (`code <id>`)  | ❌ Project board manual links     | ⚠️ MAINTAINERS `F:` (people, not deps)   | ⬜ §1 `file_patterns` + §4 `code <id>`      |
-| ⭐ | AI-agent MCP / autocomplete surface  | ❌ Closed                         | ❌ None                                  | ⚠️ §1 sidecar (programmatic); MCP deferred (note below) |
+| ⭐ | Feature                                      | 🪟 Win11                          | 🐧 Linux                                | 🚀 Impossible OS                          |
+| --- | -------------------------------------------- | --------------------------------- | --------------------------------------- | ----------------------------------------- |
+| 💎 | Structured ownership metadata                | ⚠️ CODEOWNERS                     | ✅ MAINTAINERS + get_maintainer.pl      | ⬜ §1 frontmatter + §5 migration           |
+| ⭐ | Cross-file dependency graph                  | ❌ Project boards (DB)            | ❌ Ad hoc cover letters                 | ✅ §2 generator + JSON cache (0.4s)        |
+| ⭐ | Stale-XREF / cycle validator                 | ❌ None                           | ❌ None                                 | ⬜ §3 validator (7 checks)                 |
+| ⭐ | "Ready to work" / backlinks queries          | ❌ Manual board filters           | ❌ None in-tree                         | ⬜ §4 query CLI (10 subcommands)           |
+| 💎 | CI gate on dep-graph integrity               | ⚠️ Per repo                       | ❌ Rare                                 | ⬜ §6 GHA + diff + rewrite hook            |
+| ⭐ | Canonical-markdown + derived-cache invariant | ❌ DB-first                       | ❌ Flat MAINTAINERS                     | ⬜ §1-§2 mirrors settings.json pattern     |
+| 💎 | Editor-time frontmatter validation           | ❌ None                           | ⚠️ Hugo/Jekyll JSON Schema              | ⚠️ §1 sidecar; §6 CI is the gate          |
+| ⭐ | Mermaid/dot graph render                     | ❌ Manual board views             | ❌ None in-tree                         | ⬜ §7 render CLI (5 formats)               |
+| ⭐ | Critical-path / "most-blocking" rank         | ⚠️ TaskJuggler external           | ⚠️ TaskJuggler external                 | ⬜ §4 `blocking` subcommand                |
+| ⭐ | Stale-TODO / git-aware tracking              | ❌ Manual board filters           | ❌ None in-tree                         | ⬜ §1 git timestamps + §4 `stale`          |
+| ⭐ | Source-file backlinks (`code <id>`)          | ❌ Manual board links             | ⚠️ MAINTAINERS `F:` (people)            | ⬜ §1 `file_patterns` + §4 `code <id>`     |
+| ⭐ | AI-agent MCP / autocomplete surface          | ❌ Closed                         | ❌ None                                 | ⬜ §8 MCP server (10 read-only tools)      |
 
 > **After §1-§3:** Impossible OS has full Linux-parity ownership metadata plus the dep-graph that neither OS ships, plus automated cross-file XREF integrity checks AND a CI-gated JSON Schema sidecar (consumed by `remark-lint-frontmatter-schema`; no Linux equivalent for project plans). Editor-time diagnostics are best-effort developer convenience via `markdown-yaml-embedded-langservers`; the §6 CI gate is the authoritative line of defense.
 > **After §4-§6:** "what should I work on next?" + "what's most-blocking?" + "what's been stale for 90 days?" are one-command queries, and graph drift is caught at PR time instead of at next-reviewer-sweep time, with `--diff` surfacing graph regressions per-PR. The canonical-markdown / derived-cache invariant matches the existing [Hook Routing Matrix](../../docs/infrastructure/ai-system.md#hook-routing-matrix) architecture, so contributors already understand the mental model.
 > **After §7:** the dependency graph becomes a clickable mermaid diagram in `docs/infrastructure/todo-graph.md` rendering inline on GitHub with status colors and direct links into source files. Five output formats (mermaid / graphviz / ASCII / Gantt / markdown table) cover terminal users, CI artifact viewers, PR descriptions, and external dashboards alike.
->
-> **MCP-server mode for AI agents** (taskmd 2026 ships `taskmd mcp start` for Claude / Cursor / Aider integration): out of scope for this TODO; deferred to a future TODO under `00-infrastructure` once the `query.py` surface stabilizes. The `$schema` sidecar (§1) already gives editor agents a structured surface; the MCP layer is the AI-agent-direct equivalent.
+> **After §8:** Claude Code, Cursor, and Aider call `ready` / `blocked` / `backlinks` / `code` directly via the MCP `todo-graph` server (~150 LOC over §4). Read-only by design; write operations stay in the markdown files. Closes the AI-agent-developer-experience axis where Win11 (closed) and Linux (none in-tree) both score ❌. taskmd 2026 ships `taskmd mcp start` for the same purpose; matching that surface keeps Impossible OS at parity with the 2026 standard.
 
 ---
 
