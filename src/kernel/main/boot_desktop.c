@@ -14,6 +14,7 @@
 #include "kernel/cpuid_platform.h"
 #include "kernel/mm/heap.h"
 #include "kernel/mm/boot_reserved.h"
+#include "kernel/boot_version.h"
 #include "kernel/timer.h"
 #include "kernel/drivers/framebuffer.h"
 #include "kernel/drivers/ahci.h"
@@ -279,6 +280,12 @@ void boot_phase3(void)
      * X:\Diag\boot-reserved.json so a post-boot user can audit
      * exactly which physical ranges the PMM kept reserved. */
     boot_reserved_blackbox_dump();
+
+    /* Boot protocol section 7: if the prior boot halted on a protocol
+     * mismatch, transcribe the NVRAM fault record to
+     * X:\Diag\boot-proto-fault.txt and clear the NVRAM slot. No-op
+     * if no record exists. */
+    boot_version_blackbox_transcribe();
 
     /* Report degraded subsystems.  Names come from kernel_subsystem_name() --
      * single source of truth in boot_init.c.  Loop bound is SUBSYS_COUNT,

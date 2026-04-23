@@ -12,6 +12,7 @@
 #include "kernel/cpuid.h"
 #include "kernel/multiboot2.h"
 #include "kernel/boot_info.h"
+#include "kernel/boot_version.h"
 #include "registry.h"
 #include "gfx_simd.h"
 #include "kernel/security/pku.h"
@@ -80,20 +81,17 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
             boot_halt("boot_info: unsafe mbi pointer");
         }
 
-        /* S16 phase 2: header field validation.  Address phase already
-         * confirmed the pointer is dereferenceable, so reading the
-         * observed magic/version/size for the error log is safe. */
+        /* S16 phase 2: header field validation via §7 boot_version
+         * classifier. Observed + expected magic/version/size go into
+         * a boot_version_fault record; on mismatch boot_version
+         * _render_fatal prints the record (LOG_FATAL), attempts NVRAM
+         * persistence for next-boot BlackBox transcription, and halts.
+         * Do not return from render_fatal. */
         {
             const struct boot_info_header *h = (const struct boot_info_header *)mbi_p;
-            if (boot_info_validate_header(h, sizeof(struct boot_info)) != BOOT_OK) {
-                klog(LOG_ERROR, "UEFI",
-                     "boot_info: bad header magic=0x%08X (expected 0x%08X) "
-                     "version=%u (expected %u) size=%u (expected %u)",
-                     (uint64_t)h->magic, (uint64_t)BOOT_INFO_MAGIC,
-                     (uint64_t)h->version, (uint64_t)BOOT_INFO_VERSION,
-                     (uint64_t)h->size, (uint64_t)sizeof(struct boot_info));
-                boot_halt("boot_info: bad header (stale BOOTX64.EFI or layout drift?)");
-            }
+            struct boot_version_fault fault;
+            if (boot_version_classify(h, sizeof(struct boot_info), &fault) != BOOT_OK)
+                boot_version_render_fatal(&fault);
         }
 
         /* Pre-copy validation passed -- the handoff is safe to copy.

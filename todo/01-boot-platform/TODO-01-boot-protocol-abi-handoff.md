@@ -68,7 +68,7 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 | 💎  |   4   | Optional payload descriptor array                  | §1                                 |  [x]   |
 | 💎  |   5   | Module and initrd handoff contract                 | §4                                 |  [x]   |
 | 💎  |   6   | Handoff memory ownership and PMM reservation table | §4                                 |  [x]   |
-| 💎  |   7   | Version negotiation and stale-loader error path    | §2, T03 §2                         |  [ ]   |
+| 💎  |   7   | Version negotiation and stale-loader error path    | §2, T03 §2                         |  [/]   |
 | 💎  |   8   | Boot protocol documentation and schema changelog   | §1, §2, §3, §4, §5, §6, §7         |  [ ]   |
 | ⭐  |   9   | ABI fuzz and compatibility tests                   | §2, §7                             |  [ ]   |
 | ⭐  |  10   | Cross-domain owner audit for every boot_info field | §1, §2, §3, §4, §5, §6, §7, §8, §9 |  [ ]   |
@@ -254,14 +254,26 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 
 ## 7. Version Negotiation and Stale-Loader Error Path
 
-- [ ] Define compatibility policy: exact version required for boot, or explicit downgrade adapter.
-- [ ] Add bootloader-side display for kernel ABI mismatch before jump when possible.
-- [ ] Add kernel-side fatal screen with observed/expected version, size, and manifest hash.
-- [ ] Persist mismatch reason in UEFI NVRAM and BlackBox.
-- [ ] Integrate the anti-rollback gate from §13: on mismatch, also emit the observed vs required `os_loader_security_version` pair so rollback refusals are distinguishable from structural ABI drift (different operator response: rollback refusal means "boot a newer kernel"; ABI drift means "rebuild both halves").
-- [ ] Commit: `"boot: hard fail stale boot protocol versions"`
+- [x] Define compatibility policy: exact version required for boot, or explicit downgrade adapter. Policy: **strict exact match** required for `{magic, version, struct_size}`. No downgrade adapter today; documented in [`include/kernel/boot_version.h`](../../include/kernel/boot_version.h).
+- [ ] Add bootloader-side display for kernel ABI mismatch before jump when possible -- requires a new `.bootproto` ELF section in the kernel carrying `{magic, version, struct_size, sha256}` plus a bootloader scan that reads it from the loaded kernel image before ExitBootServices and renders a UEFI-console error on mismatch. Needs linker-script + bootloader ELF-section scan work; scope beyond this section.
+- [/] Add kernel-side fatal screen with observed/expected version, size, and manifest hash. Observed/expected `{magic, version, size}` shipped via [`boot_version_classify()`](../../src/kernel/main/boot_version.c) + `boot_version_render_fatal()` (LOG_FATAL on serial + framebuffer fallback via `boot_halt`). Manifest-hash half deferred: the kernel sha256 is a build artifact (`build/boot-info-abi.kernel.json`) that is not yet compiled into the binary; needs a Makefile rule that emits `#define KERNEL_ABI_SHA256 "..."` into a generated header and includes it in the fatal log.
+- [/] Persist mismatch reason in UEFI NVRAM and BlackBox. BlackBox transcription pipeline shipped: [`boot_version_blackbox_transcribe()`](../../src/kernel/main/boot_version.c) runs late Phase 3 (next to `hw_dump_write_file`), reads any persisted NVRAM record, writes `X:\Diag\boot-proto-fault.txt` with human-readable observed/expected values, and clears the NVRAM slot on confirmed successful write (commit-after-success). NVRAM write AT fatal time from the kernel path is NOT possible: `uefi_runtime_init` runs later in Phase 0 than the boot_info header validation, so `uefi_set_variable` always returns UEFI_UNSUPPORTED on the stale-loader path this diagnostic targets. NVRAM write must come from the bootloader pre-jump (see item 2) or from a later §13 caller.
+- [ ] Integrate the anti-rollback gate from §13: on mismatch, also emit the observed vs required `os_loader_security_version` pair so rollback refusals are distinguishable from structural ABI drift (different operator response: rollback refusal means "boot a newer kernel"; ABI drift means "rebuild both halves"). Forward-compat slots reserved in [`struct boot_version_fault`](../../include/kernel/boot_version.h) (`observed_loader_sec_ver`, `expected_loader_sec_ver`) and a distinct `BOOT_VERSION_FAULT_SEC_ROLLBACK` enum value is wired through `render_fatal` and `blackbox_transcribe`. §13 populates the values when it ships.
+- [x] Commit: `"boot: hard fail stale boot protocol versions"`
 
 **Test checkpoint:** A stale `BOOTX64.EFI` paired with a current kernel, and a stale kernel paired with a current bootloader, both stop with the expected observed/expected version, size, and manifest-hash diagnostics instead of hanging. Verify the friendly failure path on QEMU WHPX, QEMU TCG, VirtualBox, and at least one bare-metal system using removable-media recovery workflow.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 469 kernel + 16 user-mode PASS on KVM 2026-04-23 (7 new `boot_version:` assertions covering classify-happy, classify-NULL-hdr, classify-bad-magic, classify-bad-version, classify-bad-size, 48-byte record pin, fault-class-name coverage); smoke PASS 2.260s on KVM
+
+> **Notes:**
+> - **What shipped**: [`include/kernel/boot_version.h`](../../include/kernel/boot_version.h) + [`src/kernel/main/boot_version.c`](../../src/kernel/main/boot_version.c) (~330 LOC). Struct `boot_version_fault` (48-byte ABI-pinned NVRAM record), enum `boot_version_fault_class` (6 classes incl. reserved `SEC_ROLLBACK` for §13), 4 public functions: `classify`, `render_fatal` (noreturn), `persist_nvram`, `blackbox_transcribe`.
+> - **How it runs**: `boot_phase0` in [`src/kernel/main/boot_hw.c`](../../src/kernel/main/boot_hw.c) calls `boot_version_classify(header, sizeof(struct boot_info), &fault)` right after address validation. On BOOT_FATAL, `boot_version_render_fatal(&fault)` prints observed vs expected on serial + framebuffer via `boot_halt`'s fallback path. Late in Phase 3 (after `hw_dump_write_file` + `boot_reserved_blackbox_dump`) `boot_version_blackbox_transcribe` reads any NVRAM record written by a prior pre-jump persist path (future bootloader-side work, see item 2) and writes `X:\Diag\boot-proto-fault.txt`. Commit-after-success: NVRAM is cleared only when `vfs_write` returns the full buffer, so a transient BlackBox failure retains the record for the next-boot retry.
+> - **Downstream effects**: replaces the prior inline klog + boot_halt in `boot_hw.c` with a structured fault record + enum-tagged diagnostic. Provides the §13 anti-rollback integration point (`observed_loader_sec_ver` / `expected_loader_sec_ver` fields + `SEC_ROLLBACK` enum value). BlackBox transcription also lands as the canonical pattern for "prior-boot diagnostic text file"; TODO-17 storage consumers can reuse the vfs_open/write + commit-after-success approach.
+> - **Canonical doc**: [`include/kernel/boot_version.h`](../../include/kernel/boot_version.h) (policy + fault flow + struct layout contract).
+> - **Scope boundary**: §7 does NOT own the bootloader-side pre-jump display (item 2 -- requires kernel ELF `.bootproto` section + bootloader ELF-section scan), the manifest-hash embed into the kernel binary (item 3 partial -- requires Makefile rule emitting a generated header), nor the §13 anti-rollback policy (item 5 -- slots reserved, populated when §13 ships). Kernel-side fatal rendering + late-boot BlackBox transcription are in scope and shipped.
+
+> **Verified:** 2026-04-23 | commit `<pending>` | 3/5 items (2 deferred via in-line notes) | build OK | 469 kernel + 16 user-mode PASS on KVM, smoke PASS 2.260s
+> **Quality reviewed:** 2026-04-23 | Codex 1x (adversarial) | 2H fixed (NVRAM persist removed from fatal path since uefi_runtime_init runs later in Phase 0; transcript-delete gated on confirmed `vfs_write` success), 0 open | scope: kernel-code-quality
 
 ---
 
@@ -390,7 +402,7 @@ Linux 6.16 (merged June 2025) shipped Kexec Handover (KHO) + the Live Update Orc
 | ⭐ | Field-level ownership map       | ⚠️ internal ownership      | ⚠️ scattered docs            | ⚠️ §1 matrix shipped; §10 audit open         |
 | 💎 | Capability negotiation          | ✅ loader extensions       | ✅ version + flags           | ⬜ §11                                       |
 | 💎 | Boot provenance decision record | ✅ boot status + resume    | ⚠️ cmdline + logs            | ⬜ §12                                       |
-| ⭐ | Friendly stale-loader mismatch  | ✅ recovery codes          | ⚠️ log-driven failures       | ⬜ §7                                        |
+| ⭐ | Friendly stale-loader mismatch  | ✅ recovery codes          | ⚠️ log-driven failures       | ⚠️ §7 kernel fatal + BlackBox transcribe shipped; bootloader pre-jump + manifest hash + §13 anti-rollback open |
 | 💎 | Anti-rollback security version  | ✅ OsLoaderSecurityVersion | ⚠️ shim SBAT revocation only | ⬜ §13 UEFI NVRAM counter                    |
 | ⭐ | Warm-kernel-update handoff ABI  | ⚠️ Hot Patch (closed)      | ✅ 6.16 Kexec Handover       | ⬜ §14 ABI only; runtime in new TODO         |
 | 💎 | Handoff memory ownership table  | ⚠️ MDL chains + LoaderBlock | ⚠️ memblock + NOMAP regions | ✅ §6 single table + overlap check + JSON dump |
