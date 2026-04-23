@@ -296,15 +296,15 @@ Media role, recovery, network boot, and resume each carry their own details, but
 
 ## OS Comparison
 
-| ⭐ | Feature                         | 🪟 Win11                  | 🐧 Linux                     | 🚀 Impossible OS |
-| --- | ------------------------------- | ------------------------- | ----------------------------- | ---------------- |
-| 💎 | Versioned loader/kernel ABI     | ✅ LPB + extensions       | ✅ boot_params + kernel_info | ⬜ §1 §7 §8      |
-| 💎 | Typed initrd and module handoff | ✅ ramdisk + boot drivers | ✅ initrd + initramfs        | ◐ §4 ABI + validator; §5 producer/consumer API still open |
-| ⭐ | Generated ABI manifest          | ⚠️ internal only          | ⚠️ docs + CI                 | ⬜ §2 §3         |
-| ⭐ | Field-level ownership map       | ⚠️ internal ownership     | ⚠️ scattered docs            | ⬜ §1 §10        |
-| 💎 | Capability negotiation          | ✅ loader extensions      | ✅ version + flags           | ⬜ §11           |
-| 💎 | Boot provenance decision record | ✅ boot status + resume   | ⚠️ cmdline + logs            | ⬜ §12           |
-| ⭐ | Friendly stale-loader mismatch  | ✅ recovery codes         | ⚠️ log-driven failures       | ⬜ §7            |
+| ⭐ | Feature                         | 🪟 Win11                  | 🐧 Linux                      | 🚀 Impossible OS                              |
+| --- | ------------------------------- | ------------------------- | ----------------------------- | --------------------------------------------- |
+| 💎 | Versioned loader/kernel ABI     | ✅ LPB + extensions       | ✅ boot_params + kernel_info  | ◐ §1 field ownership shipped; §7 §8 open      |
+| 💎 | Typed initrd and module handoff | ✅ ramdisk + boot drivers | ✅ initrd + initramfs         | ◐ §4 ABI + validator shipped; §5 API open     |
+| ⭐ | Generated ABI manifest          | ⚠️ internal only          | ⚠️ docs + CI                  | ✅ §2 + §3 manifest + drift detector shipped  |
+| ⭐ | Field-level ownership map       | ⚠️ internal ownership     | ⚠️ scattered docs             | ◐ §1 matrix shipped; §10 cross-domain audit open |
+| 💎 | Capability negotiation          | ✅ loader extensions      | ✅ version + flags            | ⬜ §11                                        |
+| 💎 | Boot provenance decision record | ✅ boot status + resume   | ⚠️ cmdline + logs             | ⬜ §12                                        |
+| ⭐ | Friendly stale-loader mismatch  | ✅ recovery codes         | ⚠️ log-driven failures        | ⬜ §7                                         |
 
 > Parity now covers the contract itself and the decisions made around it. Adding explicit capability negotiation and a shared boot decision record would make this handoff easier to debug and safer to evolve than either Windows' mostly internal loader state or Linux's split between versioned structs and scattered provenance channels.
 
