@@ -223,8 +223,7 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 > - **Smoke test**: boots cleanly with empty payload set (no boot.conf module/initrd/recovery_image keys); `payload_count=0` path is validator short-circuit. A positive smoke with actual payload files is user-rig work -- the ESP image build does not currently stage test payloads, and fabricating one here adds scope beyond §5. `load_staged_payloads` is exercised synthetically by the kernel tests.
 
 > **Verified:** 2026-04-23 | commit `0e1f8d59` | 5/5 items | build OK | 413 kernel + 16 user-mode PASS on KVM; boot_payload_find + staged loader + FLAG_RESERVED + 256 MiB cap
-> **Accepted:** [H] §5 loaded payload pages need PMM reservation (FLAG_RESERVED set in descriptor; actual reservation is §6 work; re-flagged twice across review passes because the code-only view cannot see the TODO-level close-out) -> XREF: 01-boot-platform/TODO-01 §6 (item: "Reserve BOOT_PAYLOAD_FLAG_RESERVED payload ranges from PMM" at line 235)
-> **Quality reviewed:** 2026-04-23 | Codex 3x (implement-adversarial + review-adversarial + review-quality) | 1H accepted (§6) + 3M fixed (256 MiB cap + overflow guard, empty-payload-value boot_fatal, narrowed parser gate for payload-only empty-value rejection), 0 open | scope: boot-code-quality + kernel-code-quality
+> **Quality reviewed:** 2026-04-23 | Codex 3x (implement-adversarial + review-adversarial + review-quality) | 3M fixed (256 MiB cap + overflow guard, empty-payload-value boot_fatal, narrowed parser gate for payload-only empty-value rejection), 0 open | scope: boot-code-quality + kernel-code-quality (prior §5 Accepted[H] for PMM reservation resolved by §6 commit 9fb4ccc8)
 
 ---
 
@@ -248,7 +247,7 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 > - **Canonical doc**: `include/kernel/mm/boot_reserved.h` (API contract + failure modes).
 > - **Scope boundary**: §6 does NOT describe the first 1 MiB / kernel image / bitmap / USER_ELF in the table -- those are PMM-internal and reserved by the existing direct `pmm_mark_region_used()` calls in `pmm_init`. The table scope is strictly boot_info-derived regions per the spec's item-2 list. "Survival logs" in that list refers to the klog disk buffer, which is written live to `X:\Diag\klog.txt` by the existing klog disk writer and does not need a RAM reservation.
 
-> **Verified:** 2026-04-23 | commit `<pending>` | 5/5 items | build OK | 439 kernel + 16 user-mode PASS on KVM, smoke PASS 2.260s
+> **Verified:** 2026-04-23 | commit `9fb4ccc8` | 5/5 items | build OK | 439 kernel + 16 user-mode PASS on KVM, smoke PASS 2.260s
 > **Quality reviewed:** 2026-04-23 | Codex 1x (adversarial) | 1H fixed (payload vs PMM-internal overlap check) + 1M fixed (64-bit phys/length via %llx in JSON dump), 0 open | scope: kernel-code-quality
 
 ---
