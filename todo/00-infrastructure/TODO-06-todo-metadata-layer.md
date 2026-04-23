@@ -284,7 +284,7 @@ Render the TODO dependency graph in formats GitHub, terminals, and external dash
 > - Downstream effects: §8 (MCP server) now has a rich graph-visualization surface to expose as an AI-agent tool. Contributors can regen `docs/infrastructure/todo-graph.md` before a PR to show the updated dashboard alongside their changes. Supplies the `render <format>` contract that `taskmd`-parity tooling can consume.
 > - Canonical doc: the script's module docstring (render.py header), sub-test headers 12a-12j in [`scripts/todo-graph/tests/test_build.sh`](../../scripts/todo-graph/tests/test_build.sh), and the generated artifact itself at [`docs/infrastructure/todo-graph.md`](../../docs/infrastructure/todo-graph.md).
 > - Scope boundary: this section ships the render surface + the make target + the seeded artifact. Auto-commit of the artifact on CI drift is deferred -- today `make todo-graph-render-mermaid` is manual; the spec's optional "CI commits the regenerated file when it drifts" action can land as a follow-up once the §6 CI gate surfaces real traffic. Per-node `effort` frontmatter is an OPTIONAL field read by the Gantt emitter; the schema doesn't require it today and no live TODO carries it yet, so every Gantt row currently defaults to `1w`.
-> **Verified:** 2026-04-23 | commit `<§7 commit>` | 10/10 items | 100/100 sub-tests PASS, 1 Codex round closed (2 findings fixed, 0 open)
+> **Verified:** 2026-04-23 | commit `c3dea532` | 10/10 items | 100/100 sub-tests PASS, 1 Codex round closed (2 findings fixed, 0 open)
 > **Quality reviewed:** 2026-04-23 | Codex 1x (adversarial) | 1H+1M fixed, 0 open | scope: N/A (host-side Python tooling, no kernel domain)
 
 ---
