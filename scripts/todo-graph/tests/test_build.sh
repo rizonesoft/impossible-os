@@ -240,6 +240,62 @@ else
 fi
 
 # ----------------------------------------------------------------------
+# Test 6d: JSON Schema sidecar at docs/infrastructure/todo-metadata.schema.json
+# is itself a valid Draft 2020-12 schema AND the authoritative example
+# in the spec doc validates against it. Mirrors the §1 acceptance gate
+# from todo/00-infrastructure/TODO-06-todo-metadata-layer.md.
+# ----------------------------------------------------------------------
+SCHEMA_SIDECAR="$REPO_ROOT/docs/infrastructure/todo-metadata.schema.json"
+python3 - "$SCHEMA_SIDECAR" <<'PY' 2>"$TMP_DIR/schema-sidecar.log"
+import json, sys
+try:
+    import jsonschema
+except ImportError:
+    print("FAIL: jsonschema module not installed -- run scripts/setup-deps.sh", file=sys.stderr)
+    sys.exit(2)
+import yaml
+schema = json.load(open(sys.argv[1]))
+jsonschema.Draft202012Validator.check_schema(schema)
+sample = yaml.safe_load("""
+$schema: ../../docs/infrastructure/todo-metadata.schema.json
+schema_version: 1
+id: todo-metadata-layer
+domain: 00-infrastructure
+status: active
+title: TODO Metadata Layer and Derived Graph
+depends_on: []
+""")
+jsonschema.validate(sample, schema)
+# Negative cases: each must raise ValidationError.
+import copy
+def must_reject(mutator, label):
+    bad = copy.deepcopy(sample)
+    mutator(bad)
+    try:
+        jsonschema.validate(bad, schema)
+    except jsonschema.ValidationError:
+        return
+    print(f"FAIL: schema accepted invalid sample ({label})", file=sys.stderr)
+    sys.exit(1)
+must_reject(lambda d: d.update(id="Bad_ID"), "uppercase id")
+must_reject(lambda d: d.update(id="todo-"), "trailing dash id")
+must_reject(lambda d: d.update(id="1-foo"), "leading digit id")
+must_reject(lambda d: d.update(status="in-progress"), "unknown status")
+must_reject(lambda d: d.pop("title"), "missing required title")
+must_reject(lambda d: d.update(schema_version="1"), "string schema_version")
+must_reject(lambda d: d.update(schema_version=2), "future schema_version (Codex H2)")
+must_reject(lambda d: d.update(depends_on=["Bad_ID"]), "uppercase depends_on element")
+sys.exit(0)
+PY
+RC=$?
+if [ "$RC" = "0" ]; then
+    t_pass "schema sidecar valid + authoritative example validates + 8 negatives reject"
+else
+    t_fail "schema sidecar regression (rc=$RC, log=$TMP_DIR/schema-sidecar.log)"
+    cat "$TMP_DIR/schema-sidecar.log" >&2 2>/dev/null || true
+fi
+
+# ----------------------------------------------------------------------
 # Test 7: performance budget (under 2s wall-clock per the generator spec).
 # ----------------------------------------------------------------------
 START_NS=$(date +%s%N)

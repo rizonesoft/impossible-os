@@ -1,0 +1,102 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://impossible-os/docs/infrastructure/todo-metadata.schema.json",
+    "title": "Impossible OS TODO Frontmatter",
+    "description": "Canonical schema for the YAML frontmatter block carried by every file under todo/**/*.md. Mirrors docs/infrastructure/todo-metadata.md (the human-readable spec). Editors (VS Code YAML extension, Zed YAML, Obsidian YAML-schema plugin) consume this via the per-file $schema field for autocomplete and inline diagnostics. The generator at scripts/todo-graph/build.py implements both this schema and the spec doc; behavior is the union of the two.",
+    "type": "object",
+    "additionalProperties": true,
+    "required": [
+        "schema_version",
+        "id",
+        "domain",
+        "status",
+        "title"
+    ],
+    "properties": {
+        "$schema": {
+            "type": "string",
+            "description": "Relative path to this JSON Schema file. Programmatic validators (the generator, CI lint, ad-hoc jsonschema calls) follow it. The stock Red Hat YAML language server does NOT auto-detect this as a schema directive in markdown frontmatter; editor-time diagnostics require remark-lint-frontmatter-schema or markdown-yaml-embedded-langservers. Recommended to set even though optional."
+        },
+        "schema_version": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1,
+            "description": "Schema generation. Currently constrained to exactly 1. Bumped only on a NON-additive change (rename, removal, semantic shift); adding a new optional field does NOT bump it. The maximum tracks the current generator + schema together so editors and the generator agree on what is valid (no version-skew split brain)."
+        },
+        "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{0,58}[a-z0-9]$",
+            "description": "Globally unique identifier across all domains. Lowercase kebab-case, 2-60 chars, must start with a letter, must not end with a dash. Stable across renumbering: renaming a TODO file does NOT change its id."
+        },
+        "domain": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Directory short name (folder under todo/). Matches the file's parent directory by convention but is recorded explicitly so the cache schema is self-describing."
+        },
+        "status": {
+            "type": "string",
+            "enum": [
+                "draft",
+                "active",
+                "blocked",
+                "done",
+                "superseded"
+            ],
+            "description": "Lifecycle state. Validator gates status: done against every Implementation Order row being [x]."
+        },
+        "title": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Human-readable short name. May differ from the H1 heading for length reasons (the H1 is preserved for in-page display)."
+        },
+        "owners": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            },
+            "description": "Free-form list of handles, roles, or team names. NOT enforced; advisory."
+        },
+        "depends_on": {
+            "type": "array",
+            "items": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9-]{0,58}[a-z0-9]$"
+            },
+            "uniqueItems": true,
+            "description": "Structural dependencies on other TODO ids. The validator builds a digraph from this field and rejects cycles."
+        },
+        "satisfies": {
+            "type": "array",
+            "items": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9-]{0,58}[a-z0-9]$"
+            },
+            "uniqueItems": true,
+            "description": "List of ids that this TODO closes when its status flips to done. Powers auto-closure propagation in the validator (gated by full acceptance)."
+        },
+        "superseded_by": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{0,58}[a-z0-9]$",
+            "description": "Single id. Set when this TODO's status is superseded. Validator surfaces a chain when traversing supersession."
+        },
+        "file_patterns": {
+            "type": "array",
+            "items": {
+                "type": "string",
+                "minLength": 1
+            },
+            "uniqueItems": true,
+            "description": "Glob patterns marking source paths this TODO owns. Linux MAINTAINERS-style F: parity. Powers the code <id> query (query-CLI section)."
+        },
+        "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 UTC. AUTO-DERIVED by the generator from git log --reverse (first-commit timestamp). Do NOT hand-author; the generator overwrites."
+        },
+        "last_active_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 UTC. AUTO-DERIVED by the generator from git log -1 (last-commit timestamp). Do NOT hand-author; the generator overwrites."
+        }
+    }
+}

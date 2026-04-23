@@ -219,6 +219,27 @@ else
     fi
 fi
 
+# python3-jsonschema (required by scripts/todo-graph/tests/test_build.sh
+# sub-test 6d to validate docs/infrastructure/todo-metadata.schema.json
+# as a Draft 2020-12 schema and to validate the authoritative example
+# from docs/infrastructure/todo-metadata.md against it).
+if python3 -c "import jsonschema" 2>/dev/null; then
+    skip "jsonschema (python3-jsonschema)"
+else
+    case "$DISTRO" in
+        debian) echo -e "  ${YELLOW}Installing python3-jsonschema...${NC}"; sudo apt-get install -y python3-jsonschema ;;
+        fedora) echo -e "  ${YELLOW}Installing python3-jsonschema...${NC}"; sudo dnf install -y python3-jsonschema ;;
+        arch)   echo -e "  ${YELLOW}Installing python-jsonschema...${NC}"; sudo pacman -S --noconfirm python-jsonschema ;;
+        *) echo -e "  ${YELLOW}Install python3-jsonschema manually for your distro${NC}" ;;
+    esac
+    if python3 -c "import jsonschema" 2>/dev/null; then
+        ok "jsonschema installed"
+        INSTALLED=$((INSTALLED + 1))
+    else
+        echo -e "  ${YELLOW}warn:${NC} jsonschema still missing after install; the schema sidecar regression sub-test (test_build.sh 6d) will FAIL until installed."
+    fi
+fi
+
 # ---- Summary ----
 echo ""
 echo -e "${CYAN}══════════════════════════════════════════════════${NC}"
