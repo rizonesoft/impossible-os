@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: event-viewer
+domain: 13-tools-accessories
+status: active
+title: "TODO-02 -- Event Viewer (Log Viewer)"
+---
+
 # TODO-02 -- Event Viewer (Log Viewer)
 
 > **Goal:** A user-mode GUI tool (`eventview.exe`) that reads `X:\Logs\events.jsonl` and displays kernel events in a colour-coded, filterable table -- like Windows Event Viewer. Shows timestamp, level, subsystem, and message. Filter by level (INFO/WARN/ERROR), subsystem tag, and text search. Essential for diagnosing boot issues, driver failures, and runtime errors without parsing serial logs.

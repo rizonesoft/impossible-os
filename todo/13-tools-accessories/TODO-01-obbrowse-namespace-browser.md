@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: obbrowse-namespace-browser
+domain: 13-tools-accessories
+status: active
+title: "TODO-01 -- ObBrowse: Object Namespace Browser"
+---
+
 # TODO-01 -- ObBrowse: Object Namespace Browser
 
 > **Goal:** A user-mode GUI tool (`obbrowse.exe`) that displays the kernel object namespace as a tree -- like Windows WinObj or Process Explorer's handle viewer. Shows directory objects (`\`, `\Device`, `\BaseNamedObjects`, `\DosDevices`, `\Sessions`), object types, reference counts, and security descriptors. Essential for kernel development debugging and verifying Object Manager correctness.
