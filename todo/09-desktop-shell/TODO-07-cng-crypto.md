@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: cng-crypto
+domain: 09-desktop-shell
+status: active
+title: "TODO-07 -- CNG Crypto & Certificate Store"
+---
+
 # TODO-07 -- CNG Crypto & Certificate Store
 
 > **Goal:** Build the full Windows CNG (Cryptography Next Generation) API surface on top of monocypher (TODO-06): AES-256-GCM, SHA-256, HMAC-SHA256, RSA-2048, ECDH X25519 primitives, a minimal X.509 DER certificate store with chain verification, a per-user encrypted key store, Windows-compatible BCrypt/NCrypt stub tables, transparent NTFS EFS file encryption, PE32+ code signing, and a TLS PRF helper consumed by the Mbed TLS network stack.

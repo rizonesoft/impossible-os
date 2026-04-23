@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: file-search
+domain: 09-desktop-shell
+status: active
+title: "TODO-05 -- File Search & Indexing"
+---
+
 # TODO-05 -- File Search & Indexing
 
 > **Goal:** Build an instant, VFS-backed search system: a PMM-allocated flat-array index rebuilt in a background kernel thread, a ranked query API wired to a `SYS_SEARCH` syscall, `find` shell command, Start Menu and File Manager integration, and incremental index update hooks on `vfs_create/delete/rename`.

@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: terminal
+domain: 09-desktop-shell
+status: active
+title: "TODO-08 -- Terminal Emulator"
+---
+
 # TODO-08 -- Terminal Emulator
 
 > **Goal:** Replace the existing 80×20 basic `terminal.c` with a production-quality terminal emulator: PMM-allocated cell grid with 2000-row scrollback, full ANSI/VT100 escape parser, Unicode codepoint per cell, selection + clipboard, resize with SIGWINCH, Registry-configurable appearance, and stretch advanced features (tabs, Acrylic, split panes, hyperlinks) that rival Windows Terminal and GNOME Terminal.

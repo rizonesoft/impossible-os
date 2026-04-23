@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: clipboard
+domain: 09-desktop-shell
+status: active
+title: "TODO-01 -- Clipboard System"
+---
+
 # TODO-01 -- Clipboard System
 
 > **Goal:** Build the kernel clipboard from scratch -- PMM-backed buffer, format enum, syscalls, Ctrl+C/X/V wiring with SIGINT passthrough for terminals, Win32 `SetClipboardData/GetClipboardData` stubs, clipboard history (Win+V popup, 25-entry ring), and multi-format support. This is the P0 prerequisite before text editing, copy/paste in File Manager, terminal selection, and all Win32 clipboard APIs work.

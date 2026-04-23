@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: service-manager
+domain: 09-desktop-shell
+status: active
+title: "TODO-03 -- Service Manager & Core Daemons"
+---
+
 # TODO-03 -- Service Manager & Core Daemons
 
 > **Goal:** Build the kernel service lifecycle manager -- a 32-slot static service table with Registry-backed definitions, start/stop/restart/status operations, PIT-ticked crash monitor with exponential backoff, critical-service BSOD gate, built-in daemons (netd/ntpd/registryd/indexd), a kernel notification queue, autostart program scanning, Win32 system-info stubs, and a minimal user account stub.

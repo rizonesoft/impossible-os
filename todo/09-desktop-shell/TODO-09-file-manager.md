@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: file-manager
+domain: 09-desktop-shell
+status: active
+title: "TODO-09 -- File Manager"
+---
+
 # TODO-09 -- File Manager
 
 > **Goal:** Build the primary file browsing application -- a production-quality File Manager with four-zone window layout, sidebar quick access + drives, icon and detail views with column sort, full file operations (copy/cut/paste/delete/rename/new folder), context menus, inline search, drag-and-drop, and stretch advanced features (preview pane, tabs, breadcrumb) that rival Windows Explorer.

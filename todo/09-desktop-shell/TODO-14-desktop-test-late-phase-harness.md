@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: desktop-test-late-phase-harness
+domain: 09-desktop-shell
+status: active
+title: "TODO-14 -- Desktop Test Late-Phase Harness and Artifact Bundle"
+---
+
 # TODO-14 -- Desktop Test Late-Phase Harness and Artifact Bundle
 
 > **Goal:** Ship the **late-phase kernel test harness** that runs after `boot_desktop.c` has brought up the compositor + terminal + WM, plus the cross-subsystem wiring the desktop UI test framework (`00-infrastructure/TODO-05`) needs before it can close. Today `TEST_CAT_DESKTOP` runs in Phase 3 against in-memory fixtures; the real user-facing assertions (cmd.exe `dir` roundtrip, on-failure artifact bundle, torn-snapshot-free captures under an active compositor) all wait on this TODO.

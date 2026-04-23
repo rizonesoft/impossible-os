@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: file-associations-resources
+domain: 09-desktop-shell
+status: active
+title: "TODO-02 -- File Associations, Shortcuts & System Resources"
+---
+
 # TODO-02 -- File Associations, Shortcuts & System Resources
 
 > **Goal:** Build the plumbing that makes double-click work -- extension-to-app Registry mapping, first-boot defaults, Open With dialog, INI-format `.lnk` shortcuts with desktop integration, Recycle Bin icon state, system sounds (WAV player), and a font manager app.

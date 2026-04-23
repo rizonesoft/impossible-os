@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: recycle-zip-scheduler
+domain: 09-desktop-shell
+status: active
+title: "TODO-04 -- Recycle Bin, ZIP & Task Scheduler"
+---
+
 # TODO-04 -- Recycle Bin, ZIP & Task Scheduler
 
 > **Goal:** Build three independent infrastructure pieces that unlock production-quality core apps: a fully-featured Recycle Bin (counter-keyed trash with meta sidecars + restore window), a miniz-backed ZIP archive API with shell commands, and a 16-slot task scheduler with PIT tick + built-in recurring tasks and an `at` command.

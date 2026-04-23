@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: utilities
+domain: 09-desktop-shell
+status: active
+title: "TODO-12 -- Task Manager, Device Manager & Core Utilities"
+---
+
 # TODO-12 -- Task Manager, Device Manager & Core Utilities
 
 > **Goal:** Deliver the process manager, hardware inspector, and the full suite of small core apps (Calculator, Image Viewer, Screenshot region select, Archive Manager, Calendar, System Info) plus shell command expansion -- everything that completes Impossible OS as a self-sufficient desktop OS.

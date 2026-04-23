@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: security-accounts
+domain: 09-desktop-shell
+status: active
+title: "TODO-06 -- Security & User Accounts"
+---
+
 # TODO-06 -- Security & User Accounts
 
 > **Goal:** Add proper multi-user authentication, cryptographic password hashing, file permissions enforcement, a graphical login/lock screen, and UAC-equivalent privilege elevation -- transitioning from a single root-equivalent user to a production-grade security model that rivals Windows 11 and Linux.

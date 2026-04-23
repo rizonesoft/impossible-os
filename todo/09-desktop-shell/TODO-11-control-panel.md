@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: control-panel
+domain: 09-desktop-shell
+status: active
+title: "TODO-11 -- Control Panel & Settings"
+---
+
 # TODO-11 -- Control Panel & Settings
 
 > **Goal:** Build the Control Panel -- a Windows CPL-compatible settings hub that ties all underlying APIs together (theme, DPI, network, time, user accounts, audio, power) into one discoverable place, with a Win32-compatible `cpl.h` that lets Win32 `.cpl` applets run natively.

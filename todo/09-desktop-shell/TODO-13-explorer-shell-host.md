@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: explorer-shell-host
+domain: 09-desktop-shell
+status: active
+title: "TODO-13 -- Explorer Shell Host (`explorer.exe`)"
+---
+
 # TODO-13 -- Explorer Shell Host (`explorer.exe`)
 
 > **Goal:** Ship a **Windows-named shell host** at `C:\Windows\explorer.exe` that boots after install (unless [`../10-platform-services/TODO-11-installer-iso.md`](../10-platform-services/TODO-11-installer-iso.md) `InstallerMode=1` selects `installer.exe`). The host owns **desktop + taskbar integration**, **shell folder launch** (`ShellExecute` / `open` verb), and minimal **Run / RunOnce** startup hooks. It does **not** replace the full File Manager UX epic in [`TODO-09-file-manager.md`](TODO-09-file-manager.md); that TODO stays the deep four-zone browser. Explorer here is the **small PE** that wires shell32 exports from [`../10-platform-services/TODO-C-shell32-export-master-table.md`](../10-platform-services/TODO-C-shell32-export-master-table.md) Tier 1 into the existing compositor and WM.

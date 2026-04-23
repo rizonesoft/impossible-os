@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: notepad
+domain: 09-desktop-shell
+status: active
+title: "TODO-10 -- Notepad Text Editor"
+---
+
 # TODO-10 -- Notepad Text Editor
 
 > **Goal:** Build Notepad -- the primary text editor and fallback file association for `.txt`/`.md`/`.c`/`.h`/`.asm` -- as the first real app that exercises the full widget stack. Built on a PMM-backed gap buffer with O(1) insert/delete, full keyboard + mouse editing, clipboard integration, find & replace, undo/redo, and stretch features (line numbers, syntax highlighting, font zoom).
