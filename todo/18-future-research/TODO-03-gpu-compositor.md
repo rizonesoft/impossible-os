@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: gpu-compositor
+domain: 18-future-research
+status: active
+title: "TODO-03 -- GPU-Accelerated Compositor"
+---
+
 # TODO-03 -- GPU-Accelerated Compositor
 
 > **Goal:** Research spike to select a GPU acceleration strategy for the Impossible OS

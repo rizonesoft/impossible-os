@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: hypervisor
+domain: 18-future-research
+status: active
+title: "TODO-02 -- Type-1 Hypervisor (ImpossibleHV)"
+---
+
 # TODO-02 -- Type-1 Hypervisor (ImpossibleHV)
 
 > **Goal:** Research spike to design and prove out a built-in Type-1.5 hypervisor

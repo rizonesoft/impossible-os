@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: secureboot-tpm
+domain: 18-future-research
+status: active
+title: "TODO-04 -- Secure Boot, TPM 2.0 & Measured Boot"
+---
+
 # TODO-04 -- Secure Boot, TPM 2.0 & Measured Boot
 
 > **Goal:** Research spike for the enterprise-grade security chain: UEFI Secure Boot

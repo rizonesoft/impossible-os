@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: android-app-compatibility
+domain: 18-future-research
+status: active
+title: "TODO-06 -- Android App Compatibility (Research Spike)"
+---
+
 # TODO-06 -- Android App Compatibility (Research Spike)
 
 > **Goal:** Research spike to scope how Impossible OS could run **Android applications**
