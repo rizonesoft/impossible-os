@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: sdk-build-system
+domain: 14-host-tools
+status: active
+title: "TODO-01 -- SDK Build System"
+---
+
 # TODO-01 -- SDK Build System
 
 > **Goal:** Create a build system for SDK tools that mirrors the kernel's `scripts/build.sh` experience -- progress bars, colored output, error extraction, and dependency detection. SDK tools build independently from the kernel using the host's native compiler.

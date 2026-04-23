@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: ixfs-mount
+domain: 14-host-tools
+status: active
+title: "TODO-02 -- IXFS Mount (Linux)"
+---
+
 # TODO-02 -- IXFS Mount (Linux)
 
 > **Goal:** Mount IXFS partitions from Linux so developers can browse Impossible OS filesystems from the host -- read logs, inspect files, copy assets, without booting the OS. Also provides a mount script for USB boot drives.

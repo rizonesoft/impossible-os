@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: addr2line
+domain: 14-host-tools
+status: active
+title: "TODO-03 -- ixfs-addr2line (Enhanced Address Resolver)"
+---
+
 # TODO-03 -- ixfs-addr2line (Enhanced Address Resolver)
 
 > **Goal:** Replace `llvm-addr2line-19 -e build/kernel.exe -f <RIP>` with a purpose-built tool that resolves crash addresses to function + file + line + source context, decodes error codes, and maps CR2 to known memory regions. One command for full crash analysis.

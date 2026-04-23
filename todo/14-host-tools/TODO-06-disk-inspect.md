@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: disk-inspect
+domain: 14-host-tools
+status: active
+title: "TODO-06 -- disk-inspect (Disk Image Browser)"
+---
+
 # TODO-06 -- disk-inspect (Disk Image Browser)
 
 > **Goal:** Interactively browse GPT partition tables, IXFS superblocks, inode tables, extent maps, and raw sectors from a disk image or physical drive. The `fdisk -l` + `debugfs` equivalent for Impossible OS formats.

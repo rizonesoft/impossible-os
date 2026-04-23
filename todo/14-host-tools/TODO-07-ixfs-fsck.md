@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: ixfs-fsck
+domain: 14-host-tools
+status: active
+title: "TODO-07 -- ixfs-fsck (Filesystem Consistency Checker)"
+---
+
 # TODO-07 -- ixfs-fsck (Filesystem Consistency Checker)
 
 > **Goal:** Verify IXFS filesystem integrity: superblock validity, inode consistency, extent coverage, block bitmap accuracy, orphan detection, and optional repair. Run after a crash or before any disk image release.

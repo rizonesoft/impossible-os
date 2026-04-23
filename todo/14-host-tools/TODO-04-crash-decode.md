@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: crash-decode
+domain: 14-host-tools
+status: active
+title: "TODO-04 -- crash-decode (Post-Mortem Crash Analyzer)"
+---
+
 # TODO-04 -- crash-decode (Post-Mortem Crash Analyzer)
 
 > **Goal:** Paste a BSOD screenshot or serial dump, get a complete crash analysis: stack trace with source lines, root cause hypothesis, affected subsystem, and suggested fix. The tool every OS developer wishes existed.

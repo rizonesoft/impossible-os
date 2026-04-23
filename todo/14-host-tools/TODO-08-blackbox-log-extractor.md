@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: blackbox-log-extractor
+domain: 14-host-tools
+status: active
+title: "TODO-08 -- BlackBox Log Extractor"
+---
+
 # TODO-08 -- BlackBox Log Extractor
 
 > **Goal:** Host-side tools (Linux + Windows) that extract, view, and analyze logs from the BlackBox partition (`X:\`) inside raw disk images or mounted drives. Enables Claude Code, CI pipelines, and developers to read kernel logs, crash dumps, boot timelines, and events.jsonl without booting the OS. Solves the "not verifiable from serial log, requires filesystem inspection" gap in TODO-02 verification.

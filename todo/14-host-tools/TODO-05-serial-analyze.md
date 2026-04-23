@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: serial-analyze
+domain: 14-host-tools
+status: active
+title: "TODO-05 -- serial-analyze (Boot Log Analyzer)"
+---
+
 # TODO-05 -- serial-analyze (Boot Log Analyzer)
 
 > **Goal:** Parse serial boot logs to extract timing, highlight warnings/errors, detect anomalies, compare boot runs, and generate visual reports. Replaces manually scanning hundreds of log lines.
