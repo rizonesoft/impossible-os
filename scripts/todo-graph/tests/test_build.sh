@@ -2551,6 +2551,128 @@ else
     t_fail "make: todo-graph-render-mermaid broken"
 fi
 
+# ======================================================================
+# Test 13: MCP server (§8) -- --self-test exit 0 regardless of SDK
+# presence; tools/list returns 12 entries when SDK is present. Skips
+# cleanly when the mcp package is not installed.
+# ======================================================================
+
+MCP_SERVER="$REPO_ROOT/scripts/todo-graph/mcp_server.py"
+
+# Sub-test 13a: --self-test exits 0 whether or not the SDK is present.
+# When the SDK is missing, expect a SKIP message. When it is present,
+# expect "OK: N tools registered".
+ST_OUT=$(python3 "$MCP_SERVER" --self-test 2>&1); ST_RC=$?
+if [ "$ST_RC" = "0" ]; then
+    if echo "$ST_OUT" | grep -q "SKIP: mcp SDK not installed"; then
+        t_pass "mcp_server: --self-test SKIPs cleanly when SDK absent"
+    elif echo "$ST_OUT" | grep -qE "OK: [0-9]+ tools registered"; then
+        # SDK present -- tool count must be exactly 12.
+        COUNT=$(echo "$ST_OUT" | sed -n 's/.*OK: \([0-9]\+\) tools.*/\1/p')
+        if [ "$COUNT" = "12" ]; then
+            t_pass "mcp_server: --self-test registers 12 tools (SDK present)"
+        else
+            t_fail "mcp_server: --self-test registered $COUNT tools (expected 12)"
+        fi
+    else
+        t_fail "mcp_server: --self-test exit 0 but unexpected output: $ST_OUT"
+    fi
+else
+    t_fail "mcp_server: --self-test should exit 0, got $ST_RC ($ST_OUT)"
+fi
+
+# Sub-test 13b: running mcp_server without --self-test when the SDK is
+# absent exits 2 with a clear FATAL message (this path is what Claude
+# Code would hit on a host without the SDK; we want a crisp failure,
+# not a traceback).
+if python3 -c "import mcp" 2>/dev/null; then
+    # SDK present; starting the stdio server would block forever -- skip.
+    t_pass "mcp_server: SDK-present startup (skipped; would block on stdio)"
+else
+    HUNG_OUT=$(PATH="/usr/bin:/bin" timeout --signal=TERM 2 \
+        python3 "$MCP_SERVER" 2>&1); HUNG_RC=$?
+    if [ "$HUNG_RC" = "2" ] && echo "$HUNG_OUT" | grep -q "mcp SDK not installed"; then
+        t_pass "mcp_server: SDK-absent startup exits 2 with FATAL message"
+    else
+        t_fail "mcp_server: SDK-absent startup should exit 2 (rc=$HUNG_RC)"
+    fi
+fi
+
+# Sub-test 13b2: MCP tool schemas expose the correct parameter names
+# (SDK-present only). Codex pass 18 M1: every typed handler must carry
+# the right public param name so FastMCP's introspection produces a
+# contract that matches the tool description.
+if python3 -c "import mcp" 2>/dev/null; then
+    SCHEMA_CHECK=$(python3 -c "
+import sys, json
+sys.path.insert(0, '$REPO_ROOT/scripts/todo-graph')
+from pathlib import Path
+import mcp_server
+from mcp.server.fastmcp import FastMCP
+srv = mcp_server._build_mcp(FastMCP, Path('$REPO_ROOT').resolve())
+tm = srv._tool_manager._tools
+# backlinks / deferred / deferred-by / code must require 'target'.
+# code-by must require 'path' (not 'target').
+# stale must accept optional 'days'. by-domain must accept optional 'domain'.
+expected = {
+    'backlinks':   {'required': ['target']},
+    'deferred':    {'required': ['target']},
+    'deferred-by': {'required': ['target']},
+    'code':        {'required': ['target']},
+    'code-by':     {'required': ['path']},
+    'stale':       {'props': ['days'], 'required': []},
+    'by-domain':   {'props': ['domain'], 'required': []},
+    'stats':       {'required': []},
+    'ready':       {'required': []},
+}
+failed = []
+for name, expected_spec in expected.items():
+    t = tm.get(name)
+    if t is None:
+        failed.append(f'{name}: missing')
+        continue
+    params = getattr(t, 'parameters', {}) or {}
+    req = list(params.get('required') or [])
+    props = list((params.get('properties') or {}).keys())
+    if 'required' in expected_spec and req != expected_spec['required']:
+        failed.append(f'{name}: required={req} (want {expected_spec[\"required\"]})')
+    if 'props' in expected_spec and sorted(props) != sorted(expected_spec['props']):
+        failed.append(f'{name}: props={props} (want {expected_spec[\"props\"]})')
+if failed:
+    print('SCHEMA_MISMATCH:', '; '.join(failed))
+    sys.exit(1)
+print('SCHEMAS_OK')
+" 2>&1)
+    if echo "$SCHEMA_CHECK" | grep -q "^SCHEMAS_OK$"; then
+        t_pass "mcp_server: tool schemas expose correct typed params (target vs path)"
+    else
+        t_fail "mcp_server: schema mismatch ($SCHEMA_CHECK)"
+    fi
+else
+    t_pass "mcp_server: schema check (skipped; SDK absent)"
+fi
+
+# Sub-test 13c: .claude/mcp.json + scripts/todo-graph/mcp.json are
+# parseable and register the todo-graph server.
+for MANIFEST in "$REPO_ROOT/.claude/mcp.json" "$REPO_ROOT/scripts/todo-graph/mcp.json"; do
+    if python3 -c "
+import json, sys
+d = json.load(open('$MANIFEST'))
+srv = d.get('mcpServers', {}).get('todo-graph')
+assert srv is not None, 'missing todo-graph entry'
+assert 'mcp_server.py' in ' '.join(srv.get('args', [])), 'args do not point at mcp_server.py'
+" 2>/dev/null; then
+        :
+    else
+        t_fail "mcp_server: manifest $MANIFEST invalid"
+        break
+    fi
+done
+# If we didn't fail above, the loop produced no `t_fail`; record one pass.
+if [ -f "$REPO_ROOT/.claude/mcp.json" ] && [ -f "$REPO_ROOT/scripts/todo-graph/mcp.json" ]; then
+    t_pass "mcp_server: both manifests register todo-graph -> mcp_server.py"
+fi
+
 # ----------------------------------------------------------------------
 # Test 7: performance budget (under 2s wall-clock per the generator spec).
 # ----------------------------------------------------------------------

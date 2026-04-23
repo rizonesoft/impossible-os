@@ -1,0 +1,11 @@
+{
+  "//": "Claude Code MCP server registrations (TODO-06 §8).",
+  "//1": "Mirrors scripts/todo-graph/mcp.json so Claude Code picks up the",
+  "//2": "todo-graph server automatically when launched at the repo root.",
+  "mcpServers": {
+    "todo-graph": {
+      "command": "python3",
+      "args": ["scripts/todo-graph/mcp_server.py"]
+    }
+  }
+}

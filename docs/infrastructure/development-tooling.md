@@ -980,6 +980,25 @@ scripts/
 
 ---
 
+## Claude Code MCP Servers
+
+The repo ships one Model Context Protocol (MCP) server at [`scripts/todo-graph/mcp_server.py`](../../scripts/todo-graph/mcp_server.py), registered with Claude Code via [`.claude/mcp.json`](../../.claude/mcp.json). It exposes the read-only [`query.py`](../../scripts/todo-graph/query.py) surface (12 subcommands: `ready`, `blocked`, `blocking`, `by-domain`, `backlinks`, `deferred`, `deferred-by`, `orphans`, `stale`, `stats`, `code`, `code-by`) as MCP tools so agents can answer "what can I work on?" and "what references this?" without shelling out.
+
+**Install:**
+
+```bash
+pip install --user mcp     # or use a venv
+bash scripts/todo-graph/mcp_server.py --self-test   # prints `OK: 12 tools registered, cache ...`
+```
+
+The MCP SDK is OPTIONAL per [`scripts/setup-deps.sh`](../../scripts/setup-deps.sh); without it the server exits cleanly and Claude Code simply lists zero tools. `make todo-graph-mcp` launches the stdio server in the foreground for ad-hoc testing.
+
+**Cursor:** copy the `mcpServers` block from [`scripts/todo-graph/mcp.json`](../../scripts/todo-graph/mcp.json) into `~/.cursor/mcp.json`.
+
+**Read-only by design.** `mark-done`, `set-status`, `add-dependency` are NOT exposed; write operations stay manual via the markdown files. The cache freshness check rebuilds `build/todo-cache.json` in-process on every tool call when a `todo/**/*.md` file is newer than the cache (~0.5s budget; bounded by `build.py`'s existing perf gate).
+
+---
+
 ## Gotchas
 
 > [!CAUTION]

@@ -240,6 +240,17 @@ else
     fi
 fi
 
+# python3-mcp (OPTIONAL -- required only by scripts/todo-graph/mcp_server.py
+# which ships the TODO metadata layer's AI-agent integration over the
+# query surface). Skipped cleanly when unavailable so setup-deps never
+# blocks on it.
+if python3 -c "import mcp" 2>/dev/null; then
+    skip "mcp (python3-mcp)"
+else
+    echo -e "  ${YELLOW}note:${NC} mcp SDK not installed; AI-agent integration (todo-graph MCP server) unavailable."
+    echo -e "        Optional install: ${GREEN}pip install --user mcp${NC} (or use a venv)."
+fi
+
 # ---- Summary ----
 echo ""
 echo -e "${CYAN}══════════════════════════════════════════════════${NC}"
