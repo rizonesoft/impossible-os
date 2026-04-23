@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: ssh-ftp-clients
+domain: 07-networking
+status: active
+title: "TODO-08 -- SSH & FTP Clients"
+---
+
 # TODO-08 -- SSH & FTP Clients
 
 > **Goal:** Implement the two most-used remote access protocols: FTP (plain, FTPS/FTPES, interactive shell, `wget ftp://`, File Manager `ftp://` URL), and SSH2 (transport with Curve25519/ChaCha20-Poly1305 via **monocypher**, password + Ed25519 public-key auth, interactive channel + PTY relay, `ssh`/`scp`/`ssh-keygen` shell commands, SSH agent, and SFTP subsystem with `sftp://` URL). Together these make Impossible OS viable for system administration and remote file management.

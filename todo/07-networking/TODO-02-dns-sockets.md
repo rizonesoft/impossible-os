@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: dns-sockets
+domain: 07-networking
+status: active
+title: "TODO-02 -- DNS Resolver & BSD Sockets API"
+---
+
 # TODO-02 -- DNS Resolver & BSD Sockets API
 
 > **Goal:** Build the DNS resolver (query builder, response parser, 64-entry LRU cache, AAAA support) and a BSD-compatible kernel socket layer (`SOCK_STREAM`/`SOCK_DGRAM`, `socket`/`connect`/`send`/`recv`/`bind`/`listen`/`accept`/`select`), expose them via 8 new syscalls, and provide thin user-mode wrappers. DNS and sockets turn raw IP+port into the hostname-based, file-descriptor API every application uses.

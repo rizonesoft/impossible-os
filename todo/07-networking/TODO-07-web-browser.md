@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: web-browser
+domain: 07-networking
+status: active
+title: "TODO-07 -- Web Browser"
+---
+
 # TODO-07 -- Web Browser
 
 > **Goal:** Build Impossible OS's flagship internet application in ten progressive sections: text-only browser proving the HTTP stack, a full HTML tokenizer + DOM tree, block/inline layout engine, tab management, image rendering, CSS cascade engine, JavaScript stub, bookmarks manager, download manager with HTTP Range resume, and a privacy + security layer (TLS padlock, cookie jar, mixed-content blocking, HTTP caching). A QUIC/HTTP 2 upgrade path is noted for future work (→ XREF `06-networking/TODO-08` when created).

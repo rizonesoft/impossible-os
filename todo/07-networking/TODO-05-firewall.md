@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: firewall
+domain: 07-networking
+status: active
+title: "TODO-05 -- Network Firewall & Packet Filter"
+---
+
 # TODO-05 -- Network Firewall & Packet Filter
 
 > **Goal:** Build a stateful packet filter engine (`struct fw_rule`, 64-rule ordered table, first-match-wins), wire it into `ipv4_handle()`/`ipv4_send()` and the IPv6 receive/send paths, integrate with the connection tracking table (TODO-01 §7) for automatic inbound allow of established sessions, ship a default allow-outbound/block-inbound ruleset loaded from the Registry at boot, add per-rule atomic hit counters exposed via `/sys/firewall`, a firewall CLI (`fw list/add/remove/flush/enable/disable`), Registry persistence, and a `firewall.cpl` Control Panel applet. The firewall is the security boundary that separates the OS from untrusted network traffic.

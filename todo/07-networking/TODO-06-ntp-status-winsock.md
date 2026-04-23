@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: ntp-status-winsock
+domain: 07-networking
+status: active
+title: "TODO-06 -- NTP, Network Status & Win32 Winsock"
+---
+
 # TODO-06 -- NTP, Network Status & Win32 Winsock
 
 > **Goal:** Close out the kernel networking layer with nine deliverables: DHCP lease renewal daemon, NTP time-sync client (slew mode, Registry persistence), `ifconfig` multi-NIC display + manual config, network statistics API + system-tray icon, extended `ping` (IPv6/flags), `traceroute`, `netstat`, `/sys/net` VFS aggregation file, and `ws2_32.dll` Winsock compatibility stubs. Together these give Impossible OS a complete, observable, Win32-compatible network stack.

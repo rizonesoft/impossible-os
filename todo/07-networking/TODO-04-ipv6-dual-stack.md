@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: ipv6-dual-stack
+domain: 07-networking
+status: active
+title: "TODO-04 -- IPv6 Dual-Stack"
+---
+
 # TODO-04 -- IPv6 Dual-Stack
 
 > **Goal:** Add full IPv6 support alongside IPv4: IPv6 header + ethertype routing, `ipv6_send()`/`ipv6_receive()`, ICMPv6 Neighbor Discovery Protocol (NDP) with NS/NA/RS/RA, EUI-64 link-local autoconfiguration, SLAAC global address, DHCPv6 client, dual-stack socket API (`AF_INET6`), DNS AAAA query activation, NDP neighbor cache with STALE/PROBE/FAILED state machine, and `ifconfig` IPv6 display. IPv6 is a production requirement -- many corporate and mobile networks are IPv6-only, and all modern OSes (Windows, Linux, macOS, Android) support dual-stack by default.

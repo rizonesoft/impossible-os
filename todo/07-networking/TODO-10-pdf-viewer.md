@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: pdf-viewer
+domain: 07-networking
+status: active
+title: "TODO-10 -- PDF Viewer & Document Reader"
+---
+
 # TODO-10 -- PDF Viewer & Document Reader
 
 > **Goal:** Build a full PDF viewer: structure parser (xref, trailer, object streams), object model with stream decompression (FlateDecode/LZW/ASCII85), page tree walker, content stream interpreter (graphics + text operators), embedded font rendering via stb_truetype, image rendering (FlateDecode + DCTDecode via stb_image), page rasterizer compositing text+graphics+images, a scrollable viewer app with zoom/navigation/text search, HTTP-fetched PDF streaming, and an AcroForm stub. The PDF viewer is the standard document format reader required by every desktop OS.

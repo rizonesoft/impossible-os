@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: tcp-network-infrastructure
+domain: 07-networking
+status: active
+title: "TODO-01 -- TCP Protocol & Network Infrastructure"
+---
+
 # TODO-01 -- TCP Protocol & Network Infrastructure
 
 > **Goal:** Build TCP on top of the working Ethernet/ARP/IPv4/UDP/DHCP stack, introduce a `net_interface` manager to replace the single global `net_cfg`, add a loopback interface, and implement stateful connection tracking as the backing layer for the network firewall. TCP is the foundation every higher-level protocol (HTTP, DNS, SSH, TLS) depends on.

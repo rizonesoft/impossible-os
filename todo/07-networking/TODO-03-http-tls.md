@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: http-tls
+domain: 07-networking
+status: active
+title: "TODO-03 -- HTTP/HTTPS Client & TLS"
+---
+
 # TODO-03 -- HTTP/HTTPS Client & TLS
 
 > **Goal:** Build a complete HTTP/HTTPS client stack: URL parser, HTTP GET/POST (including chunked transfer), `wget`/`curl` shell commands, Mbed TLS ported as a static kernel library, Mozilla CA bundle, HTTPS GET/POST with certificate chain verification, and an HTTP/1.1 keep-alive connection pool. HTTP and TLS are the gateway to the modern internet and prerequisites for the browser, email client, and OS update service.

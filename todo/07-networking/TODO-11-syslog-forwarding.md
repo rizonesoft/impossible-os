@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: syslog-forwarding
+domain: 07-networking
+status: active
+title: "TODO-11 -- Remote Syslog Forwarding (RFC 5424)"
+---
+
 # TODO-11 -- Remote Syslog Forwarding (RFC 5424)
 
 > **Goal:** Forward kernel log entries to a remote syslog server over UDP port 514 for enterprise monitoring and headless debug use. Enables centralized log collection from Impossible OS machines without serial access.

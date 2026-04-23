@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: email-client
+domain: 07-networking
+status: active
+title: "TODO-09 -- Email Client"
+---
+
 # TODO-09 -- Email Client
 
 > **Goal:** Build a full-featured email client: SMTP send (port 587 + STARTTLS), POP3 receive (port 995 + TLS), IMAP sync (port 993 + TLS with IDLE push), account manager (multiple accounts, MX autodiscover, Registry persistence), RFC 2822 message parser + MIME multipart + base64/QP decode, three-panel GUI (sidebar/list/viewer), compose window with attachments, full-text search, desktop notifications with tray icon, and contacts integration.
