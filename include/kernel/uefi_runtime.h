@@ -236,7 +236,7 @@ int uefi_secureboot_pk_present(void);
 /* Returns 1 if a Key Exchange Key (KEK) is enrolled. */
 int uefi_secureboot_kek_present(void);
 
-/* ---- Secure Boot Key Management API (§5.2) ---- */
+/* ---- Secure Boot Key Management API ---- */
 
 /* Security database GUID -- used for db, dbx, dbt variables */
 #define EFI_IMAGE_SECURITY_DATABASE_GUID \
@@ -336,7 +336,7 @@ void uefi_crypto_agility_init(void);
 /* Returns parsed crypto agility state. */
 const struct crypto_agility_info *uefi_crypto_agility_info(void);
 
-/* ---- Capsule Firmware Update API (§6.1) ----
+/* ---- Capsule Firmware Update API ----
  *
  * ╔══════════════════════════════════════════════════════════════════════╗
  * ║  ⚠️  DANGER: UpdateCapsule() CAN PERMANENTLY BRICK YOUR HARDWARE  ⚠️  ║

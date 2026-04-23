@@ -3,7 +3,7 @@
  *
  * `TEST_SCRATCH_KBUF(name, size)` declares a `size`-byte scratch buffer
  * for the current test suite and registers its free routine via the
- * §7 action registry, so cleanup fires on normal suite exit AND after
+ * Test action registry, so cleanup fires on normal suite exit AND after
  * a TEST_ASSERT-induced early return.
  *
  * Routes by size to respect the project's "kmalloc <= 4 KB" rule:
@@ -18,7 +18,7 @@
  *   static void test_my_thing(void) {
  *       TEST_SCRATCH_KBUF(buf, 65536);
  *       // buf is a 64 KiB scratch buffer; freed automatically on
- *       // suite exit (pass or fail -- the §7 action drain handles it).
+ *       // suite exit (pass or fail -- the test action drain handles it).
  *       fill_thing(buf, 65536);
  *       TEST_ASSERT(verify(buf), "thing verified");
  *   }

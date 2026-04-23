@@ -179,7 +179,7 @@ _Static_assert(__builtin_offsetof(pe_section_header_t, VirtualAddress) == 0x0C,
 _Static_assert(__builtin_offsetof(pe_section_header_t, Characteristics) == 0x24,
     "pe_section_header_t.Characteristics at offset 0x24");
 
-/* ---- Import structures (§9) --------------------------------------------- */
+/* ---- Import structures --------------------------------------------------- */
 
 /* IMAGE_IMPORT_DESCRIPTOR -- one per imported DLL */
 typedef struct pe_import_descriptor {
@@ -246,7 +246,7 @@ typedef struct pe_validate_result {
 pe_validate_result_t pe_validate(const uint8_t *data, uint64_t size);
 
 /* PE32+ loader entry point for the exec dispatcher.
- * Currently validates only (§7); section loading in §8.
+ * Currently validates only; section loading lands separately.
  * Returns entry point VA on success, 0 on failure. */
 uint64_t pe_load(const uint8_t *data, uint64_t size);
 

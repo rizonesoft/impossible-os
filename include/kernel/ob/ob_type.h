@@ -27,13 +27,13 @@ typedef struct object_type {
     /* Namespace parse -- walk remaining path through this object */
     int (*on_parse)(void *body, const char *remaining, void **result);
 
-    /* Per-type statistics (§12) -- SMP-safe via atomics */
+    /* Per-type statistics -- SMP-safe via atomics */
     atomic_t    total_objects;   /* current live objects of this type */
     atomic_t    total_handles;   /* current open handles to objects of this type */
     uint32_t    peak_objects;    /* high-water mark for total_objects */
     uint32_t    peak_handles;    /* high-water mark for total_handles */
 
-    /* Per-type tracing (§15) */
+    /* Per-type tracing */
     uint8_t     tracing_enabled; /* 1 = allocate OB_TRACE_INFO for new objects */
     uint8_t     _trace_pad[3];
 } OBJECT_TYPE;

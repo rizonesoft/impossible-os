@@ -109,14 +109,14 @@ struct elf_load_result {
     uint64_t load_base;             /* lowest loaded address */
     uint64_t load_end;              /* highest loaded address + 1 */
     int      success;               /* 1 on success, 0 on failure */
-    /* --- Security metadata (§3) --- */
+    /* --- Security metadata --- */
     uint8_t  nx_stack;              /* 1 = stack should be non-executable */
     uint8_t  has_relro;             /* 1 = PT_GNU_RELRO present */
     uint8_t  cet_ibt;              /* 1 = GNU_PROPERTY requests IBT */
     uint8_t  cet_shstk;            /* 1 = GNU_PROPERTY requests SHSTK */
     uint64_t relro_start;           /* RELRO range start (0 if no RELRO) */
     uint64_t relro_size;            /* RELRO range size */
-    /* --- ELF auxv metadata (§13) ---
+    /* --- ELF auxv metadata ---
      * Populated by elf_load() in the same parse pass that loads PT_LOAD
      * segments. Used by task_exec() to push AT_PHDR/AT_PHENT/AT_PHNUM into
      * the initial user stack. The values are derived from PT_PHDR if

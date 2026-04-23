@@ -309,7 +309,6 @@ if [ "$#" -eq 0 ]; then
         include/kernel/drivers/nvme.h
         include/kernel/drivers/virtio/blk.h
         include/kernel/drivers/virtio/virtio.h
-        include/kernel/elf.h
         include/kernel/exec.h
         include/kernel/fs/vfs.h
         include/kernel/ipc/alpc.h
@@ -318,16 +317,12 @@ if [ "$#" -eq 0 ]; then
         include/kernel/mm/heap.h
         include/kernel/nt/nt_file.h
         include/kernel/ob/ob.h
-        include/kernel/ob/ob_type.h
-        include/kernel/pe.h
         include/kernel/sched/task.h
         include/kernel/smp.h
         include/kernel/test/input_record.h
         include/kernel/test/klog_suppress.h
-        include/kernel/test/scratch.h
         include/kernel/test/test.h
         include/kernel/time/wall_clock.h
-        include/kernel/uefi_runtime.h
         include/registry.h
         scripts/debug/desktop/run-matrix-desktop-tests.bat
         scripts/debug/usermode/run-all-usermode-tests.bat
