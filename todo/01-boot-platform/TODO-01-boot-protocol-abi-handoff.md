@@ -44,6 +44,8 @@ title: "TODO-01 -- Boot Protocol ABI & Handoff Contract"
 - A generated ABI report catches same-size field reorder drift, not just size mismatches.
 - Compatibility negotiation is explicit: optional versus required handoff features can evolve without relying on struct-size drift alone.
 - Recovery, installer, network, and resume flows share one boot-path decision record instead of inventing per-feature reason codes.
+- Anti-rollback security-version binding prevents loading older-signed kernels once policy has been advanced (parity with Windows Loader Parameter Block `OsLoaderSecurityVersion`).
+- Warm-kernel-update handoff is reachable through the same `boot_info` contract as cold boot (competitive edge over Windows Hot Patch's closed path and parity with Linux 6.16's Kexec Handover).
 
 ## Consolidated Shipped Foundations
 
@@ -72,6 +74,8 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 | ⭐  |  10   | Cross-domain owner audit for every boot_info field | §1, §2, §3, §4, §5, §6, §7, §8, §9 |  [ ]   |
 | 💎  |  11   | Capability negotiation and degraded-feature flags  | §2, §3, §4                         |  [ ]   |
 | 💎  |  12   | Common boot-path provenance and decision record    | §1, §4, §7, §11                    |  [ ]   |
+| 💎  |  13   | Anti-rollback and security-version binding         | §1, §2, §7                         |  [ ]   |
+| ⭐  |  14   | Warm-kernel-update handoff ABI                     | §1, §2, §4                         |  [ ]   |
 
 ---
 
@@ -214,6 +218,7 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 - [ ] Add bootloader-side display for kernel ABI mismatch before jump when possible.
 - [ ] Add kernel-side fatal screen with observed/expected version, size, and manifest hash.
 - [ ] Persist mismatch reason in UEFI NVRAM and BlackBox.
+- [ ] Integrate the anti-rollback gate from §13: on mismatch, also emit the observed vs required `os_loader_security_version` pair so rollback refusals are distinguishable from structural ABI drift (different operator response: rollback refusal means "boot a newer kernel"; ABI drift means "rebuild both halves").
 - [ ] Commit: `"boot: hard fail stale boot protocol versions"`
 
 **Test checkpoint:** A stale `BOOTX64.EFI` paired with a current kernel, and a stale kernel paired with a current bootloader, both stop with the expected observed/expected version, size, and manifest-hash diagnostics instead of hanging. Verify the friendly failure path on QEMU WHPX, QEMU TCG, VirtualBox, and at least one bare-metal system using removable-media recovery workflow.
@@ -294,19 +299,61 @@ Media role, recovery, network boot, and resume each carry their own details, but
 
 ---
 
+## 13. Anti-Rollback and Security-Version Binding
+
+Windows 11 carries an `OsLoaderSecurityVersion` field in the Loader Parameter Block (v6.1+) that kernel-side init uses to refuse a downgrade attack: a newer OS can raise the required security version, and the loader refuses to boot an older-signed kernel once that line has been crossed. Linux relies on shim + SBAT vectors (Secure Boot Advanced Targeting) to revoke vulnerable GRUB2/kernel pairs. Impossible OS currently versions the ABI (§2) and negotiates version compatibility (§7) but has no anti-rollback counter, so a stored old-but-signed `kernel.exe` could still boot on a machine whose policy was "only v >= N".
+
+> [!WARNING]
+> This is boot-path security work. An incorrectly-set monotonic counter OR a write that does not persist to UEFI NVRAM would brick the system by refusing every kernel. The write path MUST be after the new kernel has booted successfully past Phase 3 (proof-of-life), not before; a pre-jump update is a classic brick vector (kernel crashes early, counter advanced, never roll back). Reserve `POST16(0xB09A)` / `POST16(0xB09B)` for anti-rollback refuse / pass.
+
+- [ ] Add `uint32_t os_loader_security_version` + `uint32_t required_security_version` to the `boot_info` header (reserve-region fields; no `BOOT_INFO_VERSION` bump needed per CLAUDE.md ABI policy). `os_loader_security_version` is the signed value of the shipped `kernel.exe`; `required_security_version` is what the bootloader read from UEFI NVRAM.
+- [ ] Create UEFI NVRAM variable `IPOSRequiredSecVersion` (non-volatile, BS+RT, attribute `EFI_VARIABLE_NON_VOLATILE | EFI_VARIABLE_BOOTSERVICE_ACCESS | EFI_VARIABLE_RUNTIME_ACCESS`) in the Impossible OS GUID namespace. Bootloader reads it during early init; kernel can raise it after successful boot.
+- [ ] Bootloader refuses to jump and shows a fatal UEFI screen when `kernel.exe`'s `os_loader_security_version < required_security_version`. Diagnostic must print the observed/required pair so the operator knows to upgrade rather than reflash.
+- [ ] Kernel-side update path in `src/kernel/main/boot_phase3.c` (or the latest boot-phase that proves live system): after `kernel_subsystem_ready(SUBSYS_BOOT_COMPLETE)`, if `os_loader_security_version > required_security_version` AND a policy flag opts-in, raise `IPOSRequiredSecVersion` via UEFI RT `SetVariable`. Never decrease.
+- [ ] Add `boot_info.flags` bit `BOOT_FLAG_ROLLBACK_REFUSAL` set by the bootloader when the refusal path was taken (for crash-recovery telemetry; the kernel never sees it because the bootloader halts before jumping).
+- [ ] Fuzz + unit tests: (a) downgrade attempt (shipped=3, required=5) -> bootloader halt + observed/required on serial. (b) first-ever boot (required=0) -> shipped=N accepted, counter stays 0 until policy opt-in. (c) update path (shipped=7, required=5, opt-in set) -> after boot, required=7. (d) update path with opt-out flag -> required stays 5.
+- [ ] Commit: `"boot: anti-rollback security-version binding via UEFI NVRAM"`
+
+**Test checkpoint:** A kernel signed with `os_loader_security_version=3` paired with UEFI NVRAM `IPOSRequiredSecVersion=5` produces a bootloader halt on the observed/required pair. A kernel with version 5 against required 5 boots cleanly. A kernel with version 7, required 5, and an opt-in policy flag completes boot and raises `IPOSRequiredSecVersion` to 7 in NVRAM (verified via `efivar -l` on Linux host after the QEMU run or via UEFI shell `dmpstore` on bare metal). Verify on QEMU WHPX, QEMU TCG, VirtualBox, and bare metal.
+
+---
+
+## 14. Warm-Kernel-Update Handoff ABI
+
+Linux 6.16 (merged June 2025) shipped Kexec Handover (KHO) + the Live Update Orchestrator (LUO) to allow a running kernel to kexec into a replacement image while preserving memory state, file descriptors, and subsystem handles across the transition. Amazon, Microsoft, and Google drove the work specifically to update kernels hosting VMs without bouncing the guests. Windows 11 has a parallel but closed mechanism (Hot Patch for monthly cumulative updates). Impossible OS has no warm-update path today; every kernel replacement requires a cold reboot.
+
+> [!TIP]
+> A warm-kernel-update handoff is the single biggest competitive differentiator in cloud/server targets. Matching Linux 6.16's KHO surface via `struct boot_info` (rather than reinventing a parallel contract) keeps the handoff story consistent: every boot path -- cold, recovery, network, resume, warm update -- shares one ABI. This section owns ONLY the ABI fields and payload-descriptor type; the actual live-update machinery (folio-preservation, subsystem callbacks, per-process PT migration) is large enough to deserve its own domain roadmap.
+
+- [ ] Add `enum boot_payload_type` value `BOOT_PAYLOAD_WARM_UPDATE_STATE` (payload descriptors section -- extend §4's enum) plus `BOOT_FLAG_WARM_UPDATE` in `boot_info.flags` set by the outgoing kernel when handing off via warm update rather than cold boot.
+- [ ] Define the warm-update descriptor contract: `phys_start` points at a preserved memory region that the outgoing kernel staged; `length` covers every page to retain; `flags` carry per-subsystem continuation bits (page tables intact, scheduler quiesced, VFS drained, etc). Descriptor ordering is policy: earlier descriptors must be consumed before later ones.
+- [ ] Add a kernel-side hook `boot_warm_update_consume(const struct boot_payload_desc *)` that validates continuation flags + reattaches preserved memory before `pmm_init()` reclaims it. Fail-closed: unknown continuation bits -> fall back to cold boot with a clear diagnostic, never a partial reattach.
+- [ ] Specify the reserved-memory protocol: warm-update pages appear in the handoff `boot_mmap[]` as `EfiUnacceptedMemoryType` (UEFI 2.10) OR a new `BOOT_MMAP_WARM_UPDATE` discriminator if firmware support is absent. The §4 overlap validator must retain the warm-update region like any other typed payload so PMM free-memory handoff does not reclaim it.
+- [ ] Document the forward compatibility contract: an older kernel encountering `BOOT_PAYLOAD_WARM_UPDATE_STATE` with an unknown `flags` bit MUST refuse the payload (fall back to cold init) rather than partial-consume. The `BOOT_PAYLOAD_FLAG_REQUIRED` policy from §4 applies.
+- [ ] Commit: `"boot: warm-kernel-update handoff ABI fields and descriptor"`
+
+**Test checkpoint:** A synthetic warm-update staging fixture (payload descriptor pre-populated with `BOOT_PAYLOAD_WARM_UPDATE_STATE`, a reserved page-aligned region, and a known continuation flag set) boots under QEMU with the new §14 validator either (a) accepting the descriptor + reattaching the region + logging the warm-update path, or (b) rejecting with an unknown-flag diagnostic and falling back to cold init. Cross-platform verification is not applicable here because this section ships only the ABI surface; the actual runtime live-update machinery owns platform validation when it lands.
+
+> [!NOTE]
+> The runtime live-update machinery (kfolio preservation, per-subsystem quiesce callbacks, scheduler drain, VFS writeback before handoff) is OUT OF SCOPE for this section. This section is the ABI contract only -- descriptors, flags, discriminators, validator hook. File the runtime work as a new TODO in 03-memory-concurrency (warm-kernel-update) with reciprocal XREF back to §14 once this ABI section commits.
+
+---
+
 ## OS Comparison
 
 | ⭐ | Feature                         | 🪟 Win11                  | 🐧 Linux                     | 🚀 Impossible OS                             |
 | --- | ------------------------------- | ------------------------- | ----------------------------- | -------------------------------------------- |
 | 💎 | Versioned loader/kernel ABI     | ✅ LPB + extensions       | ✅ boot_params + kernel_info | ⚠️ §1 shipped; §7 §8 open                    |
-| 💎 | Typed initrd and module handoff | ✅ ramdisk + boot drivers | ✅ initrd + initramfs        | ⚠️ §4 ABI + validator shipped; §5 API open  |
+| 💎 | Typed initrd and module handoff | ✅ ramdisk + boot drivers | ✅ initrd + initramfs        | ⚠️ §4 ABI + validator shipped; §5 API open   |
 | ⭐ | Generated ABI manifest          | ⚠️ internal only          | ⚠️ docs + CI                 | ✅ §2 + §3 manifest + drift detector shipped |
 | ⭐ | Field-level ownership map       | ⚠️ internal ownership     | ⚠️ scattered docs            | ⚠️ §1 matrix shipped; §10 audit open         |
 | 💎 | Capability negotiation          | ✅ loader extensions      | ✅ version + flags           | ⬜ §11                                       |
 | 💎 | Boot provenance decision record | ✅ boot status + resume   | ⚠️ cmdline + logs            | ⬜ §12                                       |
 | ⭐ | Friendly stale-loader mismatch  | ✅ recovery codes         | ⚠️ log-driven failures       | ⬜ §7                                        |
+| 💎 | Anti-rollback security version  | ✅ OsLoaderSecurityVersion | ⚠️ shim SBAT revocation only | ⬜ §13 UEFI NVRAM counter                    |
+| ⭐ | Warm-kernel-update handoff ABI  | ⚠️ Hot Patch (closed)     | ✅ 6.16 Kexec Handover       | ⬜ §14 ABI only; runtime in new TODO         |
 
-> Parity now covers the contract itself and the decisions made around it. Adding explicit capability negotiation and a shared boot decision record would make this handoff easier to debug and safer to evolve than either Windows' mostly internal loader state or Linux's split between versioned structs and scattered provenance channels.
+> Parity now covers the contract itself and the decisions made around it. Adding explicit capability negotiation, a shared boot decision record, and anti-rollback security-version binding would make this handoff easier to debug and safer to evolve than either Windows' mostly internal loader state or Linux's split between versioned structs and scattered provenance channels. The warm-kernel-update handoff ABI (§14) specifically positions Impossible OS for cloud/server parity with Linux 6.16's Kexec Handover surface at the ABI layer; the runtime live-update machinery is tracked as follow-up in 03-memory-concurrency.
 
 ## Unit Tests
 
@@ -321,6 +368,10 @@ Media role, recovery, network boot, and resume each carry their own details, but
 - [ ] Add `test_boot_info_capability_unknown_optional_ignored`: unknown optional capability bits do not reject a newer handoff when all required bits are understood.
 - [ ] Add `test_boot_info_capability_unknown_required_rejected`: unknown required capability bits fail before dependent fields are consumed.
 - [ ] Add `test_boot_info_boot_decision_round_trip`: shared `boot_path` and `boot_reason` values survive bootloader-to-kernel handoff and Registry export without enum drift.
+- [ ] Add `test_boot_info_rollback_refused`: a fixture with `os_loader_security_version=3` + `required_security_version=5` fails pre-jump with the exact observed/required diagnostic.
+- [ ] Add `test_boot_info_rollback_first_boot`: a fixture with `required_security_version=0` accepts any `os_loader_security_version` without raising the counter.
+- [ ] Add `test_boot_info_warm_update_payload_accepted`: a payload descriptor with `BOOT_PAYLOAD_WARM_UPDATE_STATE` + known continuation flags passes `boot_warm_update_consume()`.
+- [ ] Add `test_boot_info_warm_update_unknown_flag_rejected`: a warm-update descriptor with an unknown continuation bit forces the fail-closed cold-init fallback with a clear diagnostic.
 - [ ] Commit: `"test: extend boot_info ABI coverage"`
 
 **Test checkpoint:** `bash scripts/test.sh SUITE=boot` exercises the validator, payload, and mismatch-report cases through `TEST_CAT_BOOT`, and the host manifest fixtures fail only when the layout actually drifts.
@@ -335,5 +386,7 @@ Media role, recovery, network boot, and resume each carry their own details, but
 - [ ] Recovery, network, installer, and resume fixtures all produce the same `HKLM\SYSTEM\Boot\Decision` / BlackBox schema for selected path and reason.
 - [ ] VirtualBox boots a matching image and logs the retained boot reservations plus typed payload descriptors without overlap warnings.
 - [ ] Bare metal boots a matching image with USB handoff and TPM log payloads present, and PMM retains those regions exactly once.
+- [ ] Anti-rollback fixtures pass on QEMU: downgrade attempt (shipped < required) halts pre-jump; upgrade + opt-in raises `IPOSRequiredSecVersion` via `efivar -l` post-boot inspection.
+- [ ] Warm-kernel-update synthetic payload descriptor is consumed by `boot_warm_update_consume()` under QEMU with the continuation region retained; an unknown-flag variant triggers the fail-closed cold fallback with the expected diagnostic.
 
 **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot)

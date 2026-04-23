@@ -117,6 +117,7 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 - [ ] Export to `X:\Diag\attestation.json`.
 - [ ] Add native query API for user-mode system settings.
 - [ ] Add remote-attestation placeholder for platform services.
+- [ ] Reserve forward-compat slots for DRTM (Dynamic Root of Trust for Measurement) fields: `drtm_entry_pcr` (typically PCR 17), `drtm_acm_status`, `drtm_measurement_type` (Intel TXT SENTER vs AMD SKINIT vs none). The native `BOOTX64.EFI` does not issue SENTER/SKINIT today, so these fields are zero/absent; the attestation report format must accept and round-trip them so a future TrenchBoot-style Secure Launch adapter (via TODO-08 alternate protocols, or firmware-initiated DRTM on supported platforms) can populate them without a schema break. -> XREF: [`01-boot-platform/TODO-01 §8`](TODO-01-boot-protocol-abi-handoff.md#8-boot-protocol-documentation-and-schema-changelog) owns the `boot_info` handoff-ABI side of any DRTM fields.
 - [ ] Commit: `"tpm: export boot attestation report"`
 
 ## 10. Recovery and Mismatch UX

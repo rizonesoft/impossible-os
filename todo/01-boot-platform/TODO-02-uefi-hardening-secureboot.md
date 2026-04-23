@@ -68,6 +68,7 @@ title: "TODO-02 -- UEFI Bootloader Hardening & Secure Boot"
 | ⭐  |   8   | Serial log standardization               | --              |  [x]   |
 | 💎  |   9   | SBAT ops, DB registry mirror, EBS retry  | §2, §5          |  [x]   |
 | 💎  |  10   | RT sleepable lock migration              | §1, mutex prim  |  [x]   |
+| 💎  |  11   | Unified signed boot artifact (UKI-style) | §6              |  [ ]   |
 
 ---
 
@@ -254,6 +255,24 @@ UEFI firmware SetVariable can take 10-100ms+ for flash erase/write cycles. The c
 
 > **Verified:** 2026-04-11 -- Codex found critical mutex_lock CAS race (fixed: atomic_cmpxchg instead of atomic_set). Emergency ResetSystem trade-off documented (trylock failure -> unlocked call, reboot attempt > hang). All 5 items verified. Accepted: none.
 > **Quality reviewed:** 2026-04-11 -- no findings. Matches Windows FAST_MUTEX and Linux efi_runtime_lock semaphore. Priority inheritance, emergency trylock, LAPIC masking all at parity. TSC latency monitoring exceeds both (neither Win11 nor Linux log slow RT calls inline). Accepted: none.
+
+---
+
+## 11. Unified Signed Boot Artifact (UKI-style)
+
+systemd-boot ships a Unified Kernel Image (UKI) format: a single signed UEFI PE that bundles the EFI stub, kernel, optional initrd, kernel cmdline, and other resources. Tampering with any component invalidates the whole signature. UEFI firmware can invoke the UKI directly (useful in Confidential Computing) OR a boot loader can chain into it. Impossible OS currently signs `BOOTX64.EFI` and ships `kernel.exe` + `boot.conf` as separate artifacts; a Secure Boot signature on `BOOTX64.EFI` does NOT cover the kernel or the config. A UKI-style unified artifact closes that gap.
+
+> [!NOTE]
+> The handoff-ABI side (how `boot_info` carries the UKI-origin flag, how the kernel verifies it was invoked through the unified path vs legacy split) is owned by [`01-boot-platform/TODO-01 §8`](TODO-01-boot-protocol-abi-handoff.md#8-boot-protocol-documentation-and-schema-changelog) (Boot Protocol Documentation and Schema Changelog). This section owns the signing + packaging + build-pipeline side.
+
+- [ ] Investigate packaging: `scripts/build.sh` produces `BOOTX64.UKI.efi` combining `BOOTX64.EFI` + `kernel.exe` + `boot.conf` + (optional) recovery image into one PE, following the UAPI Group UKI specification (PE `.linux` / `.initrd` / `.cmdline` / `.osrel` sections).
+- [ ] Extend [`scripts/sign-efi.sh`](../../scripts/sign-efi.sh) to sign the UKI in the same pass as the current split artifacts; both paths remain installable (UKI for modern Secure Boot + direct-firmware-invoke; split for backwards compatibility with legacy boot loaders that expect a separate kernel file).
+- [ ] Add a `boot.conf` flag + `boot_info.flags` bit `BOOT_FLAG_INVOKED_VIA_UKI` so the kernel can tell whether it was launched through the unified artifact (whole-chain signed) or the split path (per-file signed). Informs §9 `BootReason` enum and any future attestation report.
+- [ ] Document the UKI layout in `docs/guides/secure-boot-keys.md` alongside the existing MOK flow; include the `objcopy --add-section` invocation and the per-section `measure-for-pcr` order so the measured-boot log (TODO-13) reconstructs the same PCR values regardless of which artifact was booted.
+- [ ] Add a regression to [`scripts/debug/kernel/run-boot-tests.bat`](../../scripts/debug/kernel/run-boot-tests.bat) that verifies both paths boot cleanly on QEMU; the UKI path is what modern Secure Boot with `shim + systemd-boot` / direct-firmware-invoke scenarios will use.
+- [ ] Commit: `"boot: Unified signed boot artifact (UKI) alongside split BOOTX64.EFI"`
+
+**Test checkpoint:** `bash scripts/build.sh` emits both `BOOTX64.EFI` (existing split path) AND `BOOTX64.UKI.efi` (new unified artifact). Signing succeeds on both when `MOK.key` is present. Booting the UKI via QEMU direct-firmware-invoke (`-drive if=pflash,format=raw,file=OVMF.fd` + `-cdrom BOOTX64.UKI.efi.iso` OR by placing the UKI at `EFI/BOOT/BOOTX64.EFI`) reaches `C:\>` cleanly with `boot_info.flags & BOOT_FLAG_INVOKED_VIA_UKI`. Split-path boot on the same firmware still works unchanged. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal (UKI is the modern-firmware path; bare metal via UEFI 2.7+ with Secure Boot should execute the UKI directly).
 
 ---
 
