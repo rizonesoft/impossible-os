@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: widget-library-core
+domain: 08-graphics-ui
+status: active
+title: "TODO-05 -- Extended Widget Library: Core Controls"
+---
+
 # TODO-05 -- Extended Widget Library: Core Controls
 
 > **Goal:** Add the 6 most-needed missing controls to `controls.c`: Checkbox, Radio Button, Dropdown/ComboBox, Slider/TrackBar, Progress Bar, and Tab Strip. These are required by every Settings applet and app UI. All new controls use `theme_get()->field` from day one. The indeterminate progress bar uses the animation engine tween from TODO-02. The dropdown floating popup uses the WM `z_order` overlay mechanism.

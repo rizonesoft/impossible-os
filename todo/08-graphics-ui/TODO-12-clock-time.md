@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: clock-time
+domain: 08-graphics-ui
+status: active
+title: "TODO-12 -- Kernel Time & Taskbar Clock"
+---
+
 # TODO-12 -- Kernel Time & Taskbar Clock
 
 > **Goal:** Build the full kernel wall-clock API on top of the existing CMOS RTC driver -- `time_now()`, timezone handling, `time_to_datetime()`, NTP hook, `strftime`-style formatting, a minimal embedded timezone table with DST rules, the taskbar clock with a calendar flyout, and a Date/Time Control Panel applet.

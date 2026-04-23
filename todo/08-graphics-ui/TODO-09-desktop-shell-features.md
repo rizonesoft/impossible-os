@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: desktop-shell-features
+domain: 08-graphics-ui
+status: active
+title: "TODO-09 -- Desktop Shell Features"
+---
+
 # TODO-09 -- Desktop Shell Features
 
 > **Goal:** Complete the full suite of desktop-level shell features -- context menu engine, desktop right-click menu, wallpaper engine with fit modes, DPI scaling, PrintScreen screenshot, night light compositor LUT, Focus/DND mode, quick settings slide-in panel, and virtual desktops. This brings the desktop to Windows 11 feature parity on the shell layer.

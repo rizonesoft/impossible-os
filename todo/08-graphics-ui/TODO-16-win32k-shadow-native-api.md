@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: win32k-shadow-native-api
+domain: 08-graphics-ui
+status: active
+title: "TODO-16 -- Win32k Shadow Native API (SSDT Table 1 Router)"
+---
+
 # TODO-16 -- Win32k Shadow Native API (SSDT Table 1 Router)
 
 > **Goal:** Define the **contract** between the existing main native SSDT ([`../02-kernel-core/TODO-12-native-api-ssdt.md`](../02-kernel-core/TODO-12-native-api-ssdt.md), Table 0, `0x0000+`) and Win32k **Table 1** services (`0x1000+`). Ring 3 still uses the same `SYSCALL` / `SYSRET` fast path; only the dispatch target changes once the service number selects Table 1. This TODO does **not** own per-function GDI/USER bodies: those live in [`TODO-15-win32k-shadow-ssdt.md`](TODO-15-win32k-shadow-ssdt.md). The **1300-row slot map** is [`TODO-A-Win32k-Shadow-SSDT-Master-Table.md`](TODO-A-Win32k-Shadow-SSDT-Master-Table.md), parallel to [`../02-kernel-core/TODO-A-SSDT-Master-Table.md`](../02-kernel-core/TODO-A-SSDT-Master-Table.md) for Table 0.

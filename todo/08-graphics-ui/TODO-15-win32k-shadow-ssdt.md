@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: win32k-shadow-ssdt
+domain: 08-graphics-ui
+status: active
+title: "TODO-15 -- Win32k Shadow SSDT (NtGdi / NtUser)"
+---
+
 # TODO-15 -- Win32k Shadow SSDT (NtGdi / NtUser)
 
 > **Goal:** Build the Win32k shadow System Service Descriptor Table (SSDT Table 1) -- the kernel-mode dispatch layer for all GDI and USER32 syscalls. In Windows, `win32k.sys` handles ~1300 `NtGdiXxx` and `NtUserXxx` entries. User-mode `gdi32.dll` and `user32.dll` call into this table via `syscall` with service numbers starting at `0x1000`. The **canonical slot table** for all reserved indices is [`TODO-A-Win32k-Shadow-SSDT-Master-Table.md`](TODO-A-Win32k-Shadow-SSDT-Master-Table.md). This file owns **implementation** (handlers, compositor integration, tests). **Router and syscall contract** for Table 1 live in [`TODO-16-win32k-shadow-native-api.md`](TODO-16-win32k-shadow-native-api.md).

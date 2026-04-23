@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: graphics-asset-foundation
+domain: 08-graphics-ui
+status: active
+title: "TODO-01 -- Advanced 2D Graphics and Visual Asset Foundation"
+---
+
 # TODO-01 -- Advanced 2D Graphics and Visual Asset Foundation
 
 > **Goal:** Turn the current `gfx_*`, image, icon, and cursor code into a complete reusable graphics substrate for the desktop, apps, and Win32k. The basic primitives, effects, runtime image decode, icon store, and cursor loader already exist; this TODO adds the missing render-target discipline, clip/transform/path state, scalable asset handling, theme-aware icon/cursor policy, thumbnailing, and the integration boundaries that keep shell and Win32 work from inventing parallel graphics stacks.

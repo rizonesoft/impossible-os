@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: window-manager
+domain: 08-graphics-ui
+status: active
+title: "TODO-08 -- Window Manager Enhancements"
+---
+
 # TODO-08 -- Window Manager Enhancements
 
 > **Goal:** Elevate the basic WM (create/move/resize/close) to a Windows 11-quality experience: proper Mica titlebar decorations with Fluent chrome buttons, minimize/maximize/restore with state persistence, snap layouts (hover-popup + keyboard), desktop icons (load/draw/launch/drag), global hotkeys + Win+D/M/Alt+F4, Alt+Tab thumbnail switcher, file drag-and-drop, and compositor dirty-rect optimization for 60 fps frame gating.

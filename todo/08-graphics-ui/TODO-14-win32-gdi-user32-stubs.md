@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: win32-gdi-user32-stubs
+domain: 08-graphics-ui
+status: active
+title: "TODO-14 -- Win32 GDI / USER32 Desktop API Stubs"
+---
+
 # TODO-14 -- Win32 GDI / USER32 Desktop API Stubs
 
 > **Goal:** Build the Win32 GDI (graphics device context) and USER32 (window/message) stub layer that lets PE32+ applications call standard Windows drawing and windowing APIs against Impossible OS without modification. This is the prerequisite bridge for the Win32 compatibility layer in `02-kernel-core`.

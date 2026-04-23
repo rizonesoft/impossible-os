@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: taskbar
+domain: 08-graphics-ui
+status: active
+title: "TODO-10 -- Taskbar"
+---
+
 # TODO-10 -- Taskbar
 
 > **Goal:** Build the full taskbar -- window list with active/flash/progress, right-click context menus, Aero Peek window preview, progress badges with a user-mode syscall, pinned app launchers, jump lists, auto-hide, and taskbar customization (position/size). This makes the taskbar the primary desktop chrome it must be, matching Windows 11 feature-for-feature.

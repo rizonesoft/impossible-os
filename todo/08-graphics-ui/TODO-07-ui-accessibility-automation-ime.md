@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: ui-accessibility-automation-ime
+domain: 08-graphics-ui
+status: active
+title: "TODO-07 -- UI Accessibility, Automation, and IME Foundation"
+---
+
 # TODO-07 -- UI Accessibility, Automation, and IME Foundation
 
 > **Goal:** Build the reusable semantics, automation, and text-composition infrastructure that modern desktop UI stacks require. Impossible OS already plans high-contrast, magnifier, sticky keys, and large-cursor features, and it already has placeholder control accessibility stubs plus future Win32k IME/accessibility syscall ranges; this TODO provides the missing shared foundation under those features: semantic trees, role/state/value providers, accessibility events, inspection and automation hooks, and an input-method/composition layer for multilingual text entry.

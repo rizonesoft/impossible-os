@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: widget-dialogs
+domain: 08-graphics-ui
+status: active
+title: "TODO-06 -- Extended Widget Library: Complex Controls & Dialogs"
+---
+
 # TODO-06 -- Extended Widget Library: Complex Controls & Dialogs
 
 > **Goal:** Add the 7 complex controls and the complete dialog system needed to build the File Manager, Notepad, Registry Editor, and Control Panel: ListView (details + icon-grid), TreeView (hierarchical expand/collapse), Toolbar (icon buttons + overflow), MenuBar (horizontal menu + popup dropdowns), StatusBar (multi-pane), GroupBox + Separator (visual grouping), Tooltip (hover popup + animation), and the full dialog system (Win32-compatible `MessageBox`, file Open/Save, input, color picker, `SYS_MSGBOX` syscall).

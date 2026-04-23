@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: startmenu-tray-notifications
+domain: 08-graphics-ui
+status: active
+title: "TODO-11 -- Start Menu, System Tray & Notifications"
+---
+
 # TODO-11 -- Start Menu, System Tray & Notifications
 
 > **Goal:** Complete the Start Menu (live data loading, app launching, search), build the system tray (volume, network, notification bell, keyboard layout icons), deliver the full toast notification pipeline with user-mode syscall, and add the notification center slide-in panel with history and per-app settings.

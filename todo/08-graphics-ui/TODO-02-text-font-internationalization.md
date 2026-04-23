@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: text-font-internationalization
+domain: 08-graphics-ui
+status: active
+title: "TODO-02 -- Text, Font, and Internationalization Foundation"
+---
+
 # TODO-02 -- Text, Font, and Internationalization Foundation
 
 > **Goal:** Upgrade the current TrueType font manager and text drawing code into a real desktop text stack: font catalog, fallback chains, emoji/color fonts, shaping, bidi, paragraph layout, caret and hit-testing services, and the Win32/Desktop integration points that make text-heavy apps feel real. The existing TTF renderer proved the desktop can draw glyphs; this TODO makes that text system complete, international, and reusable.

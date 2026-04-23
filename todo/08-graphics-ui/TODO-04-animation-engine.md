@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: animation-engine
+domain: 08-graphics-ui
+status: active
+title: "TODO-04 -- Animation Engine"
+---
+
 # TODO-04 -- Animation Engine
 
 > **Goal:** Build a time-based tween engine with 16.16 fixed-point easing functions, a global animation manager ticked inside `wm_composite()`, per-window transition animations (open/close/minimize/restore/maximize/snap/menu popup), Registry-driven speed and reduce-motion controls, and integer spring physics for natural elastic effects. Animations are the prerequisite for every animated desktop surface: Start Menu slide, notification slide-in, context menu pop, and window open/close all depend on this tick being live inside the compositor loop.

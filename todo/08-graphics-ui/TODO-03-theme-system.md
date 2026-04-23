@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: theme-system
+domain: 08-graphics-ui
+status: active
+title: "TODO-03 -- Theme System"
+---
+
 # TODO-03 -- Theme System
 
 > **Goal:** Centralize all UI colors from hardcoded hex literals into a `theme_t` token struct that every drawing call references. Provide Dark and Light built-in presets, Registry persistence, live hot-reload via `WM_THEME_CHANGED` broadcast, computed accent hover/pressed variants, and theme-aware shadow rendering. This is the P0 prerequisite before any other UI work can produce correct visual output -- every subsequent graphics-ui and desktop-shell TODO assumes `theme_get()` is live.

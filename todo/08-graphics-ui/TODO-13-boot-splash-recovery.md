@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: boot-splash-recovery
+domain: 08-graphics-ui
+status: active
+title: "TODO-13 -- Boot Splash & F8 Recovery"
+---
+
 # TODO-13 -- Boot Splash & F8 Recovery
 
 > **Goal:** Complete the graphical boot experience and the F8 recovery path. BSOD core (panic, crash dump, auto-restart) is done. This TODO adds: `boot_splash_progress(pct)` thin progress bar + 8-step fade-to-black in `boot_splash_finish()`, a logo build pipeline (`tools/png2bootsplash.py`), boot progress milestone constants wired into subsystem inits, an early-boot F8 text menu (PS/2 raw polling before keyboard IRQ), Registry-based crash loop protection, and a BSOD auto-restart validation test plan.
