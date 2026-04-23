@@ -21,8 +21,8 @@ title: "TODO-04 -- Animation Engine"
 - `include/registry.h` -- `RegGetValue()`, `HKCU` -- used in §5 to read `EnableAnimations` + `AnimationSpeed`
 - `include/desktop/theme.h` (TODO-01) -- `theme_get()` must be available before §4 window transitions
 - → XREF: `08-graphics-ui/TODO-03-theme-system.md` -- prerequisite; `theme_get()` must be live before animated windows can paint correctly
-- → XREF: `09-desktop-shell/TODO-01-*` (Start Menu) -- depends on §3 animation manager being live; Start Menu slide-up uses `gfx_tween_start()`
-- → XREF: `09-desktop-shell/TODO-02-*` (Notifications) -- slide-in notifications depend on §1 tween + §4 manager
+- Related (no stable XREF target): `09-desktop-shell/TODO-01-*` (Start Menu) -- depends on §3 animation manager being live; Start Menu slide-up uses `gfx_tween_start()`
+- Related (no stable XREF target): `09-desktop-shell/TODO-02-*` (Notifications) -- slide-in notifications depend on §1 tween + §4 manager
 
 ## Outcome
 

@@ -21,7 +21,7 @@ title: "TODO-01 -- ObBrowse: Object Namespace Browser"
 - `include/kernel/ob/ob_ns.h` -- `ObLookupObjectByName`
 - `src/kernel/sched/syscall.c` -- `SYS_OPENDIROBJ` (line 381), `SYS_QUERYDIROBJ` (line 392)
 - `src/kernel/ob/ob_ns.c` -- namespace root directories (line 350)
-- → XREF: `TODO-05-object-manager.md` -- OB implementation (was TODO-03, deferred this tool)
+- → XREF: `02-kernel-core/TODO-05-object-manager.md` -- OB implementation (was TODO-03, deferred this tool)
 - → XREF: `00-infrastructure/TODO-03-kernel-test-harness.md` -- unit test wiring for test_register_obbrowse()
 
 ---

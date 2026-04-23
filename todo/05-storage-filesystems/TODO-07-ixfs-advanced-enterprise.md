@@ -11,7 +11,7 @@ title: "TODO-07 -- IXFS Advanced Storage, Reliability & Enterprise"
 > **Goal:** Deliver the features that make IXFS genuinely superior to NTFS and competitive with ZFS/Btrfs: transparent LZ4/Zstd compression, inline block deduplication, reflink instant copy, online defragmentation, sparse files, real-time TRIM, online volume resize, self-healing metadata, automatic scheduled snapshots, per-file AES-256-XTS encryption, USN change journal, disk quotas, filesystem-native storage tiering, a volume health dashboard, and a comprehensive test suite.
 
 > [!IMPORTANT]
-> All sections depend on the v3 inode from `05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md §2` being on disk (`IXFS_VERSION=3`, 256-byte inodes). §10 (encryption) uses Monocypher and §1 (compression) uses LZ4/Zstd from `→ XREF: TODO-20-kernel-libraries`. §6 (TRIM) builds on `blkdev_discard()` which already exists in `src/kernel/drivers/blkdev.c:125`. Do **not** begin §7 (online resize), §8 (self-healing), or §13 (storage tiering) before §3 (reflink) and §4 (defrag) are stable -- they all manipulate the extent tree and block allocator. Delete `todo-old/010-Kernel-Foundations/TODO-040-Filesystem/TODO-040.11-IXFS.md` after this TODO file is created.
+> All sections depend on the v3 inode from `05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md §2` being on disk (`IXFS_VERSION=3`, 256-byte inodes). §10 (encryption) uses Monocypher and §1 (compression) uses LZ4/Zstd from `02-kernel-core/TODO-03-kernel-libraries.md` (kernel libraries -- LZ4/Zstd, Monocypher). §6 (TRIM) builds on `blkdev_discard()` which already exists in `src/kernel/drivers/blkdev.c:125`. Do **not** begin §7 (online resize), §8 (self-healing), or §13 (storage tiering) before §3 (reflink) and §4 (defrag) are stable -- they all manipulate the extent tree and block allocator. Delete `todo-old/010-Kernel-Foundations/TODO-040-Filesystem/TODO-040.11-IXFS.md` after this TODO file is created.
 
 ## Inputs
 
@@ -21,7 +21,7 @@ title: "TODO-07 -- IXFS Advanced Storage, Reliability & Enterprise"
 - `src/kernel/fs/ixfs/ixfs_journal.c` -- WAL journal; all destructive operations must be journaled
 - `src/kernel/drivers/blkdev.c` -- `blkdev_discard(dev, lba, count)` already exists; §6 wires IXFS into it
 - → XREF: `05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md` -- v3 inode with `i_compress_type`, `i_encrypt_key_id`, `i_flags` (sparse/immutable), `i_access_count` (tiering) must be in place
-- → XREF: TODO-20-kernel-libraries (future) -- LZ4 frame encoder/decoder and Zstd single-frame decompressor; Monocypher for AES-256-XTS and PBKDF2; xxHash64 for dedup hashing; until that TODO completes, stub §1 and §10 behind compile-time feature flags
+- Future dependency (no stable XREF target yet -- kernel-libraries work may land as a new TODO): LZ4 frame encoder/decoder and Zstd single-frame decompressor; Monocypher for AES-256-XTS and PBKDF2; xxHash64 for dedup hashing; until that TODO completes, stub §1 and §10 behind compile-time feature flags
 - → XREF: `08-desktop-shell` domain -- Disk Manager UI panels (§14 health dashboard, §4 defrag button, §9 Previous Versions, §12 quota panel, §13 tier config) are desktop components; coordinate on the IPC/message interface used to query IXFS stats
 - → XREF: `04-drivers-hardware/TODO-13-storage-controller-device-drivers.md §7` -- AHCI SMART data feeds the health dashboard (§14) disk temperature + error count fields
 

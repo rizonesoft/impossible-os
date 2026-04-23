@@ -51,7 +51,7 @@ title: "TODO-05 -- PDF Viewer"
 |------|---------|-------|-----------|
 | 1 | PDF Structure Parser | 💎 | VFS file load |
 | 2 | Page Tree Traversal | 💎 | §1 object resolver |
-| 3 | Stream Decompression | 💎 | §2 stream refs, miniz TODO-20 §3 |
+| 3 | Stream Decompression | 💎 | §2 stream refs, miniz `D12T01 §3` |
 | 4 | Content Stream Renderer | 💎 | §3 decompressed streams, TTF font_mgr |
 | 5 | Image Rendering | 💎 | §3, `image_load_mem` |
 | 6 | PDF Viewer UI | 💎 | §4 + §5 page surface, controls.h, wm.h |

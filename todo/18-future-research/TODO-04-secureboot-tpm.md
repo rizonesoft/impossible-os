@@ -66,9 +66,9 @@ bare-metal deployment.
 
 | Step | Section | 💎/⭐ | Dependency |
 |------|---------|-------|-----------|
-| 1 | TPM 2.0 CSPRNG integration + `swtpm` dev setup | ⭐ | `TODO-11 §8` driver; entropy pool |
+| 1 | TPM 2.0 CSPRNG integration + `swtpm` dev setup | ⭐ | `D01T13 §8` TPM driver; entropy pool |
 | 2 | Measured boot chain (PCR 8–10 extensions) | ⭐ | §1 TPM commands; bootloader PCR extend |
-| 3 | UEFI Secure Boot PK/KEK/db hierarchy | ⭐ | `TODO-01` shim; `TODO-07 §9` code signing |
+| 3 | UEFI Secure Boot PK/KEK/db hierarchy | ⭐ | `TODO-01` shim; `D09T07 §7` code signing |
 | 4 | AES-256-XTS full disk encryption (FDE) | ⭐ | §1 TPM sealing; §2 PCR policy; `cng_sha256`; `crypto_argon2i` |
 | 5 | vTPM for ImpossibleHV guests | ⭐ | `TODO-02` ImpossibleHV Phase 2; §1–§5 TPM architecture |
 | 6 | Research deliverables (`secure-boot-tpm-plan.md`) | ⭐ | §1–§5 complete |

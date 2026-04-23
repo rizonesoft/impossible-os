@@ -24,7 +24,7 @@ title: "TODO-06 -- Extended Widget Library: Complex Controls & Dialogs"
 - `include/kernel/sched/syscall.h` -- extend with `SYS_MSGBOX = 51` for user-mode MessageBox access
 - `tools/convert_icon.py` -- extend to generate msgbox icon C arrays from `assets/icons/msgbox/*.png`
 - → XREF: `08-graphics-ui/TODO-05-widget-library-core.md` -- `CTRL_DROPDOWN` overlay pattern + `CTRL_SCROLLBAR` used by ListView/TreeView; must be complete before this TODO starts
-- → XREF: `08-graphics-ui/TODO-07-*` (context menu) -- MenuBar popup dropdown may be refactored to share context menu engine once it exists; this TODO implements a self-contained popup
+- Related (no stable XREF target): `08-graphics-ui/TODO-07-*` (context menu) -- MenuBar popup dropdown may be refactored to share context menu engine once it exists; this TODO implements a self-contained popup
 
 ## Outcome
 

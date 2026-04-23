@@ -143,6 +143,16 @@ Register VFS nodes, tasks, and threads as first-class Ob-managed objects.
 - [x] Audit all existing raw `task_t *` / `vfs_node *` storage in the syscall table and IPC code; replace with handle-table lookups or `ObReferenceObjectByPointer` calls
 - [x] Commit: `"kernel: ob -- file, process, thread object types"`
 
+## 5. File, Process, Thread object types
+
+Implemented across the owning subsystems (VFS, `task.c`, `thread.c`), each registering its own `OBJECT_TYPE` entry via the §1 framework and `ObCreateObjectType`. This section documents the contract; the actual implementations live in the per-subsystem TODOs (handle-lookup paths, delete callbacks, and access-check integration). See §6 for synchronisation object types and §7 for Section.
+
+- [x] `FileObject` type: owned by VFS; close callback releases `vnode` reference.
+- [x] `ProcessObject` type: owned by `task.c`; delete callback tears down address space.
+- [x] `ThreadObject` type: owned by `thread.c`; delete callback frees kernel + user stacks.
+
+---
+
 ## 6. Synchronisation Object Types
 Re-register the existing event, mutex, semaphore, and timer primitives as Ob-managed objects so they can be named in `\BaseNamedObjects`, duplicated, and inherited.
 

@@ -59,7 +59,7 @@ title: "TODO-10 -- WordPad (Rich Text Editor)"
 | 4 | Toolbar + Menus | 💎 | §3 rendering, `CTRL_COMBOBOX`, `dialog_color` |
 | 5 | Formatting Interactions | 💎 | §3 + §4 stable |
 | 6 | File Operations + File Associations | 💎 | §2 RTF reader/writer, `dialog_file_open/save`, `file_assoc_set` |
-| 7 | Print (Stretch) | 💎 | §3 layout, `pdf_begin/draw_text/end` TODO-12 §8 |
+| 7 | Print (Stretch) | 💎 | §3 layout, `pdf_begin/draw_text/end` D10T12 §8 |
 
 ---
 

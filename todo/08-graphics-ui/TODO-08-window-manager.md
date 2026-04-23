@@ -24,7 +24,7 @@ title: "TODO-08 -- Window Manager Enhancements"
 - `include/kernel/sched/task.h` -- `task_create_user(entry, name)` for desktop icon double-click launch
 - `include/registry.h` -- Registry persistence for window state + desktop icon positions
 - → XREF: `08-graphics-ui/TODO-04-animation-engine.md` -- `wm_anim_state_t` fields in `struct wm_window` prerequisite for §1 minimize/maximize animations
-- → XREF: `09-desktop-shell/TODO-01-*` (taskbar) -- minimize animation target rect requires taskbar button position; taskbar height defines usable area for maximize
+- Related (no stable XREF target): `09-desktop-shell/TODO-01-*` (taskbar) -- minimize animation target rect requires taskbar button position; taskbar height defines usable area for maximize
 
 ## Outcome
 

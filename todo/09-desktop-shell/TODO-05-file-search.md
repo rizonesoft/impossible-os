@@ -26,7 +26,7 @@ title: "TODO-05 -- File Search & Indexing"
 - `include/desktop/wm.h` -- `wm_create_window()`, window event callbacks -- used by §4 Start Menu and §5 File Manager search bars (XREFs)
 - → XREF: `09-desktop-shell/TODO-04-recycle-zip-scheduler.md §1` -- `sched_task_add("index_rebuild", search_index_rebuild, 1800, 1)` is registered there; §2 here provides the real body that stub forwards to
 - → XREF: `08-graphics-ui/TODO-11-startmenu-tray-notifications.md §4` -- Start Menu search bar calls `search_query()`; §5 is the integration layer that wires §2 into the existing search-bar input handler
-- → XREF: `10-apps/TODO-file-manager.md` (future) -- §5 File Manager integration is a forward hook; no File Manager TODO exists yet
+- Future dependency (no XREF target yet): `10-apps/TODO-file-manager.md` -- §5 File Manager integration is a forward hook; no File Manager TODO exists yet
 
 ## Outcome
 

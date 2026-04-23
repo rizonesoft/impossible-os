@@ -41,7 +41,7 @@ title: "TODO-09 -- C/C++ Compiler & SDK"
 | `include/kernel/timer.h` | `timer_sleep_ms()` for `Sleep()` backing |
 | → XREF: `TODO-07 §2` | `SYS_*` Win32 syscall ABI, `handle_table` in task |
 | → XREF: `TODO-08 §5–5,13,15` | Win32 types, process API, memory API, IxUI, `impossible-cc` host SDK |
-| → XREF: `10-apps/TODO-*-notepad*` | Native IDE integration (`cc` build action, error parse) |
+| Related | `11-apps/TODO-08-notepad.md` | Native IDE integration (`cc` build action, error parse) |
 
 ---
 

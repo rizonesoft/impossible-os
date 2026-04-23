@@ -1,6 +1,6 @@
 ---
 schema_version: 1
-id: pdf-viewer
+id: pdf-viewer-networking
 domain: 07-networking
 status: active
 title: "TODO-10 -- PDF Viewer & Document Reader"
@@ -23,7 +23,7 @@ title: "TODO-10 -- PDF Viewer & Document Reader"
 - `src/kernel/net/http.c` (TODO-03) -- `https_get(url, buf, max)` for §2 HTTP-fetched PDF streaming
 - `src/kernel/fs/vfs.c` -- `vfs_open()`/`vfs_read()` for opening local `.pdf` files
 - → XREF: `06-networking/TODO-03-http-tls.md` -- `https_get()` prerequisite for §2 PDF-from-HTTP
-- → XREF: `06-networking/TODO-07-web-browser.md` -- §6 connects the browser's "Open PDF" flow to `pdfview_open_url()`; browser calls viewer directly rather than saving to disk
+- → XREF: `07-networking/TODO-07-web-browser.md` -- §6 connects the browser's "Open PDF" flow to `pdfview_open_url()`; browser calls viewer directly rather than saving to disk
 
 ## Outcome
 

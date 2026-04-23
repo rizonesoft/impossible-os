@@ -23,8 +23,8 @@ title: "TODO-03 -- HTTP/HTTPS Client & TLS"
 - `resources/certs/ca-bundle.crt` (to be added) -- Mozilla CA bundle (MPL-2.0, ~130 root CAs); installed to `C:\Impossible\System\Certs\ca-bundle.crt` on disk image
 - `src/shell/` -- `cmd_wget.c` + `cmd_curl.c` new shell commands (§4); shell integration as in existing shell command pattern
 - → XREF: `06-networking/TODO-02-dns-sockets.md` -- DNS (`dns_resolve`) and socket layer (§3–§8) are mandatory prerequisites for §2–§4 and §7–§8
-- → XREF: `06-networking/TODO-04-*` (future IPv6) -- `http_get_v6()` stub deferred; URL parser handles IPv6 literal `[::1]` syntax for future use
-- → XREF: `10-apps/TODO-*-browser` (future) -- §7 HTTPS client and §8 keep-alive pool are the direct foundation for the web browser TODO
+- Related (no stable XREF target): `06-networking/TODO-04-*` (future IPv6) -- `http_get_v6()` stub deferred; URL parser handles IPv6 literal `[::1]` syntax for future use
+- Related (no stable XREF target): `10-apps/TODO-*-browser` (future) -- §7 HTTPS client and §8 keep-alive pool are the direct foundation for the web browser TODO
 
 ## Outcome
 

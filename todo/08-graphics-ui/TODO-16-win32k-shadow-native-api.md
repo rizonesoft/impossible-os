@@ -34,9 +34,9 @@ title: "TODO-16 -- Win32k Shadow Native API (SSDT Table 1 Router)"
 | --- | --- | --- | --- |
 | 1 | Table 1 base, bounds check, dispatch to Win32k handler array | D02 `TODO-05` §3 | [ ] |
 | 2 | `win32k_init()` registration order after compositor prerequisites | `TODO-12` §1 | [ ] |
-| 3 | Extend or reuse per-process syscall filter bitmap for shadow indices | D02 `TODO-05` §25 | [ ] |
+| 3 | Extend or reuse per-process syscall filter bitmap for shadow indices | D02 `TODO-05` | [ ] |
 | 4 | Public constants in `include/kernel/nt/win32k_ssdt.h` matching `TODO-A` | `TODO-A` | [ ] |
-| 5 | Co-review `KeUserModeCallback` usage with `TODO-12` §7 and `TODO-05` §26 | D02 `TODO-05` §26 | [ ] |
+| 5 | Co-review `KeUserModeCallback` usage with `TODO-12` §7 and `TODO-05` §26 | D02 `TODO-05` | [ ] |
 
 ## 1. Dispatch split and guard rails
 
@@ -57,6 +57,17 @@ title: "TODO-16 -- Win32k Shadow Native API (SSDT Table 1 Router)"
 ## 4. User-mode index contract
 
 - [ ] `gdi32.dll` / `user32.dll` syscall indices are generated or asserted from the same values as `TODO-A` (no handwritten drift)
+
+## 5. KeUserModeCallback integration review
+
+Co-review note (owned by `02-kernel-core/TODO-12-native-api-ssdt.md §7`): Win32k shadow syscalls that return via `KeUserModeCallback` must reuse the existing upcall frame layout rather than inventing a new one. No code ships here; this section is a review gate before the TODO is closed.
+
+- [ ] Confirm the callback index table in `include/kernel/nt/callback.h` covers every Win32k shadow entry that requires a user-mode upcall.
+- [ ] Commit: `"todo: mark §5 review gate complete"` (no code change expected).
+
+**Test checkpoint:** review note added to the canonical handoff doc; no functional test required.
+
+---
 
 ## Unit Tests
 

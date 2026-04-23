@@ -270,17 +270,23 @@ def resolve_xref_target(target: str, source_file: str, id_index: dict, path_inde
     target = target.rstrip("/")
     if not target:
         return None
-    # Normalize D<d>/T<n>  (slash-separator) and D<d> T<n> (space-separator)
-    # into the canonical D<dd>T<nn> form used by COMPACT_DT_RE. Also
-    # zero-pads 1-digit domains (D2 -> D02, D2T6 -> D02T06) so the rest of
-    # the resolver has one shape to match.
+    # Normalize several compact-form variants into the canonical D<dd>T<nn>
+    # shape used by COMPACT_DT_RE:
+    #   - D<d>/T<n>     (slash-separator)
+    #   - D<d> T<n>     (space-separator, already pre-joined by _parse_dep_cell)
+    #   - D<d>/TODO-<n> (hybrid shorthand used by some authors)
+    #   - D<d>          (1-digit domain, zero-padded)
     slash_m = re.match(r"^D(\d{1,2})/T(\d{1,2})$", target)
     if slash_m:
         target = f"D{int(slash_m.group(1)):02d}T{int(slash_m.group(2))}"
     else:
-        pad_m = re.match(r"^D(\d)(T\d{1,2})?$", target)
-        if pad_m:
-            target = f"D{int(pad_m.group(1)):02d}" + (pad_m.group(2) or "")
+        hybrid_m = re.match(r"^D(\d{1,2})/TODO-(\d{1,2})$", target)
+        if hybrid_m:
+            target = f"D{int(hybrid_m.group(1)):02d}T{int(hybrid_m.group(2))}"
+        else:
+            pad_m = re.match(r"^D(\d)(T\d{1,2})?$", target)
+            if pad_m:
+                target = f"D{int(pad_m.group(1)):02d}" + (pad_m.group(2) or "")
     # 1. Frontmatter id (post-§5 migration)
     if target in id_index:
         return id_index[target]
@@ -322,6 +328,36 @@ def resolve_xref_target(target: str, source_file: str, id_index: dict, path_inde
     if m:
         dom, num = m.group("dom"), int(m.group("num"))
         return path_index["by_dn"].get((dom, num))
+    # 4b. Domain-only reference (`05-storage-filesystems`, with or without a
+    # trailing `/INDEX.md`). Authors use this to mean "the whole domain"
+    # when the XREF is scope-level rather than file-level; resolve to the
+    # domain's INDEX.md as the canonical landing page.
+    m = re.match(r"^(?P<dom>\d{2})-[a-z0-9-]+(?:/INDEX\.md)?$", target)
+    if m:
+        dom = m.group("dom")
+        for (d, _n), fp in path_index["by_dn"].items():
+            if d == dom:
+                return str(Path(fp).parent / "INDEX.md")
+        return None
+    # 4c. Letter-numbered TODO file (TODO-A, TODO-A-Win32k-Shadow-...).
+    # A small set of catalog/master-table files use a letter suffix instead
+    # of a numeric one. Match by filename stem or full domain path form.
+    letter_m = re.match(
+        r"^(?:(?P<dom>\d{2})-[a-z0-9-]+/)?TODO-(?P<letter>[A-Z])(?:-[A-Za-z0-9-]+)?(?:\.md)?$",
+        target,
+    )
+    if letter_m:
+        # Scan by_filename values for a matching path tail.
+        stem_fragment = f"TODO-{letter_m.group('letter')}"
+        for fp in set(path_index["by_filename"].values()):
+            tail = fp.rsplit("/", 1)[-1]
+            if tail.startswith(stem_fragment + "-") or tail == stem_fragment + ".md":
+                # Domain match if one was specified.
+                want_dom = letter_m.group("dom")
+                have_dom = fp.split("/")[1][:2] if fp.startswith("todo/") else None
+                if want_dom is None or want_dom == have_dom:
+                    return fp
+        return None
     # 5. Bare TODO-NN (resolved against source_file's domain)
     m = TODO_NN_RE.match(target)
     if m:
@@ -363,6 +399,32 @@ def resolve_xref_target(target: str, source_file: str, id_index: dict, path_inde
                 rel_path = "/".join(parts[idx:])
                 if rel_path in set(path_index["by_filename"].values()):
                     return rel_path
+                # INDEX.md relative forms (../07-networking/INDEX.md).
+                # Return the normalized INDEX.md path if it names a live
+                # domain folder.
+                if rel_path.endswith("/INDEX.md"):
+                    dom_dir = rel_path.split("/")[1]
+                    dom_m = re.match(r"^(\d{2})-", dom_dir)
+                    if dom_m:
+                        dom = dom_m.group("dom") if False else dom_m.group(1)
+                        for (d, _n), fp in path_index["by_dn"].items():
+                            if d == dom:
+                                return rel_path
+                # Path does not include the slug or .md suffix: try to map
+                # the relative form back to (domain, num) and look up in
+                # by_dn. Handles `../02-kernel-core/TODO-03` (no slug, no
+                # .md). Normalized `rel_path` would be something like
+                # `todo/02-kernel-core/TODO-03`.
+                tail = rel_path.rsplit("/", 1)[-1]
+                rel_parts = rel_path.split("/")
+                if len(rel_parts) >= 3 and rel_parts[0] == "todo":
+                    dom_dir = rel_parts[1]
+                    dom_m = re.match(r"^(\d{2})-", dom_dir)
+                    num_m = re.match(r"^TODO-(\d{1,2})(?:-|\.md|$)", tail)
+                    if dom_m and num_m:
+                        return path_index["by_dn"].get(
+                            (dom_m.group(1), int(num_m.group(1)))
+                        )
         except (OSError, ValueError):
             pass
     # 9. Already a path-like form (00-domain/TODO-NN-name.md).

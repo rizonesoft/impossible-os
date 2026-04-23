@@ -243,6 +243,12 @@ static void test_boot_reserved_null_info(void)
 
 static void test_boot_reserved_payload_vs_pmm_internal(void)
 {
+    /* The overlap branch inside boot_reserved_check_payloads_disjoint
+     * emits a LOG_ERROR naming both offenders when a payload collides
+     * with a PMM-internal range. That is EXACTLY what this test is
+     * proving fires -- suppress the expected [FAIL]-tagged klog so
+     * the boot log does not look like an actual test failure. */
+    TEST_KLOG_SUPPRESS("mm");
     br_zero_fixture();
 
     /* Reserved payload at 0x2000000 (32 MiB), 4 KiB long. */

@@ -20,7 +20,7 @@ title: "TODO-11 -- Optical Media: ISO 9660, Joliet & UDF"
 - `src/kernel/fs/vfs.c` + `include/kernel/fs/vfs.h` -- `vfs_mount()`, `vfs_fs_driver`, read-only mount via `VFS_READONLY`
 - → XREF: `05-storage-filesystems/TODO-03-volume-management-automount.md §8` -- optical drive handling; `optical_probe()` is step 7 in `vfs_probe()`; tray-open command and autorun stub are owned there; this TODO provides the FS-level mount for `vfs_probe()` to call
 - → XREF: `05-storage-filesystems/TODO-05-win32-file-io-api.md §3` -- `CreateFile` on an optical drive letter calls `NtCreateFile` → `vfs_open` → optical fs vtable; ensure all three vtables expose the full read-only 14-entry `vfs_fs_driver`
-- → XREF: `04-drivers-hardware/TODO-xx-ahci-driver` -- AHCI ATAPI port detection (`AHCI_SIG_ATAPI`, `is_atapi` flag, `ahci_atapi_count()`) provides the `atapi_idx` used throughout §1
+- Related (no stable XREF target): `04-drivers-hardware/TODO-xx-ahci-driver` -- AHCI ATAPI port detection (`AHCI_SIG_ATAPI`, `is_atapi` flag, `ahci_atapi_count()`) provides the `atapi_idx` used throughout §1
 
 ## Outcome
 

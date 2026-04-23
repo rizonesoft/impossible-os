@@ -20,7 +20,7 @@ title: "TODO-02 -- Event Viewer (Log Viewer)"
 - `src/kernel/klog_disk.c` -- writes `events.jsonl` (JSONL format: `{"ts":N,"level":"INFO","tag":"net","msg":"..."}`)
 - `include/kernel/klog.h` -- `log_level_t` enum (DEBUG=0, INFO=1, WARN=2, ERROR=3, FATAL=4)
 - `X:\Logs\events.jsonl` -- on-disk event log
-- → XREF: `TODO-04-system-logging.md` -- JSON Lines event format (was TODO-02 §6)
+- → XREF: `02-kernel-core/TODO-04-system-logging.md` -- JSON Lines event format (was TODO-02 §6)
 - → XREF: `00-infrastructure/TODO-03-kernel-test-harness.md` -- unit test wiring
 
 ---

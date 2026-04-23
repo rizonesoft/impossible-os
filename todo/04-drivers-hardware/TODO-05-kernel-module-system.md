@@ -171,6 +171,19 @@ Convert the existing built-in RTL8139 driver to `src/modules/rtl8139/rtl8139.kmo
 
 ---
 
+## 7. Plug and Play syscalls wired to SSDT
+
+PnP syscalls (`NtPlugPlayControl`, device-enumeration) are exposed through the native API SSDT so user-mode tools (Device Manager, `dmgr.exe`) can enumerate and control devices without a separate RPC layer. Depends on the §1 symbol export surface and `02-kernel-core/TODO-12-native-api-ssdt.md §4` SSDT dispatcher.
+
+- [ ] Define the PnP control codes in `include/kernel/nt/pnp.h` and add them to the SSDT table.
+- [ ] Wire enumerate / start / stop / query-id entries through `Iop*` helpers.
+- [ ] Expose user-mode stubs in `ntdll.dll` (matches Windows ABI for dmgr.exe).
+- [ ] Commit: `"drivers: wire PnP syscalls through SSDT"`
+
+**Test checkpoint:** `dmgr.exe list` enumerates attached PCI devices via the SSDT entries; unit test calls `NtPlugPlayControl` directly and asserts the returned count matches `pci_scan()`'s in-kernel table.
+
+---
+
 ## OS Comparison
 
 

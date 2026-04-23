@@ -22,7 +22,7 @@ title: "TODO-03 -- ELF Relocations & Kernel Module System"
 > definitions.
 >
 > **dlopen / dlsym** (§5): the Linux ELF compat stretch goal is specced in
-> `10-platform-services/TODO-10 §13`; this TODO provides the kernel-side relocation and
+> `10-platform-services/TODO-10 §9`; this TODO provides the kernel-side relocation and
 > GOT/PLT infrastructure that TODO-10 §13 depends on.
 >
 > **`pmm_alloc_contiguous(count)`** must be used for all module image buffers > 4 KB.
@@ -67,7 +67,7 @@ binding engine is available for the Linux ELF compat `dlopen` path.
 | 2 | Kernel Module Format `.kmod` | ⭐ | §1 relocation engine |
 | 3 | Kernel Module Loader | ⭐ | §1 §2; `vmm_map_page`; `vfs_read` |
 | 4 | Kernel Symbol Export (`EXPORT_SYMBOL`) | ⭐ | §3; linker script `__ksymtab` section |
-| 5 | `dlopen` / `dlsym` for Linux Compat | 💎 | §1 §6; `TODO-10 §13` prerequisite |
+| 5 | `dlopen` / `dlsym` for Linux Compat | 💎 | §1 §6; `D10T10 §9` prerequisite |
 | 6 | GOT / PLT Lazy Binding | 💎 | §1 relocation engine; §5 consumer |
 | 7 | Module Hot-swap (Stretch) | ⭐ | §3 stable; clean `exit_fn` protocol |
 | 8 | `lsmod` / `insmod` / `rmmod` / `modprobe` | 💎 | §3 §4 |
@@ -247,9 +247,9 @@ binding engine is available for the Linux ELF compat `dlopen` path.
 
 ## 5. `dlopen` / `dlsym` for Linux Compat `[Sonnet]`
 
-> Implements the kernel-side infrastructure for `10-platform-services/TODO-10 §13`.
+> Implements the kernel-side infrastructure for `10-platform-services/TODO-10 §9`.
 > The Linux compat layer calls these; the native PE equivalent is
-> `LoadLibrary`/`GetProcAddress` (→ `TODO-08 §7`).
+> `LoadLibrary`/`GetProcAddress` (→ `D10T08 §7`).
 
 **Source file:** `src/kernel/elf_dyn.c`; header `include/kernel/elf_dyn.h`
 

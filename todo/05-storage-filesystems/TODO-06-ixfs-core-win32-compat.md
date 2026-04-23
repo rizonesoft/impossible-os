@@ -21,7 +21,7 @@ title: "TODO-06 -- IXFS Core Foundation & Win32 Compatibility"
 - → XREF: `05-storage-filesystems/TODO-05-win32-file-io-api.md §2` -- `FILE_OBJECT`/`HANDLE` table must exist before §3 (ADS `CreateFile` path) and §9 (`OpenFileById`) can wire up
 - → XREF: `05-storage-filesystems/TODO-04-fat32-hardening-vfs-semantics.md §11` -- Win32 feature stubs that return empty ADS, default ACL are superseded here by real IXFS implementations
 - → XREF: `10-platform-services` Object Manager + Security TODO -- §5 security descriptors wire into `SeAccessCheck`; coordinate on `SECURITY_DESCRIPTOR` binary format and well-known SID constants
-- → XREF: `todo-old/010-Kernel-Foundations/TODO-040-Filesystem/TODO-040.11-IXFS.md` -- **do not delete**; advanced storage features (compression, encryption, dedup, tiering) remain there for TODO-07
+- Legacy reference (not an XREF target): `todo-old/010-Kernel-Foundations/TODO-040-Filesystem/TODO-040.11-IXFS.md` -- **do not delete**; advanced storage features (compression, encryption, dedup, tiering) remain there for TODO-07
 
 ## Outcome
 

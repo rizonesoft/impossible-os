@@ -1,6 +1,6 @@
 ---
 schema_version: 1
-id: input-system
+id: input-system-drivers
 domain: 04-drivers-hardware
 status: active
 title: "TODO-11 -- Input System Enhancement"

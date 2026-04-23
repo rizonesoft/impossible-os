@@ -50,7 +50,7 @@ title: "TODO-11 -- Start Menu, System Tray & Notifications"
 | 💎  |   2   | §2 Start Menu interaction -- Win toggle, launch, All Programs slide, Power flyout, open anim  | §1 data (must exist before wiring clicks); TODO-02 `anim_mgr`            |  [ ]   |
 | 💎  |   3   | §3 Search filtering -- prefix match, accent highlight, arrow-nav, no-results state           | §2 (search bar is part of the open menu interaction)                       |  [ ]   |
 | 💎  |   4   | §4 System tray icons -- `tray_icon` struct, register/unregister, volume/network/bell/layout  | §3 (Start Menu stable); TODO-08 §5 taskbar draw loop stable               |  [ ]   |
-| ⭐  |   5   | §5 Toast notifications -- `notify_send()` queue, slide-in/out, stacking, `SYS_NOTIFY_SEND=54` | §4 (tray bell icon; DND mode from TODO-07 §9)                             |  [ ]   |
+| ⭐  |   5   | §5 Toast notifications -- `notify_send()` queue, slide-in/out, stacking, `SYS_NOTIFY_SEND=54` | §4 (tray bell icon; DND mode from TODO-07 §6)                             |  [ ]   |
 | 💎  |   6   | §6 Notification center -- bell click, history panel, dismiss/clear, 100-entry Registry log   | §5 (history comes from toast queue); §4 (bell icon is the entry point)    |  [ ]   |
 | 💎  |   7   | §7 Notification settings -- per-app Registry toggle + sound, Settings page                   | §6 (notification center lists registered apps; settings wires to that)     |  [ ]   |
 

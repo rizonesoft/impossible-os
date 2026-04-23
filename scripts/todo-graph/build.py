@@ -515,11 +515,21 @@ def _parse_dep_cell(depends_cell: Optional[str]) -> list:
     if not depends_cell or depends_cell.strip() in {"--", "-", ""}:
         return []
     # Split on commas first; then for each comma-piece, further split on
-    # whitespace so `TODO-08 §8` becomes ["TODO-08", "§8"]. Strip backticks.
+    # whitespace so `TODO-08 §8` becomes ["TODO-08", "§8"]. Strip backticks
+    # and trailing sentence-level punctuation (`;`, `:`, `)`, `.`). Authors
+    # sometimes write prose-style refs like `TCP API from TODO-01;
+    # dns_resolve()...`; the trailing `;`/`)`/`.` is not part of the
+    # target token and should not reach the resolver.
     raw_tokens: list = []
     for chunk in depends_cell.split(","):
         for tok in chunk.strip().strip("`").split():
             tok = tok.strip().strip("`").strip()
+            # Strip both leading and trailing prose punctuation. Authors
+            # often write `(TODO-06 §2)` / `;TODO-01` / `TODO-03.` inline
+            # in the dep cell; none of the surrounding punctuation is
+            # part of the target token and should not reach the resolver.
+            tok = tok.lstrip("(")
+            tok = tok.rstrip(";:)").rstrip(".")
             if tok:
                 raw_tokens.append(tok)
     # Pre-split squished target+section tokens (D02T06 + section + 3 -->

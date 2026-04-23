@@ -26,7 +26,7 @@ title: "TODO-10 -- Taskbar"
 - `include/desktop/dpi.h` (TODO-07 §4) -- `DPI_SCALE()`, `WM_DPI_CHANGED` -- used by §8 sizing
 - → XREF: `08-graphics-ui/TODO-08-window-manager.md` -- §1 window list wires to `wm_minimize/maximize/restore`; §3 Aero Peek temporarily overrides compositor window opacity
 - → XREF: `08-graphics-ui/TODO-09-desktop-shell-features.md §1` -- context menu engine must exist before §2 right-click and §7 jump list popup; §9 vdesk present for "Move to Desktop ►"
-- → XREF: `09-desktop-shell/TODO-01-*` (notifications/TODO-09) -- §5 progress badge toast is a forward ref; use serial log stub until TODO-09 live
+- Related (no stable XREF target): `09-desktop-shell/TODO-01-*` (notifications/TODO-09) -- §5 progress badge toast is a forward ref; use serial log stub until TODO-09 live
 
 ## Outcome
 

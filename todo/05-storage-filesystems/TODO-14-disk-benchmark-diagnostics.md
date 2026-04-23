@@ -20,8 +20,8 @@ title: "TODO-14 -- Disk Benchmark & I/O Diagnostics"
 - `src/kernel/drivers/ahci/ahci_atapi.c` + `include/kernel/drivers/ahci.h` -- `atapi_dma_command()` used in §3 for ATA SMART READ DATA (`0xB0 0xD0`); AHCI NCQ tag occupancy from `src/kernel/drivers/ahci/ahci_ncq.c` consumed in §4
 - `src/kernel/drivers/blkdev.c` + `include/kernel/drivers/blkdev.h` -- §4 adds `blkdev_stats_t` to `blkdev_t`; all read/write completion paths call `blkdev_stats_record()`
 - → XREF: `05-storage-filesystems/TODO-01-block-storage-hardening.md §6` -- per-device I/O metrics `blkdev_t.stats` field defined there; §4 of this TODO extends that with histogram and queue-depth data
-- → XREF: `02-kernel-core/TODO-xx-process-scheduler` -- SCHED_IDLE thread priority used by §7 health monitor daemon
-- → XREF: `09-desktop-shell/TODO-xx-taskmanager` -- Task Manager "Storage" tab sparkline consumes §5 latency histogram data via `NtQuerySystemInformation(SystemDiskPerformanceInformation)`
+- Related (no stable XREF target): `02-kernel-core/TODO-xx-process-scheduler` -- SCHED_IDLE thread priority used by §7 health monitor daemon
+- Related (no stable XREF target): `09-desktop-shell/TODO-xx-taskmanager` -- Task Manager "Storage" tab sparkline consumes §5 latency histogram data via `NtQuerySystemInformation(SystemDiskPerformanceInformation)`
 
 ## Outcome
 

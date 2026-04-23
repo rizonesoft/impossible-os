@@ -69,7 +69,7 @@ title: "TODO-23 -- Exception Dispatch & SEH"
 | 💎  |  12   | Unhandled exception filter + WER hook                    | §7, §8, §10                            |  [ ]   |
 | ⭐  |  13   | Kernel safe probing (ProbeForRead/Write)                 | §2                                     |  [ ]   |
 | 💎  |  14   | Kernel-mode `__try`/`__except` for drivers               | §6, §9, §13                            |  [ ]   |
-| 💎  |  15   | POSIX signal delivery from exceptions (Linux compat)     | §3, §5, 10-sec/T10 §8                  |  [ ]   |
+| 💎  |  15   | POSIX signal delivery from exceptions (Linux compat)     | §3, §5, D10T10 §8                  |  [ ]   |
 | ⭐  |  16   | Exception dispatch telemetry                             | §4, TODO-11 §1                         |  [ ]   |
 
 > 💎 = parity -- Windows implements this feature; Impossible OS must match.

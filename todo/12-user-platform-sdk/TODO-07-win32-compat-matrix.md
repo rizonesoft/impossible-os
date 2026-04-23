@@ -59,15 +59,15 @@ title: "TODO-07 -- Win32 Compatibility Matrix & Bring-Up Ladder"
 
 | Step | Section | 💎/⭐ | Gate / Dependency |
 |------|---------|-------|-------------------|
-| 1 | API coverage tracker + `compat_stub` extension | ⭐ | `TODO-08 §9` base stub; `SYS_SHMEM_CREATE/MAP` |
+| 1 | API coverage tracker + `compat_stub` extension | ⭐ | `D10T08 §9` base stub; `SYS_SHMEM_CREATE/MAP` |
 | 2 | Bring-up ladder framework | ⭐ | §1; `sdk/compat/` test program structure |
 | 3 | Tier 1 -- Process exit | 💎 | Gate: `TODO-07 §1` |
-| 4 | Tier 2 -- Console I/O | 💎 | Gate: `TODO-08 §5 §4` |
-| 5 | Tier 3 -- File I/O | 💎 | Gate: `TODO-07 §7`, `TODO-08 §1` partial |
-| 6 | Tier 4 -- Process & Registry | 💎 | Gate: `TODO-08 §4`, `TODO-13` |
-| 7 | Tier 5 -- Memory & Sync | 💎 | Gate: `TODO-08 §3 §6` |
-| 8 | Tier 6 -- MessageBox & Basic GUI | 💎 | Gate: `TODO-05 §1–3`, `TODO-08 §10` |
-| 9 | Tier 7 -- Full Win32 Window + Controls | 💎 | Gate: `TODO-05 §4–4`, `TODO-08 §7 §10 §11` |
+| 4 | Tier 2 -- Console I/O | 💎 | Gate: `D10T08 §5 §4` |
+| 5 | Tier 3 -- File I/O | 💎 | Gate: `TODO-07 §7`, `D10T08 §1` partial |
+| 6 | Tier 4 -- Process & Registry | 💎 | Gate: `D10T08 §4`, `D02T14` |
+| 7 | Tier 5 -- Memory & Sync | 💎 | Gate: `D10T08 §3 §6` |
+| 8 | Tier 6 -- MessageBox & Basic GUI | 💎 | Gate: `TODO-05 §1–3`, `D10T08 §10` |
+| 9 | Tier 7 -- Full Win32 Window + Controls | 💎 | Gate: `TODO-05 §4–4`, `D10T08 §7 §10 §11` |
 | 10 | Tier 8 -- Extended Win32 surface | 💎 | Gate: all Tiers 1–7; `advapi32`/`shell32` |
 | 11 | Stub call log analysis (`win32compat.exe log`) | ⭐ | §1 shmem counters; `win32_unimpl_stub` |
 | 12 | CI compat gate (`scripts/compat-check.sh`) | ⭐ | §3–9 native programs; QEMU headless |
@@ -84,7 +84,7 @@ title: "TODO-07 -- Win32 Compatibility Matrix & Bring-Up Ladder"
   - Columns: `Function | Status | Tier | Notes`
   - Status values: `✅ implemented`, `⚠️ stub (returns error)`, `🔄 partial`, `❌ missing`
   - Tier: 1–8 from bring-up ladder (§2)
-- [ ] **`compat_stub(dll, name)` macro extension** (extends `TODO-08 §9` base):
+- [ ] **`compat_stub(dll, name)` macro extension** (extends `D10T08 §9` base):
   ```c
   /* In sdk/compat/compat_stub.h -- shared between kernel and compat tools */
   #define COMPAT_STUB_COUNT 512
@@ -98,7 +98,7 @@ title: "TODO-07 -- Win32 Compatibility Matrix & Bring-Up Ladder"
   /* Shared memory segment name: "Win32CompatCounters" */
   extern compat_stub_entry_t *g_compat_stubs; /* shmem-mapped in user mode */
   ```
-  - Extend `win32_unimpl_stub(dll, fn)` from `TODO-08 §9`: additionally write to shmem counter map (if `g_compat_stubs != NULL` -- kernel mode sets to NULL, user-mode `win32compat.exe` maps the shmem)
+  - Extend `win32_unimpl_stub(dll, fn)` from `D10T08 §9`: additionally write to shmem counter map (if `g_compat_stubs != NULL` -- kernel mode sets to NULL, user-mode `win32compat.exe` maps the shmem)
   - Shmem key: `SYS_SHMEM_CREATE("Win32CompatCounters", sizeof(compat_stub_entry_t) * 512)`; created once at process start; `win32compat.exe` maps it via `SYS_SHMEM_MAP`
 - [ ] **`win32compat.exe` tool** (`src/tools/win32compat.c`):
   - `win32compat report`: map shmem → sort by `hit_count` desc → print top 40 entries
@@ -174,7 +174,7 @@ title: "TODO-07 -- Win32 Compatibility Matrix & Bring-Up Ladder"
 
 ## 5. Tier 3 -- File I/O `[Sonnet]`
 
-> Gate: `10-platform-services/TODO-07 §7`, `TODO-08 §1` partial
+> Gate: `10-platform-services/TODO-07 §7`, `D10T08 §1` partial
 
 **~12 functions:** `CreateFile`, `ReadFile`, `WriteFile`, `CloseHandle`, `GetFileSize`, `SetFilePointer`, `DeleteFile`, `MoveFile`, `CreateDirectory`, `RemoveDirectory`, `FindFirstFile`, `FindNextFile`, `FindClose`
 

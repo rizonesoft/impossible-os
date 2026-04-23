@@ -23,7 +23,7 @@ title: "TODO-05 -- Extended Widget Library: Core Controls"
 - `include/desktop/wm.h` -- `wm_create_window()` + `z_order` field for dropdown floating popup overlay
 - → XREF: `08-graphics-ui/TODO-03-theme-system.md` -- prerequisite; `theme_get()` must be live and `CTRL_COLOR_*` migration done before new controls paint correctly
 - → XREF: `08-graphics-ui/TODO-04-animation-engine.md` -- prerequisite for §3 indeterminate progress bar; `anim_mgr_add()` must be available
-- → XREF: `08-graphics-ui/TODO-05-*` (advanced widgets) -- ListView, TreeView, Tooltip, Dialog use these 6 controls as building blocks; Tab Strip is consumed by Settings applet immediately
+- Related (no stable XREF target): `08-graphics-ui/TODO-05-*` (advanced widgets) -- ListView, TreeView, Tooltip, Dialog use these 6 controls as building blocks; Tab Strip is consumed by Settings applet immediately
 - → XREF: `08-graphics-ui/TODO-07-ui-accessibility-automation-ime.md §1-§3` -- §8 name/role helpers are only the seed; full semantic-tree and provider ownership lives there
 
 ## Outcome

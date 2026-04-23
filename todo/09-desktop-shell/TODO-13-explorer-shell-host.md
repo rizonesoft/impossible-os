@@ -58,6 +58,28 @@ title: "TODO-13 -- Explorer Shell Host (`explorer.exe`)"
 - [ ] Subscribe to WM events needed by taskbar (`TODO-08-taskbar` XREF) without duplicating filemgr UI.
 - [ ] Commit: `"desktop: explorer taskbar integration"`
 
+## 4. ShellExecute open-verb wiring
+
+Wires `ShellExecute` through the file-manager open verb and the association store so double-click opens files via the registered handler app. Extends `02-kernel-core/TODO-14-registry-completion.md` HKCR defaults.
+
+- [ ] `ShellExecute(op='open', path)` dispatches to registered handler via HKCR.
+- [ ] Commit: `"shell: wire ShellExecute open verb through explorer.exe"`
+
+**Test checkpoint:** `ShellExecute('open', 'C:\\hello.txt')` opens notepad; registered association table matches HKCR file-class entries.
+
+---
+
+## 5. Boot-time explorer default
+
+Sets `explorer.exe` as the default shell on boot unless the installer override flag is present. Owned by the service-manager init path.
+
+- [ ] Wire default-shell lookup through `HKLM\SYSTEM\CurrentControlSet\Control\WinLogon` Shell value; fall back to `cmd.exe` if missing.
+- [ ] Commit: `"shell: explorer.exe boot default + installer override"`
+
+**Test checkpoint:** Clean boot lands on desktop with `explorer.exe` running; installer mode boot lands in the installer without starting explorer.
+
+---
+
 ## OS Comparison
 
 | ⭐ | Feature | 🪟 Win11 | 🐧 Linux | 🚀 Impossible OS |

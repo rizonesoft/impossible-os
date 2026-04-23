@@ -52,7 +52,7 @@ title: "TODO-16 -- NVMe Storage Driver (Boot-Critical)"
 | 💎 |   2   | Admin Queue setup and Identify commands       | §1         |  [x]   |
 | 💎 |   3   | I/O Queue creation and sector read/write      | §2         |  [x]   |
 | 💎 |   4   | Block device registration and VFS integration | §3         |  [x]   |
-| ⭐ |   5   | Advanced NVMe parity backlog (owned by TODO-03) | §1, §9, §5, §6 |  [ ]   |
+| ⭐ |   5   | Advanced NVMe parity backlog (owned by TODO-03) | §1, §5 |  [ ]   |
 
 ---
 

@@ -65,7 +65,7 @@ compositor to 4K 120 Hz.
 | Step | Section | 💎/⭐ | Dependency |
 |------|---------|-------|-----------|
 | 1 | GPU access strategy (option comparison) | ⭐ | existing VirtIO transport; IOMMU analysis (TODO-02 §6) |
-| 2 | TinyGL → Mesa lavapipe upgrade research | ⭐ | `TODO-12 §7` TinyGL baseline |
+| 2 | TinyGL → Mesa lavapipe upgrade research | ⭐ | `D10T12 §7` TinyGL baseline |
 | 3 | Display engine research (AMD DCN + Intel Arc) | ⭐ | bare-metal GPU strategy from §1 |
 | 4 | Vulkan kernel driver architecture | ⭐ | §1 option selection; `pmm_alloc_contiguous`; syscall table |
 | 5 | Compositor GPU path design | ⭐ | §4 Vulkan API; `wm.h` compositor internals |

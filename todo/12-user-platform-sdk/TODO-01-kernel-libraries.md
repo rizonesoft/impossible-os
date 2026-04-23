@@ -1,6 +1,6 @@
 ---
 schema_version: 1
-id: kernel-libraries
+id: kernel-libraries-sdk
 domain: 12-user-platform-sdk
 status: active
 title: "TODO-01 -- Kernel Embedded Libraries"
@@ -22,8 +22,8 @@ title: "TODO-01 -- Kernel Embedded Libraries"
 > **Overlap -- miniz:** `02-kernel-core/TODO-03-kernel-libraries.md §6` already specifies
 > the miniz port to `src/libs/miniz/` and the ZIP reader API (`zip_open/entry_count/find/
 > read/close`). This TODO-01 §3 extends that work with the **ZIP writer** (`mz_zip_writer_*`)
-> and **stream API** (`mz_deflate`/`mz_inflate`) that TODO-20 §4 does not cover. Do not
-> re-port the reader; treat TODO-20 §4 as the prerequisite.
+> and **stream API** (`mz_deflate`/`mz_inflate`) that §4 does not cover. Do not
+> re-port the reader; treat §4 as the prerequisite.
 >
 > **Overlap -- math:** `include/kernel/kmath.h` already has `fabs`, `floor`, `ceil`, `fmod`,
 > `sqrt`, `pow`, `cos`, `acos` as inline functions for stb_truetype. §2 extends this with the
@@ -71,7 +71,7 @@ title: "TODO-01 -- Kernel Embedded Libraries"
 |------|---------|-------|-----------|
 | 1 | String Library Consolidation | 💎 | `kmalloc`, `kfree`; freestanding build flags |
 | 2 | Math Library Extension | 💎 | existing `kmath.h`; `-msse2` flag confirmed |
-| 3 | miniz (Writer + Stream Extension) | 💎 | TODO-20 §4 (reader/port) must be done first |
+| 3 | miniz (Writer + Stream Extension) | 💎 | §4 (reader/port) must be done first |
 | 4 | monocypher + CSPRNG + SYS_GETRANDOM | ⭐ | §1 string utils; `RDRAND` CPU feature check |
 | 5 | cJSON | 💎 | §1 string lib; `kmalloc`/`kfree` |
 | 6 | Mbed TLS Subset | 💎 | §2 math; §4 monocypher entropy; §1 string |
@@ -148,7 +148,7 @@ title: "TODO-01 -- Kernel Embedded Libraries"
   - [ ] `mz_stream_deflate_init/push/end` wrappers around `mz_deflate_*`
   - [ ] `mz_stream_inflate_init/push/end` wrappers around `mz_inflate_*`
   - [ ] Used by HTTP gzip (`Content-Encoding: gzip` in 06-networking) and IXFS block compression
-- [ ] **Memory redirect** (if not already done in TODO-20 §4): `#define MZ_MALLOC(sz) kmalloc(sz)`, `MZ_FREE(p) kfree(p)`, custom `MZ_REALLOC` shim using `kmalloc` + `memcpy` + `kfree`; buffers > 4 KB → `pmm_alloc_contiguous`
+- [ ] **Memory redirect** (if not already done in §4): `#define MZ_MALLOC(sz) kmalloc(sz)`, `MZ_FREE(p) kfree(p)`, custom `MZ_REALLOC` shim using `kmalloc` + `memcpy` + `kfree`; buffers > 4 KB → `pmm_alloc_contiguous`
 - [ ] **Verification**: compress a 64 KB zero-filled buffer → decompress → compare byte-for-byte; open existing 3-file ZIP in-memory → list entries → extract one; create new ZIP → add 2 files → close → re-open as reader → verify entry count
 
 ---
@@ -296,7 +296,7 @@ title: "TODO-01 -- Kernel Embedded Libraries"
 |----|----------------------------------------------------|----------------------------------|---------------------------------|----------------------------------------------------------|
 | 💎 | Freestanding string/printf libc                    | ✅ ntdll CRT subset              | ✅ kernel/lib/string.c + printk | ⬜ §1 -- `include/libc/string.h` consolidation            |
 | 💎 | Full software math library                         | ✅ MSVC CRT `libcmt`             | ✅ kernel/lib/math.c + libm     | ⬜ §2 -- extends existing `kmath.h`; all trig/exp/log     |
-| 💎 | deflate/inflate + ZIP read/write                   | ✅ ntoskrnl LZNT1 + Cabinet.dll  | ✅ lib/zlib in-tree + zip via   | ⬜ §3 -- (extends TODO-20 §4); `mz_zip_writer` +          |
+| 💎 | deflate/inflate + ZIP read/write                   | ✅ ntoskrnl LZNT1 + Cabinet.dll  | ✅ lib/zlib in-tree + zip via   | ⬜ §3 -- (extends §4); `mz_zip_writer` +          |
 | ⭐ | RDRAND-seeded ChaCha20 CSPRNG as inbox API         | ✅ `BCryptGenRandom` (CNG)       | ✅ `get_random_bytes` (kernel)  | ⬜ §4 -- monocypher + RDRAND entropy +                    |
 | 💎 | JSON parse/emit in-kernel                          | ❌ Not in ntoskrnl               | ❌ Not in kernel                | ⬜ §5 -- cJSON with `kmalloc` hooks +                     |
 | 💎 | TLS 1.2 client                                     | ✅ Schannel (kernel TLS offload) | ✅ Rustls / OpenSSL via socket  | ⬜ §6 -- Mbed TLS 3.x subset; ECDHE-RSA-AES128-GCM-SHA256 |

@@ -25,8 +25,8 @@ title: "TODO-09 -- Desktop Shell Features"
 - `include/kernel/gfx/anim_mgr.h` (TODO-02) -- `anim_mgr_add()`, `GFX_EASE_OUT_CUBIC` -- §6 quick settings slide-in + §7 vdesk fade
 - `include/registry.h` -- `RegGetValue/SetValueEx` -- used by §3 wallpaper, §4 DPI, §5 screenshot path, §8 night light, §9 focus mode
 - → XREF: `08-graphics-ui/TODO-08-window-manager.md` -- desktop right-click (§2) and quick settings (§6) depend on WM overlay being live; `wm_post_message_all()` used for `WM_DPI_CHANGED`
-- → XREF: `09-desktop-shell/TODO-01-*` (taskbar) -- §7 virtual desktops needs per-desktop taskbar button group
-- → XREF: `09-notifications/TODO-01-*` (TODO-09 notifications) -- §6 screenshot toast and §10 DND mode depend on toast API; use stub until TODO-09 is live
+- Related (no stable XREF target): `09-desktop-shell/TODO-01-*` (taskbar) -- §7 virtual desktops needs per-desktop taskbar button group
+- Related (no stable XREF target): `09-notifications/TODO-01-*` (TODO-09 notifications) -- §6 screenshot toast and §10 DND mode depend on toast API; use stub until TODO-09 is live
 
 ## Outcome
 

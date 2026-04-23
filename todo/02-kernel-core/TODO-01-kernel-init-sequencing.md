@@ -26,7 +26,7 @@ title: "TODO-01 -- Kernel Init Sequencing"
 - → XREF: `TODO-04-system-logging.md` -- `klog_disk_enable()` is a Phase 2 gate; must follow VFS ready
 - → XREF: `TODO-05-object-manager.md §1` -- Object Manager init slot is Phase 2, after heap, before registry; §1 provides the `ob_init()` implementation
 - → XREF: `04-drivers-hardware/INDEX.md` -- all driver `_init()` functions must accept and return `boot_result_t`
-- → XREF: `scripts/test.sh` -- headless QEMU serial log is the verification path
+- Verification path: [`scripts/test.sh`](../../scripts/test.sh) runs headless QEMU; serial log is the primary verification artifact (not an XREF target, see §Verification)
 - → XREF: `TODO-07-irql-model-dpcs.md §4` -- DPC subsystem init belongs in Phase 1, after timer; §4 is the DPC Object Type and Per-CPU Queue init
 - → XREF: `TODO-08-time-filetime-management.md §3` -- `wall_clock_init()` belongs in Phase 2, after UEFI runtime services; NTP wall clock adjustment (§17) belongs in Phase 3
 - → XREF: `01-boot-platform/TODO-23-boot-watchdog.md` -- watchdog timer integrates with `boot_progress()` calls; detects hung subsystem init

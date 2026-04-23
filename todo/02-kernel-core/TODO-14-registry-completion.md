@@ -64,7 +64,7 @@ title: "TODO-14 -- Registry System Completion"
 
 | ⭐  | Order | Deliverable                                        | Depends On                   | Status |
 | --- | :---: | -------------------------------------------------- | ---------------------------- | :----: |
-| 💎  |   1   | Access rights, API limits, FILETIME & RegFlushKey  | TODO-05 §2,§3,§5, TODO-17 §4 |  [ ]   |
+| 💎  |   1   | Access rights, API limits, FILETIME & RegFlushKey  | TODO-05 §2,§3, TODO-17 §4 |  [ ]   |
 | 💎  |   2   | Advanced key ops (copy, rename, save, volatile)    | §1                           |  [ ]   |
 | 💎  |   3   | Change notifications (core + exclusive extras)     | §2                           |  [ ]   |
 | 💎  |   4   | Nt/Zw registry syscalls & pointer validation       | §1, TODO-12 §14, §15         |  [ ]   |
@@ -673,7 +673,7 @@ Sections §8--10 + §13 deliver exclusive features that exceed Windows 11: incre
 
 | Date | Action | Summary |
 | --- | --- | --- |
-| 2026-04-10 | validate | validate-todo-file: removed 52 `### N.M` subheadings (flat `##` checklists); `§M.N` refs folded to `§M`; ASCII `--` for ranges; Impl row 1 `TODO-05 §2,§3,§5`; Inputs XREF aligned; collapsed excess blank lines; OS Comparison re-padded + `§6 §7` cell; Verification test checkpoint + `run-abi-tests.bat`; History added. Parity: OS rows map to §1--§13; external deps TODO-12 §14 / TODO-26 / TODO-17 flagged as blockers for §5/§4. |
+| 2026-04-10 | validate | validate-todo-file: removed 52 `### N.M` subheadings (flat `##` checklists); `§M.N` refs folded to `§M`; ASCII `--` for ranges; Impl row 1 `TODO-05 §2,§3`; Inputs XREF aligned; collapsed excess blank lines; OS Comparison re-padded + `§6 §7` cell; Verification test checkpoint + `run-abi-tests.bat`; History added. Parity: OS rows map to §1--§13; external deps TODO-12 §14 / TODO-26 / TODO-17 flagged as blockers for §5/§4. |
 | 2026-04-10 | gap-analysis | Web research: Learn `RegNotifyChangeKeyValue` (filters + `REG_NOTIFY_THREAD_AGNOSTIC`); Suhanov regf spec (dual `.LOG1`/`.LOG2`, HvLE log, thaw GUID fields); web search on `NtFreezeRegistry` (undocumented, VSS-adjacent). Code-truth: no `RegFlushKey`/`RegCopyTree`/`ticks_to_filetime` in `registry.c`; `reg_lookup_env_var`/`reg_expand_sz` present; `ProbeForRead`/`ProbeForWrite` in `ssdt.c`. Inputs: line count 2536, TODO-31 XREF, `→` for TODO-01; lean-structure NOTE; back-XREF TODO-32 Inputs. No new `##` sections; OS table unchanged. |
 | 2026-04-10 | validate | validate-todo-file: joined Goal + CAUTION wraps; IMPORTANT callout tightened (no blank `>`); §11 XREF style + test platforms; sandbox deferred XREF `TODO-21-process-model-extensions.md`; Inputs/registry.h + `run-abi-tests.bat` exist; all external `→ XREF` targets and `## N.` anchors verified; TODO-17 Inputs `§1.3` corrected to `§5`. Flags: Implementation Order still blocked on TODO-26 §3--§5 / TODO-17 §4 / TODO-12 §14; §5 + §13 remain over lean item count (NOTE present). |
 | 2026-04-10 | validate | Inputs: `→ XREF` `TODO-05-boot-device-discovery.md §9` for `HKLM\SYSTEM\Boot\Device\*` boot provenance (bidirectional with boot-platform TODO-32 validate pass). |

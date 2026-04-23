@@ -21,7 +21,7 @@ title: "TODO-02 -- DNS Resolver & BSD Sockets API"
 - `src/kernel/sched/syscall.c` -- add 8 new dispatch entries in the syscall handler
 - `user/lib/` -- `socket.c` thin wrappers called from user-mode programs
 - → XREF: `06-networking/TODO-01-tcp-network-infrastructure.md` -- TCP API (§3) and `netif_get_default()` (§5) are prerequisites for `SOCK_STREAM` and `getaddrinfo`
-- → XREF: `06-networking/TODO-04-*` (future IPv6) -- §6 AAAA query stub is the hook point for dual-stack; `dns_resolve6()` is left as a stub returning -ENOTSUP until IPv6 is complete
+- Related (no stable XREF target): `06-networking/TODO-04-*` (future IPv6) -- §6 AAAA query stub is the hook point for dual-stack; `dns_resolve6()` is left as a stub returning -ENOTSUP until IPv6 is complete
 
 ## Outcome
 

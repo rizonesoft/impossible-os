@@ -26,7 +26,7 @@ title: "TODO-03 -- Service Manager & Core Daemons"
 - `include/kernel/klog.h` -- `klog()` -- used throughout for `[svc]` serial log lines
 - → XREF: `02-kernel-core/TODO-02-kernel-configuration-policy.md §5, §10` -- Safe Mode and boot acceptance policy decide which services and autostarts may run
 - → XREF: `08-graphics-ui/TODO-11-startmenu-tray-notifications.md §6` -- `knotify_send()` (§7) is drained by the toast queue; `notify_send()` is the user-facing path; §7 bridges the two
-- → XREF: `06-networking/TODO-01-*` (networking) -- `netd` (§2) wraps the existing DHCP/ARP polling loop; must co-exist with existing `net_init()` call in `kernel_main`
+- Related (no stable XREF target): `06-networking/TODO-01-*` (networking) -- `netd` (§2) wraps the existing DHCP/ARP polling loop; must co-exist with existing `net_init()` call in `kernel_main`
 - → XREF: `08-graphics-ui/TODO-14-win32-gdi-user32-stubs.md` -- §4 Win32 system info stubs go into the `kernel32.dll` stub table alongside GDI/USER32
 
 ## Outcome

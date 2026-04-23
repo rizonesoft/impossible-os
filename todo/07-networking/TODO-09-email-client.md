@@ -1,6 +1,6 @@
 ---
 schema_version: 1
-id: email-client
+id: email-client-networking
 domain: 07-networking
 status: active
 title: "TODO-09 -- Email Client"

@@ -1,6 +1,6 @@
 ---
 schema_version: 1
-id: web-browser
+id: web-browser-networking
 domain: 07-networking
 status: active
 title: "TODO-07 -- Web Browser"

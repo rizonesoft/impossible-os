@@ -1,6 +1,6 @@
 ---
 schema_version: 1
-id: notepad
+id: notepad-shell-host
 domain: 09-desktop-shell
 status: active
 title: "TODO-10 -- Notepad Text Editor"

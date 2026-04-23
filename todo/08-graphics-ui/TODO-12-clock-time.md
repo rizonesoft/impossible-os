@@ -26,7 +26,7 @@ title: "TODO-12 -- Kernel Time & Taskbar Clock"
 - `include/gfx.h` -- `gfx_fill_rounded_rect()`, `gfx_acrylic()` -- §3 flyout panel, §4 Control Panel clock face
 - `include/desktop/wm.h` -- `wm_create_window()`, `z_order` -- §3 clock flyout overlay at z_order=32000
 - → XREF: `06-networking/TODO-06-ntp-status-winsock.md` -- NTP sync calls `time_set(new_unix)` from this TODO; §1 `time_set()` must be the single authority for wall-clock updates
-- → XREF: `02-kernel-core/TODO-17-*` (HPET/TSC) -- FILETIME 100 ns ticks and high-resolution monotonic clock live there; this TODO only handles the civil calendar (seconds resolution)
+- Related (no stable XREF target): `02-kernel-core/TODO-17-*` (HPET/TSC) -- FILETIME 100 ns ticks and high-resolution monotonic clock live there; this TODO only handles the civil calendar (seconds resolution)
 - → XREF: `08-graphics-ui/TODO-10-taskbar.md §2` -- system tray provides the right-edge draw area where the clock lives (§1 draws inside it)
 
 ## Outcome

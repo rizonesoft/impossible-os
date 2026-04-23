@@ -25,7 +25,7 @@ title: "TODO-14 -- Win32 GDI / USER32 Desktop API Stubs"
 - `include/kernel/mm/pmm.h` -- `pmm_alloc_contiguous()`, `pmm_free()` -- used by §2 `CreateCompatibleBitmap` to back `HBITMAP`
 - `include/desktop/controls.h` (TODO-05) -- `MessageBox()`, `dialog_file_open/save()`, `dialog_color()` -- wrapped by §8
 - `include/desktop/wm.h` -- `wm_minimize()`, `wm_maximize()`, `wm_restore()`, `wm_set_title()` (TODO-06) -- used by §5 `ShowWindow`
-- → XREF: `02-kernel-core/TODO-*` (Win32 compatibility layer) -- this TODO is a direct prerequisite; PE32+ loader will call these GDI/USER32 stubs from user-mode via syscall thunks
+- Related (no stable XREF target): `02-kernel-core/TODO-*` (Win32 compatibility layer) -- this TODO is a direct prerequisite; PE32+ loader will call these GDI/USER32 stubs from user-mode via syscall thunks
 - → XREF: `08-graphics-ui/TODO-06-widget-dialogs.md §8` -- `MessageBox()`, `dialog_file_open/save()`, `dialog_color()` must exist before §8 dialog wrappers
 - → XREF: `08-graphics-ui/TODO-08-window-manager.md` -- `wm_minimize/maximize/restore/set_title` must exist before §5 `ShowWindow` wiring
 - → XREF: `08-graphics-ui/TODO-01-graphics-asset-foundation.md §1-§5` -- GDI drawing, bitmaps, icons, and cursors must reuse the native graphics/asset foundation rather than fork a second raster stack

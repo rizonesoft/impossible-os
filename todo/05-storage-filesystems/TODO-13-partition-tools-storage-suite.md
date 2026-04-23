@@ -22,7 +22,7 @@ title: "TODO-13 -- Partition Management & Storage Tools"
 - → XREF: `05-storage-filesystems/TODO-05-win32-file-io-api.md §1` -- IRP engine must be complete before any GUI tool issues file I/O
 - → XREF: `05-storage-filesystems/TODO-07-ixfs-advanced-enterprise.md §8` -- `ixfs_snapshot_create/list/restore/delete()` are the backend for §10
 - → XREF: `05-storage-filesystems/TODO-07-ixfs-advanced-enterprise.md §3` -- IXFS defrag backend (`FSCTL_DEFRAGMENT_FILE`) used by §5
-- → XREF: `09-desktop-shell/TODO-xx-window-manager` -- GUI panels for §4, §5, §6, §7, §8, §9, §10 require compositor/widget layer
+- Related (no stable XREF target): `09-desktop-shell/TODO-xx-window-manager` -- GUI panels for §4, §5, §6, §7, §8, §9, §10 require compositor/widget layer
 
 ## Outcome
 
@@ -44,7 +44,7 @@ title: "TODO-13 -- Partition Management & Storage Tools"
 | 💎  |   1   | §1 GPT partition write -- create/delete/resize + dual-header CRC update             | Existing `gpt_crc32()`, `guid_generate()`, `gpt_sync_backup()`   |  [ ]   |
 | 💎  |   2   | §2 MBR partition write -- create/delete, CHS encoding, slot management              | Existing MBR parse + EBR chain                                    |  [ ]   |
 | 💎  |   3   | §3 `diskpart` CLI -- interactive: list/create/delete/format/assign/active/info      | §1, §2 (CRUD backend); filesystem formatters for `format` command  |  [ ]   |
-| 💎  |   4   | §4 `chkdsk` CLI + GUI -- per-FS validation, repair, progress, boot-schedule         | All fsck backends (NTFS/IXFS/FAT32/exFAT) from §4–§10 of TODO-01–§12 |  [ ]   |
+| 💎  |   4   | §4 `chkdsk` CLI + GUI -- per-FS validation, repair, progress, boot-schedule         | Per-FS fsck backends in the NTFS / IXFS / FAT32 / exFAT TODOs (future; not a single XREF) |  [ ]   |
 | 💎  |   5   | §5 `defrag` CLI + GUI -- fragmentation analysis, block relocation, TRIM            | IXFS defrag backend (TODO-07 §7); FAT32/NTFS defrag pass          |  [ ]   |
 | 💎  |   6   | §6 `sfc` CLI + GUI -- build-time manifest, runtime verify, repair                  | Build script extension for manifest generation                    |  [ ]   |
 | ⭐  |   7   | §7 `recover` CLI + GUI -- IXFS/FAT32 deleted file recovery + data carving           | IXFS inode scan (TODO-07); FAT32 0xE5 scan                        |  [ ]   |

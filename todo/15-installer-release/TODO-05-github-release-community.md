@@ -68,7 +68,7 @@ outsiders can track progress without reading 100+ TODO files.
 | 1 | Contribution guide overhaul (`CONTRIBUTING.md`) | 💎 | `scripts/build.sh`; existing file |
 | 2 | Issue & PR templates (`.github/`) | ⭐ | §1; existing templates |
 | 3 | Changelog discipline (`CHANGELOG.md`) | 💎 | `gen-changelog.sh` (TODO-03 §5) |
-| 4 | GitHub release workflow (`create-release.sh`) | 💎 | `TODO-01 §5` signing; `TODO-03 §9 §5`; SDK `TODO-06 §8` |
+| 4 | GitHub release workflow (`create-release.sh`) | 💎 | `TODO-01 §5` signing; `D10T03 §9 §5`; SDK `D12T06 §8` |
 | 5 | README overhaul | ⭐ | §4 (download links); desktop screenshot |
 | 6 | Project website (`docs/website/`) | ⭐ | §5 content; §4 release links |
 | 7 | Community channels (Discussions + Discord) | 💎 | §6 live; §4 release announcements webhook |
@@ -97,7 +97,7 @@ outsiders can track progress without reading 100+ TODO files.
 
 ## 2. Changelog Discipline `[Sonnet]`
 
-**Source:** `CHANGELOG.md` (overhaul existing); `scripts/gen-changelog.sh` (from `TODO-03 §5`)
+**Source:** `CHANGELOG.md` (overhaul existing); `scripts/gen-changelog.sh` (from `D10T03 §5`)
 
 - [ ] **`CHANGELOG.md` format** -- [Keep a Changelog](https://keepachangelog.com/) style:
   ```markdown
@@ -123,7 +123,7 @@ outsiders can track progress without reading 100+ TODO files.
   [Unreleased]: https://github.com/rizonesoft/impossible-os/compare/v1.0.22100...HEAD
   ```
 - [ ] **PR requirement**: every PR must add an entry to `## [Unreleased]`; PR template (§4) checklist includes `[ ] CHANGELOG.md updated`; CI linter checks that `## [Unreleased]` section is non-empty on PRs that add/change code
-- [ ] **`scripts/gen-changelog.sh <old-tag> <new-tag>`** (specced in `TODO-03 §5`; used here): `gh pr list --state merged --base main --search "merged:{old-date}..{new-date}" --json title,number,url` → group by PR label (`kernel`/`boot`/`desktop`/`drivers`/etc.) → output draft `docs/changelog/{version}.md`; maintainer reviews + promotes to `CHANGELOG.md`
+- [ ] **`scripts/gen-changelog.sh <old-tag> <new-tag>`** (specced in `D10T03 §5`; used here): `gh pr list --state merged --base main --search "merged:{old-date}..{new-date}" --json title,number,url` → group by PR label (`kernel`/`boot`/`desktop`/`drivers`/etc.) → output draft `docs/changelog/{version}.md`; maintainer reviews + promotes to `CHANGELOG.md`
 - [ ] **Changelog lint in CI** (`.github/workflows/pr-check.yml`): `python scripts/lint-changelog.py` -- check `CHANGELOG.md` parses; warn if `## [Unreleased]` is empty on code-change PRs; error on version entry missing comparison link
 
 ---

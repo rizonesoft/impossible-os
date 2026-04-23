@@ -23,7 +23,7 @@ title: "TODO-08 -- SSH & FTP Clients"
 - `include/kernel/net/dns.h` + `dns_resolve()` -- resolve hostnames for SSH/FTP connections
 - → XREF: `06-networking/TODO-03-http-tls.md` -- Mbed TLS (`tls_connect`) used by §5 FTPS/FTPES; monocypher port mirrors the same `-ffreestanding` compile approach as Mbed TLS
 - → XREF: `06-networking/TODO-02-dns-sockets.md` -- BSD socket layer (`kern_connect/send/recv/close`) used by both SSH and FTP
-- → XREF: `06-networking/TODO-07-web-browser.md` -- `wget ftp://` (§8) extends the `wget` command from TODO-06 §4; `sftp://` File Manager URL support shares VFS path conventions
+- → XREF: `07-networking/TODO-07-web-browser.md` -- `wget ftp://` (§8) extends the `wget` command from TODO-06 §4; `sftp://` File Manager URL support shares VFS path conventions
 
 ## Outcome
 

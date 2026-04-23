@@ -65,7 +65,7 @@ title: "TODO-12 -- Screenshot Tool & Archive Manager"
 | 1 | Full + Window Capture + Hotkeys | 💎 | `fb_get_backbuffer`, `image_save_png`, `notify_send`, `hotkey_table` |
 | 2 | Region Select Overlay | ⭐ | §1 capture pipeline, `wm_create_window` z_order overlay |
 | 3 | Snipping Tool UI | 💎 | §1 + §2 capture complete, `CTRL_*` widgets |
-| 4 | Archive Manager | 💎 | `zip_open/create/add_file/extract/list` APIs (TODO-20 §4 + TODO-04 §6) |
+| 4 | Archive Manager | 💎 | `zip_open/create/add_file/extract/list` APIs (D12T01 §4) |
 | 5 | ZIP Shell Integration | 💎 | §4 stable, `file_assoc_set`, context menu verbs |
 
 ---

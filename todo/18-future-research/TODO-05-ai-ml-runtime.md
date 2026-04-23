@@ -64,8 +64,8 @@ the ggml port and XSAVE context switch work end-to-end.
 
 | Step | Section | 💎/⭐ | Dependency |
 |------|---------|-------|-----------|
-| 1 | Runtime option survey (ggml vs. ONNX vs. custom) | ⭐ | `TODO-09 §3` C++ assessment |
-| 2 | SIMD enablement for user mode (XSAVE per-thread) | ⭐ | `TODO-19 §1` + `TODO-04 §5` XSAVE foundations |
+| 1 | Runtime option survey (ggml vs. ONNX vs. custom) | ⭐ | `D10T09 §3` C++ assessment |
+| 2 | SIMD enablement for user mode (XSAVE per-thread) | ⭐ | `D02T09 §1` + `TODO-04 §5` XSAVE foundations |
 | 3 | ggml C99 kernel port | ⭐ | §2 SIMD; `pmm_alloc_contiguous`; kernel threads |
 | 4 | GGUF model format & loading | ⭐ | §3 ggml infrastructure; `vfs_read`; `vmm_map_page` |
 | 5 | OS integration points (`SYS_AI_INFER` + apps) | ⭐ | §3 §4 runtime + loader |
@@ -311,7 +311,7 @@ the ggml port and XSAVE context switch work end-to-end.
   - **Token throughput benchmark plan**: QEMU commands, benchmark script, expected tok/s per model at each quantization level
   - **GPU inference roadmap** (from §6): VirtIO-GPU dependencies, estimated speedup, blocking items
   - **Blocking dependencies summary**:
-    1. `TODO-19 §1` + `TODO-04 §5` XSAVE activation before §4 can be implemented
+    1. `D02T09 §1` + `TODO-04 §5` XSAVE activation before §4 can be implemented
     2. `TODO-09 §3` GCC/G++ before C++ ggml bindings
     3. `TODO-03 §6` Vulkan driver before GPU inference
     4. PMM large-allocation extension (ML pool reservation) before models > 4 GB

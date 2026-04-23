@@ -26,7 +26,7 @@ title: "TODO-08 -- Terminal Emulator"
 - `include/kernel/drivers/pit.h` -- `system_get_ticks()` -- §2 cursor blink 500 ms toggle
 - `include/kernel/drivers/mouse.h` -- mouse button + wheel events -- §4 scrollback wheel, drag selection
 - → XREF: `09-desktop-shell/TODO-01-clipboard.md §1` -- `clipboard_set(CLIP_TEXT, text, len)` used by §4 Ctrl+Shift+C copy; `clipboard_get()` for Ctrl+Shift+V paste; must be complete before §4
-- → XREF: `03-memory-concurrency/TODO-IPC` (or `include/kernel/ipc/signal.h`) -- SIGWINCH signal delivered in §5 resize; existing `signal_send()` call path
+- -> XREF: `03-memory-concurrency/TODO-09-win32-ipc-extensions.md` (or `include/kernel/ipc/signal.h`) -- SIGWINCH signal delivered in §5 resize; existing `signal_send()` call path
 - → XREF: `08-graphics-ui/TODO-04-animation-engine.md` -- `anim_mgr_add()` used by §7 tab slide animation
 
 ## Outcome

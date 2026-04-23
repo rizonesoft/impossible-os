@@ -11,7 +11,7 @@ title: "TODO-04 -- NTDLL & User-Mode Runtime"
 > **Goal:** Build `ntdll.dll` -- the user-mode runtime sitting between every Win32 program
 > and the kernel. Provides the process heap (`RtlHeap`), PE DLL loader (`LdrLoadDll`), TLS,
 > vectored exception handling, process CRT startup, and the fiber API. The stubs already
-> placed in `TODO-08 §2` become real implementations here; `HeapAlloc`/`LoadLibrary` in
+> placed in `D10T08 §2` become real implementations here; `HeapAlloc`/`LoadLibrary` in
 > `kernel32.dll` forward to these Rtl/Ldr functions.
 
 > [!IMPORTANT]
@@ -40,12 +40,12 @@ title: "TODO-04 -- NTDLL & User-Mode Runtime"
 ## Inputs
 
 - `include/kernel/sched/task.h` -- `struct task`, `TEB`, `PEB` fields; extend in this TODO
-- `include/win32/types.h` -- `HANDLE`, `DWORD`, `BOOL`, `NTSTATUS` -- `TODO-08 §5`
+- `include/win32/types.h` -- `HANDLE`, `DWORD`, `BOOL`, `NTSTATUS` -- `D10T08 §5`
 - `include/pe.h` -- `IMAGE_TLS_DIRECTORY`, `IMAGE_DATA_DIRECTORY` -- `TODO-07 §3`
-- `include/kernel/mm/vmm.h` -- `vmm_alloc_user()`, `VirtualAlloc`/`VirtualFree` -- `TODO-08 §3`
+- `include/kernel/mm/vmm.h` -- `vmm_alloc_user()`, `VirtualAlloc`/`VirtualFree` -- `D10T08 §3`
 - `include/kernel/syscall.h` -- syscall numbers for `SYS_VIRTUALALLOC`, `SYS_VIRTUALFREE`
 - `08-graphics-ui/TODO-A-Win32k-Shadow-SSDT-Master-Table.md` (XREF) -- `NtGdi*` / `NtUser*` syscall stub indices in `ntdll_syscalls.asm` must match Table 1; router contract in `08-graphics-ui/TODO-16-win32k-shadow-native-api.md`
-- `src/win32/ntdll.c` -- existing minimal stubs from `TODO-08 §2` (extend, do not duplicate)
+- `src/win32/ntdll.c` -- existing minimal stubs from `D10T08 §2` (extend, do not duplicate)
 - `10-platform-services/TODO-07-win32-pe-loader.md §9` (→ XREF) -- TEB/PEB minimal setup
 - `10-platform-services/TODO-08-win32-api-surface.md §2 §3 §7` (→ XREF) -- stubs + VirtualAlloc + LoadLibrary forwards
 - `02-kernel-core/TODO-23-exception-dispatch-seh.md §3` (→ XREF) -- SEH frame walk; VEH fallback
@@ -67,11 +67,11 @@ are available via `CreateFiber`/`SwitchToFiber`.
 
 | Step | Section | 💎/⭐ | Dependency |
 |------|---------|-------|-----------|
-| 1 | ntdll.dll structure + TEB/PEB extensions | 💎 | `TODO-07 §9`; `TODO-08 §2` stubs |
-| 2 | RtlHeap process heap allocator | 💎 | §1; `VirtualAlloc` (`TODO-08 §3`) |
-| 3 | LdrLoadDll PE DLL loader | 💎 | §1; `TODO-07 §4 §5 §7`; `TODO-08 §7` |
+| 1 | ntdll.dll structure + TEB/PEB extensions | 💎 | `TODO-07 §9`; `D10T08 §2` stubs |
+| 2 | RtlHeap process heap allocator | 💎 | §1; `VirtualAlloc` (`D10T08 §3`) |
+| 3 | LdrLoadDll PE DLL loader | 💎 | §1; `TODO-07 §4 §5 §7`; `D10T08 §7` |
 | 4 | Thread-local storage (TLS + PE TLS callbacks) | 💎 | §1 TEB extensions; `TODO-07 §3` TLS data dir |
-| 5 | Vectored exception handling (VEH) | 💎 | §1 TEB VEH chain; `TODO-08 §3` VirtualAlloc; `TODO-10 §3` SEH fallback |
+| 5 | Vectored exception handling (VEH) | 💎 | §1 TEB VEH chain; `D10T08 §3` VirtualAlloc; `D10T10 §3` SEH fallback |
 | 6 | Process startup (CRT0) | 💎 | §2 heap init; §3 Ldr init; §4 TLS init; §5 VEH |
 | 7 | User-mode libc shims (`user/lib/libc.lib`) | 💎 | §6 CRT0; `kernel32.dll` stubs |
 | 8 | Fiber API | ⭐ | §1 TEB FiberData; §6 thread-to-fiber conversion |

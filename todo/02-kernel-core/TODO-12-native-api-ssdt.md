@@ -66,7 +66,7 @@ title: "TODO-12 -- Native API Layer (Nt/Zw)"
 | 💎  |   4   | System Service Descriptor Table (SSDT) -- 470 entries          | §1                |  [x]   |
 | 💎  |   5   | Nt/Zw naming and existing syscall migration                    | §1, §4            |  [x]   |
 | 💎  |   6   | NtCreateFile / NtOpenFile / NtClose / NtReadFile / NtWriteFile | §5, TODO-05 §2    |  [x]   |
-| 💎  |   7   | NtCreateProcess / NtCreateThread / process-thread lifecycle    | §5, TODO-05 §5    |  [/]   |
+| 💎  |   7   | NtCreateProcess / NtCreateThread / process-thread lifecycle    | §5, TODO-05 §2    |  [/]   |
 | 💎  |   8   | Sync objects + NtWaitForMultipleObjects                        | §5, TODO-05 §6    |  [/]   |
 | 💎  |   9   | Virtual memory (alloc, free, protect, lock)                    | §5                |  [/]   |
 | 💎  |  10   | NtQuerySystemInformation / NtQueryInformationProcess           | §5                |  [/]   |
@@ -275,7 +275,7 @@ Core file I/O entry points routed through the Object Manager (→ XREF TODO-05).
 **Test checkpoint:** `NtCreateFile` on `X:\Logs\kernel.log` returns `STATUS_SUCCESS` + valid HANDLE. `NtClose(handle)` returns `STATUS_SUCCESS`; second `NtClose` returns `STATUS_INVALID_HANDLE`. `NtReadFile` populates IOSB correctly.
 
 ## 7. NtCreateProcess / NtCreateThread / Process-Thread Lifecycle
-Process and thread creation, suspension, termination, and thread context access through the Ob-managed process model (→ XREF TODO-05 §5).
+Process and thread creation, suspension, termination, and thread context access through the Ob-managed process model (→ XREF TODO-05 §2).
 
 - [x] `NtCreateProcess(0x0030)`: wraps task_create + ob_handle_table_inherit; returns HANDLE
 - [ ] When `TODO-22-environment-variables.md §1` lands: deep-copy parent `task->environ` and `task->argv` into the child via `env_copy()` / argv helpers (→ XREF `TODO-22-environment-variables.md §1`)
