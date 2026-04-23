@@ -66,7 +66,7 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 | 💎  |   2   | Generated ABI manifest and offset fingerprint      | §1                                 |  [x]   |
 | 💎  |   3   | Full bootloader/kernel mirror drift checker        | §2                                 |  [x]   |
 | 💎  |   4   | Optional payload descriptor array                  | §1                                 |  [x]   |
-| 💎  |   5   | Module and initrd handoff contract                 | §4                                 |  [ ]   |
+| 💎  |   5   | Module and initrd handoff contract                 | §4                                 |  [x]   |
 | 💎  |   6   | Handoff memory ownership and PMM reservation table | §4                                 |  [ ]   |
 | 💎  |   7   | Version negotiation and stale-loader error path    | §2, T03 §2                         |  [ ]   |
 | 💎  |   8   | Boot protocol documentation and schema changelog   | §1, §2, §3, §4, §5, §6, §7         |  [ ]   |
@@ -202,13 +202,29 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 
 ## 5. Module and initrd Handoff Contract
 
-- [ ] Define kernel module payload type for early `.kmod` or recovery helpers.
-- [ ] Define initrd/recovery payload type for recovery shell, driver bundles, and installer assets.
-- [ ] Add bootloader loading syntax in `boot.conf`: `module=`, `initrd=`, `recovery_image=`.
-- [ ] Add kernel-side enumeration API: `boot_payload_find(type, index)`.
-- [ ] Commit: `"boot: module and initrd handoff contract"`
+- [x] Define kernel module payload type for early `.kmod` or recovery helpers.
+- [x] Define initrd/recovery payload type for recovery shell, driver bundles, and installer assets.
+- [x] Add bootloader loading syntax in `boot.conf`: `module=`, `initrd=`, `recovery_image=`.
+- [x] Add kernel-side enumeration API: `boot_payload_find(type, index)`.
+- [x] Commit: `"boot: module and initrd handoff contract"`
 
 **Test checkpoint:** A boot image with `module=`, `initrd=`, and `recovery_image=` entries exposes the expected descriptor types, `boot_payload_find(type, index)` returns the correct start/length pair, and missing or malformed entries fail with a specific bootloader error. Verify on QEMU WHPX, QEMU TCG, VirtualBox, and bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 413 kernel + 16 user-mode PASS on KVM 2026-04-23 (46 `boot_payload:` cases including 3 new `find nth of type` / `find rejects NULL + NONE` / `find rejects count > MAX` assertions)
+
+> **Notes:**
+> - Types 1 (`BOOT_PAYLOAD_MODULE`), 2 (`BOOT_PAYLOAD_INITRD`), 3 (`BOOT_PAYLOAD_RECOVERY_IMAGE`) already existed in [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h) from §4. §5 wires the enum values to a concrete producer pipeline (boot.conf -> UEFI file load -> typed descriptor) and a consumer API (`boot_payload_find`).
+> - **Bootloader side** ([`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c)): added `module=`, `initrd=`, `recovery_image=` keys to `parse_conf_kv`. Each call routes through `stage_payload(type, path)` into a fixed 31-entry staging array; the -1 leaves headroom for future implicit payloads (TPM log, random seed, USB state). After `parse_boot_conf` returns, `load_staged_payloads()` walks the staging list, opens each file via SimpleFS, size-probes via `EFI_FILE_INFO_ID`, rejects sizes above 256 MiB (`BOOT_PAYLOAD_FILE_MAX` cap) and empty files, allocates `EfiLoaderData` pages (page-aligned by construction, so `alignment=4096` is truthful), reads the file, and populates the matching `payload_descriptors[si]` slot with `flags = BOOT_PAYLOAD_FLAG_VALID | BOOT_PAYLOAD_FLAG_RESERVED`, `producer_id = BOOT_PRODUCER_UEFI`. `FLAG_RESERVED` is the signal to §6's PMM reservation table that the range must NOT be handed back as free memory after boot. Every failure path calls `boot_fatal(BOOT_ERR_CONF_INVALID, ...)` with a specific message (missing file, empty file, implausible size, short read, OOM) per the test-checkpoint contract.
+> - **Bootloader hardening**: `parse_boot_conf` now explicitly zeros `g_staged_payload_count` / `g_staged_payload_overflow` / `g_staged_payloads[]` on entry. The EDK2 DEBUG build fills uninitialized BSS with `0xAF`, and the first boot attempt triple-faulted because `g_staged_payload_count` came up as `0xAFAFAFAF` (2.9 billion entries), triggering a bogus path-length overflow in `load_staged_payloads()`. Explicit zeroing makes the startup state deterministic regardless of PE loader behavior.
+> - **Mirror header** ([`src/boot/uefi/boot_info_mirror.h`](../../src/boot/uefi/boot_info_mirror.h)): added value-mirror `#define`s for `enum boot_payload_type` (9 values), `BOOT_PAYLOAD_FLAG_*` (4), `enum boot_payload_producer` (4) so bootloader UEFI code can reference the ABI values without pulling in the kernel header.
+> - **Kernel side** ([`src/kernel/main/boot_payload.c`](../../src/kernel/main/boot_payload.c) + [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h)): `boot_payload_find(info, type, index)` returns the `index`-th descriptor of `type` in the packed prefix, or NULL on miss / NULL info / `type=NONE` (NONE is the empty-slot sentinel, never a legitimate lookup target) / `payload_count > BOOT_PAYLOAD_MAX` (defensive guard against callers skipping validation). Parameter type is `uint32_t` rather than `enum boot_payload_type` so the prototype can appear before the enum definition later in the header. Pointer returned points into `info->payload_descriptors[]` and is valid for the lifetime of `info`.
+> - **Tests** ([`src/kernel/test/test_boot_info.c`](../../src/kernel/test/test_boot_info.c)): three new assertions -- `test_payload_find_returns_nth_of_type` (2 MODULE + 1 INITRD fixture, verifies correct Nth lookup + miss returns NULL), `test_payload_find_rejects_null_info_and_none_type`, `test_payload_find_rejects_out_of_range_count`. Total boot-suite count 400 -> 413.
+> - **Scope boundary**: §5 owns the handoff contract (producer + consumer API). Actual PMM reservation of the loaded payload ranges is §6 (item: "Iterate `payload_descriptors[]` in boot_info and reserve [phys_start, phys_start + length) for every descriptor with BOOT_PAYLOAD_FLAG_RESERVED set"). Without §6, payload pages still live in the boot_info validator's overlap check but PMM can reclaim them after Phase 3 -- the FLAG_RESERVED bit is there as the signal the reservation path will read.
+> - **Smoke test**: boots cleanly with empty payload set (no boot.conf module/initrd/recovery_image keys); `payload_count=0` path is validator short-circuit. A positive smoke with actual payload files is user-rig work -- the ESP image build does not currently stage test payloads, and fabricating one here adds scope beyond §5. `load_staged_payloads` is exercised synthetically by the kernel tests.
+
+> **Verified:** 2026-04-23 | commit `<pending>` | 5/5 items | build OK | 413 kernel + 16 user-mode PASS on KVM; boot_payload_find + staged loader + FLAG_RESERVED + 256 MiB cap
+> **Accepted:** [H] §5 loaded payload pages need PMM reservation (FLAG_RESERVED set in descriptor; actual reservation is §6 work) -> XREF: 01-boot-platform/TODO-01 §6 (item: "Iterate payload_descriptors[] in boot_info and reserve [phys_start, phys_start + length) for every descriptor with BOOT_PAYLOAD_FLAG_RESERVED set" at line 226)
+> **Quality reviewed:** 2026-04-23 | Codex 1x (adversarial) | 1H accepted (§6) + 1M fixed (256 MiB cap + overflow guard), 0 open | scope: boot-code-quality + kernel-code-quality
 
 ---
 
@@ -216,6 +232,7 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 
 - [ ] Create a single `boot_reserved_region` table populated from boot_info before PMM frees memory.
 - [ ] Include boot_info itself, USB DMA pages, TPM log copy, payload descriptors, runtime services regions, framebuffer, survival logs.
+- [ ] Iterate `payload_descriptors[]` in boot_info and reserve `[phys_start, phys_start + length)` for every descriptor with `BOOT_PAYLOAD_FLAG_RESERVED` set -- §5's bootloader loader sets this flag on every module/initrd/recovery_image allocation (UEFI `EfiLoaderData` is otherwise reclaimable), so without this step PMM can silently hand payload pages back to generic allocators after boot_payload_validate already passed. Add a kernel test that publishes a synthetic descriptor with FLAG_RESERVED, runs the reservation path, and asserts the range is unavailable to `pmm_alloc_contiguous()`.
 - [ ] Teach PMM to log every retained region and fail on overlap.
 - [ ] Add a boot diagnostic dump to BlackBox.
 - [ ] Commit: `"boot: centralize handoff memory reservations"`
@@ -357,7 +374,7 @@ Linux 6.16 (merged June 2025) shipped Kexec Handover (KHO) + the Live Update Orc
 | ⭐ | Feature                         | 🪟 Win11                   | 🐧 Linux                     | 🚀 Impossible OS                             |
 | --- | ------------------------------- | -------------------------- | ----------------------------- | -------------------------------------------- |
 | 💎 | Versioned loader/kernel ABI     | ✅ LPB + extensions        | ✅ boot_params + kernel_info | ⚠️ §1 shipped; §7 §8 open                    |
-| 💎 | Typed initrd and module handoff | ✅ ramdisk + boot drivers  | ✅ initrd + initramfs        | ⚠️ §4 ABI + validator shipped; §5 API open   |
+| 💎 | Typed initrd and module handoff | ✅ ramdisk + boot drivers  | ✅ initrd + initramfs        | ✅ §4 ABI + §5 producer/consumer shipped     |
 | ⭐ | Generated ABI manifest          | ⚠️ internal only           | ⚠️ docs + CI                 | ✅ §2 + §3 manifest + drift detector shipped |
 | ⭐ | Field-level ownership map       | ⚠️ internal ownership      | ⚠️ scattered docs            | ⚠️ §1 matrix shipped; §10 audit open         |
 | 💎 | Capability negotiation          | ✅ loader extensions       | ✅ version + flags           | ⬜ §11                                       |

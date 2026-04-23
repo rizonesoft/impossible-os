@@ -674,6 +674,110 @@ static void test_payload_none_past_prefix_with_phys_start_rejected(void)
                    "err=NONE_NOT_EMPTY (past-prefix smuggling)");
 }
 
+static void test_payload_find_returns_nth_of_type(void)
+{
+    enum boot_payload_error err = BOOT_PAYLOAD_ERR_OK;
+
+    bi_payload_zero();
+    /* Three payloads: MODULE, INITRD, MODULE. boot_payload_find should
+     * return index 0 of MODULE as slot 0, index 1 of MODULE as slot 2,
+     * index 0 of INITRD as slot 1, and index 2 of MODULE (only 2 exist)
+     * as NULL. This is the contract section 5 relies on. */
+    s_test_buf.payload_count                     = 3;
+    s_test_buf.payload_descriptors[0].type       = BOOT_PAYLOAD_MODULE;
+    s_test_buf.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
+    s_test_buf.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
+    s_test_buf.payload_descriptors[0].length     = 0x1000ull;
+
+    s_test_buf.payload_descriptors[1].type       = BOOT_PAYLOAD_INITRD;
+    s_test_buf.payload_descriptors[1].flags      = BOOT_PAYLOAD_FLAG_VALID;
+    s_test_buf.payload_descriptors[1].phys_start = SAFE_PAYLOAD_START + 0x10000ull;
+    s_test_buf.payload_descriptors[1].length     = 0x2000ull;
+
+    s_test_buf.payload_descriptors[2].type       = BOOT_PAYLOAD_MODULE;
+    s_test_buf.payload_descriptors[2].flags      = BOOT_PAYLOAD_FLAG_VALID;
+    s_test_buf.payload_descriptors[2].phys_start = SAFE_PAYLOAD_START + 0x20000ull;
+    s_test_buf.payload_descriptors[2].length     = 0x4000ull;
+
+    s_test_buf.payload_total_bytes = 0x1000ull + 0x2000ull + 0x4000ull;
+
+    TEST_ASSERT_EQ(boot_payload_validate(&s_test_buf, &err), BOOT_OK,
+                   "three-descriptor fixture passes validator");
+    TEST_ASSERT_EQ((int)err, (int)BOOT_PAYLOAD_ERR_OK, "validator err=OK");
+
+    const struct boot_payload_desc *d;
+    d = boot_payload_find(&s_test_buf, BOOT_PAYLOAD_MODULE, 0);
+    TEST_ASSERT_EQ((unsigned long)(d != (void *)0 ? 1 : 0), (unsigned long)1,
+                   "find MODULE [0] non-NULL");
+    TEST_ASSERT_EQ((unsigned long)d->phys_start,
+                   (unsigned long)SAFE_PAYLOAD_START,
+                   "find MODULE [0] -> slot 0 phys_start");
+
+    d = boot_payload_find(&s_test_buf, BOOT_PAYLOAD_MODULE, 1);
+    TEST_ASSERT_EQ((unsigned long)(d != (void *)0 ? 1 : 0), (unsigned long)1,
+                   "find MODULE [1] non-NULL");
+    TEST_ASSERT_EQ((unsigned long)d->phys_start,
+                   (unsigned long)(SAFE_PAYLOAD_START + 0x20000ull),
+                   "find MODULE [1] -> slot 2 phys_start");
+
+    d = boot_payload_find(&s_test_buf, BOOT_PAYLOAD_INITRD, 0);
+    TEST_ASSERT_EQ((unsigned long)(d != (void *)0 ? 1 : 0), (unsigned long)1,
+                   "find INITRD [0] non-NULL");
+    TEST_ASSERT_EQ((unsigned long)d->length,
+                   (unsigned long)0x2000ull,
+                   "find INITRD [0] -> slot 1 length");
+
+    d = boot_payload_find(&s_test_buf, BOOT_PAYLOAD_MODULE, 2);
+    TEST_ASSERT_EQ((unsigned long)(d != (void *)0 ? 1 : 0), (unsigned long)0,
+                   "find MODULE [2] NULL (only 2 exist)");
+
+    d = boot_payload_find(&s_test_buf, BOOT_PAYLOAD_RECOVERY_IMAGE, 0);
+    TEST_ASSERT_EQ((unsigned long)(d != (void *)0 ? 1 : 0), (unsigned long)0,
+                   "find RECOVERY_IMAGE [0] NULL (none in fixture)");
+}
+
+static void test_payload_find_rejects_null_info_and_none_type(void)
+{
+    const struct boot_payload_desc *d;
+
+    d = boot_payload_find((const struct boot_info *)0, BOOT_PAYLOAD_MODULE, 0);
+    TEST_ASSERT_EQ((unsigned long)(d != (void *)0 ? 1 : 0), (unsigned long)0,
+                   "find(NULL, MODULE, 0) returns NULL");
+
+    bi_payload_zero();
+    s_test_buf.payload_count              = 1;
+    s_test_buf.payload_descriptors[0].type       = BOOT_PAYLOAD_MODULE;
+    s_test_buf.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
+    s_test_buf.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
+    s_test_buf.payload_descriptors[0].length     = 0x1000ull;
+    s_test_buf.payload_total_bytes        = 0x1000ull;
+
+    /* NONE is the empty-slot sentinel -- looking it up is always NULL. */
+    d = boot_payload_find(&s_test_buf, BOOT_PAYLOAD_NONE, 0);
+    TEST_ASSERT_EQ((unsigned long)(d != (void *)0 ? 1 : 0), (unsigned long)0,
+                   "find(info, NONE, 0) returns NULL");
+}
+
+static void test_payload_find_rejects_out_of_range_count(void)
+{
+    const struct boot_payload_desc *d;
+
+    bi_payload_zero();
+    /* Synthesize a count past BOOT_PAYLOAD_MAX. A real bootloader could
+     * not get past the validator with this, but boot_payload_find must
+     * still defend against a caller that skipped validation. */
+    s_test_buf.payload_count = BOOT_PAYLOAD_MAX + 1;
+    /* slot 0 has a real descriptor; find() must refuse to walk anyway */
+    s_test_buf.payload_descriptors[0].type       = BOOT_PAYLOAD_MODULE;
+    s_test_buf.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
+    s_test_buf.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
+    s_test_buf.payload_descriptors[0].length     = 0x1000ull;
+
+    d = boot_payload_find(&s_test_buf, BOOT_PAYLOAD_MODULE, 0);
+    TEST_ASSERT_EQ((unsigned long)(d != (void *)0 ? 1 : 0), (unsigned long)0,
+                   "find rejects payload_count > BOOT_PAYLOAD_MAX");
+}
+
 static void test_payload_desc_size_pin(void)
 {
     /* Guard against any accidental change to boot_payload_desc layout.
@@ -885,6 +989,12 @@ void test_register_boot_info(void)
                             test_payload_none_with_flags_rejected, TEST_CAT_BOOT);
     test_suite_register_cat("boot_payload: NONE past prefix with phys_start rejected",
                             test_payload_none_past_prefix_with_phys_start_rejected, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_payload: find nth of type",
+                            test_payload_find_returns_nth_of_type, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_payload: find rejects NULL + NONE",
+                            test_payload_find_rejects_null_info_and_none_type, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_payload: find rejects count > MAX",
+                            test_payload_find_rejects_out_of_range_count, TEST_CAT_BOOT);
     test_suite_register_cat("boot_payload: desc size pin",
                             test_payload_desc_size_pin, TEST_CAT_BOOT);
     test_suite_register_cat("boot_payload: phys not aligned",

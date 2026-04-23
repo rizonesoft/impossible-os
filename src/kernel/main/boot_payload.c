@@ -429,3 +429,35 @@ boot_result_t boot_payload_validate(const struct boot_info *info,
 
     return BOOT_OK;
 }
+
+const struct boot_payload_desc *
+boot_payload_find(const struct boot_info *info,
+                  uint32_t type,
+                  uint32_t index)
+{
+    if (info == (const struct boot_info *)0)
+        return (const struct boot_payload_desc *)0;
+    /* NONE is the empty-slot sentinel; boot_payload_validate rejects any
+     * NONE descriptor carrying data, so looking it up would always return
+     * NULL. Refusing the type at the API level makes intent explicit and
+     * shortens the hot path. */
+    if (type == (uint32_t)BOOT_PAYLOAD_NONE)
+        return (const struct boot_payload_desc *)0;
+    /* The validator must have cleared this before any consumer runs, but
+     * guard so a caller that skipped validation does not walk past the
+     * fixed array bound. */
+    if (info->payload_count > BOOT_PAYLOAD_MAX)
+        return (const struct boot_payload_desc *)0;
+
+    uint32_t seen = 0u;
+    uint32_t i;
+    for (i = 0u; i < info->payload_count; i++) {
+        const struct boot_payload_desc *d = &info->payload_descriptors[i];
+        if (d->type != type)
+            continue;
+        if (seen == index)
+            return d;
+        seen++;
+    }
+    return (const struct boot_payload_desc *)0;
+}

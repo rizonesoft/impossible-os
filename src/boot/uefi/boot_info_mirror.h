@@ -244,6 +244,31 @@ struct boot_usb_controller {
 /* Typed payload descriptor array (§4) -- must match kernel/boot_info.h. */
 #define BOOT_PAYLOAD_MAX  32
 
+/* enum boot_payload_type mirror (value-for-value identical to
+ * include/kernel/boot_info.h). C enums carry host ABI; we use plain
+ * #defines here so bootloader UEFI code can reference the values. */
+#define BOOT_PAYLOAD_NONE              0u
+#define BOOT_PAYLOAD_MODULE            1u
+#define BOOT_PAYLOAD_INITRD            2u
+#define BOOT_PAYLOAD_RECOVERY_IMAGE    3u
+#define BOOT_PAYLOAD_HIBERNATION_META  4u
+#define BOOT_PAYLOAD_TPM_EVENT_LOG     5u
+#define BOOT_PAYLOAD_NETWORK_CONFIG    6u
+#define BOOT_PAYLOAD_RANDOM_SEED       7u
+#define BOOT_PAYLOAD_USB_HANDOVER      8u
+
+/* BOOT_PAYLOAD_FLAG_* mirror */
+#define BOOT_PAYLOAD_FLAG_VALID        (1u << 0)
+#define BOOT_PAYLOAD_FLAG_CHECKSUMMED  (1u << 1)
+#define BOOT_PAYLOAD_FLAG_REQUIRED     (1u << 2)
+#define BOOT_PAYLOAD_FLAG_RESERVED     (1u << 3)
+
+/* enum boot_payload_producer mirror */
+#define BOOT_PRODUCER_NONE          0u
+#define BOOT_PRODUCER_UEFI          1u
+#define BOOT_PRODUCER_MULTIBOOT2    2u
+#define BOOT_PRODUCER_KERNEL_TEST   3u
+
 struct boot_payload_desc {
     UINT32 type;         /* enum boot_payload_type */
     UINT32 flags;        /* BOOT_PAYLOAD_FLAG_* bitmask */

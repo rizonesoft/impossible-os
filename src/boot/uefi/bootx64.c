@@ -530,6 +530,18 @@ static void serial_early_print_hex16(UINT16 val)
     serial_early_putchar(hex[ val        & 0xF]);
 }
 
+/* 16-hex-digit printer for UINT64 EFI_STATUS and physical addresses in
+ * the early-boot diagnostic path. Same truncation-free shape as
+ * serial_early_print_hex16 but walks 16 nibbles. Used by the section 5
+ * payload loader's failure messages. */
+static void serial_early_print_hex64(UINT64 val)
+{
+    static const char hex[] = "0123456789ABCDEF";
+    int i;
+    for (i = 60; i >= 0; i -= 4)
+        serial_early_putchar(hex[(val >> i) & 0xFull]);
+}
+
 /* Forward declaration */
 static void efi_print(CHAR16 *str);
 
@@ -1882,6 +1894,99 @@ static UINT32 ascii_atoi(const char *s)
     return val;
 }
 
+/* ============================================================================
+ * section 5: typed payload staging for module= / initrd= / recovery_image=
+ *
+ * parse_conf_kv() routes each occurrence of these keys through
+ * stage_payload() into a fixed staging array. After boot.conf parsing
+ * completes, load_staged_payloads() opens each staged file, allocates
+ * EfiLoaderData pages, reads the file, and populates the matching
+ * payload_descriptors[] slot in g_boot_info_ptr. Runs while Boot
+ * Services are still alive; consumers (kernel-side boot_payload_find)
+ * read the descriptors after ExitBootServices.
+ *
+ * The staging layer exists because a single boot.conf line cannot
+ * directly own file I/O (parse_conf_kv is called once per key=value
+ * pair and cannot partially fail without losing the rest of the file's
+ * configuration). Separating parse from load keeps error handling
+ * concentrated and lets the PATHS list survive into the load phase
+ * even if the parser encounters later unrelated errors.
+ * ============================================================================ */
+
+/* Max length of a single ESP-relative payload path. Covers realistic
+ * trees like \\EFI\\ImpossibleOS\\modules\\subdir\\name.kmod with room
+ * for a filename that is a few times the FAT short-name limit. If a
+ * future layout needs longer paths, grow this (producer_id bytes-in-path
+ * are hashed for sanity logging but never truncated). */
+#define BOOT_PAYLOAD_PATH_MAX 192
+
+/* Per-payload size cap. Typical module/initrd/recovery images in real
+ * deployments are well under this; anything larger almost certainly
+ * indicates FAT metadata corruption, a pointer-turned-size bug, or a
+ * deliberately-malicious image. Cap before AllocatePages so we fail
+ * cleanly with a specific message instead of attempting a wild
+ * allocation that would either OOM or wrap the page-count math. Sized
+ * to match the comparable boot.conf 1 MiB sanity cap philosophy: big
+ * enough for any legitimate payload but much smaller than host RAM. */
+#define BOOT_PAYLOAD_FILE_MAX (256ull * 1024ull * 1024ull)  /* 256 MiB */
+
+struct staged_payload {
+    UINT32 type;                          /* BOOT_PAYLOAD_MODULE / _INITRD / _RECOVERY_IMAGE */
+    char   path[BOOT_PAYLOAD_PATH_MAX];   /* ASCII; converted to CHAR16 on load */
+};
+
+/* Reserve BOOT_PAYLOAD_MAX - 1 slots; the -1 leaves headroom for future
+ * implicit payloads (TPM event log copy, random seed, USB handover
+ * state) that do not come from boot.conf. Slot 31 stays open. */
+#define BOOT_PAYLOAD_STAGE_MAX (BOOT_PAYLOAD_MAX - 1)
+static struct staged_payload g_staged_payloads[BOOT_PAYLOAD_STAGE_MAX];
+static UINTN g_staged_payload_count = 0;
+static UINT32 g_staged_payload_overflow = 0;
+
+/* Append one payload to the staging list. Type is already resolved to
+ * BOOT_PAYLOAD_*. Path is ASCII (from boot.conf); empty paths are
+ * rejected at the parser level before this is called. Overflow beyond
+ * BOOT_PAYLOAD_STAGE_MAX is counted and surfaced via
+ * payload_overflow in boot_info -- the validator's existing
+ * BOOT_PAYLOAD_ERR_OVERFLOW_TRUNCATED check then refuses to boot
+ * with an incomplete payload set. */
+static void stage_payload(UINT32 type, const char *path)
+{
+    if (path == (const char *)0 || path[0] == '\0') {
+        serial_early_print("[BOOT] stage_payload: empty path (ignored)\n");
+        return;
+    }
+    if (g_staged_payload_count >= BOOT_PAYLOAD_STAGE_MAX) {
+        g_staged_payload_overflow++;
+        serial_early_print("[WARN] boot.conf: payload staging full (max=");
+        serial_early_print_uint((UINT32)BOOT_PAYLOAD_STAGE_MAX);
+        serial_early_print("); dropping '");
+        serial_early_print(path);
+        serial_early_print("'\n");
+        return;
+    }
+    struct staged_payload *slot = &g_staged_payloads[g_staged_payload_count];
+    slot->type = type;
+    UINTN i;
+    for (i = 0; i < BOOT_PAYLOAD_PATH_MAX - 1 && path[i] != '\0'; i++)
+        slot->path[i] = path[i];
+    slot->path[i] = '\0';
+    /* Path overflow is a producer bug: the intended file cannot be
+     * located by this name. Refuse to continue rather than silently
+     * truncating to the wrong ESP file. */
+    if (path[i] != '\0') {
+        serial_early_print("[FATAL] boot.conf: payload path exceeds ");
+        serial_early_print_uint((UINT32)(BOOT_PAYLOAD_PATH_MAX - 1));
+        serial_early_print(" chars: '");
+        serial_early_print(path);
+        serial_early_print("'\n");
+        boot_fatal(BOOT_ERR_CONF_INVALID,
+                   "boot.conf payload path too long",
+                   "Shorten the path or raise BOOT_PAYLOAD_PATH_MAX.");
+    }
+    g_staged_payload_count++;
+}
+
 /* Set boot_config defaults (used when boot.conf is missing or on parse error) */
 static void boot_config_defaults(struct boot_config *cfg)
 {
@@ -2075,6 +2180,24 @@ static void parse_conf_kv(struct boot_config *cfg,
            \EFI\ImpossibleOS\kernel.exe).  Accept the key so boot.conf
            can document the default without triggering a warning. */
     }
+    else if (ascii_streq(key, "module")) {
+        /* section 5 typed payload: early kernel module file. Value is
+         * an ESP-relative path like '\\EFI\\ImpossibleOS\\mod\\net.kmod'.
+         * Multiple module= lines are allowed; each stages one MODULE
+         * descriptor. */
+        stage_payload(BOOT_PAYLOAD_MODULE, val);
+    }
+    else if (ascii_streq(key, "initrd")) {
+        /* section 5 typed payload: initrd/initramfs. One or more
+         * initrd= lines stage INITRD descriptors in order. */
+        stage_payload(BOOT_PAYLOAD_INITRD, val);
+    }
+    else if (ascii_streq(key, "recovery_image")) {
+        /* section 5 typed payload: recovery env image. Typically one
+         * recovery_image= line, but the staging layer accepts multiple
+         * (e.g. recovery + installer bundle). */
+        stage_payload(BOOT_PAYLOAD_RECOVERY_IMAGE, val);
+    }
     else {
         /* Unknown key -- warn but don't fail (forward compatibility) */
         serial_early_print("[WARN] boot.conf: unknown key '");
@@ -2116,6 +2239,17 @@ static void parse_boot_conf(void)
 
     /* Always start with defaults */
     boot_config_defaults(cfg);
+
+    /* Reset section 5 payload staging explicitly. EDK2 DEBUG builds
+     * fill unused pool / BSS memory with 0xAF, and in practice these
+     * statics come up with that poison pattern instead of zero --
+     * enough to make stage_payload's count >= STAGE_MAX check fail
+     * early (0xAFAFAFAF >= 31) and leak payload_overflow=0xAFAFAFAF
+     * into the validator. Initializing at parse entry guarantees a
+     * clean slate on every boot regardless of PE loader behavior. */
+    g_staged_payload_count = 0;
+    g_staged_payload_overflow = 0;
+    efi_memset(g_staged_payloads, 0, sizeof(g_staged_payloads));
 
     serial_early_print("[BOOT] parse_boot_conf...\n");
 
@@ -2322,6 +2456,254 @@ static void parse_boot_conf(void)
 
     cfg->config_found = 1;
     gBS->FreePool(buf);
+}
+
+/* ============================================================================
+ * section 5: Load staged payloads (module / initrd / recovery_image)
+ *
+ * Runs AFTER parse_boot_conf (so g_staged_payloads is populated) and
+ * BEFORE load_kernel (so descriptor population finishes while Boot
+ * Services are live). Any failure aborts the boot via boot_fatal --
+ * "missing or malformed entries fail with a specific bootloader error"
+ * per section 5 test checkpoint.
+ * ============================================================================ */
+
+/* Convert an ASCII path to UTF-16 on a caller-supplied stack buffer.
+ * Returns 0 on overflow, 1 on success. The buffer must be sized for at
+ * least (strlen(src) + 1) CHAR16 units; caller passes the declared
+ * element count. */
+static int ascii_to_utf16(const char *src, CHAR16 *dst, UINTN dst_max)
+{
+    UINTN i;
+    for (i = 0; i < dst_max - 1 && src[i] != '\0'; i++) {
+        dst[i] = (CHAR16)(UINT8)src[i];  /* ASCII subset is identity in UTF-16 */
+    }
+    dst[i] = (CHAR16)0;
+    return src[i] == '\0';
+}
+
+/* Locate SimpleFS on the boot device (same pattern as load_kernel's
+ * opening block). Returns EFI_SUCCESS + *out_fs on success; on failure
+ * callers must not dereference *out_fs. */
+static EFI_STATUS locate_boot_fs(EFI_SIMPLE_FILE_SYSTEM_PROTOCOL **out_fs)
+{
+    EFI_GUID fs_guid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
+    EFI_STATUS status = EFI_NOT_FOUND;
+    *out_fs = (EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *)0;
+    if (g_boot_device_handle) {
+        status = gBS->HandleProtocol(g_boot_device_handle, &fs_guid,
+                                     (VOID **)out_fs);
+        if (EFI_ERROR(status))
+            status = gBS->LocateProtocol(&fs_guid, (VOID *)0, (VOID **)out_fs);
+    } else {
+        status = gBS->LocateProtocol(&fs_guid, (VOID *)0, (VOID **)out_fs);
+    }
+    return status;
+}
+
+static void load_staged_payloads(void)
+{
+    if (g_staged_payload_count == 0 && g_staged_payload_overflow == 0) {
+        /* Common path: no module/initrd/recovery_image in boot.conf.
+         * payload_count / payload_overflow stay at their memset-zero
+         * default; validator short-circuits on count=0 with BOOT_OK. */
+        return;
+    }
+
+    serial_early_print("[BOOT] load_staged_payloads: staging=");
+    serial_early_print_uint((UINT32)g_staged_payload_count);
+    if (g_staged_payload_overflow) {
+        serial_early_print(" overflow=");
+        serial_early_print_uint(g_staged_payload_overflow);
+    }
+    serial_early_print("\n");
+
+    EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *fs;
+    EFI_STATUS status = locate_boot_fs(&fs);
+    if (EFI_ERROR(status)) {
+        boot_fatal(BOOT_ERR_CONF_INVALID,
+                   "boot.conf names module/initrd/recovery_image but no filesystem is available",
+                   "Check the boot device partition and SimpleFS driver.");
+    }
+
+    EFI_FILE_PROTOCOL *root_dir;
+    status = fs->OpenVolume(fs, &root_dir);
+    if (EFI_ERROR(status)) {
+        boot_fatal(BOOT_ERR_CONF_INVALID,
+                   "boot.conf payload load: OpenVolume failed",
+                   "Boot device filesystem is unavailable or corrupt.");
+    }
+
+    UINT64 total_bytes = 0ull;
+    UINTN si;
+    for (si = 0; si < g_staged_payload_count; si++) {
+        struct staged_payload *stg = &g_staged_payloads[si];
+
+        /* +1 for NUL; path came from an already-bounded ASCII buffer so
+         * length fits. */
+        CHAR16 wpath[BOOT_PAYLOAD_PATH_MAX];
+        if (!ascii_to_utf16(stg->path, wpath, BOOT_PAYLOAD_PATH_MAX)) {
+            boot_fatal(BOOT_ERR_CONF_INVALID,
+                       "boot.conf payload path UTF-16 conversion overflow",
+                       "Payload path length exceeds bootloader buffer.");
+        }
+
+        EFI_FILE_PROTOCOL *file;
+        status = root_dir->Open(root_dir, &file, wpath,
+                                EFI_FILE_MODE_READ, 0);
+        if (EFI_ERROR(status)) {
+            serial_early_print("[FATAL] boot.conf payload open failed: '");
+            serial_early_print(stg->path);
+            serial_early_print("' status=0x");
+            serial_early_print_hex64((UINT64)status);
+            serial_early_print("\n");
+            root_dir->Close(root_dir);
+            boot_fatal(BOOT_ERR_CONF_INVALID,
+                       "boot.conf named payload not found or unreadable",
+                       "Check the path spelling and that the file is on the boot ESP.");
+        }
+
+        /* FILE_INFO size probe (identical pattern to boot.conf loader). */
+        EFI_GUID file_info_guid = EFI_FILE_INFO_ID;
+        UINTN info_size = 0;
+        status = file->GetInfo(file, &file_info_guid, &info_size, (VOID *)0);
+        if (status != EFI_BUFFER_TOO_SMALL || info_size == 0) {
+            file->Close(file);
+            root_dir->Close(root_dir);
+            boot_fatal(BOOT_ERR_CONF_INVALID,
+                       "boot.conf payload GetInfo size-probe failed",
+                       "Cannot determine payload file size.");
+        }
+        VOID *info_buf = (VOID *)0;
+        status = gBS->AllocatePool(EfiLoaderData, info_size, &info_buf);
+        if (EFI_ERROR(status) || !info_buf) {
+            file->Close(file);
+            root_dir->Close(root_dir);
+            boot_fatal(BOOT_ERR_CONF_INVALID,
+                       "boot.conf payload AllocatePool(info) failed",
+                       "Out of EfiLoaderData memory for FILE_INFO.");
+        }
+        status = file->GetInfo(file, &file_info_guid, &info_size, info_buf);
+        if (EFI_ERROR(status)) {
+            gBS->FreePool(info_buf);
+            file->Close(file);
+            root_dir->Close(root_dir);
+            boot_fatal(BOOT_ERR_CONF_INVALID,
+                       "boot.conf payload GetInfo read failed",
+                       "Payload file metadata unreadable.");
+        }
+        UINT64 file_size = ((EFI_FILE_INFO *)info_buf)->FileSize;
+        gBS->FreePool(info_buf);
+
+        if (file_size == 0) {
+            file->Close(file);
+            root_dir->Close(root_dir);
+            serial_early_print("[FATAL] boot.conf payload is empty: '");
+            serial_early_print(stg->path);
+            serial_early_print("'\n");
+            boot_fatal(BOOT_ERR_CONF_INVALID,
+                       "boot.conf payload file is empty",
+                       "Remove the entry or replace the file.");
+        }
+
+        /* Sanity cap against corrupt / malicious FAT metadata. Below
+         * the cap, the (file_size + EFI_PAGE_SIZE - 1) overflow is
+         * mathematically impossible (256 MiB + 4 KiB < UINT64_MAX),
+         * so a single ceiling check covers both bugs at once. */
+        if (file_size > BOOT_PAYLOAD_FILE_MAX) {
+            file->Close(file);
+            root_dir->Close(root_dir);
+            serial_early_print("[FATAL] boot.conf payload implausibly large: '");
+            serial_early_print(stg->path);
+            serial_early_print("' FileSize=0x");
+            serial_early_print_hex64(file_size);
+            serial_early_print(" (cap=256 MiB)\n");
+            boot_fatal(BOOT_ERR_CONF_INVALID,
+                       "boot.conf payload exceeds 256 MiB sanity cap",
+                       "Filesystem likely corrupt, or payload is wrong file.");
+        }
+
+        /* Page-align the allocation so the resulting phys_start is a
+         * multiple of 4 KiB and matches the descriptor's alignment=4096
+         * promise. AllocatePages always returns page-aligned addresses.
+         * Overflow-safe because file_size <= 256 MiB per the cap above. */
+        UINTN pages = (UINTN)((file_size + (UINT64)EFI_PAGE_SIZE - 1ull)
+                               / (UINT64)EFI_PAGE_SIZE);
+        EFI_PHYSICAL_ADDRESS payload_addr = 0;
+        status = gBS->AllocatePages(AllocateAnyPages, EfiLoaderData,
+                                    pages, &payload_addr);
+        if (EFI_ERROR(status)) {
+            file->Close(file);
+            root_dir->Close(root_dir);
+            boot_fatal(BOOT_ERR_CONF_INVALID,
+                       "boot.conf payload AllocatePages failed",
+                       "Out of EfiLoaderData memory for payload buffer.");
+        }
+
+        UINTN read_size = (UINTN)file_size;
+        status = file->Read(file, &read_size, (VOID *)(UINTN)payload_addr);
+        file->Close(file);
+        if (EFI_ERROR(status)) {
+            root_dir->Close(root_dir);
+            boot_fatal(BOOT_ERR_CONF_INVALID,
+                       "boot.conf payload Read failed",
+                       "Short or erroring read from payload file.");
+        }
+        if ((UINT64)read_size != file_size) {
+            serial_early_print("[FATAL] boot.conf payload short read: '");
+            serial_early_print(stg->path);
+            serial_early_print("' expected=");
+            serial_early_print_uint((UINT32)file_size);
+            serial_early_print(" got=");
+            serial_early_print_uint((UINT32)read_size);
+            serial_early_print("\n");
+            root_dir->Close(root_dir);
+            boot_fatal(BOOT_ERR_CONF_INVALID,
+                       "boot.conf payload short read",
+                       "File truncated during read.");
+        }
+
+        /* Populate the matching payload_descriptors[] slot. Packed
+         * prefix: slot index == si, so payload_count becomes
+         * g_staged_payload_count at the end. */
+        struct boot_payload_desc *d = &g_boot_info_ptr->payload_descriptors[si];
+        d->type        = stg->type;
+        /* FLAG_RESERVED is mandatory on every bootloader-loaded typed
+         * payload: the allocation lives in EfiLoaderData, which PMM
+         * would otherwise reclaim to the free-page pool after boot.
+         * Without this flag the payload pages can be re-handed out as
+         * generic kernel memory, silently corrupting the module /
+         * initrd / recovery image AFTER boot_payload_validate already
+         * passed. PMM reservation of these ranges is owned by the
+         * Handoff Memory Ownership section (see XREF in §5 Notes). */
+        d->flags       = BOOT_PAYLOAD_FLAG_VALID | BOOT_PAYLOAD_FLAG_RESERVED;
+        d->phys_start  = (UINT64)payload_addr;
+        d->length      = file_size;
+        d->alignment   = 4096ull;  /* AllocatePages guarantees page align */
+        d->checksum    = 0ull;     /* FLAG_CHECKSUMMED not set; reserved */
+        d->producer_id = BOOT_PRODUCER_UEFI;
+        d->_reserved   = 0u;
+
+        total_bytes += file_size;
+
+        serial_early_print("[BOOT] payload[");
+        serial_early_print_uint((UINT32)si);
+        serial_early_print("] type=");
+        serial_early_print_uint(stg->type);
+        serial_early_print(" phys=0x");
+        serial_early_print_hex64((UINT64)payload_addr);
+        serial_early_print(" len=");
+        serial_early_print_uint((UINT32)file_size);
+        serial_early_print(" path='");
+        serial_early_print(stg->path);
+        serial_early_print("'\n");
+    }
+
+    root_dir->Close(root_dir);
+
+    g_boot_info_ptr->payload_count       = (UINT32)g_staged_payload_count;
+    g_boot_info_ptr->payload_overflow    = g_staged_payload_overflow;
+    g_boot_info_ptr->payload_total_bytes = total_bytes;
 }
 
 /* ============================================================================
@@ -4934,6 +5316,12 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     g_boot_info_ptr->timing.conf_start = boot_rdtsc();
     parse_boot_conf();
     g_boot_info_ptr->timing.conf_end = boot_rdtsc();
+
+    /* section 5 typed payload load. Runs right after boot.conf parse so
+     * staging is populated, and before load_kernel so the payload
+     * allocations do not compete with the 32/16/8 MiB graduated kernel
+     * buffer. All failures are fatal: a missing payload == boot fail. */
+    load_staged_payloads();
 
     /* §10: Boot device enumeration log -- gated behind verbose=1 in boot.conf
      * to avoid per-handle Open/Close overhead on firmware with many devices.

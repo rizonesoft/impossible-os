@@ -153,6 +153,30 @@ struct boot_info;
 boot_result_t boot_payload_validate(const struct boot_info *info,
                                     enum boot_payload_error *out_error);
 
+/* Enumerate typed payload descriptors. Returns a pointer to the `index`-th
+ * descriptor in the packed prefix whose `type` matches, or NULL when:
+ *   - info is NULL
+ *   - type is BOOT_PAYLOAD_NONE (NONE is the empty-slot sentinel, never a
+ *     legitimate lookup target)
+ *   - payload_count is out of range
+ *   - fewer than (index + 1) descriptors of `type` exist
+ *
+ * Callers use index=0 for "first of type". To count all of a type, scan
+ * upward until the function returns NULL. The pointer is into the caller's
+ * `info->payload_descriptors[]` and is valid for the lifetime of `info`
+ * (i.e., until the kernel releases the boot_info region after Phase 3).
+ * The validator (boot_payload_validate) must have already returned BOOT_OK
+ * for `info` before calling this -- the lookup performs no re-validation. */
+/* `type` is a uint32_t to avoid forward-declaring enum boot_payload_type
+ * before the full enum is defined later in the header. Callers should
+ * pass values from `enum boot_payload_type` directly -- they decay to
+ * uint32_t exactly; the validator already stores type as uint32_t for
+ * the same ABI-stability reason. */
+const struct boot_payload_desc *
+boot_payload_find(const struct boot_info *info,
+                  uint32_t type,
+                  uint32_t index);
+
 /* A single memory region from the bootloader */
 struct boot_mmap_entry {
     uint64_t base_addr;
