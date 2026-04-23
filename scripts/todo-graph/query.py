@@ -757,6 +757,20 @@ def cmd_code(ctx: Ctx, args) -> tuple:
     return rows, ["path", "source"]
 
 
+def cmd_render(ctx: Ctx, args) -> tuple:
+    """Dispatch to scripts/todo-graph/render.py for the requested format.
+    Returns (rendered_text, None) so emit() skips its columnar path and
+    writes the string verbatim (render formats are self-delimiting)."""
+    import render as _render_mod  # sibling module; added in TODO-06 §7
+    scope = getattr(args, "scope", None) or None
+    fmt = getattr(args, "render_format", None) or "mermaid"
+    target = getattr(args, "target", None) or None  # ascii root id
+    nodes = _render_mod.filter_by_scope(ctx.nodes, scope)
+    text = _render_mod.render(nodes, ctx, fmt, root_id=target)
+    # Signal RAW_TEXT output via a sentinel columns value; emit() handles.
+    return text, "__RAW_TEXT__"
+
+
 def cmd_code_by(ctx: Ctx, args) -> tuple:
     target_path = args.target
     rows = []
@@ -797,7 +811,14 @@ def _tsv_cell(v) -> str:
 def emit(rows, columns, fmt: str):
     """Render rows in the requested format. rows is either a list of dicts
     (when columns is not None) or a scalar dict (when columns is None, for
-    stats). fmt is 'tsv' | 'json' | 'markdown'."""
+    stats). fmt is 'tsv' | 'json' | 'markdown'.
+
+    Sentinel `columns == "__RAW_TEXT__"` means `rows` is already a
+    fully-rendered string (e.g. mermaid / dot / ascii output from the
+    render subcommand); write it verbatim without format translation."""
+    if columns == "__RAW_TEXT__":
+        sys.stdout.write(rows if isinstance(rows, str) else str(rows))
+        return
     if columns is None:
         # Scalar/nested output (stats).
         if fmt == "json":
@@ -952,6 +973,10 @@ SUBCOMMANDS = {
     "stats":       (cmd_stats, []),
     "code":        (cmd_code, [("target", None, None)]),
     "code-by":     (cmd_code_by, [("target", None, None)]),
+    "render":      (cmd_render, [("render-format", "render-fmt", None),
+                                  ("scope", "scope-opt", None),
+                                  ("output", "output-opt", None),
+                                  ("target", "?", None)]),
 }
 
 
@@ -998,6 +1023,17 @@ def _build_parser() -> argparse.ArgumentParser:
             if nargs == "optional-int":
                 sp.add_argument("--days", type=int, default=default,
                                 help=f"days threshold (default: {DEFAULT_STALE_DAYS})")
+            elif nargs == "render-fmt":
+                sp.add_argument("--render-format", dest="render_format",
+                                choices=("mermaid", "dot", "ascii", "gantt", "markdown"),
+                                default="mermaid",
+                                help="render format (default: mermaid)")
+            elif nargs == "scope-opt":
+                sp.add_argument("--scope", default=None,
+                                help="restrict render to a single domain (e.g. 00-infrastructure)")
+            elif nargs == "output-opt":
+                sp.add_argument("--output", dest="output_path", default=None,
+                                help="write rendered output to this file (default: stdout)")
             elif nargs == "?":
                 sp.add_argument(pos_name, nargs="?", default=default)
             else:
@@ -1106,7 +1142,19 @@ def main(argv=None) -> int:
     def _run_once():
         ctx = _build_ctx()
         rows, columns = fn(ctx, args)
-        emit(rows, columns, fmt)
+        output_path = getattr(args, "output_path", None)
+        if output_path:
+            # Redirect stdout for a single call so emit() writes to the
+            # target file without each emitter needing to know about it.
+            with open(output_path, "w", encoding="utf-8") as f:
+                saved = sys.stdout
+                sys.stdout = f
+                try:
+                    emit(rows, columns, fmt)
+                finally:
+                    sys.stdout = saved
+        else:
+            emit(rows, columns, fmt)
 
     if args.watch:
         # Ensure the todo/ directory exists before watching. Also regenerate

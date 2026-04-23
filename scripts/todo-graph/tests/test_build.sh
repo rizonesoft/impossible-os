@@ -1495,11 +1495,13 @@ if python3 -c "
 import sys
 sys.path.insert(0, '$REPO_ROOT/scripts/todo-graph')
 import query
-assert len(query.SUBCOMMANDS) == 12
+# 13 subcommands post-§7 (12 query + 1 render).
+assert len(query.SUBCOMMANDS) == 13, f'expected 13 subcommands, got {len(query.SUBCOMMANDS)}'
 assert 'ready' in query.SUBCOMMANDS
 assert 'code-by' in query.SUBCOMMANDS
+assert 'render' in query.SUBCOMMANDS
 " 2>/dev/null; then
-    t_pass "query: import smoke (12 subcommands exposed)"
+    t_pass "query: import smoke (13 subcommands exposed)"
 else
     t_fail "query: import smoke broken"
 fi
@@ -2339,6 +2341,214 @@ if cd "$REPO_ROOT" && make -n todo-graph >/dev/null 2>&1; then
     t_pass "make: 'todo-graph' target is wired (dry-run OK)"
 else
     t_fail "make: 'todo-graph' target missing or broken"
+fi
+
+# ======================================================================
+# Test 12: render subcommand (§7) -- 5 formats, --scope, --output.
+# ======================================================================
+
+# Sub-test 12a: mermaid output begins with `flowchart TD` and defines
+# one classDef per status (required for GitHub rendering).
+Q_OUT=$(q_live --quiet render --render-format mermaid 2>&1)
+if printf '%s' "$Q_OUT" | head -1 | grep -q '^flowchart TD$' \
+    && echo "$Q_OUT" | grep -q 'classDef done' \
+    && echo "$Q_OUT" | grep -q 'classDef active' \
+    && echo "$Q_OUT" | grep -q 'classDef blocked'; then
+    t_pass "render mermaid: flowchart header + status classDefs present"
+else
+    t_fail "render mermaid: missing flowchart header or classDefs"
+fi
+
+# Sub-test 12b: mermaid emits a click directive pointing at GitHub for
+# every rendered node. Count `click` lines vs node lines; they must
+# match for a tree of nodes that all have file_paths.
+Q_OUT=$(q_live --quiet render --render-format mermaid --scope 00-infrastructure 2>&1)
+NODE_LINES=$(printf '%s' "$Q_OUT" | grep -cE '^\s+[A-Za-z][A-Za-z0-9_]*\["')
+CLICK_LINES=$(printf '%s' "$Q_OUT" | grep -cE '^\s+click ')
+if [ "$NODE_LINES" -ge 1 ] && [ "$NODE_LINES" = "$CLICK_LINES" ]; then
+    t_pass "render mermaid: every node has a matching click directive ($NODE_LINES/$CLICK_LINES)"
+else
+    t_fail "render mermaid: node/click mismatch (nodes=$NODE_LINES, clicks=$CLICK_LINES)"
+fi
+
+# Sub-test 12c: dot output is a valid digraph with rankdir and node
+# shape declarations.
+Q_OUT=$(q_live --quiet render --render-format dot --scope 00-infrastructure 2>&1)
+if echo "$Q_OUT" | head -1 | grep -q '^digraph todo_graph' \
+    && echo "$Q_OUT" | grep -q 'rankdir=LR' \
+    && echo "$Q_OUT" | grep -q 'shape=box'; then
+    t_pass "render dot: digraph header + rankdir + shape declarations"
+else
+    t_fail "render dot: missing required dot syntax"
+fi
+
+# Sub-test 12d: ascii tree rooted at an explicit id prints the id on
+# the first line and indents children with `|-- `.
+Q_OUT=$(q_live --quiet render --render-format ascii todo-metadata-layer 2>&1)
+if echo "$Q_OUT" | head -1 | grep -q '^todo-metadata-layer'; then
+    t_pass "render ascii: tree rooted at requested id"
+else
+    t_fail "render ascii: root mismatch (out=$Q_OUT)"
+fi
+
+# Sub-test 12e: gantt output has the expected keyword structure.
+Q_OUT=$(q_live --quiet render --render-format gantt --scope 00-infrastructure 2>&1)
+if echo "$Q_OUT" | head -1 | grep -q '^gantt$' \
+    && echo "$Q_OUT" | grep -q 'dateFormat YYYY-MM-DD' \
+    && echo "$Q_OUT" | grep -q 'section 00-infrastructure'; then
+    t_pass "render gantt: header + dateFormat + section present"
+else
+    t_fail "render gantt: missing required gantt syntax"
+fi
+
+# Sub-test 12f: markdown output is a GFM table with the expected
+# columns.
+Q_OUT=$(q_live --quiet render --render-format markdown --scope 00-infrastructure 2>&1)
+if echo "$Q_OUT" | head -2 | grep -qE '^\| domain \| id \| status \| depends_on \| first_unfinished \|$' \
+    && echo "$Q_OUT" | head -2 | grep -qE '^\| --- \| --- \| --- \| --- \| --- \|$'; then
+    t_pass "render markdown: GFM header present"
+else
+    t_fail "render markdown: header row broken"
+fi
+
+# Sub-test 12g: --scope filter produces a strict subset of the
+# no-scope output.
+FULL_LINES=$(q_live --quiet render --render-format markdown 2>&1 | wc -l)
+SCOPED_LINES=$(q_live --quiet render --render-format markdown --scope 00-infrastructure 2>&1 | wc -l)
+if [ "$SCOPED_LINES" -lt "$FULL_LINES" ] && [ "$SCOPED_LINES" -gt 2 ]; then
+    t_pass "render --scope: scoped output ($SCOPED_LINES) is a strict subset of full ($FULL_LINES)"
+else
+    t_fail "render --scope: filter not applied (full=$FULL_LINES, scoped=$SCOPED_LINES)"
+fi
+
+# Sub-test 12h: --output writes the rendered text to the named file
+# and emits nothing on stdout.
+OUT_PATH="$TMP_DIR/render-out.mmd"
+rm -f "$OUT_PATH" 2>/dev/null || true
+STDOUT_TEXT=$(q_live --quiet render --render-format mermaid --output "$OUT_PATH" 2>&1)
+if [ -s "$OUT_PATH" ] && [ -z "$STDOUT_TEXT" ] && head -1 "$OUT_PATH" | grep -q '^flowchart TD$'; then
+    t_pass "render --output: writes file, suppresses stdout"
+else
+    t_fail "render --output broken (stdout=$STDOUT_TEXT, file_size=$(wc -c < "$OUT_PATH" 2>/dev/null || echo 0))"
+fi
+
+# Sub-test 12h2: mermaid node ids are COLLISION-PROOF across file_paths
+# that differ only in chars the sanitizer collapses to `_`. Codex pass
+# 16 H1: without a hash suffix, `a-b.md` and `a_b.md` would emit the
+# same node id and silently merge distinct TODOs.
+COLL_TREE="$TMP_DIR/r-collide"
+mkdir -p "$COLL_TREE"
+python3 -c "
+import json
+nodes = [
+    {'file_path': 'todo/01-t/TODO-01-a-b.md', 'id': 'a-b', 'domain': '01-t',
+     'status': 'active', 'title': 'A-B', 'schema_version': 1,
+     'sections': [], 'section_headings': [], 'inputs_xrefs': [],
+     'stamps_xrefs': [], 'created_at': '2026-04-23T00:00:00Z',
+     'last_active_at': '2026-04-23T00:00:00Z'},
+    {'file_path': 'todo/01-t/TODO-01-a_b.md', 'id': 'a_b', 'domain': '01-t',
+     'status': 'active', 'title': 'A_B', 'schema_version': 1,
+     'sections': [], 'section_headings': [], 'inputs_xrefs': [],
+     'stamps_xrefs': [], 'created_at': '2026-04-23T00:00:00Z',
+     'last_active_at': '2026-04-23T00:00:00Z'},
+]
+with open('$COLL_TREE/cache.json', 'w') as f: json.dump(nodes, f)
+"
+Q_OUT=$(python3 "$QUERY_PY" --cache "$COLL_TREE/cache.json" --repo-root "$COLL_TREE" --quiet render --render-format mermaid 2>&1)
+# Count unique node-declaration lines (grep for the `["label"]` shape).
+UNIQ_NODES=$(printf '%s' "$Q_OUT" | grep -cE '\["[A-Za-z]' || true)
+if [ "$UNIQ_NODES" = "2" ]; then
+    t_pass "render mermaid: hash suffix prevents id collision on sanitize-equal paths"
+else
+    t_fail "render mermaid: collision detected ($UNIQ_NODES nodes for 2 distinct paths)"
+fi
+
+# Sub-test 12i: ascii cycle safety -- a synthetic fixture with A -> B
+# -> A must not infinite-loop. Mark the back-edge `(cycle)`.
+CYC_TREE="$TMP_DIR/r-cycle"
+mkdir -p "$CYC_TREE"
+python3 -c "
+import json
+nodes = [
+    {'file_path': 'todo/01-t/TODO-01-a.md', 'id': 'alpha', 'domain': '01-t',
+     'status': 'active', 'title': 'A', 'schema_version': 1,
+     'depends_on': ['beta'],
+     'sections': [], 'section_headings': [], 'inputs_xrefs': [],
+     'stamps_xrefs': [], 'created_at': '2026-04-23T00:00:00Z',
+     'last_active_at': '2026-04-23T00:00:00Z'},
+    {'file_path': 'todo/01-t/TODO-02-b.md', 'id': 'beta', 'domain': '01-t',
+     'status': 'active', 'title': 'B', 'schema_version': 1,
+     'depends_on': ['alpha'],
+     'sections': [], 'section_headings': [], 'inputs_xrefs': [],
+     'stamps_xrefs': [], 'created_at': '2026-04-23T00:00:00Z',
+     'last_active_at': '2026-04-23T00:00:00Z'},
+]
+with open('$CYC_TREE/cache.json', 'w') as f: json.dump(nodes, f)
+"
+# timeout 5s would be way more than enough; cycle protection should return immediately.
+CYC_OUT=$(PATH="/usr/bin:/bin" timeout --signal=TERM 5 \
+    python3 "$QUERY_PY" --cache "$CYC_TREE/cache.json" --repo-root "$CYC_TREE" \
+        --quiet render --render-format ascii alpha 2>&1); CYC_RC=$?
+if [ "$CYC_RC" = "0" ] && echo "$CYC_OUT" | grep -q 'cycle'; then
+    t_pass "render ascii: cycle detected + rendered with (cycle) marker"
+else
+    t_fail "render ascii: cycle handling broken (rc=$CYC_RC, out=$CYC_OUT)"
+fi
+
+# Sub-test 12i2: ascii diamond DAG must NOT be misreported as a cycle.
+# Codex pass 16 M1 regression: A -> B, A -> C, B -> D, C -> D is a
+# DAG with fan-in, not a cycle.
+DAG_TREE="$TMP_DIR/r-diamond"
+mkdir -p "$DAG_TREE"
+python3 -c "
+import json
+nodes = [
+    {'file_path': 'todo/01-t/TODO-01-a.md', 'id': 'alpha', 'domain': '01-t',
+     'status': 'active', 'title': 'A', 'schema_version': 1,
+     'depends_on': ['beta', 'gamma'],
+     'sections': [], 'section_headings': [], 'inputs_xrefs': [],
+     'stamps_xrefs': [], 'created_at': '2026-04-23T00:00:00Z',
+     'last_active_at': '2026-04-23T00:00:00Z'},
+    {'file_path': 'todo/01-t/TODO-02-b.md', 'id': 'beta', 'domain': '01-t',
+     'status': 'active', 'title': 'B', 'schema_version': 1,
+     'depends_on': ['delta'],
+     'sections': [], 'section_headings': [], 'inputs_xrefs': [],
+     'stamps_xrefs': [], 'created_at': '2026-04-23T00:00:00Z',
+     'last_active_at': '2026-04-23T00:00:00Z'},
+    {'file_path': 'todo/01-t/TODO-03-c.md', 'id': 'gamma', 'domain': '01-t',
+     'status': 'active', 'title': 'C', 'schema_version': 1,
+     'depends_on': ['delta'],
+     'sections': [], 'section_headings': [], 'inputs_xrefs': [],
+     'stamps_xrefs': [], 'created_at': '2026-04-23T00:00:00Z',
+     'last_active_at': '2026-04-23T00:00:00Z'},
+    {'file_path': 'todo/01-t/TODO-04-d.md', 'id': 'delta', 'domain': '01-t',
+     'status': 'active', 'title': 'D', 'schema_version': 1,
+     'sections': [], 'section_headings': [], 'inputs_xrefs': [],
+     'stamps_xrefs': [], 'created_at': '2026-04-23T00:00:00Z',
+     'last_active_at': '2026-04-23T00:00:00Z'},
+]
+with open('$DAG_TREE/cache.json', 'w') as f: json.dump(nodes, f)
+"
+DAG_OUT=$(python3 "$QUERY_PY" --cache "$DAG_TREE/cache.json" --repo-root "$DAG_TREE" --quiet render --render-format ascii alpha 2>&1); DAG_RC=$?
+if [ "$DAG_RC" = "0" ] && ! echo "$DAG_OUT" | grep -q '(cycle)'; then
+    # Second encounter of delta should be marked (seen), not (cycle).
+    if echo "$DAG_OUT" | grep -q 'delta.*(seen)'; then
+        t_pass "render ascii: diamond DAG renders shared delta as (seen), not (cycle)"
+    else
+        t_fail "render ascii: diamond missing (seen) marker (out=$DAG_OUT)"
+    fi
+else
+    t_fail "render ascii: diamond DAG false-cycled (rc=$DAG_RC, out=$DAG_OUT)"
+fi
+
+# Sub-test 12j: make todo-graph-render-mermaid runs cleanly and produces
+# a wrapped markdown file with the mermaid fence + flowchart body.
+if cd "$REPO_ROOT" && make todo-graph-render-mermaid >/dev/null 2>&1 \
+    && head -6 "$REPO_ROOT/docs/infrastructure/todo-graph.md" | grep -q '^```mermaid$' \
+    && tail -1 "$REPO_ROOT/docs/infrastructure/todo-graph.md" | grep -q '^```$'; then
+    t_pass "make: todo-graph-render-mermaid produces fenced markdown"
+else
+    t_fail "make: todo-graph-render-mermaid broken"
 fi
 
 # ----------------------------------------------------------------------
