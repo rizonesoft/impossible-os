@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: shell32-export-master-table
+domain: 10-platform-services
+status: active
+title: "TODO-C -- shell32.dll Export Master Table"
+---
+
 # TODO-C -- shell32.dll Export Master Table
 
 > **Goal:** Authoritative checklist of **shell32.dll** exports used for paths, icons, folders, and **ShellExecute**. Implementation files stay in `TODO-08-win32-api-surface.md` Sections 12 and 14. **Shell icon index tables** (hardcoded `shell32.dll` / `imageres.dll` resource indices) remain implemented per `../08-graphics-ui/TODO-14-win32-gdi-user32-stubs.md` Section 1; this file references them with Notes `index-map only` to avoid two competing inventories of **indices**.

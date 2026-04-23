@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: comctl32-export-master-table
+domain: 10-platform-services
+status: active
+title: "TODO-B -- comctl32.dll Export Master Table"
+---
+
 # TODO-B -- comctl32.dll Export Master Table
 
 > **Goal:** Authoritative checklist of **comctl32.dll** exports and version entry points. Most real binaries expect `comctl32` for common controls v6 and `InitCommonControlsEx`; the full Common Controls surface is large and often manifest-gated, so Tier 1 is the bring-up slice and Tier 3 is the exhaustive **named** export roster (Wine scaffold) plus ordinal-only accounting.

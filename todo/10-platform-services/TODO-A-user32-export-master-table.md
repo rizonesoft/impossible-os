@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: user32-export-master-table
+domain: 10-platform-services
+status: active
+title: "TODO-A -- user32.dll Export Master Table"
+---
+
 # TODO-A -- user32.dll Export Master Table
 
 > **Goal:** Single authoritative checklist of **user32.dll** exports (and grouped stubs) for Impossible OS Win32 compatibility. Implementation narrative stays in `TODO-08-win32-api-surface.md` Section 10 and kernel-side stubs in `../08-graphics-ui/TODO-14-win32-gdi-user32-stubs.md`. **NtUser** shadow SSDT indices live only in `../08-graphics-ui/TODO-A-Win32k-Shadow-SSDT-Master-Table.md`; this file links Win32 **names** to owners, not syscall numbers.
