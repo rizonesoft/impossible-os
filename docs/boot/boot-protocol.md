@@ -124,13 +124,15 @@ A third-party bootloader that wants to invoke Impossible OS must populate the fi
 | `header.version` | `uint16_t` | Must equal the `BOOT_INFO_VERSION` the kernel was built against. |
 | `header.size` | `uint16_t` | Must equal `sizeof(struct boot_info)` for that version. |
 
-### Required for any non-trivial boot
+### Required for full UEFI parity (degrades cleanly if absent)
 
-| Field | Type | Purpose | Validator |
+These fields are required by a native UEFI loader that wants every Impossible OS feature (GOP splash, desktop, `GetVariable`/`SetVariable` for POST-codes and anti-rollback NVRAM, etc.). A non-UEFI adapter may zero any of them; the kernel degrades each one separately with a klog warning instead of halting.
+
+| Field | Type | Purpose | Degraded behavior when zeroed |
 |---|---|---|---|
-| `mmap[]` + `mmap_count` | `struct boot_mmap_entry[]` | Physical memory layout. PMM walks this to find free RAM. | `pmm_init` (rejects zero `mmap_count`; degrades with a klog warning). |
-| `fb.addr`, `fb.pitch`, `fb.width`, `fb.height`, `fb.bpp`, `fb.pixel_format` + `fb_available=1` | `struct boot_framebuffer` | Linear GOP framebuffer for the kernel splash and desktop. Headless boot is supported: set `fb_available=0` and every field 0. | Kernel framebuffer driver reads only when `fb_available==1`. |
-| `uefi_runtime_services` + `uefi_rt_available=1` | `uintptr_t`/`uint8_t` | EFI RuntimeServices table pointer (must point at a RUNTSERV-signature table). Needed for `GetVariable` / `SetVariable` / `GetTime`. | `uefi_runtime_init` validates the signature + CRC32 and falls back gracefully if unavailable. |
+| `mmap[]` + `mmap_count` | `struct boot_mmap_entry[]` | Physical memory layout. PMM walks this to find free RAM. | `pmm_init` logs `memory map truncated` warning and falls back to whatever is populated; zero entries means no free RAM is recovered and subsequent allocations fail (effectively degraded, not halted). |
+| `fb.addr`, `fb.pitch`, `fb.width`, `fb.height`, `fb.bpp`, `fb.pixel_format` + `fb_available=1` | `struct boot_framebuffer` | Linear GOP framebuffer for the kernel splash and desktop. | `fb_available=0` puts the kernel in headless mode: no splash, no desktop, serial still works. Supported path. |
+| `uefi_runtime_services` + `uefi_rt_available=1` | `uintptr_t`/`uint8_t` | EFI RuntimeServices table pointer (must point at a RUNTSERV-signature table). Needed for `GetVariable` / `SetVariable` / `GetTime`. | `uefi_runtime_init()` returns `BOOT_DEGRADED` and logs the limitation. POST-code NVRAM writes, anti-rollback reads, and RT time calls become no-ops; kernel boots without them. |
 
 ### Optional (consumed if populated)
 
@@ -150,7 +152,7 @@ The bootloader MUST:
 
 1. Allocate `struct boot_info` at physical address `0x10000` (either a fixed allocation or ensure it lands there via AllocatePages + memmove).
 2. `efi_memset(g_boot_info_ptr, 0, sizeof(struct boot_info))` before populating any field. This guarantees every unused slot is zero (a required precondition for `boot_payload_validate()`'s NONE-empty-slot invariant, and for every `*_count` field that is read without a prior store).
-3. Populate the fields above in any order EXCEPT the header. The header MUST be the last write-block before `jump_to_kernel` so late modifications to `g_boot_info` (timing, final log entries) do NOT overwrite the committed contract. The canonical producer writes the header in this order, matching `src/boot/uefi/bootx64.c` around line 5691: `header.magic = BOOT_INFO_MAGIC;` then `header.version = BOOT_INFO_VERSION;` then `header.size = sizeof(struct boot_info);`. The kernel validator (`boot_info_validate_header`) checks all three, so the ordering within the block is not load-bearing for correctness; what matters is that the three writes happen together, after every other field is final.
+3. Populate the fields above in any order. The header (`magic`, `version`, `size`) MUST be written as a block AFTER every validator-relevant field is final. The canonical producer at `src/boot/uefi/bootx64.c` around line 5691 writes the block as `header.magic = BOOT_INFO_MAGIC;` then `header.version = BOOT_INFO_VERSION;` then `header.size = sizeof(struct boot_info);`. Post-header telemetry writes are explicitly allowed: the canonical loader then writes `timing.kernel_jump = boot_rdtsc();` and jumps. The kernel validator (`boot_version_classify`) reads only the header fields; it never consults `timing.*`, so recording jump-timing after the header cannot invalidate the handoff. A third-party loader SHOULD write the header as the last block before any validator-relevant work, but MAY continue to touch telemetry-only fields (`timing.*`) between the header block and `jump_to_kernel`.
 4. Call `ExitBootServices()` and then jump to the kernel ELF entry point with the handoff pointer in `rsi` and the magic (`UEFI_BOOT_MAGIC`) in `rdi`, matching the Multiboot2-style ABI the kernel's early assembly expects.
 
 Failure modes: magic drift, version drift, and size drift each halt with a dedicated fault-class line via `boot_version_render_fatal()`. Structural field drift (e.g. rt_mmap entry with wrapping length) halts via the downstream validator with its own class-specific klog. See [boot-protocol-changelog.md](boot-protocol-changelog.md) for which version introduced each field.
@@ -169,7 +171,13 @@ The canonical bootloader is [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/boot
 | **Secure Launch (TrenchBoot / TXT / SKINIT)** | `payload_descriptors[]` with `BOOT_PAYLOAD_TPM_EVENT_LOG` | reserved for `drtm_entry_pcr` etc. (see [Attestation Report Export](../../todo/01-boot-platform/TODO-13-tpm-measured-boot-attestation.md#9-attestation-report-export)) | DRTM measurement metadata | ⬜ Planned; forward-compat fields are reserved in the attestation report. |
 | **Warm kernel update (KHO-style)** | `payload_descriptors[]` preserving in-memory state | [Warm kernel update handoff ABI](../../todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md#14-warm-kernel-update-handoff-abi) slot | KHO state region | ⬜ ABI reserved. |
 
-Every adapter column above references the owning TODO by capability name and anchor link rather than numeric section reference. The matrix is deliberately short: if an adapter does not meet the "Required for any non-trivial boot" row in section 4, the kernel will fail closed via `boot_version` or `boot_payload` validators rather than degrade silently.
+Every adapter column above references the owning TODO by capability name and anchor link rather than numeric section reference. The matrix is deliberately short. Failure semantics differ by layer:
+
+- **Header drift** (magic / version / size mismatch): the kernel halts via `boot_version_render_fatal` with a full observed-vs-expected diagnostic. No degraded path.
+- **Payload drift** (overlapping / wrapping / unknown-required payload descriptors): the kernel halts via `boot_payload_validate` with a per-descriptor error class.
+- **Optional field absence** (framebuffer, runtime services, USB state, TPM log, payloads): the kernel degrades per subsystem with a klog warning. The Multiboot2 row above boots via this path with every optional field zeroed.
+
+An adapter that emits a well-formed header + mmap but zeros everything else is a supported degraded boot; the "fail closed" behavior is scoped to the header-and-payload-integrity validators, not to the full feature surface.
 
 ## 7. See Also
 
