@@ -30,7 +30,7 @@ Usage:
   bash scripts/lint.sh src/kernel/mm/     Lint a specific path (skips xref check)
   bash scripts/lint.sh --help             Show this help
 
-Checks (4):
+Checks (5):
   1. #pragma once or include guard in every .h
   2. Lines <= 120 characters (excludes comment lines)
   3. No trailing whitespace
@@ -38,6 +38,11 @@ Checks (4):
      except a baseline allowlist of pre-existing files (see the developer
      tooling stack roadmap -- Tooling Doctor section -- for the legacy-XREF
      sweep).
+  5. No bare "section sign + number" (§N) in code comments outside todo/**
+     unless the same line carries an external-spec qualifier (UEFI, Intel
+     SDM, NTFS, ACPI, RFC, etc.). Pre-existing files are warn-listed;
+     anything new is an error. Code comments must name the FEATURE, not
+     the TODO section number, because numbers drift silently on renumber.
 
 Removed 2026-04-17: "functions > 50 lines" and "lowercase #define" warnings
 (warn-only, never triaged; duplicated Codex + domain code-quality coverage).
@@ -247,6 +252,264 @@ if [ "$#" -eq 0 ]; then
             --include='*.c' --include='*.h' --include='*.asm' --include='*.S' \
             --include='*.sh' --include='*.md' --include='*.json' \
             --include='*.bat' --include='*.ps1' --include='*.py' \
+            --include='*.yml' --include='*.yaml' \
+            --include='Makefile' --include='*.mk' \
+            --exclude-dir='.git' --exclude-dir='build' --exclude-dir='node_modules' \
+            "${TODO_XREF_EXISTING[@]}" 2>/dev/null \
+        || true
+    )
+fi
+
+# ============================================================================
+# Check 5: Bare "section sign + number" in code comments without external-spec
+# qualifier. `§11`, `(§4)`, `§1.3` inside a .c / .h / .asm / .py / .sh file
+# almost always refers to a TODO section; those break silently when the
+# owning TODO renumbers. External-spec citations (UEFI §X, Intel SDM §Y,
+# NTFS §Z, ACPI §W, etc.) stay legal because they point at stable published
+# standards.
+#
+# Allowed tokens on the same line: UEFI, Intel, SDM, AMD, APM, RFC <n>,
+# ACPI <n>, NTFS, FAT32/16, NVMe, PCI / PCIe, PE/COFF, PE32, COFF, USB <n>,
+# xHCI / EHCI / OHCI / UHCI, VirtIO, SMBIOS, IEEE, NIST, TCG, WHEA, HPET,
+# MP Spec, "spec ", "specification".
+#
+# The legacy allowlist lists every file that already contains bare §N refs
+# today (WARN) so the check does not block commits while the cleanup is in
+# progress. Any file NOT on the allowlist must not introduce new bare §N --
+# that is the permanent drift gate for new code.
+#
+# Only runs on the default lint scope (whole repo).
+if [ "$#" -eq 0 ]; then
+    BARE_SECTION_RE='§[0-9]'
+    SPEC_TOKENS_RE='(UEFI|Intel|SDM|AMD|APM|RFC [0-9]|ACPI [0-9]|NTFS|FAT[0-9]|NVMe|PCIe?|PE/COFF|PE32|COFF|USB [0-9]|xHCI|EHCI|OHCI|UHCI|VirtIO|SMBIOS|IEEE|NIST|TCG|WHEA|HPET|MP Spec|spec |specification)'
+
+    # Files with pre-existing bare §N refs (WARN-only; tracked for cleanup
+    # in todo/00-infrastructure/TODO-01-developer-tooling-stack.md). Keep
+    # sorted alphabetically for easy audit. Any new file must NOT land
+    # here -- check the lint output and replace the §N with a feature
+    # name or a doc anchor link before adding.
+    BARE_SECTION_LEGACY_FILES=(
+        include/desktop/terminal.h
+        include/kernel/atomic.h
+        include/kernel/boot_halt.h
+        include/kernel/boot_info.h
+        include/kernel/boot_progress.h
+        include/kernel/boot_version.h
+        include/kernel/cpuid_platform.h
+        include/kernel/drivers/nvme.h
+        include/kernel/drivers/virtio/blk.h
+        include/kernel/drivers/virtio/virtio.h
+        include/kernel/elf.h
+        include/kernel/etw.h
+        include/kernel/exec.h
+        include/kernel/fs/ntfs.h
+        include/kernel/fs/vfs.h
+        include/kernel/ipc/alpc.h
+        include/kernel/ipc/alpc_port.h
+        include/kernel/mm/boot_reserved.h
+        include/kernel/mm/heap.h
+        include/kernel/msr.h
+        include/kernel/nt/nt_file.h
+        include/kernel/ob/ob.h
+        include/kernel/ob/ob_type.h
+        include/kernel/ob/peb.h
+        include/kernel/pe.h
+        include/kernel/sched/irql.h
+        include/kernel/sched/task.h
+        include/kernel/sched/transition_ring.h
+        include/kernel/security/pku.h
+        include/kernel/smp.h
+        include/kernel/test/input_record.h
+        include/kernel/test/klog_suppress.h
+        include/kernel/test/scratch.h
+        include/kernel/test/test.h
+        include/kernel/test/test_usermode.h
+        include/kernel/time/wall_clock.h
+        include/kernel/timer.h
+        include/kernel/tpm.h
+        include/kernel/uefi_runtime.h
+        include/kernel/vpd.h
+        include/registry.h
+        scripts/debug/desktop/run-matrix-desktop-tests.bat
+        scripts/debug/usermode/run-all-usermode-tests.bat
+        scripts/debug/usermode/run-test_fastpath_fuzz.bat
+        scripts/debug/usermode/run-test_faultinject.bat
+        scripts/debug/usermode/run-test_fileio.bat
+        scripts/debug/usermode/run-test_harness_smoke.bat
+        scripts/debug/usermode/run-test_ipc.bat
+        scripts/debug/usermode/run-test_libc.bat
+        scripts/debug/usermode/run-test_loader_eif.bat
+        scripts/debug/usermode/run-test_loader_elf.bat
+        scripts/debug/usermode/run-test_perf_syscall.bat
+        scripts/debug/usermode/run-test_process.bat
+        scripts/debug/usermode/run-test_smoke_boot.bat
+        scripts/debug/usermode/run-test_stress_libc.bat
+        scripts/debug/usermode/run-test_syscall.bat
+        scripts/debug/usermode/run-test_win32.bat
+        scripts/lint.sh
+        scripts/make-ntfs-test.sh
+        scripts/qemu-screenshot.sh
+        scripts/test-tooling.sh
+        scripts/test-visual-regression.sh
+        scripts/test.sh
+        src/boot/uefi/boot_info_mirror.h
+        src/boot/uefi/bootx64.c
+        src/boot/uefi/efi.h
+        src/desktop/terminal.c
+        src/desktop/wm.c
+        src/kernel/acpi.c
+        src/kernel/cpu_security.c
+        src/kernel/drivers/framebuffer.c
+        src/kernel/drivers/nvme.c
+        src/kernel/drivers/virtio/blk_core.c
+        src/kernel/drivers/virtio/blk_crypto.c
+        src/kernel/drivers/virtio/blk_merge.c
+        src/kernel/drivers/virtio/blk_packed.c
+        src/kernel/drivers/virtio/blk_prefetch.c
+        src/kernel/drivers/virtio/blk_zoned.c
+        src/kernel/drivers/virtio/virtio.c
+        src/kernel/drivers/xhci.c
+        src/kernel/drivers/xhci_dev.c
+        src/kernel/elf.c
+        src/kernel/etw.c
+        src/kernel/exec.c
+        src/kernel/fs/gpt.c
+        src/kernel/fs/ntfs/ntfs_attr.c
+        src/kernel/fs/ntfs/ntfs_attr_write.c
+        src/kernel/fs/ntfs/ntfs_bitmap.c
+        src/kernel/fs/ntfs/ntfs_cache.c
+        src/kernel/fs/ntfs/ntfs_data_write.c
+        src/kernel/fs/ntfs/ntfs_file_ops.c
+        src/kernel/fs/ntfs/ntfs_index_delete.c
+        src/kernel/fs/ntfs/ntfs_index_helpers.c
+        src/kernel/fs/ntfs/ntfs_index_insert.c
+        src/kernel/fs/ntfs/ntfs_io.c
+        src/kernel/fs/ntfs/ntfs_journal.c
+        src/kernel/fs/ntfs/ntfs_metadata.c
+        src/kernel/fs/ntfs/ntfs_mft_alloc.c
+        src/kernel/fs/ntfs/ntfs_recovery.c
+        src/kernel/fs/ntfs/ntfs_runlist.c
+        src/kernel/fs/ntfs/ntfs_sysfiles.c
+        src/kernel/fs/ntfs/ntfs_test.c
+        src/kernel/fs/partition.c
+        src/kernel/fs/vfs.c
+        src/kernel/icon_store.c
+        src/kernel/idt.c
+        src/kernel/ipc/alpc_port.c
+        src/kernel/json.c
+        src/kernel/klog.c
+        src/kernel/main/boot_desktop.c
+        src/kernel/main/boot_halt.c
+        src/kernel/main/boot_hw.c
+        src/kernel/main/boot_payload.c
+        src/kernel/main/boot_progress.c
+        src/kernel/main/boot_recovery.c
+        src/kernel/main/boot_tests.c
+        src/kernel/main/boot_version.c
+        src/kernel/main/compositor.c
+        src/kernel/main/main_internal.h
+        src/kernel/mm/boot_reserved.c
+        src/kernel/mm/heap.c
+        src/kernel/mm/pmm.c
+        src/kernel/mm/vmm.c
+        src/kernel/msr.c
+        src/kernel/nt/nt_alpc.c
+        src/kernel/nt/nt_memory.c
+        src/kernel/nt/nt_process.c
+        src/kernel/nt/nt_registry.c
+        src/kernel/nt/nt_sync.c
+        src/kernel/nt/nt_syscall.c
+        src/kernel/ob/ob.c
+        src/kernel/ob/ob_ns.c
+        src/kernel/ob/ob_thread.c
+        src/kernel/panic.c
+        src/kernel/pe.c
+        src/kernel/registry.c
+        src/kernel/sched/irql.c
+        src/kernel/sched/syscall.c
+        src/kernel/sched/syscall_entry.asm
+        src/kernel/sched/task.c
+        src/kernel/sched/transition_ring.c
+        src/kernel/security/pku.c
+        src/kernel/security/token.c
+        src/kernel/smp/smp.c
+        src/kernel/spinner.c
+        src/kernel/test/input_record.c
+        src/kernel/test/race_barrier.c
+        src/kernel/test/test_acpi_power.c
+        src/kernel/test/test_alpc.c
+        src/kernel/test/test_boot_info.c
+        src/kernel/test/test_boot_init.c
+        src/kernel/test/test_cpu_security.c
+        src/kernel/test/test_exec.c
+        src/kernel/test/test_harness.c
+        src/kernel/test/test_heap.c
+        src/kernel/test/test_klog.c
+        src/kernel/test/test_nt_types.c
+        src/kernel/test/test_ob.c
+        src/kernel/test/test_peb_teb.c
+        src/kernel/test/test_pmm.c
+        src/kernel/test/test_registry.c
+        src/kernel/test/test_runner.c
+        src/kernel/test/test_security.c
+        src/kernel/test/test_usermode.c
+        src/kernel/test/test_usermode_launcher.c
+        src/kernel/test/test_vfs.c
+        src/kernel/test/test_vmm.c
+        src/kernel/time/wall_clock.c
+        src/kernel/timer.c
+        src/kernel/tpm.c
+        src/kernel/uefi_runtime.c
+        src/libc/string.c
+        tools/boot-info-manifest/check-doc-coverage.py
+        user/include/test.h
+        user/lib/win32.c
+        user/test/test_fastpath_fuzz.c
+        user/test/test_fileio.c
+        user/test/test_harness_smoke.c
+        user/test/test_ipc.c
+        user/test/test_libc.c
+        user/test/test_loader_pe.c
+        user/test/test_perf_syscall.c
+        user/test/test_process.c
+        user/test/test_smoke_boot.c
+        user/test/test_stress_libc.c
+        user/test/test_syscall.c
+        user/test/test_win32.c
+    )
+
+    is_bare_section_legacy() {
+        local path="$1"
+        local legacy
+        for legacy in "${BARE_SECTION_LEGACY_FILES[@]}"; do
+            [ "$path" = "$legacy" ] && return 0
+        done
+        return 1
+    }
+
+    # Same scan roots as Check 4; reuse the existing TODO_XREF_EXISTING array.
+    while IFS=: read -r file linenum rest; do
+        [ -z "$file" ] && continue
+        # Line passes if it carries an external-spec qualifier.
+        if echo "$rest" | grep -qE "$SPEC_TOKENS_RE"; then
+            continue
+        fi
+        relpath="${file#"$REPO_ROOT"/}"
+        case "$relpath" in
+            .github/PULL_REQUEST_TEMPLATE.md) continue ;;
+            scripts/test-ai-system.sh) continue ;;
+            scripts/todo-graph/*) continue ;;
+            *.claude/*) continue ;;
+        esac
+        if is_bare_section_legacy "$relpath"; then
+            warn "$relpath" "$linenum" "bare section ref (legacy; tracked for cleanup)"
+        else
+            error "$relpath" "$linenum" "bare section ref in code (breaks on TODO renumbering; name the feature or cite external spec)"
+        fi
+    done < <(
+        grep -rnHE "$BARE_SECTION_RE" \
+            --include='*.c' --include='*.h' --include='*.asm' --include='*.S' \
+            --include='*.sh' --include='*.bat' --include='*.ps1' --include='*.py' \
             --include='*.yml' --include='*.yaml' \
             --include='Makefile' --include='*.mk' \
             --exclude-dir='.git' --exclude-dir='build' --exclude-dir='node_modules' \

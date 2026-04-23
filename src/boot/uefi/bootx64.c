@@ -5697,7 +5697,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
         UINT64 present  = 0;
         UINT64 degraded = 0;
 
-        /* Typed payload descriptor array (§4) -- always published, even
+        /* Typed payload descriptor array -- always published, even
          * when the packed prefix is empty (count=0 is still valid). */
         present |= BOOT_CAP_PAYLOAD_DESCRIPTORS;
 

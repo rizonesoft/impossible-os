@@ -71,6 +71,7 @@ title: "TODO-01 -- Developer Tooling Stack"
 | 💎  |   8   | Unify specialist-launcher `-ExtraArgs` surface        | §4             |  [x]   |
 | 💎  |   9   | Legacy-XREF sweep (lint Check 5 -> 0 errors; CI gate) | §3, §6         |  [x]   |
 | 💎  |  10   | Smoke-test POST16 assertions (boot-phase manifest)    | §3             |  [x]   |
+| ⭐  |  11   | Bare section-ref sweep (lint Check 5 zero-allowlist)  | §9             |  [ ]   |
 
 > 💎 = parity work: Windows and Linux projects both rely on stable setup/build/test/CI contracts.
 > ⭐ = exclusive work: Impossible OS can provide a single operator-facing developer workflow with self-diagnosis instead of scattered scripts and tribal knowledge.
@@ -366,6 +367,20 @@ Migrate `scripts/test-smoke.sh`'s boot-pattern match list from raw log-message s
 
 ---
 
+## 11. Bare Section-Ref Sweep
+
+Rewrite the ~187 source / test / header / script files on the `scripts/lint.sh` `BARE_SECTION_LEGACY_FILES` allowlist so they stop using bare section-sign references (the Unicode `§` glyph followed by a digit, e.g. `§11`, `(§4)`, `§1.3`) outside `todo/**`. Check 5 already errors on NEW drift in non-allowlisted files and a PreToolUse hook in [`.claude/settings.json`](../../.claude/settings.json) blocks edits at save-time, so this is a catch-up sweep that lets the allowlist drain to zero. Same shape as [§9 Legacy-XREF Sweep](#9-legacy-xref-sweep) (now complete) but for the `§N` drift pattern that Check 4 does not cover.
+
+- [ ] For each file in the allowlist, rewrite bare section refs as either (a) a functional description of what the code does (e.g. `/* capability negotiation */`), (b) an external-spec qualifier when the reference is genuinely to a published standard (e.g. `/* UEFI 2.10 section 4.6 */`), or (c) a relative-path markdown link to the canonical doc that owns the concern.
+- [ ] As each file is cleaned, remove it from `BARE_SECTION_LEGACY_FILES` in `scripts/lint.sh`. Target: 0 entries.
+- [ ] Document rewrite strategy in the Notes block (mirror [§9](#9-legacy-xref-sweep)'s Rule 1 / Rule 2 split) so contributors can audit the choices later.
+- [ ] Keep the PreToolUse hook and Check 5 in place after the sweep lands -- they are the permanent drift gate, not legacy tooling.
+- [ ] Commit: `"scripts: drop bare section-sign refs from tree; lint Check 5 zero-allowlist"`
+
+**Test checkpoint:** `bash scripts/lint.sh` exits 0 with zero errors AND zero warnings from Check 5 on a clean tree. A PR that introduces new bare `§N` in a code file fails the pre-commit lint AND the PreToolUse hook in the same session.
+
+---
+
 ## OS Comparison
 
 | ⭐ | Feature                       | 🪟 Win11 projects         | 🐧 Linux projects          | 🚀 Impossible OS                                                                 |
@@ -380,9 +395,10 @@ Migrate `scripts/test-smoke.sh`'s boot-pattern match list from raw log-message s
 | 💎 | Unified launcher extra-args   | ⚠️ Per-script ad hoc      | ⚠️ Per-script ad hoc       | ✅ §8 -- `-ExtraArgs` surface uniform across every scenario launcher             |
 | ⭐ | Cross-reference drift gate    | ❌ Unenforced             | ❌ Unenforced              | ✅ §9 -- lint rejects numeric TODO shorthand outside `todo/`; CI-gated           |
 | ⭐ | Boot smoke assertions         | ⚠️ Log-string matches     | ⚠️ Log-string matches      | ✅ §10 -- POST16 manifest drift-detects; inverse-validated per emission          |
+| ⭐ | Bare section-sign drift gate  | ❌ Unenforced             | ❌ Unenforced              | ⚠️ §11 -- lint Check 5 + PreToolUse hook block new refs; legacy sweep in progress |
 
 > **After §1-§6:** Impossible OS reaches the same baseline as well-run Windows and Linux projects for setup, reproducible environments, wrappers, hooks, and CI policy.
-> **After §7-§10:** the repo pulls ahead of either baseline with a first-class operator doctor, drift-guarded cross-references, and boot assertions that cannot silently regress when a contributor edits a printf.
+> **After §7-§11:** the repo pulls ahead of either baseline with a first-class operator doctor, drift-guarded cross-references and section-refs, and boot assertions that cannot silently regress when a contributor edits a printf.
 
 ## Unit Tests
 
