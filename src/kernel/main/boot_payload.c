@@ -13,9 +13,9 @@
  *   3. For every occupied slot at index < payload_count:
  *        - phys_start + length must not overflow uint64_t.
  *        - alignment (if non-zero) must be a power of 2.
- *        - The descriptor's [phys_start, phys_start + length) range
- *          must not overlap: the struct boot_info handoff region, any
- *          UEFI runtime memory map entry, any populated entry in
+ *        - The descriptor's range (phys_start, length bytes) must
+ *          not overlap: the struct boot_info handoff region, any UEFI
+ *          runtime memory map entry, any populated entry in
  *          usb_controller.dma_pages[], or the linear framebuffer.
  *        - Unknown flag bits are rejected only when
  *          BOOT_PAYLOAD_FLAG_REQUIRED is set -- otherwise older
@@ -49,8 +49,9 @@
 #define BOOT_INFO_PHYS_ADDR  0x10000ull
 
 /* Linker-provided kernel image bounds -- the kernel ELF ends up loaded
- * at [__kernel_start, __kernel_end) and no typed payload may land
- * anywhere inside that range. Symbols come from src/boot/linker.ld. */
+ * at __kernel_start through __kernel_end (end exclusive), and no typed
+ * payload may land anywhere inside that range. Symbols come from
+ * src/boot/linker.ld. */
 extern uint8_t __kernel_start;
 extern uint8_t __kernel_end;
 
@@ -159,7 +160,9 @@ static enum boot_payload_error payload_overlap_check(
         return BOOT_PAYLOAD_ERR_OVERLAP_BOOT_INFO;
     }
 
-    /* 1b. Kernel image range at [__kernel_start, __kernel_end). Linker
+    /* 1b. Kernel image range from __kernel_start to __kernel_end (end
+     *     exclusive; matched by the kernel_end_addr > kernel_start_addr
+     *     gate below so the computed length is always positive). Linker
      *     guarantees end > start so no overflow check needed, but the
      *     end-overflow gate below protects against a toolchain bug
      *     placing the image at a wrapping physical address. */

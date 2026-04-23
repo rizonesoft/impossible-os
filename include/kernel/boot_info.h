@@ -87,7 +87,7 @@ struct boot_info_header {
  * boot_info_validate_addr(p, size, max_addr) -- pure, no dereferences.
  *   Rejects NULL, addresses below 0x1000 (NULL page / BDA), misaligned
  *   pointers, sizes that cannot hold the header or exceed uint16_t, and
- *   any [p, p + size) range that wraps around or crosses max_addr.
+ *   any p + size range that wraps around or crosses max_addr.
  *   Early boot passes BOOT_INFO_EARLY_MAP_END; tests pass (uintptr_t)-1.
  *
  * boot_info_validate_header(hdr, kernel_struct_size) -- dereferences
