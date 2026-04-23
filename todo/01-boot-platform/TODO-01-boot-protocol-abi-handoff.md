@@ -70,7 +70,7 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 | 💎  |   6   | Handoff memory ownership and PMM reservation table | §4                                 |  [x]   |
 | 💎  |   7   | Version negotiation and stale-loader error path    | §2, T03 §2                         |  [/]   |
 | 💎  |   8   | Boot protocol documentation and schema changelog   | §1, §2, §3, §4, §5, §6, §7         |  [x]   |
-| ⭐  |   9   | ABI fuzz and compatibility tests                   | §2, §7                             |  [ ]   |
+| ⭐  |   9   | ABI fuzz and compatibility tests                   | §2, §7                             |  [/]   |
 | ⭐  |  10   | Cross-domain owner audit for every boot_info field | §1, §2, §3, §4, §5, §6, §7, §8, §9 |  [ ]   |
 | 💎  |  11   | Capability negotiation and degraded-feature flags  | §2, §3, §4                         |  [ ]   |
 | 💎  |  12   | Common boot-path provenance and decision record    | §1, §4, §7, §11                    |  [ ]   |
@@ -304,13 +304,26 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 
 ## 9. ABI Fuzz and Compatibility Tests
 
-- [ ] Fuzz `boot_info_validate_addr()` and `boot_info_validate_header()` with malformed sizes, addresses, versions, and overlap cases.
-- [ ] Boot QEMU with intentionally stale `BOOTX64.EFI` and assert friendly error output.
-- [ ] Boot QEMU with intentionally stale `kernel.exe` and assert friendly error output.
-- [ ] Add tests for optional payload overlap rejection.
-- [ ] Commit: `"test: boot protocol ABI fuzz coverage"`
+- [x] Fuzz `boot_info_validate_addr()` and `boot_info_validate_header()` with malformed sizes, addresses, versions, and overlap cases. `test_validate_addr_fuzz_sweep` runs 256 xorshift-seeded iterations (known-reject / misaligned / known-accept / random, rotating per iteration), asserts the reject-invariant (NULL / below-floor / too-small / misaligned must always reject) with per-iteration context messages, and proves the accept and reject paths are both exercised (`accepted > 0 && rejected > 0`). `test_validate_header_fuzz_perturbations` runs 32 iterations perturbing `magic` / `version` / `size` / multi-field; every perturbation makes at least one field non-matching, so every iteration MUST reject -- asserted per-iteration with snprintf'd field-name + delta for reproduction. Builds on the 20+ discrete validator tests already shipped by §1 (addr / header / combined) and the 5 `boot_version_classify` tests from §7.
+- [/] Boot QEMU with intentionally stale `BOOTX64.EFI` and assert friendly error output. Kernel-side classification is fully tested (`boot_version_classify` fault classes BAD_MAGIC / BAD_VERSION / BAD_SIZE have per-iter fuzz coverage + discrete tests). The end-to-end QEMU harness that swaps in a stale bootloader binary is deferred: needs a Makefile rule that builds a second `BOOTX64.STALE.EFI` with `BOOT_INFO_VERSION - 1` against an otherwise-current kernel, a wrapper around `scripts/test-smoke.sh` that runs the stale ESP image, and a serial grep for `boot_version: protocol mismatch` + `BAD_VERSION`. Owner slot: this checklist item + a concrete sub-item below.
+- [/] Boot QEMU with intentionally stale `kernel.exe` and assert friendly error output. Same structure as the stale-bootloader fixture: Makefile builds a second `kernel.stale.exe` against `BOOT_INFO_VERSION - 1` paired with the current bootloader; the fatal fires from the kernel's perspective (bootloader writes current version, kernel sees its own version as `expected_version` but observes `observed_version = current_bootloader_version` which equals current kernel version if both are built in sync -- so this test requires the OLDER kernel build, not the stale bootloader). Same owner slot + sub-item.
+- [ ] Stale-image QEMU harness implementation: add `scripts/debug/stale-abi-fixtures/` with `build-stale-bootloader.sh` (rebuilds `src/boot/uefi/bootx64.c` with `-DBOOT_INFO_VERSION=$((CURRENT-1))`), `build-stale-kernel.sh` (rebuilds `include/kernel/boot_info.h` with the same `-D` override), plus a `run-fixtures.sh` that assembles each stale ESP image, runs it through `scripts/machines/run-qemu.ps1 -Accel whpx`, and greps serial for the expected `boot_version` fault-class line. Adds a CI step under `.github/workflows/build.yml` that runs the harness post-build.
+- [x] Add tests for optional payload overlap rejection -- shipped by §4: `test_payload_overlap_boot_info`, `test_payload_overlap_framebuffer`, `test_payload_overlap_rt_mmap`, `test_payload_overlap_usb_dma`, `test_payload_range_wrap`, `test_payload_total_wrap`, `test_payload_retained_rt_mmap_wrap_rejected`, `test_payload_retained_fb_wrap_rejected`, `test_payload_overflow_truncated_rejected` + the §5 `test_payload_find_*` + §6 `test_boot_reserved_payload_vs_pmm_internal`. Collectively 15+ overlap / wrap / range-violation assertions.
+- [x] Commit: `"test: boot protocol ABI fuzz coverage"`
 
 **Test checkpoint:** `bash scripts/test.sh SUITE=boot` covers malformed address, size, version, and overlap cases, and the stale-image QEMU fixtures assert the exact mismatch strings rather than a generic boot halt. Re-run the positive boot path on QEMU WHPX, QEMU TCG, VirtualBox, and bare metal after the negative fixtures pass.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 472 kernel + 16 user-mode PASS on KVM 2026-04-23 (2 new fuzz assertions: addr sweep 256 iterations + header perturbation 32 iterations, both with per-iteration snprintf'd context messages); smoke PASS 2.260s on KVM.
+
+> **Notes:**
+> - **What shipped**: two new parametric fuzz tests in [`src/kernel/test/test_boot_info.c`](../../src/kernel/test/test_boot_info.c): `test_validate_addr_fuzz_sweep` (256 iterations, 4-class rotation: NULL/below-floor / misaligned / aligned-accept / random-with-alignment, xorshift64 PRNG seeded deterministically) and `test_validate_header_fuzz_perturbations` (32 iterations perturbing magic / version / size / multi-field, every iteration rejects via `boot_info_validate_header`). Per-iteration TEST_ASSERT_EQ calls carry snprintf'd context naming `iter`, `addr`, `sz`, field-name, observed values so any platform failure is reproducible from the serial log alone.
+> - **How it runs / integrates**: registered in `test_register_boot_info()` under the existing `TEST_CAT_BOOT` suite. `bash scripts/test.sh SUITE=boot` runs them alongside the 469 existing boot-suite assertions for a total 472/472 PASS.
+> - **Downstream effects**: closes §9 items 1 and 4 (fuzz for validate_addr/validate_header, payload overlap coverage). Items 2 and 3 remain `[/]` with a new `[ ]` owner item capturing the stale-image QEMU harness work.
+> - **Canonical doc**: [`docs/boot/boot-protocol.md`](../../docs/boot/boot-protocol.md) (behavior being fuzzed) + [`docs/boot/boot-protocol-changelog.md`](../../docs/boot/boot-protocol-changelog.md) (version-bump policy the stale-image harness will test against).
+> - **Scope boundary**: §9 owns the kernel-side ABI fuzz coverage. The stale-image CI harness (Makefile rules for `BOOT_INFO_VERSION - 1` builds + `scripts/debug/stale-abi-fixtures/` runner + `.github/workflows/build.yml` step) is a remaining sub-item in this section; when it ships, items 2 and 3 flip to `[x]` and the implementation note gets a commit-hash stamp.
+
+> **Verified:** 2026-04-23 | commit `<pending>` | 3/6 items (+ 2 [/] + 1 new [ ] harness owner) | build OK | 472 kernel + 16 user-mode PASS on KVM (2 new fuzz suites: addr sweep 256 iters, header perturb 32 iters)
+> **Quality reviewed:** 2026-04-23 | Codex 1x (adversarial) | 1M fixed (per-iteration snprintf context added so any fuzz failure is reproducible from the serial log alone; previously aggregate `mismatches == 32` check dropped which perturbation class / delta regressed), 0 open | scope: kernel-code-quality
 
 ---
 
