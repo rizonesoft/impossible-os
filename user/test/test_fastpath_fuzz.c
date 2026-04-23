@@ -6,7 +6,7 @@
  * transport returns the expected value on every iteration. A single
  * transport regressing (register-mapping drift, flag not zeroed on
  * entry, SSDT number shift) fails the binary with the specific iter +
- * transport + observed value in the FAIL message; the §19 transition
+ * transport + observed value in the FAIL message; the transition
  * ring, which is always-on, captures the last 64 crossings at the next
  * panic for replay.
  *

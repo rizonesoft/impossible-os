@@ -381,7 +381,7 @@ static void test_nt_registry_ssdt_registered(void)
 }
 
 /* ============================================================================
- * §15 Advanced registry tests (flush, rename, unload, SSDT registration)
+ * Advanced registry tests (flush, rename, unload, SSDT registration)
  * ============================================================================ */
 
 /* Test: NtFlushKey accepts a valid handle and returns success */

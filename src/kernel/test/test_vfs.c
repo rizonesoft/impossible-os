@@ -63,7 +63,7 @@ static void test_vfs_mkdir_rmdir(void)
     TEST_ASSERT(rc == 0, "vfs_unlink directory succeeds");
 }
 
-/* ---- Bulletproofing §13: VFS + partition constants ---- */
+/* ---- Bulletproofing: VFS + partition constants ---- */
 
 static void test_vfs_drive_constants(void)
 {

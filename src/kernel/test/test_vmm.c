@@ -151,7 +151,7 @@ static void test_vmm_map_user_page_roundtrip(void)
                    "vmm_get_physical returns 0 after unmap");
 }
 
-/* §6 VMM map fault injection: arming vmm_map_fail_next() forces the
+/* VMM map fault injection: arming vmm_map_fail_next() forces the
  * next vmm_map_page() to return -1 without touching page tables.
  * Subsequent calls succeed normally. */
 static void test_vmm_map_fault_inject(void)

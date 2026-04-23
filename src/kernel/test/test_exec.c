@@ -1,7 +1,7 @@
 /* ============================================================================
  * test_exec.c -- Binary format system unit tests
  *
- * Tests exec dispatcher (§1), EIF loader (§5), and module registration (§6).
+ * Tests exec dispatcher, EIF loader, and module registration.
  *
  * XREF: 02-kernel-core/TODO-17-binary-system.md §Unit Tests
  * ============================================================================ */

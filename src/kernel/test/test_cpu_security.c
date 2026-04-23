@@ -976,7 +976,7 @@ static void test_pmc_ipc(void)
     TEST_ASSERT(ipc > 0, "pmc_ipc returns non-zero fixed-point IPC");
 }
 
-/* §6 copy_user fault injection: arming copy_user_fail_next() forces
+/* copy_user fault injection: arming copy_user_fail_next() forces
  * the next copy_to_user OR copy_from_user to return -1 without
  * attempting the real memory access. Proves syscall error paths
  * propagate user-copy failure as a non-zero return without corrupting

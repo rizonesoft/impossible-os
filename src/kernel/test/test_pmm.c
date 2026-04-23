@@ -39,7 +39,7 @@ static void test_pmm_contiguous(void)
     }
 }
 
-/* §6 PMM fault injection -- mirrors the kmalloc tests in test_heap.c.
+/* PMM fault injection -- mirrors the kmalloc tests in test_heap.c.
  * Arms pmm_alloc_fail_next(), expects next pmm_alloc_frame() to return
  * 0 without consuming bitmap state, and proves subsequent allocations
  * succeed normally. */

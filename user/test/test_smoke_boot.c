@@ -1,5 +1,5 @@
 /* ============================================================================
- * test_smoke_boot.c -- §8 smoke binary: is the kernel even running?
+ * test_smoke_boot.c -- smoke binary: is the kernel even running?
  *
  * Smokes run FIRST in the two-phase launcher (src/kernel/test/test_usermode.c,
  * test_usermode_run). A FAIL or SKIP here aborts the entire run and skips

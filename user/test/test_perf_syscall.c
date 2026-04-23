@@ -1,5 +1,5 @@
 /* ============================================================================
- * test_perf_syscall.c -- §8 perf binary: syscall latency baseline
+ * test_perf_syscall.c -- perf binary: syscall latency baseline
  *
  * Measures round-trip ring 3 -> kernel -> ring 3 for the cheapest wired
  * syscall (SYS_YIELD, handler returns 0) and reports the median of N

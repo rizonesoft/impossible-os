@@ -4,7 +4,7 @@
  * Canonical kernel libc.  All functions are self-contained with no
  * external dependencies.  Compiled as part of the kernel image.
  *
- * XREF: 02-kernel-core/TODO-03-kernel-libraries.md §1
+ * XREF: 02-kernel-core/TODO-03-kernel-libraries.md
  * ============================================================================ */
 
 #include "libc/string.h"

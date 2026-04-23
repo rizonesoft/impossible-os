@@ -378,39 +378,29 @@ if [ "$#" -eq 0 ]; then
         src/kernel/test/test_alpc.c
         src/kernel/test/test_boot_info.c
         src/kernel/test/test_boot_init.c
-        src/kernel/test/test_cpu_security.c
-        src/kernel/test/test_exec.c
         src/kernel/test/test_harness.c
         src/kernel/test/test_heap.c
         src/kernel/test/test_klog.c
         src/kernel/test/test_nt_types.c
         src/kernel/test/test_ob.c
         src/kernel/test/test_peb_teb.c
-        src/kernel/test/test_pmm.c
-        src/kernel/test/test_registry.c
         src/kernel/test/test_runner.c
         src/kernel/test/test_security.c
         src/kernel/test/test_usermode.c
         src/kernel/test/test_usermode_launcher.c
-        src/kernel/test/test_vfs.c
-        src/kernel/test/test_vmm.c
         src/kernel/time/wall_clock.c
         src/kernel/timer.c
         src/kernel/tpm.c
         src/kernel/uefi_runtime.c
-        src/libc/string.c
         tools/boot-info-manifest/check-doc-coverage.py
         user/include/test.h
         user/lib/win32.c
-        user/test/test_fastpath_fuzz.c
         user/test/test_fileio.c
         user/test/test_harness_smoke.c
         user/test/test_ipc.c
         user/test/test_libc.c
         user/test/test_loader_pe.c
-        user/test/test_perf_syscall.c
         user/test/test_process.c
-        user/test/test_smoke_boot.c
         user/test/test_stress_libc.c
         user/test/test_syscall.c
         user/test/test_win32.c
