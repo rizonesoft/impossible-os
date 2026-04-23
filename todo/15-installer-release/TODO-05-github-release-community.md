@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: github-release-community
+domain: 15-installer-release
+status: active
+title: "TODO-05 -- GitHub Releases & Community Launch"
+---
+
 # TODO-05 -- GitHub Releases & Community Launch
 
 > **Goal:** Transform Impossible OS from an internal project into a public open-source

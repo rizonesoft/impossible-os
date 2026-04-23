@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: update-server
+domain: 15-installer-release
+status: active
+title: "TODO-03 -- Update Server Infrastructure"
+---
+
 # TODO-03 -- Update Server Infrastructure
 
 > **Goal:** Build the server-side infrastructure that delivers updates to Impossible OS

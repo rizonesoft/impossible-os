@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: release-artifacts
+domain: 15-installer-release
+status: active
+title: "TODO-01 -- Disk Image, USB & Release Artifacts"
+---
+
 # TODO-01 -- Disk Image, USB & Release Artifacts
 
 > **Goal:** Turn development build outputs into versioned, signed, distributable release

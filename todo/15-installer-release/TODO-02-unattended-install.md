@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: unattended-install
+domain: 15-installer-release
+status: active
+title: "TODO-02 -- Unattended Installation & Deployment"
+---
+
 # TODO-02 -- Unattended Installation & Deployment
 
 > **Goal:** Add unattended installation (answer files), sysprep/generalize, OEM

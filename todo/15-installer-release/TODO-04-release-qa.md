@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: release-qa
+domain: 15-installer-release
+status: active
+title: "TODO-04 -- Release QA & Platform Certification"
+---
+
 # TODO-04 -- Release QA & Platform Certification
 
 > **Goal:** Build the structured QA process that gates every public release -- automated
