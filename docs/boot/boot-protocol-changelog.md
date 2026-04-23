@@ -33,7 +33,16 @@ Both halves of the ABI (the kernel header at `include/kernel/boot_info.h` and th
 
 ## Versions
 
-### v7 (current) -- Capability negotiation
+### v8 (current) -- Boot-path provenance and decision record
+
+- **Commit**: pending ([Common Boot-Path Provenance and Decision Record](../../todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md#12-common-boot-path-provenance-and-decision-record))
+- **TODO**: [Common Boot-Path Provenance and Decision Record](../../todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md#12-common-boot-path-provenance-and-decision-record)
+- **Fields added**: `boot_path`, `boot_reason`, `boot_source_flags`, `boot_fallback_depth` (four `uint32_t` fields appended to `struct boot_info` after `caps_degraded`).
+- **Manifest**: 232 fields, `struct_size = 23736` bytes.
+- **Kernel canonical SHA-256**: `ec89e4588783...` (produced by `tools/boot-info-manifest/dump-kernel.c`; kernel and mirror must agree).
+- **Why**: Give consumers (Registry / BlackBox / recovery orchestrator / attestation) one authoritative answer to "what path did this boot take and why" BEFORE they inspect per-path descriptors. Stable enums + a closed flag mask mean a consumer can trust the record rather than re-deriving it from a dozen provenance fields scattered across `boot_info`. Unknown `boot_path` / `boot_reason` halt (stale-kernel-on-newer-loader gate). Unknown bits in `boot_source_flags` also halt -- the forward-compat tolerance that applies to capability bits does NOT apply here because every flag maps to a kernel-side policy. Validator: [`boot_decision_validate`](../../src/kernel/main/boot_decision.c) wired from `boot_hw.c` after `boot_caps_validate`.
+
+### v7 -- Capability negotiation
 
 - **Commit**: pending ([Capability Negotiation and Degraded-Feature Flags](../../todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md#11-capability-negotiation-and-degraded-feature-flags))
 - **TODO**: [Capability Negotiation and Degraded-Feature Flags](../../todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md#11-capability-negotiation-and-degraded-feature-flags)

@@ -63,7 +63,7 @@
  *   - Bootloader writes sizeof(struct boot_info) into header.size at
  *     compile time -- a size mismatch means the structs diverged. */
 #define BOOT_INFO_MAGIC    0x49504F53  /* "IPOS" (Impossible OS) */
-#define BOOT_INFO_VERSION  7           /* v7 adds caps_required/present/degraded */
+#define BOOT_INFO_VERSION  8           /* v8 adds boot_path/reason/source_flags/fallback_depth */
 
 /* Upper bound for pre-copy address validation: the UEFI bootloader
  * identity-maps [0, 4 GiB) with 2 MiB pages in setup_page_tables()
@@ -172,6 +172,132 @@ boot_result_t boot_payload_validate(const struct boot_info *info,
  * pass values from `enum boot_payload_type` directly -- they decay to
  * uint32_t exactly; the validator already stores type as uint32_t for
  * the same ABI-stability reason. */
+/* Boot-path provenance and decision record (v8).
+ *
+ * Media role, recovery, network boot, and resume each carry their own
+ * details; this record is the one shared answer to "what path was
+ * selected and why". Three pieces:
+ *
+ *   boot_path  -- enum boot_path_type: which flow actually ran
+ *                 (cold boot, installer, recovery, network, resume,
+ *                 fast startup, diagnostic).
+ *   boot_reason -- enum boot_reason_code: the policy reason the
+ *                  loader selected that path (user selected BootNext,
+ *                  rollback triggered, resume invalidated, network
+ *                  marked insecure, manifest/measured-boot failure,
+ *                  recovery trigger asserted, fast-startup hibernation
+ *                  image validated, diagnostic mode requested).
+ *   boot_source_flags -- BOOT_SOURCE_FLAG_* bitmask: the inputs that
+ *                        drove the decision (BootCurrent mismatch,
+ *                        BootNext set, media removable/present,
+ *                        rollback + recovery + resume-invalidation
+ *                        triggers, network insecure, manifest /
+ *                        measured-boot status). Forward-compatible:
+ *                        unknown bits are tolerated.
+ *   boot_fallback_depth -- how many fallbacks were traversed before
+ *                          the selected path was reached. 0 = primary
+ *                          choice took; N > 0 = Nth fallback (capped
+ *                          at BOOT_FALLBACK_DEPTH_MAX by the
+ *                          validator).
+ *
+ * The record pairs with the per-path descriptors produced by
+ * neighboring roadmap sections (media role, recovery image, network
+ * provenance, hibernation resume); consumers read this record FIRST
+ * to know which descriptor to trust. The kernel exports the record to
+ * HKLM\SYSTEM\Boot\Decision and to BlackBox so recovery, attestation,
+ * and rollback logic can explain why the current boot chose what it
+ * chose.
+ */
+enum boot_path_type {
+    BOOT_PATH_NORMAL       = 0,  /* normal cold boot from primary boot device */
+    BOOT_PATH_INSTALLER    = 1,  /* installer image handoff */
+    BOOT_PATH_RECOVERY     = 2,  /* recovery partition / Windows RE equivalent */
+    BOOT_PATH_NETWORK      = 3,  /* PXE/HTTP boot */
+    BOOT_PATH_RESUME       = 4,  /* S4 hibernation resume (validated) */
+    BOOT_PATH_FAST_STARTUP = 5,  /* Windows-style fast startup (hybrid boot) */
+    BOOT_PATH_DIAGNOSTIC   = 6,  /* operator-triggered diagnostic mode */
+};
+#define BOOT_PATH_TYPE_MAX  BOOT_PATH_DIAGNOSTIC
+
+enum boot_reason_code {
+    BOOT_REASON_NORMAL              = 0,  /* primary path, no policy trigger */
+    BOOT_REASON_USER_SELECTED       = 1,  /* BootNext or operator picked this entry */
+    BOOT_REASON_ROLLBACK            = 2,  /* rollback after failed previous boot */
+    BOOT_REASON_RESUME_VALIDATED    = 3,  /* hibernation image passed validation */
+    BOOT_REASON_RESUME_INVALIDATED  = 4,  /* hibernation image rejected; fell back */
+    BOOT_REASON_NETWORK_INSECURE    = 5,  /* network boot used but flagged insecure */
+    BOOT_REASON_MANIFEST_FAILURE    = 6,  /* image manifest check failed */
+    BOOT_REASON_MEASURED_BOOT_FAIL  = 7,  /* measured-boot/TPM check failed */
+    BOOT_REASON_RECOVERY_TRIGGER    = 8,  /* recovery trigger asserted by firmware or operator */
+    BOOT_REASON_FAST_STARTUP_HIT    = 9,  /* fast-startup image present + valid */
+    BOOT_REASON_DIAGNOSTIC_REQUEST  = 10, /* operator requested diagnostic flow */
+    BOOT_REASON_FALLBACK            = 11, /* loader exhausted primary + chose fallback */
+};
+#define BOOT_REASON_CODE_MAX  BOOT_REASON_FALLBACK
+
+/* BOOT_SOURCE_FLAG_* bitmask bits -- inputs that drove the decision.
+ * Unknown bits are tolerated (forward compat); bits in BOOT_SOURCE_FLAG
+ * _MASK_KNOWN are recognized today.  */
+#define BOOT_SOURCE_FLAG_BOOT_NEXT_SET            (1u << 0)  /* BootNext variable was populated */
+#define BOOT_SOURCE_FLAG_BOOT_CURRENT_MISMATCH    (1u << 1)  /* BootCurrent != expected primary entry */
+#define BOOT_SOURCE_FLAG_MEDIA_REMOVABLE          (1u << 2)  /* boot media flagged removable */
+#define BOOT_SOURCE_FLAG_MEDIA_PRESENT            (1u << 3)  /* boot media actually present (BlockIO confirmed) */
+#define BOOT_SOURCE_FLAG_ROLLBACK_TRIGGERED       (1u << 4)  /* rollback counter asserted */
+#define BOOT_SOURCE_FLAG_RECOVERY_TRIGGERED       (1u << 5)  /* recovery trigger asserted */
+#define BOOT_SOURCE_FLAG_RESUME_INVALIDATED       (1u << 6)  /* hibernation image invalidated */
+#define BOOT_SOURCE_FLAG_NETWORK_INSECURE         (1u << 7)  /* network boot with insecure-channel flag */
+#define BOOT_SOURCE_FLAG_MANIFEST_FAILED          (1u << 8)  /* image manifest check failed */
+#define BOOT_SOURCE_FLAG_MEASURED_BOOT_FAILED     (1u << 9)  /* measured-boot/TPM check failed */
+
+#define BOOT_SOURCE_FLAG_MASK_KNOWN                                   \
+    (BOOT_SOURCE_FLAG_BOOT_NEXT_SET             |                     \
+     BOOT_SOURCE_FLAG_BOOT_CURRENT_MISMATCH     |                     \
+     BOOT_SOURCE_FLAG_MEDIA_REMOVABLE           |                     \
+     BOOT_SOURCE_FLAG_MEDIA_PRESENT             |                     \
+     BOOT_SOURCE_FLAG_ROLLBACK_TRIGGERED        |                     \
+     BOOT_SOURCE_FLAG_RECOVERY_TRIGGERED        |                     \
+     BOOT_SOURCE_FLAG_RESUME_INVALIDATED        |                     \
+     BOOT_SOURCE_FLAG_NETWORK_INSECURE          |                     \
+     BOOT_SOURCE_FLAG_MANIFEST_FAILED           |                     \
+     BOOT_SOURCE_FLAG_MEASURED_BOOT_FAILED)
+
+/* Upper bound on the fallback chain depth we consider legal. In
+ * practice loaders should not burn through more than a handful of
+ * fallbacks before halting; a value beyond this is a producer bug or a
+ * storage-loop detection miss. */
+#define BOOT_FALLBACK_DEPTH_MAX  16
+
+enum boot_decision_error {
+    BOOT_DECISION_ERR_OK                 = 0,
+    BOOT_DECISION_ERR_NULL_INFO          = 1,  /* info pointer is NULL */
+    BOOT_DECISION_ERR_BAD_PATH           = 2,  /* boot_path > BOOT_PATH_TYPE_MAX */
+    BOOT_DECISION_ERR_BAD_REASON         = 3,  /* boot_reason > BOOT_REASON_CODE_MAX */
+    BOOT_DECISION_ERR_UNKNOWN_FLAG       = 4,  /* boot_source_flags has bits outside KNOWN_MASK */
+    BOOT_DECISION_ERR_FALLBACK_OOR       = 5,  /* boot_fallback_depth > BOOT_FALLBACK_DEPTH_MAX */
+    BOOT_DECISION_ERR_REASON_PATH        = 6,  /* reason not allowed with current path (R5) */
+    BOOT_DECISION_ERR_FALLBACK_REASON    = 7,  /* fallback_depth>0 but reason not fallback-class (R6) */
+    BOOT_DECISION_ERR_REASON_FLAG        = 8,  /* trigger-reason without matching flag (R7) */
+};
+
+/* Validate decision record fields.  Runs in Phase 0 after
+ * boot_caps_validate() succeeds.  On BOOT_FATAL the specific failure
+ * is written to *out_error (when non-NULL); a LOG_ERROR line names the
+ * offending field before boot_halt() fires from the caller.  Unknown
+ * flag bits in boot_source_flags trigger BAD_FLAG when they are ALSO
+ * outside BOOT_SOURCE_FLAG_MASK_KNOWN -- the unknown-tolerance rule
+ * from capability negotiation does NOT apply here, because every
+ * decision input maps to a documented policy and a producer cannot
+ * assert a brand-new flag without kernel support. Widening the mask
+ * requires a BOOT_INFO_VERSION bump. */
+boot_result_t boot_decision_validate(const struct boot_info *info,
+                                     enum boot_decision_error *out_error);
+
+/* Human-readable name for the decision record enums. Returns a short
+ * stable string ("normal" / "recovery" / etc.); unknown values return
+ * "invalid". */
+const char *boot_path_name(uint32_t path);
+const char *boot_reason_name(uint32_t reason);
+
 /* Capability negotiation and degraded-feature flags.
  *
  * Boot_info carries three capability words that let the loader and
@@ -841,6 +967,16 @@ struct boot_info {
     uint64_t caps_required;         /* bits loader asserts kernel MUST support */
     uint64_t caps_present;          /* bits for features loader actually populated */
     uint64_t caps_degraded;         /* known-but-not-provided bits (adapter degradation) */
+
+    /* Boot-path provenance and decision record (v8). See the
+     * enum boot_path_type / boot_reason_code / BOOT_SOURCE_FLAG_*
+     * block above for semantics. Consumers read this BEFORE inspecting
+     * any per-path descriptors (recovery image, resume metadata,
+     * network provenance) so they know which descriptor to trust. */
+    uint32_t boot_path;             /* enum boot_path_type */
+    uint32_t boot_reason;           /* enum boot_reason_code */
+    uint32_t boot_source_flags;     /* BOOT_SOURCE_FLAG_* bitmask */
+    uint32_t boot_fallback_depth;   /* 0 = primary, N = Nth fallback */
 };
 
 /* Compile-time enforcement of ABI header layout (S15) */
@@ -889,3 +1025,10 @@ extern struct boot_info g_boot_info;
 /*: Populate HKLM\SYSTEM\Boot\Device\ from g_boot_info.
  * Called from registry_populate_defaults() after registry_init(). */
 void boot_device_populate_registry(void);
+
+/* Populate HKLM\SYSTEM\Boot\Decision\* from the validated decision
+ * record (boot_path / boot_reason / boot_source_flags / boot_fallback
+ * _depth). Called from registry_populate_defaults() in Phase 2 after
+ * boot_device_populate_registry(). Writes Path / PathName / Reason /
+ * ReasonName / SourceFlags / FallbackDepth. */
+void boot_decision_populate_registry(void);

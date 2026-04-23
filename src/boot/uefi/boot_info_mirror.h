@@ -239,7 +239,7 @@ struct boot_usb_controller {
 
 /* ABI header -- must match kernel/boot_info.h */
 #define BOOT_INFO_MAGIC    0x49504F53  /* "IPOS" */
-#define BOOT_INFO_VERSION  7  /* v7 adds caps_required/present/degraded */
+#define BOOT_INFO_VERSION  8  /* v8 adds boot_path/reason/source_flags/fallback_depth */
 
 /* Typed payload descriptor array -- must match kernel/boot_info.h. */
 #define BOOT_PAYLOAD_MAX  32
@@ -281,6 +281,45 @@ struct boot_usb_controller {
 #define BOOT_CAP_NETWORK_PROVENANCE   (1ull << 6)
 #define BOOT_CAP_RESUME_METADATA      (1ull << 7)
 #define BOOT_CAP_ALT_PROTOCOL_ADAPTER (1ull << 8)
+
+/* Boot-path provenance enums and flag bits (v8). Mirror of the
+ * enum boot_path_type / boot_reason_code / BOOT_SOURCE_FLAG_* block in
+ * include/kernel/boot_info.h. Bootloader populates boot_path /
+ * boot_reason / boot_source_flags / boot_fallback_depth before
+ * kernel handoff. */
+#define BOOT_PATH_NORMAL        0u
+#define BOOT_PATH_INSTALLER     1u
+#define BOOT_PATH_RECOVERY      2u
+#define BOOT_PATH_NETWORK       3u
+#define BOOT_PATH_RESUME        4u
+#define BOOT_PATH_FAST_STARTUP  5u
+#define BOOT_PATH_DIAGNOSTIC    6u
+
+#define BOOT_REASON_NORMAL              0u
+#define BOOT_REASON_USER_SELECTED       1u
+#define BOOT_REASON_ROLLBACK            2u
+#define BOOT_REASON_RESUME_VALIDATED    3u
+#define BOOT_REASON_RESUME_INVALIDATED  4u
+#define BOOT_REASON_NETWORK_INSECURE    5u
+#define BOOT_REASON_MANIFEST_FAILURE    6u
+#define BOOT_REASON_MEASURED_BOOT_FAIL  7u
+#define BOOT_REASON_RECOVERY_TRIGGER    8u
+#define BOOT_REASON_FAST_STARTUP_HIT    9u
+#define BOOT_REASON_DIAGNOSTIC_REQUEST  10u
+#define BOOT_REASON_FALLBACK            11u
+
+#define BOOT_SOURCE_FLAG_BOOT_NEXT_SET            (1u << 0)
+#define BOOT_SOURCE_FLAG_BOOT_CURRENT_MISMATCH    (1u << 1)
+#define BOOT_SOURCE_FLAG_MEDIA_REMOVABLE          (1u << 2)
+#define BOOT_SOURCE_FLAG_MEDIA_PRESENT            (1u << 3)
+#define BOOT_SOURCE_FLAG_ROLLBACK_TRIGGERED       (1u << 4)
+#define BOOT_SOURCE_FLAG_RECOVERY_TRIGGERED       (1u << 5)
+#define BOOT_SOURCE_FLAG_RESUME_INVALIDATED       (1u << 6)
+#define BOOT_SOURCE_FLAG_NETWORK_INSECURE         (1u << 7)
+#define BOOT_SOURCE_FLAG_MANIFEST_FAILED          (1u << 8)
+#define BOOT_SOURCE_FLAG_MEASURED_BOOT_FAILED     (1u << 9)
+
+#define BOOT_FALLBACK_DEPTH_MAX  16
 
 struct boot_payload_desc {
     UINT32 type;         /* enum boot_payload_type */
@@ -440,6 +479,13 @@ struct boot_info {
     UINT64  caps_required;
     UINT64  caps_present;
     UINT64  caps_degraded;
+
+    /* Boot-path provenance and decision record. Contract lives in the
+     * kernel header; loader populates all four before header write. */
+    UINT32  boot_path;
+    UINT32  boot_reason;
+    UINT32  boot_source_flags;
+    UINT32  boot_fallback_depth;
 };
 
 /* ABI compile-time guards -- catch bootloader/kernel struct drift at build */

@@ -309,3 +309,9 @@ F(payload_total_bytes);
 F(caps_required);
 F(caps_present);
 F(caps_degraded);
+
+/* ---- Boot-path provenance and decision record (v8) ---- */
+F(boot_path);
+F(boot_reason);
+F(boot_source_flags);
+F(boot_fallback_depth);

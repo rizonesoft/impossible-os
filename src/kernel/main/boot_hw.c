@@ -171,6 +171,21 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
         }
     }
 
+    /* Boot-path provenance and decision record: reject stale/unknown
+     * enum values, unknown flag bits, and runaway fallback depths
+     * before any Registry/BlackBox/attestation consumer reads
+     * boot_path / boot_reason / boot_source_flags / boot_fallback
+     * _depth. */
+    {
+        enum boot_decision_error derr = BOOT_DECISION_ERR_OK;
+        if (boot_decision_validate(&g_boot_info, &derr) != BOOT_OK) {
+            klog(LOG_ERROR, "boot",
+                 "boot_decision_validate failed (err=%u); halting before decision consumers run",
+                 (uint64_t)derr);
+            boot_halt("boot_decision: provenance record invariants violated");
+        }
+    }
+
     /* S13: Log previous boot error if one was persisted in NVRAM */
     if (g_boot_info.last_boot_error != 0)
         klog(LOG_WARN, "UEFI",
@@ -562,4 +577,43 @@ void boot_device_populate_registry(void)
          g_boot_info.boot_device_path,
          (uint64_t)g_boot_info.boot_device_type,
          (uint64_t)g_boot_info.boot_device_removable);
+}
+
+/* ---- Boot decision Registry population ----------------------------------
+ * Populates HKLM\SYSTEM\Boot\Decision\ with the provenance fields
+ * boot_path / boot_reason / boot_source_flags / boot_fallback_depth so
+ * recovery, attestation, and rollback logic can read one authoritative
+ * record instead of re-deriving the decision from scattered fields.
+ * Path and reason are written in two forms: the enum value as a DWORD
+ * for programmatic consumers, and the short name as a REG_SZ for
+ * operator-readable tools. */
+
+void boot_decision_populate_registry(void)
+{
+    HKEY hKey = (HKEY)0;
+    uint32_t disp = 0;
+
+    if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, "SYSTEM\\Boot\\Decision", 0,
+                       (const char *)0, 0, KEY_ALL_ACCESS, (void *)0,
+                       &hKey, &disp) != ERROR_SUCCESS) {
+        klog(LOG_WARN, "boot",
+             "Failed to create HKLM\\SYSTEM\\Boot\\Decision key");
+        return;
+    }
+
+    RegSetDword(hKey, "Path",          g_boot_info.boot_path);
+    RegSetString(hKey, "PathName",     boot_path_name(g_boot_info.boot_path));
+    RegSetDword(hKey, "Reason",        g_boot_info.boot_reason);
+    RegSetString(hKey, "ReasonName",   boot_reason_name(g_boot_info.boot_reason));
+    RegSetDword(hKey, "SourceFlags",   g_boot_info.boot_source_flags);
+    RegSetDword(hKey, "FallbackDepth", g_boot_info.boot_fallback_depth);
+
+    RegCloseKey(hKey);
+
+    klog(LOG_INFO, "boot",
+         "Boot decision Registry populated: path=%s reason=%s flags=0x%x fallback=%u",
+         (uint64_t)(uintptr_t)boot_path_name(g_boot_info.boot_path),
+         (uint64_t)(uintptr_t)boot_reason_name(g_boot_info.boot_reason),
+         (uint64_t)g_boot_info.boot_source_flags,
+         (uint64_t)g_boot_info.boot_fallback_depth);
 }

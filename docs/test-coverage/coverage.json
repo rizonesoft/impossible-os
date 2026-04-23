@@ -1,12 +1,13 @@
 {
-  "timestamp": "2026-04-23T22:50:00Z",
-  "total_suites": 653,
-  "total_assertions": 2047,
+  "timestamp": "2026-04-23T23:10:28Z",
+  "total_suites": 671,
+  "total_assertions": 2086,
   "files": [
     {"file": "test_acpi_power.c", "suites": 7, "assertions": 10},
     {"file": "test_alpc.c", "suites": 49, "assertions": 208},
     {"file": "test_blackbox.c", "suites": 11, "assertions": 9},
     {"file": "test_boot_caps.c", "suites": 11, "assertions": 22},
+    {"file": "test_boot_decision.c", "suites": 18, "assertions": 39},
     {"file": "test_boot_device.c", "suites": 9, "assertions": 10},
     {"file": "test_boot_info.c", "suites": 51, "assertions": 89},
     {"file": "test_boot_init.c", "suites": 23, "assertions": 85},

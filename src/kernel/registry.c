@@ -1855,6 +1855,9 @@ void registry_populate_defaults(void)
 
     /*: Populate boot device provenance (HKLM\SYSTEM\Boot\Device\*) */
     boot_device_populate_registry();
+
+    /* Populate boot decision record (HKLM\SYSTEM\Boot\Decision\*) */
+    boot_decision_populate_registry();
 }
 
 /* ============================================================================

@@ -220,6 +220,17 @@ Tri-word bitmask negotiation between bootloader and kernel. `caps_required` asse
 | `caps_present` | bootx64 | P0 | capability-gated consumers (runtime services, TPM log, USB handover, etc.) | handoff | boot-protocol-abi-handoff §11 | Unknown bits tolerated (forward compat). No bit may be set in both `caps_present` and `caps_degraded`. Every bit in `BOOT_CAP_MASK_KNOWN` must appear in `caps_present OR caps_degraded` (no unclassified known bits). |
 | `caps_degraded` | bootx64 | P0 | boot log, health orchestrator | handoff | boot-protocol-abi-handoff §11 | Unknown bits tolerated. Must not intersect `caps_required` or `caps_present`. Complements `caps_present` to cover every known bit. |
 
+### Boot-path provenance
+
+One shared decision record answering "what path did this boot take and why". Consumers (HKLM\SYSTEM\Boot\Decision populator, BlackBox transcription, recovery orchestrator, attestation narrative) read these four fields BEFORE inspecting per-path descriptors (recovery image, resume metadata, network provenance) so they know which descriptor to trust. Validator: [`boot_decision_validate`](../../src/kernel/main/boot_decision.c) wired from `boot_hw.c` after `boot_caps_validate`. Bumping any enum value or flag bit requires a `BOOT_INFO_VERSION` bump.
+
+| Field | Producer | First valid | Consumer | Lifetime | Owning roadmap | Validation |
+| --- | --- | --- | --- | --- | --- | --- |
+| `boot_path` | bootx64 | P0 | Registry (`SYSTEM\\Boot\\Decision\\Path`), BlackBox transcription | handoff | boot-protocol-abi-handoff section 12 | `enum boot_path_type` in `[0, BOOT_PATH_TYPE_MAX]`; out-of-range halts with "stale loader emitted unknown flow". |
+| `boot_reason` | bootx64 | P0 | Registry (`Reason`), recovery orchestrator, attestation | handoff | boot-protocol-abi-handoff section 12 | `enum boot_reason_code` in `[0, BOOT_REASON_CODE_MAX]`; out-of-range halts with "unknown code". |
+| `boot_source_flags` | bootx64 | P0 | Registry (`SourceFlags`), BlackBox | handoff | boot-protocol-abi-handoff section 12 | Every set bit MUST be in `BOOT_SOURCE_FLAG_MASK_KNOWN`; unknown bits halt with "unknown flag" (unlike capability negotiation, forward-compat tolerance does NOT apply -- every flag maps to a kernel-side policy). |
+| `boot_fallback_depth` | bootx64 | P0 | Registry (`FallbackDepth`), BlackBox | handoff | boot-protocol-abi-handoff section 12 | `<= BOOT_FALLBACK_DEPTH_MAX` (16); greater halts with "probable fallback loop". |
+
 ## Nested struct: `boot_payload_desc`
 
 48-byte ABI-pinned descriptor. Kernel enum `boot_payload_type` maps well-known values (MODULE, INITRD, RECOVERY_IMAGE, HIBERNATION_META, TPM_EVENT_LOG, NETWORK_CONFIG, RANDOM_SEED, USB_HANDOVER); unknown values are SKIPPED for type-specific validation unless `BOOT_PAYLOAD_FLAG_REQUIRED` is set on the descriptor (required-unknown forces a fatal boot failure).

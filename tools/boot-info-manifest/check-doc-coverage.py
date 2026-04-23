@@ -82,6 +82,7 @@ TOPLEVEL_SECTIONS: list[str] = [
     "Kernel-populated fields",
     "Typed payload descriptor array",
     "Capability negotiation",
+    "Boot-path provenance",
     # NOTE: do NOT add `Legacy / Multiboot2-only fields` -- it is a
     # summary table only.
 ]

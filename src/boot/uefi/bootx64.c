@@ -5760,6 +5760,46 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
         g_boot_info_ptr->caps_degraded = degraded;
     }
 
+    /* Boot-path provenance and decision record: one shared answer to
+     * "what path did this boot take and why". This bootloader only
+     * implements the native UEFI cold-boot path today; installer /
+     * recovery / network / resume / fast-startup / diagnostic paths
+     * are future work tracked in neighboring domain TODOs. The record
+     * still gets populated here so Registry / BlackBox / attestation
+     * consumers have a stable contract from day one. */
+    {
+        UINT32 src_flags = 0;
+        if (g_boot_info_ptr->uefi_boot_next_valid)
+            src_flags |= BOOT_SOURCE_FLAG_BOOT_NEXT_SET;
+        if (g_boot_info_ptr->boot_device_removable)
+            src_flags |= BOOT_SOURCE_FLAG_MEDIA_REMOVABLE;
+        if (g_boot_info_ptr->boot_media_present)
+            src_flags |= BOOT_SOURCE_FLAG_MEDIA_PRESENT;
+        /* Rollback / recovery / resume-invalidation / network-insecure /
+         * manifest-failed / measured-boot-failed flags stay clear on
+         * this loader; the paths that would set them (rollback store,
+         * recovery trigger probe, hibernation image validator, PXE
+         * adapter, manifest verifier, TPM attestation) are not
+         * implemented yet. When they land, the producer adds the flag
+         * here and picks the matching boot_reason. */
+
+        g_boot_info_ptr->boot_path = BOOT_PATH_NORMAL;
+        /* If BootNext was populated, the operator picked this entry
+         * explicitly -- record USER_SELECTED so the decision log
+         * carries that nuance even though the resulting path is
+         * NORMAL. */
+        g_boot_info_ptr->boot_reason =
+            (src_flags & BOOT_SOURCE_FLAG_BOOT_NEXT_SET)
+                ? BOOT_REASON_USER_SELECTED
+                : BOOT_REASON_NORMAL;
+        g_boot_info_ptr->boot_source_flags = src_flags;
+        /* Fallback depth: 0 on the primary path. The current loader
+         * has a fallback chain for boot-device detection but does not
+         * count rungs; future work threads a counter through the
+         * fallback path and writes the final value here. */
+        g_boot_info_ptr->boot_fallback_depth = 0u;
+    }
+
     /* S15: Populate ABI header as the final step before kernel handoff.
      * Written last so any late modifications to boot_info don't overwrite it. */
     g_boot_info_ptr->header.magic   = BOOT_INFO_MAGIC;
