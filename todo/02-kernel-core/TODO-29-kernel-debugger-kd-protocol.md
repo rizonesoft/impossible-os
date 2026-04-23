@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: kernel-debugger-kd-protocol
+domain: 02-kernel-core
+status: active
+title: "TODO-29 -- Kernel Debugger (KD Protocol)"
+---
+
 # TODO-29 -- Kernel Debugger (KD Protocol)
 
 > **Goal:** Implement a WinDbg-compatible kernel debug stub over the existing COM1 serial port. The KD protocol is the wire format that WinDbg uses to control a target kernel: it allows a connected debugger to set software and hardware breakpoints, read and write memory and registers, single-step, enumerate loaded modules, and analyze crashes on live hardware. Today the serial port outputs text at 38400 baud with no receive capability beyond a single `serial_trygetchar`; there is no breakpoint infrastructure, no `#DB`/`#BP` routing to a debugger, and no packet framing. Without KD, every crash on real hardware requires a reboot-and-guess cycle; with KD, a developer attaches WinDbg from a second machine and gets live `!analyze -v`, symbol-resolved stack traces, and memory inspection in real time.

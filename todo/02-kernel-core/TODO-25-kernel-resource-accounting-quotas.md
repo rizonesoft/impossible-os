@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: kernel-resource-accounting-quotas
+domain: 02-kernel-core
+status: active
+title: "TODO-25 -- Kernel Resource Accounting & Quotas"
+---
+
 # TODO-25 -- Kernel Resource Accounting & Quotas
 
 > **Goal:** Create one kernel authority for resource accounting and quota enforcement across objects, handles, processes, jobs, pools, registry, ALPC, notifications, crash buffers, and system-global limits. Today each subsystem plans local counters. That is not enough for a production OS: quota failures must be consistent, diagnosable, inherited, security-checked, and queryable.

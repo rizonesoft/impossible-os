@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: atom-nls-locale-subsystem
+domain: 02-kernel-core
+status: active
+title: "TODO-13 -- Atom, NLS & Locale Subsystem"
+---
+
 # TODO-13 -- Atom, NLS & Locale Subsystem
 
 > **Goal:** Complete the kernel-owned atom and NLS/locale layer required by NT Native API, Win32 compatibility, registry case-insensitivity, object namespace comparisons, environment lookup, filesystem interop, and user-mode locale APIs. This covers global/local atom tables, Unicode case mapping, code page conversion, locale identifiers, sort keys, normalization policy, timezone display names, and native syscalls.

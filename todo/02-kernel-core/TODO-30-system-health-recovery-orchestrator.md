@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: system-health-recovery-orchestrator
+domain: 02-kernel-core
+status: active
+title: "TODO-30 -- System Health & Recovery Orchestrator"
+---
+
 # TODO-30 -- System Health & Recovery Orchestrator
 
 > **Goal:** Add a kernel health orchestrator that turns scattered diagnostics into decisions: degraded mode, service restart hints, live kernel dumps, hang classification, repeated-crash policy, safe-mode escalation, subsystem quarantine, and recovery notifications. This is not a test framework or UI; it is the kernel's runtime judgement layer for whether the system is healthy enough to continue.

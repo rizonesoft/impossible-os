@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: process-model-extensions
+domain: 02-kernel-core
+status: active
+title: "TODO-21 -- Process Model Extensions"
+---
+
 # TODO-21 -- Process Model Extensions
 
 > **Goal:** Extend the kernel process model with the per-process state fields and syscalls that don't belong to the scheduler, VMM, or Object Manager individually: current working directory, standard handle pre-wiring, user-mode program break (Linux compat heap), process priority classes mapped to Win32 `SetPriorityClass`, scheduling policy per-task (`SCHED_FIFO`/`SCHED_IDLE`), and a process capability/privilege bitmask. All of these hang off `struct task` and are needed before any non-trivial user-mode program can run correctly.

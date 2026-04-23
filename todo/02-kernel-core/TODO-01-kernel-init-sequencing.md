@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: kernel-init-sequencing
+domain: 02-kernel-core
+status: active
+title: "TODO-01 -- Kernel Init Sequencing"
+---
+
 # TODO-01 -- Kernel Init Sequencing
 
 > **Goal:** Replace the ad-hoc 5-phase boot sequence with a formal, dependency-gated init model. Every subsystem declares prerequisites, returns a typed result, and the kernel halts or degrades gracefully on failure. Phase boundaries are explicit, testable, and match the hardware bring-up contract expected by a production OS.

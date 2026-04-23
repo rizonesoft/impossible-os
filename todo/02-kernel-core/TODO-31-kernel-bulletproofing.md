@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: kernel-bulletproofing
+domain: 02-kernel-core
+status: active
+title: "TODO-31 -- Kernel Bulletproofing"
+---
+
 # TODO-31 -- Kernel Bulletproofing
 
 > **Goal:** Apply 5-layer defense-in-depth (static assert, runtime verify, unit test, canary, documentation) to every critical invariant in the kernel. Make it impossible for code changes to silently break cross-file dependencies, struct layouts, assembly offsets, ABI contracts, or memory layout constraints. The GDT SYSRET ordering protection (5 layers, implemented 2026-04-03) is the reference implementation; this TODO extends the same pattern to all 24 identified fragile subsystems. When complete, Impossible OS is the most self-verifying kernel in existence -- every critical invariant is checked at compile time, boot time, and test time. Silent corruption is architecturally impossible.

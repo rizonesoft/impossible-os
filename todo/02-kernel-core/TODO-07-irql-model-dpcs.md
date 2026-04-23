@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: irql-model-dpcs
+domain: 02-kernel-core
+status: active
+title: "TODO-07 -- IRQL Model & DPCs"
+---
+
 # TODO-07 -- IRQL Model & DPCs
 
 > **Goal:** Implement a Windows-style Interrupt Request Level (IRQL) model and a real Deferred Procedure Call (DPC) subsystem so interrupt handlers can defer non-trivial work safely. DPCs run at `DISPATCH_LEVEL`, enforce preemption constraints, and provide a deterministic bridge between hard-interrupt context and thread context.

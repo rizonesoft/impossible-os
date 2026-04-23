@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: binary-system
+domain: 02-kernel-core
+status: active
+title: "TODO-17 -- Binary Format System (exec_load / ELF / PE32+ / EIF)"
+---
+
 # TODO-17 -- Binary Format System (exec_load / ELF / PE32+ / EIF)
 
 > **Goal:** Build the multi-format executable loader that every user-mode program depends on. Three formats must work: ELF (existing basic loader upgraded), PE32+ (Windows-compatible, imports wired to Win32 API), and EIF (Impossible OS native -- 64-byte header, syscall-ID import table, <10 µs load time). A single `exec_load()` dispatcher auto-detects format by magic bytes and routes to the correct loader. ASLR and EIF code signing close out the security story.

@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: executive-support-runtime
+domain: 02-kernel-core
+status: active
+title: "TODO-06 -- Executive Support Runtime"
+---
+
 # TODO-06 -- Executive Support Runtime
 
 > **Goal:** Complete the NT Executive-style support layer that sits above raw locks and scheduler mechanics: callback objects, rundown protection, lookaside lists, fast references, generic tables, resource objects, worker items, guarded regions, executive timers glue, bugcheck reason callbacks, and reusable verifier hooks. These primitives are small individually, but they are the connective tissue required by drivers, registry, SRM, ALPC, power, object callbacks, and file I/O.

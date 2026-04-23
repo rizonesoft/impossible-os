@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: system-logging
+domain: 02-kernel-core
+status: active
+title: "TODO-04 -- System Logging"
+---
+
 # TODO-04 -- System Logging
 
 > **Goal:** Complete the klog system from its current working foundation to a production-grade logging stack: per-subsystem log splitting, log rotation, structured JSON events, rate limiting, and remote syslog forwarding. The core klog infrastructure (ring buffer, disk flush, serial/framebuffer output, numbered boot logs, user-mode syscall) is already implemented and is documented in the Completed section below for reference.

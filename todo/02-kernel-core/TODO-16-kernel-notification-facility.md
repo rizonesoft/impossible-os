@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: kernel-notification-facility
+domain: 02-kernel-core
+status: active
+title: "TODO-16 -- Kernel Notification Facility"
+---
+
 # TODO-16 -- Kernel Notification Facility
 
 > **Goal:** Add a WNF-style kernel notification facility for low-cost state changes and event fanout. Logging records what happened; notifications wake consumers that need to react. Power changes, device arrival, session changes, registry policy updates, code-integrity decisions, network state, time changes, and security events need one kernel-owned publication path with access checks and user subscriptions.

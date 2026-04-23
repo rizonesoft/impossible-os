@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: bsod-ux-enhancements
+domain: 02-kernel-core
+status: active
+title: "TODO-28: BSOD / Panic Screen & Crash Experience"
+---
+
 # TODO-28: BSOD / Panic Screen & Crash Experience
 
 > **Goal:** Transform the panic screen from a developer debug dump into a polished, informative crash experience that surpasses both Windows 11 (which dropped its QR code and sad face in 2025, replacing with a brief black screen) and Linux (which added DRM panic QR codes with compressed kmsg in 6.12: the current state of the art). Use TTF fonts, display actionable crash context, encode compressed crash data in a QR code, provide keyboard-driven recovery actions, track crash history locally, and signal crashes via audio for accessibility. When complete, Impossible OS has the best crash experience of any operating system: smarter than Windows 11 (generic black screen, cloud-dependent recovery), richer than Linux DRM panic (data-bearing QR but no GUI polish, no recovery actions, no local crash history).

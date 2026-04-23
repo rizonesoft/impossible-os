@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: environment-variables
+domain: 02-kernel-core
+status: active
+title: "TODO-22 -- Environment Variables & Process Arguments"
+---
+
 # TODO-22 -- Environment Variables & Process Arguments
 
 > **Goal:** Implement per-process environment variable storage, `%VAR%` expansion, `PATH`-based command lookup, `argv`/`argc` kernel preparation, the Win32 `GetEnvironmentVariable`/`SetEnvironmentVariable` API surface, and the `.profile` shell startup script. No env API exists at all today: there is no `env_get`, no `SYS_GETENV`, no `PATH` lookup, and no argv array in `struct task`. Without this, every user-mode program launches with no arguments, no environment, and no way to find executables on disk.

@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: kernel-configuration-policy
+domain: 02-kernel-core
+status: active
+title: "TODO-02 -- Kernel Configuration & Policy Plane"
+---
+
 # TODO-02 -- Kernel Configuration & Policy Plane
 
 > **Goal:** Build the kernel's authoritative configuration plane: boot arguments, BCD-style boot entries, safe-mode flags, control sets, LastKnownGood, feature flags, runtime tunables, debug policy, crash policy, and immutable early-boot policy. The Registry stores durable state, but the kernel must own parsing, validation, phase-safe publication, rollback, and the contract every subsystem consumes.

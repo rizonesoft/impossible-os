@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: eif-full-implementation
+domain: 02-kernel-core
+status: active
+title: "TODO-20 -- EIF Full Implementation"
+---
+
 # TODO-20 -- EIF Full Implementation
 
 > **Goal:** Complete the Executable Impossible Format (EIF) from its current basic loader to a production-quality native binary format. The basic loader (TODO-17 §2) validates headers, copies segments, and builds import dispatch tables. This TODO fills the gaps: segment permission enforcement, ASLR, API version gating, metadata parsing, LZ4 decompression, range overlap validation, module registration, and optional import stubs. When done, EIF is the fastest, most secure native binary format on any OS.

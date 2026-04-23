@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: code-integrity-trust-policy
+domain: 02-kernel-core
+status: active
+title: "TODO-19 -- Code Integrity & Trust Policy"
+---
+
 # TODO-19 -- Code Integrity & Trust Policy
 
 > **Goal:** Implement the kernel Code Integrity plane that decides whether executable code may run in ring 0 or ring 3. This covers kernel image verification, driver/module admission, EIF/PE/ELF executable trust, catalog files, revocation, measured-boot binding, audit mode, test-signing mode, and native policy query APIs. Code signing primitives exist elsewhere; this TODO owns the kernel decision point and enforcement policy.

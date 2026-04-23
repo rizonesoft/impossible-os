@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: crash-dump-generation
+domain: 02-kernel-core
+status: active
+title: "TODO-27 -- Crash Dump Generation"
+---
+
 # TODO-27 -- Crash Dump Generation
 
 > **Goal:** Replace the current text-only `crashdump.log` with a complete binary crash-dump system: Windows-style STOP codes (`KeBugCheckEx`), FPU/XMM/XSAVE state capture, a kernel module registry, WinDbg-compatible MDMP binary format (Minidump / Kernel / Full variants), a raw-partition dump sink that bypasses the VFS (so a filesystem panic can still produce a dump), and a post-boot `dmpanalyze.exe` crash analyzer. When complete, any crash on real hardware produces a `.dmp` file that a developer can open directly in WinDbg or analyze with the built-in tool.

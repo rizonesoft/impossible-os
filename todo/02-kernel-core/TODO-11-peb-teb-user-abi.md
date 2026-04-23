@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: peb-teb-user-abi
+domain: 02-kernel-core
+status: active
+title: "TODO-11 -- PEB / TEB & User-Mode ABI"
+---
+
 # TODO-11 -- PEB / TEB & User-Mode ABI
 
 > **Goal:** Implement the Process Environment Block, Thread Environment Block, and the complete x86-64 user-mode ABI handoff so that `ntdll.dll` and all Win32 DLLs can initialise and user programs run correctly. Without this, no Win32 binary can call `GetLastError`, locate loaded modules, parse command-line arguments, or access TLS. This is the first item every Win32 user-mode DLL depends on, and blocks everything downstream in the Win32 subsystem.

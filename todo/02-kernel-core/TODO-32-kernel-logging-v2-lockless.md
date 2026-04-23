@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: kernel-logging-v2-lockless
+domain: 02-kernel-core
+status: active
+title: "TODO-32 -- Kernel Logging v2: Lockless, Priority-Lanes, Fail-Proof"
+---
+
 # TODO-32 -- Kernel Logging v2: Lockless, Priority-Lanes, Fail-Proof
 
 > **Goal:** Rebuild the kernel logging substrate from a single-lock global ring (TODO-04 v1) into a per-CPU lockless architecture with priority lanes, structured native fields, fail-proof FATAL guarantee, and a backpressure-aware drain worker. The v1 design works for normal-rate boot output but fails predictably under three real-world conditions: (1) a single subsystem bursts faster than 100 msgs/window (test runs, panic-time diagnostics, future telemetry), (2) multiple CPUs contend for the global lock during interrupt-storm scenarios (NIC RX completion, AHCI command storm), and (3) a recursive `klog()` from the rate-limit summary path can land in pathological lock states. v2 eliminates the global lock entirely (per-CPU SPSC rings), introduces priority lanes so a debug flood can never drop a panic line, makes diagnostic subsystems (`TEST`, etc.) exempt from rate limits without losing limiting for real noise, and ships native structured fields (timestamp/cpu/pid/tid/level/tag/file/line/msg as separate fields, not concatenated text) so log consumers do not parse strings. Reference designs: Linux 5.10 printk lockless (Senozhatsky/Mladek 2020), Windows ETW per-CPU buffers, Apple OSLog structured + privacy-aware fields.

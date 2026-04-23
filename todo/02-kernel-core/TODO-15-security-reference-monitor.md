@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: security-reference-monitor
+domain: 02-kernel-core
+status: active
+title: "TODO-15 -- Security Reference Monitor"
+---
+
 # TODO-15 -- Security Reference Monitor
 
 > **Goal:** Implement the Windows Security Reference Monitor (SRM) -- the kernel subsystem that enforces every resource access decision in the OS. The SRM owns three things: the `ACCESS_TOKEN` object (who you are, what groups you belong to, what privileges you hold), the `SECURITY_DESCRIPTOR` + ACL machinery (who is allowed to do what to a named resource), and the `SeAccessCheck` engine that compares the two to produce an allow/deny decision. Without SRM, the OS has no file permissions, no process isolation, no privilege separation, and no UAC -- it is a flat single-user system where every process can touch every resource.

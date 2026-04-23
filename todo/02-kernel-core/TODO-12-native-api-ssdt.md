@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: native-api-ssdt
+domain: 02-kernel-core
+status: active
+title: "TODO-12 -- Native API Layer (Nt/Zw)"
+---
+
 # TODO-12 -- Native API Layer (Nt/Zw)
 
 > **Goal:** Replace the ad-hoc INT 0x80 / POSIX-numbered `SYS_*` dispatch table with a complete NT native API layer: `NTSTATUS` return values, `NtXxx`/`ZwXxx` naming, a `SYSCALL`/`SYSRET` fast path, a numbered System Service Descriptor Table (SSDT) with 470 service entries, and the `NtCurrentTeb()` / `NtCurrentPeb()` inline contract. This is the exact interface that `ntdll.dll`, CSRSS, Win32k, and every driver framework use to talk to the kernel. This TODO is the **master registry** for all NT syscall endpoints -- some are implemented here, others are implemented by domain-specific TODOs but get their SSDT slots reserved and documented here.

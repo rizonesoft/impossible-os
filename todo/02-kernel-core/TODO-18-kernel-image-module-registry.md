@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: kernel-image-module-registry
+domain: 02-kernel-core
+status: active
+title: "TODO-18 -- Kernel Image & Module Registry"
+---
+
 # TODO-18 -- Kernel Image & Module Registry
 
 > **Goal:** Create the canonical loaded-image registry for the whole OS: kernel image, boot modules, drivers, kernel modules, user images, DLLs, EIF modules, PE sections, symbol tables, unwind metadata, code-integrity decisions, and provenance. Crash dumps, KD, stack walking, hot-patching, code integrity, ETW, and process introspection must all read the same source of truth.

@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: kernel-libraries
+domain: 02-kernel-core
+status: active
+title: "TODO-03 -- Kernel Embedded Libraries"
+---
+
 # TODO-03 -- Kernel Embedded Libraries
 
 > **Goal:** Build the complete freestanding library layer the rest of the kernel depends on: `snprintf`/`vsnprintf` in `libc` (§1; `panic.c` / klog migration still deferred), full floating-point math beyond `kmath.h` (§2), LZ4 (§3; assumed by TODO-26/TODO-27), miniz deflate/ZIP (§4), Monocypher + kernel CSPRNG (§5), cJSON (§6), and Mbed TLS record layer (§7) for HTTPS/FTPS consumers. All ports compile with `-ffreestanding -nostdlib` and route heap through `kmalloc`/`kfree` with `pmm_alloc_contiguous` for buffers > 4 KiB.

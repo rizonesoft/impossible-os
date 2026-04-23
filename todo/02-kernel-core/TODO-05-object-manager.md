@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: object-manager
+domain: 02-kernel-core
+status: active
+title: "TODO-05 -- Object Manager"
+---
+
 # TODO-05 -- Object Manager
 
 > **Goal:** Implement the kernel Object Manager (ObXxx layer) -- the unified substrate that gives every kernel resource (files, processes, threads, events, mutexes, semaphores, registry keys, sections) a typed header, reference-counted lifetime, named namespace entry, security descriptor, and per-process handle-table slot. Without this, Win32 `HANDLE` semantics are impossible and resource leaks are unavoidable. This is the single most foundational Win32 prerequisite in the kernel.
