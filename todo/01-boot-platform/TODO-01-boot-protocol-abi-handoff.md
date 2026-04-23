@@ -76,6 +76,7 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 | 💎  |  12   | Common boot-path provenance and decision record    | §1, §4, §7, §11                    |  [x]   |
 | 💎  |  13   | Anti-rollback and security-version binding         | §1, §2, §7                         |  [ ]   |
 | ⭐  |  14   | Warm-kernel-update handoff ABI                     | §1, §2, §4                         |  [ ]   |
+| 💎  |  15   | Capability-gated consumer retrofit                 | §11                                |  [ ]   |
 
 ---
 
@@ -375,7 +376,12 @@ The handoff needs more than a version number. The loader and kernel must disting
 > - **How it runs:** Phase 0 calls `boot_caps_validate(&g_boot_info, &err)` immediately after `boot_payload_validate`. Rule 4 (classify every known bit) closes the "loader leaves both bits clear to suppress degraded reporting" bypass Codex adversarial review caught. A failure logs at LOG_ERROR with the offending bitmask + named decode, then `boot_halt()` fires. The validator is reentrant-safe (reads only the three words) and uses no dynamic allocation.
 > - **Downstream effects:** unblocks [§12 Common Boot-Path Provenance](#12-common-boot-path-provenance-and-decision-record) which can now gate its own record on `BOOT_CAP_*` bits, and the alternate-adapter work in [TODO-08 §3,§4](../02-kernel-core/TODO-08-multiboot-compat-adapter.md) now has an explicit contract: loaders MUST set caps_present OR caps_degraded for every known feature, never both and never neither. `SECURE_BOOT_STATE` is declared degraded at handoff because `secure_boot_enabled` is kernel-populated after the UEFI RT variable read; promoting that bit to caps_present after the kernel query is a future refinement.
 > - **Canonical doc:** [docs/boot/boot-info-fields.md](../../docs/boot/boot-info-fields.md) "Capability negotiation (v7)" + [docs/boot/boot-protocol-changelog.md](../../docs/boot/boot-protocol-changelog.md) "v7".
-> - **Scope boundary:** this section owns the bitmask surface + classify+halt validator. It does NOT own adapter-specific capability population (TODO-08 owns GRUB/Multiboot2), does NOT emit POST16 codes (post-boot-path integration -- POST16 codes 0xB096/0xB097 reserved in the WARNING block remain unused until the native bootloader actually calls boot_post_write16 from the population block, which is a cosmetic optimization rather than a correctness requirement since validation happens in the kernel), and does NOT implement runtime renegotiation (kernel reads caps_* once in Phase 0; post-boot subsystems interpret the frozen snapshot).
+> - **Scope boundary:** this section owns the bitmask surface + classify+halt validator. It does NOT own adapter-specific capability population (TODO-08 owns GRUB/Multiboot2), does NOT emit POST16 codes (post-boot-path integration -- POST16 codes 0xB096/0xB097 reserved in the WARNING block remain unused until the native bootloader actually calls boot_post_write16 from the population block, which is a cosmetic optimization rather than a correctness requirement since validation happens in the kernel), and does NOT implement runtime renegotiation (kernel reads caps_* once in Phase 0; post-boot subsystems interpret the frozen snapshot). **Consumer retrofit is a separate concern owned by §15** -- the validator here proves self-consistency of the three cap words; making the bits AUTHORITATIVE in kernel consumers (gating uefi_runtime / tpm / xhci / boot_reserved on caps_present instead of legacy companion fields) is tracked there.
+
+> **Verified:** 2026-04-24 | commit `bed68e53` | 5/5 items | build OK | tests 535/535 PASS + smoke 2.35s + 228 manifest fields + 11 boot_caps suites
+> **Accepted:** [H] caps advisory only; xhci_init still enters inherit path on usb_handover_complete without consulting BOOT_CAP_USB_HANDOVER -> XREF: 01-boot-platform/TODO-01 §15 (item: "Retrofit `src/kernel/drivers/xhci.c` xHCI handoff (around line 250) to gate on `BOOT_CAP_USB_HANDOVER`" at line 461)
+> **Accepted:** [M] degraded TPM capability still pins event-log region via boot_reserved.c (reservation gated on pointer+size, not BOOT_CAP_TPM_EVENT_LOG) -> XREF: 01-boot-platform/TODO-01 §15 (item: "Retrofit `src/kernel/mm/boot_reserved.c` TPM event-log reservation" at line 463)
+> **Quality reviewed:** 2026-04-24 | Codex 2x (adversarial + quality) | 0 fixed, 2 open (both Accepted -> §15 retrofit) | scope: boot-code-quality + kernel-code-quality
 
 ---
 
@@ -448,6 +454,27 @@ Linux 6.16 (merged June 2025) shipped Kexec Handover (KHO) + the Live Update Orc
 
 ---
 
+## 15. Capability-Gated Consumer Retrofit
+
+The capability negotiation ABI shipped in §11 advertises what the bootloader populated via `caps_present` / `caps_degraded`, but kernel consumers today still gate on the legacy companion fields (`uefi_rt_available`, `tpm_event_log_size`, `usb_handover_complete`, etc.) rather than the capability bits. A hostile or buggy loader that passes all four `boot_caps_validate` rules can still mislead consumers by lying in the companion fields; conversely a loader that correctly reports a capability as `degraded` does not automatically keep consumers from trying to use the underlying field. This section closes that gap by making the capability bits authoritative.
+
+> [!NOTE]
+> **Regression risk:** MEDIUM. Each consumer has to be audited individually -- missing a consumer means the caps contract is only partially enforced. Retrofitting without preserving the legacy field reads entirely (for backward-compat during the transition) would break early-boot paths that run before `boot_caps_validate()` fires.
+
+- [ ] Retrofit `src/kernel/uefi_runtime.c:uefi_runtime_init` to gate on `g_boot_info.caps_present & BOOT_CAP_RUNTIME_SERVICES` instead of (or in addition to) `uefi_rt_available`. If the bit is degraded, skip runtime-services setup and surface the degraded status to downstream callers.
+- [ ] Retrofit `src/kernel/tpm.c:tpm_init` (around line 65) to gate on `BOOT_CAP_TPM_EVENT_LOG` before parsing `tpm_event_log` / `tpm_event_log_size`. A degraded bit means no event log is available and attestation must fall back to a minimal PCR-read path.
+- [ ] Retrofit `src/kernel/drivers/xhci.c` xHCI handoff (around line 250) to gate on `BOOT_CAP_USB_HANDOVER` before trusting `usb_handover_complete` and the associated controller DMA state.
+- [ ] Retrofit `src/kernel/mm/boot_reserved.c` (around line 172) payload reservation loop to gate on `BOOT_CAP_PAYLOAD_DESCRIPTORS` before iterating `payload_descriptors[]`. Degraded bit means no payload descriptors to reserve (though `payload_count == 0` short-circuits the loop anyway; the gate is defense-in-depth).
+- [ ] Retrofit `src/kernel/mm/boot_reserved.c` TPM event-log reservation (around line 178) to gate on `BOOT_CAP_TPM_EVENT_LOG` in `caps_present` before reserving the `tpm_event_log` / `tpm_event_log_size` region. A loader marking the capability degraded but leaving the companion fields populated must NOT force the kernel to pin the region. Add a fixture test proving degraded TPM capability with nonzero event-log pointer does not reserve memory.
+- [ ] Retrofit secure-boot state read in `src/kernel/uefi_runtime.c` (the `RtlQueryRegistryValues`-equivalent for `SYSTEM\SecureBoot\State`) to update `caps_present |= BOOT_CAP_SECURE_BOOT_STATE` after the variable query succeeds. The bootloader unconditionally marks this degraded (kernel-populated after handoff); this retrofit flips the bit kernel-side so downstream attestation consumers can observe the transition.
+- [ ] Add `boot_caps_require(uint64_t bits)` helper in `include/kernel/boot_info.h` + `src/kernel/main/boot_caps.c` that returns non-zero when every bit in `bits` is set in `caps_present`. Consumers call this as the single-line gate: `if (!boot_caps_require(BOOT_CAP_TPM_EVENT_LOG)) return; ... parse event log ...`.
+- [ ] Add unit-test suites under `src/kernel/test/test_boot_caps.c` proving each retrofit: supply a fixture `boot_info` with the bit degraded and verify the consumer's init skips the underlying field. Supply a fixture with the bit present but the companion field zeroed and verify the consumer still handles it cleanly (empty payload, etc.). The existing boot_caps suite already covers the validator; these new suites cover the consumer contract.
+- [ ] Commit: `"boot: retrofit consumers to gate on capability bits"`
+
+**Test checkpoint:** A boot where `caps_degraded` includes `BOOT_CAP_TPM_EVENT_LOG` leaves the kernel with TPM event-log parsing skipped and `tpm_event_count == 0` even when `tpm_event_log_size != 0` (loader set the size but marked the capability degraded for integrity reasons). Conversely a boot where all nine known capability bits are in `caps_present` with zero degraded walks every consumer path. Verify on QEMU WHPX for the full-present path and a synthetic fixture for each degraded case.
+
+---
+
 ## OS Comparison
 
 | ⭐ | Feature                         | 🪟 Win11                    | 🐧 Linux                     | 🚀 Impossible OS                             |
@@ -462,6 +489,7 @@ Linux 6.16 (merged June 2025) shipped Kexec Handover (KHO) + the Live Update Orc
 | 💎 | Anti-rollback security version  | ✅ OsLoaderSecurityVersion  | ⚠️ shim SBAT revocation only | ⬜ §13 UEFI NVRAM counter                    |
 | ⭐ | Warm-kernel-update handoff ABI  | ⚠️ Hot Patch (closed)       | ✅ 6.16 Kexec Handover       | ⬜ §14 ABI only; runtime in new TODO         |
 | 💎 | Handoff memory ownership table  | ⚠️ MDL chains + LoaderBlock | ⚠️ memblock + NOMAP regions | ✅ §6 single table + overlap check + JSON dump |
+| ⭐ | Authoritative capability gates  | ⚠️ advisory to drivers      | ⚠️ advisory to drivers       | ⬜ §15 retrofit consumers to gate on caps_present instead of legacy fields |
 
 > Parity now covers the contract itself (§1-§4), mirror drift detection (§2-§3), typed payload handoff (§5), centralized PMM reservation (§6), structured version negotiation with friendly fatal + BlackBox transcript (§7), and the canonical protocol reference + schema changelog (§8). Adding explicit capability negotiation, a shared boot decision record, and anti-rollback security-version binding would make this handoff easier to debug and safer to evolve than either Windows' mostly internal loader state or Linux's split between versioned structs and scattered provenance channels. The warm-kernel-update handoff ABI (§14) specifically positions Impossible OS for cloud/server parity with Linux 6.16's Kexec Handover surface at the ABI layer; the runtime live-update machinery is tracked as follow-up in 03-memory-concurrency.
 
