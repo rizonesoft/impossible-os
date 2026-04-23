@@ -530,7 +530,7 @@ assert_grep "build.sh WRITES the sentinel (not just mentions it)" \
 TODO_GRAPH_TEST="$REPO_ROOT/scripts/todo-graph/tests/test_build.sh"
 if [ -x "$TODO_GRAPH_TEST" ]; then
     if "$TODO_GRAPH_TEST" >/dev/null 2>&1; then
-        t_pass "scripts/todo-graph/tests/test_build.sh PASS (14 sub-tests)"
+        t_pass "scripts/todo-graph/tests/test_build.sh PASS (22 sub-tests)"
     else
         t_fail "scripts/todo-graph/tests/test_build.sh FAIL (run directly for details)"
     fi

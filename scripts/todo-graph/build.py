@@ -51,6 +51,35 @@ except ImportError:
     sys.exit(1)
 
 
+# PyYAML's default safe loader uses last-key-wins on duplicate mapping keys.
+# The frontmatter spec (docs/infrastructure/todo-metadata.md Parsing Rules)
+# promises duplicate keys are a hard malformed-yaml failure. Subclass
+# SafeLoader and override mapping construction to raise on the first duplicate.
+class _DupRejectingLoader(yaml.SafeLoader):
+    pass
+
+
+def _construct_mapping_no_dupes(loader, node, deep=False):
+    mapping = {}
+    for key_node, value_node in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        if key in mapping:
+            raise yaml.constructor.ConstructorError(
+                None,
+                None,
+                f"duplicate key {key!r} in mapping",
+                key_node.start_mark,
+            )
+        mapping[key] = loader.construct_object(value_node, deep=deep)
+    return mapping
+
+
+_DupRejectingLoader.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
+    _construct_mapping_no_dupes,
+)
+
+
 # --- Constants -----------------------------------------------------------
 
 VALID_STATUSES = {"draft", "active", "blocked", "done", "superseded"}
@@ -246,7 +275,7 @@ def split_frontmatter(content: str):
         if "\t" in ln:
             return None, body, f"frontmatter: tab indentation at line {ln_idx} (use spaces)"
     try:
-        fm = yaml.safe_load(yaml_block)
+        fm = yaml.load(yaml_block, Loader=_DupRejectingLoader)
     except yaml.YAMLError as exc:
         # PyYAML's exception carries a problem_mark; re-base its line to
         # the file's coordinates (frontmatter starts at line 2).
@@ -256,18 +285,47 @@ def split_frontmatter(content: str):
         return None, body, f"frontmatter: malformed YAML: {exc}"
     if not isinstance(fm, dict):
         return None, body, "frontmatter: top-level must be a mapping (key: value pairs)"
+    # YAML aliases can produce self-referential containers (e.g. `owners: &a [*a]`).
+    # PyYAML's safe_load happily constructs them; downstream json.dumps then
+    # crashes with an uncaught circular reference. Walk the parsed structure
+    # and reject any cycle as malformed-yaml so the generator stays fail-closed.
+    if _has_yaml_cycle(fm):
+        return None, body, "frontmatter: circular reference (recursive YAML alias) in frontmatter"
     return fm, body, None
+
+
+def _has_yaml_cycle(obj, _seen=None):
+    """Return True if obj contains a self-referential dict or list, walking
+    only containers (dict / list). Strings, ints, etc. are leaves."""
+    if _seen is None:
+        _seen = set()
+    if isinstance(obj, (dict, list)):
+        if id(obj) in _seen:
+            return True
+        _seen.add(id(obj))
+        children = obj.values() if isinstance(obj, dict) else obj
+        for child in children:
+            if _has_yaml_cycle(child, _seen):
+                return True
+        _seen.discard(id(obj))
+    return False
 
 
 def validate_frontmatter(fm: dict) -> list:
     """Return list of (category, message) tuples. Empty list = clean.
 
-    Categories from §2 error catalog:
-      malformed-yaml    (handled separately in split_frontmatter)
+    Categories from §2 error catalog (mirrors docs/infrastructure/todo-metadata.md):
+      malformed-yaml    (handled separately in split_frontmatter; also covers
+                         circular YAML alias cycles via _has_yaml_cycle)
       unknown-status    : status not in VALID_STATUSES
       invalid-id        : id fails regex
       missing-required  : a REQUIRED_FIELDS entry absent
-      schema-version    : schema_version > SUPPORTED_SCHEMA_VERSION
+      schema-version    : schema_version not int OR > SUPPORTED_SCHEMA_VERSION
+      forbidden-field   : hand-authored cache-only field (created_at /
+                          last_active_at) present
+      invalid-field     : optional field present but wrong type/shape
+                          (mirrors the JSON Schema sidecar's per-field
+                          constraints so generator + schema agree)
     Unknown optional fields produce a WARNING (returned with category
     'unknown-field'), not an error; caller logs but does not fail."""
     errors = []
@@ -293,11 +351,20 @@ def validate_frontmatter(fm: dict) -> list:
             )
     if "schema_version" in fm:
         ver = fm["schema_version"]
-        if not isinstance(ver, int):
+        # bool is a subclass of int in Python; True/False would otherwise
+        # silently pass the int check. Reject explicitly.
+        if not isinstance(ver, int) or isinstance(ver, bool):
             errors.append(
                 (
                     "schema-version",
                     f"schema_version='{ver}' must be an integer",
+                )
+            )
+        elif ver < 1:
+            errors.append(
+                (
+                    "schema-version",
+                    f"schema_version={ver} must be >= 1 (schema starts at 1)",
                 )
             )
         elif ver > SUPPORTED_SCHEMA_VERSION:
@@ -322,6 +389,55 @@ def validate_frontmatter(fm: dict) -> list:
                     "(see docs/infrastructure/todo-metadata.md Auto-Derived Fields)",
                 )
             )
+    # FATAL: optional field type/shape mismatches. Mirrors the JSON Schema
+    # sidecar so the generator and the schema enforce identical contracts on
+    # what a clean cache node looks like (no schema/generator split brain).
+    if "title" in fm:
+        if not isinstance(fm["title"], str):
+            errors.append(("invalid-field", f"title must be a string, got {type(fm['title']).__name__}"))
+        elif not fm["title"]:
+            errors.append(("invalid-field", "title must be a non-empty string (schema minLength: 1)"))
+    if "domain" in fm:
+        if not isinstance(fm["domain"], str):
+            errors.append(("invalid-field", f"domain must be a string, got {type(fm['domain']).__name__}"))
+        elif not fm["domain"]:
+            errors.append(("invalid-field", "domain must be a non-empty string (schema minLength: 1)"))
+    if "$schema" in fm and not isinstance(fm["$schema"], str):
+        errors.append(("invalid-field", f"$schema must be a string path, got {type(fm['$schema']).__name__}"))
+    if "owners" in fm:
+        owners = fm["owners"]
+        if not isinstance(owners, list) or not all(isinstance(x, str) for x in owners):
+            errors.append(("invalid-field", "owners must be a list of strings"))
+    for id_list_field in ("depends_on", "satisfies"):
+        if id_list_field in fm:
+            val = fm[id_list_field]
+            if not isinstance(val, list) or not all(isinstance(x, str) for x in val):
+                errors.append(("invalid-field", f"{id_list_field} must be a list of id strings"))
+            else:
+                for ref in val:
+                    if not ID_REGEX.match(ref):
+                        errors.append(
+                            (
+                                "invalid-field",
+                                f"{id_list_field}[..] entry '{ref}' must match {ID_REGEX.pattern}",
+                            )
+                        )
+                if len(val) != len(set(val)):
+                    errors.append(
+                        ("invalid-field", f"{id_list_field} must be uniqueItems (schema uniqueItems: true)")
+                    )
+    if "superseded_by" in fm:
+        sb = fm["superseded_by"]
+        if not isinstance(sb, str) or not ID_REGEX.match(sb):
+            errors.append(
+                ("invalid-field", f"superseded_by='{sb}' must be a single id string matching {ID_REGEX.pattern}")
+            )
+    if "file_patterns" in fm:
+        fp = fm["file_patterns"]
+        if not isinstance(fp, list) or not all(isinstance(x, str) and x for x in fp):
+            errors.append(("invalid-field", "file_patterns must be a list of non-empty glob strings"))
+        elif len(fp) != len(set(fp)):
+            errors.append(("invalid-field", "file_patterns must be uniqueItems (schema uniqueItems: true)"))
     # Warnings (don't fail the build)
     known = set(REQUIRED_FIELDS) | set(OPTIONAL_FIELDS)
     for field in fm:

@@ -327,6 +327,163 @@ else
 fi
 
 # ----------------------------------------------------------------------
+# Test 6f: recursive YAML alias (`owners: &a [*a]`) MUST be rejected as
+# malformed-yaml without a Python traceback. PyYAML safe_load will happily
+# build the self-referential list; the json.dumps in main() then crashes
+# with an uncaught circular-reference. The generator now walks the parsed
+# tree and emits a categorized fatal error instead. Codex pass 4 H2.
+# ----------------------------------------------------------------------
+CYCLE_ROOT="$TMP_DIR/cycle-tree"
+mkdir -p "$CYCLE_ROOT/01-test"
+printf -- '---\nschema_version: 1\nid: cycle-fixture\ndomain: 01-test\nstatus: draft\ntitle: Recursive alias\nowners: &a [*a]\n---\n\n# Body\n' \
+    > "$CYCLE_ROOT/01-test/TODO-01-cycle.md"
+RC=0
+python3 "$BUILD_PY" --quiet --root "$CYCLE_ROOT" --output "$TMP_DIR/cache-cycle.json" --repo-root "$REPO_ROOT" \
+    >"$TMP_DIR/cycle.log" 2>&1 || RC=$?
+if [ "$RC" = "1" ] && grep -q "malformed-yaml.*circular reference" "$TMP_DIR/cycle.log" && [ ! -e "$TMP_DIR/cache-cycle.json" ]; then
+    t_pass "generator rejects recursive YAML alias as malformed-yaml (no traceback)"
+else
+    t_fail "generator alias-cycle check broken (rc=$RC, log=$(cat $TMP_DIR/cycle.log))"
+fi
+
+# ----------------------------------------------------------------------
+# Test 6g: optional fields with WRONG types (owners: scalar, depends_on:
+# scalar, file_patterns: list with empty string) MUST be rejected as
+# invalid-field FATAL so the generator and the schema sidecar enforce
+# identical contracts. Codex pass 4 H1.
+# ----------------------------------------------------------------------
+OPT_ROOT="$TMP_DIR/opt-tree"
+mkdir -p "$OPT_ROOT/01-test"
+printf -- '---\nschema_version: 1\nid: bad-optional-fixture\ndomain: 01-test\nstatus: draft\ntitle: Bad optional types\nowners: 7\ndepends_on: not-a-list\nfile_patterns: [""]\n---\n\n# Body\n' \
+    > "$OPT_ROOT/01-test/TODO-01-opt.md"
+RC=0
+python3 "$BUILD_PY" --quiet --root "$OPT_ROOT" --output "$TMP_DIR/cache-opt.json" --repo-root "$REPO_ROOT" \
+    >"$TMP_DIR/opt.log" 2>&1 || RC=$?
+if [ "$RC" = "1" ] \
+    && grep -q "invalid-field.*owners" "$TMP_DIR/opt.log" \
+    && grep -q "invalid-field.*depends_on" "$TMP_DIR/opt.log" \
+    && grep -q "invalid-field.*file_patterns" "$TMP_DIR/opt.log" \
+    && [ ! -e "$TMP_DIR/cache-opt.json" ]; then
+    t_pass "generator rejects bad optional types (owners scalar, depends_on scalar, empty glob)"
+else
+    t_fail "generator invalid-field check broken (rc=$RC, log=$(cat $TMP_DIR/opt.log))"
+fi
+
+# ----------------------------------------------------------------------
+# Test 6h: clean optional fields (proper list-of-strings) MUST be accepted
+# so the new invalid-field path doesn't over-reject valid frontmatter.
+# ----------------------------------------------------------------------
+CLEAN_ROOT="$TMP_DIR/clean-tree"
+mkdir -p "$CLEAN_ROOT/01-test"
+printf -- '---\nschema_version: 1\nid: good-optional\ndomain: 01-test\nstatus: draft\ntitle: Good optional types\nowners: ["alice", "bob"]\ndepends_on: ["foo-bar", "baz-qux"]\nsuperseded_by: replacement-id\nfile_patterns: ["src/foo/**", "include/foo.h"]\n---\n\n# Body\n' \
+    > "$CLEAN_ROOT/01-test/TODO-01-clean.md"
+python3 "$BUILD_PY" --quiet --root "$CLEAN_ROOT" --output "$TMP_DIR/cache-clean.json" --repo-root "$REPO_ROOT" \
+    >"$TMP_DIR/clean.log" 2>&1
+if [ -f "$TMP_DIR/cache-clean.json" ]; then
+    t_pass "generator accepts well-formed optional fields (no invalid-field over-reject)"
+else
+    t_fail "generator over-rejected clean optional fields (log=$(cat $TMP_DIR/clean.log))"
+fi
+
+# ----------------------------------------------------------------------
+# Test 6i: duplicate YAML mapping keys MUST fail closed as malformed-yaml.
+# PyYAML's default safe_load uses last-key-wins; we install a custom loader
+# that raises on the first duplicate so author typos / merge artifacts that
+# would otherwise silently change metadata fail closed instead. Codex pass 5 H2.
+# ----------------------------------------------------------------------
+DUP_ROOT="$TMP_DIR/dup-tree"
+mkdir -p "$DUP_ROOT/01-test"
+printf -- '---\nschema_version: 1\nid: dup-key-fixture\nid: silently-overrides\ndomain: 01-test\nstatus: draft\ntitle: Duplicate id key\n---\n\n# Body\n' \
+    > "$DUP_ROOT/01-test/TODO-01-dup.md"
+RC=0
+python3 "$BUILD_PY" --quiet --root "$DUP_ROOT" --output "$TMP_DIR/cache-dup.json" --repo-root "$REPO_ROOT" \
+    >"$TMP_DIR/dup.log" 2>&1 || RC=$?
+if [ "$RC" = "1" ] && grep -q "malformed-yaml.*duplicate key 'id'" "$TMP_DIR/dup.log" && [ ! -e "$TMP_DIR/cache-dup.json" ]; then
+    t_pass "generator rejects duplicate YAML mapping keys as malformed-yaml"
+else
+    t_fail "duplicate-key check broken (rc=$RC, log=$(cat $TMP_DIR/dup.log))"
+fi
+
+# ----------------------------------------------------------------------
+# Test 6j: schema/generator parity for the constraints that previously
+# slipped past validate_frontmatter (Codex pass 5 H1): schema_version < 1,
+# empty title, $schema non-string, duplicate depends_on entries. All four
+# must fire as categorized FATAL errors so the generator and the schema
+# sidecar agree on what is valid.
+# ----------------------------------------------------------------------
+PARITY_ROOT="$TMP_DIR/parity-tree"
+mkdir -p "$PARITY_ROOT/01-test"
+
+write_fixture() {
+    local name="$1" body="$2"
+    printf -- '%s' "$body" > "$PARITY_ROOT/01-test/TODO-01-${name}.md"
+}
+parity_check() {
+    local name="$1" expect_pattern="$2"
+    local out="$TMP_DIR/parity-${name}.log"
+    local cache="$TMP_DIR/cache-parity-${name}.json"
+    local rc=0
+    python3 "$BUILD_PY" --quiet --root "$PARITY_ROOT" --output "$cache" --repo-root "$REPO_ROOT" \
+        >"$out" 2>&1 || rc=$?
+    if [ "$rc" = "1" ] && grep -q "$expect_pattern" "$out" && [ ! -e "$cache" ]; then
+        t_pass "generator parity: $name fires '$expect_pattern'"
+    else
+        t_fail "generator parity broken for $name (rc=$rc, log=$(cat $out))"
+    fi
+    rm -f "$PARITY_ROOT/01-test/TODO-01-${name}.md"
+}
+
+write_fixture "svzero" '---
+schema_version: 0
+id: sv-zero-fixture
+domain: 01-test
+status: draft
+title: SV zero
+---
+
+# Body
+'
+parity_check "svzero" "schema-version.*must be >= 1"
+
+write_fixture "emptytitle" '---
+schema_version: 1
+id: empty-title-fixture
+domain: 01-test
+status: draft
+title: ""
+---
+
+# Body
+'
+parity_check "emptytitle" "invalid-field.*title must be a non-empty string"
+
+write_fixture "schemaint" '---
+$schema: 7
+schema_version: 1
+id: bad-schemaref-fixture
+domain: 01-test
+status: draft
+title: Bad schema ref
+---
+
+# Body
+'
+parity_check "schemaint" 'invalid-field.*\$schema must be a string'
+
+write_fixture "dupdeps" '---
+schema_version: 1
+id: dup-deps-fixture
+domain: 01-test
+status: draft
+title: Dup deps
+depends_on: ["foo-bar", "foo-bar"]
+---
+
+# Body
+'
+parity_check "dupdeps" "invalid-field.*depends_on must be uniqueItems"
+
+# ----------------------------------------------------------------------
 # Test 7: performance budget (under 2s wall-clock per the generator spec).
 # ----------------------------------------------------------------------
 START_NS=$(date +%s%N)

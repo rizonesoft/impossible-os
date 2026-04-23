@@ -78,11 +78,12 @@ The generator's full error catalog (1:1 with the parser branches) is:
 
 | Category             | Trigger                                                                                                              | Severity |
 | -------------------- | -------------------------------------------------------------------------------------------------------------------- | -------- |
-| `malformed-yaml`     | Unclosed fence, tab indentation, duplicate key, any PyYAML parse error                                                | FATAL    |
+| `malformed-yaml`     | Unclosed fence, tab indentation, duplicate mapping key (e.g. two `id:` entries), recursive YAML alias (self-referential container via `&a [*a]`-style aliases), any PyYAML parse error | FATAL    |
 | `unknown-status`     | `status` not in `{draft, active, blocked, done, superseded}`                                                          | FATAL    |
 | `invalid-id`         | `id` fails the kebab-case regex `^[a-z][a-z0-9-]{0,58}[a-z0-9]$`                                                      | FATAL    |
+| `invalid-field`      | Optional field present but wrong type / shape / uniqueness: e.g. `owners` is a scalar, `depends_on` has duplicates or contains a non-id string, `$schema` is not a string, `title` / `domain` is empty. Mirrors the JSON Schema sidecar's per-field constraints | FATAL    |
 | `missing-required`   | Any of `schema_version`, `id`, `domain`, `status`, `title` absent                                                     | FATAL    |
-| `schema-version`     | `schema_version` not int OR > supported by current generator (forward-incompatible)                                   | FATAL    |
+| `schema-version`     | `schema_version` not int (bool rejected too), OR < 1, OR > supported by current generator (forward-incompatible)      | FATAL    |
 | `forbidden-field`    | Hand-authored frontmatter contains `created_at` or `last_active_at` (cache-only fields, not allowed in source)        | FATAL    |
 | `unknown-field`      | Top-level field not listed in Required + Optional                                                                     | WARNING  |
 
