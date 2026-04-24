@@ -623,16 +623,18 @@ The capability negotiation ABI shipped in §11 advertises what the bootloader po
 | 💎 | Capability negotiation          | ✅ loader extensions        | ✅ version + flags           | ✅ §11 required/present/degraded + validator     |
 | 💎 | Boot provenance decision record | ✅ boot status + resume     | ⚠️ cmdline + logs            | ✅ §12 path/reason + validator + Registry        |
 | ⭐ | Friendly stale-loader mismatch  | ✅ recovery codes           | ⚠️ log-driven failures       | ⚠️ §7 kernel fatal + BlackBox transcribe shipped |
-| 💎 | Anti-rollback security version  | ✅ OsLoaderSecurityVersion  | ⚠️ shim SBAT revocation only | ✅ §13 NVRAM counter + pre-jump refuse |
+| 💎 | Anti-rollback security version  | ✅ OsLoaderSecurityVersion  | ⚠️ shim SBAT revocation only | ✅ §13 NVRAM counter + pre-jump refuse           |
 | ⭐ | Warm-kernel-update handoff ABI  | ⚠️ Hot Patch (closed)       | ✅ 6.16 Kexec Handover       | ⬜ §14 ABI only; runtime in new TODO             |
 | 💎 | Handoff memory ownership table  | ⚠️ MDL chains + LoaderBlock | ⚠️ memblock + NOMAP regions  | ✅ §6 single table + overlap check + JSON dump   |
 | ⭐ | Authoritative capability gates  | ⚠️ advisory to drivers      | ⚠️ advisory to drivers       | ⬜ §15 consumer retrofit to caps_present         |
-| ⭐ | Compositor-steady rollback gate | ❌                          | ❌                            | ✅ §16 withholds raise until first frame         |
+| ⭐ | Compositor-steady rollback gate | ❌                          | ❌                           | ✅ §16 withholds raise until first frame         |
 | ⭐ | Pre-jump ABI mismatch UI screen | ⚠️ BSOD after kernel load  | ⚠️ kernel panic text          | ⬜ §17 UEFI console error + NVRAM persist        |
-| ⭐ | Rollback vs ABI drift split UX  | ❌                          | ❌                            | ⬜ §18 SEC_ROLLBACK class + operator guidance    |
+| ⭐ | Rollback vs ABI drift split UX  | ❌                          | ❌                           | ⬜ §18 SEC_ROLLBACK class + operator guidance    |
 | ⭐ | End-to-end stale-ABI CI gate    | ⚠️ manual HCK regression   | ⚠️ kunit / kselftests partial | ⬜ §19 QEMU fixture harness + CI wire            |
 
 > Parity now covers the contract itself (§1-§4), mirror drift detection (§2-§3), typed payload handoff (§5), centralized PMM reservation (§6), structured version negotiation with friendly fatal + BlackBox transcript (§7), and the canonical protocol reference + schema changelog (§8). Adding explicit capability negotiation, a shared boot decision record, and anti-rollback security-version binding would make this handoff easier to debug and safer to evolve than either Windows' mostly internal loader state or Linux's split between versioned structs and scattered provenance channels. The warm-kernel-update handoff ABI (§14) specifically positions Impossible OS for cloud/server parity with Linux 6.16's Kexec Handover surface at the ABI layer; the runtime live-update machinery is tracked as follow-up in 03-memory-concurrency. §16 hardens the §13 anti-rollback raise behind a compositor-steady gate -- no Windows or Linux equivalent ships today, so a boot that dies before its first frame cannot accidentally strand the machine on a broken image.
+
+---
 
 ## Unit Tests
 
@@ -654,6 +656,8 @@ The capability negotiation ABI shipped in §11 advertises what the bootloader po
 - [ ] Commit: `"test: extend boot_info ABI coverage"`
 
 **Test checkpoint:** `bash scripts/test.sh SUITE=boot` exercises the validator, payload, and mismatch-report cases through `TEST_CAT_BOOT`, and the host manifest fixtures fail only when the layout actually drifts.
+
+---
 
 ## Verification
 
