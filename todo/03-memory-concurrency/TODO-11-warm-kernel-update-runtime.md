@@ -54,9 +54,69 @@ Carve a preserved-memory region from the PMM, mark its pages as non-reclaimable 
 
 ---
 
-## 2-7: Placeholders
+## 2. Per-Subsystem Quiesce Callback Registry
 
-Each remaining section will get a full checklist when implementation begins. Runtime live-update is a multi-month effort and this file exists primarily as the tracked owner so the ABI consumer in TODO-01 §14 has a concrete cross-reference.
+Register per-subsystem quiesce callbacks (VFS, net, block I/O, IPC, device drivers, scheduler) that the warm-update outgoing path invokes in a defined order so each subsystem can publish its continuation blob or veto the update with a failure reason. Depends on TODO-06's scheduler for safe callback dispatch.
+
+- [ ] Stub: to be filled when §2 lands.
+- [ ] Commit: `"mm: warm-update per-subsystem quiesce callback registry"`
+
+**Test checkpoint:** a registered callback that returns a failure code aborts the warm-update sequence and the system remains live; all callbacks successful -> continuation blobs are collected and addressable by subsystem id.
+
+---
+
+## 3. VFS Writeback + FD Table Serialize
+
+Flush dirty VFS pages to stable storage and serialize the per-task file-descriptor table (fd -> `struct file *` + offset + flags) into a continuation blob so the incoming kernel can reattach open files without user-visible disruption. Standalone work; no blocking dep.
+
+- [ ] Stub: to be filled when §3 lands.
+- [ ] Commit: `"vfs: warm-update writeback + FD table serialize"`
+
+**Test checkpoint:** a process with open file descriptors + pending dirty pages survives a warm update and reads the same file bytes at the same offsets post-handoff.
+
+---
+
+## 4. Scheduler Drain + Thread Freeze
+
+Drain per-CPU runqueues to a quiescent state and freeze all non-kernel threads at safe points (syscall boundary or uninterruptible sleep boundary; never mid-kernel-lock) so the kexec jump sees a known-thread-state snapshot. Depends on §2 so the scheduler quiesce callback can fire in the right order.
+
+- [ ] Stub: to be filled when §4 lands.
+- [ ] Commit: `"sched: warm-update drain + thread freeze"`
+
+**Test checkpoint:** all non-kernel threads are frozen at a safe point (PC in syscall-entry trampoline or user-mode); no thread holds a kernel spinlock at handoff.
+
+---
+
+## 5. Kexec-Equivalent Jump Into New Kernel Image
+
+Jump into the new kernel image in-place (no firmware reset) with a handoff descriptor pointing at the preserved-memory region + continuation blobs. Depends on §1..§4: staging area must exist, subsystems must be quiesced, VFS flushed, scheduler drained.
+
+- [ ] Stub: to be filled when §5 lands.
+- [ ] Commit: `"boot: warm-update kexec-equivalent jump"`
+
+**Test checkpoint:** the outgoing kernel transfers control to the new kernel image via a verified jump vector; the new kernel's Phase 0 reads the BOOT_PAYLOAD_WARM_UPDATE_STATE descriptor and accepts the continuation.
+
+---
+
+## 6. Incoming-Kernel Reattach Path (Splice Memory, Restore)
+
+Incoming kernel's Phase 0 reattach path: splice the preserved folios into the new PMM's reserved set (not freed), walk `BOOT_WARM_UPDATE_CONT_*` flags to drive per-subsystem restore callbacks, and fail-closed to cold init if any required continuation bit is unrecognized. Depends on TODO-01 §14 ABI contract (already shipped).
+
+- [ ] Stub: to be filled when §6 lands.
+- [ ] Commit: `"mm: warm-update incoming reattach + continuation restore"`
+
+**Test checkpoint:** incoming kernel consumes the descriptor, preserved folios are addressable post-handoff without PMM re-allocation, per-subsystem restore callbacks run in dependency-correct order.
+
+---
+
+## 7. Live-Update Syscall + nt_live_update SSDT Entry
+
+Syscall interface (`nt_live_update`) with an SSDT entry that user-space privileged callers can invoke to trigger a warm kernel update from a signed `C:\System32\kernel.exe`. Depends on §5 (jump) and §6 (reattach).
+
+- [ ] Stub: to be filled when §7 lands.
+- [ ] Commit: `"syscall: nt_live_update SSDT entry + privileged caller gate"`
+
+**Test checkpoint:** a privileged user-mode caller invokes `nt_live_update` with a signed kernel image path; the kernel completes the warm-update cycle under 500ms on QEMU WHPX with a user process surviving across the handoff.
 
 ---
 
