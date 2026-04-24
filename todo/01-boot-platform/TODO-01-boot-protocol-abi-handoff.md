@@ -74,7 +74,7 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 | ⭐  |  10   | Cross-domain owner audit for every boot_info field | §1, §2, §3, §4, §5, §6, §7, §8, §9 |  [x]   |
 | 💎  |  11   | Capability negotiation and degraded-feature flags  | §2, §3, §4                         |  [x]   |
 | 💎  |  12   | Common boot-path provenance and decision record    | §1, §4, §7, §11                    |  [x]   |
-| 💎  |  13   | Anti-rollback and security-version binding         | §1, §2, §7                         |  [ ]   |
+| 💎  |  13   | Anti-rollback and security-version binding         | §1, §2, §7                         |  [x]   |
 | ⭐  |  14   | Warm-kernel-update handoff ABI                     | §1, §2, §4                         |  [ ]   |
 | 💎  |  15   | Capability-gated consumer retrofit                 | §11                                |  [ ]   |
 
@@ -421,15 +421,26 @@ Windows 11 carries an `OsLoaderSecurityVersion` field in the Loader Parameter Bl
 > [!WARNING]
 > This is boot-path security work. An incorrectly-set monotonic counter OR a write that does not persist to UEFI NVRAM would brick the system by refusing every kernel. The write path MUST be after the new kernel has booted successfully past Phase 3 (proof-of-life), not before; a pre-jump update is a classic brick vector (kernel crashes early, counter advanced, never roll back). Reserve `POST16(0xB09A)` / `POST16(0xB09B)` for anti-rollback refuse / pass.
 
-- [ ] Add `uint32_t os_loader_security_version` + `uint32_t required_security_version` to the `boot_info` header (reserve-region fields; no `BOOT_INFO_VERSION` bump needed per CLAUDE.md ABI policy). `os_loader_security_version` is the signed value of the shipped `kernel.exe`; `required_security_version` is what the bootloader read from UEFI NVRAM.
-- [ ] Create UEFI NVRAM variable `IPOSRequiredSecVersion` (non-volatile, BS+RT, attribute `EFI_VARIABLE_NON_VOLATILE | EFI_VARIABLE_BOOTSERVICE_ACCESS | EFI_VARIABLE_RUNTIME_ACCESS`) in the Impossible OS GUID namespace. Bootloader reads it during early init; kernel can raise it after successful boot.
-- [ ] Bootloader refuses to jump and shows a fatal UEFI screen when `kernel.exe`'s `os_loader_security_version < required_security_version`. Diagnostic must print the observed/required pair so the operator knows to upgrade rather than reflash.
-- [ ] Kernel-side update path in `src/kernel/main/boot_phase3.c` (or the latest boot-phase that proves live system): after `kernel_subsystem_ready(SUBSYS_BOOT_COMPLETE)`, if `os_loader_security_version > required_security_version` AND a policy flag opts-in, raise `IPOSRequiredSecVersion` via UEFI RT `SetVariable`. Never decrease.
-- [ ] Add `boot_info.flags` bit `BOOT_FLAG_ROLLBACK_REFUSAL` set by the bootloader when the refusal path was taken (for crash-recovery telemetry; the kernel never sees it because the bootloader halts before jumping).
-- [ ] Fuzz + unit tests: (a) downgrade attempt (shipped=3, required=5) -> bootloader halt + observed/required on serial. (b) first-ever boot (required=0) -> shipped=N accepted, counter stays 0 until policy opt-in. (c) update path (shipped=7, required=5, opt-in set) -> after boot, required=7. (d) update path with opt-out flag -> required stays 5.
-- [ ] Commit: `"boot: anti-rollback security-version binding via UEFI NVRAM"`
+- [x] Add `uint32_t os_loader_security_version` + `uint32_t required_security_version` + `uint32_t flags` + `uint32_t _rollback_pad` to `boot_info` (v9 ABI bump). The "no version bump" predicted by the TODO text required an existing top-level `_reserved` region that the struct did not have; the bump is the correct resolution per CLAUDE.md ABI policy. `os_loader_security_version` is baked via `IPOS_KERNEL_SECURITY_VERSION` build-time constant (default 1); `required_security_version` is read from UEFI NVRAM.
+- [x] Create UEFI NVRAM variable `IPOSRequiredSecVersion` (NV|BS|RT attrs). Reuses `g_impossible_os_guid` in `src/boot/uefi/bootx64.c` (same namespace as the existing boot-error NVRAM variable).
+- [x] Bootloader refuses to jump and shows a fatal UEFI screen on downgrade. `src/boot/uefi/bootx64.c` reads NVRAM via `gST->RuntimeServices->GetVariable`, caps at `BOOT_SECURITY_VERSION_MAX`, sets `BOOT_FLAG_ROLLBACK_REFUSAL`, emits `POST16_BL_ROLLBACK_REFUSE` (0xB09A), writes observed/required to serial, halts via `boot_fatal()`.
+- [x] Kernel-side update path after `POST16_BOOT_OK`. `src/kernel/main/boot_desktop.c` calls `boot_rollback_should_raise()` immediately after `boot_post_nvram_write16(POST16_BOOT_OK)`. Gated on `boot_config.anti_rollback_raise` opt-in AND shipped > required; calls `uefi_set_variable` with NV|BS|RT attrs.
+- [x] `BOOT_FLAG_ROLLBACK_REFUSAL` in `BOOT_FLAG_MASK_KNOWN` (closed mask -- no forward-compat tolerance). Kernel validator logs WARN if the flag is set when we see boot_info (should never happen because bootloader halts pre-jump; the log is defense-in-depth).
+- [x] 10 unit-test suites in `src/kernel/test/test_boot_rollback.c` (TEST_CAT_BOOT) covering NULL, first-ever boot, equal versions, unknown flag, version OOR, stale REFUSAL flag, opt-out never raises, opt-in raises to shipped, never-decrease on synthetic downgrade, NULL-safe helper. The actual NVRAM round-trip in QEMU is a manual integration test (live UEFI RT is not reachable from the host test harness). Runner: `scripts\debug\kernel\run-boot-tests.bat`.
+- [x] Commit: `"boot: anti-rollback security-version binding via UEFI NVRAM"`
 
 **Test checkpoint:** A kernel signed with `os_loader_security_version=3` paired with UEFI NVRAM `IPOSRequiredSecVersion=5` produces a bootloader halt on the observed/required pair. A kernel with version 5 against required 5 boots cleanly. A kernel with version 7, required 5, and an opt-in policy flag completes boot and raises `IPOSRequiredSecVersion` to 7 in NVRAM (verified via `efivar -l` on Linux host after the QEMU run or via UEFI shell `dmpstore` on bare metal). Verify on QEMU WHPX, QEMU TCG, VirtualBox, and bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 556 kernel + 16 user-mode PASS on KVM 2026-04-24; smoke test PASS 2.37s (Phase 0 validator accepts native-UEFI boot: shipped=1 required=0 first-ever-boot happy path). The 3 QEMU NVRAM integration scenarios (downgrade-refuse, counter-advance, counter-freeze) are manual since the kernel-side `uefi_set_variable` cannot be exercised from the unit-test harness.
+> **Notes:**
+> - **What shipped:** `src/kernel/main/boot_rollback.c` (~100 LOC: 2-rule validator + raise-decision helper); four new `uint32_t` fields in `struct boot_info` (`flags`, `os_loader_security_version`, `required_security_version`, `_rollback_pad`) gated by `BOOT_INFO_VERSION` bump 8 -> 9; `BOOT_FLAG_ROLLBACK_REFUSAL` + `BOOT_FLAG_MASK_KNOWN` + `BOOT_SECURITY_VERSION_MAX`; `IPOS_KERNEL_SECURITY_VERSION` build-time override; bootloader producer reading `IPOSRequiredSecVersion` + halting via `boot_fatal()`; `POST16_BL_ROLLBACK_REFUSE` (0xB09A) / `POST16_BL_ROLLBACK_PASS` (0xB09B) classified as optional in the POST16 manifest; Phase-3 raise hook gated on new `boot_config.anti_rollback_raise` opt-in; 10 unit-test suites.
+> - **How it runs:** Bootloader checks shipped vs required pre-jump. Kernel Phase 0 validator sanity-checks flags + version range after `boot_decision_validate`. Phase 3 after `POST16_BOOT_OK` evaluates the raise decision; on true, `uefi_set_variable` advances the NVRAM counter. Write timing is load-bearing: the raise happens AFTER proof-of-life, never before (pre-jump raise is the classic brick vector).
+> - **Downstream effects:** release pipeline can tick `IPOS_KERNEL_SECURITY_VERSION` via Makefile `-D` and set `boot.conf` `anti_rollback_raise=1` to enforce the policy. Attestation / measured-boot / recovery consumers can read `required_security_version` alongside `caps_present` + `boot_path` for a complete "who am I, what policy, what capability" triple. Integrates with §7 `boot_version_fault.SEC_ROLLBACK` reserved slot for structured fault reporting.
+> - **Canonical doc:** [docs/boot/boot-info-fields.md](../../docs/boot/boot-info-fields.md) "Anti-rollback and security-version binding" + [docs/boot/boot-protocol-changelog.md](../../docs/boot/boot-protocol-changelog.md) "v9".
+> - **Scope boundary:** this section owns the counter, refusal gate, and raise decision. It does NOT ship the release-pipeline Makefile/CI plumbing that actually ticks `IPOS_KERNEL_SECURITY_VERSION` forward (follow-up). It does NOT implement the UEFI fatal screen itself (reuses existing `boot_fatal()`). It does NOT automate the 3 NVRAM scenarios in CI (manual integration on QEMU OVMF for now).
+
+> **Verified:** 2026-04-24 | commit `11be3e13` | 7/7 items | build OK | tests 556/556 PASS + smoke 2.37s + 235 manifest fields + 10 boot_rollback suites
+> **Quality reviewed:** pending /review-todo-section
 
 ---
 
@@ -486,7 +497,7 @@ The capability negotiation ABI shipped in §11 advertises what the bootloader po
 | 💎 | Capability negotiation          | ✅ loader extensions        | ✅ version + flags           | ✅ §11 required/present/degraded + validator     |
 | 💎 | Boot provenance decision record | ✅ boot status + resume     | ⚠️ cmdline + logs            | ✅ §12 path/reason + validator + Registry        |
 | ⭐ | Friendly stale-loader mismatch  | ✅ recovery codes           | ⚠️ log-driven failures       | ⚠️ §7 kernel fatal + BlackBox transcribe shipped |
-| 💎 | Anti-rollback security version  | ✅ OsLoaderSecurityVersion  | ⚠️ shim SBAT revocation only | ⬜ §13 UEFI NVRAM counter                        |
+| 💎 | Anti-rollback security version  | ✅ OsLoaderSecurityVersion  | ⚠️ shim SBAT revocation only | ✅ §13 NVRAM counter + pre-jump refuse |
 | ⭐ | Warm-kernel-update handoff ABI  | ⚠️ Hot Patch (closed)       | ✅ 6.16 Kexec Handover       | ⬜ §14 ABI only; runtime in new TODO             |
 | 💎 | Handoff memory ownership table  | ⚠️ MDL chains + LoaderBlock | ⚠️ memblock + NOMAP regions  | ✅ §6 single table + overlap check + JSON dump   |
 | ⭐ | Authoritative capability gates  | ⚠️ advisory to drivers      | ⚠️ advisory to drivers       | ⬜ §15 consumer retrofit to caps_present         |
