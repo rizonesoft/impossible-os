@@ -10,9 +10,15 @@
 # on-demand subprocess lifecycle + JSON error envelope.
 #
 # Architecture (skeleton scope):
-#   * FastMCP stdio server exactly like scripts/todo-graph/mcp_server.py.
-#   * Module-level _CALL_LOCK serializes every MCP tool dispatch so
-#     concurrent FastMCP requests do not race the per-LSP handshake.
+#   * FastMCP stdio server modeled on scripts/todo-graph/mcp_server.py.
+#   * Module-level _CALL_LOCK narrowly serializes the first-spawn path
+#     in _get_or_spawn so concurrent FastMCP requests cannot race the
+#     per-language handshake. Steady-state tool dispatch does NOT hold
+#     _CALL_LOCK -- per-LspSubprocess locks handle single-LSP safety
+#     and unrelated languages run in parallel. (Differs from
+#     mcp_server.py, which holds its lock on every query because
+#     build.main() mutates sys.argv/sys.stdout; the bridge has no
+#     such shared process state.)
 #   * LSPs are spawned ON DEMAND: first request for a language boots
 #     that LSP; subsequent requests reuse it. Prevents idle overhead
 #     when an agent never touches a language.
@@ -36,7 +42,6 @@
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 import threading
 from pathlib import Path
@@ -48,16 +53,18 @@ _HERE = Path(__file__).resolve().parent
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
-import lsp_client  # noqa: E402
 from lsp_client import LspError, LspSubprocess  # noqa: E402
 
 
-# Global serialization for MCP tool dispatch. FastMCP may dispatch
-# overlapping tool calls on different threads; while each LspSubprocess
-# has its own per-instance lock, we serialize the outer dispatch too
-# so that first-request-for-a-language can safely perform the
-# `initialize`/`initialized` handshake without racing a second caller
-# for the same language. Matches the pattern in mcp_server.py.
+# Narrow serialization: held ONLY during the first-spawn path in
+# _get_or_spawn so two concurrent MCP tool calls for the same language
+# cannot race the `initialize`/`initialized` handshake. Steady-state
+# dispatch does NOT hold this lock -- per-LspSubprocess _io_lock +
+# _pending_lock handle single-LSP safety, and unrelated languages run
+# in parallel. Differs from scripts/todo-graph/mcp_server.py, which
+# holds its _CALL_LOCK on every query because build.main() monkey-
+# patches sys.argv and sys.stdout (process-global state); the LSP
+# bridge has no such shared state.
 _CALL_LOCK = threading.Lock()
 
 
@@ -89,24 +96,27 @@ def _get_or_spawn(lang: str, workspace_root: Path) -> LspSubprocess:
     Raises LspError when the language is unknown or the spawn recipe
     is missing. Callers translate that into the JSON error envelope.
 
-    Thread-safety: the skeleton contract is "callers hold _CALL_LOCK
-    while invoking tool handlers"; we still take _LIVE_LSPS_LOCK here
-    so the per-LSP-lock and auto-restart follow-ups can tighten
-    serialization without redoing this dict access pattern."""
-    with _LIVE_LSPS_LOCK:
-        inst = _LIVE_LSPS.get(lang)
-        if inst is not None and inst.alive:
+    Thread-safety: _CALL_LOCK is taken here (structurally, not advisory)
+    so the first-request-for-a-language path cannot race a concurrent
+    caller into a double-spawn or a half-initialized handshake. Steady-
+    state tool dispatch (after the LSP is cached) only needs the per-
+    instance locks inside LspSubprocess, so this narrow scope keeps
+    unrelated-language requests from serializing on each other."""
+    with _CALL_LOCK:
+        with _LIVE_LSPS_LOCK:
+            inst = _LIVE_LSPS.get(lang)
+            if inst is not None and inst.alive:
+                return inst
+            spawner = _LSP_SPAWNERS.get(lang)
+            if spawner is None:
+                raise LspError(
+                    "lsp-language-unsupported",
+                    f"no LSP registered for {lang!r}",
+                    lang=lang,
+                )
+            inst = spawner(workspace_root)
+            _LIVE_LSPS[lang] = inst
             return inst
-        spawner = _LSP_SPAWNERS.get(lang)
-        if spawner is None:
-            raise LspError(
-                "lsp-language-unsupported",
-                f"no LSP registered for {lang!r}",
-                lang=lang,
-            )
-        inst = spawner(workspace_root)
-        _LIVE_LSPS[lang] = inst
-        return inst
 
 
 def _call_lsp(fn: Callable[[], Any]) -> Any:
@@ -123,19 +133,27 @@ def _call_lsp(fn: Callable[[], Any]) -> Any:
         return exc.to_envelope()
 
 
+def _find_repo_root() -> Path:
+    """Walk upward from THIS file until a repo marker appears.
+
+    Matches the pattern in scripts/todo-graph/mcp_server.py: MCP hosts
+    launch the bridge from arbitrary working directories, so a CWD-
+    based walk can silently bind to the wrong checkout (or a parent
+    home directory). Walking from __file__ is deterministic -- it
+    resolves to whatever tree the script itself lives in."""
+    here = Path(__file__).resolve().parent
+    for cand in (here, *here.parents):
+        if (cand / "todo").is_dir() and (cand / "scripts" / "lsp-mcp").is_dir():
+            return cand
+    return Path.cwd()
+
+
 def _workspace_root_from_argv(args: argparse.Namespace) -> Path:
     """Resolve the workspace root: --repo-root override wins, else
-    walk upward from CWD until we find `.git` or the canonical
-    repo markers (`todo/` + `scripts/`)."""
+    _find_repo_root() walks upward from this script's location."""
     if args.repo_root:
         return Path(args.repo_root).resolve()
-    cwd = Path.cwd().resolve()
-    for cand in (cwd, *cwd.parents):
-        if (cand / ".git").exists():
-            return cand
-        if (cand / "todo").is_dir() and (cand / "scripts").is_dir():
-            return cand
-    return cwd
+    return _find_repo_root()
 
 
 def _shutdown_all_lsps() -> None:

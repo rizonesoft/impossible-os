@@ -29,17 +29,26 @@
 from __future__ import annotations
 
 import atexit
+import io
 import json
 import os
 import signal
 import subprocess
-import sys
 import threading
 import time
 import weakref
 from concurrent.futures import Future, TimeoutError as FutureTimeoutError
 from pathlib import Path
 from typing import Any, Optional
+
+
+# Bounds on untrusted LSP output. An LSP (buggy or hostile) could send a
+# header line with no CRLF, forcing Python to buffer arbitrarily large
+# input before `Content-Length` body-cap checks fire. Cap the raw
+# readline size so we detect the pathology before it becomes an OOM.
+_MAX_HEADER_LINE = 8192          # bytes; a single LSP header is ~60 bytes
+_MAX_HEADER_BLOCK = 32 * 1024    # bytes; total of every header in one frame
+_MAX_BODY_BYTES = 32 * 1024 * 1024  # 32 MiB per LSP message
 
 
 # Every live LspSubprocess instance registers itself here so the
@@ -121,15 +130,30 @@ class LspSubprocess:
         self._env = dict(env) if env is not None else None
 
         self._proc: Optional[subprocess.Popen] = None
+        # Buffered view of proc.stdout. bufsize=0 on Popen is required
+        # so the LSP does not block waiting for its write to drain
+        # through a 4 KiB Python buffer, but that makes readline() on
+        # the raw stream one-syscall-per-byte. io.BufferedReader gives
+        # us block-sized reads + efficient readline() on the parse side
+        # while keeping the child's write semantics unchanged.
+        self._stdout_buf: Optional[io.BufferedReader] = None
         self._reader_thread: Optional[threading.Thread] = None
         self._stderr_thread: Optional[threading.Thread] = None
         self._io_lock = threading.Lock()
         self._pending: dict[int, "Future[Any]"] = {}
         self._pending_lock = threading.Lock()
         self._next_id = 1
+        self._next_id_lock = threading.Lock()
         self._initialized = False
         self._init_lock = threading.Lock()
         self._shutdown_called = False
+        # Transport-dead signal: _reader_loop sets this in its finally
+        # block so request()/notify() can reject immediately on a
+        # known-bad channel instead of enqueuing a Future that will
+        # only resolve on timeout. Without this, a protocol-error
+        # that killed the reader still left the demux path looking
+        # live to new callers.
+        self._reader_dead = False
         # Teardown bypass flag: shutdown() sets this so the internal
         # shutdown-RPC can slip past the _shutdown_called guard in
         # request()/notify(). Without this, shutdown() would mark
@@ -137,14 +161,19 @@ class LspSubprocess:
         # turning every clean teardown into an EOF/SIGTERM fallback.
         self._teardown_in_progress = False
         self.server_caps: dict[str, Any] = {}
-        # Diagnostics get pushed by the server asynchronously; the
-        # MCP `diagnostics` tool (section 7) will consume the most
-        # recent set per URI from here. Exposed (not _private) so
-        # the tool handler can read it directly.
+        # SCAFFOLD (consumed by the per-language integration commits
+        # and the diagnostics tool handler): diagnostics get pushed by
+        # the server asynchronously via textDocument/publishDiagnostics;
+        # the MCP `diagnostics` tool reads the most recent set per URI
+        # from here. Exposed (not _private) so the tool handler reads
+        # it directly.
         self.diagnostics_by_uri: dict[str, Any] = {}
-        # Tracked URIs for didChange forwarding (section 12 adds the
-        # mtime check; we record them now so subsequent sections can
-        # extend this without touching __init__.).
+        # SCAFFOLD (consumed by the file-change-lifecycle commit):
+        # tracked URIs for didChange forwarding. Populated by
+        # did_open(); read by a future mtime-check path that decides
+        # whether to send a didChange before forwarding the tool
+        # request. Exposed so that path can attach without touching
+        # __init__.
         self.open_uris: set[str] = set()
 
         self._spawn()
@@ -180,6 +209,14 @@ class LspSubprocess:
                 env=self._env,
                 start_new_session=True,
             )
+            # Buffered reader wrapper only for the read side. The child
+            # still writes into an unbuffered pipe (bufsize=0), but our
+            # parser benefits from block-sized reads + efficient
+            # readline(limit=...).
+            if self._proc.stdout is not None:
+                self._stdout_buf = io.BufferedReader(
+                    self._proc.stdout, buffer_size=65536
+                )
         except FileNotFoundError as exc:
             raise LspError(
                 "lsp-binary-missing",
@@ -264,6 +301,8 @@ class LspSubprocess:
             # Pipe closed during shutdown -- expected, not an error.
             pass
 
+    _READ_HEADERS_MALFORMED = object()  # sentinel; !=None so EOF and bad framing are distinct
+
     def _reader_loop(self) -> None:
         """Parse LSP framed messages from stdout and route replies.
 
@@ -271,16 +310,31 @@ class LspSubprocess:
           * Responses (have an `id` matching a pending request)
           * Notifications (no `id`; method like publishDiagnostics).
 
-        A malformed frame fails every pending request with
-        lsp-protocol-error so callers do not hang on the Future."""
-        proc = self._proc
-        assert proc is not None and proc.stdout is not None
-        stream = proc.stdout
+        Malformed framing (bad headers, over-length headers, bad
+        Content-Length, oversized body, bad JSON) fails every pending
+        request with lsp-protocol-error so callers do not hang on a
+        Future. EOF is distinct and surfaces as lsp-subprocess-exited.
+        _reader_dead flips True in the finally so subsequent
+        request()/notify() calls reject immediately instead of
+        enqueuing a Future on a dead channel."""
+        stream = self._stdout_buf
+        if stream is None:
+            # _spawn() failed post-Popen and reset _proc; nothing to
+            # read.
+            self._reader_dead = True
+            return
         try:
             while True:
                 headers = self._read_headers(stream)
                 if headers is None:
-                    # EOF: subprocess exited.
+                    # Genuine EOF: subprocess exited.
+                    break
+                if headers is self._READ_HEADERS_MALFORMED:
+                    self._fail_all_pending(LspError(
+                        "lsp-protocol-error",
+                        "malformed LSP header block",
+                        lang=self.lang,
+                    ))
                     break
                 length_str = headers.get("content-length")
                 if length_str is None:
@@ -299,12 +353,11 @@ class LspSubprocess:
                         lang=self.lang,
                     ))
                     break
-                if length < 0 or length > (32 * 1024 * 1024):
-                    # Sanity cap: a single LSP message over 32 MiB
-                    # means either a protocol desync or a server
-                    # trying to dump its entire workspace symbol
-                    # table at us. Don't allocate the buffer; treat
-                    # as protocol error (fail pending + drain loop).
+                if length < 0 or length > _MAX_BODY_BYTES:
+                    # A single LSP message over 32 MiB means either a
+                    # protocol desync or a server trying to dump its
+                    # entire workspace-symbol table at us. Don't
+                    # allocate the buffer; treat as protocol error.
                     self._fail_all_pending(LspError(
                         "lsp-protocol-error",
                         f"Content-Length {length} outside [0, 32MiB]",
@@ -315,7 +368,10 @@ class LspSubprocess:
                 if body is None:
                     break
                 try:
-                    msg = json.loads(body.decode("utf-8"))
+                    # json.loads accepts bytes directly on Python 3.6+;
+                    # skipping the explicit UTF-8 decode removes one
+                    # full-body copy on the reader hot path.
+                    msg = json.loads(body)
                 except (UnicodeDecodeError, json.JSONDecodeError) as exc:
                     self._fail_all_pending(LspError(
                         "lsp-protocol-error",
@@ -331,35 +387,52 @@ class LspSubprocess:
                 lang=self.lang,
             ))
         finally:
-            # Last-chance: any pending request when the reader stops
-            # must be failed so callers don't block forever on a
-            # child that has already exited.
+            # Set reader_dead BEFORE the final fail_all so any thread
+            # racing in to request() during teardown sees the dead
+            # flag on next check instead of enqueuing a Future.
+            self._reader_dead = True
             self._fail_all_pending(LspError(
                 "lsp-subprocess-exited",
                 f"{self.lang} LSP reader thread ended",
                 lang=self.lang,
             ))
 
-    @staticmethod
-    def _read_headers(stream) -> Optional[dict[str, str]]:
-        """Read LSP header block (one header per line, \\r\\n-terminated,
-        empty line ends). Returns None on EOF."""
+    @classmethod
+    def _read_headers(cls, stream) -> Optional[dict[str, str]]:
+        """Read LSP header block (one header per line, CRLF-terminated,
+        empty line ends).
+
+        Returns:
+          * None on EOF before any header.
+          * _READ_HEADERS_MALFORMED on bounds violation or bad shape.
+          * dict of headers on success.
+
+        Bounds: each readline is capped at _MAX_HEADER_LINE bytes so a
+        line without CRLF cannot force unbounded buffering before the
+        body-size cap kicks in. Cumulative header bytes are capped at
+        _MAX_HEADER_BLOCK so a pathological server cannot stream
+        infinite short headers either."""
         headers: dict[str, str] = {}
+        total = 0
         while True:
-            line = stream.readline()
+            # readline(size+1) returns at most size+1 bytes; we treat
+            # anything >= size+1 OR not ending in LF as over-length.
+            line = stream.readline(_MAX_HEADER_LINE + 1)
             if not line:
                 return None  # EOF
-            # LSP headers are ASCII. Reject non-ASCII early rather
-            # than crashing on a later decode.
+            if len(line) > _MAX_HEADER_LINE or not line.endswith(b"\n"):
+                return cls._READ_HEADERS_MALFORMED
+            total += len(line)
+            if total > _MAX_HEADER_BLOCK:
+                return cls._READ_HEADERS_MALFORMED
             try:
                 s = line.decode("ascii").rstrip("\r\n")
             except UnicodeDecodeError:
-                return None
+                return cls._READ_HEADERS_MALFORMED
             if s == "":
                 return headers
             if ":" not in s:
-                # Malformed header -- treat same as EOF.
-                return None
+                return cls._READ_HEADERS_MALFORMED
             name, _, value = s.partition(":")
             headers[name.strip().lower()] = value.strip()
 
@@ -421,36 +494,49 @@ class LspSubprocess:
     # Wire I/O
     # ------------------------------------------------------------------
 
-    def _send_frame(self, payload: dict[str, Any]) -> None:
-        """Write one LSP-framed JSON-RPC message to the LSP's stdin.
-        MUST hold _io_lock while writing -- a partial interleave from
-        two threads would corrupt the Content-Length framing."""
+    def _send_frame_bytes(self, header: bytes, body: bytes) -> None:
+        """Write a pre-encoded LSP frame. MUST be called with
+        _io_lock held -- a partial interleave from two threads would
+        corrupt the Content-Length framing. Encoding + json.dumps
+        happens in request() outside the lock to keep the critical
+        section to only the syscalls that must be ordered."""
         proc = self._proc
-        if proc is None or proc.stdin is None:
+        if proc is None or proc.stdin is None or proc.stdin.closed:
             raise LspError(
                 "lsp-subprocess-exited",
                 "stdin unavailable",
                 lang=self.lang,
             )
-        body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
-        header = f"Content-Length: {len(body)}\r\n\r\n".encode("ascii")
         try:
             proc.stdin.write(header)
             proc.stdin.write(body)
             proc.stdin.flush()
-        except (BrokenPipeError, OSError) as exc:
+        except (BrokenPipeError, OSError, ValueError) as exc:
+            # ValueError is raised when writing to a closed file
+            # object (shutdown closed stdin mid-request).
             raise LspError(
                 "lsp-subprocess-exited",
                 f"write failed: {exc.__class__.__name__}",
                 lang=self.lang,
             ) from exc
 
+    @staticmethod
+    def _encode_frame(payload: dict[str, Any]) -> tuple[bytes, bytes]:
+        """Serialize a JSON-RPC payload into (header, body) bytes. Pure
+        function; no I/O, no lock. Split out so request() can encode
+        OUTSIDE the _io_lock critical section."""
+        body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        header = f"Content-Length: {len(body)}\r\n\r\n".encode("ascii")
+        return header, body
+
     def _next_request_id(self) -> int:
-        # Serialized under _io_lock in the caller; a raw int bump is
-        # fine there. Kept here for clarity + to make the invariant
-        # explicit.
-        rid = self._next_id
-        self._next_id += 1
+        # Self-locking so callers can allocate an id + register the
+        # pending Future OUTSIDE _io_lock. That keeps json.dumps and
+        # stdin.flush off the critical path and lets concurrent
+        # callers overlap id allocation with I/O.
+        with self._next_id_lock:
+            rid = self._next_id
+            self._next_id += 1
         return rid
 
     def request(self, method: str, params: Optional[dict[str, Any]] = None,
@@ -473,24 +559,39 @@ class LspSubprocess:
                 lang=self.lang,
                 method=method,
             )
+        if self._reader_dead:
+            # Reader thread already exited (subprocess crash, protocol
+            # error, etc.). Reject immediately instead of enqueuing a
+            # Future that will only resolve on timeout.
+            raise LspError(
+                "lsp-subprocess-exited",
+                "reader thread is dead",
+                lang=self.lang,
+                method=method,
+            )
         fut: "Future[Any]" = Future()
-        with self._io_lock:
-            rid = self._next_request_id()
+        # Allocate id + register pending OUTSIDE _io_lock so concurrent
+        # callers do not serialize on json.dumps / stdin.flush. Payload
+        # encoding is also pre-lock; the critical section covers only
+        # the two ordered pipe writes + flush.
+        rid = self._next_request_id()
+        with self._pending_lock:
+            self._pending[rid] = fut
+        payload: dict[str, Any] = {
+            "jsonrpc": "2.0",
+            "id": rid,
+            "method": method,
+        }
+        if params is not None:
+            payload["params"] = params
+        header, body = self._encode_frame(payload)
+        try:
+            with self._io_lock:
+                self._send_frame_bytes(header, body)
+        except LspError:
             with self._pending_lock:
-                self._pending[rid] = fut
-            payload = {
-                "jsonrpc": "2.0",
-                "id": rid,
-                "method": method,
-            }
-            if params is not None:
-                payload["params"] = params
-            try:
-                self._send_frame(payload)
-            except LspError:
-                with self._pending_lock:
-                    self._pending.pop(rid, None)
-                raise
+                self._pending.pop(rid, None)
+            raise
         try:
             return fut.result(timeout=timeout)
         except FutureTimeoutError as exc:
@@ -524,11 +625,19 @@ class LspSubprocess:
                 lang=self.lang,
                 method=method,
             )
+        if self._reader_dead and method != "exit":
+            raise LspError(
+                "lsp-subprocess-exited",
+                "reader thread is dead",
+                lang=self.lang,
+                method=method,
+            )
         payload: dict[str, Any] = {"jsonrpc": "2.0", "method": method}
         if params is not None:
             payload["params"] = params
+        header, body = self._encode_frame(payload)
         with self._io_lock:
-            self._send_frame(payload)
+            self._send_frame_bytes(header, body)
 
     # ------------------------------------------------------------------
     # Handshake
@@ -599,6 +708,16 @@ class LspSubprocess:
         teardown path."""
         if self._shutdown_called:
             return
+
+        # Serialize teardown against the first initialize() handshake.
+        # Without _init_lock here, shutdown could observe
+        # _initialized == False, skip the graceful LSP shutdown, close
+        # stdin, and begin killing the process while initialize() is
+        # still between request("initialize") and notify("initialized").
+        # Acquire the init lock briefly to drain any in-flight handshake
+        # and prevent a new one from starting after we commit.
+        with self._init_lock:
+            pass
 
         proc = self._proc
         if proc is None:

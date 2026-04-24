@@ -165,11 +165,53 @@ assert env2["keep"] == "yes", env2
 '
 }
 
+# --- 1f: over-length header line -> protocol error + fast reject --------
+t_protocol_error_oversized_header() {
+    python3 -c "
+import sys, time
+sys.path.insert(0, 'scripts/lsp-mcp')
+from lsp_client import LspSubprocess, LspError
+bad = r'''
+import sys
+# 10 KiB garbage with no CRLF anywhere -- forces malformed-header path.
+sys.stdout.buffer.write(b\"X\" * 10240)
+sys.stdout.buffer.flush()
+while True:
+    if not sys.stdin.buffer.read(1): break
+'''
+lsp = LspSubprocess(['python3','-c',bad], lang='bad')
+for _ in range(40):
+    if lsp._reader_dead: break
+    time.sleep(0.05)
+assert lsp._reader_dead, 'reader should have marked transport dead'
+try:
+    lsp.request('hover', timeout=1.0)
+    raise SystemExit('expected fast-reject')
+except LspError as e:
+    assert e.kind == 'lsp-subprocess-exited', e.kind
+lsp.shutdown()
+"
+}
+
+# --- 1g: _find_repo_root resolves to this repo root ----------------------
+t_workspace_root() {
+    python3 -c "
+import sys
+sys.path.insert(0, 'scripts/lsp-mcp')
+import bridge
+root = bridge._find_repo_root()
+assert (root / 'todo').is_dir(), f'root missing todo/: {root}'
+assert (root / 'scripts' / 'lsp-mcp').is_dir(), f'root missing scripts/lsp-mcp/: {root}'
+"
+}
+
 run "1a --self-test banner"              t_selftest
 run "1b module import smoke"             t_import
 run "1c LspSubprocess lifecycle + pgrep" t_subprocess_lifecycle
 run "1d JSON-RPC round-trip + shutdown"  t_jsonrpc_roundtrip
 run "1e envelope reserves keys"          t_envelope_reserved
+run "1f over-length header rejected"     t_protocol_error_oversized_header
+run "1g workspace root via __file__"     t_workspace_root
 
 printf '[lsp-mcp-tests] %d/%d sub-tests PASS\n' "$pass" "$((pass + fail))"
 if [ "$fail" -gt 0 ]; then

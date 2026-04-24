@@ -78,7 +78,7 @@ Lay down the process skeleton, the FastMCP server, and a minimal LSP JSON-RPC cl
 
 **Test checkpoint:** `python3 scripts/lsp-mcp/bridge.py --self-test` exits 0 and prints `[lsp-mcp] OK: 0 LSPs spawned, bridge ready`. FastMCP tool registry shows 0 tools (tools come in §7). Manual import: `from scripts.lsp_mcp.lsp_client import LspSubprocess; c = LspSubprocess(['cat'], lang='test'); c.shutdown()` completes without leaking the subprocess (`pgrep cat` empty after). No `boot` / kernel / POST16 involvement -- this is host-side Python tooling.
 
-> **Test runner:** `bash scripts/lsp-mcp/tests/test_bridge.sh` | 5/5 sub-tests PASS (1a self-test banner, 1b import smoke, 1c LspSubprocess lifecycle + pgrep, 1d JSON-RPC round-trip + concurrent demux + graceful shutdown, 1e envelope reserves error/detail against extra poisoning)
+> **Test runner:** `bash scripts/lsp-mcp/tests/test_bridge.sh` | 7/7 sub-tests PASS (1a self-test banner, 1b import smoke, 1c LspSubprocess lifecycle + pgrep, 1d JSON-RPC round-trip + concurrent demux + graceful shutdown, 1e envelope reserves error/detail, 1f over-length header rejected via transport-dead fast reject, 1g _find_repo_root resolves via __file__)
 
 > **Notes:**
 >
@@ -87,6 +87,9 @@ Lay down the process skeleton, the FastMCP server, and a minimal LSP JSON-RPC cl
 > - **Downstream effects:** unblocks §2-§6 (per-language LSP integrations reuse `LspSubprocess` + `register_spawner` as-is), §7 (MCP tool handlers close over the module-level `_CALL_LOCK` + `_get_or_spawn` + `_call_lsp` helpers), §8 (per-LSP serialization already present as `_io_lock` + `_pending_lock`), §10 (harness + sub-test numbering set).
 > - **Canonical doc:** [`scripts/todo-graph/mcp_server.py`](../../scripts/todo-graph/mcp_server.py) (FastMCP + `_CALL_LOCK` + `--self-test` precedent we mirror).
 > - **Scope boundary:** no MCP tools, no language integrations, no `.claude/mcp.json` manifest, no docs subsection, no `make` target. Those belong to §2-§10; this section is the foundation they build on.
+
+> **Verified:** 2026-04-24 | commit `PENDING` | 5/5 items | build N/A (host-side Python) | tests 7/7 PASS
+> **Quality reviewed:** 2026-04-24 | Codex 4x (adversarial + dead-code + consistency + perf) | 4H+6M+2L fixed, 0 open | scope: N/A (host-side Python tooling; no domain quality skill applies)
 
 ---
 
