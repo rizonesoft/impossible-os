@@ -30,15 +30,35 @@ cd "$REPO_ROOT"
 exec 3>&1   # keep fd 3 as the "real" stdout for the path emit
 exec 1>&2   # redirect stdout to stderr for all subsequent prints
 
-# Parse current BOOT_INFO_VERSION from the kernel header. The #ifndef
-# guard around it preserves the define's value here; grep finds the
-# inner unconditional line.
-CURRENT=$(grep -oP '#define\s+BOOT_INFO_VERSION\s+\K\d+' \
+# Parse current BOOT_INFO_VERSION from BOTH headers (kernel +
+# bootloader mirror) and reject if they have drifted. If the
+# fixture build trusted only one header, a pre-existing kernel/
+# bootloader ABI drift would silently pass the harness (stale
+# binary built from the "other" version, matching whichever side
+# we chose to baseline). The harness is a consistency gate; its
+# preflight must therefore enforce consistency before building.
+K_VER=$(grep -oP '#define\s+BOOT_INFO_VERSION\s+\K\d+' \
     include/kernel/boot_info.h | head -1)
-if [ -z "$CURRENT" ]; then
-    echo "build-stale-bootloader: could not parse BOOT_INFO_VERSION" >&2
+B_VER=$(grep -oP '#define\s+BOOT_INFO_VERSION\s+\K\d+' \
+    src/boot/uefi/boot_info_mirror.h | head -1)
+if [ -z "$K_VER" ] || [ -z "$B_VER" ]; then
+    echo "build-stale-bootloader: could not parse BOOT_INFO_VERSION (kernel=$K_VER mirror=$B_VER)" >&2
     exit 2
 fi
+if [ "$K_VER" != "$B_VER" ]; then
+    echo "build-stale-bootloader: FATAL: BOOT_INFO_VERSION drift -- kernel header=$K_VER, bootloader mirror=$B_VER. Fix the headers and re-run 'make boot-info-abi'." >&2
+    exit 2
+fi
+# Also sanity-check BOOT_INFO_MAGIC parity.
+K_MAGIC=$(grep -oP '#define\s+BOOT_INFO_MAGIC\s+\K0x[0-9A-Fa-f]+' \
+    include/kernel/boot_info.h | head -1)
+B_MAGIC=$(grep -oP '#define\s+BOOT_INFO_MAGIC\s+\K0x[0-9A-Fa-f]+' \
+    src/boot/uefi/boot_info_mirror.h | head -1)
+if [ "$K_MAGIC" != "$B_MAGIC" ]; then
+    echo "build-stale-bootloader: FATAL: BOOT_INFO_MAGIC drift -- kernel=$K_MAGIC mirror=$B_MAGIC" >&2
+    exit 2
+fi
+CURRENT="$K_VER"
 
 STALE=$((CURRENT - 1))
 if [ "$STALE" -lt 0 ]; then
@@ -51,17 +71,32 @@ echo "[stale-bootloader] current=v$CURRENT stale=v$STALE"
 # Trap cleanup: ALWAYS rebuild the real bootloader, even if the stale
 # build fails OR we are interrupted. Otherwise the tree would be left
 # with a bootloader that the system-disk.img still packages.
+SCRATCH=""
 cleanup() {
     local orig_rc=$?
+    # Reap the scratch dir BEFORE any exit so it never leaks. Earlier
+    # revision put the `rm -rf "$SCRATCH"` after `cleanup` in the trap
+    # expression, but cleanup() exits in its body, making the rm
+    # unreachable. Move it inside.
+    if [ -n "$SCRATCH" ] && [ -d "$SCRATCH" ]; then
+        rm -rf "$SCRATCH"
+    fi
     echo "[stale-bootloader] restoring real BOOTX64.EFI..."
     make -C src/boot/uefi clean >/dev/null 2>&1 || true
     local restore_rc=0
-    # Regenerate the system disk so the ESP has the restored bootloader.
-    # `bash scripts/build.sh` re-runs uefi-boot + system-disk as a
-    # single pipeline; no need for a separate `make uefi-boot` before it.
-    if ! bash scripts/build.sh >/dev/null 2>&1; then
-        echo "[stale-bootloader] FATAL: restore build failed; tree IS dirty" >&2
-        restore_rc=1
+    # Narrow restore: `make uefi-boot system-disk` rebuilds ONLY the
+    # bootloader + repacks the ESP. Kernel + userland are untouched
+    # because only the bootloader changed. Saves ~10s per-run on CI
+    # vs the previous `bash scripts/build.sh` which rebuilt the whole
+    # tree. If make fails for any reason, fall back to a full
+    # `scripts/build.sh` rebuild as a safety net (e.g. a kernel .o
+    # went missing from an earlier interrupted run).
+    if ! make uefi-boot system-disk >/dev/null 2>&1; then
+        echo "[stale-bootloader] uefi-boot+system-disk restore failed; falling back to full build" >&2
+        if ! bash scripts/build.sh >/dev/null 2>&1; then
+            echo "[stale-bootloader] FATAL: full restore build failed; tree IS dirty" >&2
+            restore_rc=1
+        fi
     fi
     # A restore failure propagates non-zero so callers (make
     # stale-abi-fixtures, CI) treat it as failure rather than silently
@@ -75,8 +110,8 @@ trap cleanup EXIT INT TERM
 
 # Build the stale bootloader. Direct the output to a scratch dir so
 # it does not overwrite build/tools/BOOTX64.EFI before we copy it out.
+# cleanup() reaps SCRATCH on any exit path.
 SCRATCH="$(mktemp -d)"
-trap 'cleanup; rm -rf "$SCRATCH"' EXIT INT TERM
 
 make -C src/boot/uefi clean >/dev/null 2>&1 || true
 if ! make -C src/boot/uefi \

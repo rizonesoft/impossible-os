@@ -155,14 +155,23 @@ boot_fixture() {
 # --- Assert the serial log carries the expected fault pattern -------
 # $1 = fixture label
 # $2 = serial log path
-# $3 = fault-class regex (PCRE-ish; BAD_VERSION|BAD_SIZE for stale-
-#       bootloader, BAD_VERSION for stale-kernel)
+# $3 = named fault-class regex, e.g. "BAD_VERSION|BAD_SIZE"
+# $4 = numeric fault-class digits for the bootloader decimal form,
+#      e.g. "2|3|4" -- MUST correspond to $3. Per-fixture tight
+#      matching prevents a regression that swaps the wrong fault
+#      class from false-passing.
+#
+# enum boot_version_fault_class (include/kernel/boot_version.h):
+#   0=OK  1=NULL_HDR  2=BAD_MAGIC  3=BAD_VERSION  4=BAD_SIZE
+#   5=SEC_ROLLBACK  6=BAD_SHA  7=BAD_PARSE
+#
 # Returns 0 on match (emits [PASS]); non-zero on no-match (emits
 # [FAIL] + last 40 lines of serial to stderr).
 assert_fault_pattern() {
     local label="$1"
     local serial="$2"
     local classes="$3"
+    local numeric_digits="$4"
 
     local stripped="${serial%.log}.stripped.log"
     sed -E 's/\x1b\[[0-9;]*[A-Za-z]//g; s/\x1b[=>]//g' "$serial" \
@@ -182,9 +191,10 @@ assert_fault_pattern() {
     fi
     # Class match: accept the named class (kernel fatal path prints
     # BAD_VERSION / BAD_SHA / BAD_PARSE / ...) OR the bootloader's
-    # numeric form (`fault_class: N` where N = 2..7 per
-    # enum boot_version_fault_class).
-    local numeric_regex="fault_class: (2|3|4|6|7)"
+    # decimal form (`fault_class: N`). Numeric digits are now per-
+    # fixture; a regression that emits fault_class: 2 (BAD_MAGIC) on
+    # a test that should fire BAD_VERSION no longer false-passes.
+    local numeric_regex="fault_class: ($numeric_digits)"
     if grep -qE "$classes" "$stripped" || \
        grep -qE "$numeric_regex" "$stripped"; then
         saw_class=1
@@ -213,6 +223,7 @@ FAILED=0
 
 run_stale_bootloader() {
     local label="stale-bootloader"
+    EXECUTED=$((EXECUTED + 1))
     echo
     printf "%s=== %s ===%s\n" "$CYAN" "$label" "$NC"
 
@@ -233,16 +244,20 @@ run_stale_bootloader() {
 
     # Stale bootloader writes an older BOOT_INFO_VERSION into the
     # boot_info header. The kernel's boot_version_classify then sees
-    # BAD_VERSION (or BAD_SIZE if the schema changed size between
-    # versions). Accept either.
+    # BAD_VERSION (3) or BAD_SIZE (4). A decrement cannot produce
+    # BAD_MAGIC (2) unless the magic override is used, so exclude 2
+    # here -- tightening prevents a regression in which the fault
+    # path accidentally reports the wrong class but still passes the
+    # harness.
     if ! assert_fault_pattern "$label" "$serial" \
-        "BAD_VERSION|BAD_SIZE|BAD_MAGIC"; then
+        "BAD_VERSION|BAD_SIZE" "3|4"; then
         FAILED=$((FAILED + 1))
     fi
 }
 
 run_stale_kernel() {
     local label="stale-kernel"
+    EXECUTED=$((EXECUTED + 1))
     echo
     printf "%s=== %s ===%s\n" "$CYAN" "$label" "$NC"
 
@@ -263,12 +278,17 @@ run_stale_kernel() {
 
     # Stale kernel: bootloader writes current BOOT_INFO_VERSION, the
     # kernel's compile-time expected value is one older. This
-    # triggers the bootloader pre-jump .bootproto mismatch (SHA +
-    # version differ) via the boot-proto-descriptor feature, OR the
-    # kernel-side boot_version_classify path. Either way a
-    # BAD_VERSION / BAD_SHA / BAD_PARSE signal should land.
+    # triggers EITHER (a) the bootloader pre-jump `.bootproto`
+    # mismatch (SHA + version differ; fault_class 3 BAD_VERSION or 6
+    # BAD_SHA), OR (b) the kernel-side boot_version_classify path
+    # (fault_class 3 BAD_VERSION / 4 BAD_SIZE). BAD_PARSE (7) is
+    # possible if the ELF parse fails; keep as accepted. BAD_MAGIC
+    # (2) is NOT reachable from a version decrement and is excluded
+    # to prevent a regression that swaps the wrong class from false-
+    # passing. "ABI MISMATCH" text banner alone (without a decimal
+    # class) satisfies the banner check, not the class check.
     if ! assert_fault_pattern "$label" "$serial" \
-        "BAD_VERSION|BAD_SIZE|BAD_SHA|BAD_PARSE|BAD_MAGIC|ABI MISMATCH"; then
+        "BAD_VERSION|BAD_SIZE|BAD_SHA|BAD_PARSE" "3|4|6|7"; then
         FAILED=$((FAILED + 1))
     fi
 }
@@ -286,8 +306,24 @@ if ! probe_env; then
     echo "========================================"
     echo "  SKIPPED (environment not ready)"
     echo "========================================"
+    # On GitHub Actions, treat full-SKIP as FAIL. The rollout
+    # plan promotes this step from continue-on-error to mandatory
+    # once three green runs land; those green runs must reflect
+    # actual fixture execution, not silent SKIP-passes. The
+    # $GITHUB_ACTIONS env var is set to "true" on every Actions
+    # runner; locally it is unset.
+    if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
+        printf "%s  CI SKIP-ALL UPGRADED TO FAIL (env gaps on Actions runner)%s\n" \
+            "$RED" "$NC" >&2
+        exit 1
+    fi
     exit 0
 fi
+
+# Track how many fixtures we actually executed. Used below to
+# distinguish "all PASSed" (executed > 0 AND failed == 0) from
+# "harness ran but produced no signal" (executed == 0).
+EXECUTED=0
 
 # Preflight: ensure the current system-disk.img exists. If not, rebuild.
 if [ ! -f "$BUILD_DIR/system-disk.img" ]; then
@@ -303,10 +339,19 @@ run_stale_kernel
 
 echo
 echo "========================================"
-if [ "$FAILED" -eq 0 ]; then
+printf "  executed=%d failed=%d\n" "$EXECUTED" "$FAILED"
+if [ "$FAILED" -eq 0 ] && [ "$EXECUTED" -gt 0 ]; then
     printf "%s  STALE-ABI HARNESS PASSED%s\n" "$GREEN" "$NC"
     echo "========================================"
     exit 0
+elif [ "$EXECUTED" -eq 0 ]; then
+    # env probe passed but no fixture actually ran -- shouldn't
+    # happen on a healthy tree. Treat as FAIL so the "three green
+    # runs" promotion criterion cannot be met by a silent no-op.
+    printf "%s  STALE-ABI HARNESS NO-OP (zero fixtures executed)%s\n" \
+        "$RED" "$NC"
+    echo "========================================"
+    exit 1
 else
     printf "%s  STALE-ABI HARNESS FAILED (%d fixture(s))%s\n" \
         "$RED" "$FAILED" "$NC"

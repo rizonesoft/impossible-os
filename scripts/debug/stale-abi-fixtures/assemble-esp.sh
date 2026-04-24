@@ -76,11 +76,23 @@ if ! mcopy -o -i "$OUT@@1M" "$STALE_PATH" "$TARGET"; then
     exit 1
 fi
 
-# Sanity-check the write: mdir should list the new file size.
+# Fatal sanity-check the write: mdir must list the target after mcopy.
+# If mcopy silently fails (wrong partition offset, FAT corruption,
+# disk-image truncation), the script would otherwise proceed with the
+# original binary still in place, hiding a real stale-ABI regression.
 NEW_SIZE="$(wc -c < "$STALE_PATH" | tr -d ' ')"
 DIR_OUT="$(mdir -i "$OUT@@1M" "$(dirname "$TARGET")" 2>/dev/null || true)"
-if ! echo "$DIR_OUT" | grep -qi "$(basename "$TARGET" .EFI | tr '[:lower:]' '[:upper:]')\|$(basename "$TARGET" .exe)"; then
-    echo "$0: WARNING: mdir did not list target after mcopy -- disk may be corrupt" >&2
+# mtools uppercases .EFI names (8.3 FAT semantics) and preserves case
+# for longfilenames like kernel.exe; match both forms.
+UPPER_STEM="$(basename "$TARGET" .EFI | tr '[:lower:]' '[:upper:]')"
+LOWER_STEM="$(basename "$TARGET" .exe)"
+if ! echo "$DIR_OUT" | grep -qi "${UPPER_STEM}\|${LOWER_STEM}"; then
+    echo "$0: FATAL: mdir did not list target after mcopy -- disk may be corrupt or mcopy silently failed" >&2
+    echo "$0: expected one of: ${UPPER_STEM} / ${LOWER_STEM}" >&2
+    echo "$0: mdir output was:" >&2
+    echo "$DIR_OUT" >&2
+    rm -f "$OUT"
+    exit 1
 fi
 
 echo "[assemble-esp] wrote $STALE_PATH (${NEW_SIZE} bytes) to ${TARGET} in $OUT"
