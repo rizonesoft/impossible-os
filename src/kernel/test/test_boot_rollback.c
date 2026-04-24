@@ -119,6 +119,22 @@ static void test_boot_rollback_refusal_flag_warning(void)
     TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_ROLLBACK_ERR_OK, "err=OK");
 }
 
+static void test_boot_rollback_read_failed_flag_accepted(void)
+{
+    TEST_KLOG_SUPPRESS("boot");
+    rb_zero();
+    /* READ_FAILED flag alone (without REFUSAL) is legitimate telemetry
+     * from the bootloader -- validator accepts with WARN. */
+    s_rb_buf.flags                       = BOOT_FLAG_ROLLBACK_READ_FAILED;
+    s_rb_buf.os_loader_security_version  = 1u;
+    s_rb_buf.required_security_version   = 0u;
+
+    enum boot_rollback_error err = BOOT_ROLLBACK_ERR_OK;
+    boot_result_t r = boot_rollback_validate(&s_rb_buf, &err);
+    TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_OK,              "READ_FAILED flag stale -> OK + WARN");
+    TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_ROLLBACK_ERR_OK, "err=OK");
+}
+
 static void test_boot_rollback_should_raise_opt_out(void)
 {
     rb_zero();
@@ -184,6 +200,8 @@ void test_register_boot_rollback(void)
                             test_boot_rollback_version_oor_rejected, TEST_CAT_BOOT);
     test_suite_register_cat("boot_rollback: stale REFUSAL flag warns",
                             test_boot_rollback_refusal_flag_warning, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_rollback: stale READ_FAILED flag accepted + WARN",
+                            test_boot_rollback_read_failed_flag_accepted, TEST_CAT_BOOT);
     test_suite_register_cat("boot_rollback: opt-out never raises",
                             test_boot_rollback_should_raise_opt_out, TEST_CAT_BOOT);
     test_suite_register_cat("boot_rollback: opt-in raises to shipped",

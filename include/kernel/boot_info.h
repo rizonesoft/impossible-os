@@ -197,8 +197,10 @@ boot_result_t boot_payload_validate(const struct boot_info *info,
  * want to reconstruct "what was the last halt reason" from the
  * boot_info image in low memory.
  */
-#define BOOT_FLAG_ROLLBACK_REFUSAL  (1u << 0)  /* bootloader halted on security-version downgrade */
-#define BOOT_FLAG_MASK_KNOWN        (BOOT_FLAG_ROLLBACK_REFUSAL)
+#define BOOT_FLAG_ROLLBACK_REFUSAL    (1u << 0)  /* bootloader halted on security-version downgrade */
+#define BOOT_FLAG_ROLLBACK_READ_FAILED (1u << 1)  /* bootloader halted on IPOSRequiredSecVersion read/validation */
+#define BOOT_FLAG_MASK_KNOWN \
+    (BOOT_FLAG_ROLLBACK_REFUSAL | BOOT_FLAG_ROLLBACK_READ_FAILED)
 
 #define BOOT_SECURITY_VERSION_MAX   0x7FFFFFFFu
 

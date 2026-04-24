@@ -486,6 +486,27 @@ The capability negotiation ABI shipped in §11 advertises what the bootloader po
 
 ---
 
+---
+
+## 16. Anti-Rollback Raise Timing Hardening
+
+§13 moves `boot_post_nvram_write16(POST16_BOOT_OK)` + the `IPOSRequiredSecVersion` raise to the "Phase 3 complete" marker in `src/kernel/main/boot_desktop.c` (immediately after `boot_run_deferred()`). That marker is DEFENSIVELY early -- the surrounding comment warns that compositor work after that point may crash on bare metal. A crash between the raise and steady-state compositor leaves the machine with an advanced rollback floor on a boot that never reached its usable state. The fix is a dedicated "truly-steady" signal that fires AFTER the compositor has produced its first stable frame (or the shell has accepted its first input), and gating the raise on that signal.
+
+> [!NOTE]
+> **Regression risk:** MEDIUM. Fixing this wrong strands machines on older images; fixing it right requires a compositor-side health callback that doesn't exist yet.
+
+- [ ] Add `boot_rollback_raise_if_steady()` helper in `src/kernel/main/boot_rollback.c` that checks a new file-static "steady state reached" flag. Returns without acting when the flag is clear.
+- [ ] Add `boot_rollback_mark_steady()` setter. Compositor calls this once after it emits its first successful frame refresh OR 5 seconds after compositor_run starts (whichever comes first). Proof-of-steady heuristic; refinement later if needed.
+- [ ] Move the `boot_rollback_should_raise()` -> `uefi_set_variable()` block from `boot_desktop.c:boot_phase3` to a new one-shot hook driven by `boot_rollback_mark_steady()`. The block runs ONCE per boot; subsequent calls are no-ops.
+- [ ] Keep `POST16_BOOT_OK` where it is (other consumers rely on the early "Phase 3 complete" NVRAM marker for crash-recovery telemetry); only the rollback raise moves.
+- [ ] Add a unit test that sets the opt-in flag + shipped > required but does NOT call mark_steady(): `boot_rollback_raise_if_steady` returns 0 and no raise occurs.
+- [ ] Add a manual QEMU integration test: boot with opt-in + shipped=2 required=1; kill QEMU 1 second after POST16_BOOT_OK; reboot and verify `IPOSRequiredSecVersion` still reads 1 (steady not reached, counter did NOT advance).
+- [ ] Commit: `"boot: gate anti-rollback raise on compositor-steady signal"`
+
+**Test checkpoint:** A boot that crashes during compositor init must NOT advance `IPOSRequiredSecVersion`; a boot that reaches first stable compositor frame MUST advance it exactly once per boot when the opt-in policy is set. Verify on QEMU WHPX + TCG by killing the VM at different points in Phase 3 and checking the NVRAM value on the next boot.
+
+---
+
 ## OS Comparison
 
 | ⭐ | Feature                         | 🪟 Win11                    | 🐧 Linux                     | 🚀 Impossible OS                                 |

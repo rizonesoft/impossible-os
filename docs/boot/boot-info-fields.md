@@ -237,7 +237,7 @@ Monotonic anti-rollback counter bound to UEFI NVRAM variable `IPOSRequiredSecVer
 
 | Field | Producer | First valid | Consumer | Lifetime | Owning roadmap | Validation |
 | --- | --- | --- | --- | --- | --- | --- |
-| `flags` | bootx64 | P0 | validator (`boot_rollback_validate`), crash-recorder | handoff | boot-protocol-abi-handoff section 13 | Every set bit MUST be in `BOOT_FLAG_MASK_KNOWN`; unknown bits halt with "unknown flag". Closed mask -- no forward-compat tolerance. |
+| `flags` | bootx64 | P0 | validator (`boot_rollback_validate`), crash-recorder | handoff | boot-protocol-abi-handoff section 13 | Every set bit MUST be in `BOOT_FLAG_MASK_KNOWN` (currently `BOOT_FLAG_ROLLBACK_REFUSAL` + `BOOT_FLAG_ROLLBACK_READ_FAILED`). `REFUSAL` = downgrade halt; `READ_FAILED` = NVRAM read/validation halt (distinct classes for crash recorder diagnostics). Unknown bits halt. Closed mask -- no forward-compat tolerance. |
 | `os_loader_security_version` | kernel build (Makefile-baked constant read by bootloader) | P0 | validator, Registry export, Phase 3 NVRAM raise | handoff | boot-protocol-abi-handoff section 13 | `<= BOOT_SECURITY_VERSION_MAX` (0x7FFFFFFF); out-of-range halts. Shipped value baked into `kernel.exe` at build. |
 | `required_security_version` | bootx64 (UEFI variable `IPOSRequiredSecVersion`) | P0 | validator, Registry export, Phase 3 raise-decision | handoff | boot-protocol-abi-handoff section 13 | `<= BOOT_SECURITY_VERSION_MAX`. Zero on first-ever boot (variable absent); raised by kernel Phase 3 opt-in. |
 | `_rollback_pad` | bootx64 | P0 | reserved | handoff | boot-protocol-abi-handoff section 13 | Must be zero; reserved for future anti-rollback policy word. |

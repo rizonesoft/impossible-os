@@ -325,8 +325,10 @@ struct boot_usb_controller {
 /* Anti-rollback and security-version binding (v9). Mirror of the
  * BOOT_FLAG_* bits + the IPOSRequiredSecVersion NVRAM variable
  * contract in include/kernel/boot_info.h. */
-#define BOOT_FLAG_ROLLBACK_REFUSAL  (1u << 0)
-#define BOOT_FLAG_MASK_KNOWN        (BOOT_FLAG_ROLLBACK_REFUSAL)
+#define BOOT_FLAG_ROLLBACK_REFUSAL    (1u << 0)
+#define BOOT_FLAG_ROLLBACK_READ_FAILED (1u << 1)
+#define BOOT_FLAG_MASK_KNOWN \
+    (BOOT_FLAG_ROLLBACK_REFUSAL | BOOT_FLAG_ROLLBACK_READ_FAILED)
 #define BOOT_SECURITY_VERSION_MAX   0x7FFFFFFFu
 
 /* Build-time security version baked into the shipping kernel.exe.

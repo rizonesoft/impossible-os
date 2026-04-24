@@ -63,17 +63,22 @@ boot_result_t boot_rollback_validate(const struct boot_info *info,
         return BOOT_FATAL;
     }
 
-    /* Telemetry: if the refusal flag was somehow still set when the
-     * kernel is running, something is wrong. The bootloader should
-     * have halted before we got here. Log + keep booting -- we do
-     * NOT halt because the kernel running is itself proof that the
-     * downgrade check passed; the flag is stale state from an
+    /* Telemetry: if either refusal flag is set when the kernel is
+     * running, something is wrong. The bootloader should have halted
+     * before we got here. Log + keep booting -- we do NOT halt
+     * because the kernel running is itself proof that the bootloader
+     * reached the kernel_jump; the flag is stale state from an
      * earlier image in low memory. */
     if ((flags & BOOT_FLAG_ROLLBACK_REFUSAL) != 0u) {
         klog(LOG_WARN, "boot",
-             "boot_rollback: REFUSAL flag set in boot_info but kernel is running; "
+             "boot_rollback: REFUSAL flag set but kernel running; "
              "stale pre-jump state in low memory (shipped=%u required=%u)",
              (uint64_t)shipped, (uint64_t)required);
+    }
+    if ((flags & BOOT_FLAG_ROLLBACK_READ_FAILED) != 0u) {
+        klog(LOG_WARN, "boot",
+             "boot_rollback: READ_FAILED flag set but kernel running; "
+             "stale pre-jump state in low memory");
     }
 
     klog(LOG_INFO, "boot",

@@ -5841,23 +5841,79 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
         UINTN sz = sizeof(required);
         UINT32 attrs = 0;
         EFI_STATUS st = EFI_UNSUPPORTED;
+        /* Expected attributes: NV | BS | RT. Must match what the
+         * kernel-side writer uses in uefi_set_variable. */
+        const UINT32 EXPECTED_ATTRS =
+            EFI_VARIABLE_NON_VOLATILE |
+            EFI_VARIABLE_BOOTSERVICE_ACCESS |
+            EFI_VARIABLE_RUNTIME_ACCESS;
+        int read_failed_closed = 0;
 
-        /* Read required version via UEFI RT GetVariable; absent
-         * variable or missing runtime services -> required = 0
-         * (first-ever boot accepts any shipped value). */
-        if (gST && gST->RuntimeServices && gST->RuntimeServices->GetVariable) {
+        /* Read required version via UEFI RT GetVariable. Fail-closed
+         * policy: only EFI_NOT_FOUND is a legitimate first-ever-boot
+         * state. Any other error, wrong size, or wrong attr set is
+         * treated as an integrity failure -- we halt rather than
+         * silently zeroing `required` (which would disable rollback
+         * protection exactly at the trust boundary).
+         *
+         * Special case: missing runtime services entirely (e.g.
+         * non-UEFI handoff) -- treat as EFI_NOT_FOUND; the caps
+         * negotiation ABI's RUNTIME_SERVICES degraded bit is the
+         * right place to signal that to the kernel. */
+        if (!gST || !gST->RuntimeServices ||
+            !gST->RuntimeServices->GetVariable) {
+            st = EFI_NOT_FOUND;
+        } else {
             st = gST->RuntimeServices->GetVariable(
                 req_name, &g_impossible_os_guid, &attrs, &sz, &required);
         }
-        if (EFI_ERROR(st) || sz != sizeof(required)) {
+
+        if (st == EFI_NOT_FOUND) {
+            /* First-ever boot: variable absent. Accept any shipped. */
             required = 0;
+        } else if (EFI_ERROR(st)) {
+            /* Any OTHER error: fail closed. A transient read error
+             * or a crafted malformed variable must not disable
+             * enforcement. */
+            read_failed_closed = 1;
+        } else if (sz != sizeof(required)) {
+            /* Size mismatch: NVRAM contains something other than a
+             * u32. Crafted or corrupted. Fail closed. */
+            read_failed_closed = 1;
+        } else if ((attrs & EXPECTED_ATTRS) != EXPECTED_ATTRS) {
+            /* Attributes don't include NV|BS|RT: variable was written
+             * by something that doesn't follow our policy (e.g.
+             * volatile write that wouldn't persist, or missing RT so
+             * the kernel couldn't advance it). Fail closed. */
+            read_failed_closed = 1;
+        } else if (required > BOOT_SECURITY_VERSION_MAX) {
+            /* Runaway counter: also fail closed. Prevents a
+             * corrupted-NVRAM brick by halting with a diagnostic the
+             * operator can fix from UEFI shell. */
+            read_failed_closed = 1;
         }
 
-        /* Cap required at BOOT_SECURITY_VERSION_MAX so a corrupted
-         * NVRAM read cannot brick the system. Matches the kernel
-         * validator's check. */
-        if (required > BOOT_SECURITY_VERSION_MAX)
-            required = 0;
+        if (read_failed_closed) {
+            post_code16(POST16_BL_ROLLBACK_REFUSE);
+            serial_early_print(
+                "[BOOT] ANTI-ROLLBACK: IPOSRequiredSecVersion read failed "
+                "(status/size/attrs invalid) -- failing closed. ");
+            serial_early_print("status=0x");
+            serial_early_print_uint((UINT32)st);
+            serial_early_print(" sz=");
+            serial_early_print_uint((UINT32)sz);
+            serial_early_print(" attrs=0x");
+            serial_early_print_uint(attrs);
+            serial_early_print(" value=");
+            serial_early_print_uint(required);
+            serial_early_print(
+                "\n -- operator recovery: clear the variable from UEFI shell "
+                "(setvar / dmpstore) or reflash with matching policy.\n");
+            g_boot_info_ptr->flags |= BOOT_FLAG_ROLLBACK_READ_FAILED;
+            boot_fatal(POST16_BL_ROLLBACK_REFUSE,
+                       "Anti-rollback read failure",
+                       "IPOSRequiredSecVersion unreadable or malformed");
+        }
 
         UINT32 shipped = (UINT32)IPOS_KERNEL_SECURITY_VERSION;
         g_boot_info_ptr->os_loader_security_version = shipped;
