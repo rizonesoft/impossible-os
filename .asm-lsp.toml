@@ -1,0 +1,21 @@
+# .asm-lsp.toml -- asm-lsp configuration for Impossible OS
+#
+# asm-lsp (bergercookie/asm-lsp) defaults to GAS syntax. Our assembly
+# files under src/boot/ and src/kernel/ are NASM syntax (x86-64 long
+# mode); without this pin, every `mov`, `jmp`, label definition, and
+# macro would parse wrong and diagnostics would be pure noise.
+#
+# Owner: TODO-07 asm-lsp Integration (NASM) in 00-infrastructure.
+# Consumed by: scripts/lsp-mcp/servers/asm_server.py (bridge spawn
+# recipe) and, on human developer hosts, by any editor with an
+# asm-lsp client (VS Code, Emacs, Neovim).
+
+[default_config]
+assembler = "nasm"
+# asm-lsp's config schema enum uses the hyphenated spelling
+# ("x86-64"), not the underscore form. Upstream rejects an
+# underscore-form value and exits, which would then fail the
+# bridge's --self-test --lang=asm OK path on any host with
+# asm-lsp actually installed. See the schema:
+# https://github.com/bergercookie/asm-lsp/blob/master/asm-lsp_config_schema.json
+instruction_set = "x86-64"

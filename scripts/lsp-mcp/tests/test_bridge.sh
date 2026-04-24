@@ -19,6 +19,12 @@
 #         list[MarkedString] response shapes uniformly.
 #   2c -- clangd_server.is_available / install_hint / required_capabilities
 #         surface is wired and stable.
+#   3a -- --self-test --lang=asm: SKIP when asm-lsp missing, or OK with a
+#         non-zero instruction-reference byte count on src/boot/entry.asm.
+#   3b -- .asm-lsp.toml at repo root pins assembler = "nasm" (NASM flavor;
+#         asm-lsp defaults to GAS).
+#   3c -- asm_server surface (ASM_LSP_BIN / LANG_TAG / is_available /
+#         required_capabilities / install_hint) stable.
 #
 # Future commits append sub-tests for tool wiring, extended tool surface,
 # file-change lifecycle, watchdog, structured logs, path sandboxing, and
@@ -62,9 +68,10 @@ sys.path.insert(0, "scripts/lsp-mcp")
 import bridge, lsp_client
 assert callable(bridge.register_spawner)
 assert bridge._LIVE_LSPS == {}
-# After clangd wiring: the bridge auto-registers a "c" spawner on
+# After clangd + asm wiring: the bridge auto-registers both on
 # import. Further languages will appear as their server modules land.
 assert "c" in bridge._LSP_SPAWNERS, bridge._LSP_SPAWNERS
+assert "asm" in bridge._LSP_SPAWNERS, bridge._LSP_SPAWNERS
 assert hasattr(lsp_client, "LspSubprocess")
 assert hasattr(lsp_client, "LspError")
 '
@@ -269,6 +276,49 @@ assert isinstance(hint, str) and hint
 "
 }
 
+# --- 3a: --self-test --lang=asm ends in OK or SKIP, exit 0 ----------------
+t_selftest_lang_asm() {
+    local out rc
+    out="$(python3 scripts/lsp-mcp/bridge.py --self-test --lang=asm 2>&1)"
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+        printf '[lsp-mcp-tests] debug (3a): exit=%s output: %s\n' "$rc" "$out" >&2
+        return 1
+    fi
+    # Accept either the asm-lsp OK banner with a non-zero byte count,
+    # or the SKIP banner when asm-lsp is not installed on this host.
+    echo "$out" | grep -qE "^\[lsp-mcp\] (OK: asm-lsp spawned, hover on mov returned instruction reference \([1-9][0-9]* bytes\)|SKIP: asm-lsp not installed)"
+}
+
+# --- 3b: .asm-lsp.toml pins NASM + schema-valid ISA -----------------------
+t_asm_lsp_config_nasm() {
+    # File must exist at repo root, sit under [default_config], and
+    # declare BOTH assembler = "nasm" AND instruction_set = "x86-64"
+    # (the upstream asm-lsp schema rejects the underscore form).
+    [ -f .asm-lsp.toml ] || return 1
+    grep -qE '^\[default_config\]' .asm-lsp.toml || return 1
+    grep -qE '^assembler\s*=\s*"nasm"' .asm-lsp.toml || return 1
+    grep -qE '^instruction_set\s*=\s*"x86-64"' .asm-lsp.toml
+}
+
+# --- 3c: asm_server surface API is stable ---------------------------------
+t_asm_server_surface() {
+    python3 -c "
+import sys
+sys.path.insert(0, 'scripts/lsp-mcp')
+from servers import asm_server
+assert asm_server.ASM_LSP_BIN == 'asm-lsp'
+assert asm_server.LANG_TAG == 'asm'
+assert isinstance(asm_server.is_available(), bool)
+assert callable(asm_server.spawn)
+caps = asm_server.required_capabilities()
+for name in ('hoverProvider','definitionProvider','referencesProvider','documentSymbolProvider'):
+    assert name in caps, name
+hint = asm_server.install_hint()
+assert isinstance(hint, str) and hint
+"
+}
+
 run "1a --self-test banner"              t_selftest
 run "1b module import smoke"             t_import
 run "1c LspSubprocess lifecycle + pgrep" t_subprocess_lifecycle
@@ -279,6 +329,9 @@ run "1g workspace root via __file__"     t_workspace_root
 run "2a clangd self-test lang=c"         t_selftest_lang_c
 run "2b hover_content_bytes shapes"      t_hover_content_bytes
 run "2c clangd_server surface"           t_clangd_server_surface
+run "3a asm self-test lang=asm"          t_selftest_lang_asm
+run "3b .asm-lsp.toml pins NASM"         t_asm_lsp_config_nasm
+run "3c asm_server surface"              t_asm_server_surface
 
 printf '[lsp-mcp-tests] %d/%d sub-tests PASS\n' "$pass" "$((pass + fail))"
 if [ "$fail" -gt 0 ]; then

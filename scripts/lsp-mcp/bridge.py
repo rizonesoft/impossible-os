@@ -130,6 +130,17 @@ def _autoregister_spawners() -> None:
             f"[lsp-mcp] warn: clangd spawner not registered: {detail}\n"
         )
 
+    # asm-lsp (NASM x86-64) -- .asm + .S extensions.
+    try:
+        from servers import asm_server as _asm
+        register_spawner("asm", _asm.spawn)
+    except Exception as exc:
+        detail = f"{exc.__class__.__name__}: {exc}"
+        _SPAWNER_IMPORT_ERRORS["asm"] = detail
+        sys.stderr.write(
+            f"[lsp-mcp] warn: asm-lsp spawner not registered: {detail}\n"
+        )
+
 
 _autoregister_spawners()
 
@@ -382,9 +393,11 @@ def _self_test_language(lang: str, workspace_root: Path) -> int:
     SKIP-vs-OK internally and prints the banner line itself."""
     if lang == "c":
         return _self_test_clangd(workspace_root)
+    if lang == "asm":
+        return _self_test_asm(workspace_root)
     sys.stderr.write(
         f"[lsp-mcp] FAIL: --lang={lang!r} is not wired yet. "
-        "Supported today: c (clangd-19).\n"
+        "Supported today: c (clangd-19), asm (asm-lsp).\n"
     )
     return 1
 
@@ -562,6 +575,177 @@ def _self_test_clangd(workspace_root: Path) -> int:
     sys.stdout.write(
         f"[lsp-mcp] OK: clangd spawned, hover on kernel_main "
         f"returned {byte_len} bytes\n"
+    )
+    return 0
+
+
+def _self_test_asm(workspace_root: Path) -> int:
+    """asm-lsp end-to-end smoke: SKIP when asm-lsp is missing, else
+    spawn + initialize + didOpen(src/boot/entry.asm) + hover on the
+    first `mov` mnemonic and print the byte-count of the instruction-
+    reference response.
+
+    Mirrors _self_test_clangd's fail-closed discipline. The hover
+    target file is src/boot/entry.asm; the TODO draft said
+    src/kernel/entry.asm, but the real tree puts the kernel entry
+    stub under src/boot/ (the kernel-side NASM files are ISR stubs,
+    SIMD helpers, etc., none of which carries the canonical `mov`
+    we want to exercise on asm-lsp's instruction-reference payload)."""
+    try:
+        from servers import asm_server
+    except Exception as exc:
+        sys.stderr.write(
+            f"[lsp-mcp] FAIL: could not import servers.asm_server: {exc}\n"
+        )
+        return 1
+
+    if not asm_server.is_available():
+        sys.stdout.write(
+            f"[lsp-mcp] SKIP: asm-lsp not installed "
+            f"({asm_server.install_hint()})\n"
+        )
+        return 0
+
+    # Sandbox the self-test file read: resolve strictly, verify the
+    # target stays inside workspace_root, reject non-regular files,
+    # enforce the 8 MiB cap. Same guarantees as _self_test_clangd.
+    entry_asm = workspace_root / "src" / "boot" / "entry.asm"
+    try:
+        resolved = entry_asm.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        sys.stderr.write(f"[lsp-mcp] FAIL: resolving {entry_asm}: {exc}\n")
+        return 1
+    try:
+        workspace_resolved = workspace_root.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        sys.stderr.write(
+            f"[lsp-mcp] FAIL: resolving {workspace_root}: {exc}\n"
+        )
+        return 1
+    try:
+        resolved.relative_to(workspace_resolved)
+    except ValueError:
+        sys.stderr.write(
+            f"[lsp-mcp] FAIL: {entry_asm} escapes workspace "
+            f"{workspace_resolved} (symlink?); refusing to read.\n"
+        )
+        return 1
+    try:
+        st = resolved.stat()
+    except OSError as exc:
+        sys.stderr.write(f"[lsp-mcp] FAIL: stat {resolved}: {exc}\n")
+        return 1
+    import stat as _stat
+    if not _stat.S_ISREG(st.st_mode):
+        sys.stderr.write(
+            f"[lsp-mcp] FAIL: {resolved} is not a regular file "
+            f"(mode={oct(st.st_mode)})\n"
+        )
+        return 1
+    if st.st_size > _SELF_TEST_MAX_READ:
+        sys.stderr.write(
+            f"[lsp-mcp] FAIL: {resolved} size {st.st_size} exceeds "
+            f"{_SELF_TEST_MAX_READ}-byte self-test cap\n"
+        )
+        return 1
+
+    try:
+        lsp = _get_or_spawn("asm", workspace_root)
+    except LspError as exc:
+        sys.stderr.write(f"[lsp-mcp] FAIL: asm-lsp spawn: {exc}\n")
+        return 1
+
+    server_caps = lsp.server_caps
+    if not isinstance(server_caps, dict):
+        sys.stderr.write(
+            "[lsp-mcp] FAIL: asm-lsp server_caps is not a dict "
+            f"({type(server_caps).__name__}); protocol violation.\n"
+        )
+        return 1
+    missing = [
+        cap for cap in asm_server.required_capabilities()
+        if not server_caps.get(cap)
+    ]
+    if missing:
+        sys.stderr.write(
+            "[lsp-mcp] FAIL: asm-lsp handshake missing required "
+            f"capabilities: {missing}. Advertised: "
+            f"{sorted(server_caps.keys())}\n"
+        )
+        return 1
+
+    try:
+        text = resolved.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        sys.stderr.write(f"[lsp-mcp] FAIL: reading {resolved}: {exc}\n")
+        return 1
+
+    try:
+        lsp.did_open(resolved.as_uri(), "asm", text, version=1)
+    except LspError as exc:
+        sys.stderr.write(f"[lsp-mcp] FAIL: asm-lsp didOpen: {exc}\n")
+        return 1
+
+    # Find the first standalone `mov` mnemonic. NASM syntax puts
+    # the mnemonic as the first non-whitespace token on an
+    # instruction line; match that shape so a string constant
+    # containing "mov" or a label with "mov" in its name does not
+    # false-match. Fail HARD if not found -- falling through to
+    # position (0,0) would hover the file comment and still
+    # produce a non-empty byte count on most LSPs.
+    target_line: Optional[int] = None
+    target_char: Optional[int] = None
+    for idx, line in enumerate(text.splitlines()):
+        stripped = line.lstrip()
+        if not stripped:
+            continue
+        # Strip leading label if any ("label: mov ...")
+        after_label = stripped
+        if ":" in stripped:
+            _, _, after_label = stripped.partition(":")
+            after_label = after_label.lstrip()
+        # Match "mov" followed by whitespace (mnemonic boundary).
+        if (after_label.startswith("mov ") or
+                after_label.startswith("mov\t")):
+            col_in_line = line.find(after_label[:3])
+            if col_in_line < 0:
+                continue
+            target_line = idx
+            target_char = _utf16_code_units(line[:col_in_line]) + 1
+            break
+    if target_line is None or target_char is None:
+        sys.stderr.write(
+            "[lsp-mcp] FAIL: could not locate a standalone `mov` "
+            f"mnemonic in {resolved}. Has the file been rewritten?\n"
+        )
+        return 1
+
+    try:
+        hover = lsp.request(
+            "textDocument/hover",
+            {
+                "textDocument": {"uri": resolved.as_uri()},
+                "position": {"line": target_line, "character": target_char},
+            },
+            timeout=10.0,
+        )
+    except LspError as exc:
+        sys.stderr.write(f"[lsp-mcp] FAIL: asm-lsp hover: {exc}\n")
+        return 1
+
+    byte_len = _hover_content_bytes(hover)
+    if byte_len == 0:
+        sys.stderr.write(
+            "[lsp-mcp] FAIL: asm-lsp hover on `mov` returned empty "
+            "contents. asm-lsp may be misconfigured (check "
+            ".asm-lsp.toml pins assembler=\"nasm\") or the binary is "
+            "from an unreleased / broken version.\n"
+        )
+        return 1
+
+    sys.stdout.write(
+        f"[lsp-mcp] OK: asm-lsp spawned, hover on mov returned "
+        f"instruction reference ({byte_len} bytes)\n"
     )
     return 0
 

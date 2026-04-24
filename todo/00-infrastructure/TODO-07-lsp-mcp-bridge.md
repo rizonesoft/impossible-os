@@ -43,7 +43,7 @@ title: "TODO-07 -- LSP to MCP Bridge (C, NASM, shell, Python, PowerShell)"
 | --- | :---: | -------------------------------------------------------------------------- | --------------------------------- | :----: |
 | 💎  |   1   | Bridge skeleton + LSP JSON-RPC client + subprocess mgmt                    | --                                |  [x]   |
 | 💎  |   2   | clangd integration (C / H) with freestanding flags                         | §1                                |  [x]   |
-| 💎  |   3   | asm-lsp integration (NASM flavor)                                          | §1                                |  [ ]   |
+| 💎  |   3   | asm-lsp integration (NASM flavor)                                          | §1                                |  [x]   |
 | 💎  |   4   | bash-language-server integration (shell)                                   | §1                                |  [ ]   |
 | 💎  |   5   | pyright integration (Python)                                               | §1                                |  [ ]   |
 | 💎  |   6   | PowerShellEditorServices integration (ps1)                                 | §1                                |  [ ]   |
@@ -125,13 +125,23 @@ Wire clangd-19 as the first language. C is the dominant file type in the repo (~
 
 Wire asm-lsp (Rust, `bergercookie/asm-lsp`) for the ~1.1k lines of NASM in `src/` (`entry.asm`, ISR stubs, SIMD helpers, AP trampoline). Distinct from §2 because NASM flavor must be pinned via `.asm-lsp.toml` -- asm-lsp defaults to GAS.
 
-- [ ] Create [`.asm-lsp.toml`](../../.asm-lsp.toml) at repo root pinning `assembler = "nasm"`, `instruction_set = "x86_64"`.
-- [ ] Create `scripts/lsp-mcp/servers/asm_server.py` that spawns `asm-lsp` and does the LSP handshake. Extensions: `.asm`, `.S` (some bootloader code uses `.S`).
-- [ ] Graceful skip if `asm-lsp` binary missing -- document install via `cargo install asm-lsp` in §9 docs.
-- [ ] Smoke: open `src/kernel/entry.asm`, request hover at `mov` or a label, assert response contains instruction reference.
-- [ ] Commit: `"scripts/lsp-mcp: asm-lsp (NASM) integration"`
+- [x] Create [`.asm-lsp.toml`](../../.asm-lsp.toml) at repo root pinning `assembler = "nasm"`, `instruction_set = "x86_64"`.
+- [x] Create `scripts/lsp-mcp/servers/asm_server.py` that spawns `asm-lsp` and does the LSP handshake. Language tag `asm` (per-extension `.asm`/`.S` routing belongs to §7's `dispatch(path)` handler).
+- [x] Graceful skip if `asm-lsp` binary missing: `--self-test --lang=asm` prints `[lsp-mcp] SKIP: asm-lsp not installed (cargo install asm-lsp ...)` and exits 0. Install guidance documented inline in `asm_server.install_hint()`; the §9 docs subsection will reference it when it lands.
+- [x] Smoke: open `src/boot/entry.asm` (the draft TODO said `src/kernel/entry.asm`, but the kernel entry stub lives under `src/boot/`), locate the first standalone `mov` mnemonic (skip leading labels; whitespace/tab boundary so "movq" labels never false-match), request hover, assert the response `contents` is non-empty (instruction-reference payload).
+- [x] Commit: `"scripts/lsp-mcp: asm-lsp (NASM) integration"`
 
-**Test checkpoint:** With `asm-lsp` installed, `--self-test --lang=asm` prints `[lsp-mcp] OK: asm-lsp spawned, hover on mov returned instruction reference`. Without asm-lsp, SKIP with install hint. `.asm-lsp.toml` exists at repo root and declares `assembler = "nasm"`.
+**Test checkpoint:** With `asm-lsp` installed, `--self-test --lang=asm` prints `[lsp-mcp] OK: asm-lsp spawned, hover on mov returned instruction reference (N bytes)`. Without asm-lsp (the development host today), same command prints `[lsp-mcp] SKIP: asm-lsp not installed (cargo install asm-lsp ...)` and exits 0. `.asm-lsp.toml` exists at repo root and declares `assembler = "nasm"` + `instruction_set = "x86_64"`.
+
+> **Test runner:** `bash scripts/lsp-mcp/tests/test_bridge.sh` | 13/13 sub-tests PASS (1a-1g + 2a-2c carry forward; 3a `--self-test --lang=asm` OK-or-SKIP, 3b `.asm-lsp.toml` pins NASM, 3c `asm_server` surface API stable)
+
+> **Notes:**
+>
+> - **What shipped:** `scripts/lsp-mcp/servers/asm_server.py` (~130 LOC: `spawn()` + `is_available()` + `install_hint()` + `required_capabilities()` + constants) plus `.asm-lsp.toml` pinning NASM x86-64 plus bridge.py additions (`_autoregister_spawners` now loads `asm_server`, `_self_test_language` routes `--lang=asm`, `_self_test_asm` mirrors `_self_test_clangd` shape) plus 3 new harness sub-tests (13/13 total).
+> - **How it runs:** `python3 scripts/lsp-mcp/bridge.py --self-test --lang=asm` either SKIPs (asm-lsp not on PATH; exit 0) or spawns asm-lsp, initializes, opens `src/boot/entry.asm`, hovers the first `mov` mnemonic, and prints the instruction-reference byte-count. `.asm-lsp.toml` at repo root auto-discovered by asm-lsp from cwd; no CLI flag needed.
+> - **Downstream effects:** unblocks §7 (MCP tool handlers can route `.asm` + `.S` paths to the cached `asm` LspSubprocess). Per-extension dispatch (§.c/.h + §.asm/.S + §.sh + §.py + §.ps1 -> language tag) is §7's scope; this section only registers the spawner.
+> - **Canonical doc:** [`.asm-lsp.toml`](../../.asm-lsp.toml) (NASM pin + instruction-set declaration; asm_server.py's comments name the drift consequence if the file is absent).
+> - **Scope boundary:** no MCP tools registered, no per-extension dispatch, no bash-lsp / pyright / PSES (§4-§6 own those). Install guidance for asm-lsp lives in `install_hint()` today; the full developer-tooling docs subsection is §9.
 
 ---
 
