@@ -327,8 +327,31 @@ struct boot_usb_controller {
  * contract in include/kernel/boot_info.h. */
 #define BOOT_FLAG_ROLLBACK_REFUSAL    (1u << 0)
 #define BOOT_FLAG_ROLLBACK_READ_FAILED (1u << 1)
+#define BOOT_FLAG_WARM_UPDATE         (1u << 2)
 #define BOOT_FLAG_MASK_KNOWN \
-    (BOOT_FLAG_ROLLBACK_REFUSAL | BOOT_FLAG_ROLLBACK_READ_FAILED)
+    (BOOT_FLAG_ROLLBACK_REFUSAL | BOOT_FLAG_ROLLBACK_READ_FAILED | BOOT_FLAG_WARM_UPDATE)
+
+/* Warm-kernel-update (section 14). Mirror of the continuation-flag
+ * bits + discriminator. Bootloader today never writes
+ * BOOT_PAYLOAD_WARM_UPDATE_STATE descriptors (the producer is the
+ * outgoing kernel during a live update, not the UEFI bootloader).
+ * Defines live here for ABI-surface completeness so a future outgoing-
+ * kernel payload producer can include this header. */
+#define BOOT_MMAP_WARM_UPDATE                   15u
+#define BOOT_PAYLOAD_WARM_UPDATE_STATE          9u
+#define BOOT_WARM_UPDATE_CONT_PAGE_TABLES       (1u << 8)
+#define BOOT_WARM_UPDATE_CONT_SCHEDULER_QUIESCED (1u << 9)
+#define BOOT_WARM_UPDATE_CONT_VFS_WRITEBACK      (1u << 10)
+#define BOOT_WARM_UPDATE_CONT_FD_TABLE           (1u << 11)
+#define BOOT_WARM_UPDATE_CONT_OBJECT_HANDLES     (1u << 12)
+#define BOOT_WARM_UPDATE_CONT_HW_QUEUES          (1u << 13)
+#define BOOT_WARM_UPDATE_CONT_MASK_KNOWN                                   \
+    (BOOT_WARM_UPDATE_CONT_PAGE_TABLES       |                             \
+     BOOT_WARM_UPDATE_CONT_SCHEDULER_QUIESCED |                            \
+     BOOT_WARM_UPDATE_CONT_VFS_WRITEBACK      |                            \
+     BOOT_WARM_UPDATE_CONT_FD_TABLE           |                            \
+     BOOT_WARM_UPDATE_CONT_OBJECT_HANDLES     |                            \
+     BOOT_WARM_UPDATE_CONT_HW_QUEUES)
 #define BOOT_SECURITY_VERSION_MAX   0x7FFFFFFFu
 
 /* Build-time security version baked into the shipping kernel.exe.

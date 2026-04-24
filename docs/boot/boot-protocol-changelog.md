@@ -33,7 +33,15 @@ Both halves of the ABI (the kernel header at `include/kernel/boot_info.h` and th
 
 ## Versions
 
-### v9 (current) -- Anti-rollback and security-version binding
+### v9 (current) -- Anti-rollback binding + warm-kernel-update handoff ABI
+
+Two independent ABI extensions land under v9:
+
+**Anti-rollback and security-version binding** (owning TODO: [§13 Anti-Rollback and Security-Version Binding](../../todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md#13-anti-rollback-and-security-version-binding)).
+
+**Warm-kernel-update handoff ABI** (owning TODO: [§14 Warm-Kernel-Update Handoff ABI](../../todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md#14-warm-kernel-update-handoff-abi)). Adds new enum value `BOOT_PAYLOAD_WARM_UPDATE_STATE=9` for `enum boot_payload_type`, new flag bit `BOOT_FLAG_WARM_UPDATE` in `boot_info.flags`, new mmap discriminator `BOOT_MMAP_WARM_UPDATE=15`, and a 6-bit continuation flag family (`BOOT_WARM_UPDATE_CONT_*`) carried in `boot_payload_desc.flags` bits 8..13 alongside the standard `BOOT_PAYLOAD_FLAG_*` family. No struct field changes -- this is an ABI extension via new enum + flag values, not a layout bump. Validator: [`boot_warm_update_consume`](../../src/kernel/main/boot_warm_update.c) returns `ACCEPTED` or `COLD_FALLBACK` (fail-closed on any rejection; partial reattach would leave unreconciled subsystem state). Actual runtime live-update machinery (kfolio preservation, subsystem quiesce callbacks, per-process page-table migration) is out-of-scope here; tracked in [03-memory-concurrency/TODO-11 Warm-Kernel-Update Runtime](../../todo/03-memory-concurrency/TODO-11-warm-kernel-update-runtime.md).
+
+### v9 -- Anti-rollback and security-version binding
 
 - **Commit**: pending ([Anti-Rollback and Security-Version Binding](../../todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md#13-anti-rollback-and-security-version-binding))
 - **TODO**: [Anti-Rollback and Security-Version Binding](../../todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md#13-anti-rollback-and-security-version-binding)

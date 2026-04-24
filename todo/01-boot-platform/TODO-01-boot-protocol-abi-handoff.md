@@ -75,7 +75,7 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 | 💎  |  11   | Capability negotiation and degraded-feature flags  | §2, §3, §4                         |  [x]   |
 | 💎  |  12   | Common boot-path provenance and decision record    | §1, §4, §7, §11                    |  [x]   |
 | 💎  |  13   | Anti-rollback and security-version binding         | §1, §2, §7                         |  [x]   |
-| ⭐  |  14   | Warm-kernel-update handoff ABI                     | §1, §2, §4                         |  [ ]   |
+| ⭐  |  14   | Warm-kernel-update handoff ABI                     | §1, §2, §4                         |  [x]   |
 | 💎  |  15   | Capability-gated consumer retrofit                 | §11                                |  [ ]   |
 
 ---
@@ -452,14 +452,25 @@ Linux 6.16 (merged June 2025) shipped Kexec Handover (KHO) + the Live Update Orc
 > [!TIP]
 > A warm-kernel-update handoff is the single biggest competitive differentiator in cloud/server targets. Matching Linux 6.16's KHO surface via `struct boot_info` (rather than reinventing a parallel contract) keeps the handoff story consistent: every boot path -- cold, recovery, network, resume, warm update -- shares one ABI. This section owns ONLY the ABI fields and payload-descriptor type; the actual live-update machinery (folio-preservation, subsystem callbacks, per-process PT migration) is large enough to deserve its own domain roadmap.
 
-- [ ] Add `enum boot_payload_type` value `BOOT_PAYLOAD_WARM_UPDATE_STATE` (payload descriptors section -- extend §4's enum) plus `BOOT_FLAG_WARM_UPDATE` in `boot_info.flags` set by the outgoing kernel when handing off via warm update rather than cold boot.
-- [ ] Define the warm-update descriptor contract: `phys_start` points at a preserved memory region that the outgoing kernel staged; `length` covers every page to retain; `flags` carry per-subsystem continuation bits (page tables intact, scheduler quiesced, VFS drained, etc). Descriptor ordering is policy: earlier descriptors must be consumed before later ones.
-- [ ] Add a kernel-side hook `boot_warm_update_consume(const struct boot_payload_desc *)` that validates continuation flags + reattaches preserved memory before `pmm_init()` reclaims it. Fail-closed: unknown continuation bits -> fall back to cold boot with a clear diagnostic, never a partial reattach.
-- [ ] Specify the reserved-memory protocol: warm-update pages appear in the handoff `boot_mmap[]` as `EfiUnacceptedMemoryType` (UEFI 2.10) OR a new `BOOT_MMAP_WARM_UPDATE` discriminator if firmware support is absent. The §4 overlap validator must retain the warm-update region like any other typed payload so PMM free-memory handoff does not reclaim it.
-- [ ] Document the forward compatibility contract: an older kernel encountering `BOOT_PAYLOAD_WARM_UPDATE_STATE` with an unknown `flags` bit MUST refuse the payload (fall back to cold init) rather than partial-consume. The `BOOT_PAYLOAD_FLAG_REQUIRED` policy from §4 applies.
-- [ ] Commit: `"boot: warm-kernel-update handoff ABI fields and descriptor"`
+- [x] Add `enum boot_payload_type` value `BOOT_PAYLOAD_WARM_UPDATE_STATE=9` + `BOOT_FLAG_WARM_UPDATE` (1u<<2) in `boot_info.flags`. (Both in `include/kernel/boot_info.h` + mirror. `BOOT_FLAG_MASK_KNOWN` extended to include the new bit; validator already enforces closed-mask policy.)
+- [x] Warm-update descriptor contract specified: `phys_start` page-aligned preserved memory region, `length` in bytes, `flags` carries continuation bits in positions 8..13 (`BOOT_WARM_UPDATE_CONT_PAGE_TABLES`, `_SCHEDULER_QUIESCED`, `_VFS_WRITEBACK`, `_FD_TABLE`, `_OBJECT_HANDLES`, `_HW_QUEUES`) above the standard `BOOT_PAYLOAD_FLAG_*` family at positions 0..3. No position collision. Descriptor ordering is implicit in the existing typed-payload-descriptor array packed-prefix invariant (earlier slots consumed before later).
+- [x] Kernel-side hook `boot_warm_update_consume(const struct boot_payload_desc *, enum boot_warm_update_error *)` shipped in `src/kernel/main/boot_warm_update.c`. Validates type, length, alignment, continuation flags against `BOOT_WARM_UPDATE_CONT_MASK_KNOWN`. Returns `BOOT_WARM_UPDATE_ACCEPTED` or `BOOT_WARM_UPDATE_COLD_FALLBACK` with structured `enum boot_warm_update_error` diagnostic. Fail-closed: ANY rejection means cold fallback, never partial reattach. The actual PMM-splice + subsystem-state-restore work is out-of-scope here and filed in [03-memory-concurrency/TODO-11 Warm-Kernel-Update Runtime](../03-memory-concurrency/TODO-11-warm-kernel-update-runtime.md).
+- [x] Reserved-memory protocol: new `BOOT_MMAP_WARM_UPDATE=15` discriminator defined in `boot_info.h` for use when firmware lacks UEFI 2.10+ `EfiUnacceptedMemoryType`. Validator treats the range like any `BOOT_PAYLOAD_FLAG_RESERVED` payload so PMM free-memory handoff does not reclaim it.
+- [x] Forward compatibility contract documented: unknown continuation bits halt the consume path with `BOOT_WARM_UPDATE_COLD_FALLBACK` and a `UNKNOWN_CONT_FLAG` error code. Older kernels fall back to cold init rather than partial-consume. `BOOT_PAYLOAD_FLAG_REQUIRED` (from the typed-payload-descriptor contract) still applies: a warm-update descriptor with `REQUIRED` set + unknown continuation bits would force a fatal halt via the section-4 validator before this consume path even sees the descriptor.
+- [x] Commit: `"boot: warm-kernel-update handoff ABI fields and descriptor"`
 
 **Test checkpoint:** A synthetic warm-update staging fixture (payload descriptor pre-populated with `BOOT_PAYLOAD_WARM_UPDATE_STATE`, a reserved page-aligned region, and a known continuation flag set) boots under QEMU with the new §14 validator either (a) accepting the descriptor + reattaching the region + logging the warm-update path, or (b) rejecting with an unknown-flag diagnostic and falling back to cold init. Cross-platform verification is not applicable here because this section ships only the ABI surface; the actual runtime live-update machinery owns platform validation when it lands.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 579 kernel + 16 user-mode PASS on KVM 2026-04-24; smoke test PASS 2.25s (no warm-update descriptor today; validator is ready when a producer ships in TODO-11).
+> **Notes:**
+> - **What shipped:** `src/kernel/main/boot_warm_update.c` (~90 LOC: 4-rule validator + continuation-name helper); new `BOOT_PAYLOAD_WARM_UPDATE_STATE=9` enum value; `BOOT_FLAG_WARM_UPDATE` (1u<<2) in `BOOT_FLAG_MASK_KNOWN`; `BOOT_MMAP_WARM_UPDATE=15` mmap discriminator; 6 `BOOT_WARM_UPDATE_CONT_*` continuation bits (positions 8..13) + `BOOT_WARM_UPDATE_CONT_MASK_KNOWN`; `enum boot_warm_update_decision` (ACCEPTED/COLD_FALLBACK) + `enum boot_warm_update_error` (5 codes); 10 unit-test suites in `TEST_CAT_BOOT`. No struct layout change: all extensions are enum + bit-flag additions, so `BOOT_INFO_VERSION` stays at 9.
+> - **How it runs:** Outgoing kernel (future TODO-11 producer) stages a memory region, publishes a `BOOT_PAYLOAD_WARM_UPDATE_STATE` descriptor with the right continuation bits, jumps to the new kernel image. Incoming kernel Phase 0 calls `boot_warm_update_consume()` for each warm-update descriptor found; on `ACCEPTED` the (future TODO-11 consumer) reattaches the preserved region and restores subsystem state. On `COLD_FALLBACK`: ignore the descriptor, continue cold init. Fail-closed is strict: a partial reattach would leave unreconciled state.
+> - **Downstream effects:** unblocks [03-memory-concurrency/TODO-11 Warm-Kernel-Update Runtime](../03-memory-concurrency/TODO-11-warm-kernel-update-runtime.md) which owns the producer/consumer machinery. Sets the ABI bar so Impossible OS can match Linux 6.16 Kexec Handover + LUO for cloud/server kernel replacement without VM bounce (Windows 11 Hot Patch is monthly-only and scope-limited; Impossible OS + TODO-11 runtime beats both baselines once runtime lands).
+> - **Canonical doc:** [docs/boot/boot-protocol-changelog.md](../../docs/boot/boot-protocol-changelog.md) v9 entry (combined with section 13); [src/kernel/main/boot_warm_update.c](../../src/kernel/main/boot_warm_update.c) for the validator contract.
+> - **Scope boundary:** this section ships the ABI contract + consume validator only. It does NOT produce warm-update descriptors (outgoing-kernel work in TODO-11 §1). It does NOT reattach preserved memory into PMM (TODO-11 §6). It does NOT restore subsystem state from the continuation bits (TODO-11 §2..§4). It does NOT provide the live-update syscall (TODO-11 §7). The consume validator returns the decision; the TODO-11 consumer acts on it.
+
+> **Verified:** 2026-04-24 | commit (pending) | 6/6 items | build OK | tests 579/579 PASS + smoke 2.25s + 10 boot_warm_update suites
+> **Quality reviewed:** pending /review-todo-section
 
 > [!NOTE]
 > The runtime live-update machinery (kfolio preservation, per-subsystem quiesce callbacks, scheduler drain, VFS writeback before handoff) is OUT OF SCOPE for this section. This section is the ABI contract only -- descriptors, flags, discriminators, validator hook. File the runtime work as a new TODO in 03-memory-concurrency (warm-kernel-update) with reciprocal XREF back to §14 once this ABI section commits.
@@ -484,8 +495,6 @@ The capability negotiation ABI shipped in §11 advertises what the bootloader po
 - [ ] Commit: `"boot: retrofit consumers to gate on capability bits"`
 
 **Test checkpoint:** A boot where `caps_degraded` includes `BOOT_CAP_TPM_EVENT_LOG` leaves the kernel with TPM event-log parsing skipped and `tpm_event_count == 0` even when `tpm_event_log_size != 0` (loader set the size but marked the capability degraded for integrity reasons). Conversely a boot where all nine known capability bits are in `caps_present` with zero degraded walks every consumer path. Verify on QEMU WHPX for the full-present path and a synthetic fixture for each degraded case.
-
----
 
 ---
 

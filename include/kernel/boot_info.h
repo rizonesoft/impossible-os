@@ -49,6 +49,12 @@
 #define UEFI_MMAP_MMIO_PORT            12   /* EfiMemoryMappedIOPortSpace */
 #define UEFI_MMAP_PAL_CODE             13   /* EfiPalCode */
 #define UEFI_MMAP_PERSISTENT           14   /* EfiPersistentMemory */
+/* Warm-kernel-update preserved memory (section 14). Used when
+ * firmware does not expose EfiUnacceptedMemoryType (UEFI 2.10+) for
+ * the staged region. Treated like UEFI_MMAP_RESERVED by the
+ * free-memory handoff: never reclaimed, matched to a
+ * BOOT_PAYLOAD_WARM_UPDATE_STATE descriptor by the consumer. */
+#define BOOT_MMAP_WARM_UPDATE          15
 
 /* ---- boot_info ABI header (S15) ----
  * Fixed at offset 0 of struct boot_info. The bootloader fills magic, version,
@@ -199,8 +205,9 @@ boot_result_t boot_payload_validate(const struct boot_info *info,
  */
 #define BOOT_FLAG_ROLLBACK_REFUSAL    (1u << 0)  /* bootloader halted on security-version downgrade */
 #define BOOT_FLAG_ROLLBACK_READ_FAILED (1u << 1)  /* bootloader halted on IPOSRequiredSecVersion read/validation */
+#define BOOT_FLAG_WARM_UPDATE         (1u << 2)  /* outgoing kernel staged a warm-update handoff -- see section 14 */
 #define BOOT_FLAG_MASK_KNOWN \
-    (BOOT_FLAG_ROLLBACK_REFUSAL | BOOT_FLAG_ROLLBACK_READ_FAILED)
+    (BOOT_FLAG_ROLLBACK_REFUSAL | BOOT_FLAG_ROLLBACK_READ_FAILED | BOOT_FLAG_WARM_UPDATE)
 
 #define BOOT_SECURITY_VERSION_MAX   0x7FFFFFFFu
 
@@ -217,6 +224,94 @@ boot_result_t boot_rollback_validate(const struct boot_info *info,
 int boot_rollback_should_raise(const struct boot_info *info,
                                int opt_in,
                                uint32_t *new_value);
+
+/* Warm-kernel-update handoff (section 14).
+ *
+ * An outgoing kernel that supports live update stages a memory region
+ * and publishes a BOOT_PAYLOAD_WARM_UPDATE_STATE descriptor in the
+ * handoff boot_info. The incoming kernel consumes the descriptor BEFORE
+ * pmm_init() reclaims the region: reattaches the preserved memory,
+ * inspects the continuation flags to determine which subsystem state
+ * to restore, and either (a) continues as a warm update OR (b) falls
+ * back to cold init if any required continuation bit is unrecognized.
+ *
+ * The memory region appears in boot_mmap[] as either
+ * EfiUnacceptedMemoryType (UEFI 2.10+) when firmware supports the
+ * discriminator or BOOT_MMAP_WARM_UPDATE (kernel-only value) when it
+ * does not. Either way, the section-4 payload-overlap validator
+ * treats the region as retained so PMM free-memory handoff does not
+ * reclaim it.
+ *
+ * Continuation flags live in boot_payload_desc.flags (for the
+ * warm-update descriptor specifically) above the standard
+ * BOOT_PAYLOAD_FLAG_* bits. Each BOOT_WARM_UPDATE_CONT_* bit signals
+ * a specific subsystem's pre-handoff quiesce state; the incoming
+ * kernel must understand every set bit to safely reattach state.
+ * Unknown bits -> fail-closed fallback to cold init (warm update NOT
+ * applied on this boot; the outgoing kernel's policy should retry
+ * cold on the next reboot).
+ */
+#define BOOT_WARM_UPDATE_CONT_PAGE_TABLES       (1u << 8)   /* outgoing kernel preserved its top-level page tables */
+#define BOOT_WARM_UPDATE_CONT_SCHEDULER_QUIESCED (1u << 9)  /* scheduler drained: no runnable user threads in handoff */
+#define BOOT_WARM_UPDATE_CONT_VFS_WRITEBACK      (1u << 10) /* VFS caches flushed to backing store before handoff */
+#define BOOT_WARM_UPDATE_CONT_FD_TABLE           (1u << 11) /* file-descriptor table preserved verbatim */
+#define BOOT_WARM_UPDATE_CONT_OBJECT_HANDLES     (1u << 12) /* Object Manager handle table preserved */
+#define BOOT_WARM_UPDATE_CONT_HW_QUEUES          (1u << 13) /* device driver queues quiesced (NVMe/xHCI/VirtIO) */
+
+/* Reserved bit range for warm-update continuation flags. Lives ABOVE
+ * the standard BOOT_PAYLOAD_FLAG_* bits so the two mask families do
+ * not overlap. */
+#define BOOT_WARM_UPDATE_CONT_MASK_KNOWN                                   \
+    (BOOT_WARM_UPDATE_CONT_PAGE_TABLES       |                             \
+     BOOT_WARM_UPDATE_CONT_SCHEDULER_QUIESCED |                            \
+     BOOT_WARM_UPDATE_CONT_VFS_WRITEBACK      |                            \
+     BOOT_WARM_UPDATE_CONT_FD_TABLE           |                            \
+     BOOT_WARM_UPDATE_CONT_OBJECT_HANDLES     |                            \
+     BOOT_WARM_UPDATE_CONT_HW_QUEUES)
+
+/* Decision returned by boot_warm_update_consume. WARM_ACCEPTED means
+ * the incoming kernel has reattached the preserved region and the
+ * caller should skip the cold-init path for the tagged subsystems.
+ * COLD_FALLBACK means the descriptor was present but unusable;
+ * caller must proceed with full cold init AND emit a diagnostic so
+ * the operator knows the warm update did not take. */
+enum boot_warm_update_decision {
+    BOOT_WARM_UPDATE_COLD_FALLBACK = 0,  /* descriptor missing, malformed, or carried unknown flags */
+    BOOT_WARM_UPDATE_ACCEPTED      = 1,  /* descriptor accepted; preserved region reattached */
+};
+
+/* Error classes for the structured COLD_FALLBACK rejection. */
+enum boot_warm_update_error {
+    BOOT_WARM_UPDATE_ERR_OK                = 0,
+    BOOT_WARM_UPDATE_ERR_NULL_DESC         = 1,  /* desc pointer is NULL (no warm-update descriptor at all) */
+    BOOT_WARM_UPDATE_ERR_WRONG_TYPE        = 2,  /* desc.type != BOOT_PAYLOAD_WARM_UPDATE_STATE */
+    BOOT_WARM_UPDATE_ERR_UNKNOWN_CONT_FLAG = 3,  /* desc.flags has CONT_* bits outside MASK_KNOWN */
+    BOOT_WARM_UPDATE_ERR_UNALIGNED         = 4,  /* phys_start not page-aligned (4K) */
+    BOOT_WARM_UPDATE_ERR_EMPTY             = 5,  /* length == 0 */
+};
+
+/* Forward declare boot_payload_desc so the prototype resolves --
+ * the full struct is defined further down in this header. */
+struct boot_payload_desc;
+
+/* Validate + consume a warm-update descriptor. Returns
+ * BOOT_WARM_UPDATE_ACCEPTED when the descriptor is well-formed and all
+ * continuation bits are recognized; callers can proceed with warm
+ * update. Returns BOOT_WARM_UPDATE_COLD_FALLBACK on any issue; the
+ * specific reason is written to *out_error (when non-NULL).
+ *
+ * Fail-closed: on ANY rejection the caller MUST NOT partially
+ * reattach -- the outgoing kernel's handoff is treated as absent and
+ * cold init proceeds. A partial reattach would leave the kernel with
+ * unknown state bits unreconciled, the exact failure mode this ABI
+ * prevents. */
+enum boot_warm_update_decision
+boot_warm_update_consume(const struct boot_payload_desc *desc,
+                         enum boot_warm_update_error *out_error);
+
+/* Human-readable name for a continuation flag (single set bit).
+ * Returns "reserved" for bits outside MASK_KNOWN. */
+const char *boot_warm_update_cont_name(uint32_t flag_bit);
 
 /* Boot-path provenance and decision record (v8).
  *
@@ -845,6 +940,7 @@ enum boot_payload_type {
     BOOT_PAYLOAD_NETWORK_CONFIG    = 6,   /* network boot config blob (owner: network boot provenance) */
     BOOT_PAYLOAD_RANDOM_SEED       = 7,   /* bootloader RNG seed (owner: early entropy seed handoff) */
     BOOT_PAYLOAD_USB_HANDOVER      = 8,   /* xHCI DMA state blob (owner: USB zero-delay handover DMA state) */
+    BOOT_PAYLOAD_WARM_UPDATE_STATE = 9,   /* warm-kernel-update preserved memory (owner: warm-kernel-update ABI) */
 };
 
 /* Descriptor flags (bitmask). New bits are ignored by older kernels if
