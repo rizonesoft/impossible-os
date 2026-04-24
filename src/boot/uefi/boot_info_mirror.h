@@ -239,8 +239,16 @@ struct boot_usb_controller {
 };
 
 /* ABI header -- must match kernel/boot_info.h */
+/* Guarded so the stale-ABI fixture harness can override via
+ * `-DBOOT_INFO_VERSION=N` / `-DBOOT_INFO_MAGIC=...` on the command
+ * line. Must match the kernel-side guards in
+ * include/kernel/boot_info.h. */
+#ifndef BOOT_INFO_MAGIC
 #define BOOT_INFO_MAGIC    0x49504F53  /* "IPOS" */
+#endif
+#ifndef BOOT_INFO_VERSION
 #define BOOT_INFO_VERSION  9  /* v9 adds flags + os_loader/required_security_version */
+#endif
 
 /* Typed payload descriptor array -- must match kernel/boot_info.h. */
 #define BOOT_PAYLOAD_MAX  32

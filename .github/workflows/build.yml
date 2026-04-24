@@ -173,6 +173,24 @@ jobs:
       - name: Run unit tests
         run: TIMEOUT=300 bash scripts/test.sh QUIET=1
 
+      # Stale-ABI QEMU fixtures: builds one half (bootloader or kernel)
+      # at BOOT_INFO_VERSION - 1, swaps it into a disposable system-disk
+      # copy via mtools, boots QEMU+KVM headless, and asserts the
+      # pre-jump bootloader fatal (SEC_ROLLBACK / ABI MISMATCH) OR
+      # kernel-side boot_version_classify fault fires with the expected
+      # fault-class line. Regression gate: detects the case where
+      # someone removes the version check and the stale pair would
+      # silently proceed.
+      #
+      # continue-on-error: true for the first ~two weeks because KVM
+      # availability on ubuntu-latest runners drifted historically; the
+      # harness itself env-probes KVM/OVMF/mtools and SKIPs cleanly
+      # when any are missing, so most CI runs should pass-through. Flip
+      # to mandatory once three consecutive runs land clean PASS.
+      - name: Stale-ABI fixtures
+        continue-on-error: true
+        run: make stale-abi-fixtures
+
       # ── Optional disk-image artifact (manual runs only) ────────────────────
       # The raw disk image is by far the largest CI artifact and quickly burns
       # through GitHub's shared artifact quota. Keep normal push/PR runs

@@ -68,8 +68,17 @@
  *   - Always rebuild BOOTX64.EFI and kernel.exe together after a bump.
  *   - Bootloader writes sizeof(struct boot_info) into header.size at
  *     compile time -- a size mismatch means the structs diverged. */
+/* MAGIC + VERSION guarded by #ifndef so a stale-ABI fixture build
+ * can override via `-DBOOT_INFO_VERSION=N` or `-DBOOT_INFO_MAGIC=...`
+ * on the command line without forking this header. All consumers
+ * (kernel TUs, bootloader mirror, manifest dumpers) read these
+ * macros at compile time, so the override flows transparently. */
+#ifndef BOOT_INFO_MAGIC
 #define BOOT_INFO_MAGIC    0x49504F53  /* "IPOS" (Impossible OS) */
+#endif
+#ifndef BOOT_INFO_VERSION
 #define BOOT_INFO_VERSION  9           /* v9 adds flags + os_loader/required_security_version */
+#endif
 
 /* Upper bound for pre-copy address validation: the UEFI bootloader
  * identity-maps [0, 4 GiB) with 2 MiB pages in setup_page_tables()

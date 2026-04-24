@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# ============================================================================
+# build-stale-bootloader.sh -- rebuild BOOTX64.EFI with
+#                              BOOT_INFO_VERSION = (current - 1) so the
+#                              stale-ABI fixture harness can exercise
+#                              the pre-jump fatal path.
+#
+# Reads the current BOOT_INFO_VERSION from include/kernel/boot_info.h,
+# rebuilds ONLY the bootloader with the decremented value via the
+# EXTRA_CFLAGS pass-through hook in src/boot/uefi/Makefile, copies the
+# resulting BOOTX64.EFI to build/fixtures/bootx64-stale-v${STALE}.efi,
+# and restores the real bootloader on exit (even on SIGINT/SIGTERM).
+#
+# Exit 0 on successful fixture build + restore.
+# Exit non-zero on any build failure; the trap still restores the real
+# bootloader so the tree is left in a clean state.
+# ============================================================================
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+FIXTURES_DIR="$REPO_ROOT/build/fixtures"
+
+cd "$REPO_ROOT"
+
+# Everything except the final fixture path goes to stderr so callers
+# can `path=$(build-stale-bootloader.sh)` without filtering. The
+# cleanup trap fires AFTER the path is echoed, and its "restoring..."
+# messages otherwise polluted stdout.
+exec 3>&1   # keep fd 3 as the "real" stdout for the path emit
+exec 1>&2   # redirect stdout to stderr for all subsequent prints
+
+# Parse current BOOT_INFO_VERSION from the kernel header. The #ifndef
+# guard around it preserves the define's value here; grep finds the
+# inner unconditional line.
+CURRENT=$(grep -oP '#define\s+BOOT_INFO_VERSION\s+\K\d+' \
+    include/kernel/boot_info.h | head -1)
+if [ -z "$CURRENT" ]; then
+    echo "build-stale-bootloader: could not parse BOOT_INFO_VERSION" >&2
+    exit 2
+fi
+
+STALE=$((CURRENT - 1))
+if [ "$STALE" -lt 0 ]; then
+    echo "build-stale-bootloader: BOOT_INFO_VERSION=$CURRENT cannot decrement to $STALE" >&2
+    exit 2
+fi
+
+echo "[stale-bootloader] current=v$CURRENT stale=v$STALE"
+
+# Trap cleanup: ALWAYS rebuild the real bootloader, even if the stale
+# build fails OR we are interrupted. Otherwise the tree would be left
+# with a bootloader that the system-disk.img still packages.
+cleanup() {
+    local orig_rc=$?
+    echo "[stale-bootloader] restoring real BOOTX64.EFI..."
+    make -C src/boot/uefi clean >/dev/null 2>&1 || true
+    local restore_rc=0
+    # Regenerate the system disk so the ESP has the restored bootloader.
+    # `bash scripts/build.sh` re-runs uefi-boot + system-disk as a
+    # single pipeline; no need for a separate `make uefi-boot` before it.
+    if ! bash scripts/build.sh >/dev/null 2>&1; then
+        echo "[stale-bootloader] FATAL: restore build failed; tree IS dirty" >&2
+        restore_rc=1
+    fi
+    # A restore failure propagates non-zero so callers (make
+    # stale-abi-fixtures, CI) treat it as failure rather than silently
+    # shipping a tree with a stale bootloader + build/system-disk.img.
+    if [ "$restore_rc" -ne 0 ]; then
+        exit 1
+    fi
+    exit "$orig_rc"
+}
+trap cleanup EXIT INT TERM
+
+# Build the stale bootloader. Direct the output to a scratch dir so
+# it does not overwrite build/tools/BOOTX64.EFI before we copy it out.
+SCRATCH="$(mktemp -d)"
+trap 'cleanup; rm -rf "$SCRATCH"' EXIT INT TERM
+
+make -C src/boot/uefi clean >/dev/null 2>&1 || true
+if ! make -C src/boot/uefi \
+    EXTRA_CFLAGS="-DBOOT_INFO_VERSION=$STALE" \
+    OUTDIR="$SCRATCH"; then
+    echo "[stale-bootloader] build FAILED" >&2
+    exit 1
+fi
+
+mkdir -p "$FIXTURES_DIR"
+OUT="$FIXTURES_DIR/bootx64-stale-v${STALE}.efi"
+cp "$SCRATCH/BOOTX64.EFI" "$OUT"
+echo "[stale-bootloader] fixture at $OUT ($(wc -c < "$OUT" | tr -d ' ') bytes)"
+
+# Emit the fixture path on fd 3 (the original stdout) so callers can
+# capture it with a clean `$(build-stale-bootloader.sh)`. Other output
+# already went to stderr via the redirect at the top of this script.
+echo "$OUT" >&3

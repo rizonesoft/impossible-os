@@ -17,6 +17,11 @@ CFLAGS  := --target=x86_64-elf -ffreestanding -fno-stack-protector -fno-stack-ch
            -Wall -Wextra -Werror -O2 -std=gnu11 -I. \
            -I../../../build
 
+# Pass-through hook for stale-ABI fixture builds. A caller can override
+# compile-time constants without forking this Makefile via
+# `make -C src/boot/uefi EXTRA_CFLAGS="-DBOOT_INFO_VERSION=8"`.
+CFLAGS += $(EXTRA_CFLAGS)
+
 OUTDIR ?= ../../../build/tools
 
 OBJS := bootx64.o reloc.o elf_bootproto.o

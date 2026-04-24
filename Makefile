@@ -26,6 +26,14 @@ CFLAGS  := --target=x86_64-elf \
            -MMD -MP \
            -DCONFIG_SMP \
            -DKERNEL_TESTS
+
+# Pass-through hook for stale-ABI fixture builds. A caller can override
+# compile-time constants (e.g. BOOT_INFO_VERSION) without forking the
+# Makefile via `make KERNEL_EXTRA_CFLAGS="-DBOOT_INFO_VERSION=8" kernel`.
+# Separate from EXTRA_CFLAGS because the bootloader sub-Makefile uses
+# EXTRA_CFLAGS for the same purpose; keeping them distinct lets a single
+# `make` invocation override only one half.
+CFLAGS += $(KERNEL_EXTRA_CFLAGS)
 ASFLAGS := -f elf64 -g
 LDFLAGS := -nostdlib -static -z max-page-size=0x1000
 
@@ -274,6 +282,20 @@ boot-info-abi: $(BOOT_ABI_KERNEL_JSON) $(BOOT_ABI_MIRROR_JSON) $(KERNEL_BIN) $(B
 .PHONY: boot-info-doc-coverage
 boot-info-doc-coverage:
 	@bash tools/boot-info-manifest/check-doc-coverage.sh
+
+## stale-abi-fixtures: end-to-end QEMU harness that boots a kernel +
+##                     bootloader pair with one half at an off-by-one
+##                     BOOT_INFO_VERSION and asserts the kernel/
+##                     bootloader fatal path fires with the expected
+##                     fault-class line. See scripts/debug/stale-abi-
+##                     fixtures/ for the three component scripts +
+##                     run-fixtures.sh orchestration. Env-probes KVM +
+##                     OVMF + mtools and SKIPs (not FAILs) when any
+##                     are missing, so CI runners without nested virt
+##                     do not gate the build on a flake.
+.PHONY: stale-abi-fixtures
+stale-abi-fixtures:
+	@bash scripts/debug/stale-abi-fixtures/run-fixtures.sh
 
 ## test-bootproto-parse: host-side unit test for the bootloader's
 ##                       pre-jump ABI mismatch parser
