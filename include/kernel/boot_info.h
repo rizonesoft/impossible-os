@@ -238,6 +238,7 @@ int boot_rollback_should_raise(const struct boot_info *info,
  * callers; tests link against it via the test harness. */
 void boot_rollback_mark_steady(void);
 int  boot_rollback_is_steady(void);
+int  boot_rollback_was_raised(void);
 int  boot_rollback_raise_if_steady(void);
 void boot_rollback_reset_for_test(void);
 

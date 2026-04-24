@@ -130,13 +130,34 @@ int boot_rollback_should_raise(const struct boot_info *info,
  * strand the machine on a broken image (next boot would refuse to fall
  * back to the previously-working image).
  *
- * Race note: s_steady is written from the compositor thread (or a
- * deferred-init fallback path), read from raise_if_steady which runs
- * on the same thread. Plain writes are fine today; if this ever gets
- * called cross-CPU the store can become __atomic_store_n with
- * __ATOMIC_RELEASE + matching ACQUIRE load. */
-static volatile int s_steady = 0;
-static volatile int s_raised = 0;
+ * Latch split:
+ *   s_steady    -- set once by compositor mark_steady.
+ *   s_attempted -- set once the policy has been evaluated. On opt-out
+ *                  (no raise needed) this latches immediately because
+ *                  the decision is stable for the remainder of the
+ *                  boot. Early-out guard; prevents repeated policy
+ *                  re-evaluation on every compositor frame.
+ *   s_raised    -- set ONLY on confirmed NVRAM write success. Keeps
+ *                  the getter honest: is_raised() means the counter
+ *                  actually advanced.
+ *
+ * Why split: a transient uefi_set_variable() failure used to latch
+ * s_raised alongside the attempt, which over-stated success and
+ * silently suppressed any future retry a caller might wire up. The
+ * compositor invokes raise_if_steady() exactly once per boot today
+ * (first-frame path), so a SetVariable miss simply drops this boot's
+ * advance; the next boot tries again. If a future caller wraps the
+ * helper in a retry loop, this split lets it work -- s_attempted
+ * stays 1 (do not reconsider policy) while s_raised stays 0 until
+ * NVRAM actually changes.
+ *
+ * Race note: all three are written from the compositor thread and
+ * read from the same thread. Plain volatile is fine today; if a
+ * cross-CPU caller ever appears the stores become __atomic_store_n
+ * with __ATOMIC_RELEASE + matching ACQUIRE load. */
+static volatile int s_steady    = 0;
+static volatile int s_attempted = 0;
+static volatile int s_raised    = 0;
 
 void boot_rollback_mark_steady(void)
 {
@@ -148,18 +169,24 @@ int boot_rollback_is_steady(void)
     return s_steady ? 1 : 0;
 }
 
+int boot_rollback_was_raised(void)
+{
+    return s_raised ? 1 : 0;
+}
+
 int boot_rollback_raise_if_steady(void)
 {
     if (!s_steady)
         return 0;
-    if (s_raised)
+    if (s_attempted)
         return 0;
 
     uint32_t new_value = 0;
     int opt_in = (int)g_boot_info.config.anti_rollback_raise;
     if (!boot_rollback_should_raise(&g_boot_info, opt_in, &new_value)) {
-        /* Mark raised so the no-op path does not re-evaluate. */
-        s_raised = 1;
+        /* Stable policy: opt-out OR shipped <= required. Latch so
+         * the helper does not re-evaluate on every compositor wake. */
+        s_attempted = 1;
         return 0;
     }
 
@@ -179,15 +206,22 @@ int boot_rollback_raise_if_steady(void)
         0x7u,
         sizeof(new_value), &new_value);
 
-    s_raised = 1;
-
     if (status == 0) {
+        /* Confirmed NVRAM write. Latch both: attempted guards the
+         * early-out, raised keeps the semantic honest for any
+         * future probe. */
+        s_attempted = 1;
+        s_raised    = 1;
         klog(LOG_INFO, "boot",
              "anti-rollback: raised IPOSRequiredSecVersion to %u (steady)",
              (uint64_t)new_value);
         return 1;
     }
 
+    /* Transient UEFI Runtime Services failure. Do NOT latch
+     * s_attempted -- leave the door open for a retry if a caller
+     * ever adds one. s_raised stays clear: is_raised() must only
+     * report confirmed advance. */
     klog(LOG_WARN, "boot",
          "anti-rollback: SetVariable failed (0x%lx); counter not advanced",
          (uint64_t)status);
@@ -198,6 +232,7 @@ int boot_rollback_raise_if_steady(void)
  * rewind state between cases without rebooting. NOT for production use. */
 void boot_rollback_reset_for_test(void)
 {
-    s_steady = 0;
-    s_raised = 0;
+    s_steady    = 0;
+    s_attempted = 0;
+    s_raised    = 0;
 }

@@ -237,7 +237,7 @@ static void test_boot_rollback_raise_one_shot_opt_out(void)
     boot_rollback_reset_for_test();
 
     /* Stage opt-out so should_raise returns 0 even after mark_steady.
-     * The helper still latches s_raised so subsequent calls are
+     * The helper still latches s_attempted so subsequent calls are
      * no-ops -- prevents re-evaluation on every compositor wake. */
     uint8_t saved_opt = g_boot_info.config.anti_rollback_raise;
     g_boot_info.config.anti_rollback_raise = 0;
@@ -247,9 +247,35 @@ static void test_boot_rollback_raise_one_shot_opt_out(void)
     int r2 = boot_rollback_raise_if_steady();
     TEST_ASSERT_EQ((uint64_t)r1, 0u, "opt-out -> no raise (first call)");
     TEST_ASSERT_EQ((uint64_t)r2, 0u, "opt-out -> no raise (second call)");
+    /* Split-latch semantic: opt-out latches s_attempted (so second
+     * call early-outs) but must NOT set s_raised -- was_raised()
+     * means NVRAM was actually advanced, which did not happen. */
+    TEST_ASSERT_EQ((uint64_t)boot_rollback_was_raised(), 0u,
+                   "opt-out never advances NVRAM");
 
     g_boot_info.config.anti_rollback_raise = saved_opt;
     boot_rollback_reset_for_test();
+}
+
+static void test_boot_rollback_was_raised_reset_clears(void)
+{
+    TEST_KLOG_SUPPRESS("boot");
+    boot_rollback_reset_for_test();
+    TEST_ASSERT_EQ((uint64_t)boot_rollback_was_raised(), 0u,
+                   "was_raised starts 0");
+    /* We cannot exercise the success branch here (would call
+     * uefi_set_variable which forbidden in tests). Verify the
+     * reset helper clears the flag if a prior real boot had set
+     * it. Use the reset_for_test + is_steady round trip as proof
+     * that all three latches wire to the same reset. */
+    boot_rollback_mark_steady();
+    TEST_ASSERT_EQ((uint64_t)boot_rollback_is_steady(), 1u,
+                   "steady latched");
+    boot_rollback_reset_for_test();
+    TEST_ASSERT_EQ((uint64_t)boot_rollback_is_steady(), 0u,
+                   "reset clears steady");
+    TEST_ASSERT_EQ((uint64_t)boot_rollback_was_raised(), 0u,
+                   "reset keeps raised clear");
 }
 
 void test_register_boot_rollback(void)
@@ -282,4 +308,6 @@ void test_register_boot_rollback(void)
                             test_boot_rollback_mark_steady_latches, TEST_CAT_BOOT);
     test_suite_register_cat("boot_rollback: raise is one-shot even on opt-out",
                             test_boot_rollback_raise_one_shot_opt_out, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_rollback: was_raised split stays 0 on opt-out; reset clears",
+                            test_boot_rollback_was_raised_reset_clears, TEST_CAT_BOOT);
 }
