@@ -63,7 +63,7 @@
  *   - Bootloader writes sizeof(struct boot_info) into header.size at
  *     compile time -- a size mismatch means the structs diverged. */
 #define BOOT_INFO_MAGIC    0x49504F53  /* "IPOS" (Impossible OS) */
-#define BOOT_INFO_VERSION  8           /* v8 adds boot_path/reason/source_flags/fallback_depth */
+#define BOOT_INFO_VERSION  9           /* v9 adds flags + os_loader/required_security_version */
 
 /* Upper bound for pre-copy address validation: the UEFI bootloader
  * identity-maps [0, 4 GiB) with 2 MiB pages in setup_page_tables()
@@ -172,6 +172,50 @@ boot_result_t boot_payload_validate(const struct boot_info *info,
  * pass values from `enum boot_payload_type` directly -- they decay to
  * uint32_t exactly; the validator already stores type as uint32_t for
  * the same ABI-stability reason. */
+/* Anti-rollback and security-version binding (v9).
+ *
+ * Windows 11 ships `OsLoaderSecurityVersion` in its Loader Parameter
+ * Block; Linux uses shim+SBAT revocation vectors. Impossible OS binds
+ * a monotonic counter in UEFI NVRAM: the bootloader reads
+ * `IPOSRequiredSecVersion` early, the kernel ships with a build-time
+ * `os_loader_security_version`, and the bootloader refuses to jump
+ * when shipped < required. After a successful Phase 3 proof-of-life,
+ * the kernel (gated by an explicit opt-in policy flag) raises the
+ * NVRAM value via UEFI RT `SetVariable`. A stored-but-older
+ * `kernel.exe` therefore cannot boot on a machine whose policy has
+ * crossed a given version line.
+ *
+ * Write timing is the critical safety invariant: the NVRAM raise
+ * happens AFTER `kernel_subsystem_ready(SUBSYS_BOOT_COMPLETE)` and
+ * after the POST16_BOOT_OK marker lands; a pre-jump update is a
+ * classic brick vector (kernel crashes early, counter advanced, old
+ * signed kernel now refused, no recovery path).
+ *
+ * BOOT_FLAG_ROLLBACK_REFUSAL is set by the bootloader on the refusal
+ * path; the kernel never sees it because the bootloader halts before
+ * jumping. The bit exists for future crash-recorder readers that
+ * want to reconstruct "what was the last halt reason" from the
+ * boot_info image in low memory.
+ */
+#define BOOT_FLAG_ROLLBACK_REFUSAL  (1u << 0)  /* bootloader halted on security-version downgrade */
+#define BOOT_FLAG_MASK_KNOWN        (BOOT_FLAG_ROLLBACK_REFUSAL)
+
+#define BOOT_SECURITY_VERSION_MAX   0x7FFFFFFFu
+
+enum boot_rollback_error {
+    BOOT_ROLLBACK_ERR_OK                 = 0,
+    BOOT_ROLLBACK_ERR_NULL_INFO          = 1,
+    BOOT_ROLLBACK_ERR_UNKNOWN_FLAG       = 2,
+    BOOT_ROLLBACK_ERR_VERSION_OOR        = 3,
+};
+
+boot_result_t boot_rollback_validate(const struct boot_info *info,
+                                     enum boot_rollback_error *out_error);
+
+int boot_rollback_should_raise(const struct boot_info *info,
+                               int opt_in,
+                               uint32_t *new_value);
+
 /* Boot-path provenance and decision record (v8).
  *
  * Media role, recovery, network boot, and resume each carry their own
@@ -591,10 +635,17 @@ struct boot_config {
      * count is a hard fail. Today fb_get_output_count() always returns
      * 1 until the virtio-gpu multi-output driver lands. */
     uint8_t  test_monitors_count;
+    /* Anti-rollback opt-in policy: 1 = kernel may raise
+     * IPOSRequiredSecVersion NVRAM counter to os_loader_security
+     * _version after POST16_BOOT_OK. 0 = never advance automatically
+     * (default; matches pre-section-13 behavior). Shipped release
+     * images set this to 1 in boot.conf when the release cadence
+     * wants the monotonic counter to tick forward. */
+    uint8_t  anti_rollback_raise;
     /* Reserved -- new config fields go here without shifting cmdline.
      * Bootloader zero-fills the entire struct, so new fields default to 0
      * in older bootloaders that don't know about them. */
-    uint8_t  _reserved[10];
+    uint8_t  _reserved[9];
     /* Command line (offset 32 -- stable across versions) */
     char     cmdline[BOOT_CONF_CMDLINE_MAX];
     /* Status */
@@ -992,6 +1043,13 @@ struct boot_info {
     uint32_t boot_reason;           /* enum boot_reason_code */
     uint32_t boot_source_flags;     /* BOOT_SOURCE_FLAG_* bitmask */
     uint32_t boot_fallback_depth;   /* 0 = primary, N = Nth fallback */
+
+    /* Anti-rollback and security-version binding (v9). See the
+     * BOOT_FLAG_* + boot_rollback_validate() contract above. */
+    uint32_t flags;                         /* BOOT_FLAG_* bitmask (currently ROLLBACK_REFUSAL) */
+    uint32_t os_loader_security_version;    /* security version baked into kernel.exe at build */
+    uint32_t required_security_version;     /* value bootloader read from IPOSRequiredSecVersion NVRAM */
+    uint32_t _rollback_pad;                 /* reserved; zero */
 };
 
 /* Compile-time enforcement of ABI header layout (S15) */

@@ -83,6 +83,7 @@ TOPLEVEL_SECTIONS: list[str] = [
     "Typed payload descriptor array",
     "Capability negotiation",
     "Boot-path provenance",
+    "Anti-rollback and security-version binding",
     # NOTE: do NOT add `Legacy / Multiboot2-only fields` -- it is a
     # summary table only.
 ]

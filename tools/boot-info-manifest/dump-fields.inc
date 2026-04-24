@@ -315,3 +315,9 @@ F(boot_path);
 F(boot_reason);
 F(boot_source_flags);
 F(boot_fallback_depth);
+
+/* ---- Anti-rollback and security-version binding (v9) ---- */
+F(flags);
+F(os_loader_security_version);
+F(required_security_version);
+F(_rollback_pad);

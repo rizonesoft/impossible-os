@@ -34,6 +34,7 @@
 #include "kernel/boot_recovery.h"
 #include "kernel/acpi.h"
 #include "kernel/boot_info.h"
+#include "kernel/uefi_runtime.h"
 #include "desktop/wm.h"
 #include "desktop/font.h"
 #include "font_mgr.h"
@@ -264,6 +265,43 @@ void boot_phase3(void)
      * Must be here, not later -- on bare metal the compositor may crash
      * (timer interrupt issue), and we need this written before that. */
     boot_post_nvram_write16(POST16_BOOT_OK);
+
+    /* Anti-rollback counter raise: after proof-of-life is recorded in
+     * NVRAM (above), if the shipped kernel advances past the stored
+     * required version AND the policy opts in, raise
+     * IPOSRequiredSecVersion so a stored-but-older kernel.exe cannot
+     * boot on this machine again. Policy opt-in comes from
+     * boot.conf's anti_rollback_raise flag (reserved field; defaults
+     * to 0 = never raise automatically). A release that wants the
+     * counter to tick forward sets it to 1 in the shipped boot.conf.
+     * Never decreases; never writes a redundant same-value. */
+    {
+        uint32_t new_value = 0;
+        int opt_in = (int)g_boot_info.config.anti_rollback_raise;
+        if (boot_rollback_should_raise(&g_boot_info, opt_in, &new_value)) {
+            static struct boot_uefi_guid ipos_guid = {
+                0x6f35d3a4, 0xc0e6, 0x4a82,
+                { 0xb5, 0xd8, 0x7c, 0x9d, 0x2e, 0x4f, 0x8a, 0x13 }
+            };
+            static const uint16_t req_name[] = {
+                'I','P','O','S','R','e','q','u','i','r','e','d',
+                'S','e','c','V','e','r','s','i','o','n', 0
+            };
+            uint64_t status = uefi_set_variable(
+                &ipos_guid, req_name,
+                0x7u,  /* NV|BS|RT */
+                sizeof(new_value), &new_value);
+            if (status == 0) {
+                klog(LOG_INFO, "boot",
+                     "anti-rollback: raised IPOSRequiredSecVersion to %u",
+                     (uint64_t)new_value);
+            } else {
+                klog(LOG_WARN, "boot",
+                     "anti-rollback: SetVariable failed (0x%lx); counter not advanced",
+                     (uint64_t)status);
+            }
+        }
+    }
 
     boot_timing_print_steps();
     boot_perf_dump();

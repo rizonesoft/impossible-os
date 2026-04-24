@@ -154,6 +154,8 @@ POST16_REQUIRED_NAMES=(
 POST16_OPTIONAL_REASONS=(
     "POST16_BL_FALLBACK=scenario-dependent: boot-device fallback chain"
     "POST16_BL_FALLBACK_OK=scenario-dependent: boot-device fallback chain"
+    "POST16_BL_ROLLBACK_REFUSE=scenario-dependent: anti-rollback halts only on downgrade attack"
+    "POST16_BL_ROLLBACK_PASS=scenario-dependent: emitted only on boots that evaluate the counter"
 )
 
 # Build the optional-name set from the reasons array for fast lookup.

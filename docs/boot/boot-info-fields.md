@@ -231,6 +231,17 @@ One shared decision record answering "what path did this boot take and why". Con
 | `boot_source_flags` | bootx64 | P0 | Registry (`SourceFlags`), BlackBox | handoff | boot-protocol-abi-handoff section 12 | Every set bit MUST be in `BOOT_SOURCE_FLAG_MASK_KNOWN`; unknown bits halt with "unknown flag" (unlike capability negotiation, forward-compat tolerance does NOT apply -- every flag maps to a kernel-side policy). |
 | `boot_fallback_depth` | bootx64 | P0 | Registry (`FallbackDepth`), BlackBox | handoff | boot-protocol-abi-handoff section 12 | `<= BOOT_FALLBACK_DEPTH_MAX` (16); greater halts with "probable fallback loop". |
 
+### Anti-rollback and security-version binding
+
+Monotonic anti-rollback counter bound to UEFI NVRAM variable `IPOSRequiredSecVersion`. The bootloader reads it early and refuses to jump when the kernel's `os_loader_security_version` is below the stored `required_security_version`. The kernel ships with a build-time signed value; after a successful Phase 3 proof-of-life (POST16_BOOT_OK), an opt-in policy may raise the NVRAM counter via UEFI RT `SetVariable` so future boots refuse older-signed kernels. Write timing is load-bearing: a pre-jump update would brick the system on a crash before POST16_BOOT_OK. Validator: [`boot_rollback_validate`](../../src/kernel/main/boot_rollback.c) wired from `boot_hw.c` after `boot_decision_validate`.
+
+| Field | Producer | First valid | Consumer | Lifetime | Owning roadmap | Validation |
+| --- | --- | --- | --- | --- | --- | --- |
+| `flags` | bootx64 | P0 | validator (`boot_rollback_validate`), crash-recorder | handoff | boot-protocol-abi-handoff section 13 | Every set bit MUST be in `BOOT_FLAG_MASK_KNOWN`; unknown bits halt with "unknown flag". Closed mask -- no forward-compat tolerance. |
+| `os_loader_security_version` | kernel build (Makefile-baked constant read by bootloader) | P0 | validator, Registry export, Phase 3 NVRAM raise | handoff | boot-protocol-abi-handoff section 13 | `<= BOOT_SECURITY_VERSION_MAX` (0x7FFFFFFF); out-of-range halts. Shipped value baked into `kernel.exe` at build. |
+| `required_security_version` | bootx64 (UEFI variable `IPOSRequiredSecVersion`) | P0 | validator, Registry export, Phase 3 raise-decision | handoff | boot-protocol-abi-handoff section 13 | `<= BOOT_SECURITY_VERSION_MAX`. Zero on first-ever boot (variable absent); raised by kernel Phase 3 opt-in. |
+| `_rollback_pad` | bootx64 | P0 | reserved | handoff | boot-protocol-abi-handoff section 13 | Must be zero; reserved for future anti-rollback policy word. |
+
 ## Nested struct: `boot_payload_desc`
 
 48-byte ABI-pinned descriptor. Kernel enum `boot_payload_type` maps well-known values (MODULE, INITRD, RECOVERY_IMAGE, HIBERNATION_META, TPM_EVENT_LOG, NETWORK_CONFIG, RANDOM_SEED, USB_HANDOVER); unknown values are SKIPPED for type-specific validation unless `BOOT_PAYLOAD_FLAG_REQUIRED` is set on the descriptor (required-unknown forces a fatal boot failure).

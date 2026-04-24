@@ -186,6 +186,21 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
         }
     }
 
+    /* Anti-rollback: sanity-check flags + security-version fields.
+     * The downgrade refusal itself was enforced pre-jump by the
+     * bootloader; this validator catches producer bugs (unknown flag
+     * bits, versions > BOOT_SECURITY_VERSION_MAX) before any consumer
+     * trusts the values. */
+    {
+        enum boot_rollback_error rerr = BOOT_ROLLBACK_ERR_OK;
+        if (boot_rollback_validate(&g_boot_info, &rerr) != BOOT_OK) {
+            klog(LOG_ERROR, "boot",
+                 "boot_rollback_validate failed (err=%u); halting before anti-rollback consumers run",
+                 (uint64_t)rerr);
+            boot_halt("boot_rollback: anti-rollback invariants violated");
+        }
+    }
+
     /* S13: Log previous boot error if one was persisted in NVRAM */
     if (g_boot_info.last_boot_error != 0)
         klog(LOG_WARN, "UEFI",

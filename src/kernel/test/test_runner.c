@@ -373,6 +373,7 @@ extern void test_register_boot_reserved(void);
 extern void test_register_boot_version(void);
 extern void test_register_boot_caps(void);
 extern void test_register_boot_decision(void);
+extern void test_register_boot_rollback(void);
 extern void test_register_klog(void);
 extern void test_register_uefi_boot(void);
 extern void test_register_boot_device(void);
@@ -423,6 +424,7 @@ void test_runner_init(void)
     test_register_boot_version();
     test_register_boot_caps();
     test_register_boot_decision();
+    test_register_boot_rollback();
     test_register_klog();
     test_register_uefi_boot();
     test_register_boot_device();

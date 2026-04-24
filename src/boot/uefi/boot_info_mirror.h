@@ -80,7 +80,8 @@ struct boot_config {
     /* Multi-monitor test-matrix expected output count:
      * 0 = whatever the hardware offers, 1..3 = hard-assert exact count. */
     UINT8   test_monitors_count;
-    UINT8   _reserved[10];     /* future fields -- zero-filled by defaults */
+    UINT8   anti_rollback_raise;    /* anti-rollback opt-in policy */
+    UINT8   _reserved[9];           /* future fields -- zero-filled by defaults */
     char    cmdline[BOOT_CONF_CMDLINE_MAX];
     UINT8   config_found;
     /* User-mode test launcher knobs (S4 of TODO-04). Mirror of kernel
@@ -239,7 +240,7 @@ struct boot_usb_controller {
 
 /* ABI header -- must match kernel/boot_info.h */
 #define BOOT_INFO_MAGIC    0x49504F53  /* "IPOS" */
-#define BOOT_INFO_VERSION  8  /* v8 adds boot_path/reason/source_flags/fallback_depth */
+#define BOOT_INFO_VERSION  9  /* v9 adds flags + os_loader/required_security_version */
 
 /* Typed payload descriptor array -- must match kernel/boot_info.h. */
 #define BOOT_PAYLOAD_MAX  32
@@ -320,6 +321,22 @@ struct boot_usb_controller {
 #define BOOT_SOURCE_FLAG_MEASURED_BOOT_FAILED     (1u << 9)
 
 #define BOOT_FALLBACK_DEPTH_MAX  16
+
+/* Anti-rollback and security-version binding (v9). Mirror of the
+ * BOOT_FLAG_* bits + the IPOSRequiredSecVersion NVRAM variable
+ * contract in include/kernel/boot_info.h. */
+#define BOOT_FLAG_ROLLBACK_REFUSAL  (1u << 0)
+#define BOOT_FLAG_MASK_KNOWN        (BOOT_FLAG_ROLLBACK_REFUSAL)
+#define BOOT_SECURITY_VERSION_MAX   0x7FFFFFFFu
+
+/* Build-time security version baked into the shipping kernel.exe.
+ * Override via Makefile -DIPOS_KERNEL_SECURITY_VERSION=N when cutting
+ * a release that requires the NVRAM counter to advance. Default 1 so
+ * an absent NVRAM variable (first-ever boot, required=0) still passes
+ * the shipped >= required gate. */
+#ifndef IPOS_KERNEL_SECURITY_VERSION
+#define IPOS_KERNEL_SECURITY_VERSION  1u
+#endif
 
 struct boot_payload_desc {
     UINT32 type;         /* enum boot_payload_type */
@@ -486,6 +503,14 @@ struct boot_info {
     UINT32  boot_reason;
     UINT32  boot_source_flags;
     UINT32  boot_fallback_depth;
+
+    /* Anti-rollback and security-version binding. Contract lives in
+     * the kernel header; loader populates flags / os_loader_security
+     * _version / required_security_version before header write. */
+    UINT32  flags;
+    UINT32  os_loader_security_version;
+    UINT32  required_security_version;
+    UINT32  _rollback_pad;
 };
 
 /* ABI compile-time guards -- catch bootloader/kernel struct drift at build */

@@ -139,6 +139,8 @@ static inline void post_code16(UINT16 code);
 #define POST16_BL_BOOT_FS_OK    0xB093
 #define POST16_BL_FALLBACK 0xB094 /* Device fallback chain */
 #define POST16_BL_FALLBACK_OK   0xB095
+#define POST16_BL_ROLLBACK_REFUSE 0xB09A  /* Anti-rollback: shipped < required */
+#define POST16_BL_ROLLBACK_PASS   0xB09B  /* Anti-rollback: shipped >= required */
 
 /* --- Helper: memory ops --- */
 static void efi_memset(void *dst, UINT8 val, UINTN size)
@@ -5821,6 +5823,65 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
          * count rungs; future work threads a counter through the
          * fallback path and writes the final value here. */
         g_boot_info_ptr->boot_fallback_depth = 0u;
+    }
+
+    /* Anti-rollback and security-version binding. Reads UEFI NVRAM
+     * variable IPOSRequiredSecVersion (if present), sets shipped +
+     * required fields, and HALTS with a fatal UEFI screen on a
+     * downgrade. The check lives here (near the end of populate,
+     * before the header-magic write) so all other boot_info fields
+     * are already populated for a potential post-mortem read.
+     *
+     * Uses the shared g_impossible_os_guid for the NVRAM namespace.
+     * Build-time shipped version is IPOS_KERNEL_SECURITY_VERSION
+     * (defaults to 1 until a release policy raises it). */
+    {
+        static CHAR16 req_name[] = L"IPOSRequiredSecVersion";
+        UINT32 required = 0;
+        UINTN sz = sizeof(required);
+        UINT32 attrs = 0;
+        EFI_STATUS st = EFI_UNSUPPORTED;
+
+        /* Read required version via UEFI RT GetVariable; absent
+         * variable or missing runtime services -> required = 0
+         * (first-ever boot accepts any shipped value). */
+        if (gST && gST->RuntimeServices && gST->RuntimeServices->GetVariable) {
+            st = gST->RuntimeServices->GetVariable(
+                req_name, &g_impossible_os_guid, &attrs, &sz, &required);
+        }
+        if (EFI_ERROR(st) || sz != sizeof(required)) {
+            required = 0;
+        }
+
+        /* Cap required at BOOT_SECURITY_VERSION_MAX so a corrupted
+         * NVRAM read cannot brick the system. Matches the kernel
+         * validator's check. */
+        if (required > BOOT_SECURITY_VERSION_MAX)
+            required = 0;
+
+        UINT32 shipped = (UINT32)IPOS_KERNEL_SECURITY_VERSION;
+        g_boot_info_ptr->os_loader_security_version = shipped;
+        g_boot_info_ptr->required_security_version  = required;
+
+        if (shipped < required) {
+            /* Refusal path: set the telemetry flag, emit POST16 +
+             * serial diagnostic, halt. Do NOT jump to kernel. */
+            g_boot_info_ptr->flags |= BOOT_FLAG_ROLLBACK_REFUSAL;
+            post_code16(POST16_BL_ROLLBACK_REFUSE);
+            serial_early_print(
+                "[BOOT] ANTI-ROLLBACK REFUSAL: os_loader_security_version=");
+            serial_early_print_uint(shipped);
+            serial_early_print(" < required_security_version=");
+            serial_early_print_uint(required);
+            serial_early_print(
+                " -- kernel.exe is older than policy permits. Refusing to jump.\n");
+            /* Fatal screen + halt. Uses the existing UEFI-side fatal
+             * path so the operator sees the observed/required pair. */
+            boot_fatal(POST16_BL_ROLLBACK_REFUSE, "Anti-rollback refusal",
+                       "Kernel security version below policy minimum");
+        }
+
+        post_code16(POST16_BL_ROLLBACK_PASS);
     }
 
     /* S15: Populate ABI header as the final step before kernel handoff.
