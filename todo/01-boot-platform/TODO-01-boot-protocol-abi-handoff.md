@@ -80,6 +80,7 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 | 💎  |  16   | Anti-rollback raise timing hardening               | §13                                |  [x]   |
 | ⭐  |  17   | Bootloader pre-jump ABI mismatch screen            | §7                                 |  [ ]   |
 | 💎  |  18   | Anti-rollback in version fault diagnostics         | §13, §17                           |  [ ]   |
+| ⭐  |  19   | Stale-ABI QEMU fixture harness                     | §7                                 |  [ ]   |
 
 ---
 
@@ -588,6 +589,29 @@ The capability negotiation ABI shipped in §11 advertises what the bootloader po
 
 ---
 
+## 19. Stale-ABI QEMU Fixture Harness
+
+§7 shipped the kernel-side `boot_version_classify()` classifier with full unit-test coverage (BAD_MAGIC / BAD_VERSION / BAD_SIZE per-class tests + fuzz) but left three items `[/]` / `[ ]` because the end-to-end "boot a stale image + assert the fatal screen fires" fixture had no tracked owner: the harness needs a way to build one component at an offset `BOOT_INFO_VERSION`, swap that stale binary into the ESP, boot QEMU, grep the serial log for the expected fault-class line, and fail the CI step if either the fatal does NOT fire (regression in the fail-closed path) or the wrong fault class fires (semantic drift). This section owns the three scripts (`build-stale-bootloader.sh`, `build-stale-kernel.sh`, `run-fixtures.sh`), the Makefile / header prep that makes per-component version overrides possible, and the CI wire that runs the harness on every push.
+
+> [!IMPORTANT]
+> **Regression risk:** MEDIUM. A broken fixture harness CI step can gate the whole pipeline on a flake (QEMU startup race, OVMF drift, KVM availability). The harness must treat environment failures (no KVM, no OVMF, mtools missing) as SKIP rather than FAIL; only an actual regression in the fail-closed path should FAIL the build.
+
+- [ ] Wrap `#define BOOT_INFO_VERSION` and `#define BOOT_INFO_MAGIC` in `#ifndef` guards in [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h) so `-DBOOT_INFO_VERSION=N` on the command line overrides the compile-time constant without forking the source. One-line change; all existing sites (including `src/boot/uefi/boot_info_mirror.h`) already consume the macro at compile time, so no behaviour change at the current version.
+- [ ] Pass `EXTRA_CFLAGS` through the UEFI sub-Makefile: in [`src/boot/uefi/Makefile`](../../src/boot/uefi/Makefile) add `CFLAGS += $(EXTRA_CFLAGS)` after the `CFLAGS :=` line so a caller can `make -C src/boot/uefi EXTRA_CFLAGS="-DBOOT_INFO_VERSION=8"`. Mirror the same hook in the top-level Makefile's kernel rule so the kernel can be rebuilt with the same override.
+- [ ] Add `scripts/debug/stale-abi-fixtures/build-stale-bootloader.sh` (~60 LOC bash). Reads current `BOOT_INFO_VERSION` via grep; sets `STALE=$((CURRENT-1))`; invokes `make -C src/boot/uefi EXTRA_CFLAGS="-DBOOT_INFO_VERSION=$STALE"`; copies `build/tools/BOOTX64.EFI` -> `build/fixtures/bootx64-stale-v${STALE}.efi`; restores the real artifact by running `make uefi-boot` with no override. Traps SIGINT + SIGTERM to guarantee the restore runs even on interrupt. Exits non-zero on any build failure.
+- [ ] Add `scripts/debug/stale-abi-fixtures/build-stale-kernel.sh` (~60 LOC bash). Mirror structure but overrides the kernel's `BOOT_INFO_VERSION` via the top-level Makefile's `KERNEL_EXTRA_CFLAGS` hook. Copies `build/kernel.exe` -> `build/fixtures/kernel-stale-v${STALE}.exe`; restores the real artifact.
+- [ ] Add `scripts/debug/stale-abi-fixtures/assemble-esp.sh` (~40 LOC bash). Takes a `--stale-bootloader PATH` or `--stale-kernel PATH` argument; copies `build/system-disk.img` to `build/fixtures/stale-<variant>-disk.img`; uses `mtools` (`mcopy -o -i <img>@@1M`) to overwrite `/EFI/BOOT/BOOTX64.EFI` or `/Impossible/System32/kernel.exe` inside the image with the stale binary; emits the output path on stdout.
+- [ ] Add `scripts/debug/stale-abi-fixtures/run-fixtures.sh` (~200 LOC bash). For each fixture (stale-bootloader, stale-kernel): (a) env-probe for KVM (`[ -w /dev/kvm ]`) + OVMF (`/usr/share/OVMF/OVMF_CODE_4M.fd`) + mtools (`command -v mcopy`); if any missing, emit `[SKIP]` and continue without failing; (b) call `build-stale-bootloader.sh` or `build-stale-kernel.sh`; (c) call `assemble-esp.sh`; (d) boot QEMU headless (mirror `scripts/test-smoke.sh` QEMU args; 30s timeout); (e) strip ANSI from serial capture; (f) grep stripped log for `boot_version: protocol mismatch` AND `BAD_VERSION` (accept `BAD_SIZE` in the stale-bootloader case because version bumps typically co-change struct_size); (g) on match -> `[PASS]`; on no-match after timeout or on wrong fault class -> `[FAIL]` with last 40 lines of serial dumped to stderr. Exit 0 iff both fixtures PASSed or SKIPped; exit 1 on any FAIL.
+- [ ] Add a `make stale-abi-fixtures` target to the top-level Makefile that runs `bash scripts/debug/stale-abi-fixtures/run-fixtures.sh`. One-line rule; the script owns all complexity.
+- [ ] Wire the CI step in [`.github/workflows/build.yml`](../../.github/workflows/build.yml): after the existing "Run unit tests" step, add "Stale-ABI fixtures" calling the new make target. Install `mtools` in the setup step (`sudo apt-get install -y mtools`). Use `continue-on-error: true` for the first two weeks so KVM flakiness does not gate the build; flip to mandatory once three consecutive runs pass cleanly.
+- [ ] Add a smoke test: run `bash scripts/debug/stale-abi-fixtures/run-fixtures.sh` locally on Linux with KVM available, capture the output, and paste the `[PASS]` lines into the `Notes:` block of this section.
+- [ ] On §19 ship: flip §7 item 6 (`[/]` stale BOOTX64.EFI boot) -> `[x]` with cross-ref `-> XREF: §19`; flip §7 item 7 (`[/]` stale kernel.exe boot) -> `[x]` with cross-ref `-> XREF: §19`. Update §7 stamps from "3/5 items (2 deferred via in-line notes)" to "5/5 items". The harness subsumes both deferred fixtures.
+- [ ] Commit: `"test: stale-ABI QEMU fixtures + CI harness for boot_version fatal path"`
+
+**Test checkpoint:** `make stale-abi-fixtures` runs locally and prints `[PASS] stale-bootloader-v<N-1>` + `[PASS] stale-kernel-v<N-1>` (or `[SKIP] ...`  when KVM / OVMF / mtools unavailable), and the `.github/workflows/build.yml` CI job reports the same. Manual verification: temporarily revert one of the §7 `boot_version` fixes in a scratch branch, re-run `make stale-abi-fixtures`, assert the harness emits `[FAIL]` with the expected "no boot_version: protocol mismatch in serial" diagnostic -- proves the harness catches real regressions, not just cosmetic ones.
+
+---
+
 ## OS Comparison
 
 | ⭐ | Feature                         | 🪟 Win11                    | 🐧 Linux                     | 🚀 Impossible OS                                 |
@@ -606,6 +630,7 @@ The capability negotiation ABI shipped in §11 advertises what the bootloader po
 | ⭐ | Compositor-steady rollback gate | ❌                          | ❌                            | ✅ §16 withholds raise until first frame         |
 | ⭐ | Pre-jump ABI mismatch UI screen | ⚠️ BSOD after kernel load  | ⚠️ kernel panic text          | ⬜ §17 UEFI console error + NVRAM persist        |
 | ⭐ | Rollback vs ABI drift split UX  | ❌                          | ❌                            | ⬜ §18 SEC_ROLLBACK class + operator guidance    |
+| ⭐ | End-to-end stale-ABI CI gate    | ⚠️ manual HCK regression   | ⚠️ kunit / kselftests partial | ⬜ §19 QEMU fixture harness + CI wire            |
 
 > Parity now covers the contract itself (§1-§4), mirror drift detection (§2-§3), typed payload handoff (§5), centralized PMM reservation (§6), structured version negotiation with friendly fatal + BlackBox transcript (§7), and the canonical protocol reference + schema changelog (§8). Adding explicit capability negotiation, a shared boot decision record, and anti-rollback security-version binding would make this handoff easier to debug and safer to evolve than either Windows' mostly internal loader state or Linux's split between versioned structs and scattered provenance channels. The warm-kernel-update handoff ABI (§14) specifically positions Impossible OS for cloud/server parity with Linux 6.16's Kexec Handover surface at the ABI layer; the runtime live-update machinery is tracked as follow-up in 03-memory-concurrency. §16 hardens the §13 anti-rollback raise behind a compositor-steady gate -- no Windows or Linux equivalent ships today, so a boot that dies before its first frame cannot accidentally strand the machine on a broken image.
 
