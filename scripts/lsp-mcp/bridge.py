@@ -90,6 +90,30 @@ def register_spawner(lang: str, spawn_fn: LspSpawnFn) -> None:
     _LSP_SPAWNERS[lang] = spawn_fn
 
 
+def _autoregister_spawners() -> None:
+    """Import the per-language server modules and register their
+    spawn recipes. Each import is independent: if one language's
+    module fails (syntax error, missing optional dep), the others
+    still register. The spawn functions themselves do the binary-
+    presence check via `is_available()`; registering here does NOT
+    require the LSP to be installed.
+
+    Kept on a single call site so `grep register_spawner bridge.py`
+    lists every wired language at a glance."""
+    # clangd-19 (C / H) -- first language wired, per the bridge's
+    # end-to-end bootstrap plan.
+    try:
+        from servers import clangd_server as _clangd
+        register_spawner("c", _clangd.spawn)
+    except Exception as exc:  # pragma: no cover -- import errors
+        sys.stderr.write(
+            f"[lsp-mcp] warn: clangd spawner not registered: {exc}\n"
+        )
+
+
+_autoregister_spawners()
+
+
 def _get_or_spawn(lang: str, workspace_root: Path) -> LspSubprocess:
     """Return a running LspSubprocess for `lang`, spawning if needed.
 
@@ -212,17 +236,28 @@ def _build_mcp(FastMCP, workspace_root: Path):
 # Self-test (CI-friendly; works with or without the SDK)
 # ---------------------------------------------------------------------
 
-def _self_test(workspace_root: Path) -> int:
-    """Self-test contract (bridge skeleton):
-      * Exit 0 with `[lsp-mcp] OK: 0 LSPs spawned, bridge ready` when
-        the bridge skeleton is healthy.
-      * SKIP with exit 0 when the mcp SDK is missing (CI-friendly).
-      * Exit 1 only on a real bridge-internal failure (import of
-        lsp_client failed, FastMCP build raised).
-    Zero tool registration is the correct number for the skeleton --
-    the six read-only MCP tools come in the tool-wiring commit. The
+def _self_test(workspace_root: Path, lang: Optional[str] = None) -> int:
+    """Self-test contract:
+      * Without `--lang`: exit 0 with
+        `[lsp-mcp] OK: 0 LSPs spawned, bridge ready` when the bridge
+        skeleton is healthy. SKIP with exit 0 when the mcp SDK is
+        missing (CI-friendly). Exit 1 only on a real bridge-internal
+        failure (import of lsp_client failed, FastMCP build raised).
+      * With `--lang=<tag>`: spawn that language's LSP, do a minimal
+        round-trip, and print a per-language OK/SKIP line. SKIP paths
+        still exit 0 so CI hosts without the LSP stay green.
+
+    Zero MCP tool registration is the correct count for this stage --
+    the six read-only MCP tools land in the tool-wiring commit. The
     count assertion defends against a future commit forgetting to
     update this check."""
+    # Dispatch --lang BEFORE the FastMCP gate: the per-language smoke
+    # path does not need the mcp SDK, and a CI host with clangd-19
+    # but no `pip install mcp` should still exercise the clangd
+    # integration rather than silently SKIPping behind the SDK gate.
+    if lang is not None:
+        return _self_test_language(lang, workspace_root)
+
     FastMCP = _try_import_mcp()
     if FastMCP is None:
         sys.stdout.write(
@@ -251,16 +286,237 @@ def _self_test(workspace_root: Path) -> int:
         except Exception:
             count = 0
 
-    live = len(_LIVE_LSPS)
     if count != 0:
         sys.stderr.write(
             f"[lsp-mcp] FAIL: expected 0 tools in the skeleton, got {count}. "
             "Did a later commit land without updating _self_test()?\n"
         )
         return 1
+
+    # Per-language smoke already ran above (before the FastMCP gate);
+    # the zero-lang path falls through to the bridge-ready banner.
+    live = len(_LIVE_LSPS)
     sys.stdout.write(
         f"[lsp-mcp] OK: {live} LSPs spawned, bridge ready\n"
     )
+    return 0
+
+
+def _self_test_language(lang: str, workspace_root: Path) -> int:
+    """Dispatch to a per-language smoke routine. Each routine decides
+    SKIP-vs-OK internally and prints the banner line itself."""
+    if lang == "c":
+        return _self_test_clangd(workspace_root)
+    sys.stderr.write(
+        f"[lsp-mcp] FAIL: --lang={lang!r} is not wired yet. "
+        "Supported today: c (clangd-19).\n"
+    )
+    return 1
+
+
+# Bound the self-test file read so a misconfigured --repo-root cannot
+# point us at a symlinked huge file and OOM the bridge. 8 MiB is ~100x
+# the size of any real source file in this repo.
+_SELF_TEST_MAX_READ = 8 * 1024 * 1024
+
+
+def _utf16_code_units(s: str) -> int:
+    """LSP Position.character is defined in UTF-16 code units. For
+    strings containing non-BMP characters, one Python code point may
+    map to two UTF-16 code units. Encode + divide so the count is
+    correct regardless of the character set before the identifier."""
+    return len(s.encode("utf-16-le")) // 2
+
+
+def _self_test_clangd(workspace_root: Path) -> int:
+    """Clangd end-to-end smoke: SKIP when clangd-19 is missing, else
+    spawn + initialize + didOpen(src/kernel/main.c) + hover and print
+    the byte-count of the hover response.
+
+    Fail-closed: every transport / IO / protocol failure after the
+    SKIP branch becomes an explicit FAIL with exit 1. Best-effort
+    text scans that could hover a wrong location (and falsely report
+    OK) are rejected."""
+    # Import lazily so an import-time failure in clangd_server.py
+    # (unlikely, but possible if someone breaks it) does not wedge
+    # the zero-lang self-test.
+    try:
+        from servers import clangd_server
+    except Exception as exc:
+        sys.stderr.write(
+            f"[lsp-mcp] FAIL: could not import servers.clangd_server: {exc}\n"
+        )
+        return 1
+
+    if not clangd_server.is_available():
+        sys.stdout.write(
+            f"[lsp-mcp] SKIP: clangd not installed "
+            f"({clangd_server.install_hint()})\n"
+        )
+        return 0
+
+    # Resolve main.c + reject non-regular files / symlinks that
+    # escape the workspace. Closes the "hostile --repo-root" vector:
+    # a malformed repo cannot trick us into read_text()'ing an
+    # arbitrary file. 8 MiB cap bounds memory even on a real file.
+    main_c = workspace_root / "src" / "kernel" / "main.c"
+    try:
+        resolved = main_c.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        sys.stderr.write(f"[lsp-mcp] FAIL: resolving {main_c}: {exc}\n")
+        return 1
+    try:
+        workspace_resolved = workspace_root.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        sys.stderr.write(
+            f"[lsp-mcp] FAIL: resolving {workspace_root}: {exc}\n"
+        )
+        return 1
+    try:
+        resolved.relative_to(workspace_resolved)
+    except ValueError:
+        sys.stderr.write(
+            f"[lsp-mcp] FAIL: {main_c} escapes workspace "
+            f"{workspace_resolved} (symlink?); refusing to read.\n"
+        )
+        return 1
+    try:
+        st = resolved.stat()
+    except OSError as exc:
+        sys.stderr.write(f"[lsp-mcp] FAIL: stat {resolved}: {exc}\n")
+        return 1
+    import stat as _stat
+    if not _stat.S_ISREG(st.st_mode):
+        sys.stderr.write(
+            f"[lsp-mcp] FAIL: {resolved} is not a regular file "
+            f"(mode={oct(st.st_mode)})\n"
+        )
+        return 1
+    if st.st_size > _SELF_TEST_MAX_READ:
+        sys.stderr.write(
+            f"[lsp-mcp] FAIL: {resolved} size {st.st_size} exceeds "
+            f"{_SELF_TEST_MAX_READ}-byte self-test cap\n"
+        )
+        return 1
+
+    try:
+        lsp = _get_or_spawn("c", workspace_root)
+    except LspError as exc:
+        # Installed-but-spawn-failed is genuine trouble; do NOT
+        # coerce to SKIP. Surface a FAIL so the CI gate bites.
+        sys.stderr.write(f"[lsp-mcp] FAIL: clangd spawn: {exc}\n")
+        return 1
+
+    # server_caps is normalized to a dict by LspSubprocess.initialize,
+    # but guard defensively in case a future refactor regresses.
+    server_caps = lsp.server_caps
+    if not isinstance(server_caps, dict):
+        sys.stderr.write(
+            "[lsp-mcp] FAIL: clangd server_caps is not a dict "
+            f"({type(server_caps).__name__}); protocol violation.\n"
+        )
+        return 1
+    missing = [
+        cap for cap in clangd_server.required_capabilities()
+        if not server_caps.get(cap)
+    ]
+    if missing:
+        sys.stderr.write(
+            "[lsp-mcp] FAIL: clangd handshake missing required "
+            f"capabilities: {missing}. Advertised: "
+            f"{sorted(server_caps.keys())}\n"
+        )
+        return 1
+
+    try:
+        text = resolved.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        sys.stderr.write(f"[lsp-mcp] FAIL: reading {resolved}: {exc}\n")
+        return 1
+
+    try:
+        lsp.did_open(resolved.as_uri(), "c", text, version=1)
+    except LspError as exc:
+        sys.stderr.write(f"[lsp-mcp] FAIL: clangd didOpen: {exc}\n")
+        return 1
+
+    # Find `kernel_main` and fail HARD if missing. Falling through to
+    # position (0,0) would hover the file comment and still produce a
+    # non-empty byte count -- a silent false positive on a rename.
+    target_line: Optional[int] = None
+    target_char: Optional[int] = None
+    for idx, line in enumerate(text.splitlines()):
+        col = line.find("kernel_main")
+        if col >= 0 and "void" in line:
+            target_line = idx
+            # LSP Position.character is UTF-16 code units. For ASCII
+            # text this equals the byte offset, but encode-count
+            # defensively so non-BMP chars before the identifier on
+            # the same line do not mis-position the hover request.
+            target_char = _utf16_code_units(line[:col]) + 1
+            break
+    if target_line is None or target_char is None:
+        sys.stderr.write(
+            "[lsp-mcp] FAIL: could not locate `void kernel_main(` in "
+            f"{resolved}. Was the kernel entry renamed?\n"
+        )
+        return 1
+
+    try:
+        hover = lsp.request(
+            "textDocument/hover",
+            {
+                "textDocument": {"uri": resolved.as_uri()},
+                "position": {"line": target_line, "character": target_char},
+            },
+            timeout=15.0,
+        )
+    except LspError as exc:
+        sys.stderr.write(f"[lsp-mcp] FAIL: clangd hover: {exc}\n")
+        return 1
+
+    byte_len = _hover_content_bytes(hover)
+    if byte_len == 0:
+        sys.stderr.write(
+            "[lsp-mcp] FAIL: clangd hover returned empty contents. "
+            "Either the symbol was not resolved (check compile_commands "
+            "has src/kernel/main.c) or clangd is mis-configured.\n"
+        )
+        return 1
+
+    sys.stdout.write(
+        f"[lsp-mcp] OK: clangd spawned, hover on kernel_main "
+        f"returned {byte_len} bytes\n"
+    )
+    return 0
+
+
+def _hover_content_bytes(hover: Any) -> int:
+    """Return the byte-length of a hover response across LSP's three
+    result shapes. Zero means the hover returned no usable content."""
+    if hover is None:
+        return 0
+    contents = hover.get("contents") if isinstance(hover, dict) else None
+    if contents is None:
+        return 0
+    # MarkupContent (dict with kind + value)
+    if isinstance(contents, dict):
+        value = contents.get("value")
+        return len(value.encode("utf-8")) if isinstance(value, str) else 0
+    # Single MarkedString (str)
+    if isinstance(contents, str):
+        return len(contents.encode("utf-8"))
+    # List of MarkedString / MarkupContent
+    if isinstance(contents, list):
+        total = 0
+        for item in contents:
+            if isinstance(item, str):
+                total += len(item.encode("utf-8"))
+            elif isinstance(item, dict):
+                value = item.get("value")
+                if isinstance(value, str):
+                    total += len(value.encode("utf-8"))
+        return total
     return 0
 
 
@@ -279,6 +535,12 @@ def main(argv=None) -> int:
         help="build the FastMCP server, sanity-check, exit without serving stdio.",
     )
     p.add_argument(
+        "--lang", default=None,
+        help="drive --self-test against a single language (e.g. 'c' for "
+             "clangd). Without --lang, --self-test only validates the "
+             "bridge skeleton.",
+    )
+    p.add_argument(
         "--repo-root", default=None,
         help="override workspace root (default: auto-detect from CWD).",
     )
@@ -288,7 +550,13 @@ def main(argv=None) -> int:
 
     try:
         if args.self_test:
-            return _self_test(workspace_root)
+            return _self_test(workspace_root, lang=args.lang)
+        if args.lang is not None:
+            sys.stderr.write(
+                "[lsp-mcp] FATAL: --lang requires --self-test. The stdio "
+                "server dispatches by file extension, not CLI flag.\n"
+            )
+            return 2
 
         FastMCP = _try_import_mcp()
         if FastMCP is None:

@@ -3,15 +3,22 @@
 # scripts/lsp-mcp/tests/test_bridge.sh -- regression pack for the LSP-MCP
 #                                         bridge (TODO-07 in 00-infrastructure).
 #
-# Sub-test coverage in this revision (bridge skeleton only):
+# Sub-test coverage:
 #   1a -- --self-test exits 0 with zero LSPs spawned + the expected banner.
-#   1b -- import smoke: both modules import cleanly (no side effects at
-#         import time, no mcp-SDK requirement at module scope).
+#   1b -- import smoke: both modules import; clangd spawner registered.
 #   1c -- LspSubprocess lifecycle: spawn `cat`, shutdown, pgrep empty.
 #   1d -- LSP JSON-RPC round-trip against a fake stdio LSP: initialize,
 #         request/response demux under 5 concurrent calls, graceful
 #         shutdown + post-shutdown request rejected.
 #   1e -- LspError.to_envelope reserves `error` + `detail` against extras.
+#   1f -- over-length header line -> protocol error + fast reject.
+#   1g -- _find_repo_root resolves via __file__ (not CWD).
+#   2a -- --self-test --lang=c: SKIP when clangd-19 missing, or OK with
+#         a non-zero hover-byte count on src/kernel/main.c:kernel_main.
+#   2b -- _hover_content_bytes handles MarkupContent / MarkedString /
+#         list[MarkedString] response shapes uniformly.
+#   2c -- clangd_server.is_available / install_hint / required_capabilities
+#         surface is wired and stable.
 #
 # Future commits append sub-tests for tool wiring, extended tool surface,
 # file-change lifecycle, watchdog, structured logs, path sandboxing, and
@@ -55,7 +62,9 @@ sys.path.insert(0, "scripts/lsp-mcp")
 import bridge, lsp_client
 assert callable(bridge.register_spawner)
 assert bridge._LIVE_LSPS == {}
-assert bridge._LSP_SPAWNERS == {}
+# After clangd wiring: the bridge auto-registers a "c" spawner on
+# import. Further languages will appear as their server modules land.
+assert "c" in bridge._LSP_SPAWNERS, bridge._LSP_SPAWNERS
 assert hasattr(lsp_client, "LspSubprocess")
 assert hasattr(lsp_client, "LspError")
 '
@@ -205,6 +214,61 @@ assert (root / 'scripts' / 'lsp-mcp').is_dir(), f'root missing scripts/lsp-mcp/:
 "
 }
 
+# --- 2a: --self-test --lang=c ends in OK or SKIP, exit 0 ------------------
+t_selftest_lang_c() {
+    local out rc
+    out="$(python3 scripts/lsp-mcp/bridge.py --self-test --lang=c 2>&1)"
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+        printf '[lsp-mcp-tests] debug (2a): exit=%s output: %s\n' "$rc" "$out" >&2
+        return 1
+    fi
+    # Accept either the clangd OK banner with a non-zero byte count,
+    # or the SKIP banner when clangd-19 is not installed on this host.
+    echo "$out" | grep -qE "^\[lsp-mcp\] (OK: clangd spawned, hover on kernel_main returned [1-9][0-9]* bytes|SKIP: clangd not installed)"
+}
+
+# --- 2b: _hover_content_bytes handles all three LSP shapes ----------------
+t_hover_content_bytes() {
+    python3 -c "
+import sys
+sys.path.insert(0, 'scripts/lsp-mcp')
+from bridge import _hover_content_bytes
+# MarkupContent
+assert _hover_content_bytes({'contents': {'kind': 'markdown', 'value': 'hello'}}) == 5
+# Single MarkedString (str)
+assert _hover_content_bytes({'contents': 'hello world'}) == 11
+# List of MarkedString / MarkupContent
+mixed = [{'kind':'plaintext','value':'ab'}, 'cde', {'value':'fgh'}]
+assert _hover_content_bytes({'contents': mixed}) == 2 + 3 + 3
+# None + empty shapes
+assert _hover_content_bytes(None) == 0
+assert _hover_content_bytes({}) == 0
+assert _hover_content_bytes({'contents': None}) == 0
+assert _hover_content_bytes({'contents': 123}) == 0
+"
+}
+
+# --- 2c: clangd_server surface API is stable ------------------------------
+t_clangd_server_surface() {
+    python3 -c "
+import sys
+sys.path.insert(0, 'scripts/lsp-mcp')
+from servers import clangd_server
+assert clangd_server.CLANGD_BIN == 'clangd-19'
+assert clangd_server.LANG_TAG == 'c'
+assert isinstance(clangd_server.is_available(), bool)
+assert callable(clangd_server.spawn)
+# required_capabilities returns the five documented caps.
+caps = clangd_server.required_capabilities()
+for name in ('hoverProvider','definitionProvider','referencesProvider','documentSymbolProvider','workspaceSymbolProvider'):
+    assert name in caps, name
+# install_hint returns a non-empty string.
+hint = clangd_server.install_hint()
+assert isinstance(hint, str) and hint
+"
+}
+
 run "1a --self-test banner"              t_selftest
 run "1b module import smoke"             t_import
 run "1c LspSubprocess lifecycle + pgrep" t_subprocess_lifecycle
@@ -212,6 +276,9 @@ run "1d JSON-RPC round-trip + shutdown"  t_jsonrpc_roundtrip
 run "1e envelope reserves keys"          t_envelope_reserved
 run "1f over-length header rejected"     t_protocol_error_oversized_header
 run "1g workspace root via __file__"     t_workspace_root
+run "2a clangd self-test lang=c"         t_selftest_lang_c
+run "2b hover_content_bytes shapes"      t_hover_content_bytes
+run "2c clangd_server surface"           t_clangd_server_surface
 
 printf '[lsp-mcp-tests] %d/%d sub-tests PASS\n' "$pass" "$((pass + fail))"
 if [ "$fail" -gt 0 ]; then

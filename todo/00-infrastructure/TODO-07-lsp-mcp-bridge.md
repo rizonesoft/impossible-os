@@ -42,7 +42,7 @@ title: "TODO-07 -- LSP to MCP Bridge (C, NASM, shell, Python, PowerShell)"
 | ⭐  | Order | Deliverable                                                                | Depends On                        | Status |
 | --- | :---: | -------------------------------------------------------------------------- | --------------------------------- | :----: |
 | 💎  |   1   | Bridge skeleton + LSP JSON-RPC client + subprocess mgmt                    | --                                |  [x]   |
-| 💎  |   2   | clangd integration (C / H) with freestanding flags                         | §1                                |  [ ]   |
+| 💎  |   2   | clangd integration (C / H) with freestanding flags                         | §1                                |  [x]   |
 | 💎  |   3   | asm-lsp integration (NASM flavor)                                          | §1                                |  [ ]   |
 | 💎  |   4   | bash-language-server integration (shell)                                   | §1                                |  [ ]   |
 | 💎  |   5   | pyright integration (Python)                                               | §1                                |  [ ]   |
@@ -97,14 +97,24 @@ Lay down the process skeleton, the FastMCP server, and a minimal LSP JSON-RPC cl
 
 Wire clangd-19 as the first language. C is the dominant file type in the repo (~189k lines across `.c`/`.h`) and clangd is already installed, so this is the smallest real test of the bridge end-to-end.
 
-- [ ] Create `scripts/lsp-mcp/servers/clangd_server.py` with `spawn() -> LspSubprocess` that launches `clangd-19 --compile-commands-dir=<repo-root>` and passes `initializationOptions` forwarding the freestanding flags from [`.clangd`](../../.clangd).
-- [ ] Register in bridge's language map: extensions `.c`, `.h` -> `clangd_server`.
-- [ ] Handshake test: `initialize` request returns capabilities including `hoverProvider`, `definitionProvider`, `referencesProvider`, `documentSymbolProvider`, `workspaceSymbolProvider`.
-- [ ] Graceful skip: if `clangd-19` binary missing, log `[lsp-mcp] SKIP: clangd (not installed)` and continue -- bridge must still serve the other four languages.
-- [ ] Smoke: open `src/kernel/main.c`, request hover at a known identifier (e.g. `kmain`), assert response contains a non-empty `contents` field.
-- [ ] Commit: `"scripts/lsp-mcp: clangd (C/H) integration"`
+- [x] Create `scripts/lsp-mcp/servers/clangd_server.py` with `spawn() -> LspSubprocess` that launches `clangd-19 --compile-commands-dir=<repo-root>` and passes `initializationOptions` forwarding the freestanding flags from [`.clangd`](../../.clangd).
+- [x] Register in bridge's language map via `_autoregister_spawners()` at module import: language tag `c` -> `clangd_server.spawn`. (Per-extension `.c`/`.h` routing belongs to §7's `dispatch(path)` handler; this item wires the spawner.)
+- [x] Handshake test: `initialize` request returns capabilities including `hoverProvider`, `definitionProvider`, `referencesProvider`, `documentSymbolProvider`, `workspaceSymbolProvider` -- verified in bridge `_self_test_clangd()` via `clangd_server.required_capabilities()`.
+- [x] Graceful skip: if `clangd-19` binary missing, `--self-test --lang=c` prints `[lsp-mcp] SKIP: clangd not installed (apt install clangd-19 ...)` and exits 0.
+- [x] Smoke: open `src/kernel/main.c`, request hover at `kernel_main` (the actual kernel entry symbol; the TODO draft used `kmain` as a placeholder), assert hover `contents` is non-empty.
+- [x] Commit: `"scripts/lsp-mcp: clangd (C/H) integration"`
 
-**Test checkpoint:** With `clangd-19` installed, `--self-test --lang=c` prints `[lsp-mcp] OK: clangd spawned, hover on kmain returned N bytes`. Without clangd, same command prints `[lsp-mcp] SKIP: clangd not installed`. Neither case exits non-zero. No kernel code touched.
+**Test checkpoint:** With `clangd-19` installed, `--self-test --lang=c` prints `[lsp-mcp] OK: clangd spawned, hover on kernel_main returned N bytes` (observed: 400 bytes on the current tree). Without clangd, same command prints `[lsp-mcp] SKIP: clangd not installed`. Neither case exits non-zero. No kernel code touched.
+
+> **Test runner:** `bash scripts/lsp-mcp/tests/test_bridge.sh` | 10/10 sub-tests PASS (1a-1g carry forward from §1; 2a `--self-test --lang=c` OK-or-SKIP, 2b `_hover_content_bytes` across MarkupContent/MarkedString/list shapes, 2c `clangd_server` surface API stable)
+
+> **Notes:**
+>
+> - **What shipped:** `scripts/lsp-mcp/servers/clangd_server.py` (~170 LOC: `spawn()` + `is_available()` + `install_hint()` + `required_capabilities()` + `_FREESTANDING_FLAGS` mirror of `.clangd`) plus bridge.py additions (`_autoregister_spawners`, `--lang` CLI flag, `_self_test_language`, `_self_test_clangd`, `_hover_content_bytes`) plus 3 new harness sub-tests.
+> - **How it runs:** `python3 scripts/lsp-mcp/bridge.py --self-test --lang=c` completes a full round-trip in ~3s (spawn -> `initialize` (15s timeout) -> `textDocument/didOpen src/kernel/main.c` -> `textDocument/hover` on `kernel_main` -> normalize contents -> exit 0). Missing `clangd-19` collapses to SKIP + exit 0 so CI stays green on hosts without the optional dep.
+> - **Downstream effects:** unblocks §7 (`hover`/`definition`/`references`/`document_symbol`/`workspace_symbol` tool handlers can route to the cached "c" LspSubprocess). §8 can take per-LSP locks directly from the LspSubprocess we already expose. §10's CI wire-up can assume `clangd-19` is the baseline tested language.
+> - **Canonical doc:** [`.clangd`](../../.clangd) (CompileFlags.Add block is the single source of truth for freestanding flags; `clangd_server._FREESTANDING_FLAGS` is a fixed mirror with an explicit drift-note).
+> - **Scope boundary:** no MCP tools registered, no per-extension dispatch (§.c/.h routing is §7's `dispatch(path)` helper), no asm-lsp / bash-lsp / pyright / PSES (§3-§6 own their respective integrations).
 
 ---
 

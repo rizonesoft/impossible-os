@@ -666,8 +666,24 @@ class LspSubprocess:
             if initialization_options is not None:
                 params["initializationOptions"] = initialization_options
             result = self.request("initialize", params, timeout=timeout)
+            # Normalize server_caps to dict. LSP spec says result is a
+            # dict with `capabilities`, but a version-skewed server or
+            # wrapper script could return null / non-dict; downstream
+            # callers .get() on server_caps so a non-dict turns into a
+            # confusing AttributeError far from the protocol violation.
+            caps: Any = None
             if isinstance(result, dict):
-                self.server_caps = result.get("capabilities") or {}
+                caps = result.get("capabilities")
+            if caps is None:
+                caps = {}
+            elif not isinstance(caps, dict):
+                raise LspError(
+                    "lsp-protocol-error",
+                    f"initialize.capabilities is {type(caps).__name__}, "
+                    "expected dict",
+                    lang=self.lang,
+                )
+            self.server_caps = caps
             self.notify("initialized", {})
             self._initialized = True
 
