@@ -73,7 +73,7 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 | 💎  |   4   | Optional payload descriptor array                  | §1                                 |  [x]   |
 | 💎  |   5   | Module and initrd handoff contract                 | §4                                 |  [x]   |
 | 💎  |   6   | Handoff memory ownership and PMM reservation table | §4                                 |  [x]   |
-| 💎  |   7   | Version negotiation and stale-loader error path    | §2, T03 §2                         |  [/]   |
+| 💎  |   7   | Version negotiation and stale-loader error path    | §2, T03 §2                         |  [x]   |
 | 💎  |   8   | Boot protocol documentation and schema changelog   | §1, §2, §3, §4, §5, §6, §7         |  [x]   |
 | ⭐  |   9   | ABI fuzz and compatibility tests                   | §2, §7                             |  [x]   |
 | ⭐  |  10   | Cross-domain owner audit for every boot_info field | §1, §2, §3, §4, §5, §6, §7, §8, §9 |  [x]   |
@@ -85,7 +85,7 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 | 💎  |  16   | Anti-rollback raise timing hardening               | §13                                |  [x]   |
 | ⭐  |  17   | Bootloader pre-jump ABI mismatch screen            | §7                                 |  [/]   |
 | 💎  |  18   | Anti-rollback in version fault diagnostics         | §13, §17                           |  [x]   |
-| ⭐  |  19   | Stale-ABI QEMU fixture harness                     | §7                                 |  [ ]   |
+| ⭐  |  19   | Stale-ABI QEMU fixture harness                     | §7                                 |  [/]   |
 
 ---
 
