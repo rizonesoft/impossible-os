@@ -197,7 +197,7 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
     The pipeline runs:
     - Phase 1: evidence mapping + scope-gap audit + test checkpoint verification + build
     - Phase 2: MANDATORY Codex adversarial dispatch (separate from step 13; reviews the committed code in full context)
-    - Phase 3: domain code-quality gates walked explicitly + MANDATORY Codex quality dispatch (dead-code + consistency + performance) + test coverage check + self-review
+    - Phase 3: domain code-quality gates walked explicitly + MANDATORY Codex quality dispatch (consistency + performance) + test coverage check + self-review
     - Phase 4: stamp with Verified + Quality reviewed, commit review fixes, push.
 
     **Enforcement:** A PreToolUse hook in `.claude/settings.json` watches `git log HEAD` after a section-ship commit (diff contains a `[x]` flip in the Implementation Order table, commit message does NOT start with `review:`/`todo:`/`docs:`, same commit did NOT add a `**Verified:**` stamp). When those conditions hold, the hook BLOCKS every Edit / Write / non-review Skill / non-script Bash call with exit 2 and a message telling the agent to invoke this skill next. Read / Grep / Glob / script Bash stay free so the review pipeline itself can run. Opt-out for legitimate false positives (revert commits, stamp-only edits, etc.): `SKIP_REVIEW_HOOK=1` env var on the blocked tool call.

@@ -228,7 +228,7 @@ Driver and module formats are tracked separately in the [kernel module system TO
 
 ## Model Roles
 
-Use the strongest available Opus-class model for implementation and judgment-heavy work such as `implement-todo-section`, `review-todo-section`, `create-todo`, `gap-analysis-todo`, `quality-review-section`, and design-heavy roadmap shaping. Keep Codex and GPT-5.4 style external review passes for adversarial review, consistency audit, dead-code audit, and performance review.
+Use the strongest available Opus-class model for implementation and judgment-heavy work such as `implement-todo-section`, `review-todo-section`, `create-todo`, `gap-analysis-todo`, `quality-review-section`, and design-heavy roadmap shaping. Keep Codex and GPT-5.4 style external review passes for adversarial review, consistency audit, and performance review.
 
 External review does not replace self-review. The agent must always perform its own integration-level check for completeness, polish, regressions, parity gaps, and ownerless adjacent work.
 
@@ -245,7 +245,7 @@ Claude Code skills live in `.claude/skills/`. They auto-load when Claude judges 
 | `/validate-todo-file` | Validate a TODO for structural gaps |
 | `/verify-todo-section` | Audit-mode wrapper over `/review-todo-section` (downgrade-only; never promotes to `[x]`) |
 | `/quality-review-section` | Deep quality review -- standards, optimization, Win11/Linux parity (is it done RIGHT?) |
-| `/review-todo-section` | Post-implementation review -- evidence mapping + MANDATORY quality Codex (perf/consistency/dead-code) |
+| `/review-todo-section` | Post-implementation review -- evidence mapping + MANDATORY quality Codex (consistency + perf) |
 | `/implement-unit-tests` | Implement a TODO's Unit Tests section end-to-end |
 | `/audit-ssdt` | Audit SSDT registration vs TODO-05/TODO-12 master tables; insert missing prerequisite items |
 | `/diagnose-serial-log` | Full serial-log audit: crashes, bugs, races, leaks, perf, POLICY violations (POLICIES.md), ACCURACY drift, baseline REGRESSION, SCOPE_CREEP; every fix gets Codex adversarial review |
@@ -259,7 +259,6 @@ Claude Code skills live in `.claude/skills/`. They auto-load when Claude judges 
 | `/codex-test-coverage` | Codex test coverage gap analysis -- finds untested paths and missing assertions |
 | `/codex-impact-analysis` | Codex dependency impact analysis -- what breaks if you change X? |
 | `/codex-consistency-audit` | Codex cross-file consistency audit -- struct offsets, constants, API contracts |
-| `/codex-dead-code` | Codex dead code scanner -- unused functions, defines, types, declarations |
 | `/codex-perf-review` | Codex performance hot-path review -- ISR paths, lock times, O(n^2), allocations |
 | `/boot-code-quality` | Pre-flight checklist for UEFI boot code -- EBS boundary, table safety, fallbacks |
 | `/kernel-code-quality` | Auto-load checklist for kernel C -- SMP safety, memory rules, bare-metal, POST16 boot-path-only |

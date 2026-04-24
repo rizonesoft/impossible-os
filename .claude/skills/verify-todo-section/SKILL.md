@@ -43,7 +43,7 @@ description: Audit-mode wrapper over /review-todo-section. Runs the same quality
 | Commit message prefix          | `"review: <TODO> §N -- <summary>"`                         | `"verify: <TODO> §N -- verified clean"` (PASS) / `"verify: ... -- <fixes>"` (PASS-with-audit-fixes) / `"verify: ... -- downgraded <items>"` (FAIL, no stamp) |
 | Scope-gap audit (step 10 / Branch A) | Implement the gap if small; file owner if large.     | **STATUS_NOT_IMPLEMENTED policy:** standalone stubs under Branch A get implemented; significant-infrastructure stubs get downgraded with `Accepted:` XREF to a new or existing owner section (never swept under the rug). |
 | Stale POST16 / tautological tests | Remove with a note.                                    | Remove with a note in the verify commit. Behaviour identical.                                                                |
-| Deep-analysis pass             | Optional; run on user request or hot-path code.           | Same -- opt-in to `codex-consistency-audit`, `codex-dead-code`, `codex-perf-review` when the section is hot-path or the user asked for thorough.                                    |
+| Deep-analysis pass             | Optional; run on user request or hot-path code.           | Same -- opt-in to `codex-consistency-audit`, `codex-perf-review` when the section is hot-path or the user asked for thorough.                                                        |
 
 ## Stamp Format
 

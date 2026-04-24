@@ -43,7 +43,6 @@ Every live skill below has a matching row in [`../../CLAUDE.md`](../../CLAUDE.md
 | [`codex-test-coverage`](codex-test-coverage/)                | Test-coverage gap analysis                                   |
 | [`codex-impact-analysis`](codex-impact-analysis/)            | Dependency impact analysis for refactors                     |
 | [`codex-consistency-audit`](codex-consistency-audit/)        | Cross-file consistency (struct offsets, API contracts)       |
-| [`codex-dead-code`](codex-dead-code/)                        | Dead code scanner                                            |
 | [`codex-perf-review`](codex-perf-review/)                    | Performance hot-path review                                  |
 
 ### Domain code quality (auto-loads on path match)

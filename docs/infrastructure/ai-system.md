@@ -193,14 +193,13 @@ Codex is invoked from inside Claude skills via the OpenAI Codex plugin binary at
 | [`codex-test-coverage`](../../.claude/skills/codex-test-coverage/)           | Untested error paths, missing boundaries, uncovered branches.           |
 | [`codex-impact-analysis`](../../.claude/skills/codex-impact-analysis/)       | What breaks if you change function X / struct Y / constant Z?           |
 | [`codex-consistency-audit`](../../.claude/skills/codex-consistency-audit/)   | Struct offsets, constants, API contracts, registration tables.          |
-| [`codex-dead-code`](../../.claude/skills/codex-dead-code/)                   | Unreachable functions, unused defines, orphaned types, stale decls.     |
 | [`codex-perf-review`](../../.claude/skills/codex-perf-review/)               | ISR paths, spinlock hold times, alloc-in-loop, O(n^2) algorithms.       |
 
 **Workflow-consumer skills that dispatch Codex directly (7) + inheritor (1):**
 
 | Skill                                                                                        | Why it dispatches Codex                                                              |
 | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| [`implement-todo-section`](../../.claude/skills/implement-todo-section/)                    | Step 13 adversarial review, step 20 quality dispatch (dead-code + consistency + perf). |
+| [`implement-todo-section`](../../.claude/skills/implement-todo-section/)                    | Step 13 adversarial review, step 20 quality dispatch (consistency + perf). |
 | [`review-todo-section`](../../.claude/skills/review-todo-section/)                          | Phase 2 mandatory adversarial, Phase 3 mandatory quality.                            |
 | [`quality-review-section`](../../.claude/skills/quality-review-section/)                    | Deep quality review dispatch (standards / optimization angles).                      |
 | [`verify-todo-section`](../../.claude/skills/verify-todo-section/)                          | Inherits review-todo-section's pipeline under audit-mode overrides.                  |
@@ -235,7 +234,7 @@ If a proposal does NOT fit this contract (e.g. a tool that wants to commit direc
 
 ### Discoverability back from skills
 
-Every `codex-*` skill under `.claude/skills/` carries a one-line pointer back to this contract section (see each skill's "External-Reviewer Contract" note near the top). A maintainer reading `codex-dead-code/SKILL.md` can trace the "reviewer, not authority" rule back to this section in one link.
+Every `codex-*` skill under `.claude/skills/` carries a one-line pointer back to this contract section (see each skill's "External-Reviewer Contract" note near the top). A maintainer reading `codex-consistency-audit/SKILL.md` can trace the "reviewer, not authority" rule back to this section in one link.
 
 ---
 
