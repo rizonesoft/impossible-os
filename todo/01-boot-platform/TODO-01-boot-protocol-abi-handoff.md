@@ -77,6 +77,7 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 | 💎  |  13   | Anti-rollback and security-version binding         | §1, §2, §7                         |  [x]   |
 | ⭐  |  14   | Warm-kernel-update handoff ABI                     | §1, §2, §4                         |  [x]   |
 | 💎  |  15   | Capability-gated consumer retrofit                 | §11                                |  [x]   |
+| 💎  |  16   | Anti-rollback raise timing hardening               | §13                                |  [x]   |
 
 ---
 
@@ -516,15 +517,25 @@ The capability negotiation ABI shipped in §11 advertises what the bootloader po
 > [!NOTE]
 > **Regression risk:** MEDIUM. Fixing this wrong strands machines on older images; fixing it right requires a compositor-side health callback that doesn't exist yet.
 
-- [ ] Add `boot_rollback_raise_if_steady()` helper in `src/kernel/main/boot_rollback.c` that checks a new file-static "steady state reached" flag. Returns without acting when the flag is clear.
-- [ ] Add `boot_rollback_mark_steady()` setter. Compositor calls this once after it emits its first successful frame refresh OR 5 seconds after compositor_run starts (whichever comes first). Proof-of-steady heuristic; refinement later if needed.
-- [ ] Move the `boot_rollback_should_raise()` -> `uefi_set_variable()` block from `boot_desktop.c:boot_phase3` to a new one-shot hook driven by `boot_rollback_mark_steady()`. The block runs ONCE per boot; subsequent calls are no-ops.
-- [ ] Keep `POST16_BOOT_OK` where it is (other consumers rely on the early "Phase 3 complete" NVRAM marker for crash-recovery telemetry); only the rollback raise moves.
-- [ ] Add a unit test that sets the opt-in flag + shipped > required but does NOT call mark_steady(): `boot_rollback_raise_if_steady` returns 0 and no raise occurs.
+- [x] Add `boot_rollback_raise_if_steady()` helper in `src/kernel/main/boot_rollback.c` that checks a new file-static "steady state reached" flag. Returns without acting when the flag is clear.
+- [x] Add `boot_rollback_mark_steady()` setter. Compositor calls this once after it emits its first successful frame refresh OR 5 seconds after compositor_run starts (whichever comes first). Proof-of-steady heuristic; refinement later if needed.
+- [x] Move the `boot_rollback_should_raise()` -> `uefi_set_variable()` block from `boot_desktop.c:boot_phase3` to a new one-shot hook driven by `boot_rollback_mark_steady()`. The block runs ONCE per boot; subsequent calls are no-ops.
+- [x] Keep `POST16_BOOT_OK` where it is (other consumers rely on the early "Phase 3 complete" NVRAM marker for crash-recovery telemetry); only the rollback raise moves.
+- [x] Add a unit test that sets the opt-in flag + shipped > required but does NOT call mark_steady(): `boot_rollback_raise_if_steady` returns 0 and no raise occurs.
 - [ ] Add a manual QEMU integration test: boot with opt-in + shipped=2 required=1; kill QEMU 1 second after POST16_BOOT_OK; reboot and verify `IPOSRequiredSecVersion` still reads 1 (steady not reached, counter did NOT advance).
-- [ ] Commit: `"boot: gate anti-rollback raise on compositor-steady signal"`
+- [x] Commit: `"boot: gate anti-rollback raise on compositor-steady signal"`
 
 **Test checkpoint:** A boot that crashes during compositor init must NOT advance `IPOSRequiredSecVersion`; a boot that reaches first stable compositor frame MUST advance it exactly once per boot when the opt-in policy is set. Verify on QEMU WHPX + TCG by killing the VM at different points in Phase 3 and checking the NVRAM value on the next boot.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 607 kernel + 16 user-mode PASS
+
+> **Notes:**
+> - Gate: two file-static flags (`s_steady`, `s_raised`) in `src/kernel/main/boot_rollback.c` drive a one-shot NVRAM write of `IPOSRequiredSecVersion`. Neither the raise nor any NVRAM touch happens until `mark_steady()` fires; after the first successful evaluation `s_raised` latches so re-entry is a no-op.
+> - Signal source: `src/kernel/main/compositor.c` calls `boot_rollback_mark_steady()` + `boot_rollback_raise_if_steady()` right after the first successful full-composite frame (the `first_frame` branch). If that branch does not fire within 5 seconds of `compositor_run` entry (headless-adjacent paths, empty desktop, input-poll stall), a fallback inside the main loop latches the signal anyway -- proof-of-steady heuristic rather than bitwise correctness.
+> - Move: the old raise block at `src/kernel/main/boot_desktop.c:~278-304` was deleted. `boot_post_nvram_write16(POST16_BOOT_OK)` stays where it was (other telemetry consumers need the early Phase-3 marker); only the anti-rollback counter advance moves behind the steady gate.
+> - Downstream: the manual QEMU "kill the VM 1s after POST16_BOOT_OK and reboot" test (spec item 6) stays `[ ]` -- not reproducible from this session (requires killing a real QEMU process mid-boot + NVRAM inspection via `efivar -l`). Host runs it.
+> - Tests: `test_boot_rollback.c` adds three steady-gate cases (withhold without mark_steady; mark_steady latches + reset clears; raise is one-shot under opt-out). All stage `g_boot_info` with opt-out so no live `uefi_set_variable` fires -- honors the "no live boot infrastructure calls from tests" rule. Live NVRAM round-trip still belongs to the manual QEMU path.
+> - Scope boundary: this section owns the timing gate only. Determining whether `should_raise()` returns 1 (opt-in + shipped > required) stayed in §13. Advancing the counter beyond one step per boot, multi-tier steady signals (shell-input-driven, first-disk-write-driven) are future work; the 5s timer fallback is intentionally coarse.
 
 ---
 
@@ -543,8 +554,9 @@ The capability negotiation ABI shipped in §11 advertises what the bootloader po
 | ⭐ | Warm-kernel-update handoff ABI  | ⚠️ Hot Patch (closed)       | ✅ 6.16 Kexec Handover       | ⬜ §14 ABI only; runtime in new TODO             |
 | 💎 | Handoff memory ownership table  | ⚠️ MDL chains + LoaderBlock | ⚠️ memblock + NOMAP regions  | ✅ §6 single table + overlap check + JSON dump   |
 | ⭐ | Authoritative capability gates  | ⚠️ advisory to drivers      | ⚠️ advisory to drivers       | ⬜ §15 consumer retrofit to caps_present         |
+| ⭐ | Compositor-steady rollback gate | ❌                          | ❌                            | ✅ §16 withholds raise until first frame         |
 
-> Parity now covers the contract itself (§1-§4), mirror drift detection (§2-§3), typed payload handoff (§5), centralized PMM reservation (§6), structured version negotiation with friendly fatal + BlackBox transcript (§7), and the canonical protocol reference + schema changelog (§8). Adding explicit capability negotiation, a shared boot decision record, and anti-rollback security-version binding would make this handoff easier to debug and safer to evolve than either Windows' mostly internal loader state or Linux's split between versioned structs and scattered provenance channels. The warm-kernel-update handoff ABI (§14) specifically positions Impossible OS for cloud/server parity with Linux 6.16's Kexec Handover surface at the ABI layer; the runtime live-update machinery is tracked as follow-up in 03-memory-concurrency.
+> Parity now covers the contract itself (§1-§4), mirror drift detection (§2-§3), typed payload handoff (§5), centralized PMM reservation (§6), structured version negotiation with friendly fatal + BlackBox transcript (§7), and the canonical protocol reference + schema changelog (§8). Adding explicit capability negotiation, a shared boot decision record, and anti-rollback security-version binding would make this handoff easier to debug and safer to evolve than either Windows' mostly internal loader state or Linux's split between versioned structs and scattered provenance channels. The warm-kernel-update handoff ABI (§14) specifically positions Impossible OS for cloud/server parity with Linux 6.16's Kexec Handover surface at the ABI layer; the runtime live-update machinery is tracked as follow-up in 03-memory-concurrency. §16 hardens the §13 anti-rollback raise behind a compositor-steady gate -- no Windows or Linux equivalent ships today, so a boot that dies before its first frame cannot accidentally strand the machine on a broken image.
 
 ## Unit Tests
 

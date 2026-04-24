@@ -25,6 +25,7 @@
 #include "kernel/drivers/ahci.h"
 #include "main/main_internal.h"
 #include "kernel/cpuid_platform.h"
+#include "kernel/boot_info.h"
 
 /* Headless state + test seed. All reads/writes are plain volatile
  * because tests + compositor thread never race on them today:
@@ -127,9 +128,33 @@ void compositor_run(void)
     uint64_t last_clock_sec = 0;
     uint8_t last_clock_min = 0xFF;  /* force first draw */
 
+    /* Compositor-steady fallback anchor: if the normal first-frame
+     * path (inside the full-composite branch below) does not fire
+     * within 5 seconds, mark steady anyway. This keeps the
+     * anti-rollback raise working on boots where the full composite
+     * is skipped (nothing to redraw) or stalled on input polling,
+     * while still withholding the raise if the compositor actually
+     * crashes before reaching the loop's HLT idle. */
+    uint64_t compositor_start_ns = mono_ns();
+    uint8_t steady_fallback_done = 0;
+
     for (;;) {
         int32_t mx, my;
         uint8_t mb;
+
+        /* Compositor-steady fallback: 5 seconds after compositor_run
+         * started, mark steady if the normal first-frame path has not
+         * done so already. 5,000,000,000 ns = 5 s. One-shot. */
+        if (!steady_fallback_done) {
+            uint64_t elapsed = mono_ns() - compositor_start_ns;
+            if (elapsed >= 5000000000ull) {
+                steady_fallback_done = 1;
+                if (!boot_rollback_is_steady()) {
+                    boot_rollback_mark_steady();
+                    (void)boot_rollback_raise_if_steady();
+                }
+            }
+        }
 
         /* Get mouse state from the best available source:
          *   1. VirtIO tablet (QEMU) -- absolute coordinates
@@ -308,6 +333,17 @@ void compositor_run(void)
             prev_mx = mx;
             prev_my = my;
             prev_mb = mb;
+            if (first_frame) {
+                /* Compositor-steady signal: the first full-desktop
+                 * composite + fb_swap has completed. Latch the signal
+                 * and evaluate the anti-rollback raise. If the opt-in
+                 * policy is clear or shipped <= required the raise is
+                 * a no-op; the point of this gate is to withhold the
+                 * raise when the boot dies before reaching the first
+                 * frame, not to force it on every boot. */
+                boot_rollback_mark_steady();
+                (void)boot_rollback_raise_if_steady();
+            }
             first_frame = 0;
         } else if (cursor_moved) {
             /* Cursor-only move (no buttons held) --

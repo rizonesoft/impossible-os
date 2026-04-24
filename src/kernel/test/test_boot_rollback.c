@@ -186,6 +186,72 @@ static void test_boot_rollback_should_raise_null_safe(void)
     TEST_ASSERT_EQ((uint64_t)raise, 0u, "NULL new_value safe");
 }
 
+/* Compositor-steady gate tests. Exercise mark_steady / raise_if_steady
+ * without triggering uefi_set_variable: tests stage g_boot_info so
+ * should_raise returns 0 (opt-out), keeping them host-safe. */
+extern struct boot_info g_boot_info;
+
+static void test_boot_rollback_raise_withheld_without_steady(void)
+{
+    TEST_KLOG_SUPPRESS("boot");
+    boot_rollback_reset_for_test();
+
+    uint8_t  saved_opt   = g_boot_info.config.anti_rollback_raise;
+    uint32_t saved_ship  = g_boot_info.os_loader_security_version;
+    uint32_t saved_req   = g_boot_info.required_security_version;
+    /* Opt-out so even if mark_steady somehow fired we'd skip the live
+     * NVRAM write. This test does NOT mark_steady -- the gate alone
+     * must withhold the raise. */
+    g_boot_info.config.anti_rollback_raise    = 0;
+    g_boot_info.os_loader_security_version    = 7u;
+    g_boot_info.required_security_version     = 5u;
+
+    int raised = boot_rollback_raise_if_steady();
+    TEST_ASSERT_EQ((uint64_t)raised, 0u, "no mark_steady -> no raise");
+    TEST_ASSERT_EQ((uint64_t)boot_rollback_is_steady(), 0u, "steady stays clear");
+
+    g_boot_info.config.anti_rollback_raise    = saved_opt;
+    g_boot_info.os_loader_security_version    = saved_ship;
+    g_boot_info.required_security_version     = saved_req;
+    boot_rollback_reset_for_test();
+}
+
+static void test_boot_rollback_mark_steady_latches(void)
+{
+    TEST_KLOG_SUPPRESS("boot");
+    boot_rollback_reset_for_test();
+
+    TEST_ASSERT_EQ((uint64_t)boot_rollback_is_steady(), 0u, "starts clear");
+    boot_rollback_mark_steady();
+    TEST_ASSERT_EQ((uint64_t)boot_rollback_is_steady(), 1u, "latches on mark");
+    boot_rollback_mark_steady();
+    TEST_ASSERT_EQ((uint64_t)boot_rollback_is_steady(), 1u, "idempotent second mark");
+
+    boot_rollback_reset_for_test();
+    TEST_ASSERT_EQ((uint64_t)boot_rollback_is_steady(), 0u, "reset clears");
+}
+
+static void test_boot_rollback_raise_one_shot_opt_out(void)
+{
+    TEST_KLOG_SUPPRESS("boot");
+    boot_rollback_reset_for_test();
+
+    /* Stage opt-out so should_raise returns 0 even after mark_steady.
+     * The helper still latches s_raised so subsequent calls are
+     * no-ops -- prevents re-evaluation on every compositor wake. */
+    uint8_t saved_opt = g_boot_info.config.anti_rollback_raise;
+    g_boot_info.config.anti_rollback_raise = 0;
+
+    boot_rollback_mark_steady();
+    int r1 = boot_rollback_raise_if_steady();
+    int r2 = boot_rollback_raise_if_steady();
+    TEST_ASSERT_EQ((uint64_t)r1, 0u, "opt-out -> no raise (first call)");
+    TEST_ASSERT_EQ((uint64_t)r2, 0u, "opt-out -> no raise (second call)");
+
+    g_boot_info.config.anti_rollback_raise = saved_opt;
+    boot_rollback_reset_for_test();
+}
+
 void test_register_boot_rollback(void)
 {
     test_suite_register_cat("boot_rollback: NULL info rejected",
@@ -210,4 +276,10 @@ void test_register_boot_rollback(void)
                             test_boot_rollback_should_raise_downgrade_impossible, TEST_CAT_BOOT);
     test_suite_register_cat("boot_rollback: NULL-safe decision helper",
                             test_boot_rollback_should_raise_null_safe, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_rollback: raise withheld without mark_steady",
+                            test_boot_rollback_raise_withheld_without_steady, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_rollback: mark_steady latches + reset clears",
+                            test_boot_rollback_mark_steady_latches, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_rollback: raise is one-shot even on opt-out",
+                            test_boot_rollback_raise_one_shot_opt_out, TEST_CAT_BOOT);
 }

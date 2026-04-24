@@ -225,6 +225,22 @@ int boot_rollback_should_raise(const struct boot_info *info,
                                int opt_in,
                                uint32_t *new_value);
 
+/* Compositor-steady gate (section 16). mark_steady() latches the signal
+ * from the compositor (first stable frame) or a timer fallback;
+ * raise_if_steady() performs the one-shot NVRAM raise of
+ * IPOSRequiredSecVersion when the opt-in policy is set and shipped >
+ * required. The raise site used to fire in Phase 3 immediately after
+ * POST16_BOOT_OK, which could advance the rollback floor on a boot
+ * that crashed during compositor init. Gating on mark_steady ensures
+ * the machine can still fall back to the prior image if this boot
+ * never reaches user-visible steady state.
+ * Test-only reset helper is declared but not exposed to release
+ * callers; tests link against it via the test harness. */
+void boot_rollback_mark_steady(void);
+int  boot_rollback_is_steady(void);
+int  boot_rollback_raise_if_steady(void);
+void boot_rollback_reset_for_test(void);
+
 /* Warm-kernel-update handoff (section 14).
  *
  * An outgoing kernel that supports live update stages a memory region
