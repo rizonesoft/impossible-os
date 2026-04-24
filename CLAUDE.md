@@ -218,6 +218,14 @@ Canonical path is `.githooks/` (activated by `core.hooksPath`). Manual edits und
 - Linker: `ld.lld-19`
 - Crash debug: `llvm-addr2line-19 -e build/kernel.exe -f <RIP>`
 
+### Kernel Binary Format -- ELF, Permanently
+
+The kernel image is ELF and stays ELF. This is a pinned decision, not a defer-till-later. Rationale: the kernel's file format is strictly internal (the UEFI bootloader at [src/boot/uefi/bootx64.c](src/boot/uefi/bootx64.c) is the only code that parses it); nothing user-visible or Win32-ABI-visible depends on it. The common intuition that "Windows compatibility requires a PE32+ kernel" is correlation, not causation -- Linux kernel + `.ko` modules are both ELF and Windows kernel + `.sys` drivers are both PE because each ecosystem standardized on one format, not because technical alignment was required. An ELF kernel can load PE32+ drivers, EIF native binaries, and ELF Linux binaries regardless; format choices are independent at every layer.
+
+Switch condition (what would unpin this): ONLY if Impossible OS needs to run under a hypervisor or firmware that rejects ELF kernel images (niche -- QEMU KVM/TCG, WHPX, VirtualBox, and UEFI bare metal all accept ELF via our bootloader). Driver ecosystem reach, Win32 API compat, `.sys` loading, `ntoskrnl`-parity claims -- none of these require a PE32+ kernel image.
+
+Driver and module formats are tracked separately in the [kernel module system TODO](todo/04-drivers-hardware/TODO-05-kernel-module-system.md) (kernel module loader) and the [EIF full implementation TODO](todo/02-kernel-core/TODO-20-eif-full-implementation.md) (EIF native binary format). Both accept multiple formats (EIF native + PE32+ for drivers) without influencing the kernel's own format.
+
 ## Model Roles
 
 Use the strongest available Opus-class model for implementation and judgment-heavy work such as `implement-todo-section`, `review-todo-section`, `create-todo`, `gap-analysis-todo`, `quality-review-section`, and design-heavy roadmap shaping. Keep Codex and GPT-5.4 style external review passes for adversarial review, consistency audit, dead-code audit, and performance review.

@@ -8,6 +8,9 @@ title: "TODO-05 -- Kernel Module System"
 
 # TODO-05 -- Kernel Module System
 
+> [!IMPORTANT]
+> **Decision pinned (2026-04-24):** The module loader parses ELF relocatable objects (`.kmod`) **independently of the kernel's own binary format**. The kernel image is ELF permanently (see `CLAUDE.md` -> Toolchain -> Kernel Binary Format); that has no bearing on which module formats this loader accepts. PE32+ `.sys` driver support is a legitimate future extension (tracked here when needed) and does NOT require re-targeting the kernel. Do not propose "align module format with kernel format" -- the layers are independently chosen.
+
 > **Goal:** Build the loadable `.kmod` infrastructure every non-boot driver depends on: a kernel symbol table, an ELF relocatable object loader, a module build system, a driver model with PCI match tables and HAL vtables, boot-time auto-load from `C:\Impossible\System\Drivers\`, and RTL8139 converted to the first loadable module as a proof-of-concept.
 
 > [!IMPORTANT]

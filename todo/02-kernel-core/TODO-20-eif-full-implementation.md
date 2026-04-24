@@ -8,6 +8,9 @@ title: "TODO-20 -- EIF Full Implementation"
 
 # TODO-20 -- EIF Full Implementation
 
+> [!IMPORTANT]
+> **Decision pinned (2026-04-24):** EIF is the **native binary format** for Impossible OS user-mode and module code. EIF is **NOT** a replacement for the **kernel image format** -- the kernel itself stays **ELF indefinitely** (see `CLAUDE.md` → Toolchain → Kernel Binary Format). The kernel binary format is strictly internal to the UEFI bootloader handoff; nothing on the Win32 ABI surface or the EIF loader surface depends on it. Do not propose re-targeting the kernel to EIF or PE32+ under "unified format" reasoning -- the two layers are independently optimal. Distribution converters (`eif2pe`, `eif2elf`) exist for cross-OS user-app portability and are tracked in TODO-17 §13 as follow-ups.
+
 > **Goal:** Complete the Executable Impossible Format (EIF) from its current basic loader to a production-quality native binary format. The basic loader (TODO-17 §2) validates headers, copies segments, and builds import dispatch tables. This TODO fills the gaps: segment permission enforcement, ASLR, API version gating, metadata parsing, LZ4 decompression, range overlap validation, module registration, and optional import stubs. When done, EIF is the fastest, most secure native binary format on any OS.
 
 > [!IMPORTANT]
