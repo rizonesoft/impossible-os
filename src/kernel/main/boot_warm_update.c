@@ -67,18 +67,40 @@ boot_warm_update_consume(const struct boot_payload_desc *desc,
         return BOOT_WARM_UPDATE_COLD_FALLBACK;
     }
 
-    /* Rule 3: phys_start must be 4K-aligned. The reattach path
-     * requires page-granular memory to splice back into PMM. */
-    if ((desc->phys_start & 0xFFFull) != 0u) {
+    /* Rule 3: required generic payload flags must be set. The
+     * warm-update region MUST survive PMM reclaim (RESERVED bit),
+     * and a VALID descriptor is table-stakes. Without RESERVED, PMM
+     * would reclaim the preserved pages as free memory at
+     * pmm_init() -- the incoming kernel would corrupt or
+     * use-after-free the outgoing kernel's subsystem state. */
+    const uint32_t REQUIRED_PAYLOAD_FLAGS =
+        BOOT_PAYLOAD_FLAG_VALID | BOOT_PAYLOAD_FLAG_RESERVED;
+    if ((desc->flags & REQUIRED_PAYLOAD_FLAGS) != REQUIRED_PAYLOAD_FLAGS) {
         klog(LOG_WARN, "boot",
-             "boot_warm_update: phys_start 0x%lx not page-aligned; cold fallback",
-             (uint64_t)desc->phys_start);
+             "boot_warm_update: missing required payload flags (have 0x%x, need 0x%x); cold fallback",
+             (uint64_t)(desc->flags & REQUIRED_PAYLOAD_FLAGS),
+             (uint64_t)REQUIRED_PAYLOAD_FLAGS);
+        if (out_error != (enum boot_warm_update_error *)0)
+            *out_error = BOOT_WARM_UPDATE_ERR_MISSING_FLAGS;
+        return BOOT_WARM_UPDATE_COLD_FALLBACK;
+    }
+
+    /* Rule 4: phys_start AND length must be 4K-page-multiple. The
+     * reattach path feeds the range to pmm_mark_region_used(), which
+     * is page-granular; a non-page-multiple length would leave the
+     * tail page owned by PMM but described as preserved, creating
+     * silent leak/corruption at the boundary. */
+    if ((desc->phys_start & 0xFFFull) != 0u ||
+        (desc->length     & 0xFFFull) != 0u) {
+        klog(LOG_WARN, "boot",
+             "boot_warm_update: phys_start 0x%lx / length %lu not page-multiple; cold fallback",
+             (uint64_t)desc->phys_start, (uint64_t)desc->length);
         if (out_error != (enum boot_warm_update_error *)0)
             *out_error = BOOT_WARM_UPDATE_ERR_UNALIGNED;
         return BOOT_WARM_UPDATE_COLD_FALLBACK;
     }
 
-    /* Rule 4: continuation flags. Any bit in the continuation range
+    /* Rule 5: continuation flags. Any bit in the continuation range
      * (bits 8..31) that is NOT in BOOT_WARM_UPDATE_CONT_MASK_KNOWN
      * means the outgoing kernel signaled a subsystem state this
      * incoming kernel does not understand. Fail-closed per spec.

@@ -469,8 +469,8 @@ Linux 6.16 (merged June 2025) shipped Kexec Handover (KHO) + the Live Update Orc
 > - **Canonical doc:** [docs/boot/boot-protocol-changelog.md](../../docs/boot/boot-protocol-changelog.md) v9 entry (combined with section 13); [src/kernel/main/boot_warm_update.c](../../src/kernel/main/boot_warm_update.c) for the validator contract.
 > - **Scope boundary:** this section ships the ABI contract + consume validator only. It does NOT produce warm-update descriptors (outgoing-kernel work in TODO-11 §1). It does NOT reattach preserved memory into PMM (TODO-11 §6). It does NOT restore subsystem state from the continuation bits (TODO-11 §2..§4). It does NOT provide the live-update syscall (TODO-11 §7). The consume validator returns the decision; the TODO-11 consumer acts on it.
 
-> **Verified:** 2026-04-24 | commit (pending) | 6/6 items | build OK | tests 579/579 PASS + smoke 2.25s + 10 boot_warm_update suites
-> **Quality reviewed:** pending /review-todo-section
+> **Verified:** 2026-04-24 | commit `975ef6e5` + review fixes | 6/6 items | build OK | tests 585/585 PASS + smoke 2.23s + 13 boot_warm_update suites
+> **Quality reviewed:** 2026-04-24 | Codex 3x (adversarial + quality + re-adversarial) | 2H+2M fixed (required-flags gate + Phase-0 consumer wire + type_is_known extension + length-page-multiple), 0 open | scope: boot-code-quality + kernel-code-quality
 
 > [!NOTE]
 > The runtime live-update machinery (kfolio preservation, per-subsystem quiesce callbacks, scheduler drain, VFS writeback before handoff) is OUT OF SCOPE for this section. This section is the ABI contract only -- descriptors, flags, discriminators, validator hook. File the runtime work as a new TODO in 03-memory-concurrency (warm-kernel-update) with reciprocal XREF back to §14 once this ABI section commits.

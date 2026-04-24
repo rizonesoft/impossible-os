@@ -288,6 +288,7 @@ enum boot_warm_update_error {
     BOOT_WARM_UPDATE_ERR_UNKNOWN_CONT_FLAG = 3,  /* desc.flags has CONT_* bits outside MASK_KNOWN */
     BOOT_WARM_UPDATE_ERR_UNALIGNED         = 4,  /* phys_start not page-aligned (4K) */
     BOOT_WARM_UPDATE_ERR_EMPTY             = 5,  /* length == 0 */
+    BOOT_WARM_UPDATE_ERR_MISSING_FLAGS     = 6,  /* desc.flags missing required BOOT_PAYLOAD_FLAG_VALID|RESERVED */
 };
 
 /* Forward declare boot_payload_desc so the prototype resolves --

@@ -126,6 +126,7 @@ static int type_is_known(uint32_t type)
     case (uint32_t)BOOT_PAYLOAD_NETWORK_CONFIG:
     case (uint32_t)BOOT_PAYLOAD_RANDOM_SEED:
     case (uint32_t)BOOT_PAYLOAD_USB_HANDOVER:
+    case (uint32_t)BOOT_PAYLOAD_WARM_UPDATE_STATE:
         return 1;
     default:
         return 0;

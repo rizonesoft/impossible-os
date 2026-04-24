@@ -98,6 +98,42 @@ static void test_boot_wu_unknown_cont_flag(void)
     TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_WARM_UPDATE_ERR_UNKNOWN_CONT_FLAG, "err=UNKNOWN_CONT_FLAG");
 }
 
+static void test_boot_wu_length_not_page_multiple(void)
+{
+    TEST_KLOG_SUPPRESS("boot");
+    wu_make_valid();
+    s_wu_desc.length = 4097u;  /* > page but not a page-multiple */
+
+    enum boot_warm_update_error err = BOOT_WARM_UPDATE_ERR_OK;
+    enum boot_warm_update_decision d = boot_warm_update_consume(&s_wu_desc, &err);
+    TEST_ASSERT_EQ((uint64_t)d,   (uint64_t)BOOT_WARM_UPDATE_COLD_FALLBACK, "non-page-multiple len -> FALLBACK");
+    TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_WARM_UPDATE_ERR_UNALIGNED, "err=UNALIGNED");
+}
+
+static void test_boot_wu_missing_valid_flag(void)
+{
+    TEST_KLOG_SUPPRESS("boot");
+    wu_make_valid();
+    s_wu_desc.flags = BOOT_PAYLOAD_FLAG_RESERVED;  /* VALID bit NOT set */
+
+    enum boot_warm_update_error err = BOOT_WARM_UPDATE_ERR_OK;
+    enum boot_warm_update_decision d = boot_warm_update_consume(&s_wu_desc, &err);
+    TEST_ASSERT_EQ((uint64_t)d,   (uint64_t)BOOT_WARM_UPDATE_COLD_FALLBACK,    "missing VALID -> COLD_FALLBACK");
+    TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_WARM_UPDATE_ERR_MISSING_FLAGS, "err=MISSING_FLAGS");
+}
+
+static void test_boot_wu_missing_reserved_flag(void)
+{
+    TEST_KLOG_SUPPRESS("boot");
+    wu_make_valid();
+    s_wu_desc.flags = BOOT_PAYLOAD_FLAG_VALID;  /* RESERVED bit NOT set */
+
+    enum boot_warm_update_error err = BOOT_WARM_UPDATE_ERR_OK;
+    enum boot_warm_update_decision d = boot_warm_update_consume(&s_wu_desc, &err);
+    TEST_ASSERT_EQ((uint64_t)d,   (uint64_t)BOOT_WARM_UPDATE_COLD_FALLBACK,    "missing RESERVED -> COLD_FALLBACK");
+    TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_WARM_UPDATE_ERR_MISSING_FLAGS, "err=MISSING_FLAGS");
+}
+
 static void test_boot_wu_all_known_cont_accepted(void)
 {
     TEST_KLOG_SUPPRESS("boot");   /* LOG_INFO accept summary */
@@ -176,8 +212,14 @@ void test_register_boot_warm_update(void)
                             test_boot_wu_empty_length, TEST_CAT_BOOT);
     test_suite_register_cat("boot_warm_update: unaligned phys_start",
                             test_boot_wu_unaligned_phys, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_warm_update: non-page-multiple length rejected",
+                            test_boot_wu_length_not_page_multiple, TEST_CAT_BOOT);
     test_suite_register_cat("boot_warm_update: unknown cont flag rejected",
                             test_boot_wu_unknown_cont_flag, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_warm_update: missing VALID flag rejected",
+                            test_boot_wu_missing_valid_flag, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_warm_update: missing RESERVED flag rejected",
+                            test_boot_wu_missing_reserved_flag, TEST_CAT_BOOT);
     test_suite_register_cat("boot_warm_update: all known cont bits accepted",
                             test_boot_wu_all_known_cont_accepted, TEST_CAT_BOOT);
     test_suite_register_cat("boot_warm_update: zero cont bits accepted",

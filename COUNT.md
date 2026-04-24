@@ -15,10 +15,10 @@
 
 |                       |   Files |      Lines |
 | --------------------- | ------: | ---------: |
-| **C sources** (`.c`)  |     289 |     152006 |
-| **Headers** (`.h`)    |     210 |      41570 |
+| **C sources** (`.c`)  |     289 |     152103 |
+| **Headers** (`.h`)    |     210 |      41571 |
 | **Assembly** (`.asm`) |       9 |       1095 |
-| **Subtotal**          | **508** | **194671** |
+| **Subtotal**          | **508** | **194769** |
 
 ## SDK Tools
 
@@ -58,9 +58,9 @@
 
 |                                |    Files |      Lines |
 | ------------------------------ | -------: | ---------: |
-| **Core code + tooling**        |  **647** | **221518** |
+| **Core code + tooling**        |  **647** | **221616** |
 | **Supporting text + metadata** |  **395** | **170151** |
-| **All counted text files**     | **1042** | **391669** |
+| **All counted text files**     | **1042** | **391767** |
 
 > Vendored code excluded: ~13886 lines (`stb_image.h`, `stb_truetype.h`, `efi.h`)
 >
@@ -77,15 +77,15 @@
 
 |                               |         Linux |     Windows |         Impossible OS |
 | ----------------------------- | ------------: | ----------: | --------------------: |
-| **Core code + tooling lines** |   ~28,000,000 | ~50,000,000 |               221,518 |
+| **Core code + tooling lines** |   ~28,000,000 | ~50,000,000 |               221,616 |
 | **Developers**                | ~1,000 active | ~5,000 peak |                     1 |
 | **Time span**                 |      33 years |    40 years | 1 month(s), 18 day(s) |
 
-> At industry rates (10,000 LOC/developer/year -- COCOMO II), writing 221,518
+> At industry rates (10,000 LOC/developer/year -- COCOMO II), writing 221,616
 > lines of core code and tooling would take **168 developers** working for **1 month(s), 18 day(s)**.
 >
 > *The "impossible" in Impossible OS was supposed to be the name, not the development method.*
 
 ---
 
-*Last updated: 2026-04-24 02:38 · commit `67c0427c`*
+*Last updated: 2026-04-24 02:48 · commit `b8598fdb`*

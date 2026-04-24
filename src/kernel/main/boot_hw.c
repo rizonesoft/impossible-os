@@ -157,6 +157,38 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
                  (uint64_t)g_boot_info.payload_total_bytes);
     }
 
+    /* Warm-kernel-update consume: scan the typed-payload-descriptor
+     * array for BOOT_PAYLOAD_WARM_UPDATE_STATE entries. Each
+     * descriptor gets validated; ACCEPTED means the caller (runtime
+     * live-update owned by todo/03-memory-concurrency/TODO-11) may
+     * proceed with reattach. COLD_FALLBACK on any rejection -- the
+     * validator logged the reason, the caller logs the decision,
+     * boot continues with cold init for the subsystems that would
+     * otherwise have continued. Today the runtime consumer is not
+     * wired so we only exercise the validator + log; the future
+     * reattach path in the runtime TODO will act on the ACCEPTED
+     * result. */
+    {
+        uint32_t j;
+        for (j = 0u; j < g_boot_info.payload_count; j++) {
+            const struct boot_payload_desc *d = &g_boot_info.payload_descriptors[j];
+            if (d->type != (uint32_t)BOOT_PAYLOAD_WARM_UPDATE_STATE)
+                continue;
+            enum boot_warm_update_error werr = BOOT_WARM_UPDATE_ERR_OK;
+            enum boot_warm_update_decision wd =
+                boot_warm_update_consume(d, &werr);
+            if (wd == BOOT_WARM_UPDATE_ACCEPTED) {
+                klog(LOG_INFO, "boot",
+                     "boot_warm_update: descriptor[%u] ACCEPTED; reattach owned by runtime TODO",
+                     (uint64_t)j);
+            } else {
+                klog(LOG_INFO, "boot",
+                     "boot_warm_update: descriptor[%u] COLD_FALLBACK (err=%u); proceeding with cold init",
+                     (uint64_t)j, (uint64_t)werr);
+            }
+        }
+    }
+
     /* Capability negotiation: reject stale-kernel-on-newer-loader
      * (unknown required bits) and producer contradictions (required &
      * degraded, present & degraded) before any capability-gated
