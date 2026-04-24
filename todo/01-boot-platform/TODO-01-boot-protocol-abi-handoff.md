@@ -439,8 +439,9 @@ Windows 11 carries an `OsLoaderSecurityVersion` field in the Loader Parameter Bl
 > - **Canonical doc:** [docs/boot/boot-info-fields.md](../../docs/boot/boot-info-fields.md) "Anti-rollback and security-version binding" + [docs/boot/boot-protocol-changelog.md](../../docs/boot/boot-protocol-changelog.md) "v9".
 > - **Scope boundary:** this section owns the counter, refusal gate, and raise decision. It does NOT ship the release-pipeline Makefile/CI plumbing that actually ticks `IPOS_KERNEL_SECURITY_VERSION` forward (follow-up). It does NOT implement the UEFI fatal screen itself (reuses existing `boot_fatal()`). It does NOT automate the 3 NVRAM scenarios in CI (manual integration on QEMU OVMF for now).
 
-> **Verified:** 2026-04-24 | commit `11be3e13` | 7/7 items | build OK | tests 556/556 PASS + smoke 2.37s + 235 manifest fields + 10 boot_rollback suites
-> **Quality reviewed:** pending /review-todo-section
+> **Verified:** 2026-04-24 | commit `ffd7a877` | 7/7 items | build OK | tests 558/558 PASS + smoke 2.26s + 235 manifest fields + 11 boot_rollback suites
+> **Accepted:** [H] Phase-3 raise after POST16_BOOT_OK but before compositor steady-state; crash in Phase 3 tail can advance counter on unusable boot -> XREF: 01-boot-platform/TODO-01 §16 (item: "Add `boot_rollback_raise_if_steady()` helper in `src/kernel/main/boot_rollback.c`" at line 477)
+> **Quality reviewed:** 2026-04-24 | Codex 3x (adversarial + re-adversarial + quality) | 1H+1M fixed inline (fail-closed NVRAM read; split READ_FAILED flag), 1H Accepted -> §16 | scope: boot-code-quality + kernel-code-quality
 
 ---
 
