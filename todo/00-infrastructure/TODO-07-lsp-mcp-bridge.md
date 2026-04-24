@@ -33,26 +33,35 @@ title: "TODO-07 -- LSP to MCP Bridge (C, NASM, shell, Python, PowerShell)"
 - `.claude/mcp.json` lists `lsp-bridge` alongside `todo-graph`; Claude Code auto-registers it. `python3 scripts/lsp-mcp/bridge.py --self-test` exits 0 with a manifest of which LSPs were detected and which tools are live.
 - Setup-deps, manifest, Makefile target, and `docs/infrastructure/development-tooling.md` subsection updated in the same PR as the code; `scripts/test-tooling.sh` includes surface checks (harness exists, `--help` exits 0, `--self-test` exits 0, manifests well-formed).
 - Boundary compliance verified: repo-tracked manifest lists only read-only tools; no write-capable LSP methods (`textDocument/rename`, `textDocument/codeAction` with execute, `workspace/applyEdit`) are reachable from MCP.
+- Extended tool surface (§11): completion, signature help, type-definition, implementation, declaration, call hierarchy (incoming/outgoing), read-only code_action -- matches every production LSP-MCP bridge without breaching the read-only boundary.
+- Robustness: file-change lifecycle forwarding (§12) keeps LSP views fresh across parallel editing; per-LSP watchdog + auto-restart (§13) transparently recovers from child crashes with exponential backoff.
+- Observability + security + performance: JSON-lines logs with correlation IDs threaded MCP->LSP->MCP (§14); workspace-bounded path sandboxing rejects escape attempts (§15); opt-in `--warm-start` bounds first-call latency (§16).
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                               | Depends On                        | Status |
-| --- | :---: | --------------------------------------------------------- | --------------------------------- | :----: |
-| 💎  |   1   | Bridge skeleton + LSP JSON-RPC client + subprocess mgmt   | --                                |  [ ]   |
-| 💎  |   2   | clangd integration (C / H) with freestanding flags        | §1                                |  [ ]   |
-| 💎  |   3   | asm-lsp integration (NASM flavor)                         | §1                                |  [ ]   |
-| 💎  |   4   | bash-language-server integration (shell)                  | §1                                |  [ ]   |
-| 💎  |   5   | pyright integration (Python)                              | §1                                |  [ ]   |
-| 💎  |   6   | PowerShellEditorServices integration (ps1)                | §1                                |  [ ]   |
-| ⭐  |   7   | Six MCP tools (hover / def / refs / diag / sym x2)        | §1, §2-§6                         |  [ ]   |
-| ⭐  |   8   | Extension routing + per-LSP lock + concurrent-call safety | §1, §7                            |  [ ]   |
-| 💎  |   9   | Setup deps, manifest, Makefile target, docs, boundary     | §1, §2-§6, §7, §8, T01 §1, T02 §5 |  [ ]   |
-| ⭐  |  10   | Unit tests, --self-test harness, test-tooling surface     | §1-§9                             |  [ ]   |
-| 💎  |  11   | Scale Roadmap (DEFERRED -- trigger-gated, no code today)  | --                                |  [ ]   |
+| ⭐  | Order | Deliverable                                                                | Depends On                        | Status |
+| --- | :---: | -------------------------------------------------------------------------- | --------------------------------- | :----: |
+| 💎  |   1   | Bridge skeleton + LSP JSON-RPC client + subprocess mgmt                    | --                                |  [x]   |
+| 💎  |   2   | clangd integration (C / H) with freestanding flags                         | §1                                |  [ ]   |
+| 💎  |   3   | asm-lsp integration (NASM flavor)                                          | §1                                |  [ ]   |
+| 💎  |   4   | bash-language-server integration (shell)                                   | §1                                |  [ ]   |
+| 💎  |   5   | pyright integration (Python)                                               | §1                                |  [ ]   |
+| 💎  |   6   | PowerShellEditorServices integration (ps1)                                 | §1                                |  [ ]   |
+| ⭐  |   7   | Six MCP tools (hover / def / refs / diag / sym x2)                         | §1, §2-§6                         |  [ ]   |
+| ⭐  |   8   | Extension routing + per-LSP lock + concurrent-call safety                  | §1, §7                            |  [ ]   |
+| 💎  |   9   | Setup deps, manifest, Makefile target, docs, boundary                      | §1, §2-§6, §7, §8, T01 §1, T02 §5 |  [ ]   |
+| ⭐  |  10   | Unit tests, --self-test harness, test-tooling surface                      | §1-§9                             |  [ ]   |
+| 💎  |  11   | Extended LSP tools (completion, signature/nav/call-hierarchy, code_action) | §1, §7                            |  [ ]   |
+| 💎  |  12   | File-change lifecycle (didChange / didSave / didClose forwarding)          | §1, §7                            |  [ ]   |
+| ⭐  |  13   | LSP subprocess health monitoring + auto-restart (exp backoff)              | §1                                |  [ ]   |
+| 💎  |  14   | Structured JSON logging + request correlation IDs                          | §1                                |  [ ]   |
+| ⭐  |  15   | Path sandboxing + workspace boundary enforcement                           | §1, §7                            |  [ ]   |
+| ⭐  |  16   | Warm-index preloading + cold-start budget                                  | §1, §2, §3, §4, §5, §6            |  [ ]   |
+| 💎  |  17   | Scale Roadmap (DEFERRED -- trigger-gated, no code today)                   | --                                |  [ ]   |
 
 > 💎 = parity -- matches the existing LSP stacks Win11/Linux devs already use, wrapped in an MCP transport.
 > ⭐ = exclusive -- neither Win11 nor Linux ships a repo-tracked cross-language LSP-MCP bridge with read-only boundary compliance baked in.
-> §11 is a **deferred planning section**, not active work. It intentionally has no `Commit:` item because nothing ships until a scale trigger fires; see the section for trigger conditions.
+> §17 is a **deferred planning section**, not active work. It intentionally has no `Commit:` item because nothing ships until a scale trigger fires; see the section for trigger conditions.
 
 ---
 
@@ -60,14 +69,26 @@ title: "TODO-07 -- LSP to MCP Bridge (C, NASM, shell, Python, PowerShell)"
 
 Lay down the process skeleton, the FastMCP server, and a minimal LSP JSON-RPC client that speaks LSP over stdio to a spawned subprocess. This is the foundation every language integration builds on.
 
-- [ ] Create `scripts/lsp-mcp/bridge.py` with FastMCP server, `--self-test` flag, and module-level `_CALL_LOCK` (pattern from [`mcp_server.py`](../../scripts/todo-graph/mcp_server.py)).
-- [ ] Create `scripts/lsp-mcp/lsp_client.py` implementing minimal LSP JSON-RPC 2.0: `initialize`, `initialized`, `textDocument/didOpen`, `shutdown`, `exit`, plus request/response correlation via `id` field and header framing (`Content-Length:` + double CRLF).
-- [ ] Implement `LspSubprocess` class: spawn via `subprocess.Popen` with stdin/stdout pipes, reader thread draining stdout, timeout-based shutdown, cleanup on bridge exit via `atexit`.
-- [ ] On-demand lifecycle: LSPs are NOT spawned at bridge startup; first request for a given language spawns that LSP and caches the handle. Prevents idle overhead when an agent never touches a language.
-- [ ] JSON error envelope on any LSP failure (timeout, subprocess crash, unsupported method), matching `mcp_server.py`'s pattern -- never let an LSP error become an MCP exception.
-- [ ] Commit: `"scripts/lsp-mcp: bridge skeleton + LSP JSON-RPC client"`
+- [x] Create `scripts/lsp-mcp/bridge.py` with FastMCP server, `--self-test` flag, and module-level `_CALL_LOCK` (pattern from [`mcp_server.py`](../../scripts/todo-graph/mcp_server.py)).
+- [x] Create `scripts/lsp-mcp/lsp_client.py` implementing minimal LSP JSON-RPC 2.0: `initialize`, `initialized`, `textDocument/didOpen`, `shutdown`, `exit`, plus request/response correlation via `id` field and header framing (`Content-Length:` + double CRLF).
+- [x] Implement `LspSubprocess` class: spawn via `subprocess.Popen` with stdin/stdout pipes, reader thread draining stdout, separate stderr drain thread (prevents LSP stderr log pipe from filling and deadlocking a running child), timeout-based shutdown with SIGTERM->SIGKILL escalation, cleanup on bridge exit via `atexit` + `weakref.WeakSet`.
+- [x] On-demand lifecycle: LSPs are NOT spawned at bridge startup; first request for a given language spawns that LSP and caches the handle. Prevents idle overhead when an agent never touches a language. Registry seeded via `register_spawner()` hook; empty in this skeleton (per-language recipes land with §2-§6).
+- [x] JSON error envelope on any LSP failure (timeout, subprocess crash, unsupported method), matching `mcp_server.py`'s pattern -- never let an LSP error become an MCP exception. Envelope reserves `error` + `detail` keys against `extra`-dict poisoning.
+- [x] Commit: `"scripts/lsp-mcp: bridge skeleton + LSP JSON-RPC client"`
 
 **Test checkpoint:** `python3 scripts/lsp-mcp/bridge.py --self-test` exits 0 and prints `[lsp-mcp] OK: 0 LSPs spawned, bridge ready`. FastMCP tool registry shows 0 tools (tools come in §7). Manual import: `from scripts.lsp_mcp.lsp_client import LspSubprocess; c = LspSubprocess(['cat'], lang='test'); c.shutdown()` completes without leaking the subprocess (`pgrep cat` empty after). No `boot` / kernel / POST16 involvement -- this is host-side Python tooling.
+
+> **Test runner:** `bash scripts/lsp-mcp/tests/test_bridge.sh` | 5/5 sub-tests PASS (1a self-test banner, 1b import smoke, 1c LspSubprocess lifecycle + pgrep, 1d JSON-RPC round-trip + concurrent demux + graceful shutdown, 1e envelope reserves error/detail against extra poisoning)
+
+> **Notes:**
+>
+> - **What shipped:** `scripts/lsp-mcp/bridge.py` (~301 LOC FastMCP stdio skeleton with `_CALL_LOCK`, on-demand `register_spawner()` registry, and `--self-test` banner) + `scripts/lsp-mcp/lsp_client.py` (~650 LOC `LspSubprocess` + `LspError` + JSON-RPC 2.0 framing with reader + stderr-drain threads) + `scripts/lsp-mcp/tests/test_bridge.sh` (5 sub-tests covering self-test, imports, lifecycle, round-trip, envelope contract).
+> - **How it runs:** stdlib-only; `python3 scripts/lsp-mcp/bridge.py --self-test` works whether or not the `mcp` SDK is installed (SKIP path for CI hosts without the SDK). Zero MCP tools registered today -- per-language integrations register spawn recipes via `register_spawner(lang, fn)`; the six read-only MCP tools land in §7.
+> - **Downstream effects:** unblocks §2-§6 (per-language LSP integrations reuse `LspSubprocess` + `register_spawner` as-is), §7 (MCP tool handlers close over the module-level `_CALL_LOCK` + `_get_or_spawn` + `_call_lsp` helpers), §8 (per-LSP serialization already present as `_io_lock` + `_pending_lock`), §10 (harness + sub-test numbering set).
+> - **Canonical doc:** [`scripts/todo-graph/mcp_server.py`](../../scripts/todo-graph/mcp_server.py) (FastMCP + `_CALL_LOCK` + `--self-test` precedent we mirror).
+> - **Scope boundary:** no MCP tools, no language integrations, no `.claude/mcp.json` manifest, no docs subsection, no `make` target. Those belong to §2-§10; this section is the foundation they build on.
+
+---
 
 ## 2. clangd Integration (C / H)
 
@@ -82,6 +103,8 @@ Wire clangd-19 as the first language. C is the dominant file type in the repo (~
 
 **Test checkpoint:** With `clangd-19` installed, `--self-test --lang=c` prints `[lsp-mcp] OK: clangd spawned, hover on kmain returned N bytes`. Without clangd, same command prints `[lsp-mcp] SKIP: clangd not installed`. Neither case exits non-zero. No kernel code touched.
 
+---
+
 ## 3. asm-lsp Integration (NASM)
 
 Wire asm-lsp (Rust, `bergercookie/asm-lsp`) for the ~1.1k lines of NASM in `src/` (`entry.asm`, ISR stubs, SIMD helpers, AP trampoline). Distinct from §2 because NASM flavor must be pinned via `.asm-lsp.toml` -- asm-lsp defaults to GAS.
@@ -93,6 +116,8 @@ Wire asm-lsp (Rust, `bergercookie/asm-lsp`) for the ~1.1k lines of NASM in `src/
 - [ ] Commit: `"scripts/lsp-mcp: asm-lsp (NASM) integration"`
 
 **Test checkpoint:** With `asm-lsp` installed, `--self-test --lang=asm` prints `[lsp-mcp] OK: asm-lsp spawned, hover on mov returned instruction reference`. Without asm-lsp, SKIP with install hint. `.asm-lsp.toml` exists at repo root and declares `assembler = "nasm"`.
+
+---
 
 ## 4. bash-language-server Integration (.sh)
 
@@ -107,6 +132,8 @@ Wire `bash-language-server` (Node) for the ~11.4k lines of shell under `scripts/
 
 **Test checkpoint:** With `bash-language-server` installed, `--self-test --lang=sh` prints `[lsp-mcp] OK: bash-language-server spawned, diagnostics on build.sh returned N items`. Without it, SKIP.
 
+---
+
 ## 5. pyright Integration (Python)
 
 Wire `pyright-langserver` (Microsoft, TS) for the ~6.4k lines of Python under `scripts/todo-graph/`, `tools/`, and test harnesses. Pyright is preferred over `ruff-lsp` because type inference on our telemetry-heavy tooling catches real contract bugs; ruff still runs via pre-commit lint.
@@ -119,6 +146,8 @@ Wire `pyright-langserver` (Microsoft, TS) for the ~6.4k lines of Python under `s
 - [ ] Commit: `"scripts/lsp-mcp: pyright (Python) integration"`
 
 **Test checkpoint:** With pyright installed, `--self-test --lang=py` prints `[lsp-mcp] OK: pyright spawned, workspace-symbol main returned N results`. Without it, SKIP.
+
+---
 
 ## 6. PowerShellEditorServices Integration (.ps1)
 
@@ -135,6 +164,8 @@ Wire PowerShellEditorServices (Microsoft OSS) for the ~1.1k lines of PowerShell 
 - [ ] Commit: `"scripts/lsp-mcp: PowerShellEditorServices (.ps1) integration"`
 
 **Test checkpoint:** With pwsh 7.x + PSES installed, `--self-test --lang=ps1` prints `[lsp-mcp] OK: PSES spawned, document-symbol returned N results`. Without pwsh, SKIP. Without PSES module but pwsh present, SKIP with install hint.
+
+---
 
 ## 7. Six MCP Tools (Hover, Definition, References, Diagnostics, Workspace/Document Symbol)
 
@@ -163,6 +194,8 @@ Expose six typed MCP tools. Each tool dispatches to the right LSP based on file 
 
 **Test checkpoint:** `python3 scripts/lsp-mcp/bridge.py --self-test --tools` prints 6 tool schemas with required params (hover/definition/references: `path`, `line`, `character`; diagnostics/document_symbol: `path`; workspace_symbol: `query`). Calling `hover` on a C file returns a normalized markdown string. Calling `workspace_symbol("kmain")` with clangd running returns at least one result pointing at `src/kernel/main.c`. No LSP `rename` / `applyEdit` / `codeAction/execute` methods are reachable from any MCP tool.
 
+---
+
 ## 8. Extension Routing, Per-LSP Lock, Concurrent-Call Safety
 
 FastMCP dispatches concurrent tool calls. Even with the bridge-level `_CALL_LOCK`, per-LSP state (pending request IDs, cached diagnostics) needs finer serialization -- and the LSP-initialize handshake must NOT race against first-request-for-a-language. Codex flagged exactly this pattern for `todo-graph` in [TODO-06 §8](./TODO-06-todo-metadata-layer.md#8-mcp-server-ai-agent-transport-over-the-cache) (pass 17, H finding); this section applies the same fix proactively.
@@ -175,6 +208,8 @@ FastMCP dispatches concurrent tool calls. Even with the bridge-level `_CALL_LOCK
 - [ ] Commit: `"scripts/lsp-mcp: extension routing + per-LSP serialization"`
 
 **Test checkpoint:** Concurrent-call stress: 10 parallel `hover` calls across `.c` and `.sh` files complete without mixed-up responses (each response's content matches its request's position). `dispatch("foo.rs")` returns `JsonErrorEnvelope("unsupported extension")`. `--self-test --stress` runs 100 concurrent calls and exits 0.
+
+---
 
 ## 9. Setup Deps, Manifest, Makefile Target, Docs, Boundary Compliance
 
@@ -189,6 +224,8 @@ Make the bridge discoverable, installable, and documented. Without this, §1-§8
 - [ ] Commit: `"scripts/lsp-mcp: setup, manifest, docs, boundary compliance"`
 
 **Test checkpoint:** `bash scripts/setup-deps.sh --verify` reports all five LSP dependencies (or "optional -- not installed" for each missing). `.claude/mcp.json` contains two entries (`todo-graph`, `lsp-bridge`). `make lsp-mcp-selftest` exits 0 on a host with zero LSPs installed (should SKIP all five and still succeed). `bash scripts/lsp-mcp/tests/test_boundary.sh` exits 0 and prints `[boundary] OK: 0 write-capable LSP methods reachable from MCP surface`. `docs/infrastructure/development-tooling.md` has the new subsection after clangd + Bear.
+
+---
 
 ## 10. Unit Tests, --self-test Harness, test-tooling Surface
 
@@ -208,14 +245,112 @@ The bridge is host-side Python tooling, so tests live outside the kernel `test_r
 
 **Test checkpoint:** `bash scripts/lsp-mcp/tests/test_bridge.sh` exits 0, prints `[lsp-mcp-tests] 7/7 sub-tests PASS` on a host with clangd-19 installed. `bash scripts/test-tooling.sh` count increases by the new surface checks. CI workflow step "Run LSP-MCP bridge tests" appears in GitHub Actions output and passes on the build runner.
 
-## 11. Scale Roadmap (Deferred)
+---
+
+## 11. Extended LSP Tools (Completion, Signature Help, Type-Definition, Implementation, Declaration, Call Hierarchy, Code Action)
+
+The six tools in §7 cover the "navigate + read diagnostics" scope. Agents doing deeper code work (completion suggestions while synthesizing a patch, walking call graphs during refactor planning, inspecting signature help during API discovery) need the next tier. All eight additions remain read-only; `code_action` lists suggestions without executing. Matches the surface every production bridge (isaacphi/mcp-language-server, mickeyinfoshan/lsp-mcp, rockerBOO/mcp-lsp-bridge) ships.
+
+- [ ] Register `completion(path: str, line: int, character: int, trigger_character: Optional[str] = None)` -- LSP `textDocument/completion`. Truncate to top 50 items per call to keep payload bounded; preserve `kind`, `label`, `detail`, `documentation`.
+- [ ] Register `signature_help(path: str, line: int, character: int)` -- LSP `textDocument/signatureHelp`. Returns active signature + active parameter index.
+- [ ] Register `type_definition(path: str, line: int, character: int)` -- LSP `textDocument/typeDefinition`. Distinct from `definition` for `typedef` / `using` / C++ `class Foo = ...` redirects.
+- [ ] Register `implementation(path: str, line: int, character: int)` -- LSP `textDocument/implementation`. For interfaces, abstract methods, vtables.
+- [ ] Register `declaration(path: str, line: int, character: int)` -- LSP `textDocument/declaration`. Useful when `definition` returns the `.c` body but the agent wants the `.h` prototype.
+- [ ] Register `call_hierarchy_incoming(path: str, line: int, character: int)` -- LSP `callHierarchy/prepare` + `callHierarchy/incomingCalls`. Returns callers of the target symbol.
+- [ ] Register `call_hierarchy_outgoing(path: str, line: int, character: int)` -- LSP `callHierarchy/prepare` + `callHierarchy/outgoingCalls`. Returns what the target calls.
+- [ ] Register `code_action(path: str, range: dict, diagnostic: Optional[dict] = None)` -- LSP `textDocument/codeAction`. **Read-only:** returns action list; NEVER executes. Enforced by §9 boundary audit: `workspace/applyEdit` dispatch stays unreachable from any MCP handler.
+- [ ] Commit: `"scripts/lsp-mcp: extended LSP tools (completion, signature help, navigation, call hierarchy, code actions)"`
+
+**Test checkpoint:** `--self-test --tools` shows 14 total registered tools (6 core + 8 extended). `completion` on a C file mid-call (`kmain(` position) returns at least one suggestion (e.g. `kmalloc`, `klog`). `call_hierarchy_incoming` on `pmm_alloc_contiguous` returns 3+ caller sites. `code_action` on a file with a known diagnostic returns the available quick-fix list but does NOT mutate the file on disk (verify with `md5sum` before and after). Host-side Python; no kernel / POST16 involvement.
+
+---
+
+## 12. File-Change Lifecycle (`didOpen`, `didChange`, `didSave`, `didClose` Forwarding)
+
+§1 wires `textDocument/didOpen` so each MCP request reads the file fresh into the LSP's view. That works for read-only snapshots but misses edits: if an agent (or a human in a parallel VS Code session) saves a file while the bridge is running, the LSP's in-memory view goes stale and subsequent hover/diagnostics answers drift silently. Forward the full LSP file-change lifecycle so the LSP's view matches the on-disk file on every request.
+
+- [ ] Extend `LspSubprocess` with a tracked-URI set: on every tool call, check if the file's mtime changed since the last `didOpen`/`didChange`. If yes, send `textDocument/didChange` (full-file replace) before the actual request.
+- [ ] On `workspace_symbol` (cross-file query), drain any pending `publishDiagnostics` notifications so cached per-URI diagnostics stay fresh.
+- [ ] On bridge shutdown (`atexit`), send `textDocument/didClose` for every tracked URI so LSPs have a chance to release resources cleanly.
+- [ ] Handle `textDocument/didSave` forwarding: some LSPs (pyright, clangd) only re-lint on save; the bridge sends a synthetic didSave when mtime indicates the file was rewritten externally.
+- [ ] Commit: `"scripts/lsp-mcp: file-change lifecycle forwarding (didChange/didSave/didClose)"`
+
+**Test checkpoint:** Open `src/kernel/main.c`, call `hover` at a known identifier (returns `kmain` doc). In parallel, `sed -i` an edit that changes the identifier's type. Call `hover` again; bridge detects mtime change, forwards `didChange`, returns the new resolved type. After bridge shutdown, `pgrep -f 'clangd|pyright'` empty (no leaked LSPs).
+
+---
+
+## 13. LSP Subprocess Health Monitoring + Auto-Restart
+
+LSPs crash. Clangd OOMs on pathological translation units. Pyright hangs on deeply nested generics. PSES has known issues with certain `.psd1` constructs. A production bridge detects the crash, restarts the LSP, and masks the hiccup from the MCP caller within a sane retry budget. Matches `systemd Type=notify` auto-restart discipline collapsed into a single process.
+
+> [!TIP]
+> Neither isaacphi/mcp-language-server nor jonrad/lsp-mcp auto-restart crashed LSPs today -- they surface the error and die. Impossible OS is first to ship in-process watchdog + respawn.
+
+- [ ] Add a reader-thread watchdog per `LspSubprocess`: if the child exits unexpectedly (not a clean shutdown path), set `.healthy = False` and mark pending requests with a `LspCrashed` JSON error envelope.
+- [ ] On the next request for a crashed language: respawn the LSP under the init-lock, replay `initialize`/`initialized`, re-open every tracked URI. Return the new request's result to the caller (first request after crash succeeds transparently).
+- [ ] Exponential backoff on restart: 1s, 2s, 4s, 8s (cap 30s). After 4 consecutive crashes within 60s, the LSP enters `FAILED` state; further requests return `{"error": "lsp-persistently-crashing", "hint": "restart the bridge"}` until the bridge itself restarts.
+- [ ] Add a `_health` MCP tool (or `--health` CLI flag) that returns per-LSP status: `spawned | healthy | backoff | failed` + last crash reason + restart count.
+- [ ] Emit a structured log entry on every crash + restart (JSON-lines to stderr; uses the §14 correlation-ID thread so the crash is linked to the request that triggered it).
+- [ ] Commit: `"scripts/lsp-mcp: LSP crash detection + auto-restart with exponential backoff"`
+
+**Test checkpoint:** `kill -9 <clangd-pid>` while the bridge is running; the next `hover` call returns a normalized result (after a ~1-2s respawn pause), not an error. `_health` reports `healthy` + `restart_count=1`. After 4 rapid kills within 60s, `_health` reports `failed`; further calls return the `lsp-persistently-crashing` envelope. No zombie processes remain in `pgrep`.
+
+---
+
+## 14. Structured JSON Logging + Request Correlation IDs
+
+The 2026 MCP observability baseline is one-line JSON per log entry, a correlation ID per inbound tool call, and that ID threaded through MCP -> `_CALL_LOCK` -> LSP wire send -> LSP wire receive -> MCP response. Lets operators trace a single request end-to-end without interleaving-log confusion. Follows OpenTelemetry Semantic Conventions for GenAI (`rpc.system: "jsonrpc"`, `rpc.method: "<lsp-method>"`).
+
+- [ ] Emit every log line as single-line JSON to stderr: `{"ts": <iso-utc>, "level": "INFO|WARN|ERROR", "corr_id": "<uuid4>", "lang": "c|asm|sh|py|ps1", "method": "hover|...", "latency_ms": <int>, "msg": "..."}`.
+- [ ] On every inbound MCP tool call: generate UUID4 `corr_id`, thread through lock acquire, LSP request ID, LSP response handling, MCP response emit. Log phase-start + phase-end with `latency_ms` computed on exit.
+- [ ] `LSP_MCP_LOG_LEVEL` env var (DEBUG | INFO | WARN | ERROR); default INFO. DEBUG includes the raw LSP wire-format request/response JSON bodies (size-capped to 4 KiB to prevent log flooding).
+- [ ] `LSP_MCP_LOG_FILE=<path>` env var: redirects JSON-lines to file. No auto-rotation (delegate to `logrotate`).
+- [ ] Commit: `"scripts/lsp-mcp: structured JSON logging with correlation IDs"`
+
+**Test checkpoint:** Issue 3 concurrent tool calls. Stderr logs show 3 distinct `corr_id` threads, each with paired `"start"` + `"end"` entries and non-zero `latency_ms`. `LSP_MCP_LOG_LEVEL=DEBUG` run shows LSP wire-format payloads. `LSP_MCP_LOG_FILE=/tmp/out.jsonl` run writes valid JSON-lines (`jq -c '.' /tmp/out.jsonl | wc -l` matches `calls * phases`).
+
+---
+
+## 15. Path Sandboxing + Workspace Boundary Enforcement
+
+Every MCP tool takes a `path` argument. Without bounds-checking, an attacker (or a prompt-injected agent) could pass `path="/etc/passwd"` and the LSP would happily open it. Enforce that every path resolves within the repo's root (or a configured workspace root) BEFORE forwarding to the LSP. Closes a supply-chain / prompt-injection attack class that 3rd-party bridges don't defend against.
+
+> [!TIP]
+> Every surveyed 3rd-party LSP-MCP bridge (isaacphi, jonrad, mickeyinfoshan, Tritlo, rockerBOO) forwards `path` to the LSP without bounds-checking. Impossible OS defends by default.
+
+- [ ] `resolve_in_workspace(path: str) -> Path` helper: resolves `path` against `WORKSPACE_ROOT` (auto-detect: walk up from CWD until `.git`; fallback to `LSP_MCP_WORKSPACE_ROOT` env var). Rejects symlinks that resolve outside the root, rejects absolute paths outside the root with `{"error": "path-outside-workspace", "path": <input>, "workspace": <root>}`.
+- [ ] Wire every MCP tool handler through `resolve_in_workspace` before constructing the LSP request.
+- [ ] Reject `file://` URIs whose resolved path escapes the workspace in the same way.
+- [ ] Document the policy in the §9 docs subsection ("Path Security"): workspace-bounded by default; `LSP_MCP_WORKSPACE_ROOT` override for non-git workspaces.
+- [ ] Commit: `"scripts/lsp-mcp: workspace-bound path sandboxing"`
+
+**Test checkpoint:** `hover(path="/etc/passwd", line=0, character=0)` returns `{"error": "path-outside-workspace"}`. `hover(path="../../etc/passwd", ...)` same. `hover(path="src/kernel/main.c", ...)` succeeds. Symlink test: `ln -s /etc/passwd src/evil.c && hover(path="src/evil.c", ...)` -- rejected because symlink resolution escapes the root.
+
+---
+
+## 16. Warm-Index Preloading + Cold-Start Budget
+
+On a fresh bridge spawn, the first `workspace_symbol` call waits for clangd to index 178 translation units (~30s cold). That latency is invisible to the MCP caller; the tool call just appears to hang. Add an opt-in `--warm-start` flag that spawns the LSPs eagerly and triggers background workspace indexing, so first-real-call latency is bounded.
+
+- [ ] `--warm-start` bridge flag: at startup, eagerly spawn all 5 LSPs in parallel under a thread pool, call `initialize` on each, and kick off workspace-symbol indexing. LSPs that support background indexing (clangd, pyright) start working immediately; stateless LSPs (asm-lsp) complete instantly.
+- [ ] `--warm-start=c,py` subset form: warm only the named languages (comma-separated extension list or language name).
+- [ ] Cold-start budget: log cumulative spawn + handshake time. If > 60s at startup, emit WARN and suggest `--warm-start=clangd,pyright` subset.
+- [ ] Progress reporting: during warm-start, log `{"phase": "warming", "lang": "c", "progress_pct": <int>}` every 2s while each LSP's `$/progress` notifications report indexing status.
+- [ ] Default behavior (no flag) remains on-demand spawn: no regression for users who touch only one language.
+- [ ] Commit: `"scripts/lsp-mcp: --warm-start for bounded first-call latency"`
+
+**Test checkpoint:** `python3 scripts/lsp-mcp/bridge.py --warm-start --self-test` exits 0 within 45s on a host with clangd + pyright + bash-language-server installed; logs per-language spawn times. First `workspace_symbol("kmain")` call afterwards completes in < 500ms (warm), versus > 20s (cold baseline same repo).
+
+---
+
+## 17. Scale Roadmap (Deferred)
 
 > [!NOTE]
 > **This section is not active work.** It captures the partitioning strategy the bridge will need when the repo grows past the thresholds where single-clangd-per-workspace stops working. Stated explicitly so the architectural shape is not rediscovered under pressure at 2 AM in 2029. No code ships until a trigger below fires.
 
 Current repo is ~215k core LOC (~189k kernel + ~24k tooling per [COUNT.md](../../COUNT.md)). Single-workspace clangd is fine here and will remain fine for ~10x growth. This section plans for the regime where it stops being fine.
 
-**Deferral triggers -- revisit §11 when ANY of these fire:**
+**Deferral triggers -- revisit §17 when ANY of these fire:**
 
 - Total core LOC (kernel + userland + tooling, per `COUNT.md` "Core code + tooling") crosses **2,000,000**.
 - `clangd-19 --check=src/kernel/main.c` on a **cold cache** takes longer than **5 minutes** (current: ~83 ms, so there's five orders of magnitude of headroom).
@@ -233,10 +368,12 @@ Current repo is ~215k core LOC (~189k kernel + ~24k tooling per [COUNT.md](../..
 
 **What NOT to plan here:** concrete `[ ]` checklist items, commit lines, test checkpoints, CI wiring. Those land when a trigger fires and this section gets rewritten into active form.
 
-- [ ] Review this section's triggers once per calendar year (or when any trigger appears likely to fire within 6 months). If any trigger is active or imminent, convert the "planned shape" notes above into concrete `[ ]` items, move §11 ahead of the OS Comparison table, and re-run `/todo-pipeline` on the TODO.
+- [ ] Review this section's triggers once per calendar year (or when any trigger appears likely to fire within 6 months). If any trigger is active or imminent, convert the "planned shape" notes above into concrete `[ ]` items, move §17 ahead of the OS Comparison table, and re-run `/todo-pipeline` on the TODO.
+
+**Test checkpoint:** No runtime verification -- §11 is a trigger-watcher, not executable work. The tracking item closes one year at a time: the reviewer re-reads the five deferral triggers against current repo state (`wc -l`, `jq '.[] | length' compile_commands.json`, wall-clock of `clangd-19 --check` on a cold cache) and records "no trigger fired, reset the clock" in the commit message of the `- [ ] Review` item. When a trigger DOES fire, §11 converts to active form and a real Test checkpoint replaces this block.
 
 > [!IMPORTANT]
-> **Per the skill-template rule, every section normally ends with a `Commit:` item.** §11 intentionally does not, because nothing ships until a trigger fires. The single `[ ]` item above is the tracking work itself (review triggers). Do not "close" §11 by marking it `[x]` -- it stays open as a standing trigger-watcher for the lifetime of this TODO, and graduates to active form when needed.
+> **Per the skill-template rule, every section normally ends with a `Commit:` item.** §17 intentionally does not, because nothing ships until a trigger fires. The single `[ ]` item above is the tracking work itself (review triggers). Do not "close" §17 by marking it `[x]` -- it stays open as a standing trigger-watcher for the lifetime of this TODO, and graduates to active form when needed.
 
 ---
 
@@ -250,46 +387,67 @@ Current repo is ~215k core LOC (~189k kernel + ~24k tooling per [COUNT.md](../..
 | Python   | `.py`             | pyright                   | `npm install -g pyright`           | `pyright-langserver --stdio`                                           |
 | PowerShell | `.ps1`, `.psm1`, `.psd1` | PowerShellEditorServices | `pwsh 7.x` + PSES module | `pwsh -NoLogo -NoProfile -Command 'Import-Module PSES; Start-EditorServices ... -Stdio'` |
 
+---
+
 ## OS Comparison
 
-| ⭐  | Feature                                                         | 🪟 Win11                                    | 🐧 Linux                                      | 🚀 Impossible OS                                      |
-| --- | --------------------------------------------------------------- | ------------------------------------------- | --------------------------------------------- | ----------------------------------------------------- |
-| 💎  | C / C++ LSP for editors                                         | ✅ clangd in VS Code + VS                   | ✅ clangd in Emacs / Vim / Neovim             | ✅ clangd-19 already, plus §2 over MCP                |
-| 💎  | NASM LSP                                                        | ⚠️ asm-lsp via VS Code                      | ✅ asm-lsp packaged (Arch/NixOS/FreeBSD)      | ✅ §3 asm-lsp pinned to NASM via `.asm-lsp.toml`      |
-| 💎  | Shell LSP                                                       | ⚠️ bash-language-server via WSL VS Code     | ✅ bash-language-server standard              | ✅ §4 bash-language-server + shellcheck               |
-| 💎  | Python LSP                                                      | ✅ pyright default in VS Code               | ✅ pyright / pylsp / ruff-lsp                 | ✅ §5 pyright                                         |
-| 💎  | PowerShell LSP                                                  | ✅ PSES in VS Code PowerShell ext           | ✅ PSES via pwsh 7.x + ext                    | ✅ §6 PSES via pwsh                                   |
-| ⭐  | AI-agent MCP transport for language servers                     | ❌ closed (Copilot-only indexing)           | ❌ none in-tree; 3rd-party (isaacphi, jonrad) | ✅ §7 six read-only tools, five languages             |
-| ⭐  | Cross-language unified MCP surface                              | ❌ per-ext VS Code LSP clients              | ❌ per-editor LSP client                      | ✅ §7 one `hover` tool routes to 5 LSPs by extension  |
-| ⭐  | Read-only boundary audit baked in                               | ❌ no boundary concept                      | ❌ 3rd-party LSP-MCP bridges expose writes    | ✅ §9 grep-audit + repo-tracked manifest              |
-| ⭐  | On-demand LSP spawn (zero idle cost)                            | ⚠️ editor-initiated only                    | ⚠️ editor-initiated only                      | ✅ §1 on-demand + `atexit` cleanup                    |
-| 💎  | `--self-test` harness for the bridge                            | ❌ N/A                                      | ❌ N/A (3rd-party bridges rarely ship one)    | ✅ §10 7 sub-tests, CI-gated                          |
-| ⭐  | Repo-tracked MCP manifest (auto-register with Claude Code)      | ❌ user-local settings                      | ❌ user-local                                 | ✅ §9 `.claude/mcp.json` alongside `todo-graph`       |
-| ⭐  | Boundary-compliant repo-tracked MCP (no credentials, read-only) | ❌ no policy                                | ❌ no policy                                  | ✅ §9 complies with [TODO-02 §8](./TODO-02-ai-development-system.md#8-autonomous-agent-boundary-policy) |
+| ⭐ | Feature                                                         | 🪟 Win11                          | 🐧 Linux                             | 🚀 Impossible OS                   |
+| --- | --------------------------------------------------------------- | --------------------------------- | ------------------------------------- | ---------------------------------- |
+| 💎 | C / C++ LSP for editors                                         | ✅ clangd in VS Code              | ✅ clangd in Emacs/Vim/Neovim        | ✅ clangd-19 + §2 MCP wrapper      |
+| 💎 | NASM LSP                                                        | ⚠️ asm-lsp via VS Code            | ✅ asm-lsp packaged                  | ✅ §3 asm-lsp NASM-pinned          |
+| 💎 | Shell LSP                                                       | ⚠️ via WSL VS Code                | ✅ standard                          | ✅ §4 + shellcheck diag            |
+| 💎 | Python LSP                                                      | ✅ pyright default (VS Code)      | ✅ pyright / pylsp / ruff-lsp        | ✅ §5 pyright                      |
+| 💎 | PowerShell LSP                                                  | ✅ PSES in VS Code                | ✅ PSES via pwsh 7.x                 | ✅ §6 PSES via pwsh                |
+| ⭐ | AI-agent MCP transport for language servers                     | ❌ closed (Copilot-only indexing) | ❌ 3rd-party only (isaacphi, jonrad) | ✅ §7 six tools, five langs        |
+| ⭐ | Cross-language unified MCP surface                              | ❌ per-ext VS Code LSP clients    | ❌ per-editor LSP client             | ✅ §7 one surface routes to 5 LSPs |
+| ⭐ | Read-only boundary audit baked in                               | ❌ no boundary concept            | ❌ 3rd-party bridges expose writes   | ✅ §9 grep-audit + manifest        |
+| ⭐ | On-demand LSP spawn (zero idle cost)                            | ⚠️ editor-initiated only          | ⚠️ editor-initiated only             | ✅ §1 on-demand + atexit           |
+| 💎 | `--self-test` harness for the bridge                            | ❌ N/A                            | ❌ not shipped by 3rd-party bridges  | ✅ §10 7 sub-tests, CI             |
+| ⭐ | Repo-tracked MCP manifest (auto-register with Claude Code)      | ❌ user-local settings            | ❌ user-local                        | ✅ §9 `.claude/mcp.json`           |
+| ⭐ | Boundary-compliant repo-tracked MCP (no credentials, read-only) | ❌ no policy                      | ❌ no policy                         | ✅ §9 complies with T02 §8         |
+| 💎 | LSP `completion` + `signature_help` tools                       | ✅ VS Code + Copilot inline       | ✅ every LSP-capable editor          | ✅ §11 via MCP                     |
+| 💎 | LSP call hierarchy (incoming / outgoing)                        | ✅ VS Code call-hierarchy view    | ✅ Emacs/Neovim call-hierarchy modes | ✅ §11 exposed as MCP tools        |
+| 💎 | Read-only `code_action` listing (no execute)                    | ✅ VS Code quick-fix popup        | ✅ code-actions in Emacs/Neovim      | ✅ §11 metadata-only (boundary)    |
+| 💎 | File-change lifecycle forwarding (didChange/didSave/didClose)   | ✅ native in every LSP client     | ✅ native in every LSP client        | ✅ §12 forwarded via bridge        |
+| ⭐ | LSP subprocess auto-restart on crash                            | ❌ editor prompts to restart      | ❌ editor prompts to restart         | ✅ §13 watchdog + exp backoff      |
+| 💎 | Structured JSON logs + correlation IDs                          | ⚠️ VS Code output panel (text)    | ⚠️ per-editor log format             | ✅ §14 JSON-lines + UUID           |
+| ⭐ | Workspace-bound path sandboxing                                 | ❌ editor trusts every path       | ❌ editor trusts every path          | ✅ §15 resolve_in_workspace        |
+| ⭐ | `--warm-start` eager LSP spawn + first-call latency budget      | ❌ editor lazy-initiates          | ❌ editor lazy-initiates             | ✅ §16 bounded at ~45s             |
 
 > **After §1-§6:** Impossible OS reaches parity with a well-configured Win11/Linux developer workstation for every language the repo uses. Every human-facing LSP-capable editor (VS Code, Emacs, Neovim) already speaks these same servers directly; this TODO duplicates none of that.
 > **After §7-§8:** Impossible OS pulls ahead with a cross-language unified MCP surface. 3rd-party bridges (isaacphi/mcp-language-server -- single LSP at a time; jonrad/lsp-mcp -- Node, no multi-LSP; mickeyinfoshan/lsp-mcp -- Go/TS/JS/Py only; Tritlo/lsp-mcp -- Zig, high-perf but no NASM support) cover a subset of this surface but none ship the 5-language mix (NASM + PowerShell are the two painful ones) and none are repo-tracked with boundary compliance.
 > **After §9-§10:** Impossible OS ships the first repo-tracked cross-language LSP-MCP bridge with boundary audit baked in, auto-registered with Claude Code out-of-the-box via `.claude/mcp.json`. No 3rd-party bridge today bakes in the read-only boundary the [TODO-02 §8](./TODO-02-ai-development-system.md#8-autonomous-agent-boundary-policy) autonomous-agent policy requires; every existing bridge exposes write-capable LSP methods by default.
+> **After §11-§16:** Impossible OS passes parity and moves into category-leading territory. §11 delivers the extended 14-tool surface that production 3rd-party bridges converged on. §12 closes the file-change-drift correctness gap every long-running bridge exhibits. §13 auto-restarts crashed LSPs -- no surveyed competitor ships this. §14 threads correlation IDs through every MCP->LSP->MCP round-trip (the 2026 observability baseline). §15 bounds path resolution to the workspace, closing a prompt-injection / supply-chain class every 3rd-party bridge leaves open. §16 bounds first-call latency with `--warm-start`.
+
+---
 
 ## Unit Tests
 
 > [!NOTE]
 > Host-side tooling checks live outside `test_runner_init()`. This TODO owns a shell-based regression pack (`scripts/lsp-mcp/tests/test_bridge.sh`), same pattern as [TODO-06 §8](./TODO-06-todo-metadata-layer.md#8-mcp-server-ai-agent-transport-over-the-cache) and [TODO-01 §7](./TODO-01-developer-tooling-stack.md#7-tooling-doctor-and-regression-pack). No kernel-side test runner involvement.
 
-- [ ] Create `scripts/lsp-mcp/tests/test_bridge.sh` with 7 sub-tests (detailed in §10 checklist): zero-LSP self-test, clangd smoke, tool-schema shape, stress, extension-router reject, subprocess cleanup, boundary audit.
+- [ ] Create `scripts/lsp-mcp/tests/test_bridge.sh` with 7 base sub-tests (detailed in §10 checklist): zero-LSP self-test, clangd smoke, tool-schema shape, stress, extension-router reject, subprocess cleanup, boundary audit.
+- [ ] Extend the harness with sub-tests for §11-§16 capabilities: 14-tool schema check (§11), stale-file didChange forwarding (§12), kill-and-respawn clangd (§13), correlation-ID log thread (§14), path-escape rejection (§15), `--warm-start` budget (§16). One sub-test per section minimum; extend as needed.
 - [ ] Wire into [`scripts/test-tooling.sh`](../../scripts/test-tooling.sh) surface checks (harness exists + executable, `--help` exits 0).
 - [ ] Wire into `.github/workflows/build.yml` post-build step "Run LSP-MCP bridge tests" (runs after `make` succeeds; gates per-language sub-tests on binary presence).
 - [ ] Commit: `"test: add lsp-mcp bridge test harness"`
+
+---
 
 ## Verification
 
 - [ ] `bash scripts/build.sh clean` -> `tail -1 build/build.log` -> `=== BUILD OK ===` (bridge is Python; build shouldn't regress).
 - [ ] `python3 scripts/lsp-mcp/bridge.py --self-test` exits 0 on a host with clangd-19 installed; prints `[lsp-mcp] OK: N/5 LSPs detected, 6 tools registered` with N >= 1.
 - [ ] `python3 scripts/lsp-mcp/bridge.py --tools` prints 6 MCP tool schemas, each with typed required params (hover/definition/references require `path`, `line`, `character`; diagnostics/document_symbol require `path`; workspace_symbol requires `query`).
-- [ ] `bash scripts/lsp-mcp/tests/test_bridge.sh` exits 0 with all 7 sub-tests PASS on a host with clangd-19.
+- [ ] `bash scripts/lsp-mcp/tests/test_bridge.sh` exits 0 with all 7 base sub-tests + §11-§16 extension sub-tests PASS on a host with clangd-19.
+- [ ] `--self-test --tools` reports 14 tools (6 core + 8 extended) with correct typed params.
+- [ ] `_health` MCP tool returns per-LSP status; exercise via kill-and-respawn during `test_bridge.sh`.
+- [ ] `hover(path="/etc/passwd", ...)` is rejected; `hover(path="src/kernel/main.c", ...)` succeeds (sandbox enforced).
 - [ ] `bash scripts/lsp-mcp/tests/test_boundary.sh` exits 0 and prints `[boundary] OK: 0 write-capable LSP methods reachable from MCP surface`.
 - [ ] `bash scripts/test-tooling.sh` passes; new surface checks visible in the output count.
 - [ ] `.claude/mcp.json` lists `lsp-bridge` as an entry alongside `todo-graph`; `jq -r '. | keys' .claude/mcp.json` includes it.
 - [ ] Register `lsp-bridge` in Claude Code harness; a `/<hover>` (or equivalent MCP tool call) against a known C symbol returns a non-empty hover response through the MCP protocol.
 - [ ] Verify on: WSL2 (primary host for Claude Code); Linux native (Arch, Ubuntu 24.04); macOS as a secondary nice-to-have (pwsh/PSES path differs). No bare-metal or VM testing needed -- this is host-side dev tooling.
 - [ ] Commit: `"scripts/lsp-mcp: bridge complete"`
+
+**Test runner:** N/A (host-side Python tooling, no `TEST_CAT_*` surface) | validation: `bash scripts/lsp-mcp/tests/test_bridge.sh` 7/7 sub-tests PASS on a host with `clangd-19`; `bash scripts/test-tooling.sh` passes with new surface checks counted.
