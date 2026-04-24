@@ -23,6 +23,9 @@
  * its offset-fingerprint dumper. If this include fails, run the clean-build
  * sequence before editing the mirror. */
 #include "boot_info_mirror.h"
+#include "boot_proto_mirror.h"
+#include "elf_bootproto.h"
+#include "boot_proto_sha.h"   /* generated; provides KERNEL_ABI_SHA256 */
 
 /* Inline rdtsc for boot timing */
 static inline UINT64 boot_rdtsc(void)
@@ -2758,6 +2761,299 @@ static void load_staged_payloads(void)
 }
 
 /* ============================================================================
+ * Pre-jump ABI mismatch check.
+ *
+ * Runs BEFORE ExitBootServices, AFTER the kernel image has been loaded
+ * into file_buf + copied to its final physical address. Walks the
+ * kernel ELF for a `.bootproto` section, compares the 4-tuple
+ * { magic, version, struct_size, sha256 } against the bootloader's
+ * compile-time expected values, and on mismatch OR parse failure:
+ *   1. Writes a boot_version_fault record to UEFI NVRAM
+ *      (BootVersionFault variable, IPOS GUID, NV|BS|RT attrs) so the
+ *      kernel-side blackbox transcribe pipeline picks it up on the
+ *      next successful boot.
+ *   2. Renders a UCS-2 error on gST->ConOut showing observed vs
+ *      expected for each differing field.
+ *   3. Stalls 10 seconds so the operator can read the screen.
+ *   4. ResetSystem(EfiResetCold, EFI_ABORTED) to reboot.
+ *
+ * This function does NOT return on mismatch. On match it returns
+ * without side effects and load_kernel continues.
+ *
+ * The boot_version_fault schema mirrors include/kernel/boot_version.h
+ * (48 bytes, pinned). A mismatch is classified by priority:
+ *   magic  -> BAD_MAGIC (fault_class=2)
+ *   version-> BAD_VERSION (fault_class=3)
+ *   size   -> BAD_SIZE (fault_class=4)
+ *   sha    -> BAD_VERSION with a SHA-hex hint in the UCS-2 message
+ *            (closest analog; sha drift = missed version bump).
+ * ============================================================================ */
+
+/* Mirror of struct boot_version_fault from include/kernel/boot_version.h.
+ * 48 bytes, pinned. Field order MUST match byte-for-byte. */
+struct bl_boot_version_fault {
+    UINT32 record_magic;
+    UINT32 fault_class;
+    UINT32 observed_magic;
+    UINT32 expected_magic;
+    UINT16 observed_version;
+    UINT16 expected_version;
+    UINT32 observed_size;
+    UINT32 expected_size;
+    UINT32 observed_loader_sec_ver;
+    UINT32 expected_loader_sec_ver;
+    UINT32 reserved_pad[3];
+};
+_Static_assert(sizeof(struct bl_boot_version_fault) == 48,
+    "bl_boot_version_fault layout pinned at 48 bytes");
+
+/* Classification enum values match include/kernel/boot_version.h. */
+#define BL_FAULT_OK            0u
+#define BL_FAULT_NULL_HDR      1u
+#define BL_FAULT_BAD_MAGIC     2u
+#define BL_FAULT_BAD_VERSION   3u
+#define BL_FAULT_BAD_SIZE      4u
+#define BL_FAULT_SEC_ROLLBACK  5u
+
+/* NVRAM record layout invariants must match include/kernel/boot_version.h. */
+#define BL_BOOT_VERSION_FAULT_MAGIC  0x42565046u
+
+/* UEFI console print helper: emit a hex byte. Uses efi_print under the
+ * hood so non-ASCII digits work on every UEFI console. */
+static void bpp_print_hex32(UINT32 v)
+{
+    static const CHAR16 hex[] = u"0123456789abcdef";
+    CHAR16 buf[11];
+    int i;
+    buf[0] = u'0';
+    buf[1] = u'x';
+    for (i = 0; i < 8; i++)
+        buf[2 + i] = hex[(v >> ((7 - i) * 4)) & 0xFu];
+    buf[10] = 0;
+    efi_print(buf);
+}
+
+static void bpp_print_decimal(UINT32 v)
+{
+    CHAR16 buf[11];
+    int i = 10;
+    buf[10] = 0;
+    if (v == 0) {
+        efi_print(u"0");
+        return;
+    }
+    while (v > 0 && i > 0) {
+        i--;
+        buf[i] = (CHAR16)(u'0' + (v % 10));
+        v /= 10;
+    }
+    efi_print(&buf[i]);
+}
+
+/* Persist the fault record. Best-effort: on failure (no RT, no
+ * SetVariable, NVRAM full), the caller still resets -- the operator
+ * sees the UCS-2 screen message regardless.
+ *
+ * CRITICAL: name + GUID MUST match what boot_version_blackbox_transcribe()
+ * reads in src/kernel/main/boot_version.c (s_fault_name + s_fault_guid).
+ * A mismatch silently drops the fault record on the next successful
+ * boot. Duplicated from the kernel side rather than shared because the
+ * bootloader cannot include kernel/boot_version.h (pulls kernel types). */
+static void bpp_persist_nvram_fault(const struct bl_boot_version_fault *rec)
+{
+    if (!gST || !gST->RuntimeServices || !gST->RuntimeServices->SetVariable)
+        return;
+    /* GUID matches kernel src/kernel/main/boot_version.c s_fault_guid:
+     * "IMPOSTFV-PROTOFLT" -- distinct from g_impossible_os_guid so a
+     * POST16 overwriter cannot alias the fault record. */
+    static EFI_GUID fault_guid = {
+        0x494D504F, 0x5354, 0x4656,
+        { 0x50, 0x52, 0x4F, 0x54, 0x4F, 0x46, 0x4C, 0x54 }
+    };
+    /* Name matches kernel s_fault_name: "ImpossibleBootProtoFault". */
+    static CHAR16 name[] = u"ImpossibleBootProtoFault";
+    UINT32 attrs = EFI_VARIABLE_NON_VOLATILE |
+                   EFI_VARIABLE_BOOTSERVICE_ACCESS |
+                   EFI_VARIABLE_RUNTIME_ACCESS;
+    (void)gST->RuntimeServices->SetVariable(
+        name, &fault_guid, attrs,
+        sizeof(*rec), (VOID *)rec);
+}
+
+/* Render the observed-vs-expected error, persist NVRAM, stall, reset.
+ * Does not return. */
+static __attribute__((noreturn)) void bpp_render_and_reset(
+    const struct bl_boot_version_fault *rec,
+    int parse_result,
+    UINT8 sha_mismatch)
+{
+    if (gST && gST->ConOut) {
+        gST->ConOut->ClearScreen(gST->ConOut);
+        efi_print(u"\r\n");
+        efi_print(u"  Impossible OS -- Boot Protocol Mismatch\r\n");
+        efi_print(u"\r\n");
+        efi_print(u"  The kernel image does not match this bootloader's\r\n");
+        efi_print(u"  compile-time ABI. Rebuild + reflash both halves.\r\n");
+        efi_print(u"\r\n");
+        if (parse_result != BOOTPROTO_OK) {
+            efi_print(u"  .bootproto parse failed: ");
+            /* Translate to ASCII via narrow print. */
+            const char *n = bootproto_result_name(parse_result);
+            CHAR16 wide[32];
+            int i = 0;
+            while (n[i] && i < 31) {
+                wide[i] = (CHAR16)(UINT8)n[i];
+                i++;
+            }
+            wide[i] = 0;
+            efi_print(wide);
+            efi_print(u"\r\n");
+        } else {
+            efi_print(u"  fault_class: ");
+            bpp_print_decimal(rec->fault_class);
+            efi_print(u"\r\n  observed_magic:   ");
+            bpp_print_hex32(rec->observed_magic);
+            efi_print(u"  expected_magic:   ");
+            bpp_print_hex32(rec->expected_magic);
+            efi_print(u"\r\n  observed_version: ");
+            bpp_print_decimal((UINT32)rec->observed_version);
+            efi_print(u"  expected_version: ");
+            bpp_print_decimal((UINT32)rec->expected_version);
+            efi_print(u"\r\n  observed_size:    ");
+            bpp_print_decimal(rec->observed_size);
+            efi_print(u"  expected_size:    ");
+            bpp_print_decimal(rec->expected_size);
+            efi_print(u"\r\n");
+            if (sha_mismatch) {
+                efi_print(u"  sha256 manifest drift detected\r\n");
+                efi_print(u"    expected: ");
+                /* Wide-print the expected hex (host string macro). */
+                const char *hex = KERNEL_ABI_SHA256_HEX;
+                CHAR16 wide[65];
+                int i = 0;
+                while (hex[i] && i < 64) {
+                    wide[i] = (CHAR16)(UINT8)hex[i];
+                    i++;
+                }
+                wide[i] = 0;
+                efi_print(wide);
+                efi_print(u"\r\n");
+            }
+        }
+        efi_print(u"\r\n  Rebooting in 10 seconds...\r\n");
+    }
+
+    serial_early_print("[BOOT] ABI MISMATCH: parse=");
+    serial_early_print_uint((UINT32)parse_result);
+    serial_early_print(" fault_class=");
+    serial_early_print_uint(rec->fault_class);
+    serial_early_print(" observed_magic=0x");
+    serial_early_print_hex16((UINT16)(rec->observed_magic >> 16));
+    serial_early_print_hex16((UINT16)rec->observed_magic);
+    serial_early_print("\n");
+
+    bpp_persist_nvram_fault(rec);
+
+    if (gBS && gBS->Stall)
+        gBS->Stall(10 * 1000 * 1000);
+
+    /* UEFI 2.x Reset types: 0=Cold, 1=Warm, 2=Shutdown. EFI_ABORTED
+     * per the UEFI specification = 21 | high-bit. Use literals since
+     * efi.h does not expose the enum names. */
+    if (gST && gST->RuntimeServices && gST->RuntimeServices->ResetSystem) {
+        gST->RuntimeServices->ResetSystem(
+            /* EfiResetCold  */ 0,
+            /* EFI_ABORTED   */ (21ULL | (1ULL << 63)),
+            0, (VOID *)0);
+    }
+
+    /* Reset unreachable on well-formed firmware; fall through to HLT
+     * as a last resort so the operator is not left with a silent
+     * re-jump into a mismatched kernel. */
+    for (;;)
+        __asm__ volatile ("cli; hlt");
+}
+
+/* Verify the loaded kernel image carries a matching .bootproto
+ * descriptor. Called from load_kernel right before its final success
+ * return, with file_buf still valid. */
+static void bootproto_verify_or_reset(const UINT8 *kernel_image,
+                                      UINT64 kernel_size)
+{
+    struct boot_proto_descriptor desc;
+    int r = bootproto_find(kernel_image, kernel_size, &desc);
+
+    struct bl_boot_version_fault rec;
+    {
+        UINT8 *p = (UINT8 *)&rec;
+        UINTN i;
+        for (i = 0; i < sizeof(rec); i++) p[i] = 0;
+    }
+    rec.record_magic = BL_BOOT_VERSION_FAULT_MAGIC;
+
+    UINT32 expected_magic   = (UINT32)BOOT_PROTO_DESCRIPTOR_MAGIC;
+    UINT32 expected_version = (UINT32)BOOT_INFO_VERSION;
+    UINT32 expected_size    = (UINT32)sizeof(struct boot_info);
+    static const UINT8 expected_sha[32] = KERNEL_ABI_SHA256;
+
+    /* Fill NVRAM record with bootloader-expected values; observed
+     * fields will be overwritten if the descriptor parsed OK. */
+    rec.expected_magic    = expected_magic;
+    rec.expected_version  = (UINT16)expected_version;
+    rec.expected_size     = expected_size;
+
+    if (r != BOOTPROTO_OK) {
+        rec.fault_class    = BL_FAULT_BAD_VERSION;  /* parse failure proxy */
+        rec.observed_magic = 0;
+        rec.observed_version = 0;
+        rec.observed_size  = 0;
+        bpp_render_and_reset(&rec, r, 0);
+    }
+
+    rec.observed_magic   = desc.magic;
+    rec.observed_version = (UINT16)desc.version;
+    rec.observed_size    = desc.struct_size;
+
+    if (desc.magic != expected_magic) {
+        rec.fault_class = BL_FAULT_BAD_MAGIC;
+        bpp_render_and_reset(&rec, BOOTPROTO_OK, 0);
+    }
+    if (desc.version != expected_version) {
+        rec.fault_class = BL_FAULT_BAD_VERSION;
+        bpp_render_and_reset(&rec, BOOTPROTO_OK, 0);
+    }
+    if (desc.struct_size != expected_size) {
+        rec.fault_class = BL_FAULT_BAD_SIZE;
+        bpp_render_and_reset(&rec, BOOTPROTO_OK, 0);
+    }
+
+    {
+        UINTN i;
+        int sha_mismatch = 0;
+        for (i = 0; i < 32; i++) {
+            if (desc.sha256[i] != expected_sha[i]) {
+                sha_mismatch = 1;
+                break;
+            }
+        }
+        if (sha_mismatch) {
+            rec.fault_class = BL_FAULT_BAD_VERSION;
+            bpp_render_and_reset(&rec, BOOTPROTO_OK, 1);
+        }
+    }
+
+    /* All fields match -- log once and return. */
+    serial_early_print("[BOOT] .bootproto match: magic=0x");
+    serial_early_print_hex16((UINT16)(desc.magic >> 16));
+    serial_early_print_hex16((UINT16)desc.magic);
+    serial_early_print(" version=");
+    serial_early_print_uint(desc.version);
+    serial_early_print(" struct_size=");
+    serial_early_print_uint(desc.struct_size);
+    serial_early_print(" sha256=match\n");
+}
+
+/* ============================================================================
  * Step 2: Load kernel ELF from FAT32
  * ============================================================================ */
 static EFI_STATUS load_kernel(UINT64 *entry_point)
@@ -3162,6 +3458,13 @@ static EFI_STATUS load_kernel(UINT64 *entry_point)
 
         *entry_point = km_addr;
     }
+
+    /* Pre-jump ABI mismatch check: scan the loaded kernel ELF for
+     * `.bootproto`, compare 4-tuple against bootloader's compile-time
+     * expected bytes. On mismatch the function does not return --
+     * it persists a NVRAM fault record, renders a UCS-2 screen, and
+     * reboots cold. file_buf + file_size are still valid here. */
+    bootproto_verify_or_reset(file_buf, (UINT64)file_size);
 
     return EFI_SUCCESS;
 }

@@ -34,6 +34,17 @@ SECTIONS
         *(.rodata)
     }
 
+    /* Boot-protocol descriptor (boot_proto.c). Placed in its own
+     * output section so the bootloader can find it by name in the
+     * ELF section header table. KEEP(*) prevents LTO / --gc-sections
+     * from dropping it. Lives inside the kernel's PT_LOAD segment
+     * (no separate program header needed -- bootloader walks the
+     * section table, not program headers, to locate it). */
+    .bootproto ALIGN(8) :
+    {
+        KEEP(*(.bootproto))
+    }
+
     /* Initialized data */
     .data ALIGN(4K) :
     {

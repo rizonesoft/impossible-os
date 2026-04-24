@@ -107,7 +107,7 @@ C_OBJS   := $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.o, $(C_SRCS))
 OBJS     := $(ASM_OBJS) $(C_OBJS) $(AP_TRAMPOLINE_OBJ)
 
 # Generated headers — must exist before any C compilation starts (-j safe)
-GENERATED_HDRS := include/build_info.h include/kernel/os_logo.h src/kernel/bsod_icon.h src/kernel/boot_splash_font_data.h
+GENERATED_HDRS := include/build_info.h include/kernel/os_logo.h src/kernel/bsod_icon.h src/kernel/boot_splash_font_data.h $(BUILD_DIR)/boot_proto_sha.h
 
 # ============================================================================
 # Targets
@@ -137,7 +137,11 @@ UEFI_EFI := $(BUILD_DIR)/tools/BOOTX64.EFI
 
 uefi-boot: $(UEFI_EFI)
 
-$(UEFI_EFI): src/boot/uefi/bootx64.c src/boot/uefi/efi.h src/boot/uefi/uefi.lds
+$(UEFI_EFI): src/boot/uefi/bootx64.c src/boot/uefi/efi.h src/boot/uefi/uefi.lds \
+             src/boot/uefi/elf_bootproto.c src/boot/uefi/elf_bootproto.h \
+             src/boot/uefi/elf_types.h src/boot/uefi/boot_proto_mirror.h \
+             src/boot/uefi/boot_info_mirror.h \
+             $(BUILD_DIR)/boot_proto_sha.h
 	@mkdir -p $(BUILD_DIR)/tools
 	$(MAKE) -C src/boot/uefi OUTDIR=$(CURDIR)/$(BUILD_DIR)/tools
 	@echo "[EFI] $@ created ($$(wc -c < $@ | tr -d ' ') bytes)"
@@ -256,10 +260,11 @@ $(BOOT_ABI_DUMPER_M): tools/boot-info-manifest/dump-mirror.c \
 # user, or left from a stale build tree). Without this, `make boot-info-abi`
 # could report PASS on artifacts produced by a non-x86_64 host that never
 # tripped the dumper-recipe gate. A PASS must always require a fresh probe.
-boot-info-abi: $(BOOT_ABI_KERNEL_JSON) $(BOOT_ABI_MIRROR_JSON)
+boot-info-abi: $(BOOT_ABI_KERNEL_JSON) $(BOOT_ABI_MIRROR_JSON) $(KERNEL_BIN) $(BUILD_DIR)/boot_proto_sha.h
 	$(BOOT_ABI_HOST_ARCH_GATE)
 	@bash tools/boot-info-manifest/compare.sh $(BOOT_ABI_KERNEL_JSON) $(BOOT_ABI_MIRROR_JSON)
 	@bash tools/boot-info-manifest/check-doc-coverage.sh
+	@python3 tools/boot-info-manifest/check-kernel-bootproto.py
 
 ## boot-info-doc-coverage: standalone entry for the doc coverage gate
 ##                         (already invoked by the boot-info-abi target;
@@ -270,11 +275,48 @@ boot-info-abi: $(BOOT_ABI_KERNEL_JSON) $(BOOT_ABI_MIRROR_JSON)
 boot-info-doc-coverage:
 	@bash tools/boot-info-manifest/check-doc-coverage.sh
 
+## test-bootproto-parse: host-side unit test for the bootloader's
+##                       pre-jump ABI mismatch parser
+##                       (src/boot/uefi/elf_bootproto.c). Runs 12
+##                       synthetic-ELF fixtures covering the happy path
+##                       plus every BOOTPROTO_ERR_* bounds-violation
+##                       class. Fails the build on any regression.
+TEST_BOOTPROTO_BIN := $(BUILD_DIR)/tools/test-bootproto
+.PHONY: test-bootproto-parse
+test-bootproto-parse: $(TEST_BOOTPROTO_BIN)
+	@$(TEST_BOOTPROTO_BIN) && echo "[TEST] bootproto_parse OK"
+
+$(TEST_BOOTPROTO_BIN): tools/test-bootproto/test_bootproto_parse.c \
+                      src/boot/uefi/elf_bootproto.c \
+                      src/boot/uefi/elf_bootproto.h \
+                      src/boot/uefi/elf_types.h \
+                      src/boot/uefi/boot_proto_mirror.h \
+                      src/boot/uefi/efi.h \
+                      $(BUILD_DIR)/boot_proto_sha.h
+	@mkdir -p $(BUILD_DIR)/tools
+	$(BOOT_ABI_HOST_ARCH_GATE)
+	$(HOST_CC) -m64 -O2 -Wall -Wextra -Werror \
+	    -I src/boot/uefi -I $(BUILD_DIR) \
+	    -o $@ tools/test-bootproto/test_bootproto_parse.c \
+	    src/boot/uefi/elf_bootproto.c
+	@echo "[TOOL] $@ built"
+
 $(BOOT_ABI_KERNEL_JSON): $(BOOT_ABI_DUMPER_K)
 	@$< > $@
 
 $(BOOT_ABI_MIRROR_JSON): $(BOOT_ABI_DUMPER_M)
 	@$< > $@
+
+## boot_proto_sha.h: auto-generated C header with the SHA-256 of the
+##                   kernel ABI manifest. Included by the kernel TU
+##                   that populates the .bootproto ELF section and by
+##                   the bootloader's pre-jump ABI mismatch check, so
+##                   both sides see byte-identical expected bytes.
+##                   Regenerated only when the manifest content drifts.
+$(BUILD_DIR)/boot_proto_sha.h: $(BOOT_ABI_KERNEL_JSON) \
+                               tools/boot-info-manifest/gen-proto-sha-header.sh
+	@bash tools/boot-info-manifest/gen-proto-sha-header.sh \
+	    $(BOOT_ABI_KERNEL_JSON) $@
 
 ## test-boot-info-abi: Regress-test the drift detector itself. Builds
 ##                    intentionally-mutated mirror fixtures and verifies
@@ -1194,8 +1236,15 @@ $(BUILD_DIR)/kernel/json.o: $(SRC_DIR)/kernel/json.c | $(GENERATED_HDRS)
 # Compile C source files (64-bit)
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(GENERATED_HDRS)
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -I$(INCLUDE) -I$(KERNEL_DIR) -I$(SRC_DIR) -c $< -o $@
+	$(CC) $(CFLAGS) -I$(INCLUDE) -I$(KERNEL_DIR) -I$(SRC_DIR) -I$(BUILD_DIR) -c $< -o $@
 	@echo "[CC] $<"
+
+# Explicit dep: boot_proto.o tracks the generated sha header so a real
+# manifest change triggers a recompile (GENERATED_HDRS is an order-only
+# prerequisite via `|`, which does not trigger recompilation on file
+# change -- good for first-build ordering, insufficient for content
+# tracking).
+$(BUILD_DIR)/kernel/main/boot_proto.o: $(BUILD_DIR)/boot_proto_sha.h
 
 # Assemble NASM source files
 # entry.asm is multi-format (starts 32-bit, transitions to 64-bit)
