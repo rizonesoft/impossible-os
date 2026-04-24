@@ -88,7 +88,7 @@ Lay down the process skeleton, the FastMCP server, and a minimal LSP JSON-RPC cl
 > - **Canonical doc:** [`scripts/todo-graph/mcp_server.py`](../../scripts/todo-graph/mcp_server.py) (FastMCP + `_CALL_LOCK` + `--self-test` precedent we mirror).
 > - **Scope boundary:** no MCP tools, no language integrations, no `.claude/mcp.json` manifest, no docs subsection, no `make` target. Those belong to §2-§10; this section is the foundation they build on.
 
-> **Verified:** 2026-04-24 | commit `PENDING` | 5/5 items | build N/A (host-side Python) | tests 7/7 PASS
+> **Verified:** 2026-04-24 | commit `dd6740e8` | 5/5 items | build N/A (host-side Python) | tests 7/7 PASS
 > **Quality reviewed:** 2026-04-24 | Codex 4x (adversarial + dead-code + consistency + perf) | 4H+6M+2L fixed, 0 open | scope: N/A (host-side Python tooling; no domain quality skill applies)
 
 ---
