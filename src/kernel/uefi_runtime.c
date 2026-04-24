@@ -188,8 +188,19 @@ boot_result_t uefi_runtime_init(void)
     s_available = 0;
     s_supported = 0;
 
-    if (!g_boot_info.uefi_rt_available) {
-        klog(LOG_WARN, "UEFI", "Runtime services: UNAVAILABLE (firmware limitation)");
+    /* Authoritative gate: capability negotiation decides whether
+     * runtime services are available. A loader that reports
+     * BOOT_CAP_RUNTIME_SERVICES as degraded MUST skip setup even if
+     * the legacy uefi_rt_available byte is set (fail-closed semantic
+     * from the capability-negotiation contract). Keep the legacy
+     * check as a second gate to defend against the path where
+     * boot_caps_validate has not yet run (early-boot callers). */
+    if (!boot_caps_require(BOOT_CAP_RUNTIME_SERVICES) ||
+        !g_boot_info.uefi_rt_available) {
+        klog(LOG_WARN, "UEFI",
+             "Runtime services: UNAVAILABLE (caps_present=0x%lx, legacy=%u)",
+             (uint64_t)(g_boot_info.caps_present & BOOT_CAP_RUNTIME_SERVICES),
+             (uint64_t)g_boot_info.uefi_rt_available);
         return BOOT_DEGRADED;
     }
 
@@ -789,6 +800,15 @@ boot_result_t uefi_secureboot_init(void)
     /* Publish state to boot_info and global system state for desktop/tray */
     g_boot_info.secure_boot_enabled = (uint8_t)s_sb_enabled;
     g_system_state.secure_boot       = (uint8_t)s_sb_enabled;
+
+    /* Promote BOOT_CAP_SECURE_BOOT_STATE from degraded to present now
+     * that the kernel-side UEFI RT variable query has succeeded. The
+     * bootloader unconditionally marked this degraded at handoff
+     * (secure_boot_enabled is a kernel-populated telemetry word, not
+     * a bootloader input); this is the kernel-side refinement that
+     * flips the bit so downstream attestation consumers can observe
+     * the transition via the authoritative caps_present word. */
+    boot_caps_mark_present(BOOT_CAP_SECURE_BOOT_STATE);
 
     /* Canonical one-line summary consumed by monitoring tools */
     if (s_sb_enabled) {

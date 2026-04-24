@@ -208,6 +208,78 @@ static void test_boot_caps_bit_name(void)
     TEST_ASSERT_NEQ((uint64_t)(uintptr_t)s, 0u, "bit name non-null (reserved)");
 }
 
+/* The require/mark_present helpers operate on g_boot_info directly,
+ * so these tests save + restore its caps words to avoid side effects
+ * on other tests. */
+extern struct boot_info g_boot_info;
+
+static void test_boot_caps_require_basics(void)
+{
+    uint64_t saved_p = g_boot_info.caps_present;
+    uint64_t saved_d = g_boot_info.caps_degraded;
+
+    g_boot_info.caps_present = BOOT_CAP_RUNTIME_SERVICES | BOOT_CAP_TPM_EVENT_LOG;
+    g_boot_info.caps_degraded = 0;
+
+    TEST_ASSERT(boot_caps_require(BOOT_CAP_RUNTIME_SERVICES), "require single bit present");
+    TEST_ASSERT(boot_caps_require(BOOT_CAP_RUNTIME_SERVICES | BOOT_CAP_TPM_EVENT_LOG),
+                "require combined bits present");
+    TEST_ASSERT(!boot_caps_require(BOOT_CAP_USB_HANDOVER), "require bit absent -> 0");
+    TEST_ASSERT(!boot_caps_require(BOOT_CAP_RUNTIME_SERVICES | BOOT_CAP_USB_HANDOVER),
+                "require one-of-two absent -> 0");
+
+    g_boot_info.caps_present = saved_p;
+    g_boot_info.caps_degraded = saved_d;
+}
+
+static void test_boot_caps_mark_present_promotes(void)
+{
+    uint64_t saved_p = g_boot_info.caps_present;
+    uint64_t saved_d = g_boot_info.caps_degraded;
+
+    /* Start with secure-boot degraded (the canonical bootloader-time
+     * state) and simulate the kernel-side UEFI RT variable query
+     * succeeding. After mark_present, the bit must be in present
+     * and removed from degraded. */
+    g_boot_info.caps_present  = BOOT_CAP_RUNTIME_SERVICES;
+    g_boot_info.caps_degraded = BOOT_CAP_SECURE_BOOT_STATE;
+
+    boot_caps_mark_present(BOOT_CAP_SECURE_BOOT_STATE);
+
+    TEST_ASSERT(boot_caps_require(BOOT_CAP_SECURE_BOOT_STATE),
+                "mark_present promotes degraded->present");
+    TEST_ASSERT_EQ((uint64_t)(g_boot_info.caps_degraded & BOOT_CAP_SECURE_BOOT_STATE),
+                   0u, "mark_present clears degraded bit");
+    /* Monotonic: second call is a no-op (already set). */
+    boot_caps_mark_present(BOOT_CAP_SECURE_BOOT_STATE);
+    TEST_ASSERT(boot_caps_require(BOOT_CAP_SECURE_BOOT_STATE),
+                "mark_present idempotent");
+
+    g_boot_info.caps_present = saved_p;
+    g_boot_info.caps_degraded = saved_d;
+}
+
+static void test_boot_caps_mark_present_unknown_bits_masked(void)
+{
+    uint64_t saved_p = g_boot_info.caps_present;
+    uint64_t saved_d = g_boot_info.caps_degraded;
+
+    g_boot_info.caps_present  = 0;
+    g_boot_info.caps_degraded = 0;
+
+    /* Pass an unknown bit along with a known one -- only the known
+     * bit should be set, unknown is masked off (keeps the
+     * BOOT_CAP_MASK_KNOWN closed-mask invariant). */
+    boot_caps_mark_present(BOOT_CAP_USB_HANDOVER | (1ull << 62));
+
+    TEST_ASSERT(boot_caps_require(BOOT_CAP_USB_HANDOVER), "known bit set");
+    TEST_ASSERT_EQ((uint64_t)(g_boot_info.caps_present & (1ull << 62)), 0u,
+                   "unknown bit masked off");
+
+    g_boot_info.caps_present = saved_p;
+    g_boot_info.caps_degraded = saved_d;
+}
+
 void test_register_boot_caps(void)
 {
     test_suite_register_cat("boot_caps: NULL info rejected",
@@ -232,4 +304,10 @@ void test_register_boot_caps(void)
                             test_boot_caps_mask_known_is_stable, TEST_CAT_BOOT);
     test_suite_register_cat("boot_caps: bit name helper",
                             test_boot_caps_bit_name, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_caps: require() basics",
+                            test_boot_caps_require_basics, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_caps: mark_present promotes degraded",
+                            test_boot_caps_mark_present_promotes, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_caps: mark_present masks unknown bits",
+                            test_boot_caps_mark_present_unknown_bits_masked, TEST_CAT_BOOT);
 }

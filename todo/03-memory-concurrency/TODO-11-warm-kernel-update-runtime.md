@@ -1,3 +1,11 @@
+---
+schema_version: 1
+id: warm-kernel-update-runtime
+domain: 03-memory-concurrency
+status: active
+title: "TODO-11 -- Warm-Kernel-Update Runtime"
+---
+
 # TODO-11: Warm-Kernel-Update Runtime
 
 ## Goal

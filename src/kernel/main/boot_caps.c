@@ -173,3 +173,28 @@ boot_result_t boot_caps_validate(const struct boot_info *info,
 
     return BOOT_OK;
 }
+
+/* ---- Consumer API -------------------------------------------------- */
+
+extern struct boot_info g_boot_info;
+
+int boot_caps_require(uint64_t bits)
+{
+    return (g_boot_info.caps_present & bits) == bits;
+}
+
+void boot_caps_mark_present(uint64_t bits)
+{
+    /* Monotonic: only add bits. A caller that tries to clear a
+     * previously-set bit silently no-ops (the OR preserves it).
+     * Callers must pass only bits in BOOT_CAP_MASK_KNOWN -- unknown
+     * bits would break forward-compat promises on the caps_* words.
+     * Silently mask here instead of asserting; the validator already
+     * ran so the fields are trusted. */
+    g_boot_info.caps_present |= (bits & BOOT_CAP_MASK_KNOWN);
+    /* Also clear any matching bit in caps_degraded -- a kernel-side
+     * refinement that proves a capability available necessarily
+     * un-degrades it. The caps_present XOR caps_degraded invariant
+     * is preserved. */
+    g_boot_info.caps_degraded &= ~(bits & BOOT_CAP_MASK_KNOWN);
+}

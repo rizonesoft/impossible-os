@@ -70,6 +70,19 @@ boot_result_t tpm_init(void)
     s_available = 1;
     s_version = g_boot_info.tpm_version;
 
+    /* Authoritative gate: capability negotiation decides whether the
+     * event log is available. A loader that reports
+     * BOOT_CAP_TPM_EVENT_LOG as degraded (e.g. log pointer present
+     * but integrity check failed) MUST leave s_event_count at 0 so
+     * attestation falls back to a minimal PCR-read path. */
+    if (!boot_caps_require(BOOT_CAP_TPM_EVENT_LOG)) {
+        klog(LOG_WARN, "TPM",
+             "Event log degraded by loader caps (caps_present=0x%lx); "
+             "skipping parse, attestation falls back to PCR-read only",
+             (uint64_t)(g_boot_info.caps_present & BOOT_CAP_TPM_EVENT_LOG));
+        return BOOT_DEGRADED;
+    }
+
     const uint8_t *log = (const uint8_t *)g_boot_info.tpm_event_log;
     uint32_t log_size = g_boot_info.tpm_event_log_size;
 

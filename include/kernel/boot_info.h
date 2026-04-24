@@ -529,6 +529,33 @@ boot_result_t boot_caps_validate(const struct boot_info *info,
  * "reserved(0xNN)" for bits outside BOOT_CAP_MASK_KNOWN. */
 const char *boot_caps_bit_name(uint64_t cap_bit);
 
+/* Authoritative gate for kernel consumers. Returns non-zero when every
+ * bit in `bits` is set in g_boot_info.caps_present, zero otherwise.
+ * Consumers call this as a single-line gate:
+ *
+ *     if (!boot_caps_require(BOOT_CAP_TPM_EVENT_LOG)) return;
+ *     ... parse event log ...
+ *
+ * The check lives here (not inline at every call site) so the source
+ * of truth for "capability available" is boot_caps_validate's
+ * classification, not scattered reads of legacy companion fields. A
+ * loader that reports a capability as degraded via caps_degraded will
+ * cause this helper to return zero even when the companion field is
+ * non-empty; this is the fail-closed semantic that closes the
+ * advisory-only gap the capability negotiation adversarial review
+ * flagged when consumers still trusted legacy companion fields. */
+int boot_caps_require(uint64_t bits);
+
+/* Post-handoff kernel refinement: set one or more bits in
+ * g_boot_info.caps_present after a kernel-side probe confirms the
+ * capability is actually available. Used for capabilities whose
+ * truth is only knowable after kernel init (e.g.
+ * BOOT_CAP_SECURE_BOOT_STATE -- the bootloader unconditionally
+ * degrades it, the kernel promotes it after reading the UEFI RT
+ * variable). Monotonic: only sets bits, never clears. Must not be
+ * called before boot_caps_validate(). */
+void boot_caps_mark_present(uint64_t bits);
+
 const struct boot_payload_desc *
 boot_payload_find(const struct boot_info *info,
                   uint32_t type,

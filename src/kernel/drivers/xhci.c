@@ -252,7 +252,15 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
      * The controller is still running with our DMA structures -- we just need
      * to point kernel data structures at the bootloader's physical addresses
      * and go straight to port enumeration. */
-    if (g_boot_info.usb_handover_complete &&
+    /* Authoritative gate: capability negotiation decides whether the
+     * handover is trustworthy. A loader that reports
+     * BOOT_CAP_USB_HANDOVER as degraded (partial DMA setup, bad
+     * controller state, etc.) MUST NOT enter the inherit path even
+     * if the legacy usb_handover_complete byte is set -- the
+     * inherit path trusts bootloader-owned ring/DCBAA state, and
+     * trusting degraded state is a direct DMA corruption risk. */
+    if (boot_caps_require(BOOT_CAP_USB_HANDOVER) &&
+        g_boot_info.usb_handover_complete &&
         g_boot_info.usb_controller.active) {
         const struct boot_usb_controller *bc = &g_boot_info.usb_controller;
 

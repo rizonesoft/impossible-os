@@ -44,9 +44,11 @@ static void test_boot_reserved_populate_happy_path(void)
 {
     br_zero_fixture();
 
-    /* TPM event log at 1 MiB, 4 KiB. */
+    /* TPM event log at 1 MiB, 4 KiB. Gate: caps_present must carry
+     * BOOT_CAP_TPM_EVENT_LOG for the reservation path to enter. */
     s_br_buf.tpm_event_log      = 0x100000u;
     s_br_buf.tpm_event_log_size = 0x1000u;
+    s_br_buf.caps_present       = BOOT_CAP_TPM_EVENT_LOG;
 
     /* Framebuffer at 0xE0000000, pitch=1920*4, height=1080 -> 8 MiB. */
     s_br_buf.fb.addr        = 0xE0000000u;
@@ -91,6 +93,7 @@ static void test_boot_reserved_payload_reserved_flag(void)
     br_zero_fixture();
 
     /* One payload with FLAG_RESERVED set (section 5 bootloader). */
+    s_br_buf.caps_present                        = BOOT_CAP_PAYLOAD_DESCRIPTORS;
     s_br_buf.payload_count                       = 2;
     s_br_buf.payload_descriptors[0].type         = BOOT_PAYLOAD_MODULE;
     s_br_buf.payload_descriptors[0].flags        = BOOT_PAYLOAD_FLAG_VALID |
@@ -135,6 +138,7 @@ static void test_boot_reserved_overlap_rejected(void)
      * boot_info first, then the TPM entry overlaps -> error. */
     s_br_buf.tpm_event_log      = 0x10000u;
     s_br_buf.tpm_event_log_size = 0x1000u;
+    s_br_buf.caps_present       = BOOT_CAP_TPM_EVENT_LOG;
 
     enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
     boot_result_t r = boot_reserved_populate_from_info(&s_br_buf, &err);
@@ -152,6 +156,7 @@ static void test_boot_reserved_range_wrap_rejected(void)
     /* TPM event log near UINT64_MAX with length that wraps. */
     s_br_buf.tpm_event_log      = 0xFFFFFFFFFFFFF000ull;
     s_br_buf.tpm_event_log_size = 0x4000u;  /* wraps past UINT64_MAX */
+    s_br_buf.caps_present       = BOOT_CAP_TPM_EVENT_LOG;
 
     enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
     boot_result_t r = boot_reserved_populate_from_info(&s_br_buf, &err);
@@ -252,6 +257,7 @@ static void test_boot_reserved_payload_vs_pmm_internal(void)
     br_zero_fixture();
 
     /* Reserved payload at 0x2000000 (32 MiB), 4 KiB long. */
+    s_br_buf.caps_present                        = BOOT_CAP_PAYLOAD_DESCRIPTORS;
     s_br_buf.payload_count                       = 1;
     s_br_buf.payload_descriptors[0].type         = BOOT_PAYLOAD_MODULE;
     s_br_buf.payload_descriptors[0].flags        = BOOT_PAYLOAD_FLAG_VALID |
@@ -279,6 +285,29 @@ static void test_boot_reserved_payload_vs_pmm_internal(void)
                    "payload overlap returns s_table_idx+1 (colliding entry)");
 }
 
+static void test_boot_reserved_tpm_log_degraded_skipped(void)
+{
+    /* Capability-gated retrofit regression: when BOOT_CAP_TPM_EVENT_LOG
+     * is NOT in caps_present, populate_from_info MUST skip the TPM
+     * event-log reservation even when tpm_event_log +
+     * tpm_event_log_size are populated. Prevents a loader from
+     * forcing the kernel to pin a degraded region. */
+    br_zero_fixture();
+    s_br_buf.tpm_event_log      = 0x100000u;
+    s_br_buf.tpm_event_log_size = 0x1000u;
+    /* caps_present does NOT carry BOOT_CAP_TPM_EVENT_LOG */
+    s_br_buf.caps_present       = 0u;
+    s_br_buf.caps_degraded      = BOOT_CAP_TPM_EVENT_LOG;
+
+    enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
+    boot_result_t r = boot_reserved_populate_from_info(&s_br_buf, &err);
+    TEST_ASSERT_EQ((int)r,   (int)BOOT_OK,                    "degraded TPM -> populate OK");
+    TEST_ASSERT_EQ((int)err, (int)BOOT_RESERVED_ERR_OK,       "err=OK");
+    /* Expected: only boot_info entry; TPM skipped. */
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_count(), (unsigned long)1,
+                   "degraded TPM caps -> no reservation");
+}
+
 void test_register_boot_reserved(void)
 {
     test_suite_register_cat("boot_reserved: populate happy path",
@@ -304,6 +333,8 @@ void test_register_boot_reserved(void)
                             TEST_CAT_BOOT);
     test_suite_register_cat("boot_reserved: NULL info rejected",
                             test_boot_reserved_null_info, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_reserved: degraded TPM caps skips reservation",
+                            test_boot_reserved_tpm_log_degraded_skipped, TEST_CAT_BOOT);
     test_suite_register_cat("boot_reserved: payload vs PMM-internal",
                             test_boot_reserved_payload_vs_pmm_internal,
                             TEST_CAT_BOOT);

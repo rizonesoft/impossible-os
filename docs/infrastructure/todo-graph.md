@@ -243,6 +243,9 @@ flowchart TD
   todo_03_memory_concurrency_TODO_10_concurrency_diagnostics_md_8cffc0["concurrency-diagnostics<br/>TODO-10"]
   class todo_03_memory_concurrency_TODO_10_concurrency_diagnostics_md_8cffc0 active
   click todo_03_memory_concurrency_TODO_10_concurrency_diagnostics_md_8cffc0 "https://github.com/rizonesoft/impossible-os/blob/main/todo/03-memory-concurrency/TODO-10-concurrency-diagnostics.md"
+  todo_03_memory_concurrency_TODO_11_warm_kernel_update_runtime_md_0449f7["warm-kernel-update-runtime<br/>TODO-11"]
+  class todo_03_memory_concurrency_TODO_11_warm_kernel_update_runtime_md_0449f7 active
+  click todo_03_memory_concurrency_TODO_11_warm_kernel_update_runtime_md_0449f7 "https://github.com/rizonesoft/impossible-os/blob/main/todo/03-memory-concurrency/TODO-11-warm-kernel-update-runtime.md"
   todo_04_drivers_hardware_TODO_01_pci_pcie_pnp_resource_manager_md_45903b["pci-pcie-pnp-resource-manager<br/>TODO-01"]
   class todo_04_drivers_hardware_TODO_01_pci_pcie_pnp_resource_manager_md_45903b active
   click todo_04_drivers_hardware_TODO_01_pci_pcie_pnp_resource_manager_md_45903b "https://github.com/rizonesoft/impossible-os/blob/main/todo/04-drivers-hardware/TODO-01-pci-pcie-pnp-resource-manager.md"
