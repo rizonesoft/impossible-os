@@ -2961,8 +2961,12 @@ static __attribute__((noreturn)) void bpp_render_and_reset(
 
     EFI_STATUS persist_status = bpp_persist_nvram_fault(rec);
     if (persist_status != 0) {
+        /* Print the FULL EFI_STATUS as 64-bit hex: the error bit
+         * (0x8000000000000000) must not be truncated by a UINT32
+         * cast, otherwise the logged value looks like success when
+         * it was a real failure. */
         serial_early_print("[BOOT] ABI mismatch: NVRAM persist failed 0x");
-        serial_early_print_uint((UINT32)persist_status);
+        serial_early_print_hex64((UINT64)persist_status);
         serial_early_print(" -- next boot will not carry the transcript\n");
     }
 
@@ -3027,7 +3031,14 @@ static __attribute__((noreturn)) void bpp_render_rollback_and_halt(
 
     EFI_STATUS persist_status = bpp_persist_nvram_fault(&rec);
 
-    if (gST && gST->ConOut) {
+    /* UEFI console (gST->ConOut) is ONLY safe pre-EBS. The anti-
+     * rollback gate currently runs AFTER ExitBootServices at
+     * boot_hw.c's refusal site, so touching ConOut here would drive
+     * an undefined service. Gate the rich UCS-2 render on
+     * !g_ebs_in_progress and fall back to serial-only when Boot
+     * Services have been exited. Serial is post-EBS safe; Runtime
+     * Services (used by bpp_persist_nvram_fault above) are too. */
+    if (!g_ebs_in_progress && gST && gST->ConOut) {
         gST->ConOut->ClearScreen(gST->ConOut);
         efi_print(u"\r\n");
         efi_print(u"  Impossible OS -- Anti-Rollback Refusal\r\n");
@@ -3048,26 +3059,33 @@ static __attribute__((noreturn)) void bpp_render_rollback_and_halt(
             efi_print(u"  Diagnostic persisted to UEFI NVRAM "
                       u"(ImpossibleBootProtoFault).\r\n");
         } else {
-            efi_print(u"  WARNING: NVRAM persist failed (status 0x");
-            bpp_print_hex32((UINT32)persist_status);
-            efi_print(u"); next boot will not have the transcript.\r\n");
+            efi_print(u"  WARNING: NVRAM persist failed; "
+                      u"next boot will not have the transcript.\r\n");
+            efi_print(u"  See serial log for full EFI_STATUS value.\r\n");
         }
         efi_print(u"\r\n  Power-cycle and enter the UEFI shell to recover.\r\n");
     }
 
+    /* Serial diagnostic (always safe, pre- or post-EBS). Format the
+     * full EFI_STATUS as a 64-bit hex value so the top error bit
+     * (0x8000000000000000) is preserved -- truncating to UINT32 drops
+     * the error flag and makes every failure look like success. */
     serial_early_print("[BOOT] ANTI-ROLLBACK REFUSAL: "
                        "fault_class=SEC_ROLLBACK shipped=");
     serial_early_print_uint(shipped);
     serial_early_print(" required=");
     serial_early_print_uint(required);
     serial_early_print(" persist_status=0x");
-    serial_early_print_uint((UINT32)persist_status);
+    serial_early_print_hex64((UINT64)persist_status);
+    if (g_ebs_in_progress)
+        serial_early_print(" (post-EBS: ConOut skipped, serial-only)");
     serial_early_print("\n");
 
-    /* Halt with the screen preserved. NO auto-reset: rollback refusal
-     * has no path forward without operator intervention, and resetting
-     * into the same refusal destroys the only diagnostic the operator
-     * has. Power-cycle (operator-triggered) is the correct next step. */
+    /* Halt with the screen/serial preserved. NO auto-reset: rollback
+     * refusal has no path forward without operator intervention, and
+     * resetting into the same refusal destroys the only diagnostic the
+     * operator has. Power-cycle (operator-triggered) is the correct
+     * next step. */
     for (;;)
         __asm__ volatile ("cli; hlt");
 }
@@ -6310,8 +6328,14 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
             serial_early_print(
                 "[BOOT] ANTI-ROLLBACK: IPOSRequiredSecVersion read failed "
                 "(status/size/attrs invalid) -- failing closed. ");
+            /* Log EFI_STATUS as 64-bit hex so the error bit
+             * (0x8000000000000000) is preserved -- narrowing to UINT32
+             * drops it and makes every failure look like a benign
+             * low value. `attrs` is defined as UINT32 per UEFI spec;
+             * `sz` (UINTN) is 64-bit on x86_64 but the size fits
+             * comfortably in 32 bits for this variable. */
             serial_early_print("status=0x");
-            serial_early_print_uint((UINT32)st);
+            serial_early_print_hex64((UINT64)st);
             serial_early_print(" sz=");
             serial_early_print_uint((UINT32)sz);
             serial_early_print(" attrs=0x");
