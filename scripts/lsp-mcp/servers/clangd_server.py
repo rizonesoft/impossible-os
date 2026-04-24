@@ -123,6 +123,16 @@ def spawn(workspace_root: Path) -> LspSubprocess:
     # clangd skip work; it still responds on request (LSP
     # capabilities are negotiation, not hard gating), but keeping
     # the surface narrow reduces spurious server chatter.
+    # Only advertise capabilities we can actually honor. Earlier
+    # revisions listed workspace.configuration / workspaceFolders,
+    # but the reader loop in LspSubprocess only routes responses to
+    # our requests + caches publishDiagnostics notifications -- it
+    # does NOT answer server-initiated requests with an `id`. If
+    # clangd took us up on those caps, it would sit waiting for a
+    # reply and surface as first-call latency or timeouts. The
+    # server-initiated-request surface lands with the file-change
+    # lifecycle + workspace-symbol tools; advertise those caps
+    # then, not now.
     capabilities: dict[str, Any] = {
         "textDocument": {
             "synchronization": {"didSave": True, "dynamicRegistration": False},
@@ -132,19 +142,12 @@ def spawn(workspace_root: Path) -> LspSubprocess:
             "documentSymbol": {"hierarchicalDocumentSymbolSupport": True},
             "publishDiagnostics": {"relatedInformation": True},
         },
-        "workspace": {
-            "symbol": {},
-            "workspaceFolders": True,
-            "configuration": True,
-        },
+        "workspace": {"symbol": {}},
     }
     init_options: dict[str, Any] = {
-        # clangd accepts fallbackFlags via initializationOptions; these
-        # are applied when a file is not in compile_commands.json.
+        # clangd accepts fallbackFlags via initializationOptions;
+        # applied when a file is not in compile_commands.json.
         "fallbackFlags": list(_FREESTANDING_FLAGS),
-        # Keep the background index on-disk location stable so repeat
-        # runs share cache entries.
-        "clangdFileStatus": True,
     }
 
     try:

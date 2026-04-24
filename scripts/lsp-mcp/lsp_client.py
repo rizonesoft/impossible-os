@@ -222,6 +222,9 @@ class LspSubprocess:
                 "lsp-binary-missing",
                 f"{self.cmd[0]!r} not found on PATH",
                 lang=self.lang,
+                install_hint="ensure the LSP binary is on PATH; "
+                             "per-language server modules set a more "
+                             "specific hint via LspError directly.",
             ) from exc
         except OSError as exc:
             raise LspError(
@@ -725,40 +728,42 @@ class LspSubprocess:
         if self._shutdown_called:
             return
 
-        # Serialize teardown against the first initialize() handshake.
-        # Without _init_lock here, shutdown could observe
-        # _initialized == False, skip the graceful LSP shutdown, close
-        # stdin, and begin killing the process while initialize() is
-        # still between request("initialize") and notify("initialized").
-        # Acquire the init lock briefly to drain any in-flight handshake
-        # and prevent a new one from starting after we commit.
+        # Serialize teardown against the first initialize() handshake by
+        # HOLDING _init_lock across the entire decision AND commit --
+        # draining once and releasing (the earlier revision) let a
+        # second thread enter initialize() between our release and the
+        # _shutdown_called commit, producing a half-initialized
+        # subprocess. With the lock held across the commit, any new
+        # initialize() call blocks until shutdown finishes marking the
+        # instance closed and subsequently rejects itself via the
+        # _shutdown_called guard.
         with self._init_lock:
-            pass
+            proc = self._proc
+            if proc is None:
+                self._shutdown_called = True
+                return
 
-        proc = self._proc
-        if proc is None:
+            # (1) Graceful LSP shutdown: request + exit notification.
+            # _teardown_in_progress lets these slip past the guard that
+            # normal callers of request()/notify() see.
+            if proc.poll() is None and self._initialized:
+                self._teardown_in_progress = True
+                try:
+                    try:
+                        self.request(
+                            "shutdown", None, timeout=min(timeout, 1.5)
+                        )
+                    except Exception:
+                        pass
+                    try:
+                        self.notify("exit", None)
+                    except Exception:
+                        pass
+                finally:
+                    self._teardown_in_progress = False
+
+            # Commit: no new requests/notifications from callers.
             self._shutdown_called = True
-            return
-
-        # (1) Graceful LSP shutdown: request + exit notification.
-        # _teardown_in_progress lets these slip past the guard that
-        # normal callers of request()/notify() see.
-        if proc.poll() is None and self._initialized:
-            self._teardown_in_progress = True
-            try:
-                try:
-                    self.request("shutdown", None, timeout=min(timeout, 1.5))
-                except Exception:
-                    pass
-                try:
-                    self.notify("exit", None)
-                except Exception:
-                    pass
-            finally:
-                self._teardown_in_progress = False
-
-        # From here on, no new requests/notifications from callers.
-        self._shutdown_called = True
 
         # (2) Close stdin so the LSP sees EOF even if it ignored exit.
         try:

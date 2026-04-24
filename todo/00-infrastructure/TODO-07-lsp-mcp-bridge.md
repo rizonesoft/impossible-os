@@ -116,6 +116,9 @@ Wire clangd-19 as the first language. C is the dominant file type in the repo (~
 > - **Canonical doc:** [`.clangd`](../../.clangd) (CompileFlags.Add block is the single source of truth for freestanding flags; `clangd_server._FREESTANDING_FLAGS` is a fixed mirror with an explicit drift-note).
 > - **Scope boundary:** no MCP tools registered, no per-extension dispatch (§.c/.h routing is §7's `dispatch(path)` helper), no asm-lsp / bash-lsp / pyright / PSES (§3-§6 own their respective integrations).
 
+> **Verified:** 2026-04-25 | commit `d3f1bf7d` | 5/5 items | build N/A (host-side Python) | tests 10/10 PASS
+> **Quality reviewed:** 2026-04-25 | Codex 3x (adversarial + consistency + perf; dead-code skipped per user request) | 2H+4M fixed, 1H rejected | scope: N/A (host-side Python tooling; no domain quality skill applies)
+
 ---
 
 ## 3. asm-lsp Integration (NASM)

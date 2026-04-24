@@ -68,12 +68,28 @@ from lsp_client import LspError, LspSubprocess  # noqa: E402
 _CALL_LOCK = threading.Lock()
 
 
-# Registry of spawned LSPs keyed by language tag (e.g. "c", "asm",
-# "sh", "py", "ps1"). Populated lazily by _get_or_spawn(); empty at
-# bridge startup. Per-language integrations each add a spawn recipe
-# that registers here; the skeleton only provides the infrastructure.
-_LIVE_LSPS: dict[str, LspSubprocess] = {}
+# Registry of spawned LSPs. KEYED BY (lang, resolved_workspace_root)
+# so a future bridge instance used across two checkouts cannot hand
+# caller B the LspSubprocess that caller A initialized against a
+# different compile_commands.json / root_uri. Today the bridge takes
+# one workspace root per process, so the tuple's root half is
+# effectively constant; defending now keeps the invariant explicit
+# and makes multi-root future work a one-line change.
+_LIVE_LSPS: dict[tuple[str, str], LspSubprocess] = {}
 _LIVE_LSPS_LOCK = threading.Lock()
+
+# Per-key spawn-in-progress Events. A second caller for the same
+# (lang, root) tuple waits on the Event rather than racing the spawn.
+# Using Event instead of a per-key Lock lets the waiter share the
+# eventually-spawned instance via _LIVE_LSPS after the first spawner
+# publishes it.
+_SPAWN_EVENTS: dict[tuple[str, str], threading.Event] = {}
+
+# Cached spawner import failures so a broken per-language module does
+# not look identical to "language not wired". Populated by
+# _autoregister_spawners; read by _get_or_spawn to emit
+# lsp-spawner-import-failed instead of lsp-language-unsupported.
+_SPAWNER_IMPORT_ERRORS: dict[str, str] = {}
 
 # Language spawn registry: language tag -> callable returning an
 # LspSubprocess instance. The per-language integration commits
@@ -98,16 +114,20 @@ def _autoregister_spawners() -> None:
     presence check via `is_available()`; registering here does NOT
     require the LSP to be installed.
 
-    Kept on a single call site so `grep register_spawner bridge.py`
-    lists every wired language at a glance."""
+    Broken imports are CACHED, not swallowed, so _get_or_spawn can
+    distinguish "integration broken" from "language not wired" --
+    the earlier revision collapsed both into lsp-language-unsupported,
+    hiding real regressions behind a generic error."""
     # clangd-19 (C / H) -- first language wired, per the bridge's
     # end-to-end bootstrap plan.
     try:
         from servers import clangd_server as _clangd
         register_spawner("c", _clangd.spawn)
-    except Exception as exc:  # pragma: no cover -- import errors
+    except Exception as exc:
+        detail = f"{exc.__class__.__name__}: {exc}"
+        _SPAWNER_IMPORT_ERRORS["c"] = detail
         sys.stderr.write(
-            f"[lsp-mcp] warn: clangd spawner not registered: {exc}\n"
+            f"[lsp-mcp] warn: clangd spawner not registered: {detail}\n"
         )
 
 
@@ -115,22 +135,49 @@ _autoregister_spawners()
 
 
 def _get_or_spawn(lang: str, workspace_root: Path) -> LspSubprocess:
-    """Return a running LspSubprocess for `lang`, spawning if needed.
+    """Return a running LspSubprocess for (lang, workspace_root),
+    spawning if needed.
 
-    Raises LspError when the language is unknown or the spawn recipe
-    is missing. Callers translate that into the JSON error envelope.
+    Concurrency contract:
+      * Steady state (LSP cached + alive): no locks held, returns
+        the instance.
+      * First-spawn for a (lang, root) key: ONE thread performs the
+        spawn; concurrent callers for the SAME key wait on a
+        threading.Event and then share the result.
+      * Unrelated languages or unrelated roots run in parallel --
+        the earlier global _CALL_LOCK around the spawner call
+        serialized all first-spawns across every language.
 
-    Thread-safety: _CALL_LOCK is taken here (structurally, not advisory)
-    so the first-request-for-a-language path cannot race a concurrent
-    caller into a double-spawn or a half-initialized handshake. Steady-
-    state tool dispatch (after the LSP is cached) only needs the per-
-    instance locks inside LspSubprocess, so this narrow scope keeps
-    unrelated-language requests from serializing on each other."""
-    with _CALL_LOCK:
-        with _LIVE_LSPS_LOCK:
-            inst = _LIVE_LSPS.get(lang)
-            if inst is not None and inst.alive:
-                return inst
+    Raises LspError for language-not-wired (lsp-language-unsupported),
+    broken spawner imports (lsp-spawner-import-failed, preserves the
+    original exception), and propagates anything the spawner itself
+    raises."""
+    try:
+        root_key = str(workspace_root.resolve())
+    except (OSError, RuntimeError):
+        root_key = str(workspace_root)
+    key = (lang, root_key)
+
+    # Fast path under _LIVE_LSPS_LOCK only. If a spawn is already
+    # under way for this key, attach to its Event and wait outside
+    # the lock.
+    with _LIVE_LSPS_LOCK:
+        inst = _LIVE_LSPS.get(key)
+        if inst is not None and inst.alive:
+            return inst
+        ev = _SPAWN_EVENTS.get(key)
+        if ev is not None:
+            waiter_event = ev
+            owner = False
+        else:
+            import_err = _SPAWNER_IMPORT_ERRORS.get(lang)
+            if import_err is not None:
+                raise LspError(
+                    "lsp-spawner-import-failed",
+                    f"spawner module for {lang!r} failed to import",
+                    lang=lang,
+                    original_error=import_err,
+                )
             spawner = _LSP_SPAWNERS.get(lang)
             if spawner is None:
                 raise LspError(
@@ -138,9 +185,37 @@ def _get_or_spawn(lang: str, workspace_root: Path) -> LspSubprocess:
                     f"no LSP registered for {lang!r}",
                     lang=lang,
                 )
-            inst = spawner(workspace_root)
-            _LIVE_LSPS[lang] = inst
-            return inst
+            waiter_event = threading.Event()
+            _SPAWN_EVENTS[key] = waiter_event
+            owner = True
+
+    if not owner:
+        waiter_event.wait()
+        with _LIVE_LSPS_LOCK:
+            inst = _LIVE_LSPS.get(key)
+        if inst is None or not inst.alive:
+            raise LspError(
+                "lsp-spawn-failed",
+                "concurrent spawn owner did not publish a live instance",
+                lang=lang,
+            )
+        return inst
+
+    # Owner path: spawn OUTSIDE the registry lock so a slow clangd
+    # (~2-3s startup + 15s initialize timeout) does not block
+    # unrelated-language callers.
+    try:
+        inst = spawner(workspace_root)
+    except BaseException:
+        with _LIVE_LSPS_LOCK:
+            _SPAWN_EVENTS.pop(key, None)
+        waiter_event.set()
+        raise
+    with _LIVE_LSPS_LOCK:
+        _LIVE_LSPS[key] = inst
+        _SPAWN_EVENTS.pop(key, None)
+    waiter_event.set()
+    return inst
 
 
 def _call_lsp(fn: Callable[[], Any]) -> Any:
