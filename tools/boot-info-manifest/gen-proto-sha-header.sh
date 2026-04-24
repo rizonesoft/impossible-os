@@ -82,6 +82,15 @@ if [ -f "$OUTPUT" ] && diff -q <(echo "$NEW") "$OUTPUT" >/dev/null 2>&1; then
     exit 0
 fi
 
-mkdir -p "$(dirname "$OUTPUT")"
-echo "$NEW" > "$OUTPUT"
+# Atomic publish: write to a sibling tempfile and rename over the final
+# path. Prevents a racing make / compiler from reading a torn header.
+# mv is atomic within the same filesystem; the tempfile lives beside the
+# target so cross-fs rename is not a concern.
+OUTDIR="$(dirname "$OUTPUT")"
+mkdir -p "$OUTDIR"
+TMP="$(mktemp "$OUTDIR/boot_proto_sha.h.XXXXXX")"
+trap 'rm -f "$TMP"' EXIT
+echo "$NEW" > "$TMP"
+mv "$TMP" "$OUTPUT"
+trap - EXIT
 echo "[TOOL] $OUTPUT emitted (sha=${HEX:0:12}...)"

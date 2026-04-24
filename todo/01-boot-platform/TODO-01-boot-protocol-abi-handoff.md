@@ -581,8 +581,8 @@ The capability negotiation ABI shipped in §11 advertises what the bootloader po
 > - **Canonical doc**: [`include/kernel/boot_proto_descriptor.h`](../../include/kernel/boot_proto_descriptor.h) (struct + magic + section-name contract); parser API in [`src/boot/uefi/elf_bootproto.h`](../../src/boot/uefi/elf_bootproto.h).
 > - **Scope boundary**: §17 owns the pre-jump compare + fault persist pipeline for structural drift (`{magic, version, struct_size, sha256}`). Anti-rollback (security-version) diagnostic integration belongs to [Anti-Rollback Integration in Version Fault Diagnostics](#18-anti-rollback-integration-in-version-fault-diagnostics). Synthetic-mismatch QEMU fixtures belong to §19. The kernel does NOT need a matching consumer for `.bootproto` -- the section is purely for bootloader pre-jump parsing.
 
-> **Verified:** 2026-04-24 | commit `1c33ded0` | 10/11 items (item 8 synthetic-mismatch QEMU defers to §19) | build OK | tests 2402 kernel + 16 user-mode + 17 bootproto_parse PASS + smoke PASS 2.47s + .bootproto match on serial
-> **Quality reviewed:** 2026-04-24 | Codex 1x (adversarial) | 2H fixed inline (NVRAM name+GUID unified with kernel reader; top-level EFI target depends on new bootloader inputs + sha header) | scope: boot-code-quality + kernel-code-quality
+> **Verified:** 2026-04-24 | commit `1c33ded0` + review fixes | 10/11 items (item 8 synthetic-mismatch QEMU defers to §19) | build OK | tests 2402 kernel + 16 user-mode + 17 bootproto_parse PASS + smoke PASS 2.47s + .bootproto match on serial
+> **Quality reviewed:** 2026-04-24 | Codex 3x (adversarial x2 + quality) | 2H+3M fixed inline (step 13: NVRAM name+GUID unified with kernel reader, top-level EFI target deps; step 20 adversarial: atomic SHA header write via mktemp+mv, BOOT_VERSION_FAULT_BAD_SHA + BAD_PARSE enum values; step 20 quality: transcriber decodes parser error enum from observed_loader_sec_ver for BAD_PARSE) | scope: boot-code-quality + kernel-code-quality
 
 ---
 

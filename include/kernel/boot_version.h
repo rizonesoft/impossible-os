@@ -57,6 +57,13 @@ enum boot_version_fault_class {
     BOOT_VERSION_FAULT_BAD_VERSION = 3,  /* header.version != BOOT_INFO_VERSION */
     BOOT_VERSION_FAULT_BAD_SIZE    = 4,  /* header.size != sizeof(struct boot_info) */
     BOOT_VERSION_FAULT_SEC_ROLLBACK = 5, /* RESERVED for anti-rollback */
+    BOOT_VERSION_FAULT_BAD_SHA     = 6,  /* .bootproto sha256 drift -- magic/version/size
+                                          * match, manifest hash diverged. Bootloader
+                                          * pre-jump path only. */
+    BOOT_VERSION_FAULT_BAD_PARSE   = 7,  /* .bootproto ELF parse failure (missing section,
+                                          * bounds violation, alignment). Bootloader
+                                          * pre-jump path only; the raw parser error
+                                          * enum is stored in observed_loader_sec_ver. */
 };
 
 /* Fixed 48-byte layout. Pinned so the NVRAM record can be read by a

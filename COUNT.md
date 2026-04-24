@@ -15,10 +15,10 @@
 
 |                       |   Files |      Lines |
 | --------------------- | ------: | ---------: |
-| **C sources** (`.c`)  |     291 |     153090 |
-| **Headers** (`.h`)    |     214 |      41901 |
+| **C sources** (`.c`)  |     291 |     153147 |
+| **Headers** (`.h`)    |     214 |      41908 |
 | **Assembly** (`.asm`) |       9 |       1095 |
-| **Subtotal**          | **514** | **196086** |
+| **Subtotal**          | **514** | **196150** |
 
 ## SDK Tools
 
@@ -58,9 +58,9 @@
 
 |                                |    Files |      Lines |
 | ------------------------------ | -------: | ---------: |
-| **Core code + tooling**        |  **654** | **223157** |
+| **Core code + tooling**        |  **654** | **223221** |
 | **Supporting text + metadata** |  **396** | **170547** |
-| **All counted text files**     | **1050** | **393704** |
+| **All counted text files**     | **1050** | **393768** |
 
 > Vendored code excluded: ~13886 lines (`stb_image.h`, `stb_truetype.h`, `efi.h`)
 >
@@ -77,15 +77,15 @@
 
 |                               |         Linux |     Windows |         Impossible OS |
 | ----------------------------- | ------------: | ----------: | --------------------: |
-| **Core code + tooling lines** |   ~28,000,000 | ~50,000,000 |               223,157 |
+| **Core code + tooling lines** |   ~28,000,000 | ~50,000,000 |               223,221 |
 | **Developers**                | ~1,000 active | ~5,000 peak |                     1 |
 | **Time span**                 |      33 years |    40 years | 1 month(s), 19 day(s) |
 
-> At industry rates (10,000 LOC/developer/year -- COCOMO II), writing 223,157
+> At industry rates (10,000 LOC/developer/year -- COCOMO II), writing 223,221
 > lines of core code and tooling would take **166 developers** working for **1 month(s), 19 day(s)**.
 >
 > *The "impossible" in Impossible OS was supposed to be the name, not the development method.*
 
 ---
 
-*Last updated: 2026-04-24 21:04 · commit `6ac548c3`*
+*Last updated: 2026-04-24 21:15 · commit `0a5a485f`*

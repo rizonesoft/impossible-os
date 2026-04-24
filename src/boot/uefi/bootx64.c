@@ -2807,13 +2807,17 @@ struct bl_boot_version_fault {
 _Static_assert(sizeof(struct bl_boot_version_fault) == 48,
     "bl_boot_version_fault layout pinned at 48 bytes");
 
-/* Classification enum values match include/kernel/boot_version.h. */
+/* Classification enum values match include/kernel/boot_version.h.
+ * Keep values in sync manually; the kernel reader renders the name via
+ * boot_version_fault_class_name() which is updated in lockstep. */
 #define BL_FAULT_OK            0u
 #define BL_FAULT_NULL_HDR      1u
 #define BL_FAULT_BAD_MAGIC     2u
 #define BL_FAULT_BAD_VERSION   3u
 #define BL_FAULT_BAD_SIZE      4u
 #define BL_FAULT_SEC_ROLLBACK  5u
+#define BL_FAULT_BAD_SHA       6u
+#define BL_FAULT_BAD_PARSE     7u
 
 /* NVRAM record layout invariants must match include/kernel/boot_version.h. */
 #define BL_BOOT_VERSION_FAULT_MAGIC  0x42565046u
@@ -3003,10 +3007,17 @@ static void bootproto_verify_or_reset(const UINT8 *kernel_image,
     rec.expected_size     = expected_size;
 
     if (r != BOOTPROTO_OK) {
-        rec.fault_class    = BL_FAULT_BAD_VERSION;  /* parse failure proxy */
-        rec.observed_magic = 0;
-        rec.observed_version = 0;
-        rec.observed_size  = 0;
+        /* Parse failure: dedicated BAD_PARSE class so the blackbox
+         * transcript can distinguish a missing/truncated/misaligned
+         * `.bootproto` section from a structural ABI mismatch. Stash
+         * the raw parser error enum in observed_loader_sec_ver so the
+         * kernel-side reader can surface the specific step that
+         * failed (missing section / bounds / alignment / etc.). */
+        rec.fault_class             = BL_FAULT_BAD_PARSE;
+        rec.observed_magic          = 0;
+        rec.observed_version        = 0;
+        rec.observed_size           = 0;
+        rec.observed_loader_sec_ver = (UINT32)r;
         bpp_render_and_reset(&rec, r, 0);
     }
 
@@ -3037,7 +3048,11 @@ static void bootproto_verify_or_reset(const UINT8 *kernel_image,
             }
         }
         if (sha_mismatch) {
-            rec.fault_class = BL_FAULT_BAD_VERSION;
+            /* Magic + version + size all match but manifest hash
+             * diverged. Dedicated BAD_SHA class so the blackbox
+             * transcript names the real cause instead of a generic
+             * version mismatch. */
+            rec.fault_class = BL_FAULT_BAD_SHA;
             bpp_render_and_reset(&rec, BOOTPROTO_OK, 1);
         }
     }

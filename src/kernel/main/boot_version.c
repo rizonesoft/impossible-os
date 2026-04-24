@@ -50,6 +50,8 @@ const char *boot_version_fault_class_name(uint32_t fault_class)
     case BOOT_VERSION_FAULT_BAD_VERSION:     return "BAD_VERSION";
     case BOOT_VERSION_FAULT_BAD_SIZE:        return "BAD_SIZE";
     case BOOT_VERSION_FAULT_SEC_ROLLBACK:    return "SEC_ROLLBACK";
+    case BOOT_VERSION_FAULT_BAD_SHA:         return "BAD_SHA";
+    case BOOT_VERSION_FAULT_BAD_PARSE:       return "BAD_PARSE";
     default:                                 return "UNKNOWN";
     }
 }
@@ -314,6 +316,46 @@ void boot_version_blackbox_transcribe(void)
         pos = append_line(buf, pos, max_sz,
                           "Operator response: boot a newer kernel; "
                           "this is a rollback refusal, not ABI drift.");
+    } else if (rec.fault_class == BOOT_VERSION_FAULT_BAD_PARSE) {
+        /* Bootloader stored the raw parser error enum in
+         * observed_loader_sec_ver so this transcript can name the
+         * specific step that failed. Values mirror
+         * `enum bootproto_result` in src/boot/uefi/elf_bootproto.h;
+         * keep the switch in sync with that enum. */
+        pos = append_line(buf, pos, max_sz, "");
+        pos = append_str(buf, pos, max_sz,
+                         ".bootproto parse failure: ");
+        const char *parse_name;
+        switch (rec.observed_loader_sec_ver) {
+        case 0:  parse_name = "OK (unexpected)";      break;
+        case 1:  parse_name = "NULL_IMAGE";           break;
+        case 2:  parse_name = "EHDR_BOUNDS";          break;
+        case 3:  parse_name = "NOT_ELF64";            break;
+        case 4:  parse_name = "SHT_BOUNDS";           break;
+        case 5:  parse_name = "SHT_ENTSIZE";          break;
+        case 6:  parse_name = "SHSTR_IDX";            break;
+        case 7:  parse_name = "SHSTR_BOUNDS";         break;
+        case 8:  parse_name = "NAME_BOUNDS";          break;
+        case 9:  parse_name = "NOT_FOUND";            break;
+        case 10: parse_name = "SECT_BOUNDS";          break;
+        case 11: parse_name = "SECT_ALIGN";           break;
+        case 12: parse_name = "SECT_SIZE";            break;
+        default: parse_name = "UNKNOWN";              break;
+        }
+        pos = append_line(buf, pos, max_sz, parse_name);
+        pos = append_line(buf, pos, max_sz, "");
+        pos = append_line(buf, pos, max_sz,
+                          "Operator response: the kernel ELF is missing "
+                          "or malformed. Reflash kernel.exe + re-sign.");
+    } else if (rec.fault_class == BOOT_VERSION_FAULT_BAD_SHA) {
+        pos = append_line(buf, pos, max_sz, "");
+        pos = append_line(buf, pos, max_sz,
+                          ".bootproto manifest hash drift: magic/version/"
+                          "size matched but SHA-256 diverged.");
+        pos = append_line(buf, pos, max_sz,
+                          "Operator response: rebuild bootloader AND "
+                          "kernel in lockstep -- the descriptor layout "
+                          "drifted at the sub-version level.");
     } else {
         pos = append_line(buf, pos, max_sz, "");
         pos = append_line(buf, pos, max_sz,
