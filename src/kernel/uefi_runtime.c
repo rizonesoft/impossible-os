@@ -749,7 +749,8 @@ boot_result_t uefi_secureboot_init(void)
         'S','e','c','u','r','e','B','o','o','t', 0
     };
     int sb_val = read_global_byte(sb_name);
-    if (sb_val >= 0)
+    int sb_val_valid = (sb_val >= 0);
+    if (sb_val_valid)
         s_sb_enabled = (sb_val == 1) ? 1 : 0;
 
     /* Read SetupMode variable (uint8_t: 0=User Mode, 1=Setup Mode) */
@@ -784,8 +785,14 @@ boot_result_t uefi_secureboot_init(void)
     static const uint16_t kek_name[] = { 'K','E','K', 0 };
     s_sb_kek_present = global_var_exists(kek_name);
 
-    /* Log summary */
-    if (s_sb_enabled) {
+    /* Log summary. When the SecureBoot variable read FAILED we have
+     * no authoritative state -- log UNKNOWN rather than "DISABLED"
+     * so operators distinguish "read failure" from "keys not enrolled
+     * + user turned it off". */
+    if (!sb_val_valid) {
+        klog(LOG_WARN, "UEFI",
+             "Secure Boot: UNKNOWN (variable read failed; cap degraded)");
+    } else if (s_sb_enabled) {
         klog(LOG_INFO, "UEFI", "Secure Boot: ENABLED (%s)",
              s_sb_setup_mode ? "Setup Mode" : "User Mode");
     } else {
@@ -797,21 +804,36 @@ boot_result_t uefi_secureboot_init(void)
          s_sb_pk_present ? "enrolled" : "absent",
          s_sb_kek_present ? "enrolled" : "absent");
 
-    /* Publish state to boot_info and global system state for desktop/tray */
-    g_boot_info.secure_boot_enabled = (uint8_t)s_sb_enabled;
-    g_system_state.secure_boot       = (uint8_t)s_sb_enabled;
+    /* Publish state to boot_info and global system state for
+     * desktop/tray. Only publish when the read succeeded -- a failed
+     * read leaves the fields at their zero-init values, but the
+     * authoritative signal for downstream consumers is
+     * caps_present & BOOT_CAP_SECURE_BOOT_STATE (which stays
+     * degraded below when the read failed). */
+    if (sb_val_valid) {
+        g_boot_info.secure_boot_enabled = (uint8_t)s_sb_enabled;
+        g_system_state.secure_boot       = (uint8_t)s_sb_enabled;
+    }
 
-    /* Promote BOOT_CAP_SECURE_BOOT_STATE from degraded to present now
-     * that the kernel-side UEFI RT variable query has succeeded. The
-     * bootloader unconditionally marked this degraded at handoff
-     * (secure_boot_enabled is a kernel-populated telemetry word, not
-     * a bootloader input); this is the kernel-side refinement that
-     * flips the bit so downstream attestation consumers can observe
-     * the transition via the authoritative caps_present word. */
-    boot_caps_mark_present(BOOT_CAP_SECURE_BOOT_STATE);
+    /* Promote BOOT_CAP_SECURE_BOOT_STATE from degraded to present ONLY
+     * when the SecureBoot variable read actually succeeded. A failed
+     * read leaves the state unknown -- publishing
+     * secure_boot_enabled=0 alongside an "authoritative" cap bit would
+     * turn an unreadable firmware query into a false "disabled"
+     * answer for downstream attestation. Keep the cap degraded when
+     * the read failed so consumers know to treat the state as
+     * unknown. */
+    if (sb_val_valid) {
+        boot_caps_mark_present(BOOT_CAP_SECURE_BOOT_STATE);
+    } else {
+        klog(LOG_WARN, "UEFI",
+             "SecureBoot variable read failed; cap stays degraded (state unknown)");
+    }
 
     /* Canonical one-line summary consumed by monitoring tools */
-    if (s_sb_enabled) {
+    if (!sb_val_valid) {
+        klog(LOG_WARN, "SecureBoot", "state=UNKNOWN (read failed)");
+    } else if (s_sb_enabled) {
         klog(LOG_INFO, "SecureBoot", "state=ENABLED");
     } else {
         klog(LOG_INFO, "SecureBoot", "state=DISABLED (firmware or user override)");

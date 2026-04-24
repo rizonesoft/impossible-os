@@ -240,30 +240,29 @@ boot_result_t boot_reserved_populate_from_info(const struct boot_info *info,
         }
     }
 
-    /* 7. typed payloads with BOOT_PAYLOAD_FLAG_RESERVED set. Gated on
-     * BOOT_CAP_PAYLOAD_DESCRIPTORS as defense-in-depth: a loader that
-     * reports payload descriptors as degraded MUST NOT force PMM
-     * reservation. In practice payload_count==0 on a degraded loader
-     * already short-circuits the loop, but the cap gate hardens the
-     * contract so a loader that LIES in payload_count without
-     * claiming the capability cannot drive reservation.
+    /* 7. typed payloads with BOOT_PAYLOAD_FLAG_RESERVED set.
      *
-     * Legacy compatibility: existing synthetic fixtures (test suite)
-     * and the in-tree bootloader BOTH set BOOT_CAP_PAYLOAD_DESCRIPTORS
-     * in caps_present on any boot that emits a payload descriptor
-     * array (even an empty one), because the capability represents
-     * "producer wrote the array at all". Fixtures that pre-date the
-     * gate MUST set the cap bit when exercising payload reservation.
-     * The test suite updates land alongside this retrofit. */
+     * Structural validation runs UNCONDITIONALLY: payload_count
+     * bounds + slot consistency are malformed-handoff defenses that
+     * must fire regardless of capability classification. Otherwise a
+     * producer that forgot to set BOOT_CAP_PAYLOAD_DESCRIPTORS but
+     * still emitted a corrupt payload_count would slip past the
+     * gate.
+     *
+     * The RESERVATION LOOP is gated on BOOT_CAP_PAYLOAD_DESCRIPTORS:
+     * when the capability is degraded, PMM reservation is skipped
+     * even if the producer populated the descriptors. A producer
+     * that reports the capability as degraded is saying "do not
+     * consume the descriptors"; the gate enforces that contract. */
+    if (info->payload_count > BOOT_PAYLOAD_MAX) {
+        if (out_err != (enum boot_reserved_error *)0)
+            *out_err = BOOT_RESERVED_ERR_COUNT_OOR;
+        klog(LOG_ERROR, "mm",
+             "boot_reserved: payload_count=%u > BOOT_PAYLOAD_MAX=%u",
+             (uint64_t)info->payload_count, (uint64_t)BOOT_PAYLOAD_MAX);
+        return BOOT_FATAL;
+    }
     if ((info->caps_present & BOOT_CAP_PAYLOAD_DESCRIPTORS) != 0u) {
-        if (info->payload_count > BOOT_PAYLOAD_MAX) {
-            if (out_err != (enum boot_reserved_error *)0)
-                *out_err = BOOT_RESERVED_ERR_COUNT_OOR;
-            klog(LOG_ERROR, "mm",
-                 "boot_reserved: payload_count=%u > BOOT_PAYLOAD_MAX=%u",
-                 (uint64_t)info->payload_count, (uint64_t)BOOT_PAYLOAD_MAX);
-            return BOOT_FATAL;
-        }
         uint32_t i;
         for (i = 0u; i < info->payload_count; i++) {
             const struct boot_payload_desc *d = &info->payload_descriptors[i];

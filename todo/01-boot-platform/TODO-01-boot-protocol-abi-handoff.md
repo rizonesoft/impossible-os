@@ -504,8 +504,8 @@ The capability negotiation ABI shipped in §11 advertises what the bootloader po
 > - **Canonical doc:** [include/kernel/boot_info.h](../../include/kernel/boot_info.h) BOOT_CAP_* block + [src/kernel/main/boot_caps.c](../../src/kernel/main/boot_caps.c) helper contracts.
 > - **Scope boundary:** retrofits all in-tree consumers that gate on capability-backed companion fields. Does NOT add new consumers (future roadmap sections). Does NOT extend BOOT_CAP_MASK_KNOWN with new bits (that is section 11 ABI scope). Does NOT add kernel-side probes for currently-degraded capabilities (RESUME_METADATA, NETWORK_PROVENANCE, ALT_PROTOCOL_ADAPTER) -- those are owned by their respective producer TODOs.
 
-> **Verified:** 2026-04-24 | commit (pending) | 8/8 items | build OK | tests 2387/2387 PASS + smoke 2.26s + 2393 tests total
-> **Quality reviewed:** pending /review-todo-section
+> **Verified:** 2026-04-24 | commit `e3710437` + review fixes | 8/8 items | build OK | tests 2389/2389 PASS + smoke 2.33s
+> **Quality reviewed:** 2026-04-24 | Codex 3x (adversarial + quality + re-adversarial) | 1H+1M+1H fixed inline (secure-boot read-failure no longer published as "disabled", payload structural validation restored unconditional, secure-boot tri-state log + skip-publish on unknown), 0 open | scope: boot-code-quality + kernel-code-quality
 
 ---
 

@@ -285,6 +285,24 @@ static void test_boot_reserved_payload_vs_pmm_internal(void)
                    "payload overlap returns s_table_idx+1 (colliding entry)");
 }
 
+static void test_boot_reserved_payload_count_oor_still_rejected_with_degraded_caps(void)
+{
+    /* Structural validation (payload_count > BOOT_PAYLOAD_MAX) MUST
+     * fire unconditionally, even when BOOT_CAP_PAYLOAD_DESCRIPTORS is
+     * degraded. A corrupt boot_info cannot hide behind a missing cap
+     * bit. */
+    TEST_KLOG_SUPPRESS("mm");
+    br_zero_fixture();
+    s_br_buf.caps_present  = 0u;
+    s_br_buf.caps_degraded = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    s_br_buf.payload_count = BOOT_PAYLOAD_MAX + 1u;  /* corrupt */
+
+    enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
+    boot_result_t r = boot_reserved_populate_from_info(&s_br_buf, &err);
+    TEST_ASSERT_EQ((int)r,   (int)BOOT_FATAL,                       "corrupt count rejected with degraded caps");
+    TEST_ASSERT_EQ((int)err, (int)BOOT_RESERVED_ERR_COUNT_OOR,      "err=COUNT_OOR");
+}
+
 static void test_boot_reserved_tpm_log_degraded_skipped(void)
 {
     /* Capability-gated retrofit regression: when BOOT_CAP_TPM_EVENT_LOG
@@ -335,6 +353,9 @@ void test_register_boot_reserved(void)
                             test_boot_reserved_null_info, TEST_CAT_BOOT);
     test_suite_register_cat("boot_reserved: degraded TPM caps skips reservation",
                             test_boot_reserved_tpm_log_degraded_skipped, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_reserved: payload count OOR still rejected with degraded caps",
+                            test_boot_reserved_payload_count_oor_still_rejected_with_degraded_caps,
+                            TEST_CAT_BOOT);
     test_suite_register_cat("boot_reserved: payload vs PMM-internal",
                             test_boot_reserved_payload_vs_pmm_internal,
                             TEST_CAT_BOOT);
