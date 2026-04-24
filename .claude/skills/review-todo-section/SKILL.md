@@ -46,14 +46,29 @@ description: Full review of a TODO section -- adversarial Codex, dead code, cons
    - `src/desktop/` -> `desktop-code-quality` | `src/shell/` -> `shell-code-quality` | `user/` -> `userland-code-quality`
    Record any gate failures as findings.
 
-8. **MANDATORY Codex quality review** -- single dispatch covering dead code + consistency + performance. No exceptions.
+8. **MANDATORY Codex quality review -- THREE separate focused dispatches.** No exceptions, no combining. A combined "all three in one prompt" dispatch is rejected: Codex's attention budget gets diluted across the three angles and depth drops on each. Run the three dispatches sequentially; each one should focus entirely on its named angle with file:line prompts specific to that angle's class of bugs.
+
+   **8a. Dead-code dispatch.** Invoke `codex-dead-code` via the plugin:
    ```bash
-   node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<prompt>"
+   node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<dead-code prompt>"
    ```
-   **CRITICAL -- Dead code (mandatory):** unreachable functions, unused defines, orphaned types, stale declarations.
-   **CRITICAL -- Consistency (mandatory):** struct layout matches, constants in one place, API contracts, error code mapping.
-   **CRITICAL -- Performance (mandatory):** allocations in hot paths, O(n^2), lock hold times, byte-at-a-time ops.
-   Apply `superpowers:receiving-code-review` to EVERY finding. Same rules as step 5 -- **Codex can be wrong.** Verify each finding at file:line. Reject wrong findings with code evidence. Do not blindly implement. Do not blindly accept.
+   Angles: unreachable functions, unused `#define` values, orphan struct / enum / type declarations, stale function prototypes with no callers, dead Makefile targets, dead test registrations, `__attribute__((used))` markers on genuinely-orphan symbols. Walk the full surface of files changed in this section; do not limit to the diff.
+
+   **8b. Consistency dispatch.** Invoke `codex-consistency-audit` via the plugin:
+   ```bash
+   node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<consistency prompt>"
+   ```
+   Angles: struct layout must match byte-for-byte across kernel + bootloader mirrors, constants defined in one place (no silent duplication with drift potential), API contracts (signature + error-code semantics match consumer expectations), ABI schemas (NVRAM variable name + GUID + attrs + size match producer/consumer), SSDT row ↔ function ↔ registration consistency, Win32 vs NT semantics, same narrowing / truncation / padding patterns applied uniformly across cross-file changes.
+
+   **8c. Performance dispatch.** Invoke `codex-perf-review` via the plugin:
+   ```bash
+   node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<perf prompt>"
+   ```
+   Angles: allocations in hot paths / ISR contexts, O(n²) or worse on unbounded inputs, spinlock hold times spanning I/O or serial writes, byte-at-a-time operations that should be memcpy'd, branch-misprediction hazards on hot paths, cache-line sharing across per-CPU state, inline-asm barriers placed conservatively vs required.
+
+   Apply `superpowers:receiving-code-review` to EVERY finding from EVERY dispatch. Same rules as step 5 -- **Codex can be wrong.** Verify each finding at file:line. Reject wrong findings with code evidence. Do not blindly implement. Do not blindly accept.
+
+   **Rationale for three dispatches instead of one.** The one-dispatch combined prompt was valid until ~2026-04-24; observed failure mode was that Codex would deep-dive whichever angle had the most text in the prompt and skim the other two. Three focused dispatches give each angle its own attention budget, lower the probability of missed findings, and make Codex-3x the scannable baseline counter in the Quality reviewed stamp (e.g., `Codex 4x (adversarial + dead-code + consistency + perf)`). The implementation cost is three Codex round-trips instead of one; the round-trip cost is acceptable for a section-ship gate.
 
 9. **Industry standards + Win11/Linux parity** -- spec compliance, concrete function/file references.
 
@@ -126,7 +141,7 @@ description: Full review of a TODO section -- adversarial Codex, dead code, cons
     - `N/M items` -- `[x]` count vs total `[ ]+[/]+[x]` in the section (exclude the `Commit:` line).
     - `build OK` | `build FAIL` -- single token. Do NOT re-paste `=== BUILD OK ===`.
     - **Evidence token vocabulary (pick one; keep scannable):** `smoke PASS (<platform> <time>)` for boot-path work; `tests N/M PASS` when a dedicated suite ran; `<N> sentinels` / `<N> fields` / `<N> rows` for structural counts; `manual` when validation is manual walkthrough. Free-form is still allowed; prefer the vocabulary. Skip if nothing surprising.
-    - Codex line: `Nx` is dispatch count; `<kinds>` names dispatches (`adversarial`, `quality`, `consistency`, `dead-code`, `perf`). Findings as `<H>H+<M>M+<L>L fixed, <D> open`; drop zero terms. `scope:` names the domain code-quality skill applied OR `N/A (<reason>)` like `N/A (docs-only)`. Do NOT write the full "No domain code-quality skill applies (...)" sentence.
+    - Codex line: `Nx` is dispatch count (minimum 4 per current rules: adversarial + dead-code + consistency + perf). `<kinds>` names dispatches (`adversarial`, `dead-code`, `consistency`, `perf`; the legacy combined `quality` kind is no longer accepted -- split it into three explicit entries). Add `design` or `re-adversarial` when extra passes land. Findings as `<H>H+<M>M+<L>L fixed, <D> open`; drop zero terms. `scope:` names the domain code-quality skill applied OR `N/A (<reason>)` like `N/A (docs-only)`. Do NOT write the full "No domain code-quality skill applies (...)" sentence.
     - **`Accepted:` vs `Deferred:` -- pick the right label; the semantic split matters for triage.** Both are hook-enforced identically.
       - **`Accepted:`** -- finding valid but **out-of-scope for this section**; ownership is elsewhere. XREF points to a concrete item in ANOTHER TODO section or file. Grep `Accepted:` when auditing ownership-transfer risk.
       - **`Deferred:`** -- finding valid, **in-scope** for this TODO, but bigger than this commit. XREF points to a later item in THIS section or TODO file. Grep `Deferred:` when auditing "we promised to come back to this."
@@ -149,7 +164,7 @@ description: Full review of a TODO section -- adversarial Codex, dead code, cons
 
 ## Rules
 
-- **TWO Codex dispatches per review.** Step 5 (adversarial) and step 8 (quality). Both mandatory.
+- **FOUR Codex dispatches per review.** Step 5 (adversarial), step 8a (dead-code), step 8b (consistency), step 8c (performance). All four mandatory, no combining, no skipping. A single combined dead-code+consistency+perf dispatch IS rejected at stamp time -- the `Quality reviewed: Codex Nx` counter must show at least 4x (adversarial + dead-code + consistency + perf) for a review to be accepted.
 - **Domain code quality skill walked explicitly** in step 7. Not just the hook -- read the skill and check every gate.
 - **Test coverage verified** in step 11. Missing tests are a finding, not acceptable.
 - **False completeness is a finding.** Checklist satisfaction without credible feature completeness or tracked ownership does not pass review.
