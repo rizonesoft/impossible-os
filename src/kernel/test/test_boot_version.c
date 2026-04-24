@@ -159,6 +159,96 @@ static void test_boot_version_fault_class_name_coverage(void)
                    (unsigned long)1, "name(garbage) non-empty");
 }
 
+/* Anti-rollback operator-hint coverage. The full fatal-screen render
+ * AND the BlackBox transcript both defer to
+ * boot_version_fault_operator_hint() for their operator-response
+ * wording, so testing the hint helper pins both paths against wording
+ * drift. The fatal-render function itself is not called here because
+ * it terminates via a halt sink (forbidden in tests per CLAUDE.md),
+ * and the transcript writer is skipped because it writes a file via
+ * VFS. Exercising the pure helper is the only test path that
+ * survives the "no live boot calls" rule. */
+static int contains_substr(const char *hay, const char *needle)
+{
+    if (hay == (const char *)0 || needle == (const char *)0) return 0;
+    uint32_t i, j;
+    for (i = 0u; hay[i] != '\0'; i++) {
+        for (j = 0u; needle[j] != '\0'; j++)
+            if (hay[i + j] != needle[j]) break;
+        if (needle[j] == '\0') return 1;
+    }
+    return 0;
+}
+
+static void test_boot_version_hint_rollback_wording(void)
+{
+    const char *h = boot_version_fault_operator_hint(
+        BOOT_VERSION_FAULT_SEC_ROLLBACK);
+    TEST_ASSERT_EQ((unsigned long)(h != (const char *)0 ? 1 : 0),
+                   (unsigned long)1, "SEC_ROLLBACK hint non-NULL");
+    TEST_ASSERT_EQ((unsigned long)contains_substr(h, "newer"),
+                   (unsigned long)1,
+                   "rollback hint mentions 'newer' (boot-newer-kernel advice)");
+    TEST_ASSERT_EQ((unsigned long)contains_substr(h, "IPOSRequiredSecVersion"),
+                   (unsigned long)1,
+                   "rollback hint names IPOSRequiredSecVersion NVRAM variable");
+    /* Rollback advice MUST NOT mention 'rebuild' -- that is the
+     * ABI-drift response, and conflating the two sends operators
+     * down the wrong recovery path. */
+    TEST_ASSERT_EQ((unsigned long)contains_substr(h, "rebuild"),
+                   (unsigned long)0,
+                   "rollback hint does NOT mention 'rebuild' "
+                   "(distinct from ABI-drift advice)");
+}
+
+static void test_boot_version_hint_abi_drift_wording(void)
+{
+    /* Any of the structural-drift classes or the OK / unknown path
+     * should return the ABI-drift hint. Pick BAD_VERSION as the
+     * representative case. */
+    const char *h = boot_version_fault_operator_hint(
+        BOOT_VERSION_FAULT_BAD_VERSION);
+    TEST_ASSERT_EQ((unsigned long)(h != (const char *)0 ? 1 : 0),
+                   (unsigned long)1, "BAD_VERSION hint non-NULL");
+    TEST_ASSERT_EQ((unsigned long)contains_substr(h, "rebuild"),
+                   (unsigned long)1,
+                   "ABI-drift hint mentions 'rebuild' advice");
+    TEST_ASSERT_EQ((unsigned long)contains_substr(h, "scripts/build.sh"),
+                   (unsigned long)1,
+                   "ABI-drift hint names the build script");
+}
+
+static void test_boot_version_hint_bad_sha_distinct(void)
+{
+    /* BAD_SHA should produce a DIFFERENT hint than either rollback or
+     * generic ABI drift -- it's a sub-version layout drift where both
+     * halves need lockstep rebuild. */
+    const char *h = boot_version_fault_operator_hint(
+        BOOT_VERSION_FAULT_BAD_SHA);
+    TEST_ASSERT_EQ((unsigned long)(h != (const char *)0 ? 1 : 0),
+                   (unsigned long)1, "BAD_SHA hint non-NULL");
+    TEST_ASSERT_EQ((unsigned long)contains_substr(h, "lockstep"),
+                   (unsigned long)1,
+                   "BAD_SHA hint calls out lockstep rebuild");
+    TEST_ASSERT_EQ((unsigned long)contains_substr(h, "newer"),
+                   (unsigned long)0,
+                   "BAD_SHA hint does NOT conflate with rollback wording");
+}
+
+static void test_boot_version_hint_bad_parse_distinct(void)
+{
+    const char *h = boot_version_fault_operator_hint(
+        BOOT_VERSION_FAULT_BAD_PARSE);
+    TEST_ASSERT_EQ((unsigned long)(h != (const char *)0 ? 1 : 0),
+                   (unsigned long)1, "BAD_PARSE hint non-NULL");
+    TEST_ASSERT_EQ((unsigned long)contains_substr(h, "malformed"),
+                   (unsigned long)1,
+                   "BAD_PARSE hint mentions malformed kernel");
+    TEST_ASSERT_EQ((unsigned long)contains_substr(h, "reflash"),
+                   (unsigned long)1,
+                   "BAD_PARSE hint advises reflash kernel.exe");
+}
+
 void test_register_boot_version(void)
 {
     test_suite_register_cat("boot_version: classify happy path",
@@ -175,5 +265,17 @@ void test_register_boot_version(void)
                             test_boot_version_record_size_pin, TEST_CAT_BOOT);
     test_suite_register_cat("boot_version: fault class name coverage",
                             test_boot_version_fault_class_name_coverage,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("boot_version: rollback hint names newer + NVRAM var",
+                            test_boot_version_hint_rollback_wording,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("boot_version: abi-drift hint mentions rebuild + build.sh",
+                            test_boot_version_hint_abi_drift_wording,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("boot_version: bad_sha hint distinct from rollback",
+                            test_boot_version_hint_bad_sha_distinct,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("boot_version: bad_parse hint names malformed + reflash",
+                            test_boot_version_hint_bad_parse_distinct,
                             TEST_CAT_BOOT);
 }

@@ -127,4 +127,14 @@ void boot_version_blackbox_transcribe(void);
 /* Fault-class name for logging. */
 const char *boot_version_fault_class_name(uint32_t fault_class);
 
+/* Return the operator-response hint for a given fault class. Rollback
+ * refusals and structural ABI drift have DIFFERENT operator responses:
+ * rollback says "boot a newer signed kernel or clear the policy
+ * variable"; ABI drift says "rebuild both halves". The hint string is
+ * consumed by boot_version_render_fatal() on the serial fatal screen
+ * AND by boot_version_blackbox_transcribe() in X:\Diag\boot-proto-fault.txt,
+ * so both paths produce matching advice from one source of truth.
+ * Returns a constant string; NEVER NULL. */
+const char *boot_version_fault_operator_hint(uint32_t fault_class);
+
 #endif /* KERNEL_BOOT_VERSION_H */

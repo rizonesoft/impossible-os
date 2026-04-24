@@ -2854,19 +2854,22 @@ static void bpp_print_decimal(UINT32 v)
     efi_print(&buf[i]);
 }
 
-/* Persist the fault record. Best-effort: on failure (no RT, no
- * SetVariable, NVRAM full), the caller still resets -- the operator
- * sees the UCS-2 screen message regardless.
+/* Persist the fault record. Returns EFI_SUCCESS on confirmed NVRAM
+ * write; any other status means the record was NOT durably captured
+ * and the caller must decide what to do (for rollback refusals we
+ * keep the screen up instead of auto-resetting; for structural ABI
+ * drift we still reset because a fresh rebuild often resolves it).
  *
  * CRITICAL: name + GUID MUST match what boot_version_blackbox_transcribe()
  * reads in src/kernel/main/boot_version.c (s_fault_name + s_fault_guid).
  * A mismatch silently drops the fault record on the next successful
  * boot. Duplicated from the kernel side rather than shared because the
  * bootloader cannot include kernel/boot_version.h (pulls kernel types). */
-static void bpp_persist_nvram_fault(const struct bl_boot_version_fault *rec)
+static EFI_STATUS bpp_persist_nvram_fault(
+    const struct bl_boot_version_fault *rec)
 {
     if (!gST || !gST->RuntimeServices || !gST->RuntimeServices->SetVariable)
-        return;
+        return EFI_UNSUPPORTED;
     /* GUID matches kernel src/kernel/main/boot_version.c s_fault_guid:
      * "IMPOSTFV-PROTOFLT" -- distinct from g_impossible_os_guid so a
      * POST16 overwriter cannot alias the fault record. */
@@ -2879,7 +2882,7 @@ static void bpp_persist_nvram_fault(const struct bl_boot_version_fault *rec)
     UINT32 attrs = EFI_VARIABLE_NON_VOLATILE |
                    EFI_VARIABLE_BOOTSERVICE_ACCESS |
                    EFI_VARIABLE_RUNTIME_ACCESS;
-    (void)gST->RuntimeServices->SetVariable(
+    return gST->RuntimeServices->SetVariable(
         name, &fault_guid, attrs,
         sizeof(*rec), (VOID *)rec);
 }
@@ -2956,7 +2959,12 @@ static __attribute__((noreturn)) void bpp_render_and_reset(
     serial_early_print_hex16((UINT16)rec->observed_magic);
     serial_early_print("\n");
 
-    bpp_persist_nvram_fault(rec);
+    EFI_STATUS persist_status = bpp_persist_nvram_fault(rec);
+    if (persist_status != 0) {
+        serial_early_print("[BOOT] ABI mismatch: NVRAM persist failed 0x");
+        serial_early_print_uint((UINT32)persist_status);
+        serial_early_print(" -- next boot will not carry the transcript\n");
+    }
 
     if (gBS && gBS->Stall)
         gBS->Stall(10 * 1000 * 1000);
@@ -2974,6 +2982,92 @@ static __attribute__((noreturn)) void bpp_render_and_reset(
     /* Reset unreachable on well-formed firmware; fall through to HLT
      * as a last resort so the operator is not left with a silent
      * re-jump into a mismatched kernel. */
+    for (;;)
+        __asm__ volatile ("cli; hlt");
+}
+
+/* Render the anti-rollback refusal path. Called from the pre-jump
+ * anti-rollback gate when shipped < required. Populates a 48-byte
+ * boot_version_fault record with fault_class=SEC_ROLLBACK and
+ * {observed,expected}_loader_sec_ver populated, persists to NVRAM via
+ * the same helper the structural-mismatch path uses, and HALTS with
+ * the operator-visible screen preserved.
+ *
+ * Distinct from bpp_render_and_reset (which handles structural ABI
+ * drift): rollback refusal is NEVER transient. The stored required
+ * value does not change between reboots, so auto-resetting would
+ * just bring the operator back to the same error. HLT preserves the
+ * diagnostic screen until the operator power-cycles and enters the
+ * firmware's UEFI shell (via the firmware F12/Escape menu) to either
+ * flash a newer signed kernel.exe OR clear the
+ * IPOSRequiredSecVersion NVRAM variable under operator consent.
+ *
+ * Operator response differs from ABI drift. Rollback refusal means
+ * "boot a newer signed kernel OR clear IPOSRequiredSecVersion";
+ * ABI drift means "rebuild both halves" (where auto-reset after a
+ * fresh build is actually helpful).
+ *
+ * Does not return. */
+static __attribute__((noreturn)) void bpp_render_rollback_and_halt(
+    UINT32 shipped, UINT32 required)
+{
+    struct bl_boot_version_fault rec;
+    {
+        UINT8 *p = (UINT8 *)&rec;
+        UINTN i;
+        for (i = 0; i < sizeof(rec); i++) p[i] = 0;
+    }
+    rec.record_magic             = BL_BOOT_VERSION_FAULT_MAGIC;
+    rec.fault_class              = BL_FAULT_SEC_ROLLBACK;
+    /* observed/expected structural fields stay zero; magic/version/
+     * size are not the drift axis here. The rollback-specific fields
+     * below carry the operator-actionable numbers. */
+    rec.observed_loader_sec_ver  = shipped;
+    rec.expected_loader_sec_ver  = required;
+
+    EFI_STATUS persist_status = bpp_persist_nvram_fault(&rec);
+
+    if (gST && gST->ConOut) {
+        gST->ConOut->ClearScreen(gST->ConOut);
+        efi_print(u"\r\n");
+        efi_print(u"  Impossible OS -- Anti-Rollback Refusal\r\n");
+        efi_print(u"\r\n");
+        efi_print(u"  Security-version downgrade refused:\r\n");
+        efi_print(u"    image    = ");
+        bpp_print_decimal(shipped);
+        efi_print(u"\r\n    required = ");
+        bpp_print_decimal(required);
+        efi_print(u"\r\n");
+        efi_print(u"\r\n");
+        efi_print(u"  Boot a newer signed kernel, or clear the\r\n");
+        efi_print(u"  IPOSRequiredSecVersion UEFI NVRAM variable under\r\n");
+        efi_print(u"  operator consent (UEFI shell: setvar / dmpstore)\r\n");
+        efi_print(u"  and retry.\r\n");
+        efi_print(u"\r\n");
+        if (persist_status == 0) {
+            efi_print(u"  Diagnostic persisted to UEFI NVRAM "
+                      u"(ImpossibleBootProtoFault).\r\n");
+        } else {
+            efi_print(u"  WARNING: NVRAM persist failed (status 0x");
+            bpp_print_hex32((UINT32)persist_status);
+            efi_print(u"); next boot will not have the transcript.\r\n");
+        }
+        efi_print(u"\r\n  Power-cycle and enter the UEFI shell to recover.\r\n");
+    }
+
+    serial_early_print("[BOOT] ANTI-ROLLBACK REFUSAL: "
+                       "fault_class=SEC_ROLLBACK shipped=");
+    serial_early_print_uint(shipped);
+    serial_early_print(" required=");
+    serial_early_print_uint(required);
+    serial_early_print(" persist_status=0x");
+    serial_early_print_uint((UINT32)persist_status);
+    serial_early_print("\n");
+
+    /* Halt with the screen preserved. NO auto-reset: rollback refusal
+     * has no path forward without operator intervention, and resetting
+     * into the same refusal destroys the only diagnostic the operator
+     * has. Power-cycle (operator-triggered) is the correct next step. */
     for (;;)
         __asm__ volatile ("cli; hlt");
 }
@@ -6239,7 +6333,11 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
 
         if (shipped < required) {
             /* Refusal path: set the telemetry flag, emit POST16 +
-             * serial diagnostic, halt. Do NOT jump to kernel. */
+             * serial diagnostic, render the UCS-2 rollback-specific
+             * screen, persist a SEC_ROLLBACK fault record to NVRAM
+             * (consumed by boot_version_blackbox_transcribe on the
+             * next successful boot), and cold-reset. Does NOT jump
+             * to kernel. */
             g_boot_info_ptr->flags |= BOOT_FLAG_ROLLBACK_REFUSAL;
             post_code16(POST16_BL_ROLLBACK_REFUSE);
             serial_early_print(
@@ -6249,10 +6347,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
             serial_early_print_uint(required);
             serial_early_print(
                 " -- kernel.exe is older than policy permits. Refusing to jump.\n");
-            /* Fatal screen + halt. Uses the existing UEFI-side fatal
-             * path so the operator sees the observed/required pair. */
-            boot_fatal(POST16_BL_ROLLBACK_REFUSE, "Anti-rollback refusal",
-                       "Kernel security version below policy minimum");
+            bpp_render_rollback_and_halt(shipped, required);
         }
 
         post_code16(POST16_BL_ROLLBACK_PASS);

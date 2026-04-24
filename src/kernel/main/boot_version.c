@@ -41,6 +41,30 @@ static const uint16_t s_fault_name[] = {
                      EFI_VARIABLE_BOOTSERVICE_ACCESS | \
                      EFI_VARIABLE_RUNTIME_ACCESS)
 
+const char *boot_version_fault_operator_hint(uint32_t fault_class)
+{
+    /* Single source of truth for operator-response wording. Consumers:
+     * boot_version_render_fatal (serial fatal screen) and
+     * boot_version_blackbox_transcribe (X:\Diag transcript). Keep the
+     * three classes' hints distinct -- the same advice for rollback
+     * and ABI drift would send operators down the wrong recovery
+     * path. */
+    switch (fault_class) {
+    case BOOT_VERSION_FAULT_SEC_ROLLBACK:
+        return "boot a newer signed kernel OR clear the "
+               "IPOSRequiredSecVersion NVRAM variable under operator "
+               "consent";
+    case BOOT_VERSION_FAULT_BAD_SHA:
+        return "rebuild bootloader AND kernel in lockstep -- the "
+               "descriptor layout drifted at the sub-version level";
+    case BOOT_VERSION_FAULT_BAD_PARSE:
+        return "the kernel ELF is missing or malformed -- reflash "
+               "kernel.exe and re-sign";
+    default:
+        return "rebuild bootloader AND kernel with `bash scripts/build.sh`";
+    }
+}
+
 const char *boot_version_fault_class_name(uint32_t fault_class)
 {
     switch (fault_class) {
@@ -134,10 +158,26 @@ void boot_version_render_fatal(const struct boot_version_fault *fault)
      * yields both lines. */
     const char *class_name = boot_version_fault_class_name(
         fault ? fault->fault_class : BOOT_VERSION_FAULT_NULL_HDR);
-    klog(LOG_FATAL, "boot",
-         "Boot protocol version mismatch -- class=%s (stale bootloader "
-         "or stale kernel; rebuild both halves with bash scripts/build.sh)",
-         (uint64_t)(uintptr_t)class_name);
+
+    /* Class-specific headline. SEC_ROLLBACK is operator-actionable
+     * (boot a newer kernel OR clear the NVRAM policy variable) --
+     * distinct from structural ABI drift which requires a rebuild
+     * of both halves. Keeping the two flows separate prevents a
+     * confused operator from "rebuilding" a rollback refusal that
+     * would just reproduce the same downgrade-detection. */
+    if (fault && fault->fault_class == BOOT_VERSION_FAULT_SEC_ROLLBACK) {
+        klog(LOG_FATAL, "boot",
+             "Security-version downgrade refused -- class=%s "
+             "(boot a newer signed kernel OR clear the "
+             "IPOSRequiredSecVersion NVRAM variable under operator "
+             "consent)",
+             (uint64_t)(uintptr_t)class_name);
+    } else {
+        klog(LOG_FATAL, "boot",
+             "Boot protocol version mismatch -- class=%s (stale bootloader "
+             "or stale kernel; rebuild both halves with bash scripts/build.sh)",
+             (uint64_t)(uintptr_t)class_name);
+    }
     if (fault) {
         klog(LOG_FATAL, "boot",
              "  observed magic=0x%x version=%u size=%u",
@@ -313,9 +353,9 @@ void boot_version_blackbox_transcribe(void)
         pos = append_dec(buf, pos, max_sz,
                          (uint64_t)rec.expected_loader_sec_ver);
         pos = append_line(buf, pos, max_sz, "");
+        pos = append_str(buf, pos, max_sz, "Operator response: ");
         pos = append_line(buf, pos, max_sz,
-                          "Operator response: boot a newer kernel; "
-                          "this is a rollback refusal, not ABI drift.");
+                          boot_version_fault_operator_hint(rec.fault_class));
     } else if (rec.fault_class == BOOT_VERSION_FAULT_BAD_PARSE) {
         /* Bootloader stored the raw parser error enum in
          * observed_loader_sec_ver so this transcript can name the
@@ -344,18 +384,17 @@ void boot_version_blackbox_transcribe(void)
         }
         pos = append_line(buf, pos, max_sz, parse_name);
         pos = append_line(buf, pos, max_sz, "");
+        pos = append_str(buf, pos, max_sz, "Operator response: ");
         pos = append_line(buf, pos, max_sz,
-                          "Operator response: the kernel ELF is missing "
-                          "or malformed. Reflash kernel.exe + re-sign.");
+                          boot_version_fault_operator_hint(rec.fault_class));
     } else if (rec.fault_class == BOOT_VERSION_FAULT_BAD_SHA) {
         pos = append_line(buf, pos, max_sz, "");
         pos = append_line(buf, pos, max_sz,
                           ".bootproto manifest hash drift: magic/version/"
                           "size matched but SHA-256 diverged.");
+        pos = append_str(buf, pos, max_sz, "Operator response: ");
         pos = append_line(buf, pos, max_sz,
-                          "Operator response: rebuild bootloader AND "
-                          "kernel in lockstep -- the descriptor layout "
-                          "drifted at the sub-version level.");
+                          boot_version_fault_operator_hint(rec.fault_class));
     } else {
         pos = append_line(buf, pos, max_sz, "");
         pos = append_line(buf, pos, max_sz,
