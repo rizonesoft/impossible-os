@@ -12,10 +12,14 @@
 
 [default_config]
 assembler = "nasm"
-# asm-lsp's config schema enum uses the hyphenated spelling
-# ("x86-64"), not the underscore form. Upstream rejects an
-# underscore-form value and exits, which would then fail the
-# bridge's --self-test --lang=asm OK path on any host with
-# asm-lsp actually installed. See the schema:
+# asm-lsp's config schema enum uses hyphenated spellings. Two
+# valid values here: "x86-64" (long mode only) or "x86/x86-64"
+# (dual mode, 32-bit + 64-bit). src/boot/entry.asm starts in
+# [BITS 32] (lines 19, 262) and switches to [BITS 64] (line 221)
+# for the multiboot2 / UEFI-handoff path, so the dual-mode pin is
+# correct -- an x86-64-only pin parses 32-bit instructions with
+# the wrong register width and the wrong operand-size defaults,
+# masking real errors during hover / diagnostics.
+# Schema reference:
 # https://github.com/bergercookie/asm-lsp/blob/master/asm-lsp_config_schema.json
-instruction_set = "x86-64"
+instruction_set = "x86/x86-64"

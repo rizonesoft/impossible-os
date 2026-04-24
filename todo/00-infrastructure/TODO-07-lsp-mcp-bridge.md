@@ -125,13 +125,13 @@ Wire clangd-19 as the first language. C is the dominant file type in the repo (~
 
 Wire asm-lsp (Rust, `bergercookie/asm-lsp`) for the ~1.1k lines of NASM in `src/` (`entry.asm`, ISR stubs, SIMD helpers, AP trampoline). Distinct from §2 because NASM flavor must be pinned via `.asm-lsp.toml` -- asm-lsp defaults to GAS.
 
-- [x] Create [`.asm-lsp.toml`](../../.asm-lsp.toml) at repo root pinning `assembler = "nasm"`, `instruction_set = "x86_64"`.
+- [x] Create [`.asm-lsp.toml`](../../.asm-lsp.toml) at repo root pinning `assembler = "nasm"`, `instruction_set = "x86-64"` (hyphenated per the upstream asm-lsp schema; the draft TODO's underscore form `x86_64` is not accepted and was corrected during adversarial review).
 - [x] Create `scripts/lsp-mcp/servers/asm_server.py` that spawns `asm-lsp` and does the LSP handshake. Language tag `asm` (per-extension `.asm`/`.S` routing belongs to §7's `dispatch(path)` handler).
 - [x] Graceful skip if `asm-lsp` binary missing: `--self-test --lang=asm` prints `[lsp-mcp] SKIP: asm-lsp not installed (cargo install asm-lsp ...)` and exits 0. Install guidance documented inline in `asm_server.install_hint()`; the §9 docs subsection will reference it when it lands.
 - [x] Smoke: open `src/boot/entry.asm` (the draft TODO said `src/kernel/entry.asm`, but the kernel entry stub lives under `src/boot/`), locate the first standalone `mov` mnemonic (skip leading labels; whitespace/tab boundary so "movq" labels never false-match), request hover, assert the response `contents` is non-empty (instruction-reference payload).
 - [x] Commit: `"scripts/lsp-mcp: asm-lsp (NASM) integration"`
 
-**Test checkpoint:** With `asm-lsp` installed, `--self-test --lang=asm` prints `[lsp-mcp] OK: asm-lsp spawned, hover on mov returned instruction reference (N bytes)`. Without asm-lsp (the development host today), same command prints `[lsp-mcp] SKIP: asm-lsp not installed (cargo install asm-lsp ...)` and exits 0. `.asm-lsp.toml` exists at repo root and declares `assembler = "nasm"` + `instruction_set = "x86_64"`.
+**Test checkpoint:** With `asm-lsp` installed, `--self-test --lang=asm` prints `[lsp-mcp] OK: asm-lsp spawned, hover on mov returned instruction reference (N bytes)`. Without asm-lsp (the development host today), same command prints `[lsp-mcp] SKIP: asm-lsp not installed (cargo install asm-lsp ...)` and exits 0. `.asm-lsp.toml` exists at repo root and declares `assembler = "nasm"` + `instruction_set = "x86-64"`.
 
 > **Test runner:** `bash scripts/lsp-mcp/tests/test_bridge.sh` | 13/13 sub-tests PASS (1a-1g + 2a-2c carry forward; 3a `--self-test --lang=asm` OK-or-SKIP, 3b `.asm-lsp.toml` pins NASM, 3c `asm_server` surface API stable)
 
@@ -142,6 +142,10 @@ Wire asm-lsp (Rust, `bergercookie/asm-lsp`) for the ~1.1k lines of NASM in `src/
 > - **Downstream effects:** unblocks §7 (MCP tool handlers can route `.asm` + `.S` paths to the cached `asm` LspSubprocess). Per-extension dispatch (§.c/.h + §.asm/.S + §.sh + §.py + §.ps1 -> language tag) is §7's scope; this section only registers the spawner.
 > - **Canonical doc:** [`.asm-lsp.toml`](../../.asm-lsp.toml) (NASM pin + instruction-set declaration; asm_server.py's comments name the drift consequence if the file is absent).
 > - **Scope boundary:** no MCP tools registered, no per-extension dispatch, no bash-lsp / pyright / PSES (§4-§6 own those). Install guidance for asm-lsp lives in `install_hint()` today; the full developer-tooling docs subsection is §9.
+
+> **Verified:** 2026-04-25 | commit `f4c888de` | 5/5 items | build N/A (host-side Python) | tests 13/13 PASS
+> **Accepted:** [M] asm-lsp diagnostics backend not pinned (upstream default tries gcc -> clang, which does not match a NASM-only workspace) (reason: scope) -> XREF: 00-infrastructure/TODO-07 §9 (item: "asm-lsp diagnostics backend pin" at line 250)
+> **Quality reviewed:** 2026-04-25 | Codex 3x (adversarial + consistency + perf) | 1H+3M fixed, 0 open | scope: N/A (host-side Python tooling; no domain quality skill applies)
 
 ---
 
@@ -247,6 +251,7 @@ Make the bridge discoverable, installable, and documented. Without this, §1-§8
 - [ ] Add a new "LSP MCP Bridge" subsection to [`docs/infrastructure/development-tooling.md`](../../docs/infrastructure/development-tooling.md), placed after the existing clangd + Bear subsection. Document: architecture, supported languages + per-language install, read-only boundary, LSP-miss fallback discipline (the 4-tier chain: LSP -> `rg` -> `git log -S` -> Read specs/docs -- agents MUST NOT treat an empty LSP response as "symbol does not exist"), troubleshooting (common LSP spawn failures + PSES quirk).
 - [ ] Cross-link from [`docs/infrastructure/ai-system.md`](../../docs/infrastructure/ai-system.md) MCP-server-boundary section: add `lsp-bridge` to the repo-tracked read-only MCP servers list (currently only `todo-graph`).
 - [ ] Boundary-compliance audit: grep the code for LSP methods `rename`, `applyEdit`, `codeAction/execute`, `workspace/executeCommand` -- assert NONE are reachable from an MCP tool handler. Add a `scripts/lsp-mcp/tests/test_boundary.sh` that greps the source and fails if any write-capable method is wired.
+- [ ] asm-lsp diagnostics backend pin: [`.asm-lsp.toml`](../../.asm-lsp.toml) today leaves diagnostics on the asm-lsp upstream default (gcc -> clang fallback), which does not match a NASM-only workspace. Decide the backend contract (explicitly disable external diagnostics via `[default_config.opts]`, OR pin a NASM-appropriate one), document the choice in the §9 "LSP MCP Bridge" docs subsection, and extend `scripts/lsp-mcp/tests/test_bridge.sh` 3b to assert the chosen value so CI bites on a future regression.
 - [ ] Commit: `"scripts/lsp-mcp: setup, manifest, docs, boundary compliance"`
 
 **Test checkpoint:** `bash scripts/setup-deps.sh --verify` reports all five LSP dependencies (or "optional -- not installed" for each missing). `.claude/mcp.json` contains two entries (`todo-graph`, `lsp-bridge`). `make lsp-mcp-selftest` exits 0 on a host with zero LSPs installed (should SKIP all five and still succeed). `bash scripts/lsp-mcp/tests/test_boundary.sh` exits 0 and prints `[boundary] OK: 0 write-capable LSP methods reachable from MCP surface`. `docs/infrastructure/development-tooling.md` has the new subsection after clangd + Bear.

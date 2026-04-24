@@ -293,12 +293,14 @@ t_selftest_lang_asm() {
 # --- 3b: .asm-lsp.toml pins NASM + schema-valid ISA -----------------------
 t_asm_lsp_config_nasm() {
     # File must exist at repo root, sit under [default_config], and
-    # declare BOTH assembler = "nasm" AND instruction_set = "x86-64"
-    # (the upstream asm-lsp schema rejects the underscore form).
+    # declare BOTH assembler = "nasm" AND instruction_set =
+    # "x86/x86-64" (dual-mode covers the 32/64-bit transition in
+    # src/boot/entry.asm; "x86-64" alone would parse 32-bit code
+    # with wrong register widths).
     [ -f .asm-lsp.toml ] || return 1
     grep -qE '^\[default_config\]' .asm-lsp.toml || return 1
     grep -qE '^assembler\s*=\s*"nasm"' .asm-lsp.toml || return 1
-    grep -qE '^instruction_set\s*=\s*"x86-64"' .asm-lsp.toml
+    grep -qE '^instruction_set\s*=\s*"x86/x86-64"' .asm-lsp.toml
 }
 
 # --- 3c: asm_server surface API is stable ---------------------------------

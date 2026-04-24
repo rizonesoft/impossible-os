@@ -42,6 +42,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 import threading
 from pathlib import Path
@@ -686,33 +687,36 @@ def _self_test_asm(workspace_root: Path) -> int:
         sys.stderr.write(f"[lsp-mcp] FAIL: asm-lsp didOpen: {exc}\n")
         return 1
 
-    # Find the first standalone `mov` mnemonic. NASM syntax puts
-    # the mnemonic as the first non-whitespace token on an
-    # instruction line; match that shape so a string constant
-    # containing "mov" or a label with "mov" in its name does not
-    # false-match. Fail HARD if not found -- falling through to
-    # position (0,0) would hover the file comment and still
-    # produce a non-empty byte count on most LSPs.
+    # Find the first standalone `mov` mnemonic. NASM lines take the
+    # shape `[label:] mnemonic operands... [; comment]`; matching
+    # anything else would silently accept a `mov` inside a comment
+    # or a label substring and still report OK on a refactor.
+    # Strip the `;`-introduced comment FIRST so commented-out mov
+    # lines never match; then anchor the regex to require an
+    # optional label + whitespace + `mov` followed by a whitespace
+    # boundary. Capture the mnemonic start so target_char is the
+    # column of the actual mnemonic (not of a substring that
+    # happens to appear earlier on the line).
+    mov_re = re.compile(
+        r"^(?P<prefix>\s*(?:[A-Za-z_.$][\w.$]*\s*:\s*)?)"
+        r"(?P<mov>mov)(?=\s|$)",
+        re.IGNORECASE,
+    )
     target_line: Optional[int] = None
     target_char: Optional[int] = None
-    for idx, line in enumerate(text.splitlines()):
-        stripped = line.lstrip()
-        if not stripped:
+    for idx, raw_line in enumerate(text.splitlines()):
+        # Strip comment (`;` introduces the comment in NASM syntax;
+        # no escape rules inside comments).
+        semi = raw_line.find(";")
+        effective = raw_line[:semi] if semi >= 0 else raw_line
+        m = mov_re.match(effective)
+        if m is None:
             continue
-        # Strip leading label if any ("label: mov ...")
-        after_label = stripped
-        if ":" in stripped:
-            _, _, after_label = stripped.partition(":")
-            after_label = after_label.lstrip()
-        # Match "mov" followed by whitespace (mnemonic boundary).
-        if (after_label.startswith("mov ") or
-                after_label.startswith("mov\t")):
-            col_in_line = line.find(after_label[:3])
-            if col_in_line < 0:
-                continue
-            target_line = idx
-            target_char = _utf16_code_units(line[:col_in_line]) + 1
-            break
+        target_line = idx
+        # m.start("mov") is a Python character index; convert to
+        # UTF-16 code units for LSP Position.character.
+        target_char = _utf16_code_units(effective[:m.start("mov")]) + 1
+        break
     if target_line is None or target_char is None:
         sys.stderr.write(
             "[lsp-mcp] FAIL: could not locate a standalone `mov` "

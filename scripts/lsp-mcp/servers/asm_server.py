@@ -8,9 +8,10 @@
 # wiring:
 #
 #   1. Repo-root `.asm-lsp.toml` pins `assembler = "nasm"` +
-#      `instruction_set = "x86-64"` (hyphenated; the upstream
-#      asm-lsp schema rejects the underscore form). asm-lsp
-#      defaults to GAS syntax;
+#      `instruction_set = "x86/x86-64"` (dual mode; the underscore
+#      form "x86_64" is not accepted by the upstream schema, and
+#      the long-mode-only "x86-64" value misreads the [BITS 32]
+#      prolog in src/boot/entry.asm). asm-lsp defaults to GAS syntax;
 #      without the pin, every mov/jmp/label/macro in our .asm files
 #      parses wrong and diagnostics become pure noise.
 #
@@ -65,14 +66,14 @@ def spawn(workspace_root: Path) -> LspSubprocess:
     and matches how human developer hosts (VS Code, Neovim) drive
     asm-lsp for this repo.
 
-    Handshake uses the SAME advertised capability shape as
-    clangd_server (textDocument.synchronization / hover / definition /
-    references / documentSymbol / publishDiagnostics +
-    workspace.symbol). The reader loop in LspSubprocess routes only
-    response-to-our-request + publishDiagnostics notifications;
-    workspace.configuration / workspaceFolders are deliberately NOT
-    advertised -- server-initiated-request handling lands with the
-    file-change-lifecycle + workspace-symbol tool commits.
+    Handshake uses a narrower capability shape than clangd_server:
+    textDocument.synchronization / hover / definition / references /
+    documentSymbol / publishDiagnostics. workspace.symbol is OMITTED
+    -- asm-lsp upstream does not offer a workspaceSymbolProvider, and
+    advertising a client capability we cannot route to a server would
+    create a tool-dispatch contract gap. workspace.configuration /
+    workspaceFolders are omitted for the same reason as clangd_server:
+    the reader loop does not answer server-initiated requests yet.
     """
     if not is_available():
         raise LspError(
@@ -87,6 +88,13 @@ def spawn(workspace_root: Path) -> LspSubprocess:
 
     lsp = LspSubprocess(cmd, lang=LANG_TAG, cwd=workspace_root)
 
+    # Advertise only the caps asm-lsp actually provides. clangd_server
+    # announces workspace.symbol; asm-lsp upstream does not offer a
+    # workspaceSymbolProvider, so advertising it on the client side
+    # would create a contract gap (tool dispatch would see an error
+    # only when someone invokes workspace_symbol on a .asm path).
+    # Keeping the asm surface narrow + honest is preferred over
+    # matching clangd's capability list verbatim.
     capabilities: dict[str, Any] = {
         "textDocument": {
             "synchronization": {"didSave": True, "dynamicRegistration": False},
@@ -96,7 +104,6 @@ def spawn(workspace_root: Path) -> LspSubprocess:
             "documentSymbol": {"hierarchicalDocumentSymbolSupport": True},
             "publishDiagnostics": {"relatedInformation": True},
         },
-        "workspace": {"symbol": {}},
     }
     # asm-lsp does not accept initializationOptions the way clangd
     # does -- its runtime config lives entirely in .asm-lsp.toml. Pass
