@@ -342,6 +342,18 @@ MCP_TOOL_NAMES = (
     "diagnostics",
     "workspace_symbol",
     "document_symbol",
+    # Extended tools (TODO-07 in 00-infrastructure, second-tier
+    # capabilities). All read-only; code_action returns the action
+    # metadata list without invoking workspace/applyEdit or
+    # workspace/executeCommand (those stay in _FORBIDDEN_LSP_METHODS).
+    "completion",
+    "signature_help",
+    "type_definition",
+    "implementation",
+    "declaration",
+    "call_hierarchy_incoming",
+    "call_hierarchy_outgoing",
+    "code_action",
 )
 
 # Extension -> language tag dispatch table. Drives _dispatch_path()
@@ -665,6 +677,182 @@ def _normalize_locations(result: Any) -> list[dict]:
                 "uri": loc.get("uri"),
                 "range": loc.get("range"),
             })
+    return out
+
+
+# Bound the per-call completion payload so an LSP that returns
+# thousands of items (clangd on a header inside <iostream>, pyright
+# on `import _`) does not blow MCP-client buffers or agent context.
+# 50 mirrors the documented checkpoint and matches the truncation
+# every production bridge uses.
+_COMPLETION_MAX_ITEMS = 50
+
+
+def _normalize_completion(result: Any) -> dict:
+    """Normalize textDocument/completion response.
+
+    LSP 3.17 shapes:
+      - null                                  -> {items: [], isIncomplete: False, truncated: False}
+      - CompletionItem[]                      -> wrap as items
+      - CompletionList {isIncomplete, items}  -> use as-is
+    Per item we keep label / kind / detail / documentation only --
+    insertText/textEdit/additionalTextEdits/command are dropped
+    because the read-only MCP boundary forbids applying edits anyway,
+    so leaving them in would mislead the agent into thinking they are
+    actionable here. Truncates to _COMPLETION_MAX_ITEMS and reports
+    that fact via the truncated/total fields so a caller can ask for
+    a narrower position to see the rest."""
+    if result is None:
+        return {"items": [], "isIncomplete": False, "truncated": False, "total": 0}
+    if isinstance(result, list):
+        items_in = result
+        is_incomplete = False
+    elif isinstance(result, dict):
+        items_in = result.get("items") or []
+        is_incomplete = bool(result.get("isIncomplete", False))
+    else:
+        return {"items": [], "isIncomplete": False, "truncated": False, "total": 0}
+    if not isinstance(items_in, list):
+        items_in = []
+    # Filter to dict CompletionItem entries BEFORE applying the cap.
+    # If we slice first and filter second, a malformed LSP response
+    # whose first 50 entries are non-dict would return zero usable
+    # items even when valid entries exist later in the response. Codex
+    # adversarial review flagged this as Low; we want the cap to bound
+    # the output of useful items, not raw input slots.
+    valid_items = [it for it in items_in if isinstance(it, dict)]
+    raw_total = len(items_in)
+    valid_total = len(valid_items)
+    truncated = valid_total > _COMPLETION_MAX_ITEMS
+    items_out: list[dict] = []
+    for item in valid_items[:_COMPLETION_MAX_ITEMS]:
+        out_item = {
+            "label": item.get("label"),
+            "kind": item.get("kind"),
+            "detail": item.get("detail"),
+            "documentation": item.get("documentation"),
+        }
+        items_out.append(out_item)
+    return {
+        "items": items_out,
+        "isIncomplete": is_incomplete,
+        "truncated": truncated,
+        # `total` is the count of usable (dict-shaped) CompletionItems.
+        # `raw_total` exposes the unfiltered input length so a caller
+        # can detect "mostly garbage from a misbehaving LSP" vs "real
+        # 50+ items withheld".
+        "total": valid_total,
+        "raw_total": raw_total,
+    }
+
+
+def _normalize_signature_help(result: Any) -> dict:
+    """Normalize textDocument/signatureHelp response.
+
+    LSP 3.17 SignatureHelp { signatures: SignatureInformation[],
+    activeSignature?: uinteger, activeParameter?: uinteger }.
+    Returns {signatures: [...], active_signature: int|None,
+    active_parameter: int|None}. Empty signatures -> active_* set to
+    None so the caller doesn't read garbage indices."""
+    if result is None or not isinstance(result, dict):
+        return {"signatures": [], "active_signature": None,
+                "active_parameter": None}
+    sigs = result.get("signatures")
+    if not isinstance(sigs, list):
+        sigs = []
+    active_sig = result.get("activeSignature")
+    active_param = result.get("activeParameter")
+    if not isinstance(active_sig, int) or len(sigs) == 0:
+        active_sig = None
+    if not isinstance(active_param, int):
+        active_param = None
+    return {
+        "signatures": sigs,
+        "active_signature": active_sig,
+        "active_parameter": active_param,
+    }
+
+
+def _normalize_call_hierarchy_items(result: Any) -> list:
+    """callHierarchy/prepare returns CallHierarchyItem[] | null.
+    Pass-through as a list; null becomes []."""
+    if result is None:
+        return []
+    if not isinstance(result, list):
+        return []
+    return [it for it in result if isinstance(it, dict)]
+
+
+def _normalize_call_hierarchy_calls(result: Any, key: str) -> list:
+    """Normalize callHierarchy/incomingCalls or outgoingCalls.
+
+    Incoming: CallHierarchyIncomingCall { from: CallHierarchyItem,
+    fromRanges: Range[] }.
+    Outgoing: CallHierarchyOutgoingCall { to: CallHierarchyItem,
+    fromRanges: Range[] }.
+
+    `key` is "from" for incoming, "to" for outgoing. Returns a flat
+    list of {item, ranges} dicts; the agent can read item.uri / .name
+    / .range without picking apart the LSP variant tag."""
+    if result is None or not isinstance(result, list):
+        return []
+    out: list[dict] = []
+    for entry in result:
+        if not isinstance(entry, dict):
+            continue
+        item = entry.get(key)
+        if not isinstance(item, dict):
+            continue
+        ranges = entry.get("fromRanges")
+        if not isinstance(ranges, list):
+            ranges = []
+        out.append({"item": item, "ranges": ranges})
+    return out
+
+
+def _normalize_code_actions(result: Any) -> list:
+    """Normalize textDocument/codeAction response.
+
+    LSP 3.17 returns (Command | CodeAction)[] | null. Pass through
+    each entry as-is (with title / kind / diagnostics / isPreferred /
+    edit / command intact -- the MCP tool surface returns metadata
+    only and the read-only boundary blocks applyEdit / executeCommand
+    at the runtime gate, so leaving the WorkspaceEdit visible lets a
+    caller READ what the action would do without being able to apply
+    it)."""
+    if result is None:
+        return []
+    if not isinstance(result, list):
+        return []
+    return [a for a in result if isinstance(a, dict)]
+
+
+def _validate_range(rng: Any) -> dict:
+    """Validate an LSP Range = {start: Position, end: Position}.
+    Returns the canonical dict with int line/character on each end.
+    Raises lsp-range-invalid for missing keys, bad types, or positions
+    that fail _validate_position. Used by code_action which takes a
+    Range argument."""
+    if not isinstance(rng, dict):
+        raise LspError(
+            "lsp-range-invalid",
+            f"range must be a dict {{start, end}}, got {type(rng).__name__}",
+            value=repr(rng),
+        )
+    out: dict = {}
+    for endpoint in ("start", "end"):
+        pos = rng.get(endpoint)
+        if not isinstance(pos, dict):
+            raise LspError(
+                "lsp-range-invalid",
+                f"range.{endpoint} must be a Position dict, "
+                f"got {type(pos).__name__}",
+                value=repr(pos),
+                endpoint=endpoint,
+            )
+        line_v, char_v = _validate_position(pos.get("line"),
+                                            pos.get("character"))
+        out[endpoint] = {"line": line_v, "character": char_v}
     return out
 
 
@@ -1012,6 +1200,345 @@ def _build_mcp(FastMCP, workspace_root: Path):
              description="LSP textDocument/documentSymbol. Returns the "
                          "server's hierarchical or flat symbol list "
                          "pass-through.")(document_symbol)
+
+    # ---------------------------------------------------------------
+    # Extended LSP tools (TODO-07 in 00-infrastructure, second tier).
+    # All read-only. code_action enumerates available actions but
+    # never invokes workspace/applyEdit or workspace/executeCommand
+    # (still in _FORBIDDEN_LSP_METHODS). textDocument/codeAction
+    # itself is read-only per LSP 3.17 and is intentionally NOT in
+    # the deny set.
+    # ---------------------------------------------------------------
+
+    def completion(path: str, line: int, character: int,
+                   trigger_character: Optional[str] = None) -> dict:
+        """LSP textDocument/completion. Returns the top
+        _COMPLETION_MAX_ITEMS items by server order. trigger_character,
+        when supplied, sets context.triggerKind=2 (TriggerCharacter)
+        and forwards the literal so completion-after-`.` style
+        prompting works; otherwise the kind is 1 (Invoked)."""
+        def _op() -> Any:
+            line_v, char_v = _validate_position(line, character)
+            tc: Optional[str] = None
+            if trigger_character is not None:
+                if not isinstance(trigger_character, str):
+                    raise LspError(
+                        "lsp-completion-trigger-invalid",
+                        f"trigger_character must be a string, got "
+                        f"{type(trigger_character).__name__}",
+                        value=repr(trigger_character),
+                    )
+                # LSP CompletionTriggerKind.TriggerCharacter expects a
+                # single character; reject obvious abuse but allow
+                # multi-char tokens like "->" that some LSPs document.
+                if len(trigger_character) == 0 or len(trigger_character) > 4:
+                    raise LspError(
+                        "lsp-completion-trigger-invalid",
+                        "trigger_character length must be 1..4",
+                        value=trigger_character,
+                    )
+                tc = trigger_character
+            resolved, lang, text = _dispatch_path(path, workspace_root)
+            lsp = _get_or_spawn(lang, workspace_root)
+            uri = _ensure_open_for(lsp, resolved, lang, text)
+            params: dict = {
+                "textDocument": {"uri": uri},
+                "position": {"line": line_v, "character": char_v},
+            }
+            if tc is not None:
+                params["context"] = {"triggerKind": 2,
+                                     "triggerCharacter": tc}
+            else:
+                params["context"] = {"triggerKind": 1}
+            raw = lsp.request(
+                "textDocument/completion", params, timeout=15.0,
+            )
+            normalized = _normalize_completion(raw)
+            return {
+                "uri": uri,
+                "lang": lang,
+                "line": line_v,
+                "character": char_v,
+                **normalized,
+            }
+        return _call_lsp(_op)
+    srv.tool(name="completion",
+             description="LSP textDocument/completion at (line, "
+                         "character). Returns up to "
+                         f"{_COMPLETION_MAX_ITEMS} items "
+                         "{label, kind, detail, documentation}; "
+                         "isIncomplete + truncated + total surface "
+                         "whether more results were withheld.")(completion)
+
+    def signature_help(path: str, line: int, character: int) -> dict:
+        """LSP textDocument/signatureHelp. Useful while synthesizing
+        a call: surfaces the active signature + active parameter
+        index so an agent can fill the right argument slot."""
+        def _op() -> Any:
+            line_v, char_v = _validate_position(line, character)
+            resolved, lang, text = _dispatch_path(path, workspace_root)
+            lsp = _get_or_spawn(lang, workspace_root)
+            uri = _ensure_open_for(lsp, resolved, lang, text)
+            raw = lsp.request(
+                "textDocument/signatureHelp",
+                {"textDocument": {"uri": uri},
+                 "position": {"line": line_v, "character": char_v}},
+                timeout=15.0,
+            )
+            normalized = _normalize_signature_help(raw)
+            return {
+                "uri": uri,
+                "lang": lang,
+                "line": line_v,
+                "character": char_v,
+                **normalized,
+            }
+        return _call_lsp(_op)
+    srv.tool(name="signature_help",
+             description="LSP textDocument/signatureHelp at (line, "
+                         "character). Returns {signatures, "
+                         "active_signature, active_parameter}; "
+                         "active_* are None when the LSP returns "
+                         "no signatures.")(signature_help)
+
+    def type_definition(path: str, line: int, character: int) -> dict:
+        """LSP textDocument/typeDefinition. Distinct from `definition`
+        for typedef / using / class-alias redirects: clicking on a
+        variable's type name lands on the type declaration, not the
+        variable's own definition."""
+        def _op() -> Any:
+            line_v, char_v = _validate_position(line, character)
+            resolved, lang, text = _dispatch_path(path, workspace_root)
+            lsp = _get_or_spawn(lang, workspace_root)
+            uri = _ensure_open_for(lsp, resolved, lang, text)
+            raw = lsp.request(
+                "textDocument/typeDefinition",
+                {"textDocument": {"uri": uri},
+                 "position": {"line": line_v, "character": char_v}},
+                timeout=15.0,
+            )
+            return {
+                "uri": uri,
+                "lang": lang,
+                "line": line_v,
+                "character": char_v,
+                "locations": _normalize_locations(raw),
+            }
+        return _call_lsp(_op)
+    srv.tool(name="type_definition",
+             description="LSP textDocument/typeDefinition at (line, "
+                         "character). Resolves a value's TYPE to its "
+                         "declaration; distinct from `definition` "
+                         "for typedef / using / aliases.")(type_definition)
+
+    def implementation(path: str, line: int, character: int) -> dict:
+        """LSP textDocument/implementation. For an interface or
+        abstract method, returns concrete implementations; for a
+        virtual method, returns overrides."""
+        def _op() -> Any:
+            line_v, char_v = _validate_position(line, character)
+            resolved, lang, text = _dispatch_path(path, workspace_root)
+            lsp = _get_or_spawn(lang, workspace_root)
+            uri = _ensure_open_for(lsp, resolved, lang, text)
+            raw = lsp.request(
+                "textDocument/implementation",
+                {"textDocument": {"uri": uri},
+                 "position": {"line": line_v, "character": char_v}},
+                timeout=15.0,
+            )
+            return {
+                "uri": uri,
+                "lang": lang,
+                "line": line_v,
+                "character": char_v,
+                "locations": _normalize_locations(raw),
+            }
+        return _call_lsp(_op)
+    srv.tool(name="implementation",
+             description="LSP textDocument/implementation at (line, "
+                         "character). Returns concrete implementors / "
+                         "overrides for interfaces, abstract methods, "
+                         "vtables.")(implementation)
+
+    def declaration(path: str, line: int, character: int) -> dict:
+        """LSP textDocument/declaration. Useful when `definition`
+        returns the .c body but the agent wants the .h prototype --
+        for headers vs. translation-unit-local definitions."""
+        def _op() -> Any:
+            line_v, char_v = _validate_position(line, character)
+            resolved, lang, text = _dispatch_path(path, workspace_root)
+            lsp = _get_or_spawn(lang, workspace_root)
+            uri = _ensure_open_for(lsp, resolved, lang, text)
+            raw = lsp.request(
+                "textDocument/declaration",
+                {"textDocument": {"uri": uri},
+                 "position": {"line": line_v, "character": char_v}},
+                timeout=15.0,
+            )
+            return {
+                "uri": uri,
+                "lang": lang,
+                "line": line_v,
+                "character": char_v,
+                "locations": _normalize_locations(raw),
+            }
+        return _call_lsp(_op)
+    srv.tool(name="declaration",
+             description="LSP textDocument/declaration at (line, "
+                         "character). Returns the declaration site "
+                         "(typically a header) -- useful when "
+                         "`definition` lands on the .c body and the "
+                         "agent wants the .h prototype.")(declaration)
+
+    def _call_hierarchy_one_step(method: str, key: str,
+                                 path: str, line: int,
+                                 character: int) -> dict:
+        """Shared body for incoming/outgoing call-hierarchy. The LSP
+        contract is two-step: callHierarchy/prepare returns
+        CallHierarchyItem[] anchoring the symbol; for each item, a
+        follow-up callHierarchy/incomingCalls or outgoingCalls returns
+        the actual edges. We collapse both into a single MCP call:
+        run prepare, then issue the follow-up for EVERY prepared
+        anchor and bundle the per-anchor results into `anchors`.
+
+        Walking every prepared item (rather than just prepared[0])
+        matters for overloaded methods, partial / generated symbols,
+        and any server that returns multiple valid anchors -- if we
+        only resolved the first, the resulting caller/callee graph
+        would silently omit the others with no API to ask for them.
+        Codex adversarial review of the initial implementation
+        flagged this as Medium. The cumulative LSP cost is bounded
+        by `prepared_count` (clangd typically returns 1-2 items)."""
+        line_v, char_v = _validate_position(line, character)
+        resolved, lang, text = _dispatch_path(path, workspace_root)
+        lsp = _get_or_spawn(lang, workspace_root)
+        uri = _ensure_open_for(lsp, resolved, lang, text)
+        prepared_raw = lsp.request(
+            "textDocument/prepareCallHierarchy",
+            {"textDocument": {"uri": uri},
+             "position": {"line": line_v, "character": char_v}},
+            timeout=15.0,
+        )
+        prepared = _normalize_call_hierarchy_items(prepared_raw)
+        if not prepared:
+            return {
+                "uri": uri,
+                "lang": lang,
+                "line": line_v,
+                "character": char_v,
+                "prepared_count": 0,
+                "anchors": [],
+                "note": "prepareCallHierarchy returned no items at "
+                        "this position; the LSP does not see a "
+                        "callable symbol here.",
+            }
+        anchors_out: list[dict] = []
+        for anchor in prepared:
+            follow = lsp.request(
+                method, {"item": anchor}, timeout=15.0,
+            )
+            anchors_out.append({
+                "anchor": anchor,
+                "calls": _normalize_call_hierarchy_calls(follow, key),
+            })
+        return {
+            "uri": uri,
+            "lang": lang,
+            "line": line_v,
+            "character": char_v,
+            "prepared_count": len(prepared),
+            "anchors": anchors_out,
+        }
+
+    def call_hierarchy_incoming(path: str, line: int, character: int) -> dict:
+        """LSP callHierarchy/prepare + callHierarchy/incomingCalls.
+        Returns callers of the symbol at (line, character)."""
+        def _op() -> Any:
+            return _call_hierarchy_one_step(
+                "callHierarchy/incomingCalls", "from",
+                path, line, character,
+            )
+        return _call_lsp(_op)
+    srv.tool(name="call_hierarchy_incoming",
+             description="LSP callHierarchy/prepare then "
+                         "incomingCalls. Returns {prepared_count, "
+                         "anchors: [{anchor, calls: [{item, "
+                         "ranges}]}]} -- one entry per prepared "
+                         "CallHierarchyItem so overloaded symbols / "
+                         "multi-anchor positions don't drop "
+                         "callers.")(call_hierarchy_incoming)
+
+    def call_hierarchy_outgoing(path: str, line: int, character: int) -> dict:
+        """LSP callHierarchy/prepare + callHierarchy/outgoingCalls.
+        Returns what the symbol at (line, character) calls."""
+        def _op() -> Any:
+            return _call_hierarchy_one_step(
+                "callHierarchy/outgoingCalls", "to",
+                path, line, character,
+            )
+        return _call_lsp(_op)
+    srv.tool(name="call_hierarchy_outgoing",
+             description="LSP callHierarchy/prepare then "
+                         "outgoingCalls. Returns {prepared_count, "
+                         "anchors: [{anchor, calls: [{item, "
+                         "ranges}]}]} -- one entry per prepared "
+                         "CallHierarchyItem so overloaded symbols / "
+                         "multi-anchor positions don't drop "
+                         "callees.")(call_hierarchy_outgoing)
+
+    def code_action(path: str, range: dict,
+                    diagnostic: Optional[dict] = None) -> dict:
+        """LSP textDocument/codeAction. READ-ONLY: returns the list
+        of available actions (Command | CodeAction). NEVER applies
+        them -- the workspace/applyEdit and workspace/executeCommand
+        methods that would actually mutate the file are blocked at
+        the runtime gate in _FORBIDDEN_LSP_METHODS.
+
+        `range` is an LSP Range = {start: {line, character},
+        end: {line, character}}. `diagnostic`, if supplied, narrows
+        the actions to fixes for that one diagnostic; without it the
+        LSP returns every action available in the range."""
+        def _op() -> Any:
+            r = _validate_range(range)
+            ctx: dict = {"diagnostics": []}
+            if diagnostic is not None:
+                if not isinstance(diagnostic, dict):
+                    raise LspError(
+                        "lsp-codeaction-diagnostic-invalid",
+                        f"diagnostic must be a dict, got "
+                        f"{type(diagnostic).__name__}",
+                        value=repr(diagnostic),
+                    )
+                ctx["diagnostics"] = [diagnostic]
+            resolved, lang, text = _dispatch_path(path, workspace_root)
+            lsp = _get_or_spawn(lang, workspace_root)
+            uri = _ensure_open_for(lsp, resolved, lang, text)
+            raw = lsp.request(
+                "textDocument/codeAction",
+                {"textDocument": {"uri": uri},
+                 "range": r,
+                 "context": ctx},
+                timeout=15.0,
+            )
+            return {
+                "uri": uri,
+                "lang": lang,
+                "range": r,
+                "actions": _normalize_code_actions(raw),
+                "note": "READ-ONLY: actions are listed but never "
+                        "applied. workspace/applyEdit + "
+                        "workspace/executeCommand are blocked at the "
+                        "runtime gate.",
+            }
+        return _call_lsp(_op)
+    srv.tool(name="code_action",
+             description="LSP textDocument/codeAction over a Range. "
+                         "READ-ONLY: returns the available "
+                         "(Command | CodeAction) list as metadata; "
+                         "the bridge never invokes applyEdit or "
+                         "executeCommand. Pass an optional "
+                         "`diagnostic` dict to scope to one "
+                         "diagnostic's fixes.")(code_action)
 
     return srv
 

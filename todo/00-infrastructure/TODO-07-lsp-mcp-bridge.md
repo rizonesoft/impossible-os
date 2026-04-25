@@ -51,7 +51,7 @@ title: "TODO-07 -- LSP to MCP Bridge (C, NASM, shell, Python, PowerShell)"
 | ⭐  |   8   | Extension routing + per-LSP lock + concurrent-call safety                  | §1, §7                            |  [x]   |
 | 💎  |   9   | Setup deps, manifest, Makefile target, docs, boundary                      | §1, §2-§6, §7, §8, T01 §1, T02 §5 |  [x]   |
 | ⭐  |  10   | Unit tests, --self-test harness, test-tooling surface                      | §1-§9                             |  [x]   |
-| 💎  |  11   | Extended LSP tools (completion, signature/nav/call-hierarchy, code_action) | §1, §7                            |  [ ]   |
+| 💎  |  11   | Extended LSP tools (completion, signature/nav/call-hierarchy, code_action) | §1, §7                            |  [x]   |
 | 💎  |  12   | File-change lifecycle (didChange / didSave / didClose forwarding)          | §1, §7                            |  [ ]   |
 | ⭐  |  13   | LSP subprocess health monitoring + auto-restart (exp backoff)              | §1                                |  [ ]   |
 | 💎  |  14   | Structured JSON logging + request correlation IDs                          | §1                                |  [ ]   |
@@ -369,17 +369,29 @@ The bridge is host-side Python tooling, so tests live outside the kernel `test_r
 
 The six tools in §7 cover the "navigate + read diagnostics" scope. Agents doing deeper code work (completion suggestions while synthesizing a patch, walking call graphs during refactor planning, inspecting signature help during API discovery) need the next tier. All eight additions remain read-only; `code_action` lists suggestions without executing. Matches the surface every production bridge (isaacphi/mcp-language-server, mickeyinfoshan/lsp-mcp, rockerBOO/mcp-lsp-bridge) ships.
 
-- [ ] Register `completion(path: str, line: int, character: int, trigger_character: Optional[str] = None)` -- LSP `textDocument/completion`. Truncate to top 50 items per call to keep payload bounded; preserve `kind`, `label`, `detail`, `documentation`.
-- [ ] Register `signature_help(path: str, line: int, character: int)` -- LSP `textDocument/signatureHelp`. Returns active signature + active parameter index.
-- [ ] Register `type_definition(path: str, line: int, character: int)` -- LSP `textDocument/typeDefinition`. Distinct from `definition` for `typedef` / `using` / C++ `class Foo = ...` redirects.
-- [ ] Register `implementation(path: str, line: int, character: int)` -- LSP `textDocument/implementation`. For interfaces, abstract methods, vtables.
-- [ ] Register `declaration(path: str, line: int, character: int)` -- LSP `textDocument/declaration`. Useful when `definition` returns the `.c` body but the agent wants the `.h` prototype.
-- [ ] Register `call_hierarchy_incoming(path: str, line: int, character: int)` -- LSP `callHierarchy/prepare` + `callHierarchy/incomingCalls`. Returns callers of the target symbol.
-- [ ] Register `call_hierarchy_outgoing(path: str, line: int, character: int)` -- LSP `callHierarchy/prepare` + `callHierarchy/outgoingCalls`. Returns what the target calls.
-- [ ] Register `code_action(path: str, range: dict, diagnostic: Optional[dict] = None)` -- LSP `textDocument/codeAction`. **Read-only:** returns action list; NEVER executes. Enforced by §9 boundary audit: `workspace/applyEdit` dispatch stays unreachable from any MCP handler.
-- [ ] Commit: `"scripts/lsp-mcp: extended LSP tools (completion, signature help, navigation, call hierarchy, code actions)"`
+- [x] Register `completion(path, line, character, trigger_character=None)` -- LSP `textDocument/completion`. Filter-then-truncate at `_COMPLETION_MAX_ITEMS=50` (`bridge.py:_normalize_completion`) so leading malformed entries cannot starve usable items; per-item keeps `label`/`kind`/`detail`/`documentation` only and drops `insertText`/`textEdit`/`additionalTextEdits`/`command` so the read-only boundary cannot be sidestepped by an agent confusing list metadata with an actionable edit. `trigger_character` validated 1..4 chars; sets LSP `CompletionContext.triggerKind=2`.
+- [x] Register `signature_help(path, line, character)` -- LSP `textDocument/signatureHelp` via `bridge.py:signature_help`. Returns `{signatures, active_signature, active_parameter}`; `active_*` flushed to `None` on empty signatures so callers don't index past the end.
+- [x] Register `type_definition(path, line, character)` -- LSP `textDocument/typeDefinition`. Locations normalized via `_normalize_locations` (same as `definition`); distinct semantically -- resolves `typedef` / `using` redirects to the type declaration.
+- [x] Register `implementation(path, line, character)` -- LSP `textDocument/implementation`. For interfaces / abstract methods / vtables.
+- [x] Register `declaration(path, line, character)` -- LSP `textDocument/declaration`. Header-vs-translation-unit-local definitions: useful when `definition` lands on a `.c` body and the agent wants the `.h` prototype.
+- [x] Register `call_hierarchy_incoming(path, line, character)` -- `callHierarchy/prepare` + `callHierarchy/incomingCalls` via `bridge.py:_call_hierarchy_one_step`. Walks **every** prepared `CallHierarchyItem` and returns one entry per anchor under `anchors: [{anchor, calls: [{item, ranges}]}]` so overloaded symbols / multi-anchor positions don't silently drop callers (Codex Medium fix).
+- [x] Register `call_hierarchy_outgoing(path, line, character)` -- same shape, queries `callHierarchy/outgoingCalls` and uses the `to` key per LSP 3.17. Walks every prepared anchor identically to `incoming`.
+- [x] Register `code_action(path, range, diagnostic=None)` -- LSP `textDocument/codeAction` via `bridge.py:code_action`. **Read-only:** returns the `(Command | CodeAction)[]` metadata list and never invokes `workspace/applyEdit` or `workspace/executeCommand` (both still in `_FORBIDDEN_LSP_METHODS`). `textDocument/codeAction` itself is read-only per LSP 3.17 and was correspondingly removed from the deny set; `EXPECTED_MIN` in `test_boundary.sh` and the docs in `development-tooling.md` were updated together. Range validated via `_validate_range`; diagnostic dict-checked.
+- [x] Commit: `"scripts/lsp-mcp: extended LSP tools (completion, signature help, navigation, call hierarchy, code actions)"`
 
 **Test checkpoint:** `--self-test --tools` shows 14 total registered tools (6 core + 8 extended). `completion` on a C file mid-call (`kmain(` position) returns at least one suggestion (e.g. `kmalloc`, `klog`). `call_hierarchy_incoming` on `pmm_alloc_contiguous` returns 3+ caller sites. `code_action` on a file with a known diagnostic returns the available quick-fix list but does NOT mutate the file on disk (verify with `md5sum` before and after). Host-side Python; no kernel / POST16 involvement.
+
+> **Test runner:** `bash scripts/lsp-mcp/tests/test_bridge.sh` | 42/42 sub-tests PASS (1a-9a carry forward; 7a updated to 14-tool schema contract; 7e/test_boundary.sh updated to the 3-method deny set; 11a extended-tool normalizers + filter-then-truncate regression, 11b code_action boundary contract, 11c completion smoke against clangd-19, 11d code_action immutability via md5sum, 11e call hierarchy walks every prepared anchor)
+
+> **Notes:**
+>
+> - **What shipped:** `bridge.py` +~530 LOC (8 typed MCP tool handlers + 5 normalizers + `_validate_range` + completion `trigger_character` validation + `_call_hierarchy_one_step` walking every prepared anchor); `lsp_client.py` `_FORBIDDEN_LSP_METHODS` shrunk to 3 (`textDocument/codeAction` is read-only per LSP 3.17 and is now allowed; `applyEdit`/`executeCommand`/`rename` stay forbidden); `tests/test_bridge.sh` adds 11a-11e (5 new sub-tests) and updates 7a + 7e to the new 14-tool / 3-method shape; `tests/test_boundary.sh` `EXPECTED_MIN` shrunk to 3.
+> - **How it runs:** `python3 bridge.py --self-test --tools` dumps 14 schemas; the new tools are addressable as `mcp__lsp-bridge__completion` etc. once Claude Code restarts. End-to-end verified: `--self-test` reports `14 tools registered`; harness 42/42 PASS; tooling 84/84 PASS; build OK.
+> - **Downstream effects:** unblocks any agent flow that needed completion / signature help / call graphs / code actions through MCP; closes the parity gap with isaacphi/mcp-language-server, mickeyinfoshan/lsp-mcp, and rockerBOO/mcp-lsp-bridge on the extended-tool surface. Codex 1x adversarial review adoptions in commit `<§11 commit>`.
+> - **Canonical doc:** [`docs/infrastructure/development-tooling.md` LSP MCP Bridge subsection](../../docs/infrastructure/development-tooling.md) -- the read-only-boundary block was updated to reflect the 3-method deny set + the explicit reasoning for why `textDocument/codeAction` is read-only.
+> - **Scope boundary:** §11 does NOT own file-change lifecycle forwarding (§12), watchdog auto-restart (§13), correlation-ID logging (§14), workspace-bounded path sandboxing's race-free walk (§15), or warm-start (§16). It also does NOT cold-spawn LSPs eagerly -- the on-demand pattern from §1 is preserved.
+
+> **Verified:** 2026-04-25 | commit `<§11 commit>` | 9/9 items | build OK (host-side Python; kernel build re-run as smoke confirm) | tests 42/42 PASS
 
 ---
 

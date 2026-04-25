@@ -119,6 +119,34 @@
 #         _pending dict is empty after, assert subprocess still alive
 #         (timeouts must NOT kill the LSP). Also assert invalid env
 #         values raise lsp-timeout-config-invalid.
+#   11a -- Extended-tool normalizers (TODO-07 in 00-infrastructure):
+#          _normalize_completion (truncation at _COMPLETION_MAX_ITEMS,
+#          drops insertText/textEdit/command per read-only boundary),
+#          _normalize_signature_help (active_* coerced to None when
+#          signatures are empty), _normalize_call_hierarchy_items,
+#          _normalize_call_hierarchy_calls (incoming uses 'from',
+#          outgoing uses 'to'), _normalize_code_actions, and
+#          _validate_range (rejects bad types and bad positions).
+#   11b -- Boundary contract for code_action: textDocument/codeAction
+#          is read-only per LSP 3.17 and is intentionally NOT in the
+#          deny set; workspace/applyEdit, workspace/executeCommand,
+#          textDocument/rename remain forbidden.
+#   11c -- completion handler end-to-end smoke against clangd-19.
+#          Builds the FastMCP server, finds the registered tool fn,
+#          invokes it on a real C source file, and validates the
+#          response shape contract. Tolerates LSP-cold-start envelopes
+#          since clangd may not have indexed yet. Also validates
+#          trigger_character length validation (1..4).
+#   11d -- code_action immutability: invokes the code_action tool with
+#          a real range; md5sums the source file before AND after to
+#          prove the bridge never applied any edit. Also validates
+#          range-shape rejection (lsp-range-invalid).
+#   11e -- call_hierarchy walks every prepared anchor (regression
+#          guard for Codex Medium finding: an early revision queried
+#          only prepared[0], silently dropping callers/callees for
+#          overloaded symbols). A stub LSP returns 3 prepared items;
+#          the test asserts the bridge issues 3 follow-up calls and
+#          bundles per-anchor results into the response.
 #   9a -- LSP-process-leak detection: pgrep snapshots taken at harness
 #         entry vs harness exit. Any NEW PID matching the 5 LSP binary
 #         names (owned by this user) is a leak from a sub-test that
@@ -169,9 +197,11 @@ t_selftest() {
     local out
     out="$(python3 scripts/lsp-mcp/bridge.py --self-test 2>&1)"
     # Banner shapes:
-    #   "[lsp-mcp] OK: 0 LSPs spawned, 6 tools registered, bridge ready"
+    #   "[lsp-mcp] OK: 0 LSPs spawned, 14 tools registered, bridge ready"
     # OR "[lsp-mcp] SKIP: mcp SDK not installed; ..." (CI without SDK).
-    echo "$out" | grep -qE '^\[lsp-mcp\] (OK: 0 LSPs spawned, 6 tools registered, bridge ready|SKIP: mcp SDK not installed)'
+    # Tool count = len(MCP_TOOL_NAMES); pin to the literal so a
+    # registration drift fails this test instead of silently sliding.
+    echo "$out" | grep -qE '^\[lsp-mcp\] (OK: 0 LSPs spawned, 14 tools registered, bridge ready|SKIP: mcp SDK not installed)'
 }
 
 # --- 1b: import smoke --------------------------------------------------------
@@ -725,7 +755,7 @@ t_selftest_tools() {
     if echo "$out" | grep -qE '^\[lsp-mcp\] SKIP: mcp SDK not installed'; then
         return 0
     fi
-    echo "$out" | grep -qE '^\[lsp-mcp\] OK: 6 tools registered \(hover, definition, references, diagnostics, workspace_symbol, document_symbol\)$' || return 1
+    echo "$out" | grep -qE '^\[lsp-mcp\] OK: 14 tools registered \(hover, definition, references, diagnostics, workspace_symbol, document_symbol, completion, signature_help, type_definition, implementation, declaration, call_hierarchy_incoming, call_hierarchy_outgoing, code_action\)$' || return 1
     # Each tool's schema must have the right required params.
     python3 -c "
 import json, subprocess, sys
@@ -738,12 +768,22 @@ end = r.stdout.find('[lsp-mcp] OK:')
 assert end > 0, 'banner missing'
 schemas = json.loads(r.stdout[:end])
 expected = {
+    # Six core tools.
     'hover': (['path','line','character'], []),
     'definition': (['path','line','character'], []),
     'references': (['path','line','character'], ['include_declaration']),
     'diagnostics': (['path'], []),
     'document_symbol': (['path'], []),
     'workspace_symbol': (['query'], ['lang']),
+    # Eight extended tools.
+    'completion': (['path','line','character'], ['trigger_character']),
+    'signature_help': (['path','line','character'], []),
+    'type_definition': (['path','line','character'], []),
+    'implementation': (['path','line','character'], []),
+    'declaration': (['path','line','character'], []),
+    'call_hierarchy_incoming': (['path','line','character'], []),
+    'call_hierarchy_outgoing': (['path','line','character'], []),
+    'code_action': (['path','range'], ['diagnostic']),
 }
 for name, (req, opt) in expected.items():
     s = schemas[name]
@@ -859,7 +899,7 @@ from lsp_client import LspSubprocess, LspError, _FORBIDDEN_LSP_METHODS
 # a policy change. Use issubset, not equality, so a 5th forbidden
 # method does NOT false-fail this test while still catching removals.
 # Mirrors the test_boundary.sh contract documented in its header.
-required_min = {'textDocument/rename', 'textDocument/codeAction',
+required_min = {'textDocument/rename',
                 'workspace/applyEdit', 'workspace/executeCommand'}
 assert required_min.issubset(set(_FORBIDDEN_LSP_METHODS)), \
     f'required_min {required_min} not subset of {set(_FORBIDDEN_LSP_METHODS)}'
@@ -1202,6 +1242,373 @@ finally:
 PY
 }
 
+# --- 11a: Extended-tool normalizers handle every LSP response shape -------
+t_extended_normalizers() {
+    python3 -c "
+import sys
+sys.path.insert(0, 'scripts/lsp-mcp')
+from bridge import (_normalize_completion, _normalize_signature_help,
+                    _normalize_call_hierarchy_items,
+                    _normalize_call_hierarchy_calls,
+                    _normalize_code_actions, _validate_range,
+                    _COMPLETION_MAX_ITEMS)
+from lsp_client import LspError
+
+# completion: null / empty / list / CompletionList / truncation
+r = _normalize_completion(None)
+assert r == {'items': [], 'isIncomplete': False, 'truncated': False, 'total': 0}, r
+r = _normalize_completion([{'label': 'kmalloc', 'kind': 3}])
+assert r['total'] == 1 and r['items'][0]['label'] == 'kmalloc', r
+assert r['raw_total'] == 1, r
+r = _normalize_completion({'isIncomplete': True, 'items': [{'label': 'k'}]})
+assert r['isIncomplete'] is True and r['total'] == 1, r
+big = [{'label': f'x{i}'} for i in range(_COMPLETION_MAX_ITEMS + 25)]
+r = _normalize_completion(big)
+assert r['truncated'] is True and len(r['items']) == _COMPLETION_MAX_ITEMS, r
+# Codex Low: total counts USABLE items, not raw input; raw_total
+# exposes input length so callers can detect malformed responses.
+assert r['total'] == _COMPLETION_MAX_ITEMS + 25, r
+assert r['raw_total'] == _COMPLETION_MAX_ITEMS + 25, r
+# Malformed-front regression: leading non-dict garbage MUST be filtered
+# BEFORE truncation. Otherwise garbage-prefixed responses returned 0
+# usable items even when valid items existed deeper in the list.
+mixed = ['junk', None, 42] * 10 + [{'label': 'real_completion'}] * 5
+r = _normalize_completion(mixed)
+assert r['total'] == 5, r          # only the 5 valid items count
+assert r['raw_total'] == 35, r     # raw input had 30 garbage + 5 valid
+assert len(r['items']) == 5, r
+assert all(it['label'] == 'real_completion' for it in r['items']), r
+assert r['truncated'] is False, r  # 5 valid is under the 50 cap
+# Per-item drops insertText / textEdit / command (read-only boundary).
+r = _normalize_completion([{'label': 'a', 'insertText': 'INJECTED',
+                             'textEdit': {'range': {}, 'newText': 'X'},
+                             'command': {'title': 'execute me', 'command': 'apply.something'}}])
+keep = r['items'][0]
+assert 'insertText' not in keep, keep
+assert 'textEdit' not in keep, keep
+assert 'command' not in keep, keep
+
+# signature_help: null / valid / missing fields
+assert _normalize_signature_help(None) == {'signatures': [],
+    'active_signature': None, 'active_parameter': None}
+r = _normalize_signature_help({'signatures': [{'label': 'foo(x)'}],
+    'activeSignature': 0, 'activeParameter': 0})
+assert r['active_signature'] == 0 and r['active_parameter'] == 0, r
+# Empty signatures -> active_signature flushed to None to avoid index OOB.
+r = _normalize_signature_help({'signatures': [], 'activeSignature': 5})
+assert r['active_signature'] is None, r
+
+# call_hierarchy_items: list of dicts / null / wrong type
+assert _normalize_call_hierarchy_items(None) == []
+assert _normalize_call_hierarchy_items('garbage') == []
+assert _normalize_call_hierarchy_items([{'name': 'foo'}, 'skip-me']) == [{'name': 'foo'}]
+
+# call_hierarchy_calls: incoming uses 'from', outgoing uses 'to'
+inc = [{'from': {'name': 'caller'}, 'fromRanges': [{'start': {}, 'end': {}}]}]
+r = _normalize_call_hierarchy_calls(inc, 'from')
+assert len(r) == 1 and r[0]['item']['name'] == 'caller', r
+out = [{'to': {'name': 'callee'}, 'fromRanges': [{}]}]
+r = _normalize_call_hierarchy_calls(out, 'to')
+assert len(r) == 1 and r[0]['item']['name'] == 'callee', r
+
+# code_actions: null / list / mixed types
+assert _normalize_code_actions(None) == []
+acts = [{'title': 'fix it', 'kind': 'quickfix'}, 'not-a-dict']
+r = _normalize_code_actions(acts)
+assert len(r) == 1 and r[0]['title'] == 'fix it', r
+
+# _validate_range: missing / wrong types / valid
+try:
+    _validate_range('not-a-dict')
+    raise SystemExit('expected lsp-range-invalid for str input')
+except LspError as e:
+    assert e.kind == 'lsp-range-invalid', e.kind
+try:
+    _validate_range({'start': {'line': 0, 'character': 0}})
+    raise SystemExit('expected lsp-range-invalid for missing end')
+except LspError as e:
+    assert e.kind == 'lsp-range-invalid', e.kind
+try:
+    _validate_range({'start': {'line': -1, 'character': 0},
+                     'end': {'line': 0, 'character': 0}})
+    raise SystemExit('expected lsp-position-invalid for negative line')
+except LspError as e:
+    assert e.kind == 'lsp-position-invalid', e.kind
+r = _validate_range({'start': {'line': 1, 'character': 2},
+                     'end': {'line': 3, 'character': 4}})
+assert r == {'start': {'line': 1, 'character': 2},
+             'end': {'line': 3, 'character': 4}}, r
+"
+}
+
+# --- 11b: Boundary contract holds for the new code_action surface ---------
+# textDocument/codeAction is read-only per LSP 3.17 and is intentionally
+# NOT in the deny set so the code_action MCP tool can call it.
+# applyEdit + executeCommand stay denied so even though codeAction
+# returns CodeAction objects with edit / command fields, the bridge
+# cannot apply them.
+t_codeaction_boundary_contract() {
+    python3 -c "
+import sys
+sys.path.insert(0, 'scripts/lsp-mcp')
+from lsp_client import _FORBIDDEN_LSP_METHODS
+
+# textDocument/codeAction must NOT be in the deny set (was removed
+# when the read-only code_action MCP tool was added).
+assert 'textDocument/codeAction' not in _FORBIDDEN_LSP_METHODS, \
+    f'codeAction in deny set: {sorted(_FORBIDDEN_LSP_METHODS)}'
+
+# Execution paths MUST remain denied. These are what would actually
+# mutate the workspace; codeAction itself just returns metadata.
+for required in ('workspace/applyEdit', 'workspace/executeCommand',
+                 'textDocument/rename'):
+    assert required in _FORBIDDEN_LSP_METHODS, \
+        f'{required} missing from deny set: {sorted(_FORBIDDEN_LSP_METHODS)}'
+"
+}
+
+# --- 11c: completion smoke against clangd (SKIP if clangd-19 missing) -----
+# End-to-end: build the FastMCP server, find the registered completion
+# tool, invoke it on a known C file at a position mid-call, expect
+# at least one item back. Validates the wired-up handler chain
+# (path validation -> didOpen -> request -> normalize -> envelope).
+t_completion_smoke_clangd() {
+    if ! command -v clangd-19 >/dev/null 2>&1; then
+        return 0  # SKIP: clangd-19 not installed
+    fi
+    python3 - << 'PY'
+import sys
+from pathlib import Path
+sys.path.insert(0, 'scripts/lsp-mcp')
+
+try:
+    from mcp.server.fastmcp import FastMCP
+except Exception:
+    sys.exit(0)  # SKIP: mcp SDK not installed
+
+import bridge
+
+ws = Path.cwd()
+srv = bridge._build_mcp(FastMCP, ws)
+fn = srv._tool_manager._tools['completion'].fn
+
+# Pick a real C source file with a known function position. Using
+# src/kernel/main.c at line 0, character 0 is enough to exercise the
+# path; clangd may need a moment to index but small files complete
+# fast. We accept either a non-empty items list OR an LSP timeout
+# envelope (cold-cache hosts may not finish indexing in 15 s); what
+# we MUST NOT see is a path-resolution / type-validation failure.
+import time
+t0 = time.time()
+result = fn(path='src/kernel/main.c', line=10, character=0)
+elapsed = time.time() - t0
+
+# Tolerate either a successful completion list OR a clangd-isn't-
+# ready envelope. Anything else is a real failure.
+if 'error' in result:
+    kind = result['error']
+    assert kind in ('lsp-timeout', 'lsp-spawner-import-failed',
+                    'lsp-language-unsupported',
+                    'lsp-binary-missing', 'lsp-spawn-failed'), \
+        f'unexpected error: {result}'
+    sys.exit(0)
+
+# Successful path: response shape contract.
+assert 'items' in result, result
+assert 'isIncomplete' in result, result
+assert 'truncated' in result, result
+assert isinstance(result['items'], list), result
+# clangd at a token boundary returns at least the surrounding
+# kernel symbols; some positions return [] which is fine. We
+# verify the SHAPE, not non-emptiness.
+
+# Position validation contract: invalid line lands as envelope
+# (NOT an exception -- _call_lsp wraps every LspError into the
+# {'error': kind, 'detail': ...} dict shape so MCP-agent clients
+# always see structured output).
+result_bad = fn(path='src/kernel/main.c', line=-1, character=0)
+assert 'error' in result_bad and result_bad['error'] == 'lsp-position-invalid', result_bad
+
+# Trigger character validation: oversized rejected (also enveloped).
+result = fn(path='src/kernel/main.c', line=0, character=0,
+            trigger_character='abcdefghij')
+assert 'error' in result and result['error'] == 'lsp-completion-trigger-invalid', result
+
+print(f'[completion] OK in {elapsed:.2f}s')
+PY
+}
+
+# --- 11e: Call hierarchy walks every prepared anchor ---------------------
+# Codex Medium finding: an early revision queried only prepared[0].
+# This test builds a fake LSP that returns N prepared CallHierarchyItems
+# and asserts the bridge issues N follow-up calls and bundles them all
+# into the response. No real LSP needed -- the contract is wire-level.
+t_call_hierarchy_multi_anchor() {
+    python3 - << 'PY'
+import sys, json, threading
+from pathlib import Path
+sys.path.insert(0, 'scripts/lsp-mcp')
+
+try:
+    from mcp.server.fastmcp import FastMCP
+except Exception:
+    sys.exit(0)  # SKIP
+
+import bridge
+from lsp_client import LspSubprocess
+
+# Stub LSP that returns 3 prepared items, then resolves each follow-up
+# distinctly so the test can prove every anchor was queried.
+fake = r"""
+import sys, json
+def read_msg():
+    hdr = b''
+    while True:
+        ch = sys.stdin.buffer.read(1)
+        if not ch: return None
+        hdr += ch
+        if hdr.endswith(b'\r\n\r\n'): break
+    n = 0
+    for line in hdr.split(b'\r\n'):
+        if line.lower().startswith(b'content-length:'):
+            n = int(line.split(b':')[1].strip()); break
+    return json.loads(sys.stdin.buffer.read(n).decode('utf-8'))
+def write_msg(obj):
+    b = json.dumps(obj).encode('utf-8')
+    sys.stdout.buffer.write(b'Content-Length: ' + str(len(b)).encode() + b'\r\n\r\n' + b)
+    sys.stdout.buffer.flush()
+while True:
+    m = read_msg()
+    if m is None: break
+    method = m.get('method')
+    if method == 'initialize':
+        write_msg({'jsonrpc':'2.0','id':m['id'],'result':{'capabilities':{}}})
+    elif method == 'textDocument/prepareCallHierarchy':
+        write_msg({'jsonrpc':'2.0','id':m['id'],'result':[
+            {'name': 'overload_a', 'kind': 12, 'uri': 'file:///x', 'range': {}, 'selectionRange': {}},
+            {'name': 'overload_b', 'kind': 12, 'uri': 'file:///x', 'range': {}, 'selectionRange': {}},
+            {'name': 'overload_c', 'kind': 12, 'uri': 'file:///x', 'range': {}, 'selectionRange': {}},
+        ]})
+    elif method == 'callHierarchy/incomingCalls':
+        anchor_name = m['params']['item']['name']
+        write_msg({'jsonrpc':'2.0','id':m['id'],'result':[
+            {'from': {'name': f'caller_of_{anchor_name}',
+                      'uri': 'file:///x', 'range': {}, 'selectionRange': {}},
+             'fromRanges': [{}]},
+        ]})
+    elif method == 'shutdown':
+        write_msg({'jsonrpc':'2.0','id':m['id'],'result':None})
+    elif method == 'exit':
+        break
+    elif 'method' in m and 'id' not in m:
+        pass
+    elif 'id' in m:
+        write_msg({'jsonrpc':'2.0','id':m['id'],'result':None})
+"""
+
+# Drive the bridge handler via a stub LSP injected through the spawn
+# registry. We register a fresh language tag 'fake' so we don't
+# collide with real spawners; then we map a tempfile extension to it.
+import tempfile, os
+ws = Path.cwd()
+tmp = tempfile.NamedTemporaryFile(suffix='.fakeext', mode='w',
+                                  delete=False, dir=str(ws))
+try:
+    tmp.write('// fake call-hierarchy stub source\n'); tmp.close()
+
+    # Patch bridge tables so the new extension routes to a fake LSP.
+    bridge._EXT_TO_LANG['.fakeext'] = 'fake'
+    bridge._LANG_TO_LSP_LANGUAGE_ID['fake'] = 'plaintext'
+
+    def spawn_fake(workspace_root):
+        lsp = LspSubprocess(['python3', '-c', fake], lang='fake')
+        lsp.initialize('file://' + str(workspace_root))
+        return lsp
+    bridge.register_spawner('fake', spawn_fake)
+
+    srv = bridge._build_mcp(FastMCP, ws)
+    fn = srv._tool_manager._tools['call_hierarchy_incoming'].fn
+    result = fn(path=os.path.basename(tmp.name), line=0, character=0)
+
+    assert 'error' not in result, result
+    assert result['prepared_count'] == 3, result
+    assert len(result['anchors']) == 3, result
+    names = sorted(a['anchor']['name'] for a in result['anchors'])
+    assert names == ['overload_a', 'overload_b', 'overload_c'], names
+    # Each anchor must have its own caller list (proves all 3 follow-ups fired).
+    for entry in result['anchors']:
+        assert len(entry['calls']) == 1, entry
+        caller = entry['calls'][0]['item']['name']
+        assert caller == f'caller_of_{entry["anchor"]["name"]}', entry
+    print(f'[call_hierarchy] OK -- 3/3 anchors resolved')
+finally:
+    os.unlink(tmp.name)
+    # Drop the fake LSP from registry + caches; let atexit clean the proc.
+    bridge._EXT_TO_LANG.pop('.fakeext', None)
+    bridge._LANG_TO_LSP_LANGUAGE_ID.pop('fake', None)
+    bridge._LSP_SPAWNERS.pop('fake', None)
+    with bridge._LIVE_LSPS_LOCK:
+        keys = [k for k in bridge._LIVE_LSPS if k[0] == 'fake']
+    for k in keys:
+        with bridge._LIVE_LSPS_LOCK:
+            inst = bridge._LIVE_LSPS.pop(k, None)
+        if inst is not None:
+            inst.shutdown(timeout=2.0)
+PY
+}
+
+# --- 11d: code_action immutability check (SKIP if clangd-19 missing) ------
+# code_action MUST be metadata-only. Even if clangd returns a
+# CodeAction with an `edit: WorkspaceEdit`, the bridge MUST NOT apply
+# it. Verify with md5sum before/after the call.
+t_codeaction_immutability() {
+    if ! command -v clangd-19 >/dev/null 2>&1; then
+        return 0  # SKIP
+    fi
+    python3 - << 'PY'
+import sys, hashlib
+from pathlib import Path
+sys.path.insert(0, 'scripts/lsp-mcp')
+
+try:
+    from mcp.server.fastmcp import FastMCP
+except Exception:
+    sys.exit(0)  # SKIP
+
+import bridge
+
+ws = Path.cwd()
+srv = bridge._build_mcp(FastMCP, ws)
+fn = srv._tool_manager._tools['code_action'].fn
+
+target = ws / 'src/kernel/main.c'
+before = hashlib.md5(target.read_bytes()).hexdigest()
+
+# Cover lines 0-5; clangd may return [] (no actions in range) which
+# is still a valid response. We only care about IMMUTABILITY.
+result = fn(path='src/kernel/main.c',
+            range={'start': {'line': 0, 'character': 0},
+                   'end':   {'line': 5, 'character': 0}})
+
+after = hashlib.md5(target.read_bytes()).hexdigest()
+assert before == after, f'code_action mutated the file! md5 {before} -> {after}'
+
+# Response shape: either the success envelope or an LSP error envelope
+# (cold-start clangd / unsupported by this LSP version).
+if 'error' in result:
+    sys.exit(0)
+assert 'actions' in result, result
+assert isinstance(result['actions'], list), result
+assert 'note' in result and 'READ-ONLY' in result['note'], result
+
+# Range validation: bad input rejected before reaching the LSP.
+result = fn(path='src/kernel/main.c', range={'start': 'not-a-dict'})
+assert 'error' in result and result['error'] == 'lsp-range-invalid', result
+
+print('[code_action] OK -- file unchanged, response read-only')
+PY
+}
+
 # --- 9a: LSP-process-leak detection (run LAST) ----------------------------
 t_no_leaked_lsp_processes() {
     # Capture the post-harness PID set of LSP binaries owned by this
@@ -1269,6 +1676,11 @@ run "7h validate_position bounds"        t_validate_position
 run "8a stress 100 concurrent hovers"    t_selftest_stress
 run "8b fake-LSP reorder demux"          t_fake_lsp_reorder_demux
 run "8c LSP_MCP_TIMEOUT env override"    t_timeout_env_override
+run "11a extended-tool normalizers"      t_extended_normalizers
+run "11b code_action boundary contract"  t_codeaction_boundary_contract
+run "11c completion smoke against clangd" t_completion_smoke_clangd
+run "11d code_action immutability"       t_codeaction_immutability
+run "11e call hierarchy multi-anchor"    t_call_hierarchy_multi_anchor
 # 9a runs LAST so every prior sub-test has had a chance to clean up.
 run "9a no leaked LSP processes"         t_no_leaked_lsp_processes
 

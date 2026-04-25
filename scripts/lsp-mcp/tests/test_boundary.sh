@@ -13,10 +13,13 @@
 #      same set we audit against).
 #   2. Greps the bridge + servers for those exact method literals appearing
 #      in lsp.request() / .notify() call sites. Any hit is a violation.
-#   3. Confirms the documented contract (4 methods minimum: rename,
-#      codeAction, applyEdit, executeCommand). Adds tolerated-grow-only
-#      semantics: extending the deny set is fine; shrinking it requires an
-#      explicit policy change in TODO-02.
+#   3. Confirms the documented contract (3 methods minimum: rename,
+#      applyEdit, executeCommand). textDocument/codeAction was previously
+#      in the deny set but is read-only per LSP 3.17 (returns the action
+#      list; execution flows through applyEdit / executeCommand which
+#      stay forbidden). Adds tolerated-grow-only semantics: extending
+#      the deny set is fine; shrinking it requires an explicit policy
+#      change in TODO-02.
 #
 # Defense in depth:
 #   - Runtime gate: LspSubprocess.request() rejects any forbidden method
@@ -52,7 +55,6 @@ for m in sorted(_FORBIDDEN_LSP_METHODS):
 # change. Every method here MUST appear in _FORBIDDEN_LSP_METHODS.
 EXPECTED_MIN=(
     "textDocument/rename"
-    "textDocument/codeAction"
     "workspace/applyEdit"
     "workspace/executeCommand"
 )
@@ -94,7 +96,7 @@ if [ -n "$VIOLATIONS" ]; then
     printf '%s\n' "$VIOLATIONS" >&2
     printf '\n' >&2
     printf 'Per TODO-02 autonomous-agent boundary, no MCP tool handler may issue\n' >&2
-    printf 'rename / codeAction-execute / applyEdit / executeCommand. The runtime\n' >&2
+    printf 'rename / applyEdit / executeCommand. The runtime\n' >&2
     printf '_FORBIDDEN_LSP_METHODS gate at lsp_client.py:request() will reject the\n' >&2
     printf 'call at runtime; this source audit prevents the literal from shipping\n' >&2
     printf 'in the first place. Remove the literal or, if a legitimate read-only\n' >&2

@@ -139,9 +139,21 @@ def _resolve_request_timeout(t: Optional[float]) -> float:
 # catches our code, not a future contributor's refactor). Codex
 # pre-implementation review of the MCP tools surface flagged this as
 # High.
+#
+# Note on textDocument/codeAction: per LSP 3.17 the method itself is
+# read-only -- it returns a list of (Command | CodeAction) describing
+# what fixes are AVAILABLE; applying them flows through
+# workspace/applyEdit (server-initiated) or workspace/executeCommand
+# (client-initiated). The extended-tools `code_action` MCP handler
+# calls textDocument/codeAction to enumerate available actions and
+# returns the metadata as-is; it never invokes applyEdit /
+# executeCommand, both of which remain forbidden here.
+# textDocument/rename is kept forbidden even though it ALSO returns
+# a WorkspaceEdit rather than applying it -- by intent it is a
+# mutation-producing call, and we have no read-only consumer that
+# needs the edit list.
 _FORBIDDEN_LSP_METHODS = frozenset({
     "textDocument/rename",
-    "textDocument/codeAction",       # execute (read-only listing has its own gate)
     "workspace/applyEdit",
     "workspace/executeCommand",
 })

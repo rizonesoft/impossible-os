@@ -736,7 +736,7 @@ Owner: [TODO-07 in 00-infrastructure](../../todo/00-infrastructure/TODO-07-lsp-m
 
 Per the [autonomous-agent-boundary policy](ai-system.md#autonomous-agent-boundary-policy), the bridge MUST NOT issue write-capable LSP methods. Defense in depth:
 
-1. **Runtime gate** -- `_FORBIDDEN_LSP_METHODS` frozenset in `lsp_client.py` rejects `textDocument/rename`, `textDocument/codeAction`, `workspace/applyEdit`, `workspace/executeCommand` at `LspSubprocess.request()` entry, before any wire I/O. A future contributor's tool handler cannot bypass it even by constructing the method name dynamically.
+1. **Runtime gate** -- `_FORBIDDEN_LSP_METHODS` frozenset in `lsp_client.py` rejects `textDocument/rename`, `workspace/applyEdit`, `workspace/executeCommand` at `LspSubprocess.request()` entry, before any wire I/O. A future contributor's tool handler cannot bypass it even by constructing the method name dynamically. (`textDocument/codeAction` is NOT in the deny set: per LSP 3.17 it is read-only and returns the available-action list; execution still flows through `applyEdit` / `executeCommand`, which stay forbidden. The `code_action` MCP tool returns the metadata list as-is and never invokes either execution method.)
 2. **Source audit** -- `bash scripts/lsp-mcp/tests/test_boundary.sh` greps the bridge + spawner sources for those literal method names and FAILS if any appear in `lsp.request()` / `.notify()` call sites. Imports the deny set from `lsp_client.py` to stay in sync with the runtime gate.
 3. **Sub-test 7e/7f in `test_bridge.sh`** -- 7e exercises the runtime gate (asserts `lsp-method-forbidden` is raised); 7f wraps the source audit so the standard harness catches violations.
 
