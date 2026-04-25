@@ -306,6 +306,7 @@ FastMCP dispatches concurrent tool calls. Even with the bridge-level `_CALL_LOCK
 > - **Scope boundary:** §8 does NOT own crash detection / auto-restart (§13), structured JSON logging with correlation IDs (§14), warm-start eager spawn (§16), or the per-LSP `cleanup_paths` retrofit (filed in §12). Stress test exercises clangd only; mixed-language stress is not a §8 deliverable -- 8b is the demux contract validator and uses a fake LSP for determinism.
 
 > **Verified:** 2026-04-25 | commit `a249c81e` | 6/6 items | build N/A (host-side Python) | tests 36/36 PASS
+> **Quality reviewed:** 2026-04-25 | Codex 4x (design + adversarial + consistency + perf) | 7M+6L fixed | scope: N/A (host-side Python tooling; no domain quality skill applies)
 
 ---
 

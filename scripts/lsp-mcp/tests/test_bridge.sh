@@ -101,9 +101,12 @@
 #         negative values to the server. Regression guard for Codex
 #         adversarial review Medium finding.
 #   8a -- --self-test --stress runs 100 concurrent hover calls through
-#         clangd, asserts demux clean + no Future leaks. SKIPs when
-#         clangd is not installed. Validates the per-LSP serialization
-#         + request/response correlation contract under concurrency.
+#         clangd, asserts no Future leaks in lsp._pending. SKIPs when
+#         clangd is not installed. Exercises _io_lock + _pending_lock
+#         + _next_id_lock contention under 100-way fan-in. Demux
+#         correctness is sub-test 8b's job (clangd hover responses do
+#         not echo position, so swapped Futures cannot be detected
+#         from the response payload alone).
 #   8b -- Fake-LSP deterministic demux test: a stub stdio server that
 #         delays + REORDERS responses (replies to req 5 first, then 1,
 #         etc.) -- the bridge's _pending dict + Future demux MUST
@@ -894,14 +897,20 @@ try:
 except LspError as e:
     assert e.kind == 'lsp-position-invalid', e.kind
 
-# Reject non-integer
-try:
-    bridge._validate_position('not_an_int', 0)
-    raise SystemExit('string line not rejected')
-except LspError as e:
-    assert e.kind == 'lsp-position-invalid', e.kind
+# Reject non-integer (strict int-only)
+for bad in ('not_an_int', '10', 1.5, 1.9, 0.0, None):
+    try:
+        bridge._validate_position(bad, 0)
+        raise SystemExit(f'{bad!r} not rejected (line)')
+    except LspError as e:
+        assert e.kind == 'lsp-position-invalid', e.kind
+    try:
+        bridge._validate_position(0, bad)
+        raise SystemExit(f'{bad!r} not rejected (character)')
+    except LspError as e:
+        assert e.kind == 'lsp-position-invalid', e.kind
 
-# Accept valid
+# Accept valid (and ONLY valid; no float-truncation)
 assert bridge._validate_position(0, 0) == (0, 0)
 assert bridge._validate_position(10, 5) == (10, 5)
 assert bridge._validate_position(2**31 - 1, 2**31 - 1) == (2**31 - 1, 2**31 - 1)

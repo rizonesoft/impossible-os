@@ -554,13 +554,23 @@ _POSITION_MAX = (2 ** 31) - 1
 
 
 def _validate_position(line: Any, character: Any) -> tuple[int, int]:
-    """Coerce + validate an LSP Position. Returns (line, character)
-    as ints. Raises LspError('lsp-position-invalid') for:
-      - bool inputs (int(True) silently coerces to 1 -- reject so
-        agents passing booleans by mistake get a clean error)
-      - non-integer inputs
+    """Validate an LSP Position. Returns (line, character) as ints.
+    Strict int-only -- does NOT coerce numeric strings or truncate
+    floats. Raises LspError('lsp-position-invalid') for:
+      - bool inputs (bool is subclass of int; reject explicitly so
+        True/False don't slip past the int check)
+      - any non-int type (str like "10", float like 1.9, None, etc.)
       - negative values
-      - values >= 2**31"""
+      - values >= 2**31
+
+    Codex post-implementation review of the per-LSP concurrency
+    surface caught the prior implementation's `int(v)` coercion as
+    Low: `int("10")` accepted a string and `int(1.9)` truncated to 1
+    silently, both of which violate the documented contract. The
+    JSON-RPC layer hands us native Python ints from MCP-client JSON
+    payloads, so non-int inputs are always a caller bug -- reject
+    them rather than coercing."""
+    out: list[int] = []
     for name, v in (("line", line), ("character", character)):
         if isinstance(v, bool):
             raise LspError(
@@ -569,24 +579,24 @@ def _validate_position(line: Any, character: Any) -> tuple[int, int]:
                 field=name,
                 value=v,
             )
-        try:
-            iv = int(v)
-        except (TypeError, ValueError) as exc:
+        if not isinstance(v, int):
             raise LspError(
                 "lsp-position-invalid",
-                f"{name}={v!r} is not an integer",
+                f"{name}={v!r} (type {type(v).__name__}) is not an int; "
+                "no coercion of strings / floats / None",
                 field=name,
                 value=repr(v),
-            ) from exc
-        if iv < 0 or iv > _POSITION_MAX:
+            )
+        if v < 0 or v > _POSITION_MAX:
             raise LspError(
                 "lsp-position-invalid",
-                f"{name}={iv} is outside LSP uinteger range "
+                f"{name}={v} is outside LSP uinteger range "
                 f"[0, {_POSITION_MAX}]",
                 field=name,
-                value=iv,
+                value=v,
             )
-    return int(line), int(character)
+        out.append(v)
+    return out[0], out[1]
 
 
 def _normalize_hover(hover: Any) -> str:
@@ -939,10 +949,19 @@ def _build_mcp(FastMCP, workspace_root: Path):
                         except Exception:
                             pass
                     elif lang_tag not in per_lang and lang_tag not in errors:
-                        errors[lang_tag] = (
-                            "lsp-overall-timeout: workspace_symbol 10s "
-                            "deadline exceeded while this LSP was still in-flight"
-                        )
+                        # Match the per-call error shape produced by
+                        # _one() via exc.to_envelope(): a dict with
+                        # {error, detail, ...}. The overall-timeout
+                        # branch previously emitted a plain string
+                        # here, leaving `errors[lang]` union-typed.
+                        # Codex consistency review caught it.
+                        errors[lang_tag] = LspError(
+                            "lsp-overall-timeout",
+                            "workspace_symbol 10s deadline exceeded "
+                            "while this LSP was still in-flight",
+                            lang=lang_tag,
+                            method="workspace/symbol",
+                        ).to_envelope()
                 pool.shutdown(wait=False, cancel_futures=True)
             else:
                 pool.shutdown(wait=True)
@@ -2150,9 +2169,10 @@ def _self_test_stress(workspace_root: Path) -> int:
         return 1
 
     # Pick a small pool of well-known positions that clangd hovers
-    # cleanly. We rotate through them across 100 calls so each
-    # in-flight request has a different (line, character); this is
-    # what lets us detect cross-talk via param round-trip mismatch.
+    # cleanly. We rotate through them across 100 calls so different
+    # in-flight requests carry different (line, character) values,
+    # which exercises clangd's own request multiplexer (not the
+    # bridge's -- bridge demux is sub-test 8b's job).
     candidate_positions: list[tuple[int, int]] = []
     for idx, line in enumerate(text.splitlines()):
         for needle in ("kernel_main", "magic", "mbi"):
@@ -2320,8 +2340,9 @@ def main(argv=None) -> int:
     p.add_argument(
         "--stress", action="store_true",
         help="with --self-test: run 100 concurrent hover calls against "
-             "clangd to validate per-LSP serialization + request/response "
-             "demux under concurrency. SKIP when clangd is not installed.",
+             "clangd to exercise per-LSP lock contention + Future-leak "
+             "detection. SKIP when clangd is not installed. Demux "
+             "correctness is exercised by sub-test 8b (fake-LSP reorder).",
     )
     args = p.parse_args(argv)
 

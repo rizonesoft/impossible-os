@@ -82,14 +82,14 @@ def _resolve_request_timeout(t: Optional[float]) -> float:
             raise LspError(
                 "lsp-timeout-config-invalid",
                 f"timeout={t!r} is bool; expected positive finite float",
-                value=repr(t),
+                value=str(t),
                 source="explicit",
             )
         if not isinstance(t, (int, float)):
             raise LspError(
                 "lsp-timeout-config-invalid",
                 f"timeout={t!r} is not numeric",
-                value=repr(t),
+                value=str(t),
                 source="explicit",
             )
         v = float(t)
@@ -97,12 +97,18 @@ def _resolve_request_timeout(t: Optional[float]) -> float:
             raise LspError(
                 "lsp-timeout-config-invalid",
                 f"timeout={v!r} must be a positive finite number",
-                value=repr(t),
+                value=str(t),
                 source="explicit",
             )
         return v
     raw = os.environ.get(_TIMEOUT_ENV)
-    if not raw:
+    # Treat both "unset" (None) and empty string as "fall back to
+    # default". Empty-string env vars are a quirk of shell quoting
+    # (`LSP_MCP_TIMEOUT="" ./bridge.py`) and almost always mean "I
+    # forgot to set this"; promoting them to validation errors would
+    # surprise users without catching real misconfiguration. Only
+    # set-and-non-empty values go through the parse + bounds gate.
+    if raw is None or not raw.strip():
         return _DEFAULT_REQUEST_TIMEOUT_S
     try:
         v = float(raw)
