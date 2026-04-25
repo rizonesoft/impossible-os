@@ -50,6 +50,80 @@ _MAX_HEADER_LINE = 8192          # bytes; a single LSP header is ~60 bytes
 _MAX_HEADER_BLOCK = 32 * 1024    # bytes; total of every header in one frame
 _MAX_BODY_BYTES = 32 * 1024 * 1024  # 32 MiB per LSP message
 
+# Default request timeout when caller passes timeout=None. The env var
+# LSP_MCP_TIMEOUT overrides this on a per-process basis -- read at
+# CALL TIME (not import time) so an MCP host can adjust the budget
+# without restarting the bridge. Codex design review of the per-LSP
+# concurrency surface flagged the import-time read as Medium: invalid
+# values should raise a structured LspError instead of crashing the
+# interpreter at module load.
+_DEFAULT_REQUEST_TIMEOUT_S = 5.0
+_TIMEOUT_ENV = "LSP_MCP_TIMEOUT"
+
+
+def _resolve_request_timeout(t: Optional[float]) -> float:
+    """Resolve the effective per-request timeout.
+
+    Caller's explicit `timeout=` wins; `timeout=None` reads
+    LSP_MCP_TIMEOUT from the environment. Either path is validated
+    BEFORE the Future is registered: positive, finite, non-bool
+    numeric. Invalid values raise LspError("lsp-timeout-config-
+    invalid") so the bridge surfaces a clean envelope rather than
+    letting a ValueError propagate or registering a Future that
+    immediately times out (timeout=0) or never times out (timeout=
+    inf raises OverflowError inside Future.result, leaving the
+    Future stuck in _pending). Codex post-implementation review
+    flagged the explicit-path as Medium."""
+    import math as _math
+    if t is not None:
+        # bool is a subclass of int -- reject explicitly so True/False
+        # don't silently coerce to 1.0/0.0 and slip past the gate.
+        if isinstance(t, bool):
+            raise LspError(
+                "lsp-timeout-config-invalid",
+                f"timeout={t!r} is bool; expected positive finite float",
+                value=repr(t),
+                source="explicit",
+            )
+        if not isinstance(t, (int, float)):
+            raise LspError(
+                "lsp-timeout-config-invalid",
+                f"timeout={t!r} is not numeric",
+                value=repr(t),
+                source="explicit",
+            )
+        v = float(t)
+        if not _math.isfinite(v) or v <= 0.0:
+            raise LspError(
+                "lsp-timeout-config-invalid",
+                f"timeout={v!r} must be a positive finite number",
+                value=repr(t),
+                source="explicit",
+            )
+        return v
+    raw = os.environ.get(_TIMEOUT_ENV)
+    if not raw:
+        return _DEFAULT_REQUEST_TIMEOUT_S
+    try:
+        v = float(raw)
+    except ValueError:
+        raise LspError(
+            "lsp-timeout-config-invalid",
+            f"{_TIMEOUT_ENV}={raw!r} is not a number; falling back disabled",
+            env_var=_TIMEOUT_ENV,
+            value=raw,
+            source="env",
+        )
+    if not _math.isfinite(v) or v <= 0.0:
+        raise LspError(
+            "lsp-timeout-config-invalid",
+            f"{_TIMEOUT_ENV}={v!r} must be a positive finite number",
+            env_var=_TIMEOUT_ENV,
+            value=raw,
+            source="env",
+        )
+    return v
+
 # Read-only boundary: LSP methods that MUTATE files or execute server
 # commands are FORBIDDEN. Enforced at request() entry so a new MCP tool
 # or a future refactor cannot reach them through LspSubprocess even
@@ -568,12 +642,21 @@ class LspSubprocess:
         return rid
 
     def request(self, method: str, params: Optional[dict[str, Any]] = None,
-                timeout: float = 5.0) -> Any:
+                timeout: Optional[float] = None) -> Any:
         """Send a JSON-RPC request + wait for its reply.
 
         Raises LspError on timeout, subprocess crash, or LSP-reported
         error. Callers in bridge.py translate this into the JSON
         error envelope returned to the MCP agent.
+
+        Timeout resolution: `timeout=<float>` is used as-is. `timeout=
+        None` resolves to the LSP_MCP_TIMEOUT env var (read at CALL
+        time so an MCP host can adjust mid-process), or the
+        _DEFAULT_REQUEST_TIMEOUT_S fallback. Invalid env values raise
+        LspError("lsp-timeout-config-invalid"). All existing in-tree
+        callers pass an explicit positive timeout; the env path is
+        for ad-hoc / test / tool-handler-default callers that opt in
+        via timeout=None.
 
         During shutdown() teardown, the internal `shutdown` RPC must
         bypass the _shutdown_called guard: _teardown_in_progress
@@ -587,6 +670,7 @@ class LspSubprocess:
         classification that write-capable MCP servers are forbidden.
         A new MCP tool handler or future refactor cannot bypass the
         gate without explicitly removing an entry from the set."""
+        timeout = _resolve_request_timeout(timeout)
         if method in _FORBIDDEN_LSP_METHODS:
             raise LspError(
                 "lsp-method-forbidden",

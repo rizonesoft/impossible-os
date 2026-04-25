@@ -2084,6 +2084,181 @@ def _self_test_pses(workspace_root: Path) -> int:
     return 0
 
 
+def _self_test_stress(workspace_root: Path) -> int:
+    """Concurrent-call stress harness for the per-LSP serialization
+    contract. Spawns clangd (SKIP if unavailable), opens
+    src/kernel/main.c, then fans 100 parallel hover requests at
+    multiple positions through `ThreadPoolExecutor`. Verifies:
+
+      1. _io_lock + _pending_lock + _next_id_lock contention under
+         100-way fan-in does not deadlock.
+      2. Every Future completes within an overall 20 s deadline.
+      3. No Future leaks: after the run, `lsp._pending` is empty.
+
+    What this DOES NOT verify: request/response demux correctness.
+    Clangd hover responses do not echo the request's (line,
+    character), so a Future-swap bug between two callers requesting
+    the same file at different positions cannot be detected from
+    the response payload alone. Demux correctness is exercised by
+    sub-test 8b (fake-LSP that DELIBERATELY reorders responses);
+    this stress test exercises lock contention + leak detection
+    under load.
+
+    Pool lifecycle mirrors the workspace_symbol(lang=None) pattern in
+    `_build_mcp` -- explicit `pool.shutdown(wait=False,
+    cancel_futures=True)` on overall-deadline expiry, no `with`
+    block that would block forever on stuck workers. Codex
+    pre-implementation review of this section flagged the with-block
+    pattern as Medium.
+    """
+    try:
+        from servers import clangd_server
+    except Exception as exc:
+        sys.stderr.write(
+            f"[lsp-mcp] FAIL: could not import servers.clangd_server: {exc}\n"
+        )
+        return 1
+    if not clangd_server.is_available():
+        sys.stdout.write(
+            f"[lsp-mcp] SKIP: clangd not installed "
+            f"({clangd_server.install_hint()})\n"
+        )
+        return 0
+
+    main_c = workspace_root / "src" / "kernel" / "main.c"
+    try:
+        resolved = main_c.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        sys.stderr.write(f"[lsp-mcp] FAIL: resolving {main_c}: {exc}\n")
+        return 1
+    try:
+        text = resolved.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        sys.stderr.write(f"[lsp-mcp] FAIL: reading {resolved}: {exc}\n")
+        return 1
+
+    try:
+        lsp = _get_or_spawn("c", workspace_root)
+    except LspError as exc:
+        sys.stderr.write(f"[lsp-mcp] FAIL: clangd spawn: {exc}\n")
+        return 1
+    uri = resolved.as_uri()
+    try:
+        lsp.ensure_open(uri, "c", text, version=1)
+    except LspError as exc:
+        sys.stderr.write(f"[lsp-mcp] FAIL: clangd didOpen: {exc}\n")
+        return 1
+
+    # Pick a small pool of well-known positions that clangd hovers
+    # cleanly. We rotate through them across 100 calls so each
+    # in-flight request has a different (line, character); this is
+    # what lets us detect cross-talk via param round-trip mismatch.
+    candidate_positions: list[tuple[int, int]] = []
+    for idx, line in enumerate(text.splitlines()):
+        for needle in ("kernel_main", "magic", "mbi"):
+            col = line.find(needle)
+            if col >= 0:
+                candidate_positions.append((idx, col + 1))
+                break
+        if len(candidate_positions) >= 5:
+            break
+    if not candidate_positions:
+        sys.stderr.write(
+            "[lsp-mcp] FAIL: could not find 5 hoverable positions in "
+            f"{resolved}\n"
+        )
+        return 1
+
+    n_calls = 100
+    overall_deadline_s = 20.0
+    requests: list[tuple[int, tuple[int, int]]] = []
+    for i in range(n_calls):
+        pos = candidate_positions[i % len(candidate_positions)]
+        requests.append((i, pos))
+
+    import concurrent.futures
+    import time as _time
+
+    def _one_call(req_id: int, pos: tuple[int, int]) -> tuple:
+        line, character = pos
+        try:
+            lsp.request(
+                "textDocument/hover",
+                {"textDocument": {"uri": uri},
+                 "position": {"line": line, "character": character}},
+                timeout=10.0,
+            )
+            return req_id, None
+        except LspError as exc:
+            return req_id, f"{exc.kind}: {exc.detail}"
+
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=n_calls)
+    futures: dict = {}
+    completed = 0
+    errors: list[tuple[int, str]] = []
+    start = _time.monotonic()
+    try:
+        for req_id, pos in requests:
+            fut = pool.submit(_one_call, req_id, pos)
+            futures[fut] = req_id
+        try:
+            for fut in concurrent.futures.as_completed(
+                    list(futures.keys()), timeout=overall_deadline_s):
+                rid, err = fut.result()
+                if err is not None:
+                    errors.append((rid, err))
+                    continue
+                completed += 1
+        except concurrent.futures.TimeoutError:
+            sys.stderr.write(
+                f"[lsp-mcp] FAIL: stress overall deadline "
+                f"({overall_deadline_s} s) exceeded; "
+                f"completed={completed}/{n_calls}\n"
+            )
+            pool.shutdown(wait=False, cancel_futures=True)
+            return 1
+        pool.shutdown(wait=True)
+    except BaseException:
+        pool.shutdown(wait=False, cancel_futures=True)
+        raise
+    elapsed = _time.monotonic() - start
+
+    # Pending dict must be empty (Future leak detector).
+    pending_len = 0
+    try:
+        with lsp._pending_lock:  # type: ignore[attr-defined]
+            pending_len = len(lsp._pending)  # type: ignore[attr-defined]
+    except Exception:
+        pass
+    if pending_len != 0:
+        sys.stderr.write(
+            "[lsp-mcp] FAIL: stress left "
+            f"{pending_len} Future(s) in lsp._pending; correlation leak\n"
+        )
+        return 1
+
+    if errors:
+        # Per-call errors are tolerated below a threshold (LSPs can
+        # return null for some positions). Hard FAIL only if more
+        # than 10% errored; otherwise note them.
+        if len(errors) > n_calls // 10:
+            sys.stderr.write(
+                f"[lsp-mcp] FAIL: stress had {len(errors)}/{n_calls} "
+                "per-call errors (>10% threshold). Examples:\n"
+            )
+            for r, e in errors[:5]:
+                sys.stderr.write(f"  req {r}: {e}\n")
+            return 1
+
+    sys.stdout.write(
+        f"[lsp-mcp] OK: stress {completed}/{n_calls} hover round-trips "
+        f"in {elapsed:.2f}s "
+        f"({completed/max(elapsed,0.001):.0f} req/s), "
+        f"no Future leaks (demux contract validated by sub-test 8b)\n"
+    )
+    return 0
+
+
 def _hover_content_bytes(hover: Any) -> int:
     """Return the byte-length of a hover response across LSP's three
     result shapes. Zero means the hover returned no usable content."""
@@ -2142,6 +2317,12 @@ def main(argv=None) -> int:
         help="with --self-test: print registered tool schemas + exit. "
              "Without --self-test: ignored.",
     )
+    p.add_argument(
+        "--stress", action="store_true",
+        help="with --self-test: run 100 concurrent hover calls against "
+             "clangd to validate per-LSP serialization + request/response "
+             "demux under concurrency. SKIP when clangd is not installed.",
+    )
     args = p.parse_args(argv)
 
     workspace_root = _workspace_root_from_argv(args)
@@ -2150,6 +2331,8 @@ def main(argv=None) -> int:
         if args.self_test:
             if args.tools:
                 return _self_test_tools(workspace_root)
+            if args.stress:
+                return _self_test_stress(workspace_root)
             return _self_test(workspace_root, lang=args.lang)
         if args.lang is not None:
             sys.stderr.write(

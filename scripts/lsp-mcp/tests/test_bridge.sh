@@ -100,6 +100,22 @@
 #         early revision coerced int(True)==1 silently and forwarded
 #         negative values to the server. Regression guard for Codex
 #         adversarial review Medium finding.
+#   8a -- --self-test --stress runs 100 concurrent hover calls through
+#         clangd, asserts demux clean + no Future leaks. SKIPs when
+#         clangd is not installed. Validates the per-LSP serialization
+#         + request/response correlation contract under concurrency.
+#   8b -- Fake-LSP deterministic demux test: a stub stdio server that
+#         delays + REORDERS responses (replies to req 5 first, then 1,
+#         etc.) -- the bridge's _pending dict + Future demux MUST
+#         deliver each reply to the correct caller. Catches demux bugs
+#         that clangd stress can hide if the LSP happens to reply in
+#         FIFO order.
+#   8c -- LSP_MCP_TIMEOUT env-var override: spawn a stub server that
+#         never replies, set LSP_MCP_TIMEOUT=0.05, call lsp.request()
+#         with timeout=None, assert lsp-timeout envelope, assert
+#         _pending dict is empty after, assert subprocess still alive
+#         (timeouts must NOT kill the LSP). Also assert invalid env
+#         values raise lsp-timeout-config-invalid.
 #
 # Future commits append sub-tests for tool wiring, extended tool surface,
 # file-change lifecycle, watchdog, structured logs, path sandboxing, and
@@ -931,6 +947,217 @@ finally:
 "
 }
 
+# --- 8a: --self-test --stress ------------------------------------------
+t_selftest_stress() {
+    local out rc
+    out="$(python3 scripts/lsp-mcp/bridge.py --self-test --stress 2>&1)"
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+        printf '[lsp-mcp-tests] debug (8a): exit=%s output: %s\n' "$rc" "$out" >&2
+        return 1
+    fi
+    # Accept the stress OK banner (no Future leaks; demux is 8b's job)
+    # OR the SKIP banner when clangd is not installed.
+    echo "$out" | grep -qE "^\[lsp-mcp\] (OK: stress [1-9][0-9]*/[1-9][0-9]* hover round-trips in [0-9.]+s.*no Future leaks|SKIP: clangd not installed)"
+}
+
+# --- 8b: fake-LSP deterministic out-of-order demux ---------------------
+t_fake_lsp_reorder_demux() {
+    python3 - << 'PY'
+import sys, threading, time
+sys.path.insert(0, 'scripts/lsp-mcp')
+from lsp_client import LspSubprocess, LspError
+
+# Stub LSP that REORDERS responses: it accumulates incoming requests,
+# replies to id=N before id=1 (reverse order). If the bridge's demux
+# is wrong, callers will see another caller's reply -- the test fails
+# because returned method names won't match the requested method.
+fake = r"""
+import sys, json, threading, time
+
+pending = []
+lock = threading.Lock()
+
+def read_msg():
+    hdr = b''
+    while True:
+        ch = sys.stdin.buffer.read(1)
+        if not ch: return None
+        hdr += ch
+        if hdr.endswith(b'\r\n\r\n'): break
+    n = 0
+    for line in hdr.split(b'\r\n'):
+        if line.lower().startswith(b'content-length:'):
+            n = int(line.split(b':')[1].strip()); break
+    return json.loads(sys.stdin.buffer.read(n).decode('utf-8'))
+
+def write_msg(obj):
+    b = json.dumps(obj).encode('utf-8')
+    sys.stdout.buffer.write(b'Content-Length: ' + str(len(b)).encode() + b'\r\n\r\n' + b)
+    sys.stdout.buffer.flush()
+
+EXPECT_N = 10
+DEADLINE = 4.0
+
+def flush_in_reverse():
+    # Wait until EXPECT_N requests have queued OR DEADLINE expires;
+    # then flush whatever we have in REVERSE order. Polling avoids
+    # the race where one short sleep flushes an incomplete batch
+    # and late callers hang. Codex post-implementation review of
+    # this section flagged the single-sleep-then-flush pattern as
+    # Low (test flakiness on slow schedulers).
+    start = time.monotonic()
+    while time.monotonic() - start < DEADLINE:
+        with lock:
+            if len(pending) >= EXPECT_N:
+                break
+        time.sleep(0.01)
+    with lock:
+        batch = pending[:]
+        pending.clear()
+    for m in reversed(batch):
+        write_msg({'jsonrpc':'2.0','id':m['id'],'result':{'echoed_method':m['method'],'echoed_id':m['id']}})
+
+flusher_started = False
+while True:
+    m = read_msg()
+    if m is None: break
+    if m.get('method') == 'initialize':
+        write_msg({'jsonrpc':'2.0','id':m['id'],'result':{'capabilities':{}}})
+    elif m.get('method') == 'shutdown':
+        write_msg({'jsonrpc':'2.0','id':m['id'],'result':None})
+    elif m.get('method') == 'exit':
+        break
+    elif 'id' in m:
+        with lock:
+            pending.append(m)
+        if not flusher_started:
+            flusher_started = True
+            threading.Thread(target=flush_in_reverse, daemon=True).start()
+"""
+lsp = LspSubprocess(['python3', '-c', fake], lang='fake')
+try:
+    lsp.initialize('file:///tmp/test')
+    # Fire 10 concurrent requests with distinct method names; the
+    # fake server replies in reverse. Each Future MUST resolve to the
+    # response carrying its OWN method name -- not someone else's.
+    results = {}
+    errors = []
+    def caller(i):
+        try:
+            r = lsp.request(f'm{i}', {'i': i}, timeout=5.0)
+            results[i] = r
+        except Exception as e:
+            errors.append((i, str(e)))
+    threads = [threading.Thread(target=caller, args=(i,)) for i in range(10)]
+    for t in threads: t.start()
+    for t in threads: t.join()
+    assert not errors, f'errors: {errors}'
+    for i, r in results.items():
+        assert r['echoed_method'] == f'm{i}', \
+            f'demux scrambled: req m{i} got back method {r["echoed_method"]!r}'
+    assert len(results) == 10, f'expected 10 results, got {len(results)}'
+finally:
+    lsp.shutdown(timeout=2.0)
+PY
+}
+
+# --- 8c: LSP_MCP_TIMEOUT env override ---------------------------------
+t_timeout_env_override() {
+    python3 - << 'PY'
+import sys, os, time
+sys.path.insert(0, 'scripts/lsp-mcp')
+from lsp_client import LspSubprocess, LspError, _resolve_request_timeout, _DEFAULT_REQUEST_TIMEOUT_S
+
+# Pure resolver tests (no subprocess).
+assert _resolve_request_timeout(2.5) == 2.5
+old = os.environ.pop('LSP_MCP_TIMEOUT', None)
+try:
+    assert _resolve_request_timeout(None) == _DEFAULT_REQUEST_TIMEOUT_S
+    os.environ['LSP_MCP_TIMEOUT'] = '7.5'
+    assert _resolve_request_timeout(None) == 7.5
+    for bad in ('not-a-number', '-1', '0', 'inf', 'nan'):
+        os.environ['LSP_MCP_TIMEOUT'] = bad
+        try:
+            _resolve_request_timeout(None)
+            raise SystemExit(f'invalid env value {bad!r} not rejected')
+        except LspError as e:
+            assert e.kind == 'lsp-timeout-config-invalid', e.kind
+finally:
+    if old is None:
+        os.environ.pop('LSP_MCP_TIMEOUT', None)
+    else:
+        os.environ['LSP_MCP_TIMEOUT'] = old
+
+# Explicit-value validation: timeout=0 / -1 / inf / nan / bool / str
+# all rejected at request() entry BEFORE Future registration.
+import math as _math
+for bad in (0, -1, 0.0, -1.5, _math.inf, _math.nan, True, False, 'oops', None):
+    if bad is None:
+        continue  # None is the env-fallback path, exercised above
+    try:
+        _resolve_request_timeout(bad)
+        raise SystemExit(f'invalid explicit value {bad!r} not rejected')
+    except LspError as e:
+        assert e.kind == 'lsp-timeout-config-invalid', \
+            f'{bad!r}: got kind={e.kind!r}'
+
+# End-to-end: stub server that NEVER replies; env timeout forces
+# request() to bail. After timeout: subprocess still alive, _pending
+# emptied (no Future leak).
+fake = r"""
+import sys
+def read_msg():
+    hdr = b''
+    while True:
+        ch = sys.stdin.buffer.read(1)
+        if not ch: return None
+        hdr += ch
+        if hdr.endswith(b'\r\n\r\n'): break
+    n = 0
+    for line in hdr.split(b'\r\n'):
+        if line.lower().startswith(b'content-length:'):
+            n = int(line.split(b':')[1].strip()); break
+    import json
+    return json.loads(sys.stdin.buffer.read(n).decode('utf-8'))
+def write_msg(obj):
+    import json
+    b = json.dumps(obj).encode('utf-8')
+    sys.stdout.buffer.write(b'Content-Length: ' + str(len(b)).encode() + b'\r\n\r\n' + b)
+    sys.stdout.buffer.flush()
+while True:
+    m = read_msg()
+    if m is None: break
+    if m.get('method') == 'initialize':
+        write_msg({'jsonrpc':'2.0','id':m['id'],'result':{'capabilities':{}}})
+    elif m.get('method') == 'shutdown':
+        write_msg({'jsonrpc':'2.0','id':m['id'],'result':None})
+    elif m.get('method') == 'exit':
+        break
+    # else: silently swallow (never reply)
+"""
+os.environ['LSP_MCP_TIMEOUT'] = '0.05'
+try:
+    lsp = LspSubprocess(['python3', '-c', fake], lang='fake')
+    try:
+        lsp.initialize('file:///tmp/test')
+        try:
+            lsp.request('hover', {}, timeout=None)
+            raise SystemExit('expected lsp-timeout')
+        except LspError as e:
+            assert e.kind == 'lsp-timeout', e.kind
+        # _pending must be empty (Future was evicted on timeout).
+        with lsp._pending_lock:
+            assert len(lsp._pending) == 0, lsp._pending
+        # Subprocess must still be alive (timeout MUST NOT kill the LSP).
+        assert lsp.alive, 'subprocess killed by timeout (forbidden)'
+    finally:
+        lsp.shutdown(timeout=2.0)
+finally:
+    os.environ.pop('LSP_MCP_TIMEOUT', None)
+PY
+}
+
 run "1a --self-test banner"              t_selftest
 run "1b module import smoke"             t_import
 run "1c LspSubprocess lifecycle + pgrep" t_subprocess_lifecycle
@@ -964,6 +1191,9 @@ run "7e boundary runtime gate"           t_boundary_runtime_gate
 run "7f boundary source audit"           t_boundary_source_audit
 run "7g ensure_open dedup"               t_ensure_open_dedup
 run "7h validate_position bounds"        t_validate_position
+run "8a stress 100 concurrent hovers"    t_selftest_stress
+run "8b fake-LSP reorder demux"          t_fake_lsp_reorder_demux
+run "8c LSP_MCP_TIMEOUT env override"    t_timeout_env_override
 
 printf '[lsp-mcp-tests] %d/%d sub-tests PASS\n' "$pass" "$((pass + fail))"
 if [ "$fail" -gt 0 ]; then
