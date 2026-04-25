@@ -6,9 +6,7 @@
     },
     "lsp-bridge": {
       "command": "python3",
-      "args": ["scripts/lsp-mcp/bridge.py"],
-      "cwd": ".",
-      "env": {}
+      "args": ["scripts/lsp-mcp/bridge.py"]
     }
   }
 }

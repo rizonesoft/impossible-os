@@ -284,18 +284,52 @@ else
 fi
 
 # pwsh + PowerShellEditorServices (OPTIONAL -- PowerShell LSP for the
-# bridge). PSES is a pwsh module, not a standalone binary -- it must
-# be installed as a module under pwsh's PSModulePath. We probe for
-# pwsh only here; PSES detection happens at bridge spawn time via
-# scripts/lsp-mcp/servers/powershell_server.py:_discover_pses() which
-# checks both Get-Module -ListAvailable AND VS Code extension globs.
-if command -v pwsh >/dev/null 2>&1; then
-    skip "pwsh (PowerShell 7.x; PSES module probed at LSP-MCP bridge spawn)"
-else
-    echo -e "  ${YELLOW}note:${NC} pwsh not installed; LSP-MCP bridge .ps1 integration unavailable."
-    echo -e "        Optional install: ${GREEN}apt install powershell${NC} or download from https://aka.ms/powershell-release."
-    echo -e "        Then install PSES module: ${GREEN}pwsh -NoProfile -Command 'Install-Module PowerShellEditorServices -Scope CurrentUser -Force'${NC}."
-fi
+# bridge). PSES is a pwsh module, not a standalone binary, so we
+# delegate to the bridge's own powershell_server.is_available() probe
+# which validates pwsh on PATH AND pwsh >= 7.0 AND PSES discoverable
+# (both Get-Module -ListAvailable AND the VS Code extension glob
+# fallback). A host with pwsh installed but PSES missing reports here
+# as "PSES missing" and gets the Install-Module hint -- without this,
+# `command -v pwsh` would report it as installed and the user would
+# be surprised when --self-test --lang=ps1 SKIPs at runtime.
+PWSH_STATE=$(python3 - <<'PY' 2>/dev/null
+import sys
+sys.path.insert(0, 'scripts/lsp-mcp')
+try:
+    from servers import powershell_server
+    state = powershell_server._probe()
+    print(state.failure_reason or 'OK')
+except Exception as exc:
+    print(f'__error__:{exc}')
+PY
+)
+case "$PWSH_STATE" in
+    OK)
+        skip "pwsh + PowerShellEditorServices"
+        ;;
+    pwsh-missing)
+        echo -e "  ${YELLOW}note:${NC} pwsh not installed; LSP-MCP bridge .ps1 integration unavailable."
+        echo -e "        Optional install: ${GREEN}apt install powershell${NC} or download from https://aka.ms/powershell-release."
+        echo -e "        Then install PSES module: ${GREEN}pwsh -NoProfile -Command 'Install-Module PowerShellEditorServices -Scope CurrentUser -Force'${NC}."
+        ;;
+    pwsh-too-old|pwsh-broken|pwsh-version-unparseable)
+        echo -e "  ${YELLOW}note:${NC} pwsh present but not runnable as 7.x; LSP-MCP bridge .ps1 integration unavailable."
+        echo -e "        Reinstall pwsh 7.x from ${GREEN}https://aka.ms/powershell-release${NC}."
+        ;;
+    pses-missing|pses-entrypoint-missing)
+        echo -e "  ${YELLOW}note:${NC} pwsh present but PowerShellEditorServices module is missing; LSP-MCP bridge .ps1 integration unavailable."
+        echo -e "        Optional install: ${GREEN}pwsh -NoProfile -Command 'Install-Module PowerShellEditorServices -Scope CurrentUser -Force'${NC}."
+        ;;
+    *)
+        # Fallback for unrecognized state OR python3 import failure.
+        if command -v pwsh >/dev/null 2>&1; then
+            skip "pwsh (PSES probe failed; install via Install-Module PowerShellEditorServices)"
+        else
+            echo -e "  ${YELLOW}note:${NC} pwsh not installed; LSP-MCP bridge .ps1 integration unavailable."
+            echo -e "        Optional install: ${GREEN}apt install powershell${NC}."
+        fi
+        ;;
+esac
 
 # ---- Summary ----
 echo ""

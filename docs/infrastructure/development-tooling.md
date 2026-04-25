@@ -704,7 +704,7 @@ Provides deep C code intelligence for editors.
 
 ### LSP MCP Bridge
 
-A FastMCP stdio server that proxies up to five language servers (clangd, asm-lsp, bash-language-server, pyright, PowerShellEditorServices) through six read-only MCP tools, giving any MCP-aware AI agent (Claude Code, Cursor, Aider) compiler-grade code intelligence across every language the repo uses. Resolves the LSP/MCP protocol incompatibility called out above.
+A FastMCP stdio server that proxies up to five language servers (clangd, asm-lsp, bash-language-server, pyright, PowerShellEditorServices) through six read-only MCP tools, giving Claude Code (the primary AI client this repo supports) compiler-grade code intelligence across every language the repo uses. Resolves the LSP/MCP protocol incompatibility called out above. Other MCP-aware clients (Cursor, Aider) can also consume the surface technically -- the bridge is read-only by design -- but the repo's [autonomous-agent boundary](ai-system.md#autonomous-agent-boundary-policy) applies regardless of client: no MCP server in this repo, including the bridge, enables autonomous commit / push / PR workflows.
 
 Owner: [TODO-07 in 00-infrastructure](../../todo/00-infrastructure/TODO-07-lsp-mcp-bridge.md). Repo-tracked under [`scripts/lsp-mcp/`](../../scripts/lsp-mcp/) (~3000 LOC + 36-test harness).
 

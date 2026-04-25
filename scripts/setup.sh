@@ -198,26 +198,79 @@ verify_tools() {
     # bridge level; missing-here just means that language's LSP
     # tools won't be available through the MCP bridge. Status is
     # advisory only -- never affects --verify exit code.
+    #
+    # We use the bridge's own is_available() probes (which include
+    # runtime --version checks for npm-shim'd binaries like
+    # bash-language-server and pyright-langserver) rather than a
+    # shallow `command -v`. A broken Node shim would otherwise be
+    # reported as OK here while the bridge SKIPs it at runtime;
+    # Codex post-implementation review of the LSP-MCP integration
+    # flagged the mismatch.
     echo ""
     echo -e "${CYAN}==================================================${NC}"
     echo -e "${CYAN}  Optional host tools (LSP-MCP bridge -- TODO-07)${NC}"
     echo -e "${CYAN}==================================================${NC}"
     echo ""
-    local opt_label opt_check
-    for entry in \
-        "bash-language-server:bash-language-server" \
-        "pyright-langserver:pyright (Python LSP)" \
-        "asm-lsp:asm-lsp (NASM LSP)" \
-        "pwsh:pwsh (PowerShell 7.x; PSES module probed at bridge spawn)"
-    do
-        opt_check="${entry%%:*}"
-        opt_label="${entry#*:}"
-        if command -v "$opt_check" >/dev/null 2>&1; then
-            echo -e "  ${GREEN}OK${NC}   $opt_label  ($(command -v "$opt_check"))"
-        else
-            echo -e "  ${YELLOW}optional -- not installed${NC}  $opt_label"
-        fi
-    done
+    # Run the bridge's is_available() probes via python3. Output is
+    # `<lang>:<status>:<binary-path>` per line. status is OK / MISS.
+    # If python3 is missing or the bridge module fails to import,
+    # fall back to advisory `command -v` checks.
+    local opt_report
+    opt_report=$(python3 - <<'PY' 2>/dev/null
+import sys
+sys.path.insert(0, 'scripts/lsp-mcp')
+try:
+    from servers import bash_server, python_server, asm_server, powershell_server
+    import shutil
+    probes = [
+        ('bash-language-server (shell LSP)', bash_server.is_available, bash_server.BASH_LSP_BIN),
+        ('pyright (Python LSP, sibling pyright CLI probed for runnability)', python_server.is_available, python_server.PYRIGHT_BIN),
+        ('asm-lsp (NASM LSP)', asm_server.is_available, asm_server.ASM_LSP_BIN),
+        ('pwsh + PSES (PowerShell 7.x; PSES module probed)', powershell_server.is_available, 'pwsh'),
+    ]
+    for label, probe, binname in probes:
+        ok = probe()
+        path = shutil.which(binname) or ''
+        print(f'{label}|{"OK" if ok else "MISS"}|{path}')
+except Exception as exc:
+    print(f'__error__|{exc}')
+PY
+)
+    if [ -n "$opt_report" ] && [[ "$opt_report" != __error__* ]]; then
+        while IFS='|' read -r opt_label opt_status opt_path; do
+            [ -z "$opt_label" ] && continue
+            if [ "$opt_status" = "OK" ]; then
+                if [ -n "$opt_path" ]; then
+                    echo -e "  ${GREEN}OK${NC}   $opt_label  ($opt_path)"
+                else
+                    echo -e "  ${GREEN}OK${NC}   $opt_label"
+                fi
+            else
+                if [ -n "$opt_path" ]; then
+                    echo -e "  ${YELLOW}optional -- not runnable${NC}  $opt_label  (binary present at $opt_path but probe failed)"
+                else
+                    echo -e "  ${YELLOW}optional -- not installed${NC}  $opt_label"
+                fi
+            fi
+        done <<< "$opt_report"
+    else
+        # Bridge module failed to import -- fall back to shallow check.
+        local opt_label opt_check
+        for entry in \
+            "bash-language-server:bash-language-server" \
+            "pyright-langserver:pyright (Python LSP)" \
+            "asm-lsp:asm-lsp (NASM LSP)" \
+            "pwsh:pwsh (PowerShell 7.x; PSES module probed at bridge spawn)"
+        do
+            opt_check="${entry%%:*}"
+            opt_label="${entry#*:}"
+            if command -v "$opt_check" >/dev/null 2>&1; then
+                echo -e "  ${GREEN}OK${NC}   $opt_label  ($(command -v "$opt_check"))"
+            else
+                echo -e "  ${YELLOW}optional -- not installed${NC}  $opt_label"
+            fi
+        done
+    fi
     echo ""
     echo -e "  Optional installs: ${CYAN}bash scripts/setup-deps.sh${NC}"
     echo -e "  See: ${CYAN}docs/infrastructure/development-tooling.md${NC} (LSP MCP Bridge subsection)"

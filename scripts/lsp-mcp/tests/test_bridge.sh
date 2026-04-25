@@ -869,7 +869,19 @@ t_boundary_source_audit() {
     # version hand-maintained a duplicate list; Codex consistency
     # review of the LSP-MCP bridge integration flagged that as drift
     # risk. Wrapping the standalone test keeps one source of truth.
-    bash scripts/lsp-mcp/tests/test_boundary.sh >/dev/null 2>&1
+    #
+    # Capture stderr so a python3 import failure (vs an actual
+    # boundary breach) gives the harness debug line concrete
+    # context, rather than a generic FAIL. Codex Phase-2 review
+    # caught the prior `>/dev/null 2>&1` swallowing.
+    local out rc
+    out="$(bash scripts/lsp-mcp/tests/test_boundary.sh 2>&1)"
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+        printf '[lsp-mcp-tests] debug (7f): exit=%s output: %s\n' "$rc" "$out" >&2
+        return 1
+    fi
+    return 0
 }
 
 # --- 7h: _validate_position bounds + type gates ---------------------------
