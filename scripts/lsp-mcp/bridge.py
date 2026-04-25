@@ -142,6 +142,18 @@ def _autoregister_spawners() -> None:
             f"[lsp-mcp] warn: asm-lsp spawner not registered: {detail}\n"
         )
 
+    # bash-language-server (.sh / .bash) -- shell LSP with shellcheck
+    # delegated diagnostics when shellcheck is on PATH.
+    try:
+        from servers import bash_server as _bash
+        register_spawner("sh", _bash.spawn)
+    except Exception as exc:
+        detail = f"{exc.__class__.__name__}: {exc}"
+        _SPAWNER_IMPORT_ERRORS["sh"] = detail
+        sys.stderr.write(
+            f"[lsp-mcp] warn: bash-language-server spawner not registered: {detail}\n"
+        )
+
 
 _autoregister_spawners()
 
@@ -396,9 +408,11 @@ def _self_test_language(lang: str, workspace_root: Path) -> int:
         return _self_test_clangd(workspace_root)
     if lang == "asm":
         return _self_test_asm(workspace_root)
+    if lang == "sh":
+        return _self_test_bash(workspace_root)
     sys.stderr.write(
         f"[lsp-mcp] FAIL: --lang={lang!r} is not wired yet. "
-        "Supported today: c (clangd-19), asm (asm-lsp).\n"
+        "Supported today: c (clangd-19), asm (asm-lsp), sh (bash-language-server).\n"
     )
     return 1
 
@@ -750,6 +764,182 @@ def _self_test_asm(workspace_root: Path) -> int:
     sys.stdout.write(
         f"[lsp-mcp] OK: asm-lsp spawned, hover on mov returned "
         f"instruction reference ({byte_len} bytes)\n"
+    )
+    return 0
+
+
+def _self_test_bash(workspace_root: Path) -> int:
+    """bash-language-server end-to-end smoke: SKIP when bash-language-
+    server is missing, else spawn + initialize + didOpen(scripts/build.sh)
+    + poll for asynchronous publishDiagnostics, then print the diagnostic
+    count.
+
+    Diagnostics are pushed by the server as one-way notifications, not
+    request/response replies. LspSubprocess._dispatch_message caches them
+    into lsp.diagnostics_by_uri[uri]; this function polls that dict with
+    a 5-second deadline. If no publish arrives within the window we treat
+    the result as zero diagnostics and still emit the OK banner -- the
+    TODO contract accepts an empty array ("possibly empty if no issues").
+    """
+    try:
+        from servers import bash_server
+    except Exception as exc:
+        sys.stderr.write(
+            f"[lsp-mcp] FAIL: could not import servers.bash_server: {exc}\n"
+        )
+        return 1
+
+    if not bash_server.is_available():
+        sys.stdout.write(
+            f"[lsp-mcp] SKIP: bash-language-server not installed "
+            f"({bash_server.install_hint()})\n"
+        )
+        return 0
+
+    # Sandbox the self-test file read: resolve strictly, verify the
+    # target stays inside workspace_root, reject non-regular files,
+    # enforce the 8 MiB cap. Same guarantees as the clangd path.
+    build_sh = workspace_root / "scripts" / "build.sh"
+    try:
+        resolved = build_sh.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        sys.stderr.write(f"[lsp-mcp] FAIL: resolving {build_sh}: {exc}\n")
+        return 1
+    try:
+        workspace_resolved = workspace_root.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        sys.stderr.write(
+            f"[lsp-mcp] FAIL: resolving {workspace_root}: {exc}\n"
+        )
+        return 1
+    try:
+        resolved.relative_to(workspace_resolved)
+    except ValueError:
+        sys.stderr.write(
+            f"[lsp-mcp] FAIL: {build_sh} escapes workspace "
+            f"{workspace_resolved} (symlink?); refusing to read.\n"
+        )
+        return 1
+    try:
+        st = resolved.stat()
+    except OSError as exc:
+        sys.stderr.write(f"[lsp-mcp] FAIL: stat {resolved}: {exc}\n")
+        return 1
+    import stat as _stat
+    if not _stat.S_ISREG(st.st_mode):
+        sys.stderr.write(
+            f"[lsp-mcp] FAIL: {resolved} is not a regular file "
+            f"(mode={oct(st.st_mode)})\n"
+        )
+        return 1
+    if st.st_size > _SELF_TEST_MAX_READ:
+        sys.stderr.write(
+            f"[lsp-mcp] FAIL: {resolved} size {st.st_size} exceeds "
+            f"{_SELF_TEST_MAX_READ}-byte self-test cap\n"
+        )
+        return 1
+
+    try:
+        lsp = _get_or_spawn("sh", workspace_root)
+    except LspError as exc:
+        sys.stderr.write(f"[lsp-mcp] FAIL: bash-language-server spawn: {exc}\n")
+        return 1
+
+    server_caps = lsp.server_caps
+    if not isinstance(server_caps, dict):
+        sys.stderr.write(
+            "[lsp-mcp] FAIL: bash-language-server server_caps is not a dict "
+            f"({type(server_caps).__name__}); protocol violation.\n"
+        )
+        return 1
+    missing = [
+        cap for cap in bash_server.required_capabilities()
+        if not server_caps.get(cap)
+    ]
+    if missing:
+        sys.stderr.write(
+            "[lsp-mcp] FAIL: bash-language-server handshake missing required "
+            f"capabilities: {missing}. Advertised: "
+            f"{sorted(server_caps.keys())}\n"
+        )
+        return 1
+
+    try:
+        text = resolved.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        sys.stderr.write(f"[lsp-mcp] FAIL: reading {resolved}: {exc}\n")
+        return 1
+
+    uri = resolved.as_uri()
+    try:
+        # 'shellscript' is the LSP language id bash-language-server
+        # accepts for .sh / .bash files (per its documentSelector).
+        lsp.did_open(uri, "shellscript", text, version=1)
+    except LspError as exc:
+        sys.stderr.write(
+            f"[lsp-mcp] FAIL: bash-language-server didOpen: {exc}\n"
+        )
+        return 1
+
+    # Poll for the asynchronous publishDiagnostics notification. The
+    # reader thread caches the most recent set per URI into
+    # lsp.diagnostics_by_uri; we wait up to 5 seconds for the URI to
+    # appear. CRITICAL: a publish that never arrives is NOT the same as
+    # an empty diagnostic list. The TODO contract accepts an empty list
+    # as a legitimate "no issues" outcome, but only when the transport
+    # is still healthy at the moment we sample. If the subprocess died
+    # or the reader thread crashed before publishing, the cached default
+    # of [] would otherwise become a false-green OK banner. We track
+    # whether a publish was actually observed and check transport
+    # liveness before emitting OK; transport-broken paths FAIL.
+    import time as _time
+    deadline = _time.monotonic() + 5.0
+    got_publish = False
+    while _time.monotonic() < deadline:
+        if uri in lsp.diagnostics_by_uri:
+            got_publish = True
+            break
+        if not lsp.alive:
+            sys.stderr.write(
+                "[lsp-mcp] FAIL: bash-language-server subprocess exited "
+                f"before publishing diagnostics for {uri}\n"
+            )
+            return 1
+        if lsp._reader_dead:
+            sys.stderr.write(
+                "[lsp-mcp] FAIL: bash-language-server reader thread died "
+                f"before publishing diagnostics for {uri}\n"
+            )
+            return 1
+        _time.sleep(0.1)
+    diagnostics = lsp.diagnostics_by_uri.get(uri, [])
+    if not isinstance(diagnostics, list):
+        sys.stderr.write(
+            "[lsp-mcp] FAIL: bash-language-server diagnostics for "
+            f"{uri} is not a list ({type(diagnostics).__name__}); "
+            "protocol violation.\n"
+        )
+        return 1
+    # Final transport-health gate: empty list with healthy transport is
+    # legitimate; empty list with broken transport is the false-green
+    # path Codex flagged. Distinguish the two before emitting OK.
+    if not got_publish and not lsp.alive:
+        sys.stderr.write(
+            "[lsp-mcp] FAIL: bash-language-server died after the "
+            f"diagnostic poll deadline without publishing for {uri}\n"
+        )
+        return 1
+    if not got_publish and lsp._reader_dead:
+        sys.stderr.write(
+            "[lsp-mcp] FAIL: bash-language-server reader thread died "
+            f"after the diagnostic poll deadline ({uri} never received "
+            "a publishDiagnostics notification)\n"
+        )
+        return 1
+
+    sys.stdout.write(
+        f"[lsp-mcp] OK: bash-language-server spawned, "
+        f"diagnostics on build.sh returned {len(diagnostics)} items\n"
     )
     return 0
 

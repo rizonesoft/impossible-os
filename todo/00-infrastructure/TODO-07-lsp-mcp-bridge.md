@@ -44,7 +44,7 @@ title: "TODO-07 -- LSP to MCP Bridge (C, NASM, shell, Python, PowerShell)"
 | 💎  |   1   | Bridge skeleton + LSP JSON-RPC client + subprocess mgmt                    | --                                |  [x]   |
 | 💎  |   2   | clangd integration (C / H) with freestanding flags                         | §1                                |  [x]   |
 | 💎  |   3   | asm-lsp integration (NASM flavor)                                          | §1                                |  [x]   |
-| 💎  |   4   | bash-language-server integration (shell)                                   | §1                                |  [ ]   |
+| 💎  |   4   | bash-language-server integration (shell)                                   | §1                                |  [x]   |
 | 💎  |   5   | pyright integration (Python)                                               | §1                                |  [ ]   |
 | 💎  |   6   | PowerShellEditorServices integration (ps1)                                 | §1                                |  [ ]   |
 | ⭐  |   7   | Six MCP tools (hover / def / refs / diag / sym x2)                         | §1, §2-§6                         |  [ ]   |
@@ -153,14 +153,27 @@ Wire asm-lsp (Rust, `bergercookie/asm-lsp`) for the ~1.1k lines of NASM in `src/
 
 Wire `bash-language-server` (Node) for the ~11.4k lines of shell under `scripts/`. Shell LSP is the highest-leverage non-C addition: shellcheck diagnostics catch real bugs agents otherwise miss.
 
-- [ ] Create `scripts/lsp-mcp/servers/bash_server.py` that spawns `bash-language-server start` with stdio transport.
-- [ ] Configure `shellcheck` integration via LSP `workspace/configuration` -- bash-language-server delegates diagnostics to shellcheck when available.
-- [ ] Extensions: `.sh`, `.bash`. Skip `.bat` (§6 PowerShell does not cover batch -- batch LSP tooling is weak enough that we deliberately leave it out of scope).
-- [ ] Graceful skip if `bash-language-server` missing.
-- [ ] Smoke: open `scripts/build.sh`, request diagnostics, assert response is an array (possibly empty if no issues).
-- [ ] Commit: `"scripts/lsp-mcp: bash-language-server (shell) integration"`
+- [x] Create `scripts/lsp-mcp/servers/bash_server.py` that spawns `bash-language-server start` with stdio transport.
+- [x] Configure `shellcheck` integration via LSP `workspace/configuration` -- bash-language-server delegates diagnostics to shellcheck when available.
+- [x] Extensions: `.sh`, `.bash`. Skip `.bat` (§6 PowerShell does not cover batch -- batch LSP tooling is weak enough that we deliberately leave it out of scope).
+- [x] Graceful skip if `bash-language-server` missing.
+- [x] Smoke: open `scripts/build.sh`, request diagnostics, assert response is an array (possibly empty if no issues).
+- [x] Commit: `"scripts/lsp-mcp: bash-language-server (shell) integration"`
 
 **Test checkpoint:** With `bash-language-server` installed, `--self-test --lang=sh` prints `[lsp-mcp] OK: bash-language-server spawned, diagnostics on build.sh returned N items`. Without it, SKIP.
+
+> **Test runner:** `bash scripts/lsp-mcp/tests/test_bridge.sh` | 16/16 sub-tests PASS (1a-1g + 2a-2c + 3a-3c carry forward; 4a `--self-test --lang=sh` OK-or-SKIP, 4b `bash_server` import + surface stable, 4c `bash_server.required_capabilities()` asserts the four providers and locks `workspaceSymbolProvider` as deliberately omitted)
+
+> **Notes:**
+>
+> - **What shipped:** `scripts/lsp-mcp/servers/bash_server.py` (~190 LOC: `is_available()` with a memoized PATH+`--version` two-stage probe, `install_hint()` mentioning npm + shellcheck, `spawn()` with shellcheck wired via `initializationOptions.shellcheckPath` + `shellcheckArguments`, `required_capabilities()` returning the four stable providers) plus bridge.py additions (`_autoregister_spawners` now loads `bash_server`, `_self_test_language` routes `--lang=sh`, new `_self_test_bash` mirrors `_self_test_clangd` shape with publishDiagnostics polling + transport-health gating) plus 3 new harness sub-tests (16/16 total).
+> - **How it runs:** `python3 scripts/lsp-mcp/bridge.py --self-test --lang=sh` either SKIPs (binary absent OR present-but-Node-broken; exit 0) or spawns `bash-language-server start`, initializes with shellcheck path passed through `initializationOptions`, opens `scripts/build.sh` with language id `shellscript`, polls `lsp.diagnostics_by_uri` for the asynchronous `publishDiagnostics` notification (5 s deadline, 100 ms steps, in-loop + post-deadline `lsp.alive` / `_reader_dead` health checks so a transport-broken empty list cannot become a false-green OK), and prints `[lsp-mcp] OK: bash-language-server spawned, diagnostics on build.sh returned N items`. The `is_available()` result is `lru_cache`-memoized so the spawner does not pay Node startup twice per process.
+> - **Downstream effects:** unblocks §7 (MCP tool handlers can route `.sh` + `.bash` paths to the cached `sh` LspSubprocess once the dispatch table lands). Per-extension dispatch (`.c`/`.h` + `.asm`/`.S` + `.sh`/`.bash` -> language tag) is §7's scope; this section only registers the spawner. The reverse-RPC capability gap (`workspace/configuration`) is unchanged: bash-language-server cannot send those requests because the client capability is not advertised, so no LspSubprocess change is required for §4.
+> - **Canonical doc:** [bash-language-server initialization options](https://github.com/bash-lsp/bash-language-server) -- `shellcheckPath` empty string requests PATH auto-discovery; passing an explicit `shutil.which("shellcheck")` path makes the configuration deterministic across hosts where multiple shellcheck installs collide.
+> - **Scope boundary:** no MCP tools registered, no per-extension dispatch (§7's `dispatch(path)` helper), no pyright / PSES (§5-§6 own those). Install guidance for `bash-language-server` + `shellcheck` in the developer-tooling docs subsection is §9. The `LspSubprocess` reader does not yet answer server-initiated `workspace/configuration` requests; advertising that capability for any future server is a §1-skeleton retrofit, not a §4 deliverable.
+
+> **Verified:** 2026-04-25 | commit `<§4 commit>` | 6/6 items | build N/A (host-side Python) | tests 16/16 PASS
+> **Quality reviewed:** 2026-04-25 | Codex 3x (adversarial + consistency + perf) | 1H+4M fixed, 1H rejected (cross-language semantic refinement: `bash_server.is_available()` deliberately diverges from clangd/asm with a `--version` runtime probe because bash-language-server is an npm shim that re-execs into Node; PATH presence does not imply runnability the way it does for the self-contained binaries) | scope: N/A (host-side Python tooling; no domain quality skill applies)
 
 ---
 

@@ -25,6 +25,12 @@
 #         asm-lsp defaults to GAS).
 #   3c -- asm_server surface (ASM_LSP_BIN / LANG_TAG / is_available /
 #         required_capabilities / install_hint) stable.
+#   4a -- --self-test --lang=sh: SKIP when bash-language-server missing,
+#         or OK with the diagnostic-count banner on scripts/build.sh.
+#   4b -- bash_server module imports + exposes the standard surface
+#         (is_available / install_hint / spawn / required_capabilities).
+#   4c -- bash_server.required_capabilities() returns a non-empty tuple
+#         covering the providers the tool-wiring commit will route.
 #
 # Future commits append sub-tests for tool wiring, extended tool surface,
 # file-change lifecycle, watchdog, structured logs, path sandboxing, and
@@ -321,6 +327,61 @@ assert isinstance(hint, str) and hint
 "
 }
 
+# --- 4a: --self-test --lang=sh ends in OK or SKIP, exit 0 ----------------
+t_selftest_lang_sh() {
+    local out rc
+    out="$(python3 scripts/lsp-mcp/bridge.py --self-test --lang=sh 2>&1)"
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+        printf '[lsp-mcp-tests] debug (4a): exit=%s output: %s\n' "$rc" "$out" >&2
+        return 1
+    fi
+    # Accept either the bash-language-server OK banner (any non-negative
+    # diagnostic count, including 0 -- "possibly empty if no issues" is
+    # explicitly allowed by the TODO contract), or the SKIP banner when
+    # bash-language-server is not installed on this host.
+    echo "$out" | grep -qE "^\[lsp-mcp\] (OK: bash-language-server spawned, diagnostics on build\.sh returned [0-9]+ items|SKIP: bash-language-server not installed)"
+}
+
+# --- 4b: bash_server module imports + standard surface --------------------
+t_bash_server_import() {
+    # Surface check ONLY: do NOT call is_available() here. Sub-test 4a
+    # already drives the real probe end-to-end; calling it again from
+    # 4b would pay Node startup cost a second time on every CI run for
+    # zero added coverage. Verify the symbol exists and is callable;
+    # behavior is exercised by 4a.
+    python3 -c "
+import sys
+sys.path.insert(0, 'scripts/lsp-mcp')
+from servers import bash_server
+assert bash_server.BASH_LSP_BIN == 'bash-language-server'
+assert bash_server.LANG_TAG == 'sh'
+assert callable(bash_server.is_available)
+assert callable(bash_server.install_hint)
+assert callable(bash_server.spawn)
+assert callable(bash_server.required_capabilities)
+hint = bash_server.install_hint()
+assert isinstance(hint, str) and 'bash-language-server' in hint
+"
+}
+
+# --- 4c: bash_server.required_capabilities is stable ----------------------
+t_bash_server_caps() {
+    python3 -c "
+import sys
+sys.path.insert(0, 'scripts/lsp-mcp')
+from servers import bash_server
+caps = bash_server.required_capabilities()
+assert isinstance(caps, tuple) and caps, caps
+# workspaceSymbolProvider is intentionally OMITTED -- bash-language-
+# server versions are uneven on advertising it; the tool-wiring commit
+# gates workspace_symbol routing on the runtime cap, not this list.
+for name in ('hoverProvider','definitionProvider','referencesProvider','documentSymbolProvider'):
+    assert name in caps, name
+assert 'workspaceSymbolProvider' not in caps, 'see bash_server.required_capabilities() docstring'
+"
+}
+
 run "1a --self-test banner"              t_selftest
 run "1b module import smoke"             t_import
 run "1c LspSubprocess lifecycle + pgrep" t_subprocess_lifecycle
@@ -334,6 +395,9 @@ run "2c clangd_server surface"           t_clangd_server_surface
 run "3a asm self-test lang=asm"          t_selftest_lang_asm
 run "3b .asm-lsp.toml pins NASM"         t_asm_lsp_config_nasm
 run "3c asm_server surface"              t_asm_server_surface
+run "4a bash self-test lang=sh"          t_selftest_lang_sh
+run "4b bash_server import + surface"    t_bash_server_import
+run "4c bash_server required caps"       t_bash_server_caps
 
 printf '[lsp-mcp-tests] %d/%d sub-tests PASS\n' "$pass" "$((pass + fail))"
 if [ "$fail" -gt 0 ]; then
