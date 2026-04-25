@@ -6,10 +6,8 @@
 #                              capabilities as MCP tools.
 #
 # Owner: TODO-07 in 00-infrastructure (LSP-MCP Bridge).
-# This commit (Bridge Skeleton): FastMCP server + LSP JSON-RPC client +
-# on-demand subprocess lifecycle + JSON error envelope.
 #
-# Architecture (skeleton scope):
+# Architecture:
 #   * FastMCP stdio server modeled on scripts/todo-graph/mcp_server.py.
 #   * Module-level _CALL_LOCK narrowly serializes the first-spawn path
 #     in _get_or_spawn so concurrent FastMCP requests cannot race the
@@ -22,12 +20,16 @@
 #   * LSPs are spawned ON DEMAND: first request for a language boots
 #     that LSP; subsequent requests reuse it. Prevents idle overhead
 #     when an agent never touches a language.
-#   * Zero MCP tools registered in this skeleton -- the hover / definition /
-#     references / diagnostics / workspace-symbol / document-symbol tools
-#     land in the tool-wiring commit; this file is the foundation they
-#     build on.
-#   * --self-test exits 0 with "[lsp-mcp] OK: 0 LSPs spawned, bridge ready"
+#   * Six read-only MCP tools registered via _build_mcp():
+#     hover / definition / references / diagnostics /
+#     workspace_symbol / document_symbol. Each handler sandboxes the
+#     path arg via _dispatch_path(), routes to the right LSP through
+#     _EXT_TO_LANG, and returns a normalized dict; errors land as the
+#     LspError.to_envelope() shape instead of raising.
+#   * --self-test exits 0 with
+#     "[lsp-mcp] OK: 0 LSPs spawned, 6 tools registered, bridge ready"
 #     even when the `mcp` SDK is absent (SKIP path, CI-friendly).
+#     --self-test --tools dumps the six tool schemas as JSON.
 #
 # Usage:
 #   python3 scripts/lsp-mcp/bridge.py              # stdio server
@@ -536,7 +538,7 @@ def _ensure_open_for(lsp: LspSubprocess, resolved: Path, lang: str,
                      text: str) -> str:
     """Shared did_open helper for the MCP tools. Accepts the pre-read
     bytes from _dispatch_path() so this helper does NOT re-read the
-    file (Codex adversarial-review TOCTOU finding). Forwards an
+    file (Codex adversarial review TOCTOU finding). Forwards an
     idempotent didOpen via LspSubprocess.ensure_open() and returns
     the file URI."""
     uri = resolved.as_uri()
@@ -879,7 +881,12 @@ def _build_mcp(FastMCP, workspace_root: Path):
                 )
                 return lang_tag, _normalize_symbols(raw), None
             except LspError as exc:
-                return lang_tag, [], f"{exc.kind}: {exc.detail}"
+                # Return the structured error envelope, not a
+                # flattened string, so the per-LSP errors dict has
+                # the same shape as the single-LSP path does for its
+                # caller via _call_lsp(). Codex review-pass
+                # consistency finding.
+                return lang_tag, [], exc.to_envelope()
 
         # Track which futures correspond to which lang_tag so the
         # overall-timeout path can mark the un-completed ones with a
@@ -887,8 +894,20 @@ def _build_mcp(FastMCP, workspace_root: Path):
         # partial results + per-lang error detail beats all-or-nothing
         # for an agent that asked across every language).
         futures_by_fut: dict = {}
-        with concurrent.futures.ThreadPoolExecutor(
-                max_workers=max(1, len(snapshot))) as pool:
+        # Manual pool lifecycle: if we used `with ThreadPoolExecutor`
+        # the context-manager __exit__ would block on shutdown(wait=
+        # True) while a stuck worker (e.g. LSP pipe write blocked
+        # past its own 5 s timeout) continued running -- defeating
+        # the fail-soft contract. Explicit shutdown(wait=False,
+        # cancel_futures=True) on the timeout path returns to the
+        # caller immediately; stuck workers continue running in the
+        # background and will unblock on their own timeout or LSP
+        # shutdown. Codex adversarial review flagged the
+        # with-block as High.
+        pool = concurrent.futures.ThreadPoolExecutor(
+            max_workers=max(1, len(snapshot))
+        )
+        try:
             for key, inst in snapshot:
                 (lang_tag, _root) = key
                 fut = pool.submit(_one, key, inst)
@@ -902,13 +921,13 @@ def _build_mcp(FastMCP, workspace_root: Path):
                     else:
                         errors[lang_tag] = err
             except concurrent.futures.TimeoutError:
-                # Overall deadline hit. Walk unfinished futures and
-                # mark each one "lsp-overall-timeout"; any that did
-                # finish before the deadline still populated per_lang
-                # / errors on their own. The executor context exit
-                # still waits for running workers (cannot cancel
-                # mid-request without breaking LSP protocol state),
-                # but agents see structured results immediately.
+                # Overall deadline hit. Harvest done futures, record
+                # in-flight workers as lsp-overall-timeout, then tell
+                # the pool to stop waiting. cancel_futures=True
+                # cancels the queued work; already-running workers
+                # cannot be interrupted from the outside (Python
+                # threads) but they carry their own per-call 5 s
+                # request timeout and will exit shortly after.
                 for fut, lang_tag in futures_by_fut.items():
                     if fut.done():
                         try:
@@ -924,6 +943,14 @@ def _build_mcp(FastMCP, workspace_root: Path):
                             "lsp-overall-timeout: workspace_symbol 10s "
                             "deadline exceeded while this LSP was still in-flight"
                         )
+                pool.shutdown(wait=False, cancel_futures=True)
+            else:
+                pool.shutdown(wait=True)
+        except BaseException:
+            # Any other exception (KeyboardInterrupt, SystemExit,
+            # unexpected errors): release the pool without blocking.
+            pool.shutdown(wait=False, cancel_futures=True)
+            raise
         total = sum(len(v) for v in per_lang.values())
         return {
             "query": str(query),
@@ -932,9 +959,15 @@ def _build_mcp(FastMCP, workspace_root: Path):
             "errors": errors,
         }
     srv.tool(name="workspace_symbol",
-             description="LSP workspace/symbol query. Optional `lang` "
-                         "routes to one spawner; without it, queries "
-                         "every already-spawned LSP in parallel.")(workspace_symbol)
+             description="LSP workspace/symbol query. When `lang` is "
+                         "given, routes to that one spawner and returns "
+                         "{query, lang, symbols: [...]}. When `lang` is "
+                         "None, queries every already-spawned LSP in "
+                         "parallel and returns {query, per_lang: {lang: "
+                         "[...]}, total: N, errors: {lang: envelope}}. "
+                         "Does NOT cold-spawn LSPs for lang=None -- only "
+                         "queries the languages currently spawned."
+                         )(workspace_symbol)
 
     def document_symbol(path: str) -> dict:
         """LSP textDocument/documentSymbol. Returns the hierarchical
@@ -969,7 +1002,7 @@ def _introspect_tools(srv: Any) -> dict[str, dict]:
 
     Uses srv.list_tools() first (public API on current SDK); falls
     back to _tool_manager.list_tools() and finally the private
-    _tool_manager._tools dict. Codex pre-implementation review
+    _tool_manager._tools dict. Codex design review
     preferred public APIs over the private _tools dict for schema
     introspection.
 
