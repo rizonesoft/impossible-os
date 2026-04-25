@@ -50,6 +50,22 @@ _MAX_HEADER_LINE = 8192          # bytes; a single LSP header is ~60 bytes
 _MAX_HEADER_BLOCK = 32 * 1024    # bytes; total of every header in one frame
 _MAX_BODY_BYTES = 32 * 1024 * 1024  # 32 MiB per LSP message
 
+# Read-only boundary: LSP methods that MUTATE files or execute server
+# commands are FORBIDDEN. Enforced at request() entry so a new MCP tool
+# or a future refactor cannot reach them through LspSubprocess even
+# if someone writes the call. The TODO-02 autonomous-agent boundary
+# classifies write-capable MCP servers as forbidden; this list is the
+# runtime enforcement (grep-audit alone is insufficient since it only
+# catches our code, not a future contributor's refactor). Codex
+# pre-implementation review of the MCP tools surface flagged this as
+# High.
+_FORBIDDEN_LSP_METHODS = frozenset({
+    "textDocument/rename",
+    "textDocument/codeAction",       # execute (read-only listing has its own gate)
+    "workspace/applyEdit",
+    "workspace/executeCommand",
+})
+
 
 # Every live LspSubprocess instance registers itself here so the
 # atexit hook can kill any that are still running when the bridge
@@ -170,11 +186,20 @@ class LspSubprocess:
         self.diagnostics_by_uri: dict[str, Any] = {}
         # SCAFFOLD (consumed by the file-change-lifecycle commit):
         # tracked URIs for didChange forwarding. Populated by
-        # did_open(); read by a future mtime-check path that decides
-        # whether to send a didChange before forwarding the tool
-        # request. Exposed so that path can attach without touching
-        # __init__.
+        # did_open() and ensure_open(); read by a future mtime-check
+        # path that decides whether to send a didChange before
+        # forwarding the tool request. Exposed so that path can
+        # attach without touching __init__.
         self.open_uris: set[str] = set()
+        # Lock covering open_uris mutation + the paired didOpen
+        # notification. Without this, two concurrent MCP tool calls
+        # on the same URI would both read the set, both see it
+        # missing, both send textDocument/didOpen, and LSPs may treat
+        # the duplicate as a protocol error. ensure_open() holds this
+        # lock across the check/send/add sequence so at most one
+        # didOpen per URI reaches the LSP. Codex pre-implementation
+        # review of the MCP tools surface flagged this as High.
+        self._open_uris_lock = threading.Lock()
 
         self._spawn()
         _LIVE_SUBPROCS.add(self)
@@ -554,7 +579,24 @@ class LspSubprocess:
         bypass the _shutdown_called guard: _teardown_in_progress
         flips True for the duration of that single RPC so the
         graceful handshake can land before we mark the instance
-        fully closed."""
+        fully closed.
+
+        Read-only boundary enforcement: method names in
+        _FORBIDDEN_LSP_METHODS are REJECTED at entry. This is the
+        runtime gate for the TODO-02 autonomous-agent-boundary
+        classification that write-capable MCP servers are forbidden.
+        A new MCP tool handler or future refactor cannot bypass the
+        gate without explicitly removing an entry from the set."""
+        if method in _FORBIDDEN_LSP_METHODS:
+            raise LspError(
+                "lsp-method-forbidden",
+                f"{method!r} is a write-capable LSP method; rejected by "
+                "the read-only boundary. See _FORBIDDEN_LSP_METHODS in "
+                "scripts/lsp-mcp/lsp_client.py and TODO-02 autonomous-"
+                "agent-boundary.",
+                lang=self.lang,
+                method=method,
+            )
         if self._shutdown_called and not self._teardown_in_progress:
             raise LspError(
                 "lsp-shutdown",
@@ -694,7 +736,14 @@ class LspSubprocess:
                  version: int = 1) -> None:
         """Notify the LSP that a document is open. Required before
         most textDocument/* requests; LSPs typically reject requests
-        against URIs they have not seen a didOpen for."""
+        against URIs they have not seen a didOpen for.
+
+        Unconditional: always sends a textDocument/didOpen even if
+        this URI was previously opened. Callers that want the
+        de-duplicated path should use ensure_open() instead; it gates
+        on open_uris under the _open_uris_lock. The self-tests use
+        did_open() directly because each self-test spawns a fresh
+        LSP and opens exactly one file."""
         self.notify("textDocument/didOpen", {
             "textDocument": {
                 "uri": uri,
@@ -703,7 +752,42 @@ class LspSubprocess:
                 "text": text,
             },
         })
-        self.open_uris.add(uri)
+        with self._open_uris_lock:
+            self.open_uris.add(uri)
+
+    def ensure_open(self, uri: str, language_id: str, text: str,
+                    version: int = 1) -> bool:
+        """Idempotent didOpen. Sends textDocument/didOpen ONLY if the
+        URI has not been opened on this LspSubprocess before.
+
+        Returns True if a didOpen was sent this call, False if the
+        URI was already open. Thread-safe: the check, notification,
+        and open_uris update happen under _open_uris_lock so two
+        concurrent MCP tool calls on the same URI produce at most
+        one didOpen wire message.
+
+        Used by the MCP tool handlers in bridge.py where a single
+        LSP may see many tool calls against the same file and each
+        re-open would be both wasteful (re-index) and protocol-
+        dubious (some LSPs reject duplicate didOpen)."""
+        with self._open_uris_lock:
+            if uri in self.open_uris:
+                return False
+            # Send inside the lock so a concurrent caller waiting on
+            # the lock sees open_uris already populated. The notify
+            # path holds _io_lock separately; nested lock order is
+            # _open_uris_lock -> _io_lock, and no code path takes
+            # them in the reverse order.
+            self.notify("textDocument/didOpen", {
+                "textDocument": {
+                    "uri": uri,
+                    "languageId": language_id,
+                    "version": version,
+                    "text": text,
+                },
+            })
+            self.open_uris.add(uri)
+            return True
 
     # ------------------------------------------------------------------
     # Shutdown

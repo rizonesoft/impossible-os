@@ -64,6 +64,42 @@
 #         bug where a corrupt install (PSES.psd1 present but
 #         Start-EditorServices.ps1 absent) returned "already installed"
 #         as the install hint.
+#   7a -- --self-test --tools introspects 6 MCP tools with the
+#         required-params contract: hover/definition/references need
+#         (path, line, character); diagnostics/document_symbol need
+#         (path); workspace_symbol needs (query).
+#   7b -- _dispatch_path() sandbox: hostile absolute path
+#         (/etc/passwd) rejected with lsp-path-outside-workspace;
+#         nonexistent path rejected with lsp-path-not-found;
+#         unsupported extension (.md) rejected with lsp-path-
+#         unsupported-extension; relative path resolves against
+#         workspace_root (not CWD).
+#   7c -- _EXT_TO_LANG maps every documented extension (.c/.h/.asm/
+#         .S/.sh/.bash/.py/.ps1/.psm1/.psd1). _LANG_TO_LSP_LANGUAGE_ID
+#         maps every language to the spec-correct LSP languageId
+#         ("c"/"asm"/"shellscript"/"python"/"powershell").
+#   7d -- Normalizers: _normalize_hover() handles MarkupContent /
+#         MarkedString / list / None; _normalize_locations() picks
+#         targetUri+targetRange for LocationLink and uri+range for
+#         Location.
+#   7e -- Read-only boundary gate: LspSubprocess.request() rejects
+#         every method in _FORBIDDEN_LSP_METHODS with kind
+#         lsp-method-forbidden BEFORE any wire I/O. Protects against
+#         a future MCP tool handler or refactor reaching a write-
+#         capable method.
+#   7f -- Source-level boundary audit: no call to rename / applyEdit
+#         / codeAction/execute / executeCommand exists anywhere
+#         under the MCP tool handlers in bridge.py. Combined with
+#         the runtime gate, this is defense in depth.
+#   7g -- ensure_open() is idempotent and thread-safe: same URI
+#         called N times from concurrent threads produces exactly
+#         one didOpen wire message.
+#   7h -- _validate_position() rejects negative, oversized, bool, and
+#         non-integer LSP Position values. LSP spec says Position.line
+#         and Position.character are uinteger (0 <= v < 2**31); the
+#         early revision coerced int(True)==1 silently and forwarded
+#         negative values to the server. Regression guard for Codex
+#         adversarial review Medium finding.
 #
 # Future commits append sub-tests for tool wiring, extended tool surface,
 # file-change lifecycle, watchdog, structured logs, path sandboxing, and
@@ -94,9 +130,10 @@ run() {
 t_selftest() {
     local out
     out="$(python3 scripts/lsp-mcp/bridge.py --self-test 2>&1)"
-    # Banner shape: "[lsp-mcp] OK: 0 LSPs spawned, bridge ready"
+    # Banner shapes:
+    #   "[lsp-mcp] OK: 0 LSPs spawned, 6 tools registered, bridge ready"
     # OR "[lsp-mcp] SKIP: mcp SDK not installed; ..." (CI without SDK).
-    echo "$out" | grep -qE '^\[lsp-mcp\] (OK: 0 LSPs spawned, bridge ready|SKIP: mcp SDK not installed)'
+    echo "$out" | grep -qE '^\[lsp-mcp\] (OK: 0 LSPs spawned, 6 tools registered, bridge ready|SKIP: mcp SDK not installed)'
 }
 
 # --- 1b: import smoke --------------------------------------------------------
@@ -628,6 +665,272 @@ assert _caps_missing({}, required) == ['hoverProvider', 'definitionProvider']
 "
 }
 
+# --- 7a: --self-test --tools schema introspection ------------------------
+t_selftest_tools() {
+    local out rc
+    out="$(python3 scripts/lsp-mcp/bridge.py --self-test --tools 2>&1)"
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+        printf '[lsp-mcp-tests] debug (7a): exit=%s output: %s\n' "$rc" "$out" >&2
+        return 1
+    fi
+    # Accept either OK banner with all 6 tool names, or SKIP when the
+    # mcp SDK is not installed on this host.
+    if echo "$out" | grep -qE '^\[lsp-mcp\] SKIP: mcp SDK not installed'; then
+        return 0
+    fi
+    echo "$out" | grep -qE '^\[lsp-mcp\] OK: 6 tools registered \(hover, definition, references, diagnostics, workspace_symbol, document_symbol\)$' || return 1
+    # Each tool's schema must have the right required params.
+    python3 -c "
+import json, subprocess, sys
+r = subprocess.run(['python3', 'scripts/lsp-mcp/bridge.py', '--self-test', '--tools'],
+                   capture_output=True, text=True)
+if r.returncode != 0 or '[lsp-mcp] SKIP' in r.stdout:
+    sys.exit(0)
+# Find the JSON block: everything up to the blank line before the banner.
+end = r.stdout.find('[lsp-mcp] OK:')
+assert end > 0, 'banner missing'
+schemas = json.loads(r.stdout[:end])
+expected = {
+    'hover': (['path','line','character'], []),
+    'definition': (['path','line','character'], []),
+    'references': (['path','line','character'], ['include_declaration']),
+    'diagnostics': (['path'], []),
+    'document_symbol': (['path'], []),
+    'workspace_symbol': (['query'], ['lang']),
+}
+for name, (req, opt) in expected.items():
+    s = schemas[name]
+    assert sorted(s['required']) == sorted(req), f'{name} required: {s[\"required\"]} != {req}'
+    assert sorted(s['optional']) == sorted(opt), f'{name} optional: {s[\"optional\"]} != {opt}'
+"
+}
+
+# --- 7b: _dispatch_path sandbox + routing ---------------------------------
+t_dispatch_path_sandbox() {
+    python3 -c "
+import sys
+from pathlib import Path
+sys.path.insert(0, 'scripts/lsp-mcp')
+import bridge
+from lsp_client import LspError
+
+ws = Path.cwd()
+
+# Hostile absolute path outside workspace.
+try:
+    bridge._dispatch_path('/etc/passwd', ws)
+    raise SystemExit('expected lsp-path-outside-workspace')
+except LspError as e:
+    assert e.kind == 'lsp-path-outside-workspace', e.kind
+
+# Nonexistent path.
+try:
+    bridge._dispatch_path('src/nope-nonexistent-xyz.c', ws)
+    raise SystemExit('expected lsp-path-not-found')
+except LspError as e:
+    assert e.kind == 'lsp-path-not-found', e.kind
+
+# Unsupported extension.
+try:
+    bridge._dispatch_path('CLAUDE.md', ws)
+    raise SystemExit('expected lsp-path-unsupported-extension')
+except LspError as e:
+    assert e.kind == 'lsp-path-unsupported-extension', e.kind
+
+# Valid relative path resolves against workspace_root + reads content.
+resolved, lang, text = bridge._dispatch_path('src/kernel/main.c', ws)
+assert lang == 'c', lang
+assert str(resolved).endswith('src/kernel/main.c'), resolved
+assert 'kernel_main' in text, 'TOCTOU fix: text was not read at dispatch time'
+
+# Valid ps1 path routes to ps1.
+resolved, lang, text = bridge._dispatch_path('scripts/machines/run-qemu.ps1', ws)
+assert lang == 'ps1', lang
+assert text, 'empty ps1 text'
+"
+}
+
+# --- 7c: _EXT_TO_LANG + _LANG_TO_LSP_LANGUAGE_ID coverage -----------------
+t_dispatch_tables() {
+    python3 -c "
+import sys
+sys.path.insert(0, 'scripts/lsp-mcp')
+import bridge
+
+ext_map = bridge._EXT_TO_LANG
+expected_ext = {'.c': 'c', '.h': 'c', '.asm': 'asm', '.S': 'asm',
+                '.sh': 'sh', '.bash': 'sh', '.py': 'py',
+                '.ps1': 'ps1', '.psm1': 'ps1', '.psd1': 'ps1'}
+assert ext_map == expected_ext, ext_map
+
+lang_id_map = bridge._LANG_TO_LSP_LANGUAGE_ID
+expected_id = {'c': 'c', 'asm': 'asm', 'sh': 'shellscript',
+               'py': 'python', 'ps1': 'powershell'}
+assert lang_id_map == expected_id, lang_id_map
+"
+}
+
+# --- 7d: Normalizers handle every LSP response shape ---------------------
+t_normalizers() {
+    python3 -c "
+import sys
+sys.path.insert(0, 'scripts/lsp-mcp')
+from bridge import _normalize_hover, _normalize_locations, _normalize_symbols
+
+# Hover
+assert _normalize_hover(None) == ''
+assert _normalize_hover({}) == ''
+assert _normalize_hover({'contents': None}) == ''
+assert _normalize_hover({'contents': {'kind': 'markdown', 'value': 'hi'}}) == 'hi'
+assert _normalize_hover({'contents': 'world'}) == 'world'
+assert _normalize_hover({'contents': [{'value': 'a'}, 'b', {'kind':'plaintext','value':'c'}]}) == 'a\n\nb\n\nc'
+
+# Locations -- Location / LocationLink / list / null
+assert _normalize_locations(None) == []
+assert _normalize_locations({'uri': 'u', 'range': 'r'}) == [{'uri': 'u', 'range': 'r'}]
+assert _normalize_locations({'targetUri': 'tu', 'targetRange': 'tr'}) == [{'uri': 'tu', 'range': 'tr'}]
+assert _normalize_locations([
+    {'uri': 'u1', 'range': 'r1'},
+    {'targetUri': 'tu2', 'targetRange': 'tr2', 'originSelectionRange': 'dropped'},
+]) == [{'uri': 'u1', 'range': 'r1'}, {'uri': 'tu2', 'range': 'tr2'}]
+
+# Symbols
+assert _normalize_symbols(None) == []
+assert _normalize_symbols([{'name': 'main'}]) == [{'name': 'main'}]
+assert _normalize_symbols('not a list') == []
+"
+}
+
+# --- 7e: Runtime boundary gate rejects forbidden methods ------------------
+t_boundary_runtime_gate() {
+    python3 -c "
+import sys, subprocess
+sys.path.insert(0, 'scripts/lsp-mcp')
+from lsp_client import LspSubprocess, LspError, _FORBIDDEN_LSP_METHODS
+
+expected = {'textDocument/rename', 'textDocument/codeAction',
+            'workspace/applyEdit', 'workspace/executeCommand'}
+assert set(_FORBIDDEN_LSP_METHODS) == expected, _FORBIDDEN_LSP_METHODS
+
+# Spawn a trivial fake LSP -- any binary that accepts stdin works.
+# We do NOT send anything through LspSubprocess init; we just want to
+# exercise request() method-name gating BEFORE any wire I/O.
+lsp = LspSubprocess(['cat'], lang='test')
+try:
+    for method in sorted(_FORBIDDEN_LSP_METHODS):
+        try:
+            lsp.request(method, {}, timeout=0.5)
+            raise SystemExit(f'{method} was not rejected')
+        except LspError as e:
+            assert e.kind == 'lsp-method-forbidden', f'{method}: got {e.kind}'
+finally:
+    lsp.shutdown(timeout=1.0)
+"
+}
+
+# --- 7f: Source-level boundary audit -- no forbidden-method calls --------
+t_boundary_source_audit() {
+    # Grep the bridge + servers for quoted forbidden LSP method
+    # literals. We match the exact wire-format strings (with quotes)
+    # because method names appear in the code ONLY as LSP wire-format
+    # literals; prose mentions in comments/docstrings use unquoted
+    # words. Combined with the 7e runtime gate, this catches both
+    # indirect dispatch (runtime) and cargo-culted literal strings
+    # (source). _FORBIDDEN_LSP_METHODS itself is allowed to reference
+    # the literals; we exclude lsp_client.py where that set lives.
+    local forbidden_pattern='"textDocument/rename"|"textDocument/codeAction"|"workspace/applyEdit"|"workspace/executeCommand"'
+    local hits
+    hits="$(grep -nE "$forbidden_pattern" scripts/lsp-mcp/bridge.py scripts/lsp-mcp/servers/*.py 2>&1 || true)"
+    if [ -n "$hits" ]; then
+        printf '[lsp-mcp-tests] debug (7f): forbidden hits:\n%s\n' "$hits" >&2
+        return 1
+    fi
+    return 0
+}
+
+# --- 7h: _validate_position bounds + type gates ---------------------------
+t_validate_position() {
+    python3 -c "
+import sys
+sys.path.insert(0, 'scripts/lsp-mcp')
+import bridge
+from lsp_client import LspError
+
+# Reject negative
+try:
+    bridge._validate_position(-1, 0)
+    raise SystemExit('negative line not rejected')
+except LspError as e:
+    assert e.kind == 'lsp-position-invalid', e.kind
+
+# Reject oversized (>= 2**31)
+try:
+    bridge._validate_position(2**31, 0)
+    raise SystemExit('oversized line not rejected')
+except LspError as e:
+    assert e.kind == 'lsp-position-invalid', e.kind
+
+# Reject bool (int(True) == 1 silent coercion)
+try:
+    bridge._validate_position(True, 0)
+    raise SystemExit('bool line not rejected')
+except LspError as e:
+    assert e.kind == 'lsp-position-invalid', e.kind
+
+# Reject non-integer
+try:
+    bridge._validate_position('not_an_int', 0)
+    raise SystemExit('string line not rejected')
+except LspError as e:
+    assert e.kind == 'lsp-position-invalid', e.kind
+
+# Accept valid
+assert bridge._validate_position(0, 0) == (0, 0)
+assert bridge._validate_position(10, 5) == (10, 5)
+assert bridge._validate_position(2**31 - 1, 2**31 - 1) == (2**31 - 1, 2**31 - 1)
+"
+}
+
+# --- 7g: ensure_open() dedup under concurrency ----------------------------
+t_ensure_open_dedup() {
+    python3 -c "
+import sys, threading
+sys.path.insert(0, 'scripts/lsp-mcp')
+from lsp_client import LspSubprocess
+
+# Spawn a 'cat'-style passthrough. The reader sees only our outbound
+# frames (cat echoes stdin to stdout, violating LSP framing -- that's
+# OK for this test; we do not parse responses, we just count
+# textDocument/didOpen notifications on the wire.
+lsp = LspSubprocess(['cat'], lang='test')
+try:
+    # Swap in a spy notify() so we can count wire-format calls.
+    sent = []
+    lock = threading.Lock()
+    orig_notify = lsp.notify
+    def spy(method, params=None):
+        with lock:
+            sent.append((method, params))
+    lsp.notify = spy  # type: ignore[assignment]
+
+    # 16 concurrent threads all calling ensure_open() on the SAME URI.
+    # Without the per-instance lock this would send 16 didOpen messages.
+    barrier = threading.Barrier(16)
+    def worker():
+        barrier.wait()
+        lsp.ensure_open('file:///tmp/x.py', 'python', 'print(1)', 1)
+    threads = [threading.Thread(target=worker) for _ in range(16)]
+    for t in threads: t.start()
+    for t in threads: t.join()
+    open_count = sum(1 for m, _ in sent if m == 'textDocument/didOpen')
+    assert open_count == 1, f'expected 1 didOpen, got {open_count}'
+    assert lsp.open_uris == {'file:///tmp/x.py'}, lsp.open_uris
+finally:
+    lsp.shutdown(timeout=1.0)
+"
+}
+
 run "1a --self-test banner"              t_selftest
 run "1b module import smoke"             t_import
 run "1c LspSubprocess lifecycle + pgrep" t_subprocess_lifecycle
@@ -653,6 +956,14 @@ run "6c powershell_server required caps" t_powershell_server_caps
 run "6d _caps_missing options shape"     t_caps_missing_options_shape
 run "6e bundled_modules_path layouts"    t_bundled_modules_path_layouts
 run "6f install_hint reason discrim"     t_powershell_install_hint_reasons
+run "7a --self-test --tools schemas"     t_selftest_tools
+run "7b dispatch_path sandbox"           t_dispatch_path_sandbox
+run "7c ext + lang-id tables"            t_dispatch_tables
+run "7d normalizers"                     t_normalizers
+run "7e boundary runtime gate"           t_boundary_runtime_gate
+run "7f boundary source audit"           t_boundary_source_audit
+run "7g ensure_open dedup"               t_ensure_open_dedup
+run "7h validate_position bounds"        t_validate_position
 
 printf '[lsp-mcp-tests] %d/%d sub-tests PASS\n' "$pass" "$((pass + fail))"
 if [ "$fail" -gt 0 ]; then

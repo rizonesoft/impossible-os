@@ -333,25 +333,694 @@ def _try_import_mcp():
         return None
 
 
-def _build_mcp(FastMCP, workspace_root: Path):
-    """Instantiate FastMCP. The skeleton registers zero tools -- the
-    read-only MCP tools (hover, definition, references, diagnostics,
-    workspace-symbol, document-symbol) land in the tool-wiring commit.
-    We still construct the server here so that the later addition is
-    a one-function change (just register tools), and so --self-test
-    can confirm the server-build path works.
+MCP_TOOL_NAMES = (
+    "hover",
+    "definition",
+    "references",
+    "diagnostics",
+    "workspace_symbol",
+    "document_symbol",
+)
 
-    Exposing _get_or_spawn + _call_lsp + _CALL_LOCK from module scope
-    is deliberate: the tool-wiring handlers will be closures over
-    these pieces, so the integration surface stays grep-able."""
+# Extension -> language tag dispatch table. Drives _dispatch_path()
+# routing. Keep in sync with the five spawner modules under
+# scripts/lsp-mcp/servers/.
+_EXT_TO_LANG: dict[str, str] = {
+    ".c": "c", ".h": "c",
+    ".asm": "asm", ".S": "asm",
+    ".sh": "sh", ".bash": "sh",
+    ".py": "py",
+    ".ps1": "ps1", ".psm1": "ps1", ".psd1": "ps1",
+}
+
+# LSP Initialize-documented languageId per spec:
+#   https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocumentItem
+# Each LSP accepts a specific identifier; the LANG_TAG we use for
+# spawner routing (e.g. "sh", "ps1") is shorthand and does NOT match
+# the LSP languageId for bash/python/powershell. Codex pre-
+# implementation review of the MCP tools surface flagged this as High
+# -- reusing LANG_TAG as languageId for bash-language-server /
+# pyright / PSES would produce empty hover / diagnostics responses.
+_LANG_TO_LSP_LANGUAGE_ID: dict[str, str] = {
+    "c": "c",
+    "asm": "asm",
+    "sh": "shellscript",
+    "py": "python",
+    "ps1": "powershell",
+}
+
+# File-size cap for tool-time did_open. Mirrors the per-message cap
+# in lsp_client._MAX_BODY_BYTES (32 MiB). A file larger than this
+# would either be rejected by the LSP protocol layer or allocate
+# unbounded memory; returning lsp-path-too-large is better than
+# hiding the behavior.
+_TOOL_MAX_READ = 32 * 1024 * 1024
+
+
+def _dispatch_path(path_str: str, workspace_root: Path) -> tuple[Path, str, str]:
+    """Resolve a tool-arg path + read its content + determine which
+    LSP should handle it, ALL UNDER A SINGLE FILE DESCRIPTOR so an
+    attacker cannot TOCTOU the stat/read window.
+
+    Returns (resolved_path, lang_tag, text). Raises LspError for:
+      - lsp-path-not-found            -- path does not exist
+      - lsp-path-outside-workspace    -- path resolves outside workspace_root
+      - lsp-path-not-regular-file     -- not a regular file (mode check on fstat)
+      - lsp-path-too-large            -- file exceeds _TOOL_MAX_READ
+      - lsp-path-unsupported-extension -- extension not in _EXT_TO_LANG
+      - lsp-path-unreadable           -- I/O error reading fd
+      - lsp-path-invalid-utf8         -- file not valid UTF-8
+
+    TOCTOU hardening (Codex adversarial review finding): the early
+    revision validated path + size on Path.stat() then let
+    _ensure_open_for reopen by pathname -- a concurrent local
+    replacement could swap the file for a symlink outside the
+    workspace or a larger file between the two operations. We now
+    open the file via os.open() ONCE, fstat() the resulting fd (which
+    is bound to the specific inode resolve() picked), read under the
+    cap, close, and only then hand the bytes forward. No later code
+    re-reads by pathname.
+
+    Relative paths are resolved against workspace_root, NOT the
+    process CWD. MCP hosts launch the bridge from arbitrary
+    directories; a CWD-based walk would let `hover("main.c", ...)`
+    bind to an unrelated file in the host's launch directory. Codex
+    pre-implementation review flagged this as High.
+    """
+    p = Path(path_str)
+    candidate = p if p.is_absolute() else (workspace_root / p)
+    try:
+        resolved = candidate.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise LspError(
+            "lsp-path-not-found",
+            f"path {path_str!r} does not exist: {exc}",
+            path=path_str,
+        ) from exc
+    try:
+        workspace_resolved = workspace_root.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise LspError(
+            "lsp-workspace-root-invalid",
+            f"workspace_root {workspace_root!r} not resolvable: {exc}",
+        ) from exc
+    try:
+        resolved.relative_to(workspace_resolved)
+    except ValueError:
+        raise LspError(
+            "lsp-path-outside-workspace",
+            f"{path_str!r} resolves to {resolved} which is outside "
+            f"workspace {workspace_resolved}",
+            path=path_str,
+            resolved=str(resolved),
+            workspace=str(workspace_resolved),
+        )
+    ext = resolved.suffix
+    lang = _EXT_TO_LANG.get(ext)
+    if lang is None:
+        # Fail extension-check BEFORE opening the fd -- no point
+        # paying an open() for a file we will not route anywhere.
+        raise LspError(
+            "lsp-path-unsupported-extension",
+            f"{resolved} extension {ext!r} is not wired (wired: "
+            f"{sorted(set(_EXT_TO_LANG))})",
+            path=path_str,
+            extension=ext,
+        )
+
+    # Single-fd read: resolve() + relative_to() + open() all bind to
+    # the inode we validated; once we have the fd a concurrent
+    # replace of the pathname does not affect us.
+    #
+    # O_NOFOLLOW on the final component is NOT used -- resolve()
+    # already follows every symlink to a canonical non-symlink path,
+    # and the relative_to() check runs against that canonical path.
+    # Re-opening with O_NOFOLLOW would false-reject legitimate
+    # workspace symlinks (e.g. a `src/foo -> ../shared/foo` symlink
+    # that resolves to a path inside the workspace).
+    import os as _os
+    try:
+        fd = _os.open(str(resolved), _os.O_RDONLY)
+    except OSError as exc:
+        raise LspError(
+            "lsp-path-unreadable",
+            f"open {resolved}: {exc}",
+            path=path_str,
+        ) from exc
+    try:
+        import stat as _stat
+        try:
+            st = _os.fstat(fd)
+        except OSError as exc:
+            raise LspError(
+                "lsp-path-unreadable",
+                f"fstat {resolved}: {exc}",
+                path=path_str,
+            ) from exc
+        if not _stat.S_ISREG(st.st_mode):
+            raise LspError(
+                "lsp-path-not-regular-file",
+                f"{resolved} is not a regular file (mode={oct(st.st_mode)})",
+                path=path_str,
+                resolved=str(resolved),
+            )
+        if st.st_size > _TOOL_MAX_READ:
+            raise LspError(
+                "lsp-path-too-large",
+                f"{resolved} size {st.st_size} exceeds "
+                f"{_TOOL_MAX_READ}-byte tool cap",
+                path=path_str,
+                size=st.st_size,
+                cap=_TOOL_MAX_READ,
+            )
+        # Read the full file via the bound fd. _os.read() may return
+        # fewer bytes per call on large files; loop until EOF or the
+        # fstat-reported size is consumed. Any growth past st.st_size
+        # in a concurrent appender IS the upper bound we already
+        # validated -- we stop at that size so a live appender cannot
+        # sneak past the cap.
+        chunks = []
+        remaining = st.st_size
+        while remaining > 0:
+            try:
+                chunk = _os.read(fd, min(remaining, 64 * 1024))
+            except OSError as exc:
+                raise LspError(
+                    "lsp-path-unreadable",
+                    f"read {resolved}: {exc}",
+                    path=path_str,
+                ) from exc
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        raw = b"".join(chunks)
+    finally:
+        try:
+            _os.close(fd)
+        except OSError:
+            pass
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise LspError(
+            "lsp-path-invalid-utf8",
+            f"{resolved} is not valid UTF-8: {exc}",
+            path=path_str,
+            resolved=str(resolved),
+        ) from exc
+    return resolved, lang, text
+
+
+def _ensure_open_for(lsp: LspSubprocess, resolved: Path, lang: str,
+                     text: str) -> str:
+    """Shared did_open helper for the MCP tools. Accepts the pre-read
+    bytes from _dispatch_path() so this helper does NOT re-read the
+    file (Codex adversarial-review TOCTOU finding). Forwards an
+    idempotent didOpen via LspSubprocess.ensure_open() and returns
+    the file URI."""
+    uri = resolved.as_uri()
+    language_id = _LANG_TO_LSP_LANGUAGE_ID.get(lang, lang)
+    lsp.ensure_open(uri, language_id, text, version=1)
+    return uri
+
+
+# LSP spec: Position.line and Position.character are `uinteger`
+# (0 <= v < 2**31). Validate at tool entry so a malicious agent
+# cannot push negative or oversized values into the LSP server.
+_POSITION_MAX = (2 ** 31) - 1
+
+
+def _validate_position(line: Any, character: Any) -> tuple[int, int]:
+    """Coerce + validate an LSP Position. Returns (line, character)
+    as ints. Raises LspError('lsp-position-invalid') for:
+      - bool inputs (int(True) silently coerces to 1 -- reject so
+        agents passing booleans by mistake get a clean error)
+      - non-integer inputs
+      - negative values
+      - values >= 2**31"""
+    for name, v in (("line", line), ("character", character)):
+        if isinstance(v, bool):
+            raise LspError(
+                "lsp-position-invalid",
+                f"{name}={v!r} is a bool; LSP Position requires uinteger",
+                field=name,
+                value=v,
+            )
+        try:
+            iv = int(v)
+        except (TypeError, ValueError) as exc:
+            raise LspError(
+                "lsp-position-invalid",
+                f"{name}={v!r} is not an integer",
+                field=name,
+                value=repr(v),
+            ) from exc
+        if iv < 0 or iv > _POSITION_MAX:
+            raise LspError(
+                "lsp-position-invalid",
+                f"{name}={iv} is outside LSP uinteger range "
+                f"[0, {_POSITION_MAX}]",
+                field=name,
+                value=iv,
+            )
+    return int(line), int(character)
+
+
+def _normalize_hover(hover: Any) -> str:
+    """Collapse LSP's three hover response shapes into a flat markdown
+    string. Returns empty string for null / empty / missing contents.
+
+    LSP 3.17 textDocument/hover returns:
+      - null (no hover available) -> ""
+      - {contents: MarkupContent{kind, value}} -> value
+      - {contents: MarkedString} where MarkedString is str or
+        {language, value} -> value
+      - {contents: MarkedString[]} -> each value joined by \\n\\n"""
+    if hover is None:
+        return ""
+    contents = hover.get("contents") if isinstance(hover, dict) else None
+    if contents is None:
+        return ""
+    if isinstance(contents, dict):
+        value = contents.get("value")
+        return value if isinstance(value, str) else ""
+    if isinstance(contents, str):
+        return contents
+    if isinstance(contents, list):
+        parts: list[str] = []
+        for item in contents:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                value = item.get("value")
+                if isinstance(value, str):
+                    parts.append(value)
+        return "\n\n".join(parts)
+    return ""
+
+
+def _normalize_locations(result: Any) -> list[dict]:
+    """Normalize LSP definition/references/typeDefinition/implementation
+    result into a list of {uri, range} dicts.
+
+    Input shapes per LSP 3.17:
+      - null -> []
+      - Location {uri, range}
+      - LocationLink {targetUri, targetRange, ...}
+      - list[Location | LocationLink]
+    We pick targetUri + targetRange for LocationLink (the symbol's
+    destination, not the origin the click came from). originSelection
+    Range and targetSelectionRange are intentionally dropped; tools
+    that need them can read the raw response separately."""
+    if result is None:
+        return []
+    if isinstance(result, dict):
+        result = [result]
+    if not isinstance(result, list):
+        return []
+    out: list[dict] = []
+    for loc in result:
+        if not isinstance(loc, dict):
+            continue
+        if "targetUri" in loc:
+            out.append({
+                "uri": loc.get("targetUri"),
+                "range": loc.get("targetRange"),
+            })
+        elif "uri" in loc:
+            out.append({
+                "uri": loc.get("uri"),
+                "range": loc.get("range"),
+            })
+    return out
+
+
+def _normalize_symbols(result: Any) -> list:
+    """workspace/symbol and textDocument/documentSymbol responses are
+    already typed as lists of SymbolInformation | DocumentSymbol |
+    WorkspaceSymbol. Pass through as-is; we only guard against null
+    (legitimate per spec when the server has nothing to return) and
+    non-list types (protocol violation)."""
+    if result is None:
+        return []
+    if not isinstance(result, list):
+        return []
+    return result
+
+
+def _build_mcp(FastMCP, workspace_root: Path):
+    """Instantiate FastMCP + register the six read-only tools.
+
+    Typed-handler pattern per TODO-06 precedent at scripts/todo-graph/
+    mcp_server.py:240-340 (one explicit function per tool with real
+    named params -- NOT **kwargs, which produces empty MCP schemas
+    that leave agents guessing). Each handler:
+      1. calls _dispatch_path() to sandbox the path and route to the
+         right LSP language tag,
+      2. calls _get_or_spawn() to cold-start or reuse the LSP,
+      3. calls _ensure_open_for() for the idempotent didOpen,
+      4. issues the LSP request,
+      5. normalizes the response,
+      6. returns a plain dict that FastMCP serializes to JSON.
+
+    Any LspError (path escape, language not wired, LSP binary
+    missing, request timeout) gets converted to the error-envelope
+    dict shape by _call_lsp() -- MCP-agent clients see a structured
+    `{"error": "kind", "detail": "...", ...}` instead of a protocol
+    exception."""
     srv = FastMCP("lsp-bridge")
-    # No tools yet. Per-language integration commits register spawn
-    # recipes via register_spawner(); the tool-wiring commit turns
-    # those into MCP tools. The marker text "register_spawner" + the
-    # _LSP_SPAWNERS registry above are the stable grep targets for
-    # the tool-wiring integration.
-    _ = workspace_root  # reserved for the tool-wiring handlers
+
+    def _forbidden_method_set() -> frozenset:
+        """Read-only boundary: surface the same frozenset the LSP
+        client uses at request() entry. The MCP tools themselves
+        never call any of these methods; the set is imported for the
+        boundary-audit test (7f) to assert consistency."""
+        from lsp_client import _FORBIDDEN_LSP_METHODS
+        return _FORBIDDEN_LSP_METHODS
+
+    _forbidden_method_set()  # bind symbol so the boundary test can find it
+
+    def hover(path: str, line: int, character: int) -> dict:
+        """Hover at (line, character) in the given file. Returns
+        {uri, lang, line, character, markdown, raw} where `markdown`
+        is the flat normalized string and `raw` is the unmodified LSP
+        response (for clients that want to inspect Markup kind etc).
+        Empty markdown means the LSP has nothing to say at that
+        position, NOT an error."""
+        def _op() -> Any:
+            line_v, char_v = _validate_position(line, character)
+            resolved, lang, text = _dispatch_path(path, workspace_root)
+            lsp = _get_or_spawn(lang, workspace_root)
+            uri = _ensure_open_for(lsp, resolved, lang, text)
+            raw = lsp.request(
+                "textDocument/hover",
+                {"textDocument": {"uri": uri},
+                 "position": {"line": line_v, "character": char_v}},
+                timeout=15.0,
+            )
+            return {
+                "uri": uri,
+                "lang": lang,
+                "line": line_v,
+                "character": char_v,
+                "markdown": _normalize_hover(raw),
+                "raw": raw,
+            }
+        return _call_lsp(_op)
+    srv.tool(name="hover",
+             description="LSP textDocument/hover at (line, character). "
+                         "Returns normalized markdown + raw response.")(hover)
+
+    def definition(path: str, line: int, character: int) -> dict:
+        """Go-to-definition. Returns {uri, lang, line, character,
+        locations} where locations is a list of {uri, range}
+        normalized across Location / LocationLink shapes."""
+        def _op() -> Any:
+            line_v, char_v = _validate_position(line, character)
+            resolved, lang, text = _dispatch_path(path, workspace_root)
+            lsp = _get_or_spawn(lang, workspace_root)
+            uri = _ensure_open_for(lsp, resolved, lang, text)
+            raw = lsp.request(
+                "textDocument/definition",
+                {"textDocument": {"uri": uri},
+                 "position": {"line": line_v, "character": char_v}},
+                timeout=15.0,
+            )
+            return {
+                "uri": uri,
+                "lang": lang,
+                "line": line_v,
+                "character": char_v,
+                "locations": _normalize_locations(raw),
+            }
+        return _call_lsp(_op)
+    srv.tool(name="definition",
+             description="LSP textDocument/definition at (line, "
+                         "character). Returns locations as [{uri, "
+                         "range}] normalized across Location and "
+                         "LocationLink response shapes.")(definition)
+
+    def references(path: str, line: int, character: int,
+                   include_declaration: bool = True) -> dict:
+        """Find references. include_declaration is forwarded as the
+        context.includeDeclaration bool per LSP spec. Returns the
+        same shape as definition()."""
+        def _op() -> Any:
+            line_v, char_v = _validate_position(line, character)
+            resolved, lang, text = _dispatch_path(path, workspace_root)
+            lsp = _get_or_spawn(lang, workspace_root)
+            uri = _ensure_open_for(lsp, resolved, lang, text)
+            raw = lsp.request(
+                "textDocument/references",
+                {"textDocument": {"uri": uri},
+                 "position": {"line": line_v, "character": char_v},
+                 "context": {"includeDeclaration": bool(include_declaration)}},
+                timeout=15.0,
+            )
+            return {
+                "uri": uri,
+                "lang": lang,
+                "line": line_v,
+                "character": char_v,
+                "include_declaration": bool(include_declaration),
+                "locations": _normalize_locations(raw),
+            }
+        return _call_lsp(_op)
+    srv.tool(name="references",
+             description="LSP textDocument/references at (line, "
+                         "character). include_declaration forwards "
+                         "to context.includeDeclaration.")(references)
+
+    def diagnostics(path: str) -> dict:
+        """Pull cached publishDiagnostics for a file. LSPs push
+        diagnostics asynchronously after didOpen; this tool returns
+        the most recent set the bridge has cached per URI. If no
+        publish has arrived yet, returns {diagnostics: [], note:
+        ...} instead of erroring -- agents can poll."""
+        def _op() -> Any:
+            resolved, lang, text = _dispatch_path(path, workspace_root)
+            lsp = _get_or_spawn(lang, workspace_root)
+            uri = _ensure_open_for(lsp, resolved, lang, text)
+            cached = lsp.diagnostics_by_uri.get(uri)
+            if cached is None:
+                return {
+                    "uri": uri,
+                    "lang": lang,
+                    "diagnostics": [],
+                    "note": "no publishDiagnostics received for this URI "
+                            "yet; LSP may still be indexing. Poll again "
+                            "after a short delay.",
+                }
+            return {
+                "uri": uri,
+                "lang": lang,
+                "diagnostics": cached if isinstance(cached, list) else [],
+            }
+        return _call_lsp(_op)
+    srv.tool(name="diagnostics",
+             description="Pull cached publishDiagnostics for a file. "
+                         "Returns empty list + note when the LSP has "
+                         "not published yet.")(diagnostics)
+
+    def workspace_symbol(query: str, lang: Optional[str] = None) -> dict:
+        """Query workspace symbols. If `lang` is given, routes to
+        that single LSP (spawning on demand); if None, queries every
+        already-spawned LSP in parallel (does NOT cold-spawn the
+        remaining four).
+
+        Response shape:
+          lang given    -> {query, lang, symbols: [...]}
+          lang is None  -> {query, per_lang: {lang: [symbols...]},
+                            total: N, errors: {lang: "detail"}}
+
+        The None-lang path is deliberately silent about languages
+        that are NOT spawned: it only walks _LIVE_LSPS. Cold-spawning
+        every LSP on a single MCP call would blow a multi-second
+        budget even for languages the agent is not looking at."""
+        if lang is not None:
+            def _op() -> Any:
+                lsp = _get_or_spawn(lang, workspace_root)
+                raw = lsp.request(
+                    "workspace/symbol",
+                    {"query": str(query)},
+                    timeout=15.0,
+                )
+                return {
+                    "query": str(query),
+                    "lang": lang,
+                    "symbols": _normalize_symbols(raw),
+                }
+            return _call_lsp(_op)
+
+        # lang is None: snapshot the live LSPs (not spawn recipes)
+        # under _LIVE_LSPS_LOCK, then fan out in parallel. Codex
+        # pre-implementation review flagged serializing under
+        # _CALL_LOCK as a Medium; per-instance request locks in
+        # LspSubprocess already protect each LSP's wire I/O.
+        import concurrent.futures
+        with _LIVE_LSPS_LOCK:
+            snapshot = [
+                (key, inst) for key, inst in _LIVE_LSPS.items()
+                if inst.alive
+            ]
+        per_lang: dict[str, list] = {}
+        errors: dict[str, str] = {}
+        if not snapshot:
+            return {"query": str(query), "per_lang": {}, "total": 0, "errors": {}}
+
+        def _one(key, inst):
+            (lang_tag, _root) = key
+            try:
+                raw = inst.request(
+                    "workspace/symbol",
+                    {"query": str(query)},
+                    timeout=5.0,
+                )
+                return lang_tag, _normalize_symbols(raw), None
+            except LspError as exc:
+                return lang_tag, [], f"{exc.kind}: {exc.detail}"
+
+        # Track which futures correspond to which lang_tag so the
+        # overall-timeout path can mark the un-completed ones with a
+        # structured error rather than raising (fail-soft contract:
+        # partial results + per-lang error detail beats all-or-nothing
+        # for an agent that asked across every language).
+        futures_by_fut: dict = {}
+        with concurrent.futures.ThreadPoolExecutor(
+                max_workers=max(1, len(snapshot))) as pool:
+            for key, inst in snapshot:
+                (lang_tag, _root) = key
+                fut = pool.submit(_one, key, inst)
+                futures_by_fut[fut] = lang_tag
+            try:
+                for fut in concurrent.futures.as_completed(
+                        list(futures_by_fut.keys()), timeout=10.0):
+                    lang_tag, syms, err = fut.result()
+                    if err is None:
+                        per_lang[lang_tag] = syms
+                    else:
+                        errors[lang_tag] = err
+            except concurrent.futures.TimeoutError:
+                # Overall deadline hit. Walk unfinished futures and
+                # mark each one "lsp-overall-timeout"; any that did
+                # finish before the deadline still populated per_lang
+                # / errors on their own. The executor context exit
+                # still waits for running workers (cannot cancel
+                # mid-request without breaking LSP protocol state),
+                # but agents see structured results immediately.
+                for fut, lang_tag in futures_by_fut.items():
+                    if fut.done():
+                        try:
+                            lt, syms, err = fut.result()
+                            if err is None and lt not in per_lang:
+                                per_lang[lt] = syms
+                            elif err is not None and lt not in errors:
+                                errors[lt] = err
+                        except Exception:
+                            pass
+                    elif lang_tag not in per_lang and lang_tag not in errors:
+                        errors[lang_tag] = (
+                            "lsp-overall-timeout: workspace_symbol 10s "
+                            "deadline exceeded while this LSP was still in-flight"
+                        )
+        total = sum(len(v) for v in per_lang.values())
+        return {
+            "query": str(query),
+            "per_lang": per_lang,
+            "total": total,
+            "errors": errors,
+        }
+    srv.tool(name="workspace_symbol",
+             description="LSP workspace/symbol query. Optional `lang` "
+                         "routes to one spawner; without it, queries "
+                         "every already-spawned LSP in parallel.")(workspace_symbol)
+
+    def document_symbol(path: str) -> dict:
+        """LSP textDocument/documentSymbol. Returns the hierarchical
+        DocumentSymbol tree or flat SymbolInformation list depending
+        on what the LSP advertised. The response is passed through
+        as-is inside the `symbols` key."""
+        def _op() -> Any:
+            resolved, lang, text = _dispatch_path(path, workspace_root)
+            lsp = _get_or_spawn(lang, workspace_root)
+            uri = _ensure_open_for(lsp, resolved, lang, text)
+            raw = lsp.request(
+                "textDocument/documentSymbol",
+                {"textDocument": {"uri": uri}},
+                timeout=15.0,
+            )
+            return {
+                "uri": uri,
+                "lang": lang,
+                "symbols": _normalize_symbols(raw),
+            }
+        return _call_lsp(_op)
+    srv.tool(name="document_symbol",
+             description="LSP textDocument/documentSymbol. Returns the "
+                         "server's hierarchical or flat symbol list "
+                         "pass-through.")(document_symbol)
+
     return srv
+
+
+def _introspect_tools(srv: Any) -> dict[str, dict]:
+    """Enumerate the registered MCP tools + their parameter schemas.
+
+    Uses srv.list_tools() first (public API on current SDK); falls
+    back to _tool_manager.list_tools() and finally the private
+    _tool_manager._tools dict. Codex pre-implementation review
+    preferred public APIs over the private _tools dict for schema
+    introspection.
+
+    Returns {tool_name: {required: [...], optional: [...],
+    inputSchema: {...}}}. Optional properties are inferred from the
+    JSON Schema (everything in `properties` not in `required`)."""
+    import asyncio
+    import inspect as _inspect
+    tools_obj: Any
+    try:
+        tools_obj = srv.list_tools()
+    except (AttributeError, TypeError):
+        try:
+            tools_obj = srv._tool_manager.list_tools()  # type: ignore[attr-defined]
+        except Exception:
+            try:
+                tools_obj = list(srv._tool_manager._tools.values())  # type: ignore[attr-defined]
+            except Exception:
+                return {}
+    if _inspect.isawaitable(tools_obj):
+        tools_obj = asyncio.run(tools_obj)
+    if not isinstance(tools_obj, (list, tuple)):
+        try:
+            tools_obj = list(tools_obj)
+        except Exception:
+            return {}
+    out: dict[str, dict] = {}
+    for t in tools_obj:
+        name = getattr(t, "name", None) or (
+            t.get("name") if isinstance(t, dict) else None
+        )
+        if not name:
+            continue
+        schema = getattr(t, "inputSchema", None)
+        if schema is None and isinstance(t, dict):
+            schema = t.get("inputSchema")
+        if schema is None:
+            # FastMCP tool objects sometimes expose parameters via a
+            # parameters attribute on the function; we cannot always
+            # reconstruct a JSON schema, but we CAN list the names.
+            params = getattr(t, "parameters", None)
+            schema = {"properties": params or {}, "required": []}
+        properties = schema.get("properties", {}) if isinstance(schema, dict) else {}
+        required = schema.get("required", []) if isinstance(schema, dict) else []
+        optional = sorted(set(properties) - set(required))
+        out[name] = {
+            "required": list(required),
+            "optional": optional,
+            "inputSchema": schema,
+        }
+    return out
 
 
 # ---------------------------------------------------------------------
@@ -408,10 +1077,11 @@ def _self_test(workspace_root: Path, lang: Optional[str] = None) -> int:
         except Exception:
             count = 0
 
-    if count != 0:
+    expected = len(MCP_TOOL_NAMES)
+    if count != expected:
         sys.stderr.write(
-            f"[lsp-mcp] FAIL: expected 0 tools in the skeleton, got {count}. "
-            "Did a later commit land without updating _self_test()?\n"
+            f"[lsp-mcp] FAIL: expected {expected} MCP tools, got {count}. "
+            "Did a handler registration drift from MCP_TOOL_NAMES?\n"
         )
         return 1
 
@@ -419,7 +1089,49 @@ def _self_test(workspace_root: Path, lang: Optional[str] = None) -> int:
     # the zero-lang path falls through to the bridge-ready banner.
     live = len(_LIVE_LSPS)
     sys.stdout.write(
-        f"[lsp-mcp] OK: {live} LSPs spawned, bridge ready\n"
+        f"[lsp-mcp] OK: {live} LSPs spawned, {count} tools registered, "
+        "bridge ready\n"
+    )
+    return 0
+
+
+def _self_test_tools(workspace_root: Path) -> int:
+    """Print the registered tool schemas as JSON and exit 0. Driven
+    by `--self-test --tools`. Satisfies the TODO test checkpoint:
+    "6 tool schemas with required params (hover/definition/references:
+    path, line, character; diagnostics/document_symbol: path;
+    workspace_symbol: query)"."""
+    FastMCP = _try_import_mcp()
+    if FastMCP is None:
+        sys.stdout.write(
+            "[lsp-mcp] SKIP: mcp SDK not installed; tool schema "
+            "introspection unavailable. Install with `pip install mcp`.\n"
+        )
+        return 0
+    try:
+        srv = _build_mcp(FastMCP, workspace_root)
+    except Exception as exc:
+        sys.stderr.write(f"[lsp-mcp] FAIL: build_mcp raised: {exc}\n")
+        return 1
+    schemas = _introspect_tools(srv)
+    expected = set(MCP_TOOL_NAMES)
+    missing = expected - set(schemas.keys())
+    if missing:
+        sys.stderr.write(
+            f"[lsp-mcp] FAIL: MCP_TOOL_NAMES claims {sorted(expected)} "
+            f"but introspection only sees {sorted(schemas.keys())}; "
+            f"missing {sorted(missing)}\n"
+        )
+        return 1
+    import json as _json
+    sys.stdout.write(_json.dumps(
+        {name: schemas[name] for name in MCP_TOOL_NAMES},
+        indent=2, sort_keys=True,
+    ))
+    sys.stdout.write("\n")
+    sys.stdout.write(
+        f"[lsp-mcp] OK: {len(schemas)} tools registered "
+        f"({', '.join(MCP_TOOL_NAMES)})\n"
     )
     return 0
 
@@ -1392,12 +2104,19 @@ def main(argv=None) -> int:
         "--repo-root", default=None,
         help="override workspace root (default: auto-detect from CWD).",
     )
+    p.add_argument(
+        "--tools", action="store_true",
+        help="with --self-test: print registered tool schemas + exit. "
+             "Without --self-test: ignored.",
+    )
     args = p.parse_args(argv)
 
     workspace_root = _workspace_root_from_argv(args)
 
     try:
         if args.self_test:
+            if args.tools:
+                return _self_test_tools(workspace_root)
             return _self_test(workspace_root, lang=args.lang)
         if args.lang is not None:
             sys.stderr.write(
