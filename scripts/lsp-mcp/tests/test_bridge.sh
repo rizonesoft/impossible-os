@@ -4392,10 +4392,15 @@ PY
 # language, JSON line `event: warm-complete` (or `warm-over-budget`) is
 # emitted, and the post-banner reports >= 1 LSPs spawned IF clangd-19 is
 # installed, OR 0 LSPs with all-spawn-failed entries IF the host has no
-# LSPs at all (CI host without language tooling).
+# LSPs at all (CI host without language tooling). Timeout: 180s budget
+# because blocking warm-start with cold clangd index (~30s) AND pyright
+# installed (parallel max ~60s soft cap) plus per-language handshake
+# overhead can push past the original 90s budget on a fresh dev box.
+# Cached-index runs finish in ~10-15s; cold-cache CI runs need the
+# fuller window.
 t_warm_start_default() {
     local out
-    out="$(timeout 90 python3 scripts/lsp-mcp/bridge.py --warm-start \
+    out="$(timeout 180 python3 scripts/lsp-mcp/bridge.py --warm-start \
         --self-test 2>&1)" || {
         printf '[warm-start-default] FAIL: exit non-zero\n%s\n' "$out" >&2
         return 1
