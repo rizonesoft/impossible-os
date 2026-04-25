@@ -30,6 +30,9 @@ flowchart TD
   todo_00_infrastructure_TODO_07_lsp_mcp_bridge_md_38ff90["lsp-mcp-bridge<br/>TODO-07"]
   class todo_00_infrastructure_TODO_07_lsp_mcp_bridge_md_38ff90 draft
   click todo_00_infrastructure_TODO_07_lsp_mcp_bridge_md_38ff90 "https://github.com/rizonesoft/impossible-os/blob/main/todo/00-infrastructure/TODO-07-lsp-mcp-bridge.md"
+  todo_00_infrastructure_TODO_08_automation_hardening_md_187877["automation-hardening<br/>TODO-08"]
+  class todo_00_infrastructure_TODO_08_automation_hardening_md_187877 draft
+  click todo_00_infrastructure_TODO_08_automation_hardening_md_187877 "https://github.com/rizonesoft/impossible-os/blob/main/todo/00-infrastructure/TODO-08-automation-hardening.md"
   todo_01_boot_platform_TODO_01_boot_protocol_abi_handoff_md_27e791["boot-protocol-abi-handoff<br/>TODO-01"]
   class todo_01_boot_platform_TODO_01_boot_protocol_abi_handoff_md_27e791 active
   click todo_01_boot_platform_TODO_01_boot_protocol_abi_handoff_md_27e791 "https://github.com/rizonesoft/impossible-os/blob/main/todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md"

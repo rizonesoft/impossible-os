@@ -50,6 +50,14 @@ This domain tracks the tooling and workflow work that supports the whole project
   diagnostics, workspace-symbol, document-symbol). Gives Claude Code + any MCP-aware agent
   compiler-grade code intelligence across every language the repo uses. XREFs: TODO-01 §1
   (dep tier), TODO-02 §5/§8 (MCP + autonomous-agent boundary), TODO-06 §8 (FastMCP precedent).
+- [TODO-08 Automation Hardening](./TODO-08-automation-hardening.md) - Wire the two MCP servers
+  (todo-graph + lsp-bridge) into Codex CLI alongside Claude Code; document and enforce the
+  no-`--model`/no-`--effort` Codex invocation policy; convert advisory hooks into hard gates
+  for `receiving-code-review`, the section-commit pipeline, and `review-todo-section` step-8
+  four-dispatch policy; audit and dedupe the hook system; reconcile the superpowers plugin
+  catalog with Impossible OS doctrine; cross-tool drift detection. XREFs: TODO-02 §3/§4 (Hook
+  Routing Matrix + External-Reviewer Contract -- mechanism owner; TODO-02 owns doctrine),
+  TODO-06 §8 (todo-graph MCP consumer), TODO-07 §1 (lsp-bridge MCP consumer).
 
 ## Completed / Doc-converted
 
