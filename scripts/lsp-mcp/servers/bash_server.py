@@ -142,7 +142,8 @@ def spawn(workspace_root: Path) -> LspSubprocess:
     if not is_available():
         raise LspError(
             "lsp-binary-missing",
-            f"{BASH_LSP_BIN!r} not found on PATH",
+            f"{BASH_LSP_BIN!r} availability probe failed (binary missing on PATH "
+            "OR present but the npm shim's Node runtime is not runnable)",
             lang=LANG_TAG,
             install_hint=install_hint(),
         )

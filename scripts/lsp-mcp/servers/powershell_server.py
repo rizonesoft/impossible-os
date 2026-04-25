@@ -152,6 +152,18 @@ def _probe() -> _Availability:
     if pses_psd1 is None:
         return _Availability(False, pwsh_path, version_line, None, "pses-missing")
 
+    # The .psd1 was found but the install MUST also ship the
+    # Start-EditorServices.ps1 entry script in the same directory --
+    # that's the canonical PSES startup path. A standalone .psd1
+    # without the entry script is a corrupt or incomplete install
+    # (e.g. someone copied just the manifest). Catch this in _probe()
+    # so is_available() returns False and install_hint() can speak
+    # to the right failure mode (Codex consistency review caught
+    # spawn() raising with the wrong install_hint when the probe
+    # had reported available=True).
+    if _start_editor_services_script(pses_psd1) is None:
+        return _Availability(False, pwsh_path, version_line, pses_psd1, "pses-entrypoint-missing")
+
     return _Availability(True, pwsh_path, version_line, pses_psd1, None)
 
 
@@ -277,6 +289,13 @@ def install_hint() -> str:
             "pwsh -NoProfile -Command 'Install-Module PowerShellEditorServices "
             "-Scope CurrentUser -Force'"
         )
+    if reason == "pses-entrypoint-missing":
+        return (
+            f"PowerShellEditorServices found at {state.pses_psd1} but the "
+            "Start-EditorServices.ps1 entry script is missing -- this install "
+            "is corrupt or incomplete; reinstall with pwsh -NoProfile -Command "
+            "'Install-Module PowerShellEditorServices -Scope CurrentUser -Force'"
+        )
     return "pwsh + PowerShellEditorServices not available (unknown reason)"
 
 
@@ -372,16 +391,13 @@ def spawn(workspace_root: Path) -> LspSubprocess:
     psd1_path = state.pses_psd1
     assert pwsh_path is not None and psd1_path is not None  # narrowed by available=True
 
+    # Entrypoint presence was already verified by _probe() before it
+    # set available=True. Asserting here makes the invariant explicit
+    # for type-checkers and pins the contract: if _probe() ever stops
+    # checking the entry script, this assert flags it before the
+    # subprocess.Popen would crash with a less informative error.
     start_script = _start_editor_services_script(psd1_path)
-    if start_script is None:
-        raise LspError(
-            "lsp-binary-missing",
-            f"PowerShellEditorServices found at {psd1_path} but "
-            "Start-EditorServices.ps1 entry script is missing from the "
-            "module directory; the PSES install is incomplete or corrupt",
-            lang=LANG_TAG,
-            install_hint=install_hint(),
-        )
+    assert start_script is not None  # narrowed by _probe() invariant
 
     bundled_modules_path = _bundled_modules_path(psd1_path)
 

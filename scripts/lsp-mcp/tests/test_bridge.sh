@@ -58,6 +58,12 @@
 #         zip layout AND the versioned Install-Module layout. Regression
 #         guard for the 2026-04-25 PSES bundle-root bug where versioned
 #         installs returned the version dir instead of the bundle root.
+#   6f -- _Availability discriminates pses-entrypoint-missing from
+#         pses-missing, and install_hint() returns the right reinstall
+#         text for each. Regression guard for the consistency-review
+#         bug where a corrupt install (PSES.psd1 present but
+#         Start-EditorServices.ps1 absent) returned "already installed"
+#         as the install hint.
 #
 # Future commits append sub-tests for tool wiring, extended tool surface,
 # file-change lifecycle, watchdog, structured logs, path sandboxing, and
@@ -557,6 +563,49 @@ with tempfile.TemporaryDirectory() as td:
 "
 }
 
+# --- 6f: install_hint reason discrimination ------------------------------
+t_powershell_install_hint_reasons() {
+    # Surface the install_hint() reason logic without spawning pwsh.
+    # Replace ps._probe with a stub that returns a chosen _Availability
+    # so install_hint() reads it. The lru_cache wrapper is shadowed by
+    # the assignment; the stubbed function does not need cache_clear.
+    python3 -c "
+import sys
+sys.path.insert(0, 'scripts/lsp-mcp')
+import servers.powershell_server as ps
+from servers.powershell_server import _Availability, install_hint
+
+def stub(av):
+    ps._probe = lambda _av=av: _av  # type: ignore[assignment]
+
+# pwsh-missing -- generic install pointer.
+stub(_Availability(False, None, None, None, 'pwsh-missing'))
+h = install_hint()
+assert 'pwsh' in h.lower() and ('apt install' in h or 'aka.ms' in h), h
+
+# pwsh-too-old -- must surface the observed version string.
+stub(_Availability(False, '/usr/bin/pwsh', 'PowerShell 5.1.0', None, 'pwsh-too-old'))
+h = install_hint()
+assert 'pwsh 7' in h and '5.1.0' in h, h
+
+# pses-missing -- Install-Module remediation, NOT 'corrupt' wording.
+stub(_Availability(False, '/usr/bin/pwsh', 'PowerShell 7.4.1', None, 'pses-missing'))
+h = install_hint()
+assert 'Install-Module PowerShellEditorServices' in h, h
+assert 'corrupt' not in h, h
+
+# pses-entrypoint-missing -- distinct from pses-missing; must NOT say
+# 'already installed'. Must mention Start-EditorServices.ps1 + reinstall.
+stub(_Availability(False, '/usr/bin/pwsh', 'PowerShell 7.4.1',
+                  '/some/path/PowerShellEditorServices/PowerShellEditorServices.psd1',
+                  'pses-entrypoint-missing'))
+h = install_hint()
+assert 'Start-EditorServices.ps1' in h, h
+assert 'corrupt' in h or 'incomplete' in h, h
+assert 'already installed' not in h, h
+"
+}
+
 # --- 6d: _caps_missing honors LSP boolean|options cap shape ---------------
 t_caps_missing_options_shape() {
     python3 -c "
@@ -603,6 +652,7 @@ run "6b powershell_server surface"       t_powershell_server_import
 run "6c powershell_server required caps" t_powershell_server_caps
 run "6d _caps_missing options shape"     t_caps_missing_options_shape
 run "6e bundled_modules_path layouts"    t_bundled_modules_path_layouts
+run "6f install_hint reason discrim"     t_powershell_install_hint_reasons
 
 printf '[lsp-mcp-tests] %d/%d sub-tests PASS\n' "$pass" "$((pass + fail))"
 if [ "$fail" -gt 0 ]; then
