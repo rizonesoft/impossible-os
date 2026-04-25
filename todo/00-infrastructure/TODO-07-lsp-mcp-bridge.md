@@ -52,7 +52,7 @@ title: "TODO-07 -- LSP to MCP Bridge (C, NASM, shell, Python, PowerShell)"
 | 💎  |   9   | Setup deps, manifest, Makefile target, docs, boundary                      | §1, §2-§6, §7, §8, T01 §1, T02 §5 |  [x]   |
 | ⭐  |  10   | Unit tests, --self-test harness, test-tooling surface                      | §1-§9                             |  [x]   |
 | 💎  |  11   | Extended LSP tools (completion, signature/nav/call-hierarchy, code_action) | §1, §7                            |  [x]   |
-| 💎  |  12   | File-change lifecycle (didChange / didSave / didClose forwarding)          | §1, §7                            |  [ ]   |
+| 💎  |  12   | File-change lifecycle (didChange / didSave / didClose forwarding)          | §1, §7                            |  [x]   |
 | ⭐  |  13   | LSP subprocess health monitoring + auto-restart (exp backoff)              | §1                                |  [ ]   |
 | 💎  |  14   | Structured JSON logging + request correlation IDs                          | §1                                |  [ ]   |
 | ⭐  |  15   | Path sandboxing + workspace boundary enforcement                           | §1, §7                            |  [ ]   |
@@ -232,7 +232,6 @@ Wire PowerShellEditorServices (Microsoft OSS) for the ~1.1k lines of PowerShell 
 > - **Scope boundary:** no MCP tools registered (§7); no per-extension dispatch (§7); successful spawns leak a tempdir per session (filed in §12 as `cleanup_paths` retrofit at line 348).
 
 > **Verified:** 2026-04-25 | commit `51e96f11` | 6/6 items | build N/A (host-side Python) | tests 25/25 PASS
-> **Accepted:** [L] PSES tempdir leaks on successful spawn (success path has no shutdown hook to clean LogPath; failure cleanup is correct) (reason: infra) -> XREF: 00-infrastructure/TODO-07 §12 (item: "Per-LSP `cleanup_paths` retrofit on `LspSubprocess`" at line 348)
 > **Quality reviewed:** 2026-04-25 | Codex 4x (design + adversarial + consistency + perf) | 4H+2M+1L fixed, 0 open | scope: N/A (host-side Python tooling; no domain quality skill applies)
 
 ---
@@ -276,8 +275,7 @@ Expose six typed MCP tools. Each tool dispatches to the right LSP based on file 
 
 > **Verified:** 2026-04-25 | commit `09a5f02b` | 7/7 items | build N/A (host-side Python) | tests 33/33 PASS
 > **Accepted:** [M] residual `resolve()`/`os.open()` path race -- local actor with workspace mutation rights could swap ancestor dir between validate and open (reason: infra) -> XREF: 00-infrastructure/TODO-07 §15 (item: "Race-free path-walk via `openat` (close the resolve/open window)" at line 425)
-> **Accepted:** [M] `ensure_open()` ignores fresh text on dedup -- after in-session file edits the LSP operates on stale text (reason: infra) -> XREF: 00-infrastructure/TODO-07 §12 (item: "Extend `LspSubprocess` with a tracked-URI set" at line 374)
-> **Quality reviewed:** 2026-04-25 | Codex 4x (design + adversarial + consistency + perf) | 6H+5M+7L fixed, 2M accepted-XREF | scope: N/A (host-side Python tooling; no domain quality skill applies)
+> **Quality reviewed:** 2026-04-25 | Codex 4x (design + adversarial + consistency + perf) | 6H+5M+7L fixed, 1M accepted-XREF | scope: N/A (host-side Python tooling; no domain quality skill applies)
 
 ---
 
@@ -400,14 +398,26 @@ The six tools in §7 cover the "navigate + read diagnostics" scope. Agents doing
 
 §1 wires `textDocument/didOpen` so each MCP request reads the file fresh into the LSP's view. That works for read-only snapshots but misses edits: if an agent (or a human in a parallel VS Code session) saves a file while the bridge is running, the LSP's in-memory view goes stale and subsequent hover/diagnostics answers drift silently. Forward the full LSP file-change lifecycle so the LSP's view matches the on-disk file on every request.
 
-- [ ] Extend `LspSubprocess` with a tracked-URI set: on every tool call, check if the file's mtime changed since the last `didOpen`/`didChange`. If yes, send `textDocument/didChange` (full-file replace) before the actual request.
-- [ ] On `workspace_symbol` (cross-file query), drain any pending `publishDiagnostics` notifications so cached per-URI diagnostics stay fresh.
-- [ ] On bridge shutdown (`atexit`), send `textDocument/didClose` for every tracked URI so LSPs have a chance to release resources cleanly.
-- [ ] Per-LSP `cleanup_paths` retrofit on `LspSubprocess`: a list of filesystem paths the spawner attaches (e.g., `LspSubprocess.cleanup_paths.append(tempdir)`). Bridge `atexit` walks every live LSP and `shutil.rmtree`s each path after the `didClose` + `shutdown` round trip. PowerShellEditorServices spawn (`scripts/lsp-mcp/servers/powershell_server.py`) creates a per-spawn tempdir for `LogPath`/`SessionDetailsPath` that today leaks on successful sessions because no shutdown hook owns it; this retrofit fixes that. Other spawners can opt in for any spawner-owned scratch state. Validation: spawn + shutdown PSES, assert tempdir is gone (extend sub-test 6a or add 12d).
-- [ ] Handle `textDocument/didSave` forwarding: some LSPs (pyright, clangd) only re-lint on save; the bridge sends a synthetic didSave when mtime indicates the file was rewritten externally.
-- [ ] Commit: `"scripts/lsp-mcp: file-change lifecycle forwarding (didChange/didSave/didClose)"`
+- [x] `LspSubprocess.open_uri_meta: dict[str, {version, mtime_ns}]` tracks per-URI version + mtime. New `apply_text(uri, language_id, text, mtime_ns, force_did_save=False)` is the open-or-refresh driver every MCP tool routes through (via `_ensure_open_for` in `bridge.py`); `_dispatch_path` returns `mtime_ns` from the same fstat that validates the file mode + size so the TOCTOU guarantee is preserved. First call -> didOpen+v1; same-mtime -> no-op cached version; mtime drift -> didChange (full-file replace) + version+1. All decisions atomic under `_open_uris_lock`; teardown gate rejects with `lsp-shutdown`.
+- [x] `workspace_symbol` fan-out path calls `inst.flush_notifications(timeout=0.05)` on each snapshot LSP after the parallel queries return so the next `diagnostics(path)` MCP call sees the latest publishDiagnostics. Single-LSP `lang=` path inherits LSP wire-order ordering for free.
+- [x] `LspSubprocess.shutdown()` (`lsp_client.py`) sends `textDocument/didClose` for every URI in `open_uris` BEFORE the LSP shutdown RPC + exit notification. Snapshot taken under `_open_uris_lock`; `_shutdown_called` committed up-front (under `_open_uris_lock`) so concurrent `apply_text`/`request`/`notify` reject with `lsp-shutdown` instead of racing past the snapshot. `_teardown_in_progress` is the internal-bypass flag so our own didClose/shutdown/exit traffic still flows.
+- [x] `LspSubprocess.cleanup_paths: list[str]` walked at the end of `shutdown()` (after the process is fully reaped) via `shutil.rmtree(path, ignore_errors=True)`. `cleanup_paths.clear()` after the walk so a double-shutdown does not double-rmtree. `powershell_server.py` appends its per-spawn `lsp-mcp-pses-*` tempdir on the success path, fixing the prior leak (the failure-path `rmtree` in the `except BaseException` block stays for spawn-time-failure cleanup before `lsp` is returned).
+- [x] `apply_text(force_did_save=True)` (used by `_DIDSAVE_ON_REFRESH_LANGS = {"c", "py"}` for clangd/pyright re-lint-on-save) sends synthetic `textDocument/didSave` ONLY on the drift branch, paired with the `didChange`. No-drift calls do NOT rebroadcast didSave (Codex review caught the earlier always-fire path that would have flooded clangd/pyright with pointless re-lint cycles on every hover).
+- [x] Commit: `"scripts/lsp-mcp: file-change lifecycle forwarding (didChange/didSave/didClose)"`
 
 **Test checkpoint:** Open `src/kernel/main.c`, call `hover` at a known identifier (returns `kmain` doc). In parallel, `sed -i` an edit that changes the identifier's type. Call `hover` again; bridge detects mtime change, forwards `didChange`, returns the new resolved type. After bridge shutdown, `pgrep -f 'clangd|pyright'` empty (no leaked LSPs).
+
+> **Test runner:** `bash scripts/lsp-mcp/tests/test_bridge.sh` | 49/49 sub-tests PASS (1a-9a + 11a-11g + 12a-12e; 12a `apply_text()` decision matrix, 12b `didClose` at shutdown ordering, 12c `cleanup_paths` walked + cleared, 12d end-to-end didChange forwarding through bridge handler on real mtime drift, 12e regression guard for the `apply_text`-during-teardown race fixed in the §12 review)
+
+> **Notes:**
+>
+> - **What shipped:** `lsp_client.py` adds `apply_text(uri, language_id, text, mtime_ns, force_did_save)` open-or-refresh driver + `did_change` / `did_save` / `did_close` / `flush_notifications` methods + `open_uri_meta` per-URI version+mtime tracking + `cleanup_paths` attribute; `shutdown()` rewritten to commit `_shutdown_called` BEFORE the didClose snapshot (under `_open_uris_lock`), send didClose for every tracked URI, then walk `cleanup_paths` after process reap. `bridge.py` `_dispatch_path` extends to return `mtime_ns` from the bound-fd fstat (TOCTOU-safe); `_ensure_open_for` becomes a thin shim over `apply_text` with `_DIDSAVE_ON_REFRESH_LANGS = {"c", "py"}` policy; `workspace_symbol` fan-out drains pending notifications. `powershell_server.py` registers its per-spawn tempdir on `lsp.cleanup_paths`, closing the prior leak.
+> - **How it runs:** every MCP tool call goes through `_ensure_open_for(lsp, resolved, lang, text, mtime_ns)` -- transparent to the agent. First call on a URI sends didOpen; same-mtime calls are no-ops; mtime drift triggers didChange (and didSave for clangd/pyright). Bridge `atexit` walks live LSPs and `LspSubprocess.shutdown()` cleans state in the canonical order: didClose -> shutdown -> exit -> reap -> cleanup_paths.
+> - **Downstream effects:** unblocks the long-running-bridge correctness gap every existing 3rd-party LSP-MCP bridge exhibits (stale LSP view drifting silently after external edits). Closes the PSES tempdir leak. Closes the §7 Accepted-XREF for `ensure_open() ignores fresh text on dedup` (resolved by `apply_text` mtime gate). Codex 1x adversarial review with 1H+2M findings adopted (commit `<§12 commit>`); per-finding evidence in commit message.
+> - **Canonical doc:** [`docs/infrastructure/development-tooling.md` LSP MCP Bridge subsection](../../docs/infrastructure/development-tooling.md) -- documents the on-demand spawn + read-only boundary; the file-change-lifecycle behavior is invisible to the MCP caller and does not need surface-level documentation beyond this TODO section.
+> - **Scope boundary:** §12 does NOT own watchdog auto-restart on LSP crash (§13), correlation-ID logging (§14), workspace-bounded path sandboxing's race-free walk (§15), or warm-start (§16). Range-based incremental sync via `TextDocumentContentChangeEvent.range` is intentionally NOT implemented -- full-file replace is the simplest correct contract every LSP supports, and the bridge already reads the full file fresh on every tool call (so range-diff would buy zero latency).
+
+> **Verified:** 2026-04-25 | commit `<§12 commit>` | 6/6 items | build OK | tests 49/49 PASS
 
 ---
 

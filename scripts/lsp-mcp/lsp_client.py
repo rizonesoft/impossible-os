@@ -32,6 +32,7 @@ import atexit
 import io
 import json
 import os
+import shutil
 import signal
 import subprocess
 import threading
@@ -292,6 +293,19 @@ class LspSubprocess:
         # didOpen per URI reaches the LSP. Codex pre-implementation
         # review of the MCP tools surface flagged this as High.
         self._open_uris_lock = threading.Lock()
+        # Per-URI metadata for the file-change-lifecycle path:
+        # {uri: {"version": int, "mtime_ns": int}}. Populated by
+        # apply_text() (the open-or-refresh driver used by every MCP
+        # tool handler) so the LSP's view stays current across
+        # external edits. Read under _open_uris_lock alongside
+        # open_uris so the open/refresh decision is atomic.
+        self.open_uri_meta: dict[str, dict[str, Any]] = {}
+        # Filesystem paths owned by this LspSubprocess that the
+        # bridge atexit hook should `shutil.rmtree` after the LSP
+        # has shut down cleanly. Spawners append to this list (e.g.
+        # PowerShellEditorServices' per-spawn LogPath/SessionDetails
+        # tempdir). Empty by default; opt-in per spawner.
+        self.cleanup_paths: list[str] = []
 
         self._spawn()
         _LIVE_SUBPROCS.add(self)
@@ -891,6 +905,192 @@ class LspSubprocess:
             self.open_uris.add(uri)
             return True
 
+    def did_change(self, uri: str, language_id: str, text: str,
+                   version: int) -> None:
+        """Send a textDocument/didChange notification with a full-file
+        replace (no `range` -- the change covers the entire document).
+
+        Full-file replacement is the simplest contract that every LSP
+        supports; range-based incremental sync would require we keep
+        the canonical document text on the bridge side AND compute a
+        Range for every diff, neither of which buys us latency wins
+        for a tool surface where each MCP call already reads the file
+        fresh. version MUST be monotonically increasing per URI per
+        LSP 3.17 -- the apply_text() driver guards that contract."""
+        self.notify("textDocument/didChange", {
+            "textDocument": {
+                "uri": uri,
+                "version": version,
+            },
+            "contentChanges": [{"text": text}],
+        })
+
+    def did_save(self, uri: str, text: Optional[str] = None) -> None:
+        """Send a textDocument/didSave notification. Some LSPs
+        (pyright, clangd) only re-lint or re-index on save; the
+        bridge sends a synthetic didSave when external mtime
+        indicates the file was rewritten by another process so the
+        LSP's diagnostics stay current.
+
+        text is optional per LSP 3.17 -- only sent when the server
+        advertised `textDocumentSync.save.includeText: true` in its
+        initialize result. We accept it as a parameter but the
+        apply_text() driver is responsible for deciding whether to
+        pass it (avoids wasted bandwidth for the common case)."""
+        params: dict[str, Any] = {"textDocument": {"uri": uri}}
+        if text is not None:
+            params["text"] = text
+        self.notify("textDocument/didSave", params)
+
+    def did_close(self, uri: str) -> None:
+        """Send a textDocument/didClose notification. Drops the URI
+        from open_uris so a subsequent ensure_open() / apply_text()
+        re-opens cleanly. Does NOT clear open_uri_meta: keeping the
+        last-known version means a future re-open + change sequence
+        starts past the LSP's prior version count, which some servers
+        (PSES) require for stale-document rejection.
+
+        Lock order: _open_uris_lock acquired BEFORE notify() (which
+        takes _io_lock) -- the same order apply_text() and
+        ensure_open() use. The earlier draft acquired the locks in
+        the reverse order (notify first, then _open_uris_lock) and
+        Codex flagged it as Medium: a real lock-order inversion
+        deadlock with apply_text on the same URI. Mutate state and
+        send the notification under the single critical section so
+        no caller can observe an open URI that has already been
+        closed on the wire (or vice versa)."""
+        with self._open_uris_lock:
+            self.notify("textDocument/didClose", {
+                "textDocument": {"uri": uri},
+            })
+            self.open_uris.discard(uri)
+
+    def apply_text(self, uri: str, language_id: str, text: str,
+                   mtime_ns: Optional[int],
+                   force_did_save: bool = False) -> int:
+        """Open-or-refresh driver: ensure the LSP's in-memory view of
+        `uri` matches the on-disk text identified by `mtime_ns`.
+
+        Returns the document version after this call (1 for first
+        open, N+1 after a change). Thread-safe: the open-vs-refresh
+        decision + the wire notification + the meta update happen
+        under _open_uris_lock as a single atomic step, so two
+        concurrent MCP tool calls on the same URI cannot race the
+        version counter or duplicate-send didOpen.
+
+        Behavior matrix:
+          * URI never opened  -> didOpen, version=1, record mtime.
+          * URI open, mtime matches  -> no-op, return cached version.
+          * URI open, mtime changed  -> didChange, version+=1, record
+                                        new mtime; if force_did_save
+                                        (or the LSP only re-lints on
+                                        save -- caller policy), also
+                                        send didSave.
+          * mtime_ns is None         -> treat as "skip refresh check";
+                                        used by self-tests that don't
+                                        care about external edits.
+
+        Lock order: _open_uris_lock acquired first, then notify()
+        takes _io_lock internally. No callsite reverses that order.
+
+        Teardown gate: rejects external callers once shutdown() has
+        committed to closing the LSP. Codex post-implementation
+        review caught a race where a concurrent apply_text() between
+        shutdown's snapshot of open_uris and its didClose loop could
+        register a new URI that the snapshot would never see, AND
+        could interleave normal traffic into the teardown sequence.
+        The fix: shutdown() now sets _shutdown_called BEFORE the
+        snapshot; we honor it here under _open_uris_lock so the
+        check + state read are atomic. _teardown_in_progress is the
+        internal-bypass flag for shutdown's own didClose/shutdown/
+        exit traffic and is NOT honored by apply_text() (no internal
+        caller of apply_text() exists during teardown)."""
+        with self._open_uris_lock:
+            if self._shutdown_called:
+                raise LspError(
+                    "lsp-shutdown",
+                    "apply_text after shutdown",
+                    lang=self.lang,
+                    uri=uri,
+                )
+            meta = self.open_uri_meta.get(uri)
+            if uri not in self.open_uris:
+                # First open. Send didOpen under the lock so a
+                # concurrent caller sees open_uris populated and
+                # falls through to the change path on its own
+                # mtime check.
+                self.notify("textDocument/didOpen", {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": language_id,
+                        "version": 1,
+                        "text": text,
+                    },
+                })
+                self.open_uris.add(uri)
+                self.open_uri_meta[uri] = {
+                    "version": 1,
+                    "mtime_ns": mtime_ns,
+                }
+                return 1
+            # Already open: refresh on mtime drift.
+            if meta is None:
+                # ensure_open() opened this URI without recording
+                # meta (legacy code path, self-tests). Adopt
+                # version=1 + current mtime without re-sending
+                # didOpen.
+                self.open_uri_meta[uri] = {
+                    "version": 1,
+                    "mtime_ns": mtime_ns,
+                }
+                return 1
+            tracked_mtime = meta.get("mtime_ns")
+            current_version = meta.get("version", 1)
+            if mtime_ns is None or tracked_mtime is None or \
+                    mtime_ns == tracked_mtime:
+                # No mtime info OR no drift -- the LSP's view is
+                # already current relative to what we last sent.
+                # No didSave here: Codex review caught the earlier
+                # revision unconditionally rebroadcasting didSave
+                # for every C/Python tool call, which would push
+                # clangd/pyright into pointless re-lint cycles on
+                # every hover/definition. didSave only fires on
+                # the drift branch below, where it actually pairs
+                # with new content.
+                return current_version
+            # Drift: send didChange with full-file replace, then
+            # optionally didSave (force_did_save targets LSPs that
+            # only re-lint or re-index on save -- pyright, clangd).
+            new_version = current_version + 1
+            self.did_change(uri, language_id, text, new_version)
+            if force_did_save:
+                self.did_save(uri)
+            self.open_uri_meta[uri] = {
+                "version": new_version,
+                "mtime_ns": mtime_ns,
+            }
+            return new_version
+
+    def flush_notifications(self, timeout: float = 0.05) -> None:
+        """Best-effort drain of any pending publishDiagnostics (or
+        other server-initiated notifications) the reader thread has
+        not yet consumed.
+
+        Implementation: yield to the reader thread for `timeout`
+        seconds. The reader thread reads the LSP's stdout in a tight
+        loop and dispatches messages as they're parsed, so
+        publishDiagnostics that arrived during the calling MCP tool's
+        wire round-trip are typically already in self.diagnostics_by_uri
+        by the time the round-trip's reply is processed (LSP wire
+        ordering guarantees notifications emitted before the response
+        are parsed first). The brief sleep covers the narrow race
+        where a notification arrived AFTER the response and would
+        otherwise miss the cache snapshot the calling tool returns to
+        the agent. 50 ms is below human latency perception and well
+        under the per-call timeout floor; not adjustable because
+        callers should not need to pick this number."""
+        time.sleep(max(0.0, timeout))
+
     # ------------------------------------------------------------------
     # Shutdown
     # ------------------------------------------------------------------
@@ -904,13 +1104,15 @@ class LspSubprocess:
 
         Idempotent: safe to call twice. Second call returns immediately.
 
-        Ordering matters: we send the graceful LSP shutdown RPC
-        FIRST (with _teardown_in_progress bypassing the
-        _shutdown_called guard in request/notify), and only then
-        flip _shutdown_called to True so further public calls are
-        rejected. Flipping the flag up front (as the earlier
-        revision did) made the graceful RPC unreachable on every
-        teardown path."""
+        Ordering matters: we set _shutdown_called BEFORE the teardown
+        traffic so external request/notify/apply_text calls reject
+        immediately during teardown (Codex post-implementation review
+        High finding: a concurrent apply_text between the open-uris
+        snapshot and the didClose loop could otherwise register a new
+        URI invisible to the snapshot and interleave normal traffic
+        into the teardown sequence). _teardown_in_progress is the
+        internal-bypass flag that lets our own didClose/shutdown/exit
+        slip past the guard the public callers see."""
         if self._shutdown_called:
             return
 
@@ -929,12 +1131,40 @@ class LspSubprocess:
                 self._shutdown_called = True
                 return
 
-            # (1) Graceful LSP shutdown: request + exit notification.
-            # _teardown_in_progress lets these slip past the guard that
-            # normal callers of request()/notify() see.
-            if proc.poll() is None and self._initialized:
+            # Commit-up-front: external callers (request, notify,
+            # apply_text) all check `_shutdown_called and not
+            # _teardown_in_progress` and reject. Set _teardown_in_
+            # progress in the same window we set _shutdown_called so
+            # the only callers that can issue traffic are our own
+            # didClose / shutdown / exit RPCs below. Take
+            # _open_uris_lock so apply_text's atomic check sees the
+            # flag flip without a torn read against a concurrent
+            # entry already past its own guard.
+            with self._open_uris_lock:
+                self._shutdown_called = True
                 self._teardown_in_progress = True
-                try:
+            try:
+                # (1) Graceful LSP shutdown: didClose for every tracked
+                # URI, then the shutdown request, then exit notification.
+                # didClose ordering matters -- some LSPs hold per-document
+                # state (PSES caches script analysis) that they release
+                # only on explicit didClose, NOT on shutdown alone, so
+                # without this loop we leak document state at the LSP
+                # side until the process is fully reaped.
+                if proc.poll() is None and self._initialized:
+                    with self._open_uris_lock:
+                        tracked_uris = list(self.open_uris)
+                    for uri in tracked_uris:
+                        try:
+                            self.notify(
+                                "textDocument/didClose",
+                                {"textDocument": {"uri": uri}},
+                            )
+                        except Exception:
+                            # didClose is best-effort -- one bad URI
+                            # must not block subsequent ones or the
+                            # shutdown RPC itself.
+                            pass
                     try:
                         self.request(
                             "shutdown", None, timeout=min(timeout, 1.5)
@@ -945,11 +1175,8 @@ class LspSubprocess:
                         self.notify("exit", None)
                     except Exception:
                         pass
-                finally:
-                    self._teardown_in_progress = False
-
-            # Commit: no new requests/notifications from callers.
-            self._shutdown_called = True
+            finally:
+                self._teardown_in_progress = False
 
         # (2) Close stdin so the LSP sees EOF even if it ignored exit.
         try:
@@ -1007,6 +1234,24 @@ class LspSubprocess:
             f"{self.lang} LSP shut down",
             lang=self.lang,
         ))
+
+        # (6) Walk cleanup_paths -- spawner-owned filesystem state
+        # (e.g. PSES per-spawn LogPath / SessionDetailsPath tempdir)
+        # that the bridge must remove now that the LSP can no longer
+        # be writing into it. Best-effort: a missing path or an
+        # already-removed tree must not crash the shutdown path,
+        # which runs from atexit hooks where any exception would be
+        # swallowed by the interpreter shutdown anyway. shutil.rmtree
+        # with ignore_errors=True covers the common case (race with
+        # an OS-level temp cleanup, partial directory) without
+        # masking legitimate code bugs (the path list is set by
+        # spawners; a typo there would skip cleanup but not crash).
+        for path in list(self.cleanup_paths):
+            try:
+                shutil.rmtree(path, ignore_errors=True)
+            except Exception:
+                pass
+        self.cleanup_paths.clear()
 
     # ------------------------------------------------------------------
     # Introspection

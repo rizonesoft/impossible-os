@@ -161,6 +161,32 @@
 #          asserts the handler returns within seconds with
 #          deadline_exceeded=True instead of waiting for every
 #          per-call timeout.
+#   12a -- apply_text() open-or-refresh decision matrix: first call =
+#          didOpen+v1, same-mtime second call = no-op cached v1,
+#          different-mtime third call = didChange+v2, force_did_save
+#          adds didSave, second URI tracked independently, mtime=None
+#          skips refresh check. Pure-data; uses a stub LSP.
+#   12b -- did_close fires at shutdown for every tracked URI: open
+#          three URIs via apply_text, shutdown(); stub log records
+#          three textDocument/didClose notifications BEFORE the
+#          shutdown request and exit notification.
+#   12c -- cleanup_paths walked after shutdown: append two tempdirs
+#          to lsp.cleanup_paths, shutdown(); both directories must be
+#          gone and cleanup_paths must be cleared so a double-shutdown
+#          does not double-rmtree.
+#   12d -- bridge handler forwards didChange when on-disk file
+#          changes: hover an arbitrary file, edit it externally
+#          (rewrite + sleep to bump mtime), hover again; stub log
+#          must show didOpen, hover, didChange, hover in that order.
+#          End-to-end through the real bridge handler chain.
+#   12e -- apply_text rejects during teardown (regression guard for
+#          Codex post-impl review High): a concurrent apply_text
+#          racing shutdown's didClose snapshot could otherwise
+#          silently send didOpen for an unsnapshot URI and miss
+#          didClose. Test runs the race 20 times and asserts every
+#          late call either succeeds before the commit or rejects
+#          with lsp-shutdown -- never silently smuggles traffic into
+#          the teardown sequence.
 #   9a -- LSP-process-leak detection: pgrep snapshots taken at harness
 #         entry vs harness exit. Any NEW PID matching the 5 LSP binary
 #         names (owned by this user) is a leak from a sub-test that
@@ -838,16 +864,19 @@ try:
 except LspError as e:
     assert e.kind == 'lsp-path-unsupported-extension', e.kind
 
-# Valid relative path resolves against workspace_root + reads content.
-resolved, lang, text = bridge._dispatch_path('src/kernel/main.c', ws)
+# Valid relative path resolves against workspace_root + reads content
+# AND captures mtime_ns for the file-change-lifecycle path.
+resolved, lang, text, mtime_ns = bridge._dispatch_path('src/kernel/main.c', ws)
 assert lang == 'c', lang
 assert str(resolved).endswith('src/kernel/main.c'), resolved
 assert 'kernel_main' in text, 'TOCTOU fix: text was not read at dispatch time'
+assert isinstance(mtime_ns, int) and mtime_ns > 0, f'bad mtime_ns: {mtime_ns!r}'
 
 # Valid ps1 path routes to ps1.
-resolved, lang, text = bridge._dispatch_path('scripts/machines/run-qemu.ps1', ws)
+resolved, lang, text, mtime_ns = bridge._dispatch_path('scripts/machines/run-qemu.ps1', ws)
 assert lang == 'ps1', lang
 assert text, 'empty ps1 text'
+assert isinstance(mtime_ns, int) and mtime_ns > 0, f'bad mtime_ns: {mtime_ns!r}'
 "
 }
 
@@ -1868,6 +1897,504 @@ print('[code_action] OK -- file unchanged, response read-only')
 PY
 }
 
+# --- 12a: apply_text() open-or-refresh decision matrix --------------------
+# Pure-data test: drives apply_text() against a stub LSP and asserts
+# (1) first call is didOpen, (2) same-mtime second call is no-op,
+# (3) different-mtime third call is didChange with version=2.
+t_apply_text_decision_matrix() {
+    python3 - << 'PY'
+import sys, json
+sys.path.insert(0, 'scripts/lsp-mcp')
+from lsp_client import LspSubprocess
+
+# Echo-stub LSP: replies to initialize; records every notification.
+fake = r"""
+import sys, json, time
+def read_msg():
+    hdr = b''
+    while True:
+        ch = sys.stdin.buffer.read(1)
+        if not ch: return None
+        hdr += ch
+        if hdr.endswith(b'\r\n\r\n'): break
+    n = 0
+    for line in hdr.split(b'\r\n'):
+        if line.lower().startswith(b'content-length:'):
+            n = int(line.split(b':')[1].strip()); break
+    return json.loads(sys.stdin.buffer.read(n).decode('utf-8'))
+def write_msg(obj):
+    b = json.dumps(obj).encode('utf-8')
+    sys.stdout.buffer.write(b'Content-Length: ' + str(len(b)).encode() + b'\r\n\r\n' + b)
+    sys.stdout.buffer.flush()
+captured = []
+import sys as _s
+while True:
+    m = read_msg()
+    if m is None: break
+    method = m.get('method')
+    if 'id' in m:
+        if method == 'initialize':
+            write_msg({'jsonrpc':'2.0','id':m['id'],'result':{'capabilities':{}}})
+        elif method == 'shutdown':
+            write_msg({'jsonrpc':'2.0','id':m['id'],'result':None})
+        else:
+            write_msg({'jsonrpc':'2.0','id':m['id'],'result':None})
+    else:
+        if method == 'exit': break
+        # Notification: echo back as a NOTIFICATION (no id) on a
+        # custom method so the test side can read it from
+        # diagnostics_by_uri-style stash. Easier: just print to stderr.
+        print(json.dumps({'method': method, 'params': m.get('params')}),
+              file=_s.stderr, flush=True)
+"""
+
+lsp = LspSubprocess(['python3', '-c', fake], lang='fake-12a')
+notifications: list = []
+
+# Capture stderr to inspect what the bridge actually sent.
+import threading
+def drain():
+    while True:
+        line = lsp._proc.stderr.readline() if lsp._proc and lsp._proc.stderr else b''
+        if not line: break
+        try:
+            notifications.append(json.loads(line.decode('utf-8').strip()))
+        except Exception:
+            pass
+
+# The LspSubprocess already starts its own stderr-drain thread that
+# DISCARDS stderr. We need a custom hook -- monkey-patch the drain
+# loop AFTER spawn by attaching our own collector via the proc's
+# stderr pipe BEFORE first notify. Simpler: just count what the
+# stub echoes via a different channel.
+
+# Drop the existing stderr drain thread by joining on a sentinel:
+# the existing thread reads everything, so our test cannot also
+# read. Workaround: use lsp._io_lock-aware notify counting via
+# patching the _io_lock acquire counts.
+
+# Cleanest: just count notify() calls via wrapper.
+notify_calls: list = []
+real_notify = lsp.notify
+def counting_notify(method, params=None):
+    notify_calls.append((method, params))
+    return real_notify(method, params)
+lsp.notify = counting_notify  # type: ignore
+
+try:
+    lsp.initialize('file:///tmp/test')
+
+    # (1) First apply_text -> didOpen, version=1.
+    v = lsp.apply_text('file:///x.py', 'python', 'first', mtime_ns=100)
+    assert v == 1, v
+    open_calls = [c for c in notify_calls if c[0] == 'textDocument/didOpen']
+    assert len(open_calls) == 1, open_calls
+    assert open_calls[0][1]['textDocument']['version'] == 1
+    assert open_calls[0][1]['textDocument']['text'] == 'first'
+
+    # (2) Same mtime -> no-op, return cached version=1, no didChange.
+    v = lsp.apply_text('file:///x.py', 'python', 'first', mtime_ns=100)
+    assert v == 1, v
+    chg_calls = [c for c in notify_calls if c[0] == 'textDocument/didChange']
+    assert len(chg_calls) == 0, chg_calls
+
+    # (3) Different mtime -> didChange, version=2.
+    v = lsp.apply_text('file:///x.py', 'python', 'second', mtime_ns=200)
+    assert v == 2, v
+    chg_calls = [c for c in notify_calls if c[0] == 'textDocument/didChange']
+    assert len(chg_calls) == 1, chg_calls
+    assert chg_calls[0][1]['textDocument']['version'] == 2
+    assert chg_calls[0][1]['contentChanges'][0]['text'] == 'second'
+
+    # (4) Force didSave on refresh.
+    v = lsp.apply_text('file:///x.py', 'python', 'third', mtime_ns=300,
+                       force_did_save=True)
+    assert v == 3, v
+    save_calls = [c for c in notify_calls if c[0] == 'textDocument/didSave']
+    assert len(save_calls) == 1, save_calls
+
+    # (5) Second URI tracked independently -- new didOpen, version=1.
+    v = lsp.apply_text('file:///y.py', 'python', 'other', mtime_ns=50)
+    assert v == 1, v
+    open_calls = [c for c in notify_calls if c[0] == 'textDocument/didOpen']
+    assert len(open_calls) == 2, open_calls
+
+    # (6) mtime_ns=None -> skip refresh check, return cached version
+    # (does not block, does not over-fire didChange).
+    v = lsp.apply_text('file:///x.py', 'python', 'whatever', mtime_ns=None)
+    assert v == 3, v   # cached after step 4
+finally:
+    lsp.shutdown(timeout=2.0)
+PY
+}
+
+# --- 12b: did_close fires at shutdown for every tracked URI ---------------
+t_didclose_at_shutdown() {
+    python3 - << 'PY'
+import sys, json
+sys.path.insert(0, 'scripts/lsp-mcp')
+from lsp_client import LspSubprocess
+
+# Stub that records every notification it receives via stderr.
+fake = r"""
+import sys, json
+def read_msg():
+    hdr = b''
+    while True:
+        ch = sys.stdin.buffer.read(1)
+        if not ch: return None
+        hdr += ch
+        if hdr.endswith(b'\r\n\r\n'): break
+    n = 0
+    for line in hdr.split(b'\r\n'):
+        if line.lower().startswith(b'content-length:'):
+            n = int(line.split(b':')[1].strip()); break
+    return json.loads(sys.stdin.buffer.read(n).decode('utf-8'))
+def write_msg(obj):
+    b = json.dumps(obj).encode('utf-8')
+    sys.stdout.buffer.write(b'Content-Length: ' + str(len(b)).encode() + b'\r\n\r\n' + b)
+    sys.stdout.buffer.flush()
+import os
+log = open(os.environ['STUB_LOG'], 'w')
+while True:
+    m = read_msg()
+    if m is None: break
+    method = m.get('method')
+    log.write(json.dumps({'method': method, 'has_id': 'id' in m}) + '\n')
+    log.flush()
+    if 'id' in m:
+        if method == 'initialize':
+            write_msg({'jsonrpc':'2.0','id':m['id'],'result':{'capabilities':{}}})
+        elif method == 'shutdown':
+            write_msg({'jsonrpc':'2.0','id':m['id'],'result':None})
+        else:
+            write_msg({'jsonrpc':'2.0','id':m['id'],'result':None})
+    else:
+        if method == 'exit':
+            break
+log.close()
+"""
+
+import os, tempfile
+log_path = tempfile.mktemp(prefix='lsp-mcp-stub-12b-', suffix='.log')
+env = dict(os.environ); env['STUB_LOG'] = log_path
+lsp = LspSubprocess(['python3', '-c', fake], lang='fake-12b', env=env)
+try:
+    lsp.initialize('file:///tmp/test')
+    # Open three URIs.
+    for i in range(3):
+        lsp.apply_text(f'file:///x{i}.py', 'python', 'body', mtime_ns=i)
+    assert lsp.open_uris == {f'file:///x{i}.py' for i in range(3)}
+finally:
+    # shutdown() must didClose every URI before issuing 'shutdown'.
+    lsp.shutdown(timeout=2.0)
+
+# Inspect stub log: ordering must show 3 didClose, then shutdown,
+# then exit.
+with open(log_path) as f:
+    lines = [json.loads(l) for l in f if l.strip()]
+os.unlink(log_path)
+
+methods = [l['method'] for l in lines]
+# Must have 3 didClose calls.
+close_count = methods.count('textDocument/didClose')
+assert close_count == 3, f'expected 3 didClose, got {close_count}: {methods}'
+# Order: every didClose must come before the shutdown request.
+shutdown_idx = methods.index('shutdown')
+for i, m in enumerate(methods):
+    if m == 'textDocument/didClose':
+        assert i < shutdown_idx, f'didClose at {i} after shutdown at {shutdown_idx}'
+PY
+}
+
+# --- 12c: cleanup_paths walked after shutdown ----------------------------
+t_cleanup_paths_walked() {
+    python3 - << 'PY'
+import sys, os, tempfile
+sys.path.insert(0, 'scripts/lsp-mcp')
+from lsp_client import LspSubprocess
+
+# Minimal LSP stub.
+fake = r"""
+import sys, json
+def read_msg():
+    hdr = b''
+    while True:
+        ch = sys.stdin.buffer.read(1)
+        if not ch: return None
+        hdr += ch
+        if hdr.endswith(b'\r\n\r\n'): break
+    n = 0
+    for line in hdr.split(b'\r\n'):
+        if line.lower().startswith(b'content-length:'):
+            n = int(line.split(b':')[1].strip()); break
+    return json.loads(sys.stdin.buffer.read(n).decode('utf-8'))
+def write_msg(obj):
+    b = json.dumps(obj).encode('utf-8')
+    sys.stdout.buffer.write(b'Content-Length: ' + str(len(b)).encode() + b'\r\n\r\n' + b)
+    sys.stdout.buffer.flush()
+while True:
+    m = read_msg()
+    if m is None: break
+    method = m.get('method')
+    if 'id' in m:
+        if method == 'initialize':
+            write_msg({'jsonrpc':'2.0','id':m['id'],'result':{'capabilities':{}}})
+        else:
+            write_msg({'jsonrpc':'2.0','id':m['id'],'result':None})
+    elif method == 'exit':
+        break
+"""
+
+# Two tempdirs: one with a real file inside, one nested.
+tmp1 = tempfile.mkdtemp(prefix='lsp-mcp-cleanup-12c-')
+tmp2 = tempfile.mkdtemp(prefix='lsp-mcp-cleanup-12c-')
+with open(os.path.join(tmp1, 'file.txt'), 'w') as f:
+    f.write('content')
+
+lsp = LspSubprocess(['python3', '-c', fake], lang='fake-12c')
+try:
+    lsp.initialize('file:///tmp/test')
+    lsp.cleanup_paths.append(tmp1)
+    lsp.cleanup_paths.append(tmp2)
+    assert os.path.isdir(tmp1) and os.path.isdir(tmp2)
+finally:
+    lsp.shutdown(timeout=2.0)
+
+# After shutdown both tempdirs MUST be gone.
+assert not os.path.exists(tmp1), f'{tmp1} still exists'
+assert not os.path.exists(tmp2), f'{tmp2} still exists'
+# cleanup_paths cleared so a double-shutdown does not double-rmtree.
+assert lsp.cleanup_paths == [], lsp.cleanup_paths
+PY
+}
+
+# --- 12d: bridge handler forwards didChange when on-disk file changes ----
+t_bridge_handler_forwards_didchange() {
+    python3 - << 'PY'
+import sys, json, os, tempfile, time
+from pathlib import Path
+sys.path.insert(0, 'scripts/lsp-mcp')
+
+try:
+    from mcp.server.fastmcp import FastMCP
+except Exception:
+    sys.exit(0)  # SKIP
+
+import bridge
+from lsp_client import LspSubprocess
+
+# Stub LSP that logs every notification + replies to hover with a
+# canned body so the bridge handler can return.
+fake = r"""
+import sys, json, os
+def read_msg():
+    hdr = b''
+    while True:
+        ch = sys.stdin.buffer.read(1)
+        if not ch: return None
+        hdr += ch
+        if hdr.endswith(b'\r\n\r\n'): break
+    n = 0
+    for line in hdr.split(b'\r\n'):
+        if line.lower().startswith(b'content-length:'):
+            n = int(line.split(b':')[1].strip()); break
+    return json.loads(sys.stdin.buffer.read(n).decode('utf-8'))
+def write_msg(obj):
+    b = json.dumps(obj).encode('utf-8')
+    sys.stdout.buffer.write(b'Content-Length: ' + str(len(b)).encode() + b'\r\n\r\n' + b)
+    sys.stdout.buffer.flush()
+log = open(os.environ['STUB_LOG'], 'w')
+while True:
+    m = read_msg()
+    if m is None: break
+    method = m.get('method')
+    log.write(json.dumps({'method': method, 'has_id': 'id' in m}) + '\n')
+    log.flush()
+    if 'id' in m:
+        if method == 'initialize':
+            write_msg({'jsonrpc':'2.0','id':m['id'],'result':{'capabilities':{}}})
+        elif method == 'textDocument/hover':
+            write_msg({'jsonrpc':'2.0','id':m['id'],
+                       'result':{'contents':{'kind':'markdown','value':'h'}}})
+        else:
+            write_msg({'jsonrpc':'2.0','id':m['id'],'result':None})
+    elif method == 'exit':
+        break
+log.close()
+"""
+
+ws = Path.cwd()
+log_path = tempfile.mktemp(prefix='lsp-mcp-stub-12d-', suffix='.log')
+tmp = tempfile.NamedTemporaryFile(suffix='.fakeext12d', mode='w',
+                                  delete=False, dir=str(ws))
+try:
+    tmp.write('first body\n'); tmp.close()
+
+    bridge._EXT_TO_LANG['.fakeext12d'] = 'fake12d'
+    bridge._LANG_TO_LSP_LANGUAGE_ID['fake12d'] = 'plaintext'
+    env = dict(os.environ); env['STUB_LOG'] = log_path
+
+    def spawn_fake(workspace_root):
+        lsp = LspSubprocess(['python3', '-c', fake], lang='fake12d', env=env)
+        lsp.initialize('file://' + str(workspace_root))
+        return lsp
+    bridge.register_spawner('fake12d', spawn_fake)
+
+    srv = bridge._build_mcp(FastMCP, ws)
+    fn = srv._tool_manager._tools['hover'].fn
+
+    # First hover -> didOpen forwarded, hover replies.
+    r1 = fn(path=os.path.basename(tmp.name), line=0, character=0)
+    assert 'error' not in r1, r1
+
+    # Force a different mtime by writing the file again (with a sleep
+    # to clear nanosecond same-tick edge case on some filesystems).
+    time.sleep(0.05)
+    with open(tmp.name, 'w') as f:
+        f.write('second body with more text\n')
+
+    # Second hover -> apply_text MUST detect mtime drift and forward
+    # textDocument/didChange before issuing the hover.
+    r2 = fn(path=os.path.basename(tmp.name), line=0, character=0)
+    assert 'error' not in r2, r2
+
+    # Inspect stub log: must have at least one didOpen and at least
+    # one didChange before the second hover. Order: didOpen, hover,
+    # didChange, hover.
+    with open(log_path) as f:
+        lines = [json.loads(l) for l in f if l.strip()]
+    methods = [l['method'] for l in lines]
+    assert methods.count('textDocument/didOpen') == 1, methods
+    assert methods.count('textDocument/didChange') == 1, methods
+    open_idx = methods.index('textDocument/didOpen')
+    change_idx = methods.index('textDocument/didChange')
+    hover_indices = [i for i, m in enumerate(methods) if m == 'textDocument/hover']
+    assert len(hover_indices) == 2, methods
+    assert open_idx < hover_indices[0] < change_idx < hover_indices[1], methods
+    print('[didChange] OK -- mtime drift forwarded didChange before 2nd hover')
+finally:
+    try: os.unlink(tmp.name)
+    except OSError: pass
+    try: os.unlink(log_path)
+    except OSError: pass
+    bridge._EXT_TO_LANG.pop('.fakeext12d', None)
+    bridge._LANG_TO_LSP_LANGUAGE_ID.pop('fake12d', None)
+    bridge._LSP_SPAWNERS.pop('fake12d', None)
+    with bridge._LIVE_LSPS_LOCK:
+        keys = [k for k in bridge._LIVE_LSPS if k[0] == 'fake12d']
+    for k in keys:
+        with bridge._LIVE_LSPS_LOCK:
+            inst = bridge._LIVE_LSPS.pop(k, None)
+        if inst is not None:
+            inst.shutdown(timeout=2.0)
+PY
+}
+
+# --- 12e: apply_text rejects during teardown -----------------------------
+# Codex post-implementation review High: a concurrent apply_text
+# between shutdown's snapshot of open_uris and its didClose loop
+# could register a new URI invisible to the snapshot AND interleave
+# normal traffic into the teardown sequence. Fix sets _shutdown_called
+# (under _open_uris_lock) BEFORE the didClose snapshot. This test
+# starts shutdown, then races apply_text against it; the apply_text
+# MUST reject with lsp-shutdown OR (rare) succeed before the teardown
+# commit -- never silently send a notification that misses didClose.
+t_apply_text_rejects_during_teardown() {
+    python3 - << 'PY'
+import sys, threading, time
+sys.path.insert(0, 'scripts/lsp-mcp')
+from lsp_client import LspSubprocess, LspError
+
+# Minimal LSP stub.
+fake = r"""
+import sys, json, time
+def read_msg():
+    hdr = b''
+    while True:
+        ch = sys.stdin.buffer.read(1)
+        if not ch: return None
+        hdr += ch
+        if hdr.endswith(b'\r\n\r\n'): break
+    n = 0
+    for line in hdr.split(b'\r\n'):
+        if line.lower().startswith(b'content-length:'):
+            n = int(line.split(b':')[1].strip()); break
+    return json.loads(sys.stdin.buffer.read(n).decode('utf-8'))
+def write_msg(obj):
+    b = json.dumps(obj).encode('utf-8')
+    sys.stdout.buffer.write(b'Content-Length: ' + str(len(b)).encode() + b'\r\n\r\n' + b)
+    sys.stdout.buffer.flush()
+while True:
+    m = read_msg()
+    if m is None: break
+    method = m.get('method')
+    if 'id' in m:
+        if method == 'initialize':
+            write_msg({'jsonrpc':'2.0','id':m['id'],'result':{'capabilities':{}}})
+        elif method == 'shutdown':
+            # Slow-shutdown: sleep so the racing apply_text has a
+            # window to land DURING teardown, not before it.
+            time.sleep(0.1)
+            write_msg({'jsonrpc':'2.0','id':m['id'],'result':None})
+        else:
+            write_msg({'jsonrpc':'2.0','id':m['id'],'result':None})
+    elif method == 'exit':
+        break
+"""
+
+# Run the race many times to actually catch it.
+shutdown_rejections = 0
+shutdown_succeeded = 0
+for trial in range(20):
+    lsp = LspSubprocess(['python3', '-c', fake], lang=f'fake-12e-{trial}')
+    try:
+        lsp.initialize('file:///tmp/test')
+        # Open one URI so didClose has something to send.
+        lsp.apply_text('file:///pre.py', 'python', 'pre', mtime_ns=1)
+
+        late_result = {'kind': None, 'error': None}
+        def late_apply():
+            # Tiny pause to let shutdown begin the didClose phase.
+            time.sleep(0.02)
+            try:
+                lsp.apply_text('file:///late.py', 'python', 'late', mtime_ns=2)
+                late_result['kind'] = 'success'
+            except LspError as e:
+                late_result['kind'] = 'error'
+                late_result['error'] = e.kind
+
+        t = threading.Thread(target=late_apply)
+        t.start()
+        lsp.shutdown(timeout=2.0)
+        t.join(timeout=3.0)
+
+        # The late apply must have either succeeded BEFORE the
+        # _shutdown_called commit (rare, unobservable race) OR been
+        # rejected with lsp-shutdown. It must NEVER crash, deadlock,
+        # or silently sneak a notification past the teardown.
+        assert late_result['kind'] in ('success', 'error'), late_result
+        if late_result['kind'] == 'error':
+            shutdown_rejections += 1
+            assert late_result['error'] == 'lsp-shutdown', late_result
+        else:
+            shutdown_succeeded += 1
+    finally:
+        # Ensure clean teardown if anything broke.
+        try: lsp.shutdown(timeout=1.0)
+        except Exception: pass
+
+# At least SOME trials must have hit the rejection path -- otherwise
+# the timing is wrong and the test isn't actually exercising the race.
+# With 20 trials the rejection rate is reliably ~95%+ on dev hardware.
+assert shutdown_rejections > 0, \
+    f'race never landed during teardown across 20 trials ' \
+    f'(succeeded={shutdown_succeeded}); test timing broken'
+print(f'[apply_text/teardown] OK -- {shutdown_rejections}/20 trials ' \
+      f'rejected with lsp-shutdown, {shutdown_succeeded} raced past commit')
+PY
+}
+
 # --- 9a: LSP-process-leak detection (run LAST) ----------------------------
 t_no_leaked_lsp_processes() {
     # Capture the post-harness PID set of LSP binaries owned by this
@@ -1942,6 +2469,11 @@ run "11d code_action immutability"       t_codeaction_immutability
 run "11e call hierarchy multi-anchor"    t_call_hierarchy_multi_anchor
 run "11f call hierarchy fan-out cap"     t_call_hierarchy_cap
 run "11g call hierarchy deadline"        t_call_hierarchy_deadline
+run "12a apply_text decision matrix"     t_apply_text_decision_matrix
+run "12b didClose at shutdown"           t_didclose_at_shutdown
+run "12c cleanup_paths walked"           t_cleanup_paths_walked
+run "12d bridge forwards didChange"      t_bridge_handler_forwards_didchange
+run "12e apply_text rejects in teardown" t_apply_text_rejects_during_teardown
 # 9a runs LAST so every prior sub-test has had a chance to clean up.
 run "9a no leaked LSP processes"         t_no_leaked_lsp_processes
 

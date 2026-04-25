@@ -391,12 +391,22 @@ _LANG_TO_LSP_LANGUAGE_ID: dict[str, str] = {
 _TOOL_MAX_READ = 32 * 1024 * 1024
 
 
-def _dispatch_path(path_str: str, workspace_root: Path) -> tuple[Path, str, str]:
+def _dispatch_path(path_str: str, workspace_root: Path
+                   ) -> tuple[Path, str, str, int]:
     """Resolve a tool-arg path + read its content + determine which
     LSP should handle it, ALL UNDER A SINGLE FILE DESCRIPTOR so an
     attacker cannot TOCTOU the stat/read window.
 
-    Returns (resolved_path, lang_tag, text). Raises LspError for:
+    Returns (resolved_path, lang_tag, text, mtime_ns). The mtime_ns
+    is captured from the same fstat() that validates the file mode +
+    size; it feeds the file-change-lifecycle path in
+    LspSubprocess.apply_text() so subsequent MCP tool calls on the
+    same URI can detect external edits and forward didChange. Using
+    the bound-fd fstat (instead of a re-stat by pathname) keeps the
+    TOCTOU guarantee intact -- the mtime we report is for the same
+    inode whose bytes we just read.
+
+    Raises LspError for:
       - lsp-path-not-found            -- path does not exist
       - lsp-path-outside-workspace    -- path resolves outside workspace_root
       - lsp-path-not-regular-file     -- not a regular file (mode check on fstat)
@@ -543,19 +553,46 @@ def _dispatch_path(path_str: str, workspace_root: Path) -> tuple[Path, str, str]
             path=path_str,
             resolved=str(resolved),
         ) from exc
-    return resolved, lang, text
+    # st was taken from the bound fd before the read; mtime_ns
+    # corresponds to the inode we actually read. nanosecond
+    # resolution avoids missing same-second edits that a 1-second
+    # st_mtime would lose.
+    return resolved, lang, text, st.st_mtime_ns
+
+
+# Languages whose LSPs only re-lint or re-index on save (per LSP
+# specs and observed behavior across pyright + clangd). For these,
+# apply_text() additionally forwards a synthetic didSave whenever
+# external mtime drift triggers a didChange, so diagnostics stay
+# fresh even when the agent (or a parallel VS Code session) wrote
+# the file outside the LSP's own save flow. Languages NOT in this
+# set re-lint on every didChange and do not need the extra
+# notification.
+_DIDSAVE_ON_REFRESH_LANGS: frozenset[str] = frozenset({"c", "py"})
 
 
 def _ensure_open_for(lsp: LspSubprocess, resolved: Path, lang: str,
-                     text: str) -> str:
-    """Shared did_open helper for the MCP tools. Accepts the pre-read
-    bytes from _dispatch_path() so this helper does NOT re-read the
-    file (Codex adversarial review TOCTOU finding). Forwards an
-    idempotent didOpen via LspSubprocess.ensure_open() and returns
-    the file URI."""
+                     text: str, mtime_ns: Optional[int] = None) -> str:
+    """Shared open-or-refresh helper for the MCP tools. Accepts the
+    pre-read bytes + mtime from _dispatch_path() so this helper does
+    NOT re-read the file (Codex adversarial review TOCTOU finding).
+
+    Routes through LspSubprocess.apply_text() which decides between
+    didOpen (first time we see the URI), didChange + optional
+    didSave (mtime drift since last call), or no-op (URI already
+    open at the same mtime). Returns the URI.
+
+    mtime_ns=None preserves the legacy contract for callers that do
+    not have a captured mtime (no production callsite today).
+
+    Function name kept as `_ensure_open_for` for backwards
+    compatibility with sub-test 7g and the existing internal
+    callers; the open-or-refresh promotion is internal."""
     uri = resolved.as_uri()
     language_id = _LANG_TO_LSP_LANGUAGE_ID.get(lang, lang)
-    lsp.ensure_open(uri, language_id, text, version=1)
+    force_did_save = lang in _DIDSAVE_ON_REFRESH_LANGS
+    lsp.apply_text(uri, language_id, text, mtime_ns,
+                   force_did_save=force_did_save)
     return uri
 
 
@@ -933,9 +970,9 @@ def _build_mcp(FastMCP, workspace_root: Path):
         position, NOT an error."""
         def _op() -> Any:
             line_v, char_v = _validate_position(line, character)
-            resolved, lang, text = _dispatch_path(path, workspace_root)
+            resolved, lang, text, mtime_ns = _dispatch_path(path, workspace_root)
             lsp = _get_or_spawn(lang, workspace_root)
-            uri = _ensure_open_for(lsp, resolved, lang, text)
+            uri = _ensure_open_for(lsp, resolved, lang, text, mtime_ns)
             raw = lsp.request(
                 "textDocument/hover",
                 {"textDocument": {"uri": uri},
@@ -961,9 +998,9 @@ def _build_mcp(FastMCP, workspace_root: Path):
         normalized across Location / LocationLink shapes."""
         def _op() -> Any:
             line_v, char_v = _validate_position(line, character)
-            resolved, lang, text = _dispatch_path(path, workspace_root)
+            resolved, lang, text, mtime_ns = _dispatch_path(path, workspace_root)
             lsp = _get_or_spawn(lang, workspace_root)
-            uri = _ensure_open_for(lsp, resolved, lang, text)
+            uri = _ensure_open_for(lsp, resolved, lang, text, mtime_ns)
             raw = lsp.request(
                 "textDocument/definition",
                 {"textDocument": {"uri": uri},
@@ -991,9 +1028,9 @@ def _build_mcp(FastMCP, workspace_root: Path):
         same shape as definition()."""
         def _op() -> Any:
             line_v, char_v = _validate_position(line, character)
-            resolved, lang, text = _dispatch_path(path, workspace_root)
+            resolved, lang, text, mtime_ns = _dispatch_path(path, workspace_root)
             lsp = _get_or_spawn(lang, workspace_root)
-            uri = _ensure_open_for(lsp, resolved, lang, text)
+            uri = _ensure_open_for(lsp, resolved, lang, text, mtime_ns)
             raw = lsp.request(
                 "textDocument/references",
                 {"textDocument": {"uri": uri},
@@ -1022,9 +1059,9 @@ def _build_mcp(FastMCP, workspace_root: Path):
         publish has arrived yet, returns {diagnostics: [], note:
         ...} instead of erroring -- agents can poll."""
         def _op() -> Any:
-            resolved, lang, text = _dispatch_path(path, workspace_root)
+            resolved, lang, text, mtime_ns = _dispatch_path(path, workspace_root)
             lsp = _get_or_spawn(lang, workspace_root)
-            uri = _ensure_open_for(lsp, resolved, lang, text)
+            uri = _ensure_open_for(lsp, resolved, lang, text, mtime_ns)
             cached = lsp.diagnostics_by_uri.get(uri)
             if cached is None:
                 return {
@@ -1181,6 +1218,21 @@ def _build_mcp(FastMCP, workspace_root: Path):
             # unexpected errors): release the pool without blocking.
             pool.shutdown(wait=False, cancel_futures=True)
             raise
+        # Drain any pending publishDiagnostics on every snapshot LSP
+        # so a follow-on `diagnostics(path)` MCP call returns the
+        # most recent set instead of a value the reader thread had
+        # not yet stored. The LSP wire-order guarantee (notifications
+        # emitted before a response are parsed first) covers
+        # diagnostics generated by didOpen/didChange we already
+        # forwarded; this brief yield covers the narrow race window
+        # where publishDiagnostics arrived AFTER workspace/symbol's
+        # response was queued but BEFORE the bridge returned to the
+        # MCP caller.
+        for _key, inst in snapshot:
+            try:
+                inst.flush_notifications(timeout=0.05)
+            except Exception:
+                pass
         total = sum(len(v) for v in per_lang.values())
         return {
             "query": str(query),
@@ -1205,9 +1257,9 @@ def _build_mcp(FastMCP, workspace_root: Path):
         on what the LSP advertised. The response is passed through
         as-is inside the `symbols` key."""
         def _op() -> Any:
-            resolved, lang, text = _dispatch_path(path, workspace_root)
+            resolved, lang, text, mtime_ns = _dispatch_path(path, workspace_root)
             lsp = _get_or_spawn(lang, workspace_root)
-            uri = _ensure_open_for(lsp, resolved, lang, text)
+            uri = _ensure_open_for(lsp, resolved, lang, text, mtime_ns)
             raw = lsp.request(
                 "textDocument/documentSymbol",
                 {"textDocument": {"uri": uri}},
@@ -1261,9 +1313,9 @@ def _build_mcp(FastMCP, workspace_root: Path):
                         value=trigger_character,
                     )
                 tc = trigger_character
-            resolved, lang, text = _dispatch_path(path, workspace_root)
+            resolved, lang, text, mtime_ns = _dispatch_path(path, workspace_root)
             lsp = _get_or_spawn(lang, workspace_root)
-            uri = _ensure_open_for(lsp, resolved, lang, text)
+            uri = _ensure_open_for(lsp, resolved, lang, text, mtime_ns)
             params: dict = {
                 "textDocument": {"uri": uri},
                 "position": {"line": line_v, "character": char_v},
@@ -1299,9 +1351,9 @@ def _build_mcp(FastMCP, workspace_root: Path):
         index so an agent can fill the right argument slot."""
         def _op() -> Any:
             line_v, char_v = _validate_position(line, character)
-            resolved, lang, text = _dispatch_path(path, workspace_root)
+            resolved, lang, text, mtime_ns = _dispatch_path(path, workspace_root)
             lsp = _get_or_spawn(lang, workspace_root)
-            uri = _ensure_open_for(lsp, resolved, lang, text)
+            uri = _ensure_open_for(lsp, resolved, lang, text, mtime_ns)
             raw = lsp.request(
                 "textDocument/signatureHelp",
                 {"textDocument": {"uri": uri},
@@ -1331,9 +1383,9 @@ def _build_mcp(FastMCP, workspace_root: Path):
         variable's own definition."""
         def _op() -> Any:
             line_v, char_v = _validate_position(line, character)
-            resolved, lang, text = _dispatch_path(path, workspace_root)
+            resolved, lang, text, mtime_ns = _dispatch_path(path, workspace_root)
             lsp = _get_or_spawn(lang, workspace_root)
-            uri = _ensure_open_for(lsp, resolved, lang, text)
+            uri = _ensure_open_for(lsp, resolved, lang, text, mtime_ns)
             raw = lsp.request(
                 "textDocument/typeDefinition",
                 {"textDocument": {"uri": uri},
@@ -1360,9 +1412,9 @@ def _build_mcp(FastMCP, workspace_root: Path):
         virtual method, returns overrides."""
         def _op() -> Any:
             line_v, char_v = _validate_position(line, character)
-            resolved, lang, text = _dispatch_path(path, workspace_root)
+            resolved, lang, text, mtime_ns = _dispatch_path(path, workspace_root)
             lsp = _get_or_spawn(lang, workspace_root)
-            uri = _ensure_open_for(lsp, resolved, lang, text)
+            uri = _ensure_open_for(lsp, resolved, lang, text, mtime_ns)
             raw = lsp.request(
                 "textDocument/implementation",
                 {"textDocument": {"uri": uri},
@@ -1389,9 +1441,9 @@ def _build_mcp(FastMCP, workspace_root: Path):
         for headers vs. translation-unit-local definitions."""
         def _op() -> Any:
             line_v, char_v = _validate_position(line, character)
-            resolved, lang, text = _dispatch_path(path, workspace_root)
+            resolved, lang, text, mtime_ns = _dispatch_path(path, workspace_root)
             lsp = _get_or_spawn(lang, workspace_root)
-            uri = _ensure_open_for(lsp, resolved, lang, text)
+            uri = _ensure_open_for(lsp, resolved, lang, text, mtime_ns)
             raw = lsp.request(
                 "textDocument/declaration",
                 {"textDocument": {"uri": uri},
@@ -1434,9 +1486,9 @@ def _build_mcp(FastMCP, workspace_root: Path):
         by `prepared_count` (clangd typically returns 1-2 items)."""
         import time as _time
         line_v, char_v = _validate_position(line, character)
-        resolved, lang, text = _dispatch_path(path, workspace_root)
+        resolved, lang, text, mtime_ns = _dispatch_path(path, workspace_root)
         lsp = _get_or_spawn(lang, workspace_root)
-        uri = _ensure_open_for(lsp, resolved, lang, text)
+        uri = _ensure_open_for(lsp, resolved, lang, text, mtime_ns)
         deadline = _time.monotonic() + _CALL_HIERARCHY_DEADLINE_S
         prepared_raw = lsp.request(
             "textDocument/prepareCallHierarchy",
@@ -1596,9 +1648,9 @@ def _build_mcp(FastMCP, workspace_root: Path):
                         value=repr(diagnostic),
                     )
                 ctx["diagnostics"] = [diagnostic]
-            resolved, lang, text = _dispatch_path(path, workspace_root)
+            resolved, lang, text, mtime_ns = _dispatch_path(path, workspace_root)
             lsp = _get_or_spawn(lang, workspace_root)
-            uri = _ensure_open_for(lsp, resolved, lang, text)
+            uri = _ensure_open_for(lsp, resolved, lang, text, mtime_ns)
             raw = lsp.request(
                 "textDocument/codeAction",
                 {"textDocument": {"uri": uri},

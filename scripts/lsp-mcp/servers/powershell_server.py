@@ -457,10 +457,22 @@ def spawn(workspace_root: Path) -> LspSubprocess:
                 pass
             raise
     except BaseException:
-        # Spawn-time failure: clean up tempdir; success path leaves it.
+        # Spawn-time failure: clean up tempdir BEFORE the LSP knows
+        # about it (cleanup_paths walks at LspSubprocess.shutdown()
+        # time, which never fires on the spawn-failure path because
+        # lsp itself was never returned).
         shutil.rmtree(tempdir, ignore_errors=True)
         raise
 
+    # Success path: register the tempdir on the LspSubprocess so the
+    # bridge atexit / shutdown walk removes it AFTER the PSES
+    # process has exited. Earlier revisions leaked the tempdir on
+    # every successful session because no shutdown hook owned it;
+    # the cleanup_paths attribute (added by TODO-07 in
+    # 00-infrastructure file-change-lifecycle work) closes that gap
+    # without spawn-side rmtree (which would race PSES still
+    # writing logs).
+    lsp.cleanup_paths.append(tempdir)
     return lsp
 
 
