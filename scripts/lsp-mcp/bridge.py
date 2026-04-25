@@ -1268,6 +1268,15 @@ def _warm_start_run(workspace_root: Path, spec: str) -> dict[str, Any]:
                 event="warm-begin", langs=warm,
                 budget_s=_WARM_OVERALL_BUDGET_S,
                 workspace_root=str(workspace_root))
+    # Reset the cancellation Event so a re-entry (in-process tests
+    # or an embedded caller that invokes _warm_start_run more than
+    # once per interpreter) does not inherit the previous run's
+    # cancelled state. main()'s finally block sets _WARM_CANCEL on
+    # the way out; without this clear, every subsequent warm-start
+    # would race with workers that immediately observe the latched
+    # cancel and return status="cancelled". (Codex post-ship
+    # adversarial review L.)
+    _WARM_CANCEL.clear()
     overall_t0 = _time.monotonic()
     results: list[dict[str, Any]] = []
     # Workers carry the warm-start corr_id so progress + spawn-failed

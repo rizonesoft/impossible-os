@@ -519,7 +519,7 @@ On a fresh bridge spawn, the first `workspace_symbol` call waits for clangd to i
 - [x] Cold-start budget (`_WARM_OVERALL_BUDGET_S = 60.0` in `bridge.py`): wall-clock measured from first warm worker submit to last completion (parallel max). Over budget emits `event: warm-over-budget` WARN with per-lang breakdown and a `--warm-start=<slow-langs>` hint; never blocks serving.
 - [x] Progress reporting (`_warm_one` poll loop, `bridge.py`): every 2s logs `{phase: "warming", lang, elapsed_s, tokens, active, progress_pct?, title?}` while each LSP's `$/progress` notifications are still ramping. Snapshot pulled via `LspSubprocess.snapshot_progress()` -- a copy-under-lock contract that closes the Codex Medium "unsynchronized progress dict" race.
 - [x] Default behavior unchanged (`--warm-start` absent): `_maybe_warm_start()` is a no-op; `_get_or_spawn` runs on-demand on the first per-language tool call. Verified by sub-test 1a (no regression in zero-LSPs banner).
-- [x] Commit: `"scripts/lsp-mcp: --warm-start for bounded first-call latency"` -- commit `2bce2bd2`.
+- [x] Commit: `"scripts/lsp-mcp: --warm-start for bounded first-call latency"` -- commit `cf2c080d`.
 
 **Test checkpoint:** `python3 scripts/lsp-mcp/bridge.py --warm-start --self-test` exits 0 within 45s on a host with clangd + pyright + bash-language-server installed; logs per-language spawn times. First `workspace_symbol("kmain")` call afterwards completes in < 500ms (warm), versus > 20s (cold baseline same repo).
 
@@ -529,10 +529,13 @@ Verified locally: `python3 scripts/lsp-mcp/bridge.py --warm-start=c --self-test`
 
 > **Notes:**
 > - Adds `--warm-start[=langs]` to `bridge.py` and a per-LSP readiness wait. clangd / pyright wait for `$/progress` end (or `_WARM_NO_PROGRESS_TIMEOUT_S = 10s` no-progress fall-through); asm/sh/ps1 are ready at handshake.
-> - `lsp_client.py` extended: `_progress_by_token` + `_progress_lock` + `snapshot_progress()`; `_dispatch_message` handles server-initiated `window/workDoneProgress/create` requests with `{result: null}` ack; everything else gets JSON-RPC `-32601` method-not-found. `_send_response` uses a 0.5s try-acquire on `_io_lock` so a stalled writer cannot deadlock the reader.
+> - `lsp_client.py` extended: `_progress_by_token` + `_progress_lock` + `snapshot_progress()`; `_dispatch_message` handles server-initiated `window/workDoneProgress/create` requests with `{result: null}` ack; everything else gets JSON-RPC `-32601` method-not-found. `_send_response` uses a 0.5s try-acquire on `_io_lock` so a stalled writer cannot deadlock the reader. Percentage values are sanitized at ingest (NaN/Inf/non-numeric dropped, finite clamped to 0..100).
 > - `clangd_server.py` and `python_server.py` now advertise `window: {workDoneProgress: True}` so progress traffic actually flows.
-> - Lifecycle: shared `_WARM_CANCEL` Event flipped in `main()`'s finally BEFORE `_shutdown_all_lsps()` so warm pollers exit before the LSPs they observe get reaped.
+> - Lifecycle: shared `_WARM_CANCEL` Event flipped in `main()`'s finally BEFORE `_shutdown_all_lsps()`; cleared at the start of each `_warm_start_run` call so in-process re-entry does not inherit the cancelled state.
 > - Default behavior unchanged when flag is absent. Persistent index caching across bridge restarts is owned by §17 (Scale Roadmap).
+
+> **Verified:** 2026-04-25 | commit `cf2c080d` | 6/6 items | build OK | tests 87/87 PASS
+> **Quality reviewed:** 2026-04-25 | Codex 4x (design + adversarial + consistency + perf) | 2H+4M+2L fixed | scope: N/A (python tooling)
 
 
 ---
@@ -606,12 +609,12 @@ Current repo is ~215k core LOC (~189k kernel + ~24k tooling per [COUNT.md](../..
 | ⭐ | LSP subprocess auto-restart on crash                            | ❌ editor prompts to restart      | ❌ editor prompts to restart         | ✅ §13 watchdog + exp backoff      |
 | 💎 | Structured JSON logs + correlation IDs                          | ⚠️ VS Code output panel (text)    | ⚠️ per-editor log format             | ✅ §14 JSON-lines + UUID           |
 | ⭐ | Workspace-bound path sandboxing                                 | ❌ editor trusts every path       | ❌ editor trusts every path          | ✅ §15 resolve_in_workspace        |
-| ⭐ | `--warm-start` eager LSP spawn + first-call latency budget      | ❌ editor lazy-initiates          | ❌ editor lazy-initiates             | ✅ §16 bounded at ~45s             |
+| ⭐ | `--warm-start` eager LSP spawn + first-call latency budget      | ❌ editor lazy-initiates          | ❌ editor lazy-initiates             | ✅ §16 60s budget WARN              |
 
 > **After §1-§6:** Impossible OS reaches parity with a well-configured Win11/Linux developer workstation for every language the repo uses. Every human-facing LSP-capable editor (VS Code, Emacs, Neovim) already speaks these same servers directly; this TODO duplicates none of that.
 > **After §7-§8:** Impossible OS pulls ahead with a cross-language unified MCP surface. 3rd-party bridges (isaacphi/mcp-language-server -- single LSP at a time; jonrad/lsp-mcp -- Node, no multi-LSP; mickeyinfoshan/lsp-mcp -- Go/TS/JS/Py only; Tritlo/lsp-mcp -- Zig, high-perf but no NASM support) cover a subset of this surface but none ship the 5-language mix (NASM + PowerShell are the two painful ones) and none are repo-tracked with boundary compliance.
 > **After §9-§10:** Impossible OS ships the first repo-tracked cross-language LSP-MCP bridge with boundary audit baked in, auto-registered with Claude Code out-of-the-box via `.claude/mcp.json`. No 3rd-party bridge today bakes in the read-only boundary the [TODO-02 §8](./TODO-02-ai-development-system.md#8-autonomous-agent-boundary-policy) autonomous-agent policy requires; every existing bridge exposes write-capable LSP methods by default.
-> **After §11-§16:** Impossible OS passes parity and moves into category-leading territory. §11 delivers the extended 14-tool surface that production 3rd-party bridges converged on. §12 closes the file-change-drift correctness gap every long-running bridge exhibits. §13 auto-restarts crashed LSPs -- no surveyed competitor ships this. §14 threads correlation IDs through every MCP->LSP->MCP round-trip (the 2026 observability baseline). §15 bounds path resolution to the workspace, closing a prompt-injection / supply-chain class every 3rd-party bridge leaves open. §16 bounds first-call latency with `--warm-start`.
+> **After §11-§16:** Impossible OS passes parity and moves into category-leading territory. §11 delivers the extended 14-tool surface that production 3rd-party bridges converged on. §12 closes the file-change-drift correctness gap every long-running bridge exhibits. §13 auto-restarts crashed LSPs -- no surveyed competitor ships this. §14 threads correlation IDs through every MCP->LSP->MCP round-trip (the 2026 observability baseline). §15 bounds path resolution to the workspace, closing a prompt-injection / supply-chain class every 3rd-party bridge leaves open. §16 bounds first-call latency with `--warm-start` (60s soft budget).
 
 ---
 

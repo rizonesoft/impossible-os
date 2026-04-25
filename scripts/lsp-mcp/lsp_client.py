@@ -775,12 +775,30 @@ class LspSubprocess:
         kind = value.get("kind")
         if kind not in ("begin", "report", "end"):
             return
+        # Sanitize percentage at ingest. Python's JSON decoder accepts
+        # NaN/Infinity, and int(float('nan')) raises ValueError while
+        # int(float('inf')) raises OverflowError -- a buggy or
+        # hostile LSP could otherwise crash the warm-start summary
+        # logger when it casts the value. Drop anything that is not
+        # a finite int/float; clamp the rest to 0..100 to match the
+        # LSP 3.16 contract. (Codex post-ship adversarial review M.)
+        import math as _math
+        raw_pct = value.get("percentage")
+        pct: Optional[int] = None
+        if isinstance(raw_pct, bool):
+            # bool is a subclass of int -- exclude it explicitly so
+            # `True` / `False` do not silently become 1 / 0.
+            pct = None
+        elif isinstance(raw_pct, int):
+            pct = max(0, min(100, raw_pct))
+        elif isinstance(raw_pct, float) and _math.isfinite(raw_pct):
+            pct = max(0, min(100, int(raw_pct)))
         now = _time.monotonic()
         entry: dict[str, Any] = {
             "kind": kind,
             "title": value.get("title"),
             "message": value.get("message"),
-            "percentage": value.get("percentage"),
+            "percentage": pct,
             "last_update_ts": now,
         }
         with self._progress_lock:
