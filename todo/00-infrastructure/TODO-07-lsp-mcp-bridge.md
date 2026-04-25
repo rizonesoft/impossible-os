@@ -360,7 +360,7 @@ The bridge is host-side Python tooling, so tests live outside the kernel `test_r
 > - **Canonical doc:** [`docs/infrastructure/development-tooling.md` LSP MCP Bridge subsection](../../docs/infrastructure/development-tooling.md) -- single source of truth; the test-checkpoint paragraph above describes the verification flow.
 > - **Scope boundary:** §10 does NOT own the per-language LSP integrations (§2-§6), the MCP tool surface (§7), the per-LSP serialization (§8), or the manifest/setup/docs/boundary-policy work (§9). §10 wires §1-§9's test contracts into the standard CI surfaces.
 
-> **Verified:** 2026-04-25 | commit `<§10 commit>` | 4/4 items | build N/A (host-side scripts) | tests 37/37 PASS
+> **Verified:** 2026-04-25 | commit `0b03fbb5` | 4/4 items | build N/A (host-side scripts) | tests 37/37 PASS
 
 ---
 
