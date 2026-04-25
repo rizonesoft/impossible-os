@@ -465,7 +465,7 @@ The 2026 MCP observability baseline is one-line JSON per log entry, a correlatio
 
 **Test checkpoint:** Issue 3 concurrent tool calls. Stderr logs show 3 distinct `corr_id` threads, each with paired `"start"` + `"end"` entries and non-zero `latency_ms`. `LSP_MCP_LOG_LEVEL=DEBUG` run shows LSP wire-format payloads. `LSP_MCP_LOG_FILE=/tmp/out.jsonl` run writes valid JSON-lines (`jq -c '.' /tmp/out.jsonl | wc -l` matches `calls * phases`).
 
-> **Test runner:** `bash scripts/lsp-mcp/tests/test_bridge.sh` | 68/68 sub-tests PASS (1a-9a + 11a-11g + 12a-12f + 13a-13i + 14a-14i; 14a logger JSON + level filter, 14b corr_id `ContextVar` propagation through `pool.submit(ctx.run, ...)`, 14c `LSP_MCP_LOG_FILE` redirect/append, 14d phase pair latency_ms, 14e DEBUG body 4 KiB cap with safe outer JSON, 14f 3 concurrent calls = 3 distinct corr_ids, 14g spawner-import warnings emit as JSON, 14h workspace_symbol cleanup paths cover empty snapshot + exception, 14i `_call_lsp` emits phase=end on non-LspError exceptions)
+> **Test runner:** `bash scripts/lsp-mcp/tests/test_bridge.sh` | 70/70 sub-tests PASS (1a-9a + 11a-11g + 12a-12f + 13a-13i + 14a-14k; 14a logger JSON + level filter, 14b corr_id `ContextVar` propagation through `pool.submit(ctx.run, ...)`, 14c `LSP_MCP_LOG_FILE` redirect/append, 14d phase pair latency_ms, 14e DEBUG body 4 KiB cap with safe outer JSON, 14f 3 concurrent calls = 3 distinct corr_ids, 14g spawner-import warnings emit as JSON, 14h workspace_symbol cleanup paths cover empty snapshot + exception, 14i `_call_lsp` emits phase=end on non-LspError exceptions, 14j lsp-recv carries the per-request `corr_id` from `_pending` metadata AND fires AFTER `fut.set_result` so a slow log sink cannot delay request completion, 14k `_truncate_body` uses `JSONEncoder.iterencode` + early break so a 5 MiB body bounds in 0.04 ms instead of ~50 ms naive `json.dumps`)
 
 > **Notes:**
 >
@@ -475,7 +475,8 @@ The 2026 MCP observability baseline is one-line JSON per log entry, a correlatio
 > - **Canonical doc:** [`docs/infrastructure/development-tooling.md` LSP MCP Bridge subsection](../../docs/infrastructure/development-tooling.md) -- to be retrofitted by the §14 review pass with the LSP_MCP_LOG_LEVEL/FILE env knobs + the corr_id thread-through diagram.
 > - **Scope boundary:** §14 does NOT own log-file rotation (operator/logrotate scope), workspace-bound path sandboxing's race-free walk (§15), or warm-start bounded latency (§16). The corr_id is per-MCP-call -- there is no cross-call session ID; trace correlation across multiple MCP calls is an explicit non-goal.
 
-> **Verified:** 2026-04-25 | commit `eb44d19e` | 5/5 items | build OK | tests 68/68 PASS
+> **Verified:** 2026-04-25 | commit `eb44d19e` | 5/5 items | build OK | tests 70/70 PASS
+> **Quality reviewed:** 2026-04-25 | Codex 4x (design + adversarial + consistency + perf) | 2M fixed (post-commit lsp-recv ordering + iterencode CPU bound) + 3L stale-doc fixed | scope: N/A (host-side Python tooling; no domain quality skill applies; re-adversarial skipped -- fix pass is bounded helper changes, not lifecycle/state-machine touches)
 
 ---
 

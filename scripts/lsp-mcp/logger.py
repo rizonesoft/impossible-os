@@ -418,16 +418,43 @@ def _iso_utc_now() -> str:
 
 def _truncate_body(body: Any) -> tuple[bool, str]:
     """Serialize `body` to a JSON string and truncate at the
-    DEBUG body cap. Returns (truncated, string). Body is emitted
-    as a STRING in the outer JSON to keep that line parseable even
-    after truncation. Codex design review caught the alternative
-    (nested JSON) as a Medium: a truncated nested object is
-    invalid JSON in the outer line."""
+    DEBUG body cap. Returns (truncated, string).
+
+    Uses JSONEncoder.iterencode + early break so the serializer
+    stops as soon as the cap is reached. A naive json.dumps()
+    would serialize the FULL body (potentially up to LSP's 32 MiB
+    cap) before truncation, blocking the single reader thread
+    long enough that subsequent pending requests' Futures could
+    time out. Codex post-implementation perf review caught this:
+    the cap was an output-size cap only, not a CPU/memory cap.
+    iterencode bounds both.
+
+    Body is emitted as a STRING in the outer JSON to keep that
+    line parseable even after truncation. Codex design review
+    caught the alternative (nested JSON) as a Medium: a
+    truncated nested object is invalid JSON in the outer line."""
+    cap = _DEBUG_BODY_CAP_BYTES
+    parts: list[str] = []
+    total = 0
     try:
-        encoded = json.dumps(body, sort_keys=True, default=str)
+        encoder = json.JSONEncoder(sort_keys=True, default=str)
+        for chunk in encoder.iterencode(body):
+            parts.append(chunk)
+            total += len(chunk)
+            if total > cap:
+                # Bounded: stop serialization the moment we've
+                # exceeded the cap. The chunk that crossed the
+                # threshold is included in `parts`; we trim it
+                # below.
+                break
     except (TypeError, ValueError):
+        # JSONEncoder failed even with default=str (e.g. recursive
+        # structure). Fall back to repr(); still bounded by cap.
         encoded = repr(body)
-    if len(encoded) > _DEBUG_BODY_CAP_BYTES:
-        encoded = encoded[:_DEBUG_BODY_CAP_BYTES] + "...truncated"
-        return True, encoded
+        if len(encoded) > cap:
+            return True, encoded[:cap] + "...truncated"
+        return False, encoded
+    encoded = "".join(parts)
+    if len(encoded) > cap:
+        return True, encoded[:cap] + "...truncated"
     return False, encoded

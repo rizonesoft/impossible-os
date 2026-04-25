@@ -668,17 +668,16 @@ class LspSubprocess:
             return
         fut = meta["future"]
         # DEBUG receive event tagged with the originating call's
-        # corr_id (looked up from per-request metadata, NOT from
-        # the reader thread's Context which is its own).
-        try:
-            from logger import debug_lsp_recv as _dbg_recv  # noqa: WPS433
-            _dbg_recv(method=meta.get("method"),
-                      lang=meta.get("lang"),
-                      request_id=rid,
-                      body=msg,
-                      corr_id=meta.get("corr_id"))
-        except Exception:
-            pass
+        # Complete the waiting Future FIRST -- the debug log
+        # serializes the full response body (potentially up to
+        # _MAX_BODY_BYTES = 32 MiB) which can block the single
+        # reader thread, and a slow LSP_MCP_LOG_FILE sink
+        # extends the wait. Codex post-implementation review
+        # caught the original "log first, set Future second"
+        # ordering as a Medium concern: in DEBUG + large response
+        # + slow sink it could push the caller's Future past its
+        # request timeout even though the data was already in
+        # the reader thread.
         if "error" in msg:
             err = msg["error"] or {}
             fut.set_exception(LspError(
@@ -689,6 +688,20 @@ class LspSubprocess:
             ))
         else:
             fut.set_result(msg.get("result"))
+        # DEBUG receive event tagged with the originating call's
+        # corr_id (looked up from per-request metadata, NOT from
+        # the reader thread's Context which is its own). Emitted
+        # AFTER Future completion so a slow log sink cannot
+        # extend the request's wall-clock latency.
+        try:
+            from logger import debug_lsp_recv as _dbg_recv  # noqa: WPS433
+            _dbg_recv(method=meta.get("method"),
+                      lang=meta.get("lang"),
+                      request_id=rid,
+                      body=msg,
+                      corr_id=meta.get("corr_id"))
+        except Exception:
+            pass
 
     def _fail_all_pending(self, err: LspError) -> None:
         with self._pending_lock:

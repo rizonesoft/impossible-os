@@ -235,6 +235,26 @@
 #          design review Medium: the 5 _autoregister_spawners
 #          callsites used to bypass the JSON contract via raw
 #          sys.stderr.write).
+#   14h -- workspace_symbol fan-out cleanup helper fires on every
+#          exit path (empty snapshot, success, exception). Codex
+#          post-impl review High caught the original revision
+#          leaking corr_id into subsequent unrelated tool calls
+#          on the same thread.
+#   14i -- _call_lsp emits phase=end with status=error + error_kind
+#          when the closure raises a non-LspError exception, then
+#          re-raises so the bridge bug stays loud. Codex post-impl
+#          review Medium caught the orphaned phase-start bug.
+#   14j -- lsp-recv DEBUG event correlates back to the originating
+#          MCP call via _pending metadata (NOT the reader thread's
+#          own Context which has no corr_id) AND fires AFTER
+#          fut.set_result so a slow log sink cannot delay request
+#          completion. Codex post-impl review Medium.
+#   14k -- _truncate_body uses JSONEncoder.iterencode + early
+#          break so the 4 KiB cap bounds CPU/memory cost, not
+#          just output size. A 5 MiB body must serialize in well
+#          under 100 ms; otherwise the reader thread blocks
+#          long enough to delay UNRELATED concurrent requests.
+#          Codex post-impl perf review Medium.
 #   13i -- regression guard for Codex post-commit perf review
 #          Medium: backoff used to be indexed by cumulative
 #          restart_count, so a long-lived bridge with transient
@@ -3754,6 +3774,154 @@ assert lg.current_corr_id() is None
 PY
 }
 
+# --- 14j: lsp-recv DEBUG correlation through _pending metadata + non-blocking
+# Two-part regression guard for the post-impl Codex review Medium:
+#   (1) lsp-recv corr_id MUST come from the per-request metadata
+#       (the reader thread's own Context has no corr_id), so a
+#       request initiated under corr_id X correlates with the
+#       lsp-recv X even though the receive happens on the reader.
+#   (2) lsp-recv DEBUG logging MUST NOT block the Future
+#       completion -- the fix moved the log call AFTER
+#       fut.set_result/set_exception. We can't directly observe
+#       wall-clock improvement in a unit test, but we CAN verify
+#       the log-emit ordering by checking that fut.done() is True
+#       before debug_lsp_recv would have fired (proven by reading
+#       the source layout via grep).
+t_lsp_recv_corr_id_correlation() {
+    python3 - << 'PY'
+import sys, io, json, time
+sys.path.insert(0, 'scripts/lsp-mcp')
+from lsp_client import LspSubprocess
+import logger as lg
+
+# DEBUG-mode logger capturing to in-memory buffer.
+buf = io.StringIO()
+saved = lg._LOGGER
+lg._LOGGER = lg.LspLogger('DEBUG', sink=buf)
+
+# Simple echo stub: replies to any request with a canned result.
+fake = r"""
+import sys, json
+def read_msg():
+    hdr = b''
+    while True:
+        ch = sys.stdin.buffer.read(1)
+        if not ch: return None
+        hdr += ch
+        if hdr.endswith(b'\r\n\r\n'): break
+    n = 0
+    for line in hdr.split(b'\r\n'):
+        if line.lower().startswith(b'content-length:'):
+            n = int(line.split(b':')[1].strip()); break
+    return json.loads(sys.stdin.buffer.read(n).decode('utf-8'))
+def write_msg(obj):
+    b = json.dumps(obj).encode('utf-8')
+    sys.stdout.buffer.write(b'Content-Length: ' + str(len(b)).encode() + b'\r\n\r\n' + b)
+    sys.stdout.buffer.flush()
+while True:
+    m = read_msg()
+    if m is None: break
+    method = m.get('method')
+    if method == 'initialize':
+        write_msg({'jsonrpc':'2.0','id':m['id'],'result':{'capabilities':{}}})
+    elif 'id' in m:
+        write_msg({'jsonrpc':'2.0','id':m['id'],'result':{'echoed_method': method}})
+    elif method == 'exit':
+        break
+"""
+
+lsp = LspSubprocess(['python3', '-c', fake], lang='fake-14j')
+try:
+    lsp.initialize('file:///tmp/test')
+
+    # Bind a corr_id; issue a request; assert lsp-recv carries it.
+    expected = lg.new_corr_id()
+    lg.set_corr_id(expected)
+    try:
+        result = lsp.request('hover', {}, timeout=2.0)
+        assert result['echoed_method'] == 'hover', result
+    finally:
+        lg.clear_corr_id()
+
+    # Inspect the log: there MUST be an lsp-send + lsp-recv pair
+    # tagged with the expected corr_id.
+    lines = [json.loads(l) for l in buf.getvalue().splitlines() if l.strip()]
+    sends = [l for l in lines if l.get('event') == 'lsp-send']
+    recvs = [l for l in lines if l.get('event') == 'lsp-recv']
+    assert len(sends) >= 1, sends
+    assert len(recvs) >= 1, recvs
+    # Find the send/recv for OUR request (most recent ones).
+    last_send = sends[-1]
+    last_recv = recvs[-1]
+    assert last_send['corr_id'] == expected, last_send
+    # CRITICAL: lsp-recv carries the originating call's corr_id
+    # via _pending metadata, NOT the reader thread's Context.
+    assert last_recv['corr_id'] == expected, \
+        f'lsp-recv corr_id mismatch: {last_recv}'
+    assert last_recv['request_id'] == last_send['request_id']
+
+    # Source-level check: in lsp_client.py _resolve_pending,
+    # debug_lsp_recv MUST be called AFTER fut.set_result so a
+    # slow log sink cannot delay request completion.
+    src = open('scripts/lsp-mcp/lsp_client.py').read()
+    func_start = src.find('def _resolve_pending(')
+    assert func_start > 0
+    func_end = src.find('def ', func_start + 10)
+    func_body = src[func_start:func_end]
+    set_result_pos = func_body.find('fut.set_result')
+    debug_recv_pos = func_body.find('_dbg_recv(')
+    assert set_result_pos > 0, 'set_result missing'
+    assert debug_recv_pos > 0, '_dbg_recv missing'
+    assert debug_recv_pos > set_result_pos, \
+        ('_dbg_recv must follow fut.set_result -- the reverse '
+         'lets a slow log sink delay request completion '
+         '(Codex post-impl review Medium)')
+finally:
+    lg._LOGGER = saved
+    try: lsp.shutdown(timeout=1.0)
+    except Exception: pass
+PY
+}
+
+# --- 14k: _truncate_body is CPU-bounded, not just output-bounded -------
+# Regression guard for the post-impl perf Codex Medium: a naive
+# json.dumps would serialize the entire 32 MiB-ish body before
+# the output truncation kicked in, blocking the reader thread.
+# The fix uses JSONEncoder.iterencode + early break so the cost
+# is bounded by the cap itself.
+t_truncate_body_cpu_bounded() {
+    python3 - << 'PY'
+import sys, time
+sys.path.insert(0, 'scripts/lsp-mcp')
+import logger as lg
+
+# Build a HUGE body whose JSON encoding would be ~10 MiB+. The
+# iterencode-based truncation must never serialize past the cap.
+huge = {'method': 'massive', 'params': {
+    'data': ['x' * 1000] * 5000  # 5000 strings of 1000 chars = 5 MiB
+}}
+
+t0 = time.monotonic()
+truncated, encoded = lg._truncate_body(huge)
+elapsed = time.monotonic() - t0
+
+# The output is bounded at the cap + a short truncation marker.
+assert truncated is True, 'huge body must report truncated=True'
+assert len(encoded) < lg._DEBUG_BODY_CAP_BYTES + 64, \
+    f'encoded length {len(encoded)} exceeds cap+marker'
+assert encoded.endswith('...truncated'), encoded[-30:]
+
+# CPU bound: serializing 5 MiB of JSON with json.dumps takes
+# ~50-200 ms. With iterencode + early break it should be under
+# ~20 ms. Generous threshold of 100 ms catches the regression
+# without flaking on slow CI.
+assert elapsed < 0.1, \
+    f'truncation took {elapsed*1000:.1f}ms -- iterencode early-break broken'
+
+print(f'[truncate-body] OK -- 5 MiB body bounded in {elapsed*1000:.2f}ms')
+PY
+}
+
 # --- 9a: LSP-process-leak detection (run LAST) ----------------------------
 t_no_leaked_lsp_processes() {
     # Capture the post-harness PID set of LSP binaries owned by this
@@ -3852,6 +4020,8 @@ run "14f 3 concurrent calls = 3 cids"    t_three_concurrent_calls_distinct_corr_
 run "14g spawner warnings as JSON"       t_spawner_warnings_are_json
 run "14h ws-symbol cleanup paths"        t_workspace_symbol_cleanup_paths
 run "14i _call_lsp phase-end on exc"     t_call_lsp_logs_phase_end_on_exception
+run "14j lsp-recv corr_id correlation"   t_lsp_recv_corr_id_correlation
+run "14k truncate body CPU bounded"      t_truncate_body_cpu_bounded
 # 9a runs LAST so every prior sub-test has had a chance to clean up.
 run "9a no leaked LSP processes"         t_no_leaked_lsp_processes
 
