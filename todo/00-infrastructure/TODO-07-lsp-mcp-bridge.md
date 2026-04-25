@@ -505,7 +505,7 @@ Every MCP tool takes a `path` argument. Without bounds-checking, an attacker (or
 > - **Canonical doc:** [`docs/infrastructure/development-tooling.md` LSP MCP Bridge / Path sandboxing](../../docs/infrastructure/development-tooling.md) -- new H4 subsection between Read-only boundary and LSP-miss fallback discipline.
 > - **Scope boundary:** §15 does NOT own warm-start eager spawn (§16) or the deferred scale roadmap (§17). Symlink policy is intentionally strict (rejects ALL symlinks, not just escape) -- if intra-workspace symlinks become a real use case later, that's a deliberate policy relaxation in a future section.
 
-> **Verified:** 2026-04-25 | commit `<§15 commit>` | 6/6 items | build OK | tests 80/80 PASS
+> **Verified:** 2026-04-25 | commit `f35ab2ec` | 6/6 items | build OK | tests 80/80 PASS
 
 ---
 
