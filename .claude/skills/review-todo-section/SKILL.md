@@ -30,12 +30,7 @@ description: Full review of a TODO section -- adversarial Codex, consistency, pe
    ```bash
    node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<prompt>"
    ```
-   **Mandatory angles:** integer overflow, buffer overread, NULL deref, SMP races, resource leaks, ABI mismatch, bounds on untrusted data.
-   Apply `superpowers:receiving-code-review` to EVERY finding. **Codex can be wrong** -- it reads code without runtime context. For EACH finding:
-   - **Verify first.** Read the actual code at file:line. Check callers, locks, reachability. Does the finding match reality?
-   - **If valid:** fix root cause, rebuild. No performative agreement -- just fix it.
-   - **If wrong:** reject with code evidence (path unreachable, lock already held, buffer bounded). Do NOT blindly fix a wrong finding.
-   - **If out of scope:** accept with domain-qualified XREF. Must truly need missing infrastructure.
+   **Mandatory angles:** integer overflow, buffer overread, NULL deref, SMP races, resource leaks, ABI mismatch, bounds on untrusted data. The PostToolUse hook fires `receiving-code-review` reminder; follow it. Triage findings -> fix valid Critical/High/Medium, reject false positives with code evidence, accept out-of-scope with domain-qualified XREF.
 6. **Fix adversarial findings** -- fix all valid Critical/High/Medium. Rebuild.
 
 ### Phase 3: Quality Audit
@@ -63,7 +58,7 @@ description: Full review of a TODO section -- adversarial Codex, consistency, pe
    ```
    Angles: allocations in hot paths / ISR contexts, O(n²) or worse on unbounded inputs, spinlock hold times spanning I/O or serial writes, byte-at-a-time operations that should be memcpy'd, branch-misprediction hazards on hot paths, cache-line sharing across per-CPU state, inline-asm barriers placed conservatively vs required.
 
-   Apply `superpowers:receiving-code-review` to EVERY finding from EVERY dispatch. Same rules as step 5 -- **Codex can be wrong.** Verify each finding at file:line. Reject wrong findings with code evidence. Do not blindly implement. Do not blindly accept.
+   Each dispatch fires the PostToolUse `receiving-code-review` reminder; follow it on every finding from every dispatch.
 
    **Rationale for two dispatches instead of one combined.** The one-dispatch combined prompt was valid until ~2026-04-24; observed failure mode was that Codex would deep-dive whichever angle had the most text in the prompt and skim the others. Focused per-angle dispatches give each one its own attention budget, lower the probability of missed findings, and make `Codex 3x` (adversarial + consistency + perf) the scannable baseline counter in the Quality reviewed stamp.
 
@@ -97,6 +92,22 @@ description: Full review of a TODO section -- adversarial Codex, consistency, pe
     - Ownership: if not fixed now, where is the exact checklist item that owns it?
 
 13. **Fix ALL findings** from steps 7-12. Priority: spec violations > incomplete stubs > missing tests > quality gate failures > consistency > parity > perf. Rebuild after each batch.
+
+13.5. **Conditional re-adversarial Codex** -- fires only when the cumulative fix diff from steps 6 + 13 is non-trivial. Trigger if ANY of:
+   - Touches locking, atomics, memory barriers, or per-CPU state.
+   - Touches ISR / interrupt entry / IST stacks / IRQL handling.
+   - Touches lifecycle: alloc / free / refcount / handle close paths.
+   - Cumulative diff > 50 lines of changed C/H, OR > 3 functions modified.
+   - Introduces or rewrites a state machine, a wait/wake path, or a faultable code region.
+
+   If any trigger fires, dispatch a focused re-adversarial scoped to ONLY the fix diff:
+   ```bash
+   node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<re-adversarial prompt>"
+   ```
+   **Prompt scope:** the diff between the pre-fix and post-fix tree (`git diff <pre-fix-sha>..HEAD -- <files>`). Angles: regressions introduced by the fixes themselves, new races opened by lock-order changes, new NULL paths from added error handling, new resource leaks from added early returns, new ABI drift from struct/enum touches.
+   The PostToolUse hook fires `receiving-code-review` reminder; follow it. Findings -> verify, fix, build. Track in stamp as `Codex Nx` (incrementing the dispatch count by 1; add `re-adversarial` to the `<kinds>` list).
+
+   If no trigger fires, skip and note in the stamp: include `(<reason>)` after the count, e.g. `Codex 3x (adversarial, consistency, perf)` with a brief Notes-block bullet `re-adversarial skipped: docs+stamp-only fixes`.
 
 ### Phase 4: Stamp + Commit
 
@@ -138,7 +149,7 @@ description: Full review of a TODO section -- adversarial Codex, consistency, pe
     - `N/M items` -- `[x]` count vs total `[ ]+[/]+[x]` in the section (exclude the `Commit:` line).
     - `build OK` | `build FAIL` -- single token. Do NOT re-paste `=== BUILD OK ===`.
     - **Evidence token vocabulary (pick one; keep scannable):** `smoke PASS (<platform> <time>)` for boot-path work; `tests N/M PASS` when a dedicated suite ran; `<N> sentinels` / `<N> fields` / `<N> rows` for structural counts; `manual` when validation is manual walkthrough. Free-form is still allowed; prefer the vocabulary. Skip if nothing surprising.
-    - Codex line: `Nx` is dispatch count (minimum 3 per current rules: adversarial + consistency + perf). `<kinds>` names dispatches (`adversarial`, `consistency`, `perf`; the legacy combined `quality` kind is no longer accepted -- split it into explicit entries; the legacy `dead-code` kind was retired 2026-04-25 and MUST NOT appear in new stamps). Add `design` or `re-adversarial` when extra passes land. Findings as `<H>H+<M>M+<L>L fixed[, <D> open][, <N>M accepted-XREF]`; drop zero terms. **Keep the count terse: `6H+5M+7L fixed, 2M accepted-XREF` is the right shape; `6H+5M+7L fixed (4H+3M+3L design adopted pre-code, 1H+1M+1L implement adversarial, ...)` is OVER-DETAILED -- per-dispatch breakdowns belong in the commit message, not in the stamp.** `scope:` names the domain code-quality skill applied OR `N/A (<reason>)` like `N/A (docs-only)`. Do NOT write the full "No domain code-quality skill applies (...)" sentence.
+    - Codex line: `Nx` is dispatch count (minimum 3 per current rules: adversarial + consistency + perf; bumps to 4 when step 13.5 re-adversarial fires). `<kinds>` names dispatches (`adversarial`, `consistency`, `perf`; the legacy combined `quality` kind is no longer accepted -- split it into explicit entries; the legacy `dead-code` kind was retired 2026-04-25 and MUST NOT appear in new stamps). Add `re-adversarial` when step 13.5 fires; add `design` for upstream design dispatches that landed in the same effort. Findings as `<H>H+<M>M+<L>L fixed[, <D> open][, <N>M accepted-XREF]`; drop zero terms. **Keep the count terse: `6H+5M+7L fixed, 2M accepted-XREF` is the right shape; `6H+5M+7L fixed (4H+3M+3L design adopted pre-code, 1H+1M+1L implement adversarial, ...)` is OVER-DETAILED -- per-dispatch breakdowns belong in the commit message, not in the stamp.** `scope:` names the domain code-quality skill applied OR `N/A (<reason>)` like `N/A (docs-only)`. Do NOT write the full "No domain code-quality skill applies (...)" sentence.
     - **`Accepted:` vs `Deferred:` -- pick the right label; the semantic split matters for triage.** Both are hook-enforced identically.
       - **`Accepted:`** -- finding valid but **out-of-scope for this section**; ownership is elsewhere. XREF points to a concrete item in ANOTHER TODO section or file. Grep `Accepted:` when auditing ownership-transfer risk.
       - **`Deferred:`** -- finding valid, **in-scope** for this TODO, but bigger than this commit. XREF points to a later item in THIS section or TODO file. Grep `Deferred:` when auditing "we promised to come back to this."
@@ -165,7 +176,7 @@ description: Full review of a TODO section -- adversarial Codex, consistency, pe
 - **Domain code quality skill walked explicitly** in step 7. Not just the hook -- read the skill and check every gate.
 - **Test coverage verified** in step 11. Missing tests are a finding, not acceptable.
 - **False completeness is a finding.** Checklist satisfaction without credible feature completeness or tracked ownership does not pass review.
-- `superpowers:receiving-code-review` on every Codex finding.
+- `superpowers:receiving-code-review` on every Codex finding (PostToolUse hook fires the reminder; follow it -- no in-step prose duplication needed).
 - All stamps use domain-qualified XREFs.
 - All stamps include test runner bat file and expected results.
 - No blank line between stamps.

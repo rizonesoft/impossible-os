@@ -16,15 +16,12 @@ description: Fix all findings from a Codex adversarial review, then re-run the r
 
 ## Workflow
 
-### Phase 1 -- Triage Findings (apply `superpowers:receiving-code-review` discipline)
+### Phase 1 -- Triage Findings
 
-> Codex is an external reviewer, not an authority. Verify before implementing. Push back when wrong. No performative agreement -- never write "great catch" or "you're absolutely right." Just state the fix or the reasoned rejection.
+> The PostToolUse hook fires `receiving-code-review` reminder when Codex returns; follow it. **Common false positives in adversarial findings:** Codex reads code without runtime context and will sometimes flag "missing lock" when the caller already holds it, "race" on a path that runs only on the BSP during boot phase 0, or "buffer overflow" on a buffer that's static-asserted larger than the access. Verify at file:line and YAGNI-check (grep for callers; remove dead code rather than expand it) before classifying.
 
 1. **Read the Codex review output.** List every finding with severity.
-2. **For each finding, verify technically against the actual code first** -- before classifying:
-   - Read the file at the cited line numbers. Does the code actually do what Codex claims?
-   - Codex reads code without runtime context. It will sometimes flag "missing lock" when the caller already holds it, "race" on a path that runs only on the BSP during boot phase 0, or "buffer overflow" on a buffer that's static-asserted larger than the access.
-   - **YAGNI check:** if Codex suggests "implement properly" for a feature, grep for callers. If unused, the answer is to remove the dead code, not expand it.
+2. **For each finding, verify technically against the actual code first** before classifying.
 3. **Classify each verified finding:**
    - **Fix now** -- correctness bug, race condition, missing error handling, architecture issue solvable with a small refactor. The finding is *verified valid*.
    - **Reject** -- the finding is wrong or misleading. Document the technical reason with code evidence (caller already holds lock X at file:line, path is single-threaded by construction because Y, etc.). Not "I disagree" -- explain WHY.
@@ -58,7 +55,7 @@ description: Fix all findings from a Codex adversarial review, then re-run the r
     3. [finding 3 summary]
     Focus on: [list of modified files]
     ```
-11. **Evaluate the re-review output (apply receiving-code-review discipline again on any new findings):**
+11. **Evaluate the re-review output** -- the PostToolUse hook fires `receiving-code-review` reminder again on the re-review; follow it on any new findings.
     - If verdict is `all-clear` or only has "accepted" items: **done**.
     - If new findings appear: go back to Phase 1 with the new findings -- verify each before fixing.
     - If original findings are "still live": the fix was incomplete -- go back to Phase 2. But also ask: did Codex re-flag a finding I already rejected? If so, re-verify; if I'm still right, the rejection stands and I document the disagreement, not the fix.
@@ -104,4 +101,3 @@ Run in background for reviews touching > 3 files:
 - **Present Codex output verbatim.** Do not reinterpret or soften findings.
 - **Each iteration must make progress.** If a re-review returns the exact same finding with the exact same code, the fix didn't work -- investigate why before retrying.
 - **Verify fixes don't break functionality.** Moving code to a thread, reordering init, or adding locks can break timing-dependent subsystems. Check CLAUDE.md "Bare Metal Gotchas" before applying structural fixes to boot-path code.
-- **Apply `superpowers:receiving-code-review` discipline throughout.** Codex is an external reviewer, not an authority. Verify each finding against the actual code before fixing. Reject wrong findings with concrete code evidence, not "I disagree." Never write performative agreement like "great catch" or "you're absolutely right" -- just state the fix or the rejection.

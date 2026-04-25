@@ -26,11 +26,7 @@ description: Codex-driven performance hot-path review. Focused analysis of ISR p
    node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<perf review prompt>"
    ```
 
-3. **Evaluate findings with `superpowers:receiving-code-review` discipline** -- perf optimizations are the easiest place to add complexity for no measurable benefit. For each finding:
-   - **Verify the path is actually hot.** Read the function. Is it really called from an ISR/per-tick path, or only from init/error paths? Codex flags allocations in functions that "look hot" but may run once at boot.
-   - **Verify the cost.** Is the allocation/lock/copy actually expensive enough to matter? A `kmalloc` call in a path that runs at 10 Hz is not a problem.
-   - **Don't sacrifice correctness or clarity for micro-optimization.** A spinlock that's held "too long" but is also the only correct way to serialize the operation should stay. A linear scan over a 16-element array should not be replaced with a hash table.
-   - **Reject "could be faster" without "is measurably slow."** Codex reviews structure, not measurements. Without a profile or serial-timing observation showing the path is actually slow, do not refactor.
+3. **Triage findings** -- the PostToolUse hook fires `receiving-code-review` reminder; follow it. **Perf-review false-positive watch:** Codex flags allocations in functions that "look hot" but only run once at boot; flags spinlock hold times that are the only correct serialization; demands hash tables for 16-element linear scans; and reports "could be faster" without "is measurably slow." Verify the path is actually hot and the cost is actually measurable before refactoring -- structure review without profile evidence is a reject.
 4. **Classify severity for verified findings:**
    - **Critical** -- verified to cause measurable latency on every interrupt/tick (> 1 us per invocation)
    - **High** -- verified to cause latency on common operations (allocation, exec, file open)
@@ -67,4 +63,3 @@ For each finding: file:line, what it does, why it's slow, suggested fix, estimat
 - Do not sacrifice correctness for performance. A fast race condition is worse than a slow lock.
 - Do not add complexity for micro-optimizations. If the improvement is < 1 us and the code is clearer as-is, skip it.
 - Focus on algorithmic improvements (O(n) -> O(log n)) over micro-optimizations (instruction scheduling).
-- Apply `superpowers:receiving-code-review` discipline -- Codex flags structural perf risks, not measured slowness. Verify each finding is on an actually-hot path with actually-measurable cost before refactoring. "Could be faster" without "is measurably slow" is a reject.

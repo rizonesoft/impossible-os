@@ -28,10 +28,7 @@ description: Codex-driven cross-file consistency audit. Verifies that constants,
    node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<consistency prompt>"
    ```
 
-3. **Evaluate findings with `superpowers:receiving-code-review` discipline** -- verify each mismatch before "fixing" it:
-   - **Read both sides of the claimed mismatch.** If Codex says "asm offset 0x18 doesn't match struct field at 0x20," open the .asm file and the C struct yourself. Codex sometimes counts padding wrong or misreads packed/aligned attributes.
-   - **Check whether the "drift" is intentional.** A `#define` that differs between two files may be deliberately scoped (e.g., kernel constant vs. bootloader constant). Don't unify them blindly.
-   - **Don't auto-add static asserts.** If Codex says "missing static assert," verify the invariant is actually load-bearing (does cross-file code depend on it?) before adding compile-time checks.
+3. **Triage findings** -- the PostToolUse hook fires `receiving-code-review` reminder; follow it. **Consistency-audit false-positive watch:** Codex misreads padding and packed/aligned attributes when comparing `.asm` offsets to C struct layouts; flags `#define` drift between files when the drift is deliberately scoped (kernel constant vs. bootloader constant); demands static asserts for invariants that no cross-file code depends on. Open both sides of every claimed mismatch yourself before fixing.
 4. **Categorize verified findings:**
    - **Offset mismatch** -- assembly uses hardcoded offset that doesn't match struct layout
    - **Size mismatch** -- `sizeof()` in test doesn't match actual struct size
@@ -70,4 +67,3 @@ Report mismatches with: file:line, expected value, actual value, risk level.
 - Focus on cross-file boundaries -- intra-file consistency is the compiler's job.
 - Always check `.asm` files -- they are the highest risk because the assembler doesn't type-check.
 - If the audit finds no issues, report what was checked (file count, assert count) so the user knows it ran.
-- Apply `superpowers:receiving-code-review` discipline -- read both sides of every claimed mismatch before fixing. Codex misreads padding, packed attributes, and intentionally-scoped constants.

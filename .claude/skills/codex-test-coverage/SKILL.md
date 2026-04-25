@@ -30,11 +30,7 @@ description: Codex-driven test coverage gap analysis. Given a source file or sub
    node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<coverage prompt>"
    ```
 
-4. **Evaluate findings with `superpowers:receiving-code-review` discipline** -- Codex's gap list is suggestions, not orders. For each gap before adding a test:
-   - **Verify the gap is real.** Read the existing test file at the cited section. Is the path actually untested, or did Codex miss an indirect assertion (e.g., a higher-level test that exercises the path)?
-   - **Verify the path is reachable.** Check the source file. If the "untested error path" is unreachable (e.g., `if (size > SIZE_MAX)` on a `size_t`), don't add a test for dead code -- delete the dead branch instead.
-   - **YAGNI check.** If Codex demands tests for hypothetical inputs that no caller produces (e.g., NULL on a function whose only callers always pass an Object Manager handle), the test would assert behavior that doesn't matter. Reject with reasoning.
-   - **No performative agreement.** Reject wrong gaps with code evidence; add real ones without commentary.
+4. **Triage findings** -- the PostToolUse hook fires `receiving-code-review` reminder; follow it. **Test-coverage false-positive watch:** Codex misses indirect assertions (a higher-level test that exercises the path); demands tests for unreachable error paths (`if (size > SIZE_MAX)` on a `size_t` -- delete the dead branch instead); demands tests for hypothetical NULL inputs that no caller produces. Verify reachability and real-caller behavior before adding any test.
 5. **Classify each verified gap:**
    - **Untested public functions** -- public API without any test assertion
    - **Missing boundary tests** -- off-by-one, exact limits, overflow, zero-length
@@ -77,4 +73,3 @@ For each gap, suggest a concrete test: function call + expected result.
 - Every suggested test must have a concrete expected value -- no "verify it works."
 - Register new tests in the correct `test_register_*()` function and `TEST_CAT_*` category.
 - This skill analyzes coverage, not correctness. Use `codex-adversarial-review-section` for correctness review.
-- Apply `superpowers:receiving-code-review` discipline -- verify each gap is real and reachable before adding a test. Don't add tests for dead code, unreachable branches, or hypothetical inputs that no caller produces.

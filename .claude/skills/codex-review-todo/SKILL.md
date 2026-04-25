@@ -31,9 +31,7 @@ description: Run a Codex adversarial review against all implemented sections of 
    ```
    Run in background for large reviews (> 3 sections).
 5. **Collect and present findings** verbatim from Codex output.
-6. **Apply `superpowers:receiving-code-review` discipline** when classifying findings -- Codex is an external reviewer, not an authority. For each finding before classifying:
-   - **Verify technically.** Read the code at the cited line numbers. Does it actually do what Codex claims? Codex reads code without runtime context and can be wrong.
-   - **YAGNI check.** If Codex flags missing functionality, grep for callers first -- the answer may be to remove the dead code, not expand it.
+6. **Triage findings** -- the PostToolUse hook fires `receiving-code-review` reminder; follow it. Verify each cited line against the actual code; YAGNI-check missing-functionality flags by grepping for callers first.
 7. **Classify each verified finding:**
    - **Fix now** -- verified correctness bug, race condition, use-after-free, data loss risk
    - **Reject** -- finding is wrong; document the technical reason with code evidence (caller already holds lock X, path is single-threaded, etc.)
@@ -62,4 +60,3 @@ Review the implemented sections of [TODO file]. Focus on:
 - Present Codex output verbatim -- do not soften or reinterpret findings.
 - If Codex returns "all-clear", note it but remain skeptical -- re-check one high-risk area manually.
 - Skip sections marked `[ ]` (not implemented) -- nothing to review.
-- Apply `superpowers:receiving-code-review` discipline when classifying -- verify each finding against the actual code before labeling it Fix Now, Reject, or Accepted. Codex is a reviewer, not an authority.

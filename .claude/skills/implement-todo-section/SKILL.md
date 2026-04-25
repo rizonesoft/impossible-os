@@ -40,7 +40,7 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
     node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<design review prompt>"
     ```
 
-    **Apply `superpowers:receiving-code-review` to EVERY design finding -- same Fix / Reject / Accept rigor as step 13 (adversarial) and step 8a/8b (consistency / perf) in the review pipeline. Codex can be wrong about design too: it can suggest an API that doesn't fit the codebase pattern, miss a constraint already enforced elsewhere, push complexity that's already been resolved differently, or recommend a library that's not available. Bulk-adopting all design findings without verification is the SAME blind-implementation failure mode that receiving-code-review was created to prevent.**
+    The PostToolUse hook fires `receiving-code-review` reminder; follow it on every design finding with the same Fix / Reject / Accept rigor as adversarial. **Design-review false-positive watch:** Codex suggests APIs that don't fit the codebase pattern, misses constraints already enforced elsewhere, pushes complexity already resolved differently, or recommends libraries that aren't available. Bulk-adopting design findings without verification is the same blind-implementation failure mode the discipline was created to prevent.
 
     For EACH design finding (Critical/High/Medium/Low):
     - **Verify against existing code first.** Read the file:line Codex cites to confirm the situation actually matches Codex's claim. Check whether the suggested change is already partially or fully in place under a different name. Check whether a related constraint (CLAUDE.md rule, existing pattern in the file, reciprocal API in another module) already addresses the concern.
@@ -150,11 +150,7 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
     ```
     **Mandatory angles (include ALL):** integer overflow, buffer overread, NULL deref, SMP races, resource leaks, ABI mismatch, bounds on untrusted data.
 
-    After Codex responds, apply `superpowers:receiving-code-review` to EVERY finding. **Codex can be wrong** -- it reads code without runtime context and makes incorrect inferences. For EACH finding:
-    - **Verify technically first.** Read the actual code at the cited file:line. Does the finding match reality? Check callers, check locks held, check whether the path is reachable.
-    - **If valid:** fix root cause (not surface symptom), rebuild. No performative agreement ("great catch") -- just state the fix.
-    - **If wrong/misleading:** reject with concrete code evidence (caller already holds lock X at file:line, path is unreachable because Y, buffer is bounded by Z). Do NOT blindly implement a fix for a wrong finding.
-    - **If out of scope:** accept with domain-qualified XREF. Must truly need missing infrastructure -- not a lazy deferral.
+    After Codex responds, the PostToolUse hook fires `receiving-code-review` reminder; follow it on every finding. **Adversarial false-positive watch:** Codex reads code without runtime context and frequently flags "missing lock" when the caller already holds it, "race" on paths single-threaded by construction, or "buffer overflow" on buffers static-asserted larger than the access. Verify at file:line; fix valid Critical/High at the root cause; reject wrong findings with code evidence; accept out-of-scope with domain-qualified XREF (not lazy deferral).
 14. **Self-review BEFORE fixing** -- catches what Codex misses at the integration level:
     - Regressions: did any existing functionality break?
     - Race conditions: any new shared mutable state without synchronization?
