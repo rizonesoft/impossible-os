@@ -334,7 +334,7 @@ Make the bridge discoverable, installable, and documented. Without this, §1-§8
 > - **Canonical doc:** [`docs/infrastructure/development-tooling.md` LSP MCP Bridge subsection](../../docs/infrastructure/development-tooling.md) -- single source of truth for users; the section's troubleshooting block is where install / configuration / failure-mode docs live.
 > - **Scope boundary:** §9 does NOT own the boundary-policy itself (that's [TODO-02 autonomous-agent boundary](TODO-02-ai-development-system.md)) -- §9 implements the carve-out the policy permits. Does NOT auto-install OPTIONAL deps (each is a deliberate user choice). Does NOT cover §10 (test-tooling.sh integration), §11-§16 (extended tools, lifecycle, watchdog, logging, sandboxing, warm-start) -- those are subsequent sections.
 
-> **Verified:** 2026-04-25 | commit `<§9 commit>` | 8/8 items | build N/A (host-side scripts + docs) | tests 36/36 PASS
+> **Verified:** 2026-04-25 | commit `a644d2ce` | 8/8 items | build N/A (host-side scripts + docs) | tests 36/36 PASS
 
 ---
 
