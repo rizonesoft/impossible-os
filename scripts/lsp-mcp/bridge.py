@@ -20,16 +20,26 @@
 #   * LSPs are spawned ON DEMAND: first request for a language boots
 #     that LSP; subsequent requests reuse it. Prevents idle overhead
 #     when an agent never touches a language.
-#   * Six read-only MCP tools registered via _build_mcp():
-#     hover / definition / references / diagnostics /
-#     workspace_symbol / document_symbol. Each handler sandboxes the
-#     path arg via _dispatch_path(), routes to the right LSP through
-#     _EXT_TO_LANG, and returns a normalized dict; errors land as the
-#     LspError.to_envelope() shape instead of raising.
+#   * 15 read-only MCP tools registered via _build_mcp():
+#     6 core (hover / definition / references / diagnostics /
+#     workspace_symbol / document_symbol), 8 extended (completion /
+#     signature_help / type_definition / implementation /
+#     declaration / call_hierarchy_incoming / call_hierarchy_outgoing
+#     / code_action), and 1 meta (_health -- per-LSP crash + restart
+#     bookkeeping; no LSP wire traffic). Each LSP-routed handler
+#     sandboxes the path arg via _dispatch_path(), routes to the
+#     right LSP through _EXT_TO_LANG, and returns a normalized
+#     dict; errors land as the LspError.to_envelope() shape instead
+#     of raising.
+#   * Crash / respawn watchdog: bridge-side _LSP_HEALTH per-(lang,
+#     root) registry survives instance replacement; _get_or_spawn
+#     detects dead instances + dispatches respawn through the same
+#     _SPAWN_EVENTS gate first-spawn uses; 4 crashes within 60 s
+#     pushes the key to FAILED state.
 #   * --self-test exits 0 with
-#     "[lsp-mcp] OK: 0 LSPs spawned, 6 tools registered, bridge ready"
+#     "[lsp-mcp] OK: 0 LSPs spawned, 15 tools registered, bridge ready"
 #     even when the `mcp` SDK is absent (SKIP path, CI-friendly).
-#     --self-test --tools dumps the six tool schemas as JSON.
+#     --self-test --tools dumps the 15 tool schemas as JSON.
 #
 # Usage:
 #   python3 scripts/lsp-mcp/bridge.py              # stdio server
@@ -285,16 +295,28 @@ def _record_crash(key: tuple[str, str], reason: str) -> bool:
     return False
 
 
-def _backoff_delay_s(restart_count: int) -> float:
+def _backoff_delay_s(window_crash_count: int) -> float:
     """Exponential backoff: 1, 2, 4, 8, ... capped at the per-policy
-    ceiling. restart_count is the number of PRIOR restarts (so the
-    first restart sleeps _RESPAWN_BACKOFF_BASE_S, the next 2x, etc).
-    Ceilinged so a long-running session that has accumulated many
-    historical restarts does not sleep for hours after one new
-    crash."""
-    if restart_count < 0:
-        restart_count = 0
-    raw = _RESPAWN_BACKOFF_BASE_S * (2 ** min(restart_count, 16))
+    ceiling. window_crash_count is the count of PRIOR crashes still
+    in the sliding window (i.e. crashes within
+    _RESPAWN_FAILED_WINDOW_S of the current one). The first crash
+    in a fresh window sleeps _RESPAWN_BACKOFF_BASE_S; each
+    additional crash within the window doubles the sleep.
+
+    Caller passes `max(0, len(recent_crash_times) - 1)` so the
+    fresh-window first-crash case is index 0 (base sleep).
+
+    Codex post-implementation perf review caught the earlier
+    cumulative-restart_count formulation as Medium: a long-lived
+    bridge with transient crashes spaced > _RESPAWN_FAILED_WINDOW_S
+    apart never enters FAILED but the restart_count grew without
+    decay, so every later respawn paid the 30 s cap. Sliding-window
+    semantics keep the backoff proportional to RECENT crash
+    pressure -- a transient crash after hours of healthy operation
+    pays only the base delay, matching what an operator expects."""
+    if window_crash_count < 0:
+        window_crash_count = 0
+    raw = _RESPAWN_BACKOFF_BASE_S * (2 ** min(window_crash_count, 16))
     return min(raw, _RESPAWN_BACKOFF_CAP_S)
 
 
@@ -410,10 +432,17 @@ def _respawn_locked(lang: str, workspace_root: Path,
     with _LIVE_LSPS_LOCK:
         h = _get_or_init_health(key)
         restart_count = h["restart_count"]
+        # Use sliding-window crash count, not cumulative
+        # restart_count, for backoff. _record_crash has already
+        # pruned + appended the current crash, so len gives "this
+        # crash + prior in-window crashes". Subtract 1 so the first
+        # crash in a fresh window sleeps the base delay (index 0).
+        window_count = max(0, len(h["recent_crash_times"]) - 1)
 
-    delay = _backoff_delay_s(restart_count)
+    delay = _backoff_delay_s(window_count)
     _emit_health_event("restart-attempt", lang, str(workspace_root),
                        restart_count=restart_count,
+                       window_crash_count=window_count,
                        backoff_s=delay)
     if delay > 0.0:
         _time.sleep(delay)
@@ -1548,11 +1577,31 @@ def _build_mcp(FastMCP, workspace_root: Path):
         # pre-implementation review flagged serializing under
         # _CALL_LOCK as a Medium; per-instance request locks in
         # LspSubprocess already protect each LSP's wire I/O.
+        #
+        # Snapshot KEYS, not raw instances. Each worker re-calls
+        # _get_or_spawn(lang_tag, root) so a cached-but-crashed LSP
+        # is detected, the crash is recorded, and the standard
+        # respawn pipeline fires (with backoff + replay). Codex
+        # post-implementation review High caught the alternative
+        # (snapshot inst directly + filter on inst.alive) as a
+        # transparent-restart bypass: an alive-but-reader-dead LSP
+        # would have been called blindly through inst.request(),
+        # the crash would never enter _LSP_HEALTH, and the FAILED
+        # state would never fire. We now route every fan-out worker
+        # through the same _get_or_spawn / _inst_usable path the
+        # single-language tools use.
         import concurrent.futures
         with _LIVE_LSPS_LOCK:
             snapshot = [
                 (key, inst) for key, inst in _LIVE_LSPS.items()
-                if inst.alive
+                if _inst_usable(inst) or (
+                    # Include cached-but-dead entries so the worker
+                    # can trigger respawn. If _inst_usable filtered
+                    # them out here, a fan-out call against a
+                    # crashed LSP would silently omit it.
+                    inst is not None
+                    and not _LSP_HEALTH.get(key, {}).get("failed", False)
+                )
             ]
         per_lang: dict[str, list] = {}
         errors: dict[str, str] = {}
@@ -1560,13 +1609,34 @@ def _build_mcp(FastMCP, workspace_root: Path):
             return {"query": str(query), "per_lang": {}, "total": 0, "errors": {}}
 
         def _one(key, inst):
-            (lang_tag, _root) = key
+            (lang_tag, root_str) = key
             try:
-                raw = inst.request(
-                    "workspace/symbol",
-                    {"query": str(query)},
-                    timeout=5.0,
-                )
+                # Re-fetch through _get_or_spawn so a cached-but-
+                # crashed instance routes into the respawn pipeline
+                # before we attempt the wire request.
+                root_path = Path(root_str)
+                live = _get_or_spawn(lang_tag, root_path)
+                try:
+                    raw = live.request(
+                        "workspace/symbol",
+                        {"query": str(query)},
+                        timeout=5.0,
+                    )
+                except LspError as inner:
+                    # One-shot retry mirroring _call_lsp's contract:
+                    # crash-class envelopes get a single re-fetch +
+                    # re-request. Anything else returns as-is.
+                    if inner.kind in ("lsp-subprocess-exited",
+                                      "lsp-reader-crashed",
+                                      "lsp-shutdown"):
+                        live = _get_or_spawn(lang_tag, root_path)
+                        raw = live.request(
+                            "workspace/symbol",
+                            {"query": str(query)},
+                            timeout=5.0,
+                        )
+                    else:
+                        raise
                 return lang_tag, _normalize_symbols(raw), None
             except LspError as exc:
                 # Return the structured error envelope, not a

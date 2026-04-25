@@ -215,6 +215,22 @@
 #          (PSES leak fix). Crashes + respawns + asserts the old
 #          tempdir is gone while the new one is owned by the new
 #          instance.
+#   13i -- regression guard for Codex post-commit perf review
+#          Medium: backoff used to be indexed by cumulative
+#          restart_count, so a long-lived bridge with transient
+#          crashes accumulated to the 30s cap forever. Fix indexes
+#          by sliding-window crash count; this test seeds 10
+#          historical restarts with empty window, records a fresh
+#          crash, and asserts backoff returns to the base delay.
+#   13h -- regression guard for Codex post-commit review High:
+#          workspace_symbol fan-out used to bypass _get_or_spawn,
+#          calling raw inst.request() against alive-checked
+#          instances; a crashed LSP would silently fail in the
+#          per-lang errors dict without entering crash accounting.
+#          With the fix the fan-out worker re-routes through
+#          _get_or_spawn (with one-retry on crash-class envelopes),
+#          so the dead LSP triggers respawn transparently and
+#          restart_count surfaces in _health.
 #   12f -- post-apply_text request rejected during teardown
 #          (regression guard for the Codex post-implementation review
 #          High follow-up to 12e): a tool thread that already passed
@@ -2885,13 +2901,62 @@ t_backoff_schedule() {
 import sys
 sys.path.insert(0, 'scripts/lsp-mcp')
 import bridge
-# Schedule for the documented sequence.
+# Schedule indexed by window_crash_count (NOT cumulative
+# restart_count, after the perf-review fix). Fresh-window first
+# crash = index 0 = base sleep.
 expected = [1.0, 2.0, 4.0, 8.0, 16.0, 30.0, 30.0, 30.0]
 for n, want in enumerate(expected):
     got = bridge._backoff_delay_s(n)
-    assert got == want, f'restart_count={n}: got {got}, want {want}'
+    assert got == want, f'window_count={n}: got {got}, want {want}'
 # Negative -> clamped to 0 -> base.
 assert bridge._backoff_delay_s(-5) == bridge._RESPAWN_BACKOFF_BASE_S
+"
+}
+
+# --- 13i: backoff resets on sliding-window decay --------------------------
+# Regression guard for Codex post-impl perf review Medium: the
+# earlier cumulative-restart_count backoff would slowly degrade
+# every recovery to the 30s cap on a long-lived bridge with
+# transient crashes. With the fix backoff is indexed by sliding-
+# window crash count, so a crash AFTER the window has decayed to
+# empty pays only the base delay regardless of historical
+# restart_count.
+t_backoff_resets_after_window_decay() {
+    python3 -c "
+import sys
+sys.path.insert(0, 'scripts/lsp-mcp')
+import bridge
+
+key = ('fake13i', '/some/root')
+saved = dict(bridge._LSP_HEALTH)
+bridge._LSP_HEALTH.clear()
+try:
+    h = bridge._get_or_init_health(key)
+    # Simulate 10 historical crashes (long-lived bridge) but the
+    # sliding window has decayed to empty (last entries dropped).
+    h['restart_count'] = 10
+    h['recent_crash_times'] = []
+
+    # New crash arrives. _record_crash appends it to the window
+    # and returns False (only 1 crash in window, far below
+    # threshold).
+    entered_failed = bridge._record_crash(key, 'fresh-crash')
+    assert entered_failed is False, 'should NOT have entered FAILED'
+    assert len(h['recent_crash_times']) == 1, h['recent_crash_times']
+
+    # Backoff for THIS crash should use window_count = 0 (first in
+    # window) -> base delay, NOT 2**10 capped at 30s like the old
+    # cumulative formulation.
+    window_count = max(0, len(h['recent_crash_times']) - 1)
+    delay = bridge._backoff_delay_s(window_count)
+    assert delay == bridge._RESPAWN_BACKOFF_BASE_S, \
+        f'backoff did not decay: got {delay}, expected base ({bridge._RESPAWN_BACKOFF_BASE_S})'
+
+    # restart_count is preserved as telemetry.
+    assert h['restart_count'] == 10, h
+finally:
+    bridge._LSP_HEALTH.clear()
+    bridge._LSP_HEALTH.update(saved)
 "
 }
 
@@ -3134,6 +3199,143 @@ finally:
 PY
 }
 
+# --- 13h: workspace_symbol fan-out triggers crash accounting + respawn --
+# Regression guard for the Codex post-implementation review High
+# finding: the fan-out path used to snapshot raw instances + filter
+# on inst.alive, calling inst.request() directly. A crashed LSP
+# would silently fail in the per-language errors dict without
+# entering crash accounting or triggering respawn. With the fix the
+# fan-out worker re-routes through _get_or_spawn (same pipeline
+# used by single-language tools), so the dead LSP triggers respawn
+# transparently and the answer comes back as a successful entry.
+t_workspace_symbol_respawns_dead_lsp() {
+    python3 - << 'PY'
+import sys, os, time, signal, tempfile
+from pathlib import Path
+sys.path.insert(0, 'scripts/lsp-mcp')
+try:
+    from mcp.server.fastmcp import FastMCP
+except Exception:
+    sys.exit(0)
+import bridge
+from lsp_client import LspSubprocess
+
+fake = r"""
+import sys, json
+def read_msg():
+    hdr = b''
+    while True:
+        ch = sys.stdin.buffer.read(1)
+        if not ch: return None
+        hdr += ch
+        if hdr.endswith(b'\r\n\r\n'): break
+    n = 0
+    for line in hdr.split(b'\r\n'):
+        if line.lower().startswith(b'content-length:'):
+            n = int(line.split(b':')[1].strip()); break
+    return json.loads(sys.stdin.buffer.read(n).decode('utf-8'))
+def write_msg(obj):
+    b = json.dumps(obj).encode('utf-8')
+    sys.stdout.buffer.write(b'Content-Length: ' + str(len(b)).encode() + b'\r\n\r\n' + b)
+    sys.stdout.buffer.flush()
+while True:
+    m = read_msg()
+    if m is None: break
+    method = m.get('method')
+    if 'id' in m:
+        if method == 'initialize':
+            write_msg({'jsonrpc':'2.0','id':m['id'],'result':{'capabilities':{}}})
+        elif method == 'workspace/symbol':
+            write_msg({'jsonrpc':'2.0','id':m['id'],
+                       'result':[{'name': 'foo', 'kind': 12,
+                                  'location': {'uri': 'file:///x',
+                                               'range': {'start': {'line':0,'character':0},
+                                                         'end':   {'line':0,'character':0}}}}]})
+        elif method == 'textDocument/hover':
+            write_msg({'jsonrpc':'2.0','id':m['id'],
+                       'result':{'contents':{'kind':'markdown','value':'h'}}})
+        else:
+            write_msg({'jsonrpc':'2.0','id':m['id'],'result':None})
+    elif method == 'exit':
+        break
+"""
+
+saved_base = bridge._RESPAWN_BACKOFF_BASE_S
+bridge._RESPAWN_BACKOFF_BASE_S = 0.05
+
+ws = Path.cwd()
+tmp = tempfile.NamedTemporaryFile(suffix='.fakeext13h', mode='w',
+                                  delete=False, dir=str(ws))
+try:
+    tmp.write('// hello\n'); tmp.close()
+    bridge._EXT_TO_LANG['.fakeext13h'] = 'fake13h'
+    bridge._LANG_TO_LSP_LANGUAGE_ID['fake13h'] = 'plaintext'
+
+    def spawn_fake(workspace_root):
+        lsp = LspSubprocess(['python3', '-c', fake], lang='fake13h')
+        lsp.initialize('file://' + str(workspace_root))
+        return lsp
+    bridge.register_spawner('fake13h', spawn_fake)
+
+    srv = bridge._build_mcp(FastMCP, ws)
+    hover_fn = srv._tool_manager._tools['hover'].fn
+    ws_fn = srv._tool_manager._tools['workspace_symbol'].fn
+    health_fn = srv._tool_manager._tools['_health'].fn
+
+    # Spawn the LSP via hover.
+    r1 = hover_fn(path=os.path.basename(tmp.name), line=0, character=0)
+    assert 'error' not in r1, r1
+    h1 = health_fn()
+    entry1 = next(iter(h1['languages']['fake13h'].values()))
+    assert entry1['restart_count'] == 0, entry1
+
+    # KILL the subprocess.
+    with bridge._LIVE_LSPS_LOCK:
+        key = next(k for k in bridge._LIVE_LSPS if k[0] == 'fake13h')
+        inst = bridge._LIVE_LSPS[key]
+    os.kill(inst.pid, signal.SIGKILL)
+    for _ in range(200):
+        if inst._crashed: break
+        time.sleep(0.01)
+
+    # workspace_symbol(lang=None) fan-out: with the fix, the dead
+    # fake13h is detected, respawned, and the per-lang answer comes
+    # back. Without the fix it would silently omit fake13h or land
+    # in errors.
+    r2 = ws_fn(query='foo')
+    assert 'error' not in r2, r2
+    assert 'fake13h' in r2['per_lang'], \
+        f'fan-out did not recover dead LSP: {r2}'
+    assert len(r2['per_lang']['fake13h']) >= 1, r2
+
+    # Health surfaces restart_count=1 -- proves crash accounting
+    # ran during the fan-out (NOT just on the next single-LSP call).
+    h2 = health_fn()
+    entry2 = next(iter(h2['languages']['fake13h'].values()))
+    assert entry2['restart_count'] == 1, \
+        f'workspace_symbol fan-out did not record crash + respawn: {entry2}'
+    assert entry2['alive'] is True, entry2
+
+    print(f'[ws-symbol-respawn] OK -- fan-out triggered respawn, ' \
+          f'restart_count 0 -> 1')
+finally:
+    bridge._RESPAWN_BACKOFF_BASE_S = saved_base
+    try: os.unlink(tmp.name)
+    except OSError: pass
+    bridge._EXT_TO_LANG.pop('.fakeext13h', None)
+    bridge._LANG_TO_LSP_LANGUAGE_ID.pop('fake13h', None)
+    bridge._LSP_SPAWNERS.pop('fake13h', None)
+    with bridge._LIVE_LSPS_LOCK:
+        keys = [k for k in bridge._LIVE_LSPS if k[0] == 'fake13h']
+        for k in keys:
+            inst = bridge._LIVE_LSPS.pop(k, None)
+            bridge._LSP_HEALTH.pop(k, None)
+            if inst is not None:
+                try: inst.shutdown(timeout=1.0)
+                except Exception: pass
+PY
+}
+
 # --- 9a: LSP-process-leak detection (run LAST) ----------------------------
 t_no_leaked_lsp_processes() {
     # Capture the post-harness PID set of LSP binaries owned by this
@@ -3221,6 +3423,8 @@ run "13d backoff schedule"               t_backoff_schedule
 run "13e _health empty state"            t_health_tool_empty_state
 run "13f cold-spawn fails enter FAILED"  t_cold_spawn_failures_enter_failed
 run "13g respawn walks cleanup_paths"    t_respawn_walks_cleanup_paths
+run "13h ws-symbol respawns dead LSP"    t_workspace_symbol_respawns_dead_lsp
+run "13i backoff resets after window"    t_backoff_resets_after_window_decay
 # 9a runs LAST so every prior sub-test has had a chance to clean up.
 run "9a no leaked LSP processes"         t_no_leaked_lsp_processes
 
