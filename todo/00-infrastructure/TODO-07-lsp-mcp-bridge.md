@@ -172,7 +172,7 @@ Wire `bash-language-server` (Node) for the ~11.4k lines of shell under `scripts/
 > - **Canonical doc:** [bash-language-server initialization options](https://github.com/bash-lsp/bash-language-server) -- `shellcheckPath` empty string requests PATH auto-discovery; passing an explicit `shutil.which("shellcheck")` path makes the configuration deterministic across hosts where multiple shellcheck installs collide.
 > - **Scope boundary:** no MCP tools registered, no per-extension dispatch (§7's `dispatch(path)` helper), no pyright / PSES (§5-§6 own those). Install guidance for `bash-language-server` + `shellcheck` in the developer-tooling docs subsection is §9. The `LspSubprocess` reader does not yet answer server-initiated `workspace/configuration` requests; advertising that capability for any future server is a §1-skeleton retrofit, not a §4 deliverable.
 
-> **Verified:** 2026-04-25 | commit `<§4 commit>` | 6/6 items | build N/A (host-side Python) | tests 16/16 PASS
+> **Verified:** 2026-04-25 | commit `36854231` | 6/6 items | build N/A (host-side Python) | tests 16/16 PASS
 > **Quality reviewed:** 2026-04-25 | Codex 3x (adversarial + consistency + perf) | 1H+4M fixed, 1H rejected (cross-language semantic refinement: `bash_server.is_available()` deliberately diverges from clangd/asm with a `--version` runtime probe because bash-language-server is an npm shim that re-execs into Node; PATH presence does not imply runnability the way it does for the self-contained binaries) | scope: N/A (host-side Python tooling; no domain quality skill applies)
 
 ---
