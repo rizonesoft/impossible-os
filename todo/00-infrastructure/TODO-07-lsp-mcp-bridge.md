@@ -234,7 +234,7 @@ Wire PowerShellEditorServices (Microsoft OSS) for the ~1.1k lines of PowerShell 
 > - **Canonical doc:** [PowerShell/PowerShellEditorServices](https://github.com/PowerShell/PowerShellEditorServices) -- `Start-EditorServices.ps1 -Stdio` is the supported start path; `LogPath` is a directory not a file (per `StartEditorServicesCommand.cs` upstream); `BundledModulesPath` must contain a `PowerShellEditorServices` subfolder.
 > - **Scope boundary:** no MCP tools registered, no per-extension dispatch (§7's `dispatch(path)` helper). The successful PSES spawn leaks a tempdir per session because no shutdown hook on `LspSubprocess` owns it today; cleaned up on spawn-failure only. The `cleanup_paths` retrofit is filed in §12 as a concrete `[ ]` item.
 
-> **Verified:** 2026-04-25 | commit `<§6 commit>` | 6/6 items | build N/A (host-side Python) | tests 24/24 PASS
+> **Verified:** 2026-04-25 | commit `51e96f11` | 6/6 items | build N/A (host-side Python) | tests 24/24 PASS
 > **Accepted:** [L] PSES tempdir leaks on successful spawn (success path has no shutdown hook to clean LogPath; failure cleanup is correct) (reason: infra) -> XREF: 00-infrastructure/TODO-07 §12 (item: "Per-LSP `cleanup_paths` retrofit on `LspSubprocess`" at line 348)
 
 ---
