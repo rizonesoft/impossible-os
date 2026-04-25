@@ -106,10 +106,14 @@ Verified locally: `codex mcp list` shows both servers `enabled`; `bash scripts/c
 
 > **Notes:**
 > - Adds repo-owned Codex MCP fixture at `docs/infrastructure/codex-mcp.config.toml` plus idempotent installer `scripts/codex-mcp-install.sh` (`--check` for dry-run); both wire `todo-graph` + `lsp-bridge` into `~/.codex/config.toml` so Codex sees the same MCP servers Claude does via `.mcp.json`.
-> - `mcp_drift` sub-test in `scripts/test-tooling.sh` does semantic two-step compare: cross-side server name parity (.mcp.json vs fixture) AND user's `~/.codex/config.toml` vs fixture key-for-key (delegates to installer's `--check`); skip-with-PASS on fresh dev env; FAIL with installer hint on real drift.
+> - `mcp_drift` sub-test in `scripts/test-tooling.sh` does semantic two-step compare: cross-side parity (.mcp.json vs fixture) -- command + args[0] for every shared name PLUS full args list for the `lsp-bridge` warm-start contract -- AND user's `~/.codex/config.toml` vs fixture key-for-key (delegates to installer's `--check`); skip-with-PASS on fresh dev env; FAIL with installer hint on real drift.
+> - Installer hardened post-ship: validates merged TOML BEFORE atomic replace (no destructive write on bad merge), boundary detector recognizes all 4 TOML-equivalent owned-block forms (bare/quoted prefix, bare/quoted name, whitespace around dot), structured FATAL envelope on malformed target.
 > - Codex CLI 0.126.0-alpha.1 limitation: `codex exec` rejects every MCP tool call as "user cancelled" within 1.2ms; wiring is correct (config round-trips, `mcp list` shows both enabled), but end-to-end smoke needs interactive `codex` TUI today.
 > - Canonical doc: `docs/infrastructure/ai-system.md` "MCP server boundary" -> "Cross-tool MCP server set" subsection.
 > - Scope boundary: §1 wires + validates the cross-tool MCP server set; §2 owns the no-`--model`/`--effort` invocation policy that goes on top of this wiring; §6 owns the broader MCP usage discipline doctrine.
+
+> **Verified:** 2026-04-26 | commit `90b4b838` | 9/10 items, 1 deferred ([/]: codex exec smoke blocked on Codex 0.126 alpha) | build OK | tests 85/85 PASS
+> **Quality reviewed:** 2026-04-26 | Codex 6x (design + adversarial + consistency + perf + re-adversarial) | 3H+5M+1L fixed | scope: N/A (host-side dev tooling)
 
 ---
 

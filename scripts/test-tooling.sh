@@ -679,12 +679,24 @@ if fixture_only:
 
 # Per-server semantic compare for shared names. The two sides use
 # different schemas (.mcp.json: {command, args}; Codex fixture:
-# {command, args, cwd, ...}). For each shared name, assert that
-# command + args[0] (the script path) match exactly. We do NOT
-# compare cwd (Codex needs an absolute path; .mcp.json is
-# implicitly cwd=repo-root) or args[1:] (CLI flags can legitimately
-# differ between clients -- e.g. Claude may pass --warm-start while
-# a future client wants --different-flag).
+# {command, args, cwd, ...}).
+#
+# Default rule: command + args[0] (the script path) must match.
+# We do NOT compare cwd (Codex needs an absolute path; .mcp.json
+# is implicitly cwd=repo-root).
+#
+# Per-server overrides for FULL_ARGS_SERVERS: the entire args list
+# must match. lsp-bridge belongs here because the cross-tool MCP
+# contract explicitly requires the same warm-start flags on both
+# sides (the bridge needs --warm-start-mode=background to survive
+# any MCP launcher's stdio handshake; dropping it on either side
+# would leave one client with a materially different startup
+# profile). Codex post-ship consistency review M caught the
+# previous args[0]-only check as too loose. (todo-graph stays on
+# the args[0]-only rule because it has no flags today and any
+# future flag would be a deliberate per-client tuning.)
+FULL_ARGS_SERVERS = {"lsp-bridge"}
+
 for name in sorted(claude_names & fixture_names):
     c = claude_servers[name]
     f = fixture_servers[name]
@@ -702,6 +714,15 @@ for name in sorted(claude_names & fixture_names):
             f"[{name}] empty args: .mcp.json={c_args!r} "
             f"fixture={f_args!r}"
         )
+    elif name in FULL_ARGS_SERVERS:
+        # Full args list must match. Render the diff so an
+        # operator can see exactly which flag drifted.
+        if list(c_args) != list(f_args):
+            errors.append(
+                f"[{name}] full args mismatch (cross-tool contract "
+                f"requires identical args for this server): "
+                f".mcp.json={c_args!r} fixture={f_args!r}"
+            )
     elif c_args[0] != f_args[0]:
         errors.append(
             f"[{name}] script path mismatch: "

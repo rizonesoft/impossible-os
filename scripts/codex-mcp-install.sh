@@ -84,7 +84,25 @@ else:
     target_bytes = b""
 
 # Parse the target so we can diff per-server. Tolerate empty file.
-target_doc = tomllib.loads(target_bytes.decode("utf-8") or "")
+# Catch parse errors with a structured envelope per Codex post-ship
+# consistency review L: the previous revision propagated
+# tomllib.TOMLDecodeError as an unstructured Python traceback,
+# breaking the documented [codex-mcp-install] FATAL/DRIFT/OK
+# envelope contract that the test-tooling drift validator embeds
+# in its t_fail message.
+try:
+    target_doc = tomllib.loads(target_bytes.decode("utf-8") or "")
+except tomllib.TOMLDecodeError as exc:
+    sys.stderr.write(
+        f"[codex-mcp-install] FATAL: target config is invalid TOML "
+        f"({target_path}): {exc}\n"
+    )
+    sys.stderr.write(
+        "[codex-mcp-install] hint: open the file, fix the TOML "
+        "syntax error, and re-run. The installer never overwrites "
+        "an unparsable target.\n"
+    )
+    sys.exit(2)
 actual = target_doc.get("mcp_servers") or {}
 
 drift = []
@@ -189,23 +207,57 @@ def strip_blocks_for_names(text, names):
     # a boundary -- presence of `[` or `[[` at line start (after
     # optional whitespace) is enough.
     boundary_start = re.compile(r'^\s*\[\[?')
-    # For OUR-block detection, match `[mcp_servers.<bare-name>]` or
-    # `[mcp_servers."quoted-name"]`. Quoted form is recognized so
-    # a user who wrote `[mcp_servers."todo-graph"]` (legal TOML)
-    # is also treated as our owned block.
-    bare_owned = re.compile(
-        r'^\[mcp_servers\.([A-Za-z0-9_.-]+)\]\s*(?:#.*)?$'
-    )
-    quoted_owned = re.compile(
-        r'^\[mcp_servers\.\"([^"]+)\"\]\s*(?:#.*)?$'
-    )
+
+    def _parse_owned_table_key(stripped):
+        """Return the owned-server name if `stripped` is a single-table
+        TOML header `[mcp_servers . <name>]` whose name part is in the
+        owned set, else None. Handles all four TOML-equivalent forms
+        the spec allows for a 2-segment dotted key:
+            [mcp_servers.todo-graph]              (bare . bare)
+            [mcp_servers."todo-graph"]            (bare . quoted)
+            ["mcp_servers".todo-graph]            (quoted . bare)
+            ["mcp_servers"."todo-graph"]          (quoted . quoted)
+        With arbitrary whitespace around the dot. Comments after the
+        `]` are tolerated. Array-of-tables (`[[..]]`) is NOT treated
+        as an owned block (we only own single tables) but still acts
+        as a block boundary at the caller. Codex post-ship adversarial
+        review High caught the previous detector missing the quoted-
+        prefix and whitespace forms, which would have left a stale
+        owned block in place during a refresh and produced invalid
+        TOML after the fixture was appended."""
+        # Quick reject: array-of-tables headers.
+        if stripped.startswith("[["):
+            return None
+        # Strip optional trailing comment.
+        head = re.split(r'\s*#', stripped, maxsplit=1)[0].rstrip()
+        if not (head.startswith("[") and head.endswith("]")):
+            return None
+        inside = head[1:-1].strip()
+        # Match exactly two segments separated by `.` with optional
+        # whitespace around the dot. Each segment is bare
+        # ([A-Za-z0-9_-]+) or quoted ("..." with no embedded ").
+        seg = r'(?:[A-Za-z0-9_-]+|"[^"]+")'
+        m = re.match(rf'^\s*({seg})\s*\.\s*({seg})\s*$', inside)
+        if not m:
+            return None
+        prefix, name = m.group(1), m.group(2)
+        # Strip surrounding quotes if present.
+        if prefix.startswith('"'):
+            prefix = prefix[1:-1]
+        if name.startswith('"'):
+            name = name[1:-1]
+        if prefix != "mcp_servers":
+            return None
+        if name not in name_set:
+            return None
+        return name
 
     while i < len(lines):
         line = lines[i]
         if boundary_start.match(line):
             stripped = line.strip()
-            mb = bare_owned.match(stripped) or quoted_owned.match(stripped)
-            if mb and mb.group(1) in name_set:
+            owned = _parse_owned_table_key(stripped)
+            if owned is not None:
                 drop_block = True
                 i += 1
                 continue
@@ -241,22 +293,53 @@ merged += fixture_blocks
 if not merged.endswith("\n"):
     merged += "\n"
 
-# Atomic write: write to .tmp, fsync, rename. Avoids leaving a
-# partially-written config if the disk fills mid-write.
-tmp_path = target_path.with_suffix(target_path.suffix + ".tmp")
-tmp_path.write_text(merged, encoding="utf-8")
-os.fsync(os.open(str(tmp_path), os.O_RDONLY))
-os.replace(str(tmp_path), str(target_path))
-
-# Re-parse to confirm round-trip.
-verify = tomllib.loads(merged)
+# Validate the merged TOML BEFORE the atomic replace. Codex post-ship
+# adversarial review High: the previous order wrote .tmp, called
+# os.replace, THEN parsed merged -- meaning a corrupt merge (e.g.
+# duplicate-table failure when the boundary detector failed to strip
+# a stale owned block in an unusual TOML form) would already have
+# overwritten the user's good config. Now we parse first; only on
+# successful parse + presence verification do we touch the target.
+try:
+    verify = tomllib.loads(merged)
+except tomllib.TOMLDecodeError as exc:
+    sys.stderr.write(
+        f"[codex-mcp-install] FATAL: merged config would be invalid "
+        f"TOML, ABORTED before writing {target_path}: {exc}\n"
+    )
+    sys.stderr.write(
+        "[codex-mcp-install] hint: this usually means a stale "
+        "[mcp_servers.<name>] block in your config used a TOML form "
+        "the boundary detector missed; please report with the lines "
+        "near the parse error.\n"
+    )
+    sys.exit(2)
 verify_actual = verify.get("mcp_servers") or {}
 for name in expected_names:
     if name not in verify_actual:
         sys.stderr.write(
-            f"[codex-mcp-install] FATAL: post-write verify missing {name}\n"
+            f"[codex-mcp-install] FATAL: merged config missing "
+            f"[mcp_servers.{name}] after parse, ABORTED before "
+            f"writing {target_path}\n"
         )
         sys.exit(2)
+
+# Atomic write: write to .tmp, fsync, rename. The merged content
+# has already been validated as TOML and confirmed to contain every
+# expected server, so a successful rename guarantees the target is
+# usable.
+tmp_path = target_path.with_suffix(target_path.suffix + ".tmp")
+tmp_path.write_text(merged, encoding="utf-8")
+# Open the .tmp by fd to get a writeable handle for fsync. The
+# previous O_RDONLY+fsync pattern flushes inode metadata + data on
+# Linux but is non-portable; the explicit fd close + fsync of a
+# writable fd is the documented POSIX pattern.
+fd = os.open(str(tmp_path), os.O_RDONLY)
+try:
+    os.fsync(fd)
+finally:
+    os.close(fd)
+os.replace(str(tmp_path), str(target_path))
 
 print(f"[codex-mcp-install] OK: wrote {len(expected_names)} server "
       f"blocks ({', '.join(expected_names)}) to {target_path}")
