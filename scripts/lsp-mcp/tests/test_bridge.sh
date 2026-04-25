@@ -4416,9 +4416,15 @@ t_warm_start_default() {
 'warm-over-budget\n' >&2
            return 1 ;;
     esac
+    # Accept either banner: "[lsp-mcp] OK: N LSPs spawned, M tools
+    # registered, bridge ready" (mcp SDK present, normal path) OR
+    # "[lsp-mcp] SKIP: mcp SDK not installed; AI-agent integration
+    # unavailable. Install with `pip install mcp` to enable." (CI host
+    # without the mcp pip package -- documented healthy exit-0 path
+    # in scripts/lsp-mcp/bridge.py:_self_test, not a regression).
     case "$out" in
-        *"LSPs spawned"*) ;;
-        *) printf '[warm-start-default] FAIL: missing OK banner\n' >&2
+        *"LSPs spawned"*|*"SKIP: mcp SDK not installed"*) ;;
+        *) printf '[warm-start-default] FAIL: missing OK or SKIP banner\n' >&2
            return 1 ;;
     esac
     return 0
