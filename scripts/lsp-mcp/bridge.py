@@ -94,6 +94,34 @@ _SPAWN_EVENTS: dict[tuple[str, str], threading.Event] = {}
 # lsp-spawner-import-failed instead of lsp-language-unsupported.
 _SPAWNER_IMPORT_ERRORS: dict[str, str] = {}
 
+
+# Per-(lang, root) crash + restart bookkeeping. Lives on the BRIDGE
+# side (NOT on LspSubprocess) so it survives instance replacement
+# during respawn AND accumulates across spawner/initialize failures
+# that never publish a live instance to _LIVE_LSPS. Codex design
+# review caught the naive "store on the LspSubprocess" trap: a
+# persistently-crashing LSP would never reach the FAILED threshold
+# because every fresh instance starts with restart_count=0.
+#
+# Schema per key:
+#   {"restart_count": int,
+#    "recent_crash_times": [float],     # monotonic seconds, sliding window
+#    "failed": bool,                    # set True on 4 crashes in 60s; never auto-clears
+#    "last_crash_reason": Optional[str],
+#    "last_restart_at": Optional[float], # monotonic seconds
+#    "status": "spawned" | "healthy" | "backoff" | "failed"}
+#
+# Read/written under _LIVE_LSPS_LOCK so the per-key health snapshot
+# stays consistent with the live-instance lookup it gates.
+_LSP_HEALTH: dict[tuple[str, str], dict[str, Any]] = {}
+
+# Crash policy constants for the watchdog + respawn path. Documented
+# in TODO-07 in 00-infrastructure (LSP Subprocess Health Monitoring).
+_RESPAWN_BACKOFF_BASE_S = 1.0          # 2**N: 1, 2, 4, 8, ...
+_RESPAWN_BACKOFF_CAP_S = 30.0          # max sleep between attempts
+_RESPAWN_FAILED_THRESHOLD = 4          # crashes within window
+_RESPAWN_FAILED_WINDOW_S = 60.0        # sliding window for FAILED detection
+
 # Language spawn registry: language tag -> callable returning an
 # LspSubprocess instance. The per-language integration commits
 # append to this. The skeleton leaves it empty so --self-test
@@ -183,6 +211,261 @@ def _autoregister_spawners() -> None:
 _autoregister_spawners()
 
 
+def _emit_health_event(event: str, lang: str, root: str,
+                       **fields: Any) -> None:
+    """Emit a single JSON-lines crash / restart event to stderr.
+
+    Schema: {ts, level, event, lang, root, ...fields}. The
+    correlation-ID thread (structured-logging follow-up section)
+    is not yet shipped; once it lands the corr_id field will be
+    added by a retrofit. Best-effort: a write failure must not
+    crash the bridge during teardown."""
+    import time as _time
+    payload = {
+        "ts": _time.time(),
+        "level": "WARN" if event in ("crash", "restart-failed",
+                                      "failed") else "INFO",
+        "event": event,
+        "lang": lang,
+        "root": root,
+    }
+    payload.update(fields)
+    try:
+        sys.stderr.write(_json_dumps(payload) + "\n")
+        sys.stderr.flush()
+    except Exception:
+        pass
+
+
+def _json_dumps(obj: Any) -> str:
+    """Stable single-line JSON dump (no trailing newline). sort_keys
+    keeps log lines greppable when the schema grows."""
+    import json as _json
+    return _json.dumps(obj, sort_keys=True, default=str)
+
+
+def _get_or_init_health(key: tuple[str, str]) -> dict[str, Any]:
+    """Return (lazily creating) the _LSP_HEALTH entry for key. MUST
+    be called under _LIVE_LSPS_LOCK so the read-then-init is atomic
+    against concurrent _get_or_spawn callers."""
+    h = _LSP_HEALTH.get(key)
+    if h is None:
+        h = {
+            "restart_count": 0,
+            "recent_crash_times": [],
+            "failed": False,
+            "last_crash_reason": None,
+            "last_restart_at": None,
+            "status": "spawned",
+        }
+        _LSP_HEALTH[key] = h
+    return h
+
+
+def _record_crash(key: tuple[str, str], reason: str) -> bool:
+    """Record a crash for `key` and update the FAILED state. Returns
+    True if the key has now entered FAILED state (and the caller
+    should NOT respawn). Caller MUST hold _LIVE_LSPS_LOCK."""
+    import time as _time
+    h = _get_or_init_health(key)
+    now = _time.monotonic()
+    # Sliding window: drop crash times older than the failure
+    # window so a long-running healthy LSP that experiences one
+    # transient crash does not stay one-strike-from-FAILED forever.
+    cutoff = now - _RESPAWN_FAILED_WINDOW_S
+    h["recent_crash_times"] = [t for t in h["recent_crash_times"]
+                                if t >= cutoff]
+    h["recent_crash_times"].append(now)
+    h["last_crash_reason"] = reason
+    if len(h["recent_crash_times"]) >= _RESPAWN_FAILED_THRESHOLD:
+        h["failed"] = True
+        h["status"] = "failed"
+        return True
+    h["status"] = "backoff"
+    return False
+
+
+def _backoff_delay_s(restart_count: int) -> float:
+    """Exponential backoff: 1, 2, 4, 8, ... capped at the per-policy
+    ceiling. restart_count is the number of PRIOR restarts (so the
+    first restart sleeps _RESPAWN_BACKOFF_BASE_S, the next 2x, etc).
+    Ceilinged so a long-running session that has accumulated many
+    historical restarts does not sleep for hours after one new
+    crash."""
+    if restart_count < 0:
+        restart_count = 0
+    raw = _RESPAWN_BACKOFF_BASE_S * (2 ** min(restart_count, 16))
+    return min(raw, _RESPAWN_BACKOFF_CAP_S)
+
+
+def _inst_usable(inst: Optional[LspSubprocess]) -> bool:
+    """An instance is usable IFF subprocess is alive AND the reader
+    thread has not died AND no unexpected crash has been flagged.
+    Codex post-implementation review caught the gap where a reader
+    thread that died on a protocol error left proc.alive=True but
+    subsequent lsp.request() calls rejected with lsp-reader-crashed
+    -- _get_or_spawn returning the alive-but-broken instance trapped
+    _call_lsp's retry loop (it would keep getting the same dead
+    instance back). The composite check covers all three failure
+    modes: subprocess exit, reader crash, and unexpected
+    teardown."""
+    if inst is None:
+        return False
+    if not inst.alive:
+        return False
+    if getattr(inst, "_reader_dead", False):
+        return False
+    if getattr(inst, "crashed", False):
+        return False
+    return True
+
+
+def _force_dispose_dead_inst(inst: Optional[LspSubprocess]) -> None:
+    """Walk an instance's cleanup_paths and reap a zombie
+    subprocess (alive but reader dead). Idempotent: relies on
+    LspSubprocess.shutdown's own early-exit when already closed.
+
+    Called by _respawn_locked before publishing the replacement
+    instance so spawner-owned tempdirs (PSES LogPath /
+    SessionDetailsPath) do not leak across respawn generations
+    (Codex post-implementation review Medium)."""
+    if inst is None:
+        return
+    try:
+        inst.shutdown(timeout=0.5)
+    except Exception:
+        pass
+
+
+def _replay_open_uris(old: LspSubprocess, new: LspSubprocess,
+                      workspace_root: Path) -> int:
+    """Re-open every URI the OLD instance had tracked, on the NEW
+    instance. Walks each URI back through _dispatch_path so the
+    workspace-bounded sandbox + TOCTOU-safe single-fd read happen
+    again -- the file may have changed during the crash window, and
+    we want the new LSP to see the current bytes, not the OLD
+    instance's last cached text. Returns the count of URIs replayed.
+
+    Best-effort: a single URI that fails to re-validate (file
+    deleted, moved outside workspace, no longer regular) is skipped
+    with a log entry; other URIs continue. This matches editor LSP
+    client behavior on restart -- closed files do not stop the
+    rest from re-opening."""
+    if old is None or not getattr(old, "open_uri_meta", None):
+        return 0
+    snapshot = list(old.open_uri_meta.items())
+    replayed = 0
+    for uri, meta in snapshot:
+        resolved_path = meta.get("resolved_path")
+        lang_tag = meta.get("lang")
+        if not resolved_path or not lang_tag:
+            # Legacy meta without snapshot fields. Skip; the next
+            # tool call will didOpen via the normal path.
+            continue
+        try:
+            # Re-walk through _dispatch_path to revalidate the
+            # workspace boundary and capture fresh text + mtime.
+            _resolved, _lang, text, mtime_ns = _dispatch_path(
+                resolved_path, workspace_root,
+            )
+        except LspError as exc:
+            _emit_health_event("replay-skip", lang_tag,
+                                str(workspace_root),
+                                uri=uri, reason=exc.kind)
+            continue
+        language_id = _LANG_TO_LSP_LANGUAGE_ID.get(lang_tag, lang_tag)
+        force_did_save = lang_tag in _DIDSAVE_ON_REFRESH_LANGS
+        try:
+            new.apply_text(uri, language_id, text, mtime_ns,
+                           force_did_save=force_did_save,
+                           resolved_path=str(_resolved),
+                           lang=lang_tag)
+            replayed += 1
+        except LspError as exc:
+            _emit_health_event("replay-skip", lang_tag,
+                                str(workspace_root),
+                                uri=uri, reason=exc.kind)
+    return replayed
+
+
+def _respawn_locked(lang: str, workspace_root: Path,
+                    spawner: "LspSpawnFn",
+                    key: tuple[str, str],
+                    old_inst: Optional[LspSubprocess]) -> LspSubprocess:
+    """Re-spawn the LSP for `key` after a detected crash.
+
+    Caller contract: holds _SPAWN_EVENTS gate (so concurrent
+    requests on the same key wait via the Event); does NOT hold
+    _LIVE_LSPS_LOCK during the spawn (slow path, mirrors the
+    first-spawn release pattern). Bumps restart_count, applies
+    backoff, runs the spawner, replays didOpens. Raises
+    lsp-persistently-crashing if the key has already entered FAILED
+    state (caller MUST check this BEFORE invoking respawn).
+
+    A spawner failure during respawn is itself recorded as a crash
+    (Codex design review caught this -- spawner/initialize failures
+    must accumulate FAILED state too, otherwise a server that dies
+    during handshake loops forever)."""
+    import time as _time
+    with _LIVE_LSPS_LOCK:
+        h = _get_or_init_health(key)
+        restart_count = h["restart_count"]
+
+    delay = _backoff_delay_s(restart_count)
+    _emit_health_event("restart-attempt", lang, str(workspace_root),
+                       restart_count=restart_count,
+                       backoff_s=delay)
+    if delay > 0.0:
+        _time.sleep(delay)
+
+    try:
+        new_inst = spawner(workspace_root)
+    except BaseException as exc:
+        # Spawner failure on respawn IS a crash -- record it so the
+        # FAILED state can fire even when the LSP never publishes a
+        # live instance. Re-raise after recording.
+        kind = exc.kind if isinstance(exc, LspError) else (
+            f"spawner-error: {type(exc).__name__}"
+        )
+        with _LIVE_LSPS_LOCK:
+            entered_failed = _record_crash(key, kind)
+        if entered_failed:
+            _emit_health_event("failed", lang, str(workspace_root),
+                                reason=kind)
+        else:
+            _emit_health_event("restart-failed", lang,
+                                str(workspace_root),
+                                reason=kind)
+        raise
+
+    # Spawn succeeded; dispose of the old instance (walks its
+    # cleanup_paths -- e.g. PSES tempdir -- so spawner-owned scratch
+    # state does not leak across respawn generations) and replay
+    # tracked URIs on the new one.
+    _force_dispose_dead_inst(old_inst)
+    replayed = 0
+    try:
+        replayed = _replay_open_uris(old_inst, new_inst, workspace_root)
+    except Exception:
+        # Replay is best-effort -- a partial replay is better than
+        # leaving the new instance unpublished after a successful
+        # spawner. Log and continue.
+        _emit_health_event("replay-error", lang, str(workspace_root))
+
+    # Publish under the lock; bump restart_count + status.
+    with _LIVE_LSPS_LOCK:
+        _LIVE_LSPS[key] = new_inst
+        h = _get_or_init_health(key)
+        h["restart_count"] = restart_count + 1
+        h["last_restart_at"] = _time.monotonic()
+        h["status"] = "healthy"
+
+    _emit_health_event("restart-success", lang, str(workspace_root),
+                       restart_count=restart_count + 1,
+                       replayed_uris=replayed)
+    return new_inst
+
+
 def _get_or_spawn(lang: str, workspace_root: Path) -> LspSubprocess:
     """Return a running LspSubprocess for (lang, workspace_root),
     spawning if needed.
@@ -199,21 +482,78 @@ def _get_or_spawn(lang: str, workspace_root: Path) -> LspSubprocess:
 
     Raises LspError for language-not-wired (lsp-language-unsupported),
     broken spawner imports (lsp-spawner-import-failed, preserves the
-    original exception), and propagates anything the spawner itself
-    raises."""
+    original exception), persistent crashes (lsp-persistently-crashing
+    once the per-key FAILED state has been set), and propagates
+    anything the spawner itself raises.
+
+    Crash detection: when a cached instance exists but inst.alive is
+    False (the reader thread saw EOF / subprocess exit), this path
+    records a crash on _LSP_HEALTH and either respawns under the
+    same _SPAWN_EVENTS gate (if not yet at FAILED threshold) or
+    raises lsp-persistently-crashing. Health-state and respawn
+    helpers live above; this function is the single decision
+    point."""
     try:
         root_key = str(workspace_root.resolve())
     except (OSError, RuntimeError):
         root_key = str(workspace_root)
     key = (lang, root_key)
 
-    # Fast path under _LIVE_LSPS_LOCK only. If a spawn is already
-    # under way for this key, attach to its Event and wait outside
-    # the lock.
+    # Fast path under _LIVE_LSPS_LOCK only. Three sub-paths:
+    #   (A) cached + alive               -> return
+    #   (B) cached + dead (crashed)      -> record crash, then either
+    #                                       FAILED-out OR set up
+    #                                       respawn through the
+    #                                       _SPAWN_EVENTS gate
+    #   (C) not cached                   -> first-spawn path
+    # An in-flight _SPAWN_EVENTS entry means another thread is
+    # spawning/respawning the SAME key; attach to its Event and wait
+    # outside the lock.
+    crashed_old: Optional[LspSubprocess] = None
     with _LIVE_LSPS_LOCK:
+        h = _get_or_init_health(key)
+        if h["failed"]:
+            raise LspError(
+                "lsp-persistently-crashing",
+                f"{lang!r} LSP entered FAILED state after "
+                f"{h['restart_count']} restarts; restart the bridge",
+                lang=lang,
+                hint="restart the bridge",
+                last_crash_reason=h.get("last_crash_reason"),
+            )
         inst = _LIVE_LSPS.get(key)
-        if inst is not None and inst.alive:
+        if _inst_usable(inst):
             return inst
+        # (B) Cached but dead OR reader-crashed (alive subprocess but
+        # reader thread exited on protocol error). Record the crash
+        # event ONCE per generation: if the cached instance is the
+        # same one we already crash-recorded against, the next caller
+        # skips re-recording (we mark the instance via
+        # _crash_recorded so repeated callers all see the same
+        # restart_count). Codex post-implementation review High:
+        # alive-but-reader-dead instances would otherwise keep
+        # being returned and trap _call_lsp's retry loop.
+        if inst is not None and not getattr(inst, "_crash_recorded",
+                                              False):
+            reason = inst._crash_reason or "unknown"
+            entered_failed = _record_crash(key, reason)
+            inst._crash_recorded = True  # type: ignore[attr-defined]
+            _emit_health_event("crash", lang, root_key,
+                                reason=reason)
+            if entered_failed:
+                _emit_health_event("failed", lang, root_key,
+                                    reason=reason)
+                raise LspError(
+                    "lsp-persistently-crashing",
+                    f"{lang!r} LSP crossed the FAILED threshold "
+                    f"({_RESPAWN_FAILED_THRESHOLD} crashes within "
+                    f"{int(_RESPAWN_FAILED_WINDOW_S)}s); restart "
+                    "the bridge",
+                    lang=lang,
+                    hint="restart the bridge",
+                    last_crash_reason=reason,
+                )
+        crashed_old = inst  # may be None; passed to replay
         ev = _SPAWN_EVENTS.get(key)
         if ev is not None:
             waiter_event = ev
@@ -252,17 +592,69 @@ def _get_or_spawn(lang: str, workspace_root: Path) -> LspSubprocess:
 
     # Owner path: spawn OUTSIDE the registry lock so a slow clangd
     # (~2-3s startup + 15s initialize timeout) does not block
-    # unrelated-language callers.
+    # unrelated-language callers. Two flavors:
+    #   * crashed_old is None -> first-spawn (fresh process, no
+    #     replay needed).
+    #   * crashed_old is set  -> respawn (apply backoff, replay
+    #     tracked URIs from the dead instance's open_uri_meta).
     try:
-        inst = spawner(workspace_root)
-    except BaseException:
-        with _LIVE_LSPS_LOCK:
-            _SPAWN_EVENTS.pop(key, None)
-        waiter_event.set()
+        if crashed_old is not None:
+            inst = _respawn_locked(lang, workspace_root, spawner,
+                                   key, crashed_old)
+        else:
+            inst = spawner(workspace_root)
+    except BaseException as exc:
+        # Record the first-spawn failure too. Codex post-impl review
+        # High: a server that fails during cold spawn / initialize
+        # would otherwise be retried on every tool call forever
+        # because _record_crash was only invoked on the
+        # cached-dead-instance path. With the fix, repeated cold-
+        # spawn failures cross _RESPAWN_FAILED_THRESHOLD and convert
+        # to lsp-persistently-crashing, matching the contract for
+        # post-publish crashes.
+        first_spawn_failed = crashed_old is None
+        if first_spawn_failed:
+            kind = exc.kind if isinstance(exc, LspError) else (
+                f"spawner-error: {type(exc).__name__}"
+            )
+            with _LIVE_LSPS_LOCK:
+                entered_failed = _record_crash(key, kind)
+                _SPAWN_EVENTS.pop(key, None)
+            waiter_event.set()
+            if entered_failed:
+                _emit_health_event("failed", lang, root_key,
+                                    reason=kind)
+                # Convert to the terminal envelope so the caller
+                # sees the FAILED state instead of the underlying
+                # spawner exception (which the caller would
+                # otherwise re-experience on every retry).
+                raise LspError(
+                    "lsp-persistently-crashing",
+                    f"{lang!r} LSP crossed the FAILED threshold "
+                    f"during cold spawn / initialize; restart "
+                    "the bridge",
+                    lang=lang,
+                    hint="restart the bridge",
+                    last_crash_reason=kind,
+                ) from exc
+            else:
+                _emit_health_event("restart-failed", lang, root_key,
+                                    reason=kind)
+        else:
+            with _LIVE_LSPS_LOCK:
+                _SPAWN_EVENTS.pop(key, None)
+            waiter_event.set()
         raise
     with _LIVE_LSPS_LOCK:
         _LIVE_LSPS[key] = inst
         _SPAWN_EVENTS.pop(key, None)
+        # First-spawn: flip status from initial "spawned" to
+        # "healthy" so _health reports the post-handshake state.
+        # _respawn_locked already set "healthy" on its own success
+        # path, so this assignment is a no-op for respawn cases.
+        h = _get_or_init_health(key)
+        if h["status"] in ("spawned", "backoff"):
+            h["status"] = "healthy"
     waiter_event.set()
     return inst
 
@@ -274,7 +666,32 @@ def _call_lsp(fn: Callable[[], Any]) -> Any:
     (and the tests) can depend on a stable error-envelope contract.
 
     Non-LspError exceptions bubble up -- a bug in the bridge itself
-    should be loud, not silently wrapped."""
+    should be loud, not silently wrapped.
+
+    Crash-retry contract: if the wrapped callable raises a transient
+    LSP-died LspError (lsp-subprocess-exited, lsp-shutdown after
+    crash, lsp-reader-crashed), retry the callable ONCE. The retry
+    invokes the same closure -- which re-calls _get_or_spawn -- so
+    the second attempt observes the dead instance, triggers
+    _respawn_locked through the normal _SPAWN_EVENTS gate, and runs
+    against the freshly-replaced instance with the replayed open_uris.
+    This makes "first hover after kill -9 returns a normalized
+    result" the user-visible contract, not the per-tool handler's
+    job. Single retry: a second crash within the retry window means
+    the LSP is genuinely broken; return the envelope. The
+    lsp-persistently-crashing envelope (FAILED state) is NOT
+    retried (it is a terminal contract)."""
+    _RETRY_KINDS = ("lsp-subprocess-exited",
+                    "lsp-reader-crashed",
+                    "lsp-shutdown")
+    try:
+        return fn()
+    except LspError as exc:
+        if exc.kind not in _RETRY_KINDS:
+            return exc.to_envelope()
+    # Retry path: the closure must re-call _get_or_spawn so it sees
+    # the dead instance and triggers respawn. Any exception on the
+    # retry returns its envelope as-is (no second retry).
     try:
         return fn()
     except LspError as exc:
@@ -354,6 +771,12 @@ MCP_TOOL_NAMES = (
     "call_hierarchy_incoming",
     "call_hierarchy_outgoing",
     "code_action",
+    # Health + auto-restart (LSP Subprocess Health Monitoring).
+    # Read-only meta tool: returns per-LSP status + restart count
+    # without touching any LSP wire path. Works even when every
+    # registered LSP is in FAILED state -- the tool walks the
+    # bridge's _LSP_HEALTH registry directly.
+    "_health",
 )
 
 # Extension -> language tag dispatch table. Drives _dispatch_path()
@@ -591,8 +1014,15 @@ def _ensure_open_for(lsp: LspSubprocess, resolved: Path, lang: str,
     uri = resolved.as_uri()
     language_id = _LANG_TO_LSP_LANGUAGE_ID.get(lang, lang)
     force_did_save = lang in _DIDSAVE_ON_REFRESH_LANGS
+    # Pass resolved_path + lang so the LspSubprocess respawn snapshot
+    # (open_uri_meta) carries enough information for the bridge to
+    # re-walk through _dispatch_path on respawn -- without these the
+    # respawn replay would have to reconstruct paths from URI strings,
+    # bypassing the workspace-bounded sandbox.
     lsp.apply_text(uri, language_id, text, mtime_ns,
-                   force_did_save=force_did_save)
+                   force_did_save=force_did_save,
+                   resolved_path=str(resolved),
+                   lang=lang)
     return uri
 
 
@@ -1684,6 +2114,78 @@ def _build_mcp(FastMCP, workspace_root: Path):
                          "executeCommand. Pass an optional "
                          "`diagnostic` dict to scope to one "
                          "diagnostic's fixes.")(code_action)
+
+    # ---------------------------------------------------------------
+    # Meta tools (no LSP wire traffic; safe to call when every LSP
+    # is FAILED). Documented in the Subprocess Health Monitoring
+    # section.
+    # ---------------------------------------------------------------
+
+    def health() -> dict:
+        """Return per-(lang, root) crash + restart bookkeeping for
+        every LSP the bridge has ever spawned in this session.
+
+        Schema:
+          {languages: {<lang>: {root, status, restart_count,
+                                last_crash_reason, last_restart_at,
+                                pid, alive}}}
+        Where status is one of:
+          spawned  -- entry exists but never finished its first
+                      successful spawn (rare; usually transient).
+          healthy  -- last spawn succeeded; subprocess alive.
+          backoff  -- last attempt crashed; FAILED threshold not
+                      yet reached; next request triggers respawn
+                      with exponential backoff.
+          failed   -- crossed the FAILED threshold; further
+                      requests return lsp-persistently-crashing
+                      until the bridge restarts.
+
+        No LSP wire traffic; safe to call at any time, including
+        when every LSP is dead. Read-only. Walks _LSP_HEALTH +
+        _LIVE_LSPS under _LIVE_LSPS_LOCK so the snapshot is
+        consistent."""
+        out: dict[str, dict] = {}
+        with _LIVE_LSPS_LOCK:
+            keys = sorted(set(_LSP_HEALTH.keys()) | set(_LIVE_LSPS.keys()))
+            for key in keys:
+                lang_tag, root_str = key
+                h = _LSP_HEALTH.get(key) or {
+                    "restart_count": 0,
+                    "recent_crash_times": [],
+                    "failed": False,
+                    "last_crash_reason": None,
+                    "last_restart_at": None,
+                    "status": "spawned",
+                }
+                inst = _LIVE_LSPS.get(key)
+                # Detect a stale "healthy" status when the cached
+                # instance has crashed but no caller has run
+                # _get_or_spawn yet to record it. _health is a
+                # read-only probe; it does NOT mutate state, just
+                # surfaces the truth.
+                effective_status = h["status"]
+                alive = bool(inst is not None and inst.alive)
+                if effective_status == "healthy" and not alive:
+                    effective_status = "crashed (pending respawn)"
+                out.setdefault(lang_tag, {})[root_str] = {
+                    "status": effective_status,
+                    "restart_count": h["restart_count"],
+                    "last_crash_reason": h["last_crash_reason"],
+                    "last_restart_at": h["last_restart_at"],
+                    "failed": h["failed"],
+                    "pid": inst.pid if inst is not None else None,
+                    "alive": alive,
+                }
+        return {"languages": out}
+    srv.tool(name="_health",
+             description="Per-LSP crash + restart bookkeeping. "
+                         "Returns {languages: {<lang>: {<root>: "
+                         "{status, restart_count, last_crash_reason, "
+                         "last_restart_at, pid, alive, failed}}}}. "
+                         "status: spawned | healthy | backoff | "
+                         "failed | 'crashed (pending respawn)'. "
+                         "Read-only; no LSP wire traffic; safe to "
+                         "call when every LSP is dead.")(health)
 
     return srv
 

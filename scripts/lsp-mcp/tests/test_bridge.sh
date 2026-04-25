@@ -187,6 +187,34 @@
 #          late call either succeeds before the commit or rejects
 #          with lsp-shutdown -- never silently smuggles traffic into
 #          the teardown sequence.
+#   13a -- LspSubprocess flags _crashed + _crash_reason when its
+#          subprocess dies unexpectedly (SIGKILL, no shutdown call);
+#          public crashed property mirrors. Fundamental crash
+#          detection contract used by the bridge respawn path.
+#   13b -- bridge respawns the LSP transparently on the next MCP
+#          tool call after a crash. Stub LSP, kill subprocess, hover
+#          again; assert respawn fires + replay reopens the URI +
+#          _health surfaces restart_count=1 + status=healthy.
+#   13c -- after _RESPAWN_FAILED_THRESHOLD crashes within the
+#          window the bridge enters FAILED state; subsequent calls
+#          return lsp-persistently-crashing instead of respawning
+#          forever. Also asserts the _health tool surfaces
+#          failed=True + status=failed.
+#   13d -- _backoff_delay_s schedule: 1, 2, 4, 8, 16, 30, 30, ...
+#          (capped at _RESPAWN_BACKOFF_CAP_S).
+#   13e -- _health tool returns {'languages': {}} when no LSP has
+#          been spawned in this session (works without any wire
+#          traffic; safe even when every LSP is FAILED).
+#   13f -- regression guard for Codex post-impl review High: cold-
+#          spawn / initialize failures now feed _record_crash and
+#          cross to lsp-persistently-crashing. Earlier revision
+#          looped forever on a broken spawner.
+#   13g -- regression guard for Codex post-impl review Medium:
+#          spawner-owned tempdirs registered on cleanup_paths are
+#          walked when the OLD instance is disposed during respawn
+#          (PSES leak fix). Crashes + respawns + asserts the old
+#          tempdir is gone while the new one is owned by the new
+#          instance.
 #   12f -- post-apply_text request rejected during teardown
 #          (regression guard for the Codex post-implementation review
 #          High follow-up to 12e): a tool thread that already passed
@@ -247,11 +275,11 @@ t_selftest() {
     local out
     out="$(python3 scripts/lsp-mcp/bridge.py --self-test 2>&1)"
     # Banner shapes:
-    #   "[lsp-mcp] OK: 0 LSPs spawned, 14 tools registered, bridge ready"
+    #   "[lsp-mcp] OK: 0 LSPs spawned, 15 tools registered, bridge ready"
     # OR "[lsp-mcp] SKIP: mcp SDK not installed; ..." (CI without SDK).
     # Tool count = len(MCP_TOOL_NAMES); pin to the literal so a
     # registration drift fails this test instead of silently sliding.
-    echo "$out" | grep -qE '^\[lsp-mcp\] (OK: 0 LSPs spawned, 14 tools registered, bridge ready|SKIP: mcp SDK not installed)'
+    echo "$out" | grep -qE '^\[lsp-mcp\] (OK: 0 LSPs spawned, 15 tools registered, bridge ready|SKIP: mcp SDK not installed)'
 }
 
 # --- 1b: import smoke --------------------------------------------------------
@@ -805,7 +833,7 @@ t_selftest_tools() {
     if echo "$out" | grep -qE '^\[lsp-mcp\] SKIP: mcp SDK not installed'; then
         return 0
     fi
-    echo "$out" | grep -qE '^\[lsp-mcp\] OK: 14 tools registered \(hover, definition, references, diagnostics, workspace_symbol, document_symbol, completion, signature_help, type_definition, implementation, declaration, call_hierarchy_incoming, call_hierarchy_outgoing, code_action\)$' || return 1
+    echo "$out" | grep -qE '^\[lsp-mcp\] OK: 15 tools registered \(hover, definition, references, diagnostics, workspace_symbol, document_symbol, completion, signature_help, type_definition, implementation, declaration, call_hierarchy_incoming, call_hierarchy_outgoing, code_action, _health\)$' || return 1
     # Each tool's schema must have the right required params.
     python3 -c "
 import json, subprocess, sys
@@ -834,6 +862,8 @@ expected = {
     'call_hierarchy_incoming': (['path','line','character'], []),
     'call_hierarchy_outgoing': (['path','line','character'], []),
     'code_action': (['path','range'], ['diagnostic']),
+    # Meta tool: zero required params.
+    '_health': ([], []),
 }
 for name, (req, opt) in expected.items():
     s = schemas[name]
@@ -2532,6 +2562,578 @@ print(f'[post-apply_text/teardown] OK -- all {total_trials} trials ' \
 PY
 }
 
+# --- 13a: Crash detection sets _crashed + _crash_reason ------------------
+# Direct unit test of LspSubprocess crash flagging. Spawn a stub
+# LSP, kill it, wait for the reader thread to exit, and assert the
+# _crashed flag flips True with a reason captured from the proc
+# poll() exit code -- not from a clean shutdown path.
+t_crash_flag_set_on_unexpected_exit() {
+    python3 - << 'PY'
+import sys, os, signal, time
+sys.path.insert(0, 'scripts/lsp-mcp')
+from lsp_client import LspSubprocess
+
+# Echo-stub that hangs in read until killed.
+fake = r"""
+import sys
+while True:
+    ch = sys.stdin.buffer.read(1)
+    if not ch: break
+"""
+lsp = LspSubprocess(['python3', '-c', fake], lang='fake-13a')
+try:
+    pid = lsp.pid
+    assert pid, lsp
+    # Kill ungracefully (no shutdown RPC) -- simulates SIGKILL.
+    os.kill(pid, signal.SIGKILL)
+    # Wait for reader thread to notice EOF + flip _crashed.
+    for _ in range(200):
+        if lsp._crashed:
+            break
+        time.sleep(0.01)
+    assert lsp._crashed, 'reader thread did not flag _crashed after kill'
+    assert lsp.crashed is True, 'public crashed property did not surface'
+    assert lsp._crash_reason is not None, 'no crash reason captured'
+    assert 'subprocess exited' in lsp._crash_reason, lsp._crash_reason
+finally:
+    try: lsp.shutdown(timeout=1.0)
+    except Exception: pass
+PY
+}
+
+# --- 13b: bridge respawns on next request after crash --------------------
+# End-to-end: register a stub spawner whose subprocess returns
+# canned hover responses. After first call succeeds, kill the
+# subprocess. Next hover call MUST trigger _get_or_spawn to detect
+# the crash, respawn, replay didOpen, and return a normalized
+# result. Restart count goes from 0 to 1 on _LSP_HEALTH.
+t_respawn_on_next_request() {
+    python3 - << 'PY'
+import sys, os, time
+from pathlib import Path
+sys.path.insert(0, 'scripts/lsp-mcp')
+
+try:
+    from mcp.server.fastmcp import FastMCP
+except Exception:
+    sys.exit(0)  # SKIP
+
+import bridge
+from lsp_client import LspSubprocess
+
+fake = r"""
+import sys, json
+def read_msg():
+    hdr = b''
+    while True:
+        ch = sys.stdin.buffer.read(1)
+        if not ch: return None
+        hdr += ch
+        if hdr.endswith(b'\r\n\r\n'): break
+    n = 0
+    for line in hdr.split(b'\r\n'):
+        if line.lower().startswith(b'content-length:'):
+            n = int(line.split(b':')[1].strip()); break
+    return json.loads(sys.stdin.buffer.read(n).decode('utf-8'))
+def write_msg(obj):
+    b = json.dumps(obj).encode('utf-8')
+    sys.stdout.buffer.write(b'Content-Length: ' + str(len(b)).encode() + b'\r\n\r\n' + b)
+    sys.stdout.buffer.flush()
+while True:
+    m = read_msg()
+    if m is None: break
+    method = m.get('method')
+    if 'id' in m:
+        if method == 'initialize':
+            write_msg({'jsonrpc':'2.0','id':m['id'],'result':{'capabilities':{}}})
+        elif method == 'textDocument/hover':
+            write_msg({'jsonrpc':'2.0','id':m['id'],
+                       'result':{'contents':{'kind':'markdown','value':'h'}}})
+        else:
+            write_msg({'jsonrpc':'2.0','id':m['id'],'result':None})
+    elif method == 'exit':
+        break
+"""
+
+# Make backoff fast for the test (default would be 1 s).
+saved_base = bridge._RESPAWN_BACKOFF_BASE_S
+bridge._RESPAWN_BACKOFF_BASE_S = 0.05
+
+import tempfile
+ws = Path.cwd()
+tmp = tempfile.NamedTemporaryFile(suffix='.fakeext13b', mode='w',
+                                  delete=False, dir=str(ws))
+try:
+    tmp.write('// hello\n'); tmp.close()
+    bridge._EXT_TO_LANG['.fakeext13b'] = 'fake13b'
+    bridge._LANG_TO_LSP_LANGUAGE_ID['fake13b'] = 'plaintext'
+
+    def spawn_fake(workspace_root):
+        lsp = LspSubprocess(['python3', '-c', fake], lang='fake13b')
+        lsp.initialize('file://' + str(workspace_root))
+        return lsp
+    bridge.register_spawner('fake13b', spawn_fake)
+
+    srv = bridge._build_mcp(FastMCP, ws)
+    hover_fn = srv._tool_manager._tools['hover'].fn
+    health_fn = srv._tool_manager._tools['_health'].fn
+
+    # First hover -> opens file, succeeds.
+    r1 = hover_fn(path=os.path.basename(tmp.name), line=0, character=0)
+    assert 'error' not in r1, r1
+
+    # Sanity: _health shows healthy + restart_count=0.
+    h = health_fn()
+    fake_entries = h['languages'].get('fake13b', {})
+    assert fake_entries, h
+    first_entry = next(iter(fake_entries.values()))
+    assert first_entry['status'] == 'healthy', first_entry
+    assert first_entry['restart_count'] == 0, first_entry
+    assert first_entry['alive'] is True, first_entry
+
+    # KILL the subprocess.
+    import signal
+    with bridge._LIVE_LSPS_LOCK:
+        keys = [k for k in bridge._LIVE_LSPS if k[0] == 'fake13b']
+    assert keys, 'fake13b not in live registry'
+    inst = bridge._LIVE_LSPS[keys[0]]
+    pid = inst.pid
+    os.kill(pid, signal.SIGKILL)
+    # Wait for reader thread to flip _crashed.
+    for _ in range(200):
+        if inst._crashed:
+            break
+        time.sleep(0.01)
+    assert inst._crashed, 'reader did not detect kill in time'
+
+    # Second hover -> should respawn transparently and succeed.
+    t0 = time.monotonic()
+    r2 = hover_fn(path=os.path.basename(tmp.name), line=0, character=0)
+    elapsed = time.monotonic() - t0
+    assert 'error' not in r2, f'respawn failed: {r2}'
+
+    # _health now shows restart_count=1, alive=True, status=healthy.
+    h = health_fn()
+    fake_entries = h['languages']['fake13b']
+    after_entry = next(iter(fake_entries.values()))
+    assert after_entry['restart_count'] == 1, after_entry
+    assert after_entry['alive'] is True, after_entry
+    assert after_entry['status'] == 'healthy', after_entry
+    assert after_entry['last_crash_reason'] is not None, after_entry
+
+    print(f'[respawn] OK -- restart_count 0 -> 1, recovered in {elapsed:.2f}s')
+finally:
+    bridge._RESPAWN_BACKOFF_BASE_S = saved_base
+    try: os.unlink(tmp.name)
+    except OSError: pass
+    bridge._EXT_TO_LANG.pop('.fakeext13b', None)
+    bridge._LANG_TO_LSP_LANGUAGE_ID.pop('fake13b', None)
+    bridge._LSP_SPAWNERS.pop('fake13b', None)
+    with bridge._LIVE_LSPS_LOCK:
+        keys = [k for k in bridge._LIVE_LSPS if k[0] == 'fake13b']
+        for k in keys:
+            inst = bridge._LIVE_LSPS.pop(k, None)
+            bridge._LSP_HEALTH.pop(k, None)
+    if 'inst' in dir() and inst is not None:
+        try: inst.shutdown(timeout=1.0)
+        except Exception: pass
+PY
+}
+
+# --- 13c: FAILED state after threshold crashes -- lsp-persistently-crashing
+# Configure threshold + window for fast test. After N=2 crashes
+# within the window, the bridge MUST refuse further requests with
+# lsp-persistently-crashing instead of respawning forever.
+t_failed_state_after_threshold() {
+    python3 - << 'PY'
+import sys, os, time, signal
+from pathlib import Path
+sys.path.insert(0, 'scripts/lsp-mcp')
+
+try:
+    from mcp.server.fastmcp import FastMCP
+except Exception:
+    sys.exit(0)
+
+import bridge
+from lsp_client import LspSubprocess
+
+fake = r"""
+import sys, json
+def read_msg():
+    hdr = b''
+    while True:
+        ch = sys.stdin.buffer.read(1)
+        if not ch: return None
+        hdr += ch
+        if hdr.endswith(b'\r\n\r\n'): break
+    n = 0
+    for line in hdr.split(b'\r\n'):
+        if line.lower().startswith(b'content-length:'):
+            n = int(line.split(b':')[1].strip()); break
+    return json.loads(sys.stdin.buffer.read(n).decode('utf-8'))
+def write_msg(obj):
+    b = json.dumps(obj).encode('utf-8')
+    sys.stdout.buffer.write(b'Content-Length: ' + str(len(b)).encode() + b'\r\n\r\n' + b)
+    sys.stdout.buffer.flush()
+while True:
+    m = read_msg()
+    if m is None: break
+    method = m.get('method')
+    if 'id' in m:
+        if method == 'initialize':
+            write_msg({'jsonrpc':'2.0','id':m['id'],'result':{'capabilities':{}}})
+        elif method == 'textDocument/hover':
+            write_msg({'jsonrpc':'2.0','id':m['id'],
+                       'result':{'contents':{'kind':'markdown','value':'h'}}})
+        else:
+            write_msg({'jsonrpc':'2.0','id':m['id'],'result':None})
+    elif method == 'exit':
+        break
+"""
+
+# Tighten policy for the test.
+saved_threshold = bridge._RESPAWN_FAILED_THRESHOLD
+saved_window = bridge._RESPAWN_FAILED_WINDOW_S
+saved_base = bridge._RESPAWN_BACKOFF_BASE_S
+bridge._RESPAWN_FAILED_THRESHOLD = 2     # fail after 2 crashes
+bridge._RESPAWN_FAILED_WINDOW_S = 5.0    # within 5 seconds
+bridge._RESPAWN_BACKOFF_BASE_S = 0.05    # fast retry
+
+import tempfile
+ws = Path.cwd()
+tmp = tempfile.NamedTemporaryFile(suffix='.fakeext13c', mode='w',
+                                  delete=False, dir=str(ws))
+try:
+    tmp.write('// hello\n'); tmp.close()
+    bridge._EXT_TO_LANG['.fakeext13c'] = 'fake13c'
+    bridge._LANG_TO_LSP_LANGUAGE_ID['fake13c'] = 'plaintext'
+
+    def spawn_fake(workspace_root):
+        lsp = LspSubprocess(['python3', '-c', fake], lang='fake13c')
+        lsp.initialize('file://' + str(workspace_root))
+        return lsp
+    bridge.register_spawner('fake13c', spawn_fake)
+
+    srv = bridge._build_mcp(FastMCP, ws)
+    hover_fn = srv._tool_manager._tools['hover'].fn
+    health_fn = srv._tool_manager._tools['_health'].fn
+
+    # First call -> spawn + succeed.
+    r1 = hover_fn(path=os.path.basename(tmp.name), line=0, character=0)
+    assert 'error' not in r1, r1
+
+    # Crash + force respawn detection N times. Each iteration:
+    #  1. Kill the live instance.
+    #  2. Wait for _crashed flag.
+    #  3. Call hover (retries via _call_lsp respawn loop).
+    for crash_n in range(bridge._RESPAWN_FAILED_THRESHOLD):
+        with bridge._LIVE_LSPS_LOCK:
+            key = next(k for k in bridge._LIVE_LSPS if k[0] == 'fake13c')
+            inst = bridge._LIVE_LSPS[key]
+        os.kill(inst.pid, signal.SIGKILL)
+        for _ in range(200):
+            if inst._crashed: break
+            time.sleep(0.01)
+        result = hover_fn(path=os.path.basename(tmp.name), line=0, character=0)
+        # Last crash should have pushed us to FAILED -- expect envelope.
+        if crash_n == bridge._RESPAWN_FAILED_THRESHOLD - 1:
+            assert 'error' in result, f'expected FAILED envelope, got {result}'
+            assert result['error'] == 'lsp-persistently-crashing', result
+        else:
+            # Mid-sequence crashes should still respawn.
+            assert 'error' not in result, f'mid-sequence crash {crash_n} did not respawn: {result}'
+
+    # Subsequent calls MUST also reject with lsp-persistently-crashing.
+    r_after = hover_fn(path=os.path.basename(tmp.name), line=0, character=0)
+    assert 'error' in r_after, r_after
+    assert r_after['error'] == 'lsp-persistently-crashing', r_after
+
+    # _health should report failed=True + status=failed.
+    h = health_fn()
+    after_entry = next(iter(h['languages']['fake13c'].values()))
+    assert after_entry['failed'] is True, after_entry
+    assert after_entry['status'] == 'failed', after_entry
+    assert after_entry['restart_count'] >= 1, after_entry
+
+    print(f'[failed-state] OK -- {bridge._RESPAWN_FAILED_THRESHOLD} crashes ' \
+          f'pushed to FAILED, restart_count={after_entry["restart_count"]}')
+finally:
+    bridge._RESPAWN_FAILED_THRESHOLD = saved_threshold
+    bridge._RESPAWN_FAILED_WINDOW_S = saved_window
+    bridge._RESPAWN_BACKOFF_BASE_S = saved_base
+    try: os.unlink(tmp.name)
+    except OSError: pass
+    bridge._EXT_TO_LANG.pop('.fakeext13c', None)
+    bridge._LANG_TO_LSP_LANGUAGE_ID.pop('fake13c', None)
+    bridge._LSP_SPAWNERS.pop('fake13c', None)
+    with bridge._LIVE_LSPS_LOCK:
+        keys = [k for k in bridge._LIVE_LSPS if k[0] == 'fake13c']
+        for k in keys:
+            inst = bridge._LIVE_LSPS.pop(k, None)
+            bridge._LSP_HEALTH.pop(k, None)
+            if inst is not None:
+                try: inst.shutdown(timeout=1.0)
+                except Exception: pass
+PY
+}
+
+# --- 13d: backoff schedule monotonically increases up to cap -------------
+# Pure-data test: verify the backoff helper's schedule.
+t_backoff_schedule() {
+    python3 -c "
+import sys
+sys.path.insert(0, 'scripts/lsp-mcp')
+import bridge
+# Schedule for the documented sequence.
+expected = [1.0, 2.0, 4.0, 8.0, 16.0, 30.0, 30.0, 30.0]
+for n, want in enumerate(expected):
+    got = bridge._backoff_delay_s(n)
+    assert got == want, f'restart_count={n}: got {got}, want {want}'
+# Negative -> clamped to 0 -> base.
+assert bridge._backoff_delay_s(-5) == bridge._RESPAWN_BACKOFF_BASE_S
+"
+}
+
+# --- 13e: _health tool returns metadata without spawning ------------------
+# _health must work even when no LSP has been spawned in this
+# session; it returns an empty languages dict, not an error.
+t_health_tool_empty_state() {
+    python3 - << 'PY'
+import sys
+from pathlib import Path
+sys.path.insert(0, 'scripts/lsp-mcp')
+try:
+    from mcp.server.fastmcp import FastMCP
+except Exception:
+    sys.exit(0)
+import bridge
+
+# Snapshot + clear health/live registry so this test is independent.
+saved_health = dict(bridge._LSP_HEALTH)
+saved_live = dict(bridge._LIVE_LSPS)
+bridge._LSP_HEALTH.clear()
+bridge._LIVE_LSPS.clear()
+try:
+    srv = bridge._build_mcp(FastMCP, Path.cwd())
+    health_fn = srv._tool_manager._tools['_health'].fn
+    h = health_fn()
+    assert h == {'languages': {}}, h
+finally:
+    bridge._LSP_HEALTH.update(saved_health)
+    bridge._LIVE_LSPS.update(saved_live)
+PY
+}
+
+# --- 13f: Cold-spawn failures accumulate FAILED state -------------------
+# Regression guard for the Codex post-impl review High finding:
+# the original first-spawn exception path skipped _record_crash, so
+# a server that died during cold spawn / initialize would loop
+# forever without backoff or FAILED transition. With the fix every
+# first-spawn failure feeds _record_crash; threshold crosses convert
+# to lsp-persistently-crashing.
+t_cold_spawn_failures_enter_failed() {
+    python3 - << 'PY'
+import sys
+from pathlib import Path
+sys.path.insert(0, 'scripts/lsp-mcp')
+try:
+    from mcp.server.fastmcp import FastMCP
+except Exception:
+    sys.exit(0)
+import bridge
+from lsp_client import LspError
+
+# Tighten policy.
+saved = (bridge._RESPAWN_FAILED_THRESHOLD,
+         bridge._RESPAWN_FAILED_WINDOW_S,
+         bridge._RESPAWN_BACKOFF_BASE_S)
+bridge._RESPAWN_FAILED_THRESHOLD = 2
+bridge._RESPAWN_FAILED_WINDOW_S = 5.0
+bridge._RESPAWN_BACKOFF_BASE_S = 0.01
+
+# Spawner that always raises -- simulates a clangd that segfaults
+# during initialize, or a binary that fails to spawn at all.
+def broken_spawner(ws):
+    raise LspError("lsp-spawn-failed", "broken on purpose",
+                   lang='fake13f')
+bridge.register_spawner('fake13f', broken_spawner)
+bridge._EXT_TO_LANG['.fakeext13f'] = 'fake13f'
+bridge._LANG_TO_LSP_LANGUAGE_ID['fake13f'] = 'plaintext'
+
+# Make a workspace-bounded file so _dispatch_path doesn't reject.
+import tempfile, os
+ws = Path.cwd()
+tmp = tempfile.NamedTemporaryFile(suffix='.fakeext13f', mode='w',
+                                  delete=False, dir=str(ws))
+try:
+    tmp.write('hi\n'); tmp.close()
+    srv = bridge._build_mcp(FastMCP, ws)
+    hover_fn = srv._tool_manager._tools['hover'].fn
+
+    # First call: spawner fails. Bridge converts to envelope.
+    r1 = hover_fn(path=os.path.basename(tmp.name), line=0, character=0)
+    assert 'error' in r1, r1
+    assert r1['error'] == 'lsp-spawn-failed', r1
+
+    # Second call (after THRESHOLD failures): must be the FAILED
+    # terminal envelope, not another spawner-failed retry.
+    r2 = hover_fn(path=os.path.basename(tmp.name), line=0, character=0)
+    assert 'error' in r2, r2
+    assert r2['error'] == 'lsp-persistently-crashing', \
+        f'expected FAILED conversion after THRESHOLD={bridge._RESPAWN_FAILED_THRESHOLD} cold-spawn fails: {r2}'
+
+    # Subsequent calls remain FAILED -- no further spawn attempts.
+    r3 = hover_fn(path=os.path.basename(tmp.name), line=0, character=0)
+    assert r3['error'] == 'lsp-persistently-crashing', r3
+
+    # _health surfaces failed=True.
+    health_fn = srv._tool_manager._tools['_health'].fn
+    h = health_fn()
+    entry = next(iter(h['languages']['fake13f'].values()))
+    assert entry['failed'] is True, entry
+    assert entry['status'] == 'failed', entry
+    print(f'[cold-spawn-failed] OK -- {bridge._RESPAWN_FAILED_THRESHOLD} ' \
+          f'cold-spawn fails crossed to FAILED')
+finally:
+    bridge._RESPAWN_FAILED_THRESHOLD, bridge._RESPAWN_FAILED_WINDOW_S, bridge._RESPAWN_BACKOFF_BASE_S = saved
+    try: os.unlink(tmp.name)
+    except OSError: pass
+    bridge._EXT_TO_LANG.pop('.fakeext13f', None)
+    bridge._LANG_TO_LSP_LANGUAGE_ID.pop('fake13f', None)
+    bridge._LSP_SPAWNERS.pop('fake13f', None)
+    with bridge._LIVE_LSPS_LOCK:
+        keys = [k for k in bridge._LSP_HEALTH if k[0] == 'fake13f']
+        for k in keys:
+            bridge._LSP_HEALTH.pop(k, None)
+PY
+}
+
+# --- 13g: respawn walks old cleanup_paths -------------------------------
+# Regression guard for the Codex post-impl review Medium finding:
+# spawner-owned tempdirs (PSES LogPath) registered on cleanup_paths
+# were leaking across respawn generations because _respawn_locked
+# never disposed the old instance. With the fix old_inst.shutdown()
+# fires before new_inst publishes; cleanup_paths walked.
+t_respawn_walks_cleanup_paths() {
+    python3 - << 'PY'
+import sys, os, time, signal, tempfile
+from pathlib import Path
+sys.path.insert(0, 'scripts/lsp-mcp')
+try:
+    from mcp.server.fastmcp import FastMCP
+except Exception:
+    sys.exit(0)
+import bridge
+from lsp_client import LspSubprocess
+
+fake = r"""
+import sys, json
+def read_msg():
+    hdr = b''
+    while True:
+        ch = sys.stdin.buffer.read(1)
+        if not ch: return None
+        hdr += ch
+        if hdr.endswith(b'\r\n\r\n'): break
+    n = 0
+    for line in hdr.split(b'\r\n'):
+        if line.lower().startswith(b'content-length:'):
+            n = int(line.split(b':')[1].strip()); break
+    return json.loads(sys.stdin.buffer.read(n).decode('utf-8'))
+def write_msg(obj):
+    b = json.dumps(obj).encode('utf-8')
+    sys.stdout.buffer.write(b'Content-Length: ' + str(len(b)).encode() + b'\r\n\r\n' + b)
+    sys.stdout.buffer.flush()
+while True:
+    m = read_msg()
+    if m is None: break
+    method = m.get('method')
+    if 'id' in m:
+        if method == 'initialize':
+            write_msg({'jsonrpc':'2.0','id':m['id'],'result':{'capabilities':{}}})
+        elif method == 'textDocument/hover':
+            write_msg({'jsonrpc':'2.0','id':m['id'],
+                       'result':{'contents':{'kind':'markdown','value':'h'}}})
+        else:
+            write_msg({'jsonrpc':'2.0','id':m['id'],'result':None})
+    elif method == 'exit':
+        break
+"""
+
+saved_base = bridge._RESPAWN_BACKOFF_BASE_S
+bridge._RESPAWN_BACKOFF_BASE_S = 0.05
+
+# Track tempdirs the spawner registers per spawn.
+tempdirs_per_spawn: list = []
+
+ws = Path.cwd()
+tmp = tempfile.NamedTemporaryFile(suffix='.fakeext13g', mode='w',
+                                  delete=False, dir=str(ws))
+try:
+    tmp.write('// hello\n'); tmp.close()
+    bridge._EXT_TO_LANG['.fakeext13g'] = 'fake13g'
+    bridge._LANG_TO_LSP_LANGUAGE_ID['fake13g'] = 'plaintext'
+
+    def spawn_fake(workspace_root):
+        td = tempfile.mkdtemp(prefix='lsp-mcp-13g-')
+        tempdirs_per_spawn.append(td)
+        lsp = LspSubprocess(['python3', '-c', fake], lang='fake13g')
+        lsp.initialize('file://' + str(workspace_root))
+        lsp.cleanup_paths.append(td)
+        return lsp
+    bridge.register_spawner('fake13g', spawn_fake)
+
+    srv = bridge._build_mcp(FastMCP, ws)
+    hover_fn = srv._tool_manager._tools['hover'].fn
+
+    # First spawn -> tempdir #0 created.
+    r1 = hover_fn(path=os.path.basename(tmp.name), line=0, character=0)
+    assert 'error' not in r1, r1
+    assert len(tempdirs_per_spawn) == 1, tempdirs_per_spawn
+    td0 = tempdirs_per_spawn[0]
+    assert os.path.isdir(td0)
+
+    # Crash + respawn -> tempdir #1 created. Old td0 MUST be removed
+    # by the dispose path.
+    with bridge._LIVE_LSPS_LOCK:
+        key = next(k for k in bridge._LIVE_LSPS if k[0] == 'fake13g')
+        inst = bridge._LIVE_LSPS[key]
+    os.kill(inst.pid, signal.SIGKILL)
+    for _ in range(200):
+        if inst._crashed: break
+        time.sleep(0.01)
+
+    r2 = hover_fn(path=os.path.basename(tmp.name), line=0, character=0)
+    assert 'error' not in r2, f'respawn failed: {r2}'
+    assert len(tempdirs_per_spawn) == 2, tempdirs_per_spawn
+    td1 = tempdirs_per_spawn[1]
+    assert os.path.isdir(td1), 'new tempdir gone unexpectedly'
+    assert not os.path.exists(td0), \
+        f'OLD tempdir {td0} still exists -- cleanup_paths leaked across respawn'
+    print(f'[respawn-cleanup] OK -- old tempdir disposed, new tempdir owned')
+finally:
+    bridge._RESPAWN_BACKOFF_BASE_S = saved_base
+    try: os.unlink(tmp.name)
+    except OSError: pass
+    # Clean up any remaining tempdirs.
+    import shutil
+    for td in tempdirs_per_spawn:
+        shutil.rmtree(td, ignore_errors=True)
+    bridge._EXT_TO_LANG.pop('.fakeext13g', None)
+    bridge._LANG_TO_LSP_LANGUAGE_ID.pop('fake13g', None)
+    bridge._LSP_SPAWNERS.pop('fake13g', None)
+    with bridge._LIVE_LSPS_LOCK:
+        keys = [k for k in bridge._LIVE_LSPS if k[0] == 'fake13g']
+        for k in keys:
+            inst = bridge._LIVE_LSPS.pop(k, None)
+            bridge._LSP_HEALTH.pop(k, None)
+            if inst is not None:
+                try: inst.shutdown(timeout=1.0)
+                except Exception: pass
+PY
+}
+
 # --- 9a: LSP-process-leak detection (run LAST) ----------------------------
 t_no_leaked_lsp_processes() {
     # Capture the post-harness PID set of LSP binaries owned by this
@@ -2612,6 +3214,13 @@ run "12c cleanup_paths walked"           t_cleanup_paths_walked
 run "12d bridge forwards didChange"      t_bridge_handler_forwards_didchange
 run "12e apply_text rejects in teardown" t_apply_text_rejects_during_teardown
 run "12f post-apply_text req rejected"   t_post_apply_text_request_rejected_in_teardown
+run "13a crash flag set on kill"         t_crash_flag_set_on_unexpected_exit
+run "13b respawn on next request"        t_respawn_on_next_request
+run "13c FAILED state after threshold"   t_failed_state_after_threshold
+run "13d backoff schedule"               t_backoff_schedule
+run "13e _health empty state"            t_health_tool_empty_state
+run "13f cold-spawn fails enter FAILED"  t_cold_spawn_failures_enter_failed
+run "13g respawn walks cleanup_paths"    t_respawn_walks_cleanup_paths
 # 9a runs LAST so every prior sub-test has had a chance to clean up.
 run "9a no leaked LSP processes"         t_no_leaked_lsp_processes
 

@@ -299,12 +299,20 @@ class LspSubprocess:
         # didOpen per URI reaches the LSP. Codex pre-implementation
         # review of the MCP tools surface flagged this as High.
         self._open_uris_lock = threading.Lock()
-        # Per-URI metadata for the file-change-lifecycle path:
-        # {uri: {"version": int, "mtime_ns": int}}. Populated by
-        # apply_text() (the open-or-refresh driver used by every MCP
-        # tool handler) so the LSP's view stays current across
-        # external edits. Read under _open_uris_lock alongside
-        # open_uris so the open/refresh decision is atomic.
+        # Per-URI metadata for the file-change-lifecycle + respawn
+        # paths. Schema:
+        #   {uri: {"version": int, "mtime_ns": int,
+        #          "resolved_path": str | None,
+        #          "lang": str | None,
+        #          "language_id": str}}
+        # Populated by apply_text() (the open-or-refresh driver used
+        # by every MCP tool handler). Read under _open_uris_lock
+        # alongside open_uris so the open/refresh decision is atomic.
+        # resolved_path / lang are stored so the bridge respawn path
+        # can re-walk every tracked URI through _dispatch_path's
+        # workspace-bounded sandbox after a crash, instead of
+        # reconstructing paths ad hoc from URI strings (Codex design
+        # review: replay needs a first-class snapshot schema).
         self.open_uri_meta: dict[str, dict[str, Any]] = {}
         # Filesystem paths owned by this LspSubprocess that the
         # bridge atexit hook should `shutil.rmtree` after the LSP
@@ -312,6 +320,21 @@ class LspSubprocess:
         # PowerShellEditorServices' per-spawn LogPath/SessionDetails
         # tempdir). Empty by default; opt-in per spawner.
         self.cleanup_paths: list[str] = []
+        # Crash detection: set True by _reader_loop's finally block
+        # when the reader exits WITHOUT _shutdown_called (i.e. the
+        # subprocess died unexpectedly). Distinct from a clean
+        # shutdown so the bridge respawn path can decide whether to
+        # restart this LSP. The crash REASON (the LspError kind that
+        # the reader saw last) is captured separately so the bridge
+        # can surface it via the _health tool. Health-state
+        # accumulation (restart_count, FAILED detection) lives on
+        # the BRIDGE side in _LSP_HEALTH (per-(lang, root)) so it
+        # survives instance replacement -- the per-LspSubprocess
+        # crashed/crash_reason fields are one-shot snapshots, not
+        # rolling counters (Codex design review caught the
+        # per-instance-counter trap).
+        self._crashed: bool = False
+        self._crash_reason: Optional[str] = None
 
         self._spawn()
         _LIVE_SUBPROCS.add(self)
@@ -531,6 +554,28 @@ class LspSubprocess:
             # racing in to request() during teardown sees the dead
             # flag on next check instead of enqueuing a Future.
             self._reader_dead = True
+            # Crash detection: reader thread ended WITHOUT a
+            # corresponding shutdown() call -> subprocess died
+            # unexpectedly. Snap the flag + reason here so the
+            # bridge respawn path can detect it via the public
+            # `crashed` property without racing the GC. The bridge
+            # owns rolling state (restart_count, FAILED detection);
+            # this object only records "I died, here's why".
+            if not self._shutdown_called:
+                self._crashed = True
+                # Best-effort reason: prefer a poll() exit code if
+                # available (subprocess died on its own) over a
+                # generic "reader exited" string.
+                try:
+                    rc = self._proc.poll() if self._proc else None
+                except Exception:
+                    rc = None
+                if rc is not None:
+                    self._crash_reason = (
+                        f"subprocess exited with code {rc}"
+                    )
+                else:
+                    self._crash_reason = "reader thread ended"
             self._fail_all_pending(LspError(
                 "lsp-subprocess-exited",
                 f"{self.lang} LSP reader thread ended",
@@ -993,7 +1038,9 @@ class LspSubprocess:
 
     def apply_text(self, uri: str, language_id: str, text: str,
                    mtime_ns: Optional[int],
-                   force_did_save: bool = False) -> int:
+                   force_did_save: bool = False,
+                   resolved_path: Optional[str] = None,
+                   lang: Optional[str] = None) -> int:
         """Open-or-refresh driver: ensure the LSP's in-memory view of
         `uri` matches the on-disk text identified by `mtime_ns`.
 
@@ -1057,6 +1104,9 @@ class LspSubprocess:
                 self.open_uri_meta[uri] = {
                     "version": 1,
                     "mtime_ns": mtime_ns,
+                    "resolved_path": resolved_path,
+                    "lang": lang,
+                    "language_id": language_id,
                 }
                 return 1
             # Already open: refresh on mtime drift.
@@ -1068,6 +1118,9 @@ class LspSubprocess:
                 self.open_uri_meta[uri] = {
                     "version": 1,
                     "mtime_ns": mtime_ns,
+                    "resolved_path": resolved_path,
+                    "lang": lang,
+                    "language_id": language_id,
                 }
                 return 1
             tracked_mtime = meta.get("mtime_ns")
@@ -1094,6 +1147,12 @@ class LspSubprocess:
             self.open_uri_meta[uri] = {
                 "version": new_version,
                 "mtime_ns": mtime_ns,
+                "resolved_path": (resolved_path
+                                  if resolved_path is not None
+                                  else meta.get("resolved_path")),
+                "lang": (lang if lang is not None
+                         else meta.get("lang")),
+                "language_id": language_id,
             }
             return new_version
 
@@ -1296,6 +1355,14 @@ class LspSubprocess:
     @property
     def alive(self) -> bool:
         return self._proc is not None and self._proc.poll() is None
+
+    @property
+    def crashed(self) -> bool:
+        """True iff the reader thread ended without a corresponding
+        shutdown() call -- i.e. the subprocess died unexpectedly.
+        Set by _reader_loop's finally block; read by the bridge
+        respawn path."""
+        return self._crashed
 
     def __repr__(self) -> str:
         state = "alive" if self.alive else "dead"
