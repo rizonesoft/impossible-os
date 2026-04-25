@@ -687,6 +687,29 @@ def _normalize_locations(result: Any) -> list[dict]:
 # every production bridge uses.
 _COMPLETION_MAX_ITEMS = 50
 
+# Bound the call-hierarchy follow-up fan-out. callHierarchy/prepare
+# can return many CallHierarchyItems on overloaded symbols, generated
+# code, or a misbehaving LSP. Each anchor triggers one
+# incomingCalls/outgoingCalls request, so an unbounded walk could
+# turn a single MCP call into thousands of sequential LSP requests.
+# We bound the operation TWO ways:
+#   - _CALL_HIERARCHY_MAX_ANCHORS: hard cap on count (generous for
+#     legitimate overload sets; clangd typically returns 1-3).
+#   - _CALL_HIERARCHY_DEADLINE_S: total wall-clock budget across the
+#     whole operation (prepare + every follow-up). When exhausted we
+#     stop issuing further follow-ups and return what we have with
+#     `deadline_exceeded=True`. Cap-only protection still allowed a
+#     wedged LSP to tie up an interactive MCP call for ~8 minutes
+#     (32 * 15 s per-request timeout); the deadline keeps the
+#     handler interactive even when the LSP is degraded. Codex
+#     post-commit perf review flagged the cap-only fix as High and
+#     recommended a wall-clock budget.
+_CALL_HIERARCHY_MAX_ANCHORS = 32
+_CALL_HIERARCHY_DEADLINE_S = 30.0
+# Per-follow-up timeout: tighter than the default 15s used elsewhere
+# so any single wedged anchor cannot consume the whole deadline.
+_CALL_HIERARCHY_FOLLOW_TIMEOUT_S = 5.0
+
 
 def _normalize_completion(result: Any) -> dict:
     """Normalize textDocument/completion response.
@@ -1409,10 +1432,12 @@ def _build_mcp(FastMCP, workspace_root: Path):
         Codex adversarial review of the initial implementation
         flagged this as Medium. The cumulative LSP cost is bounded
         by `prepared_count` (clangd typically returns 1-2 items)."""
+        import time as _time
         line_v, char_v = _validate_position(line, character)
         resolved, lang, text = _dispatch_path(path, workspace_root)
         lsp = _get_or_spawn(lang, workspace_root)
         uri = _ensure_open_for(lsp, resolved, lang, text)
+        deadline = _time.monotonic() + _CALL_HIERARCHY_DEADLINE_S
         prepared_raw = lsp.request(
             "textDocument/prepareCallHierarchy",
             {"textDocument": {"uri": uri},
@@ -1427,16 +1452,61 @@ def _build_mcp(FastMCP, workspace_root: Path):
                 "line": line_v,
                 "character": char_v,
                 "prepared_count": 0,
+                "prepared_total": 0,
                 "anchors": [],
+                "truncated": False,
+                "deadline_exceeded": False,
                 "note": "prepareCallHierarchy returned no items at "
                         "this position; the LSP does not see a "
                         "callable symbol here.",
             }
+        # Cap the fan-out before issuing follow-up requests. Codex
+        # post-commit review flagged unbounded prepared length as
+        # High; a second perf-review High flagged the cap-only fix
+        # as still allowing ~8 minute interactive latency on a
+        # wedged LSP. Defense-in-depth: count cap PLUS wall-clock
+        # deadline; whichever fires first stops the walk. Both
+        # surface state in the response so the caller can tell
+        # WHICH bound was hit.
+        prepared_total = len(prepared)
+        truncated = prepared_total > _CALL_HIERARCHY_MAX_ANCHORS
+        anchors_to_walk = prepared[:_CALL_HIERARCHY_MAX_ANCHORS]
         anchors_out: list[dict] = []
-        for anchor in prepared:
-            follow = lsp.request(
-                method, {"item": anchor}, timeout=15.0,
+        deadline_exceeded = False
+        for anchor in anchors_to_walk:
+            now = _time.monotonic()
+            if now >= deadline:
+                deadline_exceeded = True
+                break
+            # Shrink the per-follow-up timeout to whatever the
+            # remaining deadline allows, so a slow LSP cannot
+            # individually overshoot. Floor at a small positive
+            # value (the request() validator rejects 0/negative);
+            # if remaining < the floor we treat it as deadline-hit.
+            remaining = deadline - now
+            per_call_timeout = min(
+                _CALL_HIERARCHY_FOLLOW_TIMEOUT_S, remaining,
             )
+            if per_call_timeout < 0.1:
+                deadline_exceeded = True
+                break
+            try:
+                follow = lsp.request(
+                    method, {"item": anchor}, timeout=per_call_timeout,
+                )
+            except LspError as exc:
+                # A per-anchor timeout is not fatal: record the
+                # anchor with an empty calls list + the error and
+                # keep walking. Other anchors may still resolve
+                # within the remaining budget.
+                if exc.kind == "lsp-timeout":
+                    anchors_out.append({
+                        "anchor": anchor,
+                        "calls": [],
+                        "anchor_error": exc.to_envelope(),
+                    })
+                    continue
+                raise
             anchors_out.append({
                 "anchor": anchor,
                 "calls": _normalize_call_hierarchy_calls(follow, key),
@@ -1446,7 +1516,14 @@ def _build_mcp(FastMCP, workspace_root: Path):
             "lang": lang,
             "line": line_v,
             "character": char_v,
-            "prepared_count": len(prepared),
+            # prepared_count = anchors actually walked (resolved
+            # follow-ups); prepared_total = anchors the LSP returned
+            # before the cap. The two diverge on truncation OR on
+            # deadline exhaustion.
+            "prepared_count": len(anchors_out),
+            "prepared_total": prepared_total,
+            "truncated": truncated,
+            "deadline_exceeded": deadline_exceeded,
             "anchors": anchors_out,
         }
 
@@ -1462,11 +1539,17 @@ def _build_mcp(FastMCP, workspace_root: Path):
     srv.tool(name="call_hierarchy_incoming",
              description="LSP callHierarchy/prepare then "
                          "incomingCalls. Returns {prepared_count, "
-                         "anchors: [{anchor, calls: [{item, "
-                         "ranges}]}]} -- one entry per prepared "
-                         "CallHierarchyItem so overloaded symbols / "
-                         "multi-anchor positions don't drop "
-                         "callers.")(call_hierarchy_incoming)
+                         "prepared_total, truncated, anchors: "
+                         "[{anchor, calls: [{item, ranges}]}]} -- "
+                         "one entry per prepared CallHierarchyItem "
+                         "so overloaded symbols / multi-anchor "
+                         "positions don't drop callers. "
+                         "prepared_count = anchors actually walked; "
+                         "prepared_total = anchors the LSP returned "
+                         f"before the cap of {_CALL_HIERARCHY_MAX_ANCHORS}; "
+                         "truncated = True when prepared_total > "
+                         "cap (a buggy or hostile LSP cannot drive "
+                         "an unbounded fan-out).")(call_hierarchy_incoming)
 
     def call_hierarchy_outgoing(path: str, line: int, character: int) -> dict:
         """LSP callHierarchy/prepare + callHierarchy/outgoingCalls.
@@ -1480,11 +1563,14 @@ def _build_mcp(FastMCP, workspace_root: Path):
     srv.tool(name="call_hierarchy_outgoing",
              description="LSP callHierarchy/prepare then "
                          "outgoingCalls. Returns {prepared_count, "
-                         "anchors: [{anchor, calls: [{item, "
-                         "ranges}]}]} -- one entry per prepared "
-                         "CallHierarchyItem so overloaded symbols / "
-                         "multi-anchor positions don't drop "
-                         "callees.")(call_hierarchy_outgoing)
+                         "prepared_total, truncated, anchors: "
+                         "[{anchor, calls: [{item, ranges}]}]} -- "
+                         "one entry per prepared CallHierarchyItem "
+                         "so overloaded symbols / multi-anchor "
+                         "positions don't drop callees. Same cap "
+                         f"semantics as call_hierarchy_incoming "
+                         f"({_CALL_HIERARCHY_MAX_ANCHORS} anchors "
+                         "max).")(call_hierarchy_outgoing)
 
     def code_action(path: str, range: dict,
                     diagnostic: Optional[dict] = None) -> dict:

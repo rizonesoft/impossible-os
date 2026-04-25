@@ -147,6 +147,20 @@
 #          overloaded symbols). A stub LSP returns 3 prepared items;
 #          the test asserts the bridge issues 3 follow-up calls and
 #          bundles per-anchor results into the response.
+#   11f -- call_hierarchy caps unbounded fan-out (regression guard for
+#          Codex post-commit High finding: an unbounded prepare list
+#          would let one MCP call spawn thousands of sequential LSP
+#          requests). A stub LSP returns 200 prepared items; the test
+#          asserts the bridge issues at most _CALL_HIERARCHY_MAX_ANCHORS
+#          follow-ups, sets truncated=True, and surfaces prepared_total.
+#   11g -- call_hierarchy enforces wall-clock deadline (regression
+#          guard for Codex post-commit perf High: cap-only protection
+#          still allowed ~8 minute interactive latency on a wedged
+#          LSP). A stub LSP returns prepared items but never replies
+#          to follow-ups; with the deadline patched short, the test
+#          asserts the handler returns within seconds with
+#          deadline_exceeded=True instead of waiting for every
+#          per-call timeout.
 #   9a -- LSP-process-leak detection: pgrep snapshots taken at harness
 #         entry vs harness exit. Any NEW PID matching the 5 LSP binary
 #         names (owned by this user) is a leak from a sub-test that
@@ -1532,6 +1546,9 @@ try:
 
     assert 'error' not in result, result
     assert result['prepared_count'] == 3, result
+    assert result['prepared_total'] == 3, result
+    assert result['truncated'] is False, result
+    assert result['deadline_exceeded'] is False, result
     assert len(result['anchors']) == 3, result
     names = sorted(a['anchor']['name'] for a in result['anchors'])
     assert names == ['overload_a', 'overload_b', 'overload_c'], names
@@ -1549,6 +1566,248 @@ finally:
     bridge._LSP_SPAWNERS.pop('fake', None)
     with bridge._LIVE_LSPS_LOCK:
         keys = [k for k in bridge._LIVE_LSPS if k[0] == 'fake']
+    for k in keys:
+        with bridge._LIVE_LSPS_LOCK:
+            inst = bridge._LIVE_LSPS.pop(k, None)
+        if inst is not None:
+            inst.shutdown(timeout=2.0)
+PY
+}
+
+# --- 11f: Call hierarchy caps unbounded fan-out --------------------------
+# Codex post-commit review High: unbounded prepareCallHierarchy output
+# could turn a single MCP call into thousands of 15 s LSP requests.
+# This test builds a stub LSP that returns 200 prepared items and
+# asserts the bridge issues at most _CALL_HIERARCHY_MAX_ANCHORS=32
+# follow-up requests, marks truncated=True, and surfaces prepared_total.
+t_call_hierarchy_cap() {
+    python3 - << 'PY'
+import sys, json
+from pathlib import Path
+sys.path.insert(0, 'scripts/lsp-mcp')
+
+try:
+    from mcp.server.fastmcp import FastMCP
+except Exception:
+    sys.exit(0)  # SKIP
+
+import bridge
+from lsp_client import LspSubprocess
+
+# Stub LSP that returns 200 prepared items and counts every follow-up.
+fake = r"""
+import sys, json
+follow_count = [0]   # list-wrapped so module-level rebinding is in-place
+def read_msg():
+    hdr = b''
+    while True:
+        ch = sys.stdin.buffer.read(1)
+        if not ch: return None
+        hdr += ch
+        if hdr.endswith(b'\r\n\r\n'): break
+    n = 0
+    for line in hdr.split(b'\r\n'):
+        if line.lower().startswith(b'content-length:'):
+            n = int(line.split(b':')[1].strip()); break
+    return json.loads(sys.stdin.buffer.read(n).decode('utf-8'))
+def write_msg(obj):
+    b = json.dumps(obj).encode('utf-8')
+    sys.stdout.buffer.write(b'Content-Length: ' + str(len(b)).encode() + b'\r\n\r\n' + b)
+    sys.stdout.buffer.flush()
+while True:
+    m = read_msg()
+    if m is None: break
+    method = m.get('method')
+    if method == 'initialize':
+        write_msg({'jsonrpc':'2.0','id':m['id'],'result':{'capabilities':{}}})
+    elif method == 'textDocument/prepareCallHierarchy':
+        items = [{'name': f'overload_{i:03d}', 'kind': 12,
+                  'uri': 'file:///x', 'range': {}, 'selectionRange': {}}
+                 for i in range(200)]
+        write_msg({'jsonrpc':'2.0','id':m['id'],'result':items})
+    elif method == 'callHierarchy/incomingCalls':
+        follow_count[0] += 1
+        # Echo the count as the caller name so the test can verify it.
+        write_msg({'jsonrpc':'2.0','id':m['id'],'result':[
+            {'from': {'name': f'follow_{follow_count[0]}',
+                      'uri': 'file:///x', 'range': {}, 'selectionRange': {}},
+             'fromRanges': [{}]},
+        ]})
+    elif method == 'shutdown':
+        write_msg({'jsonrpc':'2.0','id':m['id'],'result':None})
+    elif method == 'exit':
+        break
+    elif 'method' in m and 'id' not in m:
+        pass
+    elif 'id' in m:
+        write_msg({'jsonrpc':'2.0','id':m['id'],'result':None})
+"""
+
+import tempfile, os
+ws = Path.cwd()
+tmp = tempfile.NamedTemporaryFile(suffix='.fakeext2', mode='w',
+                                  delete=False, dir=str(ws))
+try:
+    tmp.write('// fake stub source\n'); tmp.close()
+
+    bridge._EXT_TO_LANG['.fakeext2'] = 'fake2'
+    bridge._LANG_TO_LSP_LANGUAGE_ID['fake2'] = 'plaintext'
+
+    def spawn_fake(workspace_root):
+        lsp = LspSubprocess(['python3', '-c', fake], lang='fake2')
+        lsp.initialize('file://' + str(workspace_root))
+        return lsp
+    bridge.register_spawner('fake2', spawn_fake)
+
+    srv = bridge._build_mcp(FastMCP, ws)
+    fn = srv._tool_manager._tools['call_hierarchy_incoming'].fn
+    result = fn(path=os.path.basename(tmp.name), line=0, character=0)
+
+    assert 'error' not in result, result
+    cap = bridge._CALL_HIERARCHY_MAX_ANCHORS
+    assert result['prepared_total'] == 200, result
+    assert result['prepared_count'] == cap, result
+    assert result['truncated'] is True, result
+    # With instant-replying stub the deadline never fires.
+    assert result['deadline_exceeded'] is False, result
+    assert len(result['anchors']) == cap, result
+    print(f'[call_hierarchy] OK -- capped at {cap}/200 anchors, truncated=True')
+finally:
+    os.unlink(tmp.name)
+    bridge._EXT_TO_LANG.pop('.fakeext2', None)
+    bridge._LANG_TO_LSP_LANGUAGE_ID.pop('fake2', None)
+    bridge._LSP_SPAWNERS.pop('fake2', None)
+    with bridge._LIVE_LSPS_LOCK:
+        keys = [k for k in bridge._LIVE_LSPS if k[0] == 'fake2']
+    for k in keys:
+        with bridge._LIVE_LSPS_LOCK:
+            inst = bridge._LIVE_LSPS.pop(k, None)
+        if inst is not None:
+            inst.shutdown(timeout=2.0)
+PY
+}
+
+# --- 11g: Call hierarchy bounded by wall-clock deadline ------------------
+# Codex post-commit perf review High: cap-only protection still allowed
+# ~8 minute interactive latency on a wedged LSP. Defense-in-depth fix
+# adds a wall-clock deadline (_CALL_HIERARCHY_DEADLINE_S=30 s). This
+# test forces the deadline by patching it to ~0.3 s, has a stub that
+# never replies to follow-ups, and asserts the handler returns within
+# a few seconds with deadline_exceeded=True. Wall-time bounded.
+t_call_hierarchy_deadline() {
+    python3 - << 'PY'
+import sys, time
+from pathlib import Path
+sys.path.insert(0, 'scripts/lsp-mcp')
+
+try:
+    from mcp.server.fastmcp import FastMCP
+except Exception:
+    sys.exit(0)  # SKIP
+
+import bridge
+from lsp_client import LspSubprocess
+
+# Stub LSP that returns 5 prepared items but NEVER replies to
+# incomingCalls follow-ups. Each follow-up MUST hit a per-request
+# timeout, but the cumulative deadline must fire well before the
+# 5 anchors * per-call timeout would.
+fake = r"""
+import sys, json
+def read_msg():
+    hdr = b''
+    while True:
+        ch = sys.stdin.buffer.read(1)
+        if not ch: return None
+        hdr += ch
+        if hdr.endswith(b'\r\n\r\n'): break
+    n = 0
+    for line in hdr.split(b'\r\n'):
+        if line.lower().startswith(b'content-length:'):
+            n = int(line.split(b':')[1].strip()); break
+    return json.loads(sys.stdin.buffer.read(n).decode('utf-8'))
+def write_msg(obj):
+    b = json.dumps(obj).encode('utf-8')
+    sys.stdout.buffer.write(b'Content-Length: ' + str(len(b)).encode() + b'\r\n\r\n' + b)
+    sys.stdout.buffer.flush()
+while True:
+    m = read_msg()
+    if m is None: break
+    method = m.get('method')
+    if method == 'initialize':
+        write_msg({'jsonrpc':'2.0','id':m['id'],'result':{'capabilities':{}}})
+    elif method == 'textDocument/prepareCallHierarchy':
+        items = [{'name': f'a{i}', 'kind': 12, 'uri': 'file:///x',
+                  'range': {}, 'selectionRange': {}} for i in range(5)]
+        write_msg({'jsonrpc':'2.0','id':m['id'],'result':items})
+    elif method == 'callHierarchy/incomingCalls':
+        # Silently swallow -- never reply. This is the wedged-LSP
+        # simulation; the bridge MUST hit its deadline.
+        pass
+    elif method == 'shutdown':
+        write_msg({'jsonrpc':'2.0','id':m['id'],'result':None})
+    elif method == 'exit':
+        break
+    elif 'method' in m and 'id' not in m:
+        pass
+    elif 'id' in m:
+        write_msg({'jsonrpc':'2.0','id':m['id'],'result':None})
+"""
+
+import tempfile, os
+ws = Path.cwd()
+tmp = tempfile.NamedTemporaryFile(suffix='.fakeext3', mode='w',
+                                  delete=False, dir=str(ws))
+try:
+    tmp.write('// fake stub source\n'); tmp.close()
+
+    bridge._EXT_TO_LANG['.fakeext3'] = 'fake3'
+    bridge._LANG_TO_LSP_LANGUAGE_ID['fake3'] = 'plaintext'
+
+    def spawn_fake(workspace_root):
+        lsp = LspSubprocess(['python3', '-c', fake], lang='fake3')
+        lsp.initialize('file://' + str(workspace_root))
+        return lsp
+    bridge.register_spawner('fake3', spawn_fake)
+
+    # Patch the deadline + per-follow timeout for fast test wall-clock.
+    saved_deadline = bridge._CALL_HIERARCHY_DEADLINE_S
+    saved_per_call = bridge._CALL_HIERARCHY_FOLLOW_TIMEOUT_S
+    bridge._CALL_HIERARCHY_DEADLINE_S = 0.5
+    bridge._CALL_HIERARCHY_FOLLOW_TIMEOUT_S = 0.2
+    try:
+        srv = bridge._build_mcp(FastMCP, ws)
+        fn = srv._tool_manager._tools['call_hierarchy_incoming'].fn
+        t0 = time.monotonic()
+        result = fn(path=os.path.basename(tmp.name), line=0, character=0)
+        elapsed = time.monotonic() - t0
+    finally:
+        bridge._CALL_HIERARCHY_DEADLINE_S = saved_deadline
+        bridge._CALL_HIERARCHY_FOLLOW_TIMEOUT_S = saved_per_call
+
+    assert 'error' not in result, result
+    assert result['prepared_total'] == 5, result
+    assert result['truncated'] is False, result
+    assert result['deadline_exceeded'] is True, result
+    # Ceiling: deadline (0.5) + last per-call timeout (0.2) + slop;
+    # we should NOT have walked all 5 anchors.
+    assert elapsed < 2.0, f'handler ran {elapsed:.2f}s -- deadline ineffective'
+    # We should have at MOST a couple of anchors (each takes ~0.2s).
+    assert len(result['anchors']) <= 5, result
+    # Each walked anchor either has anchor_error (per-call timeout)
+    # or empty calls; none should have actual call data because the
+    # stub never replied.
+    for entry in result['anchors']:
+        assert entry['calls'] == [], entry
+    print(f'[call_hierarchy] OK -- deadline fired at {elapsed:.2f}s '
+          f'(walked {len(result["anchors"])}/5 anchors before deadline)')
+finally:
+    os.unlink(tmp.name)
+    bridge._EXT_TO_LANG.pop('.fakeext3', None)
+    bridge._LANG_TO_LSP_LANGUAGE_ID.pop('fake3', None)
+    bridge._LSP_SPAWNERS.pop('fake3', None)
+    with bridge._LIVE_LSPS_LOCK:
+        keys = [k for k in bridge._LIVE_LSPS if k[0] == 'fake3']
     for k in keys:
         with bridge._LIVE_LSPS_LOCK:
             inst = bridge._LIVE_LSPS.pop(k, None)
@@ -1681,6 +1940,8 @@ run "11b code_action boundary contract"  t_codeaction_boundary_contract
 run "11c completion smoke against clangd" t_completion_smoke_clangd
 run "11d code_action immutability"       t_codeaction_immutability
 run "11e call hierarchy multi-anchor"    t_call_hierarchy_multi_anchor
+run "11f call hierarchy fan-out cap"     t_call_hierarchy_cap
+run "11g call hierarchy deadline"        t_call_hierarchy_deadline
 # 9a runs LAST so every prior sub-test has had a chance to clean up.
 run "9a no leaked LSP processes"         t_no_leaked_lsp_processes
 
