@@ -387,11 +387,11 @@ The six tools in §7 cover the "navigate + read diagnostics" scope. Agents doing
 >
 > - **What shipped:** `bridge.py` +~530 LOC (8 typed MCP tool handlers + 5 normalizers + `_validate_range` + completion `trigger_character` validation + `_call_hierarchy_one_step` walking every prepared anchor); `lsp_client.py` `_FORBIDDEN_LSP_METHODS` shrunk to 3 (`textDocument/codeAction` is read-only per LSP 3.17 and is now allowed; `applyEdit`/`executeCommand`/`rename` stay forbidden); `tests/test_bridge.sh` adds 11a-11e (5 new sub-tests) and updates 7a + 7e to the new 14-tool / 3-method shape; `tests/test_boundary.sh` `EXPECTED_MIN` shrunk to 3.
 > - **How it runs:** `python3 bridge.py --self-test --tools` dumps 14 schemas; the new tools are addressable as `mcp__lsp-bridge__completion` etc. once Claude Code restarts. End-to-end verified: `--self-test` reports `14 tools registered`; harness 42/42 PASS; tooling 84/84 PASS; build OK.
-> - **Downstream effects:** unblocks any agent flow that needed completion / signature help / call graphs / code actions through MCP; closes the parity gap with isaacphi/mcp-language-server, mickeyinfoshan/lsp-mcp, and rockerBOO/mcp-lsp-bridge on the extended-tool surface. Codex 1x adversarial review adoptions in commit `<§11 commit>`.
+> - **Downstream effects:** unblocks any agent flow that needed completion / signature help / call graphs / code actions through MCP; closes the parity gap with isaacphi/mcp-language-server, mickeyinfoshan/lsp-mcp, and rockerBOO/mcp-lsp-bridge on the extended-tool surface. Codex 1x adversarial review adoptions in commit `a3fa45ed`.
 > - **Canonical doc:** [`docs/infrastructure/development-tooling.md` LSP MCP Bridge subsection](../../docs/infrastructure/development-tooling.md) -- the read-only-boundary block was updated to reflect the 3-method deny set + the explicit reasoning for why `textDocument/codeAction` is read-only.
 > - **Scope boundary:** §11 does NOT own file-change lifecycle forwarding (§12), watchdog auto-restart (§13), correlation-ID logging (§14), workspace-bounded path sandboxing's race-free walk (§15), or warm-start (§16). It also does NOT cold-spawn LSPs eagerly -- the on-demand pattern from §1 is preserved.
 
-> **Verified:** 2026-04-25 | commit `<§11 commit>` | 9/9 items | build OK (host-side Python; kernel build re-run as smoke confirm) | tests 42/42 PASS
+> **Verified:** 2026-04-25 | commit `a3fa45ed` | 9/9 items | build OK (host-side Python; kernel build re-run as smoke confirm) | tests 42/42 PASS
 
 ---
 
