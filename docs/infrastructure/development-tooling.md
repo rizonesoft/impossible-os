@@ -780,6 +780,22 @@ Locks are PER-INSTANCE, not global -- requests against different LSPs run in par
 
 `bash scripts/lsp-mcp/bridge.py --self-test --stress` runs 100 concurrent hover calls against clangd to validate the lock + Future-leak contract under load. Demux correctness is exercised separately by sub-test 8b's fake-LSP that deliberately reorders responses.
 
+#### Warm-start and `--warm-start-mode`
+
+`--warm-start[=langs]` opts the bridge into eager parallel LSP spawn at startup so the first `workspace_symbol` / `hover` call does not pay the cold spawn + cold index cost (clangd ~30 s cold against the kernel tree). Without the flag, behavior is on-demand: every per-language LSP spawns at first tool call. With the flag the bridge spawns each named language under a `concurrent.futures.ThreadPoolExecutor`, waits for clangd / pyright `$/progress` end-of-indexing (or a 10 s no-progress fall-through; asm-lsp / bash-lsp / PSES are ready as soon as `initialize` returns), and emits a structured `warm-complete` log line. Cold-start over 60 s emits `warm-over-budget` WARN with a `--warm-start=<slow-langs>` hint -- never blocks serving.
+
+`--warm-start-mode={blocking,background}` controls how warm-start interacts with the FastMCP stdio server:
+
+- `blocking` (default) -- runs warm-start INLINE in `main()` before `srv.run()` starts answering MCP `initialize`. Correct for CLI use (`python3 bridge.py --warm-start --self-test`) where there is no MCP launcher waiting on stdio handshake.
+- `background` -- spawns warm-start on a daemon thread and returns immediately. `srv.run()` answers MCP `initialize` within milliseconds; the warm worker indexes in parallel. Concurrent MCP tool calls for a language the bg worker is still spawning attach to the existing `_SPAWN_EVENTS[(lang, root)]` gate (no double-spawn). Shutdown sets a module-level `_BRIDGE_SHUTTING_DOWN` Event under `_LIVE_LSPS_LOCK` BEFORE snapshotting, so any LSP the bg worker has not yet published gets reaped at the publish gate in `_get_or_spawn` instead of leaking past `_shutdown_all_lsps`'s reap.
+
+**For `.mcp.json` launchers (Claude Code, generic MCP transport): `background` is REQUIRED.** A blocking warm-start can hold the stdio handshake open for 10-60 s while clangd indexes; the launcher's connection timeout will mark the bridge failed before any tool call lands, losing the entire `mcp__lsp-bridge__*` surface. The repo-tracked `.mcp.json` already passes `--warm-start=c,py --warm-start-mode=background` for this reason.
+
+| Mode         | Use case                              | srv.run() blocked? | First-call latency |
+|--------------|---------------------------------------|--------------------|--------------------|
+| `blocking`   | CLI, `--self-test`, scripted runs     | Yes (up to 60 s)   | < 500 ms (warm)    |
+| `background` | `.mcp.json`, MCP launcher, daemon     | No (< 100 ms)      | < 500 ms when first call lands AFTER warm; cold cost otherwise |
+
 #### Invocation
 
 | Command                                                          | Use case                                                              |

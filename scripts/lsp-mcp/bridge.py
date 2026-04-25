@@ -673,16 +673,55 @@ def _get_or_spawn(lang: str, workspace_root: Path) -> LspSubprocess:
                 _SPAWN_EVENTS.pop(key, None)
             waiter_event.set()
         raise
+    # Shutdown-publish gate. _shutdown_all_lsps sets
+    # _BRIDGE_SHUTTING_DOWN before snapshotting _LIVE_LSPS; if a
+    # background warm worker (or any spawn that was in flight when
+    # teardown started) reaches this point AFTER the snapshot was
+    # taken, publishing the new instance would leave it outside the
+    # reaped set and orphan the subprocess. Reap it inline and raise
+    # lsp-shutdown so the waiter and the caller learn about the
+    # cancellation.
+    #
+    # Gate check + publish MUST be atomic under _LIVE_LSPS_LOCK
+    # (post-implementation adversarial review High). An earlier
+    # revision checked the gate OUTSIDE the lock and then took the
+    # lock to publish; an interleaving where the spawner returned
+    # while the gate was clear, then _shutdown_all_lsps set the
+    # gate + snapshotted _LIVE_LSPS, then the owner acquired the
+    # lock and published would still leak the new subprocess past
+    # the reaped set. Holding the lock across both the re-check
+    # and the publish closes the window.
     with _LIVE_LSPS_LOCK:
-        _LIVE_LSPS[key] = inst
-        _SPAWN_EVENTS.pop(key, None)
-        # First-spawn: flip status from initial "spawned" to
-        # "healthy" so _health reports the post-handshake state.
-        # _respawn_locked already set "healthy" on its own success
-        # path, so this assignment is a no-op for respawn cases.
-        h = _get_or_init_health(key)
-        if h["status"] in ("spawned", "backoff"):
-            h["status"] = "healthy"
+        if _BRIDGE_SHUTTING_DOWN.is_set():
+            shutdown_now = True
+        else:
+            shutdown_now = False
+            _LIVE_LSPS[key] = inst
+            _SPAWN_EVENTS.pop(key, None)
+            # First-spawn: flip status from initial "spawned" to
+            # "healthy" so _health reports the post-handshake state.
+            # _respawn_locked already set "healthy" on its own
+            # success path, so this assignment is a no-op for
+            # respawn cases.
+            h = _get_or_init_health(key)
+            if h["status"] in ("spawned", "backoff"):
+                h["status"] = "healthy"
+    if shutdown_now:
+        # Reap OUTSIDE the lock so a slow shutdown (subprocess
+        # SIGTERM + 2 s wait) does not pin _LIVE_LSPS_LOCK and
+        # block other callers' cached-instance fast paths.
+        try:
+            inst.shutdown(timeout=1.0)
+        except Exception:
+            pass
+        with _LIVE_LSPS_LOCK:
+            _SPAWN_EVENTS.pop(key, None)
+        waiter_event.set()
+        raise LspError(
+            "lsp-shutdown",
+            "bridge teardown began before spawn published",
+            lang=lang,
+        )
     waiter_event.set()
     return inst
 
@@ -936,7 +975,16 @@ def _workspace_root_from_argv(args: argparse.Namespace) -> Path:
 
 def _shutdown_all_lsps() -> None:
     """Clean shutdown of every live LSP. Called on --self-test exit
-    and at bridge teardown. Idempotent; safe to call twice."""
+    and at bridge teardown. Idempotent; safe to call twice.
+
+    Sets _BRIDGE_SHUTTING_DOWN BEFORE snapshotting so any in-flight
+    spawn that has not yet published to _LIVE_LSPS will see the gate
+    in _get_or_spawn and reap its own instance instead of leaking it
+    past the snapshot. Closes the background-mode publish race
+    Codex design review caught: a daemon warm worker mid-spawner
+    when shutdown fires would otherwise add a fresh LSP to
+    _LIVE_LSPS AFTER our snapshot copy was taken."""
+    _BRIDGE_SHUTTING_DOWN.set()
     with _LIVE_LSPS_LOCK:
         insts = list(_LIVE_LSPS.values())
         _LIVE_LSPS.clear()
@@ -1021,8 +1069,38 @@ _WARM_NO_PROGRESS_TIMEOUT_S = 10.0
 _WARM_PROGRESS_LOG_INTERVAL_S = 2.0
 # Shared cancellation Event for the warm pool. Module-level so
 # main()'s finally block can flip it without holding a reference to
-# the controller.
+# the controller. Cleared by _maybe_warm_start() right before each
+# new run so a previous run's cancel does not pre-empt the next; the
+# clear NEVER happens inside _warm_start_run() itself, otherwise a
+# background thread would race the shutdown path's set() and clear
+# the cancellation main() just signaled (Codex design review High).
 _WARM_CANCEL = threading.Event()
+
+# Background-mode lifecycle. _WARM_THREAD is the live daemon thread
+# running _warm_start_run when --warm-start-mode=background; None when
+# blocking mode or when the bg thread has finished + been joined.
+# _WARM_DONE is set by the bg thread's finally so shutdown / tests
+# have a deterministic completion signal without polling is_alive().
+# _WARM_LOCK guards both fields together so re-entry (a second
+# _maybe_warm_start call while a prior bg thread is still alive) is
+# safe: the new entry joins the previous thread under the lock,
+# clears _WARM_DONE atomically with the new thread's launch, and
+# avoids the stale-event regression Codex design review caught.
+_WARM_THREAD: Optional[threading.Thread] = None
+_WARM_DONE = threading.Event()
+_WARM_LOCK = threading.Lock()
+
+# Bridge teardown gate. Set by _shutdown_all_lsps() FIRST under
+# _LIVE_LSPS_LOCK before it snapshots and reaps. _get_or_spawn checks
+# this AFTER its spawner returns and BEFORE publishing the new
+# instance to _LIVE_LSPS: if shutdown has begun in the meantime, the
+# fresh instance is shut down immediately and the call raises
+# lsp-shutdown so the caller does not get back a subprocess that no
+# one will ever reap. Closes the race Codex design review High caught
+# (background warm worker mid-spawner when shutdown fires would
+# otherwise publish an LSP outside the snapshot _shutdown_all_lsps
+# took).
+_BRIDGE_SHUTTING_DOWN = threading.Event()
 
 
 def _resolve_warm_langs(spec: str) -> tuple[list[str], list[str]]:
@@ -1242,6 +1320,31 @@ def _warm_one(lang: str, workspace_root: Path) -> dict[str, Any]:
             continue
 
 
+def _warm_start_run_in_thread(workspace_root: Path, spec: str) -> None:
+    """Background-mode wrapper around _warm_start_run. Sets
+    _WARM_DONE in its finally block so shutdown / tests have a
+    deterministic completion signal that does NOT depend on
+    Thread.is_alive() polling. Best-effort: any exception is logged
+    and swallowed -- a background warm-start must never abort the
+    bridge process.
+
+    Module-level helper (NOT closure inside _maybe_warm_start) so
+    Thread.target= refers to a stable function object that the
+    test harness can introspect."""
+    try:
+        _warm_start_run(workspace_root, spec)
+    except Exception as exc:
+        try:
+            _lsplog.log("WARN", "background warm-start raised",
+                        event="warm-bg-aborted",
+                        error=type(exc).__name__,
+                        detail=str(exc))
+        except Exception:
+            pass
+    finally:
+        _WARM_DONE.set()
+
+
 def _warm_start_run(workspace_root: Path, spec: str) -> dict[str, Any]:
     """Top-level warm-start entry point. Resolves the lang spec,
     fans out per-lang warm workers under a ThreadPoolExecutor, joins
@@ -1268,15 +1371,15 @@ def _warm_start_run(workspace_root: Path, spec: str) -> dict[str, Any]:
                 event="warm-begin", langs=warm,
                 budget_s=_WARM_OVERALL_BUDGET_S,
                 workspace_root=str(workspace_root))
-    # Reset the cancellation Event so a re-entry (in-process tests
-    # or an embedded caller that invokes _warm_start_run more than
-    # once per interpreter) does not inherit the previous run's
-    # cancelled state. main()'s finally block sets _WARM_CANCEL on
-    # the way out; without this clear, every subsequent warm-start
-    # would race with workers that immediately observe the latched
-    # cancel and return status="cancelled". (Codex post-ship
-    # adversarial review L.)
-    _WARM_CANCEL.clear()
+    # NOTE: _WARM_CANCEL.clear() is NOT called here. An earlier
+    # revision placed the clear inline; the background-mode design
+    # review (High) caught that a background thread would race
+    # main()'s shutdown set() with this clear() and silently re-arm
+    # an already-cancelled run. Cancel reset for re-entry is now
+    # performed by the caller (_maybe_warm_start) BEFORE the
+    # background thread is launched or the blocking branch is
+    # invoked, so the worker only ever observes the cancel state
+    # main()'s finally signals.
     overall_t0 = _time.monotonic()
     results: list[dict[str, Any]] = []
     # Workers carry the warm-start corr_id so progress + spawn-failed
@@ -4538,6 +4641,19 @@ def main(argv=None) -> int:
              "(flag absent) behavior is unchanged: on-demand spawn at "
              "first per-language tool call.",
     )
+    p.add_argument(
+        "--warm-start-mode", choices=("blocking", "background"),
+        default="blocking",
+        help="how warm-start interacts with srv.run(). `blocking` "
+             "(default) runs warm-start inline before the FastMCP "
+             "stdio server starts answering MCP `initialize` -- "
+             "correct for CLI use. `background` spawns warm-start on "
+             "a daemon thread and returns immediately so srv.run() "
+             "answers the MCP launcher's handshake without waiting "
+             "10-60s for clangd/pyright -- the documented pattern "
+             "for .mcp.json-launched bridges. No effect when "
+             "--warm-start is absent.",
+    )
     args = p.parse_args(argv)
 
     workspace_root = _workspace_root_from_argv(args)
@@ -4545,6 +4661,43 @@ def main(argv=None) -> int:
     def _maybe_warm_start() -> None:
         if args.warm_start is None:
             return
+        global _WARM_THREAD
+        # Cancel + done reset performed HERE, not inside
+        # _warm_start_run, so a background thread cannot race the
+        # shutdown path's _WARM_CANCEL.set() and silently re-arm a
+        # cancelled run (background-mode design review High).
+        # Holding _WARM_LOCK across the join + reset + thread launch
+        # makes the whole transition atomic against a concurrent
+        # _maybe_warm_start re-entry (re-entry is rare in
+        # production -- main() is one-shot -- but tests + embedded
+        # callers can reach it).
+        with _WARM_LOCK:
+            # If a previous bg thread is still alive, join it
+            # (bounded). The previous run must NOT outlive its
+            # caller's intent, and a re-entry cannot share a thread
+            # with a prior, possibly-different lang spec.
+            prev = _WARM_THREAD
+            if prev is not None and prev.is_alive():
+                _WARM_CANCEL.set()
+                prev.join(timeout=2.0)
+            _WARM_CANCEL.clear()
+            _WARM_DONE.clear()
+            _WARM_THREAD = None
+            if args.warm_start_mode == "background":
+                t = threading.Thread(
+                    target=_warm_start_run_in_thread,
+                    args=(workspace_root, args.warm_start),
+                    name="warm-start-bg",
+                    daemon=True,
+                )
+                _WARM_THREAD = t
+                t.start()
+                _lsplog.log("INFO", "warm-start dispatched in background",
+                            event="warm-bg-dispatched",
+                            spec=args.warm_start)
+                return
+        # Blocking branch -- runs OUTSIDE _WARM_LOCK so a slow warm
+        # cannot pin the lock against a hypothetical re-entry.
         try:
             _warm_start_run(workspace_root, args.warm_start)
         except Exception as exc:
@@ -4595,8 +4748,21 @@ def main(argv=None) -> int:
         # snapshot_progress() on an already-shut-down LspSubprocess
         # and emit a confusing stack on shutdown (the LspSubprocess
         # itself is robust to it; the poll loop just keeps the
-        # reaper waiting on a join). Codex design review Medium.
+        # reaper waiting on a join).
         _WARM_CANCEL.set()
+        # Background mode: join the daemon thread with a 2s upper
+        # bound. _WARM_CANCEL.set() above already short-circuits the
+        # per-LSP poll loop on the next 0.5s tick, so a healthy bg
+        # warm-start exits in well under 1 s. The bounded timeout
+        # plus daemon=True ensures a wedged warm worker (e.g. stuck
+        # in an LSP's initialize handshake) cannot hold the bridge
+        # process open. _shutdown_all_lsps then sets
+        # _BRIDGE_SHUTTING_DOWN under _LIVE_LSPS_LOCK so any LSP
+        # the daemon thread has not yet published gets reaped at
+        # the publish gate in _get_or_spawn instead of leaking.
+        bg_thread = _WARM_THREAD
+        if bg_thread is not None and bg_thread.is_alive():
+            bg_thread.join(timeout=2.0)
         _shutdown_all_lsps()
 
 

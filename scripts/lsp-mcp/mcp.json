@@ -14,7 +14,7 @@
   "mcpServers": {
     "lsp-bridge": {
       "command": "python3",
-      "args": ["scripts/lsp-mcp/bridge.py"],
+      "args": ["scripts/lsp-mcp/bridge.py", "--warm-start=c,py", "--warm-start-mode=background"],
       "cwd": ".",
       "env": {}
     }

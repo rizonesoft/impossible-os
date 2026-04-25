@@ -299,6 +299,29 @@
 #         500 ms must not trip dictionary-changed-size-during-iteration.
 #  16f -- server-initiated window/workDoneProgress/create gets a
 #         {result: null} ack at the same id (fake-LSP driver).
+#
+#  17a -- --warm-start --warm-start-mode=background --self-test exits
+#         in under 1.5s wall-clock (proves srv.run()-equivalent gate
+#         is not delayed by the bg warm worker).
+#  17b -- background mode emits the warm-bg-dispatched JSON log line
+#         (proves the dispatch fires on the main thread).
+#  17c -- omitting --warm-start-mode keeps blocking semantics
+#         (default; absence of warm-bg-dispatched proves the blocking
+#         branch ran).
+#  17d -- argparse rejects a bogus --warm-start-mode value with a
+#         clear error message and a non-zero exit.
+#  17e -- shutdown publish gate: when _BRIDGE_SHUTTING_DOWN is set
+#         before _get_or_spawn publishes, the spawn raises
+#         lsp-shutdown and the new instance does NOT enter
+#         _LIVE_LSPS (closes the bg-thread post-snapshot leak).
+#  17f -- bg thread re-entry: a second dispatch while a prior bg
+#         thread is alive joins the prior thread cleanly and starts
+#         the new one without orphan / double-launch.
+#  17g -- shutdown gate TOCTOU: spawner returns inst, then
+#         _BRIDGE_SHUTTING_DOWN gets set, then the publish block
+#         runs -- atomic gate-check-then-publish under
+#         _LIVE_LSPS_LOCK rejects the publish, reaps inst inline,
+#         raises lsp-shutdown.
 # ============================================================================
 # ============================================================================
 set -euo pipefail
@@ -4632,6 +4655,360 @@ PY
     return 0
 }
 
+# --- 17a: --warm-start --warm-start-mode=background --self-test < 1.5s ----
+# Asserts: --warm-start-mode=background returns to the self-test exit
+# gate without blocking on the bg warm worker. Wall-clock measured by
+# Python's time.monotonic before subprocess.run + after; budget is
+# 1.5s (cold-cache budget of warm-start is 60s, on-demand spawn of
+# clangd takes ~2s; if --warm-start-mode=background was actually
+# blocking we'd see >2s).
+t_warm_start_mode_bg_fast_exit() {
+    python3 - <<'PY' || return 1
+import subprocess, sys, time
+t0 = time.monotonic()
+r = subprocess.run(
+    ["python3", "scripts/lsp-mcp/bridge.py",
+     "--warm-start=c", "--warm-start-mode=background",
+     "--self-test"],
+    capture_output=True, text=True, timeout=30,
+)
+elapsed = time.monotonic() - t0
+if r.returncode != 0:
+    print(f"[17a] FAIL: rc={r.returncode}\nSTDOUT:\n{r.stdout}\nSTDERR:\n{r.stderr}",
+          file=sys.stderr)
+    sys.exit(1)
+if elapsed >= 1.5:
+    print(f"[17a] FAIL: took {elapsed:.2f}s (budget 1.5s)", file=sys.stderr)
+    sys.exit(1)
+PY
+    return 0
+}
+
+# --- 17b: bg dispatch event present + bg thread launched -----------------
+# Asserts: --warm-start-mode=background emits the warm-bg-dispatched
+# JSON log line BEFORE the warm-begin/warm-complete pair fires (proving
+# the dispatch happens on the main thread; the worker runs concurrently).
+t_warm_start_mode_bg_dispatch_event() {
+    out="$(python3 scripts/lsp-mcp/bridge.py --warm-start=c \
+        --warm-start-mode=background --self-test 2>&1)" || {
+        printf '[17b] FAIL: exit non-zero\n%s\n' "$out" >&2
+        return 1
+    }
+    case "$out" in
+        *'"event": "warm-bg-dispatched"'*) ;;
+        *) printf '[17b] FAIL: missing warm-bg-dispatched event\n' >&2
+           return 1 ;;
+    esac
+    return 0
+}
+
+# --- 17c: blocking mode default does NOT emit warm-bg-dispatched ---------
+# Asserts: omitting --warm-start-mode is equivalent to
+# --warm-start-mode=blocking and runs warm-start inline. The absence of
+# warm-bg-dispatched in the log proves the blocking branch ran. Also
+# confirms warm-complete (or warm-over-budget) fires before the bridge
+# reaches the OK banner.
+t_warm_start_mode_blocking_default() {
+    out="$(python3 scripts/lsp-mcp/bridge.py --warm-start=c \
+        --self-test 2>&1)" || {
+        printf '[17c] FAIL: exit non-zero\n%s\n' "$out" >&2
+        return 1
+    }
+    case "$out" in
+        *'"event": "warm-bg-dispatched"'*)
+            printf '[17c] FAIL: blocking default emitted warm-bg-dispatched\n' >&2
+            return 1 ;;
+    esac
+    case "$out" in
+        *'"event": "warm-complete"'*|*'"event": "warm-over-budget"'*) ;;
+        *) printf '[17c] FAIL: missing warm-complete\n' >&2
+           return 1 ;;
+    esac
+    return 0
+}
+
+# --- 17d: argparse rejects bogus mode value ------------------------------
+# Asserts: --warm-start-mode=baground exits non-zero with an error
+# message naming the valid choices. Pure argparse contract test.
+t_warm_start_mode_argparse_reject() {
+    if python3 scripts/lsp-mcp/bridge.py --warm-start \
+        --warm-start-mode=baground --self-test >/tmp/17d.out 2>&1; then
+        printf '[17d] FAIL: bogus mode accepted\n' >&2
+        return 1
+    fi
+    grep -q "invalid choice: 'baground'" /tmp/17d.out || {
+        printf '[17d] FAIL: missing argparse error message\n%s\n' \
+            "$(cat /tmp/17d.out)" >&2
+        return 1
+    }
+    return 0
+}
+
+# --- 17e: shutdown publish gate reaps in-flight spawn --------------------
+# Asserts: when _BRIDGE_SHUTTING_DOWN is set BEFORE _get_or_spawn
+# publishes its new instance, the spawn raises lsp-shutdown and the
+# instance is shut down inline (not leaked). Drives the gate in
+# isolation by setting _BRIDGE_SHUTTING_DOWN, then calling
+# _get_or_spawn against a fake LSP that completes initialize.
+t_warm_shutdown_publish_gate() {
+    python3 - <<'PY' || return 1
+import os, subprocess, sys, tempfile, time
+sys.path.insert(0, "scripts/lsp-mcp")
+import bridge as B
+from lsp_client import LspError, LspSubprocess
+from pathlib import Path
+
+# Fake LSP that responds to initialize within a few ms (lets _get_or_spawn
+# reach the publish gate quickly).
+fake_src = r'''
+import json, sys
+def read_msg():
+    headers = {}
+    while True:
+        line = sys.stdin.buffer.readline()
+        if not line: return None
+        line = line.rstrip(b"\r\n")
+        if line == b"": break
+        k, _, v = line.decode().partition(":")
+        headers[k.strip().lower()] = v.strip()
+    n = int(headers.get("content-length", "0"))
+    return json.loads(sys.stdin.buffer.read(n))
+def write_msg(o):
+    body = json.dumps(o).encode()
+    sys.stdout.buffer.write(b"Content-Length: %d\r\n\r\n" % len(body))
+    sys.stdout.buffer.write(body)
+    sys.stdout.buffer.flush()
+m = read_msg()
+write_msg({"jsonrpc":"2.0","id":m["id"],"result":{"capabilities":{}}})
+read_msg()  # initialized notification
+import time as _t; _t.sleep(60)  # wait for shutdown
+'''
+with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+    f.write(fake_src); fake_path = f.name
+
+def fake_spawn(workspace_root):
+    inst = LspSubprocess(["python3", fake_path], lang="fake17e")
+    inst.initialize(root_uri=workspace_root.as_uri(), timeout=2.0)
+    return inst
+
+B.register_spawner("fake17e", fake_spawn)
+
+try:
+    # Pre-set the shutdown gate, then call _get_or_spawn -- it must
+    # raise lsp-shutdown after the spawner returns.
+    B._BRIDGE_SHUTTING_DOWN.set()
+    raised = False
+    try:
+        inst = B._get_or_spawn("fake17e", Path("/tmp"))
+    except LspError as e:
+        if e.kind == "lsp-shutdown":
+            raised = True
+    if not raised:
+        print("[17e] FAIL: _get_or_spawn did not raise lsp-shutdown",
+              file=sys.stderr)
+        sys.exit(1)
+    # Verify the LSP is NOT in _LIVE_LSPS (gate prevented publish).
+    with B._LIVE_LSPS_LOCK:
+        if any(k[0] == "fake17e" for k in B._LIVE_LSPS.keys()):
+            print("[17e] FAIL: leaked instance in _LIVE_LSPS", file=sys.stderr)
+            sys.exit(1)
+finally:
+    B._BRIDGE_SHUTTING_DOWN.clear()  # don't leak gate state to next test
+    try: os.unlink(fake_path)
+    except OSError: pass
+PY
+    return 0
+}
+
+# --- 17f: bg thread re-entry joins prior thread cleanly ------------------
+# Asserts: a second _maybe_warm_start-equivalent dispatch while a prior
+# bg thread is alive joins the prior thread (no double-launch, no
+# orphaned thread). Drives _WARM_LOCK + _WARM_THREAD lifecycle in
+# isolation since main()'s _maybe_warm_start is a closure.
+t_warm_bg_reentry_safe() {
+    python3 - <<'PY' || return 1
+import sys, threading, time
+sys.path.insert(0, "scripts/lsp-mcp")
+import bridge as B
+
+# Replace _warm_start_run_in_thread with a sleep-until-cancel for
+# this test. Original is restored in finally.
+orig = B._warm_start_run_in_thread
+def fake_runner(workspace_root, spec):
+    try:
+        for _ in range(60):
+            if B._WARM_CANCEL.wait(0.05):
+                return
+    finally:
+        B._WARM_DONE.set()
+B._warm_start_run_in_thread = fake_runner
+
+try:
+    from pathlib import Path
+    workspace = Path("/tmp")
+    # First dispatch
+    with B._WARM_LOCK:
+        B._WARM_CANCEL.clear()
+        B._WARM_DONE.clear()
+        t1 = threading.Thread(target=B._warm_start_run_in_thread,
+                              args=(workspace, "c"), daemon=True)
+        B._WARM_THREAD = t1
+        t1.start()
+    time.sleep(0.05)
+    assert t1.is_alive(), "first thread should be alive"
+
+    # Second dispatch must join the first cleanly
+    with B._WARM_LOCK:
+        prev = B._WARM_THREAD
+        if prev is not None and prev.is_alive():
+            B._WARM_CANCEL.set()
+            prev.join(timeout=2.0)
+        B._WARM_CANCEL.clear()
+        B._WARM_DONE.clear()
+        t2 = threading.Thread(target=B._warm_start_run_in_thread,
+                              args=(workspace, "py"), daemon=True)
+        B._WARM_THREAD = t2
+        t2.start()
+
+    assert not t1.is_alive(), "first thread should have been joined"
+    assert t2.is_alive(), "second thread should be running"
+    # Cleanup
+    B._WARM_CANCEL.set()
+    t2.join(timeout=2.0)
+    assert not t2.is_alive(), "second thread should have stopped"
+finally:
+    B._warm_start_run_in_thread = orig
+    B._WARM_THREAD = None
+    B._WARM_CANCEL.clear()
+    B._WARM_DONE.clear()
+PY
+    return 0
+}
+
+# --- 17g: TOCTOU shutdown gate -- shutdown fires AFTER spawner returns ---
+# Asserts: _shutdown_all_lsps that fires AFTER _get_or_spawn's spawner
+# has already returned (but BEFORE the new instance was published)
+# does NOT leak the new subprocess. Drives the precise interleaving
+# the post-implementation adversarial review found: spawner returned,
+# instance is in hand, then shutdown is signalled, then the publish
+# block runs -- with the gate check inside _LIVE_LSPS_LOCK the
+# interleaving must reject the publish, reap the instance, and raise
+# lsp-shutdown. Verified by counting registered spawner invocations
+# AND that no instance is left in _LIVE_LSPS for the test key.
+t_warm_shutdown_gate_toctou() {
+    python3 - <<'PY' || return 1
+import os, sys, tempfile, threading, time
+sys.path.insert(0, "scripts/lsp-mcp")
+import bridge as B
+from lsp_client import LspError, LspSubprocess
+from pathlib import Path
+
+# Fake LSP that completes initialize quickly.
+fake_src = r'''
+import json, sys
+def read_msg():
+    h = {}
+    while True:
+        line = sys.stdin.buffer.readline()
+        if not line: return None
+        line = line.rstrip(b"\r\n")
+        if line == b"": break
+        k,_,v = line.decode().partition(":")
+        h[k.strip().lower()] = v.strip()
+    n = int(h.get("content-length","0"))
+    return json.loads(sys.stdin.buffer.read(n))
+def write_msg(o):
+    body = json.dumps(o).encode()
+    sys.stdout.buffer.write(b"Content-Length: %d\r\n\r\n" % len(body))
+    sys.stdout.buffer.write(body); sys.stdout.buffer.flush()
+m = read_msg()
+write_msg({"jsonrpc":"2.0","id":m["id"],"result":{"capabilities":{}}})
+read_msg()
+import time as _t; _t.sleep(60)
+'''
+with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+    f.write(fake_src); fake_path = f.name
+
+# Spawner that wraps the real LspSubprocess but blocks on a barrier
+# AFTER initialize completes -- simulates the moment between
+# spawner-return and the publish block in _get_or_spawn.
+gate_set = threading.Event()
+spawner_returned = threading.Event()
+
+def fake_spawn(workspace_root):
+    inst = LspSubprocess(["python3", fake_path], lang="fake17g")
+    inst.initialize(root_uri=workspace_root.as_uri(), timeout=2.0)
+    spawner_returned.set()
+    # Block here until the test sets the shutdown gate. This
+    # simulates the precise window between "spawner has finished
+    # producing inst" and "_get_or_spawn's publish block runs".
+    gate_set.wait(timeout=5.0)
+    return inst
+
+B.register_spawner("fake17g", fake_spawn)
+
+raised_kind = None
+final_check_done = threading.Event()
+def caller():
+    nonlocal_raised = []
+    try:
+        B._get_or_spawn("fake17g", Path("/tmp"))
+    except LspError as e:
+        nonlocal_raised.append(e.kind)
+    final_check_done.set()
+    if nonlocal_raised:
+        # stash on a thread attribute the main thread can read
+        threading.current_thread().result_kind = nonlocal_raised[0]
+
+t = threading.Thread(target=caller, daemon=True, name="toctou-caller")
+t.start()
+
+# Wait for the spawner to have returned its inst.
+if not spawner_returned.wait(timeout=10.0):
+    print("[17g] FAIL: spawner never returned", file=sys.stderr)
+    sys.exit(1)
+
+# Now flip the shutdown gate, mimicking what _shutdown_all_lsps
+# does (set gate + clear _LIVE_LSPS snapshot). The fake spawner
+# is still parked, holding inst; it has NOT yet entered the
+# publish block.
+B._BRIDGE_SHUTTING_DOWN.set()
+with B._LIVE_LSPS_LOCK:
+    snapshot_keys = list(B._LIVE_LSPS.keys())
+    B._LIVE_LSPS.clear()
+
+# Release the spawner so it returns inst into _get_or_spawn's
+# publish block. The atomic gate-check-then-publish under
+# _LIVE_LSPS_LOCK MUST reject the publish.
+gate_set.set()
+
+# Wait for caller to finish.
+if not final_check_done.wait(timeout=10.0):
+    print("[17g] FAIL: caller did not finish", file=sys.stderr)
+    sys.exit(1)
+t.join(timeout=2.0)
+
+result = getattr(t, "result_kind", None)
+if result != "lsp-shutdown":
+    print(f"[17g] FAIL: expected lsp-shutdown, got {result!r}",
+          file=sys.stderr)
+    sys.exit(1)
+
+# Verify no leaked instance landed in _LIVE_LSPS post-rejection.
+with B._LIVE_LSPS_LOCK:
+    if any(k[0] == "fake17g" for k in B._LIVE_LSPS.keys()):
+        print("[17g] FAIL: leaked instance in _LIVE_LSPS",
+              file=sys.stderr)
+        sys.exit(1)
+
+# Cleanup module state
+B._BRIDGE_SHUTTING_DOWN.clear()
+try: os.unlink(fake_path)
+except OSError: pass
+PY
+    return 0
+}
+
 # --- 9a: LSP-process-leak detection (run LAST) ----------------------------
 t_no_leaked_lsp_processes() {
     # Capture the post-harness PID set of LSP binaries owned by this
@@ -4749,6 +5126,13 @@ run "16c warm-start unknown lang"        t_warm_start_unknown_lang
 run "16d warm-start empty spec"          t_warm_start_empty_spec
 run "16e progress snapshot race"         t_warm_progress_snapshot_race
 run "16f workdone/create ack"            t_warm_workdone_create_ack
+run "17a bg mode <1.5s exit"             t_warm_start_mode_bg_fast_exit
+run "17b bg dispatch event"              t_warm_start_mode_bg_dispatch_event
+run "17c blocking default no bg event"   t_warm_start_mode_blocking_default
+run "17d argparse rejects bogus mode"    t_warm_start_mode_argparse_reject
+run "17e shutdown publish gate reaps"    t_warm_shutdown_publish_gate
+run "17f bg thread re-entry safe"        t_warm_bg_reentry_safe
+run "17g shutdown gate TOCTOU"           t_warm_shutdown_gate_toctou
 # 9a runs LAST so every prior sub-test has had a chance to clean up.
 run "9a no leaked LSP processes"         t_no_leaked_lsp_processes
 
