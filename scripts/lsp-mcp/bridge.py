@@ -910,11 +910,19 @@ def _workspace_root_from_argv(args: argparse.Namespace) -> Path:
     rejected) or over-permit (sandbox boundary too wide). The
     priority chain reflects "explicit operator intent first, in-tree
     auto-detect second, generic fallback last"."""
+    # Preserve operator spelling for --repo-root + env (do NOT
+    # call .resolve() here). _open_in_workspace's absolute-path
+    # branch accepts BOTH the raw and the resolved workspace
+    # prefix, so a symlinked workspace (e.g. --repo-root=/link
+    # where /link -> /real) keeps the operator's spelling in
+    # respawn-replay roundtrips. Codex post-impl review caught
+    # the resolve-then-prefix-mismatch bug: stored resolved_path
+    # was /link/foo.c but the prefix check compared against /real.
     if args.repo_root:
-        return Path(args.repo_root).resolve()
+        return Path(args.repo_root)
     env_root = os.environ.get("LSP_MCP_WORKSPACE_ROOT", "").strip()
     if env_root:
-        return Path(env_root).resolve()
+        return Path(env_root)
     intree = _find_repo_root()
     # _find_repo_root falls back to Path.cwd() on miss; check whether
     # it actually matched the marker pair before accepting it.
@@ -1136,9 +1144,10 @@ def _open_in_workspace(workspace_root: Path, path_str: str
         # follow symlinks. The O_NOFOLLOW walk below evaluates the
         # resulting segments and rejects any symlink it encounters.
         norm_input = os.path.normpath(path_str)
-        norm_ws = os.path.normpath(str(ws_resolved))
+        norm_ws_real = os.path.normpath(str(ws_resolved))
+        norm_ws_raw = os.path.normpath(str(workspace_root))
         sep = os.sep
-        if norm_input == norm_ws:
+        if norm_input in (norm_ws_real, norm_ws_raw):
             # An absolute path that points AT the workspace root
             # itself -- not a file. Reject.
             raise LspError(
@@ -1146,19 +1155,36 @@ def _open_in_workspace(workspace_root: Path, path_str: str
                 "path resolves to the workspace root (a directory)",
                 path=path_str,
             )
-        prefix = norm_ws if norm_ws.endswith(sep) else norm_ws + sep
-        if not norm_input.startswith(prefix):
+        # Try BOTH the raw operator-supplied root and its resolved
+        # realpath as accepted prefixes. Codex post-impl review
+        # caught the symlinked-workspace replay bug: if
+        # workspace_root is /link -> /real, the LSP-respawn replay
+        # path stores resolved_path as /link/src/foo.c (built from
+        # workspace_root.joinpath(...)), but the resolved-only
+        # prefix check would reject it because /link does not start
+        # with /real. Accepting both anchors keeps the operator's
+        # spelling and the realpath equally valid.
+        prefix_real = (norm_ws_real if norm_ws_real.endswith(sep)
+                        else norm_ws_real + sep)
+        prefix_raw = (norm_ws_raw if norm_ws_raw.endswith(sep)
+                       else norm_ws_raw + sep)
+        if norm_input.startswith(prefix_raw):
+            rel_str = norm_input[len(prefix_raw):]
+        elif norm_input.startswith(prefix_real):
+            rel_str = norm_input[len(prefix_real):]
+        else:
             raise LspError(
                 "lsp-path-outside-workspace",
                 f"absolute path {path_str!r} (lexically {norm_input}) "
-                f"is not under workspace {norm_ws}",
+                f"is not under workspace {norm_ws_raw} "
+                f"(realpath {norm_ws_real})",
                 path=path_str,
                 normalized=norm_input,
-                workspace=norm_ws,
+                workspace=norm_ws_raw,
+                workspace_realpath=norm_ws_real,
             )
-        # Strip the workspace prefix; remaining segments go into
-        # the dir_fd walk where O_NOFOLLOW catches symlinks.
-        rel_str = norm_input[len(prefix):]
+        # Remaining segments go into the dir_fd walk where
+        # O_NOFOLLOW catches symlinks.
         segments = [s for s in rel_str.split(sep) if s]
     else:
         segments = list(p.parts)

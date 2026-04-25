@@ -3931,10 +3931,13 @@ from pathlib import Path
 sys.path.insert(0, 'scripts/lsp-mcp')
 import bridge
 
-# (1) --repo-root wins.
+# (1) --repo-root wins. Operator spelling preserved (no .resolve()
+# in _workspace_root_from_argv -- the absolute-path branch in
+# _open_in_workspace accepts both raw and realpath anchors so a
+# symlinked workspace roundtrips in LSP-respawn replay).
 ns = argparse.Namespace(repo_root='/tmp')
 got = bridge._workspace_root_from_argv(ns)
-assert got == Path('/tmp').resolve(), got
+assert got == Path('/tmp'), got
 
 # (2) LSP_MCP_WORKSPACE_ROOT env wins when --repo-root unset.
 ns = argparse.Namespace(repo_root=None)
@@ -3943,7 +3946,9 @@ try:
     with tempfile.TemporaryDirectory() as td:
         os.environ['LSP_MCP_WORKSPACE_ROOT'] = td
         got = bridge._workspace_root_from_argv(ns)
-        assert got == Path(td).resolve(), got
+        # Spelling preserved (Path(td) -- not .resolve()); td may
+        # itself be a realpath on most systems, which is fine.
+        assert got == Path(td), got
 finally:
     if saved is None: os.environ.pop('LSP_MCP_WORKSPACE_ROOT', None)
     else:             os.environ['LSP_MCP_WORKSPACE_ROOT'] = saved
@@ -4256,6 +4261,102 @@ finally:
 PY
 }
 
+# --- 15k: symlinked workspace root + LSP-respawn absolute replay -------
+# Codex post-commit review Medium: when workspace_root is itself a
+# symlink (e.g. /link -> /real), the absolute-path branch's
+# prefix check would compare the operator-supplied /link/... path
+# against the resolved /real/... prefix and reject it. The
+# LSP-respawn replay path stores resolved_path from
+# workspace_root.joinpath(...) which preserves the operator's
+# spelling, so replay would silently fail. Fix accepts BOTH the
+# raw and resolved prefixes.
+t_symlinked_workspace_root_replay() {
+    python3 - << 'PY'
+import sys, os, tempfile
+from pathlib import Path
+sys.path.insert(0, 'scripts/lsp-mcp')
+import bridge
+from lsp_client import LspError
+
+real_root = Path(tempfile.mkdtemp(prefix='lsp-mcp-15k-real-'))
+link_root = Path(tempfile.mktemp(prefix='lsp-mcp-15k-link-'))
+try:
+    src_dir = real_root / 'src'
+    src_dir.mkdir()
+    target = src_dir / 'main.c'
+    target.write_text('// hello\n')
+    # workspace_root is the SYMLINK; the dir_fd walk uses it
+    # directly, so segments are anchored at /link.
+    os.symlink(str(real_root), str(link_root))
+
+    # 1) Relative dispatch via the symlinked workspace works.
+    resolved, lang, text, _ = bridge._dispatch_path('src/main.c', link_root)
+    assert lang == 'c', lang
+    assert 'hello' in text, text
+    # The respawn replay path would store this resolved value:
+    stored = str(resolved)
+    assert stored.startswith(str(link_root)), \
+        f'stored resolved_path {stored!r} should preserve operator spelling'
+
+    # 2) ABSOLUTE replay using the stored /link/... path MUST be
+    # accepted (regression guard for the Codex Medium).
+    resolved2, lang2, text2, _ = bridge._dispatch_path(stored, link_root)
+    assert lang2 == 'c', lang2
+    assert 'hello' in text2, text2
+
+    # 3) ABSOLUTE replay using the /real/... realpath ALSO accepted
+    # (defense in depth -- both anchors are valid).
+    real_abs = str(real_root / 'src' / 'main.c')
+    resolved3, lang3, text3, _ = bridge._dispatch_path(real_abs, link_root)
+    assert lang3 == 'c', lang3
+    assert 'hello' in text3, text3
+
+    # 4) ABSOLUTE outside both /link and /real -> rejected.
+    try:
+        bridge._dispatch_path('/etc/passwd', link_root)
+        raise SystemExit('outside-workspace not rejected')
+    except LspError as e:
+        assert e.kind == 'lsp-path-outside-workspace', e.kind
+
+    # 5) PRODUCTION-PATH coverage: _workspace_root_from_argv
+    # preserves operator spelling (Codex post-impl review fix).
+    # An MCP host launching with --repo-root=/link gets /link
+    # back, NOT /real -- so the absolute-replay roundtrip works
+    # end-to-end through the same code path production uses.
+    import argparse
+    ns = argparse.Namespace(repo_root=str(link_root))
+    ws_via_argv = bridge._workspace_root_from_argv(ns)
+    assert ws_via_argv == link_root, \
+        f'argv-derived workspace lost spelling: {ws_via_argv} != {link_root}'
+
+    # And via env.
+    saved = os.environ.get('LSP_MCP_WORKSPACE_ROOT')
+    try:
+        os.environ['LSP_MCP_WORKSPACE_ROOT'] = str(link_root)
+        ws_via_env = bridge._workspace_root_from_argv(
+            argparse.Namespace(repo_root=None))
+        assert ws_via_env == link_root, \
+            f'env-derived workspace lost spelling: {ws_via_env}'
+        # Now do the full dispatch-then-replay roundtrip via the
+        # env-derived root.
+        resolved_e, _, _, _ = bridge._dispatch_path(
+            'src/main.c', ws_via_env)
+        # Replay using the stored absolute path.
+        resolved_e2, _, _, _ = bridge._dispatch_path(
+            str(resolved_e), ws_via_env)
+        assert str(resolved_e) == str(resolved_e2), \
+            f'replay drift: {resolved_e} != {resolved_e2}'
+    finally:
+        if saved is None: os.environ.pop('LSP_MCP_WORKSPACE_ROOT', None)
+        else:             os.environ['LSP_MCP_WORKSPACE_ROOT'] = saved
+finally:
+    try: link_root.unlink()
+    except (FileNotFoundError, IsADirectoryError): pass
+    import shutil
+    shutil.rmtree(str(real_root), ignore_errors=True)
+PY
+}
+
 # --- 9a: LSP-process-leak detection (run LAST) ----------------------------
 t_no_leaked_lsp_processes() {
     # Capture the post-harness PID set of LSP binaries owned by this
@@ -4366,6 +4467,7 @@ run "15g workspace-root invalid"         t_workspace_root_invalid
 run "15h path-too-deep cap"              t_path_too_deep
 run "15i FIFO does not hang"             t_fifo_path_does_not_hang
 run "15j abs symlink rejected"           t_absolute_path_symlink_rejected
+run "15k symlinked-ws root replay"       t_symlinked_workspace_root_replay
 # 9a runs LAST so every prior sub-test has had a chance to clean up.
 run "9a no leaked LSP processes"         t_no_leaked_lsp_processes
 

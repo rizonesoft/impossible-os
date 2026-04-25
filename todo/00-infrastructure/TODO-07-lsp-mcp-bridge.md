@@ -495,7 +495,7 @@ Every MCP tool takes a `path` argument. Without bounds-checking, an attacker (or
 
 **Test checkpoint:** `hover(path="/etc/passwd", line=0, character=0)` returns `{"error": "path-outside-workspace"}`. `hover(path="../../etc/passwd", ...)` same. `hover(path="src/kernel/main.c", ...)` succeeds. Symlink test: `ln -s /etc/passwd src/evil.c && hover(path="src/evil.c", ...)` -- rejected because symlink resolution escapes the root.
 
-> **Test runner:** `bash scripts/lsp-mcp/tests/test_bridge.sh` | 80/80 sub-tests PASS (1a-9a + 11a-11g + 12a-12f + 13a-13i + 14a-14k + 15a-15j; 15a workspace-root priority chain, 15b file:// URI rejection, 15c parent traversal + NUL byte, 15d symlink rejected by O_NOFOLLOW, 15e race-free walk under concurrent rename (50 rounds), 15f absolute in-workspace path still works (LSP-respawn replay regression guard), 15g workspace-root invalid envelope, 15h `_MAX_PATH_SEGMENTS` cap, 15i FIFO with wired extension does not hang the bridge (O_NONBLOCK fix), 15j absolute path through symlinked dir rejected (lexical normpath fix))
+> **Test runner:** `bash scripts/lsp-mcp/tests/test_bridge.sh` | 81/81 sub-tests PASS (1a-9a + 11a-11g + 12a-12f + 13a-13i + 14a-14k + 15a-15k; 15a workspace-root priority chain (operator spelling preserved), 15b file:// URI rejection, 15c parent traversal + NUL byte, 15d symlink rejected by O_NOFOLLOW, 15e race-free walk under concurrent rename (50 rounds), 15f absolute in-workspace path still works (LSP-respawn replay regression guard), 15g workspace-root invalid envelope, 15h `_MAX_PATH_SEGMENTS` cap, 15i FIFO with wired extension does not hang the bridge (O_NONBLOCK fix), 15j absolute path through symlinked dir rejected (lexical normpath fix), 15k symlinked-workspace-root LSP-respawn replay roundtrip via the production `_workspace_root_from_argv` path)
 
 > **Notes:**
 >
@@ -505,7 +505,8 @@ Every MCP tool takes a `path` argument. Without bounds-checking, an attacker (or
 > - **Canonical doc:** [`docs/infrastructure/development-tooling.md` LSP MCP Bridge / Path sandboxing](../../docs/infrastructure/development-tooling.md) -- new H4 subsection between Read-only boundary and LSP-miss fallback discipline.
 > - **Scope boundary:** §15 does NOT own warm-start eager spawn (§16) or the deferred scale roadmap (§17). Symlink policy is intentionally strict (rejects ALL symlinks, not just escape) -- if intra-workspace symlinks become a real use case later, that's a deliberate policy relaxation in a future section.
 
-> **Verified:** 2026-04-25 | commit `f35ab2ec` | 6/6 items | build OK | tests 80/80 PASS
+> **Verified:** 2026-04-25 | commit `f35ab2ec` | 6/6 items | build OK | tests 81/81 PASS
+> **Quality reviewed:** 2026-04-25 | Codex 4x (design + adversarial + consistency + perf APPROVE) | 1M fixed (post-commit symlinked-workspace replay roundtrip) + 1L stale-stamp | scope: N/A (host-side Python tooling; no domain quality skill applies; re-adversarial skipped -- fix pass is `_workspace_root_from_argv` operator-spelling preservation + dual-prefix anchor, no lifecycle / state-machine touches)
 
 ---
 
