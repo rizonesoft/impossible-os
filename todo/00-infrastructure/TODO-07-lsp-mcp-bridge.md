@@ -448,7 +448,7 @@ LSPs crash. Clangd OOMs on pathological translation units. Pyright hangs on deep
 > - **Canonical doc:** [`docs/infrastructure/development-tooling.md` LSP MCP Bridge subsection](../../docs/infrastructure/development-tooling.md) -- the auto-restart behavior is part of the bridge's general lifecycle contract and lives there alongside the on-demand spawn description.
 > - **Scope boundary:** §13 does NOT own correlation-ID propagation through the crash-log entries (next section), workspace-bounded path sandboxing's race-free walk (§15), or warm-start (§16). The retry contract is single-shot: a second crash within the retry window returns the envelope (it is the FAILED detector's job to escalate). No background watchdog thread; respawn fires on the first post-crash request.
 
-> **Verified:** 2026-04-25 | commit `<§13 commit>` | 6/6 items | build OK | tests 57/57 PASS
+> **Verified:** 2026-04-25 | commit `77f3b016` | 6/6 items | build OK | tests 57/57 PASS
 
 ---
 
