@@ -346,6 +346,43 @@ class LspSubprocess:
         self._crashed: bool = False
         self._crash_reason: Optional[str] = None
 
+        # Background-progress observation for warm-start readiness
+        # detection. The bridge's --warm-start path needs to know when
+        # an LSP that does background indexing (clangd, pyright) has
+        # finished its initial pass, otherwise warm-start would report
+        # "ready" the moment initialize returns and the first
+        # workspace_symbol call would still pay the cold-index cost
+        # (Codex design review High). We observe `$/progress`
+        # notifications and accept server-initiated
+        # `window/workDoneProgress/create` requests so progress-emitting
+        # servers (pyright; some clangd configs) don't stall waiting
+        # for an ack.
+        #
+        # Schema:
+        #   _progress_by_token[<token-str>] = {
+        #       "kind": "begin" | "report" | "end",
+        #       "title": Optional[str],
+        #       "message": Optional[str],
+        #       "percentage": Optional[int],
+        #       "last_update_ts": float monotonic,
+        #   }
+        # _progress_seen_at: monotonic timestamp of the FIRST progress
+        #   notification ever observed for this LSP, or None. Lets the
+        #   warm-start poller distinguish "indexing not finished yet"
+        #   from "this LSP doesn't index" (no progress traffic at all
+        #   within a small post-handshake window).
+        # _handshake_done_at: monotonic timestamp set in initialize()
+        #   after `notify("initialized")`. Anchors the no-progress
+        #   timeout so we don't measure from process spawn.
+        # All four guarded by _progress_lock; reader writes, bridge-
+        # side warm poller reads via snapshot_progress() (returns deep
+        # copy under the lock so the poller cannot observe partial
+        # updates or trip dictionary-changed-size-during-iteration).
+        self._progress_by_token: dict[str, dict[str, Any]] = {}
+        self._progress_seen_at: Optional[float] = None
+        self._handshake_done_at: Optional[float] = None
+        self._progress_lock = threading.Lock()
+
         self._spawn()
         _LIVE_SUBPROCS.add(self)
 
@@ -648,15 +685,134 @@ class LspSubprocess:
             # Response to a prior request.
             self._resolve_pending(msg)
             return
-        # Notification. publishDiagnostics is the one we cache now;
-        # everything else is logged-and-discarded until a later
-        # section wires it up (section 13 uses $/progress, etc.).
         method = msg.get("method")
         params = msg.get("params") or {}
+        # Server-initiated REQUEST (id present, method present, no
+        # result/error). The only one the bridge currently honors is
+        # window/workDoneProgress/create; pyright (and some clangd
+        # configs) require an ack BEFORE they emit $/progress
+        # notifications, and the warm-start readiness signal depends
+        # on that progress traffic. Anything else gets method-not-
+        # found so a forward-rev server cannot stall waiting for us.
+        if "id" in msg and method:
+            self._handle_server_request(msg.get("id"), method, params)
+            return
+        # Notification.
         if method == "textDocument/publishDiagnostics":
             uri = params.get("uri")
             if isinstance(uri, str):
                 self.diagnostics_by_uri[uri] = params.get("diagnostics") or []
+            return
+        if method == "$/progress":
+            self._record_progress(params)
+            return
+
+    def _handle_server_request(self, rid: Any, method: str,
+                               params: dict[str, Any]) -> None:
+        """Respond to a server-initiated JSON-RPC request. Currently
+        accepts window/workDoneProgress/create (returns null result
+        per LSP spec) and rejects everything else with method-not-
+        found. Best-effort: a write failure here is non-fatal -- the
+        reader will surface the broken pipe on the next response."""
+        try:
+            if method == "window/workDoneProgress/create":
+                self._send_response(rid, result=None)
+            else:
+                # JSON-RPC 2.0 method-not-found = -32601.
+                self._send_response(rid, error={
+                    "code": -32601,
+                    "message": f"server-initiated {method!r} not handled",
+                })
+        except Exception:
+            pass
+
+    def _send_response(self, rid: Any, result: Any = None,
+                       error: Optional[dict[str, Any]] = None) -> None:
+        """Send a JSON-RPC response to a server-initiated request.
+        Distinct from notify() (no method) and from request() (no
+        pending Future); bypasses the shutdown gate because these
+        replies are only ever fired from the reader thread, which
+        exits before the shutdown gate flips.
+
+        Try-acquire with a short timeout instead of an unbounded
+        wait: Codex adversarial review of the warm-start change
+        flagged the unbounded acquire as a potential deadlock vector
+        when an LSP that waits on the ACK before draining its stdin
+        backpressures a concurrent client write that already holds
+        _io_lock. If we cannot acquire within the timeout, we drop
+        the ACK -- the server may stall progress for that one token,
+        but the bridge stays responsive, and the warm-start
+        no-progress timeout absorbs the missing event without
+        blocking serving."""
+        payload: dict[str, Any] = {"jsonrpc": "2.0", "id": rid}
+        if error is not None:
+            payload["error"] = error
+        else:
+            payload["result"] = result
+        header, body = self._encode_frame(payload)
+        if not self._io_lock.acquire(timeout=0.5):
+            return
+        try:
+            self._send_frame_bytes(header, body)
+        finally:
+            self._io_lock.release()
+
+    def _record_progress(self, params: dict[str, Any]) -> None:
+        """Update _progress_by_token from a $/progress notification.
+        Schema per LSP 3.16: params = {token, value: {kind, title?,
+        message?, percentage?, cancellable?}}.
+
+        Best-effort: malformed payloads are silently dropped (never
+        kill the reader thread on a server-protocol bug). Holds the
+        progress lock for the minimum critical section: dict update
+        + last_update_ts + first-seen anchor."""
+        import time as _time
+        token = params.get("token")
+        value = params.get("value")
+        if token is None or not isinstance(value, dict):
+            return
+        token_str = str(token)
+        kind = value.get("kind")
+        if kind not in ("begin", "report", "end"):
+            return
+        now = _time.monotonic()
+        entry: dict[str, Any] = {
+            "kind": kind,
+            "title": value.get("title"),
+            "message": value.get("message"),
+            "percentage": value.get("percentage"),
+            "last_update_ts": now,
+        }
+        with self._progress_lock:
+            if self._progress_seen_at is None:
+                self._progress_seen_at = now
+            existing = self._progress_by_token.get(token_str)
+            if existing is not None:
+                # Carry forward title from the begin frame so a later
+                # report/end with title=None still surfaces a
+                # human-readable label to the warm-start log.
+                if entry["title"] is None:
+                    entry["title"] = existing.get("title")
+                # Likewise for message: an end frame often omits it.
+                if entry["message"] is None and kind == "end":
+                    entry["message"] = existing.get("message")
+            self._progress_by_token[token_str] = entry
+
+    def snapshot_progress(self) -> dict[str, Any]:
+        """Return a snapshot of progress state for the warm-start
+        poller. Copy-under-lock so the poller cannot trip
+        RuntimeError(dictionary changed size during iteration) and
+        never observes a half-updated entry. The warm-start poller
+        polls every 2s while the reader thread fires progress
+        notifications without holding the poller's lock, so the
+        snapshot contract is required."""
+        with self._progress_lock:
+            return {
+                "tokens": {k: dict(v) for k, v
+                            in self._progress_by_token.items()},
+                "first_seen_at": self._progress_seen_at,
+                "handshake_done_at": self._handshake_done_at,
+            }
 
     def _resolve_pending(self, msg: dict[str, Any]) -> None:
         rid = msg.get("id")
@@ -969,6 +1125,13 @@ class LspSubprocess:
             self.server_caps = caps
             self.notify("initialized", {})
             self._initialized = True
+            # Anchor for warm-start "no progress within N seconds
+            # post-handshake => nothing to index" heuristic. Set under
+            # _progress_lock so the warm poller's snapshot is
+            # consistent with the lazy-init.
+            import time as _time
+            with self._progress_lock:
+                self._handshake_done_at = _time.monotonic()
 
     def did_open(self, uri: str, language_id: str, text: str,
                  version: int = 1) -> None:

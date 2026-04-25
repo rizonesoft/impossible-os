@@ -143,6 +143,12 @@ def spawn(workspace_root: Path) -> LspSubprocess:
             "publishDiagnostics": {"relatedInformation": True},
         },
         "workspace": {"symbol": {}},
+        # Advertise server-initiated work-done progress so clangd
+        # publishes its background-index progress via $/progress.
+        # The reader thread now answers window/workDoneProgress/create
+        # and observes $/progress notifications -- the warm-start
+        # readiness path keys off them.
+        "window": {"workDoneProgress": True},
     }
     init_options: dict[str, Any] = {
         # clangd accepts fallbackFlags via initializationOptions;

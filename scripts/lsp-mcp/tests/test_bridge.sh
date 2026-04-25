@@ -289,10 +289,17 @@
 #         based to avoid false positives on dev hosts running an
 #         editor's own clangd / pyright in parallel.
 #
-# Future commits append sub-tests for tool wiring, extended tool surface,
-# file-change lifecycle, watchdog, structured logs, path sandboxing, and
-# warm-start -- as each lands. The harness is the single entry point
-# scripts/test-tooling.sh will wire into CI.
+#  16a -- --warm-start (no value) warms every registered LSP, exits 0,
+#         emits warm-begin + warm-complete (or warm-over-budget).
+#  16b -- --warm-start=c,py warms only the named subset.
+#  16c -- --warm-start=bogus,c emits warm-unknown-lang for `bogus`,
+#         still warms `c`, exits 0.
+#  16d -- --warm-start=zzz,yyy (all unknown) -> warm-empty + exit 0.
+#  16e -- snapshot_progress copy contract: 4-writer/4-reader race for
+#         500 ms must not trip dictionary-changed-size-during-iteration.
+#  16f -- server-initiated window/workDoneProgress/create gets a
+#         {result: null} ack at the same id (fake-LSP driver).
+# ============================================================================
 # ============================================================================
 set -euo pipefail
 
@@ -4357,6 +4364,274 @@ finally:
 PY
 }
 
+# --- 16a: --warm-start without value runs against every registered LSP ----
+# Asserts: exit 0, JSON line `event: warm-begin` lists every registered
+# language, JSON line `event: warm-complete` (or `warm-over-budget`) is
+# emitted, and the post-banner reports >= 1 LSPs spawned IF clangd-19 is
+# installed, OR 0 LSPs with all-spawn-failed entries IF the host has no
+# LSPs at all (CI host without language tooling).
+t_warm_start_default() {
+    local out
+    out="$(timeout 90 python3 scripts/lsp-mcp/bridge.py --warm-start \
+        --self-test 2>&1)" || {
+        printf '[warm-start-default] FAIL: exit non-zero\n%s\n' "$out" >&2
+        return 1
+    }
+    case "$out" in
+        *'"event": "warm-begin"'*) ;;
+        *) printf '[warm-start-default] FAIL: missing warm-begin\n' >&2
+           return 1 ;;
+    esac
+    case "$out" in
+        *'"event": "warm-complete"'*|*'"event": "warm-over-budget"'*) ;;
+        *) printf '[warm-start-default] FAIL: missing warm-complete or '\
+'warm-over-budget\n' >&2
+           return 1 ;;
+    esac
+    case "$out" in
+        *"LSPs spawned"*) ;;
+        *) printf '[warm-start-default] FAIL: missing OK banner\n' >&2
+           return 1 ;;
+    esac
+    return 0
+}
+
+# --- 16b: --warm-start=c,py subset only warms named langs -----------------
+# Asserts: warm-begin payload's langs list is a SUBSET of {c, py}. Other
+# languages must not appear in the warm-begin langs array. Tolerates the
+# spawn-failed result for any of c/py whose binary is missing.
+t_warm_start_subset() {
+    local out
+    out="$(timeout 90 python3 scripts/lsp-mcp/bridge.py --warm-start=c,py \
+        --self-test 2>&1)" || {
+        printf '[warm-start-subset] FAIL: exit non-zero\n%s\n' "$out" >&2
+        return 1
+    }
+    # Extract the warm-begin line and check langs is a subset.
+    python3 - <<'PY' || return 1
+import json, sys, subprocess
+out = subprocess.run(
+    ["timeout", "90", "python3", "scripts/lsp-mcp/bridge.py",
+     "--warm-start=c,py", "--self-test"],
+    capture_output=True, text=True, check=False,
+)
+if out.returncode != 0:
+    print(f"[warm-start-subset] FAIL: rc={out.returncode}", file=sys.stderr)
+    sys.exit(1)
+lines = (out.stdout + out.stderr).splitlines()
+begin = None
+for line in lines:
+    s = line.strip()
+    if s.startswith("{") and '"event": "warm-begin"' in s:
+        begin = json.loads(s)
+        break
+if begin is None:
+    print("[warm-start-subset] FAIL: no warm-begin event", file=sys.stderr)
+    sys.exit(1)
+langs = set(begin.get("langs") or [])
+allowed = {"c", "py"}
+extra = langs - allowed
+if extra:
+    print(f"[warm-start-subset] FAIL: extra langs warmed: {extra}",
+          file=sys.stderr)
+    sys.exit(1)
+if not langs:
+    print("[warm-start-subset] FAIL: empty langs", file=sys.stderr)
+    sys.exit(1)
+PY
+    return 0
+}
+
+# --- 16c: unknown lang in spec -> WARN + skip, exit 0 ---------------------
+# Asserts: --warm-start=bogus,c does NOT abort; emits a
+# warm-unknown-lang event for `bogus`, still warms `c` (when registered),
+# and exits 0.
+t_warm_start_unknown_lang() {
+    local out
+    out="$(timeout 90 python3 scripts/lsp-mcp/bridge.py \
+        --warm-start=bogus,c --self-test 2>&1)" || {
+        printf '[warm-start-unknown] FAIL: exit non-zero\n%s\n' "$out" >&2
+        return 1
+    }
+    case "$out" in
+        *'"event": "warm-unknown-lang"'*'"lang": "bogus"'*) ;;
+        *'"lang": "bogus"'*'"event": "warm-unknown-lang"'*) ;;
+        *) printf '[warm-start-unknown] FAIL: missing warm-unknown-lang\n' >&2
+           return 1 ;;
+    esac
+    return 0
+}
+
+# --- 16d: empty spec / no registered langs -> warm-empty + exit 0 ---------
+# Asserts: --warm-start=  (empty after split) OR --warm-start=zzz,yyy
+# (all unknown) emits warm-empty and still exits 0; serving must not
+# block on a typo. Different from 16c: 16c has `c` valid, this has none.
+t_warm_start_empty_spec() {
+    local out
+    out="$(timeout 90 python3 scripts/lsp-mcp/bridge.py \
+        --warm-start=zzz,yyy --self-test 2>&1)" || {
+        printf '[warm-start-empty] FAIL: exit non-zero\n%s\n' "$out" >&2
+        return 1
+    }
+    case "$out" in
+        *'"event": "warm-empty"'*) ;;
+        *) printf '[warm-start-empty] FAIL: missing warm-empty\n' >&2
+           return 1 ;;
+    esac
+    return 0
+}
+
+# --- 16e: snapshot_progress copy contract is race-safe --------------------
+# Asserts: LspSubprocess._record_progress + snapshot_progress survive a
+# tight write/read race -- a concurrent reader iterating snapshot_progress
+# must NEVER trip RuntimeError(dictionary changed size during iteration).
+# Drives the contract in isolation (no real LSP needed) so the test
+# passes on any host.
+t_warm_progress_snapshot_race() {
+    python3 - <<'PY' || return 1
+import sys, threading, time
+sys.path.insert(0, "scripts/lsp-mcp")
+from lsp_client import LspSubprocess
+
+# Build a synthetic instance without spawning a subprocess. Use
+# __new__ + manual init of just the fields _record_progress /
+# snapshot_progress touch, to avoid the cmd= subprocess.Popen path.
+inst = LspSubprocess.__new__(LspSubprocess)
+inst._progress_by_token = {}
+inst._progress_seen_at = None
+inst._handshake_done_at = None
+inst._progress_lock = threading.Lock()
+
+stop = threading.Event()
+errors = []
+
+def writer():
+    i = 0
+    while not stop.is_set():
+        try:
+            inst._record_progress({
+                "token": f"tok{i % 16}",
+                "value": {"kind": "report", "percentage": i % 100,
+                          "message": f"m{i}", "title": "Indexing"},
+            })
+        except Exception as exc:
+            errors.append(f"writer: {exc!r}")
+            return
+        i += 1
+
+def reader():
+    while not stop.is_set():
+        try:
+            snap = inst.snapshot_progress()
+            for k, v in snap["tokens"].items():
+                _ = (k, v.get("kind"), v.get("percentage"))
+        except Exception as exc:
+            errors.append(f"reader: {exc!r}")
+            return
+
+# 4 writers + 4 readers for 0.5s.
+threads = ([threading.Thread(target=writer) for _ in range(4)]
+           + [threading.Thread(target=reader) for _ in range(4)])
+for t in threads:
+    t.start()
+time.sleep(0.5)
+stop.set()
+for t in threads:
+    t.join(2.0)
+
+if errors:
+    print(f"[warm-progress-race] FAIL: {errors[:3]}", file=sys.stderr)
+    sys.exit(1)
+# Sanity: at least some writes landed.
+assert inst._progress_by_token, "no writes landed"
+PY
+    return 0
+}
+
+# --- 16f: server-initiated workDoneProgress/create ack ---------------------
+# Asserts: when the LSP sends a `window/workDoneProgress/create` request
+# (id + method, no result/error), the bridge replies with {result: null}
+# under the same id. Tested against a fake stdio LSP that emits the
+# request unsolicited and waits for the ack.
+t_warm_workdone_create_ack() {
+    python3 - <<'PY' || return 1
+import json, os, subprocess, sys, threading, time
+sys.path.insert(0, "scripts/lsp-mcp")
+from lsp_client import LspSubprocess
+
+# Fake LSP that:
+#   1. Reads `initialize`, replies with capabilities.
+#   2. Reads `initialized` notification.
+#   3. Sends a workDoneProgress/create request with id=99.
+#   4. Waits for a response with id=99 + result=null.
+#   5. If received, prints OK on stderr and exits 0; otherwise exits 2.
+fake_src = r'''
+import json, sys
+def read_msg():
+    headers = {}
+    while True:
+        line = sys.stdin.buffer.readline()
+        if not line:
+            return None
+        line = line.rstrip(b"\r\n")
+        if line == b"":
+            break
+        k, _, v = line.decode().partition(":")
+        headers[k.strip().lower()] = v.strip()
+    n = int(headers.get("content-length", "0"))
+    return json.loads(sys.stdin.buffer.read(n))
+def write_msg(obj):
+    body = json.dumps(obj).encode()
+    sys.stdout.buffer.write(b"Content-Length: %d\r\n\r\n" % len(body))
+    sys.stdout.buffer.write(body)
+    sys.stdout.buffer.flush()
+
+m = read_msg()  # initialize
+write_msg({"jsonrpc":"2.0","id":m["id"],"result":{"capabilities":{}}})
+m = read_msg()  # initialized notification
+write_msg({"jsonrpc":"2.0","id":99,
+           "method":"window/workDoneProgress/create",
+           "params":{"token":"t1"}})
+ack = read_msg()
+if (ack and ack.get("id") == 99 and "result" in ack
+        and ack.get("result") is None):
+    sys.stderr.write("FAKE_LSP_ACK_OK\n")
+    sys.exit(0)
+sys.stderr.write(f"FAKE_LSP_NO_ACK got={ack!r}\n")
+sys.exit(2)
+'''
+import tempfile
+with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+    f.write(fake_src)
+    fake_path = f.name
+
+try:
+    lsp = LspSubprocess(["python3", fake_path], lang="fake16f")
+    lsp.initialize(root_uri="file:///tmp", timeout=2.0)
+    # Give the fake LSP a moment to send + receive the ack.
+    time.sleep(0.5)
+    rc = lsp.shutdown(timeout=2.0)
+    # Inspect captured stderr.
+    # LspSubprocess does not expose captured stderr; just verify the
+    # subprocess exited cleanly. The fake exits 0 only if the ack
+    # arrived, so a non-zero exit means we missed it.
+    proc = lsp._proc
+    if proc and proc.returncode not in (0, None):
+        # Drain any remaining stderr.
+        try:
+            err = proc.stderr.read().decode("utf-8", "replace")
+        except Exception:
+            err = "<unreadable>"
+        print(f"[warm-workdone-create] FAIL: fake LSP rc={proc.returncode} "
+              f"stderr={err!r}", file=sys.stderr)
+        sys.exit(1)
+finally:
+    try: os.unlink(fake_path)
+    except OSError: pass
+PY
+    return 0
+}
+
 # --- 9a: LSP-process-leak detection (run LAST) ----------------------------
 t_no_leaked_lsp_processes() {
     # Capture the post-harness PID set of LSP binaries owned by this
@@ -4468,6 +4743,12 @@ run "15h path-too-deep cap"              t_path_too_deep
 run "15i FIFO does not hang"             t_fifo_path_does_not_hang
 run "15j abs symlink rejected"           t_absolute_path_symlink_rejected
 run "15k symlinked-ws root replay"       t_symlinked_workspace_root_replay
+run "16a warm-start default"             t_warm_start_default
+run "16b warm-start subset c,py"         t_warm_start_subset
+run "16c warm-start unknown lang"        t_warm_start_unknown_lang
+run "16d warm-start empty spec"          t_warm_start_empty_spec
+run "16e progress snapshot race"         t_warm_progress_snapshot_race
+run "16f workdone/create ack"            t_warm_workdone_create_ack
 # 9a runs LAST so every prior sub-test has had a chance to clean up.
 run "9a no leaked LSP processes"         t_no_leaked_lsp_processes
 

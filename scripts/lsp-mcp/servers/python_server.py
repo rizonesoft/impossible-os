@@ -195,6 +195,12 @@ def spawn(workspace_root: Path) -> LspSubprocess:
             "publishDiagnostics": {"relatedInformation": True},
         },
         "workspace": {"symbol": {}},
+        # Advertise server-initiated work-done progress so pyright
+        # publishes its analysis progress via $/progress. Pyright
+        # uses workDoneProgress/create + $/progress for background
+        # type-checking; the warm-start readiness path observes
+        # those notifications.
+        "window": {"workDoneProgress": True},
     }
 
     try:

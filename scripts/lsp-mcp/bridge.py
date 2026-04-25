@@ -948,6 +948,403 @@ def _shutdown_all_lsps() -> None:
 
 
 # ---------------------------------------------------------------------
+# Warm-start: opt-in eager LSP spawn + index-readiness wait
+# ---------------------------------------------------------------------
+#
+# Default behavior is on-demand: the first per-language tool call goes
+# through _get_or_spawn, pays the spawn + initialize cost (clangd
+# ~2-3s, pyright ~5-8s) AND the first-index wall time (clangd ~30s on
+# the impossible-os tree). For an interactive agent that is about to
+# fire several tool calls in sequence, that latency is invisible and
+# the tool call appears to hang.
+#
+# --warm-start opts the bridge into eager parallel spawn:
+#   * --warm-start             -> warm every registered LSP
+#   * --warm-start=c,py        -> warm only the named languages
+#                                 (comma-separated bridge lang tags)
+#   * (flag absent)            -> behavior unchanged
+#
+# Per-language readiness is the completion bar (Codex design review
+# High): handshake completion is necessary but NOT sufficient for
+# clangd / pyright, which run background indexing AFTER initialize
+# returns. The warm worker for those languages observes $/progress
+# notifications and waits until either every observed token has
+# kind=end OR no progress traffic has arrived within
+# _WARM_NO_PROGRESS_TIMEOUT_S of handshake completion (the
+# nothing-to-index escape hatch). asm/sh/ps1 are ready as soon as
+# initialize returns -- they have no background-index step.
+#
+# Cold-start budget is informational: if total wall-clock exceeds
+# _WARM_OVERALL_BUDGET_S, the bridge emits a WARN with the per-lang
+# breakdown and a hint that the operator can subset via
+# --warm-start=clangd,pyright (the two slowest cases). Never blocks
+# serving.
+#
+# Lifecycle (Codex design review Medium): a single shared
+# _WARM_CANCEL Event is set in the finally block of main() so the
+# warm pool tears down BEFORE _shutdown_all_lsps reaps the LSPs the
+# pool is observing. ThreadPoolExecutor.shutdown(wait=True) joins
+# the workers; the per-worker poll loop checks _WARM_CANCEL on every
+# iteration so cancellation is bounded by one poll interval.
+
+_VALID_WARM_LANGS = ("c", "asm", "sh", "py", "ps1")
+# Languages whose first-real-call latency is dominated by the initial
+# index pass, NOT spawn + initialize. Warm worker waits for $/progress
+# end on these (or for the no-progress escape).
+_NEEDS_INDEX_READINESS = ("c", "py")
+# Per-language soft cap on the index-readiness wait. clangd's
+# background-index of the kernel tree finishes in well under this on
+# Linux/WSL with 4+ cores; pyright is similar. The cap exists so a
+# pathological host (single-core CI VM, broken clangd) cannot stall
+# the bridge indefinitely. Hit means "log soft-capped, proceed
+# anyway" -- never blocks serving.
+_WARM_PER_LANG_SOFT_CAP_S = 60.0
+# Cold-start budget threshold for the WARN emit. Wall-clock measured
+# as the elapsed time from the first warm worker submit to the last
+# warm worker return. Parallel execution makes this ~max-per-worker,
+# not sum.
+_WARM_OVERALL_BUDGET_S = 60.0
+# Post-handshake window during which the warm worker waits for the
+# FIRST progress notification before falling through with the
+# heuristic "no progress => nothing to index". Codex adversarial
+# review flagged the original 3 s as too aggressive for slow
+# clangd/pyright on a loaded host (first $/progress can arrive at
+# t=4-8 s); raised to 10 s so a busy CI box does not get a false
+# "ready" mark while indexing has not yet started. The reason label
+# emitted in this case is "no-progress-timeout" (not "no-index") so
+# logs distinguish "definitely nothing to index" (cached state) from
+# "we waited and never heard anything".
+_WARM_NO_PROGRESS_TIMEOUT_S = 10.0
+# How often the warm worker logs a progress update for an LSP whose
+# index pass is still running. Set to 2s to match the spec test
+# checkpoint without burning log volume.
+_WARM_PROGRESS_LOG_INTERVAL_S = 2.0
+# Shared cancellation Event for the warm pool. Module-level so
+# main()'s finally block can flip it without holding a reference to
+# the controller.
+_WARM_CANCEL = threading.Event()
+
+
+def _resolve_warm_langs(spec: str) -> tuple[list[str], list[str]]:
+    """Resolve a --warm-start spec to a (warm_list, unknown_list)
+    pair. spec == "ALL" expands to every registered spawner; a
+    comma-separated list filters by bridge lang tag. Languages with
+    no registered spawner (broken import, missing dependency) are
+    silently skipped from warm_list -- the spawner-import-failed
+    state is already surfaced via _SPAWNER_IMPORT_ERRORS, no need to
+    duplicate here. Unknown tags (typos like 'cpp') land in
+    unknown_list so the caller can WARN.
+
+    Always preserves the order of _VALID_WARM_LANGS so the parallel
+    submit order is deterministic across runs (helps log diffing)."""
+    if spec == "ALL":
+        return [l for l in _VALID_WARM_LANGS if l in _LSP_SPAWNERS], []
+    raw = [t.strip() for t in spec.split(",") if t.strip()]
+    seen: set[str] = set()
+    requested: list[str] = []
+    for tag in raw:
+        if tag in seen:
+            continue
+        seen.add(tag)
+        requested.append(tag)
+    valid = set(_VALID_WARM_LANGS)
+    unknown = [t for t in requested if t not in valid]
+    warm = [t for t in _VALID_WARM_LANGS
+             if t in seen and t in _LSP_SPAWNERS]
+    return warm, unknown
+
+
+def _warm_progress_done(snap: dict[str, Any], now: float,
+                        lang: str) -> tuple[bool, str]:
+    """Decide whether a warming LSP is ready.
+
+    Returns (done, reason). done=True means the warm worker should
+    exit its poll loop. reason is one of:
+      "indexed"        -- every observed progress token reached end
+      "no-index"       -- nothing to index (no progress traffic in
+                          _WARM_NO_PROGRESS_TIMEOUT_S after handshake)
+      ""               -- not done yet
+
+    For languages NOT in _NEEDS_INDEX_READINESS this function should
+    not be called -- the worker should return immediately after
+    _get_or_spawn (handshake completion IS readiness for those).
+    Asserted via the caller's branch, not here, so the function
+    stays a pure decision."""
+    handshake = snap.get("handshake_done_at")
+    first_seen = snap.get("first_seen_at")
+    tokens = snap.get("tokens") or {}
+    if not tokens:
+        if handshake is not None and (
+                now - handshake >= _WARM_NO_PROGRESS_TIMEOUT_S):
+            # Distinguish two cases via the reason label so logs are
+            # honest about what happened: "no-index" means we
+            # actively know there is nothing to index (server has a
+            # cached index from a prior session and immediately
+            # advertises ready behavior); "no-progress-timeout" means
+            # we waited the full window and the server simply never
+            # spoke up (could legitimately be no-index OR could be a
+            # very slow indexer that we are about to underserve --
+            # operator needs to know). Today both reach the same
+            # "ready" status; the distinction is for log triage.
+            return True, "no-progress-timeout"
+        return False, ""
+    # Some progress has been observed. Done IFF every observed token
+    # has reached kind=end. A language that emits MULTIPLE progress
+    # tokens (clangd: backgroundIndexProgress + per-TU diagnostic
+    # progress) waits for ALL of them -- waiting only for the first
+    # one to end would mark warming complete while the second is
+    # still ramping. (Codex design review High: "report success only
+    # after the index work that warm-start is meant to hide has
+    # actually finished".)
+    if all(t.get("kind") == "end" for t in tokens.values()):
+        return True, "indexed"
+    return False, ""
+
+
+def _warm_progress_summary(snap: dict[str, Any]) -> dict[str, Any]:
+    """Reduce a snapshot to a one-line log payload: aggregate
+    percentage (max across active tokens), title of the dominant
+    token, and counts. Designed to be cheap to call every 2s."""
+    tokens = snap.get("tokens") or {}
+    if not tokens:
+        return {"tokens": 0}
+    pct_seen: list[int] = []
+    titles: list[str] = []
+    active = 0
+    for t in tokens.values():
+        if t.get("kind") != "end":
+            active += 1
+        p = t.get("percentage")
+        if isinstance(p, (int, float)):
+            pct_seen.append(int(p))
+        title = t.get("title")
+        if isinstance(title, str) and title:
+            titles.append(title)
+    out: dict[str, Any] = {
+        "tokens": len(tokens),
+        "active": active,
+    }
+    if pct_seen:
+        out["progress_pct"] = max(pct_seen)
+    if titles:
+        out["title"] = titles[0]
+    return out
+
+
+def _warm_one(lang: str, workspace_root: Path) -> dict[str, Any]:
+    """Per-language warm worker. Called from a ThreadPoolExecutor;
+    returns a result dict the controller aggregates.
+
+    Result schema:
+      {lang, status: "ready" | "soft-capped" | "spawn-failed"
+                     | "cancelled",
+       spawn_s, ready_s, total_s, reason: Optional[str]}"""
+    import time as _time
+    t0 = _time.monotonic()
+    try:
+        inst = _get_or_spawn(lang, workspace_root)
+    except LspError as exc:
+        elapsed = _time.monotonic() - t0
+        _lsplog.log("WARN", "warm-start spawn failed",
+                    event="warm-spawn-failed", lang=lang,
+                    elapsed_s=round(elapsed, 3),
+                    error=exc.kind, detail=exc.detail)
+        return {"lang": lang, "status": "spawn-failed",
+                "spawn_s": round(elapsed, 3), "ready_s": 0.0,
+                "total_s": round(elapsed, 3),
+                "reason": f"{exc.kind}: {exc.detail}"}
+    except Exception as exc:
+        elapsed = _time.monotonic() - t0
+        _lsplog.log("WARN", "warm-start spawn raised",
+                    event="warm-spawn-failed", lang=lang,
+                    elapsed_s=round(elapsed, 3),
+                    error=type(exc).__name__, detail=str(exc))
+        return {"lang": lang, "status": "spawn-failed",
+                "spawn_s": round(elapsed, 3), "ready_s": 0.0,
+                "total_s": round(elapsed, 3),
+                "reason": f"{type(exc).__name__}: {exc}"}
+    spawn_done_at = _time.monotonic()
+    spawn_s = spawn_done_at - t0
+
+    # Languages with no background-index step are READY now.
+    if lang not in _NEEDS_INDEX_READINESS:
+        _lsplog.log("INFO", "warm-start: ready",
+                    event="warm-ready", lang=lang,
+                    spawn_s=round(spawn_s, 3),
+                    ready_s=0.0, total_s=round(spawn_s, 3),
+                    reason="no-index")
+        return {"lang": lang, "status": "ready",
+                "spawn_s": round(spawn_s, 3), "ready_s": 0.0,
+                "total_s": round(spawn_s, 3), "reason": "no-index"}
+
+    # Index-readiness loop. Poll every 0.5s; emit a structured log
+    # line every _WARM_PROGRESS_LOG_INTERVAL_S so an operator can
+    # see warm-start making progress without spamming. Cap at
+    # _WARM_PER_LANG_SOFT_CAP_S so a pathological LSP cannot stall
+    # the bridge.
+    last_log = spawn_done_at
+    deadline = spawn_done_at + _WARM_PER_LANG_SOFT_CAP_S
+    while True:
+        if _WARM_CANCEL.is_set():
+            elapsed = _time.monotonic() - t0
+            _lsplog.log("INFO", "warm-start cancelled",
+                        event="warm-cancelled", lang=lang,
+                        spawn_s=round(spawn_s, 3),
+                        total_s=round(elapsed, 3))
+            return {"lang": lang, "status": "cancelled",
+                    "spawn_s": round(spawn_s, 3),
+                    "ready_s": round(elapsed - spawn_s, 3),
+                    "total_s": round(elapsed, 3),
+                    "reason": "cancelled"}
+        now = _time.monotonic()
+        snap = inst.snapshot_progress()
+        done, reason = _warm_progress_done(snap, now, lang)
+        if done:
+            ready_s = now - spawn_done_at
+            total_s = now - t0
+            _lsplog.log("INFO", "warm-start: ready",
+                        event="warm-ready", lang=lang,
+                        spawn_s=round(spawn_s, 3),
+                        ready_s=round(ready_s, 3),
+                        total_s=round(total_s, 3),
+                        reason=reason)
+            return {"lang": lang, "status": "ready",
+                    "spawn_s": round(spawn_s, 3),
+                    "ready_s": round(ready_s, 3),
+                    "total_s": round(total_s, 3), "reason": reason}
+        if now >= deadline:
+            ready_s = now - spawn_done_at
+            total_s = now - t0
+            summary = _warm_progress_summary(snap)
+            _lsplog.log("WARN", "warm-start soft-capped",
+                        event="warm-soft-capped", lang=lang,
+                        spawn_s=round(spawn_s, 3),
+                        ready_s=round(ready_s, 3),
+                        total_s=round(total_s, 3),
+                        soft_cap_s=_WARM_PER_LANG_SOFT_CAP_S,
+                        **summary)
+            return {"lang": lang, "status": "soft-capped",
+                    "spawn_s": round(spawn_s, 3),
+                    "ready_s": round(ready_s, 3),
+                    "total_s": round(total_s, 3),
+                    "reason": "soft-capped"}
+        if now - last_log >= _WARM_PROGRESS_LOG_INTERVAL_S:
+            summary = _warm_progress_summary(snap)
+            _lsplog.log("INFO", "warm-start indexing",
+                        phase="warming", lang=lang,
+                        elapsed_s=round(now - t0, 3),
+                        **summary)
+            last_log = now
+        # Interruptible sleep: wait_for(_WARM_CANCEL, 0.5) returns
+        # True early if cancellation is set, so soft-capped LSPs
+        # respond to teardown within ~0ms instead of 0.5s.
+        if _WARM_CANCEL.wait(0.5):
+            continue
+
+
+def _warm_start_run(workspace_root: Path, spec: str) -> dict[str, Any]:
+    """Top-level warm-start entry point. Resolves the lang spec,
+    fans out per-lang warm workers under a ThreadPoolExecutor, joins
+    them, and emits the cold-start budget WARN if appropriate.
+
+    Returns an aggregate dict (used by self-test for assertion
+    messages and by future MCP tooling). Always returns; never
+    raises -- warm-start is best-effort and must not block serving."""
+    import time as _time
+    import concurrent.futures
+    warm, unknown = _resolve_warm_langs(spec)
+    for tag in unknown:
+        _lsplog.log("WARN", "warm-start: unknown lang",
+                    event="warm-unknown-lang", lang=tag,
+                    valid=list(_VALID_WARM_LANGS))
+    if not warm:
+        _lsplog.log("WARN", "warm-start: no languages to warm",
+                    event="warm-empty", spec=spec,
+                    unknown=unknown,
+                    registered=list(_LSP_SPAWNERS.keys()))
+        return {"started": False, "warmed": [], "results": [],
+                "wall_clock_s": 0.0, "unknown": unknown}
+    _lsplog.log("INFO", "warm-start begin",
+                event="warm-begin", langs=warm,
+                budget_s=_WARM_OVERALL_BUDGET_S,
+                workspace_root=str(workspace_root))
+    overall_t0 = _time.monotonic()
+    results: list[dict[str, Any]] = []
+    # Workers carry the warm-start corr_id so progress + spawn-failed
+    # log lines correlate back to this dispatch in DEBUG-mode dumps.
+    # contextvars.Context objects can only be entered ONCE -- a single
+    # ctx.run shared across N submits raises "cannot enter context:
+    # already entered". Snapshot the corr_id and re-set it inside each
+    # worker instead. Cheaper than a per-worker copy_context() and
+    # equally correct because warm-start workers do not propagate
+    # other ContextVars.
+    warm_corr = _lsplog.new_corr_id()
+    _lsplog.set_corr_id(warm_corr)
+    try:
+        ex = concurrent.futures.ThreadPoolExecutor(
+            max_workers=max(1, len(warm)),
+            thread_name_prefix="warm-start",
+        )
+        try:
+            def _runner(lang_tag: str) -> dict[str, Any]:
+                # Worker carries the parent corr_id so per-language
+                # log lines correlate. Cleared on exit so the worker
+                # thread (reused across pool tasks) does not leak the
+                # corr_id into a later task.
+                _lsplog.set_corr_id(warm_corr)
+                try:
+                    return _warm_one(lang_tag, workspace_root)
+                finally:
+                    _lsplog.clear_corr_id()
+            futures = [ex.submit(_runner, lang) for lang in warm]
+            for fut in concurrent.futures.as_completed(futures):
+                try:
+                    results.append(fut.result())
+                except Exception as exc:
+                    # Worker swallows its own exceptions but a runner
+                    # crash (e.g. interpreter shutdown) could surface
+                    # here. Never let it bubble out of warm-start.
+                    _lsplog.log("WARN", "warm-start worker crashed",
+                                event="warm-worker-crashed",
+                                error=type(exc).__name__,
+                                detail=str(exc))
+        finally:
+            ex.shutdown(wait=True)
+    finally:
+        _lsplog.clear_corr_id()
+    wall = _time.monotonic() - overall_t0
+    aggregate = {
+        "started": True,
+        "warmed": warm,
+        "results": results,
+        "wall_clock_s": round(wall, 3),
+        "unknown": unknown,
+    }
+    if wall > _WARM_OVERALL_BUDGET_S:
+        # Hint the operator at the subset most likely to be the
+        # bottleneck. If clangd or pyright weren't requested, drop
+        # them from the hint so we don't suggest warming a language
+        # the operator already excluded.
+        slow_langs = [r["lang"] for r in results
+                       if r.get("status") == "soft-capped"
+                       or r.get("total_s", 0) > 5.0]
+        hint_subset = ",".join(slow_langs) if slow_langs else "c,py"
+        _lsplog.log("WARN", "warm-start over budget",
+                    event="warm-over-budget",
+                    wall_clock_s=round(wall, 3),
+                    budget_s=_WARM_OVERALL_BUDGET_S,
+                    hint=f"--warm-start={hint_subset}",
+                    breakdown=results)
+    else:
+        _lsplog.log("INFO", "warm-start complete",
+                    event="warm-complete",
+                    wall_clock_s=round(wall, 3),
+                    budget_s=_WARM_OVERALL_BUDGET_S,
+                    breakdown=results)
+    return aggregate
+
+
+# ---------------------------------------------------------------------
 # FastMCP wiring (guarded behind optional import, same as mcp_server.py)
 # ---------------------------------------------------------------------
 
@@ -4120,9 +4517,36 @@ def main(argv=None) -> int:
              "detection. SKIP when clangd is not installed. Demux "
              "correctness is exercised by sub-test 8b (fake-LSP reorder).",
     )
+    p.add_argument(
+        "--warm-start", nargs="?", const="ALL", default=None,
+        metavar="LANGS",
+        help="opt-in eager LSP spawn + index-readiness wait at "
+             "startup. Without a value, warms every registered LSP "
+             "in parallel; with a comma list (e.g. --warm-start=c,py) "
+             "warms only those languages. clangd and pyright wait for "
+             "background indexing to finish; asm-lsp / bash-lsp / "
+             "PSES are ready as soon as initialize returns. Default "
+             "(flag absent) behavior is unchanged: on-demand spawn at "
+             "first per-language tool call.",
+    )
     args = p.parse_args(argv)
 
     workspace_root = _workspace_root_from_argv(args)
+
+    def _maybe_warm_start() -> None:
+        if args.warm_start is None:
+            return
+        try:
+            _warm_start_run(workspace_root, args.warm_start)
+        except Exception as exc:
+            # Best-effort: warm-start failure must NEVER block
+            # serving. The internal log lines already capture the
+            # detail; surface a single line on stderr so an
+            # operator running interactively notices.
+            sys.stderr.write(
+                f"[lsp-mcp] WARN: warm-start aborted: "
+                f"{type(exc).__name__}: {exc}\n"
+            )
 
     try:
         if args.self_test:
@@ -4130,6 +4554,7 @@ def main(argv=None) -> int:
                 return _self_test_tools(workspace_root)
             if args.stress:
                 return _self_test_stress(workspace_root)
+            _maybe_warm_start()
             return _self_test(workspace_root, lang=args.lang)
         if args.lang is not None:
             sys.stderr.write(
@@ -4149,12 +4574,20 @@ def main(argv=None) -> int:
             return 2
 
         srv = _build_mcp(FastMCP, workspace_root)
+        _maybe_warm_start()
         # Serve on stdio. FastMCP.run() picks the correct transport
         # based on context; default is stdio which is what Claude
         # Code launches.
         srv.run()
         return 0
     finally:
+        # Cancel + drain warm-start workers BEFORE reaping LSPs --
+        # otherwise the per-worker progress poll could call
+        # snapshot_progress() on an already-shut-down LspSubprocess
+        # and emit a confusing stack on shutdown (the LspSubprocess
+        # itself is robust to it; the poll loop just keeps the
+        # reaper waiting on a join). Codex design review Medium.
+        _WARM_CANCEL.set()
         _shutdown_all_lsps()
 
 

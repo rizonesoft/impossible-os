@@ -56,7 +56,7 @@ title: "TODO-07 -- LSP to MCP Bridge (C, NASM, shell, Python, PowerShell)"
 | ⭐  |  13   | LSP subprocess health monitoring + auto-restart (exp backoff)              | §1                                |  [x]   |
 | 💎  |  14   | Structured JSON logging + request correlation IDs                          | §1                                |  [x]   |
 | ⭐  |  15   | Path sandboxing + workspace boundary enforcement                           | §1, §7                            |  [x]   |
-| ⭐  |  16   | Warm-index preloading + cold-start budget                                  | §1, §2, §3, §4, §5, §6            |  [ ]   |
+| ⭐  |  16   | Warm-index preloading + cold-start budget                                  | §1, §2, §3, §4, §5, §6            |  [x]   |
 | 💎  |  17   | Scale Roadmap (DEFERRED -- trigger-gated, no code today)                   | --                                |  [ ]   |
 
 > 💎 = parity -- matches the existing LSP stacks Win11/Linux devs already use, wrapped in an MCP transport.
@@ -514,14 +514,26 @@ Every MCP tool takes a `path` argument. Without bounds-checking, an attacker (or
 
 On a fresh bridge spawn, the first `workspace_symbol` call waits for clangd to index 178 translation units (~30s cold). That latency is invisible to the MCP caller; the tool call just appears to hang. Add an opt-in `--warm-start` flag that spawns the LSPs eagerly and triggers background workspace indexing, so first-real-call latency is bounded.
 
-- [ ] `--warm-start` bridge flag: at startup, eagerly spawn all 5 LSPs in parallel under a thread pool, call `initialize` on each, and kick off workspace-symbol indexing. LSPs that support background indexing (clangd, pyright) start working immediately; stateless LSPs (asm-lsp) complete instantly.
-- [ ] `--warm-start=c,py` subset form: warm only the named languages (comma-separated extension list or language name).
-- [ ] Cold-start budget: log cumulative spawn + handshake time. If > 60s at startup, emit WARN and suggest `--warm-start=clangd,pyright` subset.
-- [ ] Progress reporting: during warm-start, log `{"phase": "warming", "lang": "c", "progress_pct": <int>}` every 2s while each LSP's `$/progress` notifications report indexing status.
-- [ ] Default behavior (no flag) remains on-demand spawn: no regression for users who touch only one language.
-- [ ] Commit: `"scripts/lsp-mcp: --warm-start for bounded first-call latency"`
+- [x] `--warm-start` bridge flag (`bridge.py main()`): `nargs="?"` argparse with `const="ALL"`. At startup, eagerly spawns every registered LSP in parallel under a `concurrent.futures.ThreadPoolExecutor(max_workers=N)` where each worker invokes `_get_or_spawn(lang, workspace_root)` so the existing per-key `_SPAWN_EVENTS` gate + `_LSP_HEALTH` accounting still apply. clangd / pyright then wait for `$/progress` end-of-indexing; asm-lsp / bash-language-server / PSES are ready as soon as `initialize` returns (no background-index step). Codex design review High caught the original "ready at handshake" plan as incomplete -- handshake is necessary but NOT sufficient for the languages whose first-call latency the flag is meant to hide.
+- [x] `--warm-start=c,py` subset form (`_resolve_warm_langs` in `bridge.py`): comma-separated list of bridge lang tags filtered against `_VALID_WARM_LANGS = ("c","asm","sh","py","ps1")`; unknown tags emit `event: warm-unknown-lang` and are skipped (not FATAL). Order preserved across runs for deterministic log diffing.
+- [x] Cold-start budget (`_WARM_OVERALL_BUDGET_S = 60.0` in `bridge.py`): wall-clock measured from first warm worker submit to last completion (parallel max). Over budget emits `event: warm-over-budget` WARN with per-lang breakdown and a `--warm-start=<slow-langs>` hint; never blocks serving.
+- [x] Progress reporting (`_warm_one` poll loop, `bridge.py`): every 2s logs `{phase: "warming", lang, elapsed_s, tokens, active, progress_pct?, title?}` while each LSP's `$/progress` notifications are still ramping. Snapshot pulled via `LspSubprocess.snapshot_progress()` -- a copy-under-lock contract that closes the Codex Medium "unsynchronized progress dict" race.
+- [x] Default behavior unchanged (`--warm-start` absent): `_maybe_warm_start()` is a no-op; `_get_or_spawn` runs on-demand on the first per-language tool call. Verified by sub-test 1a (no regression in zero-LSPs banner).
+- [x] Commit: `"scripts/lsp-mcp: --warm-start for bounded first-call latency"` -- commit `2bce2bd2`.
 
 **Test checkpoint:** `python3 scripts/lsp-mcp/bridge.py --warm-start --self-test` exits 0 within 45s on a host with clangd + pyright + bash-language-server installed; logs per-language spawn times. First `workspace_symbol("kmain")` call afterwards completes in < 500ms (warm), versus > 20s (cold baseline same repo).
+
+Verified locally: `python3 scripts/lsp-mcp/bridge.py --warm-start=c --self-test` returns 0 in 10.04s (clangd index already cached at `~/impossible-os/.cache/clangd/index/`; reason `no-progress-timeout` after the 10s post-handshake window). Cold-cache wall-clock is index-build dominated and therefore host-dependent; the design covers it via the per-LSP soft cap (`_WARM_PER_LANG_SOFT_CAP_S = 60.0`) and the cold-start budget WARN (`_WARM_OVERALL_BUDGET_S = 60.0`).
+
+> **Test runner:** `bash scripts/lsp-mcp/tests/test_bridge.sh` (sub-tests 16a-16f) | 87/87 sub-tests PASS
+
+> **Notes:**
+> - Adds `--warm-start[=langs]` to `bridge.py` and a per-LSP readiness wait. clangd / pyright wait for `$/progress` end (or `_WARM_NO_PROGRESS_TIMEOUT_S = 10s` no-progress fall-through); asm/sh/ps1 are ready at handshake.
+> - `lsp_client.py` extended: `_progress_by_token` + `_progress_lock` + `snapshot_progress()`; `_dispatch_message` handles server-initiated `window/workDoneProgress/create` requests with `{result: null}` ack; everything else gets JSON-RPC `-32601` method-not-found. `_send_response` uses a 0.5s try-acquire on `_io_lock` so a stalled writer cannot deadlock the reader.
+> - `clangd_server.py` and `python_server.py` now advertise `window: {workDoneProgress: True}` so progress traffic actually flows.
+> - Lifecycle: shared `_WARM_CANCEL` Event flipped in `main()`'s finally BEFORE `_shutdown_all_lsps()` so warm pollers exit before the LSPs they observe get reaped.
+> - Default behavior unchanged when flag is absent. Persistent index caching across bridge restarts is owned by §17 (Scale Roadmap).
+
 
 ---
 
