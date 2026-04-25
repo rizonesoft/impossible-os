@@ -293,7 +293,7 @@ Expose six typed MCP tools. Each tool dispatches to the right LSP based on file 
 > - **Canonical doc:** [LSP 3.17 Specification -- textDocument/hover, definition, references](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/) -- defines the wire-format shapes every normalizer handles; [TODO-06 §8](./TODO-06-todo-metadata-layer.md#8-mcp-server-ai-agent-transport-over-the-cache) typed-handler precedent mirrored here.
 > - **Scope boundary:** §7 does NOT own per-extension routing wiring (extension-to-MCP-tool binding lives entirely in `_dispatch_path`; §8 is about the cache + lock discipline AROUND dispatch). §7 does NOT own the extended tool surface (completion/signature/call-hierarchy/code-action -- those are §11). §7 does NOT own mtime-based `didChange` forwarding (that's §12); tool calls today send `didOpen` once via `ensure_open()` and never re-sync; a future `didSave` / `didChange` forwarding retrofit is the §12 item "Per-LSP mtime check + didChange forwarding". §7 does NOT own full path sandboxing beyond workspace-root escape + symlink resolution + S_ISREG (that's §15).
 
-> **Verified:** 2026-04-25 | commit `<§7 commit>` | 7/7 items | build N/A (host-side Python) | tests 33/33 PASS
+> **Verified:** 2026-04-25 | commit `09a5f02b` | 7/7 items | build N/A (host-side Python) | tests 33/33 PASS
 
 ---
 
