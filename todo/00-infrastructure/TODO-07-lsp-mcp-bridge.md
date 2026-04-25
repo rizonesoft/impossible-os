@@ -475,7 +475,7 @@ The 2026 MCP observability baseline is one-line JSON per log entry, a correlatio
 > - **Canonical doc:** [`docs/infrastructure/development-tooling.md` LSP MCP Bridge subsection](../../docs/infrastructure/development-tooling.md) -- to be retrofitted by the §14 review pass with the LSP_MCP_LOG_LEVEL/FILE env knobs + the corr_id thread-through diagram.
 > - **Scope boundary:** §14 does NOT own log-file rotation (operator/logrotate scope), workspace-bound path sandboxing's race-free walk (§15), or warm-start bounded latency (§16). The corr_id is per-MCP-call -- there is no cross-call session ID; trace correlation across multiple MCP calls is an explicit non-goal.
 
-> **Verified:** 2026-04-25 | commit `<§14 commit>` | 5/5 items | build OK | tests 68/68 PASS
+> **Verified:** 2026-04-25 | commit `eb44d19e` | 5/5 items | build OK | tests 68/68 PASS
 
 ---
 
