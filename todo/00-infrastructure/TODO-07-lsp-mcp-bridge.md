@@ -201,7 +201,7 @@ Wire `pyright-langserver` (Microsoft, TS) for the ~6.4k lines of Python under `s
 > - **Canonical doc:** [pyright LSP server documentation](https://microsoft.github.io/pyright/#/) -- `pyright-langserver --stdio` is the supported invocation; configuration lives in `pyrightconfig.json` (preferred) or `pyproject.toml [tool.pyright]`; auto-discovered from cwd.
 > - **Scope boundary:** no MCP tools registered, no per-extension dispatch (§7's `dispatch(path)` helper), no PSES (§6 owns that). Install guidance for pyright in the developer-tooling docs subsection is §9. The `LspSubprocess` reader does not yet answer server-initiated `workspace/configuration` requests; advertising that capability for any future server is a §1-skeleton retrofit, not a §5 deliverable.
 
-> **Verified:** 2026-04-25 | commit `<§5 commit>` | 6/6 items | build N/A (host-side Python) | tests 19/19 PASS
+> **Verified:** 2026-04-25 | commit `c1d479a7` | 6/6 items | build N/A (host-side Python) | tests 19/19 PASS
 
 ---
 
