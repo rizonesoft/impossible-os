@@ -742,6 +742,18 @@ Per the [autonomous-agent-boundary policy](ai-system.md#autonomous-agent-boundar
 
 The MCP manifest at [`.mcp.json`](../../.mcp.json) is repo-tracked precisely because the bridge has zero credentials and proxies only public LSPs -- the carve-out documented in [ai-system.md MCP server boundary](ai-system.md#mcp-server-boundary).
 
+#### Path sandboxing
+
+Every MCP tool that takes a `path` argument routes through `_dispatch_path` -> `_open_in_workspace`, which enforces a workspace-bound sandbox by default:
+
+- **Workspace root resolution** chains operator-supplied overrides first: `--repo-root` CLI flag, then `LSP_MCP_WORKSPACE_ROOT` env var (for non-git workspaces or bridges launched outside their own checkout), then the in-tree `todo/`+`scripts/lsp-mcp/` marker walk, then a `.git` ancestor walk, then `Path.cwd()` as a last resort.
+- **Race-free open** walks the path one segment at a time via `os.open(seg, flags, dir_fd=dirfd)`. The dir_fd anchor is a dirfd on the workspace root; `O_NOFOLLOW` on every segment rejects symlinks; `O_DIRECTORY` on intermediates rejects file-where-directory-expected; `O_NONBLOCK` on the final segment prevents FIFO/blocking-device DoS. A concurrent local rename of an ancestor cannot swap the inode the prior fd already references. The bridge fails CLOSED at module import if `os.open not in os.supports_dir_fd` (Linux/macOS only -- WSL2 is the supported runtime).
+- **Symlink policy: rejected unconditionally.** Both relative and absolute paths reject any symlinked component. This is stricter than the resolve-then-validate approach the earlier revision used; the only known impact is that intra-workspace symlinks are no longer followed (no such symlinks exist in this repo today).
+- **Reject classes** (all return structured `LspError` envelopes; no LSP wire traffic): `lsp-path-outside-workspace` (escape, parent traversal `..`, NUL byte, `file://` URI, symlink in walk), `lsp-path-not-found` (missing segment), `lsp-path-too-deep` (>64 segments), `lsp-path-not-regular-file` (FIFO/device/dir at the target), `lsp-path-too-large` (>32 MiB), `lsp-path-invalid-utf8`, `lsp-workspace-root-invalid` (root not a directory).
+- **Defense in depth**: harness sub-tests 15a-15j exercise the priority chain, file:// rejection, parent traversal, symlink rejection (relative + absolute), race-free walk under concurrent rename (50-round stress), absolute-path acceptance for in-workspace files (preserves the LSP-respawn replay contract), workspace-root-invalid envelope, segment-cap envelope, and FIFO-does-not-hang.
+
+This closes a supply-chain / prompt-injection class that every surveyed 3rd-party LSP-MCP bridge (isaacphi, jonrad, mickeyinfoshan, Tritlo, rockerBOO) leaves open by forwarding the path to the LSP without bounds-checking.
+
 #### LSP-miss fallback discipline (4-tier chain)
 
 An empty LSP response does NOT mean a symbol does not exist. LSPs only see files in the build graph (e.g. clangd indexes the ~200 entries in `compile_commands.json`) and skip `#if 0`/preprocessor-excluded branches and generated headers. **Agents using these tools MUST compose tiers, not treat tier 1 as ground truth:**

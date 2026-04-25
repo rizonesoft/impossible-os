@@ -54,6 +54,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 import threading
@@ -874,12 +875,55 @@ def _find_repo_root() -> Path:
     return Path.cwd()
 
 
+def _find_git_root() -> Optional[Path]:
+    """Walk upward from THIS file until a `.git` directory appears.
+    Returns None if no .git ancestor exists.
+
+    Path-sandboxing fallback: when neither --repo-root nor
+    LSP_MCP_WORKSPACE_ROOT is set AND the in-tree marker (todo/ +
+    scripts/lsp-mcp/) is missing, .git is the standard project-root
+    discriminator that every modern editor LSP client uses. Walking
+    from __file__ keeps the discovery deterministic across MCP-host
+    launch directories."""
+    here = Path(__file__).resolve().parent
+    for cand in (here, *here.parents):
+        if (cand / ".git").exists():  # .git can be a dir OR a file (worktrees)
+            return cand
+    return None
+
+
 def _workspace_root_from_argv(args: argparse.Namespace) -> Path:
-    """Resolve the workspace root: --repo-root override wins, else
-    _find_repo_root() walks upward from this script's location."""
+    """Resolve the workspace root with priority:
+        1. --repo-root CLI override.
+        2. LSP_MCP_WORKSPACE_ROOT env var (for non-git workspaces or
+           when the bridge runs outside its own checkout, e.g.
+           embedded as an MCP server in a separate project).
+        3. _find_repo_root() walk for the in-tree
+           todo/ + scripts/lsp-mcp/ marker pair.
+        4. _find_git_root() walk for a .git ancestor (matches editor
+           LSP-client convention).
+        5. Path.cwd() as last resort.
+
+    Path-sandboxing relies on this root: every MCP-tool path arg is
+    resolved against this root and rejected if it escapes. A
+    misconfigured root would either over-restrict (legitimate paths
+    rejected) or over-permit (sandbox boundary too wide). The
+    priority chain reflects "explicit operator intent first, in-tree
+    auto-detect second, generic fallback last"."""
     if args.repo_root:
         return Path(args.repo_root).resolve()
-    return _find_repo_root()
+    env_root = os.environ.get("LSP_MCP_WORKSPACE_ROOT", "").strip()
+    if env_root:
+        return Path(env_root).resolve()
+    intree = _find_repo_root()
+    # _find_repo_root falls back to Path.cwd() on miss; check whether
+    # it actually matched the marker pair before accepting it.
+    if (intree / "todo").is_dir() and (intree / "scripts" / "lsp-mcp").is_dir():
+        return intree
+    git_root = _find_git_root()
+    if git_root is not None:
+        return git_root.resolve()
+    return Path.cwd()
 
 
 def _shutdown_all_lsps() -> None:
@@ -974,6 +1018,307 @@ _LANG_TO_LSP_LANGUAGE_ID: dict[str, str] = {
 # hiding the behavior.
 _TOOL_MAX_READ = 32 * 1024 * 1024
 
+# Path-component segment cap. Defends against a pathological deep
+# path arg whose walk would do thousands of openat() syscalls. 64
+# segments covers every legitimate path in this repo with headroom.
+_MAX_PATH_SEGMENTS = 64
+
+# Capability gate: the race-free walk uses os.open(seg, flags,
+# dir_fd=dirfd). Python 3.x exposes dir_fd support through
+# os.supports_dir_fd. The bridge is Linux-targeted (WSL2) per
+# CLAUDE.md; on a hypothetical platform without dir_fd support
+# we FAIL CLOSED at module import rather than silently fall back
+# to the resolve-then-open TOCTOU window. Codex design review
+# caught the silent-fallback path as High: tests would pass on
+# happy-path validation while the security requirement remained
+# unimplemented.
+if os.open not in os.supports_dir_fd:
+    raise RuntimeError(
+        "scripts/lsp-mcp/bridge.py requires os.open dir_fd support "
+        "(Linux / macOS). This Python build does not advertise "
+        "os.open in os.supports_dir_fd; the race-free path walk "
+        "cannot run safely. Refusing to start."
+    )
+
+
+def _open_in_workspace(workspace_root: Path, path_str: str
+                       ) -> tuple[int, Path]:
+    """Race-free open of a workspace-relative file.
+
+    Walks the workspace root one segment at a time using
+    os.open(seg, flags, dir_fd=dirfd) so an attacker cannot swap
+    an ancestor directory between validation and final open.
+    O_NOFOLLOW on every segment rejects symlinks (per the
+    path-sandboxing test checkpoint: a symlink whose resolution
+    escapes the root must be rejected). O_DIRECTORY on intermediate
+    segments rejects file-where-directory-expected.
+
+    Inputs:
+      workspace_root  -- pre-resolved workspace root Path. Caller
+                         is responsible for canonicalizing it
+                         before invoking this helper.
+      path_str        -- the user-supplied path arg. May be
+                         absolute or relative. Absolute paths are
+                         accepted IFF they canonicalize inside
+                         workspace_root (preserves the LSP-respawn
+                         replay contract that feeds back the stored
+                         absolute resolved_path -- Codex design
+                         review High caught reject-all-absolute as
+                         a regression in subprocess health
+                         monitoring).
+
+    Returns (final_fd, resolved_path):
+      * final_fd      -- open file descriptor on the target file
+                         (caller MUST close).
+      * resolved_path -- workspace_root joined with the walked
+                         segments, in canonical form.
+
+    Raises LspError for:
+      lsp-path-outside-workspace -- absolute outside, parent
+                                    traversal, symlink in walk,
+                                    or file:// URI scheme.
+      lsp-path-not-found         -- segment missing.
+      lsp-path-too-deep          -- segment count exceeds
+                                    _MAX_PATH_SEGMENTS.
+      lsp-path-unreadable        -- I/O error on open."""
+    if not path_str:
+        raise LspError(
+            "lsp-path-not-found",
+            "path is empty",
+            path=path_str,
+        )
+    # Reject file:// URIs at the entry. No current MCP tool
+    # handler accepts file://, but defending here means a future
+    # handler that adds URI support will hit the boundary first.
+    if path_str.startswith(("file://", "file:")):
+        raise LspError(
+            "lsp-path-outside-workspace",
+            f"file:// URIs are not accepted as MCP tool path args; "
+            f"got {path_str!r}",
+            path=path_str,
+        )
+    # Reject embedded NUL bytes (os.open raises ValueError on these
+    # but a structured envelope is friendlier for the agent).
+    if "\0" in path_str:
+        raise LspError(
+            "lsp-path-outside-workspace",
+            f"path {path_str!r} contains NUL byte",
+            path=path_str,
+        )
+    p = Path(path_str)
+    # Absolute path handling: convert to a workspace-relative
+    # segment list using LEXICAL canonicalization (os.path.normpath
+    # to fold ".." and "//"), NOT Path.resolve() -- resolve()
+    # follows symlinks, which would erase symlinked components
+    # before the O_NOFOLLOW walk sees them. Codex post-impl review
+    # caught this as Medium: an absolute path like
+    # /workspace/link/file.c (link -> /workspace/real) would have
+    # been silently followed before the walk could reject it,
+    # bypassing the strict-O_NOFOLLOW policy that the relative-path
+    # branch enforces.
+    #
+    # Preserves the LSP-respawn-replay contract that feeds an
+    # absolute resolved_path back through this function (the
+    # respawn helper stores resolved_path as absolute when first
+    # opening a URI).
+    if p.is_absolute():
+        # Resolve workspace_root once for the prefix check (the
+        # workspace itself MAY be a symlink to the real tree --
+        # operator decision via --repo-root or env).
+        try:
+            ws_resolved = workspace_root.resolve(strict=True)
+        except (OSError, RuntimeError) as exc:
+            raise LspError(
+                "lsp-workspace-root-invalid",
+                f"workspace_root {workspace_root!r} not resolvable: {exc}",
+            ) from exc
+        # LEXICAL canonicalization: fold .. and //, but DO NOT
+        # follow symlinks. The O_NOFOLLOW walk below evaluates the
+        # resulting segments and rejects any symlink it encounters.
+        norm_input = os.path.normpath(path_str)
+        norm_ws = os.path.normpath(str(ws_resolved))
+        sep = os.sep
+        if norm_input == norm_ws:
+            # An absolute path that points AT the workspace root
+            # itself -- not a file. Reject.
+            raise LspError(
+                "lsp-path-not-found",
+                "path resolves to the workspace root (a directory)",
+                path=path_str,
+            )
+        prefix = norm_ws if norm_ws.endswith(sep) else norm_ws + sep
+        if not norm_input.startswith(prefix):
+            raise LspError(
+                "lsp-path-outside-workspace",
+                f"absolute path {path_str!r} (lexically {norm_input}) "
+                f"is not under workspace {norm_ws}",
+                path=path_str,
+                normalized=norm_input,
+                workspace=norm_ws,
+            )
+        # Strip the workspace prefix; remaining segments go into
+        # the dir_fd walk where O_NOFOLLOW catches symlinks.
+        rel_str = norm_input[len(prefix):]
+        segments = [s for s in rel_str.split(sep) if s]
+    else:
+        segments = list(p.parts)
+
+    # Reject parent traversal segments BEFORE opening any fd.
+    # ".." would have been canonicalized away by Path.resolve in
+    # the absolute-path branch, but a relative input like
+    # "../../etc/passwd" gets here verbatim.
+    if any(s in ("..", "") for s in segments):
+        raise LspError(
+            "lsp-path-outside-workspace",
+            f"path {path_str!r} contains parent or empty segment",
+            path=path_str,
+        )
+    # Reject path-segment count above the cap. Defends against a
+    # pathological 10000-segment input that would do 10000
+    # openat syscalls.
+    if len(segments) == 0:
+        raise LspError(
+            "lsp-path-not-found",
+            "path resolves to the workspace root (a directory)",
+            path=path_str,
+        )
+    if len(segments) > _MAX_PATH_SEGMENTS:
+        raise LspError(
+            "lsp-path-too-deep",
+            f"path {path_str!r} has {len(segments)} segments; cap is "
+            f"{_MAX_PATH_SEGMENTS}",
+            path=path_str,
+            segment_count=len(segments),
+            cap=_MAX_PATH_SEGMENTS,
+        )
+
+    # Open the workspace root as the starting dirfd. O_DIRECTORY
+    # rejects "workspace_root pointing at a regular file" early.
+    # O_NOFOLLOW on the workspace root would reject a symlinked
+    # workspace_root -- skip that check (operator-supplied root
+    # via --repo-root or LSP_MCP_WORKSPACE_ROOT may legitimately
+    # be a symlink to the real tree).
+    try:
+        dirfd = os.open(str(workspace_root),
+                        os.O_RDONLY | os.O_DIRECTORY)
+    except OSError as exc:
+        raise LspError(
+            "lsp-workspace-root-invalid",
+            f"open workspace_root {workspace_root!r}: {exc}",
+        ) from exc
+
+    # Walk segment-by-segment via dir_fd. Intermediate segments
+    # MUST be directories AND non-symlinks. The final segment is
+    # the file (no O_DIRECTORY) but still O_NOFOLLOW -- the test
+    # checkpoint says a symlinked file is rejected.
+    try:
+        for i, seg in enumerate(segments):
+            is_last = (i == len(segments) - 1)
+            flags = os.O_RDONLY | os.O_NOFOLLOW
+            if not is_last:
+                flags |= os.O_DIRECTORY
+            else:
+                # Final segment: open NONBLOCK so a malicious
+                # FIFO or blocking device named with a wired
+                # extension (e.g. mkfifo evil.c) cannot stall
+                # the bridge's synchronous tool path. Codex
+                # post-impl review High caught the FIFO/device
+                # DoS. For regular files O_NONBLOCK is a no-op;
+                # the S_ISREG check the caller (_dispatch_path)
+                # runs after fstat rejects anything else with
+                # lsp-path-not-regular-file.
+                flags |= os.O_NONBLOCK
+            try:
+                next_fd = os.open(seg, flags, dir_fd=dirfd)
+            except OSError as exc:
+                # ELOOP: O_NOFOLLOW caught a symlink on the FINAL
+                # segment (with no O_DIRECTORY). ENOTDIR on an
+                # INTERMEDIATE segment with O_NOFOLLOW|O_DIRECTORY
+                # ALSO means symlink (kernel: NOFOLLOW->fd refers
+                # to symlink itself, then O_DIRECTORY check fails
+                # because symlink isn't a dir). Differentiate via
+                # lstat to keep the diagnostic precise -- regular
+                # files mid-path also raise ENOTDIR but are not
+                # symlinks. Both translate to
+                # lsp-path-outside-workspace (the path violates the
+                # sandbox; the symlink-vs-regular-file detail goes
+                # in the message). ENOENT: missing.
+                import errno as _errno
+                if exc.errno in (_errno.ELOOP,):
+                    raise LspError(
+                        "lsp-path-outside-workspace",
+                        f"segment {seg!r} in path {path_str!r} is a "
+                        f"symlink; symlinks are blocked by the path "
+                        "sandbox",
+                        path=path_str,
+                        segment=seg,
+                        segment_index=i,
+                    ) from exc
+                if exc.errno in (_errno.ENOTDIR,):
+                    # Disambiguate symlink-to-directory from regular-
+                    # file-mid-path via lstat (no symlink follow).
+                    is_symlink = False
+                    try:
+                        import stat as _stat
+                        st = os.stat(seg, dir_fd=dirfd,
+                                      follow_symlinks=False)
+                        is_symlink = _stat.S_ISLNK(st.st_mode)
+                    except OSError:
+                        pass
+                    if is_symlink:
+                        raise LspError(
+                            "lsp-path-outside-workspace",
+                            f"segment {seg!r} in path {path_str!r} is "
+                            f"a symlinked directory; symlinks are "
+                            "blocked by the path sandbox",
+                            path=path_str,
+                            segment=seg,
+                            segment_index=i,
+                        ) from exc
+                    # Mid-path regular file (e.g. src/main.c/foo).
+                    raise LspError(
+                        "lsp-path-outside-workspace",
+                        f"segment {seg!r} in path {path_str!r} is a "
+                        f"regular file mid-path (expected directory)",
+                        path=path_str,
+                        segment=seg,
+                        segment_index=i,
+                    ) from exc
+                if exc.errno in (_errno.ENOENT,):
+                    raise LspError(
+                        "lsp-path-not-found",
+                        f"segment {seg!r} in path {path_str!r} not found "
+                        f"({exc})",
+                        path=path_str,
+                        segment=seg,
+                        segment_index=i,
+                    ) from exc
+                raise LspError(
+                    "lsp-path-unreadable",
+                    f"openat({seg!r}): {exc}",
+                    path=path_str,
+                    segment=seg,
+                    segment_index=i,
+                ) from exc
+            # Close the prior dirfd; advance to the next.
+            try:
+                os.close(dirfd)
+            except OSError:
+                pass
+            dirfd = next_fd
+    except BaseException:
+        try:
+            os.close(dirfd)
+        except OSError:
+            pass
+        raise
+
+    # dirfd now refers to the FILE fd. Build the canonical resolved
+    # path for return (the segments we walked, joined with the
+    # workspace root that was the dirfd anchor).
+    resolved = workspace_root.joinpath(*segments)
+    return dirfd, resolved
+
 
 def _dispatch_path(path_str: str, workspace_root: Path
                    ) -> tuple[Path, str, str, int]:
@@ -992,22 +1337,26 @@ def _dispatch_path(path_str: str, workspace_root: Path
 
     Raises LspError for:
       - lsp-path-not-found            -- path does not exist
-      - lsp-path-outside-workspace    -- path resolves outside workspace_root
+      - lsp-path-outside-workspace    -- path escapes workspace_root,
+                                         contains parent traversal,
+                                         contains a symlinked segment,
+                                         or is a file:// URI
       - lsp-path-not-regular-file     -- not a regular file (mode check on fstat)
       - lsp-path-too-large            -- file exceeds _TOOL_MAX_READ
+      - lsp-path-too-deep             -- segment count exceeds cap
       - lsp-path-unsupported-extension -- extension not in _EXT_TO_LANG
       - lsp-path-unreadable           -- I/O error reading fd
       - lsp-path-invalid-utf8         -- file not valid UTF-8
 
-    TOCTOU hardening (Codex adversarial review finding): the early
-    revision validated path + size on Path.stat() then let
-    _ensure_open_for reopen by pathname -- a concurrent local
-    replacement could swap the file for a symlink outside the
-    workspace or a larger file between the two operations. We now
-    open the file via os.open() ONCE, fstat() the resulting fd (which
-    is bound to the specific inode resolve() picked), read under the
-    cap, close, and only then hand the bytes forward. No later code
-    re-reads by pathname.
+    Race-free walk: _open_in_workspace() walks the workspace root
+    one segment at a time via os.open(seg, flags, dir_fd=dirfd) so
+    a concurrent local actor cannot swap an ancestor directory
+    between path validation and final open. O_NOFOLLOW on every
+    segment rejects symlinks (a symlink that escapes the workspace
+    is the canonical attack the path sandbox blocks). Replaces the
+    earlier Path.resolve() + os.open(pathname) two-step which had a
+    narrow TOCTOU window that the path-sandboxing section's design
+    review tracked as an outstanding concern.
 
     Relative paths are resolved against workspace_root, NOT the
     process CWD. MCP hosts launch the bridge from arbitrary
@@ -1015,39 +1364,22 @@ def _dispatch_path(path_str: str, workspace_root: Path
     bind to an unrelated file in the host's launch directory. Codex
     pre-implementation review flagged this as High.
     """
-    p = Path(path_str)
-    candidate = p if p.is_absolute() else (workspace_root / p)
-    try:
-        resolved = candidate.resolve(strict=True)
-    except (OSError, RuntimeError) as exc:
-        raise LspError(
-            "lsp-path-not-found",
-            f"path {path_str!r} does not exist: {exc}",
-            path=path_str,
-        ) from exc
-    try:
-        workspace_resolved = workspace_root.resolve(strict=True)
-    except (OSError, RuntimeError) as exc:
-        raise LspError(
-            "lsp-workspace-root-invalid",
-            f"workspace_root {workspace_root!r} not resolvable: {exc}",
-        ) from exc
-    try:
-        resolved.relative_to(workspace_resolved)
-    except ValueError:
-        raise LspError(
-            "lsp-path-outside-workspace",
-            f"{path_str!r} resolves to {resolved} which is outside "
-            f"workspace {workspace_resolved}",
-            path=path_str,
-            resolved=str(resolved),
-            workspace=str(workspace_resolved),
-        )
+    # Race-free walk: opens the file via per-segment dir_fd so the
+    # final fd is bound to the inode we validated. Returns
+    # (file_fd, resolved_path) -- caller must close the fd. Raises
+    # LspError envelopes with the "lsp-path-*" kinds documented
+    # above.
+    fd, resolved = _open_in_workspace(workspace_root, path_str)
+    # Extension check after the walk because the dir_fd open is
+    # the workspace-bound check; the resolved path here is the
+    # canonical workspace-relative path, NOT the user input.
     ext = resolved.suffix
     lang = _EXT_TO_LANG.get(ext)
     if lang is None:
-        # Fail extension-check BEFORE opening the fd -- no point
-        # paying an open() for a file we will not route anywhere.
+        try:
+            os.close(fd)
+        except OSError:
+            pass
         raise LspError(
             "lsp-path-unsupported-extension",
             f"{resolved} extension {ext!r} is not wired (wired: "
@@ -1056,25 +1388,7 @@ def _dispatch_path(path_str: str, workspace_root: Path
             extension=ext,
         )
 
-    # Single-fd read: resolve() + relative_to() + open() all bind to
-    # the inode we validated; once we have the fd a concurrent
-    # replace of the pathname does not affect us.
-    #
-    # O_NOFOLLOW on the final component is NOT used -- resolve()
-    # already follows every symlink to a canonical non-symlink path,
-    # and the relative_to() check runs against that canonical path.
-    # Re-opening with O_NOFOLLOW would false-reject legitimate
-    # workspace symlinks (e.g. a `src/foo -> ../shared/foo` symlink
-    # that resolves to a path inside the workspace).
     import os as _os
-    try:
-        fd = _os.open(str(resolved), _os.O_RDONLY)
-    except OSError as exc:
-        raise LspError(
-            "lsp-path-unreadable",
-            f"open {resolved}: {exc}",
-            path=path_str,
-        ) from exc
     try:
         import stat as _stat
         try:

@@ -55,7 +55,7 @@ title: "TODO-07 -- LSP to MCP Bridge (C, NASM, shell, Python, PowerShell)"
 | 💎  |  12   | File-change lifecycle (didChange / didSave / didClose forwarding)          | §1, §7                            |  [x]   |
 | ⭐  |  13   | LSP subprocess health monitoring + auto-restart (exp backoff)              | §1                                |  [x]   |
 | 💎  |  14   | Structured JSON logging + request correlation IDs                          | §1                                |  [x]   |
-| ⭐  |  15   | Path sandboxing + workspace boundary enforcement                           | §1, §7                            |  [ ]   |
+| ⭐  |  15   | Path sandboxing + workspace boundary enforcement                           | §1, §7                            |  [x]   |
 | ⭐  |  16   | Warm-index preloading + cold-start budget                                  | §1, §2, §3, §4, §5, §6            |  [ ]   |
 | 💎  |  17   | Scale Roadmap (DEFERRED -- trigger-gated, no code today)                   | --                                |  [ ]   |
 
@@ -274,8 +274,7 @@ Expose six typed MCP tools. Each tool dispatches to the right LSP based on file 
 > - **Scope boundary:** §7 does NOT own extended tools (§11), `didChange`/`didSave`/`didClose` forwarding (§12), full path sandboxing including `openat` race-free walk (§15), watchdog auto-restart (§13), or correlation-ID logging (§14).
 
 > **Verified:** 2026-04-25 | commit `09a5f02b` | 7/7 items | build N/A (host-side Python) | tests 33/33 PASS
-> **Accepted:** [M] residual `resolve()`/`os.open()` path race -- local actor with workspace mutation rights could swap ancestor dir between validate and open (reason: infra) -> XREF: 00-infrastructure/TODO-07 §15 (item: "Race-free path-walk via `openat` (close the resolve/open window)" at line 425)
-> **Quality reviewed:** 2026-04-25 | Codex 4x (design + adversarial + consistency + perf) | 6H+5M+7L fixed, 1M accepted-XREF | scope: N/A (host-side Python tooling; no domain quality skill applies)
+> **Quality reviewed:** 2026-04-25 | Codex 4x (design + adversarial + consistency + perf) | 6H+5M+7L fixed | scope: N/A (host-side Python tooling; no domain quality skill applies)
 
 ---
 
@@ -487,14 +486,26 @@ Every MCP tool takes a `path` argument. Without bounds-checking, an attacker (or
 > [!TIP]
 > Every surveyed 3rd-party LSP-MCP bridge (isaacphi, jonrad, mickeyinfoshan, Tritlo, rockerBOO) forwards `path` to the LSP without bounds-checking. Impossible OS defends by default.
 
-- [ ] `resolve_in_workspace(path: str) -> Path` helper: resolves `path` against `WORKSPACE_ROOT` (auto-detect: walk up from CWD until `.git`; fallback to `LSP_MCP_WORKSPACE_ROOT` env var). Rejects symlinks that resolve outside the root, rejects absolute paths outside the root with `{"error": "path-outside-workspace", "path": <input>, "workspace": <root>}`.
-- [ ] **Race-free path-walk via `openat` (close the resolve/open window).** Today's `_dispatch_path()` in `scripts/lsp-mcp/bridge.py` validates with `Path.resolve()` + `relative_to()` then opens with `os.open(str(resolved), O_RDONLY)`. A local actor who can mutate workspace paths between validation and open can swap the final component OR an ancestor directory -- the opened fd now refers to a different inode than the one validated. Mitigation on Linux: use `os.open(str(workspace_root))` → dirfd, then walk the workspace-relative path component-by-component via `os.openat(dirfd, seg, O_RDONLY|O_NOFOLLOW|O_DIRECTORY)` for each directory segment, and `os.openat(final_dirfd, name, O_RDONLY)` for the final file. `O_NOFOLLOW` rejects symlinked directories in the walk (a stronger-than-current policy; evaluate whether to allow symlinks by ANY means, or only re-stat the final-fd canonical path via `os.readlink(f"/proc/self/fd/{fd}")` and compare to the validated resolved path). On non-Linux (macOS), `openat` exists with compatible semantics; on Windows use `CreateFileW` with `FILE_FLAG_OPEN_REPARSE_POINT`. Retrofit consumer: `scripts/lsp-mcp/bridge.py:_dispatch_path()` returns `(resolved, lang, text)`; the race-free walk becomes an alternative implementation of that function, returning the same 3-tuple. Validation: add a sub-test (7i or equivalent in §10's harness scope) that creates a tempdir, calls `_dispatch_path` in a background thread, mutates the tempdir path with `os.rename` in a second thread, and asserts the call either returns the original inode's bytes OR fails with `lsp-path-outside-workspace` -- never a wrong-file read. Codex post-commit review of TODO-07 §7 flagged this as Medium; the race has narrow practical impact (local actor with write access to workspace dirs) but closing it moves the trust boundary from "resolve-then-open" to "walk-bound-to-workspace".
-- [ ] Wire every MCP tool handler through `resolve_in_workspace` before constructing the LSP request.
-- [ ] Reject `file://` URIs whose resolved path escapes the workspace in the same way.
-- [ ] Document the policy in the §9 docs subsection ("Path Security"): workspace-bounded by default; `LSP_MCP_WORKSPACE_ROOT` override for non-git workspaces.
-- [ ] Commit: `"scripts/lsp-mcp: workspace-bound path sandboxing"`
+- [x] `_workspace_root_from_argv` chains `--repo-root` > `LSP_MCP_WORKSPACE_ROOT` env > `_find_repo_root` (in-tree marker) > `_find_git_root` (.git ancestor walk) > `Path.cwd()`. Operator-supplied overrides win; non-git workspaces (or bridges launched outside their own checkout) get explicit env-knob support.
+- [x] `_open_in_workspace(workspace_root, path_str)` walks segment-by-segment via `os.open(seg, flags, dir_fd=dirfd)` with `O_NOFOLLOW|O_DIRECTORY` on intermediates and `O_NOFOLLOW|O_NONBLOCK` on the final segment. The dir_fd anchor is a dirfd on workspace_root; concurrent ancestor renames cannot swap the inode the prior fd references. Module-import fail-closed if `os.open not in os.supports_dir_fd` (Codex design review High caught the silent-fallback path that would have left Linux without race-free walk if `os.openat` -- which does not exist in Python 3.x -- was the API choice). `O_NONBLOCK` on the final open prevents FIFO/blocking-device DoS; subsequent `S_ISREG` fstat check rejects non-regular files (Codex post-impl review High). Linux/macOS only; bridge runs on WSL2 per CLAUDE.md.
+- [x] `_dispatch_path` refactored to call `_open_in_workspace`; the old `Path.resolve()` + `relative_to()` + `os.open(pathname)` two-step is gone, closing the residual TOCTOU window the §7 review tracked. Absolute paths handled via lexical canonicalization (`os.path.normpath` + workspace-prefix check) NOT `Path.resolve()` so symlinked components in absolute inputs are caught by the walk's `O_NOFOLLOW` (Codex post-impl review Medium; reject-all-absolute would have broken the LSP-respawn replay path which feeds back stored absolute resolved_path -- Codex design review High).
+- [x] file:// URI rejection at `_dispatch_path` entry (`lsp-path-outside-workspace`). NUL byte rejection. Parent-traversal segment rejection BEFORE any fd open. Path-segment count cap `_MAX_PATH_SEGMENTS=64` to bound openat syscalls.
+- [x] Policy doc added to [`docs/infrastructure/development-tooling.md` LSP MCP Bridge subsection](../../docs/infrastructure/development-tooling.md) under "Path sandboxing" describing the workspace-root resolution chain, the `LSP_MCP_WORKSPACE_ROOT` env knob, the all-symlink-rejection policy, and the dir_fd-walk capability gate.
+- [x] Commit: `"scripts/lsp-mcp: workspace-bound path sandboxing"`
 
 **Test checkpoint:** `hover(path="/etc/passwd", line=0, character=0)` returns `{"error": "path-outside-workspace"}`. `hover(path="../../etc/passwd", ...)` same. `hover(path="src/kernel/main.c", ...)` succeeds. Symlink test: `ln -s /etc/passwd src/evil.c && hover(path="src/evil.c", ...)` -- rejected because symlink resolution escapes the root.
+
+> **Test runner:** `bash scripts/lsp-mcp/tests/test_bridge.sh` | 80/80 sub-tests PASS (1a-9a + 11a-11g + 12a-12f + 13a-13i + 14a-14k + 15a-15j; 15a workspace-root priority chain, 15b file:// URI rejection, 15c parent traversal + NUL byte, 15d symlink rejected by O_NOFOLLOW, 15e race-free walk under concurrent rename (50 rounds), 15f absolute in-workspace path still works (LSP-respawn replay regression guard), 15g workspace-root invalid envelope, 15h `_MAX_PATH_SEGMENTS` cap, 15i FIFO with wired extension does not hang the bridge (O_NONBLOCK fix), 15j absolute path through symlinked dir rejected (lexical normpath fix))
+
+> **Notes:**
+>
+> - **What shipped:** `bridge.py` adds `_find_git_root` + `LSP_MCP_WORKSPACE_ROOT` env knob in `_workspace_root_from_argv`, `_open_in_workspace` race-free dir_fd walk (~150 LOC), module-import `os.supports_dir_fd` capability gate (fails closed), and refactors `_dispatch_path` to route through the new walk. `tests/test_bridge.sh` adds 10 new sub-tests (15a-15j).
+> - **How it runs:** every MCP tool path arg goes through `_dispatch_path` -> `_open_in_workspace` -> per-segment `os.open(seg, O_RDONLY|O_NOFOLLOW|O_DIRECTORY?, dir_fd=)` walk. `O_NONBLOCK` on the final segment + `S_ISREG` fstat check gate the read; FIFO/device targets are rejected without blocking. Workspace-root resolution priority: `--repo-root` > `LSP_MCP_WORKSPACE_ROOT` > in-tree marker walk > `.git` walk > `cwd`.
+> - **Downstream effects:** closes the residual TOCTOU window the §7 review tracked (Accepted-XREF deleted by this commit). Closes the supply-chain / prompt-injection class every surveyed 3rd-party LSP-MCP bridge (isaacphi, jonrad, mickeyinfoshan, Tritlo, rockerBOO) leaves open. Codex 2x review adoptions (design + adversarial; 2H+2H+2M findings) -- evidence in commit message.
+> - **Canonical doc:** [`docs/infrastructure/development-tooling.md` LSP MCP Bridge / Path sandboxing](../../docs/infrastructure/development-tooling.md) -- new H4 subsection between Read-only boundary and LSP-miss fallback discipline.
+> - **Scope boundary:** §15 does NOT own warm-start eager spawn (§16) or the deferred scale roadmap (§17). Symlink policy is intentionally strict (rejects ALL symlinks, not just escape) -- if intra-workspace symlinks become a real use case later, that's a deliberate policy relaxation in a future section.
+
+> **Verified:** 2026-04-25 | commit `<§15 commit>` | 6/6 items | build OK | tests 80/80 PASS
 
 ---
 

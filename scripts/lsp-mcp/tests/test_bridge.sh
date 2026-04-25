@@ -3922,6 +3922,340 @@ print(f'[truncate-body] OK -- 5 MiB body bounded in {elapsed*1000:.2f}ms')
 PY
 }
 
+# --- 15a: workspace-root resolution priority chain -----------------------
+# --repo-root > LSP_MCP_WORKSPACE_ROOT > _find_repo_root > _find_git_root > cwd.
+t_workspace_root_priority() {
+    python3 - << 'PY'
+import sys, os, argparse, tempfile
+from pathlib import Path
+sys.path.insert(0, 'scripts/lsp-mcp')
+import bridge
+
+# (1) --repo-root wins.
+ns = argparse.Namespace(repo_root='/tmp')
+got = bridge._workspace_root_from_argv(ns)
+assert got == Path('/tmp').resolve(), got
+
+# (2) LSP_MCP_WORKSPACE_ROOT env wins when --repo-root unset.
+ns = argparse.Namespace(repo_root=None)
+saved = os.environ.get('LSP_MCP_WORKSPACE_ROOT')
+try:
+    with tempfile.TemporaryDirectory() as td:
+        os.environ['LSP_MCP_WORKSPACE_ROOT'] = td
+        got = bridge._workspace_root_from_argv(ns)
+        assert got == Path(td).resolve(), got
+finally:
+    if saved is None: os.environ.pop('LSP_MCP_WORKSPACE_ROOT', None)
+    else:             os.environ['LSP_MCP_WORKSPACE_ROOT'] = saved
+
+# (3) Empty env -> falls through to in-tree marker walk.
+saved = os.environ.get('LSP_MCP_WORKSPACE_ROOT')
+try:
+    os.environ['LSP_MCP_WORKSPACE_ROOT'] = ''
+    got = bridge._workspace_root_from_argv(argparse.Namespace(repo_root=None))
+    # Should land at the impossible-os repo root (this script's tree).
+    assert (got / 'scripts' / 'lsp-mcp').is_dir(), got
+finally:
+    if saved is None: os.environ.pop('LSP_MCP_WORKSPACE_ROOT', None)
+    else:             os.environ['LSP_MCP_WORKSPACE_ROOT'] = saved
+PY
+}
+
+# --- 15b: file:// URI rejected at _dispatch_path entry ------------------
+t_file_uri_rejected() {
+    python3 - << 'PY'
+import sys
+from pathlib import Path
+sys.path.insert(0, 'scripts/lsp-mcp')
+import bridge
+from lsp_client import LspError
+
+ws = Path.cwd()
+for url in ('file:///etc/passwd', 'file://localhost/etc/passwd', 'file:/etc/passwd'):
+    try:
+        bridge._dispatch_path(url, ws)
+        raise SystemExit(f'file:// URI {url!r} not rejected')
+    except LspError as e:
+        assert e.kind == 'lsp-path-outside-workspace', (url, e.kind)
+PY
+}
+
+# --- 15c: ../../escape rejected at parent-traversal gate ----------------
+t_parent_traversal_rejected() {
+    python3 - << 'PY'
+import sys
+from pathlib import Path
+sys.path.insert(0, 'scripts/lsp-mcp')
+import bridge
+from lsp_client import LspError
+
+ws = Path.cwd()
+for bad in ('../../etc/passwd', '../etc/passwd', 'src/../../etc/passwd',
+             'src//../etc'):
+    try:
+        bridge._dispatch_path(bad, ws)
+        raise SystemExit(f'parent-traversal path {bad!r} not rejected')
+    except LspError as e:
+        # Either parent-segment rejection (most paths) OR not-found
+        # (the symlink-walk catches some forms).
+        assert e.kind in ('lsp-path-outside-workspace', 'lsp-path-not-found'), \
+            f'unexpected kind for {bad!r}: {e.kind}'
+
+# Embedded NUL byte rejected.
+try:
+    bridge._dispatch_path('src/main\0.c', ws)
+    raise SystemExit('NUL-byte path not rejected')
+except LspError as e:
+    assert e.kind == 'lsp-path-outside-workspace', e.kind
+PY
+}
+
+# --- 15d: symlink in walk rejected (per test checkpoint) ---------------
+# `ln -s /etc/passwd src/evil.c && hover(path="src/evil.c")` -> rejected.
+t_symlink_rejected() {
+    python3 - << 'PY'
+import sys, os, tempfile
+from pathlib import Path
+sys.path.insert(0, 'scripts/lsp-mcp')
+import bridge
+from lsp_client import LspError
+
+ws = Path.cwd()
+# Place a symlink to /etc/passwd inside the workspace with a wired
+# extension. The race-free walk MUST reject it via O_NOFOLLOW.
+link_path = ws / 'evil_test_link.c'
+try:
+    if link_path.exists() or link_path.is_symlink():
+        link_path.unlink()
+    os.symlink('/etc/passwd', str(link_path))
+    try:
+        bridge._dispatch_path('evil_test_link.c', ws)
+        raise SystemExit('symlinked file not rejected by O_NOFOLLOW walk')
+    except LspError as e:
+        assert e.kind == 'lsp-path-outside-workspace', e.kind
+        assert 'symlink' in e.detail or 'symlink' in str(e.extra), e.detail
+finally:
+    try: link_path.unlink()
+    except FileNotFoundError: pass
+PY
+}
+
+# --- 15e: race-free walk: rename mid-walk -> wrong-file read NEVER OK ---
+# Two threads: one mutates the workspace tree, the other dispatches.
+# The dispatch result MUST be either the original-inode bytes OR an
+# lsp-path-outside-workspace envelope -- never bytes from a different
+# inode the attacker swapped in. Codex post-implementation review of
+# the path sandboxing surface tracked this as the canonical TOCTOU
+# guard the race-free walk closes.
+t_race_free_walk_rename() {
+    python3 - << 'PY'
+import sys, os, tempfile, threading, time
+from pathlib import Path
+sys.path.insert(0, 'scripts/lsp-mcp')
+import bridge
+from lsp_client import LspError
+
+# Build a TEMP workspace so we can rename without disturbing the
+# real tree. Use a wired extension (.c).
+ws = Path(tempfile.mkdtemp(prefix='lsp-mcp-15e-'))
+try:
+    inner = ws / 'inner'
+    inner.mkdir()
+    target = inner / 'main.c'
+    target.write_text('// original bytes\n')
+    decoy = ws / 'decoy.c'
+    decoy.write_text('// decoy bytes\n')
+
+    rounds = 50
+    bad_reads = 0
+    for _ in range(rounds):
+        # Background thread mutates the tree mid-dispatch.
+        ev = threading.Event()
+        def mutator():
+            ev.wait(timeout=1.0)
+            # Best-effort rename; OK if it races and fails.
+            try:
+                inner.rename(ws / 'inner_moved')
+                (ws / 'inner_moved').rename(inner)
+            except OSError:
+                pass
+        t = threading.Thread(target=mutator)
+        t.start()
+        ev.set()
+        try:
+            _, _, text, _ = bridge._dispatch_path('inner/main.c', ws)
+            # If we got bytes, they MUST be from the original inode.
+            if 'original bytes' not in text:
+                bad_reads += 1
+        except LspError:
+            # Acceptable: the walk noticed the change and rejected.
+            pass
+        t.join()
+    assert bad_reads == 0, f'{bad_reads}/{rounds} race-condition wrong-file reads'
+finally:
+    import shutil
+    shutil.rmtree(str(ws), ignore_errors=True)
+PY
+}
+
+# --- 15f: respawn replay still works after the absolute-path fix --------
+# Codex design review High: rejecting all absolute paths would break
+# the LSP-respawn replay path (it passes back the stored absolute
+# resolved_path). Verify the absolute-in-workspace path is still
+# accepted.
+t_respawn_replay_absolute_path_still_works() {
+    python3 - << 'PY'
+import sys
+from pathlib import Path
+sys.path.insert(0, 'scripts/lsp-mcp')
+import bridge
+from lsp_client import LspError
+
+ws = Path.cwd().resolve()
+# Build an absolute in-workspace path the way the LSP-respawn
+# replay path would pass it back through.
+abs_path = str(ws / 'src/kernel/main.c')
+resolved, lang, text, mtime_ns = bridge._dispatch_path(abs_path, ws)
+assert lang == 'c', lang
+assert 'kernel_main' in text, 'absolute in-workspace path failed dispatch'
+
+# Absolute path OUTSIDE workspace -> rejected.
+try:
+    bridge._dispatch_path('/etc/passwd', ws)
+    raise SystemExit('/etc/passwd not rejected')
+except LspError as e:
+    assert e.kind == 'lsp-path-outside-workspace', e.kind
+PY
+}
+
+# --- 15g: workspace-root not a directory -> structured envelope --------
+t_workspace_root_invalid() {
+    python3 - << 'PY'
+import sys
+from pathlib import Path
+sys.path.insert(0, 'scripts/lsp-mcp')
+import bridge
+from lsp_client import LspError
+
+# Pass a regular file as the workspace root.
+try:
+    bridge._dispatch_path('foo.c', Path('/etc/hostname'))
+    raise SystemExit('non-directory workspace not rejected')
+except LspError as e:
+    # workspace_root is a file -> os.open(O_DIRECTORY) raises ENOTDIR.
+    assert e.kind == 'lsp-workspace-root-invalid', e.kind
+PY
+}
+
+# --- 15h: deep-path cap (lsp-path-too-deep) -----------------------------
+t_path_too_deep() {
+    python3 - << 'PY'
+import sys, tempfile
+from pathlib import Path
+sys.path.insert(0, 'scripts/lsp-mcp')
+import bridge
+from lsp_client import LspError
+
+ws = Path.cwd()
+deep = '/'.join(['x'] * (bridge._MAX_PATH_SEGMENTS + 1)) + '/foo.c'
+try:
+    bridge._dispatch_path(deep, ws)
+    raise SystemExit('over-cap path not rejected')
+except LspError as e:
+    assert e.kind == 'lsp-path-too-deep', e.kind
+    assert e.extra.get('cap') == bridge._MAX_PATH_SEGMENTS
+PY
+}
+
+# --- 15i: FIFO with wired extension must not hang the bridge -----------
+# Codex post-impl review High: opening the final segment without
+# O_NONBLOCK would block on FIFO/blocking-device targets. Fix
+# uses O_NONBLOCK on the final open + S_ISREG check.
+t_fifo_path_does_not_hang() {
+    python3 - << 'PY'
+import sys, os, tempfile, threading, time
+from pathlib import Path
+sys.path.insert(0, 'scripts/lsp-mcp')
+import bridge
+from lsp_client import LspError
+
+ws = Path(tempfile.mkdtemp(prefix='lsp-mcp-15i-'))
+try:
+    fifo = ws / 'evil.c'
+    os.mkfifo(str(fifo))
+    # _dispatch_path MUST reject within milliseconds; without the
+    # O_NONBLOCK fix it would hang waiting for a writer.
+    result = {'kind': None, 'detail': None}
+    def go():
+        try:
+            bridge._dispatch_path('evil.c', ws)
+            result['kind'] = 'no-rejection'
+        except LspError as e:
+            result['kind'] = e.kind
+            result['detail'] = e.detail
+    t = threading.Thread(target=go)
+    t.start()
+    t.join(timeout=2.0)
+    assert not t.is_alive(), 'bridge HUNG opening FIFO -- O_NONBLOCK fix missing'
+    assert result['kind'] == 'lsp-path-not-regular-file', \
+        f'FIFO not rejected as non-regular: {result}'
+finally:
+    import shutil
+    shutil.rmtree(str(ws), ignore_errors=True)
+PY
+}
+
+# --- 15j: absolute path with in-workspace symlink REJECTED -------------
+# Codex post-impl review Medium: Path.resolve() in the absolute-path
+# branch was erasing symlinks before the O_NOFOLLOW walk could see
+# them. Fix uses lexical normpath instead. The all-symlink rejection
+# policy now applies to absolute paths too.
+t_absolute_path_symlink_rejected() {
+    python3 - << 'PY'
+import sys, os, tempfile
+from pathlib import Path
+sys.path.insert(0, 'scripts/lsp-mcp')
+import bridge
+from lsp_client import LspError
+
+ws = Path(tempfile.mkdtemp(prefix='lsp-mcp-15j-'))
+try:
+    real = ws / 'real'
+    real.mkdir()
+    target = real / 'main.c'
+    target.write_text('// real bytes\n')
+    link_dir = ws / 'link'
+    os.symlink(str(real), str(link_dir))
+
+    # Relative path through symlinked directory -> rejected.
+    try:
+        bridge._dispatch_path('link/main.c', ws)
+        raise SystemExit('relative symlinked dir not rejected')
+    except LspError as e:
+        assert e.kind == 'lsp-path-outside-workspace', e.kind
+        assert 'symlink' in e.detail or 'symlink' in str(e.extra), e.detail
+
+    # ABSOLUTE path through symlinked directory -> ALSO rejected
+    # (regression guard for Codex Medium).
+    abs_through_link = str(ws / 'link' / 'main.c')
+    try:
+        bridge._dispatch_path(abs_through_link, ws)
+        raise SystemExit('absolute path through symlink not rejected')
+    except LspError as e:
+        assert e.kind == 'lsp-path-outside-workspace', e.kind
+        assert 'symlink' in e.detail or 'symlink' in str(e.extra), e.detail
+
+    # Direct (non-symlinked) absolute path still works.
+    abs_direct = str(ws / 'real' / 'main.c')
+    resolved, lang, text, _ = bridge._dispatch_path(abs_direct, ws)
+    assert lang == 'c', lang
+    assert 'real bytes' in text, text
+finally:
+    import shutil
+    shutil.rmtree(str(ws), ignore_errors=True)
+PY
+}
+
 # --- 9a: LSP-process-leak detection (run LAST) ----------------------------
 t_no_leaked_lsp_processes() {
     # Capture the post-harness PID set of LSP binaries owned by this
@@ -4022,6 +4356,16 @@ run "14h ws-symbol cleanup paths"        t_workspace_symbol_cleanup_paths
 run "14i _call_lsp phase-end on exc"     t_call_lsp_logs_phase_end_on_exception
 run "14j lsp-recv corr_id correlation"   t_lsp_recv_corr_id_correlation
 run "14k truncate body CPU bounded"      t_truncate_body_cpu_bounded
+run "15a workspace root priority chain"  t_workspace_root_priority
+run "15b file:// URI rejected"           t_file_uri_rejected
+run "15c parent traversal rejected"      t_parent_traversal_rejected
+run "15d symlink rejected by O_NOFOLLOW" t_symlink_rejected
+run "15e race-free walk under rename"    t_race_free_walk_rename
+run "15f respawn replay absolute path"   t_respawn_replay_absolute_path_still_works
+run "15g workspace-root invalid"         t_workspace_root_invalid
+run "15h path-too-deep cap"              t_path_too_deep
+run "15i FIFO does not hang"             t_fifo_path_does_not_hang
+run "15j abs symlink rejected"           t_absolute_path_symlink_rejected
 # 9a runs LAST so every prior sub-test has had a chance to clean up.
 run "9a no leaked LSP processes"         t_no_leaked_lsp_processes
 
