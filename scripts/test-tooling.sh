@@ -599,6 +599,160 @@ else
 fi
 
 # ============================================================================
+# Cross-tool MCP drift detection (TODO-08 in 00-infrastructure section 1)
+#
+# Asserts the Claude Code side (.mcp.json) and the Codex CLI side
+# (~/.codex/config.toml, validated against the repo-owned fixture
+# docs/infrastructure/codex-mcp.config.toml) expose the same MCP
+# server set with the same wiring (command, args, cwd, timeouts,
+# enabled_tools allowlist where applicable).
+#
+# Two-step drift check:
+#   1. Codex side -- delegate to scripts/codex-mcp-install.sh --check
+#      so the rule "Codex config matches repo fixture" is enforced
+#      from the same source the installer uses (no two-source bug).
+#   2. Cross-side parity -- diff the SERVER NAME SET between
+#      .mcp.json (mcpServers keys) and the repo fixture
+#      (mcp_servers.* tables). A mismatch means somebody added a
+#      server to one client without adding it to the other.
+#
+# Skip-with-WARN behavior: a fresh dev environment with no
+# ~/.codex/config.toml gets a clear actionable message pointing at
+# scripts/codex-mcp-install.sh (the installer creates the file from
+# the fixture). The Cross-side parity check still runs even without
+# Codex installed because it compares the repo's .mcp.json against
+# the repo's fixture, both repo-tracked.
+[ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[mcp_drift]${NC}"
+
+MCP_FIXTURE="$REPO_ROOT/docs/infrastructure/codex-mcp.config.toml"
+CLAUDE_MCP_JSON="$REPO_ROOT/.mcp.json"
+CODEX_MCP_INSTALL="$REPO_ROOT/scripts/codex-mcp-install.sh"
+
+if [ ! -f "$MCP_FIXTURE" ]; then
+    t_fail "mcp_drift fixture missing: $MCP_FIXTURE"
+elif [ ! -f "$CLAUDE_MCP_JSON" ]; then
+    t_fail "mcp_drift Claude .mcp.json missing: $CLAUDE_MCP_JSON"
+else
+    # Cross-side parity check (always runs). The python script is
+    # written to a tempfile to avoid a heredoc-inside-$() pattern
+    # bash misparses with a "unterminated here-document" warning.
+    # Codex post-impl adversarial review High caught the original
+    # name-only diff as insufficient: a .mcp.json command/args
+    # change for an existing server name silently passed. The
+    # parity script now compares command + args + cwd between
+    # .mcp.json and the repo fixture for each named server, on
+    # top of the server-name set check.
+    MCP_PARITY_PY="$(mktemp)"
+    cat > "$MCP_PARITY_PY" <<'PY'
+import json
+import sys
+
+try:
+    import tomllib
+except ImportError:
+    sys.stderr.write("python3 lacks tomllib (need 3.11+)\n")
+    sys.exit(2)
+
+claude_path, fixture_path = sys.argv[1], sys.argv[2]
+claude = json.loads(open(claude_path).read())
+claude_servers = (claude.get("mcpServers") or {})
+
+with open(fixture_path, "rb") as f:
+    fixture = tomllib.load(f)
+fixture_servers = (fixture.get("mcp_servers") or {})
+
+claude_names = set(claude_servers.keys())
+fixture_names = set(fixture_servers.keys())
+
+# Server-name set parity.
+errors = []
+claude_only = sorted(claude_names - fixture_names)
+fixture_only = sorted(fixture_names - claude_names)
+if claude_only:
+    errors.append(
+        f"in .mcp.json but not in fixture: {', '.join(claude_only)}"
+    )
+if fixture_only:
+    errors.append(
+        f"in fixture but not in .mcp.json: {', '.join(fixture_only)}"
+    )
+
+# Per-server semantic compare for shared names. The two sides use
+# different schemas (.mcp.json: {command, args}; Codex fixture:
+# {command, args, cwd, ...}). For each shared name, assert that
+# command + args[0] (the script path) match exactly. We do NOT
+# compare cwd (Codex needs an absolute path; .mcp.json is
+# implicitly cwd=repo-root) or args[1:] (CLI flags can legitimately
+# differ between clients -- e.g. Claude may pass --warm-start while
+# a future client wants --different-flag).
+for name in sorted(claude_names & fixture_names):
+    c = claude_servers[name]
+    f = fixture_servers[name]
+    c_cmd = c.get("command")
+    f_cmd = f.get("command")
+    if c_cmd != f_cmd:
+        errors.append(
+            f"[{name}] command mismatch: .mcp.json={c_cmd!r} "
+            f"fixture={f_cmd!r}"
+        )
+    c_args = c.get("args") or []
+    f_args = f.get("args") or []
+    if not c_args or not f_args:
+        errors.append(
+            f"[{name}] empty args: .mcp.json={c_args!r} "
+            f"fixture={f_args!r}"
+        )
+    elif c_args[0] != f_args[0]:
+        errors.append(
+            f"[{name}] script path mismatch: "
+            f".mcp.json args[0]={c_args[0]!r} "
+            f"fixture args[0]={f_args[0]!r}"
+        )
+
+if errors:
+    for e in errors:
+        sys.stderr.write(f"  {e}\n")
+    sys.exit(1)
+print(f"both sides expose {len(claude_names)} servers with matching "
+      f"command + script path: {', '.join(sorted(claude_names))}")
+PY
+    PARITY_OUT=$(python3 "$MCP_PARITY_PY" "$CLAUDE_MCP_JSON" "$MCP_FIXTURE" 2>&1)
+    PARITY_RC=$?
+    rm -f "$MCP_PARITY_PY"
+
+    # Codex-side check (delegates to installer's --check mode).
+    if [ -f "${HOME}/.codex/config.toml" ] && [ -x "$CODEX_MCP_INSTALL" ]; then
+        CODEX_OUT=$("$CODEX_MCP_INSTALL" --check 2>&1)
+        CODEX_RC=$?
+    elif [ ! -f "${HOME}/.codex/config.toml" ]; then
+        CODEX_OUT="~/.codex/config.toml absent (run: bash scripts/codex-mcp-install.sh)"
+        CODEX_RC=2
+    else
+        CODEX_OUT="scripts/codex-mcp-install.sh missing or not executable"
+        CODEX_RC=2
+    fi
+
+    # Codex post-impl adversarial review High caught the original
+    # condition's mask: a previous revision did `t_pass` on
+    # CODEX_RC == 2 alone, which silently passed even when the
+    # cross-side parity check FAILed. Always check PARITY_RC
+    # first; only consider the codex-side skip-with-PASS when
+    # PARITY_RC is also 0.
+    if [ "$PARITY_RC" != "0" ]; then
+        t_fail "mcp_drift cross-side parity FAIL: ${PARITY_OUT}"
+    elif [ "$CODEX_RC" = "0" ]; then
+        t_pass "mcp_drift Claude .mcp.json and Codex config in sync (${PARITY_OUT})"
+    elif [ "$CODEX_RC" = "2" ]; then
+        # Skip-with-PASS: fresh dev env / installer missing AND
+        # cross-side parity passed. The hint message tells the
+        # operator how to install the Codex side.
+        t_pass "mcp_drift cross-side parity OK; codex-side SKIP (${CODEX_OUT})"
+    else
+        t_fail "mcp_drift codex-side: ${CODEX_OUT}"
+    fi
+fi
+
+# ============================================================================
 # Summary
 # ============================================================================
 

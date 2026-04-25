@@ -300,6 +300,13 @@ Bullets that still apply to user-local credentialed MCP servers:
 
 The two existing entries each have a corresponding TODO -- [todo-graph MCP transport](../../todo/00-infrastructure/TODO-06-todo-metadata-layer.md#8-mcp-server-ai-agent-transport-over-the-cache) and [LSP-MCP bridge](../../todo/00-infrastructure/TODO-07-lsp-mcp-bridge.md); both ship harnesses and boundary audits. Any third entry follows the same shape.
 
+**Cross-tool MCP server set (Claude Code + Codex CLI).** The same two repo-tracked servers are wired into both AI clients so reviewer / rescue / task runs from EITHER tool have the same dependency-graph + LSP-grade context:
+
+- **Claude Code side:** [`.mcp.json`](../../.mcp.json) at repo root (auto-loaded by the harness when working under this repo).
+- **Codex CLI side:** `~/.codex/config.toml` (user-local, since Codex CLI 0.126 has no per-project equivalent of `.mcp.json`). The expected TOML block content is repo-tracked at [`docs/infrastructure/codex-mcp.config.toml`](codex-mcp.config.toml); the installer at [`scripts/codex-mcp-install.sh`](../../scripts/codex-mcp-install.sh) merges the fixture into the user's Codex config (idempotent; `--check` mode is a dry-run).
+- **Drift detection:** the `mcp_drift` sub-test in [`scripts/test-tooling.sh`](../../scripts/test-tooling.sh) asserts both that the Claude `.mcp.json` and the Codex fixture name the same server set AND that the user's actual `~/.codex/config.toml` matches the fixture key-for-key. A mismatch fails fast with an actionable message pointing at the installer. On a fresh dev environment with no `~/.codex/config.toml`, the cross-side parity check still runs (against the repo fixture) and the codex-side check skip-with-PASS with a hint to run the installer.
+- **Canonical TODO:** [Codex MCP Wiring + Cross-Config Drift Validator](../../todo/00-infrastructure/TODO-08-automation-hardening.md#1-codex-mcp-wiring--cross-config-drift-validator). Future cross-tool MCP wiring (third client, fourth server, etc.) extends the same fixture + installer + validator triplet rather than introducing a parallel mechanism.
+
 ### Subagent boundary
 
 Claude Code ships a handful of built-in subagents (`claude-code-guide`, `Explore`, `general-purpose`, `Plan`, `statusline-setup`). These are harness-provided and do NOT count as repo-tracked AI surface.

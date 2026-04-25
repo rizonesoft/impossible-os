@@ -1,0 +1,80 @@
+# =====================================================================
+# docs/infrastructure/codex-mcp.config.toml
+#
+# Canonical Codex CLI MCP server contract for impossible-os.
+#
+# This file is the REPO-OWNED source of truth for the two MCP server
+# blocks Codex CLI is expected to expose: `todo-graph` and `lsp-bridge`.
+# Codex CLI reads `~/.codex/config.toml` (per Codex CLI 0.126), which is
+# user-local; this fixture documents the EXACT block shape that file
+# must contain. The drift validator in `scripts/test-tooling.sh` (the
+# `mcp_drift` sub-test) compares the active `~/.codex/config.toml`
+# against this fixture and against `.mcp.json` (the Claude Code side)
+# so the two AI clients cannot silently diverge.
+#
+# Owner: TODO-08-automation-hardening section 1 (Codex MCP Wiring).
+#
+# How to install / refresh on a fresh dev environment:
+#   bash scripts/codex-mcp-install.sh
+# That script merges the two blocks below into the user's
+# `~/.codex/config.toml`, preserving any non-MCP keys (model,
+# project-trust, etc.). Idempotent: running it twice is a no-op.
+#
+# Why a fixture instead of just running `codex mcp add`:
+#   The `codex mcp add` CLI is fine for one-shot wiring, but the
+#   resulting `~/.codex/config.toml` is then the only source of truth.
+#   A user who reinstalls Codex, switches machines, or wipes their
+#   home dir loses the wiring with no diff signal. The fixture +
+#   installer + drift validator triplet keeps the wiring reproducible
+#   and detectable.
+# =====================================================================
+
+[mcp_servers.todo-graph]
+command = "python3"
+args = ["scripts/todo-graph/mcp_server.py"]
+cwd = "/home/derickpayne/impossible-os"
+# Codex CLI default timeouts are non-obvious; explicit values keep
+# both clients aligned. 10 s startup is generous (the todo-graph
+# server reads + parses the entire todo/ tree at boot, ~50 ms today).
+startup_timeout_sec = 10
+# 60 s per tool call covers the slow-path graph queries (full
+# dependency walk across all 86 TODO files); fast-path queries
+# return in single-digit ms.
+tool_timeout_sec = 60
+# Fail loudly if Codex starts without this server -- losing the
+# dependency-graph context silently degrades every Codex review.
+required = true
+
+[mcp_servers.lsp-bridge]
+command = "python3"
+args = [
+    "scripts/lsp-mcp/bridge.py",
+    "--warm-start=c,py",
+    "--warm-start-mode=background",
+]
+cwd = "/home/derickpayne/impossible-os"
+# 10 s startup matches the bridge's --warm-start-mode=background
+# path: srv.run() answers initialize within milliseconds; warm-start
+# runs in a daemon thread and does not block the launcher handshake.
+startup_timeout_sec = 10
+# 60 s per tool covers the slow-path LSP queries (cold-cache
+# workspace_symbol on a kernel tree can take 20+ s when the index
+# is still building).
+tool_timeout_sec = 60
+required = true
+# Least-privilege allowlist: only the 6 read-only tools the boundary
+# audit (TODO-07 §9) certifies. The bridge ships 15 tools (6 core +
+# 8 extended + 1 _health meta), but the §1 cross-tool boundary
+# pins Codex to the same minimal surface .mcp.json would expose
+# under a hostile-extension threat model. If a future bridge change
+# accidentally exposes a write-capable tool, this allowlist clamps
+# Codex's reach independent of the runtime _FORBIDDEN_LSP_METHODS
+# gate. Confirm against TODO-07 §7 / §11 before changing.
+enabled_tools = [
+    "definition",
+    "references",
+    "hover",
+    "workspace_symbol",
+    "document_symbol",
+    "diagnostics",
+]

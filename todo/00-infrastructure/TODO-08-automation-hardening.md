@@ -24,12 +24,14 @@ title: "TODO-08 -- Automation Hardening (Skill / Hook / MCP / Codex Integration)
 ## Inputs
 
 - [`.claude/settings.json`](../../.claude/settings.json) -- canonical hook + permissions config; this TODO edits `hooks.PreToolUse` / `hooks.PostToolUse` blocks
-- [`.claude/hooks/`](../../.claude/hooks/) -- Python hook scripts: `section_review_required.py`, `design_review_required.py`, `accepted_xref_block.py`, `bare_section_refs.py`, `numeric_todo_shorthand.py`, `notes_bloat_check.py`, `scope_gap_marker.py`, `scope_gap_dedup_check.py`, `test_pending_reminder.py`, `test_message_uniqueness.py`, `test_side_effect_ban.py`, `todo_format_check.py`, `accepted_xref_warn.py` -- §3 + §4 add 4-6 new ones
+- [`.claude/hooks/`](../../.claude/hooks/) -- Python hook scripts: `section_review_required.py`, `design_review_required.py`, `accepted_xref_block.py`, `bare_section_refs.py`, `numeric_todo_shorthand.py`, `notes_bloat_check.py`, `scope_gap_marker.py`, `scope_gap_dedup_check.py`, `test_pending_reminder.py`, `test_message_uniqueness.py`, `test_side_effect_ban.py`, `todo_format_check.py`, `accepted_xref_warn.py` -- §3 + §4 + §5 + §10 + §11 + §12 add ~12 new ones (audit + manifest in §7)
 - [`.mcp.json`](../../.mcp.json) -- Claude Code MCP manifest; §1 mirrors this into Codex side
 - [`~/.codex/config.toml`](file:///home/derickpayne/.codex/config.toml) -- Codex CLI config; §1 adds `[mcp_servers.todo-graph]` + `[mcp_servers.lsp-bridge]` blocks; §2 documents the model/effort policy
 - [`scripts/todo-graph/mcp_server.py`](../../scripts/todo-graph/mcp_server.py) -- existing FastMCP server (TODO-06 §8); §1 confirms it works under Codex's MCP client
 - [`scripts/lsp-mcp/bridge.py`](../../scripts/lsp-mcp/bridge.py) -- existing FastMCP server (TODO-07); §1 confirms cross-client and §6 wires usage discipline
 - [`scripts/codex-companion.mjs`](../../scripts/codex-companion.mjs) -- absent in repo; canonical copy lives in plugin at `~/.claude/plugins/cache/openai-codex/codex/1.0.2/scripts/codex-companion.mjs`. §2 verifies the absolute-path versus `${CLAUDE_PLUGIN_ROOT}` invocation across all 9 codex-* skills
+- [`scripts/lint.sh`](../../scripts/lint.sh) -- existing pre-commit lint (Check 1-5); §12 adds Check 6/7/8 (tautological-test + stub-behind-stamp + phantom-include)
+- [`build/todo-cache.json`](../../build/todo-cache.json) -- TODO-06 §2 derived cache; §12 stub-behind-stamp consumer reads the stamped-item -> file:symbol map from this artifact
 - [`.claude/skills/`](../../.claude/skills/) -- 28 skills (11 `codex-*`, plus implement / verify / review / quality / create / validate); §5 audits invocation discipline
 - [`~/.claude/plugins/cache/claude-plugins-official/superpowers/5.0.7/skills/`](file:///home/derickpayne/.claude/plugins/cache/claude-plugins-official/superpowers/5.0.7/skills/) -- 12 superpowers skills; §7 audits which are actually useful in Impossible OS context and which to suppress
 - [`~/.claude/plugins/cache/openai-codex/codex/1.0.2/`](file:///home/derickpayne/.claude/plugins/cache/openai-codex/codex/1.0.2/) -- Codex plugin: `commands/adversarial-review.md`, `agents/codex-rescue.md`, `skills/codex-cli-runtime`, `hooks/hooks.json`
@@ -51,27 +53,33 @@ title: "TODO-08 -- Automation Hardening (Skill / Hook / MCP / Codex Integration)
 - **Hook system audit + dedupe.** All 14 active hooks under `.claude/hooks/` + the inline Python in `settings.json` get a 1-line description and a coverage note; hooks doing the same job collapse to one. New `scripts/audit-hooks.sh` lists every hook, every matcher, and the trigger event; `bash scripts/test-tooling.sh` adds a sub-test that asserts the hook count and coverage matches an expected manifest at `.claude/hooks/MANIFEST.md`.
 - **Skill catalog audit + suppression policy.** The 12 superpowers skills are split into "actively used" (`receiving-code-review`, `verification-before-completion`, `writing-plans`, `dispatching-parallel-agents`, `subagent-driven-development`, `using-git-worktrees`, `executing-plans`, `systematic-debugging`, `test-driven-development`, `requesting-code-review`, `finishing-a-development-branch`, `using-superpowers`, `brainstorming`, `writing-skills`) versus "noise / suppress" (none currently identified, but the manifest sets the policy). Add a `superpowers-suppression.md` doc identifying any plugin-shipped behavior that conflicts with Impossible OS doctrine (e.g. AI-attribution trailers, autonomous-agent assumptions). One row in CLAUDE.md "Mandatory Skill Triggers" table per actively-used superpowers skill, with the same hard-gate enforcement.
 - **MCP usage discipline -- documented, not enforced.** A new `docs/infrastructure/mcp-usage.md` describes when to call which MCP tool: prefer `lsp-bridge` `definition` / `references` over `grep` for symbol queries; use `todo-graph` `ready` / `blocking` / `backlinks` before manually walking TODO XREFs; the `code` / `code-by` queries connect a source file to its owning TODO. CLAUDE.md "Using your tools" section gets a 3-bullet pointer at the doc. No hooks force this; the change is doctrine-level so future skill iterations adopt the pattern.
-- **Cross-tool drift detection.** New `scripts/audit-ai-system.sh` runs three checks: (1) `.mcp.json` server set matches `~/.codex/config.toml` `[mcp_servers.*]` set; (2) every `Skill(codex-...)` invocation in `.claude/skills/` uses `${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs` not the absolute marketplaces path; (3) every `codex-*` skill carries the receiving-code-review reminder paragraph. Sub-test added to `scripts/test-tooling.sh`.
+- **Cross-tool drift detection.** New `scripts/audit-ai-system.sh` runs eight checks: (1) `.mcp.json` server set matches `~/.codex/config.toml` `[mcp_servers.*]` set; (2) every `Skill(codex-...)` invocation in `.claude/skills/` uses `${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs` not the absolute marketplaces path; (3) every `codex-*` skill carries the receiving-code-review reminder paragraph; (4) every `.claude/hooks/*.py` policy-block path uses `sys.exit(2)` (or declares `permissionDecision: "deny"` JSON output); (5) every plugin under `~/.claude/plugins/installed_plugins.json` has its `hooks/hooks.json` enumerated in `MANIFEST.md`; (6) state-file directory layout matches the documented shape; (7) Codex `~/.codex/config.toml` `model` + `model_reasoning_effort` match the policy file; (8) `tool-history.jsonl` is being written and is fresh. Sub-test added to `scripts/test-tooling.sh`.
+- **Skill step-state telemetry.** New `.claude/state/skill-progress.json` records each step of every multi-step skill (`implement-todo-section`, `review-todo-section`, `verify-todo-section`, `complete-todo-file`, `quality-review-section`) on the actual tool call that proves the step ran -- never on agent self-claim. New PreToolUse hook BLOCKs commit if step evidence is non-contiguous or terminal steps are missing. Closes the "claimed step 18, actually did step 13" failure mode named in `feedback_skill_invocation_drift` and `feedback_codex_review_four_dispatches`.
+- **Hook event surface expansion.** Five currently-unused Claude Code hook events get wired: `SessionStart` (state-file rebuild + uncommitted-TODO context injection), `UserPromptSubmit` (doctrine reminder on "skip review" / "just commit" prompts), `Stop` (acknowledged-but-skipped detector + verification-before-completion check), `SubagentStop` (subagent-budget audit), `PreCompact` (mid-pipeline state flush so compaction doesn't lose evidence). Plus a `tool-history.jsonl` writer feeding §10 step observation and §11 conversation scanning.
+- **AI-slop content lints.** Three new checks in `scripts/lint.sh`: (1) tautological-test detection (`TEST_ASSERT_EQ(X, X, ...)` and `TEST_ASSERT_EQ(SYM, LITERAL_VALUE_OF_SYM, ...)`); (2) stub-behind-stamp detection (cross-checks every `[x]` checklist item naming a function against the function's body LOC); (3) phantom-include detection (uses `lsp-bridge.diagnostics` MCP for compiler-grade unused-include findings). Each opt-out via env var with paper-trail logging.
 - **Documentation sync** -- CLAUDE.md gets the Codex Invocation Policy paragraph and a 3-bullet "MCP usage" pointer; `docs/infrastructure/ai-system.md` Hook Routing Matrix gets the new hooks; `docs/infrastructure/mcp-usage.md` is new; the Skills table in CLAUDE.md absorbs the four superpowers skills as "Mandatory Skill Triggers" rows.
 
 ## Implementation Order
 
-| ⭐  | Order | Section | Deliverable                                                                          | Depends On    | Status |
-| --- | :---: | :-----: | ------------------------------------------------------------------------------------ | ------------- | :----: |
-| ⭐  |   1   |  §1     | Wire `todo-graph` + `lsp-bridge` MCP into Codex CLI; cross-config drift validator    | --            |  [ ]   |
-| ⭐  |   2   |  §2     | Codex invocation policy: no `--model` / `--effort` from Claude, hook block           | §1            |  [ ]   |
-| ⭐  |   3   |  §3     | `receiving-code-review` hard gate: state file + post-Codex hook block                | §2            |  [ ]   |
-| ⭐  |   4   |  §4     | Section-commit gate hardens to BLOCK with build + Codex + receiving evidence         | §3            |  [ ]   |
-| ⭐  |   5   |  §5     | `review-todo-section` four-dispatch enforcement (state file + commit-gate check)     | §4            |  [ ]   |
-| 💎  |   6   |  §6     | MCP usage discipline doc; CLAUDE.md pointer; skill audits update prose               | §1            |  [ ]   |
-| 💎  |   7   |  §7     | Hook system audit + dedupe; `MANIFEST.md`; `scripts/audit-hooks.sh`                  | §3, §4, §5    |  [ ]   |
-| 💎  |   8   |  §8     | Superpowers skill catalog audit; suppression policy; CLAUDE.md trigger rows          | §3            |  [ ]   |
-| ⭐  |   9   |  §9     | Cross-tool drift detection: `scripts/audit-ai-system.sh` + test-tooling sub-test     | §1, §2, §7    |  [ ]   |
-| 💎  |   10  |  §10    | Documentation sync: CLAUDE.md / ai-system.md / mcp-usage.md; reciprocal XREF sweep   | §1-§9         |  [ ]   |
+| ⭐  | Order | Section | Deliverable                                                                          | Depends On                 | Status |
+| --- | :---: | :-----: | ------------------------------------------------------------------------------------ | -------------------------- | :----: |
+| ⭐  |   1   |  §1     | Wire `todo-graph` + `lsp-bridge` MCP into Codex CLI; cross-config drift validator    | --                         |  [/]   |
+| ⭐  |   2   |  §2     | Codex invocation policy: no `--model` / `--effort` from Claude, hook block           | §1                         |  [ ]   |
+| ⭐  |   3   |  §3     | `receiving-code-review` hard gate: state file + post-Codex hook block                | §2                         |  [ ]   |
+| ⭐  |   4   |  §4     | Section-commit gate hardens to BLOCK with build + Codex + receiving evidence         | §3                         |  [ ]   |
+| ⭐  |   5   |  §5     | `review-todo-section` four-dispatch enforcement (state file + commit-gate check)     | §4                         |  [ ]   |
+| 💎  |   6   |  §6     | MCP usage discipline doc; CLAUDE.md pointer; skill audits update prose               | §1                         |  [ ]   |
+| ⭐  |   7   |  §10    | Skill step-state telemetry + non-contiguous-step block                               | §3, §11                    |  [ ]   |
+| ⭐  |   8   |  §11    | Hook event surface expansion (SessionStart / UserPromptSubmit / Stop / Subagent / PreCompact) | §3, §4            |  [ ]   |
+| ⭐  |   9   |  §12    | AI-slop content lints (tautological / stub-behind-stamp / phantom-include)           | §1 (lsp-bridge consumer)   |  [ ]   |
+| 💎  |   10  |  §7     | Hook system audit + dedupe; `MANIFEST.md`; `scripts/audit-hooks.sh`; exit-code gate  | §3, §4, §5, §10, §11, §12  |  [ ]   |
+| 💎  |   11  |  §8     | Superpowers skill catalog audit; suppression policy; CLAUDE.md trigger rows          | §3                         |  [ ]   |
+| ⭐  |   12  |  §9     | Cross-tool drift detection: `scripts/audit-ai-system.sh` (8 checks)                  | §1, §2, §7, §11            |  [ ]   |
+| 💎  |   13  |  §13    | Documentation sync: CLAUDE.md / ai-system.md / mcp-usage.md; reciprocal XREF sweep   | §1-§12                     |  [ ]   |
 
 > 💎 = parity work -- standard developer-tooling hygiene (audit scripts, drift detection, doc sync). Linux kernel ships `MAINTAINERS` + `get_maintainer.pl`; Windows has the engineering-systems-internal equivalent. We need it because skill / hook / MCP wiring drifts silently.
-> ⭐ = competitive edge -- enforcing reviewer-contract discipline at the Bash / Edit tool boundary, hard-gating skill-pipeline steps, and cross-wiring two AI assistants (Claude Code + Codex CLI) into the same MCP server set is novel ground. Neither Win11 nor Linux ships AI-tooling automation at this layer.
-> **Order vs section number:** §1 unblocks every other section (Codex needs MCP first; the model-flag policy + receiving-review gate + section-commit gate all assume Codex is reachable from Claude with shared context). §2 must precede §3 because the hook in §2 gates `codex-companion.mjs` invocations; the §3 hook fires on the OUTPUT of those invocations. §4 wraps §3 into a commit gate. §5 extends §4 with the four-dispatch counting. §6 + §7 + §8 are independent audits that can interleave once §1-§5 ship. §9 cross-wires the audits. §10 closes the doctrine documentation in lockstep.
+> ⭐ = competitive edge -- enforcing reviewer-contract discipline at the Bash / Edit tool boundary, hard-gating skill-pipeline steps, cross-wiring two AI assistants (Claude Code + Codex CLI) into the same MCP server set, and observed-not-claimed step-state telemetry are novel ground. Neither Win11 nor Linux ships AI-tooling automation at this layer; among AI dev tools (Cursor, Aider, Continue, Copilot Workspace) only `nesaminua/claude-code-lsp-enforcement-kit` ships a comparable state-binding pattern as of early 2026.
+> **Order vs section number:** §1 unblocks every other section (Codex needs MCP first; the model-flag policy + receiving-review gate + section-commit gate all assume Codex is reachable from Claude with shared context). §2 must precede §3 because the hook in §2 gates `codex-companion.mjs` invocations; the §3 hook fires on the OUTPUT of those invocations. §4 wraps §3 into a commit gate. §5 extends §4 with the four-dispatch counting. §11 (hook events) ships before §10 (step telemetry) because §10 reads the `tool-history.jsonl` writer that §11 installs. §12 (AI-slop lints) ships in parallel with §10/§11 since it has no hard dependency on either. §6 / §8 are independent audits that can interleave. §7 (hook audit) ships AFTER §10/§11/§12 so it can manifest the new hooks they add. §9 (cross-tool drift) ships after §7 (which produces the manifest §9 reads). §13 closes doctrine in lockstep with everything.
 
 ---
 
@@ -79,15 +87,31 @@ title: "TODO-08 -- Automation Hardening (Skill / Hook / MCP / Codex Integration)
 
 Wire the two MCP servers Claude Code already uses (`todo-graph` + `lsp-bridge`) into Codex CLI's MCP client so Codex review / rescue / task runs have the same dependency-graph + LSP-grade code intelligence Claude has. Today every Codex review starts cold: it has the file paths in the prompt but no way to ask "what TODO owns this section?" or "where else is this symbol used?". Wiring the MCP servers into both sides closes that asymmetry. Codex CLI 0.125.0+ supports `codex mcp add` per `codex --help`; this section uses that surface.
 
-- [ ] Add `[mcp_servers.todo-graph]` block to [`~/.codex/config.toml`](file:///home/derickpayne/.codex/config.toml): `command = "python3"`, `args = ["scripts/todo-graph/mcp_server.py"]`, `cwd = "/home/derickpayne/impossible-os"` (Codex CLI does not honor a per-project trust-block-scoped relative cwd, so the absolute path is required for portability across `codex` invocations from any directory).
-- [ ] Add `[mcp_servers.lsp-bridge]` block to [`~/.codex/config.toml`](file:///home/derickpayne/.codex/config.toml): same shape, `args = ["scripts/lsp-mcp/bridge.py"]`. Confirm the bridge starts cleanly under Codex's MCP client (Codex uses the standard stdio MCP transport, same as Claude Code; the bridge already runs under FastMCP stdio per TODO-07 §1).
-- [ ] Run `codex mcp list` and confirm both servers appear with status "ready" (or equivalent). Capture stdout in the verification.
-- [ ] Run a smoke task: `codex exec "list 5 TODO sections that are ready to start using the todo-graph MCP"` and verify the output names actual ready sections (not hallucinated). Repeat for `lsp-bridge` with `codex exec "what is the prototype of pmm_alloc_contiguous? use the lsp-bridge definition tool"`.
-- [ ] Add a startup-time drift validator to [`scripts/test-tooling.sh`](../../scripts/test-tooling.sh): a new sub-test `t_pass mcp_drift "Claude .mcp.json and ~/.codex/config.toml expose the same MCP server set"` that parses both files and diffs the server name set. Fail fast on mismatch with a one-line actionable message.
-- [ ] Document the wiring in [`docs/infrastructure/ai-system.md`](../../docs/infrastructure/ai-system.md) "MCP Server Set" subsection: one paragraph that names the two servers, the two clients (Claude Code via `.mcp.json`, Codex CLI via `~/.codex/config.toml`), the canonical source (this TODO §1), and the drift validator entry point.
-- [ ] Commit: `"codex/mcp: wire todo-graph + lsp-bridge into Codex CLI config; add cross-config drift validator"`
+- [x] `[mcp_servers.todo-graph]` block lives in repo-owned fixture [`docs/infrastructure/codex-mcp.config.toml`](../../docs/infrastructure/codex-mcp.config.toml) and is installed into `~/.codex/config.toml` by [`scripts/codex-mcp-install.sh`](../../scripts/codex-mcp-install.sh): `command = "python3"`, `args = ["scripts/todo-graph/mcp_server.py"]`, `cwd = "/home/derickpayne/impossible-os"`. Design review High caught the original "edit config.toml directly" plan as non-reproducible (no source of truth for fresh dev envs / Codex reinstalls); fixture + idempotent installer + drift validator triplet is the adopted shape.
+- [x] `[mcp_servers.lsp-bridge]` block in the same fixture, `args = ["scripts/lsp-mcp/bridge.py", "--warm-start=c,py", "--warm-start-mode=background"]` so Codex spawns the bridge with the same MCP-launcher-safe warm-start pattern Claude uses (Background Warm-Start Mode contract). Verified via `codex mcp get lsp-bridge` -- args round-trip exactly.
+- [x] `startup_timeout_sec = 10` and `tool_timeout_sec = 60` in BOTH blocks. Confirmed Codex CLI 0.126 round-trips both keys via `codex mcp get`.
+- [x] `required = true` in both blocks. Codex CLI 0.126 silently accepts the key (parser does not reject); whether the runtime enforces it is forward-compat. Cost of including is zero; benefit if a future Codex release hardens the field is explicit fail-loud.
+- [x] `enabled_tools = ["definition", "references", "hover", "workspace_symbol", "document_symbol", "diagnostics"]` on the `lsp-bridge` block. The bridge ships 15 tools (6 core + 8 extended + 1 `_health` meta per [TODO-07 §11](./TODO-07-lsp-mcp-bridge.md#11-extended-lsp-tools-completion-signature-help-type-definition-implementation-declaration-call-hierarchy-code-action)); the allowlist clamps Codex to the same minimal read-only surface even if the bridge accidentally exposes a write-capable tool in a future revision.
+- [x] `codex mcp list` shows both servers `enabled` with the expected command/args; `codex mcp get <name>` round-trips every key. Captured during install verification.
+- [/] `codex exec` smoke -- BLOCKED on Codex CLI 0.126.0-alpha.1: every MCP tool call returns `"user cancelled MCP tool call"` within 1.2 ms regardless of `approval_policy`, even with `--full-auto`. This is upstream Codex CLI alpha behavior (likely the MCP-tool-approval default rejects under `codex exec` non-interactive mode). The wiring IS correct -- the call REACHES the MCP server (`mcp: todo-graph/ready started` in the rollout log); the Codex client rejects the response. Will re-verify when Codex CLI ships a stable release with MCP-tool-approval semantics that work under `codex exec`. Interactive `codex` TUI (where the user manually approves) is the production-blessed path until then.
+- [x] `mcp_drift` sub-test added to [`scripts/test-tooling.sh`](../../scripts/test-tooling.sh): two-step semantic check -- (a) cross-side parity diffs server names between `.mcp.json` and the repo fixture, (b) Codex-side parity delegates to `scripts/codex-mcp-install.sh --check` which compares user's `~/.codex/config.toml` against the fixture key-for-key. Skip-with-PASS on fresh dev env (no `~/.codex/config.toml` yet); FAIL with actionable hint when drift is real. Design review High caught name-only-diff as insufficient -- semantic compare covers wrong-command / wrong-cwd / wrong-args / missing-required / wrong-enabled_tools failure modes too.
+- [x] Documented the wiring in `docs/infrastructure/ai-system.md` ["MCP server boundary" -> "Cross-tool MCP server set" subsection](../../docs/infrastructure/ai-system.md#mcp-server-boundary): names both clients, both servers, the fixture, the installer, the drift validator entry point, and this TODO as the canonical source.
+- [x] Commit: `"codex/mcp: wire todo-graph + lsp-bridge into Codex CLI config; add cross-config drift validator"`
 
 **Test checkpoint:** `codex mcp list` shows `todo-graph` + `lsp-bridge`. `codex exec "..."` smoke prompts return real data from both servers. `bash scripts/test-tooling.sh` shows the new `mcp_drift` sub-test PASS. Manually deleting one of the four config blocks and re-running the validator triggers the sub-test FAIL with the expected actionable message. Test on: Linux WSL2 dev host (Codex CLI 0.125.0+).
+
+Verified locally: `codex mcp list` shows both servers `enabled`; `bash scripts/codex-mcp-install.sh --check` reports `OK: 2 servers in sync`; `bash scripts/test-tooling.sh` shows `mcp_drift Claude .mcp.json and Codex config in sync (both sides expose 2 servers: lsp-bridge, todo-graph)` (85/85 tooling tests PASS). FAIL-mode test confirmed: dropping the `[mcp_servers.lsp-bridge]` block from the user's Codex config and re-running test-tooling.sh produces `FAIL mcp_drift cross-config drift detected: codex-side: ... missing block [mcp_servers.lsp-bridge]` with the actionable installer hint. The `codex exec` smoke item carries the Codex CLI 0.126.0-alpha.1 limitation noted in its `[/]` checklist entry.
+
+> **Test runner:** `bash scripts/test-tooling.sh` (sub-test `mcp_drift`) | 85/85 tooling tests PASS
+
+> **Notes:**
+> - Adds repo-owned Codex MCP fixture at `docs/infrastructure/codex-mcp.config.toml` plus idempotent installer `scripts/codex-mcp-install.sh` (`--check` for dry-run); both wire `todo-graph` + `lsp-bridge` into `~/.codex/config.toml` so Codex sees the same MCP servers Claude does via `.mcp.json`.
+> - `mcp_drift` sub-test in `scripts/test-tooling.sh` does semantic two-step compare: cross-side server name parity (.mcp.json vs fixture) AND user's `~/.codex/config.toml` vs fixture key-for-key (delegates to installer's `--check`); skip-with-PASS on fresh dev env; FAIL with installer hint on real drift.
+> - Codex CLI 0.126.0-alpha.1 limitation: `codex exec` rejects every MCP tool call as "user cancelled" within 1.2ms; wiring is correct (config round-trips, `mcp list` shows both enabled), but end-to-end smoke needs interactive `codex` TUI today.
+> - Canonical doc: `docs/infrastructure/ai-system.md` "MCP server boundary" -> "Cross-tool MCP server set" subsection.
+> - Scope boundary: §1 wires + validates the cross-tool MCP server set; §2 owns the no-`--model`/`--effort` invocation policy that goes on top of this wiring; §6 owns the broader MCP usage discipline doctrine.
+
+---
 
 ## 2. Codex Invocation Policy: No `--model` / `--effort` From Claude
 
@@ -106,21 +130,26 @@ Document the user's policy and add a hook that blocks accidental violations. The
 
 **Test checkpoint:** `bash scripts/test-tooling.sh` shows the `codex_flag_block` sub-test PASS. Manually triggering the hook with a synthetic `Bash(codex-companion.mjs adversarial-review --model gpt-5.5 ...)` invocation prints the block message and exits 2. Setting `CODEX_FLAG_OVERRIDE=1` allows the call through. Audit grep over `.claude/skills/codex-*/SKILL.md` shows no remaining `--model` or `--effort` example invocations. Test on: Linux WSL2 dev host.
 
+---
+
 ## 3. `receiving-code-review` Hard Gate: State File + Post-Codex Hook Block
 
 The user's `feedback_skill_invocation_drift.md` and `feedback_never_skip_review.md` both name the same failure mode: Claude runs Codex, gets a list of findings, and silently starts fixing without invoking `Skill(superpowers:receiving-code-review, ...)`. The reminder hook prints a `systemMessage` that the agent reads and acknowledges in prose, then proceeds anyway. Convert this from advisory to enforced.
 
-- [ ] Add `.claude/state/` to `.gitignore`. Create the directory with a `.keep` file so the layout is documented.
-- [ ] Define the state file shape at [`.claude/state/last-codex-review.json`](../../.claude/state/last-codex-review.json) (NEW, gitignored): `{"timestamp_ns": <int>, "trigger": "Skill(codex-adversarial-review-section)" | "Bash(codex-companion.mjs adversarial-review)" | ...,  "received": false, "received_timestamp_ns": <int|null>, "trigger_files": ["..."]}`. The shape doc lives in [`.claude/state/README.md`](../../.claude/state/README.md) (NEW).
+- [ ] Add `.claude/state/` to `.gitignore` + create the dir with a `.keep` file. Define the state file shape at [`.claude/state/last-codex-review.json`](../../.claude/state/last-codex-review.json) (NEW, gitignored): `{"timestamp_ns": <int>, "trigger": "Skill(codex-adversarial-review-section)" | "Bash(codex-companion.mjs adversarial-review)" | ...,  "received": false, "received_timestamp_ns": <int|null>, "trigger_files": ["..."]}`. The shape doc lives in [`.claude/state/README.md`](../../.claude/state/README.md) (NEW).
 - [ ] Add a PostToolUse hook [`.claude/hooks/codex_review_completed.py`](../../.claude/hooks/codex_review_completed.py): fires after `Skill` matcher when `tool_input.skill` is one of `codex-adversarial-review-section`, `codex-review-todo`, `codex-design-review`, `codex-impact-analysis`, `codex-test-coverage`, `codex-consistency-audit`, `codex-perf-review`, `codex-fix-review`; AND after `Bash` matcher when `tool_input.command` matches `codex-companion.mjs adversarial-review`, `scripts/copilot-review.sh`, `codex review`, or any `/codex:adversarial-review` invocation. Writes the state file with `received: false`.
 - [ ] Add a PostToolUse hook on `Skill` matcher: if `tool_input.skill == "superpowers:receiving-code-review"`, mark the state file `received: true` with `received_timestamp_ns`. Same hook also accepts `Skill(superpowers:receiving-code-review, ...)` typed without the namespace prefix (the marketplaces plugin sometimes resolves the bare name).
 - [ ] Add a PreToolUse hook [`.claude/hooks/receiving_review_required.py`](../../.claude/hooks/receiving_review_required.py): on `Edit | Write | MultiEdit` against any code path (`.c|.h|.asm|.S|.py|.sh|.mjs|.ts|.md` outside `todo/`), reads the state file. If `received: false` AND `timestamp_ns` is within the last 30 minutes, BLOCK (exit 2) with: "Codex review at `<timestamp_iso>` (trigger: `<trigger>`) has not been processed through `superpowers:receiving-code-review`. Invoke that skill to verify each finding at file:line and classify Fix / Reject / Accept BEFORE editing. Opt-out: set `RECEIVING_REVIEW_OVERRIDE=1` AND state in your next message what code-evidence quote justifies skipping (e.g. 'review found zero findings, output was \"no issues\"')."
 - [ ] Wire both new hooks into [`.claude/settings.json`](../../.claude/settings.json). Order the PreToolUse `receiving_review_required.py` after `section_review_required.py` and before the existing test-side-effect ban.
 - [ ] Add three sub-tests to [`scripts/test-tooling.sh`](../../scripts/test-tooling.sh): (a) state file is written by the PostToolUse hook on a synthetic `Skill(codex-adversarial-review-section)` event; (b) the PreToolUse hook blocks (exit 2) with `received: false` state file; (c) the PreToolUse hook allows (exit 0) with `received: true` state file. Synthetic JSON inputs constructed with `printf` + Python.
 - [ ] Update [`.claude/skills/codex-adversarial-review-section/SKILL.md`](../../.claude/skills/codex-adversarial-review-section/SKILL.md) step 4 to call out: "the new `receiving_review_required.py` hook will BLOCK any subsequent code edit until you invoke `Skill(superpowers:receiving-code-review, ...)`. The block is the gate; the existing `systemMessage` reminder is now the secondary signal."
+- [ ] **Anti-stale-pass binding (commit SHA + tree hash + tool_use_id + 1h TTL):** the `last-codex-review.json` schema gets four extra fields: `head_sha` (from `git rev-parse HEAD` at hook-fire time), `tree_hash` (sha256 of `git status --porcelain`), `trigger_tool_use_id` (captured from the Codex trigger event), and the existing `received_timestamp_ns`. The PreToolUse hook invalidates if HEAD advanced, the working tree changed, the receiving-review skill recorded a different `tool_use_id` than the trigger, OR `received_timestamp_ns` is older than 1 hour. Closes the "yesterday's review lets today's commit through" + "rapid-fire reviews + one stale receive" anti-patterns ([LSP enforcement-kit state-binding pattern](https://github.com/nesaminua/claude-code-lsp-enforcement-kit)).
+- [ ] **Structured-finding parser + missing-field BLOCK:** receiving-code-review must produce a structured findings object (in the conversation) per the canonical taxonomy: `[{file, line_range, finding: "...", classification: "Fix|Reject|Accept-as-gap", evidence: "..."}, ...]`. The PostToolUse hook on the receiving-review skill parses this from the skill's tool output (or the agent's response if the skill returns a marker file) and BLOCKs if any finding lacks all four fields. Suspicious-no-rejections check: if `finding_count >= 3 AND classification == "Fix"` for ALL findings (no Reject, no Accept), surface a warning -- this is the performative-agreement anti-pattern (see [ASDLC adversarial-review pattern](https://asdlc.io/patterns/adversarial-code-review/)).
 - [ ] Commit: `"hooks: receiving-code-review hard gate via state file + Pre/PostToolUse pair"`
 
 **Test checkpoint:** `bash scripts/test-tooling.sh` shows 3 new sub-tests PASS. End-to-end: invoke `/codex:adversarial-review` (or trigger `Skill(codex-adversarial-review-section)`) on a trivial change, attempt an Edit on a `.c` file, the hook blocks with the expected message; invoke `Skill(superpowers:receiving-code-review)`, retry the Edit, the hook allows. Setting `RECEIVING_REVIEW_OVERRIDE=1` allows the edit through. Test on: Linux WSL2 dev host.
+
+---
 
 ## 4. Section-Commit Gate Hardens to BLOCK With Build + Codex + Receiving Evidence
 
@@ -136,9 +165,12 @@ Today's section-commit hook (the inline Python block in [`.claude/settings.json`
 - [ ] Add a sub-test to [`scripts/test-tooling.sh`](../../scripts/test-tooling.sh): synthetic staged diff with section-commit signature + missing build evidence -> exit 2; same diff with all 3 evidence pieces -> exit 0; same diff with `SKIP_REVIEW_HOOK=1` only (no reason) -> exit 2; same diff with both env vars -> exit 0 with logged reason.
 - [ ] Update [`.claude/skills/implement-todo-section/SKILL.md`](../../.claude/skills/implement-todo-section/SKILL.md) step 18 to point at the gate: "the new `section_commit_gate.py` hook BLOCKS commits that lack build / Codex / receiving evidence. Steps 13-17 produce the evidence the gate checks; skipping any of them = blocked commit, not reminder-then-proceed."
 - [ ] Update [`.claude/skills/verify-todo-section/SKILL.md`](../../.claude/skills/verify-todo-section/SKILL.md) (audit-mode wrapper) to note that the gate fires on the same staged-diff signature whether the source is implement-mode or verify-mode.
+- [ ] **No-small-section-exemption rule:** the gate does NOT relax for small diffs. A section commit with `< 50 LOC of source change` still requires the full 3-evidence check; in fact log a `WARN: small-section-skip-risk` line (the `feedback_never_skip_review` and `feedback_no_corner_cutting` memories both name "the section was small so I skipped review" as a recurring pattern). Implementation: gate counts staged source-LOC; if `< 50`, append the WARN line to `.claude/state/skip-log.jsonl` regardless of pass/fail outcome (so a sweep over the log reveals review-skipping patterns).
 - [ ] Commit: `"hooks: section-commit gate is now a hard block, not a reminder"`
 
 **Test checkpoint:** `bash scripts/test-tooling.sh` shows the new sub-tests PASS. End-to-end: stage a section-commit diff WITHOUT running Codex first, attempt `git commit`, hook exits 2 with the missing-evidence message; run the full implement-todo-section pipeline, retry, hook exits 0; export `SKIP_REVIEW_HOOK=1` without reason, exit 2 with usage message; export both env vars, exit 0 and the reason appears in `.claude/state/skip-log.jsonl`. Test on: Linux WSL2 dev host.
+
+---
 
 ## 5. `review-todo-section` Four-Dispatch Enforcement
 
@@ -149,9 +181,12 @@ User feedback memory `feedback_codex_review_four_dispatches.md`: review-todo-sec
 - [ ] Update [`.claude/hooks/section_commit_gate.py`](../../.claude/hooks/section_commit_gate.py) (from §4): when the staged diff includes the section-commit signature AND the TODO file shows a section-level `**Verified:**` or `**Quality reviewed:**` stamp being added in the diff, ALSO require all four state-file entries for that TODO path are within the last 30 minutes. If any are missing, exit 2 with the actionable list of missing dispatches.
 - [ ] Add a sub-test: synthetic state-file with 3 of 4 dispatches recorded -> exit 2 naming the missing one; all 4 -> exit 0.
 - [ ] Update [`.claude/skills/review-todo-section/SKILL.md`](../../.claude/skills/review-todo-section/SKILL.md) step 8 to call out the state-file mechanism: "after dispatching each of the four reviews, the §3 PostToolUse hook records the dispatch. The §4 commit gate refuses the section-commit until all four are present. There is no 'three is enough' fallback."
+- [ ] **No-self-summary Codex template + context-isolation enforcement:** review-todo-section step 8 currently lets the agent compose the prompt for each Codex dispatch in free form; the [CONSENSAGENT ACL-2025 sycophancy-mitigation result](https://aclanthology.org/2025.findings-acl.1141/) shows that pasting the implementor's narrative into the reviewer's prompt biases the reviewer toward agreement. Replace with a fixed template at [`.claude/skills/review-todo-section/codex-prompt-template.md`](../../.claude/skills/review-todo-section/codex-prompt-template.md): the template names files + sections + adversarial angles only -- no "what I built", no "I think this works", no narrative. The skill prose explicitly forbids prepending the agent's own analysis. Hook check: parse the Codex prompt from the dispatch command line + stdin; flag if it contains a first-person "I" claim or a "summary of changes" preamble.
 - [ ] Commit: `"hooks: enforce review-todo-section step-8 four-dispatch policy via state file"`
 
 **Test checkpoint:** End-to-end on a `verify-todo-section` re-stamp: run only adversarial + consistency, attempt to commit a `**Quality reviewed:**` stamp, hook exits 2 naming `dead_code` + `perf` missing; run the remaining two, retry, exit 0. `bash scripts/test-tooling.sh` shows the new sub-test PASS. Test on: Linux WSL2 dev host.
+
+---
 
 ## 6. MCP Usage Discipline -- Doc + CLAUDE.md Pointer
 
@@ -166,6 +201,8 @@ Today neither Claude nor Codex consistently uses the two MCP servers. Symptom: C
 
 **Test checkpoint:** `docs/infrastructure/mcp-usage.md` exists, names the two servers + 17 total tools, validates as well-formed markdown via `bash scripts/lint.sh` (existing lint accepts new doc files). CLAUDE.md grep for "MCP usage" shows the new 3-bullet block. Skill grep for `grep -rn` in the 11 audited skills shows only fallback uses. Test on: Linux WSL2 dev host.
 
+---
+
 ## 7. Hook System Audit + Dedupe
 
 Today there are 14 Python files under [`.claude/hooks/`](../../.claude/hooks/) plus several inline-Python hooks in [`.claude/settings.json`](../../.claude/settings.json). Some overlap (`accepted_xref_block.py` blocks at commit, `accepted_xref_warn.py` warns at edit; `numeric_todo_shorthand.py` and `bare_section_refs.py` both touch TODO files; the inline domain-router and the dedicated quality-skill router fire on the same Edit events). No manifest documents which hook fires when, so adding a new hook risks shadowing or duplicating an existing one. After §3-§5 ship, the system gains 3-4 new hooks; document them all in one manifest and dedupe overlap.
@@ -176,9 +213,13 @@ Today there are 14 Python files under [`.claude/hooks/`](../../.claude/hooks/) p
 - [ ] Same extraction for the inline `git commit` smoke-test hook and boot-smoke hook into dedicated files [`.claude/hooks/post_commit_smoketest.py`](../../.claude/hooks/post_commit_smoketest.py) and [`.claude/hooks/post_commit_smoketest_boot.py`](../../.claude/hooks/post_commit_smoketest_boot.py). The `settings.json` entries become one-line `command: "python3 .claude/hooks/<name>.py"` calls.
 - [ ] Same extraction for the two inline reminder hooks (the `Skill` matcher pipeline reminder; the section-commit reminder upgraded in §4 to a block).
 - [ ] Add `scripts/audit-hooks.sh` (NEW): runs through `.claude/settings.json`, lists every matcher and its hook commands, cross-checks against `.claude/hooks/MANIFEST.md`, and reports any drift (hook in dir but not in manifest, manifest entry without a hook, settings.json command not pointing at a manifest entry). Sub-test added to `scripts/test-tooling.sh`.
+- [ ] **Exit-code correctness audit:** every hook in `.claude/hooks/*.py` that intends to BLOCK on policy violation MUST `sys.exit(2)`, not `sys.exit(0)` with a stderr message. The latter silently passes (per [claude-code Issue #19561](https://github.com/anthropics/claude-code/issues/19561) and [#45427](https://github.com/anthropics/claude-code/issues/45427)). `scripts/audit-hooks.sh` adds a check that walks each hook source, identifies its block path (stderr.write followed by exit), and asserts the exit is `sys.exit(2)`. Allowlist: hooks intentionally using `permissionDecision: "deny"` JSON output (the cleaner 2026 alternative -- see [hooks reference](https://code.claude.com/docs/en/hooks)) declare their intent in a top-of-file comment `# block-via: permissionDecision`.
+- [ ] **Plugin-side hook enumeration:** hooks shipped by installed plugins (`~/.claude/plugins/cache/openai-codex/codex/1.0.2/hooks/hooks.json` and `~/.claude/plugins/cache/claude-plugins-official/superpowers/5.0.7/hooks/hooks.json`) are NOT in `.claude/settings.json` but DO fire alongside it. The `MANIFEST.md` enumerates plugin-side hooks separately under a "Plugin Hooks (auto-loaded)" subsection; `audit-hooks.sh` walks `~/.claude/plugins/installed_plugins.json`, dereferences each plugin's `hooks/` dir, and includes the count + matchers in the manifest cross-check.
 - [ ] Commit: `"hooks: extract inline hooks; audit + manifest; dedupe overlap"`
 
 **Test checkpoint:** [`.claude/hooks/MANIFEST.md`](../../.claude/hooks/MANIFEST.md) lists ~20 hooks with full metadata. `bash scripts/audit-hooks.sh` shows zero drift. `bash scripts/test-tooling.sh` shows the new audit sub-test PASS. `.claude/settings.json` size shrinks (inline-Python blocks replaced with one-line file calls). Test on: Linux WSL2 dev host.
+
+---
 
 ## 8. Superpowers Skill Catalog Audit + Trigger Rows
 
@@ -189,9 +230,12 @@ The superpowers plugin ships 14 skills; CLAUDE.md "Mandatory Skill Triggers" tod
 - [ ] For each "conflict with doctrine" item, document the conflict in [`docs/infrastructure/superpowers-policy.md`](../../docs/infrastructure/superpowers-policy.md) (NEW) -- e.g. "if any superpowers skill suggests adding `Co-Authored-By:` or `Assisted-by:` trailer, ignore; CLAUDE.md zero-trailer policy wins".
 - [ ] Add 1-2 new rows to CLAUDE.md "Mandatory Skill Triggers" table for the strongest candidates from the audit. Wire enforcement via existing or new hooks where mechanical (e.g. a "task-complete claim without verification-before-completion" detection is non-trivial; document as "agent discipline" if not mechanizable).
 - [ ] Update [`docs/infrastructure/ai-system.md`](../../docs/infrastructure/ai-system.md) skill-system section with a pointer at the new superpowers-policy doc.
+- [ ] **Document the subagent-driven-development tradeoff:** [Jesse Vincent's superpowers writeup (Oct 2025)](https://blog.fsck.com/2025/10/09/superpowers/) describes a "dispatch -> subagent -> code-review subagent -> next" loop as the canonical pattern. For Impossible OS, this works for greenfield TDD or routine refactoring but NOT for security-sensitive kernel work where cross-MODEL adversarial review (Claude reviewer + Codex GPT-5.5 reviewer) catches what same-model self-review misses. Document explicitly: superpowers' `subagent-driven-development` is approved for `user/*`, `src/apps/*`, and tooling work; the four-dispatch Codex policy stays mandatory for `src/kernel/*`, `src/boot/*`, `include/kernel/*`. The superpowers-policy doc carries this scope distinction.
 - [ ] Commit: `"docs/superpowers: audit catalog; add mandatory trigger rows; suppression policy doc"`
 
 **Test checkpoint:** [`docs/infrastructure/superpowers-policy.md`](../../docs/infrastructure/superpowers-policy.md) exists and names every superpowers skill with a verdict. CLAUDE.md "Mandatory Skill Triggers" table has at least 2 new rows. Test on: Linux WSL2 dev host (no runtime test; doctrine-level change).
+
+---
 
 ## 9. Cross-Tool Drift Detection -- `scripts/audit-ai-system.sh`
 
@@ -206,22 +250,77 @@ Wire the per-section audit checks (§1 MCP drift, §2 Codex flag policy, §3 rec
    6. `state_dir_layout` -- `.claude/state/` directory exists with the documented file shapes; `.gitignore` includes the directory.
 - [ ] Wire `scripts/audit-ai-system.sh` into `bash scripts/test-tooling.sh` as a single sub-test (`t_pass audit_ai_system "ai-system drift checks pass"`).
 - [ ] Add a CI-side equivalent: a job in [`.github/workflows/build.yml`](../../.github/workflows/build.yml) (if Github CI is wired -- TODO-01 §6 owns this) that runs `bash scripts/audit-ai-system.sh` before any other check. Failure on PR = same actionable message in the CI log.
+- [ ] **Check 7 -- Codex side config drift:** `~/.codex/config.toml` top-level `model = "gpt-5.5"` AND `model_reasoning_effort = "medium"` match the user's documented policy (see [`feedback_codex_no_model_or_effort.md`](file:///home/derickpayne/.claude/projects/-home-derickpayne-impossible-os/memory/feedback_codex_no_model_or_effort.md) memory). If either drifts, fail with a one-line actionable message naming the expected and observed values. The check does NOT enforce a particular value across user machines; it reads the expected values from the memory file or a sibling `[`.codex/config-policy.toml`]` declaring them, so a future model-default change is a single-file edit.
+- [ ] **Check 8 -- plugin manifest enumeration:** every plugin under `~/.claude/plugins/installed_plugins.json` has its `hooks/hooks.json` enumerated in `.claude/hooks/MANIFEST.md` (cross-checks §7 plugin-side hook enumeration). If a new plugin is installed but the manifest is not updated, the check fails.
 - [ ] Commit: `"scripts: audit-ai-system.sh -- six cross-tool drift checks; wired into test-tooling"`
 
 **Test checkpoint:** `bash scripts/audit-ai-system.sh` exits 0 with all 6 checks PASS. Synthetically delete the `lsp-bridge` block from `~/.codex/config.toml`, re-run, check 1 fails with the expected message. Restore. Synthetically add `--model gpt-5.5` to one skill's example, re-run, check 2 fails. Restore. `bash scripts/test-tooling.sh` shows the new umbrella sub-test PASS. Test on: Linux WSL2 dev host.
 
-## 10. Documentation Sync -- CLAUDE.md / ai-system.md / mcp-usage.md / Reciprocal XREFs
+---
+
+## 10. Skill Step-State Telemetry + Non-Contiguous-Step Block
+
+The user's `feedback_skill_invocation_drift` and `feedback_codex_review_four_dispatches` memories both describe the same failure: a skill claims to do steps 1-18, actually does steps 1-13, the section ships, the gap is invisible until a later review catches it. §3-§5 catch this for one specific skill (`review-todo-section` step 8) by requiring four state-file entries. Generalize to every multi-step skill in the catalog: per-skill state file written by the SAME hooks that fire during the skill's tool calls, never on agent self-claim. The key insight from 2026 industry practice: a step is "done" only when a hook *observed* the tool call that step requires; the agent saying "I did step N" is not evidence.
+
+- [ ] Define a per-skill state file shape at [`.claude/state/skill-progress.json`](../../.claude/state/skill-progress.json) (NEW, gitignored): keyed by `(skill, cwd_md5, head_sha)` triple, value `{started_ts: <ts_ns>, steps_observed: [{n: int, observed_ts: <ts_ns>, evidence_tool: "Bash|Edit|Skill", evidence_token: "<sha or path>"}], session_id: "<from SessionStart>"}`. Schema doc in [`.claude/state/README.md`](../../.claude/state/README.md). Invalidation: tied to `git rev-parse HEAD` AND working-tree dirty hash; TTL 1 hour; cleared on `SessionStart` if the prior session never produced a Stop.
+- [ ] Define the step-evidence map for the 5 multi-step skills currently in scope (`implement-todo-section`, `review-todo-section`, `verify-todo-section`, `complete-todo-file`, `quality-review-section`). Each step is paired with a tool-call signature that proves it ran: e.g. step 5 (build) -> `Bash` matching `bash scripts/build.sh`; step 13 (Codex adversarial) -> `Skill(codex-adversarial-review-section)` OR `Bash` matching `codex-companion.mjs adversarial-review`; step 16 (rebuild) -> second `Bash` matching `bash scripts/build.sh`. Map lives in [`.claude/hooks/skill_step_map.py`](../../.claude/hooks/skill_step_map.py) (NEW, importable by §10 + §11 hooks).
+- [ ] Add a PostToolUse hook [`.claude/hooks/skill_step_observer.py`](../../.claude/hooks/skill_step_observer.py): on every tool call that matches a known step-evidence signature for the currently-active skill (looked up via the active session-id + most recent `Skill` invocation in `.claude/state/tool-history.jsonl` from §11), append a `steps_observed` entry to the state file.
+- [ ] Add a PreToolUse hook [`.claude/hooks/skill_step_block.py`](../../.claude/hooks/skill_step_block.py): on `Bash(git commit:*)` AND on `Skill(skill="review-todo-section")` AND on the §4 section-commit signature, look up the active skill's state file. If the skill's required-step set is non-contiguous (gaps in `steps_observed`) OR missing terminal steps (e.g. `implement-todo-section` requires steps 13, 14, 15, 16, 17, 18 all observed; missing any -> block), exit 2 with: "skill `<X>` claims to be at step N but steps `[missing]` were never observed. Run them or set `SKIP_SKILL_STEP_BLOCK=1 SKIP_SKILL_STEP_BLOCK_REASON='<text>'`."
+- [ ] Add a sub-test to [`scripts/test-tooling.sh`](../../scripts/test-tooling.sh): synthetic state file with `steps_observed=[1,2,3,5]` (gap at 4) -> block; `[1,2,3,4,5]` -> pass; missing terminal step 18 -> block.
+- [ ] Update [`.claude/skills/implement-todo-section/SKILL.md`](../../.claude/skills/implement-todo-section/SKILL.md), [`.claude/skills/review-todo-section/SKILL.md`](../../.claude/skills/review-todo-section/SKILL.md), [`.claude/skills/verify-todo-section/SKILL.md`](../../.claude/skills/verify-todo-section/SKILL.md), [`.claude/skills/complete-todo-file/SKILL.md`](../../.claude/skills/complete-todo-file/SKILL.md), [`.claude/skills/quality-review-section/SKILL.md`](../../.claude/skills/quality-review-section/SKILL.md): add a closing paragraph "the §10 step-observer hook records each step on its real tool call; the §10 step-block hook BLOCKs commit if any required step's evidence is missing. There is no 'I did it inline' shortcut -- the hook does not see narration."
+- [ ] Commit: `"hooks: per-skill step-state telemetry; non-contiguous-step block"`
+
+**Test checkpoint:** `bash scripts/test-tooling.sh` shows the new sub-test PASS. End-to-end: invoke `/implement-todo-section` on a trivial section, deliberately skip step 13 (no Codex dispatch), attempt the section commit, hook exits 2 naming step 13 as missing-evidence; run step 13, retry, exits 0. State file invalidates after `git commit` advances HEAD (next session sees a fresh state). Test on: Linux WSL2 dev host.
+
+---
+
+## 11. Hook Event Surface Expansion (SessionStart / UserPromptSubmit / Stop / SubagentStop / PreCompact)
+
+The current hook surface uses only `PreToolUse` and `PostToolUse`. The 2026 hook spec exposes ~28 events; five of them carry high leverage for this hardening effort and are unused: `SessionStart` (session bootstrap), `UserPromptSubmit` (every user turn before Claude sees it), `Stop` (end-of-turn audit), `SubagentStop` (subagent completion), `PreCompact` (context-compaction trigger). Adds catch the failure modes the per-tool-call hooks structurally cannot.
+
+- [ ] `SessionStart` hook [`.claude/hooks/session_start.py`](../../.claude/hooks/session_start.py): writes `.claude/state/session.json` with session-id + ts + cwd + `git rev-parse HEAD`; truncates `tool-history.jsonl` if older than 7 days; restores any state files §10 invalidated mid-session. Injects an `additionalContext` block reminding the agent of the current TODO if a TODO commit is in flight (detected via uncommitted edits to `todo/**/*.md`).
+- [ ] `UserPromptSubmit` hook [`.claude/hooks/user_prompt_doctrine.py`](../../.claude/hooks/user_prompt_doctrine.py): scans the user's prompt for "skip review", "just commit", "ignore the hook", "bypass the gate" and similar phrases. On match, injects a `systemMessage` reminding the agent of the relevant doctrine memory + the legitimate opt-out env var. Does NOT block the prompt (the user's intent is authoritative); just makes sure the agent sees the rule before acting.
+- [ ] `Stop` hook [`.claude/hooks/stop_audit.py`](../../.claude/hooks/stop_audit.py): on session stop, scans the last 30 turns of `.claude/state/tool-history.jsonl` for the regex pair `(I('| w)ill|I should) (run|invoke|call) (review-todo-section|/codex-|kernel-code-quality)` followed by no actual matching tool call within 5 turns; appends to `.claude/state/acknowledged-but-skipped.log`. Surfaces the latest entry on the next `SessionStart` injection.
+- [ ] `Stop` hook also runs the verification-before-completion gate: if the session contains any `todo/**/*.md` edit that flipped `[ ]` to `[x]` AND no `Skill(superpowers:verification-before-completion)` ran in the same session, append a WARN line to the same log. Reminder, not block (the user may stop the session intentionally with verification owed to the next session).
+- [ ] `SubagentStop` hook [`.claude/hooks/subagent_audit.py`](../../.claude/hooks/subagent_audit.py): records subagent-type + duration_ms + tool_uses_total to `.claude/state/subagent-log.jsonl`. Feeds §9 drift detection (subagent budget audit -- if a single subagent runs 30+ tool calls or 10+ minutes, surface as a possible runaway).
+- [ ] `PreCompact` hook [`.claude/hooks/pre_compact_flush.py`](../../.claude/hooks/pre_compact_flush.py): flushes all `.claude/state/*.json` to `.claude/state/.compaction-snapshots/<ts>.json` so mid-pipeline state survives compaction. The §10 step-state file is the highest-priority artifact to preserve.
+- [ ] Add `tool-history.jsonl` writer to the existing PostToolUse `*` matcher: append `{event, tool_name, tool_use_id, ts_ns, duration_ms, success}` per call. This is the source-of-truth log that `Stop` and `skill_step_observer.py` read. Keep file under 10 MB via the `SessionStart` truncate.
+- [ ] Wire all 5 new hooks + the `tool-history.jsonl` writer into [`.claude/settings.json`](../../.claude/settings.json) under the appropriate matchers. Verify `claude code --help` lists the 5 events as supported (older Claude Code versions may not expose all 5; if `SubagentStop` or `PreCompact` is not yet in the running version, document the version requirement and skip those hooks until upgrade).
+- [ ] Add 3 sub-tests to [`scripts/test-tooling.sh`](../../scripts/test-tooling.sh): (a) `SessionStart` hook writes session.json with valid keys; (b) `UserPromptSubmit` hook injects systemMessage on a synthetic "skip review" prompt; (c) `Stop` hook detects an "I'll run codex-adversarial" promise followed by no matching tool call.
+- [ ] Commit: `"hooks: expand event surface (SessionStart/UserPromptSubmit/Stop/SubagentStop/PreCompact) + tool-history.jsonl"`
+
+**Test checkpoint:** `bash scripts/test-tooling.sh` shows 3 new sub-tests PASS. Manual end-to-end: type "skip review and just commit" as the next user turn, the agent's first response begins with the doctrine reminder; type a normal prompt, no reminder. Run a session that promises "I'll run /review-todo-section" without doing it, end the session via `/clear`, the next `SessionStart` injection notes the unfulfilled promise. Test on: Linux WSL2 dev host (Claude Code current; document minimum version for `SubagentStop` / `PreCompact`).
+
+---
+
+## 12. AI-Slop Content Lints (Tautological-Test / Stub-Behind-Stamp / Phantom-Include)
+
+Build green and tests green do not catch the three most common AI-slop patterns. Industry reports for late 2025 / early 2026 (CodeRabbit Dec 2025 PR study) show AI-coauthored changes ship ~1.7x more major issues than human-authored, with the leak being content-level, not compile-level. The user's `feedback_no_substandard_code` and `feedback_no_corner_cutting` memories both name this as a recurring failure mode. CLAUDE.md already prohibits tautological tests in prose ("NO tautological constant tests like `TEST_ASSERT_EQ(POST16_FOO, 0xDF20)`"); enforce mechanically.
+
+- [ ] Add Check 6 to [`scripts/lint.sh`](../../scripts/lint.sh): **Tautological-test detection**. Walk every `src/kernel/test/test_*.c`; flag any `TEST_ASSERT_EQ(X, X, ...)` (identical LHS/RHS), any `TEST_ASSERT_EQ(SYM, NUMERIC_LITERAL_MATCHING_DEFINE(SYM), ...)` (compares a `#define` to its own literal value, which the compiler enforces), and any `TEST_ASSERT(true, ...)`. Allowlist: `/* TEST-TAUTOLOGY-OK: <reason> */` marker on the same line. Output: `path:line: tautological-test: <detail>`.
+- [ ] Add Check 7: **Stub-behind-stamp detection**. Cross-reference: every TODO checklist item marked `[x]` that names a specific function (e.g. `Implement frobnicate_init() in src/kernel/foo.c`), grep for the function in the codebase. If the function exists AND its body is `<= 3 LOC and only returns a constant or NULL` AND no `/* INTENTIONAL-STUB: <reason> */` marker is on the previous line, flag as stub-behind-stamp. Output: `path:line: stub-behind-stamp: <symbol> stamped done at <todo:line> but body is N-LOC return-constant`. Implementation reads `build/todo-cache.json` (TODO-06 §2) for the stamped-item -> file:symbol map.
+- [ ] Add Check 8: **Phantom-include detection**. For every `#include` line in `src/kernel/**/*.c`, run a `clangd` (via `lsp-bridge.diagnostics` MCP, TODO-07 §7 `diagnostics`) check that confirms the file actually references at least one symbol from that header. The MCP gives compiler-grade unused-include detection. Allowlist: headers known to define preprocessor macros that get used (`<kernel/types.h>` for typedefs, etc.); maintain at [`.claude/state/include-allowlist.txt`](../../.claude/state/include-allowlist.txt) (gitignored, regenerated on demand).
+- [ ] Wire the 3 checks into the existing [`scripts/lint.sh`](../../scripts/lint.sh) pre-commit gate (already invoked by [`.githooks/pre-commit`](../../.githooks/pre-commit)). Each check is opt-out via env var (`SKIP_LINT_TAUTOLOGY=1`, etc.) for the rare legitimate exception, with a paper-trail logging requirement matching §4.
+- [ ] Add 3 sub-tests to [`scripts/test-tooling.sh`](../../scripts/test-tooling.sh) that synthesize each anti-pattern and confirm `bash scripts/lint.sh` exits non-zero with the expected message.
+- [ ] Update [`docs/infrastructure/ai-system.md`](../../docs/infrastructure/ai-system.md) "AI-Slop Content Gates" subsection (NEW): three checks, three opt-out env vars, the markers (`TEST-TAUTOLOGY-OK`, `INTENTIONAL-STUB`) and where they belong.
+- [ ] Commit: `"scripts/lint: AI-slop content lints (tautological-test, stub-behind-stamp, phantom-include)"`
+
+**Test checkpoint:** Synthetic `test_foo.c` with `TEST_ASSERT_EQ(MAGIC, MAGIC, "tautology")` -> lint exits non-zero. `kmalloc_init() { return STATUS_SUCCESS; }` stamped `[x]` in a synthetic TODO -> stub-behind-stamp fires (with `INTENTIONAL-STUB` marker -> passes). Synthetic `.c` with `#include "kernel/unused.h"` and no symbol from that header -> phantom-include fires; with at least one referenced symbol -> passes. `bash scripts/test-tooling.sh` shows 3 new sub-tests PASS. Test on: Linux WSL2 dev host.
+
+---
+
+## 13. Documentation Sync -- CLAUDE.md / ai-system.md / mcp-usage.md / Reciprocal XREFs
 
 Every section above touches a doctrine surface. Close the loop in lockstep with the implementation so the docs and the running code never diverge.
 
-- [ ] CLAUDE.md changes (single commit at the end): add the "Codex Invocation Policy" paragraph (§2), the 3-bullet "MCP usage" pointer (§6), the new mandatory-trigger rows (§8), and a 1-line cross-reference to this TODO under "Mandatory Skill Triggers" overview text.
-- [ ] [`docs/infrastructure/ai-system.md`](../../docs/infrastructure/ai-system.md): update Hook Routing Matrix to add the new hooks from §3, §4, §5, §7; update External-Reviewer Contract subsection to point at the §3 hard gate; update MCP Server Set subsection to point at §1 cross-config.
+- [ ] CLAUDE.md changes (single commit at the end): add the "Codex Invocation Policy" paragraph (§2), the 3-bullet "MCP usage" pointer (§6), the new mandatory-trigger rows (§8), and a 1-line cross-reference to this TODO under "Mandatory Skill Triggers" overview text. Per `feedback_todo_notes_brevity` (and Karpathy 2026 progressive-disclosure guidance), keep the additions terse; deeper doctrine lives in `docs/infrastructure/*.md` with a 1-line CLAUDE.md pointer.
+- [ ] [`docs/infrastructure/ai-system.md`](../../docs/infrastructure/ai-system.md): update Hook Routing Matrix to add the new hooks from §3, §4, §5, §7, §10, §11, §12; update External-Reviewer Contract subsection to point at the §3 hard gate + §5 four-dispatch enforcement; update MCP Server Set subsection to point at §1 cross-config; add the AI-Slop Content Gates subsection from §12; add a Skill-Step Telemetry subsection from §10; add a Hook Event Surface subsection from §11.
 - [ ] [`docs/infrastructure/mcp-usage.md`](../../docs/infrastructure/mcp-usage.md): finalized in §6.
 - [ ] [`docs/infrastructure/superpowers-policy.md`](../../docs/infrastructure/superpowers-policy.md): finalized in §8.
-- [ ] Reciprocal XREF sweep: add a `-> XREF: 00-infrastructure/TODO-08 §<N>` line to TODO-02 §3 (Hook Routing Matrix) referencing this TODO's §3-§5; to TODO-02 §4 (External-Reviewer Contract) referencing §3-§5; to TODO-06 §8 (todo-graph MCP) referencing §1, §6; to TODO-07 §1 (LSP-MCP bridge) referencing §1, §6.
+- [ ] Reciprocal XREF sweep: add a `-> XREF: 00-infrastructure/TODO-08 §<N>` line to TODO-02 §3 (Hook Routing Matrix) referencing this TODO's §3-§5, §10-§12; to TODO-02 §4 (External-Reviewer Contract) referencing §3, §5; to TODO-06 §8 (todo-graph MCP) referencing §1, §6; to TODO-07 §1 (LSP-MCP bridge) referencing §1, §6, §12 (lint phantom-include consumer).
 - [ ] Update [`todo/00-infrastructure/INDEX.md`](INDEX.md) Active TODOs section: add a TODO-08 row with the same one-paragraph blurb style as TODO-06 / TODO-07.
 - [ ] Update [`todo/TODO-00-INDEX.md`](../TODO-00-INDEX.md) (root index): same row addition.
-- [ ] Update memory: record `feedback_codex_no_model_or_effort.md` (no --model / --effort policy), `feedback_mcp_usage_first.md` (prefer MCP over grep), `project_automation_hardening_complete.md` (TODO-08 done -- once shipped).
+- [ ] Update memory: record `feedback_codex_no_model_or_effort.md` (already done), `feedback_mcp_usage_first.md` (prefer MCP over grep), `project_automation_hardening_complete.md` (TODO-08 done -- once shipped).
 - [ ] Commit: `"docs: sync CLAUDE.md / ai-system.md / superpowers-policy + reciprocal XREFs for TODO-08"`
 
 **Test checkpoint:** `bash scripts/audit-ai-system.sh` green; `bash scripts/test-tooling.sh` green; `bash scripts/build.sh` green (no kernel impact); `bash scripts/todo-graph/validate.py` green (no stale XREFs). Both indexes show the new TODO-08 row. Test on: Linux WSL2 dev host.
@@ -236,17 +335,22 @@ Every section above touches a doctrine surface. Close the loop in lockstep with 
 | Codex CLI MCP servers | `~/.codex/config.toml` `[mcp_servers.*]` | §1 -- mirrors from Claude side |
 | Codex model + effort default | `~/.codex/config.toml` top-level | User -- centralized control; §2 documents non-override policy |
 | Hooks | [`.claude/settings.json`](../../.claude/settings.json) + [`.claude/hooks/`](../../.claude/hooks/) | §7 manifest; per-section adds |
-| State files | `.claude/state/*.json` (gitignored) | §3, §5 -- shape doc in `.claude/state/README.md` |
+| State files | `.claude/state/*.json` + `.claude/state/*.jsonl` (gitignored) | §3 / §5 / §10 / §11 -- shape doc in `.claude/state/README.md` |
+| Skill step evidence map | [`.claude/hooks/skill_step_map.py`](../../.claude/hooks/skill_step_map.py) | §10 -- pairs each skill's required steps with the tool-call signature that proves it ran |
+| Tool call history | `.claude/state/tool-history.jsonl` (gitignored) | §11 -- written by PostToolUse `*` matcher; consumed by §10 step observer + §11 Stop audit |
+| Lint surface | [`scripts/lint.sh`](../../scripts/lint.sh) | Existing checks 1-5; §12 adds 6/7/8 |
 | Reviewer contract | [`docs/infrastructure/ai-system.md`](../../docs/infrastructure/ai-system.md) "External-Reviewer Contract" | TODO-02 §4 owns doctrine; this TODO §3 owns mechanism |
 | Skill triggers | [`CLAUDE.md`](../../CLAUDE.md) "Mandatory Skill Triggers" table | TODO-02 §3 owns doctrine; this TODO §8 adds rows |
 | MCP usage | [`docs/infrastructure/mcp-usage.md`](../../docs/infrastructure/mcp-usage.md) | §6 (NEW) |
 | Drift detection | `scripts/audit-ai-system.sh` | §9 (NEW) |
 
+---
+
 ## OS Comparison
 
 | ⭐ | Feature                                  | 🪟 Win11               | 🐧 Linux                | 🚀 Impossible OS                   |
 |----|------------------------------------------|-----------------------|------------------------|-----------------------------------|
-| 💎 | Cross-tool MCP server set                | ❌ N/A                 | ❌ N/A                  | ⬜ Planned -- §1                   |
+| 💎 | Cross-tool MCP server set                | ❌ N/A                 | ❌ N/A                  | ⏳ §1 wired; smoke blocked on Codex 0.126 alpha |
 | 💎 | Hook + skill manifest                    | ❌ N/A                 | ❌ N/A                  | ⬜ Planned -- §7                   |
 | ⭐ | Reviewer-contract hard gate at edit      | ❌ Not available       | ❌ Not available        | ⬜ Planned -- §3                   |
 | ⭐ | Section-commit gate with build evidence  | ❌ Not available       | ❌ Not available        | ⬜ Planned -- §4                   |
@@ -254,10 +358,16 @@ Every section above touches a doctrine surface. Close the loop in lockstep with 
 | ⭐ | Cross-tool drift detection (Claude+Codex)| ❌ Not available       | ❌ Not available        | ⬜ Planned -- §9                   |
 | 💎 | Doctrine + skill catalog audit           | ❌ Internal eng only   | ⚠️ Ad-hoc per project   | ⬜ Planned -- §8                   |
 | 💎 | MCP usage discipline doctrine            | ❌ N/A                 | ❌ N/A                  | ⬜ Planned -- §6                   |
+| ⭐ | Skill step-state telemetry (observed)    | ❌ Not available       | ❌ Not available        | ⬜ Planned -- §10                  |
+| ⭐ | Hook event surface (SessionStart / Stop) | ❌ N/A                 | ❌ N/A                  | ⬜ Planned -- §11                  |
+| ⭐ | AI-slop content lints (build-passes-but) | ❌ Not available       | ⚠️ Linter-coverage only | ⬜ Planned -- §12                  |
 
 > **After §1-§5:** Claude and Codex share the same MCP server set, the same Codex invocation policy, the same hard gates around reviews and section commits. Drift between the two automation sides is detectable.
 > **After §6-§9:** The whole automation surface is auditable in one script. Hook system is documented; MCP usage is doctrine; superpowers plugin behavior is reconciled with Impossible OS rules.
-> **After §10:** Doctrine docs match running code; reciprocal XREFs land. Future work in TODO-02 / TODO-06 / TODO-07 has a clean integration story.
+> **After §10-§12:** Skill step-state telemetry observes (rather than trusts) what each pipeline did; the unused two-thirds of the hook-event surface is wired in (SessionStart / UserPromptSubmit / Stop / SubagentStop / PreCompact); AI-slop content lints catch the three patterns build+tests structurally cannot (tautological tests, stub-behind-stamp, phantom-includes).
+> **After §13:** Doctrine docs match running code; reciprocal XREFs land. Future work in TODO-02 / TODO-06 / TODO-07 has a clean integration story.
+
+---
 
 ## Unit Tests
 
@@ -275,18 +385,33 @@ Every section above touches a doctrine surface. Close the loop in lockstep with 
   - `section_commit_gate_skip` -- §4 gate honors `SKIP_REVIEW_HOOK=1` + reason; logs to skip-log
   - `four_dispatch_partial` -- §5 gate exits 2 with 3 of 4 review state entries
   - `four_dispatch_full` -- §5 gate exits 0 with all 4
-  - `audit_hooks_clean` -- §7 manifest matches dir + settings.json
-  - `audit_ai_system` -- §9 umbrella runs all 6 checks
+  - `skill_step_noncontig` -- §10 gate exits 2 on `steps_observed=[1,2,3,5]` (gap at 4)
+  - `skill_step_full` -- §10 gate exits 0 on `steps_observed=[1..18]`
+  - `session_start_writes` -- §11 SessionStart hook produces session.json with valid keys
+  - `user_prompt_doctrine` -- §11 UserPromptSubmit injects systemMessage on synthetic "skip review" prompt
+  - `stop_audit_detects` -- §11 Stop hook flags "I'll run codex-adversarial" promise + no matching tool call
+  - `lint_tautology` -- §12 lint rejects `TEST_ASSERT_EQ(X, X, ...)` and accepts allowlisted exception
+  - `lint_stub_behind_stamp` -- §12 lint rejects 3-LOC stub function whose owner item is `[x]`; accepts `INTENTIONAL-STUB` marker
+  - `lint_phantom_include` -- §12 lint rejects `#include` with no symbol referenced from the same TU
+  - `audit_hooks_clean` -- §7 manifest matches dir + settings.json + plugin hooks; exit-2-or-bust audit passes
+  - `audit_ai_system` -- §9 umbrella runs all 8 checks
 - [ ] No bat-runner subdirs needed (kernel test infra not touched).
 - [ ] Commit: `"test: add automation-hardening tooling-side tests to test-tooling.sh"`
 
+---
+
 ## Verification
+
+> **Test runner:** N/A (host-side automation tooling; no kernel/usermode/desktop test surface) | validation: `bash scripts/test-tooling.sh` (~22 new sub-tests via §1-§5 / §7 / §9 / §10 / §11 / §12) + `bash scripts/audit-ai-system.sh` (8 cross-tool drift checks via §9) + `bash scripts/lint.sh` (Check 6/7/8 from §12).
 
 - [ ] `codex mcp list` shows both `todo-graph` and `lsp-bridge` (§1)
 - [ ] `codex exec "use todo-graph to list 5 ready sections"` returns real section titles (§1)
 - [ ] `bash scripts/build.sh clean` -> `=== BUILD OK ===` (no kernel impact, just confirms tooling changes do not break build)
-- [ ] `bash scripts/test-tooling.sh` shows all 13 new sub-tests PASS (§1-§5, §7, §9)
-- [ ] `bash scripts/audit-ai-system.sh` shows all 6 checks PASS (§9)
+- [ ] `bash scripts/test-tooling.sh` shows all ~22 new sub-tests PASS (§1-§5, §7, §9, §10, §11, §12)
+- [ ] `bash scripts/audit-ai-system.sh` shows all 8 checks PASS (§9)
+- [ ] `bash scripts/lint.sh` runs the 3 new content checks from §12 with allowlist markers honored
+- [ ] Skill step-state telemetry: invoke `/implement-todo-section` on a trivial section, deliberately skip step 13 (no Codex dispatch); attempt section commit, hook exits 2 naming step 13 missing-evidence; run step 13, retry, exits 0 (§10)
+- [ ] Hook event surface: type "skip review and just commit" as a user prompt, the agent's first response begins with the doctrine reminder (§11 UserPromptSubmit). End a session with an unfulfilled "I'll run /review-todo-section" promise; next SessionStart surfaces the entry from `acknowledged-but-skipped.log` (§11 Stop)
 - [ ] `bash scripts/todo-graph/validate.py` shows no stale XREFs after the §10 reciprocal-XREF sweep
 - [ ] Manual end-to-end test: invoke `/codex:adversarial-review --wait` on a trivial branch change; attempt an Edit; receiving-review hook blocks; invoke `superpowers:receiving-code-review`; retry; allows (§3)
 - [ ] Manual end-to-end test: stage a section-commit diff WITHOUT running Codex, attempt `git commit`, gate blocks with named missing evidence; complete the pipeline; retry; passes (§4)
