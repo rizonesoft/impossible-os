@@ -559,32 +559,43 @@ fi
 # boundary audit; sub-test 7f wraps it, but we ALSO run it standalone
 # so a future test_bridge.sh refactor cannot accidentally bypass the
 # audit gate.
-[ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[lsp-mcp]${NC}"
-LSP_MCP_TEST="$REPO_ROOT/scripts/lsp-mcp/tests/test_bridge.sh"
-if [ -x "$LSP_MCP_TEST" ]; then
-    LM_OUT=$("$LSP_MCP_TEST" 2>&1)
-    LM_RC=$?
-    LM_SUMMARY=$(printf '%s\n' "$LM_OUT" | grep -E '^\[lsp-mcp-tests\] [0-9]+/[0-9]+ sub-tests PASS$' | tail -1)
-    if [ "$LM_RC" = "0" ]; then
-        t_pass "scripts/lsp-mcp/tests/test_bridge.sh PASS (${LM_SUMMARY:-summary unavailable})"
-    else
-        t_fail "scripts/lsp-mcp/tests/test_bridge.sh FAIL (${LM_SUMMARY:-run directly for details})"
-    fi
+#
+# CI deduplication: build.yml runs both harnesses again as a standalone
+# step for log placement, so it sets TEST_TOOLING_SKIP_LSP_MCP=1 when
+# invoking this script to avoid running the harness twice per build (one
+# clangd cold-spawn + one stress pass = ~tens of seconds saved). Local
+# developers running the script directly still get the full surface.
+if [ "${TEST_TOOLING_SKIP_LSP_MCP:-0}" = "1" ]; then
+    [ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[lsp-mcp]${NC}"
+    t_pass "lsp-mcp harness skipped (TEST_TOOLING_SKIP_LSP_MCP=1; run directly via test_bridge.sh + test_boundary.sh)"
 else
-    t_fail "scripts/lsp-mcp/tests/test_bridge.sh not found or not executable"
-fi
-LSP_BOUNDARY_TEST="$REPO_ROOT/scripts/lsp-mcp/tests/test_boundary.sh"
-if [ -x "$LSP_BOUNDARY_TEST" ]; then
-    LB_OUT=$("$LSP_BOUNDARY_TEST" 2>&1)
-    LB_RC=$?
-    LB_SUMMARY=$(printf '%s\n' "$LB_OUT" | grep -E '^\[boundary\] ' | tail -1)
-    if [ "$LB_RC" = "0" ]; then
-        t_pass "scripts/lsp-mcp/tests/test_boundary.sh PASS (${LB_SUMMARY:-summary unavailable})"
+    [ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[lsp-mcp]${NC}"
+    LSP_MCP_TEST="$REPO_ROOT/scripts/lsp-mcp/tests/test_bridge.sh"
+    if [ -x "$LSP_MCP_TEST" ]; then
+        LM_OUT=$("$LSP_MCP_TEST" 2>&1)
+        LM_RC=$?
+        LM_SUMMARY=$(printf '%s\n' "$LM_OUT" | grep -E '^\[lsp-mcp-tests\] [0-9]+/[0-9]+ sub-tests PASS$' | tail -1)
+        if [ "$LM_RC" = "0" ]; then
+            t_pass "scripts/lsp-mcp/tests/test_bridge.sh PASS (${LM_SUMMARY:-summary unavailable})"
+        else
+            t_fail "scripts/lsp-mcp/tests/test_bridge.sh FAIL (${LM_SUMMARY:-run directly for details})"
+        fi
     else
-        t_fail "scripts/lsp-mcp/tests/test_boundary.sh FAIL (${LB_SUMMARY:-run directly for details})"
+        t_fail "scripts/lsp-mcp/tests/test_bridge.sh not found or not executable"
     fi
-else
-    t_fail "scripts/lsp-mcp/tests/test_boundary.sh not found or not executable"
+    LSP_BOUNDARY_TEST="$REPO_ROOT/scripts/lsp-mcp/tests/test_boundary.sh"
+    if [ -x "$LSP_BOUNDARY_TEST" ]; then
+        LB_OUT=$("$LSP_BOUNDARY_TEST" 2>&1)
+        LB_RC=$?
+        LB_SUMMARY=$(printf '%s\n' "$LB_OUT" | grep -E '^\[boundary\] ' | tail -1)
+        if [ "$LB_RC" = "0" ]; then
+            t_pass "scripts/lsp-mcp/tests/test_boundary.sh PASS (${LB_SUMMARY:-summary unavailable})"
+        else
+            t_fail "scripts/lsp-mcp/tests/test_boundary.sh FAIL (${LB_SUMMARY:-run directly for details})"
+        fi
+    else
+        t_fail "scripts/lsp-mcp/tests/test_boundary.sh not found or not executable"
+    fi
 fi
 
 # ============================================================================

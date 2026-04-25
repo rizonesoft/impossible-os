@@ -716,7 +716,7 @@ Owner: [TODO-07 in 00-infrastructure](../../todo/00-infrastructure/TODO-07-lsp-m
 | LSP JSON-RPC client                      | [`scripts/lsp-mcp/lsp_client.py`](../../scripts/lsp-mcp/lsp_client.py) | Subprocess lifecycle + request/response demux + read-only deny gate                |
 | Per-language spawn recipes               | [`scripts/lsp-mcp/servers/`](../../scripts/lsp-mcp/servers/)  | One module per LSP: `clangd_server`, `asm_server`, `bash_server`, `python_server`, `powershell_server` |
 | MCP manifest                             | [`scripts/lsp-mcp/mcp.json`](../../scripts/lsp-mcp/mcp.json) + [`.mcp.json`](../../.mcp.json) | stdio transport, registered alongside `todo-graph`              |
-| Self-test + boundary harness             | [`scripts/lsp-mcp/tests/test_bridge.sh`](../../scripts/lsp-mcp/tests/test_bridge.sh) + [`test_boundary.sh`](../../scripts/lsp-mcp/tests/test_boundary.sh) | 36 sub-tests + write-capable-method audit             |
+| Self-test + boundary harness             | [`scripts/lsp-mcp/tests/test_bridge.sh`](../../scripts/lsp-mcp/tests/test_bridge.sh) + [`test_boundary.sh`](../../scripts/lsp-mcp/tests/test_boundary.sh) | 37 sub-tests + write-capable-method audit             |
 
 #### Six MCP tools (all read-only)
 

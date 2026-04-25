@@ -57,16 +57,18 @@ jobs:
           path: |
             /usr/lib/llvm-${{ env.LLVM_VERSION }}
             /usr/bin/clang-${{ env.LLVM_VERSION }}
+            /usr/bin/clangd-${{ env.LLVM_VERSION }}
             /usr/bin/ld.lld-${{ env.LLVM_VERSION }}
             /usr/bin/llvm-objcopy-${{ env.LLVM_VERSION }}
             /usr/bin/llvm-ar-${{ env.LLVM_VERSION }}
             /usr/bin/llvm-nm-${{ env.LLVM_VERSION }}
-          key: llvm-${{ env.LLVM_VERSION }}-${{ runner.os }}-v2
+          key: llvm-${{ env.LLVM_VERSION }}-${{ runner.os }}-v3
 
-      # ── Install LLVM (clang-19, lld-19, llvm-19) ────────────────────────────
+      # ── Install LLVM (clang-19, clangd-19, lld-19, llvm-19) ─────────────────
       # llvm-${VERSION} owns llvm-ar-${VERSION} / llvm-nm-${VERSION} /
       # llvm-objcopy-${VERSION}; install it explicitly so setup.sh --verify
-      # does not rely on apt Recommends auto-pulling it.
+      # does not rely on apt Recommends auto-pulling it. clangd-${VERSION}
+      # is required by the LSP-MCP bridge stress sub-test 8a.
       - name: Install LLVM ${{ env.LLVM_VERSION }}
         if: steps.cache-llvm.outputs.cache-hit != 'true'
         run: |
@@ -76,6 +78,7 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq \
             clang-${{ env.LLVM_VERSION }} \
+            clangd-${{ env.LLVM_VERSION }} \
             lld-${{ env.LLVM_VERSION }} \
             llvm-${{ env.LLVM_VERSION }}
 
@@ -113,7 +116,14 @@ jobs:
       # Exercises the wrapper contract, hook lifecycle, and workflow YAML
       # without actually compiling the OS. Catches drift between local docs
       # and CI before the build stage runs.
+      #
+      # TEST_TOOLING_SKIP_LSP_MCP=1: the standalone "Run LSP-MCP bridge tests"
+      # step below runs test_bridge.sh + test_boundary.sh once for log
+      # placement. Skip the duplicate run here so CI does not pay the
+      # clangd cold-spawn + stress pass twice per build.
       - name: Run tooling regression pack
+        env:
+          TEST_TOOLING_SKIP_LSP_MCP: "1"
         run: bash scripts/test-tooling.sh --quiet
 
       # AI workflow regression pack (AI Development System roadmap). Checks doctrine presence,
@@ -175,15 +185,16 @@ jobs:
 
       # LSP-MCP bridge harness (TODO-07 in 00-infrastructure). Host-side
       # Python tests; do NOT depend on the kernel build but DO need the
-      # mcp SDK (clean SKIP without it) and clangd-19 (already installed
-      # by setup-deps.sh). The runtime regression pack scripts/test-
+      # mcp SDK (clean SKIP without it) and clangd-19 (installed in the
+      # LLVM apt step above). The runtime regression pack scripts/test-
       # tooling.sh ABOVE runs the same harness, but listing it as a
       # standalone step makes a regression here visible at the right
       # place in the GitHub Actions log instead of buried inside the
-      # tooling pack output. CI host has clangd-19 from setup-deps; the
-      # other 4 LSPs are not installed, so per-language sub-tests SKIP
-      # cleanly. Stress sub-test 8a runs against clangd. Boundary test
-      # validates the source audit independently.
+      # tooling pack output. clangd-19 is the only LSP installed in CI;
+      # the other 4 LSPs (asm-lsp, bash-language-server, pyright, pwsh
+      # + PSES) are absent, so per-language sub-tests SKIP cleanly.
+      # Stress sub-test 8a runs against clangd. Boundary test validates
+      # the source audit independently.
       - name: Run LSP-MCP bridge tests
         run: |
           bash scripts/lsp-mcp/tests/test_bridge.sh
