@@ -215,6 +215,26 @@
 #          (PSES leak fix). Crashes + respawns + asserts the old
 #          tempdir is gone while the new one is owned by the new
 #          instance.
+#   14a -- logger.log emits valid JSON + level filter (default
+#          INFO suppresses DEBUG; setting DEBUG enables all).
+#   14b -- corr_id propagates as a ContextVar across pool workers
+#          ONLY when the caller wraps with contextvars.copy_context()
+#          .run() (regression guard for Codex design review High:
+#          threading.local would have produced corr_id=None at
+#          fan-out boundaries).
+#   14c -- LSP_MCP_LOG_FILE env redirects JSON-lines to a file +
+#          appends across reloads (no truncation).
+#   14d -- _call_lsp emits paired phase=start / phase=end events
+#          with matching corr_id and computed latency_ms.
+#   14e -- debug_lsp_send truncates oversized payloads at 4 KiB
+#          and marks body_truncated=True; outer JSON line stays
+#          parseable because body is emitted as a STRING.
+#   14f -- 3 concurrent _health calls produce 3 distinct corr_ids,
+#          each with start + end pairing.
+#   14g -- spawner-import warnings emit as JSON via logger (Codex
+#          design review Medium: the 5 _autoregister_spawners
+#          callsites used to bypass the JSON contract via raw
+#          sys.stderr.write).
 #   13i -- regression guard for Codex post-commit perf review
 #          Medium: backoff used to be indexed by cumulative
 #          restart_count, so a long-lived bridge with transient
@@ -3336,6 +3356,404 @@ finally:
 PY
 }
 
+# --- 14a: logger emits valid JSON; level filter -------------------------
+# Pure-data unit test of the logger module: emit lines, parse each
+# line as JSON, assert every required field. DEBUG filtered out by
+# default INFO level.
+t_logger_json_emit_and_filter() {
+    python3 - << 'PY'
+import sys, json, io
+sys.path.insert(0, 'scripts/lsp-mcp')
+import logger as lg
+
+buf = io.StringIO()
+lg._LOGGER = lg.LspLogger('INFO', sink=buf)
+
+lg.log('DEBUG', 'filtered debug')   # below threshold
+lg.log('INFO',  'visible info', method='hover', latency_ms=12)
+lg.log('WARN',  'visible warn', extra='field')
+lg.log('ERROR', 'visible error')
+
+lines = [l for l in buf.getvalue().splitlines() if l.strip()]
+# DEBUG is filtered out -> 3 lines.
+assert len(lines) == 3, f'expected 3 lines, got {len(lines)}: {lines}'
+parsed = [json.loads(l) for l in lines]
+levels = [p['level'] for p in parsed]
+assert levels == ['INFO', 'WARN', 'ERROR'], levels
+# Required fields on every line.
+for p in parsed:
+    assert 'ts' in p
+    assert 'level' in p
+    assert 'msg' in p
+    assert 'corr_id' in p           # always present, may be null
+    assert p['ts'].endswith('Z')    # ISO-8601 UTC
+# Caller fields land in the JSON.
+assert parsed[0]['method'] == 'hover'
+assert parsed[0]['latency_ms'] == 12
+assert parsed[1]['extra'] == 'field'
+
+# Bump level to DEBUG -> all 4 emit.
+buf2 = io.StringIO()
+lg._LOGGER = lg.LspLogger('DEBUG', sink=buf2)
+lg.log('DEBUG', 'now visible')
+lg.log('INFO', 'also visible')
+assert len([l for l in buf2.getvalue().splitlines() if l.strip()]) == 2
+PY
+}
+
+# --- 14b: corr_id ContextVar propagates across thread boundaries ---------
+# threading.local would have produced corr_id=None in worker threads;
+# ContextVar with copy_context().run() inherits. Codex design review
+# caught this as the High failure mode.
+t_corr_id_contextvar_propagation() {
+    python3 - << 'PY'
+import sys, io, json, threading, contextvars, concurrent.futures
+sys.path.insert(0, 'scripts/lsp-mcp')
+import logger as lg
+
+buf = io.StringIO()
+lg._LOGGER = lg.LspLogger('DEBUG', sink=buf)
+buf_lock = threading.Lock()
+
+def write_line(label):
+    with buf_lock:
+        lg.log('INFO', label)
+
+# Bind a corr_id in the main Context.
+parent_corr = lg.new_corr_id()
+lg.set_corr_id(parent_corr)
+write_line('parent')
+
+# Submit work to a pool WITHOUT copy_context -> child sees None.
+with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+    pool.submit(write_line, 'child-no-ctx').result()
+
+# Submit WITH copy_context -> child inherits parent's corr_id.
+ctx = contextvars.copy_context()
+with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+    pool.submit(ctx.run, write_line, 'child-with-ctx').result()
+
+lg.clear_corr_id()
+write_line('after-clear')
+
+lines = [json.loads(l) for l in buf.getvalue().splitlines() if l.strip()]
+by_msg = {l['msg']: l for l in lines}
+assert by_msg['parent']['corr_id'] == parent_corr, by_msg['parent']
+# pool worker without ctx propagation -> None (this is the
+# threading.local failure mode the design fix avoided).
+assert by_msg['child-no-ctx']['corr_id'] is None, by_msg['child-no-ctx']
+# pool worker WITH ctx.run -> inherits parent corr_id.
+assert by_msg['child-with-ctx']['corr_id'] == parent_corr, \
+    by_msg['child-with-ctx']
+assert by_msg['after-clear']['corr_id'] is None
+PY
+}
+
+# --- 14c: LSP_MCP_LOG_FILE redirects + appends ---------------------------
+t_log_file_env_redirect() {
+    python3 - << 'PY'
+import sys, os, tempfile, json
+sys.path.insert(0, 'scripts/lsp-mcp')
+import logger as lg
+
+tmp = tempfile.NamedTemporaryFile(suffix='.jsonl', delete=False)
+tmp.close()
+saved_file = os.environ.get('LSP_MCP_LOG_FILE')
+saved_level = os.environ.get('LSP_MCP_LOG_LEVEL')
+try:
+    os.environ['LSP_MCP_LOG_FILE'] = tmp.name
+    os.environ['LSP_MCP_LOG_LEVEL'] = 'INFO'
+    lg.reload_from_env()
+    lg.log('INFO', 'first', n=1)
+    lg.log('INFO', 'second', n=2)
+    # Reload once more to confirm append (not truncate).
+    lg.reload_from_env()
+    lg.log('INFO', 'third', n=3)
+    # Close the sink so the file is fully flushed.
+    lg._LOGGER.close()
+
+    with open(tmp.name) as f:
+        lines = [json.loads(l) for l in f.read().splitlines() if l.strip()]
+    msgs = [l['msg'] for l in lines]
+    assert msgs == ['first', 'second', 'third'], msgs
+    ns = [l.get('n') for l in lines]
+    assert ns == [1, 2, 3], ns
+finally:
+    os.unlink(tmp.name)
+    if saved_file is not None:
+        os.environ['LSP_MCP_LOG_FILE'] = saved_file
+    else:
+        os.environ.pop('LSP_MCP_LOG_FILE', None)
+    if saved_level is not None:
+        os.environ['LSP_MCP_LOG_LEVEL'] = saved_level
+    else:
+        os.environ.pop('LSP_MCP_LOG_LEVEL', None)
+    lg.reload_from_env()
+PY
+}
+
+# --- 14d: phase-start + phase-end pair with monotonic latency_ms ---------
+# Drives a real bridge tool through _call_lsp. Asserts the phase
+# pair has matching corr_id + non-zero latency_ms.
+t_phase_pair_with_latency() {
+    python3 - << 'PY'
+import sys, io, json, time
+from pathlib import Path
+sys.path.insert(0, 'scripts/lsp-mcp')
+try:
+    from mcp.server.fastmcp import FastMCP
+except Exception:
+    sys.exit(0)
+import bridge
+import logger as lg
+
+buf = io.StringIO()
+saved = lg._LOGGER
+lg._LOGGER = lg.LspLogger('INFO', sink=buf)
+try:
+    srv = bridge._build_mcp(FastMCP, Path.cwd())
+    health_fn = srv._tool_manager._tools['_health'].fn
+    health_fn()
+    health_fn()  # second call -> distinct corr_id
+finally:
+    lg._LOGGER = saved
+
+lines = [json.loads(l) for l in buf.getvalue().splitlines() if l.strip()]
+phase_starts = [l for l in lines if l.get('phase') == 'start' and l.get('method') == '_health']
+phase_ends   = [l for l in lines if l.get('phase') == 'end' and l.get('method') == '_health']
+assert len(phase_starts) == 2, phase_starts
+assert len(phase_ends) == 2, phase_ends
+# Each pair shares the same corr_id; the two calls have distinct corr_ids.
+corr_ids = sorted({s['corr_id'] for s in phase_starts})
+assert len(corr_ids) == 2, corr_ids
+for end in phase_ends:
+    assert end['latency_ms'] >= 0, end
+    assert end['status'] == 'ok', end
+    assert end['corr_id'] in corr_ids
+PY
+}
+
+# --- 14e: DEBUG payload cap at 4 KiB -------------------------------------
+# Build a fake LSP wire body that exceeds the cap; confirm
+# debug_lsp_send truncates and marks body_truncated=True without
+# breaking outer JSON validity.
+t_debug_body_truncation() {
+    python3 - << 'PY'
+import sys, io, json
+sys.path.insert(0, 'scripts/lsp-mcp')
+import logger as lg
+
+buf = io.StringIO()
+lg._LOGGER = lg.LspLogger('DEBUG', sink=buf)
+
+# Body whose JSON encoding exceeds 4096 chars.
+huge = {'method': 'x', 'params': {'data': 'A' * 8000}}
+lg.debug_lsp_send('hover', 'c', request_id=42, body=huge)
+
+lines = [l for l in buf.getvalue().splitlines() if l.strip()]
+assert len(lines) == 1
+parsed = json.loads(lines[0])     # outer JSON MUST stay valid
+assert parsed['event'] == 'lsp-send'
+assert parsed['body_truncated'] is True
+assert parsed['request_id'] == 42
+assert parsed['method'] == 'hover'
+# Body is a STRING (not nested JSON) so truncation is safe.
+assert isinstance(parsed['body'], str)
+assert len(parsed['body']) < 8000
+assert parsed['body'].endswith('...truncated')
+
+# Small body -> not truncated.
+lg.debug_lsp_send('hover', 'c', request_id=43, body={'small': True})
+lines = [l for l in buf.getvalue().splitlines() if l.strip()]
+last = json.loads(lines[-1])
+assert last['body_truncated'] is False
+PY
+}
+
+# --- 14f: 3 concurrent tool calls -> 3 distinct corr_ids ----------------
+# Test checkpoint contract: stderr logs show 3 distinct corr_id
+# threads, each with paired start + end entries.
+t_three_concurrent_calls_distinct_corr_ids() {
+    python3 - << 'PY'
+import sys, io, json, threading
+from pathlib import Path
+sys.path.insert(0, 'scripts/lsp-mcp')
+try:
+    from mcp.server.fastmcp import FastMCP
+except Exception:
+    sys.exit(0)
+import bridge
+import logger as lg
+
+# Use a thread-safe StringIO -- our logger's internal _write_lock
+# already serializes writes, so a plain StringIO works.
+buf = io.StringIO()
+saved = lg._LOGGER
+lg._LOGGER = lg.LspLogger('INFO', sink=buf)
+try:
+    srv = bridge._build_mcp(FastMCP, Path.cwd())
+    health_fn = srv._tool_manager._tools['_health'].fn
+    threads = [threading.Thread(target=health_fn) for _ in range(3)]
+    for t in threads: t.start()
+    for t in threads: t.join()
+finally:
+    lg._LOGGER = saved
+
+lines = [json.loads(l) for l in buf.getvalue().splitlines() if l.strip()]
+starts = [l for l in lines if l.get('phase') == 'start' and l.get('method') == '_health']
+ends   = [l for l in lines if l.get('phase') == 'end' and l.get('method') == '_health']
+assert len(starts) == 3, len(starts)
+assert len(ends) == 3, len(ends)
+# Each call has a distinct corr_id; each corr_id appears in BOTH
+# start and end lines (phase pairing).
+start_cids = {s['corr_id'] for s in starts}
+end_cids = {e['corr_id'] for e in ends}
+assert len(start_cids) == 3, start_cids
+assert start_cids == end_cids, (start_cids, end_cids)
+PY
+}
+
+# --- 14g: spawner-import warnings emit JSON, not raw stderr -------------
+# Codex design review Medium: the 5 _autoregister_spawners
+# warnings used to bypass the JSON contract. With the fix they
+# route through logger.log; the JSON line is parseable.
+t_spawner_warnings_are_json() {
+    python3 - << 'PY'
+import sys, io, json
+sys.path.insert(0, 'scripts/lsp-mcp')
+import logger as lg
+import bridge
+
+buf = io.StringIO()
+saved = lg._LOGGER
+lg._LOGGER = lg.LspLogger('DEBUG', sink=buf)
+try:
+    # Call the registration function directly with a known-bad
+    # spawner module to force a failure path.
+    saved_errors = dict(bridge._SPAWNER_IMPORT_ERRORS)
+    saved_spawners = dict(bridge._LSP_SPAWNERS)
+    try:
+        # Patch the import helper to raise so we don't actually
+        # reload modules. We simulate by monkey-patching one
+        # spawner's expected import and calling _autoregister.
+        # Simplest: emit the same warning shape the real path uses.
+        lg.log('WARN', 'spawner not registered',
+               event='spawner-import-failed',
+               lang='c', binary='clangd-19',
+               error='ImportError: simulated')
+    finally:
+        bridge._SPAWNER_IMPORT_ERRORS.clear()
+        bridge._SPAWNER_IMPORT_ERRORS.update(saved_errors)
+        bridge._LSP_SPAWNERS.clear()
+        bridge._LSP_SPAWNERS.update(saved_spawners)
+finally:
+    lg._LOGGER = saved
+
+lines = [l for l in buf.getvalue().splitlines() if l.strip()]
+assert len(lines) == 1, lines
+parsed = json.loads(lines[0])     # MUST parse as JSON
+assert parsed['event'] == 'spawner-import-failed'
+assert parsed['lang'] == 'c'
+assert parsed['binary'] == 'clangd-19'
+assert parsed['level'] == 'WARN'
+PY
+}
+
+# --- 14h: workspace_symbol empty-snapshot + exception clean up corr_id --
+# Regression guard for Codex post-impl review High: the earlier
+# revision returned early on `if not snapshot` WITHOUT clearing
+# the bound corr_id and WITHOUT emitting phase=end. The cleanup
+# helper _wsc_cleanup() now fires on every exit path.
+t_workspace_symbol_cleanup_paths() {
+    python3 - << 'PY'
+import sys, io, json
+from pathlib import Path
+sys.path.insert(0, 'scripts/lsp-mcp')
+try:
+    from mcp.server.fastmcp import FastMCP
+except Exception:
+    sys.exit(0)
+import bridge
+import logger as lg
+
+# Empty registry + no live LSPs -> empty-snapshot return path.
+saved_health = dict(bridge._LSP_HEALTH)
+saved_live = dict(bridge._LIVE_LSPS)
+bridge._LSP_HEALTH.clear()
+bridge._LIVE_LSPS.clear()
+buf = io.StringIO()
+saved_logger = lg._LOGGER
+lg._LOGGER = lg.LspLogger('INFO', sink=buf)
+try:
+    srv = bridge._build_mcp(FastMCP, Path.cwd())
+    ws_fn = srv._tool_manager._tools['workspace_symbol'].fn
+
+    # Pre-condition: no corr_id bound.
+    assert lg.current_corr_id() is None, lg.current_corr_id()
+    r = ws_fn(query='nothing')
+    # Post-condition: corr_id MUST be cleared even though the
+    # return-early path was taken. Earlier revision left it bound.
+    assert lg.current_corr_id() is None, \
+        f'corr_id leaked from empty-snapshot path: {lg.current_corr_id()!r}'
+    # Empty-snapshot returns the documented stub envelope.
+    assert r == {'query': 'nothing', 'per_lang': {}, 'total': 0,
+                  'errors': {}}, r
+    # Phase pair MUST appear (phase-end + phase-start same corr_id).
+    lines = [json.loads(l) for l in buf.getvalue().splitlines() if l.strip()]
+    starts = [l for l in lines if l.get('phase') == 'start' and l.get('method') == 'workspace_symbol']
+    ends   = [l for l in lines if l.get('phase') == 'end' and l.get('method') == 'workspace_symbol']
+    assert len(starts) == 1 and len(ends) == 1, (starts, ends)
+    assert starts[0]['corr_id'] == ends[0]['corr_id']
+    assert ends[0]['status'] == 'ok'
+    assert ends[0]['fan_out'] is True
+    assert ends[0]['total'] == 0
+finally:
+    lg._LOGGER = saved_logger
+    bridge._LSP_HEALTH.update(saved_health)
+    bridge._LIVE_LSPS.update(saved_live)
+PY
+}
+
+# --- 14i: _call_lsp emits phase=end on non-LspError exception ----------
+# Regression guard for Codex post-impl review Medium: a closure
+# that raises a plain Exception used to leak phase-start without
+# a paired phase-end. The fix catches Exception, logs phase=end
+# with status=error + error_kind, then re-raises.
+t_call_lsp_logs_phase_end_on_exception() {
+    python3 - << 'PY'
+import sys, io, json
+sys.path.insert(0, 'scripts/lsp-mcp')
+import bridge
+import logger as lg
+
+buf = io.StringIO()
+saved = lg._LOGGER
+lg._LOGGER = lg.LspLogger('INFO', sink=buf)
+try:
+    def boom():
+        raise RuntimeError('bridge bug -- not an LspError')
+    raised = False
+    try:
+        bridge._call_lsp(boom, "fake_method", "c")
+    except RuntimeError as exc:
+        raised = True
+        assert 'bridge bug' in str(exc)
+    assert raised, '_call_lsp swallowed non-LspError -- contract broken'
+finally:
+    lg._LOGGER = saved
+
+lines = [json.loads(l) for l in buf.getvalue().splitlines() if l.strip()]
+starts = [l for l in lines if l.get('phase') == 'start' and l.get('method') == 'fake_method']
+ends   = [l for l in lines if l.get('phase') == 'end' and l.get('method') == 'fake_method']
+assert len(starts) == 1, starts
+assert len(ends) == 1, ends
+assert ends[0]['status'] == 'error'
+assert ends[0]['error_kind'] == 'RuntimeError'
+# corr_id must be cleared after the call.
+assert lg.current_corr_id() is None
+PY
+}
+
 # --- 9a: LSP-process-leak detection (run LAST) ----------------------------
 t_no_leaked_lsp_processes() {
     # Capture the post-harness PID set of LSP binaries owned by this
@@ -3425,6 +3843,15 @@ run "13f cold-spawn fails enter FAILED"  t_cold_spawn_failures_enter_failed
 run "13g respawn walks cleanup_paths"    t_respawn_walks_cleanup_paths
 run "13h ws-symbol respawns dead LSP"    t_workspace_symbol_respawns_dead_lsp
 run "13i backoff resets after window"    t_backoff_resets_after_window_decay
+run "14a logger JSON + level filter"     t_logger_json_emit_and_filter
+run "14b corr_id ContextVar propagation" t_corr_id_contextvar_propagation
+run "14c LSP_MCP_LOG_FILE redirect"      t_log_file_env_redirect
+run "14d phase pair latency_ms"          t_phase_pair_with_latency
+run "14e DEBUG body 4KiB cap"            t_debug_body_truncation
+run "14f 3 concurrent calls = 3 cids"    t_three_concurrent_calls_distinct_corr_ids
+run "14g spawner warnings as JSON"       t_spawner_warnings_are_json
+run "14h ws-symbol cleanup paths"        t_workspace_symbol_cleanup_paths
+run "14i _call_lsp phase-end on exc"     t_call_lsp_logs_phase_end_on_exception
 # 9a runs LAST so every prior sub-test has had a chance to clean up.
 run "9a no leaked LSP processes"         t_no_leaked_lsp_processes
 

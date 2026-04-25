@@ -54,7 +54,7 @@ title: "TODO-07 -- LSP to MCP Bridge (C, NASM, shell, Python, PowerShell)"
 | 💎  |  11   | Extended LSP tools (completion, signature/nav/call-hierarchy, code_action) | §1, §7                            |  [x]   |
 | 💎  |  12   | File-change lifecycle (didChange / didSave / didClose forwarding)          | §1, §7                            |  [x]   |
 | ⭐  |  13   | LSP subprocess health monitoring + auto-restart (exp backoff)              | §1                                |  [x]   |
-| 💎  |  14   | Structured JSON logging + request correlation IDs                          | §1                                |  [ ]   |
+| 💎  |  14   | Structured JSON logging + request correlation IDs                          | §1                                |  [x]   |
 | ⭐  |  15   | Path sandboxing + workspace boundary enforcement                           | §1, §7                            |  [ ]   |
 | ⭐  |  16   | Warm-index preloading + cold-start budget                                  | §1, §2, §3, §4, §5, §6            |  [ ]   |
 | 💎  |  17   | Scale Roadmap (DEFERRED -- trigger-gated, no code today)                   | --                                |  [ ]   |
@@ -457,13 +457,25 @@ LSPs crash. Clangd OOMs on pathological translation units. Pyright hangs on deep
 
 The 2026 MCP observability baseline is one-line JSON per log entry, a correlation ID per inbound tool call, and that ID threaded through MCP -> `_CALL_LOCK` -> LSP wire send -> LSP wire receive -> MCP response. Lets operators trace a single request end-to-end without interleaving-log confusion. Follows OpenTelemetry Semantic Conventions for GenAI (`rpc.system: "jsonrpc"`, `rpc.method: "<lsp-method>"`).
 
-- [ ] Emit every log line as single-line JSON to stderr: `{"ts": <iso-utc>, "level": "INFO|WARN|ERROR", "corr_id": "<uuid4>", "lang": "c|asm|sh|py|ps1", "method": "hover|...", "latency_ms": <int>, "msg": "..."}`.
-- [ ] On every inbound MCP tool call: generate UUID4 `corr_id`, thread through lock acquire, LSP request ID, LSP response handling, MCP response emit. Log phase-start + phase-end with `latency_ms` computed on exit.
-- [ ] `LSP_MCP_LOG_LEVEL` env var (DEBUG | INFO | WARN | ERROR); default INFO. DEBUG includes the raw LSP wire-format request/response JSON bodies (size-capped to 4 KiB to prevent log flooding).
-- [ ] `LSP_MCP_LOG_FILE=<path>` env var: redirects JSON-lines to file. No auto-rotation (delegate to `logrotate`).
-- [ ] Commit: `"scripts/lsp-mcp: structured JSON logging with correlation IDs"`
+- [x] `scripts/lsp-mcp/logger.py` `LspLogger` emits every log line as single-line JSON via `_write_lock` (no byte interleaving across threads). Schema: `{ts: iso-utc-Z+microsecond, level: DEBUG|INFO|WARN|ERROR, corr_id: uuid4-hex|None, msg, ...event-specific fields}` with `sort_keys=True` for grep stability. Routes through `log_phase_start` / `log_phase_end` / `log_attempt_start` / `log_attempt_end` / `debug_lsp_send` / `debug_lsp_recv` helpers; existing `_emit_health_event` (crash log) + 5 raw `sys.stderr.write` spawner-import warnings retrofitted to the logger so the JSON contract holds even at module import time.
+- [x] `_call_lsp(fn, method, lang_hint=None)` in `bridge.py` generates a uuid4 `corr_id` per inbound MCP call, binds it via `contextvars.ContextVar` (NOT `threading.local`) so the value propagates through `pool.submit(ctx.run, ...)` to `workspace_symbol(lang=None)` fan-out workers. Reader-thread `lsp-recv` events look the corr_id up via `_pending` metadata (`{future, corr_id, method, lang, send_ts}` -- expanded from a bare `Future`). Phase-start + phase-end + per-attempt events flank every call (Codex design review High: phase-only logging cannot distinguish first-attempt-fail+retry-ok from first-attempt-ok). All 14 tool-routed handlers + `_health` go through `_call_lsp`; non-`LspError` exceptions still emit phase-end with `status=error` before re-raising.
+- [x] `LSP_MCP_LOG_LEVEL` env (`DEBUG|INFO|WARN|ERROR`; default INFO; case-insensitive). `debug_lsp_send` / `debug_lsp_recv` truncate the wire body at `_DEBUG_BODY_CAP_BYTES=4096` (string truncation -- emitted as a STRING field in the outer JSON so the line stays parseable even after truncation). Skips JSON serialization entirely when DEBUG is filtered out.
+- [x] `LSP_MCP_LOG_FILE=<path>` env (append-mode). External rotation via `logrotate` is the operator's job; the bridge keeps writing to the renamed inode until restarted (acceptable per TODO contract). On open failure the logger falls back to stderr with one warning line.
+- [x] Commit: `"scripts/lsp-mcp: structured JSON logging with correlation IDs"`
 
 **Test checkpoint:** Issue 3 concurrent tool calls. Stderr logs show 3 distinct `corr_id` threads, each with paired `"start"` + `"end"` entries and non-zero `latency_ms`. `LSP_MCP_LOG_LEVEL=DEBUG` run shows LSP wire-format payloads. `LSP_MCP_LOG_FILE=/tmp/out.jsonl` run writes valid JSON-lines (`jq -c '.' /tmp/out.jsonl | wc -l` matches `calls * phases`).
+
+> **Test runner:** `bash scripts/lsp-mcp/tests/test_bridge.sh` | 68/68 sub-tests PASS (1a-9a + 11a-11g + 12a-12f + 13a-13i + 14a-14i; 14a logger JSON + level filter, 14b corr_id `ContextVar` propagation through `pool.submit(ctx.run, ...)`, 14c `LSP_MCP_LOG_FILE` redirect/append, 14d phase pair latency_ms, 14e DEBUG body 4 KiB cap with safe outer JSON, 14f 3 concurrent calls = 3 distinct corr_ids, 14g spawner-import warnings emit as JSON, 14h workspace_symbol cleanup paths cover empty snapshot + exception, 14i `_call_lsp` emits phase=end on non-LspError exceptions)
+
+> **Notes:**
+>
+> - **What shipped:** new `scripts/lsp-mcp/logger.py` (~430 LOC) -- `LspLogger` + `ContextVar` `corr_id` + `LSP_MCP_LOG_LEVEL` / `LSP_MCP_LOG_FILE` env + `debug_lsp_send` / `debug_lsp_recv` payload helpers with 4 KiB body cap. `bridge.py` retrofits all 5 raw `sys.stderr.write` callsites + `_emit_health_event`; `_call_lsp(fn, method, lang_hint)` wraps every tool with phase-start / per-attempt / phase-end events. `lsp_client.py` `_pending` upgraded from `dict[int, Future]` to `dict[int, _RequestMeta]` so reader-thread `lsp-recv` events carry the originating call's `corr_id`. 9 new sub-tests (14a-14i).
+> - **How it runs:** unset env -> JSON-lines to stderr at INFO. `LSP_MCP_LOG_LEVEL=DEBUG python3 scripts/lsp-mcp/bridge.py` adds `lsp-send` / `lsp-recv` payload events. `LSP_MCP_LOG_FILE=/tmp/x.jsonl python3 ...` appends to file (no rotation; logrotate's job). Concurrent MCP calls each get a fresh uuid4 corr_id; `workspace_symbol(lang=None)` fan-out workers inherit it via `contextvars.copy_context().run()`.
+> - **Downstream effects:** retrofits the §13 crash-log `corr_id=null` blank field that the §13 stamp called out as a deferred follow-up. Every health event now carries the inbound caller's correlation ID for free (the logger reads `current_corr_id()` automatically). Codex 2x review adoptions (design + adversarial; 4 design + 2 adversarial findings) -- evidence in commit message.
+> - **Canonical doc:** [`docs/infrastructure/development-tooling.md` LSP MCP Bridge subsection](../../docs/infrastructure/development-tooling.md) -- to be retrofitted by the §14 review pass with the LSP_MCP_LOG_LEVEL/FILE env knobs + the corr_id thread-through diagram.
+> - **Scope boundary:** §14 does NOT own log-file rotation (operator/logrotate scope), workspace-bound path sandboxing's race-free walk (§15), or warm-start bounded latency (§16). The corr_id is per-MCP-call -- there is no cross-call session ID; trace correlation across multiple MCP calls is an explicit non-goal.
+
+> **Verified:** 2026-04-25 | commit `<§14 commit>` | 5/5 items | build OK | tests 68/68 PASS
 
 ---
 

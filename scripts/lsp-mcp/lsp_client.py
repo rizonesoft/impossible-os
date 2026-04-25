@@ -249,7 +249,17 @@ class LspSubprocess:
         self._reader_thread: Optional[threading.Thread] = None
         self._stderr_thread: Optional[threading.Thread] = None
         self._io_lock = threading.Lock()
-        self._pending: dict[int, "Future[Any]"] = {}
+        # Per-request metadata. Was `dict[int, Future]`; expanded
+        # to carry corr_id + method + send_ts so the reader thread
+        # (which does NOT inherit the requester's contextvars
+        # Context) can attach the right correlation ID to lsp-recv
+        # / timeout / crash events. Codex design review of the
+        # structured-logging plan caught this: send-side-only
+        # corr_id leaves DEBUG mode unable to prove which response
+        # matches which request under concurrent load.
+        # Schema: {"future": Future, "corr_id": str|None,
+        #          "method": str, "send_ts": float, "lang": str|None}
+        self._pending: dict[int, dict[str, Any]] = {}
         self._pending_lock = threading.Lock()
         self._next_id = 1
         self._next_id_lock = threading.Lock()
@@ -653,9 +663,22 @@ class LspSubprocess:
         if not isinstance(rid, int):
             return
         with self._pending_lock:
-            fut = self._pending.pop(rid, None)
-        if fut is None:
+            meta = self._pending.pop(rid, None)
+        if meta is None:
             return
+        fut = meta["future"]
+        # DEBUG receive event tagged with the originating call's
+        # corr_id (looked up from per-request metadata, NOT from
+        # the reader thread's Context which is its own).
+        try:
+            from logger import debug_lsp_recv as _dbg_recv  # noqa: WPS433
+            _dbg_recv(method=meta.get("method"),
+                      lang=meta.get("lang"),
+                      request_id=rid,
+                      body=msg,
+                      corr_id=meta.get("corr_id"))
+        except Exception:
+            pass
         if "error" in msg:
             err = msg["error"] or {}
             fut.set_exception(LspError(
@@ -671,7 +694,8 @@ class LspSubprocess:
         with self._pending_lock:
             pending = self._pending
             self._pending = {}
-        for fut in pending.values():
+        for meta in pending.values():
+            fut = meta["future"]
             if not fut.done():
                 fut.set_exception(err)
 
@@ -790,8 +814,25 @@ class LspSubprocess:
         # encoding is also pre-lock; the critical section covers only
         # the two ordered pipe writes + flush.
         rid = self._next_request_id()
+        # Capture the active correlation ID from the requester's
+        # Context so the reader thread (which has its own Context)
+        # can attach the right corr_id to lsp-recv / timeout / crash
+        # events. Best-effort: logger import failure must not break
+        # the request path.
+        corr_id: Optional[str] = None
+        try:
+            from logger import current_corr_id as _ccid  # noqa: WPS433
+            corr_id = _ccid()
+        except Exception:
+            pass
         with self._pending_lock:
-            self._pending[rid] = fut
+            self._pending[rid] = {
+                "future": fut,
+                "corr_id": corr_id,
+                "method": method,
+                "lang": self.lang,
+                "send_ts": time.monotonic(),
+            }
         payload: dict[str, Any] = {
             "jsonrpc": "2.0",
             "id": rid,
@@ -800,6 +841,15 @@ class LspSubprocess:
         if params is not None:
             payload["params"] = params
         header, body = self._encode_frame(payload)
+        # DEBUG send event BEFORE the wire write -- the corr_id is
+        # already captured into _pending so receive-side correlation
+        # works even if this thread races a ctx switch.
+        try:
+            from logger import debug_lsp_send as _dbg_send  # noqa: WPS433
+            _dbg_send(method=method, lang=self.lang,
+                      request_id=rid, body=payload)
+        except Exception:
+            pass
         try:
             with self._io_lock:
                 self._send_frame_bytes(header, body)

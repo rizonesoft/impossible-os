@@ -67,6 +67,12 @@ if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
 from lsp_client import LspError, LspSubprocess  # noqa: E402
+import logger as _lsplog  # noqa: E402
+
+# Initialize the logger BEFORE _autoregister_spawners runs so the
+# spawner-import warnings emit as JSON (Codex design review caught
+# the raw sys.stderr.write fallback as a Medium contract violation).
+_lsplog.reload_from_env()
 
 
 # Narrow serialization: held ONLY during the first-spawn path in
@@ -167,9 +173,9 @@ def _autoregister_spawners() -> None:
     except Exception as exc:
         detail = f"{exc.__class__.__name__}: {exc}"
         _SPAWNER_IMPORT_ERRORS["c"] = detail
-        sys.stderr.write(
-            f"[lsp-mcp] warn: clangd spawner not registered: {detail}\n"
-        )
+        _lsplog.log("WARN", "spawner not registered",
+                    event="spawner-import-failed",
+                    lang="c", binary="clangd-19", error=detail)
 
     # asm-lsp (NASM x86-64) -- .asm + .S extensions.
     try:
@@ -178,9 +184,9 @@ def _autoregister_spawners() -> None:
     except Exception as exc:
         detail = f"{exc.__class__.__name__}: {exc}"
         _SPAWNER_IMPORT_ERRORS["asm"] = detail
-        sys.stderr.write(
-            f"[lsp-mcp] warn: asm-lsp spawner not registered: {detail}\n"
-        )
+        _lsplog.log("WARN", "spawner not registered",
+                    event="spawner-import-failed",
+                    lang="asm", binary="asm-lsp", error=detail)
 
     # bash-language-server (.sh / .bash) -- shell LSP with shellcheck
     # delegated diagnostics when shellcheck is on PATH.
@@ -190,9 +196,10 @@ def _autoregister_spawners() -> None:
     except Exception as exc:
         detail = f"{exc.__class__.__name__}: {exc}"
         _SPAWNER_IMPORT_ERRORS["sh"] = detail
-        sys.stderr.write(
-            f"[lsp-mcp] warn: bash-language-server spawner not registered: {detail}\n"
-        )
+        _lsplog.log("WARN", "spawner not registered",
+                    event="spawner-import-failed",
+                    lang="sh", binary="bash-language-server",
+                    error=detail)
 
     # pyright (.py) -- Microsoft Python LSP, type-inference focused.
     try:
@@ -201,9 +208,10 @@ def _autoregister_spawners() -> None:
     except Exception as exc:
         detail = f"{exc.__class__.__name__}: {exc}"
         _SPAWNER_IMPORT_ERRORS["py"] = detail
-        sys.stderr.write(
-            f"[lsp-mcp] warn: pyright spawner not registered: {detail}\n"
-        )
+        _lsplog.log("WARN", "spawner not registered",
+                    event="spawner-import-failed",
+                    lang="py", binary="pyright-langserver",
+                    error=detail)
 
     # PowerShellEditorServices (.ps1 / .psm1 / .psd1) -- pwsh module
     # loaded via Start-EditorServices.ps1, not a standalone binary.
@@ -213,9 +221,9 @@ def _autoregister_spawners() -> None:
     except Exception as exc:
         detail = f"{exc.__class__.__name__}: {exc}"
         _SPAWNER_IMPORT_ERRORS["ps1"] = detail
-        sys.stderr.write(
-            f"[lsp-mcp] warn: PSES spawner not registered: {detail}\n"
-        )
+        _lsplog.log("WARN", "spawner not registered",
+                    event="spawner-import-failed",
+                    lang="ps1", binary="pwsh+PSES", error=detail)
 
 
 _autoregister_spawners()
@@ -223,28 +231,18 @@ _autoregister_spawners()
 
 def _emit_health_event(event: str, lang: str, root: str,
                        **fields: Any) -> None:
-    """Emit a single JSON-lines crash / restart event to stderr.
+    """Emit a single JSON-lines crash / restart event via the
+    structured logger. The logger attaches `corr_id` automatically
+    from the active Context (set by `_call_lsp` at MCP call entry),
+    so health events fired transitively from a tool call carry the
+    inbound caller's correlation ID for free.
 
-    Schema: {ts, level, event, lang, root, ...fields}. The
-    correlation-ID thread (structured-logging follow-up section)
-    is not yet shipped; once it lands the corr_id field will be
-    added by a retrofit. Best-effort: a write failure must not
-    crash the bridge during teardown."""
-    import time as _time
-    payload = {
-        "ts": _time.time(),
-        "level": "WARN" if event in ("crash", "restart-failed",
-                                      "failed") else "INFO",
-        "event": event,
-        "lang": lang,
-        "root": root,
-    }
-    payload.update(fields)
-    try:
-        sys.stderr.write(_json_dumps(payload) + "\n")
-        sys.stderr.flush()
-    except Exception:
-        pass
+    Best-effort -- the logger swallows write failures so a logger
+    fault during teardown cannot crash the bridge."""
+    level = "WARN" if event in ("crash", "restart-failed",
+                                  "failed") else "INFO"
+    _lsplog.log(level, f"health: {event}",
+                event=event, lang=lang, root=root, **fields)
 
 
 def _json_dumps(obj: Any) -> str:
@@ -688,7 +686,28 @@ def _get_or_spawn(lang: str, workspace_root: Path) -> LspSubprocess:
     return inst
 
 
-def _call_lsp(fn: Callable[[], Any]) -> Any:
+def _lang_hint_from_path(path: Optional[str]) -> Optional[str]:
+    """Cheap (no I/O, no syscall) inference of the bridge lang tag
+    from a path arg's extension. Returns None if the extension
+    is not in _EXT_TO_LANG. Used by _call_lsp to populate
+    lang_hint on the phase-start log without paying for a full
+    _dispatch_path resolve at MCP entry."""
+    if not path:
+        return None
+    try:
+        # Path suffix + lookup. Avoid importing Path here -- cheap
+        # rsplit is enough for a hint.
+        if "." not in path:
+            return None
+        ext = "." + path.rsplit(".", 1)[1]
+        return _EXT_TO_LANG.get(ext)
+    except Exception:
+        return None
+
+
+def _call_lsp(fn: Callable[[], Any],
+              method: Optional[str] = None,
+              lang_hint: Optional[str] = None) -> Any:
     """Wrap an LSP-touching callable; convert LspError into the JSON
     error envelope shape that the tool-wiring commit's handlers will
     return to MCP agents. Exported so the six read-only tool handlers
@@ -709,22 +728,135 @@ def _call_lsp(fn: Callable[[], Any]) -> Any:
     job. Single retry: a second crash within the retry window means
     the LSP is genuinely broken; return the envelope. The
     lsp-persistently-crashing envelope (FAILED state) is NOT
-    retried (it is a terminal contract)."""
+    retried (it is a terminal contract).
+
+    Logging contract:
+      * Generates a UUID4 corr_id for the inbound MCP call and
+        binds it to the active contextvars Context. Every log
+        line emitted transitively (health events, lsp-send /
+        lsp-recv, retry events) carries that corr_id.
+      * Emits phase=start at entry, phase=end at exit with
+        latency_ms + status (ok|error). Per-attempt events
+        (phase=attempt-start / phase=attempt-end) flank each
+        invocation of the closure so the retry path is visible
+        in logs (Codex design review High: a phase-only wrapper
+        cannot distinguish first-attempt-fail+retry-ok from
+        first-attempt-ok).
+      * method = the MCP tool name; lang_hint = bridge lang tag
+        when known at entry. Both are nullable for tools that
+        don't have a per-language scope (workspace_symbol with
+        lang=None, _health)."""
     _RETRY_KINDS = ("lsp-subprocess-exited",
                     "lsp-reader-crashed",
                     "lsp-shutdown")
+    method_str = method or "<unknown>"
+    corr_id = _lsplog.new_corr_id()
+    token = _lsplog.set_corr_id(corr_id)
+    t_start = _lsplog.log_phase_start(method_str, lang_hint)
+    # Track whether phase-end has been emitted so the finally
+    # block can fill in the "unhandled exception" case without
+    # double-emitting on the normal-return paths.
+    phase_end_done = False
     try:
-        return fn()
-    except LspError as exc:
-        if exc.kind not in _RETRY_KINDS:
-            return exc.to_envelope()
-    # Retry path: the closure must re-call _get_or_spawn so it sees
-    # the dead instance and triggers respawn. Any exception on the
-    # retry returns its envelope as-is (no second retry).
-    try:
-        return fn()
-    except LspError as exc:
-        return exc.to_envelope()
+        # Attempt 1.
+        a1_t0 = _lsplog.log_attempt_start(method_str, lang_hint, 1)
+        attempt_end_done = False
+        try:
+            result = fn()
+        except LspError as exc:
+            if exc.kind not in _RETRY_KINDS:
+                _lsplog.log_attempt_end(method_str, lang_hint, 1,
+                                        a1_t0, "error",
+                                        error_kind=exc.kind)
+                _lsplog.log_phase_end(method_str, lang_hint, t_start,
+                                      "error", error_kind=exc.kind)
+                phase_end_done = True
+                return exc.to_envelope()
+            _lsplog.log_attempt_end(method_str, lang_hint, 1,
+                                    a1_t0, "crash-retry",
+                                    error_kind=exc.kind)
+            attempt_end_done = True
+            # Attempt 2 (retry). The closure re-calls _get_or_spawn,
+            # which observes the dead instance and triggers respawn
+            # through the standard _SPAWN_EVENTS gate.
+            a2_t0 = _lsplog.log_attempt_start(method_str, lang_hint, 2,
+                                              first_error_kind=exc.kind)
+            try:
+                result = fn()
+            except LspError as exc2:
+                _lsplog.log_attempt_end(method_str, lang_hint, 2,
+                                        a2_t0, "error",
+                                        error_kind=exc2.kind,
+                                        first_error_kind=exc.kind)
+                _lsplog.log_phase_end(method_str, lang_hint, t_start,
+                                      "error", error_kind=exc2.kind,
+                                      first_error_kind=exc.kind,
+                                      attempts=2)
+                phase_end_done = True
+                return exc2.to_envelope()
+            except Exception as exc2:
+                # Non-LspError on the retry path. Log the failure
+                # boundary, then re-raise so the bridge bug is
+                # loud (Codex post-impl review caught the missing
+                # phase-end on unexpected exceptions as Medium).
+                _lsplog.log_attempt_end(method_str, lang_hint, 2,
+                                        a2_t0, "error",
+                                        error_kind=type(exc2).__name__,
+                                        first_error_kind=exc.kind)
+                _lsplog.log_phase_end(method_str, lang_hint, t_start,
+                                      "error",
+                                      error_kind=type(exc2).__name__,
+                                      first_error_kind=exc.kind,
+                                      attempts=2)
+                phase_end_done = True
+                raise
+            _lsplog.log_attempt_end(method_str, lang_hint, 2,
+                                    a2_t0, "ok",
+                                    first_error_kind=exc.kind)
+            _lsplog.log_phase_end(method_str, lang_hint, t_start,
+                                  "ok", attempts=2,
+                                  first_error_kind=exc.kind)
+            phase_end_done = True
+            return result
+        except Exception as exc:
+            # Non-LspError on the first-attempt path. Log boundaries
+            # and re-raise -- non-LspError exceptions bubble up by
+            # contract (a bug in the bridge itself should be loud).
+            _lsplog.log_attempt_end(method_str, lang_hint, 1,
+                                    a1_t0, "error",
+                                    error_kind=type(exc).__name__)
+            _lsplog.log_phase_end(method_str, lang_hint, t_start,
+                                  "error",
+                                  error_kind=type(exc).__name__)
+            phase_end_done = True
+            raise
+        # First attempt succeeded.
+        if not attempt_end_done:
+            _lsplog.log_attempt_end(method_str, lang_hint, 1, a1_t0, "ok")
+        _lsplog.log_phase_end(method_str, lang_hint, t_start, "ok",
+                              attempts=1)
+        phase_end_done = True
+        return result
+    finally:
+        # Cleanup. If phase-end was never emitted (only happens when
+        # the try block raised something that bypassed every
+        # explicit log_phase_end above -- e.g. SystemExit /
+        # KeyboardInterrupt), emit one with status=interrupted so
+        # the log line pairing stays intact. Best-effort: failure
+        # to log here cannot crash the bridge.
+        if not phase_end_done:
+            try:
+                _lsplog.log_phase_end(method_str, lang_hint, t_start,
+                                      "interrupted")
+            except Exception:
+                pass
+        _lsplog.clear_corr_id()
+        # Reset to whatever the prior Context held (None, in
+        # production -- we only set corr_id at this single boundary).
+        try:
+            _lsplog._CORR_ID.reset(token)
+        except (LookupError, ValueError):
+            pass
 
 
 def _find_repo_root() -> Path:
@@ -1446,7 +1578,7 @@ def _build_mcp(FastMCP, workspace_root: Path):
                 "markdown": _normalize_hover(raw),
                 "raw": raw,
             }
-        return _call_lsp(_op)
+        return _call_lsp(_op, "hover", _lang_hint_from_path(path))
     srv.tool(name="hover",
              description="LSP textDocument/hover at (line, character). "
                          "Returns normalized markdown + raw response.")(hover)
@@ -1473,7 +1605,7 @@ def _build_mcp(FastMCP, workspace_root: Path):
                 "character": char_v,
                 "locations": _normalize_locations(raw),
             }
-        return _call_lsp(_op)
+        return _call_lsp(_op, "definition", _lang_hint_from_path(path))
     srv.tool(name="definition",
              description="LSP textDocument/definition at (line, "
                          "character). Returns locations as [{uri, "
@@ -1505,7 +1637,7 @@ def _build_mcp(FastMCP, workspace_root: Path):
                 "include_declaration": bool(include_declaration),
                 "locations": _normalize_locations(raw),
             }
-        return _call_lsp(_op)
+        return _call_lsp(_op, "references", _lang_hint_from_path(path))
     srv.tool(name="references",
              description="LSP textDocument/references at (line, "
                          "character). include_declaration forwards "
@@ -1536,7 +1668,7 @@ def _build_mcp(FastMCP, workspace_root: Path):
                 "lang": lang,
                 "diagnostics": cached if isinstance(cached, list) else [],
             }
-        return _call_lsp(_op)
+        return _call_lsp(_op, "diagnostics", _lang_hint_from_path(path))
     srv.tool(name="diagnostics",
              description="Pull cached publishDiagnostics for a file. "
                          "Returns empty list + note when the LSP has "
@@ -1570,9 +1702,40 @@ def _build_mcp(FastMCP, workspace_root: Path):
                     "lang": lang,
                     "symbols": _normalize_symbols(raw),
                 }
-            return _call_lsp(_op)
+            return _call_lsp(_op, "workspace_symbol", lang)
 
-        # lang is None: snapshot the live LSPs (not spawn recipes)
+        # lang=None fan-out: bind corr_id at this entry so workers
+        # see it via contextvars.copy_context().run(). Phase-start /
+        # phase-end log lines wrap the whole fan-out so an operator
+        # can correlate fan-out errors with the inbound MCP call.
+        # _call_lsp is NOT used here because the fan-out has its
+        # own per-LSP retry contract (per-language errors land in
+        # the `errors` dict, not as the outer return envelope).
+        import contextvars as _cv
+        _wsc_corr = _lsplog.new_corr_id()
+        _wsc_token = _lsplog.set_corr_id(_wsc_corr)
+        _wsc_t0 = _lsplog.log_phase_start("workspace_symbol", None,
+                                          fan_out=True)
+        # The fan-out body emits phase-end + cleans up the
+        # ContextVar inside _wsc_cleanup() called from EVERY exit
+        # path (empty snapshot, normal return, exception). Codex
+        # post-impl review caught the earlier revision leaking
+        # corr_id on the empty-snapshot return AND on the
+        # `except BaseException` re-raise -- both bypassed the
+        # tail cleanup, leaving the corr_id stuck in this thread's
+        # Context for any subsequent unrelated tool call.
+        def _wsc_cleanup(status: str, **fields: Any) -> None:
+            try:
+                _lsplog.log_phase_end("workspace_symbol", None, _wsc_t0,
+                                      status, fan_out=True, **fields)
+            except Exception:
+                pass
+            _lsplog.clear_corr_id()
+            try:
+                _lsplog._CORR_ID.reset(_wsc_token)
+            except (LookupError, ValueError):
+                pass
+        # snapshot the live LSPs (not spawn recipes)
         # under _LIVE_LSPS_LOCK, then fan out in parallel. Codex
         # pre-implementation review flagged serializing under
         # _CALL_LOCK as a Medium; per-instance request locks in
@@ -1606,6 +1769,7 @@ def _build_mcp(FastMCP, workspace_root: Path):
         per_lang: dict[str, list] = {}
         errors: dict[str, str] = {}
         if not snapshot:
+            _wsc_cleanup("ok", total=0, error_langs=[])
             return {"query": str(query), "per_lang": {}, "total": 0, "errors": {}}
 
         def _one(key, inst):
@@ -1668,7 +1832,13 @@ def _build_mcp(FastMCP, workspace_root: Path):
         try:
             for key, inst in snapshot:
                 (lang_tag, _root) = key
-                fut = pool.submit(_one, key, inst)
+                # Capture per-submit Context so the fan-out worker
+                # inherits the inbound MCP call's corr_id. Codex
+                # design review caught threading.local as High: the
+                # fan-out workers would not have seen the corr_id
+                # without explicit propagation.
+                ctx = _cv.copy_context()
+                fut = pool.submit(ctx.run, _one, key, inst)
                 futures_by_fut[fut] = lang_tag
             try:
                 for fut in concurrent.futures.as_completed(
@@ -1715,8 +1885,13 @@ def _build_mcp(FastMCP, workspace_root: Path):
                 pool.shutdown(wait=True)
         except BaseException:
             # Any other exception (KeyboardInterrupt, SystemExit,
-            # unexpected errors): release the pool without blocking.
+            # unexpected errors): release the pool + cleanup the
+            # corr_id binding before re-raising. Without the
+            # cleanup the corr_id leaks into the next unrelated
+            # tool call on the same thread (Codex post-impl
+            # review High).
             pool.shutdown(wait=False, cancel_futures=True)
+            _wsc_cleanup("interrupted")
             raise
         # Drain any pending publishDiagnostics on every snapshot LSP
         # so a follow-on `diagnostics(path)` MCP call returns the
@@ -1741,12 +1916,16 @@ def _build_mcp(FastMCP, workspace_root: Path):
             except Exception:
                 pass
         total = sum(len(v) for v in per_lang.values())
-        return {
+        result = {
             "query": str(query),
             "per_lang": per_lang,
             "total": total,
             "errors": errors,
         }
+        _wsc_cleanup("ok" if not errors else "partial",
+                     total=total,
+                     error_langs=sorted(errors.keys()))
+        return result
     srv.tool(name="workspace_symbol",
              description="LSP workspace/symbol query. When `lang` is "
                          "given, routes to that one spawner and returns "
@@ -1777,7 +1956,7 @@ def _build_mcp(FastMCP, workspace_root: Path):
                 "lang": lang,
                 "symbols": _normalize_symbols(raw),
             }
-        return _call_lsp(_op)
+        return _call_lsp(_op, "document_symbol", _lang_hint_from_path(path))
     srv.tool(name="document_symbol",
              description="LSP textDocument/documentSymbol. Returns the "
                          "server's hierarchical or flat symbol list "
@@ -1843,7 +2022,7 @@ def _build_mcp(FastMCP, workspace_root: Path):
                 "character": char_v,
                 **normalized,
             }
-        return _call_lsp(_op)
+        return _call_lsp(_op, "completion", _lang_hint_from_path(path))
     srv.tool(name="completion",
              description="LSP textDocument/completion at (line, "
                          "character). Returns up to "
@@ -1875,7 +2054,7 @@ def _build_mcp(FastMCP, workspace_root: Path):
                 "character": char_v,
                 **normalized,
             }
-        return _call_lsp(_op)
+        return _call_lsp(_op, "signature_help", _lang_hint_from_path(path))
     srv.tool(name="signature_help",
              description="LSP textDocument/signatureHelp at (line, "
                          "character). Returns {signatures, "
@@ -1906,7 +2085,7 @@ def _build_mcp(FastMCP, workspace_root: Path):
                 "character": char_v,
                 "locations": _normalize_locations(raw),
             }
-        return _call_lsp(_op)
+        return _call_lsp(_op, "type_definition", _lang_hint_from_path(path))
     srv.tool(name="type_definition",
              description="LSP textDocument/typeDefinition at (line, "
                          "character). Resolves a value's TYPE to its "
@@ -1935,7 +2114,7 @@ def _build_mcp(FastMCP, workspace_root: Path):
                 "character": char_v,
                 "locations": _normalize_locations(raw),
             }
-        return _call_lsp(_op)
+        return _call_lsp(_op, "implementation", _lang_hint_from_path(path))
     srv.tool(name="implementation",
              description="LSP textDocument/implementation at (line, "
                          "character). Returns concrete implementors / "
@@ -1964,7 +2143,7 @@ def _build_mcp(FastMCP, workspace_root: Path):
                 "character": char_v,
                 "locations": _normalize_locations(raw),
             }
-        return _call_lsp(_op)
+        return _call_lsp(_op, "declaration", _lang_hint_from_path(path))
     srv.tool(name="declaration",
              description="LSP textDocument/declaration at (line, "
                          "character). Returns the declaration site "
@@ -2094,7 +2273,7 @@ def _build_mcp(FastMCP, workspace_root: Path):
                 "callHierarchy/incomingCalls", "from",
                 path, line, character,
             )
-        return _call_lsp(_op)
+        return _call_lsp(_op, "call_hierarchy_incoming", _lang_hint_from_path(path))
     srv.tool(name="call_hierarchy_incoming",
              description="LSP callHierarchy/prepare then "
                          "incomingCalls. Returns {prepared_count, "
@@ -2118,7 +2297,7 @@ def _build_mcp(FastMCP, workspace_root: Path):
                 "callHierarchy/outgoingCalls", "to",
                 path, line, character,
             )
-        return _call_lsp(_op)
+        return _call_lsp(_op, "call_hierarchy_outgoing", _lang_hint_from_path(path))
     srv.tool(name="call_hierarchy_outgoing",
              description="LSP callHierarchy/prepare then "
                          "outgoingCalls. Returns {prepared_count, "
@@ -2175,7 +2354,7 @@ def _build_mcp(FastMCP, workspace_root: Path):
                         "workspace/executeCommand are blocked at the "
                         "runtime gate.",
             }
-        return _call_lsp(_op)
+        return _call_lsp(_op, "code_action", _lang_hint_from_path(path))
     srv.tool(name="code_action",
              description="LSP textDocument/codeAction over a Range. "
                          "READ-ONLY: returns the available "
@@ -2213,7 +2392,20 @@ def _build_mcp(FastMCP, workspace_root: Path):
         No LSP wire traffic; safe to call at any time, including
         when every LSP is dead. Read-only. Walks _LSP_HEALTH +
         _LIVE_LSPS under _LIVE_LSPS_LOCK so the snapshot is
-        consistent."""
+        consistent.
+
+        Goes through _call_lsp so the inbound MCP call gets a
+        corr_id + phase-start/phase-end logs (matches the contract
+        the other tools use; an operator can correlate _health
+        polls with the restart events the polled-on data refers
+        to)."""
+        def _op() -> dict:
+            return _build_health_snapshot()
+        return _call_lsp(_op, "_health", None)
+
+    def _build_health_snapshot() -> dict:
+        """Inner body of the `health` MCP tool. Pure read; safe
+        when every LSP is FAILED."""
         out: dict[str, dict] = {}
         with _LIVE_LSPS_LOCK:
             keys = sorted(set(_LSP_HEALTH.keys()) | set(_LIVE_LSPS.keys()))
