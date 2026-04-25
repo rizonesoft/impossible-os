@@ -113,7 +113,7 @@ Verified locally: `codex mcp list` shows both servers `enabled`; `bash scripts/c
 > - Canonical doc: `docs/infrastructure/ai-system.md` "MCP server boundary" -> "Cross-tool MCP server set" subsection (covers both installer and wrapper paths).
 > - Scope boundary: §1 wires + validates the cross-tool MCP server set; §2 owns the no-`--model`/`--effort` invocation policy that goes on top of this wiring; §6 owns the broader MCP usage discipline doctrine.
 
-> **Verified:** 2026-04-26 | commit `90b4b838` + wrapper follow-up `<this-commit>` | 10/11 items, 1 deferred ([/]: codex exec smoke blocked on Codex 0.126 alpha) | build OK | tests 86/86 PASS
+> **Verified:** 2026-04-26 | commit `90b4b838` + wrapper follow-up `dc06d5cb` | 10/11 items, 1 deferred ([/]: codex exec smoke blocked on Codex 0.126 alpha) | build OK | tests 86/86 PASS
 > **Quality reviewed:** 2026-04-26 | Codex 6x (design + adversarial + consistency + perf + re-adversarial) | 3H+5M+1L fixed | scope: N/A (host-side dev tooling)
 
 ---
