@@ -202,6 +202,7 @@ Wire `pyright-langserver` (Microsoft, TS) for the ~6.4k lines of Python under `s
 > - **Scope boundary:** no MCP tools registered, no per-extension dispatch (§7's `dispatch(path)` helper), no PSES (§6 owns that). Install guidance for pyright in the developer-tooling docs subsection is §9. The `LspSubprocess` reader does not yet answer server-initiated `workspace/configuration` requests; advertising that capability for any future server is a §1-skeleton retrofit, not a §5 deliverable.
 
 > **Verified:** 2026-04-25 | commit `c1d479a7` | 6/6 items | build N/A (host-side Python) | tests 19/19 PASS
+> **Quality reviewed:** 2026-04-25 | Codex 3x (adversarial + consistency + perf) | 0H+0M fixed, 0 open | scope: N/A (host-side Python tooling; no domain quality skill applies)
 
 ---
 
