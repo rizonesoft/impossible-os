@@ -35,7 +35,7 @@ title: "TODO-07 -- LSP to MCP Bridge (C, NASM, shell, Python, PowerShell)"
 - Boundary compliance verified: repo-tracked manifest lists only read-only tools; no write-capable LSP methods are reachable from MCP. Canonical deny list lives in `_FORBIDDEN_LSP_METHODS` (`scripts/lsp-mcp/lsp_client.py`) -- currently `textDocument/rename`, `workspace/applyEdit`, `workspace/executeCommand`. (`textDocument/codeAction` is read-only per LSP 3.17 and is intentionally NOT in the deny set; the `code_action` tool returns the action metadata list and never invokes `applyEdit`/`executeCommand`.) `test_boundary.sh` imports the frozenset at runtime and audits source.
 - Extended tool surface (§11): completion, signature help, type-definition, implementation, declaration, call hierarchy (incoming/outgoing), read-only code_action -- matches every production LSP-MCP bridge without breaching the read-only boundary.
 - Robustness: file-change lifecycle forwarding (§12) keeps LSP views fresh across parallel editing; per-LSP watchdog + auto-restart (§13) transparently recovers from child crashes with exponential backoff.
-- Observability + security + performance: JSON-lines logs with correlation IDs threaded MCP->LSP->MCP (§14); workspace-bounded path sandboxing rejects escape attempts (§15); opt-in `--warm-start` bounds first-call latency (§16).
+- Observability + security + performance: JSON-lines logs with correlation IDs threaded MCP->LSP->MCP (§14); workspace-bounded path sandboxing rejects escape attempts (§15); opt-in `--warm-start` bounds first-call latency (§16); background-mode warm-start (§17) makes that bound compatible with MCP launchers.
 
 ## Implementation Order
 
@@ -57,11 +57,12 @@ title: "TODO-07 -- LSP to MCP Bridge (C, NASM, shell, Python, PowerShell)"
 | 💎  |  14   | Structured JSON logging + request correlation IDs                          | §1                                |  [x]   |
 | ⭐  |  15   | Path sandboxing + workspace boundary enforcement                           | §1, §7                            |  [x]   |
 | ⭐  |  16   | Warm-index preloading + cold-start budget                                  | §1, §2, §3, §4, §5, §6            |  [x]   |
-| 💎  |  17   | Scale Roadmap (DEFERRED -- trigger-gated, no code today)                   | --                                |  [ ]   |
+| ⭐  |  17   | Background warm-start mode (MCP launcher compatibility)                    | §16                               |  [ ]   |
+| 💎  |  18   | Scale Roadmap (DEFERRED -- trigger-gated, no code today)                   | --                                |  [ ]   |
 
 > 💎 = parity -- matches the existing LSP stacks Win11/Linux devs already use, wrapped in an MCP transport.
 > ⭐ = exclusive -- neither Win11 nor Linux ships a repo-tracked cross-language LSP-MCP bridge with read-only boundary compliance baked in.
-> §17 is a **deferred planning section**, not active work. It intentionally has no `Commit:` item because nothing ships until a scale trigger fires; see the section for trigger conditions.
+> §18 is a **deferred planning section**, not active work. It intentionally has no `Commit:` item because nothing ships until a scale trigger fires; see the section for trigger conditions.
 
 ---
 
@@ -540,7 +541,33 @@ Verified locally: `python3 scripts/lsp-mcp/bridge.py --warm-start=c --self-test`
 
 ---
 
-## 17. Scale Roadmap (Deferred)
+## 17. Background Warm-Start Mode (MCP Launcher Compatibility)
+
+§16's `--warm-start` is **synchronous** in `main()`: `_maybe_warm_start()` runs to completion before `srv.run()` answers MCP `initialize` on stdio. That's correct for CLI use (`python3 bridge.py --warm-start --self-test`) but it's incompatible with `.mcp.json`-launched bridges -- Claude Code (and any other MCP launcher) sends `initialize` immediately after spawning the server and expects a response within a finite stdio handshake timeout. A 10-60s blocking warm-start can mark the `lsp-bridge` server failed before it ever serves a tool call, which would lose the entire MCP surface (the user just wires a footgun by enabling `--warm-start` in `.mcp.json` today).
+
+This section adds an opt-in **background** mode that starts MCP serving immediately and runs warm-start on a daemon thread. Concurrent MCP tool calls for a language that warm-start is currently spawning attach to the same `_SPAWN_EVENTS` gate the on-demand path already uses, so the FIRST in-flight tool call for each language sees the warm cost (same as on-demand today); subsequent tool calls see the warm benefit (clangd index already done in the background while the user was reading code). The default mode stays `blocking` for CLI back-compat -- `.mcp.json` opts into `background` explicitly.
+
+- [ ] `--warm-start-mode={blocking,background}` flag in `bridge.py main()` (`argparse` choices=, default `"blocking"`). Validates BEFORE the FastMCP build so a typo (`--warm-start-mode=baground`) FATALs out instead of falling through to the wrong code path.
+- [ ] Background controller in `bridge.py`: per-process `_WARM_THREAD: Optional[threading.Thread] = None` and `_WARM_DONE = threading.Event()`. `_maybe_warm_start()` branches on the mode arg; `background` spawns a daemon `threading.Thread(target=_warm_start_run, args=(workspace_root, args.warm_start), name="warm-start-bg")` and returns immediately. The thread sets `_WARM_DONE` in its finally block so the shutdown path can wait on a deterministic signal instead of polling `is_alive()`.
+- [ ] Shutdown ordering in `main()` finally: `_WARM_CANCEL.set()` -> `_WARM_THREAD.join(timeout=2.0)` (only if not None) -> `_shutdown_all_lsps()`. The 2s join is the upper bound; `_WARM_CANCEL` already short-circuits the per-LSP poll loop on the next 0.5s tick, so a healthy shutdown finishes in well under 1s. The join WITH a timeout (not infinite) so a wedged warm worker cannot hold the bridge process open.
+- [ ] Concurrency contract: an MCP tool call for lang `X` arriving WHILE a background warm worker is in `_get_or_spawn(X, root)` MUST attach to the existing `_SPAWN_EVENTS[(X, root)]` Event and return when the warm worker publishes the instance (NO second spawn, NO second clangd process). The existing `_SPAWN_EVENTS` gate already enforces this; the §17 work is verifying the path under a fake-LSP harness.
+- [ ] `.mcp.json` integration: update `.mcp.json` (authoritative) AND the `scripts/lsp-mcp/mcp.json` sidecar to `args: ["scripts/lsp-mcp/bridge.py", "--warm-start=c,py", "--warm-start-mode=background"]`. The two-flag pair is the documented MCP-launcher pattern; CLI users who want blocking semantics omit `--warm-start-mode` (default `blocking`).
+- [ ] Docs: extend the LSP MCP Bridge subsection of `docs/infrastructure/development-tooling.md` with a `--warm-start-mode` paragraph and call out `.mcp.json` MUST use `background` mode for any MCP launcher.
+- [ ] Test sub-tests in `scripts/lsp-mcp/tests/test_bridge.sh`:
+    - 17a -- `--warm-start --warm-start-mode=background --self-test` exits 0 within 1s wall-clock (does NOT block on warm-start completion before reaching the self-test exit gate).
+    - 17b -- background mode launches `_WARM_THREAD` AND the thread is alive at the moment `_self_test` reaches its FastMCP build sanity check (validated via a small instrumentation hook or by polling `_WARM_DONE.is_set()`). Proves srv.run() would have started ahead of warm-start completion in production.
+    - 17c -- concurrent attach: a fake LSP whose initialize takes 2s; trigger background warm-start for that lang plus a synchronous request for the same lang via the on-demand path; assert exactly ONE subprocess was spawned (pgrep against the fake-LSP marker).
+    - 17d -- shutdown joins the background thread within the 2s timeout even when a warm worker is in the middle of its 0.5s poll sleep.
+    - 17e -- `--warm-start-mode=blocking` (default) keeps existing §16 sub-tests 16a-16f green (no behavioral change to that path).
+    - 17f -- argparse rejects bogus mode (`--warm-start-mode=baground`) with non-zero exit and a clear error.
+- [ ] Default behavior unchanged: omitting `--warm-start-mode` keeps blocking semantics. §16 sub-tests 16a-16f stay green untouched.
+- [ ] Commit: `"scripts/lsp-mcp: --warm-start-mode=background for MCP launcher compatibility"`
+
+**Test checkpoint:** `python3 scripts/lsp-mcp/bridge.py --warm-start --warm-start-mode=background --self-test` exits 0 within 1s. Then with `.mcp.json` updated to `["scripts/lsp-mcp/bridge.py", "--warm-start=c,py", "--warm-start-mode=background"]`, restart Claude Code; `mcp__lsp-bridge__hover` etc. register within Claude Code's normal MCP launcher window, and the first real tool call for `c` after a fresh launch lands on a warmed clangd (verified by comparing the first-call latency before / after the flag change).
+
+---
+
+## 18. Scale Roadmap (Deferred)
 
 > [!NOTE]
 > **This section is not active work.** It captures the partitioning strategy the bridge will need when the repo grows past the thresholds where single-clangd-per-workspace stops working. Stated explicitly so the architectural shape is not rediscovered under pressure at 2 AM in 2029. No code ships until a trigger below fires.
@@ -565,12 +592,12 @@ Current repo is ~215k core LOC (~189k kernel + ~24k tooling per [COUNT.md](../..
 
 **What NOT to plan here:** concrete `[ ]` checklist items, commit lines, test checkpoints, CI wiring. Those land when a trigger fires and this section gets rewritten into active form.
 
-- [ ] Review this section's triggers once per calendar year (or when any trigger appears likely to fire within 6 months). If any trigger is active or imminent, convert the "planned shape" notes above into concrete `[ ]` items, move §17 ahead of the OS Comparison table, and re-run `/todo-pipeline` on the TODO.
+- [ ] Review this section's triggers once per calendar year (or when any trigger appears likely to fire within 6 months). If any trigger is active or imminent, convert the "planned shape" notes above into concrete `[ ]` items, move §18 ahead of the OS Comparison table, and re-run `/todo-pipeline` on the TODO.
 
-**Test checkpoint:** No runtime verification -- §11 is a trigger-watcher, not executable work. The tracking item closes one year at a time: the reviewer re-reads the five deferral triggers against current repo state (`wc -l`, `jq '.[] | length' compile_commands.json`, wall-clock of `clangd-19 --check` on a cold cache) and records "no trigger fired, reset the clock" in the commit message of the `- [ ] Review` item. When a trigger DOES fire, §11 converts to active form and a real Test checkpoint replaces this block.
+**Test checkpoint:** No runtime verification -- §18 is a trigger-watcher, not executable work. The tracking item closes one year at a time: the reviewer re-reads the five deferral triggers against current repo state (`wc -l`, `jq '.[] | length' compile_commands.json`, wall-clock of `clangd-19 --check` on a cold cache) and records "no trigger fired, reset the clock" in the commit message of the `- [ ] Review` item. When a trigger DOES fire, §18 converts to active form and a real Test checkpoint replaces this block.
 
 > [!IMPORTANT]
-> **Per the skill-template rule, every section normally ends with a `Commit:` item.** §17 intentionally does not, because nothing ships until a trigger fires. The single `[ ]` item above is the tracking work itself (review triggers). Do not "close" §17 by marking it `[x]` -- it stays open as a standing trigger-watcher for the lifetime of this TODO, and graduates to active form when needed.
+> **Per the skill-template rule, every section normally ends with a `Commit:` item.** §18 intentionally does not, because nothing ships until a trigger fires. The single `[ ]` item above is the tracking work itself (review triggers). Do not "close" §18 by marking it `[x]` -- it stays open as a standing trigger-watcher for the lifetime of this TODO, and graduates to active form when needed.
 
 ---
 
@@ -610,11 +637,12 @@ Current repo is ~215k core LOC (~189k kernel + ~24k tooling per [COUNT.md](../..
 | 💎 | Structured JSON logs + correlation IDs                          | ⚠️ VS Code output panel (text)    | ⚠️ per-editor log format             | ✅ §14 JSON-lines + UUID           |
 | ⭐ | Workspace-bound path sandboxing                                 | ❌ editor trusts every path       | ❌ editor trusts every path          | ✅ §15 resolve_in_workspace        |
 | ⭐ | `--warm-start` eager LSP spawn + first-call latency budget      | ❌ editor lazy-initiates          | ❌ editor lazy-initiates             | ✅ §16 60s budget WARN              |
+| ⭐ | Background warm-start compatible with MCP launchers             | ❌ editor blocks on LSP cold start | ❌ editor blocks on LSP cold start   | ⏳ §17 daemon thread + attach gate  |
 
 > **After §1-§6:** Impossible OS reaches parity with a well-configured Win11/Linux developer workstation for every language the repo uses. Every human-facing LSP-capable editor (VS Code, Emacs, Neovim) already speaks these same servers directly; this TODO duplicates none of that.
 > **After §7-§8:** Impossible OS pulls ahead with a cross-language unified MCP surface. 3rd-party bridges (isaacphi/mcp-language-server -- single LSP at a time; jonrad/lsp-mcp -- Node, no multi-LSP; mickeyinfoshan/lsp-mcp -- Go/TS/JS/Py only; Tritlo/lsp-mcp -- Zig, high-perf but no NASM support) cover a subset of this surface but none ship the 5-language mix (NASM + PowerShell are the two painful ones) and none are repo-tracked with boundary compliance.
 > **After §9-§10:** Impossible OS ships the first repo-tracked cross-language LSP-MCP bridge with boundary audit baked in, auto-registered with Claude Code out-of-the-box via `.claude/mcp.json`. No 3rd-party bridge today bakes in the read-only boundary the [TODO-02 §8](./TODO-02-ai-development-system.md#8-autonomous-agent-boundary-policy) autonomous-agent policy requires; every existing bridge exposes write-capable LSP methods by default.
-> **After §11-§16:** Impossible OS passes parity and moves into category-leading territory. §11 delivers the extended 14-tool surface that production 3rd-party bridges converged on. §12 closes the file-change-drift correctness gap every long-running bridge exhibits. §13 auto-restarts crashed LSPs -- no surveyed competitor ships this. §14 threads correlation IDs through every MCP->LSP->MCP round-trip (the 2026 observability baseline). §15 bounds path resolution to the workspace, closing a prompt-injection / supply-chain class every 3rd-party bridge leaves open. §16 bounds first-call latency with `--warm-start` (60s soft budget).
+> **After §11-§17:** Impossible OS passes parity and moves into category-leading territory. §11 delivers the extended 14-tool surface that production 3rd-party bridges converged on. §12 closes the file-change-drift correctness gap every long-running bridge exhibits. §13 auto-restarts crashed LSPs -- no surveyed competitor ships this. §14 threads correlation IDs through every MCP->LSP->MCP round-trip (the 2026 observability baseline). §15 bounds path resolution to the workspace, closing a prompt-injection / supply-chain class every 3rd-party bridge leaves open. §16 bounds first-call latency with `--warm-start` (60s soft budget). §17 makes that bound MCP-launcher compatible by running warm-start on a daemon thread so `srv.run()` answers `initialize` immediately, with the `_SPAWN_EVENTS` gate ensuring concurrent tool calls attach to the in-flight warm spawn.
 
 ---
 
