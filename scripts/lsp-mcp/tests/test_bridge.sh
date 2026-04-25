@@ -390,7 +390,8 @@ t_selftest_lang_asm() {
     echo "$out" | grep -qE "^\[lsp-mcp\] (OK: asm-lsp spawned, hover on mov returned instruction reference \([1-9][0-9]* bytes\)|SKIP: asm-lsp not installed)"
 }
 
-# --- 3b: .asm-lsp.toml pins NASM + schema-valid ISA -----------------------
+# --- 3b: .asm-lsp.toml pins NASM + schema-valid ISA + disables external
+#         compiler diagnostics (NASM-only workspace) ----------------------
 t_asm_lsp_config_nasm() {
     # File must exist at repo root, sit under [default_config], and
     # declare BOTH assembler = "nasm" AND instruction_set =
@@ -400,7 +401,14 @@ t_asm_lsp_config_nasm() {
     [ -f .asm-lsp.toml ] || return 1
     grep -qE '^\[default_config\]' .asm-lsp.toml || return 1
     grep -qE '^assembler\s*=\s*"nasm"' .asm-lsp.toml || return 1
-    grep -qE '^instruction_set\s*=\s*"x86/x86-64"' .asm-lsp.toml
+    grep -qE '^instruction_set\s*=\s*"x86/x86-64"' .asm-lsp.toml || return 1
+    # LSP-MCP integration adds [default_config.opts] disabling the
+    # asm-lsp upstream gcc -> clang diagnostics fallback (meaningless
+    # for a NASM-only workspace; floods the LSP with false errors).
+    # Both fields required: diagnostics OFF + default-fallback OFF.
+    grep -qE '^\[default_config\.opts\]' .asm-lsp.toml || return 1
+    grep -qE '^diagnostics\s*=\s*false' .asm-lsp.toml || return 1
+    grep -qE '^default_diagnostics\s*=\s*false' .asm-lsp.toml
 }
 
 # --- 3c: asm_server surface API is stable ---------------------------------
@@ -828,9 +836,14 @@ import sys, subprocess
 sys.path.insert(0, 'scripts/lsp-mcp')
 from lsp_client import LspSubprocess, LspError, _FORBIDDEN_LSP_METHODS
 
-expected = {'textDocument/rename', 'textDocument/codeAction',
-            'workspace/applyEdit', 'workspace/executeCommand'}
-assert set(_FORBIDDEN_LSP_METHODS) == expected, _FORBIDDEN_LSP_METHODS
+# Grow-only contract: extending the deny set is fine; shrinking flags
+# a policy change. Use issubset, not equality, so a 5th forbidden
+# method does NOT false-fail this test while still catching removals.
+# Mirrors the test_boundary.sh contract documented in its header.
+required_min = {'textDocument/rename', 'textDocument/codeAction',
+                'workspace/applyEdit', 'workspace/executeCommand'}
+assert required_min.issubset(set(_FORBIDDEN_LSP_METHODS)), \
+    f'required_min {required_min} not subset of {set(_FORBIDDEN_LSP_METHODS)}'
 
 # Spawn a trivial fake LSP -- any binary that accepts stdin works.
 # We do NOT send anything through LspSubprocess init; we just want to
@@ -848,24 +861,15 @@ finally:
 "
 }
 
-# --- 7f: Source-level boundary audit -- no forbidden-method calls --------
+# --- 7f: Source-level boundary audit -- delegated to test_boundary.sh -----
 t_boundary_source_audit() {
-    # Grep the bridge + servers for quoted forbidden LSP method
-    # literals. We match the exact wire-format strings (with quotes)
-    # because method names appear in the code ONLY as LSP wire-format
-    # literals; prose mentions in comments/docstrings use unquoted
-    # words. Combined with the 7e runtime gate, this catches both
-    # indirect dispatch (runtime) and cargo-culted literal strings
-    # (source). _FORBIDDEN_LSP_METHODS itself is allowed to reference
-    # the literals; we exclude lsp_client.py where that set lives.
-    local forbidden_pattern='"textDocument/rename"|"textDocument/codeAction"|"workspace/applyEdit"|"workspace/executeCommand"'
-    local hits
-    hits="$(grep -nE "$forbidden_pattern" scripts/lsp-mcp/bridge.py scripts/lsp-mcp/servers/*.py 2>&1 || true)"
-    if [ -n "$hits" ]; then
-        printf '[lsp-mcp-tests] debug (7f): forbidden hits:\n%s\n' "$hits" >&2
-        return 1
-    fi
-    return 0
+    # The standalone test_boundary.sh imports _FORBIDDEN_LSP_METHODS
+    # from lsp_client.py at runtime so the source-audit deny set
+    # always tracks the runtime-gate deny set. Earlier inline grep
+    # version hand-maintained a duplicate list; Codex consistency
+    # review of the LSP-MCP bridge integration flagged that as drift
+    # risk. Wrapping the standalone test keeps one source of truth.
+    bash scripts/lsp-mcp/tests/test_boundary.sh >/dev/null 2>&1
 }
 
 # --- 7h: _validate_position bounds + type gates ---------------------------

@@ -121,7 +121,7 @@ GENERATED_HDRS := include/build_info.h include/kernel/os_logo.h src/kernel/bsod_
 # Targets
 # ============================================================================
 
-.PHONY: all _increment_build boot boot-icon boot-font kernel host-tools sysroot userland iso uefi-boot sign-efi system-disk test-disks run run-test run-debug run-log run-usb-ci run-nvme run-nvme-ci clean assets validate-assets sysroot-dirs sysroot-fonts sysroot-wallpapers sysroot-cursors sysroot-icons test-mm test-fs test-ob test-security test-ipc test-sched test-boot test-abi test-storage test-exec test-x86 test-desktop test-visual test-wcag update-ui-refs boot-info-abi test-boot-info-abi test-tooling test-ai-system todo-graph todo-graph-ready todo-graph-blocked todo-graph-render-mermaid todo-graph-mcp
+.PHONY: all _increment_build boot boot-icon boot-font kernel host-tools sysroot userland iso uefi-boot sign-efi system-disk test-disks run run-test run-debug run-log run-usb-ci run-nvme run-nvme-ci clean assets validate-assets sysroot-dirs sysroot-fonts sysroot-wallpapers sysroot-cursors sysroot-icons test-mm test-fs test-ob test-security test-ipc test-sched test-boot test-abi test-storage test-exec test-x86 test-desktop test-visual test-wcag update-ui-refs boot-info-abi test-boot-info-abi test-tooling test-ai-system todo-graph todo-graph-ready todo-graph-blocked todo-graph-render-mermaid todo-graph-mcp lsp-mcp lsp-mcp-selftest
 
 ## all: Build everything (kernel + userland + system disk + boot_info ABI manifest)
 all: _increment_build check-abi assets kernel userland uefi-boot boot-info-abi post16-manifest system-disk
@@ -387,6 +387,26 @@ todo-graph-blocked:
 ##                 Requires the `mcp` Python SDK (`pip install mcp`).
 todo-graph-mcp:
 	@python3 scripts/todo-graph/mcp_server.py
+
+## lsp-mcp-selftest: Run the LSP-MCP bridge self-test pipeline
+##                   (TODO-07 in 00-infrastructure). Exits 0 with
+##                   "OK: 0 LSPs spawned, 6 tools registered" when
+##                   the mcp SDK is installed; SKIPs when SDK is
+##                   absent (CI-friendly). Adding --lang=<tag> drives
+##                   a single-language end-to-end smoke (clangd / asm
+##                   / sh / py / ps1). --tools dumps the 6 MCP tool
+##                   schemas; --stress runs 100 concurrent hovers
+##                   against clangd to validate per-LSP serialization.
+lsp-mcp-selftest:
+	@python3 scripts/lsp-mcp/bridge.py --self-test
+
+## lsp-mcp: Launch the LSP-MCP bridge stdio server in the foreground
+##          for MCP-client-driven debugging. Claude Code normally
+##          launches this as a subprocess via the .mcp.json entry;
+##          use this target to hand-drive a session or reproduce a
+##          bug. Requires the `mcp` Python SDK (`pip install mcp`).
+lsp-mcp:
+	@python3 scripts/lsp-mcp/bridge.py
 
 todo-graph-render-mermaid:
 	@printf '# TODO Dependency Graph\n\n' > docs/infrastructure/todo-graph.md

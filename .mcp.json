@@ -3,6 +3,12 @@
     "todo-graph": {
       "command": "python3",
       "args": ["scripts/todo-graph/mcp_server.py"]
+    },
+    "lsp-bridge": {
+      "command": "python3",
+      "args": ["scripts/lsp-mcp/bridge.py"],
+      "cwd": ".",
+      "env": {}
     }
   }
 }

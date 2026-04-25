@@ -251,6 +251,52 @@ else
     echo -e "        Optional install: ${GREEN}pip install --user mcp${NC} (or use a venv)."
 fi
 
+# LSP-MCP bridge optional dependencies (TODO-07 in 00-infrastructure).
+# clangd-19 is already in REQUIRED via scripts/setup.sh. The four
+# language servers below are OPTIONAL: each is gated graceful-skip in
+# scripts/lsp-mcp/servers/<lang>_server.py via is_available(); a
+# missing dep produces a SKIP banner in --self-test, never blocks.
+# We DO NOT autoinstall any of these because they require system-wide
+# npm / cargo / pwsh writes that should be the user's explicit choice.
+
+# bash-language-server (OPTIONAL -- shell LSP for the LSP-MCP bridge)
+if command -v bash-language-server >/dev/null 2>&1; then
+    skip "bash-language-server"
+else
+    echo -e "  ${YELLOW}note:${NC} bash-language-server not installed; LSP-MCP bridge .sh integration unavailable."
+    echo -e "        Optional install: ${GREEN}npm install -g bash-language-server${NC} (also apt install shellcheck for full diagnostics)."
+fi
+
+# pyright (OPTIONAL -- Python LSP for the LSP-MCP bridge)
+if command -v pyright-langserver >/dev/null 2>&1; then
+    skip "pyright (pyright-langserver)"
+else
+    echo -e "  ${YELLOW}note:${NC} pyright-langserver not installed; LSP-MCP bridge .py integration unavailable."
+    echo -e "        Optional install: ${GREEN}npm install -g pyright${NC} (requires node >= 14)."
+fi
+
+# asm-lsp (OPTIONAL -- NASM LSP for the LSP-MCP bridge)
+if command -v asm-lsp >/dev/null 2>&1; then
+    skip "asm-lsp"
+else
+    echo -e "  ${YELLOW}note:${NC} asm-lsp not installed; LSP-MCP bridge .asm integration unavailable."
+    echo -e "        Optional install: ${GREEN}cargo install asm-lsp${NC} (requires Rust toolchain)."
+fi
+
+# pwsh + PowerShellEditorServices (OPTIONAL -- PowerShell LSP for the
+# bridge). PSES is a pwsh module, not a standalone binary -- it must
+# be installed as a module under pwsh's PSModulePath. We probe for
+# pwsh only here; PSES detection happens at bridge spawn time via
+# scripts/lsp-mcp/servers/powershell_server.py:_discover_pses() which
+# checks both Get-Module -ListAvailable AND VS Code extension globs.
+if command -v pwsh >/dev/null 2>&1; then
+    skip "pwsh (PowerShell 7.x; PSES module probed at LSP-MCP bridge spawn)"
+else
+    echo -e "  ${YELLOW}note:${NC} pwsh not installed; LSP-MCP bridge .ps1 integration unavailable."
+    echo -e "        Optional install: ${GREEN}apt install powershell${NC} or download from https://aka.ms/powershell-release."
+    echo -e "        Then install PSES module: ${GREEN}pwsh -NoProfile -Command 'Install-Module PowerShellEditorServices -Scope CurrentUser -Force'${NC}."
+fi
+
 # ---- Summary ----
 echo ""
 echo -e "${CYAN}══════════════════════════════════════════════════${NC}"

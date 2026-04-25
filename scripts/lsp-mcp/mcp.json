@@ -1,0 +1,22 @@
+{
+  "//": "MCP server manifest for scripts/lsp-mcp/bridge.py (TODO-07 in 00-infrastructure).",
+  "//1": "Exposes 6 read-only LSP tools (hover/definition/references/diagnostics/",
+  "//2": "workspace_symbol/document_symbol) as MCP tools, dispatching to clangd /",
+  "//3": "asm-lsp / bash-language-server / pyright / PowerShellEditorServices by",
+  "//4": "file extension.",
+  "//5": "AUTHORITATIVE registration is .mcp.json at repo root -- Claude Code reads",
+  "//6": "that file. THIS FILE is an informational sidecar that documents the",
+  "//7": "manifest contract independently. If the two ever diverge, .mcp.json wins;",
+  "//8": "this sidecar must be re-synced.",
+  "//9": "Read-only boundary enforced at runtime by _FORBIDDEN_LSP_METHODS in",
+  "//10": "scripts/lsp-mcp/lsp_client.py + at source-audit time by",
+  "//11": "scripts/lsp-mcp/tests/test_boundary.sh.",
+  "mcpServers": {
+    "lsp-bridge": {
+      "command": "python3",
+      "args": ["scripts/lsp-mcp/bridge.py"],
+      "cwd": ".",
+      "env": {}
+    }
+  }
+}

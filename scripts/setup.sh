@@ -188,10 +188,43 @@ verify_tools() {
     echo ""
     if [ "$missing" -eq 0 ]; then
         echo -e "  ${GREEN}All required host tools present.${NC}"
-        return 0
     else
         echo -e "  ${RED}$missing required tool(s) missing.${NC}"
         echo -e "  Fix: ${CYAN}bash scripts/setup.sh${NC}  (installs packages for the detected distro)"
+    fi
+
+    # OPTIONAL-tier report: LSP-MCP bridge dependencies (TODO-07 in
+    # 00-infrastructure). Each one is gated graceful-skip at the
+    # bridge level; missing-here just means that language's LSP
+    # tools won't be available through the MCP bridge. Status is
+    # advisory only -- never affects --verify exit code.
+    echo ""
+    echo -e "${CYAN}==================================================${NC}"
+    echo -e "${CYAN}  Optional host tools (LSP-MCP bridge -- TODO-07)${NC}"
+    echo -e "${CYAN}==================================================${NC}"
+    echo ""
+    local opt_label opt_check
+    for entry in \
+        "bash-language-server:bash-language-server" \
+        "pyright-langserver:pyright (Python LSP)" \
+        "asm-lsp:asm-lsp (NASM LSP)" \
+        "pwsh:pwsh (PowerShell 7.x; PSES module probed at bridge spawn)"
+    do
+        opt_check="${entry%%:*}"
+        opt_label="${entry#*:}"
+        if command -v "$opt_check" >/dev/null 2>&1; then
+            echo -e "  ${GREEN}OK${NC}   $opt_label  ($(command -v "$opt_check"))"
+        else
+            echo -e "  ${YELLOW}optional -- not installed${NC}  $opt_label"
+        fi
+    done
+    echo ""
+    echo -e "  Optional installs: ${CYAN}bash scripts/setup-deps.sh${NC}"
+    echo -e "  See: ${CYAN}docs/infrastructure/development-tooling.md${NC} (LSP MCP Bridge subsection)"
+
+    if [ "$missing" -eq 0 ]; then
+        return 0
+    else
         return 1
     fi
 }

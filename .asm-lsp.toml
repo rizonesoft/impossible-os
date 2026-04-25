@@ -23,3 +23,17 @@ assembler = "nasm"
 # Schema reference:
 # https://github.com/bergercookie/asm-lsp/blob/master/asm-lsp_config_schema.json
 instruction_set = "x86/x86-64"
+
+[default_config.opts]
+# asm-lsp upstream default tries gcc -> clang fallback for diagnostics
+# on .asm files. That fallback is meaningless for a NASM-only
+# workspace -- gcc/clang treat .asm as GAS syntax and emit a flood of
+# false errors. Disable both the per-call diagnostics path and the
+# default-compiler fallback so hover / definition / references stay
+# functional while diagnostics fall back silently. Build correctness
+# is asserted by `nasm` itself during scripts/build.sh, not by the
+# LSP. Codex consistency review of asm_server's spawn recipe accepted
+# the deferral in TODO-07's asm integration; the LSP-MCP integration
+# section closes it.
+diagnostics = false
+default_diagnostics = false

@@ -276,11 +276,29 @@ The `.gitignore` explicitly excludes `.claude/settings.local.json`. A CI check (
 
 ### MCP server boundary
 
-MCP (Model Context Protocol) servers (Ahrefs, Gmail, Notion, Microsoft Learn, etc.) are **user-local infrastructure**. They live in the user's Claude Code harness config (typically `~/.claude/` or the IDE extension's config pane), not in the repo. The repo neither installs nor depends on them.
+MCP (Model Context Protocol) servers come in two categories:
 
-- **No repo-tracked MCP config.** Do not commit MCP server definitions to `.claude/settings.json` or any other tracked file. Reason: MCP servers carry auth tokens and personal data; sharing them through the repo would leak credentials.
-- **MCP findings through skills.** If an MCP server is used during development (e.g. fetching Microsoft Learn docs while researching a Win32 API), the finding enters the repo via a Claude skill's output (doc text, citation in a PR) -- not via the MCP server itself being committed.
-- **If the repo ever needs a shared tool surface beyond skills and hooks**, the extension model is: write a shell script under `scripts/` that reads from standard input / returns structured output, invoke it from a skill. That pattern keeps the surface repo-tracked, reviewable, and independent of any specific MCP server.
+1. **User-local credential-bearing servers** (Ahrefs, Gmail, Notion, Microsoft Learn, etc.) -- live in the user's Claude Code harness config (typically `~/.claude/` or the IDE extension's config pane), NOT in the repo. The repo neither installs nor depends on them. Sharing them through the repo would leak auth tokens and personal data.
+2. **Repo-tracked credential-free read-only servers** -- a narrow allowlist of MCP servers that the repo ships AS infrastructure. Currently `todo-graph` (TODO metadata query surface) and `lsp-bridge` ([TODO-07 LSP-MCP bridge](../../todo/00-infrastructure/TODO-07-lsp-mcp-bridge.md)). These DO live in [`.mcp.json`](../../.mcp.json) at repo root.
+
+A repo-tracked MCP server is permitted ONLY when ALL of:
+
+- **Zero credentials.** No auth tokens, API keys, OAuth flows, personal-data store handles. The server proxies only public/local infrastructure that is already visible to anyone with repo read access.
+- **Read-only by design.** The server exposes ONLY query/inspection tools. NO method that mutates external state, writes to remote services, runs untrusted code, or applies edits to the workspace. Verified at runtime AND at source-audit time: `lsp-bridge` enforces this via `_FORBIDDEN_LSP_METHODS` runtime gate + `bash scripts/lsp-mcp/tests/test_boundary.sh` source audit.
+- **Proxies only public/local infrastructure.** Either local code already in the repo (`todo-graph` reads `todo/`) or public LSP processes invoked locally (`lsp-bridge` spawns clangd / asm-lsp / etc.). No reach-out to network services.
+
+Bullets that still apply to user-local credentialed MCP servers:
+
+- **No repo-tracked credentialed MCP config.** Do not commit credentialed MCP server definitions to `.claude/settings.json`, `.mcp.json`, or any other tracked file. Reason: token leak.
+- **Findings through skills.** If a credentialed MCP server is used during development (e.g. fetching Microsoft Learn docs while researching a Win32 API), the finding enters the repo via a Claude skill's output (doc text, citation in a PR) -- not via the MCP server itself being committed.
+- **Shared tool surface beyond skills and hooks.** If the repo needs a NEW shared tool surface, prefer the repo-tracked-MCP carve-out (zero creds, read-only, proxies local/public infra) -- write the server under `scripts/<name>/` with a self-test harness + boundary audit, register in `.mcp.json`, document in [`docs/infrastructure/development-tooling.md`](development-tooling.md). Otherwise: write a shell script under `scripts/` that reads from stdin / returns structured output, invoke from a skill.
+
+**Adding a new repo-tracked MCP server (procedural gate).** Growing the `.mcp.json` allowlist beyond the current two entries (`todo-graph`, `lsp-bridge`) requires:
+1. **A new TODO file or section** that documents the server's three-criteria proof: zero credentials (cite the auth surface or its absence), read-only by design (cite the equivalent of `_FORBIDDEN_LSP_METHODS` runtime gate + a source-audit harness), and which public/local infrastructure it proxies.
+2. **A self-test harness** (host-side or kernel-side) that exits non-zero on regression of any of the three criteria. Add the harness to `scripts/test-tooling.sh` if host-side.
+3. **Standard PR review.** The `.mcp.json` change is reviewed alongside the server source + harness, NOT in isolation. A PR that grows `.mcp.json` without the supporting TODO + harness is rejected.
+
+The two existing entries each have a corresponding TODO -- [todo-graph MCP transport](../../todo/00-infrastructure/TODO-06-todo-metadata-layer.md#8-mcp-server-ai-agent-transport-over-the-cache) and [LSP-MCP bridge](../../todo/00-infrastructure/TODO-07-lsp-mcp-bridge.md); both ship harnesses and boundary audits. Any third entry follows the same shape.
 
 ### Subagent boundary
 
