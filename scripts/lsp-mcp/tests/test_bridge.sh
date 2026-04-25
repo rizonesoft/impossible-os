@@ -119,6 +119,13 @@
 #         _pending dict is empty after, assert subprocess still alive
 #         (timeouts must NOT kill the LSP). Also assert invalid env
 #         values raise lsp-timeout-config-invalid.
+#   9a -- LSP-process-leak detection: pgrep snapshots taken at harness
+#         entry vs harness exit. Any NEW PID matching the 5 LSP binary
+#         names (owned by this user) is a leak from a sub-test that
+#         failed to shut down its LSP. Last sub-test in the file so
+#         every prior sub-test has had a chance to clean up. Delta-
+#         based to avoid false positives on dev hosts running an
+#         editor's own clangd / pyright in parallel.
 #
 # Future commits append sub-tests for tool wiring, extended tool surface,
 # file-change lifecycle, watchdog, structured logs, path sandboxing, and
@@ -131,6 +138,18 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
 cd "$REPO_ROOT"
+
+# LSP-process-leak detection (sub-test 9a): capture the set of LSP
+# binary PIDs OWNED BY THIS USER at harness entry, diff against the
+# set at harness exit. Any new PID matching one of the 5 supported
+# LSP binaries is a leak from a sub-test that failed to clean up its
+# subprocess. Codex pre-implementation review of the harness layer
+# noted: comparing against ABSOLUTE counts gives false positives on
+# dev hosts where the user's editor is also running clangd / pyright;
+# delta-only is correct. Captured early so any sub-test that spawns
+# its own LSP can be observed.
+LSP_BIN_RE='clangd-19|asm-lsp|bash-language-server|pyright-langserver|pwsh'
+LSP_PIDS_BEFORE=$(pgrep -u "$(id -u)" -f "$LSP_BIN_RE" 2>/dev/null | sort -n | tr '\n' ' ' || true)
 
 pass=0
 fail=0
@@ -1183,6 +1202,37 @@ finally:
 PY
 }
 
+# --- 9a: LSP-process-leak detection (run LAST) ----------------------------
+t_no_leaked_lsp_processes() {
+    # Capture the post-harness PID set of LSP binaries owned by this
+    # user. Any PID present here but NOT in LSP_PIDS_BEFORE was
+    # spawned during the harness AND not cleaned up. A clean run
+    # leaves the delta empty.
+    #
+    # Some sub-tests (8a/8b/8c) spawn fake stdio LSPs via `python3 -c
+    # ... cat`; those don't match the real-LSP binary regex so they
+    # don't show up here. The regex deliberately matches only the 5
+    # production LSP binary names from the install table.
+    local after delta
+    after=$(pgrep -u "$(id -u)" -f "$LSP_BIN_RE" 2>/dev/null | sort -n | tr '\n' ' ' || true)
+    delta=""
+    for pid in $after; do
+        case " $LSP_PIDS_BEFORE " in
+            *" $pid "*) ;;
+            *) delta="$delta $pid" ;;
+        esac
+    done
+    if [ -n "$(echo "$delta" | tr -d ' ')" ]; then
+        printf '[lsp-mcp-tests] debug (9a): leaked LSP PIDs:%s\n' "$delta" >&2
+        # Show which binaries leaked so the error names them.
+        for pid in $delta; do
+            ps -o pid,comm,args -p "$pid" 2>/dev/null | tail -n +2 | sed 's/^/  /' >&2
+        done
+        return 1
+    fi
+    return 0
+}
+
 run "1a --self-test banner"              t_selftest
 run "1b module import smoke"             t_import
 run "1c LspSubprocess lifecycle + pgrep" t_subprocess_lifecycle
@@ -1219,6 +1269,8 @@ run "7h validate_position bounds"        t_validate_position
 run "8a stress 100 concurrent hovers"    t_selftest_stress
 run "8b fake-LSP reorder demux"          t_fake_lsp_reorder_demux
 run "8c LSP_MCP_TIMEOUT env override"    t_timeout_env_override
+# 9a runs LAST so every prior sub-test has had a chance to clean up.
+run "9a no leaked LSP processes"         t_no_leaked_lsp_processes
 
 printf '[lsp-mcp-tests] %d/%d sub-tests PASS\n' "$pass" "$((pass + fail))"
 if [ "$fail" -gt 0 ]; then

@@ -546,6 +546,48 @@ else
 fi
 
 # ============================================================================
+# LSP-MCP bridge test harness wiring (TODO-07 in 00-infrastructure)
+#
+# scripts/lsp-mcp/bridge.py is the FastMCP stdio server proxying five
+# language servers (clangd / asm-lsp / bash-lsp / pyright / PSES). The
+# harness at scripts/lsp-mcp/tests/test_bridge.sh runs N host-side
+# sub-tests (see file header for the running list); each per-language
+# sub-test gracefully SKIPs when the corresponding LSP binary is not
+# installed, so the harness exits 0 in CI even with only clangd-19
+# available. Same shell-out-and-aggregate pattern as todo-graph above.
+# scripts/lsp-mcp/tests/test_boundary.sh is the standalone read-only
+# boundary audit; sub-test 7f wraps it, but we ALSO run it standalone
+# so a future test_bridge.sh refactor cannot accidentally bypass the
+# audit gate.
+[ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[lsp-mcp]${NC}"
+LSP_MCP_TEST="$REPO_ROOT/scripts/lsp-mcp/tests/test_bridge.sh"
+if [ -x "$LSP_MCP_TEST" ]; then
+    LM_OUT=$("$LSP_MCP_TEST" 2>&1)
+    LM_RC=$?
+    LM_SUMMARY=$(printf '%s\n' "$LM_OUT" | grep -E '^\[lsp-mcp-tests\] [0-9]+/[0-9]+ sub-tests PASS$' | tail -1)
+    if [ "$LM_RC" = "0" ]; then
+        t_pass "scripts/lsp-mcp/tests/test_bridge.sh PASS (${LM_SUMMARY:-summary unavailable})"
+    else
+        t_fail "scripts/lsp-mcp/tests/test_bridge.sh FAIL (${LM_SUMMARY:-run directly for details})"
+    fi
+else
+    t_fail "scripts/lsp-mcp/tests/test_bridge.sh not found or not executable"
+fi
+LSP_BOUNDARY_TEST="$REPO_ROOT/scripts/lsp-mcp/tests/test_boundary.sh"
+if [ -x "$LSP_BOUNDARY_TEST" ]; then
+    LB_OUT=$("$LSP_BOUNDARY_TEST" 2>&1)
+    LB_RC=$?
+    LB_SUMMARY=$(printf '%s\n' "$LB_OUT" | grep -E '^\[boundary\] ' | tail -1)
+    if [ "$LB_RC" = "0" ]; then
+        t_pass "scripts/lsp-mcp/tests/test_boundary.sh PASS (${LB_SUMMARY:-summary unavailable})"
+    else
+        t_fail "scripts/lsp-mcp/tests/test_boundary.sh FAIL (${LB_SUMMARY:-run directly for details})"
+    fi
+else
+    t_fail "scripts/lsp-mcp/tests/test_boundary.sh not found or not executable"
+fi
+
+# ============================================================================
 # Summary
 # ============================================================================
 

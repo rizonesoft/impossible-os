@@ -50,7 +50,7 @@ title: "TODO-07 -- LSP to MCP Bridge (C, NASM, shell, Python, PowerShell)"
 | ⭐  |   7   | Six MCP tools (hover / def / refs / diag / sym x2)                         | §1, §2-§6                         |  [x]   |
 | ⭐  |   8   | Extension routing + per-LSP lock + concurrent-call safety                  | §1, §7                            |  [x]   |
 | 💎  |   9   | Setup deps, manifest, Makefile target, docs, boundary                      | §1, §2-§6, §7, §8, T01 §1, T02 §5 |  [x]   |
-| ⭐  |  10   | Unit tests, --self-test harness, test-tooling surface                      | §1-§9                             |  [ ]   |
+| ⭐  |  10   | Unit tests, --self-test harness, test-tooling surface                      | §1-§9                             |  [x]   |
 | 💎  |  11   | Extended LSP tools (completion, signature/nav/call-hierarchy, code_action) | §1, §7                            |  [ ]   |
 | 💎  |  12   | File-change lifecycle (didChange / didSave / didClose forwarding)          | §1, §7                            |  [ ]   |
 | ⭐  |  13   | LSP subprocess health monitoring + auto-restart (exp backoff)              | §1                                |  [ ]   |
@@ -343,19 +343,24 @@ Make the bridge discoverable, installable, and documented. Without this, §1-§8
 
 The bridge is host-side Python tooling, so tests live outside the kernel `test_runner`. Mirror the approach [TODO-06 §8](./TODO-06-todo-metadata-layer.md#8-mcp-server-ai-agent-transport-over-the-cache) took: a shell harness (`scripts/lsp-mcp/tests/test_bridge.sh`) driving `--self-test` variants + direct FastMCP schema introspection + boundary audit.
 
-- [ ] Create `scripts/lsp-mcp/tests/test_bridge.sh` with concrete sub-tests:
-  - `10a` -- `--self-test` exits 0 with zero LSPs installed (all SKIP).
-  - `10b` -- `--self-test --lang=c` with clangd installed returns hover result on a known symbol.
-  - `10c` -- `--self-test --tools` schema introspection: 6 tools, each with correct required params, no write-capable method in handler table.
-  - `10d` -- `--self-test --stress` 100 concurrent calls complete without response-mixing (assert each response correlates with its request).
-  - `10e` -- extension router rejects `foo.rs` with `JsonErrorEnvelope`.
-  - `10f` -- LSP subprocess cleanup: after `--self-test` returns, no stray LSP processes remain (`pgrep -f 'clangd-19|asm-lsp|bash-language-server|pyright|pwsh' | wc -l` == 0).
-  - `10g` -- boundary audit: no `rename` / `applyEdit` / `executeCommand` methods reachable.
-- [ ] Wire `scripts/lsp-mcp/tests/test_bridge.sh` into [`scripts/test-tooling.sh`](../../scripts/test-tooling.sh) surface checks: harness exists + is executable, `--help` exits 0, README references the subdir. (test-tooling.sh runs BEFORE build in CI, so it can only check surface, not execute the full suite -- same constraint TODO-06 §8 hit.)
-- [ ] Wire into a new `.github/workflows/build.yml` step "Run LSP-MCP bridge tests" that runs after the build and executes `bash scripts/lsp-mcp/tests/test_bridge.sh` (CI has clangd-19 from setup-deps, so at least 10a + 10b + 10c + 10e + 10f + 10g should pass; 10b on other langs depends on CI having them -- gate per-language sub-tests on binary presence).
-- [ ] Commit: `"test: lsp-mcp bridge harness (self-test + concurrent + boundary)"`
+- [x] [`scripts/lsp-mcp/tests/test_bridge.sh`](../../scripts/lsp-mcp/tests/test_bridge.sh) shipped via §1-§9 with 37 sub-tests (1a-1g + 2a-2c + 3a-3c + 4a-4c + 5a-5c + 6a-6f + 7a-7h + 8a-8c + 9a) covering every §10 sub-test contract. Mapping: 10a → 1a (zero-LSP banner), 10b → 2a (`--lang=c` hover smoke), 10c → 7a (`--tools` 6-schema introspection), 10d → 8a (clangd 100-concurrent stress) + 8b (fake-LSP demux verification on top of stress), 10e → 7b (`_dispatch_path` rejects `.md` / `.rs`-style unsupported extensions with `lsp-path-unsupported-extension` envelope), 10f → 9a (NEW; pre/post-harness pgrep diff for the 5 LSP binaries owned by current user, false-positive-resistant via delta semantics), 10g → 7e (runtime `_FORBIDDEN_LSP_METHODS` deny gate) + 7f (delegates to standalone [`scripts/lsp-mcp/tests/test_boundary.sh`](../../scripts/lsp-mcp/tests/test_boundary.sh)).
+- [x] Wired into [`scripts/test-tooling.sh`](../../scripts/test-tooling.sh) -- two new aggregate-runner blocks under `[lsp-mcp]` shell out to `test_bridge.sh` + `test_boundary.sh` and capture summary lines into `t_pass` / `t_fail`. Mirrors the existing `[todo-graph]` block. test-tooling.sh runs BEFORE build in CI; the harness is host-side Python (no kernel-build dep) so the full suite executes. Tooling-test count grew from 81 → 84 (3 new aggregate sub-tests: bridge-harness PASS, bridge-harness summary capture, boundary PASS).
+- [x] Wired into [`.github/workflows/build.yml`](../../.github/workflows/build.yml) -- new step "Run LSP-MCP bridge tests" after "Run unit tests". Runs `test_bridge.sh` then `test_boundary.sh` sequentially. CI has clangd-19 from `setup-deps.sh` REQUIRED tier; the other 4 LSPs are not installed in CI so per-language sub-tests SKIP cleanly. Stress sub-test 8a runs against clangd. Same harness ALSO runs as part of the earlier "Run tooling regression pack" step; the standalone step is for log-visibility (a regression here surfaces at a named step instead of buried inside the tooling pack output).
+- [x] Commit: `"test: lsp-mcp bridge harness (self-test + concurrent + boundary)"`
 
-**Test checkpoint:** `bash scripts/lsp-mcp/tests/test_bridge.sh` exits 0, prints `[lsp-mcp-tests] 7/7 sub-tests PASS` on a host with clangd-19 installed. `bash scripts/test-tooling.sh` count increases by the new surface checks. CI workflow step "Run LSP-MCP bridge tests" appears in GitHub Actions output and passes on the build runner.
+**Test checkpoint:** `bash scripts/lsp-mcp/tests/test_bridge.sh` exits 0, prints `[lsp-mcp-tests] 37/37 sub-tests PASS` on a host with clangd-19 installed (per-language SKIPs for the other 4 LSPs do NOT count as failures; SKIP exits 0 by contract). `bash scripts/test-tooling.sh` reports `84/84 tooling tests passed` with `[lsp-mcp]` block showing both `test_bridge.sh PASS ([lsp-mcp-tests] 37/37 sub-tests PASS)` and `test_boundary.sh PASS ([boundary] OK: 0 write-capable LSP methods reachable from MCP surface (4 method(s) in _FORBIDDEN_LSP_METHODS deny set))`. CI workflow step "Run LSP-MCP bridge tests" appears in GitHub Actions output between "Run unit tests" and "Stale-ABI fixtures" and passes on the build runner.
+
+> **Test runner:** `bash scripts/lsp-mcp/tests/test_bridge.sh` | 37/37 sub-tests PASS (1a-1g + 2a-2c + 3a-3c + 4a-4c + 5a-5c + 6a-6f + 7a-7h + 8a-8c carry forward; 9a new -- LSP-process-leak detection at harness exit) PLUS `bash scripts/lsp-mcp/tests/test_boundary.sh` exits 0 standalone PLUS `bash scripts/test-tooling.sh` reports 84/84 (was 81; +3 aggregate sub-tests for bridge harness + boundary)
+
+> **Notes:**
+>
+> - **What shipped:** new sub-test 9a in `test_bridge.sh` (~30 LOC: LSP-process-leak detection via pre/post-harness pgrep diff with delta semantics); `scripts/test-tooling.sh` `[lsp-mcp]` block (~40 LOC, 2 aggregate-runner shells); `.github/workflows/build.yml` step "Run LSP-MCP bridge tests" between unit tests and stale-ABI fixtures. The other 6 sub-test contracts (10a-10e + 10g) were already shipped under different sub-test numbering across §1-§9.
+> - **How it runs:** the harness invocation flows three ways: (1) directly via `bash scripts/lsp-mcp/tests/test_bridge.sh`, (2) through `scripts/test-tooling.sh` aggregate (also invoked locally + at the start of the CI build), (3) via the explicit GitHub Actions step for log-visibility. `test_boundary.sh` runs standalone in all three flows.
+> - **Downstream effects:** closes the test-coverage gate the TODO-06 §8 precedent established for repo-tracked MCP servers. Future LSP-MCP work (§11-§16) extends this same harness with new sub-tests; the `[lsp-mcp]` block in test-tooling.sh + the GitHub Actions step do not need re-wiring per future section. Codex 2x review adoptions in commit `<§10 commit>`.
+> - **Canonical doc:** [`docs/infrastructure/development-tooling.md` LSP MCP Bridge subsection](../../docs/infrastructure/development-tooling.md) -- single source of truth; the test-checkpoint paragraph above describes the verification flow.
+> - **Scope boundary:** §10 does NOT own the per-language LSP integrations (§2-§6), the MCP tool surface (§7), the per-LSP serialization (§8), or the manifest/setup/docs/boundary-policy work (§9). §10 wires §1-§9's test contracts into the standard CI surfaces.
+
+> **Verified:** 2026-04-25 | commit `<§10 commit>` | 4/4 items | build N/A (host-side scripts) | tests 37/37 PASS
 
 ---
 

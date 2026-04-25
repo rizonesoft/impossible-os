@@ -173,6 +173,22 @@ jobs:
       - name: Run unit tests
         run: TIMEOUT=300 bash scripts/test.sh QUIET=1
 
+      # LSP-MCP bridge harness (TODO-07 in 00-infrastructure). Host-side
+      # Python tests; do NOT depend on the kernel build but DO need the
+      # mcp SDK (clean SKIP without it) and clangd-19 (already installed
+      # by setup-deps.sh). The runtime regression pack scripts/test-
+      # tooling.sh ABOVE runs the same harness, but listing it as a
+      # standalone step makes a regression here visible at the right
+      # place in the GitHub Actions log instead of buried inside the
+      # tooling pack output. CI host has clangd-19 from setup-deps; the
+      # other 4 LSPs are not installed, so per-language sub-tests SKIP
+      # cleanly. Stress sub-test 8a runs against clangd. Boundary test
+      # validates the source audit independently.
+      - name: Run LSP-MCP bridge tests
+        run: |
+          bash scripts/lsp-mcp/tests/test_bridge.sh
+          bash scripts/lsp-mcp/tests/test_boundary.sh
+
       # Stale-ABI QEMU fixtures: builds one half (bootloader or kernel)
       # at BOOT_INFO_VERSION - 1, swaps it into a disposable system-disk
       # copy via mtools, boots QEMU+KVM headless, and asserts the
