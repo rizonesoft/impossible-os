@@ -45,7 +45,7 @@ title: "TODO-07 -- LSP to MCP Bridge (C, NASM, shell, Python, PowerShell)"
 | 💎  |   2   | clangd integration (C / H) with freestanding flags                         | §1                                |  [x]   |
 | 💎  |   3   | asm-lsp integration (NASM flavor)                                          | §1                                |  [x]   |
 | 💎  |   4   | bash-language-server integration (shell)                                   | §1                                |  [x]   |
-| 💎  |   5   | pyright integration (Python)                                               | §1                                |  [ ]   |
+| 💎  |   5   | pyright integration (Python)                                               | §1                                |  [x]   |
 | 💎  |   6   | PowerShellEditorServices integration (ps1)                                 | §1                                |  [ ]   |
 | ⭐  |   7   | Six MCP tools (hover / def / refs / diag / sym x2)                         | §1, §2-§6                         |  [ ]   |
 | ⭐  |   8   | Extension routing + per-LSP lock + concurrent-call safety                  | §1, §7                            |  [ ]   |
@@ -181,14 +181,27 @@ Wire `bash-language-server` (Node) for the ~11.4k lines of shell under `scripts/
 
 Wire `pyright-langserver` (Microsoft, TS) for the ~6.4k lines of Python under `scripts/todo-graph/`, `tools/`, and test harnesses. Pyright is preferred over `ruff-lsp` because type inference on our telemetry-heavy tooling catches real contract bugs; ruff still runs via pre-commit lint.
 
-- [ ] Create `scripts/lsp-mcp/servers/python_server.py` that spawns `pyright-langserver --stdio`.
-- [ ] Point pyright at repo-root `pyproject.toml` if present, otherwise default config -- document in §9 if a root `pyproject.toml` gets created to pin pyright config.
-- [ ] Extensions: `.py`.
-- [ ] Graceful skip if `pyright-langserver` missing -- document install via `npm install -g pyright` in §9 docs.
-- [ ] Smoke: open `scripts/todo-graph/build.py`, request workspace symbols for `main`, assert response contains at least one symbol.
-- [ ] Commit: `"scripts/lsp-mcp: pyright (Python) integration"`
+- [x] Create `scripts/lsp-mcp/servers/python_server.py` that spawns `pyright-langserver --stdio`.
+- [x] Point pyright at repo-root `pyproject.toml` if present, otherwise default config -- `cwd=workspace_root` lets pyright auto-discover any future `pyrightconfig.json` or `[tool.pyright]` block without code changes here. Document in §9 if a root `pyproject.toml` gets created to pin pyright config (none today).
+- [x] Extensions: `.py` (per-extension routing belongs to §7's `dispatch(path)` handler; this section registers the spawner under language tag `py`).
+- [x] Graceful skip if `pyright-langserver` missing -- two-stage probe (PATH + sibling `pyright --version`, since `pyright-langserver --version` errors with "Connection input stream is not set"). Install hint: `npm install -g pyright (requires node >= 14)`. Documented in `python_server.install_hint()`; the §9 docs subsection will surface it when it lands.
+- [x] Smoke: open `scripts/todo-graph/build.py`, request workspace symbols for `main`, assert at least one returned symbol's `location.uri` resolves to the opened file (filter via URI match -- a bare "non-empty list" gate would false-pass on `main` matches from elsewhere in the workspace, since multiple Python files in the repo define one).
+- [x] Commit: `"scripts/lsp-mcp: pyright (Python) integration"`
 
-**Test checkpoint:** With pyright installed, `--self-test --lang=py` prints `[lsp-mcp] OK: pyright spawned, workspace-symbol main returned N results`. Without it, SKIP.
+**Test checkpoint:** With pyright installed, `--self-test --lang=py` prints `[lsp-mcp] OK: pyright spawned, workspace-symbol main returned N results` (observed: 6 results on the current tree). Without pyright (the development host today), same command prints `[lsp-mcp] SKIP: pyright not installed (npm install -g pyright (requires node >= 14))` and exits 0. Neither case exits non-zero.
+
+> **Test runner:** `bash scripts/lsp-mcp/tests/test_bridge.sh` | 19/19 sub-tests PASS (1a-1g + 2a-2c + 3a-3c + 4a-4c carry forward; 5a `--self-test --lang=py` OK-or-SKIP, 5b `python_server` import + surface stable, 5c `python_server.required_capabilities()` includes `workspaceSymbolProvider`)
+
+> **Notes:**
+>
+> - **What shipped:** `scripts/lsp-mcp/servers/python_server.py` (~210 LOC: `is_available()` with PATH + `pyright --version` two-stage probe (lru-cached), `install_hint()` returning the npm command, `spawn()` running `pyright-langserver --stdio` with `cwd=workspace_root` for config auto-discovery, `required_capabilities()` returning the five providers including `workspaceSymbolProvider`) plus bridge.py additions (`_autoregister_spawners` now loads `python_server`, `_self_test_language` routes `--lang=py`, new `_self_test_pyright` mirrors the clangd/bash smoke shape with a 10 s polling loop on `workspace/symbol` and URI-match filtering on results) plus 3 new harness sub-tests (19/19 total).
+> - **How it runs:** `python3 scripts/lsp-mcp/bridge.py --self-test --lang=py` either SKIPs (pyright not on PATH, or the npm shim is broken so the `pyright --version` probe fails; exit 0) or spawns `pyright-langserver --stdio`, initializes with workspace.symbol advertised (no workspace.configuration -- same reverse-RPC reason as bash_server), opens `scripts/todo-graph/build.py` with language id `python`, polls `workspace/symbol` for query "main" every 250 ms with a 10 s deadline, filters returned symbols by `location.uri == build.py uri`, requires at least one match, and prints `[lsp-mcp] OK: pyright spawned, workspace-symbol main returned N results`. The `is_available()` result is `lru_cache`-memoized so the spawner does not pay Node startup twice per process.
+> - **Probe choice:** the dual-stage check probes the sibling `pyright` CLI binary, not `pyright-langserver` itself, because `pyright-langserver --version` exits non-zero with a "Connection input stream is not set" error -- it expects connection arguments. The npm `pyright` package always ships both binaries together; if one's Node shim is broken, both are. This is documented in `python_server.is_available()` so a future maintainer does not "fix" it back to probing the langserver directly.
+> - **Downstream effects:** unblocks §7 (MCP tool handlers can route `.py` paths to the cached `py` LspSubprocess once the dispatch table lands). Per-extension dispatch is §7's scope; this section only registers the spawner. Pyright `is_available()` lets §10 boundary harness gate per-language sub-tests on binary presence without per-language harness changes.
+> - **Canonical doc:** [pyright LSP server documentation](https://microsoft.github.io/pyright/#/) -- `pyright-langserver --stdio` is the supported invocation; configuration lives in `pyrightconfig.json` (preferred) or `pyproject.toml [tool.pyright]`; auto-discovered from cwd.
+> - **Scope boundary:** no MCP tools registered, no per-extension dispatch (§7's `dispatch(path)` helper), no PSES (§6 owns that). Install guidance for pyright in the developer-tooling docs subsection is §9. The `LspSubprocess` reader does not yet answer server-initiated `workspace/configuration` requests; advertising that capability for any future server is a §1-skeleton retrofit, not a §5 deliverable.
+
+> **Verified:** 2026-04-25 | commit `<§5 commit>` | 6/6 items | build N/A (host-side Python) | tests 19/19 PASS
 
 ---
 

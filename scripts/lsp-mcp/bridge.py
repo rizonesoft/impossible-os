@@ -154,6 +154,17 @@ def _autoregister_spawners() -> None:
             f"[lsp-mcp] warn: bash-language-server spawner not registered: {detail}\n"
         )
 
+    # pyright (.py) -- Microsoft Python LSP, type-inference focused.
+    try:
+        from servers import python_server as _py
+        register_spawner("py", _py.spawn)
+    except Exception as exc:
+        detail = f"{exc.__class__.__name__}: {exc}"
+        _SPAWNER_IMPORT_ERRORS["py"] = detail
+        sys.stderr.write(
+            f"[lsp-mcp] warn: pyright spawner not registered: {detail}\n"
+        )
+
 
 _autoregister_spawners()
 
@@ -410,9 +421,12 @@ def _self_test_language(lang: str, workspace_root: Path) -> int:
         return _self_test_asm(workspace_root)
     if lang == "sh":
         return _self_test_bash(workspace_root)
+    if lang == "py":
+        return _self_test_pyright(workspace_root)
     sys.stderr.write(
         f"[lsp-mcp] FAIL: --lang={lang!r} is not wired yet. "
-        "Supported today: c (clangd-19), asm (asm-lsp), sh (bash-language-server).\n"
+        "Supported today: c (clangd-19), asm (asm-lsp), sh (bash-language-server), "
+        "py (pyright).\n"
     )
     return 1
 
@@ -940,6 +954,207 @@ def _self_test_bash(workspace_root: Path) -> int:
     sys.stdout.write(
         f"[lsp-mcp] OK: bash-language-server spawned, "
         f"diagnostics on build.sh returned {len(diagnostics)} items\n"
+    )
+    return 0
+
+
+def _self_test_pyright(workspace_root: Path) -> int:
+    """pyright end-to-end smoke: SKIP when pyright-langserver is missing,
+    else spawn + initialize + didOpen(scripts/todo-graph/build.py) +
+    workspace/symbol query for 'main', then assert at least one symbol
+    came back.
+
+    The smoke target is workspace symbols rather than hover because
+    pyright's workspaceSymbolProvider is the highest-leverage cap we
+    will route through MCP -- agents asking "where is symbol X defined
+    across all .py files?" depend on it -- and exercising it end-to-end
+    catches indexer regressions that a hover smoke would miss.
+
+    Mirrors the fail-closed discipline of the clangd / asm / bash
+    smokes: every transport / IO / protocol failure after the SKIP
+    branch becomes an explicit FAIL with exit 1. Best-effort symbol
+    scans that could falsely report OK on an empty index are rejected.
+    """
+    try:
+        from servers import python_server
+    except Exception as exc:
+        sys.stderr.write(
+            f"[lsp-mcp] FAIL: could not import servers.python_server: {exc}\n"
+        )
+        return 1
+
+    if not python_server.is_available():
+        sys.stdout.write(
+            f"[lsp-mcp] SKIP: pyright not installed "
+            f"({python_server.install_hint()})\n"
+        )
+        return 0
+
+    # Sandbox the self-test file read: resolve strictly, verify the
+    # target stays inside workspace_root, reject non-regular files,
+    # enforce the 8 MiB cap. Same guarantees as the clangd path.
+    build_py = workspace_root / "scripts" / "todo-graph" / "build.py"
+    try:
+        resolved = build_py.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        sys.stderr.write(f"[lsp-mcp] FAIL: resolving {build_py}: {exc}\n")
+        return 1
+    try:
+        workspace_resolved = workspace_root.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        sys.stderr.write(
+            f"[lsp-mcp] FAIL: resolving {workspace_root}: {exc}\n"
+        )
+        return 1
+    try:
+        resolved.relative_to(workspace_resolved)
+    except ValueError:
+        sys.stderr.write(
+            f"[lsp-mcp] FAIL: {build_py} escapes workspace "
+            f"{workspace_resolved} (symlink?); refusing to read.\n"
+        )
+        return 1
+    try:
+        st = resolved.stat()
+    except OSError as exc:
+        sys.stderr.write(f"[lsp-mcp] FAIL: stat {resolved}: {exc}\n")
+        return 1
+    import stat as _stat
+    if not _stat.S_ISREG(st.st_mode):
+        sys.stderr.write(
+            f"[lsp-mcp] FAIL: {resolved} is not a regular file "
+            f"(mode={oct(st.st_mode)})\n"
+        )
+        return 1
+    if st.st_size > _SELF_TEST_MAX_READ:
+        sys.stderr.write(
+            f"[lsp-mcp] FAIL: {resolved} size {st.st_size} exceeds "
+            f"{_SELF_TEST_MAX_READ}-byte self-test cap\n"
+        )
+        return 1
+
+    try:
+        lsp = _get_or_spawn("py", workspace_root)
+    except LspError as exc:
+        sys.stderr.write(f"[lsp-mcp] FAIL: pyright spawn: {exc}\n")
+        return 1
+
+    server_caps = lsp.server_caps
+    if not isinstance(server_caps, dict):
+        sys.stderr.write(
+            "[lsp-mcp] FAIL: pyright server_caps is not a dict "
+            f"({type(server_caps).__name__}); protocol violation.\n"
+        )
+        return 1
+    missing = [
+        cap for cap in python_server.required_capabilities()
+        if not server_caps.get(cap)
+    ]
+    if missing:
+        sys.stderr.write(
+            "[lsp-mcp] FAIL: pyright handshake missing required "
+            f"capabilities: {missing}. Advertised: "
+            f"{sorted(server_caps.keys())}\n"
+        )
+        return 1
+
+    try:
+        text = resolved.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        sys.stderr.write(f"[lsp-mcp] FAIL: reading {resolved}: {exc}\n")
+        return 1
+
+    uri = resolved.as_uri()
+    try:
+        # Pyright accepts 'python' as the LSP language id for .py files.
+        lsp.did_open(uri, "python", text, version=1)
+    except LspError as exc:
+        sys.stderr.write(f"[lsp-mcp] FAIL: pyright didOpen: {exc}\n")
+        return 1
+
+    # Pyright indexes the workspace asynchronously. workspace/symbol
+    # against a freshly-spawned server can return an empty list before
+    # the indexer finishes, even though the symbol exists. Poll with a
+    # bounded deadline (10 s; pyright indexes the scripts/ tree in
+    # 2-3 s on a warm cache).
+    #
+    # CRITICAL discrimination: query "main" matches every `main`
+    # function in the workspace (bridge.py has one too, mcp_server.py
+    # has one, etc.), so a non-empty result does NOT prove build.py
+    # was indexed. Require at least one returned symbol to resolve to
+    # the URI we just did_open'd. That is the only assertion that
+    # actually validates the end-to-end path: did_open is forwarded ->
+    # pyright indexer ingests our file -> workspace/symbol returns a
+    # match in our file. Without this filter the smoke can go green
+    # while the indexer is broken on build.py specifically.
+    import time as _time
+    deadline = _time.monotonic() + 10.0
+    matching: list[Any] = []
+    total_count = 0
+    last_err: Optional[LspError] = None
+    symbols: Any = None
+    while _time.monotonic() < deadline:
+        if not lsp.alive:
+            sys.stderr.write(
+                "[lsp-mcp] FAIL: pyright subprocess exited before "
+                "workspace/symbol returned a result\n"
+            )
+            return 1
+        if lsp._reader_dead:
+            sys.stderr.write(
+                "[lsp-mcp] FAIL: pyright reader thread died before "
+                "workspace/symbol returned a result\n"
+            )
+            return 1
+        try:
+            symbols = lsp.request(
+                "workspace/symbol",
+                {"query": "main"},
+                timeout=5.0,
+            )
+        except LspError as exc:
+            last_err = exc
+            symbols = None
+        if isinstance(symbols, list) and symbols:
+            total_count = len(symbols)
+            matching = [
+                s for s in symbols
+                if isinstance(s, dict)
+                and isinstance(s.get("location"), dict)
+                and s["location"].get("uri") == uri
+            ]
+            if matching:
+                break
+        _time.sleep(0.25)
+
+    if symbols is None:
+        sys.stderr.write(
+            f"[lsp-mcp] FAIL: pyright workspace/symbol: {last_err}\n"
+        )
+        return 1
+    if not isinstance(symbols, list):
+        sys.stderr.write(
+            "[lsp-mcp] FAIL: pyright workspace/symbol returned "
+            f"{type(symbols).__name__}; expected list per LSP spec.\n"
+        )
+        return 1
+    if not matching:
+        sys.stderr.write(
+            "[lsp-mcp] FAIL: pyright workspace/symbol query 'main' "
+            f"returned {total_count} results after 10s, but NONE "
+            f"resolved to {uri}. The indexer is producing matches "
+            "from elsewhere in the workspace but did_open on "
+            "scripts/todo-graph/build.py was not picked up. Either "
+            "the indexer is still cold (raise the deadline), the "
+            "did_open uri did not match what pyright expects, or "
+            "scripts/todo-graph/build.py no longer defines a "
+            "top-level `main` symbol.\n"
+        )
+        return 1
+
+    sys.stdout.write(
+        f"[lsp-mcp] OK: pyright spawned, workspace-symbol main "
+        f"returned {total_count} results\n"
     )
     return 0
 

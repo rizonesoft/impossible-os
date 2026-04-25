@@ -31,6 +31,15 @@
 #         (is_available / install_hint / spawn / required_capabilities).
 #   4c -- bash_server.required_capabilities() returns a non-empty tuple
 #         covering the providers the tool-wiring commit will route.
+#   5a -- --self-test --lang=py: SKIP when pyright-langserver missing,
+#         or OK with a non-zero workspace-symbol count on
+#         scripts/todo-graph/build.py.
+#   5b -- python_server module imports + exposes the standard surface
+#         (PYRIGHT_BIN / LANG_TAG / is_available / install_hint / spawn /
+#         required_capabilities).
+#   5c -- python_server.required_capabilities() includes
+#         workspaceSymbolProvider (the load-bearing cap for the smoke
+#         path; pyright reliably advertises it across releases).
 #
 # Future commits append sub-tests for tool wiring, extended tool surface,
 # file-change lifecycle, watchdog, structured logs, path sandboxing, and
@@ -74,10 +83,13 @@ sys.path.insert(0, "scripts/lsp-mcp")
 import bridge, lsp_client
 assert callable(bridge.register_spawner)
 assert bridge._LIVE_LSPS == {}
-# After clangd + asm wiring: the bridge auto-registers both on
-# import. Further languages will appear as their server modules land.
+# After clangd + asm + bash + pyright wiring: the bridge auto-
+# registers all four on import. Further languages (PSES) will
+# appear as their server modules land.
 assert "c" in bridge._LSP_SPAWNERS, bridge._LSP_SPAWNERS
 assert "asm" in bridge._LSP_SPAWNERS, bridge._LSP_SPAWNERS
+assert "sh" in bridge._LSP_SPAWNERS, bridge._LSP_SPAWNERS
+assert "py" in bridge._LSP_SPAWNERS, bridge._LSP_SPAWNERS
 assert hasattr(lsp_client, "LspSubprocess")
 assert hasattr(lsp_client, "LspError")
 '
@@ -382,6 +394,61 @@ assert 'workspaceSymbolProvider' not in caps, 'see bash_server.required_capabili
 "
 }
 
+# --- 5a: --self-test --lang=py ends in OK or SKIP, exit 0 ----------------
+t_selftest_lang_py() {
+    local out rc
+    out="$(python3 scripts/lsp-mcp/bridge.py --self-test --lang=py 2>&1)"
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+        printf '[lsp-mcp-tests] debug (5a): exit=%s output: %s\n' "$rc" "$out" >&2
+        return 1
+    fi
+    # Accept either the pyright OK banner with a non-zero result count
+    # (workspace/symbol "main" against scripts/todo-graph/build.py
+    # produces multiple matches once pyright finishes indexing), or the
+    # SKIP banner when pyright-langserver is not installed on this host.
+    echo "$out" | grep -qE "^\[lsp-mcp\] (OK: pyright spawned, workspace-symbol main returned [1-9][0-9]* results|SKIP: pyright not installed)"
+}
+
+# --- 5b: python_server module imports + standard surface ------------------
+t_python_server_import() {
+    # Surface check ONLY: do NOT call is_available() here. Sub-test 5a
+    # already drives the real probe end-to-end; calling it again from
+    # 5b would pay the Node startup cost a second time on every CI run
+    # for zero added coverage. Verify the symbol exists and is callable;
+    # behavior is exercised by 5a.
+    python3 -c "
+import sys
+sys.path.insert(0, 'scripts/lsp-mcp')
+from servers import python_server
+assert python_server.PYRIGHT_BIN == 'pyright-langserver'
+assert python_server.PYRIGHT_CLI_BIN == 'pyright'
+assert python_server.LANG_TAG == 'py'
+assert callable(python_server.is_available)
+assert callable(python_server.install_hint)
+assert callable(python_server.spawn)
+assert callable(python_server.required_capabilities)
+hint = python_server.install_hint()
+assert isinstance(hint, str) and 'pyright' in hint
+"
+}
+
+# --- 5c: python_server.required_capabilities is stable --------------------
+t_python_server_caps() {
+    python3 -c "
+import sys
+sys.path.insert(0, 'scripts/lsp-mcp')
+from servers import python_server
+caps = python_server.required_capabilities()
+assert isinstance(caps, tuple) and caps, caps
+# workspaceSymbolProvider IS asserted (unlike bash_server which drops
+# it). Pyright ships the cap reliably; the sub-test 5a smoke path
+# depends on it directly.
+for name in ('hoverProvider','definitionProvider','referencesProvider','documentSymbolProvider','workspaceSymbolProvider'):
+    assert name in caps, name
+"
+}
+
 run "1a --self-test banner"              t_selftest
 run "1b module import smoke"             t_import
 run "1c LspSubprocess lifecycle + pgrep" t_subprocess_lifecycle
@@ -398,6 +465,9 @@ run "3c asm_server surface"              t_asm_server_surface
 run "4a bash self-test lang=sh"          t_selftest_lang_sh
 run "4b bash_server import + surface"    t_bash_server_import
 run "4c bash_server required caps"       t_bash_server_caps
+run "5a pyright self-test lang=py"       t_selftest_lang_py
+run "5b python_server import + surface"  t_python_server_import
+run "5c python_server required caps"     t_python_server_caps
 
 printf '[lsp-mcp-tests] %d/%d sub-tests PASS\n' "$pass" "$((pass + fail))"
 if [ "$fail" -gt 0 ]; then
