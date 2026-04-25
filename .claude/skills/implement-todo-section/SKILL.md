@@ -112,14 +112,25 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
     - **Cross-TODO sync:** when this section references or satisfies external TODO requirements, update those TODOs in the same run.
     - Preserve existing formatting (table headers, icons, column structure).
     - **No N.M subnumbering:** never add `### N.M`, `**N.M ...**`, or extra heading levels that carve one `## N.` into sub-chapters. Keep **one continuous** `- [ ]` list under each `## N.`; put grouping in bullet wording. Need more structure -- add a new `##` section with the next number, not `17.1`/`17.2`.
-    - **Write a `> **Notes:**` block** (MANDATORY for sections marked `[x]` or `[/]` that shipped any artifact). Placement: immediately after the pre-stamp `> **Test runner:**` line, before the `> **Verified:**` stamp. 3-6 bullets, each one line. Canonical shape:
+    - **Write a `> **Notes:**` block** (MANDATORY for sections marked `[x]` or `[/]` that shipped any artifact). Placement: immediately after the pre-stamp `> **Test runner:**` line, before the `> **Verified:**` stamp.
+
+      **HARD RULE: 3-6 bullets, ONE LINE EACH (one logical line in the markdown source -- a long single bullet is fine, a wrapped multi-paragraph bullet is not).**
+
+      **FORBIDDEN patterns (PreToolUse hook in `.claude/settings.json` BLOCKS edits that introduce these):**
+      - More than 6 top-level bullets in the Notes block.
+      - Indented sub-bullets (`>   - ...`) under a Notes bullet.
+      - Per-finding adoption sub-blocks like "Design review adoptions:" / "Implementation adversarial adoptions:" / "Latent bug fixed:" / "Bundle root discovery:" with their own enumerated children. Adoption details (Codex finding evidence, file:line citations, per-dispatch breakdowns, "before this fix / after this fix" prose) belong in **commit messages**, NOT in Notes.
+      - Inventing extra bullets beyond the canonical shape below to capture review-pipeline narrative. If the canonical shape can't hold a fact, that fact lives in the commit message or in a concrete `[ ]` checklist item in a dependent section.
+
+      **Canonical shape (one bullet each, in this order):**
       - **What shipped** -- name the concrete artifact (filename + one-phrase purpose) and any key knob/count (line count, sentinel count, hook count, etc.).
       - **How it runs / integrates** -- invocation path, idempotence claim, how it fires (hook / skill / CI). Skip if the artifact is pure docs.
-      - **Downstream effects** -- other TODOs it satisfies or unblocks, stamp sweeps it enables.
+      - **Downstream effects** -- other TODOs it satisfies or unblocks, stamp sweeps it enables. May also point at the commit message for review-pipeline adoption details (e.g. "Codex 4x review adoptions in commit `<hash>`").
       - **Canonical doc** -- single link to the authoritative file for this section's subject (usually `docs/<area>/<topic>.md` or `CLAUDE.md` anchor). One link, not three.
       - **Scope boundary** -- name what this section does NOT own, with pointers (e.g. "§7 owns X; TODO-XX §N owns Y").
       - For docs-only sections, collapse "How it runs" and "Downstream effects" into one "Structure / consumers" bullet.
-      Purpose: a contributor six months from now reading the section can see what landed without chasing stamp fields or link-clicking. The stamps are the machine-readable audit trail; Notes is the human-readable "what's in this section" summary.
+
+      Purpose: Notes is a 30-second human scan summary, NOT a review-pipeline transcript. The stamps are the machine-readable audit trail; commit messages are the per-finding evidence trail; Notes is "what shipped, how it integrates, what's still owed elsewhere." A contributor six months from now should be able to read this block in 30 seconds. If you find yourself drafting a bullet that needs a colon-introduced sub-list or a multi-paragraph explanation, STOP -- promote the structural fact to a single sentence and move the rest to the commit message. Same applies if you find yourself reaching for "Latent bug fixed", "Design review adoptions", or per-finding bullets: those signal Notes is being misused as a review log.
 11. **Update Implementation Order table** -- `[x]` (fully done) or `[/]` (in progress).
 12. **Update OS Comparison table** -- replace placeholders with concrete descriptions. `Planned` -> `Done` or `Partial`. **If the section added a capability not yet represented in the table, ADD a row** (do not just update existing rows). Scan the Implementation Order table and confirm every `[x]` row has a corresponding row in OS Comparison; a missing row is as much drift as a stale one. Also update the post-table summary sentences if they cap out before the section just shipped. **Do not** add or extend `<!-- Sources: ... -->` URL comment blocks; cite new research in the PR or chat only.
 13. **Codex adversarial review** (MANDATORY -- NO EXCEPTIONS) -- dispatch to Codex plugin. If Codex responds with "no diff available", re-dispatch with actual file content (read 100-200 relevant lines). A shallow response requires re-prompting.
