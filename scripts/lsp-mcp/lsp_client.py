@@ -263,12 +263,18 @@ class LspSubprocess:
         # that killed the reader still left the demux path looking
         # live to new callers.
         self._reader_dead = False
-        # Teardown bypass flag: shutdown() sets this so the internal
-        # shutdown-RPC can slip past the _shutdown_called guard in
-        # request()/notify(). Without this, shutdown() would mark
-        # itself closed BEFORE sending the graceful LSP shutdown,
-        # turning every clean teardown into an EOF/SIGTERM fallback.
-        self._teardown_in_progress = False
+        # Teardown bypass: shutdown() sets this to its own thread id
+        # so its internal shutdown-RPC, didClose, and exit traffic can
+        # slip past the _shutdown_called guard in request()/notify().
+        # Stored as a thread id (NOT a process-wide bool) so a
+        # concurrent MCP-tool thread that already passed the
+        # apply_text gate cannot also bypass during the teardown
+        # window. Codex post-implementation review of the
+        # file-change-lifecycle work flagged a global bool as High:
+        # ordinary tool traffic could interleave after
+        # _shutdown_called was committed, recreating the ordering
+        # race the file-change-lifecycle fix claimed to close.
+        self._teardown_thread_id: Optional[int] = None
         self.server_caps: dict[str, Any] = {}
         # SCAFFOLD (consumed by the per-language integration commits
         # and the diagnostics tool handler): diagnostics get pushed by
@@ -691,10 +697,12 @@ class LspSubprocess:
         via timeout=None.
 
         During shutdown() teardown, the internal `shutdown` RPC must
-        bypass the _shutdown_called guard: _teardown_in_progress
-        flips True for the duration of that single RPC so the
-        graceful handshake can land before we mark the instance
-        fully closed.
+        bypass the _shutdown_called guard: _teardown_thread_id is
+        set to the shutdown owner's thread id for the duration of
+        the teardown sequence; only that thread can call request()
+        past the guard. A concurrent MCP-tool thread that already
+        passed apply_text's gate cannot also bypass -- its thread
+        id will not match.
 
         Read-only boundary enforcement: method names in
         _FORBIDDEN_LSP_METHODS are REJECTED at entry. This is the
@@ -713,7 +721,8 @@ class LspSubprocess:
                 lang=self.lang,
                 method=method,
             )
-        if self._shutdown_called and not self._teardown_in_progress:
+        if self._shutdown_called and \
+                self._teardown_thread_id != threading.get_ident():
             raise LspError(
                 "lsp-shutdown",
                 "request after shutdown",
@@ -774,12 +783,17 @@ class LspSubprocess:
     def notify(self, method: str, params: Optional[dict[str, Any]] = None) -> None:
         """Send a one-way JSON-RPC notification. No reply expected.
 
-        Same teardown bypass as request(): shutdown() sends `exit`
-        while _shutdown_called is already True. `initialized` is
-        also allowed during teardown since the handshake may not
-        have completed yet when shutdown fires."""
-        if (self._shutdown_called and not self._teardown_in_progress
-                and method != "exit"):
+        Same teardown bypass as request(): shutdown's own exit
+        notification rides through because the shutdown thread holds
+        _teardown_thread_id == threading.get_ident(). NO method-name
+        carveout: a non-owner thread that races shutdown cannot
+        smuggle `exit` (or any other notification) onto the wire
+        ahead of the shutdown thread's didClose / shutdown RPC.
+        Codex re-adversarial flagged a stale `method != \"exit\"`
+        carveout from the original boolean teardown flag as a
+        Medium risk for ordering breakage."""
+        if (self._shutdown_called
+                and self._teardown_thread_id != threading.get_ident()):
             raise LspError(
                 "lsp-shutdown",
                 "notification after shutdown",
@@ -885,8 +899,20 @@ class LspSubprocess:
         Used by the MCP tool handlers in bridge.py where a single
         LSP may see many tool calls against the same file and each
         re-open would be both wasteful (re-index) and protocol-
-        dubious (some LSPs reject duplicate didOpen)."""
+        dubious (some LSPs reject duplicate didOpen).
+
+        Teardown gate matches apply_text(): rejects with
+        lsp-shutdown once shutdown() commits, so legacy callers
+        cannot interleave a didOpen between the shutdown gate flip
+        and the didClose snapshot."""
         with self._open_uris_lock:
+            if self._shutdown_called:
+                raise LspError(
+                    "lsp-shutdown",
+                    "ensure_open after shutdown",
+                    lang=self.lang,
+                    uri=uri,
+                )
             if uri in self.open_uris:
                 return False
             # Send inside the lock so a concurrent caller waiting on
@@ -1001,7 +1027,7 @@ class LspSubprocess:
         could interleave normal traffic into the teardown sequence.
         The fix: shutdown() now sets _shutdown_called BEFORE the
         snapshot; we honor it here under _open_uris_lock so the
-        check + state read are atomic. _teardown_in_progress is the
+        check + state read are atomic. _teardown_thread_id is the
         internal-bypass flag for shutdown's own didClose/shutdown/
         exit traffic and is NOT honored by apply_text() (no internal
         caller of apply_text() exists during teardown)."""
@@ -1110,9 +1136,13 @@ class LspSubprocess:
         High finding: a concurrent apply_text between the open-uris
         snapshot and the didClose loop could otherwise register a new
         URI invisible to the snapshot and interleave normal traffic
-        into the teardown sequence). _teardown_in_progress is the
-        internal-bypass flag that lets our own didClose/shutdown/exit
-        slip past the guard the public callers see."""
+        into the teardown sequence). _teardown_thread_id is the
+        thread-id-bound bypass that lets ONLY this shutdown thread's
+        didClose/shutdown/exit traffic slip past the guard; tool
+        threads that already passed apply_text's gate cannot bypass
+        because their thread id will not match (Codex follow-up
+        High: a global bool was bypassable by ordinary tool traffic;
+        binding to threading.get_ident() closes the loophole)."""
         if self._shutdown_called:
             return
 
@@ -1133,16 +1163,18 @@ class LspSubprocess:
 
             # Commit-up-front: external callers (request, notify,
             # apply_text) all check `_shutdown_called and not
-            # _teardown_in_progress` and reject. Set _teardown_in_
-            # progress in the same window we set _shutdown_called so
-            # the only callers that can issue traffic are our own
-            # didClose / shutdown / exit RPCs below. Take
-            # _open_uris_lock so apply_text's atomic check sees the
-            # flag flip without a torn read against a concurrent
-            # entry already past its own guard.
+            # _teardown_thread_id != current thread` and reject. Set
+            # _teardown_thread_id to OUR thread id in the same window
+            # we set _shutdown_called so only this shutdown thread
+            # can issue the didClose / shutdown / exit RPCs below.
+            # A concurrent MCP-tool thread that already passed
+            # apply_text's gate will get a different thread id from
+            # threading.get_ident() and reject at request()/notify()
+            # entry. Take _open_uris_lock so apply_text's atomic
+            # check sees the flag flip without a torn read.
             with self._open_uris_lock:
                 self._shutdown_called = True
-                self._teardown_in_progress = True
+                self._teardown_thread_id = threading.get_ident()
             try:
                 # (1) Graceful LSP shutdown: didClose for every tracked
                 # URI, then the shutdown request, then exit notification.
@@ -1176,7 +1208,7 @@ class LspSubprocess:
                     except Exception:
                         pass
             finally:
-                self._teardown_in_progress = False
+                self._teardown_thread_id = None
 
         # (2) Close stdin so the LSP sees EOF even if it ignored exit.
         try:

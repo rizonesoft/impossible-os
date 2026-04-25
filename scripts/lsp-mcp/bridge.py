@@ -1228,9 +1228,16 @@ def _build_mcp(FastMCP, workspace_root: Path):
         # where publishDiagnostics arrived AFTER workspace/symbol's
         # response was queued but BEFORE the bridge returned to the
         # MCP caller.
-        for _key, inst in snapshot:
+        #
+        # ONE 50 ms drain window for the whole fan-out -- not
+        # per-instance. Each LSP has its own reader thread; a
+        # single yield lets ALL of them drain concurrently. Codex
+        # perf review of the per-instance loop flagged the original
+        # implementation as Medium: 5 live LSPs would cost 250ms of
+        # serial sleep after the parallel work was already done.
+        if snapshot:
             try:
-                inst.flush_notifications(timeout=0.05)
+                snapshot[0][1].flush_notifications(timeout=0.05)
             except Exception:
                 pass
         total = sum(len(v) for v in per_lang.values())

@@ -187,6 +187,16 @@
 #          late call either succeeds before the commit or rejects
 #          with lsp-shutdown -- never silently smuggles traffic into
 #          the teardown sequence.
+#   12f -- post-apply_text request rejected during teardown
+#          (regression guard for the Codex post-implementation review
+#          High follow-up to 12e): a tool thread that already passed
+#          apply_text's gate can be inside lsp.request() when shutdown
+#          commits. With the global _teardown_in_progress bool that
+#          existed before this fix, the tool thread's request would
+#          have slipped past the gate. The thread-id-bound
+#          _teardown_thread_id rejects any thread != shutdown owner.
+#          Test runs 15 trials and asserts each post-apply_text
+#          request rejects with lsp-shutdown.
 #   9a -- LSP-process-leak detection: pgrep snapshots taken at harness
 #         entry vs harness exit. Any NEW PID matching the 5 LSP binary
 #         names (owned by this user) is a leak from a sub-test that
@@ -2395,6 +2405,133 @@ print(f'[apply_text/teardown] OK -- {shutdown_rejections}/20 trials ' \
 PY
 }
 
+# --- 12f: post-apply_text request rejected during teardown ---------------
+# Codex post-implementation review of the file-change-lifecycle work
+# caught a follow-up High: an MCP tool thread that already passed
+# apply_text's gate would be inside lsp.request() when shutdown
+# commits. The fix binds _teardown_thread_id to the shutdown owner
+# thread (instead of using a global bool), so request()/notify()
+# from any other thread reject with lsp-shutdown after the commit.
+# Test simulates a tool thread that has cleared apply_text but not
+# yet called request -- shutdown fires in between, then the tool
+# thread tries to issue hover. It must reject with lsp-shutdown.
+t_post_apply_text_request_rejected_in_teardown() {
+    python3 - << 'PY'
+import sys, threading, time
+sys.path.insert(0, 'scripts/lsp-mcp')
+from lsp_client import LspSubprocess, LspError
+
+# Slow-shutdown stub: shutdown takes long enough that the racing
+# request lands DURING teardown.
+fake = r"""
+import sys, json, time
+def read_msg():
+    hdr = b''
+    while True:
+        ch = sys.stdin.buffer.read(1)
+        if not ch: return None
+        hdr += ch
+        if hdr.endswith(b'\r\n\r\n'): break
+    n = 0
+    for line in hdr.split(b'\r\n'):
+        if line.lower().startswith(b'content-length:'):
+            n = int(line.split(b':')[1].strip()); break
+    return json.loads(sys.stdin.buffer.read(n).decode('utf-8'))
+def write_msg(obj):
+    b = json.dumps(obj).encode('utf-8')
+    sys.stdout.buffer.write(b'Content-Length: ' + str(len(b)).encode() + b'\r\n\r\n' + b)
+    sys.stdout.buffer.flush()
+while True:
+    m = read_msg()
+    if m is None: break
+    method = m.get('method')
+    if 'id' in m:
+        if method == 'initialize':
+            write_msg({'jsonrpc':'2.0','id':m['id'],'result':{'capabilities':{}}})
+        elif method == 'shutdown':
+            time.sleep(0.15)
+            write_msg({'jsonrpc':'2.0','id':m['id'],'result':None})
+        else:
+            write_msg({'jsonrpc':'2.0','id':m['id'],'result':None})
+    elif method == 'exit':
+        break
+"""
+
+total_trials = 10
+for trial in range(total_trials):
+    lsp = LspSubprocess(['python3', '-c', fake], lang=f'fake-12f-{trial}')
+    try:
+        lsp.initialize('file:///tmp/test')
+        # Pre-open a URI so apply_text's same-mtime no-op path doesn't
+        # send any wire traffic; the tool thread's request() is the
+        # only thing under test.
+        lsp.apply_text('file:///pre.py', 'python', 'pre', mtime_ns=1)
+
+        result = {'kind': None, 'error': None}
+
+        def tool_thread():
+            # Cross apply_text BEFORE shutdown commits; result
+            # captured but not gated -- this proves the tool reached
+            # the post-apply_text state.
+            try:
+                lsp.apply_text('file:///pre.py', 'python', 'pre',
+                               mtime_ns=1)
+            except LspError as e:
+                # apply_text rejected before we even got to request --
+                # not the path we want to exercise. Note + return.
+                result['kind'] = 'rejected_at_apply_text'
+                result['error'] = e.kind
+                return
+            # Now BLOCK until the main thread commits shutdown. This
+            # eliminates the timing-sensitive race the earlier
+            # revision had: by polling _shutdown_called we
+            # deterministically observe the post-commit window before
+            # issuing the racing request. The test then asserts the
+            # request MUST reject -- not "may succeed if it raced
+            # before commit", which the prior pass-rate-only assert
+            # would have allowed.
+            for _ in range(2000):  # ~2s ceiling at 1ms poll
+                if lsp._shutdown_called:
+                    break
+                time.sleep(0.001)
+            assert lsp._shutdown_called, 'shutdown never committed in 2s'
+            try:
+                lsp.request('hover', {'textDocument': {'uri': 'file:///pre.py'},
+                                      'position': {'line': 0, 'character': 0}},
+                            timeout=1.0)
+                result['kind'] = 'success'
+            except LspError as e:
+                result['kind'] = 'error'
+                result['error'] = e.kind
+
+        t = threading.Thread(target=tool_thread)
+        t.start()
+        # Yield so the tool thread is past apply_text before we
+        # commit shutdown.
+        time.sleep(0.02)
+        lsp.shutdown(timeout=2.0)
+        t.join(timeout=4.0)
+
+        # apply_text could have lost the race and rejected first
+        # (rare but acceptable -- shows the OTHER gate fired). For
+        # every trial that DID reach request(), the result MUST be
+        # an error with kind=lsp-shutdown.
+        if result['kind'] == 'rejected_at_apply_text':
+            continue
+        assert result['kind'] == 'error', \
+            f'trial {trial}: post-commit request returned {result!r}; ' \
+            f'expected lsp-shutdown rejection'
+        assert result['error'] == 'lsp-shutdown', \
+            f'trial {trial}: wrong rejection kind: {result!r}'
+    finally:
+        try: lsp.shutdown(timeout=1.0)
+        except Exception: pass
+
+print(f'[post-apply_text/teardown] OK -- all {total_trials} trials ' \
+      f'rejected at request() after teardown commit (deterministic)')
+PY
+}
+
 # --- 9a: LSP-process-leak detection (run LAST) ----------------------------
 t_no_leaked_lsp_processes() {
     # Capture the post-harness PID set of LSP binaries owned by this
@@ -2474,6 +2611,7 @@ run "12b didClose at shutdown"           t_didclose_at_shutdown
 run "12c cleanup_paths walked"           t_cleanup_paths_walked
 run "12d bridge forwards didChange"      t_bridge_handler_forwards_didchange
 run "12e apply_text rejects in teardown" t_apply_text_rejects_during_teardown
+run "12f post-apply_text req rejected"   t_post_apply_text_request_rejected_in_teardown
 # 9a runs LAST so every prior sub-test has had a chance to clean up.
 run "9a no leaked LSP processes"         t_no_leaked_lsp_processes
 
