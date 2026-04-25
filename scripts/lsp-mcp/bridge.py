@@ -608,6 +608,18 @@ def _get_or_spawn(lang: str, workspace_root: Path) -> LspSubprocess:
 
     if not owner:
         waiter_event.wait()
+        # Check the shutdown gate BEFORE the live-instance check.
+        # An owner that hits the publish gate raises lsp-shutdown;
+        # the waiter must see the same envelope, otherwise a
+        # concurrent MCP tool call attached to _SPAWN_EVENTS during
+        # bridge teardown would get the misleading lsp-spawn-failed
+        # error. (Post-ship consistency review M.)
+        if _BRIDGE_SHUTTING_DOWN.is_set():
+            raise LspError(
+                "lsp-shutdown",
+                "bridge teardown began while concurrent spawn was in flight",
+                lang=lang,
+            )
         with _LIVE_LSPS_LOCK:
             inst = _LIVE_LSPS.get(key)
         if inst is None or not inst.alive:
@@ -4750,16 +4762,34 @@ def main(argv=None) -> int:
         # itself is robust to it; the poll loop just keeps the
         # reaper waiting on a join).
         _WARM_CANCEL.set()
-        # Background mode: join the daemon thread with a 2s upper
+        # Background mode: join the daemon thread with a 2 s upper
         # bound. _WARM_CANCEL.set() above already short-circuits the
-        # per-LSP poll loop on the next 0.5s tick, so a healthy bg
-        # warm-start exits in well under 1 s. The bounded timeout
-        # plus daemon=True ensures a wedged warm worker (e.g. stuck
-        # in an LSP's initialize handshake) cannot hold the bridge
-        # process open. _shutdown_all_lsps then sets
-        # _BRIDGE_SHUTTING_DOWN under _LIVE_LSPS_LOCK so any LSP
-        # the daemon thread has not yet published gets reaped at
-        # the publish gate in _get_or_spawn instead of leaking.
+        # per-LSP poll loop on the next 0.5 s tick, so a healthy bg
+        # warm-start exits in well under 1 s. _shutdown_all_lsps then
+        # sets _BRIDGE_SHUTTING_DOWN under _LIVE_LSPS_LOCK so any LSP
+        # the daemon thread has not yet published gets reaped at the
+        # publish gate in _get_or_spawn instead of leaking.
+        #
+        # If a warm worker is wedged inside a spawner's
+        # `lsp.initialize()` (clangd uses a 15 s timeout) when this
+        # finally runs, the 2 s join here returns early -- the worker
+        # is still inside the ThreadPoolExecutor underneath
+        # _warm_start_run. Three layers ensure the wedged worker
+        # cannot leak its child subprocess past process exit:
+        #   1. lsp_client._LIVE_SUBPROCS WeakSet tracks every
+        #      LspSubprocess from __init__ (lsp_client.py:387), so
+        #      the in-flight subprocess is registered before
+        #      initialize ever runs.
+        #   2. lsp_client._atexit_kill_all (lsp_client.py:170-184)
+        #      reaps every entry on interpreter shutdown via SIGTERM
+        #      -> SIGKILL with bounded grace.
+        #   3. atexit handlers run in LIFO order, so
+        #      _atexit_kill_all (registered later, at first
+        #      LspSubprocess import) fires BEFORE
+        #      ThreadPoolExecutor's _python_exit. Once the LSP dies
+        #      its reader EOFs, the pending Future raises
+        #      lsp-subprocess-exited, the warm worker unblocks, and
+        #      the executor join completes.
         bg_thread = _WARM_THREAD
         if bg_thread is not None and bg_thread.is_alive():
             bg_thread.join(timeout=2.0)

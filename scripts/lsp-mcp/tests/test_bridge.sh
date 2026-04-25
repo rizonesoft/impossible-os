@@ -4935,7 +4935,11 @@ with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
 gate_set = threading.Event()
 spawner_returned = threading.Event()
 
+spawn_call_count = [0]
+spawn_count_lock = threading.Lock()
 def fake_spawn(workspace_root):
+    with spawn_count_lock:
+        spawn_call_count[0] += 1
     inst = LspSubprocess(["python3", fake_path], lang="fake17g")
     inst.initialize(root_uri=workspace_root.as_uri(), timeout=2.0)
     spawner_returned.set()
@@ -4968,6 +4972,23 @@ if not spawner_returned.wait(timeout=10.0):
     print("[17g] FAIL: spawner never returned", file=sys.stderr)
     sys.exit(1)
 
+# Attach a SECOND waiter on the same key so the post-impl
+# consistency review's "waiter must also see lsp-shutdown" claim
+# is exercised. The waiter joins via the existing _SPAWN_EVENTS
+# gate while the owner (`t`) is parked inside the spawner.
+waiter_done = threading.Event()
+waiter_result = []
+def waiter():
+    try:
+        B._get_or_spawn("fake17g", Path("/tmp"))
+    except LspError as e:
+        waiter_result.append(e.kind)
+    waiter_done.set()
+w = threading.Thread(target=waiter, daemon=True, name="toctou-waiter")
+w.start()
+# Give the waiter time to attach to _SPAWN_EVENTS.
+time.sleep(0.1)
+
 # Now flip the shutdown gate, mimicking what _shutdown_all_lsps
 # does (set gate + clear _LIVE_LSPS snapshot). The fake spawner
 # is still parked, holding inst; it has NOT yet entered the
@@ -4982,7 +5003,7 @@ with B._LIVE_LSPS_LOCK:
 # _LIVE_LSPS_LOCK MUST reject the publish.
 gate_set.set()
 
-# Wait for caller to finish.
+# Wait for caller (owner) to finish.
 if not final_check_done.wait(timeout=10.0):
     print("[17g] FAIL: caller did not finish", file=sys.stderr)
     sys.exit(1)
@@ -4990,9 +5011,31 @@ t.join(timeout=2.0)
 
 result = getattr(t, "result_kind", None)
 if result != "lsp-shutdown":
-    print(f"[17g] FAIL: expected lsp-shutdown, got {result!r}",
+    print(f"[17g] FAIL: owner expected lsp-shutdown, got {result!r}",
           file=sys.stderr)
     sys.exit(1)
+
+# Waiter must also see lsp-shutdown (post-impl consistency review).
+if not waiter_done.wait(timeout=5.0):
+    print("[17g] FAIL: waiter did not finish", file=sys.stderr)
+    sys.exit(1)
+w.join(timeout=2.0)
+if not waiter_result or waiter_result[0] != "lsp-shutdown":
+    print(f"[17g] FAIL: waiter expected lsp-shutdown, got {waiter_result!r}",
+          file=sys.stderr)
+    sys.exit(1)
+
+# Critical: the waiter MUST have been a true waiter (attached to
+# _SPAWN_EVENTS), not a second owner that re-entered _get_or_spawn
+# after the first owner popped the event. Asserting spawn_call_count
+# == 1 proves the waiter path -- a second-owner scenario would have
+# called fake_spawn a second time. (Re-adversarial review M.)
+with spawn_count_lock:
+    if spawn_call_count[0] != 1:
+        print(f"[17g] FAIL: expected exactly 1 fake_spawn call, "
+              f"got {spawn_call_count[0]} -- waiter became 2nd owner",
+              file=sys.stderr)
+        sys.exit(1)
 
 # Verify no leaked instance landed in _LIVE_LSPS post-rejection.
 with B._LIVE_LSPS_LOCK:

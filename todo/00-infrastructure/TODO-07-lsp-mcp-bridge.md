@@ -553,7 +553,7 @@ This section adds an opt-in **background** mode that starts MCP serving immediat
 - [x] Concurrency contract verified by sub-test 17e (in-isolation drive of the new shutdown publish gate via a fake LSP). The existing `_SPAWN_EVENTS[(lang, root)]` gate continues to handle the steady-state attach contract; no new gate was needed for the per-key concurrent-tool-call case (correct since the bridge skeleton).
 - [x] `.mcp.json` (authoritative) AND `scripts/lsp-mcp/mcp.json` sidecar updated to `args: ["scripts/lsp-mcp/bridge.py", "--warm-start=c,py", "--warm-start-mode=background"]`. Both kept in sync so the sidecar's "if the two ever diverge, .mcp.json wins" comment stays accurate.
 - [x] `docs/infrastructure/development-tooling.md` LSP MCP Bridge subsection extended with a `Warm-start and --warm-start-mode` paragraph + a 2-row mode-comparison table that names blocking as CLI-only and background as REQUIRED for `.mcp.json` launchers.
-- [x] Six sub-tests added to `scripts/lsp-mcp/tests/test_bridge.sh` (17a-17f). Mapping shifted from the original draft to better cover the lifecycle:
+- [x] Seven sub-tests added to `scripts/lsp-mcp/tests/test_bridge.sh` (17a-17g). Mapping shifted from the original draft to better cover the lifecycle:
     - 17a -- `--warm-start --warm-start-mode=background --self-test` exits in under 1.5 s wall-clock (proves bg dispatch does not delay the exit gate).
     - 17b -- the `event: warm-bg-dispatched` JSON log line fires (proves dispatch happens on the main thread).
     - 17c -- omitting `--warm-start-mode` defaults to blocking; `warm-bg-dispatched` MUST NOT appear in the log.
@@ -572,10 +572,14 @@ Verified locally: `--warm-start=c --warm-start-mode=background --self-test` retu
 
 > **Notes:**
 > - Adds `--warm-start-mode={blocking,background}` to `bridge.py`. Blocking (default) preserves CLI semantics; background spawns warm-start on a `daemon=True` thread named `warm-start-bg` and returns to `srv.run()` within ~1 ms.
-> - Lifecycle: `_WARM_LOCK` guards `_WARM_THREAD` + `_WARM_DONE` for atomic re-entry; `_BRIDGE_SHUTTING_DOWN` set under `_LIVE_LSPS_LOCK` BEFORE snapshotting so `_get_or_spawn` reaps any in-flight publish (closes the bg-worker post-snapshot leak the design review caught).
+> - Lifecycle: `_WARM_LOCK` guards `_WARM_THREAD` + `_WARM_DONE` for atomic re-entry; `_BRIDGE_SHUTTING_DOWN` set under `_LIVE_LSPS_LOCK` BEFORE snapshotting so `_get_or_spawn` reaps any in-flight publish; the waiter path also checks the gate so concurrent MCP calls get `lsp-shutdown` (not `lsp-spawn-failed`) during teardown.
+> - Orphan-subprocess safety net: `lsp_client._LIVE_SUBPROCS` WeakSet + `_atexit_kill_all` (LIFO atexit order before `concurrent.futures._python_exit`) reaps any in-flight LSP whose warm worker was wedged in initialize when shutdown fired.
 > - `.mcp.json` (authoritative) + `scripts/lsp-mcp/mcp.json` sidecar both flipped to `--warm-start=c,py --warm-start-mode=background` -- the documented MCP-launcher pattern.
 > - Canonical doc: `docs/infrastructure/development-tooling.md` LSP MCP Bridge -> `Warm-start and --warm-start-mode` subsection.
 > - Scope boundary: §17 does NOT change blocking-mode semantics, the per-language readiness wait, or the cold-start budget WARN -- those remain owned by §16.
+
+> **Verified:** 2026-04-26 | commit `0d7841c7` | 9/9 items | build OK | tests 94/94 PASS
+> **Quality reviewed:** 2026-04-26 | Codex 6x (design + adversarial + consistency + perf + re-adversarial) | 3H+3M+1L fixed, 1H+2M rejected | scope: N/A (python tooling)
 
 ---
 
