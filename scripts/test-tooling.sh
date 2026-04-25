@@ -774,6 +774,73 @@ PY
 fi
 
 # ============================================================================
+# Codex per-workspace wrapper sub-test (TODO-08 in 00-infrastructure section 1
+# follow-up)
+#
+# Asserts scripts/codex.sh injects the repo's MCP server set into every
+# `codex` invocation via -c overrides, even when ~/.codex/config.toml
+# has no MCP blocks. Skip-with-PASS when `codex` is not on PATH (CI
+# host without Codex CLI installed; the wrapper's existence + bash
+# parse-success is the only thing we can check there).
+[ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[codex_wrapper]${NC}"
+
+CODEX_WRAPPER="$REPO_ROOT/scripts/codex.sh"
+if [ ! -x "$CODEX_WRAPPER" ]; then
+    t_fail "codex_wrapper script missing or not executable: $CODEX_WRAPPER"
+elif ! command -v codex >/dev/null 2>&1; then
+    t_pass "codex_wrapper SKIP (codex CLI not on PATH; wrapper present + executable)"
+else
+    # Parse-only check (bash -n) so a syntax error in the wrapper
+    # surfaces independent of the codex binary's behavior.
+    if ! bash -n "$CODEX_WRAPPER" 2>/dev/null; then
+        t_fail "codex_wrapper bash syntax error in $CODEX_WRAPPER"
+    else
+        # Argv-injection probe via a fake `codex` shim. The previous
+        # revision invoked the real `codex mcp list` and grep'd
+        # output for server names -- a developer with a global
+        # ~/.codex/config.toml that already has both servers would
+        # see PASS even if the wrapper failed open and supplied no
+        # -c overrides. (Codex adversarial review, Medium.)
+        # The shim writes its argv to a tempfile; the test asserts
+        # the wrapper passed `-c mcp_servers.todo-graph=...` AND
+        # `-c mcp_servers.lsp-bridge=...` AND the cwd value
+        # references the live REPO_ROOT.
+        SHIM_DIR="$(mktemp -d)"
+        SHIM_ARGV="$SHIM_DIR/argv"
+        cat > "$SHIM_DIR/codex" <<SHIM_EOF
+#!/usr/bin/env bash
+# Fake codex shim that records argv and exits 0.
+printf '%s\n' "\$@" > "$SHIM_ARGV"
+exit 0
+SHIM_EOF
+        chmod +x "$SHIM_DIR/codex"
+        # Run the wrapper with the shim FIRST on PATH.
+        PATH="$SHIM_DIR:$PATH" bash "$CODEX_WRAPPER" mcp list \
+            >/dev/null 2>&1 || true
+        if [ ! -s "$SHIM_ARGV" ]; then
+            t_fail "codex_wrapper shim never received argv (wrapper failed before exec)"
+        else
+            # Assert both -c overrides AND cwd injection landed.
+            need_todo=0; need_lsp=0; need_cwd=0
+            grep -qE '^mcp_servers\.todo-graph=' "$SHIM_ARGV" && need_todo=1
+            grep -qE '^mcp_servers\.lsp-bridge=' "$SHIM_ARGV" && need_lsp=1
+            grep -qF "cwd = \"$REPO_ROOT\"" "$SHIM_ARGV" && need_cwd=1
+            if [ "$need_todo" = "1" ] && [ "$need_lsp" = "1" ] \
+               && [ "$need_cwd" = "1" ]; then
+                t_pass "codex_wrapper injects -c mcp_servers.{todo-graph,lsp-bridge} with cwd=$REPO_ROOT"
+            else
+                MISSING=""
+                [ "$need_todo" != "1" ] && MISSING="$MISSING -c mcp_servers.todo-graph"
+                [ "$need_lsp" != "1" ] && MISSING="$MISSING -c mcp_servers.lsp-bridge"
+                [ "$need_cwd" != "1" ] && MISSING="$MISSING cwd=$REPO_ROOT"
+                t_fail "codex_wrapper missing argv:$MISSING"
+            fi
+        fi
+        rm -rf "$SHIM_DIR"
+    fi
+fi
+
+# ============================================================================
 # Summary
 # ============================================================================
 
