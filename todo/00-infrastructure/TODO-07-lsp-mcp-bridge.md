@@ -305,7 +305,7 @@ FastMCP dispatches concurrent tool calls. Even with the bridge-level `_CALL_LOCK
 > - **Canonical doc:** [LSP 3.17 specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/) for the request/response correlation contract; [TODO-06 §8](./TODO-06-todo-metadata-layer.md#8-mcp-server-ai-agent-transport-over-the-cache) for the precedent that flagged this concurrency surface.
 > - **Scope boundary:** §8 does NOT own crash detection / auto-restart (§13), structured JSON logging with correlation IDs (§14), warm-start eager spawn (§16), or the per-LSP `cleanup_paths` retrofit (filed in §12). Stress test exercises clangd only; mixed-language stress is not a §8 deliverable -- 8b is the demux contract validator and uses a fake LSP for determinism.
 
-> **Verified:** 2026-04-25 | commit `<§8 commit>` | 6/6 items | build N/A (host-side Python) | tests 36/36 PASS
+> **Verified:** 2026-04-25 | commit `a249c81e` | 6/6 items | build N/A (host-side Python) | tests 36/36 PASS
 
 ---
 
