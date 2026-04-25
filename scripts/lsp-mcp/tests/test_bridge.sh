@@ -40,6 +40,24 @@
 #   5c -- python_server.required_capabilities() includes
 #         workspaceSymbolProvider (the load-bearing cap for the smoke
 #         path; pyright reliably advertises it across releases).
+#   6a -- --self-test --lang=ps1: SKIP when pwsh+PSES unavailable, or
+#         OK with a non-negative document-symbol count on
+#         scripts/machines/run-qemu.ps1.
+#   6b -- powershell_server module imports + exposes the standard
+#         surface (PWSH_BIN / LANG_TAG / is_available / install_hint /
+#         spawn / required_capabilities).
+#   6c -- powershell_server.required_capabilities() includes the five
+#         providers PSES advertises across all supported releases.
+#   6d -- _caps_missing() honors the LSP "boolean | XxxOptions" cap
+#         shape: True / `{}` / non-empty options dict are all
+#         supported; False / None / key-absent are missing. Regression
+#         guard for the 2026-04-25 PSES handshake bug where empty-
+#         options dicts were treated as falsy and falsely reported
+#         missing.
+#   6e -- _bundled_modules_path() handles BOTH the unversioned VS Code
+#         zip layout AND the versioned Install-Module layout. Regression
+#         guard for the 2026-04-25 PSES bundle-root bug where versioned
+#         installs returned the version dir instead of the bundle root.
 #
 # Future commits append sub-tests for tool wiring, extended tool surface,
 # file-change lifecycle, watchdog, structured logs, path sandboxing, and
@@ -83,13 +101,15 @@ sys.path.insert(0, "scripts/lsp-mcp")
 import bridge, lsp_client
 assert callable(bridge.register_spawner)
 assert bridge._LIVE_LSPS == {}
-# After clangd + asm + bash + pyright wiring: the bridge auto-
-# registers all four on import. Further languages (PSES) will
-# appear as their server modules land.
+# After clangd + asm + bash + pyright + PSES wiring: the bridge
+# auto-registers all five on import. The bridge proxies every
+# language the repo uses; further additions are out-of-scope for
+# the existing five-LSP charter.
 assert "c" in bridge._LSP_SPAWNERS, bridge._LSP_SPAWNERS
 assert "asm" in bridge._LSP_SPAWNERS, bridge._LSP_SPAWNERS
 assert "sh" in bridge._LSP_SPAWNERS, bridge._LSP_SPAWNERS
 assert "py" in bridge._LSP_SPAWNERS, bridge._LSP_SPAWNERS
+assert "ps1" in bridge._LSP_SPAWNERS, bridge._LSP_SPAWNERS
 assert hasattr(lsp_client, "LspSubprocess")
 assert hasattr(lsp_client, "LspError")
 '
@@ -449,6 +469,116 @@ for name in ('hoverProvider','definitionProvider','referencesProvider','document
 "
 }
 
+# --- 6a: --self-test --lang=ps1 ends in OK or SKIP, exit 0 ---------------
+t_selftest_lang_ps1() {
+    local out rc
+    out="$(python3 scripts/lsp-mcp/bridge.py --self-test --lang=ps1 2>&1)"
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+        printf '[lsp-mcp-tests] debug (6a): exit=%s output: %s\n' "$rc" "$out" >&2
+        return 1
+    fi
+    # Accept either the PSES OK banner with a non-negative document-
+    # symbol count (an empty array is legitimate per LSP spec; large
+    # .ps1 files like run-qemu.ps1 produce many), or the SKIP banner
+    # when pwsh 7.x and/or PowerShellEditorServices is not installed.
+    echo "$out" | grep -qE "^\[lsp-mcp\] (OK: PSES spawned, document-symbol returned [0-9]+ results|SKIP: PSES not installed)"
+}
+
+# --- 6b: powershell_server module imports + standard surface --------------
+t_powershell_server_import() {
+    # Surface check ONLY. 6a drives the real probe end-to-end; calling
+    # is_available() here would re-pay the pwsh + PSES probe cost.
+    python3 -c "
+import sys
+sys.path.insert(0, 'scripts/lsp-mcp')
+from servers import powershell_server
+assert powershell_server.PWSH_BIN == 'pwsh'
+assert powershell_server.LANG_TAG == 'ps1'
+assert callable(powershell_server.is_available)
+assert callable(powershell_server.install_hint)
+assert callable(powershell_server.spawn)
+assert callable(powershell_server.required_capabilities)
+hint = powershell_server.install_hint()
+assert isinstance(hint, str) and hint
+"
+}
+
+# --- 6c: powershell_server.required_capabilities is stable ----------------
+t_powershell_server_caps() {
+    python3 -c "
+import sys
+sys.path.insert(0, 'scripts/lsp-mcp')
+from servers import powershell_server
+caps = powershell_server.required_capabilities()
+assert isinstance(caps, tuple) and caps, caps
+for name in ('hoverProvider','definitionProvider','referencesProvider','documentSymbolProvider','workspaceSymbolProvider'):
+    assert name in caps, name
+# publishDiagnostics is a notification path, not a server cap key;
+# must NOT be advertised as required (Codex design review correction).
+assert 'publishDiagnostics' not in caps, 'publishDiagnostics is a notification, not a cap'
+"
+}
+
+# --- 6e: _bundled_modules_path handles both PSES install layouts ---------
+t_bundled_modules_path_layouts() {
+    python3 -c "
+import sys, tempfile
+from pathlib import Path
+sys.path.insert(0, 'scripts/lsp-mcp')
+from servers.powershell_server import _bundled_modules_path
+
+# Versioned Install-Module layout: <root>/PowerShellEditorServices/<ver>/PSES.psd1
+with tempfile.TemporaryDirectory() as td:
+    psd1 = Path(td) / 'PowerShellEditorServices' / '4.4.0' / 'PowerShellEditorServices.psd1'
+    psd1.parent.mkdir(parents=True)
+    psd1.touch()
+    expected = str(Path(td).resolve())
+    got = _bundled_modules_path(str(psd1))
+    assert got == expected, f'versioned: got {got!r} expected {expected!r}'
+
+# Unversioned VS Code / GitHub zip layout: <root>/PowerShellEditorServices/PSES.psd1
+with tempfile.TemporaryDirectory() as td:
+    psd1 = Path(td) / 'PowerShellEditorServices' / 'PowerShellEditorServices.psd1'
+    psd1.parent.mkdir(parents=True)
+    psd1.touch()
+    expected = str(Path(td).resolve())
+    got = _bundled_modules_path(str(psd1))
+    assert got == expected, f'unversioned: got {got!r} expected {expected!r}'
+
+# Nested VS Code extension layout: ~/.vscode/extensions/ms-vscode.powershell-X/modules/PowerShellEditorServices/PSES.psd1
+with tempfile.TemporaryDirectory() as td:
+    psd1 = Path(td) / 'modules' / 'PowerShellEditorServices' / 'PowerShellEditorServices.psd1'
+    psd1.parent.mkdir(parents=True)
+    psd1.touch()
+    expected = str((Path(td) / 'modules').resolve())
+    got = _bundled_modules_path(str(psd1))
+    assert got == expected, f'vscode-ext: got {got!r} expected {expected!r}'
+"
+}
+
+# --- 6d: _caps_missing honors LSP boolean|options cap shape ---------------
+t_caps_missing_options_shape() {
+    python3 -c "
+import sys
+sys.path.insert(0, 'scripts/lsp-mcp')
+from bridge import _caps_missing
+required = ('hoverProvider','definitionProvider')
+# Supported variants per LSP 3.17:
+#   - True (boolean)
+#   - {} (default options)
+#   - {'workDoneProgress': True} (non-empty options)
+assert _caps_missing({'hoverProvider': True, 'definitionProvider': True}, required) == []
+assert _caps_missing({'hoverProvider': {}, 'definitionProvider': {}}, required) == []
+assert _caps_missing({'hoverProvider': {'workDoneProgress': True}, 'definitionProvider': {'linkSupport': False}}, required) == []
+# Unsupported variants:
+assert _caps_missing({'hoverProvider': False, 'definitionProvider': True}, required) == ['hoverProvider']
+assert _caps_missing({'hoverProvider': None, 'definitionProvider': True}, required) == ['hoverProvider']
+assert _caps_missing({'definitionProvider': True}, required) == ['hoverProvider']
+assert _caps_missing({}, required) == ['hoverProvider', 'definitionProvider']
+"
+}
+
 run "1a --self-test banner"              t_selftest
 run "1b module import smoke"             t_import
 run "1c LspSubprocess lifecycle + pgrep" t_subprocess_lifecycle
@@ -468,6 +598,11 @@ run "4c bash_server required caps"       t_bash_server_caps
 run "5a pyright self-test lang=py"       t_selftest_lang_py
 run "5b python_server import + surface"  t_python_server_import
 run "5c python_server required caps"     t_python_server_caps
+run "6a PSES self-test lang=ps1"         t_selftest_lang_ps1
+run "6b powershell_server surface"       t_powershell_server_import
+run "6c powershell_server required caps" t_powershell_server_caps
+run "6d _caps_missing options shape"     t_caps_missing_options_shape
+run "6e bundled_modules_path layouts"    t_bundled_modules_path_layouts
 
 printf '[lsp-mcp-tests] %d/%d sub-tests PASS\n' "$pass" "$((pass + fail))"
 if [ "$fail" -gt 0 ]; then

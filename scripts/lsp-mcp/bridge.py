@@ -165,6 +165,18 @@ def _autoregister_spawners() -> None:
             f"[lsp-mcp] warn: pyright spawner not registered: {detail}\n"
         )
 
+    # PowerShellEditorServices (.ps1 / .psm1 / .psd1) -- pwsh module
+    # loaded via Start-EditorServices.ps1, not a standalone binary.
+    try:
+        from servers import powershell_server as _ps1
+        register_spawner("ps1", _ps1.spawn)
+    except Exception as exc:
+        detail = f"{exc.__class__.__name__}: {exc}"
+        _SPAWNER_IMPORT_ERRORS["ps1"] = detail
+        sys.stderr.write(
+            f"[lsp-mcp] warn: PSES spawner not registered: {detail}\n"
+        )
+
 
 _autoregister_spawners()
 
@@ -423,10 +435,12 @@ def _self_test_language(lang: str, workspace_root: Path) -> int:
         return _self_test_bash(workspace_root)
     if lang == "py":
         return _self_test_pyright(workspace_root)
+    if lang == "ps1":
+        return _self_test_pses(workspace_root)
     sys.stderr.write(
         f"[lsp-mcp] FAIL: --lang={lang!r} is not wired yet. "
         "Supported today: c (clangd-19), asm (asm-lsp), sh (bash-language-server), "
-        "py (pyright).\n"
+        "py (pyright), ps1 (PSES via pwsh 7.x).\n"
     )
     return 1
 
@@ -435,6 +449,34 @@ def _self_test_language(lang: str, workspace_root: Path) -> int:
 # point us at a symlinked huge file and OOM the bridge. 8 MiB is ~100x
 # the size of any real source file in this repo.
 _SELF_TEST_MAX_READ = 8 * 1024 * 1024
+
+
+def _caps_missing(server_caps: dict, required: tuple) -> list:
+    """Return the subset of required capability keys that the server
+    has NOT advertised as supported.
+
+    Per LSP 3.17 each capability value is `boolean | XxxOptions`.
+    `True` or any `XxxOptions` dict (including `{}`, which means
+    "supported with default options") signals support; `False` /
+    `None` / key-absent signal unsupported.
+
+    The naive `if not server_caps.get(cap)` check we used initially
+    treats empty options dicts as falsy and falsely reports them as
+    missing. PowerShellEditorServices advertises every provider as
+    `{}` (default options) -- that's spec-correct, but it tripped
+    the smoke until this helper landed. clangd/asm/bash/pyright
+    happen to advertise booleans, so they passed the naive check by
+    luck; the helper makes all five smokes use the spec-correct
+    rule."""
+    out = []
+    for cap in required:
+        if cap not in server_caps:
+            out.append(cap)
+            continue
+        val = server_caps[cap]
+        if val is False or val is None:
+            out.append(cap)
+    return out
 
 
 def _utf16_code_units(s: str) -> int:
@@ -533,10 +575,7 @@ def _self_test_clangd(workspace_root: Path) -> int:
             f"({type(server_caps).__name__}); protocol violation.\n"
         )
         return 1
-    missing = [
-        cap for cap in clangd_server.required_capabilities()
-        if not server_caps.get(cap)
-    ]
+    missing = _caps_missing(server_caps, clangd_server.required_capabilities())
     if missing:
         sys.stderr.write(
             "[lsp-mcp] FAIL: clangd handshake missing required "
@@ -691,10 +730,7 @@ def _self_test_asm(workspace_root: Path) -> int:
             f"({type(server_caps).__name__}); protocol violation.\n"
         )
         return 1
-    missing = [
-        cap for cap in asm_server.required_capabilities()
-        if not server_caps.get(cap)
-    ]
+    missing = _caps_missing(server_caps, asm_server.required_capabilities())
     if missing:
         sys.stderr.write(
             "[lsp-mcp] FAIL: asm-lsp handshake missing required "
@@ -866,10 +902,7 @@ def _self_test_bash(workspace_root: Path) -> int:
             f"({type(server_caps).__name__}); protocol violation.\n"
         )
         return 1
-    missing = [
-        cap for cap in bash_server.required_capabilities()
-        if not server_caps.get(cap)
-    ]
+    missing = _caps_missing(server_caps, bash_server.required_capabilities())
     if missing:
         sys.stderr.write(
             "[lsp-mcp] FAIL: bash-language-server handshake missing required "
@@ -1046,10 +1079,7 @@ def _self_test_pyright(workspace_root: Path) -> int:
             f"({type(server_caps).__name__}); protocol violation.\n"
         )
         return 1
-    missing = [
-        cap for cap in python_server.required_capabilities()
-        if not server_caps.get(cap)
-    ]
+    missing = _caps_missing(server_caps, python_server.required_capabilities())
     if missing:
         sys.stderr.write(
             "[lsp-mcp] FAIL: pyright handshake missing required "
@@ -1155,6 +1185,156 @@ def _self_test_pyright(workspace_root: Path) -> int:
     sys.stdout.write(
         f"[lsp-mcp] OK: pyright spawned, workspace-symbol main "
         f"returned {total_count} results\n"
+    )
+    return 0
+
+
+def _self_test_pses(workspace_root: Path) -> int:
+    """PowerShellEditorServices end-to-end smoke: SKIP when pwsh 7.x or
+    PSES module is missing, else spawn + initialize + didOpen on a
+    real .ps1 file + textDocument/documentSymbol, then assert the
+    response is a list (LSP spec contract for documentSymbol).
+
+    Smoke target is scripts/machines/run-qemu.ps1 -- the largest .ps1
+    in the repo at section-implementation time, with multiple top-level
+    functions so a healthy PSES indexer returns a non-trivial symbol
+    tree. The TODO contract says "assert response is an array" not
+    "non-empty"; we accept an empty list so a future shrunk file does
+    not false-fail the smoke. Length is reported in the OK banner so
+    a regression that drops symbols is still visible.
+
+    Mirrors the fail-closed discipline of the clangd / asm / bash /
+    pyright smokes: every transport / IO / protocol failure after the
+    SKIP branch becomes an explicit FAIL with exit 1.
+    """
+    try:
+        from servers import powershell_server
+    except Exception as exc:
+        sys.stderr.write(
+            f"[lsp-mcp] FAIL: could not import servers.powershell_server: {exc}\n"
+        )
+        return 1
+
+    if not powershell_server.is_available():
+        sys.stdout.write(
+            f"[lsp-mcp] SKIP: PSES not installed "
+            f"({powershell_server.install_hint()})\n"
+        )
+        return 0
+
+    # Sandbox the self-test file read: resolve strictly, verify the
+    # target stays inside workspace_root, reject non-regular files,
+    # enforce the 8 MiB cap. Same guarantees as the clangd path.
+    target = workspace_root / "scripts" / "machines" / "run-qemu.ps1"
+    try:
+        resolved = target.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        sys.stderr.write(f"[lsp-mcp] FAIL: resolving {target}: {exc}\n")
+        return 1
+    try:
+        workspace_resolved = workspace_root.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        sys.stderr.write(
+            f"[lsp-mcp] FAIL: resolving {workspace_root}: {exc}\n"
+        )
+        return 1
+    try:
+        resolved.relative_to(workspace_resolved)
+    except ValueError:
+        sys.stderr.write(
+            f"[lsp-mcp] FAIL: {target} escapes workspace "
+            f"{workspace_resolved} (symlink?); refusing to read.\n"
+        )
+        return 1
+    try:
+        st = resolved.stat()
+    except OSError as exc:
+        sys.stderr.write(f"[lsp-mcp] FAIL: stat {resolved}: {exc}\n")
+        return 1
+    import stat as _stat
+    if not _stat.S_ISREG(st.st_mode):
+        sys.stderr.write(
+            f"[lsp-mcp] FAIL: {resolved} is not a regular file "
+            f"(mode={oct(st.st_mode)})\n"
+        )
+        return 1
+    if st.st_size > _SELF_TEST_MAX_READ:
+        sys.stderr.write(
+            f"[lsp-mcp] FAIL: {resolved} size {st.st_size} exceeds "
+            f"{_SELF_TEST_MAX_READ}-byte self-test cap\n"
+        )
+        return 1
+
+    try:
+        lsp = _get_or_spawn("ps1", workspace_root)
+    except LspError as exc:
+        sys.stderr.write(f"[lsp-mcp] FAIL: PSES spawn: {exc}\n")
+        return 1
+
+    server_caps = lsp.server_caps
+    if not isinstance(server_caps, dict):
+        sys.stderr.write(
+            "[lsp-mcp] FAIL: PSES server_caps is not a dict "
+            f"({type(server_caps).__name__}); protocol violation.\n"
+        )
+        return 1
+    missing = _caps_missing(server_caps, powershell_server.required_capabilities())
+    if missing:
+        sys.stderr.write(
+            "[lsp-mcp] FAIL: PSES handshake missing required "
+            f"capabilities: {missing}. Advertised: "
+            f"{sorted(server_caps.keys())}\n"
+        )
+        return 1
+
+    try:
+        text = resolved.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        sys.stderr.write(f"[lsp-mcp] FAIL: reading {resolved}: {exc}\n")
+        return 1
+
+    uri = resolved.as_uri()
+    try:
+        # PSES accepts 'powershell' as the LSP language id for .ps1 /
+        # .psm1 / .psd1 files (per its documentSelector).
+        lsp.did_open(uri, "powershell", text, version=1)
+    except LspError as exc:
+        sys.stderr.write(f"[lsp-mcp] FAIL: PSES didOpen: {exc}\n")
+        return 1
+
+    try:
+        symbols = lsp.request(
+            "textDocument/documentSymbol",
+            {"textDocument": {"uri": uri}},
+            timeout=15.0,
+        )
+    except LspError as exc:
+        sys.stderr.write(f"[lsp-mcp] FAIL: PSES documentSymbol: {exc}\n")
+        return 1
+
+    if symbols is None:
+        # The LSP spec permits null but the smoke contract is strict:
+        # null on a real .ps1 with multiple top-level functions
+        # signals that PSES failed to parse the file or that the
+        # documentSymbol provider is not actually wired. Either is a
+        # regression, not a benign no-symbols case (which would be an
+        # empty list). FAIL.
+        sys.stderr.write(
+            "[lsp-mcp] FAIL: PSES documentSymbol returned null; expected "
+            "an array per the smoke contract. The file has top-level "
+            "functions; null indicates a parser or provider regression.\n"
+        )
+        return 1
+    if not isinstance(symbols, list):
+        sys.stderr.write(
+            "[lsp-mcp] FAIL: PSES documentSymbol returned "
+            f"{type(symbols).__name__}; expected list per LSP spec.\n"
+        )
+        return 1
+
+    sys.stdout.write(
+        f"[lsp-mcp] OK: PSES spawned, document-symbol "
+        f"returned {len(symbols)} results\n"
     )
     return 0
 
