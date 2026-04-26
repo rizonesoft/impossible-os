@@ -75,9 +75,50 @@ from pathlib import Path
 # its segment-by-control-operators + wrapper-walk pattern, and we
 # share the source-path classifier so trigger_files / staged_files
 # overlap deterministically.
+#
+# Codex perf finding (round-7 review-pipeline): import was at
+# module-load and added ~36ms per Bash hook invocation, even for
+# obvious non-commit commands like `ls`. Now lazy: PreToolUse Bash
+# hooks return early via _looks_like_git_commit_screen() without
+# importing crc at all. The expensive import only happens when the
+# command MAY be a git commit. Module-level reference is set on
+# first lazy load to avoid repeat resolution.
 _HOOK_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(_HOOK_DIR))
-import codex_review_completed as crc  # noqa: E402
+crc = None  # populated lazily by _ensure_crc()
+
+
+def _ensure_crc():
+    """Lazy-import codex_review_completed only when needed."""
+    global crc
+    if crc is None:
+        if str(_HOOK_DIR) not in sys.path:
+            sys.path.insert(0, str(_HOOK_DIR))
+        import codex_review_completed as _crc  # noqa: E402
+        crc = _crc
+    return crc
+
+
+def _looks_like_git_commit_screen(cmd: str) -> bool:
+    """Fast literal screen: skip the full shlex+wrapper-walk for
+    commands that obviously can't be a git commit. Returns True if
+    the command MIGHT be a git commit, False if definitely not.
+    Cost: 2-3 string searches, no allocations beyond the input.
+
+    The screen is intentionally permissive (false positives are OK
+    -- they pay the full parse cost; false negatives are NOT OK).
+    Conservative: any command containing the substring `git` is
+    forwarded; commands without `git` cannot be a git invocation
+    no matter how wrapped.
+    """
+    if not isinstance(cmd, str) or not cmd:
+        return False
+    # Cheap literal -- false-positive on `digit`, `gita`, etc., but
+    # those just pay the full parse cost. False-negative on a custom
+    # git binary symlinked under a non-git name is the only real risk;
+    # we accept it (the user opting out of `git` as a name is signing
+    # up for non-standard tooling and the gate doesn't pretend to
+    # cover it).
+    return "git" in cmd
 
 # ----------------------------------------------------------------------
 # Constants
@@ -87,9 +128,16 @@ EVIDENCE_TTL_SECONDS = 30 * 60  # 30 minutes for build + review
 SKIP_REASON_MIN_LEN = 12
 
 # Wrapper / env tokens we walk past to find the real `git` command.
-# Same set as crc._CODEX_WRAPPER_TOKENS, with `git` stripped of any
-# special-case wrappers it doesn't use.
-_WRAPPER_TOKENS = crc._CODEX_WRAPPER_TOKENS | frozenset({"xargs"})
+# Hardcoded (round-7 perf fix) instead of importing from crc to avoid
+# the ~36ms module-load cost on every PreToolUse Bash. Mirrors
+# crc._CODEX_WRAPPER_TOKENS plus xargs (commit-runner specific to
+# section-commit detection).
+_WRAPPER_TOKENS = frozenset({
+    "sudo", "doas", "env", "nice", "nohup", "timeout", "ionice",
+    "stdbuf", "unbuffer", "chronic", "exec", "command",
+    "taskset", "chrt", "setsid", "setpriv", "cgexec", "flock",
+    "xargs",
+})
 
 # Implementation Order row: status column is the FINAL `|`-bounded
 # cell. Anchor regex to the END of the line so `[x]` in description
@@ -349,43 +397,147 @@ def _segment_is_git_commit(seg_tokens: list[str]) -> tuple[bool, bool]:
     head = out[0].rsplit("/", 1)[-1]
     if head != "git":
         return (False, False)
-    # Walk past git's own pre-subcommand options.
+    # Walk past git's own pre-subcommand options. Capture inline
+    # `-c alias.<name>=<value>` definitions so we can detect commit
+    # aliases the user defined on the command line (Codex round-6
+    # post-commit fix: `git -c alias.ship='commit --no-verify' ship`
+    # was a hard bypass of the gate).
     idx = 1
     git_value_flags = ("-c", "-C", "--git-dir", "--work-tree",
                         "--namespace", "--exec-path", "--super-prefix")
+    inline_aliases: dict[str, str] = {}
+
+    def _maybe_record_alias(kv: str) -> None:
+        # `kv` is the value of `-c key=value` (with `=` already split).
+        if "=" not in kv:
+            return
+        key, _, val = kv.partition("=")
+        if key.startswith("alias."):
+            inline_aliases[key[len("alias."):]] = val
+
     while idx < len(out):
         tok = out[idx]
         if not tok.startswith("-"):
             break
         if tok in git_value_flags:
             if "=" in tok:
+                # `-c=foo=bar` form (rare; `-c` actually parses as
+                # `-c <next>` per git-c(1), but be defensive).
+                _, _, attached = tok.partition("=")
+                if tok.startswith("-c="):
+                    _maybe_record_alias(attached)
                 idx += 1
             else:
+                # `-c key=value` -- next token is the value.
+                if tok == "-c" and idx + 1 < len(out):
+                    _maybe_record_alias(out[idx + 1])
                 idx += 2
             continue
-        if any(tok.startswith(f + "=") for f in git_value_flags):
+        # `-c=key=value` attached form variant: `--<flag>=value`.
+        for f in git_value_flags:
+            if tok.startswith(f + "="):
+                if f == "-c":
+                    _maybe_record_alias(tok[len(f) + 1:])
+                idx += 1
+                break
+        else:
             idx += 1
-            continue
-        idx += 1
     subcmd = out[idx] if idx < len(out) else ""
-    # Codex H2 round-2: common commit aliases. Custom user-defined
-    # aliases (`git -c alias.foo='commit ...' foo`) cannot be resolved
-    # without parsing git config; documented as a known gap. The
-    # ubiquitous `ci`/`cm` aliases ship with most developer setups.
+    # Codex H2 round-2 + round-6: subcommand allowlist + custom-alias
+    # resolution. `commit`/`ci`/`cm` are the conventional commit names;
+    # any user alias defined inline via `-c alias.<X>=<Y>` whose value
+    # starts with `commit` (after optional flags) is treated as a commit
+    # invocation, with the alias's value scanned for `--no-verify`.
+    extra_no_verify = False
+    if subcmd in inline_aliases:
+        alias_value = inline_aliases[subcmd]
+        # Round-7 fix: git supports SHELL aliases (leading `!`) where
+        # the body is an arbitrary shell command, not a git subcommand.
+        # `git -c alias.ship='!git commit --no-verify "$@"' ship` is a
+        # documented and common pattern. Recurse into the shell body
+        # via the same _bash_is_git_commit machinery used for `bash -c`
+        # / `eval` shell descents.
+        stripped = alias_value.lstrip()
+        if stripped.startswith("!"):
+            shell_body = stripped[1:]
+            try:
+                inner_toks = shlex.split(shell_body, posix=True, comments=False)
+            except ValueError:
+                inner_toks = []
+            # Run each control-operator-separated segment through the
+            # same recognizer; if any segment is a git commit invocation,
+            # treat the outer alias as commit and inherit no-verify.
+            for inner_seg in crc._segment_by_separators(inner_toks):
+                inner_seg = crc._trim_heredoc_body(inner_seg)
+                if not inner_seg:
+                    continue
+                is_inner, inner_no_verify = _segment_is_git_commit(inner_seg)
+                if is_inner:
+                    subcmd = "commit"
+                    if inner_no_verify:
+                        extra_no_verify = True
+                    break
+            # Also handle `!f() { git commit ...; }; f` shape: scan the
+            # raw shell body string for `commit` + `--no-verify` literal
+            # as a defense-in-depth backstop. Function-defining aliases
+            # are uncommon in practice, but they exist.
+            if subcmd not in ("commit", "ci", "cm"):
+                if " commit" in shell_body or shell_body.startswith("commit"):
+                    if "--no-verify" in shell_body or " -n " in (" " + shell_body + " "):
+                        subcmd = "commit"
+                        extra_no_verify = True
+        else:
+            try:
+                alias_toks = shlex.split(alias_value, posix=True, comments=False)
+            except ValueError:
+                alias_toks = []
+            # Round-8 fix: alias body can carry git pre-subcommand
+            # options (`-c key=value`, `-C path`, `--git-dir=...`)
+            # before the actual subcommand. Mirror the outer git
+            # pre-subcommand walker -- value-bearing options consume
+            # the next token, attached `--flag=value` consume one.
+            a_idx = 0
+            while a_idx < len(alias_toks):
+                tok = alias_toks[a_idx]
+                if not tok.startswith("-"):
+                    break
+                if tok in git_value_flags:
+                    if "=" in tok:
+                        a_idx += 1
+                    else:
+                        a_idx += 2
+                    continue
+                if any(tok.startswith(f + "=") for f in git_value_flags):
+                    a_idx += 1
+                    continue
+                a_idx += 1
+            alias_subcmd = alias_toks[a_idx] if a_idx < len(alias_toks) else ""
+            if alias_subcmd in ("commit", "ci", "cm"):
+                subcmd = "commit"
+                for tok in alias_toks[a_idx + 1:]:
+                    if tok in ("--no-verify", "-n") or tok.startswith("--no-verify="):
+                        extra_no_verify = True
+                        break
+            if not extra_no_verify:
+                for tok in alias_toks[:a_idx]:
+                    if tok in ("--no-verify", "-n") or tok.startswith("--no-verify="):
+                        extra_no_verify = True
+                        break
     if subcmd not in ("commit", "ci", "cm"):
         return (False, False)
     # Codex H1: scan post-subcommand args for --no-verify / -n. The
     # `-n` short form is ambiguous (could be a value-arg of an
     # earlier flag), but in `git commit` argv positions after the
     # subcommand it is unambiguously --no-verify per `git-commit(1)`.
-    has_no_verify = False
-    for tok in out[idx + 1:]:
-        if tok in ("--no-verify", "-n"):
-            has_no_verify = True
-            break
-        if tok.startswith("--no-verify="):
-            has_no_verify = True
-            break
+    has_no_verify = extra_no_verify
+    if not has_no_verify:
+        for tok in out[idx + 1:]:
+            if tok in ("--no-verify", "-n"):
+                has_no_verify = True
+                break
+            if tok.startswith("--no-verify="):
+                has_no_verify = True
+                break
     return (True, has_no_verify)
 
 
@@ -799,6 +951,11 @@ def _harness_command_is_git_commit() -> tuple[bool, bool, str]:
     (is_git_commit, has_no_verify, command_string). Fail-OPEN on
     malformed input (returns False) -- pre-signature errors should
     not block tool calls per Codex H2.
+
+    Round-7 perf fix: cheap literal screen runs BEFORE the expensive
+    shlex+wrapper-walk parse. Non-git commands (ls, cat, echo, the
+    overwhelming majority of Bash invocations) return immediately
+    without paying the parse cost or importing crc.
     """
     try:
         payload = json.load(sys.stdin)
@@ -809,6 +966,10 @@ def _harness_command_is_git_commit() -> tuple[bool, bool, str]:
     cmd = (payload.get("tool_input") or {}).get("command", "")
     if not isinstance(cmd, str):
         return (False, False, "")
+    if not _looks_like_git_commit_screen(cmd):
+        return (False, False, cmd)
+    # Screen passed; lazy-import crc and run the real parse.
+    _ensure_crc()
     is_commit, no_verify = _bash_is_git_commit(cmd)
     return (is_commit, no_verify, cmd)
 
@@ -856,6 +1017,10 @@ def _evaluate(root: Path, mode: str) -> int:
     """Shared signature + evidence evaluation. Pre-signature errors
     fail OPEN; post-signature errors and missing evidence fail CLOSED.
     """
+    # Ensure crc is loaded before any signature/evidence work that
+    # uses crc.X helpers. Harness path already loaded it during screen
+    # pass; --git-hook-mode path enters here directly.
+    _ensure_crc()
     # SKIP path: handle BEFORE signature detection so a clearly opted-
     # out commit doesn't waste cycles on diff/regex work AND so an
     # incomplete opt-out (missing reason) is reported with a usage

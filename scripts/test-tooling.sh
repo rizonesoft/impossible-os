@@ -1730,7 +1730,31 @@ JSON
     _gate_run 2 "cgexec --sticky git commit --no-verify blocked (H2 r5: --sticky is no-value)" \
         '{"tool_name":"Bash","tool_input":{"command":"cgexec --sticky git commit --no-verify -m foo"}}'
 
-    # 37 (Codex H2 round-2): index/worktree desync blocks.
+    # 37 (Codex round-6 post-commit): inline `-c alias.<X>=<commit ...>` resolution.
+    _stage_section_commit
+    rm -f "$GATE_STATE_FILE_T"
+    _gate_run 2 "git -c alias.ship='commit --no-verify' ship blocked (round-6: alias resolution)" \
+        '{"tool_name":"Bash","tool_input":{"command":"git -c alias.ship=\"commit --no-verify\" ship -m foo"}}'
+    _gate_run 2 "git -c alias.cmt=commit cmt blocks on signature (round-6: bare-commit alias)" \
+        '{"tool_name":"Bash","tool_input":{"command":"git -c alias.cmt=commit cmt -m foo"}}'
+    _gate_run 0 "git -c alias.lg='log --oneline' lg allows (round-6: non-commit alias)" \
+        '{"tool_name":"Bash","tool_input":{"command":"git -c alias.lg=\"log --oneline\" lg"}}'
+
+    # 38 (Codex round-7 re-adversarial): git shell aliases (leading !).
+    _gate_run 2 "git -c alias.ship='!git commit --no-verify' blocked (round-7: shell alias)" \
+        '{"tool_name":"Bash","tool_input":{"command":"git -c alias.ship=\"!git commit --no-verify\" ship -m foo"}}'
+    _gate_run 2 "git -c alias.ship='!f() { git commit --no-verify; }; f' blocked (round-7: function alias)" \
+        '{"tool_name":"Bash","tool_input":{"command":"git -c alias.ship=\"!f() { git commit --no-verify; }; f\" ship"}}'
+    _gate_run 0 "git -c alias.ship='!echo foo' allows (round-7: non-commit shell alias)" \
+        '{"tool_name":"Bash","tool_input":{"command":"git -c alias.ship=\"!echo foo\" ship"}}'
+
+    # 39 (Codex round-8): alias body with leading git options.
+    _gate_run 2 "git -c alias.ship='-c user.name=x commit --no-verify' blocked (round-8: alias body with -c)" \
+        '{"tool_name":"Bash","tool_input":{"command":"git -c alias.ship=\"-c user.name=x commit --no-verify\" ship -m foo"}}'
+    _gate_run 2 "git -c alias.ship='-C /tmp commit --no-verify' blocked (round-8: alias body with -C)" \
+        '{"tool_name":"Bash","tool_input":{"command":"git -c alias.ship=\"-C /tmp commit --no-verify\" ship"}}'
+
+    # 40 (Codex H2 round-2): index/worktree desync blocks.
     # Stage section commit, write valid review state, ensure build.log
     # is newer than worktree mtime, but mutate worktree so `git diff`
     # reports desync between index and worktree.

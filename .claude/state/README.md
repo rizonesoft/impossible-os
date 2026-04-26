@@ -24,6 +24,7 @@ the receive skill.
   "timestamp_ns": 1735258800000000000,
   "trigger": "Bash(codex-companion.mjs adversarial-review)",
   "trigger_files": ["scripts/foo.py"],
+  "trigger_blobs": {"scripts/foo.py": "abc123def456..."},
   "head_sha": "1408d994...",
   "tree_hash": "sha256-of-git-status-porcelain",
   "received": false,
@@ -35,7 +36,8 @@ the receive skill.
 |---|---|---|
 | `timestamp_ns` | int | `time.time_ns()` at trigger fire. Anchors the 1-hour TTL invalidation. |
 | `trigger` | str | What fired the trigger: `"Bash(<command-prefix>)"` or `"Skill(<skill-name>)"`. Surfaced in BLOCK envelope so the agent knows which review to receive. |
-| `trigger_files` | list[str] | Source-code paths in the git index at trigger time (`git diff --cached --name-only` filtered to `.c`/`.h`/`.asm`/`.S` under `src`/`include` OR `.py`/`.mjs`/`.sh` under `scripts`). Populated by `codex_review_completed.py` for both Bash and Skill triggers. **Used by §4 commit gate** to bind a Codex review to the staged tree: gate requires committed source paths to be a SUBSET of (union of recent reviews' trigger_files). Empty list = covers nothing (Codex C2: empty must NOT mean "covers everything" or any earlier review blesses unrelated commits). May be empty if `git diff --cached` failed at trigger time -- treat as a missing review and re-run. |
+| `trigger_files` | list[str] | Source-code paths in the git index at trigger time (`git diff --cached --name-only` filtered to `.c`/`.h`/`.asm`/`.S` under `src`/`include` OR `.py`/`.mjs`/`.sh` under `scripts`). Populated by `codex_review_completed.py` for both Bash and Skill triggers. **Used by §4 commit gate** to bind a Codex review to the staged tree: gate requires every committed source path to be present in `trigger_files` (single state file; the latest Codex review supersedes earlier ones). Empty list = covers nothing (Codex C2: empty must NOT mean "covers everything"). May be empty if `git diff --cached` failed at trigger time -- treat as a missing review and re-run. |
+| `trigger_blobs` | object[str → str] | `{path: git-blob-sha}` map captured by `git ls-files -s` at trigger time, one entry per `trigger_files` path. **Required by §4 commit gate** for content-binding (Codex C1): the gate compares the staged blob SHA at commit time against `trigger_blobs[path]`; a mismatch means the staged content was edited after the Codex review, so the review no longer covers the commit. Empty / missing → gate refuses ("review state missing trigger_blobs; re-run review"). |
 | `head_sha` | str | `git rev-parse HEAD` at trigger time. Recorded for audit / debugging; NOT used for invalidation per the design review (HEAD mismatch would let post-review file mutations clear the block, defeating the gate). |
 | `tree_hash` | str | sha256 over `git status --porcelain`. Same rationale: recorded but NOT used for invalidation. |
 | `received` | bool | False after a Codex trigger; flipped True when `Skill(superpowers:receiving-code-review)` (or the bare-name variant `receiving-code-review`) PostToolUse fires. |

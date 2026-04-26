@@ -271,19 +271,33 @@ def _segment_is_codex_invocation(seg_tokens: list[str]) -> bool:
     # Per-wrapper value-flag table. Used to walk past `--flag value`
     # cleanly; `--flag=value` attached form is handled by detecting
     # `=` in the flag token.
+    # §4 round-4/round-5 corrections: drop NO-VALUE flags so they
+    # don't pop the next positional (which would be the real command).
+    # `sudo -n` (--non-interactive), `command -p` (default-PATH),
+    # `ionice -t` (ignore-failure), `cgexec --sticky` are all no-value.
+    # Setpriv expanded to current util-linux 2.39+ names; flock's
+    # `-c/--command` is shell-descent (handled separately in §4 gate
+    # but kept as a value flag here since this hook only needs to
+    # detect Codex invocations -- it doesn't recurse into shell
+    # strings, so treating -c as opaque value-flag is safe).
     _wrapper_value_flags = {
-        "sudo": frozenset({"-u", "-g", "-n", "-p", "-r", "-h", "-D", "-C"}),
+        "sudo": frozenset({"-u", "-g", "-p", "-r", "-h", "-D", "-C"}),
         "doas": frozenset({"-u", "-C"}),
         "timeout": frozenset({"-k", "--kill-after", "-s", "--signal"}),
         "nice": frozenset({"-n", "--adjustment"}),
-        "ionice": frozenset({"-c", "--class", "-n", "--classdata", "-p", "--pid", "-P", "-u", "-t"}),
+        "ionice": frozenset({"-c", "--class", "-n", "--classdata", "-p", "--pid", "-P", "-u"}),
         "env": frozenset({"-u", "--unset", "-S", "--split-string", "-C", "--chdir"}),
         "stdbuf": frozenset({"-i", "-o", "-e"}),
-        "command": frozenset({"-p"}),
+        "command": frozenset(),
         "taskset": frozenset({"-c", "--cpu-list", "-p", "--pid"}),
         "chrt": frozenset({"-p", "--pid"}),
-        "setpriv": frozenset({"--reuid", "--regid", "--clear-groups", "--groups", "--inh-caps", "--ambient-caps", "--bounding-set"}),
-        "cgexec": frozenset({"-g", "--sticky"}),
+        "setpriv": frozenset({"--reuid", "--regid",
+                              "--ruid", "--euid", "--rgid", "--egid",
+                              "--groups", "--inh-caps", "--ambient-caps",
+                              "--bounding-set", "--securebits",
+                              "--pdeathsig", "--selinux-label",
+                              "--apparmor-profile"}),
+        "cgexec": frozenset({"-g"}),
         "flock": frozenset({"-w", "--timeout", "-E", "--conflict-exit-code", "-c", "--command"}),
     }
 
