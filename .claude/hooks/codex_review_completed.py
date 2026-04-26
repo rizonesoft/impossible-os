@@ -115,6 +115,80 @@ def _tree_hash(root: Path) -> str:
     return hashlib.sha256(out.encode("utf-8")).hexdigest()
 
 
+# Source-code path filter shared with section_commit_gate.py. Kept
+# here as the canonical definition; the gate imports this module's
+# constant for parity. Mirrors the §4 spec: source = .c/.h/.asm/.S
+# under src|include OR .py/.mjs/.sh under scripts.
+_SOURCE_KERNEL_EXTS = (".c", ".h", ".asm", ".S")
+_SOURCE_KERNEL_PREFIXES = ("src/", "include/")
+_SOURCE_TOOLING_EXTS = (".py", ".mjs", ".sh")
+_SOURCE_TOOLING_PREFIXES = ("scripts/",)
+
+
+def _is_source_path(path: str) -> bool:
+    """True if `path` is a section-commit-relevant source file."""
+    p = path.replace("\\", "/")
+    if any(p.startswith(pre) for pre in _SOURCE_KERNEL_PREFIXES) and \
+            p.endswith(_SOURCE_KERNEL_EXTS):
+        return True
+    if any(p.startswith(pre) for pre in _SOURCE_TOOLING_PREFIXES) and \
+            p.endswith(_SOURCE_TOOLING_EXTS):
+        return True
+    return False
+
+
+def _staged_source_files(root: Path) -> list[str]:
+    """Return the source-code paths currently in the git index.
+    Empty list on git error; the section-commit gate treats empty
+    trigger_files as 'covers nothing' so a transient git failure
+    cannot let an unbound review satisfy a later commit gate.
+    """
+    try:
+        out = subprocess.check_output(
+            ["git", "diff", "--cached", "--name-only", "-z"],
+            cwd=str(root), text=True, timeout=3, stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        return []
+    paths = [p for p in out.split("\x00") if p]
+    return [p for p in paths if _is_source_path(p)]
+
+
+def _staged_source_blobs(root: Path, paths: list[str]) -> dict:
+    """Return a {path: blob_sha} map for the given staged source
+    paths, captured from `git ls-files -s` (mode/sha/stage/path
+    output). Used at trigger time for content-binding evidence
+    (Codex C1: path-only binding lets post-review same-path edits
+    sneak past). Empty dict on git error; the gate treats missing
+    or partial blob coverage as evidence missing.
+    """
+    if not paths:
+        return {}
+    blobs: dict = {}
+    try:
+        # `git ls-files -s -z -- <paths>` yields:
+        #   <mode> SP <sha> SP <stage> TAB <path> NUL
+        out = subprocess.check_output(
+            ["git", "ls-files", "-s", "-z", "--", *paths],
+            cwd=str(root), text=True, timeout=5, stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        return {}
+    for entry in out.split("\x00"):
+        if not entry:
+            continue
+        # Split header (mode sha stage) and path on TAB.
+        if "\t" not in entry:
+            continue
+        header, path = entry.split("\t", 1)
+        parts = header.split()
+        if len(parts) != 3:
+            continue
+        _mode, sha, _stage = parts
+        blobs[path] = sha
+    return blobs
+
+
 # Bash control operators that introduce a NEW command sequence.
 # `true && codex review prompt` was a bypass: the original code
 # treated the whole command as one argv with `true` at position 0.
@@ -446,15 +520,19 @@ def main() -> int:
                 f"`Skill(superpowers:receiving-code-review)`; only the new "
                 f"trigger is now tracked by the gate.\n"
             )
-        # Best-effort capture of the file paths the agent was
-        # working with at trigger time. Only meaningful for
-        # Bash(node ... codex-companion.mjs ...) where the prompt
-        # often names files; leave empty for Skill triggers.
-        trigger_files: list[str] = []
+        # Capture currently-staged source files at trigger time
+        # PLUS their blob SHAs. Path-binding alone is insufficient
+        # (Codex C1: `git diff --cached` covers foo.c at trigger,
+        # then agent edits foo.c, then commit -- gate would pass
+        # without this binding). The blob SHA captures the exact
+        # content the reviewer saw.
+        trigger_files = _staged_source_files(root)
+        trigger_blobs = _staged_source_blobs(root, trigger_files)
         state = {
             "timestamp_ns": now_ns,
             "trigger": label,
             "trigger_files": trigger_files,
+            "trigger_blobs": trigger_blobs,
             "head_sha": _head_sha(root),
             "tree_hash": _tree_hash(root),
             "received": False,

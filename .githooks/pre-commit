@@ -30,11 +30,7 @@ echo ""
 echo "Pre-commit: running scripts/lint.sh (full-repo, matches CI)..."
 echo ""
 
-if bash "$REPO_ROOT/scripts/lint.sh"; then
-    echo ""
-    echo -e "\033[32mPre-commit lint passed\033[0m"
-    exit 0
-else
+if ! bash "$REPO_ROOT/scripts/lint.sh"; then
     echo ""
     echo -e "\033[31mFix lint errors before committing\033[0m"
     echo "  Hint: 'bash scripts/lint.sh' shows all violations."
@@ -42,3 +38,23 @@ else
     echo "        Use capability names or anchor links in other files."
     exit 1
 fi
+
+# TODO-08 §4: section-commit gate -- enforced at the final-index point
+# of git's own pre-commit. The harness PreToolUse hook is the
+# convenience layer; this is the load-bearing one for chained shapes
+# like `git add foo && git commit -m bar` where the harness sees only
+# pre-`git add` staging (Codex C1 partial fix).
+GATE="$REPO_ROOT/.claude/hooks/section_commit_gate.py"
+if [ -f "$GATE" ]; then
+    if ! python3 "$GATE" --git-hook-mode; then
+        echo ""
+        echo -e "\033[31mSection-commit gate refused this commit\033[0m"
+        echo "  See above for missing build / Codex / receiving-review evidence."
+        echo "  Opt-out: SKIP_REVIEW_HOOK=1 SKIP_REVIEW_HOOK_REASON=\"...\" git commit ..."
+        exit 1
+    fi
+fi
+
+echo ""
+echo -e "\033[32mPre-commit lint passed\033[0m"
+exit 0

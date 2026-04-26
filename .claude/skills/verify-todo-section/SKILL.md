@@ -64,6 +64,10 @@ Re-verify replaces existing stamp lines in place; never duplicate.
 - Does NOT modify the section's `- [x] Commit:` checklist line.
 - Does NOT replace `/review-todo-section`. Freshly-implemented code goes through review, not verify.
 
+## Section-Commit Gate Note
+
+The `.claude/hooks/section_commit_gate.py` hook fires on the same staged-diff signature whether the source is implement-mode or verify-mode (source change + Implementation Order `[x]` flip in the same commit). For verify-mode, an audit-fix commit that DOWNGRADES `[x]` to `[/]` or `[ ]` will NOT match the signature (the regex looks for flips TO `[x]`, not from); the gate stays out of the way for downgrade commits. An audit-fix commit that promotes a fixed item to `[x]` (rare; verify default is downgrade-only) WILL match the signature and require evidence. Same opt-out (`SKIP_REVIEW_HOOK=1` + `SKIP_REVIEW_HOOK_REASON="..."`) applies.
+
 ## Guardrails
 
 - **Conservative downgrade only.** Never widen scope. The two places verify-mode may touch code are Branch A scope-gap fixes and the one-assertion test gap-fill.

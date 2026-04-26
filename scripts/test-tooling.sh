@@ -1314,6 +1314,449 @@ fi
 
 
 # ============================================================================
+# section-commit gate (TODO-08 section-commit hard block)
+#
+# Asserts the section_commit_gate.py PreToolUse hook:
+#   - Bash invocations that are NOT a git commit -> rc=0 (allow)
+#   - git commit with no section signature -> rc=0
+#   - Section signature + missing build evidence -> rc=2 (block)
+#   - Section signature + missing review evidence -> rc=2
+#   - Section signature + all 3 evidence -> rc=0
+#   - SKIP_REVIEW_HOOK=1 only (no reason) -> rc=2 (usage envelope)
+#   - SKIP_REVIEW_HOOK=1 + reason >= 12 chars -> rc=0 with skip-log entry
+#   - SKIP also resets last-codex-review.json received -> false (M1 fix)
+#   - small-section diff (< 50 LOC) -> WARN line in skip-log regardless
+#   - Bypass shapes (env-prefix, wrapper, chain) detected as git commit
+[ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[section_commit_gate]${NC}"
+
+GATE_HOOK="$REPO_ROOT/.claude/hooks/section_commit_gate.py"
+
+if [ ! -f "$GATE_HOOK" ]; then
+    t_fail "section_commit_gate hook missing: $GATE_HOOK"
+else
+    GATE_TMP="$(mktemp -d)"
+    GATE_REPO="$GATE_TMP/repo"
+    mkdir -p "$GATE_REPO/build" "$GATE_REPO/.claude/state" "$GATE_REPO/.claude/hooks" \
+             "$GATE_REPO/src/kernel" "$GATE_REPO/todo/00-infrastructure"
+    cp "$GATE_HOOK" "$GATE_REPO/.claude/hooks/section_commit_gate.py"
+    cp "$REPO_ROOT/.claude/hooks/codex_review_completed.py" \
+       "$GATE_REPO/.claude/hooks/codex_review_completed.py"
+
+    pushd "$GATE_REPO" >/dev/null
+    git init -q -b main
+    git config user.email "test@example.com"
+    git config user.name "Test"
+
+    # Seed an Implementation Order table whose status column matches
+    # the production format. Fixture column-1 uses placeholder text
+    # (no marker glyph) since the gate regex anchors on the trailing
+    # status cell, not the marker column.
+    {
+        printf '%s\n' '# Seed'
+        printf '\n'
+        printf '%s\n' '| Star | Order | Section | Deliverable | Depends | Status |'
+        printf '%s\n' '| ---- | :---: | :---:   | ----------- | ------- | :----: |'
+        printf '%s\n' '| star |   1   |  S1     | Test row    | --      |  [ ]   |'
+    } > todo/00-infrastructure/TEST.md
+    cat > src/kernel/foo.c <<'CSEED'
+int seed_only(void) { return 0; }
+CSEED
+    git add todo/00-infrastructure/TEST.md src/kernel/foo.c
+    git -c commit.gpgsign=false commit -q --no-verify -m "seed"
+    popd >/dev/null
+
+    GATE_STATE_FILE_T="$GATE_REPO/.claude/state/last-codex-review.json"
+    GATE_SKIP_LOG_T="$GATE_REPO/.claude/state/skip-log.jsonl"
+
+    _gate_run() {
+        local want="$1" desc="$2" payload="$3"; shift 3
+        local got
+        if [ "$#" -gt 0 ]; then
+            got=$(cd "$GATE_REPO" && printf '%s' "$payload" | env "$@" \
+                python3 ".claude/hooks/section_commit_gate.py" >/dev/null 2>&1; echo $?)
+        else
+            got=$(cd "$GATE_REPO" && printf '%s' "$payload" | \
+                python3 ".claude/hooks/section_commit_gate.py" >/dev/null 2>&1; echo $?)
+        fi
+        if [ "$got" = "$want" ]; then
+            t_pass "section_commit_gate: $desc (rc=$got)"
+        else
+            t_fail "section_commit_gate: $desc (want $want, got $got)"
+        fi
+    }
+
+    _stage_section_commit() {
+        (
+            cd "$GATE_REPO"
+            sed -i 's/\[ \]/[x]/g' todo/00-infrastructure/TEST.md
+            cat > src/kernel/foo.c <<'CMOD'
+int seed_only(void) { return 1; }
+int new_helper(int n) { return n + 1; }
+CMOD
+            git add todo/00-infrastructure/TEST.md src/kernel/foo.c
+        )
+    }
+
+    _unstage_all() {
+        (
+            cd "$GATE_REPO"
+            git reset -q HEAD -- . 2>/dev/null || true
+            git checkout -q -- . 2>/dev/null || true
+        )
+    }
+
+    _write_received_state() {
+        local recv="$1" files_json="$2" age="${3:-60}"
+        local now_ns recv_ns blobs
+        now_ns=$(python3 -c 'import time; print(time.time_ns())')
+        recv_ns=$((now_ns - age * 1000000000))
+        # Capture blob SHAs for any path in files_json that is currently
+        # staged. Empty {} when files_json is empty or paths aren't staged.
+        blobs=$(cd "$GATE_REPO" && python3 -c '
+import json, subprocess, sys
+files = json.loads(sys.argv[1])
+if not files:
+    print("{}")
+    sys.exit(0)
+try:
+    out = subprocess.check_output(["git", "ls-files", "-s", "-z", "--", *files], text=True, stderr=subprocess.DEVNULL)
+except Exception:
+    print("{}")
+    sys.exit(0)
+result = {}
+for entry in out.split("\x00"):
+    if not entry or "\t" not in entry:
+        continue
+    header, path = entry.split("\t", 1)
+    parts = header.split()
+    if len(parts) == 3:
+        result[path] = parts[1]
+print(json.dumps(result))
+' "$files_json")
+        cat > "$GATE_STATE_FILE_T" <<JSON
+{
+  "timestamp_ns": $recv_ns,
+  "trigger": "test-trigger",
+  "trigger_files": $files_json,
+  "trigger_blobs": $blobs,
+  "head_sha": "deadbeef",
+  "tree_hash": "x",
+  "received": $recv,
+  "received_timestamp_ns": $recv_ns
+}
+JSON
+    }
+
+    # 1: non-git-commit Bash -> allow.
+    rm -f "$GATE_SKIP_LOG_T"
+    _gate_run 0 "non-git-commit Bash allows" \
+        '{"tool_name":"Bash","tool_input":{"command":"ls"}}'
+
+    # 2: git commit with no signature -> allow.
+    _unstage_all
+    _gate_run 0 "git commit with no staged diff allows" \
+        '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"}}'
+
+    # 3: section signature + missing build -> block.
+    _stage_section_commit
+    rm -f "$GATE_REPO/build/build.log"
+    _gate_run 2 "section signature + missing build evidence blocks" \
+        '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"}}'
+
+    # 4: build.log without BUILD OK -> block.
+    echo "FAIL" > "$GATE_REPO/build/build.log"
+    _gate_run 2 "section signature + build.log without BUILD OK blocks" \
+        '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"}}'
+
+    # 5: missing review state -> block.
+    echo "=== BUILD OK ===" > "$GATE_REPO/build/build.log"
+    rm -f "$GATE_STATE_FILE_T"
+    _gate_run 2 "section signature + missing review state blocks" \
+        '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"}}'
+
+    # 6: received:false -> block.
+    _write_received_state "false" '["src/kernel/foo.c"]'
+    _gate_run 2 "section signature + received:false blocks" \
+        '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"}}'
+
+    # 7: empty trigger_files -> block (C2: empty covers nothing).
+    _write_received_state "true" '[]'
+    _gate_run 2 "empty trigger_files blocks (C2: empty covers nothing)" \
+        '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"}}'
+
+    # 8: trigger_files don't cover staged source -> block.
+    _write_received_state "true" '["src/other/different.c"]'
+    _gate_run 2 "trigger_files don't cover staged source blocks" \
+        '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"}}'
+
+    # 9: review older than 30 min TTL -> block.
+    _write_received_state "true" '["src/kernel/foo.c"]' "3600"
+    _gate_run 2 "review older than 30 min TTL blocks" \
+        '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"}}'
+
+    # 10: ALL 3 evidence pieces -> allow.
+    _write_received_state "true" '["src/kernel/foo.c"]' "60"
+    touch "$GATE_REPO/build/build.log"
+    _gate_run 0 "section signature + all 3 evidence pieces allows" \
+        '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"}}'
+
+    # 11: SKIP without reason -> block.
+    _gate_run 2 "SKIP_REVIEW_HOOK=1 without reason blocks" \
+        '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"}}' \
+        SKIP_REVIEW_HOOK=1
+
+    # 12: SKIP with too-short reason -> block.
+    _gate_run 2 "SKIP_REVIEW_HOOK=1 with too-short reason blocks" \
+        '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"}}' \
+        SKIP_REVIEW_HOOK=1 "SKIP_REVIEW_HOOK_REASON=short"
+
+    # 13: SKIP with valid reason -> allow + log + state reset (M1 fix).
+    rm -f "$GATE_SKIP_LOG_T"
+    _write_received_state "true" '["src/kernel/foo.c"]' "60"
+    _gate_run 0 "SKIP with valid reason allows" \
+        '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"}}' \
+        SKIP_REVIEW_HOOK=1 'SKIP_REVIEW_HOOK_REASON=intentional revert-only commit, audit purposes'
+    if [ -f "$GATE_SKIP_LOG_T" ] && grep -q "intentional revert-only" "$GATE_SKIP_LOG_T"; then
+        t_pass "section_commit_gate: SKIP appends skip-log.jsonl with reason"
+    else
+        t_fail "section_commit_gate: SKIP did not log reason" \
+            "skip-log content: $(cat "$GATE_SKIP_LOG_T" 2>/dev/null || echo 'missing')"
+    fi
+    GATE_GOT=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("received"))' "$GATE_STATE_FILE_T")
+    if [ "$GATE_GOT" = "False" ]; then
+        t_pass "section_commit_gate: SKIP resets last-codex-review.json received -> false (M1 fix)"
+    else
+        t_fail "section_commit_gate: SKIP did not reset received (got $GATE_GOT) (M1 fix)"
+    fi
+
+    # 14: small-section WARN logged regardless.
+    rm -f "$GATE_SKIP_LOG_T" "$GATE_STATE_FILE_T"
+    _write_received_state "true" '["src/kernel/foo.c"]' "60"
+    touch "$GATE_REPO/build/build.log"
+    _gate_run 0 "small-section commit with full evidence allows" \
+        '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"}}'
+    if [ -f "$GATE_SKIP_LOG_T" ] && grep -q "small-section-skip-risk" "$GATE_SKIP_LOG_T"; then
+        t_pass "section_commit_gate: small-section WARN logged (< 50 LOC)"
+    else
+        t_fail "section_commit_gate: small-section WARN missing" \
+            "skip-log: $(cat "$GATE_SKIP_LOG_T" 2>/dev/null || echo 'missing')"
+    fi
+
+    # 15-17: bypass-shape detection (Codex C1 fix).
+    _unstage_all
+    _stage_section_commit
+    rm -f "$GATE_STATE_FILE_T"
+    _gate_run 2 "bypass via 'true && git commit' still blocks (C1: chain detection)" \
+        '{"tool_name":"Bash","tool_input":{"command":"true && git commit -m foo"}}'
+    _gate_run 2 "bypass via 'env git commit' still blocks (C1: env-prefix walk)" \
+        '{"tool_name":"Bash","tool_input":{"command":"env git commit -m foo"}}'
+    _gate_run 2 "bypass via 'git -c x=y commit' still blocks (C1: git pre-subcmd flag walk)" \
+        '{"tool_name":"Bash","tool_input":{"command":"git -c user.email=x@y.z commit -m foo"}}'
+
+    # 18: ADD-only [x] row counts as flip (Codex H1 fix).
+    _unstage_all
+    (
+        cd "$GATE_REPO"
+        printf '%s\n' '| star |   2   |  S2     | New row at done | --      |  [x]   |' \
+            >> todo/00-infrastructure/TEST.md
+        cat > src/kernel/foo.c <<'CMOD2'
+int seed_only(void) { return 2; }
+CMOD2
+        git add todo/00-infrastructure/TEST.md src/kernel/foo.c
+    )
+    rm -f "$GATE_STATE_FILE_T"
+    _gate_run 2 "ADD-only [x] row counts as flip (H1: new row at done)" \
+        '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"}}'
+
+    # 19-20: --git-hook-mode (no stdin) blocks/allows correctly.
+    rm -f "$GATE_STATE_FILE_T"
+    GATE_RC=$(cd "$GATE_REPO" && python3 .claude/hooks/section_commit_gate.py --git-hook-mode </dev/null >/dev/null 2>&1; echo $?)
+    if [ "$GATE_RC" = "2" ]; then
+        t_pass "section_commit_gate: --git-hook-mode blocks without evidence (rc=2)"
+    else
+        t_fail "section_commit_gate: --git-hook-mode wrong rc (got $GATE_RC)"
+    fi
+    _write_received_state "true" '["src/kernel/foo.c"]' "60"
+    touch "$GATE_REPO/build/build.log"
+    GATE_RC=$(cd "$GATE_REPO" && python3 .claude/hooks/section_commit_gate.py --git-hook-mode </dev/null >/dev/null 2>&1; echo $?)
+    if [ "$GATE_RC" = "0" ]; then
+        t_pass "section_commit_gate: --git-hook-mode allows with full evidence"
+    else
+        t_fail "section_commit_gate: --git-hook-mode wrong rc with evidence (got $GATE_RC)"
+    fi
+
+    # 21: source edited AFTER build -> block (C2: mtime + content binding).
+    touch "$GATE_REPO/build/build.log"
+    sleep 1.1
+    (cd "$GATE_REPO" && touch src/kernel/foo.c)
+    _gate_run 2 "source edited after build blocks (C2: mtime + content binding)" \
+        '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"}}'
+
+    # 22 (Codex C1 fix): post-review same-path edit blocks via blob SHA mismatch.
+    # Stage source, write a state with trigger_blobs that match CURRENT staging,
+    # then mutate the file content + restage. Gate must see blob mismatch.
+    _unstage_all
+    _stage_section_commit
+    # Capture current blob SHAs and write a state with those exact blobs.
+    GATE_BLOBS=$(cd "$GATE_REPO" && git ls-files -s -- src/kernel/foo.c | awk '{print "{\"src/kernel/foo.c\": \""$2"\"}"}')
+    NOW_NS=$(python3 -c 'import time; print(time.time_ns())')
+    cat > "$GATE_STATE_FILE_T" <<JSON
+{
+  "timestamp_ns": $NOW_NS,
+  "trigger": "test",
+  "trigger_files": ["src/kernel/foo.c"],
+  "trigger_blobs": $GATE_BLOBS,
+  "head_sha": "x",
+  "tree_hash": "y",
+  "received": true,
+  "received_timestamp_ns": $NOW_NS
+}
+JSON
+    touch "$GATE_REPO/build/build.log"
+    _gate_run 0 "matching blob SHA allows (C1 fix: content binding present and equal)" \
+        '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"}}'
+    # Now mutate the file content and restage so the blob SHA changes.
+    (cd "$GATE_REPO" && echo "int post_review_edit(void){return 99;}" >> src/kernel/foo.c && git add src/kernel/foo.c)
+    touch "$GATE_REPO/build/build.log"
+    _gate_run 2 "post-review same-path edit blocks via blob SHA mismatch (C1 fix)" \
+        '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"}}'
+
+    # 23 (Codex C1 fix): old state without trigger_blobs is treated as missing evidence.
+    cat > "$GATE_STATE_FILE_T" <<JSON
+{
+  "timestamp_ns": $NOW_NS,
+  "trigger": "test",
+  "trigger_files": ["src/kernel/foo.c"],
+  "head_sha": "x",
+  "tree_hash": "y",
+  "received": true,
+  "received_timestamp_ns": $NOW_NS
+}
+JSON
+    _gate_run 2 "old state without trigger_blobs blocks (C1 backward-compat)" \
+        '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"}}'
+
+    # 24 (Codex H1 fix): git commit --no-verify blocked unconditionally.
+    _unstage_all
+    _gate_run 2 "git commit --no-verify blocked even without section signature (H1)" \
+        '{"tool_name":"Bash","tool_input":{"command":"git commit --no-verify -m foo"}}'
+    _gate_run 2 "git commit -n blocked even without section signature (H1)" \
+        '{"tool_name":"Bash","tool_input":{"command":"git commit -n -m foo"}}'
+
+    # 25 (Codex H1 fix): bash -c "git commit --no-verify" blocked.
+    _gate_run 2 "bash -c \"git commit --no-verify\" blocked (H1: shell descent)" \
+        '{"tool_name":"Bash","tool_input":{"command":"bash -c \"git commit --no-verify -m foo\""}}'
+
+    # 26 (Codex H1 fix): bash -c with regular git commit + section signature blocks.
+    _stage_section_commit
+    rm -f "$GATE_STATE_FILE_T"
+    _gate_run 2 "bash -c \"git commit\" + signature still blocks (H1: inner-shell detection)" \
+        '{"tool_name":"Bash","tool_input":{"command":"bash -c \"git commit -m foo\""}}'
+
+    # 27 (Codex H1 fix): bash -c with NON-commit inner doesn't trigger gate.
+    _gate_run 0 "bash -c \"ls\" allows (H1: not a commit)" \
+        '{"tool_name":"Bash","tool_input":{"command":"bash -c \"ls -la\""}}'
+
+    # 28 (Codex H2 round-2): bash -lc combined-flag bypass closed.
+    _gate_run 2 "bash -lc \"git commit --no-verify\" blocked (H2: combined -c flag)" \
+        '{"tool_name":"Bash","tool_input":{"command":"bash -lc \"git commit --no-verify -m foo\""}}'
+    _gate_run 2 "sh -ec \"git commit --no-verify\" blocked (H2: combined -c flag)" \
+        '{"tool_name":"Bash","tool_input":{"command":"sh -ec \"git commit --no-verify -m foo\""}}'
+
+    # 29 (Codex H2 round-2): common commit aliases ci/cm.
+    _stage_section_commit
+    rm -f "$GATE_STATE_FILE_T"
+    _gate_run 2 "git ci -m blocks on section signature (H2: ci alias)" \
+        '{"tool_name":"Bash","tool_input":{"command":"git ci -m foo"}}'
+    _gate_run 2 "git ci --no-verify blocked unconditionally (H2: ci alias + --no-verify)" \
+        '{"tool_name":"Bash","tool_input":{"command":"git ci --no-verify -m foo"}}'
+
+    # 30 (Codex H2 round-3): env -u FOO bypass closed.
+    _gate_run 2 "env -u FOO git commit --no-verify blocked (H2 r3: env -u value flag)" \
+        '{"tool_name":"Bash","tool_input":{"command":"env -u FOO git commit --no-verify -m foo"}}'
+    _gate_run 2 "sudo -u alice git commit --no-verify blocked (H2 r3: sudo -u value flag)" \
+        '{"tool_name":"Bash","tool_input":{"command":"sudo -u alice git commit --no-verify -m foo"}}'
+
+    # 31 (Codex H2 round-3): bash --rcfile myrc -c bypass closed.
+    _gate_run 2 "bash --rcfile myrc -c \"git commit --no-verify\" blocked (H2 r3: shell long-value flag)" \
+        '{"tool_name":"Bash","tool_input":{"command":"bash --rcfile myrc -c \"git commit --no-verify -m foo\""}}'
+    _gate_run 2 "bash --init-file myrc -c \"git commit --no-verify\" blocked (H2 r3: --init-file alias)" \
+        '{"tool_name":"Bash","tool_input":{"command":"bash --init-file myrc -c \"git commit --no-verify -m foo\""}}'
+
+    # 32 (Codex H2 round-4): no-value flags must NOT pop the next positional.
+    # `sudo -n git commit --no-verify` -- -n is --non-interactive (no value).
+    _gate_run 2 "sudo -n git commit --no-verify blocked (H2 r4: -n is no-value)" \
+        '{"tool_name":"Bash","tool_input":{"command":"sudo -n git commit --no-verify -m foo"}}'
+    # `command -p git commit --no-verify` -- -p is use-default-PATH (no value).
+    _gate_run 2 "command -p git commit --no-verify blocked (H2 r4: -p is no-value)" \
+        '{"tool_name":"Bash","tool_input":{"command":"command -p git commit --no-verify -m foo"}}'
+    # `ionice -t -c 2 git commit --no-verify` -- -t is ignore-failure (no value).
+    _gate_run 2 "ionice -t -c 2 git commit --no-verify blocked (H2 r4: -t is no-value)" \
+        '{"tool_name":"Bash","tool_input":{"command":"ionice -t -c 2 git commit --no-verify -m foo"}}'
+
+    # 33 (Codex H2 round-4): eval shell-descent.
+    _gate_run 2 "eval \"git commit --no-verify\" blocked (H2 r4: eval re-shells arg)" \
+        '{"tool_name":"Bash","tool_input":{"command":"eval \"git commit --no-verify -m foo\""}}'
+
+    # 34 (Codex H2 round-4): xargs as command-runner.
+    _gate_run 2 "echo foo | xargs git commit --no-verify blocked (H2 r4: xargs runs git)" \
+        '{"tool_name":"Bash","tool_input":{"command":"echo foo | xargs git commit --no-verify -m foo"}}'
+    _gate_run 2 "xargs -I _ -n 1 git commit blocks on signature (H2 r4: xargs -I value flag)" \
+        '{"tool_name":"Bash","tool_input":{"command":"xargs -I _ -n 1 git commit -m _"}}'
+
+    # 35 (Codex H2 round-4 follow-up): setpriv / cgexec / flock wrappers.
+    _gate_run 2 "setpriv --reuid 1000 git commit --no-verify blocked (H2 r4: setpriv value flag)" \
+        '{"tool_name":"Bash","tool_input":{"command":"setpriv --reuid 1000 git commit --no-verify -m foo"}}'
+    _gate_run 2 "cgexec -g cpu:foo git commit --no-verify blocked (H2 r4: cgexec -g value flag)" \
+        '{"tool_name":"Bash","tool_input":{"command":"cgexec -g cpu:foo git commit --no-verify -m foo"}}'
+    _gate_run 2 "flock -n /tmp/lock git commit --no-verify blocked (H2 r4: flock lockfile positional)" \
+        '{"tool_name":"Bash","tool_input":{"command":"flock -n /tmp/lock git commit --no-verify -m foo"}}'
+    _gate_run 2 "flock -c \"git commit --no-verify\" blocked (H2 r4: flock -c shell descent)" \
+        '{"tool_name":"Bash","tool_input":{"command":"flock -c \"git commit --no-verify -m foo\" /tmp/lock"}}'
+    _gate_run 2 "flock --command \"git commit --no-verify\" blocked (H2 r4: flock --command alias)" \
+        '{"tool_name":"Bash","tool_input":{"command":"flock --command \"git commit --no-verify -m foo\" /tmp/lock"}}'
+
+    # 36 (Codex H2 round-5): taskset MASK / exec -a / setpriv current names / cgexec --sticky.
+    _gate_run 2 "taskset 03 git commit --no-verify blocked (H2 r5: taskset MASK positional)" \
+        '{"tool_name":"Bash","tool_input":{"command":"taskset 03 git commit --no-verify -m foo"}}'
+    _gate_run 2 "taskset 0xff git commit --no-verify blocked (H2 r5: hex MASK)" \
+        '{"tool_name":"Bash","tool_input":{"command":"taskset 0xff git commit --no-verify -m foo"}}'
+    _gate_run 2 "exec -a mygit git commit --no-verify blocked (H2 r5: exec -a value)" \
+        '{"tool_name":"Bash","tool_input":{"command":"exec -a mygit git commit --no-verify -m foo"}}'
+    _gate_run 2 "setpriv --ruid 1000 git commit --no-verify blocked (H2 r5: --ruid current name)" \
+        '{"tool_name":"Bash","tool_input":{"command":"setpriv --ruid 1000 git commit --no-verify -m foo"}}'
+    _gate_run 2 "setpriv --securebits keep-caps git commit --no-verify blocked (H2 r5: --securebits)" \
+        '{"tool_name":"Bash","tool_input":{"command":"setpriv --securebits keep-caps git commit --no-verify -m foo"}}'
+    _gate_run 2 "cgexec --sticky git commit --no-verify blocked (H2 r5: --sticky is no-value)" \
+        '{"tool_name":"Bash","tool_input":{"command":"cgexec --sticky git commit --no-verify -m foo"}}'
+
+    # 37 (Codex H2 round-2): index/worktree desync blocks.
+    # Stage section commit, write valid review state, ensure build.log
+    # is newer than worktree mtime, but mutate worktree so `git diff`
+    # reports desync between index and worktree.
+    _unstage_all
+    _stage_section_commit
+    _write_received_state "true" '["src/kernel/foo.c"]' "60"
+    touch "$GATE_REPO/build/build.log"
+    sleep 1.1
+    # Mutate worktree without re-staging -- index now differs from worktree.
+    (cd "$GATE_REPO" && cat > src/kernel/foo.c <<'CMOD3'
+int seed_only(void) { return 42; }
+int new_helper(int n) { return n + 1; }
+int extra_worktree_only(void) { return 99; }
+CMOD3
+)
+    # Re-touch build.log AFTER worktree mutation so mtime check passes
+    # but desync check fires.
+    touch "$GATE_REPO/build/build.log"
+    _gate_run 2 "index/worktree desync blocks (H2: build did not compile staged)" \
+        '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"}}'
+
+    rm -rf "$GATE_TMP"
+fi
+
+
+# ============================================================================
 # Summary
 # ============================================================================
 

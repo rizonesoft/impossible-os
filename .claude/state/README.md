@@ -35,7 +35,7 @@ the receive skill.
 |---|---|---|
 | `timestamp_ns` | int | `time.time_ns()` at trigger fire. Anchors the 1-hour TTL invalidation. |
 | `trigger` | str | What fired the trigger: `"Bash(<command-prefix>)"` or `"Skill(<skill-name>)"`. Surfaced in BLOCK envelope so the agent knows which review to receive. |
-| `trigger_files` | list[str] | File paths the agent was working with when the trigger fired (best-effort, used only for the BLOCK message). May be empty. |
+| `trigger_files` | list[str] | Source-code paths in the git index at trigger time (`git diff --cached --name-only` filtered to `.c`/`.h`/`.asm`/`.S` under `src`/`include` OR `.py`/`.mjs`/`.sh` under `scripts`). Populated by `codex_review_completed.py` for both Bash and Skill triggers. **Used by §4 commit gate** to bind a Codex review to the staged tree: gate requires committed source paths to be a SUBSET of (union of recent reviews' trigger_files). Empty list = covers nothing (Codex C2: empty must NOT mean "covers everything" or any earlier review blesses unrelated commits). May be empty if `git diff --cached` failed at trigger time -- treat as a missing review and re-run. |
 | `head_sha` | str | `git rev-parse HEAD` at trigger time. Recorded for audit / debugging; NOT used for invalidation per the design review (HEAD mismatch would let post-review file mutations clear the block, defeating the gate). |
 | `tree_hash` | str | sha256 over `git status --porcelain`. Same rationale: recorded but NOT used for invalidation. |
 | `received` | bool | False after a Codex trigger; flipped True when `Skill(superpowers:receiving-code-review)` (or the bare-name variant `receiving-code-review`) PostToolUse fires. |
@@ -66,6 +66,53 @@ The Claude Code harness PostToolUse / PreToolUse hooks receive `tool_name` plus 
 **Why no structured-finding parser:**
 
 The upstream `superpowers:receiving-code-review` skill is process-prose ("READ then VERIFY then EVALUATE"), not structured JSON output (verified by reading the skill source at `~/.claude/plugins/cache/claude-plugins-official/superpowers/<ver>/skills/receiving-code-review/SKILL.md`). Parsing structured findings from its output would require either modifying the upstream skill (out of scope) or establishing a marker-file convention (no current pattern). Deferred to a future TODO-08 section.
+
+### `skip-log.jsonl` -- section-commit gate opt-out audit trail
+
+Owner: TODO-08-automation-hardening section 4 (section-commit gate hard block).
+
+Append-only JSONL written by `.claude/hooks/section_commit_gate.py` whenever a
+section commit takes the SKIP path (`SKIP_REVIEW_HOOK=1` + valid
+`SKIP_REVIEW_HOOK_REASON`). Each line is a single JSON object; writes use
+`os.open(O_APPEND|O_CREAT|O_WRONLY)` + a single `os.write()` under PIPE_BUF
+(4096 bytes) so parallel sessions don't interleave (POSIX append-write
+atomicity guarantee).
+
+**Schema (one line per record):**
+
+```json
+{
+  "timestamp_ns": 1735258800000000000,
+  "mode": "harness" | "git-hook",
+  "head_sha": "1408d994...",
+  "staged_sources": ["src/foo.c", "scripts/bar.sh"],
+  "flipped_todos": ["todo/00-infrastructure/TODO-08-automation-hardening.md"],
+  "small_section_warn": false,
+  "reason": "intentional revert-only commit, no source changes touched"
+}
+```
+
+**Two record kinds (distinguished by presence of `kind`):**
+
+- `kind` absent or `"SKIP"` -- a real opt-out commit. `reason` is required, >= 12 chars.
+- `kind == "WARN"` AND `tag == "small-section-skip-risk"` -- a section commit
+  with `< 50 LOC` source delta. Logged regardless of pass/fail outcome so a
+  sweep over the log surfaces "small section, skipped review" patterns.
+
+**SKIP is a state transition, not just an audit append (Codex M1):**
+
+After a successful SKIP, `last-codex-review.json` is rewritten with
+`received: false` AND `skipped_section_commit: true`. The next commit gate
+evaluation cannot reuse the prior `received: true` to bypass evidence
+checking. Without this reset, an agent could SKIP one section commit and
+the leftover `received: true` would silently satisfy the next section's
+gate.
+
+**Post-commit propagation:** the smoke-test and boot-smoke PostToolUse hooks
+in `.claude/settings.json` look up the most recent skip-log record matching
+the current HEAD sha and prepend `[SKIP_REVIEW_HOOK reason: ...]` to their
+systemMessage. Match by HEAD (not "last line globally") because parallel
+sessions interleave (Codex M2).
 
 ## Gitignore
 

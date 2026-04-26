@@ -197,6 +197,7 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
     - Stage all changed source files, headers, the updated TODO file(s), and test changes together.
     - Push to `origin/main` immediately after successful commit.
     - Mark the section's `- [ ] Commit: "..."` item `[x]`.
+    - **Section-commit gate enforcement:** the new `.claude/hooks/section_commit_gate.py` hook BLOCKS this commit (exit 2) if the staged diff carries the section-commit signature (source change + Implementation Order `[x]` flip) but the evidence is missing -- a stale build, a Codex review whose `trigger_files` don't cover the staged source, or a review never received through `superpowers:receiving-code-review`. Steps 13-17 produce that evidence; skipping any of them means the gate refuses the commit, not "reminder-then-proceed". The gate runs at BOTH harness PreToolUse AND `.githooks/pre-commit` (the latter catches `git add foo && git commit -m bar` chains the harness layer cannot see). Opt-out requires BOTH `SKIP_REVIEW_HOOK=1` AND `SKIP_REVIEW_HOOK_REASON="<text >= 12 chars>"`; the reason is logged to `.claude/state/skip-log.jsonl` AND `last-codex-review.json` is reset so the skip cannot be reused.
 
 ## Phase 2: Post-Implementation Review (MANDATORY -- NO EXCEPTIONS)
 
