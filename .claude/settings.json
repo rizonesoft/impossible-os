@@ -94,6 +94,16 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .claude/hooks/receiving_review_required.py",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "PostToolUse": [
@@ -114,7 +124,17 @@
           },
           {
             "type": "command",
-            "command": "python3 -c \"\nimport json, sys\nd = json.load(sys.stdin)\ncmd = d.get('tool_input', {}).get('command', '')\nif ('scripts/copilot-review.sh' not in cmd) and ('codex-companion.mjs' not in cmd or 'adversarial-review' not in cmd):\n    sys.exit(0)\nmsg = ('[external review complete -- receiving-code-review REQUIRED] Apply superpowers:receiving-code-review discipline NOW. '\n       'For each finding: (1) read the cited code at the file:line first, do NOT trust the summary; '\n       '(2) classify as Fix / Reject / Accept with concrete evidence -- The external reviewer reads code without runtime context and CAN be wrong; '\n       '(3) reject false positives with code evidence (caller already holds lock X at file:line, path is single-threaded by construction because Y, buffer is static-asserted larger than the access, etc.); '\n       '(4) YAGNI check -- if Codex demands implementing an unused feature, grep for callers and remove the dead code instead; '\n       '(5) NO performative agreement -- never write great catch or you are absolutely right; just state the fix or the rejection.')\nprint(json.dumps({'systemMessage': msg}))\n\"",
+            "command": "python3 -c \"\nimport json, sys\nd = json.load(sys.stdin)\ncmd = d.get('tool_input', {}).get('command', '')\nif 'codex-companion.mjs' not in cmd or 'adversarial-review' not in cmd:\n    sys.exit(0)\nmsg = ('[external review complete -- receiving-code-review REQUIRED] Apply superpowers:receiving-code-review discipline NOW. '\n       'For each finding: (1) read the cited code at the file:line first, do NOT trust the summary; '\n       '(2) classify as Fix / Reject / Accept with concrete evidence -- The external reviewer reads code without runtime context and CAN be wrong; '\n       '(3) reject false positives with code evidence (caller already holds lock X at file:line, path is single-threaded by construction because Y, buffer is static-asserted larger than the access, etc.); '\n       '(4) YAGNI check -- if Codex demands implementing an unused feature, grep for callers and remove the dead code instead; '\n       '(5) NO performative agreement -- never write great catch or you are absolutely right; just state the fix or the rejection.')\nprint(json.dumps({'systemMessage': msg}))\n\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|Skill",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .claude/hooks/codex_review_completed.py",
             "timeout": 5
           }
         ]

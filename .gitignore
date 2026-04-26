@@ -68,3 +68,9 @@ sdk/build/
 # .claude/settings.local.json (never committed). See
 # docs/infrastructure/ai-system.md "MCP, Permissions, and Extension Boundary".
 .claude/settings.local.json
+
+# .claude/state/ -- runtime state files for hooks (last-codex-review.json etc).
+# Keep .keep + README.md tracked; everything else is per-session/runtime.
+.claude/state/*
+!.claude/state/.keep
+!.claude/state/README.md

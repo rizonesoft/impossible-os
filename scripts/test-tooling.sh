@@ -933,6 +933,233 @@ else
 fi
 
 # ============================================================================
+# receiving-code-review hard gate (TODO-08 in 00-infrastructure section 3)
+#
+# Asserts the codex_review_completed.py PostToolUse hook + the
+# receiving_review_required.py PreToolUse hook chain works:
+#   - Trigger event writes state file with received:false
+#   - Receive event flips received:true
+#   - PreToolUse blocks Edit/Write while received:false within 1h TTL
+#   - PreToolUse allows after received:true
+#   - PreToolUse allows when state file missing (no recent review)
+#   - PreToolUse allows on TTL expiry (>1h since trigger)
+#   - Opt-out via RECEIVING_REVIEW_OVERRIDE=1 allows
+#   - Bare-name Skill (per design-review M finding) is recognized
+[ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[receiving_review_gate]${NC}"
+
+POST_HOOK="$REPO_ROOT/.claude/hooks/codex_review_completed.py"
+PRE_HOOK="$REPO_ROOT/.claude/hooks/receiving_review_required.py"
+STATE_FILE="$REPO_ROOT/.claude/state/last-codex-review.json"
+
+if [ ! -f "$POST_HOOK" ]; then
+    t_fail "receiving_review_gate post hook missing: $POST_HOOK"
+elif [ ! -f "$PRE_HOOK" ]; then
+    t_fail "receiving_review_gate pre hook missing: $PRE_HOOK"
+else
+    _gate_probe() {
+        # Args: <expected_rc> <description> <hook> <payload-json> [env_var]
+        local want="$1" desc="$2" hook="$3" payload="$4" envvar="${5:-}"
+        local got
+        if [ -n "$envvar" ]; then
+            got=$(printf '%s' "$payload" | env "$envvar" python3 "$hook" >/dev/null 2>&1; echo $?)
+        else
+            got=$(printf '%s' "$payload" | python3 "$hook" >/dev/null 2>&1; echo $?)
+        fi
+        if [ "$got" = "$want" ]; then
+            t_pass "receiving_review_gate: $desc (rc=$got)"
+        else
+            t_fail "receiving_review_gate: $desc (want $want, got $got)"
+        fi
+    }
+    _state_received() {
+        # Print received field from state file; "missing" if absent.
+        # Use single-quoted python -c body and pass STATE_FILE as argv
+        # so quote-escape headaches cannot eat the json.load argument.
+        if [ -f "$STATE_FILE" ]; then
+            python3 -c 'import json, sys; print(json.load(open(sys.argv[1])).get("received", "missing"))' "$STATE_FILE"
+        else
+            echo "missing"
+        fi
+    }
+
+    # Clean any prior state from earlier test runs.
+    rm -f "$STATE_FILE"
+
+    # Sub-test 1: Bash trigger writes state with received:false
+    printf "%s" '''{"tool_name":"Bash","tool_input":{"command":"node /tmp/codex-companion.mjs adversarial-review test"}}''' \
+        | python3 "$POST_HOOK" >/dev/null 2>&1
+    GOT=$(_state_received)
+    if [ "$GOT" = "False" ]; then
+        t_pass "receiving_review_gate: Bash trigger writes state.received=False"
+    else
+        t_fail "receiving_review_gate: Bash trigger writes state.received=False (got $GOT)"
+    fi
+
+    # Sub-test 2: Skill trigger via codex-* skill writes state
+    rm -f "$STATE_FILE"
+    printf "%s" '''{"tool_name":"Skill","tool_input":{"skill":"codex-adversarial-review-section"}}''' \
+        | python3 "$POST_HOOK" >/dev/null 2>&1
+    GOT=$(_state_received)
+    if [ "$GOT" = "False" ]; then
+        t_pass "receiving_review_gate: Skill trigger writes state.received=False"
+    else
+        t_fail "receiving_review_gate: Skill trigger writes state.received=False (got $GOT)"
+    fi
+
+    # Sub-test 3: PreToolUse BLOCKS (rc=2) when received:false
+    _gate_probe 2 "PreToolUse blocks Edit when received=false" \
+        "$PRE_HOOK" '''{"tool_name":"Edit","tool_input":{"file_path":"src/foo.c"}}'''
+
+    # Sub-test 4: PreToolUse BLOCKS Write too
+    _gate_probe 2 "PreToolUse blocks Write when received=false" \
+        "$PRE_HOOK" '''{"tool_name":"Write","tool_input":{"file_path":"src/foo.c","content":"x"}}'''
+
+    # Sub-test 5: Receive (namespaced) flips state to received=true
+    printf "%s" '''{"tool_name":"Skill","tool_input":{"skill":"superpowers:receiving-code-review"}}''' \
+        | python3 "$POST_HOOK" >/dev/null 2>&1
+    GOT=$(_state_received)
+    if [ "$GOT" = "True" ]; then
+        t_pass "receiving_review_gate: namespaced receive flips received=True"
+    else
+        t_fail "receiving_review_gate: namespaced receive flips received=True (got $GOT)"
+    fi
+
+    # Sub-test 6: PreToolUse ALLOWS after receive
+    _gate_probe 0 "PreToolUse allows Edit after received=true" \
+        "$PRE_HOOK" '''{"tool_name":"Edit","tool_input":{"file_path":"src/foo.c"}}'''
+
+    # Sub-test 7: Bare-name receive (skill key) -- design review M
+    rm -f "$STATE_FILE"
+    printf "%s" '''{"tool_name":"Skill","tool_input":{"skill":"codex-adversarial-review-section"}}''' \
+        | python3 "$POST_HOOK" >/dev/null 2>&1
+    printf "%s" '''{"tool_name":"Skill","tool_input":{"skill":"receiving-code-review"}}''' \
+        | python3 "$POST_HOOK" >/dev/null 2>&1
+    GOT=$(_state_received)
+    if [ "$GOT" = "True" ]; then
+        t_pass "receiving_review_gate: bare-name receive (skill key) flips True"
+    else
+        t_fail "receiving_review_gate: bare-name receive (skill key) flips True (got $GOT)"
+    fi
+
+    # Sub-test 8: Bare-name receive (name key) -- design review M
+    rm -f "$STATE_FILE"
+    printf "%s" '''{"tool_name":"Skill","tool_input":{"skill":"codex-adversarial-review-section"}}''' \
+        | python3 "$POST_HOOK" >/dev/null 2>&1
+    printf "%s" '''{"tool_name":"Skill","tool_input":{"name":"receiving-code-review"}}''' \
+        | python3 "$POST_HOOK" >/dev/null 2>&1
+    GOT=$(_state_received)
+    if [ "$GOT" = "True" ]; then
+        t_pass "receiving_review_gate: bare-name receive (name key) flips True"
+    else
+        t_fail "receiving_review_gate: bare-name receive (name key) flips True (got $GOT)"
+    fi
+
+    # Sub-test 9: PreToolUse ALLOWS when state file missing
+    rm -f "$STATE_FILE"
+    _gate_probe 0 "PreToolUse allows Edit when no state file" \
+        "$PRE_HOOK" '''{"tool_name":"Edit","tool_input":{"file_path":"src/foo.c"}}'''
+
+    # Sub-test 10: Opt-out via RECEIVING_REVIEW_OVERRIDE=1
+    printf "%s" '''{"tool_name":"Skill","tool_input":{"skill":"codex-adversarial-review-section"}}''' \
+        | python3 "$POST_HOOK" >/dev/null 2>&1
+    _gate_probe 0 "PreToolUse opt-out via RECEIVING_REVIEW_OVERRIDE=1" \
+        "$PRE_HOOK" '''{"tool_name":"Edit","tool_input":{"file_path":"src/foo.c"}}''' \
+        "RECEIVING_REVIEW_OVERRIDE=1"
+
+    # Sub-test 11: TTL stale-pass (>1h) -> allow
+    printf "%s" '''{"tool_name":"Skill","tool_input":{"skill":"codex-adversarial-review-section"}}''' \
+        | python3 "$POST_HOOK" >/dev/null 2>&1
+    python3 -c '
+import json, sys
+p = sys.argv[1]
+s = json.load(open(p))
+s["timestamp_ns"] = s["timestamp_ns"] - 2 * 3600 * 10**9
+open(p, "w").write(json.dumps(s))
+' "$STATE_FILE"
+    _gate_probe 0 "PreToolUse allows on TTL stale-pass (>1h old)" \
+        "$PRE_HOOK" '''{"tool_name":"Edit","tool_input":{"file_path":"src/foo.c"}}'''
+
+    # Sub-test 12: Non-Edit/Write/MultiEdit tools are not blocked
+    rm -f "$STATE_FILE"
+    printf "%s" '''{"tool_name":"Skill","tool_input":{"skill":"codex-adversarial-review-section"}}''' \
+        | python3 "$POST_HOOK" >/dev/null 2>&1
+    _gate_probe 0 "PreToolUse passes through Bash/Read/Grep tools" \
+        "$PRE_HOOK" '''{"tool_name":"Bash","tool_input":{"command":"ls"}}'''
+
+    # Sub-test 13 (M1 regression): substring-only mention of
+    # codex-companion.mjs in a Bash command (e.g. heredoc body, rg
+    # search, git grep) MUST NOT write a trigger. Codex adversarial
+    # review caught this on first pass; live-reproduced when the
+    # heredoc that built this very review's prompt left a
+    # `Bash(cat > /tmp/...)` trigger label in the state file.
+    rm -f "$STATE_FILE"
+    printf "%s" '''{"tool_name":"Bash","tool_input":{"command":"rg codex-companion.mjs .claude/skills/"}}''' \
+        | python3 "$POST_HOOK" >/dev/null 2>&1
+    GOT=$(_state_received)
+    if [ "$GOT" = "missing" ]; then
+        t_pass "receiving_review_gate: rg codex-companion.mjs does NOT write trigger (M1 regression)"
+    else
+        t_fail "receiving_review_gate: rg codex-companion.mjs wrote trigger (M1 regression, got $GOT)"
+    fi
+
+    # Sub-test 14 (M1 regression): heredoc body containing the literal
+    # is also not a trigger.
+    rm -f "$STATE_FILE"
+    printf "%s" '''{"tool_name":"Bash","tool_input":{"command":"cat > /tmp/x <<EOF\nrun codex-companion.mjs from here\nEOF"}}''' \
+        | python3 "$POST_HOOK" >/dev/null 2>&1
+    GOT=$(_state_received)
+    if [ "$GOT" = "missing" ]; then
+        t_pass "receiving_review_gate: heredoc body literal does NOT write trigger (M1 regression)"
+    else
+        t_fail "receiving_review_gate: heredoc body literal wrote trigger (M1 regression, got $GOT)"
+    fi
+
+    # Sub-test 15 (M1 regression): git grep mentioning the literal is
+    # also not a trigger.
+    rm -f "$STATE_FILE"
+    printf "%s" '''{"tool_name":"Bash","tool_input":{"command":"git grep \"codex review\""}}''' \
+        | python3 "$POST_HOOK" >/dev/null 2>&1
+    GOT=$(_state_received)
+    if [ "$GOT" = "missing" ]; then
+        t_pass "receiving_review_gate: git grep \"codex review\" does NOT write trigger (M1 regression)"
+    else
+        t_fail "receiving_review_gate: git grep \"codex review\" wrote trigger (M1 regression, got $GOT)"
+    fi
+
+    # Sub-test 16 (M1 positive): wrapped Codex via env-prefix +
+    # wrapper command IS still a trigger (the shlex tokenizer walks
+    # past `RECEIVING_REVIEW_OVERRIDE=1 timeout 600 node ...`).
+    rm -f "$STATE_FILE"
+    printf "%s" '''{"tool_name":"Bash","tool_input":{"command":"RECEIVING_REVIEW_OVERRIDE=1 timeout 600 node /abs/codex-companion.mjs adversarial-review prompt"}}''' \
+        | python3 "$POST_HOOK" >/dev/null 2>&1
+    GOT=$(_state_received)
+    if [ "$GOT" = "False" ]; then
+        t_pass "receiving_review_gate: env-prefix + timeout-wrapper Codex IS a trigger (M1 positive)"
+    else
+        t_fail "receiving_review_gate: env-prefix + timeout-wrapper Codex missed (M1 positive, got $GOT)"
+    fi
+
+    # Sub-test 17 (H1 mitigation): rapid-fire trigger that overwrites
+    # an unreceived previous trigger emits a stderr WARN naming both
+    # the new and the previous trigger label. Captures stderr to
+    # verify the WARN text shape.
+    rm -f "$STATE_FILE"
+    printf "%s" '''{"tool_name":"Bash","tool_input":{"command":"node /abs/codex-companion.mjs adversarial-review first"}}''' \
+        | python3 "$POST_HOOK" >/dev/null 2>&1
+    WARN_OUT=$(printf "%s" '''{"tool_name":"Bash","tool_input":{"command":"node /abs/codex-companion.mjs adversarial-review second"}}''' \
+        | python3 "$POST_HOOK" 2>&1 >/dev/null || true)
+    if echo "$WARN_OUT" | grep -q "overwriting previous unreceived trigger"; then
+        t_pass "receiving_review_gate: rapid-fire trigger emits WARN (H1 mitigation)"
+    else
+        t_fail "receiving_review_gate: no WARN on rapid-fire trigger (H1 mitigation, got: $WARN_OUT)"
+    fi
+
+    # Cleanup
+    rm -f "$STATE_FILE"
+fi
+
+
+# ============================================================================
 # Summary
 # ============================================================================
 

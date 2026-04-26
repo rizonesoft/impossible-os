@@ -58,6 +58,10 @@ This domain tracks the tooling and workflow work that supports the whole project
   catalog with Impossible OS doctrine; cross-tool drift detection. XREFs: TODO-02 §3/§4 (Hook
   Routing Matrix + External-Reviewer Contract -- mechanism owner; TODO-02 owns doctrine),
   TODO-06 §8 (todo-graph MCP consumer), TODO-07 §1 (lsp-bridge MCP consumer).
+- [TODO-09 Repository Transfer to rizonetech](./TODO-09-repository-transfer-rizonetech.md) -
+  Transfer `rizonesoft/impossible-os` to `rizonetech/impossible-os` without avoidable GitHub
+  Pages, custom-domain, workflow, release-link, or policy disruption; preserve a documented
+  move-back path for the later public-visibility transition.
 
 ## Completed / Doc-converted
 
