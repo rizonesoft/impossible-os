@@ -872,6 +872,56 @@ else
     # 16. Bypass closed: short form `-m gpt-5.5`
     _flag_probe 2 "block -m short form" \
         'codex exec -m gpt-5.5 prompt'
+    # 17. Bypass closed: env-assignment prefix
+    _flag_probe 2 "block env-prefix MODEL=x codex exec --model" \
+        'MODEL=foo codex exec --model gpt-5.5 prompt'
+    # 18. Bypass closed: timeout wrapper
+    _flag_probe 2 "block timeout wrapper codex exec --model" \
+        'timeout 60 codex exec --model gpt-5.5 prompt'
+    # 19. Bypass closed: && chain
+    _flag_probe 2 "block && chain to codex exec --model" \
+        'true && codex exec --model gpt-5.5 prompt'
+    # 20. Bypass closed: -c model_provider=
+    _flag_probe 2 "block -c model_provider=value override" \
+        'codex exec -c model_provider=foo prompt'
+    # 21. Bypass closed: env wrapper
+    _flag_probe 2 "block env-wrapper env MODEL=x codex exec --model" \
+        'env MODEL=x codex exec --model gpt-5.5 prompt'
+    # 22. Allow: && chain where second segment is non-Codex
+    _flag_probe 0 "allow && chain non-codex 2nd segment" \
+        'true && rg --model thing'
+    # 23. Allow: env-only command (env-prefix to non-codex)
+    _flag_probe 0 "allow env-prefix to non-codex" \
+        'MODEL=foo true'
+    # 24. Heredoc fail-open: complex shell constructs (heredocs,
+    #     process substitution) bail-out -- shlex flattens heredoc
+    #     bodies into ordinary tokens, so a body containing
+    #     `&& codex exec --model X` would otherwise look like a real
+    #     bypass after segmentation. File redirects (`> /tmp/out`)
+    #     are NOT bailed out -- they don't introduce phantom commands.
+    _flag_probe 0 "allow heredoc with --model in body" \
+        'python3 << EOF\nfoo --model bar\nEOF'
+    # 25. Bypass closed: redirect after a real Codex command must
+    #     still BLOCK (re-adversarial review H -- the previous
+    #     revision's broad-redirect fail-open let this slip).
+    _flag_probe 2 "block codex exec --model X > /tmp/out (redirect after Codex)" \
+        'codex exec --model gpt-5.5 prompt > /tmp/out'
+    # 26. Bypass closed: sudo -u VALUE codex exec --model X (sudo
+    #     value-taking flag was missed by the per-wrapper parser).
+    _flag_probe 2 "block sudo -u root codex exec --model X" \
+        'sudo -u root codex exec --model gpt-5.5 prompt'
+    # 27. Bypass closed: timeout 5s codex exec --model X (duration
+    #     with suffix unit was missed by the float-parse heuristic).
+    _flag_probe 2 "block timeout 5s codex exec --model X (suffix duration)" \
+        'timeout 5s codex exec --model gpt-5.5 prompt'
+    # 28. Allow: redirect on a NON-Codex command must NOT bail-out
+    #     (re-adversarial review H regression check).
+    _flag_probe 0 "allow echo --model > /tmp/out (non-codex with redirect)" \
+        'echo --model > /tmp/out'
+    # 29. Allow: process substitution with --model in argv (proc-sub
+    #     fail-open guard handles `<(...)` / `>(...)` constructs).
+    _flag_probe 0 "allow diff <(echo a) <(echo b)" \
+        'diff <(echo a) <(echo b)'
 fi
 
 # ============================================================================

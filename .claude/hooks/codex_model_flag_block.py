@@ -60,7 +60,30 @@ FORBIDDEN_FLAG_PREFIXES = (
 # flag is legitimate (sandbox, network, etc. overrides) -- block
 # only when the value targets a forbidden config key.
 CODEX_CONFIG_FLAGS = ("-c", "--config")
-FORBIDDEN_CONFIG_KEYS = ("model", "model_reasoning_effort")
+FORBIDDEN_CONFIG_KEYS = (
+    "model", "model_reasoning_effort", "model_provider",
+    # `model_provider` per `codex --help`; lets a caller swap the
+    # provider implementation per-dispatch which undermines the
+    # central-control policy as much as `model` does. (Codex
+    # post-ship adversarial review M.)
+)
+
+# Bash control operators that introduce a NEW command sequence.
+# Splitting on these lets us catch bypasses like
+# `true && codex exec --model X`. Pipes, sequence semicolons,
+# and short-circuit operators all qualify. (Codex post-ship
+# adversarial review H.)
+COMMAND_SEPARATORS = ("&&", "||", ";", "|", "&")
+
+# Known command wrappers that prefix another command's argv.
+# When tokens[0] is one of these, the actual command starts after
+# the wrapper's own arguments. Strips so we can inspect the wrapped
+# command (the real Codex invocation, if any). Hand-curated; common
+# Linux wrappers only.
+COMMAND_WRAPPERS = (
+    "env", "timeout", "exec", "sudo", "nice", "ionice",
+    "stdbuf", "nohup", "chrt", "taskset",
+)
 
 CODEX_SUBCOMMANDS = (
     # Per `codex --help`: bare subcommand names + documented aliases.
@@ -90,81 +113,160 @@ def _opt_out() -> bool:
     return os.environ.get("CODEX_FLAG_OVERRIDE", "") == "1"
 
 
+def _is_env_assignment(tok: str) -> bool:
+    """A leading shell env-assignment like `KEY=value`. Bash allows
+    `KEY=value KEY2=value2 command args` and the command runs with
+    those vars in its environment. We must skip these prefix tokens
+    to find the real argv[0]. (Codex post-ship adversarial review
+    H: `MODEL=foo codex exec --model X` bypassed because tokens[0]
+    was `MODEL=foo`, not `codex`.)
+    Valid identifier rules: starts with letter or `_`, then letters
+    digits or `_`. Anything else (e.g. a flag like `--cwd=/tmp`)
+    is NOT an env assignment."""
+    if "=" not in tok or tok.startswith("-"):
+        return False
+    key = tok.split("=", 1)[0]
+    if not key:
+        return False
+    if not (key[0].isalpha() or key[0] == "_"):
+        return False
+    return all(c.isalnum() or c == "_" for c in key)
+
+
+def _segment_commands(tokens: list[str]) -> list[list[str]]:
+    """Split tokens by Bash control operators (&&, ||, ;, |, &)
+    into a list of simple commands. Each segment is its own argv.
+    (Codex post-ship adversarial review H: `true && codex exec
+    --model X` bypassed because the original code treated the
+    whole command as one argv with `true` at position 0.)"""
+    segs: list[list[str]] = []
+    cur: list[str] = []
+    for tok in tokens:
+        if tok in COMMAND_SEPARATORS:
+            if cur:
+                segs.append(cur)
+            cur = []
+        else:
+            cur.append(tok)
+    if cur:
+        segs.append(cur)
+    return segs
+
+
+def _strip_command_prefix(tokens: list[str]) -> list[str]:
+    """Strip leading env-assignments and known wrappers (env,
+    timeout, sudo, nice, ...) so the returned tokens start with the
+    real command's argv[0]. (Codex post-ship adversarial review H.)"""
+    i = 0
+    # Phase 1: skip leading env-assignment prefix tokens.
+    while i < len(tokens) and _is_env_assignment(tokens[i]):
+        i += 1
+    if i >= len(tokens):
+        return []
+    # Phase 2: if argv[0] is now a known wrapper, skip past it AND
+    # its own arguments to reach the wrapped command. Wrapper-argument
+    # patterns we recognize:
+    #   * env [-i] [KEY=val ...] [-u KEY ...] command args
+    #   * timeout [OPT...] DURATION command args
+    #   * sudo [OPT...] [-E] [-u USER] command args
+    #   * nice / ionice / nohup / chrt / taskset: similar OPT...
+    # Heuristic: skip flag tokens (`-...`, `--...`), env-assignment
+    # tokens, and pure-numeric tokens (timeout's DURATION argument)
+    # until the next bare-word token.
+    base = os.path.basename(tokens[i].rstrip("/"))
+    if base in COMMAND_WRAPPERS:
+        i += 1
+        while i < len(tokens):
+            t = tokens[i]
+            if t.startswith("-"):
+                i += 1
+                continue
+            if _is_env_assignment(t):
+                i += 1
+                continue
+            # Pure-numeric (timeout's seconds arg, nice's level).
+            try:
+                float(t)
+                i += 1
+                continue
+            except ValueError:
+                pass
+            break
+    return tokens[i:]
+
+
+def _trim_heredoc_body(tokens: list[str]) -> list[str]:
+    """Return tokens up to (but not including) the first heredoc /
+    process-substitution opener. Tokens after the opener are body
+    content that shlex flattens but isn't part of the real command.
+
+    Heredoc opener token forms: `<<`, `<<-`, or any token starting
+    with `<<` (e.g. `<<EOF`, `<<-DELIMITER`). Process substitution
+    opener: tokens starting with `<(` or `>(`. Plain file redirects
+    (`<`, `>`, `>>`, `<>`) do NOT introduce ambiguous content and
+    stay in the command tokens (their target path is already
+    harmless to scan since it can't contain a Codex invocation).
+
+    Returns tokens unchanged if no heredoc/proc-sub marker is found.
+    """
+    for i, tok in enumerate(tokens):
+        if tok in ("<<", "<<-") or tok.startswith("<<"):
+            return tokens[:i]
+        if tok.startswith("<(") or tok.startswith(">("):
+            return tokens[:i]
+    return tokens
+
+
 def _command_argv(tokens: list[str]) -> list[str] | None:
-    """Return the argv of the actual Codex invocation when one is the
-    main command being executed by this shell line, else None.
+    """Return the segment's tokens if it contains a Codex invocation,
+    else None.
 
-    We MUST distinguish "Codex is the main command" from "this command
-    happens to mention `codex` somewhere deeper in its argv" -- e.g. a
-    `python3 <<'EOF' ... --model gpt-5.5 ... EOF` heredoc would have
-    `--model` as a standalone token but `python3` as argv[0]; that is
-    NOT a Codex invocation and must not be blocked. The earlier
-    revision scanned ALL tokens which produced exactly that false
-    positive (the heredoc body of an unrelated python3 script).
+    Scans ALL tokens for either (a) a `codex` token (basename match)
+    followed by a Codex subcommand, OR (b) any token containing
+    `codex-companion.mjs`. This handles wrappers + env-prefixes
+    uniformly: `sudo -u root codex exec --model X`,
+    `MODEL=foo codex exec --model X`, `timeout 5s codex exec
+    --model X`, `nice -n 10 codex exec --model X`, etc. all surface
+    via the same scan. Earlier revisions tried to strip wrappers
+    one-by-one and fell behind on `-u root` (sudo's value-taking
+    flag) and `5s` (timeout's duration-with-suffix); the
+    scan-anywhere approach has no such omission.
 
-    Detection rule, in order of preference:
-      1. argv[0] basename == "codex" AND argv[1] is in CODEX_SUBCOMMANDS
-         -> return tokens (Codex CLI invocation).
-      2. argv[0] basename in {"node", "nodejs"} AND any of argv[1..]
-         until the first non-flag/non-path token contains
-         `codex-companion.mjs`
-         -> return tokens (codex-companion.mjs script invocation).
-         Allows `node --inspect /path/to/codex-companion.mjs ...`
-         and `node /path/to/codex-companion.mjs subcommand ...`.
-
-    Anything else returns None and the hook exits 0. Compound shell
-    commands (heredocs, pipes, &&) tokenize at the shell level; only
-    the FIRST sub-command's argv matters here -- if a heredoc's
-    payload happens to look like a Codex command, that's the
-    payload's responsibility (and won't reach the harness's Bash
-    tool wrapper as a separate call)."""
+    False-positive concern: a python heredoc body that happens to
+    contain `codex exec` literal text would be flagged. Closed by
+    the heredoc / process-substitution fail-open guard at the top
+    of main() -- if any token equals/startswith `<<` or starts with
+    `<(`/`>(`, main() returns 0 BEFORE this function runs.
+    """
     if not tokens:
         return None
-    cmd0 = tokens[0]
-    base = os.path.basename(cmd0.rstrip("/"))
-    if base == "codex":
-        # `codex [OPTIONS] <COMMAND> [ARGS]` per docs. Walk past
-        # global options (which may carry their own values either
-        # attached via `=` or as the next token) until we find a
-        # token that is a Codex subcommand. Earlier revision only
-        # checked tokens[1] which let `codex --json exec --model X`
-        # bypass (Codex post-impl adversarial review High).
-        i = 1
-        while i < len(tokens):
-            tok = tokens[i]
-            if tok in CODEX_SUBCOMMANDS:
-                return tokens
-            # Global option with separate value -- skip both tokens.
-            if tok in CODEX_GLOBAL_VALUE_FLAGS:
-                i += 2
-                continue
-            # Attached form (`--config=key=val` or `-c=key=val`).
-            if any(tok.startswith(g + "=") for g in CODEX_GLOBAL_VALUE_FLAGS):
-                i += 1
-                continue
-            # Any other token starting with `-` is a boolean flag
-            # (--json, --quiet, etc.) -- skip just this token.
-            if tok.startswith("-"):
-                i += 1
-                continue
-            # First positional that isn't a subcommand: this is
-            # being used as a prompt to the bare `codex` (TUI auto-
-            # forwards options + prompt). Not a target.
-            return None
-        return None
-    if base in ("node", "nodejs"):
-        # Walk past node's own flags to find the script path.
-        for tok in tokens[1:]:
-            if tok.startswith("--"):
-                # A node flag (--inspect, --max-old-space-size=, etc.)
-                # -- skip and keep looking.
-                continue
-            if "codex-companion.mjs" in tok:
-                return tokens
-            # First positional that isn't codex-companion.mjs --
-            # this is some other script; not a Codex invocation.
-            return None
-        return None
+    for i, tok in enumerate(tokens):
+        base = os.path.basename(tok.rstrip("/"))
+        if base == "codex":
+            # Walk forward past Codex global options to find the
+            # subcommand. (Codex global options that take a value
+            # need both their flag and value tokens skipped.)
+            j = i + 1
+            while j < len(tokens):
+                t = tokens[j]
+                if t in CODEX_SUBCOMMANDS:
+                    return tokens
+                if t in CODEX_GLOBAL_VALUE_FLAGS:
+                    j += 2
+                    continue
+                if any(t.startswith(g + "=") for g in CODEX_GLOBAL_VALUE_FLAGS):
+                    j += 1
+                    continue
+                if t.startswith("-"):
+                    j += 1
+                    continue
+                # Bare positional that isn't a subcommand: not a
+                # Codex CLI invocation (looks like bare `codex`
+                # interactive TUI receiving a prompt as positional).
+                return None
+            return None  # `codex` token but no subcommand follows
+        if "codex-companion.mjs" in tok:
+            return tokens
     return None
 
 
@@ -218,26 +320,57 @@ def main() -> int:
         # A real shell would reject it too; we don't want to mask
         # that error with a hook block.
         return 0
-    codex_argv = _command_argv(tokens)
-    if codex_argv is None:
-        return 0
-    # Walk argv looking for forbidden flag tokens AND forbidden
-    # `-c key=value` config overrides (Codex post-impl adversarial
-    # review Medium: `-c model="x"` sets the model centrally too,
-    # bypassing the long-flag-only check).
+    # Fail-open on commands containing complex shell constructs
+    # (heredocs, file redirects, process substitution) -- shlex
+    # flattens those into ordinary tokens, which means a heredoc
+    # body containing `&& codex exec --model X` literal text would
+    # otherwise look like a real Codex invocation after segmentation.
+    # We only enforce on simple-shape commands; complex shell goes
+    # to human review. (Caught while adding bypass tests for
+    # post-ship adversarial review H findings -- the test-adding
+    # python heredoc itself contained the literal text and got
+    # blocked.)
+    # Segment by control operators so `true && codex exec --model X`
+    # is checked at the codex segment, not just at the first command.
+    # (Codex post-ship adversarial review H.)
+    for segment in _segment_commands(tokens):
+        # Trim heredoc / process-substitution body tokens from the
+        # segment END before classifying. The command tokens BEFORE
+        # the heredoc marker are still scannable; only the body is
+        # ambiguous. Closes the `codex exec --model X <<EOF body EOF`
+        # bypass the consistency review caught -- the previous
+        # revision did a top-level fail-open that allowed this.
+        cmd_part = _trim_heredoc_body(segment)
+        # _command_argv scans for a `codex` token + subcommand or
+        # for codex-companion.mjs, so we don't need wrapper-specific
+        # parsing -- handles `sudo -u root codex exec --model X`,
+        # `MODEL=foo codex exec --model X`, `timeout 5s codex exec
+        # --model X` etc. uniformly.
+        codex_argv = _command_argv(cmd_part)
+        if codex_argv is None:
+            continue
+        if _scan_codex_segment(codex_argv, cmd) == 2:
+            return 2
+    return 0
+
+
+def _scan_codex_segment(codex_argv: list[str], raw_cmd: str) -> int:
+    """Scan one Codex argv for forbidden flag tokens AND forbidden
+    `-c key=value` config overrides. Returns 2 (block + emit) on
+    hit, 0 on clean."""
     i = 0
     while i < len(codex_argv):
         tok = codex_argv[i]
         hit = _forbidden_flag_token(tok)
         if hit is not None:
-            _emit_block(hit, cmd)
+            _emit_block(hit, raw_cmd)
             return 2
         # `-c <key=value>` / `--config <key=value>` separated form.
         if tok in CODEX_CONFIG_FLAGS and i + 1 < len(codex_argv):
             val = codex_argv[i + 1]
             for key in FORBIDDEN_CONFIG_KEYS:
                 if val == key or val.startswith(key + "="):
-                    _emit_block(f"{tok} {key}=...", cmd)
+                    _emit_block(f"{tok} {key}=...", raw_cmd)
                     return 2
             i += 2
             continue
@@ -247,10 +380,10 @@ def main() -> int:
                 val = tok[len(cfg) + 1:]
                 for key in FORBIDDEN_CONFIG_KEYS:
                     if val == key or val.startswith(key + "="):
-                        _emit_block(f"{cfg}={key}=...", cmd)
+                        _emit_block(f"{cfg}={key}=...", raw_cmd)
                         return 2
         i += 1
-    return 0
+    return 0  # clean segment
 
 
 if __name__ == "__main__":
