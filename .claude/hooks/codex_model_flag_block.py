@@ -196,23 +196,43 @@ def _strip_command_prefix(tokens: list[str]) -> list[str]:
 
 
 def _trim_heredoc_body(tokens: list[str]) -> list[str]:
-    """Return tokens up to (but not including) the first heredoc /
-    process-substitution opener. Tokens after the opener are body
-    content that shlex flattens but isn't part of the real command.
+    """Return tokens up to (but not including) the first construct
+    that introduces SHELL SUB-CONTENT (heredoc body, process
+    substitution body, command substitution body). Tokens after
+    the opener are NOT part of the real command line -- shlex
+    flattens them but they belong to a separate execution context
+    (the heredoc body, the inner $(...) command, etc.).
 
-    Heredoc opener token forms: `<<`, `<<-`, or any token starting
-    with `<<` (e.g. `<<EOF`, `<<-DELIMITER`). Process substitution
-    opener: tokens starting with `<(` or `>(`. Plain file redirects
-    (`<`, `>`, `>>`, `<>`) do NOT introduce ambiguous content and
-    stay in the command tokens (their target path is already
-    harmless to scan since it can't contain a Codex invocation).
+    Constructs trimmed:
+      `<<` / `<<-` / `<<DELIM` -- heredoc body follows.
+      `<(...)` / `>(...)` -- process substitution body in token.
+      `$(...)` / starts with `$(` -- command substitution body
+        in token. shlex tokenizes `git commit -m "$(cat <<EOF
+        ... EOF)"` such that the `$(cat` token contains the open
+        parenthesis; the message body words (including any
+        forbidden-flag literals) follow as separate tokens. The
+        previous revision missed this and false-positive-blocked
+        the very git commit that landed the post-ship review
+        fixes (the commit message body mentioned `-m`, `--model`,
+        and the literal Codex-subcommand strings as text inside
+        the heredoc fed via $(cat <<EOF ... EOF)).
+      `${...}` / starts with `${` -- parameter expansion with
+        sub-content (rare but same family).
+      Plain file redirects (`<`, `>`, `>>`, `<>`) do NOT trim --
+        their target path is harmless to scan.
 
-    Returns tokens unchanged if no heredoc/proc-sub marker is found.
+    Returns tokens unchanged if no marker is found.
     """
     for i, tok in enumerate(tokens):
         if tok in ("<<", "<<-") or tok.startswith("<<"):
             return tokens[:i]
         if tok.startswith("<(") or tok.startswith(">("):
+            return tokens[:i]
+        if tok.startswith("$(") or tok.startswith("${"):
+            return tokens[:i]
+        # Backtick command substitution: `cmd args` -- shlex with
+        # posix=True keeps the backticks as part of the token.
+        if tok.startswith("`"):
             return tokens[:i]
     return tokens
 

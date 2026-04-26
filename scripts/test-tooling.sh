@@ -922,6 +922,14 @@ else
     #     fail-open guard handles `<(...)` / `>(...)` constructs).
     _flag_probe 0 "allow diff <(echo a) <(echo b)" \
         'diff <(echo a) <(echo b)'
+    # 30. Allow: command substitution body containing flag literals
+    #     (consistency review caught the false-positive when the
+    #     review-stamp git commit blocked itself because its message
+    #     body inside $(cat <<EOF ... EOF) mentioned `-m` and
+    #     `codex` as text). Trim helper now handles `$(`, `${`, and
+    #     backticks the same way it handles `<<` heredocs.
+    _flag_probe 0 "allow git commit -m with codex+-m in cmd-sub body" \
+        'git commit -m "$(cat <<EOF\nblock -m short form for codex exec\nEOF\n)"'
 fi
 
 # ============================================================================
