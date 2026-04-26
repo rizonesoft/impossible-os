@@ -617,6 +617,7 @@ check_no_cursor_residue() {
             docs/infrastructure/ai-system.md|docs/infrastructure/skill-authoring.md|.claude/skills/TEMPLATE.md)
                 continue ;;
             todo/00-infrastructure/TODO-02-ai-development-system.md) continue ;;
+            todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md) continue ;;
             AGENTS.md) continue ;;
             CLAUDE.md) continue ;;
             .claude/skills/README.md) continue ;;
