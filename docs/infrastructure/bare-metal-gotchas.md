@@ -1,0 +1,43 @@
+# Bare Metal Gotchas
+
+> Hard-won lessons from real hardware debugging. Violating any of these will crash on bare metal while appearing to work fine in VMs. CLAUDE.md carries the short-form list as a per-turn reminder; the full incident histories live here.
+
+## ISR / IDT
+
+- **No LAPIC TPR writes in ISR path.** The IDT `isr_handler` must track IRQL in software only -- no `lapic_write(LAPIC_REG_TPR, ...)` on interrupt entry/exit. The LAPIC hardware handles vector priority masking via ISR/PPR. TPR writes break emulated LAPIC on WHPX/VBox/TCG.
+- **No CLAC/STAC without SMAP CPUID.** `clac` and `stac` cause #UD on CPUs without SMAP in CPUID -- including QEMU TCG and VirtualBox NEM. The ISR common stub must NOT use `clac`/`stac` until SMAP is actually enabled via per-process page tables. This was the root cause of the 2026-03-28 "hardware interrupts crash on bare metal/TCG" issue.
+- **GS_BASE must be set before any interrupt fires.** `smp_early_bsp_init()` is called as the first thing in `boot_phase0()` -- before serial init. On bare metal, `GS_BASE` defaults to 0; `smp_this_cpu()` reads garbage from the real-mode IVT at physical address 0 instead of NULL, crashing the IRQL tracking in `isr_handler`.
+
+## MMU / Memory
+
+- **No SMEP/SMAP until per-process page tables.** The shared identity-mapped address space uses 2 MiB pages; user stacks are `kmalloc`'d from the kernel heap, so user and kernel data share the same 2 MiB pages. Clearing User bit from "kernel" pages also blocks user-mode stack access. `hv_supports_cr4_smep_smap()` returns 0 for `PLATFORM_BARE_METAL`.
+- **No MMIO through WB-cached pages.** HPET, ECAM, NVMe BARs, and future GPU BARs must use `vmm_map_mmio_uc()` with UC (uncacheable) attributes. The bootloader identity-maps everything as WB. LAPIC/IOAPIC work only because MTRRs override those ranges to UC. HPET calibration uses `vmm_map_mmio_uc()` (fixed 2026-03-29).
+- **CR3 reloads on WHPX can reset per-vCPU MSRs.** `write_cr3(read_cr3())` (used by `vmm_flush_tlb_all`) triggers a VMEXIT on WHPX that can reset the PAT MSR (and potentially other per-vCPU MSRs) to Intel defaults. Any MSR that must persist across TLB flushes must be re-programmed after CR3 reloads. Discovered 2026-04-13: `cpu_configure_pat()` wrote WC to PAT entry 1, then `vmm_promote_to_1g()` flushed TLB via CR3 reload, and PAT readback showed WT (Intel default). Fix: re-program PAT after page table modifications that flush TLB.
+- **User-mode ELF range (0x800000--0x900000).** Constants defined in `include/kernel/mm/user_range.h` (single source of truth). Three C files include it: `vmm.c`, `pmm.c`, `task.c`. `user/user.ld` must be updated manually if the base changes. Static asserts, runtime PMM bitmap verify, guard page at 0x900000, and unit test enforce sync.
+
+## SMP Startup
+
+- **No Init Level De-Assert IPI.** The broadcast Init Level De-Assert (ICR: INIT | ALL | LEVEL_DEASSERT) was deprecated since Intel P6 (1995) and is a hardware no-op on all x86-64 CPUs. On WHPX with 2+ vCPUs it hangs because the hypervisor traps the broadcast and stalls waiting for the not-yet-booted AP. Removed entirely 2026-04-01. The per-AP INIT->de-assert->SIPI sequence in `lapic_send_init()` is unrelated and required.
+
+## Devices
+
+- **NVMe I/O unreliable on QEMU WHPX.** QEMU's emulated NVMe controller processes doorbell MMIO writes asynchronously through its event loop under WHPX. The vCPU polls the CQ at native speed before the main thread processes the command, causing intermittent admin and I/O timeouts. Not a driver bug -- the NVMe driver has correct barriers (`wmb`/`rmb`/`clflush`). Real NVMe hardware handles PCIe DMA synchronously with cache snooping. NVMe test uses TCG; normal boot (SATA) uses WHPX fine.
+
+## FPU / SIMD
+
+- **FXSAVE/XSAVE buffer: set BOTH FCW and MXCSR defaults.** `task_alloc_xsave()` zeroes the buffer, then must set FCW at offset 0 to `0x037F` (all x87 exceptions masked, Intel SDM reset value) and MXCSR at offset 24 to `0x1F80` (all SIMD exceptions masked). Zeroed FCW causes #MF (vector 16) on the first imprecise x87 FP op; zeroed MXCSR causes #XM (vector 19) on the first SSE instruction. On WHPX (has XSAVE), XRSTOR init optimization masked the FCW=0 bug. On TCG (uses FXRSTOR), FCW=0 was loaded directly, freezing boot at the font renderer (2026-04-13). MXCSR=0 caused WHPX BSOD the same day.
+- **CR0.TS must be cleared before ALL FPU instructions.** XSAVE, XRSTOR, FXSAVE, and FXRSTOR all fault with #NM when CR0.TS=1 -- not just restores. Both the preemptive schedule() and cooperative schedule_now() must CLTS before any save or restore. Missing CLTS before XRSTOR caused the original WHPX freeze (2026-04-13).
+- **Never compile SSE2 fallback code with `-mavx2`.** The compiler emits VEX-encoded instructions (`vmovdqu` instead of `movdqu`) for all SSE operations when `-mavx2` is active, even around inline asm and in scalar tails. On CPUs without AVX (TCG `qemu64`, pre-Sandy Bridge bare metal), VEX instructions cause #UD. Split SIMD files: AVX2 functions in a `-mavx2` translation unit, SSE2 fallbacks and dispatch in a `-msse2` translation unit. This crashed TCG boot when `memops_sse.c` was compiled as part of `memops.c` with `-mavx2` (2026-04-13).
+
+## MSR Probe
+
+- **`msr_try_read()` is a no-crash guarantee, not an existence check.** WHPX silently absorbs reads of unknown MSRs (returns 0, no #GP), so `msr_try_read()` returning 0 does NOT prove the MSR exists. Always gate on `cpu_has()` or CPUID first; use `msr_try_read()` only as a secondary safety net. Pattern: `if (!cpu_has(FEATURE)) return; if (msr_try_read(MSR, &val) != 0) { fallback; }`. Discovered 2026-04-13 when `msr_try_read(0xFFFFFFFF)` returned success on WHPX.
+- **`msr_try_read()` requires the kernel IDT to be loaded.** The probe installs a custom #GP handler in a C-level `handlers[]` table consulted only by our ISR stubs, which only dispatch after `idt_init()` has `lidt`-ed the kernel IDT. Before that, IDTR still points at the UEFI IDT, and any real #GP (KVM trapping IA32_MPERF, real hardware trapping an unavailable MSR) is caught by UEFI's handler and halts the system. `msr_try_read()` now gates on `idt_is_loaded()` and returns `-1` pre-IDT; callers must have a fallback path. `simd_enable_avx512()` was moved from boot_phase0 to boot_phase1 (after `idt_init()`) so its throttle guard keeps working on bare metal. Discovered 2026-04-17 when the KVM smoke test crashed at MPERF probe in phase 0. Under virtualization CPUID lies (KVM with `-cpu host` passes AVX512F through but traps MPERF); always pair CPUID gate with `msr_try_read()` fallback.
+
+## Init Ordering
+
+- **No thread_create for deferred init.** `boot_run_deferred()` MUST run inline in Phase 3, not on a background thread. `compositor_run()` is an infinite event loop on the BSP that starves any kernel thread created just before it. Moving deferred inits to a thread caused VirtIO input and VBox mouse drivers to never initialize, breaking absolute cursor positioning on QEMU/VBox (2026-04-05). Per-thread fault isolation requires SEH (TODO-10).
+
+## Disk-Sourced Config
+
+- **Disk-sourced config files get dynamic buffers + hard-fail overflow.** `resources/boot/boot.conf` was originally read into a 4096-byte stack buffer with a silent `[WARN] truncating` on overflow. On 2026-04-21 doc-comment growth pushed the file to 4.5 KiB; the truncation dropped the patch-appended `test=1` line at EOF and every `test=1` boot ran zero tests without any visible error. Fixed by switching `bootx64.c boot_conf_load()` to `gBS->AllocatePool(FileSize + 1)` via a `GetInfo(&EFI_FILE_INFO_ID, ...)` size probe, with a 1 MiB sanity cap that `boot_fatal()`s on hit (never `[WARN]` + continue). Codified in `boot-code-quality` Gate 14. Any future parser reading disk/user input should follow the same pattern: dynamic-size first, sanity cap second, silent truncation never.

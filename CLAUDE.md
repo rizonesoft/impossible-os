@@ -67,54 +67,16 @@ The smoke test complements unit tests: unit tests cover individual behaviors aga
 
 Neither WSL runner replaces native Windows or bare metal for shipping. They filter regressions before the user has to boot the image.
 
-## Test Code -- No Live Boot Infrastructure Calls
+## Test Code Policy
 
-> WSL has no working QEMU (CLAUDE memory `feedback_no_qemu_wsl`). I cannot validate runtime behavior here -- the user has to boot on native Windows or bare metal. Tests that mutate live boot state can freeze the kernel between the time they're committed and the time the user notices. **3 incidents to date** (2026-04-07 was a unit test calling `boot_progress("VERIFY_TEST", 0xCAFE)` from `test_boot_init.c`; froze WHPX boot after `BOOT_STEP clears ready on BOOT_DEFERRED`).
+Tests under `src/kernel/test/test_*.c` MUST NOT call live boot infrastructure (`boot_progress`, `vpd_*`, subsystem `_init`, `panic`, `boot_halt`, etc.) -- pre-commit hook enforces. Full forbidden table, allowed patterns, and `TEST-SIDE-EFFECT-ALLOWED` opt-out: [docs/infrastructure/test-policy.md](docs/infrastructure/test-policy.md). 3 incidents to date; rule was learned the hard way.
 
-**Tests under `src/kernel/test/test_*.c` MUST NOT call** any function in this list -- a pre-commit hook enforces this:
+## Code Style: ASCII Dashes, No Bare Section Refs
 
-| Forbidden in tests | Why |
-|---|---|
-| `boot_progress(`, `boot_post_write16(`, `boot_post_nvram_write16(`, `post_display16(` | Live VPD / framebuffer / I/O port / NVRAM side effects |
-| `vpd_stage_begin(`, `vpd_stage_done(`, `vpd_stage_fail(`, `vpd_init(` | VPD state machine -- mutates row counters and renders to fb |
-| `boot_splash_init(`, `boot_splash_status(`, `boot_splash_finish(`, `boot_splash_start_animation(` | Splash screen state |
-| `boot_halt(`, `panic(`, `KeBugCheckEx(` | Halts the running kernel |
-| `serial_init(`, `pmm_init(`, `vmm_init(`, `heap_init(`, `klog_early_init(`, `klog_disk_enable(` | Re-initializes a live subsystem |
-| `acpi_init(`, `lapic_init(`, `ioapic_init(`, `timer_hal_init(`, `gdt_init(`, `idt_init(` | Brings up real hardware -- crashes if called twice |
+Two enforced policies; full text and rationale at [docs/infrastructure/code-style-policies.md](docs/infrastructure/code-style-policies.md).
 
-**Allowed test patterns:**
-- Pure constant checks (`TEST_ASSERT_EQ(POST16_FOO, 0x1020, ...)`)
-- Save/restore wrappers around `kernel_subsystem_set_ready` / `kernel_subsystem_ready` on a specific slot (`SUBSYS_PMM` is fine -- existing tests use it)
-- Direct calls to pure data helpers (`boot_timing_record_step()` is OK -- it just appends to an in-memory buffer; `boot_progress()` is NOT OK because it ALSO updates VPD/framebuffer)
-- BOOT_REQUIRE / BOOT_STEP via wrapper functions that return the expected `boot_result_t`
-- Read-only oracle queries (`kernel_subsystem_ready()`, `boot_timing_get_steps()`)
-
-**If a Codex test-coverage finding recommends testing a forbidden function**, REJECT it with code evidence and document the gap. Codex doesn't know about WSL constraints. Test the underlying pure helper instead, or accept the gap and add a `**Note:**` in the TODO's Unit Tests section.
-
-**Opt-out:** for legitimate test cases (panic recovery testing in a controlled context, hardware fault simulation), add `/* TEST-SIDE-EFFECT-ALLOWED: <one-line reason> */` in the test function body.
-
-## No Unicode Dashes (en/em): ASCII only
-
-Do not use Unicode **en dash** (U+2013) or **em dash** (U+2014) in source files, comments, strings, docs, or scripts. Windows serial and CMD/PowerShell often garble those bytes as mojibake (for example `ΓÇö`).
-
-**Prose and explanatory comments:** Do not paste two ASCII hyphens (`--`) where an em dash would go; that is not clearer. It looks like minus or `--flag` noise. **Rewrite** the sentence (colon, semicolon, parentheses, comma pair, or two short sentences). Example: prefer `/* Redzone: detect underflow */` over `/* ... -- detect underflow */`.
-
-**Where ASCII `--` stays correct:** technical uses readers already parse as non-prose (markdown `---`, decrement operator in docs, long options in command examples, search patterns, ranges where house style already uses double hyphen).
-
-This applies to `.c`, `.h`, `.md`, `.sh`, `.ps1`, `.bat`, `.conf`, and all other tracked files.
-
-## Comments -- No Bare Section Refs in Code
-
-Do not write bare "section-sign + number" references in source code comments, headers, assembly, tests, or tooling scripts. A comment like `/* capability negotiation */` carries its meaning forever; `/* section 11 capability negotiation */` (with the section-sign glyph and just a number) goes stale the moment the owning TODO renumbers its sections, and even before then it names no TODO and no domain so a reader has no way to re-anchor it.
-
-**Rule:** in any file that is NOT `.md`, NOT inside `todo/`, and NOT inside `.claude/`, the section-sign glyph followed by a digit is only legal when the same line carries an external-spec qualifier that points at a stable published standard: UEFI, Intel, SDM, AMD, RFC `<n>`, ACPI `<n>`, NTFS, FAT32/16, NVMe, PCI, PCIe, PE/COFF, PE32, USB `<n>`, xHCI / EHCI / OHCI / UHCI, VirtIO, SMBIOS, IEEE, NIST, TCG, WHEA, HPET, MP Spec, the literal word "spec " or "specification". Anything else is a bare reference and must be rewritten.
-
-**Fix options** (pick one):
-- Rewrite the comment to name the feature (`/* capability negotiation */`, `/* xHCI BIOS -> OS handover */`).
-- Prefix with an external-spec qualifier (`/* UEFI 2.10 section 4.6 */`).
-- Replace with a markdown-doc link (`/* see docs/boot/boot-info-fields.md#capability-negotiation */`).
-
-**Enforcement:** `scripts/lint.sh` Check 5 + a PreToolUse hook in `.claude/settings.json`. The hook blocks edits at save-time so CI never rejects; the lint check is the full-repo backstop. Current legacy violations are warn-listed; any NEW file or any unlisted file must not introduce bare section refs. Legacy cleanup is tracked as a follow-up item in `todo/00-infrastructure/TODO-01-developer-tooling-stack.md` Tooling Doctor section.
+- **No Unicode dashes (U+2013/U+2014).** Windows serial and CMD garble them as mojibake. Don't paste `--` as typographic substitute either; rewrite (colon, semicolon, parens). PreToolUse hook blocks edits introducing them.
+- **No bare `section`-sign + digit refs in source code comments.** Outside `.md` / `todo/` / `.claude/`, the glyph + digit is only legal when paired with an external-spec qualifier (UEFI, Intel SDM, RFC, ACPI, NVMe, PE/COFF, etc.). `scripts/lint.sh` Check 5 + PreToolUse hook enforce.
 
 ## Freestanding Kernel -- No stdlib
 
@@ -158,24 +120,18 @@ When writing hardware-touching code, ask: "does this work without a hypervisor?"
 
 ## Bare Metal Gotchas
 
-These are hard-won lessons from real hardware debugging. Violating any of these will crash on bare metal while appearing to work fine in VMs.
+Hard-won rules from real hardware debugging. Violating any of these crashes on bare metal while looking fine in VMs. Full incident histories with dates, commit refs, and full rationale: [docs/infrastructure/bare-metal-gotchas.md](docs/infrastructure/bare-metal-gotchas.md). **Read that doc before touching kernel/boot code; the hooks do NOT catch most of these (they are code-pattern issues, not file-edit issues).**
 
-- **No LAPIC TPR writes in ISR path.** The IDT `isr_handler` must track IRQL in software only -- no `lapic_write(LAPIC_REG_TPR, ...)` on interrupt entry/exit. The LAPIC hardware handles vector priority masking via ISR/PPR. TPR writes break emulated LAPIC on WHPX/VBox/TCG.
-- **No SMEP/SMAP until per-process page tables.** The shared identity-mapped address space uses 2 MiB pages; user stacks are `kmalloc`'d from the kernel heap, so user and kernel data share the same 2 MiB pages. Clearing User bit from "kernel" pages also blocks user-mode stack access. `hv_supports_cr4_smep_smap()` returns 0 for `PLATFORM_BARE_METAL`.
-- **No MMIO through WB-cached pages.** HPET, ECAM, NVMe BARs, and future GPU BARs must use `vmm_map_mmio_uc()` with UC (uncacheable) attributes. The bootloader identity-maps everything as WB. LAPIC/IOAPIC work only because MTRRs override those ranges to UC. HPET calibration uses `vmm_map_mmio_uc()` (fixed 2026-03-29).
-- **No CLAC/STAC without SMAP CPUID.** `clac` and `stac` cause #UD on CPUs without SMAP in CPUID -- including QEMU TCG and VirtualBox NEM. The ISR common stub must NOT use `clac`/`stac` until SMAP is actually enabled via per-process page tables. This was the root cause of the 2026-03-28 "hardware interrupts crash on bare metal/TCG" issue.
-- **GS_BASE must be set before any interrupt fires.** `smp_early_bsp_init()` is called as the first thing in `boot_phase0()` -- before serial init. On bare metal, `GS_BASE` defaults to 0; `smp_this_cpu()` reads garbage from the real-mode IVT at physical address 0 instead of NULL, crashing the IRQL tracking in `isr_handler`.
-- **NVMe I/O unreliable on QEMU WHPX.** QEMU's emulated NVMe controller processes doorbell MMIO writes asynchronously through its event loop under WHPX. The vCPU polls the CQ at native speed before the main thread processes the command, causing intermittent admin and I/O timeouts. Not a driver bug -- the NVMe driver has correct barriers (`wmb`/`rmb`/`clflush`). Real NVMe hardware handles PCIe DMA synchronously with cache snooping. NVMe test uses TCG; normal boot (SATA) uses WHPX fine.
-- **No Init Level De-Assert IPI.** The broadcast Init Level De-Assert (ICR: INIT | ALL | LEVEL_DEASSERT) was deprecated since Intel P6 (1995) and is a hardware no-op on all x86-64 CPUs. On WHPX with 2+ vCPUs it hangs because the hypervisor traps the broadcast and stalls waiting for the not-yet-booted AP. Removed entirely 2026-04-01. The per-AP INIT→de-assert→SIPI sequence in `lapic_send_init()` is unrelated and required.
-- **User-mode ELF range (0x800000--0x900000).** Constants defined in `include/kernel/mm/user_range.h` (single source of truth). Three C files include it: `vmm.c`, `pmm.c`, `task.c`. `user/user.ld` must be updated manually if the base changes. Static asserts, runtime PMM bitmap verify, guard page at 0x900000, and unit test enforce sync.
-- **No thread_create for deferred init.** `boot_run_deferred()` MUST run inline in Phase 3, not on a background thread. `compositor_run()` is an infinite event loop on the BSP that starves any kernel thread created just before it. Moving deferred inits to a thread caused VirtIO input and VBox mouse drivers to never initialize, breaking absolute cursor positioning on QEMU/VBox (2026-04-05). Per-thread fault isolation requires SEH (TODO-10).
-- **FXSAVE/XSAVE buffer: set BOTH FCW and MXCSR defaults.** `task_alloc_xsave()` zeroes the buffer, then must set FCW at offset 0 to `0x037F` (all x87 exceptions masked, Intel SDM reset value) and MXCSR at offset 24 to `0x1F80` (all SIMD exceptions masked). Zeroed FCW causes #MF (vector 16) on the first imprecise x87 FP op; zeroed MXCSR causes #XM (vector 19) on the first SSE instruction. On WHPX (has XSAVE), XRSTOR init optimization masked the FCW=0 bug. On TCG (uses FXRSTOR), FCW=0 was loaded directly, freezing boot at the font renderer (2026-04-13). MXCSR=0 caused WHPX BSOD the same day.
-- **CR0.TS must be cleared before ALL FPU instructions.** XSAVE, XRSTOR, FXSAVE, and FXRSTOR all fault with #NM when CR0.TS=1 -- not just restores. Both the preemptive schedule() and cooperative schedule_now() must CLTS before any save or restore. Missing CLTS before XRSTOR caused the original WHPX freeze (2026-04-13).
-- **Never compile SSE2 fallback code with `-mavx2`.** The compiler emits VEX-encoded instructions (`vmovdqu` instead of `movdqu`) for all SSE operations when `-mavx2` is active, even around inline asm and in scalar tails. On CPUs without AVX (TCG `qemu64`, pre-Sandy Bridge bare metal), VEX instructions cause #UD. Split SIMD files: AVX2 functions in a `-mavx2` translation unit, SSE2 fallbacks and dispatch in a `-msse2` translation unit. This crashed TCG boot when `memops_sse.c` was compiled as part of `memops.c` with `-mavx2` (2026-04-13).
-- **`msr_try_read()` is a no-crash guarantee, not an existence check.** WHPX silently absorbs reads of unknown MSRs (returns 0, no #GP), so `msr_try_read()` returning 0 does NOT prove the MSR exists. Always gate on `cpu_has()` or CPUID first; use `msr_try_read()` only as a secondary safety net. Pattern: `if (!cpu_has(FEATURE)) return; if (msr_try_read(MSR, &val) != 0) { fallback; }`. Discovered 2026-04-13 when `msr_try_read(0xFFFFFFFF)` returned success on WHPX.
-- **`msr_try_read()` requires the kernel IDT to be loaded.** The probe installs a custom #GP handler in a C-level `handlers[]` table consulted only by our ISR stubs, which only dispatch after `idt_init()` has `lidt`-ed the kernel IDT. Before that, IDTR still points at the UEFI IDT, and any real #GP (KVM trapping IA32_MPERF, real hardware trapping an unavailable MSR) is caught by UEFI's handler and halts the system. `msr_try_read()` now gates on `idt_is_loaded()` and returns `-1` pre-IDT; callers must have a fallback path. `simd_enable_avx512()` was moved from boot_phase0 to boot_phase1 (after `idt_init()`) so its throttle guard keeps working on bare metal. Discovered 2026-04-17 when the KVM smoke test crashed at MPERF probe in phase 0. Under virtualization CPUID lies (KVM with `-cpu host` passes AVX512F through but traps MPERF); always pair CPUID gate with `msr_try_read()` fallback.
-- **CR3 reloads on WHPX can reset per-vCPU MSRs.** `write_cr3(read_cr3())` (used by `vmm_flush_tlb_all`) triggers a VMEXIT on WHPX that can reset the PAT MSR (and potentially other per-vCPU MSRs) to Intel defaults. Any MSR that must persist across TLB flushes must be re-programmed after CR3 reloads. Discovered 2026-04-13: `cpu_configure_pat()` wrote WC to PAT entry 1, then `vmm_promote_to_1g()` flushed TLB via CR3 reload, and PAT readback showed WT (Intel default). Fix: re-program PAT after page table modifications that flush TLB.
-- **Disk-sourced config files get dynamic buffers + hard-fail overflow.** `resources/boot/boot.conf` was originally read into a 4096-byte stack buffer with a silent `[WARN] truncating` on overflow. On 2026-04-21 doc-comment growth pushed the file to 4.5 KiB; the truncation dropped the patch-appended `test=1` line at EOF and every `test=1` boot ran zero tests without any visible error. Fixed by switching `bootx64.c boot_conf_load()` to `gBS->AllocatePool(FileSize + 1)` via a `GetInfo(&EFI_FILE_INFO_ID, ...)` size probe, with a 1 MiB sanity cap that `boot_fatal()`s on hit (never `[WARN]` + continue). Codified in `boot-code-quality` Gate 14. Any future parser reading disk/user input should follow the same pattern: dynamic-size first, sanity cap second, silent truncation never.
+Short-form list (group / rule):
+
+- **ISR / IDT:** no LAPIC TPR writes in ISR path; no CLAC/STAC without SMAP CPUID; GS_BASE before any interrupt fires.
+- **MMU:** no SMEP/SMAP until per-process page tables; no MMIO through WB pages (use `vmm_map_mmio_uc()`); CR3 reloads on WHPX can reset per-vCPU MSRs (re-program PAT after TLB flush); user-mode ELF range 0x800000-0x900000 is single source of truth.
+- **SMP startup:** no Init Level De-Assert IPI (deprecated since P6, hangs WHPX); per-AP INIT->de-assert->SIPI is fine and required.
+- **Devices:** NVMe I/O unreliable on QEMU WHPX (test on TCG); SATA on WHPX fine.
+- **FPU/SIMD:** FXSAVE/XSAVE buffer needs FCW=0x037F + MXCSR=0x1F80; CR0.TS must be cleared before ALL FPU instructions; never compile SSE2 fallback code with `-mavx2` (split into separate translation units).
+- **MSR probe:** `msr_try_read()` is no-crash guarantee, NOT existence check (gate on CPUID first); requires kernel IDT loaded (no MSR probes in boot_phase0).
+- **Init ordering:** no `thread_create` for deferred init (compositor starves threads); per-thread fault isolation needs SEH (TODO-10).
+- **Disk-sourced config:** dynamic buffers + hard-fail overflow, never silent truncate (boot.conf 2026-04-21 incident).
 
 ## Safety Gates
 
@@ -234,19 +190,9 @@ External review does not replace self-review. The agent must always perform its 
 
 ### Codex Invocation Policy
 
-When Claude invokes Codex from any path -- the in-repo `codex-*` skills under [`.claude/skills/`](.claude/skills/), the Codex plugin slash commands, raw `node ...codex-companion.mjs ...` calls, or `codex exec` / `codex review` / `codex task` -- Claude does NOT pass any flag that overrides the centrally-configured Codex model or reasoning effort. The user controls those values centrally via `~/.codex/config.toml` (currently `model = "gpt-5.5"`, `model_reasoning_effort = "medium"`); Claude must not second-guess per-dispatch.
+When Claude invokes Codex from any path (the `codex-*` skills, the Codex plugin slash commands, raw `node ...codex-companion.mjs ...`, or `codex exec` / `codex review` / `codex task`), Claude does NOT pass `--model` / `--effort` / `-m` / `-e` / `-c model=...` / `-c model_reasoning_effort=...` / `-c model_provider=...`. The user controls those centrally via `~/.codex/config.toml` (currently `model = "gpt-5.5"`, `model_reasoning_effort = "medium"`).
 
-Enforcement: a PreToolUse hook ([`.claude/hooks/codex_model_flag_block.py`](.claude/hooks/codex_model_flag_block.py)) parses every `Bash` tool call's command via `shlex`, segments by Bash control operators (`&&` / `||` / `;` / `|` / `&`), trims heredoc / process-substitution body tokens from each segment, then detects Codex invocations (any token containing `codex-companion.mjs`, OR a `codex` token -- bare or path-prefixed -- followed by a known subcommand: `exec` / `review` / `task` / `mcp` / `app-server` / `rescue` / `exec-server` / `resume` / `fork` / `apply` / aliases `e` / `a`), and exits 2 (block) when ANY of the following appears in the Codex segment:
-
-- Long flags: `--model`, `--effort` (bare or `--flag=value` attached form).
-- Short flags: `-m` (Codex's documented short for `--model`), `-e` (forward-compat for a future short of `--effort`).
-- Config-key overrides via `-c` / `--config <key=value>`: `model`, `model_reasoning_effort`, `model_provider` (the keys that materially redirect Codex to a different model selection per dispatch). `-c sandbox_mode=...` and other non-forbidden config keys remain legitimate.
-
-Detection handles common bypass shapes uniformly: env-assignment prefixes (`MODEL=x codex exec ...`), wrapper commands (`sudo`, `timeout`, `nice`, `env`, `nohup`, etc.), `&&` / `||` / `;` / `|` chains, global Codex options BEFORE the subcommand (`codex --json exec ...`), and heredoc / process-substitution INPUT to a Codex command (the heredoc body is dropped but the command tokens before it are still scanned). Prompt text that happens to contain a flag literal (e.g. `codex exec "review whether --model gpt-5.5 is right"`) is NOT blocked because shlex tokenization keeps that text inside its containing quoted-arg token.
-
-Opt-out for legitimate one-off overrides: `CODEX_FLAG_OVERRIDE=1` env var on the same call -- the agent must set it explicitly per call, the user sees it in the diff. Test coverage: 29-case `codex_flag_block` sub-test in [`scripts/test-tooling.sh`](scripts/test-tooling.sh) covering every block path + every allow path + both bypass-regression cases identified by Codex post-ship adversarial review (env-prefix, wrapper, chain, redirect, heredoc-on-Codex).
-
-Note on absolute paths: in-repo skills invoke Codex via the absolute path `node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs"`. The Codex plugin's own slash-command files use `${CLAUDE_PLUGIN_ROOT}` substitution, but that variable is **not exported** in the harness env that runs Claude skill / hook / Bash tool calls (verified via `env | grep CLAUDE` -- only `CLAUDECODE`, `CLAUDE_CODE_SSE_PORT`, `CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_CODE_EXECPATH` are present). The absolute path is the canonical form for skill-driven Codex invocation today; consistent across 15 skill files. Re-evaluate if Claude Code starts exporting `CLAUDE_PLUGIN_ROOT` to skill / hook execution contexts.
+Enforcement: PreToolUse hook [`.claude/hooks/codex_model_flag_block.py`](.claude/hooks/codex_model_flag_block.py) blocks via `shlex` tokenization + segment-by-control-operator + bypass-shape walk (env-prefix, wrappers, `&&` chains, global options before subcommand, heredoc-on-Codex). 29-case sub-test in [`scripts/test-tooling.sh`](scripts/test-tooling.sh). Full detection mechanics + bypass shapes + absolute-path note: [docs/infrastructure/codex-invocation-policy.md](docs/infrastructure/codex-invocation-policy.md). Opt-out: `CODEX_FLAG_OVERRIDE=1` per call.
 
 ## Skills
 
@@ -256,28 +202,28 @@ Claude Code skills live in `.claude/skills/`. They auto-load when Claude judges 
 |---|---|
 | `/implement-todo-section` | Implement one TODO section end-to-end |
 | `/implement-ssdt-range` | Implement + wire a range of SSDT entries, mark Done [x] |
-| `/complete-todo-file` | Finalize a TODO whose `## N.` sections are all shipped, or sweep an active TODO for loose ends: stale `Accepted:`/`Deferred:` XREFs annotated with RESOLVED-by-§N, drifted test counts refreshed against current runs, unfilled `<§N commit>`/`<TBD>` placeholders resolved, `[/]` items narrowed to actually-pending platforms (TCG runnable via `FORCE_TCG=1`), reversible `[ ]` manual items demonstrated and closed. Then runs `/implement-unit-tests`, executes Verification items, flags remaining manual-only, commits |
+| `/complete-todo-file` | Finalize / loose-end sweep an active TODO; runs unit tests + verification + commits |
 | `/create-todo` | Create a new TODO file |
 | `/validate-todo-file` | Validate a TODO for structural gaps |
-| `/verify-todo-section` | Audit-mode wrapper over `/review-todo-section` (downgrade-only; never promotes to `[x]`) |
-| `/quality-review-section` | Deep quality review -- standards, optimization, Win11/Linux parity (is it done RIGHT?) |
-| `/review-todo-section` | Post-implementation review -- evidence mapping + MANDATORY quality Codex (consistency + perf) |
-| `/implement-unit-tests` | Implement a TODO's Unit Tests section end-to-end |
-| `/audit-ssdt` | Audit SSDT registration vs TODO-05/TODO-12 master tables; insert missing prerequisite items |
-| `/diagnose-serial-log` | Full serial-log audit: crashes, bugs, races, leaks, perf, POLICY violations (POLICIES.md), ACCURACY drift, baseline REGRESSION, SCOPE_CREEP; every fix gets Codex adversarial review |
-| `/debug-session` | Structured debug session with rubber-duck validation -- hypothesis, trace, rubber-duck review, fix, verify |
-| `/todo-pipeline` | 3-stage TODO prep: validate -> gap analysis -> validate (before implementation) |
-| `/gap-analysis-todo` | Deep gap analysis of a TODO vs Win11/Linux parity + cross-TODO overlap + code-truth audit |
-| `/codex-design-review` | Codex pre-implementation design review -- catches plan flaws before coding |
+| `/verify-todo-section` | Audit-mode wrapper over `/review-todo-section` (downgrade-only) |
+| `/quality-review-section` | Deep quality review (Win11/Linux parity, optimization) |
+| `/review-todo-section` | Post-implementation review with mandatory adversarial + consistency + perf Codex |
+| `/implement-unit-tests` | Implement a TODO's Unit Tests section |
+| `/audit-ssdt` | Audit SSDT registration vs master tables |
+| `/diagnose-serial-log` | Full serial-log audit (crashes / races / leaks / perf / drift) |
+| `/debug-session` | Structured debug session with rubber-duck validation |
+| `/todo-pipeline` | 3-stage TODO prep (validate -> gap analysis -> validate) |
+| `/gap-analysis-todo` | Gap analysis vs Win11/Linux parity + cross-TODO overlap |
+| `/codex-design-review` | Codex pre-implementation design review |
 | `/codex-review-todo` | Codex adversarial review of all implemented sections in a TODO |
-| `/codex-adversarial-review-section` | Codex adversarial review loop for a single section (up to 3 rounds) |
-| `/codex-fix-review` | Fix Codex findings, re-review until resolved (max 3 iterations) |
-| `/codex-test-coverage` | Codex test coverage gap analysis -- finds untested paths and missing assertions |
-| `/codex-impact-analysis` | Codex dependency impact analysis -- what breaks if you change X? |
-| `/codex-consistency-audit` | Codex cross-file consistency audit -- struct offsets, constants, API contracts |
-| `/codex-perf-review` | Codex performance hot-path review -- ISR paths, lock times, O(n^2), allocations |
-| `/boot-code-quality` | Pre-flight checklist for UEFI boot code -- EBS boundary, table safety, fallbacks |
-| `/kernel-code-quality` | Auto-load checklist for kernel C -- SMP safety, memory rules, bare-metal, POST16 boot-path-only |
+| `/codex-adversarial-review-section` | Codex adversarial review for a single section (up to 3 rounds) |
+| `/codex-fix-review` | Fix Codex findings, re-review until resolved |
+| `/codex-test-coverage` | Codex test coverage gap analysis |
+| `/codex-impact-analysis` | Codex dependency impact analysis |
+| `/codex-consistency-audit` | Codex cross-file consistency audit |
+| `/codex-perf-review` | Codex performance hot-path review |
+| `/boot-code-quality` | Pre-flight checklist for UEFI boot code |
+| `/kernel-code-quality` | Auto-load checklist for kernel C (SMP, memory, bare-metal) |
 | `/desktop-code-quality` | Pre-flight checklist for desktop compositor code (placeholder) |
 | `/shell-code-quality` | Pre-flight checklist for command shell code (placeholder) |
 | `/userland-code-quality` | Pre-flight checklist for user-mode applications (placeholder) |
@@ -290,18 +236,17 @@ These are non-negotiable. Auto-loading by description is unreliable -- the rules
 
 | Trigger | Skill | Why |
 |---|---|---|
-| Edit/Write on `src/boot/` (`.c`/`.h`/`.asm`/`.S`) | `boot-code-quality` | UEFI error handling, EBS boundary, table safety, framebuffer guards, fallback chains. |
-| Edit/Write on `src/kernel/`, `include/kernel/` (`.c`/`.h`/`.asm`/`.S`) | `kernel-code-quality` | SMP safety, memory rules, bare-metal correctness, POST16 boot-path only. |
-| Edit/Write on `src/desktop/` (`.c`/`.h`) | `desktop-code-quality` | WC mapping, compositor loop, pixel format, back-buffer pattern. |
-| Edit/Write on `src/shell/` (`.c`/`.h`) | `shell-code-quality` | Win32 console API, Windows path conventions. |
-| Edit/Write on `user/`, `src/apps/` (`.c`/`.h`) | `userland-code-quality` | User libc, syscall interface, no kernel headers. |
-| Codex `adversarial-review` invocation completed | `superpowers:receiving-code-review` | Codex is a reviewer, not an authority. Verify each finding against cited code, classify Fix/Reject/Accept with evidence. No blind implementation, no performative agreement. |
-| Implementing a TODO section | `implement-todo-section` | Steps 13-18 (Codex review, fix loop, self-review, build, validate, tie up loose ends) are MANDATORY before commit. No exceptions for "simple" sections. |
-| Commit + push of a TODO section-ship (`git commit` flips `\| \[x\] \|` in Implementation Order) | `review-todo-section` | The NEXT tool call after `git push` MUST be `Skill(review-todo-section, "<path> §N <title>")`. A PreToolUse hook in `.claude/settings.json` checks `git log HEAD` for a `[x]` flip without a matching `**Verified:**` stamp and BLOCKS every Edit/Write/non-review-Skill/non-script-Bash (Read/Grep/Glob stay free so the review can gather info). The gate is the hook, not the skill prose -- the skill's step 20 describes the rule; the hook enforces it. Opt-out: `SKIP_REVIEW_HOOK=1` env var for legitimate false positives (revert commits, stamp-only edits). Pattern I kept breaking on 2026-04-24: "the adversarial Codex already ran during implementation, review is paperwork" -- that substitution IS the failure mode. Step 5 (adversarial) and step 8 (quality) in `review-todo-section` are separate dispatches with separate scopes. |
-| Test file in `src/kernel/test/` | `implement-unit-tests` | Wire to `test_runner.c`, correct `TEST_CAT_*`, concrete `TEST_ASSERT_*` with expected values. |
-| Codex skill returns findings | `superpowers:receiving-code-review` | Same rule -- every codex-* skill is upstream of receiving-code-review. |
-| Test asserts a deferred-feature sentinel (`STATUS_NOT_IMPLEMENTED`, `STATUS_NOT_SUPPORTED`, `E_NOTIMPL`, `ENOSYS`) as the EXPECTED result | `implement-unit-tests` "When to use TEST_PENDING vs TEST_ASSERT" | Use `TEST_PENDING(cond, msg)` instead of `TEST_ASSERT`. The deferred-feature outcome counts in the `pending` bucket and renders as `[STUB]` in the boot log; the end-of-run summary surfaces total reserved-but-unimplemented features at a glance. NEVER pair a `TEST_PENDING` test with a runtime `klog(LOG_WARN, ...)` in the stub body -- that duplicates the signal. Hook fires PostToolUse on test_*.c edits to remind. |
-| Writing "Accepted: ... XREF: TODO-NN §N" in a TODO stamp | `review-todo-section` step 15 | Every Accepted/Deferred XREF must name a concrete `[ ]` checklist item in the target section (use `(item: "NAME" at line N)` or name a specific helper/retrofit). Bare `§N` references and paraphrase-only parentheticals (e.g. `(SeAccessCheck)`) are rejected. Hooks enforce: PostToolUse reminder on TODO edits, `git commit` BLOCKs (exit 2) if staged diff contains bare XREFs. If no concrete item exists in the target, CREATE one now before stamping. |
+| Edit/Write on `src/boot/` | `boot-code-quality` | UEFI error handling, EBS boundary, table safety, fallback chains. |
+| Edit/Write on `src/kernel/` or `include/kernel/` | `kernel-code-quality` | SMP, memory rules, bare-metal, POST16 boot-path only. |
+| Edit/Write on `src/desktop/` | `desktop-code-quality` | WC framebuffer mapping, compositor loop, pixel format. |
+| Edit/Write on `src/shell/` | `shell-code-quality` | Win32 console API, Windows paths. |
+| Edit/Write on `user/` or `src/apps/` | `userland-code-quality` | user libc, syscall interface, no kernel headers. |
+| Codex skill or `adversarial-review` returns findings | `superpowers:receiving-code-review` | Reviewer not authority: verify each finding at file:line, classify Fix/Reject/Accept with evidence; no blind-implement, no performative agreement. |
+| Implementing a TODO section | `implement-todo-section` | Steps 13-18 (Codex review, fix loop, self-review, build, validate, tie up loose ends) are mandatory before commit. |
+| Commit + push of a TODO section-ship (`git commit` flips `\| \[x\] \|` in IO table) | `review-todo-section` | Next tool call after `git push` MUST be `Skill(review-todo-section, ...)`. PreToolUse hook BLOCKs Edit/Write/non-review-Skill/non-script-Bash if HEAD has `[x]` flip without `**Verified:**` stamp. Step 5 (adversarial) and step 8 (quality consistency + perf) are separate dispatches. Opt-out for revert / stamp-only: `SKIP_REVIEW_HOOK=1`. |
+| Test file in `src/kernel/test/` | `implement-unit-tests` | Wire to `test_runner.c`, correct `TEST_CAT_*`, concrete assertions. |
+| Test asserts `STATUS_NOT_IMPLEMENTED` / `E_NOTIMPL` / `ENOSYS` as expected | `implement-unit-tests` "TEST_PENDING vs TEST_ASSERT" | Use `TEST_PENDING(cond, msg)`. Counts in `pending` bucket, renders `[STUB]` in boot log. Never pair with runtime `klog(LOG_WARN, ...)` (duplicate signal). |
+| Writing `Accepted:` / `Deferred:` XREF in a TODO stamp | `review-todo-section` step 15 | Every XREF must name a concrete `[ ]` item in the target (`(item: "NAME" at line N)` or named helper). Bare `section`-refs and paraphrase parentheticals rejected. PostToolUse reminder + git-commit BLOCK enforce. |
 
 If a skill is listed above, "I forgot" is not a valid excuse. The hooks will remind you; act on the reminder.
 
