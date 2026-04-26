@@ -1154,8 +1154,162 @@ open(p, "w").write(json.dumps(s))
         t_fail "receiving_review_gate: no WARN on rapid-fire trigger (H1 mitigation, got: $WARN_OUT)"
     fi
 
-    # Cleanup
+    # Sub-test 18 (H2 review-adv): env FOO=bar codex review shape --
+    # env wrapper popped, then env's KEY=value assignments stripped,
+    # then the codex subcommand identified.
     rm -f "$STATE_FILE"
+    printf "%s" '''{"tool_name":"Bash","tool_input":{"command":"env FOO=bar codex review prompt"}}''' \
+        | python3 "$POST_HOOK" >/dev/null 2>&1
+    GOT=$(_state_received)
+    if [ "$GOT" = "False" ]; then
+        t_pass "receiving_review_gate: env FOO=bar codex review IS a trigger (H2)"
+    else
+        t_fail "receiving_review_gate: env FOO=bar codex review missed (H2, got $GOT)"
+    fi
+
+    # Sub-test 19 (H2 review-adv): timeout -k 10 5 codex review shape
+    # -- timeout's value-flag -k strips its value 10, then DURATION 5
+    # strips, then codex subcommand identified.
+    rm -f "$STATE_FILE"
+    printf "%s" '''{"tool_name":"Bash","tool_input":{"command":"timeout -k 10 5 codex review prompt"}}''' \
+        | python3 "$POST_HOOK" >/dev/null 2>&1
+    GOT=$(_state_received)
+    if [ "$GOT" = "False" ]; then
+        t_pass "receiving_review_gate: timeout -k 10 5 codex review IS a trigger (H2)"
+    else
+        t_fail "receiving_review_gate: timeout -k 10 5 codex review missed (H2, got $GOT)"
+    fi
+
+    # Sub-test 20 (H2 review-adv): codex --json review shape -- Codex
+    # global option --json walked past to find the real subcommand.
+    # Same bypass shape as the codex --json exec --model X case
+    # caught by the model-flag block hook.
+    rm -f "$STATE_FILE"
+    printf "%s" '''{"tool_name":"Bash","tool_input":{"command":"codex --json review prompt"}}''' \
+        | python3 "$POST_HOOK" >/dev/null 2>&1
+    GOT=$(_state_received)
+    if [ "$GOT" = "False" ]; then
+        t_pass "receiving_review_gate: codex --json review IS a trigger (H2)"
+    else
+        t_fail "receiving_review_gate: codex --json review missed (H2, got $GOT)"
+    fi
+
+    # Sub-test 21 (H4 review-adv): chained command `true && codex
+    # review prompt` IS a trigger. Section-2 hook detected this;
+    # section-3 originally missed it because tokens[0] was `true`.
+    rm -f "$STATE_FILE"
+    printf "%s" '''{"tool_name":"Bash","tool_input":{"command":"true && codex review prompt"}}''' \
+        | python3 "$POST_HOOK" >/dev/null 2>&1
+    GOT=$(_state_received)
+    if [ "$GOT" = "False" ]; then
+        t_pass "receiving_review_gate: true && codex review IS a trigger (H4)"
+    else
+        t_fail "receiving_review_gate: true && codex review missed (H4, got $GOT)"
+    fi
+
+    # Sub-test 22 (H4 review-adv): taskset wrapper -- `taskset -c 0
+    # codex review prompt`. taskset's -c flag takes a value (cpu
+    # list); after -c 0 the codex subcommand is the head.
+    rm -f "$STATE_FILE"
+    printf "%s" '''{"tool_name":"Bash","tool_input":{"command":"taskset -c 0 codex review prompt"}}''' \
+        | python3 "$POST_HOOK" >/dev/null 2>&1
+    GOT=$(_state_received)
+    if [ "$GOT" = "False" ]; then
+        t_pass "receiving_review_gate: taskset -c 0 codex review IS a trigger (H4)"
+    else
+        t_fail "receiving_review_gate: taskset -c 0 codex review missed (H4, got $GOT)"
+    fi
+
+    # Sub-test 23 (H4 review-adv): chrt wrapper -- `chrt -f 10 codex
+    # review prompt`. chrt's -f flag does not take a value, but 10
+    # is the priority positional. Wrapper-specific handling.
+    rm -f "$STATE_FILE"
+    printf "%s" '''{"tool_name":"Bash","tool_input":{"command":"chrt -f 10 codex review prompt"}}''' \
+        | python3 "$POST_HOOK" >/dev/null 2>&1
+    GOT=$(_state_received)
+    if [ "$GOT" = "False" ]; then
+        t_pass "receiving_review_gate: chrt -f 10 codex review IS a trigger (H4)"
+    else
+        t_fail "receiving_review_gate: chrt -f 10 codex review missed (H4, got $GOT)"
+    fi
+
+    # Sub-test 24 (H7 re-adv): leading command substitution must NOT
+    # cause later codex segment to be lost. Pre-fix: trim_heredoc
+    # ran before segmentation, so $(date) cut tokens at the first
+    # token starting with $(, dropping the codex review segment.
+    rm -f "$STATE_FILE"
+    printf "%s" '''{"tool_name":"Bash","tool_input":{"command":"echo $(date) && codex review prompt"}}''' \
+        | python3 "$POST_HOOK" >/dev/null 2>&1
+    GOT=$(_state_received)
+    if [ "$GOT" = "False" ]; then
+        t_pass "receiving_review_gate: echo \$(date) && codex review IS a trigger (H7)"
+    else
+        t_fail "receiving_review_gate: echo \$(date) && codex review missed (H7, got $GOT)"
+    fi
+
+    # Sub-test 25 (H7 re-adv): backtick command substitution
+    # variant.
+    rm -f "$STATE_FILE"
+    printf "%s" '''{"tool_name":"Bash","tool_input":{"command":"echo \\`date\\` && codex review prompt"}}''' \
+        | python3 "$POST_HOOK" >/dev/null 2>&1
+    GOT=$(_state_received)
+    if [ "$GOT" = "False" ]; then
+        t_pass "receiving_review_gate: echo backtick && codex review IS a trigger (H7)"
+    else
+        t_fail "receiving_review_gate: echo backtick && codex review missed (H7, got $GOT)"
+    fi
+
+    # Sub-test 26 (H8 re-adv): codex global value-flag --enable
+    # consumes its value before the real subcommand. Pre-fix:
+    # `feature` was treated as the subcommand.
+    rm -f "$STATE_FILE"
+    printf "%s" '''{"tool_name":"Bash","tool_input":{"command":"codex --enable feature review prompt"}}''' \
+        | python3 "$POST_HOOK" >/dev/null 2>&1
+    GOT=$(_state_received)
+    if [ "$GOT" = "False" ]; then
+        t_pass "receiving_review_gate: codex --enable feature review IS a trigger (H8)"
+    else
+        t_fail "receiving_review_gate: codex --enable feature review missed (H8, got $GOT)"
+    fi
+
+    # Sub-test 27 (H8 re-adv): codex --remote VALUE review prompt.
+    rm -f "$STATE_FILE"
+    printf "%s" '''{"tool_name":"Bash","tool_input":{"command":"codex --remote http://x review prompt"}}''' \
+        | python3 "$POST_HOOK" >/dev/null 2>&1
+    GOT=$(_state_received)
+    if [ "$GOT" = "False" ]; then
+        t_pass "receiving_review_gate: codex --remote VALUE review IS a trigger (H8)"
+    else
+        t_fail "receiving_review_gate: codex --remote VALUE review missed (H8, got $GOT)"
+    fi
+
+    # Sub-test 28 (H3 re-adv): _write_atomic uses unique
+    # per-process tmp paths so parallel hook fires do not race on
+    # the same .tmp file. Verify by inspecting the temp-file glob:
+    # writing the state from a Python in-process call should leave
+    # NO .tmp residue in the state dir.
+    STATE_DIR="$REPO_ROOT/.claude/state"
+    rm -f "$STATE_FILE" "$STATE_DIR"/*.tmp 2>/dev/null
+    python3 -c "
+import sys
+sys.path.insert(0, '$REPO_ROOT/.claude/hooks')
+import importlib.util
+spec = importlib.util.spec_from_file_location('crc', '$POST_HOOK')
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+from pathlib import Path
+m._write_atomic(Path('$STATE_FILE'), {'test': 1, 'received': False, 'timestamp_ns': 1})
+m._write_atomic(Path('$STATE_FILE'), {'test': 2, 'received': False, 'timestamp_ns': 2})
+" 2>/dev/null
+    TMP_COUNT=$(ls "$STATE_DIR"/*.tmp 2>/dev/null | wc -l)
+    if [ "$TMP_COUNT" = "0" ] && [ -f "$STATE_FILE" ]; then
+        t_pass "receiving_review_gate: unique tmp paths leave no residue (H3)"
+    else
+        t_fail "receiving_review_gate: tmp residue ($TMP_COUNT files) or state missing (H3)"
+    fi
+
+    # Cleanup
+    rm -f "$STATE_FILE" "$STATE_DIR"/*.tmp 2>/dev/null
 fi
 
 

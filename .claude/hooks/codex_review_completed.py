@@ -115,96 +115,213 @@ def _tree_hash(root: Path) -> str:
     return hashlib.sha256(out.encode("utf-8")).hexdigest()
 
 
+# Bash control operators that introduce a NEW command sequence.
+# `true && codex review prompt` was a bypass: the original code
+# treated the whole command as one argv with `true` at position 0.
+# Mirrors the section-2 codex_model_flag_block.py pattern.
+_COMMAND_SEPARATORS = ("&&", "||", ";", "|", "&")
+
 # Tokens that are env-prefix assignments (FOO=bar) or wrapper commands
-# we walk past when looking for the "real" Codex invocation. Mirrors the
-# §2 codex_model_flag_block.py pattern -- a Bash command like
-# `RECEIVING_REVIEW_OVERRIDE=1 sudo -u dev nice -n 5 codex review ...`
-# is a Codex trigger, but `rg codex-companion.mjs .` is NOT.
+# we walk past when looking for the "real" Codex invocation. Includes
+# taskset / chrt / setsid / setpriv / cgexec / flock for parity with
+# the section-2 hook (review-pipeline adversarial H4 caught divergence).
 _CODEX_WRAPPER_TOKENS = frozenset({
     "sudo", "doas", "env", "nice", "nohup", "timeout", "ionice",
     "stdbuf", "unbuffer", "chronic", "exec", "command",
+    "taskset", "chrt", "setsid", "setpriv", "cgexec", "flock",
 })
 
 
-def _segment_command_tokens(cmd: str) -> list[str]:
-    """Tokenize the Bash command via shlex (POSIX), then strip leading
-    env-assignment tokens and known wrapper commands. Returns the
-    remaining tokens starting with what shell would actually exec.
-    Empty list on shlex failure -- caller treats as not-a-trigger."""
-    try:
-        toks = shlex.split(cmd, posix=True, comments=False)
-    except ValueError:
-        return []
-    out = list(toks)
-    # Strip leading FOO=bar env assignments.
+def _trim_heredoc_body(tokens: list[str]) -> list[str]:
+    """Return tokens up to (but not including) the first construct
+    that introduces SHELL SUB-CONTENT (heredoc body, process
+    substitution, command substitution body). Tokens after the
+    opener are NOT part of the real command line. Same shape as
+    section-2 codex_model_flag_block.py _trim_heredoc_body.
+    """
+    for i, tok in enumerate(tokens):
+        if tok in ("<<", "<<-") or tok.startswith("<<"):
+            return tokens[:i]
+        if tok.startswith("<(") or tok.startswith(">("):
+            return tokens[:i]
+        if tok.startswith("$(") or tok.startswith("${"):
+            return tokens[:i]
+        if tok.startswith("`"):
+            return tokens[:i]
+    return tokens
+
+
+def _segment_by_separators(tokens: list[str]) -> list[list[str]]:
+    """Split tokens by Bash control operators into a list of simple
+    commands. `true && codex review prompt` -> [['true'], ['codex',
+    'review', 'prompt']]. Each segment is its own argv to scan.
+    """
+    segs: list[list[str]] = []
+    cur: list[str] = []
+    for tok in tokens:
+        if tok in _COMMAND_SEPARATORS:
+            if cur:
+                segs.append(cur)
+            cur = []
+        else:
+            cur.append(tok)
+    if cur:
+        segs.append(cur)
+    return segs
+
+
+def _segment_is_codex_invocation(seg_tokens: list[str]) -> bool:
+    """Test whether a SINGLE command segment (already separated from
+    operator chains and stripped of heredoc body) is a Codex review
+    invocation. Strips env-prefix + wrapper-prefix (with proper
+    flag/value handling), then inspects argv[0]/argv[1].
+
+    Forms accepted:
+      - argv[0] basename contains `codex-companion.mjs`
+      - argv[0] == `node` AND argv[1] contains `codex-companion.mjs`
+      - argv[0] basename is `codex` AND, after walking past Codex
+        global options, the real subcommand is `review` or `e`
+    """
+    out = list(seg_tokens)
+    # Strip leading env-assignments.
     while out and "=" in out[0] and not out[0].startswith("="):
         head = out[0].split("=", 1)[0]
-        if head and all(c.isalnum() or c == "_" for c in head):
+        if head and (head[0].isalpha() or head[0] == "_") and all(
+            c.isalnum() or c == "_" for c in head
+        ):
             out.pop(0)
         else:
             break
-    # Strip known wrapper commands and their flag args (best-effort:
-    # accept tokens that look like flags right after the wrapper).
+    if not out:
+        return False
+    # Per-wrapper value-flag table. Used to walk past `--flag value`
+    # cleanly; `--flag=value` attached form is handled by detecting
+    # `=` in the flag token.
+    _wrapper_value_flags = {
+        "sudo": frozenset({"-u", "-g", "-n", "-p", "-r", "-h", "-D", "-C"}),
+        "doas": frozenset({"-u", "-C"}),
+        "timeout": frozenset({"-k", "--kill-after", "-s", "--signal"}),
+        "nice": frozenset({"-n", "--adjustment"}),
+        "ionice": frozenset({"-c", "--class", "-n", "--classdata", "-p", "--pid", "-P", "-u", "-t"}),
+        "env": frozenset({"-u", "--unset", "-S", "--split-string", "-C", "--chdir"}),
+        "stdbuf": frozenset({"-i", "-o", "-e"}),
+        "command": frozenset({"-p"}),
+        "taskset": frozenset({"-c", "--cpu-list", "-p", "--pid"}),
+        "chrt": frozenset({"-p", "--pid"}),
+        "setpriv": frozenset({"--reuid", "--regid", "--clear-groups", "--groups", "--inh-caps", "--ambient-caps", "--bounding-set"}),
+        "cgexec": frozenset({"-g", "--sticky"}),
+        "flock": frozenset({"-w", "--timeout", "-E", "--conflict-exit-code", "-c", "--command"}),
+    }
+
+    def _is_duration(tok: str) -> bool:
+        if not tok:
+            return False
+        if tok[0].isdigit():
+            if tok[-1] in "smhd" and len(tok) > 1:
+                return tok[:-1].replace(".", "", 1).isdigit()
+            return tok.replace(".", "", 1).isdigit()
+        return False
+
+    # Walk wrappers. `taskset -c 0 codex review prompt` works:
+    # taskset popped, `-c 0` consumed (flag with value), then codex
+    # is the head.
     while out and out[0] in _CODEX_WRAPPER_TOKENS:
         wrapper = out.pop(0)
-        # Drop wrapper-flag tokens until we hit a non-flag word.
+        value_flags = _wrapper_value_flags.get(wrapper, frozenset())
         while out and out[0].startswith("-"):
-            # `sudo -u dev` style: drop the value too.
-            flag = out[0]
+            flag = out.pop(0)
+            if "=" in flag:
+                continue
+            if flag in value_flags and out:
+                out.pop(0)
+        # Wrapper-specific positional args before the real command.
+        if wrapper == "timeout" and out and _is_duration(out[0]):
             out.pop(0)
-            if flag in ("-u", "-g", "-n", "-p", "-r") and out:
-                out.pop(0)
-        # Handle wrappers with a positional non-flag arg before the
-        # real command: `timeout 600 cmd ...`, `nice -n 5 cmd`,
-        # `ionice -c 2 cmd`. After the flag loop, if the next token
-        # looks like a duration / numeric argument, pop it.
-        if wrapper == "timeout" and out:
-            # `timeout DURATION CMD` -- DURATION is digits with
-            # optional s/m/h/d suffix (e.g. "600", "5m", "1h").
-            tok = out[0]
-            if tok and (tok[0].isdigit() or (len(tok) > 1 and tok[-1] in "smhd" and tok[:-1].replace(".","",1).isdigit())):
-                out.pop(0)
-    return out
+        elif wrapper == "env":
+            while out and "=" in out[0] and not out[0].startswith("="):
+                head_a = out[0].split("=", 1)[0]
+                if head_a and (head_a[0].isalpha() or head_a[0] == "_") and all(
+                    c.isalnum() or c == "_" for c in head_a
+                ):
+                    out.pop(0)
+                else:
+                    break
+        elif wrapper == "nice" and out and out[0].lstrip("-").isdigit():
+            out.pop(0)
+        elif wrapper == "chrt" and out and out[0].isdigit():
+            # `chrt -f 10 cmd` -- after -f flag, 10 is the priority.
+            out.pop(0)
 
-
-def _is_codex_bash_trigger(cmd: str) -> bool:
-    """Detect a real Codex invocation in a Bash command.
-
-    Tokenize via shlex, walk past env-prefix + wrapper commands, then
-    inspect argv[0]/argv[1] only. This rejects substring false-positives
-    from `rg codex-companion.mjs ...`, `git grep "codex review"`, and
-    heredoc bodies that happen to contain the literal -- the H1/M1
-    issues from the post-impl Codex adversarial review.
-
-    Forms accepted:
-      - argv[0] basename or path contains `codex-companion.mjs`
-        (wrapper script, our review skills' canonical form)
-      - argv[0] == `node` AND argv[1] contains `codex-companion.mjs`
-        (the typical `node "/abs/path/to/codex-companion.mjs"` shape)
-      - argv[0] basename is `codex` (or path ending in `/codex`) AND
-        argv[1] is one of the known review subcommands
-    """
-    if not isinstance(cmd, str) or not cmd.strip():
+    if not out:
         return False
-    toks = _segment_command_tokens(cmd)
-    if not toks:
-        return False
-    head = toks[0]
-    second = toks[1] if len(toks) > 1 else ""
+    head = out[0]
+    second = out[1] if len(out) > 1 else ""
     head_base = head.rsplit("/", 1)[-1]
 
-    # codex-companion.mjs wrapper -- direct exec or via node.
     if "codex-companion.mjs" in head_base:
         return True
     if head_base == "node" and "codex-companion.mjs" in second:
         return True
 
-    # Bare `codex` CLI with a review subcommand.
     if head_base == "codex":
-        # `codex review` and `codex e` (exec alias) when used for
-        # review. Bare `codex --version` is intentionally not a
-        # trigger.
-        if second in ("review", "e"):
+        # Walk past Codex global options to find the real subcommand.
+        # H8 fix: include the FULL value-flag set from section-2's
+        # codex_model_flag_block.py CODEX_GLOBAL_VALUE_FLAGS so
+        # `codex --enable feature review` etc. correctly identify
+        # `review` as the subcommand (pre-fix: `feature` was treated
+        # as the subcommand and the gate missed the trigger).
+        codex_global_value_flags = (
+            "-c", "--config", "--enable", "--disable", "--remote",
+            "--bearer-token-env-var",
+        )
+        idx = 1
+        while idx < len(out):
+            tok = out[idx]
+            if not tok.startswith("-"):
+                break
+            if tok in codex_global_value_flags:
+                # Two-token form: `--flag value`; skip the value.
+                # Attached form `--flag=value` is detected via "="
+                # in the flag and skipped without a separate value pop.
+                if "=" in tok:
+                    idx += 1
+                else:
+                    idx += 2
+                continue
+            idx += 1
+        subcmd = out[idx] if idx < len(out) else ""
+        if subcmd in ("review", "e"):
+            return True
+    return False
+
+
+def _is_codex_bash_trigger(cmd: str) -> bool:
+    """Detect a real Codex invocation in a Bash command.
+
+    Tokenize via shlex, trim heredoc / sub-content, segment by Bash
+    control operators (&&, ||, ;, |, &), then scan EACH segment for
+    a Codex invocation. Same shape as section-2 codex_model_flag_block.py
+    -- review-pipeline adversarial H4 caught divergence where
+    `true && codex review prompt` and `taskset -c 0 codex review`
+    were missed by the segmentless single-argv check.
+    """
+    if not isinstance(cmd, str) or not cmd.strip():
+        return False
+    try:
+        toks = shlex.split(cmd, posix=True, comments=False)
+    except ValueError:
+        return False
+    if not toks:
+        return False
+    # H7 fix: trim heredoc / substitution INSIDE the segment loop
+    # (per-segment) instead of globally. Pre-fix: `echo $(date) &&
+    # codex review prompt` was trimmed to `[echo]` BEFORE the
+    # segmenter ran -- the later codex review segment was lost.
+    # Mirrors the section-2 codex_model_flag_block.py per-segment
+    # trim ordering.
+    for seg in _segment_by_separators(toks):
+        seg = _trim_heredoc_body(seg)
+        if seg and _segment_is_codex_invocation(seg):
             return True
     return False
 
@@ -247,14 +364,33 @@ def _classify(payload: dict) -> tuple[str, str]:
 
 
 def _write_atomic(path: Path, data: dict) -> None:
-    """Atomic write via .tmp + os.replace. Best-effort: a failure
-    here is logged to stderr but does not block the tool call."""
+    """Atomic write via per-process tmp file + os.replace.
+
+    H3 (review-pipeline adversarial): the original fixed-path
+    `.tmp` suffix raced when two PostToolUse hooks ran in parallel
+    sessions or nested fires -- both wrote the same `.tmp`, both
+    `os.replace`'d, the loser's tmp could be removed before its
+    replace ran, leaving the winner's state intact while the loser
+    silently dropped a trigger write. Unique tmp path (pid + a
+    random suffix) eliminates the cross-process collision.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
+    # Unique per-process per-call tmp path. `os.replace` is atomic
+    # on the same filesystem; concurrent writers each have their
+    # own tmp so there's no removal race.
+    import secrets
+    tmp = path.with_suffix(f"{path.suffix}.{os.getpid()}.{secrets.token_hex(4)}.tmp")
     try:
         tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
         os.replace(str(tmp), str(path))
     except Exception as exc:
+        # Best-effort cleanup of the unique tmp on failure. Ignore
+        # cleanup errors -- the next state-dir GC sweep handles it.
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except Exception:
+            pass
         sys.stderr.write(
             f"[codex-review-state] WARN: state write failed "
             f"({type(exc).__name__}: {exc})\n"

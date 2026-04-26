@@ -42,7 +42,6 @@ Owner: TODO-08-automation-hardening section 3.
 
 import json
 import os
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -52,21 +51,6 @@ TTL_SECONDS = 3600  # 1 hour stale-pass window
 
 def _opt_out() -> bool:
     return os.environ.get("RECEIVING_REVIEW_OVERRIDE", "") == "1"
-
-
-def _repo_root() -> Path | None:
-    try:
-        out = subprocess.check_output(
-            ["git", "rev-parse", "--show-toplevel"],
-            text=True, timeout=2, stderr=subprocess.DEVNULL,
-        ).strip()
-    except Exception:
-        return None
-    return Path(out) if out else None
-
-
-def _state_path(root: Path) -> Path:
-    return root / ".claude" / "state" / "last-codex-review.json"
 
 
 def _load_state(path: Path) -> dict | None:
@@ -126,12 +110,20 @@ def main() -> int:
         return 0  # malformed -- fail open
     if payload.get("tool_name") not in ("Edit", "Write", "MultiEdit"):
         return 0
-    root = _repo_root()
-    if root is None:
-        return 0  # outside git repo
-    state = _load_state(_state_path(root))
+    # Hot-path optimization (review-pipeline perf H5): compute the
+    # state path from this file's location instead of forking
+    # `git rev-parse --show-toplevel`. The hook lives at
+    # `<repo>/.claude/hooks/receiving_review_required.py`; the state
+    # file is always at `<repo>/.claude/state/last-codex-review.json`.
+    # Pre-fix Codex measurement: ~34ms median per Edit on the
+    # no-state fast path (git subprocess dominated). Post-fix: skip
+    # the fork entirely when the state file is absent.
+    state_path = Path(__file__).resolve().parent.parent / "state" / "last-codex-review.json"
+    if not state_path.exists():
+        return 0  # no prior Codex trigger -- fast-path early return
+    state = _load_state(state_path)
     if state is None:
-        return 0  # no prior Codex trigger
+        return 0  # malformed state file -- fail open
     if state.get("received") is True:
         return 0  # already triaged
     ts_ns = state.get("timestamp_ns")
