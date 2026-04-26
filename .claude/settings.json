@@ -65,6 +65,11 @@
           },
           {
             "type": "command",
+            "command": "python3 .claude/hooks/codex_model_flag_block.py",
+            "timeout": 5
+          },
+          {
+            "type": "command",
             "command": "python3 -c \"\nimport json, sys, subprocess\nd = json.load(sys.stdin)\ncmd = d.get('tool_input', {}).get('command', '')\nif not cmd.startswith('git commit'):\n    sys.exit(0)\ntry:\n    out = subprocess.check_output(['git', 'diff', '--cached', '--name-only'], text=True, timeout=5, stderr=subprocess.DEVNULL)\nexcept Exception:\n    sys.exit(0)\nfiles = [f.strip() for f in out.split('\\n') if f.strip()]\nsrc_exts = ('.c', '.h', '.asm', '.S')\nhas_src = any(any(f.endswith(e) for e in src_exts) for f in files)\nhas_todo = any(f.startswith('todo/') and f.endswith('.md') for f in files)\nif not (has_src and has_todo):\n    sys.exit(0)\nmsg = ('[section-commit GATE -- implement-todo-section OR verify-todo-section steps 13-18 must have run] '\n       'Staged files include source code AND a TODO file. This looks like a section commit from EITHER pipeline (implement or verify -- they share the HARD GATE on steps 13-18). Confirm before proceeding: '\n       '13 Codex adversarial review dispatched + findings classified Fix/Reject/Accept; '\n       '14 Critical/High fixed (or rejected with code evidence); '\n       '15 Self-review walked all checklist items; '\n       '16 2nd final build passed; '\n       '17 code-truth checklist reconciliation (evidence + done-proof + false-completeness + SSDT + cross-TODO sync); '\n       '18 loose-end scan complete (verify-mode also runs the deep-analysis pass: codex-consistency-audit, codex-perf-review for hot-path, audit-ssdt for SSDT sections). '\n       'If any step was skipped, abort the commit and complete the pipeline first. '\n       'Pattern to watch for: build passes, looks straightforward, just commit -- '\n       'that thought is the signal to STOP.')\nprint(json.dumps({'systemMessage': msg}))\n\"",
             "timeout": 10
           }

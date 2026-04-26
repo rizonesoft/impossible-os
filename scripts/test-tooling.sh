@@ -774,6 +774,107 @@ PY
 fi
 
 # ============================================================================
+# Codex --model/--effort flag-block hook (TODO-08 in 00-infrastructure section 2)
+#
+# Asserts the `.claude/hooks/codex_model_flag_block.py` PreToolUse
+# hook blocks Codex invocations that pass --model or --effort flags
+# (per the Codex Invocation Policy in CLAUDE.md "Model Roles") AND
+# correctly allows clean Codex commands, non-Codex commands, prompt
+# text that contains the literal flag string, and opt-out via
+# CODEX_FLAG_OVERRIDE=1.
+[ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[codex_flag_block]${NC}"
+
+CODEX_FLAG_HOOK="$REPO_ROOT/.claude/hooks/codex_model_flag_block.py"
+if [ ! -f "$CODEX_FLAG_HOOK" ]; then
+    t_fail "codex_flag_block hook missing: $CODEX_FLAG_HOOK"
+else
+    _flag_probe() {
+        # Args: <expected_rc> <description> <command-string>
+        local want="$1" desc="$2" cmd="$3"
+        local got
+        local payload
+        payload=$(python3 -c "import json; print(json.dumps({'tool_name':'Bash','tool_input':{'command':'''$cmd'''}}))" 2>/dev/null || echo "{}")
+        got=$(printf '%s' "$payload" | python3 "$CODEX_FLAG_HOOK" 2>/dev/null; echo " rc=$?")
+        local rc=${got##* rc=}
+        if [ "$rc" = "$want" ]; then
+            t_pass "codex_flag_block: $desc (rc=$rc)"
+        else
+            t_fail "codex_flag_block: $desc (want $want, got $rc; cmd='$cmd')"
+        fi
+    }
+    _flag_probe_env() {
+        # Same as _flag_probe but injects an env var for the hook call.
+        local var="$1" want="$2" desc="$3" cmd="$4"
+        local payload got rc
+        payload=$(python3 -c "import json; print(json.dumps({'tool_name':'Bash','tool_input':{'command':'''$cmd'''}}))" 2>/dev/null || echo "{}")
+        got=$(printf '%s' "$payload" | env "$var" python3 "$CODEX_FLAG_HOOK" 2>/dev/null; echo " rc=$?")
+        rc=${got##* rc=}
+        if [ "$rc" = "$want" ]; then
+            t_pass "codex_flag_block: $desc (rc=$rc)"
+        else
+            t_fail "codex_flag_block: $desc (want $want, got $rc; cmd='$cmd')"
+        fi
+    }
+    # 1. --model on codex-companion.mjs invocation -> BLOCK (rc=2)
+    _flag_probe 2 "block --model on codex-companion.mjs" \
+        'node /path/to/codex-companion.mjs adversarial-review --model gpt-5.5 prompt'
+    # 2. --effort on codex exec invocation -> BLOCK (rc=2)
+    _flag_probe 2 "block --effort on codex exec" \
+        'codex exec --effort high prompt'
+    # 3. --model=value attached form -> BLOCK (rc=2)
+    _flag_probe 2 "block --model=value attached form" \
+        'codex exec --model=gpt-5.5 prompt'
+    # 4. Clean Codex command (no forbidden flags) -> ALLOW (rc=0)
+    _flag_probe 0 "allow clean codex-companion.mjs invocation" \
+        'node /path/to/codex-companion.mjs adversarial-review some prompt'
+    # 5. Non-Codex command that happens to mention --model -> ALLOW (rc=0)
+    _flag_probe 0 "allow non-codex rg --model" \
+        'rg --model whatever-rg-flag-here'
+    # 6. Prompt-text containing the literal --model string in a quoted arg -> ALLOW
+    _flag_probe 0 "allow --model literal inside quoted prompt text" \
+        'codex exec "review whether --model gpt-5.5 is correct"'
+    # 7. CODEX_FLAG_OVERRIDE=1 lets the call through (rc=0)
+    _flag_probe_env 'CODEX_FLAG_OVERRIDE=1' 0 \
+        "opt-out via CODEX_FLAG_OVERRIDE=1" \
+        'codex exec --model gpt-5.5 prompt'
+    # 8. Empty command -> ALLOW (rc=0)
+    _flag_probe 0 "allow empty command" ''
+    # 9. Bare codex (no subcommand) -> ALLOW even with --model (TUI/help)
+    _flag_probe 0 "allow bare codex --version" 'codex --version'
+    # 10. Regression: python3 heredoc whose body contains --model
+    #     literal token -> ALLOW (the FIRST command is python3, not
+    #     Codex; an earlier revision walked all tokens and blocked
+    #     this case, breaking edits to TODO files / commit messages
+    #     that contain `--model` as plain text).
+    _flag_probe 0 "allow python3 with --model in argv" \
+        'python3 -c "x = \"--model\""'
+    # 11. Bypass closed: `codex --json exec --model X` -- global
+    #     option BEFORE subcommand. An earlier revision only
+    #     checked tokens[1] for the subcommand; the post-impl
+    #     adversarial review found this letting --model through
+    #     because tokens[1] was --json. Now blocks (rc=2).
+    _flag_probe 2 "block --model after global option (--json before exec)" \
+        'codex --json exec --model gpt-5.5 prompt'
+    # 12. Bypass closed: `-c model="x"` config override. The bare
+    #     -c is legitimate (e.g. -c sandbox_mode="..."); only
+    #     model / model_reasoning_effort keys are forbidden.
+    _flag_probe 2 "block -c model=value config override" \
+        'codex exec -c model=gpt-5.5 prompt'
+    # 13. Bypass closed: `--config model_reasoning_effort=...`
+    _flag_probe 2 "block --config model_reasoning_effort=value override" \
+        'codex exec --config model_reasoning_effort=high prompt'
+    # 14. Allow: `-c sandbox_mode=...` (legitimate, non-forbidden key)
+    _flag_probe 0 "allow -c sandbox_mode=value (non-forbidden key)" \
+        'codex exec -c sandbox_mode=workspace-write prompt'
+    # 15. Bypass closed: `codex e --model X` (e is alias for exec)
+    _flag_probe 2 "block --model on codex e (exec alias)" \
+        'codex e --model gpt-5.5 prompt'
+    # 16. Bypass closed: short form `-m gpt-5.5`
+    _flag_probe 2 "block -m short form" \
+        'codex exec -m gpt-5.5 prompt'
+fi
+
+# ============================================================================
 # Summary
 # ============================================================================
 
