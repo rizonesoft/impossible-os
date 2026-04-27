@@ -23,7 +23,9 @@ description: Codex-driven cross-file consistency audit. Verifies that constants,
    - All `test_*.c` files that assert on sizes/offsets/values
    - All `_Static_assert` in the codebase for those types
 
-2. **Dispatch to Codex plugin:**
+1.5. **Pre-fetch the reference set via `mcp__lsp-bridge__references` (MANDATORY for typed symbols).** Two-step workflow because `references` requires `path/line/character` (cursor position), not a symbol name: (a) call `mcp__lsp-bridge__workspace_symbol <name>` for each named type / constant / function in the consistency domain to resolve the canonical declaration site; (b) call `mcp__lsp-bridge__references` with the resolved cursor to get the AST-resolved use sites. Paste the result into the Codex prompt as the verified reference set so Codex audits actual divergence between known callers, not heuristically-discovered ones. The LSP doesn't index `.asm`, so for assembly-side mirrors fall back to `Bash(grep)` for the offsets / constants and combine the two lists. Doctrine: [docs/infrastructure/mcp-usage.md](../../../docs/infrastructure/mcp-usage.md).
+
+2. **Dispatch to Codex plugin** (with the `mcp__lsp-bridge__references` output + assembly-side grep result pasted into the prompt as the verified consistency-domain set):
    ```bash
    node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<consistency prompt>"
    ```

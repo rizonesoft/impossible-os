@@ -194,6 +194,14 @@ When Claude invokes Codex from any path (the `codex-*` skills, the Codex plugin 
 
 Enforcement: PreToolUse hook [`.claude/hooks/codex_model_flag_block.py`](.claude/hooks/codex_model_flag_block.py) blocks via `shlex` tokenization + segment-by-control-operator + bypass-shape walk (env-prefix, wrappers, `&&` chains, global options before subcommand, heredoc-on-Codex). 29-case sub-test in [`scripts/test-tooling.sh`](scripts/test-tooling.sh). Full detection mechanics + bypass shapes + absolute-path note: [docs/infrastructure/codex-invocation-policy.md](docs/infrastructure/codex-invocation-policy.md). Opt-out: `CODEX_FLAG_OVERRIDE=1` per call.
 
+## MCP Usage
+
+Two MCP servers are wired in [`.mcp.json`](.mcp.json) at project scope: `todo-graph` (read-only TODO-graph queries) and `lsp-bridge` (LSP-backed code intelligence).
+
+1. Prefer `mcp__lsp-bridge__definition` / `references` over `grep` for symbol queries -- the LSP returns the canonical answer; grep returns N partial matches that need disambiguation.
+2. Prefer `mcp__todo-graph__ready` / `backlinks` / `code` over manual TODO walks -- one MCP call returns the structured answer that a multi-step grep+read traversal approximates.
+3. Full doctrine (12 todo-graph + 15 lsp-bridge tools, when-to-use / when-not-to-use, cross-tool parity story) at [docs/infrastructure/mcp-usage.md](docs/infrastructure/mcp-usage.md).
+
 ## Skills
 
 Claude Code skills live in `.claude/skills/`. They auto-load when Claude judges them relevant based on the `description` field. Each skill is self-contained. Impossible OS is Claude Code-only as of 2026-04-18; Cursor was removed because the parallel skill set created clutter without a corresponding productivity win. The full ownership matrix (Claude master, Codex/Copilot subordinate reviewers, edit-here-not-there rules) lives at [docs/infrastructure/ai-system.md](docs/infrastructure/ai-system.md).

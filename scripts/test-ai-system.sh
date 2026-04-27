@@ -528,6 +528,17 @@ check_doctrine_presence() {
         "docs/infrastructure/test-policy.md" "No Live Boot Infrastructure Calls"
     assert_fixed_string "CLAUDE.md points at test-policy.md" \
         "CLAUDE.md" "test-policy.md"
+    # MCP Usage doctrine
+    assert_fixed_string "mcp-usage.md has 'When to call'" \
+        "docs/infrastructure/mcp-usage.md" "When to call"
+    assert_fixed_string "mcp-usage.md names todo-graph server" \
+        "docs/infrastructure/mcp-usage.md" "todo-graph"
+    assert_fixed_string "mcp-usage.md names lsp-bridge server" \
+        "docs/infrastructure/mcp-usage.md" "lsp-bridge"
+    assert_fixed_string "CLAUDE.md has 'MCP Usage' section" \
+        "CLAUDE.md" "MCP Usage"
+    assert_fixed_string "CLAUDE.md points at mcp-usage.md" \
+        "CLAUDE.md" "mcp-usage.md"
     # SMP from day one
     assert_fixed_string "CLAUDE.md has 'SMP From Day One'" "CLAUDE.md" "SMP From Day One"
     # SMP-safe by default

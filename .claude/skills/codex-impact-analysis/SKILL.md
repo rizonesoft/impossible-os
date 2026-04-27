@@ -21,7 +21,9 @@ description: Codex-driven dependency impact analysis. Before changing a function
    - Function name, struct name, constant name, or file path
    - The specific change planned (new parameter, removed field, renamed symbol, etc.)
 
-2. **Dispatch to Codex plugin:**
+1.5. **Pre-fetch the reference set via `mcp__lsp-bridge__references` (MANDATORY when target is a function or symbol).** Two-step workflow because `references` requires `path/line/character` (cursor position), not a symbol name: (a) call `mcp__lsp-bridge__workspace_symbol <name>` to get the canonical declaration site for the target; (b) call `mcp__lsp-bridge__references` with the resolved `path/line/character` to get the AST-resolved caller list. Paste the result into the Codex prompt as the verified call site set. For struct-layout / constant changes, also call `mcp__lsp-bridge__definition` (same cursor-position contract) on the target to confirm the canonical declaration site -- Codex sometimes treats a forward-declaration as the source. Skip when the target lives in a non-LSP-covered file (e.g. a build script or a generated header) and fall back to `Bash(grep)` for the call site list. Doctrine: [docs/infrastructure/mcp-usage.md](../../../docs/infrastructure/mcp-usage.md).
+
+2. **Dispatch to Codex plugin** (with the `mcp__lsp-bridge__references` output pasted into the prompt as the verified call site set):
    ```bash
    node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<impact analysis prompt>"
    ```

@@ -76,7 +76,7 @@ description: Finalize a TODO file whose `## N.` implementation sections are all 
 
 - **PreToolUse on `Skill` matcher includes this skill** in the completion-first reminder list (hook 8 in the Hook Routing Matrix). The reminder fires before the skill starts and pins the "no PASS without execution" rule.
 - **Cross-TODO scope-gap awareness:** if the `## Verification` section references external TODO sections (e.g. "verify TODO-05 §14 stamps resolve"), this skill runs the lookup but does NOT author fixes in other TODO files. Out-of-scope findings land in the close-out report as `Accepted:` with an XREF pointer (the Accepted-XREF concreteness check from `review-todo-section` step 15 applies).
-- **Inbound stamp sweep:** if this is the last section of a TODO marked `[x]` and other TODOs held `Accepted:` / `Deferred:` XREFs pointing at items this close-out just confirmed, grep `todo/` for those XREFs and report them as sweep candidates. Do NOT auto-rewrite inbound stamps; user confirms.
+- **Inbound stamp sweep:** if this is the last section of a TODO marked `[x]` and other TODOs held `Accepted:` / `Deferred:` XREFs pointing at items this close-out just confirmed, **prefer `mcp__todo-graph__deferred-by <id>`** (one structured call returns every inbound `Accepted:` / `Deferred:` stamp by section + item_name + severity) over walking `todo/` with grep. Doctrine: [docs/infrastructure/mcp-usage.md](../../../docs/infrastructure/mcp-usage.md). Grep across `todo/` is the fallback when the cache is stale or the target lacks a stable `id`. Do NOT auto-rewrite inbound stamps; user confirms.
 
 ## Guardrails
 

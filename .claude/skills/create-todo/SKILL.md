@@ -48,7 +48,8 @@ When `create-todo` is invoked from the scope-gap protocol, the workflow is the s
     - **Save research sources** for your own traceability only: list URLs in the **gap-analysis or create-todo chat report** (or commit message notes). **Do not** paste URL lists into the TODO as `<!-- Sources: ... -->` HTML comments -- they clutter diffs and duplicate long lines across files.
 
 3. **Cross-TODO overlap scan.**
-   - Use Grep to search ALL domain folders for keywords from the planned section titles and deliverables.
+   - **Fast path:** if any planned section overlaps with an existing TODO, that TODO's `id` is the natural lookup key. Call `mcp__todo-graph__backlinks <id>` to enumerate every inbound XREF / depends_on / satisfies / Inputs reference / Accepted-stamp / Deferred-stamp pointing at the candidate target. The MCP returns one structured answer; a multi-step grep traversal approximates the same thing. Doctrine: [docs/infrastructure/mcp-usage.md](../../../docs/infrastructure/mcp-usage.md).
+   - **Grep fallback** (when no candidate `id` is known yet, or for free-text overlap): use `Grep` to search ALL domain folders for keywords from the planned section titles and deliverables. Markdown body text search is the canonical case where grep beats the MCP.
    - For each match, classify: SUPERSEDES, COMPLEMENT, CONFLICT, or FOUNDATION.
    - Add bidirectional `-> XREF:` links for every real dependency or overlap.
    - **Edit both sides in the same task.** If you add a `-> XREF` to the new TODO pointing at TODO-XX, also add a reciprocal `-> XREF` in TODO-XX pointing back. One-sided XREFs are broken XREFs.
