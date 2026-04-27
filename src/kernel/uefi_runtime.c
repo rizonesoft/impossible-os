@@ -106,6 +106,8 @@ static struct efi_runtime_services *s_rt;    /* pointer to firmware RT table */
 static mutex_t s_rt_mutex = MUTEX_INIT("uefi_rt");  /* serialize RT calls (sleepable) */
 static int s_available;                      /* 1 = RT services usable */
 static uint32_t s_supported;                 /* EFI_RT_SUPPORTED_* bitmask */
+static int s_init_done;                      /* 1 = uefi_runtime_init has run successfully (once-latch) */
+static int s_svam_done;                      /* 1 = SVAM called this boot (kernel-side latch) */
 
 /* ---- Internal helpers ---- */
 
@@ -120,6 +122,21 @@ static int call_set_virtual_address_map(void)
     if (count == 0) {
         klog(LOG_WARN, "UEFI", "No runtime memory regions -- skipping SVAM");
         return 0;  /* not a failure -- firmware may have no RT regions */
+    }
+
+    /* Codex Perf H1 (2026-04-27 re-review): bound count locally
+     * before indexing into vmap[BOOT_RT_MMAP_MAX]. The downstream
+     * boot_reserved_populate_from_info() validator rejects an
+     * oversized rt_mmap_count, but it runs LATER in pmm_init --
+     * uefi_runtime_init runs first, so a corrupted handoff would
+     * stack-overwrite vmap and SVAM-call firmware with a poisoned
+     * map before any validator caught it. Treat over-bound count
+     * as a producer error and degrade. */
+    if (count > BOOT_RT_MMAP_MAX) {
+        klog(LOG_ERROR, "UEFI",
+             "rt_mmap_count=%u exceeds BOOT_RT_MMAP_MAX=%u -- bootloader produced malformed handoff",
+             count, (uint32_t)BOOT_RT_MMAP_MAX);
+        return -1;
     }
 
     /* We build the virtual map ourselves, so the descriptor stride matches
@@ -145,6 +162,16 @@ static int call_set_virtual_address_map(void)
 
     klog(LOG_INFO, "UEFI", "SetVirtualAddressMap: %u runtime regions, "
          "desc_size=%u, desc_ver=%u", count, desc_size, desc_version);
+
+    /* Codex H2 (2026-04-27 re-review): per-service NULL validation
+     * happens AFTER SVAM in uefi_runtime_init; the SVAM function
+     * pointer itself was being dereferenced before any validation,
+     * so a malformed RT table could null-deref Phase 0 instead of
+     * degrading cleanly. Validate the pointer here before the call. */
+    if (!s_rt->set_virtual_address_map) {
+        klog(LOG_ERROR, "UEFI", "SetVirtualAddressMap: NULL function pointer");
+        return -1;
+    }
 
     efi_status_t status = s_rt->set_virtual_address_map(
         map_size, (uint64_t)desc_size, desc_version, vmap);
@@ -182,9 +209,46 @@ static void read_rt_properties(void)
 
 /* ---- Public API ---- */
 
+/* Clear advertised RT capability + legacy availability byte in
+ * lockstep with s_available going to 0. Codex M1 (2026-04-27
+ * re-review): without this, BOOT_DEGRADED paths leave
+ * caps_present & BOOT_CAP_RUNTIME_SERVICES set and the legacy
+ * uefi_rt_available byte at 1, so any later boot_caps_require
+ * caller still treats RT as present after init has disabled it.
+ *
+ * Codex Consistency M1 (re-review): clearing caps_present is not
+ * enough -- the boot_info contract (boot_info.h:510-518 / 1183-1187)
+ * requires every known capability bit to live in EXACTLY ONE of
+ * caps_present or caps_degraded, never neither. Clearing without
+ * setting caps_degraded leaves the bit unclassified, which trips
+ * later validators that walk the known-bit set. Mirror the
+ * present->degraded transition that boot_caps_mark_present() does
+ * in the opposite direction. */
+static void rt_advertise_unavailable(void)
+{
+    s_available = 0;
+    g_boot_info.uefi_rt_available = 0;
+    g_boot_info.caps_present &= ~(uint64_t)BOOT_CAP_RUNTIME_SERVICES;
+    g_boot_info.caps_degraded |= (uint64_t)BOOT_CAP_RUNTIME_SERVICES;
+}
+
 boot_result_t uefi_runtime_init(void)
 {
     (void)s_rt_mutex;  /* initialized statically via MUTEX_INIT */
+
+    /* Codex H1 (2026-04-27 re-review): once-latch -- if a duplicate
+     * BOOT_STEP / re-init path calls us, return the cached state
+     * instead of re-running SVAM (which UEFI permits ONLY ONCE per
+     * boot per spec §7.4.2; a second call returns EFI_UNSUPPORTED
+     * and would leave s_available=0, disabling previously-working
+     * services). */
+    if (s_init_done) {
+        klog(LOG_INFO, "UEFI",
+             "uefi_runtime_init: already initialised (s_available=%d, returning cached state)",
+             s_available);
+        return s_available ? BOOT_OK : BOOT_DEGRADED;
+    }
+
     s_available = 0;
     s_supported = 0;
 
@@ -201,12 +265,16 @@ boot_result_t uefi_runtime_init(void)
              "Runtime services: UNAVAILABLE (caps_present=0x%lx, legacy=%u)",
              (uint64_t)(g_boot_info.caps_present & BOOT_CAP_RUNTIME_SERVICES),
              (uint64_t)g_boot_info.uefi_rt_available);
+        rt_advertise_unavailable();
+        s_init_done = 1;
         return BOOT_DEGRADED;
     }
 
     s_rt = (struct efi_runtime_services *)g_boot_info.uefi_runtime_services;
     if (!s_rt) {
         klog(LOG_ERROR, "UEFI", "Runtime services pointer is NULL");
+        rt_advertise_unavailable();
+        s_init_done = 1;
         return BOOT_DEGRADED;
     }
 
@@ -215,6 +283,8 @@ boot_result_t uefi_runtime_init(void)
         klog(LOG_ERROR, "UEFI", "RT table signature mismatch: 0x%llx",
              (unsigned long long)s_rt->hdr.signature);
         s_rt = (struct efi_runtime_services *)0;
+        rt_advertise_unavailable();
+        s_init_done = 1;
         return BOOT_DEGRADED;
     }
 
@@ -242,14 +312,24 @@ boot_result_t uefi_runtime_init(void)
     /* Call SetVirtualAddressMap.  Per UEFI spec §7.4.2 this must happen after
      * ExitBootServices().  The bootloader preserves pointers only; SVAM is
      * always the kernel's responsibility.  svam_called is kept as a safety
-     * guard in case a future loader calls SVAM before handoff. */
-    if (g_boot_info.uefi_runtime.svam_called) {
-        klog(LOG_INFO, "UEFI", "SetVirtualAddressMap already called by loader");
+     * guard in case a future loader calls SVAM before handoff. The kernel-
+     * side s_svam_done latch (Codex H1, 2026-04-27) is the same guard
+     * within the kernel: even if uefi_runtime_init's once-latch is
+     * bypassed somehow, we never call firmware SVAM twice. */
+    if (g_boot_info.uefi_runtime.svam_called || s_svam_done) {
+        klog(LOG_INFO, "UEFI", "SetVirtualAddressMap already called");
     } else {
         if (call_set_virtual_address_map() != 0) {
             klog(LOG_ERROR, "UEFI", "Runtime services: UNAVAILABLE (SVAM failed)");
+            rt_advertise_unavailable();
+            s_init_done = 1;
             return BOOT_DEGRADED;
         }
+        s_svam_done = 1;
+        /* Mirror the kernel-side latch into boot_info so anyone reading
+         * the field post-handoff (e.g. a kexec replacement kernel
+         * sharing the boot_info ABI) sees the correct state. */
+        g_boot_info.uefi_runtime.svam_called = 1;
     }
 
     /* Validate critical function pointers */
@@ -264,12 +344,14 @@ boot_result_t uefi_runtime_init(void)
     if (missing > 0) {
         klog(LOG_WARN, "UEFI", "Runtime services: UNAVAILABLE "
              "(firmware limitation, %d/%d pointers NULL)", missing, 5);
-        s_available = 0;
+        rt_advertise_unavailable();
+        s_init_done = 1;
         return BOOT_DEGRADED;
     }
 
     /* Mark available -- all critical pointers validated */
     s_available = 1;
+    s_init_done = 1;
 
     /* Build human-readable service list for log */
     char services[128];

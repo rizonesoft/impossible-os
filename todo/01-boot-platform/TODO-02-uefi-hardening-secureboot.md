@@ -93,8 +93,18 @@ Before `ExitBootServices()`, save UEFI runtime function pointers into `boot_info
 
 **Test checkpoint:** Serial shows `[UEFI] SetVirtualAddressMap OK` and per-service OK or UNAVAILABLE lines; kernel does not fault when calling preserved RT entry points after EBS. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Verified:** 2026-04-11 -- Codex adversarial review found 2 valid issues (SVAM failure not propagated, descriptor stride mismatch on extended firmware), both fixed. 1 unit test wired (`test_uefi_rt_available`), build passes.
-> **Quality reviewed:** 2026-04-11 -- 1 spec violation fixed (SVAM attribute preservation), 2 best practices applied (centralized RT timer masking, table signature+CRC32 validation). Accepted: spinlock->mutex migration (-> 01-boot-platform/TODO-02 §10).
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) -- `test_uefi_rt_available` (test_uefi_boot.c:22) | 1 §1 suite, 0 failures
+
+> **Notes:**
+> - What shipped: `src/kernel/uefi_runtime.c` (~440 lines) -- `uefi_runtime_init()` walks the bootloader-preserved RT table, validates signature + CRC32, calls `SetVirtualAddressMap`, validates the 5 critical service pointers, and exposes `uefi_rt_available()` as the canonical check.
+> - How it integrates: invoked from `boot_hw.c:262` via `BOOT_STEP`; sets `kernel_subsystem_set_ready(uefi_runtime, BOOT_OK || BOOT_DEGRADED)`; the `s_rt_mutex` (mutex_t) serializes all post-init RT calls (sleepable per §10 migration).
+> - Once-latch + caps invariants: `s_init_done` blocks duplicate-init re-entry; `s_svam_done` mirrors into `boot_info.uefi_runtime.svam_called`; `rt_advertise_unavailable()` enforces the present/degraded XOR contract by clearing `caps_present` AND setting `caps_degraded` for `BOOT_CAP_RUNTIME_SERVICES` in lockstep with `s_available=0` and the legacy byte.
+> - Codex 4x review pipeline this pass: implementation-time adversarial (3 findings: H1 once-latch, H2 SVAM fn-pointer NULL deref, M1 caps not cleared on degrade) + consistency (M1 caps_degraded XOR invariant) + perf (H1 BOOT_RT_MMAP_MAX local bound) + re-adversarial on fix delta (verdict: approve, no findings). All 5 fixed; zero deferred / accepted-XREF.
+> - Canonical doc: [`src/kernel/uefi_runtime.c`](../../src/kernel/uefi_runtime.c) is authoritative for SVAM + RT-service invariants; [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h) §510-518 / §1183-1187 carries the caps_present/caps_degraded XOR contract.
+> - Scope boundary: §1 owns SVAM + RT-pointer validation + once-init contract; §10 owns the sleepable mutex around post-init RT calls; §2 owns variable-service wrappers; per-CPU MSR re-program after CR3 reload is a CLAUDE.md "Bare Metal Gotchas" concern, not a §1 implementation gap.
+
+> **Verified:** 2026-04-27 | commit `<pending>` | 5/5 items | build OK | tests 1 §1 suite, 0 failures (test_uefi_rt_available)
+> **Quality reviewed:** 2026-04-27 | Codex 4x (adversarial + consistency + perf + re-adversarial) | 3H+2M fixed | scope: kernel-code-quality (gates walked: SMP-safe by default, memory rules, bare-metal correctness, complete error paths)
 
 ---
 
