@@ -269,11 +269,11 @@ Stop relying on redirects for first-party content. Redirects are useful for old 
 > **Notes:**
 > - Shipped: bulk `rizonesoft/impossible-os` -> `rizonetech/impossible-os` rewrite across README + CONTRIBUTING + docs (~12 files) + gh-pages site content (16 HTML files + errors.js) + 7 TODO files + 2 scripts (`scripts/todo-graph/render.py` REPO_URL_BASE constant + `scripts/test-ai-system.sh:396` Copilot-disable log message). Renderer constant flip is what makes `docs/infrastructure/todo-graph.md` regenerate correctly.
 > - Classification rule excluded brand references, sibling repos (impossible-os-bootloader / -updates / -packages), and documented historical-record sources (preflight + TODO-09 narrative + rg-pattern literals).
-> - Codex 3x review adoptions in commit `<this-commit>`.
+> - Codex 3x review adoptions in commit `5097fbd3`.
 > - Canonical doc: this section + [`scripts/todo-graph/render.py`](../../scripts/todo-graph/render.py) for the generator constant.
 > - Scope boundary: §6 owns first-party URL flip; §7 owns the validation suite; §8 owns the move-back runbook; §9 owns docs sync + closure.
 >
-> **Verified:** 2026-04-28 | commit `<this-commit>` | 12/12 items | build N/A (URL sweep + graph regen) | lint clean, todo-graph 8/8 | post-sweep test checkpoint: 0 residuals after filter
+> **Verified:** 2026-04-28 | commit `5097fbd3` | 12/12 items | build N/A (URL sweep + graph regen) | lint clean, todo-graph 8/8 | post-sweep test checkpoint: 0 residuals after filter
 
 ---
 
