@@ -67,7 +67,7 @@ title: "TODO-02 -- UEFI Bootloader Hardening & Secure Boot"
 | 💎  |   7   | Boot UX polish                           | §3, §5, T14 §2  |  [x]   |
 | ⭐  |   8   | Serial log standardization               | --              |  [x]   |
 | 💎  |   9   | SBAT ops, DB registry mirror, EBS retry  | §2, §5          |  [x]   |
-| 💎  |  10   | RT sleepable lock migration              | §1, mutex prim  |  [x]   |
+| 💎  |  10   | RT sleepable lock migration              | §1              |  [x]   |
 | 💎  |  11   | Unified signed boot artifact (UKI-style) | §6              |  [ ]   |
 
 ---
@@ -153,7 +153,7 @@ Read the UEFI `SecureBoot` variable and expose the state to the kernel.
 
 - [x] `uefi_secureboot_init()`: read `SecureBoot` variable, set `boot_info.secure_boot_enabled`
 - [x] Write `HKLM\SYSTEM\SecureBoot\State` = 0 or 1
-- [/] Padlock icon in system tray when Secure Boot active -- `g_system_state.secure_boot` flag published; rendering not implemented (-> XREF: 09-desktop-shell/TODO-11-control-panel.md or system tray TODO when ready)
+- [/] Padlock icon in system tray when Secure Boot active -- `g_system_state.secure_boot` flag published; rendering not implemented. -> XREF: `08-graphics-ui/TODO-11-startmenu-tray-notifications.md §4` (System tray icons -- `tray_icon` struct + register/unregister) is the owner; padlock-when-secure-boot-on is a §4 consumer of `g_system_state.secure_boot`.
 - [x] Commit: `"kernel: Secure Boot state detection, registry key"`
 
 > [!NOTE]
@@ -242,7 +242,7 @@ Win11 and major Linux distros surface firmware trust inventory (db/dbx counts), 
 UEFI firmware SetVariable can take 10-100ms+ for flash erase/write cycles. The current `s_rt_lock` spinlock holds with interrupts disabled across the entire firmware call, stalling all contending CPUs. Windows uses `FAST_MUTEX` (sleepable), Linux uses a semaphore (`efi_runtime_lock`). Migrate to a sleepable lock for thread-context RT callers, with a trylock/emergency path for panic writes.
 
 > [!NOTE]
-> **Prerequisite:** requires a kernel mutex primitive (sleepable lock with ownership tracking). Currently only spinlocks exist. The mutex implementation should support `mutex_lock()` (sleeps if contended), `mutex_trylock()` (non-blocking), and `mutex_unlock()`. -> XREF: `03-memory-concurrency/TODO-08-advanced-sync.md` or new TODO for synchronization primitives.
+> **Prerequisite (now satisfied):** required a kernel mutex primitive (sleepable lock with ownership tracking + `mutex_lock()` / `mutex_trylock()` / `mutex_unlock()`). Already shipped in [`src/kernel/sched/mutex.c`](../../src/kernel/sched/mutex.c) with full waitqueue-based sleep, deadlock detection, and lock ordering. -> XREF: `03-memory-concurrency/TODO-08-advanced-sync.md` for further synchronization primitive work.
 
 - [x] Implement kernel mutex primitive: `mutex_init()`, `mutex_lock()`, `mutex_trylock()`, `mutex_unlock()` with ownership tracking and scheduler integration -- already existed in `src/kernel/sched/mutex.c` with full waitqueue-based sleep, deadlock detection, and lock ordering
 - [x] Replace `s_rt_lock` (spinlock) with a mutex in `uefi_runtime.c` for all thread-context RT calls (GetVariable, SetVariable, GetTime, SetTime, GetNextVariableName, GetWakeupTime, QueryVariableInfo) -- `s_rt_mutex = MUTEX_INIT("uefi_rt")`, `rt_call_enter()` uses `mutex_lock()`
@@ -322,7 +322,7 @@ systemd-boot ships a Unified Kernel Image (UKI) format: a single signed UEFI PE 
 
 **Test checkpoint:** Repeat Verification bullets on a clean build after Unit Tests land; serial matches expected markers above on QEMU WHPX, QEMU TCG, VirtualBox, and bare metal.
 
-**Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot)
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 9 suites, 0 failures
 
 ---
 
