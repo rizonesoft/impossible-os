@@ -265,8 +265,10 @@ These are non-negotiable. Auto-loading by description is unreliable -- the rules
 | Test file in `src/kernel/test/` | `implement-unit-tests` | Wire to `test_runner.c`, correct `TEST_CAT_*`, concrete assertions. |
 | Test asserts `STATUS_NOT_IMPLEMENTED` / `E_NOTIMPL` / `ENOSYS` as expected | `implement-unit-tests` "TEST_PENDING vs TEST_ASSERT" | Use `TEST_PENDING(cond, msg)`. Counts in `pending` bucket, renders `[STUB]` in boot log. Never pair with runtime `klog(LOG_WARN, ...)` (duplicate signal). |
 | Writing `Accepted:` / `Deferred:` XREF in a TODO stamp | `review-todo-section` step 15 | Every XREF must name a concrete `[ ]` item in the target (`(item: "NAME" at line N)` or named helper). Bare `section`-refs and paraphrase parentheticals rejected. PostToolUse reminder + git-commit BLOCK enforce. |
+| About to claim work is complete, fixed, or passing (before commit / PR / Verified stamp) | `superpowers:verification-before-completion` | Re-run the relevant build / test / lint commands and quote the actual output BEFORE asserting success. Wired into `review-todo-section` step 15.5 and `complete-todo-file` Execution Discipline. Closes the `feedback_never_skip_review` failure mode where claims were made without re-running. |
+| Bug, test failure, or unexpected behavior, before proposing a fix | `superpowers:systematic-debugging` | Build a hypothesis from observed evidence, identify root cause, validate before patching. Repo's `debug-session` cross-references it. Bypassing this step into "I'll just try changing X" is the bug-whack-a-mole pattern. |
 
-If a skill is listed above, "I forgot" is not a valid excuse. The hooks will remind you; act on the reminder.
+If a skill is listed above, "I forgot" is not a valid excuse. The hooks will remind you; act on the reminder. Per-skill verdicts and the suppression rules for the rest of the superpowers catalog (e.g. `subagent-driven-development` forbidden on kernel/boot paths) live at [docs/infrastructure/superpowers-policy.md](docs/infrastructure/superpowers-policy.md).
 
 ## Repository Layout
 

@@ -236,6 +236,10 @@ If a proposal does NOT fit this contract (e.g. a tool that wants to commit direc
 
 Every `codex-*` skill under `.claude/skills/` carries a one-line pointer back to this contract section (see each skill's "External-Reviewer Contract" note near the top). A maintainer reading `codex-consistency-audit/SKILL.md` can trace the "reviewer, not authority" rule back to this section in one link.
 
+### Plugin skill catalog (superpowers)
+
+The `superpowers@claude-plugins-official` plugin ships 14 skills, three of which are MANDATORY in this repo (`receiving-code-review`, `verification-before-completion`, `systematic-debugging`) and one of which carries a hard scope distinction (`subagent-driven-development` is FORBIDDEN as a substitute for the Codex four-dispatch on `src/kernel/`, `src/boot/`, `include/kernel/`). Per-skill verdicts, doctrine-conflict suppression rules, and the kernel/boot scope distinction live in [`docs/infrastructure/superpowers-policy.md`](superpowers-policy.md). CLAUDE.md "Mandatory Skill Triggers" carries the agent-facing prompt rows; the policy doc carries the rationale.
+
 ---
 
 ## MCP, Permissions, and Extension Boundary
