@@ -66,8 +66,8 @@ The `bootloader` remote is a separate repository (`rizonesoft/impossible-os-boot
 | `https_certificate.expires_at` | `2026-06-16` |
 | Pages environment | `github-pages` (id `13147855799`, created `2026-03-18T12:19:40Z`) |
 | Environment protection | `branch_policy` (custom branch policies; admins can bypass) |
-| Latest Pages workflow run | `id 24294368082` (`2026-04-12T00:11:46Z`) **failed** -- artifact storage quota |
-| Latest successful workflow run | `id 23255656274` (`2026-03-18T16:33:14Z`) |
+| Latest Pages workflow run | `id 24294368082` (`2026-04-12T00:11:46Z`) **failed** -- `Failed to CreateArtifact: Artifact storage quota has been hit`. |
+| Latest successful workflow run | `id 23255656274` (`2026-03-18T16:33:14Z`). The 2026-04-12 attempt is the only run after that and the only failure; no further runs have fired since because the workflow's `paths: ['gh-pages/**']` trigger has not matched and no `workflow_dispatch` was issued. |
 | Latest deployment to env | `id 4340497396` from `gh-pages` branch sha `35e7dcd5` (`2026-04-12T00:27:47Z`) |
 
 **Two findings flagged for §3 / §5:**
@@ -224,41 +224,64 @@ Items GitHub may or may not bring across cleanly during a transfer; verify direc
 
 ## 7. Hard-Coded Owner References (Inventory)
 
-Captured by `rg -n 'rizonesoft/impossible-os|github\.com/rizonesoft|rizonesoft\.github\.io|hits\.sh/rizonesoft' README.md CONTRIBUTING.md SECURITY.md CODE_OF_CONDUCT.md AGENTS.md CLAUDE.md docs gh-pages .github`.
+Captured by `rg -n 'rizonesoft/impossible-os|github\.com/rizonesoft|rizonesoft\.github\.io|hits\.sh/rizonesoft' README.md CONTRIBUTING.md SECURITY.md CODE_OF_CONDUCT.md AGENTS.md CLAUDE.md docs gh-pages .github todo scripts` -- the path set was expanded to include `todo/` and `scripts/` after the initial pass missed [`scripts/todo-graph/render.py:42`](../../scripts/todo-graph/render.py#L42) (`REPO_URL_BASE = "https://github.com/rizonesoft/impossible-os/blob/main"`), the actual generator constant for TODO graph links. **Re-runs of this baseline MUST use this expanded path set**, not the narrower one.
+
+**Two snapshots are tracked because this preflight doc itself is a source of references:**
+
+| Snapshot | Total matches | Files | Captured |
+|---|---|---|---|
+| **Pre-preflight-doc baseline (expanded path, theoretical)** | 303 | ~37 | 2026-04-27, theoretical state before this doc, the [TODO-09 file](../../todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md) self-references, and the [`github-setup.md`](github-setup.md) overview pointer were committed. Represents the inventory the [URL/badge/docs/generated-link sweep](../../todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md#6-url-badge-docs-and-generated-link-sweep) must reduce. (Computed as 364 - 61, where 61 = 43 from this preflight doc + 17 from the [TODO-09 file](../../todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md) self-references + 1 from the github-setup overview-pointer edit.) |
+| **Post-preflight-doc baseline (expanded path, measured)** | 364 | 39 | 2026-04-27, measured immediately after this doc, the [Preflight Inventory section](../../todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md#1-preflight-inventory-and-risk-register) stamp, and the github-setup pointer were committed. An operator re-running the rg command at transfer time will see this number; the [URL/badge/docs/generated-link sweep](../../todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md#6-url-badge-docs-and-generated-link-sweep) MUST classify the preflight doc, the [TODO-09 file](../../todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md), and the `Pre-doc / Post-doc` rows in this very table as intentionally retained historical-record sources and exclude them from "active GitHub repo" references that need owner-rewriting. |
+
+**Per-pattern breakdown (post-doc expanded baseline):**
 
 | Pattern | Hits |
 |---|---|
-| `rizonesoft/impossible-os` | 277 |
-| `github.com/rizonesoft` | 273 |
-| `rizonesoft.github.io` | 5 |
-| `hits.sh/rizonesoft` | 1 |
-| **Total raw matches (with overlap)** | **283** |
+| `rizonesoft/impossible-os` | 339 |
+| `github.com/rizonesoft` | 298 |
+| `rizonesoft.github.io` | 23 |
+| `hits.sh/rizonesoft` | 5 |
+| **Total raw matches (with overlap)** | **364** |
 
-**Files containing at least one match (28 files):**
+**Files containing at least one match (39 in post-doc expanded baseline; the originally-scanned 28 narrow-path files plus [`docs/infrastructure/repository-transfer-preflight.md`](repository-transfer-preflight.md), 8 files under `todo/` and 2 files under `scripts/`):**
 
 ```
 README.md                                 docs/index.md
 CONTRIBUTING.md                           docs/getting-started/virtualbox.md
 docs/infrastructure/github-setup.md       docs/infrastructure/development-tooling.md
 docs/infrastructure/ai-system.md          docs/infrastructure/todo-graph.md
-docs/boot/boot-protocol-changelog.md      .github/ISSUE_TEMPLATE/feature-request.yml
-.github/ISSUE_TEMPLATE/config.yml         gh-pages/index.html
-gh-pages/err/index.html                   gh-pages/err/errors.js
-gh-pages/err/0000/index.html              gh-pages/err/0001/index.html
-gh-pages/err/0002/index.html              gh-pages/err/0003/index.html
-gh-pages/err/0004/index.html              gh-pages/err/0005/index.html
-gh-pages/err/0006/index.html              gh-pages/err/0007/index.html
-gh-pages/err/0008/index.html              gh-pages/err/0009/index.html
-gh-pages/err/000a/index.html              gh-pages/err/000b/index.html
-gh-pages/err/000c/index.html              gh-pages/err/000d/index.html
+docs/boot/boot-protocol-changelog.md      docs/infrastructure/repository-transfer-preflight.md
+.github/ISSUE_TEMPLATE/feature-request.yml .github/ISSUE_TEMPLATE/config.yml
+gh-pages/index.html                       gh-pages/err/index.html
+gh-pages/err/errors.js                    gh-pages/err/0000/index.html
+gh-pages/err/0001/index.html              gh-pages/err/0002/index.html
+gh-pages/err/0003/index.html              gh-pages/err/0004/index.html
+gh-pages/err/0005/index.html              gh-pages/err/0006/index.html
+gh-pages/err/0007/index.html              gh-pages/err/0008/index.html
+gh-pages/err/0009/index.html              gh-pages/err/000a/index.html
+gh-pages/err/000b/index.html              gh-pages/err/000c/index.html
+gh-pages/err/000d/index.html              todo/00-infrastructure/INDEX.md
+todo/00-infrastructure/TODO-02-ai-development-system.md
+todo/00-infrastructure/TODO-06-todo-metadata-layer.md
+todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md
+todo/12-user-platform-sdk/TODO-06-sdk-distribution.md
+todo/15-installer-release/TODO-01-release-artifacts.md
+todo/15-installer-release/TODO-03-update-server.md
+todo/15-installer-release/TODO-05-github-release-community.md
+scripts/test-ai-system.sh                 scripts/todo-graph/render.py
 ```
+
+**`scripts/` matches need explicit handling, not "intentional retention":**
+
+- [`scripts/todo-graph/render.py:42`](../../scripts/todo-graph/render.py#L42) -- `REPO_URL_BASE = "https://github.com/rizonesoft/impossible-os/blob/main"`. This is the generator constant for TODO graph node URLs in [`docs/infrastructure/todo-graph.md`](todo-graph.md). The [URL/badge/docs/generated-link sweep](../../todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md#6-url-badge-docs-and-generated-link-sweep) must update this constant in lockstep with the transfer; the regenerated graph then re-emits with the new owner. Do NOT manually edit the generated graph block. Risk row R10 names this file directly.
+- [`scripts/test-ai-system.sh:396`](../../scripts/test-ai-system.sh#L396) -- a `t_info` log line ("verify repo/org Settings -> Copilot access = disabled for rizonesoft/impossible-os"). The [URL/badge/docs/generated-link sweep](../../todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md#6-url-badge-docs-and-generated-link-sweep) should update this string to track the active owner; this is informational rather than a URL.
 
 Notes for §6:
 
 - `SECURITY.md`, `CODE_OF_CONDUCT.md`, `AGENTS.md`, `CLAUDE.md` returned **zero** matches in this scan -- they identify the project / Claude Code system but do not name the GitHub URL. They should not need owner-related edits.
 - `gh-pages/err/*/index.html` is the largest group (15 files); the error-page header/footer link block is the most likely shared template that produces hundreds of references.
-- `rizonesoft.github.io` only appears 5 times -- exactly the spots called out in the TODO's `Current state` callout (canonical, Open Graph, JSON-LD, visitor counter on `gh-pages/index.html`, and presumably one other landing-page surface).
-- `hits.sh/rizonesoft` appears once -- the visitor-counter badge URL in `gh-pages/index.html`.
+- `rizonesoft.github.io` appears 23 times under the expanded scan (5 in the narrow-path baseline -- the canonical / Open Graph / JSON-LD / visitor-counter spots on `gh-pages/index.html` plus one other landing-page surface; the additional 18 are spread across `todo/` and self-references in this preflight doc).
+- `hits.sh/rizonesoft` appears 5 times under the expanded scan (1 in the narrow-path baseline -- the active visitor-counter badge URL in `gh-pages/index.html`; the other 4 are self-references in this preflight doc and the [Preflight Inventory section stamp](../../todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md#1-preflight-inventory-and-risk-register) prose that quote the pattern).
 
 This inventory does NOT classify which references are the active GitHub repo (must change in §6) versus the brand `rizonesoft.com` (must NOT change, since the company name does not move). §6 walks the classification.
 
@@ -292,8 +315,8 @@ Severity scale: **Critical** (Pages or repo unreachable for any duration), **Hig
 | R6 | Ruleset "Default Branch Security" not migrated to new owner -- main branch becomes unprotected. | High | Medium | §5 verifies the ruleset survives; if not, recreate it from this baseline (rules listed verbatim in §5). | §5 |
 | R7 | Org-level Actions policy disables existing workflows under `rizonetech` (allowlist or token-permissions tighter than user-account default). | High | Medium | §2 confirms org Actions policy permits `actions/checkout`, `actions/configure-pages`, `actions/upload-pages-artifact`, `actions/deploy-pages`, plus all build/release/labeler/stale/todo-graph/visual-regression action versions BEFORE pressing transfer. | §2 |
 | R8 | CODEOWNERS / collaborators / Maintain-role bypass actor not preserved across owners. | Medium | Medium | Solo-owner repo so collaborator loss is bounded (only `rizonesoft` is on the list). §5 verifies CODEOWNERS handle `@derickpayne` is still resolvable under the new owner; recreate ruleset bypass actor to map to a `rizonetech` team member. | §5 |
-| R9 | Badges in `README.md` and `docs/` break because they URL-bake the old owner. 28 files / 283 references identified. | Medium | High | §6 sweep (already inventoried in section 7 above) replaces active references; redirect is convenience only. | §6 |
-| R10 | Generated TODO graph links in `docs/infrastructure/todo-graph.md` go stale -- those are auto-emitted by `scripts/todo-graph/build.py`. | Medium | High | §6 either regenerates the doc or patches the script's owner constant. Do NOT manually edit the generated graph block. | §6 + §9 |
+| R9 | Badges in `README.md` and `docs/` break because they URL-bake the old owner. **39 files / 364 matches** under the expanded scan (the historical narrow-path baseline was 28 files / 283 matches). | Medium | High | The [URL/badge/docs/generated-link sweep](../../todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md#6-url-badge-docs-and-generated-link-sweep) (already inventoried in section 7 above) replaces active references; redirect is convenience only. | §6 |
+| R10 | Generated TODO graph links in [`docs/infrastructure/todo-graph.md`](todo-graph.md) go stale -- those are auto-emitted by [`scripts/todo-graph/render.py`](../../scripts/todo-graph/render.py) (the `REPO_URL_BASE` constant at line 42 is the single source of truth for graph node URLs; `build.py` orchestrates and writes but does NOT hold the URL constant). | Medium | High | The [URL/badge/docs/generated-link sweep](../../todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md#6-url-badge-docs-and-generated-link-sweep) must update `render.py:42` and re-run `python3 scripts/todo-graph/build.py` to regenerate the doc. Do NOT manually edit the generated graph block. | §6 + §9 |
 | R11 | Recreating the old repository path `rizonesoft/impossible-os` during the redirect window destroys GitHub's automatic repo redirect. | High | Low (operator discipline) | §4 explicitly forbids recreating the path during the redirect window. Documented here as a tripwire. | §4 |
 | R12 | Org-level Copilot / autonomous coding-agent policy diverges from project doctrine, silently enabling cloud-agent PRs. | High | Medium | §2 / §5 / §7 explicitly check that org Copilot Access policies do NOT enable coding-agent / autonomous PR flow for the repo. Pre-transfer check with admin user, post-transfer check via UI. (No public API surface for this -- manual UI inspection required.) | §2 + §5 + §7 |
 | R13 | Visibility flip during transfer -- transferring a private repo to an org that allows public repos still requires explicit visibility change; no risk of accidental flip on transfer alone, but R12 + visibility flip together would expose private artifacts. | Medium | Low | Visibility stays `PRIVATE` through the transfer; §8 governs the eventual public flip with its own preflight gate. | §4 + §8 |
@@ -349,10 +372,20 @@ gh api orgs/rizonetech --jq '{login,plan,public_repos,total_private_repos,owned_
 gh repo view rizonetech/impossible-os --json nameWithOwner   # MUST 404
 gh api user/memberships/orgs/rizonetech
 
-# Hard-coded owner references
-rg -n 'rizonesoft/impossible-os|github\.com/rizonesoft|rizonesoft\.github\.io|hits\.sh/rizonesoft' \
-  README.md CONTRIBUTING.md SECURITY.md CODE_OF_CONDUCT.md AGENTS.md CLAUDE.md \
-  docs gh-pages .github
+# Hard-coded owner references (expanded path set: includes todo + scripts;
+# render.py:42 holds REPO_URL_BASE so scripts/ is mandatory).
+#
+# Step 1 -- compare against the post-doc baseline (expected: 39 files / 364 matches):
+PATTERN='rizonesoft/impossible-os|github\.com/rizonesoft|rizonesoft\.github\.io|hits\.sh/rizonesoft'
+PATHS='README.md CONTRIBUTING.md SECURITY.md CODE_OF_CONDUCT.md AGENTS.md CLAUDE.md docs gh-pages .github todo scripts'
+rg -l "$PATTERN" $PATHS | wc -l                                    # file count
+rg -n "$PATTERN" $PATHS | wc -l                                    # total matching lines (matches "364" semantics in this doc)
+for p in 'rizonesoft/impossible-os' 'github\.com/rizonesoft' 'rizonesoft\.github\.io' 'hits\.sh/rizonesoft'; do
+  echo "[$p] $(rg -c "$p" $PATHS 2>/dev/null | awk -F: '{s+=$NF} END {print s}')"
+done                                                                # per-pattern counts
+#
+# Step 2 -- locator (only run after Step 1 shows drift; emits hundreds of lines):
+rg -n "$PATTERN" $PATHS
 ```
 
 Re-run the full block immediately before §4 transfer to detect any drift since the baseline date.
