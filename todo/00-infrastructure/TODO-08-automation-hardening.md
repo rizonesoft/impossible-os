@@ -469,7 +469,7 @@ The pre-implementation design-review hook ([`.claude/hooks/design_review_require
 > - Canonical doc: `.claude/hooks/MANIFEST.md` (the hook's row updates implicitly via the file path; behavior is documented in the hook's own header comment).
 > - Scope boundary: §15 fixes the design-review hook's over-aggression; §3 owns the broader receiving-review gate; §4 (TODO-08) owns the section-commit gate. The three hooks compose.
 
-> **Verified:** 2026-04-27 | commit `<pending>` | 5/5 items | build N/A (host-side hook + tests) | lint CLEAN | tests 253/253 PASS
+> **Verified:** 2026-04-27 | commit `d9bdacf9` | 5/5 items | build N/A (host-side hook + tests) | lint CLEAN | tests 253/253 PASS
 > **Quality reviewed:** 2026-04-27 | self-review only (host-side hook + test fixtures, no kernel/SMP risk; the hook's behavior is exercised by 5 sub-tests covering both relaxation paths and a non-clearing-prefix negative case) | scope: N/A (host-side hook fix)
 
 ---
