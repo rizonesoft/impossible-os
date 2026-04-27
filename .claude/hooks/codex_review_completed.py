@@ -509,28 +509,81 @@ def _bash_prompt_arg(cmd: str) -> str:
       codex review "<prompt>"
       codex e "<prompt>"
 
-    The prompt is the LAST positional shlex token. Returns empty
-    string when the invocation has no detectable prompt arg or when
-    shlex.split fails.
+    The prompt is the FIRST positional immediately after the review
+    subcommand. Earlier (pre-fix) implementation reverse-walked the
+    segment, which broke whenever the bash command appended shell
+    redirects: `node ... adversarial-review "<prompt>" 2>&1 | tail -3`
+    segments on `|` to `[node, ..., adversarial-review, <prompt>,
+    2>&1]`, and reverse iteration picked `2>&1` instead of `<prompt>`.
+    This was the root cause of the §5 PostToolUse routing failure
+    (state file empty in real sessions; verified by trace 2026-04-27).
+    Forward-walk from the subcommand is unambiguous because review
+    takes ONE positional argument.
+
+    Returns empty string when the invocation has no detectable
+    prompt arg or when shlex.split fails.
     """
     if not isinstance(cmd, str) or not cmd:
+        return ""
+    if "codex" not in cmd:
         return ""
     try:
         toks = shlex.split(cmd, posix=True, comments=False)
     except ValueError:
         return ""
-    # Trim heredoc body / sub-content, segment by control operators,
-    # and pick the segment that's a Codex invocation.
+    _COMPANION_SUBCMDS = ("review", "adversarial-review", "task")
+    _CODEX_BARE_SUBCMDS = ("review", "e")
+
+    def _first_positional_after(seg: list[str], start: int) -> str:
+        """Walk past flag tokens (`--background`, `--json`,
+        `--key=value`, etc.) starting at `start` and return the first
+        non-flag token. Returns '' if none. Codex companion review
+        subcommands take a SINGLE positional (the prompt) after any
+        per-subcommand flags such as `task --background --json`."""
+        idx = start
+        while idx < len(seg) and seg[idx].startswith("-"):
+            idx += 1
+        return seg[idx] if idx < len(seg) and not seg[idx].startswith("-") else ""
+
     segs = _segment_by_separators(toks)
     for seg in segs:
         seg = _trim_heredoc_body(seg)
-        if seg and _segment_is_codex_invocation(seg):
-            # Return the last non-flag token. Walking from the end is
-            # cheap and avoids re-doing the wrapper-walk -- the prompt
-            # is always the last positional in our review skills.
-            for tok in reversed(seg):
-                if tok and not tok.startswith("-"):
-                    return tok
+        if not (seg and _segment_is_codex_invocation(seg)):
+            continue
+        for i, tok in enumerate(seg):
+            base = tok.rsplit("/", 1)[-1]
+            # Direct: `<path>/codex-companion.mjs <subcmd> [flags...] <prompt>`
+            if "codex-companion.mjs" in base:
+                if i + 1 < len(seg) and seg[i + 1] in _COMPANION_SUBCMDS:
+                    return _first_positional_after(seg, i + 2)
+                return ""
+            # `node <path>/codex-companion.mjs <subcmd> [flags...] <prompt>`
+            if base == "node" and i + 1 < len(seg) and "codex-companion.mjs" in seg[i + 1]:
+                if i + 2 < len(seg) and seg[i + 2] in _COMPANION_SUBCMDS:
+                    return _first_positional_after(seg, i + 3)
+                return ""
+            # `codex [global-flags] <subcmd> <prompt>`
+            if base == "codex":
+                codex_global_value_flags = (
+                    "-c", "--config", "--enable", "--disable", "--remote",
+                    "--bearer-token-env-var",
+                )
+                idx = i + 1
+                while idx < len(seg):
+                    tok2 = seg[idx]
+                    if not tok2.startswith("-"):
+                        break
+                    if tok2 in codex_global_value_flags:
+                        if "=" in tok2:
+                            idx += 1
+                        else:
+                            idx += 2
+                        continue
+                    idx += 1
+                if idx < len(seg) and seg[idx] in _CODEX_BARE_SUBCMDS:
+                    return _first_positional_after(seg, idx + 1)
+                return ""
+        return ""
     return ""
 
 

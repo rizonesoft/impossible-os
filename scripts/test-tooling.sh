@@ -2394,6 +2394,92 @@ sys.exit(0 if ok else 1)
     _fd_write_stamps "adversarial=60,consistency=120,perf=180"
     _fd_run 0 "M5 source+stamp+no-flip allows when 3 dispatches recent"
 
+    # Test R1 (post-c65568fc routing fix): _bash_prompt_arg must
+    # extract the prompt even when shell redirects + pipes follow.
+    # Pre-fix the reverse-walk picked `2>&1` from the segment instead
+    # of the actual prompt, so review_kind / todo_path didn't resolve
+    # and last-review-stamps.json never got written.
+    rm -f "$FD_STAMPS"
+    PAYLOAD='{"tool_name":"Bash","tool_input":{"command":"node /abs/codex-companion.mjs adversarial-review \"[review-kind: adversarial] todo/00-infrastructure/TODO-99-fdgate-fixture.md S1 some review prompt\" 2>&1 | tail -5"}}'
+    (cd "$FD_REPO" && printf '%s' "$PAYLOAD" | \
+        python3 ".claude/hooks/codex_review_completed.py" >/dev/null 2>&1)
+    if python3 -c "
+import json, sys
+s = json.load(open('$FD_STAMPS'))
+e = s.get('$FD_TODO_PATH', {})
+sys.exit(0 if isinstance(e.get('adversarial'), int) else 1)
+" 2>/dev/null; then
+        t_pass "four_dispatch_gate: R1 prompt extracted correctly with 2>&1 | tail tail"
+    else
+        t_fail "four_dispatch_gate: R1 redirect-tail prompt extraction broken"
+    fi
+
+    # Test R2 (post-c65568fc routing fix): _bash_prompt_arg must
+    # walk past per-subcommand flags. `task --background --json
+    # <prompt>` is the codex-bg-dispatch.sh shape.
+    rm -f "$FD_STAMPS"
+    PAYLOAD='{"tool_name":"Bash","tool_input":{"command":"node /abs/codex-companion.mjs task --background --json \"[review-kind: perf] todo/00-infrastructure/TODO-99-fdgate-fixture.md S1 perf review prompt\""}}'
+    (cd "$FD_REPO" && printf '%s' "$PAYLOAD" | \
+        python3 ".claude/hooks/codex_review_completed.py" >/dev/null 2>&1)
+    if python3 -c "
+import json, sys
+s = json.load(open('$FD_STAMPS'))
+e = s.get('$FD_TODO_PATH', {})
+sys.exit(0 if isinstance(e.get('perf'), int) else 1)
+" 2>/dev/null; then
+        t_pass "four_dispatch_gate: R2 prompt extracted past 'task --background --json' flags"
+    else
+        t_fail "four_dispatch_gate: R2 task-flag-walk prompt extraction broken"
+    fi
+
+    # Test R3 (post-c65568fc routing fix): inline SKIP env-var prefix
+    # in the bash command propagates to the gate. Pre-fix the gate
+    # only read os.environ; the harness PreToolUse hook ran in its
+    # own process env so `SKIP_REVIEW_HOOK=1 git commit` couldn't
+    # reach the SKIP path -- the user had to spawn git from a Python
+    # subprocess that explicitly set env before exec.
+    rm -f "$FD_STAMPS"
+    _fd_unstage
+    _fd_stage_stamp_only
+    INLINE_RC=$(cd "$FD_REPO" && \
+        printf '%s' '{"tool_name":"Bash","tool_input":{"command":"SKIP_REVIEW_HOOK=1 SKIP_REVIEW_HOOK_REASON=\"inline prefix routing test for stamp-only\" git commit -m foo"}}' | \
+        python3 ".claude/hooks/section_commit_gate.py" >/dev/null 2>&1; echo $?)
+    if [ "$INLINE_RC" = "0" ]; then
+        t_pass "four_dispatch_gate: R3 inline SKIP env-var prefix on stamp-only path allows"
+    else
+        t_fail "four_dispatch_gate: R3 inline SKIP env-var (rc=$INLINE_RC)"
+    fi
+
+    # Test R3.b: inline env prefix with `env VAR=val git commit ...`.
+    rm -f "$FD_STAMPS"
+    _fd_unstage
+    _fd_stage_stamp_only
+    INLINE_RC=$(cd "$FD_REPO" && \
+        printf '%s' '{"tool_name":"Bash","tool_input":{"command":"env SKIP_REVIEW_HOOK=1 SKIP_REVIEW_HOOK_REASON=\"env wrapper inline prefix test\" git commit -m foo"}}' | \
+        python3 ".claude/hooks/section_commit_gate.py" >/dev/null 2>&1; echo $?)
+    if [ "$INLINE_RC" = "0" ]; then
+        t_pass "four_dispatch_gate: R3.b inline SKIP env-var via 'env' wrapper allows"
+    else
+        t_fail "four_dispatch_gate: R3.b env-wrapper inline (rc=$INLINE_RC)"
+    fi
+
+    # Test R3.c: inline SKIP_REVIEW_HOOK=1 without REASON returns
+    # the same usage-envelope BLOCK as the os.environ path.
+    rm -f "$FD_STAMPS"
+    _fd_unstage
+    _fd_stage_stamp_only
+    BLOCK_OUT=$(cd "$FD_REPO" && \
+        printf '%s' '{"tool_name":"Bash","tool_input":{"command":"SKIP_REVIEW_HOOK=1 git commit -m foo"}}' | \
+        python3 ".claude/hooks/section_commit_gate.py" 2>&1 >/dev/null; true)
+    BLOCK_RC=$(cd "$FD_REPO" && \
+        printf '%s' '{"tool_name":"Bash","tool_input":{"command":"SKIP_REVIEW_HOOK=1 git commit -m foo"}}' | \
+        python3 ".claude/hooks/section_commit_gate.py" >/dev/null 2>&1; echo $?)
+    if [ "$BLOCK_RC" = "2" ] && echo "$BLOCK_OUT" | grep -q "REASON is empty\|REASON too short"; then
+        t_pass "four_dispatch_gate: R3.c inline SKIP without REASON returns usage-envelope BLOCK"
+    else
+        t_fail "four_dispatch_gate: R3.c inline-SKIP-no-reason missing usage envelope (rc=$BLOCK_RC)"
+    fi
+
     # ----- Codex post-commit fixes (A: marker anchoring; B: stamp-only
     #       SKIP resets state; C: nested blockquote; D: lock timeout) -----
 

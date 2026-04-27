@@ -275,6 +275,28 @@ the current HEAD sha and prepend `[SKIP_REVIEW_HOOK reason: ...]` to their
 systemMessage. Match by HEAD (not "last line globally") because parallel
 sessions interleave (Codex M2).
 
+**Mid-session SKIP recipe (post-c65568fc):** the gate accepts the SKIP
+env vars from THREE sources, in this order:
+
+1. **Process env (canonical)** -- shell-level vars set BEFORE Claude Code
+   started, e.g. user runs `SKIP_REVIEW_HOOK=1 SKIP_REVIEW_HOOK_REASON=... claude`.
+   The harness inherits them; `os.environ.get` in the hook sees them.
+2. **`.githooks/pre-commit` path** -- when git itself runs the gate (via
+   `--git-hook-mode`), `git commit`'s env DOES propagate to its child hooks.
+   So `SKIP_REVIEW_HOOK=1 git commit ...` works at the git layer; the
+   harness PreToolUse layer would still block first, see (3).
+3. **Inline-prefix scan** -- the harness PreToolUse hook now parses the
+   `tool_input.command` for a leading `SKIP_REVIEW_HOOK=1 [SKIP_REVIEW_HOOK_REASON=...]`
+   env-prefix (with optional wrapper tokens like `env`/`sudo`/`timeout`).
+   This closes the gap where shell-level `VAR=val cmd` env DOES NOT
+   propagate to the harness PreToolUse hook process. Pre-c65568fc the
+   only mid-session SKIP recipe was to spawn `git commit` from a Python
+   subprocess that explicitly set env via `subprocess.run(env=...)`.
+
+Both SKIP_REVIEW_HOOK and SKIP_REVIEW_HOOK_REASON must appear together;
+SKIP_REVIEW_HOOK_REASON >= 12 chars or the gate returns the usage-envelope
+BLOCK regardless of which source was used.
+
 ## Gitignore
 
 The directory ships tracked via `.keep`; per-session JSON files are excluded. See `.gitignore` rules at repo root:

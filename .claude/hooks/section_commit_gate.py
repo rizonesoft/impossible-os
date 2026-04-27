@@ -1188,16 +1188,79 @@ def _repo_root() -> Path | None:
     return Path(out) if out else None
 
 
-def _is_skip_requested() -> tuple[bool, str | None, str | None]:
+def _scan_inline_env_prefix(cmd: str) -> dict[str, str]:
+    """Scan a bash command's leading env-var prefix and return the
+    `{NAME: VALUE}` dict. Walks past wrapper tokens (`sudo`, `env`,
+    `timeout`, etc.) so `sudo SKIP_REVIEW_HOOK=1 git commit ...` is
+    handled the same as the bare prefix. Returns {} on parse failure.
+
+    Codex routing-fix #2 (post-c65568fc): the harness PreToolUse
+    hook reads its OWN `os.environ`, not the would-be-Bash-call's
+    env; inline `SKIP_REVIEW_HOOK=1 git commit` therefore couldn't
+    reach the gate's SKIP path (the user had to spawn git from a
+    Python subprocess that explicitly set env before exec). Scanning
+    the command's leading env prefix here closes the gap so the
+    inline form works as the documentation implies it should.
+
+    Only `SKIP_REVIEW_HOOK*` keys are returned (other env vars are
+    not relevant to the gate); broader scope risks privacy/audit
+    surprises if commands carry secrets in env prefix.
+    """
+    if not isinstance(cmd, str) or "SKIP_REVIEW_HOOK" not in cmd:
+        return {}
+    try:
+        toks = shlex.split(cmd, posix=True, comments=False)
+    except ValueError:
+        return {}
+    # Walk past env-prefix-friendly wrappers; they may PRECEDE env
+    # assignments. We don't need to be as exhaustive as the codex
+    # invocation walker -- typical real shapes are bare prefix or
+    # `env VAR=val cmd`.
+    _wrappers = frozenset({"env", "sudo", "doas", "nice", "nohup",
+                           "timeout", "ionice", "stdbuf", "command",
+                           "exec"})
+    out: dict[str, str] = {}
+    for tok in toks:
+        if "=" in tok and not tok.startswith("="):
+            head, val = tok.split("=", 1)
+            if head and (head[0].isalpha() or head[0] == "_") and all(
+                c.isalnum() or c == "_" for c in head
+            ):
+                if head.startswith("SKIP_REVIEW_HOOK"):
+                    out[head] = val
+                continue
+            break
+        if tok in _wrappers:
+            continue
+        # Stop at the first non-wrapper / non-env token.
+        break
+    return out
+
+
+def _is_skip_requested(cmd: str = "") -> tuple[bool, str | None, str | None]:
     """Returns (skip_requested, reason, error). If SKIP_REVIEW_HOOK=1
     is set BUT SKIP_REVIEW_HOOK_REASON is missing or too short, returns
     skip_requested=True with error explaining what's missing -- the
     caller blocks with a usage envelope. Both env vars together = real
     skip path.
+
+    Reads from `os.environ` first (canonical). When `cmd` is provided
+    AND the env vars are NOT set in process env, falls back to scanning
+    the command's leading inline env prefix (`SKIP_REVIEW_HOOK=1
+    SKIP_REVIEW_HOOK_REASON=... git commit ...`). The inline path
+    closes the harness-PreToolUse gap where shell-level env vars don't
+    propagate to the hook process (post-c65568fc fix).
     """
-    if os.environ.get("SKIP_REVIEW_HOOK", "") != "1":
-        return (False, None, None)
+    flag = os.environ.get("SKIP_REVIEW_HOOK", "")
     reason = os.environ.get("SKIP_REVIEW_HOOK_REASON", "").strip()
+    if flag != "1" and cmd:
+        # Inline-env fallback.
+        inline = _scan_inline_env_prefix(cmd)
+        flag = inline.get("SKIP_REVIEW_HOOK", flag)
+        if "SKIP_REVIEW_HOOK_REASON" in inline:
+            reason = inline["SKIP_REVIEW_HOOK_REASON"].strip()
+    if flag != "1":
+        return (False, None, None)
     if not reason:
         return (True, None, "SKIP_REVIEW_HOOK=1 set but SKIP_REVIEW_HOOK_REASON is empty")
     if len(reason) < SKIP_REASON_MIN_LEN:
@@ -1245,7 +1308,7 @@ def _git_hook_mode_main(root: Path) -> int:
 
 
 def _harness_main() -> int:
-    is_commit, has_no_verify, _cmd = _harness_command_is_git_commit()
+    is_commit, has_no_verify, cmd = _harness_command_is_git_commit()
     if not is_commit:
         return 0
     # Codex H1: --no-verify skips .githooks/pre-commit entirely, so
@@ -1271,12 +1334,19 @@ def _harness_main() -> int:
         # Outside a repo (shouldn't happen for a git-commit Bash);
         # fail open per H2 pre-signature semantics.
         return 0
-    return _evaluate(root, mode="harness")
+    return _evaluate(root, mode="harness", cmd=cmd)
 
 
-def _evaluate(root: Path, mode: str) -> int:
+def _evaluate(root: Path, mode: str, cmd: str = "") -> int:
     """Shared signature + evidence evaluation. Pre-signature errors
     fail OPEN; post-signature errors and missing evidence fail CLOSED.
+
+    `cmd` is the harness's tool_input.command (when invoked from the
+    Bash PreToolUse path); passed through to `_is_skip_requested` so
+    inline `SKIP_REVIEW_HOOK=1 git commit ...` is recognized when the
+    harness doesn't propagate shell env to the hook process. Empty
+    string in --git-hook-mode (where git itself propagates env, so
+    the canonical os.environ path works).
     """
     # Ensure crc is loaded before any signature/evidence work that
     # uses crc.X helpers. Harness path already loaded it during screen
@@ -1286,7 +1356,7 @@ def _evaluate(root: Path, mode: str) -> int:
     # out commit doesn't waste cycles on diff/regex work AND so an
     # incomplete opt-out (missing reason) is reported with a usage
     # envelope.
-    skip_req, skip_reason, skip_err = _is_skip_requested()
+    skip_req, skip_reason, skip_err = _is_skip_requested(cmd)
     if skip_req and skip_err:
         sys.stderr.write(
             f"[section-commit-gate] BLOCK -- opt-out malformed: {skip_err}.\n"
