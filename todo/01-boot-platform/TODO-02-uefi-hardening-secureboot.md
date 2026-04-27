@@ -38,6 +38,8 @@ title: "TODO-02 -- UEFI Bootloader Hardening & Secure Boot"
 - -> XREF: `TODO-27-uefi-advanced.md` -- deferred advanced features (multi-OS menu, capsule, W^X, multi-GPU, extended SB, SMBIOS ext, DBX)
 - -> XREF: `TODO-13-tpm-measured-boot-attestation.md` -- measured boot, PCR replay, TPM NV baselines, sealed secrets, and attestation export
 - -> XREF: `TODO-12-early-entropy-random-seed.md` -- firmware and CPU entropy collection plus boot-time seed handoff
+- -> XREF: `10-platform-services/TODO-08-win32-api-surface.md §2` -- consumer for §14 `kernel32.dll` firmware variable + table exports
+- -> XREF: `01-boot-platform/TODO-04-firmware-table-platform-inventory.md §1` -- ESP UUID surfaced by §13 feeds the firmware table catalog
 
 ---
 
@@ -51,6 +53,9 @@ title: "TODO-02 -- UEFI Bootloader Hardening & Secure Boot"
 - `BOOTX64.EFI` signed with MOK key; `.gitignore` entry for `MOK.key`.
 - Serial log unified format with atomic line writes.
 - SBAT / revocation ops checklist documented; Secure Boot DB counts visible in-registry; `ExitBootServices()` bounded retry with visible status codes on picky firmware.
+- Shim is signed by a current MS UEFI CA generation (2011 or 2023); CA generation visible in registry (`HKLM\SYSTEM\SecureBoot\ShimCA`); build-time WARN fires when only the deprecated 2011 CA is present past the 2026-04-01 safety window.
+- Bootloader fails fast on corrupted / wrong-type ESP: GPT type GUID + FAT32 BPB + required-file batch are checked before kernel load; ESP UUID + size mirrored to `HKLM\HARDWARE\BOOT\ESP\*`.
+- `kernel32.dll` exports `GetFirmwareEnvironmentVariableA/W`, `SetFirmwareEnvironmentVariableA/W`, `GetSystemFirmwareTable`, `EnumSystemFirmwareTables`; variable storage quota mirrored to `HKLM\SYSTEM\SecureBoot\Vars\*`.
 
 ---
 
@@ -69,6 +74,9 @@ title: "TODO-02 -- UEFI Bootloader Hardening & Secure Boot"
 | 💎  |   9   | SBAT ops, DB registry mirror, EBS retry  | §2, §5          |  [x]   |
 | 💎  |  10   | RT sleepable lock migration              | §1              |  [x]   |
 | 💎  |  11   | Unified signed boot artifact (UKI-style) | §6              |  [ ]   |
+| 💎  |  12   | MS UEFI CA 2023 transition + 2011 retirement | §6          |  [ ]   |
+| 💎  |  13   | EFI System Partition integrity check     | --              |  [ ]   |
+| 💎  |  14   | Win32 firmware variable + table surface  | §2              |  [ ]   |
 
 ---
 
@@ -276,6 +284,58 @@ systemd-boot ships a Unified Kernel Image (UKI) format: a single signed UEFI PE 
 
 ---
 
+## 12. MS UEFI CA 2023 Transition + 2011 Retirement Tracking
+
+Microsoft began rotating UEFI signing certificates in 2024-2025: the original `Microsoft Corporation UEFI CA 2011` (the cert that signs every shim Microsoft has shipped) is scheduled to expire June 2026, and a replacement `Microsoft Corporation UEFI CA 2023` is being enrolled into firmware DBs via Windows Update. Devices booting a shim still signed only by 2011 CA will start failing on machines whose firmware's KEK/db has rotated to 2023-only. Any Impossible OS install that ships through 2026+ MUST track this transition and re-sign shim against the 2023 CA before the 2011 cert expires. This section is doctrine + ops; the actual signing happens in §6's pipeline.
+
+> [!IMPORTANT]
+> **2026 ship-blocker if ignored.** Without 2023-CA-signed shim, machines that received the firmware DB rotation through Windows Update will refuse to boot Impossible OS. The transition window is firm.
+
+- [ ] Add a "MS UEFI CA Lifecycle" section to [`docs/guides/secure-boot-keys.md`](../../docs/guides/secure-boot-keys.md) covering: 2011 CA expiry date (June 2026), 2023 CA enrollment timeline, how to verify which CA your shim is signed against (`sbverify --list shim/shimx64.efi`), how to re-sign + redistribute when MS publishes the 2023-signed shim binary.
+- [ ] Update [`scripts/sign-efi.sh`](../../scripts/sign-efi.sh) to log which MS UEFI CA the bundled `shim/shimx64.efi` is signed by (parse `sbverify --list` output, emit `[shim] signed-by: Microsoft Corporation UEFI CA <year>`). Fail loudly if signed-by year is in the deprecated set.
+- [ ] Pin the canonical 2023-CA-signed shim binary into `shim/` once Microsoft publishes it; bump `shim/SHA256SUMS` accordingly. Until then, document the 2011-CA-signed binary's expiry exposure in the docs section above.
+- [ ] Add a build-time check (`scripts/build.sh` or `scripts/test-tooling.sh` sub-test): if the shim binary is signed only by the deprecated CA AND the build host's date is past 2026-04-01, emit a WARN. The 60-day pre-expiry window is the safety margin per the MS guidance.
+- [ ] Surface the shim CA generation in `HKLM\SYSTEM\SecureBoot\ShimCA` (DWORD: 2011 or 2023) at boot via [`uefi_secureboot_populate_registry()`](../../src/kernel/uefi_runtime.c). Consumers (msinfo32-equivalent, audit tools) can read it.
+- [ ] Commit: `"boot: track MS UEFI CA 2023 transition; sign-efi.sh emits CA generation; registry surface"`
+
+**Test checkpoint:** `sbverify --list shim/shimx64.efi` output names a Microsoft Corporation UEFI CA generation; `HKLM\SYSTEM\SecureBoot\ShimCA` matches; `bash scripts/sign-efi.sh build/BOOTX64.EFI` logs `[shim] signed-by: ...`; the build-time warning fires when the deprecated CA date threshold is crossed. Test on: QEMU WHPX (signature path), QEMU TCG, VirtualBox, bare metal (real DB rotation).
+
+---
+
+## 13. EFI System Partition Integrity Check
+
+The bootloader currently trusts that UEFI launched it from a valid ESP and proceeds to load `kernel.exe` + `boot.conf` without re-verifying. On a corrupted or tampered ESP, the bootloader silently loads whatever bytes it finds. Win11 BootMgr does basic ESP sanity (FAT32 + correct partition GUID); Linux's `efibootmgr` exposes the ESP UUID. Impossible OS should add a small pre-load sanity gate that catches obvious corruption / wrong-partition cases before kernel launch.
+
+- [ ] [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c): after `gBS->OpenProtocol(EFI_LOADED_IMAGE_PROTOCOL_GUID)`, call `EFI_BLOCK_IO_PROTOCOL` to read the GPT partition entry for the device that launched us. Verify partition type GUID equals `EFI_PARTITION_TYPE_SYSTEM_PARTITION_GUID` (`C12A7328-F81F-11D2-BA4B-00A0C93EC93B`). Halt with `boot_halt("ESP type GUID mismatch")` on failure.
+- [ ] Verify the ESP filesystem is FAT32 by reading the BPB's `BS_FilSysType` field (offset 0x52, "FAT32   "). Tolerate FAT16 only on tiny test ESPs (< 16 MB) with a one-line WARN to serial.
+- [ ] Sanity-check that `\EFI\BOOT\BOOTX64.EFI`, `\kernel.exe`, and `\boot.conf` exist before attempting their full load, so missing-file errors are reported in one batch instead of cascading through the load chain.
+- [ ] Surface the ESP UUID + size into `HKLM\HARDWARE\BOOT\ESP\{Uuid, SizeMB}` via `boot_info` so post-boot tools can identify the boot disk without re-reading firmware.
+- [ ] Commit: `"boot: ESP integrity check (GPT type GUID + FAT32 BPB + required-files batch)"`
+
+> [!NOTE]
+> ESP cryptographic verification (signed manifest) is out of scope for this section; the trust anchor for the legacy split path is Secure Boot signature on `BOOTX64.EFI` itself. UKI (§11) is the path that closes whole-chain signing. This section is corruption / wrong-partition detection, not adversary defense.
+
+**Test checkpoint:** Booting from a freshly-formatted ESP (FAT32, correct GUID) passes silently; flipping the partition type GUID via `gdisk` triggers the `boot_halt("ESP type GUID mismatch")` path; deleting `kernel.exe` from the ESP triggers a single batched error reporting all three required-file checks. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+---
+
+## 14. Win32 Firmware Variable + Table Surface
+
+§2 wired `NtQuerySystemEnvironmentValueEx` / `NtSetSystemEnvironmentValueEx` into the SSDT, but `kernel32.dll` does not export the corresponding Win32-named functions (`GetFirmwareEnvironmentVariableA/W`, `SetFirmwareEnvironmentVariableA/W`, `GetSystemFirmwareTable`, `EnumSystemFirmwareTables`). Win11 + Linux WINE applications that query firmware variables or SMBIOS tables fail to resolve these symbols at load time. The native NT API is reachable; the Win32 facade is not. This is purely a wiring gap -- the underlying syscalls exist; the export table needs new entries.
+
+- [ ] Add `GetFirmwareEnvironmentVariableA/W` and `SetFirmwareEnvironmentVariableA/W` to `s_kernel32_exports[]` in [`src/kernel/pe.c`](../../src/kernel/pe.c), proxying to the existing `SSDT_NtQuerySystemEnvironmentValueEx` / `SSDT_NtSetSystemEnvironmentValueEx` entries.
+- [ ] Add `GetSystemFirmwareTable` and `EnumSystemFirmwareTables` to `s_kernel32_exports[]`, returning the cached ACPI / SMBIOS tables from Phase 1 init (the kernel already parses these in §4 SMBIOS + ACPI init).
+- [ ] Implement the Win32-style ANSI/Wide name conversion + privilege check (`SE_SYSTEM_ENVIRONMENT_NAME` privilege required for Set, per Win32 doc) in the export trampoline, then dispatch to the NT syscall.
+- [ ] Surface variable storage quota -- Win32 has no canonical export, but the registry should mirror `QueryVariableInfo` results: `HKLM\SYSTEM\SecureBoot\Vars\{MaxStorageSize, RemainingSize, MaxVariableSize}` (DWORDs, in bytes), refreshed at boot. Documents the 64 KB / per-machine total cap that production firmware enforces.
+- [ ] Commit: `"kernel: kernel32 exports for Win32 firmware variable + table APIs; QueryVariableInfo registry mirror"`
+
+> [!NOTE]
+> SE_SYSTEM_ENVIRONMENT_NAME privilege gating is partial in this section's scope (the TODO-23 referenced under §2 owns the privilege table). Drop a comment in the trampoline pointing at TODO-23's privilege check, and gate the Set path on a TODO marker until the privilege table lands.
+
+**Test checkpoint:** A Win32 .exe linked against the shipping kernel32 import library can call `GetFirmwareEnvironmentVariableA("SecureBoot", L"{8be4df61-...}", buf, sizeof(buf))` and receive the same byte the SSDT path returns; `GetSystemFirmwareTable('RSMB', 0, buf, sizeof(buf))` returns the SMBIOS table cached at boot; `HKLM\SYSTEM\SecureBoot\Vars\MaxStorageSize` is non-zero. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+---
+
 ## OS Comparison
 
 | ⭐   | Feature               | 🪟 Win11                       | 🐧 Linux                     | 🚀 Impossible OS                |
@@ -292,6 +352,9 @@ systemd-boot ships a Unified Kernel Image (UKI) format: a single signed UEFI PE 
 | 💎   | DB/dbx inventory      | ✅ msinfo32 SB details         | ✅ mokutil --db              | ✅ §9 registry Db/Dbx counts    |
 | 💎   | EBS retry hardening   | ✅ bootmgr bounded retry       | ✅ efi-stub retry patch      | ✅ §9 4-attempt bounded loop    |
 | 💎   | Capsule install UX    | ✅ Windows Update stack        | ✅ fwupd + LVFS              | ⬜ TODO-27 §2 (query-only)      |
+| 💎   | MS UEFI CA lifecycle  | ✅ Windows Update CA rotation  | ⚠️ Distro re-sign timing     | ⬜ §12 build-time CA WARN + registry surface |
+| 💎   | ESP integrity check   | ⚠️ BootMgr GUID / FAT32 only   | ⚠️ efibootmgr UUID surface   | ⬜ §13 GUID + BPB + batch + UUID mirror |
+| 💎   | Win32 firmware vars   | ✅ kernel32 GetFirmwareEnv*    | ⚠️ WINE shim only            | ⬜ §14 kernel32 exports + quota mirror |
 
 > **Parity:** 💎 rows match Win11+Linux baseline. **⭐** JSON boot profile is extra vs ETW and userland boot charts. Capsule **apply** path and W^X on RT pages stay in [TODO-27](TODO-27-uefi-advanced.md); kernel already runs read-only `esrt_init()` / `uefi_capsule_init()` / `uefi_crypto_agility_init()` during Phase 1 bring-up.
 
@@ -304,6 +367,10 @@ systemd-boot ships a Unified Kernel Image (UKI) format: a single signed UEFI PE 
 - [x] Create `src/kernel/test/test_uefi_boot.c` with 9 suites: RT available, var_get SecureBoot, var_u32 roundtrip (Impossible OS vendor GUID), framebuffer width/height, HiDPI consistency, SMBIOS UUID, Secure Boot state consistency, registry BIOS vendor, SecureBoot DB mirror (DbEntries/DbxEntries match secureboot_get_db_info)
 - [x] Register in `test_runner_init()`: `test_register_uefi_boot()` under Boot category
 - [x] Commit: `"test: add uefi_boot test suite"` (07ce1ac3)
+- [ ] Add §12 test: registry `HKLM\SYSTEM\SecureBoot\ShimCA` is a non-zero DWORD matching the build-host's recorded shim CA generation.
+- [ ] Add §13 test: ESP probe returns valid GPT type GUID match (constant compare via `RtlCompareMemory(&type_guid, &EFI_PARTITION_TYPE_SYSTEM_PARTITION_GUID, sizeof(EFI_GUID))` returning the full 16); ESP UUID surfaced under `HKLM\HARDWARE\BOOT\ESP\Uuid` is non-zero.
+- [ ] Add §14 test: `pe_resolve_export("kernel32.dll", "GetFirmwareEnvironmentVariableA")` returns a non-NULL function pointer; calling it with `L"SecureBoot"` returns the same byte the SSDT path returns; `HKLM\SYSTEM\SecureBoot\Vars\MaxStorageSize` is a non-zero DWORD.
+- [ ] Commit: `"test: extend uefi_boot suite with shim CA, ESP probe, kernel32 firmware exports"`
 
 > **Done:** 9 suites, 13 assertions -- registered in `test_runner_init()` (2026-04-10)
 
