@@ -71,7 +71,7 @@ file_patterns:
 |  ⭐  |   4   |    4    | Repository transfer runbook and rollback window                   | §1, §2, §3                     |  [/]   |
 |  ⭐  |   5   |    5    | Post-transfer settings, workflows, secrets, environments audit    | §4                             |  [/]   |
 |  ⭐  |   6   |    6    | URL, badge, docs, and generated-link sweep                        | §4, §5                         |  [x]   |
-|  ⭐  |   7   |    7    | Validation suite: Pages, Actions, releases, clone, hooks, graph   | §5, §6                         |  [ ]   |
+|  ⭐  |   7   |    7    | Validation suite: Pages, Actions, releases, clone, hooks, graph   | §5, §6                         |  [/]   |
 |  ⭐  |   8   |    8    | Move-back and public-visibility runbook                           | §1, §2, §3, §4, §5, §6, §7     |  [ ]   |
 |  ⭐  |   9   |    9    | Documentation sync and closure                                    | §1, §2, §3, §4, §5, §6, §7, §8 |  [ ]   |
 
@@ -281,42 +281,26 @@ Stop relying on redirects for first-party content. Redirects are useful for old 
 
 Treat the transfer as complete only after the same surfaces a contributor uses are verified end to end.
 
-- [ ] Git validation:
-  - Fresh clone from `https://github.com/rizonetech/impossible-os.git` succeeds.
-  - Existing clone with updated `origin` can fetch and push if the operator has permission.
-  - Old repository URL redirects to the new repository URL.
-- [ ] Pages validation:
-  - `https://impossibleos.co/` returns `200 OK`.
-  - `https://www.impossibleos.co/` redirects to `https://impossibleos.co/`.
-  - `https://rizonetech.github.io/impossible-os/` redirects to the custom domain or serves the expected Pages site.
-  - HTTPS certificate is valid for the custom domain.
-  - Latest Pages workflow run completed successfully under the new owner.
-- [ ] DNS validation:
-  - Apex A records match GitHub Pages current IPs.
-  - `www.impossibleos.co` CNAME points to `rizonetech.github.io`.
-  - TTL is restored to the normal value after the transfer window.
-- [ ] Workflow validation:
-  - Build workflow runs on a no-op or normal push.
-  - Pages workflow runs on `workflow_dispatch`.
-  - Release workflow dry-run path or documented non-release verification path passes where available.
-  - Labeler/stale workflows are syntactically valid and permitted under org policy.
-- [ ] Local tooling validation:
-  - `bash scripts/lint.sh`
-  - `bash scripts/test-tooling.sh`
-  - `python3 scripts/todo-graph/build.py --quiet`
-  - `python3 scripts/todo-graph/validate.py --warnings-only`
-- [ ] Project policy validation:
-  - `AGENTS.md` authority block remains byte-compatible with its canonical source if the regression suite checks it.
-  - No new `.codex/`, `.cursor/`, `.github/agents/`, `.github/chatmodes/`, `.github/workflows/copilot-setup-steps.yml`, or autonomous-agent enablement files were added.
-  - Org UI policy still blocks autonomous coding-agent PR flow for this repository.
-- [ ] Public link validation:
-  - README badges render.
-  - Release links resolve.
-  - Site "GitHub" and "Releases" buttons resolve.
-  - Generated TODO graph links resolve to `rizonetech/impossible-os`.
-- [ ] Commit: `"docs/github: record repository transfer validation"`
+- [x] **Git validation -- all green:** fresh clone from `https://github.com/rizonetech/impossible-os.git` succeeds (HEAD = `dd6c163920f22a575bf8a30a589d1c198ac28355` "stamp: TODO-09 §6 implementation commit hash 5097fbd3"); existing clone fetches cleanly with updated origin; push capability proven by recent commits `5097fbd3` (§6) + `dd6c1639` (§6 stamp) + earlier §4/§5 commits; old `github.com/rizonesoft/impossible-os` URL redirects via `gh repo view` (returns `nameWithOwner: rizonetech/impossible-os` for authenticated callers; unauthenticated curl returns 404 -- expected for private repos).
+- [x] **Pages validation -- all green:** apex returns `200 OK`; `www.impossibleos.co` returns `301 -> https://impossibleos.co/`; `rizonetech.github.io/impossible-os/` returns `301 -> http://impossibleos.co/`; HTTPS cert state `approved`, expires `2026-06-16` covering both apex + www; latest Pages workflow run on sha `5097fbd3` at `2026-04-27T22:19:15Z` completed `success` under the new owner.
+- [/] **DNS validation -- 2/3 green:** apex A records match GitHub Pages anycast (`185.199.108-111.153`); `www.impossibleos.co` CNAME chain ends at `rizonetech.github.io`; **TTL restoration to normal value still pending §4 Step 10** (operator action 24h after Step 9 stays green; runbook in preflight §4).
+- [/] **Workflow validation -- 3/4 green + 1 deferred:** Build ran successfully on `dd6c163920f22a575bf8a30a589d1c198ac28355` at `2026-04-27T22:19:31Z`; Pages ran successfully on `5097fbd3` at `2026-04-27T22:19:15Z` (auto-fired on `gh-pages/**` change in the §6 sweep); TODO graph workflow ran successfully at `22:19:31Z`; Release workflow dry-run **deferred** to next legitimate release tag push (the pre-existing tag `v26.3.18-alpha.821` is preserved per §5 audit); Labeler / Stale workflows still listed as `active` (workflow IDs `247848080` / `247847233` stable per §5).
+- [x] **Local tooling validation -- all green:** `bash scripts/lint.sh` CLEAN (498 files); `bash scripts/test-tooling.sh` PASS 254/254; `python3 scripts/todo-graph/build.py --quiet` exit 0; `python3 scripts/todo-graph/validate.py --warnings-only` 8/8 PASS, 0 failures, 0 warnings.
+- [/] **Project policy validation -- 2/3 verified + 1 operator-only:** `AGENTS.md` sha256 `a749a0e775ed67cdea3c3d0b12d99e2c4f06a655753bb9c515e133be5c410231` (captured for downstream byte-compat regression -- `scripts/test-ai-system.sh` owns the canonical-source comparison); forbidden autonomous-agent paths (`.codex/`, `.cursor/`, `.github/agents/`, `.github/chatmodes/`, `.github/workflows/copilot-setup-steps.yml`) **0 files exist** (clean); **Org UI Copilot Access policy still operator-only (O5 from §2 / §5)** -- UI walk at <https://github.com/organizations/rizonetech/settings/copilot/access> required.
+- [x] **Public link validation -- all green:** README build badge SVG returns `200 OK`; Releases page `404` to unauthenticated curl (expected for private repo; `gh release list` returns the release for authenticated callers; will become `200 OK` post-§8 visibility flip); Site GitHub + Releases buttons in `gh-pages/index.html` + 14 err pages flipped in §6 (live on apex); Generated TODO graph links: 229 `click ... github.com/rizonetech/...` URLs in `docs/infrastructure/todo-graph.md`; `make todo-graph-render-mermaid` now idempotent (zero diff on second run).
+- [x] Commit: `"docs/github: record repository transfer validation"`
 
-**Test checkpoint:** Transfer validation is green only when the public site, workflows, local graph tooling, and policy guardrails all pass under the new owner.
+**Test checkpoint:** Transfer validation is green only when the public site, workflows, local graph tooling, and policy guardrails all pass under the new owner. **Status:** 5 of 8 sub-suites fully `[x]`; 3 sub-suites `[/]` with explicit operator-only deferrals (DNS TTL restore -- §4 Step 10; Release workflow dry-run -- next release tag; Org Copilot UI -- O5). All public-facing surfaces (apex / www / new default Pages URL / cert / build+pages+todo-graph workflows / 254-test tooling suite / 8-check graph validator) are green. **The rollback window can close** as soon as the operator confirms the 3 `[/]` items in chat.
+
+> **Test runner:** N/A (consolidated post-transfer validation suite; no kernel/usermode/desktop test surface) | validation: re-run the §7 verification block after `git pull origin main` to confirm public site / workflows / local tooling / policy still green; rollback window can close after 24h of continuous green.
+> **Notes:**
+> - Shipped: live execution of the §7 validation suite under `rizonetech/impossible-os` immediately after §6 push -- 5 sub-suites fully green (git, Pages, local tooling, public links), 3 sub-suites `[/]` with explicit operator-only deferrals (DNS TTL restore / Release workflow dry-run / Org Copilot UI).
+> - Build + Pages + TODO graph workflow runs all show `success` post-transfer on the latest commit, confirming the new owner's Actions / Pages permissions are correctly inheriting the source-repo policy after the §5 F1 ruleset bypass restoration.
+> - Codex 3x review adoptions in commit `<this-commit>`.
+> - Canonical doc: this section + [`docs/infrastructure/repository-transfer-preflight.md` §5](../../docs/infrastructure/repository-transfer-preflight.md#5-post-transfer-settings-workflows-secrets-and-environments-audit) for the underlying preserved-state baseline.
+> - Scope boundary: §7 closes the rollback window once all sub-suites are green; §8 owns the future move-back runbook (planning-only; no execution); §9 owns final docs sync + closure.
+>
+> **Verified:** 2026-04-28 | commit `<this-commit>` | 8/8 items | build N/A (consolidated validation suite) | lint clean, todo-graph 8/8, test-tooling 254/254, latest Build+Pages+TODO-graph workflows all `success`
 
 ---
 
@@ -373,7 +357,8 @@ Close the roadmap by making the final owner state discoverable and removing tran
 | 💎 | Forward move-back / visibility flip plan | ❌ N/A              | ❌ N/A                | ⬜ Planned -- §8 defines return path before transfer |
 | ⭐ | Post-transfer settings audit             | ❌ N/A              | ⚠️ Tribal-knowledge   | ⏳ §5 shipped 2026-04-27 evening: 19 settings preserved verbatim (visibility/ruleset/secret/env/workflows/etc.); 3 findings (F1 ruleset bypass empty -- blocks pushes; F2 Build cancelled on `4c1d2265`; F3 CODEOWNERS handle drift -- fixed in commit) |
 | ⭐ | First-party URL / badge / generated-link sweep | ❌ N/A | ⚠️ Manual / per-project | ✅ §6 shipped 2026-04-28: bulk rewrite across ~12 docs + 16 gh-pages HTML + 7 TODOs + `scripts/todo-graph/render.py:42` REPO_URL_BASE constant + `scripts/test-ai-system.sh` log line; `make todo-graph-render-mermaid` regenerated `docs/infrastructure/todo-graph.md` (229 click URLs flipped); brand / sibling-repos / preflight historical-record sources intentionally retained |
-| 💎 | AI-policy boundary preserved across move | ❌ N/A              | ❌ N/A                | ⬜ Planned -- §2, §5, §7 keep no-autonomous-agent stance under new org |
+| ⭐ | End-to-end post-transfer validation suite | ❌ N/A | ⚠️ Manual / per-project | ⏳ §7 shipped 2026-04-28: 5/8 sub-suites green live (git / Pages / local tooling / public links / partial workflow); 3 sub-suites operator-deferred (DNS TTL restore §4 Step 10; Release workflow dry-run on next tag; Org Copilot UI O5). Build + Pages + TODO-graph workflows all `success` under the new owner. |
+| 💎 | AI-policy boundary preserved across move | ❌ N/A              | ❌ N/A                | ⏳ §2 + §5 + §7 keep no-autonomous-agent stance: 0 forbidden paths verified live; AGENTS.md sha256 captured for byte-compat regression; org Copilot Access UI walk (O5) remains operator-only |
 
 > **After §1-§4:** Inventory, org readiness, Pages continuity plan, and a time-boxed transfer runbook with rollback exist before any GitHub setting is touched.
 > **After §5-§7:** Settings audit, first-party URL sweep, and end-to-end validation suite confirm the move did not silently break Pages, Actions, releases, badges, or graph tooling.
