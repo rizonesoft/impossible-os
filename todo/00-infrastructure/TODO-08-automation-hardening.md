@@ -401,7 +401,7 @@ The user's `feedback_skill_invocation_drift` and `feedback_codex_review_four_dis
 > - Canonical doc: skill-step telemetry has no separate doctrine page; the canonical reference is `.claude/hooks/skill_step_map.py` (the rules) + the closing paragraph in each of the 5 SKILL.md files.
 > - Scope boundary: §10 owns the step-state telemetry + non-contiguous-step gate; §3 owns the Codex receiving-review gate; §4 owns the section-commit gate (different evidence, different surface); §5 owns review-todo-section's four-dispatch counter. The four hooks compose.
 
-> **Verified:** 2026-04-28 | commit `<pending>` | 7/7 items | build N/A (host-side hooks + tests + docs) | lint CLEAN | tests 259/259 PASS | audit-hooks PASS | audit-ai-system PASS
+> **Verified:** 2026-04-28 | commit `f532b37e` | 7/7 items | build N/A (host-side hooks + tests + docs) | lint CLEAN | tests 259/259 PASS | audit-hooks PASS | audit-ai-system PASS
 > **Quality reviewed:** 2026-04-28 | Codex 1x design (Q1-Q4 fixed pre-code) | self-review covers post-implementation | scope: N/A (host-side hook system + Python data module + test fixtures)
 
 ---
