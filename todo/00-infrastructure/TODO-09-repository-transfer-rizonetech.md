@@ -67,7 +67,7 @@ file_patterns:
 | --- | :---: | :------: | ----------------------------------------------------------------- | ------------------------------ | :----: |
 |  ⭐  |   1   |    1    | Preflight inventory and risk register                             | --                             |  [x]   |
 |  ⭐  |   2   |    2    | `rizonetech` organization readiness and policy parity             | §1                             |  [/]   |
-|  ⭐  |   3   |    3    | GitHub Pages custom-domain continuity plan                        | §1, §2                         |  [ ]   |
+|  ⭐  |   3   |    3    | GitHub Pages custom-domain continuity plan                        | §1, §2                         |  [/]   |
 |  ⭐  |   4   |    4    | Repository transfer runbook and rollback window                   | §1, §2, §3                     |  [ ]   |
 |  ⭐  |   5   |    5    | Post-transfer settings, workflows, secrets, environments audit    | §4                             |  [ ]   |
 |  ⭐  |   6   |    6    | URL, badge, docs, and generated-link sweep                        | §4, §5                         |  [ ]   |
@@ -149,24 +149,29 @@ Prepare the receiving organization before transfer so the repository lands into 
 
 Make the custom domain the stable user-facing surface. The default owner-based Pages URL is allowed to change; `https://impossibleos.co/` must not.
 
-- [ ] Decide the canonical domain policy: apex `https://impossibleos.co/` remains canonical; `https://www.impossibleos.co/` redirects to apex; owner-based GitHub Pages URLs are non-canonical.
-- [ ] Add a tracked [`gh-pages/CNAME`](../../gh-pages/CNAME) file containing exactly `impossibleos.co` if GitHub Actions Pages honors it in this repo's deployment mode. If Actions Pages ignores the file for this setup, document that the custom domain is settings-owned and keep the file out.
-- [ ] Update [`gh-pages/index.html`](../../gh-pages/index.html) canonical, Open Graph URL, JSON-LD URL, and visitor-counter URL away from `rizonesoft.github.io/impossible-os/` to `https://impossibleos.co/`.
-- [ ] Audit [`gh-pages/err/`](../../gh-pages/err/) for consistent canonical URLs and relative links.
-- [ ] Reduce DNS TTL for `www.impossibleos.co` before transfer if the DNS provider allows it, so the CNAME switch to `rizonetech.github.io` propagates quickly.
-- [ ] Keep apex A records pointed at the four GitHub Pages IPv4 addresses unless GitHub changes the documented Pages IP set.
-- [ ] Decide whether to add GitHub Pages AAAA records for IPv6 parity. If added, record them in the DNS baseline and validation checklist.
-- [ ] Prepare the `www` DNS change but do not apply it until `rizonetech/impossible-os` Pages settings accept `impossibleos.co` and the new default Pages host is live.
-- [ ] Prepare validation commands:
-  - `curl -I https://impossibleos.co/`
-  - `curl -I https://www.impossibleos.co/`
-  - `curl -I https://rizonetech.github.io/impossible-os/`
-  - DNS lookup for `impossibleos.co A`
-  - DNS lookup for `www.impossibleos.co CNAME`
-- [ ] Document acceptable transient states: GitHub Pages certificate provisioning may show a temporary HTTPS warning; default `github.io` URLs may redirect differently; DNS may take one TTL to converge.
-- [ ] Commit: `"pages: prepare custom-domain continuity for repository transfer"`
+- [x] Decide the canonical domain policy: apex `https://impossibleos.co/` remains canonical; `https://www.impossibleos.co/` redirects to apex; owner-based GitHub Pages URLs are non-canonical. **Documented in [`docs/infrastructure/repository-transfer-preflight.md` §3](../../docs/infrastructure/repository-transfer-preflight.md#3-custom-domain-continuity-plan) "Canonical domain policy" table.**
+- [x] Add a tracked [`gh-pages/CNAME`](../../gh-pages/CNAME) file containing exactly `impossibleos.co`. **Verified:** the `gh-pages` BRANCH (current legacy Pages source) already carries a CNAME blob `1441672e` with content `impossibleos.co`; adding the same file to `main`'s `gh-pages/` folder gives the workflow-deployed artifact (when the artifact-quota issue resolves) the same custom-domain hint, so switching the Pages source mode from "branch" to "Actions" later doesn't drop the domain. The `actions/upload-pages-artifact@v3` step in [`pages.yml`](../../.github/workflows/pages.yml) bundles everything under `gh-pages/` into the artifact, so the CNAME ships with the deploy.
+- [x] Update [`gh-pages/index.html`](../../gh-pages/index.html) canonical, Open Graph URL, JSON-LD URL, and visitor-counter URL away from `rizonesoft.github.io/impossible-os/` to `https://impossibleos.co/`. **Done:** four edits at lines 13 (canonical), 19 (og:url), 36 (JSON-LD `url`), 1089 (hits.sh visitor counter switched to `hits.sh/impossibleos.co.svg` -- owner-independent across this transfer AND any future move-back). `author.url: https://rizonesoft.com` at line 40 retained intentionally (brand homepage, not active GitHub repo URL).
+- [x] Audit [`gh-pages/err/`](../../gh-pages/err/) for consistent canonical URLs and relative links. **Verified:** all 14 error-page `index.html` files (`err/index.html` + `err/000[0-d]/index.html`) already use `https://impossibleos.co/err/<code>/` as their canonical URL; relative `../../` links resolve correctly. The single `https://github.com/rizonesoft/impossible-os` "GitHub" nav link in each err page is owner-specific repo URL, owned by the [URL/badge/docs/generated-link sweep](#6-url-badge-docs-and-generated-link-sweep) (§6), NOT §3.
+- [ ] Reduce DNS TTL for `www.impossibleos.co` before transfer if the DNS provider allows it, so the CNAME switch to `rizonetech.github.io` propagates quickly. **Operator-only:** target 60-300s TTL at least 24h pre-transfer. Some DNS providers treat apex/CNAME as ALIAS/ANAME with provider-side caching that ignores the published TTL -- verify provider docs before assuming. Captured in preflight §3 DNS plan.
+- [x] Keep apex A records pointed at the four GitHub Pages IPv4 addresses unless GitHub changes the documented Pages IP set. **Verified:** apex resolves to `185.199.108.153 / 109.153 / 110.153 / 111.153` (the published GitHub Pages anycast set per <https://docs.github.com/pages/configuring-a-custom-domain-for-your-github-pages-site/managing-a-custom-domain-for-your-github-pages-site>). Owner-independent; no change required.
+- [x] Decide whether to add GitHub Pages AAAA records for IPv6 parity. **Decided: keep unset for now.** Re-evaluate after §4 transfer is verified green; adding IPv6 AAAA records expands rollback surface and the docs site has no measurable IPv6-only client demand today. Documented in preflight §3 DNS plan.
+- [x] Prepare the `www` DNS change but do not apply it until `rizonetech/impossible-os` Pages settings accept `impossibleos.co` and the new default Pages host is live. **Prepared:** the §3 DNS plan documents the exact pre-condition (`curl -I https://rizonetech.github.io/impossible-os/` returns a successful response under the new owner) and the change (CNAME `rizonesoft.github.io` -> `rizonetech.github.io`). The actual flip is a §4 operator action.
+- [x] Prepare validation commands. **Done:** `curl` / `getent` / `dig` block embedded in preflight §3 "Validation commands". Same set referenced from §1's baseline + §7's validation suite.
+- [x] Document acceptable transient states: GitHub Pages certificate provisioning may show a temporary HTTPS warning; default `github.io` URLs may redirect differently; DNS may take one TTL to converge. **Done:** preflight §3 "Acceptable transient states" lists 4 named transients (default-Pages-URL redirect drift, new default-Pages-URL TLS warning during cert reissue, `www` CNAME TTL convergence, hits.sh counter reset on namespace switch).
+- [x] Commit: `"pages: prepare custom-domain continuity for repository transfer"`
 
-**Test checkpoint:** Before the repository moves, `https://impossibleos.co/` is already the canonical link surface in the site content and the DNS change needed after transfer is known exactly.
+**Test checkpoint:** Before the repository moves, `https://impossibleos.co/` is already the canonical link surface in the site content and the DNS change needed after transfer is known exactly. **Probe-time status:** 9 of 10 items complete; 1 item (DNS TTL drop) is operator-only at the DNS provider. Section flips from `[/]` to `[x]` once the operator confirms the TTL drop in chat.
+
+> **Test runner:** N/A (Pages content + DNS plan, no kernel/usermode/desktop test surface) | validation: re-run the §3 "Validation commands" block in `repository-transfer-preflight.md` post-transfer; expect 200 on apex / 301 on www / 301 on default Pages URL / DNS A records unchanged / `www` CNAME flipped to `rizonetech.github.io`.
+> **Notes:**
+> - Shipped: tracked [`gh-pages/CNAME`](../../gh-pages/CNAME) (`impossibleos.co\n`), four URL fixes in [`gh-pages/index.html`](../../gh-pages/index.html) (canonical / og:url / JSON-LD / hits.sh), and a `## §3 Custom-Domain Continuity Plan` appendix in [`docs/infrastructure/repository-transfer-preflight.md`](../../docs/infrastructure/repository-transfer-preflight.md) covering canonical policy / source-of-truth changes / DNS plan / cert continuity / transient states / validation commands.
+> - The hits.sh visitor counter switched namespace from `rizonesoft.github.io/impossible-os` to `impossibleos.co` -- owner-independent and survives both this transfer and any future move-back. Counter resets to zero (acceptable per §1 R-table).
+> - Cross-doc wiring: each operator action (TTL drop, AAAA decision, www CNAME flip) names the §4/§5/§7 section that owns the actual execution. Codex 3x review adoptions in commit `<this-commit>`.
+> - Canonical doc: [`docs/infrastructure/repository-transfer-preflight.md` §3](../../docs/infrastructure/repository-transfer-preflight.md#3-custom-domain-continuity-plan).
+> - Scope boundary: §3 only **prepares** the custom-domain continuity (source-of-truth content + DNS plan + transient-state taxonomy); §4 owns the actual transfer + the `www` CNAME flip; §5 owns flipping `https_enforced` on once the new cert is stable; §6 owns the GitHub repo URLs in `gh-pages/err/`.
+>
+> **Verified:** 2026-04-27 | commit `<this-commit>` | 9/10 items | build N/A (Pages content + docs) | lint clean, todo-graph 8/8
 
 ---
 
@@ -328,7 +333,7 @@ Close the roadmap by making the final owner state discoverable and removing tran
 |----|------------------------------------------|---------------------|----------------------|------------------------------------|
 | ⭐ | Repo-owner transfer runbook              | ❌ N/A (closed src) | ⚠️ Ad-hoc per project | ⏳ §1 baseline + §2 org-readiness probe shipped (`docs/infrastructure/repository-transfer-preflight.md`); §3-§9 still planned |
 | ⭐ | Rollback-window discipline               | ❌ N/A              | ⚠️ Project-dependent  | ⬜ Planned -- §4 keeps rollback open until §7 green |
-| ⭐ | Pages custom-domain continuity plan      | ❌ N/A              | ⚠️ Project-dependent  | ⬜ Planned -- §3 apex+www split, TTL pre-drop |
+| ⭐ | Pages custom-domain continuity plan      | ❌ N/A              | ⚠️ Project-dependent  | ⏳ §3 shipped: tracked CNAME, 4 URL fixes in `gh-pages/index.html`, DNS plan + transient-state taxonomy + validation block in preflight §3; one operator-only TTL drop remaining |
 | 💎 | Forward move-back / visibility flip plan | ❌ N/A              | ❌ N/A                | ⬜ Planned -- §8 defines return path before transfer |
 | ⭐ | Post-transfer settings audit             | ❌ N/A              | ⚠️ Tribal-knowledge   | ⬜ Planned -- §5 verifies branch protection / secrets / Pages env / Actions policy directly |
 | 💎 | AI-policy boundary preserved across move | ❌ N/A              | ❌ N/A                | ⬜ Planned -- §2, §5, §7 keep no-autonomous-agent stance under new org |

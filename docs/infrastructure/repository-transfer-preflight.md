@@ -421,6 +421,70 @@ If any item returns unexpected values OR the UI shows a state different from the
 
 ---
 
+## §3 Custom-Domain Continuity Plan
+
+> Plans the Pages custom-domain transition so `https://impossibleos.co/` stays the canonical user-facing URL before, during, and after the [transfer button](../../todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md#4-repository-transfer-runbook-and-rollback-window). The default owner-based Pages URL (`https://rizonesoft.github.io/impossible-os/` -> `https://rizonetech.github.io/impossible-os/`) IS allowed to change; the apex is not.
+
+### Canonical domain policy
+
+| Surface | Status |
+|---|---|
+| `https://impossibleos.co/` (apex) | **Canonical** -- the only URL contributors / docs / external references should bake in long-term. |
+| `https://www.impossibleos.co/` | Permanent `301` redirect to apex (already configured: §3 baseline shows `301 -> https://impossibleos.co/`). |
+| `https://<owner>.github.io/impossible-os/` | **Non-canonical**. Currently `rizonesoft.github.io` -> `301 -> http://impossibleos.co/`; will become `rizonetech.github.io` after transfer. The default Pages URL is a transient implementation detail. |
+
+### Source-of-truth changes shipped in this section
+
+| Change | Why |
+|---|---|
+| Add tracked [`gh-pages/CNAME`](../../gh-pages/CNAME) containing `impossibleos.co\n` | The `gh-pages` BRANCH (current legacy Pages source) already has a `CNAME` blob (sha `1441672e`, content `impossibleos.co`). Adding the same file to `main`'s `gh-pages/` folder gives the workflow-deployed artifact (when the failed `pages.yml` quota issue resolves) the same custom-domain hint, so switching the Pages source mode from "branch" to "Actions" later doesn't drop the domain. The `actions/upload-pages-artifact@v3` step in `.github/workflows/pages.yml` includes everything under `gh-pages/` in the artifact, so the CNAME ships with the deploy. |
+| Update [`gh-pages/index.html`](../../gh-pages/index.html) lines 13 / 19 / 36 / 1089 | Replace `https://rizonesoft.github.io/impossible-os/` with `https://impossibleos.co/` in the canonical link, og:url, JSON-LD `url`, and the hits.sh visitor-counter namespace. The visitor-counter switch (`hits.sh/rizonesoft.github.io/impossible-os.svg` -> `hits.sh/impossibleos.co.svg`) makes the counter owner-independent across this transfer AND any future move-back. Counter resets when the namespace changes; acceptable per §1's R-table. |
+| `gh-pages/err/` audit | All 14 error-page `index.html` files already use `https://impossibleos.co/err/<code>/` as their canonical URL (§1's "error pages already use https://impossibleos.co/..." callout was correct). Each err page has one `https://github.com/rizonesoft/impossible-os` link in the nav -- those are owner-specific repo links, owned by the [URL/badge/docs/generated-link sweep](../../todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md#6-url-badge-docs-and-generated-link-sweep) (§6), NOT by §3. |
+| The `author.url` `https://rizonesoft.com` in the JSON-LD block (line 40) | INTENTIONALLY RETAINED -- `rizonesoft.com` is the company brand homepage, not the active GitHub repo URL. The §6 classification rule keeps brand references; only repo URLs flip. |
+
+### DNS plan
+
+| Record | Current state (per §1 baseline) | Pre-transfer change | Post-transfer change |
+|---|---|---|---|
+| `impossibleos.co` A (apex) | 4 GitHub Pages anycast IPv4: `185.199.108.153`, `185.199.109.153`, `185.199.110.153`, `185.199.111.153`. | **No change.** GitHub Pages anycast IPs are owner-independent. | **No change** unless GitHub publishes a new Pages IP set (verify against <https://docs.github.com/pages/configuring-a-custom-domain-for-your-github-pages-site/managing-a-custom-domain-for-your-github-pages-site>). |
+| `impossibleos.co` AAAA (apex) | NOT SET (IPv4 only) | **Decision: keep unset for now.** GitHub publishes IPv6 addresses (`2606:50c0:8000::153` ... `2606:50c0:8003::153`) and recommends adding them for IPv6 parity, but the upstream Linux/Windows test platforms used by Impossible OS do not measurably benefit from IPv6 reachability for a docs site, and adding records expands the rollback surface. Re-evaluate after the §4 transfer is verified green; if added, log them in §1's DNS table. | Re-evaluate after transfer. |
+| `www.impossibleos.co` CNAME | `rizonesoft.github.io.` (verified by `getent hosts`). Returns `301 -> https://impossibleos.co/`. | **Drop TTL** if the DNS provider exposes the control. Target a low TTL (60-300s) at least 24h before transfer so the CNAME flip in §4 propagates within a single TTL window. Some providers treat apex/CNAME as ALIAS/ANAME with provider-side caching that ignores the published TTL -- check the provider's documented behavior before assuming. | **CNAME flip** from `rizonesoft.github.io` -> `rizonetech.github.io` AFTER the transfer button is pressed AND `https://rizonetech.github.io/impossible-os/` is serving (verified via `curl -I`). DO NOT flip earlier; the new owner's Pages endpoint must exist first or `www` goes dark. |
+
+### Pages certificate continuity
+
+| Field | Current | Plan |
+|---|---|---|
+| Cert state | `approved` | After transfer, GitHub may re-provision the cert when the custom domain is re-verified under the new owner. **Tolerate transient HTTPS warning** on the apex during re-provisioning -- typically minutes to single-digit hours per GitHub Pages docs. |
+| `https_certificate.expires_at` | `2026-06-16` | Cert covers BOTH `impossibleos.co` and `www.impossibleos.co`. Transfer must complete BEFORE this expiry, otherwise GitHub may not auto-renew. |
+| `https_enforced` | **`false`** | Leave OFF until the new cert reissues post-transfer; turning it on while the cert is reissuing can break the default Pages URL's redirect chain. The [Post-Transfer Settings audit](../../todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md#5-post-transfer-settings-workflows-secrets-and-environments-audit) is the right place to flip it on once the cert is stable. |
+
+### Acceptable transient states (during/just-after transfer)
+
+- The default Pages URL `https://rizonesoft.github.io/impossible-os/` may stop redirecting cleanly for ~minutes while GitHub's repo-redirect machinery catches up; the apex serves through Fastly with the existing cert and is unaffected.
+- The new default Pages URL `https://rizonetech.github.io/impossible-os/` may show a TLS warning briefly while the cert reissues for the new owner.
+- `www.impossibleos.co` may show an old answer for one TTL after the CNAME flip.
+- The hits.sh visitor counter resets to zero on the namespace switch (`rizonesoft.github.io/impossible-os` -> `impossibleos.co`); historical counts are not retained. Acceptable for a private repo.
+
+### Validation commands
+
+The same set used in §1's baseline; running them post-transfer is the §3 acceptance check (and the basis for the [Validation suite](../../todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md#7-validation-suite-pages-actions-releases-clone-hooks-graph)):
+
+```bash
+curl -sIL --max-time 10 https://impossibleos.co/                        # expect 200, last-modified matching latest gh-pages deploy
+curl -sIL --max-time 10 https://www.impossibleos.co/                    # expect 301 -> https://impossibleos.co/
+curl -sIL --max-time 10 https://rizonetech.github.io/impossible-os/     # expect 301 -> apex (or HTTPS-enforced apex if §5 flipped the toggle)
+getent hosts impossibleos.co                                            # 4 anycast IPv4 addresses (185.199.10[8-11].153)
+getent hosts www.impossibleos.co                                        # CNAME chain ends at rizonetech.github.io after §4
+# With BIND tools available:
+dig +nocmd +noall +answer impossibleos.co A
+dig +nocmd +noall +answer impossibleos.co AAAA      # currently empty; non-empty if §3 AAAA decision was revisited
+dig +nocmd +noall +answer www.impossibleos.co CNAME
+```
+
+If any line returns an unexpected status code or DNS answer, stop and resolve before pressing the transfer button (or rolling back per §4).
+
+---
+
 ## How to Re-Run This Inventory
 
 The exact commands used to capture this baseline:
