@@ -296,11 +296,11 @@ Treat the transfer as complete only after the same surfaces a contributor uses a
 > **Notes:**
 > - Shipped: live execution of the §7 validation suite under `rizonetech/impossible-os` immediately after §6 push -- 5 sub-suites fully green (git, Pages, local tooling, public links), 3 sub-suites `[/]` with explicit operator-only deferrals (DNS TTL restore / Release workflow dry-run / Org Copilot UI).
 > - Build + Pages + TODO graph workflow runs all show `success` post-transfer on the latest commit, confirming the new owner's Actions / Pages permissions are correctly inheriting the source-repo policy after the §5 F1 ruleset bypass restoration.
-> - Codex 3x review adoptions in commit `<this-commit>`.
+> - Codex 3x review adoptions in commit `089d9c09`.
 > - Canonical doc: this section + [`docs/infrastructure/repository-transfer-preflight.md` §5](../../docs/infrastructure/repository-transfer-preflight.md#5-post-transfer-settings-workflows-secrets-and-environments-audit) for the underlying preserved-state baseline.
 > - Scope boundary: §7 closes the rollback window once all sub-suites are green; §8 owns the future move-back runbook (planning-only; no execution); §9 owns final docs sync + closure.
 >
-> **Verified:** 2026-04-28 | commit `<this-commit>` | 8/8 items | build N/A (consolidated validation suite) | lint clean, todo-graph 8/8, test-tooling 254/254, latest Build+Pages+TODO-graph workflows all `success`
+> **Verified:** 2026-04-28 | commit `089d9c09` | 8/8 items | build N/A (consolidated validation suite) | lint clean, todo-graph 8/8, test-tooling 254/254, latest Build+Pages+TODO-graph workflows all `success`
 
 ---
 
