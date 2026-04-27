@@ -136,14 +136,16 @@ SKIP_REASON_MIN_LEN = 12
 _DISPATCH_KINDS = ("adversarial", "consistency", "perf")
 
 # Stamp lines whose presence in the staged diff triggers the
-# four-dispatch check. `^\+\s{0,3}>` matches ADDED stamp lines with
-# 0-3 leading spaces of valid Markdown blockquote indent; unchanged
-# context lines starting with `>` (no leading `+`) won't trigger.
-# Codex M4 (review-pipeline post-impl): regex without leading-space
-# tolerance was evadable -- `+   > **Verified:**` is a valid Markdown
-# stamp shape that the gate would skip.
+# four-dispatch check. `^\+\s{0,3}(?:>\s*)+\*\*` matches ADDED stamp
+# lines with 0-3 leading spaces of valid Markdown blockquote indent
+# AND tolerates nested blockquote markers (`> > **`, `>> **`).
+# Unchanged context lines starting with `>` (no leading `+`) do not
+# trigger. Codex M4 (review-pipeline post-impl): regex without
+# leading-space tolerance was evadable; Codex post-commit review_C:
+# the single-`>` form was also evadable via Markdown-valid nested
+# blockquote forms (`+> > **Verified:**` / `+>> **Quality reviewed:**`).
 _STAMP_ADDED_RE = re.compile(
-    r"^\+\s{0,3}>\s*\*\*(Verified|Quality reviewed):\*\*",
+    r"^\+\s{0,3}(?:>\s*)+\*\*(Verified|Quality reviewed):\*\*",
 )
 
 # Wrapper / env tokens we walk past to find the real `git` command.
@@ -1002,6 +1004,13 @@ def _four_dispatch_evidence(
     except Exception:
         pass
 
+    # Codex post-commit perf M1(b): cache `_git_is_ancestor` results
+    # by (dispatch_head, current_head) pair. Without the cache, a
+    # 3-stamped-TODO commit ran up to 9 `git merge-base` subprocesses
+    # (3 kinds * 3 todos), each ~10-30ms. With the cache, distinct
+    # dispatch heads are checked once.
+    ancestry_cache: dict[tuple[str, str], bool] = {}
+
     legacy_warned = False
     issues: list[str] = []
     for todo in stamped_todos:
@@ -1029,7 +1038,12 @@ def _four_dispatch_evidence(
             # `<kind>_head`) pass with a one-shot WARN.
             disp_head = entry.get(f"{kind}_head")
             if disp_head and current_head:
-                if not _git_is_ancestor(root, disp_head, current_head):
+                cache_key = (disp_head, current_head)
+                if cache_key not in ancestry_cache:
+                    ancestry_cache[cache_key] = _git_is_ancestor(
+                        root, disp_head, current_head
+                    )
+                if not ancestry_cache[cache_key]:
                     cross_branch.append(
                         f"{kind} (dispatch_head {disp_head[:10]} not ancestor of HEAD {current_head[:10]})"
                     )
@@ -1343,10 +1357,17 @@ def _evaluate(root: Path, mode: str) -> int:
                     "requires a durable paper trail; refusing the commit.\n"
                 )
                 return 2
+            # Codex post-commit review_B: SKIP is a state transition,
+            # not just an audit append. Reset last-codex-review.json
+            # `received` to false so a stamp-only SKIP cannot leave a
+            # stale received state available to satisfy a later
+            # section commit's review_evidence binding.
+            _reset_review_state(root)
             sys.stderr.write(
                 f"[section-commit-gate] SKIP allowed (stamp_only) -- "
                 f"reason: {skip_reason}\n"
-                f"[section-commit-gate]   logged to .claude/state/skip-log.jsonl.\n"
+                f"[section-commit-gate]   logged to .claude/state/skip-log.jsonl; "
+                f"last-codex-review.json reset (received: false).\n"
             )
             return 0
         fourd_ok, fourd_err = _four_dispatch_evidence(root, flipped)

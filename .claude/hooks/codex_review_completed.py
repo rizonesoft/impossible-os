@@ -410,14 +410,24 @@ def _segment_is_codex_invocation(seg_tokens: list[str]) -> bool:
 def _is_codex_bash_trigger(cmd: str) -> bool:
     """Detect a real Codex invocation in a Bash command.
 
+    Codex post-commit perf H1 (review-pipeline post-impl): the hook
+    fires on EVERY Bash PostToolUse call. shlex.split() on a 200KB
+    Bash command costs ~600ms; non-Codex commands paid that cost
+    needlessly. The literal screen below short-circuits the common
+    case (>99% of Bash calls don't mention Codex) before any
+    expensive parsing. False-positive rate: any command that happens
+    to contain the substring `codex` anywhere proceeds to full
+    tokenization -- which then correctly classifies it as not a real
+    trigger via argv[0]/argv[1] inspection. The cheap screen mirrors
+    section_commit_gate.py's `_looks_like_git_commit_screen` pattern.
+
     Tokenize via shlex, trim heredoc / sub-content, segment by Bash
     control operators (&&, ||, ;, |, &), then scan EACH segment for
-    a Codex invocation. Same shape as section-2 codex_model_flag_block.py
-    -- review-pipeline adversarial H4 caught divergence where
-    `true && codex review prompt` and `taskset -c 0 codex review`
-    were missed by the segmentless single-argv check.
+    a Codex invocation.
     """
     if not isinstance(cmd, str) or not cmd.strip():
+        return False
+    if "codex" not in cmd:
         return False
     try:
         toks = shlex.split(cmd, posix=True, comments=False)
@@ -528,13 +538,36 @@ def _detect_review_kind(skill_name: str, prompt: str) -> str:
     """Return one of `"adversarial" | "consistency" | "perf" | ""`.
 
     Skill name takes precedence over prompt marker because the skill
-    invocation is unambiguous. Falls back to the marker when the
-    trigger is a raw Bash dispatch.
+    invocation is unambiguous. For Bash triggers (no skill name) the
+    marker MUST appear on the first non-blank line of the prompt --
+    Codex review_post_impl_A: scanning the entire body let earlier
+    quoted markers in repository text or example diffs spoof the
+    attribution. Anchor to the leading line; reject if multiple
+    distinct kinds appear there.
     """
     if skill_name in DISPATCH_KIND_BY_SKILL:
         return DISPATCH_KIND_BY_SKILL[skill_name]
-    m = _REVIEW_KIND_RE.search(prompt)
-    return m.group(1).lower() if m else ""
+    if not prompt:
+        return ""
+    first_line = ""
+    for ln in prompt.splitlines():
+        if ln.strip():
+            first_line = ln
+            break
+    if not first_line:
+        return ""
+    matches = _REVIEW_KIND_RE.findall(first_line)
+    if not matches:
+        return ""
+    kinds = {m.lower() for m in matches}
+    if len(kinds) != 1:
+        sys.stderr.write(
+            f"[review-stamps] WARN: leading prompt line carries multiple "
+            f"review-kind markers {sorted(kinds)}; refusing to attribute "
+            f"the dispatch.\n"
+        )
+        return ""
+    return kinds.pop()
 
 
 def _detect_todo_path(prompt: str, root: Path) -> tuple[str, str]:
@@ -652,7 +685,49 @@ def _record_stamp(
                 os.O_RDWR | os.O_CREAT,
                 0o644,
             )
-            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            # Codex post-commit review_D: bounded LOCK_NB with retry
+            # rather than blocking LOCK_EX. A hung holder indefinitely
+            # blocked every later PostToolUse stamp write before
+            # eventually being SIGKILL'd by the harness's 5s hook
+            # timeout (which loses the stamp anyway). Bounded retry
+            # caps the wait at well under 5s and degrades gracefully
+            # to lock-free with a stderr WARN if contention persists.
+            acquired = False
+            deadline = time.time() + 2.0  # 2s budget; harness timeout is 5s
+            sleep_s = 0.01
+            while time.time() < deadline:
+                try:
+                    fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    acquired = True
+                    break
+                except BlockingIOError:
+                    time.sleep(sleep_s)
+                    if sleep_s < 0.1:
+                        sleep_s *= 2
+            if not acquired:
+                # Codex re-adversarial M1 (post-impl re-review): on
+                # acquire-timeout we MUST NOT proceed unlocked --
+                # writing the canonical JSON without serialization
+                # races against the concurrent holder's eventual
+                # write and silently drops one process's merge. Emit
+                # a hard WARN, skip recording entirely. The gate's
+                # missing-dispatch BLOCK will surface the gap on the
+                # next stamp commit; the agent re-runs the dispatch.
+                sys.stderr.write(
+                    "[review-stamps] WARN: could not acquire "
+                    "last-review-stamps.lock within 2s (likely a hung "
+                    "concurrent dispatch). Refusing to write the stamp "
+                    "unlocked -- a graceful-degradation write would race "
+                    "with the eventual holder's write and lose data. "
+                    "The dispatch is NOT recorded; the §4 commit gate "
+                    "will block on the next stamp commit. Re-run this "
+                    "dispatch after the contended hook finishes.\n"
+                )
+                try:
+                    os.close(lock_fd)
+                except Exception:
+                    pass
+                return
         except Exception:
             # Lock acquisition failed (filesystem error, etc). Proceed
             # without the lock -- the prior race window remains, but

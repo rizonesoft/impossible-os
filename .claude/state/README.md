@@ -243,12 +243,22 @@ atomicity guarantee).
 }
 ```
 
-**Two record kinds (distinguished by presence of `kind`):**
+**Three record kinds (distinguished by `kind` field):**
 
-- `kind` absent or `"SKIP"` -- a real opt-out commit. `reason` is required, >= 12 chars.
-- `kind == "WARN"` AND `tag == "small-section-skip-risk"` -- a section commit
-  with `< 50 LOC` source delta. Logged regardless of pass/fail outcome so a
-  sweep over the log surfaces "small section, skipped review" patterns.
+- `kind` absent -- a real opt-out commit on the canonical `section`
+  signature path (source + Implementation Order row flip). `reason`
+  required, >= 12 chars.
+- `kind == "stamp_only"` -- a real opt-out commit on the `stamp_only`
+  signature path (added stamp lines without source / row flip; the
+  user's separate `stamp:` commit shape from §5 M1). `reason`
+  required, >= 12 chars. Sweep tooling treats this identically to
+  the canonical SKIP for paper-trail purposes; the `kind` tag exists
+  so audits can split "real section opt-out" vs "stamp-only opt-out"
+  without re-deriving from staged-paths metadata.
+- `kind == "WARN"` AND `tag == "small-section-skip-risk"` -- a section
+  commit with `< 50 LOC` source delta. Logged regardless of pass/fail
+  outcome so a sweep over the log surfaces "small section, skipped
+  review" patterns.
 
 **SKIP is a state transition, not just an audit append (Codex M1):**
 

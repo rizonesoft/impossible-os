@@ -2394,6 +2394,161 @@ sys.exit(0 if ok else 1)
     _fd_write_stamps "adversarial=60,consistency=120,perf=180"
     _fd_run 0 "M5 source+stamp+no-flip allows when 3 dispatches recent"
 
+    # ----- Codex post-commit fixes (A: marker anchoring; B: stamp-only
+    #       SKIP resets state; C: nested blockquote; D: lock timeout) -----
+
+    # Test A.1: leading-line marker is recorded; trailing-body marker
+    # in the prompt is NOT used for attribution. Note: `\n` in the
+    # single-quoted JSON literal stays one backslash + n, which the
+    # JSON parser then converts to a real newline -- that's what we
+    # want so splitlines() actually segments the prompt.
+    rm -f "$FD_STAMPS"
+    PAYLOAD='{"tool_name":"Bash","tool_input":{"command":"node /abs/codex-companion.mjs adversarial-review \"[review-kind: adversarial] Target: todo/00-infrastructure/TODO-99-fdgate-fixture.md S1\nSee also marker example: [review-kind: perf] (this should NOT be used)\nReview angles per template.\""}}'
+    (cd "$FD_REPO" && printf '%s' "$PAYLOAD" | \
+        python3 ".claude/hooks/codex_review_completed.py" >/dev/null 2>&1)
+    if python3 -c "
+import json, sys
+s = json.load(open('$FD_STAMPS'))
+e = s.get('$FD_TODO_PATH', {})
+ok = isinstance(e.get('adversarial'), int) and e.get('perf') is None
+sys.exit(0 if ok else 1)
+" 2>/dev/null; then
+        t_pass "four_dispatch_gate: A leading marker wins; trailing marker ignored"
+    else
+        t_fail "four_dispatch_gate: A marker anchoring leaked trailing kind"
+    fi
+
+    # Test A.2: conflicting markers on the leading line -> no attribution + WARN.
+    rm -f "$FD_STAMPS"
+    PAYLOAD='{"tool_name":"Bash","tool_input":{"command":"node /abs/codex-companion.mjs adversarial-review \"[review-kind: adversarial] [review-kind: perf] Target: todo/00-infrastructure/TODO-99-fdgate-fixture.md S1\\nReview angles.\""}}'
+    WARN_OUT=$(cd "$FD_REPO" && printf '%s' "$PAYLOAD" | \
+        python3 ".claude/hooks/codex_review_completed.py" 2>&1 >/dev/null)
+    if [ ! -f "$FD_STAMPS" ] && echo "$WARN_OUT" | grep -q "multiple"; then
+        t_pass "four_dispatch_gate: A conflicting leading markers refuse attribution + WARN"
+    else
+        t_fail "four_dispatch_gate: A conflicting markers not blocked (stamps exist=$( [ -f "$FD_STAMPS" ] && echo yes || echo no), warn=$WARN_OUT)"
+    fi
+
+    # Test B: stamp-only SKIP resets last-codex-review.json received state.
+    rm -f "$FD_STAMPS"
+    _fd_unstage
+    _fd_stage_stamp_only
+    NOW_NS=$(python3 -c 'import time; print(time.time_ns())')
+    cat > "$FD_REVIEW" <<JSON
+{
+  "timestamp_ns": $NOW_NS,
+  "trigger": "test",
+  "trigger_files": ["src/kernel/foo.c"],
+  "trigger_blobs": {},
+  "head_sha": "x",
+  "tree_hash": "y",
+  "received": true,
+  "received_timestamp_ns": $NOW_NS
+}
+JSON
+    SKIP_RC=$(cd "$FD_REPO" && \
+        printf '%s' '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"}}' | \
+        SKIP_REVIEW_HOOK=1 \
+        SKIP_REVIEW_HOOK_REASON="testing B: stamp-only SKIP must reset state" \
+        python3 ".claude/hooks/section_commit_gate.py" >/dev/null 2>&1; echo $?)
+    if [ "$SKIP_RC" = "0" ] && python3 -c "
+import json, sys
+s = json.load(open('$FD_REVIEW'))
+sys.exit(0 if s.get('received') is False else 1)
+" 2>/dev/null; then
+        t_pass "four_dispatch_gate: B stamp-only SKIP resets last-codex-review received=false"
+    else
+        t_fail "four_dispatch_gate: B stamp-only SKIP did not reset state (rc=$SKIP_RC)"
+    fi
+
+    # Test C: nested blockquote stamp lines are detected (`> > **`).
+    rm -f "$FD_STAMPS"
+    _fd_unstage
+    (
+        cd "$FD_REPO"
+        python3 - <<'PY'
+import pathlib
+p = pathlib.Path("todo/00-infrastructure/TODO-99-fdgate-fixture.md")
+text = p.read_text()
+stamp = "\n> > **Verified:** 2026-04-27 | commit `abc1234` | 1/1 items | build OK\n"
+text = text.replace("## 1. Sample section\n", "## 1. Sample section\n" + stamp)
+p.write_text(text)
+PY
+        git add todo/00-infrastructure/TODO-99-fdgate-fixture.md
+    )
+    BLOCK_RC=$(cd "$FD_REPO" && \
+        printf '%s' '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"}}' | \
+        python3 ".claude/hooks/section_commit_gate.py" >/dev/null 2>&1; echo $?)
+    if [ "$BLOCK_RC" = "2" ]; then
+        t_pass "four_dispatch_gate: C nested blockquote stamp (`> > **`) is detected"
+    else
+        t_fail "four_dispatch_gate: C nested blockquote stamp missed (rc=$BLOCK_RC)"
+    fi
+
+    # Test C.2: doubled-up `>>` form (`+>> **Verified:**`).
+    rm -f "$FD_STAMPS"
+    _fd_unstage
+    (
+        cd "$FD_REPO"
+        python3 - <<'PY'
+import pathlib
+p = pathlib.Path("todo/00-infrastructure/TODO-99-fdgate-fixture.md")
+text = p.read_text()
+stamp = "\n>> **Quality reviewed:** 2026-04-27 | Codex 3x | 0 fixed\n"
+text = text.replace("## 1. Sample section\n", "## 1. Sample section\n" + stamp)
+p.write_text(text)
+PY
+        git add todo/00-infrastructure/TODO-99-fdgate-fixture.md
+    )
+    BLOCK_RC=$(cd "$FD_REPO" && \
+        printf '%s' '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"}}' | \
+        python3 ".claude/hooks/section_commit_gate.py" >/dev/null 2>&1; echo $?)
+    if [ "$BLOCK_RC" = "2" ]; then
+        t_pass "four_dispatch_gate: C doubled-blockquote stamp (`>>`) is detected"
+    else
+        t_fail "four_dispatch_gate: C doubled-blockquote stamp missed (rc=$BLOCK_RC)"
+    fi
+
+    # Test D: contended lock degrades gracefully within 2s budget
+    # (degraded path emits WARN; stamp still recorded).
+    rm -f "$FD_STAMPS"
+    rm -f "$FD_REPO/.claude/state/last-review-stamps.lock"
+    # Hold the lock from a background subshell for 4 seconds.
+    (
+        cd "$FD_REPO"
+        python3 - <<'PY' &
+import fcntl, os, time, pathlib
+p = pathlib.Path(".claude/state/last-review-stamps.lock")
+p.parent.mkdir(parents=True, exist_ok=True)
+fd = os.open(str(p), os.O_RDWR | os.O_CREAT, 0o644)
+fcntl.flock(fd, fcntl.LOCK_EX)
+time.sleep(4)
+fcntl.flock(fd, fcntl.LOCK_UN)
+os.close(fd)
+PY
+        HOLDER_PID=$!
+        sleep 0.3  # let the holder grab the lock
+        START=$(date +%s.%N)
+        PAYLOAD='{"tool_name":"Skill","tool_input":{"skill":"codex-perf-review","prompt":"[review-kind: perf] Target: todo/00-infrastructure/TODO-99-fdgate-fixture.md S1\nReview angles."}}'
+        WARN_OUT=$(printf '%s' "$PAYLOAD" | \
+            python3 ".claude/hooks/codex_review_completed.py" 2>&1 >/dev/null)
+        END=$(date +%s.%N)
+        ELAPSED=$(echo "$END $START" | awk '{ printf "%.2f", $1 - $2 }')
+        wait "$HOLDER_PID" 2>/dev/null || true
+        if echo "$WARN_OUT" | grep -q "could not acquire" && \
+           awk -v t="$ELAPSED" 'BEGIN { exit (t < 3.5) ? 0 : 1 }'; then
+            echo "TEST_OK $ELAPSED $WARN_OUT" > /tmp/fdgate_d_result.$$
+        else
+            echo "TEST_FAIL elapsed=$ELAPSED warn=$WARN_OUT" > /tmp/fdgate_d_result.$$
+        fi
+    )
+    if [ -f "/tmp/fdgate_d_result.$$" ] && grep -q "^TEST_OK " "/tmp/fdgate_d_result.$$"; then
+        t_pass "four_dispatch_gate: D bounded lock timeout degrades with WARN (~2s)"
+    else
+        t_fail "four_dispatch_gate: D lock timeout test ($(cat /tmp/fdgate_d_result.$$ 2>/dev/null))"
+    fi
+    rm -f "/tmp/fdgate_d_result.$$"
+
     rm -rf "$FD_TMP"
 fi
 
