@@ -68,7 +68,7 @@ file_patterns:
 |  ⭐  |   1   |    1    | Preflight inventory and risk register                             | --                             |  [x]   |
 |  ⭐  |   2   |    2    | `rizonetech` organization readiness and policy parity             | §1                             |  [/]   |
 |  ⭐  |   3   |    3    | GitHub Pages custom-domain continuity plan                        | §1, §2                         |  [/]   |
-|  ⭐  |   4   |    4    | Repository transfer runbook and rollback window                   | §1, §2, §3                     |  [ ]   |
+|  ⭐  |   4   |    4    | Repository transfer runbook and rollback window                   | §1, §2, §3                     |  [/]   |
 |  ⭐  |   5   |    5    | Post-transfer settings, workflows, secrets, environments audit    | §4                             |  [ ]   |
 |  ⭐  |   6   |    6    | URL, badge, docs, and generated-link sweep                        | §4, §5                         |  [ ]   |
 |  ⭐  |   7   |    7    | Validation suite: Pages, Actions, releases, clone, hooks, graph   | §5, §6                         |  [ ]   |
@@ -180,21 +180,29 @@ Make the custom domain the stable user-facing surface. The default owner-based P
 
 Perform the actual transfer as a short, observable operation with a clear stop/rollback point.
 
-- [ ] Freeze repository changes during transfer: no merges, releases, Pages deploys, branch protection changes, or DNS changes until the post-transfer audit completes.
-- [ ] Create a fresh backup marker: latest commit SHA on `main`, latest tag, latest release ID, last successful build workflow run, last successful Pages deployment run, and `git bundle` or verified remote mirror if desired.
-- [ ] Confirm there is no repository at `https://github.com/rizonetech/impossible-os` immediately before transfer.
-- [ ] Confirm the old path `rizonesoft/impossible-os` will not be recreated during the redirect window. Recreating the old path can break GitHub's automatic repository redirect.
-- [ ] Transfer repository ownership from `rizonesoft` to `rizonetech` through GitHub Settings.
-- [ ] Accept the transfer from the `rizonetech` organization side if GitHub requires explicit acceptance.
-- [ ] Update local remotes after the transfer:
-  - `origin` fetch/push -> `https://github.com/rizonetech/impossible-os.git`
-  - keep `bootloader` remote unchanged unless a separate decision transfers `impossible-os-bootloader`
-- [ ] Trigger or re-run Pages deployment from `rizonetech/impossible-os` after Pages settings are confirmed.
-- [ ] Apply the `www.impossibleos.co` CNAME switch from `rizonesoft.github.io` to `rizonetech.github.io` once the new Pages endpoint is active.
-- [ ] Keep a rollback window open until all Section 7 validation checks pass. Rollback means transferring back to the previous owner and restoring `www` CNAME if needed, not deleting/recreating repositories.
-- [ ] Commit: `"docs/github: add repository transfer runbook"`
+- [x] **Plan documented:** freeze rules captured in [`docs/infrastructure/repository-transfer-preflight.md` §4 "Pre-transfer freeze"](../../docs/infrastructure/repository-transfer-preflight.md#pre-transfer-freeze) -- no merges to `main`, no new releases / tag pushes, no `gh-pages/**` changes, no branch-protection / ruleset edits, no DNS changes (except the planned `www` CNAME flip in step 8). **Operator action:** observe the freeze for the ~30-minute window from "press transfer" to "all post-transfer validation green".
+- [x] **Backup markers captured 2026-04-27:** `main` HEAD `5d0df5bad107ae05d1280984ee069ceae1d790be`, latest tag `v26.3.18-alpha.821`, latest release `Impossible OS v26.3.18-alpha.821` (pre-release, 2026-03-18), latest successful Build run `databaseId: 25018759331` at `5d0df5ba`, latest successful Pages deploy `databaseId: 25018428197` at `ec2b7c00` (deployment id `4503518780`, state `success`), `gh-pages` branch tip `35e7dcd5`, Pages live state `etag: "69efca05-b970"`, Pages settings `cname: impossibleos.co`. Full table in preflight §4 "Backup markers". Optional `git bundle` belt-and-braces command also documented.
+- [x] **Destination clean:** `gh repo view rizonetech/impossible-os` returns "Could not resolve to a Repository" + `gh api orgs/rizonetech/repos` returns `[]`; clean transfer destination verified at backup-marker capture time.
+- [x] **Redirect-window forbidden actions documented:** preflight §4 "Forbidden during the redirect window" names the three concrete tripwires (no creating a new empty `rizonesoft/impossible-os`, no fork-and-rename into the old path, no automated repo-provisioning at the user account) plus the rule of thumb (treat the old path as a tombstone until the redirect-retention window expires).
+- [ ] **Operator action:** Transfer repository ownership from `rizonesoft` to `rizonetech` through GitHub Settings. Step 2 in preflight §4 -- walk <https://github.com/rizonesoft/impossible-os/settings> "Danger Zone" -> "Transfer ownership", new owner `rizonetech`, confirm.
+- [ ] **Operator action:** Accept the transfer if GitHub requires explicit acceptance. Step 3 in preflight §4 -- usually auto-accepted because the operator is admin of both sides; if a prompt appears, walk <https://github.com/organizations/rizonetech/settings/transfer-requests> or click the email link.
+- [ ] **Operator action:** Update local remotes after the transfer. Step 5 in preflight §4 -- `git remote set-url origin https://github.com/rizonetech/impossible-os.git` then `git fetch origin && git pull --ff-only origin main`. The `bootloader` remote stays unchanged (separate decision, OUT OF SCOPE for TODO-09).
+- [ ] **Operator action:** Trigger or re-run Pages deployment from `rizonetech/impossible-os` after Pages settings are confirmed. Step 7 in preflight §4 -- `gh workflow run pages.yml -R rizonetech/impossible-os` if the workflow hasn't auto-fired post-transfer.
+- [ ] **Operator action:** Apply the `www.impossibleos.co` CNAME switch from `rizonesoft.github.io` to `rizonetech.github.io` once the new Pages endpoint is active. Step 8 in preflight §4 -- DNS provider UI; verify with `getent hosts www.impossibleos.co` showing `rizonetech.github.io` chain.
+- [x] **Rollback procedure documented:** preflight §4 "Rollback (if any post-transfer step fails)" lists 4 reversal steps (reverse-transfer GitHub UI, restore `www` CNAME, restore local remote, re-run pre-transfer validation). Window stays open until §7 validation passes. **Operator action:** keep this window open (do not push new commits, do not roll TTL back to normal) until §7 is green.
+- [x] Commit: `"docs/github: add repository transfer runbook"`
 
-**Test checkpoint:** The repository lands at `https://github.com/rizonetech/impossible-os`, local `git fetch` succeeds from the new remote, the old GitHub repo URL redirects, and the custom domain still serves the landing page.
+**Test checkpoint:** The repository lands at `https://github.com/rizonetech/impossible-os`, local `git fetch` succeeds from the new remote, the old GitHub repo URL redirects, and the custom domain still serves the landing page. **Probe-time status:** 6 of 11 items shipped (plan, backup markers, destination-clean check, redirect tripwires, rollback procedure, commit). 5 items remain `[ ]` -- all operator-only execution (transfer button, accept, remote update, Pages re-trigger, www CNAME flip). Section flips from `[/]` to `[x]` once the operator confirms all 5 in chat after running the §4 transfer steps.
+
+> **Test runner:** N/A (transfer runbook + rollback procedure, no kernel/usermode/desktop test surface) | validation: pre-transfer block in preflight §3 (Step 1), post-transfer block in preflight §3 (Step 9), Pages settings probe `gh api repos/rizonetech/impossible-os/pages --jq .cname` (Step 6).
+> **Notes:**
+> - Shipped: `## §4 Transfer Runbook and Rollback Window` appendix in [`docs/infrastructure/repository-transfer-preflight.md`](../../docs/infrastructure/repository-transfer-preflight.md) covering captured backup markers (11 fields), pre-transfer freeze rules, 10 numbered transfer steps with copy-paste commands and expected outputs, 4-step rollback procedure, and the redirect-window tombstone rule.
+> - Backup markers are a frozen 2026-04-27 snapshot -- the operator pressing transfer should NOT update them; they are the canonical "known-good" reference for rollback verification.
+> - Cross-doc wiring: each operator step links to the preflight §3 validation block (pre-transfer + post-transfer) and the §5/§7 sections that own post-transfer audit / validation. Codex 3x review adoptions in commit `<this-commit>`.
+> - Canonical doc: [`docs/infrastructure/repository-transfer-preflight.md` §4](../../docs/infrastructure/repository-transfer-preflight.md#4-transfer-runbook-and-rollback-window).
+> - Scope boundary: §4 prepares + documents the transfer; the press-the-button steps are operator execution. §5 owns post-transfer settings audit; §7 owns the validation suite that closes the rollback window.
+>
+> **Verified:** 2026-04-27 | commit `<this-commit>` | 6/11 items | build N/A (runbook docs) | lint clean, todo-graph 8/8
 
 ---
 
@@ -333,7 +341,7 @@ Close the roadmap by making the final owner state discoverable and removing tran
 | ⭐ | Feature                                  | 🪟 Win11             | 🐧 Linux              | 🚀 Impossible OS                    |
 |----|------------------------------------------|---------------------|----------------------|------------------------------------|
 | ⭐ | Repo-owner transfer runbook              | ❌ N/A (closed src) | ⚠️ Ad-hoc per project | ⏳ §1 baseline + §2 org-readiness probe shipped (`docs/infrastructure/repository-transfer-preflight.md`); §3-§9 still planned |
-| ⭐ | Rollback-window discipline               | ❌ N/A              | ⚠️ Project-dependent  | ⬜ Planned -- §4 keeps rollback open until §7 green |
+| ⭐ | Rollback-window discipline               | ❌ N/A              | ⚠️ Project-dependent  | ⏳ §4 shipped: backup-marker snapshot, 10-step transfer runbook, 4-step rollback procedure, redirect-window tombstone rule -- in preflight §4; rollback stays open until §7 green |
 | ⭐ | Pages custom-domain continuity plan      | ❌ N/A              | ⚠️ Project-dependent  | ⏳ §3 shipped: tracked CNAME, 4 URL fixes in `gh-pages/index.html`, DNS plan + transient-state taxonomy + validation block in preflight §3; one operator-only TTL drop remaining |
 | 💎 | Forward move-back / visibility flip plan | ❌ N/A              | ❌ N/A                | ⬜ Planned -- §8 defines return path before transfer |
 | ⭐ | Post-transfer settings audit             | ❌ N/A              | ⚠️ Tribal-knowledge   | ⬜ Planned -- §5 verifies branch protection / secrets / Pages env / Actions policy directly |
