@@ -103,7 +103,7 @@ Before `ExitBootServices()`, save UEFI runtime function pointers into `boot_info
 > - Canonical doc: [`src/kernel/uefi_runtime.c`](../../src/kernel/uefi_runtime.c) is authoritative for SVAM + RT-service invariants; [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h) §510-518 / §1183-1187 carries the caps_present/caps_degraded XOR contract.
 > - Scope boundary: §1 owns SVAM + RT-pointer validation + once-init contract; §10 owns the sleepable mutex around post-init RT calls; §2 owns variable-service wrappers; per-CPU MSR re-program after CR3 reload is a CLAUDE.md "Bare Metal Gotchas" concern, not a §1 implementation gap.
 
-> **Verified:** 2026-04-27 | commit `<pending>` | 5/5 items | build OK | tests 1 §1 suite, 0 failures (test_uefi_rt_available)
+> **Verified:** 2026-04-27 | commit `cbda05ac` | 5/5 items | build OK | tests 1 §1 suite, 0 failures (test_uefi_rt_available)
 > **Quality reviewed:** 2026-04-27 | Codex 4x (adversarial + consistency + perf + re-adversarial) | 3H+2M fixed | scope: kernel-code-quality (gates walked: SMP-safe by default, memory rules, bare-metal correctness, complete error paths)
 
 ---
