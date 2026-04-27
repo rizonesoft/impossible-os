@@ -27,6 +27,7 @@
 | design_review_required | `.claude/hooks/design_review_required.py` | STATE+BLOCK | N | -- | `SKIP_DESIGN_REVIEW_HOOK=1` | After a flagship Skill is invoked, BLOCKs subsequent code edits until a Codex design dispatch is observed. |
 | receiving_review_required | `.claude/hooks/receiving_review_required.py` | STATE+BLOCK | N | -- | `SKIP_RECEIVING_REVIEW_HOOK=1` | After a Codex review completes, BLOCKs subsequent code edits until `receiving-code-review` discipline is applied. |
 | section_review_required | `.claude/hooks/section_review_required.py` | STATE+BLOCK | N | -- | `SKIP_REVIEW_HOOK=1` (+ `SKIP_REVIEW_HOOK_REASON`) | After a section-ship commit, BLOCKs subsequent edits/Skills/non-script Bash until `/review-todo-section` is invoked. (Matcher is `Edit|Write|MultiEdit|Skill|Bash`.) |
+| skill_step_block | `.claude/hooks/skill_step_block.py` | STATE+BLOCK | N | -- | `SKIP_SKILL_STEP_BLOCK=1` (+ `SKIP_SKILL_STEP_BLOCK_REASON` >= 12 chars) | On `git commit` and `Skill(review-todo-section)`, BLOCKs if the active multi-step skill's required terminal steps were never observed by `skill_step_observer`. (Matcher is `Bash\|Skill`.) Reads `.claude/state/skill-progress.json`. |
 
 ### Matcher: `Bash`
 
@@ -57,6 +58,7 @@
 | Hook | File | Kind | Wrap.sh | Markers | Opt-out | Purpose |
 |---|---|---|---|---|---|---|
 | codex_review_completed | `.claude/hooks/codex_review_completed.py` | STATE | N | -- | -- | Records the just-completed Codex dispatch into `.claude/state/last-codex-review.json` (gate state for `receiving_review_required` and the four-dispatch counter). Performs file-locking and hash gating. |
+| skill_step_observer | `.claude/hooks/skill_step_observer.py` | STATE | N | -- | -- | After every Edit/Write/MultiEdit/Bash/Skill, walks transcript_path to find the active multi-step skill, looks up the step-evidence map, and records observed steps in `.claude/state/skill-progress.json`. Per-skill latest-invocation-wins; state keyed on `started_head_sha`. Imports `skill_step_map` for the evidence rules. |
 
 ### Matcher: `Edit|Write|MultiEdit`
 
@@ -71,6 +73,12 @@
 | scope_gap_dedup_check | `.claude/hooks/scope_gap_dedup_check.py` | REMINDER | N | -- | -- | After a TODO edit, flags scope-gap dedup misses against existing TODOs. |
 | accepted_xref_warn | `.claude/hooks/accepted_xref_warn.py` | REMINDER | N | -- | -- | After a TODO edit, warns on Accepted/Deferred XREFs lacking concrete parentheticals (commit-time blocker is `accepted_xref_block`). |
 | todo_graph_auto_rewrite | `.claude/hooks/todo_graph_auto_rewrite.py` | SIDE-EFFECT | N | -- | -- | After a TODO `.md` edit, runs `todo-graph/validate.py --fix-line-numbers --write` to keep stamp parentheticals fresh. Surfaces ambiguity via systemMessage. |
+
+## Helper Modules (imported by hooks, not invoked directly)
+
+| Module | File | Importers | Purpose |
+|---|---|---|---|
+| skill_step_map | `.claude/hooks/skill_step_map.py` | `skill_step_observer.py`, `skill_step_block.py` | Step-evidence rules for the 5 multi-step skills + required-terminal-step lists. Pure data module; no `stderr.write` and no exit paths. |
 
 ## Plugin Hooks (auto-loaded)
 
