@@ -105,11 +105,11 @@ Capture the exact current state before changing any GitHub owner setting. The ou
 > **Notes:**
 > - Shipped: [`docs/infrastructure/repository-transfer-preflight.md`](../../docs/infrastructure/repository-transfer-preflight.md) (~360 lines, 9 sections + count-first reproduction-command block) baselining identity / Pages / DNS / Actions / settings / access / owner-refs / consumers / 15-row risk register on 2026-04-27 from live `gh api` / `curl` / `getent` / `rg` outputs.
 > - Surfaced three latent findings the TODO callout had wrong or missing: Pages source is `build_type: legacy` from the `gh-pages` branch (NOT the workflow); the workflow's most recent run (2026-04-12) failed on `Artifact storage quota`; and the original narrow-path owner-reference scan missed the active `REPO_URL_BASE` constant in `scripts/todo-graph/render.py:42`. Updated §0 `Current state` callout to match observed reality, expanded the rg path set to include `todo` + `scripts`, added R4 (workflow failure) and rewrote R10 to name the actual generator file.
-> - Cross-doc wiring: [`docs/infrastructure/github-setup.md`](../../docs/infrastructure/github-setup.md) Overview now points at the preflight doc, so §5 / §7 / §8 (move-back) re-baseline against a single source of truth. Codex 3x review adoptions in commit `<this-commit>`.
+> - Cross-doc wiring: [`docs/infrastructure/github-setup.md`](../../docs/infrastructure/github-setup.md) Overview now points at the preflight doc, so §5 / §7 / §8 (move-back) re-baseline against a single source of truth. Codex 3x review adoptions in commit `baad0045`.
 > - Canonical doc: [`docs/infrastructure/repository-transfer-preflight.md`](../../docs/infrastructure/repository-transfer-preflight.md).
 > - Scope boundary: §1 captures *current* state only; §2 owns receiving-org policy parity, §3 owns Pages/DNS continuity changes, §4 owns the actual transfer, §5 owns post-transfer audit. The preflight doc is a baseline reference, not a runbook.
 >
-> **Verified:** 2026-04-27 | commit `<this-commit>` | 9/9 items | build N/A (docs-only) | lint clean, todo-graph 8/8
+> **Verified:** 2026-04-27 | commit `baad0045` | 9/9 items | build N/A (docs-only) | lint clean, todo-graph 8/8
 > **Quality reviewed:** 2026-04-27 | Codex 3x (adversarial, consistency, perf) | 1H+2M+1L fixed, 0 open | scope: N/A (docs-only -- no domain code-quality skill applies; re-adversarial skipped: docs+stamp-only fixes, no SMP/IRQ/state-machine touch)
 
 ---
