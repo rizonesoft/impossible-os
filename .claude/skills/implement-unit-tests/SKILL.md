@@ -7,6 +7,8 @@ description: Implement the Unit Tests section of a TODO file -- create the test 
 
 > **External-Reviewer Contract:** This skill dispatches Codex as part of its workflow. Every finding goes through `superpowers:receiving-code-review` (verify at file:line, Fix / Reject / Accept, never blind-implement). Canonical contract: [docs/infrastructure/ai-system.md#external-reviewer-contract-codex-copilot](../../../docs/infrastructure/ai-system.md#external-reviewer-contract-codex-copilot).
 
+> **Pair with `superpowers:test-driven-development` for greenfield work.** When the function under test does NOT yet exist (or is being rewritten), invoke `superpowers:test-driven-development` BEFORE implementing the function: write the failing test first, see the red, write the minimal code to make it green, refactor with green tests as the rail. The flow this skill normally documents (test EXISTING code) is the post-hoc coverage path; the TDD skill is the inversion that catches design issues before they ossify. Per `feedback_mandatory_unit_tests` (3 critical FPU bugs surfaced when tests finally ran), this matters most for SMP-sensitive / context-switch / bare-metal code where the bug class is hard to observe after the fact.
+
 ## Use This Skill When
 
 - A TODO file has a `## Unit Tests` section with `[ ]` checkboxes ready to implement.

@@ -230,6 +230,15 @@ Claude Code skills live in `.claude/skills/`. They auto-load when Claude judges 
 
 > Adding, editing, or retiring a skill: see [docs/infrastructure/skill-authoring.md](docs/infrastructure/skill-authoring.md) for the lifecycle, template, and catalog hygiene rules. Every live skill has a row here AND in [.claude/skills/README.md](.claude/skills/README.md); a directory without matching rows is drift.
 
+### Plugin skills -- usage notes
+
+The four installed Claude Code plugins (`superpowers`, `feature-dev`, `firecrawl`, `explanatory-output-style`) ship their own skills + commands + agents that are NOT in the table above. Treat them as helpers, not replacements:
+
+- **`superpowers@claude-plugins-official`** -- load-bearing. `superpowers:receiving-code-review` is wired into all 9 codex-* skills + a hook gate; `superpowers:verification-before-completion` is wired into `review-todo-section` step 15.5 and `complete-todo-file` Execution Discipline. Other useful skills (referenced in specific in-repo skills): `systematic-debugging`, `test-driven-development`, `dispatching-parallel-agents`, `requesting-code-review`. Never disable the plugin.
+- **`feature-dev@claude-plugins-official`** -- agents (`code-architect`, `code-explorer`, `code-reviewer`) are usable as helpers. The `/feature-dev` slash command is **NOT the primary path** for feature work in this repo: it skips the Codex adversarial-review pipeline + the section-commit gate that `/implement-todo-section` enforces. Treat `/feature-dev` as a brainstorming aid, not a shipping path. `feature-dev:code-explorer` IS referenced as an Explore-agent alternative in `implement-todo-section` step 3 for very-large unfamiliar codebases.
+- **`firecrawl@claude-plugins-official`** -- preferred over built-in `WebSearch` / `WebFetch` for Win11/Linux parity research (`gap-analysis-todo` Phase 2, `create-todo` step 2) and as the canonical bootstrap recipe for new skills derived from external docs (`firecrawl:skill-gen`, see [skill-authoring.md](docs/infrastructure/skill-authoring.md) step 1).
+- **`explanatory-output-style@claude-plugins-official`** -- SessionStart hook only; injects "explanatory mode" instructions (the `★ Insight ─` blocks). Not a skill, no triggers; benign but adds ~400 tokens per session.
+
 ## Mandatory Skill Triggers
 
 These are non-negotiable. Auto-loading by description is unreliable -- the rules below apply regardless of whether the skill description "felt relevant." Hooks in `.claude/settings.json` enforce the first two by injecting reminders into the conversation.

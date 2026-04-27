@@ -20,6 +20,8 @@ description: Structured kernel debugging session with adversarial review validat
 >
 > The rubber-duck agent exists precisely because debugging tunnel vision is real. You WILL miss things. The rubber-duck sees the same evidence from a fresh angle. Use it BEFORE writing a fix -- not after.
 
+> **Pair with `superpowers:systematic-debugging`.** That skill formalizes the "evidence -> hypothesis -> minimal experiment -> fix" loop in skill-shaped form: it forbids speculation-as-fix, requires a testable hypothesis before every code change, and keeps the agent on the "explain why this fix works given the evidence" rail. Invoke it when about to propose a fix and the hypothesis is not yet bulletproof. The kernel-specific rubber-duck + Codex adversarial pieces below stay; `systematic-debugging` is the cross-domain process layer underneath.
+
 ---
 
 ## Workflow
