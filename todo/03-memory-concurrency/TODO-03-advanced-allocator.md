@@ -97,6 +97,7 @@ Replace the fixed 2 MiB first-fit allocator with a growable, SMP-safe heap. Star
 
 - [ ] Add `spinlock_t heap_lock` protecting `heap_start_block`, `total_heap_size`, `used_bytes`
 - [ ] Wrap `kmalloc`, `kfree`, `krealloc` with `spin_lock_irqsave` / `spin_unlock_irqrestore`
+- [ ] **PMM bitmap SMP locking**: `pmm_alloc_frame()`, `pmm_alloc_contiguous()`, `pmm_free_frame()`, `pmm_mark_region_used()` in `src/kernel/mm/pmm.c` mutate the global frame bitmap and `used_frames` counter without synchronization. Concurrent callers from two CPUs (e.g. user-reachable syscall paths like the UEFI Variable Services SSDT handlers in `src/kernel/uefi_runtime.c` allocating value buffers above 4 KiB via `uefi_value_alloc()`) can race the bitmap and double-allocate / double-free / corrupt counters. Add `spinlock_t pmm_lock` (or per-zone if a zone allocator is introduced); wrap allocator/free entry points with `spin_lock_irqsave` / `spin_unlock_irqrestore`. The same `irqsave` variant requirement as the heap lock applies (PMM may be called from IRQ context for emergency frame allocation).
 - [ ] Replace static 512-page BSS array with a linked list of heap segments (`struct heap_segment { uintptr_t base; uint64_t size; struct heap_segment *next; }`)
 - [ ] Initial segment: 256 KB from `pmm_alloc_contiguous(64)` at `heap_init()`
 - [ ] On `kmalloc` failure: if below max, `pmm_alloc_contiguous(64)` for new 256 KB segment; append to segment list; retry

@@ -122,8 +122,20 @@ Thin wrappers around `gRT->GetVariable` / `SetVariable` with error translation.
 
 **Test checkpoint:** `uefi_var_get(L"SecureBoot", ...)` returns success or not-found without crash; test GUID roundtrip via `uefi_var_set_u32` / `uefi_var_get_u32` survives reboot when NVRAM allows. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Verified:** 2026-04-11 -- Codex review found u32 size validation bug (fixed), SSDT pointer probing + privilege gaps accepted out-of-scope (tracked in 02-kernel-core/TODO-23). 2 unit tests wired, build passes.
-> **Quality reviewed:** 2026-04-11 -- 2 spec violations fixed (expanded efi_to_ntstatus to 9 codes + unified duplicate, enumerate BUFFER_TOO_SMALL handling), 2 best practices (attrs output on uefi_var_get, unified mapper), 1 dead code removed (uefi_enumerate_variables -> callback), 1 parity gap closed (QueryVariableInfo exposed). Accepted: duplicate GUID (circular include), parameter order (Win32 vs UEFI convention), SSDT probing/privilege (-> 02-kernel-core/TODO-23), spinlock migration (-> 01-boot-platform/TODO-02 §10).
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) -- `test_uefi_var_get_secureboot` + `test_uefi_var_u32_roundtrip` (test_uefi_boot.c:31,45) | 2 §2 suites, 0 failures
+>
+> **Notes:**
+> - Legacy SSDT 0x00D2 / 0x00D3 (`NtQuerySystemEnvironmentValue` / `NtSetSystemEnvironmentValue`) now ship with the canonical native NT ABI: `PUNICODE_STRING` name (Length / MaximumLength / Buffer triplet), implicit `EFI_GLOBAL_VARIABLE_GUID` namespace, legacy attrs = NV|BS|RT for the setter, `USHORT*` `ReturnLength` out for the getter. Earlier wrappers that re-routed to the Ex variant via stack-args 5/6 were silently dropping those args because the SSDT dispatcher only forwards 4 (TODO-12 §4 owns extending the entry).
+> - All four handlers now marshal user pointers into kernel-bounded buffers BEFORE entering `s_rt_mutex`: GUID copy + length copy + name (`marshal_user_pwstr_name` for Ex, `marshal_user_unicode_string` for legacy) + value buffer probe + kmalloc/pmm copy. Mutex hold time is now a function of firmware latency + a bounded copy, not user memory latency -- closes the cross-process stall vector.
+> - Value buffers above 4 KiB route through `pmm_alloc_contiguous` per CLAUDE.md kmalloc cap; `uefi_value_alloc` / `uefi_value_free` pick the right allocator and frame-by-frame free. Caps: name 1024 B, value 64 KiB.
+> - `count_sig_entries` (Secure Boot DB inventory) tightened against firmware-supplied size lies: header_total computed in uint64 to defeat wraparound; signature_size floor at `sizeof(efi_signature_data)`; data_size must be exact multiple of signature_size or list rejected.
+> - Query handlers defend against firmware returning SUCCESS while inflating DataSize: if `actual_len > requested_len` after `uefi_get_variable`, downgrade to `UEFI_BUFFER_TOO_SMALL` and skip the copy-back -- protects both the kernel kvalue buffer and the user-probed range from overrun by buggy/hostile firmware.
+> - Canonical doc: legacy native NT ABI spec at TODO-12 §23 (line 707). Master SSDT row at TODO-A-SSDT-Master-Table §0x00D0-0x00DF.
+>
+> **Verified:** 2026-04-27 | commit `PENDING` | 7/7 items | build OK | tests 2 §2 suites, 0 failures (test_uefi_var_get_secureboot, test_uefi_var_u32_roundtrip)
+> **Accepted:** [H] SSDT dispatcher forwards only 4 args; legacy handlers must not depend on stack-args 5-6 -> XREF: 02-kernel-core/TODO-12 §4 (item: "Extend INT 0x2E + SYSCALL entry to read stack arguments 5-6+" at line 212)
+> **Accepted:** [H] PMM bitmap unsynchronized; `pmm_alloc_contiguous` / `pmm_free_frame` race on SMP when uefi_value_alloc routes >4 KiB buffers there (reason: kernel-wide PMM concern, not §2-specific) -> XREF: 03-memory-concurrency/TODO-03 §1 (item: "PMM bitmap SMP locking" at line 100)
+> **Quality reviewed:** 2026-04-27 | Codex 5x (adversarial + consistency + perf + re-adversarial + final-adversarial) | 5H+3M fixed, 2H accepted-XREF | scope: kernel-code-quality (gates walked: SMP-safe by default, memory rules, bare-metal correctness, complete error paths)
 
 ---
 

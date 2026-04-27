@@ -17,6 +17,10 @@
 #include "kernel/nt/ssdt.h"
 #include "kernel/nt/service_numbers.h"
 #include "kernel/nt/ntstatus.h"
+#include "kernel/nt/zw.h"
+#include "kernel/cpu_security.h"
+#include "kernel/mm/heap.h"
+#include "kernel/ob/peb.h"
 #include "kernel/drivers/lapic.h"
 #include "kernel/klog.h"
 #include "kernel/sched/spinlock.h"
@@ -1003,13 +1007,22 @@ static void count_sig_entries(const uint8_t *buf, uint64_t buf_sz,
         if (sl->signature_list_size == 0) break;
         if (offset + sl->signature_list_size > buf_sz) break;
 
-        /* Count entries in this list */
-        uint32_t data_size = sl->signature_list_size -
-            (uint32_t)sizeof(struct efi_signature_list) -
-            sl->signature_header_size;
-        uint32_t entries = 0;
-        if (sl->signature_size > 0)
-            entries = data_size / sl->signature_size;
+        /* Codex M1 (2026-04-27 re-review): firmware/NVRAM-supplied
+         * sizes are untrusted. signature_list_size could be smaller
+         * than header + signature_header_size, which would underflow
+         * the subtraction below and fabricate a huge entries count.
+         * Compute header_total as uint64 so a hostile
+         * signature_header_size near UINT32_MAX cannot wrap before
+         * the comparison. */
+        uint64_t header_total = (uint64_t)sizeof(struct efi_signature_list)
+            + (uint64_t)sl->signature_header_size;
+        if ((uint64_t)sl->signature_list_size < header_total) break;
+        if (sl->signature_size < sizeof(struct efi_signature_data)) break;
+        uint32_t data_size = sl->signature_list_size - (uint32_t)header_total;
+        /* data_size must be an exact multiple of signature_size for
+         * a well-formed list -- treat any remainder as malformed. */
+        if (data_size % sl->signature_size != 0) break;
+        uint32_t entries = data_size / sl->signature_size;
 
         *total += entries;
 
@@ -1349,79 +1362,497 @@ const struct capsule_capability_info *uefi_capsule_info(void)
     return &s_capsule_info;
 }
 
-/* ---- SSDT handlers: NtQuerySystemEnvironmentValueEx / NtSetSystemEnvironmentValueEx ---- */
+/* ---- SSDT handlers: NtQuerySystemEnvironmentValue[Ex] / NtSetSystemEnvironmentValue[Ex] ---- */
+
+/* User-marshalling bounds. UEFI variable names are short (typical
+ * < 64 wide chars); UEFI 2.x permits values up to ~64 KiB but
+ * production firmware caps the per-variable max around 32-64 KiB.
+ * Codex Perf H1 (2026-04-27 re-review): the prior implementation
+ * passed user pointers directly to firmware while holding the
+ * global s_rt_mutex. A slow / unmapped / huge user buffer stalled
+ * every other RT call. The marshalling cap below makes the firmware
+ * call run against bounded kernel memory, so mutex hold time is a
+ * function of the firmware itself + a bounded copy, not user
+ * memory latency. */
+#define UEFI_NAME_MAX_BYTES   1024  /* 512 wide chars + slack */
+#define UEFI_VALUE_MAX_BYTES  (64 * 1024)
+#define UEFI_KMALLOC_CAP      4096  /* CLAUDE.md kmalloc <=4 KB rule */
+
+/* Codex H1 (2026-04-27 re-review): value buffers can reach 64 KiB;
+ * kmalloc has no internal cap and would happily carve large blocks
+ * out of the kernel heap, opening a DoS / fragmentation vector for
+ * unprivileged firmware-variable syscalls. Route value buffers
+ * through pmm_alloc_contiguous when they exceed the kmalloc-safe
+ * ceiling. PMM frames are identity-mapped in the kernel range, so
+ * the physical address doubles as a usable kernel pointer. The
+ * allocated-frame count is recovered from size on free. */
+#include "kernel/mm/pmm.h"
+
+static void *uefi_value_alloc(uint32_t size)
+{
+    if (size == 0) return (void *)0;
+    if (size <= UEFI_KMALLOC_CAP)
+        return kmalloc(size);
+    uint64_t frames = (size + PMM_FRAME_SIZE - 1) / PMM_FRAME_SIZE;
+    uintptr_t phys = pmm_alloc_contiguous(frames);
+    if (!phys) return (void *)0;
+    return (void *)phys;
+}
+
+static void uefi_value_free(void *ptr, uint32_t size)
+{
+    if (!ptr) return;
+    if (size <= UEFI_KMALLOC_CAP) {
+        kfree(ptr);
+        return;
+    }
+    uint64_t frames = (size + PMM_FRAME_SIZE - 1) / PMM_FRAME_SIZE;
+    uintptr_t phys = (uintptr_t)ptr;
+    for (uint64_t i = 0; i < frames; i++)
+        pmm_free_frame(phys + i * PMM_FRAME_SIZE);
+}
+
+/* Marshal a user-supplied PWSTR (null-terminated wide string used
+ * by the Ex variants). Probes for read, scans for the NUL within
+ * UEFI_NAME_MAX_BYTES, kmallocs a kernel copy with explicit NUL.
+ * Returns kernel buffer on success, sets *out_status; returns NULL
+ * on any error (out_status carries the NTSTATUS). Caller frees. */
+static uint16_t *marshal_user_pwstr_name(uint64_t user_ptr,
+                                          NTSTATUS *out_status)
+{
+    if (!user_ptr) {
+        *out_status = STATUS_INVALID_PARAMETER;
+        return (uint16_t *)0;
+    }
+    /* Probe a small head region; we'll scan for NUL up to the cap. */
+    if (ProbeForReadIfUser((const void *)user_ptr,
+                            sizeof(uint16_t), sizeof(uint16_t)) != 0) {
+        *out_status = STATUS_ACCESS_VIOLATION;
+        return (uint16_t *)0;
+    }
+    /* Allocate the kernel copy at the cap; copy in chunks then NUL. */
+    uint16_t *kbuf = (uint16_t *)kmalloc(UEFI_NAME_MAX_BYTES);
+    if (!kbuf) {
+        *out_status = STATUS_INSUFFICIENT_RESOURCES;
+        return (uint16_t *)0;
+    }
+    /* Probe + copy the full cap; firmware tolerates an over-long
+     * scan because we re-NUL-terminate based on the user's NUL. */
+    if (ProbeForReadIfUser((const void *)user_ptr,
+                            UEFI_NAME_MAX_BYTES,
+                            sizeof(uint16_t)) != 0) {
+        /* Codex H2 (2026-04-27 re-review): the prior fallback copied
+         * 64-byte chunks without re-probing each chunk, so a name
+         * pointer ending near the user/kernel boundary could pass
+         * the head probe, fail the full probe, then have copy_from_user
+         * read past MM_USER_PROBE_ADDRESS into kernel memory. Probe
+         * EACH chunk before copy; reject if any chunk fails (NUL was
+         * not within mapped user range). */
+        uint32_t off;
+        for (off = 0; off < UEFI_NAME_MAX_BYTES; off += 64) {
+            uint32_t chunk = 64;
+            if (off + chunk > UEFI_NAME_MAX_BYTES)
+                chunk = UEFI_NAME_MAX_BYTES - off;
+            if (ProbeForReadIfUser((const void *)(user_ptr + off),
+                                     chunk, sizeof(uint16_t)) != 0)
+                break;
+            if (copy_from_user((char *)kbuf + off,
+                               (const char *)user_ptr + off, chunk) != 0)
+                break;
+            /* Look for NUL within this chunk. */
+            uint16_t *p = (uint16_t *)((char *)kbuf + off);
+            uint32_t i;
+            for (i = 0; i < chunk / 2; i++) {
+                if (p[i] == 0) {
+                    *out_status = STATUS_SUCCESS;
+                    return kbuf;  /* found user NUL -- string complete */
+                }
+            }
+        }
+        /* No NUL within mapped range -- reject (avoids reading past
+         * the user/kernel boundary). */
+        kfree(kbuf);
+        *out_status = STATUS_ACCESS_VIOLATION;
+        return (uint16_t *)0;
+    }
+    /* Full region readable -- single copy, then verify NUL exists. */
+    if (copy_from_user(kbuf, (const void *)user_ptr,
+                       UEFI_NAME_MAX_BYTES) != 0) {
+        kfree(kbuf);
+        *out_status = STATUS_ACCESS_VIOLATION;
+        return (uint16_t *)0;
+    }
+    uint32_t i;
+    for (i = 0; i < UEFI_NAME_MAX_BYTES / 2; i++) {
+        if (kbuf[i] == 0) {
+            *out_status = STATUS_SUCCESS;
+            return kbuf;
+        }
+    }
+    kfree(kbuf);
+    *out_status = STATUS_BUFFER_OVERFLOW;
+    return (uint16_t *)0;
+}
+
+/* Marshal a user-supplied UNICODE_STRING (legacy NT variant).
+ * Probes the descriptor for read, validates Length within
+ * UEFI_NAME_MAX_BYTES, kmallocs a kernel copy of Length+2 bytes
+ * (room for an explicit NUL since UNICODE_STRING is NOT
+ * null-terminated by spec), copies the wide-char buffer in,
+ * appends NUL. Returns kernel buffer; caller frees. */
+static uint16_t *marshal_user_unicode_string(uint64_t user_ptr,
+                                              uint32_t cap,
+                                              NTSTATUS *out_status)
+{
+    if (!user_ptr) {
+        *out_status = STATUS_INVALID_PARAMETER;
+        return (uint16_t *)0;
+    }
+    UNICODE_STRING us;
+    if (ProbeForReadIfUser((const void *)user_ptr, sizeof(us), 8) != 0) {
+        *out_status = STATUS_ACCESS_VIOLATION;
+        return (uint16_t *)0;
+    }
+    if (copy_from_user(&us, (const void *)user_ptr, sizeof(us)) != 0) {
+        *out_status = STATUS_ACCESS_VIOLATION;
+        return (uint16_t *)0;
+    }
+    if (us.Length == 0 || (us.Length & 1) != 0 || us.Length > cap) {
+        *out_status = STATUS_INVALID_PARAMETER;
+        return (uint16_t *)0;
+    }
+    if (!us.Buffer) {
+        *out_status = STATUS_INVALID_PARAMETER;
+        return (uint16_t *)0;
+    }
+    if (ProbeForReadIfUser(us.Buffer, us.Length, sizeof(uint16_t)) != 0) {
+        *out_status = STATUS_ACCESS_VIOLATION;
+        return (uint16_t *)0;
+    }
+    uint16_t *kbuf = (uint16_t *)kmalloc(us.Length + 2);
+    if (!kbuf) {
+        *out_status = STATUS_INSUFFICIENT_RESOURCES;
+        return (uint16_t *)0;
+    }
+    if (copy_from_user(kbuf, us.Buffer, us.Length) != 0) {
+        kfree(kbuf);
+        *out_status = STATUS_ACCESS_VIOLATION;
+        return (uint16_t *)0;
+    }
+    kbuf[us.Length / 2] = 0;
+    *out_status = STATUS_SUCCESS;
+    return kbuf;
+}
 
 /* NtQuerySystemEnvironmentValueEx(Name, VendorGuid, Value, ValueLength, Attributes)
- * SSDT 0x00D4 -- Win32 GetFirmwareEnvironmentVariableExW maps here */
+ * SSDT 0x00D4 -- Win32 GetFirmwareEnvironmentVariableExW maps here.
+ * Codex Perf H1 fix (2026-04-27 re-review): all user pointers are
+ * marshalled into kernel-bounded copies BEFORE entering the
+ * firmware path. Only the firmware call itself runs while
+ * uefi_get_variable holds s_rt_mutex; user memory access happens
+ * outside the lock window. */
 static NTSTATUS nt_query_env_value_ex(uint64_t name_ptr, uint64_t guid_ptr,
                                        uint64_t value_ptr, uint64_t length_ptr,
                                        uint64_t attrs_ptr, uint64_t a6)
 {
-    const uint16_t *name;
-    const struct boot_uefi_guid *guid;
-    uint64_t data_size;
+    NTSTATUS s;
+    uint32_t requested_len;
+    uint64_t actual_len;
     uint32_t attrs = 0;
     uint64_t efi_status;
+    uint16_t *kname = (uint16_t *)0;
+    void *kvalue = (void *)0;
+    struct boot_uefi_guid kguid;
+    NTSTATUS rc;
 
     (void)a6;
     if (!name_ptr || !guid_ptr || !value_ptr || !length_ptr)
         return STATUS_INVALID_PARAMETER;
 
-    name = (const uint16_t *)name_ptr;
-    guid = (const struct boot_uefi_guid *)guid_ptr;
-    data_size = *(uint32_t *)length_ptr;
+    /* Probe + copy GUID (16 bytes) */
+    if (ProbeForReadIfUser((const void *)guid_ptr, sizeof(kguid), 4) != 0)
+        return STATUS_ACCESS_VIOLATION;
+    if (copy_from_user(&kguid, (const void *)guid_ptr, sizeof(kguid)) != 0)
+        return STATUS_ACCESS_VIOLATION;
 
-    efi_status = uefi_get_variable(guid, name, &attrs, &data_size,
-                                    (void *)value_ptr);
+    /* Probe + copy length (uint32_t, in/out) */
+    if (ProbeForReadIfUser((const void *)length_ptr, sizeof(uint32_t), 4) != 0)
+        return STATUS_ACCESS_VIOLATION;
+    if (copy_from_user(&requested_len, (const void *)length_ptr,
+                        sizeof(requested_len)) != 0)
+        return STATUS_ACCESS_VIOLATION;
+    if (requested_len > UEFI_VALUE_MAX_BYTES)
+        return STATUS_INVALID_PARAMETER;
 
-    *(uint32_t *)length_ptr = (uint32_t)data_size;
-    if (attrs_ptr)
-        *(uint32_t *)attrs_ptr = attrs;
+    /* Marshal name (PWSTR null-terminated wide string, Ex form) */
+    kname = marshal_user_pwstr_name(name_ptr, &s);
+    if (!kname)
+        return s;
 
-    return efi_status_to_ntstatus(efi_status);
+    /* Probe write capacity for the value buffer */
+    if (requested_len > 0) {
+        if (ProbeForWriteIfUser((void *)value_ptr, requested_len,
+                                  sizeof(uint8_t)) != 0) {
+            kfree(kname);
+            return STATUS_ACCESS_VIOLATION;
+        }
+        kvalue = uefi_value_alloc(requested_len);
+        if (!kvalue) {
+            kfree(kname);
+            return STATUS_INSUFFICIENT_RESOURCES;
+        }
+    }
+
+    /* Probe write of length output (also handled by attrs probe below) */
+    if (ProbeForWriteIfUser((void *)length_ptr, sizeof(uint32_t),
+                              sizeof(uint32_t)) != 0) {
+        uefi_value_free(kvalue, requested_len);
+        kfree(kname);
+        return STATUS_ACCESS_VIOLATION;
+    }
+    if (attrs_ptr) {
+        if (ProbeForWriteIfUser((void *)attrs_ptr, sizeof(uint32_t),
+                                  sizeof(uint32_t)) != 0) {
+            uefi_value_free(kvalue, requested_len);
+            kfree(kname);
+            return STATUS_ACCESS_VIOLATION;
+        }
+    }
+
+    /* Firmware call against kernel-bounded buffers */
+    actual_len = requested_len;
+    efi_status = uefi_get_variable(&kguid, kname, &attrs, &actual_len, kvalue);
+
+    /* Codex (2026-04-27 final-adversarial): defend against buggy or
+     * hostile firmware returning SUCCESS while inflating DataSize.
+     * The kernel buffer is exactly requested_len bytes; if firmware
+     * claims more, do NOT copy -- publish the size for the caller
+     * to retry and downgrade to BUFFER_TOO_SMALL. */
+    if (efi_status == UEFI_SUCCESS && actual_len > requested_len)
+        efi_status = UEFI_BUFFER_TOO_SMALL;
+
+    /* Copy results back */
+    if (efi_status == UEFI_SUCCESS && kvalue && actual_len > 0) {
+        if (copy_to_user((void *)value_ptr, kvalue, (uint32_t)actual_len) != 0)
+            efi_status = UEFI_DEVICE_ERROR;
+    }
+    {
+        uint32_t out_len = (uint32_t)actual_len;
+        if (copy_to_user((void *)length_ptr, &out_len, sizeof(out_len)) != 0)
+            efi_status = UEFI_DEVICE_ERROR;
+    }
+    if (attrs_ptr) {
+        if (copy_to_user((void *)attrs_ptr, &attrs, sizeof(attrs)) != 0)
+            efi_status = UEFI_DEVICE_ERROR;
+    }
+    rc = efi_status_to_ntstatus(efi_status);
+    uefi_value_free(kvalue, requested_len);
+    kfree(kname);
+    return rc;
 }
 
 /* NtSetSystemEnvironmentValueEx(Name, VendorGuid, Value, ValueLength, Attributes)
- * SSDT 0x00D5 -- Win32 SetFirmwareEnvironmentVariableExW maps here */
+ * SSDT 0x00D5 -- Win32 SetFirmwareEnvironmentVariableExW maps here. */
 static NTSTATUS nt_set_env_value_ex(uint64_t name_ptr, uint64_t guid_ptr,
                                      uint64_t value_ptr, uint64_t length,
                                      uint64_t attrs, uint64_t a6)
 {
-    const uint16_t *name;
-    const struct boot_uefi_guid *guid;
+    NTSTATUS s;
+    uint16_t *kname = (uint16_t *)0;
+    void *kvalue = (void *)0;
+    struct boot_uefi_guid kguid;
     uint64_t efi_status;
+    NTSTATUS rc;
 
     (void)a6;
     if (!name_ptr || !guid_ptr)
         return STATUS_INVALID_PARAMETER;
+    if (length > UEFI_VALUE_MAX_BYTES)
+        return STATUS_INVALID_PARAMETER;
+    if (length > 0 && !value_ptr)
+        return STATUS_INVALID_PARAMETER;
 
-    name = (const uint16_t *)name_ptr;
-    guid = (const struct boot_uefi_guid *)guid_ptr;
+    if (ProbeForReadIfUser((const void *)guid_ptr, sizeof(kguid), 4) != 0)
+        return STATUS_ACCESS_VIOLATION;
+    if (copy_from_user(&kguid, (const void *)guid_ptr, sizeof(kguid)) != 0)
+        return STATUS_ACCESS_VIOLATION;
 
-    efi_status = uefi_set_variable(guid, name, (uint32_t)attrs,
-                                    length, (const void *)value_ptr);
+    kname = marshal_user_pwstr_name(name_ptr, &s);
+    if (!kname)
+        return s;
 
-    return efi_status_to_ntstatus(efi_status);
+    if (length > 0) {
+        if (ProbeForReadIfUser((const void *)value_ptr, (uint32_t)length,
+                                 sizeof(uint8_t)) != 0) {
+            kfree(kname);
+            return STATUS_ACCESS_VIOLATION;
+        }
+        kvalue = uefi_value_alloc((uint32_t)length);
+        if (!kvalue) {
+            kfree(kname);
+            return STATUS_INSUFFICIENT_RESOURCES;
+        }
+        if (copy_from_user(kvalue, (const void *)value_ptr, (uint32_t)length) != 0) {
+            uefi_value_free(kvalue, (uint32_t)length);
+            kfree(kname);
+            return STATUS_ACCESS_VIOLATION;
+        }
+    }
+
+    efi_status = uefi_set_variable(&kguid, kname, (uint32_t)attrs,
+                                    length, kvalue);
+    rc = efi_status_to_ntstatus(efi_status);
+    uefi_value_free(kvalue, (uint32_t)length);
+    kfree(kname);
+    return rc;
 }
 
-/* Legacy non-Ex variants: same but no attributes parameter */
-static NTSTATUS nt_query_env_value(uint64_t name_ptr, uint64_t guid_ptr,
-                                    uint64_t value_ptr, uint64_t length_ptr,
+/* NtQuerySystemEnvironmentValue(VariableName, VariableValue, ValueLength, ReturnLength)
+ * SSDT 0x00D2 -- legacy native NT ABI. VariableName is a PUNICODE_STRING
+ * (Length / MaximumLength / Buffer triplet, NOT null-terminated by spec).
+ * VariableValue is a raw output buffer of `length` bytes. ReturnLength is
+ * an OUT USHORT pointer with the actual size. Implicit
+ * EFI_GLOBAL_VARIABLE_GUID namespace (legacy form predates per-variable
+ * GUIDs; Win32 callers wanting the GUID parameter use the Ex variant). */
+static NTSTATUS nt_query_env_value(uint64_t name_ptr, uint64_t value_ptr,
+                                    uint64_t length, uint64_t return_length_ptr,
                                     uint64_t a5, uint64_t a6)
 {
-    return nt_query_env_value_ex(name_ptr, guid_ptr, value_ptr, length_ptr,
-                                 0, a6);
-    (void)a5;
+    static const struct boot_uefi_guid global_guid = EFI_GLOBAL_VARIABLE_GUID;
+    NTSTATUS s;
+    uint16_t *kname;
+    void *kvalue = (void *)0;
+    uint64_t actual_len;
+    uint32_t attrs = 0;
+    uint64_t efi_status;
+    NTSTATUS rc;
+
+    (void)a5; (void)a6;
+    if (!name_ptr || !return_length_ptr)
+        return STATUS_INVALID_PARAMETER;
+    if (length > UEFI_VALUE_MAX_BYTES || length > 0xFFFF)
+        return STATUS_INVALID_PARAMETER;
+    if (length > 0 && !value_ptr)
+        return STATUS_INVALID_PARAMETER;
+
+    kname = marshal_user_unicode_string(name_ptr, UEFI_NAME_MAX_BYTES, &s);
+    if (!kname)
+        return s;
+
+    if (length > 0) {
+        if (ProbeForWriteIfUser((void *)value_ptr, (uint32_t)length,
+                                  sizeof(uint8_t)) != 0) {
+            kfree(kname);
+            return STATUS_ACCESS_VIOLATION;
+        }
+        kvalue = uefi_value_alloc((uint32_t)length);
+        if (!kvalue) {
+            kfree(kname);
+            return STATUS_INSUFFICIENT_RESOURCES;
+        }
+    }
+    if (ProbeForWriteIfUser((void *)return_length_ptr,
+                              sizeof(uint16_t), sizeof(uint16_t)) != 0) {
+        uefi_value_free(kvalue, (uint32_t)length);
+        kfree(kname);
+        return STATUS_ACCESS_VIOLATION;
+    }
+
+    actual_len = length;
+    efi_status = uefi_get_variable(&global_guid, kname, &attrs,
+                                     &actual_len, kvalue);
+
+    /* Same firmware-trust defense as the Ex variant. */
+    if (efi_status == UEFI_SUCCESS && actual_len > length)
+        efi_status = UEFI_BUFFER_TOO_SMALL;
+
+    if (efi_status == UEFI_SUCCESS && kvalue && actual_len > 0) {
+        if (copy_to_user((void *)value_ptr, kvalue,
+                          (uint32_t)actual_len) != 0)
+            efi_status = UEFI_DEVICE_ERROR;
+    }
+    {
+        uint16_t out_len = (uint16_t)(actual_len > 0xFFFF ? 0xFFFF
+                                                          : actual_len);
+        if (copy_to_user((void *)return_length_ptr, &out_len,
+                          sizeof(out_len)) != 0)
+            efi_status = UEFI_DEVICE_ERROR;
+    }
+    rc = efi_status_to_ntstatus(efi_status);
+    uefi_value_free(kvalue, (uint32_t)length);
+    kfree(kname);
+    return rc;
 }
 
-static NTSTATUS nt_set_env_value(uint64_t name_ptr, uint64_t guid_ptr,
-                                  uint64_t value_ptr, uint64_t length,
+/* NtSetSystemEnvironmentValue(VariableName, VariableValue) -- SSDT 0x00D3.
+ * Both args are PUNICODE_STRING (the value's Length carries the bytes-to-write
+ * count). Legacy form uses EFI_GLOBAL_VARIABLE_GUID and NV+BS+RT attrs (per
+ * Windows native NT firmware-variable defaults). */
+static NTSTATUS nt_set_env_value(uint64_t name_ptr, uint64_t value_ptr,
+                                  uint64_t a3, uint64_t a4,
                                   uint64_t a5, uint64_t a6)
 {
-    /* Legacy: use NV+BS+RT attributes */
-    return nt_set_env_value_ex(name_ptr, guid_ptr, value_ptr, length,
-                                7, a6);  /* 7 = NV|BS|RT */
-    (void)a5;
+    static const struct boot_uefi_guid global_guid = EFI_GLOBAL_VARIABLE_GUID;
+    /* NV (1) | BS (2) | RT (4) = 7 -- Windows native default for legacy
+     * SetSystemEnvironmentValue per ntoskrnl convention. */
+    static const uint32_t legacy_attrs = 7;
+    NTSTATUS s;
+    uint16_t *kname;
+    void *kvalue = (void *)0;
+    UNICODE_STRING value_us;
+    uint64_t efi_status;
+    NTSTATUS rc;
+
+    (void)a3; (void)a4; (void)a5; (void)a6;
+    if (!name_ptr || !value_ptr)
+        return STATUS_INVALID_PARAMETER;
+
+    kname = marshal_user_unicode_string(name_ptr, UEFI_NAME_MAX_BYTES, &s);
+    if (!kname)
+        return s;
+
+    /* The legacy Set takes a UNICODE_STRING value, not a raw PWSTR.
+     * The bytes-to-write are value_us.Length; treat them as opaque
+     * UEFI variable bytes (which is what firmware expects). */
+    if (ProbeForReadIfUser((const void *)value_ptr, sizeof(value_us), 8) != 0) {
+        kfree(kname);
+        return STATUS_ACCESS_VIOLATION;
+    }
+    if (copy_from_user(&value_us, (const void *)value_ptr,
+                        sizeof(value_us)) != 0) {
+        kfree(kname);
+        return STATUS_ACCESS_VIOLATION;
+    }
+    /* value_us.Length is uint16_t (max 65535); UEFI_VALUE_MAX_BYTES
+     * is 65536, so the type already enforces the strict cap. */
+    if (value_us.Length > 0) {
+        if (!value_us.Buffer) {
+            kfree(kname);
+            return STATUS_INVALID_PARAMETER;
+        }
+        if (ProbeForReadIfUser(value_us.Buffer, value_us.Length,
+                                 sizeof(uint8_t)) != 0) {
+            kfree(kname);
+            return STATUS_ACCESS_VIOLATION;
+        }
+        kvalue = uefi_value_alloc(value_us.Length);
+        if (!kvalue) {
+            kfree(kname);
+            return STATUS_INSUFFICIENT_RESOURCES;
+        }
+        if (copy_from_user(kvalue, value_us.Buffer, value_us.Length) != 0) {
+            uefi_value_free(kvalue, value_us.Length);
+            kfree(kname);
+            return STATUS_ACCESS_VIOLATION;
+        }
+    }
+
+    efi_status = uefi_set_variable(&global_guid, kname, legacy_attrs,
+                                     value_us.Length, kvalue);
+    rc = efi_status_to_ntstatus(efi_status);
+    uefi_value_free(kvalue, value_us.Length);
+    kfree(kname);
+    return rc;
 }
 
 void uefi_register_ssdt(void)
@@ -1436,7 +1867,8 @@ void uefi_register_ssdt(void)
                   (SSDT_HANDLER)nt_set_env_value_ex);
 
     klog(LOG_INFO, "uefi",
-         "Firmware variable syscalls registered (SSDT 0x%03X-0x%03X)",
+         "Firmware variable syscalls registered (SSDT 0x%03X-0x%03X); "
+         "user pointers marshalled to kernel buffers before firmware",
          (uint64_t)SSDT_NtQuerySystemEnvironmentValue,
          (uint64_t)SSDT_NtSetSystemEnvironmentValueEx);
 }
