@@ -1,10 +1,10 @@
 # Default owner for everything
-*                           @derickpayne
+*                           @rizonesoft
 
 # Critical paths — require lead review
-src/boot/                   @derickpayne
-src/kernel/memory/          @derickpayne
-src/kernel/sched/           @derickpayne
-linker.ld                   @derickpayne
-Makefile                    @derickpayne
-scripts/build.sh            @derickpayne
+src/boot/                   @rizonesoft
+src/kernel/memory/          @rizonesoft
+src/kernel/sched/           @rizonesoft
+linker.ld                   @rizonesoft
+Makefile                    @rizonesoft
+scripts/build.sh            @rizonesoft

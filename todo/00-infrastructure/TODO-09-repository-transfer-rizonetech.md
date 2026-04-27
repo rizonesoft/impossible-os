@@ -69,7 +69,7 @@ file_patterns:
 |  ⭐  |   2   |    2    | `rizonetech` organization readiness and policy parity             | §1                             |  [/]   |
 |  ⭐  |   3   |    3    | GitHub Pages custom-domain continuity plan                        | §1, §2                         |  [/]   |
 |  ⭐  |   4   |    4    | Repository transfer runbook and rollback window                   | §1, §2, §3                     |  [/]   |
-|  ⭐  |   5   |    5    | Post-transfer settings, workflows, secrets, environments audit    | §4                             |  [ ]   |
+|  ⭐  |   5   |    5    | Post-transfer settings, workflows, secrets, environments audit    | §4                             |  [/]   |
 |  ⭐  |   6   |    6    | URL, badge, docs, and generated-link sweep                        | §4, §5                         |  [ ]   |
 |  ⭐  |   7   |    7    | Validation suite: Pages, Actions, releases, clone, hooks, graph   | §5, §6                         |  [ ]   |
 |  ⭐  |   8   |    8    | Move-back and public-visibility runbook                           | §1, §2, §3, §4, §5, §6, §7     |  [ ]   |
@@ -216,20 +216,30 @@ Perform the actual transfer as a short, observable operation with a clear stop/r
 
 GitHub transfers repository data, but the project should not trust complex settings until they are checked directly.
 
-- [ ] Verify repository visibility is unchanged from the intended transfer state.
-- [ ] Verify default branch, branch protection, rulesets, required checks, required reviews, signed commit rules if any, force-push/delete restrictions, and bypass users/teams.
-- [ ] Verify team and collaborator permissions match the access model from Section 1.
-- [ ] Verify `.github/CODEOWNERS` still references valid users/teams after transfer; update owner handles or teams if needed.
-- [ ] Verify Actions policy and workflow token permissions. Pages workflow must retain `contents: read`, `pages: write`, and `id-token: write`.
-- [ ] Verify repository secrets and variables required by release automation, signing, notifications, or integrations. GitHub may not expose secret values; validate by running the workflow that consumes them or by comparing names to the preflight inventory.
-- [ ] Verify Pages environment exists, deployment branch/source is correct, environment protection does not block deploys, and the latest deployment is attached to `rizonetech/impossible-os`.
-- [ ] Verify release workflow can read tags and attach artifacts without old-owner assumptions.
-- [ ] Verify issue templates, discussions, labels, milestones, project links, and security policy are still present.
-- [ ] Verify webhooks, deploy keys, GitHub Apps, branch badges, package settings, and integration installs that may be owner-scoped.
-- [ ] Verify org-level autonomous-agent/Copilot policy for this repository remains disabled as required by the AI-system documentation.
-- [ ] Commit: `"docs/github: record post-transfer settings audit"`
+- [x] **Visibility unchanged:** `gh api repos/rizonetech/impossible-os --jq .visibility` returns `private` (matches §1 baseline `PRIVATE`). Captured in [preflight §5 "Preserved verbatim"](../../docs/infrastructure/repository-transfer-preflight.md#5-post-transfer-settings-workflows-secrets-and-environments-audit).
+- [/] **Branch protection / ruleset structure preserved BUT bypass actors empty** -- ruleset id `14058331` "Default Branch Security" survived with all 4 rules (`required_status_checks`/`Build Impossible OS`, `non_fast_forward`, `required_linear_history`, `deletion`). However `bypass_actors: []` post-transfer (was `RepositoryRole 5 / Maintain` pre-transfer); `current_user_can_bypass: "never"`. This is **F1 in preflight §5 Findings** -- direct push to `main` is now blocked even for org admin until a bypass entry is restored. **Operator action remaining:** walk <https://github.com/rizonetech/impossible-os/rules/14058331> -> "Bypass list" -> add `Repository admin` role.
+- [x] **Team / collaborator permissions match §1 access model:** `gh api repos/rizonetech/impossible-os/collaborators` returns only `rizonesoft admin`; `gh api repos/rizonetech/impossible-os/teams` returns `[]` (matches §1 baseline of solo-collaborator + zero teams; org-team creation is §2 O6).
+- [x] **`.github/CODEOWNERS` updated:** F3 fix shipped -- replaced 7 instances of `@derickpayne` (handle did not resolve, predates transfer) with `@rizonesoft` (id `8640728`, the actual maintainer login). Verified via `gh api users/rizonesoft` returning the real user record. F3 detail in preflight §5 Findings.
+- [x] **Repo-level Actions policy and workflow permissions preserved:** `gh api repos/rizonetech/impossible-os/actions/permissions` returns `enabled: true`, `allowed_actions: all`, `sha_pinning_required: false`; default workflow permissions `read`; Pages workflow retains its `permissions: contents: read, pages: write, id-token: write` block (source file unchanged). Org-level Actions policy (O2) is still operator-only via `admin:org` probe.
+- [x] **Repository secrets / variables preserved:** `gh secret list -R rizonetech/impossible-os` returns `BOOTLOADER_REPO_TOKEN` with timestamp `2026-03-14T14:40:49Z` (identical name AND identical creation timestamp to §1 baseline -- migrated cleanly, value preserved). `gh variable list` returns empty. Final value-validation will come from running the release workflow which consumes the token.
+- [x] **Pages environment + deployment-source preserved:** `gh api repos/rizonetech/impossible-os/environments` returns id `13147855799` (same node id `EN_kwDORgIuVs8AAAADD6xbtw` as §1 baseline); Pages settings `cname: "impossibleos.co"` preserved; latest deployment id `4503518780` ref `main` sha `ec2b7c00` attached to `rizonetech/impossible-os` per `gh api repos/rizonetech/impossible-os/deployments`.
+- [/] **Release workflow tag-read capability:** the `Release` workflow file (`.github/workflows/release.yml`) uses `actions/checkout` + `gh release create`/`upload` patterns; nothing bakes the old owner. Latest release `v26.3.18-alpha.821` (pre-release, 2026-03-18) is preserved with same tag/timestamp under the new owner. **Final tag-read + artifact-upload validation comes from a release dry-run** post-F1-fix; until then this row is ⏳ best-effort verified.
+- [x] **Issue templates / labels / security policy preserved:** 4 issue-template YAML files in `.github/ISSUE_TEMPLATE/` (`bug-report.yml`, `config.yml`, `feature-request.yml`, `hardware-report.yml`) -- source-tree files migrated trivially. `gh api repos/rizonetech/impossible-os/labels --jq 'length'` returns `22` (count preserved). `SECURITY.md` source-tree file unchanged. Discussions remain off (matches baseline). Milestones / project links unused, no migration concern.
+- [x] **Webhooks / deploy keys / GitHub Apps / branch badges / packages preserved:** all empty / minimal per §1 baseline -- `gh api .../hooks` returns `[]`, `gh api .../keys` returns `[]`, `gh api orgs/rizonetech/installations` returns `total_count: 0`, no packages enumerated. README badges that bake the OLD owner URL are §6 territory (URL/badge sweep), not §5.
+- [ ] **Org-level Copilot / autonomous-agent policy** -- still operator-only (no public REST endpoint). Walk <https://github.com/organizations/rizonetech/settings/copilot/access>; confirm "No access" or `rizonesoft` excluded from cloud-agent permission per [Autonomous-Agent Boundary Policy](../../docs/infrastructure/ai-system.md#autonomous-agent-boundary-policy). This is the O5 item from §2 / §3.
+- [x] Commit: `"docs/github: record post-transfer settings audit"`
 
-**Test checkpoint:** The settings audit closes only after direct inspection or a successful workflow run proves each setting survived or was intentionally recreated.
+**Test checkpoint:** The settings audit closes only after direct inspection or a successful workflow run proves each setting survived or was intentionally recreated. **Status:** 9 of 11 items verified `[x]` from live `gh api` probes; 2 items `[/]` (F1 ruleset bypass actor restoration -- blocking pushes; release-workflow dry-run -- best-effort verified, final validation post-F1-fix); 1 item `[ ]` (operator-only Copilot Access UI walk). 3 findings (F1/F2/F3) captured in [preflight §5](../../docs/infrastructure/repository-transfer-preflight.md#5-post-transfer-settings-workflows-secrets-and-environments-audit); F3 fix already shipped in this commit.
+
+> **Test runner:** N/A (post-transfer GitHub-state audit, no kernel/usermode/desktop test surface) | validation: re-run the §5 "Preserved verbatim" probe block in `repository-transfer-preflight.md` and diff against the live `gh api` output; F1 / F2 / F3 owner-actions visible in §5 Findings table.
+> **Notes:**
+> - Shipped: `## §5 Post-Transfer Settings, Workflows, Secrets, and Environments Audit` appendix in [`docs/infrastructure/repository-transfer-preflight.md`](../../docs/infrastructure/repository-transfer-preflight.md) with three tables: 19-row "Preserved verbatim" comparison vs §1 baseline, 3-row Findings (F1 ruleset bypass empty / F2 Build cancelled on `4c1d2265` / F3 CODEOWNERS handle drift), 7-row operator-only items list mirroring §2 / §3 deferrals, and a §7-feed summary table.
+> - F3 fix shipped: `.github/CODEOWNERS` 7x `@derickpayne` -> `@rizonesoft`. F1 + F2 are operator-side actions (ruleset bypass restore + Build workflow re-dispatch).
+> - Cross-doc wiring: each §5 finding links back to the operator-action URL or follow-up section. Codex 3x review adoptions in commit `<this-commit>`.
+> - Canonical doc: [`docs/infrastructure/repository-transfer-preflight.md` §5](../../docs/infrastructure/repository-transfer-preflight.md#5-post-transfer-settings-workflows-secrets-and-environments-audit).
+> - Scope boundary: §5 audits state preservation; §6 owns URL / badge / docs / generated-link sweep; §7 owns the validation suite that closes the rollback window; §8 owns the move-back runbook. F1 (ruleset bypass) blocks pushes for §6/§7 work until the operator restores it.
+>
+> **Verified:** 2026-04-27 | commit `<this-commit>` | 9/11 items | build N/A (audit + docs) | lint clean, todo-graph 8/8 | F3 CODEOWNERS fix included
 
 ---
 
@@ -350,7 +360,7 @@ Close the roadmap by making the final owner state discoverable and removing tran
 | ⭐ | Rollback-window discipline               | ❌ N/A              | ⚠️ Project-dependent  | ⏳ §4 shipped + transfer EXECUTED 2026-04-27: 14/16 operator items verified live (apex 200, www CNAME flipped to rizonetech.github.io, Pages cname=impossibleos.co preserved, cert approved); Step 7 dispatch + Step 10 TTL-restore remain |
 | ⭐ | Pages custom-domain continuity plan      | ❌ N/A              | ⚠️ Project-dependent  | ⏳ §3 shipped: tracked CNAME, 4 URL fixes in `gh-pages/index.html`, DNS plan + transient-state taxonomy + validation block in preflight §3; one operator-only TTL drop remaining |
 | 💎 | Forward move-back / visibility flip plan | ❌ N/A              | ❌ N/A                | ⬜ Planned -- §8 defines return path before transfer |
-| ⭐ | Post-transfer settings audit             | ❌ N/A              | ⚠️ Tribal-knowledge   | ⬜ Planned -- §5 verifies branch protection / secrets / Pages env / Actions policy directly |
+| ⭐ | Post-transfer settings audit             | ❌ N/A              | ⚠️ Tribal-knowledge   | ⏳ §5 shipped 2026-04-27 evening: 19 settings preserved verbatim (visibility/ruleset/secret/env/workflows/etc.); 3 findings (F1 ruleset bypass empty -- blocks pushes; F2 Build cancelled on `4c1d2265`; F3 CODEOWNERS handle drift -- fixed in commit) |
 | 💎 | AI-policy boundary preserved across move | ❌ N/A              | ❌ N/A                | ⬜ Planned -- §2, §5, §7 keep no-autonomous-agent stance under new org |
 
 > **After §1-§4:** Inventory, org readiness, Pages continuity plan, and a time-boxed transfer runbook with rollback exist before any GitHub setting is touched.

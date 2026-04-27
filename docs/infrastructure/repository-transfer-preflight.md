@@ -747,6 +747,70 @@ Rule of thumb: until §7 has been green for at least the GitHub-documented redir
 
 ---
 
+## §5 Post-Transfer Settings, Workflows, Secrets, and Environments Audit
+
+> Captured 2026-04-27 evening, immediately after the transfer completed. Each row compares the live post-transfer state under `rizonetech/impossible-os` to the §1 baseline captured under `rizonesoft/impossible-os`. Most settings preserved verbatim; three real findings caught -- one drift that pre-dated the transfer, two transfer-induced.
+
+### Preserved verbatim (matches §1 baseline)
+
+| Surface | Source baseline | Post-transfer state | Verdict |
+|---|---|---|---|
+| Visibility | `PRIVATE` | `private` | ✓ unchanged |
+| Default branch | `main` | `main` | ✓ |
+| Description / topics / license | as captured in §1 | identical (the typographic dash in the description metadata is preserved by GitHub-side; not a source-file lint concern) | ✓ |
+| Merge methods (merge / squash / rebase) | all three allowed | `allow_merge_commit: true`, `allow_squash_merge: true`, `allow_rebase_merge: true` | ✓ |
+| Auto-merge / delete-branch-on-merge | both off | `allow_auto_merge: false`, `delete_branch_on_merge: false` | ✓ |
+| Issues / Wiki / Projects | on / on / on (unused but enabled) | identical | ✓ |
+| Discussions | off | off | ✓ |
+| Security policy file | enabled (SECURITY.md present) | identical (source-tree file unchanged) | ✓ |
+| Ruleset "Default Branch Security" | id `14058331`; 4 rules: `required_status_checks` (`Build Impossible OS`, strict, `do_not_enforce_on_create`), `non_fast_forward`, `required_linear_history`, `deletion` | id `14058331` preserved; all 4 rules preserved byte-equal; `updated_at: 2026-04-27T23:29:58.281+02:00` reflects the transfer-time touch | ✓ structure |
+| Repository secrets | `BOOTLOADER_REPO_TOKEN` (created `2026-03-14T14:40:49Z`) | `BOOTLOADER_REPO_TOKEN` `2026-03-14T14:40:49Z` -- identical name AND identical creation timestamp | ✓ migrated cleanly |
+| Repository variables | none | none | ✓ |
+| Webhooks | none | `[]` | ✓ |
+| Deploy keys | none | `[]` | ✓ |
+| Dependabot alerts / automated security fixes | both disabled | both disabled | ✓ parity preserved (per §1 R-table; not a regression but a hardening opportunity in O-decisions for §8/move-back) |
+| Pages environment | id `13147855799`, `branch_policy` protection, custom branch policies allowed | id `13147855799` preserved (same node id `EN_kwDORgIuVs8AAAADD6xbtw`); same protection rules; admins-can-bypass | ✓ identical |
+| Pages settings | `cname: "impossibleos.co"`, cert `approved` through 2026-06-16 | `cname: "impossibleos.co"`, cert `approved` (same `expires_at`), `https_enforced: false` | ✓ -- the actual continuity control survived (per §3 -- this matters more than the `gh-pages/CNAME` file) |
+| Latest release | `v26.3.18-alpha.821` (pre-release, 2026-03-18T09:35:11Z) | identical name, tag, prerelease flag, publishedAt | ✓ |
+| Issue templates | 4 YAML files in `.github/ISSUE_TEMPLATE/` | 4 files unchanged on disk (source-tree migration is trivial) | ✓ |
+| Labels | 22 labels | 22 labels | ✓ count preserved |
+| Workflows (8 active) | `Build`, `Label PRs`, `Deploy GitHub Pages`, `Release`, `Stale Issues`, `TODO graph`, `Visual Regression`, `pages-build-deployment` (auto) | all 8 workflows present with same workflow IDs (`247801843`, `247848080`, `247912708`, `247815431`, `247847233`, `265120126`, `264848357`, `247909841`) | ✓ |
+| Repo-level Actions permissions | `enabled: true`, `allowed_actions: all`, `sha_pinning_required: false`, default workflow permissions `read`, can-approve-own-PR `false` | identical | ✓ |
+
+### Findings (3 real issues; 1 drift, 2 transfer-induced)
+
+| # | Severity | Finding | Evidence | Owner action |
+|---|---|---|---|---|
+| F1 | **High** | **Ruleset bypass actors empty** -- the source repo's bypass `RepositoryRole 5 / Maintain` did not map under the receiving org. `bypass_actors: []`, `current_user_can_bypass: "never"`. Direct push to `main` is now blocked even for org admin until a bypass entry is restored. | `gh api repos/rizonetech/impossible-os/rulesets/14058331 --jq '.bypass_actors,.current_user_can_bypass'` returns `[]`, `"never"`. The §4 review-fix commit (`1fa3ff0a`) and §4 mark-update commit (`1bee0d71`) cannot push until this is fixed. | Walk <https://github.com/rizonetech/impossible-os/rules/14058331> -> "Bypass list" -> add `Repository admin` role (always-bypass) for the solo-dev workflow. After save, queued commits push cleanly. |
+| F2 | **Medium** | **Build status check on `4c1d22652d` is `cancelled` not `success`.** The post-transfer Build workflow run for the pre-transfer-pushed `4c1d2265` commit ended `cancelled` (databaseId `25020533025`, `2026-04-27T21:28:57Z` then updated `21:30:30Z`). Reason unclear: could be org-policy interaction at run time, or concurrency cancellation. Until a Build run on the current default-branch tip succeeds, the required status check on the ruleset is unsatisfied; combined with F1 this compounds the push block. | `gh run list -R rizonetech/impossible-os -w build.yml -L 3` shows the 21:28 run cancelled; the prior `5d0df5ba` (pre-transfer) had Build `success`. | After F1 is fixed, push the queued commits; the Build workflow auto-fires and (presumably) runs cleanly under the new owner. If it cancels again, dispatch manually via `gh workflow run build.yml -R rizonetech/impossible-os --ref main` and inspect the failure log. |
+| F3 | Medium | **CODEOWNERS handle `@derickpayne` does not resolve to any GitHub user** (predates the transfer; `gh api users/derickpayne` returns HTTP 404). The actual GitHub login of the maintainer is `@rizonesoft` (`gh api users/rizonesoft` returns id `8640728`). The `.github/CODEOWNERS` file routes 7 paths to `@derickpayne`, which has been silently no-op-ing for review routing the entire time. | `cat .github/CODEOWNERS` shows 7 `@derickpayne` references; that handle 404s. | Edit `.github/CODEOWNERS`: replace `@derickpayne` with `@rizonesoft` everywhere. Optionally add a `@rizonetech/maintainers` team route once the team exists (§2 O6). The fix is a normal commit (subject to the F1 / F2 push-block resolution). |
+
+### Operator-only items (require admin:org / UI -- still pending from §2 / §3)
+
+These were captured in §2 Receiving Org Readiness Probe. Re-listed here for the post-transfer audit:
+
+- **O1 Pages custom-domain re-verification under new owner** -- per §3 the `pages.cname` value carried over (`impossibleos.co`); GitHub may re-verify silently. Walk <https://github.com/rizonetech/impossible-os/settings/pages> "Verified custom domains" if the cert reissues or the domain shows "DNS check unsuccessful".
+- **O2 Org Actions policy** -- repo-level Actions policy is preserved (per the table above); the org-level envelope still needs the `admin:org` probe.
+- **O3 Org Pages policy** -- still UI-only check at <https://github.com/organizations/rizonetech/settings/pages>.
+- **O4 Org rulesets / merge defaults / 2FA enforcement** -- the source-repo ruleset migrated cleanly (id preserved); the org-level envelope still needs the `admin:org` probe.
+- **O5 Copilot Access policy** -- mandatory check at <https://github.com/organizations/rizonetech/settings/copilot/access>; per the Autonomous-Agent Boundary Policy the org must NOT enable cloud coding-agent or autonomous-agent PR enablement for this repo.
+- **O6 Org teams** -- still zero teams; consider adding `maintainers` team containing `@rizonesoft` once F3 is fixed (or in lockstep with it).
+- **`https_enforced` flip** -- intentionally still `false`; flip on at the operator's discretion once the cert reissue (if any) settles. UI: <https://github.com/rizonetech/impossible-os/settings/pages> "Enforce HTTPS" toggle, OR `gh api -X PUT repos/rizonetech/impossible-os/pages -f https_enforced=true` after refresh-with-`admin:org`.
+
+### Summary table (for §7 validation suite)
+
+| §7 verification surface | Status from §5 audit |
+|---|---|
+| Repo state preserved | ✓ (15 surfaces verbatim; 3 findings) |
+| Pages live | ✓ (Step 9 green; cert approved) |
+| Workflows runnable | ⏳ pending F2 resolution (Build run on current tip) |
+| Secrets / variables | ✓ |
+| Branch protection | ⏳ pending F1 (ruleset structure preserved; bypass actor needs restoration) |
+| CODEOWNERS valid | ⏳ pending F3 (handle drift; not transfer-induced but caught by audit) |
+| Org policy boundary | ⏳ pending O2-O5 operator confirmation |
+
+---
+
 ## How to Re-Run This Inventory
 
 The exact commands used to capture this baseline:
