@@ -181,8 +181,17 @@ Walk SMBIOS 3.x structures and populate Registry hardware keys.
 
 **Test checkpoint:** Registry keys under `HKLM\HARDWARE\BIOS\*`, `HKLM\HARDWARE\System\*`, `HKLM\HARDWARE\CPU\*`, and `HKLM\HARDWARE\Memory\*` are populated after boot; `smbios_get_system_uuid()` returns non-zero UUID on real hardware. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Verified:** 2026-04-11 -- Codex found 3 parser safety issues: bounded string scan (smbios_get_string overread), walker truncation check (hdr->length > remaining), Type 17 0x7FFF sentinel without extended field. All fixed. Accepted: none.
-> **Quality reviewed:** 2026-04-11 -- 1 spec violation fixed (entry point checksum validation for 3.x and 2.x), 1 best practice (anchor string validation "_SM3_"/"_SM_"), 2 parity gaps closed (Type 4 2-byte core/thread counts at 0x2A/0x2E for SMBIOS 3.0+, Type 17 configured speed at 0x20 preferred over max speed). Accepted: none.
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot, TEST_CAT_BOOT) | test_smbios_uuid registered; smoke covers boot reach to C:\>
+
+> **Notes:**
+> - `smbios.c` parses SMBIOS 3.x (preferred) and 2.x entry points found via UEFI config table; walks structures, extracts BIOS / System / Baseboard / Type 4 CPU / Type 17 DIMM data, populates `HKLM\HARDWARE\{BIOS,System,CPU\<n>,Memory\<n>}` via `smbios_populate_registry()` from `registry.c:1851`.
+> - Hostile-firmware hardening (Codex 4x review 2026-04-27): new `smbios_copy_string()` bounds copies by both max-1 AND `s_table_end` (closes overread that escaped through `str_copy` at 18 call sites); entry-point length validated against explicit wire-format constants (`SMBIOS3_EP_LEN=0x18`, `SMBIOS2_EP_LEN_MIN=0x1E`, `SMBIOS2_EP_LEN_MAX=0x1F`) BEFORE checksum (closes the `ep->length=0` checksum-bypass and oversized-length overread); `walk_structures` uses `__builtin_add_overflow` to reject `table_addr + max_len` wrap and now returns `int`; callers gate `s_info.valid` on the walker's return so a rejected table cannot pose as parsed.
+> - `smbios_get_system_uuid()` and `smbios_get_info()` consumed by `test_smbios_uuid` (`src/kernel/test/test_uefi_boot.c:94-101`, `TEST_CAT_BOOT`) and registry hardware-key population. Boot integration validates end-to-end via the existing smoke test reaching `C:\>`.
+> - Canonical doc: this section + DMTF DSP0134 3.7.0 (referenced in code header comments at `smbios.c:30-40`).
+> - Scope boundary: §4 owns table parse + Registry HARDWARE hive population; the Control Panel UI surfaces these keys to the user (owned by `09-desktop-shell/TODO-11-control-panel.md` per the section's existing NOTE).
+
+> **Verified:** 2026-04-27 | commit `<pending>` | 7/7 items | build OK | lint CLEAN | tests test_smbios_uuid wired
+> **Quality reviewed:** 2026-04-27 | Codex 5x (design + adversarial + consistency + perf + re-adversarial) | 2H+2M fixed | scope: kernel-code-quality (gates walked: SMP-safe by default, memory rules, bare-metal correctness, complete error paths, no TODO/FIXME, Win32 surface)
 
 ---
 

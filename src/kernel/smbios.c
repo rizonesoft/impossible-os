@@ -61,6 +61,16 @@ static const uint8_t *s_table_end;
 
 /* ---- String helper ---- */
 
+/* SMBIOS spec wire-format entry-point lengths (DMTF DSP0134 3.7.0).
+ * Codex design review 2026-04-27 M1: must NOT use sizeof(struct
+ * smbios{2,3}_entry) as the upper bound -- the local C structs are
+ * unpacked and natural padding can stretch sizeof beyond the wire
+ * length, letting a hostile firmware ep->length pass a sizeof-based
+ * cap and let the checksum loop read one byte past the spec record. */
+#define SMBIOS3_EP_LEN          0x18  /* 24 bytes; spec rev 3.x */
+#define SMBIOS2_EP_LEN_MIN      0x1E  /* 30 bytes; spec rev 2.1 */
+#define SMBIOS2_EP_LEN_MAX      0x1F  /* 31 bytes; spec rev 2.4+ */
+
 /* SMBIOS strings follow the structure data as a double-NUL-terminated list.
  * String index 1 = first string, 2 = second, etc.  Index 0 = no string.
  * Scan is bounded by s_table_end to prevent overread on malformed tables. */
@@ -85,12 +95,35 @@ static const char *smbios_get_string(const struct smbios_header *hdr,
     return (p < limit) ? p : "";
 }
 
-/* Safe string copy with truncation */
+/* Safe string copy with truncation. */
 static void str_copy(char *dst, const char *src, uint32_t max)
 {
     uint32_t i;
     for (i = 0; i < max - 1 && src[i] != '\0'; i++)
         dst[i] = src[i];
+    dst[i] = '\0';
+}
+
+/* Bounded SMBIOS string copy: like str_copy but never reads past s_table_end
+ * even if the firmware-supplied table omits the terminating NUL inside the
+ * advertised max_len. Codex adversarial review 2026-04-27 H2: the previous
+ * smbios_get_string + str_copy pair lost the s_table_end bound at the copy
+ * site -- a truncated table whose last string lacks a NUL inside max_len
+ * would let str_copy walk past s_table_end into unmapped memory. This
+ * helper preserves the bound end-to-end. Output is always NUL-terminated. */
+static void smbios_copy_string(char *dst, uint32_t max,
+                               const struct smbios_header *hdr,
+                               uint8_t index)
+{
+    const char *src = smbios_get_string(hdr, index);
+    const char *limit = (const char *)s_table_end;
+    uint32_t i = 0;
+    if (src && src < limit) {
+        while (i < max - 1 && (src + i) < limit && src[i] != '\0') {
+            dst[i] = src[i];
+            i++;
+        }
+    }
     dst[i] = '\0';
 }
 
@@ -101,12 +134,9 @@ static void parse_type0(const struct smbios_header *hdr)
     const uint8_t *d = (const uint8_t *)hdr;
     if (hdr->length < 18) return;
 
-    str_copy(s_info.bios_vendor,  smbios_get_string(hdr, d[4]),
-             SMBIOS_STRING_MAX);
-    str_copy(s_info.bios_version, smbios_get_string(hdr, d[5]),
-             SMBIOS_STRING_MAX);
-    str_copy(s_info.bios_date,    smbios_get_string(hdr, d[8]),
-             SMBIOS_STRING_MAX);
+    smbios_copy_string(s_info.bios_vendor,  SMBIOS_STRING_MAX, hdr, d[4]);
+    smbios_copy_string(s_info.bios_version, SMBIOS_STRING_MAX, hdr, d[5]);
+    smbios_copy_string(s_info.bios_date,    SMBIOS_STRING_MAX, hdr, d[8]);
 }
 
 static void parse_type1(const struct smbios_header *hdr)
@@ -114,16 +144,12 @@ static void parse_type1(const struct smbios_header *hdr)
     const uint8_t *d = (const uint8_t *)hdr;
     if (hdr->length < 8) return;
 
-    str_copy(s_info.sys_manufacturer, smbios_get_string(hdr, d[4]),
-             SMBIOS_STRING_MAX);
-    str_copy(s_info.sys_product,      smbios_get_string(hdr, d[5]),
-             SMBIOS_STRING_MAX);
+    smbios_copy_string(s_info.sys_manufacturer, SMBIOS_STRING_MAX, hdr, d[4]);
+    smbios_copy_string(s_info.sys_product,      SMBIOS_STRING_MAX, hdr, d[5]);
     if (hdr->length >= 7)
-        str_copy(s_info.sys_version,  smbios_get_string(hdr, d[6]),
-                 SMBIOS_STRING_MAX);
+        smbios_copy_string(s_info.sys_version,  SMBIOS_STRING_MAX, hdr, d[6]);
     if (hdr->length >= 25) {
-        str_copy(s_info.sys_serial,   smbios_get_string(hdr, d[7]),
-                 SMBIOS_STRING_MAX);
+        smbios_copy_string(s_info.sys_serial,   SMBIOS_STRING_MAX, hdr, d[7]);
         /* UUID at bytes 8..23 (128-bit) */
         uint32_t i;
         for (i = 0; i < 16; i++)
@@ -136,10 +162,8 @@ static void parse_type2(const struct smbios_header *hdr)
     const uint8_t *d = (const uint8_t *)hdr;
     if (hdr->length < 8) return;
 
-    str_copy(s_info.board_manufacturer, smbios_get_string(hdr, d[4]),
-             SMBIOS_STRING_MAX);
-    str_copy(s_info.board_product,      smbios_get_string(hdr, d[5]),
-             SMBIOS_STRING_MAX);
+    smbios_copy_string(s_info.board_manufacturer, SMBIOS_STRING_MAX, hdr, d[4]);
+    smbios_copy_string(s_info.board_product,      SMBIOS_STRING_MAX, hdr, d[5]);
 }
 
 static void parse_type4(const struct smbios_header *hdr)
@@ -151,11 +175,9 @@ static void parse_type4(const struct smbios_header *hdr)
     if (s_info.cpu_count >= SMBIOS_CPU_MAX) return;
     struct smbios_cpu_info *cpu = &s_info.cpus[s_info.cpu_count];
 
-    str_copy(cpu->socket,       smbios_get_string(hdr, d[4]),
-             SMBIOS_STRING_MAX);
+    smbios_copy_string(cpu->socket,       SMBIOS_STRING_MAX, hdr, d[4]);
     cpu->family = d[6];
-    str_copy(cpu->manufacturer, smbios_get_string(hdr, d[7]),
-             SMBIOS_STRING_MAX);
+    smbios_copy_string(cpu->manufacturer, SMBIOS_STRING_MAX, hdr, d[7]);
 
     /* Max speed at offset 0x14 (uint16_t LE) */
     cpu->max_speed_mhz = (uint16_t)(d[0x14] | ((uint16_t)d[0x15] << 8));
@@ -246,15 +268,11 @@ static void parse_type17(const struct smbios_header *hdr)
 
     /* String fields: device locator (d[0x10]), bank locator (d[0x11]),
      * manufacturer (d[0x17]), part number (d[0x1A]) -- SMBIOS 2.3+ */
-    str_copy(dimm->device_locator, smbios_get_string(hdr, d[0x10]),
-             SMBIOS_STRING_MAX);
-    str_copy(dimm->bank_locator,   smbios_get_string(hdr, d[0x11]),
-             SMBIOS_STRING_MAX);
+    smbios_copy_string(dimm->device_locator, SMBIOS_STRING_MAX, hdr, d[0x10]);
+    smbios_copy_string(dimm->bank_locator,   SMBIOS_STRING_MAX, hdr, d[0x11]);
     if (hdr->length >= 0x1B) {
-        str_copy(dimm->manufacturer, smbios_get_string(hdr, d[0x17]),
-                 SMBIOS_STRING_MAX);
-        str_copy(dimm->part_number,  smbios_get_string(hdr, d[0x1A]),
-                 SMBIOS_STRING_MAX);
+        smbios_copy_string(dimm->manufacturer, SMBIOS_STRING_MAX, hdr, d[0x17]);
+        smbios_copy_string(dimm->part_number,  SMBIOS_STRING_MAX, hdr, d[0x1A]);
     }
 
     dimm->valid = 1;
@@ -263,10 +281,24 @@ static void parse_type17(const struct smbios_header *hdr)
 
 /* ---- Table walker ---- */
 
-static void walk_structures(uintptr_t table_addr, uint32_t max_len)
+/* Returns 1 on a successful walk, 0 if the firmware-supplied bounds were
+ * rejected (max_len==0, table_addr==0, or table_addr+max_len overflow).
+ * Codex re-adversarial review 2026-04-27 M2: caller must gate
+ * s_info.valid on this return so a rejected table cannot pose as
+ * successfully parsed. */
+static int walk_structures(uintptr_t table_addr, uint32_t max_len)
 {
+    /* Codex adversarial review 2026-04-27 M3: pointer arithmetic on
+     * firmware-supplied table_addr + max_len can wrap UINTPTR_MAX. Reject
+     * (rather than silently cap) so a malformed entry never marks
+     * s_info.valid = 1 with a partial parse. */
+    if (max_len == 0 || table_addr == 0)
+        return 0;
+    uintptr_t end_addr;
+    if (__builtin_add_overflow(table_addr, (uintptr_t)max_len, &end_addr))
+        return 0;
     const uint8_t *p = (const uint8_t *)table_addr;
-    const uint8_t *end = p + max_len;
+    const uint8_t *end = (const uint8_t *)end_addr;
 
     /* Set file-scope end pointer for bounded string extraction */
     s_table_end = end;
@@ -296,6 +328,7 @@ static void walk_structures(uintptr_t table_addr, uint32_t max_len)
             p++;
         p += 2;  /* skip the double NUL */
     }
+    return 1;
 }
 
 /* ---- Public API ---- */
@@ -345,7 +378,18 @@ void smbios_init(void)
             klog(LOG_WARN, "SMBIOS", "3.x anchor mismatch -- skipping");
             ep_addr = 0;  /* fall through to 2.x */
         }
-        /* Validate entry point checksum */
+        /* Validate entry-point length BEFORE checksum (Codex review
+         * 2026-04-27 H1): firmware-supplied ep->length must be the spec
+         * wire-format size. ep->length=0 would make checksum sum 0 bytes
+         * and return "valid"; oversized would make checksum read past the
+         * entry struct. Spec: SMBIOS 3.x entry-point length is 0x18. */
+        else if (ep->length != SMBIOS3_EP_LEN) {
+            klog(LOG_WARN, "SMBIOS",
+                 "3.x entry length %u not %u -- rejecting",
+                 (uint32_t)ep->length, (uint32_t)SMBIOS3_EP_LEN);
+            ep_addr = 0;
+        }
+        /* Validate entry point checksum (now bounded by validated length) */
         else if (!smbios_checksum_valid((const uint8_t *)ep, ep->length)) {
             klog(LOG_WARN, "SMBIOS", "3.x entry point checksum invalid");
             ep_addr = 0;
@@ -359,9 +403,13 @@ void smbios_init(void)
         s_info.smbios_major = ep->major_version;
         s_info.smbios_minor = ep->minor_version;
 
-        walk_structures((uintptr_t)ep->struct_table_addr,
-                        ep->max_struct_size);
-        s_info.valid = 1;
+        if (walk_structures((uintptr_t)ep->struct_table_addr,
+                            ep->max_struct_size)) {
+            s_info.valid = 1;
+        } else {
+            klog(LOG_WARN, "SMBIOS",
+                 "3.x table bounds rejected -- not parsed");
+        }
     } else {
         /* Fallback: SMBIOS 2.x */
         struct boot_uefi_guid guid2 = UEFI_GUID_SMBIOS;
@@ -377,7 +425,19 @@ void smbios_init(void)
                 klog(LOG_WARN, "SMBIOS", "2.x anchor mismatch -- skipping");
                 ep_addr = 0;
             }
-            /* Validate entry point checksum */
+            /* Validate entry-point length BEFORE checksum (Codex review
+             * 2026-04-27 H1). Spec: SMBIOS 2.1 length 0x1E, SMBIOS 2.4+
+             * length 0x1F. Reject anything outside [0x1E, 0x1F]. */
+            else if (ep->length < SMBIOS2_EP_LEN_MIN ||
+                     ep->length > SMBIOS2_EP_LEN_MAX) {
+                klog(LOG_WARN, "SMBIOS",
+                     "2.x entry length %u not in [%u,%u] -- rejecting",
+                     (uint32_t)ep->length,
+                     (uint32_t)SMBIOS2_EP_LEN_MIN,
+                     (uint32_t)SMBIOS2_EP_LEN_MAX);
+                ep_addr = 0;
+            }
+            /* Validate entry point checksum (now bounded by validated length) */
             else if (!smbios_checksum_valid((const uint8_t *)ep, ep->length)) {
                 klog(LOG_WARN, "SMBIOS", "2.x entry point checksum invalid");
                 ep_addr = 0;
@@ -391,9 +451,13 @@ void smbios_init(void)
             s_info.smbios_major = ep->major_version;
             s_info.smbios_minor = ep->minor_version;
 
-            walk_structures((uintptr_t)ep->struct_table_addr,
-                            (uint32_t)ep->struct_table_length);
-            s_info.valid = 1;
+            if (walk_structures((uintptr_t)ep->struct_table_addr,
+                                (uint32_t)ep->struct_table_length)) {
+                s_info.valid = 1;
+            } else {
+                klog(LOG_WARN, "SMBIOS",
+                     "2.x table bounds rejected -- not parsed");
+            }
         }
     }
 
