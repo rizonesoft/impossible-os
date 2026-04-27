@@ -375,36 +375,49 @@ These are **org defaults for newly created repos** -- transferred repos preserve
 
 | # | Item | What blocks API check | Authoritative source for the operator |
 |---|---|---|---|
-| O1 | Verify `impossibleos.co` at the **organization** level (separate from the repo-level Pages CNAME -- some custom-domain features require account-level verification before the repo's Pages settings accept the domain). | Domain verification status is `admin:org` only. | UI: <https://github.com/organizations/rizonetech/settings/security> -> "Verified domains". CLI after refresh: `gh auth refresh -h github.com -s admin:org` then `gh api orgs/rizonetech/verified-domains`. Walk before pressing the [transfer button](../../todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md#4-repository-transfer-runbook-and-rollback-window) so the new owner accepts `impossibleos.co` without re-issuing the cert. |
+| O1 | **Verify `impossibleos.co` for GitHub Pages** at the org level. This is the Pages-specific custom-domain ownership check that prevents the org from publishing a site on a domain the org does not own; it is a SEPARATE flow from organization-identity domain verification (the SAML/billing-domain feature) -- DO NOT conflate them. The Pages flow proves DNS ownership of `impossibleos.co` for the receiving org, so the new owner's Pages settings accept the custom domain without re-issuing the cert and `https_enforced` can later be turned on cleanly. Per <https://docs.github.com/pages/configuring-a-custom-domain-for-your-github-pages-site/verifying-your-custom-domain-for-github-pages>. | Pages custom-domain verification is a UI-only flow today; no public REST endpoint. | UI: <https://github.com/organizations/rizonetech/settings/pages> -> "Verified custom domains" (or the org-Pages domain-verification panel; GitHub renames this surface periodically). The flow shows a TXT record to add to the DNS zone for `impossibleos.co`, then verifies. Walk before pressing the [transfer button](../../todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md#4-repository-transfer-runbook-and-rollback-window) so the receiving org's Pages accept the domain immediately. **Optional separate check:** organization-identity domain verification at <https://github.com/organizations/rizonetech/settings/security> ("Verified and approved domains" -- per <https://docs.github.com/organizations/managing-organization-settings/verifying-or-approving-a-domain-for-your-organization>) is used for SAML / email / billing display; not required for Pages, but harmless to also verify if the org plans to send branded email or display a verified badge. |
 | O2 | Configure org Actions policy: GitHub-hosted runners enabled, allowed actions list includes `actions/checkout`, `actions/configure-pages`, `actions/upload-pages-artifact`, `actions/deploy-pages` (Pages workflow), plus build / release / labeler / stale / todo-graph / visual-regression actions. Default `GITHUB_TOKEN` permission must allow Pages workflow's `pages: write` + `id-token: write`. | Endpoint requires `admin:org`. | UI: <https://github.com/organizations/rizonetech/settings/actions>. CLI after refresh: `gh api orgs/rizonetech/actions/permissions`, `gh api orgs/rizonetech/actions/permissions/selected-actions`, `gh api orgs/rizonetech/actions/permissions/workflow`. Source-repo baseline (§4 above): `allowed_actions: all`, `default_workflow_permissions: read`. Match or relax at the org level before transfer; do NOT tighten and break the workflow. |
 | O3 | Confirm org Pages policy permits per-repository Pages and custom domains. (Some enterprise plans expose a "Pages public/private/disabled" toggle at the org level.) | Org Pages policy is part of `admin:org` settings. | UI: <https://github.com/organizations/rizonetech/settings/pages>. Confirm "Public" or "Private and Public" is selected; confirm custom domains are allowed. |
 | O4 | Confirm org-level merge / branch / ruleset / security policies are at least as permissive as the source-repo settings: ruleset import path for "Default Branch Security" (id `14058331`, captured in §5 above), merge methods (merge / squash / rebase all allowed at source), 2FA enforcement (currently OFF). | Org rulesets endpoint requires `admin:org`. | UI: <https://github.com/organizations/rizonetech/settings/repository-defaults>, <https://github.com/organizations/rizonetech/settings/rules>. CLI after refresh: `gh api orgs/rizonetech/rulesets`. The org may be empty (no ruleset preset) -- that's fine; the source-repo ruleset migrates with the repo. |
 | O5 | **Disable Copilot cloud coding-agent / autonomous-agent PR enablement** for the org and the soon-to-be-transferred repo. Required by [Autonomous-Agent Boundary Policy](ai-system.md#autonomous-agent-boundary-policy). | Copilot Access policy has no public-API surface today; UI-only. | UI: <https://github.com/organizations/rizonetech/settings/copilot/access>. Set to "No access" or "Selected members" with `rizonesoft` excluded from cloud-agent permission. Re-verify post-transfer in the [Post-Transfer Settings audit](../../todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md#5-post-transfer-settings-workflows-secrets-and-environments-audit) and the [Validation suite](../../todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md#7-validation-suite-pages-actions-releases-clone-hooks-graph). |
-| O6 | Identify or create teams that replace personal/collaborator permissions: maintainers, reviewers, release operators, security contacts, Pages/DNS administrators. | Org team management is `admin:org`. | UI: <https://github.com/orgs/rizonetech/teams>. Currently zero teams (verified above). Solo-dev pattern: a single `maintainers` team with `rizonesoft` is sufficient until external collaborators are onboarded. CODEOWNERS migration: the source-repo file routes everything to `@derickpayne` (the user); under an org owner, that handle still resolves but consider adding a `@rizonetech/maintainers` route once the team exists. |
+| O6 | Identify or create teams that replace personal/collaborator permissions: maintainers, reviewers, release operators, security contacts, Pages/DNS administrators. | Org team management is `admin:org`. | UI: <https://github.com/organizations/rizonetech/teams>. Currently zero teams (verified above). Solo-dev pattern: a single `maintainers` team with `rizonesoft` is sufficient until external collaborators are onboarded. CODEOWNERS migration: the source-repo file routes everything to `@derickpayne` (the user); under an org owner, that handle still resolves but consider adding a `@rizonetech/maintainers` route once the team exists. |
 
-### Pre-transfer checklist (concrete commands for the operator)
+### Pre-transfer checklist (concrete commands + UI walkthroughs for the operator)
 
-After running `gh auth refresh -h github.com -s admin:org` once to upgrade the local token, the operator can replace UI walkthroughs above with:
+The block below covers ALL six O-items: CLI commands for items with REST endpoints, and explicit UI walkthroughs for items where GitHub does not expose a public API (O1 Pages-domain verification, O3 org Pages policy, O5 Copilot Access). Walk every item -- skipping the UI-only ones (especially O5) lets the operator complete the visible CLI block and press transfer with policy gaps. After running `gh auth refresh -h github.com -s admin:org` once to upgrade the local token, the operator can replace the CLI walkthroughs:
 
 ```bash
-# O1 -- verify domain at org level (only available on enterprise / GHAS-eligible plans)
-gh api orgs/rizonetech/verified-domains 2>&1 | jq
+# O1 -- Pages custom-domain verification for impossibleos.co (UI-only)
+#   Walk: https://github.com/organizations/rizonetech/settings/pages
+#   Add TXT record per the displayed challenge, then click Verify.
+#   Do NOT confuse with org-identity domain verification under /settings/security.
 
 # O2 -- Actions policy (must match or relax source-repo settings)
 gh api orgs/rizonetech/actions/permissions
 gh api orgs/rizonetech/actions/permissions/workflow
 gh api orgs/rizonetech/actions/permissions/selected-actions  # only if allowed_actions != "all"
 
-# O3 -- org Pages policy (no public REST endpoint today; UI is authoritative)
+# O3 -- org Pages policy (UI-only; no stable public REST endpoint)
+#   Walk: https://github.com/organizations/rizonetech/settings/pages
+#   Confirm: "Public" or "Private and Public" selected; custom domains allowed.
 
-# O4 -- rulesets (typically empty until first ruleset is imported)
-gh api orgs/rizonetech/rulesets
+# O4 -- rulesets / merge defaults / 2FA-required policy
+gh api orgs/rizonetech/rulesets                                     # typically empty until first ruleset is imported
+#   UI follow-up: https://github.com/organizations/rizonetech/settings/repository-defaults
+#                 https://github.com/organizations/rizonetech/settings/rules
+
+# O5 -- Copilot cloud-coding-agent / autonomous-agent PR enablement (UI-only -- MANDATORY)
+#   Walk: https://github.com/organizations/rizonetech/settings/copilot/access
+#   Set: "No access" OR "Selected members" with rizonesoft excluded from cloud-agent permission.
+#   Required by docs/infrastructure/ai-system.md "Autonomous-Agent Boundary Policy".
+#   Re-verify post-transfer in the post-transfer settings audit and the validation suite.
 
 # O6 -- teams (currently zero)
 gh api orgs/rizonetech/teams
+#   UI: https://github.com/organizations/rizonetech/teams
 ```
 
-If any item returns unexpected values, stop the transfer and resolve before pressing the [transfer button](../../todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md#4-repository-transfer-runbook-and-rollback-window).
+If any item returns unexpected values OR the UI shows a state different from the documented expectation, stop the transfer and resolve before pressing the [transfer button](../../todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md#4-repository-transfer-runbook-and-rollback-window).
 
 ---
 
