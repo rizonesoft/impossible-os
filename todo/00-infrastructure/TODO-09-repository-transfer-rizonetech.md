@@ -21,7 +21,7 @@ file_patterns:
 > **Goal:** Move the Impossible OS repository from the current `rizonesoft/impossible-os` owner to the `rizonetech` GitHub organization with no avoidable disruption to GitHub Pages, release links, badges, workflows, branch protection, custom domain ownership, or contributor workflow. Keep the move reversible so the repository can later transfer back to the personal account when the project is ready to become public.
 
 > [!IMPORTANT]
-> **Current state:** Local remotes point at `https://github.com/rizonesoft/impossible-os.git` and `https://github.com/rizonesoft/impossible-os-bootloader.git`. GitHub Pages is deployed by [`.github/workflows/pages.yml`](../../.github/workflows/pages.yml) from the tracked [`gh-pages/`](../../gh-pages/) folder. The custom domain `https://impossibleos.co/` is live and returns `200 OK` from GitHub Pages. The default Pages URL `https://rizonesoft.github.io/impossible-os/` redirects to the custom domain. DNS for the apex `impossibleos.co` points at GitHub Pages A records, while `www.impossibleos.co` currently CNAMEs to `rizonesoft.github.io`. The landing page still has canonical, Open Graph, JSON-LD, and visitor-counter references to `rizonesoft.github.io/impossible-os/`; the error pages already use `https://impossibleos.co/...`.
+> **Current state (baselined 2026-04-27 in [`docs/infrastructure/repository-transfer-preflight.md`](../../docs/infrastructure/repository-transfer-preflight.md)):** Local remotes point at `https://github.com/rizonesoft/impossible-os.git` and `https://github.com/rizonesoft/impossible-os-bootloader.git`. The repository is `PRIVATE`, owned by the `rizonesoft` user (NOT an org). GitHub Pages serves with `build_type: legacy` from the `gh-pages` BRANCH (sha `35e7dcd5`, last successful 2026-04-12); the workflow [`.github/workflows/pages.yml`](../../.github/workflows/pages.yml) is configured but its 2026-04-12 run failed with `Artifact storage quota has been hit` and has not run successfully since. The custom domain `https://impossibleos.co/` returns `200 OK` directly (cert valid through 2026-06-16), `https://www.impossibleos.co/` returns `301 -> https://impossibleos.co/`, and `https://rizonesoft.github.io/impossible-os/` returns `301 -> http://impossibleos.co/` (HTTP because `https_enforced: false`). DNS for the apex points at the four GitHub Pages anycast IPv4 addresses (no AAAA set); `www.impossibleos.co` CNAMEs to `rizonesoft.github.io`. Repo state: 7 active workflows, 1 secret (`BOOTLOADER_REPO_TOKEN`), 0 variables, 0 webhooks, 0 deploy keys, ruleset "Default Branch Security" active on `main`, no classic branch protection, Dependabot alerts disabled. Hard-coded owner references span 28 files / 283 matches. Receiving destination `rizonetech/impossible-os` does not exist; the `rizonetech` enterprise org has 50 seats / 1 filled and the operator (`rizonesoft`) is admin. The landing page still has canonical, Open Graph, JSON-LD, and visitor-counter references to `rizonesoft.github.io/impossible-os/`; the error pages already use `https://impossibleos.co/...`.
 
 ## Inputs
 
@@ -63,17 +63,17 @@ file_patterns:
 
 ## Implementation Order
 
-| Star | Order | Section | Deliverable                                                       | Depends On | Status |
-| --- | :---: | :-----: | ----------------------------------------------------------------- | ---------- | :----: |
-| Star |   1   |    1    | Preflight inventory and risk register                             | --         |  [ ]   |
-| Star |   2   |    2    | `rizonetech` organization readiness and policy parity             | 1          |  [ ]   |
-| Star |   3   |    3    | GitHub Pages custom-domain continuity plan                        | 1, 2       |  [ ]   |
-| Star |   4   |    4    | Repository transfer runbook and rollback window                   | 1-3        |  [ ]   |
-| Star |   5   |    5    | Post-transfer settings, workflows, secrets, environments audit     | 4          |  [ ]   |
-| Star |   6   |    6    | URL, badge, docs, and generated-link sweep                        | 4, 5       |  [ ]   |
-| Star |   7   |    7    | Validation suite: Pages, Actions, releases, clone, hooks, graph    | 5, 6       |  [ ]   |
-| Star |   8   |    8    | Move-back and public-visibility runbook                           | 1-7        |  [ ]   |
-| Star |   9   |    9    | Documentation sync and closure                                    | 1-8        |  [ ]   |
+|  ⭐  | Order | Section | Deliverable                                                       | Depends On                     | Status |
+| --- | :---: | :------: | ----------------------------------------------------------------- | ------------------------------ | :----: |
+|  ⭐  |   1   |    1    | Preflight inventory and risk register                             | --                             |  [x]   |
+|  ⭐  |   2   |    2    | `rizonetech` organization readiness and policy parity             | §1                             |  [ ]   |
+|  ⭐  |   3   |    3    | GitHub Pages custom-domain continuity plan                        | §1, §2                         |  [ ]   |
+|  ⭐  |   4   |    4    | Repository transfer runbook and rollback window                   | §1, §2, §3                     |  [ ]   |
+|  ⭐  |   5   |    5    | Post-transfer settings, workflows, secrets, environments audit    | §4                             |  [ ]   |
+|  ⭐  |   6   |    6    | URL, badge, docs, and generated-link sweep                        | §4, §5                         |  [ ]   |
+|  ⭐  |   7   |    7    | Validation suite: Pages, Actions, releases, clone, hooks, graph   | §5, §6                         |  [ ]   |
+|  ⭐  |   8   |    8    | Move-back and public-visibility runbook                           | §1, §2, §3, §4, §5, §6, §7     |  [ ]   |
+|  ⭐  |   9   |    9    | Documentation sync and closure                                    | §1, §2, §3, §4, §5, §6, §7, §8 |  [ ]   |
 
 > **Order vs section number:** The file is ordered by execution flow. Section 8 is intentionally specified before the first transfer happens so the team can confirm the move is reversible rather than discovering account or Pages constraints after the repository is already in the organization.
 
@@ -83,23 +83,33 @@ file_patterns:
 
 Capture the exact current state before changing any GitHub owner setting. The output is the baseline used to prove that the move did not break Pages, CI, release automation, or project policy.
 
-- [ ] Record current repository identity: owner, visibility, default branch, repository ID if available, remote URLs, archived/fork/template flags, topics, description, homepage URL, Discussions state, Issues state, Projects state, Wiki state, Packages state, and security feature toggles.
-- [ ] Record current Pages state: source mode, deployment workflow, environment name, custom domain, HTTPS enforcement, last successful deployment SHA, public URL, and whether the repository currently has a `CNAME` file or stores the domain only in Pages settings.
-- [ ] Record live domain baseline:
-  - `https://impossibleos.co/` returns `200 OK` from GitHub Pages.
-  - `https://www.impossibleos.co/` redirects to `https://impossibleos.co/`.
-  - `https://rizonesoft.github.io/impossible-os/` redirects to the custom domain.
-  - `impossibleos.co` apex DNS has GitHub Pages A records.
-  - `www.impossibleos.co` CNAME currently targets `rizonesoft.github.io`.
-- [ ] Record current GitHub Actions state: enabled workflows, default token permissions, Actions policy, required workflow approvals, runner groups, caches, artifacts, retention, workflow concurrency, and whether any workflow references the old owner explicitly.
-- [ ] Record repository settings that do not reliably travel in a way operators can trust blindly: branch protection, rulesets, environments, environment reviewers, deployment branches, repository secrets, repository variables, Dependabot, code scanning, secret scanning, vulnerability alerts, Pages environment, webhooks, deploy keys, GitHub Apps, and integration installations.
-- [ ] Record current access model: collaborators, teams, outside collaborators, CODEOWNERS handles, protected branch bypass users, release managers, and who can administer Pages/DNS.
-- [ ] Record all hard-coded owner references with a focused search: `rizonesoft/impossible-os`, `github.com/rizonesoft`, `rizonesoft.github.io`, `hits.sh/rizonesoft.github.io`, badge URLs, generated graph links, clone commands, and release URLs.
-- [ ] Record remote consumers that may need notification or manual updates: local clones, CI mirrors, package/release download pages, social/profile links, external docs, and any pinned GitHub App installation.
-- [ ] Create a risk register with severity and mitigation for at least: Pages custom-domain detachment, DNS propagation delay, Pages certificate re-provisioning delay, lost repository secrets, broken branch protection, disabled Actions under org policy, lost team access, broken badges, stale GitHub graph links, and redirect shadowing by accidentally recreating the old repository path.
-- [ ] Commit: `"todo: document repository-transfer preflight inventory"`
+- [x] Record current repository identity: owner `rizonesoft` (user, not org -- `isInOrganization: false`), visibility `PRIVATE`, default branch `main`, node id `R_kgDORgIuVg`, HTTPS / SSH URLs, topics (`bare-metal`, `freestanding`, `operating-system`, `os-development`, `uefi-boot`), description, homepage `https://rizonesoft.com`, Issues=on, Discussions=off, Wiki=on (unused), Projects=on (unused), security policy file present, GPL-3.0 license, all three merge methods allowed. Captured in [`docs/infrastructure/repository-transfer-preflight.md`](../../docs/infrastructure/repository-transfer-preflight.md) §1.
+- [x] Record current Pages state: `build_type: legacy` from branch `gh-pages` path `/`, environment `github-pages` (id `13147855799`), custom domain `impossibleos.co`, custom 404 enabled, **`https_enforced: false`**, cert `approved` through `2026-06-16` covering both apex and `www`. Last successful workflow run 2026-03-18; the 2026-04-12 run failed (`Artifact storage quota has been hit`); legacy branch source keeps the live site up. No tracked `gh-pages/CNAME` file -- domain stored in Pages settings only. Preflight §2.
+- [x] Record live domain baseline (curl HEAD captured 2026-04-27 ~19:54 UTC):
+  - `https://impossibleos.co/` returns `200 OK`, `last-modified: 2026-04-12T00:27:55Z`, etag `"69dae70b-b9bc"`, content-length `47548`.
+  - `https://www.impossibleos.co/` returns `301 -> https://impossibleos.co/`.
+  - `https://rizonesoft.github.io/impossible-os/` returns `301 -> http://impossibleos.co/` (HTTP -- consequence of `https_enforced: false`).
+  - `impossibleos.co` apex A records: `185.199.108.153`, `185.199.109.153`, `185.199.110.153`, `185.199.111.153` (the 4 GitHub Pages anycast addresses); no AAAA set.
+  - `www.impossibleos.co` CNAME currently targets `rizonesoft.github.io.`. Preflight §3.
+- [x] Record current GitHub Actions state: enabled, `allowed_actions: all`, `sha_pinning_required: false`, default `GITHUB_TOKEN` permission `read`, no required workflow approvals, GitHub-hosted runners only. **7 active workflows** (the TODO Inputs list named only 5 -- adds `todo-graph.yml` and `visual-regression.yml`) plus the auto-generated `pages-build-deployment`. Preflight §4.
+- [x] Record repository settings that do not reliably travel: classic branch protection on `main` is **NOT** set (`HTTP 404 Branch not protected`); ruleset "Default Branch Security" (id `14058331`) IS active with `required_status_checks` (`Build Impossible OS`, strict, `do_not_enforce_on_create`), `non_fast_forward`, `required_linear_history`, `deletion`; bypass actor `RepositoryRole 5 (Maintain)`. Repo secrets: `BOOTLOADER_REPO_TOKEN` only. Variables: none. Webhooks: none. Deploy keys: none. Vulnerability alerts: **disabled**. Automated security fixes: disabled. Environment `github-pages` has `branch_policy` protection. Preflight §5.
+- [x] Record current access model: only `rizonesoft` is a direct collaborator (admin/maintain/push/pull/triage). No outside collaborators. No teams (user-owned repo). CODEOWNERS routes everything plus 6 critical paths to `@derickpayne`. Pages/DNS administered by repo owner; DNS provider holds `impossibleos.co` records. Receiving org `rizonetech` (canonical login `Rizonetech`, id `279138845`) is `enterprise` plan with 50 seats / 1 filled; current operator is direct-membership admin; `rizonetech/impossible-os` does not yet exist. Preflight §6.
+- [x] Record all hard-coded owner references via `rg -n 'rizonesoft/impossible-os|github\.com/rizonesoft|rizonesoft\.github\.io|hits\.sh/rizonesoft' README.md CONTRIBUTING.md SECURITY.md CODE_OF_CONDUCT.md AGENTS.md CLAUDE.md docs gh-pages .github`: **283 matches across 28 files**. Largest cluster is `gh-pages/err/*` error-page templates (15 files). `SECURITY.md`/`CODE_OF_CONDUCT.md`/`AGENTS.md`/`CLAUDE.md` returned **zero** GitHub-URL matches and should not need owner edits. Preflight §7 lists the full file set + per-prefix counts.
+- [x] Record remote consumers: local dev clone (`origin` on this host), one prerelease `v26.3.18-alpha.821` (artifact URLs auto-redirect through GitHub), the `BOOTLOADER_REPO_TOKEN` consumer (`release.yml` only), and the `hits.sh/rizonesoft.github.io` visitor-counter namespace (counter resets on namespace change -- acceptable for a private repo). External docs / social profiles / pinned GitHub Apps are not enumerable from inside the repo and must be walked manually before §4. Preflight §8.
+- [x] Risk register with severity + mitigation + owner section -- 15 risks captured ranging from Critical (R1: Pages custom-domain detachment on transfer) through Low (R14: provider-side DNS TTL caching, R15: `https_enforced` left off). Includes the new finding R4 (Pages workflow already failing on artifact quota -- transfer to enterprise org likely fixes it) and R11 (recreating old repo path during redirect window destroys redirect). Preflight §9.
+- [x] Commit: `"todo: document repository-transfer preflight inventory"`
 
-**Test checkpoint:** The preflight document or notes list every setting needed to recreate the repository in `rizonetech`. The current public site and default Pages redirect are checked immediately before transfer, not from stale memory.
+**Test checkpoint:** [`docs/infrastructure/repository-transfer-preflight.md`](../../docs/infrastructure/repository-transfer-preflight.md) lists every setting needed to recreate the repository in `rizonetech` and contains a "How to Re-Run This Inventory" block with the exact `gh api` / `gh repo view` / `curl` / `getent` / `rg` commands used to capture the baseline. §4 must re-run that block immediately before pressing the transfer button to detect drift, not rely on the 2026-04-27 snapshot.
+
+> **Test runner:** N/A (operator preflight inventory, no test surface) | validation: re-run the "How to Re-Run This Inventory" command block in `repository-transfer-preflight.md` and diff against the captured tables; live URL/DNS/`gh api` outputs must match within transfer-window tolerance.
+> **Notes:**
+> - Shipped: [`docs/infrastructure/repository-transfer-preflight.md`](../../docs/infrastructure/repository-transfer-preflight.md) (~330 lines, 9 sections + reproduction-command block) baselining identity / Pages / DNS / Actions / settings / access / owner-refs / consumers / 15-row risk register on 2026-04-27.
+> - Surfaced two latent findings the TODO callout had wrong or missing: Pages source is `build_type: legacy` from the `gh-pages` branch (NOT the workflow), and the workflow has been failing since 2026-04-12 on `Artifact storage quota`. Updated the §0 `Current state` callout to match observed reality and added R4 to the risk register.
+> - Cross-doc wiring: [`docs/infrastructure/github-setup.md`](../../docs/infrastructure/github-setup.md) Overview now points at the preflight doc, so §5 / §7 / §8 (move-back) re-baseline against a single source of truth.
+> - Canonical doc: [`docs/infrastructure/repository-transfer-preflight.md`](../../docs/infrastructure/repository-transfer-preflight.md).
+> - Scope boundary: §1 captures *current* state only; §2 owns receiving-org policy parity, §3 owns Pages/DNS continuity changes, §4 owns the actual transfer, §5 owns post-transfer audit. The preflight doc is a baseline reference, not a runbook.
+>
+> **Verified:** 2026-04-27 -- preflight doc renders, all 9 baseline blocks captured from live `gh api` / `curl` / DNS lookups; HEAD requests against apex / `www` / default Pages URL all returned the documented codes; `gh api orgs/rizonetech` confirms enterprise plan and current admin membership; `gh repo view rizonetech/impossible-os` 404s as expected.
 
 ---
 
@@ -296,3 +306,51 @@ Close the roadmap by making the final owner state discoverable and removing tran
 - [ ] Commit: `"todo: close repository transfer to rizonetech"`
 
 **Test checkpoint:** A new contributor can find the canonical repository URL, clone it, view the Pages site, and follow the docs without encountering stale owner names except where history is intentional.
+
+---
+
+## OS Comparison
+
+| ⭐ | Feature                                  | 🪟 Win11             | 🐧 Linux              | 🚀 Impossible OS                    |
+|----|------------------------------------------|---------------------|----------------------|------------------------------------|
+| ⭐ | Repo-owner transfer runbook              | ❌ N/A (closed src) | ⚠️ Ad-hoc per project | ⏳ §1 baseline shipped (`docs/infrastructure/repository-transfer-preflight.md`); §2-§9 still planned |
+| ⭐ | Rollback-window discipline               | ❌ N/A              | ⚠️ Project-dependent  | ⬜ Planned -- §4 keeps rollback open until §7 green |
+| ⭐ | Pages custom-domain continuity plan      | ❌ N/A              | ⚠️ Project-dependent  | ⬜ Planned -- §3 apex+www split, TTL pre-drop |
+| 💎 | Forward move-back / visibility flip plan | ❌ N/A              | ❌ N/A                | ⬜ Planned -- §8 defines return path before transfer |
+| ⭐ | Post-transfer settings audit             | ❌ N/A              | ⚠️ Tribal-knowledge   | ⬜ Planned -- §5 verifies branch protection / secrets / Pages env / Actions policy directly |
+| 💎 | AI-policy boundary preserved across move | ❌ N/A              | ❌ N/A                | ⬜ Planned -- §2, §5, §7 keep no-autonomous-agent stance under new org |
+
+> **After §1-§4:** Inventory, org readiness, Pages continuity plan, and a time-boxed transfer runbook with rollback exist before any GitHub setting is touched.
+> **After §5-§7:** Settings audit, first-party URL sweep, and end-to-end validation suite confirm the move did not silently break Pages, Actions, releases, badges, or graph tooling.
+> **After §8-§9:** A move-back and public-visibility runbook is documented before it is needed, and `docs/infrastructure/github-setup.md` carries the final state for future contributors.
+
+---
+
+## Unit Tests
+
+> Tests for this TODO are **operator-validation**, not kernel-side or host-tooling-side. There is no `TEST_CAT_*` registration, no `src/kernel/test/test_*.c`, no `user/test/test_*.c`, and no `scripts/test-tooling.sh` sub-test to add. The sole verification surface is the live GitHub repository, GitHub Pages, DNS, and the existing tooling already covered by `bash scripts/test-tooling.sh` and `python3 scripts/todo-graph/validate.py`. Section 7 is the validation suite for this TODO.
+
+- [ ] No new automated tests are introduced by this TODO.
+- [ ] Section 7 enumerates the operator-executed checks (git fetch, `curl -I`, DNS lookup, workflow re-run, `bash scripts/lint.sh`, `bash scripts/test-tooling.sh`, `python3 scripts/todo-graph/build.py`, `python3 scripts/todo-graph/validate.py`) that stand in for unit tests here.
+- [ ] Commit: covered by §7's validation commit; no separate test commit.
+
+---
+
+## Verification
+
+> **Test runner:** N/A (operator runbook -- no kernel/usermode/desktop test surface) | validation: §7 validation suite (`curl -I https://impossibleos.co/`, `curl -I https://www.impossibleos.co/`, `curl -I https://rizonetech.github.io/impossible-os/`, fresh clone from new origin, latest Pages deployment under `rizonetech`, `bash scripts/lint.sh`, `bash scripts/test-tooling.sh`, `python3 scripts/todo-graph/build.py --quiet`, `python3 scripts/todo-graph/validate.py --warnings-only`).
+
+- [ ] Repository lives at `https://github.com/rizonetech/impossible-os`; old `rizonesoft/impossible-os` URL redirects.
+- [ ] `git fetch` succeeds from the new origin in a fresh clone and in an updated existing clone.
+- [ ] `https://impossibleos.co/` returns `200 OK` with a valid HTTPS certificate.
+- [ ] `https://www.impossibleos.co/` redirects to `https://impossibleos.co/`.
+- [ ] `https://rizonetech.github.io/impossible-os/` either redirects to the custom domain or serves the expected Pages site.
+- [ ] Apex DNS A records match GitHub Pages IPs; `www.impossibleos.co` CNAME resolves to `rizonetech.github.io`.
+- [ ] Latest Pages, build, and (if dispatched) release workflow runs are green under the new owner.
+- [ ] `bash scripts/lint.sh` passes after the URL/badge/doc sweep.
+- [ ] `bash scripts/test-tooling.sh` passes (no regression from URL changes).
+- [ ] `python3 scripts/todo-graph/build.py --quiet` and `python3 scripts/todo-graph/validate.py --warnings-only` both pass.
+- [ ] `rg -n "rizonesoft/impossible-os|github.com/rizonesoft|rizonesoft.github.io" README.md CONTRIBUTING.md SECURITY.md CODE_OF_CONDUCT.md docs gh-pages .github todo` returns only intentional historical or brand references.
+- [ ] Org-level policy still blocks autonomous coding-agent PR flow for the repository (Settings -> Copilot -> Access policies; manual UI check captured in §5/§7 evidence).
+- [ ] Verify on: GitHub.com (production), DNS provider's authoritative resolvers, and the Linux WSL2 dev host. Bare-metal / Windows test platforms not applicable -- this TODO is repository-operations only.
+- [ ] Commit: `"00-infrastructure/TODO-09: repository transfer to rizonetech complete"`
