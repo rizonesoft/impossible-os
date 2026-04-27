@@ -140,6 +140,8 @@ description: Full review of a TODO section -- adversarial Codex, consistency, pe
 
     **Why this step exists:** without it, "Accepted with XREF" becomes a paper trail that someone later has to chase, find nothing actionable, and re-do the analysis. Every Accepted finding must be one `[x]` away from being fully closed.
 
+15.5. **Verification before stamp (MANDATORY)** -- invoke `Skill(superpowers:verification-before-completion, ...)` to enforce the evidence-before-assertion contract. The stamp's `Verified:` line is a literal claim that build / tests / lint passed; this skill makes you re-run the relevant commands and quote the actual output BEFORE writing the stamp. Closes the `feedback_never_skip_review` failure mode where claims are made without re-running. Required output to capture: `tail -1 build/build.log` (must show `=== BUILD OK ===`), the test runner's pass count (e.g. `bash scripts/test-tooling.sh` final tally), and `bash scripts/lint.sh` exit code. Skip ONLY when the section is docs-only and there's no testable surface; document the skip in the stamp's `scope:` field.
+
 16. **Stamps** -- compact pipe-separated fields, one line per stamp, no blank lines between:
 
     ```

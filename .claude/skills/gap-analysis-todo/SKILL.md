@@ -35,22 +35,24 @@ description: Deep gap analysis of a TODO file against all overlapping TODOs -- f
 
 ### Phase 2 -- Internet Research (critical -- do not skip)
 
+> **Tooling preference:** prefer `firecrawl-search` (full-page markdown content) and `firecrawl-scrape` (single URL -> markdown) over the built-in `WebSearch` + `WebFetch` for this phase. Rationale: Firecrawl returns the whole page as clean markdown; the built-in tools return search snippets and HTML excerpts, so research depth varies by chance. Fall back to WebSearch only when the network has Firecrawl rate limits or the source blocks scraping. Invoke via the `firecrawl:firecrawl-search` and `firecrawl:firecrawl-scrape` skills (or the matching `firecrawl` CLI under `Bash`).
+
 7. **Research Windows 11 features in this domain.**
-   - Use WebSearch with queries like: `"Windows 11 <topic> internals"`, `"Windows NT <topic> architecture"`, `"Win32 <topic> API"`, `"Windows <topic> features 2025 2026"`.
-   - Run at least 3 targeted searches. Follow promising results with WebFetch to read documentation pages, blog posts, and Microsoft Learn articles.
+   - Use `firecrawl:firecrawl-search` with queries like: `"Windows 11 <topic> internals"`, `"Windows NT <topic> architecture"`, `"Win32 <topic> API"`, `"Windows <topic> features 2025 2026"`. Pass `scrapeOptions.formats=["markdown"]` so the search results carry full page content, not just snippets. WebSearch is the fallback.
+   - Run at least 3 targeted searches. Follow promising results with `firecrawl:firecrawl-scrape` to read documentation pages, blog posts, and Microsoft Learn articles in full markdown. WebFetch is the fallback.
    - Build a feature inventory: list every distinct feature, API, behavior, or capability that Win11 provides in this domain.
    - Note implementation details that affect how Impossible OS should implement the same feature.
    - **Save URLs** for key findings -- cite them in the final **report to the user** (schema item 22), not in the TODO file.
 
 8. **Research Linux features in this domain.**
-   - Use WebSearch with queries like: `"Linux kernel <topic>"`, `"Linux <topic> subsystem"`, `"Linux <topic> implementation"`, `"Linux <topic> features 2025 2026"`.
-   - Run at least 3 targeted searches. Follow promising results with WebFetch.
+   - Use `firecrawl:firecrawl-search` with queries like: `"Linux kernel <topic>"`, `"Linux <topic> subsystem"`, `"Linux <topic> implementation"`, `"Linux <topic> features 2025 2026"`. WebSearch is the fallback.
+   - Run at least 3 targeted searches. Follow promising results with `firecrawl:firecrawl-scrape` (e.g. fetch full kernel.org `Documentation/` pages, LWN articles, kernel-newbies posts).
    - Build a feature inventory for Linux -- same level of detail as Win11.
    - Note where Linux does something differently or better than Windows.
    - **Save URLs.**
 
 9. **Research emerging and state-of-art features.**
-    - Use WebSearch for: `"modern OS <topic> best practices"`, `"<topic> innovations operating system"`, `"<topic> security hardening OS"`.
+    - Use `firecrawl:firecrawl-search` for: `"modern OS <topic> best practices"`, `"<topic> innovations operating system"`, `"<topic> security hardening OS"`. WebSearch is the fallback.
     - Look for features that NEITHER Win11 nor Linux implements well -- these are competitive edge opportunities for Impossible OS.
     - Look for common pain points developers/users have with Win11 and Linux in this domain.
     - Build a **refinement inventory**: cleaner APIs, better defaults, reduced wiring friction, stronger safety checks, simpler deployment, better observability, or less legacy complexity than either baseline.
@@ -224,8 +226,8 @@ description: Deep gap analysis of a TODO file against all overlapping TODOs -- f
 
 ## Research Quality Standards
 
-- **Minimum 6 web searches** per analysis (3 Win11 + 3 Linux). More for complex domains.
-- **Follow at least 2 links** with WebFetch to get detailed feature descriptions, not just search summaries.
+- **Minimum 6 web searches** per analysis (3 Win11 + 3 Linux). More for complex domains. Prefer `firecrawl:firecrawl-search` (full-page markdown); WebSearch is fallback when Firecrawl is rate-limited or the source blocks scraping.
+- **Follow at least 2 links** to get detailed feature descriptions, not just search summaries. Prefer `firecrawl:firecrawl-scrape` over WebFetch -- Firecrawl returns clean markdown; WebFetch returns HTML excerpts that vary by chance.
 - **Save source URLs** for the written report (schema item 22) -- not as `<!-- Sources: ... -->` in the TODO file.
 - **Distinguish fact from inference.** If a feature's existence is inferred from documentation rather than confirmed, note it as "likely" rather than "confirmed."
 - **Current information only.** Search for 2025/2026 content to avoid citing deprecated features. Windows 11 24H2+ and Linux 6.x+ are the comparison baseline.
