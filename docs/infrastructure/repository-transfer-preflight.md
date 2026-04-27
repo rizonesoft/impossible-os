@@ -325,6 +325,89 @@ Severity scale: **Critical** (Pages or repo unreachable for any duration), **Hig
 
 ---
 
+## §2 Receiving Org (`rizonetech`) Readiness Probe
+
+> Captures the pre-transfer readiness of the `rizonetech` organization. Combines public-API observations (token scopes `gist, read:org, repo, workflow`) with operator-only items that need either `gh auth refresh -h github.com -s admin:org` or a UI walkthrough. Each item names the authoritative source so the [URL/badge/docs/generated-link sweep](../../todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md#6-url-badge-docs-and-generated-link-sweep) and post-transfer audit have a concrete reference.
+
+### Confirmed from public API (no `admin:org` needed)
+
+| Field | Value | Source |
+|---|---|---|
+| `login` | `Rizonetech` (canonical case; URLs case-insensitive, code uses `rizonetech`) | `gh api orgs/rizonetech` |
+| `plan` | `enterprise` | `gh api orgs/rizonetech` |
+| `private_repos` plan limit | 999999 | §1 baseline (`gh api orgs/rizonetech --jq '.plan.private_repos'`) |
+| `seats` | 50 (1 filled) | §1 baseline |
+| `members_can_create_repositories` | yes | `gh api orgs/rizonetech` |
+| `members_allowed_repository_creation_type` | `all` (internal / private / public) | `gh api orgs/rizonetech` |
+| `members_can_fork_private_repositories` | **disabled** | `gh api orgs/rizonetech` |
+| `default_repository_permission` | `read` | `gh api orgs/rizonetech` |
+| `web_commit_signoff_required` | no | `gh api orgs/rizonetech` |
+| `two_factor_requirement_enabled` | **no** -- 2FA is not org-required | `gh api orgs/rizonetech` |
+| `is_verified` | no (org-name verification, separate from custom-domain verification) | `gh api orgs/rizonetech` |
+| `has_organization_projects` / `has_repository_projects` | yes / yes | `gh api orgs/rizonetech` |
+| `saml_provider` | null (no SSO enforcement) | `gh api orgs/rizonetech --jq '.saml_provider'` |
+| Org members (public) | one entry: `rizonesoft` (admin) | `gh api orgs/rizonetech/members` |
+| Org public teams | zero | `gh api orgs/rizonetech/teams` |
+| Org repositories | zero (clean transfer destination -- no `rizonetech/impossible-os` collision) | `gh api orgs/rizonetech/repos` |
+| Org GitHub App installations | zero (`total_count: 0`) | `gh api orgs/rizonetech/installations` |
+| Org credential authorizations | empty | `gh api orgs/rizonetech/credential-authorizations` |
+
+### Confirmed: operator + current admin membership
+
+| Field | Value | Source |
+|---|---|---|
+| Operator `rizonesoft` membership | `state: active`, `role: admin`, `direct_membership: true` | `gh api user/memberships/orgs/rizonetech` (recorded in §6 Access Model above) |
+
+### Org security defaults for NEW repositories (read off `gh api orgs/rizonetech`)
+
+| Default toggle | Current value | Implication for the transferred repo |
+|---|---|---|
+| `advanced_security_enabled_for_new_repositories` | `false` | Source repo is private; advanced security is a paid GHAS add-on; not required for transfer. |
+| `dependabot_alerts_enabled_for_new_repositories` | `false` | Source repo also has Dependabot disabled (§5 baseline). Transfer is parity-compatible. R5 in the risk register flags this as a hardening opportunity post-transfer, not a blocker. |
+| `dependabot_security_updates_enabled_for_new_repositories` | `false` | Same as above. |
+| `dependency_graph_enabled_for_new_repositories` | `false` | Free feature; consider enabling post-transfer. |
+| `secret_scanning_enabled_for_new_repositories` | `false` | Private-repo secret scanning is a paid GHAS feature; not blocking. |
+| `secret_scanning_push_protection_enabled_for_new_repositories` | `false` | Same. |
+
+These are **org defaults for newly created repos** -- transferred repos preserve their own settings. The transfer does not regress against the source-repo baseline (which is also "all off"), but the org defaults being all-off means the transfer is **not** an automatic hardening event. Hardening (turning Dependabot alerts on, etc.) is a deliberate post-transfer step under [the Post-Transfer Settings audit](../../todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md#5-post-transfer-settings-workflows-secrets-and-environments-audit).
+
+### Operator-only items (require `admin:org` token scope OR UI walkthrough)
+
+| # | Item | What blocks API check | Authoritative source for the operator |
+|---|---|---|---|
+| O1 | Verify `impossibleos.co` at the **organization** level (separate from the repo-level Pages CNAME -- some custom-domain features require account-level verification before the repo's Pages settings accept the domain). | Domain verification status is `admin:org` only. | UI: <https://github.com/organizations/rizonetech/settings/security> -> "Verified domains". CLI after refresh: `gh auth refresh -h github.com -s admin:org` then `gh api orgs/rizonetech/verified-domains`. Walk before pressing the [transfer button](../../todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md#4-repository-transfer-runbook-and-rollback-window) so the new owner accepts `impossibleos.co` without re-issuing the cert. |
+| O2 | Configure org Actions policy: GitHub-hosted runners enabled, allowed actions list includes `actions/checkout`, `actions/configure-pages`, `actions/upload-pages-artifact`, `actions/deploy-pages` (Pages workflow), plus build / release / labeler / stale / todo-graph / visual-regression actions. Default `GITHUB_TOKEN` permission must allow Pages workflow's `pages: write` + `id-token: write`. | Endpoint requires `admin:org`. | UI: <https://github.com/organizations/rizonetech/settings/actions>. CLI after refresh: `gh api orgs/rizonetech/actions/permissions`, `gh api orgs/rizonetech/actions/permissions/selected-actions`, `gh api orgs/rizonetech/actions/permissions/workflow`. Source-repo baseline (§4 above): `allowed_actions: all`, `default_workflow_permissions: read`. Match or relax at the org level before transfer; do NOT tighten and break the workflow. |
+| O3 | Confirm org Pages policy permits per-repository Pages and custom domains. (Some enterprise plans expose a "Pages public/private/disabled" toggle at the org level.) | Org Pages policy is part of `admin:org` settings. | UI: <https://github.com/organizations/rizonetech/settings/pages>. Confirm "Public" or "Private and Public" is selected; confirm custom domains are allowed. |
+| O4 | Confirm org-level merge / branch / ruleset / security policies are at least as permissive as the source-repo settings: ruleset import path for "Default Branch Security" (id `14058331`, captured in §5 above), merge methods (merge / squash / rebase all allowed at source), 2FA enforcement (currently OFF). | Org rulesets endpoint requires `admin:org`. | UI: <https://github.com/organizations/rizonetech/settings/repository-defaults>, <https://github.com/organizations/rizonetech/settings/rules>. CLI after refresh: `gh api orgs/rizonetech/rulesets`. The org may be empty (no ruleset preset) -- that's fine; the source-repo ruleset migrates with the repo. |
+| O5 | **Disable Copilot cloud coding-agent / autonomous-agent PR enablement** for the org and the soon-to-be-transferred repo. Required by [Autonomous-Agent Boundary Policy](ai-system.md#autonomous-agent-boundary-policy). | Copilot Access policy has no public-API surface today; UI-only. | UI: <https://github.com/organizations/rizonetech/settings/copilot/access>. Set to "No access" or "Selected members" with `rizonesoft` excluded from cloud-agent permission. Re-verify post-transfer in the [Post-Transfer Settings audit](../../todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md#5-post-transfer-settings-workflows-secrets-and-environments-audit) and the [Validation suite](../../todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md#7-validation-suite-pages-actions-releases-clone-hooks-graph). |
+| O6 | Identify or create teams that replace personal/collaborator permissions: maintainers, reviewers, release operators, security contacts, Pages/DNS administrators. | Org team management is `admin:org`. | UI: <https://github.com/orgs/rizonetech/teams>. Currently zero teams (verified above). Solo-dev pattern: a single `maintainers` team with `rizonesoft` is sufficient until external collaborators are onboarded. CODEOWNERS migration: the source-repo file routes everything to `@derickpayne` (the user); under an org owner, that handle still resolves but consider adding a `@rizonetech/maintainers` route once the team exists. |
+
+### Pre-transfer checklist (concrete commands for the operator)
+
+After running `gh auth refresh -h github.com -s admin:org` once to upgrade the local token, the operator can replace UI walkthroughs above with:
+
+```bash
+# O1 -- verify domain at org level (only available on enterprise / GHAS-eligible plans)
+gh api orgs/rizonetech/verified-domains 2>&1 | jq
+
+# O2 -- Actions policy (must match or relax source-repo settings)
+gh api orgs/rizonetech/actions/permissions
+gh api orgs/rizonetech/actions/permissions/workflow
+gh api orgs/rizonetech/actions/permissions/selected-actions  # only if allowed_actions != "all"
+
+# O3 -- org Pages policy (no public REST endpoint today; UI is authoritative)
+
+# O4 -- rulesets (typically empty until first ruleset is imported)
+gh api orgs/rizonetech/rulesets
+
+# O6 -- teams (currently zero)
+gh api orgs/rizonetech/teams
+```
+
+If any item returns unexpected values, stop the transfer and resolve before pressing the [transfer button](../../todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md#4-repository-transfer-runbook-and-rollback-window).
+
+---
+
 ## How to Re-Run This Inventory
 
 The exact commands used to capture this baseline:
