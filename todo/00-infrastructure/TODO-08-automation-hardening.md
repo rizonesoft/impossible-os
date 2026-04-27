@@ -325,7 +325,7 @@ The superpowers plugin ships 14 skills; CLAUDE.md "Mandatory Skill Triggers" tod
 - [x] CLAUDE.md "Mandatory Skill Triggers" table now has 11 rows (up from 9) plus a closing line pointing at the policy doc: "Per-skill verdicts and the suppression rules for the rest of the superpowers catalog (e.g. `subagent-driven-development` forbidden on kernel/boot paths) live at [docs/infrastructure/superpowers-policy.md]".
 - [x] [`docs/infrastructure/ai-system.md`](../../docs/infrastructure/ai-system.md) "External-Reviewer Contract" gained a new "Plugin skill catalog (superpowers)" subsection (lines 241-244) pointing at the policy doc with a one-line summary of the 3 MANDATORY skills + the 1 scope-restricted skill.
 - [x] subagent-driven-development scope distinction documented in [`docs/infrastructure/superpowers-policy.md`](../../docs/infrastructure/superpowers-policy.md) "Scope Distinction" table: `src/kernel/`, `src/boot/`, `include/kernel/` -> Forbidden as substitute, four-dispatch Codex mandatory; `user/`, `src/apps/`, tooling, docs -> Approved, Codex optional; `.claude/`, `scripts/` -> Approved, single design dispatch usually sufficient. Rationale: same-model self-review misses what cross-MODEL Codex review catches (concrete incidents cited: TODO-19 FPU bugs, TODO-02 GOP review where 2026-04-27 re-review caught 5H+1M after the original same-model review had stamped verified).
-- [ ] Commit: `"docs/superpowers: audit catalog; add mandatory trigger rows; suppression policy doc"`
+- [x] Commit: `"docs/superpowers: audit catalog; add mandatory trigger rows; suppression policy doc"` -- shipped as `ed9852ad`.
 
 **Test checkpoint:** [`docs/infrastructure/superpowers-policy.md`](../../docs/infrastructure/superpowers-policy.md) exists and names every superpowers skill with a verdict. CLAUDE.md "Mandatory Skill Triggers" table has at least 2 new rows. Test on: Linux WSL2 dev host (no runtime test; doctrine-level change).
 
@@ -337,7 +337,7 @@ The superpowers plugin ships 14 skills; CLAUDE.md "Mandatory Skill Triggers" tod
 > - Canonical doc: `docs/infrastructure/superpowers-policy.md`.
 > - Scope boundary: §8 owns the superpowers plugin policy + the CLAUDE.md trigger rows for `verification-before-completion` and `systematic-debugging`; §7 owns the per-hook MANIFEST that enumerates plugin-side hooks (a different audit surface); §6 owns the broader MCP usage discipline (different plugin set).
 
-> **Verified:** 2026-04-27 | commit `<pending>` | 7/7 items | build N/A (docs-only) | lint CLEAN
+> **Verified:** 2026-04-27 | commit `ed9852ad` | 7/7 items | build N/A (docs-only) | lint CLEAN
 > **Quality reviewed:** 2026-04-27 | self-review only (docs-only, doctrine surface; no Codex four-dispatch needed per superpowers-policy.md scope distinction) | scope: N/A (docs-only)
 
 ---
