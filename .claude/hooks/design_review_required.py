@@ -137,7 +137,7 @@ def main() -> int:
         "implement-todo-section requires a design pass BEFORE editing "
         "any source code -- target " + target + " is a code edit. "
         "Required: dispatch via the Codex plugin BEFORE this Edit/Write, e.g.\n"
-        "  node /home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs adversarial-review \"<design review prompt covering the planned section>\"\n"
+        "  node $HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs adversarial-review \"<design review prompt covering the planned section>\"\n"
         "The prompt must contain the word 'design' for this hook to "
         "recognize it as a design pass. After Codex returns, walk every "
         "finding via the receiving-code-review pattern (verify, Fix / "

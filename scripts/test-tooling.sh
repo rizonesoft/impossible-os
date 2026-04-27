@@ -1283,6 +1283,76 @@ open(p, "w").write(json.dumps(s))
         t_fail "receiving_review_gate: codex --remote VALUE review missed (H8, got $GOT)"
     fi
 
+    # Sub-test 28a (2026-04-27 false-positive fix): the `status`
+    # subcommand is metadata/control, not a review trigger. Pre-fix:
+    # `node ...codex-companion.mjs status xyz` registered as a trigger
+    # because head_base matched without inspecting argv[2]. Live-
+    # reproduced when a session-lifecycle-hook status call locked
+    # subsequent edits with an unreceived false trigger.
+    rm -f "$STATE_FILE"
+    printf "%s" '''{"tool_name":"Bash","tool_input":{"command":"node /abs/codex-companion.mjs status xyz123"}}''' \
+        | python3 "$POST_HOOK" >/dev/null 2>&1
+    GOT=$(_state_received)
+    if [ "$GOT" = "missing" ]; then
+        t_pass "receiving_review_gate: codex-companion.mjs status does NOT trigger (2026-04-27 fix)"
+    else
+        t_fail "receiving_review_gate: codex-companion.mjs status incorrectly wrote trigger (got $GOT)"
+    fi
+
+    # Sub-test 28b (2026-04-27 false-positive fix): `cancel` is also
+    # metadata/control. Same filter rationale as status.
+    rm -f "$STATE_FILE"
+    printf "%s" '''{"tool_name":"Bash","tool_input":{"command":"node /abs/codex-companion.mjs cancel xyz123"}}''' \
+        | python3 "$POST_HOOK" >/dev/null 2>&1
+    GOT=$(_state_received)
+    if [ "$GOT" = "missing" ]; then
+        t_pass "receiving_review_gate: codex-companion.mjs cancel does NOT trigger (2026-04-27 fix)"
+    else
+        t_fail "receiving_review_gate: codex-companion.mjs cancel incorrectly wrote trigger (got $GOT)"
+    fi
+
+    # Sub-test 28c (2026-04-27 false-positive fix): `task-worker` is
+    # the internal detached-worker spawn target, not user-initiated;
+    # filter must reject it.
+    rm -f "$STATE_FILE"
+    printf "%s" '''{"tool_name":"Bash","tool_input":{"command":"node /abs/codex-companion.mjs task-worker --cwd /x --job-id abc"}}''' \
+        | python3 "$POST_HOOK" >/dev/null 2>&1
+    GOT=$(_state_received)
+    if [ "$GOT" = "missing" ]; then
+        t_pass "receiving_review_gate: codex-companion.mjs task-worker does NOT trigger (2026-04-27 fix)"
+    else
+        t_fail "receiving_review_gate: codex-companion.mjs task-worker incorrectly wrote trigger (got $GOT)"
+    fi
+
+    # Sub-test 28d (2026-04-27 fallback positive): `task --background`
+    # IS a real review trigger -- this is the path used by the
+    # codex-bg-dispatch.sh wrapper when foreground hits the 10-min
+    # Bash wall. The receive gate must protect background dispatches
+    # the same way it protects foreground ones.
+    rm -f "$STATE_FILE"
+    printf "%s" '''{"tool_name":"Bash","tool_input":{"command":"node /abs/codex-companion.mjs task --background --json design-review-prompt"}}''' \
+        | python3 "$POST_HOOK" >/dev/null 2>&1
+    GOT=$(_state_received)
+    if [ "$GOT" = "False" ]; then
+        t_pass "receiving_review_gate: codex-companion.mjs task --background IS a trigger (2026-04-27 background fallback)"
+    else
+        t_fail "receiving_review_gate: codex-companion.mjs task --background missed (got $GOT)"
+    fi
+
+    # Sub-test 28e (2026-04-27 false-positive fix): direct invocation
+    # form (no `node` wrapper) -- /abs/path/codex-companion.mjs status
+    # must also be filtered. Covers the second match arm in
+    # _segment_is_codex_invocation.
+    rm -f "$STATE_FILE"
+    printf "%s" '''{"tool_name":"Bash","tool_input":{"command":"/abs/path/codex-companion.mjs status xyz"}}''' \
+        | python3 "$POST_HOOK" >/dev/null 2>&1
+    GOT=$(_state_received)
+    if [ "$GOT" = "missing" ]; then
+        t_pass "receiving_review_gate: direct codex-companion.mjs status does NOT trigger (2026-04-27 fix)"
+    else
+        t_fail "receiving_review_gate: direct codex-companion.mjs status incorrectly wrote trigger (got $GOT)"
+    fi
+
     # Sub-test 28 (H3 re-adv): _write_atomic uses unique
     # per-process tmp paths so parallel hook fires do not race on
     # the same .tmp file. Verify by inspecting the temp-file glob:
@@ -1357,11 +1427,11 @@ else
         printf '%s\n' '| Star | Order | Section | Deliverable | Depends | Status |'
         printf '%s\n' '| ---- | :---: | :---:   | ----------- | ------- | :----: |'
         printf '%s\n' '| star |   1   |  S1     | Test row    | --      |  [ ]   |'
-    } > todo/00-infrastructure/TEST.md
+    } > todo/00-infrastructure/TODO-99-fdgate-fixture.md
     cat > src/kernel/foo.c <<'CSEED'
 int seed_only(void) { return 0; }
 CSEED
-    git add todo/00-infrastructure/TEST.md src/kernel/foo.c
+    git add todo/00-infrastructure/TODO-99-fdgate-fixture.md src/kernel/foo.c
     git -c commit.gpgsign=false commit -q --no-verify -m "seed"
     popd >/dev/null
 
@@ -1388,12 +1458,12 @@ CSEED
     _stage_section_commit() {
         (
             cd "$GATE_REPO"
-            sed -i 's/\[ \]/[x]/g' todo/00-infrastructure/TEST.md
+            sed -i 's/\[ \]/[x]/g' todo/00-infrastructure/TODO-99-fdgate-fixture.md
             cat > src/kernel/foo.c <<'CMOD'
 int seed_only(void) { return 1; }
 int new_helper(int n) { return n + 1; }
 CMOD
-            git add todo/00-infrastructure/TEST.md src/kernel/foo.c
+            git add todo/00-infrastructure/TODO-99-fdgate-fixture.md src/kernel/foo.c
         )
     }
 
@@ -1558,11 +1628,11 @@ JSON
     (
         cd "$GATE_REPO"
         printf '%s\n' '| star |   2   |  S2     | New row at done | --      |  [x]   |' \
-            >> todo/00-infrastructure/TEST.md
+            >> todo/00-infrastructure/TODO-99-fdgate-fixture.md
         cat > src/kernel/foo.c <<'CMOD2'
 int seed_only(void) { return 2; }
 CMOD2
-        git add todo/00-infrastructure/TEST.md src/kernel/foo.c
+        git add todo/00-infrastructure/TODO-99-fdgate-fixture.md src/kernel/foo.c
     )
     rm -f "$GATE_STATE_FILE_T"
     _gate_run 2 "ADD-only [x] row counts as flip (H1: new row at done)" \
@@ -1777,6 +1847,554 @@ CMOD3
         '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"}}'
 
     rm -rf "$GATE_TMP"
+fi
+
+
+# ============================================================================
+# four_dispatch_gate (review-todo-section step-8 four-dispatch enforcement)
+# ============================================================================
+# Asserts the review-todo-section step-8 four-dispatch policy:
+#   - PostToolUse codex_review_completed.py records dispatches into
+#     .claude/state/last-review-stamps.json keyed by TODO path.
+#   - section_commit_gate.py refuses a stamp-add commit when fewer
+#     than three dispatches (adversarial / consistency / perf) are
+#     recorded for that TODO within the last 30 minutes.
+#   - Self-summary preamble in a Codex prompt emits stderr WARN.
+[ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[four_dispatch_gate]${NC}"
+
+if [ ! -f "$REPO_ROOT/.claude/hooks/section_commit_gate.py" ] || \
+   [ ! -f "$REPO_ROOT/.claude/hooks/codex_review_completed.py" ]; then
+    t_fail "four_dispatch_gate: hook scripts missing"
+else
+    FD_TMP="$(mktemp -d)"
+    FD_REPO="$FD_TMP/repo"
+    mkdir -p "$FD_REPO/build" "$FD_REPO/.claude/state" "$FD_REPO/.claude/hooks" \
+             "$FD_REPO/src/kernel" "$FD_REPO/todo/00-infrastructure"
+    cp "$REPO_ROOT/.claude/hooks/section_commit_gate.py" \
+       "$FD_REPO/.claude/hooks/section_commit_gate.py"
+    cp "$REPO_ROOT/.claude/hooks/codex_review_completed.py" \
+       "$FD_REPO/.claude/hooks/codex_review_completed.py"
+
+    pushd "$FD_REPO" >/dev/null
+    git init -q -b main
+    git config user.email "test@example.com"
+    git config user.name "Test"
+
+    {
+        printf '%s\n' '# Seed'
+        printf '\n'
+        printf '%s\n' '| Star | Order | Section | Deliverable | Depends | Status |'
+        printf '%s\n' '| ---- | :---: | :---:   | ----------- | ------- | :----: |'
+        printf '%s\n' '| star |   1   |  S1     | Test row    | --      |  [ ]   |'
+        printf '\n'
+        printf '%s\n' '## 1. Sample section'
+        printf '\n'
+        printf '%s\n' '- [ ] Some item'
+    } > todo/00-infrastructure/TODO-99-fdgate-fixture.md
+    cat > src/kernel/foo.c <<'CSEED'
+int seed_only(void) { return 0; }
+CSEED
+    git add todo/00-infrastructure/TODO-99-fdgate-fixture.md src/kernel/foo.c
+    git -c commit.gpgsign=false commit -q --no-verify -m "seed"
+    popd >/dev/null
+
+    FD_TODO_PATH="todo/00-infrastructure/TODO-99-fdgate-fixture.md"
+    FD_STAMPS="$FD_REPO/.claude/state/last-review-stamps.json"
+    FD_REVIEW="$FD_REPO/.claude/state/last-codex-review.json"
+
+    _fd_stage_with_stamp() {
+        (
+            cd "$FD_REPO"
+            python3 - <<'PY'
+import pathlib
+p = pathlib.Path("todo/00-infrastructure/TODO-99-fdgate-fixture.md")
+text = p.read_text()
+text = text.replace("|  [ ]   |", "|  [x]   |")
+stamp = (
+    "\n> **Verified:** 2026-04-27 | commit `abc1234` | 1/1 items | build OK\n"
+    "> **Quality reviewed:** 2026-04-27 | Codex 3x | 0 fixed\n"
+)
+text = text.replace("## 1. Sample section\n", "## 1. Sample section\n" + stamp)
+p.write_text(text)
+PY
+            cat > src/kernel/foo.c <<'CMOD'
+int seed_only(void) { return 1; }
+int new_helper(int n) { return n + 1; }
+CMOD
+            git add todo/00-infrastructure/TODO-99-fdgate-fixture.md src/kernel/foo.c
+        )
+    }
+
+    _fd_stage_no_stamp() {
+        (
+            cd "$FD_REPO"
+            sed -i 's/\[ \]/[x]/g' todo/00-infrastructure/TODO-99-fdgate-fixture.md
+            cat > src/kernel/foo.c <<'CMOD'
+int seed_only(void) { return 1; }
+int new_helper(int n) { return n + 1; }
+CMOD
+            git add todo/00-infrastructure/TODO-99-fdgate-fixture.md src/kernel/foo.c
+        )
+    }
+
+    _fd_unstage() {
+        ( cd "$FD_REPO" && git reset -q HEAD -- . 2>/dev/null || true; \
+          git checkout -q -- . 2>/dev/null || true )
+    }
+
+    _fd_write_review_state() {
+        local now_ns blobs
+        now_ns=$(python3 -c 'import time; print(time.time_ns())')
+        blobs=$(cd "$FD_REPO" && python3 -c '
+import json, subprocess, sys
+try:
+    out = subprocess.check_output(["git","ls-files","-s","-z","--","src/kernel/foo.c"], text=True, stderr=subprocess.DEVNULL)
+except Exception:
+    print("{}"); sys.exit(0)
+result = {}
+for entry in out.split("\x00"):
+    if not entry or "\t" not in entry: continue
+    h, p = entry.split("\t",1)
+    parts = h.split()
+    if len(parts) == 3: result[p] = parts[1]
+print(json.dumps(result))
+')
+        cat > "$FD_REVIEW" <<JSON
+{
+  "timestamp_ns": $now_ns,
+  "trigger": "test",
+  "trigger_files": ["src/kernel/foo.c"],
+  "trigger_blobs": $blobs,
+  "head_sha": "x",
+  "tree_hash": "y",
+  "received": true,
+  "received_timestamp_ns": $now_ns
+}
+JSON
+    }
+
+    _fd_write_stamps() {
+        local entries="$1"
+        python3 - "$FD_STAMPS" "$FD_TODO_PATH" "$entries" <<'PY'
+import json, sys, time
+path, todo, entries = sys.argv[1], sys.argv[2], sys.argv[3]
+now_ns = time.time_ns()
+state = {todo: {"section": "S1", "adversarial": None, "consistency": None, "perf": None}}
+for piece in entries.split(","):
+    piece = piece.strip()
+    if not piece: continue
+    if "=" not in piece: continue
+    kind, age = piece.split("=", 1)
+    age_s = int(age)
+    if age_s < 0:
+        state[todo][kind] = None
+    else:
+        state[todo][kind] = now_ns - age_s * 1_000_000_000
+import pathlib
+pathlib.Path(path).parent.mkdir(parents=True, exist_ok=True)
+pathlib.Path(path).write_text(json.dumps(state, indent=2) + "\n")
+PY
+    }
+
+    _fd_run() {
+        local want="$1" desc="$2"
+        local got
+        got=$(cd "$FD_REPO" && \
+            printf '%s' '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"}}' | \
+            python3 ".claude/hooks/section_commit_gate.py" >/dev/null 2>&1; echo $?)
+        if [ "$got" = "$want" ]; then
+            t_pass "four_dispatch_gate: $desc (rc=$got)"
+        else
+            t_fail "four_dispatch_gate: $desc (want $want, got $got)"
+        fi
+    }
+
+    # 1: implementation commit (no stamp added) bypasses four-dispatch check.
+    _fd_unstage
+    _fd_stage_no_stamp
+    rm -f "$FD_STAMPS"
+    _fd_write_review_state
+    echo "=== BUILD OK ===" > "$FD_REPO/build/build.log"
+    _fd_run 0 "implementation commit (no stamp added) bypasses four-dispatch check"
+
+    # 2: stamp commit + state file missing -> block.
+    _fd_unstage
+    _fd_stage_with_stamp
+    _fd_write_review_state
+    echo "=== BUILD OK ===" > "$FD_REPO/build/build.log"
+    rm -f "$FD_STAMPS"
+    _fd_run 2 "stamp commit + state file missing blocks (3-of-3 missing)"
+
+    # 3: 2 of 3 dispatches (perf missing) -> block, names perf.
+    _fd_write_stamps "adversarial=60,consistency=120"
+    echo "=== BUILD OK ===" > "$FD_REPO/build/build.log"
+    BLOCK_OUT=$(cd "$FD_REPO" && \
+        printf '%s' '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"}}' | \
+        python3 ".claude/hooks/section_commit_gate.py" 2>&1 >/dev/null; true)
+    BLOCK_RC=$(cd "$FD_REPO" && \
+        printf '%s' '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"}}' | \
+        python3 ".claude/hooks/section_commit_gate.py" >/dev/null 2>&1; echo $?)
+    if [ "$BLOCK_RC" = "2" ] && echo "$BLOCK_OUT" | grep -q "missing: perf"; then
+        t_pass "four_dispatch_gate: 2-of-3 dispatches blocks naming missing perf"
+    else
+        t_fail "four_dispatch_gate: 2-of-3 dispatches block (rc=$BLOCK_RC, missing-perf in stderr=$(echo "$BLOCK_OUT" | grep -c 'missing: perf'))"
+    fi
+
+    # 4: stale perf (>30 min) -> block.
+    _fd_write_stamps "adversarial=60,consistency=120,perf=2400"
+    echo "=== BUILD OK ===" > "$FD_REPO/build/build.log"
+    BLOCK_OUT=$(cd "$FD_REPO" && \
+        printf '%s' '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"}}' | \
+        python3 ".claude/hooks/section_commit_gate.py" 2>&1 >/dev/null; true)
+    BLOCK_RC=$(cd "$FD_REPO" && \
+        printf '%s' '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"}}' | \
+        python3 ".claude/hooks/section_commit_gate.py" >/dev/null 2>&1; echo $?)
+    if [ "$BLOCK_RC" = "2" ] && echo "$BLOCK_OUT" | grep -q "stale.*perf"; then
+        t_pass "four_dispatch_gate: stale perf (>30 min) blocks"
+    else
+        t_fail "four_dispatch_gate: stale perf block (rc=$BLOCK_RC)"
+    fi
+
+    # 5: all 3 dispatches recent -> allow.
+    _fd_write_stamps "adversarial=60,consistency=120,perf=180"
+    echo "=== BUILD OK ===" > "$FD_REPO/build/build.log"
+    _fd_run 0 "stamp commit + all 3 dispatches recent allows"
+
+    # 6: PostToolUse Skill records consistency dispatch.
+    rm -f "$FD_STAMPS"
+    _fd_unstage
+    PAYLOAD='{"tool_name":"Skill","tool_input":{"skill":"codex-consistency-audit","prompt":"[review-kind: consistency] Target: todo/00-infrastructure/TODO-99-fdgate-fixture.md S1\nReview the consistency of struct layouts."}}'
+    (cd "$FD_REPO" && printf '%s' "$PAYLOAD" | \
+        python3 ".claude/hooks/codex_review_completed.py" >/dev/null 2>&1)
+    if [ -f "$FD_STAMPS" ] && \
+       python3 -c "import json,sys; s=json.load(open('$FD_STAMPS')); e=s.get('$FD_TODO_PATH',{}); sys.exit(0 if isinstance(e.get('consistency'), int) else 1)"; then
+        t_pass "four_dispatch_gate: PostToolUse Skill records consistency dispatch"
+    else
+        t_fail "four_dispatch_gate: PostToolUse Skill did not record consistency dispatch" \
+            "stamps: $(cat "$FD_STAMPS" 2>/dev/null || echo missing)"
+    fi
+
+    # 7: PostToolUse Bash with [review-kind: perf] marker records perf.
+    rm -f "$FD_STAMPS"
+    PAYLOAD='{"tool_name":"Bash","tool_input":{"command":"node /abs/codex-companion.mjs adversarial-review \"[review-kind: perf] Target: todo/00-infrastructure/TODO-99-fdgate-fixture.md S1\\nPerf review angles: hot-path allocations.\""}}'
+    (cd "$FD_REPO" && printf '%s' "$PAYLOAD" | \
+        python3 ".claude/hooks/codex_review_completed.py" >/dev/null 2>&1)
+    if [ -f "$FD_STAMPS" ] && \
+       python3 -c "import json,sys; s=json.load(open('$FD_STAMPS')); e=s.get('$FD_TODO_PATH',{}); sys.exit(0 if isinstance(e.get('perf'), int) and e.get('adversarial') is None else 1)"; then
+        t_pass "four_dispatch_gate: PostToolUse Bash records perf dispatch via marker"
+    else
+        t_fail "four_dispatch_gate: PostToolUse Bash did not record perf dispatch" \
+            "stamps: $(cat "$FD_STAMPS" 2>/dev/null || echo missing)"
+    fi
+
+    # 8: Bash without marker -> no stamp write.
+    rm -f "$FD_STAMPS"
+    PAYLOAD='{"tool_name":"Bash","tool_input":{"command":"node /abs/codex-companion.mjs adversarial-review \"Generic prompt with todo/00-infrastructure/TODO-99-fdgate-fixture.md S1 but no review-kind marker.\""}}'
+    (cd "$FD_REPO" && printf '%s' "$PAYLOAD" | \
+        python3 ".claude/hooks/codex_review_completed.py" >/dev/null 2>&1)
+    if [ ! -f "$FD_STAMPS" ]; then
+        t_pass "four_dispatch_gate: Bash without marker does not write stamps file"
+    else
+        t_fail "four_dispatch_gate: Bash without marker incorrectly wrote stamps" \
+            "stamps: $(cat "$FD_STAMPS" 2>/dev/null)"
+    fi
+
+    # 9: Skill without TODO path in prompt -> no stamp write.
+    rm -f "$FD_STAMPS"
+    PAYLOAD='{"tool_name":"Skill","tool_input":{"skill":"codex-perf-review","prompt":"Review hot paths in foo.c with no TODO reference."}}'
+    (cd "$FD_REPO" && printf '%s' "$PAYLOAD" | \
+        python3 ".claude/hooks/codex_review_completed.py" >/dev/null 2>&1)
+    if [ ! -f "$FD_STAMPS" ]; then
+        t_pass "four_dispatch_gate: Skill without TODO path in prompt does not write stamps"
+    else
+        t_fail "four_dispatch_gate: Skill without TODO path incorrectly wrote stamps"
+    fi
+
+    # 10: self-summary preamble emits stderr WARN.
+    rm -f "$FD_STAMPS"
+    PAYLOAD='{"tool_name":"Skill","tool_input":{"skill":"codex-adversarial-review-section","prompt":"I built a new commit gate hook in section_commit_gate.py.\nReview todo/00-infrastructure/TODO-99-fdgate-fixture.md S1 for SMP races."}}'
+    WARN_OUT=$(cd "$FD_REPO" && printf '%s' "$PAYLOAD" | \
+        python3 ".claude/hooks/codex_review_completed.py" 2>&1 >/dev/null)
+    if echo "$WARN_OUT" | grep -q "first-person"; then
+        t_pass "four_dispatch_gate: self-summary preamble emits stderr WARN"
+    else
+        t_fail "four_dispatch_gate: self-summary WARN missing" \
+            "stderr: $WARN_OUT"
+    fi
+
+    # 11: round-trip end-to-end -- 3 dispatches + stamp commit allows.
+    rm -f "$FD_STAMPS"
+    for KIND in adversarial consistency perf; do
+        case "$KIND" in
+            adversarial) SKILL=codex-adversarial-review-section ;;
+            consistency) SKILL=codex-consistency-audit ;;
+            perf)        SKILL=codex-perf-review ;;
+        esac
+        PAYLOAD=$(printf '{"tool_name":"Skill","tool_input":{"skill":"%s","prompt":"[review-kind: %s] Target: todo/00-infrastructure/TODO-99-fdgate-fixture.md S1\\nReview angles per template."}}' "$SKILL" "$KIND")
+        (cd "$FD_REPO" && printf '%s' "$PAYLOAD" | \
+            python3 ".claude/hooks/codex_review_completed.py" >/dev/null 2>&1)
+    done
+    _fd_unstage
+    _fd_stage_with_stamp
+    _fd_write_review_state
+    echo "=== BUILD OK ===" > "$FD_REPO/build/build.log"
+    _fd_run 0 "round-trip: 3 PostToolUse dispatches + stamp commit allows"
+
+    # ----- Codex post-impl fixes (M1: stamp-only path; M2: head ancestry;
+    #       M3: lock; M4: indented stamp line; M5: cross-TODO/mixed bypasses) -----
+
+    # Helper: stage stamp-only diff (no source change) -- the user's
+    # `stamp:` commit shape (M1 fix target).
+    _fd_stage_stamp_only() {
+        (
+            cd "$FD_REPO"
+            python3 - <<'PY'
+import pathlib
+p = pathlib.Path("todo/00-infrastructure/TODO-99-fdgate-fixture.md")
+text = p.read_text()
+stamp = (
+    "\n> **Verified:** 2026-04-27 | commit `abc1234` | 1/1 items | build OK\n"
+    "> **Quality reviewed:** 2026-04-27 | Codex 3x | 0 fixed\n"
+)
+text = text.replace("## 1. Sample section\n", "## 1. Sample section\n" + stamp)
+p.write_text(text)
+PY
+            git add todo/00-infrastructure/TODO-99-fdgate-fixture.md
+        )
+    }
+
+    # Helper: 3-space leading indent on stamp line (Markdown-valid
+    # blockquote indent). Pre-M4 the regex would skip this.
+    _fd_stage_stamp_only_indented() {
+        (
+            cd "$FD_REPO"
+            python3 - <<'PY'
+import pathlib
+p = pathlib.Path("todo/00-infrastructure/TODO-99-fdgate-fixture.md")
+text = p.read_text()
+stamp = (
+    "\n   > **Verified:** 2026-04-27 | commit `abc1234` | 1/1 items | build OK\n"
+)
+text = text.replace("## 1. Sample section\n", "## 1. Sample section\n" + stamp)
+p.write_text(text)
+PY
+            git add todo/00-infrastructure/TODO-99-fdgate-fixture.md
+        )
+    }
+
+    # Helper: stage source + stamp + NO row flip (M5 mixed-bypass fix).
+    _fd_stage_source_plus_stamp_no_flip() {
+        (
+            cd "$FD_REPO"
+            python3 - <<'PY'
+import pathlib
+p = pathlib.Path("todo/00-infrastructure/TODO-99-fdgate-fixture.md")
+text = p.read_text()
+stamp = "\n> **Verified:** 2026-04-27 | commit `abc1234` | 1/1 items | build OK\n"
+text = text.replace("## 1. Sample section\n", "## 1. Sample section\n" + stamp)
+p.write_text(text)
+PY
+            cat > src/kernel/foo.c <<'CMOD'
+int seed_only(void) { return 1; }
+int unrelated(int x) { return x * 2; }
+CMOD
+            git add todo/00-infrastructure/TODO-99-fdgate-fixture.md src/kernel/foo.c
+        )
+    }
+
+    # Test M1.1: stamp-only commit + state file missing -> blocks.
+    rm -f "$FD_STAMPS"
+    _fd_unstage
+    _fd_stage_stamp_only
+    BLOCK_OUT=$(cd "$FD_REPO" && \
+        printf '%s' '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"}}' | \
+        python3 ".claude/hooks/section_commit_gate.py" 2>&1 >/dev/null; true)
+    BLOCK_RC=$(cd "$FD_REPO" && \
+        printf '%s' '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"}}' | \
+        python3 ".claude/hooks/section_commit_gate.py" >/dev/null 2>&1; echo $?)
+    if [ "$BLOCK_RC" = "2" ] && echo "$BLOCK_OUT" | grep -q "stamp-only commit"; then
+        t_pass "four_dispatch_gate: M1 stamp-only commit blocks when state missing"
+    else
+        t_fail "four_dispatch_gate: M1 stamp-only block (rc=$BLOCK_RC stderr=$BLOCK_OUT)"
+    fi
+
+    # Test M1.2: stamp-only commit + 3 recent dispatches -> allows.
+    _fd_write_stamps "adversarial=60,consistency=120,perf=180"
+    _fd_run 0 "M1 stamp-only commit allows when 3 dispatches recent"
+
+    # Test M1.3: stamp-only commit honors SKIP_REVIEW_HOOK with reason.
+    # Re-stage stamp-only first; the prior _fd_run advanced the test
+    # but didn't unstage, and the prior M1.2 wrote stamps that still
+    # pass the gate -- need missing stamps + SKIP env to exercise SKIP.
+    _fd_unstage
+    _fd_stage_stamp_only
+    rm -f "$FD_STAMPS"
+    SKIP_RC=$(cd "$FD_REPO" && \
+        printf '%s' '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"}}' | \
+        SKIP_REVIEW_HOOK=1 \
+        SKIP_REVIEW_HOOK_REASON="manual override for testing M1 path" \
+        python3 ".claude/hooks/section_commit_gate.py" >/dev/null 2>&1; echo $?)
+    if [ "$SKIP_RC" = "0" ]; then
+        t_pass "four_dispatch_gate: M1 stamp-only honors SKIP_REVIEW_HOOK"
+    else
+        t_fail "four_dispatch_gate: M1 stamp-only SKIP path (rc=$SKIP_RC)"
+    fi
+
+    # Test M4: indented stamp line (3-space Markdown blockquote) detected.
+    rm -f "$FD_STAMPS"
+    _fd_unstage
+    _fd_stage_stamp_only_indented
+    BLOCK_RC=$(cd "$FD_REPO" && \
+        printf '%s' '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"}}' | \
+        python3 ".claude/hooks/section_commit_gate.py" >/dev/null 2>&1; echo $?)
+    if [ "$BLOCK_RC" = "2" ]; then
+        t_pass "four_dispatch_gate: M4 indented stamp line (3-space) is detected"
+    else
+        t_fail "four_dispatch_gate: M4 indented stamp not detected (rc=$BLOCK_RC)"
+    fi
+
+    # Test M2.1: dispatch entries with `<kind>_head` field are written.
+    rm -f "$FD_STAMPS"
+    _fd_unstage
+    PAYLOAD='{"tool_name":"Skill","tool_input":{"skill":"codex-perf-review","prompt":"[review-kind: perf] Target: todo/00-infrastructure/TODO-99-fdgate-fixture.md S1\nPerf angles."}}'
+    (cd "$FD_REPO" && printf '%s' "$PAYLOAD" | \
+        python3 ".claude/hooks/codex_review_completed.py" >/dev/null 2>&1)
+    if python3 -c "
+import json, sys
+s = json.load(open('$FD_STAMPS'))
+e = s.get('$FD_TODO_PATH', {})
+sys.exit(0 if isinstance(e.get('perf_head'), str) and len(e['perf_head']) >= 7 else 1)
+" 2>/dev/null; then
+        t_pass "four_dispatch_gate: M2 PostToolUse records perf_head with HEAD SHA"
+    else
+        t_fail "four_dispatch_gate: M2 perf_head field missing or empty"
+    fi
+
+    # Test M2.2: dispatch HEAD that is NOT an ancestor of current HEAD blocks.
+    rm -f "$FD_STAMPS"
+    _fd_unstage
+    _fd_stage_stamp_only
+    NOW_NS=$(python3 -c 'import time; print(time.time_ns())')
+    cat > "$FD_STAMPS" <<JSON
+{
+  "$FD_TODO_PATH": {
+    "section": "S1",
+    "adversarial": $NOW_NS,
+    "adversarial_head": "deadbeefcafebabe1234567890abcdef00000000",
+    "consistency": $NOW_NS,
+    "consistency_head": "deadbeefcafebabe1234567890abcdef00000000",
+    "perf": $NOW_NS,
+    "perf_head": "deadbeefcafebabe1234567890abcdef00000000"
+  }
+}
+JSON
+    BLOCK_OUT=$(cd "$FD_REPO" && \
+        printf '%s' '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"}}' | \
+        python3 ".claude/hooks/section_commit_gate.py" 2>&1 >/dev/null; true)
+    BLOCK_RC=$(cd "$FD_REPO" && \
+        printf '%s' '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"}}' | \
+        python3 ".claude/hooks/section_commit_gate.py" >/dev/null 2>&1; echo $?)
+    if [ "$BLOCK_RC" = "2" ] && echo "$BLOCK_OUT" | grep -q "cross-branch"; then
+        t_pass "four_dispatch_gate: M2 non-ancestor dispatch HEAD blocks (cross-branch)"
+    else
+        t_fail "four_dispatch_gate: M2 cross-branch block (rc=$BLOCK_RC)" \
+            "stderr: $BLOCK_OUT"
+    fi
+
+    # Test M2.3: dispatch HEAD == current HEAD passes ancestry.
+    CURRENT_HEAD=$(cd "$FD_REPO" && git rev-parse HEAD)
+    cat > "$FD_STAMPS" <<JSON
+{
+  "$FD_TODO_PATH": {
+    "section": "S1",
+    "adversarial": $NOW_NS,
+    "adversarial_head": "$CURRENT_HEAD",
+    "consistency": $NOW_NS,
+    "consistency_head": "$CURRENT_HEAD",
+    "perf": $NOW_NS,
+    "perf_head": "$CURRENT_HEAD"
+  }
+}
+JSON
+    _fd_run 0 "M2 dispatch HEAD == current HEAD passes ancestry"
+
+    # Test M2.4: legacy entry without `<kind>_head` -> TTL-only with WARN.
+    cat > "$FD_STAMPS" <<JSON
+{
+  "$FD_TODO_PATH": {
+    "section": "S1",
+    "adversarial": $NOW_NS,
+    "consistency": $NOW_NS,
+    "perf": $NOW_NS
+  }
+}
+JSON
+    LEG_OUT=$(cd "$FD_REPO" && \
+        printf '%s' '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"}}' | \
+        python3 ".claude/hooks/section_commit_gate.py" 2>&1 >/dev/null; true)
+    LEG_RC=$(cd "$FD_REPO" && \
+        printf '%s' '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"}}' | \
+        python3 ".claude/hooks/section_commit_gate.py" >/dev/null 2>&1; echo $?)
+    if [ "$LEG_RC" = "0" ] && echo "$LEG_OUT" | grep -q "predates the head-binding"; then
+        t_pass "four_dispatch_gate: M2 legacy entry (no head field) passes with WARN"
+    else
+        t_fail "four_dispatch_gate: M2 legacy entry (rc=$LEG_RC, stderr=$LEG_OUT)"
+    fi
+
+    # Test M3: parallel _record_stamp invocations preserve all entries.
+    rm -f "$FD_STAMPS"
+    rm -f "$FD_REPO/.claude/state/last-review-stamps.lock"
+    PIDS=""
+    for KIND in adversarial consistency perf; do
+        case "$KIND" in
+            adversarial) SKILL=codex-adversarial-review-section ;;
+            consistency) SKILL=codex-consistency-audit ;;
+            perf)        SKILL=codex-perf-review ;;
+        esac
+        PAYLOAD=$(printf '{"tool_name":"Skill","tool_input":{"skill":"%s","prompt":"[review-kind: %s] Target: todo/00-infrastructure/TODO-99-fdgate-fixture.md S1\\nReview angles."}}' "$SKILL" "$KIND")
+        (cd "$FD_REPO" && printf '%s' "$PAYLOAD" | \
+            python3 ".claude/hooks/codex_review_completed.py" >/dev/null 2>&1) &
+        PIDS="$PIDS $!"
+    done
+    for P in $PIDS; do wait "$P" 2>/dev/null || true; done
+    if python3 -c "
+import json, sys
+s = json.load(open('$FD_STAMPS'))
+e = s.get('$FD_TODO_PATH', {})
+ok = (
+    isinstance(e.get('adversarial'), int) and
+    isinstance(e.get('consistency'), int) and
+    isinstance(e.get('perf'), int)
+)
+sys.exit(0 if ok else 1)
+" 2>/dev/null; then
+        t_pass "four_dispatch_gate: M3 parallel dispatches all preserved (fcntl.flock)"
+    else
+        t_fail "four_dispatch_gate: M3 parallel race lost an entry"
+    fi
+
+    # Test M5.1: source + stamp + no row flip routes to stamp_only path
+    # and blocks when dispatches missing. Pre-M5 returned not_section.
+    rm -f "$FD_STAMPS"
+    _fd_unstage
+    _fd_stage_source_plus_stamp_no_flip
+    BLOCK_OUT=$(cd "$FD_REPO" && \
+        printf '%s' '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"}}' | \
+        python3 ".claude/hooks/section_commit_gate.py" 2>&1 >/dev/null; true)
+    BLOCK_RC=$(cd "$FD_REPO" && \
+        printf '%s' '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"}}' | \
+        python3 ".claude/hooks/section_commit_gate.py" >/dev/null 2>&1; echo $?)
+    if [ "$BLOCK_RC" = "2" ] && echo "$BLOCK_OUT" | grep -q "stamp-only commit"; then
+        t_pass "four_dispatch_gate: M5 source+stamp+no-flip blocks (mixed-bypass)"
+    else
+        t_fail "four_dispatch_gate: M5 mixed-bypass block (rc=$BLOCK_RC stderr=$BLOCK_OUT)"
+    fi
+
+    # Test M5.2: source + stamp + no row flip + 3 dispatches -> allows.
+    _fd_write_stamps "adversarial=60,consistency=120,perf=180"
+    _fd_run 0 "M5 source+stamp+no-flip allows when 3 dispatches recent"
+
+    rm -rf "$FD_TMP"
 fi
 
 

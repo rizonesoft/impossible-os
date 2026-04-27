@@ -22,16 +22,24 @@ Two events:
 
 Trigger detection (Bash side -- shlex tokenized, argv[0]/argv[1]):
 
-  * `argv[0]` basename or path contains `codex-companion.mjs` (our
-    review skills' canonical wrapper), OR
+  * `argv[0]` basename or path contains `codex-companion.mjs` AND the
+    next positional is a real review subcommand (`review`,
+    `adversarial-review`, `task`) -- NOT a metadata/control subcommand
+    (`status`, `cancel`, `task-worker`, `setup`), OR
   * `argv[0]` is `node` AND `argv[1]` contains `codex-companion.mjs`
-    (the typical `node "/abs/path/to/codex-companion.mjs"` shape), OR
+    AND argv[2] is a real review subcommand (same filter), OR
   * `argv[0]` basename is `codex` AND `argv[1]` is `review` or `e`
     (the bare CLI / exec alias for review).
 
   Substring scan over the full command line was rejected after Codex
   adversarial review caught false positives from `rg codex-companion.mjs`,
   `git grep "codex review"`, and heredoc bodies containing the literal.
+
+  Subcommand filter added 2026-04-27 after a session-lifecycle-hook
+  `codex-companion.mjs status` call falsely registered as a review
+  trigger and blocked subsequent edits. Real review subcommands write
+  output that needs receiving-code-review processing; metadata/control
+  subcommands do not.
 
 Trigger detection (Skill side):
 
@@ -49,6 +57,7 @@ Owner: TODO-08-automation-hardening section 3.
 import hashlib
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -344,12 +353,27 @@ def _segment_is_codex_invocation(seg_tokens: list[str]) -> bool:
         return False
     head = out[0]
     second = out[1] if len(out) > 1 else ""
+    third = out[2] if len(out) > 2 else ""
     head_base = head.rsplit("/", 1)[-1]
 
+    # Real review subcommands. Anything else (status, cancel,
+    # task-worker, setup) is metadata/control and must NOT register
+    # as a review trigger -- that was the false-positive that locked
+    # edits after a session-lifecycle status call (2026-04-27).
+    _COMPANION_REVIEW_SUBCOMMANDS = frozenset({
+        "review", "adversarial-review", "task",
+    })
+
+    def _companion_subcmd_is_review(subcmd: str) -> bool:
+        # Strip any leading flags (e.g. accidental `--` before subcmd).
+        return subcmd in _COMPANION_REVIEW_SUBCOMMANDS
+
     if "codex-companion.mjs" in head_base:
-        return True
+        # Direct: <path>/codex-companion.mjs <subcmd> ...
+        return _companion_subcmd_is_review(second)
     if head_base == "node" and "codex-companion.mjs" in second:
-        return True
+        # Wrapped: node <path>/codex-companion.mjs <subcmd> ...
+        return _companion_subcmd_is_review(third)
 
     if head_base == "codex":
         # Walk past Codex global options to find the real subcommand.
@@ -414,6 +438,275 @@ def _is_codex_bash_trigger(cmd: str) -> bool:
     return False
 
 
+# ----------------------------------------------------------------------
+# Four-dispatch policy state (§5 last-review-stamps.json)
+# ----------------------------------------------------------------------
+#
+# The §5 gate enforces that all three review-todo-section step-8
+# dispatches (adversarial / consistency / perf) ran within 30 min of
+# any commit that adds a `**Verified:**` or `**Quality reviewed:**`
+# stamp to a TODO file. Dead-code dispatch was retired in
+# review-todo-section/SKILL.md on 2026-04-25; this state file tracks
+# the three kinds that survived.
+
+# Skill -> dispatch kind. Only the three step-8 dispatches map here;
+# codex-design-review / codex-fix-review / codex-impact-analysis /
+# codex-test-coverage / codex-review-todo are valid Codex triggers
+# (still recorded in last-codex-review.json) but do not satisfy the
+# four-dispatch gate.
+DISPATCH_KIND_BY_SKILL = {
+    "codex-adversarial-review-section": "adversarial",
+    "codex-consistency-audit": "consistency",
+    "codex-perf-review": "perf",
+}
+
+# Bash-side: the codex-companion.mjs invocation is identical across
+# the three dispatches; only the prompt content differs. SKILL.md
+# step 8 + codex-prompt-template.md require a leading
+# `[review-kind: <kind>]` marker at the start of the prompt. The
+# regex tolerates whitespace and different bracket spellings.
+_REVIEW_KIND_RE = re.compile(
+    r"\[\s*review[-_ ]kind\s*:\s*(adversarial|consistency|perf)\s*\]",
+    re.IGNORECASE,
+)
+
+# TODO path locator: matches `todo/<domain>/TODO-XX-<slug>.md`. First
+# match wins; multiple matches surface a stderr WARN. The regex is
+# anchored on the literal `todo/` prefix so it does not match
+# `~/.claude/projects/.../todo/...` or other unrelated paths.
+_TODO_PATH_RE = re.compile(r"(?<![\w/-])todo/[\w./-]+TODO-\d[\w./-]*\.md")
+
+# Section number locator: `§5`, `§ 5`, `section 5`. Captured for the
+# `section` field in the state entry; not used by the gate.
+_SECTION_RE = re.compile(r"(?:§\s*|section\s+)(\d+)", re.IGNORECASE)
+
+# Self-summary preambles that bias the reviewer toward agreement
+# (CONSENSAGENT ACL-2025). Detected on the first ~10 non-empty lines
+# of the prompt. Emit a stderr WARN; do not block (false positives
+# are too easy to hit on legitimate context lines).
+_SELF_SUMMARY_PATTERNS = [
+    re.compile(r"^\s*I\s+(built|wrote|implemented|made|added|created|fixed)\b", re.IGNORECASE),
+    re.compile(r"^\s*(Summary\s+of\s+changes|What\s+I\s+built|My\s+(implementation|approach|fix|change))", re.IGNORECASE),
+    re.compile(r"^\s*Here\s+(is|'s)\s+what\s+I\s+", re.IGNORECASE),
+]
+
+
+def _bash_prompt_arg(cmd: str) -> str:
+    """Return the prompt argument from a Codex bash invocation.
+
+    Codex companion shapes:
+      node /abs/codex-companion.mjs adversarial-review "<prompt>"
+      codex review "<prompt>"
+      codex e "<prompt>"
+
+    The prompt is the LAST positional shlex token. Returns empty
+    string when the invocation has no detectable prompt arg or when
+    shlex.split fails.
+    """
+    if not isinstance(cmd, str) or not cmd:
+        return ""
+    try:
+        toks = shlex.split(cmd, posix=True, comments=False)
+    except ValueError:
+        return ""
+    # Trim heredoc body / sub-content, segment by control operators,
+    # and pick the segment that's a Codex invocation.
+    segs = _segment_by_separators(toks)
+    for seg in segs:
+        seg = _trim_heredoc_body(seg)
+        if seg and _segment_is_codex_invocation(seg):
+            # Return the last non-flag token. Walking from the end is
+            # cheap and avoids re-doing the wrapper-walk -- the prompt
+            # is always the last positional in our review skills.
+            for tok in reversed(seg):
+                if tok and not tok.startswith("-"):
+                    return tok
+    return ""
+
+
+def _detect_review_kind(skill_name: str, prompt: str) -> str:
+    """Return one of `"adversarial" | "consistency" | "perf" | ""`.
+
+    Skill name takes precedence over prompt marker because the skill
+    invocation is unambiguous. Falls back to the marker when the
+    trigger is a raw Bash dispatch.
+    """
+    if skill_name in DISPATCH_KIND_BY_SKILL:
+        return DISPATCH_KIND_BY_SKILL[skill_name]
+    m = _REVIEW_KIND_RE.search(prompt)
+    return m.group(1).lower() if m else ""
+
+
+def _detect_todo_path(prompt: str, root: Path) -> tuple[str, str]:
+    """Extract (todo_path, section) from the prompt. Returns ("", "")
+    when no match. WARNs on stderr when multiple distinct TODO paths
+    appear -- the agent's prompt is then ambiguous; first match wins
+    so the dispatch still counts for SOMETHING and the gate exit-2
+    catches the remaining gap.
+    """
+    if not prompt:
+        return ("", "")
+    matches = _TODO_PATH_RE.findall(prompt)
+    if not matches:
+        return ("", "")
+    # Normalize: strip any trailing punctuation, dedup preserving order.
+    seen: list[str] = []
+    for m in matches:
+        m_clean = m.rstrip(").,;:")
+        if m_clean not in seen:
+            seen.append(m_clean)
+    chosen = seen[0]
+    if len(seen) > 1:
+        sys.stderr.write(
+            f"[review-stamps] WARN: prompt names multiple TODO paths "
+            f"{seen[:3]}; recording dispatch against {chosen!r} only. "
+            f"Reviewer prompts should target one TODO file.\n"
+        )
+    # Validate the path actually resolves under the repo root. If not,
+    # still record it (the agent may be referring to an under-development
+    # TODO) but warn.
+    abs_path = root / chosen
+    if not abs_path.exists():
+        sys.stderr.write(
+            f"[review-stamps] WARN: prompt names TODO path {chosen!r} "
+            f"that does not exist on disk. Recording anyway; the gate "
+            f"will not match a non-existent path.\n"
+        )
+    section = ""
+    sm = _SECTION_RE.search(prompt)
+    if sm:
+        section = f"§{sm.group(1)}"
+    return (chosen, section)
+
+
+def _scan_self_summary(prompt: str) -> str:
+    """Return the first matched preamble line, or empty string."""
+    if not prompt:
+        return ""
+    # Inspect the first 10 non-blank lines (the preamble window).
+    lines = [ln for ln in prompt.splitlines() if ln.strip()][:10]
+    for ln in lines:
+        for pat in _SELF_SUMMARY_PATTERNS:
+            if pat.search(ln):
+                return ln.strip()[:200]
+    return ""
+
+
+def _stamps_path(root: Path) -> Path:
+    return root / ".claude" / "state" / "last-review-stamps.json"
+
+
+def _stamps_lock_path(root: Path) -> Path:
+    return root / ".claude" / "state" / "last-review-stamps.lock"
+
+
+def _record_stamp(
+    root: Path,
+    todo_path: str,
+    section: str,
+    kind: str,
+    now_ns: int,
+    dispatch_head_sha: str = "",
+) -> None:
+    """Update last-review-stamps.json[todo_path] with `kind` timestamp
+    and per-kind `dispatch_head_sha`.
+
+    Reads existing state; merges; atomic-writes. Fail-open on any
+    error -- this is a tracking feature, never a block.
+
+    Codex M3 (post-impl): the read-merge-write sequence is now
+    serialized via fcntl.flock() on a sibling lockfile. Without the
+    lock, parallel PostToolUse fires (e.g. `task --background`
+    dispatches per `feedback_codex_background_fallback`) raced on
+    the same JSON: both processes read the prior state, each merged
+    only their own kind, last writer wins. That silently dropped one
+    of the three required dispatches and surfaced as a missing-kind
+    BLOCK at commit time.
+
+    Codex M2 (post-impl): the per-kind `<kind>_head` field is the
+    HEAD SHA at dispatch time. The §4 gate verifies it's an ancestor
+    of the current HEAD before accepting the stamp; this prevents
+    cross-branch reuse of dispatch evidence.
+    """
+    if not todo_path or kind not in ("adversarial", "consistency", "perf"):
+        return
+    path = _stamps_path(root)
+    lock_path = _stamps_lock_path(root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    # fcntl is Unix-only. On platforms without it, fall back to the
+    # legacy lock-free path (the WSL2 dev host always has fcntl, so
+    # this is a safety net for portability, not a hot path).
+    try:
+        import fcntl
+    except ImportError:
+        fcntl = None  # type: ignore[assignment]
+
+    lock_fd = None
+    if fcntl is not None:
+        try:
+            # O_RDWR | O_CREAT lets us own the lock without truncating
+            # any state another process is writing.
+            lock_fd = os.open(
+                str(lock_path),
+                os.O_RDWR | os.O_CREAT,
+                0o644,
+            )
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        except Exception:
+            # Lock acquisition failed (filesystem error, etc). Proceed
+            # without the lock -- the prior race window remains, but
+            # losing the stamp is better than crashing the hook.
+            if lock_fd is not None:
+                try:
+                    os.close(lock_fd)
+                except Exception:
+                    pass
+                lock_fd = None
+
+    try:
+        state: dict = {}
+        if path.exists():
+            try:
+                state = json.loads(path.read_text(encoding="utf-8"))
+                if not isinstance(state, dict):
+                    state = {}
+            except Exception:
+                state = {}
+        entry = state.get(todo_path)
+        if not isinstance(entry, dict):
+            entry = {
+                "section": section or "",
+                "adversarial": None,
+                "consistency": None,
+                "perf": None,
+            }
+        # Update section if we have a fresh one (most recent dispatch
+        # presumably names the section in flight; older entries may
+        # have been section-less).
+        if section:
+            entry["section"] = section
+        entry[kind] = now_ns
+        if dispatch_head_sha:
+            entry[f"{kind}_head"] = dispatch_head_sha
+        # Preserve any unexpected keys but ensure the three canonical
+        # ones exist so the gate's lookup is total.
+        for k in ("adversarial", "consistency", "perf"):
+            entry.setdefault(k, None)
+        state[todo_path] = entry
+        _write_atomic(path, state)
+    finally:
+        if lock_fd is not None and fcntl is not None:
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            except Exception:
+                pass
+            try:
+                os.close(lock_fd)
+            except Exception:
+                pass
+
+
 def _skill_name(tool_input: dict) -> str:
     """Return the invoked skill name. Read both `skill` and `name`
     keys per the existing tolerant pattern (section_review_required
@@ -448,6 +741,33 @@ def _classify(payload: dict) -> tuple[str, str]:
         if skill in CODEX_TRIGGER_SKILLS:
             return ("trigger", f"Skill({skill})")
         return ("", "")
+    return ("", "")
+
+
+def _extract_prompt_and_skill(payload: dict) -> tuple[str, str]:
+    """Return (prompt_text, skill_name) for §5 dispatch attribution.
+
+    For Bash triggers the prompt is the last positional shlex token
+    of the Codex invocation. For Skill triggers we read the skill
+    name plus a best-effort prompt extraction from common input keys
+    (`prompt`, `args`, `input`, `query`) -- the harness varies and
+    we want defensive coverage so a future Skill input shape doesn't
+    silently drop the prompt-marker fallback.
+    """
+    tool_name = payload.get("tool_name", "")
+    tool_input = payload.get("tool_input") or {}
+    if tool_name == "Bash":
+        return (_bash_prompt_arg(tool_input.get("command", "")), "")
+    if tool_name == "Skill":
+        skill = _skill_name(tool_input)
+        # Skill input field varies. Concatenate the obvious string
+        # fields so the marker / TODO-path scan has something to chew.
+        parts: list[str] = []
+        for key in ("prompt", "args", "input", "query", "message"):
+            val = tool_input.get(key)
+            if isinstance(val, str) and val:
+                parts.append(val)
+        return ("\n".join(parts), skill)
     return ("", "")
 
 
@@ -542,17 +862,43 @@ def main() -> int:
         # content the reviewer saw.
         trigger_files = _staged_source_files(root)
         trigger_blobs = _staged_source_blobs(root, trigger_files)
+        head_at_dispatch = _head_sha(root)
         state = {
             "timestamp_ns": now_ns,
             "trigger": label,
             "trigger_files": trigger_files,
             "trigger_blobs": trigger_blobs,
-            "head_sha": _head_sha(root),
+            "head_sha": head_at_dispatch,
             "tree_hash": _tree_hash(root),
             "received": False,
             "received_timestamp_ns": None,
         }
         _write_atomic(state_path, state)
+        # §5 four-dispatch tracking. Best-effort: extract prompt and
+        # detect (kind, todo_path). Both must resolve for the dispatch
+        # to count toward the four-dispatch gate. Failures are silent
+        # except for explicit WARN paths inside the helpers.
+        prompt, skill_for_kind = _extract_prompt_and_skill(payload)
+        # No-self-summary detector (§5 item 6). WARN only -- false
+        # positives on legitimate context lines are too easy to hit
+        # for this to be a block.
+        preamble = _scan_self_summary(prompt)
+        if preamble:
+            sys.stderr.write(
+                f"[review-stamps] WARN: Codex prompt opens with a "
+                f"first-person / summary preamble: {preamble!r}. "
+                f"Reviewer prompts should NOT prepend the implementor's "
+                f"narrative -- this biases the reviewer toward agreement "
+                f"(CONSENSAGENT ACL-2025). Use the unbiased template at "
+                f".claude/skills/review-todo-section/codex-prompt-template.md.\n"
+            )
+        review_kind = _detect_review_kind(skill_for_kind, prompt)
+        todo_path, section = _detect_todo_path(prompt, root)
+        if review_kind and todo_path:
+            _record_stamp(
+                root, todo_path, section, review_kind, now_ns,
+                dispatch_head_sha=head_at_dispatch,
+            )
         return 0
     # kind == "receive"
     state = _load_state(state_path)

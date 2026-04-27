@@ -35,7 +35,7 @@ description: Deep quality review of an implemented TODO section -- industry stan
 4. **Codex comprehensive review** (MANDATORY -- NO EXCEPTIONS) -- single dispatch covering performance, consistency, AND dead code. If Codex responds with "no diff available", re-dispatch with actual file content (read 100-200 relevant lines). A shallow response requires re-prompting with specific angles. This step CANNOT be replaced with self-review.
 
    ```bash
-   node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<comprehensive prompt>"
+   node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<comprehensive prompt>"
    ```
 
    **CRITICAL -- Performance angles (mandatory in every prompt):**

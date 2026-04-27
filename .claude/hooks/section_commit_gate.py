@@ -125,7 +125,26 @@ def _looks_like_git_commit_screen(cmd: str) -> bool:
 # ----------------------------------------------------------------------
 
 EVIDENCE_TTL_SECONDS = 30 * 60  # 30 minutes for build + review
+FOUR_DISPATCH_TTL_SECONDS = 30 * 60  # 30 minutes per the §5 spec
 SKIP_REASON_MIN_LEN = 12
+
+# Dispatch kinds tracked in last-review-stamps.json (§5). Dead-code
+# was retired in review-todo-section/SKILL.md on 2026-04-25; the
+# canonical step-8 dispatch set is three (adversarial / consistency
+# / perf). The TODO-08 §5 text predates the retirement and uses a
+# "FOUR" framing; this implementation reflects current SKILL.md.
+_DISPATCH_KINDS = ("adversarial", "consistency", "perf")
+
+# Stamp lines whose presence in the staged diff triggers the
+# four-dispatch check. `^\+\s{0,3}>` matches ADDED stamp lines with
+# 0-3 leading spaces of valid Markdown blockquote indent; unchanged
+# context lines starting with `>` (no leading `+`) won't trigger.
+# Codex M4 (review-pipeline post-impl): regex without leading-space
+# tolerance was evadable -- `+   > **Verified:**` is a valid Markdown
+# stamp shape that the gate would skip.
+_STAMP_ADDED_RE = re.compile(
+    r"^\+\s{0,3}>\s*\*\*(Verified|Quality reviewed):\*\*",
+)
 
 # Wrapper / env tokens we walk past to find the real `git` command.
 # Hardcoded (round-7 perf fix) instead of importing from crc to avoid
@@ -615,10 +634,18 @@ def _staged_todo_files(root: Path) -> list[str]:
 
 
 def _detect_signature(root: Path) -> tuple[str, list[str], list[str]]:
-    """Returns (state, staged_source_files, flipped_todo_files) where
+    """Returns (state, staged_source_files, flipped_or_stamped_todo_files) where
     state is one of:
-      "section"     -- definitely a section commit (block on missing evidence)
-      "not_section" -- definitely not a section commit (allow)
+      "section"     -- source + Implementation Order row flip; full evidence
+                       (build + Codex/receiving + four-dispatch-if-stamped)
+      "stamp_only"  -- TODO file(s) staged with ADDED stamp line(s) but no
+                       source change. Codex M1 (post-impl): a separate
+                       `stamp:` commit (the user's actual workflow per
+                       git log) bypassed the four-dispatch check entirely
+                       under the original §4 signature; this state path
+                       runs ONLY the four-dispatch check (no build /
+                       review evidence, since no source was reviewed).
+      "not_section" -- not a section / stamp commit (allow)
       "unknown"     -- could not determine (Codex H2: in --git-hook-mode
                        this fails CLOSED if the index is non-empty,
                        because the load-bearing layer cannot fail open
@@ -637,16 +664,45 @@ def _detect_signature(root: Path) -> tuple[str, list[str], list[str]]:
         # against staging that has no source / no TODO. Cannot be a
         # section commit by definition.
         return ("not_section", src, [])
-    if not src or not todos:
-        # One of the two halves is empty. Either way, no section
-        # signature; skip the more-expensive flip detection.
+    if src and todos:
+        flipped, todo_diff_ok = _impl_order_flips_with_status(root, todos)
+        if flipped:
+            # Section signature: caller pulls all_staged_todos via
+            # _staged_todo_files() to scan stamps in non-flipped TODOs
+            # too (Codex M5 post-impl: cross-TODO stamp piggyback).
+            return ("section", src, flipped)
+        if not todo_diff_ok:
+            # Some per-TODO diff failed to read. Cannot rule out a flip.
+            return ("unknown", src, [])
+        # Codex M5 (post-impl): source + TODO without row flip but
+        # WITH added stamps was a real bypass under the original
+        # signature (`not_section` allowed it). Detect stamp adds and
+        # route to stamp_only when present. Source files staged here
+        # are context (e.g. doc/test/skill changes alongside a stamp);
+        # the four-dispatch check fires for the stamped TODOs.
+        try:
+            stamped = _stamped_todos(root, todos)
+        except Exception:
+            return ("unknown", src, [])
+        if stamped:
+            return ("stamp_only", src, stamped)
+        # Source + TODO without flip and without stamps: not a
+        # section/stamp commit. Allow (prior behavior).
         return ("not_section", src, [])
-    flipped, todo_diff_ok = _impl_order_flips_with_status(root, todos)
-    if flipped:
-        return ("section", src, flipped)
-    if not todo_diff_ok:
-        # Some per-TODO diff failed to read. Cannot rule out a flip.
-        return ("unknown", src, [])
+    if todos and not src:
+        # Stamp-only path (Codex M1 post-impl). Detect ADDED stamp
+        # lines via the same _stamped_todos used by the four-dispatch
+        # check. Per-file diff failure here is treated as "unknown"
+        # only when the index is non-empty (caller handles that mode).
+        try:
+            stamped = _stamped_todos(root, todos)
+        except Exception:
+            return ("unknown", src, [])
+        if stamped:
+            return ("stamp_only", src, stamped)
+        return ("not_section", src, [])
+    # src and not todos: pure source change without TODO update; not a
+    # section commit per the §4 contract.
     return ("not_section", src, [])
 
 
@@ -821,6 +877,197 @@ def _review_evidence(root: Path, staged_src: list[str]) -> tuple[bool, str]:
                        f"current staged blob SHA differs (post-review edit). "
                        f"Re-run the review against the new staging."
                        + (f" (+{len(mismatched)-5} more)" if len(mismatched) > 5 else ""))
+    return (True, "")
+
+
+# ----------------------------------------------------------------------
+# §5 Four-dispatch policy: review-todo-section step-8 enforcement
+# ----------------------------------------------------------------------
+
+
+def _stamped_todos(root: Path, todo_files: list[str]) -> list[str]:
+    """Return the subset of `todo_files` whose staged diff ADDS a
+    `**Verified:**` or `**Quality reviewed:**` stamp line. The
+    four-dispatch check fires only when at least one such file is
+    present in the staged diff.
+    """
+    out: list[str] = []
+    for path in todo_files:
+        try:
+            diff = subprocess.check_output(
+                ["git", "diff", "--cached", "-U0", "--", path],
+                cwd=str(root), text=True, timeout=5,
+                stderr=subprocess.DEVNULL,
+            )
+        except Exception:
+            # Per-file diff failure: be conservative -- skip this
+            # file. The signature-detection layer's "unknown" path
+            # would have already routed this case via `todo_diff_ok`.
+            continue
+        for line in diff.splitlines():
+            if _STAMP_ADDED_RE.match(line):
+                out.append(path)
+                break
+    return out
+
+
+def _git_is_ancestor(root: Path, sha: str, descendant_sha: str) -> bool:
+    """True if `sha` is an ancestor of (or equal to) `descendant_sha`.
+
+    Codex M2 (post-impl): cross-branch stamp reuse defense. When a
+    dispatch is recorded against branch A's HEAD, switching to branch
+    B and stamping there must not satisfy the gate unless A's HEAD is
+    in B's ancestor chain (i.e., the work is part of B's history).
+
+    Returns False if either SHA is missing/empty, if the git command
+    fails (e.g. SHA no longer exists after a rebase), or if `git
+    merge-base --is-ancestor` reports non-zero. Callers treat False
+    as "binding does not hold" for the failing kind.
+    """
+    if not sha or not descendant_sha:
+        return False
+    if sha == descendant_sha:
+        return True
+    try:
+        result = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", sha, descendant_sha],
+            cwd=str(root), timeout=3,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        return False
+    return result.returncode == 0
+
+
+def _four_dispatch_evidence(
+    root: Path, stamped_todos: list[str]
+) -> tuple[bool, str]:
+    """For each TODO whose staged diff adds a stamp, require all three
+    dispatch entries (adversarial / consistency / perf) in
+    last-review-stamps.json AND each entry's ts_ns within
+    FOUR_DISPATCH_TTL_SECONDS of now AND -- when the dispatch entry
+    carries a `<kind>_head` field (Codex M2 post-impl) -- that head
+    SHA is an ancestor of (or equal to) the current HEAD.
+
+    Returns (ok, error_message). Empty `stamped_todos` -> (True, "")
+    (the four-dispatch check does not fire on implementation commits;
+    it only gates stamp-add commits, i.e. review / verify section
+    completions).
+
+    Missing state file or non-dict shape -> fail with an actionable
+    message naming the missing dispatches for ALL stamped todos
+    (collapsed to one message). Per-todo missing dispatches are
+    enumerated in the message so the agent knows exactly what to
+    re-run.
+
+    Backwards compatibility: state entries written before the M2 fix
+    have `<kind>` (ts_ns) but no `<kind>_head` field. These pass the
+    ancestry check (TTL-only) and emit a one-shot stderr WARN so
+    legacy stamps remain usable during the transition window.
+    """
+    if not stamped_todos:
+        return (True, "")
+    stamps_path = root / ".claude" / "state" / "last-review-stamps.json"
+    if not stamps_path.exists():
+        joined = ", ".join(stamped_todos[:3])
+        more = (
+            f" (+{len(stamped_todos)-3} more)"
+            if len(stamped_todos) > 3 else ""
+        )
+        return (False, (
+            f".claude/state/last-review-stamps.json missing -- no "
+            f"review-todo-section step-8 dispatches recorded yet for "
+            f"{joined}{more}. Run `codex-adversarial-review-section`, "
+            f"`codex-consistency-audit`, AND `codex-perf-review` (each "
+            f"with the [review-kind: <kind>] marker AND the TODO path "
+            f"in the prompt) before stamping."
+        ))
+    try:
+        state = json.loads(stamps_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return (False, f"last-review-stamps.json malformed ({exc})")
+    if not isinstance(state, dict):
+        return (False, "last-review-stamps.json is not a JSON object")
+
+    now_ns = time.time_ns()
+    cutoff_ns = now_ns - FOUR_DISPATCH_TTL_SECONDS * 1_000_000_000
+
+    # Resolve current HEAD once for the ancestry check (Codex M2).
+    current_head = ""
+    try:
+        current_head = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=str(root),
+            text=True, timeout=2, stderr=subprocess.DEVNULL,
+        ).strip()
+    except Exception:
+        pass
+
+    legacy_warned = False
+    issues: list[str] = []
+    for todo in stamped_todos:
+        entry = state.get(todo)
+        if not isinstance(entry, dict):
+            issues.append(
+                f"{todo}: no dispatch entries recorded -- run all three "
+                f"dispatches with the TODO path in the prompt"
+            )
+            continue
+        missing: list[str] = []
+        stale: list[str] = []
+        cross_branch: list[str] = []
+        for kind in _DISPATCH_KINDS:
+            ts = entry.get(kind)
+            if not isinstance(ts, int) or ts <= 0:
+                missing.append(kind)
+                continue
+            if ts < cutoff_ns:
+                age_min = (now_ns - ts) / 1e9 / 60
+                stale.append(f"{kind} ({age_min:.0f} min old)")
+                continue
+            # Ancestry check (Codex M2): per-kind dispatch HEAD must
+            # be reachable from the current HEAD. Legacy entries (no
+            # `<kind>_head`) pass with a one-shot WARN.
+            disp_head = entry.get(f"{kind}_head")
+            if disp_head and current_head:
+                if not _git_is_ancestor(root, disp_head, current_head):
+                    cross_branch.append(
+                        f"{kind} (dispatch_head {disp_head[:10]} not ancestor of HEAD {current_head[:10]})"
+                    )
+                    continue
+            elif current_head and not disp_head and not legacy_warned:
+                sys.stderr.write(
+                    f"[section-commit-gate] WARN: {todo} {kind} dispatch "
+                    f"entry predates the head-binding fix (no `{kind}_head` "
+                    f"field). Allowing on TTL alone for this commit; future "
+                    f"dispatches will record the binding.\n"
+                )
+                legacy_warned = True
+        if missing or stale or cross_branch:
+            parts: list[str] = []
+            if missing:
+                parts.append(f"missing: {', '.join(missing)}")
+            if stale:
+                parts.append(
+                    f"stale (>{FOUR_DISPATCH_TTL_SECONDS // 60} min): "
+                    f"{', '.join(stale)}"
+                )
+            if cross_branch:
+                parts.append(
+                    f"cross-branch (not ancestor of HEAD): {', '.join(cross_branch)}"
+                )
+            issues.append(f"{todo}: {'; '.join(parts)}")
+
+    if issues:
+        joined = " | ".join(issues[:5])
+        more = f" (+{len(issues)-5} more)" if len(issues) > 5 else ""
+        return (False, (
+            f"review-todo-section step-8 four-dispatch policy violated. "
+            f"Stamps added without all three dispatches recorded within "
+            f"the last {FOUR_DISPATCH_TTL_SECONDS // 60} min: {joined}{more}. "
+            f"Re-run the missing dispatches; each prompt MUST include "
+            f"`[review-kind: adversarial|consistency|perf]` and the "
+            f"TODO path so the §3 PostToolUse hook can attribute it."
+        ))
     return (True, "")
 
 
@@ -1066,6 +1313,61 @@ def _evaluate(root: Path, mode: str) -> int:
             return 2
         return 0
 
+    if sig_state == "stamp_only":
+        # Codex M1 (post-impl): stamp-only commits (the user's
+        # `stamp: TODO-XX §N` workflow) trigger ONLY the four-dispatch
+        # check. No source was reviewed, so build/review evidence
+        # is not applicable. SKIP env vars still bypass.
+        if skip_req and skip_reason:
+            head = ""
+            try:
+                head = subprocess.check_output(
+                    ["git", "rev-parse", "HEAD"], cwd=str(root),
+                    text=True, timeout=2, stderr=subprocess.DEVNULL,
+                ).strip()
+            except Exception:
+                pass
+            record = {
+                "timestamp_ns": time.time_ns(),
+                "mode": mode,
+                "head_sha": head,
+                "staged_sources": staged_src,
+                "stamped_todos": flipped,  # repurposed slot: stamped TODOs
+                "kind": "stamp_only",
+                "reason": skip_reason,
+            }
+            if not _skip_record_append(record, _skip_log_path(root)):
+                sys.stderr.write(
+                    "[section-commit-gate] BLOCK -- SKIP audit write to "
+                    ".claude/state/skip-log.jsonl FAILED. The opt-out path "
+                    "requires a durable paper trail; refusing the commit.\n"
+                )
+                return 2
+            sys.stderr.write(
+                f"[section-commit-gate] SKIP allowed (stamp_only) -- "
+                f"reason: {skip_reason}\n"
+                f"[section-commit-gate]   logged to .claude/state/skip-log.jsonl.\n"
+            )
+            return 0
+        fourd_ok, fourd_err = _four_dispatch_evidence(root, flipped)
+        if fourd_ok:
+            return 0
+        head = ""
+        try:
+            head = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=str(root),
+                text=True, timeout=2, stderr=subprocess.DEVNULL,
+            ).strip()
+        except Exception:
+            pass
+        _emit_block(
+            f"stamp-only commit detected on {flipped[0] if flipped else '(?)'} "
+            f"but four-dispatch evidence is incomplete",
+            [f"four-dispatch evidence: {fourd_err}"],
+            head=head,
+        )
+        return 2
+
     # Real section commit. From here on, missing/malformed evidence
     # fails CLOSED.
     if skip_req and skip_reason:
@@ -1121,13 +1423,23 @@ def _evaluate(root: Path, mode: str) -> int:
     # Evidence checks (Codex H2 fail-closed scope).
     build_ok, build_err = _build_evidence(root, staged_src)
     review_ok, review_err = _review_evidence(root, staged_src)
-    if build_ok and review_ok:
+    # §5 four-dispatch check fires for any TODO file in the staged
+    # diff that ADDS a stamp line, NOT just the section-flipping ones.
+    # Codex M5 (post-impl): scanning only `flipped` missed cross-TODO
+    # piggyback stamps (commit flips TODO-A while adding a stamp to
+    # TODO-B; B's dispatches were never verified).
+    all_staged_todos = _staged_todo_files(root)
+    stamped = _stamped_todos(root, all_staged_todos)
+    fourd_ok, fourd_err = _four_dispatch_evidence(root, stamped)
+    if build_ok and review_ok and fourd_ok:
         return 0  # full evidence; commit allowed
     missing = []
     if not build_ok:
         missing.append(f"build evidence: {build_err}")
     if not review_ok:
         missing.append(f"Codex/receiving evidence: {review_err}")
+    if not fourd_ok:
+        missing.append(f"four-dispatch evidence: {fourd_err}")
     head = ""
     try:
         head = subprocess.check_output(

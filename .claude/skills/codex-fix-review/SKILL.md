@@ -84,7 +84,7 @@ description: Fix all findings from a Codex adversarial review, then re-run the r
 ## Review Command
 
 ```bash
-node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<focus prompt>"
+node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<focus prompt>"
 ```
 
 Run in background for reviews touching > 3 files:

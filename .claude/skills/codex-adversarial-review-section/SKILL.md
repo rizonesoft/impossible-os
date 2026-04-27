@@ -35,7 +35,7 @@ description: Run adversarial code review for one implemented TODO section, fix f
 3. Dispatch adversarial review via the Codex plugin.
    - Command:
      ```bash
-     node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<focus prompt>"
+     node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<focus prompt>"
      ```
    - Include the exact file paths and line ranges in the focus prompt.
    - List ALL adversarial angles from step 2 in the prompt -- do not omit any.

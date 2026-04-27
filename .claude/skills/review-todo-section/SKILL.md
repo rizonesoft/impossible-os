@@ -28,8 +28,10 @@ description: Full review of a TODO section -- adversarial Codex, consistency, pe
 
 5. **MANDATORY Codex adversarial review** -- dispatch to Codex. No exceptions.
    ```bash
-   node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<prompt>"
+   node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<prompt>"
    ```
+   **Prompt shape:** start with `[review-kind: adversarial]` and include the TODO path (`todo/<domain>/TODO-XX-<slug>.md`) + `§<N>`. The §3 PostToolUse hook (`codex_review_completed.py`) records this dispatch to `.claude/state/last-review-stamps.json` keyed by TODO path. Without the marker AND the path, the §4 commit gate cannot attribute the dispatch and the four-dispatch evidence check (step 16 stamp commit) refuses the commit. Use [`codex-prompt-template.md`](codex-prompt-template.md) (adversarial section); do NOT prepend implementor narrative -- the hook WARNs on first-person preambles per [CONSENSAGENT ACL-2025](https://aclanthology.org/2025.findings-acl.1141/).
+
    **Mandatory angles:** integer overflow, buffer overread, NULL deref, SMP races, resource leaks, ABI mismatch, bounds on untrusted data. The PostToolUse hook fires `receiving-code-review` reminder; follow it. Triage findings -> fix valid Critical/High/Medium, reject false positives with code evidence, accept out-of-scope with domain-qualified XREF.
 6. **Fix adversarial findings** -- fix all valid Critical/High/Medium. Rebuild.
 
@@ -48,19 +50,21 @@ description: Full review of a TODO section -- adversarial Codex, consistency, pe
 
    **8a. Consistency dispatch.** Invoke `codex-consistency-audit` via the plugin:
    ```bash
-   node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<consistency prompt>"
+   node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<consistency prompt>"
    ```
-   Angles: struct layout must match byte-for-byte across kernel + bootloader mirrors, constants defined in one place (no silent duplication with drift potential), API contracts (signature + error-code semantics match consumer expectations), ABI schemas (NVRAM variable name + GUID + attrs + size match producer/consumer), SSDT row ↔ function ↔ registration consistency, Win32 vs NT semantics, same narrowing / truncation / padding patterns applied uniformly across cross-file changes.
+   **Prompt shape:** start with `[review-kind: consistency]` plus the TODO path + `§<N>`. Use [`codex-prompt-template.md`](codex-prompt-template.md) (consistency section). Angles: struct layout must match byte-for-byte across kernel + bootloader mirrors, constants defined in one place (no silent duplication with drift potential), API contracts (signature + error-code semantics match consumer expectations), ABI schemas (NVRAM variable name + GUID + attrs + size match producer/consumer), SSDT row ↔ function ↔ registration consistency, Win32 vs NT semantics, same narrowing / truncation / padding patterns applied uniformly across cross-file changes.
 
    **8b. Performance dispatch.** Invoke `codex-perf-review` via the plugin:
    ```bash
-   node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<perf prompt>"
+   node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<perf prompt>"
    ```
-   Angles: allocations in hot paths / ISR contexts, O(n²) or worse on unbounded inputs, spinlock hold times spanning I/O or serial writes, byte-at-a-time operations that should be memcpy'd, branch-misprediction hazards on hot paths, cache-line sharing across per-CPU state, inline-asm barriers placed conservatively vs required.
+   **Prompt shape:** start with `[review-kind: perf]` plus the TODO path + `§<N>`. Use [`codex-prompt-template.md`](codex-prompt-template.md) (perf section). Angles: allocations in hot paths / ISR contexts, O(n²) or worse on unbounded inputs, spinlock hold times spanning I/O or serial writes, byte-at-a-time operations that should be memcpy'd, branch-misprediction hazards on hot paths, cache-line sharing across per-CPU state, inline-asm barriers placed conservatively vs required.
 
    Each dispatch fires the PostToolUse `receiving-code-review` reminder; follow it on every finding from every dispatch.
 
-   **Rationale for two dispatches instead of one combined.** The one-dispatch combined prompt was valid until ~2026-04-24; observed failure mode was that Codex would deep-dive whichever angle had the most text in the prompt and skim the others. Focused per-angle dispatches give each one its own attention budget, lower the probability of missed findings, and make `Codex 3x` (adversarial + consistency + perf) the scannable baseline counter in the Quality reviewed stamp.
+   **State-file mechanism (TODO-08 §5):** after dispatching each of the three reviews (step 5 adversarial + 8a consistency + 8b perf), the §3 PostToolUse hook records the dispatch into `.claude/state/last-review-stamps.json` keyed by TODO path with a per-kind ts_ns. The §4 commit gate refuses the section-commit (the one that adds the `**Verified:**` / `**Quality reviewed:**` stamp) until all three entries are present AND within the last 30 minutes for that TODO path. There is no "two is enough" or "three is overkill" fallback -- the gate enumerates the missing kinds in its BLOCK message. **The marker `[review-kind: <kind>]` and the TODO path MUST appear in every dispatch prompt** or the hook cannot attribute the dispatch and the gate treats it as missing.
+
+   **Rationale for separate dispatches instead of one combined.** The one-dispatch combined prompt was valid until ~2026-04-24; observed failure mode was that Codex would deep-dive whichever angle had the most text in the prompt and skim the others. Focused per-angle dispatches give each one its own attention budget, lower the probability of missed findings, and make `Codex 3x` (adversarial + consistency + perf) the scannable baseline counter in the Quality reviewed stamp.
 
 9. **Industry standards + Win11/Linux parity** -- spec compliance, concrete function/file references.
 
@@ -102,7 +106,7 @@ description: Full review of a TODO section -- adversarial Codex, consistency, pe
 
    If any trigger fires, dispatch a focused re-adversarial scoped to ONLY the fix diff:
    ```bash
-   node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<re-adversarial prompt>"
+   node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<re-adversarial prompt>"
    ```
    **Prompt scope:** the diff between the pre-fix and post-fix tree (`git diff <pre-fix-sha>..HEAD -- <files>`). Angles: regressions introduced by the fixes themselves, new races opened by lock-order changes, new NULL paths from added error handling, new resource leaks from added early returns, new ABI drift from struct/enum touches.
    The PostToolUse hook fires `receiving-code-review` reminder; follow it. Findings -> verify, fix, build. Track in stamp as `Codex Nx` (incrementing the dispatch count by 1; add `re-adversarial` to the `<kinds>` list).

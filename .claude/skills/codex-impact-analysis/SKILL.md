@@ -23,7 +23,7 @@ description: Codex-driven dependency impact analysis. Before changing a function
 
 2. **Dispatch to Codex plugin:**
    ```bash
-   node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<impact analysis prompt>"
+   node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<impact analysis prompt>"
    ```
 
 3. **Triage findings** -- the PostToolUse hook fires `receiving-code-review` reminder; follow it. **Impact-analysis false-positive watch:** Codex hallucinates dependencies in `.asm` files that don't actually reference the symbol/offset; "no callers found" is a hypothesis to verify with grep, not a guarantee; "safe to change" claims need spot-checked riskiest call sites. A missed dependency here becomes a runtime crash.

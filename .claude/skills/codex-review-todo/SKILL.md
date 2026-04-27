@@ -27,7 +27,7 @@ description: Run a Codex adversarial review against all implemented sections of 
    - Every cross-section dependency (e.g., "§5 depends on §3's lock being held")
 4. **Run the Codex adversarial review** via:
    ```bash
-   node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<focus prompt>"
+   node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<focus prompt>"
    ```
    Run in background for large reviews (> 3 sections).
 5. **Collect and present findings** verbatim from Codex output.

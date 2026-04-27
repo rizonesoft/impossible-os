@@ -25,7 +25,7 @@ description: Codex-driven cross-file consistency audit. Verifies that constants,
 
 2. **Dispatch to Codex plugin:**
    ```bash
-   node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<consistency prompt>"
+   node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<consistency prompt>"
    ```
 
 3. **Triage findings** -- the PostToolUse hook fires `receiving-code-review` reminder; follow it. **Consistency-audit false-positive watch:** Codex misreads padding and packed/aligned attributes when comparing `.asm` offsets to C struct layouts; flags `#define` drift between files when the drift is deliberately scoped (kernel constant vs. bootloader constant); demands static asserts for invariants that no cross-file code depends on. Open both sides of every claimed mismatch yourself before fixing.

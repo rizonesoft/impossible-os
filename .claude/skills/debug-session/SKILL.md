@@ -119,7 +119,7 @@ REVIEW ANGLES -- cover ALL of these:
 
 Dispatch it:
 ```bash
-node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<prompt above>"
+node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<prompt above>"
 ```
 
 **Do not write code until the adversarial review responds.**

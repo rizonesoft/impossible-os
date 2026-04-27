@@ -335,7 +335,7 @@ For each actionable finding, in ranked order:
     - After each root-cause fix (or each coherent batch of related fixes), dispatch a Codex adversarial review before committing. This catches the "plausible-looking fix that doesn't actually close the root cause" case, which has happened before.
     - Dispatch with:
       ```bash
-      node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<prompt naming the finding, the root cause, the fix, and the expected log signal that confirms the fix>"
+      node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<prompt naming the finding, the root cause, the fix, and the expected log signal that confirms the fix>"
       ```
     - **Mandatory angles for the prompt:** (1) does the fix actually close the finding's root cause or only the visible symptom? (2) are there error paths, SMP cases, or boundary values the fix misses? (3) does the fix introduce a regression in adjacent code? (4) for POLICY fixes: does the fix match the POLICIES.md Remediation shape?
     - Apply `superpowers:receiving-code-review` to every Codex finding. Codex can be wrong; verify each finding against code before acting.

@@ -9,9 +9,60 @@ description: Pre-implementation design review via Codex. Before writing code for
 
 ## Use This Skill When
 
-- About to implement a TODO section that touches SMP-sensitive, boot-path, or security-critical code.
+- About to implement a TODO section that touches SMP-sensitive, boot-path, page tables, interrupt handling, or security-critical code.
 - The section's plan looks complex and you want a second opinion before writing code.
 - The user asks for a design review or feasibility check on a planned section.
+
+## Skip When (with `SKIP_DESIGN_REVIEW_HOOK=1` env var)
+
+The `design_review_required.py` PreToolUse hook is the always-on backstop -- it BLOCKs Edit/Write on code targets after `implement-todo-section` is invoked unless a design dispatch has fired. To legitimately skip the review, set `SKIP_DESIGN_REVIEW_HOOK=1` on the next tool call AND make sure the section actually fits one of these:
+
+- **Docs-only / markdown-only sections** -- no `.c`/`.h`/`.asm`/`.py` edits.
+- **Stamp-only edits** -- adding `> **Verified:**` / `> **Quality reviewed:**` lines without code changes.
+- **Pure constant additions** -- a single `#define` or enum value, no logic.
+- **Test-only work** -- new `src/kernel/test/test_*.c` registration with no production-code edits.
+- **Single-function plumbing** -- a wrapper that delegates to an already-reviewed primitive, no new state, no SMP surface.
+
+Anything else dispatches. "It's host-side Python so no SMP risk" is NOT a skip criterion -- host-side concurrency, lifecycle, and state machines benefit from the design pass (TODO-07 §11/§12 incident).
+
+## Size Discipline (10-min Bash wall)
+
+The Codex review runs as a foreground Bash call, which has a 600000ms (10 min) hard wall. Design reviews historically hit this wall when prompts dump full file contents or carry too many open-ended questions. **Keep the dispatch tight:**
+
+- **Integration surface = names only.** List file paths + function/struct/symbol names that the section will modify or call into. Do NOT paste file contents -- Codex's app-server reads files itself when it needs them. Pasting bloats the prompt without speeding reasoning.
+- **Plan = checklist items as written.** Copy from the TODO section verbatim; do not re-narrate.
+- **Questions = max 4, most important first.** Open-ended "is this sound?" + 2-3 concrete risks specific to this section. Drop generic questions Codex would ask itself.
+- **Constraints = 3-5 lines.** The kernel is freestanding + SMP-safe + identity-mapped + bare-metal. Do not re-explain CLAUDE.md.
+- **No section repetition.** If the section's TODO text already states a constraint, don't restate it under "Constraints".
+
+A well-shaped design-review prompt is typically under 80 lines. If yours is over 150 lines, you are pasting file contents -- trim before dispatching.
+
+## Background Fallback (when foreground hits the 10-min wall)
+
+If a tightly-scoped foreground dispatch still hits Bash's 600000ms wall and gets truncated, fall back to background mode. **Do not reach for this preemptively** -- foreground gives you the result in one Bash call; background requires polling. Use it only after a foreground attempt was killed.
+
+**Foreground (default):**
+```bash
+node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<design review prompt>"
+```
+
+**Background fallback (after foreground timeout):**
+```bash
+bash scripts/codex-bg-dispatch.sh "<design review prompt>"
+```
+
+The wrapper invokes `codex-companion.mjs task --background --json` (the only background-capable subcommand) and returns immediately with `{jobId, logFile, status}`. The detached worker continues reasoning past the 10-min wall.
+
+**Poll for completion** (each call blocks up to 4 min, repeat until `status: "completed"`):
+```bash
+node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" status <jobId> --wait --timeout-ms 240000
+```
+
+When `status: "completed"`, the same JSON contains `finalMessage` (the review text). If you prefer a single non-blocking check, drop `--wait`.
+
+**Receive integrity is preserved.** The background dispatch is detected as a real review trigger by `codex_review_completed.py` (PostToolUse) -- it writes `last-codex-review.json` with `received: false` exactly like a foreground call. The `receiving_review_required.py` PreToolUse hook then BLOCKs every Edit/Write/MultiEdit on code targets until you read the result and run `Skill(superpowers:receiving-code-review)`. You cannot accidentally skip a background review's findings -- the gate is the same as foreground.
+
+**Stale recovery:** if a background dispatch is abandoned (session crash, agent confusion), the trigger state has a 3600s TTL after which the gate auto-releases. Manual recovery: delete `.claude/state/last-codex-review.json` AND cancel the job via `node codex-companion.mjs cancel <jobId>`.
 
 ## Workflow
 
@@ -24,7 +75,7 @@ description: Pre-implementation design review via Codex. Before writing code for
    - Specific questions: "Is this approach correct?", "What edge cases are missing?", "What could this break?"
 4. **Dispatch to Codex plugin:**
    ```bash
-   node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<design review prompt>"
+   node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<design review prompt>"
    ```
    Frame as design review, not code review -- Codex should analyze the PLAN, not existing code.
 5. **Triage findings** -- the PostToolUse hook fires `receiving-code-review` reminder; follow it. **Design-review false-positive watch:** Codex assumes general-OS conventions (e.g., "you need a wait queue here") that don't apply to this freestanding kernel (we use polled completion in init paths); demands "production-ready" configurability the section's spec doesn't require; flags "this will conflict with X" without verifying that X actually behaves the way Codex claims. Read the integration surface files yourself before accepting any conflict claim.
@@ -40,28 +91,31 @@ description: Pre-implementation design review via Codex. Before writing code for
 
 ## Prompt Template
 
+Follow the size discipline above. Names only, not file contents.
+
 ```
 Design review for TODO-XX §N: <section title>
 
-Plan:
-<paste checklist items>
+Plan (verbatim from TODO):
+<paste checklist items, no re-narration>
 
-Integration surface:
-<list key files, functions, structs the section will modify>
+Integration surface (names only):
+- <file_path>: <function/struct names this section modifies or calls>
+- <file_path>: <...>
+(2-3 files max; Codex reads them itself)
 
 Constraints:
-- Freestanding kernel (no stdlib)
-- SMP-safe from day one (2+ CPUs)
-- Identity-mapped address space (for now)
-- Bare metal is the acceptance criteria
+- Freestanding kernel, SMP-safe, identity-mapped, bare-metal
+- <any section-specific constraint not in CLAUDE.md>
 
-Questions:
-1. Is this approach architecturally sound?
-2. What edge cases or failure modes are missing from the plan?
-3. What existing functionality could this break (regressions)?
-4. Are there SMP/concurrency hazards in the proposed design?
-5. Are there simpler alternatives that achieve the same goal?
+Questions (pick 3-4 most relevant):
+1. Is this approach architecturally sound for <specific concern>?
+2. What edge case or failure mode in <specific area> is the plan missing?
+3. <one concrete risk specific to this section>
+4. <one concrete risk specific to this section>
 ```
+
+Drop generic "what could break / SMP hazards / simpler alternatives" -- Codex evaluates those automatically. Spend the question budget on section-specific risks.
 
 ## Guardrails
 
