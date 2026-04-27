@@ -137,3 +137,7 @@ These are battle-tested patterns from TODO-01 / TODO-02 / TODO-03 / TODO-04 swee
 - [`/implement-unit-tests`](../implement-unit-tests/SKILL.md) -- this skill dispatches it in step 3. Delegates the test-file creation + runner registration + bat-file wiring entirely.
 - [`/review-todo-section`](../review-todo-section/SKILL.md) / [`/verify-todo-section`](../verify-todo-section/SKILL.md) -- section-level quality review and audit. This skill does NOT re-run them; sections that closed through review already carry their stamps.
 - [`/validate-todo-file`](../validate-todo-file/SKILL.md) -- runs on TODO structure (numbering, XREFs, OS Comparison, Notes). This skill does not re-validate structure; if you want both, run `/validate-todo-file` before `/complete-todo-file`.
+
+## TODO-08 §10 step-state telemetry
+
+The TODO-08 §10 step-observer hook records each step on its real tool call; the §10 step-block hook BLOCKs commit if any required terminal step's evidence is missing. There is no "I did it inline" shortcut -- the hook does not see narration. The hook fires on `Bash(git commit:*)` and `Skill(review-todo-section)`. Required terminal steps for this skill are listed in `.claude/hooks/skill_step_map.py`. Opt-out (legitimate revert / stamp-only flows): `SKIP_SKILL_STEP_BLOCK=1 SKIP_SKILL_STEP_BLOCK_REASON="<text >= 12 chars>"`.

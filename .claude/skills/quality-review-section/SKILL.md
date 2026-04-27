@@ -114,3 +114,7 @@ description: Deep quality review of an implemented TODO section -- industry stan
 - Do not sacrifice correctness or clarity for micro-optimization.
 - Do not turn this into a rewrite. Targeted improvements only.
 - Cite Win11/Linux sources by function/file name, not vague claims.
+
+## TODO-08 §10 step-state telemetry
+
+The TODO-08 §10 step-observer hook records each step on its real tool call; the §10 step-block hook BLOCKs commit if any required terminal step's evidence is missing. There is no "I did it inline" shortcut -- the hook does not see narration. The hook fires on `Bash(git commit:*)` and `Skill(review-todo-section)`. Required terminal steps for this skill are listed in `.claude/hooks/skill_step_map.py`. Opt-out (legitimate revert / stamp-only flows): `SKIP_SKILL_STEP_BLOCK=1 SKIP_SKILL_STEP_BLOCK_REASON="<text >= 12 chars>"`.

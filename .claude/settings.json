@@ -96,6 +96,16 @@
         ]
       },
       {
+        "matcher": "Bash|Skill",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .claude/hooks/skill_step_block.py",
+            "timeout": 5
+          }
+        ]
+      },
+      {
         "matcher": "Edit|Write|MultiEdit",
         "hooks": [
           {
@@ -135,6 +145,16 @@
           {
             "type": "command",
             "command": "python3 .claude/hooks/codex_review_completed.py",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write|MultiEdit|Bash|Skill",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .claude/hooks/skill_step_observer.py",
             "timeout": 5
           }
         ]

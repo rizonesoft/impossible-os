@@ -2729,6 +2729,106 @@ rm -rf "$DR_TMP"
 
 
 # ============================================================================
+# skill_step_block.py -- non-contiguous-step gate (TODO-08 number 10)
+# ============================================================================
+# Synthesizes a .claude/state/skill-progress.json fixture and runs the
+# blocker against synthetic Bash(git commit) payloads. Asserts:
+#   - all required terminal steps observed -> rc 0 (pass-through)
+#   - missing terminal step              -> rc 2 (block)
+#   - non-contiguous (gap in middle)     -> rc 2 (block; subset of missing)
+#   - SKIP_SKILL_STEP_BLOCK opt-out      -> rc 0
+# Restores the prior state file if it existed; deletes the fixture otherwise.
+
+SSB_TMP="$(mktemp -d)"
+SSB_STATE_REAL="$REPO_ROOT/.claude/state/skill-progress.json"
+SSB_BACKUP="$SSB_TMP/skill-progress.json.bak"
+if [ -f "$SSB_STATE_REAL" ]; then
+    cp "$SSB_STATE_REAL" "$SSB_BACKUP"
+fi
+
+ssb_write_state() {
+    local steps_json="$1"
+    mkdir -p "$REPO_ROOT/.claude/state"
+    cat >"$SSB_STATE_REAL" <<EOF
+{
+  "implement-todo-section": {
+    "started_ts": 1000,
+    "started_head_sha": "deadbeef",
+    "session_id": "test",
+    "args": "test section",
+    "steps_observed": ${steps_json}
+  }
+}
+EOF
+}
+
+ssb_run() {
+    printf '%s' '{"tool_name":"Bash","tool_input":{"command":"git commit -m test"}}' | \
+        python3 "$REPO_ROOT/.claude/hooks/skill_step_block.py" >/dev/null 2>&1
+    echo $?
+}
+
+# Test A: all required terminal steps [7, 13, 16, 19] observed -> rc 0
+ssb_write_state '[{"n":7},{"n":13},{"n":16},{"n":19}]'
+RC="$(ssb_run)"
+if [ "$RC" = "0" ]; then
+    t_pass "skill_step_block all required terminal steps -> rc=0"
+else
+    t_fail "skill_step_block all-required expected rc=0, got rc=$RC"
+fi
+
+# Test B: missing terminal step 19 -> rc 2
+ssb_write_state '[{"n":7},{"n":13},{"n":16}]'
+RC="$(ssb_run)"
+if [ "$RC" = "2" ]; then
+    t_pass "skill_step_block missing terminal step 19 -> rc=2"
+else
+    t_fail "skill_step_block missing-terminal expected rc=2, got rc=$RC"
+fi
+
+# Test C: gap in middle (missing step 13 adversarial) -> rc 2
+ssb_write_state '[{"n":7},{"n":16},{"n":19}]'
+RC="$(ssb_run)"
+if [ "$RC" = "2" ]; then
+    t_pass "skill_step_block gap at step 13 -> rc=2"
+else
+    t_fail "skill_step_block gap-at-13 expected rc=2, got rc=$RC"
+fi
+
+# Test D: SKIP opt-out with proper reason on missing-terminal -> rc 0
+ssb_write_state '[{"n":7},{"n":13},{"n":16}]'
+SKIP_SKILL_STEP_BLOCK=1 SKIP_SKILL_STEP_BLOCK_REASON="legitimate-revert-flow" \
+    bash -c 'printf "%s" '"'"'{"tool_name":"Bash","tool_input":{"command":"git commit -m test"}}'"'"' | python3 "$0" >/dev/null 2>&1' \
+    "$REPO_ROOT/.claude/hooks/skill_step_block.py"
+RC=$?
+if [ "$RC" = "0" ]; then
+    t_pass "skill_step_block SKIP opt-out with reason -> rc=0"
+else
+    t_fail "skill_step_block SKIP opt-out expected rc=0, got rc=$RC"
+fi
+
+# Test E: SKIP without reason -> rc 2 (reason >= 12 chars required)
+ssb_write_state '[{"n":7},{"n":13},{"n":16}]'
+SKIP_SKILL_STEP_BLOCK=1 SKIP_SKILL_STEP_BLOCK_REASON="too-short" \
+    bash -c 'printf "%s" '"'"'{"tool_name":"Bash","tool_input":{"command":"git commit -m test"}}'"'"' | python3 "$0" >/dev/null 2>&1' \
+    "$REPO_ROOT/.claude/hooks/skill_step_block.py"
+RC=$?
+if [ "$RC" = "2" ]; then
+    t_pass "skill_step_block SKIP with too-short reason -> rc=2"
+else
+    t_fail "skill_step_block SKIP-bad-reason expected rc=2, got rc=$RC"
+fi
+
+# Restore prior state file (or remove fixture).
+if [ -f "$SSB_BACKUP" ]; then
+    cp "$SSB_BACKUP" "$SSB_STATE_REAL"
+else
+    rm -f "$SSB_STATE_REAL"
+fi
+rm -rf "$SSB_TMP"
+
+
+# ============================================================================
 # audit-ai-system.sh -- umbrella cross-tool AI drift detection
 # ============================================================================
 # Single sub-test: run the 7-check umbrella; treat its exit code as verdict.

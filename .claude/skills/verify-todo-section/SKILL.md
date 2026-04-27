@@ -88,3 +88,7 @@ Editing review-todo-section's workflow propagates automatically to verify; editi
 
 - [scope-gap-protocol.md](../implement-todo-section/scope-gap-protocol.md) -- Branch A/B/C/D decision tree; Branch A is the verify-mode fix allowance.
 - [build-evidence.md](../implement-todo-section/build-evidence.md) -- shared build-confirmation rules.
+
+## TODO-08 §10 step-state telemetry
+
+The TODO-08 §10 step-observer hook records each step on its real tool call; the §10 step-block hook BLOCKs commit if any required terminal step's evidence is missing. There is no "I did it inline" shortcut -- the hook does not see narration. The hook fires on `Bash(git commit:*)` and `Skill(review-todo-section)`. Required terminal steps for this skill are listed in `.claude/hooks/skill_step_map.py`. Opt-out (legitimate revert / stamp-only flows): `SKIP_SKILL_STEP_BLOCK=1 SKIP_SKILL_STEP_BLOCK_REASON="<text >= 12 chars>"`.
