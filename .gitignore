@@ -74,3 +74,4 @@ sdk/build/
 .claude/state/*
 !.claude/state/.keep
 !.claude/state/README.md
+.claude/scheduled_tasks.lock
