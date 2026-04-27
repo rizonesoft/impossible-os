@@ -136,11 +136,11 @@ Prepare the receiving organization before transfer so the repository lands into 
 > **Notes:**
 > - Shipped: appended `## §2 Receiving Org (rizonetech) Readiness Probe` to [`docs/infrastructure/repository-transfer-preflight.md`](../../docs/infrastructure/repository-transfer-preflight.md) with three tables (public-API confirmed, security-defaults parity, operator-only items O1-O6) plus a copy-paste pre-transfer block that mixes `gh api` commands with explicit UI walkthroughs for the three GitHub features without REST endpoints (O1 Pages-domain verification, O3 org Pages policy, O5 Copilot Access).
 > - Local CLI token has scopes `gist, read:org, repo, workflow` -- enough to confirm 4 of 10 items publicly; the remaining 6 need either `gh auth refresh -h github.com -s admin:org` or UI walkthrough at named URLs.
-> - Cross-doc wiring: each operator-only item links back to the canonical TODO sections that depend on it (§4 transfer button, §5 post-transfer audit, §7 validation suite). Codex 3x review adoptions in commit `<this-commit>`.
+> - Cross-doc wiring: each operator-only item links back to the canonical TODO sections that depend on it (§4 transfer button, §5 post-transfer audit, §7 validation suite). Codex 3x review adoptions in commit `b7e3392d`.
 > - Canonical doc: [`docs/infrastructure/repository-transfer-preflight.md` §2](../../docs/infrastructure/repository-transfer-preflight.md#2-receiving-org-rizonetech-readiness-probe).
 > - Scope boundary: §2 only **probes and documents** org readiness; the actual `admin:org`-scoped configuration changes (Actions policy, ruleset import, Copilot Access toggle, team creation) are operator actions before §4. §5 owns the post-transfer audit that re-validates each item.
 >
-> **Verified:** 2026-04-27 | commit `<this-commit>` | 4/10 items | build N/A (docs-only) | lint clean, todo-graph 8/8
+> **Verified:** 2026-04-27 | commit `b7e3392d` | 4/10 items | build N/A (docs-only) | lint clean, todo-graph 8/8
 > **Quality reviewed:** 2026-04-27 | Codex 3x (adversarial, consistency, perf) | 2H+1M+1L fixed, 0 open | scope: N/A (docs-only -- no domain code-quality skill applies; re-adversarial skipped: docs+stamp-only fixes, no SMP/state-machine touch)
 
 ---
