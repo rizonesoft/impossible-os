@@ -297,7 +297,7 @@ This inventory does NOT classify which references are the active GitHub repo (mu
 | Default Pages URL (`https://rizonesoft.github.io/impossible-os/`) | live; redirects to apex over HTTP | will move to `https://rizonetech.github.io/impossible-os/`; OLD URL relies on GitHub repo redirect. |
 | `BOOTLOADER_REPO_TOKEN` consumers | the release workflow only | re-validated post-transfer. |
 | External docs / social profiles / pinned GitHub Apps | unknown to this preflight | operator must enumerate manually before §4; this preflight cannot see private third-party references. |
-| Visitor-counter `hits.sh` badge | namespace `hits.sh/rizonesoft.github.io` -- counter accumulates per-namespace | counter resets when namespace switches to `rizonetech.github.io`; acceptable for a private repo. |
+| Visitor-counter `hits.sh` badge | original namespace `hits.sh/rizonesoft.github.io/impossible-os` -- counter accumulates per-namespace. **§3 switched the badge to `hits.sh/impossibleos.co.svg`** in `gh-pages/index.html` to make it owner-independent across this transfer AND any future move-back. | One-time counter reset when the §3 namespace switch ships; subsequent owner changes leave the counter intact. Acceptable for a private repo. |
 
 ---
 
@@ -437,7 +437,8 @@ If any item returns unexpected values OR the UI shows a state different from the
 
 | Change | Why |
 |---|---|
-| Add tracked [`gh-pages/CNAME`](../../gh-pages/CNAME) containing `impossibleos.co\n` | The `gh-pages` BRANCH (current legacy Pages source) already has a `CNAME` blob (sha `1441672e`, content `impossibleos.co`). Adding the same file to `main`'s `gh-pages/` folder gives the workflow-deployed artifact (when the failed `pages.yml` quota issue resolves) the same custom-domain hint, so switching the Pages source mode from "branch" to "Actions" later doesn't drop the domain. The `actions/upload-pages-artifact@v3` step in `.github/workflows/pages.yml` includes everything under `gh-pages/` in the artifact, so the CNAME ships with the deploy. |
+| Add tracked [`gh-pages/CNAME`](../../gh-pages/CNAME) containing `impossibleos.co\n` | **Branch-source parity only.** The `gh-pages` BRANCH (current legacy Pages source) already has a `CNAME` blob (sha `1441672e`, content `impossibleos.co`); tracking the same file on `main` keeps `main`'s `gh-pages/` folder byte-equal to the branch source so any future manual sync (`main:gh-pages/` -> `refs/heads/gh-pages`) does not drop the domain. **NOT an Actions-mode preservation control** -- per [GitHub Pages docs](https://docs.github.com/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site#publishing-with-a-custom-github-actions-workflow), "If your repository contains a CNAME file, it will be ignored" for custom GitHub Actions workflows. If the Pages source mode is ever switched from "branch" to "Actions", this file becomes informational; the actual custom domain is read from repo Pages settings (next row). |
+| **Pages settings `.cname` value is the actual continuity control** | The single source of truth for the Pages custom domain is `repos/{owner}/impossible-os/pages.cname` -- per §1 baseline, the source repo currently has `cname: "impossibleos.co"` (`gh api repos/rizonesoft/impossible-os/pages --jq .cname`). Repository transfers preserve the Pages settings, so the value should carry over to `repos/rizonetech/impossible-os/pages.cname` automatically. **Operator must verify post-transfer** with `gh api repos/rizonetech/impossible-os/pages --jq .cname` (expected: `impossibleos.co`); if the value is empty or different, re-set via the repo Pages UI <https://github.com/rizonetech/impossible-os/settings/pages> BEFORE the cert-reissue window closes. This is the surface that prevents R1 (Pages custom-domain detachment), NOT the `gh-pages/CNAME` file. |
 | Update [`gh-pages/index.html`](../../gh-pages/index.html) lines 13 / 19 / 36 / 1089 | Replace `https://rizonesoft.github.io/impossible-os/` with `https://impossibleos.co/` in the canonical link, og:url, JSON-LD `url`, and the hits.sh visitor-counter namespace. The visitor-counter switch (`hits.sh/rizonesoft.github.io/impossible-os.svg` -> `hits.sh/impossibleos.co.svg`) makes the counter owner-independent across this transfer AND any future move-back. Counter resets when the namespace changes; acceptable per §1's R-table. |
 | `gh-pages/err/` audit | All 14 error-page `index.html` files already use `https://impossibleos.co/err/<code>/` as their canonical URL (§1's "error pages already use https://impossibleos.co/..." callout was correct). Each err page has one `https://github.com/rizonesoft/impossible-os` link in the nav -- those are owner-specific repo links, owned by the [URL/badge/docs/generated-link sweep](../../todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md#6-url-badge-docs-and-generated-link-sweep) (§6), NOT by §3. |
 | The `author.url` `https://rizonesoft.com` in the JSON-LD block (line 40) | INTENTIONALLY RETAINED -- `rizonesoft.com` is the company brand homepage, not the active GitHub repo URL. The §6 classification rule keeps brand references; only repo URLs flip. |
@@ -465,23 +466,45 @@ If any item returns unexpected values OR the UI shows a state different from the
 - `www.impossibleos.co` may show an old answer for one TTL after the CNAME flip.
 - The hits.sh visitor counter resets to zero on the namespace switch (`rizonesoft.github.io/impossible-os` -> `impossibleos.co`); historical counts are not retained. Acceptable for a private repo.
 
-### Validation commands
+### Validation commands -- pre-transfer
 
-The same set used in §1's baseline; running them post-transfer is the §3 acceptance check (and the basis for the [Validation suite](../../todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md#7-validation-suite-pages-actions-releases-clone-hooks-graph)):
+Run these immediately before pressing the [transfer button](../../todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md#4-repository-transfer-runbook-and-rollback-window). They confirm the source-owner state is what §1 baselined and that the TTL drop has propagated. **Do NOT expect `rizonetech.github.io` to resolve yet** -- the receiving repo doesn't exist until the transfer completes.
 
 ```bash
-curl -sIL --max-time 10 https://impossibleos.co/                        # expect 200, last-modified matching latest gh-pages deploy
+# State expected: source owner is still rizonesoft; www CNAME still targets rizonesoft.github.io.
+curl -sIL --max-time 10 https://impossibleos.co/                        # expect 200; last-modified matches latest gh-pages deploy
 curl -sIL --max-time 10 https://www.impossibleos.co/                    # expect 301 -> https://impossibleos.co/
-curl -sIL --max-time 10 https://rizonetech.github.io/impossible-os/     # expect 301 -> apex (or HTTPS-enforced apex if §5 flipped the toggle)
+curl -sIL --max-time 10 https://rizonesoft.github.io/impossible-os/     # expect 301 -> http://impossibleos.co/ (https_enforced=false)
 getent hosts impossibleos.co                                            # 4 anycast IPv4 addresses (185.199.10[8-11].153)
-getent hosts www.impossibleos.co                                        # CNAME chain ends at rizonetech.github.io after §4
+getent hosts www.impossibleos.co                                        # CNAME chain ends at rizonesoft.github.io
 # With BIND tools available:
-dig +nocmd +noall +answer impossibleos.co A
-dig +nocmd +noall +answer impossibleos.co AAAA      # currently empty; non-empty if §3 AAAA decision was revisited
-dig +nocmd +noall +answer www.impossibleos.co CNAME
+dig +nocmd +noall +answer +ttl impossibleos.co A                        # apex A; TTL within provider's normal range
+dig +nocmd +noall +answer +ttl www.impossibleos.co CNAME                # TTL should be the LOW value (60-300s) from the pre-transfer drop
+gh api repos/rizonesoft/impossible-os/pages --jq '.cname,.html_url,.https_certificate.state,.https_enforced'   # expect: "impossibleos.co", "http://impossibleos.co/", "approved", false
 ```
 
-If any line returns an unexpected status code or DNS answer, stop and resolve before pressing the transfer button (or rolling back per §4).
+If any line returns an unexpected status code, DNS answer, or Pages-settings value, **stop** and resolve before pressing the transfer button.
+
+### Validation commands -- post-transfer
+
+Run these AFTER the transfer button is pressed AND the receiving Pages endpoint is verified live AND the `www` CNAME has been flipped to `rizonetech.github.io`. They form the §3 acceptance check (and the basis for the [Validation suite](../../todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md#7-validation-suite-pages-actions-releases-clone-hooks-graph)):
+
+```bash
+# State expected: receiving owner is rizonetech; www CNAME flipped; cert reissued; old default Pages URL redirects via GitHub repo redirect.
+curl -sIL --max-time 10 https://impossibleos.co/                        # expect 200; new etag may differ if Pages re-fetched the artifact
+curl -sIL --max-time 10 https://www.impossibleos.co/                    # expect 301 -> https://impossibleos.co/
+curl -sIL --max-time 10 https://rizonetech.github.io/impossible-os/     # expect 301 -> apex (or HTTPS-enforced apex once §5 flips the toggle)
+curl -sIL --max-time 10 https://rizonesoft.github.io/impossible-os/     # expect 301 to the new owner via GitHub repo redirect (or 404 if the redirect window expired)
+getent hosts impossibleos.co                                            # apex A unchanged (anycast IPs)
+getent hosts www.impossibleos.co                                        # CNAME chain now ends at rizonetech.github.io
+# With BIND tools available:
+dig +nocmd +noall +answer +ttl impossibleos.co A
+dig +nocmd +noall +answer +ttl impossibleos.co AAAA                     # empty unless §3 AAAA decision was revisited
+dig +nocmd +noall +answer +ttl www.impossibleos.co CNAME                # target = rizonetech.github.io.
+gh api repos/rizonetech/impossible-os/pages --jq '.cname,.html_url,.https_certificate.state,.https_certificate.expires_at,.https_enforced'   # expect: "impossibleos.co", apex URL, "approved" (cert reissued), expires_at >= cert reissue date, https_enforced still false until §5
+```
+
+If any line returns an unexpected status code or DNS answer, **stop and roll back per [§4](../../todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md#4-repository-transfer-runbook-and-rollback-window)** -- do NOT proceed with the URL/badge sweep until the apex serves cleanly under the new owner.
 
 ---
 
