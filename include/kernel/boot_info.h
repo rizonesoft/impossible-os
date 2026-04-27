@@ -1063,7 +1063,11 @@ struct boot_info {
     /* GOP mode list (enumerated by bootloader) */
     struct boot_gop_mode gop_modes[BOOT_GOP_MODE_MAX];
     uint32_t gop_mode_count;     /* number of valid entries */
-    uint32_t gop_mode_selected;  /* index of currently active mode */
+    uint32_t gop_mode_selected;  /* ordinal into gop_modes[] (0..gop_mode_count-1);
+                                    equals gop_mode_count when the active raw firmware
+                                    mode was not enumerated into the bounded table
+                                    (sentinel = "off-table"). Consumers MUST check
+                                    `gop_mode_selected < gop_mode_count` before indexing. */
 
     /* ACPI */
     uintptr_t acpi_rsdp_addr;   /* physical address of RSDP */

@@ -1661,7 +1661,17 @@ static UINT8 gop_pixel_format_code(EFI_GRAPHICS_PIXEL_FORMAT fmt)
     return 2;
 }
 
-/* Score and select the best 32bpp GOP mode, call SetMode, set hidpi flag. */
+/* Score and select the best 32bpp GOP mode, call SetMode, set hidpi flag.
+ *
+ * Hostile-firmware hardening (Codex review 2026-04-27):
+ *   - Loop is bounded by BOOT_GOP_MODE_MAX (matches init_gop's enumeration
+ *     cap) AND by a consecutive-error counter, so a firmware that reports
+ *     MaxMode = 0xFFFFFFFF or that returns garbage from QueryMode cannot
+ *     hang the bootloader.
+ *   - Every successful QueryMode buffer is FreePool'd (UEFI 2.10 spec
+ *     12.9.2.4: caller releases callee-allocated info).
+ *   - info pointer + info_size are validated before dereference.
+ */
 static void gop_negotiate_mode(EFI_GRAPHICS_OUTPUT_PROTOCOL *gop)
 {
     /* Guard: validate Mode and Info pointers before any dereference */
@@ -1676,21 +1686,39 @@ static void gop_negotiate_mode(EFI_GRAPHICS_OUTPUT_PROTOCOL *gop)
     UINT32  best_h   = gop->Mode->Info->VerticalResolution;
     int     found    = 0;
     UINT32  i;
+    UINT32  query_errors = 0;
+    UINT32  scan_cap = gop->Mode->MaxMode;
+    if (scan_cap > BOOT_GOP_MODE_MAX) scan_cap = BOOT_GOP_MODE_MAX;
 
-    for (i = 0; i < gop->Mode->MaxMode; i++) {
-        UINTN info_size;
-        EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *info;
-        if (EFI_ERROR(gop->QueryMode(gop, i, &info_size, &info))) continue;
-
-        /* Only consider 32bpp modes with valid pitch */
-        if (info->PixelFormat != PixelBlueGreenRedReserved &&
-            info->PixelFormat != PixelRedGreenBlueReserved)
+    for (i = 0; i < scan_cap; i++) {
+        UINTN info_size = 0;
+        EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *info = (EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *)0;
+        if (EFI_ERROR(gop->QueryMode(gop, i, &info_size, &info))) {
+            query_errors++;
+            if (query_errors >= 100) {
+                serial_early_print("[BOOT] GOP: negotiate aborted after 100 errors\n");
+                break;
+            }
             continue;
-        if (info->PixelsPerScanLine < info->HorizontalResolution)
-            continue;  /* corrupt pitch */
+        }
+        query_errors = 0;
+        /* UEFI spec: SUCCESS always populates info; defense-in-depth check */
+        if (!info || info_size < sizeof(*info)) {
+            if (info) gBS->FreePool(info);
+            continue;
+        }
 
+        EFI_GRAPHICS_PIXEL_FORMAT pf = info->PixelFormat;
         UINT32 w = info->HorizontalResolution;
         UINT32 h = info->VerticalResolution;
+        UINT32 pps = info->PixelsPerScanLine;
+        gBS->FreePool(info);
+
+        /* Only consider 32bpp modes with valid pitch */
+        if (pf != PixelBlueGreenRedReserved && pf != PixelRedGreenBlueReserved)
+            continue;
+        if (pps < w)
+            continue;  /* corrupt pitch */
 
         if (g_conf_res_width > 0 && g_conf_res_height > 0) {
             /* boot.conf explicit resolution: require exact match */
@@ -1777,8 +1805,8 @@ static EFI_STATUS init_gop(void)
     {
         UINT32 query_errors = 0;
         for (i = 0; i < gop->Mode->MaxMode && i < BOOT_GOP_MODE_MAX; i++) {
-            UINTN info_size;
-            EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *info;
+            UINTN info_size = 0;
+            EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *info = (EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *)0;
             if (EFI_ERROR(gop->QueryMode(gop, i, &info_size, &info))) {
                 query_errors++;
                 /* Abort mode enumeration after 100 consecutive errors --
@@ -1791,17 +1819,25 @@ static EFI_STATUS init_gop(void)
             }
             query_errors = 0;  /* Reset on success */
 
-        UINT32 idx = g_boot_info_ptr->gop_mode_count;
-        g_boot_info_ptr->gop_modes[idx].width  = info->HorizontalResolution;
-        g_boot_info_ptr->gop_modes[idx].height = info->VerticalResolution;
-        g_boot_info_ptr->gop_modes[idx].pixels_per_scanline =
-            info->PixelsPerScanLine;
-        g_boot_info_ptr->gop_modes[idx].pixel_format =
-            gop_pixel_format_code(info->PixelFormat);
-        g_boot_info_ptr->gop_modes[idx].pad[0] = 0;
-        g_boot_info_ptr->gop_modes[idx].pad[1] = 0;
-        g_boot_info_ptr->gop_modes[idx].pad[2] = 0;
-        g_boot_info_ptr->gop_mode_count++;
+            /* UEFI 12.9.2.4: callee allocates info; caller must free.
+             * Defense-in-depth NULL/size check before dereferencing. */
+            if (!info || info_size < sizeof(*info)) {
+                if (info) gBS->FreePool(info);
+                continue;
+            }
+
+            UINT32 idx = g_boot_info_ptr->gop_mode_count;
+            g_boot_info_ptr->gop_modes[idx].width  = info->HorizontalResolution;
+            g_boot_info_ptr->gop_modes[idx].height = info->VerticalResolution;
+            g_boot_info_ptr->gop_modes[idx].pixels_per_scanline =
+                info->PixelsPerScanLine;
+            g_boot_info_ptr->gop_modes[idx].pixel_format =
+                gop_pixel_format_code(info->PixelFormat);
+            g_boot_info_ptr->gop_modes[idx].pad[0] = 0;
+            g_boot_info_ptr->gop_modes[idx].pad[1] = 0;
+            g_boot_info_ptr->gop_modes[idx].pad[2] = 0;
+            g_boot_info_ptr->gop_mode_count++;
+            gBS->FreePool(info);
         }
     }
 
@@ -1837,9 +1873,26 @@ static EFI_STATUS init_gop(void)
     gFbPixelFormat = gop_pixel_format_code(gop->Mode->Info->PixelFormat);
 
     {
-        UINTN required_bytes = (UINTN)gFbHeight * (UINTN)gFbPitch * 4;
         UINTN fb_size = gop->Mode->FrameBufferSize;
-        if (gFbPitch < gFbWidth || required_bytes == 0 ||
+        /* Hostile-firmware overflow guard (Codex review 2026-04-27):
+         * UINT32 height * UINT32 pitch * 4 in UINTN can wrap to a small
+         * value if firmware reports both dimensions near 0xFFFFFFFF.
+         * Reject before any mul that could overflow. */
+        if (gFbPitch < gFbWidth || gFbHeight == 0 || gFbPitch == 0 ||
+            gFbHeight > (0xFFFFFFFFu / 4) ||
+            gFbPitch  > (0xFFFFFFFFu / 4) ||
+            (UINTN)gFbHeight > ((UINTN)~(UINTN)0 / (UINTN)gFbPitch) ||
+            ((UINTN)gFbHeight * (UINTN)gFbPitch) > ((UINTN)~(UINTN)0 / 4)) {
+            serial_early_print("[BOOT] GOP: dimensions out of range -- headless\n");
+            gFramebuffer = (UINT32 *)0;
+            gFbWidth = 0; gFbHeight = 0; gFbPitch = 0;
+            gFbPixelFormat = 2;
+            g_boot_info_ptr->fb_available = 0;
+            g_boot_info_ptr->hidpi = 0;
+            return EFI_SUCCESS;
+        }
+        UINTN required_bytes = (UINTN)gFbHeight * (UINTN)gFbPitch * 4;
+        if (required_bytes == 0 ||
             (fb_size > 0 && required_bytes > fb_size)) {
             serial_early_print("[BOOT] GOP: framebuffer size mismatch -- headless\n");
             gFramebuffer = (UINT32 *)0;
@@ -1849,13 +1902,13 @@ static EFI_STATUS init_gop(void)
             g_boot_info_ptr->hidpi = 0;
             return EFI_SUCCESS;
         }
-        /* Clear VRAM -- bounded by validated byte count */
-        UINTN sz = (UINTN)gFbHeight * (UINTN)gFbPitch;
-        UINTN j;
-        for (j = 0; j < sz; j++)
-            gFramebuffer[j] = 0x00000000;
+        /* VRAM clear is owned by the caller (efi_main, after init_gop
+         * returns). The previous duplicate clear here was redundant
+         * (~8 MB MMIO/WC writes at 1080p) -- removed per Codex review
+         * 2026-04-27 perf finding M2. */
     }
 
+    /* fb.pitch * 4 overflow check: gFbPitch <= 0xFFFFFFFFu/4 verified above */
     g_boot_info_ptr->fb.addr   = (UINT64)gop->Mode->FrameBufferBase;
     g_boot_info_ptr->fb.pitch  = gFbPitch * 4;
     g_boot_info_ptr->fb.width  = gFbWidth;
@@ -1865,7 +1918,31 @@ static EFI_STATUS init_gop(void)
     g_boot_info_ptr->fb.pixel_format =
         gop_pixel_format_code(gop->Mode->Info->PixelFormat);
     g_boot_info_ptr->fb.pad0 = 0;
-    g_boot_info_ptr->gop_mode_selected = gop->Mode->Mode;
+    /* gop_mode_selected is the ordinal into gop_modes[] (0..gop_mode_count-1),
+     * NOT the raw firmware mode id. We look up the active mode by matching
+     * width + height + pixels_per_scanline; if the selected raw mode was
+     * not enumerated into the bounded gop_modes[] table (firmware exposed
+     * more than BOOT_GOP_MODE_MAX modes and the negotiator picked an
+     * unenumerated one), we fall through to gop_mode_count as a sentinel
+     * meaning "off-table" -- consumers MUST check selected < count.
+     * (Codex consistency review 2026-04-27: prevents OOB read on
+     * gop_modes[selected].) */
+    {
+        UINT32 active_w   = gFbWidth;
+        UINT32 active_h   = gFbHeight;
+        UINT32 active_pps = gFbPitch;
+        UINT32 ord = g_boot_info_ptr->gop_mode_count; /* sentinel */
+        UINT32 k;
+        for (k = 0; k < g_boot_info_ptr->gop_mode_count; k++) {
+            if (g_boot_info_ptr->gop_modes[k].width  == active_w &&
+                g_boot_info_ptr->gop_modes[k].height == active_h &&
+                g_boot_info_ptr->gop_modes[k].pixels_per_scanline == active_pps) {
+                ord = k;
+                break;
+            }
+        }
+        g_boot_info_ptr->gop_mode_selected = ord;
+    }
     g_boot_info_ptr->fb_available = 1;
 
     return EFI_SUCCESS;

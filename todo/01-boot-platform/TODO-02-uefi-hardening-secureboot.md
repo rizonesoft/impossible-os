@@ -150,8 +150,17 @@ Negotiate the best framebuffer resolution before `ExitBootServices()`.
 
 **Test checkpoint:** Serial shows `[Boot] GOP: {W}x{H} 32bpp (mode N)` with W/H > 0; `boot_info.hidpi` is 1 when width >= 2560 else 0. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Verified:** 2026-04-11 -- Codex found FrameBufferBase==0 crash path after mode 0 retry (fixed: headless fallback). Auto 1080p cap is intentional VBox safety (documented in code). 2 unit tests wired, build passes.
-> **Quality reviewed:** 2026-04-11 -- 1 spec violation fixed (FrameBufferSize bounds check before VRAM clear), 3 best practices (Mode/Info NULL guard, pitch validation in mode scoring, mode 0 retry failure logging), 1 simplification (extracted gop_pixel_format_code helper). Accepted: VRAM clear pixel loop (cold path, runs once), double mode enumeration (different purposes).
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot, TEST_CAT_BOOT) | smoke PASS (KVM 2.3s; GOP enumerated 30 modes, mode 0 selected at 1280x800 BGRX)
+
+> **Notes:**
+> - `gop_negotiate_mode()` and `init_gop()` in `src/boot/uefi/bootx64.c:1664-1900` score every 32bpp mode by pixel count under boot.conf overrides or auto-1080p cap; `boot_info.hidpi` flips at width >= 2560; HiDPI consumers (boot splash, desktop scaling) read the flag.
+> - Hostile-firmware hardening (Codex 4x review 2026-04-27): both QueryMode loops capped at `BOOT_GOP_MODE_MAX` + 100-error abort; every successful info buffer FreePool'd per UEFI 12.9.2.4; required_bytes checked for UINTN multiplication overflow before any clear; duplicate VRAM clear in init_gop removed (efi_main owns the visible clear); `gop_mode_selected` switched to ordinal-into-`gop_modes[]` with `gop_mode_count` sentinel for off-table.
+> - Test wiring at `src/kernel/test/test_uefi_boot.c` (test_boot_info_hidpi + GOP fb width/height assertions, registered TEST_CAT_BOOT). Smoke test (`bash scripts/test-smoke.sh`) covers end-to-end boot reaching `C:\>` with serial verifying the GOP log line.
+> - Canonical doc: this section + `docs/boot/boot-info-fields.md` "Framebuffer + GOP" subsection.
+> - Scope boundary: §3 owns GOP mode negotiation + framebuffer publication into boot_info; multi-GPU and DisplayPort hot-plug are owned by `01-boot-platform/TODO-27-uefi-advanced.md`; HiDPI scaling rules are owned by the desktop compositor (TODO under `09-desktop-shell/`).
+
+> **Verified:** 2026-04-27 | commit `<pending>` | 4/4 items | build OK | smoke PASS (KVM 2.3s)
+> **Quality reviewed:** 2026-04-27 | Codex 4x (adversarial + consistency + perf + re-adversarial) | 5H+1M fixed | scope: boot-code-quality (gates walked: UEFI types, error handling, framebuffer safety, boot_info ABI, EBS boundary, fallback chains, spec compliance)
 
 ---
 

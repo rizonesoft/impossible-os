@@ -276,10 +276,17 @@ void boot_phase1(void)
         if (mc > 0) {
             const char *pf = (g_boot_info.fb.pixel_format < 3) ?
                 pf_names[g_boot_info.fb.pixel_format] : "Unknown";
-            klog(LOG_INFO, "GOP",
-                 "%ux%u %s (mode %u of %u available)",
-                 g_boot_info.fb.width, g_boot_info.fb.height,
-                 pf, sel, mc);
+            if (sel < mc) {
+                klog(LOG_INFO, "GOP",
+                     "%ux%u %s (mode %u of %u available)",
+                     g_boot_info.fb.width, g_boot_info.fb.height,
+                     pf, sel, mc);
+            } else {
+                klog(LOG_INFO, "GOP",
+                     "%ux%u %s (active mode off-table, %u modes enumerated)",
+                     g_boot_info.fb.width, g_boot_info.fb.height,
+                     pf, mc);
+            }
         }
     }
 
