@@ -159,7 +159,7 @@ Negotiate the best framebuffer resolution before `ExitBootServices()`.
 > - Canonical doc: this section + `docs/boot/boot-info-fields.md` "Framebuffer + GOP" subsection.
 > - Scope boundary: §3 owns GOP mode negotiation + framebuffer publication into boot_info; multi-GPU and DisplayPort hot-plug are owned by `01-boot-platform/TODO-27-uefi-advanced.md`; HiDPI scaling rules are owned by the desktop compositor (TODO under `09-desktop-shell/`).
 
-> **Verified:** 2026-04-27 | commit `<pending>` | 4/4 items | build OK | smoke PASS (KVM 2.3s)
+> **Verified:** 2026-04-27 | commit `909e5eef` | 4/4 items | build OK | smoke PASS (KVM 2.3s)
 > **Quality reviewed:** 2026-04-27 | Codex 4x (adversarial + consistency + perf + re-adversarial) | 5H+1M fixed | scope: boot-code-quality (gates walked: UEFI types, error handling, framebuffer safety, boot_info ABI, EBS boundary, fallback chains, spec compliance)
 
 ---
