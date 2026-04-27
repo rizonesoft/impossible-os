@@ -4,9 +4,9 @@
 
 ## Overview
 
-The `rizonesoft/impossible-os` GitHub repository is configured with CI/CD pipelines, automated release management, issue/PR templates, branch protection, and community documentation. A secondary archived repo (`rizonesoft/impossible-os-bootloader`) exists but all development happens in the main repo.
+The `rizonetech/impossible-os` GitHub repository is configured with CI/CD pipelines, automated release management, issue/PR templates, branch protection, and community documentation. A secondary archived repo (`rizonesoft/impossible-os-bootloader`) exists but all development happens in the main repo.
 
-> **Planned ownership move.** [`todo/00-infrastructure/TODO-09`](../../todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md) tracks the transfer from `rizonesoft/impossible-os` to `rizonetech/impossible-os` (enterprise org). The current-state baseline -- repository identity, Pages source mode, custom-domain DNS, Actions/secrets/rulesets, hard-coded owner references, risk register -- is captured once in [`repository-transfer-preflight.md`](repository-transfer-preflight.md) so the §5 / §7 audits and the eventual §8 move-back compare against a single source of truth.
+> **Planned ownership move.** [`todo/00-infrastructure/TODO-09`](../../todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md) tracks the transfer from `rizonetech/impossible-os` to `rizonetech/impossible-os` (enterprise org). The current-state baseline -- repository identity, Pages source mode, custom-domain DNS, Actions/secrets/rulesets, hard-coded owner references, risk register -- is captured once in [`repository-transfer-preflight.md`](repository-transfer-preflight.md) so the §5 / §7 audits and the eventual §8 move-back compare against a single source of truth.
 
 ```mermaid
 graph TD
@@ -39,7 +39,7 @@ graph TD
 
 | Repository                            | Visibility | Purpose                                    |
 | ------------------------------------- | ---------- | ------------------------------------------ |
-| `rizonesoft/impossible-os`            | Private    | Kernel, bootloader, desktop, drivers, apps |
+| `rizonetech/impossible-os`            | Private    | Kernel, bootloader, desktop, drivers, apps |
 | `rizonesoft/impossible-os-bootloader` | Public     | Archived -- no longer maintained separately |
 
 ---
@@ -396,7 +396,7 @@ Critical path explicit ownership:
 | Content         | Hero section, features, countdown, download   |
 | Download link   | Points to latest GitHub Release (`/releases`) |
 | Deploy          | GitHub Pages from `gh-pages` branch root      |
-| URL             | `rizonesoft.github.io/impossible-os/`         |
+| URL             | `rizonetech.github.io/impossible-os/`         |
 | Deploy workflow | `.github/workflows/pages.yml`                 |
 
 ---
@@ -471,7 +471,7 @@ Critical path explicit ownership:
 
 ## References
 
-- Repository: [rizonesoft/impossible-os](https://github.com/rizonesoft/impossible-os)
+- Repository: [rizonetech/impossible-os](https://github.com/rizonetech/impossible-os)
 - CI config: `.github/workflows/`
 - Templates: `.github/ISSUE_TEMPLATE/`
 - Related: [Development Tooling](development-tooling.md)

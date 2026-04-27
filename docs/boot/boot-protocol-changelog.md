@@ -69,7 +69,7 @@ Two independent ABI extensions land under v9:
 
 ### v6 -- Typed payload descriptor array
 
-- **Commit**: [`01991083`](https://github.com/rizonesoft/impossible-os/commit/01991083) "boot: add typed payload descriptors"
+- **Commit**: [`01991083`](https://github.com/rizonetech/impossible-os/commit/01991083) "boot: add typed payload descriptors"
 - **TODO**: [Optional Payload Descriptor Array](../../todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md#4-optional-payload-descriptor-array)
 - **Fields added**: `payload_descriptors[32]`, `payload_count`, `payload_overflow`, `payload_total_bytes`.
 - **Manifest**: 225 fields, `struct_size = 23696` bytes.
@@ -78,32 +78,32 @@ Two independent ABI extensions land under v9:
 
 ### v5 -- Removable media detection
 
-- **Commit**: [`e4bd76be`](https://github.com/rizonesoft/impossible-os/commit/e4bd76be) "boot: detect removable media via EFI_BLOCK_IO_PROTOCOL"
+- **Commit**: [`e4bd76be`](https://github.com/rizonetech/impossible-os/commit/e4bd76be) "boot: detect removable media via EFI_BLOCK_IO_PROTOCOL"
 - **TODO**: [UEFI Hardening + Secure Boot](../../todo/01-boot-platform/TODO-02-uefi-hardening-secureboot.md) (boot media classification work).
 - **Fields added**: removable-media / boot partition classification flags in the boot_device area.
 - **Why**: downstream consumers (recovery path, default drive selection) need to distinguish removable from fixed boot media before mounting.
 
 ### v4 -- Boot partition GUID
 
-- **Commit**: [`d125a47c`](https://github.com/rizonesoft/impossible-os/commit/d125a47c) "boot: extract and validate boot partition GUID from device path"
+- **Commit**: [`d125a47c`](https://github.com/rizonetech/impossible-os/commit/d125a47c) "boot: extract and validate boot partition GUID from device path"
 - **Fields added**: `boot_partition_guid[16]`, `boot_partition_style` (GPT vs MBR), plus related metadata.
 - **Why**: GPT-style boot media needs explicit partition identification so the kernel can locate diagnostic scratch (X:\Diag\) on the correct partition and so recovery can cross-check the partition identity vs `BootOrder`.
 
 ### v3 -- UEFI boot variables
 
-- **Commit**: [`77a4823c`](https://github.com/rizonesoft/impossible-os/commit/77a4823c) "boot: read UEFI boot variables -- BootOrder, BootCurrent, BootNext"
+- **Commit**: [`77a4823c`](https://github.com/rizonetech/impossible-os/commit/77a4823c) "boot: read UEFI boot variables -- BootOrder, BootCurrent, BootNext"
 - **Fields added**: `uefi_boot_current`, `uefi_boot_next`, `uefi_boot_next_valid`, `uefi_boot_order[16]`, `uefi_boot_order_count`.
 - **Why**: the bootloader needs to read `BootOrder` + `BootCurrent` + `BootNext` before ExitBootServices (they come from UEFI variable storage); surfacing them to the kernel lets higher-level boot-device debug code explain the boot entry that fired.
 
 ### v2 -- Boot device type and path
 
-- **Commit**: [`6c3e723f`](https://github.com/rizonesoft/impossible-os/commit/6c3e723f) "boot: pass boot device type and path in boot_info"
+- **Commit**: [`6c3e723f`](https://github.com/rizonetech/impossible-os/commit/6c3e723f) "boot: pass boot device type and path in boot_info"
 - **Fields added**: `boot_device_type` (enum: unknown / SATA / NVMe / USB / network), `boot_device_path[128]` (UEFI device path in text form).
 - **Why**: the kernel needs to log which device it booted from for diagnostics and to drive the recovery-partition search.
 
 ### v1 -- Initial ABI
 
-- **Commit**: [`24d7baa2`](https://github.com/rizonesoft/impossible-os/commit/24d7baa2) "boot: boot_info ABI header fields and bootloader populate"
+- **Commit**: [`24d7baa2`](https://github.com/rizonetech/impossible-os/commit/24d7baa2) "boot: boot_info ABI header fields and bootloader populate"
 - **Baseline** of `struct boot_info` with `header{magic, version, size}`, memory map, framebuffer, UEFI config table, runtime services pointer, TPM event log pointer, USB enumeration state, timing TSC timestamps, serial port metadata, last-boot error code, and the parsed `boot_config` subset.
 - **Why**: first version of the ABI. Everything since is accretion.
 
