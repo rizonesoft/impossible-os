@@ -277,7 +277,7 @@ Today neither Claude nor Codex consistently uses the two MCP servers. Symptom: C
 > - Canonical doc: [`docs/infrastructure/mcp-usage.md`](../../docs/infrastructure/mcp-usage.md) (single source of truth for tool inventory + when-to-use rules); CLAUDE.md `## MCP Usage` is the 3-bullet pointer block.
 > - Scope boundary: §6 owns the doctrine doc + CLAUDE.md pointer + 4 targeted skill updates; §1 owns the actual Codex MCP wiring that closes the cross-tool drift; §9 owns the drift validator. Today (pre-§1) Codex review remains MCP-cold; doc is forward-compatible.
 
-> **Verified:** 2026-04-27 | commit `<pending>` | 7/7 items | build OK | tests 79/79 PASS (test-ai-system) + lint clean (498 files)
+> **Verified:** 2026-04-27 | commit `628c4f0b` | 7/7 items | build OK | tests 79/79 PASS (test-ai-system) + lint clean (498 files)
 > **Quality reviewed:** 2026-04-27 | Codex 1x (adversarial) | 1M+1L fixed | scope: N/A (docs-only section; consistency + perf dispatches don't apply to a doctrine doc + skill prose; the 1 adversarial pass caught 2 real factual errors -- M1 lsp-bridge.references requires path/line/character not name lookup, L1 diagnostics path is required not optional)
 
 ---
