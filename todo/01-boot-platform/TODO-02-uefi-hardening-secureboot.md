@@ -190,7 +190,7 @@ Walk SMBIOS 3.x structures and populate Registry hardware keys.
 > - Canonical doc: this section + DMTF DSP0134 3.7.0 (referenced in code header comments at `smbios.c:30-40`).
 > - Scope boundary: §4 owns table parse + Registry HARDWARE hive population; the Control Panel UI surfaces these keys to the user (owned by `09-desktop-shell/TODO-11-control-panel.md` per the section's existing NOTE).
 
-> **Verified:** 2026-04-27 | commit `<pending>` | 7/7 items | build OK | lint CLEAN | tests test_smbios_uuid wired
+> **Verified:** 2026-04-27 | commit `fce434c1` | 7/7 items | build OK | lint CLEAN | tests test_smbios_uuid wired
 > **Quality reviewed:** 2026-04-27 | Codex 5x (design + adversarial + consistency + perf + re-adversarial) | 2H+2M fixed | scope: kernel-code-quality (gates walked: SMP-safe by default, memory rules, bare-metal correctness, complete error paths, no TODO/FIXME, Win32 surface)
 
 ---
