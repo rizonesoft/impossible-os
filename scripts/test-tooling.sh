@@ -2640,6 +2640,27 @@ fi
 
 
 # ============================================================================
+# audit-hooks.sh -- hook-system drift checks
+# ============================================================================
+# Single sub-test: bash scripts/audit-hooks.sh exits 0 on a clean tree.
+# The script's own checks (files <-> manifest, settings.json <-> manifest,
+# BLOCK exit codes, plugin-side enumeration) are exercised by it being
+# run; we treat its exit code as the verdict.
+
+if [ -x "$REPO_ROOT/scripts/audit-hooks.sh" ]; then
+    AUDIT_OUT="$(bash "$REPO_ROOT/scripts/audit-hooks.sh" --quiet 2>&1)"
+    AUDIT_RC=$?
+    if [ "$AUDIT_RC" = "0" ]; then
+        t_pass "audit_hooks scripts/audit-hooks.sh PASS (no drift)"
+    else
+        t_fail "audit_hooks scripts/audit-hooks.sh FAIL ($AUDIT_OUT)"
+    fi
+else
+    t_fail "audit_hooks scripts/audit-hooks.sh missing or not executable"
+fi
+
+
+# ============================================================================
 # Summary
 # ============================================================================
 

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# block-via: warning-only (STATE hook -- emits stderr warnings on lock contention / state errors but never exits 2; the BLOCK partner is receiving_review_required.py which reads this hook's state file).
 """Track Codex review trigger / receive state for the hard gate.
 
 PostToolUse hook on `Bash` and `Skill`. Writes / updates
