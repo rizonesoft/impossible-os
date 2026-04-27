@@ -16,8 +16,6 @@ Every new or edited skill goes through the same five steps.
 
 Copy [`.claude/skills/TEMPLATE.md`](../../.claude/skills/TEMPLATE.md) into a new directory `.claude/skills/<slug>/SKILL.md` and rename. The slug is `kebab-case`, matches the `name:` frontmatter field, and is what the user types as `/slug` to invoke.
 
-> **Bootstrap from external docs:** when a new skill is the project-side surface for an external system (an external CLI, an HTTP API, a chip's vendor doc, an LSP server's protocol page), invoke `Skill(firecrawl:skill-gen, ...)` with the canonical docs URL. The skill scrapes the docs, derives a SKILL.md scaffold, and seeds the `description:` field from the doc's title + first paragraph. Carry the scaffold through steps 2-5 below for project-specific tightening (description triggers, edit-here-not-there rules, skill-catalog row in CLAUDE.md). Faster than manual transcription and reduces the "I forgot a capability" gap.
-
 ### 2. Write the description so auto-load works
 
 The `description:` field is what Claude reads to decide whether a skill is relevant. Claude does not open the body of SKILL.md to decide relevance -- the description is the entire signal. Structure:

@@ -232,12 +232,13 @@ Claude Code skills live in `.claude/skills/`. They auto-load when Claude judges 
 
 ### Plugin skills -- usage notes
 
-The four installed Claude Code plugins (`superpowers`, `feature-dev`, `firecrawl`, `explanatory-output-style`) ship their own skills + commands + agents that are NOT in the table above. Treat them as helpers, not replacements:
+The three installed Claude Code plugins (`superpowers`, `feature-dev`, `explanatory-output-style`) ship their own skills + commands + agents that are NOT in the table above. Treat them as helpers, not replacements:
 
 - **`superpowers@claude-plugins-official`** -- load-bearing. `superpowers:receiving-code-review` is wired into all 9 codex-* skills + a hook gate; `superpowers:verification-before-completion` is wired into `review-todo-section` step 15.5 and `complete-todo-file` Execution Discipline. Other useful skills (referenced in specific in-repo skills): `systematic-debugging`, `test-driven-development`, `dispatching-parallel-agents`, `requesting-code-review`. Never disable the plugin.
 - **`feature-dev@claude-plugins-official`** -- agents (`code-architect`, `code-explorer`, `code-reviewer`) are usable as helpers. The `/feature-dev` slash command is **NOT the primary path** for feature work in this repo: it skips the Codex adversarial-review pipeline + the section-commit gate that `/implement-todo-section` enforces. Treat `/feature-dev` as a brainstorming aid, not a shipping path. `feature-dev:code-explorer` IS referenced as an Explore-agent alternative in `implement-todo-section` step 3 for very-large unfamiliar codebases.
-- **`firecrawl@claude-plugins-official`** -- preferred over built-in `WebSearch` / `WebFetch` for Win11/Linux parity research (`gap-analysis-todo` Phase 2, `create-todo` step 2) and as the canonical bootstrap recipe for new skills derived from external docs (`firecrawl:skill-gen`, see [skill-authoring.md](docs/infrastructure/skill-authoring.md) step 1).
 - **`explanatory-output-style@claude-plugins-official`** -- SessionStart hook only; injects "explanatory mode" instructions (the `★ Insight ─` blocks). Not a skill, no triggers; benign but adds ~400 tokens per session.
+
+> **Removed:** `firecrawl@claude-plugins-official` was uninstalled 2026-04-27. The plugin required `FIRECRAWL_API_KEY` + an external CLI binary that weren't installed on the dev host, so every dispatch silently fell back to WebSearch / WebFetch. The cost-benefit didn't favor keeping the inactive plugin around.
 
 ## Mandatory Skill Triggers
 
