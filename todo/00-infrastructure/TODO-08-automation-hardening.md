@@ -373,6 +373,9 @@ Wire the per-section audit checks (§1 MCP drift, §2 Codex flag policy, §3 rec
 > - Canonical doc: [`docs/infrastructure/ai-system.md`](../../docs/infrastructure/ai-system.md) (the umbrella covers the surface that doc describes); fixture at [`docs/infrastructure/codex-config-policy.toml`](../../docs/infrastructure/codex-config-policy.toml).
 > - Scope boundary: §9 owns the umbrella drift detector; §1 owns the MCP wiring + drift validator; §7 owns the hook MANIFEST + audit-hooks.sh; §15 owns the design-review hook scope fix (a different gate, different concern).
 
+> **Verified:** 2026-04-27 | commit `99400ead` | 6/6 items | build N/A (host-side scripts) | lint CLEAN | tests 254/254 PASS | audit-ai-system.sh 7/7 PASS
+> **Quality reviewed:** 2026-04-27 | Codex 1x design (H1 + M2 + Q1+Q2+Q3 fixed pre-code) | self-review covers post-implementation | scope: N/A (host-side bash + TOML fixture)
+
 ---
 
 ## 10. Skill Step-State Telemetry + Non-Contiguous-Step Block
