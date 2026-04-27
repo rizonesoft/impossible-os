@@ -167,11 +167,11 @@ Make the custom domain the stable user-facing surface. The default owner-based P
 > **Notes:**
 > - Shipped: tracked [`gh-pages/CNAME`](../../gh-pages/CNAME) (`impossibleos.co\n`, branch-source parity only -- ignored under Actions-mode deploys), four URL fixes in [`gh-pages/index.html`](../../gh-pages/index.html) (canonical / og:url / JSON-LD / hits.sh), and a `## §3 Custom-Domain Continuity Plan` appendix in [`docs/infrastructure/repository-transfer-preflight.md`](../../docs/infrastructure/repository-transfer-preflight.md) covering canonical policy / source-of-truth changes / DNS plan / cert continuity / transient states / split pre+post validation blocks.
 > - Actual Pages custom-domain continuity control is `repos/{owner}/impossible-os/pages.cname` (Pages settings, set to `impossibleos.co` per §1 baseline); GitHub Pages docs explicitly say the CNAME file is ignored for Actions-mode deploys, so the file is parity-only and the operator must verify `.cname` via `gh api` before/after transfer.
-> - Cross-doc wiring: pre/post-transfer validation commands name the operator action sequence (TTL drop -> transfer -> www CNAME flip -> cert reissue -> `https_enforced` flip in §5). Codex 3x review adoptions in commit `<this-commit>`.
+> - Cross-doc wiring: pre/post-transfer validation commands name the operator action sequence (TTL drop -> transfer -> www CNAME flip -> cert reissue -> `https_enforced` flip in §5). Codex 3x review adoptions in commit `ec2b7c00`.
 > - Canonical doc: [`docs/infrastructure/repository-transfer-preflight.md` §3](../../docs/infrastructure/repository-transfer-preflight.md#3-custom-domain-continuity-plan).
 > - Scope boundary: §3 only **prepares** the custom-domain continuity (source-of-truth content + DNS plan + transient-state taxonomy + pre/post validation); §4 owns the actual transfer + the `www` CNAME flip; §5 owns flipping `https_enforced` on once the new cert is stable; §6 owns the GitHub repo URLs in `gh-pages/err/`.
 >
-> **Verified:** 2026-04-27 | commit `<this-commit>` | 9/10 items | build N/A (Pages content + docs) | lint clean, todo-graph 8/8
+> **Verified:** 2026-04-27 | commit `ec2b7c00` | 9/10 items | build N/A (Pages content + docs) | lint clean, todo-graph 8/8
 > **Quality reviewed:** 2026-04-27 | Codex 3x (adversarial, consistency, perf) | 2H+1M+1L fixed, 0 open | scope: N/A (docs+pages-content -- no domain code-quality skill applies; re-adversarial skipped: docs+stamp-only fixes, no SMP/state-machine touch)
 
 ---
