@@ -2729,6 +2729,24 @@ rm -rf "$DR_TMP"
 
 
 # ============================================================================
+# audit-ai-system.sh -- umbrella cross-tool AI drift detection
+# ============================================================================
+# Single sub-test: run the 7-check umbrella; treat its exit code as verdict.
+
+if [ -x "$REPO_ROOT/scripts/audit-ai-system.sh" ]; then
+    AAS_OUT="$(bash "$REPO_ROOT/scripts/audit-ai-system.sh" --quiet 2>&1)"
+    AAS_RC=$?
+    if [ "$AAS_RC" = "0" ]; then
+        t_pass "audit_ai_system  scripts/audit-ai-system.sh PASS (no drift)"
+    else
+        t_fail "audit_ai_system  scripts/audit-ai-system.sh FAIL ($AAS_OUT)"
+    fi
+else
+    t_fail "audit_ai_system  scripts/audit-ai-system.sh missing or not executable"
+fi
+
+
+# ============================================================================
 # audit-hooks.sh -- hook-system drift checks
 # ============================================================================
 # Single sub-test: bash scripts/audit-hooks.sh exits 0 on a clean tree.

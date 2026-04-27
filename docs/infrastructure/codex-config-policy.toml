@@ -1,0 +1,29 @@
+# ============================================================================
+# codex-config-policy.toml -- Impossible OS expected Codex CLI defaults.
+#
+# Single source of truth for what the user's `~/.codex/config.toml` SHOULD
+# carry at the top level, audited by `scripts/audit-ai-system.sh` Check 7
+# (codex_config_policy). The doctrine reason for these values lives in
+# CLAUDE.md "Codex Invocation Policy"; the values themselves live here so a
+# future model bump is a single-file edit, not a doctrine rewrite.
+#
+# Memory anchor:
+#   `feedback_codex_no_model_or_effort` records the user's standing rule:
+#   never pass `--model` or `--effort` from Claude; let Codex CLI use the
+#   defaults from `~/.codex/config.toml`.
+#
+# Drift policy:
+#   - User-machine config matching this fixture: PASS.
+#   - User-machine config differs: FAIL with the expected and observed values.
+#   - User-machine config absent (`~/.codex/config.toml` not present): SKIP-
+#     with-WARN (fresh dev env or CI runner; not a repo-state failure).
+#
+# Updating this fixture:
+#   When the supported Codex model or reasoning-effort default changes, edit
+#   this file AND the matching paragraph in CLAUDE.md "Codex Invocation
+#   Policy" in the same commit. The audit script reads this file and reports
+#   any divergence; CLAUDE.md is doctrine prose for human readers.
+# ============================================================================
+
+model = "gpt-5.5"
+model_reasoning_effort = "medium"

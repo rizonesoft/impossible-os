@@ -74,7 +74,7 @@ title: "TODO-08 -- Automation Hardening (Skill / Hook / MCP / Codex Integration)
 | ⭐  |   9   |  §12    | AI-slop content lints (tautological / stub-behind-stamp / phantom-include)           | §1 (lsp-bridge consumer)   |  [ ]   |
 | 💎  |   10  |  §7     | Hook system audit + dedupe; `MANIFEST.md`; `scripts/audit-hooks.sh`; exit-code gate  | §3, §4, §5, §10, §11, §12  |  [x]   |
 | 💎  |   11  |  §8     | Superpowers skill catalog audit; suppression policy; CLAUDE.md trigger rows          | §3                         |  [x]   |
-| ⭐  |   12  |  §9     | Cross-tool drift detection: `scripts/audit-ai-system.sh` (8 checks)                  | §1, §2, §7, §11            |  [ ]   |
+| ⭐  |   12  |  §9     | Cross-tool drift detection: `scripts/audit-ai-system.sh` (7 checks)                  | §1, §2, §7, §11            |  [x]   |
 | 💎  |   13  |  §13    | Documentation sync: CLAUDE.md / ai-system.md / mcp-usage.md; reciprocal XREF sweep   | §1-§12                     |  [ ]   |
 | 💎  |   14  |  §14    | Remove Copilot CLI reviewer wholesale (Codex is sole external reviewer)              | §3 (initial sweep started) |  [/]   |
 | 💎  |   15  |  §15    | Design-review hook scope fix: review-kind recognition + commit-clears-gate            | §7                         |  [x]   |
@@ -347,20 +347,31 @@ The superpowers plugin ships 14 skills; CLAUDE.md "Mandatory Skill Triggers" tod
 
 Wire the per-section audit checks (§1 MCP drift, §2 Codex flag policy, §3 receiving-review hook coverage, §6 mcp-usage discipline, §7 hook manifest, §8 superpowers policy) into one umbrella script that catches drift between the Claude side, the Codex side, and the two installed plugins.
 
-- [ ] Create `scripts/audit-ai-system.sh` (NEW). Six checks, each with `t_pass` / `t_fail` output and a 1-line actionable message on failure:
-   1. `mcp_set_match` -- `.mcp.json` server-name set == `~/.codex/config.toml` `[mcp_servers.*]` keys (calls into §1 validator).
-   2. `codex_skill_no_model_flag` -- grep over `.claude/skills/codex-*/SKILL.md` finds zero `--model ` and zero `--effort ` examples.
-   3. `codex_skill_companion_path` -- every `codex-companion.mjs` invocation in skill prose uses `${CLAUDE_PLUGIN_ROOT}` (skill-side) or the absolute marketplaces path (documented exceptions only).
-   4. `codex_skill_receiving_pointer` -- every `.claude/skills/codex-*/SKILL.md` mentions `superpowers:receiving-code-review` or `receiving-code-review` at least once.
-   5. `hook_manifest_complete` -- every file under `.claude/hooks/` has a row in `MANIFEST.md`; every manifest row points at an existing file (calls into §7).
-   6. `state_dir_layout` -- `.claude/state/` directory exists with the documented file shapes; `.gitignore` includes the directory.
-- [ ] Wire `scripts/audit-ai-system.sh` into `bash scripts/test-tooling.sh` as a single sub-test (`t_pass audit_ai_system "ai-system drift checks pass"`).
-- [ ] Add a CI-side equivalent: a job in [`.github/workflows/build.yml`](../../.github/workflows/build.yml) (if Github CI is wired -- TODO-01 §6 owns this) that runs `bash scripts/audit-ai-system.sh` before any other check. Failure on PR = same actionable message in the CI log.
-- [ ] **Check 7 -- Codex side config drift:** `~/.codex/config.toml` top-level `model = "gpt-5.5"` AND `model_reasoning_effort = "medium"` match the user's documented policy (see [`feedback_codex_no_model_or_effort.md`](file:///home/derickpayne/.claude/projects/-home-derickpayne-impossible-os/memory/feedback_codex_no_model_or_effort.md) memory). If either drifts, fail with a one-line actionable message naming the expected and observed values. The check does NOT enforce a particular value across user machines; it reads the expected values from the memory file or a sibling `[`.codex/config-policy.toml`]` declaring them, so a future model-default change is a single-file edit.
-- [ ] **Check 8 -- plugin manifest enumeration:** every plugin under `~/.claude/plugins/installed_plugins.json` has its `hooks/hooks.json` enumerated in `.claude/hooks/MANIFEST.md` (cross-checks §7 plugin-side hook enumeration). If a new plugin is installed but the manifest is not updated, the check fails.
-- [ ] Commit: `"scripts: audit-ai-system.sh -- six cross-tool drift checks; wired into test-tooling"`
+- [x] [`scripts/audit-ai-system.sh`](../../scripts/audit-ai-system.sh) ships with 7 checks (the 6 originally planned plus check 7 Codex config policy; the originally planned check 8 was MERGED into check 5 per design review M2 to avoid duplicate plugin enumeration calls). Each check is `t_pass` / `t_fail` / `t_warn` style with a 1-line actionable message on failure.
+  - `mcp_set_match` -- delegates to [`scripts/codex-mcp-install.sh --check`](../../scripts/codex-mcp-install.sh) (`.mcp.json` vs `~/.codex/config.toml` parity); SKIP-with-WARN if `~/.codex/config.toml` missing.
+  - `codex_no_model_flag` -- design review H1 fix: scope is ALL `.claude/skills/**/SKILL.md` that grep-match `codex-companion.mjs`, not just `codex-*` skills. Catches workflow-consumer skills (`implement-todo-section`, `review-todo-section`, etc.) that also invoke Codex.
+  - `codex_companion_path` -- every `node ... codex-companion.mjs` invocation in any Codex-using skill uses `${CLAUDE_PLUGIN_ROOT}` or the absolute marketplaces path. Pure-prose backtick mentions are exempt (the regex requires `node` or `bash` adjacent to the filename, so descriptive references are not flagged).
+  - `codex_receiving_pointer` -- every Codex-using skill (whole `.claude/skills/**` corpus, not just `codex-*`) mentions `receiving-code-review` at least once.
+  - `hook_manifest_complete` -- delegates to [`scripts/audit-hooks.sh --quiet`](../../scripts/audit-hooks.sh); covers files-vs-manifest, manifest-vs-files, BLOCK exit codes, and plugin enumeration in one call (no double-call duplication).
+  - `state_dir_layout` -- `.claude/state/` directory exists; `.claude/state/README.md` exists; `.gitignore` declares `.claude/state/*`.
+  - `codex_config_policy` -- compares `~/.codex/config.toml` top-level `model` + `model_reasoning_effort` against [`docs/infrastructure/codex-config-policy.toml`](../../docs/infrastructure/codex-config-policy.toml) fixture (NEW, this commit). SKIP-with-WARN on missing user config. Design review M2 fix: split user-home checks (1, 7) from repo-state checks (2-6) so CI runners that lack `~/.codex/config.toml` get clean PASS via the WARN path.
+- [x] Wired into [`scripts/test-tooling.sh`](../../scripts/test-tooling.sh) as a single sub-test (`audit_ai_system`) immediately before the existing `audit_hooks` block.
+- [x] CI coverage already in place: [`.github/workflows/build.yml`](../../.github/workflows/build.yml) line 127 runs `bash scripts/test-tooling.sh --quiet`; the new umbrella sub-test fires automatically via that path. No new workflow job needed.
+- [x] Check 7 ships as documented above with `docs/infrastructure/codex-config-policy.toml` as the single-source-of-truth fixture (model + effort). Future model-default changes are a 1-line edit to the fixture; the script reads it directly. Doctrine reasoning lives in CLAUDE.md "Codex Invocation Policy".
+- [x] Check 8 (originally planned plugin-manifest-enumeration) absorbed into check 5: `audit-hooks.sh` already enumerates plugins under `~/.claude/plugins/installed_plugins.json`, so a separate check would have called the same logic twice with no new coverage.
+- [x] Commit: `"scripts: audit-ai-system.sh -- seven cross-tool drift checks; wired into test-tooling"`.
 
-**Test checkpoint:** `bash scripts/audit-ai-system.sh` exits 0 with all 6 checks PASS. Synthetically delete the `lsp-bridge` block from `~/.codex/config.toml`, re-run, check 1 fails with the expected message. Restore. Synthetically add `--model gpt-5.5` to one skill's example, re-run, check 2 fails. Restore. `bash scripts/test-tooling.sh` shows the new umbrella sub-test PASS. Test on: Linux WSL2 dev host.
+**Test checkpoint:** `bash scripts/audit-ai-system.sh` exits 0 with all 7 checks PASS. Synthetically delete the `lsp-bridge` block from `~/.codex/config.toml`, re-run, check 1 fails with the expected message. Restore. Synthetically add `--model gpt-5.5` to one skill's example, re-run, check 2 fails. Restore. `bash scripts/test-tooling.sh` shows the new umbrella sub-test PASS. Test on: Linux WSL2 dev host.
+
+> **Test runner:** `bash scripts/test-tooling.sh` (sub-test `audit_ai_system`) | 254/254 tooling tests PASS
+
+> **Notes:**
+> - Two new artifacts: [`scripts/audit-ai-system.sh`](../../scripts/audit-ai-system.sh) (281-line bash umbrella with 7 checks; delegates to existing per-section validators where possible) and [`docs/infrastructure/codex-config-policy.toml`](../../docs/infrastructure/codex-config-policy.toml) (model + reasoning-effort fixture for check 7). Sub-test `audit_ai_system` wired into `scripts/test-tooling.sh`.
+> - How it runs: invoke directly via `bash scripts/audit-ai-system.sh` or transitively via `bash scripts/test-tooling.sh`. CI runs it through test-tooling.sh per `.github/workflows/build.yml:127`. Idempotent over a clean working tree; audits disk state, not git index.
+> - Caught a real drift on first run: `codex-design-review/SKILL.md` line 65 had a bare `node codex-companion.mjs cancel` in the stale-recovery prose; rewrote to use the canonical absolute marketplaces path (fixed in this same commit).
+> - Codex design review adoptions in this commit: H1 (scope check 2/3/4 over ALL Codex-using skills, not just `codex-*`), M2 (split user-home from repo-state checks; SKIP-with-WARN on missing user config), Q1 (TOML fixture file), Q2 (merged checks 5+8 to avoid duplicate plugin-enumeration), Q3 (missing config = SKIP-with-WARN, not PASS).
+> - Canonical doc: [`docs/infrastructure/ai-system.md`](../../docs/infrastructure/ai-system.md) (the umbrella covers the surface that doc describes); fixture at [`docs/infrastructure/codex-config-policy.toml`](../../docs/infrastructure/codex-config-policy.toml).
+> - Scope boundary: §9 owns the umbrella drift detector; §1 owns the MCP wiring + drift validator; §7 owns the hook MANIFEST + audit-hooks.sh; §15 owns the design-review hook scope fix (a different gate, different concern).
 
 ---
 

@@ -62,7 +62,7 @@ When `status: "completed"`, the same JSON contains `finalMessage` (the review te
 
 **Receive integrity is preserved.** The background dispatch is detected as a real review trigger by `codex_review_completed.py` (PostToolUse) -- it writes `last-codex-review.json` with `received: false` exactly like a foreground call. The `receiving_review_required.py` PreToolUse hook then BLOCKs every Edit/Write/MultiEdit on code targets until you read the result and run `Skill(superpowers:receiving-code-review)`. You cannot accidentally skip a background review's findings -- the gate is the same as foreground.
 
-**Stale recovery:** if a background dispatch is abandoned (session crash, agent confusion), the trigger state has a 3600s TTL after which the gate auto-releases. Manual recovery: delete `.claude/state/last-codex-review.json` AND cancel the job via `node codex-companion.mjs cancel <jobId>`.
+**Stale recovery:** if a background dispatch is abandoned (session crash, agent confusion), the trigger state has a 3600s TTL after which the gate auto-releases. Manual recovery: delete `.claude/state/last-codex-review.json` AND cancel the job via `node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" cancel <jobId>`.
 
 ## Workflow
 
