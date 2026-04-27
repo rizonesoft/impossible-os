@@ -2640,6 +2640,95 @@ fi
 
 
 # ============================================================================
+# design_review_required.py -- review-kind + commit-clears (TODO-08 #15)
+# ============================================================================
+# Two sub-tests verify the gate-relaxation behavior added in TODO-08 #15:
+#   review_kind  -- a Codex dispatch with `[review-kind: ...]` marker
+#                   counts as design-equivalent (gate cleared)
+#   commit_clears -- a section-ship commit (`review:` / `stamp:` /
+#                   `docs:` / `todo:` prefix) resets the gate
+
+DR_TMP="$(mktemp -d)"
+DR_HOOK="$REPO_ROOT/.claude/hooks/design_review_required.py"
+
+# Helper: build a transcript fixture with a Skill(implement-todo-section)
+# event followed by an optional Bash event, then run the hook against an
+# Edit payload targeting a code file. Echoes hook exit code.
+dr_run() {
+    local fixture="$1"
+    local target="$2"
+    local payload
+    payload="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"%s"},"transcript_path":"%s"}' \
+        "$target" "$fixture")"
+    printf '%s' "$payload" | python3 "$DR_HOOK" >/dev/null 2>&1
+    echo $?
+}
+
+# Synthesize a JSONL transcript line with a tool_use event.
+dr_event() {
+    local tool="$1" name="$2" input_json="$3"
+    printf '{"message":{"content":[{"type":"tool_use","name":"%s","input":%s}]}}\n' \
+        "$tool" "$input_json"
+}
+
+# --- Test A: bare implement-todo-section (no design dispatch) -> blocked
+FX="$DR_TMP/baseline.jsonl"
+dr_event "Skill" "Skill" '{"skill":"implement-todo-section","args":"## 1. Foo"}' >"$FX"
+RC="$(dr_run "$FX" "src/kernel/foo.c")"
+if [ "$RC" = "2" ]; then
+    t_pass "design_review_required baseline blocks (rc=2 with no design dispatch)"
+else
+    t_fail "design_review_required baseline expected rc=2, got rc=$RC"
+fi
+
+# --- Test B (#15 #1): [review-kind: adversarial] dispatch clears the gate
+FX="$DR_TMP/review_kind.jsonl"
+dr_event "Skill" "Skill" '{"skill":"implement-todo-section","args":"## 1. Foo"}' >"$FX"
+dr_event "Bash" "Bash" '{"command":"node /path/codex-companion.mjs adversarial-review \"[review-kind: adversarial] Target: ...\""}' >>"$FX"
+RC="$(dr_run "$FX" "src/kernel/foo.c")"
+if [ "$RC" = "0" ]; then
+    t_pass "design_review_review_kind [review-kind: adversarial] clears gate (rc=0)"
+else
+    t_fail "design_review_review_kind expected rc=0, got rc=$RC"
+fi
+
+# --- Test C (#15 #2): a `review:` commit clears the gate
+FX="$DR_TMP/commit_clears.jsonl"
+dr_event "Skill" "Skill" '{"skill":"implement-todo-section","args":"## 1. Foo"}' >"$FX"
+dr_event "Bash" "Bash" '{"command":"git commit -m \"review: TODO-XX foo bar\""}' >>"$FX"
+RC="$(dr_run "$FX" "src/kernel/foo.c")"
+if [ "$RC" = "0" ]; then
+    t_pass "design_review_commit_clears review: prefix clears gate (rc=0)"
+else
+    t_fail "design_review_commit_clears expected rc=0, got rc=$RC"
+fi
+
+# --- Test D (#15 #2): a `docs/x:` commit also clears the gate
+FX="$DR_TMP/commit_docs.jsonl"
+dr_event "Skill" "Skill" '{"skill":"implement-todo-section","args":"## 1. Foo"}' >"$FX"
+dr_event "Bash" "Bash" '{"command":"git commit -m \"docs/superpowers: catalog audit\""}' >>"$FX"
+RC="$(dr_run "$FX" "src/kernel/foo.c")"
+if [ "$RC" = "0" ]; then
+    t_pass "design_review_commit_clears docs/x: prefix clears gate (rc=0)"
+else
+    t_fail "design_review_commit_clears docs/x: expected rc=0, got rc=$RC"
+fi
+
+# --- Test E: a non-section-ship commit (e.g. `feat:`) does NOT clear gate
+FX="$DR_TMP/commit_other.jsonl"
+dr_event "Skill" "Skill" '{"skill":"implement-todo-section","args":"## 1. Foo"}' >"$FX"
+dr_event "Bash" "Bash" '{"command":"git commit -m \"feat: unrelated change\""}' >>"$FX"
+RC="$(dr_run "$FX" "src/kernel/foo.c")"
+if [ "$RC" = "2" ]; then
+    t_pass "design_review_commit_clears feat: prefix does NOT clear gate (rc=2)"
+else
+    t_fail "design_review_commit_clears feat: expected rc=2, got rc=$RC"
+fi
+
+rm -rf "$DR_TMP"
+
+
+# ============================================================================
 # audit-hooks.sh -- hook-system drift checks
 # ============================================================================
 # Single sub-test: bash scripts/audit-hooks.sh exits 0 on a clean tree.

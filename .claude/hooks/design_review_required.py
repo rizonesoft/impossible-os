@@ -19,6 +19,24 @@
 # Opt-out: SKIP_DESIGN_REVIEW_HOOK=1 env var. Use sparingly --
 # legitimate cases: docs-only sections, stamp-only edits, sections
 # explicitly classified as no-design-needed (pure constant additions).
+#
+# TODO-08 §15 fix (2026-04-27):
+#   #1 review-kind recognition -- a Codex dispatch whose prompt carries
+#      a `[review-kind: adversarial|consistency|perf|re-adversarial|design]`
+#      marker counts as design-equivalent. Rationale: review-pipeline
+#      fixes responding to Codex findings ARE design-validated work; the
+#      design-review-pre-code rule is for *new* implementation, not for
+#      fixing a reviewer's findings. Closes the §4 SMBIOS pain where the
+#      hook re-fired on review-pipeline edits despite three real review
+#      dispatches having just run.
+#   #2 commit-clears-gate -- after a section-ship-style commit subject
+#      (`review:` / `stamp:` / `docs:` / `todo:` prefix), reset impl_seen
+#      so the next implement-todo-section invocation starts a fresh
+#      gate window. Rationale: the gate is meant to enforce design-
+#      before-code WITHIN one implement-todo-section flow; once that
+#      flow ships, the next session's work shouldn't inherit the gate.
+#      Closes the §8-after-§7 pain where docs-only §8 left the gate
+#      armed and blocked unrelated §4 SMBIOS edits.
 import json
 import os
 import re
@@ -101,10 +119,38 @@ def _scan_transcript(path: str) -> tuple[bool, bool, str]:
                         impl_args = inp.get("args", "")
                 elif name == "Bash" and impl_seen:
                     cmd = (inp.get("command") or "")
+                    # #1 (TODO-08 §15): explicit "design" keyword OR a
+                    # `[review-kind: ...]` marker in the prompt counts
+                    # as design-equivalent. Review-pipeline dispatches
+                    # ARE design-validation work for fixes responding
+                    # to those reviews.
                     if ("codex-companion.mjs" in cmd
                             and "adversarial-review" in cmd
-                            and re.search(r"\bdesign\b", cmd, re.I)):
+                            and (re.search(r"\bdesign\b", cmd, re.I)
+                                 or re.search(
+                                     r"\[review-kind:\s*"
+                                     r"(?:adversarial|consistency|perf|"
+                                     r"re-adversarial|design)\b",
+                                     cmd, re.I))):
                         design_seen = True
+                    # #2 (TODO-08 §15): a section-ship-style commit
+                    # clears the gate so the next implement-todo-section
+                    # invocation starts fresh. Patterns: subject after
+                    # `-m "..."` inline OR after a HEREDOC body line
+                    # starting with `review:` / `stamp:` / `docs:` /
+                    # `todo:` (covers `docs/superpowers:` etc).
+                    elif (re.search(r"\bgit\s+commit\b", cmd) and
+                          (re.search(
+                              r"-m\s+[\'\"]\s*"
+                              r"(?:review|stamp|docs|todo)[:/]",
+                              cmd) or
+                           re.search(
+                               r"<<\s*[\'\"]?[A-Za-z_]\w*[\'\"]?\s*\n"
+                               r"\s*(?:review|stamp|docs|todo)[:/]",
+                               cmd, re.S))):
+                        impl_seen = False
+                        design_seen = False
+                        impl_args = ""
     return (impl_seen, design_seen, impl_args)
 
 

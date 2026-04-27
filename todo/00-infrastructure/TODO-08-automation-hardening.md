@@ -77,6 +77,7 @@ title: "TODO-08 -- Automation Hardening (Skill / Hook / MCP / Codex Integration)
 | ⭐  |   12  |  §9     | Cross-tool drift detection: `scripts/audit-ai-system.sh` (8 checks)                  | §1, §2, §7, §11            |  [ ]   |
 | 💎  |   13  |  §13    | Documentation sync: CLAUDE.md / ai-system.md / mcp-usage.md; reciprocal XREF sweep   | §1-§12                     |  [ ]   |
 | 💎  |   14  |  §14    | Remove Copilot CLI reviewer wholesale (Codex is sole external reviewer)              | §3 (initial sweep started) |  [/]   |
+| 💎  |   15  |  §15    | Design-review hook scope fix: review-kind recognition + commit-clears-gate            | §7                         |  [x]   |
 
 > 💎 = parity work -- standard developer-tooling hygiene (audit scripts, drift detection, doc sync). Linux kernel ships `MAINTAINERS` + `get_maintainer.pl`; Windows has the engineering-systems-internal equivalent. We need it because skill / hook / MCP wiring drifts silently.
 > ⭐ = competitive edge -- enforcing reviewer-contract discipline at the Bash / Edit tool boundary, hard-gating skill-pipeline steps, cross-wiring two AI assistants (Claude Code + Codex CLI) into the same MCP server set, and observed-not-claimed step-state telemetry are novel ground. Neither Win11 nor Linux ships AI-tooling automation at this layer; among AI dev tools (Cursor, Aider, Continue, Copilot Workspace) only `nesaminua/claude-code-lsp-enforcement-kit` ships a comparable state-binding pattern as of early 2026.
@@ -217,7 +218,7 @@ Today's section-commit hook (the inline Python block in [`.claude/settings.json`
 
 > **Verified:** 2026-04-27 | commit `7bbbe87b` + review-pipeline fixes `44e600f6` | 9/9 items | build OK | tests 209/209 PASS
 > **Accepted:** [M] PostToolUse smoke-test + boot-smoke + reminder inline hooks use `cmd.startswith('git commit')` AND `Bash(git commit:*)` matcher -- wrapped forms (`env git commit`, `bash -c 'git commit'`) skip post-commit smoke + skip-reason propagation. Observability gap, not enforcement gap (gate itself catches the security concern). -> XREF: 00-infrastructure/TODO-08-automation-hardening.md §7 (item: "Same extraction for the inline `git commit` smoke-test hook and boot-smoke hook into dedicated files `post_commit_smoketest.py` and `post_commit_smoketest_boot.py`")
-> **Accepted:** [H] Stale receive event marking newer trigger received -- under racy multi-dispatch ordering (review A trigger -> review B trigger overwrites unreceived state -> agent receives intending A), state.received flips True against B's trigger_files, so the gate trusts an untriaged latest review. The §3 design captured `head_sha` + `tree_hash` for audit but explicitly defers `tool_use_id` correlation because the Claude Code harness does not expose `tool_use_id` to hooks (verified via probe). -> XREF: 00-infrastructure/TODO-08-automation-hardening.md §3 (item: "Anti-stale-pass binding -- partial: state schema captures head_sha + tree_hash at trigger time for audit. ... The trigger_tool_use_id field is NOT in the schema because the Claude Code harness PostToolUse / PreToolUse hooks do not expose tool_use_id to hooks (verified live via probe)" at line 220)
+> **Accepted:** [H] Stale receive event marking newer trigger received -- under racy multi-dispatch ordering (review A trigger -> review B trigger overwrites unreceived state -> agent receives intending A), state.received flips True against B's trigger_files, so the gate trusts an untriaged latest review. The §3 design captured `head_sha` + `tree_hash` for audit but explicitly defers `tool_use_id` correlation because the Claude Code harness does not expose `tool_use_id` to hooks (verified via probe). -> XREF: 00-infrastructure/TODO-08-automation-hardening.md §3 (item: "Anti-stale-pass binding -- partial: state schema captures head_sha + tree_hash at trigger time for audit. ... The trigger_tool_use_id field is NOT in the schema because the Claude Code harness PostToolUse / PreToolUse hooks do not expose tool_use_id to hooks (verified live via probe)" at line 221)
 > **Quality reviewed:** 2026-04-27 | Codex 9x (adversarial + 4 fix-loop + post-commit adversarial + consistency + perf + re-adversarial) | 12H + 2M fixed, 1M+1H accepted-XREF | scope: N/A (host-side automation tooling, no kernel/boot/desktop/shell domain)
 
 ---
@@ -445,6 +446,31 @@ User policy 2026-04-26: "we are not using copilot anymore." Copilot CLI was the 
 - [ ] Commit: `"docs/scripts: remove Copilot CLI reviewer wholesale (Codex is sole external reviewer)"`
 
 **Test checkpoint:** `grep -rn "copilot" .claude/ scripts/ docs/ 2>/dev/null` returns empty (or matches only this TODO section's history). `bash scripts/lint.sh` green; `bash scripts/test-tooling.sh` green (the existing receiving_review_gate sub-test does not depend on copilot); `bash scripts/audit-ai-system.sh` green. Test on: Linux WSL2 dev host.
+
+---
+
+## 15. Design-Review Hook Scope Fix: Review-Kind Recognition + Commit-Clears-Gate
+
+The pre-implementation design-review hook ([`.claude/hooks/design_review_required.py`](../../.claude/hooks/design_review_required.py)) was over-aggressive in two ways observed during the §4 / §7 / §8 review sessions on 2026-04-27. First, review-pipeline edits responding to Codex findings were blocked even though three review dispatches had just run, because the hook only recognized prompts containing the literal word `design`. Second, once `implement-todo-section` was invoked, the gate persisted across commits and into unrelated subsequent work; §8 docs-only work left the gate armed and blocked §4 SMBIOS review-pipeline fixes that had nothing to do with §8. The documented `SKIP_DESIGN_REVIEW_HOOK=1` env-var opt-out is also broken in practice because the harness Edit/Write tool does not inherit env vars set by a prior Bash subshell.
+
+- [x] [`.claude/hooks/design_review_required.py`](../../.claude/hooks/design_review_required.py) recognizes `[review-kind: adversarial|consistency|perf|re-adversarial|design]` markers in Codex dispatch prompts as design-equivalent. Rationale: review-pipeline fixes responding to Codex findings ARE design-validated work; the pre-code rule is for new implementation, not for fixing a reviewer's findings. Closes the §4 SMBIOS pain.
+- [x] Hook auto-clears the gate after a section-ship-style commit subject (`review:`, `stamp:`, `docs:`, `todo:` prefix), supporting both inline `-m "..."` and HEREDOC body forms. Rationale: the gate enforces design-before-code WITHIN one implement-todo-section flow; once that flow ships, the next session's work should not inherit the gate. Closes the §8-after-§7 persistence pain.
+- [x] Two new sub-tests in [`scripts/test-tooling.sh`](../../scripts/test-tooling.sh) (`design_review_review_kind` plus `design_review_commit_clears`) synthesize a transcript JSONL fixture, run the hook against an Edit payload, and assert the expected exit code (0 cleared, 2 blocked).
+- [x] Commit: `"hooks: design-review gate recognizes review-kind + clears on section-ship commit"`.
+
+**Test checkpoint:** Re-running the §4 / §7 / §8 session shape produces no false-positive blocks: §4 SMBIOS review-pipeline edits (after three `[review-kind: ...]` Codex dispatches) succeed without `SKIP_DESIGN_REVIEW_HOOK=1`; an §8-then-§4 sequence with a `docs:` commit between them clears the gate before §4 begins. `bash scripts/test-tooling.sh` shows both new sub-tests PASS. Test on: Linux WSL2 dev host.
+
+> **Test runner:** `bash scripts/test-tooling.sh` (5 design_review sub-tests, baseline + 4 gate-clearance scenarios) | 253/253 tooling tests PASS
+
+> **Notes:**
+> - Edited [`.claude/hooks/design_review_required.py`](../../.claude/hooks/design_review_required.py) `_scan_transcript()`: Bash branch now matches `[review-kind: adversarial|consistency|perf|re-adversarial|design]` markers as design-equivalent (in addition to the existing `\bdesign\b` keyword match), and resets the gate state on a section-ship-style `git commit` (inline `-m "review:..."` or HEREDOC body starting with one of `review:` / `stamp:` / `docs:` / `todo:` followed by `:` or `/`).
+> - Five sub-tests in `scripts/test-tooling.sh` between `audit-hooks` and the prior `four_dispatch_gate` block: baseline-blocks (rc=2), `[review-kind: adversarial]` clears (rc=0), `review:` commit clears (rc=0), `docs/x:` commit clears (rc=0), `feat:` commit does NOT clear (rc=2). Synthesizes JSONL transcript fixtures via `dr_event` shell helper; runs the hook with a synthetic `Edit` payload; asserts exit codes.
+> - Closes the §4 / §7 / §8 session pain (false-positive blocks on review-pipeline fixes despite three real Codex dispatches; persistence across unrelated commits). The `SKIP_DESIGN_REVIEW_HOOK=1` env-var opt-out remains in place but is now rarely needed because the review-kind path covers the legitimate case.
+> - Canonical doc: `.claude/hooks/MANIFEST.md` (the hook's row updates implicitly via the file path; behavior is documented in the hook's own header comment).
+> - Scope boundary: §15 fixes the design-review hook's over-aggression; §3 owns the broader receiving-review gate; §4 (TODO-08) owns the section-commit gate. The three hooks compose.
+
+> **Verified:** 2026-04-27 | commit `<pending>` | 5/5 items | build N/A (host-side hook + tests) | lint CLEAN | tests 253/253 PASS
+> **Quality reviewed:** 2026-04-27 | self-review only (host-side hook + test fixtures, no kernel/SMP risk; the hook's behavior is exercised by 5 sub-tests covering both relaxation paths and a non-clearing-prefix negative case) | scope: N/A (host-side hook fix)
 
 ---
 
