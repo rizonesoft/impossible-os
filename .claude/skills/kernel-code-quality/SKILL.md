@@ -218,6 +218,18 @@ Lesson: `s_subsys_names[]` missed `SUBSYS_OB`, causing OOB read in `kernel_subsy
 - [ ] **Correct the first time.** Read the spec, read the existing code, understand the integration surface BEFORE writing. A function that works on the first `build.sh` run is the goal -- iterating through compile errors is wasted motion. Think, then type.
 - [ ] **No backwards-compatibility shims.** If a function signature changes, update all callers. Don't add a wrapper that converts old arguments to new ones. Don't re-export removed symbols. If it's unused, delete it completely.
 
+### Gate 11a: Win32 API Surface -- Fix, Never Remove
+
+> **Incident 2026-04-27 (TODO-02 §2):** Codex flagged legacy SSDT 0x00D2/0x00D3 (`NtQuerySystemEnvironmentValue` / `NtSetSystemEnvironmentValue`) handlers as broken: they re-routed to the Ex variant via stack-args 5/6, but the SSDT dispatcher only forwards 4 args, so attrs/extra GUID arg silently zeroed. First instinct: remove the registrations to fix the H2 ABI mismatch. User pushed back: "we are working towards a complete Win32 API. Removing implementations that could potentially break Win32 API support is not a good idea. Implement it correctly." The right fix was the canonical UNICODE_STRING legacy ABI with implicit `EFI_GLOBAL_VARIABLE_GUID`, not removal.
+
+- [ ] **Never remove an SSDT registration, syscall entry, or Win32-shaped export to "fix" it.** Impossible OS is building a complete Win32 API surface (CLAUDE.md "Product North Star"). A registered SSDT slot, an exported `kernel32!Foo` symbol, an `ntdll!NtFoo` entry -- these are PROMISES to a future caller. Removing the registration breaks the promise; keeping the registration with a broken handler at least preserves the surface so a fix can land later. Removing is worse than broken.
+- [ ] **If a handler has the wrong ABI, signature, or behavior: implement the correct one.** This is gate-walking territory: read the canonical spec (Windows Internals 7e for NT API; MSDN for Win32; UEFI 2.10 for firmware ABIs; relevant TODO master tables in `todo/02-kernel-core/TODO-A-SSDT-Master-Table.md` for SSDT entries), produce the right shape, replace the broken implementation. Do NOT silently drop the registration and wait for "someone" to file a follow-up.
+- [ ] **Sub-standard handlers that ARE the right ABI but cut corners on coverage are not "remove and re-implement" candidates either.** They are Gate 11 (Spec Compliance) work: extend the implementation to the full spec, in the same commit if the scope fits.
+- [ ] **The only legitimate registration removal is when the syscall NUMBER itself is wrong** (e.g. duplicate slot, shadow vs main SSDT confusion, wrong category). In that case the fix is moving the registration, not deleting it -- the Win32 surface stays whole, just at the right slot.
+- [ ] **When in doubt, ask the user before removing any SSDT slot, exported symbol, or Win32 entry point.** The user's review gate (`feedback_no_simplify`, `feedback_no_substandard_code`) treats removal-as-fix as a corner-cutting failure mode. Confirmation costs ~30 seconds; reverting a removed-then-re-added Win32 entry costs an hour and a regression scare.
+
+---
+
 ### Gate 11: Spec Compliance -- No Sub-Standard Code
 
 > **Incident 2026-04-12:** UEFI device path walk used `Type == 0x7F` instead of `Type == 0x7F && SubType == 0xFF` for END_ENTIRE, and HardDrive DP extraction checked MBRType but not SignatureType. Both diverged from the UEFI spec. Claude accepted them as "forward-reserve" or "low risk" instead of fixing immediately. The user had to ask.
