@@ -207,9 +207,19 @@ Read the UEFI `SecureBoot` variable and expose the state to the kernel.
 > [!NOTE]
 > Kernel **code signature verification** for loaded images is owned by `02-kernel-core/TODO-10-kernel-security-hardening.md §11` (Enclave and code signing) and cross-notes in `02-kernel-core/TODO-15-security-reference-monitor.md`, not this bootloader TODO.
 
-**Test checkpoint:** `boot_info.secure_boot_enabled` matches UEFI `SecureBoot` variable; registry `HKLM\SYSTEM\SecureBoot\State` is 0 or 1 accordingly; padlock tray icon matches state when shell is running. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** `boot_info.secure_boot_enabled` matches UEFI `SecureBoot` variable when read succeeded (`StateValid=1`); registry `HKLM\SYSTEM\SecureBoot\StateValid` is `1` if the SecureBoot variable read succeeded, `0` if it failed. `State` key is present (0 or 1) ONLY when `StateValid=1`; absent on read-failure path so legacy boolean readers cannot mistake unknown for disabled. Padlock tray icon matches state when shell is running. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Quality reviewed:** 2026-04-11 -- 4 parity gaps closed (SetupMode, DeployedMode, AuditMode, PK/KEK enrollment all written to HKLM\SYSTEM\SecureBoot registry). Accepted: registry path convention (intentionally simpler than Windows CurrentControlSet).
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot, TEST_CAT_BOOT) | test_secureboot_state_matches_var + test_secureboot_db_inventory_matches_registry; smoke covers boot reach to C:\>
+
+> **Notes:**
+> - `uefi_secureboot_init()` in `src/kernel/uefi_runtime.c:825-944` reads SecureBoot/SetupMode/DeployedMode/AuditMode (UEFI 2.5+) global vars + PK/KEK existence; publishes to `g_boot_info.secure_boot_enabled` + `g_system_state.secure_boot` + `BOOT_CAP_SECURE_BOOT_STATE` cap bit ONLY when the variable read succeeded. Failure path: state stays zero-init, cap stays degraded, klog says UNKNOWN.
+> - Hostile-firmware hardening (Codex 4x review 2026-04-28): `read_global_byte` now requires `status==SUCCESS && sz==sizeof(val)` (rejects firmware returning SUCCESS with sz=0/sz>1); `global_var_exists` requires `sz>0` (rejects empty PK/KEK as "enrolled"); `uefi_secureboot_populate_registry` writes `StateValid` always but `State` ONLY when valid (closes the unknown-vs-disabled ambiguity in the registry; 0xFF sentinel attempted but re-adversarial caught it polluted the bool contract for legacy readers).
+> - Padlock tray icon: `g_system_state.secure_boot` flag published; rendering owned by `08-graphics-ui/TODO-11-startmenu-tray-notifications.md §4` (System tray icons -- `tray_icon` struct + register/unregister). The flag is the consumer-side signal; no further plumbing needed by this section.
+> - Canonical doc: this section + UEFI 2.10 §8.2.1 (Secure Boot variables) + UEFI 2.10 §3.3 (PK/KEK semantics).
+> - Scope boundary: §5 owns SecureBoot state read + registry publication; kernel **code signature verification** for loaded images is owned by `02-kernel-core/TODO-10-kernel-security-hardening.md §11`; SecureBoot DB/dbx inventory is owned by §9 of this TODO.
+
+> **Verified:** 2026-04-28 | commit `<pending>` | 4/4 items (3 [x] + 1 [/]) | build OK | tests test_secureboot_state_matches_var + test_secureboot_db_inventory_matches_registry wired
+> **Quality reviewed:** 2026-04-28 | Codex 4x (adversarial + consistency + perf + re-adversarial) | 1H+2M fixed (+1 re-adversarial regression) | scope: kernel-code-quality (gates walked: SMP-safe by default, memory rules, bare-metal correctness, complete error paths, no TODO/FIXME, Win32 surface)
 
 ---
 

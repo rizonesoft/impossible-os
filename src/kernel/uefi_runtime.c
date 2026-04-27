@@ -776,13 +776,25 @@ boot_result_t uefi_time_init(void)
  * ============================================================================ */
 
 static int s_sb_enabled;      /* SecureBoot variable = 1 */
+static int s_sb_state_valid;  /* 1 if SecureBoot var read returned authoritative
+                                 value; 0 if read failed (state is unknown).
+                                 Codex review 2026-04-28 H1: registry must NOT
+                                 publish State when this is 0 -- consumers must
+                                 see a separate StateValid=0 signal so the
+                                 read-failure path is distinguishable from
+                                 genuinely-disabled. */
 static int s_sb_setup_mode;   /* SetupMode variable = 1 */
 static int s_sb_deployed_mode;/* DeployedMode variable = 1 (UEFI 2.5+) */
 static int s_sb_audit_mode;   /* AuditMode variable = 1 (UEFI 2.5+) */
 static int s_sb_pk_present;   /* PK variable exists with data */
 static int s_sb_kek_present;  /* KEK variable exists with data */
 
-/* Helper: read a single-byte UEFI global variable. Returns the byte, or -1. */
+/* Helper: read a single-byte UEFI global variable. Returns the byte, or -1.
+ *
+ * Codex adversarial review 2026-04-28 M2: SUCCESS alone is not enough --
+ * a buggy or hostile firmware can return SUCCESS with sz != 1, leaving
+ * `val` at the zero-init or filling only part of the byte. Require both
+ * SUCCESS AND sz == sizeof(val); anything else is a read failure. */
 static int read_global_byte(const uint16_t *name)
 {
     struct boot_uefi_guid global = EFI_GLOBAL_VARIABLE_GUID;
@@ -791,12 +803,19 @@ static int read_global_byte(const uint16_t *name)
     uint32_t attrs = 0;
 
     efi_status_t status = uefi_get_variable(&global, name, &attrs, &sz, &val);
-    if (status != UEFI_SUCCESS)
+    if (status != UEFI_SUCCESS || sz != sizeof(val))
         return -1;
     return (int)val;
 }
 
-/* Helper: check if a UEFI global variable exists with non-zero size. */
+/* Helper: check if a UEFI global variable exists with non-zero size.
+ *
+ * Codex adversarial review 2026-04-28 M3: SUCCESS-with-sz=0 must NOT
+ * count as "exists" for PK/KEK enrollment checks. Empty PK/KEK
+ * variables are firmware artifacts, not enrolled keys; reporting them
+ * as enrolled would mislead Secure Boot status consumers. Require
+ * sz > 0 on either SUCCESS or BUFFER_TOO_SMALL.
+ */
 static int global_var_exists(const uint16_t *name)
 {
     struct boot_uefi_guid global = EFI_GLOBAL_VARIABLE_GUID;
@@ -807,11 +826,11 @@ static int global_var_exists(const uint16_t *name)
     efi_status_t status = uefi_get_variable(
         &global, name, &attrs, &sz, (void *)0);
 
-    /* BUFFER_TOO_SMALL means it exists; sz > 0 means it has data */
+    /* BUFFER_TOO_SMALL is the canonical "exists with data" signal */
     if (status == UEFI_BUFFER_TOO_SMALL && sz > 0)
         return 1;
-    /* SUCCESS with sz=0 also means it exists (empty variable) */
-    if (status == UEFI_SUCCESS)
+    /* SUCCESS with sz > 0 also counts (firmware sized the buffer for us) */
+    if (status == UEFI_SUCCESS && sz > 0)
         return 1;
     return 0;
 }
@@ -819,6 +838,7 @@ static int global_var_exists(const uint16_t *name)
 boot_result_t uefi_secureboot_init(void)
 {
     s_sb_enabled = 0;
+    s_sb_state_valid = 0;
     s_sb_setup_mode = 0;
     s_sb_deployed_mode = 0;
     s_sb_audit_mode = 0;
@@ -836,8 +856,10 @@ boot_result_t uefi_secureboot_init(void)
     };
     int sb_val = read_global_byte(sb_name);
     int sb_val_valid = (sb_val >= 0);
-    if (sb_val_valid)
+    if (sb_val_valid) {
         s_sb_enabled = (sb_val == 1) ? 1 : 0;
+        s_sb_state_valid = 1;
+    }
 
     /* Read SetupMode variable (uint8_t: 0=User Mode, 1=Setup Mode) */
     static const uint16_t sm_name[] = {
@@ -936,7 +958,20 @@ void uefi_secureboot_populate_registry(void)
     if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, "SYSTEM\\SecureBoot", 0,
                        NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
         const struct secureboot_db_info *dbi = secureboot_get_db_info();
-        RegSetDword(hKey, "State",        (uint32_t)s_sb_enabled);
+        /* Codex review 2026-04-28 H1: gate State on read validity.
+         * StateValid=0 means the SecureBoot variable read failed;
+         * State is meaningless in that case. We write StateValid
+         * always, but write State ONLY when valid. Re-adversarial
+         * 2026-04-28 H1b: do NOT write a sentinel value for State on
+         * the invalid path -- a truthy 0xFF would pollute the
+         * existing State=0|1 boolean contract for legacy consumers.
+         * Consumers MUST check StateValid first; if they read State
+         * directly they get key-not-found (which they must handle
+         * explicitly, not coerce to "false"). */
+        RegSetDword(hKey, "StateValid",   (uint32_t)s_sb_state_valid);
+        if (s_sb_state_valid) {
+            RegSetDword(hKey, "State",    (uint32_t)s_sb_enabled);
+        }
         RegSetDword(hKey, "SetupMode",   (uint32_t)s_sb_setup_mode);
         RegSetDword(hKey, "DeployedMode",(uint32_t)s_sb_deployed_mode);
         RegSetDword(hKey, "AuditMode",   (uint32_t)s_sb_audit_mode);
