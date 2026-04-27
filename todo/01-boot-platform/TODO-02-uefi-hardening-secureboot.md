@@ -218,7 +218,7 @@ Read the UEFI `SecureBoot` variable and expose the state to the kernel.
 > - Canonical doc: this section + UEFI 2.10 §8.2.1 (Secure Boot variables) + UEFI 2.10 §3.3 (PK/KEK semantics).
 > - Scope boundary: §5 owns SecureBoot state read + registry publication; kernel **code signature verification** for loaded images is owned by `02-kernel-core/TODO-10-kernel-security-hardening.md §11`; SecureBoot DB/dbx inventory is owned by §9 of this TODO.
 
-> **Verified:** 2026-04-28 | commit `<pending>` | 4/4 items (3 [x] + 1 [/]) | build OK | tests test_secureboot_state_matches_var + test_secureboot_db_inventory_matches_registry wired
+> **Verified:** 2026-04-28 | commit `35e9e17e` | 4/4 items (3 [x] + 1 [/]) | build OK | tests test_secureboot_state_matches_var + test_secureboot_db_inventory_matches_registry wired
 > **Quality reviewed:** 2026-04-28 | Codex 4x (adversarial + consistency + perf + re-adversarial) | 1H+2M fixed (+1 re-adversarial regression) | scope: kernel-code-quality (gates walked: SMP-safe by default, memory rules, bare-metal correctness, complete error paths, no TODO/FIXME, Win32 surface)
 
 ---
