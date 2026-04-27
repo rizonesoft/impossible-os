@@ -66,8 +66,8 @@ The `bootloader` remote is a separate repository (`rizonesoft/impossible-os-boot
 | `https_certificate.expires_at` | `2026-06-16` |
 | Pages environment | `github-pages` (id `13147855799`, created `2026-03-18T12:19:40Z`) |
 | Environment protection | `branch_policy` (custom branch policies; admins can bypass) |
-| Latest Pages workflow run | `id 24294368082` (`2026-04-12T00:11:46Z`) **failed** -- `Failed to CreateArtifact: Artifact storage quota has been hit`. |
-| Latest successful workflow run | `id 23255656274` (`2026-03-18T16:33:14Z`). The 2026-04-12 attempt is the only run after that and the only failure; no further runs have fired since because the workflow's `paths: ['gh-pages/**']` trigger has not matched and no `workflow_dispatch` was issued. |
+| Latest Pages workflow run (initial 2026-04-27 morning baseline -- superseded; see §4 backup markers for current values) | `id 24294368082` (`2026-04-12T00:11:46Z`) **failed** -- `Failed to CreateArtifact: Artifact storage quota has been hit`. **Resolved 2026-04-27 evening:** the §3 commit (`ec2b7c00`) successfully ran the workflow at 2026-04-27T20:41:28Z (`databaseId: 25018428197`), confirming the artifact-quota issue cleared on its own and risk row R4 is implicitly mitigated. The §4 backup markers section below carries the current canonical values; this row stays as the morning-baseline historical record. |
+| Latest successful workflow run | Up-to-date as of evening 2026-04-27: `databaseId: 25018428197` at sha `ec2b7c00` (`2026-04-27T20:41:28Z`, deployment id `4503518780`, state `success`). Prior to that, the last successful run had been `id 23255656274` (`2026-03-18T16:33:14Z`); the §4 backup markers freeze the evening values for rollback verification. |
 | Latest deployment to env | `id 4340497396` from `gh-pages` branch sha `35e7dcd5` (`2026-04-12T00:27:47Z`) |
 
 **Two findings flagged for §3 / §5:**
@@ -310,7 +310,7 @@ Severity scale: **Critical** (Pages or repo unreachable for any duration), **Hig
 | R1 | Pages custom-domain detachment when GitHub asks the new owner to re-verify the domain on transfer. Apex `impossibleos.co` could go dark for hours. | Critical | Medium | Verify the domain at the org level BEFORE transfer (§2). Keep the legacy `gh-pages` branch source intact through the transfer (do NOT switch to "GitHub Actions" source on the same day). Watch `gh api repos/rizonetech/impossible-os/pages` immediately after transfer for `protected_domain_state` regressing from `null`. | §2 + §3 + §4 |
 | R2 | DNS propagation delay on `www.impossibleos.co` CNAME flip from `rizonesoft.github.io` -> `rizonetech.github.io`. | High | High | Drop TTL pre-transfer (§3). Apply CNAME flip only after the new Pages endpoint serves (§4). Apex A records are unchanged because they target the GitHub anycast IPs, not the owner. | §3 + §4 |
 | R3 | Pages HTTPS certificate re-provisioning delay -- GitHub typically issues a fresh cert when the custom domain is re-verified. | High | Medium | Tolerate transient HTTPS warning on the default Pages URL; apex serves through Fastly with the existing cert (`expires 2026-06-16`). Do NOT enable `https_enforced` until the cert reissues. | §5 |
-| R4 | Pages workflow on `main` branch is currently FAILING (`Artifact storage quota`) -- the move could mask the failure as "transfer broke Pages". | High | Already realized | Document baseline failure state here; expect new owner's enterprise-plan storage to allow the workflow to succeed; verify with `gh run list -w pages.yml -R rizonetech/impossible-os` post-transfer. The legacy `gh-pages` branch source keeps the live site up regardless. | §3 + §7 |
+| R4 | Pages workflow on `main` branch was failing (`Artifact storage quota`) at the morning 2026-04-27 baseline. | ~~High~~ **Resolved** | ~~Already realized~~ Cleared 2026-04-27 evening | The §3 commit `ec2b7c00` successfully ran the workflow at 2026-04-27T20:41:28Z (`databaseId: 25018428197`, deployment `4503518780`, state `success`); apex now serves the workflow-deployed artifact (`last-modified: 2026-04-27 20:41:41 GMT`). Quota limit is per-account and presumably aged out. Post-transfer, re-verify with `gh run list -w pages.yml -R rizonetech/impossible-os` to confirm the new owner doesn't hit the same cap; the new enterprise-org budget is fresh. | §3 + §7 |
 | R5 | Lost or unreadable `BOOTLOADER_REPO_TOKEN` after transfer -- secret values do not always migrate. | High | Low-Medium | Re-validate post-transfer by triggering a release workflow dry run. If broken, regenerate token and push to repo secrets. | §5 |
 | R6 | Ruleset "Default Branch Security" not migrated to new owner -- main branch becomes unprotected. | High | Medium | §5 verifies the ruleset survives; if not, recreate it from this baseline (rules listed verbatim in §5). | §5 |
 | R7 | Org-level Actions policy disables existing workflows under `rizonetech` (allowlist or token-permissions tighter than user-account default). | High | Medium | §2 confirms org Actions policy permits `actions/checkout`, `actions/configure-pages`, `actions/upload-pages-artifact`, `actions/deploy-pages`, plus all build/release/labeler/stale/todo-graph/visual-regression action versions BEFORE pressing transfer. | §2 |
@@ -494,7 +494,7 @@ Run these AFTER the transfer button is pressed AND the receiving Pages endpoint 
 curl -sIL --max-time 10 https://impossibleos.co/                        # expect 200; new etag may differ if Pages re-fetched the artifact
 curl -sIL --max-time 10 https://www.impossibleos.co/                    # expect 301 -> https://impossibleos.co/
 curl -sIL --max-time 10 https://rizonetech.github.io/impossible-os/     # expect 301 -> apex (or HTTPS-enforced apex once §5 flips the toggle)
-curl -sIL --max-time 10 https://rizonesoft.github.io/impossible-os/     # expect 301 to the new owner via GitHub repo redirect (or 404 if the redirect window expired)
+curl -sIL --max-time 10 https://rizonesoft.github.io/impossible-os/     # INFORMATIONAL ONLY -- do NOT use as a rollback trigger. Per GitHub docs, repo URLs (github.com/owner/repo) auto-redirect on transfer, but Pages URLs (owner.github.io/repo) are owned by the user/org Pages namespace and do NOT auto-redirect. Post-transfer this commonly 404s or 302s to https://rizonesoft.github.io/ root. The apex (impossibleos.co) is the canonical post-transfer surface; do not gate the transfer on this owner-based Pages URL.
 getent hosts impossibleos.co                                            # apex A unchanged (anycast IPs)
 getent hosts www.impossibleos.co                                        # CNAME chain now ends at rizonetech.github.io
 # With BIND tools available:
@@ -532,17 +532,21 @@ Preserve this block AS IS. Do not modify after capture. If rollback is needed, t
 
 **Optional belt-and-braces backup:** before pressing transfer, run `git bundle create /tmp/impossible-os-pre-transfer-$(date +%Y%m%d).bundle --all` and stash the bundle file off-host. Restoration: `git clone /tmp/impossible-os-pre-transfer-YYYYMMDD.bundle restored/ && cd restored && git push https://github.com/<owner>/impossible-os.git --all --tags`. Useful only if the GitHub-side transfer corrupts history (extremely rare; documented for completeness).
 
-### Pre-transfer freeze
+### Freeze rules (entire transfer + rollback window)
 
-For the ~30-minute window from "press transfer" to "all §3 post-transfer validation green":
+The freeze runs from "press transfer" until [§7 validation suite](../../todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md#7-validation-suite-pages-actions-releases-clone-hooks-graph) is green for 24h continuously -- NOT just until §3 post-transfer validation passes. The longer window exists because rollback stays open the whole time, and any commits/tags/releases/Pages deploys landed during the window create a reconciliation problem if rollback fires.
+
+For the entire window:
 
 - No merges to `main` (the harness pre-commit hook already requires lint clean; reinforce by setting yourself a "no commit" reminder).
 - No new releases or tag pushes.
 - No `gh-pages/**` changes (the Pages workflow auto-fires on `paths: ['gh-pages/**']` push and would race the transfer).
 - No branch-protection / ruleset edits.
-- No DNS changes EXCEPT the planned `www` CNAME flip (post-step 8 below).
+- No DNS changes EXCEPT the planned `www` CNAME flip (transfer Step 8 below) and the eventual TTL restoration (Step 10).
 
 Communicate the freeze to anyone with `rizonesoft` write access (currently solo-dev: only `rizonesoft`, so the freeze is self-imposed).
+
+**Rollback reconciliation (if rollback fires after the freeze was violated):** If new commits / tags / releases / deployments landed between transfer and rollback (i.e., the freeze was violated), the rollback procedure transfers ownership/DNS/remotes back but leaves the post-transfer changes IN the rolled-back repo. The operator must then either: (a) cherry-pick the post-transfer changes onto the source-owner repo's `main` after rollback, or (b) `git push --force-with-lease origin main` to reset to the backup-marker SHA `5d0df5ba` (destructive, loses the post-transfer commits). Decide AT THE TIME based on the intent of the post-transfer changes; default is (a). This whole branch only matters if the freeze was violated -- which it should not be.
 
 ### Transfer steps (in order)
 
@@ -569,6 +573,14 @@ In the dialog:
 - Click "I understand, transfer this repository".
 
 GitHub will redirect through an auth confirmation. The transfer typically completes within 30 seconds.
+
+**Expected confirmation signals (any one suffices to proceed to Step 3):**
+
+- The browser URL bar redirects to `https://github.com/rizonetech/impossible-os` (or to the org dashboard with a "transfer succeeded" banner).
+- Loading <https://github.com/rizonesoft/impossible-os/settings> in a new tab returns 404 or redirects to the new path.
+- `gh repo view rizonesoft/impossible-os --json nameWithOwner` from another terminal either returns `Could not resolve` (transfer complete) or follows the redirect to `rizonetech/impossible-os`.
+
+If the transfer dialog returns an error (e.g., "You can't transfer this repository because of an issue") instead of redirecting, STOP and consult the Rollback section -- the transfer did not commit. Common causes: the destination org doesn't allow inbound transfers (fix in O3 / O4 of §2), or there's an active fork that blocks transfer.
 
 #### Step 3 -- Accept the transfer (operator, GitHub UI for the org owner)
 
@@ -656,21 +668,55 @@ dig +nocmd +noall +answer +ttl www.impossibleos.co CNAME
 
 #### Step 9 -- Run preflight §3 "Validation commands -- post-transfer" (operator)
 
-Execute every command in the post-transfer block. Every line must match its expected result. If ANY line fails, stop and consult Rollback below.
+Execute every command in the [post-transfer block](#validation-commands----post-transfer). The compact go/rollback table below mirrors the §3 expected outputs at the decision point so you don't have to scroll during the freeze window:
+
+| Check | Expected | Failure action |
+|---|---|---|
+| `curl -sIL https://impossibleos.co/` | `200`, `last-modified` close to most recent Pages deploy | **Rollback** -- apex must serve under new owner |
+| `curl -sIL https://www.impossibleos.co/` | `301 -> https://impossibleos.co/` | **Rollback** -- www flip didn't take effect |
+| `curl -sIL https://rizonetech.github.io/impossible-os/` | `301 -> apex` (or `200` if §5 already flipped `https_enforced`) | **Rollback** -- new default Pages endpoint must serve |
+| `curl -sIL https://rizonesoft.github.io/impossible-os/` | 404 OR 302 to `https://rizonesoft.github.io/` root | **Informational only** -- per GitHub docs, owner-based Pages URLs do NOT auto-redirect across owner transfers (only repo URLs do); apex is the canonical surface. |
+| `getent hosts impossibleos.co` | 4 anycast IPv4 addresses (`185.199.10[8-11].153`) | **Rollback** -- apex DNS regression |
+| `getent hosts www.impossibleos.co` | CNAME chain ends at `rizonetech.github.io` | **Rollback** -- www CNAME flip didn't propagate |
+| `gh api repos/rizonetech/impossible-os/pages --jq .cname` | `"impossibleos.co"` | **Rollback** -- Pages custom-domain didn't migrate |
+| `gh api .../pages --jq .https_certificate.state` | `"approved"` (after cert reissue, may take minutes-to-hours) | Tolerate `"provisioning"` for up to 1h; rollback if `"errored"` persists. |
+
+If any required line fails (rows marked **Rollback**), STOP and proceed to the [Rollback section below](#rollback-if-any-post-transfer-step-fails) immediately.
 
 #### Step 10 -- Restore TTL to normal (operator, ~24h after Step 9 green)
 
 After all post-transfer validation has been green for 24h continuously, restore `www.impossibleos.co` CNAME TTL to the provider's normal value (typically 3600-86400s) at the DNS provider UI. The temporary low TTL was only needed for the transfer window.
 
+**Expected output:**
+
+```bash
+dig +nocmd +noall +answer +ttl www.impossibleos.co CNAME
+# Expected: "www.impossibleos.co. <TTL>  IN  CNAME  rizonetech.github.io."
+# where <TTL> >= the provider's normal value (e.g., 3600 or higher).
+# If <TTL> is still showing the low pre-transfer value (60-300), wait one previous-TTL window for the new TTL to propagate, then re-check.
+```
+
 ### Rollback (if any post-transfer step fails)
 
 The rollback window stays open until the §7 validation suite passes. **Rollback means transferring back to the previous owner**, NOT deleting and recreating repositories (deletion would break GitHub's redirect table permanently).
+
+**Wall-clock budget:**
+
+| Phase | Best case | Degraded case |
+|---|---|---|
+| Reverse-transfer accepted in GitHub UI | ~30s | up to a few minutes if GitHub Support is engaged |
+| `www` CNAME restore + propagation | one observed `www` TTL (60-300s if the pre-transfer TTL drop took effect) | up to the previous-TTL window (3600-86400s) if the low TTL didn't propagate -- check `dig +nocmd +noall +answer +ttl www.impossibleos.co CNAME` BEFORE starting rollback |
+| Local remote restore | ~5s | unchanged |
+| Pre-transfer validation re-run | ~30s | unchanged |
+| **Total best case** | **~5-10 minutes** | **up to one TTL window + a few minutes** |
+
+If the degraded case looks unavoidable (low TTL didn't propagate AND post-transfer validation already failed), proceed with rollback anyway -- the alternative is leaving the apex broken longer. The temporary `www` outage during the TTL window is finite; a broken apex under a partially-transferred state can be open-ended.
 
 #### Rollback step 1 -- Reverse the transfer (operator, GitHub UI)
 
 Walk: <https://github.com/rizonetech/impossible-os/settings> -> Danger Zone -> "Transfer". Set new owner: `rizonesoft`. Confirm.
 
-GitHub will reject the transfer if the old `rizonesoft/impossible-os` redirect entry still exists -- delete the redirect first via the Pages settings UI under the new owner if needed. (This is rare; usually the reverse-transfer succeeds because GitHub treats redirects as soft references.)
+If GitHub rejects the reverse-transfer (e.g., due to redirect-table state or a transient API error), **STOP and escalate to GitHub Support** at <https://support.github.com/contact>. Do NOT attempt to "free" the old path by creating, forking, or renaming any repository at `rizonesoft/impossible-os` -- per the redirect-window invariant in this doc, recreating the old path permanently deletes the redirect table and makes recovery harder. Repository redirects are a GitHub-internal feature, not a Pages setting; there is no documented user-facing UI to delete them. If reverse-transfer remains blocked after Support engages, fall back to the optional `git bundle` belt-and-braces backup (see Backup markers above) and restore to a fresh repo path *under the new owner* (do NOT recreate the old path).
 
 #### Rollback step 2 -- Restore the `www` CNAME (operator, DNS)
 
