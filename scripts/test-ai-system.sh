@@ -507,16 +507,27 @@ check_skill_catalog() {
 # 7. Doctrine presence in CLAUDE.md
 # ============================================================================
 check_doctrine_presence() {
-    section "[7/12] Doctrine presence in CLAUDE.md"
+    section "[7/12] Doctrine presence in CLAUDE.md and canonical docs"
     # Completion-first
     assert_fixed_string "CLAUDE.md has 'Completion-first'" "CLAUDE.md" "Completion-first"
     # Bare metal first
     assert_fixed_string "CLAUDE.md has 'Bare Metal First'" "CLAUDE.md" "Bare Metal First"
-    # No Unicode Dashes
-    assert_fixed_string "CLAUDE.md has 'No Unicode Dashes'" "CLAUDE.md" "No Unicode Dashes"
-    # No live boot infra in tests
-    assert_fixed_string "CLAUDE.md has 'No Live Boot Infrastructure Calls'" \
-        "CLAUDE.md" "No Live Boot Infrastructure Calls"
+    # No Unicode Dashes -- canonical text moved to
+    # docs/infrastructure/code-style-policies.md per progressive-
+    # disclosure trim (commit b3c823f3); CLAUDE.md keeps a one-line
+    # pointer with lowercase phrasing ("No Unicode dashes"), and
+    # the canonical heading carries the title-case form.
+    assert_fixed_string "code-style-policies.md has 'No Unicode Dashes'" \
+        "docs/infrastructure/code-style-policies.md" "No Unicode Dashes"
+    assert_fixed_string "CLAUDE.md points at code-style-policies.md" \
+        "CLAUDE.md" "code-style-policies.md"
+    # No live boot infra in tests -- canonical text moved to
+    # docs/infrastructure/test-policy.md per the same trim; CLAUDE.md
+    # has a "Test Code Policy" section pointing at it.
+    assert_fixed_string "test-policy.md has 'No Live Boot Infrastructure Calls'" \
+        "docs/infrastructure/test-policy.md" "No Live Boot Infrastructure Calls"
+    assert_fixed_string "CLAUDE.md points at test-policy.md" \
+        "CLAUDE.md" "test-policy.md"
     # SMP from day one
     assert_fixed_string "CLAUDE.md has 'SMP From Day One'" "CLAUDE.md" "SMP From Day One"
     # SMP-safe by default
