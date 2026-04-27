@@ -203,11 +203,11 @@ Perform the actual transfer as a short, observable operation with a clear stop/r
 > **Notes:**
 > - Shipped: `## §4 Transfer Runbook and Rollback Window` appendix in [`docs/infrastructure/repository-transfer-preflight.md`](../../docs/infrastructure/repository-transfer-preflight.md) covering captured backup markers (11 fields), freeze rules covering the full transfer+rollback window, 10 numbered transfer steps with copy-paste commands + inlined Step 9 go/rollback table, 4-step rollback with wall-clock budget + reconciliation guidance, and the redirect-window tombstone rule.
 > - Backup markers are a frozen 2026-04-27 snapshot -- the operator pressing transfer should NOT update them; they are the canonical "known-good" reference for rollback verification.
-> - Cross-doc wiring: each operator step links to the preflight §3 validation block + the §5/§7 sections that own post-transfer audit / validation. Codex 3x review adoptions in commit `<this-commit>`.
+> - Cross-doc wiring: each operator step links to the preflight §3 validation block + the §5/§7 sections that own post-transfer audit / validation. Codex 3x review adoptions in commit `4c1d2265`.
 > - Canonical doc: [`docs/infrastructure/repository-transfer-preflight.md` §4](../../docs/infrastructure/repository-transfer-preflight.md#4-transfer-runbook-and-rollback-window).
 > - Scope boundary: §4 prepares + documents the transfer; the press-the-button steps are operator execution. §5 owns post-transfer settings audit; §7 owns the validation suite that closes the rollback window.
 >
-> **Verified:** 2026-04-27 | commit `<this-commit>` | 14/16 items | build N/A (runbook docs) | lint clean, todo-graph 8/8 | live-transfer post-Step-9 evidence captured in chat
+> **Verified:** 2026-04-27 | commit `4c1d2265` | 14/16 items | build N/A (runbook docs) | lint clean, todo-graph 8/8 | live-transfer post-Step-9 evidence captured in chat
 > **Quality reviewed:** 2026-04-27 | Codex 3x (adversarial, consistency, perf) | 3H+5M+0L fixed, 0 open | scope: N/A (docs-only -- no domain code-quality skill applies; re-adversarial skipped: docs-only fixes, no SMP/state-machine touch)
 
 ---
@@ -235,11 +235,11 @@ GitHub transfers repository data, but the project should not trust complex setti
 > **Notes:**
 > - Shipped: `## §5 Post-Transfer Settings, Workflows, Secrets, and Environments Audit` appendix in [`docs/infrastructure/repository-transfer-preflight.md`](../../docs/infrastructure/repository-transfer-preflight.md) with three tables: 19-row "Preserved verbatim" comparison vs §1 baseline, 3-row Findings (F1 ruleset bypass empty / F2 Build cancelled on `4c1d2265` / F3 CODEOWNERS handle drift), 7-row operator-only items list mirroring §2 / §3 deferrals, and a §7-feed summary table.
 > - F3 fix shipped: `.github/CODEOWNERS` 7x `@derickpayne` -> `@rizonesoft`. F1 + F2 are operator-side actions (ruleset bypass restore + Build workflow re-dispatch).
-> - Cross-doc wiring: each §5 finding links back to the operator-action URL or follow-up section. Codex 3x review adoptions in commit `<this-commit>`.
+> - Cross-doc wiring: each §5 finding links back to the operator-action URL or follow-up section. Codex 3x review adoptions in commit `26b9d290`.
 > - Canonical doc: [`docs/infrastructure/repository-transfer-preflight.md` §5](../../docs/infrastructure/repository-transfer-preflight.md#5-post-transfer-settings-workflows-secrets-and-environments-audit).
 > - Scope boundary: §5 audits state preservation; §6 owns URL / badge / docs / generated-link sweep; §7 owns the validation suite that closes the rollback window; §8 owns the move-back runbook. F1 (ruleset bypass) blocks pushes for §6/§7 work until the operator restores it.
 >
-> **Verified:** 2026-04-27 | commit `<this-commit>` | 9/11 items | build N/A (audit + docs) | lint clean, todo-graph 8/8 | F3 CODEOWNERS fix included
+> **Verified:** 2026-04-27 | commit `26b9d290` | 9/11 items | build N/A (audit + docs) | lint clean, todo-graph 8/8 | F3 CODEOWNERS fix included
 
 ---
 
