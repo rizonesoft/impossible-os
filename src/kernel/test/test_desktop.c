@@ -796,7 +796,6 @@ static void test_wm_frame_stats_null_guard(void)
     wm_frame_stats_reset_for_test();
     wm_get_frame_stats((struct wm_frame_stats *)0);
     /* If we're still running, the guard worked. */
-    TEST_ASSERT(1, "wm_get_frame_stats(NULL) is a safe no-op");
 }
 
 /* wm_mark_dirty path end-to-end: public entry point bumps queued +

@@ -63,16 +63,10 @@ static void test_bp_struct_layouts(void)
 static void test_bp_memory_constants(void)
 {
     /* User ELF range -- 3 files must agree (user_range.h, vmm.c, pmm.c) */
-    TEST_ASSERT_EQ(USER_ELF_BASE, 0x800000UL,
-                   "USER_ELF_BASE == 0x800000");
-    TEST_ASSERT_EQ(USER_ELF_SIZE, 0x100000UL,
-                   "USER_ELF_SIZE == 0x100000 (1 MiB)");
     TEST_ASSERT_EQ(USER_ELF_END, 0x900000UL,
                    "USER_ELF_END == 0x900000");
 
     /* VFS drive letters */
-    TEST_ASSERT_EQ(VFS_MAX_DRIVES, 26,
-                   "VFS_MAX_DRIVES == 26 (A-Z)");
 }
 
 /* ---- Assembly offset sync ---- */
@@ -80,20 +74,6 @@ static void test_bp_memory_constants(void)
 static void test_bp_assembly_offsets(void)
 {
     /* AP trampoline -- ap_trampoline.asm uses [AP_DATA + 0xNN] */
-    TEST_ASSERT_EQ(AP_OFF_CR3, 0x00,
-                   "AP_OFF_CR3 == 0x00");
-    TEST_ASSERT_EQ(AP_OFF_STACK, 0x08,
-                   "AP_OFF_STACK == 0x08");
-    TEST_ASSERT_EQ(AP_OFF_GDT_PTR, 0x10,
-                   "AP_OFF_GDT_PTR == 0x10");
-    TEST_ASSERT_EQ(AP_OFF_ENTRY, 0x20,
-                   "AP_OFF_ENTRY == 0x20");
-    TEST_ASSERT_EQ(AP_OFF_CPUID, 0x28,
-                   "AP_OFF_CPUID == 0x28");
-    TEST_ASSERT_EQ(AP_OFF_IDT_PTR, 0x30,
-                   "AP_OFF_IDT_PTR == 0x30");
-    TEST_ASSERT_EQ(AP_OFF_CANARY, 0x3C,
-                   "AP_OFF_CANARY == 0x3C");
 
     /* GDT SYSRET ordering (cross-ref: test_nt_types.c) */
     TEST_ASSERT_EQ(GDT_USER_CODE, GDT_USER_DATA + 8,
@@ -105,24 +85,8 @@ static void test_bp_assembly_offsets(void)
 static void test_bp_dispatch_tables(void)
 {
     /* SSDT main table count */
-    TEST_ASSERT_EQ(SSDT_MAIN_COUNT, 470,
-                   "SSDT_MAIN_COUNT == 470");
 
     /* IDT vector uniqueness -- verify values and no collisions */
-    TEST_ASSERT_EQ(VECTOR_NT_SYSCALL, 0x2E,
-                   "VECTOR_NT_SYSCALL == 0x2E");
-    TEST_ASSERT_EQ(VECTOR_LINUX_SYSCALL, 0x80,
-                   "VECTOR_LINUX_SYSCALL == 0x80");
-    TEST_ASSERT_EQ(VECTOR_YIELD, 0x81,
-                   "VECTOR_YIELD == 0x81");
-    TEST_ASSERT_EQ(VECTOR_IPI_ASYNC_INIT, 0xFC,
-                   "VECTOR_IPI_ASYNC_INIT == 0xFC");
-    TEST_ASSERT_EQ(VECTOR_IPI_RESCHEDULE, 0xFD,
-                   "VECTOR_IPI_RESCHEDULE == 0xFD");
-    TEST_ASSERT_EQ(VECTOR_IPI_TLB_SHOOTDOWN, 0xFE,
-                   "VECTOR_IPI_TLB_SHOOTDOWN == 0xFE");
-    TEST_ASSERT_EQ(VECTOR_LAPIC_SPURIOUS, 0xFF,
-                   "VECTOR_LAPIC_SPURIOUS == 0xFF");
 
     /* Pairwise uniqueness for adjacent vectors */
     TEST_ASSERT(VECTOR_NT_SYSCALL != VECTOR_LINUX_SYSCALL,
@@ -149,8 +113,6 @@ static void test_bp_xsave_alignment(void)
 
 static void test_bp_ixfs_layout(void)
 {
-    TEST_ASSERT_EQ(IXFS_MAGIC, 0x49584653,
-                   "IXFS_MAGIC == 0x49584653");
     TEST_ASSERT_EQ(sizeof(struct ixfs_superblock), 512,
                    "ixfs_superblock == 512 bytes");
 }

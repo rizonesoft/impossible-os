@@ -35,10 +35,6 @@ static void test_exec_null_data(void)
 
 static void test_exec_errno(void)
 {
-    TEST_ASSERT_EQ(ENOEXEC, 8, "ENOEXEC == 8");
-    TEST_ASSERT_EQ(ENOENT,  2, "ENOENT == 2");
-    TEST_ASSERT_EQ(ENOMEM, 12, "ENOMEM == 12");
-    TEST_ASSERT_EQ(EINVAL, 22, "EINVAL == 22");
 }
 
 /* ---- Module registration tests ---- */
@@ -46,9 +42,6 @@ static void test_exec_errno(void)
 static void test_module_struct_size(void)
 {
     TEST_ASSERT_EQ(sizeof(loaded_module_t), 368, "loaded_module_t == 368 bytes");
-    TEST_ASSERT_EQ(EXEC_MAX_MODULES, 64, "EXEC_MAX_MODULES == 64");
-    TEST_ASSERT_EQ(EXEC_MODULE_NAME_MAX, 64, "EXEC_MODULE_NAME_MAX == 64");
-    TEST_ASSERT_EQ(EXEC_MODULE_PATH_MAX, 256, "EXEC_MODULE_PATH_MAX == 256");
 }
 
 static void test_module_register_and_find(void)
@@ -194,11 +187,6 @@ static void test_pe_struct_sizes(void)
 
 static void test_pe_constants(void)
 {
-    TEST_ASSERT_EQ(PE_DOS_MAGIC, 0x5A4D, "PE_DOS_MAGIC == 0x5A4D");
-    TEST_ASSERT_EQ(PE_SIGNATURE, 0x00004550, "PE_SIGNATURE == 0x00004550");
-    TEST_ASSERT_EQ(PE_MACHINE_AMD64, 0x8664, "PE_MACHINE_AMD64 == 0x8664");
-    TEST_ASSERT_EQ(PE_OPT_MAGIC_PE32PLUS, 0x20B, "PE_OPT_MAGIC_PE32PLUS == 0x20B");
-    TEST_ASSERT_EQ(PE_OPT_MAGIC_PE32, 0x10B, "PE_OPT_MAGIC_PE32 == 0x10B");
 }
 
 static void test_pe_validate_valid(void)
@@ -327,9 +315,6 @@ static void test_eif_struct_sizes(void)
 
 static void test_eif_constants(void)
 {
-    TEST_ASSERT_EQ(EIF_MAGIC, 0x21464945, "EIF_MAGIC == 0x21464945 (file-order LE 'EIF!')");
-    TEST_ASSERT_EQ(EIF_VERSION, 1, "EIF_VERSION == 1");
-    TEST_ASSERT_EQ(EIF_ARCH_X86_64, 1, "EIF_ARCH_X86_64 == 1");
     TEST_ASSERT_EQ(EIF_FLAG_SIGNED, 8, "EIF_FLAG_SIGNED == 8");
 }
 

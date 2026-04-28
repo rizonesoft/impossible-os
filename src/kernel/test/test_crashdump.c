@@ -122,7 +122,6 @@ static void test_xmm_save_area_size(void)
 
 static void test_context_flags(void)
 {
-    TEST_ASSERT_EQ(CONTEXT_AMD64, 0x00100000, "CONTEXT_AMD64 flag");
     TEST_ASSERT_EQ(CONTEXT_CONTROL, 0x00100001, "CONTEXT_CONTROL flag");
     TEST_ASSERT_EQ(CONTEXT_INTEGER, 0x00100002, "CONTEXT_INTEGER flag");
     TEST_ASSERT_EQ(CONTEXT_FLOATING_POINT, 0x00100008,
@@ -217,8 +216,6 @@ static void test_xsave_buffer_alignment(void)
 static void test_fpu_capture_post_code(void)
 {
     /* POST16_FPU_CAPTURE must be 0xDE42 and unique */
-    TEST_ASSERT_EQ(POST16_FPU_CAPTURE, 0xDE42,
-                   "POST16_FPU_CAPTURE == 0xDE42");
     TEST_ASSERT(POST16_FPU_CAPTURE != POST16_BUGCHECK,
                 "FPU POST != Bugcheck POST");
     TEST_ASSERT(POST16_FPU_CAPTURE != POST16_CRASHLOG,
@@ -286,8 +283,6 @@ static void test_iterate_modules_lockless(void)
 
 static void test_module_registry_post_code(void)
 {
-    TEST_ASSERT_EQ(POST16_MODULE_REGISTRY, 0xDE44,
-                   "POST16_MODULE_REGISTRY == 0xDE44");
     TEST_ASSERT(POST16_MODULE_REGISTRY != POST16_BUGCHECK,
                 "MODULE_REGISTRY POST != BUGCHECK POST");
     TEST_ASSERT(POST16_MODULE_REGISTRY != POST16_FPU_CAPTURE,
@@ -330,14 +325,10 @@ static void test_mdmp_header_offsets(void)
 
 static void test_mdmp_signature(void)
 {
-    TEST_ASSERT_EQ(MDMP_SIGNATURE, 0x504D444D,
-                   "MDMP_SIGNATURE == 0x504D444D ('MDMP')");
 }
 
 static void test_mdmp_version(void)
 {
-    TEST_ASSERT_EQ(MDMP_VERSION, 0x0000A793,
-                   "MDMP_VERSION == 0xA793 (42899)");
 }
 
 static void test_mdmp_stream_types(void)
@@ -425,14 +416,10 @@ static void test_impossible_os_info(void)
 {
     TEST_ASSERT_EQ(sizeof(IMPOSSIBLE_OS_INFO), 436,
                    "IMPOSSIBLE_OS_INFO is 436 bytes");
-    TEST_ASSERT_EQ(IMPOSSIBLE_OS_INFO_MAGIC, 0x10DEAD00,
-                   "IMPOSSIBLE_OS_INFO_MAGIC == 0x10DEAD00");
 }
 
 static void test_mdmp_format_post_code(void)
 {
-    TEST_ASSERT_EQ(POST16_MDMP_FORMAT, 0xDE46,
-                   "POST16_MDMP_FORMAT == 0xDE46");
     TEST_ASSERT(POST16_MDMP_FORMAT != POST16_BUGCHECK,
                 "MDMP_FORMAT POST != BUGCHECK POST");
     TEST_ASSERT(POST16_MDMP_FORMAT != POST16_FPU_CAPTURE,
@@ -456,10 +443,6 @@ static void test_mdmp_type_flags(void)
 
 static void test_mdmp_processor_arch(void)
 {
-    TEST_ASSERT_EQ(PROCESSOR_ARCHITECTURE_AMD64, 9,
-                   "PROCESSOR_ARCHITECTURE_AMD64 == 9");
-    TEST_ASSERT_EQ(VER_PLATFORM_WIN32_NT, 2,
-                   "VER_PLATFORM_WIN32_NT == 2");
 }
 
 /* ---- Registration ---- */

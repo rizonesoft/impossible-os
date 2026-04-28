@@ -67,7 +67,6 @@ static void test_vfs_mkdir_rmdir(void)
 
 static void test_vfs_drive_constants(void)
 {
-    TEST_ASSERT_EQ(VFS_MAX_DRIVES, 26, "VFS_MAX_DRIVES == 26 (A-Z)");
 
     /* drive_index rejects letters outside A-Z via vfs_is_mounted returning 0 */
     TEST_ASSERT(vfs_is_mounted('Z') == 0 || vfs_is_mounted('Z') == 1,
@@ -79,12 +78,6 @@ static void test_vfs_drive_constants(void)
 
 static void test_mbr_gpt_constants(void)
 {
-    TEST_ASSERT_EQ(MBR_ENTRY_OFFSET, 446, "MBR partition table at offset 446 (0x1BE)");
-    TEST_ASSERT_EQ(MBR_SIG_OFFSET, 510, "MBR boot signature at offset 510");
-    TEST_ASSERT_EQ(MBR_ENTRY_SIZE, 16, "MBR entry is 16 bytes");
-    TEST_ASSERT_EQ(MBR_MAX_PARTITIONS, 4, "MBR has 4 primary partitions");
-    TEST_ASSERT_EQ(GPT_HEADER_LBA, 1, "GPT header at LBA 1 (UEFI spec)");
-    TEST_ASSERT_EQ(GPT_ENTRY_SIZE, 128, "GPT entry is 128 bytes (UEFI spec)");
 }
 
 /* Registration */

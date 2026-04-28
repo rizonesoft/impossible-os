@@ -53,7 +53,6 @@ static void test_smep_smap_state(void)
     /* On Hyper-V, SMEP/SMAP may be enforced via EPT even if CR4 bits
      * are not set. On bare metal/TCG, they're skipped. Either way,
      * the test just confirms no crash accessing cr4. */
-    TEST_ASSERT(1, "CR4 read succeeds (SMEP/SMAP state accessible)");
     (void)cr4;
 }
 
@@ -787,10 +786,8 @@ static void test_wc_pat_entry(void)
     uint64_t pat = msr_read(0x277);  /* MSR_IA32_PAT */
     uint8_t entry1 = (uint8_t)((pat >> 8) & 0xFF);
     if (entry1 == 0x01) {
-        TEST_ASSERT(1, "PAT entry 1 is WC (0x01)");
     } else if (entry1 == 0x04) {
         /* WHPX traps PAT writes; kernel degrades to WT (functional) */
-        TEST_ASSERT(1, "PAT entry 1 is WT (0x04, WHPX traps PAT writes)");
     } else {
         TEST_ASSERT_EQ(entry1, 0x01,
                        "PAT entry 1 is WC (0x01) or WT (0x04)");

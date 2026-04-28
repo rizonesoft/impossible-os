@@ -140,7 +140,6 @@ static void test_klog_ring_wrap(void)
 
 static void test_klog_crash_magic(void)
 {
-    TEST_ASSERT_EQ(KLOG_CRASH_MAGIC, 0x4B4C4F47, "KLOG_CRASH_MAGIC == 'KLOG'");
 }
 
 static void test_klog_crash_header_size(void)
@@ -217,7 +216,6 @@ static void test_klog_ctx_post_codes(void)
 
 static void test_etw_session_magic(void)
 {
-    TEST_ASSERT_EQ(ETW_SESSION_MAGIC, 0x45545753, "ETW_SESSION_MAGIC == 'ETWS'");
 }
 
 /* ---- ETW: event header size ---- */

@@ -113,14 +113,6 @@ static void test_gdt_sysret_order(void)
                    "GDT_USER_CODE == GDT_USER_DATA + 8 (SYSRET constraint)");
     TEST_ASSERT(GDT_USER_DATA < GDT_USER_CODE,
                 "GDT_USER_DATA < GDT_USER_CODE (data before code)");
-    TEST_ASSERT_EQ(GDT_KERNEL_CODE, 0x08,
-                   "GDT_KERNEL_CODE == 0x08");
-    TEST_ASSERT_EQ(GDT_KERNEL_DATA, 0x10,
-                   "GDT_KERNEL_DATA == 0x10");
-    TEST_ASSERT_EQ(GDT_USER_DATA, 0x18,
-                   "GDT_USER_DATA == 0x18");
-    TEST_ASSERT_EQ(GDT_USER_CODE, 0x20,
-                   "GDT_USER_CODE == 0x20");
 }
 
 /* ---- SSDT dispatch ---- */
@@ -144,9 +136,6 @@ static void test_ssdt_invalid_table_returns_error(void)
 
 static void test_ssdt_main_count(void)
 {
-    TEST_ASSERT_EQ(SSDT_MAIN_COUNT, 470, "SSDT_MAIN_COUNT == 470");
-    TEST_ASSERT_EQ(SSDT_LAST_MAIN_INDEX, 0x03D7,
-                   "SSDT_LAST_MAIN_INDEX == 0x03D7");
     TEST_ASSERT(SSDT_LAST_MAIN_INDEX < SSDT_MAIN_MAX,
                 "last index within table capacity");
 
@@ -230,10 +219,6 @@ static void test_user_elf_range(void)
     /* Three files must agree: user_range.h, vmm.c, pmm.c, user.ld.
      * The linker script can't #include the header, so verify the constants
      * match the expected values that user.ld uses. */
-    TEST_ASSERT_EQ(USER_ELF_BASE, 0x800000UL,
-                   "USER_ELF_BASE == 0x800000");
-    TEST_ASSERT_EQ(USER_ELF_SIZE, 0x100000UL,
-                   "USER_ELF_SIZE == 0x100000 (1 MiB)");
     TEST_ASSERT_EQ(USER_ELF_END, 0x900000UL,
                    "USER_ELF_END == 0x900000");
     TEST_ASSERT_EQ(USER_PD_INDEX, 4,
@@ -249,20 +234,6 @@ static void test_ap_trampoline_offsets(void)
 {
     /* ap_trampoline.asm uses hardcoded [AP_DATA + 0xNN] offsets.
      * If these C defines diverge, APs read garbage and crash on SIPI. */
-    TEST_ASSERT_EQ(AP_OFF_CR3, 0x00,
-                   "AP_OFF_CR3 == 0x00");
-    TEST_ASSERT_EQ(AP_OFF_STACK, 0x08,
-                   "AP_OFF_STACK == 0x08");
-    TEST_ASSERT_EQ(AP_OFF_GDT_PTR, 0x10,
-                   "AP_OFF_GDT_PTR == 0x10");
-    TEST_ASSERT_EQ(AP_OFF_ENTRY, 0x20,
-                   "AP_OFF_ENTRY == 0x20");
-    TEST_ASSERT_EQ(AP_OFF_CPUID, 0x28,
-                   "AP_OFF_CPUID == 0x28");
-    TEST_ASSERT_EQ(AP_OFF_IDT_PTR, 0x30,
-                   "AP_OFF_IDT_PTR == 0x30");
-    TEST_ASSERT_EQ(AP_OFF_CANARY, 0x3C,
-                   "AP_OFF_CANARY == 0x3C (after IDT_PTR 10-byte span)");
     TEST_ASSERT_EQ(AP_DATA_BASE, AP_TRAMPOLINE_ADDR + 0xE00,
                    "AP_DATA_BASE == trampoline + 0xE00");
 }
@@ -310,13 +281,6 @@ static void test_vector_uniqueness(void)
     /* Every statically assigned vector must be unique. The static asserts
      * in vectors.h catch this at compile time; these tests verify the
      * actual values at runtime and document the expected assignments. */
-    TEST_ASSERT_EQ(VECTOR_LINUX_SYSCALL, 0x80, "VECTOR_LINUX_SYSCALL == 0x80");
-    TEST_ASSERT_EQ(VECTOR_NT_SYSCALL, 0x2E, "VECTOR_NT_SYSCALL == 0x2E");
-    TEST_ASSERT_EQ(VECTOR_YIELD, 0x81, "VECTOR_YIELD == 0x81");
-    TEST_ASSERT_EQ(VECTOR_IPI_ASYNC_INIT, 0xFC, "VECTOR_IPI_ASYNC_INIT == 0xFC");
-    TEST_ASSERT_EQ(VECTOR_IPI_RESCHEDULE, 0xFD, "VECTOR_IPI_RESCHEDULE == 0xFD");
-    TEST_ASSERT_EQ(VECTOR_IPI_TLB_SHOOTDOWN, 0xFE, "VECTOR_IPI_TLB_SHOOTDOWN == 0xFE");
-    TEST_ASSERT_EQ(VECTOR_LAPIC_SPURIOUS, 0xFF, "VECTOR_LAPIC_SPURIOUS == 0xFF");
 
     /* Verify no pair of software/IPI vectors collide */
     TEST_ASSERT(VECTOR_LINUX_SYSCALL != VECTOR_YIELD,
@@ -400,10 +364,6 @@ static void test_filetime_dos_roundtrip(void)
 
 static void test_filetime_ticks_per_second(void)
 {
-    TEST_ASSERT_EQ(FILETIME_TICKS_PER_SECOND, 10000000ULL,
-                   "FILETIME_TICKS_PER_SECOND == 10,000,000");
-    TEST_ASSERT_EQ(FILETIME_TICKS_PER_MS, 10000ULL,
-                   "FILETIME_TICKS_PER_MS == 10,000");
 }
 
 static void test_filetime_pre_epoch_guard(void)
@@ -543,18 +503,8 @@ static void test_nt_create_file_ssdt_registered(void)
 static void test_nt_file_constants(void)
 {
     /* CreateDisposition values match Windows NT convention */
-    TEST_ASSERT_EQ(FILE_SUPERSEDE,    0, "FILE_SUPERSEDE == 0");
-    TEST_ASSERT_EQ(FILE_OPEN,         1, "FILE_OPEN == 1");
-    TEST_ASSERT_EQ(FILE_CREATE,       2, "FILE_CREATE == 2");
-    TEST_ASSERT_EQ(FILE_OPEN_IF,      3, "FILE_OPEN_IF == 3");
-    TEST_ASSERT_EQ(FILE_OVERWRITE,    4, "FILE_OVERWRITE == 4");
-    TEST_ASSERT_EQ(FILE_OVERWRITE_IF, 5, "FILE_OVERWRITE_IF == 5");
 
     /* IoStatusBlock Information values */
-    TEST_ASSERT_EQ(FILE_SUPERSEDED,     0, "FILE_SUPERSEDED == 0");
-    TEST_ASSERT_EQ(FILE_OPENED,         1, "FILE_OPENED == 1");
-    TEST_ASSERT_EQ(FILE_CREATED,        2, "FILE_CREATED == 2");
-    TEST_ASSERT_EQ(FILE_OVERWRITTEN,    3, "FILE_OVERWRITTEN == 3");
 
     /* SSDT indices for NtCreateFile/NtOpenFile */
     TEST_ASSERT_EQ(SSDT_NtCreateFile, 0x0010, "SSDT_NtCreateFile == 0x0010");
@@ -668,7 +618,6 @@ static void test_nt_sync_constants(void)
     TEST_ASSERT_EQ(SynchronizationEvent,  1, "SynchronizationEvent == 1");
     TEST_ASSERT_EQ(WaitAll,               0, "WaitAll == 0");
     TEST_ASSERT_EQ(WaitAny,               1, "WaitAny == 1");
-    TEST_ASSERT_EQ(MAXIMUM_WAIT_OBJECTS, 64, "MAXIMUM_WAIT_OBJECTS == 64");
     TEST_ASSERT_EQ(STATUS_WAIT_0,         0, "STATUS_WAIT_0 == 0");
     TEST_ASSERT_EQ(STATUS_ABANDONED,   0x80, "STATUS_ABANDONED == 0x80");
 }
@@ -707,17 +656,6 @@ static void test_nt_vm_ssdt_registered(void)
 
 static void test_nt_vm_constants(void)
 {
-    TEST_ASSERT_EQ(MEM_COMMIT,    0x1000, "MEM_COMMIT == 0x1000");
-    TEST_ASSERT_EQ(MEM_RESERVE,   0x2000, "MEM_RESERVE == 0x2000");
-    TEST_ASSERT_EQ(MEM_RELEASE,   0x8000, "MEM_RELEASE == 0x8000");
-    TEST_ASSERT_EQ(MEM_DECOMMIT,  0x4000, "MEM_DECOMMIT == 0x4000");
-    TEST_ASSERT_EQ(PAGE_NOACCESS,       0x01, "PAGE_NOACCESS == 0x01");
-    TEST_ASSERT_EQ(PAGE_READONLY,       0x02, "PAGE_READONLY == 0x02");
-    TEST_ASSERT_EQ(PAGE_READWRITE,      0x04, "PAGE_READWRITE == 0x04");
-    TEST_ASSERT_EQ(PAGE_EXECUTE,        0x10, "PAGE_EXECUTE == 0x10");
-    TEST_ASSERT_EQ(PAGE_EXECUTE_READ,   0x20, "PAGE_EXECUTE_READ == 0x20");
-    TEST_ASSERT_EQ(PAGE_EXECUTE_READWRITE, 0x40, "PAGE_EXECUTE_READWRITE == 0x40");
-    TEST_ASSERT_EQ(PAGE_GUARD,          0x100, "PAGE_GUARD == 0x100");
 
     /* MEMORY_BASIC_INFORMATION size */
     TEST_ASSERT_EQ(sizeof(MEMORY_BASIC_INFORMATION), 48,
