@@ -297,6 +297,85 @@ Both SKIP_REVIEW_HOOK and SKIP_REVIEW_HOOK_REASON must appear together;
 SKIP_REVIEW_HOOK_REASON >= 12 chars or the gate returns the usage-envelope
 BLOCK regardless of which source was used.
 
+### `skill-progress-skip.log` -- orphan-skip audit trail (TODO-08 §16)
+
+Owner: `.claude/hooks/skill_step_block.py:_log_orphan_skip()`.
+
+JSONL append-only file written each time `_select_active_skill` skips a
+`skill-progress.json` entry whose `compaction_orphaned` flag is `true`.
+Record shape:
+
+```json
+{
+  "ts_ns": 1777365781228471747,
+  "kind": "ORPHAN_SKIP",
+  "skill": "implement-todo-section",
+  "started_head_sha": "abc12345...",
+  "orphan_ts_ns": 1777000000000000001,
+  "orphan_reason": "PreCompact fired with 3 steps observed"
+}
+```
+
+Lifecycle:
+
+- Appended on every orphan-skip from `skill_step_block.py`. Acquired with
+  `fcntl.flock` on `skill-progress-skip.log.lock` so concurrent block
+  hooks do not race.
+- Truncated to the last 200 lines after every append (ring buffer).
+- Safe to delete at any time. Audit only -- no consumer reads from it
+  programmatically; the gate logic does not depend on it.
+
+When to look at it: if a post-compaction `git commit` proceeds and you
+want to confirm the gate cleared because of an orphan flag (not a
+genuine missing-step bypass), grep this file for the skill + ts.
+
+### `transcript-scan-cache.json` -- design-review hook offset cache (TODO-08 §15+§16)
+
+Owner: `.claude/hooks/design_review_required.py:_cache_save()`.
+
+Per-transcript-path cache used by `_scan_transcript()` to avoid
+re-parsing the entire JSONL transcript on every PreToolUse Edit. Cache
+entry shape:
+
+```json
+{
+  "/path/to/transcript.jsonl": {
+    "inode": 123456,
+    "mtime": 1777365781.123,
+    "size": 51234,
+    "head_fp": "<sha256 hex of first 256 bytes>",
+    "last_byte_offset": 51234,
+    "impl_seen": true,
+    "design_seen": true,
+    "impl_args": "## 16. Foo",
+    "pending_clear_ids": {"toolu_abc": true}
+  }
+}
+```
+
+Validity check on read: `inode == cur_inode AND head_fp == cur_head_fp
+AND mtime <= cur_mtime AND size <= cur_size`. The `head_fp` fingerprint
+(sha256 of first 256 bytes) catches truncate-and-regrow resets where
+the file size grew past the cached size but the prefix bytes belong to
+a fresh transcript window. ctime is intentionally NOT used: POSIX
+ctime updates on every write, so a ctime-equality check would defeat
+the cache on every legitimate append.
+
+Lifecycle:
+
+- Written on every successful `_scan_transcript()` call.
+- Evicted entries: `_cache_save()` drops keys whose `transcript_path`
+  no longer exists, AND caps total entries to 32 (most-recent-mtime
+  wins), AND caps `pending_clear_ids` per entry to 200.
+- Invalidated on PreCompact: `pre_compact_flush.py` `os.unlink`s the
+  whole file because the semantic window changes on compaction.
+- Safe to delete at any time. The next `_scan_transcript()` call
+  pays one full rescan and rebuilds the cache.
+
+When to delete it manually: if `design_review_required.py` is firing
+unexpectedly (false-positive block on an Edit), removing this file
+forces a full rescan that always reflects current transcript content.
+
 ## Gitignore
 
 The directory ships tracked via `.keep`; per-session JSON files are excluded. See `.gitignore` rules at repo root:

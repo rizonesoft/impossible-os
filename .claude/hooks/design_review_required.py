@@ -87,10 +87,50 @@ def _cache_load(cache_file: str, transcript_path: str) -> dict:
     return entry if isinstance(entry, dict) else {}
 
 
+_CACHE_MAX_ENTRIES = 32
+_CACHE_PENDING_IDS_MAX = 200
+
+
+def _evict_stale(cache: dict) -> dict:
+    """TODO-08 §16 Codex L2 fix (2026-04-28): drop cache entries
+    whose transcript_path no longer exists on disk; cap the total
+    entry count to _CACHE_MAX_ENTRIES (keep the most recent by
+    mtime field). Also caps pending_clear_ids per entry to
+    _CACHE_PENDING_IDS_MAX (drop arbitrary subset; pending IDs are
+    short-lived by nature so a hard cap is safe).
+    """
+    if not isinstance(cache, dict):
+        return {}
+    pruned = {}
+    for tp, ent in cache.items():
+        if not isinstance(ent, dict):
+            continue
+        if not isinstance(tp, str) or not tp:
+            continue
+        if not os.path.exists(tp):
+            continue
+        # Cap pending_clear_ids per entry.
+        pcids = ent.get("pending_clear_ids")
+        if isinstance(pcids, dict) and len(pcids) > _CACHE_PENDING_IDS_MAX:
+            keep = list(pcids.keys())[-_CACHE_PENDING_IDS_MAX:]
+            ent["pending_clear_ids"] = {k: pcids[k] for k in keep}
+        pruned[tp] = ent
+    if len(pruned) > _CACHE_MAX_ENTRIES:
+        # Keep the _CACHE_MAX_ENTRIES with the highest mtime field.
+        items = sorted(pruned.items(),
+                       key=lambda kv: float(kv[1].get("mtime", 0) or 0),
+                       reverse=True)
+        pruned = dict(items[:_CACHE_MAX_ENTRIES])
+    return pruned
+
+
 def _cache_save(cache_file: str, transcript_path: str, entry: dict) -> None:
     """Atomically write the cache entry for transcript_path. Best-
     effort: silently swallow I/O errors -- worst case the next call
-    pays a full rescan."""
+    pays a full rescan. TODO-08 §16 Codex L2 fix (2026-04-28):
+    evicts stale entries (path no longer exists) and caps total
+    cache size to _CACHE_MAX_ENTRIES so the cache file does not
+    grow unbounded across sessions/test runs."""
     if not cache_file or not transcript_path:
         return
     try:
@@ -105,25 +145,42 @@ def _cache_save(cache_file: str, transcript_path: str, entry: dict) -> None:
             except Exception:
                 pass
         cache[transcript_path] = entry
-        tmp = cache_file + ".tmp"
+        cache = _evict_stale(cache)
+        tmp = cache_file + ".tmp." + str(os.getpid())
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(cache, f)
         os.replace(tmp, cache_file)
     except Exception:
         try:
-            os.unlink(cache_file + ".tmp")
+            os.unlink(cache_file + ".tmp." + str(os.getpid()))
         except Exception:
             pass
 
 
 def _stat_signature(path: str):
-    """Return (inode, mtime, size) tuple for cache validation. Empty
-    tuple if stat fails."""
+    """Return (inode, mtime, size) tuple for cache validation.
+    Empty tuple if stat fails."""
     try:
         st = os.stat(path)
         return (st.st_ino, st.st_mtime, st.st_size)
     except Exception:
         return ()
+
+
+def _head_fingerprint(path: str, n: int = 256) -> str:
+    """Return a hex digest of the first `n` bytes of `path`. Used as
+    a truncate-and-regrow guard (Codex M5 fix re-adversarial 2026-
+    04-28: ctime equality was too strict -- POSIX ctime updates on
+    every write so cache never hit on legitimate appends; head-byte
+    fingerprint catches the truncate-regrow case while remaining
+    invariant under append). Empty string on stat/read error."""
+    try:
+        import hashlib
+        with open(path, "rb") as f:
+            head = f.read(n)
+        return hashlib.sha256(head).hexdigest()
+    except Exception:
+        return ""
 
 
 def _is_code_target(path: str) -> bool:
@@ -188,10 +245,20 @@ def _scan_transcript(path: str) -> tuple[bool, bool, str]:
     design_seen = False
     impl_args = ""
     pending_clear_ids: dict = {}
+    # §16 Codex re-adversarial M5 fix (2026-04-28): use a head-bytes
+    # fingerprint instead of ctime equality. The earlier ctime check
+    # was too strict -- POSIX ctime updates on every write, so the
+    # cache never hit on legitimate appends. head_fp captures the
+    # first 256 bytes of the transcript: invariant under append (head
+    # of file does not change), but changes on truncate-and-regrow
+    # (new session has different first line / session_id / ts).
+    cur_head_fp = _head_fingerprint(path) if cur_sig else ""
     can_incremental = (
         cached
         and cur_sig
         and cached.get("inode") == cur_sig[0]
+        and cached.get("head_fp", "") == cur_head_fp
+        and cached.get("head_fp", "") != ""
         and cached.get("mtime", 0) <= cur_sig[1]
         and cached.get("size", 0) <= cur_sig[2]
     )
@@ -301,6 +368,7 @@ def _scan_transcript(path: str) -> tuple[bool, bool, str]:
             "inode": final_sig[0],
             "mtime": final_sig[1],
             "size": final_sig[2],
+            "head_fp": _head_fingerprint(path),
             "last_byte_offset": end_offset,
             "impl_seen": impl_seen,
             "design_seen": design_seen,

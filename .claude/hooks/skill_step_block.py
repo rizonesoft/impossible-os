@@ -65,20 +65,50 @@ def _log_orphan_skip(root: str, name: str, entry: dict) -> None:
     }
     try:
         os.makedirs(os.path.dirname(p), exist_ok=True)
-        with open(p, "a", encoding="utf-8") as f:
-            f.write(json.dumps(rec) + "\n")
-        # Ring-buffer truncation: if file > MAX lines, keep the tail.
+        # TODO-08 §16 Codex H1-adjacent fix (2026-04-28): ring-buffer
+        # rewrite must not race against a concurrent appender. Use
+        # advisory flock on a sibling .lock file; per-process tmp
+        # name is a uniqueness backstop so even if the lock is a
+        # no-op (Windows host) two writers do not clobber each
+        # others tmp.
+        lock_path = p + ".lock"
         try:
+            import fcntl as _fcntl  # local import for portability
+            have_flock = True
+        except ImportError:
+            _fcntl = None
+            have_flock = False
+        lock_fd = None
+        try:
+            if have_flock:
+                lock_fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+                _fcntl.flock(lock_fd, _fcntl.LOCK_EX)
+            with open(p, "a", encoding="utf-8") as f:
+                f.write(json.dumps(rec) + "\n")
+            # Ring-buffer truncation: if file > MAX lines, keep the tail.
             with open(p, "r", encoding="utf-8") as f:
                 lines = f.readlines()
             if len(lines) > _ORPHAN_SKIP_LOG_MAX_LINES:
                 lines = lines[-_ORPHAN_SKIP_LOG_MAX_LINES:]
-                tmp = p + ".tmp"
+                tmp = p + ".tmp." + str(os.getpid()) + "." + str(
+                    time.time_ns() if hasattr(time, "time_ns")
+                    else int(time.time() * 1e9)
+                )
                 with open(tmp, "w", encoding="utf-8") as f:
                     f.writelines(lines)
                 os.replace(tmp, p)
         except Exception:
             pass
+        finally:
+            if lock_fd is not None:
+                try:
+                    _fcntl.flock(lock_fd, _fcntl.LOCK_UN)
+                except Exception:
+                    pass
+                try:
+                    os.close(lock_fd)
+                except Exception:
+                    pass
     except Exception:
         pass
 

@@ -35,6 +35,7 @@ Wrap.sh-eligible: NO -- the observer needs to walk transcript on every
 tool call to record the observed step on the right skill's state.
 """
 
+import contextlib
 import json
 import os
 import re
@@ -43,6 +44,13 @@ import sys
 import time
 from typing import Dict, List, Optional, Tuple
 from pathlib import Path
+
+try:
+    import fcntl  # type: ignore[import]
+    _HAVE_FLOCK = True
+except ImportError:
+    fcntl = None  # type: ignore[assignment]
+    _HAVE_FLOCK = False
 
 
 _HOOK_DIR = Path(__file__).resolve().parent
@@ -163,8 +171,15 @@ def _load_state(state_path: str) -> Dict:
 
 
 def _save_state(state_path: str, data: Dict) -> None:
+    """Atomic write of skill-progress.json. TODO-08 §16 Codex H1 fix
+    (2026-04-28): per-process tmp filename via os.getpid() + ns
+    timestamp prevents two concurrent observers from clobbering each
+    other's tmp file. Combined with _with_state_lock() in main() this
+    closes the parallel-PostToolUse race that could lose post-
+    compaction step evidence.
+    """
     os.makedirs(os.path.dirname(state_path), exist_ok=True)
-    tmp = state_path + ".tmp"
+    tmp = state_path + ".tmp." + str(os.getpid()) + "." + str(_ts_ns())
     try:
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, sort_keys=True)
@@ -174,6 +189,78 @@ def _save_state(state_path: str, data: Dict) -> None:
             os.unlink(tmp)
         except Exception:
             pass
+
+
+@contextlib.contextmanager
+def _with_state_lock(state_path: str):
+    """TODO-08 §16 Codex H1 fix (2026-04-28): hold an exclusive
+    advisory lock on `<state_path>.lock` while reading-modifying-
+    writing skill-progress.json. Two concurrent PostToolUse observers
+    used to race here -- both archived the same orphaned entry, both
+    created a fresh entry, last write wins, evidence loss. The lock
+    serializes the entire RMW span; per-process tmp filename in
+    _save_state covers the file-system-visible portion.
+
+    Falls open on platforms without fcntl (Windows hosts running
+    Claude Code natively): the lock is a no-op and the per-process
+    tmp filename is the only safety net. Acceptable because:
+    Windows-side parallel hooks are rare (the harness serializes
+    most tool calls), and the tmp filename uniqueness still prevents
+    cross-process tmp clobbering.
+    """
+    if not _HAVE_FLOCK:
+        yield
+        return
+    os.makedirs(os.path.dirname(state_path), exist_ok=True)
+    lock_path = state_path + ".lock"
+    fd = None
+    try:
+        fd = os.open(
+            lock_path,
+            os.O_RDWR | os.O_CREAT,
+            0o600,
+        )
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        if fd is not None:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            except Exception:
+                pass
+            try:
+                os.close(fd)
+            except Exception:
+                pass
+
+
+def _archive_orphan_in_place(state: Dict, skill: str) -> None:
+    """TODO-08 §16 Codex M3 fix (2026-04-28): if state[skill] is
+    a dict with `compaction_orphaned: true`, move it to
+    `<skill>.orphan.<orphan_ts_ns>` (collision-safe with a counter
+    suffix if the archive key already exists). Caller can then
+    safely write a fresh entry under `state[skill]`.
+
+    Used by both Branch A (fresh Skill invocation) and Branch B
+    (lazy entry init when an active flow needs to record steps).
+    Without Branch A coverage, a fresh implement-todo-section
+    invocation post-compaction would clobber the orphaned entry
+    before either the blocker skip log or the observer archive
+    path could preserve it -- audit-trail loss exactly when
+    compaction resilience is being exercised.
+    """
+    existing = state.get(skill)
+    if not isinstance(existing, dict):
+        return
+    if existing.get("compaction_orphaned") is not True:
+        return
+    base = skill + ".orphan." + str(existing.get("orphan_ts_ns", _ts_ns()))
+    key = base
+    suffix = 0
+    while key in state:
+        suffix += 1
+        key = base + "." + str(suffix)
+    state[key] = existing
 
 
 def _ts_ns() -> int:
@@ -218,134 +305,150 @@ def main() -> int:
         return 0
 
     state_path = os.path.join(root, _STATE_REL)
-    state = _load_state(state_path)
+    # TODO-08 §16 Codex H1 fix (2026-04-28): hold the state lock for
+    # the entire read-modify-write span so two concurrent observers
+    # cannot race and lose post-compaction step evidence.
+    with _with_state_lock(state_path):
+        state = _load_state(state_path)
 
-    # Branch A: this tool call IS a multi-step Skill invocation -- start
-    # (or restart) the state entry for that skill. Per Q1+Q2: latest
-    # invocation wins; the started_head_sha pins the invalidation key.
-    fresh_skill = _is_skill_invocation_in_payload(d, MULTI_STEP_SKILLS)
-    if fresh_skill:
-        head = _head_sha(root)
+        # Branch A: this tool call IS a multi-step Skill invocation --
+        # start (or restart) the state entry for that skill. Per Q1+Q2:
+        # latest invocation wins; the started_head_sha pins the
+        # invalidation key.
+        fresh_skill = _is_skill_invocation_in_payload(d, MULTI_STEP_SKILLS)
+        if fresh_skill:
+            head = _head_sha(root)
+            sid = ""
+            # Best-effort session_id from transcript.
+            tp = d.get("transcript_path", "")
+            try:
+                if tp and os.path.exists(tp):
+                    with open(tp, "r", encoding="utf-8") as f:
+                        for line in f:
+                            try:
+                                ev = json.loads(line)
+                            except Exception:
+                                continue
+                            s = ev.get("session_id") or ev.get("sessionId")
+                            if isinstance(s, str) and s:
+                                sid = s
+            except Exception:
+                pass
+            # Codex consistency M3 fix (2026-04-28): preserve any
+            # orphaned entry under the same skill name before the
+            # fresh write -- the unconditional state[fresh_skill]=
+            # {...} on line ~245 used to clobber post-compaction
+            # audit state. Use the same archive-and-rotate path as
+            # Branch B's lazy init.
+            _archive_orphan_in_place(state, fresh_skill)
+            state[fresh_skill] = {
+                "started_ts": _ts_ns(),
+                "started_head_sha": head,
+                "session_id": sid,
+                "steps_observed": [],
+                "args": (d.get("tool_input") or {}).get("args", ""),
+            }
+            _save_state(state_path, state)
+            return 0
+
+        # Branch B: the tool call is something else -- check whether it is a
+        # step-evidence event for the most-recent active multi-step skill.
+        #
+        # Codex perf review 2026-04-28 H1: avoid walking the transcript on
+        # every PostToolUse. The active skill state lives in skill-progress
+        # .json (written by Branch A above when a fresh Skill invocation
+        # fires). Pick the most-recently-started entry there instead of
+        # rescanning N MiB of JSONL on every tool call. Transcript walk is
+        # ONLY used as a fallback when the state file has no recent entry
+        # (observer started mid-session, state cleared by SessionStart, etc).
+        skill = None
+        args = ""
         sid = ""
-        # Best-effort session_id from transcript.
-        tp = d.get("transcript_path", "")
-        try:
-            if tp and os.path.exists(tp):
-                with open(tp, "r", encoding="utf-8") as f:
-                    for line in f:
-                        try:
-                            ev = json.loads(line)
-                        except Exception:
-                            continue
-                        s = ev.get("session_id") or ev.get("sessionId")
-                        if isinstance(s, str) and s:
-                            sid = s
-        except Exception:
-            pass
-        state[fresh_skill] = {
-            "started_ts": _ts_ns(),
-            "started_head_sha": head,
-            "session_id": sid,
-            "steps_observed": [],
-            "args": (d.get("tool_input") or {}).get("args", ""),
-        }
+        if isinstance(state, dict) and state:
+            best_ts = -1
+            for name, entry in state.items():
+                if not isinstance(entry, dict):
+                    continue
+                if name not in MULTI_STEP_SKILLS:
+                    continue
+                # TODO-08 §16: skip orphaned entries. Without this skip the
+                # observer would keep recording post-compaction step evidence
+                # into an orphaned entry while the §10 step-block hook (which
+                # also skips orphans) ignores it -- creating an enforcement
+                # bypass where post-compaction commits proceed without any
+                # active-skill gate. Symmetric with skill_step_block.py.
+                if entry.get("compaction_orphaned") is True:
+                    continue
+                ts = entry.get("started_ts", 0)
+                if isinstance(ts, int) and ts > best_ts:
+                    best_ts = ts
+                    skill = name
+                    args = entry.get("args", "")
+                    sid = entry.get("session_id", "")
+        if not skill:
+            # Fallback: no state entry (or all entries orphaned). One
+            # transcript walk to bootstrap from the resumed flow's most-
+            # recent Skill(implement-todo-section/...) invocation.
+            transcript = d.get("transcript_path", "")
+            skill, args, sid = _scan_transcript_for_active_skill(transcript)
+        if not skill:
+            return 0
+        tn = d.get("tool_name", "")
+        ti = d.get("tool_input", {}) or {}
+        sig = _signature_for_tool(tn, ti)
+        if not sig:
+            return 0
+
+        matched = match_step(skill, tn, sig)
+        if not matched:
+            return 0
+
+        # Lazy state init for the skill if missing (transcript-walked but not
+        # observed-from-payload, e.g. observer started mid-session). TODO-08
+        # §16: if the existing entry under this skill name is orphaned,
+        # archive it via the collision-safe helper (Codex re-adversarial
+        # M4 fix 2026-04-28: was an inline assignment that could
+        # silently overwrite a prior archive with the same orphan_ts_ns;
+        # _archive_orphan_in_place uses a counter suffix). Without this
+        # rotation the observer would write new step evidence into the
+        # orphaned entry, which §10 + §16 selector skips ignore -- the
+        # resumed flow would have NO active gate.
+        _archive_orphan_in_place(state, skill)
+        entry = state.get(skill)
+        if isinstance(entry, dict) and entry.get("compaction_orphaned") is True:
+            # Helper only archives if the entry is orphaned; if it
+            # remained, force fresh-entry creation below.
+            entry = None
+        if not isinstance(entry, dict):
+            entry = {
+                "started_ts": _ts_ns(),
+                "started_head_sha": _head_sha(root),
+                "session_id": sid or "",
+                "steps_observed": [],
+                "args": args or "",
+            }
+            state[skill] = entry
+
+        so = entry.setdefault("steps_observed", [])
+        if not isinstance(so, list):
+            so = []
+            entry["steps_observed"] = so
+        token = _evidence_token(tn, ti)
+        now = _ts_ns()
+        seen = {x.get("n") for x in so if isinstance(x, dict)}
+        for n in matched:
+            if n in seen:
+                continue
+            so.append({
+                "n": n,
+                "observed_ts": now,
+                "evidence_tool": tn,
+                "evidence_token": token,
+            })
+            seen.add(n)
+
         _save_state(state_path, state)
         return 0
-
-    # Branch B: the tool call is something else -- check whether it is a
-    # step-evidence event for the most-recent active multi-step skill.
-    #
-    # Codex perf review 2026-04-28 H1: avoid walking the transcript on
-    # every PostToolUse. The active skill state lives in skill-progress
-    # .json (written by Branch A above when a fresh Skill invocation
-    # fires). Pick the most-recently-started entry there instead of
-    # rescanning N MiB of JSONL on every tool call. Transcript walk is
-    # ONLY used as a fallback when the state file has no recent entry
-    # (observer started mid-session, state cleared by SessionStart, etc).
-    skill = None
-    args = ""
-    sid = ""
-    if isinstance(state, dict) and state:
-        best_ts = -1
-        for name, entry in state.items():
-            if not isinstance(entry, dict):
-                continue
-            if name not in MULTI_STEP_SKILLS:
-                continue
-            # TODO-08 §16: skip orphaned entries. Without this skip the
-            # observer would keep recording post-compaction step evidence
-            # into an orphaned entry while the §10 step-block hook (which
-            # also skips orphans) ignores it -- creating an enforcement
-            # bypass where post-compaction commits proceed without any
-            # active-skill gate. Symmetric with skill_step_block.py.
-            if entry.get("compaction_orphaned") is True:
-                continue
-            ts = entry.get("started_ts", 0)
-            if isinstance(ts, int) and ts > best_ts:
-                best_ts = ts
-                skill = name
-                args = entry.get("args", "")
-                sid = entry.get("session_id", "")
-    if not skill:
-        # Fallback: no state entry (or all entries orphaned). One
-        # transcript walk to bootstrap from the resumed flow's most-
-        # recent Skill(implement-todo-section/...) invocation.
-        transcript = d.get("transcript_path", "")
-        skill, args, sid = _scan_transcript_for_active_skill(transcript)
-    if not skill:
-        return 0
-    tn = d.get("tool_name", "")
-    ti = d.get("tool_input", {}) or {}
-    sig = _signature_for_tool(tn, ti)
-    if not sig:
-        return 0
-
-    matched = match_step(skill, tn, sig)
-    if not matched:
-        return 0
-
-    # Lazy state init for the skill if missing (transcript-walked but not
-    # observed-from-payload, e.g. observer started mid-session). TODO-08
-    # §16: if the existing entry under this skill name is orphaned,
-    # archive it under a `<skill>.orphan.<ts>` key and create a fresh
-    # entry. Without this rotation the observer would write new step
-    # evidence into the orphaned entry, which §10 + §16 selector skips
-    # ignore -- the resumed flow would have NO active gate.
-    entry = state.get(skill)
-    if isinstance(entry, dict) and entry.get("compaction_orphaned") is True:
-        archive_key = skill + ".orphan." + str(entry.get("orphan_ts_ns", _ts_ns()))
-        state[archive_key] = entry
-        entry = None
-    if not isinstance(entry, dict):
-        entry = {
-            "started_ts": _ts_ns(),
-            "started_head_sha": _head_sha(root),
-            "session_id": sid or "",
-            "steps_observed": [],
-            "args": args or "",
-        }
-        state[skill] = entry
-
-    so = entry.setdefault("steps_observed", [])
-    if not isinstance(so, list):
-        so = []
-        entry["steps_observed"] = so
-    token = _evidence_token(tn, ti)
-    now = _ts_ns()
-    seen = {x.get("n") for x in so if isinstance(x, dict)}
-    for n in matched:
-        if n in seen:
-            continue
-        so.append({
-            "n": n,
-            "observed_ts": now,
-            "evidence_tool": tn,
-            "evidence_token": token,
-        })
-        seen.add(n)
-
-    _save_state(state_path, state)
-    return 0
 
 
 if __name__ == "__main__":
