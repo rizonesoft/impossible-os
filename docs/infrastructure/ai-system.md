@@ -12,7 +12,7 @@
 | `CLAUDE.md`                       | Doctrine source-of-truth (file)                  | Product north star, workflow rules, safety constraints, policy                                                                     |
 | `.claude/skills/`                 | Workflow source-of-truth (directory)             | How Claude executes a specific task (implement, review, verify, diagnose)                                                          |
 | `.claude/settings.json`           | Harness policy source-of-truth (file)            | Permissions, hook reminders, pre/post-tool-use gates                                                                               |
-| Codex (OpenAI plugin)             | Subordinate reviewer                             | Adversarial findings only; invoked from inside Claude skills (17 dispatchers: 9 angle-owner `codex-*` + 8 workflow-consumer); findings go through `receiving-code-review` before action |
+| Codex (OpenAI plugin)             | Subordinate reviewer                             | Adversarial findings only; invoked from inside Claude skills (16 dispatchers: 8 angle-owner `codex-*` + 7 workflow-consumer + 1 inheritor); findings go through `receiving-code-review` before action |
 | Copilot CLI                       | Subordinate reviewer                             | External PR-style review; invoked via `scripts/copilot-review.sh`; same `receiving-code-review` discipline                         |
 | `.github/copilot-instructions.md` | Copilot-CLI repo instructions                    | Only configures how Copilot answers when invoked; does NOT add new doctrine                                                        |
 | `.githooks/`                      | Git-time guards (distinct layer; see [Git Hooks and Local Automation Lifecycle](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md#5-git-hooks-and-local-automation-lifecycle)) | Pre-commit lint, post-commit COUNT, opt-in pre-push                                                                                |
@@ -32,7 +32,7 @@
 As of 2026-04-18, Impossible OS is **Claude Code-only** for AI-assisted development. This is a deliberate design choice, documented here so the decision is discoverable when a contributor wonders why there is no `.cursor/` tree or `.windsurf/` tree or Aider config checked in.
 
 - **No `.cursor/`, no parallel skill sets.** Doctrine lives in `CLAUDE.md`; skills live in `.claude/skills/`. The previous `.cursor/` tree was removed because maintaining a parallel skill set under it created clutter without a corresponding productivity win.
-- **External reviewers are invoked from inside Claude skills, not from separate instruction layers.** Codex runs through the OpenAI Codex plugin when any of the 17 dispatching skills ([External-Reviewer Contract](#external-reviewer-contract-codex-copilot) names them: 9 angle-owner `codex-*` + 8 workflow-consumer) invokes it; Copilot runs through `scripts/copilot-review.sh` when Claude asks for a PR-style review. Neither tool reads its own instruction tree in this repo.
+- **External reviewers are invoked from inside Claude skills, not from separate instruction layers.** Codex runs through the OpenAI Codex plugin when any of the 16 dispatching skills ([External-Reviewer Contract](#external-reviewer-contract-codex-copilot) names them: 8 angle-owner `codex-*` + 7 workflow-consumer + 1 inheritor) invokes it; Copilot runs through `scripts/copilot-review.sh` when Claude asks for a PR-style review. Neither tool reads its own instruction tree in this repo.
 - **If a new AI tool is added in the future, it goes through the [External-Reviewer Contract](../../todo/00-infrastructure/TODO-02-ai-development-system.md#4-external-reviewer-contract-codex-copilot)** and applies `receiving-code-review` discipline to its findings. New tools do not get their own instruction tree.
 
 ---
@@ -191,9 +191,9 @@ Codex and Copilot participate in the AI workflow as **adversarial reviewers**, n
 
 ### Codex dispatch surface
 
-Codex is invoked from inside Claude skills via the OpenAI Codex plugin binary at `~/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs`. Three surfaces: nine **angle-owner** `codex-*` skills that each own one adversarial angle, seven **workflow-consumer** skills that dispatch Codex directly as part of a larger pipeline (e.g. step 13 of `/implement-todo-section`), and one **inheritor** (`verify-todo-section`) that inherits Codex dispatches through `review-todo-section` without calling `codex-companion.mjs` itself. Total: 9 + 7 + 1 = 17 skills carry the External-Reviewer Contract pointer.
+Codex is invoked from inside Claude skills via the OpenAI Codex plugin binary at `~/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs`. Three surfaces: eight **angle-owner** `codex-*` skills that each own one adversarial angle, seven **workflow-consumer** skills that dispatch Codex directly as part of a larger pipeline (e.g. step 13 of `/implement-todo-section`), and one **inheritor** (`verify-todo-section`) that inherits Codex dispatches through `review-todo-section` without calling `codex-companion.mjs` itself. Total: 8 + 7 + 1 = 16 skills carry the External-Reviewer Contract pointer. (The legacy `codex-dead-code-review` skill was retired 2026-04-25 per the rationale in `review-todo-section/SKILL.md` retirement note; the angle-owner count dropped from 9 to 8 at that time.)
 
-**Angle-owner skills (9):**
+**Angle-owner skills (8):**
 
 | Skill                                                                        | Adversarial angle                                                       |
 | ---------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
@@ -253,7 +253,7 @@ The `superpowers@claude-plugins-official` plugin ships 14 skills, three of which
 
 ### AI-Slop Content Gates
 
-Build green and tests green do not catch the most common AI-coauthor failure modes; CodeRabbit's December 2025 PR study reports AI-coauthored changes ship roughly 1.7x more major issues than human-authored code, and the leak is content-level rather than compile-level. [`scripts/lint.sh`](../../scripts/lint.sh) Checks 6/7/8 mechanically reject the three patterns CLAUDE.md prohibits in prose:
+Build green and tests green do not catch the most common AI-coauthor failure modes; CodeRabbit's December 2025 PR study reports AI-coauthored changes ship roughly 1.7x more major issues than human-authored code, and the leak is content-level rather than compile-level. [`scripts/lint.sh`](../../scripts/lint.sh) Checks 6/7/8 target three patterns CLAUDE.md prohibits in prose. Check 6 (tautological-test) is a live ERROR gate that rejects the pattern outside the legacy allowlist; Checks 7 and 8 emit deferred-WARN lines pending their infrastructure dependencies (TODO-06 cache extension for 7; lsp-bridge MCP wiring for 8), and will graduate to ERROR gates when those land:
 
 | Check | Pattern | Marker (allowlist) | Skip env |
 |---|---|---|---|
