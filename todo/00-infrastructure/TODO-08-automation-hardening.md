@@ -149,7 +149,7 @@ Verified locally: 29/29 `codex_flag_block` sub-test cases PASS (114/114 tooling 
 > - Canonical doc: `CLAUDE.md` "Model Roles" -> "Codex Invocation Policy" subsection (rule + enforcement + absolute-path note).
 > - Scope boundary: §2 documents + enforces the no-flag policy; §1 owns the MCP wiring; §6 owns the broader MCP usage discipline doctrine; §3 owns the receiving-code-review hard gate.
 
-> **Verified:** 2026-04-26 | commit `9e970610` + post-impl fixes `<this-commit>` | 7/7 items | build OK | tests 114/114 PASS
+> **Verified:** 2026-04-26 | commit `9e970610` + post-impl fixes (TBD: original review commit hash unrecorded; placeholder preserved for git-log audit) | 7/7 items | build OK | tests 114/114 PASS
 > **Quality reviewed:** 2026-04-26 | Codex 5x (design + adversarial + consistency + perf + re-adversarial) | 4H+5M fixed | scope: N/A (host-side hook + docs)
 
 ---
