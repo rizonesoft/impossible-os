@@ -303,6 +303,12 @@ if $DO_CLEAN; then
     echo "" > "$LOG"
 fi
 
+# Generated headers: extract MS UEFI CA generation from the pinned
+# shim binary so uefi_runtime.c can publish HKLM\SYSTEM\SecureBoot\ShimCA
+# at boot. Idempotent; runs every build (cheap; ~10 ms).
+bash scripts/extract-shim-ca.sh >> "$LOG" 2>&1 || \
+    echo "[shim-ca] WARN: extract-shim-ca.sh failed; ShimCA value may be stale" >> "$LOG"
+
 # Kernel (with progress bar)
 STEP=$((STEP + 1))
 run_kernel_step $STEP $TOTAL || { print_errors; echo "=== BUILD FAILED ===" >> "$LOG"; exit 1; }

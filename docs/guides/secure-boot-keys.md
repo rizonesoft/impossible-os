@@ -168,3 +168,64 @@ certificate. When a shim or GRUB vulnerability is disclosed:
 Once a release candidate is tagged, submit to [rhboot/shim-review](https://github.com/rhboot/shim-review).
 This replaces the MOK enrollment popup with transparent Secure Boot on all hardware.
 See `shim/README.md` for the current shim build details.
+
+## MS UEFI CA Lifecycle
+
+Microsoft began rotating UEFI signing certificates in 2024-2025:
+
+- **Microsoft Corporation UEFI CA 2011** -- the cert that signs every shim
+  Microsoft has shipped historically. Scheduled to expire **2026-06-30**.
+- **Microsoft Corporation UEFI CA 2023** -- the replacement cert, being
+  enrolled into firmware DBs via Windows Update through 2025-2026.
+
+Devices booting a shim signed only by the 2011 CA will start failing on
+machines whose firmware's KEK/db has rotated to 2023-only after the
+expiry window closes.
+
+### Verifying which CA your shim uses
+
+```bash
+sbverify --list shim/shimx64.efi 2>&1 | grep -E 'Microsoft Corporation UEFI CA'
+```
+
+Look for a "Microsoft Corporation UEFI CA YYYY" subject in the certificate
+chain. The newest year in the output is the active CA generation.
+
+### Re-signing + redistributing
+
+When Microsoft publishes the 2023-CA-signed shim binary:
+
+1. Download the new `shimx64.efi` from the
+   [rhboot/shim](https://github.com/rhboot/shim) release tagged for the
+   2023 CA, or from your distribution's signed-shim package.
+2. Replace `shim/shimx64.efi` in this repo.
+3. Update `shim/SHA256SUMS` with the new digest.
+4. Run `bash scripts/sign-efi.sh` and confirm the post-sign block emits
+   `[shim] signed-by: Microsoft Corporation UEFI CA 2023`.
+5. Run `bash scripts/build.sh clean` to rebuild the disk image with the
+   new shim.
+
+### Graduated deprecation policy in `scripts/sign-efi.sh`
+
+| Today's date           | Behavior on shim signed by 2011 CA      |
+|------------------------|------------------------------------------|
+| pre-2026-05-01         | Silent accept (transition window not open) |
+| 2026-05-01 to 2026-06-30 | `WARN` (60-day pre-expiry margin)      |
+| post-2026-06-30        | `FAIL` -- signing pipeline aborts hard  |
+
+The WARN threshold is `MS_UEFI_CA_2011_EXPIRY` minus 60 days. When
+Microsoft publishes a 2023-signed shim binary, pin it in `shim/` per the
+re-sign + redistribute steps above, well before the WARN window opens.
+
+### Kernel-side audit value
+
+`HKLM\SYSTEM\SecureBoot\ShimCA` (DWORD) surfaces the bundled shim's CA
+generation at boot for audit tools (msinfo32-equivalent, security
+inventory, support diagnostics):
+
+| Value      | Meaning                                                  |
+|------------|----------------------------------------------------------|
+| `0`        | Shim binary not pinned (waiting on 2023-CA publication) |
+| `2011`     | Shim signed by Microsoft Corporation UEFI CA 2011       |
+| `2023`     | Shim signed by Microsoft Corporation UEFI CA 2023       |
+| `0xFFFFFFFF` | Shim present but `sbverify` could not identify the CA |

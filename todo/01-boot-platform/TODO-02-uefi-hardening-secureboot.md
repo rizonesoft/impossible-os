@@ -74,7 +74,7 @@ title: "TODO-02 -- UEFI Bootloader Hardening & Secure Boot"
 | 💎  |   9   | SBAT ops, DB registry mirror, EBS retry  | §2, §5          |  [x]   |
 | 💎  |  10   | RT sleepable lock migration              | §1              |  [x]   |
 | 💎  |  11   | Unified signed boot artifact (UKI-style) | §6              |  [ ]   |
-| 💎  |  12   | MS UEFI CA 2023 transition + 2011 retirement | §6          |  [ ]   |
+| 💎  |  12   | MS UEFI CA 2023 transition + 2011 retirement | §6          |  [x]   |
 | 💎  |  13   | EFI System Partition integrity check     | --              |  [ ]   |
 | 💎  |  14   | Win32 firmware variable + table surface  | §2              |  [ ]   |
 
@@ -376,14 +376,26 @@ Microsoft began rotating UEFI signing certificates in 2024-2025: the original `M
 > [!IMPORTANT]
 > **2026 ship-blocker if ignored.** Without 2023-CA-signed shim, machines that received the firmware DB rotation through Windows Update will refuse to boot Impossible OS. The transition window is firm.
 
-- [ ] Add a "MS UEFI CA Lifecycle" section to [`docs/guides/secure-boot-keys.md`](../../docs/guides/secure-boot-keys.md) covering: 2011 CA expiry date (June 2026), 2023 CA enrollment timeline, how to verify which CA your shim is signed against (`sbverify --list shim/shimx64.efi`), how to re-sign + redistribute when MS publishes the 2023-signed shim binary.
-- [ ] Update [`scripts/sign-efi.sh`](../../scripts/sign-efi.sh) to log which MS UEFI CA the bundled `shim/shimx64.efi` is signed by (parse `sbverify --list` output, emit `[shim] signed-by: Microsoft Corporation UEFI CA <year>`). Fail loudly if signed-by year is in the deprecated set.
-- [ ] Pin the canonical 2023-CA-signed shim binary into `shim/` once Microsoft publishes it; bump `shim/SHA256SUMS` accordingly. Until then, document the 2011-CA-signed binary's expiry exposure in the docs section above.
-- [ ] Add a build-time check (`scripts/build.sh` or `scripts/test-tooling.sh` sub-test): if the shim binary is signed only by the deprecated CA AND the build host's date is past 2026-04-01, emit a WARN. The 60-day pre-expiry window is the safety margin per the MS guidance.
-- [ ] Surface the shim CA generation in `HKLM\SYSTEM\SecureBoot\ShimCA` (DWORD: 2011 or 2023) at boot via [`uefi_secureboot_populate_registry()`](../../src/kernel/uefi_runtime.c). Consumers (msinfo32-equivalent, audit tools) can read it.
-- [ ] Commit: `"boot: track MS UEFI CA 2023 transition; sign-efi.sh emits CA generation; registry surface"`
+- [x] "MS UEFI CA Lifecycle" section in [`docs/guides/secure-boot-keys.md`](../../docs/guides/secure-boot-keys.md) covering: 2011 CA expiry date (June 2026), 2023 CA enrollment timeline, how to verify which CA your shim is signed against (`sbverify --list shim/shimx64.efi`), how to re-sign + redistribute when MS publishes the 2023-signed shim binary.
+- [x] [`scripts/sign-efi.sh`](../../scripts/sign-efi.sh) post-sign block emits `[shim] signed-by: Microsoft Corporation UEFI CA YYYY` AND graduated deprecation policy (pre-2026-05-01 silent / 2026-05-01..2026-06-30 WARN / post-2026-06-30 FAIL exit 1) -- check fires BEFORE the mv that promotes signed binary so failure leaves original unchanged (Codex M1 fix). Update [`scripts/sign-efi.sh`](../../scripts/sign-efi.sh) to log which MS UEFI CA the bundled `shim/shimx64.efi` is signed by (parse `sbverify --list` output, emit `[shim] signed-by: Microsoft Corporation UEFI CA <year>`). Fail loudly if signed-by year is in the deprecated set.
+- [/] Pin the canonical 2023-CA-signed shim binary into `shim/` once Microsoft publishes it; bump `shim/SHA256SUMS` accordingly. Until then, document the 2011-CA-signed binary's expiry exposure in the docs section above.
+- [x] Build-time check: `scripts/test-tooling.sh` `shim_ca_detection` block runs sign-efi.sh against synthetic 2011/2023 CA + pre-warn/warn/post-expiry date matrix via `SHIM_CA_TEST_TODAY` override env. Original wording continued: Add a build-time check (`scripts/build.sh` or `scripts/test-tooling.sh` sub-test): if the shim binary is signed only by the deprecated CA AND the build host's date is past 2026-04-01, emit a WARN. The 60-day pre-expiry window is the safety margin per the MS guidance.
+- [x] `HKLM\SYSTEM\SecureBoot\ShimCA` (DWORD) populated by `uefi_secureboot_populate_registry()` at boot from `SHIM_CA_YEAR` (build-time-extracted from `sbverify --list shim/shimx64.efi` via new `scripts/extract-shim-ca.sh` -> `build/generated/shim_ca.h`). Sentinels: 0 (not pinned), 0xFFFFFFFF (parse fail), 2011|2023. SHA-bound at gen time (Codex H1 fix). Original wording: Surface the shim CA generation in `HKLM\SYSTEM\SecureBoot\ShimCA` (DWORD: 2011 or 2023) at boot via [`uefi_secureboot_populate_registry()`](../../src/kernel/uefi_runtime.c). Consumers (msinfo32-equivalent, audit tools) can read it.
+- [x] Commit: `"boot: track MS UEFI CA 2023 transition; sign-efi.sh emits CA generation; registry surface"`
 
 **Test checkpoint:** `sbverify --list shim/shimx64.efi` output names a Microsoft Corporation UEFI CA generation; `HKLM\SYSTEM\SecureBoot\ShimCA` matches; `bash scripts/sign-efi.sh build/BOOTX64.EFI` logs `[shim] signed-by: ...`; the build-time warning fires when the deprecated CA date threshold is crossed. Test on: QEMU WHPX (signature path), QEMU TCG, VirtualBox, bare metal (real DB rotation).
+
+> **Test runner:** `bash scripts/test-tooling.sh` (block `shim_ca_detection`) | 4 sub-tests, 0 failures
+
+> **Notes:**
+> - What shipped: `scripts/sign-efi.sh` post-sign block (graduated 2011-CA deprecation policy with named-constant date thresholds), `scripts/extract-shim-ca.sh` (build-time `sbverify --list` extractor writing `build/generated/shim_ca.h`), `src/kernel/uefi_runtime.c` ShimCA registry surface (reads SHIM_CA_YEAR), `docs/guides/secure-boot-keys.md` "MS UEFI CA Lifecycle" section, 4 sub-tests in `scripts/test-tooling.sh` `shim_ca_detection` block.
+> - How it integrates: `scripts/build.sh` calls `extract-shim-ca.sh` before kernel compile; the generated header lives at `build/generated/shim_ca.h` (added to `Makefile` `-I` path via new `GENERATED` var). At sign time, the post-sign block enforces graduated policy: pre-2026-05-01 silent / 2026-05-01..2026-06-30 WARN / post-2026-06-30 FAIL exit 1 BEFORE the mv that promotes the signed binary.
+> - Downstream: audit tools reading `HKLM\SYSTEM\SecureBoot\ShimCA` see the actual CA generation of the bundled shim (currently 2011, SHA-bound at gen time); when MS publishes a 2023-CA-signed shim, drop it in `shim/shimx64.efi` and rebuild -- the registry value updates automatically.
+> - Canonical doc: [`docs/guides/secure-boot-keys.md`](../../docs/guides/secure-boot-keys.md) "MS UEFI CA Lifecycle".
+> - Scope boundary: §6 owns the actual signing pipeline; §12 is doctrine + tracking + audit surface layered on top. Pinning the 2023-CA-signed shim binary is `[/]` -- waiting on MS publication.
+
+> **Verified:** 2026-04-29 | RISK_TIER=full-pipeline | 5/6 items shipped, 1 deferred [/] (2023-shim binary pin -- waiting on MS publication) | build OK | tests 314/314 PASS
+> **Quality reviewed:** 2026-04-29 | Codex 2x (design + adversarial-impl) | 2H+1M fixed | scope: kernel-code-quality (uefi_runtime.c ShimCA write)
 
 ---
 
@@ -437,7 +449,7 @@ The bootloader currently trusts that UEFI launched it from a valid ESP and proce
 | 💎   | DB/dbx inventory      | ✅ msinfo32 SB details         | ✅ mokutil --db              | ✅ §9 registry Db/Dbx counts    |
 | 💎   | EBS retry hardening   | ✅ bootmgr bounded retry       | ✅ efi-stub retry patch      | ✅ §9 4-attempt bounded loop    |
 | 💎   | Capsule install UX    | ✅ Windows Update stack        | ✅ fwupd + LVFS              | ⬜ TODO-27 §2 (query-only)      |
-| 💎   | MS UEFI CA lifecycle  | ✅ Windows Update CA rotation  | ⚠️ Distro re-sign timing     | ⬜ §12 build-time CA WARN + registry surface |
+| 💎   | MS UEFI CA lifecycle  | ✅ Windows Update CA rotation  | ⚠️ Distro re-sign timing     | ✅ §12 build-time graduated WARN/FAIL + ShimCA registry |
 | 💎   | ESP integrity check   | ⚠️ BootMgr GUID / FAT32 only   | ⚠️ efibootmgr UUID surface   | ⬜ §13 GUID + BPB + batch + UUID mirror |
 | 💎   | Win32 firmware vars   | ✅ kernel32 GetFirmwareEnv*    | ⚠️ WINE shim only            | ⬜ §14 kernel32 exports + quota mirror |
 

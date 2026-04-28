@@ -41,6 +41,7 @@ LDFLAGS := -nostdlib -static -z max-page-size=0x1000
 SRC_DIR    := src
 BUILD_DIR  := build
 INCLUDE    := include
+GENERATED  := build/generated
 BOOT_DIR   := $(SRC_DIR)/boot
 KERNEL_DIR := $(SRC_DIR)/kernel
 LIBC_DIR   := $(SRC_DIR)/libc
@@ -1202,79 +1203,79 @@ AVX2_CFLAGS := $(SIMD_CFLAGS) -mavx2
 AVX512_CFLAGS := $(SIMD_CFLAGS) -mavx512f
 $(BUILD_DIR)/kernel/gfx/gfx_simd.o: $(SRC_DIR)/kernel/gfx/gfx_simd.c | $(GENERATED_HDRS)
 	@mkdir -p $(dir $@)
-	$(CC) $(SIMD_CFLAGS) -I$(INCLUDE) -I$(KERNEL_DIR) -c $< -o $@
+	$(CC) $(SIMD_CFLAGS) -I$(INCLUDE) -I$(KERNEL_DIR) -I$(GENERATED) -c $< -o $@
 	@echo "[CC/SSE2] $<"
 
 # AVX-512 SIMD -- fb_blit_avx512/fb_fill_avx512 + throttle burst (AVX-512 ONLY)
 $(BUILD_DIR)/kernel/gfx/gfx_simd_avx512.o: $(SRC_DIR)/kernel/gfx/gfx_simd_avx512.c | $(GENERATED_HDRS)
 	@mkdir -p $(dir $@)
-	$(CC) $(AVX512_CFLAGS) -I$(INCLUDE) -I$(KERNEL_DIR) -c $< -o $@
+	$(CC) $(AVX512_CFLAGS) -I$(INCLUDE) -I$(KERNEL_DIR) -I$(GENERATED) -c $< -o $@
 	@echo "[CC/AVX512] $<"
 
 # AVX2 memops -- memcpy_avx/memset_avx with vzeroupper (AVX2 ONLY)
 $(BUILD_DIR)/kernel/mm/memops.o: $(SRC_DIR)/kernel/mm/memops.c | $(GENERATED_HDRS)
 	@mkdir -p $(dir $@)
-	$(CC) $(AVX2_CFLAGS) -I$(INCLUDE) -I$(KERNEL_DIR) -c $< -o $@
+	$(CC) $(AVX2_CFLAGS) -I$(INCLUDE) -I$(KERNEL_DIR) -I$(GENERATED) -c $< -o $@
 	@echo "[CC/AVX2] $<"
 
 # AVX-512 memops -- memcpy_avx512/memset_avx512 (AVX-512 ONLY)
 $(BUILD_DIR)/kernel/mm/memops_avx512.o: $(SRC_DIR)/kernel/mm/memops_avx512.c | $(GENERATED_HDRS)
 	@mkdir -p $(dir $@)
-	$(CC) $(AVX512_CFLAGS) -I$(INCLUDE) -I$(KERNEL_DIR) -c $< -o $@
+	$(CC) $(AVX512_CFLAGS) -I$(INCLUDE) -I$(KERNEL_DIR) -I$(GENERATED) -c $< -o $@
 	@echo "[CC/AVX512] $<"
 
 # SSE2 memops + dispatch -- must NOT use -mavx2 (VEX instructions crash TCG)
 $(BUILD_DIR)/kernel/mm/memops_sse.o: $(SRC_DIR)/kernel/mm/memops_sse.c | $(GENERATED_HDRS)
 	@mkdir -p $(dir $@)
-	$(CC) $(SIMD_CFLAGS) -I$(INCLUDE) -I$(KERNEL_DIR) -c $< -o $@
+	$(CC) $(SIMD_CFLAGS) -I$(INCLUDE) -I$(KERNEL_DIR) -I$(GENERATED) -c $< -o $@
 	@echo "[CC/SSE2] $< (dispatch)"
 
 # stb_truetype implementation — needs SSE2 for floating-point math
 $(BUILD_DIR)/kernel/gfx/stb_truetype_impl.o: $(SRC_DIR)/kernel/gfx/stb_truetype_impl.c | $(GENERATED_HDRS)
 	@mkdir -p $(dir $@)
-	$(CC) $(SIMD_CFLAGS) -Wno-unused-function -Wno-sign-compare -I$(INCLUDE) -I$(KERNEL_DIR) -c $< -o $@
+	$(CC) $(SIMD_CFLAGS) -Wno-unused-function -Wno-sign-compare -I$(INCLUDE) -I$(KERNEL_DIR) -I$(GENERATED) -c $< -o $@
 	@echo "[CC/SSE2] $< (stb_truetype)"
 
 # Font manager + text rendering — needs SSE2 for stb_truetype API calls
 $(BUILD_DIR)/kernel/gfx/gfx_text.o: $(SRC_DIR)/kernel/gfx/gfx_text.c | $(GENERATED_HDRS)
 	@mkdir -p $(dir $@)
-	$(CC) $(SIMD_CFLAGS) -I$(INCLUDE) -I$(KERNEL_DIR) -c $< -o $@
+	$(CC) $(SIMD_CFLAGS) -I$(INCLUDE) -I$(KERNEL_DIR) -I$(GENERATED) -c $< -o $@
 	@echo "[CC/SSE2] $< (fonts)"
 
 # stb_image implementation — needs SSE2 for floating-point math
 # -isystem include/freestanding provides shims for <stdlib.h>, <string.h>, etc.
 $(BUILD_DIR)/kernel/image.o: $(SRC_DIR)/kernel/image.c | $(GENERATED_HDRS)
 	@mkdir -p $(dir $@)
-	$(CC) $(SIMD_CFLAGS) -Wno-unused-function -Wno-sign-compare -isystem include/freestanding -I$(INCLUDE) -I$(KERNEL_DIR) -c $< -o $@
+	$(CC) $(SIMD_CFLAGS) -Wno-unused-function -Wno-sign-compare -isystem include/freestanding -I$(INCLUDE) -I$(KERNEL_DIR) -I$(GENERATED) -c $< -o $@
 	@echo "[CC/SSE2] $< (stb_image)"
 
 # stb_image_write implementation — same flags as stb_image
 $(BUILD_DIR)/kernel/image_save.o: $(SRC_DIR)/kernel/image_save.c | $(GENERATED_HDRS)
 	@mkdir -p $(dir $@)
-	$(CC) $(SIMD_CFLAGS) -Wno-unused-function -Wno-sign-compare -isystem include/freestanding -I$(INCLUDE) -I$(KERNEL_DIR) -c $< -o $@
+	$(CC) $(SIMD_CFLAGS) -Wno-unused-function -Wno-sign-compare -isystem include/freestanding -I$(INCLUDE) -I$(KERNEL_DIR) -I$(GENERATED) -c $< -o $@
 	@echo "[CC/SSE2] $< (stb_image_write)"
 
 # Icon store — uses stb_truetype for glyph rasterization
 $(BUILD_DIR)/kernel/icon_store.o: $(SRC_DIR)/kernel/icon_store.c | $(GENERATED_HDRS)
 	@mkdir -p $(dir $@)
-	$(CC) $(SIMD_CFLAGS) -Wno-unused-function -Wno-sign-compare -isystem include/freestanding -I$(INCLUDE) -I$(KERNEL_DIR) -c $< -o $@
+	$(CC) $(SIMD_CFLAGS) -Wno-unused-function -Wno-sign-compare -isystem include/freestanding -I$(INCLUDE) -I$(KERNEL_DIR) -I$(GENERATED) -c $< -o $@
 	@echo "[CC/SSE2] $< (icon_store)"
 
 # cJSON + json wrapper: need SSE2 for float (JSON number values use double)
 $(BUILD_DIR)/libs/cjson/cJSON.o: $(SRC_DIR)/libs/cjson/cJSON.c | $(GENERATED_HDRS)
 	@mkdir -p $(dir $@)
-	$(CC) $(SIMD_CFLAGS) -Wno-unused-function -Wno-sign-compare -Wno-float-conversion -Wno-implicit-float-conversion -I$(INCLUDE) -I$(KERNEL_DIR) -I$(SRC_DIR) -c $< -o $@
+	$(CC) $(SIMD_CFLAGS) -Wno-unused-function -Wno-sign-compare -Wno-float-conversion -Wno-implicit-float-conversion -I$(INCLUDE) -I$(KERNEL_DIR) -I$(GENERATED) -I$(SRC_DIR) -c $< -o $@
 	@echo "[CC/SSE2] $< (cJSON)"
 
 $(BUILD_DIR)/kernel/json.o: $(SRC_DIR)/kernel/json.c | $(GENERATED_HDRS)
 	@mkdir -p $(dir $@)
-	$(CC) $(SIMD_CFLAGS) -I$(INCLUDE) -I$(KERNEL_DIR) -I$(SRC_DIR) -c $< -o $@
+	$(CC) $(SIMD_CFLAGS) -I$(INCLUDE) -I$(KERNEL_DIR) -I$(GENERATED) -I$(SRC_DIR) -c $< -o $@
 	@echo "[CC/SSE2] $< (json wrapper)"
 
 # Compile C source files (64-bit)
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(GENERATED_HDRS)
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -I$(INCLUDE) -I$(KERNEL_DIR) -I$(SRC_DIR) -I$(BUILD_DIR) -c $< -o $@
+	$(CC) $(CFLAGS) -I$(INCLUDE) -I$(KERNEL_DIR) -I$(GENERATED) -I$(SRC_DIR) -I$(BUILD_DIR) -c $< -o $@
 	@echo "[CC] $<"
 
 # Explicit dep: boot_proto.o tracks the generated sha header so a real

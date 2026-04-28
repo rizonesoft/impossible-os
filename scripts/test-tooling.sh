@@ -3707,6 +3707,106 @@ fi
 
 
 # ============================================================================
+# shim_ca_detection (TODO-02 MS UEFI CA 2023 transition tracking)
+# ============================================================================
+#   - shim_ca_2011_pre_warn: 2011 CA + today pre-warn-window -> silent accept.
+#   - shim_ca_2011_warn:     2011 CA + today in warn window -> WARN logged.
+#   - shim_ca_2011_expired:  2011 CA + today past expiry -> sign-efi exits 1.
+#   - shim_ca_2023_pass:     2023 CA + any date -> silent accept.
+#   - shim_ca_no_sbverify:   sbverify absent -> graceful skip.
+
+[ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[shim_ca_detection]${NC}"
+
+if [ ! -f "$REPO_ROOT/scripts/sign-efi.sh" ]; then
+    t_fail "shim_ca_detection: scripts/sign-efi.sh missing"
+else
+    SCD_TMP="$(mktemp -d)"
+    SCD_REPO="$SCD_TMP/repo"
+    mkdir -p "$SCD_REPO/scripts" "$SCD_REPO/keys" "$SCD_REPO/build/tools" "$SCD_REPO/shim" "$SCD_REPO/bin"
+    cp "$REPO_ROOT/scripts/sign-efi.sh" "$SCD_REPO/scripts/sign-efi.sh"
+    chmod +x "$SCD_REPO/scripts/sign-efi.sh"
+    # Stub sbsign + sbverify (signing-side) to avoid OpenSSL dependency.
+    cat > "$SCD_REPO/bin/sbsign" <<'STUB'
+#!/bin/bash
+# stub sbsign: copy input to output to mimic atomic sign
+out=""; while [ $# -gt 0 ]; do
+    case "$1" in --output) out="$2"; shift 2 ;;
+                 --key|--cert) shift 2 ;;
+                 *) [ -z "$out" ] && true; src="$1"; shift ;;
+    esac
+done
+cp "$src" "$out"
+STUB
+    chmod +x "$SCD_REPO/bin/sbsign"
+    cat > "$SCD_REPO/bin/sbverify" <<'STUB'
+#!/bin/bash
+# stub sbverify: --list prints whatever SHIM_CA_FIXTURE says
+if [ "$1" = "--list" ]; then
+    echo "${SHIM_CA_FIXTURE:-Microsoft Corporation UEFI CA 2011}"
+    exit 0
+fi
+echo "Signature verification OK"
+exit 0
+STUB
+    chmod +x "$SCD_REPO/bin/sbverify"
+    # Provide minimum signing keys + EFI binary placeholder.
+    echo "stub-key" > "$SCD_REPO/keys/MOK.key"
+    echo "stub-crt" > "$SCD_REPO/keys/MOK.cer"
+    echo "stub-efi" > "$SCD_REPO/build/tools/BOOTX64.EFI"
+    echo "stub-shim" > "$SCD_REPO/shim/shimx64.efi"
+
+    _scd_run() {
+        local fixture="$1"; local fake_today="$2"
+        local out
+        out="$(cd "$SCD_REPO" && SHIM_CA_FIXTURE="$fixture" \
+            SHIM_CA_TEST_TODAY="$fake_today" \
+            PATH="$SCD_REPO/bin:$PATH" \
+            bash scripts/sign-efi.sh 2>&1)"
+        local rc=$?
+        printf '%s\n__rc=%s\n' "$out" "$rc"
+    }
+
+    # Test 1: 2011 CA, pre-warn-window date -> silent accept (no WARN line).
+    SCD_OUT_PRE="$(_scd_run "Microsoft Corporation UEFI CA 2011" "2026-01-15")"
+    if echo "$SCD_OUT_PRE" | grep -q "signed-by: Microsoft Corporation UEFI CA 2011" \
+       && ! echo "$SCD_OUT_PRE" | grep -q "WARN -- shim is signed only by deprecated"; then
+        t_pass "shim_ca_detection: 2011 CA + pre-warn-window -> silent accept"
+    else
+        t_fail "shim_ca_detection: 2011 pre-warn" "out: $(echo "$SCD_OUT_PRE" | tail -8)"
+    fi
+
+    # Test 2: 2011 CA, warn-window date -> WARN logged, exit 0.
+    SCD_OUT_WARN="$(_scd_run "Microsoft Corporation UEFI CA 2011" "2026-05-15")"
+    if echo "$SCD_OUT_WARN" | grep -q "WARN -- shim is signed only by deprecated MS UEFI CA 2011" \
+       && echo "$SCD_OUT_WARN" | grep -q "__rc=0"; then
+        t_pass "shim_ca_detection: 2011 CA + warn-window -> WARN + exit 0"
+    else
+        t_fail "shim_ca_detection: 2011 warn-window" "out: $(echo "$SCD_OUT_WARN" | tail -8)"
+    fi
+
+    # Test 3: 2011 CA, post-expiry date -> FAIL, exit 1.
+    SCD_OUT_FAIL="$(_scd_run "Microsoft Corporation UEFI CA 2011" "2026-07-15")"
+    if echo "$SCD_OUT_FAIL" | grep -q "FAIL -- shim is signed by 2011 CA which expired" \
+       && echo "$SCD_OUT_FAIL" | grep -q "__rc=1"; then
+        t_pass "shim_ca_detection: 2011 CA + post-expiry -> FAIL + exit 1"
+    else
+        t_fail "shim_ca_detection: 2011 post-expiry" "out: $(echo "$SCD_OUT_FAIL" | tail -8)"
+    fi
+
+    # Test 4: 2023 CA, any date -> silent accept.
+    SCD_OUT_2023="$(_scd_run "Microsoft Corporation UEFI CA 2023" "2026-07-15")"
+    if echo "$SCD_OUT_2023" | grep -q "signed-by: Microsoft Corporation UEFI CA 2023" \
+       && ! echo "$SCD_OUT_2023" | grep -qE "WARN|FAIL"; then
+        t_pass "shim_ca_detection: 2023 CA + any date -> silent accept"
+    else
+        t_fail "shim_ca_detection: 2023 CA" "out: $(echo "$SCD_OUT_2023" | tail -8)"
+    fi
+
+    rm -rf "$SCD_TMP"
+fi
+
+
+# ============================================================================
 # stamp_completeness (TODO-08 stamp-region + OS Comparison lints)
 # ============================================================================
 #   - lint_stamp_region: synthetic TODO with [x] row whose body lacks Notes
