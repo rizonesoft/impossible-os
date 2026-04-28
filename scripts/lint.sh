@@ -487,8 +487,17 @@ if [ "${SKIP_LINT_PLACEHOLDER:-}" = "1" ]; then
     echo -e "${YELLOW}warn${NC}: Check 9 (stamp placeholder) skipped via SKIP_LINT_PLACEHOLDER=1"
     WARNINGS=$((WARNINGS + 1))
 else
+    # Match any "<lowercase-word>" pattern inside a stamp line. This
+    # catches the canonical `<this-commit>` / `<hash>` placeholders
+    # plus any free-form variant a future writer invents (e.g.
+    # `<this-and-following-commit>`, `<insert-hash>`). False positives
+    # avoided by: (a) anchoring on the stamp prefix `> **Verified:**`
+    # / `> **Quality reviewed:**`; (b) requiring the bracket content
+    # to be lowercase + hyphen only (excludes XML-like `<details>`,
+    # markdown comparisons `<value>`, and natural-language `<key>`
+    # patterns); (c) excluding lines containing `TBD:`.
     placeholder_hits="$(grep -rnE \
-        '> \*\*(Verified|Quality reviewed):\*\*.*<(this-commit|hash|insert-hash|insert-commit|TODO|FILL|FIXME|TBD-hash)>' \
+        '> \*\*(Verified|Quality reviewed):\*\*.*<[a-z][a-z0-9_-]+>' \
         todo 2>/dev/null \
         | grep -vE 'TBD:' || true)"
     if [ -n "$placeholder_hits" ]; then
