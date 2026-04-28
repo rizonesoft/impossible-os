@@ -56,6 +56,7 @@ title: "TODO-08 -- Advanced Synchronisation Primitives"
 | ⭐  |   8   | §8 `WaitForMultipleObjects` (`waitable_t` + `wait_any`)   | §4, §9                               |  [ ]   |
 | ⭐  |   9   | §6 `pthread_barrier_t` -- kernel-level, reusable           | §8 or §9 (timeout variant)           |  [ ]   |
 | 💎  |  10   | Sync syscalls wired to SSDT (keyed events, alerts)        | §4, §8, TODO-06 §4                   |  [ ]   |
+| ⭐  |  11   | §11 Mutex wait-queue SMP-safety backfill (defect in §14)  | TODO-02 §10 re-review (2026-04-28)   |  [ ]   |
 
 > 💎 = parity -- ticket locks, preemption count, TLS, futexes, timeout API, pthread_once, and thread cancellation all have direct Linux or Windows NT equivalents.
 > ⭐ = exclusive -- `WaitForMultipleObjects` with a first-class `waitable_t` vtable across all sync types is superior to Linux's fd-only `epoll`; `pthread_barrier_t` as a kernel primitive (not just user-space pthreads) is a Windows gap.
@@ -261,6 +262,26 @@ Register keyed event and alert-by-thread-id syscalls in the SSDT for user-mode s
 - [ ] Commit: `"sync: wire keyed event and alert-by-thread-id syscalls to SSDT"`
 
 **Test checkpoint:** `NtCreateKeyedEvent` + `NtWaitForKeyedEvent` blocks; `NtReleaseKeyedEvent` from another thread wakes it. `NtAlertThreadByThreadId` + `NtWaitForAlertByThreadId` round-trip completes.
+
+---
+
+## 11. Mutex Wait-Queue SMP-Safety Backfill
+
+The "already complete" §1-§14 baseline (line 14) lists `mutex_t` as shipped, but the 2026-04-28 re-review of [the UEFI Runtime Services Sleepable Lock Migration](../01-boot-platform/TODO-02-uefi-hardening-secureboot.md#10-uefi-runtime-services-sleepable-lock-migration) caught a real SMP race in `mutex_lock()`'s loser path: `num_waiters`, `waiter_tasks[]`, and `waiter_threads[]` are mutated with plain loads/stores while multiple CPUs concurrently fail the CAS. Two waiters can pick the same slot, one entry gets clobbered before its thread sets `THREAD_BLOCKED`, and `mutex_unlock()` later wakes only what survived in the queue -- the stranded thread sleeps forever. UEFI Runtime Services calls (`s_rt_mutex` consumer) and any other contended `mutex_t` user is exposed.
+
+> [!IMPORTANT]
+> This backfills a defect in the §14 SMP-Phase-1 mutex shipping; it is NOT a forward-looking new feature. Existing callers depend on `mutex_t` being SMP-safe.
+
+- [ ] **Wait-queue protection**: add a per-mutex `spinlock_t wait_lock` (or reuse the lock word as a low-bit gate) around enqueue / dequeue / wake. Enqueue path: acquire `wait_lock`, assign `num_waiters++` slot, write task+thread, set `THREAD_BLOCKED`, release `wait_lock`, then `schedule()`. Unlock path: acquire `wait_lock`, dequeue the head waiter, release, then wake.
+- [ ] **Duplicate-enqueue prevention**: a thread retrying CAS after a spurious wake must not double-enqueue. Either record the enqueued slot index on `struct thread` for idempotent re-enqueue, or skip enqueue if `THREAD_BLOCKED` already set on this mutex.
+- [ ] **Atomic block-vs-wake**: setting `THREAD_BLOCKED` and the corresponding wake check in `mutex_unlock` must observe each other. Wake-before-block races are closed by holding `wait_lock` across both the state transition AND the queue mutation.
+- [ ] **Regression test**: `src/kernel/test/test_mutex_smp.c` -- spawn N kernel threads (N = NR_CPUS), all contending on one mutex; assert no waiter is lost across M iterations of lock/unlock round-trips. Hardware-dependent (SMP); use `TEST_SKIP` on UP builds.
+- [ ] **Audit other `mutex_t` consumers**: `s_rt_mutex` is the canonical caller from the UEFI Runtime Services Sleepable Lock Migration; grep for `MUTEX_INIT` and confirm none have additional waiter-queue invariants the fix must preserve.
+- [ ] Commit: `"sched: SMP-safe mutex wait queue + duplicate-enqueue guard + regression test"`
+
+**Test checkpoint:** `bash scripts/test.sh SUITE=sched` runs the new `test_mutex_smp` suite and shows 0 lost waiters across the contention loop on multi-CPU hosts (WHPX 2 CPUs, bare metal). UEFI runtime services calls under load (`SetVariable` storms) no longer strand callers.
+
+**Inputs (XREFs):** -> XREF: [UEFI Runtime Services Sleepable Lock Migration](../01-boot-platform/TODO-02-uefi-hardening-secureboot.md#10-uefi-runtime-services-sleepable-lock-migration) (consumer; the re-review that surfaced this defect).
 
 ---
 

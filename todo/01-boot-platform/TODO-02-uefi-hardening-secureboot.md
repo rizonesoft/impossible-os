@@ -338,8 +338,16 @@ UEFI firmware SetVariable can take 10-100ms+ for flash erase/write cycles. The c
 
 **Test checkpoint:** Serial shows normal RT calls with no latency warnings on QEMU (fast emulated flash). On bare metal with real NVRAM, SetVariable calls should complete without stalling other CPUs. Verify `uefi_reset()` works from panic context (NMI handler test). Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Verified:** 2026-04-11 -- Codex found critical mutex_lock CAS race (fixed: atomic_cmpxchg instead of atomic_set). Emergency ResetSystem trade-off documented (trylock failure -> unlocked call, reboot attempt > hang). All 5 items verified. Accepted: none.
-> **Quality reviewed:** 2026-04-11 -- no findings. Matches Windows FAST_MUTEX and Linux efi_runtime_lock semaphore. Priority inheritance, emergency trylock, LAPIC masking all at parity. TSC latency monitoring exceeds both (neither Win11 nor Linux log slow RT calls inline). Accepted: none.
+> **Notes:**
+> - What shipped: `s_rt_mutex` + `rt_call_enter`/`rt_call_exit` (sleepable lock with LAPIC LVT mask + TSC latency >50ms warn) + `rt_call_enter_emergency`/`rt_call_exit_emergency` (trylock for panic/reset path) in `src/kernel/uefi_runtime.c`.
+> - How it integrates: all thread-context RT callers (GetVariable/SetVariable/GetTime/SetTime/GetNextVariableName/GetWakeupTime/QueryVariableInfo) acquire the mutex; `uefi_reset` uses the trylock path with a `got_lock` guard at uefi_runtime.c:649-654 so emergency unlock is balanced.
+> - Downstream: closes the spinlock-with-IRQs-disabled stall on flash erase/write; matches Windows `FAST_MUTEX` and Linux `efi_runtime_lock` semaphore at parity. TSC latency log exceeds both.
+> - Canonical doc: `src/kernel/uefi_runtime.c` (consumer); `src/kernel/sched/mutex.c` (primitive).
+> - Scope boundary: §10 ships the UEFI consumer. The mutex primitive itself is owned by `03-memory-concurrency/TODO-08-advanced-sync` -- the 2026-04-28 re-review surfaced an SMP wait-queue race in that primitive (filed as §11 there).
+
+> **Verified:** 2026-04-28 (re-verify; original ship 2026-04-11) | RISK_TIER=critical | 5/5 items | build OK | code-truth confirmed at uefi_runtime.c:110/438-466/469-488/649-654
+> **Accepted:** [H] mutex_lock loser path mutates num_waiters/waiter_tasks[]/waiter_threads[] with plain loads/stores under SMP CAS contention; lost waiter sleeps forever -> XREF: 03-memory-concurrency/TODO-08-advanced-sync §11 (item: "Wait-queue protection: per-mutex spinlock_t wait_lock around enqueue/dequeue/wake")
+> **Quality reviewed:** 2026-04-28 (re-verify) | Codex 1x (adversarial) | 0 fixed, 1H accepted-XREF | scope: N/A (re-verify of already-shipped section; original 3x dispatch on 2026-04-11; no C/H diff to re-quality-review)
 
 ---
 
