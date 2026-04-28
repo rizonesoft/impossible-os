@@ -266,23 +266,33 @@ void boot_halt(const char *reason)
     serial_write("Recovery: https://impossible-os.dev/recovery\n");
 
     /* Framebuffer diagnostics -- only when fb is accessible AND the
-     * pitch is structurally sane. Codex adversarial review 2026-04-28
-     * H1: a malformed boot_info handoff (firmware quirk, partial GOP
-     * setup, garbage pitch) used to write past the framebuffer here
-     * because we trusted pitch/4 without bounds. Validate pitch is
-     * 4-byte aligned AND large enough to cover one row of `width`
-     * 32-bpp pixels; on failure, skip framebuffer drawing entirely
-     * (serial log is still complete -- recovery URL still printed). */
+     * pitch + dimensions are structurally sane. Codex adversarial
+     * review 2026-04-28 H1: a malformed boot_info handoff used to
+     * write past the framebuffer because we trusted pitch/4 without
+     * bounds. Codex re-adversarial 2026-04-28 H2: the first fix's
+     * `pitch >= width * 4u` had a u32 multiply overflow when width
+     * > UINT32_MAX/4 (~1G), wrapping small so a tiny pitch passed.
+     * Final form below uses snapshot-once + bound-then-compare-as-
+     * pixels to be overflow-safe, plus a sanity cap on width/height
+     * (16K x 16K is 4x the largest known commercial display + leaves
+     * 18 bits of headroom before any 32-bit pixel-count overflow). */
     uint32_t fb_pitch_bytes = g_boot_info.fb.pitch;
-    int fb_pitch_ok = (fb_pitch_bytes >= (g_boot_info.fb.width * 4u)
-                       && (fb_pitch_bytes % 4u) == 0);
+    uint32_t fb_w_snap      = g_boot_info.fb.width;
+    uint32_t fb_h_snap      = g_boot_info.fb.height;
+    /* Sanity cap before any arithmetic on the snapshots. */
+    int fb_dims_ok = (fb_w_snap > 0 && fb_w_snap <= 16384u &&
+                      fb_h_snap > 0 && fb_h_snap <= 16384u);
+    /* Pitch must be 4-byte aligned; compare as pixels (overflow-
+     * safe -- pitch_bytes / 4 cannot exceed UINT32_MAX/4 by
+     * construction). */
+    int fb_pitch_ok = ((fb_pitch_bytes % 4u) == 0 &&
+                       (fb_pitch_bytes / 4u) >= fb_w_snap);
     if (g_boot_info.fb_available && g_boot_info.fb.addr &&
-        g_boot_info.fb.width > 0 && g_boot_info.fb.height > 0 &&
-        fb_pitch_ok) {
+        fb_dims_ok && fb_pitch_ok) {
 
         volatile uint32_t *fb = (volatile uint32_t *)(uintptr_t)g_boot_info.fb.addr;
-        uint32_t w       = g_boot_info.fb.width;
-        uint32_t h       = g_boot_info.fb.height;
+        uint32_t w       = fb_w_snap;
+        uint32_t h       = fb_h_snap;
         uint32_t pitch   = fb_pitch_bytes / 4;  /* bytes → pixels (validated) */
 
         /* Red banner: top 40 rows */

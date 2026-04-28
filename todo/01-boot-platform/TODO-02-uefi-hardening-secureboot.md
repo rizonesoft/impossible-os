@@ -267,8 +267,8 @@ Structured boot profiling and pre-framebuffer error recovery screen.
 > - Doc pointer: header docs at `include/kernel/boot_timing.h` and `include/kernel/boot_progress.h` carry the path-resolution rules; `01-boot-platform/TODO-11 §9` carries the JSON schema.
 > - Scope boundary: §7 owns instrumentation + pre-framebuffer error screen + JSON-timeline plumbing. Timeline viewer / diff tooling lives in `01-boot-platform/TODO-14-boot-diagnostics.md`; the JSON schema itself is owned by TODO-11.
 
-> **Verified:** 2026-04-28 | commit `ede0e2d3` (impl + post-impl Codex 3 fixes 2026-04-11) + `807b491f` (re-review fixes: H1 fb pitch + 2M XREF/path doc) | 5/5 items | build OK
-> **Quality reviewed:** 2026-04-28 | Codex 3x (adversarial, consistency, perf) | 1H+2M fixed | scope: boot-code-quality (UEFI handoff + framebuffer safety)
+> **Verified:** 2026-04-28 | commit `ede0e2d3` (impl + post-impl Codex 3 fixes 2026-04-11) + `807b491f` (re-review fixes: H1 fb pitch + 2M XREF/path doc) + `<this-and-following-commit>` (re-adversarial H2 width*4 overflow fix) | 5/5 items | build OK
+> **Quality reviewed:** 2026-04-28 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 2H+2M fixed | scope: boot-code-quality (UEFI handoff + framebuffer safety)
 
 ---
 

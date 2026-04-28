@@ -464,6 +464,49 @@ else
 fi
 
 # ============================================================================
+# Check 9: Stamp-region placeholder leak detection (post-2026-04-28)
+# ============================================================================
+# Recurring failure mode: when writing a Verified/Quality-reviewed stamp
+# before the corresponding commit lands, an `<this-commit>` (or `<hash>`,
+# `<TBD>`, `<insert-hash>`, etc.) placeholder gets written into the stamp
+# and never replaced after the commit. The earlier lint checks did not
+# catch it because the placeholder uses ASCII angle brackets and contains
+# no Unicode dashes, no bare section signs, no numeric TODO shorthand.
+# Hit twice in the 2026-04-28 session (one boot-platform stamp + one
+# automation-hardening stamp) before the user noticed. ERRORs on any
+# literal placeholder inside `> **Verified:**` / `> **Quality
+# reviewed:**` lines anywhere under todo/.
+#
+# Allowed (explicit "still-TBD" markers): a placeholder is OK when the
+# enclosing line explicitly says `TBD:` -- e.g. `(TBD: original review
+# commit hash unrecorded; placeholder preserved for git-log audit)`. The
+# check matches the literal placeholder pattern and excludes lines that
+# contain `TBD:` so deliberate "this slot is intentionally empty" notes
+# are not flagged.
+if [ "${SKIP_LINT_PLACEHOLDER:-}" = "1" ]; then
+    echo -e "${YELLOW}warn${NC}: Check 9 (stamp placeholder) skipped via SKIP_LINT_PLACEHOLDER=1"
+    WARNINGS=$((WARNINGS + 1))
+else
+    placeholder_hits="$(grep -rnE \
+        '> \*\*(Verified|Quality reviewed):\*\*.*<(this-commit|hash|insert-hash|insert-commit|TODO|FILL|FIXME|TBD-hash)>' \
+        todo 2>/dev/null \
+        | grep -vE 'TBD:' || true)"
+    if [ -n "$placeholder_hits" ]; then
+        while IFS= read -r entry; do
+            [ -n "$entry" ] || continue
+            # grep -rn returns "path:line:content"
+            file="${entry%%:*}"
+            tail_field="${entry#*:}"
+            ln="${tail_field%%:*}"
+            content="${tail_field#*:}"
+            placeholder="$(printf '%s\n' "$content" | grep -oE '<[a-zA-Z0-9_-]+>' | head -1)"
+            echo -e "${RED}error${NC}: $file:$ln: stamp placeholder leak: $placeholder"
+            ERRORS=$((ERRORS + 1))
+        done <<< "$placeholder_hits"
+    fi
+fi
+
+# ============================================================================
 # Summary
 # ============================================================================
 echo ""
