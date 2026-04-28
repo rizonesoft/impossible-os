@@ -383,13 +383,12 @@ check_autonomous_agent_boundary() {
     for p in "${forbidden[@]}"; do
         assert_path_absent "forbidden path absent: $p" "$p"
     done
-    # Allowed-but-not-enablement surfaces carry framing.
-    assert_file_exists ".github/copilot-instructions.md exists (reviewer-mode)" \
+    # Copilot CLI reviewer was retired wholesale 2026-04-28 by the
+    # Copilot-CLI-removal automation-hardening sweep; the
+    # .github/copilot-instructions.md file is now also forbidden, not just
+    # the autonomous-agent enablement files above.
+    assert_path_absent "forbidden path absent: .github/copilot-instructions.md (retired)" \
         ".github/copilot-instructions.md"
-    if [ -f .github/copilot-instructions.md ]; then
-        assert_fixed_string "copilot-instructions.md names subordinate-reviewer role" \
-            ".github/copilot-instructions.md" "Claude Code"
-    fi
     assert_fixed_string "AGENTS.md has Autonomous-agent stop sign" \
         "AGENTS.md" "Autonomous-agent stop sign"
     # Non-automatable reminder.
@@ -683,32 +682,35 @@ check_hook_json_parse() {
 }
 
 # ============================================================================
-# 12. Copilot instructions subordinate role
+# 12. Copilot CLI reviewer absence (retired 2026-04-28)
 # ============================================================================
-check_copilot_instructions() {
-    section "[12/12] Copilot instructions subordinate role (TODO-02 §4)"
-    assert_file_exists ".github/copilot-instructions.md exists" \
+# The Copilot CLI was retired as a subordinate reviewer wholesale; Codex
+# GPT-5.5 is now the sole external reviewer. Test 5
+# (check_autonomous_agent_boundary) already asserts the file is absent;
+# this check is the explicit positive coverage that the retirement
+# policy stays enforced.
+check_copilot_retired() {
+    section "[12/12] Copilot CLI reviewer retired wholesale"
+    assert_path_absent ".github/copilot-instructions.md is gone (retired)" \
         ".github/copilot-instructions.md"
-    [ -f .github/copilot-instructions.md ] || return
-    assert_fixed_string "copilot-instructions.md references Claude Code (CLAUDE.md)" \
-        ".github/copilot-instructions.md" "Claude Code"
-    # Should not redefine CLAUDE.md-owned doctrine. Check for telltale phrases
-    # that would indicate drift (e.g. product north star, SMP-from-day-one).
-    local doctrine_imports=(
-        "Bare Metal Gotchas"
-        "Safety Gates"
-        "SMP From Day One"
-    )
-    local imports=0
-    for phrase in "${doctrine_imports[@]}"; do
-        if grep -qF -- "$phrase" .github/copilot-instructions.md 2>/dev/null; then
-            imports=$((imports + 1))
-            t_fail "copilot-instructions.md does NOT redefine CLAUDE.md doctrine" \
-                   "found CLAUDE.md-exclusive phrase: \"$phrase\""
-        fi
-    done
-    if [ "$imports" = "0" ]; then
-        t_pass "copilot-instructions.md does not duplicate CLAUDE.md doctrine"
+    assert_path_absent "scripts/copilot-review.sh is gone (retired)" \
+        "scripts/copilot-review.sh"
+    # Live-invocation check: scan only executable script files
+    # (.sh / .py / .mjs / .js) under scripts/ and .claude/hooks/, and
+    # only flag occurrences that look like invocation lines (start with
+    # "bash " or contain a "subprocess." or "exec" call to the wrapper).
+    # Plain prose mentions in markdown / SKILL.md / this script's own
+    # assertion strings are not invocation paths and not flagged.
+    local invocation_hits
+    invocation_hits="$(grep -RIE \
+        '(bash|sh|exec[a-z]*|run|subprocess\.[a-zA-Z_]+\([^)]*)[[:space:]]*[\"'"'"']?scripts/copilot-review\.sh' \
+        .claude/hooks scripts 2>/dev/null \
+        | grep -v "test-ai-system\.sh:" || true)"
+    if [ -n "$invocation_hits" ]; then
+        t_fail "no live caller of scripts/copilot-review.sh remains" \
+               "found invocation: $invocation_hits"
+    else
+        t_pass "no live caller of scripts/copilot-review.sh remains"
     fi
 }
 
@@ -729,7 +731,7 @@ check_index_link_integrity
 check_no_cursor_residue
 check_no_parallel_skill_trees
 check_hook_json_parse
-check_copilot_instructions
+check_copilot_retired
 
 # ---- Summary ----
 echo ""

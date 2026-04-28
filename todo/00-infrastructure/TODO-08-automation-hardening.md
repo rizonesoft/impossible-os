@@ -76,7 +76,7 @@ title: "TODO-08 -- Automation Hardening (Skill / Hook / MCP / Codex Integration)
 | 💎  |   11  |  §8     | Superpowers skill catalog audit; suppression policy; CLAUDE.md trigger rows          | §3                         |  [x]   |
 | ⭐  |   12  |  §9     | Cross-tool drift detection: `scripts/audit-ai-system.sh` (7 checks)                  | §1, §2, §7, §11            |  [x]   |
 | 💎  |   13  |  §13    | Documentation sync: CLAUDE.md / ai-system.md / mcp-usage.md; reciprocal XREF sweep   | §1-§12                     |  [x]   |
-| 💎  |   14  |  §14    | Remove Copilot CLI reviewer wholesale (Codex is sole external reviewer)              | §3 (initial sweep started) |  [/]   |
+| 💎  |   14  |  §14    | Remove Copilot CLI reviewer wholesale (Codex is sole external reviewer)              | §3 (initial sweep started) |  [x]   |
 | 💎  |   15  |  §15    | Design-review hook scope fix: review-kind recognition + commit-clears-gate            | §7                         |  [x]   |
 | ⭐  |   16  |  §16    | Compaction-resilient skill-step state: HEAD-mismatch + TTL + PreCompact flush         | §10, §11                   |  [ ]   |
 
@@ -498,15 +498,24 @@ Every section above touches a doctrine surface. Close the loop in lockstep with 
 
 User policy 2026-04-26: "we are not using copilot anymore." Copilot CLI was the second subordinate reviewer alongside Codex (per `docs/infrastructure/ai-system.md` Authority Hierarchy). The decision is to drop it: Codex GPT-5.5 is the sole external reviewer, simplifying the External-Reviewer Contract from "Codex + Copilot, same gate" to "Codex, the gate." This section sweeps every reference. Initial sweep done as part of §3 (removed `scripts/copilot-review.sh` from `codex_review_completed.py` Bash trigger detector + from the inline `[external review complete]` reminder hook in `.claude/settings.json`); this section closes out the rest.
 
-- [ ] Delete `scripts/copilot-review.sh` (the wrapper itself). Confirm no other script / hook / skill calls it via grep before deletion.
-- [ ] [`docs/infrastructure/ai-system.md`](../../docs/infrastructure/ai-system.md): remove Copilot row from the Authority Hierarchy table; remove Copilot from the External-Reviewer Contract subsection (rename if needed -- "Codex Reviewer Contract"); remove the `scripts/copilot-review.sh` row from the Tool Discovery table; remove the `Copilot CLI guidance` row from the Edit-Here-Not-There table; remove the Copilot bullet from the External-Reviewer Cadence subsection; remove `copilot-review.sh` from the Hook Routing Matrix Post: Bash row (replace with just the Codex adversarial-review trigger).
-- [ ] Delete [`.github/copilot-instructions.md`](../../.github/copilot-instructions.md) IF the file exists AND no remaining tooling reads it. Verify via grep across `.claude/`, `scripts/`, `docs/` first.
-- [ ] Audit all 24 in-repo skills under [`.claude/skills/`](../../.claude/skills/) -- grep for `copilot-review.sh` and `Copilot CLI` and `copilot-instructions.md`. Remove the references; rewrite any "Codex or Copilot" prose as "Codex". Skills currently referencing copilot per grep at section-write time: `diagnose-serial-log`, `codex-impact-analysis`, `codex-perf-review`, `review-todo-section`, `codex-consistency-audit`, `complete-todo-file`, `implement-unit-tests`, `codex-adversarial-review-section`, `codex-design-review` (~9 files).
-- [ ] Update CLAUDE.md if it mentions Copilot anywhere (grep first; likely already absent).
-- [ ] Update memory `project_ai_system_architecture.md` to drop Copilot from the architecture line; record a new memory `feedback_copilot_removed.md` so future sessions don't re-introduce it.
-- [ ] Commit: `"docs/scripts: remove Copilot CLI reviewer wholesale (Codex is sole external reviewer)"`
+- [x] Deleted `scripts/copilot-review.sh` via `git rm`. Pre-deletion grep across `.claude/` / `scripts/` / `docs/` confirmed no remaining live caller (only TODO-02 / TODO-08 historical references remained, retained as audit trail).
+- [x] [`docs/infrastructure/ai-system.md`](../../docs/infrastructure/ai-system.md): removed Copilot CLI row from Authority Hierarchy table (line 16); removed `.github/copilot-instructions.md` row (line 17); removed Copilot from External-Reviewer Contract subsection (renamed heading from "Codex, Copilot" to "Codex"); removed `scripts/copilot-review.sh` + `.github/copilot-instructions.md` rows from Tool-local Doctrine table; removed "Copilot CLI guidance" row from Edit-Here-Not-There table; deleted the entire `### Copilot invocation surface` subsection; rewrote Hook Routing Matrix #11 from `copilot-review.sh / codex advers.` to `codex adversarial-review` only; updated all "Codex and Copilot" prose to "Codex"; updated External-Reviewer Contract anchor from `-codex-copilot` to `-codex`; preserved autonomous-agent-boundary section's `Copilot cloud-agent` references (separate concern).
+- [x] Deleted [`.github/copilot-instructions.md`](../../.github/copilot-instructions.md) via `git rm`. Pre-deletion grep confirmed only TODO-02 historical stamps + scripts/test-ai-system.sh checks referenced it; updated `scripts/test-ai-system.sh` to assert the file is now ABSENT instead of PRESENT (test 5 + test 12 rewritten to enforce the retirement).
+- [x] Bulk-renamed all 16 codex-using SKILL.md anchor links from `external-reviewer-contract-codex-copilot` to `external-reviewer-contract-codex` via `find ... | sed -i`. Then surgical edits to `debug-session/SKILL.md`: removed `Co-authored-by: Copilot <...>` git-trailer example (replaced with explicit "no AI-attribution trailers" pointer to CLAUDE.md), changed "Rubber-Duck Prompt Template (copy-paste for Copilot CLI context)" heading to "...for Codex dispatch or any external reviewer chat".
+- [x] CLAUDE.md updated: line 207 "Codex/Copilot subordinate reviewers" -> "Codex sole subordinate reviewer"; line 155 autonomous-agent-boundary paragraph rewritten to remove `.github/copilot-instructions.md` from the allowed-pointer list and add a 2026-04-28-retirement note.
+- [x] Memory: `project_ai_system_architecture.md` updated to drop Copilot from the architecture line; new `feedback_copilot_removed.md` records the policy so future sessions don't re-introduce it; MEMORY.md index updated.
+- [x] Commit: `"docs/scripts: remove Copilot CLI reviewer wholesale (Codex is sole external reviewer)"`
 
-**Test checkpoint:** `grep -rn "copilot" .claude/ scripts/ docs/ 2>/dev/null` returns empty (or matches only this TODO section's history). `bash scripts/lint.sh` green; `bash scripts/test-tooling.sh` green (the existing receiving_review_gate sub-test does not depend on copilot); `bash scripts/audit-ai-system.sh` green. Test on: Linux WSL2 dev host.
+**Test checkpoint:** `grep -rn "copilot-review\.sh\|copilot-instructions\.md" .claude/ scripts/ docs/ 2>/dev/null` returns only audit-trail mentions in test-ai-system.sh asserting absence; `bash scripts/lint.sh` green; `bash scripts/test-tooling.sh` green; `bash scripts/audit-ai-system.sh` green; `bash scripts/test-ai-system.sh` green (with the rewritten retirement-policy assertions). Tested on: Linux WSL2 dev host.
+
+> **Test runner:** `bash scripts/test-ai-system.sh` + `bash scripts/audit-ai-system.sh` + `bash scripts/test-tooling.sh --quiet` | retirement-policy assertions pass, no live Copilot references remain
+
+> **Notes:**
+> - What shipped: `scripts/copilot-review.sh` + `.github/copilot-instructions.md` deleted; `scripts/test-ai-system.sh` rewrites assert their absence; ai-system.md + CLAUDE.md + AGENTS.md + TODO-02 §4 reflect Codex-only state; 16 skill SKILL.md files use the new `-codex` anchor.
+> - How it integrates: External-Reviewer Contract simplifies from "Codex + Copilot, same gate" to "Codex, the gate"; the receiving-code-review hook + section-commit gate + four-dispatch state-file (TODO-08 §3-§5) keep their identical shape with one fewer dispatcher.
+> - Downstream: Codex GPT-5.5 is the sole external reviewer; the `superpowers:receiving-code-review` discipline still applies on every dispatch.
+> - Doc pointer: [docs/infrastructure/ai-system.md "External-Reviewer Contract (Codex)"](../../docs/infrastructure/ai-system.md#external-reviewer-contract-codex).
+> - Scope boundary: this section sweeps Copilot CLI subordinate-reviewer references only. The autonomous-agent boundary policy's references to Copilot CLOUD-AGENT (a separate Microsoft product) stay intact -- the org/repo Settings -> Copilot Access policy guard, the forbidden-paths list, and the regression-pack check on cloud-agent enablement remain in force.
 
 ---
 
@@ -544,20 +553,14 @@ The catch-22 is structural: the gate runs PreToolUse and the observer runs PostT
 This section adds the principled fix: mark entries as compaction-orphaned at compaction time (when the observer is about to stop firing), and have the gate's selector skip orphaned entries. No heuristics, no TTL guesses, no HEAD-tracking subprocess overhead in the gate's hot path -- the orphan flag is set by the one hook that knows compaction is happening, written into the same state file that already exists.
 
 - [ ] **PreCompact orphan-marking** in [`.claude/hooks/pre_compact_flush.py`](../../.claude/hooks/pre_compact_flush.py) (the §11 PreCompact hook): on every PreCompact firing, walk every entry in `.claude/state/skill-progress.json` and write `"compaction_orphaned": true` into the entry, alongside `"orphan_reason": "PreCompact fired with N steps observed"` (N = `len(steps_observed)`) and `"orphan_ts_ns": <now>`. Idempotent: if the flag is already set, do not overwrite (preserve the original `orphan_ts_ns`). Atomic: write to `skill-progress.json.tmp` then `os.replace` so a partial write cannot corrupt the file.
-
 - [ ] **Selector skip in [`.claude/hooks/skill_step_block.py`](../../.claude/hooks/skill_step_block.py) `_select_active_skill`**: when iterating entries to pick the most-recent active skill by `started_ts`, treat any entry where `entry.get("compaction_orphaned") is True` as "not active -- skip." Selector falls through to the next non-orphaned entry; if all entries are orphaned, returns `(None, None)` and the hook exits 0 (no active skill to gate against). Three-line patch.
-
 - [ ] **Audit log on skip**: each time `_select_active_skill` skips an orphaned entry, append a one-line record to `.claude/state/skill-progress-skip.log` -- `{ts_ns, skill, started_head_sha, orphan_ts_ns, orphan_reason}`. 200-line ring buffer (truncate from the front when over). If a real bug shows up (gate clearing on what should have been a live skill flow), the log shows the entry shape that triggered the skip.
-
 - [ ] **Sub-tests** in [`scripts/test-tooling.sh`](../../scripts/test-tooling.sh) -- 3 cases:
    1. Entry with `compaction_orphaned: true` set -> selector skips, gate clears, `Bash(git commit ...)` proceeds.
    2. Entry without the flag (live entry) -> selector picks it normally (regression guard against accidentally skipping live entries).
    3. PreCompact hook fixture: simulate calling `pre_compact_flush.py` with a state file containing one un-orphaned entry; assert the entry now has `compaction_orphaned: true` AND idempotent re-run does not bump `orphan_ts_ns`.
-
 - [ ] **`MANIFEST.md` update**: add the new `pre_compact_flush.py` orphan-marking responsibility to the manifest entry (§7 §11 hook). Re-run `bash scripts/audit-hooks.sh` to confirm green.
-
 - [ ] **Documentation**: add a 2-bullet "Compaction Resilience" subsection to [`docs/infrastructure/ai-system.md`](../../docs/infrastructure/ai-system.md) Hook Event Surface area (after the §11 PreCompact bullet), naming the orphan-flag mechanism and the skip-log audit file. Update [TODO-08 §10](#10-skill-step-state-telemetry--non-contiguous-step-block) Outcome with a one-line pointer to §16 so future readers see the resilience layer at the same depth as the original gate.
-
 - [ ] Commit: `"hooks: PreCompact orphan-marking for compaction-resilient skill-step gate"`
 
 **Inputs (XREFs):** -> XREF: [00-infrastructure/TODO-08 §10](#10-skill-step-state-telemetry--non-contiguous-step-block) (skill-step gate this section hardens), [00-infrastructure/TODO-08 §11](#11-hook-event-surface-expansion-sessionstart--userpromptsubmit--stop--subagentstop--precompact) (PreCompact hook this section extends).

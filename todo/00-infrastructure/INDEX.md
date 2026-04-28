@@ -29,8 +29,8 @@ This domain tracks the tooling and workflow work that supports the whole project
   developer workflow for setup, build, test, run, debug, hooks, CI, artifacts, and a tooling
   doctor/regression pack.
 - [TODO-02 AI Development System](./TODO-02-ai-development-system.md) - Canonical ownership for
-  Claude Code doctrine, skills, hooks, permissions, external reviewers (Codex/Copilot),
-  drift audit, and AI workflow regression checks.
+  Claude Code doctrine, skills, hooks, permissions, sole external reviewer (Codex; Copilot CLI
+  retired 2026-04-28 per TODO-08 §14), drift audit, and AI workflow regression checks.
 - [TODO-03 Kernel Test Harness](./TODO-03-kernel-test-harness.md) - Kernel-internal test-time
   infrastructure: `kmalloc_fail_countdown` fault injection, `test_race_barrier_t` deterministic
   race fence, `TEST_SCRATCH_KBUF` > 4 KiB scratch buffers. Closes the "Test gaps (NO current

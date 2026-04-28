@@ -5,7 +5,7 @@ description: Structured kernel debugging session with adversarial review validat
 
 # Debug Session
 
-> **External-Reviewer Contract:** This skill dispatches Codex as part of its workflow. Every finding goes through `superpowers:receiving-code-review` (verify at file:line, Fix / Reject / Accept, never blind-implement). Canonical contract: [docs/infrastructure/ai-system.md#external-reviewer-contract-codex-copilot](../../../docs/infrastructure/ai-system.md#external-reviewer-contract-codex-copilot).
+> **External-Reviewer Contract:** This skill dispatches Codex as part of its workflow. Every finding goes through `superpowers:receiving-code-review` (verify at file:line, Fix / Reject / Accept, never blind-implement). Canonical contract: [docs/infrastructure/ai-system.md#external-reviewer-contract-codex](../../../docs/infrastructure/ai-system.md#external-reviewer-contract-codex).
 
 ## Use This Skill When
 
@@ -186,9 +186,9 @@ Use a descriptive commit message:
 fix: <subsystem> -- <one-line description of what was wrong>
 
 <optional body: what the bug was, why it happened, what platforms it affected>
-
-Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>
 ```
+
+(Per CLAUDE.md "Commits -- zero AI-attribution trailers": no `Co-Authored-By` / `Assisted-by` lines on Impossible OS commits, including from Codex review.)
 
 ---
 
@@ -208,7 +208,7 @@ Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>
 | "AP hangs during SMP init" | Check Init Level De-Assert IPI removed; check GS_BASE on AP; check per-AP MSR programming |
 | "test_*.c causes boot freeze" | Test is calling a forbidden live boot function -- wrap in pure helper instead |
 
-## Rubber-Duck Prompt Template (copy-paste for Copilot CLI context)
+## Rubber-Duck Prompt Template (copy-paste into a Codex dispatch or any external reviewer chat)
 
 ```
 I am debugging a kernel bug in Impossible OS (x86-64, freestanding, UEFI bootloader, clang-19, NASM, APIC, no stdlib).

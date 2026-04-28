@@ -39,6 +39,6 @@ This tree is the live planning scaffold for active work.
 ## Active Epics
 
 - [00 Infrastructure] [TODO-01 Developer Tooling Stack](./00-infrastructure/TODO-01-developer-tooling-stack.md) - Define the canonical host-side tooling contract for setup, build, test, run, hooks, GitHub workflows, and a tooling doctor/regression pack.
-- [00 Infrastructure] [TODO-02 AI Development System](./00-infrastructure/TODO-02-ai-development-system.md) - Stabilize the repo AI workflow (Claude Code master; Codex + Copilot subordinate reviewers) with explicit ownership, hook policy, external-reviewer contract, and regression checks.
+- [00 Infrastructure] [TODO-02 AI Development System](./00-infrastructure/TODO-02-ai-development-system.md) - Stabilize the repo AI workflow (Claude Code master; Codex GPT-5.5 sole external reviewer -- Copilot CLI retired 2026-04-28) with explicit ownership, hook policy, external-reviewer contract, and regression checks.
 - [00 Infrastructure] [TODO-06 TODO Metadata Layer](./00-infrastructure/TODO-06-todo-metadata-layer.md) - Add stable-ID frontmatter and a derived graph cache so cross-TODO dependencies, backlinks, and ready/blocked queries stop depending on file numbering and line numbers. Markdown stays canonical; the cache is a read-only projection.
 - [03 Memory Concurrency] [TODO-01 VMM Memory Protection & Diagnostics](./03-memory-concurrency/TODO-01-vmm-memory-protection.md) - Harden the memory model with mprotect, W^X enforcement, demand paging, VirtualAlloc Win32 wrappers, kmalloc lint, heap canaries, leak detector, and PMM statistics.

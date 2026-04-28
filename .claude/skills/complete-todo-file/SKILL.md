@@ -5,7 +5,7 @@ description: Finalize a TODO file whose `## N.` implementation sections are all 
 
 # Complete TODO File
 
-> **External-Reviewer Contract:** This skill dispatches Codex indirectly via `/implement-unit-tests` (Codex test-coverage step) and through any automated test runs that invoke the Codex-review pipeline. Every finding from those dispatches goes through `superpowers:receiving-code-review` (verify at file:line, Fix / Reject / Accept, never blind-implement). Canonical contract: [docs/infrastructure/ai-system.md#external-reviewer-contract-codex-copilot](../../../docs/infrastructure/ai-system.md#external-reviewer-contract-codex-copilot).
+> **External-Reviewer Contract:** This skill dispatches Codex indirectly via `/implement-unit-tests` (Codex test-coverage step) and through any automated test runs that invoke the Codex-review pipeline. Every finding from those dispatches goes through `superpowers:receiving-code-review` (verify at file:line, Fix / Reject / Accept, never blind-implement). Canonical contract: [docs/infrastructure/ai-system.md#external-reviewer-contract-codex](../../../docs/infrastructure/ai-system.md#external-reviewer-contract-codex).
 
 ## Execution Discipline
 

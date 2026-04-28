@@ -20,17 +20,15 @@ title: "TODO-02 -- AI Development System"
 | `CLAUDE.md`               | Doctrine source-of-truth (file)                | Product north star, workflow rules, safety constraints, policy |
 | `.claude/skills/`         | Workflow source-of-truth (directory)           | How Claude executes a specific task (implement, review, verify, diagnose) |
 | `.claude/settings.json`   | Harness policy source-of-truth (file)          | Permissions, hook reminders, pre/post-tool-use gates |
-| Codex (OpenAI plugin)     | Subordinate reviewer                           | Adversarial findings only; invoked from inside Claude skills (17 dispatchers: 9 angle-owner `codex-*` + 8 workflow-consumer, see §4); findings go through `receiving-code-review` before action |
-| Copilot CLI               | Subordinate reviewer                           | External PR-style review; invoked via `scripts/copilot-review.sh`; same `receiving-code-review` discipline |
-| `.github/copilot-instructions.md` | Copilot-CLI repo instructions        | Only configures how Copilot answers when invoked; does NOT add new doctrine |
+| Codex (OpenAI plugin)     | Subordinate reviewer (sole external)           | Adversarial findings only; invoked from inside Claude skills (16 dispatchers: 8 angle-owner `codex-*` + 7 workflow-consumer + 1 inheritor, see §4); findings go through `receiving-code-review` before action. Copilot CLI was retired wholesale 2026-04-28 (per the §14 Copilot-removal sweep in TODO-08); `scripts/copilot-review.sh` and `.github/copilot-instructions.md` no longer exist. |
 | `.githooks/`              | Git-time guards (distinct layer, see TODO-01 §5) | Pre-commit lint, post-commit COUNT, opt-in pre-push |
 
 **Hierarchy invariants:**
 1. **Doctrine lives in `CLAUDE.md`. Nowhere else.** Skill headers, tool instructions, and regression messages reference doctrine but do not redefine it. Edits go to `CLAUDE.md` first, then propagate.
 2. **Skills live in `.claude/skills/` only.** No parallel skill trees (`.cursor/`, `.codex/`, `.other-tool/` etc.). External tools that want to participate do so through a Claude skill that dispatches them.
-3. **External reviewers return findings, never edits.** Codex and Copilot output is information Claude reads and judges. The commit/edit decision stays with Claude under `superpowers:receiving-code-review` discipline.
+3. **External reviewers return findings, never edits.** Codex output is information Claude reads and judges. The commit/edit decision stays with Claude under `superpowers:receiving-code-review` discipline. (Copilot CLI was the second subordinate reviewer until the 2026-04-28 wholesale retirement; Codex GPT-5.5 is now the sole external reviewer.)
 4. **CLAUDE.md wins on conflict.** If a skill, a hook message, or an external-tool config contradicts `CLAUDE.md`, `CLAUDE.md` is right and the other layer is the bug. Fix the drift, don't fork the doctrine.
-5. **Claude Code is also the interactive agent.** A human operator talks to Claude; Claude dispatches subordinates. Treating Codex or Copilot as a direct-edit or direct-commit tool violates the hierarchy.
+5. **Claude Code is also the interactive agent.** A human operator talks to Claude; Claude dispatches subordinates. Treating Codex as a direct-edit or direct-commit tool violates the hierarchy.
 
 > [!IMPORTANT]
 > **Current state:** The repository's AI surface today is `CLAUDE.md`, `.github/copilot-instructions.md`, `.claude/settings.json`, and `.claude/skills/` (25+ skills covering TODO workflow, implementation, review, Codex dispatch, domain code-quality gates). Codex participates as an external adversarial reviewer invoked from Claude skills via the OpenAI Codex plugin, not as a first-party instruction layer. Copilot is used as an external review CLI (`scripts/copilot-review.sh`) in the same "reviewer, not authority" role. No canonical infrastructure TODO owns the multi-agent system itself today: the ownership map lives scattered across `CLAUDE.md` prose and individual skill READMEs, the hook policy lives only inside a large `settings.json` blob, and no regression pack checks that the completion-first / domain-routing doctrine is still enforced.
@@ -38,11 +36,10 @@ title: "TODO-02 -- AI Development System"
 ## Inputs
 
 - [`CLAUDE.md`](../../CLAUDE.md) -- Claude Code source-of-truth doctrine and workflow rules
-- [`.github/copilot-instructions.md`](../../.github/copilot-instructions.md) -- Copilot CLI repo instructions (external-reviewer role)
 - [`.claude/settings.json`](../../.claude/settings.json) -- Claude Code hooks, permissions, and reminders
 - [`.claude/skills/README.md`](../../.claude/skills/README.md) -- Claude skill catalog
 - [`.claude/skills/`](../../.claude/skills/) -- skill implementations and templates
-- [`scripts/copilot-review.sh`](../../scripts/copilot-review.sh) -- Copilot CLI review entry point
+- (Retired 2026-04-28: `scripts/copilot-review.sh` and `.github/copilot-instructions.md` were removed wholesale when Copilot CLI was dropped as a subordinate reviewer; see TODO-08 §14.)
 - [`todo/TODO-00-INDEX.md`](../TODO-00-INDEX.md) -- root roadmap ownership
 - [`AGENTS.md`](../../AGENTS.md) -- cross-tool pointer (ships in §6; referenced here so Inputs is self-consistent after §6 lands)
 - [`CONTRIBUTING.md`](../../CONTRIBUTING.md) -- contributor-facing doc; candidate home for the §7 zero-trailer commit policy
@@ -168,11 +165,11 @@ Hooks are part of the AI system, not invisible glue.
 
 ---
 
-## 4. External-Reviewer Contract (Codex, Copilot)
+## 4. External-Reviewer Contract (Codex)
 
-Codex and Copilot participate in the AI workflow as adversarial reviewers, not as authoritative instruction layers. That contract must be explicit so doctrine drift stays impossible.
+Codex participates in the AI workflow as the sole external adversarial reviewer, not as an authoritative instruction layer. That contract must be explicit so doctrine drift stays impossible. (Section heading kept "Codex, Copilot" anchor unchanged for backward-compat link stability; section title above is the canonical present-tense form.)
 
-> **XREF (2026-04-28):** [TODO-08](TODO-08-automation-hardening.md) §3 hardens the contract from reminder to BLOCK -- after any Codex dispatch, the next code edit is refused until `superpowers:receiving-code-review` is invoked. §5 enforces the four-dispatch policy (adversarial + consistency + perf + optional re-adversarial) at section-commit time via `.claude/state/last-review-stamps.json`.
+> **XREF (2026-04-28):** [TODO-08](TODO-08-automation-hardening.md) §3 hardens the contract from reminder to BLOCK -- after any Codex dispatch, the next code edit is refused until `superpowers:receiving-code-review` is invoked. §5 enforces the three-dispatch policy (adversarial + consistency + perf, optional re-adversarial) at section-commit time via `.claude/state/last-review-stamps.json`. §14 retired the Copilot CLI subordinate-reviewer role wholesale -- `scripts/copilot-review.sh` and `.github/copilot-instructions.md` were deleted; Codex GPT-5.5 is now the sole external reviewer. Historical [x] stamps below describe the original Codex+Copilot landing in commit `1097c3d3` and remain unchanged as audit trail; the active state is Codex-only.
 
 - [x] Documented the external-reviewer role in the new [External-Reviewer Contract](../../docs/infrastructure/ai-system.md#external-reviewer-contract-codex-copilot) section of `ai-system.md`. Codex is invoked from within Claude skills via the OpenAI Codex plugin binary (`~/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs`); Copilot is invoked via `scripts/copilot-review.sh`. Both return findings that Claude applies `superpowers:receiving-code-review` discipline to -- no doctrine edits.
 - [x] Documented the 9 Codex-dispatching Claude skills in a dedicated table under "Codex dispatch surface": `codex-design-review`, `codex-adversarial-review-section`, `codex-review-todo`, `codex-fix-review`, `codex-test-coverage`, `codex-impact-analysis`, `codex-consistency-audit`, `codex-dead-code`, `codex-perf-review`. Each row names the specific adversarial angle the skill owns.

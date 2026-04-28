@@ -1,11 +1,11 @@
 # AGENTS.md
 
-Impossible OS uses **Claude Code** as its master / orchestrator. Doctrine lives in [`CLAUDE.md`](CLAUDE.md); read it first. This file is a pointer for non-Claude tools (Codex, Copilot, Aider, Continue, Gemini-CLI, Zed, etc.) when they are used in subordinate reviewer or reader roles.
+Impossible OS uses **Claude Code** as its master / orchestrator. Doctrine lives in [`CLAUDE.md`](CLAUDE.md); read it first. This file is a pointer for non-Claude tools (Codex, Aider, Continue, Gemini-CLI, Zed, etc.) when they are used in subordinate reviewer or reader roles. (Copilot CLI was retired wholesale 2026-04-28; Codex GPT-5.5 is the sole active external reviewer the repo wires to a Claude skill.)
 
 ## What to do
 
 1. **Read [`CLAUDE.md`](CLAUDE.md) first.** It is the single source of truth for product north star, workflow rules, safety constraints, and testing policy.
-2. **Read [`docs/infrastructure/ai-system.md`](docs/infrastructure/ai-system.md)** for the AI-system ownership map: Authority Hierarchy, Claude Code-Only Stance, Hook Routing Matrix, and the [External-Reviewer Contract](docs/infrastructure/ai-system.md#external-reviewer-contract-codex-copilot) that governs how your output is received.
+2. **Read [`docs/infrastructure/ai-system.md`](docs/infrastructure/ai-system.md)** for the AI-system ownership map: Authority Hierarchy, Claude Code-Only Stance, Hook Routing Matrix, and the [External-Reviewer Contract](docs/infrastructure/ai-system.md#external-reviewer-contract-codex) that governs how your output is received.
 3. **Do not restate or redefine any rule you find in `CLAUDE.md`.** If your tool would otherwise emit a different version of a rule, the other layer is the bug.
 
 ## Authority (3-bullet summary of the 5 invariants)
@@ -13,7 +13,7 @@ Impossible OS uses **Claude Code** as its master / orchestrator. Doctrine lives 
 **Claude Code is the master.** Everything else in the AI surface is subordinate: doctrine files tell Claude what to do, skills tell Claude how to do it, external reviewers tell Claude what might be wrong. Nothing outside Claude Code edits code, commits, or makes scope decisions autonomously.
 
 - **Doctrine lives in `CLAUDE.md`. Nowhere else.** Skills, tool instructions, and reviewer prompts reference doctrine but never redefine it. On conflict, `CLAUDE.md` wins.
-- **External reviewers return findings, never edits.** Codex, Copilot, and any future reviewer tool emit analysis that Claude Code reads under `superpowers:receiving-code-review` discipline: verify at file:line, classify Fix / Reject / Accept, never blind-implement.
+- **External reviewers return findings, never edits.** Codex (the sole active external reviewer; Copilot CLI was retired 2026-04-28) and any future reviewer tool emit analysis that Claude Code reads under `superpowers:receiving-code-review` discipline: verify at file:line, classify Fix / Reject / Accept, never blind-implement.
 - **No parallel skill trees.** `.claude/skills/` is the only skill directory in this repo. External tools participate through Claude skills that dispatch them, not through their own `.cursor/` / `.codex/` / `.<tool>/` trees.
 
 Full table and the other two invariants: [Authority Hierarchy in ai-system.md](docs/infrastructure/ai-system.md#authority-hierarchy-read-this-first) and [the AI Development System roadmap](todo/00-infrastructure/TODO-02-ai-development-system.md).
