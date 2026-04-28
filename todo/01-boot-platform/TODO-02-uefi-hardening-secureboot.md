@@ -236,6 +236,8 @@ Set up MOK key pair, sign `BOOTX64.EFI`, and integrate shim into the build.
 
 **Test checkpoint:** With `MOK.key` present, signed `BOOTX64.EFI` builds; without keys, signing is skipped silently; first boot can complete MOK enrollment path on real firmware. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
+> **Test runner:** `scripts\debug\kernel\run-secureboot.bat` (TCG + q35 + SMM + OVMF-secure; WHPX cannot emulate Secure Boot pflash) | manual: shim launches MokManager on first boot, enroll `\MOK.cer` from ESP root, signed `grubx64.efi` then trusts the chain. Build-time validation via `scripts/sign-efi.sh` (sbsign + sbverify on every `make sign-efi` when `keys/MOK.key` present).
+
 > **Notes:**
 > - What shipped: signed `BOOTX64.EFI` (sbsign + atomic temp+verify+mv via `scripts/sign-efi.sh`); committed Microsoft-signed Ubuntu shim 1.58 (`shim/shimx64.efi` + `mmx64.efi` + `SHA256SUMS`); MOK enrollment via MokManager from ESP-root `\MOK.cer`.
 > - How it integrates: `make sign-efi` calls `scripts/sign-efi.sh` (env-override-friendly: `MOK_KEY`, `MOK_CRT`, `EFI_BIN`); `make disk` writes DER-encoded `\MOK.cer` to ESP root; firmware -> shim (MS-signed) -> grubx64.efi (MOK-signed) -> kernel.
@@ -258,7 +260,9 @@ Structured boot profiling and pre-framebuffer error recovery screen.
 - [x] `boot_splash_status()` integration: live stage text below spinner
 - [x] Commit: `"boot: boot-stage instrumentation, pre-framebuffer error recovery screen"`
 
-**Test checkpoint:** `boot_progress()` stages appear in order on serial and optional `X:\Perf\boot-profile.log`; `boot_halt()` shows pre-framebuffer error text when forced; JSON timeline export matches `TODO-11-interrupt-timer-arch.md §3` contract. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** `boot_progress()` stages appear in order on serial and optional `X:\Perf\boot-profile.log`; `boot_halt()` shows pre-framebuffer error text when forced; JSON timeline export matches the boot-platform Boot Time Visualization contract. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot, TEST_CAT_BOOT) -- covers `boot_progress`/`boot_timing_record_step` null-safety + POST16 uniqueness in `test_boot_init.c`; smoke (KVM 2.3s) covers boot reach to C:\>
 
 > **Notes:**
 > - What shipped: `boot_progress(phase, name, post16)` instrumented at every major boot event (8+ call sites in `src/kernel/main/boot_hw.c`); `boot_timing_write_report()` writes plain-text profile to `X:\Perf\boot-profile.log` (BlackBox) or `C:\Impossible\System\Logs\boot-profile.log` (fallback); `boot_timeline_dump_json()` writes the structured JSON timeline at `src/kernel/main/boot_progress.c:203`.
@@ -282,6 +286,8 @@ Unified log format and atomic serial writes.
 - [x] Commit: `"kernel: fix serial line mangling by making klog write atomically"`
 
 **Test checkpoint:** Under concurrent IRQ logging, serial shows no interleaved partial lines; tags `[ OK ]`, `[WARN]`, `[FAIL]` appear as documented. Stress: rapid `klog()` from timer tick + main thread. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot, TEST_CAT_BOOT) -- covers `test_klog_ring_write` / `test_klog_level_drop` / `test_klog_level_pass` / `test_klog_global_level` / `test_klog_rate_limit_api` in `test_klog.c`; smoke covers boot reach to C:\>
 
 > **Notes:**
 > - What shipped: 5-level klog (`LOG_DEBUG`->`[INFO]`, `LOG_INFO`->`[ OK ]`, `LOG_WARN`->`[WARN]`, `LOG_ERROR`->`[FAIL]`, `LOG_FATAL`->`[CRIT]`); atomic per-line `serial_write` (spinlock-serialized) + atomic `klog()` builder at `src/kernel/klog.c:934 char line[512]`; recovery-replay path at `klog.c:537 char line[192]`. `printk()` rewritten 2026-04-28 to also be atomic (single bounded buffer + one `serial_write`).
