@@ -608,7 +608,7 @@ This section adds the principled fix: mark entries as compaction-orphaned at com
 ## OS Comparison
 
 | ⭐ | Feature                             | 🪟 Win11    | 🐧 Linux        | 🚀 Impossible OS                     |
-|---|-------------------------------------|------------|----------------|-------------------------------------|
+|---|--------------------------------------|--------------|-----------------|---------------------------------------|
 | 💎 | Cross-tool MCP server set           | ❌ N/A      | ❌ N/A          | ✅ §1 (Claude+Codex shared)          |
 | 💎 | Hook + skill manifest               | ❌ N/A      | ❌ N/A          | ✅ §7 (MANIFEST + audit)             |
 | ⭐ | Reviewer-contract hard gate at edit | ❌ N/A      | ❌ N/A          | ✅ §3 (BLOCK on receive)             |
@@ -623,7 +623,7 @@ This section adds the principled fix: mark entries as compaction-orphaned at com
 | 💎 | Doctrine sync + reciprocal XREFs    | ❌ N/A      | ❌ N/A          | ✅ §13 (lockstep with code)          |
 | 💎 | Sole external reviewer surface      | ❌ N/A      | ❌ N/A          | ✅ §14 (Copilot retired; Codex only) |
 | ⭐ | Design-review hook scope precision  | ❌ N/A      | ❌ N/A          | ✅ §15 (review-kind + commit-clears) |
-| ⭐ | Compaction-resilient skill state    | ❌ N/A      | ❌ N/A          | ⬜ Planned -- §16                    |
+| ⭐ | Compaction-resilient skill state    | ❌ N/A      | ❌ N/A          | ✅ §16 (PreCompact orphan-marking)   |
 
 > **After §1-§5:** Claude and Codex share the same MCP server set, the same Codex invocation policy, the same hard gates around reviews and section commits. Drift between the two automation sides is detectable.
 > **After §6-§9:** The whole automation surface is auditable in one script. Hook system is documented; MCP usage is doctrine; superpowers plugin behavior is reconciled with Impossible OS rules.
