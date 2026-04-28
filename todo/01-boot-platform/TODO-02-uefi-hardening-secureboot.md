@@ -236,7 +236,14 @@ Set up MOK key pair, sign `BOOTX64.EFI`, and integrate shim into the build.
 
 **Test checkpoint:** With `MOK.key` present, signed `BOOTX64.EFI` builds; without keys, signing is skipped silently; first boot can complete MOK enrollment path on real firmware. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Verified:** 2026-04-28 | commit `e3e138f2` (impl) + `6839936c` (atomic signing fixes 2026-04-11) + `87f068b1` (MS-signed shim swap) + `<this-commit>` (post-impl re-review fixes) | 6/6 items | build OK
+> **Notes:**
+> - What shipped: signed `BOOTX64.EFI` (sbsign + atomic temp+verify+mv via `scripts/sign-efi.sh`); committed Microsoft-signed Ubuntu shim 1.58 (`shim/shimx64.efi` + `mmx64.efi` + `SHA256SUMS`); MOK enrollment via MokManager from ESP-root `\MOK.cer`.
+> - How it integrates: `make sign-efi` calls `scripts/sign-efi.sh` (env-override-friendly: `MOK_KEY`, `MOK_CRT`, `EFI_BIN`); `make disk` writes DER-encoded `\MOK.cer` to ESP root; firmware -> shim (MS-signed) -> grubx64.efi (MOK-signed) -> kernel.
+> - Downstream: first-boot MokManager flow per `docs/guides/secure-boot-keys.md`; SBAT bumps + shim refreshes track Ubuntu shim-signed releases (NOT rebuilt locally).
+> - Doc pointer: [`docs/guides/secure-boot-keys.md`](../../docs/guides/secure-boot-keys.md).
+> - Scope boundary: §6 owns the chain-loading wiring + signing pipeline + key-management docs. SBAT operations + Secure Boot DB count exposure are §7/§8 in this TODO.
+
+> **Verified:** 2026-04-28 | commit `e3e138f2` (impl) + `6839936c` (atomic-sign fix) + `87f068b1` (MS-shim swap) + `47db7913` (post-impl re-review) | 6/6 items | build OK
 > **Quality reviewed:** 2026-04-28 | Codex 3x (adversarial, consistency, perf) | 2H+1M fixed | scope: N/A (host-side build/sign pipeline + docs)
 
 ---
