@@ -86,6 +86,12 @@ def _scan_transcript(path: str) -> tuple[bool, bool, str]:
     impl_seen = False
     design_seen = False
     impl_args = ""
+    # Track pending section-ship commit candidates by tool_use_id;
+    # only clear the gate when the matching tool_result lands with
+    # no error (Codex consistency H1 / adversarial H1, 2026-04-28):
+    # a failed `git commit -m "docs: ..."` or an in-flight commit
+    # must NOT clear the design-review gate.
+    pending_clear_ids: dict = {}
     if not path or not os.path.exists(path):
         return (False, False, "")
     try:
@@ -105,52 +111,67 @@ def _scan_transcript(path: str) -> tuple[bool, bool, str]:
             if not isinstance(content, list):
                 continue
             for c in content:
-                if not isinstance(c, dict) or c.get("type") != "tool_use":
+                if not isinstance(c, dict):
                     continue
-                name = c.get("name") or ""
-                inp = c.get("input") or {}
-                if name == "Skill":
-                    skill = inp.get("skill") or inp.get("name") or ""
-                    if skill == "implement-todo-section":
-                        impl_seen = True
-                        # Reset design flag: every fresh implement-
-                        # todo-section call starts a new gate window.
-                        design_seen = False
-                        impl_args = inp.get("args", "")
-                elif name == "Bash" and impl_seen:
-                    cmd = (inp.get("command") or "")
-                    # #1 (TODO-08 §15): explicit "design" keyword OR a
-                    # `[review-kind: ...]` marker in the prompt counts
-                    # as design-equivalent. Review-pipeline dispatches
-                    # ARE design-validation work for fixes responding
-                    # to those reviews.
-                    if ("codex-companion.mjs" in cmd
-                            and "adversarial-review" in cmd
-                            and (re.search(r"\bdesign\b", cmd, re.I)
-                                 or re.search(
-                                     r"\[review-kind:\s*"
-                                     r"(?:adversarial|consistency|perf|"
-                                     r"re-adversarial|design)\b",
-                                     cmd, re.I))):
-                        design_seen = True
-                    # #2 (TODO-08 §15): a section-ship-style commit
-                    # clears the gate so the next implement-todo-section
-                    # invocation starts fresh. Patterns: subject after
-                    # `-m "..."` inline OR after a HEREDOC body line
-                    # starting with `review:` / `stamp:` / `docs:` /
-                    # `todo:` (covers `docs/superpowers:` etc).
-                    elif (re.search(r"\bgit\s+commit\b", cmd) and
-                          (re.search(
-                              r"-m\s+[\'\"]\s*"
-                              r"(?:review|stamp|docs|todo)[:/]",
-                              cmd) or
-                           re.search(
-                               r"<<\s*[\'\"]?[A-Za-z_]\w*[\'\"]?\s*\n"
-                               r"\s*(?:review|stamp|docs|todo)[:/]",
-                               cmd, re.S))):
-                        impl_seen = False
-                        design_seen = False
-                        impl_args = ""
+                ctype = c.get("type")
+                if ctype == "tool_use":
+                    name = c.get("name") or ""
+                    inp = c.get("input") or {}
+                    if name == "Skill":
+                        skill = inp.get("skill") or inp.get("name") or ""
+                        if skill == "implement-todo-section":
+                            impl_seen = True
+                            # Reset design flag: every fresh implement-
+                            # todo-section call starts a new gate window.
+                            design_seen = False
+                            impl_args = inp.get("args", "")
+                    elif name == "Bash" and impl_seen:
+                        cmd = (inp.get("command") or "")
+                        # explicit "design" keyword OR a [review-kind: ...]
+                        # marker in the prompt counts as design-equivalent.
+                        # Review-pipeline dispatches ARE design-validation
+                        # work for fixes responding to those reviews.
+                        if ("codex-companion.mjs" in cmd
+                                and "adversarial-review" in cmd
+                                and (re.search(r"\bdesign\b", cmd, re.I)
+                                     or re.search(
+                                         r"\[review-kind:\s*"
+                                         r"(?:adversarial|consistency|perf|"
+                                         r"re-adversarial|design)\b",
+                                         cmd, re.I))):
+                            design_seen = True
+                        # a section-ship-style git commit candidate:
+                        # subject after `-m "..."` inline OR a HEREDOC
+                        # body line starting with `review:` / `stamp:`
+                        # / `docs:` / `todo:` (covers `docs/x:` forms).
+                        # ONLY MARK PENDING -- the actual gate-clear
+                        # waits for the matching tool_result with no
+                        # error.
+                        elif (re.search(r"\bgit\s+commit\b", cmd) and
+                              (re.search(
+                                  r"-m\s+[\'\"]\s*"
+                                  r"(?:review|stamp|docs|todo)[:/]",
+                                  cmd) or
+                               re.search(
+                                   r"<<\s*[\'\"]?[A-Za-z_]\w*[\'\"]?\s*\n"
+                                   r"\s*(?:review|stamp|docs|todo)[:/]",
+                                   cmd, re.S))):
+                            tu_id = c.get("id")
+                            if tu_id:
+                                pending_clear_ids[tu_id] = True
+                elif ctype == "tool_result":
+                    tu_id = c.get("tool_use_id")
+                    if tu_id and tu_id in pending_clear_ids:
+                        # Successful section-ship commit confirms the
+                        # gate-clear. is_error == True means the Bash
+                        # actually failed (block hook fired, lint
+                        # failed, etc.); only clear on success.
+                        if not c.get("is_error"):
+                            impl_seen = False
+                            design_seen = False
+                            impl_args = ""
+                        # Either way, drop the pending entry.
+                        pending_clear_ids.pop(tu_id, None)
     return (impl_seen, design_seen, impl_args)
 
 

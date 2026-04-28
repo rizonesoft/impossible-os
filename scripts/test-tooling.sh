@@ -2664,11 +2664,30 @@ dr_run() {
     echo $?
 }
 
-# Synthesize a JSONL transcript line with a tool_use event.
+# Synthesize a JSONL transcript line with a tool_use event. Optional 4th
+# arg is a tool_use_id (used by tests that pair tool_use with tool_result).
 dr_event() {
-    local tool="$1" name="$2" input_json="$3"
-    printf '{"message":{"content":[{"type":"tool_use","name":"%s","input":%s}]}}\n' \
-        "$tool" "$input_json"
+    local tool="$1" name="$2" input_json="$3" tu_id="${4-}"
+    if [ -n "$tu_id" ]; then
+        printf '{"message":{"content":[{"type":"tool_use","id":"%s","name":"%s","input":%s}]}}\n' \
+            "$tu_id" "$tool" "$input_json"
+    else
+        printf '{"message":{"content":[{"type":"tool_use","name":"%s","input":%s}]}}\n' \
+            "$tool" "$input_json"
+    fi
+}
+
+# Synthesize a JSONL transcript line with a tool_result event matching
+# a prior tool_use_id. 2nd arg "ok"|"err" sets the is_error flag.
+# Codex H1 fix (2026-04-28): the design-review gate-clear path requires
+# a successful tool_result; tests must pair tool_use with tool_result
+# to exercise the realistic transcript shape.
+dr_result() {
+    local tu_id="$1" status="$2"
+    local is_err="false"
+    [ "$status" = "err" ] && is_err="true"
+    printf '{"message":{"content":[{"type":"tool_result","tool_use_id":"%s","is_error":%s,"content":"out"}]}}\n' \
+        "$tu_id" "$is_err"
 }
 
 # --- Test A: bare implement-todo-section (no design dispatch) -> blocked
@@ -2692,24 +2711,26 @@ else
     t_fail "design_review_review_kind expected rc=0, got rc=$RC"
 fi
 
-# --- Test C (#15 #2): a `review:` commit clears the gate
+# --- Test C (#15 #2): a `review:` commit with SUCCESSFUL tool_result clears
 FX="$DR_TMP/commit_clears.jsonl"
 dr_event "Skill" "Skill" '{"skill":"implement-todo-section","args":"## 1. Foo"}' >"$FX"
-dr_event "Bash" "Bash" '{"command":"git commit -m \"review: TODO-XX foo bar\""}' >>"$FX"
+dr_event "Bash" "Bash" '{"command":"git commit -m \"review: TODO-XX foo bar\""}' "tu_review_ok" >>"$FX"
+dr_result "tu_review_ok" "ok" >>"$FX"
 RC="$(dr_run "$FX" "src/kernel/foo.c")"
 if [ "$RC" = "0" ]; then
-    t_pass "design_review_commit_clears review: prefix clears gate (rc=0)"
+    t_pass "design_review_commit_clears review: prefix + ok result clears gate (rc=0)"
 else
     t_fail "design_review_commit_clears expected rc=0, got rc=$RC"
 fi
 
-# --- Test D (#15 #2): a `docs/x:` commit also clears the gate
+# --- Test D (#15 #2): a `docs/x:` commit with SUCCESSFUL tool_result clears
 FX="$DR_TMP/commit_docs.jsonl"
 dr_event "Skill" "Skill" '{"skill":"implement-todo-section","args":"## 1. Foo"}' >"$FX"
-dr_event "Bash" "Bash" '{"command":"git commit -m \"docs/superpowers: catalog audit\""}' >>"$FX"
+dr_event "Bash" "Bash" '{"command":"git commit -m \"docs/superpowers: catalog audit\""}' "tu_docs_ok" >>"$FX"
+dr_result "tu_docs_ok" "ok" >>"$FX"
 RC="$(dr_run "$FX" "src/kernel/foo.c")"
 if [ "$RC" = "0" ]; then
-    t_pass "design_review_commit_clears docs/x: prefix clears gate (rc=0)"
+    t_pass "design_review_commit_clears docs/x: prefix + ok result clears gate (rc=0)"
 else
     t_fail "design_review_commit_clears docs/x: expected rc=0, got rc=$RC"
 fi
@@ -2717,12 +2738,39 @@ fi
 # --- Test E: a non-section-ship commit (e.g. `feat:`) does NOT clear gate
 FX="$DR_TMP/commit_other.jsonl"
 dr_event "Skill" "Skill" '{"skill":"implement-todo-section","args":"## 1. Foo"}' >"$FX"
-dr_event "Bash" "Bash" '{"command":"git commit -m \"feat: unrelated change\""}' >>"$FX"
+dr_event "Bash" "Bash" '{"command":"git commit -m \"feat: unrelated change\""}' "tu_feat" >>"$FX"
+dr_result "tu_feat" "ok" >>"$FX"
 RC="$(dr_run "$FX" "src/kernel/foo.c")"
 if [ "$RC" = "2" ]; then
     t_pass "design_review_commit_clears feat: prefix does NOT clear gate (rc=2)"
 else
     t_fail "design_review_commit_clears feat: expected rc=2, got rc=$RC"
+fi
+
+# --- Test F (Codex H1 fix 2026-04-28): a `review:` commit with FAILED
+# tool_result must NOT clear the gate. Closes the bypass where a
+# blocked/failed commit attempt could disable design-review.
+FX="$DR_TMP/commit_failed.jsonl"
+dr_event "Skill" "Skill" '{"skill":"implement-todo-section","args":"## 1. Foo"}' >"$FX"
+dr_event "Bash" "Bash" '{"command":"git commit -m \"review: TODO-XX foo bar\""}' "tu_review_err" >>"$FX"
+dr_result "tu_review_err" "err" >>"$FX"
+RC="$(dr_run "$FX" "src/kernel/foo.c")"
+if [ "$RC" = "2" ]; then
+    t_pass "design_review_commit_clears failed review: commit does NOT clear gate (rc=2)"
+else
+    t_fail "design_review_commit_clears failed-result expected rc=2, got rc=$RC"
+fi
+
+# --- Test G (Codex H1 fix 2026-04-28): a `review:` commit with NO
+# tool_result yet (in-flight) must NOT clear the gate.
+FX="$DR_TMP/commit_inflight.jsonl"
+dr_event "Skill" "Skill" '{"skill":"implement-todo-section","args":"## 1. Foo"}' >"$FX"
+dr_event "Bash" "Bash" '{"command":"git commit -m \"review: TODO-XX foo bar\""}' "tu_review_pending" >>"$FX"
+RC="$(dr_run "$FX" "src/kernel/foo.c")"
+if [ "$RC" = "2" ]; then
+    t_pass "design_review_commit_clears in-flight commit (no result) does NOT clear gate (rc=2)"
+else
+    t_fail "design_review_commit_clears in-flight expected rc=2, got rc=$RC"
 fi
 
 rm -rf "$DR_TMP"
