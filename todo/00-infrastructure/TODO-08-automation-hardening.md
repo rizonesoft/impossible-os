@@ -80,7 +80,7 @@ title: "TODO-08 -- Automation Hardening (Skill / Hook / MCP / Codex Integration)
 | 💎  |   15  |  §15    | Design-review hook scope fix: review-kind recognition + commit-clears-gate                   | §7                         |  [x]   |
 | ⭐  |   16  |  §16    | Compaction-resilient skill-step state                                                        | §10, §11                   |  [x]   |
 | ⭐  |   17  |  §17    | Review-pipeline pre-Codex enforcement: Phase-1 evidence-map + re-adversarial trigger gate    | §10, §11, §4               |  [x]   |
-| ⭐  |   18  |  §18    | Stamp-region + OS Comparison completeness lints (lint.sh Check 10 + Check 11)                | §12                        |  [ ]   |
+| ⭐  |   18  |  §18    | Stamp-region + OS Comparison completeness lints (lint.sh Check 10 + Check 11)                | §12                        |  [x]   |
 | 💎  |   19  |  §19    | Codex prompt-scope helper: re-review wrapper that embeds committed-file content              | §2                         |  [ ]   |
 | ⭐  |   20  |  §20    | Implement-pipeline section-commit gates (steps 5/8/13/16 -- quality / tests / adv / smoke)   | §3, §4, §10, §11           |  [ ]   |
 | ⭐  |   21  |  §21    | Implement-todo-section partial-enforcement heuristics (steps 1/2/3/9/15/17/18 -- WARN-first) | §10, §11, §20              |  [ ]   |
@@ -631,9 +631,9 @@ Two recurring drifts the user caught by hand on 2026-04-28: stamp regions missin
 
 > **Outcome:** every `[x]` IO row in any `todo/**/*.md` shipped after this lint lands MUST have a complete stamp region (Notes + Test runner + Verified + Quality reviewed) AND a matching ✅ OS Comparison row. Drift is an ERROR at lint time, not a user-spotted bug at review time.
 
-- [ ] **Stamp-region completeness lint** as `scripts/lint.sh` Check 10: for every `[x]` Implementation Order row in any `todo/**/*.md`, verify the corresponding section body contains all of: `> **Notes:**` block, `> **Test runner:**` line (or explicit `**Note:** No <surface> test surface` exemption), `> **Verified:**` stamp, `> **Quality reviewed:**` stamp. ERROR on any missing piece. Sentinel-date scoped: only enforce on sections whose `**Verified:**` line is dated on/after the lint-land date (older sections grandfathered). Sibling to existing Check 9 (placeholder leak).
-- [ ] **OS Comparison cross-table consistency lint** as `scripts/lint.sh` Check 11: for every `[x]` Implementation Order row, verify the matching feature row in the file's OS Comparison table is checkmark-shipped (✅) not ⬜ Planned / ⚠️ Partial. ERROR on the `[x]`-but-OS-table-still-Planned drift the user flagged on the Compaction-Resilient Skill State row. Heuristic: feature-row matching by either explicit section reference (`§N` in last column) or substring match on the IO row's deliverable text against the OS row's last column.
-- [ ] **2 sub-tests** in [`scripts/test-tooling.sh`](../../scripts/test-tooling.sh): `lint_stamp_region` (synthetic TODO file with `[x]` row whose body lacks Notes -> ERROR; same with all 4 stamp pieces -> PASS; same with grandfather date -> PASS) + `lint_os_comparison_sync` (synthetic TODO file with `[x]` IO row + ⬜ OS row -> ERROR; with ✅ OS row -> PASS; with neither row matchable to other -> WARN, not ERROR).
+- [x] **Stamp-region completeness lint** as `scripts/lint.sh` Check 10: for every `[x]` Implementation Order row in any `todo/**/*.md`, verify the corresponding section body contains all of: `> **Notes:**` block, `> **Test runner:**` line (or explicit `**Note:** No <surface> test surface` exemption), `> **Verified:**` stamp, `> **Quality reviewed:**` stamp. ERROR on any missing piece. Sentinel-date scoped: only enforce on sections whose `**Verified:**` line is dated on/after the lint-land date (older sections grandfathered). Sibling to existing Check 9 (placeholder leak).
+- [x] **OS Comparison cross-table consistency lint** as `scripts/lint.sh` Check 11: for every `[x]` Implementation Order row, verify the matching feature row in the file's OS Comparison table is checkmark-shipped (✅) not ⬜ Planned / ⚠️ Partial. ERROR on the `[x]`-but-OS-table-still-Planned drift the user flagged on the Compaction-Resilient Skill State row. Heuristic: feature-row matching by either explicit section reference (`§N` in last column) or substring match on the IO row's deliverable text against the OS row's last column.
+- [x] **2 sub-tests** in [`scripts/test-tooling.sh`](../../scripts/test-tooling.sh): `lint_stamp_region` (synthetic TODO file with `[x]` row whose body lacks Notes -> ERROR; same with all 4 stamp pieces -> PASS; same with grandfather date -> PASS) + `lint_os_comparison_sync` (synthetic TODO file with `[x]` IO row + ⬜ OS row -> ERROR; with ✅ OS row -> PASS; with neither row matchable to other -> WARN, not ERROR).
 - [x] Commit: `"lint: add Check 10 (stamp-region completeness) + Check 11 (OS Comparison sync)"`
 
 **Inputs (XREFs):** -> XREF: [00-infrastructure/TODO-08 §12 AI-slop content lints](#12-ai-slop-content-lints-tautological-test--stub-behind-stamp--phantom-include) (lint Check pattern this extends), [00-infrastructure/TODO-08 §17 review-pipeline pre-Codex enforcement](#17-review-pipeline-pre-codex-enforcement-phase-1--re-adversarial) (sibling -- catches the in-flight review skips).
@@ -642,11 +642,15 @@ Two recurring drifts the user caught by hand on 2026-04-28: stamp regions missin
 
 > **Test runner:** `bash scripts/test-tooling.sh --filter stamp_completeness` | 2 sub-tests, 0 failures (planned)
 
-> **Notes:** (canonical shape, fill at ship time)
-> - What shipped: lint.sh Check 10 (stamp-region completeness on `[x]` rows) + Check 11 (OS Comparison ✅ sync).
-> - How it integrates: walks every `todo/**/*.md` IO table, parses `[x]` rows, locates matching section body via `## N.` header and `## Format Quick Reference|## OS Comparison|## Unit Tests|## Verification` end-sentinel; cross-references OS Comparison rows by section number or substring.
-> - Downstream: shipping a section without a stamp region or without flipping the OS row breaks `bash scripts/lint.sh`; pre-commit hook surfaces it before commit.
-> - Scope boundary: lint-only, no hook surface; doctrine for stamp-region content lives in `review-todo-section/SKILL.md` step 16; OS Comparison flip discipline lives in `feedback_os_comparison_update.md`.
+> **Notes:**
+> - What shipped: `scripts/lint.sh` Check 10 (stamp-region completeness on `[x]` rows) + Check 11 (OS Comparison ✅ sync); both sentinel-date scoped (LINT_LAND_DATE=2026-04-29).
+> - How it integrates: Python heredoc embedded in lint.sh walks every `todo/**/*.md` IO table, parses `[x]` rows, locates the matching `## N.` body via end-sentinel regex, and cross-references the OS Comparison row by `§N` or first-distinctive-word substring match.
+> - Downstream: shipping a new section without a stamp region or without flipping the OS row breaks `bash scripts/lint.sh`; pre-commit hook surfaces the error before commit. Older sections grandfathered via the sentinel date; future renames advance the date.
+> - Canonical doc: `scripts/lint.sh` Check 10/11 (in-source) + `review-todo-section/SKILL.md` step 16 (stamp-region doctrine).
+> - Scope boundary: lint-only, no hook surface. The §17 phase1 / re-adv gates and §20 impl-side gates handle the in-flight enforcement; this lint is the post-ship file-shape enforcement.
+
+> **Verified:** 2026-04-28 | RISK_TIER=trivial | 4/4 items | build OK | tests 304/304 PASS
+> **Quality reviewed:** 2026-04-28 | Codex 1x (design) | 0 fixed | scope: N/A (host-side automation lint additions; no SMP/kernel risk; trivial-tier dogfooded)
 
 ---
 

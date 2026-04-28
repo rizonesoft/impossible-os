@@ -516,6 +516,213 @@ else
 fi
 
 # ============================================================================
+# Check 10: Stamp-region completeness (TODO-08 stamp-region completeness lints)
+# Check 11: OS Comparison cross-table sync (TODO-08 stamp-region completeness lints)
+# ============================================================================
+# Both checks walk every todo/**/*.md IO table, find [x] rows, and verify
+# downstream invariants in the matching `## N.` section + OS Comparison
+# row. Sentinel-date scoped: only enforce on sections whose Verified
+# stamp date is on/after LINT_LAND_DATE. Older sections are grandfathered
+# (existing TODOs ship pre-doctrine and would all WARN otherwise).
+#
+# Doctrine:
+#   Check 10 -- review-todo-section/SKILL.md step 16 (canonical stamp shape)
+#   Check 11 -- feedback_os_comparison_update memory (flip OS row to checkmark
+#               every shipped IO row)
+#
+# Skip flags:
+#   SKIP_LINT_STAMP_REGION=1   -- Check 10 emits WARN with reason logged
+#   SKIP_LINT_OS_COMPARISON=1  -- Check 11 emits WARN with reason logged
+if [ "${SKIP_LINT_STAMP_REGION:-}" = "1" ] && [ "${SKIP_LINT_OS_COMPARISON:-}" = "1" ]; then
+    echo -e "${YELLOW}warn${NC}: Check 10 + Check 11 both skipped via SKIP_LINT_STAMP_REGION + SKIP_LINT_OS_COMPARISON"
+    WARNINGS=$((WARNINGS + 2))
+else
+    LINT_OUT="$(python3 - <<'PYEOF'
+import os
+import re
+import sys
+from pathlib import Path
+
+# Sentinel date: stamp-region completeness lints land date. Sections
+# whose `> **Verified:**` carries an earlier date are grandfathered
+# (pre-doctrine ship).
+LINT_LAND_DATE = "2026-04-29"
+
+SKIP_C10 = os.environ.get("SKIP_LINT_STAMP_REGION", "") == "1"
+SKIP_C11 = os.environ.get("SKIP_LINT_OS_COMPARISON", "") == "1"
+
+todo_root = Path("todo")
+errors = []
+warnings = []
+
+# Parse the IO table for [x] rows: capture section number + deliverable.
+IO_ROW_RE = re.compile(
+    r"^\|[^|]*\|[^|]*\|\s*§?\s*(\d+)\s*\|([^|]+)\|[^|]*\|\s*\[x\]\s*\|",
+    re.MULTILINE,
+)
+
+# Section header anchor.
+SEC_HDR_RE = re.compile(r"^##\s+(\d+)\.\s+(.+?)$", re.MULTILINE)
+
+# Body end-sentinels: stop scanning a section body at any of these.
+BODY_END_RE = re.compile(
+    r"^##\s+(?:\d+\.|Format Quick Reference|OS Comparison|Unit Tests|"
+    r"Verification|History)\b",
+    re.MULTILINE,
+)
+
+# Verified date extraction.
+VERIFIED_DATE_RE = re.compile(
+    r"^>\s*\*\*Verified:\*\*\s*(\d{4}-\d{2}-\d{2})",
+    re.MULTILINE,
+)
+
+# Stamp-region required pieces (Check 10).
+NOTES_RE = re.compile(r"^>\s*\*\*Notes:\*\*", re.MULTILINE)
+TEST_RUNNER_RE = re.compile(r"^>\s*\*\*Test runner:\*\*", re.MULTILINE)
+VERIFIED_RE = re.compile(r"^>\s*\*\*Verified:\*\*", re.MULTILINE)
+QUALITY_RE = re.compile(r"^>\s*\*\*Quality reviewed:\*\*", re.MULTILINE)
+NO_TEST_SURFACE_RE = re.compile(
+    r"\*\*Note:\*\*\s*No\s+\w+\s+test\s+surface", re.IGNORECASE
+)
+
+OS_SHIPPED_GLYPHS = ("✅", "✓")
+OS_NOT_SHIPPED_GLYPHS = ("⬜", "⚠️", "Planned")
+
+
+def section_body(text, section_num):
+    m = re.search(
+        r"^##\s+" + str(section_num) + r"\.\s+(.+?)$",
+        text, re.MULTILINE,
+    )
+    if not m:
+        return None
+    start = m.end()
+    end_m = BODY_END_RE.search(text, start)
+    end = end_m.start() if end_m else len(text)
+    return text[start:end]
+
+
+def os_table_block(text):
+    m = re.search(r"^##\s+OS Comparison\b", text, re.MULTILINE)
+    if not m:
+        return ""
+    start = m.end()
+    end_m = re.search(r"^##\s+\w", text[start:], re.MULTILINE)
+    end = start + end_m.start() if end_m else len(text)
+    return text[start:end]
+
+
+def os_row_for_section(os_block, section_num, deliverable_substring):
+    if not os_block:
+        return None
+    sec_marker = "§" + str(section_num)
+    deliv_lower = deliverable_substring.lower().strip()
+    for line in os_block.splitlines():
+        if not line.lstrip().startswith("|"):
+            continue
+        if sec_marker in line:
+            return line
+    if deliv_lower:
+        words = re.findall(r"\b[a-zA-Z][a-zA-Z-]{3,}\b", deliv_lower)
+        if words:
+            needle = words[0]
+            for line in os_block.splitlines():
+                if not line.lstrip().startswith("|"):
+                    continue
+                if needle in line.lower():
+                    return line
+    return None
+
+
+for md_path in sorted(todo_root.rglob("*.md")):
+    try:
+        text = md_path.read_text(encoding="utf-8")
+    except Exception:
+        continue
+    rel = str(md_path)
+    os_block = os_table_block(text)
+    for m in IO_ROW_RE.finditer(text):
+        sec_num = int(m.group(1))
+        deliv = m.group(2).strip()
+        body = section_body(text, sec_num)
+        if body is None:
+            continue
+        ver_m = VERIFIED_DATE_RE.search(body)
+        if not ver_m:
+            continue
+        ver_date = ver_m.group(1)
+        if ver_date < LINT_LAND_DATE:
+            continue
+
+        if not SKIP_C10:
+            missing_pieces = []
+            if not NOTES_RE.search(body):
+                missing_pieces.append("Notes")
+            has_test_runner = bool(TEST_RUNNER_RE.search(body))
+            has_no_test_exemption = bool(NO_TEST_SURFACE_RE.search(body))
+            if not has_test_runner and not has_no_test_exemption:
+                missing_pieces.append("Test runner")
+            if not VERIFIED_RE.search(body):
+                missing_pieces.append("Verified")
+            if not QUALITY_RE.search(body):
+                missing_pieces.append("Quality reviewed")
+            if missing_pieces:
+                deliv_short = deliv[:40].strip()
+                errors.append(
+                    f"{rel}: section-{sec_num} ({deliv_short}) stamp-region "
+                    f"missing: {', '.join(missing_pieces)} (Check 10)"
+                )
+
+        if not SKIP_C11:
+            os_row = os_row_for_section(os_block, sec_num, deliv)
+            if os_row is None:
+                deliv_short = deliv[:40].strip()
+                warnings.append(
+                    f"{rel}: section-{sec_num} ({deliv_short}) has no "
+                    f"matchable OS Comparison row (Check 11)"
+                )
+            else:
+                shipped = any(g in os_row for g in OS_SHIPPED_GLYPHS)
+                not_shipped = any(g in os_row for g in OS_NOT_SHIPPED_GLYPHS)
+                if not shipped and not_shipped:
+                    errors.append(
+                        f"{rel}: section-{sec_num} IO row [x] but matching "
+                        f"OS Comparison row is not shipped (Check 11)"
+                    )
+
+for w in warnings:
+    print(f"WARN {w}")
+for e in errors:
+    print(f"ERROR {e}")
+PYEOF
+)"
+    if [ -n "$LINT_OUT" ]; then
+        while IFS= read -r line; do
+            [ -n "$line" ] || continue
+            case "$line" in
+                ERROR\ *)
+                    echo -e "${RED}error${NC}: ${line#ERROR }"
+                    ERRORS=$((ERRORS + 1))
+                    ;;
+                WARN\ *)
+                    echo -e "${YELLOW}warn${NC}: ${line#WARN }"
+                    WARNINGS=$((WARNINGS + 1))
+                    ;;
+            esac
+        done <<< "$LINT_OUT"
+    fi
+    if [ "${SKIP_LINT_STAMP_REGION:-}" = "1" ]; then
+        echo -e "${YELLOW}warn${NC}: Check 10 (stamp-region) skipped via SKIP_LINT_STAMP_REGION=1"
+        WARNINGS=$((WARNINGS + 1))
+    fi
+    if [ "${SKIP_LINT_OS_COMPARISON:-}" = "1" ]; then
+        echo -e "${YELLOW}warn${NC}: Check 11 (OS comparison) skipped via SKIP_LINT_OS_COMPARISON=1"
+        WARNINGS=$((WARNINGS + 1))
+    fi
+fi
+
+# ============================================================================
 # Summary
 # ============================================================================
 echo ""

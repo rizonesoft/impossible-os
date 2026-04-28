@@ -3707,6 +3707,221 @@ fi
 
 
 # ============================================================================
+# stamp_completeness (TODO-08 stamp-region + OS Comparison lints)
+# ============================================================================
+#   - lint_stamp_region: synthetic TODO with [x] row whose body lacks Notes
+#     -> Check 10 ERROR; full stamp region -> PASS; pre-sentinel -> PASS.
+#   - lint_os_comparison_sync: synthetic TODO with [x] IO row + not-shipped
+#     OS row -> Check 11 ERROR; with shipped -> PASS.
+
+[ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[stamp_completeness]${NC}"
+
+if [ ! -f "$REPO_ROOT/scripts/lint.sh" ]; then
+    t_fail "stamp_completeness: scripts/lint.sh missing"
+else
+    SC_TMP="$(mktemp -d)"
+    SC_REPO="$SC_TMP/repo"
+    mkdir -p "$SC_REPO/scripts" "$SC_REPO/todo/00-infrastructure" "$SC_REPO/src"
+    cp "$REPO_ROOT/scripts/lint.sh" "$SC_REPO/scripts/lint.sh"
+    chmod +x "$SC_REPO/scripts/lint.sh"
+    # lint.sh bails early when no .c/.h files exist; provide a stub
+    # so the new Check 10/11 walk runs against the synthetic todo/.
+    echo "/* stub */" > "$SC_REPO/src/stub.c"
+
+    SC_FUTURE_DATE="2026-12-31"
+
+    # Build fixtures via Python so the section-marker glyph (U+00A7)
+    # appears in generated test data only, not in this script's source
+    # (where bare_section_refs hook BLOCKS it at edit time).
+    python3 - "$SC_REPO" "$SC_FUTURE_DATE" <<'PYEOF'
+import sys, pathlib
+repo, future_date = sys.argv[1], sys.argv[2]
+SECT = chr(0xA7)  # U+00A7 SECTION SIGN
+fix = pathlib.Path(repo) / "todo" / "00-infrastructure" / "TODO-99-stamp-fixture.md"
+header = """---
+schema_version: 1
+id: stamp-fixture
+domain: 00-infrastructure
+status: draft
+title: "TODO-99 stamp-completeness fixture"
+---
+
+# TODO-99 fixture
+"""
+io_table = (
+    "\n## Implementation Order\n\n"
+    "| Star | Order | Section | Deliverable | Depends | Status |\n"
+    "| ---- | :---: | :---:   | ----------- | ------- | :----: |\n"
+    f"| star |   1   |  {SECT}1     | Sample row  | --      |  [x]   |\n\n"
+)
+sec_no_notes = (
+    "## 1. Sample section\n\n"
+    "Body missing the Notes block on purpose.\n\n"
+    "> **Test runner:** `scripts/foo.bat` | 0 failures\n\n"
+    f"> **Verified:** {future_date} | commit `abc1234` | 1/1 items | build OK\n"
+    f"> **Quality reviewed:** {future_date} | Codex 1x | 0 fixed | scope: N/A\n\n"
+)
+os_table_shipped = (
+    "## OS Comparison\n\n"
+    "| Feature       | Win11    | Linux    | Impossible OS  |\n"
+    "|---------------|----------|----------|----------------|\n"
+    f"| Sample feature| N/A     | N/A     | done {SECT}1 (sample)     |\n"
+)
+# Add shipped marker (checkmark glyph U+2705).
+os_table_shipped = os_table_shipped.replace("done", chr(0x2705))
+fix.write_text(header + io_table + sec_no_notes + os_table_shipped)
+PYEOF
+    SC_OUT_MISS_NOTES="$(cd "$SC_REPO" && bash scripts/lint.sh 2>&1)"
+    if echo "$SC_OUT_MISS_NOTES" | grep -qE "missing.*Notes.*Check 10"; then
+        t_pass "lint_stamp_region: missing Notes -> Check 10 ERROR"
+    else
+        t_fail "lint_stamp_region: missing-Notes ERROR" \
+               "out: $(echo "$SC_OUT_MISS_NOTES" | tail -8)"
+    fi
+
+    # Full stamp region -> PASS.
+    python3 - "$SC_REPO" "$SC_FUTURE_DATE" <<'PYEOF'
+import sys, pathlib
+repo, future_date = sys.argv[1], sys.argv[2]
+SECT = chr(0xA7)
+fix = pathlib.Path(repo) / "todo" / "00-infrastructure" / "TODO-99-stamp-fixture.md"
+header = """---
+schema_version: 1
+id: stamp-fixture
+domain: 00-infrastructure
+status: draft
+title: "TODO-99 stamp-completeness fixture"
+---
+
+# TODO-99 fixture
+"""
+io_table = (
+    "\n## Implementation Order\n\n"
+    "| Star | Order | Section | Deliverable | Depends | Status |\n"
+    "| ---- | :---: | :---:   | ----------- | ------- | :----: |\n"
+    f"| star |   1   |  {SECT}1     | Sample row  | --      |  [x]   |\n\n"
+)
+sec_full = (
+    "## 1. Sample section\n\n"
+    "Body has all four stamp pieces.\n\n"
+    "> **Test runner:** `scripts/foo.bat` | 0 failures\n\n"
+    "> **Notes:**\n"
+    "> - What shipped: sample.\n\n"
+    f"> **Verified:** {future_date} | commit `abc1234` | 1/1 items | build OK\n"
+    f"> **Quality reviewed:** {future_date} | Codex 1x | 0 fixed | scope: N/A\n\n"
+)
+os_table = (
+    "## OS Comparison\n\n"
+    "| Feature       | Win11    | Linux    | Impossible OS  |\n"
+    "|---------------|----------|----------|----------------|\n"
+    f"| Sample feature| N/A     | N/A     | {chr(0x2705)} {SECT}1 (sample)     |\n"
+)
+fix.write_text(header + io_table + sec_full + os_table)
+PYEOF
+    SC_OUT_FULL="$(cd "$SC_REPO" && bash scripts/lint.sh 2>&1)"
+    if echo "$SC_OUT_FULL" | grep -qE "0 errors"; then
+        t_pass "lint_stamp_region: full stamp region -> PASS"
+    else
+        t_fail "lint_stamp_region: full stamp region PASS" \
+               "out: $(echo "$SC_OUT_FULL" | tail -5)"
+    fi
+
+    # Pre-sentinel-date -> grandfathered PASS even with no Notes.
+    python3 - "$SC_REPO" <<'PYEOF'
+import sys, pathlib
+repo = sys.argv[1]
+SECT = chr(0xA7)
+fix = pathlib.Path(repo) / "todo" / "00-infrastructure" / "TODO-99-stamp-fixture.md"
+header = """---
+schema_version: 1
+id: stamp-fixture
+domain: 00-infrastructure
+status: draft
+title: "TODO-99 grandfather fixture"
+---
+
+# fixture
+"""
+io_table = (
+    "\n## Implementation Order\n\n"
+    "| Star | Order | Section | Deliverable | Depends | Status |\n"
+    "| ---- | :---: | :---:   | ----------- | ------- | :----: |\n"
+    f"| star |   1   |  {SECT}1     | Sample row  | --      |  [x]   |\n\n"
+)
+# Old date, no Notes -- should be grandfathered.
+sec = (
+    "## 1. Sample section\n\n"
+    "> **Test runner:** `scripts/foo.bat` | 0 failures\n\n"
+    "> **Verified:** 2026-04-01 | commit `abc1234` | 1/1 items | build OK\n"
+    "> **Quality reviewed:** 2026-04-01 | Codex 1x | 0 fixed | scope: N/A\n\n"
+)
+os_table = (
+    "## OS Comparison\n\n"
+    "| Feature       | Win11    | Linux    | Impossible OS  |\n"
+    "|---------------|----------|----------|----------------|\n"
+    f"| Sample feature| N/A     | N/A     | {chr(0x2705)} {SECT}1 (sample)     |\n"
+)
+fix.write_text(header + io_table + sec + os_table)
+PYEOF
+    SC_OUT_OLD="$(cd "$SC_REPO" && bash scripts/lint.sh 2>&1)"
+    if echo "$SC_OUT_OLD" | grep -qE "0 errors"; then
+        t_pass "lint_stamp_region: pre-sentinel-date -> grandfathered PASS"
+    else
+        t_fail "lint_stamp_region: grandfather PASS" \
+               "out: $(echo "$SC_OUT_OLD" | tail -5)"
+    fi
+
+    # OS Comparison row not shipped -> Check 11 ERROR.
+    python3 - "$SC_REPO" "$SC_FUTURE_DATE" <<'PYEOF'
+import sys, pathlib
+repo, future_date = sys.argv[1], sys.argv[2]
+SECT = chr(0xA7)
+fix = pathlib.Path(repo) / "todo" / "00-infrastructure" / "TODO-99-stamp-fixture.md"
+header = """---
+schema_version: 1
+id: stamp-fixture
+domain: 00-infrastructure
+status: draft
+title: "TODO-99 OS sync fixture"
+---
+
+# fixture
+"""
+io_table = (
+    "\n## Implementation Order\n\n"
+    "| Star | Order | Section | Deliverable | Depends | Status |\n"
+    "| ---- | :---: | :---:   | ----------- | ------- | :----: |\n"
+    f"| star |   1   |  {SECT}1     | Sample row  | --      |  [x]   |\n\n"
+)
+sec_full = (
+    "## 1. Sample section\n\n"
+    "> **Test runner:** `scripts/foo.bat` | 0 failures\n\n"
+    "> **Notes:**\n> - What shipped: sample.\n\n"
+    f"> **Verified:** {future_date} | commit `abc1234` | 1/1 items | build OK\n"
+    f"> **Quality reviewed:** {future_date} | Codex 1x | 0 fixed | scope: N/A\n\n"
+)
+# Not-shipped marker (U+2B1C white square).
+os_table = (
+    "## OS Comparison\n\n"
+    "| Feature       | Win11    | Linux    | Impossible OS  |\n"
+    "|---------------|----------|----------|----------------|\n"
+    f"| Sample feature| N/A     | N/A     | {chr(0x2B1C)} {SECT}1 (planned)    |\n"
+)
+fix.write_text(header + io_table + sec_full + os_table)
+PYEOF
+    SC_OUT_OS_BAD="$(cd "$SC_REPO" && bash scripts/lint.sh 2>&1)"
+    if echo "$SC_OUT_OS_BAD" | grep -qE "not shipped.*Check 11"; then
+        t_pass "lint_os_comparison_sync: not-shipped OS row -> Check 11 ERROR"
+    else
+        t_fail "lint_os_comparison_sync: not-shipped OS row ERROR" \
+               "out: $(echo "$SC_OUT_OS_BAD" | tail -8)"
+    fi
+
+    rm -rf "$SC_TMP"
+fi
+
+
+# ============================================================================
 # review_right_sizing (TODO-08 review-pipeline right-sizing doctrine)
 # ============================================================================
 #   - risk_tier_declared: skill-progress entry has risk_tier field after
