@@ -460,7 +460,7 @@ Build green and tests green do not catch the three most common AI-slop patterns.
 > - Canonical doc: [`docs/infrastructure/ai-system.md`](../../docs/infrastructure/ai-system.md) "AI-Slop Content Gates" subsection.
 > - Scope boundary: §12 owns the lint surface for the 3 anti-patterns; the cleanup pass over the 12 legacy tautological tests is future work; TODO-06 owns the cache extension that unblocks Check 7; TODO-07 owns the lsp-bridge MCP wiring that unblocks Check 8.
 
-> **Verified:** 2026-04-28 | commit `<pending>` | 5/8 items (3 [x] + 2 [/] = Check 7+8 deferred to dependency TODOs) | build N/A (host-side lint) | lint CLEAN (12 legacy WARN, 0 errors) | tests 269/269 PASS
+> **Verified:** 2026-04-28 | commit `12ba62c5` | 5/8 items (3 [x] + 2 [/] = Check 7+8 deferred to dependency TODOs) | build N/A (host-side lint) | lint CLEAN (12 legacy WARN, 0 errors) | tests 269/269 PASS
 > **Quality reviewed:** 2026-04-28 | Codex 1x design (Q1-Q4 fixed pre-code) | self-review covers post-implementation | scope: N/A (host-side bash + awk lint check + 1 doc subsection)
 
 ---
