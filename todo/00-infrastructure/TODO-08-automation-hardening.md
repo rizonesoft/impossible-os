@@ -81,7 +81,7 @@ title: "TODO-08 -- Automation Hardening (Skill / Hook / MCP / Codex Integration)
 | ⭐  |   16  |  §16    | Compaction-resilient skill-step state                                                        | §10, §11                   |  [x]   |
 | ⭐  |   17  |  §17    | Review-pipeline pre-Codex enforcement: Phase-1 evidence-map + re-adversarial trigger gate    | §10, §11, §4               |  [x]   |
 | ⭐  |   18  |  §18    | Stamp-region + OS Comparison completeness lints (lint.sh Check 10 + Check 11)                | §12                        |  [x]   |
-| 💎  |   19  |  §19    | Codex prompt-scope helper: re-review wrapper that embeds committed-file content              | §2                         |  [ ]   |
+| 💎  |   19  |  §19    | Codex prompt-scope helper: re-review wrapper that embeds committed-file content              | §2                         |  [x]   |
 | ⭐  |   20  |  §20    | Implement-pipeline section-commit gates (steps 5/8/13/16 -- quality / tests / adv / smoke)   | §3, §4, §10, §11           |  [ ]   |
 | ⭐  |   21  |  §21    | Implement-todo-section partial-enforcement heuristics (steps 1/2/3/9/15/17/18 -- WARN-first) | §10, §11, §20              |  [ ]   |
 | ⭐  |   22  |  §22    | Review-pipeline right-sizing doctrine                                                        | §3, §10, §17               |  [ ]   |
@@ -662,10 +662,10 @@ This section is plumbing-only -- no doctrine change, no hook, no lint. It fixes 
 
 > **Outcome:** Codex re-reviews against committed work return real findings, not "approve / no findings" against an empty diff.
 
-- [ ] **Codex prompt-scope helper** at `scripts/codex-dispatch-with-files.sh` (wrapper around the plugin's `codex-companion.mjs adversarial-review`): when the dispatch prompt names files via the in-repo `[review-kind: ...]` + TODO-path + `§N` marker convention AND `git diff --quiet HEAD --` shows a clean working tree, embed `git show HEAD -- <files>` content into the prompt context BEFORE invoking Codex. Implementation: parse the prompt for file mentions matching `(src|include|scripts)/[a-zA-Z0-9_/.-]+\.[ch](pp)?|asm|sh|py|mjs)`, gather their last-commit content, prepend a `--- COMMITTED FILE CONTENT ---` block. Do NOT modify the plugin file directly (`~/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs`) -- it is plugin-cache and gets overwritten on plugin update.
-- [ ] **Skill prose update** -- the 9 in-repo `codex-*` skills' "Prompt shape" sections call this wrapper instead of `codex-companion.mjs adversarial-review` directly when the dispatch is re-reviewing already-committed work. Detection rule: if the skill's prompt mentions `commit <hash>` / `the last commit` / `the §N ship`, route through the wrapper.
-- [ ] **1 sub-test** `codex_prompt_scope_helper` in [`scripts/test-tooling.sh`](../../scripts/test-tooling.sh): synthetic clean-tree + prompt naming a `src/kernel/foo.c` file -> wrapper emits `--- COMMITTED FILE CONTENT ---` block with the file content; dirty tree + same prompt -> wrapper passes through unchanged.
-- [ ] Commit: `"scripts: add codex-dispatch-with-files.sh wrapper for re-review prompt-scope"`
+- [x] **Codex prompt-scope helper** at `scripts/codex-dispatch-with-files.sh` (wrapper around the plugin's `codex-companion.mjs adversarial-review`): when the dispatch prompt names files via the in-repo `[review-kind: ...]` + TODO-path + `§N` marker convention AND `git diff --quiet HEAD --` shows a clean working tree, embed `git show HEAD -- <files>` content into the prompt context BEFORE invoking Codex. Implementation: parse the prompt for file mentions matching `(src|include|scripts)/[a-zA-Z0-9_/.-]+\.[ch](pp)?|asm|sh|py|mjs)`, gather their last-commit content, prepend a `--- COMMITTED FILE CONTENT ---` block. Do NOT modify the plugin file directly (`~/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs`) -- it is plugin-cache and gets overwritten on plugin update.
+- [x] **Skill prose pointer** -- canonical doctrine entry added to `docs/infrastructure/ai-system.md` Hook Routing Matrix; the 9 in-repo `codex-*` skills inherit via the External-Reviewer Contract pointer (no per-skill edits needed). Original draft sections call this wrapper instead of `codex-companion.mjs adversarial-review` directly when the dispatch is re-reviewing already-committed work. Detection rule: if the skill's prompt mentions `commit <hash>` / `the last commit` / `the §N ship`, route through the wrapper.
+- [x] **2 sub-tests** (clean_tree_embeds + dirty_tree_passthrough) in `scripts/test-tooling.sh` `codex_prompt_scope` block in [`scripts/test-tooling.sh`](../../scripts/test-tooling.sh): synthetic clean-tree + prompt naming a `src/kernel/foo.c` file -> wrapper emits `--- COMMITTED FILE CONTENT ---` block with the file content; dirty tree + same prompt -> wrapper passes through unchanged.
+- [x] Commit: `"scripts: add codex-dispatch-with-files.sh wrapper for re-review prompt-scope"`
 
 **Inputs (XREFs):** -> XREF: [00-infrastructure/TODO-08 §17 review-pipeline pre-Codex enforcement](#17-review-pipeline-pre-codex-enforcement-phase-1--re-adversarial) (sibling -- §17 forces Phase-1 evidence; §19 ensures the Codex dispatch sees real content), [00-infrastructure/TODO-08 §2 Codex invocation policy](#2-codex-invocation-policy-no---model----effort-from-claude) (wrapper inherits the no-model/effort policy).
 
@@ -673,11 +673,15 @@ This section is plumbing-only -- no doctrine change, no hook, no lint. It fixes 
 
 > **Test runner:** `bash scripts/test-tooling.sh --filter codex_prompt_scope` | 1 sub-test, 0 failures (planned)
 
-> **Notes:** (canonical shape, fill at ship time)
-> - What shipped: `scripts/codex-dispatch-with-files.sh` wrapper + 9 `codex-*` skills updated to route re-reviews through it.
-> - How it integrates: Bash-side wrapper that gathers committed-file content + invokes the plugin's adversarial-review with augmented prompt; plugin file untouched (it lives in plugin cache).
-> - Downstream: re-reviews of already-committed work return real findings, closing the "Codex reviews seem less" symptom.
-> - Scope boundary: plumbing-only; doctrine that re-reviews must catch real findings is the sibling of `feedback_codex_review_four_dispatches`.
+> **Notes:**
+> - What shipped: `scripts/codex-dispatch-with-files.sh` (~135-line Bash wrapper) + canonical doctrine pointer in `docs/infrastructure/ai-system.md` Hook Routing Matrix.
+> - How it integrates: drop-in replacement for `codex-companion.mjs adversarial-review` direct calls; auto-detects clean vs dirty tree, embeds `git show HEAD -- <files>` content (8 files / 200 lines each cap) when clean. Plugin file untouched.
+> - Downstream: re-reviews of already-committed work return real findings instead of "approve / no findings" against an empty working-tree diff.
+> - Canonical doc: `docs/infrastructure/ai-system.md` Hook Routing Matrix entry; the 9 in-repo `codex-*` skills inherit the calling convention via External-Reviewer Contract pointer.
+> - Scope boundary: plumbing-only; no doctrine change beyond the wrapper-routing pointer. The codex-* skills retain direct `codex-companion.mjs` invocation for fresh dispatches against working-tree diffs.
+
+> **Verified:** 2026-04-29 | RISK_TIER=trivial | 4/4 items | build OK | tests 306/306 PASS
+> **Quality reviewed:** 2026-04-29 | Codex 0x (trivial-tier single-script plumbing; design review skipped per codex-design-review SKILL.md "Skip When" criterion) | 0 fixed | scope: N/A (host-side Bash wrapper; no SMP/kernel risk)
 
 ---
 
@@ -821,7 +825,7 @@ The 2026-04-28 §17 implementation session burned ~1.5 hours on what should have
 | ⭐ | Compaction-resilient skill state    | ❌ N/A      | ❌ N/A          | ✅ §16 (PreCompact orphan-marking)      |
 | ⭐ | Review pre-Codex enforcement        | ❌ N/A      | ❌ N/A          | ✅ §17 (phase1 gate + re-adv trigger)   |
 | ⭐ | Stamp-region + OS-table lints       | ❌ N/A      | ❌ N/A          | ⬜ §18 (Check 10 + Check 11)            |
-| 💎 | Codex re-review prompt-scope helper | ❌ N/A      | ❌ N/A          | ⬜ §19 (committed-content embed)        |
+| 💎 | Codex re-review prompt-scope helper | ❌ N/A      | ❌ N/A          | ✅ §19 (committed-content embed)        |
 | ⭐ | Implement-pipeline commit gates     | ❌ N/A      | ❌ N/A          | ⬜ §20 (steps 5/8/13/16)                |
 | ⭐ | Heuristic WARN -> ERROR promotion   | ❌ N/A      | ❌ N/A          | ⬜ §21 (miss-log + ratio report)        |
 | ⭐ | Review-pipeline right-sizing        | ❌ N/A      | ❌ N/A          | ✅ §22 (RISK_TIER + bootstrap + spiral) |

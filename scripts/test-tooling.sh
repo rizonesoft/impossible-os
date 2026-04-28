@@ -3922,6 +3922,81 @@ fi
 
 
 # ============================================================================
+# codex_prompt_scope (TODO-08 codex-dispatch-with-files wrapper)
+# ============================================================================
+#   - clean_tree_embeds: clean working tree + prompt naming a file ->
+#     wrapper emits `--- COMMITTED FILE CONTENT ---` block with HEAD
+#     content (verified by replacing the codex-companion call with echo).
+#   - dirty_tree_passthrough: dirty working tree + same prompt -> wrapper
+#     passes through unchanged (no embed block).
+
+[ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[codex_prompt_scope]${NC}"
+
+if [ ! -f "$REPO_ROOT/scripts/codex-dispatch-with-files.sh" ]; then
+    t_fail "codex_prompt_scope: wrapper script missing"
+else
+    CPS_TMP="$(mktemp -d)"
+    CPS_REPO="$CPS_TMP/repo"
+    mkdir -p "$CPS_REPO/scripts" "$CPS_REPO/src/kernel"
+    cp "$REPO_ROOT/scripts/codex-dispatch-with-files.sh" \
+       "$CPS_REPO/scripts/codex-dispatch-with-files.sh"
+    chmod +x "$CPS_REPO/scripts/codex-dispatch-with-files.sh"
+    # Stub codex-companion.mjs path: replace the exec node call with
+    # a captured-prompt echo so we can inspect what the wrapper would
+    # have sent. Patch lives in the temp copy only.
+    mkdir -p "$CPS_TMP/fake-plugin"
+    cat > "$CPS_TMP/fake-plugin/codex-companion.mjs" <<'PLUGIN'
+#!/usr/bin/env node
+// Stub: echo the prompt argument so the test can grep it.
+process.stdout.write(process.argv[3] || "");
+PLUGIN
+    chmod +x "$CPS_TMP/fake-plugin/codex-companion.mjs"
+    # Patch the wrapper to point at the stub plugin path (HOME-relative
+    # path is fixed to the real plugin; the test redirects via env-style
+    # search-and-replace).
+    sed -i "s|\$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs|$CPS_TMP/fake-plugin/codex-companion.mjs|g" \
+        "$CPS_REPO/scripts/codex-dispatch-with-files.sh"
+
+    pushd "$CPS_REPO" >/dev/null
+    git init -q -b main
+    git config user.email "test@example.com"
+    git config user.name "Test"
+    cat > src/kernel/foo.c <<'CFAKE'
+/* fake source for codex_prompt_scope test */
+int sample_function(int x) {
+    return x + 1;
+}
+CFAKE
+    git add src/kernel/foo.c scripts/codex-dispatch-with-files.sh
+    git -c commit.gpgsign=false commit -q --no-verify -m "seed"
+    popd >/dev/null
+
+    # ---- clean_tree_embeds ----
+    CPS_PROMPT="[review-kind: adversarial] todo/00-infrastructure/TODO-08-automation-hardening.md sample re-review src/kernel/foo.c file"
+    CPS_OUT_CLEAN="$(cd "$CPS_REPO" && bash scripts/codex-dispatch-with-files.sh "$CPS_PROMPT" 2>&1)"
+    if echo "$CPS_OUT_CLEAN" | grep -q "COMMITTED FILE CONTENT" \
+       && echo "$CPS_OUT_CLEAN" | grep -q "sample_function"; then
+        t_pass "codex_prompt_scope: clean tree embeds HEAD content"
+    else
+        t_fail "codex_prompt_scope: clean tree embed" \
+               "out: $(echo "$CPS_OUT_CLEAN" | head -10)"
+    fi
+
+    # ---- dirty_tree_passthrough ----
+    echo "/* dirty edit */" >> "$CPS_REPO/src/kernel/foo.c"
+    CPS_OUT_DIRTY="$(cd "$CPS_REPO" && bash scripts/codex-dispatch-with-files.sh "$CPS_PROMPT" 2>&1)"
+    if ! echo "$CPS_OUT_DIRTY" | grep -q "COMMITTED FILE CONTENT"; then
+        t_pass "codex_prompt_scope: dirty tree passes through unchanged"
+    else
+        t_fail "codex_prompt_scope: dirty tree passthrough" \
+               "out: $(echo "$CPS_OUT_DIRTY" | head -10)"
+    fi
+
+    rm -rf "$CPS_TMP"
+fi
+
+
+# ============================================================================
 # review_right_sizing (TODO-08 review-pipeline right-sizing doctrine)
 # ============================================================================
 #   - risk_tier_declared: skill-progress entry has risk_tier field after
