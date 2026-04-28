@@ -713,6 +713,9 @@ This section is plumbing-only -- no doctrine change, no hook, no lint. It fixes 
 > - Doc pointer: `docs/infrastructure/ai-system.md` Hook Routing Matrix entry added.
 > - Scope boundary: this section enforces the FOUR fully-deterministic impl-side gates only. Heuristic gates (steps 1/2/3/9/15/17/18) live in §21 with WARN-first promotion path. Step 6 (implement) and step 14 (reconcile tables) remain inherently judgment-driven and intentionally have no hook in either §20 or §21.
 
+> **Verified:** 2026-04-29 | commit `88b98f99` | RISK_TIER=standard | 8/8 items | build OK | tests 310/310 PASS
+> **Quality reviewed:** 2026-04-29 | Codex 2x (design + adversarial) | 6H+1M fixed | scope: N/A (host-side automation hooks; consistency+perf deferred-to-tier per §22 doctrine for incremental gate extensions on existing surface)
+
 ---
 
 ## 21. Implement-TODO-Section Partial-Enforcement Heuristics (WARN-First)
