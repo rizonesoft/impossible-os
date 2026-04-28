@@ -824,7 +824,7 @@ The 2026-04-28 §17 implementation session burned ~1.5 hours on what should have
 | ⭐ | Design-review hook scope precision  | ❌ N/A      | ❌ N/A          | ✅ §15 (review-kind + commit-clears)    |
 | ⭐ | Compaction-resilient skill state    | ❌ N/A      | ❌ N/A          | ✅ §16 (PreCompact orphan-marking)      |
 | ⭐ | Review pre-Codex enforcement        | ❌ N/A      | ❌ N/A          | ✅ §17 (phase1 gate + re-adv trigger)   |
-| ⭐ | Stamp-region + OS-table lints       | ❌ N/A      | ❌ N/A          | ⬜ §18 (Check 10 + Check 11)            |
+| ⭐ | Stamp-region + OS-table lints       | ❌ N/A      | ❌ N/A          | ✅ §18 (Check 10 + Check 11)            |
 | 💎 | Codex re-review prompt-scope helper | ❌ N/A      | ❌ N/A          | ✅ §19 (committed-content embed)        |
 | ⭐ | Implement-pipeline commit gates     | ❌ N/A      | ❌ N/A          | ⬜ §20 (steps 5/8/13/16)                |
 | ⭐ | Heuristic WARN -> ERROR promotion   | ❌ N/A      | ❌ N/A          | ⬜ §21 (miss-log + ratio report)        |
