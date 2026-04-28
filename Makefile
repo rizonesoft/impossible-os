@@ -154,22 +154,18 @@ $(UEFI_EFI): src/boot/uefi/bootx64.c src/boot/uefi/efi.h src/boot/uefi/uefi.lds 
 	$(MAKE) -C src/boot/uefi OUTDIR=$(CURDIR)/$(BUILD_DIR)/tools
 	@echo "[EFI] $@ created ($$(wc -c < $@ | tr -d ' ') bytes)"
 
-## sign-efi: Sign BOOTX64.EFI with MOK private key (skipped if keys/MOK.key absent)
+## sign-efi: Sign BOOTX64.EFI with MOK private key (skipped if keys/MOK.key absent).
+## Defaults match scripts/sign-efi.sh; either script-style or make-style env
+## overrides (MOK_KEY=, MOK_CRT=) are honored consistently. Codex consistency
+## review M3 fix 2026-04-28: previously this target reimplemented signing
+## inline, so MOK_KEY=/run/secrets/... CI overrides through bash
+## scripts/build.sh were silently dropped.
 MOK_KEY := keys/MOK.key
 MOK_CRT := keys/MOK.cer
 
 sign-efi: $(UEFI_EFI)
-	@if [ -f "$(MOK_KEY)" ]; then \
-		echo "[SIGN] Signing $(UEFI_EFI) with MOK..."; \
-		sbsign --key $(MOK_KEY) --cert $(MOK_CRT) \
-			--output $(UEFI_EFI).tmp $(UEFI_EFI); \
-		sbverify --cert $(MOK_CRT) $(UEFI_EFI).tmp \
-			&& echo "[SIGN] Signature verified OK" \
-			|| { rm -f $(UEFI_EFI).tmp; echo "[SIGN] ERROR: signature verification FAILED"; exit 1; }; \
-		mv $(UEFI_EFI).tmp $(UEFI_EFI); \
-	else \
-		echo "[SIGN] keys/MOK.key not found -- skipping signing (dev build)"; \
-	fi
+	@MOK_KEY="$(MOK_KEY)" MOK_CRT="$(MOK_CRT)" EFI_BIN="$(UEFI_EFI)" \
+		bash scripts/sign-efi.sh
 
 ## os-logo: Generate shared OS logo header from PNG
 os-logo: include/kernel/os_logo.h

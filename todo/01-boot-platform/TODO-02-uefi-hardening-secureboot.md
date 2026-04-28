@@ -231,13 +231,13 @@ Set up MOK key pair, sign `BOOTX64.EFI`, and integrate shim into the build.
 - [x] Key generation documented in `docs/guides/secure-boot-keys.md`
 - [x] `scripts/sign-efi.sh` + `sign-efi` Makefile target
 - [x] Shim: `shim/shimx64.efi` + `shim/mmx64.efi` committed (SHA256 verified)
-- [x] Shim validates `grubx64.efi` via embedded `MOK.cer`; MokManager for first-boot enrollment
+- [x] Shipped shim: Ubuntu `shim-signed` 1.58 (Microsoft-signed; trusted by firmware via MS UEFI CA out of the box). Shim validates `grubx64.efi` via the MOK list, populated by MokManager on first boot from `\\MOK.cer` at the ESP root (DER-encoded). The earlier self-built/embedded-MOK.cer flow was retired when we switched to the MS-signed binary.
 - [x] Commit: `"boot: Secure Boot shim chain-loading, MOK key signing pipeline"`
 
 **Test checkpoint:** With `MOK.key` present, signed `BOOTX64.EFI` builds; without keys, signing is skipped silently; first boot can complete MOK enrollment path on real firmware. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Verified:** 2026-04-11 -- all 5 items verified (gitignore, docs, scripts, shim binaries, build integration). Codex found 4 signing/packaging safety issues, all fixed. Accepted: none.
-> **Quality reviewed:** 2026-04-11 -- 4 fixes: atomic signing (temp+verify+mv), shim hash verification (SHA256SUMS), partial shim set error, consistent error handling. Accepted: none.
+> **Verified:** 2026-04-28 | commit `e3e138f2` (impl) + `6839936c` (atomic signing fixes 2026-04-11) + `87f068b1` (MS-signed shim swap) + `<this-commit>` (post-impl re-review fixes) | 6/6 items | build OK
+> **Quality reviewed:** 2026-04-28 | Codex 3x (adversarial, consistency, perf) | 2H+1M fixed | scope: N/A (host-side build/sign pipeline + docs)
 
 ---
 
