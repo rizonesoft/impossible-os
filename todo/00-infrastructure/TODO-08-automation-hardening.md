@@ -619,6 +619,10 @@ The 2026-04-28 boot-platform UEFI Hardening review session (Sections 6-8) surfac
 > - Doc pointer: `docs/infrastructure/ai-system.md` Hook Routing Matrix subsection "Review-pipeline pre-Codex enforcement (TODO-08 §17)".
 > - Scope boundary: this section enforces TWO pre-Codex / intra-Codex review gates only. Stamp-region completeness is §18; Codex prompt-scope wrapper is §19; impl-side gates are §20; heuristic WARN-first hooks are §21.
 
+> **Verified:** 2026-04-28 | commit `d8bbc454` | 8/8 items | build OK | tests 296/296 PASS
+> **Deferred:** [M] Re-adversarial gate uses regex-based TODO attribution from skill args (first match wins; no structured field) -> XREF: 00-infrastructure/TODO-08 §21 (item: heuristic WARN-first hooks share the same ambiguous-args limitation; structured `todo_path` field on skill state belongs in §21's miss-log telemetry layer)
+> **Quality reviewed:** 2026-04-28 | Codex 4x (design + adversarial + test-coverage + re-adversarial) | 4H+5M+1L fixed, 1M accepted-XREF | scope: N/A (host-side automation hooks; no SMP/kernel risk)
+
 ---
 
 ## 18. Stamp-Region + OS Comparison Completeness Lints (Check 10 + Check 11)

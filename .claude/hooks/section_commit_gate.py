@@ -1106,11 +1106,17 @@ def _four_dispatch_evidence(
     return (True, "")
 
 
-def _staged_diff_text(root: Path, paths: list[str]) -> str:
+def _staged_diff_text(root: Path, paths: list[str]) -> str | None:
     """Return the concatenated `git diff --cached` body for the given
     staged source paths. Used by the re-adversarial trigger detector
     to scan only ADDED lines (the prefix `+` filter happens at the
-    regex layer; see _re_adversarial_trigger_check)."""
+    regex layer; see _re_adversarial_trigger_check).
+
+    Codex re-adversarial M2 fix (2026-04-28): returns None on git
+    failure (timeout, missing binary, etc.) so the caller can
+    distinguish 'no diff body' from 'could not inspect diff'. The
+    earlier fail-open empty-string return let a transient git
+    failure suppress trigger detection."""
     if not paths:
         return ""
     try:
@@ -1121,12 +1127,13 @@ def _staged_diff_text(root: Path, paths: list[str]) -> str:
         )
         return out or ""
     except Exception:
-        return ""
+        return None
 
 
-def _staged_loc_delta(root: Path, paths: list[str]) -> int:
-    """Total added+removed LOC across staged C/H files. Used for the
-    >50 LOC step-13.5 trigger."""
+def _staged_loc_delta(root: Path, paths: list[str]) -> int | None:
+    """Total added+removed LOC across staged C/H/asm files. Returns
+    None on git failure (Codex re-adversarial M2 fix); 0 when no
+    paths provided OR no LOC change observed."""
     if not paths:
         return 0
     try:
@@ -1136,7 +1143,7 @@ def _staged_loc_delta(root: Path, paths: list[str]) -> int:
             stderr=subprocess.DEVNULL,
         )
     except Exception:
-        return 0
+        return None
     total = 0
     for line in out.splitlines():
         parts = line.split("\t")
@@ -1222,7 +1229,21 @@ def _re_adversarial_trigger_check(
     # ADDED-line filter: the diff body has unified-0 hunks; ADDED lines
     # start with `+` (and are not `+++` headers). We scan only those
     # lines for trigger signatures.
+    # Codex re-adversarial M2 fix: helpers return None on git failure.
+    # When inspection fails on a non-empty staged source set, we cannot
+    # prove triggers did NOT fire -- emit a stderr WARN naming the
+    # opacity and continue with whatever evidence we have. The
+    # existing fail-closed git-hook mode in _evaluate catches genuine
+    # git outage at a broader layer.
     diff_text = _staged_diff_text(root, c_h_paths) if c_h_paths else ""
+    if diff_text is None:
+        sys.stderr.write(
+            "[section-commit-gate] WARN -- staged-diff inspection failed "
+            "on the re-adversarial trigger check; cannot scan ADDED lines "
+            "for locking/faultable/lifecycle triggers. Manually verify "
+            "step-13.5 doctrine before pushing.\n"
+        )
+        diff_text = ""
     added_lines: list[str] = []
     for line in diff_text.splitlines():
         if line.startswith("+++"):
@@ -1238,7 +1259,13 @@ def _re_adversarial_trigger_check(
         triggers_fired.append("faultable region")
     if _RE_ADV_TRIGGER_LIFECYCLE.search(added):
         triggers_fired.append("lifecycle")
-    if _staged_loc_delta(root, loc_paths) > _RE_ADV_LOC_THRESHOLD:
+    loc = _staged_loc_delta(root, loc_paths)
+    if loc is None:
+        sys.stderr.write(
+            "[section-commit-gate] WARN -- numstat inspection failed; "
+            "cannot evaluate >50 LOC trigger.\n"
+        )
+    elif loc > _RE_ADV_LOC_THRESHOLD:
         triggers_fired.append(f">{_RE_ADV_LOC_THRESHOLD} LOC C/H/asm")
 
     if not triggers_fired:

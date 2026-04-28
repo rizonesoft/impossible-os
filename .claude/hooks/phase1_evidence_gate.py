@@ -74,6 +74,15 @@ _PHASE1_PATH_RE = re.compile(
 )
 
 
+# Bash-command path scan: paths inside shell command strings appear
+# after whitespace / quote / slash / start, and may end at whitespace
+# / quote / pipe / EOL. Permissive boundaries; the `has_explore_cmd`
+# gate above is what scopes this to actual exploration commands.
+_PHASE1_BASH_PATH_RE = re.compile(
+    r"(?:^|[\s'\"/])(?:src|include|\.claude|scripts|docs)/"
+)
+
+
 def _repo_root() -> Optional[str]:
     try:
         return subprocess.check_output(
@@ -165,6 +174,59 @@ def _extract_event_ts_ns(ev: dict) -> int:
     return 0
 
 
+_BASH_PHASE1_CMDS = (
+    "grep", "rg", "cat", "head", "tail", "sed", "awk",
+    "find", "wc", "nl", "ls", "less", "more",
+)
+
+
+def _bash_is_phase1_evidence(cmd: str) -> bool:
+    """True if a Bash command qualifies as Phase-1 exploration evidence:
+    invokes one of the read-only exploration tools AND names a path
+    under the Phase-1 region (src/include/.claude/scripts/docs).
+
+    Heuristic by design -- the goal is to count legitimate shell-side
+    exploration, not perfectly classify every shell command. False
+    positives lower the BLOCK rate (acceptable; the gate is advisory
+    enough that over-counting is preferable to under-counting and
+    forcing SKIP-env workarounds). False negatives just leave the
+    gate firing as before -- the agent can still use Read/Grep tools.
+    """
+    if not isinstance(cmd, str) or not cmd:
+        return False
+    # Walk command-line tokens. The first non-env-prefix token is the
+    # entry program; subsequent tokens are arguments. We accept the
+    # entry program if it ends in any of _BASH_PHASE1_CMDS, OR if any
+    # later token after a pipe / && / ; matches an exploration command.
+    # Codex re-adversarial M1 fix: do NOT lowercase the command for
+    # exact-match. POSIX command names are case-sensitive; `RG` and
+    # `Grep` are not real commands and matching them would let
+    # mixed-case typos satisfy the gate. The explore set is fixed
+    # lowercase; the command head must match exactly.
+    has_explore_cmd = False
+    for explore in _BASH_PHASE1_CMDS:
+        if (
+            cmd.startswith(f"{explore} ")
+            or cmd.startswith(f"{explore}\t")
+            or f" | {explore} " in cmd
+            or f"|{explore} " in cmd
+            or f"&& {explore} " in cmd
+            or f"; {explore} " in cmd
+            or f'"{explore} ' in cmd
+            or f"'{explore} " in cmd
+        ):
+            has_explore_cmd = True
+            break
+    if not has_explore_cmd:
+        return False
+    # Bash commands embed paths after whitespace, quotes, or slashes;
+    # _PHASE1_PATH_RE alone only matches start-of-string or after a
+    # slash, missing the common ` <path>` argument shape. Extend the
+    # boundary chars here for the Bash-command scanning case only;
+    # the strict regex still guards Read/Grep/Glob inputs above.
+    return bool(_PHASE1_BASH_PATH_RE.search(cmd))
+
+
 def _count_phase1_evidence(transcript_path: str, started_ts: int) -> int:
     """Walk the transcript JSONL forward from started_ts, counting
     Read/Grep/Glob tool_use events whose input names a path under any
@@ -224,6 +286,23 @@ def _count_phase1_evidence(transcript_path: str, started_ts: int) -> int:
                     elif name == "Glob":
                         loc = inp.get("path") or inp.get("pattern") or ""
                         if _PHASE1_PATH_RE.search(loc):
+                            count += 1
+                    elif name == "Bash":
+                        # User feedback 2026-04-28: Phase 1 evidence
+                        # work frequently happens via shell `grep` /
+                        # `cat` / `rg` / `head` / `find` invocations
+                        # through the Bash tool, NOT just the dedicated
+                        # Read/Grep tools. Without counting Bash, the
+                        # gate fires on legitimate Phase 1 work that
+                        # used shell exploration -- forcing the agent
+                        # to either redo the search via Read/Grep or
+                        # use SKIP env (training around the gate, the
+                        # exact failure mode `feedback_skill_invocation
+                        # _drift` warns against). Count Bash invocations
+                        # that look like exploration commands AND name
+                        # a path under the Phase-1 region.
+                        cmd = inp.get("command") or ""
+                        if _bash_is_phase1_evidence(cmd):
                             count += 1
     except Exception:
         pass
