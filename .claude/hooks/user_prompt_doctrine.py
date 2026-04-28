@@ -53,6 +53,8 @@ def main() -> int:
         d = json.load(sys.stdin)
     except Exception:
         return 0
+    if not isinstance(d, dict):
+        return 0
 
     prompt = d.get("prompt") or d.get("user_prompt") or ""
     if not isinstance(prompt, str) or not prompt:

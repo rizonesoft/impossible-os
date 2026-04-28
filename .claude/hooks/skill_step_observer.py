@@ -254,8 +254,34 @@ def main() -> int:
 
     # Branch B: the tool call is something else -- check whether it is a
     # step-evidence event for the most-recent active multi-step skill.
-    transcript = d.get("transcript_path", "")
-    skill, args, sid = _scan_transcript_for_active_skill(transcript)
+    #
+    # Codex perf review 2026-04-28 H1: avoid walking the transcript on
+    # every PostToolUse. The active skill state lives in skill-progress
+    # .json (written by Branch A above when a fresh Skill invocation
+    # fires). Pick the most-recently-started entry there instead of
+    # rescanning N MiB of JSONL on every tool call. Transcript walk is
+    # ONLY used as a fallback when the state file has no recent entry
+    # (observer started mid-session, state cleared by SessionStart, etc).
+    skill = None
+    args = ""
+    sid = ""
+    if isinstance(state, dict) and state:
+        best_ts = -1
+        for name, entry in state.items():
+            if not isinstance(entry, dict):
+                continue
+            if name not in MULTI_STEP_SKILLS:
+                continue
+            ts = entry.get("started_ts", 0)
+            if isinstance(ts, int) and ts > best_ts:
+                best_ts = ts
+                skill = name
+                args = entry.get("args", "")
+                sid = entry.get("session_id", "")
+    if not skill:
+        # Fallback: no state entry. One transcript walk to bootstrap.
+        transcript = d.get("transcript_path", "")
+        skill, args, sid = _scan_transcript_for_active_skill(transcript)
     if not skill:
         return 0
     tn = d.get("tool_name", "")

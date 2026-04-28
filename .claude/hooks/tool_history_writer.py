@@ -52,6 +52,8 @@ def main() -> int:
         d = json.load(sys.stdin)
     except Exception:
         return 0
+    if not isinstance(d, dict):
+        return 0
 
     root = _repo_root()
     if not root:

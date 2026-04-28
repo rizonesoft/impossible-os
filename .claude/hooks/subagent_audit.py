@@ -87,6 +87,8 @@ def main() -> int:
         d = json.load(sys.stdin)
     except Exception:
         return 0
+    if not isinstance(d, dict):
+        return 0
 
     root = _repo_root()
     if not root:
@@ -96,14 +98,34 @@ def main() -> int:
     duration_ms = d.get("duration_ms")
     tool_uses_total = d.get("tool_uses_total")
 
-    # Fallback: walk transcript when payload is missing.
-    if not sub_type or tool_uses_total is None:
-        st, count = _walk_transcript_for_subagent(
+    # Codex adversarial review 2026-04-28 M2: the prior fallback walked
+    # the transcript and counted any tool_use after the most recent
+    # Agent invocation, which polluted tool_uses_total with parent-
+    # session tool calls and produced spurious SUBAGENT-RUNAWAY warnings.
+    # The transcript boundary between subagent and parent is not
+    # reliably derivable from text alone -- nested Agent calls, parent
+    # tool calls after subagent return, etc. all break the count.
+    #
+    # New behavior: prefer payload metrics; only walk transcript for
+    # subagent_type discovery (which is a narrow read of Agent input).
+    # Track type-fallback and count-untrusted INDEPENDENTLY (re-
+    # adversarial 2026-04-28 H1: a single conflated `fallback_used`
+    # flag was wrongly suppressing the count-based runaway when only
+    # subagent_type came from fallback while a real payload count was
+    # present and trustworthy).
+    type_fallback_used = False
+    count_untrusted = False
+    if not sub_type:
+        st, _ = _walk_transcript_for_subagent(
             d.get("transcript_path", ""), d.get("agent_id", ""))
-        if not sub_type:
-            sub_type = st or "unknown"
-        if tool_uses_total is None:
-            tool_uses_total = count
+        sub_type = st or "unknown"
+        type_fallback_used = True
+    if tool_uses_total is None:
+        # No reliable count when the harness did not pass it. Record 0
+        # and disable count-based runaway detection rather than risk a
+        # false alarm from transcript-wide counting.
+        tool_uses_total = 0
+        count_untrusted = True
 
     record = {
         "ts_ns": _ts_ns(),
@@ -120,10 +142,14 @@ def main() -> int:
     except Exception:
         pass
 
-    # Runaway detection.
+    # Runaway detection. Count-based check fires only when the count
+    # is trustworthy (payload-provided, not fallback-derived). The
+    # duration-based check is independent of count trust because
+    # duration_ms is always a payload field.
     runaway = False
-    if isinstance(tool_uses_total, int) and tool_uses_total >= RUNAWAY_TOOL_USES:
-        runaway = True
+    if not count_untrusted:
+        if isinstance(tool_uses_total, int) and tool_uses_total >= RUNAWAY_TOOL_USES:
+            runaway = True
     if isinstance(duration_ms, int) and duration_ms >= RUNAWAY_DURATION_MS:
         runaway = True
     if runaway:

@@ -34,6 +34,11 @@ from skill_step_map import (  # noqa: E402
     MULTI_STEP_SKILLS,
     REQUIRED_TERMINAL_STEPS,
 )
+# Reuse the alias-aware git-commit classifier from section_commit_gate
+# (same one post_commit_smoketest.py imports). Closes the false-positive
+# observed when a python -c heredoc body contained the literal text
+# "git commit" (incident 2026-04-28).
+import section_commit_gate as scg  # noqa: E402
 
 
 _STATE_REL = ".claude/state/skill-progress.json"
@@ -53,18 +58,29 @@ def _repo_root():
 def _is_blocking_signature(d: dict) -> bool:
     """Return True if the current tool call should be gated by the
     step-state check. Triggers:
-      - Bash with `git commit` (any form)
+      - Bash that is genuinely invoking `git commit` (alias-aware)
       - Skill(skill="review-todo-section")
-    The §4 section-commit gate (section_commit_gate.py) handles the
-    section-ship signature directly; this hook complements it.
+
+    Uses section_commit_gate._bash_is_git_commit for the Bash classifier
+    so wrapped (`gci`, `git -c alias.X='...' X`, `env VAR=val git commit`)
+    and aliased commit invocations are detected, AND so the literal
+    string "git commit" appearing inside a python -c heredoc body or
+    similar non-command-invocation context does NOT false-positive.
+    The naive `re.search(r"\bgit\s+commit\b", cmd)` we used to ship
+    matched any literal occurrence; documented incident 2026-04-28
+    (user tripped it when synthesizing skill-progress.json with a
+    'commit ...' evidence_token string).
     """
     tn = d.get("tool_name", "")
     ti = d.get("tool_input", {}) or {}
     if tn == "Bash":
         cmd = ti.get("command") or ""
-        if re.search(r"\bgit\s+commit\b", cmd):
-            return True
-        return False
+        try:
+            scg._ensure_crc()
+            is_commit, _ = scg._bash_is_git_commit(cmd)
+        except Exception:
+            return False
+        return bool(is_commit)
     if tn == "Skill":
         skill = ti.get("skill") or ti.get("name") or ""
         if skill == "review-todo-section":

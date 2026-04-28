@@ -62,11 +62,14 @@ def _prune_old(snap_root: str, keep: int) -> None:
 
 
 def main() -> int:
+    # Hook is best-effort: snapshot regardless of payload shape. We do
+    # consume stdin (so the harness pipe doesn't block) but we don't
+    # use the parsed value. Codex review 2026-04-28 M1: even non-dict
+    # JSON like `null` or `[]` is handled here because we never call
+    # `.get(...)` on the result.
     try:
         json.load(sys.stdin)
     except Exception:
-        # Even on stdin parse failure, attempt snapshot -- the hook should
-        # be best-effort. The harness payload is informational here.
         pass
 
     root = _repo_root()

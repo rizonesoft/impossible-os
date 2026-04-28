@@ -72,6 +72,11 @@ def _ts_ns() -> int:
 
 
 def _load_transcript(path: str) -> List[dict]:
+    """Materializes ALL events. Used by _check_acknowledged_but_skipped
+    where the bounded scan still needs the last _TURN_WINDOW events
+    plus _MATCH_WINDOW lookahead. Codex perf review 2026-04-28 M2:
+    callers that only need the tail should use _load_transcript_tail
+    or _check_vfc_streaming which avoid the full materialization."""
     if not path or not os.path.exists(path):
         return []
     out = []
@@ -84,6 +89,90 @@ def _load_transcript(path: str) -> List[dict]:
                     continue
     except Exception:
         return []
+    return out
+
+
+def _check_vfc_streaming(path: str) -> Optional[str]:
+    """Stream the transcript and short-circuit as soon as both
+    todo_flip and vfc_seen are known. Codex perf review 2026-04-28 M2:
+    avoids materializing the full event list when VFC state can be
+    determined from a partial scan.
+    """
+    if not path or not os.path.exists(path):
+        return None
+    todo_flip = False
+    vfc_seen = False
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                try:
+                    ev = json.loads(line)
+                except Exception:
+                    continue
+                for tu in _tool_uses(ev):
+                    name = tu.get("name") or ""
+                    inp = tu.get("input") or {}
+                    if name == "Skill":
+                        sk = (inp.get("skill") or inp.get("name") or "").lower()
+                        if (sk == _VFC_SKILL.lower()
+                                or sk.endswith(":verification-before-completion")):
+                            vfc_seen = True
+                    elif name in ("Edit", "MultiEdit"):
+                        fp = inp.get("file_path") or inp.get("path") or ""
+                        if "/todo/" not in fp.replace("\\", "/"):
+                            continue
+                        ns = inp.get("new_string", "")
+                        if isinstance(ns, str) and "[x]" in ns:
+                            todo_flip = True
+                        edits = inp.get("edits", [])
+                        if isinstance(edits, list):
+                            for e in edits:
+                                if isinstance(e, dict):
+                                    es = e.get("new_string", "")
+                                    if isinstance(es, str) and "[x]" in es:
+                                        todo_flip = True
+                # Early-exit: VFC owed only when todo_flip AND not vfc_seen.
+                # If we have BOTH (vfc satisfied), no warning. Stop scanning.
+                # If we have todo_flip but no vfc YET, we must keep scanning
+                # because VFC may appear later; can't short-circuit early.
+                # If we have vfc_seen, we're DONE (no warning regardless of
+                # any later todo flips).
+                if vfc_seen:
+                    return None
+    except Exception:
+        return None
+    if todo_flip and not vfc_seen:
+        return ("{ts} VFC-OWED todo edits flipped [x] but "
+                "Skill(superpowers:verification-before-completion) never ran"
+                .format(ts=_ts_ns()))
+    return None
+
+
+def _load_transcript_tail(path: str, max_events: int) -> List[dict]:
+    """Read the last max_events JSONL events from path. Used by the
+    promise-scan check which is bounded by _TURN_WINDOW + _MATCH_WINDOW.
+    Avoids materializing 10K+ events when only ~35 are needed.
+    """
+    if not path or not os.path.exists(path):
+        return []
+    # Simple ring-buffer over the file: parse all lines, keep the last
+    # max_events. The file format is one JSON per line so we can avoid
+    # holding all parsed dicts in memory simultaneously by keeping a
+    # bounded deque of the raw line texts and parsing only at the end.
+    from collections import deque
+    tail_lines = deque(maxlen=max_events)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                tail_lines.append(line)
+    except Exception:
+        return []
+    out = []
+    for line in tail_lines:
+        try:
+            out.append(json.loads(line))
+        except Exception:
+            continue
     return out
 
 
@@ -209,16 +298,23 @@ def main() -> int:
         d = json.load(sys.stdin)
     except Exception:
         return 0
+    if not isinstance(d, dict):
+        return 0
 
     root = _repo_root()
     if not root:
         return 0
 
     transcript = d.get("transcript_path", "")
-    events = _load_transcript(transcript)
 
-    warns = _check_acknowledged_but_skipped(events)
-    vfc_warn = _check_vfc_owed(events)
+    # Codex perf review 2026-04-28 M2: bound the promise scan to a
+    # tail of (TURN_WINDOW + MATCH_WINDOW) events, and use the
+    # streaming VFC check that early-exits as soon as a VFC invocation
+    # is observed. Avoids materializing 10K+ event transcripts at end
+    # of every turn.
+    tail_events = _load_transcript_tail(transcript, _TURN_WINDOW + _MATCH_WINDOW)
+    warns = _check_acknowledged_but_skipped(tail_events)
+    vfc_warn = _check_vfc_streaming(transcript)
     if vfc_warn:
         warns.append(vfc_warn)
 
