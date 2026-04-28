@@ -294,6 +294,8 @@ Render the TODO dependency graph in formats GitHub, terminals, and external dash
 
 Expose §4's query surface over the Model Context Protocol so Claude Code, Cursor, Aider, and any other MCP-aware agent can call `ready` / `blocked` / `blocking` / `backlinks` / `deferred` / `orphans` / `stale` / `stats` / `code` directly without shelling out to `python3 scripts/todo-graph/query.py`. The cache is the contract; this section ships the transport. taskmd 2026 ships `taskmd mcp start` for the same purpose; matching that surface keeps Impossible OS competitive in the AI-agent-developer-experience axis where Win11 (closed) and Linux (none in-tree) both score ❌.
 
+> **XREF (2026-04-28):** consumed by [TODO-08 Automation Hardening](TODO-08-automation-hardening.md) §1 (Codex CLI MCP wiring -- the `[mcp_servers.todo-graph]` block points at this server) and §6 (MCP usage discipline doctrine). This section's `code` query is the canonical answer to "what owns this symbol?" that the codex-* skills reach for when triaging review findings.
+
 > [!TIP]
 > A read-only MCP server is the cheapest possible AI-agent integration: ~150 LOC of `mcp` Python SDK glue, no auth, no write operations, no new dependencies beyond `mcp[cli]` (already a common dev-machine package via the Python MCP SDK). Every `query.py` subcommand becomes an MCP tool with the same name + flags; agents discover the surface via MCP's `list_tools` introspection without any prompt-engineering on the agent side.
 

@@ -70,6 +70,8 @@ title: "TODO-07 -- LSP to MCP Bridge (C, NASM, shell, Python, PowerShell)"
 
 Lay down the process skeleton, the FastMCP server, and a minimal LSP JSON-RPC client that speaks LSP over stdio to a spawned subprocess. This is the foundation every language integration builds on.
 
+> **XREF (2026-04-28):** consumed by [TODO-08 Automation Hardening](TODO-08-automation-hardening.md) §1 (Codex CLI MCP wiring -- the `[mcp_servers.lsp-bridge]` block points at this server with the `--warm-start=c,py` flag) and §6 (MCP usage discipline). [TODO-08 §12](TODO-08-automation-hardening.md#12-ai-slop-content-lints-tautological-test--stub-behind-stamp--phantom-include) Check 8 (phantom-include detection) is a future consumer that needs `lsp-bridge.diagnostics` MCP integration into `scripts/lint.sh`; until that wiring lands, Check 8 emits a deferred-WARN.
+
 - [x] Create `scripts/lsp-mcp/bridge.py` with FastMCP server, `--self-test` flag, and module-level `_CALL_LOCK` (pattern from [`mcp_server.py`](../../scripts/todo-graph/mcp_server.py)).
 - [x] Create `scripts/lsp-mcp/lsp_client.py` implementing minimal LSP JSON-RPC 2.0: `initialize`, `initialized`, `textDocument/didOpen`, `shutdown`, `exit`, plus request/response correlation via `id` field and header framing (`Content-Length:` + double CRLF).
 - [x] Implement `LspSubprocess` class: spawn via `subprocess.Popen` with stdin/stdout pipes, reader thread draining stdout, separate stderr drain thread (prevents LSP stderr log pipe from filling and deadlocking a running child), timeout-based shutdown with SIGTERM->SIGKILL escalation, cleanup on bridge exit via `atexit` + `weakref.WeakSet`.

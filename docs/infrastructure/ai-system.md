@@ -94,7 +94,18 @@ Preserve the hierarchy by editing the ONE canonical location when a concept has 
 
 ## Hook Routing Matrix
 
-Hooks are part of the AI system, not invisible glue. This matrix is the human-readable view of [`.claude/settings.json`](../../.claude/settings.json); the JSON blob stays canonical but is not the place to read from.
+Hooks are part of the AI system, not invisible glue. This matrix is the human-readable view of [`.claude/settings.json`](../../.claude/settings.json); the JSON blob stays canonical but is not the place to read from. The full per-hook table (kind, matcher, wrap.sh-eligibility, opt-out env, purpose) lives at [`.claude/hooks/MANIFEST.md`](../../.claude/hooks/MANIFEST.md), which `scripts/audit-hooks.sh` cross-checks against the in-tree files; the matrix below is a quick-reference subset, NOT the canonical source of truth.
+
+> **TODO-08 expansion (2026-04-28).** The hook surface roughly doubled in TODO-08:
+> - **§3 receiving-review hard gate:** `receiving_review_required.py` (BLOCK) + `codex_review_completed.py` (STATE; the `block-via: warning-only` STATE hook that records the gate state for §3).
+> - **§4 section-commit gate:** `section_commit_gate.py` (BLOCK) -- replaces the prior reminder.
+> - **§5 four-dispatch enforcement:** `last-review-stamps.json` per-kind state read by §4.
+> - **§7 hook system audit:** [`MANIFEST.md`](../../.claude/hooks/MANIFEST.md) + [`scripts/audit-hooks.sh`](../../scripts/audit-hooks.sh) (5-check drift detector).
+> - **§10 skill step-state telemetry:** `skill_step_observer.py` (PostToolUse STATE), `skill_step_block.py` (PreToolUse BLOCK on `git commit` / `Skill(review-todo-section)`).
+> - **§11 hook event surface expansion:** `session_start.py` (SessionStart), `user_prompt_doctrine.py` (UserPromptSubmit), `stop_audit.py` (Stop), `subagent_audit.py` (SubagentStop), `pre_compact_flush.py` (PreCompact), `tool_history_writer.py` (PostToolUse `*`).
+> - **§12 AI-Slop content gates:** `scripts/lint.sh` Checks 6/7/8 + `scripts/lint/check_tautological_test.py`. (Lint, not a harness hook -- listed for completeness.)
+>
+> The static tables below are kept for the historical "BLOCK / REMIND / POST-HOC" three-class taxonomy. Update the canonical [`MANIFEST.md`](../../.claude/hooks/MANIFEST.md) when adding new hooks; the Markdown matrix below is supplementary.
 
 ### Two hook layers -- do not confuse them
 

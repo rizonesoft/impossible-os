@@ -75,7 +75,7 @@ title: "TODO-08 -- Automation Hardening (Skill / Hook / MCP / Codex Integration)
 | 💎  |   10  |  §7     | Hook system audit + dedupe; `MANIFEST.md`; `scripts/audit-hooks.sh`; exit-code gate  | §3, §4, §5, §10, §11, §12  |  [x]   |
 | 💎  |   11  |  §8     | Superpowers skill catalog audit; suppression policy; CLAUDE.md trigger rows          | §3                         |  [x]   |
 | ⭐  |   12  |  §9     | Cross-tool drift detection: `scripts/audit-ai-system.sh` (7 checks)                  | §1, §2, §7, §11            |  [x]   |
-| 💎  |   13  |  §13    | Documentation sync: CLAUDE.md / ai-system.md / mcp-usage.md; reciprocal XREF sweep   | §1-§12                     |  [ ]   |
+| 💎  |   13  |  §13    | Documentation sync: CLAUDE.md / ai-system.md / mcp-usage.md; reciprocal XREF sweep   | §1-§12                     |  [x]   |
 | 💎  |   14  |  §14    | Remove Copilot CLI reviewer wholesale (Codex is sole external reviewer)              | §3 (initial sweep started) |  [/]   |
 | 💎  |   15  |  §15    | Design-review hook scope fix: review-kind recognition + commit-clears-gate            | §7                         |  [x]   |
 
@@ -469,17 +469,24 @@ Build green and tests green do not catch the three most common AI-slop patterns.
 
 Every section above touches a doctrine surface. Close the loop in lockstep with the implementation so the docs and the running code never diverge.
 
-- [ ] CLAUDE.md changes (single commit at the end): add the "Codex Invocation Policy" paragraph (§2), the 3-bullet "MCP usage" pointer (§6), the new mandatory-trigger rows (§8), and a 1-line cross-reference to this TODO under "Mandatory Skill Triggers" overview text. Per `feedback_todo_notes_brevity` (and Karpathy 2026 progressive-disclosure guidance), keep the additions terse; deeper doctrine lives in `docs/infrastructure/*.md` with a 1-line CLAUDE.md pointer.
-- [ ] [`docs/infrastructure/ai-system.md`](../../docs/infrastructure/ai-system.md): update Hook Routing Matrix to add the new hooks from §3, §4, §5, §7, §10, §11, §12; update External-Reviewer Contract subsection to point at the §3 hard gate + §5 four-dispatch enforcement; update MCP Server Set subsection to point at §1 cross-config; add the AI-Slop Content Gates subsection from §12; add a Skill-Step Telemetry subsection from §10; add a Hook Event Surface subsection from §11.
-- [ ] [`docs/infrastructure/mcp-usage.md`](../../docs/infrastructure/mcp-usage.md): finalized in §6.
-- [ ] [`docs/infrastructure/superpowers-policy.md`](../../docs/infrastructure/superpowers-policy.md): finalized in §8.
-- [ ] Reciprocal XREF sweep: add a `-> XREF: 00-infrastructure/TODO-08 §<N>` line to TODO-02 §3 (Hook Routing Matrix) referencing this TODO's §3-§5, §10-§12; to TODO-02 §4 (External-Reviewer Contract) referencing §3, §5; to TODO-06 §8 (todo-graph MCP) referencing §1, §6; to TODO-07 §1 (LSP-MCP bridge) referencing §1, §6, §12 (lint phantom-include consumer).
-- [ ] Update [`todo/00-infrastructure/INDEX.md`](INDEX.md) Active TODOs section: add a TODO-08 row with the same one-paragraph blurb style as TODO-06 / TODO-07.
-- [ ] Update [`todo/TODO-00-INDEX.md`](../TODO-00-INDEX.md) (root index): same row addition.
-- [ ] Update memory: record `feedback_codex_no_model_or_effort.md` (already done), `feedback_mcp_usage_first.md` (prefer MCP over grep), `project_automation_hardening_complete.md` (TODO-08 done -- once shipped).
-- [ ] Commit: `"docs: sync CLAUDE.md / ai-system.md / superpowers-policy + reciprocal XREFs for TODO-08"`
+- [x] CLAUDE.md updates landed in lockstep with each section: Codex Invocation Policy paragraph (shipped with §2), MCP Usage 3-bullet pointer (shipped with §6), Mandatory Skill Triggers rows for `receiving-code-review` / section-commit gate / four-dispatch policy / `Accepted:` / `Deferred:` XREF grammar (shipped with §3 / §4 / §5 / §8). Per `feedback_todo_notes_brevity` the deeper doctrine lives in `docs/infrastructure/*.md`; CLAUDE.md keeps a 1-line pointer.
+- [x] [`docs/infrastructure/ai-system.md`](../../docs/infrastructure/ai-system.md): Hook Routing Matrix expanded with TODO-08 expansion note covering §3 (`receiving_review_required.py`), §4 (`section_commit_gate.py`), §5 four-dispatch enforcement (`codex_review_completed.py` + `last-review-stamps.json`), §7 (`MANIFEST.md` + `audit-hooks.sh`), §10 (`skill_step_observer` / `skill_step_block` / `skill_step_map`), §11 (SessionStart / UserPromptSubmit / Stop / SubagentStop / PreCompact + `tool_history_writer.py`), §12 (lint Check 6/7/8 helpers). External-Reviewer Contract subsection points at §3 hard gate + §5 four-dispatch enforcement; MCP Server Set subsection points at §1 cross-config; AI-Slop Content Gates subsection added in §12; Skill-Step Telemetry subsection landed with §10; Hook Event Surface subsection landed with §11.
+- [x] [`docs/infrastructure/mcp-usage.md`](../../docs/infrastructure/mcp-usage.md): finalized in §6 (12 todo-graph + 15 lsp-bridge tools, when-to-use / when-not-to-use, cross-tool parity story).
+- [x] [`docs/infrastructure/superpowers-policy.md`](../../docs/infrastructure/superpowers-policy.md): finalized in §8 (suppression policy + load-bearing / non-load-bearing skill split).
+- [x] Reciprocal XREF sweep: appended `> **XREF (2026-04-28):**` prose paragraphs to TODO-02 §3 (Hook Routing Matrix) referencing TODO-08 §3-§5 + §10-§12, TODO-02 §4 (External-Reviewer Contract) referencing TODO-08 §3 + §5, TODO-06 §8 (todo-graph MCP) referencing TODO-08 §1 + §6, TODO-07 §1 (LSP-MCP bridge) referencing TODO-08 §1 + §6 + §12. Prose-paragraph form chosen over `-> XREF:` line so verified stamps in those sections are not disturbed.
+- [x] [`todo/00-infrastructure/INDEX.md`](INDEX.md) already carries the TODO-08 row (ship-time addition, line 53 onward). No further edit needed.
+- [x] [`todo/TODO-00-INDEX.md`](../TODO-00-INDEX.md) is domain-only (lists 14 domains, no per-TODO rows); the per-TODO listing lives in each domain's INDEX.md. Spec wording superseded by the domain-only structure -- no row needed at the root.
+- [x] Memory: `feedback_codex_no_model_or_effort.md` (shipped 2026-04-26), `feedback_mcp_usage_first.md` (this commit -- prefer MCP over grep umbrella), `project_automation_hardening_complete.md` (this commit -- §1-§13+§15 shipped, §14 still open). MEMORY.md index updated.
+- [x] Commit: `docs: sync CLAUDE.md / ai-system.md / superpowers-policy + reciprocal XREFs for TODO-08` (this commit).
 
-**Test checkpoint:** `bash scripts/audit-ai-system.sh` green; `bash scripts/test-tooling.sh` green; `bash scripts/build.sh` green (no kernel impact); `bash scripts/todo-graph/validate.py` green (no stale XREFs). Both indexes show the new TODO-08 row. Test on: Linux WSL2 dev host.
+**Test checkpoint:** `bash scripts/audit-ai-system.sh` PASS (7/7 checks); `bash scripts/test-tooling.sh --quiet` PASS (270/270); kernel build untouched (docs + memory + TODO files only); both indexes carry the TODO-08 row (root index intentionally domain-only). Tested on: Linux WSL2 dev host.
+
+> **Notes:**
+> - Doctrine sync was kept in lockstep across §1-§12: CLAUDE.md additions and `docs/infrastructure/*.md` subsections shipped with each section's commit, not batched.
+> - Reciprocal XREFs use `> **XREF (2026-04-28):**` prose paragraphs (not `-> XREF:` checklist lines) so the verified stamps in TODO-02 / TODO-06 / TODO-07 sections stay intact. Future readers grep `XREF (2026` to find the back-pointers.
+> - `todo/TODO-00-INDEX.md` is structurally domain-only (the 14 domain folders, not 86 per-TODO rows); the spec line "same row addition" is superseded by the current index shape -- per-TODO listing is in `todo/00-infrastructure/INDEX.md`.
+> - Memory: `feedback_mcp_usage_first.md` is the umbrella over `feedback_lsp_bridge_over_grep.md` (both MCP servers come first, not just one); `project_automation_hardening_complete.md` records §1-§13+§15 shipped and the open §14.
+> - §14 (Copilot CLI removal) remains; not in this section's scope. Tracked separately in TODO-08 IO row 14.
 
 ---
 
