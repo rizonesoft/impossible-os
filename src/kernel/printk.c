@@ -3,6 +3,19 @@
  *
  * Outputs formatted text to BOTH the framebuffer console and serial port.
  * Supports: %d, %u, %x, %p, %s, %c, %%
+ *
+ * Codex H1 fix (2026-04-28 review of Serial Log Standardization
+ * section): the older char-at-a-time printk() let a concurrent klog()
+ * line interleave between any two characters of a printk() line
+ * because klog() holds the serial spinlock for a full line while
+ * printk() acquired the lock per-character via serial_putchar(). The
+ * section ship stamp had accepted "printk emergency bypass (intentional)" but
+ * 13 src files use printk() outside the panic path -- the bypass was
+ * not actually quarantined to emergencies. Fixed by formatting the
+ * whole printk() output into a single bounded buffer and calling
+ * serial_write() ONCE per printk() invocation. Now both klog() and
+ * printk() emit lines atomically; the serial log can no longer have
+ * interleaved partial lines from the two surfaces.
  * ============================================================================ */
 
 #include "kernel/printk.h"
@@ -15,57 +28,69 @@ typedef __builtin_va_list va_list;
 #define va_end(ap)          __builtin_va_end(ap)
 #define va_arg(ap, type)    __builtin_va_arg(ap, type)
 
-/* Output a character to both serial and framebuffer */
-static void printk_putchar(char c)
+/* Per-printk()-call line buffer. Sized to match klog() live path
+ * (klog.c:934 char line[512]) so any caller migrated from printk()
+ * to klog() never sees a smaller capacity. The truncation marker
+ * '~' lands at line[511] when the format would have exceeded the
+ * buffer, mirroring klog.c:1037. */
+#define PRINTK_LINE_MAX 512
+
+typedef struct {
+    char  buf[PRINTK_LINE_MAX];
+    int   pos;
+    int   truncated;
+} printk_line_t;
+
+static inline void plnk_putc(printk_line_t *l, char c)
 {
-    if (c == '\n')
-        serial_putchar('\r');
-    serial_putchar(c);
-    fb_putchar(c);
+    if (l->pos >= PRINTK_LINE_MAX - 1) {
+        l->truncated = 1;
+        return;
+    }
+    l->buf[l->pos++] = c;
 }
 
-static void printk_write(const char *s)
+static inline void plnk_puts(printk_line_t *l, const char *s)
 {
     while (*s) {
-        printk_putchar(*s++);
+        if (l->pos >= PRINTK_LINE_MAX - 1) {
+            l->truncated = 1;
+            return;
+        }
+        l->buf[l->pos++] = *s++;
     }
 }
 
-/* Print unsigned integer in given base */
-static void print_uint(uint64_t val, uint32_t base, uint32_t min_digits)
+/* Print unsigned integer in given base into the line buffer. */
+static void plnk_uint(printk_line_t *l, uint64_t val, uint32_t base, uint32_t min_digits)
 {
     const char digits[] = "0123456789ABCDEF";
-    char buf[20];
+    char tmp[20];
     int i = 0;
 
     if (val == 0) {
-        buf[i++] = '0';
+        tmp[i++] = '0';
     } else {
         while (val > 0) {
-            buf[i++] = digits[val % base];
+            tmp[i++] = digits[val % base];
             val /= base;
         }
     }
-
-    /* Pad with zeros if needed */
     while (i < (int)min_digits) {
-        buf[i++] = '0';
+        tmp[i++] = '0';
     }
-
-    /* Print in reverse */
     while (i > 0) {
-        printk_putchar(buf[--i]);
+        plnk_putc(l, tmp[--i]);
     }
 }
 
-/* Print signed integer */
-static void print_int(int64_t val)
+static void plnk_int(printk_line_t *l, int64_t val)
 {
     if (val < 0) {
-        printk_putchar('-');
-        print_uint((uint64_t)(-val), 10, 0);
+        plnk_putc(l, '-');
+        plnk_uint(l, (uint64_t)(-val), 10, 0);
     } else {
-        print_uint((uint64_t)val, 10, 0);
+        plnk_uint(l, (uint64_t)val, 10, 0);
     }
 }
 
@@ -74,19 +99,30 @@ void printk(const char *fmt, ...)
     va_list ap;
     va_start(ap, fmt);
 
+    printk_line_t L;
+    L.pos = 0;
+    L.truncated = 0;
+
     while (*fmt) {
         if (*fmt != '%') {
-            printk_putchar(*fmt++);
+            /* Plain newline -- serial_write() inserts \r before every \n
+             * itself (see src/kernel/drivers/serial.c:96-98), so DO NOT
+             * pre-expand here. Codex re-adversarial M4 fix (2026-04-28
+             * review of Serial Log Standardization section): the earlier
+             * pre-expansion produced \r\r\n on serial because both
+             * surfaces normalized. fb_write() handles plain \n natively. */
+            plnk_putc(&L, *fmt++);
             continue;
         }
 
         fmt++; /* skip '%' */
         if (*fmt == '\0') break;
-        if (*fmt == '%') { printk_putchar('%'); fmt++; continue; }
+        if (*fmt == '%') { plnk_putc(&L, '%'); fmt++; continue; }
 
         /* Parse zero-pad flag */
         int zero_pad = 0;
         if (*fmt == '0') { zero_pad = 1; fmt++; }
+        (void)zero_pad;
 
         /* Parse width */
         uint32_t width = 0;
@@ -98,48 +134,36 @@ void printk(const char *fmt, ...)
         /* Parse length modifier: skip l, ll, h, hh */
         while (*fmt == 'l' || *fmt == 'h') fmt++;
 
-        (void)zero_pad; /* width already handled by min_digits */
-
         /* Specifier */
         switch (*fmt) {
         case 'd':
         case 'i':
-            print_int(va_arg(ap, int64_t));
+            plnk_int(&L, va_arg(ap, int64_t));
             break;
-
         case 'u':
-            print_uint(va_arg(ap, uint64_t), 10, width);
+            plnk_uint(&L, va_arg(ap, uint64_t), 10, width);
             break;
-
         case 'x':
-            print_uint(va_arg(ap, uint64_t), 16, width);
-            break;
-
         case 'X':
-            print_uint(va_arg(ap, uint64_t), 16, width);
+            plnk_uint(&L, va_arg(ap, uint64_t), 16, width);
             break;
-
         case 'p':
-            printk_write("0x");
-            print_uint(va_arg(ap, uint64_t), 16, 16);
+            plnk_puts(&L, "0x");
+            plnk_uint(&L, va_arg(ap, uint64_t), 16, 16);
             break;
-
         case 's': {
             const char *s = va_arg(ap, const char *);
-            printk_write(s ? s : "(null)");
+            plnk_puts(&L, s ? s : "(null)");
             break;
         }
-
         case 'c':
-            printk_putchar((char)va_arg(ap, int));
+            plnk_putc(&L, (char)va_arg(ap, int));
             break;
-
         case '\0':
             goto done;
-
         default:
-            printk_putchar('%');
-            printk_putchar(*fmt);
+            plnk_putc(&L, '%');
+            plnk_putc(&L, *fmt);
             break;
         }
 
@@ -148,4 +172,17 @@ void printk(const char *fmt, ...)
 
 done:
     va_end(ap);
+
+    /* Truncation marker if the format overflowed the buffer.
+     * Reserve space for the marker by overwriting the last byte. */
+    if (L.truncated && L.pos >= 1) {
+        L.buf[PRINTK_LINE_MAX - 2] = '~';
+        L.pos = PRINTK_LINE_MAX - 1;
+    }
+    L.buf[L.pos] = '\0';
+
+    /* Atomic emit: one lock-protected serial write + one framebuffer
+     * write for the whole formatted line. */
+    serial_write(L.buf);
+    fb_write(L.buf);
 }

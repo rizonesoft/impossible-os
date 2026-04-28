@@ -248,7 +248,7 @@ def top_level_str(text, key):
     return m.group(1) if m else None
 
 drift = []
-for key in ("model", "model_reasoning_effort"):
+for key in ("model",):  # effort is a user dial, not pinned (see fixture preamble 2026-04-28 entry)
     expect = top_level_str(fixture, key)
     actual = top_level_str(user, key)
     if expect is None:
@@ -267,7 +267,7 @@ PY
 )"
     case "$POLICY_OUT" in
         PASS::*)
-            t_pass "codex_config_policy  ~/.codex/config.toml model+effort match policy fixture"
+            t_pass "codex_config_policy  ~/.codex/config.toml model matches policy fixture (effort is a user dial; not audited)"
             ;;
         FAIL::*)
             DETAIL="${POLICY_OUT#FAIL::}"

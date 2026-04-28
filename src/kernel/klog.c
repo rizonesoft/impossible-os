@@ -82,8 +82,20 @@ static uint32_t vformat_buf(char *buf, uint32_t bufsize, const char *fmt,
                              va_list ap)
 {
     uint32_t pos = 0;
+    int truncated = 0;
 
-    #define BUF_PUT(c) do { if (pos < bufsize - 1) buf[pos++] = (c); } while(0)
+    /* Codex M3 fix (2026-04-28 review of Serial Log Standardization
+     * section): the BUF_PUT macro silently dropped chars once pos
+     * reached bufsize-1 (reserved for NUL). A long %s that overflowed
+     * the message buffer left the message silently short -- the live
+     * klog() line-level truncation marker doesn't fire because the
+     * already-truncated message fits within the line buffer's
+     * remaining space. Track the silent-drop case and append '~' as
+     * the final byte before NUL when truncation actually happened. */
+    #define BUF_PUT(c) do { \
+        if (pos < bufsize - 1) buf[pos++] = (c); \
+        else truncated = 1; \
+    } while(0)
 
     while (*fmt) {
         if (*fmt != '%') {
@@ -167,6 +179,13 @@ static uint32_t vformat_buf(char *buf, uint32_t bufsize, const char *fmt,
         fmt++;
     }
 done:
+    if (truncated && pos >= 1 && pos < bufsize) {
+        /* Replace last char with '~' so the marker survives even when
+         * pos == bufsize-1. Caller's line-level fallback can still add
+         * its own marker, but this one survives the snapshot copy
+         * regardless of what the line-level path does. */
+        buf[pos - 1] = '~';
+    }
     buf[pos] = '\0';
     #undef BUF_PUT
     return pos;
@@ -835,8 +854,24 @@ void klog_set_screen_level(log_level_t min_level)
 
 const klog_entry_t *klog_get_ring(uint32_t *out_count, uint32_t *out_head)
 {
+    /* Codex M2 fix (2026-04-28 review of Serial Log Standardization
+     * section): take s_klog_lock around the head/count read so the
+     * caller sees a consistent (count, head) pair. The previous
+     * unlocked read could observe count advanced but head still at
+     * the old value (or vice versa) when a concurrent klog() append
+     * raced with this read. test_klog.c relies on the before/after
+     * head check; without the lock the test could observe a stale
+     * value and assert against the wrong entry. The returned ring
+     * pointer is still the live array (caller reads at their own
+     * race risk for entry contents); a fully snapshot-safe API
+     * would need to copy entries into caller storage, deferred
+     * because no production caller currently iterates entries
+     * concurrently with logging. */
+    unsigned long flags;
+    spin_lock_irqsave(&s_klog_lock, &flags);
     if (out_count) *out_count = klog_ring_count;
     if (out_head)  *out_head  = klog_ring_head;
+    spin_unlock_irqrestore(&s_klog_lock, flags);
     return klog_ring;
 }
 
@@ -933,9 +968,32 @@ void klog(log_level_t level, const char *subsystem, const char *fmt, ...)
          * Max size: 11 (ts) + 7 (level) + 16 (subsys+": ") + 256 (msg) + ANSI ~40 = 330 */
         char line[512];
         uint32_t pos = 0;
+        int line_truncated = 0;
 
-        #define LP(c) do { if (pos < sizeof(line)-1) line[pos++] = (c); } while(0)
-        #define LS(s) do { const char *_p = (s); while (*_p && pos < sizeof(line)-1) line[pos++] = *_p++; } while(0)
+        /* Codex M3 fix (2026-04-28 review of Serial Log Standardization
+         * section): reserve TAIL_RESERVE bytes at the end of `line` for
+         * ANSI_RESET + truncation marker + '\n' + '\0'. The earlier
+         * formatter let LS() consume right up to sizeof(line)-1, so a
+         * long subsystem/message could fill the buffer before the
+         * trailing ANSI_RESET was appended -- the terminal then stayed
+         * in the warning/error/test color for subsequent output. With
+         * the reserve, ANSI_RESET always fits in the unconditional
+         * trailer below. ANSI_RESET = "\x1b[0m" is 4 chars; reserve 16
+         * to give headroom for any future suffix additions. */
+        #define KLOG_LINE_TAIL_RESERVE 16U
+        #define KLOG_LINE_USABLE (sizeof(line) - 1U - KLOG_LINE_TAIL_RESERVE)
+
+        #define LP(c) do { \
+            if (pos < KLOG_LINE_USABLE) line[pos++] = (c); \
+            else line_truncated = 1; \
+        } while(0)
+        #define LS(s) do { \
+            const char *_p = (s); \
+            while (*_p) { \
+                if (pos >= KLOG_LINE_USABLE) { line_truncated = 1; break; } \
+                line[pos++] = *_p++; \
+            } \
+        } while(0)
 
         /* Timestamp: [  X.XXX] */
         uint64_t ms  = (uint64_t)snapshot.timestamp * 10;
@@ -1031,16 +1089,25 @@ void klog(log_level_t level, const char *subsystem, const char *fmt, ...)
                 if (level_full_line[level]) LS(ANSI_RESET);
             }
         }
-        /* Ensure line always ends with newline + NUL, even if truncated */
-        if (pos >= sizeof(line) - 2) {
-            pos = sizeof(line) - 2;
-            line[pos - 1] = '~';  /* truncation marker */
+        /* Codex M3 fix: emit ANSI_RESET unconditionally (the reserved
+         * tail bytes guarantee it fits even when the main format
+         * truncated). This stops the terminal from staying in color
+         * after a long-line truncation. */
+        {
+            const char *reset = ANSI_RESET;
+            while (*reset && pos < sizeof(line) - 4)
+                line[pos++] = *reset++;
         }
-        LP('\n');
+        if (line_truncated && pos < sizeof(line) - 3) {
+            line[pos++] = '~';  /* truncation marker (after ANSI_RESET) */
+        }
+        if (pos < sizeof(line) - 2) line[pos++] = '\n';
         line[pos] = '\0';
 
         #undef LP
         #undef LS
+        #undef KLOG_LINE_TAIL_RESERVE
+        #undef KLOG_LINE_USABLE
 
         serial_write(line);
     }

@@ -3,27 +3,38 @@
 #
 # Single source of truth for what the user's `~/.codex/config.toml` SHOULD
 # carry at the top level, audited by `scripts/audit-ai-system.sh` Check 7
-# (codex_config_policy). The doctrine reason for these values lives in
-# CLAUDE.md "Codex Invocation Policy"; the values themselves live here so a
-# future model bump is a single-file edit, not a doctrine rewrite.
+# (codex_config_policy). The doctrine reason for the values that ARE pinned
+# lives in CLAUDE.md "Codex Invocation Policy"; the values themselves live
+# here so a future model bump is a single-file edit, not a doctrine rewrite.
 #
 # Memory anchor:
 #   `feedback_codex_no_model_or_effort` records the user's standing rule:
 #   never pass `--model` or `--effort` from Claude; let Codex CLI use the
 #   defaults from `~/.codex/config.toml`.
 #
+# What this fixture pins (and what it deliberately does NOT):
+#   - `model` IS pinned. The supported reviewer model is a doctrine concern
+#     because dispatch prompts assume a known capability tier (gpt-5.5). A
+#     user-machine config naming a retired or wildly different model is a
+#     real drift the audit should catch.
+#   - `model_reasoning_effort` is NOT pinned. It is a user dial: low /
+#     medium / high are all legitimate choices and the user changes it for
+#     budget vs. depth tradeoffs. The audit must not dictate this value;
+#     pinning it here would defeat the user point of having local control.
+#     (Removed 2026-04-28 after the audit failed on a legitimate "high"
+#     override the user had set deliberately.)
+#
 # Drift policy:
-#   - User-machine config matching this fixture: PASS.
-#   - User-machine config differs: FAIL with the expected and observed values.
+#   - User-machine config `model` matches: PASS.
+#   - User-machine config `model` differs: FAIL with expected/observed.
 #   - User-machine config absent (`~/.codex/config.toml` not present): SKIP-
 #     with-WARN (fresh dev env or CI runner; not a repo-state failure).
 #
 # Updating this fixture:
-#   When the supported Codex model or reasoning-effort default changes, edit
-#   this file AND the matching paragraph in CLAUDE.md "Codex Invocation
-#   Policy" in the same commit. The audit script reads this file and reports
-#   any divergence; CLAUDE.md is doctrine prose for human readers.
+#   When the supported Codex model changes, edit this file AND the matching
+#   paragraph in CLAUDE.md "Codex Invocation Policy" in the same commit.
+#   The audit script reads this file and reports any divergence; CLAUDE.md
+#   is doctrine prose for human readers.
 # ============================================================================
 
 model = "gpt-5.5"
-model_reasoning_effort = "medium"
