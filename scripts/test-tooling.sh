@@ -4181,12 +4181,13 @@ else
 import sys, time, json
 sys.path.insert(0, '.claude/hooks')
 
-# Test 1: risk_tier parsed from RISK_TIER=trivial in skill args.
-import re
-args = "Section 22 RISK_TIER=trivial host-side review-pipeline doctrine"
-m = re.search(r"RISK_TIER\s*=\s*(trivial|standard|critical)\b", args, re.IGNORECASE)
-assert m and m.group(1).lower() == "trivial", "Test 1 risk_tier parse failed"
-print("OK risk_tier_declared")
+# Test 1: RISK_TIER doctrine RETRACTED 2026-04-29 (TODO-08 section-22
+# partial retraction). Smoke check that the observer's uniform 60-min
+# spiral budget constant is intact.
+import skill_step_observer as sso_mod
+assert sso_mod._SPIRAL_BUDGET_NS == 60 * 60 * 1_000_000_000, \
+    f"spiral budget should be 60 min uniform, got {sso_mod._SPIRAL_BUDGET_NS}"
+print("OK spiral_budget_uniform_60min")
 
 # Test 2: bootstrap_mode reports True for hook's own file in staged diff.
 import _bootstrap_mode
@@ -4197,24 +4198,23 @@ _bootstrap_mode._staged_paths = lambda root: ["src/kernel/foo.c"]
 assert not _bootstrap_mode.is_bootstrap_commit(hook_self), "Test 2 bootstrap False path failed"
 print("OK bootstrap_mode_warn")
 
-# Test 3: spiral check emits at 2x budget, dedups via escalation counter.
+# Test 3: spiral check on uniform 60-min budget; 2x = 120 min, 4x = 240 min.
 import skill_step_observer as sso
 class _Stderr:
     def __init__(self): self.buf = []
     def write(self, s): self.buf.append(s)
 sso.sys.stderr = _Stderr()
 entry = {
-    "started_ts": time.time_ns() - 70 * 60 * 1_000_000_000,
-    "risk_tier": "trivial",
+    "started_ts": time.time_ns() - 130 * 60 * 1_000_000_000,
     "spiral_check_emitted": 0,
 }
 sso._spiral_check(entry, "implement-todo-section")
-assert any("SPIRAL CHECK" in s and "2x" in s for s in sso.sys.stderr.buf), "Test 3 spiral 2x not fired"
+assert any("SPIRAL CHECK" in s and "2x" in s for s in sso.sys.stderr.buf), "Test 3 spiral 2x not fired (uniform 60-min budget)"
 assert entry["spiral_check_emitted"] == 1, "Test 3 escalation counter not bumped"
 sso.sys.stderr = _Stderr()
 sso._spiral_check(entry, "implement-todo-section")
 assert sso.sys.stderr.buf == [], "Test 3 dedup failed"
-entry["started_ts"] = time.time_ns() - 130 * 60 * 1_000_000_000
+entry["started_ts"] = time.time_ns() - 250 * 60 * 1_000_000_000
 sso._spiral_check(entry, "implement-todo-section")
 assert any("4x" in s for s in sso.sys.stderr.buf), "Test 3 spiral 4x not fired"
 print("OK spiral_check_warn")

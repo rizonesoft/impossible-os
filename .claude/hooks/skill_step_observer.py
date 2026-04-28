@@ -350,19 +350,13 @@ def main() -> int:
                 m = re.search(r"todo/[\w./-]+TODO-\d[\w./-]*\.md", args_str)
                 if m:
                     todo_path = m.group(0)
-            # TODO-08 §22 #1 RISK_TIER doctrine: parse the tier from
-            # skill args (`RISK_TIER=trivial|standard|critical`).
-            # Default = standard when undeclared (Codex design pointer
-            # 2: silent default + section_commit_gate surfaces tier in
-            # its BLOCK message so the agent notices).
-            risk_tier = "standard"
-            if isinstance(args_str, str) and args_str:
-                tm = re.search(
-                    r"RISK_TIER\s*=\s*(trivial|standard|critical)\b",
-                    args_str, re.IGNORECASE,
-                )
-                if tm:
-                    risk_tier = tm.group(1).lower()
+            # TODO-08 §22 partial retraction (2026-04-29): RISK_TIER
+            # doctrine removed -- every section runs the full pipeline
+            # (design + adversarial + consistency + perf + conditional
+            # re-adversarial + fix loop). The tier classifier removed
+            # value from the implement-todo-section skill enforcement.
+            # Spiral check retained with uniform 60-min budget; bootstrap-
+            # mode and state-file diagnostics retained.
             state[fresh_skill] = {
                 "started_ts": _ts_ns(),
                 "started_head_sha": head,
@@ -370,8 +364,7 @@ def main() -> int:
                 "steps_observed": [],
                 "args": args_str,
                 "todo_path": todo_path,
-                "risk_tier": risk_tier,
-                "spiral_check_emitted": 0,  # escalation count: 0->2x->4x
+                "spiral_check_emitted": 0,  # escalation count: 0->2x->4x of 60 min
             }
             _save_state(state_path, state)
             return 0
@@ -482,27 +475,24 @@ def main() -> int:
         return 0
 
 
-# Tier wall-clock budgets (ns). Trivial = 30 min, standard = 90 min,
-# critical = 4 hours. Sourced from implement-todo-section/SKILL.md
-# "Risk-Tiered Review Pipeline" (TODO-08 §22 #1).
-_BUDGET_NS = {
-    "trivial":  30 * 60 * 1_000_000_000,
-    "standard": 90 * 60 * 1_000_000_000,
-    "critical": 4 * 60 * 60 * 1_000_000_000,
-}
+# Uniform skill wall-clock budget (60 min) per TODO-08 §22 partial
+# retraction (2026-04-29). The earlier RISK_TIER doctrine right-sized
+# Codex pipelines per-tier and was retracted because the classifier
+# undermined implement-todo-section enforcement; spiral check retained
+# at a single uniform budget so the skill flags long-running flows
+# without right-sizing reviews away.
+_SPIRAL_BUDGET_NS = 60 * 60 * 1_000_000_000
 
 
 def _spiral_check(entry: Dict, skill: str) -> None:
     """Emit a one-shot stderr `systemMessage` when elapsed wall-clock
-    exceeds 2x or 4x the tier budget. Pure advisory; never blocks.
+    exceeds 2x or 4x the uniform 60-min budget. Pure advisory; never
+    blocks. Persists escalation counter to dedup re-emissions.
     """
     started_ts = entry.get("started_ts", 0)
     if not isinstance(started_ts, int) or started_ts <= 0:
         return
-    tier = entry.get("risk_tier", "standard")
-    if tier not in _BUDGET_NS:
-        tier = "standard"
-    budget = _BUDGET_NS[tier]
+    budget = _SPIRAL_BUDGET_NS
     elapsed = _ts_ns() - started_ts
     emitted = entry.get("spiral_check_emitted", 0)
     if not isinstance(emitted, int):
@@ -520,10 +510,10 @@ def _spiral_check(entry: Dict, skill: str) -> None:
     budget_min = budget / 60_000_000_000
     sys.stderr.write(
         f"[skill-step-observer] SPIRAL CHECK -- skill `{skill}` "
-        f"(RISK_TIER={tier}) elapsed {elapsed_min:.0f} min, "
-        f"{threshold} of {budget_min:.0f} min budget. Consider: declare "
-        f"the section done, escalate the tier (RISK_TIER=...), or split "
-        f"the section. Pure advisory; this does not block.\n"
+        f"elapsed {elapsed_min:.0f} min, {threshold} of {budget_min:.0f} "
+        f"min budget. Consider: declare the section done, split it, or "
+        f"document why the work is genuinely larger than 60 min. Pure "
+        f"advisory; this does not block.\n"
     )
     entry["spiral_check_emitted"] = new_level
 

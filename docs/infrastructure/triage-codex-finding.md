@@ -1,99 +1,84 @@
-# Triage Codex Finding -- The 4-Option Discipline
+# Triage Codex Finding -- The 3-Option Discipline
 
-> Reference doctrine consumed by `superpowers:receiving-code-review`. Per the
-> [review-pipeline right-sizing doctrine](../../todo/00-infrastructure/TODO-08-automation-hardening.md#22-review-pipeline-right-sizing-doctrine----risk_tier--bootstrap--tier-aware-triage--state-diagnosis--spiral-check)
-> Codex findings get triaged against the active task's `RISK_TIER`, not
-> adopted unconditionally.
+> Reference doctrine consumed by `superpowers:receiving-code-review`. Every
+> Codex finding gets one of three classifications.
 
 ## Background
 
-Pre-doctrine, the receiving-code-review pattern offered three triage options:
+The receiving-code-review pattern offers three triage options:
 
 1. **Fix** -- valid finding, fix at root cause.
 2. **Reject** -- false positive, push back with code evidence.
 3. **Accept-XREF** -- valid but out-of-scope, defer to a concrete `[ ]` item
    in another TODO with a domain-qualified XREF.
 
-This worked when every task ran the full review pipeline. Once `RISK_TIER`
-shipped, a fourth option became necessary: a `trivial` task should not
-over-adopt findings whose severity-vs-risk ratio is calibrated for
-`standard` or `critical` work.
+> **History note (2026-04-29 retraction):** an earlier draft of this doc
+> added a 4th `Defer-to-tier` option keyed on a `RISK_TIER` declaration in
+> the active skill flow. That doctrine was retracted because the tier
+> classifier removed value from `implement-todo-section` enforcement -- a
+> task declared `trivial` would skip Codex dispatches the section deserved.
+> Every section now runs the full Codex pipeline (design + adversarial +
+> consistency + perf + conditional re-adversarial + fix loop), so
+> `Defer-to-tier` no longer has a meaningful place in triage. Findings
+> that genuinely belong to lower-priority work get filed as `Accept-XREF`
+> with a concrete owner item.
 
-## The Four Options
+## The Three Options
 
 | Option | When | Stamp shape |
 |---|---|---|
-| **Fix** | Valid finding within scope, fits the active RISK_TIER | (no stamp; just fixed) |
+| **Fix** | Valid finding within scope of the section being reviewed | (no stamp; just fixed) |
 | **Reject** | False positive | (no stamp; rejection rationale lives in chat / commit message) |
 | **Accept-XREF** | Valid, out-of-scope for THIS section, owned elsewhere | `Accepted: [<sev>] <finding> -> XREF: <domain/TODO-name (item: ...)>` |
-| **Defer-to-tier** (NEW) | Valid finding, lower priority than the active RISK_TIER warrants | `Deferred: [<sev>] <finding> (deferred-to-tier: <next-tier-task-XREF>)` |
 
-## When to Defer-to-tier
-
-The decision tree:
+## Decision Tree
 
 ```
 Is the finding valid?
-├── No  -> Reject
-└── Yes -> Is it in-scope (this section / this RISK_TIER)?
+├── No  -> Reject (with code-evidence pushback)
+└── Yes -> Is it in-scope for the section being reviewed?
            ├── Yes (in-scope) -> Fix
-           └── No  -> Is the owner a concrete OTHER section/TODO?
-                      ├── Yes -> Accept-XREF
-                      └── No  -> Is the finding's severity calibrated for
-                                 a HIGHER tier than this task?
-                                 ├── Yes -> Defer-to-tier
-                                 └── No  -> Fix (re-evaluate; the fact
-                                            that nobody owns it means
-                                            you do)
+           └── No  -> Is the owner a concrete OTHER section/TODO with
+                      a concrete `[ ]` checklist item?
+                      ├── Yes -> Accept-XREF (cite the item by name/line)
+                      └── No  -> File the concrete owner item NOW (Branch
+                                 C/D scope-gap protocol), then Accept-XREF
+                                 to it.
 ```
 
 ## Examples
 
-### Defer-to-tier (correct use)
+### Fix (correct use)
 
-A `RISK_TIER=trivial` task ships a 40-line host-side helper. Codex
-adversarial flags an M finding: "race possible if two PostToolUse hooks
-fire concurrently against the same state file". The codebase already
-mitigates this for kernel-tier work via `fcntl.flock` in
-`codex_review_completed.py::_record_stamp`; the host-side helper does not
-hold load-bearing state.
+A `review-todo-section` step 5 adversarial Codex flags an H finding: a
+`mutex_lock()` race condition in the section's own implementation file.
 
-→ **Defer-to-tier.** Stamp:
-```
-> **Deferred:** [M] Concurrent PostToolUse race on host-side helper state -- fcntl.flock pattern from kernel-tier work would close it (deferred-to-tier: standard tier follow-up; the helper does not yet hold load-bearing state)
-```
+→ **Fix.** Same-section issue; fix at root cause.
 
-### Fix (NOT defer-to-tier)
+### Reject (correct use)
 
-A `RISK_TIER=trivial` task adds a regex to a hook. Codex adversarial flags
-an H finding: the regex has catastrophic backtracking on adversarial input.
+Codex adversarial flags an M finding: "function X is missing a NULL check".
+Reading the cited line shows the caller of X already does an `assert(p !=
+NULL)` 3 lines above the call site.
 
-→ **Fix.** Even at trivial tier, an H finding that affects the hook's own
-correctness gets fixed. Defer-to-tier is for severity-vs-priority gaps,
-not for severity-vs-tier overrides on the section's own correctness.
+→ **Reject.** Code evidence: caller-side null check at `foo.c:42`.
 
-### Accept-XREF (NOT defer-to-tier)
+### Accept-XREF (correct use)
 
 Codex adversarial flags an M finding: "function signature inconsistent with
 the equivalent in src/kernel/foo.c". The kernel side is owned by another
 TODO section.
 
-→ **Accept-XREF.** Defer-to-tier is for "lower-priority work that some
-later tier will sweep up"; this finding has a known concrete owner now.
+→ **Accept-XREF.** Open the kernel TODO, find the concrete item that owns
+the signature drift, cite it by line number.
 
-## Rule of thumb
-
-`Defer-to-tier` is the option of LAST resort among the four. If you find
-yourself reaching for it on more than ~10% of findings, the active task's
-RISK_TIER is probably wrong (declared trivial when it should be standard).
-Escalate the tier rather than deferring half the findings.
-
-The stamp's `(deferred-to-tier: ...)` parenthetical is mandatory and
-human-readable -- it should name the next task / sweep that will pick the
-finding up, not just say "later".
+If no concrete owner item exists, file one BEFORE writing the stamp (per
+the `Accepted-XREF concreteness check` in `review-todo-section/SKILL.md`
+step 15 -- the same rule keeps `Accepted: TODO-XX §N` from becoming a
+dead-end paper trail).
 
 ## Cross-references
 
-- [Review-pipeline right-sizing doctrine](../../todo/00-infrastructure/TODO-08-automation-hardening.md#22-review-pipeline-right-sizing-doctrine----risk_tier--bootstrap--tier-aware-triage--state-diagnosis--spiral-check) (parent)
+- `review-todo-section` skill step 15 (Accepted-XREF concreteness check)
 - `superpowers:receiving-code-review` (consumer; plugin-cache)
 - `feedback_codex_review_workflow` memory
