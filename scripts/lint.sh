@@ -349,6 +349,120 @@ if [ "$#" -eq 0 ]; then
 fi
 
 # ============================================================================
+# Check 6: Tautological-test detection (TODO-08 #12)
+# ============================================================================
+# Walks src/kernel/test/test_*.c and flags two AI-slop anti-patterns that
+# build green and pass the test runner but verify nothing:
+#   (a) TEST_ASSERT_EQ(X, X, ...) where LHS == RHS string-identical
+#   (b) TEST_ASSERT(true, ...) / TEST_ASSERT(1, ...)
+# Allowlist: a /* TEST-TAUTOLOGY-OK: <reason> */ marker on the same line.
+# Skip the whole check via SKIP_LINT_TAUTOLOGY=1 on the lint invocation;
+# the skip prints a visible WARN line so bypasses are auditable.
+if [ "${SKIP_LINT_TAUTOLOGY:-}" = "1" ]; then
+    echo -e "${YELLOW}warn${NC}: Check 6 (tautological-test) skipped via SKIP_LINT_TAUTOLOGY=1"
+    WARNINGS=$((WARNINGS + 1))
+else
+    # Legacy-allowlist pattern: pre-existing tautological tests get WARN
+    # (tracked for cleanup in todo/00-infrastructure/TODO-08-automation
+    # -hardening.md #12 follow-up); any NEW tautological test in any
+    # other file is ERROR. Mirrors Check 5's BARE_SECTION_LEGACY_FILES.
+    TAUTOLOGY_LEGACY_FILES=(
+        "src/kernel/test/test_boot_init.c"
+        "src/kernel/test/test_cpu_security.c"
+        "src/kernel/test/test_desktop.c"
+        "src/kernel/test/test_ixfs.c"
+        "src/kernel/test/test_peb_teb.c"
+        "src/kernel/test/test_usermode_launcher.c"
+    )
+    is_tautology_legacy() {
+        local path="$1"
+        local legacy
+        for legacy in "${TAUTOLOGY_LEGACY_FILES[@]}"; do
+            [ "$path" = "$legacy" ] && return 0
+        done
+        return 1
+    }
+
+    while IFS= read -r file; do
+        [ -z "$file" ] && continue
+        relpath="${file#"$REPO_ROOT"/}"
+        # (a) TEST_ASSERT_EQ(X, X, ...) -- whitespace-normalized compare.
+        # (b) TEST_ASSERT(true, ...) and TEST_ASSERT(1, ...).
+        # Process substitution feeds the parent shell loop so error() updates
+        # the ERRORS counter in the right scope (subshell-via-pipe lost it).
+        while IFS=: read -r f l rest; do
+            [ -z "$f" ] && continue
+            if is_tautology_legacy "$f"; then
+                warn "$f" "$l" "$rest (legacy; tracked for cleanup)"
+            else
+                error "$f" "$l" "$rest"
+            fi
+        done < <(awk -v file="$relpath" '
+            /TEST-TAUTOLOGY-OK:/ { next }
+            match($0, /TEST_ASSERT_EQ\(([^,]+),([^,]+),/, arr) {
+                lhs = arr[1]; rhs = arr[2]
+                gsub(/[ \t]+/, "", lhs); gsub(/[ \t]+/, "", rhs)
+                if (lhs == rhs && lhs != "") {
+                    printf "%s:%d:tautological-test:TEST_ASSERT_EQ(X,X) identical args (%s)\n", file, NR, lhs
+                }
+            }
+            /TEST_ASSERT\([ \t]*(true|1)[ \t]*,/ {
+                printf "%s:%d:tautological-test:TEST_ASSERT(true|1, ...) is a no-op assertion\n", file, NR
+            }
+        ' "$file" 2>/dev/null)
+    done < <(find "$REPO_ROOT/src/kernel/test" -maxdepth 1 -type f -name 'test_*.c' 2>/dev/null)
+fi
+
+# ============================================================================
+# Check 7: Stub-behind-stamp detection (TODO-08 #12)
+# ============================================================================
+# Designed to read build/todo-cache.json (TODO-06 #2 derived cache) for the
+# stamped-item -> file:symbol map and verify each [x]-stamped function has
+# a non-stub body. The TODO-06 #2 cache extension that exposes per-item
+# file:symbol mapping has not shipped yet, so this check skip-with-warns
+# until the cache contract is updated. Allowlist marker (when active):
+# /* INTENTIONAL-STUB: <reason> */ on the same line as the function body.
+# Skip the whole check via SKIP_LINT_STUB_BEHIND_STAMP=1.
+if [ "${SKIP_LINT_STUB_BEHIND_STAMP:-}" = "1" ]; then
+    echo -e "${YELLOW}warn${NC}: Check 7 (stub-behind-stamp) skipped via SKIP_LINT_STUB_BEHIND_STAMP=1"
+    WARNINGS=$((WARNINGS + 1))
+else
+    CACHE="$REPO_ROOT/build/todo-cache.json"
+    if [ ! -f "$CACHE" ]; then
+        echo -e "${YELLOW}warn${NC}: Check 7 (stub-behind-stamp) skipped -- build/todo-cache.json missing; run bash scripts/todo-graph/build-and-validate.sh"
+        WARNINGS=$((WARNINGS + 1))
+    elif ! python3 -c "import json,sys; d=json.load(open('$CACHE')); sys.exit(0 if any('stamped_items' in (e or {}) for e in d) else 2)" 2>/dev/null; then
+        echo -e "${YELLOW}warn${NC}: Check 7 (stub-behind-stamp) deferred -- build/todo-cache.json lacks per-item file:symbol map; awaiting TODO-06 cache extension"
+        WARNINGS=$((WARNINGS + 1))
+    else
+        # When the cache extension lands, this branch walks each stamped
+        # function and flags <=3-line return-constant bodies without an
+        # INTENTIONAL-STUB marker. Implementation lands when the dep does.
+        echo -e "${YELLOW}warn${NC}: Check 7 (stub-behind-stamp) cache extension present but check implementation pending"
+        WARNINGS=$((WARNINGS + 1))
+    fi
+fi
+
+# ============================================================================
+# Check 8: Phantom-include detection (TODO-08 #12)
+# ============================================================================
+# Designed to verify every #include in src/kernel/**/*.c references at least
+# one symbol from that header. Accurate detection requires clangd-grade
+# unused-include analysis via the lsp-bridge MCP server (TODO-07 #7
+# diagnostics tool). The MCP server runs as a JSON-RPC subprocess and is
+# not callable from this bash script today; design review 2026-04-28
+# deferred this check rather than ship a heuristic grep that produces
+# false positives on transitive macro-only headers. Skip via
+# SKIP_LINT_PHANTOM_INCLUDE=1 once the MCP wiring lands.
+if [ "${SKIP_LINT_PHANTOM_INCLUDE:-}" = "1" ]; then
+    echo -e "${YELLOW}warn${NC}: Check 8 (phantom-include) skipped via SKIP_LINT_PHANTOM_INCLUDE=1"
+    WARNINGS=$((WARNINGS + 1))
+else
+    echo -e "${YELLOW}warn${NC}: Check 8 (phantom-include) deferred -- requires lsp-bridge MCP integration; tracked in TODO-07 follow-up"
+    WARNINGS=$((WARNINGS + 1))
+fi
+
+# ============================================================================
 # Summary
 # ============================================================================
 echo ""

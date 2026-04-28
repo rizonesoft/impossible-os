@@ -2921,6 +2921,91 @@ rm -rf "$HEE_TMP"
 
 
 # ============================================================================
+# AI-slop content lints (TODO-08 #12)
+# ============================================================================
+# Three sub-tests exercise lint.sh Checks 6/7/8 against synthetic inputs:
+#   - Check 6 tautological-test: synthetic test file with TEST_ASSERT(true,...)
+#     in a NON-legacy path must produce a lint error.
+#   - Check 7 stub-behind-stamp: WARN-deferred path is exercised by the
+#     baseline lint run (cache extension not yet shipped).
+#   - Check 8 phantom-include: WARN-deferred path is exercised by the
+#     baseline lint run (lsp-bridge MCP integration pending).
+
+ASL_TMP="$(mktemp -d)"
+ASL_REPO="$ASL_TMP/repo"
+mkdir -p "$ASL_REPO/src/kernel/test"
+mkdir -p "$ASL_REPO/scripts"
+mkdir -p "$ASL_REPO/build"
+mkdir -p "$ASL_REPO/include"
+
+# Synthetic test file with a tautological assertion in a NON-legacy path.
+# We name the file 'test_synthetic_tautology_check_6.c' so it cannot collide
+# with the legacy allowlist.
+cat >"$ASL_REPO/src/kernel/test/test_synthetic_tautology_check_6.c" <<'EOF'
+/* Synthetic fixture for TODO-08 #12 Check 6 tautological-test test. */
+void test_func(void)
+{
+    TEST_ASSERT(true, "no-op assertion -- should be flagged");
+}
+EOF
+
+# Symlink the real lint.sh into the synthetic tree so it runs against
+# our fake src/.
+mkdir -p "$ASL_REPO/scripts"
+cp "$REPO_ROOT/scripts/lint.sh" "$ASL_REPO/scripts/lint.sh"
+
+# Run lint pointed at the synthetic test dir. Should detect the tautology
+# and exit non-zero.
+ASL_OUT="$(cd "$ASL_REPO" && bash scripts/lint.sh "$ASL_REPO/src/kernel/test/" 2>&1 || true)"
+if echo "$ASL_OUT" | grep -q "tautological-test:TEST_ASSERT(true|1, ...)"; then
+    t_pass "lint_check6_tautology  TEST_ASSERT(true,...) flagged in non-legacy path"
+else
+    t_fail "lint_check6_tautology  expected tautological-test error, got: $(echo "$ASL_OUT" | tail -3)"
+fi
+
+# Negative: the same line with /* TEST-TAUTOLOGY-OK: <reason> */ marker
+# must NOT be flagged.
+cat >"$ASL_REPO/src/kernel/test/test_synthetic_tautology_check_6.c" <<'EOF'
+/* Synthetic fixture: marker-allowlisted tautology should NOT fire. */
+void test_func(void)
+{
+    TEST_ASSERT(true, "marker"); /* TEST-TAUTOLOGY-OK: synthetic-allowlist-test */
+}
+EOF
+ASL_OUT2="$(cd "$ASL_REPO" && bash scripts/lint.sh "$ASL_REPO/src/kernel/test/" 2>&1 || true)"
+if echo "$ASL_OUT2" | grep -q "tautological-test:"; then
+    t_fail "lint_check6_marker  marker-allowlisted line should NOT fire, got: $(echo "$ASL_OUT2" | grep tautological)"
+else
+    t_pass "lint_check6_marker  /* TEST-TAUTOLOGY-OK: */ marker suppresses the lint"
+fi
+
+# Check 7 stub-behind-stamp: deferred WARN.
+ASL_OUT3="$(cd "$ASL_REPO" && bash scripts/lint.sh "$ASL_REPO/src/kernel/test/" 2>&1 || true)"
+if echo "$ASL_OUT3" | grep -q "Check 7 (stub-behind-stamp)"; then
+    t_pass "lint_check7_deferred  Check 7 deferred WARN line present"
+else
+    t_fail "lint_check7_deferred  expected deferred WARN, got: $(echo "$ASL_OUT3" | tail -3)"
+fi
+
+# Check 8 phantom-include: deferred WARN.
+if echo "$ASL_OUT3" | grep -q "Check 8 (phantom-include)"; then
+    t_pass "lint_check8_deferred  Check 8 deferred WARN line present"
+else
+    t_fail "lint_check8_deferred  expected deferred WARN, got: $(echo "$ASL_OUT3" | tail -3)"
+fi
+
+# Skip env vars produce visible WARN.
+ASL_OUT4="$(cd "$ASL_REPO" && SKIP_LINT_TAUTOLOGY=1 bash scripts/lint.sh "$ASL_REPO/src/kernel/test/" 2>&1 || true)"
+if echo "$ASL_OUT4" | grep -q "Check 6 (tautological-test) skipped via SKIP_LINT_TAUTOLOGY=1"; then
+    t_pass "lint_check6_skip  SKIP_LINT_TAUTOLOGY=1 emits visible WARN"
+else
+    t_fail "lint_check6_skip  expected skip WARN, got: $(echo "$ASL_OUT4" | tail -3)"
+fi
+
+rm -rf "$ASL_TMP"
+
+
+# ============================================================================
 # audit-ai-system.sh -- umbrella cross-tool AI drift detection
 # ============================================================================
 # Single sub-test: run the 7-check umbrella; treat its exit code as verdict.

@@ -240,6 +240,18 @@ Every `codex-*` skill under `.claude/skills/` carries a one-line pointer back to
 
 The `superpowers@claude-plugins-official` plugin ships 14 skills, three of which are MANDATORY in this repo (`receiving-code-review`, `verification-before-completion`, `systematic-debugging`) and one of which carries a hard scope distinction (`subagent-driven-development` is FORBIDDEN as a substitute for the Codex four-dispatch on `src/kernel/`, `src/boot/`, `include/kernel/`). Per-skill verdicts, doctrine-conflict suppression rules, and the kernel/boot scope distinction live in [`docs/infrastructure/superpowers-policy.md`](superpowers-policy.md). CLAUDE.md "Mandatory Skill Triggers" carries the agent-facing prompt rows; the policy doc carries the rationale.
 
+### AI-Slop Content Gates
+
+Build green and tests green do not catch the most common AI-coauthor failure modes; CodeRabbit's December 2025 PR study reports AI-coauthored changes ship roughly 1.7x more major issues than human-authored code, and the leak is content-level rather than compile-level. [`scripts/lint.sh`](../../scripts/lint.sh) Checks 6/7/8 mechanically reject the three patterns CLAUDE.md prohibits in prose:
+
+| Check | Pattern | Marker (allowlist) | Skip env |
+|---|---|---|---|
+| 6: Tautological-test | `TEST_ASSERT_EQ(X, X, ...)`, `TEST_ASSERT(true, ...)`, `TEST_ASSERT(1, ...)` in `src/kernel/test/test_*.c` | `/* TEST-TAUTOLOGY-OK: <reason> */` (same line) | `SKIP_LINT_TAUTOLOGY=1` |
+| 7: Stub-behind-stamp | TODO `[x]` item names a function whose body is `<= 3 LOC return-constant` (deferred until [TODO-06 todo metadata layer cache extension](../../todo/00-infrastructure/TODO-06-todo-metadata-layer.md)) | `/* INTENTIONAL-STUB: <reason> */` (same line) | `SKIP_LINT_STUB_BEHIND_STAMP=1` |
+| 8: Phantom-include | `#include` whose header contributes no symbol to the file (deferred until [lsp-bridge MCP integration](../../todo/00-infrastructure/TODO-07-lsp-mcp-bridge.md)) | TBD when check ships | `SKIP_LINT_PHANTOM_INCLUDE=1` |
+
+Check 6 is live; Checks 7 and 8 emit a deferred-WARN line on every lint run until their dependencies land (cache extension for 7; lsp-bridge MCP wiring for 8). Pre-existing tautological tests are tracked in a per-check legacy allowlist (mirrors Check 5's `BARE_SECTION_LEGACY_FILES`) and emit WARN, not ERROR; new tautology in any non-allowlisted file is ERROR. Every skip env var emits a visible WARN line so bypasses are auditable.
+
 ---
 
 ## MCP, Permissions, and Extension Boundary
