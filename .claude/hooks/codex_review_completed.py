@@ -477,7 +477,7 @@ DISPATCH_KIND_BY_SKILL = {
 # `[review-kind: <kind>]` marker at the start of the prompt. The
 # regex tolerates whitespace and different bracket spellings.
 _REVIEW_KIND_RE = re.compile(
-    r"\[\s*review[-_ ]kind\s*:\s*(adversarial|consistency|perf)\s*\]",
+    r"\[\s*review[-_ ]kind\s*:\s*(adversarial|consistency|perf|re-adversarial)\s*\]",
     re.IGNORECASE,
 )
 
@@ -589,7 +589,7 @@ def _bash_prompt_arg(cmd: str) -> str:
 
 
 def _detect_review_kind(skill_name: str, prompt: str) -> str:
-    """Return one of `"adversarial" | "consistency" | "perf" | ""`.
+    """Return one of `"adversarial" | "consistency" | "perf" | "re-adversarial" | ""`.
 
     Skill name takes precedence over prompt marker because the skill
     invocation is unambiguous. For Bash triggers (no skill name) the
@@ -715,7 +715,7 @@ def _record_stamp(
     of the current HEAD before accepting the stamp; this prevents
     cross-branch reuse of dispatch evidence.
     """
-    if not todo_path or kind not in ("adversarial", "consistency", "perf"):
+    if not todo_path or kind not in ("adversarial", "consistency", "perf", "re-adversarial"):
         return
     path = _stamps_path(root)
     lock_path = _stamps_lock_path(root)

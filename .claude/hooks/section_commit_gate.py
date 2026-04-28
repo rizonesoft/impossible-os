@@ -126,6 +126,7 @@ def _looks_like_git_commit_screen(cmd: str) -> bool:
 
 EVIDENCE_TTL_SECONDS = 30 * 60  # 30 minutes for build + review
 FOUR_DISPATCH_TTL_SECONDS = 30 * 60  # 30 minutes per the §5 spec
+RE_ADV_TRIGGER_TTL_SECONDS = 30 * 60  # 30 minutes per TODO-08 §17 spec
 SKIP_REASON_MIN_LEN = 12
 
 # Dispatch kinds tracked in last-review-stamps.json (§5). Dead-code
@@ -134,6 +135,26 @@ SKIP_REASON_MIN_LEN = 12
 # / perf). The TODO-08 §5 text predates the retirement and uses a
 # "FOUR" framing; this implementation reflects current SKILL.md.
 _DISPATCH_KINDS = ("adversarial", "consistency", "perf")
+
+# TODO-08 §17 re-adversarial trigger detection. Step 13.5 of
+# review-todo-section requires a re-adversarial Codex dispatch when
+# the cumulative fix diff matches one of these triggers. Per Codex
+# design review 2026-04-28 M3, the regexes match the locking /
+# faultable / lifecycle vocabulary actually used in this codebase.
+# State-machine and >3-functions triggers are NOT mechanically
+# detectable here -- documented as manual-only gaps; review-todo-
+# section step 13.5 prose still names them, and the agent must
+# dispatch re-adversarial by hand when those fire.
+_RE_ADV_TRIGGER_LOCKING = re.compile(
+    r"\b(?:spinlock_t|atomic_t|atomic\d+_t|mutex_t)\b"
+)
+_RE_ADV_TRIGGER_FAULTABLE = re.compile(
+    r"\b(?:boot_halt|panic|KeBugCheck\w*|fault_handler|exception_\w*)"
+)
+_RE_ADV_TRIGGER_LIFECYCLE = re.compile(
+    r"\b\w*_(?:alloc|free|refcount)\b"
+)
+_RE_ADV_LOC_THRESHOLD = 50  # >50 LOC C/H trigger
 
 # Stamp lines whose presence in the staged diff triggers the
 # four-dispatch check. `^\+\s{0,3}(?:>\s*)+\*\*` matches ADDED stamp
@@ -1085,6 +1106,232 @@ def _four_dispatch_evidence(
     return (True, "")
 
 
+def _staged_diff_text(root: Path, paths: list[str]) -> str:
+    """Return the concatenated `git diff --cached` body for the given
+    staged source paths. Used by the re-adversarial trigger detector
+    to scan only ADDED lines (the prefix `+` filter happens at the
+    regex layer; see _re_adversarial_trigger_check)."""
+    if not paths:
+        return ""
+    try:
+        out = subprocess.check_output(
+            ["git", "diff", "--cached", "--unified=0", "--"] + paths,
+            cwd=str(root), text=True, timeout=10,
+            stderr=subprocess.DEVNULL,
+        )
+        return out or ""
+    except Exception:
+        return ""
+
+
+def _staged_loc_delta(root: Path, paths: list[str]) -> int:
+    """Total added+removed LOC across staged C/H files. Used for the
+    >50 LOC step-13.5 trigger."""
+    if not paths:
+        return 0
+    try:
+        out = subprocess.check_output(
+            ["git", "diff", "--cached", "--numstat", "--"] + paths,
+            cwd=str(root), text=True, timeout=10,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        return 0
+    total = 0
+    for line in out.splitlines():
+        parts = line.split("\t")
+        if len(parts) < 2:
+            continue
+        try:
+            total += int(parts[0]) + int(parts[1])
+        except ValueError:
+            # Binary files report `-\t-`; skip.
+            continue
+    return total
+
+
+def _attribute_review_todo(root: Path, todo_files: list[str]) -> str:
+    """Pick the TODO path to look up in last-review-stamps.json for
+    the re-adversarial check. Preference order:
+      1. A staged TODO file (typical impl-pipeline section commit).
+      2. The TODO path parsed from the active review-todo-section
+         skill entry's `args` field in skill-progress.json (covers
+         the pure-source fix-loop commit per Codex design H2).
+    Returns "" when neither source provides a path.
+    """
+    for tf in todo_files:
+        if tf and tf.endswith(".md") and "todo/" in tf.replace("\\", "/"):
+            return tf
+    state_path = root / ".claude" / "state" / "skill-progress.json"
+    if not state_path.exists():
+        return ""
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except Exception:
+        return ""
+    if not isinstance(state, dict):
+        return ""
+    entry = state.get("review-todo-section")
+    if not isinstance(entry, dict):
+        return ""
+    if entry.get("compaction_orphaned") is True:
+        return ""
+    args = entry.get("args", "")
+    if not isinstance(args, str) or not args:
+        return ""
+    # The skill args carry the TODO path on first invocation, e.g.
+    # "todo/00-infrastructure/TODO-08-automation-hardening.md §17 ...".
+    m = re.search(r"todo/[\w./-]+TODO-\d[\w./-]*\.md", args)
+    if not m:
+        return ""
+    return m.group(0)
+
+
+def _re_adversarial_trigger_check(
+    root: Path, staged_src: list[str], todo_files: list[str]
+) -> tuple[bool, str]:
+    """TODO-08 §17 re-adversarial trigger gate.
+
+    Returns (ok, error_message). When the staged C/H diff matches any
+    of the step-13.5 triggers AND last-review-stamps.json lacks a
+    `re-adversarial` entry for the relevant TODO within the TTL, BLOCK.
+
+    Triggers (per Codex design review 2026-04-28 M3):
+      - locking: spinlock_t / atomic_t / atomic\\d+_t / mutex_t
+      - faultable: boot_halt / panic / KeBugCheckEx / fault_handler /
+        exception_*
+      - lifecycle: \\w*_(alloc|free|refcount)
+      - LOC: total added+removed > 50
+
+    State-machine and >3-functions are NOT mechanically detected --
+    documented as manual-only gaps.
+
+    Honors the existing SKIP_REVIEW_HOOK opt-out (caller already
+    handles it; this function is reached only in the fail-closed
+    paths).
+    """
+    # Regex scan restricted to C/H (locking/faultable/lifecycle vocab
+    # is a C/C++ idiom). LOC trigger covers C/H + asm so an asm-only
+    # rewrite of an interrupt entry / IST stub still trips the gate
+    # (Codex adversarial M1 fix 2026-04-28).
+    c_h_paths = [p for p in staged_src if p.endswith((".c", ".h"))]
+    loc_paths = [p for p in staged_src if p.endswith((".c", ".h", ".asm", ".S"))]
+    if not c_h_paths and not loc_paths:
+        return (True, "")
+
+    # ADDED-line filter: the diff body has unified-0 hunks; ADDED lines
+    # start with `+` (and are not `+++` headers). We scan only those
+    # lines for trigger signatures.
+    diff_text = _staged_diff_text(root, c_h_paths) if c_h_paths else ""
+    added_lines: list[str] = []
+    for line in diff_text.splitlines():
+        if line.startswith("+++"):
+            continue
+        if line.startswith("+"):
+            added_lines.append(line[1:])
+    added = "\n".join(added_lines)
+
+    triggers_fired: list[str] = []
+    if _RE_ADV_TRIGGER_LOCKING.search(added):
+        triggers_fired.append("locking")
+    if _RE_ADV_TRIGGER_FAULTABLE.search(added):
+        triggers_fired.append("faultable region")
+    if _RE_ADV_TRIGGER_LIFECYCLE.search(added):
+        triggers_fired.append("lifecycle")
+    if _staged_loc_delta(root, loc_paths) > _RE_ADV_LOC_THRESHOLD:
+        triggers_fired.append(f">{_RE_ADV_LOC_THRESHOLD} LOC C/H/asm")
+
+    if not triggers_fired:
+        return (True, "")
+
+    # Triggers fired; require a re-adversarial entry in
+    # last-review-stamps.json[<todo>] within TTL.
+    todo = _attribute_review_todo(root, todo_files)
+    if not todo:
+        # No attribution path -- emit a gentle message but don't
+        # BLOCK. A pure-source fix commit with no active review skill
+        # and no staged TODO file has nothing for the gate to look
+        # up; the responsibility falls back to the agent's manual
+        # judgment per step 13.5 prose.
+        sys.stderr.write(
+            "[section-commit-gate] WARN -- staged diff matches step-13.5 "
+            f"trigger(s) {triggers_fired} but no TODO file is staged AND "
+            "no active review-todo-section skill is in flight. The "
+            "re-adversarial gate cannot attribute the commit; doctrine "
+            "(feedback_re_adversarial_small_fix) requires you to dispatch "
+            "re-adversarial manually if this is part of a fix loop.\n"
+        )
+        return (True, "")
+
+    stamps_path = root / ".claude" / "state" / "last-review-stamps.json"
+    re_adv_ts = 0
+    re_adv_head = ""
+    if stamps_path.exists():
+        try:
+            state = json.loads(stamps_path.read_text(encoding="utf-8"))
+            if isinstance(state, dict):
+                entry = state.get(todo)
+                if isinstance(entry, dict):
+                    ts = entry.get("re-adversarial")
+                    if isinstance(ts, int) and ts > 0:
+                        re_adv_ts = ts
+                    rh = entry.get("re-adversarial_head")
+                    if isinstance(rh, str):
+                        re_adv_head = rh
+        except Exception:
+            pass
+
+    now_ns = time.time_ns()
+    cutoff_ns = now_ns - RE_ADV_TRIGGER_TTL_SECONDS * 1_000_000_000
+
+    # Codex adversarial H1 fix (2026-04-28): when re-adv stamp carries a
+    # head SHA, verify it is an ancestor of the current HEAD. Mirrors
+    # the four-dispatch gate's M2 cross-branch check; prevents a re-adv
+    # dispatched on an unrelated branch from satisfying the gate. Legacy
+    # entries with empty head field pass through (warned at write time).
+    if re_adv_ts >= cutoff_ns and re_adv_ts > 0:
+        if re_adv_head:
+            try:
+                current_head = subprocess.check_output(
+                    ["git", "rev-parse", "HEAD"], cwd=str(root),
+                    text=True, timeout=2, stderr=subprocess.DEVNULL,
+                ).strip()
+                if current_head and not _git_is_ancestor(
+                    root, re_adv_head, current_head
+                ):
+                    return (False, (
+                        f"step-13.5 trigger(s) fired ({', '.join(triggers_fired)}) "
+                        f"on {todo}; the recorded `re-adversarial` dispatch was "
+                        f"made against {re_adv_head[:12]} which is NOT an "
+                        f"ancestor of HEAD {current_head[:12]} (cross-branch). "
+                        f"Re-run the re-adversarial Codex on the current branch."
+                    ))
+            except Exception:
+                pass
+        return (True, "")
+
+    if re_adv_ts > 0:
+        age_min = (now_ns - re_adv_ts) / 1e9 / 60
+        return (False, (
+            f"step-13.5 trigger(s) fired ({', '.join(triggers_fired)}) on "
+            f"{todo} but the recorded `re-adversarial` dispatch is stale "
+            f"({age_min:.0f} min old; TTL "
+            f"{RE_ADV_TRIGGER_TTL_SECONDS // 60} min). Re-run the "
+            f"re-adversarial Codex with [review-kind: re-adversarial] "
+            f"in the prompt before committing."
+        ))
+    return (False, (
+        f"step-13.5 trigger(s) fired ({', '.join(triggers_fired)}) on "
+        f"{todo} but no `re-adversarial` dispatch is recorded within "
+        f"the last {RE_ADV_TRIGGER_TTL_SECONDS // 60} min. Doctrine: "
+        f"feedback_re_adversarial_small_fix -- 'small fix' is NOT a "
+        f"reason to skip step 13.5. Dispatch re-adversarial Codex with "
+        f"[review-kind: re-adversarial] + the TODO path in the prompt, "
+        f"then retry the commit. Opt-out (legitimate skip): "
+        f"SKIP_REVIEW_HOOK=1 SKIP_REVIEW_HOOK_REASON=\"<text>\"."
+    ))
+
+
 # ----------------------------------------------------------------------
 # SKIP path (Codex M1)
 # ----------------------------------------------------------------------
@@ -1381,7 +1628,38 @@ def _evaluate(root: Path, mode: str, cmd: str = "") -> int:
             return 2
         return 0
     if sig_state == "not_section":
-        return 0
+        # TODO-08 §17 (Codex design H2): pure-source fix-loop commits
+        # carry no IO flip and no stamp, so the section-commit signature
+        # is "not_section" -- but if review-todo-section is in flight
+        # (skill-progress.json has an active entry), step 13.5 still
+        # applies. Fire the re-adversarial trigger check using the
+        # active skill's TODO path for attribution. SKIP_REVIEW_HOOK
+        # honored.
+        skip_req2, skip_reason2, skip_err2 = _is_skip_requested(cmd)
+        if skip_req2 and not skip_err2 and skip_reason2:
+            return 0
+        all_staged_todos2 = _staged_todo_files(root)
+        re_adv_ok, re_adv_err = _re_adversarial_trigger_check(
+            root, staged_src, all_staged_todos2
+        )
+        if re_adv_ok:
+            return 0
+        head = ""
+        try:
+            head = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=str(root),
+                text=True, timeout=2, stderr=subprocess.DEVNULL,
+            ).strip()
+        except Exception:
+            pass
+        _emit_block(
+            "fix-loop commit detected (active review-todo-section + "
+            "step-13.5 trigger in staged C/H diff) but re-adversarial "
+            "evidence is missing",
+            [f"re-adversarial evidence: {re_adv_err}"],
+            head=head,
+        )
+        return 2
     if sig_state == "unknown":
         # Codex H2: in --git-hook-mode (load-bearing), unknown +
         # non-empty index = block. In harness mode (convenience),
@@ -1522,7 +1800,13 @@ def _evaluate(root: Path, mode: str, cmd: str = "") -> int:
     all_staged_todos = _staged_todo_files(root)
     stamped = _stamped_todos(root, all_staged_todos)
     fourd_ok, fourd_err = _four_dispatch_evidence(root, stamped)
-    if build_ok and review_ok and fourd_ok:
+    # TODO-08 §17: re-adversarial trigger gate. Fires for both real-
+    # section commits and pure-source fix-loop commits when the staged
+    # diff matches a step-13.5 trigger.
+    re_adv_ok, re_adv_err = _re_adversarial_trigger_check(
+        root, staged_src, all_staged_todos
+    )
+    if build_ok and review_ok and fourd_ok and re_adv_ok:
         return 0  # full evidence; commit allowed
     missing = []
     if not build_ok:
@@ -1531,6 +1815,8 @@ def _evaluate(root: Path, mode: str, cmd: str = "") -> int:
         missing.append(f"Codex/receiving evidence: {review_err}")
     if not fourd_ok:
         missing.append(f"four-dispatch evidence: {fourd_err}")
+    if not re_adv_ok:
+        missing.append(f"re-adversarial evidence: {re_adv_err}")
     head = ""
     try:
         head = subprocess.check_output(

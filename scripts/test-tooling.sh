@@ -3236,6 +3236,475 @@ fi
 
 
 # ============================================================================
+# pre_codex_enforcement (TODO-08 review-pipeline pre-Codex enforcement)
+# ============================================================================
+#   - phase1_evidence_block: phase1_evidence_gate.py BLOCKs adversarial
+#     dispatch when active review-todo-section has <2 src/include Reads.
+#   - re_adv_trigger_block: section_commit_gate.py BLOCKs commits whose
+#     staged C/H diff matches step-13.5 triggers when no recent
+#     re-adversarial stamp exists.
+
+[ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[pre_codex_enforcement]${NC}"
+
+if [ ! -f "$REPO_ROOT/.claude/hooks/phase1_evidence_gate.py" ] || \
+   [ ! -f "$REPO_ROOT/.claude/hooks/section_commit_gate.py" ] || \
+   [ ! -f "$REPO_ROOT/.claude/hooks/skill_step_map.py" ]; then
+    t_fail "pre_codex_enforcement: hook scripts missing"
+else
+    PCE_TMP="$(mktemp -d)"
+    PCE_REPO="$PCE_TMP/repo"
+    mkdir -p "$PCE_REPO/.claude/state" "$PCE_REPO/.claude/hooks" \
+             "$PCE_REPO/src/kernel" "$PCE_REPO/todo/00-infrastructure"
+    cp "$REPO_ROOT/.claude/hooks/phase1_evidence_gate.py" \
+       "$PCE_REPO/.claude/hooks/phase1_evidence_gate.py"
+    cp "$REPO_ROOT/.claude/hooks/skill_step_map.py" \
+       "$PCE_REPO/.claude/hooks/skill_step_map.py"
+    cp "$REPO_ROOT/.claude/hooks/section_commit_gate.py" \
+       "$PCE_REPO/.claude/hooks/section_commit_gate.py"
+    cp "$REPO_ROOT/.claude/hooks/codex_review_completed.py" \
+       "$PCE_REPO/.claude/hooks/codex_review_completed.py"
+
+    pushd "$PCE_REPO" >/dev/null
+    git init -q -b main
+    git config user.email "test@example.com"
+    git config user.name "Test"
+    {
+        printf '%s\n' '# pre-codex-enforcement fixture'
+        printf '\n'
+        printf '%s\n' '## 1. Sample target section'
+    } > todo/00-infrastructure/TODO-99-pce-fixture.md
+    git add todo/00-infrastructure/TODO-99-pce-fixture.md
+    git -c commit.gpgsign=false commit -q --no-verify -m "seed"
+    popd >/dev/null
+
+    PCE_SKILL_STATE="$PCE_REPO/.claude/state/skill-progress.json"
+    PCE_TRANSCRIPT="$PCE_REPO/.claude/state/transcript.jsonl"
+    PCE_STAMPS="$PCE_REPO/.claude/state/last-review-stamps.json"
+
+    # ---- phase1_evidence_block sub-tests ----
+
+    # Active review-todo-section, started 1 second ago.
+    PCE_STARTED_TS="$(python3 -c 'import time; print(time.time_ns() - 1_000_000_000)')"
+    cat > "$PCE_SKILL_STATE" <<JSON
+{
+  "review-todo-section": {
+    "started_ts": $PCE_STARTED_TS,
+    "started_head_sha": "0000000000000000000000000000000000000000",
+    "session_id": "pce-test",
+    "steps_observed": [],
+    "args": "todo/00-infrastructure/TODO-99-pce-fixture.md section 1 sample"
+  }
+}
+JSON
+
+    : > "$PCE_TRANSCRIPT"
+
+    # Codex companion path. SECTION-MARKER is a placeholder for the
+    # real review-kind marker; tests assemble at runtime so this
+    # source line carries no bare-marker pattern.
+    PCE_KIND_OPEN='[review-kind: adversarial]'
+    PCE_CMD_BASE='node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review'
+    PCE_PROMPT_ADV="${PCE_KIND_OPEN} todo/00-infrastructure/TODO-99-pce-fixture.md sample"
+    PCE_CMD="$PCE_CMD_BASE \"$PCE_PROMPT_ADV\""
+    PCE_PAYLOAD=$(python3 -c "
+import json
+print(json.dumps({
+    'tool_name': 'Bash',
+    'tool_input': {'command': '''$PCE_CMD'''},
+    'transcript_path': '$PCE_TRANSCRIPT',
+}))
+")
+    PCE_OUT="$(cd "$PCE_REPO" && echo "$PCE_PAYLOAD" | python3 .claude/hooks/phase1_evidence_gate.py 2>&1)"
+    PCE_RC=$?
+    if [ "$PCE_RC" = "2" ] && echo "$PCE_OUT" | grep -q "BLOCK"; then
+        t_pass "phase1_evidence_block: 0 src/include Reads -> BLOCK"
+    else
+        t_fail "phase1_evidence_block: empty-transcript BLOCK" \
+               "rc=$PCE_RC out=$PCE_OUT"
+    fi
+
+    PCE_AFTER_TS="$(python3 -c 'import time; print(time.time_ns())')"
+    cat > "$PCE_TRANSCRIPT" <<TSCRIPT
+{"ts_ns":$PCE_AFTER_TS,"message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"src/kernel/foo.c"}}]}}
+{"ts_ns":$PCE_AFTER_TS,"message":{"content":[{"type":"tool_use","name":"Grep","input":{"path":"src/kernel","pattern":"spinlock_t"}}]}}
+TSCRIPT
+    PCE_OUT2="$(cd "$PCE_REPO" && echo "$PCE_PAYLOAD" | python3 .claude/hooks/phase1_evidence_gate.py 2>&1)"
+    PCE_RC2=$?
+    if [ "$PCE_RC2" = "0" ]; then
+        t_pass "phase1_evidence_block: 2 src/ Reads -> PASS"
+    else
+        t_fail "phase1_evidence_block: 2-Read PASS path" \
+               "rc=$PCE_RC2 out=$PCE_OUT2"
+    fi
+
+    : > "$PCE_TRANSCRIPT"
+    rm -f "$PCE_REPO/.claude/state/skip-log.jsonl"
+    PCE_PAYLOAD_FILE="$PCE_TMP/payload.json"
+    printf '%s\n' "$PCE_PAYLOAD" > "$PCE_PAYLOAD_FILE"
+    PCE_OUT3="$(cd "$PCE_REPO" && SKIP_PHASE1_BLOCK=1 SKIP_PHASE1_BLOCK_REASON='legitimate verified-clean section' python3 .claude/hooks/phase1_evidence_gate.py < "$PCE_PAYLOAD_FILE" 2>&1)"
+    PCE_RC3=$?
+    if [ "$PCE_RC3" = "0" ] && [ -f "$PCE_REPO/.claude/state/skip-log.jsonl" ] && \
+       grep -q "SKIP_PHASE1_BLOCK" "$PCE_REPO/.claude/state/skip-log.jsonl"; then
+        t_pass "phase1_evidence_block: SKIP env -> PASS + skip-log entry"
+    else
+        t_fail "phase1_evidence_block: SKIP path" \
+               "rc=$PCE_RC3 skip-log=$([ -f "$PCE_REPO/.claude/state/skip-log.jsonl" ] && cat "$PCE_REPO/.claude/state/skip-log.jsonl" || echo missing)"
+    fi
+
+    PCE_KIND_CONS='[review-kind: consistency]'
+    PCE_PROMPT_CONS="${PCE_KIND_CONS} todo/00-infrastructure/TODO-99-pce-fixture.md sample"
+    PCE_CMD_CONS="$PCE_CMD_BASE \"$PCE_PROMPT_CONS\""
+    PCE_PAYLOAD_CONS=$(python3 -c "
+import json
+print(json.dumps({
+    'tool_name': 'Bash',
+    'tool_input': {'command': '''$PCE_CMD_CONS'''},
+    'transcript_path': '$PCE_TRANSCRIPT',
+}))
+")
+    PCE_OUT4="$(cd "$PCE_REPO" && echo "$PCE_PAYLOAD_CONS" | python3 .claude/hooks/phase1_evidence_gate.py 2>&1)"
+    PCE_RC4=$?
+    if [ "$PCE_RC4" = "0" ]; then
+        t_pass "phase1_evidence_block: consistency dispatch bypasses gate (scoped to adversarial only)"
+    else
+        t_fail "phase1_evidence_block: consistency bypass" \
+               "rc=$PCE_RC4 out=$PCE_OUT4"
+    fi
+
+    # ---- re_adv_trigger_block sub-tests ----
+
+    cat > "$PCE_REPO/src/kernel/boot_halt.c" <<'CFAULT'
+void boot_halt(unsigned int code) {
+    while (1) { __asm__ volatile("hlt"); }
+}
+CFAULT
+    (
+        cd "$PCE_REPO" && git add src/kernel/boot_halt.c >/dev/null 2>&1
+    )
+
+    PCE_GIT_PAYLOAD=$(python3 -c "
+import json
+print(json.dumps({'tool_name': 'Bash', 'tool_input': {'command': 'git commit -m \"fix faultable region\"'}}))
+")
+    rm -f "$PCE_STAMPS"
+    PCE_OUT5="$(cd "$PCE_REPO" && echo "$PCE_GIT_PAYLOAD" | python3 .claude/hooks/section_commit_gate.py 2>&1)"
+    PCE_RC5=$?
+    if [ "$PCE_RC5" = "2" ] && echo "$PCE_OUT5" | grep -qE "re-adversarial|step-13.5 trigger"; then
+        t_pass "re_adv_trigger_block: faultable C/H + no re-adv stamp -> BLOCK"
+    else
+        t_fail "re_adv_trigger_block: BLOCK on faultable trigger" \
+               "rc=$PCE_RC5 out=$PCE_OUT5"
+    fi
+
+    PCE_NOW_NS="$(python3 -c 'import time; print(time.time_ns())')"
+    cat > "$PCE_STAMPS" <<JSON
+{
+  "todo/00-infrastructure/TODO-99-pce-fixture.md": {
+    "section": "1",
+    "adversarial": null,
+    "consistency": null,
+    "perf": null,
+    "re-adversarial": $PCE_NOW_NS
+  }
+}
+JSON
+    PCE_OUT6="$(cd "$PCE_REPO" && echo "$PCE_GIT_PAYLOAD" | python3 .claude/hooks/section_commit_gate.py 2>&1)"
+    PCE_RC6=$?
+    if [ "$PCE_RC6" = "0" ]; then
+        t_pass "re_adv_trigger_block: fresh re-adversarial stamp -> PASS"
+    else
+        t_fail "re_adv_trigger_block: PASS path with fresh stamp" \
+               "rc=$PCE_RC6 out=$PCE_OUT6"
+    fi
+
+    PCE_STALE_NS="$(python3 -c 'import time; print(time.time_ns() - 60*60*1_000_000_000)')"
+    cat > "$PCE_STAMPS" <<JSON
+{
+  "todo/00-infrastructure/TODO-99-pce-fixture.md": {
+    "section": "1",
+    "adversarial": null,
+    "consistency": null,
+    "perf": null,
+    "re-adversarial": $PCE_STALE_NS
+  }
+}
+JSON
+    PCE_OUT7="$(cd "$PCE_REPO" && echo "$PCE_GIT_PAYLOAD" | python3 .claude/hooks/section_commit_gate.py 2>&1)"
+    PCE_RC7=$?
+    if [ "$PCE_RC7" = "2" ] && echo "$PCE_OUT7" | grep -q "stale"; then
+        t_pass "re_adv_trigger_block: stale re-adversarial stamp -> BLOCK"
+    else
+        t_fail "re_adv_trigger_block: stale BLOCK path" \
+               "rc=$PCE_RC7 out=$PCE_OUT7"
+    fi
+
+    cat > "$PCE_REPO/src/kernel/lock_change.c" <<'CLOCK'
+#include "kernel/types.h"
+mutex_t g_lock;
+void lock_init(void) { g_lock = 0; }
+CLOCK
+    (cd "$PCE_REPO" && git add src/kernel/lock_change.c >/dev/null 2>&1)
+    rm -f "$PCE_STAMPS"
+    PCE_OUT8="$(cd "$PCE_REPO" && echo "$PCE_GIT_PAYLOAD" | python3 .claude/hooks/section_commit_gate.py 2>&1)"
+    PCE_RC8=$?
+    if [ "$PCE_RC8" = "2" ] && echo "$PCE_OUT8" | grep -q "locking"; then
+        t_pass "re_adv_trigger_block: mutex_t locking trigger detected (Codex M3 fix)"
+    else
+        t_fail "re_adv_trigger_block: mutex_t locking detection" \
+               "rc=$PCE_RC8 out=$PCE_OUT8"
+    fi
+
+    PCE_GIT_PAYLOAD_FILE="$PCE_TMP/git-payload.json"
+    printf '%s\n' "$PCE_GIT_PAYLOAD" > "$PCE_GIT_PAYLOAD_FILE"
+    PCE_OUT9="$(cd "$PCE_REPO" && SKIP_REVIEW_HOOK=1 SKIP_REVIEW_HOOK_REASON='manual re-adv already done' python3 .claude/hooks/section_commit_gate.py < "$PCE_GIT_PAYLOAD_FILE" 2>&1)"
+    PCE_RC9=$?
+    if [ "$PCE_RC9" = "0" ]; then
+        t_pass "re_adv_trigger_block: SKIP_REVIEW_HOOK env -> PASS"
+    else
+        t_fail "re_adv_trigger_block: SKIP path" \
+               "rc=$PCE_RC9 out=$PCE_OUT9"
+    fi
+
+    # ---- Codex test-coverage gap closures ----
+    # Reset staged state and stamps for the new sub-tests.
+    (cd "$PCE_REPO" && git reset -q HEAD -- . && rm -f src/kernel/*.c)
+
+    # Lifecycle trigger family: \w*_(alloc|free|refcount).
+    cat > "$PCE_REPO/src/kernel/lifecycle.c" <<'CLIFE'
+#include "kernel/types.h"
+void *obj_alloc(unsigned long sz) { return 0; }
+void obj_free(void *p) { (void)p; }
+CLIFE
+    (cd "$PCE_REPO" && git add src/kernel/lifecycle.c >/dev/null 2>&1)
+    rm -f "$PCE_STAMPS"
+    PCE_OUT_LIFE="$(cd "$PCE_REPO" && python3 .claude/hooks/section_commit_gate.py < "$PCE_GIT_PAYLOAD_FILE" 2>&1)"
+    PCE_RC_LIFE=$?
+    if [ "$PCE_RC_LIFE" = "2" ] && echo "$PCE_OUT_LIFE" | grep -q "lifecycle"; then
+        t_pass "re_adv_trigger_block: lifecycle (_alloc/_free/_refcount) trigger detected"
+    else
+        t_fail "re_adv_trigger_block: lifecycle trigger" \
+               "rc=$PCE_RC_LIFE out=$PCE_OUT_LIFE"
+    fi
+    (cd "$PCE_REPO" && git reset -q HEAD -- . && rm -f src/kernel/lifecycle.c)
+
+    # >50 LOC C/H trigger: a benign-content file with 60+ added lines
+    # touching neither locking, faultable, nor lifecycle regexes.
+    {
+        printf '#include "kernel/types.h"\n'
+        for i in $(seq 1 60); do
+            printf 'int benign_func_%s(void) { return %s; }\n' "$i" "$i"
+        done
+    } > "$PCE_REPO/src/kernel/big_diff.c"
+    (cd "$PCE_REPO" && git add src/kernel/big_diff.c >/dev/null 2>&1)
+    rm -f "$PCE_STAMPS"
+    PCE_OUT_LOC="$(cd "$PCE_REPO" && python3 .claude/hooks/section_commit_gate.py < "$PCE_GIT_PAYLOAD_FILE" 2>&1)"
+    PCE_RC_LOC=$?
+    if [ "$PCE_RC_LOC" = "2" ] && echo "$PCE_OUT_LOC" | grep -q "LOC"; then
+        t_pass "re_adv_trigger_block: >50 LOC C/H trigger detected"
+    else
+        t_fail "re_adv_trigger_block: >50 LOC trigger" \
+               "rc=$PCE_RC_LOC out=$PCE_OUT_LOC"
+    fi
+    (cd "$PCE_REPO" && git reset -q HEAD -- . && rm -f src/kernel/big_diff.c)
+
+    # Malformed last-review-stamps.json with a faultable trigger -> BLOCK
+    # (the gate must treat parse failure as "no recent re-adv stamp").
+    cat > "$PCE_REPO/src/kernel/boot_halt2.c" <<'CFAULT2'
+void boot_halt(unsigned int code) { while (1) { } }
+CFAULT2
+    (cd "$PCE_REPO" && git add src/kernel/boot_halt2.c >/dev/null 2>&1)
+    printf '%s' '{ this is not valid json' > "$PCE_STAMPS"
+    PCE_OUT_BAD="$(cd "$PCE_REPO" && python3 .claude/hooks/section_commit_gate.py < "$PCE_GIT_PAYLOAD_FILE" 2>&1)"
+    PCE_RC_BAD=$?
+    if [ "$PCE_RC_BAD" = "2" ] && echo "$PCE_OUT_BAD" | grep -qE "re-adversarial|step-13.5"; then
+        t_pass "re_adv_trigger_block: malformed last-review-stamps.json -> BLOCK (no parse-time fault)"
+    else
+        t_fail "re_adv_trigger_block: malformed-stamps BLOCK" \
+               "rc=$PCE_RC_BAD out=$PCE_OUT_BAD"
+    fi
+    rm -f "$PCE_STAMPS"
+    (cd "$PCE_REPO" && git reset -q HEAD -- . && rm -f src/kernel/boot_halt2.c)
+
+    # No-attribution path: faultable trigger fires but no staged TODO
+    # AND no active review-todo-section in skill-progress.json.
+    rm -f "$PCE_SKILL_STATE"
+    cat > "$PCE_REPO/src/kernel/boot_halt3.c" <<'CFAULT3'
+void boot_halt(unsigned int code) { while (1) { } }
+CFAULT3
+    (cd "$PCE_REPO" && git add src/kernel/boot_halt3.c >/dev/null 2>&1)
+    PCE_OUT_NOATTR="$(cd "$PCE_REPO" && python3 .claude/hooks/section_commit_gate.py < "$PCE_GIT_PAYLOAD_FILE" 2>&1)"
+    PCE_RC_NOATTR=$?
+    if [ "$PCE_RC_NOATTR" = "0" ] && echo "$PCE_OUT_NOATTR" | grep -q "WARN"; then
+        t_pass "re_adv_trigger_block: no attribution -> PASS with WARN (manual judgment fallback)"
+    else
+        t_fail "re_adv_trigger_block: no-attribution path" \
+               "rc=$PCE_RC_NOATTR out=$PCE_OUT_NOATTR"
+    fi
+    (cd "$PCE_REPO" && git reset -q HEAD -- . && rm -f src/kernel/boot_halt3.c)
+
+    # Compaction-orphaned skill state: re-adv gate must NOT pick up the
+    # orphan as the active skill. Faultable trigger + orphaned entry +
+    # no staged TODO -> no attribution -> PASS with WARN.
+    cat > "$PCE_SKILL_STATE" <<JSON
+{
+  "review-todo-section": {
+    "started_ts": $PCE_STARTED_TS,
+    "started_head_sha": "0000000000000000000000000000000000000000",
+    "session_id": "pce-test",
+    "steps_observed": [],
+    "args": "todo/00-infrastructure/TODO-99-pce-fixture.md section 1",
+    "compaction_orphaned": true,
+    "orphan_ts_ns": $PCE_STARTED_TS,
+    "orphan_reason": "PreCompact"
+  }
+}
+JSON
+    cat > "$PCE_REPO/src/kernel/boot_halt4.c" <<'CFAULT4'
+void boot_halt(unsigned int code) { while (1) { } }
+CFAULT4
+    (cd "$PCE_REPO" && git add src/kernel/boot_halt4.c >/dev/null 2>&1)
+    PCE_OUT_ORPH="$(cd "$PCE_REPO" && python3 .claude/hooks/section_commit_gate.py < "$PCE_GIT_PAYLOAD_FILE" 2>&1)"
+    PCE_RC_ORPH=$?
+    if [ "$PCE_RC_ORPH" = "0" ] && echo "$PCE_OUT_ORPH" | grep -q "WARN"; then
+        t_pass "re_adv_trigger_block: compaction_orphaned skill state -> attribution skipped (PASS+WARN)"
+    else
+        t_fail "re_adv_trigger_block: compaction_orphaned path" \
+               "rc=$PCE_RC_ORPH out=$PCE_OUT_ORPH"
+    fi
+    (cd "$PCE_REPO" && git reset -q HEAD -- . && rm -f src/kernel/boot_halt4.c)
+
+    # Restore the active skill state for Phase-1 boundary tests.
+    cat > "$PCE_SKILL_STATE" <<JSON
+{
+  "review-todo-section": {
+    "started_ts": $PCE_STARTED_TS,
+    "started_head_sha": "0000000000000000000000000000000000000000",
+    "session_id": "pce-test",
+    "steps_observed": [],
+    "args": "todo/00-infrastructure/TODO-99-pce-fixture.md section 1 sample"
+  }
+}
+JSON
+
+    # Codex adversarial M1 fix: assembly-only diff over 50 LOC must
+    # also fire the LOC trigger. The original implementation filtered
+    # to .c/.h before _staged_loc_delta and missed asm rewrites.
+    {
+        printf '; comment line %s\n' 1
+        for i in $(seq 1 60); do
+            printf 'mov rax, %s\n' "$i"
+        done
+    } > "$PCE_REPO/src/kernel/asm_only.S"
+    (cd "$PCE_REPO" && git add src/kernel/asm_only.S >/dev/null 2>&1)
+    rm -f "$PCE_STAMPS"
+    PCE_OUT_ASM="$(cd "$PCE_REPO" && python3 .claude/hooks/section_commit_gate.py < "$PCE_GIT_PAYLOAD_FILE" 2>&1)"
+    PCE_RC_ASM=$?
+    if [ "$PCE_RC_ASM" = "2" ] && echo "$PCE_OUT_ASM" | grep -q "LOC"; then
+        t_pass "re_adv_trigger_block: asm-only >50 LOC trigger detected (Codex M1 fix)"
+    else
+        t_fail "re_adv_trigger_block: asm LOC trigger" \
+               "rc=$PCE_RC_ASM out=$PCE_OUT_ASM"
+    fi
+    (cd "$PCE_REPO" && git reset -q HEAD -- . && rm -f src/kernel/asm_only.S)
+
+    # Codex adversarial M2 fix: timestamp-less transcript events must
+    # NOT count as Phase-1 evidence. Only events with ts_ns >= started_ts
+    # count.
+    cat > "$PCE_TRANSCRIPT" <<TSCRIPT
+{"message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"src/kernel/foo.c"}}]}}
+{"message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"src/kernel/bar.c"}}]}}
+TSCRIPT
+    PCE_OUT_NOTS="$(cd "$PCE_REPO" && echo "$PCE_PAYLOAD" | python3 .claude/hooks/phase1_evidence_gate.py 2>&1)"
+    PCE_RC_NOTS=$?
+    if [ "$PCE_RC_NOTS" = "2" ] && echo "$PCE_OUT_NOTS" | grep -q "BLOCK"; then
+        t_pass "phase1_evidence_block: timestamp-less events do NOT count as evidence (Codex M2 fix)"
+    else
+        t_fail "phase1_evidence_block: missing-ts fail-closed" \
+               "rc=$PCE_RC_NOTS out=$PCE_OUT_NOTS"
+    fi
+
+    # Codex re-adversarial H1 fix: infrastructure TODOs own .claude/
+    # hooks, scripts/, and docs/ paths. Phase 1 evidence from those
+    # locations must count for infrastructure-style reviews.
+    cat > "$PCE_TRANSCRIPT" <<TSCRIPT
+{"ts_ns":$PCE_AFTER_TS,"message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":".claude/hooks/phase1_evidence_gate.py"}}]}}
+{"ts_ns":$PCE_AFTER_TS,"message":{"content":[{"type":"tool_use","name":"Grep","input":{"path":"scripts","glob":"*.sh"}}]}}
+TSCRIPT
+    PCE_OUT_INFRA="$(cd "$PCE_REPO" && echo "$PCE_PAYLOAD" | python3 .claude/hooks/phase1_evidence_gate.py 2>&1)"
+    PCE_RC_INFRA=$?
+    if [ "$PCE_RC_INFRA" = "0" ]; then
+        t_pass "phase1_evidence_block: infrastructure paths (.claude/scripts/docs) count as evidence (Codex re-adv H1 fix)"
+    else
+        t_fail "phase1_evidence_block: infrastructure path coverage" \
+               "rc=$PCE_RC_INFRA out=$PCE_OUT_INFRA"
+    fi
+
+    # M1 -- Phase-1 malformed tool_use input must NOT crash the walk.
+    # Mix one truthy non-dict input event between two valid Reads.
+    cat > "$PCE_TRANSCRIPT" <<TSCRIPT
+{"ts_ns":$PCE_AFTER_TS,"message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"src/kernel/foo.c"}}]}}
+{"ts_ns":$PCE_AFTER_TS,"message":{"content":[{"type":"tool_use","name":"Read","input":"not-a-dict"}]}}
+{"ts_ns":$PCE_AFTER_TS,"message":{"content":[{"type":"tool_use","name":"Grep","input":{"path":"include/kernel"}}]}}
+this is not valid json at all
+TSCRIPT
+    PCE_OUT_MAL="$(cd "$PCE_REPO" && echo "$PCE_PAYLOAD" | python3 .claude/hooks/phase1_evidence_gate.py 2>&1)"
+    PCE_RC_MAL=$?
+    if [ "$PCE_RC_MAL" = "0" ]; then
+        t_pass "phase1_evidence_block: malformed inputs do not abort walk; valid evidence still counted"
+    else
+        t_fail "phase1_evidence_block: malformed-input resilience" \
+               "rc=$PCE_RC_MAL out=$PCE_OUT_MAL"
+    fi
+
+    # M2 -- re-adversarial dispatch must NOT trigger the Phase-1 gate
+    # (only adversarial does; re-adversarial is step 13.5, separate).
+    : > "$PCE_TRANSCRIPT"
+    PCE_KIND_READV='[review-kind: re-adversarial]'
+    PCE_PROMPT_READV="${PCE_KIND_READV} todo/00-infrastructure/TODO-99-pce-fixture.md sample"
+    PCE_CMD_READV="$PCE_CMD_BASE \"$PCE_PROMPT_READV\""
+    PCE_PAYLOAD_READV=$(python3 -c "
+import json
+print(json.dumps({
+    'tool_name': 'Bash',
+    'tool_input': {'command': '''$PCE_CMD_READV'''},
+    'transcript_path': '$PCE_TRANSCRIPT',
+}))
+")
+    PCE_OUT_READV="$(cd "$PCE_REPO" && echo "$PCE_PAYLOAD_READV" | python3 .claude/hooks/phase1_evidence_gate.py 2>&1)"
+    PCE_RC_READV=$?
+    if [ "$PCE_RC_READV" = "0" ]; then
+        t_pass "phase1_evidence_block: re-adversarial dispatch bypasses gate (scoped to adversarial only)"
+    else
+        t_fail "phase1_evidence_block: re-adversarial discrimination" \
+               "rc=$PCE_RC_READV out=$PCE_OUT_READV"
+    fi
+
+    # M2 -- missing review-kind marker must bypass the gate (no marker
+    # = no scoped dispatch we can attribute as adversarial).
+    PCE_PROMPT_NOMK="todo/00-infrastructure/TODO-99-pce-fixture.md plain prompt no marker"
+    PCE_CMD_NOMK="$PCE_CMD_BASE \"$PCE_PROMPT_NOMK\""
+    PCE_PAYLOAD_NOMK=$(python3 -c "
+import json
+print(json.dumps({
+    'tool_name': 'Bash',
+    'tool_input': {'command': '''$PCE_CMD_NOMK'''},
+    'transcript_path': '$PCE_TRANSCRIPT',
+}))
+")
+    PCE_OUT_NOMK="$(cd "$PCE_REPO" && echo "$PCE_PAYLOAD_NOMK" | python3 .claude/hooks/phase1_evidence_gate.py 2>&1)"
+    PCE_RC_NOMK=$?
+    if [ "$PCE_RC_NOMK" = "0" ]; then
+        t_pass "phase1_evidence_block: missing review-kind marker bypasses gate"
+    else
+        t_fail "phase1_evidence_block: missing-marker bypass" \
+               "rc=$PCE_RC_NOMK out=$PCE_OUT_NOMK"
+    fi
+
+    rm -rf "$PCE_TMP"
+fi
+
+
+# ============================================================================
 # Summary
 # ============================================================================
 

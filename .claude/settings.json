@@ -72,6 +72,11 @@
             "type": "command",
             "command": "python3 .claude/hooks/section_commit_gate.py",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "python3 .claude/hooks/phase1_evidence_gate.py",
+            "timeout": 10
           }
         ]
       },

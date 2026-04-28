@@ -35,7 +35,8 @@
 |---|---|---|---|---|---|---|
 | accepted_xref_block | `.claude/hooks/accepted_xref_block.py` | BLOCK | N | -- | -- | At `git commit`, BLOCKs staged TODO diffs containing bare `> **Accepted:**` / `> **Deferred:**` XREFs lacking a parenthetical anchor. |
 | codex_model_flag_block | `.claude/hooks/codex_model_flag_block.py` | BLOCK | N | -- | `CODEX_FLAG_OVERRIDE=1` | BLOCKs Bash invocations that pass `--model` / `--effort` / `-m` / `-e` / `-c model=...` to Codex. |
-| section_commit_gate | `.claude/hooks/section_commit_gate.py` | BLOCK | N | -- | `SKIP_REVIEW_HOOK=1` (+ `SKIP_REVIEW_HOOK_REASON`) | BLOCKs `git commit` of a section-ship signature without build + Codex + receiving-review evidence. |
+| section_commit_gate | `.claude/hooks/section_commit_gate.py` | BLOCK | N | -- | `SKIP_REVIEW_HOOK=1` (+ `SKIP_REVIEW_HOOK_REASON`) | BLOCKs `git commit` of a section-ship signature without build + Codex + receiving-review evidence. TODO-08 §17: also BLOCKs commits whose staged C/H diff matches step-13.5 triggers (locking / faultable / lifecycle / >50 LOC) when no recent `re-adversarial` stamp exists, including pure-source fix-loop commits when an active `review-todo-section` provides TODO attribution. |
+| phase1_evidence_gate | `.claude/hooks/phase1_evidence_gate.py` | BLOCK | N | -- | `SKIP_PHASE1_BLOCK=1` (+ `SKIP_PHASE1_BLOCK_REASON`) | TODO-08 §17: BLOCKs `Bash` dispatches of `codex-companion.mjs adversarial-review` with `[review-kind: adversarial]` when an active `review-todo-section` skill in `skill-progress.json` has fewer than 2 prior `Read`/`Grep` tool calls scoped to `src/` or `include/`. Walks `transcript_path` JSONL forward from `started_ts`; tool-history.jsonl carries no tool_input so transcript walk is the only viable evidence source. |
 
 ### Matcher: `Skill`
 
