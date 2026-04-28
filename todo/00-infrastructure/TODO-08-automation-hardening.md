@@ -78,7 +78,7 @@ title: "TODO-08 -- Automation Hardening (Skill / Hook / MCP / Codex Integration)
 | 💎  |   13  |  §13    | Documentation sync: CLAUDE.md / ai-system.md / mcp-usage.md; reciprocal XREF sweep   | §1-§12                     |  [x]   |
 | 💎  |   14  |  §14    | Remove Copilot CLI reviewer wholesale (Codex is sole external reviewer)              | §3 (initial sweep started) |  [x]   |
 | 💎  |   15  |  §15    | Design-review hook scope fix: review-kind recognition + commit-clears-gate            | §7                         |  [x]   |
-| ⭐  |   16  |  §16    | Compaction-resilient skill-step state: HEAD-mismatch + TTL + PreCompact flush         | §10, §11                   |  [ ]   |
+| ⭐  |   16  |  §16    | Compaction-resilient skill-step state: PreCompact orphan + observer/block skip + cache | §10, §11                   |  [x]   |
 
 > 💎 = parity work -- standard developer-tooling hygiene (audit scripts, drift detection, doc sync). Linux kernel ships `MAINTAINERS` + `get_maintainer.pl`; Windows has the engineering-systems-internal equivalent. We need it because skill / hook / MCP wiring drifts silently.
 > ⭐ = competitive edge -- enforcing reviewer-contract discipline at the Bash / Edit tool boundary, hard-gating skill-pipeline steps, cross-wiring two AI assistants (Claude Code + Codex CLI) into the same MCP server set, and observed-not-claimed step-state telemetry are novel ground. Neither Win11 nor Linux ships AI-tooling automation at this layer; among AI dev tools (Cursor, Aider, Continue, Copilot Workspace) only `nesaminua/claude-code-lsp-enforcement-kit` ships a comparable state-binding pattern as of early 2026.
@@ -556,18 +556,17 @@ The catch-22 is structural: the gate runs PreToolUse and the observer runs PostT
 
 This section adds the principled fix: mark entries as compaction-orphaned at compaction time (when the observer is about to stop firing), and have the gate's selector skip orphaned entries. No heuristics, no TTL guesses, no HEAD-tracking subprocess overhead in the gate's hot path -- the orphan flag is set by the one hook that knows compaction is happening, written into the same state file that already exists.
 
-- [ ] **PreCompact orphan-marking** in [`.claude/hooks/pre_compact_flush.py`](../../.claude/hooks/pre_compact_flush.py) (the §11 PreCompact hook): on every PreCompact firing, walk every entry in `.claude/state/skill-progress.json` and write `"compaction_orphaned": true` into the entry, alongside `"orphan_reason": "PreCompact fired with N steps observed"` (N = `len(steps_observed)`) and `"orphan_ts_ns": <now>`. Idempotent: if the flag is already set, do not overwrite (preserve the original `orphan_ts_ns`). Atomic: write to `skill-progress.json.tmp` then `os.replace` so a partial write cannot corrupt the file.
-- [ ] **Selector skip in [`.claude/hooks/skill_step_block.py`](../../.claude/hooks/skill_step_block.py) `_select_active_skill`**: when iterating entries to pick the most-recent active skill by `started_ts`, treat any entry where `entry.get("compaction_orphaned") is True` as "not active -- skip." Selector falls through to the next non-orphaned entry; if all entries are orphaned, returns `(None, None)` and the hook exits 0 (no active skill to gate against). Three-line patch.
-
-- [ ] **Transcript-scan offset cache for `design_review_required.py`** (Codex §15 perf M1, deferred 2026-04-28): `_scan_transcript()` opens the transcript fresh and iterates every JSONL line on every PreToolUse Edit, so latency grows with session length. Add a per-transcript-path cache keyed by `(inode, mtime, size, last_byte_offset)` that processes only appended lines. Persist the cache to `.claude/state/transcript-scan-cache.json` (single file, all hooks share it; document in `.claude/state/README.md`). Alternative: scan backward from EOF until the latest `implement-todo-section` Skill event or section-ship commit and only parse that bounded suffix. Add a fixture with a large transcript (10k+ lines) to assert bounded runtime. Same hot-path concern applies to `skill_step_block.py:_select_active_skill` reading `skill-progress.json` -- that file is small (one entry per active skill) so no cache needed there. The cache is specifically for the JSONL transcript scanners.
-- [ ] **Audit log on skip**: each time `_select_active_skill` skips an orphaned entry, append a one-line record to `.claude/state/skill-progress-skip.log` -- `{ts_ns, skill, started_head_sha, orphan_ts_ns, orphan_reason}`. 200-line ring buffer (truncate from the front when over). If a real bug shows up (gate clearing on what should have been a live skill flow), the log shows the entry shape that triggered the skip.
-- [ ] **Sub-tests** in [`scripts/test-tooling.sh`](../../scripts/test-tooling.sh) -- 3 cases:
+- [x] **PreCompact orphan-marking** in [`.claude/hooks/pre_compact_flush.py`](../../.claude/hooks/pre_compact_flush.py) (the §11 PreCompact hook): on every PreCompact firing, walk every entry in `.claude/state/skill-progress.json` and write `"compaction_orphaned": true` into the entry, alongside `"orphan_reason": "PreCompact fired with N steps observed"` (N = `len(steps_observed)`) and `"orphan_ts_ns": <now>`. Idempotent: if the flag is already set, do not overwrite (preserve the original `orphan_ts_ns`). Atomic: write to `skill-progress.json.tmp` then `os.replace` so a partial write cannot corrupt the file.
+- [x] **Selector skip in BOTH `skill_step_block.py` AND `skill_step_observer.py`** (design review H1 fix 2026-04-28): when each hook iterates entries to pick the most-recent active skill by `started_ts`, treat any entry where `entry.get("compaction_orphaned") is True` as "not active -- skip." If all entries are orphaned, observer creates a fresh new entry for the resumed skill flow and the blocker returns `(None, None)`. Why both: if only the blocker skips orphaned entries, the observer keeps recording post-compaction step evidence into the orphaned entry while the blocker ignores it, creating an enforcement bypass (post-compaction commits proceed without ANY active-skill gate, even when a fresh implement-todo-section was invoked after compaction). The observer's `_select_active_skill_for_record()` (or equivalent) must skip orphaned entries when looking for the most-recent active flow to attribute observed steps to.
+- [x] **Transcript-scan offset cache for `design_review_required.py`** (Codex §15 perf M1, deferred 2026-04-28): `_scan_transcript()` opens the transcript fresh and iterates every JSONL line on every PreToolUse Edit, so latency grows with session length. Add a per-transcript-path cache keyed by `(inode, mtime, size, last_byte_offset)` that processes only appended lines. Persist the cache to `.claude/state/transcript-scan-cache.json` (single file, all hooks share it; document in `.claude/state/README.md`). Alternative: scan backward from EOF until the latest `implement-todo-section` Skill event or section-ship commit and only parse that bounded suffix. Add a fixture with a large transcript (10k+ lines) to assert bounded runtime. Same hot-path concern applies to `skill_step_block.py:_select_active_skill` reading `skill-progress.json` -- that file is small (one entry per active skill) so no cache needed there. The cache is specifically for the JSONL transcript scanners.
+- [x] **Audit log on skip**: each time `_select_active_skill` skips an orphaned entry, append a one-line record to `.claude/state/skill-progress-skip.log` -- `{ts_ns, skill, started_head_sha, orphan_ts_ns, orphan_reason}`. 200-line ring buffer (truncate from the front when over). If a real bug shows up (gate clearing on what should have been a live skill flow), the log shows the entry shape that triggered the skip.
+- [x] **Sub-tests** in [`scripts/test-tooling.sh`](../../scripts/test-tooling.sh) -- 3 cases:
    1. Entry with `compaction_orphaned: true` set -> selector skips, gate clears, `Bash(git commit ...)` proceeds.
    2. Entry without the flag (live entry) -> selector picks it normally (regression guard against accidentally skipping live entries).
    3. PreCompact hook fixture: simulate calling `pre_compact_flush.py` with a state file containing one un-orphaned entry; assert the entry now has `compaction_orphaned: true` AND idempotent re-run does not bump `orphan_ts_ns`.
-- [ ] **`MANIFEST.md` update**: add the new `pre_compact_flush.py` orphan-marking responsibility to the manifest entry (§7 §11 hook). Re-run `bash scripts/audit-hooks.sh` to confirm green.
-- [ ] **Documentation**: add a 2-bullet "Compaction Resilience" subsection to [`docs/infrastructure/ai-system.md`](../../docs/infrastructure/ai-system.md) Hook Event Surface area (after the §11 PreCompact bullet), naming the orphan-flag mechanism and the skip-log audit file. Update [TODO-08 §10](#10-skill-step-state-telemetry--non-contiguous-step-block) Outcome with a one-line pointer to §16 so future readers see the resilience layer at the same depth as the original gate.
-- [ ] Commit: `"hooks: PreCompact orphan-marking for compaction-resilient skill-step gate"`
+- [x] **`MANIFEST.md` update**: add the new `pre_compact_flush.py` orphan-marking responsibility to the manifest entry (§7 §11 hook). Re-run `bash scripts/audit-hooks.sh` to confirm green.
+- [x] **Documentation**: add a 2-bullet "Compaction Resilience" subsection to [`docs/infrastructure/ai-system.md`](../../docs/infrastructure/ai-system.md) Hook Event Surface area (after the §11 PreCompact bullet), naming the orphan-flag mechanism and the skip-log audit file. Update [TODO-08 §10](#10-skill-step-state-telemetry--non-contiguous-step-block) Outcome with a one-line pointer to §16 so future readers see the resilience layer at the same depth as the original gate.
+- [x] Commit: `"hooks: PreCompact orphan-marking for compaction-resilient skill-step gate"`
 
 **Inputs (XREFs):** -> XREF: [00-infrastructure/TODO-08 §10](#10-skill-step-state-telemetry--non-contiguous-step-block) (skill-step gate this section hardens), [00-infrastructure/TODO-08 §11](#11-hook-event-surface-expansion-sessionstart--userpromptsubmit--stop--subagentstop--precompact) (PreCompact hook this section extends).
 
@@ -586,43 +585,48 @@ This section adds the principled fix: mark entries as compaction-orphaned at com
 
 ## Format Quick Reference
 
-| Concern | Where it lives | Owner |
-|---------|----------------|-------|
-| Claude Code MCP servers | [`.mcp.json`](../../.mcp.json) | §1 (this TODO) -- mirrors to Codex |
-| Codex CLI MCP servers | `~/.codex/config.toml` `[mcp_servers.*]` | §1 -- mirrors from Claude side |
-| Codex model + effort default | `~/.codex/config.toml` top-level | User -- centralized control; §2 documents non-override policy |
-| Hooks | [`.claude/settings.json`](../../.claude/settings.json) + [`.claude/hooks/`](../../.claude/hooks/) | §7 manifest; per-section adds |
-| State files | `.claude/state/*.json` + `.claude/state/*.jsonl` (gitignored) | §3 / §5 / §10 / §11 -- shape doc in `.claude/state/README.md` |
-| Skill step evidence map | [`.claude/hooks/skill_step_map.py`](../../.claude/hooks/skill_step_map.py) | §10 -- pairs each skill's required steps with the tool-call signature that proves it ran |
-| Tool call history | `.claude/state/tool-history.jsonl` (gitignored) | §11 -- written by PostToolUse `*` matcher; consumed by §10 step observer + §11 Stop audit |
-| Lint surface | [`scripts/lint.sh`](../../scripts/lint.sh) | Existing checks 1-5; §12 adds 6/7/8 |
-| Reviewer contract | [`docs/infrastructure/ai-system.md`](../../docs/infrastructure/ai-system.md) "External-Reviewer Contract" | TODO-02 §4 owns doctrine; this TODO §3 owns mechanism |
-| Skill triggers | [`CLAUDE.md`](../../CLAUDE.md) "Mandatory Skill Triggers" table | TODO-02 §3 owns doctrine; this TODO §8 adds rows |
-| MCP usage | [`docs/infrastructure/mcp-usage.md`](../../docs/infrastructure/mcp-usage.md) | §6 (NEW) |
-| Drift detection | `scripts/audit-ai-system.sh` | §9 (NEW) |
+| Concern                      | Where it lives                                                                                    | Owner                                           |
+|------------------------------|---------------------------------------------------------------------------------------------------|-------------------------------------------------|
+| Claude Code MCP servers      | [`.mcp.json`](../../.mcp.json)                                                                    | §1 (this TODO) -- mirrors to Codex              |
+| Codex CLI MCP servers        | `~/.codex/config.toml` `[mcp_servers.*]`                                                          | §1 -- mirrors from Claude side                  |
+| Codex model + effort default | `~/.codex/config.toml` top-level                                                                  | User -- centralized control; §2 non-override    |
+| Hooks                        | [`.claude/settings.json`](../../.claude/settings.json) + [`.claude/hooks/`](../../.claude/hooks/) | §7 manifest; per-section adds                   |
+| State files                  | `.claude/state/*.json` + `*.jsonl` (gitignored)                                                   | §3 / §5 / §10 / §11; shape in `state/README.md` |
+| Skill step evidence map      | [`.claude/hooks/skill_step_map.py`](../../.claude/hooks/skill_step_map.py)                        | §10 -- per-skill required-steps signatures      |
+| Tool call history            | `.claude/state/tool-history.jsonl` (gitignored)                                                   | §11 -- PostToolUse `*`; §10/§11 consumers       |
+| Lint surface                 | [`scripts/lint.sh`](../../scripts/lint.sh)                                                        | Existing checks 1-5; §12 adds 6/7/8             |
+| Reviewer contract            | [`ai-system.md`](../../docs/infrastructure/ai-system.md) External-Reviewer Contract               | TODO-02 §4 doctrine; this TODO §3 mechanism     |
+| Skill triggers               | [`CLAUDE.md`](../../CLAUDE.md) Mandatory Skill Triggers                                           | TODO-02 §3 doctrine; this TODO §8 adds rows     |
+| MCP usage                    | [`docs/infrastructure/mcp-usage.md`](../../docs/infrastructure/mcp-usage.md)                      | §6 (NEW)                                        |
+| Drift detection              | `scripts/audit-ai-system.sh`                                                                      | §9 (NEW)                                        |
 
 ---
 
 ## OS Comparison
 
-| ⭐ | Feature                                  | 🪟 Win11               | 🐧 Linux                | 🚀 Impossible OS                   |
-|----|------------------------------------------|-----------------------|------------------------|-----------------------------------|
-| 💎 | Cross-tool MCP server set                | ❌ N/A                 | ❌ N/A                  | ⏳ §1 wired; smoke blocked on Codex 0.126 alpha |
-| 💎 | Hook + skill manifest                    | ❌ N/A                 | ❌ N/A                  | ⬜ Planned -- §7                   |
-| ⭐ | Reviewer-contract hard gate at edit      | ❌ Not available       | ❌ Not available        | ⬜ Planned -- §3                   |
-| ⭐ | Section-commit gate with build evidence  | ❌ Not available       | ❌ Not available        | ✅ §4 hard block; build mtime + index/worktree desync + Codex blob-binding + receiving evidence; ~60 bypass shapes blocked |
-| ⭐ | Four-dispatch quality review enforcement | ❌ Not available       | ❌ Not available        | ⏳ §5 three-dispatch state file + commit gate (adversarial+consistency+perf, 30-min TTL, HEAD-ancestry binding); per-section keying still open (M6) |
-| ⭐ | Cross-tool drift detection (Claude+Codex)| ❌ Not available       | ❌ Not available        | ⬜ Planned -- §9                   |
-| 💎 | Doctrine + skill catalog audit           | ❌ Internal eng only   | ⚠️ Ad-hoc per project   | ⬜ Planned -- §8                   |
-| 💎 | MCP usage discipline doctrine            | ❌ N/A                 | ❌ N/A                  | ⬜ Planned -- §6                   |
-| ⭐ | Skill step-state telemetry (observed)    | ❌ Not available       | ❌ Not available        | ⬜ Planned -- §10                  |
-| ⭐ | Hook event surface (SessionStart / Stop) | ❌ N/A                 | ❌ N/A                  | ⬜ Planned -- §11                  |
-| ⭐ | AI-slop content lints (build-passes-but) | ❌ Not available       | ⚠️ Linter-coverage only | ⬜ Planned -- §12                  |
+| ⭐ | Feature                             | 🪟 Win11    | 🐧 Linux        | 🚀 Impossible OS                     |
+|---|-------------------------------------|------------|----------------|-------------------------------------|
+| 💎 | Cross-tool MCP server set           | ❌ N/A      | ❌ N/A          | ✅ §1 (Claude+Codex shared)          |
+| 💎 | Hook + skill manifest               | ❌ N/A      | ❌ N/A          | ✅ §7 (MANIFEST + audit)             |
+| ⭐ | Reviewer-contract hard gate at edit | ❌ N/A      | ❌ N/A          | ✅ §3 (BLOCK on receive)             |
+| ⭐ | Section-commit build-evidence gate  | ❌ N/A      | ❌ N/A          | ✅ §4 (~60 bypasses blocked)         |
+| ⭐ | Multi-dispatch review enforcement   | ❌ N/A      | ❌ N/A          | ✅ §5 (3x state file + gate)         |
+| ⭐ | Cross-tool drift detection          | ❌ N/A      | ❌ N/A          | ✅ §9 (7 checks audit)               |
+| 💎 | Doctrine + skill catalog audit      | ❌ Internal | ⚠️ Per project | ✅ §8 (suppression policy)           |
+| 💎 | MCP usage discipline doctrine       | ❌ N/A      | ❌ N/A          | ✅ §6 (CLAUDE.md pointer)            |
+| ⭐ | Skill step-state telemetry          | ❌ N/A      | ❌ N/A          | ✅ §10 (observer + block)            |
+| ⭐ | Hook event surface coverage         | ❌ N/A      | ❌ N/A          | ✅ §11 (5 events wired)              |
+| ⭐ | AI-slop content lints               | ❌ N/A      | ⚠️ Linter only | ✅ §12 (Check 6 live; 7/8 deferred)  |
+| 💎 | Doctrine sync + reciprocal XREFs    | ❌ N/A      | ❌ N/A          | ✅ §13 (lockstep with code)          |
+| 💎 | Sole external reviewer surface      | ❌ N/A      | ❌ N/A          | ✅ §14 (Copilot retired; Codex only) |
+| ⭐ | Design-review hook scope precision  | ❌ N/A      | ❌ N/A          | ✅ §15 (review-kind + commit-clears) |
+| ⭐ | Compaction-resilient skill state    | ❌ N/A      | ❌ N/A          | ⬜ Planned -- §16                    |
 
 > **After §1-§5:** Claude and Codex share the same MCP server set, the same Codex invocation policy, the same hard gates around reviews and section commits. Drift between the two automation sides is detectable.
 > **After §6-§9:** The whole automation surface is auditable in one script. Hook system is documented; MCP usage is doctrine; superpowers plugin behavior is reconciled with Impossible OS rules.
-> **After §10-§12:** Skill step-state telemetry observes (rather than trusts) what each pipeline did; the unused two-thirds of the hook-event surface is wired in (SessionStart / UserPromptSubmit / Stop / SubagentStop / PreCompact); AI-slop content lints catch the three patterns build+tests structurally cannot (tautological tests, stub-behind-stamp, phantom-includes).
-> **After §13:** Doctrine docs match running code; reciprocal XREFs land. Future work in TODO-02 / TODO-06 / TODO-07 has a clean integration story.
+> **After §10-§12:** Skill step-state telemetry observes (rather than trusts) what each pipeline did; the unused two-thirds of the hook-event surface is wired in (SessionStart / UserPromptSubmit / Stop / SubagentStop / PreCompact); AI-slop content lints catch the three patterns build+tests structurally cannot.
+> **After §13-§14:** Doctrine docs match running code; reciprocal XREFs land; Copilot CLI subordinate-reviewer wrapper retired wholesale (Codex GPT-5.5 sole external reviewer).
+> **After §15-§16:** Design-review hook recognizes the full review-kind set + clears on successful section-ship commits; PreCompact orphan-marking ends the catch-22 where stale skill-progress entries blocked all post-compaction commits and review skill invocations.
 
 ---
 

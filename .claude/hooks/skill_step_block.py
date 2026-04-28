@@ -43,6 +43,44 @@ import section_commit_gate as scg  # noqa: E402
 
 _STATE_REL = ".claude/state/skill-progress.json"
 _SKIP_LOG_REL = ".claude/state/skip-log.jsonl"
+_ORPHAN_SKIP_LOG_REL = ".claude/state/skill-progress-skip.log"
+_ORPHAN_SKIP_LOG_MAX_LINES = 200
+
+
+def _log_orphan_skip(root: str, name: str, entry: dict) -> None:
+    """TODO-08 §16: append a JSONL record when _select_active_skill
+    skips a `compaction_orphaned` entry. 200-line ring buffer
+    (truncate from the front when over). Audit trail in case the
+    skip behavior fires on what should have been a live entry.
+    """
+    p = os.path.join(root, _ORPHAN_SKIP_LOG_REL)
+    rec = {
+        "ts_ns": time.time_ns() if hasattr(time, "time_ns")
+                 else int(time.time() * 1e9),
+        "kind": "ORPHAN_SKIP",
+        "skill": name,
+        "started_head_sha": entry.get("started_head_sha", ""),
+        "orphan_ts_ns": entry.get("orphan_ts_ns", 0),
+        "orphan_reason": entry.get("orphan_reason", ""),
+    }
+    try:
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "a", encoding="utf-8") as f:
+            f.write(json.dumps(rec) + "\n")
+        # Ring-buffer truncation: if file > MAX lines, keep the tail.
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+            if len(lines) > _ORPHAN_SKIP_LOG_MAX_LINES:
+                lines = lines[-_ORPHAN_SKIP_LOG_MAX_LINES:]
+                tmp = p + ".tmp"
+                with open(tmp, "w", encoding="utf-8") as f:
+                    f.writelines(lines)
+                os.replace(tmp, p)
+        except Exception:
+            pass
+    except Exception:
+        pass
 
 
 def _repo_root():
@@ -89,9 +127,16 @@ def _is_blocking_signature(d: dict) -> bool:
     return False
 
 
-def _select_active_skill(state: dict):
+def _select_active_skill(state: dict, root: str = ""):
     """Pick the most-recently-started multi-step skill entry. Returns
-    (skill_name, entry_dict) or (None, None) if state is empty."""
+    (skill_name, entry_dict) or (None, None) if state is empty.
+
+    TODO-08 §16: skip entries with `compaction_orphaned: true`. The
+    PreCompact hook marks every active entry orphaned on compaction
+    because the PostToolUse step-observer cannot run during summary
+    generation, so the entry's steps_observed list freezes; without
+    this skip the gate would BLOCK every post-compaction commit
+    (see file header for the structural catch-22 rationale)."""
     if not isinstance(state, dict):
         return (None, None)
     best = None
@@ -100,6 +145,12 @@ def _select_active_skill(state: dict):
         if name not in MULTI_STEP_SKILLS:
             continue
         if not isinstance(entry, dict):
+            continue
+        if entry.get("compaction_orphaned") is True:
+            # §16: log the skip for audit; never gate against an
+            # orphaned entry whose steps_observed froze pre-compact.
+            if root:
+                _log_orphan_skip(root, name, entry)
             continue
         ts = entry.get("started_ts", 0)
         if not isinstance(ts, int):
@@ -173,7 +224,7 @@ def main() -> int:
         # the canonical guard for sections without an active skill flow.
         return 0
 
-    skill, entry = _select_active_skill(state)
+    skill, entry = _select_active_skill(state, root)
     if not skill or not entry:
         return 0
 

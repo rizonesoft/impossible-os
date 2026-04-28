@@ -272,6 +272,14 @@ def main() -> int:
                 continue
             if name not in MULTI_STEP_SKILLS:
                 continue
+            # TODO-08 §16: skip orphaned entries. Without this skip the
+            # observer would keep recording post-compaction step evidence
+            # into an orphaned entry while the §10 step-block hook (which
+            # also skips orphans) ignores it -- creating an enforcement
+            # bypass where post-compaction commits proceed without any
+            # active-skill gate. Symmetric with skill_step_block.py.
+            if entry.get("compaction_orphaned") is True:
+                continue
             ts = entry.get("started_ts", 0)
             if isinstance(ts, int) and ts > best_ts:
                 best_ts = ts
@@ -279,7 +287,9 @@ def main() -> int:
                 args = entry.get("args", "")
                 sid = entry.get("session_id", "")
     if not skill:
-        # Fallback: no state entry. One transcript walk to bootstrap.
+        # Fallback: no state entry (or all entries orphaned). One
+        # transcript walk to bootstrap from the resumed flow's most-
+        # recent Skill(implement-todo-section/...) invocation.
         transcript = d.get("transcript_path", "")
         skill, args, sid = _scan_transcript_for_active_skill(transcript)
     if not skill:
@@ -295,8 +305,17 @@ def main() -> int:
         return 0
 
     # Lazy state init for the skill if missing (transcript-walked but not
-    # observed-from-payload, e.g. observer started mid-session).
+    # observed-from-payload, e.g. observer started mid-session). TODO-08
+    # §16: if the existing entry under this skill name is orphaned,
+    # archive it under a `<skill>.orphan.<ts>` key and create a fresh
+    # entry. Without this rotation the observer would write new step
+    # evidence into the orphaned entry, which §10 + §16 selector skips
+    # ignore -- the resumed flow would have NO active gate.
     entry = state.get(skill)
+    if isinstance(entry, dict) and entry.get("compaction_orphaned") is True:
+        archive_key = skill + ".orphan." + str(entry.get("orphan_ts_ns", _ts_ns()))
+        state[archive_key] = entry
+        entry = None
     if not isinstance(entry, dict):
         entry = {
             "started_ts": _ts_ns(),

@@ -2777,6 +2777,110 @@ rm -rf "$DR_TMP"
 
 
 # ============================================================================
+# TODO-08 number 16: PreCompact orphan-marking + selector skip + cache
+# ============================================================================
+# Sub-tests for compaction-resilient skill-step state. Three angles:
+# (16-1) skill-progress.json entry with compaction_orphaned: true is
+#        skipped by skill_step_block selector -> gate clears.
+# (16-2) Live (un-orphaned) entry is still picked normally (regression
+#        guard against accidentally skipping live entries).
+# (16-3) pre_compact_flush.py walking a state file marks every entry
+#        compaction_orphaned: true; idempotent re-run preserves
+#        orphan_ts_ns.
+
+C16_TMP="$(mktemp -d -t test_compact16_XXXXXX)"
+SSB_HOOK="$REPO_ROOT/.claude/hooks/skill_step_block.py"
+PCF_HOOK="$REPO_ROOT/.claude/hooks/pre_compact_flush.py"
+
+# 16-1: orphaned entry -> skill_step_block selector skips, exits 0
+C16_STATE_DIR="$C16_TMP/state1/.claude/state"
+mkdir -p "$C16_STATE_DIR"
+cat >"$C16_STATE_DIR/skill-progress.json" <<'PYJSON'
+{
+  "implement-todo-section": {
+    "args": "## 1. Foo",
+    "session_id": "sess-abc",
+    "started_head_sha": "deadbeef",
+    "started_ts": 1777000000000000000,
+    "steps_observed": [],
+    "compaction_orphaned": true,
+    "orphan_reason": "PreCompact fired with 0 steps observed",
+    "orphan_ts_ns": 1777000000000000001
+  }
+}
+PYJSON
+# Init empty git repo so the hook's _repo_root resolves to C16_TMP/state1.
+( cd "$C16_TMP/state1" && git init -q && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init )
+PAYLOAD='{"tool_name":"Bash","tool_input":{"command":"git commit -m \"feat: x\""}}'
+RC=0
+( cd "$C16_TMP/state1" && printf '%s' "$PAYLOAD" | python3 "$SSB_HOOK" >/dev/null 2>&1 ) || RC=$?
+if [ "$RC" = "0" ]; then
+    t_pass "compact16_orphan_skip orphaned entry -> selector skips, gate clears (rc=0)"
+else
+    t_fail "compact16_orphan_skip expected rc=0, got rc=$RC"
+fi
+
+# 16-2: live (un-orphaned) entry with missing terminal steps -> blocker fires
+C16_STATE_DIR2="$C16_TMP/state2/.claude/state"
+mkdir -p "$C16_STATE_DIR2"
+cat >"$C16_STATE_DIR2/skill-progress.json" <<'PYJSON'
+{
+  "implement-todo-section": {
+    "args": "## 1. Foo",
+    "session_id": "sess-live",
+    "started_head_sha": "abc12345",
+    "started_ts": 1777999999999999999,
+    "steps_observed": []
+  }
+}
+PYJSON
+( cd "$C16_TMP/state2" && git init -q && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init )
+RC=0
+( cd "$C16_TMP/state2" && printf '%s' "$PAYLOAD" | python3 "$SSB_HOOK" >/dev/null 2>&1 ) || RC=$?
+if [ "$RC" = "2" ]; then
+    t_pass "compact16_live_picked live (un-orphaned) entry -> selector picks it, gate blocks (rc=2)"
+else
+    t_fail "compact16_live_picked expected rc=2, got rc=$RC"
+fi
+
+# 16-3: PreCompact hook marks every active entry compaction_orphaned;
+# idempotent re-run preserves orphan_ts_ns.
+C16_STATE_DIR3="$C16_TMP/state3/.claude/state"
+mkdir -p "$C16_STATE_DIR3"
+cat >"$C16_STATE_DIR3/skill-progress.json" <<'PYJSON'
+{
+  "implement-todo-section": {
+    "args": "## 1. Foo",
+    "session_id": "sess-precompact",
+    "started_head_sha": "abc12345",
+    "started_ts": 1777999999999999999,
+    "steps_observed": [{"n": 5, "evidence_tool": "Bash"}]
+  }
+}
+PYJSON
+( cd "$C16_TMP/state3" && git init -q && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init )
+( cd "$C16_TMP/state3" && printf '{}' | python3 "$PCF_HOOK" >/dev/null 2>&1 )
+ORPHAN1="$(python3 -c "import json; d=json.load(open('$C16_STATE_DIR3/skill-progress.json')); e=d['implement-todo-section']; print(e.get('compaction_orphaned'), e.get('orphan_ts_ns',0))")"
+case "$ORPHAN1" in
+    "True "*) t_pass "compact16_precompact_mark PreCompact marks entry compaction_orphaned" ;;
+    *) t_fail "compact16_precompact_mark expected 'True <ts>', got '$ORPHAN1'" ;;
+esac
+TS1="${ORPHAN1#True }"
+sleep 0  # ensure any time-based assertion is monotonic-OK
+# Idempotent re-run: orphan_ts_ns must NOT change.
+( cd "$C16_TMP/state3" && printf '{}' | python3 "$PCF_HOOK" >/dev/null 2>&1 )
+ORPHAN2="$(python3 -c "import json; d=json.load(open('$C16_STATE_DIR3/skill-progress.json')); e=d['implement-todo-section']; print(e.get('compaction_orphaned'), e.get('orphan_ts_ns',0))")"
+TS2="${ORPHAN2#True }"
+if [ "$TS1" = "$TS2" ] && [ -n "$TS1" ] && [ "$TS1" != "0" ]; then
+    t_pass "compact16_precompact_idempotent re-run preserves orphan_ts_ns ($TS1)"
+else
+    t_fail "compact16_precompact_idempotent expected ts1==ts2, got '$TS1' vs '$TS2'"
+fi
+
+rm -rf "$C16_TMP"
+
+
+# ============================================================================
 # skill_step_block.py -- non-contiguous-step gate (TODO-08 number 10)
 # ============================================================================
 # Synthesizes a .claude/state/skill-progress.json fixture and runs the

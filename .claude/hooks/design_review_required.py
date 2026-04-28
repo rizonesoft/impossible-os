@@ -43,6 +43,89 @@ import re
 import sys
 
 
+_CACHE_REL = ".claude/state/transcript-scan-cache.json"
+
+
+def _repo_root() -> str:
+    """Best-effort git repo root for cache file placement. Empty
+    string if not in a git repo (cache disabled, fall back to full
+    rescan)."""
+    try:
+        import subprocess
+        return subprocess.check_output(
+            ["git", "rev-parse", "--show-toplevel"],
+            text=True, timeout=2, stderr=subprocess.DEVNULL,
+        ).strip()
+    except Exception:
+        return ""
+
+
+def _cache_path(root: str) -> str:
+    return os.path.join(root, _CACHE_REL) if root else ""
+
+
+def _cache_load(cache_file: str, transcript_path: str) -> dict:
+    """Return the cache entry for transcript_path, or {} if no entry
+    or the cache file is missing/corrupt. Cache entry shape:
+        {
+          "inode": int, "mtime": float, "size": int,
+          "last_byte_offset": int,
+          "impl_seen": bool, "design_seen": bool, "impl_args": str,
+          "pending_clear_ids": {tu_id: true, ...}
+        }
+    """
+    if not cache_file or not transcript_path or not os.path.isfile(cache_file):
+        return {}
+    try:
+        with open(cache_file, "r", encoding="utf-8") as f:
+            cache = json.load(f)
+    except Exception:
+        return {}
+    if not isinstance(cache, dict):
+        return {}
+    entry = cache.get(transcript_path)
+    return entry if isinstance(entry, dict) else {}
+
+
+def _cache_save(cache_file: str, transcript_path: str, entry: dict) -> None:
+    """Atomically write the cache entry for transcript_path. Best-
+    effort: silently swallow I/O errors -- worst case the next call
+    pays a full rescan."""
+    if not cache_file or not transcript_path:
+        return
+    try:
+        os.makedirs(os.path.dirname(cache_file), exist_ok=True)
+        cache = {}
+        if os.path.isfile(cache_file):
+            try:
+                with open(cache_file, "r", encoding="utf-8") as f:
+                    loaded = json.load(f)
+                if isinstance(loaded, dict):
+                    cache = loaded
+            except Exception:
+                pass
+        cache[transcript_path] = entry
+        tmp = cache_file + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(cache, f)
+        os.replace(tmp, cache_file)
+    except Exception:
+        try:
+            os.unlink(cache_file + ".tmp")
+        except Exception:
+            pass
+
+
+def _stat_signature(path: str):
+    """Return (inode, mtime, size) tuple for cache validation. Empty
+    tuple if stat fails."""
+    try:
+        st = os.stat(path)
+        return (st.st_ino, st.st_mtime, st.st_size)
+    except Exception:
+        return ()
+
+
 def _is_code_target(path: str) -> bool:
     """Return True if path looks like a source-code edit that should
     wait for the design review.
@@ -82,23 +165,59 @@ def _scan_transcript(path: str) -> tuple[bool, bool, str]:
                           prompt was invoked AFTER impl_seen
     impl_args          -- args of the most recent implement-todo-section
                           invocation (for the error message)
+
+    TODO-08 §16: incremental rescan via offset cache. If a cached state
+    exists for `path` and (inode, mtime, size) match-or-grow vs the
+    cached values, seek to last_byte_offset and parse only the appended
+    lines starting from cached state. Otherwise full rescan from byte
+    0. Cache invalidation: PreCompact hook deletes the cache file (the
+    semantic window changes on compaction). All errors fall back to
+    full rescan -- the cache is a perf optimization, never a
+    correctness boundary.
     """
+    if not path or not os.path.exists(path):
+        return (False, False, "")
+
+    # §16 cache: try incremental scan first.
+    root = _repo_root()
+    cache_file = _cache_path(root)
+    cached = _cache_load(cache_file, path)
+    cur_sig = _stat_signature(path)
+    start_offset = 0
     impl_seen = False
     design_seen = False
     impl_args = ""
-    # Track pending section-ship commit candidates by tool_use_id;
-    # only clear the gate when the matching tool_result lands with
-    # no error (Codex consistency H1 / adversarial H1, 2026-04-28):
-    # a failed `git commit -m "docs: ..."` or an in-flight commit
-    # must NOT clear the design-review gate.
     pending_clear_ids: dict = {}
-    if not path or not os.path.exists(path):
-        return (False, False, "")
+    can_incremental = (
+        cached
+        and cur_sig
+        and cached.get("inode") == cur_sig[0]
+        and cached.get("mtime", 0) <= cur_sig[1]
+        and cached.get("size", 0) <= cur_sig[2]
+    )
+    if can_incremental:
+        start_offset = int(cached.get("last_byte_offset", 0) or 0)
+        impl_seen = bool(cached.get("impl_seen", False))
+        design_seen = bool(cached.get("design_seen", False))
+        impl_args = str(cached.get("impl_args", "") or "")
+        pcids = cached.get("pending_clear_ids", {}) or {}
+        if isinstance(pcids, dict):
+            pending_clear_ids = dict(pcids)
     try:
         f = open(path, encoding="utf-8")
     except OSError:
         return (False, False, "")
     with f:
+        if start_offset:
+            try:
+                f.seek(start_offset)
+            except Exception:
+                # Seek failed -- fall back to full rescan from 0.
+                f.seek(0)
+                impl_seen = False
+                design_seen = False
+                impl_args = ""
+                pending_clear_ids = {}
         for line in f:
             try:
                 ev = json.loads(line)
@@ -172,6 +291,22 @@ def _scan_transcript(path: str) -> tuple[bool, bool, str]:
                             impl_args = ""
                         # Either way, drop the pending entry.
                         pending_clear_ids.pop(tu_id, None)
+        end_offset = f.tell()
+    # §16 cache: persist post-scan state. Re-stat the file to pin the
+    # mtime/size/inode to the bytes we actually consumed (not the pre-
+    # scan stat above, which can race against an in-flight write).
+    final_sig = _stat_signature(path)
+    if final_sig and cache_file:
+        _cache_save(cache_file, path, {
+            "inode": final_sig[0],
+            "mtime": final_sig[1],
+            "size": final_sig[2],
+            "last_byte_offset": end_offset,
+            "impl_seen": impl_seen,
+            "design_seen": design_seen,
+            "impl_args": impl_args,
+            "pending_clear_ids": pending_clear_ids,
+        })
     return (impl_seen, design_seen, impl_args)
 
 
