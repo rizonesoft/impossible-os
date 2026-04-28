@@ -517,6 +517,9 @@ User policy 2026-04-26: "we are not using copilot anymore." Copilot CLI was the 
 > - Doc pointer: [docs/infrastructure/ai-system.md "External-Reviewer Contract (Codex)"](../../docs/infrastructure/ai-system.md#external-reviewer-contract-codex).
 > - Scope boundary: this section sweeps Copilot CLI subordinate-reviewer references only. The autonomous-agent boundary policy's references to Copilot CLOUD-AGENT (a separate Microsoft product) stay intact -- the org/repo Settings -> Copilot Access policy guard, the forbidden-paths list, and the regression-pack check on cloud-agent enablement remain in force.
 
+> **Verified:** 2026-04-28 | commit `f3a7b6bb` | 7/7 items | build OK | test-ai-system 79/79 PASS, audit-ai-system 7/7 PASS, test-tooling 270/270 PASS
+> **Quality reviewed:** 2026-04-28 | Codex 3x (adversarial, consistency, perf) | 3M+1L fixed | scope: N/A (docs/scripts removal sweep; no source code)
+
 ---
 
 ## 15. Design-Review Hook Scope Fix: Review-Kind Recognition + Commit-Clears-Gate

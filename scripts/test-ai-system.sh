@@ -63,9 +63,9 @@ What this tests (12 check groups; owned by TODO-02 sections 1-8):
  10. No-parallel-skill-trees: no .codex/skills/ or .copilot/skills/
      or equivalent outside .claude/skills/.
  11. Hook JSON parse: .claude/settings.json is valid JSON.
- 12. Copilot instructions present and subordinate: .github/
-     copilot-instructions.md exists, references the external-reviewer
-     contract, does not redefine CLAUDE.md doctrine.
+ 12. Copilot CLI reviewer retired: .github/copilot-instructions.md
+     and scripts/copilot-review.sh are absent (deleted 2026-04-28),
+     and no live wrapper caller remains in scripts / hooks / settings.
 
 Exit codes:
   0 = all tests passed
@@ -695,12 +695,15 @@ check_copilot_retired() {
         ".github/copilot-instructions.md"
     assert_path_absent "scripts/copilot-review.sh is gone (retired)" \
         "scripts/copilot-review.sh"
-    # Live-invocation check: scan only executable script files
-    # (.sh / .py / .mjs / .js) under scripts/ and .claude/hooks/, and
-    # only flag occurrences that look like invocation lines (start with
-    # "bash " or contain a "subprocess." or "exec" call to the wrapper).
-    # Plain prose mentions in markdown / SKILL.md / this script's own
-    # assertion strings are not invocation paths and not flagged.
+    # Live-invocation check: scan executable script files (.sh / .py
+    # / .mjs / .js) under scripts/ and .claude/hooks/, AND
+    # .claude/settings.json (a live hook-command surface that could
+    # re-introduce the wrapper through a hook entry). Only flag
+    # occurrences that look like invocation lines (start with "bash "
+    # or contain a "subprocess." or "exec" call to the wrapper, OR
+    # appear inside a settings.json string value). Plain prose mentions
+    # in markdown / SKILL.md / this script's own assertion strings are
+    # not invocation paths and not flagged.
     local invocation_hits
     invocation_hits="$(grep -RIE \
         '(bash|sh|exec[a-z]*|run|subprocess\.[a-zA-Z_]+\([^)]*)[[:space:]]*[\"'"'"']?scripts/copilot-review\.sh' \
@@ -711,6 +714,13 @@ check_copilot_retired() {
                "found invocation: $invocation_hits"
     else
         t_pass "no live caller of scripts/copilot-review.sh remains"
+    fi
+    # Additional: settings.json hook-command surface
+    if grep -q "scripts/copilot-review\.sh" .claude/settings.json 2>/dev/null; then
+        t_fail "no copilot-review.sh reference in .claude/settings.json hook commands" \
+               "found wrapper path in settings.json"
+    else
+        t_pass "no copilot-review.sh reference in .claude/settings.json hook commands"
     fi
 }
 
