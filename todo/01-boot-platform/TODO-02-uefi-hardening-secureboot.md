@@ -283,8 +283,15 @@ Unified log format and atomic serial writes.
 
 **Test checkpoint:** Under concurrent IRQ logging, serial shows no interleaved partial lines; tags `[ OK ]`, `[WARN]`, `[FAIL]` appear as documented. Stress: rapid `klog()` from timer tick + main thread. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Verified:** 2026-04-11 -- Codex found truncation without marker (fixed: `~` appended on overflow). printk bypass and ring flush race accepted by design (emergency path + lockless producer). Accepted: printk emergency bypass (intentional), ring flush lockless design (same trade-off as Linux printk).
-> **Quality reviewed:** 2026-04-11 -- no findings. Matches Windows DbgPrint (spinlock-serialized per-line) and Linux printk (lockless ring + console_lock). ANSI color output exceeds both. Accepted: none.
+> **Notes:**
+> - What shipped: 5-level klog (`LOG_DEBUG`->`[INFO]`, `LOG_INFO`->`[ OK ]`, `LOG_WARN`->`[WARN]`, `LOG_ERROR`->`[FAIL]`, `LOG_FATAL`->`[CRIT]`); atomic per-line `serial_write` (spinlock-serialized) + atomic `klog()` builder at `src/kernel/klog.c:934 char line[512]`; recovery-replay path at `klog.c:537 char line[192]`. `printk()` rewritten 2026-04-28 to also be atomic (single bounded buffer + one `serial_write`).
+> - How it integrates: `serial_putchar_raw()` static inline (no lock); `serial_write()` holds `g_serial_lock` for whole string; `klog()` snapshots a ring entry under `s_klog_lock`, releases, then formats line outside the lock and emits via single `serial_write`. ANSI color escape sequences with reserved-tail termination so the terminal cannot get stuck in color on truncation.
+> - Downstream: `klog_get_ring()` is locked-snapshot-safe for `(count, head)`; entry contents are still live (no production caller iterates entries concurrently with logging).
+> - Doc pointer: header at `include/kernel/klog.h` documents the level mapping and `klog()` API.
+> - Scope boundary: §8 owns the format + atomic-line plumbing. Per-process console / log-level filtering / framebuffer scrollback are out of scope (separate sections).
+
+> **Verified:** 2026-04-28 | commit `e3e138f2`-era impl + `0346727f` (re-review fixes: 1H+3M+1L) | 4/4 items | build OK | tests 276/276 PASS, audit-ai-system 7/7 PASS
+> **Quality reviewed:** 2026-04-28 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 1H+3M+1L fixed | scope: kernel-code-quality (SMP-safe spinlock + IRQ-safe + bounded buffers + ANSI state termination)
 
 ---
 
