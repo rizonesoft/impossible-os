@@ -50,9 +50,9 @@ StepRule = Tuple[int, str, str]
 # Other steps are prose / TodoWrite / Edit-based and not enforced here.
 # ----------------------------------------------------------------------------
 _IMPLEMENT_TODO_SECTION: List[StepRule] = [
-    (4,  "Bash",  r"codex-companion\.mjs.*?adversarial-review.*?\[review-kind:\s*design\b"),
+    (4,  "Bash",  "__REVIEW_KIND__:design"),
     (7,  "Bash",  r"\bbash\s+(?:[^\"\']*?/)?scripts/build\.sh\b"),
-    (13, "Bash",  r"codex-companion\.mjs.*?adversarial-review(?!.*?\[review-kind:\s*design)"),
+    (13, "Bash",  "__REVIEW_KIND__:adversarial"),
     (13, "Skill", r"^codex-adversarial-review-section$"),
     (16, "Bash",  r"\bbash\s+(?:[^\"\']*?/)?scripts/build\.sh\b"),
     (19, "Bash",  r"\bgit\s+commit\b"),
@@ -71,10 +71,10 @@ _IMPLEMENT_TODO_SECTION: List[StepRule] = [
 # ----------------------------------------------------------------------------
 _REVIEW_TODO_SECTION: List[StepRule] = [
     (4,    "Bash", r"\bbash\s+(?:[^\"\']*?/)?scripts/build\.sh\b"),
-    (5,    "Bash", r"codex-companion\.mjs.*?adversarial-review.*?\[review-kind:\s*adversarial\b"),
-    (8,    "Bash", r"codex-companion\.mjs.*?adversarial-review.*?\[review-kind:\s*consistency\b"),
-    (8,    "Bash", r"codex-companion\.mjs.*?adversarial-review.*?\[review-kind:\s*perf\b"),
-    (13,   "Bash", r"codex-companion\.mjs.*?adversarial-review.*?\[review-kind:\s*re-adversarial\b"),
+    (5,    "Bash", "__REVIEW_KIND__:adversarial"),
+    (8,    "Bash", "__REVIEW_KIND__:consistency"),
+    (8,    "Bash", "__REVIEW_KIND__:perf"),
+    (13,   "Bash", "__REVIEW_KIND__:re-adversarial"),
     (17,   "Bash", r"\bgit\s+commit\b"),
 ]
 
@@ -138,15 +138,36 @@ REQUIRED_TERMINAL_STEPS: Dict[str, List[int]] = {
 MULTI_STEP_SKILLS = frozenset(SKILL_STEP_MAP.keys())
 
 
+# Sentinel patterns used in SKILL_STEP_MAP for [review-kind: X] dispatches.
+# Replaces unanchored regex with a first-non-blank-line classifier
+# delegated to _review_kind.detect_review_kind_from_cmd. Closes the
+# drift named in TODO-08 §17 deferred-XREF M2 (step-5 telemetry vs
+# phase1_evidence_gate marker-rule mismatch).
+_SENTINEL_REVIEW_KIND_PREFIX = "__REVIEW_KIND__:"
+
+
 def match_step(skill: str, tool_name: str, signature: str) -> List[int]:
     """Return the list of step numbers whose evidence rule matches the
     given (tool_name, signature). signature is the relevant tool_input
     field as documented at the StepRule type alias.
+
+    For sentinel-prefixed patterns of shape `__REVIEW_KIND__:<kind>`,
+    delegate to the shared first-non-blank-line classifier in
+    _review_kind. Plain regex patterns continue to use re.search.
     """
     rules = SKILL_STEP_MAP.get(skill, [])
     matched = []
+    detect_kind = None
     for step_n, evidence_tool, pattern in rules:
         if evidence_tool != tool_name:
+            continue
+        if pattern.startswith(_SENTINEL_REVIEW_KIND_PREFIX):
+            if detect_kind is None:
+                from _review_kind import detect_review_kind_from_cmd
+                detect_kind = detect_review_kind_from_cmd(signature)
+            want = pattern[len(_SENTINEL_REVIEW_KIND_PREFIX):]
+            if detect_kind == want:
+                matched.append(step_n)
             continue
         if re.search(pattern, signature, re.S):
             matched.append(step_n)

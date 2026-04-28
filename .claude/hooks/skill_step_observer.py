@@ -341,12 +341,23 @@ def main() -> int:
             # audit state. Use the same archive-and-rotate path as
             # Branch B's lazy init.
             _archive_orphan_in_place(state, fresh_skill)
+            args_str = (d.get("tool_input") or {}).get("args", "")
+            # TODO-08 §17 deferred-XREF M4 fix: record the structured
+            # todo_path at skill-start. _attribute_review_todo prefers
+            # this field over a loose regex of `args`, closing the
+            # incidental-TODO-mention attribution risk.
+            todo_path = ""
+            if isinstance(args_str, str) and args_str:
+                m = re.search(r"todo/[\w./-]+TODO-\d[\w./-]*\.md", args_str)
+                if m:
+                    todo_path = m.group(0)
             state[fresh_skill] = {
                 "started_ts": _ts_ns(),
                 "started_head_sha": head,
                 "session_id": sid,
                 "steps_observed": [],
-                "args": (d.get("tool_input") or {}).get("args", ""),
+                "args": args_str,
+                "todo_path": todo_path,
             }
             _save_state(state_path, state)
             return 0

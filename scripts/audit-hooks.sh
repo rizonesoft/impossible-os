@@ -87,6 +87,12 @@ while IFS= read -r f; do
     base="$(basename "$f")"
     case "$base" in
         __pycache__|README*|MANIFEST.md) continue ;;
+        # Underscore-prefixed files are shared helper modules
+        # (Python private-module convention), not standalone hooks.
+        # Examples: _review_kind.py -- shared classifier consumed by
+        # phase1_evidence_gate + skill_step_map (review-pipeline pre-Codex
+        # enforcement work). Skip; manifest rows describe hook-as-hook.
+        _*) continue ;;
     esac
     if ! grep -qF "\`.claude/hooks/$base\`" "$MANIFEST"; then
         drift "hook file present but not in MANIFEST.md: $base"

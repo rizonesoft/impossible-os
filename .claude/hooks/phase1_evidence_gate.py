@@ -100,34 +100,14 @@ def _ts_ns() -> int:
 def _is_adversarial_dispatch(cmd: str) -> bool:
     """Match Bash invocations of codex-companion.mjs adversarial-review
     whose prompt's first non-blank line carries [review-kind: adversarial].
-    Returns False for design / consistency / perf / re-adversarial -- those
-    are different dispatches and step-13.5 does not gate them on Phase 1.
+    Returns False for design / consistency / perf / re-adversarial.
+
+    Delegated to _review_kind.detect_review_kind_from_cmd (shared helper)
+    per TODO-08 §17 deferred-XREF M2 fix: skill_step_map.py + this gate
+    + codex_review_completed.py now share one classifier.
     """
-    if not isinstance(cmd, str) or not cmd:
-        return False
-    if "codex-companion.mjs" not in cmd:
-        return False
-    if "adversarial-review" not in cmd:
-        return False
-    after = cmd.split("adversarial-review", 1)[1]
-    after = after.lstrip()
-    body = after
-    # Skip a HEREDOC opener line if present.
-    if body.startswith("\"$(cat <<") or body.startswith("'$(cat <<"):
-        nl = body.find("\n")
-        if nl >= 0:
-            body = body[nl + 1:]
-    elif body.startswith('"') or body.startswith("'"):
-        body = body[1:]
-    for ln in body.splitlines():
-        s = ln.strip()
-        if not s:
-            continue
-        m = _REVIEW_KIND_RE.search(s)
-        if not m:
-            return False
-        return m.group(1).lower() == "adversarial"
-    return False
+    from _review_kind import is_dispatch_of_kind
+    return is_dispatch_of_kind(cmd, "adversarial")
 
 
 def _load_active_review_skill(root: str) -> Optional[dict]:

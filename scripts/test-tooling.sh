@@ -3263,6 +3263,8 @@ else
        "$PCE_REPO/.claude/hooks/section_commit_gate.py"
     cp "$REPO_ROOT/.claude/hooks/codex_review_completed.py" \
        "$PCE_REPO/.claude/hooks/codex_review_completed.py"
+    cp "$REPO_ROOT/.claude/hooks/_review_kind.py" \
+       "$PCE_REPO/.claude/hooks/_review_kind.py"
 
     pushd "$PCE_REPO" >/dev/null
     git init -q -b main

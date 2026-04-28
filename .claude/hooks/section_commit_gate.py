@@ -146,7 +146,13 @@ _DISPATCH_KINDS = ("adversarial", "consistency", "perf")
 # section step 13.5 prose still names them, and the agent must
 # dispatch re-adversarial by hand when those fire.
 _RE_ADV_TRIGGER_LOCKING = re.compile(
-    r"\b(?:spinlock_t|atomic_t|atomic\d+_t|mutex_t)\b"
+    # TODO-08 §17 deferred-XREF M3 fix: expanded vocab covers all
+    # in-tree synchronization primitives + direct __atomic_* ops.
+    # Codex consistency review identified rwlock_t (sched/rwlock.h),
+    # seqlock_t (sched/seqlock.h), semaphore_t (sched/semaphore.h),
+    # and __atomic_* operations (time/wall_clock.c, exec.c) as missed.
+    r"\b(?:spinlock_t|atomic_t|atomic\d+_t|mutex_t|rwlock_t|seqlock_t|semaphore_t)\b"
+    r"|\b__atomic_\w+"
 )
 _RE_ADV_TRIGGER_FAULTABLE = re.compile(
     r"\b(?:boot_halt|panic|KeBugCheck\w*|fault_handler|exception_\w*)"
@@ -1183,11 +1189,21 @@ def _attribute_review_todo(root: Path, todo_files: list[str]) -> str:
         return ""
     if entry.get("compaction_orphaned") is True:
         return ""
+    # TODO-08 §17 deferred-XREF M4 fix: prefer the structured `todo_path`
+    # field recorded by skill_step_observer at skill-start. Loose-regex
+    # parsing of `args` was a fallback that risked picking up incidental
+    # TODO mentions; the structured field comes from a single regex run
+    # at observer-time and is the authoritative attribution.
+    todo_path = entry.get("todo_path")
+    if isinstance(todo_path, str) and todo_path.endswith(".md") \
+       and "todo/" in todo_path.replace("\\", "/"):
+        return todo_path
     args = entry.get("args", "")
     if not isinstance(args, str) or not args:
         return ""
-    # The skill args carry the TODO path on first invocation, e.g.
-    # "todo/00-infrastructure/TODO-08-automation-hardening.md §17 ...".
+    # Fallback: the skill args carry the TODO path on first invocation,
+    # e.g. "todo/00-infrastructure/TODO-08-automation-hardening.md §17 ...".
+    # Used only when the observer entry predates the structured field.
     m = re.search(r"todo/[\w./-]+TODO-\d[\w./-]*\.md", args)
     if not m:
         return ""
@@ -1235,15 +1251,21 @@ def _re_adversarial_trigger_check(
     # opacity and continue with whatever evidence we have. The
     # existing fail-closed git-hook mode in _evaluate catches genuine
     # git outage at a broader layer.
+    # TODO-08 §17 deferred-XREF H1 fix: fail-closed when git inspection
+    # is opaque on a non-empty staged source set. WARN+empty-diff used to
+    # let a transient git failure suppress trigger detection. Now: when
+    # paths exist but the helper returns None, return (False, error) so
+    # the commit BLOCKs with an actionable message. Empty staged_src
+    # remains (True, "") -- nothing to inspect.
     diff_text = _staged_diff_text(root, c_h_paths) if c_h_paths else ""
     if diff_text is None:
-        sys.stderr.write(
-            "[section-commit-gate] WARN -- staged-diff inspection failed "
-            "on the re-adversarial trigger check; cannot scan ADDED lines "
-            "for locking/faultable/lifecycle triggers. Manually verify "
-            "step-13.5 doctrine before pushing.\n"
-        )
-        diff_text = ""
+        return (False, (
+            f"git inspection of staged C/H diff failed (timeout / "
+            f"missing binary / transient error); cannot prove step-13.5 "
+            f"triggers did NOT fire. Re-run the commit; if the failure "
+            f"persists, set SKIP_REVIEW_HOOK with a reason after manual "
+            f"step-13.5 verification."
+        ))
     added_lines: list[str] = []
     for line in diff_text.splitlines():
         if line.startswith("+++"):
@@ -1260,12 +1282,14 @@ def _re_adversarial_trigger_check(
     if _RE_ADV_TRIGGER_LIFECYCLE.search(added):
         triggers_fired.append("lifecycle")
     loc = _staged_loc_delta(root, loc_paths)
-    if loc is None:
-        sys.stderr.write(
-            "[section-commit-gate] WARN -- numstat inspection failed; "
-            "cannot evaluate >50 LOC trigger.\n"
-        )
-    elif loc > _RE_ADV_LOC_THRESHOLD:
+    if loc is None and loc_paths:
+        # Same fail-closed treatment for numstat opacity (H1 fix).
+        return (False, (
+            f"git numstat inspection failed on staged C/H/asm paths; "
+            f"cannot evaluate >50 LOC step-13.5 trigger. Re-run the "
+            f"commit; if persistent, set SKIP_REVIEW_HOOK with reason."
+        ))
+    if loc is not None and loc > _RE_ADV_LOC_THRESHOLD:
         triggers_fired.append(f">{_RE_ADV_LOC_THRESHOLD} LOC C/H/asm")
 
     if not triggers_fired:
