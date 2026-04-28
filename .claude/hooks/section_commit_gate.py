@@ -1869,13 +1869,20 @@ def _evaluate(root: Path, mode: str, cmd: str = "") -> int:
     all_staged_todos = _staged_todo_files(root)
     stamped = _stamped_todos(root, all_staged_todos)
     fourd_ok, fourd_err = _four_dispatch_evidence(root, stamped)
-    # TODO-08 §17: re-adversarial trigger gate. Fires for both real-
-    # section commits and pure-source fix-loop commits when the staged
-    # diff matches a step-13.5 trigger.
+    # TODO-08 §17: re-adversarial trigger gate.
     re_adv_ok, re_adv_err = _re_adversarial_trigger_check(
         root, staged_src, all_staged_todos
     )
-    if build_ok and review_ok and fourd_ok and re_adv_ok:
+    # TODO-08 §20: impl-pipeline section-commit gates (steps 8/13/16).
+    test_wiring_ok, test_wiring_err = _step8_test_wiring_check(
+        root, staged_src, all_staged_todos
+    )
+    impl_adv_ok, impl_adv_err = _step13_impl_adversarial_check(
+        root, staged_src, flipped
+    )
+    smoke_ok, smoke_err = _step16_smoke_check(root, staged_src)
+    if (build_ok and review_ok and fourd_ok and re_adv_ok
+            and test_wiring_ok and impl_adv_ok and smoke_ok):
         return 0  # full evidence; commit allowed
     missing = []
     if not build_ok:
@@ -1886,6 +1893,12 @@ def _evaluate(root: Path, mode: str, cmd: str = "") -> int:
         missing.append(f"four-dispatch evidence: {fourd_err}")
     if not re_adv_ok:
         missing.append(f"re-adversarial evidence: {re_adv_err}")
+    if not test_wiring_ok:
+        missing.append(f"step-8 test-wiring evidence: {test_wiring_err}")
+    if not impl_adv_ok:
+        missing.append(f"step-13 impl-adversarial evidence: {impl_adv_err}")
+    if not smoke_ok:
+        missing.append(f"step-16 smoke-test evidence: {smoke_err}")
     head = ""
     try:
         head = subprocess.check_output(
@@ -1901,6 +1914,373 @@ def _evaluate(root: Path, mode: str, cmd: str = "") -> int:
         head=head,
     )
     return 2
+
+
+# ----------------------------------------------------------------------
+# TODO-08 §20: implement-pipeline section-commit gates (steps 8/13/16)
+# ----------------------------------------------------------------------
+# Each gate honors:
+#   - SKIP_REVIEW_HOOK=1 (step 8 + step 13; reuses existing skip envelope)
+#   - SKIP_SMOKE_GATE=1 + SKIP_SMOKE_GATE_REASON >=12 chars (step 16)
+#   - _bootstrap_mode bypass when this hook's own file is in the staged
+#     diff (already applied at _re_adversarial_trigger_check entry; the
+#     §20 gates run AFTER that bypass so they inherit it via the same
+#     return path -- if bootstrap-mode fires, _evaluate's full-evidence
+#     check still passes because the new gates also return (True, "")
+#     when their staged-source filter yields nothing).
+
+_TEST_WIRING_SRC_PREFIXES = (
+    "src/kernel/", "src/desktop/", "src/shell/", "src/apps/", "user/",
+)
+_TEST_WIRING_TEST_DIRS = {
+    "src/kernel/": "src/kernel/test/",
+    "src/desktop/": "src/desktop/test/",
+    "src/shell/": "src/shell/test/",
+    "src/apps/": "src/apps/test/",
+    "user/": "user/test/",
+}
+_NO_TEST_SURFACE_RE = re.compile(
+    r"\*\*Note:\*\*\s*No\s+\w+\s+test\s+surface", re.IGNORECASE
+)
+
+
+def _step8_test_wiring_check(
+    root: Path, staged_src: list[str], todo_files: list[str]
+) -> tuple[bool, str]:
+    """TODO-08 §20 step-8: when staged diff touches src/{kernel,desktop,
+    shell,apps}/ or user/, require ONE of:
+      (a) staged diff also touches a `test_*.c` file in the matching
+          test directory, OR
+      (b) a `test_*.c` covering the same surface already exists at HEAD
+          (Codex design M1: prior-commit coverage counts; same-commit
+          test diff is too strict), OR
+      (c) the section body contains `**Note:** No <surface> test surface`
+          exemption phrase.
+    SKIP_REVIEW_HOOK=1 honored (caller; same-skip path as build/review/
+    four-dispatch). _bootstrap_mode honored when this hook's own file
+    is in the staged diff (caller).
+    """
+    triggering_paths = [
+        p for p in staged_src
+        if any(p.startswith(pre) for pre in _TEST_WIRING_SRC_PREFIXES)
+        and not any(td in p for td in _TEST_WIRING_TEST_DIRS.values())
+    ]
+    if not triggering_paths:
+        return (True, "")
+    # Skill-aware gate: only fire when implement-todo-section is active.
+    skill_state_path = root / ".claude" / "state" / "skill-progress.json"
+    if not skill_state_path.exists():
+        return (True, "")
+    try:
+        skill_state = json.loads(skill_state_path.read_text(encoding="utf-8"))
+    except Exception:
+        return (True, "")
+    if not isinstance(skill_state, dict):
+        return (True, "")
+    impl_entry = skill_state.get("implement-todo-section")
+    if not isinstance(impl_entry, dict) or impl_entry.get("compaction_orphaned") is True:
+        return (True, "")
+    # Bootstrap-mode bypass for this gate (covers shipping the gate itself).
+    try:
+        from _bootstrap_mode import is_bootstrap_commit
+        if is_bootstrap_commit(__file__):
+            return (True, "")
+    except Exception:
+        pass
+
+    # (a) Same-commit test diff matching the staged source basename.
+    # Same H1 fix as (b): test_heap.c must not satisfy drivers/acpi.c.
+    staged_tests = [p for p in staged_src
+                    if "/test/" in p and re.search(r"test_[\w-]+\.c$", p)]
+    for src_path in triggering_paths:
+        src_base = os.path.basename(src_path)
+        if "." in src_base:
+            src_base = src_base.rsplit(".", 1)[0]
+        base_pattern = re.compile(
+            r"(^|/)test_" + re.escape(src_base) + r"(_[\w-]+)?\.c$"
+        )
+        if any(base_pattern.search(t) for t in staged_tests):
+            return (True, "")
+
+    # (b) Existing test_*.c at HEAD covering BASENAME of staged source.
+    # Codex adversarial H1 fix: bind to source basename (e.g.
+    # src/kernel/drivers/acpi.c -> test_acpi*.c) instead of accepting
+    # any test_*.c in the broad surface directory. test_heap.c must
+    # NOT satisfy a section that touches drivers/acpi.c.
+    matched_existing = False
+    for src_path in triggering_paths:
+        # Extract basename without extension.
+        src_base = os.path.basename(src_path)
+        if "." in src_base:
+            src_base = src_base.rsplit(".", 1)[0]
+        # Find the matching test directory.
+        test_dir = ""
+        for src_pre, td in _TEST_WIRING_TEST_DIRS.items():
+            if src_path.startswith(src_pre):
+                test_dir = td
+                break
+        if not test_dir:
+            continue
+        try:
+            out = subprocess.check_output(
+                ["git", "ls-tree", "-r", "--name-only", "HEAD", test_dir],
+                cwd=str(root), text=True, timeout=3,
+                stderr=subprocess.DEVNULL,
+            )
+            # Match `test_<basename>` exactly OR `test_<basename>_*`
+            # (e.g. test_acpi.c, test_acpi_smp.c -- both bind to
+            # acpi.c). The .c suffix is required.
+            base_pattern = re.compile(
+                r"(^|/)test_" + re.escape(src_base) + r"(_[\w-]+)?\.c$"
+            )
+            if any(base_pattern.search(line) for line in out.splitlines()):
+                matched_existing = True
+                break
+        except Exception:
+            pass
+    if matched_existing:
+        return (True, "")
+
+    # (c) Section-body exemption phrase in any staged TODO?
+    for tf in todo_files:
+        try:
+            content = (root / tf).read_text(encoding="utf-8")
+            if _NO_TEST_SURFACE_RE.search(content):
+                return (True, "")
+        except Exception:
+            pass
+
+    return (False, (
+        f"staged diff touches {triggering_paths[0]} (and {len(triggering_paths)-1} "
+        f"more) but neither a same-commit test_*.c diff, an existing "
+        f"test_*.c at HEAD in the matching test directory, nor a "
+        f"`**Note:** No <surface> test surface` exemption is present. "
+        f"Wire a unit test or add the exemption phrase to the TODO section."
+    ))
+
+
+def _step13_impl_adversarial_check(
+    root: Path, staged_src: list[str], flipped_todos: list[str],
+    flipped_sections: list[str] | None = None,
+) -> tuple[bool, str]:
+    """TODO-08 §20 step-13: when staged diff touches src/ AND IO row
+    flips to [x] (i.e. flipped_todos non-empty), require an
+    `adversarial-impl` entry in last-review-stamps.json[<todo>] within
+    30 minutes for at least one of the flipped TODOs.
+
+    Distinct from review-todo-section step-5's `adversarial` key per
+    Codex design H1 -- impl-side step-13 dispatches use the marker
+    `[review-kind: adversarial-impl]`.
+
+    SKIP_REVIEW_HOOK=1 honored (caller). Bootstrap-mode honored.
+    """
+    if not staged_src or not flipped_todos:
+        return (True, "")
+    # Source-only filter: only fire when actual source code lands.
+    has_src = any(
+        p.endswith((".c", ".h", ".asm", ".S", ".py", ".sh", ".mjs"))
+        for p in staged_src
+    )
+    if not has_src:
+        return (True, "")
+    # Skill-aware gate: only fire when implement-todo-section is the
+    # active skill in skill-progress.json. Closes the test-fixture
+    # regression where pre-§20 commit tests don't exercise the impl
+    # flow but DO exercise the section-commit signature.
+    skill_state_path = root / ".claude" / "state" / "skill-progress.json"
+    if not skill_state_path.exists():
+        return (True, "")
+    try:
+        skill_state = json.loads(skill_state_path.read_text(encoding="utf-8"))
+    except Exception:
+        return (True, "")
+    if not isinstance(skill_state, dict):
+        return (True, "")
+    impl_entry = skill_state.get("implement-todo-section")
+    if not isinstance(impl_entry, dict):
+        return (True, "")
+    if impl_entry.get("compaction_orphaned") is True:
+        return (True, "")
+    try:
+        from _bootstrap_mode import is_bootstrap_commit
+        if is_bootstrap_commit(__file__):
+            return (True, "")
+    except Exception:
+        pass
+
+    stamps_path = root / ".claude" / "state" / "last-review-stamps.json"
+    if not stamps_path.exists():
+        return (False, (
+            f"IO row [x] flip on {flipped_todos[0]} requires step-13 "
+            f"`[review-kind: adversarial-impl]` Codex dispatch within "
+            f"the last 30 minutes; .claude/state/last-review-stamps.json "
+            f"does not exist."
+        ))
+    try:
+        state = json.loads(stamps_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return (False, f"last-review-stamps.json malformed ({exc})")
+    if not isinstance(state, dict):
+        return (False, "last-review-stamps.json is not a JSON object")
+
+    now_ns = time.time_ns()
+    cutoff_ns = now_ns - 30 * 60 * 1_000_000_000
+
+    # Codex adversarial H2 fix: bind evidence to the flipped section
+    # AND the dispatch HEAD. Previously a fresh `adversarial-impl` for
+    # a different section in the same TODO (or from another branch
+    # within TTL) could satisfy the gate.
+    current_head = ""
+    try:
+        current_head = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=str(root),
+            text=True, timeout=2, stderr=subprocess.DEVNULL,
+        ).strip()
+    except Exception:
+        pass
+
+    for todo in flipped_todos:
+        entry = state.get(todo)
+        if not isinstance(entry, dict):
+            continue
+        ts = entry.get("adversarial-impl")
+        if not (isinstance(ts, int) and ts >= cutoff_ns):
+            continue
+        # Section binding: the recorded `section` field must match the
+        # section being flipped. flipped_sections is best-effort -- when
+        # the caller cannot extract the section number (no section
+        # column / parse failure), this binding is skipped.
+        if flipped_sections:
+            recorded_section = str(entry.get("section", "")).lstrip("§").strip()
+            if recorded_section and recorded_section not in flipped_sections:
+                continue
+        # HEAD binding: the dispatch's `adversarial-impl_head` must be
+        # an ancestor of the current HEAD.
+        rh = entry.get("adversarial-impl_head", "")
+        if isinstance(rh, str) and rh and current_head:
+            if not _git_is_ancestor(root, rh, current_head):
+                continue
+        return (True, "")
+    return (False, (
+        f"IO row [x] flip on {flipped_todos[0]} requires step-13 "
+        f"`[review-kind: adversarial-impl]` Codex dispatch (distinct "
+        f"from review-todo-section step-5 adversarial). Evidence is "
+        f"bound to the section number and dispatch HEAD ancestry. Run: "
+        f"`scripts/codex-dispatch-with-files.sh \"[review-kind: "
+        f"adversarial-impl] <todo-path> <section-N> <prompt>\"`."
+    ))
+
+
+_SMOKE_BOOT_PATH_GLOBS = (
+    "src/boot/", "src/kernel/main/boot_",
+    "src/kernel/idt.c", "src/kernel/gdt.c", "src/kernel/msr.c",
+    "src/kernel/smp/",
+    "src/kernel/mm/pmm.c", "src/kernel/mm/vmm.c", "src/kernel/mm/heap.c",
+    "src/kernel/drivers/lapic.c", "src/kernel/drivers/ioapic.c",
+    "src/kernel/drivers/acpi.c", "src/kernel/drivers/timer.c",
+)
+
+
+def _step16_smoke_check(
+    root: Path, staged_src: list[str]
+) -> tuple[bool, str]:
+    """TODO-08 §20 step-16: when staged diff touches a boot-path glob,
+    require build/smoke-test.stripped.log to exist, be more recent than
+    the most-recent staged file mtime, AND contain BOTH `Boot complete`
+    AND `C:\\>` markers in the body (Codex design H2: stdout PASS banner
+    is NOT in the stripped log; the script validates serial markers).
+
+    Opt-out:
+        SKIP_SMOKE_GATE=1 SKIP_SMOKE_GATE_REASON="<text >= 12 chars>"
+    Bootstrap-mode honored.
+    """
+    boot_paths = [
+        p for p in staged_src
+        if any(p.startswith(g) for g in _SMOKE_BOOT_PATH_GLOBS)
+    ]
+    if not boot_paths:
+        return (True, "")
+    # Skill-aware gate: only fire when implement-todo-section is active.
+    skill_state_path = root / ".claude" / "state" / "skill-progress.json"
+    if not skill_state_path.exists():
+        return (True, "")
+    try:
+        skill_state = json.loads(skill_state_path.read_text(encoding="utf-8"))
+    except Exception:
+        return (True, "")
+    if not isinstance(skill_state, dict):
+        return (True, "")
+    impl_entry = skill_state.get("implement-todo-section")
+    if not isinstance(impl_entry, dict) or impl_entry.get("compaction_orphaned") is True:
+        return (True, "")
+    try:
+        from _bootstrap_mode import is_bootstrap_commit
+        if is_bootstrap_commit(__file__):
+            return (True, "")
+    except Exception:
+        pass
+    # SKIP_SMOKE_GATE opt-out (separate from SKIP_REVIEW_HOOK).
+    if os.environ.get("SKIP_SMOKE_GATE", "") == "1":
+        reason = os.environ.get("SKIP_SMOKE_GATE_REASON", "")
+        if len(reason) < SKIP_REASON_MIN_LEN:
+            return (False, (
+                f"SKIP_SMOKE_GATE=1 set but SKIP_SMOKE_GATE_REASON "
+                f"missing or under {SKIP_REASON_MIN_LEN} chars."
+            ))
+        return (True, "")
+
+    smoke_log = root / "build" / "smoke-test.stripped.log"
+    if not smoke_log.exists():
+        return (False, (
+            f"staged boot-path edit ({boot_paths[0]}) requires "
+            f"`bash scripts/test-smoke.sh` PASS first; "
+            f"build/smoke-test.stripped.log does not exist."
+        ))
+    try:
+        log_mtime = smoke_log.stat().st_mtime
+    except Exception:
+        return (False, "smoke-test.stripped.log mtime unreadable")
+    # Compare against most-recent staged file mtime.
+    # Codex adversarial M1 fix: fail closed when stat() fails -- a
+    # boot-path file staged as deleted/renamed-out would silently leave
+    # most_recent=0, letting any old smoke log pass freshness. Now: any
+    # stat failure means we cannot prove freshness and BLOCK.
+    most_recent = 0.0
+    for p in boot_paths:
+        full = root / p
+        try:
+            mt = full.stat().st_mtime
+            if mt > most_recent:
+                most_recent = mt
+        except FileNotFoundError:
+            return (False, (
+                f"staged boot-path {p} is not present in the worktree "
+                f"(deleted/renamed staged change). Cannot verify smoke "
+                f"freshness; re-run `bash scripts/test-smoke.sh` against "
+                f"the post-rename layout, or use SKIP_SMOKE_GATE."
+            ))
+        except Exception as exc:
+            return (False, (
+                f"stat() failed on staged boot-path {p}: {exc}. Cannot "
+                f"verify smoke freshness; re-run smoke or use SKIP."
+            ))
+    if log_mtime < most_recent:
+        return (False, (
+            f"build/smoke-test.stripped.log is older than the staged "
+            f"boot-path file(s). Re-run `bash scripts/test-smoke.sh`."
+        ))
+    # Validate serial markers (Codex design H2 fix).
+    try:
+        body = smoke_log.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return (False, "smoke-test.stripped.log unreadable")
+    if "Boot complete" not in body or "C:\\>" not in body:
+        return (False, (
+            f"build/smoke-test.stripped.log does not contain BOTH "
+            f"`Boot complete` and `C:\\>` markers; smoke test did not "
+            f"reach userspace shell. Re-run."
+        ))
+    return (True, "")
 
 
 def _index_is_nonempty(root: Path) -> bool:

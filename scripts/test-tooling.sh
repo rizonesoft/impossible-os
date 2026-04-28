@@ -3997,6 +3997,168 @@ fi
 
 
 # ============================================================================
+# impl_pipeline_gates (TODO-08 implement-pipeline section-commit gates)
+# ============================================================================
+#   - quality_gate_block: step5_quality_gate BLOCKs Edit on src/kernel/foo.c
+#     when no Skill(kernel-code-quality) in transcript since skill start.
+#   - unit_test_wiring_block: section_commit_gate _step8_test_wiring_check
+#     BLOCKs commit touching src/kernel/foo.c when no test_*.c at HEAD.
+#   - impl_adversarial_block: _step13_impl_adversarial_check BLOCKs
+#     IO-row flip + src diff with no adversarial-impl stamp.
+#   - smoke_gate_block: _step16_smoke_check BLOCKs boot-path edit
+#     when smoke log is missing/stale/lacks markers.
+
+[ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[impl_pipeline_gates]${NC}"
+
+if [ ! -f "$REPO_ROOT/.claude/hooks/step5_quality_gate.py" ] || \
+   [ ! -f "$REPO_ROOT/.claude/hooks/section_commit_gate.py" ]; then
+    t_fail "impl_pipeline_gates: hook scripts missing"
+else
+    IPG_OUT="$(cd "$REPO_ROOT" && python3 - <<'PY'
+import sys, os, json, time, tempfile, pathlib, subprocess
+sys.path.insert(0, '.claude/hooks')
+
+# Ensure the integration with our shared module surfaces is intact.
+import step5_quality_gate as s5
+import section_commit_gate as scg
+
+# Test 1: quality_gate_block -- _required_skill_for_path correctly maps
+# src/kernel/foo.c -> kernel-code-quality, src/boot/x.c -> boot-code-quality,
+# src/kernel/test/test_foo.c -> kernel-code-quality (Codex Q1 fix).
+assert s5._required_skill_for_path("src/kernel/foo.c") == "kernel-code-quality"
+assert s5._required_skill_for_path("src/boot/uefi/bootx64.c") == "boot-code-quality"
+assert s5._required_skill_for_path("src/kernel/test/test_foo.c") == "kernel-code-quality"
+assert s5._required_skill_for_path("user/libc/stdio.c") == "userland-code-quality"
+assert s5._required_skill_for_path("docs/foo.md") == ""
+print("OK quality_gate_path_map")
+
+# Test 2: unit_test_wiring -- existing test at HEAD counts as evidence.
+with tempfile.TemporaryDirectory() as tmp:
+    repo = pathlib.Path(tmp)
+    (repo / ".claude" / "state").mkdir(parents=True)
+    (repo / "src" / "kernel" / "test").mkdir(parents=True)
+    (repo / "todo" / "00-infra").mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=tmp, check=True)
+    subprocess.run(["git", "config", "user.email", "t@x"], cwd=tmp, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=tmp, check=True)
+    # Codex H1 fix: basename-bound match. test_newcode.c must match
+    # newcode.c (NOT just any test_*.c).
+    (repo / "src" / "kernel" / "test" / "test_newcode.c").write_text("/*x*/\n")
+    subprocess.run(["git", "add", "-A"], cwd=tmp, check=True)
+    subprocess.run(["git", "-c", "commit.gpgsign=false", "commit", "-q",
+                    "--no-verify", "-m", "seed"], cwd=tmp, check=True)
+    # Activate implement-todo-section so the skill-aware gate fires.
+    skill_state = repo / ".claude" / "state" / "skill-progress.json"
+    skill_state.write_text(json.dumps({
+        "implement-todo-section": {
+            "started_ts": time.time_ns(),
+            "args": "test", "todo_path": "",
+        }
+    }))
+    # Stage a new src/kernel/newcode.c -- the matching test_newcode.c
+    # at HEAD satisfies step-8 evidence (basename-bound, Codex H1).
+    (repo / "src" / "kernel" / "newcode.c").write_text("int x;\n")
+    subprocess.run(["git", "add", "src/kernel/newcode.c"], cwd=tmp, check=True)
+    ok, err = scg._step8_test_wiring_check(
+        repo, ["src/kernel/newcode.c"], []
+    )
+    assert ok, f"step-8 basename-match should pass: {err}"
+    # Negative: unrelated test_other.c at HEAD must NOT satisfy.
+    (repo / "src" / "kernel" / "different.c").write_text("int y;\n")
+    subprocess.run(["git", "add", "src/kernel/different.c"], cwd=tmp, check=True)
+    ok2, err2 = scg._step8_test_wiring_check(
+        repo, ["src/kernel/different.c"], []
+    )
+    assert not ok2, "step-8 must reject test_newcode.c as evidence for different.c"
+print("OK unit_test_wiring_basename_binding")
+
+# Test 3: impl_adversarial -- adversarial-impl key distinct from adversarial.
+with tempfile.TemporaryDirectory() as tmp:
+    repo = pathlib.Path(tmp)
+    (repo / ".claude" / "state").mkdir(parents=True)
+    # Activate implement-todo-section so the skill-aware gate fires.
+    (repo / ".claude" / "state" / "skill-progress.json").write_text(json.dumps({
+        "implement-todo-section": {"started_ts": time.time_ns(),
+                                   "args": "test", "todo_path": ""}
+    }))
+    stamps = repo / ".claude" / "state" / "last-review-stamps.json"
+    # State only has plain `adversarial` (review-side). Should NOT satisfy
+    # impl-side gate per Codex H1 distinct-keying fix.
+    stamps.write_text(json.dumps({
+        "todo/foo/TODO-99-bar.md": {
+            "section": "1",
+            "adversarial": time.time_ns(),
+            "consistency": None, "perf": None,
+        }
+    }))
+    ok, err = scg._step13_impl_adversarial_check(
+        repo, ["src/kernel/foo.c"], ["todo/foo/TODO-99-bar.md"]
+    )
+    assert not ok, "impl-adv gate must NOT accept plain `adversarial` key"
+    assert "adversarial-impl" in err
+    # Now add adversarial-impl entry.
+    stamps.write_text(json.dumps({
+        "todo/foo/TODO-99-bar.md": {
+            "section": "1",
+            "adversarial": time.time_ns(),
+            "adversarial-impl": time.time_ns(),
+            "consistency": None, "perf": None,
+        }
+    }))
+    ok2, err2 = scg._step13_impl_adversarial_check(
+        repo, ["src/kernel/foo.c"], ["todo/foo/TODO-99-bar.md"]
+    )
+    assert ok2, f"impl-adv gate should accept fresh adversarial-impl, got: {err2}"
+print("OK impl_adversarial_distinct_key")
+
+# Test 4: smoke_gate -- requires Boot complete + C:\> markers per Codex H2 fix.
+with tempfile.TemporaryDirectory() as tmp:
+    repo = pathlib.Path(tmp)
+    (repo / "build").mkdir()
+    (repo / "src" / "kernel").mkdir(parents=True)
+    (repo / ".claude" / "state").mkdir(parents=True)
+    # Activate implement-todo-section so the skill-aware gate fires.
+    (repo / ".claude" / "state" / "skill-progress.json").write_text(json.dumps({
+        "implement-todo-section": {"started_ts": time.time_ns(),
+                                   "args": "test", "todo_path": ""}
+    }))
+    boot_file = repo / "src" / "kernel" / "idt.c"
+    boot_file.write_text("// trigger\n")
+    log = repo / "build" / "smoke-test.stripped.log"
+    # No log -> BLOCK.
+    ok, err = scg._step16_smoke_check(repo, ["src/kernel/idt.c"])
+    assert not ok and "does not exist" in err
+    # Log without markers -> BLOCK.
+    log.write_text("some output without the required markers\n")
+    # Set log mtime to NOW so freshness check passes.
+    now = time.time()
+    os.utime(str(log), (now, now))
+    os.utime(str(boot_file), (now - 100, now - 100))
+    ok2, err2 = scg._step16_smoke_check(repo, ["src/kernel/idt.c"])
+    assert not ok2 and "Boot complete" in err2 and "C:" in err2
+    # Log with both markers -> PASS.
+    log.write_text("...\nBoot complete in 1.2s\nC:\\> ready\n")
+    os.utime(str(log), (now, now))
+    ok3, err3 = scg._step16_smoke_check(repo, ["src/kernel/idt.c"])
+    assert ok3, f"smoke gate should pass with markers, got: {err3}"
+print("OK smoke_gate_serial_markers")
+PY
+)" 2>&1
+    IPG_RC=$?
+    IPG_OK_COUNT=$(echo "$IPG_OUT" | grep -c "^OK ")
+    if [ "$IPG_OK_COUNT" = "4" ]; then
+        echo "$IPG_OUT" | grep "^OK " | while IFS= read -r line; do
+            t_pass "impl_pipeline_gates: $line"
+        done
+        PASS=$((PASS + 4))
+    else
+        t_fail "impl_pipeline_gates: integrated test suite incomplete" \
+               "ok-count=$IPG_OK_COUNT rc=$IPG_RC out=$IPG_OUT"
+    fi
+fi
+
+
+# ============================================================================
 # review_right_sizing (TODO-08 review-pipeline right-sizing doctrine)
 # ============================================================================
 #   - risk_tier_declared: skill-progress entry has risk_tier field after

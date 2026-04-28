@@ -52,6 +52,11 @@
           {
             "type": "command",
             "command": "python3 .claude/hooks/design_review_required.py"
+          },
+          {
+            "type": "command",
+            "command": "python3 .claude/hooks/step5_quality_gate.py",
+            "timeout": 10
           }
         ]
       },
