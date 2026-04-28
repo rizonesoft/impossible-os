@@ -56,7 +56,7 @@ title: "TODO-08 -- Advanced Synchronisation Primitives"
 | ⭐  |   8   | §8 `WaitForMultipleObjects` (`waitable_t` + `wait_any`)   | §4, §9                               |  [ ]   |
 | ⭐  |   9   | §6 `pthread_barrier_t` -- kernel-level, reusable           | §8 or §9 (timeout variant)           |  [ ]   |
 | 💎  |  10   | Sync syscalls wired to SSDT (keyed events, alerts)        | §4, §8, TODO-06 §4                   |  [ ]   |
-| ⭐  |  11   | §11 Mutex wait-queue SMP-safety backfill (defect in §14)  | TODO-02 §10 re-review (2026-04-28)   |  [ ]   |
+| ⭐  |  11   | §11 Mutex wait-queue SMP-safety backfill                  | --                                   |  [ ]   |
 
 > 💎 = parity -- ticket locks, preemption count, TLS, futexes, timeout API, pthread_once, and thread cancellation all have direct Linux or Windows NT equivalents.
 > ⭐ = exclusive -- `WaitForMultipleObjects` with a first-class `waitable_t` vtable across all sync types is superior to Linux's fd-only `epoll`; `pthread_barrier_t` as a kernel primitive (not just user-space pthreads) is a Windows gap.

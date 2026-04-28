@@ -124,7 +124,7 @@ def _repo_root():
 
 
 def _is_blocking_signature(d: dict) -> bool:
-    """Return True if the current tool call should be gated by the
+    r"""Return True if the current tool call should be gated by the
     step-state check. Triggers:
       - Bash that is genuinely invoking `git commit` (alias-aware)
       - Skill(skill="review-todo-section")
