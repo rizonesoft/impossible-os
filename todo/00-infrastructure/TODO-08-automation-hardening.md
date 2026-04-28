@@ -432,7 +432,7 @@ The current hook surface uses only `PreToolUse` and `PostToolUse`. The 2026 hook
 > - Canonical doc: `.claude/hooks/MANIFEST.md` (6 new rows + the existing event-class headings; this expands the previously PreToolUse/PostToolUse-only manifest into the full 7-event surface).
 > - Scope boundary: §11 owns the 5 new event hooks + tool-history writer; §10 reads `tool-history.jsonl` (now provided) and writes `skill-progress.json` (preserved by PreCompact); §3 receiving-review hard gate is unchanged; §4 section-commit gate is unchanged.
 
-> **Verified:** 2026-04-28 | commit `<pending>` | 10/10 items | build N/A (host-side hooks + tests + docs) | lint CLEAN | tests 264/264 PASS | audit-hooks PASS | audit-ai-system PASS
+> **Verified:** 2026-04-28 | commit `58477fc8` | 10/10 items | build N/A (host-side hooks + tests + docs) | lint CLEAN | tests 264/264 PASS | audit-hooks PASS | audit-ai-system PASS
 > **Quality reviewed:** 2026-04-28 | Codex 1x design (no diff at dispatch time; Q1-Q4 answered locally and adopted pre-code) | self-review covers post-implementation | scope: N/A (host-side hook system + Python state-machine modules + test fixtures)
 
 ---
