@@ -2949,22 +2949,60 @@ void test_func(void)
 }
 EOF
 
-# Symlink the real lint.sh into the synthetic tree so it runs against
-# our fake src/.
-mkdir -p "$ASL_REPO/scripts"
+# Copy lint.sh + the python tautology helper into the synthetic tree so
+# the lint script's REPO_ROOT resolves to $ASL_REPO and finds the helper.
+mkdir -p "$ASL_REPO/scripts/lint"
 cp "$REPO_ROOT/scripts/lint.sh" "$ASL_REPO/scripts/lint.sh"
+cp "$REPO_ROOT/scripts/lint/check_tautological_test.py" \
+    "$ASL_REPO/scripts/lint/check_tautological_test.py"
 
 # Run lint pointed at the synthetic test dir. Should detect the tautology
-# and exit non-zero.
-ASL_OUT="$(cd "$ASL_REPO" && bash scripts/lint.sh "$ASL_REPO/src/kernel/test/" 2>&1 || true)"
-if echo "$ASL_OUT" | grep -q "tautological-test:TEST_ASSERT(true|1, ...)"; then
-    t_pass "lint_check6_tautology  TEST_ASSERT(true,...) flagged in non-legacy path"
+# AND exit non-zero (Codex review 2026-04-28 A-M2: assert both rc and
+# diagnostic, not just the diagnostic text).
+ASL_OUT="$(cd "$ASL_REPO" && bash scripts/lint.sh "$ASL_REPO/src/kernel/test/" 2>&1)"
+ASL_RC=$?
+if [ "$ASL_RC" != "0" ] && echo "$ASL_OUT" | grep -q "tautological-test:TEST_ASSERT(true|1, ...)"; then
+    t_pass "lint_check6_tautology  TEST_ASSERT(true,...) flagged in non-legacy path (rc=$ASL_RC)"
 else
-    t_fail "lint_check6_tautology  expected tautological-test error, got: $(echo "$ASL_OUT" | tail -3)"
+    t_fail "lint_check6_tautology  expected rc!=0 + diagnostic; rc=$ASL_RC, last 3 lines: $(echo "$ASL_OUT" | tail -3)"
+fi
+
+# Symbol-vs-literal-of-symbol: TEST_ASSERT_EQ(POST16_FOO, 0xDF20) where
+# POST16_FOO is #define'd to 0xDF20. The python helper builds a #define
+# index from include/, so we use a real define from the project.
+# DEFAULT_BAUD = 115200 in include/kernel/serial.h is a stable target.
+cat >"$ASL_REPO/src/kernel/test/test_synthetic_tautology_check_6.c" <<'EOF'
+/* Synthetic fixture: SYM-vs-literal-of-SYM tautology, no marker. */
+void test_func(void)
+{
+    /* If DEFAULT_BAUD = 115200 in headers, this asserts the constant
+       equals its own #define value -- pure tautology. */
+    TEST_ASSERT_EQ(DEFAULT_BAUD, 115200, "tautology: define vs literal");
+}
+EOF
+# The helper resolves defines from the REAL repo's include/ tree because
+# we copied lint.sh into a synthetic repo but the python helper walks up
+# from the test file looking for include/ + .git. To prevent the
+# fallback from finding include/ in a parent dir of $ASL_REPO, we need
+# include/kernel/ in the synthetic tree with a matching #define.
+mkdir -p "$ASL_REPO/include/kernel"
+cat >"$ASL_REPO/include/kernel/serial.h" <<'EOF'
+#pragma once
+#define DEFAULT_BAUD 115200
+EOF
+( cd "$ASL_REPO" && git init -q . 2>/dev/null && git config user.email "x@x" && git config user.name "x" )
+cp "$REPO_ROOT/scripts/lint/check_tautological_test.py" "$ASL_REPO/scripts/lint/check_tautological_test.py" 2>/dev/null \
+    || ( mkdir -p "$ASL_REPO/scripts/lint" && cp "$REPO_ROOT/scripts/lint/check_tautological_test.py" "$ASL_REPO/scripts/lint/" )
+ASL_OUT_SYM="$(cd "$ASL_REPO" && bash scripts/lint.sh "$ASL_REPO/src/kernel/test/" 2>&1)"
+ASL_RC_SYM=$?
+if [ "$ASL_RC_SYM" != "0" ] && echo "$ASL_OUT_SYM" | grep -q "compares define to its own value"; then
+    t_pass "lint_check6_sym_literal  TEST_ASSERT_EQ(SYM, value-of-SYM) flagged (rc=$ASL_RC_SYM)"
+else
+    t_fail "lint_check6_sym_literal  expected rc!=0 + 'compares define to its own value'; rc=$ASL_RC_SYM, got: $(echo "$ASL_OUT_SYM" | grep tautological | head -3)"
 fi
 
 # Negative: the same line with /* TEST-TAUTOLOGY-OK: <reason> */ marker
-# must NOT be flagged.
+# must NOT be flagged AND lint must rc=0.
 cat >"$ASL_REPO/src/kernel/test/test_synthetic_tautology_check_6.c" <<'EOF'
 /* Synthetic fixture: marker-allowlisted tautology should NOT fire. */
 void test_func(void)
@@ -2972,11 +3010,12 @@ void test_func(void)
     TEST_ASSERT(true, "marker"); /* TEST-TAUTOLOGY-OK: synthetic-allowlist-test */
 }
 EOF
-ASL_OUT2="$(cd "$ASL_REPO" && bash scripts/lint.sh "$ASL_REPO/src/kernel/test/" 2>&1 || true)"
-if echo "$ASL_OUT2" | grep -q "tautological-test:"; then
-    t_fail "lint_check6_marker  marker-allowlisted line should NOT fire, got: $(echo "$ASL_OUT2" | grep tautological)"
+ASL_OUT2="$(cd "$ASL_REPO" && bash scripts/lint.sh "$ASL_REPO/src/kernel/test/" 2>&1)"
+ASL_RC2=$?
+if [ "$ASL_RC2" = "0" ] && ! echo "$ASL_OUT2" | grep -q "tautological-test:"; then
+    t_pass "lint_check6_marker  /* TEST-TAUTOLOGY-OK: */ marker suppresses lint (rc=0)"
 else
-    t_pass "lint_check6_marker  /* TEST-TAUTOLOGY-OK: */ marker suppresses the lint"
+    t_fail "lint_check6_marker  expected rc=0 + no tautological diagnostic; rc=$ASL_RC2, got: $(echo "$ASL_OUT2" | grep tautological)"
 fi
 
 # Check 7 stub-behind-stamp: deferred WARN.

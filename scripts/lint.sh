@@ -367,12 +367,19 @@ else
     # -hardening.md #12 follow-up); any NEW tautological test in any
     # other file is ERROR. Mirrors Check 5's BARE_SECTION_LEGACY_FILES.
     TAUTOLOGY_LEGACY_FILES=(
+        "src/kernel/test/test_alpc.c"
         "src/kernel/test/test_boot_init.c"
+        "src/kernel/test/test_bulletproof.c"
         "src/kernel/test/test_cpu_security.c"
+        "src/kernel/test/test_crashdump.c"
         "src/kernel/test/test_desktop.c"
+        "src/kernel/test/test_exec.c"
         "src/kernel/test/test_ixfs.c"
+        "src/kernel/test/test_klog.c"
+        "src/kernel/test/test_nt_types.c"
         "src/kernel/test/test_peb_teb.c"
         "src/kernel/test/test_usermode_launcher.c"
+        "src/kernel/test/test_vfs.c"
     )
     is_tautology_legacy() {
         local path="$1"
@@ -383,13 +390,18 @@ else
         return 1
     }
 
+    # Collect all test files and run the python checker once -- saves
+    # ~50 fork-execs vs the prior per-file awk loop AND handles three
+    # patterns the awk version missed (Codex review 2026-04-28):
+    # multiline assertions, inner-comma tautologies, and SYM-vs-literal
+    # -of-SYM comparisons. Output is one finding per line in the
+    # `relpath:line:detail` format that the parent loop dispatches via
+    # error()/warn() based on TAUTOLOGY_LEGACY_FILES membership.
+    TAUTOLOGY_FILES=()
     while IFS= read -r file; do
-        [ -z "$file" ] && continue
-        relpath="${file#"$REPO_ROOT"/}"
-        # (a) TEST_ASSERT_EQ(X, X, ...) -- whitespace-normalized compare.
-        # (b) TEST_ASSERT(true, ...) and TEST_ASSERT(1, ...).
-        # Process substitution feeds the parent shell loop so error() updates
-        # the ERRORS counter in the right scope (subshell-via-pipe lost it).
+        [ -n "$file" ] && TAUTOLOGY_FILES+=("$file")
+    done < <(find "$REPO_ROOT/src/kernel/test" -maxdepth 1 -type f -name 'test_*.c' 2>/dev/null)
+    if [ "${#TAUTOLOGY_FILES[@]}" -gt 0 ]; then
         while IFS=: read -r f l rest; do
             [ -z "$f" ] && continue
             if is_tautology_legacy "$f"; then
@@ -397,20 +409,9 @@ else
             else
                 error "$f" "$l" "$rest"
             fi
-        done < <(awk -v file="$relpath" '
-            /TEST-TAUTOLOGY-OK:/ { next }
-            match($0, /TEST_ASSERT_EQ\(([^,]+),([^,]+),/, arr) {
-                lhs = arr[1]; rhs = arr[2]
-                gsub(/[ \t]+/, "", lhs); gsub(/[ \t]+/, "", rhs)
-                if (lhs == rhs && lhs != "") {
-                    printf "%s:%d:tautological-test:TEST_ASSERT_EQ(X,X) identical args (%s)\n", file, NR, lhs
-                }
-            }
-            /TEST_ASSERT\([ \t]*(true|1)[ \t]*,/ {
-                printf "%s:%d:tautological-test:TEST_ASSERT(true|1, ...) is a no-op assertion\n", file, NR
-            }
-        ' "$file" 2>/dev/null)
-    done < <(find "$REPO_ROOT/src/kernel/test" -maxdepth 1 -type f -name 'test_*.c' 2>/dev/null)
+        done < <(python3 "$REPO_ROOT/scripts/lint/check_tautological_test.py" \
+            "${TAUTOLOGY_FILES[@]}" 2>/dev/null)
+    fi
 fi
 
 # ============================================================================
