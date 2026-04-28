@@ -80,6 +80,17 @@
 |---|---|---|---|
 | skill_step_map | `.claude/hooks/skill_step_map.py` | `skill_step_observer.py`, `skill_step_block.py` | Step-evidence rules for the 5 multi-step skills + required-terminal-step lists. Pure data module; no `stderr.write` and no exit paths. |
 
+## SessionStart / UserPromptSubmit / Stop / SubagentStop / PreCompact Hooks
+
+| Hook | File | Event | Kind | Wrap.sh | Markers | Opt-out | Purpose |
+|---|---|---|---|---|---|---|---|
+| session_start | `.claude/hooks/session_start.py` | SessionStart | STATE | N | -- | -- | Writes `.claude/state/session.json` (sid + ts + cwd + head_sha); truncates `tool-history.jsonl` if > 7 days old; surfaces last `acknowledged-but-skipped.log` entry as systemMessage. |
+| user_prompt_doctrine | `.claude/hooks/user_prompt_doctrine.py` | UserPromptSubmit | REMINDER | N | -- | -- | Scans user prompt for bypass-shape phrases (`skip review`, `just commit`, `bypass the gate`, etc.) and injects systemMessage with the relevant doctrine + opt-out env vars. Never blocks. |
+| stop_audit | `.claude/hooks/stop_audit.py` | Stop | STATE | N | -- | -- | At session-stop, walks transcript for "I will run X / I should invoke X" promises against enforcement-relevant skill names that never had a matching tool call within 5 turns; appends to `.claude/state/acknowledged-but-skipped.log`. Also flags TODO `[ ]`->`[x]` flips with no `superpowers:verification-before-completion` invocation. |
+| subagent_audit | `.claude/hooks/subagent_audit.py` | SubagentStop | STATE | N | -- | -- | Records `{ts, subagent_type, duration_ms, tool_uses_total}` to `.claude/state/subagent-log.jsonl`. Flags runaway subagents (> 30 tool calls or > 10 min) into the same skip-log. |
+| pre_compact_flush | `.claude/hooks/pre_compact_flush.py` | PreCompact | SIDE-EFFECT | N | -- | -- | Snapshots every `.claude/state/*.json` into `.claude/state/.compaction-snapshots/<ts>/` so mid-pipeline state (especially §10 step-state) survives compaction. Retains 3 most recent snapshots. |
+| tool_history_writer | `.claude/hooks/tool_history_writer.py` | PostToolUse `*` | STATE | N | -- | -- | Appends `{event, tool_name, tool_use_id, ts_ns, duration_ms, success}` to `.claude/state/tool-history.jsonl` per tool call. Live-rotates at 10 MiB to `.1`; SessionStart truncates if older than 7 days. |
+
 ## Plugin Hooks (auto-loaded)
 
 These hooks ship inside installed plugin caches under `~/.claude/plugins/cache/` and fire alongside our `.claude/settings.json` hooks. They are NOT edited by this repo; listed here so `audit-hooks.sh` can enumerate the full hook surface.

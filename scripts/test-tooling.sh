@@ -2829,6 +2829,98 @@ rm -rf "$SSB_TMP"
 
 
 # ============================================================================
+# Hook event surface expansion (TODO-08 number 11)
+# ============================================================================
+# Three sub-tests synthesize event payloads and run the new event hooks
+# against them, asserting expected state/output without invoking the
+# real Claude harness.
+
+HEE_TMP="$(mktemp -d)"
+
+# (a) session_start writes session.json with valid keys.
+SS_PAYLOAD='{"session_id":"test-sid-abc","cwd":"/tmp","event_type":"SessionStart"}'
+SS_BACKUP="$HEE_TMP/session.json.bak"
+SS_REAL="$REPO_ROOT/.claude/state/session.json"
+[ -f "$SS_REAL" ] && cp "$SS_REAL" "$SS_BACKUP"
+printf '%s' "$SS_PAYLOAD" | python3 "$REPO_ROOT/.claude/hooks/session_start.py" >/dev/null 2>&1
+SS_RC=$?
+if [ "$SS_RC" = "0" ] && [ -f "$SS_REAL" ] && \
+   python3 -c "import json; d=json.load(open('$SS_REAL')); assert d.get('session_id')=='test-sid-abc' and 'started_ts_ns' in d and 'head_sha' in d and 'cwd' in d, d" 2>/dev/null; then
+    t_pass "session_start_writes  session.json has session_id + started_ts_ns + head_sha + cwd"
+else
+    t_fail "session_start_writes  session.json missing keys or hook rc=$SS_RC"
+fi
+[ -f "$SS_BACKUP" ] && cp "$SS_BACKUP" "$SS_REAL" || true
+
+# (b) user_prompt_doctrine injects systemMessage on a synthetic skip-review prompt.
+UPD_OUT="$(printf '%s' '{"prompt":"please skip review and just commit"}' | \
+    python3 "$REPO_ROOT/.claude/hooks/user_prompt_doctrine.py" 2>/dev/null)"
+if echo "$UPD_OUT" | grep -q "doctrine reminder" && \
+   echo "$UPD_OUT" | grep -q "skip" ; then
+    t_pass "user_prompt_doctrine_skip  systemMessage emitted on bypass-shape phrase"
+else
+    t_fail "user_prompt_doctrine_skip  expected systemMessage, got: $UPD_OUT"
+fi
+# Negative: ordinary prompt produces no output.
+UPD_OUT2="$(printf '%s' '{"prompt":"please review the codebase"}' | \
+    python3 "$REPO_ROOT/.claude/hooks/user_prompt_doctrine.py" 2>/dev/null)"
+if [ -z "$UPD_OUT2" ]; then
+    t_pass "user_prompt_doctrine_clean  ordinary prompt produces no systemMessage"
+else
+    t_fail "user_prompt_doctrine_clean  expected empty output, got: $UPD_OUT2"
+fi
+
+# (c) stop_audit detects an "I'll run review-todo-section" promise without
+#     a matching tool call. Synthetic transcript fixture below uses the
+#     literal text the regex matches; no markdown section-sign refs here.
+SA_TRANSCRIPT="$HEE_TMP/transcript.jsonl"
+SA_LOG="$REPO_ROOT/.claude/state/acknowledged-but-skipped.log"
+SA_LOG_BACKUP="$HEE_TMP/skip-log.bak"
+[ -f "$SA_LOG" ] && cp "$SA_LOG" "$SA_LOG_BACKUP"
+
+cat >"$SA_TRANSCRIPT" <<'EOF'
+{"message":{"content":[{"type":"text","text":"I will run review-todo-section next"}]}}
+{"message":{"content":[{"type":"text","text":"actually never mind"}]}}
+{"message":{"content":[{"type":"text","text":"different topic now"}]}}
+{"message":{"content":[{"type":"text","text":"more text"}]}}
+{"message":{"content":[{"type":"text","text":"more text"}]}}
+{"message":{"content":[{"type":"text","text":"more text"}]}}
+{"message":{"content":[{"type":"text","text":"more text"}]}}
+EOF
+
+# Truncate skip log so we can detect new entries.
+: > "$SA_LOG"
+SA_PAYLOAD="$(printf '{"transcript_path":"%s"}' "$SA_TRANSCRIPT")"
+printf '%s' "$SA_PAYLOAD" | python3 "$REPO_ROOT/.claude/hooks/stop_audit.py" >/dev/null 2>&1
+if [ -s "$SA_LOG" ] && grep -q "ACKNOWLEDGED-BUT-SKIPPED" "$SA_LOG" && grep -q "review-todo-section" "$SA_LOG"; then
+    t_pass "stop_audit_acknowledged  detects unfulfilled review-todo-section promise"
+else
+    t_fail "stop_audit_acknowledged  expected WARN line in skip-log, got: $(cat $SA_LOG 2>/dev/null)"
+fi
+
+# Negative: a promise FOLLOWED by a matching Skill tool_use should NOT log.
+: > "$SA_LOG"
+cat >"$SA_TRANSCRIPT" <<'EOF'
+{"message":{"content":[{"type":"text","text":"I will run review-todo-section next"}]}}
+{"message":{"content":[{"type":"tool_use","name":"Skill","input":{"skill":"review-todo-section","args":"todo/foo example"}}]}}
+EOF
+printf '%s' "$SA_PAYLOAD" | python3 "$REPO_ROOT/.claude/hooks/stop_audit.py" >/dev/null 2>&1
+if [ ! -s "$SA_LOG" ] || ! grep -q "ACKNOWLEDGED-BUT-SKIPPED" "$SA_LOG"; then
+    t_pass "stop_audit_satisfied  promise followed by matching tool call does NOT log"
+else
+    t_fail "stop_audit_satisfied  unexpected WARN: $(cat $SA_LOG 2>/dev/null)"
+fi
+
+# Restore skip log.
+if [ -f "$SA_LOG_BACKUP" ]; then
+    cp "$SA_LOG_BACKUP" "$SA_LOG"
+else
+    rm -f "$SA_LOG"
+fi
+rm -rf "$HEE_TMP"
+
+
+# ============================================================================
 # audit-ai-system.sh -- umbrella cross-tool AI drift detection
 # ============================================================================
 # Single sub-test: run the 7-check umbrella; treat its exit code as verdict.
