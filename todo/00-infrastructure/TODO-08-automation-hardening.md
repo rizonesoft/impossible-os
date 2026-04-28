@@ -78,6 +78,7 @@ title: "TODO-08 -- Automation Hardening (Skill / Hook / MCP / Codex Integration)
 | 💎  |   13  |  §13    | Documentation sync: CLAUDE.md / ai-system.md / mcp-usage.md; reciprocal XREF sweep   | §1-§12                     |  [x]   |
 | 💎  |   14  |  §14    | Remove Copilot CLI reviewer wholesale (Codex is sole external reviewer)              | §3 (initial sweep started) |  [/]   |
 | 💎  |   15  |  §15    | Design-review hook scope fix: review-kind recognition + commit-clears-gate            | §7                         |  [x]   |
+| ⭐  |   16  |  §16    | Compaction-resilient skill-step state: HEAD-mismatch + TTL + PreCompact flush         | §10, §11                   |  [ ]   |
 
 > 💎 = parity work -- standard developer-tooling hygiene (audit scripts, drift detection, doc sync). Linux kernel ships `MAINTAINERS` + `get_maintainer.pl`; Windows has the engineering-systems-internal equivalent. We need it because skill / hook / MCP wiring drifts silently.
 > ⭐ = competitive edge -- enforcing reviewer-contract discipline at the Bash / Edit tool boundary, hard-gating skill-pipeline steps, cross-wiring two AI assistants (Claude Code + Codex CLI) into the same MCP server set, and observed-not-claimed step-state telemetry are novel ground. Neither Win11 nor Linux ships AI-tooling automation at this layer; among AI dev tools (Cursor, Aider, Continue, Copilot Workspace) only `nesaminua/claude-code-lsp-enforcement-kit` ships a comparable state-binding pattern as of early 2026.
@@ -218,7 +219,7 @@ Today's section-commit hook (the inline Python block in [`.claude/settings.json`
 
 > **Verified:** 2026-04-27 | commit `7bbbe87b` + review-pipeline fixes `44e600f6` | 9/9 items | build OK | tests 209/209 PASS
 > **Accepted:** [M] PostToolUse smoke-test + boot-smoke + reminder inline hooks use `cmd.startswith('git commit')` AND `Bash(git commit:*)` matcher -- wrapped forms (`env git commit`, `bash -c 'git commit'`) skip post-commit smoke + skip-reason propagation. Observability gap, not enforcement gap (gate itself catches the security concern). -> XREF: 00-infrastructure/TODO-08-automation-hardening.md §7 (item: "Same extraction for the inline `git commit` smoke-test hook and boot-smoke hook into dedicated files `post_commit_smoketest.py` and `post_commit_smoketest_boot.py`")
-> **Accepted:** [H] Stale receive event marking newer trigger received -- under racy multi-dispatch ordering (review A trigger -> review B trigger overwrites unreceived state -> agent receives intending A), state.received flips True against B's trigger_files, so the gate trusts an untriaged latest review. The §3 design captured `head_sha` + `tree_hash` for audit but explicitly defers `tool_use_id` correlation because the Claude Code harness does not expose `tool_use_id` to hooks (verified via probe). -> XREF: 00-infrastructure/TODO-08-automation-hardening.md §3 (item: "Anti-stale-pass binding -- partial: state schema captures head_sha + tree_hash at trigger time for audit. ... The trigger_tool_use_id field is NOT in the schema because the Claude Code harness PostToolUse / PreToolUse hooks do not expose tool_use_id to hooks (verified live via probe)" at line 221)
+> **Accepted:** [H] Stale receive event marking newer trigger received -- under racy multi-dispatch ordering (review A trigger -> review B trigger overwrites unreceived state -> agent receives intending A), state.received flips True against B's trigger_files, so the gate trusts an untriaged latest review. The §3 design captured `head_sha` + `tree_hash` for audit but explicitly defers `tool_use_id` correlation because the Claude Code harness does not expose `tool_use_id` to hooks (verified via probe). -> XREF: 00-infrastructure/TODO-08-automation-hardening.md §3 (item: "Anti-stale-pass binding -- partial: state schema captures head_sha + tree_hash at trigger time for audit. ... The trigger_tool_use_id field is NOT in the schema because the Claude Code harness PostToolUse / PreToolUse hooks do not expose tool_use_id to hooks (verified live via probe)" at line 222)
 > **Quality reviewed:** 2026-04-27 | Codex 9x (adversarial + 4 fix-loop + post-commit adversarial + consistency + perf + re-adversarial) | 12H + 2M fixed, 1M+1H accepted-XREF | scope: N/A (host-side automation tooling, no kernel/boot/desktop/shell domain)
 
 ---
@@ -488,6 +489,9 @@ Every section above touches a doctrine surface. Close the loop in lockstep with 
 > - Memory: `feedback_mcp_usage_first.md` is the umbrella over `feedback_lsp_bridge_over_grep.md` (both MCP servers come first, not just one); `project_automation_hardening_complete.md` records §1-§13+§15 shipped and the open §14.
 > - §14 (Copilot CLI removal) remains; not in this section's scope. Tracked separately in TODO-08 IO row 14.
 
+> **Verified:** 2026-04-28 | commit `e8c6dfd9` | 8/8 items | build OK | tools 270/270 PASS, audit-ai-system 7/7 PASS
+> **Quality reviewed:** 2026-04-28 | Codex 3x (adversarial, consistency, perf) | 4M+1L fixed | scope: N/A (docs-only sync section; no source code)
+
 ---
 
 ## 14. Remove Copilot CLI Reviewer Wholesale (Subordinate-Reviewer Reduction)
@@ -528,6 +532,46 @@ The pre-implementation design-review hook ([`.claude/hooks/design_review_require
 
 > **Verified:** 2026-04-27 | commit `d9bdacf9` | 5/5 items | build N/A (host-side hook + tests) | lint CLEAN | tests 253/253 PASS
 > **Quality reviewed:** 2026-04-27 | self-review only (host-side hook + test fixtures, no kernel/SMP risk; the hook's behavior is exercised by 5 sub-tests covering both relaxation paths and a non-clearing-prefix negative case) | scope: N/A (host-side hook fix)
+
+---
+
+## 16. Compaction-Resilient Skill-Step State -- PreCompact Orphan-Marking
+
+`.claude/state/skill-progress.json` survives context compaction, but the `skill_step_observer.py` PostToolUse hook does not run during summary generation. Result: the entry written before compaction stays in the file with `steps_observed: []` (or partial) while the agent that resumes is a different turn that can no longer fill in those observations. `skill_step_block.py` then BLOCKs the next `git commit` or `Skill(review-todo-section, ...)` indefinitely because the stale entry is the most-recent active skill by `started_ts`.
+
+The catch-22 is structural: the gate runs PreToolUse and the observer runs PostToolUse, so the missing-step list can never close itself once the entry is orphaned. Session 2026-04-28 hit this twice during TODO-08 §13 ship (stale `implement-todo-section` entry from pre-compaction, then stale `review-todo-section` entry from §12 review). The documented `SKIP_SKILL_STEP_BLOCK=1 + REASON=...` opt-out works for `Bash(git commit:*)` but NOT for `Skill(review-todo-section, ...)` because Skill tool calls don't accept env-var prefixes -- the only paths through required user-authorized state-file edits.
+
+This section adds the principled fix: mark entries as compaction-orphaned at compaction time (when the observer is about to stop firing), and have the gate's selector skip orphaned entries. No heuristics, no TTL guesses, no HEAD-tracking subprocess overhead in the gate's hot path -- the orphan flag is set by the one hook that knows compaction is happening, written into the same state file that already exists.
+
+- [ ] **PreCompact orphan-marking** in [`.claude/hooks/pre_compact_flush.py`](../../.claude/hooks/pre_compact_flush.py) (the §11 PreCompact hook): on every PreCompact firing, walk every entry in `.claude/state/skill-progress.json` and write `"compaction_orphaned": true` into the entry, alongside `"orphan_reason": "PreCompact fired with N steps observed"` (N = `len(steps_observed)`) and `"orphan_ts_ns": <now>`. Idempotent: if the flag is already set, do not overwrite (preserve the original `orphan_ts_ns`). Atomic: write to `skill-progress.json.tmp` then `os.replace` so a partial write cannot corrupt the file.
+
+- [ ] **Selector skip in [`.claude/hooks/skill_step_block.py`](../../.claude/hooks/skill_step_block.py) `_select_active_skill`**: when iterating entries to pick the most-recent active skill by `started_ts`, treat any entry where `entry.get("compaction_orphaned") is True` as "not active -- skip." Selector falls through to the next non-orphaned entry; if all entries are orphaned, returns `(None, None)` and the hook exits 0 (no active skill to gate against). Three-line patch.
+
+- [ ] **Audit log on skip**: each time `_select_active_skill` skips an orphaned entry, append a one-line record to `.claude/state/skill-progress-skip.log` -- `{ts_ns, skill, started_head_sha, orphan_ts_ns, orphan_reason}`. 200-line ring buffer (truncate from the front when over). If a real bug shows up (gate clearing on what should have been a live skill flow), the log shows the entry shape that triggered the skip.
+
+- [ ] **Sub-tests** in [`scripts/test-tooling.sh`](../../scripts/test-tooling.sh) -- 3 cases:
+   1. Entry with `compaction_orphaned: true` set -> selector skips, gate clears, `Bash(git commit ...)` proceeds.
+   2. Entry without the flag (live entry) -> selector picks it normally (regression guard against accidentally skipping live entries).
+   3. PreCompact hook fixture: simulate calling `pre_compact_flush.py` with a state file containing one un-orphaned entry; assert the entry now has `compaction_orphaned: true` AND idempotent re-run does not bump `orphan_ts_ns`.
+
+- [ ] **`MANIFEST.md` update**: add the new `pre_compact_flush.py` orphan-marking responsibility to the manifest entry (§7 §11 hook). Re-run `bash scripts/audit-hooks.sh` to confirm green.
+
+- [ ] **Documentation**: add a 2-bullet "Compaction Resilience" subsection to [`docs/infrastructure/ai-system.md`](../../docs/infrastructure/ai-system.md) Hook Event Surface area (after the §11 PreCompact bullet), naming the orphan-flag mechanism and the skip-log audit file. Update [TODO-08 §10](#10-skill-step-state-telemetry--non-contiguous-step-block) Outcome with a one-line pointer to §16 so future readers see the resilience layer at the same depth as the original gate.
+
+- [ ] Commit: `"hooks: PreCompact orphan-marking for compaction-resilient skill-step gate"`
+
+**Inputs (XREFs):** -> XREF: [00-infrastructure/TODO-08 §10](#10-skill-step-state-telemetry--non-contiguous-step-block) (skill-step gate this section hardens), [00-infrastructure/TODO-08 §11](#11-hook-event-surface-expansion-sessionstart--userpromptsubmit--stop--subagentstop--precompact) (PreCompact hook this section extends).
+
+**Test checkpoint:** `bash scripts/test-tooling.sh` PASS with 3 new sub-tests; `bash scripts/audit-hooks.sh` PASS after MANIFEST.md update; `bash scripts/audit-ai-system.sh` PASS (no regressions). Manual reproduction: trigger context compaction in a live session with an active `implement-todo-section` flow -- subsequent `git commit` proceeds without manual `skill-progress.json` editing.
+
+> **Test runner:** `bash scripts/test-tooling.sh --filter compaction` | 3 sub-tests, 0 failures (planned)
+
+> **Notes:** (canonical shape, fill at ship time)
+> - What shipped: PreCompact hook flags every active `skill-progress.json` entry as `compaction_orphaned: true`; `skill_step_block.py:_select_active_skill` skips orphaned entries.
+> - How it integrates: PreCompact hook owned by §11 carries orphan-marking; gate selector owned by §10 gains the skip clause; both stay loose-coupled via the state file.
+> - Downstream: state-file edits to resume after compaction become unnecessary; the `SKIP_SKILL_STEP_BLOCK` env opt-out reverts to its intended rare-escape-hatch role.
+> - Doc pointer: `docs/infrastructure/ai-system.md` Compaction Resilience subsection (added by this section).
+> - Scope boundary: this section only adds the orphan flag + selector skip. Gate BLOCK message format and observer recording behavior unchanged.
 
 ---
 
