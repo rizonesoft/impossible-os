@@ -342,15 +342,27 @@ def main() -> int:
             # Branch B's lazy init.
             _archive_orphan_in_place(state, fresh_skill)
             args_str = (d.get("tool_input") or {}).get("args", "")
-            # TODO-08 §17 deferred-XREF M4 fix: record the structured
-            # todo_path at skill-start. _attribute_review_todo prefers
-            # this field over a loose regex of `args`, closing the
-            # incidental-TODO-mention attribution risk.
+            # TODO-08 §17 deferred-XREF M4 fix: record structured
+            # todo_path so _attribute_review_todo prefers it over a
+            # loose regex of `args`.
             todo_path = ""
             if isinstance(args_str, str) and args_str:
                 m = re.search(r"todo/[\w./-]+TODO-\d[\w./-]*\.md", args_str)
                 if m:
                     todo_path = m.group(0)
+            # TODO-08 §22 #1 RISK_TIER doctrine: parse the tier from
+            # skill args (`RISK_TIER=trivial|standard|critical`).
+            # Default = standard when undeclared (Codex design pointer
+            # 2: silent default + section_commit_gate surfaces tier in
+            # its BLOCK message so the agent notices).
+            risk_tier = "standard"
+            if isinstance(args_str, str) and args_str:
+                tm = re.search(
+                    r"RISK_TIER\s*=\s*(trivial|standard|critical)\b",
+                    args_str, re.IGNORECASE,
+                )
+                if tm:
+                    risk_tier = tm.group(1).lower()
             state[fresh_skill] = {
                 "started_ts": _ts_ns(),
                 "started_head_sha": head,
@@ -358,6 +370,8 @@ def main() -> int:
                 "steps_observed": [],
                 "args": args_str,
                 "todo_path": todo_path,
+                "risk_tier": risk_tier,
+                "spiral_check_emitted": 0,  # escalation count: 0->2x->4x
             }
             _save_state(state_path, state)
             return 0
@@ -458,8 +472,60 @@ def main() -> int:
             })
             seen.add(n)
 
+        # TODO-08 §22 #5 spiral check: compare elapsed wall-clock vs
+        # tier budget. Per Codex design pointer 3, persist an
+        # escalation counter so the reminder fires at 2x and 4x but
+        # not on every PostToolUse in between (chat flood).
+        _spiral_check(entry, skill)
+
         _save_state(state_path, state)
         return 0
+
+
+# Tier wall-clock budgets (ns). Trivial = 30 min, standard = 90 min,
+# critical = 4 hours. Sourced from implement-todo-section/SKILL.md
+# "Risk-Tiered Review Pipeline" (TODO-08 §22 #1).
+_BUDGET_NS = {
+    "trivial":  30 * 60 * 1_000_000_000,
+    "standard": 90 * 60 * 1_000_000_000,
+    "critical": 4 * 60 * 60 * 1_000_000_000,
+}
+
+
+def _spiral_check(entry: Dict, skill: str) -> None:
+    """Emit a one-shot stderr `systemMessage` when elapsed wall-clock
+    exceeds 2x or 4x the tier budget. Pure advisory; never blocks.
+    """
+    started_ts = entry.get("started_ts", 0)
+    if not isinstance(started_ts, int) or started_ts <= 0:
+        return
+    tier = entry.get("risk_tier", "standard")
+    if tier not in _BUDGET_NS:
+        tier = "standard"
+    budget = _BUDGET_NS[tier]
+    elapsed = _ts_ns() - started_ts
+    emitted = entry.get("spiral_check_emitted", 0)
+    if not isinstance(emitted, int):
+        emitted = 0
+    new_level = emitted
+    if elapsed > 4 * budget and emitted < 2:
+        new_level = 2
+        threshold = "4x"
+    elif elapsed > 2 * budget and emitted < 1:
+        new_level = 1
+        threshold = "2x"
+    else:
+        return
+    elapsed_min = elapsed / 60_000_000_000
+    budget_min = budget / 60_000_000_000
+    sys.stderr.write(
+        f"[skill-step-observer] SPIRAL CHECK -- skill `{skill}` "
+        f"(RISK_TIER={tier}) elapsed {elapsed_min:.0f} min, "
+        f"{threshold} of {budget_min:.0f} min budget. Consider: declare "
+        f"the section done, escalate the tier (RISK_TIER=...), or split "
+        f"the section. Pure advisory; this does not block.\n"
+    )
+    entry["spiral_check_emitted"] = new_level
 
 
 if __name__ == "__main__":

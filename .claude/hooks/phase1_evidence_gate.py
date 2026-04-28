@@ -321,6 +321,21 @@ def main() -> int:
     if not root:
         return 0
 
+    # TODO-08 §22 #2 bootstrap-mode: when this hook's own file is in
+    # the staged diff, the commit ships the hook itself -- downgrade
+    # BLOCK to WARN to avoid the chicken-and-egg loop.
+    try:
+        from _bootstrap_mode import is_bootstrap_commit
+        if is_bootstrap_commit(__file__):
+            sys.stderr.write(
+                "[phase1-evidence-gate] WARN (bootstrap-mode) -- staged "
+                "diff includes this hook's own file; gate downgraded "
+                "from BLOCK to WARN for the commit that ships it.\n"
+            )
+            return 0
+    except Exception:
+        pass
+
     skip_req = os.environ.get("SKIP_PHASE1_BLOCK", "") == "1"
     skip_reason = os.environ.get("SKIP_PHASE1_BLOCK_REASON", "")
     if skip_req and len(skip_reason) < _SKIP_REASON_MIN_LEN:

@@ -3707,6 +3707,106 @@ fi
 
 
 # ============================================================================
+# review_right_sizing (TODO-08 review-pipeline right-sizing doctrine)
+# ============================================================================
+#   - risk_tier_declared: skill-progress entry has risk_tier field after
+#     observer parses RISK_TIER=<tier> from skill args.
+#   - bootstrap_mode_warn: is_bootstrap_commit returns True when staged
+#     diff includes the hook's own file path.
+#   - spiral_check_warn: skill_step_observer emits systemMessage when
+#     elapsed > 2x budget; persists escalation counter.
+#   - debug_log_env_gated: codex_review_completed writes debug log only
+#     when CODEX_REVIEW_DEBUG=1.
+
+[ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[review_right_sizing]${NC}"
+
+if [ ! -f "$REPO_ROOT/.claude/hooks/_bootstrap_mode.py" ] || \
+   [ ! -f "$REPO_ROOT/.claude/hooks/skill_step_observer.py" ] || \
+   [ ! -f "$REPO_ROOT/.claude/hooks/codex_review_completed.py" ]; then
+    t_fail "review_right_sizing: hook scripts missing"
+else
+    RRS_OUT="$(cd "$REPO_ROOT" && python3 - <<'PY'
+import sys, time, json
+sys.path.insert(0, '.claude/hooks')
+
+# Test 1: risk_tier parsed from RISK_TIER=trivial in skill args.
+import re
+args = "Section 22 RISK_TIER=trivial host-side review-pipeline doctrine"
+m = re.search(r"RISK_TIER\s*=\s*(trivial|standard|critical)\b", args, re.IGNORECASE)
+assert m and m.group(1).lower() == "trivial", "Test 1 risk_tier parse failed"
+print("OK risk_tier_declared")
+
+# Test 2: bootstrap_mode reports True for hook's own file in staged diff.
+import _bootstrap_mode
+_bootstrap_mode._staged_paths = lambda root: [".claude/hooks/_bootstrap_mode.py"]
+hook_self = _bootstrap_mode.__file__
+assert _bootstrap_mode.is_bootstrap_commit(hook_self), "Test 2 bootstrap True path failed"
+_bootstrap_mode._staged_paths = lambda root: ["src/kernel/foo.c"]
+assert not _bootstrap_mode.is_bootstrap_commit(hook_self), "Test 2 bootstrap False path failed"
+print("OK bootstrap_mode_warn")
+
+# Test 3: spiral check emits at 2x budget, dedups via escalation counter.
+import skill_step_observer as sso
+class _Stderr:
+    def __init__(self): self.buf = []
+    def write(self, s): self.buf.append(s)
+sso.sys.stderr = _Stderr()
+entry = {
+    "started_ts": time.time_ns() - 70 * 60 * 1_000_000_000,
+    "risk_tier": "trivial",
+    "spiral_check_emitted": 0,
+}
+sso._spiral_check(entry, "implement-todo-section")
+assert any("SPIRAL CHECK" in s and "2x" in s for s in sso.sys.stderr.buf), "Test 3 spiral 2x not fired"
+assert entry["spiral_check_emitted"] == 1, "Test 3 escalation counter not bumped"
+sso.sys.stderr = _Stderr()
+sso._spiral_check(entry, "implement-todo-section")
+assert sso.sys.stderr.buf == [], "Test 3 dedup failed"
+entry["started_ts"] = time.time_ns() - 130 * 60 * 1_000_000_000
+sso._spiral_check(entry, "implement-todo-section")
+assert any("4x" in s for s in sso.sys.stderr.buf), "Test 3 spiral 4x not fired"
+print("OK spiral_check_warn")
+
+# Test 4: codex_review_completed debug log only writes when env set.
+import os, tempfile
+with tempfile.TemporaryDirectory() as tmp:
+    import pathlib
+    root = pathlib.Path(tmp)
+    (root / ".claude" / "state").mkdir(parents=True)
+    import codex_review_completed as crc
+    log_path = root / ".claude" / "state" / "codex-review-debug.log"
+    if "CODEX_REVIEW_DEBUG" in os.environ: del os.environ["CODEX_REVIEW_DEBUG"]
+    crc._debug_log(root, "test_event", k="v")
+    assert not log_path.exists(), "Test 4 debug log written without env"
+    os.environ["CODEX_REVIEW_DEBUG"] = "1"
+    crc._debug_log(root, "test_event", k="v")
+    assert log_path.exists(), "Test 4 debug log NOT written with env"
+    txt = log_path.read_text()
+    assert "test_event" in txt and "k='v'" in txt, "Test 4 debug log content wrong"
+    del os.environ["CODEX_REVIEW_DEBUG"]
+print("OK debug_log_env_gated")
+PY
+)" 2>&1
+    RRS_RC=$?
+    # Count OK lines emitted. Python exit code can be non-zero from
+    # interpreter cleanup after sys.stderr monkey-patch even when
+    # every assertion passed; trust the OK markers as the source of
+    # truth.
+    RRS_OK_COUNT=$(echo "$RRS_OUT" | grep -c "^OK ")
+    if [ "$RRS_OK_COUNT" = "4" ]; then
+        echo "$RRS_OUT" | grep "^OK " | while IFS= read -r line; do
+            t_pass "review_right_sizing: $line"
+        done
+        # While-loop subshell drops PASS counter increments. Use direct count.
+        PASS=$((PASS + 4))
+    else
+        t_fail "review_right_sizing: integrated test suite incomplete" \
+               "ok-count=$RRS_OK_COUNT rc=$RRS_RC out=$RRS_OUT"
+    fi
+fi
+
+
+# ============================================================================
 # Summary
 # ============================================================================
 

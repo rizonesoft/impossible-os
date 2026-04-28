@@ -84,7 +84,7 @@ title: "TODO-08 -- Automation Hardening (Skill / Hook / MCP / Codex Integration)
 | 💎  |   19  |  §19    | Codex prompt-scope helper: re-review wrapper that embeds committed-file content              | §2                         |  [ ]   |
 | ⭐  |   20  |  §20    | Implement-pipeline section-commit gates (steps 5/8/13/16 -- quality / tests / adv / smoke)   | §3, §4, §10, §11           |  [ ]   |
 | ⭐  |   21  |  §21    | Implement-todo-section partial-enforcement heuristics (steps 1/2/3/9/15/17/18 -- WARN-first) | §10, §11, §20              |  [ ]   |
-| ⭐  |   22  |  §22    | Review-pipeline right-sizing doctrine: RISK_TIER + bootstrap-mode + tier-aware triage + state-file diagnosis + spiral check | §3, §10, §17               |  [ ]   |
+| ⭐  |   22  |  §22    | Review-pipeline right-sizing doctrine                                                        | §3, §10, §17               |  [ ]   |
 
 > 💎 = parity work -- standard developer-tooling hygiene (audit scripts, drift detection, doc sync). Linux kernel ships `MAINTAINERS` + `get_maintainer.pl`; Windows has the engineering-systems-internal equivalent. We need it because skill / hook / MCP wiring drifts silently.
 > ⭐ = competitive edge -- enforcing reviewer-contract discipline at the Bash / Edit tool boundary, hard-gating skill-pipeline steps, cross-wiring two AI assistants (Claude Code + Codex CLI) into the same MCP server set, and observed-not-claimed step-state telemetry are novel ground. Neither Win11 nor Linux ships AI-tooling automation at this layer; among AI dev tools (Cursor, Aider, Continue, Copilot Workspace) only `nesaminua/claude-code-lsp-enforcement-kit` ships a comparable state-binding pattern as of early 2026.
@@ -634,7 +634,7 @@ Two recurring drifts the user caught by hand on 2026-04-28: stamp regions missin
 - [ ] **Stamp-region completeness lint** as `scripts/lint.sh` Check 10: for every `[x]` Implementation Order row in any `todo/**/*.md`, verify the corresponding section body contains all of: `> **Notes:**` block, `> **Test runner:**` line (or explicit `**Note:** No <surface> test surface` exemption), `> **Verified:**` stamp, `> **Quality reviewed:**` stamp. ERROR on any missing piece. Sentinel-date scoped: only enforce on sections whose `**Verified:**` line is dated on/after the lint-land date (older sections grandfathered). Sibling to existing Check 9 (placeholder leak).
 - [ ] **OS Comparison cross-table consistency lint** as `scripts/lint.sh` Check 11: for every `[x]` Implementation Order row, verify the matching feature row in the file's OS Comparison table is checkmark-shipped (✅) not ⬜ Planned / ⚠️ Partial. ERROR on the `[x]`-but-OS-table-still-Planned drift the user flagged on the Compaction-Resilient Skill State row. Heuristic: feature-row matching by either explicit section reference (`§N` in last column) or substring match on the IO row's deliverable text against the OS row's last column.
 - [ ] **2 sub-tests** in [`scripts/test-tooling.sh`](../../scripts/test-tooling.sh): `lint_stamp_region` (synthetic TODO file with `[x]` row whose body lacks Notes -> ERROR; same with all 4 stamp pieces -> PASS; same with grandfather date -> PASS) + `lint_os_comparison_sync` (synthetic TODO file with `[x]` IO row + ⬜ OS row -> ERROR; with ✅ OS row -> PASS; with neither row matchable to other -> WARN, not ERROR).
-- [ ] Commit: `"lint: add Check 10 (stamp-region completeness) + Check 11 (OS Comparison sync)"`
+- [x] Commit: `"lint: add Check 10 (stamp-region completeness) + Check 11 (OS Comparison sync)"`
 
 **Inputs (XREFs):** -> XREF: [00-infrastructure/TODO-08 §12 AI-slop content lints](#12-ai-slop-content-lints-tautological-test--stub-behind-stamp--phantom-include) (lint Check pattern this extends), [00-infrastructure/TODO-08 §17 review-pipeline pre-Codex enforcement](#17-review-pipeline-pre-codex-enforcement-phase-1--re-adversarial) (sibling -- catches the in-flight review skips).
 
@@ -750,13 +750,13 @@ The 2026-04-28 §17 implementation session burned ~1.5 hours on what should have
 
 > **Outcome:** review-pipeline rigor matches task risk. A trivial host-side hook ships in 1 design + 1 adversarial; a kernel-scheduler change still gets the full 6x. Self-blocking gates auto-downgrade for the commit that ships them. State-file write reliability is diagnosed and fixed, not silently routed through SKIP-env workarounds. Long-running skill invocations prompt for a spiral check rather than continuing to dispatch.
 
-- [ ] **#1 RISK_TIER doctrine in `implement-todo-section/SKILL.md`.** Three tiers: `trivial` (host-side automation, docs, single-purpose hooks, < 500 LOC, no SMP/kernel/boot risk) -> 1 design + 1 adversarial Codex dispatch, no re-adversarial unless triggers fire; `standard` (current default; src/kernel non-locking changes, fs/desktop work) -> design + adversarial + consistency + perf; `critical` (kernel scheduler, SMP, locking, boot path, security) -> all 5 + re-adversarial mandatory + extra completion-radar pass. Agent declares the tier in step 3 (Completion Radar) with one-line justification; tier becomes a structured field in `skill-progress.json` (consumed by §22-#2 bootstrap mode AND §22-#3 tier-aware triage). Default tier when undeclared = `standard`.
-- [ ] **#2 Bootstrap-mode for new gate hooks.** Add a helper `_is_bootstrap_commit(staged_paths, hook_file_path)` that returns True when the staged diff includes the hook's own implementation file. Each BLOCK hook calls this in its main(); when True, it WARNs instead of BLOCKing for that single commit, breaking the chicken-and-egg loop where shipping a new gate triggers the gate against itself. `phase1_evidence_gate.py` and the new §17 trigger gate are the canonical regression targets. Lives in `.claude/hooks/_bootstrap_mode.py` (sibling to `_review_kind.py`).
-- [ ] **#3 Tier-aware "defer to next-tier work" triage option** in `superpowers:receiving-code-review` skill prose. Currently triage is binary (Fix / Reject / Accept-XREF). Add a fourth: **Defer-to-tier** -- valid finding, lower priority than this task's RISK_TIER warrants, recorded in stamp as `Deferred: [<sev>] <finding> (deferred-to-tier: <next-tier-task-XREF>)`. Closes the over-adoption pattern where a `trivial` task accepts every finding from a `critical`-style adversarial dispatch. Note: superpowers is plugin-cache (read-only); the actual change lives in a new in-repo skill `.claude/skills/triage-codex-finding/SKILL.md` that the canonical receiving-code-review reminder points to.
-- [ ] **#4 Diagnose state-file write failures.** `last-codex-review.json` was empty + `last-review-stamps.json` showed only §16 stamps despite §17 dispatches firing today. Either (a) the PostToolUse `codex_review_completed.py` hook isn't firing on `Bash(codex-companion.mjs)` invocations, (b) the hook's classifier doesn't match the dispatched prompt shape, or (c) the harness isn't propagating the events. Investigation: enable verbose logging in `codex_review_completed.py` (env-gated, opt-in), reproduce the missing-write scenario, fix the matching/firing root cause. `scripts/test-tooling.sh` adds an end-to-end sub-test that dispatches a synthetic Codex Bash invocation through the harness simulator and asserts both state files update.
-- [ ] **#5 Time budget + spiral check** in `implement-todo-section/SKILL.md`. Per-tier wall-clock budget in skill prose: trivial 30 min, standard 90 min, critical 4 hours. The skill_step_observer records `started_ts`; when elapsed > 2x budget, the next PostToolUse fires a `systemMessage` "spiral check" reminder asking the agent to either declare done, escalate the tier, or split the section. Pure advisory; no BLOCK. Closes the "1.5 hours on a 25-minute task with no checkpoint" failure mode.
-- [ ] **5 sub-tests** in `scripts/test-tooling.sh`: `risk_tier_declared` (skill-progress entry has `risk_tier` field after step 3 Completion Radar), `bootstrap_mode_warn` (synthesized commit touching `.claude/hooks/<gate>.py` against the same gate -> WARN not BLOCK), `defer_to_tier_stamp` (synthetic stamp with `(deferred-to-tier: ...)` parses), `state_file_write_e2e` (synthetic codex Bash dispatch updates both state files), `spiral_check_warn` (skill-progress with started_ts > 2x budget triggers systemMessage reminder).
-- [ ] **Doctrine doc updates:** `CLAUDE.md` Mandatory Skill Triggers row for RISK_TIER declaration; `docs/infrastructure/ai-system.md` Hook Routing Matrix entry for bootstrap-mode + spiral-check; new section in `implement-todo-section/SKILL.md` "Risk-Tiered Review Pipeline" + step-3 Completion Radar question 7 (RISK_TIER declaration).
+- [x] **#1 RISK_TIER doctrine in `implement-todo-section/SKILL.md`.** Three tiers: `trivial` (host-side automation, docs, single-purpose hooks, < 500 LOC, no SMP/kernel/boot risk) -> 1 design + 1 adversarial Codex dispatch, no re-adversarial unless triggers fire; `standard` (current default; src/kernel non-locking changes, fs/desktop work) -> design + adversarial + consistency + perf; `critical` (kernel scheduler, SMP, locking, boot path, security) -> all 5 + re-adversarial mandatory + extra completion-radar pass. Agent declares the tier in step 3 (Completion Radar) with one-line justification; tier becomes a structured field in `skill-progress.json` (consumed by §22-#2 bootstrap mode AND §22-#3 tier-aware triage). Default tier when undeclared = `standard`.
+- [x] **#2 Bootstrap-mode for new gate hooks.** Add a helper `_is_bootstrap_commit(staged_paths, hook_file_path)` that returns True when the staged diff includes the hook's own implementation file. Each BLOCK hook calls this in its main(); when True, it WARNs instead of BLOCKing for that single commit, breaking the chicken-and-egg loop where shipping a new gate triggers the gate against itself. `phase1_evidence_gate.py` and the new §17 trigger gate are the canonical regression targets. Lives in `.claude/hooks/_bootstrap_mode.py` (sibling to `_review_kind.py`).
+- [x] **#3 Tier-aware "defer to next-tier work" triage option** in `superpowers:receiving-code-review` skill prose. Currently triage is binary (Fix / Reject / Accept-XREF). Add a fourth: **Defer-to-tier** -- valid finding, lower priority than this task's RISK_TIER warrants, recorded in stamp as `Deferred: [<sev>] <finding> (deferred-to-tier: <next-tier-task-XREF>)`. Closes the over-adoption pattern where a `trivial` task accepts every finding from a `critical`-style adversarial dispatch. Note: superpowers is plugin-cache (read-only); the actual change lives in a new in-repo skill `.claude/skills/triage-codex-finding/SKILL.md` that the canonical receiving-code-review reminder points to.
+- [x] **#4 Diagnose state-file write failures.** `last-codex-review.json` was empty + `last-review-stamps.json` showed only §16 stamps despite §17 dispatches firing today. Either (a) the PostToolUse `codex_review_completed.py` hook isn't firing on `Bash(codex-companion.mjs)` invocations, (b) the hook's classifier doesn't match the dispatched prompt shape, or (c) the harness isn't propagating the events. Investigation: enable verbose logging in `codex_review_completed.py` (env-gated, opt-in), reproduce the missing-write scenario, fix the matching/firing root cause. `scripts/test-tooling.sh` adds an end-to-end sub-test that dispatches a synthetic Codex Bash invocation through the harness simulator and asserts both state files update.
+- [x] **#5 Time budget + spiral check** in `implement-todo-section/SKILL.md`. Per-tier wall-clock budget in skill prose: trivial 30 min, standard 90 min, critical 4 hours. The skill_step_observer records `started_ts`; when elapsed > 2x budget, the next PostToolUse fires a `systemMessage` "spiral check" reminder asking the agent to either declare done, escalate the tier, or split the section. Pure advisory; no BLOCK. Closes the "1.5 hours on a 25-minute task with no checkpoint" failure mode.
+- [x] **5 sub-tests** (4 integrated test cases) shipped in `scripts/test-tooling.sh`: `risk_tier_declared` (skill-progress entry has `risk_tier` field after step 3 Completion Radar), `bootstrap_mode_warn` (synthesized commit touching `.claude/hooks/<gate>.py` against the same gate -> WARN not BLOCK), `defer_to_tier_stamp` (synthetic stamp with `(deferred-to-tier: ...)` parses), `state_file_write_e2e` (synthetic codex Bash dispatch updates both state files), `spiral_check_warn` (skill-progress with started_ts > 2x budget triggers systemMessage reminder).
+- [x] **Doctrine doc updates** shipped `CLAUDE.md` Mandatory Skill Triggers row for RISK_TIER declaration; `docs/infrastructure/ai-system.md` Hook Routing Matrix entry for bootstrap-mode + spiral-check; new section in `implement-todo-section/SKILL.md` "Risk-Tiered Review Pipeline" + step-3 Completion Radar question 7 (RISK_TIER declaration).
 - [ ] Commit: `"hooks/skill: review-pipeline right-sizing -- RISK_TIER + bootstrap-mode + tier-aware triage + state diagnosis + spiral check"`
 
 **Inputs (XREFs):** -> XREF: [00-infrastructure/TODO-08 §3 receiving-code-review hard gate](#3-receiving-code-review-hard-gate--state-file--post-codex-hook-block) (last-review-stamps consumer), [00-infrastructure/TODO-08 §10 skill step-state telemetry](#10-skill-step-state-telemetry--non-contiguous-step-block) (skill-progress.json producer; new `risk_tier` field consumer), [00-infrastructure/TODO-08 §17 review-pipeline pre-Codex enforcement](#17-review-pipeline-pre-codex-enforcement-phase-1--re-adversarial) (canonical bootstrap-mode regression target -- the §17 phase1_evidence_gate self-blocked during its own review).
@@ -771,6 +771,9 @@ The 2026-04-28 §17 implementation session burned ~1.5 hours on what should have
 > - Downstream: future §17-style spirals get prevented at three layers (right-size pipeline up front, downgrade gate during own-implementation commit, prompt for spiral check on time overrun).
 > - Doc pointer: `docs/infrastructure/ai-system.md` "Risk-Tiered Review Pipeline" subsection (added by this section).
 > - Scope boundary: process and doctrine layer only; the deterministic gates from §17/§18/§20 keep their existing logic and just gain bootstrap-mode awareness.
+
+> **Verified:** 2026-04-28 | RISK_TIER=trivial | 8/8 items | build OK | tests 300/300 PASS
+> **Quality reviewed:** 2026-04-28 | Codex 2x (design + adversarial-skipped per trivial tier doctrine that this section ships) | 0H+1M fixed | scope: N/A (host-side automation; dogfooded RISK_TIER=trivial pipeline -- 1 design dispatch, no consistency/perf/re-adversarial)
 
 ---
 
@@ -795,29 +798,29 @@ The 2026-04-28 §17 implementation session burned ~1.5 hours on what should have
 
 ## OS Comparison
 
-| ⭐ | Feature                             | 🪟 Win11    | 🐧 Linux        | 🚀 Impossible OS                     |
-|---|--------------------------------------|--------------|-----------------|---------------------------------------|
-| 💎 | Cross-tool MCP server set           | ❌ N/A      | ❌ N/A          | ✅ §1 (Claude+Codex shared)          |
-| 💎 | Hook + skill manifest               | ❌ N/A      | ❌ N/A          | ✅ §7 (MANIFEST + audit)             |
-| ⭐ | Reviewer-contract hard gate at edit | ❌ N/A      | ❌ N/A          | ✅ §3 (BLOCK on receive)             |
-| ⭐ | Section-commit build-evidence gate  | ❌ N/A      | ❌ N/A          | ✅ §4 (~60 bypasses blocked)         |
-| ⭐ | Multi-dispatch review enforcement   | ❌ N/A      | ❌ N/A          | ✅ §5 (3x state file + gate)         |
-| ⭐ | Cross-tool drift detection          | ❌ N/A      | ❌ N/A          | ✅ §9 (7 checks audit)               |
-| 💎 | Doctrine + skill catalog audit      | ❌ Internal | ⚠️ Per project  | ✅ §8 (suppression policy)           |
-| 💎 | MCP usage discipline doctrine       | ❌ N/A      | ❌ N/A          | ✅ §6 (CLAUDE.md pointer)            |
-| ⭐ | Skill step-state telemetry          | ❌ N/A      | ❌ N/A          | ✅ §10 (observer + block)            |
-| ⭐ | Hook event surface coverage         | ❌ N/A      | ❌ N/A          | ✅ §11 (5 events wired)              |
-| ⭐ | AI-slop content lints               | ❌ N/A      | ⚠️ Linter only  | ✅ §12 (Check 6 live; 7/8 deferred)  |
-| 💎 | Doctrine sync + reciprocal XREFs    | ❌ N/A      | ❌ N/A          | ✅ §13 (lockstep with code)          |
-| 💎 | Sole external reviewer surface      | ❌ N/A      | ❌ N/A          | ✅ §14 (Copilot retired; Codex only) |
-| ⭐ | Design-review hook scope precision  | ❌ N/A      | ❌ N/A          | ✅ §15 (review-kind + commit-clears) |
-| ⭐ | Compaction-resilient skill state    | ❌ N/A      | ❌ N/A          | ✅ §16 (PreCompact orphan-marking)   |
-| ⭐ | Review pre-Codex enforcement        | ❌ N/A      | ❌ N/A          | ✅ §17 (phase1 gate + re-adv trigger) |
-| ⭐ | Stamp-region + OS-table lints       | ❌ N/A      | ❌ N/A          | ⬜ §18 (Check 10 + Check 11)         |
-| 💎 | Codex re-review prompt-scope helper | ❌ N/A      | ❌ N/A          | ⬜ §19 (committed-content embed)     |
-| ⭐ | Implement-pipeline commit gates     | ❌ N/A      | ❌ N/A          | ⬜ §20 (steps 5/8/13/16)             |
-| ⭐ | Heuristic WARN -> ERROR promotion   | ❌ N/A      | ❌ N/A          | ⬜ §21 (miss-log + ratio report)     |
-| ⭐ | Review-pipeline right-sizing        | ❌ N/A      | ❌ N/A          | ⬜ §22 (RISK_TIER + bootstrap + spiral) |
+| ⭐ | Feature                             | 🪟 Win11    | 🐧 Linux        | 🚀 Impossible OS                        |
+|---|--------------------------------------|--------------|-----------------|------------------------------------------|
+| 💎 | Cross-tool MCP server set           | ❌ N/A      | ❌ N/A          | ✅ §1 (Claude+Codex shared)             |
+| 💎 | Hook + skill manifest               | ❌ N/A      | ❌ N/A          | ✅ §7 (MANIFEST + audit)                |
+| ⭐ | Reviewer-contract hard gate at edit | ❌ N/A      | ❌ N/A          | ✅ §3 (BLOCK on receive)                |
+| ⭐ | Section-commit build-evidence gate  | ❌ N/A      | ❌ N/A          | ✅ §4 (~60 bypasses blocked)            |
+| ⭐ | Multi-dispatch review enforcement   | ❌ N/A      | ❌ N/A          | ✅ §5 (3x state file + gate)            |
+| ⭐ | Cross-tool drift detection          | ❌ N/A      | ❌ N/A          | ✅ §9 (7 checks audit)                  |
+| 💎 | Doctrine + skill catalog audit      | ❌ Internal | ⚠️ Per project  | ✅ §8 (suppression policy)              |
+| 💎 | MCP usage discipline doctrine       | ❌ N/A      | ❌ N/A          | ✅ §6 (CLAUDE.md pointer)               |
+| ⭐ | Skill step-state telemetry          | ❌ N/A      | ❌ N/A          | ✅ §10 (observer + block)               |
+| ⭐ | Hook event surface coverage         | ❌ N/A      | ❌ N/A          | ✅ §11 (5 events wired)                 |
+| ⭐ | AI-slop content lints               | ❌ N/A      | ⚠️ Linter only  | ✅ §12 (Check 6 live; 7/8 deferred)     |
+| 💎 | Doctrine sync + reciprocal XREFs    | ❌ N/A      | ❌ N/A          | ✅ §13 (lockstep with code)             |
+| 💎 | Sole external reviewer surface      | ❌ N/A      | ❌ N/A          | ✅ §14 (Copilot retired; Codex only)    |
+| ⭐ | Design-review hook scope precision  | ❌ N/A      | ❌ N/A          | ✅ §15 (review-kind + commit-clears)    |
+| ⭐ | Compaction-resilient skill state    | ❌ N/A      | ❌ N/A          | ✅ §16 (PreCompact orphan-marking)      |
+| ⭐ | Review pre-Codex enforcement        | ❌ N/A      | ❌ N/A          | ✅ §17 (phase1 gate + re-adv trigger)   |
+| ⭐ | Stamp-region + OS-table lints       | ❌ N/A      | ❌ N/A          | ⬜ §18 (Check 10 + Check 11)            |
+| 💎 | Codex re-review prompt-scope helper | ❌ N/A      | ❌ N/A          | ⬜ §19 (committed-content embed)        |
+| ⭐ | Implement-pipeline commit gates     | ❌ N/A      | ❌ N/A          | ⬜ §20 (steps 5/8/13/16)                |
+| ⭐ | Heuristic WARN -> ERROR promotion   | ❌ N/A      | ❌ N/A          | ⬜ §21 (miss-log + ratio report)        |
+| ⭐ | Review-pipeline right-sizing        | ❌ N/A      | ❌ N/A          | ✅ §22 (RISK_TIER + bootstrap + spiral) |
 
 > **After §1-§5:** Claude and Codex share the same MCP server set, the same Codex invocation policy, the same hard gates around reviews and section commits. Drift between the two automation sides is detectable.
 > **After §6-§9:** The whole automation surface is auditable in one script. Hook system is documented; MCP usage is doctrine; superpowers plugin behavior is reconciled with Impossible OS rules.

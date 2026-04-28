@@ -1233,6 +1233,24 @@ def _re_adversarial_trigger_check(
     handles it; this function is reached only in the fail-closed
     paths).
     """
+    # TODO-08 §22 #2 bootstrap-mode: when this hook's own file is in
+    # the staged diff, downgrade BLOCK to WARN. Section_commit_gate
+    # itself is the regression target since shipping new triggers in
+    # _RE_ADV_TRIGGER_LOCKING / _RE_ADV_TRIGGER_FAULTABLE / etc. lands
+    # in this very file.
+    try:
+        from _bootstrap_mode import is_bootstrap_commit
+        if is_bootstrap_commit(__file__):
+            sys.stderr.write(
+                "[section-commit-gate] WARN (bootstrap-mode) -- staged "
+                "diff includes this hook's own file; re-adversarial "
+                "trigger gate downgraded from BLOCK to WARN for the "
+                "commit that ships it.\n"
+            )
+            return (True, "")
+    except Exception:
+        pass
+
     # Regex scan restricted to C/H (locking/faultable/lifecycle vocab
     # is a C/C++ idiom). LOC trigger covers C/H + asm so an asm-only
     # rewrite of an interrupt entry / IST stub still trips the gate

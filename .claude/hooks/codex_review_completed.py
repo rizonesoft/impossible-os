@@ -943,12 +943,40 @@ def _load_state(path: Path) -> dict | None:
         return None
 
 
+def _debug_log(root, event: str, **fields) -> None:
+    """TODO-08 §22 #4 state-file diagnosis: env-gated verbose log to
+    `.claude/state/codex-review-debug.log` so missing-write incidents
+    can be diagnosed (last-codex-review.json or last-review-stamps.json
+    empty after dispatches). Opt-in via `CODEX_REVIEW_DEBUG=1`; silent
+    in normal operation. Never blocks.
+    """
+    if os.environ.get("CODEX_REVIEW_DEBUG", "") != "1":
+        return
+    if root is None:
+        return
+    try:
+        p = root / ".claude" / "state" / "codex-review-debug.log"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        line = f"{time.time_ns()} {event} " + " ".join(
+            f"{k}={v!r}" for k, v in fields.items()
+        ) + "\n"
+        with open(p, "a", encoding="utf-8") as f:
+            f.write(line)
+    except Exception:
+        pass
+
+
 def main() -> int:
     try:
         payload = json.load(sys.stdin)
     except Exception:
         return 0  # malformed input -- fail open
+    root_for_debug = _repo_root()
+    _debug_log(root_for_debug, "main_entry",
+               tool_name=payload.get("tool_name", ""),
+               event_type=payload.get("event_type", ""))
     kind, label = _classify(payload)
+    _debug_log(root_for_debug, "classify", kind=kind, label=label)
     if not kind:
         return 0
     root = _repo_root()
