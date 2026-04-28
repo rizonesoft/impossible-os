@@ -581,6 +581,9 @@ This section adds the principled fix: mark entries as compaction-orphaned at com
 > - Doc pointer: `docs/infrastructure/ai-system.md` Compaction Resilience subsection (added by this section).
 > - Scope boundary: this section only adds the orphan flag + selector skip. Gate BLOCK message format and observer recording behavior unchanged.
 
+> **Verified:** 2026-04-28 | commit `4320b2ab` | 7/7 items | build OK | tests 276/276 PASS, audit-hooks PASS, audit-ai-system 7/7, test-ai-system 79/79
+> **Quality reviewed:** 2026-04-28 | Codex 5x (design, adversarial, consistency, perf, re-adversarial) | 1H+4M+1L fixed | scope: N/A (host-side hooks; no kernel/SMP risk)
+
 ---
 
 ## Format Quick Reference
@@ -612,11 +615,11 @@ This section adds the principled fix: mark entries as compaction-orphaned at com
 | ⭐ | Section-commit build-evidence gate  | ❌ N/A      | ❌ N/A          | ✅ §4 (~60 bypasses blocked)         |
 | ⭐ | Multi-dispatch review enforcement   | ❌ N/A      | ❌ N/A          | ✅ §5 (3x state file + gate)         |
 | ⭐ | Cross-tool drift detection          | ❌ N/A      | ❌ N/A          | ✅ §9 (7 checks audit)               |
-| 💎 | Doctrine + skill catalog audit      | ❌ Internal | ⚠️ Per project | ✅ §8 (suppression policy)           |
+| 💎 | Doctrine + skill catalog audit      | ❌ Internal | ⚠️ Per project  | ✅ §8 (suppression policy)           |
 | 💎 | MCP usage discipline doctrine       | ❌ N/A      | ❌ N/A          | ✅ §6 (CLAUDE.md pointer)            |
 | ⭐ | Skill step-state telemetry          | ❌ N/A      | ❌ N/A          | ✅ §10 (observer + block)            |
 | ⭐ | Hook event surface coverage         | ❌ N/A      | ❌ N/A          | ✅ §11 (5 events wired)              |
-| ⭐ | AI-slop content lints               | ❌ N/A      | ⚠️ Linter only | ✅ §12 (Check 6 live; 7/8 deferred)  |
+| ⭐ | AI-slop content lints               | ❌ N/A      | ⚠️ Linter only  | ✅ §12 (Check 6 live; 7/8 deferred)  |
 | 💎 | Doctrine sync + reciprocal XREFs    | ❌ N/A      | ❌ N/A          | ✅ §13 (lockstep with code)          |
 | 💎 | Sole external reviewer surface      | ❌ N/A      | ❌ N/A          | ✅ §14 (Copilot retired; Codex only) |
 | ⭐ | Design-review hook scope precision  | ❌ N/A      | ❌ N/A          | ✅ §15 (review-kind + commit-clears) |
