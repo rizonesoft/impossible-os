@@ -265,14 +265,25 @@ void boot_halt(const char *reason)
     serial_write("System halted. Check serial log for details.\n");
     serial_write("Recovery: https://impossible-os.dev/recovery\n");
 
-    /* Framebuffer diagnostics -- only when fb is accessible */
+    /* Framebuffer diagnostics -- only when fb is accessible AND the
+     * pitch is structurally sane. Codex adversarial review 2026-04-28
+     * H1: a malformed boot_info handoff (firmware quirk, partial GOP
+     * setup, garbage pitch) used to write past the framebuffer here
+     * because we trusted pitch/4 without bounds. Validate pitch is
+     * 4-byte aligned AND large enough to cover one row of `width`
+     * 32-bpp pixels; on failure, skip framebuffer drawing entirely
+     * (serial log is still complete -- recovery URL still printed). */
+    uint32_t fb_pitch_bytes = g_boot_info.fb.pitch;
+    int fb_pitch_ok = (fb_pitch_bytes >= (g_boot_info.fb.width * 4u)
+                       && (fb_pitch_bytes % 4u) == 0);
     if (g_boot_info.fb_available && g_boot_info.fb.addr &&
-        g_boot_info.fb.width > 0 && g_boot_info.fb.height > 0) {
+        g_boot_info.fb.width > 0 && g_boot_info.fb.height > 0 &&
+        fb_pitch_ok) {
 
         volatile uint32_t *fb = (volatile uint32_t *)(uintptr_t)g_boot_info.fb.addr;
         uint32_t w       = g_boot_info.fb.width;
         uint32_t h       = g_boot_info.fb.height;
-        uint32_t pitch   = g_boot_info.fb.pitch / 4;  /* bytes → pixels */
+        uint32_t pitch   = fb_pitch_bytes / 4;  /* bytes → pixels (validated) */
 
         /* Red banner: top 40 rows */
         const uint32_t BANNER_H = 40;

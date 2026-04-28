@@ -61,8 +61,14 @@ const boot_stage_entry_t *boot_stage_history_get(uint32_t *out_count);
  * message to boot_splash_status() without recording a new entry. */
 void boot_progress_poll(void);
 
-/* Write boot timeline to C:\Impossible\System\Logs\boot-timeline.json.
- * JSON array of {stage, phase, post, start_ms, duration_ms} per step. */
+/* Write boot timeline. Path resolution (codified at src/kernel/main/
+ * boot_progress.c:262-282): primary is `X:\Boot\boot-timeline.json`
+ * when the BlackBox partition is mounted (klog_using_blackbox);
+ * fallback is `C:\Impossible\System\Logs\boot-timeline.json` if
+ * BlackBox is unavailable. JSON array of {stage, phase, post,
+ * start_ms, duration_ms} per step (contract: see "Boot Time
+ * Visualization" section in [01-boot-platform/TODO-11](../../todo/01-boot-platform/TODO-11-interrupt-timer-arch.md),
+ * the boot_timeline_dump_json row). */
 void boot_timeline_dump_json(void);
 
 /* Render 4-digit hex POST code at native 8 px scale in top-right corner.

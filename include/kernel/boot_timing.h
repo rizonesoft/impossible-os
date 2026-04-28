@@ -28,8 +28,12 @@ void boot_timing_record_step(uint8_t phase, const char *step, uint16_t postcode)
  * Call after boot_timing_init() so TSC frequency is calibrated. */
 void boot_timing_print_steps(void);
 
-/* Write the boot step timing report to C:\Impossible\System\Logs\boot-profile.log.
- * Call at desktop-ready, after VFS is mounted on C:. */
+/* Write the boot step timing report. Path resolution (codified at
+ * src/kernel/boot_timing.c:188-207): primary is `X:\Perf\boot-profile
+ * .log` when the BlackBox partition is mounted (klog_using_blackbox);
+ * fallback is `C:\Impossible\System\Logs\boot-profile.log` if BlackBox
+ * is unavailable (matches the Boot UX Polish checklist + Codex review 2026-04-28
+ * M2 fix that aligned the header docstring with the runtime path). */
 void boot_timing_write_report(void);
 
 /* Write POST code history to X:\Diag\postcode.log (or C:\ fallback). */

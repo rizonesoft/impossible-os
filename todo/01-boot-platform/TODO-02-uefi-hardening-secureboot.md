@@ -253,15 +253,22 @@ Set up MOK key pair, sign `BOOTX64.EFI`, and integrate shim into the build.
 Structured boot profiling and pre-framebuffer error recovery screen.
 
 - [x] Boot profiling: `boot_progress()` at every major event; `boot_timing_write_report()` writes to `X:\Perf\boot-profile.log`
-- [x] JSON boot-timeline export (-> XREF: `TODO-11-interrupt-timer-arch.md §3`)
+- [x] JSON boot-timeline export via `boot_timeline_dump_json()` -> XREF: [`01-boot-platform/TODO-11 §9`](TODO-11-interrupt-timer-arch.md) (item: "`boot_timeline_dump_json()`: writes `X:\Boot\boot-timeline.json`" at line 215). Implementation lives at `src/kernel/main/boot_progress.c:203` (header decl `include/kernel/boot_progress.h:64`); writes JSON array of `{stage, phase, post, start_ms, duration_ms}` per step. The earlier `TODO-11-interrupt-timer-arch.md §3` XREF was stale (kernel-domain TODO-11 was renamed `warm-kernel-update-runtime`; the right anchor is the `01-boot-platform` TODO-11 §9 above).
 - [x] Pre-framebuffer error screen: `boot_halt(reason)` with inline 8x8 bitmap font
 - [x] `boot_splash_status()` integration: live stage text below spinner
 - [x] Commit: `"boot: boot-stage instrumentation, pre-framebuffer error recovery screen"`
 
 **Test checkpoint:** `boot_progress()` stages appear in order on serial and optional `X:\Perf\boot-profile.log`; `boot_halt()` shows pre-framebuffer error text when forced; JSON timeline export matches `TODO-11-interrupt-timer-arch.md §3` contract. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Verified:** 2026-04-11 -- Codex found 3 issues: JSON buffer overflow on long step names (fixed: clamped pos + escaped quotes), profile report stack overflow (fixed: bounded step name copy), forbidden boot_progress call in test (fixed: replaced with pure boot_timing_record_step). Accepted: none.
-> **Quality reviewed:** 2026-04-11 -- no findings. JSON timeline format exceeds Win11 ETW (binary, requires WPA) and Linux systemd-analyze (text only). Pre-fb error screen, boot_post_write16 I/O safety, and splash integration all industry-compliant. Accepted: none.
+> **Notes:**
+> - What shipped: `boot_progress(phase, name, post16)` instrumented at every major boot event (8+ call sites in `src/kernel/main/boot_hw.c`); `boot_timing_write_report()` writes plain-text profile to `X:\Perf\boot-profile.log` (BlackBox) or `C:\Impossible\System\Logs\boot-profile.log` (fallback); `boot_timeline_dump_json()` writes the structured JSON timeline at `src/kernel/main/boot_progress.c:203`.
+> - How it integrates: `boot_desktop.c:275` invokes both writers at desktop-ready (after VFS is up); `boot_halt(reason)` renders an inline 8x8-bitmap-font error screen via the framebuffer (with pitch validation per Codex H1 fix) and falls back to serial-only when fb is unavailable or pitch is malformed; `boot_splash_status(msg)` updates live stage text under the spinner.
+> - Downstream: BlackBox partition at TODO-17 is the canonical landing surface for both files; JSON contract owned by `01-boot-platform/TODO-11 §9` (`boot_timeline_dump_json()` row at line 215).
+> - Doc pointer: header docs at `include/kernel/boot_timing.h` and `include/kernel/boot_progress.h` carry the path-resolution rules; `01-boot-platform/TODO-11 §9` carries the JSON schema.
+> - Scope boundary: §7 owns instrumentation + pre-framebuffer error screen + JSON-timeline plumbing. Timeline viewer / diff tooling lives in `01-boot-platform/TODO-14-boot-diagnostics.md`; the JSON schema itself is owned by TODO-11.
+
+> **Verified:** 2026-04-28 | commit `ede0e2d3` (impl + post-impl Codex 3 fixes 2026-04-11) + `<this-commit>` (re-review fixes: H1 fb pitch + 2M XREF/path doc) | 5/5 items | build OK
+> **Quality reviewed:** 2026-04-28 | Codex 3x (adversarial, consistency, perf) | 1H+2M fixed | scope: boot-code-quality (UEFI handoff + framebuffer safety)
 
 ---
 
