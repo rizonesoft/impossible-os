@@ -992,6 +992,9 @@ Each error was harmless -- the dispatch ran with the substituted-empty-string pr
 
 > **Test runner:** `bash scripts/test-tooling.sh` | 3 new sub-tests: 2 under `[codex_dispatch_escaping]` (`cde_argc_enforcement`, `cde_lint_check_12`); 1 under `[codex_review_state_write]` (`crsw_wrapper_attribution`).
 
+> **Verified:** 2026-04-29 | commit `904065a2` | 7/7 items | build N/A (hooks-only) | tests 352/352 PASS | lint 0 errors
+> **Quality reviewed:** 2026-04-29 | Codex 6x (design + adversarial + consistency + perf + 1x re-adversarial + impl-adversarial) | 3H+2M fixed, 1H accepted-XREF: TODO-08 section-30 | scope: N/A (Python hooks + bash wrapper + lint check + markdown migration)
+
 > **Notes:**
 > - Structure: 1 wrapper script + 1 lint check + 2 hook helpers extended (`_review_kind` + `codex_review_completed`) + 21 skill examples migrated across 15 SKILL.md files + 1 CLAUDE.md doctrine section + 3 sub-tests.
 > - How it integrates: lint Check 12 is the load-bearing safety (source-text BEFORE shell). The wrapper is convenience: `argc == 1` enforcement + hook-attribution shape. Hook recognition (`_is_codex_bash_trigger` + `_bash_prompt_arg`) accepts both wrapper and legacy direct-node shapes so existing logs and ad-hoc invocations remain attributed.
