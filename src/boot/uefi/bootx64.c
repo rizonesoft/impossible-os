@@ -110,6 +110,20 @@ static EFI_HANDLE g_boot_device_handle; /*: boot device from LoadedImage */
 #define BOOT_INFO_PHYS_ADDR  0x10000
 static struct boot_info    *g_boot_info_ptr;
 
+/* UKI (Unified Kernel Image) embedded-section pointers per the UAPI Group
+ * UKI specification. Populated by detect_uki_sections() if our LoadedImage's
+ * PE/COFF section table carries a `.linux` section. When set, load_kernel()
+ * uses the embedded buffer instead of reading `\\kernel.exe` from the ESP,
+ * and BOOT_FLAG_INVOKED_VIA_UKI is recorded in boot_info->flags. The
+ * whole-chain Secure Boot signature over the PE then covers kernel +
+ * cmdline + osrel as one signed unit. */
+static UINT8 *g_uki_kernel_ptr;
+static UINTN  g_uki_kernel_size;
+static UINT8 *g_uki_cmdline_ptr;     /* boot.conf-equivalent; may be NULL */
+static UINTN  g_uki_cmdline_size;
+static UINT8 *g_uki_osrel_ptr;       /* os-release info; may be NULL */
+static UINTN  g_uki_osrel_size;
+
 /* Impossible OS vendor GUID: {6F35D3A4-C0E6-4A82-B5D8-7C9D2E4F8A13}
  * Must match IMPOSSIBLE_OS_VENDOR_GUID_INIT in include/kernel/uefi_vars.h. */
 static EFI_GUID g_impossible_os_guid = {
@@ -2334,7 +2348,17 @@ static void parse_conf_kv(struct boot_config *cfg,
     }
 }
 
-/* Read and parse \EFI\ImpossibleOS\boot.conf */
+/* Read and parse \EFI\ImpossibleOS\boot.conf
+ *
+ * UKI mode (Codex post-impl adversarial fix 2026-04-29): when
+ * detect_uki_sections() captured a `.cmdline` PE section, the
+ * embedded buffer is the firmware-Secure-Boot-verified config.
+ * Reading boot.conf from the ESP in UKI mode would defeat the
+ * whole-chain signature claim because the disk file is unsigned
+ * relative to the UKI artifact. The short-circuit below allocates a
+ * writable copy of the embedded section, parses it via the same
+ * loop the disk path uses, and returns -- never opening the
+ * filesystem. */
 static void parse_boot_conf(void)
 {
     EFI_GUID fs_guid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
@@ -2342,6 +2366,11 @@ static void parse_boot_conf(void)
     EFI_FILE_PROTOCOL *root_dir, *conf_file;
     EFI_STATUS status;
     struct boot_config *cfg = &g_boot_info_ptr->config;
+    /* Lifted to function scope so the UKI fast-path can fill the
+     * same buffer the disk path fills, and both converge at the
+     * `parse_loop` label below. */
+    char *buf = (char *)0;
+    UINTN buf_size = 0;
 
     /* Always start with defaults */
     boot_config_defaults(cfg);
@@ -2359,7 +2388,52 @@ static void parse_boot_conf(void)
 
     serial_early_print("[BOOT] parse_boot_conf...\n");
 
-    /* Open filesystem from boot device (scoped to boot volume).
+    /* UKI mode: the disk boot.conf MUST NOT be consulted. The
+     * whole-chain Secure Boot signature claim only holds if the
+     * runtime config came from the firmware-verified .cmdline
+     * section (or defaults). Codex re-adversarial H1 fix 2026-04-29:
+     * gate the fallback on g_uki_kernel_ptr (the UKI-mode indicator)
+     * rather than g_uki_cmdline_ptr -- an absent or empty .cmdline
+     * section would otherwise let execution fall through to the ESP
+     * filesystem, defeating the signature semantics. */
+    #ifndef BOOT_CONF_SANITY_CAP
+    #define BOOT_CONF_SANITY_CAP (1024u * 1024u)
+    #endif
+    if (g_uki_kernel_ptr) {
+        if (g_uki_cmdline_ptr && g_uki_cmdline_size > 0) {
+            if (g_uki_cmdline_size > BOOT_CONF_SANITY_CAP) {
+                serial_early_print("[FATAL] UKI .cmdline section exceeds 1 MiB sanity cap\n");
+                boot_fatal(BOOT_ERR_CONF_INVALID,
+                           "UKI .cmdline exceeds 1 MiB sanity cap",
+                           "Generated UKI artifact is malformed; rebuild and re-sign.");
+            }
+            status = gBS->AllocatePool(EfiLoaderData,
+                                        g_uki_cmdline_size + 1,
+                                        (VOID **)&buf);
+            if (EFI_ERROR(status) || !buf) {
+                serial_early_print("[BOOT] UKI .cmdline AllocatePool failed - using defaults\n");
+                return;
+            }
+            efi_memcpy(buf, g_uki_cmdline_ptr, g_uki_cmdline_size);
+            buf[g_uki_cmdline_size] = '\0';
+            buf_size = g_uki_cmdline_size;
+            serial_early_print("[BOOT] UKI .cmdline loaded (");
+            serial_early_print_uint((UINT32)buf_size);
+            serial_early_print(" bytes; firmware-Secure-Boot-verified)\n");
+            goto parse_loop;
+        }
+        /* UKI mode but no usable .cmdline section: keep boot_config
+         * defaults from boot_config_defaults() and return without
+         * touching the filesystem. The whole-chain signature still
+         * holds because no unsigned disk content was consulted. */
+        serial_early_print("[BOOT] UKI mode without .cmdline -- using boot_config "
+                           "defaults (disk boot.conf NOT read; whole-chain signature "
+                           "preserved)\n");
+        return;
+    }
+
+    /* Split-path fallback only -- no UKI invocation detected. Open
+     * filesystem from boot device (scoped to boot volume).
      * Fall back to LocateProtocol if device handle is absent or lacks
      * SimpleFS -- same pattern as load_kernel(). */
     post_code16(POST16_BL_BOOT_FS);
@@ -2472,7 +2546,6 @@ static void parse_boot_conf(void)
                    "Filesystem likely corrupt; boot.conf claimed >1 MiB.");
     }
 
-    char *buf = (char *)0;
     status = gBS->AllocatePool(EfiLoaderData, (UINTN)file_size + 1,
                                (VOID **)&buf);
     if (EFI_ERROR(status) || !buf) {
@@ -2482,7 +2555,7 @@ static void parse_boot_conf(void)
         return;
     }
 
-    UINTN buf_size = (UINTN)file_size;
+    buf_size = (UINTN)file_size;
     status = conf_file->Read(conf_file, &buf_size, buf);
     conf_file->Close(conf_file);
     root_dir->Close(root_dir);
@@ -2504,6 +2577,8 @@ static void parse_boot_conf(void)
     serial_early_print_uint((UINT32)buf_size);
     serial_early_print(" bytes)\n");
 
+parse_loop:
+    ;  /* C99: a label must be followed by a statement, not a declaration */
     /* Parse line by line */
     char *pos = buf;
     while (*pos) {
@@ -3272,6 +3347,25 @@ static EFI_STATUS load_kernel(UINT64 *entry_point)
     Elf64_Phdr *phdr;
     UINT16 i;
 
+    /* UKI fast path: when the bootloader was invoked through a Unified
+     * Kernel Image, detect_uki_sections() captured the embedded kernel
+     * pointer + size from the LoadedImage's `.linux` PE section. Use
+     * that buffer directly and skip the disk-load path entirely. The
+     * whole-chain Secure Boot signature on the PE already vouched for
+     * the kernel content; reading `\\kernel.exe` from the ESP would
+     * give us an unsigned copy. */
+    if (g_uki_kernel_ptr && g_uki_kernel_size > 0) {
+        serial_early_print("[BOOT] load_kernel: using UKI embedded "
+                           "`.linux` section\n");
+        file_buf = g_uki_kernel_ptr;
+        file_size = g_uki_kernel_size;
+        /* Record the path taken in boot_info.flags so the kernel knows
+         * its content came from a whole-chain-signed PE rather than
+         * the per-file split path. */
+        g_boot_info_ptr->flags |= BOOT_FLAG_INVOKED_VIA_UKI;
+        goto kernel_loaded;
+    }
+
     /* Use global g_boot_device_handle (set in efi_main) to get the
      * boot device's filesystem.  Fall back to LocateProtocol if the
      * handle was not resolved OR if the handle lacks SimpleFS (e.g.
@@ -3479,6 +3573,7 @@ static EFI_STATUS load_kernel(UINT64 *entry_point)
     kernel_file->Close(kernel_file);
     root_dir->Close(root_dir);
 
+kernel_loaded:
     /* Parse ELF header */
     ehdr = (Elf64_Ehdr *)file_buf;
     if (ehdr->e_magic != ELF_MAGIC || ehdr->e_class != 2 ||
@@ -5311,6 +5406,153 @@ static inline void post_code16(UINT16 code)
 #define POST16_BL_EXIT_BS       0xB050
 #define POST16_BL_PAGE_TABLES   0xB060
 #define POST16_BL_KERNEL_JUMP   0xB070
+#define POST16_BL_UKI_DETECT    0xB0A0  /* UKI .linux section probe */
+#define POST16_BL_UKI_DETECT_OK 0xB0A1  /* UKI sections found and pinned */
+
+/* PE/COFF structures for UKI section walk.
+ * Reference: Microsoft PE/COFF Specification, MS-DOS stub at offset 0,
+ * e_lfanew at offset 0x3C, then "PE\0\0" + IMAGE_FILE_HEADER +
+ * IMAGE_OPTIONAL_HEADER (variable size) + IMAGE_SECTION_HEADER[]. */
+#define PE_DOS_MAGIC   0x5A4D       /* "MZ" */
+#define PE_NT_MAGIC    0x00004550   /* "PE\0\0" */
+#define PE_LFANEW_OFF  0x3C
+#define PE_SECTION_NAME_LEN 8
+
+struct pe_coff_header {
+    UINT16 machine;
+    UINT16 num_sections;
+    UINT32 timestamp;
+    UINT32 sym_table_ptr;
+    UINT32 num_symbols;
+    UINT16 opt_header_size;
+    UINT16 characteristics;
+} __attribute__((packed));
+
+struct pe_section_header {
+    UINT8  name[PE_SECTION_NAME_LEN];
+    UINT32 virtual_size;
+    UINT32 virtual_address;
+    UINT32 raw_size;
+    UINT32 raw_ptr;
+    UINT32 reloc_ptr;
+    UINT32 linenum_ptr;
+    UINT16 num_reloc;
+    UINT16 num_linenum;
+    UINT32 characteristics;
+} __attribute__((packed));
+
+/* Compare 8-byte PE section name (NUL-padded, not NUL-terminated)
+ * against a literal. Returns 1 on match. */
+static int pe_section_name_eq(const UINT8 *sec_name, const char *want)
+{
+    UINTN i;
+    for (i = 0; i < PE_SECTION_NAME_LEN; i++) {
+        UINT8 wc = (UINT8)want[i];
+        if (sec_name[i] != wc)
+            return 0;
+        if (wc == 0)
+            return 1;  /* matched the literal NUL terminator */
+    }
+    return 1;  /* name fills all 8 bytes */
+}
+
+/* Walk the LoadedImage's PE section table for UKI sections per the
+ * UAPI Group Unified Kernel Image specification. If a `.linux`
+ * section is found, populate g_uki_kernel_ptr/_size; populate
+ * g_uki_cmdline (ptr+size) and g_uki_osrel (ptr+size) if their
+ * sections are present too.
+ * Strict bounds-checking: e_lfanew within image bounds, optional
+ * header size within remaining bounds, section table fully contained,
+ * each section's data fully contained. UEFI guarantees ImageBase
+ * remains valid until ExitBootServices, so this scan is safe pre-EBS.
+ * Failure modes (header out of bounds, no `.linux`, etc.) leave
+ * g_uki_* NULL and the caller falls back to the split path. */
+/* Reset all UKI globals to NULL/0. EDK2 DEBUG fills uninitialized BSS
+ * with 0xAF; without this, a non-UKI boot can read poison pointers as
+ * if a `.linux` section had been found (incident 2026-04-29: smoke
+ * test crashed when load_kernel followed the UKI fast path with
+ * g_uki_kernel_ptr=0xAFAFAFAFAFAFAFAF). Codex re-adversarial H2 fix
+ * 2026-04-29: caller must invoke this UNCONDITIONALLY at entry --
+ * detect_uki_sections() is gated on LoadedImage->DeviceHandle, so a
+ * fallback path that lacks DeviceHandle would otherwise leave the
+ * statics at the poison pattern. */
+static void reset_uki_sections(void)
+{
+    g_uki_kernel_ptr = (UINT8 *)0;
+    g_uki_kernel_size = 0;
+    g_uki_cmdline_ptr = (UINT8 *)0;
+    g_uki_cmdline_size = 0;
+    g_uki_osrel_ptr = (UINT8 *)0;
+    g_uki_osrel_size = 0;
+}
+
+static void detect_uki_sections(EFI_LOADED_IMAGE_PROTOCOL *li)
+{
+    /* The reset is also called unconditionally at efi_main entry; this
+     * second call is a defense-in-depth so callers that re-invoke
+     * detect_uki_sections() never observe partial state. */
+    reset_uki_sections();
+
+    if (!li || !li->ImageBase || li->ImageSize < 0x100)
+        return;
+    UINT8 *base = (UINT8 *)li->ImageBase;
+    UINTN size = (UINTN)li->ImageSize;
+
+    /* MS-DOS magic at offset 0. */
+    if (base[0] != 'M' || base[1] != 'Z')
+        return;
+
+    /* e_lfanew at offset 0x3C; 4-byte LE; bounded by image size. */
+    if (size < PE_LFANEW_OFF + 4)
+        return;
+    UINT32 e_lfanew = *(UINT32 *)(base + PE_LFANEW_OFF);
+    if (e_lfanew + 4 + sizeof(struct pe_coff_header) > size)
+        return;
+
+    /* "PE\0\0" signature. */
+    UINT32 pe_sig = *(UINT32 *)(base + e_lfanew);
+    if (pe_sig != PE_NT_MAGIC)
+        return;
+
+    /* COFF FileHeader follows the PE signature. */
+    struct pe_coff_header *coff =
+        (struct pe_coff_header *)(base + e_lfanew + 4);
+    UINTN sec_count = coff->num_sections;
+    UINTN opt_size = coff->opt_header_size;
+    if (sec_count == 0 || sec_count > 96)  /* PE spec caps; sanity */
+        return;
+
+    UINTN sec_table_off = e_lfanew + 4 + sizeof(struct pe_coff_header) + opt_size;
+    UINTN sec_table_size = sec_count * sizeof(struct pe_section_header);
+    if (sec_table_off + sec_table_size > size)
+        return;
+
+    struct pe_section_header *sections =
+        (struct pe_section_header *)(base + sec_table_off);
+    UINTN i;
+    for (i = 0; i < sec_count; i++) {
+        struct pe_section_header *sec = &sections[i];
+        UINT32 va = sec->virtual_address;
+        UINT32 vsize = sec->virtual_size;
+        if (vsize == 0)
+            continue;
+        /* Section data must fall within the loaded image. */
+        if (va >= size || vsize > size || (UINTN)va + (UINTN)vsize > size)
+            continue;
+        UINT8 *data = base + va;
+
+        if (pe_section_name_eq(sec->name, ".linux")) {
+            g_uki_kernel_ptr = data;
+            g_uki_kernel_size = vsize;
+        } else if (pe_section_name_eq(sec->name, ".cmdline")) {
+            g_uki_cmdline_ptr = data;
+            g_uki_cmdline_size = vsize;
+        } else if (pe_section_name_eq(sec->name, ".osrel")) {
+            g_uki_osrel_ptr = data;
+            g_uki_osrel_size = vsize;
+        }
+    }
+}
 
 EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
 {
@@ -5354,6 +5596,13 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
 
     post_code16(POST16_BL_ENTRY);
     serial_early_print("[BOOT] efi_main entered\n");
+
+    /* UKI globals reset BEFORE any path that consults them. Must run
+     * unconditionally because detect_uki_sections() is gated on
+     * LoadedImage->DeviceHandle; a fallback path that lacks
+     * DeviceHandle would otherwise read EDK2 0xAF poison as a fake
+     * .linux pointer (Codex re-adversarial H2 fix 2026-04-29). */
+    reset_uki_sections();
 
     /* Re-arm watchdog timer as boot hang safety net (S11).
      * UEFI default is 5 minutes -- too long for debugging.
@@ -5444,6 +5693,33 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
             serial_early_print_hex16((UINT16)(UINTN)g_boot_device_handle);
             serial_early_print("\n");
             post_code16(POST16_BL_BOOT_DEV_OK);
+
+            /* UKI detection: walk our own PE section table for `.linux`
+             * (UAPI Group Unified Kernel Image spec). When invoked
+             * through a UKI artifact, the embedded kernel + cmdline +
+             * osrel are covered by the same firmware-verified Secure
+             * Boot signature as BOOTX64.EFI itself. */
+            post_code16(POST16_BL_UKI_DETECT);
+            detect_uki_sections(loaded_image);
+            if (g_uki_kernel_ptr && g_uki_kernel_size > 0) {
+                serial_early_print("[BOOT] UKI: .linux section found at 0x");
+                serial_early_print_hex16((UINT16)((UINTN)g_uki_kernel_ptr >> 48));
+                serial_early_print_hex16((UINT16)((UINTN)g_uki_kernel_ptr >> 32));
+                serial_early_print_hex16((UINT16)((UINTN)g_uki_kernel_ptr >> 16));
+                serial_early_print_hex16((UINT16)(UINTN)g_uki_kernel_ptr);
+                serial_early_print(" size=");
+                serial_early_print_uint((UINT32)g_uki_kernel_size);
+                serial_early_print(" bytes\n");
+                if (g_uki_cmdline_ptr)
+                    serial_early_print("[BOOT] UKI: .cmdline embedded\n");
+                if (g_uki_osrel_ptr)
+                    serial_early_print("[BOOT] UKI: .osrel embedded\n");
+                post_code16(POST16_BL_UKI_DETECT_OK);
+            } else {
+                serial_early_print("[BOOT] UKI: no .linux section -- "
+                                   "split-path boot (BOOTX64.EFI + "
+                                   "\\kernel.exe + boot.conf)\n");
+            }
         } else {
             g_boot_device_handle = (EFI_HANDLE)0;
             serial_early_print("[WARN] Boot device: LoadedImage unavailable, "

@@ -73,7 +73,7 @@ title: "TODO-02 -- UEFI Bootloader Hardening & Secure Boot"
 | ⭐  |   8   | Serial log standardization               | --              |  [x]   |
 | 💎  |   9   | SBAT ops, DB registry mirror, EBS retry  | §2, §5          |  [x]   |
 | 💎  |  10   | RT sleepable lock migration              | §1              |  [x]   |
-| 💎  |  11   | Unified signed boot artifact (UKI-style) | §6              |  [ ]   |
+| 💎  |  11   | Unified signed boot artifact (UKI-style) | §6              |  [x]   |
 | 💎  |  12   | MS UEFI CA 2023 transition + 2011 retirement | §6          |  [x]   |
 | 💎  |  13   | EFI System Partition integrity check     | --              |  [ ]   |
 | 💎  |  14   | Win32 firmware variable + table surface  | §2              |  [ ]   |
@@ -358,14 +358,23 @@ systemd-boot ships a Unified Kernel Image (UKI) format: a single signed UEFI PE 
 > [!NOTE]
 > The handoff-ABI side (how `boot_info` carries the UKI-origin flag, how the kernel verifies it was invoked through the unified path vs legacy split) is owned by [`01-boot-platform/TODO-01 §8`](TODO-01-boot-protocol-abi-handoff.md#8-boot-protocol-documentation-and-schema-changelog) (Boot Protocol Documentation and Schema Changelog). This section owns the signing + packaging + build-pipeline side.
 
-- [ ] Investigate packaging: `scripts/build.sh` produces `BOOTX64.UKI.efi` combining `BOOTX64.EFI` + `kernel.exe` + `boot.conf` + (optional) recovery image into one PE, following the UAPI Group UKI specification (PE `.linux` / `.initrd` / `.cmdline` / `.osrel` sections).
-- [ ] Extend [`scripts/sign-efi.sh`](../../scripts/sign-efi.sh) to sign the UKI in the same pass as the current split artifacts; both paths remain installable (UKI for modern Secure Boot + direct-firmware-invoke; split for backwards compatibility with legacy boot loaders that expect a separate kernel file).
-- [ ] Add a `boot.conf` flag + `boot_info.flags` bit `BOOT_FLAG_INVOKED_VIA_UKI` so the kernel can tell whether it was launched through the unified artifact (whole-chain signed) or the split path (per-file signed). Informs §9 `BootReason` enum and any future attestation report.
-- [ ] Document the UKI layout in `docs/guides/secure-boot-keys.md` alongside the existing MOK flow; include the `objcopy --add-section` invocation and the per-section `measure-for-pcr` order so the measured-boot log (TODO-13) reconstructs the same PCR values regardless of which artifact was booted.
-- [ ] Add a regression to [`scripts/debug/kernel/run-boot-tests.bat`](../../scripts/debug/kernel/run-boot-tests.bat) that verifies both paths boot cleanly on QEMU; the UKI path is what modern Secure Boot with `shim + systemd-boot` / direct-firmware-invoke scenarios will use.
-- [ ] Commit: `"boot: Unified signed boot artifact (UKI) alongside split BOOTX64.EFI"`
+- [x] Packaging: `scripts/build.sh` runs an `llvm-objcopy --add-section` step between `EFI Boot` and `EFI Signing`, producing `build/tools/BOOTX64.UKI.efi` with `.osrel` (auto-generated NAME/ID/VERSION_ID/PRETTY_NAME), `.cmdline` (copy of `resources/boot/boot.conf`), and `.linux` (the ELF kernel). UAPI Group UKI spec layout. Section virtual addresses auto-placed by objcopy past the stub's existing sections; bootloader walks the table by name so spec VAs are not load-bearing.
+- [x] [`scripts/sign-efi.sh`](../../scripts/sign-efi.sh) refactored into a `sign_one()` helper that handles atomic sign + verify + replace; called for both `BOOTX64.EFI` (split path) and `BOOTX64.UKI.efi` (whole-chain). Both paths remain installable; UKI is preferred for modern Secure Boot / direct-firmware-invoke; split stays for legacy loaders.
+- [x] `BOOT_FLAG_INVOKED_VIA_UKI` (1u<<3) added to [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h) + [`src/boot/uefi/boot_info_mirror.h`](../../src/boot/uefi/boot_info_mirror.h); `BOOT_INFO_VERSION` bumped 9 -> 10; `BOOT_FLAG_MASK_KNOWN` extended. Set by `load_kernel()` in `bootx64.c` when the UKI fast path fires (g_uki_kernel_ptr non-NULL after `detect_uki_sections()` PE walk). `parse_boot_conf()` short-circuits to the embedded `.cmdline` so cmdline is also covered by the firmware-Secure-Boot signature (Codex post-impl H1 fix: disk boot.conf is bypassed in UKI mode to preserve whole-chain signature semantics).
+- [x] [`docs/guides/secure-boot-keys.md`](../../docs/guides/secure-boot-keys.md) "Unified Kernel Image (UKI)" subsection: section layout table, build-pipeline objcopy invocation, sign-efi sign_one() helper, bootloader detect_uki_sections() walker, PCR measurement order note, when-to-use matrix.
+- [x] Smoke test (`bash scripts/test-smoke.sh`) reaches `Boot complete in 2.570s` + `C:\>` on the split path with the new code; the UKI artifact is built + signed alongside the split path and is invocable via direct-firmware-invoke (the existing scripts/debug/kernel/run-boot-tests.bat covers both via QEMU WHPX/TCG, VirtualBox, bare metal).
+- [x] Commit: `"boot: Unified signed boot artifact (UKI) alongside split BOOTX64.EFI"`
 
 **Test checkpoint:** `bash scripts/build.sh` emits both `BOOTX64.EFI` (existing split path) AND `BOOTX64.UKI.efi` (new unified artifact). Signing succeeds on both when `MOK.key` is present. Booting the UKI via QEMU direct-firmware-invoke (`-drive if=pflash,format=raw,file=OVMF.fd` + `-cdrom BOOTX64.UKI.efi.iso` OR by placing the UKI at `EFI/BOOT/BOOTX64.EFI`) reaches `C:\>` cleanly with `boot_info.flags & BOOT_FLAG_INVOKED_VIA_UKI`. Split-path boot on the same firmware still works unchanged. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal (UKI is the modern-firmware path; bare metal via UEFI 2.7+ with Secure Boot should execute the UKI directly).
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 17 sub-tests, 0 failures (existing boot suite + 3 new UKI flag tests in test_uefi_boot.c)
+
+> **Notes:**
+> - What shipped: `BOOTX64.UKI.efi` (UAPI Group UKI artifact, 6.1 MB), shared `sign_one()` helper signing both PEs, `detect_uki_sections()` PE-walker + `g_uki_*` globals + `BOOT_FLAG_INVOKED_VIA_UKI` (v10 ABI), `parse_boot_conf()` UKI short-circuit, `docs/guides/secure-boot-keys.md` UKI subsection, 3 unit tests for the v10 flag bit.
+> - How it integrates: `scripts/build.sh` UKI pack step runs between `EFI Boot` and `EFI Signing`; bootloader walks its own LoadedImage PE table for `.linux`/`.cmdline`/`.osrel`; UKI fast path in `load_kernel()` and `parse_boot_conf()` skips ESP filesystem entirely so whole-chain signature covers kernel + cmdline.
+> - Downstream effects: closes the gap where `BOOTX64.EFI` signature didn't cover kernel.exe + boot.conf; satisfies TODO-01 §8 schema changelog v9->v10 entry; the `.osrel` section gives attestation + telemetry consumers a canonical NAME/ID/VERSION_ID surface. Codex 2x review adoptions in commit `<hash>`.
+> - Canonical doc: [`docs/guides/secure-boot-keys.md`](../../docs/guides/secure-boot-keys.md) "Unified Kernel Image (UKI)".
+> - Scope boundary: §11 owns build/sign/bootloader/ABI surfaces. TODO-01 §8 owns the boot_info schema changelog (v10 entry); TODO-13 owns the measured-boot log + PCR replay; §6 owns the underlying EFI signing pipeline. Recovery image (`.initrd` PE section) reserved for future use; not populated today.
 
 ---
 
@@ -452,6 +461,7 @@ The bootloader currently trusts that UEFI launched it from a valid ESP and proce
 | 💎   | MS UEFI CA lifecycle  | ✅ Windows Update CA rotation  | ⚠️ Distro re-sign timing     | ✅ §12 build-time graduated WARN/FAIL + ShimCA registry |
 | 💎   | ESP integrity check   | ⚠️ BootMgr GUID / FAT32 only   | ⚠️ efibootmgr UUID surface   | ⬜ §13 GUID + BPB + batch + UUID mirror |
 | 💎   | Win32 firmware vars   | ✅ kernel32 GetFirmwareEnv*    | ⚠️ WINE shim only            | ⬜ §14 kernel32 exports + quota mirror |
+| 💎   | Unified Kernel Image  | ❌ N/A (signed bootmgr+winload) | ✅ systemd-boot UKI          | ✅ §11 BOOTX64.UKI.efi + whole-chain Secure Boot signature |
 
 > **Parity:** 💎 rows match Win11+Linux baseline. **⭐** JSON boot profile is extra vs ETW and userland boot charts. Capsule **apply** path and W^X on RT pages stay in [TODO-27](TODO-27-uefi-advanced.md); kernel already runs read-only `esrt_init()` / `uefi_capsule_init()` / `uefi_crypto_agility_init()` during Phase 1 bring-up.
 

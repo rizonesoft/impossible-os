@@ -77,7 +77,9 @@
 #define BOOT_INFO_MAGIC    0x49504F53  /* "IPOS" (Impossible OS) */
 #endif
 #ifndef BOOT_INFO_VERSION
-#define BOOT_INFO_VERSION  9           /* v9 adds flags + os_loader/required_security_version */
+/* v10 adds BOOT_FLAG_INVOKED_VIA_UKI;
+ * v9 added flags + os_loader/required_security_version */
+#define BOOT_INFO_VERSION  10
 #endif
 
 /* Upper bound for pre-copy address validation: the UEFI bootloader
@@ -214,9 +216,21 @@ boot_result_t boot_payload_validate(const struct boot_info *info,
  */
 #define BOOT_FLAG_ROLLBACK_REFUSAL    (1u << 0)  /* bootloader halted on security-version downgrade */
 #define BOOT_FLAG_ROLLBACK_READ_FAILED (1u << 1)  /* bootloader halted on IPOSRequiredSecVersion read/validation */
-#define BOOT_FLAG_WARM_UPDATE         (1u << 2)  /* outgoing kernel staged a warm-update handoff -- see section 14 */
+/* outgoing kernel staged a warm-update handoff -- see warm-update section */
+#define BOOT_FLAG_WARM_UPDATE         (1u << 2)
+/* BOOT_FLAG_INVOKED_VIA_UKI (v10): set when the bootloader detected a
+ * `.linux` PE section in its own LoadedImage and used the embedded
+ * kernel instead of loading `\\kernel.exe` from the ESP filesystem.
+ * Whole-chain Secure Boot signature semantics: when set, kernel +
+ * cmdline + osrel were all covered by the firmware-verified PE
+ * signature. When clear, only BOOTX64.EFI was signature-covered;
+ * kernel.exe + boot.conf were per-file-signed via the split path.
+ * Consumed by the kernel for attestation reporting and the boot-reason
+ * enum (UKI-style unified signed boot artifact -- UAPI Group spec). */
+#define BOOT_FLAG_INVOKED_VIA_UKI     (1u << 3)
 #define BOOT_FLAG_MASK_KNOWN \
-    (BOOT_FLAG_ROLLBACK_REFUSAL | BOOT_FLAG_ROLLBACK_READ_FAILED | BOOT_FLAG_WARM_UPDATE)
+    (BOOT_FLAG_ROLLBACK_REFUSAL | BOOT_FLAG_ROLLBACK_READ_FAILED | \
+     BOOT_FLAG_WARM_UPDATE | BOOT_FLAG_INVOKED_VIA_UKI)
 
 #define BOOT_SECURITY_VERSION_MAX   0x7FFFFFFFu
 

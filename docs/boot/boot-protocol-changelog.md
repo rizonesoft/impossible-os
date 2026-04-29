@@ -33,7 +33,18 @@ Both halves of the ABI (the kernel header at `include/kernel/boot_info.h` and th
 
 ## Versions
 
-### v9 (current) -- Anti-rollback binding + warm-kernel-update handoff ABI
+### v10 (current) -- Unified Kernel Image (UKI) provenance flag
+
+Adds a single new flag bit to the existing `boot_info.flags` field. No
+struct layout changes; the bump signals that consumers may now observe
+`BOOT_FLAG_INVOKED_VIA_UKI` (`1u << 3`) in the flag word.
+
+- **Owning TODO**: [Unified Signed Boot Artifact (UKI-style)](../../todo/01-boot-platform/TODO-02-uefi-hardening-secureboot.md#11-unified-signed-boot-artifact-uki-style)
+- **Mask update**: `BOOT_FLAG_MASK_KNOWN` extends to include the new bit, so the validator does not reject UKI-marked boot info as unknown-flag drift.
+- **Producer contract**: bootloader sets the bit when `detect_uki_sections()` finds a `.linux` PE section in its own LoadedImage and `load_kernel()` uses the embedded buffer instead of opening `\\kernel.exe` from the ESP. Implies the kernel + cmdline + osrel were covered by the firmware-Secure-Boot-verified PE signature as a single signed unit.
+- **Consumer contract**: kernel attestation surfaces (`HKLM\SYSTEM\Boot\Decision`, future PCR replay) read the bit to report whole-chain signature coverage vs the per-file split path.
+
+### v9 -- Anti-rollback binding + warm-kernel-update handoff ABI
 
 Two independent ABI extensions land under v9:
 

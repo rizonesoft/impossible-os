@@ -92,14 +92,33 @@ if [ ! -f "$EFI_BIN" ]; then
     exit 1
 fi
 
-# Sign to temp file, verify, then atomic replace
-TMPFILE="${EFI_BIN}.signing.tmp"
-trap 'rm -f "$TMPFILE"' EXIT
+# Helper: sign one PE binary in-place with sbsign. Atomic via temp +
+# verify + mv. Used for both BOOTX64.EFI (split path) and BOOTX64.UKI.efi
+# (Unified Kernel Image, whole-chain Secure Boot signature).
+sign_one() {
+    local target="$1"
+    local label="$2"
+    if [ ! -f "$target" ]; then
+        return 0
+    fi
+    local tmp="${target}.signing.tmp"
+    local cleanup_trap_was=$(trap -p EXIT)
+    trap "rm -f \"$tmp\"" EXIT
+    echo "[SIGN] Signing $label ($target) with MOK..."
+    sbsign --key "$MOK_KEY" --cert "$MOK_CRT" --output "$tmp" "$target"
+    sbverify --cert "$MOK_CRT" "$tmp" \
+        && echo "[SIGN] $label signature verification OK" \
+        || { echo "[SIGN] ERROR: $label signature verification FAILED"; exit 1; }
+    mv "$tmp" "$target"
+    trap - EXIT
+    eval "$cleanup_trap_was"
+}
 
-echo "[SIGN] Signing $EFI_BIN with MOK..."
-sbsign --key "$MOK_KEY" --cert "$MOK_CRT" --output "$TMPFILE" "$EFI_BIN"
-sbverify --cert "$MOK_CRT" "$TMPFILE" \
-    && echo "[SIGN] Signature verification OK" \
-    || { echo "[SIGN] ERROR: signature verification FAILED"; exit 1; }
+sign_one "$EFI_BIN" "BOOTX64.EFI"
 
-mv "$TMPFILE" "$EFI_BIN"
+# Unified Kernel Image alongside the split artifact. UAPI Group spec;
+# whole-chain signed PE that bundles BOOTX64.EFI stub + .linux kernel +
+# .cmdline + .osrel into one signable unit. Built by scripts/build.sh
+# UKI pack step right before this signing stage.
+UKI_BIN="${UKI_BIN:-$REPO_ROOT/build/tools/BOOTX64.UKI.efi}"
+sign_one "$UKI_BIN" "BOOTX64.UKI.efi"

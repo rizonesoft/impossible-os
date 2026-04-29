@@ -229,3 +229,90 @@ inventory, support diagnostics):
 | `2011`     | Shim signed by Microsoft Corporation UEFI CA 2011       |
 | `2023`     | Shim signed by Microsoft Corporation UEFI CA 2023       |
 | `0xFFFFFFFF` | Shim present but `sbverify` could not identify the CA |
+
+## Unified Kernel Image (UKI)
+
+Impossible OS produces two installable artifacts in parallel: the
+classic split path (`BOOTX64.EFI` + `\\kernel.exe` + `\\boot.conf`)
+and a Unified Kernel Image (`BOOTX64.UKI.efi`) per the
+[UAPI Group UKI specification](https://uapi-group.org/specifications/specs/unified_kernel_image/).
+The UKI bundles the bootloader stub, the kernel, the boot
+configuration, and an `os-release` snippet into a single signable PE,
+giving the firmware-verified Secure Boot signature whole-chain
+coverage. Tampering with any embedded component invalidates the
+single signature.
+
+### Section layout
+
+| PE Section | Source                                  | Purpose                                                  |
+|-----------|-----------------------------------------|----------------------------------------------------------|
+| (stub)    | `build/tools/BOOTX64.EFI`               | UEFI entry point; PE code + data, parses sections at boot |
+| `.linux`  | `build/kernel.exe`                      | The ELF kernel; consumed by `load_kernel()` directly      |
+| `.cmdline`| `resources/boot/boot.conf`              | `boot_config` key/value file (UKI-mode equivalent)        |
+| `.osrel`  | `build/uki-osrel.txt` (auto-generated)  | NAME / ID / VERSION_ID / PRETTY_NAME (`os-release` form)  |
+
+Section virtual addresses are auto-placed by `objcopy` past the stub's
+existing sections; the bootloader's `detect_uki_sections()` walks the
+PE table by name (matching `.linux`, `.cmdline`, `.osrel`) so specific
+VAs do not need to match the UAPI Group spec constants.
+
+### Build pipeline
+
+`scripts/build.sh` runs the UKI pack step between `EFI Boot` and
+`EFI Signing`:
+
+```
+llvm-objcopy-19 \
+    --add-section .osrel=build/uki-osrel.txt \
+    --set-section-flags .osrel=alloc,readonly,data \
+    --add-section .cmdline=build/uki-cmdline.txt \
+    --set-section-flags .cmdline=alloc,readonly,data \
+    --add-section .linux=build/kernel.exe \
+    --set-section-flags .linux=alloc,readonly,data \
+    build/tools/BOOTX64.EFI build/tools/BOOTX64.UKI.efi
+```
+
+`scripts/sign-efi.sh` then signs both artifacts in the same pass via
+the shared `sign_one()` helper. The split path remains installable;
+the UKI is the modern Secure Boot path used by direct-firmware-invoke
+and by `shim + systemd-boot`-style chained loaders.
+
+### Bootloader detection
+
+At entry, `bootx64.c` calls `detect_uki_sections(loaded_image)` right
+after the LoadedImage protocol is acquired. The walker validates the
+DOS magic, e_lfanew bound, PE signature, COFF header, optional-header
+size, section-table extent, and each section's virtual span before
+storing the embedded pointers in `g_uki_kernel_ptr`,
+`g_uki_cmdline_ptr`, and `g_uki_osrel_ptr`. UEFI guarantees
+`ImageBase` remains valid until ExitBootServices, so the scan is safe
+in the pre-EBS window.
+
+When `g_uki_kernel_ptr` is non-NULL, `load_kernel()` uses the embedded
+buffer directly and skips the disk-load path entirely. The bootloader
+sets `boot_info.flags |= BOOT_FLAG_INVOKED_VIA_UKI` so the kernel can
+report whole-chain signature coverage in its attestation surface.
+
+### PCR measurement order
+
+The measured-boot log (TPM PCR replay) reconstructs the same set of
+PCR values regardless of which artifact booted, because both paths
+load the same kernel bytes. The UKI path measures the entire signed
+PE in one go (matching firmware Secure Boot behavior); the split path
+measures `BOOTX64.EFI` + `\\kernel.exe` + `\\boot.conf` as separate
+events. Replay tools should canonicalize on the UKI shape when
+verifying attestation reports from a UKI-booted machine.
+
+### When to use which artifact
+
+| Scenario                                       | Use         |
+|-----------------------------------------------|-------------|
+| Direct-firmware-invoke (UEFI 2.7+ Secure Boot)  | `BOOTX64.UKI.efi` |
+| Confidential Computing (whole-chain signature) | `BOOTX64.UKI.efi` |
+| Chained boot via `shim + systemd-boot`        | `BOOTX64.UKI.efi` |
+| Legacy boot loaders expecting separate kernel | `BOOTX64.EFI` (split) |
+| Development / fast iteration                  | Either      |
+
+The split path stays in-tree as the legacy compatibility surface; the
+UKI path is the modern preferred form whenever the firmware accepts
+direct PE invocation.

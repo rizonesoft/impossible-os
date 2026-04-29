@@ -226,7 +226,44 @@ static void test_serial_port_standard(void)
     }
 }
 
-/* ---- Registration ---- */
+/* ---- UKI (Unified Kernel Image) ---- */
+
+/* BOOT_FLAG_INVOKED_VIA_UKI is part of BOOT_FLAG_MASK_KNOWN; the
+ * boot_rollback_validate path rejects unknown flag bits, so adding
+ * the flag to the mask is part of the v10 ABI contract. */
+static void test_uki_flag_in_known_mask(void)
+{
+    TEST_ASSERT((BOOT_FLAG_MASK_KNOWN & BOOT_FLAG_INVOKED_VIA_UKI) != 0,
+                "BOOT_FLAG_INVOKED_VIA_UKI is part of BOOT_FLAG_MASK_KNOWN");
+}
+
+/* The four flag bits MUST occupy distinct positions; a collision would
+ * silently merge two semantic states (e.g. UKI invocation conflated
+ * with rollback refusal). */
+static void test_uki_flag_distinct_position(void)
+{
+    uint32_t all = BOOT_FLAG_ROLLBACK_REFUSAL |
+                   BOOT_FLAG_ROLLBACK_READ_FAILED |
+                   BOOT_FLAG_WARM_UPDATE |
+                   BOOT_FLAG_INVOKED_VIA_UKI;
+    TEST_ASSERT_EQ(__builtin_popcount(all), 4,
+                   "four BOOT_FLAG_* bits occupy distinct positions");
+    TEST_ASSERT((BOOT_FLAG_INVOKED_VIA_UKI &
+                 (BOOT_FLAG_ROLLBACK_REFUSAL |
+                  BOOT_FLAG_ROLLBACK_READ_FAILED |
+                  BOOT_FLAG_WARM_UPDATE)) == 0,
+                "BOOT_FLAG_INVOKED_VIA_UKI does not overlap any prior flag");
+}
+
+/* The flag bit's existence implies BOOT_INFO_VERSION >= 10; the
+ * version bump is what tells the kernel the bit is meaningful. */
+static void test_uki_flag_implies_v10_abi(void)
+{
+    TEST_ASSERT(BOOT_INFO_VERSION >= 10,
+                "BOOT_INFO_VERSION >= 10 (UKI flag bit landed in v10)");
+}
+
+/* Registration */
 
 void test_register_uefi_boot(void)
 {
@@ -256,6 +293,12 @@ void test_register_uefi_boot(void)
                             test_serial_baud_valid, TEST_CAT_BOOT);
     test_suite_register_cat("UEFI: serial_port standard",
                             test_serial_port_standard, TEST_CAT_BOOT);
+    test_suite_register_cat("UEFI: UKI flag in mask",
+                            test_uki_flag_in_known_mask, TEST_CAT_BOOT);
+    test_suite_register_cat("UEFI: UKI flag distinct bit",
+                            test_uki_flag_distinct_position, TEST_CAT_BOOT);
+    test_suite_register_cat("UEFI: UKI flag v10 ABI",
+                            test_uki_flag_implies_v10_abi, TEST_CAT_BOOT);
 }
 
 #endif /* KERNEL_TESTS */

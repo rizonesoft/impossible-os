@@ -156,6 +156,8 @@ POST16_OPTIONAL_REASONS=(
     "POST16_BL_FALLBACK_OK=scenario-dependent: boot-device fallback chain"
     "POST16_BL_ROLLBACK_REFUSE=scenario-dependent: anti-rollback halts only on downgrade attack"
     "POST16_BL_ROLLBACK_PASS=scenario-dependent: emitted only on boots that evaluate the counter"
+    "POST16_BL_UKI_DETECT=scenario-dependent: UKI section probe always runs but only emits when LoadedImage is available"
+    "POST16_BL_UKI_DETECT_OK=scenario-dependent: only emitted when invoked through a UKI artifact carrying a .linux section"
 )
 
 # Build the optional-name set from the reasons array for fast lookup.

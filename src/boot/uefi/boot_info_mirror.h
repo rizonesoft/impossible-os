@@ -247,7 +247,9 @@ struct boot_usb_controller {
 #define BOOT_INFO_MAGIC    0x49504F53  /* "IPOS" */
 #endif
 #ifndef BOOT_INFO_VERSION
-#define BOOT_INFO_VERSION  9  /* v9 adds flags + os_loader/required_security_version */
+/* v10 adds BOOT_FLAG_INVOKED_VIA_UKI;
+ * v9 added flags + os_loader/required_security_version */
+#define BOOT_INFO_VERSION  10
 #endif
 
 /* Typed payload descriptor array -- must match kernel/boot_info.h. */
@@ -336,8 +338,14 @@ struct boot_usb_controller {
 #define BOOT_FLAG_ROLLBACK_REFUSAL    (1u << 0)
 #define BOOT_FLAG_ROLLBACK_READ_FAILED (1u << 1)
 #define BOOT_FLAG_WARM_UPDATE         (1u << 2)
+/* BOOT_FLAG_INVOKED_VIA_UKI (v10): bootloader walked LoadedImage's PE
+ * section table, found a `.linux` section, and used the embedded
+ * kernel image instead of loading `\\kernel.exe` from the ESP. UKI
+ * format per UAPI Group spec; whole-chain Secure Boot signature. */
+#define BOOT_FLAG_INVOKED_VIA_UKI     (1u << 3)
 #define BOOT_FLAG_MASK_KNOWN \
-    (BOOT_FLAG_ROLLBACK_REFUSAL | BOOT_FLAG_ROLLBACK_READ_FAILED | BOOT_FLAG_WARM_UPDATE)
+    (BOOT_FLAG_ROLLBACK_REFUSAL | BOOT_FLAG_ROLLBACK_READ_FAILED | \
+     BOOT_FLAG_WARM_UPDATE | BOOT_FLAG_INVOKED_VIA_UKI)
 
 /* Warm-kernel-update (section 14). Mirror of the continuation-flag
  * bits + discriminator. Bootloader today never writes

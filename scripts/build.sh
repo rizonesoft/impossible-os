@@ -342,6 +342,78 @@ run_step $STEP $TOTAL "Userland" "userland" || { print_errors; echo "=== BUILD F
 STEP=$((STEP + 1))
 run_step $STEP $TOTAL "EFI Boot" "uefi-boot" || { print_errors; echo "=== BUILD FAILED ===" >> "$LOG"; exit 1; }
 
+# Pack BOOTX64.UKI.efi -- Unified Kernel Image per UAPI Group spec
+# (https://uapi-group.org/specifications/specs/unified_kernel_image/).
+# Bundles the BOOTX64.EFI stub + kernel.exe (.linux section) + boot.conf
+# (.cmdline section) + os-release info (.osrel section) into a single
+# signable PE. UEFI firmware can invoke the UKI directly via direct-
+# firmware-invoke, getting whole-chain Secure Boot signature coverage
+# (kernel + cmdline are inside the firmware-verified PE blob, so per-
+# file split-path signing is no longer required).
+#
+# Section virtual addresses are spec-defined (0x20000 .osrel,
+# 0x30000 .cmdline, 0x2000000 .linux) to avoid overlap with the stub
+# PE's existing sections. The bootloader's detect_uki_sections() walks
+# the PE section table at boot time looking for these.
+{
+    set -e
+    UKI_OUT="build/tools/BOOTX64.UKI.efi"
+    UKI_STUB="build/tools/BOOTX64.EFI"
+    UKI_KERNEL="build/kernel.exe"
+    UKI_CMDLINE="build/uki-cmdline.txt"
+    UKI_OSREL="build/uki-osrel.txt"
+    if [ -f "$UKI_STUB" ] && [ -f "$UKI_KERNEL" ]; then
+        # Source boot.conf into .cmdline so the bootloader's UKI path
+        # parses the same shape it would have read from disk under the
+        # split path.
+        if [ -f "resources/boot/boot.conf" ]; then
+            cp "resources/boot/boot.conf" "$UKI_CMDLINE"
+        else
+            : > "$UKI_CMDLINE"
+        fi
+        # Minimal os-release info; matches the UAPI Group spec layout.
+        cat > "$UKI_OSREL" <<'OSEOF'
+NAME="Impossible OS"
+ID=impossible-os
+VERSION_ID="0.1"
+PRETTY_NAME="Impossible OS (UKI)"
+OSEOF
+        # llvm-objcopy preserves the PE/COFF format and supports
+        # --add-section for section injection. Spec virtual addresses
+        # via --change-section-vma; raw size auto-aligned by objcopy.
+        OBJCOPY=""
+        for cand in llvm-objcopy-19 llvm-objcopy objcopy; do
+            if command -v "$cand" >/dev/null 2>&1; then
+                OBJCOPY="$cand"
+                break
+            fi
+        done
+        if [ -z "$OBJCOPY" ]; then
+            echo "[uki] WARN: no objcopy found (tried llvm-objcopy-19, llvm-objcopy, objcopy); skipping UKI pack" >> "$LOG"
+        else
+            # Section virtual addresses are auto-placed by objcopy
+            # immediately past the stub's existing sections. The
+            # bootloader's detect_uki_sections() walks the table by
+            # name (VirtualAddress + VirtualSize from each entry), so
+            # specific VAs don't need to match the UAPI Group spec
+            # constants. llvm-objcopy lacks a --change-section-vma flag
+            # for PE; section placement is left to the tool's default.
+            "$OBJCOPY" \
+                --add-section .osrel="$UKI_OSREL" \
+                --set-section-flags .osrel=alloc,readonly,data \
+                --add-section .cmdline="$UKI_CMDLINE" \
+                --set-section-flags .cmdline=alloc,readonly,data \
+                --add-section .linux="$UKI_KERNEL" \
+                --set-section-flags .linux=alloc,readonly,data \
+                "$UKI_STUB" "$UKI_OUT" 2>>"$LOG" \
+                && echo "[uki] generated $UKI_OUT ($(wc -c < "$UKI_OUT" | tr -d ' ') bytes)" >> "$LOG" \
+                || { echo "[uki] FATAL: $OBJCOPY --add-section failed" >> "$LOG"; print_errors; echo "=== BUILD FAILED ===" >> "$LOG"; exit 1; }
+        fi
+    else
+        echo "[uki] skip: missing stub or kernel ($UKI_STUB / $UKI_KERNEL)" >> "$LOG"
+    fi
+} || { print_errors; echo "=== BUILD FAILED ===" >> "$LOG"; exit 1; }
+
 # EFI Signing (skipped silently if keys/MOK.key is absent)
 STEP=$((STEP + 1))
 run_step $STEP $TOTAL "EFI Signing" "sign-efi" || { print_errors; echo "=== BUILD FAILED ===" >> "$LOG"; exit 1; }
