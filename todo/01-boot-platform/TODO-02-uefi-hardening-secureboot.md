@@ -434,9 +434,12 @@ The bootloader currently trusts that UEFI launched it from a valid ESP and proce
 > **Notes:**
 > - What shipped: 5 new static helpers in [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c) (`esp_find_parent_disk`, `esp_read_harddrive_node`, `esp_check_gpt_type_guid`, `esp_check_fat_bpb`, `esp_check_required_files`, `esp_integrity_check`) wiring three integrity gates plus `boot_info` v11 ABI extension (esp_size_mb / esp_filesystem_type / esp_type_guid_valid).
 > - How it integrates: `esp_integrity_check()` invoked from `efi_main` after BlockIO probe and before `parse_boot_conf`; UKI fast-skip honored; non-GPT WARN-skip; corruption / wrong-partition cases halt via `boot_fatal()` with a specific `BOOT_ERR_ESP_*` code so the BSOD identifies which gate failed; POST16 0xB096-0xB099 + 0xB09C bracket the gate.
-> - Downstream effects: `HKLM\HARDWARE\BOOT\ESP\{Uuid,SizeMB,FilesystemType,TypeGuidValid}` registry seed feeds the firmware-table catalog ([`01-boot-platform/TODO-04-firmware-table-platform-inventory.md`](TODO-04-firmware-table-platform-inventory.md) §1); Codex 2x review adoptions (1 design + 1 adversarial round, 6 findings) in commit hash to be stamped at section close.
+> - Downstream effects: `HKLM\HARDWARE\BOOT\ESP\{Uuid,SizeMB,FilesystemType,TypeGuidValid}` registry seed feeds the firmware-table catalog ([`01-boot-platform/TODO-04-firmware-table-platform-inventory.md`](TODO-04-firmware-table-platform-inventory.md) §1); Codex 5x review adoptions (design + adversarial + adversarial-impl + re-adversarial + consistency, 9 findings) in commit `fb0c6520`.
 > - Canonical doc: [`docs/boot/boot-info-fields.md`](../../docs/boot/boot-info-fields.md) "EFI System Partition integrity" subsection.
 > - Scope boundary: §13 owns ESP integrity gating; UKI whole-chain Secure Boot signing is owned by §11; cryptographic ESP manifest verification is out of scope for this section; the firmware-table-platform-inventory consumer of `HKLM\HARDWARE\BOOT\ESP` lives in TODO-04 §1.
+
+> **Verified:** 2026-04-29 | commit `fb0c6520` | 6/6 items | build OK | smoke PASS (KVM 2.32s)
+> **Quality reviewed:** 2026-04-29 | Codex 6x (design + adversarial + adversarial-impl + re-adversarial + consistency + perf) | 0H+9M fixed | scope: boot-code-quality
 
 ---
 

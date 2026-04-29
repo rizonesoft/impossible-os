@@ -17,12 +17,12 @@ Physical address 0x10000  ────┐
                               │
         struct boot_info {    │  <-- bootloader writes here before jumping
           struct boot_info_header header;   (offset 0, 8 bytes)
-          ... all ABI fields ...            (v6 total: 23696 bytes)
+          ... all ABI fields ...            (v11 total: 23760 bytes)
         }                     │
 ```
 
 - **Handoff base**: `BOOT_INFO_PHYS_ADDR = 0x10000`.
-- **Version gate**: `BOOT_INFO_VERSION = 6` (current; see changelog for history).
+- **Version gate**: `BOOT_INFO_VERSION = 11` (current; see changelog for history).
 - **Magic gate**: `BOOT_INFO_MAGIC = 0x49504F53` (`"IPOS"`, little-endian).
 - **Size gate**: `sizeof(struct boot_info)` is ABI-pinned via `_Static_assert`. The kernel refuses any handoff whose `header.size` does not equal this exact value.
 - **Early map bound**: `BOOT_INFO_EARLY_MAP_END` is the bootloader's 4 GiB identity map. The kernel rejects handoff pointers outside `[0x1000 .. BOOT_INFO_EARLY_MAP_END)`.
@@ -165,7 +165,7 @@ The canonical bootloader is [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/boot
 
 | Adapter | Required payloads | Required capability flags | Required provenance fields | Supported |
 |---|---|---|---|---|
-| **Native UEFI (`BOOTX64.EFI`)** | All of `mmap`, `fb`, `uefi_runtime_services` | none (all v6 features) | `boot_device_*`, `uefi_boot_*`, `timing.*`, `config` | ✅ Canonical |
+| **Native UEFI (`BOOTX64.EFI`)** | All of `mmap`, `fb`, `uefi_runtime_services` | none (all v6+ features) | `boot_device_*`, `uefi_boot_*`, `timing.*`, `config` | ✅ Canonical |
 | **Multiboot2 legacy path** | `mmap` only | capability negotiation (future) would apply once it ships | none required today (Multiboot2 path does NOT populate `timing.*` fields; timeline starts at kernel entry). | ⚠️ Parses Multiboot2 tags in [`src/kernel/multiboot2_parse.c`](../../src/kernel/multiboot2_parse.c); fills what it can, leaves everything else zero. |
 | **PXE / HTTP boot** | `payload_descriptors[]` with `BOOT_PAYLOAD_NETWORK_CONFIG` | reserved for [Network PXE/HTTP boot](../../todo/01-boot-platform/TODO-25-network-pxe-http-boot.md) | [Network provenance section](../../todo/01-boot-platform/TODO-25-network-pxe-http-boot.md#6-boot_info-network-provenance) | ⬜ Planned; alternate adapters should target the [Alternate Boot Protocols](../../todo/01-boot-platform/TODO-08-alternate-boot-protocols.md) TODO for this path. |
 | **Secure Launch (TrenchBoot / TXT / SKINIT)** | `payload_descriptors[]` with `BOOT_PAYLOAD_TPM_EVENT_LOG` | reserved for `drtm_entry_pcr` etc. (see [Attestation Report Export](../../todo/01-boot-platform/TODO-13-tpm-measured-boot-attestation.md#9-attestation-report-export)) | DRTM measurement metadata | ⬜ Planned; forward-compat fields are reserved in the attestation report. |
