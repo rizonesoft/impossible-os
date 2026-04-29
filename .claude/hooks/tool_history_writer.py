@@ -68,6 +68,30 @@ def main() -> int:
         return 0
 
     ti = d.get("tool_input", {}) or {}
+    # TODO-08 §21: capture a primary-input identifier so heuristic
+    # gates that read tool-history can answer questions like "was a
+    # todo/**/*.md file Read before the first src/ Edit?" without
+    # re-scanning the whole transcript. The field is best-effort and
+    # bounded to keep storage marginal.
+    target = ""
+    try:
+        if isinstance(ti, dict):
+            tn_low = (d.get("tool_name") or "").lower()
+            if "file_path" in ti and isinstance(ti["file_path"], str):
+                target = ti["file_path"]
+            elif "path" in ti and isinstance(ti["path"], str):
+                target = ti["path"]
+            elif "pattern" in ti and isinstance(ti["pattern"], str):
+                target = ti["pattern"]
+            elif "query" in ti and isinstance(ti["query"], str):
+                target = ti["query"]
+            elif tn_low == "skill" and isinstance(ti.get("skill"), str):
+                target = ti["skill"]
+            elif "command" in ti and isinstance(ti["command"], str):
+                target = ti["command"]
+            target = target[:240]
+    except Exception:
+        target = ""
     record = {
         "event": d.get("event_type") or "PostToolUse",
         "tool_name": d.get("tool_name", ""),
@@ -75,6 +99,7 @@ def main() -> int:
         "ts_ns": _ts_ns(),
         "duration_ms": d.get("duration_ms"),
         "success": d.get("success"),
+        "target": target,
     }
     # Per design Q1: live rotate at 10 MiB. Single .1 slot; older lost.
     try:

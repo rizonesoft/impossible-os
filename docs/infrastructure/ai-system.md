@@ -176,6 +176,25 @@ Path-filter abbreviations used in the tables below:
 2. Update the relevant table above in the same commit (row add / remove / modify). The matrix and the JSON must stay in sync -- the [AI Workflow Regression Suite](../../todo/00-infrastructure/TODO-02-ai-development-system.md#9-ai-workflow-regression-suite) asserts this invariant.
 3. If the hook BLOCKS, document the exact failure signature (tag line + exit code) so a reader can recognize a block-fail in their terminal.
 
+### Hook Promotion Pipeline
+
+Some `implement-todo-section` steps are inherently judgment-driven (e.g. step 6 implementation, step 14 table reconciliation) and have no usable enforcement signal. Others have a useful tool-call shape that USUALLY proves the step ran but a measurable false-positive rate -- WARN-first heuristics fit there. The promotion path:
+
+1. **Ship as WARN-only.** The hook detects a heuristic miss, emits a `[heuristic-step-N] WARN -- ...` line to stderr, AND appends one structured JSON line to `.claude/state/heuristic-misses.jsonl` via the shared [`_heuristic_misses.emit_warn`](../../.claude/hooks/_heuristic_misses.py) helper. The hook MUST NOT exit 2; the user / agent gets the warning, the workflow continues.
+2. **Observe.** `bash scripts/heuristic-misses-report.sh` summarizes the log per step (count, false-positive ratio over the last N entries). False-positive flagging is retroactive: `bash scripts/heuristic-mark-false-positive.sh <step> [<n>]` rewrites the Nth-most-recent entry's `false_positive_user_flagged: true` field after the user / agent confirms the WARN was wrong.
+3. **Promote to ERROR (BLOCK)** when the per-heuristic graduation criterion is met. Documented criteria for the seven heuristics shipped today:
+   - **Step 1** (todo Read before first src/ Edit): `<5% FP over 20 sections`.
+   - **Step 2** (XREF target reads): `<5% FP over 20 sections`.
+   - **Step 3** (>=3 explore queries before first Edit): `<10% FP over 30 sections`. Counts `Grep`, `Glob`, `mcp__lsp-bridge__*`, `mcp__todo-graph__*` per [CLAUDE.md "MCP-first defaults"](../../CLAUDE.md#mcp-usage).
+   - **Step 9** (Codex test-coverage on test-touching commits): `<10% FP over 20 sections`.
+   - **Step 15** (Edit between latest Codex and section commit): `<10% FP over 20 sections`.
+   - **Step 17** (>=2 Read/Grep between latest Codex and commit): `<10% FP over 20 sections`.
+   - **Step 18** (TODO/FIXME/HACK/STATUS_NOT_IMPLEMENTED Grep before commit): `<10% FP over 20 sections`.
+
+The promotion itself is a follow-up TODO -- once a heuristic clears its criterion, file an item to flip its `emit_warn` to a hard `sys.stderr.write` + `sys.exit(2)` BLOCK with the same documented opt-out shape (`SKIP_<NAME>_GATE=1` + reason).
+
+The doctrine match is intentional: §3 of TODO-08 walks "advisory hook reminders → hard gates where critical steps keep getting skipped" for the legacy reminder set; this pipeline is the same shape applied to NEW gates that need an empirical false-positive rate before shipping as ERROR.
+
 ---
 
 ## External-Reviewer Contract (Codex)

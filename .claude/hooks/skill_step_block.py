@@ -39,6 +39,26 @@ from skill_step_map import (  # noqa: E402
 # observed when a python -c heredoc body contained the literal text
 # "git commit" (incident 2026-04-28).
 import section_commit_gate as scg  # noqa: E402
+# TODO-08 §21: shared WARN+miss-log helper for the heuristic gates.
+import _heuristic_misses as hm  # noqa: E402
+
+_TOOL_HISTORY_REL = ".claude/state/tool-history.jsonl"
+_HEURISTIC_EXPLORE_TOOLS = {
+    "Grep", "Glob",
+    "mcp__lsp-bridge__references", "mcp__lsp-bridge__definition",
+    "mcp__lsp-bridge__workspace_symbol", "mcp__lsp-bridge__document_symbol",
+    "mcp__lsp-bridge__implementation", "mcp__lsp-bridge__type_definition",
+    "mcp__lsp-bridge__hover", "mcp__lsp-bridge__call_hierarchy_incoming",
+    "mcp__lsp-bridge__call_hierarchy_outgoing", "mcp__lsp-bridge__diagnostics",
+    "mcp__todo-graph__backlinks", "mcp__todo-graph__blocked",
+    "mcp__todo-graph__blocking", "mcp__todo-graph__by-domain",
+    "mcp__todo-graph__code", "mcp__todo-graph__code-by",
+    "mcp__todo-graph__deferred", "mcp__todo-graph__deferred-by",
+    "mcp__todo-graph__orphans", "mcp__todo-graph__ready",
+    "mcp__todo-graph__stale", "mcp__todo-graph__stats",
+}
+_HEURISTIC_EXPLORE_MIN = 3
+_XREF_RE = re.compile(r"->\s*XREF:\s*([\w./0-9-]+\.md)", re.IGNORECASE)
 
 
 _STATE_REL = ".claude/state/skill-progress.json"
@@ -220,10 +240,171 @@ def _log_skip(root: str, reason: str, skill: str, missing: list) -> None:
         pass
 
 
+def _read_tool_history_since(root: str, since_ts_ns: int) -> list:
+    """Return tool-history.jsonl records strictly after `since_ts_ns`.
+    Best-effort, returns [] on any error."""
+    p = os.path.join(root, _TOOL_HISTORY_REL)
+    out = []
+    try:
+        if not os.path.exists(p):
+            return out
+        with open(p, "r", encoding="utf-8") as f:
+            for line in f:
+                try:
+                    rec = json.loads(line)
+                except Exception:
+                    continue
+                if not isinstance(rec, dict):
+                    continue
+                ts = rec.get("ts_ns", 0)
+                if isinstance(ts, int) and ts > since_ts_ns:
+                    out.append(rec)
+    except Exception:
+        return []
+    return out
+
+
+def _is_first_src_edit(d: dict, history_since: list) -> bool:
+    """True iff the current Edit/Write is the first one this skill
+    session targeting src/ or include/. Conservative: ANY prior
+    Edit/Write/MultiEdit on a matching path means this is not first."""
+    tn = d.get("tool_name", "")
+    if tn not in ("Edit", "Write", "MultiEdit"):
+        return False
+    ti = d.get("tool_input", {}) or {}
+    fp = ti.get("file_path", "") or ti.get("path", "")
+    if not isinstance(fp, str):
+        return False
+    if not (fp.startswith("src/") or fp.startswith("include/")
+            or "/src/" in fp or "/include/" in fp):
+        return False
+    for r in history_since:
+        if r.get("tool_name") in ("Edit", "Write", "MultiEdit"):
+            t = r.get("target", "") or ""
+            if t.startswith("src/") or t.startswith("include/") \
+               or "/src/" in t or "/include/" in t:
+                return False
+    return True
+
+
+def _heuristic_check_steps_1_2_3(d: dict, root: str, entry: dict) -> None:
+    """TODO-08 §21 steps 1/2/3: pre-first-src-edit heuristics.
+
+    Step 1: WARN if no Read of any todo/**/*.md happened in this skill
+            session before the first Edit/Write on src/ or include/.
+    Step 2: WARN if any `-> XREF: <path>.md` referenced from the read
+            TODO body has NOT been Read.
+    Step 3: WARN if fewer than 3 explore-class queries (Grep/Glob/MCP
+            lsp-bridge or todo-graph) happened before this first Edit.
+    All three are advisory; the gate never BLOCKs."""
+    started_ts = entry.get("started_ts") or entry.get("started_ts_ns") or 0
+    if not isinstance(started_ts, int) or started_ts <= 0:
+        return
+    history = _read_tool_history_since(root, started_ts)
+    if not _is_first_src_edit(d, history):
+        return
+
+    todo_path, section = hm.parse_active_todo_section(entry)
+
+    # --- Step 1 ---
+    todo_reads = [
+        r for r in history
+        if r.get("tool_name") == "Read"
+        and isinstance(r.get("target"), str)
+        and r.get("target", "").startswith("todo/")
+        and r.get("target", "").endswith(".md")
+    ]
+    if not todo_reads:
+        ti = d.get("tool_input", {}) or {}
+        target_file = ti.get("file_path", "") or ti.get("path", "") or "<unknown>"
+        hm.emit_warn(
+            root, 1,
+            "todo-read-missing",
+            "first src/ Edit on " + target_file + " but no todo/**/*.md "
+            "Read recorded in this skill session. Implement-todo-section "
+            "step 1: read the section before editing.",
+            todo_path=todo_path, section=section,
+        )
+
+    # --- Step 2 ---
+    if todo_reads:
+        xref_targets = set()
+        for r in todo_reads:
+            tgt = r.get("target", "")
+            if not tgt:
+                continue
+            try:
+                full = os.path.join(root, tgt)
+                if not os.path.exists(full):
+                    continue
+                # Codex M1 fix 2026-04-29: read up to 1 MiB so XREF/Inputs
+                # blocks placed late in long TODO files (TODO-08 is ~205 KB)
+                # are scanned. The previous 64 KiB cap caused a false-negative
+                # on the exact file shape this heuristic targets.
+                with open(full, "r", encoding="utf-8") as f:
+                    body = f.read(1024 * 1024)
+                for m in _XREF_RE.finditer(body):
+                    xpath = m.group(1)
+                    if not xpath.startswith("todo/"):
+                        # Allow relative paths inside todo/<domain>/
+                        cand = os.path.normpath(os.path.join(os.path.dirname(tgt), xpath))
+                        if cand.startswith("todo/"):
+                            xpath = cand
+                        else:
+                            continue
+                    xref_targets.add(xpath)
+            except Exception:
+                continue
+        read_paths = {r.get("target", "") for r in todo_reads}
+        unread = sorted(t for t in xref_targets if t not in read_paths)
+        if unread:
+            hm.emit_warn(
+                root, 2,
+                "xref-unread",
+                "first src/ Edit but " + str(len(unread)) + " XREF target(s) "
+                "in the read TODO body not yet Read: " + ", ".join(unread[:3])
+                + (" (+more)" if len(unread) > 3 else ""),
+                todo_path=todo_path, section=section,
+            )
+
+    # --- Step 3 ---
+    explore_count = sum(
+        1 for r in history
+        if r.get("tool_name") in _HEURISTIC_EXPLORE_TOOLS
+    )
+    if explore_count < _HEURISTIC_EXPLORE_MIN:
+        hm.emit_warn(
+            root, 3,
+            "explore-thin",
+            "first src/ Edit after only " + str(explore_count) + " explore "
+            "querie(s) (Grep/Glob/lsp-bridge/todo-graph); "
+            "implement-todo-section step 3 expects >= "
+            + str(_HEURISTIC_EXPLORE_MIN) + ".",
+            todo_path=todo_path, section=section,
+        )
+
+
 def main() -> int:
     try:
         d = json.load(sys.stdin)
     except Exception:
+        return 0
+
+    # §21 heuristics (steps 1/2/3) run on Edit/Write/MultiEdit before the
+    # blocking-signature check. They never BLOCK -- emit_warn writes
+    # stderr + miss-log and we still return 0 so the tool call proceeds.
+    if d.get("tool_name") in ("Edit", "Write", "MultiEdit"):
+        try:
+            root = _repo_root()
+            if root:
+                state_path = os.path.join(root, _STATE_REL)
+                with open(state_path, "r", encoding="utf-8") as f:
+                    state = json.load(f)
+                skill, entry = _select_active_skill(state, root)
+                if skill == "implement-todo-section" and entry:
+                    _heuristic_check_steps_1_2_3(d, root, entry)
+        except Exception:
+            pass
         return 0
 
     if not _is_blocking_signature(d):

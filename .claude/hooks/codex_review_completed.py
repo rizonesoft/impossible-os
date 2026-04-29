@@ -477,7 +477,7 @@ DISPATCH_KIND_BY_SKILL = {
 # `[review-kind: <kind>]` marker at the start of the prompt. The
 # regex tolerates whitespace and different bracket spellings.
 _REVIEW_KIND_RE = re.compile(
-    r"\[\s*review[-_ ]kind\s*:\s*(adversarial|consistency|perf|re-adversarial|adversarial-impl)\s*\]",
+    r"\[\s*review[-_ ]kind\s*:\s*(adversarial|consistency|perf|re-adversarial|adversarial-impl|test-coverage|design)\s*\]",
     re.IGNORECASE,
 )
 
@@ -715,7 +715,7 @@ def _record_stamp(
     of the current HEAD before accepting the stamp; this prevents
     cross-branch reuse of dispatch evidence.
     """
-    if not todo_path or kind not in ("adversarial", "consistency", "perf", "re-adversarial", "adversarial-impl"):
+    if not todo_path or kind not in ("adversarial", "consistency", "perf", "re-adversarial", "adversarial-impl", "test-coverage", "design"):
         return
     path = _stamps_path(root)
     lock_path = _stamps_lock_path(root)

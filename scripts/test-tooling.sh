@@ -4407,6 +4407,120 @@ fi
 
 
 # ============================================================================
+# heuristic_warn_misses (TODO-08 partial-enforcement heuristics)
+# ============================================================================
+#   - hw_step1_warn:       skill_step_block emits step-1 WARN on first src/
+#                          Edit when no todo Read happened.
+#   - hw_step3_warn:       skill_step_block emits step-3 WARN when explore
+#                          query count is below threshold.
+#   - hw_step9_warn:       _heuristic_step9_test_coverage emits WARN when
+#                          test-coverage stamp missing.
+#   - hw_step15_warn:      _heuristic_step15_post_codex_edit emits WARN
+#                          when no Edit followed the last Codex dispatch.
+#   - hw_step17_warn:      _heuristic_step17_validate_phase emits WARN
+#                          on thin validate phase.
+#   - hw_step18_warn:      _heuristic_step18_loose_ends_scan emits WARN
+#                          when no TODO/FIXME Grep recorded.
+#   - hw_misslog_writer:   _heuristic_misses.emit_warn appends one JSON line
+#                          per WARN with the documented schema.
+
+[ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[heuristic_warn_misses]${NC}"
+
+if [ ! -f "$REPO_ROOT/.claude/hooks/_heuristic_misses.py" ]; then
+    t_fail "heuristic_warn_misses: _heuristic_misses.py missing"
+elif [ ! -f "$REPO_ROOT/.claude/hooks/skill_step_block.py" ]; then
+    t_fail "heuristic_warn_misses: skill_step_block.py missing"
+else
+    HW_TMP="$(mktemp -d)"
+    HW_LOG="$HW_TMP/heuristic-misses.jsonl"
+
+    # 1. miss-log writer schema check
+    HW_PY_OUT="$(HEURISTIC_MISSES_LOG_FORCE="$HW_LOG" python3 - <<PYEOF
+import sys, os, json
+sys.path.insert(0, os.path.join("$REPO_ROOT", ".claude/hooks"))
+import _heuristic_misses as hm
+# Override the module's _MISS_LOG_REL by injecting a fake repo root.
+# Easier: monkey-patch emit_warn to write to our absolute path.
+fake_root = "$HW_TMP"
+os.makedirs(os.path.join(fake_root, ".claude/state"), exist_ok=True)
+hm.emit_warn(fake_root, 1, "todo-read-missing",
+             "first src/ Edit but no todo/**/*.md Read",
+             todo_path="todo/00-infrastructure/TODO-08-automation-hardening.md",
+             section=21)
+hm.emit_warn(fake_root, 3, "explore-thin",
+             "first src/ Edit after only 1 explore query",
+             todo_path="todo/00-infrastructure/TODO-08-automation-hardening.md",
+             section=21)
+log_path = os.path.join(fake_root, ".claude/state/heuristic-misses.jsonl")
+with open(log_path, "r", encoding="utf-8") as f:
+    lines = f.readlines()
+recs = [json.loads(l) for l in lines if l.strip()]
+assert len(recs) == 2, "expected 2 records, got %d" % len(recs)
+required = {"ts_ns", "step", "todo_path", "section", "signal",
+            "detail", "false_positive_user_flagged"}
+for r in recs:
+    missing = required - set(r.keys())
+    assert not missing, "schema fields missing: %s" % missing
+assert recs[0]["step"] == 1
+assert recs[1]["step"] == 3
+assert all(r["false_positive_user_flagged"] is False for r in recs)
+print("OK 2 records schema-clean")
+PYEOF
+2>&1)"
+    if echo "$HW_PY_OUT" | grep -q "OK 2 records schema-clean"; then
+        t_pass "heuristic_warn_misses: hw_misslog_writer schema OK"
+    else
+        t_fail "heuristic_warn_misses: hw_misslog_writer" "out: $HW_PY_OUT"
+    fi
+
+    # 2. emit_warn writes stderr WARN line
+    HW_STDERR="$(python3 - <<PYEOF 2>&1 >/dev/null
+import sys, os
+sys.path.insert(0, os.path.join("$REPO_ROOT", ".claude/hooks"))
+import _heuristic_misses as hm
+hm.emit_warn(None, 1, "test-signal", "test-detail")
+PYEOF
+)"
+    if echo "$HW_STDERR" | grep -q "\[heuristic-step-1\] WARN -- test-detail" \
+       && echo "$HW_STDERR" | grep -q "signal: test-signal"; then
+        t_pass "heuristic_warn_misses: hw_step1_warn stderr format"
+    else
+        t_fail "heuristic_warn_misses: hw_step1_warn" "stderr: $HW_STDERR"
+    fi
+
+    # 3-7. Steps 3/9/15/17/18 -- each just verifies the canonical signal
+    # name + step id round-trip through emit_warn produces a valid log line.
+    # The integration paths (hook + skill window detection) are exercised
+    # via real session usage; here we verify the WARN+log shape contract.
+    for STEP_INFO in "3:explore-thin:hw_step3_warn" \
+                     "9:test-coverage-missing:hw_step9_warn" \
+                     "15:no-edit-after-codex:hw_step15_warn" \
+                     "17:validate-thin:hw_step17_warn" \
+                     "18:loose-ends-scan-missing:hw_step18_warn"; do
+        HW_S="${STEP_INFO%%:*}"
+        HW_REST="${STEP_INFO#*:}"
+        HW_SIGNAL="${HW_REST%%:*}"
+        HW_NAME="${HW_REST#*:}"
+        HW_OUT="$(python3 - <<PYEOF 2>&1
+import sys, os
+sys.path.insert(0, os.path.join("$REPO_ROOT", ".claude/hooks"))
+import _heuristic_misses as hm
+hm.emit_warn(None, $HW_S, "$HW_SIGNAL", "step-$HW_S detail")
+PYEOF
+)"
+        if echo "$HW_OUT" | grep -q "\[heuristic-step-$HW_S\] WARN" \
+           && echo "$HW_OUT" | grep -q "signal: $HW_SIGNAL"; then
+            t_pass "heuristic_warn_misses: $HW_NAME stderr format"
+        else
+            t_fail "heuristic_warn_misses: $HW_NAME" "out: $HW_OUT"
+        fi
+    done
+
+    rm -rf "$HW_TMP"
+fi
+
+
+# ============================================================================
 # Summary
 # ============================================================================
 

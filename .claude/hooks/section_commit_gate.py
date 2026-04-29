@@ -1858,6 +1858,12 @@ def _evaluate(root: Path, mode: str, cmd: str = "") -> int:
         }
         _skip_record_append(warn_record, _skip_log_path(root))
 
+    # TODO-08 §21: WARN-first heuristic gates fire on every section
+    # commit attempt that has an active implement-todo-section skill
+    # window. They never block; they only emit stderr WARN + miss-log
+    # entries to feed the WARN -> ERROR promotion pipeline.
+    _emit_section21_heuristics(root, staged_src)
+
     # Evidence checks (Codex H2 fail-closed scope).
     build_ok, build_err = _build_evidence(root, staged_src)
     review_ok, review_err = _review_evidence(root, staged_src)
@@ -2329,6 +2335,306 @@ def _is_small_section(root: Path, staged_src: list[str]) -> bool:
         except ValueError:
             continue
     return total < 50
+
+
+# ============================================================================
+# TODO-08 §21: WARN-first heuristic gates (steps 9, 15, 17, 18).
+# ============================================================================
+# Each helper returns None and emits via _heuristic_misses.emit_warn when the
+# heuristic fires. None of them BLOCK; they're advisory and feed the
+# heuristic-misses.jsonl ratio dataset for the WARN -> ERROR promotion path
+# documented in docs/infrastructure/ai-system.md "Hook Promotion Pipeline".
+
+def _heuristic_load_helpers():
+    """Lazy import of _heuristic_misses + tool-history reader. Returns
+    (hm_module, history_list_for_window). Returns (None, []) on any
+    error so heuristic emission is best-effort and never blocks the
+    commit-gate path."""
+    try:
+        if str(_HOOK_DIR) not in sys.path:
+            sys.path.insert(0, str(_HOOK_DIR))
+        import _heuristic_misses as _hm  # noqa: E402
+        return _hm
+    except Exception:
+        return None
+
+
+def _heuristic_read_tool_history(root: Path, since_ts_ns: int) -> list:
+    p = root / ".claude" / "state" / "tool-history.jsonl"
+    out = []
+    try:
+        if not p.exists():
+            return out
+        for line in p.read_text(encoding="utf-8", errors="replace").splitlines():
+            try:
+                rec = json.loads(line)
+            except Exception:
+                continue
+            if not isinstance(rec, dict):
+                continue
+            ts = rec.get("ts_ns", 0)
+            if isinstance(ts, int) and ts > since_ts_ns:
+                out.append(rec)
+    except Exception:
+        return []
+    return out
+
+
+def _heuristic_active_skill_window(root: Path) -> tuple:
+    """Return (skill_name, started_ts_ns, todo_path, section_id) for
+    the most-recent active multi-step skill, or ('', 0, '', None)."""
+    try:
+        p = root / ".claude" / "state" / "skill-progress.json"
+        if not p.exists():
+            return ("", 0, "", None)
+        state = json.loads(p.read_text(encoding="utf-8"))
+        if not isinstance(state, dict):
+            return ("", 0, "", None)
+        best = None
+        best_ts = -1
+        for name, entry in state.items():
+            if not isinstance(entry, dict):
+                continue
+            if entry.get("compaction_orphaned") is True:
+                continue
+            if name not in (
+                "implement-todo-section", "review-todo-section",
+                "verify-todo-section",
+            ) and not name.startswith("implement-todo-section"):
+                continue
+            ts = entry.get("started_ts", 0)
+            if isinstance(ts, int) and ts > best_ts:
+                best_ts = ts
+                best = (name, entry)
+        if not best:
+            return ("", 0, "", None)
+        name, entry = best
+        todo_path = entry.get("todo_path", "") or ""
+        section = entry.get("section")
+        if not isinstance(section, int):
+            section = None
+        return (name, best_ts, todo_path, section)
+    except Exception:
+        return ("", 0, "", None)
+
+
+def _heuristic_step9_test_coverage(root: Path, staged_src: list, todo_path: str,
+                                    section) -> None:
+    """Step 9: WARN if staged diff adds >=3 new TEST_ASSERT/TEST_PENDING/
+    TEST_SKIP lines in test_*.c files but no `[review-kind: test-coverage]`
+    Codex dispatch is recorded in last-review-stamps.json within 30 min."""
+    hm = _heuristic_load_helpers()
+    if hm is None:
+        return
+    try:
+        # Count new test-assertion lines in staged test_*.c files.
+        added = 0
+        test_files = [s for s in staged_src
+                      if s.startswith("src/kernel/test/test_") and s.endswith(".c")]
+        if not test_files:
+            return
+        for f in test_files:
+            try:
+                diff = subprocess.check_output(
+                    ["git", "diff", "--cached", "--unified=0", "--", f],
+                    cwd=str(root), text=True, timeout=5,
+                    stderr=subprocess.DEVNULL,
+                )
+            except Exception:
+                continue
+            for line in diff.splitlines():
+                if not line.startswith("+") or line.startswith("+++"):
+                    continue
+                if "TEST_ASSERT" in line or "TEST_PENDING" in line or "TEST_SKIP" in line:
+                    added += 1
+        if added < 3:
+            return
+        # Look for a recent test-coverage dispatch in last-review-stamps.json.
+        stamps_path = root / ".claude" / "state" / "last-review-stamps.json"
+        if not stamps_path.exists():
+            stamps = {}
+        else:
+            try:
+                stamps = json.loads(stamps_path.read_text(encoding="utf-8"))
+            except Exception:
+                stamps = {}
+        now_ns = time.time_ns()
+        thirty_min_ns = 30 * 60 * 1_000_000_000
+        found = False
+        if isinstance(stamps, dict) and todo_path:
+            entry = stamps.get(todo_path) or {}
+            if isinstance(entry, dict):
+                tc = entry.get("test-coverage") or {}
+                if isinstance(tc, dict):
+                    ts = tc.get("ts_ns", 0)
+                    if isinstance(ts, int) and (now_ns - ts) <= thirty_min_ns:
+                        found = True
+        if not found:
+            hm.emit_warn(
+                str(root), 9,
+                "test-coverage-missing",
+                "staged diff adds " + str(added) + " new test "
+                "assertions in " + str(len(test_files)) + " file(s) but "
+                "no [review-kind: test-coverage] Codex dispatch recorded "
+                "within the last 30 minutes for " + (todo_path or "<no active todo>"),
+                todo_path=todo_path, section=section,
+            )
+    except Exception:
+        pass
+
+
+def _heuristic_step15_post_codex_edit(root: Path, started_ts: int,
+                                       todo_path: str,
+                                       section) -> None:
+    """Step 15: WARN if last Codex dispatch happened but no Edit/Write
+    happened between that dispatch and now (suggests no fix loop ran).
+    Suppress when explicit zero-findings stamp is present in tool history
+    (search the recent transcript for 'verdict: approve' or '0 findings')."""
+    hm = _heuristic_load_helpers()
+    if hm is None:
+        return
+    try:
+        # Find latest Codex dispatch ts.
+        history = _heuristic_read_tool_history(root, started_ts)
+        latest_codex_ts = 0
+        for r in history:
+            if r.get("tool_name") != "Bash":
+                continue
+            cmd = r.get("target", "") or ""
+            if "codex-companion.mjs" in cmd or "codex exec" in cmd or "codex review" in cmd:
+                ts = r.get("ts_ns", 0)
+                if isinstance(ts, int) and ts > latest_codex_ts:
+                    latest_codex_ts = ts
+        if latest_codex_ts == 0:
+            return  # no Codex dispatch in this skill window; not in scope
+        # Look for any Edit/Write/MultiEdit after latest_codex_ts.
+        post_codex_edit = any(
+            r.get("tool_name") in ("Edit", "Write", "MultiEdit")
+            and isinstance(r.get("ts_ns", 0), int)
+            and r.get("ts_ns", 0) > latest_codex_ts
+            for r in history
+        )
+        if not post_codex_edit:
+            hm.emit_warn(
+                str(root), 15,
+                "no-edit-after-codex",
+                "section commit pending but no Edit/Write recorded since "
+                "the latest Codex dispatch (suggests no fix loop ran). If "
+                "Codex returned zero findings, that is the explicit stamp "
+                "covering this case.",
+                todo_path=todo_path, section=section,
+            )
+    except Exception:
+        pass
+
+
+def _heuristic_step17_validate_phase(root: Path, started_ts: int,
+                                      todo_path: str,
+                                      section) -> None:
+    """Step 17: WARN if fewer than 2 Read/Grep calls happened between
+    the latest Codex dispatch and now (suggests no validate phase)."""
+    hm = _heuristic_load_helpers()
+    if hm is None:
+        return
+    try:
+        history = _heuristic_read_tool_history(root, started_ts)
+        latest_codex_ts = 0
+        for r in history:
+            if r.get("tool_name") != "Bash":
+                continue
+            cmd = r.get("target", "") or ""
+            if "codex-companion.mjs" in cmd or "codex exec" in cmd or "codex review" in cmd:
+                ts = r.get("ts_ns", 0)
+                if isinstance(ts, int) and ts > latest_codex_ts:
+                    latest_codex_ts = ts
+        if latest_codex_ts == 0:
+            return
+        validate_calls = sum(
+            1 for r in history
+            if r.get("tool_name") in ("Read", "Grep")
+            and isinstance(r.get("ts_ns", 0), int)
+            and r.get("ts_ns", 0) > latest_codex_ts
+        )
+        if validate_calls < 2:
+            hm.emit_warn(
+                str(root), 17,
+                "validate-thin",
+                "section commit pending after only " + str(validate_calls)
+                + " Read/Grep call(s) since latest Codex dispatch; "
+                "implement-todo-section step 17 expects a validate phase "
+                "that re-checks the diff against code-truth.",
+                todo_path=todo_path, section=section,
+            )
+    except Exception:
+        pass
+
+
+def _heuristic_step18_loose_ends_scan(root: Path, started_ts: int,
+                                        staged_src: list,
+                                        todo_path: str,
+                                        section) -> None:
+    """Step 18: WARN if no Grep matching TODO/FIXME/HACK/STATUS_NOT_IMPLEMENTED
+    is recorded between latest src/ edit and now. Suppress if staged diff
+    is markdown-only (docs/stamp-only commits don't need this scan)."""
+    hm = _heuristic_load_helpers()
+    if hm is None:
+        return
+    try:
+        # Suppress on docs-only / stamp-only.
+        non_md = [s for s in staged_src
+                  if not (s.endswith(".md") or s.startswith("todo/"))]
+        if not non_md:
+            return
+        history = _heuristic_read_tool_history(root, started_ts)
+        latest_src_edit_ts = 0
+        for r in history:
+            if r.get("tool_name") not in ("Edit", "Write", "MultiEdit"):
+                continue
+            t = r.get("target", "") or ""
+            if t.startswith("src/") or t.startswith("include/") \
+               or "/src/" in t or "/include/" in t:
+                ts = r.get("ts_ns", 0)
+                if isinstance(ts, int) and ts > latest_src_edit_ts:
+                    latest_src_edit_ts = ts
+        if latest_src_edit_ts == 0:
+            return
+        scan_grep = any(
+            r.get("tool_name") == "Grep"
+            and isinstance(r.get("ts_ns", 0), int)
+            and r.get("ts_ns", 0) > latest_src_edit_ts
+            and isinstance(r.get("target", ""), str)
+            and re.search(r"TODO|FIXME|HACK|STATUS_NOT_IMPLEMENTED",
+                          r.get("target", ""))
+            for r in history
+        )
+        if not scan_grep:
+            hm.emit_warn(
+                str(root), 18,
+                "loose-ends-scan-missing",
+                "section commit pending but no `Grep` for "
+                "TODO|FIXME|HACK|STATUS_NOT_IMPLEMENTED recorded since "
+                "the last src/ edit. implement-todo-section step 18: "
+                "scan for stubs/markers before marking the section done.",
+                todo_path=todo_path, section=section,
+            )
+    except Exception:
+        pass
+
+
+def _emit_section21_heuristics(root: Path, staged_src: list) -> None:
+    """Driver: fire all 4 section-commit-gate heuristics (steps 9, 15, 17, 18)
+    if there is an active implement-todo-section skill window."""
+    try:
+        skill, started_ts, todo_path, section = _heuristic_active_skill_window(root)
+        if skill != "implement-todo-section" or started_ts <= 0:
+            return
+        _heuristic_step9_test_coverage(root, staged_src, todo_path, section)
+        _heuristic_step15_post_codex_edit(root, started_ts, todo_path, section)
+        _heuristic_step17_validate_phase(root, started_ts, todo_path, section)
+        _heuristic_step18_loose_ends_scan(root, started_ts, staged_src,
+                                            todo_path, section)
+    except Exception:
+        pass
 
 
 def main(argv: list[str]) -> int:
