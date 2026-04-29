@@ -1864,7 +1864,7 @@ def _evaluate(root: Path, mode: str, cmd: str = "") -> int:
     impl_adv_ok, impl_adv_err = _step13_impl_adversarial_check(
         root, staged_src, flipped
     )
-    smoke_ok, smoke_err = _step16_smoke_check(root, staged_src)
+    smoke_ok, smoke_err = _step16_smoke_check(root, staged_src, cmd)
     if (build_ok and review_ok and fourd_ok and re_adv_ok
             and test_wiring_ok and impl_adv_ok and smoke_ok):
         return 0  # full evidence; commit allowed
@@ -2166,7 +2166,7 @@ _SMOKE_BOOT_PATH_GLOBS = (
 
 
 def _step16_smoke_check(
-    root: Path, staged_src: list[str]
+    root: Path, staged_src: list[str], cmd: str = ""
 ) -> tuple[bool, str]:
     """TODO-08 §20 step-16: when staged diff touches a boot-path glob,
     require build/smoke-test.stripped.log to exist, be more recent than
@@ -2204,8 +2204,19 @@ def _step16_smoke_check(
     except Exception:
         pass
     # SKIP_SMOKE_GATE opt-out (separate from SKIP_REVIEW_HOOK).
-    if os.environ.get("SKIP_SMOKE_GATE", "") == "1":
-        reason = os.environ.get("SKIP_SMOKE_GATE_REASON", "")
+    # TODO-08 §23 unification (Codex consistency M1 fix 2026-04-29):
+    # read via shared helper so inline `SKIP_SMOKE_GATE=1 git commit ...`
+    # form works the same as harness env. Inline wins on collision.
+    if str(_HOOK_DIR) not in sys.path:
+        sys.path.insert(0, str(_HOOK_DIR))
+    import _skip_env as _se  # noqa: E402
+    _smoke_envs = _se.read_skip_envs(
+        cmd,
+        keys=("SKIP_SMOKE_GATE", "SKIP_SMOKE_GATE_REASON"),
+        fallback_to_environ=True,
+    )
+    if _smoke_envs.get("SKIP_SMOKE_GATE", "") == "1":
+        reason = _smoke_envs.get("SKIP_SMOKE_GATE_REASON", "")
         if len(reason) < SKIP_REASON_MIN_LEN:
             return (False, (
                 f"SKIP_SMOKE_GATE=1 set but SKIP_SMOKE_GATE_REASON "

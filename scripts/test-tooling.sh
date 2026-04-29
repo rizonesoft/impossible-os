@@ -4596,6 +4596,32 @@ PYEOF
     else
         t_fail "skip_env_unified: se_gate_inline_wins" "$(echo "$SE_GATE_OUT" | tail -3)"
     fi
+
+    # Regression: SKIP_SMOKE_GATE inline form reaches _step16_smoke_check
+    # via the shared helper (Codex review-todo-section consistency M1 fix).
+    SE_SMOKE_OUT="$(python3 - <<PYEOF2 2>&1
+import sys, os
+sys.path.insert(0, "$REPO_ROOT/.claude/hooks")
+import section_commit_gate as scg
+
+# Stub helpers so _step16_smoke_check reaches the SKIP path quickly.
+# Use a fake staged_src that triggers boot-path detection AND a missing
+# smoke log (default failure path); inline opt-out should short-circuit.
+for k in ("SKIP_SMOKE_GATE", "SKIP_SMOKE_GATE_REASON"):
+    os.environ.pop(k, None)
+ok, err = scg._step16_smoke_check(
+    scg.Path("/tmp/nonexistent-repo"),
+    ["src/boot/uefi/bootx64.c"],
+    cmd='SKIP_SMOKE_GATE=1 SKIP_SMOKE_GATE_REASON=inline-skip-smoke-test git commit -m foo',
+)
+print("se_smoke_inline:" + ("OK" if ok is True else "FAIL ok=" + repr(ok) + " err=" + repr(err)))
+PYEOF2
+)"
+    if echo "$SE_SMOKE_OUT" | grep -q "se_smoke_inline:OK"; then
+        t_pass "skip_env_unified: se_smoke_inline (SKIP_SMOKE_GATE inline form)"
+    else
+        t_fail "skip_env_unified: se_smoke_inline" "$(echo "$SE_SMOKE_OUT" | tail -3)"
+    fi
 fi
 
 

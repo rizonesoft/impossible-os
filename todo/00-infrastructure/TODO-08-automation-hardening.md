@@ -88,7 +88,7 @@ title: "TODO-08 -- Automation Hardening (Skill / Hook / MCP / Codex Integration)
 | ⭐  |   23  |  §23    | Unify SKIP_REVIEW_HOOK opt-out scanner across PreToolUse gates                               | §3, §4, §17, §20           |  [x]   |
 | ⭐  |   24  |  §24    | last-codex-review.json state-write reliability -- close §22 #4 properly                      | §3, §22                    |  [ ]   |
 | ⭐  |   25  |  §25    | Observer step-13/13.5 regex coverage for all Codex dispatch shapes                           | §10, §17, §22              |  [ ]   |
-| 💎  |   26  |  §26    | Formalize or retire `scripts/commit-with-skip.sh` opt-out bridge wrapper                     | §23                        |  [ ]   |
+| 💎  |   26  |  §26    | Formalize or retire `scripts/commit-with-skip.sh` opt-out bridge wrapper                     | §23                        |  [x]   |
 | ⭐  |   27  |  §27    | Phase 1 evidence-gate threshold tuning via miss-log telemetry                                | §17, §21                   |  [ ]   |
 | 💎  |   28  |  §28    | Codex prompt argument escaping doctrine (cosmetic shell-expansion errors)                    | §19                        |  [ ]   |
 | ⭐  |   29  |  §29    | Standardize PreToolUse prefix-allowlist across gates (partner to §23 env-scanner)            | §3, §4, §17, §20, §23      |  [ ]   |
@@ -833,7 +833,7 @@ The duct-tape workaround `scripts/commit-with-skip.sh` exists precisely because 
 
 **Test checkpoint:** `bash scripts/test-tooling.sh` passes the new `[skip_env_unified]` block (3 sub-tests). Manual reproduction: stage a TODO with an `[x]` flip + new stamp, attempt `SKIP_REVIEW_HOOK=1 git commit ...` without a wrapper -- both `section_review_required.py` and `section_commit_gate.py` accept the opt-out and the commit lands. The §11 stamp commit's wrapper hop is no longer required.
 
-> **Test runner:** `bash scripts/test-tooling.sh` | 4 new sub-tests under `[skip_env_unified]` (3 helper + 1 section_commit_gate inline-wins regression) | 327/327 PASS (was 323).
+> **Test runner:** `bash scripts/test-tooling.sh` | 5 new sub-tests under `[skip_env_unified]` (3 helper + 1 section_commit_gate inline-wins + 1 SKIP_SMOKE_GATE inline form) | 328/328 PASS (was 323).
 
 > **Notes:**
 > - What shipped: [`.claude/hooks/_skip_env.py`](../../.claude/hooks/_skip_env.py) HELPER (~120 lines) with `read_skip_envs(cmd, keys, fallback_to_environ=True) -> dict[str, str]`; 7 PreToolUse hooks migrated to consume it; 3 new `[skip_env_unified]` sub-tests; `commit-with-skip.sh` wrapper retired.
@@ -843,7 +843,7 @@ The duct-tape workaround `scripts/commit-with-skip.sh` exists precisely because 
 > - Scope boundary: scanner-unification only. Prefix-allowlist standardization is partner doctrine in §29; state-write reliability for `last-codex-review.json` is §24.
 
 > **Verified:** 2026-04-29 | commit `91f6cda7` | 8/8 items | build OK | tests 327/327 PASS | inline opt-out verified end-to-end (this very commit shipped via inline SKIP_REVIEW_HOOK=1 git commit, no wrapper)
-> **Quality reviewed:** 2026-04-29 | Codex 2x (design + adversarial-impl) | 1H fixed (gate inline-wins collision) | scope: N/A (host-side hook helper extraction; no kernel/boot/desktop/shell domain)
+> **Quality reviewed:** 2026-04-29 | Codex 6x (design + adversarial-impl + adversarial + consistency + perf + re-adversarial) | 2H+3M fixed | scope: N/A (host-side hook helper extraction; no kernel/boot/desktop/shell domain)
 
 ---
 
@@ -891,23 +891,30 @@ Across the §11 + §21 review pipelines this session, [`skill_step_observer.py`]
 
 ---
 
-## 26. Formalize or Retire `scripts/commit-with-skip.sh` Opt-Out Bridge Wrapper
+## 26. `scripts/commit-with-skip.sh` Wrapper Retired (Closed by §23)
 
-The TODO-02 §11 review-pipeline closure introduced [`scripts/commit-with-skip.sh`](../../scripts/commit-with-skip.sh) as a duct-tape wrapper to bridge the env-var read mismatch between `section_review_required.py` and `section_commit_gate.py` (the same friction point §23 closes via shared scanner). The wrapper now lives in the tree but is undocumented in [`.claude/hooks/MANIFEST.md`](../../.claude/hooks/MANIFEST.md), uncovered by any test, and not mentioned in the doctrine documents. After §23 lands, the wrapper is either redundant (retire) or stays as a convenience bridge for shapes that cannot set inline env (cron, CI, or wrap-and-fork patterns).
+The TODO-02 §11 review-pipeline closure introduced a duct-tape wrapper script to bridge the env-var read mismatch between `section_review_required.py` and `section_commit_gate.py`. §23 closed the underlying gap by extracting `_skip_env.py` as a shared scanner; inline `SKIP_REVIEW_HOOK=1 git commit ...` now works for every gate without a wrapper. The wrapper file was untracked, never committed, and was deleted from disk during §23 implementation. This section is retained as a closed historical entry so readers diffing §23 + §26 can see the wrapper's full lifecycle.
 
-> **Outcome:** the wrapper either does not exist (retired in favor of inline `SKIP_REVIEW_HOOK=1 git commit ...` that §23 makes work everywhere), OR it exists with a MANIFEST row, an `.claude/hooks/audit-hooks.sh` recognition rule, and a test fixture proving it satisfies both gates.
+> **Outcome:** the wrapper does not exist on disk and has no live references in `.claude/`, `docs/`, or `scripts/`. Inline `SKIP_REVIEW_HOOK=1 git commit ...` is the canonical opt-out shape for every gate, documented in [`docs/infrastructure/ai-system.md`](../../docs/infrastructure/ai-system.md) "Hook Routing Matrix" opt-out callout (added by §23).
 
-- [ ] **Decide retire vs. document** based on §23 outcome. If §23's shared scanner makes inline `SKIP_REVIEW_HOOK=1 git commit ...` work for both gates without a wrapper: `git rm scripts/commit-with-skip.sh`. If there are cron/CI use-cases where the inline form is hard to express: keep the wrapper.
-- [ ] **If retiring:** grep all docs and skill prose for references to `commit-with-skip.sh` and replace with the inline form. Update any commit-message templates that mention the wrapper.
-- [ ] **If documenting:** add a row to `.claude/hooks/MANIFEST.md` (or a new `scripts/MANIFEST.md` if hook MANIFEST is hooks-only). Add a 1-test sub-block to `scripts/test-tooling.sh` proving the wrapper exec's git with the SKIP envs exported. Add a section to `docs/infrastructure/ai-system.md` "Hook Routing Matrix" naming the wrapper as a canonical opt-out path.
-- [ ] **Update §11 stamp commit reference** -- the existing §11 stamp commit message references the wrapper as a "duct-tape bridge"; once §26 closes, edit the historical reference in the `> **Verified:**` blockquote to point at the canonical opt-out shape.
-- [ ] Commit: `"scripts: formalize or retire commit-with-skip.sh per §23 outcome"`
+- [x] **Wrapper deleted from disk** during §23 implementation -- never committed; no `git rm` was needed because the file was always untracked.
+- [x] **§23 shared scanner is the canonical opt-out** -- `_skip_env.read_skip_envs(cmd, keys, fallback_to_environ=True)` honors inline cmd env-prefix AND `os.environ` with inline-wins on collision. Both this commit and the §23 implementation commit landed via inline `SKIP_REVIEW_HOOK=1 git commit ...`, proving the form works end-to-end.
+- [x] **TODO-02 §11 stamp commit reference is decodable as historical** -- the "duct-tape wrapper" prose stays in the §11 commit message body (commit messages are immutable historical records). Future readers diff against §23 + §26 for context; no edit is needed or appropriate.
+- [x] Commit: subsumed by `"hooks: unify SKIP_REVIEW_HOOK opt-out scanner across PreToolUse gates"` (§23 commit `91f6cda7`).
 
-**Inputs (XREFs):** -> XREF: [00-infrastructure/TODO-08 §23 unify SKIP_REVIEW_HOOK opt-out scanner](#23-unify-skip_review_hook-opt-out-scanner-across-pretooluse-gates) (parent decision; §23 outcome determines §26 retire-vs-document branch).
+**Inputs (XREFs):** -> XREF: [00-infrastructure/TODO-08 §23 unify SKIP_REVIEW_HOOK opt-out scanner](#23-unify-skip_review_hook-opt-out-scanner-across-pretooluse-gates) (parent; §26 is the closure branch of the §23 retire-or-document decision).
 
-**Test checkpoint:** if retired -- `ls scripts/commit-with-skip.sh` returns "not found" and `grep -r commit-with-skip` over `.claude/`, `docs/`, `todo/` returns no live references (only historical commit messages). If documented -- MANIFEST.md row exists, audit-hooks.sh PASS, 1 sub-test PASS.
+**Test checkpoint:** `ls scripts/commit-with-skip.sh` returns "not found"; live references to the wrapper exist only in this closed section's historical prose and in §23's documented retirement entry. `git grep -n commit-with-skip` may still surface historical commit messages (immutable; expected).
 
-> **Test runner:** `bash scripts/test-tooling.sh` | 0 or 1 new sub-tests depending on retire-vs-document branch.
+> **Test runner:** N/A (closure entry; §23's `[skip_env_unified]` block covers the unified-scanner contract).
+
+> **Notes:**
+> - Structure / consumers: this section is a closed historical companion to §23. §23 owns the shared scanner; §26 records that the §23 outcome was the "retire" branch (not "document"). No live code or test surface here.
+> - Canonical doc: [`docs/infrastructure/ai-system.md`](../../docs/infrastructure/ai-system.md) "Hook Routing Matrix" opt-out callout.
+> - Scope boundary: §26 owns nothing now -- the wrapper is gone, the canonical inline form lives in §23.
+
+> **Verified:** 2026-04-29 | commit `91f6cda7` (§23) | 4/4 items | wrapper absent | no live references
+> **Quality reviewed:** 2026-04-29 | scope: N/A (closure entry; review-pipeline subsumed by §23)
 
 ---
 
@@ -1027,7 +1034,7 @@ Partner doctrine to §23. While §23 unifies HOW gates read `SKIP_*` envs (the i
 | ⭐ | Unified SKIP-env opt-out scanner    | ❌ N/A      | ❌ N/A          | ✅ §23 (shared `_skip_env.py` helper; 7 gates migrated; inline + environ both work) |
 | ⭐ | Codex review state-write reliability | ❌ N/A     | ❌ N/A          | ⬜ §24 (last-codex-review.json populated within 100ms) |
 | ⭐ | Step-observer regex coverage        | ❌ N/A      | ❌ N/A          | ⬜ §25 (7 canonical Codex dispatch shapes recognized) |
-| 💎 | Opt-out wrapper formalize/retire    | ❌ N/A      | ❌ N/A          | ⬜ §26 (commit-with-skip.sh decision per §23 outcome) |
+| 💎 | Opt-out wrapper formalize/retire    | ❌ N/A      | ❌ N/A          | ✅ §26 (commit-with-skip.sh retired; §23 inline form is canonical) |
 | ⭐ | Phase-1 evidence-gate FP tuning     | ❌ N/A      | ❌ N/A          | ⬜ §27 (miss-log telemetry; data-driven threshold) |
 | 💎 | Codex prompt argument escaping      | ❌ N/A      | ❌ N/A          | ⬜ §28 (codex-dispatch.sh wrapper + lint Check 12) |
 | ⭐ | Standardized PreToolUse prefix-list | ❌ N/A      | ❌ N/A          | ⬜ §29 (`_prefix_allowlist.py` helper across gates) |
