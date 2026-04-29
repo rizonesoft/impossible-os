@@ -15,6 +15,7 @@ _HOOK_DIR = Path(__file__).resolve().parent
 if str(_HOOK_DIR) not in sys.path:
     sys.path.insert(0, str(_HOOK_DIR))
 import _skip_env as _se  # noqa: E402
+import _review_pipeline_passthrough as _rpp  # noqa: E402
 
 d = json.load(sys.stdin)
 tn = d.get('tool_name', '')
@@ -34,14 +35,15 @@ if tn == 'Skill' and (ti.get('skill', '') == 'review-todo-section' or
                       ti.get('name', '') == 'review-todo-section'):
     sys.exit(0)
 
-# Git operations + script wrappers + codex dispatches pass
-# (the review pipeline runs git diff / lint / tests / codex, all via Bash)
+# Git operations + script wrappers + codex dispatches pass via the
+# shared review-pipeline-passthrough helper. Section-29 of TODO-08
+# extracted this list from this file. Other gates with different
+# threat models MUST NOT inherit this list -- it permits broad code
+# execution (node, python3, bash scripts/) which is safe for the
+# review pipeline but not for write-sensitive contexts.
 if tn == 'Bash':
     cmd = ti.get('command', '').strip()
-    if (cmd.startswith(('git ', 'bash scripts/', 'node ', 'python3 ',
-                        'grep ', 'awk ', 'sed ', 'wc ', 'head ', 'tail ',
-                        'ls ', 'cat ', 'find ', 'rg '))
-        or cmd.startswith('cd ') or '&&' in cmd[:5]):
+    if _rpp.is_review_pipeline_passthrough(cmd) or '&&' in cmd[:5]:
         sys.exit(0)
 
 # Look up repo root (hook runs with CWD=cwd of the parent tool call)

@@ -1,6 +1,16 @@
 # Codex Prompt Shape -- Canonical Review-Kind Markers
 
-Every `node ...codex-companion.mjs adversarial-review "<prompt>"` dispatch MUST start its prompt with a `[review-kind: <kind>]` marker on the first non-blank line, followed by the TODO path the dispatch targets. This is what the observer + the section-commit four-dispatch gate use to attribute the dispatch.
+Every Codex dispatch MUST go through the canonical wrapper, with the prompt as a single-quoted argv:
+
+```bash
+bash scripts/codex-dispatch.sh '[review-kind: <kind>] <todo-path> <body>'
+```
+
+The wrapper enforces `argc == 1` (multi-argv misuse fails loud) and `exec`s into `node ".../codex-companion.mjs" adversarial-review "$1"`. The prompt's first non-blank line MUST start with the `[review-kind: <kind>]` marker followed by the TODO path the dispatch targets. This is what the observer + the section-commit four-dispatch gate use to attribute the dispatch.
+
+> **Why single quotes are mandatory.** Bash double-quotes evaluate `$(...)`, `${...}`, and backslash escapes BEFORE the wrapper sees argv. By the time the wrapper validates, any unintended substitution has already happened. The escaping discipline is enforced at the source-text layer by `scripts/lint.sh` Check 12 -- single-quote your prompts so the lint never has reason to fire.
+
+The legacy direct-node form (`node ".../codex-companion.mjs" adversarial-review "<prompt>"`) is still recognized by the hooks for backward compat with existing logs and ad-hoc invocations, but new dispatches use the wrapper.
 
 ## The 7 canonical kinds
 
@@ -24,12 +34,12 @@ Step numbers are recorded by `.claude/hooks/skill_step_observer.py` via the map 
 <rest of the prompt body>
 ```
 
-Concrete shape:
+Concrete shape (canonical wrapper form):
 
-```
-[review-kind: adversarial] todo/00-infrastructure/TODO-08-automation-hardening.md §25 -- skill_step_observer regex coverage.
+```bash
+bash scripts/codex-dispatch.sh '[review-kind: adversarial] todo/00-infrastructure/TODO-08-automation-hardening.md §25 -- skill_step_observer regex coverage.
 
-Diff under review: ...
+Diff under review: ...'
 ```
 
 The `<todo-path>` token is what the codex_review_completed.py PostToolUse hook scans for to attribute the dispatch in `.claude/state/last-review-stamps.json`. Without it the per-kind stamp is recorded against `(unknown)` and the four-dispatch gate cannot match.

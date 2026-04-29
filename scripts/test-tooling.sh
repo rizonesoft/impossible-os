@@ -5117,6 +5117,82 @@ fi
 
 
 # ============================================================================
+# review_pipeline_passthrough -- policy-scoped Bash prefix passthrough
+# ============================================================================
+# Owner: 00-infrastructure/TODO-08-automation-hardening (PreToolUse
+# prefix-allowlist standardization section). Three regression checks:
+#   - rpp_git_commit: `git commit ...` -> trusted (review pipeline)
+#   - rpp_bash_scripts: `bash scripts/foo.sh` -> trusted (slash anchor)
+#   - rpp_bash_random: `bash /tmp/random.sh` -> NOT trusted (no slash anchor)
+
+RPP_OUT=$(python3 - <<'PYEOF'
+import sys
+sys.path.insert(0, ".claude/hooks")
+from _review_pipeline_passthrough import is_review_pipeline_passthrough as ok
+
+cases = [
+    ("git commit -m foo",                 True,  "rpp_git_commit"),
+    ("bash scripts/build.sh",             True,  "rpp_bash_scripts_slash"),
+    ("bash /tmp/random.sh",               False, "rpp_bash_random_rejected"),
+    ("node /x/codex-companion.mjs review", True,  "rpp_node_codex"),
+    ("rm -rf /",                          False, "rpp_destructive_rejected"),
+    ("rg '[review-kind: ...]'",           True,  "rpp_rg_search"),
+]
+for cmd, want, name in cases:
+    got = ok(cmd)
+    if got is want:
+        print(f"OK {name}")
+    else:
+        print(f"FAIL {name}: cmd={cmd!r} got={got!r} want={want!r}")
+PYEOF
+)
+RPP_OK=$(echo "$RPP_OUT" | grep -c "^OK ")
+if [ "$RPP_OK" = "6" ]; then
+    echo "$RPP_OUT" | grep "^OK " | while IFS= read -r line; do
+        t_pass "review_pipeline_passthrough: $line"
+    done
+    PASS=$((PASS + 6))
+else
+    t_fail "review_pipeline_passthrough: prefix-policy regression incomplete" \
+           "ok-count=$RPP_OK out=$RPP_OUT"
+fi
+
+# Drift-check regression: audit-hooks.sh DOTALL TUPLE_RE must catch a
+# multi-line cmd.startswith((...)) tuple (perf re-dispatch M finding).
+RPP_DRIFT_TMP=$(mktemp -d)
+mkdir -p "$RPP_DRIFT_TMP/.claude/hooks"
+cat > "$RPP_DRIFT_TMP/.claude/hooks/fixture-multiline.py" <<'EOF'
+def is_pipeline(cmd):
+    return cmd.startswith((
+        'git ', 'bash scripts/',
+        'node ', 'python3 ',
+    ))
+EOF
+RPP_DRIFT_OUT=$(cd "$RPP_DRIFT_TMP" && python3 - <<'PYEOF'
+import pathlib, re
+TUPLE_RE = re.compile(
+    r'startswith\s*\(\s*\((?:[^)]*?)'
+    r'''(?:["']git ["']|["']bash scripts/["']|["']python3 ["']|["']node ["'])''',
+    re.DOTALL,
+)
+hits = 0
+for f in pathlib.Path(".claude/hooks").glob("*.py"):
+    text = f.read_text()
+    if TUPLE_RE.search(text):
+        hits += 1
+print(hits)
+PYEOF
+)
+if [ "$RPP_DRIFT_OUT" = "1" ]; then
+    t_pass "review_pipeline_passthrough: rpp_dotall_multiline_tuple_caught (audit-hooks DOTALL fix)"
+else
+    t_fail "review_pipeline_passthrough: rpp_dotall_multiline_tuple_caught" \
+           "expected hits=1, got '$RPP_DRIFT_OUT'"
+fi
+rm -rf "$RPP_DRIFT_TMP"
+
+
+# ============================================================================
 # codex_dispatch_escaping -- prompt argument escaping doctrine
 # ============================================================================
 # Owner: 00-infrastructure/TODO-08-automation-hardening (prompt argument
