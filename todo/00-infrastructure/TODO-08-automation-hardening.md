@@ -867,6 +867,9 @@ The duct-tape workaround `scripts/commit-with-skip.sh` exists precisely because 
 
 > **Test runner:** `bash scripts/test-tooling.sh` | 4 new sub-tests under `[codex_review_state_write]`: `crsw_synthetic_dispatch`, `crsw_unmarked_kind`, `crsw_parallel_writes`, `crsw_write_failure_honesty` (regression for the section-24 H1 fix that returned `(ok, err)` from `_write_atomic` so the JSONL diagnostic cannot lie about success).
 
+> **Verified:** 2026-04-29 | commit `4b80434c` | 7/7 items | build N/A (hooks-only) | tests 332/332 PASS | lint 0 errors
+> **Quality reviewed:** 2026-04-29 | Codex 5x (adversarial + consistency + perf + re-adversarial + consistency-refresh) | 1H+4M fixed | scope: N/A (Python hook + bash test infra; no domain code-quality skill applies)
+
 > **Notes:**
 > - Structure: observability upgrade + 1 small contract change in 2 helpers + 4 sub-tests. No new state file; the existing `last-codex-review.json` and `last-review-stamps.json` schemas are unchanged. The new diagnostic file is `.claude/state/codex-review-debug.jsonl`, env-gated, JSONL.
 > - Helper return-type change: `_write_atomic(path, data)` and `_record_stamp(...)` now return `(ok: bool, err: str)`. Existing callers that discarded the prior `None` return are unaffected (Python ignores extra returns); the receive-side `_write_atomic` call discards the new tuple intentionally.
