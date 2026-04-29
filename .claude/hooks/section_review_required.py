@@ -1,15 +1,28 @@
 #!/usr/bin/env python3
 import json, sys, os, subprocess, re
+from pathlib import Path
 # Post-ship review gate: if HEAD commit flips a TODO section to [x] but
 # does NOT add a **Verified:** stamp in the same commit, the next
 # non-gathering tool call MUST be Skill(review-todo-section).
 # See feedback_never_skip_review memory.
+
+# TODO-08 section-23: shared SKIP-env scanner so inline opt-outs
+# (`SKIP_REVIEW_HOOK=1 git commit ...`) reach this hook the same way
+# they reach section_commit_gate. The harness env-only path was a
+# real friction point during the TODO-02 section-11 review-pipeline
+# closure (commit 3bc47f6f).
+_HOOK_DIR = Path(__file__).resolve().parent
+if str(_HOOK_DIR) not in sys.path:
+    sys.path.insert(0, str(_HOOK_DIR))
+import _skip_env as _se  # noqa: E402
+
 d = json.load(sys.stdin)
 tn = d.get('tool_name', '')
 ti = d.get('tool_input', {})
 
-# Opt-out
-if os.environ.get('SKIP_REVIEW_HOOK', '') == '1':
+# Opt-out -- read from BOTH inline cmd env-prefix AND os.environ.
+_cmd_for_skip = ti.get('command', '') if tn == 'Bash' else ''
+if _se.read_skip_envs(_cmd_for_skip, keys=('SKIP_REVIEW_HOOK',)).get('SKIP_REVIEW_HOOK') == '1':
     sys.exit(0)
 
 # Info-gathering tools always pass (the review itself needs them)

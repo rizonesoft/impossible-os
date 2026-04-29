@@ -25,6 +25,13 @@ Opt-out:
 """
 import json
 import os
+# TODO-08 section-23: shared SKIP-env scanner.
+from pathlib import Path as _SkipPath
+_SKIP_HOOK_DIR = _SkipPath(__file__).resolve().parent
+import sys as _SkipSys
+if str(_SKIP_HOOK_DIR) not in _SkipSys.path:
+    _SkipSys.path.insert(0, str(_SKIP_HOOK_DIR))
+import _skip_env as _se  # noqa: E402
 import re
 import subprocess
 import sys
@@ -230,8 +237,14 @@ def main() -> int:
         pass
 
     # Opt-out check.
-    skip_req = os.environ.get("SKIP_QUALITY_GATE_BLOCK", "") == "1"
-    skip_reason = os.environ.get("SKIP_QUALITY_GATE_BLOCK_REASON", "")
+    # TODO-08 section-23: shared SKIP-env scanner -- environ-only here
+    # because step5_quality_gate is an Edit/Write hook (no Bash cmd).
+    _skip_envs = _se.read_skip_envs(
+        cmd="",
+        keys=("SKIP_QUALITY_GATE_BLOCK", "SKIP_QUALITY_GATE_BLOCK_REASON"),
+    )
+    skip_req = _skip_envs.get("SKIP_QUALITY_GATE_BLOCK", "") == "1"
+    skip_reason = _skip_envs.get("SKIP_QUALITY_GATE_BLOCK_REASON", "")
     if skip_req and len(skip_reason) < _SKIP_REASON_MIN_LEN:
         sys.stderr.write(
             "[step5-quality-gate] BLOCK -- opt-out malformed: "

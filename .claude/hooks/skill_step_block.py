@@ -433,8 +433,18 @@ def main() -> int:
         return 0
 
     # Opt-out (Q4): both env vars required.
-    if os.environ.get("SKIP_SKILL_STEP_BLOCK", "") == "1":
-        reason = os.environ.get("SKIP_SKILL_STEP_BLOCK_REASON", "")
+    # TODO-08 section-23: shared SKIP-env scanner -- inline + environ.
+    _cmd_for_skip = ""
+    if d.get("tool_name") == "Bash":
+        _cmd_for_skip = (d.get("tool_input") or {}).get("command", "") or ""
+    _skip_envs = hm  # placeholder; fixed below
+    import _skip_env as _se
+    _skip_envs = _se.read_skip_envs(
+        _cmd_for_skip,
+        keys=("SKIP_SKILL_STEP_BLOCK", "SKIP_SKILL_STEP_BLOCK_REASON"),
+    )
+    if _skip_envs.get("SKIP_SKILL_STEP_BLOCK", "") == "1":
+        reason = _skip_envs.get("SKIP_SKILL_STEP_BLOCK_REASON", "")
         if len(reason) < 12:
             sys.stderr.write(
                 "[skill-step-block] SKIP_SKILL_STEP_BLOCK=1 set but "
@@ -462,8 +472,8 @@ def main() -> int:
     if not missing:
         return 0
 
-    if os.environ.get("SKIP_SKILL_STEP_BLOCK", "") == "1":
-        _log_skip(root, os.environ.get("SKIP_SKILL_STEP_BLOCK_REASON", ""),
+    if _skip_envs.get("SKIP_SKILL_STEP_BLOCK", "") == "1":
+        _log_skip(root, _skip_envs.get("SKIP_SKILL_STEP_BLOCK_REASON", ""),
                   skill, missing)
         return 0
 

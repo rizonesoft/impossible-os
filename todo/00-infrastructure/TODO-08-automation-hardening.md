@@ -85,7 +85,7 @@ title: "TODO-08 -- Automation Hardening (Skill / Hook / MCP / Codex Integration)
 | ⭐  |   20  |  §20    | Implement-pipeline section-commit gates (steps 5/8/13/16 -- quality / tests / adv / smoke)   | §3, §4, §10, §11           |  [x]   |
 | ⭐  |   21  |  §21    | Implement-todo-section partial-enforcement heuristics (steps 1/2/3/9/15/17/18 -- WARN-first) | §10, §11, §20              |  [x]   |
 | ⭐  |   22  |  §22    | Review-pipeline right-sizing doctrine                                                        | §3, §10, §17               |  [ ]   |
-| ⭐  |   23  |  §23    | Unify SKIP_REVIEW_HOOK opt-out scanner across PreToolUse gates                               | §3, §4, §17, §20           |  [ ]   |
+| ⭐  |   23  |  §23    | Unify SKIP_REVIEW_HOOK opt-out scanner across PreToolUse gates                               | §3, §4, §17, §20           |  [x]   |
 | ⭐  |   24  |  §24    | last-codex-review.json state-write reliability -- close §22 #4 properly                      | §3, §22                    |  [ ]   |
 | ⭐  |   25  |  §25    | Observer step-13/13.5 regex coverage for all Codex dispatch shapes                           | §10, §17, §22              |  [ ]   |
 | 💎  |   26  |  §26    | Formalize or retire `scripts/commit-with-skip.sh` opt-out bridge wrapper                     | §23                        |  [ ]   |
@@ -820,27 +820,29 @@ The duct-tape workaround `scripts/commit-with-skip.sh` exists precisely because 
 
 > **Outcome:** a single, shared SKIP-env scanner used by every PreToolUse gate that claims to honor `SKIP_REVIEW_HOOK`. Inline `SKIP_REVIEW_HOOK=1 git commit ...` works for ALL gates without a wrapper. The behavior is consistent, documented, and tested. The duct-tape wrapper is either retired or formally named as the canonical opt-out bridge.
 
-- [ ] **Extract `_scan_inline_env_prefix()` into a shared helper** at `.claude/hooks/_skip_env.py` (HELPER module, `# block-via: warning-only`). Same `shlex` tokenization + control-operator + wrapper-walk logic currently lives only in `section_commit_gate.py`. Surface the result as `read_skip_envs(cmd: str, fallback_to_environ: bool = True) -> dict[str, str]` returning `{NAME: VALUE}` for every `SKIP_*` key found in either the cmd's leading env prefix OR `os.environ`.
-- [ ] **Migrate `section_review_required.py` to consume the shared helper.** Replace line 12's `os.environ.get('SKIP_REVIEW_HOOK', '') == '1'` with `_skip_env.read_skip_envs(cmd).get('SKIP_REVIEW_HOOK') == '1'`. The hook now honors inline-prefix opt-outs the same way `section_commit_gate.py` does, without duplicating the parser.
-- [ ] **Migrate `section_commit_gate.py` to consume the shared helper.** Replace the existing `_scan_inline_env_prefix()` body with a one-line delegation to `_skip_env.read_skip_envs(cmd)`. Single source of truth; behavior tied to the helper's tests.
-- [ ] **Audit every other PreToolUse hook for `SKIP_*` reads.** Grep for `os.environ.get.*SKIP_` across `.claude/hooks/`. Each hook that honors any `SKIP_*` env should consume the shared helper. As of 2026-04-29 the list includes (at minimum): `section_review_required.py`, `section_commit_gate.py`, `phase1_evidence_gate.py`, `step5_quality_gate.py`, `skill_step_block.py`, `design_review_required.py`, `receiving_review_required.py`. Each migration is a one-line change.
-- [ ] **3 sub-tests** in [`scripts/test-tooling.sh`](../../scripts/test-tooling.sh) under a new `[skip_env_unified]` block: (1) bare `git commit` with `SKIP_REVIEW_HOOK=1` in os.environ -> all gates pass; (2) inline `SKIP_REVIEW_HOOK=1 git commit ...` with no harness env -> all gates pass; (3) `env SKIP_REVIEW_HOOK=1 git commit ...` wrapper form -> all gates pass.
-- [ ] **Retire `scripts/commit-with-skip.sh`** if the shared scanner makes it unnecessary, OR formalize it: add a row in `.claude/hooks/MANIFEST.md` describing it, and document the use-case (cron / CI shapes that cannot easily set os.environ).
-- [ ] **`docs/infrastructure/ai-system.md`** -- update the Hook Routing Matrix introduction to name the shared SKIP scanner; remove any prose that implies inline `SKIP_REVIEW_HOOK=1 ...` "should work" without naming the shared helper.
-- [ ] Commit: `"hooks: unify SKIP_REVIEW_HOOK opt-out scanner across PreToolUse gates"`
+- [x] **Shared SKIP-env scanner shipped** at [`.claude/hooks/_skip_env.py`](../../.claude/hooks/_skip_env.py) (HELPER module, `# block-via: warning-only`). `read_skip_envs(cmd, keys, fallback_to_environ=True) -> dict[str, str]` merges inline cmd env-prefix (with wrapper-walk: env/sudo/doas/nice/nohup/timeout/ionice/stdbuf/command/exec) + os.environ; inline wins on collision. Codex design Q1 fix: explicit key list (not prefix) prevents suffix-collision capture.
+- [x] **`section_review_required.py` migrated** -- now imports `_skip_env` and reads `SKIP_REVIEW_HOOK` via the shared helper. Inline form `SKIP_REVIEW_HOOK=1 git commit ...` reaches the gate (was env-only before).
+- [x] **`section_commit_gate.py` migrated** -- `_scan_inline_env_prefix()` is now a one-line delegation to `_se.read_skip_envs(cmd, keys=(SKIP_REVIEW_HOOK, SKIP_REVIEW_HOOK_REASON), fallback_to_environ=False)`. Preserves the original API shape so existing call sites in this file work unchanged.
+- [x] **5 other PreToolUse hooks migrated** -- `phase1_evidence_gate.py` (SKIP_PHASE1_BLOCK), `step5_quality_gate.py` (SKIP_QUALITY_GATE_BLOCK; cmd="" because Edit hook), `skill_step_block.py` (SKIP_SKILL_STEP_BLOCK; cmd from tool_input when Bash), `design_review_required.py` (SKIP_DESIGN_REVIEW_HOOK), `receiving_review_required.py` (RECEIVING_REVIEW_OVERRIDE; `_opt_out` now takes payload as required arg).
+- [x] **3 sub-tests** in [`scripts/test-tooling.sh`](../../scripts/test-tooling.sh) `[skip_env_unified]` block: `se_inline_form` (inline only), `se_environ_form` (environ only), `se_inline_wins` (collision merge). 326/326 PASS (was 323).
+- [x] **`scripts/commit-with-skip.sh` retired** -- never committed (untracked); deleted from disk. Inline form now satisfies all gates without the wrapper hop.
+- [x] **[`docs/infrastructure/ai-system.md`](../../docs/infrastructure/ai-system.md) Hook Routing Matrix** -- new opt-out callout names `_skip_env.py` as the shared scanner, both shapes (inline + environ) work for every gate, wrapper retired.
+- [x] Commit: `"hooks: unify SKIP_REVIEW_HOOK opt-out scanner across PreToolUse gates"`
 
 **Inputs (XREFs):** -> XREF: [00-infrastructure/TODO-08 §3 receiving-code-review hard gate](#3-receiving-code-review-hard-gate--state-file--post-codex-hook-block) (canonical SKIP_REVIEW_HOOK consumer), [00-infrastructure/TODO-08 §4 section-commit gate](#4-section-commit-gate-hardens-to-block-with-build--codex--receiving-evidence) (origin of `_scan_inline_env_prefix`), [00-infrastructure/TODO-08 §17 review-pipeline pre-Codex enforcement](#17-review-pipeline-pre-codex-enforcement-phase-1--re-adversarial) (phase1_evidence_gate also reads SKIP envs), [00-infrastructure/TODO-08 §20 implement-pipeline section-commit gates](#20-implement-pipeline-section-commit-gates-steps-581316) (step5_quality_gate also reads SKIP envs).
 
 **Test checkpoint:** `bash scripts/test-tooling.sh` passes the new `[skip_env_unified]` block (3 sub-tests). Manual reproduction: stage a TODO with an `[x]` flip + new stamp, attempt `SKIP_REVIEW_HOOK=1 git commit ...` without a wrapper -- both `section_review_required.py` and `section_commit_gate.py` accept the opt-out and the commit lands. The §11 stamp commit's wrapper hop is no longer required.
 
-> **Test runner:** `bash scripts/test-tooling.sh` | 3 new sub-tests under `[skip_env_unified]`, expected 326/326 PASS (was 323).
+> **Test runner:** `bash scripts/test-tooling.sh` | 4 new sub-tests under `[skip_env_unified]` (3 helper + 1 section_commit_gate inline-wins regression) | 327/327 PASS (was 323).
 
-> **Notes:** (canonical shape, fill at ship time)
-> - What shipped: `_skip_env.py` HELPER module (~50 lines) extracted from `section_commit_gate._scan_inline_env_prefix`; 7 PreToolUse hooks migrated to consume it; 3 new sub-tests; MANIFEST + ai-system.md updated.
-> - How it integrates: every PreToolUse hook that honors a `SKIP_*` env now calls `_skip_env.read_skip_envs(cmd)` instead of `os.environ.get` directly; behavior is consistent across the gate stack.
-> - Downstream effects: the §11 commit-with-skip.sh wrapper either retires or becomes a documented optional bridge for shapes that cannot set the inline env (e.g. cron with no shell). The opt-out shape becomes a canonical, scannable pattern.
-> - Canonical doc: [`docs/infrastructure/ai-system.md`](../../docs/infrastructure/ai-system.md) "Hook Routing Matrix".
-> - Scope boundary: this section is scanner-unification only. New gates that want to add their own SKIP env should consume the shared helper from day one; that is a doctrine, not a code change here.
+> **Notes:**
+> - What shipped: [`.claude/hooks/_skip_env.py`](../../.claude/hooks/_skip_env.py) HELPER (~120 lines) with `read_skip_envs(cmd, keys, fallback_to_environ=True) -> dict[str, str]`; 7 PreToolUse hooks migrated to consume it; 3 new `[skip_env_unified]` sub-tests; `commit-with-skip.sh` wrapper retired.
+> - How it integrates: each PreToolUse gate passes its explicit key list (Codex design Q1 fix prevents suffix-collision capture); inline cmd env-prefix wins over `os.environ` on key collision (Codex design Q3 inline-wins); `cmd=""` for Edit/Write hooks, full `tool_input.command` for Bash gates.
+> - Downstream effects: `SKIP_REVIEW_HOOK=1 git commit ...` now satisfies BOTH `section_review_required.py` and `section_commit_gate.py` without `commit-with-skip.sh`; the wrapper hop documented in TODO-02 §11 stamp commit is no longer required.
+> - Canonical doc: [`docs/infrastructure/ai-system.md`](../../docs/infrastructure/ai-system.md) "Hook Routing Matrix" opt-out callout.
+> - Scope boundary: scanner-unification only. Prefix-allowlist standardization is partner doctrine in §29; state-write reliability for `last-codex-review.json` is §24.
+
+> **Quality reviewed:** 2026-04-29 | Codex 2x (design + adversarial-impl) | 1H fixed (gate inline-wins collision) | scope: N/A (host-side hook helper extraction; no kernel/boot/desktop/shell domain)
 
 ---
 
@@ -1021,7 +1023,7 @@ Partner doctrine to §23. While §23 unifies HOW gates read `SKIP_*` envs (the i
 | ⭐ | Implement-pipeline commit gates     | ❌ N/A      | ❌ N/A          | ✅ §20 (steps 5/8/13/16)                |
 | ⭐ | Heuristic WARN -> ERROR promotion   | ❌ N/A      | ❌ N/A          | ✅ §21 (7 WARN hooks + miss-log + ratio report) |
 | ⭐ | Review-pipeline right-sizing        | ❌ N/A      | ❌ N/A          | ✅ §22 (RISK_TIER + bootstrap + spiral) |
-| ⭐ | Unified SKIP-env opt-out scanner    | ❌ N/A      | ❌ N/A          | ⬜ §23 (shared `_skip_env.py` helper across gate stack) |
+| ⭐ | Unified SKIP-env opt-out scanner    | ❌ N/A      | ❌ N/A          | ✅ §23 (shared `_skip_env.py` helper; 7 gates migrated; inline + environ both work) |
 | ⭐ | Codex review state-write reliability | ❌ N/A     | ❌ N/A          | ⬜ §24 (last-codex-review.json populated within 100ms) |
 | ⭐ | Step-observer regex coverage        | ❌ N/A      | ❌ N/A          | ⬜ §25 (7 canonical Codex dispatch shapes recognized) |
 | 💎 | Opt-out wrapper formalize/retire    | ❌ N/A      | ❌ N/A          | ⬜ §26 (commit-with-skip.sh decision per §23 outcome) |

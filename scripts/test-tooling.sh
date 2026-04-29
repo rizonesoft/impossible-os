@@ -1411,6 +1411,9 @@ else
     cp "$GATE_HOOK" "$GATE_REPO/.claude/hooks/section_commit_gate.py"
     cp "$REPO_ROOT/.claude/hooks/codex_review_completed.py" \
        "$GATE_REPO/.claude/hooks/codex_review_completed.py"
+    # TODO-08 section-23 shared SKIP-env scanner.
+    cp "$REPO_ROOT/.claude/hooks/_skip_env.py" \
+       "$GATE_REPO/.claude/hooks/_skip_env.py"
 
     pushd "$GATE_REPO" >/dev/null
     git init -q -b main
@@ -1874,6 +1877,8 @@ else
        "$FD_REPO/.claude/hooks/section_commit_gate.py"
     cp "$REPO_ROOT/.claude/hooks/codex_review_completed.py" \
        "$FD_REPO/.claude/hooks/codex_review_completed.py"
+    cp "$REPO_ROOT/.claude/hooks/_skip_env.py" \
+       "$FD_REPO/.claude/hooks/_skip_env.py"
 
     pushd "$FD_REPO" >/dev/null
     git init -q -b main
@@ -3265,6 +3270,8 @@ else
        "$PCE_REPO/.claude/hooks/codex_review_completed.py"
     cp "$REPO_ROOT/.claude/hooks/_review_kind.py" \
        "$PCE_REPO/.claude/hooks/_review_kind.py"
+    cp "$REPO_ROOT/.claude/hooks/_skip_env.py" \
+       "$PCE_REPO/.claude/hooks/_skip_env.py"
 
     pushd "$PCE_REPO" >/dev/null
     git init -q -b main
@@ -4520,6 +4527,75 @@ PYEOF
     done
 
     rm -rf "$HW_TMP"
+fi
+
+
+# ============================================================================
+# skip_env_unified (TODO-08 section-23 shared SKIP-env scanner)
+# ============================================================================
+#   - se_inline_form:  inline `SKIP_FOO=1 git commit ...` returns the value
+#                      with no harness env set.
+#   - se_environ_form: bare `git commit` with SKIP_FOO=1 in os.environ
+#                      returns the value.
+#   - se_inline_wins:  inline value wins when both sources carry the same key.
+
+[ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[skip_env_unified]${NC}"
+
+if [ ! -f "$REPO_ROOT/.claude/hooks/_skip_env.py" ]; then
+    t_fail "skip_env_unified: _skip_env.py missing"
+else
+    SE_OUT="$(python3 - <<PYEOF 2>&1
+import sys, os
+sys.path.insert(0, "$REPO_ROOT/.claude/hooks")
+import _skip_env as se
+
+# Test 1: inline form (no environ)
+for k in ("SKIP_TESTKEY",):
+    os.environ.pop(k, None)
+r = se.read_skip_envs("SKIP_TESTKEY=1 git commit -m foo", keys=("SKIP_TESTKEY",))
+print("se_inline_form:" + ("OK" if r == {"SKIP_TESTKEY": "1"} else "FAIL " + repr(r)))
+
+# Test 2: environ form (no inline)
+os.environ["SKIP_TESTKEY"] = "env-val"
+r = se.read_skip_envs("git commit", keys=("SKIP_TESTKEY",))
+print("se_environ_form:" + ("OK" if r == {"SKIP_TESTKEY": "env-val"} else "FAIL " + repr(r)))
+
+# Test 3: inline wins
+os.environ["SKIP_TESTKEY"] = "env-val"
+r = se.read_skip_envs("SKIP_TESTKEY=inline-val git commit", keys=("SKIP_TESTKEY",))
+print("se_inline_wins:" + ("OK" if r == {"SKIP_TESTKEY": "inline-val"} else "FAIL " + repr(r)))
+del os.environ["SKIP_TESTKEY"]
+PYEOF
+)"
+    for tag in se_inline_form se_environ_form se_inline_wins; do
+        if echo "$SE_OUT" | grep -q "$tag:OK"; then
+            t_pass "skip_env_unified: $tag"
+        else
+            t_fail "skip_env_unified: $tag" "$(echo "$SE_OUT" | grep "$tag")"
+        fi
+    done
+
+    # Regression: section_commit_gate _is_skip_requested honors inline-wins
+    # via the shared helper (Codex review-impl H1 fix 2026-04-29).
+    SE_GATE_OUT="$(python3 - <<PYEOF 2>&1
+import sys, os
+sys.path.insert(0, "$REPO_ROOT/.claude/hooks")
+import section_commit_gate as scg
+
+# Stale ambient SKIP_REVIEW_HOOK=1 must NOT override inline SKIP_REVIEW_HOOK=0.
+os.environ["SKIP_REVIEW_HOOK"] = "1"
+os.environ["SKIP_REVIEW_HOOK_REASON"] = "stale-ambient-reason-12-chars-min"
+skip_req, reason, err = scg._is_skip_requested("SKIP_REVIEW_HOOK=0 git commit -m foo")
+print("se_gate_inline_wins:" + ("OK" if skip_req is False else "FAIL skip_req=" + repr(skip_req)))
+del os.environ["SKIP_REVIEW_HOOK"]
+del os.environ["SKIP_REVIEW_HOOK_REASON"]
+PYEOF
+)"
+    if echo "$SE_GATE_OUT" | grep -q "se_gate_inline_wins:OK"; then
+        t_pass "skip_env_unified: se_gate_inline_wins (collision regression)"
+    else
+        t_fail "skip_env_unified: se_gate_inline_wins" "$(echo "$SE_GATE_OUT" | tail -3)"
+    fi
 fi
 
 

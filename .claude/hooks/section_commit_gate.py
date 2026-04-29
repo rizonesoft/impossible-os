@@ -1505,52 +1505,27 @@ def _repo_root() -> Path | None:
 
 
 def _scan_inline_env_prefix(cmd: str) -> dict[str, str]:
-    """Scan a bash command's leading env-var prefix and return the
-    `{NAME: VALUE}` dict. Walks past wrapper tokens (`sudo`, `env`,
-    `timeout`, etc.) so `sudo SKIP_REVIEW_HOOK=1 git commit ...` is
-    handled the same as the bare prefix. Returns {} on parse failure.
+    """One-line delegation to the shared SKIP-env scanner (TODO-08
+    section-23 unification). Preserves the original API shape -- only
+    `SKIP_REVIEW_HOOK*` keys returned, no environ fallback -- so
+    existing call sites in this file work unchanged. New consumers
+    should call `_skip_env.read_skip_envs()` directly with their
+    explicit key list.
 
-    Codex routing-fix #2 (post-c65568fc): the harness PreToolUse
-    hook reads its OWN `os.environ`, not the would-be-Bash-call's
-    env; inline `SKIP_REVIEW_HOOK=1 git commit` therefore couldn't
-    reach the gate's SKIP path (the user had to spawn git from a
-    Python subprocess that explicitly set env before exec). Scanning
-    the command's leading env prefix here closes the gap so the
-    inline form works as the documentation implies it should.
-
-    Only `SKIP_REVIEW_HOOK*` keys are returned (other env vars are
-    not relevant to the gate); broader scope risks privacy/audit
-    surprises if commands carry secrets in env prefix.
+    The previous in-file implementation has moved to
+    `.claude/hooks/_skip_env.py` along with the wrapper-walk logic;
+    that helper is the single source of truth across all 7 PreToolUse
+    gates that honor a `SKIP_*` opt-out.
     """
-    if not isinstance(cmd, str) or "SKIP_REVIEW_HOOK" not in cmd:
-        return {}
-    try:
-        toks = shlex.split(cmd, posix=True, comments=False)
-    except ValueError:
-        return {}
-    # Walk past env-prefix-friendly wrappers; they may PRECEDE env
-    # assignments. We don't need to be as exhaustive as the codex
-    # invocation walker -- typical real shapes are bare prefix or
-    # `env VAR=val cmd`.
-    _wrappers = frozenset({"env", "sudo", "doas", "nice", "nohup",
-                           "timeout", "ionice", "stdbuf", "command",
-                           "exec"})
-    out: dict[str, str] = {}
-    for tok in toks:
-        if "=" in tok and not tok.startswith("="):
-            head, val = tok.split("=", 1)
-            if head and (head[0].isalpha() or head[0] == "_") and all(
-                c.isalnum() or c == "_" for c in head
-            ):
-                if head.startswith("SKIP_REVIEW_HOOK"):
-                    out[head] = val
-                continue
-            break
-        if tok in _wrappers:
-            continue
-        # Stop at the first non-wrapper / non-env token.
-        break
-    return out
+    # Lazy import to keep this file's load cost the same as before.
+    if str(_HOOK_DIR) not in sys.path:
+        sys.path.insert(0, str(_HOOK_DIR))
+    import _skip_env as _se  # noqa: E402
+    return _se.read_skip_envs(
+        cmd,
+        keys=("SKIP_REVIEW_HOOK", "SKIP_REVIEW_HOOK_REASON"),
+        fallback_to_environ=False,
+    )
 
 
 def _is_skip_requested(cmd: str = "") -> tuple[bool, str | None, str | None]:
@@ -1560,21 +1535,24 @@ def _is_skip_requested(cmd: str = "") -> tuple[bool, str | None, str | None]:
     caller blocks with a usage envelope. Both env vars together = real
     skip path.
 
-    Reads from `os.environ` first (canonical). When `cmd` is provided
-    AND the env vars are NOT set in process env, falls back to scanning
-    the command's leading inline env prefix (`SKIP_REVIEW_HOOK=1
-    SKIP_REVIEW_HOOK_REASON=... git commit ...`). The inline path
-    closes the harness-PreToolUse gap where shell-level env vars don't
-    propagate to the hook process (post-c65568fc fix).
+    Reads BOTH inline cmd env-prefix AND `os.environ` via the shared
+    `_skip_env` helper (TODO-08 §23 unification). Inline wins on key
+    collision per the helper's documented merge semantics -- so a same-
+    call `SKIP_REVIEW_HOOK=0 git commit ...` overrides a stale ambient
+    `SKIP_REVIEW_HOOK=1` (Codex review-impl H1 fix 2026-04-29: the old
+    "env first, inline only as fallback when env is absent" behavior
+    let stale ambient envs override same-call intent).
     """
-    flag = os.environ.get("SKIP_REVIEW_HOOK", "")
-    reason = os.environ.get("SKIP_REVIEW_HOOK_REASON", "").strip()
-    if flag != "1" and cmd:
-        # Inline-env fallback.
-        inline = _scan_inline_env_prefix(cmd)
-        flag = inline.get("SKIP_REVIEW_HOOK", flag)
-        if "SKIP_REVIEW_HOOK_REASON" in inline:
-            reason = inline["SKIP_REVIEW_HOOK_REASON"].strip()
+    if str(_HOOK_DIR) not in sys.path:
+        sys.path.insert(0, str(_HOOK_DIR))
+    import _skip_env as _se  # noqa: E402
+    merged = _se.read_skip_envs(
+        cmd,
+        keys=("SKIP_REVIEW_HOOK", "SKIP_REVIEW_HOOK_REASON"),
+        fallback_to_environ=True,
+    )
+    flag = merged.get("SKIP_REVIEW_HOOK", "")
+    reason = merged.get("SKIP_REVIEW_HOOK_REASON", "").strip()
     if flag != "1":
         return (False, None, None)
     if not reason:

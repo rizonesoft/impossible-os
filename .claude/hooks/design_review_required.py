@@ -379,11 +379,18 @@ def _scan_transcript(path: str) -> tuple[bool, bool, str]:
 
 
 def main() -> int:
-    if os.environ.get("SKIP_DESIGN_REVIEW_HOOK", "") == "1":
-        return 0
     try:
         d = json.load(sys.stdin)
     except Exception:
+        return 0
+    # TODO-08 section-23: shared SKIP-env scanner -- inline + environ.
+    import _skip_env as _se_dr
+    _se_cmd = ""
+    if d.get("tool_name") == "Bash":
+        _se_cmd = (d.get("tool_input") or {}).get("command", "") or ""
+    if _se_dr.read_skip_envs(
+        _se_cmd, keys=("SKIP_DESIGN_REVIEW_HOOK",)
+    ).get("SKIP_DESIGN_REVIEW_HOOK") == "1":
         return 0
     tn = d.get("tool_name", "")
     if tn not in ("Edit", "Write", "MultiEdit"):

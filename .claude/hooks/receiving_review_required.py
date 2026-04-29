@@ -49,8 +49,17 @@ from pathlib import Path
 TTL_SECONDS = 3600  # 1 hour stale-pass window
 
 
-def _opt_out() -> bool:
-    return os.environ.get("RECEIVING_REVIEW_OVERRIDE", "") == "1"
+def _opt_out(payload: dict) -> bool:
+    # TODO-08 section-23: shared SKIP-env scanner -- inline + environ.
+    # `payload` is the harness PostToolUse JSON (tool_name + tool_input);
+    # required-arg form keeps the helper out of module-globals scope.
+    import _skip_env as _se
+    _cmd = ""
+    if payload.get("tool_name") == "Bash":
+        _cmd = (payload.get("tool_input") or {}).get("command", "") or ""
+    return _se.read_skip_envs(
+        _cmd, keys=("RECEIVING_REVIEW_OVERRIDE",)
+    ).get("RECEIVING_REVIEW_OVERRIDE") == "1"
 
 
 def _load_state(path: Path) -> dict | None:
@@ -102,12 +111,12 @@ def _emit_block(state: dict, target_path: str) -> None:
 
 
 def main() -> int:
-    if _opt_out():
-        return 0
     try:
         payload = json.load(sys.stdin)
     except Exception:
         return 0  # malformed -- fail open
+    if _opt_out(payload):
+        return 0
     if payload.get("tool_name") not in ("Edit", "Write", "MultiEdit"):
         return 0
     # Hot-path optimization (review-pipeline perf H5): compute the

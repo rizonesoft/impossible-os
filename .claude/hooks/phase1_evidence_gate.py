@@ -33,6 +33,13 @@ Both required; reason logged to .claude/state/skip-log.jsonl.
 
 import json
 import os
+# TODO-08 section-23: shared SKIP-env scanner.
+from pathlib import Path as _SkipPath
+_SKIP_HOOK_DIR = _SkipPath(__file__).resolve().parent
+import sys as _SkipSys
+if str(_SKIP_HOOK_DIR) not in _SkipSys.path:
+    _SkipSys.path.insert(0, str(_SKIP_HOOK_DIR))
+import _skip_env as _se  # noqa: E402
 import re
 import subprocess
 import sys
@@ -336,8 +343,14 @@ def main() -> int:
     except Exception:
         pass
 
-    skip_req = os.environ.get("SKIP_PHASE1_BLOCK", "") == "1"
-    skip_reason = os.environ.get("SKIP_PHASE1_BLOCK_REASON", "")
+    # TODO-08 section-23: shared SKIP-env scanner -- inline cmd env
+    # AND os.environ. Cmd is always present for Bash gate.
+    _skip_envs = _se.read_skip_envs(
+        cmd,
+        keys=("SKIP_PHASE1_BLOCK", "SKIP_PHASE1_BLOCK_REASON"),
+    )
+    skip_req = _skip_envs.get("SKIP_PHASE1_BLOCK", "") == "1"
+    skip_reason = _skip_envs.get("SKIP_PHASE1_BLOCK_REASON", "")
     if skip_req and len(skip_reason) < _SKIP_REASON_MIN_LEN:
         sys.stderr.write(
             "[phase1-evidence-gate] BLOCK -- opt-out malformed: "
