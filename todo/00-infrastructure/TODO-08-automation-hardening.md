@@ -1067,6 +1067,9 @@ The `_review_kind.detect_review_kind_from_cmd` classifier currently uses substri
 
 > **Test runner:** `bash scripts/test-tooling.sh` | 6 new sub-tests under `[codex_dispatch_helper]` (`cdh_direct_node`, `cdh_wrapper`, `cdh_bare_cli`, `cdh_heredoc_rejected`, `cdh_prose_rejected`, `cdh_chained_2nd_seg`) + 2 restored under `[skill_step_observer]` (`multiline_continuation_before_subcommand`, `multiline_continuation_before_prompt`).
 
+> **Verified:** 2026-04-29 | commit `50849b92` | 8/8 items | build N/A (hooks-only) | tests 367/367 PASS | lint 0 errors
+> **Quality reviewed:** 2026-04-29 | Codex 2x (design + adversarial) | 1H fixed (design: 3-shape parity) | scope: N/A (Python helper extraction + 2 hook migrations + markdown)
+
 > **Notes:**
 > - Structure: 1 new shared helper module (`_codex_dispatch.py`, ~330 LOC including docstrings) + 2 hook migrations (`codex_review_completed.py` re-bound wrappers, `_review_kind.py` delegated to helper) + 6 new sub-tests + 2 restored sub-tests + 4 test-fixture cp lines added so the new helper module reaches each isolated fixture.
 > - How it integrates: every Codex dispatch attribution path (PostToolUse `codex_review_completed.py`, observer `skill_step_map.match_step` via `_review_kind.detect_review_kind_from_cmd`, `phase1_evidence_gate`) shares the single `is_codex_dispatch(cmd) -> bool` + `extract_dispatch_prompt(cmd) -> str` API. Heredoc-body matches, prose mentions, search commands, and wrapper-shape spoofs cannot fool any of them. Multi-line dispatches with shell line-continuation classify identically to their single-line equivalents.
