@@ -842,6 +842,7 @@ The duct-tape workaround `scripts/commit-with-skip.sh` exists precisely because 
 > - Canonical doc: [`docs/infrastructure/ai-system.md`](../../docs/infrastructure/ai-system.md) "Hook Routing Matrix" opt-out callout.
 > - Scope boundary: scanner-unification only. Prefix-allowlist standardization is partner doctrine in §29; state-write reliability for `last-codex-review.json` is §24.
 
+> **Verified:** 2026-04-29 | commit `91f6cda7` | 8/8 items | build OK | tests 327/327 PASS | inline opt-out verified end-to-end (this very commit shipped via inline SKIP_REVIEW_HOOK=1 git commit, no wrapper)
 > **Quality reviewed:** 2026-04-29 | Codex 2x (design + adversarial-impl) | 1H fixed (gate inline-wins collision) | scope: N/A (host-side hook helper extraction; no kernel/boot/desktop/shell domain)
 
 ---
