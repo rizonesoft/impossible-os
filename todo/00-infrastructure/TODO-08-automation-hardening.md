@@ -84,14 +84,15 @@ title: "TODO-08 -- Automation Hardening (Skill / Hook / MCP / Codex Integration)
 | 💎  |   19  |  §19    | Codex prompt-scope helper: re-review wrapper that embeds committed-file content              | §2                         |  [x]   |
 | ⭐  |   20  |  §20    | Implement-pipeline section-commit gates (steps 5/8/13/16 -- quality / tests / adv / smoke)   | §3, §4, §10, §11           |  [x]   |
 | ⭐  |   21  |  §21    | Implement-todo-section partial-enforcement heuristics (steps 1/2/3/9/15/17/18 -- WARN-first) | §10, §11, §20              |  [x]   |
-| ⭐  |   22  |  §22    | Review-pipeline right-sizing doctrine                                                        | §3, §10, §17               |  [ ]   |
+| ⭐  |   22  |  §22    | Review-pipeline right-sizing doctrine                                                        | §3, §10, §17               |  [x]   |
 | ⭐  |   23  |  §23    | Unify SKIP_REVIEW_HOOK opt-out scanner across PreToolUse gates                               | §3, §4, §17, §20           |  [x]   |
-| ⭐  |   24  |  §24    | last-codex-review.json state-write reliability -- close §22 #4 properly                      | §3, §22                    |  [ ]   |
-| ⭐  |   25  |  §25    | Observer step-13/13.5 regex coverage for all Codex dispatch shapes                           | §10, §17, §22              |  [ ]   |
+| ⭐  |   24  |  §24    | last-codex-review.json state-write reliability -- close §22 #4 properly                      | §3, §22                    |  [x]   |
+| ⭐  |   25  |  §25    | Observer step-13/13.5 regex coverage for all Codex dispatch shapes                           | §10, §17, §22              |  [x]   |
 | 💎  |   26  |  §26    | Formalize or retire `scripts/commit-with-skip.sh` opt-out bridge wrapper                     | §23                        |  [x]   |
-| ⭐  |   27  |  §27    | Phase 1 evidence-gate threshold tuning via miss-log telemetry                                | §17, §21                   |  [ ]   |
+| ⭐  |   27  |  §27    | Phase 1 evidence-gate threshold tuning via miss-log telemetry                                | §17, §21                   |  [x]   |
 | 💎  |   28  |  §28    | Codex prompt argument escaping doctrine (cosmetic shell-expansion errors)                    | §19                        |  [ ]   |
 | ⭐  |   29  |  §29    | Standardize PreToolUse prefix-allowlist across gates (partner to §23 env-scanner)            | §3, §4, §17, §20, §23      |  [ ]   |
+| ⭐  |   30  |  §30    | Shell-aware Codex dispatch segmentation in `_review_kind` (close §25 round-7 deferred)       | §25                        |  [ ]   |
 
 > 💎 = parity work -- standard developer-tooling hygiene (audit scripts, drift detection, doc sync). Linux kernel ships `MAINTAINERS` + `get_maintainer.pl`; Windows has the engineering-systems-internal equivalent. We need it because skill / hook / MCP wiring drifts silently.
 > ⭐ = competitive edge -- enforcing reviewer-contract discipline at the Bash / Edit tool boundary, hard-gating skill-pipeline steps, cross-wiring two AI assistants (Claude Code + Codex CLI) into the same MCP server set, and observed-not-claimed step-state telemetry are novel ground. Neither Win11 nor Linux ships AI-tooling automation at this layer; among AI dev tools (Cursor, Aider, Continue, Copilot Workspace) only `nesaminua/claude-code-lsp-enforcement-kit` ships a comparable state-binding pattern as of early 2026.
@@ -232,7 +233,7 @@ Today's section-commit hook (the inline Python block in [`.claude/settings.json`
 
 > **Verified:** 2026-04-27 | commit `7bbbe87b` + review-pipeline fixes `44e600f6` | 9/9 items | build OK | tests 209/209 PASS
 > **Accepted:** [M] PostToolUse smoke-test + boot-smoke + reminder inline hooks use `cmd.startswith('git commit')` AND `Bash(git commit:*)` matcher -- wrapped forms (`env git commit`, `bash -c 'git commit'`) skip post-commit smoke + skip-reason propagation. Observability gap, not enforcement gap (gate itself catches the security concern). -> XREF: 00-infrastructure/TODO-08-automation-hardening.md §7 (item: "Same extraction for the inline `git commit` smoke-test hook and boot-smoke hook into dedicated files `post_commit_smoketest.py` and `post_commit_smoketest_boot.py`")
-> **Accepted:** [H] Stale receive event marking newer trigger received -- under racy multi-dispatch ordering (review A trigger -> review B trigger overwrites unreceived state -> agent receives intending A), state.received flips True against B's trigger_files, so the gate trusts an untriaged latest review. The §3 design captured `head_sha` + `tree_hash` for audit but explicitly defers `tool_use_id` correlation because the Claude Code harness does not expose `tool_use_id` to hooks (verified via probe). -> XREF: 00-infrastructure/TODO-08-automation-hardening.md §3 (item: "Anti-stale-pass binding -- partial: state schema captures head_sha + tree_hash at trigger time for audit. ... The trigger_tool_use_id field is NOT in the schema because the Claude Code harness PostToolUse / PreToolUse hooks do not expose tool_use_id to hooks (verified live via probe)" at line 235)
+> **Accepted:** [H] Stale receive event marking newer trigger received -- under racy multi-dispatch ordering (review A trigger -> review B trigger overwrites unreceived state -> agent receives intending A), state.received flips True against B's trigger_files, so the gate trusts an untriaged latest review. The §3 design captured `head_sha` + `tree_hash` for audit but explicitly defers `tool_use_id` correlation because the Claude Code harness does not expose `tool_use_id` to hooks (verified via probe). -> XREF: 00-infrastructure/TODO-08-automation-hardening.md §3 (item: "Anti-stale-pass binding -- partial: state schema captures head_sha + tree_hash at trigger time for audit. ... The trigger_tool_use_id field is NOT in the schema because the Claude Code harness PostToolUse / PreToolUse hooks do not expose tool_use_id to hooks (verified live via probe)" at line 236)
 > **Quality reviewed:** 2026-04-27 | Codex 9x (adversarial + 4 fix-loop + post-commit adversarial + consistency + perf + re-adversarial) | 12H + 2M fixed, 1M+1H accepted-XREF | scope: N/A (host-side automation tooling, no kernel/boot/desktop/shell domain)
 
 ---
@@ -1088,10 +1089,10 @@ The `_review_kind.detect_review_kind_from_cmd` classifier currently uses substri
 | ⭐ | Heuristic WARN -> ERROR promotion   | ❌ N/A      | ❌ N/A          | ✅ §21 (7 WARN hooks + miss-log + ratio report) |
 | ⭐ | Review-pipeline right-sizing        | ❌ N/A      | ❌ N/A          | ✅ §22 (RISK_TIER + bootstrap + spiral) |
 | ⭐ | Unified SKIP-env opt-out scanner    | ❌ N/A      | ❌ N/A          | ✅ §23 (shared `_skip_env.py` helper; 7 gates migrated; inline + environ both work) |
-| ⭐ | Codex review state-write reliability | ❌ N/A     | ❌ N/A          | ⬜ §24 (last-codex-review.json populated within 100ms) |
-| ⭐ | Step-observer regex coverage        | ❌ N/A      | ❌ N/A          | ⬜ §25 (7 canonical Codex dispatch shapes recognized) |
+| ⭐ | Codex review state-write reliability | ❌ N/A     | ❌ N/A          | ✅ §24 (`(ok, err)` writer contract; JSONL diagnostic; 4 sub-tests) |
+| ⭐ | Step-observer regex coverage        | ❌ N/A      | ❌ N/A          | ✅ §25 (7 canonical Codex dispatch shapes recognized; 14 sub-tests) |
 | 💎 | Opt-out wrapper formalize/retire    | ❌ N/A      | ❌ N/A          | ✅ §26 (commit-with-skip.sh retired; §23 inline form is canonical) |
-| ⭐ | Phase-1 evidence-gate FP tuning     | ❌ N/A      | ❌ N/A          | ⬜ §27 (miss-log telemetry; data-driven threshold) |
+| ⭐ | Phase-1 evidence-gate FP tuning     | ❌ N/A      | ❌ N/A          | ✅ §27 (step-4 miss-log + per-section dedup + FP-flag aggregation) |
 | 💎 | Codex prompt argument escaping      | ❌ N/A      | ❌ N/A          | ⬜ §28 (codex-dispatch.sh wrapper + lint Check 12) |
 | ⭐ | Standardized PreToolUse prefix-list | ❌ N/A      | ❌ N/A          | ⬜ §29 (`_prefix_allowlist.py` helper across gates) |
 
