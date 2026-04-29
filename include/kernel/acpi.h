@@ -333,6 +333,12 @@ int acpi_enumerate_signatures(uint32_t *out_sigs, uint32_t max_count,
 int acpi_get_raw_table(uint32_t signature, const uint8_t **out_addr,
                         uint32_t *out_size);
 
+/* Returns 1 if acpi_init() succeeded (RSDP checksum + FADT located), 0
+ * otherwise. Use this instead of `g_boot_info.acpi_available` when a
+ * caller must avoid touching ACPI roots after a failed acpi_init -- the
+ * boot_info bit only reflects "RSDP pointer present" not "validated". */
+int acpi_is_ready(void);
+
 /* Retrieve the n-th validated ACPI SDT in XSDT/RSDT order. Unlike the
  * signature-keyed accessor above, this returns each duplicate-signature
  * table separately (e.g. multiple SSDTs are distinct entries) -- the

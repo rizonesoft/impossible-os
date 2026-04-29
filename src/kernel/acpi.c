@@ -1103,9 +1103,15 @@ int acpi_get_raw_table(uint32_t signature, const uint8_t **out_addr,
     return 0;
 }
 
+int acpi_is_ready(void)
+{
+    return acpi_ready != 0;
+}
+
 uint32_t acpi_for_each_record(acpi_record_cb_t cb, void *ctx)
 {
     if (!cb) return 0;
+    if (!acpi_ready) return 0;
     if (!g_boot_info.acpi_available || !g_boot_info.acpi_rsdp_addr) return 0;
 
     const struct acpi_rsdp *rsdp =
@@ -1169,6 +1175,7 @@ int acpi_get_record(uint32_t index, uint32_t *out_sig,
     *out_size = 0;
     if (out_sig) *out_sig = 0;
 
+    if (!acpi_ready) return 0;
     if (!g_boot_info.acpi_available || !g_boot_info.acpi_rsdp_addr)
         return 0;
 

@@ -31,15 +31,27 @@
 #define FW_SOURCE_DTB             6  /* Devicetree blob (EBBR) */
 
 /* Validation status assigned at catalog time.
- * The firmware-table validator (later TODO-04 section) may downgrade entries
- * to FW_STATUS_DEGRADED with a reason code; the catalog itself only records
- * what the per-provider helper already accepted. */
+ *
+ *   VALIDATED       -- a per-provider helper has confirmed success on this
+ *                      entry (e.g. acpi_init parsed the RSDP, smbios_init
+ *                      validated the SMBIOS entry point).
+ *   UNKNOWN_PROFILE -- entry is present but no provider has validated it
+ *                      yet.  Includes both unknown GUIDs and known-named
+ *                      entries whose providers have no boot-time oracle
+ *                      (FPDT/MAT/RtProps/Conformance/ESRT/DTB).  The
+ *                      firmware-table validator (later TODO-04 section)
+ *                      can re-check these.
+ *   DEGRADED        -- entry was present but failed a check.  At catalog
+ *                      time only the NULL VendorTable case sets this
+ *                      (FW_DEGRADED_NULL_POINTER); the validator may
+ *                      downgrade other entries with additional reasons. */
 #define FW_STATUS_VALIDATED       0  /* per-provider helper succeeded */
 #define FW_STATUS_DEGRADED        1  /* present but a check failed (see reason) */
-#define FW_STATUS_UNKNOWN_PROFILE 2  /* present but profile/format not recognised */
+#define FW_STATUS_UNKNOWN_PROFILE 2  /* present but no provider validation yet */
 
-/* Reason codes for FW_STATUS_DEGRADED (populated by the validator -- the
- * catalog leaves this at FW_DEGRADED_NONE). */
+/* Reason codes for FW_STATUS_DEGRADED.  The catalog itself emits only
+ * FW_DEGRADED_NULL_POINTER for NULL VendorTable entries; remaining
+ * reason codes are owned by the validator. */
 #define FW_DEGRADED_NONE           0
 #define FW_DEGRADED_NULL_POINTER   1
 #define FW_DEGRADED_RANGE_UNMAPPED 2

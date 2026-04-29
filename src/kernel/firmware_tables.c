@@ -153,6 +153,26 @@ static void format_acpi_sig(uint32_t sig, char out[5])
     }
 }
 
+/* Returns 1 only when the per-provider helper that owns this short
+ * name has actually succeeded.  ACPI uses acpi_is_ready() (set on
+ * acpi_init success); SMBIOS uses smbios_get_raw_table() (returns 1
+ * only after smbios_init parsed the entry point).  Other known names
+ * (FPDT, MAT, RtProps, Conform, ESRT, DTB) have no boot-time oracle
+ * exposed today and are treated as unvalidated until the firmware-
+ * table validator (later TODO-04 section) checks them. */
+static int cfg_owner_validated(const char *short_name)
+{
+    if (!short_name) return 0;
+    if (str_eq(short_name, "ACPI2.0") || str_eq(short_name, "ACPI1.0"))
+        return acpi_is_ready();
+    if (str_eq(short_name, "SMBIOS3") || str_eq(short_name, "SMBIOS")) {
+        const uint8_t *addr = (const uint8_t *)0;
+        uint32_t size = 0;
+        return smbios_get_raw_table(&addr, &size);
+    }
+    return 0;  /* known short_name but no provider oracle */
+}
+
 static void catalog_uefi_cfg_tables(void)
 {
     uint32_t n = g_boot_info.config_table_count;
@@ -173,19 +193,22 @@ static void catalog_uefi_cfg_tables(void)
 
         const char *short_name = cfg_table_short_name(&src->guid);
 
-        /* Status assignment honours the header contract:
-         *   VALIDATED       -> per-provider helper succeeded (known GUID)
-         *   UNKNOWN_PROFILE -> nonzero pointer, GUID not recognised here
-         *   DEGRADED        -> NULL VendorTable pointer (firmware bug)
-         * Range checks against the UEFI memory map remain owned by the
-         * later TODO-04 validator section. */
+        /* Status assignment honours the header contract: VALIDATED ONLY
+         * when a per-provider helper has confirmed success.  Knowing the
+         * GUID is not enough -- acpi_init may have rejected the RSDP,
+         * smbios_init may have failed entry-point parsing, etc. */
         if (src->table_addr == 0) {
             e->status = FW_STATUS_DEGRADED;
             e->degraded_reason = FW_DEGRADED_NULL_POINTER;
-        } else if (short_name) {
+        } else if (cfg_owner_validated(short_name)) {
             e->status = FW_STATUS_VALIDATED;
             e->degraded_reason = FW_DEGRADED_NONE;
         } else {
+            /* Includes both unknown GUIDs AND known-name entries whose
+             * provider has not yet been validated (FPDT/MAT/RtProps/
+             * Conform/ESRT/DTB own their own checksums, but no oracle
+             * is exposed at catalog time -- those land here, and the
+             * TODO-04 validator section can re-check them). */
             e->status = FW_STATUS_UNKNOWN_PROFILE;
             e->degraded_reason = FW_DEGRADED_NONE;
         }

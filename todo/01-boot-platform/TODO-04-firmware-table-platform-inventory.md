@@ -62,7 +62,7 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 
 **Test checkpoint:** Boot log shows `[BOOT] firmware tables: <N> cataloged` line; `firmware_table_lookup_guid(EFI_ACPI_20_TABLE_GUID)` returns a valid entry on QEMU OVMF + VirtualBox EFI; lookup of an unknown GUID returns NULL. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 51 firmware-table assertions across 11 sub-tests, 0 failures (1 SKIP on QEMU OVMF: <2 SSDTs)
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 12 firmware-table sub-tests / 23 assertions, 0 failures (1 SKIP on QEMU OVMF: <2 SSDTs)
 >
 > **Notes:**
 > - Shipped: `include/kernel/firmware_tables.h` + `src/kernel/firmware_tables.c` (~290 LOC catalog + lookups), unit tests at `src/kernel/test/test_firmware_tables.c`, plus `acpi_for_each_record()` / `acpi_get_record()` accessors on `acpi.c` for duplicate-preserving SDT enumeration.
@@ -71,7 +71,9 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 > - Canonical doc: `include/kernel/firmware_tables.h` API contract.
 > - Scope boundary: §1 records what per-provider helpers already validated. Range checks against the UEFI memory map and per-table checksum re-verification are owned by §2; ESRT/MAT/conformance details remain owned by §5/§6/§7.
 >
-> **Accepted:** [high] ACPI catalog walk dereferences firmware child pointers before range validation -> XREF: §2 (item: "Validate every table pointer against the UEFI memory map before dereference"). Reason: per-provider deref surface already shipped in `acpi_init` / `acpi_enumerate_signatures` (commit 194e6012); §1 routes through that pre-existing path and does not introduce new pointer chases. UEFI-memory-map range gating is the named owner of §2's first item.
+> **Verified:** 2026-04-30 | commit `57d1aa79` | 5/5 items | build OK | smoke PASS (QEMU OVMF 2.30s)
+> **Accepted:** [H] ACPI catalog walk dereferences firmware child pointers before range validation -> XREF: 01-boot-platform/TODO-04 §2 (item: "Validate every table pointer against the UEFI memory map before dereference" at line 69). Reason: pre-existing dereference surface from acpi_init / acpi_enumerate_signatures (commit 194e6012); §1 routes through that path without new pointer chases.
+> **Quality reviewed:** 2026-04-30 | Codex 9x (design + adversarial + adversarial-impl + re-adversarial x4 + consistency + perf) | 6H+1M+0L fixed, 1H accepted-XREF | scope: kernel-code-quality
 
 ---
 
