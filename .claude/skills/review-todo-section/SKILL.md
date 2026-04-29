@@ -111,6 +111,12 @@ description: Full review of a TODO section -- adversarial Codex, consistency, pe
    **Prompt scope:** the diff between the pre-fix and post-fix tree (`git diff <pre-fix-sha>..HEAD -- <files>`). Angles: regressions introduced by the fixes themselves, new races opened by lock-order changes, new NULL paths from added error handling, new resource leaks from added early returns, new ABI drift from struct/enum touches.
    The PostToolUse hook fires `receiving-code-review` reminder; follow it. Findings -> verify, fix, build. Track in stamp as `Codex Nx` (incrementing the dispatch count by 1; add `re-adversarial` to the `<kinds>` list).
 
+   **Iteration: keep dispatching re-adversarial until convergence (no new findings) OR a hard cap of 8 rounds.** Updated 2026-04-29 from the previous "3 rounds" cap after the §11 UKI review proved that genuine H findings landed in rounds 4 and 5 -- a low cap caused the agent to stop while load-bearing security gaps were still open. Convergence rule:
+   - **A round closes the loop** when Codex returns zero findings OR every finding the round produced is rejected with code evidence (false positive). State this explicitly in chat: "round N: zero findings, loop closed" OR "round N: 2 findings rejected (file:line evidence: <quote>); loop closed."
+   - **A round continues the loop** when ANY valid Critical/High/Medium finding is fixed in that round. Every fix MUST be verified at file:line before the next round dispatches.
+   - **The hard cap of 8 is a circuit-breaker, not a soft target.** If round 8 still produces valid H findings, STOP, file the remaining gaps as concrete `[ ]` checklist items in the section under Branch B (sub-items in this section) or Branch C/D (new section / new TODO file) per scope-gap protocol, then ship. The pattern of "reach the cap with open findings" is itself a signal that scope is wrong; re-evaluate before continuing.
+   - **Defer-to-tracked-followup is NEVER chat-only.** "I'll defer this" without a concrete `[ ]` item in a target TODO is a process violation -- the Accepted-XREF concreteness check (step 15) and the filed-in-owner check (step 18) exist precisely to catch this.
+
    If no trigger fires, skip and note in the stamp: include `(<reason>)` after the count, e.g. `Codex 3x (adversarial, consistency, perf)` with a brief Notes-block bullet `re-adversarial skipped: docs+stamp-only fixes`.
 
 ### Phase 4: Stamp + Commit

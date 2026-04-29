@@ -3753,6 +3753,9 @@ STUB
     echo "stub-key" > "$SCD_REPO/keys/MOK.key"
     echo "stub-crt" > "$SCD_REPO/keys/MOK.cer"
     echo "stub-efi" > "$SCD_REPO/build/tools/BOOTX64.EFI"
+    # UKI artifact stub: section-11 dual-sign requires both PEs present;
+    # missing UKI is now hard-fail (Codex consistency H1 fix 2026-04-29).
+    echo "stub-uki" > "$SCD_REPO/build/tools/BOOTX64.UKI.efi"
     echo "stub-shim" > "$SCD_REPO/shim/shimx64.efi"
 
     _scd_run() {

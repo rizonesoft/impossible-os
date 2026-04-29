@@ -3721,22 +3721,65 @@ kernel_loaded:
     /* Find kernel_main symbol in the ELF symbol table.
      * The ELF entry point (_start) is 32-bit code for GRUB compatibility.
      * Since UEFI is already in 64-bit Long Mode, we must call kernel_main
-     * directly, skipping the 32→64 mode transition in entry.asm. */
+     * directly, skipping the 32->64 mode transition in entry.asm.
+     *
+     * Codex review M1 fix 2026-04-29: bound the section-header walk
+     * against file_size so a malformed signed UKI .linux section
+     * cannot make the bootloader read past the embedded kernel
+     * buffer or divide by zero. The Secure Boot signature only
+     * proves the bytes were not tampered with -- it does NOT prove
+     * the ELF is well-formed. */
     {
-        Elf64_Shdr *shdr = (Elf64_Shdr *)(file_buf + ehdr->e_shoff);
+        Elf64_Shdr *shdr = (Elf64_Shdr *)0;
         UINT16 s;
         UINT64 km_addr = 0;
 
+        /* Section-table envelope: e_shoff + e_shnum * sh_size_of_entry
+         * must fit within file_size; e_shentsize must equal sizeof. */
+        if (ehdr->e_shentsize != sizeof(Elf64_Shdr) ||
+            ehdr->e_shnum == 0 ||
+            ehdr->e_shoff > file_size ||
+            (UINT64)ehdr->e_shnum * sizeof(Elf64_Shdr) > file_size - ehdr->e_shoff) {
+            efi_print(u"[FAIL] Kernel ELF: malformed section header table\r\n");
+            return EFI_LOAD_ERROR;
+        }
+        shdr = (Elf64_Shdr *)(file_buf + ehdr->e_shoff);
+
         for (s = 0; s < ehdr->e_shnum; s++) {
             if (shdr[s].sh_type == SHT_SYMTAB) {
+                /* sh_entsize MUST be > 0 and match Elf64_Sym; sh_link
+                 * MUST be a valid section index; symtab and strtab
+                 * data MUST fit within file_size. */
+                if (shdr[s].sh_entsize == 0 ||
+                    shdr[s].sh_entsize != sizeof(Elf64_Sym) ||
+                    shdr[s].sh_link >= ehdr->e_shnum ||
+                    shdr[s].sh_offset > file_size ||
+                    shdr[s].sh_size > file_size - shdr[s].sh_offset) {
+                    continue;  /* malformed symtab; try next section */
+                }
+                UINT32 strtab_idx = shdr[s].sh_link;
+                if (shdr[strtab_idx].sh_offset > file_size ||
+                    shdr[strtab_idx].sh_size > file_size - shdr[strtab_idx].sh_offset) {
+                    continue;  /* malformed strtab; try next */
+                }
+                UINT64 strtab_size = shdr[strtab_idx].sh_size;
                 Elf64_Sym *syms = (Elf64_Sym *)(file_buf + shdr[s].sh_offset);
                 UINT64 nsyms = shdr[s].sh_size / shdr[s].sh_entsize;
-                /* String table is in section shdr[s].sh_link */
-                char *strtab = (char *)(file_buf + shdr[shdr[s].sh_link].sh_offset);
+                char *strtab = (char *)(file_buf + shdr[strtab_idx].sh_offset);
                 UINT64 j;
 
                 for (j = 0; j < nsyms; j++) {
+                    /* st_name must be within the strtab bounds; the
+                     * strtab MUST end with NUL so name traversal
+                     * cannot run off the end. Conservative cap: any
+                     * st_name >= strtab_size is malformed. */
+                    if (syms[j].st_name >= strtab_size)
+                        continue;
                     char *name = strtab + syms[j].st_name;
+                    UINT64 name_room = strtab_size - syms[j].st_name;
+                    /* "kernel_main" + NUL == 12 bytes; require room. */
+                    if (name_room < 12)
+                        continue;
                     /* Compare with "kernel_main" */
                     if (name[0]=='k' && name[1]=='e' && name[2]=='r' &&
                         name[3]=='n' && name[4]=='e' && name[5]=='l' &&
@@ -5684,21 +5727,35 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
 
         li_status = gBS->HandleProtocol(gImageHandle, &li_guid,
                                          (VOID **)&loaded_image);
-        if (!EFI_ERROR(li_status) && loaded_image && loaded_image->DeviceHandle) {
-            g_boot_device_handle = loaded_image->DeviceHandle;
-            serial_early_print("[BOOT] Boot device: handle=0x");
-            serial_early_print_hex16((UINT16)((UINTN)g_boot_device_handle >> 48));
-            serial_early_print_hex16((UINT16)((UINTN)g_boot_device_handle >> 32));
-            serial_early_print_hex16((UINT16)((UINTN)g_boot_device_handle >> 16));
-            serial_early_print_hex16((UINT16)(UINTN)g_boot_device_handle);
-            serial_early_print("\n");
-            post_code16(POST16_BL_BOOT_DEV_OK);
+        if (!EFI_ERROR(li_status) && loaded_image) {
+            /* DeviceHandle is OPTIONAL on the LoadedImage; UKI
+             * detection is independent. Codex review H1 fix
+             * 2026-04-29: previously gating UKI detection on
+             * DeviceHandle let a UKI invocation with NULL DeviceHandle
+             * silently degrade to split-path boot without setting
+             * BOOT_FLAG_INVOKED_VIA_UKI -- breaking the whole-chain
+             * Secure Boot guarantee on degraded LoadedImage paths. */
+            if (loaded_image->DeviceHandle) {
+                g_boot_device_handle = loaded_image->DeviceHandle;
+                serial_early_print("[BOOT] Boot device: handle=0x");
+                serial_early_print_hex16((UINT16)((UINTN)g_boot_device_handle >> 48));
+                serial_early_print_hex16((UINT16)((UINTN)g_boot_device_handle >> 32));
+                serial_early_print_hex16((UINT16)((UINTN)g_boot_device_handle >> 16));
+                serial_early_print_hex16((UINT16)(UINTN)g_boot_device_handle);
+                serial_early_print("\n");
+                post_code16(POST16_BL_BOOT_DEV_OK);
+            } else {
+                g_boot_device_handle = (EFI_HANDLE)0;
+                serial_early_print("[WARN] Boot device: LoadedImage has NULL "
+                                   "DeviceHandle -- UKI detection still runs\n");
+            }
 
             /* UKI detection: walk our own PE section table for `.linux`
              * (UAPI Group Unified Kernel Image spec). When invoked
              * through a UKI artifact, the embedded kernel + cmdline +
              * osrel are covered by the same firmware-verified Secure
-             * Boot signature as BOOTX64.EFI itself. */
+             * Boot signature as BOOTX64.EFI itself. Runs regardless
+             * of DeviceHandle availability. */
             post_code16(POST16_BL_UKI_DETECT);
             detect_uki_sections(loaded_image);
             if (g_uki_kernel_ptr && g_uki_kernel_size > 0) {

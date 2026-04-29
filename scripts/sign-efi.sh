@@ -92,33 +92,75 @@ if [ ! -f "$EFI_BIN" ]; then
     exit 1
 fi
 
-# Helper: sign one PE binary in-place with sbsign. Atomic via temp +
-# verify + mv. Used for both BOOTX64.EFI (split path) and BOOTX64.UKI.efi
-# (Unified Kernel Image, whole-chain Secure Boot signature).
-sign_one() {
-    local target="$1"
-    local label="$2"
-    if [ ! -f "$target" ]; then
-        return 0
-    fi
-    local tmp="${target}.signing.tmp"
-    local cleanup_trap_was=$(trap -p EXIT)
-    trap "rm -f \"$tmp\"" EXIT
-    echo "[SIGN] Signing $label ($target) with MOK..."
-    sbsign --key "$MOK_KEY" --cert "$MOK_CRT" --output "$tmp" "$target"
-    sbverify --cert "$MOK_CRT" "$tmp" \
-        && echo "[SIGN] $label signature verification OK" \
-        || { echo "[SIGN] ERROR: $label signature verification FAILED"; exit 1; }
-    mv "$tmp" "$target"
-    trap - EXIT
-    eval "$cleanup_trap_was"
-}
+# Two-phase atomic dual-sign: sign + verify BOTH artifacts to temp
+# files first, then replace BOTH originals only after every step
+# succeeded. On any failure, both originals stay untouched. Codex
+# consistency H1 fix 2026-04-29: the previous one-at-a-time helper
+# could leave BOOTX64.EFI freshly signed alongside an unsigned/stale/
+# absent BOOTX64.UKI.efi, violating the dual-artifact consistency
+# contract for releases.
 
-sign_one "$EFI_BIN" "BOOTX64.EFI"
-
-# Unified Kernel Image alongside the split artifact. UAPI Group spec;
-# whole-chain signed PE that bundles BOOTX64.EFI stub + .linux kernel +
-# .cmdline + .osrel into one signable unit. Built by scripts/build.sh
-# UKI pack step right before this signing stage.
 UKI_BIN="${UKI_BIN:-$REPO_ROOT/build/tools/BOOTX64.UKI.efi}"
-sign_one "$UKI_BIN" "BOOTX64.UKI.efi"
+
+# Both artifacts MUST exist when the UKI pipeline ran -- the build
+# script's `Pack BOOTX64.UKI.efi` step produces both before we sign.
+# A missing UKI here is a build pipeline failure, not a soft skip,
+# so we fail closed.
+if [ ! -f "$EFI_BIN" ]; then
+    echo "[ERROR] EFI binary not found: $EFI_BIN" >&2
+    echo "        Run: bash scripts/build.sh" >&2
+    exit 1
+fi
+if [ ! -f "$UKI_BIN" ]; then
+    echo "[ERROR] UKI binary not found: $UKI_BIN" >&2
+    echo "        Run: bash scripts/build.sh (Pack BOOTX64.UKI.efi step)" >&2
+    exit 1
+fi
+
+EFI_TMP="${EFI_BIN}.signing.tmp"
+UKI_TMP="${UKI_BIN}.signing.tmp"
+trap 'rm -f "$EFI_TMP" "$UKI_TMP"' EXIT
+
+# Phase 1: sign + verify both to temp files. Failures here leave the
+# originals untouched.
+echo "[SIGN] Phase 1a: signing BOOTX64.EFI to temp..."
+sbsign --key "$MOK_KEY" --cert "$MOK_CRT" --output "$EFI_TMP" "$EFI_BIN"
+sbverify --cert "$MOK_CRT" "$EFI_TMP" \
+    && echo "[SIGN] BOOTX64.EFI signature verification OK" \
+    || { echo "[SIGN] ERROR: BOOTX64.EFI signature verification FAILED" >&2; exit 1; }
+
+echo "[SIGN] Phase 1b: signing BOOTX64.UKI.efi to temp..."
+sbsign --key "$MOK_KEY" --cert "$MOK_CRT" --output "$UKI_TMP" "$UKI_BIN"
+sbverify --cert "$MOK_CRT" "$UKI_TMP" \
+    && echo "[SIGN] BOOTX64.UKI.efi signature verification OK" \
+    || { echo "[SIGN] ERROR: BOOTX64.UKI.efi signature verification FAILED" >&2; exit 1; }
+
+# Phase 2: replace both originals atomically. Codex re-adversarial
+# H1 fix 2026-04-29: per-file mv is atomic, but the window between
+# mv #1 and mv #2 can leave EFI signed-fresh next to a stale UKI if
+# mv #2 fails or the script is killed between the two. Use a
+# backup-and-rollback pattern so any failure restores BOTH originals
+# to the pre-Phase-2 state.
+EFI_BAK="${EFI_BIN}.signing.bak"
+UKI_BAK="${UKI_BIN}.signing.bak"
+trap 'rm -f "$EFI_TMP" "$UKI_TMP" "$EFI_BAK" "$UKI_BAK"' EXIT
+
+echo "[SIGN] Phase 2a: backing up originals..."
+cp -f "$EFI_BIN" "$EFI_BAK"
+cp -f "$UKI_BIN" "$UKI_BAK"
+
+echo "[SIGN] Phase 2b: replacing originals..."
+if ! mv "$EFI_TMP" "$EFI_BIN"; then
+    echo "[SIGN] ERROR: mv to $EFI_BIN failed -- both originals untouched (backups stay until trap fires)" >&2
+    exit 1
+fi
+if ! mv "$UKI_TMP" "$UKI_BIN"; then
+    echo "[SIGN] ERROR: mv to $UKI_BIN failed -- restoring $EFI_BIN from backup" >&2
+    if ! mv "$EFI_BAK" "$EFI_BIN"; then
+        echo "[SIGN] CRITICAL: rollback of $EFI_BIN FAILED -- manual intervention required; backup at $EFI_BAK" >&2
+    fi
+    exit 1
+fi
+trap - EXIT
+rm -f "$EFI_BAK" "$UKI_BAK"
+echo "[SIGN] BOOTX64.EFI + BOOTX64.UKI.efi: dual-artifact signing complete"

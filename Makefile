@@ -160,13 +160,57 @@ $(UEFI_EFI): src/boot/uefi/bootx64.c src/boot/uefi/efi.h src/boot/uefi/uefi.lds 
 ## overrides (MOK_KEY=, MOK_CRT=) are honored consistently. Codex consistency
 ## review M3 fix 2026-04-28: previously this target reimplemented signing
 ## inline, so MOK_KEY=/run/secrets/... CI overrides through bash
-## scripts/build.sh were silently dropped.
-MOK_KEY := keys/MOK.key
-MOK_CRT := keys/MOK.cer
+## scripts/build.sh were silently dropped. Codex review H2 fix 2026-04-29:
+## use `?=` so environment overrides through `MOK_KEY=/run/secrets/... bash
+## scripts/build.sh` reach the recipe; `:=` would have made the env value
+## ignored in favor of the repo-local default.
+MOK_KEY ?= keys/MOK.key
+MOK_CRT ?= keys/MOK.cer
 
-sign-efi: $(UEFI_EFI)
+## Signed-artifacts stamp: non-phony file that captures the
+## signing pipeline's result so downstream targets (system-disk, all)
+## depend on the *signed* output rather than just $(UEFI_EFI).
+## Codex re-adversarial M1 fix 2026-04-29: previously system-disk's
+## sign-efi prerequisite was removed to fix double-signing, but `make
+## all` / direct `make system-disk` then bypassed signing entirely.
+## The stamp re-establishes the dependency without re-introducing the
+## double-sign (the stamp updates only when sign-efi.sh succeeds, and
+## sign-efi.sh itself is the single signing site).
+##
+## Codex re-re-adversarial H1 fix 2026-04-29: SIGN_STAMP / UKI_BIN_PATH
+## MUST be defined BEFORE any rule references them. GNU make expands
+## prerequisites at parse time, so `sign-efi: $(SIGN_STAMP)` declared
+## ahead of the := assignment was silently dropped (prereq evaluated
+## to empty, target became a no-op).
+SIGN_STAMP := $(BUILD_DIR)/.signed-artifacts.stamp
+UKI_BIN_PATH := $(BUILD_DIR)/tools/BOOTX64.UKI.efi
+
+sign-efi: $(SIGN_STAMP)
+
+# Codex re-re-re-adversarial H1 fix 2026-04-29: key/cert files are
+# wildcard-prereqs so dev builds without keys still work, but a real
+# signing run that rotates the MOK key/cert invalidates the stamp.
+# When the wildcard expands to empty (no keys yet) the dependency is
+# absent and the recipe still fires (because the stamp doesn't exist
+# either); when keys are present the dependency reflects their mtime
+# so a key rotation forces re-sign.
+$(SIGN_STAMP): $(UEFI_EFI) $(UKI_BIN_PATH) scripts/sign-efi.sh \
+              $(wildcard $(MOK_KEY)) $(wildcard $(MOK_CRT))
+	@# Codex re-re-adversarial H1 fix 2026-04-29: only touch the stamp
+	@# when actual signing happened. sign-efi.sh exits 0 from BOTH the
+	@# successful-sign path AND the keyless-dev-build skip path, so an
+	@# unconditional touch would cache "signed" status for an unsigned
+	@# binary, then bypass signing on a later build after keys appear.
+	@# Refuse to write the stamp when MOK_KEY is absent; recipe still
+	@# exits 0 so dev builds proceed, but the stamp stays missing so
+	@# adding keys forces a real sign on the next make invocation.
+	@if [ ! -f "$(MOK_KEY)" ]; then \
+		echo "[SIGN] dev build (no $(MOK_KEY)) -- skipping signing, stamp NOT created"; \
+		exit 0; \
+	fi
 	@MOK_KEY="$(MOK_KEY)" MOK_CRT="$(MOK_CRT)" EFI_BIN="$(UEFI_EFI)" \
 		bash scripts/sign-efi.sh
+	@touch $@
 
 ## os-logo: Generate shared OS logo header from PNG
 os-logo: include/kernel/os_logo.h
@@ -705,7 +749,7 @@ IXFS_PART_SIZE := $(shell echo $$(( (512*1024*1024 - 202375168 - 34*512) )) )
 
 system-disk: $(SYSTEM_DISK)
 
-$(SYSTEM_DISK): $(KERNEL_BIN) $(UEFI_EFI) sign-efi \
+$(SYSTEM_DISK): $(KERNEL_BIN) $(UEFI_EFI) $(SIGN_STAMP) \
                 tools/make-system-disk.c tools/mkfs-ixfs.c \
                 $(SYSROOT)/hello.exe
 	@echo "[DISK] Building system disk..."
