@@ -184,10 +184,11 @@ Some `implement-todo-section` steps are inherently judgment-driven (e.g. step 6 
 
 1. **Ship as WARN-only.** The hook detects a heuristic miss, emits a `[heuristic-step-N] WARN -- ...` line to stderr, AND appends one structured JSON line to `.claude/state/heuristic-misses.jsonl` via the shared [`_heuristic_misses.emit_warn`](../../.claude/hooks/_heuristic_misses.py) helper. The hook MUST NOT exit 2; the user / agent gets the warning, the workflow continues.
 2. **Observe.** `bash scripts/heuristic-misses-report.sh` summarizes the log per step (count, false-positive ratio over the last N entries). False-positive flagging is retroactive: `bash scripts/heuristic-mark-false-positive.sh <step> [<n>]` rewrites the Nth-most-recent entry's `false_positive_user_flagged: true` field after the user / agent confirms the WARN was wrong.
-3. **Promote to ERROR (BLOCK)** when the per-heuristic graduation criterion is met. Documented criteria for the seven heuristics shipped today:
+3. **Promote to ERROR (BLOCK)** when the per-heuristic graduation criterion is met. Documented criteria for the heuristics shipped today:
    - **Step 1** (todo Read before first src/ Edit): `<5% FP over 20 sections`.
    - **Step 2** (XREF target reads): `<5% FP over 20 sections`.
    - **Step 3** (>=3 explore queries before first Edit): `<10% FP over 30 sections`. Counts `Grep`, `Glob`, `mcp__lsp-bridge__*`, `mcp__todo-graph__*` per [CLAUDE.md "MCP-first defaults"](../../CLAUDE.md#mcp-usage).
+   - **Step 4** (Phase 1 evidence-gate `>=2 Read/Grep on src/include/.claude/scripts/docs` before adversarial Codex): `<5% FP over 30 sections`. Lower FP tolerance because Phase 1 is foundational -- if the evidence gate misfires the rest of the review pipeline runs blind. Already shipped as a hard BLOCK in [`phase1_evidence_gate.py`](../../.claude/hooks/phase1_evidence_gate.py); the WARN is additive (BLOCK+WARN), the miss-log is the tuning surface for `PHASE1_MIN_READS` rather than a promotion path.
    - **Step 9** (Codex test-coverage on test-touching commits): `<10% FP over 20 sections`.
    - **Step 15** (Edit between latest Codex and section commit): `<10% FP over 20 sections`.
    - **Step 17** (>=2 Read/Grep between latest Codex and commit): `<10% FP over 20 sections`.

@@ -53,11 +53,23 @@ if str(_HOOK_DIR) not in sys.path:
 
 # pylint: disable=wrong-import-position
 from skill_step_map import MULTI_STEP_SKILLS  # noqa: E402
+import _heuristic_misses as hm  # noqa: E402
 
 _STATE_REL = ".claude/state/skill-progress.json"
 _SKIP_LOG_REL = ".claude/state/skip-log.jsonl"
 _SKIP_REASON_MIN_LEN = 12
-_PHASE1_MIN_EVIDENCE = 2
+
+# Threshold for required Read/Grep evidence on src/include/.claude/scripts/docs
+# before allowing a step-5 adversarial Codex dispatch. Originally chosen at
+# section-17 ship time as "enough to prove Phase 1 evidence ran" without
+# empirical tuning. Section-27 of 00-infrastructure/TODO-08 wires this gate
+# into the section-21 heuristic miss-log surface so the threshold can be
+# tuned by data: every BLOCK fires emit_warn(step=4), the periodic
+# scripts/heuristic-misses-report.sh surfaces the FP ratio, and the
+# threshold here adjusts up or down based on observed false-positive rate
+# over a documented N-section window. Tuning is a one-line edit.
+PHASE1_MIN_READS = 2
+_PHASE1_MIN_EVIDENCE = PHASE1_MIN_READS  # legacy alias retained for callers
 
 # review-kind detection. Anchored to first non-blank line per
 # codex_review_completed.py _detect_review_kind: scanning the entire
@@ -387,7 +399,7 @@ def main() -> int:
         "step 5 (adversarial Codex dispatch) but Phase 1 evidence is "
         f"missing. Found {evidence_count} Read/Grep on src / include "
         f"/ .claude / scripts / docs since the skill started; require "
-        f"{_PHASE1_MIN_EVIDENCE}.\n"
+        f"{PHASE1_MIN_READS}.\n"
         "[phase1-evidence-gate]   Phase 1 of review-todo-section: "
         "(1) evidence map per [x] item -> file:line, (2) scope-gap "
         "audit grep for TODO/FIXME/HACK/STATUS_NOT_IMPLEMENTED, "
@@ -400,7 +412,22 @@ def main() -> int:
         "section, etc.): SKIP_PHASE1_BLOCK=1 "
         f"SKIP_PHASE1_BLOCK_REASON=\"<text >= {_SKIP_REASON_MIN_LEN} chars>\".\n"
         "[phase1-evidence-gate]   Doctrine: feedback_skill_invocation_drift "
-        "memory + TODO-08 §17.\n"
+        "memory + TODO-08 sections 17 and 27.\n"
+    )
+    # Section-27: emit a miss-log entry alongside the BLOCK so the section-21
+    # heuristic-miss telemetry path can compute the FP ratio over time. Step 4
+    # is the canonical step id for Phase 1 evidence (review-todo-section
+    # steps 1-3 = evidence map / scope-gap audit / test-checkpoint, step 4 =
+    # build that gates step 5 adversarial). The gate stays a hard BLOCK; the
+    # WARN is additive (logged-for-ratio, not converted-to-warning).
+    todo_path, section = hm.parse_active_todo_section(entry)
+    hm.emit_warn(
+        root, 4,
+        "phase1-evidence-missing",
+        f"step-5 adversarial dispatch attempted with {evidence_count}/"
+        f"{PHASE1_MIN_READS} Phase 1 Read/Grep evidence calls. Logged for "
+        "FP-ratio tuning of the threshold per section-27 doctrine.",
+        todo_path=todo_path, section=section,
     )
     return 2
 

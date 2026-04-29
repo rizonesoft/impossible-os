@@ -74,10 +74,61 @@ print()
 # the FP ratio is computed over the last N entries (20 for steps
 # 1/2/9/15/17/18; 30 for step 3). Lifetime ratio is shown separately
 # for context. Promotion decision uses the windowed value.
-WINDOW_BY_STEP = {1: 20, 2: 20, 3: 30, 9: 20, 15: 20, 17: 20, 18: 20}
+WINDOW_BY_STEP = {1: 20, 2: 20, 3: 30, 4: 30, 9: 20, 15: 20, 17: 20, 18: 20}
+
+# Per-section dedup for steps where the same section can fire the gate
+# multiple times (Phase 1 evidence-gate retry loop). Collapse by
+# (todo_path, section), keeping the most-recent entry per group, so the
+# windowed FP ratio counts sections, not attempts. Steps 1/2/3/9/15/17/18
+# are first-edit / first-codex gates that fire once per section by
+# construction, so their per-attempt sampling already equals per-section.
+SECTION_SCOPED_STEPS = {4}
+
+def _section_collapse(records):
+    """Collapse records by (todo_path, section), keeping the most-recent
+    per group. Records with missing metadata (empty todo_path or None
+    section) stay UNIQUE -- keyed on ts_ns so each remains a distinct
+    observation. This prevents the prior-round failure mode where every
+    under-attributed BLOCK collapsed into one ('', None) bucket and
+    hid the FP signal the report is supposed to surface.
+
+    FP flags are aggregated (logical OR) across the group: if ANY
+    record in the section was flagged false-positive, the collapsed
+    record carries the flag. Without this, an earlier-flagged FP
+    followed by a later unflagged retry would silently un-flag the
+    section and understate the FP rate the threshold-tuning data
+    relies on.
+    """
+    by_key = {}
+    fp_seen = {}
+    for r in records:
+        todo_path = (r.get("todo_path", "") or "").strip()
+        section = r.get("section")
+        if todo_path and isinstance(section, int):
+            key = (todo_path, section)
+        else:
+            # Non-collapsible: each record gets a unique key so it
+            # survives as its own observation in the windowed FP ratio.
+            key = ("__unique__", r.get("ts_ns", 0), id(r))
+        if r.get("false_positive_user_flagged") is True:
+            fp_seen[key] = True
+        prior = by_key.get(key)
+        if prior is None or r.get("ts_ns", 0) > prior.get("ts_ns", 0):
+            by_key[key] = r
+    out = []
+    for key, r in by_key.items():
+        if fp_seen.get(key) and r.get("false_positive_user_flagged") is not True:
+            # Keep the latest record for display; lift the FP flag from
+            # the group so the windowed ratio counts this section as FP.
+            r = dict(r)
+            r["false_positive_user_flagged"] = True
+        out.append(r)
+    return out
 
 for step in sorted(by_step.keys()):
     rs = by_step[step]
+    if step in SECTION_SCOPED_STEPS:
+        rs = _section_collapse(rs)
     n_total = len(rs)
     fp_total = sum(1 for r in rs if r.get("false_positive_user_flagged") is True)
     ratio_total = (fp_total / n_total) if n_total else 0.0
@@ -110,6 +161,8 @@ for step in sorted(by_step.keys()):
 print("Promotion criteria (per docs/infrastructure/ai-system.md):")
 print("  - Step 1/2: <5% FP over 20 sections")
 print("  - Step 3:   <10% FP over 30 sections")
+print("  - Step 4:   <5% FP over 30 sections (Phase 1 evidence-gate; tighter")
+print("              tolerance because the gate is foundational; section-27 doctrine)")
 print("  - Step 9/15/17/18: <10% FP over 20 sections")
 print()
 print("Mark a miss as false-positive:")

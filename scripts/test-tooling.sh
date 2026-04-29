@@ -3272,6 +3272,12 @@ else
        "$PCE_REPO/.claude/hooks/_review_kind.py"
     cp "$REPO_ROOT/.claude/hooks/_skip_env.py" \
        "$PCE_REPO/.claude/hooks/_skip_env.py"
+    # phase1_evidence_gate.py imports _heuristic_misses at module load
+    # for the section-27 step-4 miss-log emission path. Without this
+    # copy, every existing sub-test hits ModuleNotFoundError before the
+    # gate even runs.
+    cp "$REPO_ROOT/.claude/hooks/_heuristic_misses.py" \
+       "$PCE_REPO/.claude/hooks/_heuristic_misses.py"
 
     pushd "$PCE_REPO" >/dev/null
     git init -q -b main
@@ -3378,6 +3384,58 @@ print(json.dumps({
     else
         t_fail "phase1_evidence_block: consistency bypass" \
                "rc=$PCE_RC4 out=$PCE_OUT4"
+    fi
+
+    # ---- phase1_evidence_misslog sub-tests ----
+    # Owner: 00-infrastructure/TODO-08-automation-hardening (Phase 1
+    # evidence-gate threshold tuning via miss-log telemetry section).
+    # The gate emits a step-4 miss-log entry on every BLOCK so the
+    # heuristic-misses telemetry path computes FP ratio and tunes
+    # PHASE1_MIN_READS by data. Three checks:
+    #   (1) 0 reads -> BLOCK + miss-log entry with step:4
+    #   (2) 1 read  -> BLOCK + new miss-log entry (separate fire)
+    #   (3) 2 reads -> PASS, NO new miss-log entry appended
+    PCE_MISSLOG="$PCE_REPO/.claude/state/heuristic-misses.jsonl"
+    rm -f "$PCE_MISSLOG"
+    : > "$PCE_TRANSCRIPT"
+    cd "$PCE_REPO" && echo "$PCE_PAYLOAD" | python3 .claude/hooks/phase1_evidence_gate.py >/dev/null 2>&1; cd - >/dev/null
+    if [ -f "$PCE_MISSLOG" ] && grep -q '"step":4' "$PCE_MISSLOG" && \
+       grep -q '"signal":"phase1-evidence-missing"' "$PCE_MISSLOG"; then
+        t_pass "phase1_evidence_misslog: 0 Reads -> BLOCK + miss-log step:4 entry"
+    else
+        t_fail "phase1_evidence_misslog: 0 Reads miss-log emit" \
+               "exists=$([ -f "$PCE_MISSLOG" ] && echo yes || echo no) content=$(cat "$PCE_MISSLOG" 2>&1 | head -3)"
+    fi
+
+    # 1 Read still BELOW threshold -> BLOCK + new miss-log entry.
+    PCE_T1_TS="$(python3 -c 'import time; print(time.time_ns())')"
+    cat > "$PCE_TRANSCRIPT" <<TSCRIPT
+{"ts_ns":$PCE_T1_TS,"message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"src/kernel/foo.c"}}]}}
+TSCRIPT
+    PCE_MISSLOG_LINES_BEFORE=$(wc -l < "$PCE_MISSLOG" 2>/dev/null || echo 0)
+    cd "$PCE_REPO" && echo "$PCE_PAYLOAD" | python3 .claude/hooks/phase1_evidence_gate.py >/dev/null 2>&1; cd - >/dev/null
+    PCE_MISSLOG_LINES_AFTER=$(wc -l < "$PCE_MISSLOG" 2>/dev/null || echo 0)
+    if [ "$PCE_MISSLOG_LINES_AFTER" -gt "$PCE_MISSLOG_LINES_BEFORE" ]; then
+        t_pass "phase1_evidence_misslog: 1 Read -> BLOCK + new miss-log entry"
+    else
+        t_fail "phase1_evidence_misslog: 1 Read miss-log emit" \
+               "before=$PCE_MISSLOG_LINES_BEFORE after=$PCE_MISSLOG_LINES_AFTER"
+    fi
+
+    # 2 Reads at threshold -> PASS, NO new miss-log entry.
+    PCE_T2_TS="$(python3 -c 'import time; print(time.time_ns())')"
+    cat > "$PCE_TRANSCRIPT" <<TSCRIPT
+{"ts_ns":$PCE_T2_TS,"message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"src/kernel/foo.c"}}]}}
+{"ts_ns":$PCE_T2_TS,"message":{"content":[{"type":"tool_use","name":"Grep","input":{"path":"src/kernel","pattern":"spinlock_t"}}]}}
+TSCRIPT
+    PCE_MISSLOG_LINES_BEFORE2=$(wc -l < "$PCE_MISSLOG" 2>/dev/null || echo 0)
+    cd "$PCE_REPO" && echo "$PCE_PAYLOAD" | python3 .claude/hooks/phase1_evidence_gate.py >/dev/null 2>&1; PCE_RC_PASS=$?; cd - >/dev/null
+    PCE_MISSLOG_LINES_AFTER2=$(wc -l < "$PCE_MISSLOG" 2>/dev/null || echo 0)
+    if [ "$PCE_RC_PASS" = "0" ] && [ "$PCE_MISSLOG_LINES_AFTER2" = "$PCE_MISSLOG_LINES_BEFORE2" ]; then
+        t_pass "phase1_evidence_misslog: 2 Reads -> PASS, no new miss-log entry"
+    else
+        t_fail "phase1_evidence_misslog: 2 Reads PASS without emit" \
+               "rc=$PCE_RC_PASS before=$PCE_MISSLOG_LINES_BEFORE2 after=$PCE_MISSLOG_LINES_AFTER2"
     fi
 
     # ---- re_adv_trigger_block sub-tests ----
