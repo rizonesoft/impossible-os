@@ -390,7 +390,7 @@ If tests fail, use `/diagnose-serial-log` on the test output to classify and fix
 After wiring tests, dispatch a test coverage gap analysis to catch missing assertions. Apply `superpowers:receiving-code-review` discipline -- verify Codex suggestions technically before adding them.
 
 ```bash
-node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "[review-kind: test-coverage] <todo-path> <test coverage prompt>"
+bash scripts/codex-dispatch.sh '[review-kind: test-coverage] <todo-path> <test coverage prompt>'
 ```
 
 Focus: untested error paths, missing boundary tests, missing negative tests. Add any valid missing tests found. Skip for trivial test suites (< 3 assertions).

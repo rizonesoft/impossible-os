@@ -39,7 +39,7 @@ Every dispatch from this skill MUST open its prompt with the marker `[review-kin
 3. Dispatch adversarial review via the Codex plugin.
    - Command:
      ```bash
-     node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "[review-kind: adversarial] <todo-path> <focus prompt>"
+     bash scripts/codex-dispatch.sh '[review-kind: adversarial] <todo-path> <focus prompt>'
      ```
    - Include the exact file paths and line ranges in the focus prompt.
    - List ALL adversarial angles from step 2 in the prompt -- do not omit any.

@@ -375,6 +375,16 @@ def _segment_is_codex_invocation(seg_tokens: list[str]) -> bool:
     if head_base == "node" and "codex-companion.mjs" in second:
         # Wrapped: node <path>/codex-companion.mjs <subcmd> ...
         return _companion_subcmd_is_review(third)
+    # Section-28 canonical wrapper: bash scripts/codex-dispatch.sh '<prompt>'.
+    # The wrapper exec's into the same node + codex-companion.mjs +
+    # adversarial-review chain internally; here we recognize the wrapper
+    # shape itself so the gate attributes the dispatch to (todo_path,
+    # review-kind) via _detect_review_kind reading argv[1].
+    if head_base in ("bash", "sh", "/bin/bash", "/bin/sh") and \
+            second.endswith("codex-dispatch.sh"):
+        return True
+    if head_base == "codex-dispatch.sh" or head_base.endswith("/codex-dispatch.sh"):
+        return True
 
     if head_base == "codex":
         # Walk past Codex global options to find the real subcommand.
@@ -563,6 +573,18 @@ def _bash_prompt_arg(cmd: str) -> str:
                 if i + 2 < len(seg) and seg[i + 2] in _COMPANION_SUBCMDS:
                     return _first_positional_after(seg, i + 3)
                 return ""
+            # Section-28 wrapper: `bash scripts/codex-dispatch.sh '<prompt>'`
+            # The wrapper takes EXACTLY one positional (the full prompt).
+            # exec's into the same node + codex-companion.mjs shape
+            # internally, but at the Bash-tool layer the visible argv is
+            # `bash <wrapper-path> <prompt>` so we must extract here.
+            if base in ("bash", "sh") and i + 1 < len(seg) and \
+                    seg[i + 1].endswith("codex-dispatch.sh"):
+                return _first_positional_after(seg, i + 2)
+            # Bare wrapper invocation: `scripts/codex-dispatch.sh '<prompt>'`
+            # or `./codex-dispatch.sh '<prompt>'` etc.
+            if base == "codex-dispatch.sh" or base.endswith("/codex-dispatch.sh"):
+                return _first_positional_after(seg, i + 1)
             # `codex [global-flags] <subcmd> <prompt>`
             if base == "codex":
                 codex_global_value_flags = (

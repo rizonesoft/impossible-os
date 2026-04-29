@@ -47,7 +47,7 @@ If a tightly-scoped foreground dispatch still hits Bash's 600000ms wall and gets
 
 **Foreground (default):**
 ```bash
-node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "[review-kind: design] <todo-path> <design review prompt>"
+bash scripts/codex-dispatch.sh '[review-kind: design] <todo-path> <design review prompt>'
 ```
 
 **Background fallback (after foreground timeout):**
@@ -79,7 +79,7 @@ When `status: "completed"`, the same JSON contains `finalMessage` (the review te
    - Specific questions: "Is this approach correct?", "What edge cases are missing?", "What could this break?"
 4. **Dispatch to Codex plugin:**
    ```bash
-   node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "[review-kind: design] <todo-path> <design review prompt>"
+   bash scripts/codex-dispatch.sh '[review-kind: design] <todo-path> <design review prompt>'
    ```
    Frame as design review, not code review -- Codex should analyze the PLAN, not existing code.
 5. **Triage findings** -- the PostToolUse hook fires `receiving-code-review` reminder; follow it. **Design-review false-positive watch:** Codex assumes general-OS conventions (e.g., "you need a wait queue here") that don't apply to this freestanding kernel (we use polled completion in init paths); demands "production-ready" configurability the section's spec doesn't require; flags "this will conflict with X" without verifying that X actually behaves the way Codex claims. Read the integration surface files yourself before accepting any conflict claim.

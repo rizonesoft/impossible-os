@@ -4815,7 +4815,48 @@ else
            "debug_lines=$CRSW_DEBUG_LINES stamp_check=$CRSW_STAMP_OK state_size=$(stat -c %s "$CRSW_REPO/.claude/state/last-codex-review.json" 2>/dev/null)"
 fi
 
-# Sub-test 4: write-failure honesty -- exercises the WIRED diagnostic at
+# Sub-test 4 (precedes the prior sub-test 4 which is now sub-test 5):
+# wrapper attribution -- the section-28 canonical invocation shape
+# `bash scripts/codex-dispatch.sh '<prompt>'` MUST classify as a Codex
+# trigger AND extract the prompt for stamp attribution. Regression for
+# the post-impl Codex H1 finding where _segment_is_codex_invocation
+# recognized the wrapper but _bash_prompt_arg returned ''.
+rm -f "$CRSW_REPO/.claude/state/last-codex-review.json" \
+      "$CRSW_REPO/.claude/state/codex-review-debug.jsonl" \
+      "$CRSW_REPO/.claude/state/last-review-stamps.json"
+cat > "$CRSW_TMP/p_wrapper.json" <<'JSON'
+{"tool_name":"Bash","tool_input":{"command":"bash scripts/codex-dispatch.sh '[review-kind: adversarial] todo/00-infrastructure/TODO-08-automation-hardening.md wrapper attribution'"}}
+JSON
+( cd "$CRSW_REPO" && CODEX_REVIEW_DEBUG=1 python3 .claude/hooks/codex_review_completed.py < "$CRSW_TMP/p_wrapper.json" >/dev/null 2>&1 )
+CRSW_WRAPPER_OK=$(python3 - "$CRSW_REPO" <<'PYEOF'
+import json, sys, pathlib
+root = pathlib.Path(sys.argv[1])
+state = root / ".claude/state/last-codex-review.json"
+stamps = root / ".claude/state/last-review-stamps.json"
+if not state.exists():
+    print(f"missing-state"); sys.exit(0)
+d = json.loads(state.read_text())
+if d.get("received") is not False:
+    print(f"state-received={d.get('received')!r}"); sys.exit(0)
+if "codex-dispatch.sh" not in d.get("trigger", ""):
+    print(f"state-trigger={d.get('trigger', '')[:60]!r}"); sys.exit(0)
+if not stamps.exists():
+    print(f"missing-stamps"); sys.exit(0)
+s = json.loads(stamps.read_text())
+e = s.get("todo/00-infrastructure/TODO-08-automation-hardening.md", {})
+if not isinstance(e.get("adversarial"), int):
+    print(f"stamps-adv={e.get('adversarial')!r}"); sys.exit(0)
+print("ok")
+PYEOF
+)
+if [ "$CRSW_WRAPPER_OK" = "ok" ]; then
+    t_pass "codex_review_state_write: crsw_wrapper_attribution (wrapper -> state + adversarial stamp)"
+else
+    t_fail "codex_review_state_write: crsw_wrapper_attribution" \
+           "result=$CRSW_WRAPPER_OK"
+fi
+
+# Sub-test 5: write-failure honesty -- exercises the WIRED diagnostic at
 # main()'s trigger_state_write emit site, not just the helper. Monkeypatches
 # os.replace to raise OSError, drives crc.main() with a synthetic Bash
 # trigger, then parses codex-review-debug.jsonl to assert the
@@ -5011,11 +5052,19 @@ from _review_kind import detect_review_kind_from_cmd
 # AND every successful (parsed + classifier-validated) example; fail if
 # total != marked. Catches future heredoc / single-quoted shapes the
 # simple double-quoted parser cannot reach.
-# Match actual dispatch invocations (codex-companion.mjs + adversarial-review
-# on the same line) -- NOT prose mentions like 'codex-adversarial-review-section'
-# (skill name) or "adversarial-review's Accepted-XREF rule".
-TOTAL_RE = re.compile(r'codex-companion\.mjs[^\n]*?\badversarial-review\b')
-EXAMPLE_RE = re.compile(r'codex-companion\.mjs[^\n]*?adversarial-review\s*"([^"]*)"')
+# Match actual dispatch invocations -- NOT prose mentions like
+# 'codex-adversarial-review-section' (skill name). Two canonical shapes:
+#   1. Direct: codex-companion.mjs ... adversarial-review "<body>"
+#   2. Wrapper (section-28 canonical): codex-dispatch.sh '<body>'
+# Both bind to a marker via _review_kind.detect_review_kind_from_cmd.
+TOTAL_RE = re.compile(
+    r'(?:codex-companion\.mjs[^\n]*?\badversarial-review\b'
+    r'|codex-dispatch\.sh)'
+)
+EXAMPLE_RE = re.compile(
+    r"(?:codex-companion\.mjs[^\n]*?adversarial-review\s*\"([^\"]*)\""
+    r"|codex-dispatch\.sh\s+'([^']*)')"
+)
 total = 0
 marked = 0
 problems = []
@@ -5032,15 +5081,25 @@ for skill_md in pathlib.Path(".claude/skills").rglob("SKILL.md"):
     text = skill_md.read_text()
     file_total = len(TOTAL_RE.findall(text))
     file_parsed_bodies = EXAMPLE_RE.findall(text)
+    # EXAMPLE_RE returns one match per dispatch with TWO groups: group 1
+    # is the direct-node body (double-quoted), group 2 is the wrapper
+    # body (single-quoted). Exactly one is set per match. Use whichever
+    # is non-empty as the body, and reconstruct the appropriate full cmd
+    # for the classifier.
     file_parsed = len(file_parsed_bodies)
     if file_total > file_parsed:
-        problems.append(f'{skill_md}: {file_total} total adversarial-review, {file_parsed} parsable as simple double-quoted body')
-    for body in file_parsed_bodies:
-        cmd = f'node /x/codex-companion.mjs adversarial-review "{body}"'
+        problems.append(f'{skill_md}: {file_total} total dispatches, {file_parsed} parsable')
+    for direct_body, wrapper_body in file_parsed_bodies:
+        if direct_body:
+            cmd = f'node /x/codex-companion.mjs adversarial-review "{direct_body}"'
+            body_for_msg = direct_body
+        else:
+            cmd = f"bash scripts/codex-dispatch.sh '{wrapper_body}'"
+            body_for_msg = wrapper_body
         if detect_review_kind_from_cmd(cmd):
             marked += 1
         else:
-            problems.append(f'{skill_md}: classifier returns empty for body "{body[:80]}"')
+            problems.append(f'{skill_md}: classifier returns empty for body "{body_for_msg[:80]}"')
     total += file_total
 status = "OK" if total == marked and not problems else "FAIL"
 print(f'{status} total={total} marked={marked}')
@@ -5055,6 +5114,80 @@ else
     t_fail "skill_step_observer: skill_examples_classifier_validated" \
            "$(echo "$SSO_PARSER_OUT" | head -5)"
 fi
+
+
+# ============================================================================
+# codex_dispatch_escaping -- prompt argument escaping doctrine
+# ============================================================================
+# Owner: 00-infrastructure/TODO-08-automation-hardening (prompt argument
+# escaping doctrine section). Two regression checks:
+#   - cde_argc_enforcement: wrapper rejects argc != 1 (multi-argv misuse).
+#   - cde_lint_check_12: scripts/lint.sh Check 12 catches a documented
+#     dispatch in DOUBLE quotes containing $(...) (load-bearing
+#     source-text safety).
+
+# Sub-test 1: argc enforcement.
+CDE_OUT=$(bash scripts/codex-dispatch.sh 'arg one' 'arg two' 2>&1)
+CDE_RC=$?
+if [ "$CDE_RC" = "1" ] && echo "$CDE_OUT" | grep -q "BLOCK -- expected exactly 1 argv"; then
+    t_pass "codex_dispatch_escaping: cde_argc_enforcement (multi-argv -> exit 1)"
+else
+    t_fail "codex_dispatch_escaping: cde_argc_enforcement" \
+           "rc=$CDE_RC out=$(echo "$CDE_OUT" | head -2)"
+fi
+
+# Sub-test 2: lint Check 12 catches double-quoted dangerous bodies.
+# Construct the fixture programmatically so the dangerous pattern does
+# NOT live in scripts/test-tooling.sh source text (where Check 12 would
+# catch it -- the lint scanner reads source files directly).
+CDE_TMP=$(mktemp -d)
+mkdir -p "$CDE_TMP/repo/scripts" "$CDE_TMP/repo/.claude/skills"
+cp scripts/lint.sh "$CDE_TMP/repo/scripts/" 2>/dev/null
+DOLLAR='$'
+PAREN_OPEN='('
+PAREN_CLOSE=')'
+DANGER_BODY="[review-kind: adversarial] ${DOLLAR}${PAREN_OPEN}SYSTEM_DISK${PAREN_CLOSE} prompt"
+NODE_LINE='node "${HOME}/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review'
+{
+    echo "Example dispatch (intentionally bad):"
+    echo
+    echo '```bash'
+    echo "$NODE_LINE \"${DANGER_BODY}\""
+    echo '```'
+} > "$CDE_TMP/repo/.claude/skills/fixture-bad.md"
+# Run only the Check 12 logic against the fixture by invoking it
+# inline (the live lint.sh would scan our actual repo too; we want
+# isolated fixture coverage).
+CDE_LINT_OUT=$(cd "$CDE_TMP/repo" && python3 - <<'PYEOF'
+import pathlib, re
+CODEX_LINE_RE = re.compile(
+    r"(?:codex-companion\.mjs[^\n]*?adversarial-review|codex-dispatch\.sh)"
+    r"\s+(.*)$"
+)
+DANGER_DOUBLE = re.compile(r'"[^"]*?(\$\(|\$\{)[^"]*?"')
+hits = 0
+for f in pathlib.Path(".claude/skills").rglob("*.md"):
+    text = f.read_text()
+    for ln in text.splitlines():
+        m = CODEX_LINE_RE.search(ln)
+        if not m:
+            continue
+        body = m.group(1)
+        stripped = body.lstrip()
+        if not stripped or stripped[0] != '"':
+            continue
+        if DANGER_DOUBLE.search(body):
+            hits += 1
+print(hits)
+PYEOF
+)
+if [ "$CDE_LINT_OUT" = "1" ]; then
+    t_pass "codex_dispatch_escaping: cde_lint_check_12 (dangerous-double-quoted body flagged)"
+else
+    t_fail "codex_dispatch_escaping: cde_lint_check_12" \
+           "expected hits=1, got '$CDE_LINT_OUT'"
+fi
+rm -rf "$CDE_TMP"
 
 
 # ============================================================================

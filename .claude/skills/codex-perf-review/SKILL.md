@@ -27,7 +27,7 @@ Every dispatch from this skill MUST open its prompt with the marker `[review-kin
 
 2. **Dispatch to Codex plugin:**
    ```bash
-   node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "[review-kind: perf] <todo-path> <perf review prompt>"
+   bash scripts/codex-dispatch.sh '[review-kind: perf] <todo-path> <perf review prompt>'
    ```
 
 3. **Triage findings** -- the PostToolUse hook fires `receiving-code-review` reminder; follow it. **Perf-review false-positive watch:** Codex flags allocations in functions that "look hot" but only run once at boot; flags spinlock hold times that are the only correct serialization; demands hash tables for 16-element linear scans; and reports "could be faster" without "is measurably slow." Verify the path is actually hot and the cost is actually measurable before refactoring -- structure review without profile evidence is a reject.

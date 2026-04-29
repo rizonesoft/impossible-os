@@ -88,7 +88,7 @@ Every dispatch from this skill MUST open its prompt with the marker `[review-kin
 ## Review Command
 
 ```bash
-node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "[review-kind: re-adversarial] <todo-path> <focus prompt>"
+bash scripts/codex-dispatch.sh '[review-kind: re-adversarial] <todo-path> <focus prompt>'
 ```
 
 Run in background for reviews touching > 3 files:

@@ -723,6 +723,113 @@ PYEOF
 fi
 
 # ============================================================================
+# Check 12: Codex prompt argument escaping (per the prompt-argument escaping
+# doctrine section of 00-infrastructure/TODO-08-automation-hardening). Source
+# text is the LOAD-BEARING safety: every documented Codex dispatch in
+# .claude/skills/, scripts/, docs/ MUST single-quote its prompt body so bash
+# never evaluates the dispatch text. Patterns flagged at WARN:
+#   - prompt body in DOUBLE quotes contains $(...) / ${...} / un-escaped
+#     `<` that bash would parse as redirect
+# WARN-first per the partial-enforcement-heuristics promotion doctrine; can
+# graduate to ERROR after FP ratio observed.
+if [ "${SKIP_LINT_PROMPT_ESCAPING:-}" = "1" ]; then
+    echo -e "${YELLOW}warn${NC}: Check 12 (codex-prompt-escaping) skipped via SKIP_LINT_PROMPT_ESCAPING=1"
+    WARNINGS=$((WARNINGS + 1))
+else
+    LINT12_OUT="$(python3 - <<'PYEOF'
+import pathlib, re, sys
+
+# Match a Codex dispatch invocation on a single line. Two shapes:
+#   1. node ".../codex-companion.mjs" adversarial-review <body>
+#   2. bash scripts/codex-dispatch.sh <body>
+# For each, capture the body argument (everything after the
+# subcommand / wrapper script up to end of line). The body MAY be
+# wrapped in single quotes, double quotes, or unquoted (latter is a
+# different lint failure -- whitespace splits multi-word body across
+# argv).
+CODEX_LINE_RE = re.compile(
+    r"(?:codex-companion\.mjs[^\n]*?adversarial-review|codex-dispatch\.sh)"
+    r"\s+(.*)$"
+)
+
+# Inside a captured body, detect:
+#   - $( or ${ inside DOUBLE quotes (would expand)
+#   - un-escaped < that looks like a redirect AND is OUTSIDE quotes
+DANGER_DOUBLE = re.compile(r'"[^"]*?(\$\(|\$\{)[^"]*?"')
+
+ROOTS = ["scripts", ".claude/skills", "docs"]
+EXTENSIONS = (".sh", ".md", ".py", ".mjs")
+warnings = []
+
+for root in ROOTS:
+    p = pathlib.Path(root)
+    if not p.exists():
+        continue
+    for f in p.rglob("*"):
+        if not f.is_file() or not f.name.endswith(EXTENSIONS):
+            continue
+        # Skip the wrapper script + this lint scanner itself + the
+        # canonical doctrine doc -- they document the patterns we
+        # flag elsewhere.
+        rel = str(f)
+        if rel.endswith("scripts/codex-dispatch.sh"):
+            continue
+        if rel.endswith("scripts/lint.sh"):
+            continue
+        if rel.endswith(".claude/skills/codex-prompt-shape.md"):
+            continue
+        try:
+            text = f.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            continue
+        for ln_no, ln in enumerate(text.splitlines(), 1):
+            m = CODEX_LINE_RE.search(ln)
+            if not m:
+                continue
+            body = m.group(1)
+            # Skip lines that are clearly prose talking about the
+            # pattern (e.g. lint check 12 description, the doctrine
+            # rule statement). Heuristic: prose lines start with
+            # markdown emphasis markers or are inside a code-fence
+            # for documentation. Cheaper heuristic: body must look
+            # like an actual bash arg (starts with " or ' or a
+            # placeholder like <).
+            stripped = body.lstrip()
+            if not stripped:
+                continue
+            if stripped[0] not in ('"', "'", "<"):
+                # Prose mention, not an actual invocation. Skip.
+                continue
+            if stripped[0] == "'":
+                # Single-quoted body: bash never evaluates, safe.
+                continue
+            if stripped[0] == "<":
+                # Unquoted placeholder body. Real invocation would
+                # fail to parse -- catch as separate lint at the
+                # caller site, not here.
+                continue
+            # Double-quoted body: scan for $(/${
+            if DANGER_DOUBLE.search(body):
+                warnings.append(f"{rel}:{ln_no}: Codex prompt in double quotes contains $( or ${{ that bash will expand. Single-quote the prompt: '<body>' instead of \"<body>\".")
+
+for w in warnings:
+    print(f"WARN {w}")
+PYEOF
+)"
+    if [ -n "$LINT12_OUT" ]; then
+        while IFS= read -r line; do
+            [ -n "$line" ] || continue
+            case "$line" in
+                WARN\ *)
+                    echo -e "${YELLOW}warn${NC}: ${line#WARN }"
+                    WARNINGS=$((WARNINGS + 1))
+                    ;;
+            esac
+        done <<< "$LINT12_OUT"
+    fi
+fi
+
+# ============================================================================
 # Summary
 # ============================================================================
 echo ""

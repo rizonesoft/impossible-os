@@ -31,7 +31,7 @@ Every dispatch from this skill MUST open its prompt with the marker `[review-kin
 
 2. **Dispatch to Codex plugin** (with the `mcp__lsp-bridge__references` output + assembly-side grep result pasted into the prompt as the verified consistency-domain set):
    ```bash
-   node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "[review-kind: consistency] <todo-path> <consistency prompt>"
+   bash scripts/codex-dispatch.sh '[review-kind: consistency] <todo-path> <consistency prompt>'
    ```
 
 3. **Triage findings** -- the PostToolUse hook fires `receiving-code-review` reminder; follow it. **Consistency-audit false-positive watch:** Codex misreads padding and packed/aligned attributes when comparing `.asm` offsets to C struct layouts; flags `#define` drift between files when the drift is deliberately scoped (kernel constant vs. bootloader constant); demands static asserts for invariants that no cross-file code depends on. Open both sides of every claimed mismatch yourself before fixing.

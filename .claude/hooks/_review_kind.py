@@ -20,7 +20,22 @@ _REVIEW_KIND_RE = re.compile(
 
 def detect_review_kind_from_cmd(cmd: str) -> str:
     """Return the [review-kind: X] value from the first non-blank line of
-    a codex-companion.mjs adversarial-review Bash command's prompt arg.
+    a Codex dispatch Bash command's prompt arg.
+
+    Two canonical dispatch shapes are recognized:
+
+    1. Direct node invocation (legacy):
+         node ".../codex-companion.mjs" adversarial-review "<prompt>"
+       Extract the prompt as the first non-empty content after the
+       `adversarial-review` token.
+
+    2. Wrapper invocation (canonical post-section-28):
+         bash scripts/codex-dispatch.sh '<prompt>'
+       Extract the prompt as the first non-empty content after the
+       `codex-dispatch.sh` token. The wrapper exec's into the same
+       node command internally; routing the classifier through both
+       shapes lets the gate attribute either form.
+
     Returns empty string when no marker is on the first non-blank line,
     when the command is not a codex dispatch, or when the prompt cannot
     be located.
@@ -36,11 +51,16 @@ def detect_review_kind_from_cmd(cmd: str) -> str:
     """
     if not isinstance(cmd, str) or not cmd:
         return ""
-    if "codex-companion.mjs" not in cmd:
+
+    # Wrapper shape (section-28): codex-dispatch.sh '<prompt>'. Detect
+    # first because the wrapper line still mentions codex-companion.mjs
+    # in a comment header that could pollute substring-only checks.
+    if "codex-dispatch.sh" in cmd:
+        after = cmd.split("codex-dispatch.sh", 1)[1].lstrip()
+    elif "codex-companion.mjs" in cmd and "adversarial-review" in cmd:
+        after = cmd.split("adversarial-review", 1)[1].lstrip()
+    else:
         return ""
-    if "adversarial-review" not in cmd:
-        return ""
-    after = cmd.split("adversarial-review", 1)[1].lstrip()
     body = after
     # Skip a HEREDOC opener line if present.
     if body.startswith("\"$(cat <<") or body.startswith("'$(cat <<"):

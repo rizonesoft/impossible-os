@@ -31,7 +31,7 @@ Every dispatch from this skill MUST open its prompt with the marker `[review-kin
    - Every cross-section dependency (e.g., "§5 depends on §3's lock being held")
 4. **Run the Codex adversarial review** via:
    ```bash
-   node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "[review-kind: adversarial] <todo-path> <focus prompt>"
+   bash scripts/codex-dispatch.sh '[review-kind: adversarial] <todo-path> <focus prompt>'
    ```
    Run in background for large reviews (> 3 sections).
 5. **Collect and present findings** verbatim from Codex output.

@@ -31,7 +31,7 @@ Every dispatch from this skill MUST open its prompt with the marker `[review-kin
 
 3. **Dispatch to Codex plugin:**
    ```bash
-   node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "[review-kind: test-coverage] <todo-path> <coverage prompt>"
+   bash scripts/codex-dispatch.sh '[review-kind: test-coverage] <todo-path> <coverage prompt>'
    ```
 
 4. **Triage findings** -- the PostToolUse hook fires `receiving-code-review` reminder; follow it. **Test-coverage false-positive watch:** Codex misses indirect assertions (a higher-level test that exercises the path); demands tests for unreachable error paths (`if (size > SIZE_MAX)` on a `size_t` -- delete the dead branch instead); demands tests for hypothetical NULL inputs that no caller produces. Verify reachability and real-caller behavior before adding any test.

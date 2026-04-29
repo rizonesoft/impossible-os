@@ -94,7 +94,7 @@ SSDT handlers are the kernel's attack surface -- every user-mode process can cal
 
 Dispatch to Codex plugin:
 ```bash
-node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "[review-kind: adversarial] <todo-path> <focus prompt>"
+bash scripts/codex-dispatch.sh '[review-kind: adversarial] <todo-path> <focus prompt>'
 ```
 
 Focus prompt must cover:

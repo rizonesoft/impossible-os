@@ -29,7 +29,7 @@ Every dispatch from this skill MUST open its prompt with the marker `[review-kin
 
 2. **Dispatch to Codex plugin** (with the `mcp__lsp-bridge__references` output pasted into the prompt as the verified call site set):
    ```bash
-   node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "[review-kind: adversarial] <todo-path> <impact analysis prompt>"
+   bash scripts/codex-dispatch.sh '[review-kind: adversarial] <todo-path> <impact analysis prompt>'
    ```
 
 3. **Triage findings** -- the PostToolUse hook fires `receiving-code-review` reminder; follow it. **Impact-analysis false-positive watch:** Codex hallucinates dependencies in `.asm` files that don't actually reference the symbol/offset; "no callers found" is a hypothesis to verify with grep, not a guarantee; "safe to change" claims need spot-checked riskiest call sites. A missed dependency here becomes a runtime crash.
