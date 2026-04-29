@@ -69,14 +69,32 @@ if parse_errors:
     print(f"Unparseable lines: {parse_errors}")
 print()
 
+# Codex review C-M2 fix 2026-04-29: doctrine in
+# docs/infrastructure/ai-system.md "Hook Promotion Pipeline" specifies
+# the FP ratio is computed over the last N entries (20 for steps
+# 1/2/9/15/17/18; 30 for step 3). Lifetime ratio is shown separately
+# for context. Promotion decision uses the windowed value.
+WINDOW_BY_STEP = {1: 20, 2: 20, 3: 30, 9: 20, 15: 20, 17: 20, 18: 20}
+
 for step in sorted(by_step.keys()):
     rs = by_step[step]
-    n = len(rs)
-    fp = sum(1 for r in rs if r.get("false_positive_user_flagged") is True)
-    ratio = (fp / n) if n else 0.0
-    print(f"Step {step:>2} -- {n} miss(es), {fp} flagged FP ({ratio*100:.1f}%)")
+    n_total = len(rs)
+    fp_total = sum(1 for r in rs if r.get("false_positive_user_flagged") is True)
+    ratio_total = (fp_total / n_total) if n_total else 0.0
+    window = WINDOW_BY_STEP.get(step, 20)
+    sorted_recent = sorted(rs, key=lambda r: r.get("ts_ns", 0), reverse=True)
+    windowed = sorted_recent[:window]
+    n_w = len(windowed)
+    fp_w = sum(1 for r in windowed if r.get("false_positive_user_flagged") is True)
+    ratio_w = (fp_w / n_w) if n_w else 0.0
+    print(f"Step {step:>2} -- last-{window} window: {n_w} miss(es), {fp_w} FP "
+          f"({ratio_w*100:.1f}%) | lifetime: {n_total} miss(es), {fp_total} FP "
+          f"({ratio_total*100:.1f}%)")
+    if n_w < window:
+        remaining = window - n_w
+        print(f"    (need {remaining} more observation(s) before promotion criterion applies)")
     # Show the most-recent 3
-    recent = sorted(rs, key=lambda r: r.get("ts_ns", 0), reverse=True)[:3]
+    recent = sorted_recent[:3]
     for r in recent:
         signal = r.get("signal", "")
         todo_path = r.get("todo_path", "") or "(no path)"

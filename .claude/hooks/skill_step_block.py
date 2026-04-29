@@ -58,7 +58,7 @@ _HEURISTIC_EXPLORE_TOOLS = {
     "mcp__todo-graph__stale", "mcp__todo-graph__stats",
 }
 _HEURISTIC_EXPLORE_MIN = 3
-_XREF_RE = re.compile(r"->\s*XREF:\s*([\w./0-9-]+\.md)", re.IGNORECASE)
+_XREF_RE = re.compile(r"->\s*XREF:\s*(?:\[[^\]]*\]\()?([\w./0-9-]+\.md)", re.IGNORECASE)
 
 
 _STATE_REL = ".claude/state/skill-progress.json"
@@ -242,23 +242,30 @@ def _log_skip(root: str, reason: str, skill: str, missing: list) -> None:
 
 def _read_tool_history_since(root: str, since_ts_ns: int) -> list:
     """Return tool-history.jsonl records strictly after `since_ts_ns`.
-    Best-effort, returns [] on any error."""
-    p = os.path.join(root, _TOOL_HISTORY_REL)
+
+    Codex re-adversarial #2 M1 fix 2026-04-29: tool_history_writer
+    live-rotates the log to `.jsonl.1` at 10 MiB. After rotation
+    crosses, prior Edit/Read/Codex evidence lives only in `.1`. Read
+    rotated FIRST, live SECOND, so timestamp-filtered records remain
+    in chronological order. Best-effort, returns [] on any error."""
+    p_live = os.path.join(root, _TOOL_HISTORY_REL)
+    p_rot = p_live + ".1"
     out = []
     try:
-        if not os.path.exists(p):
-            return out
-        with open(p, "r", encoding="utf-8") as f:
-            for line in f:
-                try:
-                    rec = json.loads(line)
-                except Exception:
-                    continue
-                if not isinstance(rec, dict):
-                    continue
-                ts = rec.get("ts_ns", 0)
-                if isinstance(ts, int) and ts > since_ts_ns:
-                    out.append(rec)
+        for path in (p_rot, p_live):
+            if not os.path.exists(path):
+                continue
+            with open(path, "r", encoding="utf-8") as f:
+                for line in f:
+                    try:
+                        rec = json.loads(line)
+                    except Exception:
+                        continue
+                    if not isinstance(rec, dict):
+                        continue
+                    ts = rec.get("ts_ns", 0)
+                    if isinstance(ts, int) and ts > since_ts_ns:
+                        out.append(rec)
     except Exception:
         return []
     return out
@@ -296,7 +303,18 @@ def _heuristic_check_steps_1_2_3(d: dict, root: str, entry: dict) -> None:
             TODO body has NOT been Read.
     Step 3: WARN if fewer than 3 explore-class queries (Grep/Glob/MCP
             lsp-bridge or todo-graph) happened before this first Edit.
-    All three are advisory; the gate never BLOCKs."""
+    All three are advisory; the gate never BLOCKs.
+
+    Codex re-adversarial H1 fix 2026-04-29: the original perf optimization
+    (cache `first_src_edit_seen: true` in skill-progress.json) was reverted
+    because it persisted state from a PreToolUse hook BEFORE the edit was
+    confirmed to succeed and bypassed the existing skill-progress flock.
+    A blocked/failed first edit would still set the marker and suppress
+    the heuristics on the next real first edit; concurrent observer
+    writes could corrupt the state file. _is_first_src_edit already
+    derives the answer from tool-history without persistence; we accept
+    the bounded re-parse cost (<= 10 MiB rotated) for the WARN-only
+    path rather than risk state corruption."""
     started_ts = entry.get("started_ts") or entry.get("started_ts_ns") or 0
     if not isinstance(started_ts, int) or started_ts <= 0:
         return

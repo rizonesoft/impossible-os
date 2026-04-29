@@ -2360,21 +2360,27 @@ def _heuristic_load_helpers():
 
 
 def _heuristic_read_tool_history(root: Path, since_ts_ns: int) -> list:
-    p = root / ".claude" / "state" / "tool-history.jsonl"
+    """Codex re-adversarial #2 M1 fix 2026-04-29: read rotated .1
+    BEFORE live so chronological order is preserved across the
+    10 MiB rotation boundary. Otherwise long sessions misclassify
+    pre-rotation Codex/edit evidence as missing."""
+    p_live = root / ".claude" / "state" / "tool-history.jsonl"
+    p_rot = root / ".claude" / "state" / "tool-history.jsonl.1"
     out = []
     try:
-        if not p.exists():
-            return out
-        for line in p.read_text(encoding="utf-8", errors="replace").splitlines():
-            try:
-                rec = json.loads(line)
-            except Exception:
+        for path in (p_rot, p_live):
+            if not path.exists():
                 continue
-            if not isinstance(rec, dict):
-                continue
-            ts = rec.get("ts_ns", 0)
-            if isinstance(ts, int) and ts > since_ts_ns:
-                out.append(rec)
+            for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+                try:
+                    rec = json.loads(line)
+                except Exception:
+                    continue
+                if not isinstance(rec, dict):
+                    continue
+                ts = rec.get("ts_ns", 0)
+                if isinstance(ts, int) and ts > since_ts_ns:
+                    out.append(rec)
     except Exception:
         return []
     return out
@@ -2464,11 +2470,21 @@ def _heuristic_step9_test_coverage(root: Path, staged_src: list, todo_path: str,
         if isinstance(stamps, dict) and todo_path:
             entry = stamps.get(todo_path) or {}
             if isinstance(entry, dict):
-                tc = entry.get("test-coverage") or {}
-                if isinstance(tc, dict):
-                    ts = tc.get("ts_ns", 0)
-                    if isinstance(ts, int) and (now_ns - ts) <= thirty_min_ns:
-                        found = True
+                # Codex review M1 fix 2026-04-29: codex_review_completed
+                # ._record_stamp writes every kind as a bare int timestamp
+                # (entry[kind] = now_ns). Original code treated this slot
+                # as a {ts_ns: int} dict and never matched, causing every
+                # test-touching commit to false-positive. Accept both shapes.
+                tc = entry.get("test-coverage")
+                ts = 0
+                if isinstance(tc, int):
+                    ts = tc
+                elif isinstance(tc, dict):
+                    inner = tc.get("ts_ns", 0)
+                    if isinstance(inner, int):
+                        ts = inner
+                if ts > 0 and (now_ns - ts) <= thirty_min_ns:
+                    found = True
         if not found:
             hm.emit_warn(
                 str(root), 9,
@@ -2483,19 +2499,16 @@ def _heuristic_step9_test_coverage(root: Path, staged_src: list, todo_path: str,
         pass
 
 
-def _heuristic_step15_post_codex_edit(root: Path, started_ts: int,
+def _heuristic_step15_post_codex_edit(root: Path, history: list,
                                        todo_path: str,
                                        section) -> None:
     """Step 15: WARN if last Codex dispatch happened but no Edit/Write
     happened between that dispatch and now (suggests no fix loop ran).
-    Suppress when explicit zero-findings stamp is present in tool history
-    (search the recent transcript for 'verdict: approve' or '0 findings')."""
+    Codex perf M2 fix: history is pre-read by the driver."""
     hm = _heuristic_load_helpers()
     if hm is None:
         return
     try:
-        # Find latest Codex dispatch ts.
-        history = _heuristic_read_tool_history(root, started_ts)
         latest_codex_ts = 0
         for r in history:
             if r.get("tool_name") != "Bash":
@@ -2528,16 +2541,16 @@ def _heuristic_step15_post_codex_edit(root: Path, started_ts: int,
         pass
 
 
-def _heuristic_step17_validate_phase(root: Path, started_ts: int,
+def _heuristic_step17_validate_phase(root: Path, history: list,
                                       todo_path: str,
                                       section) -> None:
     """Step 17: WARN if fewer than 2 Read/Grep calls happened between
-    the latest Codex dispatch and now (suggests no validate phase)."""
+    the latest Codex dispatch and now (suggests no validate phase).
+    Codex perf M2 fix: history is pre-read by the driver."""
     hm = _heuristic_load_helpers()
     if hm is None:
         return
     try:
-        history = _heuristic_read_tool_history(root, started_ts)
         latest_codex_ts = 0
         for r in history:
             if r.get("tool_name") != "Bash":
@@ -2569,13 +2582,14 @@ def _heuristic_step17_validate_phase(root: Path, started_ts: int,
         pass
 
 
-def _heuristic_step18_loose_ends_scan(root: Path, started_ts: int,
+def _heuristic_step18_loose_ends_scan(root: Path, history: list,
                                         staged_src: list,
                                         todo_path: str,
                                         section) -> None:
     """Step 18: WARN if no Grep matching TODO/FIXME/HACK/STATUS_NOT_IMPLEMENTED
     is recorded between latest src/ edit and now. Suppress if staged diff
-    is markdown-only (docs/stamp-only commits don't need this scan)."""
+    is markdown-only (docs/stamp-only commits don't need this scan).
+    Codex perf M2 fix: history is pre-read by the driver."""
     hm = _heuristic_load_helpers()
     if hm is None:
         return
@@ -2585,7 +2599,6 @@ def _heuristic_step18_loose_ends_scan(root: Path, started_ts: int,
                   if not (s.endswith(".md") or s.startswith("todo/"))]
         if not non_md:
             return
-        history = _heuristic_read_tool_history(root, started_ts)
         latest_src_edit_ts = 0
         for r in history:
             if r.get("tool_name") not in ("Edit", "Write", "MultiEdit"):
@@ -2623,15 +2636,21 @@ def _heuristic_step18_loose_ends_scan(root: Path, started_ts: int,
 
 def _emit_section21_heuristics(root: Path, staged_src: list) -> None:
     """Driver: fire all 4 section-commit-gate heuristics (steps 9, 15, 17, 18)
-    if there is an active implement-todo-section skill window."""
+    if there is an active implement-todo-section skill window.
+
+    Codex perf M2 fix 2026-04-29: read tool-history.jsonl ONCE here
+    and pass the filtered list into each heuristic. The previous shape
+    re-parsed the same file 3x per commit; at the 10 MiB live cap that
+    was ~30 MiB of synchronous parse on every section-commit attempt."""
     try:
         skill, started_ts, todo_path, section = _heuristic_active_skill_window(root)
         if skill != "implement-todo-section" or started_ts <= 0:
             return
+        history = _heuristic_read_tool_history(root, started_ts)
         _heuristic_step9_test_coverage(root, staged_src, todo_path, section)
-        _heuristic_step15_post_codex_edit(root, started_ts, todo_path, section)
-        _heuristic_step17_validate_phase(root, started_ts, todo_path, section)
-        _heuristic_step18_loose_ends_scan(root, started_ts, staged_src,
+        _heuristic_step15_post_codex_edit(root, history, todo_path, section)
+        _heuristic_step17_validate_phase(root, history, todo_path, section)
+        _heuristic_step18_loose_ends_scan(root, history, staged_src,
                                             todo_path, section)
     except Exception:
         pass
