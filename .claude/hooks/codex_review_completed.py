@@ -694,9 +694,17 @@ def _record_stamp(
     kind: str,
     now_ns: int,
     dispatch_head_sha: str = "",
-) -> None:
+) -> tuple[bool, str]:
     """Update last-review-stamps.json[todo_path] with `kind` timestamp
     and per-kind `dispatch_head_sha`.
+
+    Returns `(ok, error_str)` for honest observability (see TODO-08
+    section 24 H1 fix). `ok=False` covers: invalid kind, lock-acquire
+    timeout (writer skipped to avoid race), or `_write_atomic` failure.
+    Fail-open at the call site (main() does not crash on
+    observability failure); the boolean lets the JSONL diagnostic
+    record the truth instead of inferring success from absence of
+    a propagated exception.
 
     Reads existing state; merges; atomic-writes. Fail-open on any
     error -- this is a tracking feature, never a block.
@@ -716,7 +724,7 @@ def _record_stamp(
     cross-branch reuse of dispatch evidence.
     """
     if not todo_path or kind not in ("adversarial", "consistency", "perf", "re-adversarial", "adversarial-impl", "test-coverage", "design"):
-        return
+        return (False, f"invalid kind={kind!r} or empty todo_path")
     path = _stamps_path(root)
     lock_path = _stamps_lock_path(root)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -781,7 +789,7 @@ def _record_stamp(
                     os.close(lock_fd)
                 except Exception:
                     pass
-                return
+                return (False, "lock acquire timeout (>2s)")
         except Exception:
             # Lock acquisition failed (filesystem error, etc). Proceed
             # without the lock -- the prior race window remains, but
@@ -823,7 +831,8 @@ def _record_stamp(
         for k in ("adversarial", "consistency", "perf"):
             entry.setdefault(k, None)
         state[todo_path] = entry
-        _write_atomic(path, state)
+        ok, err = _write_atomic(path, state)
+        return (ok, err)
     finally:
         if lock_fd is not None and fcntl is not None:
             try:
@@ -900,8 +909,16 @@ def _extract_prompt_and_skill(payload: dict) -> tuple[str, str]:
     return ("", "")
 
 
-def _write_atomic(path: Path, data: dict) -> None:
+def _write_atomic(path: Path, data: dict) -> tuple[bool, str]:
     """Atomic write via per-process tmp file + os.replace.
+
+    Returns `(ok, error_str)` so callers can record honest write
+    success in observability records (see TODO-08 section 24 H1
+    fix: previously the function swallowed every exception and
+    returned None, so the diagnostic-log `write_ok` field stayed
+    True on actual failure -- the JSONL diagnostic could lie).
+    Internal cleanup + stderr WARN preserved so callers retain the
+    fail-open contract (don't crash main() on observability failure).
 
     H3 (review-pipeline adversarial): the original fixed-path
     `.tmp` suffix raced when two PostToolUse hooks ran in parallel
@@ -920,6 +937,7 @@ def _write_atomic(path: Path, data: dict) -> None:
     try:
         tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
         os.replace(str(tmp), str(path))
+        return (True, "")
     except Exception as exc:
         # Best-effort cleanup of the unique tmp on failure. Ignore
         # cleanup errors -- the next state-dir GC sweep handles it.
@@ -928,10 +946,11 @@ def _write_atomic(path: Path, data: dict) -> None:
                 tmp.unlink()
         except Exception:
             pass
+        err = f"{type(exc).__name__}: {exc}"
         sys.stderr.write(
-            f"[codex-review-state] WARN: state write failed "
-            f"({type(exc).__name__}: {exc})\n"
+            f"[codex-review-state] WARN: state write failed ({err})\n"
         )
+        return (False, err)
 
 
 def _load_state(path: Path) -> dict | None:
@@ -944,24 +963,29 @@ def _load_state(path: Path) -> dict | None:
 
 
 def _debug_log(root, event: str, **fields) -> None:
-    """TODO-08 §22 #4 state-file diagnosis: env-gated verbose log to
-    `.claude/state/codex-review-debug.log` so missing-write incidents
-    can be diagnosed (last-codex-review.json or last-review-stamps.json
-    empty after dispatches). Opt-in via `CODEX_REVIEW_DEBUG=1`; silent
-    in normal operation. Never blocks.
+    """TODO-08 §22 #4 / §24 state-file diagnosis: env-gated JSONL log
+    to `.claude/state/codex-review-debug.jsonl` so missing-write
+    incidents leave a structured trail (one JSON object per line so
+    `jq` / log-shipping tools can ingest it). Opt-in via
+    `CODEX_REVIEW_DEBUG=1`; silent in normal operation. Never blocks.
+    The §24 canonical schema:
+        {ts_ns, event, classifier_kind, classifier_label,
+         last_codex_review_write_ok, last_codex_review_write_path,
+         stamp_write_ok, error, ...}
+    Extra kwargs are merged into the record; unknown fields land at
+    the top level so future events can extend without a schema bump.
     """
     if os.environ.get("CODEX_REVIEW_DEBUG", "") != "1":
         return
     if root is None:
         return
     try:
-        p = root / ".claude" / "state" / "codex-review-debug.log"
+        p = root / ".claude" / "state" / "codex-review-debug.jsonl"
         p.parent.mkdir(parents=True, exist_ok=True)
-        line = f"{time.time_ns()} {event} " + " ".join(
-            f"{k}={v!r}" for k, v in fields.items()
-        ) + "\n"
+        rec = {"ts_ns": time.time_ns(), "event": event}
+        rec.update(fields)
         with open(p, "a", encoding="utf-8") as f:
-            f.write(line)
+            f.write(json.dumps(rec, default=str) + "\n")
     except Exception:
         pass
 
@@ -1030,7 +1054,22 @@ def main() -> int:
             "received": False,
             "received_timestamp_ns": None,
         }
-        _write_atomic(state_path, state)
+        # TODO-08 section 24 observability: capture write success/failure
+        # so missing-write incidents leave a structured trail in
+        # codex-review-debug.jsonl. _write_atomic returns (ok, err) so the
+        # diagnostic CANNOT lie about success when the writer fail-open
+        # path swallowed an OSError -- the H1 fix from the section-24
+        # review pipeline. The write itself remains best-effort; we add
+        # honest diagnosis, not new failure modes.
+        write_ok, write_err = _write_atomic(state_path, state)
+        _debug_log(
+            root, "trigger_state_write",
+            classifier_kind=kind,
+            classifier_label=label[:120],
+            last_codex_review_write_ok=write_ok,
+            last_codex_review_write_path=str(state_path),
+            error=write_err,
+        )
         # §5 four-dispatch tracking. Best-effort: extract prompt and
         # detect (kind, todo_path). Both must resolve for the dispatch
         # to count toward the four-dispatch gate. Failures are silent
@@ -1051,11 +1090,24 @@ def main() -> int:
             )
         review_kind = _detect_review_kind(skill_for_kind, prompt)
         todo_path, section = _detect_todo_path(prompt, root)
-        if review_kind and todo_path:
-            _record_stamp(
+        stamp_attempted = bool(review_kind and todo_path)
+        if stamp_attempted:
+            stamp_ok, stamp_err = _record_stamp(
                 root, todo_path, section, review_kind, now_ns,
                 dispatch_head_sha=head_at_dispatch,
             )
+        else:
+            stamp_ok = False
+            stamp_err = "skipped (missing review_kind or todo_path)"
+        _debug_log(
+            root, "trigger_stamp_write",
+            review_kind=review_kind or "unknown",
+            todo_path=todo_path,
+            section=section,
+            stamp_attempted=stamp_attempted,
+            stamp_write_ok=stamp_ok,
+            error=stamp_err,
+        )
         return 0
     # kind == "receive"
     state = _load_state(state_path)

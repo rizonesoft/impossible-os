@@ -4378,21 +4378,25 @@ assert any("4x" in s for s in sso.sys.stderr.buf), "Test 3 spiral 4x not fired"
 print("OK spiral_check_warn")
 
 # Test 4: codex_review_completed debug log only writes when env set.
-import os, tempfile
+# Schema upgraded to JSONL in the state-write reliability section of
+# TODO-08-automation-hardening; extension is .jsonl and content is
+# one JSON object per line.
+import os, json, tempfile
 with tempfile.TemporaryDirectory() as tmp:
     import pathlib
     root = pathlib.Path(tmp)
     (root / ".claude" / "state").mkdir(parents=True)
     import codex_review_completed as crc
-    log_path = root / ".claude" / "state" / "codex-review-debug.log"
+    log_path = root / ".claude" / "state" / "codex-review-debug.jsonl"
     if "CODEX_REVIEW_DEBUG" in os.environ: del os.environ["CODEX_REVIEW_DEBUG"]
     crc._debug_log(root, "test_event", k="v")
     assert not log_path.exists(), "Test 4 debug log written without env"
     os.environ["CODEX_REVIEW_DEBUG"] = "1"
     crc._debug_log(root, "test_event", k="v")
     assert log_path.exists(), "Test 4 debug log NOT written with env"
-    txt = log_path.read_text()
-    assert "test_event" in txt and "k='v'" in txt, "Test 4 debug log content wrong"
+    rec = json.loads(log_path.read_text().strip().splitlines()[-1])
+    assert rec.get("event") == "test_event" and rec.get("k") == "v", \
+        f"Test 4 debug log content wrong: {rec!r}"
     del os.environ["CODEX_REVIEW_DEBUG"]
 print("OK debug_log_env_gated")
 PY
@@ -4622,6 +4626,199 @@ PYEOF2
     else
         t_fail "skip_env_unified: se_smoke_inline" "$(echo "$SE_SMOKE_OUT" | tail -3)"
     fi
+fi
+
+
+# ============================================================================
+# codex_review_state_write -- last-codex-review.json reliability
+# ============================================================================
+# TODO ownership: state-write reliability section of
+# 00-infrastructure/TODO-08-automation-hardening.md.
+#   - crsw_synthetic_dispatch: PostToolUse fed a synthetic Bash codex-companion
+#                              trigger -> last-codex-review.json populated
+#                              within 100 ms.
+#   - crsw_unmarked_kind:      synthetic trigger missing review-kind marker
+#                              -> state file still written; debug log records
+#                              review_kind="unknown" (documented behavior, not
+#                              silent drop).
+#   - crsw_parallel_writes:    two synthetic dispatches in quick succession
+#                              -> both observability records written via
+#                              flock-protected stamp file; state file holds
+#                              the second trigger; no lost updates.
+# Closes the prior state-file deferral; replaces the bootstrap-mode
+# SKIP_REVIEW_HOOK escape that cited that deferral as the documented opt-out.
+
+CRSW_TMP=$(mktemp -d)
+trap 'rm -rf "$CRSW_TMP"' EXIT
+CRSW_REPO="$CRSW_TMP/repo"
+mkdir -p "$CRSW_REPO/.claude/hooks" "$CRSW_REPO/.claude/state"
+cp .claude/hooks/codex_review_completed.py "$CRSW_REPO/.claude/hooks/" 2>/dev/null
+( cd "$CRSW_REPO" && git init -q && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init )
+
+# Sub-test 1: synthetic adversarial dispatch -> state file populated within 1 s.
+CRSW_PAYLOAD=$(cat <<'JSON'
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "node \"$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs\" adversarial-review \"[review-kind: adversarial] todo/00-infrastructure/TODO-08-automation-hardening.md sample\""
+  }
+}
+JSON
+)
+CRSW_T0=$(date +%s%N)
+echo "$CRSW_PAYLOAD" | ( cd "$CRSW_REPO" && CODEX_REVIEW_DEBUG=1 python3 .claude/hooks/codex_review_completed.py >/dev/null 2>&1 )
+CRSW_RC=$?
+CRSW_T1=$(date +%s%N)
+CRSW_DELTA_MS=$(( (CRSW_T1 - CRSW_T0) / 1000000 ))
+if [ "$CRSW_RC" = "0" ] && [ -s "$CRSW_REPO/.claude/state/last-codex-review.json" ] && [ "$CRSW_DELTA_MS" -lt 1000 ]; then
+    if grep -q '"received": false' "$CRSW_REPO/.claude/state/last-codex-review.json" \
+       && grep -q '"trigger": "Bash(' "$CRSW_REPO/.claude/state/last-codex-review.json"; then
+        t_pass "codex_review_state_write: crsw_synthetic_dispatch (${CRSW_DELTA_MS} ms)"
+    else
+        t_fail "codex_review_state_write: crsw_synthetic_dispatch" \
+               "state file shape: $(head -c 200 "$CRSW_REPO/.claude/state/last-codex-review.json")"
+    fi
+else
+    t_fail "codex_review_state_write: crsw_synthetic_dispatch" \
+           "rc=$CRSW_RC, delta_ms=$CRSW_DELTA_MS, file=$(ls -la "$CRSW_REPO/.claude/state/last-codex-review.json" 2>&1)"
+fi
+
+# Sub-test 2: unmarked dispatch (no review-kind marker) -> state file still
+# written; debug log shows review_kind="unknown" (documented, not silent drop).
+rm -f "$CRSW_REPO/.claude/state/last-codex-review.json" \
+      "$CRSW_REPO/.claude/state/codex-review-debug.jsonl" \
+      "$CRSW_REPO/.claude/state/last-review-stamps.json"
+CRSW_PAYLOAD2=$(cat <<'JSON'
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "node \"$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs\" adversarial-review \"plain prompt with no marker\""
+  }
+}
+JSON
+)
+echo "$CRSW_PAYLOAD2" | ( cd "$CRSW_REPO" && CODEX_REVIEW_DEBUG=1 python3 .claude/hooks/codex_review_completed.py >/dev/null 2>&1 )
+if [ -s "$CRSW_REPO/.claude/state/last-codex-review.json" ] \
+   && [ -s "$CRSW_REPO/.claude/state/codex-review-debug.jsonl" ] \
+   && grep -q '"review_kind": "unknown"' "$CRSW_REPO/.claude/state/codex-review-debug.jsonl"; then
+    t_pass "codex_review_state_write: crsw_unmarked_kind (state written; review_kind=unknown logged)"
+else
+    t_fail "codex_review_state_write: crsw_unmarked_kind" \
+           "state=$(stat -c %s "$CRSW_REPO/.claude/state/last-codex-review.json" 2>/dev/null) debug=$(cat "$CRSW_REPO/.claude/state/codex-review-debug.jsonl" 2>&1 | tail -3)"
+fi
+
+# Sub-test 3: two parallel dispatches -> both writes complete; no lost updates.
+rm -f "$CRSW_REPO/.claude/state/last-codex-review.json" \
+      "$CRSW_REPO/.claude/state/codex-review-debug.jsonl" \
+      "$CRSW_REPO/.claude/state/last-review-stamps.json"
+cat > "$CRSW_TMP/p3a.json" <<'JSON'
+{"tool_name":"Bash","tool_input":{"command":"node /x/codex-companion.mjs adversarial-review \"[review-kind: adversarial] todo/00-infrastructure/TODO-08-automation-hardening.md dispatch A\""}}
+JSON
+cat > "$CRSW_TMP/p3b.json" <<'JSON'
+{"tool_name":"Bash","tool_input":{"command":"node /x/codex-companion.mjs adversarial-review \"[review-kind: consistency] todo/00-infrastructure/TODO-08-automation-hardening.md dispatch B\""}}
+JSON
+( cd "$CRSW_REPO" && CODEX_REVIEW_DEBUG=1 python3 .claude/hooks/codex_review_completed.py < "$CRSW_TMP/p3a.json" >/dev/null 2>&1 ) &
+( cd "$CRSW_REPO" && CODEX_REVIEW_DEBUG=1 python3 .claude/hooks/codex_review_completed.py < "$CRSW_TMP/p3b.json" >/dev/null 2>&1 ) &
+wait
+CRSW_DEBUG_LINES=$(wc -l < "$CRSW_REPO/.claude/state/codex-review-debug.jsonl" 2>/dev/null || echo 0)
+# M2 fix from review pipeline: validate stamp persistence too, not just
+# debug-log presence. If _record_stamp() silently no-oped, the prior test
+# would still pass; parsing last-review-stamps.json catches that gap.
+CRSW_STAMP_OK=$(python3 - "$CRSW_REPO" <<'PYEOF'
+import json, sys, pathlib
+root = pathlib.Path(sys.argv[1])
+p = root / ".claude" / "state" / "last-review-stamps.json"
+if not p.exists():
+    print("missing"); sys.exit(0)
+try:
+    d = json.loads(p.read_text())
+except Exception as e:
+    print(f"parse-fail: {e}"); sys.exit(0)
+entry = d.get("todo/00-infrastructure/TODO-08-automation-hardening.md", {})
+adv = entry.get("adversarial")
+con = entry.get("consistency")
+if isinstance(adv, int) and isinstance(con, int) and adv > 0 and con > 0:
+    print("ok")
+else:
+    print(f"missing-kinds: adv={adv!r} con={con!r}")
+PYEOF
+)
+# Each dispatch emits 4 records (main_entry + classify + trigger_state_write +
+# trigger_stamp_write) = 8 total across the two processes when both fire.
+if [ -s "$CRSW_REPO/.claude/state/last-codex-review.json" ] \
+   && [ "$CRSW_DEBUG_LINES" -ge 8 ] \
+   && grep -q '"review_kind": "adversarial"' "$CRSW_REPO/.claude/state/codex-review-debug.jsonl" \
+   && grep -q '"review_kind": "consistency"' "$CRSW_REPO/.claude/state/codex-review-debug.jsonl" \
+   && [ "$CRSW_STAMP_OK" = "ok" ] \
+   && ! grep -q '"stamp_write_ok": false' "$CRSW_REPO/.claude/state/codex-review-debug.jsonl"; then
+    t_pass "codex_review_state_write: crsw_parallel_writes (${CRSW_DEBUG_LINES} debug records; stamps persisted)"
+else
+    t_fail "codex_review_state_write: crsw_parallel_writes" \
+           "debug_lines=$CRSW_DEBUG_LINES stamp_check=$CRSW_STAMP_OK state_size=$(stat -c %s "$CRSW_REPO/.claude/state/last-codex-review.json" 2>/dev/null)"
+fi
+
+# Sub-test 4: write-failure honesty -- exercises the WIRED diagnostic at
+# main()'s trigger_state_write emit site, not just the helper. Monkeypatches
+# os.replace to raise OSError, drives crc.main() with a synthetic Bash
+# trigger, then parses codex-review-debug.jsonl to assert the
+# trigger_state_write record has last_codex_review_write_ok=false and a
+# non-empty error string. The regression contract is that the JSONL
+# diagnostic CANNOT report success when the writer fail-open path swallowed
+# the error -- the H1 fix from the post-impl Codex review pipeline.
+rm -f "$CRSW_REPO/.claude/state/last-codex-review.json" \
+      "$CRSW_REPO/.claude/state/codex-review-debug.jsonl" \
+      "$CRSW_REPO/.claude/state/last-review-stamps.json"
+CRSW_FAIL_OUT=$(cd "$CRSW_REPO" && CODEX_REVIEW_DEBUG=1 python3 - <<'PYEOF'
+import io, json, os, sys
+sys.path.insert(0, ".claude/hooks")
+import codex_review_completed as crc
+
+# Monkeypatch os.replace in BOTH the os module and the crc module's
+# import-time binding -- crc imports os at module top, so `os.replace` in
+# crc resolves through the os module attribute.
+_orig = os.replace
+def _boom(*a, **k):
+    raise OSError(28, "No space left on device (test fixture)")
+os.replace = _boom
+
+payload = {
+    "tool_name": "Bash",
+    "tool_input": {
+        "command": 'node /x/codex-companion.mjs adversarial-review "[review-kind: adversarial] todo/00-infrastructure/TODO-08-automation-hardening.md fail-test"',
+    },
+}
+# Replace stdin so crc.main()'s json.load(sys.stdin) sees the synthetic
+# payload. Suppress stderr so the WARN doesn't pollute test output.
+sys.stdin = io.StringIO(json.dumps(payload))
+sys.stderr = io.StringIO()
+try:
+    rc = crc.main()
+finally:
+    os.replace = _orig
+    sys.stderr = sys.__stderr__
+
+# Parse the JSONL diagnostic file and find the trigger_state_write record.
+log_path = ".claude/state/codex-review-debug.jsonl"
+if not os.path.exists(log_path):
+    print(f"FAIL: debug log not written (rc={rc})"); sys.exit(0)
+
+records = [json.loads(line) for line in open(log_path) if line.strip()]
+state_writes = [r for r in records if r.get("event") == "trigger_state_write"]
+if not state_writes:
+    print(f"FAIL: no trigger_state_write record in {len(records)} records"); sys.exit(0)
+rec = state_writes[-1]
+if rec.get("last_codex_review_write_ok") is not False:
+    print(f"FAIL: write_ok={rec.get('last_codex_review_write_ok')!r} expected False"); sys.exit(0)
+if "OSError" not in str(rec.get("error", "")):
+    print(f"FAIL: error={rec.get('error')!r} expected OSError substring"); sys.exit(0)
+print("OK")
+PYEOF
+)
+if [ "$CRSW_FAIL_OUT" = "OK" ]; then
+    t_pass "codex_review_state_write: crsw_write_failure_honesty (JSONL records ok=false + OSError)"
+else
+    t_fail "codex_review_state_write: crsw_write_failure_honesty" \
+           "out=$CRSW_FAIL_OUT"
 fi
 
 
