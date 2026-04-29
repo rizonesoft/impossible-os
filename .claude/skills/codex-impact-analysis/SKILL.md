@@ -7,6 +7,10 @@ description: Codex-driven dependency impact analysis. Before changing a function
 
 > **External-Reviewer Contract:** Codex is a subordinate reviewer, not authority. Every finding from this skill goes through `superpowers:receiving-code-review` (verify at file:line, Fix / Reject / Accept, never blind-implement). Canonical contract: [docs/infrastructure/ai-system.md#external-reviewer-contract-codex](../../../docs/infrastructure/ai-system.md#external-reviewer-contract-codex).
 
+## Prompt Shape
+
+Every dispatch from this skill MUST open its prompt with the marker `[review-kind: adversarial] <todo-path>` on the first non-blank line. The marker is what `.claude/hooks/skill_step_observer.py` and the section-commit four-dispatch gate use to attribute the dispatch. Un-marked dispatches waste a Codex round and block the next section-commit. Canonical reference for all 7 markers: [.claude/skills/codex-prompt-shape.md](../codex-prompt-shape.md).
+
 ## Use This Skill When
 
 - About to change a function signature (add/remove/reorder parameters).
@@ -25,7 +29,7 @@ description: Codex-driven dependency impact analysis. Before changing a function
 
 2. **Dispatch to Codex plugin** (with the `mcp__lsp-bridge__references` output pasted into the prompt as the verified call site set):
    ```bash
-   node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<impact analysis prompt>"
+   node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "[review-kind: adversarial] <todo-path> <impact analysis prompt>"
    ```
 
 3. **Triage findings** -- the PostToolUse hook fires `receiving-code-review` reminder; follow it. **Impact-analysis false-positive watch:** Codex hallucinates dependencies in `.asm` files that don't actually reference the symbol/offset; "no callers found" is a hypothesis to verify with grep, not a guarantee; "safe to change" claims need spot-checked riskiest call sites. A missed dependency here becomes a runtime crash.

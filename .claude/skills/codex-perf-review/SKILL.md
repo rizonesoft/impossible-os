@@ -7,6 +7,10 @@ description: Codex-driven performance hot-path review. Focused analysis of ISR p
 
 > **External-Reviewer Contract:** Codex is a subordinate reviewer, not authority. Every finding from this skill goes through `superpowers:receiving-code-review` (verify at file:line, Fix / Reject / Accept, never blind-implement). Canonical contract: [docs/infrastructure/ai-system.md#external-reviewer-contract-codex](../../../docs/infrastructure/ai-system.md#external-reviewer-contract-codex).
 
+## Prompt Shape
+
+Every dispatch from this skill MUST open its prompt with the marker `[review-kind: perf] <todo-path>` on the first non-blank line. The marker is what `.claude/hooks/skill_step_observer.py` and the section-commit four-dispatch gate use to attribute the dispatch. Un-marked dispatches waste a Codex round and block the next section-commit. Canonical reference for all 7 markers: [.claude/skills/codex-prompt-shape.md](../codex-prompt-shape.md).
+
 ## Use This Skill When
 
 - Implementing code in the ISR path, scheduler, or compositor (hot paths).
@@ -23,7 +27,7 @@ description: Codex-driven performance hot-path review. Focused analysis of ISR p
 
 2. **Dispatch to Codex plugin:**
    ```bash
-   node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<perf review prompt>"
+   node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "[review-kind: perf] <todo-path> <perf review prompt>"
    ```
 
 3. **Triage findings** -- the PostToolUse hook fires `receiving-code-review` reminder; follow it. **Perf-review false-positive watch:** Codex flags allocations in functions that "look hot" but only run once at boot; flags spinlock hold times that are the only correct serialization; demands hash tables for 16-element linear scans; and reports "could be faster" without "is measurably slow." Verify the path is actually hot and the cost is actually measurable before refactoring -- structure review without profile evidence is a reject.

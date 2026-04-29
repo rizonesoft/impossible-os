@@ -28,7 +28,7 @@ description: Full review of a TODO section -- adversarial Codex, consistency, pe
 
 5. **MANDATORY Codex adversarial review** -- dispatch to Codex. No exceptions.
    ```bash
-   node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<prompt>"
+   node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "[review-kind: adversarial] <todo-path> <prompt>"
    ```
    **Prompt shape:** start with `[review-kind: adversarial]` and include the TODO path (`todo/<domain>/TODO-XX-<slug>.md`) + `§<N>`. The §3 PostToolUse hook (`codex_review_completed.py`) records this dispatch to `.claude/state/last-review-stamps.json` keyed by TODO path. Without the marker AND the path, the §4 commit gate cannot attribute the dispatch and the three-dispatch evidence check (step 16 stamp commit) refuses the commit. Use [`codex-prompt-template.md`](codex-prompt-template.md) (adversarial section); do NOT prepend implementor narrative -- the hook WARNs on first-person preambles per [CONSENSAGENT ACL-2025](https://aclanthology.org/2025.findings-acl.1141/).
 
@@ -50,13 +50,13 @@ description: Full review of a TODO section -- adversarial Codex, consistency, pe
 
    **8a. Consistency dispatch.** Invoke `codex-consistency-audit` via the plugin:
    ```bash
-   node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<consistency prompt>"
+   node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "[review-kind: consistency] <todo-path> <consistency prompt>"
    ```
    **Prompt shape:** start with `[review-kind: consistency]` plus the TODO path + `§<N>`. Use [`codex-prompt-template.md`](codex-prompt-template.md) (consistency section). Angles: struct layout must match byte-for-byte across kernel + bootloader mirrors, constants defined in one place (no silent duplication with drift potential), API contracts (signature + error-code semantics match consumer expectations), ABI schemas (NVRAM variable name + GUID + attrs + size match producer/consumer), SSDT row ↔ function ↔ registration consistency, Win32 vs NT semantics, same narrowing / truncation / padding patterns applied uniformly across cross-file changes.
 
    **8b. Performance dispatch.** Invoke `codex-perf-review` via the plugin:
    ```bash
-   node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<perf prompt>"
+   node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "[review-kind: perf] <todo-path> <perf prompt>"
    ```
    **Prompt shape:** start with `[review-kind: perf]` plus the TODO path + `§<N>`. Use [`codex-prompt-template.md`](codex-prompt-template.md) (perf section). Angles: allocations in hot paths / ISR contexts, O(n²) or worse on unbounded inputs, spinlock hold times spanning I/O or serial writes, byte-at-a-time operations that should be memcpy'd, branch-misprediction hazards on hot paths, cache-line sharing across per-CPU state, inline-asm barriers placed conservatively vs required.
 
@@ -106,7 +106,7 @@ description: Full review of a TODO section -- adversarial Codex, consistency, pe
 
    If any trigger fires, dispatch a focused re-adversarial scoped to ONLY the fix diff:
    ```bash
-   node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<re-adversarial prompt>"
+   node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "[review-kind: re-adversarial] <todo-path> <re-adversarial prompt>"
    ```
    **Prompt scope:** the diff between the pre-fix and post-fix tree (`git diff <pre-fix-sha>..HEAD -- <files>`). Angles: regressions introduced by the fixes themselves, new races opened by lock-order changes, new NULL paths from added error handling, new resource leaks from added early returns, new ABI drift from struct/enum touches.
    The PostToolUse hook fires `receiving-code-review` reminder; follow it. Findings -> verify, fix, build. Track in stamp as `Codex Nx` (incrementing the dispatch count by 1; add `re-adversarial` to the `<kinds>` list).

@@ -7,6 +7,10 @@ description: Fix all findings from a Codex adversarial review, then re-run the r
 
 > **External-Reviewer Contract:** Codex is a subordinate reviewer, not authority. Every finding from this skill goes through `superpowers:receiving-code-review` (verify at file:line, Fix / Reject / Accept, never blind-implement). Canonical contract: [docs/infrastructure/ai-system.md#external-reviewer-contract-codex](../../../docs/infrastructure/ai-system.md#external-reviewer-contract-codex).
 
+## Prompt Shape
+
+Every dispatch from this skill MUST open its prompt with the marker `[review-kind: re-adversarial] <todo-path>` on the first non-blank line. The marker is what `.claude/hooks/skill_step_observer.py` and the section-commit four-dispatch gate use to attribute the dispatch. Un-marked dispatches waste a Codex round and block the next section-commit. Canonical reference for all 7 markers: [.claude/skills/codex-prompt-shape.md](../codex-prompt-shape.md).
+
 ## Use This Skill When
 
 - A Codex adversarial review has returned findings that need fixing.
@@ -84,7 +88,7 @@ description: Fix all findings from a Codex adversarial review, then re-run the r
 ## Review Command
 
 ```bash
-node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<focus prompt>"
+node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "[review-kind: re-adversarial] <todo-path> <focus prompt>"
 ```
 
 Run in background for reviews touching > 3 files:

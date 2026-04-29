@@ -4823,6 +4823,183 @@ fi
 
 
 # ============================================================================
+# skill_step_observer -- canonical Codex review-kind dispatch coverage
+# ============================================================================
+# TODO ownership: 00-infrastructure/TODO-08-automation-hardening.md observer
+# regex coverage section. The 7 canonical review-kind markers (design,
+# adversarial, adversarial-impl, test-coverage, consistency, perf,
+# re-adversarial) MUST each bind to a step number in the implement-
+# todo-section step map; the prior shape silently dropped 5 of 7.
+# Each sub-test feeds a synthetic Bash codex-companion.mjs adversarial-
+# review command with the named marker and asserts match_step returns
+# the expected step number.
+
+SSO_PY=$(cat <<'PYEOF'
+import sys
+sys.path.insert(0, "$REPO_ROOT/.claude/hooks")
+from skill_step_map import match_step, bound_review_kinds
+
+CASES = [
+    ("implement-todo-section", "design",            4),
+    ("implement-todo-section", "adversarial",       13),
+    ("implement-todo-section", "adversarial-impl",  13),
+    ("implement-todo-section", "test-coverage",     9),
+    ("implement-todo-section", "consistency",       20),
+    ("implement-todo-section", "perf",              20),
+    ("implement-todo-section", "re-adversarial",    20),
+]
+
+for skill, kind, want in CASES:
+    cmd = f'node /x/codex-companion.mjs adversarial-review "[review-kind: {kind}] todo/foo prompt"'
+    got = match_step(skill, "Bash", cmd)
+    if want in got:
+        print(f"OK {kind}")
+    else:
+        print(f"FAIL {kind}: got {got} want {want}")
+
+# Unmarked dispatch must NOT match any step (the runtime observer emits
+# a stderr WARN; here we just confirm match_step returns []).
+unmarked = 'node /x/codex-companion.mjs adversarial-review "plain prompt no marker"'
+got = match_step("implement-todo-section", "Bash", unmarked)
+if got == []:
+    print("OK unmarked")
+else:
+    print(f"FAIL unmarked: got {got} want []")
+
+# Typo'd marker (post-impl review M1 fix): a non-canonical kind like
+# 'performance' (typo for 'perf') must NOT bind to any step. The runtime
+# observer's WARN path identifies this as an unbound-marker case.
+typo = 'node /x/codex-companion.mjs adversarial-review "[review-kind: performance] todo/foo prompt"'
+got = match_step("implement-todo-section", "Bash", typo)
+if got == []:
+    print("OK typo_marker_unbound")
+else:
+    print(f"FAIL typo_marker_unbound: got {got} want []")
+
+# bound_review_kinds helper sanity: implement-todo-section MUST bind
+# all 7 canonical kinds (the observer-coverage contract).
+bound = set(bound_review_kinds("implement-todo-section"))
+expected = {"design", "adversarial", "adversarial-impl", "test-coverage",
+            "consistency", "perf", "re-adversarial"}
+missing = expected - bound
+if not missing:
+    print("OK bound_review_kinds_complete")
+else:
+    print(f"FAIL bound_review_kinds_complete: missing={missing}")
+
+# Quality-review-section step 2 must use a sentinel marker (post-impl
+# review M3 fix). A typo'd marker dispatch under quality-review-section
+# must NOT get step credit.
+typo_qrs = 'node /x/codex-companion.mjs adversarial-review "[review-kind: performance] todo/foo prompt"'
+got = match_step("quality-review-section", "Bash", typo_qrs)
+if got == []:
+    print("OK quality_review_section_typo_unbound")
+else:
+    print(f"FAIL quality_review_section_typo_unbound: got {got} want []")
+
+# A canonical adversarial dispatch under quality-review-section MUST
+# still get step 2 credit (the legitimate path).
+canon_qrs = 'node /x/codex-companion.mjs adversarial-review "[review-kind: adversarial] todo/foo prompt"'
+got = match_step("quality-review-section", "Bash", canon_qrs)
+if 2 in got:
+    print("OK quality_review_section_adversarial_bound")
+else:
+    print(f"FAIL quality_review_section_adversarial_bound: got {got} want [2]")
+
+# Wrong-canonical marker (round-3 M6 fix): canonical kind not bound for
+# the active skill returns []. The runtime observer then emits the
+# wrong-canonical WARN (loud).
+wrong_canon = 'node /x/codex-companion.mjs adversarial-review "[review-kind: perf] todo/foo prompt"'
+got = match_step("quality-review-section", "Bash", wrong_canon)
+if got == []:
+    print("OK wrong_canonical_marker_unbound")
+else:
+    print(f"FAIL wrong_canonical_marker_unbound: got {got} want []")
+
+# Multi-line dispatches with shell line-continuation are out of scope
+# for the substring classifier; tracked as a follow-up section in
+# 00-infrastructure/TODO-08-automation-hardening (shell-aware Codex
+# dispatch segmentation). The same follow-up closes the pre-existing
+# heredoc-spoofing concern (Bash text containing a quoted Codex example
+# inside a heredoc body falsely classifies as a dispatch). Until that
+# refactor lands, dispatches stay single-line + simple-double-quoted.
+PYEOF
+)
+SSO_PY="${SSO_PY//\$REPO_ROOT/$REPO_ROOT}"
+SSO_OUT="$(python3 -c "$SSO_PY" 2>&1)"
+SSO_OK=$(echo "$SSO_OUT" | grep -c "^OK ")
+if [ "$SSO_OK" = "13" ]; then
+    echo "$SSO_OUT" | grep "^OK " | while IFS= read -r line; do
+        t_pass "skill_step_observer: $line"
+    done
+    PASS=$((PASS + 13))
+else
+    t_fail "skill_step_observer: canonical-kind coverage incomplete" \
+           "ok-count=$SSO_OK out=$SSO_OUT"
+fi
+
+# Marker-coverage regression (round 3 M5 fix): instead of a permissive grep
+# that accepts marker-after-body shapes, parse each adversarial-review
+# example and run the actual _review_kind classifier against it. The
+# classifier scans the FIRST non-blank line of the prompt; an example
+# fools the prior grep when the marker landed mid-prompt or when the
+# prompt didn't start with `<`.
+SSO_PARSER_OUT=$(python3 - <<'PYEOF'
+import pathlib, re, sys
+sys.path.insert(0, ".claude/hooks")
+from _review_kind import detect_review_kind_from_cmd
+
+# Round-4 M7 fix: fail-closed. Count every `adversarial-review` occurrence
+# AND every successful (parsed + classifier-validated) example; fail if
+# total != marked. Catches future heredoc / single-quoted shapes the
+# simple double-quoted parser cannot reach.
+# Match actual dispatch invocations (codex-companion.mjs + adversarial-review
+# on the same line) -- NOT prose mentions like 'codex-adversarial-review-section'
+# (skill name) or "adversarial-review's Accepted-XREF rule".
+TOTAL_RE = re.compile(r'codex-companion\.mjs[^\n]*?\badversarial-review\b')
+EXAMPLE_RE = re.compile(r'codex-companion\.mjs[^\n]*?adversarial-review\s*"([^"]*)"')
+total = 0
+marked = 0
+problems = []
+# Multi-line dispatches with shell line-continuation are out of scope
+# for this validator; they are tracked under a follow-up section in
+# 00-infrastructure/TODO-08-automation-hardening (shell-aware Codex
+# dispatch segmentation). The pre-existing heredoc-spoofing concern
+# is closed by the same follow-up. For now: simple-double-quoted-body
+# dispatches are the only shape in use, and any future continuation
+# example will fail-closed (TOTAL_RE > EXAMPLE_RE) for the maintainer
+# to either rewrite as single-line OR land the section's shell-aware
+# refactor.
+for skill_md in pathlib.Path(".claude/skills").rglob("SKILL.md"):
+    text = skill_md.read_text()
+    file_total = len(TOTAL_RE.findall(text))
+    file_parsed_bodies = EXAMPLE_RE.findall(text)
+    file_parsed = len(file_parsed_bodies)
+    if file_total > file_parsed:
+        problems.append(f'{skill_md}: {file_total} total adversarial-review, {file_parsed} parsable as simple double-quoted body')
+    for body in file_parsed_bodies:
+        cmd = f'node /x/codex-companion.mjs adversarial-review "{body}"'
+        if detect_review_kind_from_cmd(cmd):
+            marked += 1
+        else:
+            problems.append(f'{skill_md}: classifier returns empty for body "{body[:80]}"')
+    total += file_total
+status = "OK" if total == marked and not problems else "FAIL"
+print(f'{status} total={total} marked={marked}')
+for p in problems[:5]:
+    print(p)
+PYEOF
+)
+SSO_PARSER_HEAD=$(echo "$SSO_PARSER_OUT" | head -1)
+if [[ "$SSO_PARSER_HEAD" == OK* ]]; then
+    t_pass "skill_step_observer: skill_examples_classifier_validated ($SSO_PARSER_HEAD)"
+else
+    t_fail "skill_step_observer: skill_examples_classifier_validated" \
+           "$(echo "$SSO_PARSER_OUT" | head -5)"
+fi
+
+
+# ============================================================================
 # Summary
 # ============================================================================
 

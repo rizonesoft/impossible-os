@@ -24,6 +24,15 @@ def detect_review_kind_from_cmd(cmd: str) -> str:
     Returns empty string when no marker is on the first non-blank line,
     when the command is not a codex dispatch, or when the prompt cannot
     be located.
+
+    Multi-line dispatches with shell line-continuation (`\\<newline>`)
+    classify as empty here -- the substring-and-split path is not
+    shell-aware. The proper fix (shlex tokenize + segment-by-separator
+    + heredoc body strip, matching codex_review_completed.py
+    _is_codex_bash_trigger) is tracked as a follow-up section in
+    00-infrastructure/TODO-08-automation-hardening; it also closes a
+    pre-existing heredoc-spoofing class where Bash text containing a
+    quoted Codex example would falsely classify as a dispatch.
     """
     if not isinstance(cmd, str) or not cmd:
         return ""

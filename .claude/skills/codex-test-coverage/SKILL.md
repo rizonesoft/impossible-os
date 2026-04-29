@@ -7,6 +7,10 @@ description: Codex-driven test coverage gap analysis. Given a source file or sub
 
 > **External-Reviewer Contract:** Codex is a subordinate reviewer, not authority. Every finding from this skill goes through `superpowers:receiving-code-review` (verify at file:line, Fix / Reject / Accept, never blind-implement). Canonical contract: [docs/infrastructure/ai-system.md#external-reviewer-contract-codex](../../../docs/infrastructure/ai-system.md#external-reviewer-contract-codex).
 
+## Prompt Shape
+
+Every dispatch from this skill MUST open its prompt with the marker `[review-kind: test-coverage] <todo-path>` on the first non-blank line. The marker is what `.claude/hooks/skill_step_observer.py` and the section-commit four-dispatch gate use to attribute the dispatch. Un-marked dispatches waste a Codex round and block the next section-commit. Canonical reference for all 7 markers: [.claude/skills/codex-prompt-shape.md](../codex-prompt-shape.md).
+
 ## Use This Skill When
 
 - A section has been implemented and tests written, but you want to verify nothing was missed.
@@ -27,7 +31,7 @@ description: Codex-driven test coverage gap analysis. Given a source file or sub
 
 3. **Dispatch to Codex plugin:**
    ```bash
-   node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<coverage prompt>"
+   node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "[review-kind: test-coverage] <todo-path> <coverage prompt>"
    ```
 
 4. **Triage findings** -- the PostToolUse hook fires `receiving-code-review` reminder; follow it. **Test-coverage false-positive watch:** Codex misses indirect assertions (a higher-level test that exercises the path); demands tests for unreachable error paths (`if (size > SIZE_MAX)` on a `size_t` -- delete the dead branch instead); demands tests for hypothetical NULL inputs that no caller produces. Verify reachability and real-caller behavior before adding any test.

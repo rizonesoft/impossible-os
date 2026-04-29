@@ -7,6 +7,10 @@ description: Pre-implementation design review via Codex. Before writing code for
 
 > **External-Reviewer Contract:** Codex is a subordinate reviewer, not authority. Every finding from this skill goes through `superpowers:receiving-code-review` (verify at file:line, Fix / Reject / Accept, never blind-implement). Canonical contract: [docs/infrastructure/ai-system.md#external-reviewer-contract-codex](../../../docs/infrastructure/ai-system.md#external-reviewer-contract-codex).
 
+## Prompt Shape
+
+Every dispatch from this skill MUST open its prompt with the marker `[review-kind: design] <todo-path>` on the first non-blank line. The marker is what `.claude/hooks/skill_step_observer.py` and the section-commit four-dispatch gate use to attribute the dispatch. Un-marked dispatches waste a Codex round and block the next section-commit. Canonical reference for all 7 markers: [.claude/skills/codex-prompt-shape.md](../codex-prompt-shape.md).
+
 ## Use This Skill When
 
 - About to implement a TODO section that touches SMP-sensitive, boot-path, page tables, interrupt handling, or security-critical code.
@@ -43,7 +47,7 @@ If a tightly-scoped foreground dispatch still hits Bash's 600000ms wall and gets
 
 **Foreground (default):**
 ```bash
-node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<design review prompt>"
+node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "[review-kind: design] <todo-path> <design review prompt>"
 ```
 
 **Background fallback (after foreground timeout):**
@@ -75,7 +79,7 @@ When `status: "completed"`, the same JSON contains `finalMessage` (the review te
    - Specific questions: "Is this approach correct?", "What edge cases are missing?", "What could this break?"
 4. **Dispatch to Codex plugin:**
    ```bash
-   node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<design review prompt>"
+   node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "[review-kind: design] <todo-path> <design review prompt>"
    ```
    Frame as design review, not code review -- Codex should analyze the PLAN, not existing code.
 5. **Triage findings** -- the PostToolUse hook fires `receiving-code-review` reminder; follow it. **Design-review false-positive watch:** Codex assumes general-OS conventions (e.g., "you need a wait queue here") that don't apply to this freestanding kernel (we use polled completion in init paths); demands "production-ready" configurability the section's spec doesn't require; flags "this will conflict with X" without verifying that X actually behaves the way Codex claims. Read the integration surface files yourself before accepting any conflict claim.

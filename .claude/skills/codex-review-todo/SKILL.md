@@ -7,6 +7,10 @@ description: Run a Codex adversarial review against all implemented sections of 
 
 > **External-Reviewer Contract:** Codex is a subordinate reviewer, not authority. Every finding from this skill goes through `superpowers:receiving-code-review` (verify at file:line, Fix / Reject / Accept, never blind-implement). Canonical contract: [docs/infrastructure/ai-system.md#external-reviewer-contract-codex](../../../docs/infrastructure/ai-system.md#external-reviewer-contract-codex).
 
+## Prompt Shape
+
+Every dispatch from this skill MUST open its prompt with the marker `[review-kind: adversarial] <todo-path>` on the first non-blank line. The marker is what `.claude/hooks/skill_step_observer.py` and the section-commit four-dispatch gate use to attribute the dispatch. Un-marked dispatches waste a Codex round and block the next section-commit. Canonical reference for all 7 markers: [.claude/skills/codex-prompt-shape.md](../codex-prompt-shape.md).
+
 ## Use This Skill When
 
 - A TODO file has completed sections (`[x]`) that need adversarial review against the actual code.
@@ -27,7 +31,7 @@ description: Run a Codex adversarial review against all implemented sections of 
    - Every cross-section dependency (e.g., "§5 depends on §3's lock being held")
 4. **Run the Codex adversarial review** via:
    ```bash
-   node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<focus prompt>"
+   node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "[review-kind: adversarial] <todo-path> <focus prompt>"
    ```
    Run in background for large reviews (> 3 sections).
 5. **Collect and present findings** verbatim from Codex output.

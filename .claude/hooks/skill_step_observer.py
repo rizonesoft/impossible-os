@@ -61,8 +61,26 @@ if str(_HOOK_DIR) not in sys.path:
 from skill_step_map import (  # noqa: E402
     MULTI_STEP_SKILLS,
     SKILL_STEP_MAP,
+    bound_review_kinds,
     match_step,
 )
+
+
+# Canonical review-kind markers across the project. Sourced from the
+# post-impl Codex pipeline in section-25 + .claude/skills/codex-prompt-shape.md.
+# A kind that's in this set but not in bound_review_kinds(skill) is
+# canonical-but-not-bound-for-this-skill (silent fallthrough); a kind
+# that's missing from this set is non-canonical (typo / retired kind / etc.)
+# and warrants a loud WARN at dispatch time.
+CANONICAL_REVIEW_KINDS = frozenset({
+    "design",
+    "adversarial",
+    "adversarial-impl",
+    "test-coverage",
+    "consistency",
+    "perf",
+    "re-adversarial",
+})
 
 
 _STATE_REL = ".claude/state/skill-progress.json"
@@ -419,6 +437,74 @@ def main() -> int:
 
         matched = match_step(skill, tn, sig)
         if not matched:
+            # TODO-08 §25 -- emit a stderr WARN when a codex-companion.mjs
+            # adversarial-review dispatch came through with a marker that
+            # the observer cannot bind to a step under the active skill.
+            # Three cases:
+            #   (1) kind == ""              -> missing marker (loud WARN)
+            #   (2) kind not canonical      -> typo / retired kind (loud WARN)
+            #   (3) kind canonical but not  -> silent fallthrough (legitimate;
+            #       bound for `skill`          e.g. design dispatch during
+            #                                  review-todo-section flow)
+            # Prior shape only handled (1); the post-impl Codex consistency
+            # round caught (2) silently dropping for typos like 'performance'.
+            if (
+                tn == "Bash"
+                and "codex-companion.mjs" in sig
+                and "adversarial-review" in sig
+            ):
+                try:
+                    from _review_kind import detect_review_kind_from_cmd
+                    kind = detect_review_kind_from_cmd(sig)
+                except Exception:
+                    kind = ""
+                bound = bound_review_kinds(skill)
+                if not kind:
+                    sys.stderr.write(
+                        "[skill-step-observer] WARN: codex-companion.mjs "
+                        "adversarial-review dispatch with no [review-kind:] "
+                        "marker on its first non-blank line; classified as "
+                        "kind=unknown and not bound to any step under the "
+                        f"active skill {skill!r}. Add a marker like "
+                        "'[review-kind: adversarial]' on the prompt's first "
+                        "line so the observer can attribute it. See "
+                        ".claude/skills/codex-prompt-shape.md.\n"
+                    )
+                elif kind not in CANONICAL_REVIEW_KINDS:
+                    sys.stderr.write(
+                        "[skill-step-observer] WARN: codex-companion.mjs "
+                        f"adversarial-review marker '[review-kind: {kind}]' "
+                        f"is not a canonical kind (canonical set: "
+                        f"{sorted(CANONICAL_REVIEW_KINDS)}). Likely a typo "
+                        "(e.g. 'performance' instead of 'perf', 'dead-code' "
+                        "is retired). The dispatch lands in the conversation "
+                        "but earns NO step credit and NO per-kind stamp. "
+                        "Re-run with the correct canonical marker. See "
+                        ".claude/skills/codex-prompt-shape.md.\n"
+                    )
+                elif bound and kind not in bound:
+                    # Wrong-canonical: the kind IS canonical project-wide but
+                    # the active skill's step map doesn't bind it. Common
+                    # mistake: dispatching `[review-kind: perf]` under
+                    # quality-review-section (which binds only `adversarial`).
+                    # Silent fallthrough here would let the operator burn a
+                    # Codex round and still hit the commit gate's missing-step
+                    # BLOCK later. Closes the round-3 M6 finding from the
+                    # post-impl Codex pipeline.
+                    sys.stderr.write(
+                        "[skill-step-observer] WARN: codex-companion.mjs "
+                        f"adversarial-review marker '[review-kind: {kind}]' "
+                        f"is canonical but not bound for the active skill "
+                        f"{skill!r}. Accepted markers for {skill!r}: "
+                        f"{sorted(bound)}. The dispatch earns NO step credit; "
+                        "re-run with one of the accepted markers, or invoke "
+                        "the matching skill explicitly. See "
+                        ".claude/skills/codex-prompt-shape.md.\n"
+                    )
+                # Case (3) collapsed: when bound is empty (skills with no
+                # canonical-kind sentinel at all) silent fallthrough remains;
+                # no skill currently has this shape after the section-25 +
+                # section-25-round-3 fixes.
             return 0
 
         # Lazy state init for the skill if missing (transcript-walked but not

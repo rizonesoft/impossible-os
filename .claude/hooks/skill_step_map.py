@@ -43,19 +43,37 @@ StepRule = Tuple[int, str, str]
 # Steps that produce mechanical evidence:
 #   step 4  -- Codex design dispatch (OPTIONAL, conditional skip-rules apply)
 #   step 7  -- first build (Bash: bash scripts/build.sh)
-#   step 13 -- MANDATORY Codex adversarial dispatch
+#   step 9  -- Codex test-coverage dispatch (OPTIONAL on trivial sections)
+#   step 13 -- MANDATORY Codex adversarial dispatch (also matches
+#              adversarial-impl, the implementation-time variant the
+#              codex-design-review SKILL.md prompt-shape doc names)
 #   step 16 -- second build (Bash: bash scripts/build.sh, fires after step 13)
 #   step 19 -- commit + push (Bash: git commit / git push)
-#   step 20 -- Skill(review-todo-section) invocation
-# Other steps are prose / TodoWrite / Edit-based and not enforced here.
+#   step 20 -- Skill(review-todo-section) invocation OR the inline review
+#              pipeline equivalent (consistency / perf / re-adversarial
+#              dispatches that prove the post-impl review pipeline ran
+#              without explicit Skill(review-todo-section) invocation;
+#              the OS-level Codex hooks + the section-commit four-dispatch
+#              gate independently enforce the dispatch evidence, so the
+#              observer just records that step 20 happened).
+# Coverage closes TODO-08 §25: all 7 canonical review-kind markers
+# (design / adversarial / adversarial-impl / test-coverage / consistency
+# / perf / re-adversarial) now bind to step numbers; the prior shape
+# silently dropped the 5 non-{design, adversarial} kinds during implement
+# flow.
 # ----------------------------------------------------------------------------
 _IMPLEMENT_TODO_SECTION: List[StepRule] = [
     (4,  "Bash",  "__REVIEW_KIND__:design"),
     (7,  "Bash",  r"\bbash\s+(?:[^\"\']*?/)?scripts/build\.sh\b"),
+    (9,  "Bash",  "__REVIEW_KIND__:test-coverage"),
     (13, "Bash",  "__REVIEW_KIND__:adversarial"),
+    (13, "Bash",  "__REVIEW_KIND__:adversarial-impl"),
     (13, "Skill", r"^codex-adversarial-review-section$"),
     (16, "Bash",  r"\bbash\s+(?:[^\"\']*?/)?scripts/build\.sh\b"),
     (19, "Bash",  r"\bgit\s+commit\b"),
+    (20, "Bash",  "__REVIEW_KIND__:consistency"),
+    (20, "Bash",  "__REVIEW_KIND__:perf"),
+    (20, "Bash",  "__REVIEW_KIND__:re-adversarial"),
     (20, "Skill", r"^review-todo-section$"),
 ]
 
@@ -72,8 +90,18 @@ _IMPLEMENT_TODO_SECTION: List[StepRule] = [
 _REVIEW_TODO_SECTION: List[StepRule] = [
     (4,    "Bash", r"\bbash\s+(?:[^\"\']*?/)?scripts/build\.sh\b"),
     (5,    "Bash", "__REVIEW_KIND__:adversarial"),
+    # adversarial-impl is the implementation-time variant; if it fires
+    # during the review pipeline (rare but legitimate when the reviewer
+    # asks Codex to re-evaluate the diff under implementation eyes) it
+    # also satisfies step 5 evidence. TODO-08 §25 coverage extension.
+    (5,    "Bash", "__REVIEW_KIND__:adversarial-impl"),
     (8,    "Bash", "__REVIEW_KIND__:consistency"),
     (8,    "Bash", "__REVIEW_KIND__:perf"),
+    # test-coverage dispatches during the review pipeline are observed
+    # at step 8 (the broader quality-audit phase); the codex-test-coverage
+    # skill is also valid evidence for step 8 via the Skill matcher below.
+    (8,    "Bash", "__REVIEW_KIND__:test-coverage"),
+    (8,    "Skill", r"^codex-test-coverage$"),
     (13,   "Bash", "__REVIEW_KIND__:re-adversarial"),
     (17,   "Bash", r"\bgit\s+commit\b"),
 ]
@@ -103,7 +131,12 @@ _COMPLETE_TODO_FILE: List[StepRule] = [
 # ----------------------------------------------------------------------------
 _QUALITY_REVIEW_SECTION: List[StepRule] = [
     (1, "Bash", r"\bbash\s+(?:[^\"\']*?/)?scripts/build\.sh\b"),
-    (2, "Bash", r"codex-companion\.mjs.*?adversarial-review"),
+    # Quality-review Codex dispatches are adversarial-class; bind via the
+    # canonical sentinel so typo'd or marker-less dispatches route to the
+    # observer's typo-WARN path instead of getting silent step credit.
+    # Closes the post-impl Codex re-adversarial M3 finding (broad regex
+    # bypassed the marker validation contract).
+    (2, "Bash", "__REVIEW_KIND__:adversarial"),
     (3, "Bash", r"\bgit\s+commit\b"),
 ]
 
@@ -144,6 +177,22 @@ MULTI_STEP_SKILLS = frozenset(SKILL_STEP_MAP.keys())
 # drift named in TODO-08 §17 deferred-XREF M2 (step-5 telemetry vs
 # phase1_evidence_gate marker-rule mismatch).
 _SENTINEL_REVIEW_KIND_PREFIX = "__REVIEW_KIND__:"
+
+
+def bound_review_kinds(skill: str) -> List[str]:
+    """Return the canonical review-kind markers that bind to at least one
+    step number under `skill`. Used by skill_step_observer.py to
+    distinguish 'kind is canonical but the active skill doesn't bind it'
+    (silent fallthrough) from 'kind is non-canonical / typo' (loud WARN).
+    Closes the section-25 M1 finding from the post-impl Codex pipeline.
+    """
+    kinds: List[str] = []
+    for _step_n, _evidence_tool, pattern in SKILL_STEP_MAP.get(skill, []):
+        if pattern.startswith(_SENTINEL_REVIEW_KIND_PREFIX):
+            kind = pattern[len(_SENTINEL_REVIEW_KIND_PREFIX):]
+            if kind not in kinds:
+                kinds.append(kind)
+    return kinds
 
 
 def match_step(skill: str, tool_name: str, signature: str) -> List[int]:
