@@ -1024,6 +1024,9 @@ Partner doctrine to §23. While §23 unifies HOW gates read `SKIP_*` envs (the i
 
 > **Test runner:** `bash scripts/test-tooling.sh` | 6 new sub-tests under `[review_pipeline_passthrough]`: rpp_git_commit, rpp_bash_scripts_slash, rpp_bash_random_rejected, rpp_node_codex, rpp_destructive_rejected, rpp_rg_search.
 
+> **Verified:** 2026-04-29 | commit `1ed350df` | 7/7 items | build N/A (hooks-only) | tests 358/359 PASS (1 unrelated pre-existing) | lint 0 errors | audit-hooks PASS
+> **Quality reviewed:** 2026-04-29 | Codex 5x (design + adversarial + consistency + perf + perf-refresh) | 1H+1M fixed | scope: N/A (Python helper + bash audit + markdown doc; no domain code-quality skill applies)
+
 > **Notes:**
 > - Structure: 1 new helper module (`_review_pipeline_passthrough.py`, ~40 LOC) + 1 consumer migration (`section_review_required.py`, 4-line tuple to 1-line helper call) + 1 audit-hooks check + 1 ai-system.md doctrine callout + 6 sub-tests.
 > - How it integrates: review-pipeline PreToolUse gates import `_review_pipeline_passthrough as _rpp` and call `_rpp.is_review_pipeline_passthrough(cmd)`. The audit-hooks drift check FAILs if any non-helper consumer has the canonical multi-prefix tuple. Other gates with different threat models do NOT consume this helper.
