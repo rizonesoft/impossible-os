@@ -30,10 +30,75 @@ if _se.read_skip_envs(_cmd_for_skip, keys=('SKIP_REVIEW_HOOK',)).get('SKIP_REVIE
 if tn in ('Read', 'Grep', 'Glob'):
     sys.exit(0)
 
-# The review skill itself passes
-if tn == 'Skill' and (ti.get('skill', '') == 'review-todo-section' or
-                      ti.get('name', '') == 'review-todo-section'):
+# The review skill itself passes, plus skills it explicitly delegates to.
+# `superpowers:receiving-code-review` is mandated by review-todo-section
+# step 5 / 6 / 8 to handle Codex findings -- blocking it here is
+# self-defeating. The other entries cover step 7 domain code-quality
+# gates and step 15.5 verification-before-completion.
+_REVIEW_PIPELINE_SKILLS = {
+    'review-todo-section',
+    'superpowers:receiving-code-review',
+    'superpowers:verification-before-completion',
+    'kernel-code-quality', 'boot-code-quality', 'desktop-code-quality',
+    'shell-code-quality', 'userland-code-quality',
+}
+if tn == 'Skill' and (ti.get('skill', '') in _REVIEW_PIPELINE_SKILLS or
+                      ti.get('name', '') in _REVIEW_PIPELINE_SKILLS):
     sys.exit(0)
+
+
+def _review_pipeline_active(repo_root):
+    """Return True iff review-todo-section is the active multi-step skill
+    in this session and was started after the HEAD commit (the user
+    invoked review AFTER the section-ship commit landed -- exactly the
+    window where step-13 fixes need to write to src/include/todo).
+    """
+    try:
+        state_p = Path(repo_root) / '.claude/state/skill-progress.json'
+        if not state_p.exists():
+            return False
+        with state_p.open() as fh:
+            state = json.load(fh)
+    except Exception:
+        return False
+    rts = state.get('review-todo-section')
+    if not isinstance(rts, dict):
+        return False
+    try:
+        sess_p = Path(repo_root) / '.claude/state/session.json'
+        cur_sid = json.loads(sess_p.read_text()).get('session_id', '')
+    except Exception:
+        cur_sid = ''
+    if cur_sid and rts.get('session_id') and rts.get('session_id') != cur_sid:
+        return False
+    try:
+        head_ts_str = subprocess.check_output(
+            ['git', '-C', repo_root, 'log', '-1', '--format=%ct'],
+            text=True, timeout=2, stderr=subprocess.DEVNULL).strip()
+        head_ts_ns = int(head_ts_str) * 1_000_000_000
+    except Exception:
+        return False
+    rts_ts_ns = rts.get('started_ts') or 0
+    return isinstance(rts_ts_ns, int) and rts_ts_ns >= head_ts_ns
+
+
+# When a review-todo-section invocation is currently active, allow
+# Edit / Write / MultiEdit on the implementation surface -- review
+# step 13 ("Fix ALL findings") is the legitimate write path between
+# commit-without-stamp and commit-with-stamp.
+if tn in ('Edit', 'Write', 'MultiEdit'):
+    file_path = ti.get('file_path', '') or ''
+    try:
+        _root_for_pipeline = subprocess.check_output(
+            ['git', 'rev-parse', '--show-toplevel'],
+            text=True, timeout=2, stderr=subprocess.DEVNULL).strip()
+    except Exception:
+        _root_for_pipeline = ''
+    if (_root_for_pipeline and _review_pipeline_active(_root_for_pipeline)
+            and any(seg in file_path for seg in ('/src/', '/include/',
+                                                  '/todo/', '/scripts/',
+                                                  '/docs/'))):
+        sys.exit(0)
 
 # Git operations + script wrappers + codex dispatches pass via the
 # shared review-pipeline-passthrough helper. Section-29 of TODO-08
