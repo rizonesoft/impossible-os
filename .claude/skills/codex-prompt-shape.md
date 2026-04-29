@@ -10,7 +10,9 @@ The wrapper enforces `argc == 1` (multi-argv misuse fails loud) and `exec`s into
 
 > **Why single quotes are mandatory.** Bash double-quotes evaluate `$(...)`, `${...}`, and backslash escapes BEFORE the wrapper sees argv. By the time the wrapper validates, any unintended substitution has already happened. The escaping discipline is enforced at the source-text layer by `scripts/lint.sh` Check 12 -- single-quote your prompts so the lint never has reason to fire.
 
-The legacy direct-node form (`node ".../codex-companion.mjs" adversarial-review "<prompt>"`) is still recognized by the hooks for backward compat with existing logs and ad-hoc invocations, but new dispatches use the wrapper.
+The legacy direct-node form (`node ".../codex-companion.mjs" adversarial-review "<prompt>"`) is still recognized by the hooks for backward compat with existing logs and ad-hoc invocations, but new dispatches use the wrapper. The bare CLI form `codex review "<prompt>"` (or alias `codex e "<prompt>"`) is also recognized; the underlying classifier (`.claude/hooks/_codex_dispatch.py`) accepts all three shapes via shlex-aware tokenization + segment-by-control-operator + heredoc-body strip.
+
+**Multi-line dispatches are supported.** A `node ".../codex-companion.mjs" \<NL>    adversarial-review '<prompt>'` shape (typed verbatim or pulled from a docs example with backslash line-continuation) classifies identically to its single-line equivalent; the helper preprocesses `\<newline>[ \t]*` to whitespace before tokenizing.
 
 ## The 7 canonical kinds
 

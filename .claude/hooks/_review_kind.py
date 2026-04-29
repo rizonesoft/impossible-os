@@ -22,53 +22,30 @@ def detect_review_kind_from_cmd(cmd: str) -> str:
     """Return the [review-kind: X] value from the first non-blank line of
     a Codex dispatch Bash command's prompt arg.
 
-    Two canonical dispatch shapes are recognized:
+    TODO-08 section-30: the dispatch detection + prompt extraction
+    delegate to the shared `_codex_dispatch` helper which uses shell-
+    aware parsing (shlex tokenize + segment-by-control-operator + per-
+    segment heredoc-body strip + argv shape match). This closes the
+    substring-classifier spoofing class (heredoc bodies, prose mentions,
+    search commands) and adds multi-line continuation support.
 
-    1. Direct node invocation (legacy):
-         node ".../codex-companion.mjs" adversarial-review "<prompt>"
-       Extract the prompt as the first non-empty content after the
-       `adversarial-review` token.
+    Three dispatch shapes are recognized via the helper:
+      1. node ".../codex-companion.mjs" adversarial-review "<prompt>"
+      2. bash scripts/codex-dispatch.sh '<prompt>' (section-28 wrapper)
+      3. codex review "<prompt>" / codex e "<prompt>" (bare CLI)
 
-    2. Wrapper invocation (canonical post-section-28):
-         bash scripts/codex-dispatch.sh '<prompt>'
-       Extract the prompt as the first non-empty content after the
-       `codex-dispatch.sh` token. The wrapper exec's into the same
-       node command internally; routing the classifier through both
-       shapes lets the gate attribute either form.
-
-    Returns empty string when no marker is on the first non-blank line,
-    when the command is not a codex dispatch, or when the prompt cannot
-    be located.
-
-    Multi-line dispatches with shell line-continuation (`\\<newline>`)
-    classify as empty here -- the substring-and-split path is not
-    shell-aware. The proper fix (shlex tokenize + segment-by-separator
-    + heredoc body strip, matching codex_review_completed.py
-    _is_codex_bash_trigger) is tracked as a follow-up section in
-    00-infrastructure/TODO-08-automation-hardening; it also closes a
-    pre-existing heredoc-spoofing class where Bash text containing a
-    quoted Codex example would falsely classify as a dispatch.
+    Returns empty string when the command is not a Codex dispatch OR
+    the prompt's first non-blank line carries no marker.
     """
-    if not isinstance(cmd, str) or not cmd:
+    import sys
+    from pathlib import Path
+    _hook_dir = Path(__file__).resolve().parent
+    if str(_hook_dir) not in sys.path:
+        sys.path.insert(0, str(_hook_dir))
+    from _codex_dispatch import extract_dispatch_prompt
+    body = extract_dispatch_prompt(cmd)
+    if not body:
         return ""
-
-    # Wrapper shape (section-28): codex-dispatch.sh '<prompt>'. Detect
-    # first because the wrapper line still mentions codex-companion.mjs
-    # in a comment header that could pollute substring-only checks.
-    if "codex-dispatch.sh" in cmd:
-        after = cmd.split("codex-dispatch.sh", 1)[1].lstrip()
-    elif "codex-companion.mjs" in cmd and "adversarial-review" in cmd:
-        after = cmd.split("adversarial-review", 1)[1].lstrip()
-    else:
-        return ""
-    body = after
-    # Skip a HEREDOC opener line if present.
-    if body.startswith("\"$(cat <<") or body.startswith("'$(cat <<"):
-        nl = body.find("\n")
-        if nl >= 0:
-            body = body[nl + 1:]
-    elif body.startswith('"') or body.startswith("'"):
-        body = body[1:]
     for ln in body.splitlines():
         s = ln.strip()
         if not s:

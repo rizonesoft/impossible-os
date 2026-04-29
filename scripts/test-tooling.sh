@@ -1414,6 +1414,8 @@ else
     # TODO-08 section-23 shared SKIP-env scanner.
     cp "$REPO_ROOT/.claude/hooks/_skip_env.py" \
        "$GATE_REPO/.claude/hooks/_skip_env.py"
+    cp "$REPO_ROOT/.claude/hooks/_codex_dispatch.py" \
+       "$GATE_REPO/.claude/hooks/_codex_dispatch.py"
 
     pushd "$GATE_REPO" >/dev/null
     git init -q -b main
@@ -1879,6 +1881,8 @@ else
        "$FD_REPO/.claude/hooks/codex_review_completed.py"
     cp "$REPO_ROOT/.claude/hooks/_skip_env.py" \
        "$FD_REPO/.claude/hooks/_skip_env.py"
+    cp "$REPO_ROOT/.claude/hooks/_codex_dispatch.py" \
+       "$FD_REPO/.claude/hooks/_codex_dispatch.py"
 
     pushd "$FD_REPO" >/dev/null
     git init -q -b main
@@ -3272,6 +3276,8 @@ else
        "$PCE_REPO/.claude/hooks/_review_kind.py"
     cp "$REPO_ROOT/.claude/hooks/_skip_env.py" \
        "$PCE_REPO/.claude/hooks/_skip_env.py"
+    cp "$REPO_ROOT/.claude/hooks/_codex_dispatch.py" \
+       "$PCE_REPO/.claude/hooks/_codex_dispatch.py"
     # phase1_evidence_gate.py imports _heuristic_misses at module load
     # for the section-27 step-4 miss-log emission path. Without this
     # copy, every existing sub-test hits ModuleNotFoundError before the
@@ -4711,6 +4717,8 @@ trap 'rm -rf "$CRSW_TMP"' EXIT
 CRSW_REPO="$CRSW_TMP/repo"
 mkdir -p "$CRSW_REPO/.claude/hooks" "$CRSW_REPO/.claude/state"
 cp .claude/hooks/codex_review_completed.py "$CRSW_REPO/.claude/hooks/" 2>/dev/null
+    cp "$REPO_ROOT/.claude/hooks/_codex_dispatch.py" \
+       "$CRSW_REPO/.claude/hooks/_codex_dispatch.py"
 ( cd "$CRSW_REPO" && git init -q && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init )
 
 # Sub-test 1: synthetic adversarial dispatch -> state file populated within 1 s.
@@ -5015,23 +5023,32 @@ if got == []:
 else:
     print(f"FAIL wrong_canonical_marker_unbound: got {got} want []")
 
-# Multi-line dispatches with shell line-continuation are out of scope
-# for the substring classifier; tracked as a follow-up section in
-# 00-infrastructure/TODO-08-automation-hardening (shell-aware Codex
-# dispatch segmentation). The same follow-up closes the pre-existing
-# heredoc-spoofing concern (Bash text containing a quoted Codex example
-# inside a heredoc body falsely classifies as a dispatch). Until that
-# refactor lands, dispatches stay single-line + simple-double-quoted.
+# Restored multi-line continuation sub-tests (TODO-08 section-30 closed
+# the deferred shell-aware-segmentation work; detect_review_kind_from_cmd
+# now routes through _codex_dispatch.extract_dispatch_prompt which
+# normalizes shell line-continuations before tokenizing).
+multiline_a = 'node /x/codex-companion.mjs \\\n    adversarial-review "[review-kind: adversarial] todo/foo prompt"'
+import _review_kind
+if _review_kind.detect_review_kind_from_cmd(multiline_a) == "adversarial":
+    print("OK multiline_continuation_before_subcommand")
+else:
+    print(f"FAIL multiline_continuation_before_subcommand: got {_review_kind.detect_review_kind_from_cmd(multiline_a)!r}")
+
+multiline_b = 'node /x/codex-companion.mjs adversarial-review \\\n    "[review-kind: consistency] todo/foo prompt"'
+if _review_kind.detect_review_kind_from_cmd(multiline_b) == "consistency":
+    print("OK multiline_continuation_before_prompt")
+else:
+    print(f"FAIL multiline_continuation_before_prompt: got {_review_kind.detect_review_kind_from_cmd(multiline_b)!r}")
 PYEOF
 )
 SSO_PY="${SSO_PY//\$REPO_ROOT/$REPO_ROOT}"
 SSO_OUT="$(python3 -c "$SSO_PY" 2>&1)"
 SSO_OK=$(echo "$SSO_OUT" | grep -c "^OK ")
-if [ "$SSO_OK" = "13" ]; then
+if [ "$SSO_OK" = "15" ]; then
     echo "$SSO_OUT" | grep "^OK " | while IFS= read -r line; do
         t_pass "skill_step_observer: $line"
     done
-    PASS=$((PASS + 13))
+    PASS=$((PASS + 15))
 else
     t_fail "skill_step_observer: canonical-kind coverage incomplete" \
            "ok-count=$SSO_OK out=$SSO_OUT"
@@ -5113,6 +5130,57 @@ if [[ "$SSO_PARSER_HEAD" == OK* ]]; then
 else
     t_fail "skill_step_observer: skill_examples_classifier_validated" \
            "$(echo "$SSO_PARSER_OUT" | head -5)"
+fi
+
+
+# ============================================================================
+# codex_dispatch_helper -- shell-aware Codex dispatch detection
+# ============================================================================
+# Owner: 00-infrastructure/TODO-08-automation-hardening (shell-aware
+# Codex dispatch segmentation section). Six regression checks of the
+# shared _codex_dispatch helper that all consumers (codex_review_completed,
+# _review_kind, phase1_evidence_gate, skill_step_block) route through.
+
+CDH_OUT=$(python3 - <<'PYEOF'
+import sys
+sys.path.insert(0, ".claude/hooks")
+from _codex_dispatch import is_codex_dispatch, extract_dispatch_prompt
+
+# (cmd, expected_trigger, label)
+CASES = [
+    ('node /x/codex-companion.mjs adversarial-review "[review-kind: adversarial] body"', True, "cdh_direct_node"),
+    ("bash scripts/codex-dispatch.sh '[review-kind: perf] todo/foo body'", True, "cdh_wrapper"),
+    ('codex review "[review-kind: adversarial] body"', True, "cdh_bare_cli"),
+    # heredoc-body MUST NOT classify (closes section-25 round-7 H)
+    ('cat > /tmp/foo.md <<EOF\ncodex-companion.mjs adversarial-review "[review-kind: adversarial]"\nEOF', False, "cdh_heredoc_rejected"),
+    # prose mention of codex-dispatch.sh inside a quoted argv to rg / grep
+    # (closes section-28 wrapper-spoofing)
+    ('rg "codex-dispatch.sh" .claude/skills', False, "cdh_prose_rejected"),
+    # &&-chained command where the Codex dispatch is the second segment
+    ('echo done && bash scripts/codex-dispatch.sh \'[review-kind: adversarial] body\'', True, "cdh_chained_2nd_seg"),
+]
+for cmd, want, label in CASES:
+    got = is_codex_dispatch(cmd)
+    if got is want:
+        if want:
+            prompt = extract_dispatch_prompt(cmd)
+            has_marker = "review-kind" in prompt
+            print(f"OK {label} (prompt-marker={has_marker})")
+        else:
+            print(f"OK {label} (rejected)")
+    else:
+        print(f"FAIL {label}: got {got!r} want {want!r}")
+PYEOF
+)
+CDH_OK=$(echo "$CDH_OUT" | grep -c "^OK ")
+if [ "$CDH_OK" = "6" ]; then
+    echo "$CDH_OUT" | grep "^OK " | while IFS= read -r line; do
+        t_pass "codex_dispatch_helper: $line"
+    done
+    PASS=$((PASS + 6))
+else
+    t_fail "codex_dispatch_helper: shell-aware coverage incomplete" \
+           "ok-count=$CDH_OK out=$CDH_OUT"
 fi
 
 
