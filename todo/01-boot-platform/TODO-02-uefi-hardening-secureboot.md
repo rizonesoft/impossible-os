@@ -377,6 +377,7 @@ systemd-boot ships a Unified Kernel Image (UKI) format: a single signed UEFI PE 
 > - Canonical doc: [`docs/guides/secure-boot-keys.md`](../../docs/guides/secure-boot-keys.md) "Unified Kernel Image (UKI)".
 > - Scope boundary: §11 owns build/sign/bootloader/ABI surfaces. TODO-01 §8 owns the boot_info schema changelog (v10 entry); TODO-13 owns the measured-boot log + PCR replay; §6 owns the underlying EFI signing pipeline. Recovery image (`.initrd` PE section) reserved for future use; not populated today.
 
+> **Verified:** 2026-04-29 | commit `3bc47f6f` (impl ship `6b3df1fb`) | 7/7 items, 1 deferred [/] (stamp-identity binding) | build OK | smoke PASS (KVM 2.370s) | secureboot-smoke 7/7 PASS
 > **Quality reviewed:** 2026-04-29 | Codex 10x (design + adversarial-impl + adversarial + consistency + perf + 5x re-adversarial) | 8H+3M fixed, 1H deferred-XREF | scope: boot-code-quality (UEFI PE walk + EBS boundary + ABI sync + atomic signing pipeline)
 > **Deferred:** [H] stamp identity binding for MOK key rotation (Codex round-5 H1; mtime-only invalidation can miss old-mtime key swaps) -> XREF: 01-boot-platform/TODO-02 §11 (item: "Stamp-identity binding for key rotation" at line 369)
 
