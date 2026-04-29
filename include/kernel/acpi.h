@@ -332,3 +332,32 @@ int acpi_enumerate_signatures(uint32_t *out_sigs, uint32_t max_count,
  * 0 if not found or any validation failed. */
 int acpi_get_raw_table(uint32_t signature, const uint8_t **out_addr,
                         uint32_t *out_size);
+
+/* Retrieve the n-th validated ACPI SDT in XSDT/RSDT order. Unlike the
+ * signature-keyed accessor above, this returns each duplicate-signature
+ * table separately (e.g. multiple SSDTs are distinct entries) -- the
+ * firmware table catalog uses this to preserve full ACPI inventory.
+ * Indexing matches the order of signatures emitted by
+ * `acpi_enumerate_signatures`. out_sig may be NULL.
+ * Returns 1 on success, 0 if index is out of range or validation fails.
+ *
+ * NOTE: Each call rewalks the root and re-validates every preceding SDT;
+ * callers iterating the full list should prefer `acpi_for_each_record`
+ * instead, which performs a single validated pass. */
+int acpi_get_record(uint32_t index, uint32_t *out_sig,
+                    const uint8_t **out_addr, uint32_t *out_size);
+
+/* Single-pass walk over every validated ACPI SDT. The callback receives
+ * each record's signature, firmware-mapped pointer, and length-validated
+ * size; the user `ctx` is forwarded unchanged. The callback returns 1 to
+ * continue or 0 to stop the walk early. Returns the number of records
+ * passed to the callback (0 if ACPI was not parsed or the root failed
+ * validation). Preserves duplicate-signature tables as distinct callbacks.
+ *
+ * Use this for catalog-style enumeration so the root walk + per-child
+ * checksum/length validation runs once across the whole list, not once
+ * per ordinal. */
+typedef int (*acpi_record_cb_t)(uint32_t index, uint32_t signature,
+                                 const uint8_t *addr, uint32_t size,
+                                 void *ctx);
+uint32_t acpi_for_each_record(acpi_record_cb_t cb, void *ctx);

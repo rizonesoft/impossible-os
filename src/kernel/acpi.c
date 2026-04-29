@@ -1102,3 +1102,138 @@ int acpi_get_raw_table(uint32_t signature, const uint8_t **out_addr,
     }
     return 0;
 }
+
+uint32_t acpi_for_each_record(acpi_record_cb_t cb, void *ctx)
+{
+    if (!cb) return 0;
+    if (!g_boot_info.acpi_available || !g_boot_info.acpi_rsdp_addr) return 0;
+
+    const struct acpi_rsdp *rsdp =
+        (const struct acpi_rsdp *)g_boot_info.acpi_rsdp_addr;
+    uint32_t emitted = 0;
+
+    if (g_boot_info.acpi_version >= 2) {
+        const struct acpi_rsdp2 *rsdp2 = (const struct acpi_rsdp2 *)rsdp;
+        if (rsdp2->xsdt_addr) {
+            const struct acpi_xsdt *xsdt =
+                (const struct acpi_xsdt *)(uintptr_t)rsdp2->xsdt_addr;
+            uint32_t count = acpi_validate_root(&xsdt->header,
+                                                 sizeof(uint64_t), "XSDT");
+            if (count == 0) return 0;
+            for (uint32_t i = 0; i < count; i++) {
+                const struct acpi_sdt_header *hdr =
+                    (const struct acpi_sdt_header *)(uintptr_t)xsdt->entries[i];
+                uint32_t hdr_len = acpi_validate_child(hdr);
+                if (hdr_len == 0) continue;
+                uint32_t sig =
+                    (uint32_t)(uint8_t)hdr->signature[0] |
+                    ((uint32_t)(uint8_t)hdr->signature[1] << 8) |
+                    ((uint32_t)(uint8_t)hdr->signature[2] << 16) |
+                    ((uint32_t)(uint8_t)hdr->signature[3] << 24);
+                if (!cb(emitted, sig, (const uint8_t *)hdr, hdr_len, ctx))
+                    return emitted + 1;
+                emitted++;
+            }
+            return emitted;
+        }
+    }
+
+    if (!rsdp->rsdt_addr) return 0;
+    const struct acpi_rsdt *rsdt =
+        (const struct acpi_rsdt *)(uintptr_t)rsdp->rsdt_addr;
+    uint32_t count = acpi_validate_root(&rsdt->header,
+                                         sizeof(uint32_t), "RSDT");
+    if (count == 0) return 0;
+    for (uint32_t i = 0; i < count; i++) {
+        const struct acpi_sdt_header *hdr =
+            (const struct acpi_sdt_header *)(uintptr_t)rsdt->entries[i];
+        uint32_t hdr_len = acpi_validate_child(hdr);
+        if (hdr_len == 0) continue;
+        uint32_t sig =
+            (uint32_t)(uint8_t)hdr->signature[0] |
+            ((uint32_t)(uint8_t)hdr->signature[1] << 8) |
+            ((uint32_t)(uint8_t)hdr->signature[2] << 16) |
+            ((uint32_t)(uint8_t)hdr->signature[3] << 24);
+        if (!cb(emitted, sig, (const uint8_t *)hdr, hdr_len, ctx))
+            return emitted + 1;
+        emitted++;
+    }
+    return emitted;
+}
+
+int acpi_get_record(uint32_t index, uint32_t *out_sig,
+                    const uint8_t **out_addr, uint32_t *out_size)
+{
+    if (!out_addr || !out_size) return 0;
+    *out_addr = (const uint8_t *)0;
+    *out_size = 0;
+    if (out_sig) *out_sig = 0;
+
+    if (!g_boot_info.acpi_available || !g_boot_info.acpi_rsdp_addr)
+        return 0;
+
+    const struct acpi_rsdp *rsdp =
+        (const struct acpi_rsdp *)g_boot_info.acpi_rsdp_addr;
+
+    /* Iterate validated SDTs in the same order as acpi_enumerate_signatures
+     * so duplicate-signature tables (multiple SSDTs) get distinct ordinals. */
+    uint32_t seen = 0;
+
+    if (g_boot_info.acpi_version >= 2) {
+        const struct acpi_rsdp2 *rsdp2 = (const struct acpi_rsdp2 *)rsdp;
+        if (rsdp2->xsdt_addr) {
+            const struct acpi_xsdt *xsdt =
+                (const struct acpi_xsdt *)(uintptr_t)rsdp2->xsdt_addr;
+            uint32_t count = acpi_validate_root(&xsdt->header,
+                                                 sizeof(uint64_t), "XSDT");
+            if (count == 0) return 0;
+            for (uint32_t i = 0; i < count; i++) {
+                const struct acpi_sdt_header *hdr =
+                    (const struct acpi_sdt_header *)(uintptr_t)xsdt->entries[i];
+                uint32_t hdr_len = acpi_validate_child(hdr);
+                if (hdr_len == 0) continue;
+                if (seen == index) {
+                    if (out_sig) {
+                        *out_sig =
+                            (uint32_t)(uint8_t)hdr->signature[0] |
+                            ((uint32_t)(uint8_t)hdr->signature[1] << 8) |
+                            ((uint32_t)(uint8_t)hdr->signature[2] << 16) |
+                            ((uint32_t)(uint8_t)hdr->signature[3] << 24);
+                    }
+                    *out_addr = (const uint8_t *)hdr;
+                    *out_size = hdr_len;
+                    return 1;
+                }
+                seen++;
+            }
+            return 0;
+        }
+    }
+
+    if (!rsdp->rsdt_addr) return 0;
+    const struct acpi_rsdt *rsdt =
+        (const struct acpi_rsdt *)(uintptr_t)rsdp->rsdt_addr;
+    uint32_t count = acpi_validate_root(&rsdt->header,
+                                         sizeof(uint32_t), "RSDT");
+    if (count == 0) return 0;
+    for (uint32_t i = 0; i < count; i++) {
+        const struct acpi_sdt_header *hdr =
+            (const struct acpi_sdt_header *)(uintptr_t)rsdt->entries[i];
+        uint32_t hdr_len = acpi_validate_child(hdr);
+        if (hdr_len == 0) continue;
+        if (seen == index) {
+            if (out_sig) {
+                *out_sig =
+                    (uint32_t)(uint8_t)hdr->signature[0] |
+                    ((uint32_t)(uint8_t)hdr->signature[1] << 8) |
+                    ((uint32_t)(uint8_t)hdr->signature[2] << 16) |
+                    ((uint32_t)(uint8_t)hdr->signature[3] << 24);
+            }
+            *out_addr = (const uint8_t *)hdr;
+            *out_size = hdr_len;
+            return 1;
+        }
+        seen++;
+    }
+    return 0;
+}

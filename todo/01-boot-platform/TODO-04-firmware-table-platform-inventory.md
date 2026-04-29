@@ -36,7 +36,7 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 
 | ⭐ | Order | Deliverable                                             | Depends On     | Status |
 | -- | :---: | ------------------------------------------------------- | -------------- | :----: |
-| 💎 |   1   | Firmware table catalog API                              | TODO-01 §1     |  [ ]   |
+| 💎 |   1   | Firmware table catalog API                              | TODO-01 §1     |  [x]   |
 | 💎 |   2   | Physical range and checksum validation                  | §1             |  [ ]   |
 | 💎 |   3   | ACPI/SMBIOS/DTB table arbitration                       | §1, §2         |  [ ]   |
 | 💎 |   4   | FPDT and boot timing normalization                      | §1             |  [ ]   |
@@ -54,13 +54,24 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 > [!NOTE]
 > **Foundation already shipped:** `uefi_find_config_table()` (uefi_config.c:47) walks `boot_info.config_table[]` by GUID. `acpi_enumerate_signatures()` + `acpi_get_raw_table()` (acpi.c:972, 1041) and `smbios_get_raw_table()` (smbios.c:679) provide validated raw-byte access. SMBIOS3 + SMBIOS2 entry-point parsing exists at smbios.c:381,429. This section adds the higher-level `firmware_table_entry_t` catalog that aggregates these per-provider helpers behind one inventory API; do NOT re-implement the per-provider validation.
 
-- [ ] Define `firmware_table_entry_t` with GUID/name, physical address, size, source (`SOURCE_UEFI_CFG_TABLE` / `SOURCE_ACPI_SDT` / `SOURCE_SMBIOS_RAW` / `SOURCE_FPDT` / `SOURCE_ESRT` / `SOURCE_DTB`), validation status, and owner.
-- [ ] Implement `firmware_tables_init()` populating the catalog from `boot_info.config_table[]` plus the per-provider accessors landed in TODO-02 §14.
-- [ ] Add `firmware_table_lookup_guid()` / `firmware_table_lookup_name()` / `firmware_table_lookup_owner()`.
-- [ ] Emit a compact boot log summary: `[BOOT] firmware tables: <N> cataloged, <M> validated, <K> degraded`.
-- [ ] Commit: `"boot: firmware table catalog API"`
+- [x] Define `firmware_table_entry_t` with GUID/name, physical address, size, source (`FW_SOURCE_UEFI_CFG_TABLE` / `FW_SOURCE_ACPI_SDT` / `FW_SOURCE_SMBIOS_RAW` / `FW_SOURCE_FPDT` / `FW_SOURCE_ESRT` / `FW_SOURCE_DTB`), validation status, and owner. Header at `include/kernel/firmware_tables.h`; cap `FIRMWARE_TABLE_MAX = 64` slots.
+- [x] Implement `firmware_tables_init()` populating the catalog from `boot_info.config_table[]` plus per-provider accessors. ACPI uses `acpi_for_each_record()` (single validated XSDT/RSDT walk; preserves duplicate SSDTs as distinct entries) and SMBIOS uses `smbios_get_raw_table()`. Wired in `boot_interrupts.c` after `uefi_conformance_init()`.
+- [x] Add `firmware_table_lookup_guid()` / `firmware_table_lookup_name()` / `firmware_table_lookup_owner()` plus `firmware_table_count()` / `firmware_table_get()`. NULL/zero-GUID/NULL-name guards in place.
+- [x] Emit a compact boot log summary: `[BOOT] firmware tables: <N> cataloged, <M> validated, <K> degraded`. QEMU OVMF reports `17 cataloged, 17 validated, 0 degraded`.
+- [x] Commit: `"boot: firmware table catalog API"`
 
 **Test checkpoint:** Boot log shows `[BOOT] firmware tables: <N> cataloged` line; `firmware_table_lookup_guid(EFI_ACPI_20_TABLE_GUID)` returns a valid entry on QEMU OVMF + VirtualBox EFI; lookup of an unknown GUID returns NULL. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 51 firmware-table assertions across 11 sub-tests, 0 failures (1 SKIP on QEMU OVMF: <2 SSDTs)
+>
+> **Notes:**
+> - Shipped: `include/kernel/firmware_tables.h` + `src/kernel/firmware_tables.c` (~290 LOC catalog + lookups), unit tests at `src/kernel/test/test_firmware_tables.c`, plus `acpi_for_each_record()` / `acpi_get_record()` accessors on `acpi.c` for duplicate-preserving SDT enumeration.
+> - How it runs: `firmware_tables_init()` is called once on the BSP at Phase 1 (after `uefi_conformance_init()`, before `sti`); read-only thereafter so lookups are lock-free.
+> - Downstream effects: this catalog is the input for the §2 range/checksum validator and the §8 Registry/BlackBox firmware report; Codex 3-round adversarial review adoptions in commit `<hash>`.
+> - Canonical doc: `include/kernel/firmware_tables.h` API contract.
+> - Scope boundary: §1 records what per-provider helpers already validated. Range checks against the UEFI memory map and per-table checksum re-verification are owned by §2; ESRT/MAT/conformance details remain owned by §5/§6/§7.
+>
+> **Accepted:** [high] ACPI catalog walk dereferences firmware child pointers before range validation -> XREF: §2 (item: "Validate every table pointer against the UEFI memory map before dereference"). Reason: per-provider deref surface already shipped in `acpi_init` / `acpi_enumerate_signatures` (commit 194e6012); §1 routes through that pre-existing path and does not introduce new pointer chases. UEFI-memory-map range gating is the named owner of §2's first item.
 
 ---
 
@@ -179,7 +190,7 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 
 | ⭐ | Feature                               | 🪟 Win11                         | 🐧 Linux                        | 🚀 Impossible OS                |
 | -- | ------------------------------------- | --------------------------------- | ------------------------------- | -------------------------------- |
-| 💎 | Firmware table catalog API            | ✅ ACPI/HAL + WMI                | ✅ acpi_get_table + sysfs       | ⬜ §1 firmware_table_entry_t    |
+| 💎 | Firmware table catalog API            | ✅ ACPI/HAL + WMI                | ✅ acpi_get_table + sysfs       | ✅ firmware_table_entry_t catalog |
 | 💎 | Physical range + checksum validation  | ✅ HAL validates pre-use         | ✅ acpi_tb_verify_checksum      | ⬜ §2 mmap-bound + checksums    |
 | 💎 | ACPI/SMBIOS/DTB arbitration           | ⚠️ ACPI-first; no DTB            | ✅ ACPI on x86, DTB on ARM      | ⬜ §3 priority + EBBR detect    |
 | 💎 | FPDT boot-timeline normalization      | ✅ FPDT + ETW timeline           | ⚠️ acpi_fpdt_init read-only     | ⬜ §4 FPDT + TSC unified        |
@@ -194,10 +205,10 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 
 ## Unit Tests
 
-- [ ] `test_firmware_table_guid_lookup`
-- [ ] `test_firmware_table_range_rejects_unmapped`
-- [ ] `test_firmware_table_checksum_fail`
-- [ ] `test_firmware_conformance_profiles`
+- [x] `test_firmware_table_guid_lookup` -- §1: ACPI 2.0/1.0 cfg-table entry; non-zero phys_addr; unknown GUID + NULL guid both return NULL.
+- [ ] `test_firmware_table_range_rejects_unmapped` -- owned by §2 (range validator).
+- [ ] `test_firmware_table_checksum_fail` -- owned by §2 (checksum validator).
+- [ ] `test_firmware_conformance_profiles` -- owned by §7 (conformance integration).
 
 ---
 

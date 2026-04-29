@@ -261,6 +261,10 @@ void boot_phase1(void)
     esrt_init();
     mat_init();
     uefi_conformance_init();
+    {
+        extern void firmware_tables_init(void);
+        firmware_tables_init();
+    }
     uefi_capsule_init();
     uefi_crypto_agility_init();
     secureboot_keys_init();

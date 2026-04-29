@@ -190,6 +190,8 @@ typedef enum {
 #define POST16_SMBIOS_OK        0x10A1
 #define POST16_BOOT_TIMING      0x10B0
 #define POST16_BOOT_TIMING_OK   0x10B1
+#define POST16_FW_TABLES        0x10C0
+#define POST16_FW_TABLES_OK     0x10C1
 
 /* Phase 2 -- System Services (0x2000–0x2FFF) */
 #define POST16_PCI              0x2000
