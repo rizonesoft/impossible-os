@@ -385,7 +385,7 @@ Microsoft began rotating UEFI signing certificates in 2024-2025: the original `M
 
 **Test checkpoint:** `sbverify --list shim/shimx64.efi` output names a Microsoft Corporation UEFI CA generation; `HKLM\SYSTEM\SecureBoot\ShimCA` matches; `bash scripts/sign-efi.sh build/BOOTX64.EFI` logs `[shim] signed-by: ...`; the build-time warning fires when the deprecated CA date threshold is crossed. Test on: QEMU WHPX (signature path), QEMU TCG, VirtualBox, bare metal (real DB rotation).
 
-> **Test runner:** `bash scripts/test-tooling.sh` (block `shim_ca_detection`) | 6 sub-tests, 0 failures
+> **Test runner:** `bash scripts/test-tooling.sh` | 316/316 PASS (this section adds 6 sub-tests under the `[shim_ca_detection]` block)
 
 > **Notes:**
 > - What shipped: `scripts/sign-efi.sh` post-sign block (graduated 2011-CA deprecation policy with named-constant date thresholds), `scripts/extract-shim-ca.sh` (build-time `sbverify --list` extractor writing `build/generated/shim_ca.h`), `src/kernel/uefi_runtime.c` ShimCA registry surface (reads SHIM_CA_YEAR), `docs/guides/secure-boot-keys.md` "MS UEFI CA Lifecycle" section, 4 sub-tests in `scripts/test-tooling.sh` `shim_ca_detection` block.
