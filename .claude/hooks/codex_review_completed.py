@@ -114,6 +114,44 @@ def _state_path(root: Path) -> Path:
     return root / ".claude" / "state" / "last-codex-review.json"
 
 
+def _history_path(root: Path) -> Path:
+    """Ring-buffer JSONL of recent reviews for section_commit_gate's
+    blob-match fallback. Prevents re-staging an identical content tree
+    after a fix-iterate-fix loop from invalidating an already-received
+    review whose blob SHAs still match. Last 16 entries kept."""
+    return root / ".claude" / "state" / "codex-review-history.jsonl"
+
+
+def _append_history(root: Path, state: dict, max_entries: int = 16) -> None:
+    """Append `state` to the ring buffer, truncating to last
+    `max_entries`. Best-effort -- silent on I/O error.
+    """
+    try:
+        hp = _history_path(root)
+        hp.parent.mkdir(parents=True, exist_ok=True)
+        existing: list = []
+        if hp.exists():
+            for line in hp.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    existing.append(json.loads(line))
+                except Exception:
+                    continue
+        existing.append(state)
+        # Keep last N, oldest discarded.
+        existing = existing[-max_entries:]
+        tmp = hp.with_suffix(".tmp")
+        tmp.write_text(
+            "\n".join(json.dumps(s) for s in existing) + "\n",
+            encoding="utf-8",
+        )
+        os.replace(tmp, hp)
+    except Exception:
+        pass
+
+
 def _head_sha(root: Path) -> str:
     try:
         return subprocess.check_output(
@@ -999,6 +1037,10 @@ def main() -> int:
     state["received"] = True
     state["received_timestamp_ns"] = now_ns
     _write_atomic(state_path, state)
+    # Mirror to ring-buffer history so section_commit_gate can fall back
+    # to "any recent received review whose blobs match" when blob SHAs
+    # drift between staged-tree restages.
+    _append_history(root, state)
     return 0
 
 

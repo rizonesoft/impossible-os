@@ -2938,11 +2938,16 @@ else
     t_fail "skill_step_block all-required expected rc=0, got rc=$RC"
 fi
 
-# Test B: missing terminal step 19 -> rc 2
-ssb_write_state '[{"n":7},{"n":13},{"n":16}]'
+# Test B: missing terminal step 16 (rebuild) -> rc 2.
+# NOTE: step 19 (commit) is the in-flight Bash here, so the bootstrap
+# branch in skill_step_block credits it; testing "missing step 19"
+# directly would always pass under the bootstrap. Use missing step 16
+# (which the in-flight `git commit` does NOT match) to exercise the
+# missing-terminal block.
+ssb_write_state '[{"n":7},{"n":13}]'
 RC="$(ssb_run)"
 if [ "$RC" = "2" ]; then
-    t_pass "skill_step_block missing terminal step 19 -> rc=2"
+    t_pass "skill_step_block missing terminal step 16 -> rc=2"
 else
     t_fail "skill_step_block missing-terminal expected rc=2, got rc=$RC"
 fi
@@ -2954,6 +2959,17 @@ if [ "$RC" = "2" ]; then
     t_pass "skill_step_block gap at step 13 -> rc=2"
 else
     t_fail "skill_step_block gap-at-13 expected rc=2, got rc=$RC"
+fi
+
+# Test B-bootstrap: only step 19 missing AND in-flight is `git commit`
+# -> rc 0 (bootstrap credit). Closes the terminal-step deadlock that
+# previously forced SKIP_SKILL_STEP_BLOCK on every section commit.
+ssb_write_state '[{"n":7},{"n":13},{"n":16}]'
+RC="$(ssb_run)"
+if [ "$RC" = "0" ]; then
+    t_pass "skill_step_block bootstrap-credit for in-flight commit -> rc=0"
+else
+    t_fail "skill_step_block bootstrap-credit expected rc=0, got rc=$RC"
 fi
 
 # Test D: SKIP opt-out with proper reason on missing-terminal -> rc 0
@@ -4294,18 +4310,21 @@ with tempfile.TemporaryDirectory() as tmp:
     assert not ok2, "step-8 must reject test_newcode.c as evidence for different.c"
 print("OK unit_test_wiring_basename_binding")
 
-# Test 3: impl_adversarial -- adversarial-impl key distinct from adversarial.
+# Test 3: impl_adversarial -- accepts EITHER adversarial-impl OR plain
+# adversarial. The previous design demanded a distinct `adversarial-impl`
+# tag for implement-time dispatches, but in practice the same Codex run
+# (same prompt, same files) was being re-dispatched only to swap the
+# tag. The interchangeability fix accepts both tags so the agent does
+# not need to redispatch only to satisfy the gate's tag preference.
 with tempfile.TemporaryDirectory() as tmp:
     repo = pathlib.Path(tmp)
     (repo / ".claude" / "state").mkdir(parents=True)
-    # Activate implement-todo-section so the skill-aware gate fires.
     (repo / ".claude" / "state" / "skill-progress.json").write_text(json.dumps({
         "implement-todo-section": {"started_ts": time.time_ns(),
                                    "args": "test", "todo_path": ""}
     }))
     stamps = repo / ".claude" / "state" / "last-review-stamps.json"
-    # State only has plain `adversarial` (review-side). Should NOT satisfy
-    # impl-side gate per Codex H1 distinct-keying fix.
+    # Plain `adversarial` only. With interchangeability, this satisfies.
     stamps.write_text(json.dumps({
         "todo/foo/TODO-99-bar.md": {
             "section": "1",
@@ -4316,13 +4335,11 @@ with tempfile.TemporaryDirectory() as tmp:
     ok, err = scg._step13_impl_adversarial_check(
         repo, ["src/kernel/foo.c"], ["todo/foo/TODO-99-bar.md"]
     )
-    assert not ok, "impl-adv gate must NOT accept plain `adversarial` key"
-    assert "adversarial-impl" in err
-    # Now add adversarial-impl entry.
+    assert ok, f"impl-adv should accept plain `adversarial` (interchangeable), got: {err}"
+    # adversarial-impl alone also satisfies.
     stamps.write_text(json.dumps({
         "todo/foo/TODO-99-bar.md": {
             "section": "1",
-            "adversarial": time.time_ns(),
             "adversarial-impl": time.time_ns(),
             "consistency": None, "perf": None,
         }
@@ -4331,7 +4348,18 @@ with tempfile.TemporaryDirectory() as tmp:
         repo, ["src/kernel/foo.c"], ["todo/foo/TODO-99-bar.md"]
     )
     assert ok2, f"impl-adv gate should accept fresh adversarial-impl, got: {err2}"
-print("OK impl_adversarial_distinct_key")
+    # No relevant tag at all -> still blocks.
+    stamps.write_text(json.dumps({
+        "todo/foo/TODO-99-bar.md": {
+            "section": "1",
+            "consistency": None, "perf": None,
+        }
+    }))
+    ok3, err3 = scg._step13_impl_adversarial_check(
+        repo, ["src/kernel/foo.c"], ["todo/foo/TODO-99-bar.md"]
+    )
+    assert not ok3, "impl-adv must still block when neither tag is present"
+print("OK impl_adversarial_tag_interchangeable")
 
 # Test 4: smoke_gate -- requires Boot complete + C:\> markers per Codex H2 fix.
 with tempfile.TemporaryDirectory() as tmp:

@@ -380,6 +380,29 @@ def main() -> int:
     if not isinstance(started_ts, int) or started_ts <= 0:
         return 0
 
+    # Credit prior-skill evidence: when implement-todo-section ran in
+    # the same session immediately before review-todo-section, the
+    # agent has already done plenty of Read/Grep on the same surface.
+    # Walk forward from the EARLIEST multi-step skill start in this
+    # session so that handoff doesn't force redundant exploration.
+    try:
+        state_path = os.path.join(root, _STATE_REL)
+        with open(state_path, "r", encoding="utf-8") as f:
+            state = json.load(f)
+        if isinstance(state, dict):
+            for k, v in state.items():
+                if k not in MULTI_STEP_SKILLS or not isinstance(v, dict):
+                    continue
+                if v.get("compaction_orphaned") is True:
+                    continue
+                ts = v.get("started_ts", 0)
+                if (isinstance(ts, int) and ts > 0
+                        and ts < started_ts
+                        and v.get("session_id") == entry.get("session_id")):
+                    started_ts = ts
+    except Exception:
+        pass
+
     transcript_path = d.get("transcript_path", "")
     evidence_count = _count_phase1_evidence(transcript_path, started_ts)
     if evidence_count >= _PHASE1_MIN_EVIDENCE:

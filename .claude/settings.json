@@ -7,7 +7,13 @@
       "Bash(TIMEOUT=30 bash scripts/test.sh QUIET=1:*)",
       "Edit(/.claude/skills/validate-todo-file/**)",
       "Edit(/.claude/skills/implement-todo-section/**)",
-      "Edit(/.claude/hooks/section_review_required.py)"
+      "Edit(/.claude/hooks/section_review_required.py)",
+      "Edit(/.claude/hooks/receiving_review_required.py)",
+      "Edit(/.claude/hooks/section_commit_gate.py)",
+      "Edit(/.claude/hooks/skill_step_block.py)",
+      "Edit(/.claude/hooks/_review_pipeline_passthrough.py)",
+      "Edit(/.claude/hooks/phase1_evidence_gate.py)",
+      "Edit(/.claude/hooks/skill_step_observer.py)"
     ]
   },
   "hooks": {

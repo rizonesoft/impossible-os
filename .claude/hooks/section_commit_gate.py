@@ -902,11 +902,54 @@ def _review_evidence(root: Path, staged_src: list[str]) -> tuple[bool, str]:
         if current_blobs.get(p) != trigger_blobs.get(p)
     ]
     if mismatched:
+        # Fallback: check the ring-buffer history for any previously
+        # received review whose trigger_blobs cover the *current* staged
+        # tree. Prevents re-staging an identical content tree after a
+        # stash-pop / re-add cycle from invalidating an already-received
+        # review whose blob SHAs would still match.
+        if _history_covers(root, staged_src, current_blobs):
+            return (True, "")
         return (False, f"review covered older content of {mismatched[:5]}; "
                        f"current staged blob SHA differs (post-review edit). "
                        f"Re-run the review against the new staging."
                        + (f" (+{len(mismatched)-5} more)" if len(mismatched) > 5 else ""))
     return (True, "")
+
+
+def _history_covers(root: Path, staged_src: list[str], current_blobs: dict) -> bool:
+    """Return True if any received review in
+    .claude/state/codex-review-history.jsonl covered every staged path
+    with a blob SHA that matches the current staged blob. Bounded to the
+    last 16 entries (file is a ring buffer)."""
+    hp = root / ".claude" / "state" / "codex-review-history.jsonl"
+    if not hp.exists():
+        return False
+    try:
+        lines = hp.read_text(encoding="utf-8").splitlines()
+    except Exception:
+        return False
+    # Walk newest-first.
+    for line in reversed(lines):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            entry = json.loads(line)
+        except Exception:
+            continue
+        if entry.get("received") is not True:
+            continue
+        rts = entry.get("received_timestamp_ns")
+        if not isinstance(rts, int):
+            continue
+        if (time.time_ns() - rts) / 1e9 > EVIDENCE_TTL_SECONDS:
+            continue
+        eblobs = entry.get("trigger_blobs") or {}
+        if not isinstance(eblobs, dict):
+            continue
+        if all(eblobs.get(p) == current_blobs.get(p) for p in staged_src):
+            return True
+    return False
 
 
 # ----------------------------------------------------------------------
@@ -2123,28 +2166,33 @@ def _step13_impl_adversarial_check(
     except Exception:
         pass
 
+    # Tag interchangeability (TODO-08 follow-up): the implement-todo-section
+    # gate was demanding `[review-kind: adversarial-impl]` while
+    # review-todo-section accepted plain `[review-kind: adversarial]` for
+    # the same Codex run. Both tags now satisfy the impl-adversarial gate
+    # so the agent does not need to redispatch only to swap the tag. The
+    # head/section bindings still apply per-tag.
     for todo in flipped_todos:
         entry = state.get(todo)
         if not isinstance(entry, dict):
             continue
-        ts = entry.get("adversarial-impl")
-        if not (isinstance(ts, int) and ts >= cutoff_ns):
-            continue
-        # Section binding: the recorded `section` field must match the
-        # section being flipped. flipped_sections is best-effort -- when
-        # the caller cannot extract the section number (no section
-        # column / parse failure), this binding is skipped.
-        if flipped_sections:
-            recorded_section = str(entry.get("section", "")).lstrip("§").strip()
-            if recorded_section and recorded_section not in flipped_sections:
+        for tag in ("adversarial-impl", "adversarial"):
+            ts = entry.get(tag)
+            if not (isinstance(ts, int) and ts >= cutoff_ns):
                 continue
-        # HEAD binding: the dispatch's `adversarial-impl_head` must be
-        # an ancestor of the current HEAD.
-        rh = entry.get("adversarial-impl_head", "")
-        if isinstance(rh, str) and rh and current_head:
-            if not _git_is_ancestor(root, rh, current_head):
-                continue
-        return (True, "")
+            # Section binding: the recorded `section` field must match
+            # the section being flipped. flipped_sections is best-effort.
+            if flipped_sections:
+                recorded_section = str(entry.get("section", "")).lstrip("§").strip()
+                if recorded_section and recorded_section not in flipped_sections:
+                    continue
+            # HEAD binding: the dispatch's `<tag>_head` must be an
+            # ancestor of the current HEAD.
+            rh = entry.get(f"{tag}_head", "")
+            if isinstance(rh, str) and rh and current_head:
+                if not _git_is_ancestor(root, rh, current_head):
+                    continue
+            return (True, "")
     return (False, (
         f"IO row [x] flip on {flipped_todos[0]} requires step-13 "
         f"`[review-kind: adversarial-impl]` Codex dispatch (distinct "

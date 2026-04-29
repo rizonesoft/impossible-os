@@ -472,6 +472,22 @@ def main() -> int:
     if not missing:
         return 0
 
+    # Bootstrap: the terminal "commit + push" step (19 for implement,
+    # 17 for review) is satisfied BY the very Bash call we're gating.
+    # The PostToolUse observer cannot record it before this PreToolUse
+    # fires, so without this branch every section-ship requires a
+    # SKIP_SKILL_STEP_BLOCK on the first attempt. Match the in-flight
+    # Bash signature against the step map; if it would credit one or
+    # more of the missing terminal steps, drop those from `missing`.
+    if d.get("tool_name") == "Bash":
+        from skill_step_map import match_step  # noqa: E402
+        sig = (d.get("tool_input") or {}).get("command", "") or ""
+        in_flight_steps = set(match_step(skill, "Bash", sig))
+        if in_flight_steps:
+            missing = [m for m in missing if m not in in_flight_steps]
+            if not missing:
+                return 0
+
     if _skip_envs.get("SKIP_SKILL_STEP_BLOCK", "") == "1":
         _log_skip(root, _skip_envs.get("SKIP_SKILL_STEP_BLOCK_REASON", ""),
                   skill, missing)

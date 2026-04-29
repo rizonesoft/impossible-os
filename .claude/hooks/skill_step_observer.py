@@ -166,10 +166,42 @@ def _signature_for_tool(tool_name: str, ti: Dict) -> str:
 
 
 def _evidence_token(tool_name: str, ti: Dict) -> str:
-    """Short token captured for traceability. Truncated to 200 chars."""
+    """Short token captured for traceability. For Bash, classify into a
+    one-line `kind: head` shape (build / test / smoke / dispatch / lint
+    / commit / push / git / shell) so steps_observed lines stay scannable
+    instead of carrying 200-char Bash payloads. Falls back to a 120-char
+    head for unclassified shells. Edit/Write/Skill tokens are unchanged
+    paths/names. TODO-08 follow-up to the readability complaint:
+    skill-progress.json was readable only with `jq` due to Bash
+    evidence_tokens dominating the file."""
     if tool_name == "Bash":
-        cmd = ti.get("command") or ""
-        return cmd[:200]
+        cmd = (ti.get("command") or "").strip()
+        if not cmd:
+            return ""
+        head = cmd.split("\n", 1)[0][:120]
+        # Classifier (cheapest first, narrowest first).
+        try:
+            from _review_kind import detect_review_kind_from_cmd
+            kind = detect_review_kind_from_cmd(cmd)
+        except Exception:
+            kind = None
+        if kind:
+            return f"codex {kind}: {head[:80]}"
+        for needle, label in (
+            ("scripts/build.sh", "build"),
+            ("scripts/test-smoke.sh", "smoke"),
+            ("scripts/test.sh", "test"),
+            ("scripts/lint.sh", "lint"),
+        ):
+            if needle in cmd:
+                return f"{label}: {head[:80]}"
+        if cmd.startswith("git commit") or " git commit" in cmd[:60]:
+            return f"git-commit: {head[:80]}"
+        if cmd.startswith("git push") or " git push" in cmd[:60]:
+            return f"git-push: {head[:80]}"
+        if cmd.startswith("git "):
+            return f"git: {head[:80]}"
+        return head[:120]
     if tool_name in ("Edit", "Write", "MultiEdit"):
         return (ti.get("file_path") or ti.get("path") or "")[:200]
     if tool_name == "Skill":

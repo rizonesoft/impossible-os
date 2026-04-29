@@ -108,8 +108,18 @@ if tn in ('Edit', 'Write', 'MultiEdit'):
 # review pipeline but not for write-sensitive contexts.
 if tn == 'Bash':
     cmd = ti.get('command', '').strip()
-    if _rpp.is_review_pipeline_passthrough(cmd) or '&&' in cmd[:5]:
+    # Pass through if the whole pipeline is review-allowed, or if the
+    # FIRST segment of an `&&` / `;` / `||` chain is. The previous
+    # `'&&' in cmd[:5]` was vestigial -- `&&` cannot legally appear in
+    # the first 5 chars of any command.
+    if _rpp.is_review_pipeline_passthrough(cmd):
         sys.exit(0)
+    for sep in ('&&', ';', '||'):
+        if sep in cmd:
+            first_seg = cmd.split(sep, 1)[0].strip()
+            if first_seg and _rpp.is_review_pipeline_passthrough(first_seg):
+                sys.exit(0)
+            break
 
 # Look up repo root (hook runs with CWD=cwd of the parent tool call)
 try:
