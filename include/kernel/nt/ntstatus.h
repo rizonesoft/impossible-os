@@ -59,6 +59,7 @@ uint32_t RtlNtStatusToDosError(NTSTATUS status);
 #define STATUS_DATATYPE_MISALIGNMENT       ((NTSTATUS)0x80000002)  /* buffer not aligned */
 #define STATUS_INVALID_HANDLE               ((NTSTATUS)0xC0000008)  /* handle not in table or wrong type */
 #define STATUS_INVALID_PARAMETER            ((NTSTATUS)0xC000000D)  /* bad argument value */
+#define STATUS_INFO_LENGTH_MISMATCH         ((NTSTATUS)0xC0000004)  /* in/out length field disagrees with buffer capacity */
 #define STATUS_NO_MEMORY                    ((NTSTATUS)0xC0000017)  /* allocation failed */
 #define STATUS_ACCESS_DENIED                ((NTSTATUS)0xC0000022)  /* SeAccessCheck denied */
 #define STATUS_BUFFER_TOO_SMALL             ((NTSTATUS)0xC0000023)  /* output buffer too small */

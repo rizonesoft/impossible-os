@@ -910,3 +910,195 @@ int acpi_has_vga(void)
     /* Bit 2: VGA_NOT_PRESENT -- inverted: 0=present, 1=absent */
     return (fadt_ptr->boot_arch_flags & (1u << 2)) ? 0 : 1;
 }
+
+/* ---- Win32 GetSystemFirmwareTable surface ---------------------------------
+ *
+ * Hostile-input contract per Codex design review F2 (2026-04-29):
+ * every accessor below treats firmware-supplied pointers, lengths, and
+ * counts as untrusted. The internal find_acpi_table is single-shot
+ * boot-time code; these public accessors are reachable from user-mode
+ * via NtQuerySystemInformation(SystemFirmwareTableInformation) and
+ * therefore must reject every malformed shape before dereferencing.
+ */
+
+/* Conservative cap on the SDT root entry count. ACPI 6.4 doesn't
+ * specify an upper bound, but real systems carry < 64 entries; a 1024
+ * cap rejects malicious headers without blocking legitimate platforms. */
+#define ACPI_ROOT_ENTRY_MAX 1024
+
+/* Validate the root SDT header (RSDT or XSDT): signature, length range,
+ * length covers an entry-count integer multiple, and full checksum.
+ * Returns the validated entry count on success, 0 on rejection. The
+ * caller derives entry count from header.length and entry stride. */
+static uint32_t acpi_validate_root(const struct acpi_sdt_header *root,
+                                    uint32_t entry_stride,
+                                    const char *expected_sig)
+{
+    if (!root || !sig_match(root->signature, expected_sig))
+        return 0;
+    /* length must cover the header plus at least zero entries and not
+     * exceed a sane upper bound (1 MiB). */
+    if (root->length < sizeof(struct acpi_sdt_header) ||
+        root->length > 1024U * 1024U)
+        return 0;
+    uint32_t entries_bytes = root->length - sizeof(struct acpi_sdt_header);
+    if (entries_bytes % entry_stride != 0)
+        return 0;
+    uint32_t count = entries_bytes / entry_stride;
+    if (count > ACPI_ROOT_ENTRY_MAX)
+        return 0;
+    if (!acpi_checksum(root, root->length))
+        return 0;
+    return count;
+}
+
+/* Validate a child SDT pointed to by RSDT/XSDT. Returns the SDT length
+ * on success, 0 on rejection. Caller passes the firmware-mapped
+ * pointer; we read header.length and full-table checksum, both of
+ * which the firmware controls. */
+static uint32_t acpi_validate_child(const struct acpi_sdt_header *hdr)
+{
+    if (!hdr) return 0;
+    /* Header.length must cover the SDT header itself and not exceed a
+     * 16 MiB sanity cap (largest legitimate ACPI table is < 1 MiB). */
+    if (hdr->length < sizeof(struct acpi_sdt_header) ||
+        hdr->length > 16U * 1024U * 1024U)
+        return 0;
+    if (!acpi_checksum(hdr, hdr->length))
+        return 0;
+    return hdr->length;
+}
+
+int acpi_enumerate_signatures(uint32_t *out_sigs, uint32_t max_count,
+                               uint32_t *out_total)
+{
+    if (!out_total)
+        return 0;
+    *out_total = 0;
+
+    if (!g_boot_info.acpi_available || !g_boot_info.acpi_rsdp_addr)
+        return 0;
+
+    const struct acpi_rsdp *rsdp =
+        (const struct acpi_rsdp *)g_boot_info.acpi_rsdp_addr;
+
+    /* Prefer XSDT on ACPI 2.0+; fall back to RSDT. */
+    if (g_boot_info.acpi_version >= 2) {
+        const struct acpi_rsdp2 *rsdp2 = (const struct acpi_rsdp2 *)rsdp;
+        if (rsdp2->xsdt_addr) {
+            const struct acpi_xsdt *xsdt =
+                (const struct acpi_xsdt *)(uintptr_t)rsdp2->xsdt_addr;
+            uint32_t count = acpi_validate_root(&xsdt->header,
+                                                 sizeof(uint64_t), "XSDT");
+            if (count == 0)
+                return 0;
+            uint32_t i, written = 0;
+            for (i = 0; i < count; i++) {
+                const struct acpi_sdt_header *hdr =
+                    (const struct acpi_sdt_header *)(uintptr_t)xsdt->entries[i];
+                if (acpi_validate_child(hdr) == 0)
+                    continue;
+                if (out_sigs && written < max_count) {
+                    uint32_t sig = (uint32_t)(uint8_t)hdr->signature[0] |
+                                   ((uint32_t)(uint8_t)hdr->signature[1] << 8) |
+                                   ((uint32_t)(uint8_t)hdr->signature[2] << 16) |
+                                   ((uint32_t)(uint8_t)hdr->signature[3] << 24);
+                    out_sigs[written++] = sig;
+                }
+                (*out_total)++;
+            }
+            return 1;
+        }
+    }
+
+    /* RSDT fallback */
+    if (!rsdp->rsdt_addr)
+        return 0;
+    const struct acpi_rsdt *rsdt =
+        (const struct acpi_rsdt *)(uintptr_t)rsdp->rsdt_addr;
+    uint32_t count = acpi_validate_root(&rsdt->header,
+                                         sizeof(uint32_t), "RSDT");
+    if (count == 0)
+        return 0;
+    uint32_t i, written = 0;
+    for (i = 0; i < count; i++) {
+        const struct acpi_sdt_header *hdr =
+            (const struct acpi_sdt_header *)(uintptr_t)rsdt->entries[i];
+        if (acpi_validate_child(hdr) == 0)
+            continue;
+        if (out_sigs && written < max_count) {
+            uint32_t sig = (uint32_t)(uint8_t)hdr->signature[0] |
+                           ((uint32_t)(uint8_t)hdr->signature[1] << 8) |
+                           ((uint32_t)(uint8_t)hdr->signature[2] << 16) |
+                           ((uint32_t)(uint8_t)hdr->signature[3] << 24);
+            out_sigs[written++] = sig;
+        }
+        (*out_total)++;
+    }
+    return 1;
+}
+
+int acpi_get_raw_table(uint32_t signature, const uint8_t **out_addr,
+                        uint32_t *out_size)
+{
+    if (!out_addr || !out_size)
+        return 0;
+    *out_addr = (const uint8_t *)0;
+    *out_size = 0;
+
+    if (!g_boot_info.acpi_available || !g_boot_info.acpi_rsdp_addr)
+        return 0;
+
+    char want[4];
+    want[0] = (char)(signature & 0xFF);
+    want[1] = (char)((signature >> 8) & 0xFF);
+    want[2] = (char)((signature >> 16) & 0xFF);
+    want[3] = (char)((signature >> 24) & 0xFF);
+
+    const struct acpi_rsdp *rsdp =
+        (const struct acpi_rsdp *)g_boot_info.acpi_rsdp_addr;
+
+    if (g_boot_info.acpi_version >= 2) {
+        const struct acpi_rsdp2 *rsdp2 = (const struct acpi_rsdp2 *)rsdp;
+        if (rsdp2->xsdt_addr) {
+            const struct acpi_xsdt *xsdt =
+                (const struct acpi_xsdt *)(uintptr_t)rsdp2->xsdt_addr;
+            uint32_t count = acpi_validate_root(&xsdt->header,
+                                                 sizeof(uint64_t), "XSDT");
+            if (count == 0) return 0;
+            uint32_t i;
+            for (i = 0; i < count; i++) {
+                const struct acpi_sdt_header *hdr =
+                    (const struct acpi_sdt_header *)(uintptr_t)xsdt->entries[i];
+                uint32_t hdr_len = acpi_validate_child(hdr);
+                if (hdr_len == 0) continue;
+                if (sig_match(hdr->signature, want)) {
+                    *out_addr = (const uint8_t *)hdr;
+                    *out_size = hdr_len;
+                    return 1;
+                }
+            }
+            return 0;
+        }
+    }
+
+    if (!rsdp->rsdt_addr) return 0;
+    const struct acpi_rsdt *rsdt =
+        (const struct acpi_rsdt *)(uintptr_t)rsdp->rsdt_addr;
+    uint32_t count = acpi_validate_root(&rsdt->header,
+                                         sizeof(uint32_t), "RSDT");
+    if (count == 0) return 0;
+    uint32_t i;
+    for (i = 0; i < count; i++) {
+        const struct acpi_sdt_header *hdr =
+            (const struct acpi_sdt_header *)(uintptr_t)rsdt->entries[i];
+        uint32_t hdr_len = acpi_validate_child(hdr);
+        if (hdr_len == 0) continue;
+        if (sig_match(hdr->signature, want)) {
+            *out_addr = (const uint8_t *)hdr;
+            *out_size = hdr_len;
+            return 1;
+        }
+    }
+    return 0;
+}

@@ -193,16 +193,36 @@ static int pe_stricmp(const char *a, const char *b)
     return (int)(uint8_t)*a - (int)(uint8_t)*b;
 }
 
-/* kernel32.dll exports (sorted by name) */
+/* kernel32.dll exports (sorted by name).
+ *
+ * Each entry is a name->SSDT-slot mapping. Per the existing pattern
+ * (CreateFileA/W -> SSDT_NtCreateFile), the kernel-side table reserves
+ * the syscall slot; the user-mode kernel32 trampoline (the
+ * Win32 API surface TODO at todo/10-platform-services/TODO-08-win32-api-surface.md,
+ * Console & Process API, not yet shipped) handles ANSI/Wide
+ * conversion, GUID-string parsing, error-code mapping, and the
+ * SystemFirmwareTableInformation packing for the firmware-table API.
+ *
+ * Codex design review (2026-04-29) verified that adding raw
+ * name->slot entries here does not by itself produce a working Win32
+ * call -- the user-mode trampoline gap is tracked in the Win32 API
+ * surface TODO with reciprocal XREFs.
+ */
 static const pe_export_entry_t s_kernel32_exports[] = {
-    { "CloseHandle",           SSDT_NtClose },
-    { "CreateFileA",           SSDT_NtCreateFile },
-    { "CreateFileW",           SSDT_NtCreateFile },
-    { "ExitProcess",           SSDT_NtTerminateProcess },
-    { "GetLastError",          SSDT_NtQueryInformationThread },
-    { "ReadFile",              SSDT_NtReadFile },
-    { "SetLastError",          SSDT_NtSetInformationThread },
-    { "WriteFile",             SSDT_NtWriteFile },
+    { "CloseHandle",                      SSDT_NtClose },
+    { "CreateFileA",                      SSDT_NtCreateFile },
+    { "CreateFileW",                      SSDT_NtCreateFile },
+    { "EnumSystemFirmwareTables",         SSDT_NtQuerySystemInformation },
+    { "ExitProcess",                      SSDT_NtTerminateProcess },
+    { "GetFirmwareEnvironmentVariableA",  SSDT_NtQuerySystemEnvironmentValueEx },
+    { "GetFirmwareEnvironmentVariableW",  SSDT_NtQuerySystemEnvironmentValueEx },
+    { "GetLastError",                     SSDT_NtQueryInformationThread },
+    { "GetSystemFirmwareTable",           SSDT_NtQuerySystemInformation },
+    { "ReadFile",                         SSDT_NtReadFile },
+    { "SetFirmwareEnvironmentVariableA",  SSDT_NtSetSystemEnvironmentValueEx },
+    { "SetFirmwareEnvironmentVariableW",  SSDT_NtSetSystemEnvironmentValueEx },
+    { "SetLastError",                     SSDT_NtSetInformationThread },
+    { "WriteFile",                        SSDT_NtWriteFile },
 };
 
 /* ntdll.dll exports (sorted by name) */

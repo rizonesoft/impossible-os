@@ -22,6 +22,11 @@
 #include "kernel/fs/vfs.h"
 #include "kernel/timer.h"
 #include "kernel/acpi.h"
+#include "kernel/smbios.h"
+#include "kernel/nt/zw.h"
+#include "kernel/cpu_security.h"
+
+extern void *memcpy(void *dst, const void *src, uint64_t n);
 #include "kernel/ipc/pipe.h"
 #include "kernel/ipc/shmem.h"
 #include "kernel/ob/ob.h"
@@ -716,6 +721,29 @@ static NTSTATUS NtQueryDirectoryFile(uint64_t a1, uint64_t a2, uint64_t a3,
 #define SystemInterruptInformation          23
 #define SystemExceptionInformation          33
 #define SystemRegistryQuotaInformation      37
+#define SystemFirmwareTableInformation      76    /* GetSystemFirmwareTable / EnumSystemFirmwareTables */
+
+/* SYSTEM_FIRMWARE_TABLE_ACTION values per Win32 SDK winternl.h.  */
+#define SystemFirmwareTable_Enumerate       0
+#define SystemFirmwareTable_Get             1
+
+/* SYSTEM_FIRMWARE_TABLE_PROVIDER values (4-byte LE-packed ASCII).
+ * 'ACPI' = 0x49504341, 'FIRM' = 0x4D524946, 'RSMB' = 0x424D5352. */
+#define FW_PROVIDER_ACPI                    0x49504341U
+#define FW_PROVIDER_FIRM                    0x4D524946U
+#define FW_PROVIDER_RSMB                    0x424D5352U
+
+/* RSMB header per Microsoft "Raw SMBIOS firmware table provider" doc:
+ * 4 bytes Used20CallingMethod | MajorVersion | MinorVersion | DmiRevision
+ * + 4 bytes Length + raw SMBIOS table bytes. */
+struct raw_smbios_data {
+    uint8_t  used20_calling_method;
+    uint8_t  smbios_major_version;
+    uint8_t  smbios_minor_version;
+    uint8_t  dmi_revision;
+    uint32_t length;
+    /* uint8_t smbios_table_data[]; */
+} __attribute__((packed));
 
 /* ---- NtQuerySystemInformation -------------------------------------------
  * SSDT 0x00D0 -- system-wide information queries.
@@ -859,7 +887,221 @@ static NTSTATUS NtQuerySystemInformation(uint64_t a1, uint64_t a2, uint64_t a3,
         }
         return STATUS_SUCCESS;
     }
+    case SystemFirmwareTableInformation: {
+        /* SYSTEM_FIRMWARE_TABLE_INFORMATION (Win32 SDK winternl.h):
+         *   ULONG ProviderSignature;       caller input ('ACPI'/'RSMB'/'FIRM')
+         *   SYSTEM_FIRMWARE_TABLE_ACTION Action;  0=enumerate, 1=get
+         *   ULONG TableID;                 caller input (signature for get)
+         *   ULONG TableBufferLength;       in: capacity, out: bytes-needed
+         *   UCHAR TableBuffer[ANYSIZE_ARRAY];
+         *
+         * Codex adversarial-impl review F1 (2026-04-29): user-mode
+         * callers MUST be probed; previous-mode-aware copy_from_user /
+         * copy_to_user wrappers are mandatory for every read/write
+         * across the buffer. Existing nt_section.c is the reference
+         * pattern. F2: every length addition uses
+         * __builtin_add_overflow so a hostile firmware-reported size
+         * cannot wrap and bypass the capacity check.
+         */
+        struct fwti_hdr {
+            uint32_t provider_signature;
+            uint32_t action;
+            uint32_t table_id;
+            uint32_t table_buffer_length;
+        } __attribute__((packed));
+        const uint32_t fwti_hdr_size = (uint32_t)sizeof(struct fwti_hdr);
+
+        if (!buffer || buf_size < fwti_hdr_size)
+            return STATUS_BUFFER_TOO_SMALL;
+
+        /* F1: probe + copy header into a kernel local. */
+        NTSTATUS pst = ProbeForReadIfUser(buffer, buf_size, 4);
+        if (pst != STATUS_SUCCESS)
+            return pst;
+        struct fwti_hdr local;
+        if (copy_from_user(&local, buffer, fwti_hdr_size) != 0)
+            return STATUS_ACCESS_VIOLATION;
+
+        uint32_t provider = local.provider_signature;
+        uint32_t action   = local.action;
+        uint32_t table_id = local.table_id;
+        uint32_t out_cap  = local.table_buffer_length;
+
+        if (out_cap > (buf_size - fwti_hdr_size))
+            return STATUS_INFO_LENGTH_MISMATCH;
+        uint8_t *out_buf = (uint8_t *)buffer + fwti_hdr_size;
+        /* F1: probe the entire writable area we may touch (header
+         * write-back + table buffer), so all subsequent copy_to_user
+         * calls operate on a region we have already validated. */
+        pst = ProbeForWriteIfUser(buffer, fwti_hdr_size + out_cap, 4);
+        if (pst != STATUS_SUCCESS)
+            return pst;
+        /* F3 (round-2 re-adversarial 2026-04-29): return_length is
+         * also a user pointer; probe it once here so each write below
+         * goes through copy_to_user safely. NULL is a valid Windows
+         * caller convention (caller does not need the returned size). */
+        if (return_length) {
+            pst = ProbeForWriteIfUser(return_length,
+                                       (uint32_t)sizeof(uint32_t), 4);
+            if (pst != STATUS_SUCCESS)
+                return pst;
+        }
+
+        if (provider == FW_PROVIDER_ACPI) {
+            if (action == SystemFirmwareTable_Enumerate) {
+                uint32_t total = 0;
+                if (!acpi_enumerate_signatures((uint32_t *)0, 0, &total))
+                    return STATUS_NOT_FOUND;
+                /* F2: total * sizeof(uint32_t) is bounded by
+                 * ACPI_ROOT_ENTRY_MAX (1024) * 4 = 4096; cannot wrap. */
+                uint32_t needed_bytes = total * (uint32_t)sizeof(uint32_t);
+                /* Write the bytes-needed back to user before length check
+                 * so two-pass callers see the right value. */
+                if (copy_to_user(&((struct fwti_hdr *)buffer)->table_buffer_length,
+                                  &needed_bytes, (uint32_t)sizeof(uint32_t)) != 0)
+                    return STATUS_ACCESS_VIOLATION;
+                uint32_t total_out;
+                if (__builtin_add_overflow(fwti_hdr_size, needed_bytes,
+                                            &total_out))
+                    return STATUS_INVALID_PARAMETER;
+                if (return_length) {
+                    uint32_t _rl_tmp = (uint32_t)(total_out);
+                    if (copy_to_user(return_length, &_rl_tmp,
+                                      (uint32_t)sizeof(uint32_t)) != 0)
+                        return STATUS_ACCESS_VIOLATION;
+                }
+                if (out_cap < needed_bytes)
+                    return STATUS_BUFFER_TOO_SMALL;
+                uint32_t fit = needed_bytes / (uint32_t)sizeof(uint32_t);
+                /* F4 (round-2 re-adversarial 2026-04-29): zero-initialize
+                 * the local sigs[] AND use the second-pass total to
+                 * derive the actual byte count. If the firmware view
+                 * changes between the count probe and the fill pass,
+                 * we must NOT copy_to_user the residual stack bytes
+                 * past the actual write count -- doing so leaks
+                 * uninitialized kernel stack to user-mode. */
+                #define FW_SIG_LOCAL_MAX 1024U
+                uint32_t sigs[FW_SIG_LOCAL_MAX];
+                uint32_t z;
+                for (z = 0; z < FW_SIG_LOCAL_MAX; z++) sigs[z] = 0;
+                if (fit > FW_SIG_LOCAL_MAX) fit = FW_SIG_LOCAL_MAX;
+                uint32_t actual = 0;
+                acpi_enumerate_signatures(sigs, fit, &actual);
+                /* `actual` is the (possibly-changed) total found this
+                 * pass; the bytes we may copy out are bounded by
+                 * min(actual, fit). */
+                uint32_t copy_count = (actual < fit) ? actual : fit;
+                uint32_t copy_bytes = copy_count * (uint32_t)sizeof(uint32_t);
+                #undef FW_SIG_LOCAL_MAX
+                if (copy_count > 0 &&
+                    copy_to_user(out_buf, sigs, copy_bytes) != 0)
+                    return STATUS_ACCESS_VIOLATION;
+                return STATUS_SUCCESS;
+            } else if (action == SystemFirmwareTable_Get) {
+                const uint8_t *tbl_addr = (const uint8_t *)0;
+                uint32_t tbl_size = 0;
+                if (!acpi_get_raw_table(table_id, &tbl_addr, &tbl_size))
+                    return STATUS_NOT_FOUND;
+                if (copy_to_user(&((struct fwti_hdr *)buffer)->table_buffer_length,
+                                  &tbl_size, (uint32_t)sizeof(uint32_t)) != 0)
+                    return STATUS_ACCESS_VIOLATION;
+                uint32_t total_out;
+                if (__builtin_add_overflow(fwti_hdr_size, tbl_size,
+                                            &total_out))
+                    return STATUS_INVALID_PARAMETER;
+                if (return_length) {
+                    uint32_t _rl_tmp = (uint32_t)(total_out);
+                    if (copy_to_user(return_length, &_rl_tmp,
+                                      (uint32_t)sizeof(uint32_t)) != 0)
+                        return STATUS_ACCESS_VIOLATION;
+                }
+                if (out_cap < tbl_size)
+                    return STATUS_BUFFER_TOO_SMALL;
+                if (copy_to_user(out_buf, tbl_addr, tbl_size) != 0)
+                    return STATUS_ACCESS_VIOLATION;
+                return STATUS_SUCCESS;
+            }
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        if (provider == FW_PROVIDER_RSMB) {
+            const uint8_t *raw_addr = (const uint8_t *)0;
+            uint32_t raw_size = 0;
+            if (!smbios_get_raw_table(&raw_addr, &raw_size))
+                return STATUS_NOT_FOUND;
+            const struct smbios_system_info *si = smbios_get_info();
+            uint32_t hdr_size = (uint32_t)sizeof(struct raw_smbios_data);
+            /* F2: total = hdr_size + raw_size MUST be overflow-checked.
+             * raw_size is firmware-sourced uint32; an adversarial value
+             * near UINT32_MAX would wrap a plain add, letting the
+             * downstream memcpy(raw_size) copy gigabytes despite the
+             * tiny capacity check passing. */
+            uint32_t total;
+            if (__builtin_add_overflow(hdr_size, raw_size, &total))
+                return STATUS_INVALID_PARAMETER;
+
+            if (action == SystemFirmwareTable_Enumerate) {
+                uint32_t needed = (uint32_t)sizeof(uint32_t);
+                if (copy_to_user(&((struct fwti_hdr *)buffer)->table_buffer_length,
+                                  &needed, (uint32_t)sizeof(uint32_t)) != 0)
+                    return STATUS_ACCESS_VIOLATION;
+                if (return_length) {
+                    uint32_t _rl_tmp = (uint32_t)(fwti_hdr_size + needed);
+                    if (copy_to_user(return_length, &_rl_tmp,
+                                      (uint32_t)sizeof(uint32_t)) != 0)
+                        return STATUS_ACCESS_VIOLATION;
+                }
+                if (out_cap < needed)
+                    return STATUS_BUFFER_TOO_SMALL;
+                uint32_t one_zero = 0;
+                if (copy_to_user(out_buf, &one_zero, needed) != 0)
+                    return STATUS_ACCESS_VIOLATION;
+                return STATUS_SUCCESS;
+            } else if (action == SystemFirmwareTable_Get) {
+                if (copy_to_user(&((struct fwti_hdr *)buffer)->table_buffer_length,
+                                  &total, (uint32_t)sizeof(uint32_t)) != 0)
+                    return STATUS_ACCESS_VIOLATION;
+                uint32_t total_out;
+                if (__builtin_add_overflow(fwti_hdr_size, total, &total_out))
+                    return STATUS_INVALID_PARAMETER;
+                if (return_length) {
+                    uint32_t _rl_tmp = (uint32_t)(total_out);
+                    if (copy_to_user(return_length, &_rl_tmp,
+                                      (uint32_t)sizeof(uint32_t)) != 0)
+                        return STATUS_ACCESS_VIOLATION;
+                }
+                if (out_cap < total)
+                    return STATUS_BUFFER_TOO_SMALL;
+                struct raw_smbios_data rsd_local;
+                rsd_local.used20_calling_method = 0;
+                rsd_local.smbios_major_version = si ? si->smbios_major : 0;
+                rsd_local.smbios_minor_version = si ? si->smbios_minor : 0;
+                rsd_local.dmi_revision = 0;
+                rsd_local.length = raw_size;
+                if (copy_to_user(out_buf, &rsd_local, hdr_size) != 0)
+                    return STATUS_ACCESS_VIOLATION;
+                if (copy_to_user(out_buf + hdr_size, raw_addr, raw_size) != 0)
+                    return STATUS_ACCESS_VIOLATION;
+                return STATUS_SUCCESS;
+            }
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        if (provider == FW_PROVIDER_FIRM) {
+            /* Legacy BIOS shadow region (0xC0000-0xFFFFF). Impossible OS
+             * is UEFI-only; the bootloader does not preserve the BIOS
+             * shadow segment. Matches Linux's posture on UEFI-only
+             * systems. SCOPE-GAP-ALLOWED: legacy provider intentionally
+             * unsupported on a UEFI-only kernel. */
+            return STATUS_NOT_FOUND;
+        }
+
+        return STATUS_INVALID_PARAMETER;
+    }
     default:
+        /* SCOPE-GAP-ALLOWED: NT API contract default for unrecognized
+         * SystemInformationClass values; Windows ntoskrnl returns the
+         * same. Adding new classes is per-class work, not a stub gap. */
         return STATUS_NOT_IMPLEMENTED;
     }
 }

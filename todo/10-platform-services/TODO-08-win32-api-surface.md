@@ -128,6 +128,7 @@ Create `src/win32/kernel32.c`. File I/O functions are **re-exports** of the nati
 - [ ] `GetEnvironmentVariableA/W(name, buf, size)` / `SetEnvironmentVariableA/W(name, value)` → TEB env-block read/write
 - [ ] `GetExitCodeProcess(hProcess, lpExitCode)` → read exit code from completed task
 - [ ] Registry re-exports (already implemented): `RegOpenKeyExA/W`, `RegQueryValueExA/W`, `RegSetValueExA/W`, `RegCloseKey`, `RegCreateKeyExA/W`, `RegEnumKeyExA/W`
+- [ ] Firmware variable trampolines for kernel32 exports reserved in [`src/kernel/pe.c`](../../src/kernel/pe.c) `s_kernel32_exports[]` (TODO-02 firmware variable + table surface XREF). Each implements ANSI/Wide name conversion, EFI_GUID string parsing (`{8be4df61-93ca-11d2-aa0d-00e098032b8c}` form), and dispatches the existing `SSDT_NtQuerySystemEnvironmentValueEx` / `SSDT_NtSetSystemEnvironmentValueEx` / `SSDT_NtQuerySystemInformation` slots. Privilege gating (`SE_SYSTEM_ENVIRONMENT_NAME` for the Set path) defers to the privilege table TODO. Trampolines: `GetFirmwareEnvironmentVariableA/W`, `SetFirmwareEnvironmentVariableA/W`, `GetSystemFirmwareTable`, `EnumSystemFirmwareTables`. Without these the kernel32 imports resolve but first calls decode arguments wrong (Codex design F1 2026-04-29 against the kernel-side reservation).
 - [ ] Commit: `"win32: kernel32.dll console + process API"`
 
 ---

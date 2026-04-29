@@ -297,3 +297,38 @@ int acpi_msi_supported(void);
 
 /* Returns 1 if VGA is present (bit 2 NOT set). */
 int acpi_has_vga(void);
+
+/* ---- Win32 GetSystemFirmwareTable / EnumSystemFirmwareTables surface ----
+ *
+ * Codex design review F2 (2026-04-29) drove these public accessors:
+ * the Win32 facade in NtQuerySystemInformation(SystemFirmwareTableInformation)
+ * exposes ACPI tables to user-mode, so every read MUST validate
+ * checksums and lengths. The kernel's internal find_acpi_table walks
+ * pointers without per-entry validation -- fine for one-shot boot
+ * parsing, NOT fine for repeatable user-triggered reads.
+ *
+ * Both accessors return 0 on failure (table not found, checksum
+ * mismatch, geometry rejected) so the syscall path can return
+ * STATUS_NOT_FOUND cleanly. Pointers handed to the caller are
+ * firmware-mapped; the caller MUST memcpy into its own buffer before
+ * exposing to user-mode (the firmware pointer never crosses the
+ * syscall boundary).
+ */
+
+/* Enumerate the 4-byte signatures of every validated ACPI SDT.
+ * out_sigs[] receives up to max_count uint32_t signatures (little-endian
+ * encoded "FACP", "APIC", etc.). out_total receives the actual count
+ * found (may exceed max_count -- caller can re-call with a larger
+ * buffer). Returns 1 on success, 0 if ACPI was not parsed or the
+ * RSDT/XSDT root is invalid. Duplicates (multiple SSDT) ARE included
+ * to match Win32 EnumSystemFirmwareTables semantics. */
+int acpi_enumerate_signatures(uint32_t *out_sigs, uint32_t max_count,
+                               uint32_t *out_total);
+
+/* Look up a single ACPI SDT by signature (4-byte ASCII packed
+ * little-endian, e.g. 'FACP' as 0x50434146). Validates the table
+ * header length AND checksum before returning. out_addr / out_size
+ * are the firmware-mapped pointer + length. Returns 1 on success,
+ * 0 if not found or any validation failed. */
+int acpi_get_raw_table(uint32_t signature, const uint8_t **out_addr,
+                        uint32_t *out_size);

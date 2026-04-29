@@ -59,6 +59,14 @@ static struct smbios_system_info s_info;
  * Safe as file-scope static: SMBIOS init runs once, single-threaded. */
 static const uint8_t *s_table_end;
 
+/* Captured table base + length, exposed via smbios_get_raw_table() so
+ * the Win32 GetSystemFirmwareTable('RSMB',...) path can return raw
+ * bytes without re-parsing. Set in walk_structures() ONLY when bounds
+ * are accepted -- a rejected table leaves both zero so the public
+ * accessor returns 0. Single-writer at boot, read-only after. */
+static const uint8_t *s_table_base;
+static uint32_t       s_table_size;
+
 /* ---- String helper ---- */
 
 /* SMBIOS spec wire-format entry-point lengths (DMTF DSP0134 3.7.0).
@@ -300,8 +308,13 @@ static int walk_structures(uintptr_t table_addr, uint32_t max_len)
     const uint8_t *p = (const uint8_t *)table_addr;
     const uint8_t *end = (const uint8_t *)end_addr;
 
-    /* Set file-scope end pointer for bounded string extraction */
+    /* Set file-scope end pointer for bounded string extraction.
+     * Capture the validated base + length too so smbios_get_raw_table()
+     * can hand them to the Win32 GetSystemFirmwareTable('RSMB',...) path
+     * without re-parsing. */
     s_table_end = end;
+    s_table_base = (const uint8_t *)table_addr;
+    s_table_size = max_len;
 
     while (p + 4 <= end) {
         const struct smbios_header *hdr = (const struct smbios_header *)p;
@@ -645,4 +658,34 @@ void smbios_populate_registry(void)
 
     klog(LOG_INFO, "SMBIOS", "Registry populated: BIOS, System, %u CPU(s), %u DIMM(s)",
          (uint32_t)s_info.cpu_count, (uint32_t)s_info.dimm_count);
+}
+
+
+/* Codex design review F2 (2026-04-29): the public accessor returns the
+ * firmware-mapped pointer + length captured at smbios_init(); callers
+ * MUST memcpy into their own buffer before exposing to user-mode. The
+ * pointer never crosses the syscall boundary. Returns 0 (not 1) when
+ * SMBIOS was unparsed or the bounds are zero so the Win32
+ * GetSystemFirmwareTable path can return STATUS_NOT_FOUND cleanly. */
+/* Codex adversarial F2 fix (2026-04-29): cap the raw-table size at
+ * 16 MiB to mirror the 16 MiB ACPI SDT cap. SMBIOS 3.x allows a 32-bit
+ * size field; firmware reporting a huge value would let
+ * NtQuerySystemInformation(RSMB) compute a wrap-prone hdr_size +
+ * raw_size and hand a near-zero capacity check to a multi-gigabyte
+ * memcpy. This cap rejects malformed firmware before it can drive
+ * downstream wraparound. Real SMBIOS tables are well under 64 KiB. */
+#define SMBIOS_RAW_TABLE_MAX (16U * 1024U * 1024U)
+
+int smbios_get_raw_table(const uint8_t **out_addr, uint32_t *out_size)
+{
+    if (!out_addr || !out_size) return 0;
+    if (!s_info.valid || s_table_base == (const uint8_t *)0 ||
+        s_table_size == 0 || s_table_size > SMBIOS_RAW_TABLE_MAX) {
+        *out_addr = (const uint8_t *)0;
+        *out_size = 0;
+        return 0;
+    }
+    *out_addr = s_table_base;
+    *out_size = s_table_size;
+    return 1;
 }

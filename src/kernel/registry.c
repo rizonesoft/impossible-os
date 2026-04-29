@@ -1853,6 +1853,11 @@ void registry_populate_defaults(void)
     /* Populate Secure Boot state key (HKLM\SYSTEM\SecureBoot\State) */
     uefi_secureboot_populate_registry();
 
+    /* Populate UEFI variable quota (HKLM\SYSTEM\SecureBoot\Vars) --
+     * surfaces QueryVariableInfo() results for the Win32
+     * GetFirmwareEnvironmentVariable / kernel32 facade. */
+    uefi_runtime_populate_vars_registry();
+
     /*: Populate boot device provenance (HKLM\SYSTEM\Boot\Device\*) */
     boot_device_populate_registry();
 

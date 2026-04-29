@@ -1025,6 +1025,61 @@ int uefi_secureboot_setup_mode(void) { return s_sb_setup_mode; }
 int uefi_secureboot_pk_present(void) { return s_sb_pk_present; }
 int uefi_secureboot_kek_present(void) { return s_sb_kek_present; }
 
+/* Surface QueryVariableInfo() results to HKLM\SYSTEM\SecureBoot\Vars
+ * so post-boot tools can see the firmware variable storage quota
+ * (production firmware enforces ~64 KB per machine total). The
+ * non-volatile + boot-services + runtime attribute combination is
+ * the production-relevant slice (BS-only and runtime-only counters
+ * are not separately tracked because Win32 GetFirmwareEnvironmentVariable
+ * always uses the NV+BS+RT slice).
+ *
+ * Codex design review F3 (2026-04-29) drove the validity contract:
+ * mirror the HKLM\SYSTEM\SecureBoot\State pattern -- always write
+ * VarsValid (DWORD 0/1), write the size fields ONLY when QueryVariableInfo
+ * succeeded. A missing size key is "did not query"; a present size
+ * key is "this is the firmware-reported value". Consumers MUST check
+ * VarsValid first. Sizes use REG_QWORD because the spec is UINT64.
+ */
+void uefi_runtime_populate_vars_registry(void)
+{
+    HKEY hKey;
+    long rc = RegCreateKeyEx(HKEY_LOCAL_MACHINE,
+                              "SYSTEM\\SecureBoot\\Vars", 0,
+                              NULL, 0, KEY_WRITE, NULL, &hKey, NULL);
+    if (rc != ERROR_SUCCESS) {
+        klog(LOG_WARN, "UEFI",
+             "Vars registry: RegCreateKeyEx failed");
+        return;
+    }
+
+    uint64_t max_storage = 0;
+    uint64_t remaining = 0;
+    uint64_t max_var_size = 0;
+    uint32_t attrs = EFI_VARIABLE_NON_VOLATILE |
+                     EFI_VARIABLE_BOOTSERVICE_ACCESS |
+                     EFI_VARIABLE_RUNTIME_ACCESS;
+    uint64_t status = uefi_query_variable_info(attrs, &max_storage,
+                                                &remaining, &max_var_size);
+
+    if (status == UEFI_SUCCESS) {
+        RegSetDword(hKey, "VarsValid", 1);
+        RegSetQword(hKey, "MaxStorageSize",   max_storage);
+        RegSetQword(hKey, "RemainingSize",    remaining);
+        RegSetQword(hKey, "MaxVariableSize",  max_var_size);
+        RegSetDword(hKey, "Attributes",       attrs);
+        klog(LOG_INFO, "UEFI",
+             "Vars registry: max=%u remain=%u max_var=%u",
+             (uint32_t)max_storage, (uint32_t)remaining,
+             (uint32_t)max_var_size);
+    } else {
+        RegSetDword(hKey, "VarsValid", 0);
+        klog(LOG_INFO, "UEFI",
+             "Vars registry: QueryVariableInfo unavailable (status=0x%x)",
+             (uint64_t)status);
+    }
+    RegCloseKey(hKey);
+}
+
 /* ============================================================================
  * Secure Boot Key Management
  *

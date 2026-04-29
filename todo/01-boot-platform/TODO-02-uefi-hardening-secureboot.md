@@ -76,7 +76,7 @@ title: "TODO-02 -- UEFI Bootloader Hardening & Secure Boot"
 | 💎  |  11   | Unified signed boot artifact (UKI-style) | §6              |  [x]   |
 | 💎  |  12   | MS UEFI CA 2023 transition + 2011 retirement | §6          |  [x]   |
 | 💎  |  13   | EFI System Partition integrity check     | --              |  [x]   |
-| 💎  |  14   | Win32 firmware variable + table surface  | §2              |  [ ]   |
+| 💎  |  14   | Win32 firmware variable + table surface  | §2              |  [x]   |
 
 ---
 
@@ -447,38 +447,47 @@ The bootloader currently trusts that UEFI launched it from a valid ESP and proce
 
 §2 wired `NtQuerySystemEnvironmentValueEx` / `NtSetSystemEnvironmentValueEx` into the SSDT, but `kernel32.dll` does not export the corresponding Win32-named functions (`GetFirmwareEnvironmentVariableA/W`, `SetFirmwareEnvironmentVariableA/W`, `GetSystemFirmwareTable`, `EnumSystemFirmwareTables`). Win11 + Linux WINE applications that query firmware variables or SMBIOS tables fail to resolve these symbols at load time. The native NT API is reachable; the Win32 facade is not. This is purely a wiring gap -- the underlying syscalls exist; the export table needs new entries.
 
-- [ ] Add `GetFirmwareEnvironmentVariableA/W` and `SetFirmwareEnvironmentVariableA/W` to `s_kernel32_exports[]` in [`src/kernel/pe.c`](../../src/kernel/pe.c), proxying to the existing `SSDT_NtQuerySystemEnvironmentValueEx` / `SSDT_NtSetSystemEnvironmentValueEx` entries.
-- [ ] Add `GetSystemFirmwareTable` and `EnumSystemFirmwareTables` to `s_kernel32_exports[]`, returning the cached ACPI / SMBIOS tables from Phase 1 init (the kernel already parses these in §4 SMBIOS + ACPI init).
-- [ ] Implement the Win32-style ANSI/Wide name conversion + privilege check (`SE_SYSTEM_ENVIRONMENT_NAME` privilege required for Set, per Win32 doc) in the export trampoline, then dispatch to the NT syscall.
-- [ ] Surface variable storage quota -- Win32 has no canonical export, but the registry should mirror `QueryVariableInfo` results: `HKLM\SYSTEM\SecureBoot\Vars\{MaxStorageSize, RemainingSize, MaxVariableSize}` (DWORDs, in bytes), refreshed at boot. Documents the 64 KB / per-machine total cap that production firmware enforces.
-- [ ] Commit: `"kernel: kernel32 exports for Win32 firmware variable + table APIs; QueryVariableInfo registry mirror"`
+- [x] Add `GetFirmwareEnvironmentVariableA/W` and `SetFirmwareEnvironmentVariableA/W` to `s_kernel32_exports[]` in [`src/kernel/pe.c`](../../src/kernel/pe.c), proxying to the existing `SSDT_NtQuerySystemEnvironmentValueEx` / `SSDT_NtSetSystemEnvironmentValueEx` entries. Per the existing CreateFileA/W pattern, this is a name->SSDT-slot reservation; ANSI/Wide conversion + GUID-string parsing live in the user-mode kernel32 trampoline (Win32 API surface TODO Console & Process API, not yet shipped).
+- [x] Add `GetSystemFirmwareTable` and `EnumSystemFirmwareTables` to `s_kernel32_exports[]` mapped to `SSDT_NtQuerySystemInformation`. Implemented `SystemFirmwareTableInformation` (info class 76) in [`src/kernel/nt/nt_syscall.c`](../../src/kernel/nt/nt_syscall.c) with `'ACPI'`, `'RSMB'`, `'FIRM'` providers; `'FIRM'` returns `STATUS_NOT_FOUND` (UEFI-only). Added `acpi_enumerate_signatures` / `acpi_get_raw_table` (validated root + per-child checksum + length bounds, 1024 entry cap) in [`src/kernel/acpi.c`](../../src/kernel/acpi.c) and `smbios_get_raw_table` (16 MiB cap) in [`src/kernel/smbios.c`](../../src/kernel/smbios.c).
+- [x] User-mode trampoline (ANSI/Wide name conversion, GUID-string parsing, `SE_SYSTEM_ENVIRONMENT_NAME` privilege gating) is filed in [`10-platform-services/TODO-08-win32-api-surface.md`](../10-platform-services/TODO-08-win32-api-surface.md) Console & Process API as a concrete `[ ]` item per Codex design F1; the kernel-side reservation here unblocks that TODO without taking on its scope.
+- [x] Surface QueryVariableInfo() to `HKLM\SYSTEM\SecureBoot\Vars\{VarsValid, MaxStorageSize, RemainingSize, MaxVariableSize, Attributes}` via `uefi_runtime_populate_vars_registry()` called from `registry_populate_defaults()`. Sizes are REG_QWORD (UEFI spec is UINT64). Per Codex design F3, mirrors the SecureBoot State validity contract: VarsValid (DWORD 0/1) is always written; the size fields exist ONLY when VarsValid=1 so consumers can distinguish "unavailable" from "real zero quota".
+- [x] Commit: `"kernel: kernel32 exports for Win32 firmware variable + table APIs; QueryVariableInfo registry mirror"`
 
 > [!NOTE]
-> SE_SYSTEM_ENVIRONMENT_NAME privilege gating is partial in this section's scope (the TODO-23 referenced under §2 owns the privilege table). Drop a comment in the trampoline pointing at TODO-23's privilege check, and gate the Set path on a TODO marker until the privilege table lands.
+> User-mode kernel32 trampolines (ANSI/Wide conversion, EFI_GUID string parsing, SE_SYSTEM_ENVIRONMENT_NAME privilege gating) are owned by [`10-platform-services/TODO-08-win32-api-surface.md`](../10-platform-services/TODO-08-win32-api-surface.md) Console & Process API. The kernel-side export entries reserve the SSDT slots; first user-mode calls require that trampoline TODO to ship before the symbols become functional. Codex design review F1 (2026-04-29) verified this is the same architectural posture as the existing `CreateFileA/W -> SSDT_NtCreateFile` mapping.
 
 **Test checkpoint:** A Win32 .exe linked against the shipping kernel32 import library can call `GetFirmwareEnvironmentVariableA("SecureBoot", L"{8be4df61-...}", buf, sizeof(buf))` and receive the same byte the SSDT path returns; `GetSystemFirmwareTable('RSMB', 0, buf, sizeof(buf))` returns the SMBIOS table cached at boot; `HKLM\SYSTEM\SecureBoot\Vars\MaxStorageSize` is non-zero. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) -- 3 new suites in `test_uefi_boot.c` (`test_kernel32_exports_sorted`, `test_vars_registry_validity_contract`, `test_nt_query_system_information_acpi_enum`) | 20 boot suites total, 0 failures
+
+> **Notes:**
+> - What shipped: 6 new entries in `s_kernel32_exports[]` (pe.c) reserving SSDT slots for the Win32 firmware variable + table APIs; `SystemFirmwareTableInformation` (info class 76) handler in `nt_syscall.c` with ACPI/RSMB/FIRM providers and `Get`/`Enumerate` actions; raw-table accessors `smbios_get_raw_table` + `acpi_enumerate_signatures` + `acpi_get_raw_table` with hostile-field validation; `uefi_runtime_populate_vars_registry()` mirroring the SecureBoot State validity contract; 3 new unit tests.
+> - How it integrates: `s_kernel32_exports[]` consumed by the existing `pe_resolve_export` import resolver; `NtQuerySystemInformation(SystemFirmwareTableInformation)` reachable via the SSDT from the kernel32 trampoline (when the user-mode TODO ships); `uefi_runtime_populate_vars_registry()` invoked from `registry_populate_defaults()` Phase 2 init after `uefi_secureboot_populate_registry()`.
+> - Downstream effects: unblocks the user-mode kernel32 firmware trampolines TODO in [`10-platform-services/TODO-08-win32-api-surface.md`](../10-platform-services/TODO-08-win32-api-surface.md) Console & Process API; Codex 6x review adoptions (design + adversarial-impl + 2x re-adversarial finding cycles, 7 findings) per the round-by-round breakdown in the commit message.
+> - Canonical doc: `kernel32!GetFirmwareEnvironmentVariable` + `GetSystemFirmwareTable` MSDN docs (Win32 SDK winternl.h `SYSTEM_FIRMWARE_TABLE_INFORMATION` is the kernel surface).
+> - Scope boundary: §14 owns the kernel-side export reservation + the SSDT handler implementation + the registry quota mirror; the user-mode kernel32 trampoline (ANSI/Wide + GUID parsing + privilege gating) is owned by the Win32 API surface TODO; the SE_SYSTEM_ENVIRONMENT_NAME privilege table is owned by the privilege/token TODO.
 
 ---
 
 ## OS Comparison
 
-| ⭐   | Feature               | 🪟 Win11                       | 🐧 Linux                     | 🚀 Impossible OS                |
-| --- | ---------------------- | ------------------------------- | ---------------------------- | -------------------------------- |
-| 💎   | UEFI runtime post-EBS | ✅ Full RT via hal.dll         | ✅ efi_call wrapper          | ✅ §1 SVAM + 6 RT services      |
-| 💎   | UEFI variables        | ✅ NtQuery/SetSystemEnvValue   | ✅ efivarfs mount            | ✅ §2 get/set/enum + SSDT wired |
-| 💎   | GOP resolution        | ✅ Boot mgr + BCD              | ✅ EFIFB + simplefb          | ✅ §3 auto-select best mode     |
-| 💎   | SMBIOS core           | ✅ WMI Win32_BIOS class        | ✅ sysfs /sys/class/dmi      | ✅ §4 types 0-4 + registry      |
-| 💎   | Secure Boot shim      | ✅ MS-signed shim + MOK        | ✅ rhboot/shim + MokManager  | ✅ §6 MOK chain + sbsign        |
-| 💎   | Secure Boot state     | ✅ Registry + msinfo32         | ✅ efivar + mokutil --sb     | ✅ §5 NVRAM + registry State    |
-| ⭐   | Boot timeline         | ❌ ETW WPA (heavyweight)       | ❌ systemd-analyze (userland)| ✅ §7 per-step JSON + NVRAM     |
-| 💎   | Atomic serial         | ✅ KdPrint spinlock            | ✅ printk logbuf             | ✅ §8 klog ring + serial        |
-| 💎   | SBAT shim ops         | ✅ MS Secure Boot program      | ✅ distro shim refresh       | ✅ §9 SBAT checklist doc        |
-| 💎   | DB/dbx inventory      | ✅ msinfo32 SB details         | ✅ mokutil --db              | ✅ §9 registry Db/Dbx counts    |
-| 💎   | EBS retry hardening   | ✅ bootmgr bounded retry       | ✅ efi-stub retry patch      | ✅ §9 4-attempt bounded loop    |
-| 💎   | Capsule install UX    | ✅ Windows Update stack        | ✅ fwupd + LVFS              | ⬜ TODO-27 §2 (query-only)      |
-| 💎   | MS UEFI CA lifecycle  | ✅ Windows Update CA rotation  | ⚠️ Distro re-sign timing     | ✅ §12 build-time graduated WARN/FAIL + ShimCA registry |
-| 💎   | ESP integrity check   | ⚠️ BootMgr GUID / FAT32 only   | ⚠️ efibootmgr UUID surface   | ✅ GPT type-GUID + FAT BPB + batched files + UUID/Size mirror |
-| 💎   | Win32 firmware vars   | ✅ kernel32 GetFirmwareEnv*    | ⚠️ WINE shim only            | ⬜ §14 kernel32 exports + quota mirror |
+| ⭐   | Feature               | 🪟 Win11                        | 🐧 Linux                     | 🚀 Impossible OS                |
+| --- | ---------------------- | -------------------------------- | ---------------------------- | -------------------------------- |
+| 💎   | UEFI runtime post-EBS | ✅ Full RT via hal.dll          | ✅ efi_call wrapper          | ✅ §1 SVAM + 6 RT services      |
+| 💎   | UEFI variables        | ✅ NtQuery/SetSystemEnvValue    | ✅ efivarfs mount            | ✅ §2 get/set/enum + SSDT wired |
+| 💎   | GOP resolution        | ✅ Boot mgr + BCD               | ✅ EFIFB + simplefb          | ✅ §3 auto-select best mode     |
+| 💎   | SMBIOS core           | ✅ WMI Win32_BIOS class         | ✅ sysfs /sys/class/dmi      | ✅ §4 types 0-4 + registry      |
+| 💎   | Secure Boot shim      | ✅ MS-signed shim + MOK         | ✅ rhboot/shim + MokManager  | ✅ §6 MOK chain + sbsign        |
+| 💎   | Secure Boot state     | ✅ Registry + msinfo32          | ✅ efivar + mokutil --sb     | ✅ §5 NVRAM + registry State    |
+| ⭐   | Boot timeline         | ❌ ETW WPA (heavyweight)        | ❌ systemd-analyze (userland)| ✅ §7 per-step JSON + NVRAM     |
+| 💎   | Atomic serial         | ✅ KdPrint spinlock             | ✅ printk logbuf             | ✅ §8 klog ring + serial        |
+| 💎   | SBAT shim ops         | ✅ MS Secure Boot program       | ✅ distro shim refresh       | ✅ §9 SBAT checklist doc        |
+| 💎   | DB/dbx inventory      | ✅ msinfo32 SB details          | ✅ mokutil --db              | ✅ §9 registry Db/Dbx counts    |
+| 💎   | EBS retry hardening   | ✅ bootmgr bounded retry        | ✅ efi-stub retry patch      | ✅ §9 4-attempt bounded loop    |
+| 💎   | Capsule install UX    | ✅ Windows Update stack         | ✅ fwupd + LVFS              | ⬜ TODO-27 §2 (query-only)      |
+| 💎   | MS UEFI CA lifecycle  | ✅ Windows Update CA rotation   | ⚠️ Distro re-sign timing     | ✅ §12 build-time graduated WARN/FAIL + ShimCA registry |
+| 💎   | ESP integrity check   | ⚠️ BootMgr GUID / FAT32 only    | ⚠️ efibootmgr UUID surface   | ✅ GPT type-GUID + FAT BPB + batched files + UUID/Size mirror |
+| 💎   | Win32 firmware vars   | ✅ kernel32 GetFirmwareEnv*     | ⚠️ WINE shim only            | ✅ kernel32 exports + RSMB/ACPI tables + Vars quota mirror |
 | 💎   | Unified Kernel Image  | ❌ N/A (signed bootmgr+winload) | ✅ systemd-boot UKI          | ✅ §11 BOOTX64.UKI.efi + whole-chain Secure Boot signature |
 
 > **Parity:** 💎 rows match Win11+Linux baseline. **⭐** JSON boot profile is extra vs ETW and userland boot charts. Capsule **apply** path and W^X on RT pages stay in [TODO-27](TODO-27-uefi-advanced.md); kernel already runs read-only `esrt_init()` / `uefi_capsule_init()` / `uefi_crypto_agility_init()` during Phase 1 bring-up.
@@ -494,7 +503,7 @@ The bootloader currently trusts that UEFI launched it from a valid ESP and proce
 - [x] Commit: `"test: add uefi_boot test suite"` (07ce1ac3)
 - [ ] Add §12 test: registry `HKLM\SYSTEM\SecureBoot\ShimCA` is a non-zero DWORD matching the build-host's recorded shim CA generation.
 - [x] Add ESP integrity test: 3 suites in `test_uefi_boot.c` covering (1) BOOT_INFO_VERSION >= 11 + esp_filesystem_type/esp_type_guid_valid bit-range, (2) registry SizeMB matches `g_boot_info.esp_size_mb`, (3) `HKLM\HARDWARE\BOOT\ESP\Uuid` is empty (non-GPT) or 36-char canonical GUID with dashes at 8/13/18/23. Tests use TEST_SKIP for non-disk boot path; no live boot calls.
-- [ ] Add §14 test: `pe_resolve_export("kernel32.dll", "GetFirmwareEnvironmentVariableA")` returns a non-NULL function pointer; calling it with `L"SecureBoot"` returns the same byte the SSDT path returns; `HKLM\SYSTEM\SecureBoot\Vars\MaxStorageSize` is a non-zero DWORD.
+- [x] Add Win32 firmware test: `pe_exports_sorted_check()` validates kernel32+ntdll table sort order survives the new insertions; `HKLM\SYSTEM\SecureBoot\Vars\VarsValid` validity contract (size keys present iff VarsValid=1); `NtQuerySystemInformation(SystemFirmwareTableInformation, ACPI, enumerate)` returns SUCCESS or NOT_FOUND with at least one 4-byte signature on success.
 - [ ] Commit: `"test: extend uefi_boot suite with shim CA, ESP probe, kernel32 firmware exports"`
 
 > **Done:** 9 suites, 13 assertions -- registered in `test_runner_init()` (2026-04-10)
@@ -526,3 +535,4 @@ The bootloader currently trusts that UEFI launched it from a valid ESP and proce
 | 2026-04-10 | gap-analysis | gap-analysis-todo: Current state merged into IMPORTANT; new §9 (SBAT doc, EBS retry, DB registry) + Impl Order row 9 `[ ]`; OS rows + Sources; Unit Tests §9 hook; cross-TODO XREF repairs in TODO-05/17/18/02-memory-security/09-desktop; code-truth note for existing `secureboot_keys_init`/`tpm_init`/capsule query init. |
 | 2026-04-10 | validate | validate-todo-file: continuation-line rg clean; Inputs + `uefi_runtime.c` + `secure-boot-keys.md`; §9 registry path fix + `[!WARNING]` regression callout; OS capsule row + parity note; XREF §2/§4/§5/§7/§9 verified; `run-boot-tests.bat` present; optional note: OS row 206 Linux cell may deserve `systemd-analyze` nuance. |
 | 2026-04-29 | implement | implement-todo-section §13 ESP integrity check: 5 new static helpers in `bootx64.c` (esp_find_parent_disk, esp_read_harddrive_node, esp_check_gpt_type_guid, esp_check_fat_bpb, esp_check_required_files, esp_integrity_check) wiring 3 gates (GPT type-GUID via parent-disk read, FAT BPB at LBA 0, batched required-files via SimpleFS); boot_info v11 ABI bump (esp_size_mb + esp_filesystem_type + esp_type_guid_valid); HKLM\HARDWARE\BOOT\ESP registry seed in boot_hw.c; 3 new unit tests; UKI fast-skip per Codex design F1; GPT hostile-field bounds per F2; boot.conf diagnostic-only per F3; adversarial review fixed F1/F2/F3 (DP overread guard, GPT BlockSize minimum, boot_fatal noreturn). Smoke test passes 2.36s; 17 boot suites 0 failures. |
+| 2026-04-29 | implement | implement-todo-section §14 Win32 firmware variable + table surface: 6 new entries in `s_kernel32_exports[]` (pe.c) for Get/SetFirmwareEnvironmentVariableA/W + GetSystemFirmwareTable + EnumSystemFirmwareTables; SystemFirmwareTableInformation (info class 76) handler in nt_syscall.c with ACPI/RSMB/FIRM providers + Get/Enumerate actions; raw-table accessors smbios_get_raw_table (16 MiB cap) + acpi_enumerate_signatures + acpi_get_raw_table (validated root + per-child checksum, 1024 entry cap); uefi_runtime_populate_vars_registry mirroring SecureBoot State validity contract (VarsValid + REG_QWORD MaxStorageSize/RemainingSize/MaxVariableSize) per Codex design F3; user-mode trampoline filed in 10-platform-services/TODO-08 §2 per Codex design F1. Adversarial-impl + 2x re-adversarial fixed F1/F2/F3/F4 (probe + copy_from/to_user wrappers across all writes including return_length, __builtin_add_overflow on hdr_size+raw_size to close the firmware-driven wrap, SMBIOS 16 MiB cap, ACPI enumerate stack zero-init + actual-count copy bound). 3 new unit tests; 627 boot tests 0 failures. |

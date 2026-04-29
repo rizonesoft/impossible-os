@@ -345,6 +345,103 @@ static void test_esp_registry_uuid_format(void)
     }
 }
 
+/* ---- Win32 Firmware Variable + Table Surface (TODO-02 firmware section) ----
+ *
+ * The kernel32 export table reserves SSDT slots for the Win32 firmware
+ * variable + table APIs. The user-mode kernel32 trampoline (the
+ * Win32 API surface TODO Console & Process API, not yet shipped) handles
+ * the actual ANSI/Wide conversion + GUID parsing. These tests verify
+ * (1) the export-table sort invariant survived the new insertions,
+ * (2) the QueryVariableInfo registry mirror at HKLM\SYSTEM\SecureBoot
+ * \Vars carries either VarsValid=1 + non-zero sizes OR VarsValid=0
+ * (unavailable -- distinguishable from real zero quota), (3)
+ * NtQuerySystemInformation(SystemFirmwareTableInformation) responds
+ * coherently to the ACPI enumerate path. */
+
+#include "kernel/pe.h"
+#include "kernel/nt/ssdt.h"
+#include "kernel/nt/service_numbers.h"
+
+static void test_kernel32_exports_sorted(void)
+{
+    int violations = pe_exports_sorted_check();
+    TEST_ASSERT_EQ(violations, 0,
+                   "pe_exports_sorted_check returns 0 (kernel32+ntdll tables strictly sorted)");
+}
+
+/* HKLM\SYSTEM\SecureBoot\Vars must always carry VarsValid; the size
+ * fields are present iff VarsValid=1. Either shape is correct -- the
+ * test rejects the broken intermediate state where VarsValid is
+ * missing or VarsValid=0 with size keys present. */
+static void test_vars_registry_validity_contract(void)
+{
+    HKEY hKey = (HKEY)0;
+    long rc = RegOpenKeyEx(HKEY_LOCAL_MACHINE, "SYSTEM\\SecureBoot\\Vars",
+                           0, KEY_READ, &hKey);
+    if (rc != ERROR_SUCCESS) {
+        TEST_SKIP("HKLM\\SYSTEM\\SecureBoot\\Vars absent -- registry not seeded");
+    }
+    uint32_t valid = 0xFFFFFFFFu;
+    long vrc = RegGetDword(hKey, "VarsValid", &valid);
+    TEST_ASSERT(vrc == ERROR_SUCCESS,
+                "VarsValid DWORD is present");
+    TEST_ASSERT(valid <= 1,
+                "VarsValid is a single bit (0 or 1)");
+    if (valid == 1) {
+        uint64_t max_storage = 0;
+        long mrc = RegGetQword(hKey, "MaxStorageSize", &max_storage);
+        TEST_ASSERT(mrc == ERROR_SUCCESS && max_storage > 0,
+                    "VarsValid=1 implies MaxStorageSize > 0");
+    } else {
+        /* VarsValid=0: size keys MUST be absent (no truthy 0 sentinel). */
+        uint64_t probe = 0;
+        long mrc = RegGetQword(hKey, "MaxStorageSize", &probe);
+        TEST_ASSERT(mrc != ERROR_SUCCESS,
+                    "VarsValid=0 implies MaxStorageSize key is absent");
+    }
+    RegCloseKey(hKey);
+}
+
+/* SystemFirmwareTableInformation enumerate of the ACPI provider should
+ * return STATUS_SUCCESS with a non-zero list (every UEFI system has
+ * at least one ACPI table -- typically FACP+APIC+HPET). */
+static void test_nt_query_system_information_acpi_enum(void)
+{
+    /* FW_PROVIDER_ACPI = 0x49504341 ('ACPI' little-endian) */
+    /* SystemFirmwareTableInformation = 76 */
+    struct {
+        uint32_t provider_signature;
+        uint32_t action;
+        uint32_t table_id;
+        uint32_t table_buffer_length;
+        uint32_t buf[64];
+    } req;
+    uint32_t i;
+    for (i = 0; i < sizeof(req) / sizeof(uint32_t); i++)
+        ((uint32_t *)&req)[i] = 0;
+    req.provider_signature = 0x49504341u; /* 'ACPI' */
+    req.action = 0;                       /* enumerate */
+    req.table_buffer_length = sizeof(req.buf);
+
+    uint32_t return_length = 0;
+    NTSTATUS s = ssdt_dispatch(SSDT_NtQuerySystemInformation,
+                               76,                 /* info class */
+                               (uint64_t)(uintptr_t)&req,
+                               sizeof(req),
+                               (uint64_t)(uintptr_t)&return_length,
+                               0, 0);
+    /* On a system with no ACPI tables (extremely rare) the call
+     * returns STATUS_NOT_FOUND; on a normal UEFI boot it returns
+     * STATUS_SUCCESS with a non-zero TableBufferLength. Accept either
+     * but reject any other status. */
+    TEST_ASSERT(s == STATUS_SUCCESS || s == STATUS_NOT_FOUND,
+                "SystemFirmwareTableInformation+ACPI+enumerate returns SUCCESS or NOT_FOUND");
+    if (s == STATUS_SUCCESS) {
+        TEST_ASSERT(req.table_buffer_length >= 4,
+                    "ACPI enumerate returns at least one 4-byte signature");
+    }
+}
+
 /* Registration */
 
 void test_register_uefi_boot(void)
@@ -387,6 +484,12 @@ void test_register_uefi_boot(void)
                             test_esp_size_mb_consistency, TEST_CAT_BOOT);
     test_suite_register_cat("UEFI: ESP registry Uuid format",
                             test_esp_registry_uuid_format, TEST_CAT_BOOT);
+    test_suite_register_cat("UEFI: kernel32 exports sorted",
+                            test_kernel32_exports_sorted, TEST_CAT_BOOT);
+    test_suite_register_cat("UEFI: Vars registry validity contract",
+                            test_vars_registry_validity_contract, TEST_CAT_BOOT);
+    test_suite_register_cat("UEFI: NtQuerySystemInformation ACPI enum",
+                            test_nt_query_system_information_acpi_enum, TEST_CAT_BOOT);
 }
 
 #endif /* KERNEL_TESTS */

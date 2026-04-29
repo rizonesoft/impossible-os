@@ -106,3 +106,19 @@ int smbios_get_system_uuid(uint8_t uuid[16]);
  * HKLM\HARDWARE\CPU\{idx}\*, and HKLM\HARDWARE\Memory\{idx}\*.
  * Must be called after smbios_init() and registry_init(). */
 void smbios_populate_registry(void);
+
+/* Return the firmware-mapped raw SMBIOS structure-table base + length
+ * captured at smbios_init() time. Used by the Win32 GetSystemFirmwareTable
+ * facade to return raw RSMB bytes -- caller must memcpy into its own
+ * buffer before exposing to user-mode (the firmware pointer never crosses
+ * the syscall boundary). Returns 1 on success, 0 if SMBIOS was never
+ * successfully parsed (s_info.valid == 0) or the table bounds are zero.
+ *
+ * Lifetime: pointer remains valid for the kernel's lifetime (UEFI marks
+ * SMBIOS pages as Reserved, never reclaimed). Read-only.
+ *
+ * Codex design review F2 (2026-04-29) drove this contract: the public
+ * accessor must hand out validated bounds (table_addr != 0,
+ * table_size > 0) so a caller cannot dereference an unparsed firmware
+ * region. */
+int smbios_get_raw_table(const uint8_t **out_addr, uint32_t *out_size);

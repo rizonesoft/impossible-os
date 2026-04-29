@@ -224,6 +224,15 @@ boot_result_t uefi_secureboot_init(void);
  * Called from registry_populate_defaults() after registry_init(). */
 void uefi_secureboot_populate_registry(void);
 
+/* Surface QueryVariableInfo() results to HKLM\SYSTEM\SecureBoot\Vars
+ * so post-boot tools can see the firmware variable storage quota
+ * (production firmware enforces the documented per-machine cap).
+ * Writes VarsValid (DWORD) always; size fields (QWORD MaxStorageSize,
+ * RemainingSize, MaxVariableSize) ONLY on successful query. Consumers
+ * MUST check VarsValid before reading sizes. Called from
+ * registry_populate_defaults() after uefi_secureboot_populate_registry. */
+void uefi_runtime_populate_vars_registry(void);
+
 /* Returns 1 if Secure Boot is enabled by firmware. */
 int uefi_secureboot_enabled(void);
 
