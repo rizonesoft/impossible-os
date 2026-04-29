@@ -39,6 +39,7 @@ title: "TODO-02 -- UEFI Bootloader Hardening & Secure Boot"
 - -> XREF: `TODO-13-tpm-measured-boot-attestation.md` -- measured boot, PCR replay, TPM NV baselines, sealed secrets, and attestation export
 - -> XREF: `TODO-12-early-entropy-random-seed.md` -- firmware and CPU entropy collection plus boot-time seed handoff
 - -> XREF: `10-platform-services/TODO-08-win32-api-surface.md §2` -- consumer for §14 `kernel32.dll` firmware variable + table exports
+- -> XREF: `01-boot-platform/TODO-04-firmware-table-platform-inventory.md §1` -- higher-level firmware_table_entry_t catalog that consumes §14's `acpi_enumerate_signatures` / `acpi_get_raw_table` / `smbios_get_raw_table` helpers
 - -> XREF: `01-boot-platform/TODO-04-firmware-table-platform-inventory.md §1` -- ESP UUID surfaced by §13 feeds the firmware table catalog
 
 ---

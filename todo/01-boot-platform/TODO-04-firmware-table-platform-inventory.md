@@ -11,7 +11,7 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 > **Goal:** Make firmware-provided platform data complete, validated, and queryable. The bootloader already copies UEFI configuration-table entries and the kernel has helpers for ACPI, SMBIOS, memory attributes, runtime properties, conformance profiles, ESRT, DTB, and FPDT. This TODO owns the generic firmware inventory layer that discovers, validates, logs, and publishes those tables without mixing policy into each consumer.
 
 > [!IMPORTANT]
-> **Current state:** `boot_info.config_table[]` exists, `uefi_find_config_table()` exists, SMBIOS base parsing exists, FPDT timing is partially copied, and ESRT/conformance declarations exist. There is no complete table catalog, no registry mirror, no validation of table physical ranges against the memory map, no DTB/EBBR path, and no unified user-visible inventory.
+> **Current state (2026-04-29):** `boot_info.config_table[]` exists, `uefi_find_config_table()` exists at uefi_config.c:47, SMBIOS3+SMBIOS2 parsing at smbios.c:381,429, FPDT timing at boot_timing.c:8-154, `esrt_init()` at uefi_config.c:183, MAT lookup at uefi_config.c:268, Runtime Properties at uefi_runtime.c:199, and EFI_CONFORMANCE_PROFILES_TABLE parsing (UEFI_CONFORM_FULL / EBBR) at uefi_config.c:107-140. **TODO-02 §14 (commit 194e6012) shipped `acpi_enumerate_signatures` / `acpi_get_raw_table` / `smbios_get_raw_table` with hostile-field validation and the Win32 `GetSystemFirmwareTable` / `EnumSystemFirmwareTables` / `SystemFirmwareTableInformation` syscall surface** -- this TODO's §1 catalog API consumes those helpers rather than re-implementing per-provider validation. There is still no unified `firmware_table_entry_t` catalog, no `HKLM\HARDWARE\Firmware\Tables\*` registry mirror, no validation of table physical ranges against the UEFI memory map, no DTB/EBBR handoff path, no FPDT+TSC timeline normalization, and no `firmware-tables.json` host decoder.
 
 ## Inputs
 
@@ -20,8 +20,10 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 - [`include/kernel/smbios.h`](../../include/kernel/smbios.h)
 - [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c)
 - -> XREF: `TODO-02-uefi-hardening-secureboot.md §5` -- existing SMBIOS base parser
+- -> XREF: `TODO-02-uefi-hardening-secureboot.md §14` -- Win32 GetSystemFirmwareTable + EnumSystemFirmwareTables surface (commit 194e6012); §1 here consumes `acpi_enumerate_signatures` / `acpi_get_raw_table` / `smbios_get_raw_table` from that section rather than re-implementing per-provider validation
 - -> XREF: `TODO-11-interrupt-timer-arch.md §6` -- ACPI MADT remains the interrupt owner
 - -> XREF: `TODO-27-uefi-advanced.md §2,§6` -- ESRT/capsule and extended SMBIOS consumers
+- -> XREF: `02-kernel-core/TODO-14-registry-completion.md §5` -- `HKLM\HARDWARE\Firmware\*` storage via registry syscalls (consumer for §8)
 
 ## Outcome
 
@@ -49,10 +51,13 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 
 ## 1. Firmware Table Catalog API
 
-- [ ] Define `firmware_table_entry_t` with GUID/name, physical address, size, source, validation status, and owner.
-- [ ] Implement `firmware_tables_init()` from `boot_info.config_table[]`.
-- [ ] Add lookup by GUID, name, and owner subsystem.
-- [ ] Emit a compact boot log summary with table count and critical table presence.
+> [!NOTE]
+> **Foundation already shipped:** `uefi_find_config_table()` (uefi_config.c:47) walks `boot_info.config_table[]` by GUID. `acpi_enumerate_signatures()` + `acpi_get_raw_table()` (acpi.c:972, 1041) and `smbios_get_raw_table()` (smbios.c:679) provide validated raw-byte access. SMBIOS3 + SMBIOS2 entry-point parsing exists at smbios.c:381,429. This section adds the higher-level `firmware_table_entry_t` catalog that aggregates these per-provider helpers behind one inventory API; do NOT re-implement the per-provider validation.
+
+- [ ] Define `firmware_table_entry_t` with GUID/name, physical address, size, source (`SOURCE_UEFI_CFG_TABLE` / `SOURCE_ACPI_SDT` / `SOURCE_SMBIOS_RAW` / `SOURCE_FPDT` / `SOURCE_ESRT` / `SOURCE_DTB`), validation status, and owner.
+- [ ] Implement `firmware_tables_init()` populating the catalog from `boot_info.config_table[]` plus the per-provider accessors landed in TODO-02 §14.
+- [ ] Add `firmware_table_lookup_guid()` / `firmware_table_lookup_name()` / `firmware_table_lookup_owner()`.
+- [ ] Emit a compact boot log summary: `[BOOT] firmware tables: <N> cataloged, <M> validated, <K> degraded`.
 - [ ] Commit: `"boot: firmware table catalog API"`
 
 **Test checkpoint:** Boot log shows `[BOOT] firmware tables: <N> cataloged` line; `firmware_table_lookup_guid(EFI_ACPI_20_TABLE_GUID)` returns a valid entry on QEMU OVMF + VirtualBox EFI; lookup of an unknown GUID returns NULL. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
@@ -121,10 +126,13 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 
 ## 7. UEFI Conformance Profile and EBBR Detection
 
-- [ ] Parse conformance profile table.
-- [ ] Detect UEFI full profile, EBBR, and unknown profile GUIDs.
-- [ ] Relax or tighten required table set based on profile.
-- [ ] Add diagnostics when hardware claims EBBR but exposes PC-only assumptions.
+> [!NOTE]
+> **Partial foundation shipped:** EFI_CONFORMANCE_PROFILES_TABLE parsing already exists in `uefi_config.c` (the `s_conformance_level` / `UEFI_CONFORM_FULL` / `UEFI_CONFORM_EBBR` path at uefi_config.c:107-140). What remains is (a) feeding the result through the §1 catalog, (b) relaxing/tightening the required-table set, and (c) detecting EBBR-claim + PC-hardware contradictions.
+
+- [ ] Wire existing `s_conformance_level` (uefi_config.c) into the §1 firmware table catalog as a query helper rather than a static.
+- [ ] Detect UEFI full profile, EBBR, and unknown profile GUIDs (existing) -- promote unknown-GUID logging from DEBUG to a `firmware_table_entry_t.status = unknown_profile` flag.
+- [ ] Relax or tighten required table set based on profile (e.g. EBBR allows missing FPDT/MAT; full UEFI requires them).
+- [ ] Add diagnostics when hardware claims EBBR but exposes PC-only assumptions (PIC, i8042, RTC port 0x70).
 - [ ] Commit: `"boot: detect UEFI conformance profile"`
 
 **Test checkpoint:** PC-class boot logs `[BOOT] UEFI conformance: full`. Synthetic EBBR profile boot logs `conformance: EBBR` and skips required-PC-table checks. Hybrid case (EBBR-claimed + PIC/i8042 present) logs `[WARN] firmware: EBBR claim with PC-only hardware`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
@@ -170,16 +178,16 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 ## OS Comparison
 
 | ⭐ | Feature                               | 🪟 Win11                         | 🐧 Linux                        | 🚀 Impossible OS                |
-| -- | ------------------------------------- | -------------------------------- | ------------------------------- | ------------------------------- |
+| -- | ------------------------------------- | --------------------------------- | ------------------------------- | -------------------------------- |
 | 💎 | Firmware table catalog API            | ✅ ACPI/HAL + WMI                | ✅ acpi_get_table + sysfs       | ⬜ §1 firmware_table_entry_t    |
 | 💎 | Physical range + checksum validation  | ✅ HAL validates pre-use         | ✅ acpi_tb_verify_checksum      | ⬜ §2 mmap-bound + checksums    |
-| 💎 | ACPI/SMBIOS/DTB arbitration           | ⚠️ ACPI-first; no DTB          | ✅ ACPI on x86, DTB on ARM      | ⬜ §3 priority + EBBR detect    |
-| 💎 | FPDT boot-timeline normalization      | ✅ FPDT + ETW timeline           | ⚠️ acpi_fpdt_init read-only    | ⬜ §4 FPDT + TSC unified        |
+| 💎 | ACPI/SMBIOS/DTB arbitration           | ⚠️ ACPI-first; no DTB            | ✅ ACPI on x86, DTB on ARM      | ⬜ §3 priority + EBBR detect    |
+| 💎 | FPDT boot-timeline normalization      | ✅ FPDT + ETW timeline           | ⚠️ acpi_fpdt_init read-only     | ⬜ §4 FPDT + TSC unified        |
 | 💎 | UEFI MAT + Runtime Properties         | ✅ MmGetEfiRuntimeServicesTable  | ✅ efi_memmap_attributes        | ⬜ §5 MAT + RT properties       |
 | 💎 | ESRT firmware inventory               | ✅ Windows Update / fwupdd       | ✅ fwupd /sys/firmware/efi/esrt | ⬜ §6 ESRT mirror to Registry   |
-| 💎 | UEFI conformance profile + EBBR       | ⚠️ assumes full PC profile     | ✅ EBBR detection in efi-stub   | ⬜ §7 conformance GUID parse    |
-| 💎 | Registry + BlackBox firmware report   | ✅ msinfo32 + Event Log          | ⚠️ scattered (dmidecode/sysfs) | ⬜ §8 HKLM\HARDWARE\Firmware  |
-| ⭐ | Firmware quirk database               | ⚠️ HAL-internal, opaque        | ⚠️ DMI quirks scattered        | ⬜ §9 SMBIOS-keyed quirks       |
+| 💎 | UEFI conformance profile + EBBR       | ⚠️ assumes full PC profile       | ✅ EBBR detection in efi-stub   | ⬜ §7 conformance GUID parse    |
+| 💎 | Registry + BlackBox firmware report   | ✅ msinfo32 + Event Log          | ⚠️ scattered (dmidecode/sysfs)  | ⬜ §8 HKLM\HARDWARE\Firmware    |
+| ⭐ | Firmware quirk database               | ⚠️ HAL-internal, opaque          | ⚠️ DMI quirks scattered         | ⬜ §9 SMBIOS-keyed quirks       |
 | ⭐ | Host decoder for firmware-tables.json | ❌ N/A                           | ❌ N/A                          | ⬜ §10 host tool decode JSON    |
 
 ---
