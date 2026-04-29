@@ -85,6 +85,7 @@ title: "TODO-08 -- Automation Hardening (Skill / Hook / MCP / Codex Integration)
 | ⭐  |   20  |  §20    | Implement-pipeline section-commit gates (steps 5/8/13/16 -- quality / tests / adv / smoke)   | §3, §4, §10, §11           |  [x]   |
 | ⭐  |   21  |  §21    | Implement-todo-section partial-enforcement heuristics (steps 1/2/3/9/15/17/18 -- WARN-first) | §10, §11, §20              |  [x]   |
 | ⭐  |   22  |  §22    | Review-pipeline right-sizing doctrine                                                        | §3, §10, §17               |  [ ]   |
+| ⭐  |   23  |  §23    | Unify SKIP_REVIEW_HOOK opt-out scanner across PreToolUse gates                               | §3, §4, §17, §20           |  [ ]   |
 
 > 💎 = parity work -- standard developer-tooling hygiene (audit scripts, drift detection, doc sync). Linux kernel ships `MAINTAINERS` + `get_maintainer.pl`; Windows has the engineering-systems-internal equivalent. We need it because skill / hook / MCP wiring drifts silently.
 > ⭐ = competitive edge -- enforcing reviewer-contract discipline at the Bash / Edit tool boundary, hard-gating skill-pipeline steps, cross-wiring two AI assistants (Claude Code + Codex CLI) into the same MCP server set, and observed-not-claimed step-state telemetry are novel ground. Neither Win11 nor Linux ships AI-tooling automation at this layer; among AI dev tools (Cursor, Aider, Continue, Copilot Workspace) only `nesaminua/claude-code-lsp-enforcement-kit` ships a comparable state-binding pattern as of early 2026.
@@ -225,7 +226,7 @@ Today's section-commit hook (the inline Python block in [`.claude/settings.json`
 
 > **Verified:** 2026-04-27 | commit `7bbbe87b` + review-pipeline fixes `44e600f6` | 9/9 items | build OK | tests 209/209 PASS
 > **Accepted:** [M] PostToolUse smoke-test + boot-smoke + reminder inline hooks use `cmd.startswith('git commit')` AND `Bash(git commit:*)` matcher -- wrapped forms (`env git commit`, `bash -c 'git commit'`) skip post-commit smoke + skip-reason propagation. Observability gap, not enforcement gap (gate itself catches the security concern). -> XREF: 00-infrastructure/TODO-08-automation-hardening.md §7 (item: "Same extraction for the inline `git commit` smoke-test hook and boot-smoke hook into dedicated files `post_commit_smoketest.py` and `post_commit_smoketest_boot.py`")
-> **Accepted:** [H] Stale receive event marking newer trigger received -- under racy multi-dispatch ordering (review A trigger -> review B trigger overwrites unreceived state -> agent receives intending A), state.received flips True against B's trigger_files, so the gate trusts an untriaged latest review. The §3 design captured `head_sha` + `tree_hash` for audit but explicitly defers `tool_use_id` correlation because the Claude Code harness does not expose `tool_use_id` to hooks (verified via probe). -> XREF: 00-infrastructure/TODO-08-automation-hardening.md §3 (item: "Anti-stale-pass binding -- partial: state schema captures head_sha + tree_hash at trigger time for audit. ... The trigger_tool_use_id field is NOT in the schema because the Claude Code harness PostToolUse / PreToolUse hooks do not expose tool_use_id to hooks (verified live via probe)" at line 228)
+> **Accepted:** [H] Stale receive event marking newer trigger received -- under racy multi-dispatch ordering (review A trigger -> review B trigger overwrites unreceived state -> agent receives intending A), state.received flips True against B's trigger_files, so the gate trusts an untriaged latest review. The §3 design captured `head_sha` + `tree_hash` for audit but explicitly defers `tool_use_id` correlation because the Claude Code harness does not expose `tool_use_id` to hooks (verified via probe). -> XREF: 00-infrastructure/TODO-08-automation-hardening.md §3 (item: "Anti-stale-pass binding -- partial: state schema captures head_sha + tree_hash at trigger time for audit. ... The trigger_tool_use_id field is NOT in the schema because the Claude Code harness PostToolUse / PreToolUse hooks do not expose tool_use_id to hooks (verified live via probe)" at line 229)
 > **Quality reviewed:** 2026-04-27 | Codex 9x (adversarial + 4 fix-loop + post-commit adversarial + consistency + perf + re-adversarial) | 12H + 2M fixed, 1M+1H accepted-XREF | scope: N/A (host-side automation tooling, no kernel/boot/desktop/shell domain)
 
 ---
@@ -792,6 +793,51 @@ The 2026-04-28 §17 implementation session burned ~1.5 hours on what should have
 
 ---
 
+## 23. Unify SKIP_REVIEW_HOOK Opt-Out Scanner Across PreToolUse Gates
+
+The TODO-02 §11 review-pipeline closure (commit `3bc47f6f`) exposed a real friction point in the PreToolUse gate stack: `section_review_required.py` and `section_commit_gate.py` honor the `SKIP_REVIEW_HOOK` opt-out via TWO different read paths that no single bash-tool command can satisfy at once.
+
+**The conflict** (verified 2026-04-29 in the §11 commit dance):
+
+- [`section_review_required.py:12`](../../.claude/hooks/section_review_required.py) reads `os.environ.get('SKIP_REVIEW_HOOK', '')`. The hook process inherits the harness env, NOT the bash-command-line env, so inline `SKIP_REVIEW_HOOK=1 git commit ...` does NOT reach this hook. Its prefix allowlist (`git `, `bash scripts/`, `node `, `python3 `, `grep `, `awk `, `sed `, `wc `, `head `, `tail `, `ls `, `cat `, `find `, `rg `, `cd `) requires the cmd to START with one of those tokens; an env-var assignment as the first token fails the allowlist and the hook BLOCKs.
+- [`section_commit_gate.py:1507-1549`](../../.claude/hooks/section_commit_gate.py) `_scan_inline_env_prefix(cmd)` DOES recognize `SKIP_REVIEW_HOOK=1 git commit ...` (and `env SKIP_REVIEW_HOOK=1 ...`, `sudo SKIP_REVIEW_HOOK=1 ...`, etc.). This was the explicit Codex routing-fix #2 (post-c65568fc) intended to bridge harness env vs bash-cmd-line env.
+
+Mismatch: same env var, two different read mechanisms. **No single command shape satisfies both gates** when both are armed:
+
+| Cmd shape                                       | section_review_required | section_commit_gate |
+|--------------------------------------------------|------------------------|----------------------|
+| `git commit ...`                                 | PASS (`git ` prefix)   | BLOCK (no opt-out)   |
+| `SKIP_REVIEW_HOOK=1 git commit ...`              | BLOCK (cmd starts with `SKIP_*=`) | PASS (inline scan)   |
+| `bash scripts/commit-with-skip.sh ...` (wrapper) | PASS (`bash scripts/`) | PASS (wrapper exports env before exec git) |
+
+The duct-tape workaround `scripts/commit-with-skip.sh` exists precisely because the in-tree gates have no shared opt-out scanner. That wrapper now lives in the tree (added during the §11 closure) but it is NOT documented as a canonical bridge, NOT enumerated in MANIFEST.md, and the underlying opt-out shape inconsistency remains.
+
+> **Outcome:** a single, shared SKIP-env scanner used by every PreToolUse gate that claims to honor `SKIP_REVIEW_HOOK`. Inline `SKIP_REVIEW_HOOK=1 git commit ...` works for ALL gates without a wrapper. The behavior is consistent, documented, and tested. The duct-tape wrapper is either retired or formally named as the canonical opt-out bridge.
+
+- [ ] **Extract `_scan_inline_env_prefix()` into a shared helper** at `.claude/hooks/_skip_env.py` (HELPER module, `# block-via: warning-only`). Same `shlex` tokenization + control-operator + wrapper-walk logic currently lives only in `section_commit_gate.py`. Surface the result as `read_skip_envs(cmd: str, fallback_to_environ: bool = True) -> dict[str, str]` returning `{NAME: VALUE}` for every `SKIP_*` key found in either the cmd's leading env prefix OR `os.environ`.
+- [ ] **Migrate `section_review_required.py` to consume the shared helper.** Replace line 12's `os.environ.get('SKIP_REVIEW_HOOK', '') == '1'` with `_skip_env.read_skip_envs(cmd).get('SKIP_REVIEW_HOOK') == '1'`. The hook now honors inline-prefix opt-outs the same way `section_commit_gate.py` does, without duplicating the parser.
+- [ ] **Migrate `section_commit_gate.py` to consume the shared helper.** Replace the existing `_scan_inline_env_prefix()` body with a one-line delegation to `_skip_env.read_skip_envs(cmd)`. Single source of truth; behavior tied to the helper's tests.
+- [ ] **Audit every other PreToolUse hook for `SKIP_*` reads.** Grep for `os.environ.get.*SKIP_` across `.claude/hooks/`. Each hook that honors any `SKIP_*` env should consume the shared helper. As of 2026-04-29 the list includes (at minimum): `section_review_required.py`, `section_commit_gate.py`, `phase1_evidence_gate.py`, `step5_quality_gate.py`, `skill_step_block.py`, `design_review_required.py`, `receiving_review_required.py`. Each migration is a one-line change.
+- [ ] **3 sub-tests** in [`scripts/test-tooling.sh`](../../scripts/test-tooling.sh) under a new `[skip_env_unified]` block: (1) bare `git commit` with `SKIP_REVIEW_HOOK=1` in os.environ -> all gates pass; (2) inline `SKIP_REVIEW_HOOK=1 git commit ...` with no harness env -> all gates pass; (3) `env SKIP_REVIEW_HOOK=1 git commit ...` wrapper form -> all gates pass.
+- [ ] **Retire `scripts/commit-with-skip.sh`** if the shared scanner makes it unnecessary, OR formalize it: add a row in `.claude/hooks/MANIFEST.md` describing it, and document the use-case (cron / CI shapes that cannot easily set os.environ).
+- [ ] **`docs/infrastructure/ai-system.md`** -- update the Hook Routing Matrix introduction to name the shared SKIP scanner; remove any prose that implies inline `SKIP_REVIEW_HOOK=1 ...` "should work" without naming the shared helper.
+- [ ] Commit: `"hooks: unify SKIP_REVIEW_HOOK opt-out scanner across PreToolUse gates"`
+
+**Inputs (XREFs):** -> XREF: [00-infrastructure/TODO-08 §3 receiving-code-review hard gate](#3-receiving-code-review-hard-gate--state-file--post-codex-hook-block) (canonical SKIP_REVIEW_HOOK consumer), [00-infrastructure/TODO-08 §4 section-commit gate](#4-section-commit-gate-hardens-to-block-with-build--codex--receiving-evidence) (origin of `_scan_inline_env_prefix`), [00-infrastructure/TODO-08 §17 review-pipeline pre-Codex enforcement](#17-review-pipeline-pre-codex-enforcement-phase-1--re-adversarial) (phase1_evidence_gate also reads SKIP envs), [00-infrastructure/TODO-08 §20 implement-pipeline section-commit gates](#20-implement-pipeline-section-commit-gates-steps-581316) (step5_quality_gate also reads SKIP envs).
+
+**Test checkpoint:** `bash scripts/test-tooling.sh` passes the new `[skip_env_unified]` block (3 sub-tests). Manual reproduction: stage a TODO with an `[x]` flip + new stamp, attempt `SKIP_REVIEW_HOOK=1 git commit ...` without a wrapper -- both `section_review_required.py` and `section_commit_gate.py` accept the opt-out and the commit lands. The §11 stamp commit's wrapper hop is no longer required.
+
+> **Test runner:** `bash scripts/test-tooling.sh` | 3 new sub-tests under `[skip_env_unified]`, expected 326/326 PASS (was 323).
+
+> **Notes:** (canonical shape, fill at ship time)
+> - What shipped: `_skip_env.py` HELPER module (~50 lines) extracted from `section_commit_gate._scan_inline_env_prefix`; 7 PreToolUse hooks migrated to consume it; 3 new sub-tests; MANIFEST + ai-system.md updated.
+> - How it integrates: every PreToolUse hook that honors a `SKIP_*` env now calls `_skip_env.read_skip_envs(cmd)` instead of `os.environ.get` directly; behavior is consistent across the gate stack.
+> - Downstream effects: the §11 commit-with-skip.sh wrapper either retires or becomes a documented optional bridge for shapes that cannot set the inline env (e.g. cron with no shell). The opt-out shape becomes a canonical, scannable pattern.
+> - Canonical doc: [`docs/infrastructure/ai-system.md`](../../docs/infrastructure/ai-system.md) "Hook Routing Matrix".
+> - Scope boundary: this section is scanner-unification only. New gates that want to add their own SKIP env should consume the shared helper from day one; that is a doctrine, not a code change here.
+
+---
+
 ## Format Quick Reference
 
 | Concern                      | Where it lives                                                                                    | Owner                                           |
@@ -836,6 +882,7 @@ The 2026-04-28 §17 implementation session burned ~1.5 hours on what should have
 | ⭐ | Implement-pipeline commit gates     | ❌ N/A      | ❌ N/A          | ✅ §20 (steps 5/8/13/16)                |
 | ⭐ | Heuristic WARN -> ERROR promotion   | ❌ N/A      | ❌ N/A          | ✅ §21 (7 WARN hooks + miss-log + ratio report) |
 | ⭐ | Review-pipeline right-sizing        | ❌ N/A      | ❌ N/A          | ✅ §22 (RISK_TIER + bootstrap + spiral) |
+| ⭐ | Unified SKIP-env opt-out scanner    | ❌ N/A      | ❌ N/A          | ⬜ §23 (shared `_skip_env.py` helper across gate stack) |
 
 > **After §1-§5:** Claude and Codex share the same MCP server set, the same Codex invocation policy, the same hard gates around reviews and section commits. Drift between the two automation sides is detectable.
 > **After §6-§9:** The whole automation surface is auditable in one script. Hook system is documented; MCP usage is doctrine; superpowers plugin behavior is reconciled with Impossible OS rules.
