@@ -754,6 +754,7 @@ The promotion-after-observation pattern matches §3's "advisory hook reminders -
 > - Canonical doc: [`docs/infrastructure/ai-system.md`](../../docs/infrastructure/ai-system.md) "Hook Promotion Pipeline" subsection under Hook Routing Matrix.
 > - Scope boundary: WARN-only by construction. Fully-deterministic counterparts ship as BLOCK in §17 (Phase-1 + re-adv), §18 (stamp-region + OS Comparison), §19 (Codex prompt-scope wrapper), §20 (steps 5/8/13/16). Steps 6 (implement) and 14 (reconcile tables) remain judgment-driven; intentionally no hook in §17-§21.
 
+> **Verified:** 2026-04-29 | commit `629a874e` (impl ship `84b9def4`) | 13/13 items | build OK | tests 323/323 PASS
 > **Quality reviewed:** 2026-04-29 | Codex 8x (design + adversarial-impl + adversarial + consistency + perf + 3x re-adversarial) | 1H+8M fixed | scope: N/A (host-side hooks + report scripts + doctrine doc; no kernel/boot/desktop/shell domain)
 
 ---
