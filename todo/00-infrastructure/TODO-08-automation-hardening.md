@@ -953,6 +953,9 @@ The TODO-02 §11 review-pipeline closure introduced a duct-tape wrapper script t
 
 > **Test runner:** `bash scripts/test-tooling.sh` | 3 new sub-tests under `[pre_codex_enforcement]` `phase1_evidence_misslog` (0 reads / 1 read / 2 reads emit-or-not assertions).
 
+> **Verified:** 2026-04-29 | commit `9580885a` | 5/5 items | build N/A (hooks-only) | tests 349/349 PASS | lint 0 errors
+> **Quality reviewed:** 2026-04-29 | Codex 5x (design + adversarial + consistency + perf + 3x re-adversarial) | 1H+5M fixed | scope: N/A (Python hook + bash reporter + markdown doc; no domain code-quality skill applies)
+
 > **Notes:**
 > - Structure: 1 hook edit (`phase1_evidence_gate.py` -- `PHASE1_MIN_READS` constant + `hm.emit_warn(step=4)` call), 1 reporter extension (`scripts/heuristic-misses-report.sh` -- `WINDOW_BY_STEP[4]=30` + `_section_collapse` for step 4), 1 doc update (`ai-system.md` Hook Promotion Pipeline step-4 row), 3 sub-tests in `[pre_codex_enforcement]`.
 > - How it integrates: every BLOCK fire appends one structured JSON line to `.claude/state/heuristic-misses.jsonl` with `step:4 signal:"phase1-evidence-missing"`. `bash scripts/heuristic-misses-report.sh` surfaces the per-section-deduped FP ratio over a last-30-sections window. The gate stays a hard BLOCK; the WARN is observability for tuning `PHASE1_MIN_READS`, not a promotion path.
