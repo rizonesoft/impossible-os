@@ -394,6 +394,7 @@ Microsoft began rotating UEFI signing certificates in 2024-2025: the original `M
 > - Canonical doc: [`docs/guides/secure-boot-keys.md`](../../docs/guides/secure-boot-keys.md) "MS UEFI CA Lifecycle".
 > - Scope boundary: §6 owns the actual signing pipeline; §12 is doctrine + tracking + audit surface layered on top. Pinning the 2023-CA-signed shim binary is `[/]` -- waiting on MS publication.
 
+> **Verified:** 2026-04-29 | commit `69d72fce` | 5/6 items, 1 deferred [/] | build OK | tests 316/316 PASS
 > **Quality reviewed:** 2026-04-29 | Codex 6x (design + adversarial + consistency + perf + 2x re-adversarial) | 3H+7M fixed | scope: kernel-code-quality (uefi_runtime.c ShimCA write) + boot-code-quality (sign-efi.sh gate ordering + sbverify rc capture)
 
 ---
