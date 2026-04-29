@@ -77,9 +77,12 @@
 #define BOOT_INFO_MAGIC    0x49504F53  /* "IPOS" (Impossible OS) */
 #endif
 #ifndef BOOT_INFO_VERSION
-/* v10 adds BOOT_FLAG_INVOKED_VIA_UKI;
+/* v11 adds ESP integrity fields (esp_size_mb, esp_filesystem_type,
+ * esp_type_guid_valid) populated by the UEFI bootloader's pre-load
+ * sanity gate;
+ * v10 added BOOT_FLAG_INVOKED_VIA_UKI;
  * v9 added flags + os_loader/required_security_version */
-#define BOOT_INFO_VERSION  10
+#define BOOT_INFO_VERSION  11
 #endif
 
 /* Upper bound for pre-copy address validation: the UEFI bootloader
@@ -1220,6 +1223,22 @@ struct boot_info {
     uint32_t os_loader_security_version;    /* security version baked into kernel.exe at build */
     uint32_t required_security_version;     /* value bootloader read from IPOSRequiredSecVersion NVRAM */
     uint32_t _rollback_pad;                 /* reserved; zero */
+
+    /* EFI System Partition integrity gate (v11). Populated by the UEFI
+     * bootloader's pre-load sanity check (esp_integrity_check) BEFORE
+     * parse_boot_conf and load_kernel. Surfaces the ESP identity to
+     * post-boot tools via HKLM\HARDWARE\BOOT\ESP\* without re-reading
+     * firmware. The unique ESP partition GUID itself lives in
+     * boot_partition_guid above; the type-GUID match result is the
+     * single bit esp_type_guid_valid. In UKI invocation mode the
+     * bootloader populates esp_size_mb when BlockIO is available but
+     * leaves esp_type_guid_valid = 0 and esp_filesystem_type = 0 --
+     * the trust anchor for UKI is the signed PE image itself, so the
+     * disk identity check is skipped (split-path-only gate). */
+    uint32_t esp_size_mb;            /* ESP partition size in MiB; 0 if unknown */
+    uint8_t  esp_filesystem_type;    /* 0=unknown, 1=FAT16, 2=FAT32 */
+    uint8_t  esp_type_guid_valid;    /* 1 if GPT type GUID matched ESP type GUID; 0 otherwise/UKI/non-GPT */
+    uint8_t  _esp_pad[2];            /* alignment; reserved zero */
 };
 
 /* Compile-time enforcement of ABI header layout (S15) */

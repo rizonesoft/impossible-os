@@ -67,6 +67,9 @@ typedef UINTN               EFI_TPL;
 #define BOOT_ERR_WATCHDOG_TIMEOUT   0x000B  /* S11: watchdog timeout */
 #define BOOT_ERR_EBS_MMAP_FAIL      0x000C  /* GetMemoryMap failed in EBS retry */
 #define BOOT_ERR_BOOT_INFO_RESERVED 0x000D  /* S16: boot_info range already owned by firmware */
+#define BOOT_ERR_ESP_TYPE_GUID      0x000E  /* ESP integrity: GPT partition type GUID mismatch */
+#define BOOT_ERR_ESP_BPB            0x000F  /* ESP integrity: FAT BPB sanity check failed */
+#define BOOT_ERR_ESP_MISSING_FILES  0x0010  /* ESP integrity: required boot files absent */
 
 /* --- GUID --- */
 typedef struct {

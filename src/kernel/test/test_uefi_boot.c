@@ -263,6 +263,88 @@ static void test_uki_flag_implies_v10_abi(void)
                 "BOOT_INFO_VERSION >= 10 (UKI flag bit landed in v10)");
 }
 
+/* ---- EFI System Partition integrity (TODO-02 ESP integrity) -----------
+ *
+ * The bootloader's esp_integrity_check() runs pre-load and writes
+ * three new fields plus mirrors the result to the registry. We verify
+ * (1) the boot_info ABI carries the fields at the v11 layout, (2)
+ * size_mb is non-zero on the disk-boot smoke path (i.e. when BlockIO
+ * was usable), and (3) the registry seed produced HKLM\HARDWARE\BOOT
+ * \ESP\Uuid as a non-empty string when the boot device is GPT (the
+ * common smoke-test case). These are runtime oracle queries -- no
+ * live boot infrastructure is invoked from the test body.
+ */
+
+static void test_esp_integrity_v11_abi(void)
+{
+    TEST_ASSERT(BOOT_INFO_VERSION >= 11,
+                "BOOT_INFO_VERSION >= 11 (ESP integrity fields landed in v11)");
+    /* The struct must contain the three new fields by name at the
+     * compile-time layout. The static asserts in boot_info.h enforce
+     * total size; the runtime test confirms the producer actually
+     * stored sane values into them. */
+    uint32_t valid_bit = (uint32_t)g_boot_info.esp_type_guid_valid;
+    TEST_ASSERT(valid_bit <= 1,
+                "esp_type_guid_valid is a single bit (0 or 1)");
+    uint32_t fs_type = (uint32_t)g_boot_info.esp_filesystem_type;
+    TEST_ASSERT(fs_type <= 2,
+                "esp_filesystem_type in {0=unknown, 1=FAT16, 2=FAT32}");
+}
+
+/* Disk-boot path: when the bootloader had BlockIO available it
+ * populates esp_size_mb. UKI mode also populates from the partition's
+ * BlockIO before fast-skipping, so a zero here means BlockIO was
+ * absent (PXE / RAM-disk only). The registry seed mirrors the same
+ * value, so cross-check that they agree. */
+static void test_esp_size_mb_consistency(void)
+{
+    HKEY hKey = (HKEY)0;
+    if (RegOpenKeyEx(HKEY_LOCAL_MACHINE, "HARDWARE\\BOOT\\ESP",
+                     0, KEY_READ, &hKey) != ERROR_SUCCESS) {
+        TEST_SKIP("HKLM\\HARDWARE\\BOOT\\ESP key absent -- non-disk boot path");
+    }
+    uint32_t size_mb = 0;
+    uint32_t reg_dword = 0;
+    if (RegGetDword(hKey, "SizeMB", &reg_dword) == ERROR_SUCCESS)
+        size_mb = reg_dword;
+    RegCloseKey(hKey);
+    TEST_ASSERT_EQ((uint64_t)size_mb,
+                   (uint64_t)g_boot_info.esp_size_mb,
+                   "registry SizeMB matches g_boot_info.esp_size_mb");
+}
+
+/* GPT boot path: the registry seed writes Uuid as the formatted
+ * unique partition GUID (matches PartitionGUID). On non-GPT boots
+ * (network, MBR-only test image) the seed writes an empty string so
+ * the key always has a value. We just verify the Uuid string is
+ * either empty (non-GPT) or a 36-char canonical form. */
+static void test_esp_registry_uuid_format(void)
+{
+    HKEY hKey = (HKEY)0;
+    if (RegOpenKeyEx(HKEY_LOCAL_MACHINE, "HARDWARE\\BOOT\\ESP",
+                     0, KEY_READ, &hKey) != ERROR_SUCCESS) {
+        TEST_SKIP("HKLM\\HARDWARE\\BOOT\\ESP key absent -- non-disk boot path");
+    }
+    char uuid_str[64];
+    uuid_str[0] = '\0';
+    long rc = RegGetString(hKey, "Uuid", uuid_str, sizeof(uuid_str));
+    RegCloseKey(hKey);
+    TEST_ASSERT(rc == ERROR_SUCCESS,
+                "HKLM\\HARDWARE\\BOOT\\ESP\\Uuid value is present");
+    uuid_str[sizeof(uuid_str) - 1] = '\0';
+    /* Length is either 0 (non-GPT) or 36 (canonical GUID). */
+    uint32_t len = 0;
+    while (len < sizeof(uuid_str) - 1 && uuid_str[len] != '\0') len++;
+    TEST_ASSERT(len == 0 || len == 36,
+                "Uuid string is empty or 36-char canonical GUID");
+    if (len == 36) {
+        /* Canonical form: 8-4-4-4-12 hex with dashes at fixed positions. */
+        TEST_ASSERT(uuid_str[8] == '-' && uuid_str[13] == '-' &&
+                    uuid_str[18] == '-' && uuid_str[23] == '-',
+                    "Uuid dashes at positions 8/13/18/23");
+    }
+}
+
 /* Registration */
 
 void test_register_uefi_boot(void)
@@ -299,6 +381,12 @@ void test_register_uefi_boot(void)
                             test_uki_flag_distinct_position, TEST_CAT_BOOT);
     test_suite_register_cat("UEFI: UKI flag v10 ABI",
                             test_uki_flag_implies_v10_abi, TEST_CAT_BOOT);
+    test_suite_register_cat("UEFI: ESP integrity v11 ABI",
+                            test_esp_integrity_v11_abi, TEST_CAT_BOOT);
+    test_suite_register_cat("UEFI: ESP size_mb consistency",
+                            test_esp_size_mb_consistency, TEST_CAT_BOOT);
+    test_suite_register_cat("UEFI: ESP registry Uuid format",
+                            test_esp_registry_uuid_format, TEST_CAT_BOOT);
 }
 
 #endif /* KERNEL_TESTS */

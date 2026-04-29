@@ -313,18 +313,28 @@ def _scan_transcript(path: str) -> tuple[bool, bool, str]:
                             impl_args = inp.get("args", "")
                     elif name == "Bash" and impl_seen:
                         cmd = (inp.get("command") or "")
-                        # explicit "design" keyword OR a [review-kind: ...]
-                        # marker in the prompt counts as design-equivalent.
-                        # Review-pipeline dispatches ARE design-validation
-                        # work for fixes responding to those reviews.
-                        if ("codex-companion.mjs" in cmd
-                                and "adversarial-review" in cmd
-                                and (re.search(r"\bdesign\b", cmd, re.I)
-                                     or re.search(
-                                         r"\[review-kind:\s*"
-                                         r"(?:adversarial|consistency|perf|"
-                                         r"re-adversarial|design)\b",
-                                         cmd, re.I))):
+                        # Delegate dispatch + review-kind detection to the
+                        # shared `_review_kind` helper so all three canonical
+                        # dispatch shapes are recognized: direct
+                        # `node codex-companion.mjs adversarial-review`,
+                        # the `bash scripts/codex-dispatch.sh '...'` wrapper
+                        # (current canonical per CLAUDE.md "Codex Prompt
+                        # Argument Escaping"), and bare `codex review` /
+                        # `codex e` CLI. Previously this hook home-rolled a
+                        # `codex-companion.mjs` + `adversarial-review`
+                        # substring check that the wrapper bypassed (the
+                        # wrapper exec's into the underlying node command,
+                        # so the literal Bash command never carries those
+                        # tokens). A `[review-kind: design]` marker in the
+                        # FIRST non-blank line of the prompt -- or any of
+                        # the other review kinds, since review-pipeline
+                        # dispatches ARE design-validation work for fixes
+                        # responding to those reviews -- counts as
+                        # design-equivalent.
+                        from _review_kind import detect_review_kind_from_cmd
+                        kind = detect_review_kind_from_cmd(cmd)
+                        if kind in ("design", "adversarial", "consistency",
+                                    "perf", "re-adversarial"):
                             design_seen = True
                         # a section-ship-style git commit candidate:
                         # subject after `-m "..."` inline OR a HEREDOC

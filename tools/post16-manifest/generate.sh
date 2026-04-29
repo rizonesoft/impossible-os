@@ -158,6 +158,11 @@ POST16_OPTIONAL_REASONS=(
     "POST16_BL_ROLLBACK_PASS=scenario-dependent: emitted only on boots that evaluate the counter"
     "POST16_BL_UKI_DETECT=scenario-dependent: UKI section probe always runs but only emits when LoadedImage is available"
     "POST16_BL_UKI_DETECT_OK=scenario-dependent: only emitted when invoked through a UKI artifact carrying a .linux section"
+    "POST16_BL_ESP_INTEGRITY=scenario-dependent: ESP integrity gate runs only when boot device handle is present (skipped in PXE/RAM boot)"
+    "POST16_BL_ESP_INTEGRITY_OK=scenario-dependent: ESP integrity gate exits via this code on UKI fast-skip OR after all sub-checks pass"
+    "POST16_BL_ESP_GPT=scenario-dependent: GPT type-GUID check skipped on non-GPT boot media (MBR test images, network boot)"
+    "POST16_BL_ESP_BPB=scenario-dependent: FAT BPB check requires partition BlockIO with usable BlockSize"
+    "POST16_BL_ESP_FILES=scenario-dependent: required-files batch requires SimpleFS on the boot device handle"
 )
 
 # Build the optional-name set from the reasons array for fast lookup.

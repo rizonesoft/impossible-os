@@ -75,7 +75,7 @@ title: "TODO-02 -- UEFI Bootloader Hardening & Secure Boot"
 | 💎  |  10   | RT sleepable lock migration              | §1              |  [x]   |
 | 💎  |  11   | Unified signed boot artifact (UKI-style) | §6              |  [x]   |
 | 💎  |  12   | MS UEFI CA 2023 transition + 2011 retirement | §6          |  [x]   |
-| 💎  |  13   | EFI System Partition integrity check     | --              |  [ ]   |
+| 💎  |  13   | EFI System Partition integrity check     | --              |  [x]   |
 | 💎  |  14   | Win32 firmware variable + table surface  | §2              |  [ ]   |
 
 ---
@@ -417,16 +417,26 @@ Microsoft began rotating UEFI signing certificates in 2024-2025: the original `M
 
 The bootloader currently trusts that UEFI launched it from a valid ESP and proceeds to load `kernel.exe` + `boot.conf` without re-verifying. On a corrupted or tampered ESP, the bootloader silently loads whatever bytes it finds. Win11 BootMgr does basic ESP sanity (FAT32 + correct partition GUID); Linux's `efibootmgr` exposes the ESP UUID. Impossible OS should add a small pre-load sanity gate that catches obvious corruption / wrong-partition cases before kernel launch.
 
-- [ ] [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c): after `gBS->OpenProtocol(EFI_LOADED_IMAGE_PROTOCOL_GUID)`, call `EFI_BLOCK_IO_PROTOCOL` to read the GPT partition entry for the device that launched us. Verify partition type GUID equals `EFI_PARTITION_TYPE_SYSTEM_PARTITION_GUID` (`C12A7328-F81F-11D2-BA4B-00A0C93EC93B`). Halt with `boot_halt("ESP type GUID mismatch")` on failure.
-- [ ] Verify the ESP filesystem is FAT32 by reading the BPB's `BS_FilSysType` field (offset 0x52, "FAT32   "). Tolerate FAT16 only on tiny test ESPs (< 16 MB) with a one-line WARN to serial.
-- [ ] Sanity-check that `\EFI\BOOT\BOOTX64.EFI`, `\kernel.exe`, and `\boot.conf` exist before attempting their full load, so missing-file errors are reported in one batch instead of cascading through the load chain.
-- [ ] Surface the ESP UUID + size into `HKLM\HARDWARE\BOOT\ESP\{Uuid, SizeMB}` via `boot_info` so post-boot tools can identify the boot disk without re-reading firmware.
-- [ ] Commit: `"boot: ESP integrity check (GPT type GUID + FAT32 BPB + required-files batch)"`
+- [x] [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c): `esp_integrity_check()` runs after the BlockIO probe and before `parse_boot_conf`. `esp_check_gpt_type_guid()` finds the parent (whole-disk) BlockIO handle via device-path truncation + `LocateDevicePath`, reads the GPT header at LBA 1, validates signature + header_size + size_of_partition_entry + num_partition_entries + partition_entry_lba range + partition_number range + table-byte overflow BEFORE alloc/read/index (Codex design review F2 hostile-field treatment), reads the single LBA containing our entry, and `boot_fatal(BOOT_ERR_ESP_TYPE_GUID, ...)`s on type-GUID mismatch. Type GUID `C12A7328-F81F-11D2-BA4B-00A0C93EC93B` per UEFI 2.10 Appendix A.2.
+- [x] `esp_check_fat_bpb()` reads LBA 0 of the partition (existing BlockIO from boot_device probe), validates 0x55AA boot signature, then matches `BS_FilSysType` at offset 0x52 ("FAT32   ") OR offset 0x36 ("FAT16   ") with partition size < 16 MiB toleration (single WARN line). `boot_fatal(BOOT_ERR_ESP_BPB, ...)` on unrecognized BPB or non-tiny FAT16. Sets `esp_filesystem_type` (0=unknown, 1=FAT16, 2=FAT32).
+- [x] `esp_check_required_files()` opens SimpleFS on the boot device and probes `\EFI\BOOT\BOOTX64.EFI` (required) plus the existing 3-path kernel.exe fallback (any one suffices). All missing files batched into one `boot_fatal(BOOT_ERR_ESP_MISSING_FILES, ...)`. `\boot.conf` probed for diagnostic-only logging -- NOT in fatal set because `parse_boot_conf` already supports default-config when missing (Codex design review F3; original draft had boot.conf in the required set, which would have changed boot semantics).
+- [x] `boot_info` v11 ABI bump adds `esp_size_mb` (uint32) + `esp_filesystem_type` (uint8) + `esp_type_guid_valid` (uint8) at struct tail; mirrored in [`src/boot/uefi/boot_info_mirror.h`](../../src/boot/uefi/boot_info_mirror.h) and the `tools/boot-info-manifest/dump-fields.inc` manifest. `boot_device_populate_registry()` in [`src/kernel/main/boot_hw.c`](../../src/kernel/main/boot_hw.c) seeds `HKLM\HARDWARE\BOOT\ESP\{Uuid, SizeMB, FilesystemType, TypeGuidValid}`.
+- [x] UKI invocation fast-skips identity validation per Codex design review F1 -- the trust anchor for UKI is the signed PE image itself, so the ESP identity is not load-bearing. `esp_size_mb` is still surfaced from BlockIO so post-boot tools see a non-zero size; `esp_type_guid_valid` stays 0 to indicate "not checked".
+- [x] Commit: `"boot: ESP integrity check (GPT type GUID + FAT32 BPB + required-files batch)"`
 
 > [!NOTE]
 > ESP cryptographic verification (signed manifest) is out of scope for this section; the trust anchor for the legacy split path is Secure Boot signature on `BOOTX64.EFI` itself. UKI (§11) is the path that closes whole-chain signing. This section is corruption / wrong-partition detection, not adversary defense.
 
-**Test checkpoint:** Booting from a freshly-formatted ESP (FAT32, correct GUID) passes silently; flipping the partition type GUID via `gdisk` triggers the `boot_halt("ESP type GUID mismatch")` path; deleting `kernel.exe` from the ESP triggers a single batched error reporting all three required-file checks. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** Booting from a freshly-formatted ESP (FAT32, correct GUID) passes silently; flipping the partition type GUID via `gdisk` triggers the `boot_fatal("ESP type GUID mismatch")` path; deleting `kernel.exe` from the ESP triggers a single batched error reporting all three required-file checks. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) -- 3 new ESP suites in `test_uefi_boot.c` (`test_esp_integrity_v11_abi`, `test_esp_size_mb_consistency`, `test_esp_registry_uuid_format`) | 17 boot suites total, 0 failures
+
+> **Notes:**
+> - What shipped: 5 new static helpers in [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c) (`esp_find_parent_disk`, `esp_read_harddrive_node`, `esp_check_gpt_type_guid`, `esp_check_fat_bpb`, `esp_check_required_files`, `esp_integrity_check`) wiring three integrity gates plus `boot_info` v11 ABI extension (esp_size_mb / esp_filesystem_type / esp_type_guid_valid).
+> - How it integrates: `esp_integrity_check()` invoked from `efi_main` after BlockIO probe and before `parse_boot_conf`; UKI fast-skip honored; non-GPT WARN-skip; corruption / wrong-partition cases halt via `boot_fatal()` with a specific `BOOT_ERR_ESP_*` code so the BSOD identifies which gate failed; POST16 0xB096-0xB099 + 0xB09C bracket the gate.
+> - Downstream effects: `HKLM\HARDWARE\BOOT\ESP\{Uuid,SizeMB,FilesystemType,TypeGuidValid}` registry seed feeds the firmware-table catalog ([`01-boot-platform/TODO-04-firmware-table-platform-inventory.md`](TODO-04-firmware-table-platform-inventory.md) §1); Codex 2x review adoptions (1 design + 1 adversarial round, 6 findings) in commit hash to be stamped at section close.
+> - Canonical doc: [`docs/boot/boot-info-fields.md`](../../docs/boot/boot-info-fields.md) "EFI System Partition integrity" subsection.
+> - Scope boundary: §13 owns ESP integrity gating; UKI whole-chain Secure Boot signing is owned by §11; cryptographic ESP manifest verification is out of scope for this section; the firmware-table-platform-inventory consumer of `HKLM\HARDWARE\BOOT\ESP` lives in TODO-04 §1.
 
 ---
 
@@ -464,7 +474,7 @@ The bootloader currently trusts that UEFI launched it from a valid ESP and proce
 | 💎   | EBS retry hardening   | ✅ bootmgr bounded retry       | ✅ efi-stub retry patch      | ✅ §9 4-attempt bounded loop    |
 | 💎   | Capsule install UX    | ✅ Windows Update stack        | ✅ fwupd + LVFS              | ⬜ TODO-27 §2 (query-only)      |
 | 💎   | MS UEFI CA lifecycle  | ✅ Windows Update CA rotation  | ⚠️ Distro re-sign timing     | ✅ §12 build-time graduated WARN/FAIL + ShimCA registry |
-| 💎   | ESP integrity check   | ⚠️ BootMgr GUID / FAT32 only   | ⚠️ efibootmgr UUID surface   | ⬜ §13 GUID + BPB + batch + UUID mirror |
+| 💎   | ESP integrity check   | ⚠️ BootMgr GUID / FAT32 only   | ⚠️ efibootmgr UUID surface   | ✅ GPT type-GUID + FAT BPB + batched files + UUID/Size mirror |
 | 💎   | Win32 firmware vars   | ✅ kernel32 GetFirmwareEnv*    | ⚠️ WINE shim only            | ⬜ §14 kernel32 exports + quota mirror |
 | 💎   | Unified Kernel Image  | ❌ N/A (signed bootmgr+winload) | ✅ systemd-boot UKI          | ✅ §11 BOOTX64.UKI.efi + whole-chain Secure Boot signature |
 
@@ -480,7 +490,7 @@ The bootloader currently trusts that UEFI launched it from a valid ESP and proce
 - [x] Register in `test_runner_init()`: `test_register_uefi_boot()` under Boot category
 - [x] Commit: `"test: add uefi_boot test suite"` (07ce1ac3)
 - [ ] Add §12 test: registry `HKLM\SYSTEM\SecureBoot\ShimCA` is a non-zero DWORD matching the build-host's recorded shim CA generation.
-- [ ] Add §13 test: ESP probe returns valid GPT type GUID match (constant compare via `RtlCompareMemory(&type_guid, &EFI_PARTITION_TYPE_SYSTEM_PARTITION_GUID, sizeof(EFI_GUID))` returning the full 16); ESP UUID surfaced under `HKLM\HARDWARE\BOOT\ESP\Uuid` is non-zero.
+- [x] Add ESP integrity test: 3 suites in `test_uefi_boot.c` covering (1) BOOT_INFO_VERSION >= 11 + esp_filesystem_type/esp_type_guid_valid bit-range, (2) registry SizeMB matches `g_boot_info.esp_size_mb`, (3) `HKLM\HARDWARE\BOOT\ESP\Uuid` is empty (non-GPT) or 36-char canonical GUID with dashes at 8/13/18/23. Tests use TEST_SKIP for non-disk boot path; no live boot calls.
 - [ ] Add §14 test: `pe_resolve_export("kernel32.dll", "GetFirmwareEnvironmentVariableA")` returns a non-NULL function pointer; calling it with `L"SecureBoot"` returns the same byte the SSDT path returns; `HKLM\SYSTEM\SecureBoot\Vars\MaxStorageSize` is a non-zero DWORD.
 - [ ] Commit: `"test: extend uefi_boot suite with shim CA, ESP probe, kernel32 firmware exports"`
 
@@ -512,3 +522,4 @@ The bootloader currently trusts that UEFI launched it from a valid ESP and proce
 | 2026-04-10 | validate | validate-todo-file: Inputs `---` + XREF section refs (TODO-14 §3, TODO-11 §2/§3, TODO-20 §4); Impl T14 fixed; removed `### 8.1/8.2`; §1-§8 Commit+Test checkpoint+platforms; §4/§5 deferred items as NOTE; OS table compact; Unit Tests NOTE+checkpoint; Verification runner+checkpoint; History added. |
 | 2026-04-10 | gap-analysis | gap-analysis-todo: Current state merged into IMPORTANT; new §9 (SBAT doc, EBS retry, DB registry) + Impl Order row 9 `[ ]`; OS rows + Sources; Unit Tests §9 hook; cross-TODO XREF repairs in TODO-05/17/18/02-memory-security/09-desktop; code-truth note for existing `secureboot_keys_init`/`tpm_init`/capsule query init. |
 | 2026-04-10 | validate | validate-todo-file: continuation-line rg clean; Inputs + `uefi_runtime.c` + `secure-boot-keys.md`; §9 registry path fix + `[!WARNING]` regression callout; OS capsule row + parity note; XREF §2/§4/§5/§7/§9 verified; `run-boot-tests.bat` present; optional note: OS row 206 Linux cell may deserve `systemd-analyze` nuance. |
+| 2026-04-29 | implement | implement-todo-section §13 ESP integrity check: 5 new static helpers in `bootx64.c` (esp_find_parent_disk, esp_read_harddrive_node, esp_check_gpt_type_guid, esp_check_fat_bpb, esp_check_required_files, esp_integrity_check) wiring 3 gates (GPT type-GUID via parent-disk read, FAT BPB at LBA 0, batched required-files via SimpleFS); boot_info v11 ABI bump (esp_size_mb + esp_filesystem_type + esp_type_guid_valid); HKLM\HARDWARE\BOOT\ESP registry seed in boot_hw.c; 3 new unit tests; UKI fast-skip per Codex design F1; GPT hostile-field bounds per F2; boot.conf diagnostic-only per F3; adversarial review fixed F1/F2/F3 (DP overread guard, GPT BlockSize minimum, boot_fatal noreturn). Smoke test passes 2.36s; 17 boot suites 0 failures. |

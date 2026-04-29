@@ -242,6 +242,17 @@ Monotonic anti-rollback counter bound to UEFI NVRAM variable `IPOSRequiredSecVer
 | `required_security_version` | bootx64 (UEFI variable `IPOSRequiredSecVersion`) | P0 | validator, Registry export, Phase 3 raise-decision | handoff | boot-protocol-abi-handoff section 13 | `<= BOOT_SECURITY_VERSION_MAX`. Zero on first-ever boot (variable absent); raised by kernel Phase 3 opt-in. |
 | `_rollback_pad` | bootx64 | P0 | reserved | handoff | boot-protocol-abi-handoff section 13 | Must be zero; reserved for future anti-rollback policy word. |
 
+### EFI System Partition integrity
+
+Pre-load sanity gate written by `esp_integrity_check()` in [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c). Catches obvious corruption / wrong-partition cases before the bootloader trusts the disk for kernel.exe + BOOTX64.EFI. Mirrors what Win11 BootMgr surfaces (FAT32 + GPT type GUID) and what Linux exposes via `efibootmgr` UUID. The trust anchor for the legacy split path is the Secure Boot signature on `BOOTX64.EFI` itself; this gate is corruption / wrong-partition detection, not adversary defense. Surfaced post-boot at `HKLM\HARDWARE\BOOT\ESP\{Uuid, SizeMB, FilesystemType, TypeGuidValid}` via `boot_device_populate_registry` in [`src/kernel/main/boot_hw.c`](../../src/kernel/main/boot_hw.c).
+
+| Field | Producer | First valid | Consumer | Lifetime | Owning roadmap | Validation |
+| --- | --- | --- | --- | --- | --- | --- |
+| `esp_size_mb` | bootx64 (`esp_integrity_check` from BlockIO->Media on partition handle) | P0 | Registry (`HKLM\HARDWARE\BOOT\ESP\SizeMB`) | handoff | uefi-hardening-secureboot ESP integrity | `0` when BlockIO unavailable; otherwise partition `(LastBlock+1)*BlockSize` in MiB. UKI invocation populates this from BlockIO before skipping identity validation. |
+| `esp_filesystem_type` | bootx64 (BS_FilSysType BPB read at LBA 0) | P0 | Registry (`FilesystemType`) | handoff | uefi-hardening-secureboot ESP integrity | `0`=unknown / not checked, `1`=FAT16 (only on partitions < 16 MiB; warned), `2`=FAT32. Non-tiny FAT16 or unrecognized BPB halts with `BOOT_ERR_ESP_BPB`. Zero in UKI mode. |
+| `esp_type_guid_valid` | bootx64 (parent-disk GPT entry table read) | P0 | Registry (`TypeGuidValid`) | handoff | uefi-hardening-secureboot ESP integrity | `1` only when GPT partition type GUID matched `EFI_PARTITION_TYPE_SYSTEM_PARTITION_GUID`. `0` for UKI mode (skipped), non-GPT boot media, or parent-disk handle unavailable. Mismatch halts with `BOOT_ERR_ESP_TYPE_GUID`. |
+| `_esp_pad` | bootx64 | P0 | reserved | handoff | uefi-hardening-secureboot ESP integrity | Must be zero; reserved for future ESP integrity flags (e.g., backup-GPT validity, secondary-LBA agreement). |
+
 ## Nested struct: `boot_payload_desc`
 
 48-byte ABI-pinned descriptor. Kernel enum `boot_payload_type` maps well-known values (MODULE, INITRD, RECOVERY_IMAGE, HIBERNATION_META, TPM_EVENT_LOG, NETWORK_CONFIG, RANDOM_SEED, USB_HANDOVER); unknown values are SKIPPED for type-specific validation unless `BOOT_PAYLOAD_FLAG_REQUIRED` is set on the descriptor (required-unknown forces a fatal boot failure).

@@ -321,3 +321,10 @@ F(flags);
 F(os_loader_security_version);
 F(required_security_version);
 F(_rollback_pad);
+
+/* ---- EFI System Partition integrity gate (v11) ---- */
+F(esp_size_mb);
+F(esp_filesystem_type);
+F(esp_type_guid_valid);
+F(_esp_pad);
+F(_esp_pad[0]);     /* element-size sentinel */

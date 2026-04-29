@@ -247,9 +247,10 @@ struct boot_usb_controller {
 #define BOOT_INFO_MAGIC    0x49504F53  /* "IPOS" */
 #endif
 #ifndef BOOT_INFO_VERSION
-/* v10 adds BOOT_FLAG_INVOKED_VIA_UKI;
+/* v11 adds ESP integrity fields populated by esp_integrity_check();
+ * v10 added BOOT_FLAG_INVOKED_VIA_UKI;
  * v9 added flags + os_loader/required_security_version */
-#define BOOT_INFO_VERSION  10
+#define BOOT_INFO_VERSION  11
 #endif
 
 /* Typed payload descriptor array -- must match kernel/boot_info.h. */
@@ -552,6 +553,20 @@ struct boot_info {
     UINT32  os_loader_security_version;
     UINT32  required_security_version;
     UINT32  _rollback_pad;
+
+    /* EFI System Partition integrity gate (v11). Populated by
+     * esp_integrity_check() in bootx64.c BEFORE parse_boot_conf and
+     * load_kernel. The unique partition GUID lives in
+     * boot_partition_guid above; here we record the size + filesystem
+     * type + type-GUID match result so post-boot tools (registry seed
+     * at HKLM\HARDWARE\BOOT\ESP) can identify the boot disk without
+     * re-reading firmware. UKI mode populates esp_size_mb but leaves
+     * the validity bits zero (split-path-only gate; UKI's trust anchor
+     * is the signed PE image itself). */
+    UINT32  esp_size_mb;            /* ESP partition size in MiB; 0 if unknown */
+    UINT8   esp_filesystem_type;    /* 0=unknown, 1=FAT16, 2=FAT32 */
+    UINT8   esp_type_guid_valid;    /* 1 if GPT type GUID matched ESP type GUID; 0 otherwise/UKI/non-GPT */
+    UINT8   _esp_pad[2];            /* alignment; reserved zero */
 };
 
 /* ABI compile-time guards -- catch bootloader/kernel struct drift at build */

@@ -84,6 +84,7 @@ TOPLEVEL_SECTIONS: list[str] = [
     "Capability negotiation",
     "Boot-path provenance",
     "Anti-rollback and security-version binding",
+    "EFI System Partition integrity",
     # NOTE: do NOT add `Legacy / Multiboot2-only fields` -- it is a
     # summary table only.
 ]

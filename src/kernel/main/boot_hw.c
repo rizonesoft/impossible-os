@@ -624,6 +624,73 @@ void boot_device_populate_registry(void)
          g_boot_info.boot_device_path,
          (uint64_t)g_boot_info.boot_device_type,
          (uint64_t)g_boot_info.boot_device_removable);
+
+    /* HKLM\HARDWARE\BOOT\ESP -- ESP identity surfaced from the
+     * bootloader's pre-load integrity check (esp_integrity_check in
+     * src/boot/uefi/bootx64.c). Mirrors what Linux exposes via
+     * efibootmgr UUID and what Win11 exposes via msinfo32 boot disk
+     * fields, with the added FilesystemType / TypeGuidValid bits so
+     * post-boot tools can tell at-a-glance whether the integrity gate
+     * passed (split-path) or was deliberately skipped (UKI). The Uuid
+     * value is the partition UNIQUE GUID (already populated above as
+     * boot_partition_guid); the same string is duplicated here under
+     * the BOOT\ESP key so callers querying the ESP-by-name path do
+     * not need to know about HKLM\SYSTEM\Boot\Device internals. */
+    {
+        HKEY hEsp = (HKEY)0;
+        uint32_t edisp = 0;
+        if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, "HARDWARE\\BOOT\\ESP", 0,
+                           (const char *)0, 0, KEY_ALL_ACCESS, (void *)0,
+                           &hEsp, &edisp) == ERROR_SUCCESS) {
+            RegSetDword(hEsp, "SizeMB", g_boot_info.esp_size_mb);
+            RegSetDword(hEsp, "FilesystemType",
+                        (uint32_t)g_boot_info.esp_filesystem_type);
+            RegSetDword(hEsp, "TypeGuidValid",
+                        (uint32_t)g_boot_info.esp_type_guid_valid);
+            /* Uuid: format the unique GUID identically to PartitionGUID
+             * above (UEFI mixed-endian -> string). Empty string when
+             * the partition style is not GPT, so the key always has a
+             * value (no silent omission). */
+            if (g_boot_info.boot_partition_style == 2) {
+                const uint8_t *g = g_boot_info.boot_partition_guid;
+                static const char hex[] = "0123456789ABCDEF";
+                char guid_str[37];
+                int p = 0;
+                guid_str[p++] = hex[g[3] >> 4]; guid_str[p++] = hex[g[3] & 0xF];
+                guid_str[p++] = hex[g[2] >> 4]; guid_str[p++] = hex[g[2] & 0xF];
+                guid_str[p++] = hex[g[1] >> 4]; guid_str[p++] = hex[g[1] & 0xF];
+                guid_str[p++] = hex[g[0] >> 4]; guid_str[p++] = hex[g[0] & 0xF];
+                guid_str[p++] = '-';
+                guid_str[p++] = hex[g[5] >> 4]; guid_str[p++] = hex[g[5] & 0xF];
+                guid_str[p++] = hex[g[4] >> 4]; guid_str[p++] = hex[g[4] & 0xF];
+                guid_str[p++] = '-';
+                guid_str[p++] = hex[g[7] >> 4]; guid_str[p++] = hex[g[7] & 0xF];
+                guid_str[p++] = hex[g[6] >> 4]; guid_str[p++] = hex[g[6] & 0xF];
+                guid_str[p++] = '-';
+                guid_str[p++] = hex[g[8] >> 4]; guid_str[p++] = hex[g[8] & 0xF];
+                guid_str[p++] = hex[g[9] >> 4]; guid_str[p++] = hex[g[9] & 0xF];
+                guid_str[p++] = '-';
+                int gi;
+                for (gi = 10; gi < 16; gi++) {
+                    guid_str[p++] = hex[g[gi] >> 4];
+                    guid_str[p++] = hex[g[gi] & 0xF];
+                }
+                guid_str[p] = '\0';
+                RegSetString(hEsp, "Uuid", guid_str);
+            } else {
+                RegSetString(hEsp, "Uuid", "");
+            }
+            RegCloseKey(hEsp);
+            klog(LOG_INFO, "boot",
+                 "ESP Registry populated: SizeMB=%u FsType=%u GuidValid=%u",
+                 g_boot_info.esp_size_mb,
+                 (uint64_t)g_boot_info.esp_filesystem_type,
+                 (uint64_t)g_boot_info.esp_type_guid_valid);
+        } else {
+            klog(LOG_WARN, "boot",
+                 "Failed to create HKLM\\HARDWARE\\BOOT\\ESP key");
+        }
+    }
 }
 
 /* ---- Boot decision Registry population ----------------------------------

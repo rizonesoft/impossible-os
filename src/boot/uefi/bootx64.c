@@ -156,6 +156,11 @@ static inline void post_code16(UINT16 code);
 #define POST16_BL_BOOT_FS_OK    0xB093
 #define POST16_BL_FALLBACK 0xB094 /* Device fallback chain */
 #define POST16_BL_FALLBACK_OK   0xB095
+#define POST16_BL_ESP_INTEGRITY 0xB096  /* ESP integrity check entry */
+#define POST16_BL_ESP_GPT       0xB097  /* ESP GPT type-GUID probe */
+#define POST16_BL_ESP_BPB       0xB098  /* ESP FAT BPB sanity */
+#define POST16_BL_ESP_FILES     0xB099  /* ESP required-files batch */
+#define POST16_BL_ESP_INTEGRITY_OK 0xB09C  /* ESP integrity all gates passed */
 #define POST16_BL_ROLLBACK_REFUSE 0xB09A  /* Anti-rollback: shipped < required */
 #define POST16_BL_ROLLBACK_PASS   0xB09B  /* Anti-rollback: shipped >= required */
 
@@ -1497,7 +1502,9 @@ static void boot_fatal_dwell(void)
     }
 }
 
-static void boot_fatal(UINT32 err_code, const char *title, const char *detail)
+static __attribute__((noreturn)) void boot_fatal(UINT32 err_code,
+                                                  const char *title,
+                                                  const char *detail)
 {
     /* 0. Persist error code in NVRAM for next-boot diagnostics (S13) */
     nvram_write_boot_error(err_code);
@@ -5597,6 +5604,671 @@ static void detect_uki_sections(EFI_LOADED_IMAGE_PROTOCOL *li)
     }
 }
 
+/* --- EFI System Partition integrity check ---------------------------------
+ *
+ * Pre-load sanity gate: catches obvious corruption / wrong-partition cases
+ * BEFORE we trust the disk for kernel.exe, BOOTX64.EFI, or boot.conf.
+ * This is NOT cryptographic verification -- the trust anchor for the
+ * legacy split path is the Secure Boot signature on BOOTX64.EFI itself,
+ * and the trust anchor for UKI is the whole-PE signature. This gate
+ * matches Win11 BootMgr (FAT32 + correct partition GUID) and surfaces
+ * the ESP UUID + size into HKLM\HARDWARE\BOOT\ESP via boot_info.
+ *
+ * Three checks, plus telemetry surfacing:
+ *   (a) GPT partition type GUID == EFI_PARTITION_TYPE_SYSTEM_PARTITION_GUID
+ *       (read from the PARENT disk's partition entry table; the partition
+ *       handle's HardDrive DP node only carries the UNIQUE GUID).
+ *   (b) FAT32 BPB sanity: BS_FilSysType at offset 0x52 == "FAT32   ", or
+ *       BS_FilSysType at offset 0x36 == "FAT16   " for tiny test ESPs
+ *       (< 16 MiB) with a WARN.
+ *   (c) Required boot files present: BOOTX64.EFI plus one of the three
+ *       kernel.exe fallback paths. boot.conf is diagnostic-only because
+ *       parse_boot_conf treats missing as "use default config" (per Codex
+ *       design review F3 -- making it required would change boot semantics).
+ *
+ * Codex design review (2026-04-29) drove three decisions:
+ *   F1 UKI fast-skip: in UKI mode the disk identity is not load-bearing,
+ *       so all integrity validation is skipped. esp_size_mb is still
+ *       populated from the existing BlockIO probe so post-boot tools see
+ *       a non-zero size; esp_type_guid_valid stays 0 to indicate "not
+ *       checked".
+ *   F2 GPT parser bounds: the corruption gate must treat all on-disk
+ *       fields as hostile. We validate signature, header_size,
+ *       NumberOfPartitionEntries, SizeOfPartitionEntry, table-byte
+ *       overflow, PartitionEntryLBA range, and partition_number range
+ *       BEFORE allocating, reading, or indexing.
+ *   F3 boot.conf diagnostic-only: see (c) above.
+ *
+ * Failure mode: type-GUID mismatch / corrupt BPB / missing required file
+ * all halt via boot_fatal() with a specific error code so the on-screen
+ * BSOD identifies which gate failed. Missing parent disk handle (PXE,
+ * RAM-disk, firmware quirks) is WARN-and-continue -- no GPT to check.
+ */
+
+/* GPT header layout per UEFI 2.10 Table 5-5. Read from LBA 1 of the
+ * parent disk. Total header size is at least 92 bytes; bytes beyond
+ * HeaderSize must read as zero per spec but we never look past HeaderSize. */
+struct esp_gpt_header {
+    UINT8   signature[8];           /* "EFI PART" -- 0x5452415020494645 */
+    UINT32  revision;               /* 0x00010000 for v1.0 */
+    UINT32  header_size;            /* 92 .. block_size; bytes covered by CRC */
+    UINT32  header_crc32;           /* CRC32 of header_size bytes with this field zeroed */
+    UINT32  reserved;
+    UINT64  current_lba;            /* LBA of this header */
+    UINT64  backup_lba;
+    UINT64  first_usable_lba;
+    UINT64  last_usable_lba;
+    UINT8   disk_guid[16];
+    UINT64  partition_entry_lba;    /* LBA where partition entry array starts */
+    UINT32  num_partition_entries;
+    UINT32  size_of_partition_entry; /* must be >= 128 and a power of 2 per UEFI spec */
+    UINT32  partition_entry_array_crc32;
+} __attribute__((packed));
+
+/* GPT partition entry per UEFI 2.10 Table 5-6. First 16 bytes are
+ * the partition type GUID -- that is all this gate needs. */
+struct esp_gpt_partition_entry_head {
+    UINT8   partition_type_guid[16];
+    UINT8   unique_partition_guid[16];
+    UINT64  starting_lba;
+    UINT64  ending_lba;
+    UINT64  attributes;
+    /* + 72 bytes partition name (CHAR16) */
+} __attribute__((packed));
+
+/* C12A7328-F81F-11D2-BA4B-00A0C93EC93B in mixed-endian on-disk layout
+ * (Data1/Data2/Data3 little-endian, Data4 big-endian) per UEFI 2.10
+ * Appendix A.2 "EFI System Partition" partition type. */
+static const UINT8 g_esp_type_guid[16] = {
+    0x28, 0x73, 0x2A, 0xC1,                         /* Data1 LE: 0xC12A7328 */
+    0x1F, 0xF8,                                     /* Data2 LE: 0xF81F */
+    0xD2, 0x11,                                     /* Data3 LE: 0x11D2 */
+    0xBA, 0x4B, 0x00, 0xA0, 0xC9, 0x3E, 0xC9, 0x3B  /* Data4 BE */
+};
+
+/* Locate the parent (whole-disk) BlockIO handle for the partition handle
+ * `part_handle`. The standard EDK2 pattern: copy the partition's device
+ * path, walk to the LAST node, replace it with END_ENTIRE, then call
+ * gBS->LocateDevicePath(&BlockIo, &dp_remaining, &parent_handle).
+ * On entry the partition's last node is HardDrive (UEFI 2.10 Table
+ * 10-58); after truncation the path describes the parent media
+ * (Sata/NVMe/USB/...) and LocateDevicePath finds its handle. Returns
+ * EFI_SUCCESS + parent_handle on success, EFI_NOT_FOUND on PXE/RAM
+ * boots that have no parent disk. */
+static EFI_STATUS esp_find_parent_disk(EFI_HANDLE part_handle,
+                                        EFI_HANDLE *out_parent)
+{
+    EFI_GUID dp_guid = EFI_DEVICE_PATH_PROTOCOL_GUID;
+    EFI_GUID bio_guid = EFI_BLOCK_IO_PROTOCOL_GUID;
+    EFI_DEVICE_PATH_PROTOCOL *part_dp = (EFI_DEVICE_PATH_PROTOCOL *)0;
+    EFI_STATUS status;
+
+    *out_parent = (EFI_HANDLE)0;
+
+    status = gBS->HandleProtocol(part_handle, &dp_guid, (VOID **)&part_dp);
+    if (EFI_ERROR(status) || !part_dp)
+        return EFI_NOT_FOUND;
+
+    UINTN total_bytes = 0;
+    {
+        const EFI_DEVICE_PATH_PROTOCOL *node = part_dp;
+        UINTN walked = 0;
+        while (1) {
+            UINT16 nlen;
+            if (walked + 4 > 4096)
+                return EFI_NOT_FOUND;
+            nlen = (UINT16)node->Length[0] | ((UINT16)node->Length[1] << 8);
+            if (nlen < 4)
+                return EFI_NOT_FOUND;
+            /* Codex F1 fix: require the full node body fits within the
+             * cap BEFORE advancing -- header bound alone is insufficient
+             * for malformed firmware paths. */
+            if (walked + nlen > 4096)
+                return EFI_NOT_FOUND;
+            walked += nlen;
+            if (node->Type == EFI_DP_TYPE_END &&
+                node->SubType == EFI_DP_SUBTYPE_END_ENTIRE)
+                break;
+            node = (const EFI_DEVICE_PATH_PROTOCOL *)((const UINT8 *)node + nlen);
+        }
+        total_bytes = walked;
+    }
+
+    UINT8 dp_copy[1024];
+    if (total_bytes > sizeof(dp_copy))
+        return EFI_NOT_FOUND;
+    efi_memcpy(dp_copy, part_dp, total_bytes);
+
+    /* Walk the copy and find the last non-END node. Replace it with
+     * END_ENTIRE in place, removing the trailing HD()/CDROM() media
+     * node and leaving the parent (Pci(...)/Sata(...)/Nvme(...)) path. */
+    {
+        EFI_DEVICE_PATH_PROTOCOL *node = (EFI_DEVICE_PATH_PROTOCOL *)dp_copy;
+        EFI_DEVICE_PATH_PROTOCOL *prev = (EFI_DEVICE_PATH_PROTOCOL *)0;
+        UINTN walked = 0;
+        while (walked < total_bytes) {
+            UINT16 nlen = (UINT16)node->Length[0] |
+                          ((UINT16)node->Length[1] << 8);
+            if (node->Type == EFI_DP_TYPE_END &&
+                node->SubType == EFI_DP_SUBTYPE_END_ENTIRE)
+                break;
+            prev = node;
+            node = (EFI_DEVICE_PATH_PROTOCOL *)((UINT8 *)node + nlen);
+            walked += nlen;
+        }
+        if (!prev)
+            return EFI_NOT_FOUND;
+        prev->Type = EFI_DP_TYPE_END;
+        prev->SubType = EFI_DP_SUBTYPE_END_ENTIRE;
+        prev->Length[0] = 4;
+        prev->Length[1] = 0;
+    }
+
+    /* LocateDevicePath consumes a pointer-to-pointer and advances it
+     * past matched nodes; pass our own pointer so its mutation does
+     * not damage the original copy. EFI Boot Services entry 20 per
+     * UEFI 2.10 -- typed VOID* in efi.h, cast at the call site so
+     * we do not pollute the shared header. */
+    typedef EFI_STATUS (EFIAPI *LOCATE_DEVICE_PATH_FN)(
+        EFI_GUID *Protocol,
+        EFI_DEVICE_PATH_PROTOCOL **DevicePath,
+        EFI_HANDLE *Device);
+    LOCATE_DEVICE_PATH_FN locate_dp =
+        (LOCATE_DEVICE_PATH_FN)gBS->LocateDevicePath;
+    EFI_DEVICE_PATH_PROTOCOL *probe = (EFI_DEVICE_PATH_PROTOCOL *)dp_copy;
+    EFI_HANDLE parent = (EFI_HANDLE)0;
+    status = locate_dp(&bio_guid, &probe, &parent);
+    if (EFI_ERROR(status) || !parent)
+        return EFI_NOT_FOUND;
+
+    *out_parent = parent;
+    return EFI_SUCCESS;
+}
+
+/* Extract HardDrive DP node fields from the partition's device path.
+ * Returns EFI_SUCCESS + populated outputs when an HD() node is present
+ * and is the last data node (always true for a partition handle). */
+static EFI_STATUS esp_read_harddrive_node(EFI_HANDLE part_handle,
+                                           UINT32 *out_part_number,
+                                           UINT64 *out_part_start_lba,
+                                           UINT64 *out_part_size_lba)
+{
+    EFI_GUID dp_guid = EFI_DEVICE_PATH_PROTOCOL_GUID;
+    EFI_DEVICE_PATH_PROTOCOL *dp = (EFI_DEVICE_PATH_PROTOCOL *)0;
+    EFI_STATUS status;
+
+    *out_part_number = 0;
+    *out_part_start_lba = 0;
+    *out_part_size_lba = 0;
+
+    status = gBS->HandleProtocol(part_handle, &dp_guid, (VOID **)&dp);
+    if (EFI_ERROR(status) || !dp)
+        return EFI_NOT_FOUND;
+
+    const EFI_DEVICE_PATH_PROTOCOL *node = dp;
+    UINTN walked = 0;
+    while (walked + 4 <= 4096) {
+        UINT16 nlen = (UINT16)node->Length[0] |
+                      ((UINT16)node->Length[1] << 8);
+        if (nlen < 4) return EFI_NOT_FOUND;
+        /* Codex F1 fix: require the FULL node body fits within the 4096
+         * sanity cap before reading any payload fields. The earlier
+         * `walked + 4 <= 4096` only proved the header is in range; a
+         * malformed firmware DP with HardDrive nlen >= 42 starting near
+         * the cap would otherwise read past the bounded window. */
+        if (walked + nlen > 4096) return EFI_NOT_FOUND;
+        if (node->Type == EFI_DP_TYPE_END &&
+            node->SubType == EFI_DP_SUBTYPE_END_ENTIRE)
+            return EFI_NOT_FOUND;
+        if (node->Type == EFI_DP_TYPE_MEDIA &&
+            node->SubType == EFI_DP_MEDIA_HARDDRIVE && nlen >= 42) {
+            const UINT8 *nd = (const UINT8 *)node;
+            UINT32 pn = (UINT32)nd[4] | ((UINT32)nd[5] << 8) |
+                        ((UINT32)nd[6] << 16) | ((UINT32)nd[7] << 24);
+            UINT64 ps = 0, pz = 0;
+            UINTN bi;
+            for (bi = 0; bi < 8; bi++) {
+                ps |= (UINT64)nd[8 + bi] << (bi * 8);
+                pz |= (UINT64)nd[16 + bi] << (bi * 8);
+            }
+            *out_part_number = pn;
+            *out_part_start_lba = ps;
+            *out_part_size_lba = pz;
+            return EFI_SUCCESS;
+        }
+        node = (const EFI_DEVICE_PATH_PROTOCOL *)((const UINT8 *)node + nlen);
+        walked += nlen;
+    }
+    return EFI_NOT_FOUND;
+}
+
+/* Validate the GPT type GUID for our partition by reading the parent
+ * disk's GPT header + partition entry table. Sets
+ * g_boot_info_ptr->esp_type_guid_valid on success. Returns EFI_SUCCESS
+ * on validation pass, an error status on missing-parent / read-failure
+ * (warn-skip), or calls boot_fatal() and never returns on actual
+ * type-GUID mismatch / corrupt header.
+ *
+ * Per Codex design review (hostile-field treatment): every on-disk
+ * field is validated -- signature, header_size, num_entries,
+ * entry_size, table byte count, entry LBA range, and partition_number
+ * range -- BEFORE allocation, read, or indexing. */
+static EFI_STATUS esp_check_gpt_type_guid(EFI_HANDLE part_handle)
+{
+    EFI_GUID bio_guid = EFI_BLOCK_IO_PROTOCOL_GUID;
+    EFI_HANDLE parent_handle = (EFI_HANDLE)0;
+    EFI_BLOCK_IO_PROTOCOL *parent_bio = (EFI_BLOCK_IO_PROTOCOL *)0;
+    UINT32 part_number = 0;
+    UINT64 part_start_lba = 0;
+    UINT64 part_size_lba = 0;
+    EFI_STATUS status;
+
+    status = esp_read_harddrive_node(part_handle, &part_number,
+                                      &part_start_lba, &part_size_lba);
+    if (EFI_ERROR(status) || part_number == 0) {
+        serial_early_print("[BOOT] ESP integrity: no HardDrive DP node "
+                           "(non-GPT boot path) -- skipping GPT check\n");
+        return EFI_NOT_FOUND;
+    }
+
+    /* Codex round-2 F2 fix: the caller already gated on
+     * boot_partition_style == 2 before calling this function, so every
+     * read failure below is on a GPT-CLASSIFIED boot device. Treat
+     * those as fail-closed (boot_fatal) rather than warn-skip -- a
+     * hostile or degraded parent-disk read path must not be allowed to
+     * disable the type-GUID gate. The only legitimate warn-skip
+     * remains in esp_read_harddrive_node when no HD() node exists
+     * (true non-GPT path) and is reachable BEFORE this function. */
+    status = esp_find_parent_disk(part_handle, &parent_handle);
+    if (EFI_ERROR(status)) {
+        boot_fatal(BOOT_ERR_ESP_TYPE_GUID,
+                   "ESP integrity: parent disk handle not found",
+                   "Boot device is GPT-classified but the parent "
+                   "(whole-disk) handle is unreachable -- cannot "
+                   "verify partition type GUID.");
+    }
+
+    status = gBS->HandleProtocol(parent_handle, &bio_guid,
+                                  (VOID **)&parent_bio);
+    if (EFI_ERROR(status) || !parent_bio || !parent_bio->Media) {
+        boot_fatal(BOOT_ERR_ESP_TYPE_GUID,
+                   "ESP integrity: parent disk BlockIO missing",
+                   "Cannot read GPT header on a GPT-classified boot "
+                   "device -- ESP identity is unverifiable.");
+    }
+
+    EFI_BLOCK_IO_MEDIA *pm = parent_bio->Media;
+    /* Codex round-1 F2 fix: require BlockSize covers the full GPT
+     * header footprint (92 bytes per UEFI 2.10) before reading. */
+    if (!pm->MediaPresent || pm->BlockSize < sizeof(struct esp_gpt_header) ||
+        pm->BlockSize > 4096 || pm->LastBlock < 2) {
+        boot_fatal(BOOT_ERR_ESP_TYPE_GUID,
+                   "ESP integrity: parent media geometry unusable",
+                   "BlockSize must be 92..4096 with media present and "
+                   "LastBlock >= 2 to host a GPT header.");
+    }
+
+    UINT8 hdr_buf[4096];
+    if (pm->BlockSize > sizeof(hdr_buf)) {
+        boot_fatal(BOOT_ERR_ESP_TYPE_GUID,
+                   "ESP integrity: parent BlockSize exceeds 4096",
+                   "Cannot allocate stack buffer to hold one block; "
+                   "GPT header read aborted.");
+    }
+    status = parent_bio->ReadBlocks(parent_bio, pm->MediaId, 1,
+                                     pm->BlockSize, hdr_buf);
+    if (EFI_ERROR(status)) {
+        boot_fatal(BOOT_ERR_ESP_TYPE_GUID,
+                   "ESP integrity: GPT header read failed",
+                   "Cannot read LBA 1 of the parent disk to verify "
+                   "the GPT header.");
+    }
+
+    struct esp_gpt_header hdr;
+    efi_memcpy(&hdr, hdr_buf, sizeof(hdr));
+
+    static const UINT8 expected_sig[8] = {
+        'E','F','I',' ','P','A','R','T'
+    };
+    UINTN i;
+    for (i = 0; i < 8; i++) {
+        if (hdr.signature[i] != expected_sig[i]) {
+            boot_fatal(BOOT_ERR_ESP_TYPE_GUID,
+                       "GPT signature mismatch on parent disk",
+                       "Expected 'EFI PART' at LBA 1; ESP cannot be "
+                       "verified against a corrupt or non-GPT disk.");
+        }
+    }
+    if (hdr.header_size < 92 || hdr.header_size > pm->BlockSize) {
+        boot_fatal(BOOT_ERR_ESP_TYPE_GUID,
+                   "GPT header_size out of bounds",
+                   "GPT header_size must be 92..BlockSize per UEFI spec.");
+    }
+    if (hdr.size_of_partition_entry < 128 ||
+        hdr.size_of_partition_entry > 4096 ||
+        (hdr.size_of_partition_entry & (hdr.size_of_partition_entry - 1)) != 0) {
+        boot_fatal(BOOT_ERR_ESP_TYPE_GUID,
+                   "GPT size_of_partition_entry invalid",
+                   "Must be >= 128 and a power of 2 per UEFI spec.");
+    }
+    if (hdr.num_partition_entries == 0 ||
+        hdr.num_partition_entries > 1024) {
+        boot_fatal(BOOT_ERR_ESP_TYPE_GUID,
+                   "GPT num_partition_entries out of bounds",
+                   "Plausible range is 1..1024 (typical is 128).");
+    }
+    if (part_number > hdr.num_partition_entries) {
+        boot_fatal(BOOT_ERR_ESP_TYPE_GUID,
+                   "GPT partition_number exceeds num_partition_entries",
+                   "Boot partition's HD() node references an entry "
+                   "past the end of the partition table.");
+    }
+    UINT64 table_bytes = (UINT64)hdr.num_partition_entries *
+                         (UINT64)hdr.size_of_partition_entry;
+    if (table_bytes > 1024ULL * 1024ULL) {
+        boot_fatal(BOOT_ERR_ESP_TYPE_GUID,
+                   "GPT partition table byte count exceeds 1 MiB cap",
+                   "Sanity cap rejects malformed disks claiming an "
+                   "absurdly large entry table.");
+    }
+    if (hdr.partition_entry_lba < 2 ||
+        hdr.partition_entry_lba > pm->LastBlock) {
+        boot_fatal(BOOT_ERR_ESP_TYPE_GUID,
+                   "GPT partition_entry_lba out of disk range",
+                   "Entry table LBA must be within the parent disk.");
+    }
+    UINT64 entry_blocks = (table_bytes + (UINT64)pm->BlockSize - 1) /
+                          (UINT64)pm->BlockSize;
+    if (entry_blocks == 0 ||
+        hdr.partition_entry_lba + entry_blocks > pm->LastBlock + 1) {
+        boot_fatal(BOOT_ERR_ESP_TYPE_GUID,
+                   "GPT partition entry array exceeds disk size",
+                   "Computed table footprint walks off the end of the "
+                   "parent disk -- header is corrupt or hostile.");
+    }
+
+    /* Read the single block containing our partition's entry rather
+     * than the whole table -- minimizes alloc and read pressure on
+     * slow firmware. */
+    UINT64 byte_offset = (UINT64)(part_number - 1) *
+                          (UINT64)hdr.size_of_partition_entry;
+    UINT64 block_index = byte_offset / (UINT64)pm->BlockSize;
+    UINT32 byte_in_block = (UINT32)(byte_offset % (UINT64)pm->BlockSize);
+    if (byte_in_block + 16 > (UINT32)pm->BlockSize) {
+        boot_fatal(BOOT_ERR_ESP_TYPE_GUID,
+                   "GPT partition entry straddles block boundary",
+                   "Type GUID would span two LBAs -- header is corrupt.");
+    }
+
+    UINT8 entry_blk[4096];
+    status = parent_bio->ReadBlocks(parent_bio, pm->MediaId,
+                                     hdr.partition_entry_lba + block_index,
+                                     pm->BlockSize, entry_blk);
+    if (EFI_ERROR(status)) {
+        boot_fatal(BOOT_ERR_ESP_TYPE_GUID,
+                   "ESP integrity: GPT partition entry read failed",
+                   "GPT header parsed cleanly but the entry table LBA "
+                   "could not be read -- disk is corrupt or hostile.");
+    }
+
+    const UINT8 *type_guid = &entry_blk[byte_in_block];
+    for (i = 0; i < 16; i++) {
+        if (type_guid[i] != g_esp_type_guid[i]) {
+            char detail[96];
+            const char hex[] = "0123456789ABCDEF";
+            UINTN p = 0;
+            const char *prefix = "Observed type GUID first byte: 0x";
+            UINTN pi;
+            for (pi = 0; prefix[pi] && p < sizeof(detail) - 4; pi++)
+                detail[p++] = prefix[pi];
+            detail[p++] = hex[(type_guid[0] >> 4) & 0xF];
+            detail[p++] = hex[type_guid[0] & 0xF];
+            detail[p] = '\0';
+            boot_fatal(BOOT_ERR_ESP_TYPE_GUID,
+                       "ESP type GUID mismatch",
+                       detail);
+        }
+    }
+
+    g_boot_info_ptr->esp_type_guid_valid = 1;
+    serial_early_print("[BOOT] ESP integrity: GPT type GUID matches "
+                       "EFI System Partition\n");
+    return EFI_SUCCESS;
+}
+
+/* Read LBA 0 of the partition (already-open BlockIO `bio`) and verify
+ * the FAT BPB filesystem-type field. Sets esp_filesystem_type. FAT32
+ * is mandatory; FAT16 is tolerated only on tiny test ESPs (< 16 MiB)
+ * with a WARN. Calls boot_fatal on a clearly invalid BPB. */
+static void esp_check_fat_bpb(EFI_BLOCK_IO_PROTOCOL *bio,
+                               UINT32 partition_size_mib)
+{
+    EFI_BLOCK_IO_MEDIA *m = bio->Media;
+    UINT8 lba0[4096];
+    EFI_STATUS status;
+
+    /* Codex round-3 fix: BPB check is a fail-closed gate. Geometry
+     * out of range or ReadBlocks failure on LBA 0 of the partition
+     * we are about to load kernel.exe from is a hard error -- not a
+     * skip. Leaving esp_filesystem_type=0 while continuing to
+     * required-files + load_kernel would let a degraded or hostile
+     * BlockIO path bypass the FAT32 policy entirely. */
+    if (m->BlockSize < 512 || m->BlockSize > sizeof(lba0)) {
+        boot_fatal(BOOT_ERR_ESP_BPB,
+                   "ESP integrity: BlockSize geometry unusable for BPB",
+                   "Partition BlockSize must be 512..4096 to host a "
+                   "FAT BPB at LBA 0; ESP cannot be verified.");
+    }
+    status = bio->ReadBlocks(bio, m->MediaId, 0, m->BlockSize, lba0);
+    if (EFI_ERROR(status)) {
+        boot_fatal(BOOT_ERR_ESP_BPB,
+                   "ESP integrity: BPB read failed at LBA 0",
+                   "Cannot read the partition's boot sector to verify "
+                   "FAT32 / FAT16 filesystem signature.");
+    }
+
+    /* Boot signature 0x55AA at offset 510 is mandatory for any FAT
+     * volume per Microsoft FAT specification; absence indicates the
+     * volume was never formatted. */
+    if (lba0[510] != 0x55 || lba0[511] != 0xAA) {
+        boot_fatal(BOOT_ERR_ESP_BPB,
+                   "ESP BPB boot signature missing",
+                   "Bytes 510/511 of LBA 0 must be 0x55 0xAA per "
+                   "Microsoft FAT spec; ESP appears unformatted.");
+    }
+
+    static const UINT8 fat32_marker[8] = {'F','A','T','3','2',' ',' ',' '};
+    static const UINT8 fat16_marker[8] = {'F','A','T','1','6',' ',' ',' '};
+    int is_fat32 = 1, is_fat16_legacy = 1;
+    UINTN i;
+    for (i = 0; i < 8; i++) {
+        if (lba0[0x52 + i] != fat32_marker[i]) is_fat32 = 0;
+        if (lba0[0x36 + i] != fat16_marker[i]) is_fat16_legacy = 0;
+    }
+    if (is_fat32) {
+        g_boot_info_ptr->esp_filesystem_type = 2;
+        serial_early_print("[BOOT] ESP integrity: BS_FilSysType FAT32 OK\n");
+        return;
+    }
+    if (is_fat16_legacy) {
+        if (partition_size_mib > 0 && partition_size_mib < 16) {
+            g_boot_info_ptr->esp_filesystem_type = 1;
+            serial_early_print("[WARN] ESP integrity: FAT16 ESP tolerated "
+                               "(partition < 16 MiB; likely test image)\n");
+            return;
+        }
+        boot_fatal(BOOT_ERR_ESP_BPB,
+                   "ESP filesystem is FAT16 on a non-tiny ESP",
+                   "FAT16 only allowed on test ESPs under 16 MiB; "
+                   "production ESPs must be FAT32 per UEFI spec.");
+    }
+    boot_fatal(BOOT_ERR_ESP_BPB,
+               "ESP filesystem type unrecognized",
+               "BS_FilSysType at offset 0x52 is not 'FAT32   '; "
+               "ESP must be FAT32 per UEFI spec or tiny FAT16.");
+}
+
+/* Probe the boot device's filesystem for required boot files and
+ * report ALL missing files in a single batched boot_fatal call
+ * instead of cascading through later load failures. boot.conf is
+ * NOT required (parse_boot_conf treats missing as default-config) --
+ * we probe it for diagnostic-only logging per Codex design F3. */
+static void esp_check_required_files(EFI_HANDLE part_handle)
+{
+    EFI_GUID fs_guid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
+    EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *fs = (EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *)0;
+    EFI_FILE_PROTOCOL *root = (EFI_FILE_PROTOCOL *)0;
+    EFI_STATUS status;
+
+    status = gBS->HandleProtocol(part_handle, &fs_guid, (VOID **)&fs);
+    if (EFI_ERROR(status) || !fs) {
+        serial_early_print("[WARN] ESP integrity: boot device has no "
+                           "SimpleFS -- required-files batch skipped\n");
+        return;
+    }
+    status = fs->OpenVolume(fs, &root);
+    if (EFI_ERROR(status) || !root) {
+        serial_early_print("[WARN] ESP integrity: OpenVolume failed -- "
+                           "required-files batch skipped\n");
+        return;
+    }
+
+    int missing_bootx64 = 0;
+    int missing_kernel = 0;
+    int missing_bootconf = 0;
+
+    EFI_FILE_PROTOCOL *fh = (EFI_FILE_PROTOCOL *)0;
+    status = root->Open(root, &fh, u"\\EFI\\BOOT\\BOOTX64.EFI",
+                         EFI_FILE_MODE_READ, 0);
+    if (EFI_ERROR(status) || !fh) {
+        missing_bootx64 = 1;
+    } else {
+        fh->Close(fh);
+    }
+
+    /* kernel.exe: matches the existing fallback list in load_kernel
+     * (\boot\kernel.exe, \kernel.exe, \EFI\ImpossibleOS\kernel.exe).
+     * Any one being present satisfies the batch. */
+    fh = (EFI_FILE_PROTOCOL *)0;
+    status = root->Open(root, &fh, u"\\boot\\kernel.exe",
+                         EFI_FILE_MODE_READ, 0);
+    if (EFI_ERROR(status) || !fh) {
+        fh = (EFI_FILE_PROTOCOL *)0;
+        status = root->Open(root, &fh, u"\\kernel.exe",
+                             EFI_FILE_MODE_READ, 0);
+        if (EFI_ERROR(status) || !fh) {
+            fh = (EFI_FILE_PROTOCOL *)0;
+            status = root->Open(root, &fh,
+                                 u"\\EFI\\ImpossibleOS\\kernel.exe",
+                                 EFI_FILE_MODE_READ, 0);
+            if (EFI_ERROR(status) || !fh) {
+                missing_kernel = 1;
+            } else {
+                fh->Close(fh);
+            }
+        } else {
+            fh->Close(fh);
+        }
+    } else {
+        fh->Close(fh);
+    }
+
+    fh = (EFI_FILE_PROTOCOL *)0;
+    status = root->Open(root, &fh, u"\\EFI\\ImpossibleOS\\boot.conf",
+                         EFI_FILE_MODE_READ, 0);
+    if (EFI_ERROR(status) || !fh) {
+        fh = (EFI_FILE_PROTOCOL *)0;
+        status = root->Open(root, &fh, u"\\boot.conf",
+                             EFI_FILE_MODE_READ, 0);
+        if (EFI_ERROR(status) || !fh) {
+            missing_bootconf = 1;
+        } else {
+            fh->Close(fh);
+        }
+    } else {
+        fh->Close(fh);
+    }
+    if (missing_bootconf) {
+        serial_early_print("[BOOT] ESP integrity: boot.conf not present "
+                           "(default-config boot path will be used)\n");
+    }
+
+    root->Close(root);
+
+    /* Codex round-2 F1 fix: only BOOTX64.EFI is fatal here. kernel.exe
+     * missing on the boot device is NOT fatal because load_kernel() has
+     * an existing fallback (bootx64.c:3443-3500) that searches every
+     * other SimpleFS volume; making this gate fatal would block that
+     * recovery path. UEFI launched us from BOOTX64.EFI, so it MUST be
+     * on this volume -- a missing copy means the volume itself is
+     * corrupt regardless of what load_kernel finds elsewhere. */
+    if (missing_bootx64) {
+        boot_fatal(BOOT_ERR_ESP_MISSING_FILES,
+                   "BOOTX64.EFI missing from boot volume",
+                   "UEFI launched us from this volume, but the file is "
+                   "no longer present -- ESP appears corrupt.");
+    }
+    if (missing_kernel) {
+        serial_early_print("[BOOT] ESP integrity: kernel.exe absent on "
+                           "boot device -- load_kernel() will search "
+                           "non-boot volumes\n");
+    } else {
+        serial_early_print("[BOOT] ESP integrity: required files present "
+                           "(BOOTX64.EFI + kernel.exe)\n");
+    }
+}
+
+/* Top-level ESP integrity check entry. Runs after the BlockIO probe
+ * in efi_main and BEFORE parse_boot_conf. UKI mode skips identity
+ * validation (the trust anchor is the signed PE) but still surfaces
+ * esp_size_mb so post-boot tools see the partition size. */
+static void esp_integrity_check(EFI_HANDLE part_handle,
+                                 EFI_BLOCK_IO_PROTOCOL *part_bio,
+                                 UINT32 partition_size_mib)
+{
+    post_code16(POST16_BL_ESP_INTEGRITY);
+
+    g_boot_info_ptr->esp_size_mb = partition_size_mib;
+    g_boot_info_ptr->esp_filesystem_type = 0;
+    g_boot_info_ptr->esp_type_guid_valid = 0;
+
+    /* UKI fast-skip per Codex design review: in UKI mode the disk is
+     * not load-bearing for kernel.exe / boot.conf, and a valid signed
+     * UKI launched from PXE / RAM-disk / non-GPT media must not fail
+     * this gate. */
+    if (g_uki_kernel_ptr && g_uki_kernel_size > 0) {
+        serial_early_print("[BOOT] ESP integrity: skipped (UKI mode -- "
+                           "trust anchor is signed PE image)\n");
+        post_code16(POST16_BL_ESP_INTEGRITY_OK);
+        return;
+    }
+
+    if (!part_handle || !part_bio || !part_bio->Media) {
+        serial_early_print("[WARN] ESP integrity: no boot device handle / "
+                           "BlockIO -- skipping\n");
+        return;
+    }
+
+    /* Non-GPT boot path (network, MBR-only test image): no GPT type
+     * GUID to check, but the BPB and required-files gates still
+     * apply for any partitioned FAT volume. */
+    if (g_boot_info_ptr->boot_partition_style != 2) {
+        serial_early_print("[BOOT] ESP integrity: non-GPT boot device "
+                           "-- skipping GPT type-GUID check\n");
+    } else {
+        post_code16(POST16_BL_ESP_GPT);
+        (void)esp_check_gpt_type_guid(part_handle);
+    }
+
+    post_code16(POST16_BL_ESP_BPB);
+    esp_check_fat_bpb(part_bio, partition_size_mib);
+
+    post_code16(POST16_BL_ESP_FILES);
+    esp_check_required_files(part_handle);
+
+    post_code16(POST16_BL_ESP_INTEGRITY_OK);
+}
+
 EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
 {
     EFI_STATUS status;
@@ -5957,63 +6629,79 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     g_boot_info_ptr->boot_media_present = 1;
     g_boot_info_ptr->boot_device_removable =
         (g_boot_info_ptr->boot_device_type == 3) ? 1 : 0;
-    if (g_boot_device_handle) {
-        EFI_GUID bio_guid = EFI_BLOCK_IO_PROTOCOL_GUID;
-        EFI_BLOCK_IO_PROTOCOL *bio = (EFI_BLOCK_IO_PROTOCOL *)0;
-        EFI_STATUS bio_s;
+    {
+        EFI_BLOCK_IO_PROTOCOL *esp_bio_for_integrity = (EFI_BLOCK_IO_PROTOCOL *)0;
+        UINT32 esp_partition_mib = 0;
+        if (g_boot_device_handle) {
+            EFI_GUID bio_guid = EFI_BLOCK_IO_PROTOCOL_GUID;
+            EFI_BLOCK_IO_PROTOCOL *bio = (EFI_BLOCK_IO_PROTOCOL *)0;
+            EFI_STATUS bio_s;
 
-        bio_s = gBS->HandleProtocol(g_boot_device_handle, &bio_guid,
-                                     (VOID **)&bio);
-        if (!EFI_ERROR(bio_s) && bio && bio->Media) {
-            EFI_BLOCK_IO_MEDIA *m = bio->Media;
+            bio_s = gBS->HandleProtocol(g_boot_device_handle, &bio_guid,
+                                         (VOID **)&bio);
+            if (!EFI_ERROR(bio_s) && bio && bio->Media) {
+                EFI_BLOCK_IO_MEDIA *m = bio->Media;
 
-            /*: Removable + MediaPresent */
-            g_boot_info_ptr->boot_device_removable =
-                m->RemovableMedia ? 1 : 0;
-            g_boot_info_ptr->boot_media_present =
-                m->MediaPresent ? 1 : 0;
+                /*: Removable + MediaPresent */
+                g_boot_info_ptr->boot_device_removable =
+                    m->RemovableMedia ? 1 : 0;
+                g_boot_info_ptr->boot_media_present =
+                    m->MediaPresent ? 1 : 0;
 
-            /*: Capacity */
-            {
-                UINT64 total_bytes = 0;
-                UINT32 mib = 0;
-                if (m->BlockSize > 0 && m->LastBlock < 0xFFFFFFFFFFFFFFFFULL) {
-                    UINT64 blocks = m->LastBlock + 1;
-                    if (blocks <= 0xFFFFFFFFFFFFFFFFULL / (UINT64)m->BlockSize)
-                        total_bytes = blocks * (UINT64)m->BlockSize;
-                    mib = (UINT32)(total_bytes / (1024 * 1024));
-                }
-                serial_early_print("[BOOT] Boot disk: ");
+                /*: Capacity */
                 {
-                    char nb[20];
-                    UINT32 v = mib;
-                    int n = 0;
-                    if (v == 0) nb[n++] = '0';
-                    else { while (v > 0 && n < 20) { nb[n++] = '0' + (char)(v % 10); v /= 10; } }
-                    while (n > 0) serial_early_putchar(nb[--n]);
+                    UINT64 total_bytes = 0;
+                    UINT32 mib = 0;
+                    if (m->BlockSize > 0 && m->LastBlock < 0xFFFFFFFFFFFFFFFFULL) {
+                        UINT64 blocks = m->LastBlock + 1;
+                        if (blocks <= 0xFFFFFFFFFFFFFFFFULL / (UINT64)m->BlockSize)
+                            total_bytes = blocks * (UINT64)m->BlockSize;
+                        mib = (UINT32)(total_bytes / (1024 * 1024));
+                    }
+                    esp_partition_mib = mib;
+                    serial_early_print("[BOOT] Boot disk: ");
+                    {
+                        char nb[20];
+                        UINT32 v = mib;
+                        int n = 0;
+                        if (v == 0) nb[n++] = '0';
+                        else { while (v > 0 && n < 20) { nb[n++] = '0' + (char)(v % 10); v /= 10; } }
+                        while (n > 0) serial_early_putchar(nb[--n]);
+                    }
+                    serial_early_print(" MiB (");
+                    {
+                        static const char *tn[] = {"unknown","SATA","NVMe","USB","network"};
+                        UINT8 t = g_boot_info_ptr->boot_device_type;
+                        serial_early_print(t <= 4 ? tn[t] : "?");
+                    }
+                    serial_early_print(")\n");
                 }
-                serial_early_print(" MiB (");
-                {
-                    static const char *tn[] = {"unknown","SATA","NVMe","USB","network"};
-                    UINT8 t = g_boot_info_ptr->boot_device_type;
-                    serial_early_print(t <= 4 ? tn[t] : "?");
-                }
-                serial_early_print(")\n");
-            }
 
-            /*: ReadOnly warning (abnormal on fixed non-USB disks) */
-            if (m->ReadOnly && g_boot_info_ptr->boot_device_type != 3)
-                serial_early_print("[WARN] Boot disk is read-only "
-                                   "-- possible hardware failure\n");
+                /*: ReadOnly warning (abnormal on fixed non-USB disks) */
+                if (m->ReadOnly && g_boot_info_ptr->boot_device_type != 3)
+                    serial_early_print("[WARN] Boot disk is read-only "
+                                       "-- possible hardware failure\n");
 
-            /*: LogicalPartition diagnostic */
-            if (m->LogicalPartition)
-                serial_early_print("[BOOT] Boot device is a logical partition "
-                                   "(not whole disk)\n");
-        } else {
-            serial_early_print("[WARN] BlockIO not available on boot device"
+                /*: LogicalPartition diagnostic */
+                if (m->LogicalPartition)
+                    serial_early_print("[BOOT] Boot device is a logical partition "
+                                       "(not whole disk)\n");
+
+                esp_bio_for_integrity = bio;
+            } else {
+                serial_early_print("[WARN] BlockIO not available on boot device"
                                " -- using type-based default\n");
+            }
         }
+
+        /* ESP integrity gate (TODO-02 part 13). Runs after the BlockIO
+         * probe so esp_size_mb is populated, and BEFORE parse_boot_conf
+         * so corruption / wrong-partition cases halt before any disk
+         * content is trusted. UKI mode skips identity validation; the
+         * GPT type GUID, FAT32 BPB, and required-files checks are
+         * split-path-only gates. */
+        esp_integrity_check(g_boot_device_handle, esp_bio_for_integrity,
+                             esp_partition_mib);
     }
 
     /* logging */
