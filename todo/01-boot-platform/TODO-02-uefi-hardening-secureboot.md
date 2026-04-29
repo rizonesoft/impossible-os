@@ -385,7 +385,7 @@ Microsoft began rotating UEFI signing certificates in 2024-2025: the original `M
 
 **Test checkpoint:** `sbverify --list shim/shimx64.efi` output names a Microsoft Corporation UEFI CA generation; `HKLM\SYSTEM\SecureBoot\ShimCA` matches; `bash scripts/sign-efi.sh build/BOOTX64.EFI` logs `[shim] signed-by: ...`; the build-time warning fires when the deprecated CA date threshold is crossed. Test on: QEMU WHPX (signature path), QEMU TCG, VirtualBox, bare metal (real DB rotation).
 
-> **Test runner:** `bash scripts/test-tooling.sh` (block `shim_ca_detection`) | 4 sub-tests, 0 failures
+> **Test runner:** `bash scripts/test-tooling.sh` (block `shim_ca_detection`) | 6 sub-tests, 0 failures
 
 > **Notes:**
 > - What shipped: `scripts/sign-efi.sh` post-sign block (graduated 2011-CA deprecation policy with named-constant date thresholds), `scripts/extract-shim-ca.sh` (build-time `sbverify --list` extractor writing `build/generated/shim_ca.h`), `src/kernel/uefi_runtime.c` ShimCA registry surface (reads SHIM_CA_YEAR), `docs/guides/secure-boot-keys.md` "MS UEFI CA Lifecycle" section, 4 sub-tests in `scripts/test-tooling.sh` `shim_ca_detection` block.
@@ -394,8 +394,7 @@ Microsoft began rotating UEFI signing certificates in 2024-2025: the original `M
 > - Canonical doc: [`docs/guides/secure-boot-keys.md`](../../docs/guides/secure-boot-keys.md) "MS UEFI CA Lifecycle".
 > - Scope boundary: §6 owns the actual signing pipeline; §12 is doctrine + tracking + audit surface layered on top. Pinning the 2023-CA-signed shim binary is `[/]` -- waiting on MS publication.
 
-> **Verified:** 2026-04-29 | RISK_TIER=full-pipeline | 5/6 items shipped, 1 deferred [/] (2023-shim binary pin -- waiting on MS publication) | build OK | tests 314/314 PASS
-> **Quality reviewed:** 2026-04-29 | Codex 2x (design + adversarial-impl) | 2H+1M fixed | scope: kernel-code-quality (uefi_runtime.c ShimCA write)
+> **Quality reviewed:** 2026-04-29 | Codex 6x (design + adversarial + consistency + perf + 2x re-adversarial) | 3H+7M fixed | scope: kernel-code-quality (uefi_runtime.c ShimCA write) + boot-code-quality (sign-efi.sh gate ordering + sbverify rc capture)
 
 ---
 

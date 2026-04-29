@@ -3802,6 +3802,54 @@ STUB
         t_fail "shim_ca_detection: 2023 CA" "out: $(echo "$SCD_OUT_2023" | tail -8)"
     fi
 
+    # Test 6: sbverify exits nonzero on a present shim binary -> FAIL
+    # exit 1 (Codex final adversarial M1 fix 2026-04-29). Regression
+    # guard: tool failure must NOT be conflated with "no recognized CA"
+    # which would let an unverified shim through the WARN branch.
+    cat > "$SCD_REPO/bin/sbverify_failing" <<'STUB'
+#!/bin/bash
+echo "sbverify: cannot read input file (simulated)"
+exit 2
+STUB
+    chmod +x "$SCD_REPO/bin/sbverify_failing"
+    SCD_OUT_SBVFAIL="$(cd "$SCD_REPO" && \
+        PATH="$SCD_REPO/bin:$PATH" \
+        bash -c 'cp bin/sbverify_failing bin/sbverify; exec bash scripts/sign-efi.sh' 2>&1; printf '__rc=%s\n' $?)"
+    if echo "$SCD_OUT_SBVFAIL" | grep -q "FAIL -- sbverify --list" \
+       && echo "$SCD_OUT_SBVFAIL" | grep -q "__rc=1"; then
+        t_pass "shim_ca_detection: sbverify nonzero exit -> FAIL exit 1 (no fail-open)"
+    else
+        t_fail "shim_ca_detection: sbverify-fail" "out: $(echo "$SCD_OUT_SBVFAIL" | tail -8)"
+    fi
+    # Restore the passing stub for any subsequent tests (currently last).
+    cat > "$SCD_REPO/bin/sbverify" <<'STUB'
+#!/bin/bash
+if [ "$1" = "--list" ]; then
+    echo "${SHIM_CA_FIXTURE:-Microsoft Corporation UEFI CA 2011}"
+    exit 0
+fi
+echo "Signature verification OK"
+exit 0
+STUB
+    chmod +x "$SCD_REPO/bin/sbverify"
+
+    # Test 5: 2011 CA + post-expiry date + missing MOK key -> FAIL exit 1
+    # (Codex consistency H1 fix 2026-04-29). Regression guard: the shim
+    # CA gate must abort the pipeline BEFORE the dev-build "MOK key not
+    # found, skipping" early return, otherwise CI without local keys
+    # ships an expired-2011 shim silently.
+    SCD_OUT_NOMOK="$(cd "$SCD_REPO" && SHIM_CA_FIXTURE="Microsoft Corporation UEFI CA 2011" \
+        SHIM_CA_TEST_TODAY="2026-07-15" \
+        MOK_KEY="/tmp/scd-definitely-missing-key-$$" \
+        PATH="$SCD_REPO/bin:$PATH" \
+        bash scripts/sign-efi.sh 2>&1; printf '__rc=%s\n' $?)"
+    if echo "$SCD_OUT_NOMOK" | grep -q "FAIL -- shim is signed by 2011 CA which expired" \
+       && echo "$SCD_OUT_NOMOK" | grep -q "__rc=1"; then
+        t_pass "shim_ca_detection: 2011 post-expiry + no MOK -> FAIL + exit 1 (gate runs before MOK skip)"
+    else
+        t_fail "shim_ca_detection: 2011 post-expiry no-MOK" "out: $(echo "$SCD_OUT_NOMOK" | tail -8)"
+    fi
+
     rm -rf "$SCD_TMP"
 fi
 
