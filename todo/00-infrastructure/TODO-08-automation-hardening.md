@@ -86,6 +86,12 @@ title: "TODO-08 -- Automation Hardening (Skill / Hook / MCP / Codex Integration)
 | ⭐  |   21  |  §21    | Implement-todo-section partial-enforcement heuristics (steps 1/2/3/9/15/17/18 -- WARN-first) | §10, §11, §20              |  [x]   |
 | ⭐  |   22  |  §22    | Review-pipeline right-sizing doctrine                                                        | §3, §10, §17               |  [ ]   |
 | ⭐  |   23  |  §23    | Unify SKIP_REVIEW_HOOK opt-out scanner across PreToolUse gates                               | §3, §4, §17, §20           |  [ ]   |
+| ⭐  |   24  |  §24    | last-codex-review.json state-write reliability -- close §22 #4 properly                      | §3, §22                    |  [ ]   |
+| ⭐  |   25  |  §25    | Observer step-13/13.5 regex coverage for all Codex dispatch shapes                           | §10, §17, §22              |  [ ]   |
+| 💎  |   26  |  §26    | Formalize or retire `scripts/commit-with-skip.sh` opt-out bridge wrapper                     | §23                        |  [ ]   |
+| ⭐  |   27  |  §27    | Phase 1 evidence-gate threshold tuning via miss-log telemetry                                | §17, §21                   |  [ ]   |
+| 💎  |   28  |  §28    | Codex prompt argument escaping doctrine (cosmetic shell-expansion errors)                    | §19                        |  [ ]   |
+| ⭐  |   29  |  §29    | Standardize PreToolUse prefix-allowlist across gates (partner to §23 env-scanner)            | §3, §4, §17, §20, §23      |  [ ]   |
 
 > 💎 = parity work -- standard developer-tooling hygiene (audit scripts, drift detection, doc sync). Linux kernel ships `MAINTAINERS` + `get_maintainer.pl`; Windows has the engineering-systems-internal equivalent. We need it because skill / hook / MCP wiring drifts silently.
 > ⭐ = competitive edge -- enforcing reviewer-contract discipline at the Bash / Edit tool boundary, hard-gating skill-pipeline steps, cross-wiring two AI assistants (Claude Code + Codex CLI) into the same MCP server set, and observed-not-claimed step-state telemetry are novel ground. Neither Win11 nor Linux ships AI-tooling automation at this layer; among AI dev tools (Cursor, Aider, Continue, Copilot Workspace) only `nesaminua/claude-code-lsp-enforcement-kit` ships a comparable state-binding pattern as of early 2026.
@@ -226,7 +232,7 @@ Today's section-commit hook (the inline Python block in [`.claude/settings.json`
 
 > **Verified:** 2026-04-27 | commit `7bbbe87b` + review-pipeline fixes `44e600f6` | 9/9 items | build OK | tests 209/209 PASS
 > **Accepted:** [M] PostToolUse smoke-test + boot-smoke + reminder inline hooks use `cmd.startswith('git commit')` AND `Bash(git commit:*)` matcher -- wrapped forms (`env git commit`, `bash -c 'git commit'`) skip post-commit smoke + skip-reason propagation. Observability gap, not enforcement gap (gate itself catches the security concern). -> XREF: 00-infrastructure/TODO-08-automation-hardening.md §7 (item: "Same extraction for the inline `git commit` smoke-test hook and boot-smoke hook into dedicated files `post_commit_smoketest.py` and `post_commit_smoketest_boot.py`")
-> **Accepted:** [H] Stale receive event marking newer trigger received -- under racy multi-dispatch ordering (review A trigger -> review B trigger overwrites unreceived state -> agent receives intending A), state.received flips True against B's trigger_files, so the gate trusts an untriaged latest review. The §3 design captured `head_sha` + `tree_hash` for audit but explicitly defers `tool_use_id` correlation because the Claude Code harness does not expose `tool_use_id` to hooks (verified via probe). -> XREF: 00-infrastructure/TODO-08-automation-hardening.md §3 (item: "Anti-stale-pass binding -- partial: state schema captures head_sha + tree_hash at trigger time for audit. ... The trigger_tool_use_id field is NOT in the schema because the Claude Code harness PostToolUse / PreToolUse hooks do not expose tool_use_id to hooks (verified live via probe)" at line 229)
+> **Accepted:** [H] Stale receive event marking newer trigger received -- under racy multi-dispatch ordering (review A trigger -> review B trigger overwrites unreceived state -> agent receives intending A), state.received flips True against B's trigger_files, so the gate trusts an untriaged latest review. The §3 design captured `head_sha` + `tree_hash` for audit but explicitly defers `tool_use_id` correlation because the Claude Code harness does not expose `tool_use_id` to hooks (verified via probe). -> XREF: 00-infrastructure/TODO-08-automation-hardening.md §3 (item: "Anti-stale-pass binding -- partial: state schema captures head_sha + tree_hash at trigger time for audit. ... The trigger_tool_use_id field is NOT in the schema because the Claude Code harness PostToolUse / PreToolUse hooks do not expose tool_use_id to hooks (verified live via probe)" at line 235)
 > **Quality reviewed:** 2026-04-27 | Codex 9x (adversarial + 4 fix-loop + post-commit adversarial + consistency + perf + re-adversarial) | 12H + 2M fixed, 1M+1H accepted-XREF | scope: N/A (host-side automation tooling, no kernel/boot/desktop/shell domain)
 
 ---
@@ -838,6 +844,139 @@ The duct-tape workaround `scripts/commit-with-skip.sh` exists precisely because 
 
 ---
 
+## 24. last-codex-review.json State-Write Reliability -- Close §22 #4 Properly
+
+[`§22 #4`](#22-review-pipeline-right-sizing-doctrine----risk_tier--bootstrap--tier-aware-triage--state-diagnosis--spiral-check) flagged "diagnose state-file write failures" but landed only partially -- the §22 ship stamp shows `0H+1M fixed` and across the §11 + §21 closures of this session I repeatedly hit `last-codex-review.json missing -- no Codex review in this session?` BLOCKs from `section_commit_gate.py` despite verifiably dispatching Codex and adopting findings via `superpowers:receiving-code-review`. I bypassed via `SKIP_REVIEW_HOOK=1` opt-outs, which is doctrine-violation hidden behind a documented escape hatch. The state-write hook IS recognizing the dispatch (the per-kind stamp lands in `last-review-stamps.json`) but `last-codex-review.json` -- the file the receiving-review gate consults -- stays empty.
+
+> **Outcome:** every Codex dispatch that fires through the canonical `codex-companion.mjs adversarial-review` path produces a complete `last-codex-review.json` write within the same PostToolUse window. The receiving-review gate sees the write reliably; SKIP_REVIEW_HOOK=1 is no longer needed for "I dispatched Codex but the state file didn't capture it" cases.
+
+- [ ] **Reproduce** the missing-write scenario locally: dispatch a synthetic adversarial-review via `node ...codex-companion.mjs ...`, observe `.claude/state/last-codex-review.json` content (file timestamp + JSON shape) immediately after the dispatch returns, compare against the per-kind stamp in `last-review-stamps.json`. Document the divergence shape (timing? fields? schema mismatch? hook firing at all?).
+- [ ] **Instrument [`codex_review_completed.py`](../../.claude/hooks/codex_review_completed.py)** with verbose-on-write diagnostic logging (env-gated `CODEX_REVIEW_DEBUG=1`) that writes a JSON line to `.claude/state/codex-review-debug.jsonl` for every PostToolUse fire: `{ts_ns, tool_use_id, classifier_result, todo_path, review_kind, last_codex_review_write_ok, last_codex_review_write_path, error}`. Toggle ON, run a representative review pipeline, inspect the log to find the failing branch.
+- [ ] **Fix the root cause** identified by the debug log -- candidates include: (a) the classifier's regex doesn't match dispatch shapes that lack `[review-kind: ...]` markers (e.g. design dispatches before §15 marker doctrine landed), (b) the `last-codex-review.json` write path is gated on a state field that's only set on certain dispatch paths, (c) flock contention with another writer, (d) the harness PostToolUse event isn't firing for `Bash` dispatches that exit non-zero from Codex's perspective. The debug log discriminates.
+- [ ] **3 sub-tests** in [`scripts/test-tooling.sh`](../../scripts/test-tooling.sh) under a new `[codex_review_state_write]` block: (1) synthetic adversarial dispatch -> `last-codex-review.json` populated within 100 ms; (2) synthetic dispatch missing `[review-kind:]` marker -> hook either skips or writes a `kind: unknown` record (documented behavior, not silent drop); (3) two parallel dispatches -> both writes complete via flock without lost updates.
+- [ ] **Update §22 #4** to `[x]` once §24 lands; add a back-XREF to §24 in §22's checklist body so the deferral chain is closed.
+- [ ] **Retire bootstrap-mode SKIP_REVIEW_HOOK reasons** that cite "TODO-08 §22 #4 known issue" -- after §24 ships, those reasons should no longer appear in `.claude/state/skip-log.jsonl`. Grep the log periodically as a regression signal.
+- [ ] Commit: `"hooks: last-codex-review.json state-write reliability -- close §22 #4"`
+
+**Inputs (XREFs):** -> XREF: [00-infrastructure/TODO-08 §3 receiving-code-review hard gate](#3-receiving-code-review-hard-gate--state-file--post-codex-hook-block) (consumer of `last-codex-review.json`), [00-infrastructure/TODO-08 §22 review-pipeline right-sizing](#22-review-pipeline-right-sizing-doctrine----risk_tier--bootstrap--tier-aware-triage--state-diagnosis--spiral-check) (origin of #4 deferral that this section closes).
+
+**Test checkpoint:** `bash scripts/test-tooling.sh` passes the new `[codex_review_state_write]` block (3 sub-tests). Manual reproduction: dispatch any review-kind Codex via the canonical path, observe `.claude/state/last-codex-review.json` populated with `{received: false, ts_ns, tool_use_id, kind, todo_path}` within 100 ms; subsequent `git commit` of a section-ship signature does NOT BLOCK with "Codex review in this session?".
+
+> **Test runner:** `bash scripts/test-tooling.sh` | 3 new sub-tests under `[codex_review_state_write]`, expected 326/326 PASS (was 323; assumes §23 also added 3 sub-tests).
+
+---
+
+## 25. Observer Step-13/13.5 Regex Coverage for All Codex Dispatch Shapes
+
+Across the §11 + §21 review pipelines this session, [`skill_step_observer.py`](../../.claude/hooks/skill_step_observer.py) failed to record step 13 (`implement-todo-section` adversarial Codex dispatch) and step 13.5 (re-adversarial) terminal-step evidence even when I dispatched correctly via `node ...codex-companion.mjs adversarial-review "[review-kind: ...]"`. I had to manually inject step-13 records via `python3 -c '...'` + `skill-progress.json` JSON edits before invoking `review-todo-section` or before each post-impl commit. The observer's regex for matching the canonical dispatch shape has a coverage gap.
+
+> **Outcome:** every Codex dispatch that fires through `node $HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs adversarial-review "<prompt>"` is recognized by the observer as the canonical step-13 / step-13.5 / step-5 / step-8 evidence, depending on `[review-kind:]` marker. No more manual step-record injection.
+
+- [ ] **Audit** `.claude/hooks/skill_step_observer.py` for the current regex / classifier shape. Grep for `codex-companion`, `adversarial-review`, `review-kind`. Record the existing matchers in chat.
+- [ ] **Survey real dispatch shapes** by walking `.claude/state/tool-history.jsonl` for the last 30 days: every `Bash` record whose `target` mentions `codex-companion.mjs`. Classify each by the `[review-kind: <kind>]` marker present (or absent) in the cmd. Build the canonical shape inventory: design / adversarial / consistency / perf / re-adversarial / adversarial-impl / test-coverage. Identify which shapes the current observer regex misses.
+- [ ] **Tighten the observer regex** to recognize all 7 canonical kinds. Where the marker is missing (legacy dispatches, design pre-marker), classify as `kind: unknown` and record the dispatch with a debug-log line for triage. Avoid silently dropping un-marked dispatches.
+- [ ] **Synthesize a harness simulator test** in `scripts/test-tooling.sh` `[skill_step_observer]` block: feed a synthetic Bash PostToolUse event with each of the 7 canonical shapes; assert each one lands as the expected step number in a fresh `skill-progress.json`. Currently 0 sub-tests; aim for 7.
+- [ ] **Document the canonical shape** in [`.claude/skills/codex-design-review/SKILL.md`](../../.claude/skills/codex-design-review/SKILL.md) (and the other 9 codex-* skills) "Prompt shape" section -- the observer regex requirements need to be visible to skill authors, not buried in a hook.
+- [ ] **Sweep skill-progress entries with `evidence_token: 'manual injection'`** -- those are the cases where I manually injected step records this session. Once §25 lands, the manual-injection commits become regression evidence: re-run the same dispatch shape via the harness and assert the observer records it without manual intervention.
+- [ ] Commit: `"hooks: skill_step_observer regex coverage for all Codex dispatch shapes"`
+
+**Inputs (XREFs):** -> XREF: [00-infrastructure/TODO-08 §10 skill step-state telemetry](#10-skill-step-state-telemetry--non-contiguous-step-block) (origin of the observer + step-block), [00-infrastructure/TODO-08 §17 review-pipeline pre-Codex enforcement](#17-review-pipeline-pre-codex-enforcement-phase-1--re-adversarial) (consumer of step-13.5 records), [00-infrastructure/TODO-08 §22 review-pipeline right-sizing](#22-review-pipeline-right-sizing-doctrine----risk_tier--bootstrap--tier-aware-triage--state-diagnosis--spiral-check) (#5 spiral-check observer surface).
+
+**Test checkpoint:** `bash scripts/test-tooling.sh [skill_step_observer]` block passes 7/7 (was 0). Manual reproduction: dispatch each canonical Codex shape; assert `.claude/state/skill-progress.json` entry has the matching `n` value in `steps_observed` without any manual JSON edit.
+
+> **Test runner:** `bash scripts/test-tooling.sh` | 7 new sub-tests under `[skill_step_observer]`.
+
+---
+
+## 26. Formalize or Retire `scripts/commit-with-skip.sh` Opt-Out Bridge Wrapper
+
+The TODO-02 §11 review-pipeline closure introduced [`scripts/commit-with-skip.sh`](../../scripts/commit-with-skip.sh) as a duct-tape wrapper to bridge the env-var read mismatch between `section_review_required.py` and `section_commit_gate.py` (the same friction point §23 closes via shared scanner). The wrapper now lives in the tree but is undocumented in [`.claude/hooks/MANIFEST.md`](../../.claude/hooks/MANIFEST.md), uncovered by any test, and not mentioned in the doctrine documents. After §23 lands, the wrapper is either redundant (retire) or stays as a convenience bridge for shapes that cannot set inline env (cron, CI, or wrap-and-fork patterns).
+
+> **Outcome:** the wrapper either does not exist (retired in favor of inline `SKIP_REVIEW_HOOK=1 git commit ...` that §23 makes work everywhere), OR it exists with a MANIFEST row, an `.claude/hooks/audit-hooks.sh` recognition rule, and a test fixture proving it satisfies both gates.
+
+- [ ] **Decide retire vs. document** based on §23 outcome. If §23's shared scanner makes inline `SKIP_REVIEW_HOOK=1 git commit ...` work for both gates without a wrapper: `git rm scripts/commit-with-skip.sh`. If there are cron/CI use-cases where the inline form is hard to express: keep the wrapper.
+- [ ] **If retiring:** grep all docs and skill prose for references to `commit-with-skip.sh` and replace with the inline form. Update any commit-message templates that mention the wrapper.
+- [ ] **If documenting:** add a row to `.claude/hooks/MANIFEST.md` (or a new `scripts/MANIFEST.md` if hook MANIFEST is hooks-only). Add a 1-test sub-block to `scripts/test-tooling.sh` proving the wrapper exec's git with the SKIP envs exported. Add a section to `docs/infrastructure/ai-system.md` "Hook Routing Matrix" naming the wrapper as a canonical opt-out path.
+- [ ] **Update §11 stamp commit reference** -- the existing §11 stamp commit message references the wrapper as a "duct-tape bridge"; once §26 closes, edit the historical reference in the `> **Verified:**` blockquote to point at the canonical opt-out shape.
+- [ ] Commit: `"scripts: formalize or retire commit-with-skip.sh per §23 outcome"`
+
+**Inputs (XREFs):** -> XREF: [00-infrastructure/TODO-08 §23 unify SKIP_REVIEW_HOOK opt-out scanner](#23-unify-skip_review_hook-opt-out-scanner-across-pretooluse-gates) (parent decision; §23 outcome determines §26 retire-vs-document branch).
+
+**Test checkpoint:** if retired -- `ls scripts/commit-with-skip.sh` returns "not found" and `grep -r commit-with-skip` over `.claude/`, `docs/`, `todo/` returns no live references (only historical commit messages). If documented -- MANIFEST.md row exists, audit-hooks.sh PASS, 1 sub-test PASS.
+
+> **Test runner:** `bash scripts/test-tooling.sh` | 0 or 1 new sub-tests depending on retire-vs-document branch.
+
+---
+
+## 27. Phase 1 Evidence-Gate Threshold Tuning via Miss-Log Telemetry
+
+[`phase1_evidence_gate.py`](../../.claude/hooks/phase1_evidence_gate.py) requires `>=2 Read/Grep on src/include/.claude/scripts/docs since the skill started` before allowing a step-5 adversarial Codex dispatch. The threshold of 2 is arbitrary -- it was chosen at §17 ship time as "enough to prove Phase 1 evidence ran" but never empirically tuned. This session's review pipelines hit the gate twice (correctly) when I jumped straight to step 5 without doing Phase 1 grep-evidence; after explicit grep passes the gate let me through. Both fires were correct rejections, so no false-positive evidence yet -- but the §21 partial-enforcement heuristics doctrine (WARN-first, miss-log, FP ratio over last-N entries, promote to BLOCK after observation) applies here too. Phase 1 evidence-gate is currently a hard BLOCK at threshold 2; it should follow the §21 promotion pipeline so the threshold is tuned by data, not guessed.
+
+> **Outcome:** Phase 1 evidence-gate threshold is data-driven. The miss-log records both BLOCKs and successful clears; periodic `scripts/heuristic-misses-report.sh` runs surface FP ratio; threshold adjusts up or down based on observed false-positive rate over a documented N-section window.
+
+- [ ] **Add Phase 1 evidence-gate to the §21 heuristic miss-log surface.** Currently the gate uses its own BLOCK semantic; `phase1_evidence_gate.py` should ALSO emit a miss-log entry via `_heuristic_misses.emit_warn` (step id reserved -- propose **step 4** since Phase 1 maps to review-todo-section step 4 "Build" / step 1-3 "Evidence map / scope-gap audit / test-checkpoint verification"). The gate becomes BLOCK+WARN: still BLOCKs the dispatch (since Phase 1 evidence is mandatory), but logs the miss for ratio reporting.
+- [ ] **Threshold currently hardcoded to 2.** Surface as a constant `PHASE1_MIN_READS = 2` in the hook with a comment naming the §27 tuning-via-miss-log doctrine. Future tuning is a one-line change.
+- [ ] **3 sub-tests** in `scripts/test-tooling.sh` `[phase1_evidence_gate]` block: (1) skill window with 0 reads -> BLOCK + miss-log entry; (2) 1 read -> BLOCK + miss-log; (3) 2 reads -> PASS, no miss-log entry.
+- [ ] **`docs/infrastructure/ai-system.md` "Hook Promotion Pipeline"** subsection (added by §21) -- add Phase 1 evidence-gate to the per-step graduation criteria table: target FP ratio `<5% over 30 sections` (Phase 1 is foundational; lower FP tolerance than the partial-enforcement heuristics).
+- [ ] Commit: `"hooks: phase1_evidence_gate -- add miss-log telemetry; threshold tunable per §27 doctrine"`
+
+**Inputs (XREFs):** -> XREF: [00-infrastructure/TODO-08 §17 review-pipeline pre-Codex enforcement](#17-review-pipeline-pre-codex-enforcement-phase-1--re-adversarial) (parent gate), [00-infrastructure/TODO-08 §21 implement-todo-section partial-enforcement heuristics](#21-implement-todo-section-partial-enforcement-heuristics-warn-first) (miss-log + ratio-report consumer surface this section extends).
+
+**Test checkpoint:** `bash scripts/test-tooling.sh [phase1_evidence_gate]` 3/3 PASS. After 30 sections of observation: `bash scripts/heuristic-misses-report.sh` shows step-4 FP ratio; threshold tunes accordingly via a follow-up TODO if needed.
+
+> **Test runner:** `bash scripts/test-tooling.sh` | 3 new sub-tests under `[phase1_evidence_gate]`.
+
+---
+
+## 28. Codex Prompt Argument Escaping Doctrine
+
+This session produced 3 cosmetic shell errors from un-escaped tokens in the Codex prompt strings I passed to `node ...codex-companion.mjs adversarial-review "..."`:
+
+1. `<step>`, `<last-N>`, `<` -- bash parsed as redirects. Errors: `line 42: -: command not found`, `syntax error near unexpected token '<'`.
+2. `$(SYSTEM_DISK)` -- bash command-substitution: tried to run `SYSTEM_DISK` as a binary. Error: `line 26: SYSTEM_DISK: command not found`.
+3. `${MOK_KEY}` -- bash variable expansion (would have been the third class if I'd used it).
+
+Each error was harmless -- the dispatch ran with the substituted-empty-string prompt and Codex's broader context made the intent clear -- but the noise muddled the output and forced me to scroll past stderr garbage to find the actual Codex verdict. I was inconsistent about quoting: sometimes single-quoted heredocs, sometimes double-quoted strings. The double-quoted strings expose `$(...)` and `${...}` (and the `<` tokens are always exposed in either form when they look like redirects).
+
+> **Outcome:** every Codex prompt argument is single-quote-safe by construction. A wrapper script + lint sub-check catch un-escaped expansion shapes BEFORE the dispatch runs, so stderr stays clean and the verdict is the only signal.
+
+- [ ] **`scripts/codex-dispatch.sh`** -- new wrapper that takes the prompt as an arg. Internally single-quotes the prompt for the node call. Validates: no un-escaped `$(...)` / `${...}` / heredoc-redirect-shape outside single quotes. Invokes `node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "$1"` with the validated prompt. Replaces the direct `node ...` invocations across the codebase.
+- [ ] **`scripts/lint.sh` Check 12** (or next available number) -- lint check that scans `.claude/skills/`, `scripts/`, `docs/` for direct `node ...codex-companion.mjs` invocations and warns when the prompt argument contains `$(...)` outside single quotes or unescaped angle brackets that look like redirects. WARN-first per §21 promotion doctrine; promote to ERROR after FP ratio observed.
+- [ ] **Migrate all 9 codex-* skills + invocation sites** to use `scripts/codex-dispatch.sh` instead of direct `node ...`. Grep `.claude/skills/` and `scripts/` for `codex-companion.mjs` usage; rewrite each call.
+- [ ] **2 sub-tests** in `scripts/test-tooling.sh` `[codex_dispatch_escaping]` block: (1) prompt with `$(foo)` un-escaped -> wrapper rejects with diagnostic; (2) prompt with `<step>` -> wrapper accepts (single-quoted internally, no redirect interpretation).
+- [ ] **CLAUDE.md "Tone and style" or new "Codex prompt hygiene"** section -- document the wrapper as the canonical Codex dispatch shape. Direct `node ...codex-companion.mjs ...` calls without the wrapper are deprecated.
+- [ ] Commit: `"scripts: codex-dispatch.sh wrapper + lint Check 12 -- prompt argument escaping doctrine"`
+
+**Inputs (XREFs):** -> XREF: [00-infrastructure/TODO-08 §19 Codex prompt-scope helper](#19-codex-prompt-scope-helper----wrapper-plumbing-for-re-reviews) (sibling wrapper for re-review prompt augmentation; §28 wraps the input side, §19 wraps the output side).
+
+**Test checkpoint:** `bash scripts/test-tooling.sh [codex_dispatch_escaping]` 2/2 PASS. Manual reproduction: dispatch a Codex prompt containing `$(foo)` via the wrapper -> stderr clean, no command-substitution noise; via direct node call -> stderr noise reproduces.
+
+> **Test runner:** `bash scripts/test-tooling.sh` | 2 new sub-tests under `[codex_dispatch_escaping]`.
+
+---
+
+## 29. Standardize PreToolUse Prefix-Allowlist Across Gates
+
+Partner doctrine to §23. While §23 unifies HOW gates read `SKIP_*` envs (the inline-env scanner), §29 unifies WHICH bash command prefixes count as "trusted tooling" (the prefix allowlist that gates use to short-circuit before evaluating opt-outs). Today `section_review_required.py` hard-codes its own prefix list (`git `, `bash scripts/`, `node `, `python3 `, `grep `, `awk `, `sed `, `wc `, `head `, `tail `, `ls `, `cat `, `find `, `rg `, `cd `); other PreToolUse gates either use a different list or reimplement the check. New gates land with their own ad-hoc prefix decisions, leading to inconsistencies (e.g. one gate accepts `env VAR=val ...` but another doesn't).
+
+> **Outcome:** a single `.claude/hooks/_prefix_allowlist.py` HELPER module exports the canonical "trusted bash tooling prefix" set. Every PreToolUse gate that does prefix-based short-circuit consumes it. New gates inherit the same shape; expansions to the list (e.g. adding `make ` for build hooks) happen in one place.
+
+- [ ] **Audit** every PreToolUse hook for `cmd.startswith(...)` calls. Grep `.claude/hooks/` for `startswith.*git \|startswith.*bash scripts`. Record current allowlist per hook in chat.
+- [ ] **Extract canonical allowlist** into `.claude/hooks/_prefix_allowlist.py` (HELPER, `# block-via: warning-only`). Surface as `is_trusted_tool_prefix(cmd: str) -> bool`. Default set: the union of all current per-hook allowlists, deduplicated. Comment block names each prefix's rationale.
+- [ ] **Migrate every consumer** to the helper. One-line change per hook (replace inline `startswith(...)` tuple with `_prefix_allowlist.is_trusted_tool_prefix(cmd)`).
+- [ ] **3 sub-tests** in `scripts/test-tooling.sh` `[prefix_allowlist]` block: (1) `git commit` -> trusted; (2) `bash scripts/foo.sh` -> trusted; (3) `bash /tmp/random.sh` -> NOT trusted (must be `bash scripts/`).
+- [ ] **`audit-hooks.sh` Check N** (next available) -- assert no PreToolUse hook calls `cmd.startswith(...)` for command-tooling prefixes outside the shared helper. Drift = audit failure.
+- [ ] **Document the canonical list** in `docs/infrastructure/ai-system.md` "Hook Routing Matrix" -- single table that any new hook author consults. The opt-out chapter then says "add your prefix here, not in your hook's .py file".
+- [ ] Commit: `"hooks: standardize PreToolUse prefix-allowlist across gates (partner to §23)"`
+
+**Inputs (XREFs):** -> XREF: [00-infrastructure/TODO-08 §23 unify SKIP_REVIEW_HOOK opt-out scanner across PreToolUse gates](#23-unify-skip_review_hook-opt-out-scanner-across-pretooluse-gates) (sibling unification; §23 is env-scanner, §29 is prefix-allowlist, both attack the same gate-stack inconsistency from different angles).
+
+**Test checkpoint:** `bash scripts/test-tooling.sh [prefix_allowlist]` 3/3 PASS. `bash scripts/audit-hooks.sh` PASS with the new prefix-allowlist drift check. Manual reproduction: add a new prefix to one hook only -> audit-hooks.sh FAIL (drift caught).
+
+> **Test runner:** `bash scripts/test-tooling.sh` | 3 new sub-tests under `[prefix_allowlist]`.
+
+---
+
 ## Format Quick Reference
 
 | Concern                      | Where it lives                                                                                    | Owner                                           |
@@ -883,6 +1022,12 @@ The duct-tape workaround `scripts/commit-with-skip.sh` exists precisely because 
 | ⭐ | Heuristic WARN -> ERROR promotion   | ❌ N/A      | ❌ N/A          | ✅ §21 (7 WARN hooks + miss-log + ratio report) |
 | ⭐ | Review-pipeline right-sizing        | ❌ N/A      | ❌ N/A          | ✅ §22 (RISK_TIER + bootstrap + spiral) |
 | ⭐ | Unified SKIP-env opt-out scanner    | ❌ N/A      | ❌ N/A          | ⬜ §23 (shared `_skip_env.py` helper across gate stack) |
+| ⭐ | Codex review state-write reliability | ❌ N/A     | ❌ N/A          | ⬜ §24 (last-codex-review.json populated within 100ms) |
+| ⭐ | Step-observer regex coverage        | ❌ N/A      | ❌ N/A          | ⬜ §25 (7 canonical Codex dispatch shapes recognized) |
+| 💎 | Opt-out wrapper formalize/retire    | ❌ N/A      | ❌ N/A          | ⬜ §26 (commit-with-skip.sh decision per §23 outcome) |
+| ⭐ | Phase-1 evidence-gate FP tuning     | ❌ N/A      | ❌ N/A          | ⬜ §27 (miss-log telemetry; data-driven threshold) |
+| 💎 | Codex prompt argument escaping      | ❌ N/A      | ❌ N/A          | ⬜ §28 (codex-dispatch.sh wrapper + lint Check 12) |
+| ⭐ | Standardized PreToolUse prefix-list | ❌ N/A      | ❌ N/A          | ⬜ §29 (`_prefix_allowlist.py` helper across gates) |
 
 > **After §1-§5:** Claude and Codex share the same MCP server set, the same Codex invocation policy, the same hard gates around reviews and section commits. Drift between the two automation sides is detectable.
 > **After §6-§9:** The whole automation surface is auditable in one script. Hook system is documented; MCP usage is doctrine; superpowers plugin behavior is reconciled with Impossible OS rules.
