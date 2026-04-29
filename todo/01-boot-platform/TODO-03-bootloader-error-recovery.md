@@ -102,8 +102,8 @@ Harden the kernel ELF parser in `load_kernel()` to reject malformed or corrupted
 
 **Test checkpoint:** Build a test kernel with `e_phoff` pointing past EOF. Bootloader must reject with `"Kernel ELF corrupt: phdr offset past EOF"` on serial. Verify on QEMU WHPX and TCG. Normal kernel must pass all checks on all 4 platforms (WHPX, TCG, VBox, bare metal).
 
-> **Verified:** 2026-04-11 -- all 8 checks confirmed with line evidence. Subtraction-based overflow prevention correct. Framebuffer overlap uses pitch*height with overflow guard. Overlapping PT_LOAD segments accepted (valid ELF feature, matches Linux/GRUB). Accepted: none.
-> **Quality reviewed:** 2026-04-11 -- 1 spec violation fixed (e_phentsize != sizeof(Elf64_Phdr) rejection), 1 best practice (e_phnum capped at 64). Accepted: p_align not checked (identity-mapped, not needed for direct physical copy).
+> **Verified:** 2026-04-29 | re-verify of commit `3c888540` | 8/8 items | build OK | smoke PASS (KVM 2.32s). All 8 checks confirmed at file:line. Subtraction-based overflow prevention correct. Framebuffer overlap uses pitch*height with overflow guard. Overlapping PT_LOAD segments accepted (valid ELF feature, matches Linux/GRUB). Prior verify 2026-04-11 retained.
+> **Quality reviewed:** 2026-04-29 | Codex audit-mode adversarial | 1H fixed (file_size >= sizeof(Elf64_Ehdr) guard added before ehdr deref) | scope: boot-code-quality. Prior 2026-04-11 review retained: 1 spec violation fixed (e_phentsize != sizeof(Elf64_Phdr) rejection), 1 best practice (e_phnum capped at 64). Accepted: p_align not checked (identity-mapped, direct physical copy).
 
 ---
 
@@ -555,14 +555,3 @@ The pre-§18 error screen used UEFI text console (`ConOut`) with white-on-blue t
 **Test checkpoint:** Every Verification bullet passes on QEMU WHPX, QEMU TCG, VirtualBox, and bare metal; serial shows no unexpected `[WARN]` / `[CRIT]` on clean boot after all sections land.
 
 **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot)
-
----
-
-## History
-
-| Date | Action | Summary |
-| --- | --- | --- |
-| 2026-04-10 | validate | validate-todo-file: ASCII `->` XREFs; Inputs links + TODO-27 §4 + kernel-init §2; §1-§15 regression notes moved before checklists; §5 stale TODO-02 §12 fixed to TODO-27 §4; OS table compact; Unit Tests + Verification checkpoints + boot test runner; History added. |
-| 2026-04-10 | gap-analysis | gap-analysis-todo: Code-truth IMPORTANT; §15 split -> §15+§16 + Impl row 16; EBS N aligned XREF TODO-02 §9; OS TODO-22 row + Sources; Inputs TODO-22; Unit/Verify §16; TODO-22 + kernel-init + TODO-02 patches; 6 searches + MS Learn fetch. |
-| 2026-04-10 | validate | validate-todo-file: continuation rg clean; Inputs + `boot_hw.c` + TODO-02 §9 Inputs XREF; §2 policy bullet de-staled (shared N); OS `TODO-22` cell; 16 `##` sections Commit+Test-last OK; `run-boot-tests.bat` present; external XREF section anchors spot-checked. |
-| 2026-04-10 | validate | Inputs: `-> XREF` `TODO-05-boot-device-discovery.md §5,§11` for error-screen handoff from fallback / health-check (paired with TODO-05 validate pass). |

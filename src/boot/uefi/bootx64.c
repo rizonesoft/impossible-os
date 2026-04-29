@@ -3581,6 +3581,18 @@ static EFI_STATUS load_kernel(UINT64 *entry_point)
     root_dir->Close(root_dir);
 
 kernel_loaded:
+    /* Codex audit-mode review 2026-04-29: validate file_size covers a
+     * full Elf64_Ehdr BEFORE any header field deref. The disk path's
+     * AllocatePages buffer is uninitialized past file_size; without
+     * this guard a truncated kernel (file_size < 64) would let stale
+     * buffer bytes feed e_phentsize / e_phnum / e_phoff and possibly
+     * pass the existing ELF-bounds checks. Matches the additive-bounds
+     * hardening pattern of the rest of load_kernel. */
+    if (file_size < sizeof(Elf64_Ehdr)) {
+        serial_early_print("[FAIL] Kernel ELF corrupt: file < Elf64_Ehdr\n");
+        return EFI_LOAD_ERROR;
+    }
+
     /* Parse ELF header */
     ehdr = (Elf64_Ehdr *)file_buf;
     if (ehdr->e_magic != ELF_MAGIC || ehdr->e_class != 2 ||
