@@ -381,6 +381,46 @@ boot_result_t boot_payload_validate(const struct boot_info *info,
             }
         }
 
+        /* c2 pairwise descriptor overlap. payload_overlap_check above
+         * compares each descriptor against retained boot regions only;
+         * it does NOT compare two payload descriptors against each
+         * other. Without this loop, a malformed handoff that publishes
+         * MODULE@X and INITRD@Y with overlapping ranges would pass
+         * validation as long as neither hits boot_info / rt_mmap / USB
+         * DMA / fb, payload_total_bytes would double-count the overlap,
+         * and downstream consumers would be handed aliased payloads.
+         * O(N) per outer iter; total O(N^2/2) = 496 compares max over
+         * BOOT_PAYLOAD_MAX=32. Zero-length descriptors cannot overlap
+         * by construction (ranges_overlap rejects len==0); skip
+         * empty-slot peers defensively. */
+        {
+            uint32_t j;
+            for (j = 0u; j < i; j++) {
+                const struct boot_payload_desc *e =
+                    &info->payload_descriptors[j];
+                if (descriptor_is_empty_slot(e))
+                    continue;
+                if (ranges_overlap(d->phys_start, d->length,
+                                   e->phys_start, e->length)) {
+                    payload_log_failure(
+                        i, BOOT_PAYLOAD_ERR_DESCRIPTOR_OVERLAP, d);
+                    klog(LOG_ERROR, "boot",
+                         "boot_payload: descriptor #%u "
+                         "[%lx+%lx) overlaps descriptor #%u "
+                         "[%lx+%lx)",
+                         (uint64_t)i,
+                         (uint64_t)d->phys_start,
+                         (uint64_t)d->length,
+                         (uint64_t)j,
+                         (uint64_t)e->phys_start,
+                         (uint64_t)e->length);
+                    if (out_error != (enum boot_payload_error *)0)
+                        *out_error = BOOT_PAYLOAD_ERR_DESCRIPTOR_OVERLAP;
+                    return BOOT_FATAL;
+                }
+            }
+        }
+
         /* d unknown-type / unknown-flags policy. The REQUIRED flag
          * forces strict checking for forward-compatibility control:
          * a newer bootloader marking a payload REQUIRED tells this

@@ -509,7 +509,7 @@ struct boot_info {
     UINT32  hv_flags;
     char    hv_vendor[16];
 
-    /* Typed payload descriptor array. Two invariants enforced by
+    /* Typed payload descriptor array. Three invariants enforced by
      * the kernel validator (see boot_payload_validate() in
      * src/kernel/main/boot_payload.c; contract lives in the kernel
      * header):
@@ -520,10 +520,18 @@ struct boot_info {
      *       other field zero (flags, phys_start, length, alignment,
      *       checksum, producer_id, _reserved). Residual metadata in a
      *       NONE slot is rejected (BOOT_PAYLOAD_ERR_NONE_NOT_EMPTY).
-     * The current UEFI bootloader satisfies both trivially: it emits
-     * payload_count=0 after the full efi_memset(g_boot_info_ptr, 0,
-     * sizeof(struct boot_info)) at handoff alloc time. Any future
-     * producer must uphold both invariants before publishing. */
+     *   (3) Pairwise-disjoint: occupied descriptors inside the prefix
+     *       MUST have non-overlapping ranges using half-open
+     *       [phys_start, phys_start+length) semantics. Adjacent
+     *       (X+len == Y) is allowed; any overlap is rejected
+     *       (BOOT_PAYLOAD_ERR_DESCRIPTOR_OVERLAP). Without this, two
+     *       payload descriptors could alias the same physical range
+     *       and downstream consumers would be handed conflicting
+     *       payloads (e.g. MODULE and INITRD overlapping).
+     * The current UEFI bootloader satisfies all three trivially: it
+     * emits payload_count=0 after the full efi_memset(g_boot_info_ptr,
+     * 0, sizeof(struct boot_info)) at handoff alloc time. Any future
+     * producer must uphold all three invariants before publishing. */
     struct boot_payload_desc payload_descriptors[BOOT_PAYLOAD_MAX];
     UINT32  payload_count;
     UINT32  payload_overflow;

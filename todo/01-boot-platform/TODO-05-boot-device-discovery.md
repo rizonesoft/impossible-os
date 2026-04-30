@@ -309,18 +309,18 @@ Firmware boot entry **`Boot####`** variables hold an **`EFI_LOAD_OPTION`**: attr
 ## OS Comparison
 
 | ⭐  | Feature                     | 🪟 Win11                      | 🐧 Linux                 | 🚀 Impossible OS |
-| --- | --------------------------- | ---------------------------- | ----------------------- | --------------- |
-| 💎  | Boot device identification  | ✅ BCD + device path          | ✅ GRUB search command   | ✅ §1-§2 done |
-| 💎  | Multi-device fallback       | ✅ BCD boot order             | ✅ GRUB menu entries     | ✅ §5 done |
-| 💎  | Boot device type in kernel  | ✅ Registry boot info         | ✅ /proc/cmdline root=   | ✅ §3-§4 done |
-| 💎  | Boot variable reading       | ✅ BCD reads BootOrder        | ✅ efibootmgr/efivarfs   | ✅ §6 done |
-| 💎  | Boot#### option decode      | ✅ BCD / bcdedit              | ✅ efibootmgr -v         | ✅ S12 done |
-| 💎  | BootNext one-shot boot      | ✅ SetFirmwareEnvVar          | ✅ efibootmgr -n         | ✅ §6 done |
-| 💎  | Partition GUID validation   | ✅ BCD disk signature         | ✅ root=PARTUUID=        | ✅ §7 done |
-| 💎  | Removable media detection   | ✅ DriveType removable        | ✅ sysfs removable flag  | ✅ §8 done |
-| 💎  | Boot device Registry        | ✅ HKLM Enum + MountedDevices | ✅ /sys/firmware/efi     | ✅ §9 done |
-| ⭐  | Full device enumeration log | ❌ Hidden in Event Log        | ❌ Not logged            | ✅ §10 done 🚀 |
-| ⭐  | Pre-boot disk health check  | ❌ Post-boot SMART only       | ❌ Post-boot smartd only | ✅ §11 done 🚀 |
+| --- | --------------------------- | ------------------------------ | ------------------------ | ----------------- |
+| 💎  | Boot device identification  | ✅ BCD + device path          | ✅ GRUB search command   | ✅ §1-§2 done    |
+| 💎  | Multi-device fallback       | ✅ BCD boot order             | ✅ GRUB menu entries     | ✅ §5 done       |
+| 💎  | Boot device type in kernel  | ✅ Registry boot info         | ✅ /proc/cmdline root=   | ✅ §3-§4 done    |
+| 💎  | Boot variable reading       | ✅ BCD reads BootOrder        | ✅ efibootmgr/efivarfs   | ✅ §6 done       |
+| 💎  | Boot#### option decode      | ✅ BCD / bcdedit              | ✅ efibootmgr -v         | ✅ S12 done      |
+| 💎  | BootNext one-shot boot      | ✅ SetFirmwareEnvVar          | ✅ efibootmgr -n         | ✅ §6 done       |
+| 💎  | Partition GUID validation   | ✅ BCD disk signature         | ✅ root=PARTUUID=        | ✅ §7 done       |
+| 💎  | Removable media detection   | ✅ DriveType removable        | ✅ sysfs removable flag  | ✅ §8 done       |
+| 💎  | Boot device Registry        | ✅ HKLM Enum + MountedDevices | ✅ /sys/firmware/efi     | ✅ §9 done       |
+| ⭐  | Full device enumeration log | ❌ Hidden in Event Log        | ❌ Not logged            | ✅ §10 done      |
+| ⭐  | Pre-boot disk health check  | ❌ Post-boot SMART only       | ❌ Post-boot smartd only | ✅ §11 done      |
 
 > **After parity items:** Impossible OS matches Windows and Linux on all boot device discovery fundamentals: device identification via LoadedImage, UEFI boot variable reading, partition GUID validation, removable media detection, and Registry population. The exclusive items push beyond: comprehensive serial logging of the full device enumeration (neither competitor exposes this), and a pre-boot disk health check at the UEFI stage that gives users early warning of failing hardware before the kernel even loads.
 
@@ -361,13 +361,3 @@ Firmware boot entry **`Boot####`** variables hold an **`EFI_LOAD_OPTION`**: attr
 **Test checkpoint:** Every Verification bullet above passes on QEMU WHPX, QEMU TCG, VirtualBox, and bare metal; POST16 codes `0xB090`--`0xB095` localize bootloader failures as documented in §1--§5.
 
 **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot)
-
----
-
-## History
-
-| Date | Action | Summary |
-| --- | --- | --- |
-| 2026-04-10 | validate | validate-todo-file: Inputs `→ XREF`; §5/§11 error-screen refs use full `TODO-03` filename; Inputs XREF TODO-20 for §9 Registry keys; Unit Tests + Verification closed with **Test checkpoint**; **Test runner** `run-boot-tests.bat`; History added; reciprocal Inputs on TODO-03 (§3,§11) and TODO-20 (§9 keys). Flags: §9 blocked until registry init + TODO-20 APIs; `test_boot_device.c` not in tree yet (planned). |
-| 2026-04-10 | gap-analysis | Web research: UEFI Loaded Image + Boot Manager (`uefi.org` specs); Linux `efibootmgr`/BootOrder/BootNext; GRUB `search`/UUID; systemd-boot multi-ESP. Code-truth: `load_kernel` uses LoadedImage; `parse_boot_conf` still `LocateProtocol`; no `boot_info` device fields; POST16 `0xB090`--`0xB095` not in `boot_init.h`. Added **§12** Boot#### `EFI_LOAD_OPTION` decode; IMPORTANT + §1/§2 notes; Impl row 12 + OS row; §10 depends on §12; Unit Tests smoke line; POST16 define bullet §1. |
-| 2026-04-10 | validate | validate-todo-file: §1 NOTE range §2--§12; POST16 XREF pinned to `TODO-14 §2`; Outcome health-check wording matches §11 (no SMART claim); Verification + Commit cover §12; 12 flat `##` sections, Commit+Test-last OK; Inputs paths + `run-boot-tests.bat` exist; OS parity rows map to §2--§12. Flags: §10 still 10 bullets; external blockers TODO-02 §2, TODO-20 for Registry. |

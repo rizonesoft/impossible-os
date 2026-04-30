@@ -682,6 +682,79 @@ static void test_payload_overlap_usb_dma(void)
                    "err=OVERLAP_USB_DMA");
 }
 
+static void test_payload_descriptor_overlap_exact_duplicate(void)
+{
+    TEST_KLOG_SUPPRESS("boot");
+    enum boot_payload_error err = BOOT_PAYLOAD_ERR_OK;
+
+    bi_payload_zero();
+    s_test_buf.payload_count                     = 2;
+    s_test_buf.payload_descriptors[0].type       = BOOT_PAYLOAD_MODULE;
+    s_test_buf.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
+    s_test_buf.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
+    s_test_buf.payload_descriptors[0].length     = SAFE_PAYLOAD_LEN;
+    s_test_buf.payload_descriptors[1].type       = BOOT_PAYLOAD_INITRD;
+    s_test_buf.payload_descriptors[1].flags      = BOOT_PAYLOAD_FLAG_VALID;
+    s_test_buf.payload_descriptors[1].phys_start = SAFE_PAYLOAD_START;
+    s_test_buf.payload_descriptors[1].length     = SAFE_PAYLOAD_LEN;
+    s_test_buf.payload_total_bytes               = 2ull * SAFE_PAYLOAD_LEN;
+
+    TEST_ASSERT_EQ(boot_payload_validate(&s_test_buf, &err), BOOT_FATAL,
+                   "exact-duplicate phys range rejected");
+    TEST_ASSERT_EQ((int)err, (int)BOOT_PAYLOAD_ERR_DESCRIPTOR_OVERLAP,
+                   "err=DESCRIPTOR_OVERLAP");
+}
+
+static void test_payload_descriptor_overlap_partial(void)
+{
+    TEST_KLOG_SUPPRESS("boot");
+    enum boot_payload_error err = BOOT_PAYLOAD_ERR_OK;
+
+    bi_payload_zero();
+    /* MODULE@X..X+0x2000; INITRD@X+0x1000..X+0x3000 -- second straddles
+     * the upper half of first by 0x1000 bytes. Neither hits a retained
+     * boot region (SAFE_PAYLOAD_START is 64 GiB, far from any). */
+    s_test_buf.payload_count                     = 2;
+    s_test_buf.payload_descriptors[0].type       = BOOT_PAYLOAD_MODULE;
+    s_test_buf.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
+    s_test_buf.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
+    s_test_buf.payload_descriptors[0].length     = 0x2000ull;
+    s_test_buf.payload_descriptors[1].type       = BOOT_PAYLOAD_INITRD;
+    s_test_buf.payload_descriptors[1].flags      = BOOT_PAYLOAD_FLAG_VALID;
+    s_test_buf.payload_descriptors[1].phys_start = SAFE_PAYLOAD_START + 0x1000ull;
+    s_test_buf.payload_descriptors[1].length     = 0x2000ull;
+    s_test_buf.payload_total_bytes               = 0x4000ull;
+
+    TEST_ASSERT_EQ(boot_payload_validate(&s_test_buf, &err), BOOT_FATAL,
+                   "partial-overlap phys ranges rejected");
+    TEST_ASSERT_EQ((int)err, (int)BOOT_PAYLOAD_ERR_DESCRIPTOR_OVERLAP,
+                   "err=DESCRIPTOR_OVERLAP partial");
+}
+
+static void test_payload_descriptor_overlap_adjacent_ok(void)
+{
+    enum boot_payload_error err = BOOT_PAYLOAD_ERR_OK;
+
+    bi_payload_zero();
+    /* Adjacent (touching) ranges MUST NOT overlap: ranges_overlap uses
+     * half-open [start, start+len) semantics so X+len == Y is allowed. */
+    s_test_buf.payload_count                     = 2;
+    s_test_buf.payload_descriptors[0].type       = BOOT_PAYLOAD_MODULE;
+    s_test_buf.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
+    s_test_buf.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
+    s_test_buf.payload_descriptors[0].length     = 0x1000ull;
+    s_test_buf.payload_descriptors[1].type       = BOOT_PAYLOAD_INITRD;
+    s_test_buf.payload_descriptors[1].flags      = BOOT_PAYLOAD_FLAG_VALID;
+    s_test_buf.payload_descriptors[1].phys_start = SAFE_PAYLOAD_START + 0x1000ull;
+    s_test_buf.payload_descriptors[1].length     = 0x1000ull;
+    s_test_buf.payload_total_bytes               = 0x2000ull;
+
+    TEST_ASSERT_EQ(boot_payload_validate(&s_test_buf, &err), BOOT_OK,
+                   "adjacent non-overlapping ranges accepted");
+    TEST_ASSERT_EQ((int)err, (int)BOOT_PAYLOAD_ERR_OK,
+                   "err=OK adjacent");
+}
+
 static void test_payload_bad_alignment(void)
 {
     TEST_KLOG_SUPPRESS("boot");
@@ -1199,6 +1272,12 @@ void test_register_boot_info(void)
                             test_payload_overlap_rt_mmap, TEST_CAT_BOOT);
     test_suite_register_cat("boot_payload: overlap usb_dma",
                             test_payload_overlap_usb_dma, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_payload: descriptor overlap exact",
+                            test_payload_descriptor_overlap_exact_duplicate, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_payload: descriptor overlap partial",
+                            test_payload_descriptor_overlap_partial, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_payload: descriptor adjacent ok",
+                            test_payload_descriptor_overlap_adjacent_ok, TEST_CAT_BOOT);
     test_suite_register_cat("boot_payload: bad alignment",
                             test_payload_bad_alignment, TEST_CAT_BOOT);
     test_suite_register_cat("boot_payload: unknown type required",

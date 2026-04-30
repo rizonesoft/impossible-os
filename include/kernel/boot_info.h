@@ -158,6 +158,18 @@ enum boot_payload_error {
                                                 * non-zero); ABI contract
                                                 * requires NONE == fully
                                                 * zeroed empty slot. */
+    BOOT_PAYLOAD_ERR_DESCRIPTOR_OVERLAP   = 14, /* two occupied descriptors
+                                                * inside the packed prefix
+                                                * have overlapping
+                                                * [phys_start, phys_start+length)
+                                                * ranges. Caught even when
+                                                * neither overlaps a retained
+                                                * boot region (boot_info,
+                                                * rt_mmap, USB DMA, fb), so
+                                                * a malformed loader cannot
+                                                * publish aliased payloads
+                                                * that downstream consumers
+                                                * would treat as distinct. */
 };
 
 /* Forward declaration so the validator prototype can reference
