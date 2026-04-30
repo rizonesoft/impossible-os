@@ -745,12 +745,12 @@ struct fat32_volume *fat32_init(const struct blkdev *dev)
     /* Read the boot sector */
     if (fat32_read_sector(vol, 0, vol->sector_buf) != 0) {
         klog(LOG_ERROR, "fat32", "FAT32: cannot read boot sector");
-        return (struct fat32_volume *)0;
+        goto fail;
     }
 
     if (vol->sector_buf[510] != 0x55 || vol->sector_buf[511] != 0xAA) {
         klog(LOG_ERROR, "fat32", "FAT32: invalid boot signature");
-        return (struct fat32_volume *)0;
+        goto fail;
     }
 
     /* Parse BPB fields */
@@ -789,12 +789,56 @@ struct fat32_volume *fat32_init(const struct blkdev *dev)
 
     /* Strict BPB validation (Microsoft FAT spec S3) */
     if (fat32_validate_bpb(vol) != 0)
-        return (struct fat32_volume *)0;
+        goto fail;
 
     /* Check dirty volume marker via FAT[1] bit 27 */
     fat32_read_dirty_marker(vol);
 
-    /* Compare FAT1 vs FAT2; repair FAT2 if they differ */
+    /* Auto-run fsck on dirty mount BEFORE exposing the volume to VFS.
+     * Without this, a power-loss-corrupted FAT32 volume would mount
+     * cleanly with stale FAT/cluster state, then silently corrupt
+     * subsequent writes. Previously the only auto-fsck path was the
+     * BlackBox-specific gate in partition.c (GPT name == "BlackBox"),
+     * leaving every other FAT32 volume unrepaired. The dirty-mount
+     * repair belongs in the FS driver itself so all volumes get the
+     * same self-heal contract. fat32_fsck(vol, fix=1) walks the full
+     * directory tree, detects cross-linked chains and lost clusters,
+     * and repairs them; on success, clear the in-memory dirty flag so
+     * set_clean_marker on unmount fires correctly. Failure leaves
+     * volume_dirty=1 so the next mount retries. */
+    if (vol->volume_dirty) {
+        klog(LOG_WARN, "fat32",
+             "auto-fsck: dirty volume detected; running repair before mount");
+        int fsck_rc = fat32_fsck(vol, 1);
+        if (fsck_rc == 0) {
+            klog(LOG_INFO, "fat32",
+                 "auto-fsck: repair completed; volume now clean");
+            vol->volume_dirty = 0;
+        } else {
+            /* Fail-safe: refuse to expose a writable volume that fsck
+             * could not fully repair (traversal failed -- partial walk
+             * means lost-cluster scan was skipped, leaving the FS in
+             * an unknown state). A degraded mount would let normal
+             * VFS writes corrupt a FAT that fsck just declared
+             * inconsistent. Free the volume struct via the same
+             * pmm_free_frame loop the caller would use; otherwise
+             * repeated mount attempts on a corrupted volume leak
+             * pages_needed PMM frames per try. The dirty bit stays
+             * set on disk (no clean marker written), so the next
+             * mount retries fsck automatically once the underlying
+             * issue is gone. Operator workaround: boot to recovery,
+             * run chkdsk D: /fat32 /fix manually, then remount. */
+            klog(LOG_ERROR, "fat32",
+                 "auto-fsck: errors remain (%d); refusing to mount "
+                 "writable; operator must run chkdsk from recovery",
+                 (uint64_t)fsck_rc);
+            goto fail;
+        }
+    }
+
+    /* Compare FAT1 vs FAT2; repair FAT2 if they differ. Runs on every
+     * mount as defense in depth -- fsck above already includes a FAT
+     * compare on dirty volumes; this catches drift on clean volumes. */
     fat32_compare_repair_fats(vol);
 
     /* Set up root node */
@@ -867,6 +911,20 @@ struct fat32_volume *fat32_init(const struct blkdev *dev)
     }
 
     return vol;
+
+fail:
+    /* Centralized cleanup for every post-allocation failure path.
+     * Without this, repeated mount attempts on a corrupted, malformed,
+     * or auto-fsck-failing volume would leak `pages_needed` PMM frames
+     * per try. Every failure label above goes through here so the
+     * frames are always returned. */
+    {
+        uintptr_t base = (uintptr_t)vol;
+        uint32_t pg;
+        for (pg = 0; pg < pages_needed; pg++)
+            pmm_free_frame(base + (uintptr_t)pg * 4096u);
+    }
+    return (struct fat32_volume *)0;
 }
 
 struct vfs_fs_driver *fat32_get_driver(void)

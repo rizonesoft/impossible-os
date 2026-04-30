@@ -26,7 +26,7 @@ static inline int bitset_test(const uint8_t *bits, uint32_t idx)
  * Returns the number of cross-links detected. */
 static uint32_t walk_chain(struct fat32_volume *vol, uint8_t *visited,
                             uint32_t start_cluster, uint32_t max_cluster,
-                            int fix)
+                            int fix, int *repair_failed)
 {
     uint32_t cluster = start_cluster;
     uint32_t prev = 0;
@@ -41,8 +41,16 @@ static uint32_t walk_chain(struct fat32_volume *vol, uint8_t *visited,
             klog(LOG_WARN, "fsck",
                  "cross-linked chain at cluster %u", (uint64_t)cluster);
             if (fix && prev) {
-                /* Truncate the chain at the previous cluster */
-                fat32_set_fat_entry(vol, prev, 0x0FFFFFFF);
+                /* Truncate the chain at the previous cluster.
+                 * fat32_set_fat_entry returns -1 on FAT sector R/W
+                 * failure; without propagating, a torn truncate would
+                 * declare the FS clean while the chain still aliases. */
+                if (fat32_set_fat_entry(vol, prev, 0x0FFFFFFF) != 0) {
+                    klog(LOG_ERROR, "fsck",
+                         "truncate FAT write failed at cluster %u",
+                         (uint64_t)prev);
+                    *repair_failed = 1;
+                }
                 klog(LOG_INFO, "fsck",
                      "truncated chain at cluster %u", (uint64_t)prev);
             }
@@ -66,21 +74,45 @@ static uint32_t walk_chain(struct fat32_volume *vol, uint8_t *visited,
 }
 
 /* Recursively walk directory entries and mark all reachable clusters. */
+/* walk_directory: traverse a directory cluster chain, marking every
+ * reached cluster in `visited`. Returns the count of cross-linked
+ * clusters detected. Sets *traversal_failed = 1 on ANY allocation or
+ * read failure that left the visited bitmap incomplete -- the caller
+ * MUST treat a partial walk as a "do not run lost-cluster scan in fix
+ * mode" signal, otherwise the post-walk lost-cluster pass would free
+ * every cluster the incomplete traversal failed to reach (data wipe).
+ *
+ * Allocation note: `bytes_per_cluster = sectors_per_cluster * 512`
+ * ranges 512..65536 across valid BPBs. CLAUDE.md mandates
+ * pmm_alloc_contiguous for allocations > 4 KiB; use it when the
+ * cluster spills past one page so cluster sizes >= 8 KiB do not
+ * implicitly fail kmalloc and pretend success. Allocation failure
+ * here is now FATAL to the walk, not a silent partial scan. */
 static uint32_t walk_directory(struct fat32_volume *vol, uint8_t *visited,
                                 uint32_t dir_cluster, uint32_t max_cluster,
-                                int fix)
+                                int fix, int *traversal_failed,
+                                int *repair_failed)
 {
     uint32_t bytes_per_cluster = vol->bpb.sectors_per_cluster * 512;
     uint8_t *cluster_buf;
+    uint32_t pmm_pages = 0;
     uint32_t cur_cluster = dir_cluster;
     uint32_t cross_links = 0;
 
-    cluster_buf = (uint8_t *)kmalloc(bytes_per_cluster);
-    if (!cluster_buf)
+    if (bytes_per_cluster <= 4096u) {
+        cluster_buf = (uint8_t *)kmalloc(bytes_per_cluster);
+    } else {
+        pmm_pages = (bytes_per_cluster + 4095u) / 4096u;
+        cluster_buf = (uint8_t *)pmm_alloc_contiguous(pmm_pages);
+    }
+    if (!cluster_buf) {
+        *traversal_failed = 1;
         return 0;
+    }
 
     /* Mark directory's own cluster chain */
-    cross_links += walk_chain(vol, visited, dir_cluster, max_cluster, fix);
+    cross_links += walk_chain(vol, visited, dir_cluster, max_cluster, fix,
+                              repair_failed);
 
     /* Walk directory entries */
     cur_cluster = dir_cluster;
@@ -89,8 +121,13 @@ static uint32_t walk_directory(struct fat32_volume *vol, uint8_t *visited,
         uint32_t i;
 
         if (fat32_read_sectors_multi(vol, sector, vol->bpb.sectors_per_cluster,
-                                     cluster_buf) != 0)
+                                     cluster_buf) != 0) {
+            /* Read failure mid-walk: the visited bitmap is incomplete
+             * for any subdirectories not yet recursed into. Mark the
+             * walk failed so fsck skips the lost-cluster freeing pass. */
+            *traversal_failed = 1;
             break;
+        }
 
         for (i = 0; i < bytes_per_cluster; i += 32) {
             struct fat32_dir_entry *de =
@@ -115,13 +152,18 @@ static uint32_t walk_directory(struct fat32_volume *vol, uint8_t *visited,
                 continue;
 
             if (de->attr & FAT32_ATTR_DIRECTORY) {
-                /* Recurse into subdirectory */
+                /* Recurse into subdirectory; failure propagates via
+                 * traversal_failed and repair_failed -- no need to
+                 * inspect the count. */
                 cross_links += walk_directory(vol, visited, fc,
-                                              max_cluster, fix);
+                                              max_cluster, fix,
+                                              traversal_failed,
+                                              repair_failed);
             } else {
                 /* Walk file's cluster chain */
                 cross_links += walk_chain(vol, visited, fc,
-                                          max_cluster, fix);
+                                          max_cluster, fix,
+                                          repair_failed);
             }
         }
 
@@ -134,7 +176,14 @@ static uint32_t walk_directory(struct fat32_volume *vol, uint8_t *visited,
     }
 
 dir_done:
-    kfree(cluster_buf);
+    if (pmm_pages > 0) {
+        uintptr_t base = (uintptr_t)cluster_buf;
+        uint32_t pg;
+        for (pg = 0; pg < pmm_pages; pg++)
+            pmm_free_frame(base + (uintptr_t)pg * 4096u);
+    } else {
+        kfree(cluster_buf);
+    }
     return cross_links;
 }
 
@@ -189,17 +238,42 @@ int fat32_fsck(struct fat32_volume *vol, int fix)
     bitset_set(visited, 1);
 
     /* Walk from root directory */
+    int traversal_failed = 0;
+    int repair_failed = 0;
     cross_links = walk_directory(vol, visited, vol->bpb.root_cluster,
-                                 max_cluster, fix);
+                                 max_cluster, fix, &traversal_failed,
+                                 &repair_failed);
 
-    /* Step 4: Detect lost clusters */
+    /* Step 4: Detect lost clusters
+     *
+     * SAFETY GATE: only run this in fix mode if the directory walk
+     * fully completed. A partial walk leaves the visited bitmap with
+     * unmarked file/subdir clusters; running the lost-cluster freeing
+     * pass on an incomplete map would free live data (catastrophic on
+     * an auto-fsck-on-mount path -- a transient OOM during walk would
+     * wipe the volume). Read-only mode (fix=0) still scans to count
+     * "lost-or-unwalked" clusters for the diagnostic, but does not
+     * mutate the FAT. */
+    if (traversal_failed) {
+        klog(LOG_ERROR, "fsck",
+             "directory traversal incomplete; SKIPPING lost-cluster "
+             "freeing pass (would free live data on a partial walk)");
+    }
     for (cluster = 2; cluster < max_cluster; cluster++) {
         uint32_t fat_val = fat32_get_fat_entry(vol, cluster);
         if (fat_val != FAT32_FREE && !bitset_test(visited, cluster)) {
             lost_clusters++;
-            if (fix) {
-                /* Free the lost cluster */
-                fat32_set_fat_entry(vol, cluster, FAT32_FREE);
+            if (fix && !traversal_failed) {
+                /* Free the lost cluster. fat32_set_fat_entry returns
+                 * -1 on FAT R/W error -- propagate so the auto-fsck-
+                 * on-mount path does NOT clear the dirty bit and
+                 * expose a still-corrupted FAT. */
+                if (fat32_set_fat_entry(vol, cluster, FAT32_FREE) != 0) {
+                    klog(LOG_ERROR, "fsck",
+                         "free FAT write failed at cluster %u",
+                         (uint64_t)cluster);
+                    repair_failed = 1;
+                }
             }
         }
     }
@@ -218,8 +292,33 @@ int fat32_fsck(struct fat32_volume *vol, int fix)
     klog(LOG_INFO, "fsck",
          "%u errors, %u cross-links, %u lost clusters -- %s",
          (uint64_t)errors, (uint64_t)cross_links, (uint64_t)lost_clusters,
-         fix ? (errors ? "Fixed" : "Clean") :
-               (errors ? "Errors remain" : "Clean"));
+         traversal_failed ? "Errors remain (partial walk)" :
+         (fix ? (errors ? "Fixed" : "Clean") :
+                (errors ? "Errors remain" : "Clean")));
 
-    return errors > 0 ? -1 : 0;
+    /* Return contract:
+     *   0  = filesystem is now consistent. In fix=1 mode this means
+     *        the walk completed AND every repair write (truncate +
+     *        free) succeeded; the FS no longer has the errors fsck
+     *        found. In fix=0 mode it means no errors were found.
+     *   -1 = filesystem state is NOT trustworthy. Possible causes:
+     *        (a) traversal_failed -- incomplete walk; no mutations
+     *            possible without risking data loss.
+     *        (b) repair_failed -- fix=1 attempted a FAT write
+     *            (truncate or free) that returned -1; the FS may now
+     *            be in a torn state somewhere between original and
+     *            repaired.
+     *        (c) fix=0 reported errors that have not been repaired.
+     *
+     * The auto-fsck-on-dirty-mount path in fat32_init relies on this
+     * split: returning -1 for "I just fixed N errors" would falsely
+     * fail every dirty mount that fsck actually repaired (service-
+     * outage regression for common power-loss recovery). Conversely,
+     * returning 0 after a torn repair would expose a corrupt FAT to
+     * normal VFS writes -- worse than the original dirty mount. */
+    if (traversal_failed || (fix && repair_failed))
+        return -1;
+    if (!fix && errors > 0)
+        return -1;
+    return 0;
 }

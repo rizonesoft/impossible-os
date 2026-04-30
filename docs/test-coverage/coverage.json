@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-04-30T18:50:20Z",
-  "total_suites": 787,
-  "total_assertions": 2161,
+  "timestamp": "2026-04-30T19:34:05Z",
+  "total_suites": 796,
+  "total_assertions": 2173,
   "files": [
     {"file": "test_acpi_power.c", "suites": 7, "assertions": 10},
     {"file": "test_alpc.c", "suites": 49, "assertions": 194},
@@ -28,7 +28,7 @@
     {"file": "test_harness.c", "suites": 26, "assertions": 48},
     {"file": "test_heap.c", "suites": 11, "assertions": 31},
     {"file": "test_ipc.c", "suites": 5, "assertions": 12},
-    {"file": "test_ixfs.c", "suites": 8, "assertions": 13},
+    {"file": "test_ixfs.c", "suites": 17, "assertions": 25},
     {"file": "test_klog.c", "suites": 27, "assertions": 57},
     {"file": "test_mmap.c", "suites": 1, "assertions": 2},
     {"file": "test_nt_types.c", "suites": 52, "assertions": 187},

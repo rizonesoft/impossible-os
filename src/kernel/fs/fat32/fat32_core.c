@@ -138,6 +138,54 @@ int fat32_validate_bpb(struct fat32_volume *vol)
         return -1;
     }
 
+    /* Geometry trust-boundary checks: reserved_sectors, fat_size_sectors,
+     * and num_fats are attacker-controlled raw-disk fields that the
+     * fat32_init code uses to compute first_data_sector (= reserved +
+     * num_fats * fat_size). Without these guards, a forged BPB can wrap
+     * u32 arithmetic so first_data_sector underflows total_sectors,
+     * driving cluster scans, free-count math, and fsck across bogus FAT
+     * ranges. Validate the inputs AND the computed result. */
+    uint32_t resv = vol->bpb.reserved_sectors;
+    uint32_t fsz  = vol->bpb.fat_size_sectors;
+
+    if (resv == 0) {
+        klog(LOG_ERROR, "fat32", "BPB validation failed: reserved_sectors is 0");
+        return -1;
+    }
+    if (fsz == 0) {
+        klog(LOG_ERROR, "fat32", "BPB validation failed: fat_size_sectors is 0");
+        return -1;
+    }
+
+    /* Compute first_data_sector in u64 to detect u32 wrap. */
+    uint64_t fds = (uint64_t)resv + ((uint64_t)nf * (uint64_t)fsz);
+    if (fds > (uint64_t)0xFFFFFFFFu) {
+        klog(LOG_ERROR, "fat32",
+             "BPB validation failed: first_data_sector wraps u32 (resv=%u num_fats=%u fat_sz=%u)",
+             (uint64_t)resv, (uint64_t)nf, (uint64_t)fsz);
+        return -1;
+    }
+    if ((uint32_t)fds >= ts) {
+        klog(LOG_ERROR, "fat32",
+             "BPB validation failed: first_data_sector %u >= total_sectors %u",
+             (uint64_t)(uint32_t)fds, (uint64_t)ts);
+        return -1;
+    }
+
+    /* root_cluster must be addressable: (total - first_data) / spc + 1
+     * gives the maximum cluster index. FAT32 spec caps the FAT entry
+     * value at 0x0FFFFFEF; root_cluster above that is a forged BPB. */
+    uint32_t data_sectors = ts - (uint32_t)fds;
+    uint32_t max_cluster  = (data_sectors / spc) + 1u;
+    if (max_cluster > 0x0FFFFFEFu)
+        max_cluster = 0x0FFFFFEFu;
+    if (rc > max_cluster) {
+        klog(LOG_ERROR, "fat32",
+             "BPB validation failed: RootClus %u > max_cluster %u",
+             (uint64_t)rc, (uint64_t)max_cluster);
+        return -1;
+    }
+
     return 0;
 }
 
