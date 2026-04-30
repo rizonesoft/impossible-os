@@ -28,6 +28,8 @@
 #include "kernel/boot_info.h"
 #include "kernel/klog.h"
 #include "kernel/uefi_runtime.h"
+#include "kernel/sched/workqueue.h"
+#include "kernel/sched/spinlock.h"
 
 extern struct boot_info g_boot_info;
 
@@ -157,50 +159,86 @@ int boot_rollback_should_raise(const struct boot_info *info,
  *
  * Why split: a transient uefi_set_variable() failure used to latch
  * s_raised alongside the attempt, which over-stated success and
- * silently suppressed any future retry a caller might wire up. The
- * compositor invokes raise_if_steady() exactly once per boot today
- * (first-frame path), so a SetVariable miss simply drops this boot's
- * advance; the next boot tries again. If a future caller wraps the
- * helper in a retry loop, this split lets it work -- s_attempted
- * stays 1 (do not reconsider policy) while s_raised stays 0 until
- * NVRAM actually changes.
+ * silently suppressed any future retry. The compositor first-frame
+ * path requests one raise per steady boot via
+ * boot_rollback_request_raise(); the worker (or sync fallback) runs
+ * raise_if_steady() and rolls back s_attempted on transient failure,
+ * letting a future request retry. s_attempted stays 1 (do not
+ * reconsider policy) on success or opt-out; stays 0 on transient
+ * failure. s_raised stays 0 until NVRAM actually changes.
  *
- * Race note: all three are written from the compositor thread and
- * read from the same thread. Plain volatile is fine today; if a
- * cross-CPU caller ever appears the stores become __atomic_store_n
- * with __ATOMIC_RELEASE + matching ACQUIRE load. */
-static volatile int s_steady    = 0;
-static volatile int s_attempted = 0;
-static volatile int s_raised    = 0;
+ * SMP note: as of the deferred-raise refactor, s_steady / s_attempted
+ * / s_raised / s_enqueued are accessed by both the compositor caller
+ * and the sys_wq worker (different kernel tasks, possibly different
+ * CPUs). All four are read/written via __atomic_* with explicit
+ * memory order: mark_steady stores RELEASE; the worker loads
+ * ACQUIRE. s_attempted and s_enqueued use CAS so the worker-vs-
+ * fallback race resolves to a single SetVariable attempt. */
+/* SMP synchronization: the worker thread (boot_rollback_request_raise
+ * dispatches the raise to sys_wq) reads/writes these flags from a
+ * different kernel task than the compositor first-frame caller. Use
+ * __atomic_load_n / __atomic_store_n with explicit memory order so
+ * the compositor s mark_steady write happens-before the worker s
+ * raise_if_steady read. The previous "single-thread by construction"
+ * justification no longer holds once the slow path is deferred. */
+static volatile int s_steady    = 0;  /* compositor publishes; worker reads */
+static volatile int s_attempted = 0;  /* claimed under s_state_lock */
+static volatile int s_raised    = 0;  /* worker writes; readers see latched advance */
+static volatile int s_enqueued  = 0;  /* request_raise dedup; updated under s_state_lock */
+/* s_state_lock makes the {s_attempted, s_enqueued} pair atomic with
+ * respect to concurrent callers. Codex 2026-04-30 step-13 M2 finding:
+ * a transient SetVariable failure used to clear the two flags via two
+ * independent atomic stores, exposing a window where a concurrent
+ * request_raise saw s_enqueued=1 + s_attempted=0 and dropped the
+ * retry. With the lock, the failure path clears both inside the same
+ * critical region; request_raise reads s_enqueued under the same
+ * lock. s_steady and s_raised stay outside the lock (acquire/release
+ * atomics) because their state machines do not interlock with the
+ * request/attempt pair. */
+static DEFINE_SPINLOCK(s_state_lock);
 
 void boot_rollback_mark_steady(void)
 {
-    s_steady = 1;
+    /* Release: the compositor s "first frame painted" evidence must be
+     * visible to the worker thread that consumes s_steady via
+     * raise_if_steady. */
+    __atomic_store_n(&s_steady, 1, __ATOMIC_RELEASE);
 }
 
 int boot_rollback_is_steady(void)
 {
-    return s_steady ? 1 : 0;
+    return __atomic_load_n(&s_steady, __ATOMIC_ACQUIRE) ? 1 : 0;
 }
 
 int boot_rollback_was_raised(void)
 {
-    return s_raised ? 1 : 0;
+    return __atomic_load_n(&s_raised, __ATOMIC_ACQUIRE) ? 1 : 0;
 }
 
 int boot_rollback_raise_if_steady(void)
 {
-    if (!s_steady)
+    if (!__atomic_load_n(&s_steady, __ATOMIC_ACQUIRE))
         return 0;
-    if (s_attempted)
-        return 0;
+
+    /* Claim the single raise attempt under the state lock so the
+     * load + set is atomic with respect to concurrent callers and
+     * with respect to the failure-path cleanup below. */
+    {
+        uint64_t flags;
+        spin_lock_irqsave(&s_state_lock, &flags);
+        if (s_attempted) {
+            spin_unlock_irqrestore(&s_state_lock, flags);
+            return 0;
+        }
+        s_attempted = 1;
+        spin_unlock_irqrestore(&s_state_lock, flags);
+    }
 
     uint32_t new_value = 0;
     int opt_in = (int)g_boot_info.config.anti_rollback_raise;
     if (!boot_rollback_should_raise(&g_boot_info, opt_in, &new_value)) {
-        /* Stable policy: opt-out OR shipped <= required. Latch so
-         * the helper does not re-evaluate on every compositor wake. */
-        s_attempted = 1;
+        /* Stable policy: opt-out OR shipped <= required. s_attempted
+         * stays latched; future calls early-out at the lock check. */
         return 0;
     }
 
@@ -221,32 +259,100 @@ int boot_rollback_raise_if_steady(void)
         sizeof(new_value), &new_value);
 
     if (status == 0) {
-        /* Confirmed NVRAM write. Latch both: attempted guards the
-         * early-out, raised keeps the semantic honest for any
-         * future probe. */
-        s_attempted = 1;
-        s_raised    = 1;
+        /* Confirmed NVRAM write. s_attempted is already latched
+         * inside the state lock above; publish s_raised with release
+         * so was_raised() observers see a coherent advance. */
+        __atomic_store_n(&s_raised, 1, __ATOMIC_RELEASE);
         klog(LOG_INFO, "boot",
              "anti-rollback: raised IPOSRequiredSecVersion to %u (steady)",
              (uint64_t)new_value);
         return 1;
     }
 
-    /* Transient UEFI Runtime Services failure. Do NOT latch
-     * s_attempted -- leave the door open for a retry if a caller
-     * ever adds one. s_raised stays clear: is_raised() must only
-     * report confirmed advance. */
+    /* Transient UEFI Runtime Services failure. Roll back s_attempted
+     * AND s_enqueued atomically under the state lock so a concurrent
+     * request_raise caller cannot observe a half-cleared state. */
+    {
+        uint64_t flags;
+        spin_lock_irqsave(&s_state_lock, &flags);
+        s_attempted = 0;
+        s_enqueued  = 0;
+        spin_unlock_irqrestore(&s_state_lock, flags);
+    }
     klog(LOG_WARN, "boot",
          "anti-rollback: SetVariable failed (0x%lx); counter not advanced",
          (uint64_t)status);
     return 0;
 }
 
+/* Worker callback for sys_wq -- runs the slow-path raise on the
+ * deferred-work thread instead of the compositor first-frame
+ * thread. The actual NVRAM write blocks for 10-100 ms on real
+ * firmware; offloading it removes that hitch from presentation. */
+static void boot_rollback_raise_worker(void *arg)
+{
+    (void)arg;
+    /* raise_if_steady handles both the success latch (leaves
+     * s_enqueued=1) and the transient-failure rollback (clears
+     * s_enqueued=0 atomically with s_attempted) inside its own
+     * critical region. Nothing to do in the worker epilogue.
+     * (Codex 2026-04-30 step-13 M1 follow-up: collapsing the race
+     * window required moving the s_enqueued cleanup into the same
+     * place that rolls back s_attempted.) */
+    (void)boot_rollback_raise_if_steady();
+}
+
+int boot_rollback_request_raise(void)
+{
+    /* Idempotent: claim the enqueue slot under the state lock so a
+     * concurrent failure-path cleanup cannot expose a half-cleared
+     * {s_attempted, s_enqueued} pair. */
+    {
+        uint64_t flags;
+        spin_lock_irqsave(&s_state_lock, &flags);
+        if (s_enqueued) {
+            spin_unlock_irqrestore(&s_state_lock, flags);
+            return 0;
+        }
+        s_enqueued = 1;
+        spin_unlock_irqrestore(&s_state_lock, flags);
+    }
+
+    /* Try the deferred path first. sys_wq might be NULL during early
+     * boot or if creation failed; the workqueue pool can also fill
+     * under load. */
+    if (sys_wq != (workqueue_t *)0
+        && workqueue_enqueue(sys_wq, boot_rollback_raise_worker,
+                             (void *)0) != 0) {
+        return 1;
+    }
+
+    /* Fallback: run synchronously on the caller s thread. The
+     * compositor first-frame is one-shot; silently dropping the only
+     * raise attempt would violate the section test checkpoint
+     * "a boot that reaches first stable compositor frame MUST advance
+     * the counter exactly once when the opt-in policy is set". The
+     * stall is unfortunate but bounded (single SetVariable call, no
+     * loop). */
+    klog(LOG_WARN, "boot",
+         "anti-rollback: workqueue unavailable (sys_wq=%s); running "
+         "raise synchronously on caller",
+         (uint64_t)(uintptr_t)(sys_wq ? "full" : "null"));
+    /* raise_if_steady manages s_enqueued cleanup atomically with
+     * s_attempted on transient failure; nothing to do here. */
+    (void)boot_rollback_raise_if_steady();
+    return 1;
+}
+
 /* Test-only reset. Tests that drive the steady gate need a way to
  * rewind state between cases without rebooting. NOT for production use. */
 void boot_rollback_reset_for_test(void)
 {
-    s_steady    = 0;
-    s_attempted = 0;
-    s_raised    = 0;
+    /* Atomic stores to mirror the production paths -- tests that
+     * observe these from a different thread must see a coherent
+     * reset. */
+    __atomic_store_n(&s_steady,    0, __ATOMIC_RELEASE);
+    __atomic_store_n(&s_attempted, 0, __ATOMIC_RELEASE);
+    __atomic_store_n(&s_raised,    0, __ATOMIC_RELEASE);
+    __atomic_store_n(&s_enqueued,  0, __ATOMIC_RELEASE);
 }

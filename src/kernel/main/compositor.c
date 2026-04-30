@@ -333,7 +333,13 @@ void compositor_run(void)
                  * raise when the boot dies before reaching the first
                  * frame, not to force it on every boot. */
                 boot_rollback_mark_steady();
-                (void)boot_rollback_raise_if_steady();
+                /* Defer the actual NVRAM write to sys_wq so the
+                 * first-frame presentation thread doesn t block on
+                 * the UEFI Runtime Services SetVariable call (10-100
+                 * ms on real firmware). request_raise falls back to
+                 * synchronous if sys_wq is unavailable so the raise
+                 * still happens on every steady boot. */
+                (void)boot_rollback_request_raise();
             }
             first_frame = 0;
         } else if (cursor_moved) {

@@ -293,6 +293,22 @@ void boot_rollback_mark_steady(void);
 int  boot_rollback_is_steady(void);
 int  boot_rollback_was_raised(void);
 int  boot_rollback_raise_if_steady(void);
+/* Schedule the raise asynchronously on sys_wq so the compositor
+ * first-frame thread does not block on the UEFI Runtime Services
+ * SetVariable call (10-100 ms NVRAM flash on real firmware). The
+ * actual NVRAM write happens later in the worker thread.
+ *
+ * Idempotent: subsequent calls are no-ops once a work item has
+ * been enqueued OR a synchronous fallback ran.
+ *
+ * Fallback: if sys_wq is null OR the workqueue pool is exhausted,
+ * runs boot_rollback_raise_if_steady() synchronously on the caller s
+ * thread. Compositor first-frame is one-shot; silently dropping the
+ * only raise attempt would violate the section test checkpoint.
+ *
+ * Returns 1 if work was enqueued OR the synchronous fallback ran,
+ * 0 if the request was already serviced (idempotent no-op). */
+int  boot_rollback_request_raise(void);
 void boot_rollback_reset_for_test(void);
 
 /* Warm-kernel-update handoff (section 14).

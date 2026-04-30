@@ -19,6 +19,7 @@
 #include "kernel/test/test.h"
 #include "kernel/test/klog_suppress.h"
 #include "kernel/boot_info.h"
+#include "kernel/sched/workqueue.h"
 
 static struct boot_info s_rb_buf;
 
@@ -295,6 +296,43 @@ static void test_boot_rollback_was_raised_reset_clears(void)
                    "reset keeps raised clear");
 }
 
+/* Codex 2026-04-30 anti-rollback-deferred-raise perf finding: boot_rollback_request_raise
+ * defers the NVRAM SetVariable to sys_wq; the synchronous fallback
+ * (sys_wq null OR pool exhausted) keeps the one-shot compositor
+ * first-frame contract honest. Test the fallback path: with sys_wq
+ * deliberately null and opt-out policy, request_raise must run the
+ * sync raise (which short-circuits as a no-op due to opt-out, but
+ * exercises the fallback dispatch). The deferred path itself is
+ * exercised on every real boot; here we focus on the contract that
+ * a missing sys_wq does not silently drop the only attempt. */
+extern workqueue_t *sys_wq;
+static void test_boot_rollback_request_raise_sync_fallback(void)
+{
+    TEST_KLOG_SUPPRESS("boot");
+    boot_rollback_reset_for_test();
+
+    workqueue_t *saved_wq = sys_wq;
+    uint8_t saved_opt = g_boot_info.config.anti_rollback_raise;
+
+    sys_wq = (workqueue_t *)0;            /* force fallback */
+    g_boot_info.config.anti_rollback_raise = 0; /* opt-out: sync raise no-ops */
+    boot_rollback_mark_steady();
+
+    int r1 = boot_rollback_request_raise();
+    TEST_ASSERT_EQ((uint64_t)r1, 1u,
+                   "fallback path takes ownership of the request");
+    /* Idempotent: second call must NOT re-enqueue / re-run; s_enqueued
+     * is latched. */
+    int r2 = boot_rollback_request_raise();
+    TEST_ASSERT_EQ((uint64_t)r2, 0u,
+                   "second request is idempotent no-op");
+
+    /* Restore + clean up so other tests see normal state. */
+    sys_wq = saved_wq;
+    g_boot_info.config.anti_rollback_raise = saved_opt;
+    boot_rollback_reset_for_test();
+}
+
 void test_register_boot_rollback(void)
 {
     test_suite_register_cat("boot_rollback: NULL info rejected",
@@ -327,6 +365,8 @@ void test_register_boot_rollback(void)
                             test_boot_rollback_mark_steady_latches, TEST_CAT_BOOT);
     test_suite_register_cat("boot_rollback: raise is one-shot even on opt-out",
                             test_boot_rollback_raise_one_shot_opt_out, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_rollback: request_raise sync fallback when sys_wq null",
+                            test_boot_rollback_request_raise_sync_fallback, TEST_CAT_BOOT);
     test_suite_register_cat("boot_rollback: was_raised split stays 0 on opt-out; reset clears",
                             test_boot_rollback_was_raised_reset_clears, TEST_CAT_BOOT);
 }
