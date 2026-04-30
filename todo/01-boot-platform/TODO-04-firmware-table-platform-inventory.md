@@ -87,14 +87,18 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 
 **Test checkpoint:** Synthetic test corrupts an ACPI RSDP checksum byte; `firmware_table_validate_all()` reports the table as `status: degraded` with reason `checksum_fail`; clean OVMF boot reports zero degraded tables. Pointer outside the UEFI memory map -> `status: degraded` with reason `range_unmapped`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 8 validator sub-tests / 14 assertions, 0 failures (TCG: clean SDT VALIDATED, checksum corruption -> CHECKSUM_FAIL, size-below-header -> LENGTH_BAD, size mismatch -> LENGTH_BAD, CONVENTIONAL phys_addr -> RANGE_UNMAPPED, NULL phys_addr -> NULL_POINTER, one-way downgrade preserved, validate_all clean firmware no validator degradations)
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 11 validator sub-tests / 19 assertions, 0 failures (TCG: clean SDT VALIDATED, checksum corruption -> CHECKSUM_FAIL, size-below-header / size mismatch / oversized SDT catalog size / oversized FPDT declared length -> LENGTH_BAD, CONVENTIONAL phys_addr -> RANGE_UNMAPPED, NULL phys_addr -> NULL_POINTER, one-way downgrade preserved, UNKNOWN_PROFILE promoted on full pass, validate_all clean firmware no validator degradations)
 >
 > **Notes:**
 > - Shipped: `firmware_table_validate_all()` + per-source helpers (~330 LOC) in `src/kernel/firmware_tables.c`; private wire-format struct views (RSDP v1/v2, SDT header, SMBIOS3/SMBIOS2 entry-point, ESRT header) pinned with `_Static_assert` on size; 8 new test functions / 14 assertions in `src/kernel/test/test_firmware_tables.c`.
 > - How it runs: `firmware_tables_init()` calls the validator after the three catalog steps and before the boot summary, so the cataloged/validated/degraded counts in `[BOOT] firmware tables: ...` reflect validator findings; idempotent (one-way downgrade, second call is a no-op).
 > - Downstream effects: §8 Registry/BlackBox firmware report consumes `entry->status` + `degraded_reason`; §6 ESRT mirror trusts the validated entry list; Codex 1x adversarial review approved with one residual non-blocking note (test bypass flag global, accepted: test runner is single-threaded by design).
 > - Canonical doc: `include/kernel/firmware_tables.h` `firmware_table_validate_all()` contract.
-> - Scope boundary: §2 marks status only; consumers act on it. §3 owns full DTB header parsing (validator only range-checks DTB base byte). §6 owns ESRT mirror to Registry. §7 owns conformance-profile flagging. §8 owns Registry + JSON publication.
+> - Scope boundary: §2 marks status only; consumers act on it. §3 owns full DTB header parsing (validator only range-checks DTB base byte). §6 owns ESRT mirror to Registry. §7 owns conformance-profile flagging. §8 owns Registry + JSON publication. §10 owns SMBIOS wire-format constant consolidation (deferred from this section).
+
+> **Verified:** 2026-04-30 | commit `789b572f` | 5/5 items | build OK | smoke PASS (KVM 2.35s, "17 cataloged, 9 validated, 0 degraded") | tests 710/710 PASS
+> **Accepted:** [L] SMBIOS3/2 entry-point wire-format length constants duplicated between `smbios.c` (`SMBIOS3_EP_LEN` / `SMBIOS2_EP_LEN_*`) and `firmware_tables.c` (`FW_SMBIOS3_EP_LEN` / `FW_SMBIOS2_EP_LEN_*`); future-spec drift hazard (reason: scope -- consolidating into a shared internal header touches `src/kernel/smbios.c` private types) -> XREF: 01-boot-platform/TODO-04 §10 (item: "Consolidate SMBIOS entry-point wire-format constants into a shared internal header" at line 188)
+> **Quality reviewed:** 2026-04-30 | Codex 5x (design + adversarial + re-adversarial x2 + consistency + perf) | 2M+2L fixed, 1L accepted-XREF | scope: kernel-code-quality
 
 ---
 
@@ -190,6 +194,7 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 - [ ] Unit tests for GUID lookup, range rejection, checksum failures, and conformance levels.
 - [ ] Add fixture blobs for ACPI RSDP, SMBIOS3, ESRT, FPDT, and DTB.
 - [ ] Add host tool mode to decode `firmware-tables.json`.
+- [ ] Consolidate SMBIOS entry-point wire-format constants into a shared internal header (e.g. `src/kernel/smbios_wire.h`) so `smbios.c` (`SMBIOS3_EP_LEN` / `SMBIOS2_EP_LEN_MIN` / `SMBIOS2_EP_LEN_MAX`) and `firmware_tables.c` (`FW_SMBIOS3_EP_LEN` / `FW_SMBIOS2_EP_LEN_MIN` / `FW_SMBIOS2_EP_LEN_MAX`) reference one definition; either include the same header or add `_Static_assert(FW_* == SMBIOS_*)` linking the two if a shared header is too disruptive. Drift risk is low (DMTF DSP0134 entry-point sizes have not changed since SMBIOS 2.4) but the duplicate is still a future-spec hazard.
 - [ ] Verify on QEMU OVMF, VirtualBox EFI, and at least two bare-metal machines.
 - [ ] Commit: `"test: firmware table inventory coverage"`
 

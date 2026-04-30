@@ -23,6 +23,14 @@
 #include "kernel/klog.h"
 #include "libc/string.h"
 
+/* Cross-source consistency: ESRT entry stride literal must equal the
+ * actual struct laid out by uefi_config.c.  If struct boot_uefi_guid or
+ * struct esrt_entry ever grows or shrinks, this assertion fails at
+ * compile time so the validator's range check stays in sync with the
+ * parser's wire layout. */
+_Static_assert(sizeof(struct esrt_entry) == 40,
+               "ESRT entry wire-format stride must be 40 bytes");
+
 /* Compile-time sanity: cap must be at least the config-table cap so every
  * UEFI cfg-table slot can land before ACPI SDTs start filling the rest. */
 _Static_assert(FIRMWARE_TABLE_MAX >= BOOT_CONFIG_TABLE_MAX,
@@ -369,9 +377,29 @@ struct fw_esrt_header_view {
     uint32_t fw_resource_count_max;
     uint64_t fw_resource_version;
 };
-#define FW_ESRT_ENTRY_SIZE 40u  /* GUID(16) + 6*u32 = 40 bytes */
+#define FW_ESRT_ENTRY_SIZE ((uint32_t)sizeof(struct esrt_entry))
 _Static_assert(sizeof(struct fw_esrt_header_view) == 16,
                "ESRT header wire-format must be 16 bytes");
+
+/* Format-specific maxima for firmware-declared lengths.  Used to cap
+ * fw_sum8_is_zero loops before scanning firmware-supplied bytes: a
+ * malicious or corrupt firmware declaring multi-MB lengths could
+ * otherwise force a pre-sti byte sum over an unbounded span and stall
+ * boot.  The caps are several orders of magnitude above any sane
+ * production size for each table:
+ *
+ *   RSDP -- ACPI specification 5.2.5.3 fixes RSDP at 20 (v1) or 36
+ *           (v2) bytes; the cap is tightened to a single page for
+ *           defense-in-depth.
+ *   FPDT -- ACPI specification 5.2.23 puts FPDT at <= ~16 KiB in
+ *           practice (header + a handful of pointer records); cap at
+ *           one page.
+ *   SDT  -- ACPI SDTs are bounded by acpi_for_each_record at parse
+ *           time; we still cap at 1 MiB as a defensive ceiling for any
+ *           pathological DSDT / SSDT. */
+#define FW_RSDP_LENGTH_MAX     0x1000u   /* one page */
+#define FW_FPDT_LENGTH_MAX     0x1000u   /* one page */
+#define FW_SDT_LENGTH_MAX      0x100000u /* 1 MiB */
 
 /* 8-bit sum-to-zero, matching ACPI / SMBIOS spec checksums. */
 static int fw_sum8_is_zero(const uint8_t *bytes, uint32_t len)
@@ -457,6 +485,11 @@ static void fw_validate_acpi_sdt(struct firmware_table_entry *e)
         fw_degrade(e, FW_DEGRADED_LENGTH_BAD, "SDT size below header");
         return;
     }
+    if (e->size > FW_SDT_LENGTH_MAX) {
+        fw_degrade(e, FW_DEGRADED_LENGTH_BAD,
+                   "SDT size exceeds defensive cap");
+        return;
+    }
     if (!fw_mmap_contains(e->phys_addr, e->size)) {
         fw_degrade(e, FW_DEGRADED_RANGE_UNMAPPED, "SDT span outside firmware mmap");
         return;
@@ -501,6 +534,11 @@ static void fw_validate_acpi_rsdp(struct firmware_table_entry *e)
          * trivially pass with sum=0 over zero bytes. */
         if (v2->length < sizeof(*v2)) {
             fw_degrade(e, FW_DEGRADED_LENGTH_BAD, "RSDP v2 length below 36");
+            return;
+        }
+        if (v2->length > FW_RSDP_LENGTH_MAX) {
+            fw_degrade(e, FW_DEGRADED_LENGTH_BAD,
+                       "RSDP v2 length exceeds defensive cap");
             return;
         }
         if (!fw_mmap_contains(e->phys_addr, v2->length)) {
@@ -586,6 +624,11 @@ static void fw_validate_fpdt(struct firmware_table_entry *e)
         (const struct fw_sdt_header_view *)e->phys_addr;
     if (h->length < sizeof(*h)) {
         fw_degrade(e, FW_DEGRADED_LENGTH_BAD, "FPDT length below header");
+        return;
+    }
+    if (h->length > FW_FPDT_LENGTH_MAX) {
+        fw_degrade(e, FW_DEGRADED_LENGTH_BAD,
+                   "FPDT length exceeds defensive cap");
         return;
     }
     if (!fw_mmap_contains(e->phys_addr, h->length)) {

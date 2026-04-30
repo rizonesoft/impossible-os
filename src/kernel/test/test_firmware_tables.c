@@ -422,6 +422,81 @@ static void test_validate_null_phys_addr(void)
                    "NULL phys_addr reports NULL_POINTER");
 }
 
+/* Defensive cap: an oversized firmware-declared length must be
+ * rejected with LENGTH_BAD before fw_sum8_is_zero scans it. Guards the
+ * Codex perf-review finding that an unbounded byte-sum loop in pre-sti
+ * boot could stall startup if a hostile or corrupt firmware advertises
+ * a multi-MB length.
+ *
+ * Two-test invariant lock:
+ *   1. SDT path: catalog size > FW_SDT_LENGTH_MAX must degrade with
+ *      LENGTH_BAD via the size > cap branch. (Catalog size cap.)
+ *   2. FPDT path: build a small buffer whose header.length claims an
+ *      oversized span; buffer is sized just enough for the SDT header
+ *      so a cap regression that moved the FPDT check AFTER
+ *      fw_sum8_is_zero would force a kernel overread (test fails
+ *      loudly) instead of silently passing. (Firmware-declared cap.) */
+static void test_validate_oversized_length_capped_sdt(void)
+{
+    static struct test_sdt sdt;
+    sdt.signature[0] = 'B'; sdt.signature[1] = 'I';
+    sdt.signature[2] = 'G'; sdt.signature[3] = 'X';
+    sdt.length = sizeof(sdt);
+    sdt.revision = 1;
+    seal_checksum((uint8_t *)&sdt, sizeof(sdt),
+                  __builtin_offsetof(struct test_sdt, checksum));
+
+    struct firmware_table_entry e;
+    build_sdt_entry(&e, &sdt, 0x200000u);  /* 2 MiB > FW_SDT_LENGTH_MAX */
+    firmware_table_validate_one_for_test(&e, /*bypass_range=*/1);
+    TEST_ASSERT_EQ(e.status, FW_STATUS_DEGRADED,
+                   "oversized SDT catalog size downgrades before any byte scan");
+    TEST_ASSERT_EQ(e.degraded_reason, FW_DEGRADED_LENGTH_BAD,
+                   "oversized SDT reports LENGTH_BAD");
+}
+
+/* FPDT path: a hostile firmware that advertises an oversized
+ * h->length must be rejected by the cap BEFORE fw_sum8_is_zero loops
+ * over the claimed span. The buffer is exactly sizeof(struct test_sdt)
+ * bytes (36) so a cap regression would force the byte sum to read past
+ * the end of the buffer and either fault or trip the test runner's
+ * boundary detection -- in either case, the regression cannot pass
+ * silently. Buffer is in BSS so it is naturally zeroed; sdt.length is
+ * the only non-zero header field. */
+static void test_validate_oversized_length_capped_fpdt(void)
+{
+    static struct test_sdt sdt;
+    /* Mark the buffer as FPDT-shaped, claim length = 0x10000 which is
+     * 16 * FW_FPDT_LENGTH_MAX so the cap is unambiguous. */
+    sdt.signature[0] = 'F'; sdt.signature[1] = 'P';
+    sdt.signature[2] = 'D'; sdt.signature[3] = 'T';
+    sdt.length = 0x10000u;  /* 64 KiB -- well over 4 KiB cap */
+    sdt.revision = 1;
+    /* Do NOT seal_checksum: we want the cap to fire first; the test
+     * proves the cap rejects BEFORE fw_sum8_is_zero would have run
+     * over 64 KiB of memory past the end of this 36-byte buffer. */
+
+    struct firmware_table_entry e;
+    /* Manual entry build for FPDT cfg-table source. */
+    uint8_t *p = (uint8_t *)&e;
+    for (uint32_t i = 0; i < sizeof(e); i++) p[i] = 0;
+    e.phys_addr = (uintptr_t)&sdt;
+    e.size = 0;  /* cfg-table source: size unknown at catalog time */
+    e.source = FW_SOURCE_UEFI_CFG_TABLE;
+    e.status = FW_STATUS_UNKNOWN_PROFILE;
+    e.degraded_reason = FW_DEGRADED_NONE;
+    e.name[0] = 'F'; e.name[1] = 'P'; e.name[2] = 'D';
+    e.name[3] = 'T'; e.name[4] = '\0';
+    e.owner[0] = 'F'; e.owner[1] = 'P'; e.owner[2] = 'D';
+    e.owner[3] = 'T'; e.owner[4] = '\0';
+
+    firmware_table_validate_one_for_test(&e, /*bypass_range=*/1);
+    TEST_ASSERT_EQ(e.status, FW_STATUS_DEGRADED,
+                   "oversized FPDT firmware-declared length downgrades");
+    TEST_ASSERT_EQ(e.degraded_reason, FW_DEGRADED_LENGTH_BAD,
+                   "oversized FPDT reports LENGTH_BAD via cap");
+}
+
 /* Promotion contract: an UNKNOWN_PROFILE entry that passes a full
  * format-specific validator (here: ACPI SDT format) must end VALIDATED
  * so downstream consumers can distinguish "fully checked by the range
@@ -561,6 +636,12 @@ void test_register_firmware_tables(void)
                             TEST_CAT_BOOT);
     test_suite_register_cat("FW: validator promotes UNKNOWN_PROFILE on full pass",
                             test_validate_promotes_unknown_to_validated,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("FW: validator caps oversized SDT catalog size",
+                            test_validate_oversized_length_capped_sdt,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("FW: validator caps oversized FPDT declared length",
+                            test_validate_oversized_length_capped_fpdt,
                             TEST_CAT_BOOT);
     test_suite_register_cat("FW: validate_all clean firmware has no validator degradations",
                             test_validate_all_clean_ovmf_zero_degraded,
