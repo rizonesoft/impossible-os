@@ -238,7 +238,14 @@ boot_result_t boot_reserved_populate_from_info(const struct boot_info *info,
              (uint64_t)info->rt_mmap_count, (uint64_t)BOOT_RT_MMAP_MAX);
         return BOOT_FATAL;
     }
-    {
+    /* Gated on BOOT_CAP_RUNTIME_SERVICES: when the capability is
+     * degraded (RT init failed and `rt_advertise_unavailable()` cleared
+     * the bit, OR the bootloader populated the field but never asserted
+     * caps_present), the kernel has explicitly decided runtime services
+     * are unavailable. Pinning rt_mmap regions in that state would
+     * waste physical memory on regions the kernel will never call into.
+     * Codex 2026-04-30 finding: previously unconditional. */
+    if ((info->caps_present & BOOT_CAP_RUNTIME_SERVICES) != 0u) {
         uint32_t i;
         for (i = 0u; i < info->rt_mmap_count; i++) {
             const struct boot_rt_mem_entry *rt = &info->rt_mmap[i];

@@ -96,10 +96,19 @@ boot_result_t tpm_init(void)
     const struct tcg_pcr_event *first =
         (const struct tcg_pcr_event *)log;
 
-    uint32_t first_entry_size =
-        (uint32_t)sizeof(struct tcg_pcr_event) + first->event_data_size;
-
-    if (first_entry_size > log_size) {
+    /* Containment check, overflow-safe: rearrange to subtraction so a
+     * malformed event_data_size near UINT32_MAX cannot wrap the sum
+     * back to a small value. Codex 2026-04-30 Round 2 finding: the
+     * previous form sizeof(...) + event_data_size could wrap in 32-bit
+     * and pass the > log_size check while the buffer was actually too
+     * small. Order matters: check log_size >= header size FIRST so
+     * the subtraction below cannot wrap. */
+    if ((size_t)log_size < sizeof(struct tcg_pcr_event)) {
+        klog(LOG_WARN, "TPM", "Event log smaller than header");
+        return BOOT_DEGRADED;
+    }
+    if ((size_t)first->event_data_size
+            > (size_t)log_size - sizeof(struct tcg_pcr_event)) {
         klog(LOG_WARN, "TPM", "Event log truncated");
         return BOOT_DEGRADED;
     }
@@ -119,11 +128,40 @@ boot_result_t tpm_init(void)
 
         num_algs = spec->number_of_algorithms;
 
+        /* Cap the iteration count at the loop's hard limit (8). */
+        uint32_t algs_to_read = num_algs;
+        if (algs_to_read > 8u)
+            algs_to_read = 8u;
+
+        /* Bounds gate: each algorithm entry is 4 bytes (uint16 alg_id +
+         * uint16 digest_size) trailing the spec_id_event header. The
+         * cap-present check at the if-line above only confirmed the
+         * header fits; a malformed cap-present log can still claim
+         * number_of_algorithms = N while the buffer holds only the
+         * header. Codex 2026-04-30 finding: read past first event
+         * payload / past log buffer. Validate the advertised table
+         * before touching alg_ptr.
+         *
+         * Overflow-safe: algs_to_read is at most 8 (capped above), so
+         * algs_to_read * 4 is at most 32 -- no multiplication wrap on
+         * any uint32_t. The addition uses size_t and cannot overflow
+         * because both addends are bounded by struct sizes. */
+        size_t needed = sizeof(struct tcg_spec_id_event)
+                      + (size_t)algs_to_read * 4u;
+        if ((size_t)first->event_data_size < needed) {
+            klog(LOG_WARN, "TPM",
+                 "Event log spec event truncated: data_size=%u < needed=%lu (num_algs=%u); skipping algorithm parse",
+                 (uint64_t)first->event_data_size,
+                 (uint64_t)needed,
+                 (uint64_t)num_algs);
+            algs_to_read = 0u;
+        }
+
         /* Calculate total digest size from algorithm list */
         const uint8_t *alg_ptr = (const uint8_t *)(spec + 1);
         total_digest_size = 0;
         uint32_t i;
-        for (i = 0; i < num_algs && i < 8; i++) {
+        for (i = 0; i < algs_to_read; i++) {
             uint16_t alg_id = *(const uint16_t *)(alg_ptr + i * 4);
             uint16_t digest_sz = *(const uint16_t *)(alg_ptr + i * 4 + 2);
             total_digest_size += digest_sz;
@@ -138,9 +176,21 @@ boot_result_t tpm_init(void)
     /* Walk the event log and count entries.
      * First entry is TCG_PCR_EVENT format (always).
      * Remaining entries are TCG_PCR_EVENT2 format for TPM 2.0. */
-    uint32_t offset = first_entry_size;
+    /* Safe to compute as uint32_t now that the containment checks
+     * above proved event_data_size + sizeof(tcg_pcr_event) fits in
+     * the (possibly larger) log_size; the sum still fits in uint32_t
+     * because sizeof(tcg_pcr_event) is small and event_data_size has
+     * already been bound-checked against log_size. */
+    uint32_t offset = (uint32_t)sizeof(struct tcg_pcr_event)
+                    + first->event_data_size;
     uint32_t event_count = 1;  /* count the first entry */
 
+    /* Containment pattern: every check is "required <= log_size -
+     * offset" form so a malformed log claiming near-4GiB sizes cannot
+     * wrap a uint32_t addition past the bound. Codex 2026-04-30
+     * Round 3 finding: prior `offset + N < log_size` chain wraps when
+     * offset or N approaches UINT32_MAX. log_size is uint32_t per the
+     * boot_info contract. */
     if (s_version == 2) {
         /* TCG_PCR_EVENT2 format:
          * uint32_t pcr_index
@@ -148,18 +198,21 @@ boot_result_t tpm_init(void)
          * TPML_DIGEST_VALUES { uint32_t count; TPMT_HA[count] }
          * uint32_t event_data_size
          * uint8_t  event_data[] */
-        while (offset + 12 < log_size) {
+        while (offset < log_size && (uint32_t)(log_size - offset) >= 12u) {
             /* Skip pcr_index (4) + event_type (4) */
             uint32_t digest_count = *(const uint32_t *)(log + offset + 8);
             if (digest_count > 8) break;  /* sanity check */
 
-            /* Skip past digests: count field (4) + sum of (alg_id(2) + digest) */
+            /* Walk digests: count field (4) + sum of (alg_id(2) + digest).
+             * After the count field, dptr is at log + offset + 12. */
             uint32_t digests_size = 4;  /* count field */
-            const uint8_t *dptr = log + offset + 12;
+            uint32_t dpos = offset + 12u;  /* offset is bounded; +12 fits u32 */
             uint32_t d;
+            int oob = 0;
             for (d = 0; d < digest_count; d++) {
-                if ((uint32_t)(dptr - log) + 2 >= log_size) goto done;
-                uint16_t alg_id = *(const uint16_t *)dptr;
+                /* Need at least 2 bytes for alg_id at dpos. */
+                if (dpos > log_size || (log_size - dpos) < 2u) { oob = 1; break; }
+                uint16_t alg_id = *(const uint16_t *)(log + dpos);
                 uint16_t dsz = 0;
                 /* Look up digest size from algorithm ID */
                 if (alg_id == TPM_ALG_SHA1) dsz = 20;
@@ -167,28 +220,43 @@ boot_result_t tpm_init(void)
                 else if (alg_id == TPM_ALG_SHA384) dsz = 48;
                 else if (alg_id == TPM_ALG_SHA512) dsz = 64;
                 else dsz = 32;  /* unknown -- guess SHA-256 */
-                digests_size += 2 + dsz;
-                dptr += 2 + dsz;
+                /* Need 2 + dsz bytes at dpos. */
+                if ((log_size - dpos) < (uint32_t)(2u + dsz)) { oob = 1; break; }
+                digests_size += 2u + dsz;
+                dpos += 2u + dsz;
             }
+            if (oob) goto done;
 
-            uint32_t event2_header = 8 + digests_size;
-            if (offset + event2_header + 4 > log_size) break;
+            /* event2_header = 8 (pcr+type) + digests_size. digests_size
+             * is bounded by the per-iteration check above, so the sum
+             * cannot wrap u32 (max digest_count=8, max dsz=64 each;
+             * worst-case digests_size = 4 + 8*(2+64) = 532). */
+            uint32_t event2_header = 8u + digests_size;
+
+            /* Need event2_header + 4 bytes (ev_data_size field) at offset. */
+            if (event2_header > log_size - offset
+                || 4u > log_size - offset - event2_header) break;
 
             uint32_t ev_data_size =
                 *(const uint32_t *)(log + offset + event2_header);
-            uint32_t entry_size = event2_header + 4 + ev_data_size;
-
-            if (offset + entry_size > log_size) break;
+            /* entry_size = header + 4 (length field) + ev_data_size.
+             * ev_data_size is attacker-controlled u32; check via
+             * subtraction. */
+            if (ev_data_size > log_size - offset - event2_header - 4u) break;
+            uint32_t entry_size = event2_header + 4u + ev_data_size;
 
             event_count++;
             offset += entry_size;
         }
     } else {
-        /* TCG 1.2 format -- all entries are TCG_PCR_EVENT */
-        while (offset + 32 < log_size) {
+        /* TCG 1.2 format -- all entries are TCG_PCR_EVENT (32-byte
+         * fixed header + variable event_data). */
+        while (offset < log_size && (log_size - offset) >= 32u) {
             uint32_t ev_data_size = *(const uint32_t *)(log + offset + 28);
-            uint32_t entry_size = 32 + ev_data_size;
-            if (offset + entry_size > log_size) break;
+            /* Need 32 + ev_data_size bytes at offset; subtract to
+             * avoid wrap. */
+            if (ev_data_size > log_size - offset - 32u) break;
+            uint32_t entry_size = 32u + ev_data_size;
             event_count++;
             offset += entry_size;
         }

@@ -246,7 +246,12 @@ static void test_boot_reserved_rt_mmap_num_pages_wrap(void)
     /* num_pages above UINT64_MAX / 4096 wraps on multiplication. A
      * naive implementation would happily record a tiny length and
      * leave the rest of the runtime range free. The validator must
-     * catch this before the multiply. */
+     * catch this before the multiply.
+     *
+     * Codex 2026-04-30: rt_mmap loop is now gated on
+     * BOOT_CAP_RUNTIME_SERVICES; set the cap so the loop runs and
+     * the wrap check fires. */
+    s_br_buf.caps_present = BOOT_CAP_RUNTIME_SERVICES;
     s_br_buf.rt_mmap_count = 1u;
     s_br_buf.rt_mmap[0].phys_addr = 0x100000000ull;
     s_br_buf.rt_mmap[0].num_pages = ((uint64_t)-1 / 4096ull) + 1ull;
@@ -342,6 +347,33 @@ static void test_boot_reserved_payload_count_oor_still_rejected_with_degraded_ca
     boot_result_t r = boot_reserved_populate_from_info(&s_br_buf, &err);
     TEST_ASSERT_EQ((int)r,   (int)BOOT_FATAL,                       "corrupt count rejected with degraded caps");
     TEST_ASSERT_EQ((int)err, (int)BOOT_RESERVED_ERR_COUNT_OOR,      "err=COUNT_OOR");
+}
+
+static void test_boot_reserved_rt_mmap_runtime_services_degraded_skipped(void)
+{
+    /* Codex 2026-04-30 H regression: when BOOT_CAP_RUNTIME_SERVICES is
+     * NOT set in caps_present (degraded -- RT init failed or producer
+     * never advertised), boot_reserved_populate_from_info MUST skip
+     * the rt_mmap reservation loop. Pinning rt_mmap regions for an
+     * unavailable runtime would waste physical memory on regions the
+     * kernel has explicitly decided it will never call into. */
+    TEST_KLOG_SUPPRESS("mm");
+    br_zero_fixture();
+    s_br_buf.caps_present  = 0u;  /* RUNTIME_SERVICES not advertised */
+    s_br_buf.caps_degraded = BOOT_CAP_RUNTIME_SERVICES;
+    /* Populate rt_mmap as if the producer DID write it (stale or
+     * companion-field-without-cap pattern). */
+    s_br_buf.rt_mmap_count       = 1u;
+    s_br_buf.rt_mmap[0].phys_addr = 0x200000000ull;
+    s_br_buf.rt_mmap[0].num_pages = 4ull;
+
+    enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
+    boot_result_t r = boot_reserved_populate_from_info(&s_br_buf, &err);
+    TEST_ASSERT_EQ((int)r,   (int)BOOT_OK,                    "degraded RT -> populate OK");
+    TEST_ASSERT_EQ((int)err, (int)BOOT_RESERVED_ERR_OK,       "err=OK");
+    /* Expected: only boot_info entry; rt_mmap skipped. */
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_count(), (unsigned long)1,
+                   "degraded RT caps -> no rt_mmap reservation");
 }
 
 static void test_boot_reserved_warm_update_no_flag_skipped(void)
@@ -450,6 +482,8 @@ void test_register_boot_reserved(void)
                             TEST_CAT_BOOT);
     test_suite_register_cat("boot_reserved: NULL info rejected",
                             test_boot_reserved_null_info, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_reserved: degraded RUNTIME_SERVICES caps skips rt_mmap reservation",
+                            test_boot_reserved_rt_mmap_runtime_services_degraded_skipped, TEST_CAT_BOOT);
     test_suite_register_cat("boot_reserved: warm-update RESERVED skipped when WARM_UPDATE flag clear",
                             test_boot_reserved_warm_update_no_flag_skipped, TEST_CAT_BOOT);
     test_suite_register_cat("boot_reserved: warm-update RESERVED pinned when WARM_UPDATE flag set",
