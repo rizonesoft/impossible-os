@@ -39,8 +39,17 @@ def parse_expected():
     if not MANIFEST.exists():
         die(f"manifest not found: {MANIFEST}")
     manifest_raw = MANIFEST.read_bytes()
-    expected_sha = hashlib.sha256(manifest_raw).digest()
     manifest_json = json.loads(manifest_raw)
+    # Use the canonical ABI fingerprint emitted by the manifest dumper
+    # (computed over version + struct_size + per-field name/offset/size in
+    # F() order, prefixed `BOOTINFO-ABI-V1\n`). Hashing JSON file bytes
+    # instead would make BAD_SHA fire on cosmetic formatting churn that
+    # never changed the ABI -- the canonical-hash invariant exists exactly
+    # to be view-independent.
+    sha_hex = manifest_json.get("sha256")
+    if not sha_hex or len(sha_hex) != 64:
+        die("manifest missing canonical sha256 field")
+    expected_sha = bytes.fromhex(sha_hex)
     expected_size = manifest_json.get("struct_size")
     if expected_size is None:
         die("manifest missing struct_size")

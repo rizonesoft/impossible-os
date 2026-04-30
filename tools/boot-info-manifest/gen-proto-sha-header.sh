@@ -33,9 +33,24 @@ if [ ! -f "$INPUT" ]; then
     exit 1
 fi
 
-# Canonicalize: hash the raw file bytes. No re-formatting; the manifest
-# dumper already emits a stable representation.
-HEX=$(sha256sum "$INPUT" | awk '{print $1}')
+# Pull the canonical, view-independent ABI fingerprint from the
+# manifest "sha256" field. The dumper computes it over the tuple
+# (version, struct_size, per-field name+offset+size) in F() emission
+# order via a fixed delimited byte stream prefixed `BOOTINFO-ABI-V1\n`,
+# never from the JSON bytes. Hashing the raw JSON file would make the
+# .bootproto BAD_SHA diagnostic fire on cosmetic JSON formatting
+# changes that do not change the ABI -- exactly the failure mode the
+# canonical-hash rework (2026-04-23) was designed to close.
+HEX=$(python3 -c "
+import json, sys
+with open(sys.argv[1]) as f:
+    m = json.load(f)
+sha = m.get('sha256', '')
+if len(sha) != 64 or not all(c in '0123456789abcdef' for c in sha):
+    sys.stderr.write(f\"gen-proto-sha-header: manifest sha256 invalid: {sha!r}\\n\")
+    sys.exit(2)
+print(sha)
+" "$INPUT")
 
 if [ ${#HEX} -ne 64 ]; then
     echo "gen-proto-sha-header: unexpected sha256 length ${#HEX} (want 64)" >&2
