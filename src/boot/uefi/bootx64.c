@@ -2723,12 +2723,32 @@ static void load_staged_payloads(void)
         return;
     }
 
+    /* Fail-closed BEFORE any file I/O when boot.conf overflowed the
+     * staging table. Without this early gate, the loader would open the
+     * filesystem and allocate up to BOOT_PAYLOAD_STAGE_MAX payloads
+     * despite already knowing the handoff is incomplete. The kernel's
+     * Phase-0 validator does reject with OVERFLOW_TRUNCATED later, but
+     * by then the operator may have seen a misleading open/OOM/short-
+     * read diagnostic from a mid-loop failure that masks the real
+     * cause. Halt here with the actual reason so the user knows to
+     * trim boot.conf instead of chasing a phantom file error. */
+    if (g_staged_payload_overflow != 0) {
+        serial_early_print("[FATAL] boot.conf: staged ");
+        serial_early_print_uint((UINT32)g_staged_payload_count);
+        serial_early_print(" + dropped ");
+        serial_early_print_uint(g_staged_payload_overflow);
+        serial_early_print(" payload entries; max allowed=");
+        serial_early_print_uint((UINT32)BOOT_PAYLOAD_STAGE_MAX);
+        serial_early_print("\n");
+        boot_fatal(BOOT_ERR_CONF_INVALID,
+                   "boot.conf has too many payload entries",
+                   "module/initrd/recovery_image total exceeds the "
+                   "fixed staging table; trim entries or raise "
+                   "BOOT_PAYLOAD_STAGE_MAX.");
+    }
+
     serial_early_print("[BOOT] load_staged_payloads: staging=");
     serial_early_print_uint((UINT32)g_staged_payload_count);
-    if (g_staged_payload_overflow) {
-        serial_early_print(" overflow=");
-        serial_early_print_uint(g_staged_payload_overflow);
-    }
     serial_early_print("\n");
 
     EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *fs;

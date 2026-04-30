@@ -731,6 +731,100 @@ static void test_payload_descriptor_overlap_partial(void)
                    "err=DESCRIPTOR_OVERLAP partial");
 }
 
+static void test_payload_missing_valid_flag(void)
+{
+    TEST_KLOG_SUPPRESS("boot");
+    enum boot_payload_error err = BOOT_PAYLOAD_ERR_OK;
+
+    bi_payload_zero();
+    /* Occupied descriptor (type != NONE) with flags=0 (no FLAG_VALID).
+     * Validator MUST reject before any downstream consumer sees it,
+     * regardless of whether the range/alignment/overlap fields are
+     * sound. This protects the FLAG_VALID gate from becoming
+     * informational. */
+    s_test_buf.payload_count                     = 1;
+    s_test_buf.payload_descriptors[0].type       = BOOT_PAYLOAD_MODULE;
+    s_test_buf.payload_descriptors[0].flags      = 0u;  /* missing FLAG_VALID */
+    s_test_buf.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
+    s_test_buf.payload_descriptors[0].length     = SAFE_PAYLOAD_LEN;
+    s_test_buf.payload_total_bytes               = SAFE_PAYLOAD_LEN;
+
+    TEST_ASSERT_EQ(boot_payload_validate(&s_test_buf, &err), BOOT_FATAL,
+                   "occupied slot without FLAG_VALID rejected");
+    TEST_ASSERT_EQ((int)err, (int)BOOT_PAYLOAD_ERR_MISSING_VALID_FLAG,
+                   "err=MISSING_VALID_FLAG");
+}
+
+static void test_payload_warm_update_cold_fallback_accepted(void)
+{
+    enum boot_payload_error err = BOOT_PAYLOAD_ERR_OK;
+
+    bi_payload_zero();
+    /* Warm-update descriptor with NO FLAG_VALID and NO FLAG_RESERVED:
+     * the documented cold-fallback shape from the warm-kernel-update
+     * handoff contract. Validator MUST accept (boot_warm_update_consume
+     * handles the cold-fallback decision later); halting here would
+     * turn a soft fallback into a fatal halt. */
+    s_test_buf.payload_count                     = 1;
+    s_test_buf.payload_descriptors[0].type       = BOOT_PAYLOAD_WARM_UPDATE_STATE;
+    s_test_buf.payload_descriptors[0].flags      = 0u;
+    s_test_buf.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
+    s_test_buf.payload_descriptors[0].length     = SAFE_PAYLOAD_LEN;
+    s_test_buf.payload_total_bytes               = SAFE_PAYLOAD_LEN;
+
+    TEST_ASSERT_EQ(boot_payload_validate(&s_test_buf, &err), BOOT_OK,
+                   "warm-update cold-fallback shape (no flags) accepted");
+    TEST_ASSERT_EQ((int)err, (int)BOOT_PAYLOAD_ERR_OK,
+                   "err=OK warm-update cold-fallback");
+}
+
+static void test_payload_warm_update_reserved_only_rejected(void)
+{
+    TEST_KLOG_SUPPRESS("boot");
+    enum boot_payload_error err = BOOT_PAYLOAD_ERR_OK;
+
+    bi_payload_zero();
+    /* Warm-update descriptor with FLAG_RESERVED but NOT FLAG_VALID:
+     * this would tell PMM to reserve a range while telling consumers
+     * to cold-fallback. Memory leak on cold boot. Validator MUST
+     * reject as malformed; the cold-fallback exemption is only for
+     * the no-flags shape. */
+    s_test_buf.payload_count                     = 1;
+    s_test_buf.payload_descriptors[0].type       = BOOT_PAYLOAD_WARM_UPDATE_STATE;
+    s_test_buf.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_RESERVED;
+    s_test_buf.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
+    s_test_buf.payload_descriptors[0].length     = SAFE_PAYLOAD_LEN;
+    s_test_buf.payload_total_bytes               = SAFE_PAYLOAD_LEN;
+
+    TEST_ASSERT_EQ(boot_payload_validate(&s_test_buf, &err), BOOT_FATAL,
+                   "warm-update RESERVED-without-VALID rejected as malformed");
+    TEST_ASSERT_EQ((int)err, (int)BOOT_PAYLOAD_ERR_MISSING_VALID_FLAG,
+                   "err=MISSING_VALID_FLAG malformed warm-update");
+}
+
+static void test_payload_warm_update_checksummed_only_rejected(void)
+{
+    TEST_KLOG_SUPPRESS("boot");
+    enum boot_payload_error err = BOOT_PAYLOAD_ERR_OK;
+
+    bi_payload_zero();
+    /* Warm-update descriptor with FLAG_CHECKSUMMED but NOT FLAG_VALID:
+     * the exemption only covers d->flags == 0 exactly. Any non-zero
+     * flag bit without FLAG_VALID is producer drift, not a documented
+     * cold-fallback case. */
+    s_test_buf.payload_count                     = 1;
+    s_test_buf.payload_descriptors[0].type       = BOOT_PAYLOAD_WARM_UPDATE_STATE;
+    s_test_buf.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_CHECKSUMMED;
+    s_test_buf.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
+    s_test_buf.payload_descriptors[0].length     = SAFE_PAYLOAD_LEN;
+    s_test_buf.payload_total_bytes               = SAFE_PAYLOAD_LEN;
+
+    TEST_ASSERT_EQ(boot_payload_validate(&s_test_buf, &err), BOOT_FATAL,
+                   "warm-update CHECKSUMMED-without-VALID rejected");
+    TEST_ASSERT_EQ((int)err, (int)BOOT_PAYLOAD_ERR_MISSING_VALID_FLAG,
+                   "err=MISSING_VALID_FLAG nonzero-flags-without-VALID");
+}
+
 static void test_payload_descriptor_overlap_adjacent_ok(void)
 {
     enum boot_payload_error err = BOOT_PAYLOAD_ERR_OK;
@@ -1278,6 +1372,14 @@ void test_register_boot_info(void)
                             test_payload_descriptor_overlap_partial, TEST_CAT_BOOT);
     test_suite_register_cat("boot_payload: descriptor adjacent ok",
                             test_payload_descriptor_overlap_adjacent_ok, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_payload: missing FLAG_VALID",
+                            test_payload_missing_valid_flag, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_payload: warm-update cold-fallback shape",
+                            test_payload_warm_update_cold_fallback_accepted, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_payload: warm-update RESERVED-only rejected",
+                            test_payload_warm_update_reserved_only_rejected, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_payload: warm-update CHECKSUMMED-only rejected",
+                            test_payload_warm_update_checksummed_only_rejected, TEST_CAT_BOOT);
     test_suite_register_cat("boot_payload: bad alignment",
                             test_payload_bad_alignment, TEST_CAT_BOOT);
     test_suite_register_cat("boot_payload: unknown type required",

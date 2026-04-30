@@ -336,6 +336,46 @@ boot_result_t boot_payload_validate(const struct boot_info *info,
             return BOOT_FATAL;
         }
 
+        /* a0 missing FLAG_VALID. The ABI documents
+         * BOOT_PAYLOAD_FLAG_VALID as the explicit producer/consumer gate
+         * meaning "this slot carries a real payload to process". type !=
+         * NONE alone is not enough: an alternate or future producer that
+         * forgets the flag would still have its descriptor consumed by
+         * boot_payload_find, the PMM reservation pass, and type-keyed
+         * downstream paths, defeating the flag's purpose and creating
+         * producer-consumer drift. Reject occupied descriptors that
+         * omit it so the gate is load-bearing rather than informational.
+         *
+         * Warm-update exemption: the warm-kernel-update contract is
+         * intentionally fail-soft -- a warm-update descriptor that omits
+         * BOTH FLAG_VALID and FLAG_RESERVED falls back to cold init via
+         * boot_warm_update_consume's COLD_FALLBACK path rather than
+         * halting boot. The exemption is narrow: a descriptor with
+         * FLAG_RESERVED but missing FLAG_VALID is MALFORMED, not a
+         * cold-fallback case -- the producer would be telling PMM to
+         * reserve a range while telling consumers to ignore it, which
+         * would leak physical memory on a cold boot. Reject that shape
+         * with the strict path so PMM never reserves an "ignored"
+         * range. Only the truly empty (no validity, no reservation)
+         * shape gets the cold-fallback exemption. */
+        {
+            /* Cold-fallback exemption is the EXACT no-flags shape:
+             * d->flags == 0. Any other bit (CHECKSUMMED, REQUIRED, an
+             * unknown future bit) without FLAG_VALID is producer drift,
+             * not a documented fail-soft case, and gets the strict
+             * reject. */
+            int is_warm_update_cold_fallback =
+                (d->type == (uint32_t)BOOT_PAYLOAD_WARM_UPDATE_STATE) &&
+                (d->flags == 0u);
+            if (!is_warm_update_cold_fallback &&
+                (d->flags & BOOT_PAYLOAD_FLAG_VALID) == 0u) {
+                payload_log_failure(i, BOOT_PAYLOAD_ERR_MISSING_VALID_FLAG, d);
+                if (out_error != (enum boot_payload_error *)0)
+                    *out_error = BOOT_PAYLOAD_ERR_MISSING_VALID_FLAG;
+                return BOOT_FATAL;
+            }
+        }
+
         /* a range overflow. phys_start + length must fit uint64_t. */
         if (d->length > (uint64_t)-1 - d->phys_start) {
             payload_log_failure(i, BOOT_PAYLOAD_ERR_RANGE_WRAP, d);

@@ -170,6 +170,20 @@ enum boot_payload_error {
                                                 * publish aliased payloads
                                                 * that downstream consumers
                                                 * would treat as distinct. */
+    BOOT_PAYLOAD_ERR_MISSING_VALID_FLAG    = 15, /* occupied descriptor (type
+                                                  * != NONE) is missing
+                                                  * BOOT_PAYLOAD_FLAG_VALID.
+                                                  * The flag is the explicit
+                                                  * producer/consumer ABI
+                                                  * gate; type != NONE alone
+                                                  * is not enough -- without
+                                                  * this enforcement a
+                                                  * future or alternate
+                                                  * producer that forgets
+                                                  * the flag would still
+                                                  * have its descriptor
+                                                  * consumed, defeating the
+                                                  * flag's purpose. */
 };
 
 /* Forward declaration so the validator prototype can reference
