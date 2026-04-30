@@ -413,11 +413,17 @@ void boot_reserved_blackbox_dump(void)
         buf[pos++] = close_hdr[i];
 
     /* Create file via parent-dir handle to avoid the FAT32 dir-cache
-     * re-walk bug documented in hw_dump_write_file. */
+     * re-walk bug documented in hw_dump_write_file (vfs_open with
+     * VFS_O_CREATE re-walks the path through walk_path, which fails on
+     * a freshly-created file before the FAT32 dir cache refreshes).
+     * The pre-opened dir handle is the working pattern. */
     {
         struct vfs_node *dir = vfs_open(diag_dir, VFS_O_READ);
         if (dir && dir->ops && dir->ops->create)
             dir->ops->create(dir, "boot-reserved.json", VFS_FILE);
+        /* dir handle intentionally leaked to keep the FAT32 dir cache
+         * hot for the subsequent vfs_open(path, VFS_O_WRITE) below;
+         * matches the working pattern in hw_dump_write_file. */
     }
 
     char path[64];
@@ -430,33 +436,57 @@ void boot_reserved_blackbox_dump(void)
         path[pi++] = fn[j];
     path[pi] = '\0';
 
-    /* Truncate the (now-extant) file to zero length so a shorter dump
-     * cannot leave stale tail bytes from a prior longer one. The parent-
-     * dir create above guarantees the file exists at this point, so a
-     * non-zero return from vfs_truncate is a real failure (FS error,
-     * missing truncate op, etc.) and must NOT be silently swallowed --
-     * doing so masks the exact stale-tail failure mode this fix is
-     * meant to close. VFS_O_TRUNC is defined in vfs.h but vfs_open
-     * ignores it today; the systemic VFS-layer fix is tracked under the
-     * BlackBox-dump owner item in this TODO. Until that lands, the
-     * explicit truncate call here is the only way to guarantee a
-     * byte-exact audit artifact on FAT32. */
-    int trunc_rc = vfs_truncate(path, 0);
-    if (trunc_rc != 0) {
-        klog(LOG_ERROR, "mm",
-             "boot_reserved_blackbox_dump: vfs_truncate(%s) failed (%d); "
-             "audit artifact NOT written to avoid stale-tail corruption",
-             (uint64_t)(uintptr_t)path, (uint64_t)trunc_rc);
-        kfree(buf);
-        return;
-    }
+    /* Open the (now-extant) file. node->size carries the prior file
+     * size: zero means a freshly-created file with no stale tail to
+     * worry about; non-zero means a prior longer dump may exist and we
+     * MUST truncate before write to avoid stale tail bytes (vfs_write
+     * at offset 0 does NOT shrink an existing FAT32 file). VFS_O_TRUNC
+     * is defined in vfs.h but vfs_open ignores it today; systemic VFS-
+     * layer fix is tracked under the BlackBox deferred owner item.
+     * Until that lands, the explicit vfs_truncate call below is the
+     * only way to guarantee a byte-exact audit artifact on FAT32. */
     struct vfs_node *f = vfs_open(path, VFS_O_WRITE);
     if (!f) {
-        klog(LOG_ERROR, "mm",
-             "boot_reserved_blackbox_dump: vfs_open(%s) failed; "
-             "audit artifact NOT written",
+        /* LOG_WARN (not LOG_ERROR) because a freshly-mounted BlackBox
+         * partition can have the parent dir present but the file itself
+         * not yet visible to walk_path on first boot -- there is no
+         * prior file to leave stale tail bytes, so the audit artifact
+         * is simply not produced this boot. Matches hw_dump_write_file
+         * which silently no-ops on the same path. The genuine
+         * correctness-violation cases (truncate failure on a known
+         * pre-existing file, short / errored write) still emit
+         * LOG_ERROR below. */
+        klog(LOG_WARN, "mm",
+             "boot_reserved_blackbox_dump: vfs_open(%s) returned NULL; "
+             "audit artifact NOT written this boot (no stale-tail risk)",
              (uint64_t)(uintptr_t)path);
     } else {
+        uint64_t prior_size = f->size;
+        if (prior_size > 0u) {
+            vfs_close(f);  /* close before truncate; reopen below */
+            int trunc_rc = vfs_truncate(path, 0);
+            if (trunc_rc != 0) {
+                klog(LOG_ERROR, "mm",
+                     "boot_reserved_blackbox_dump: vfs_truncate(%s) "
+                     "failed on prior-size=%lu file (%d); audit "
+                     "artifact NOT written to avoid stale-tail "
+                     "corruption",
+                     (uint64_t)(uintptr_t)path,
+                     (uint64_t)prior_size,
+                     (uint64_t)trunc_rc);
+                kfree(buf);
+                return;
+            }
+            f = vfs_open(path, VFS_O_WRITE);
+            if (!f) {
+                klog(LOG_ERROR, "mm",
+                     "boot_reserved_blackbox_dump: vfs_open(%s) "
+                     "failed after truncate; audit artifact NOT written",
+                     (uint64_t)(uintptr_t)path);
+                kfree(buf);
+                return;
+            }
+        }
         int wrote = vfs_write(f, 0, pos, (const uint8_t *)buf);
         vfs_close(f);
         if (wrote < 0 || (uint32_t)wrote != pos) {
