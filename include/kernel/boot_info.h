@@ -298,8 +298,18 @@ int  boot_rollback_raise_if_steady(void);
  * SetVariable call (10-100 ms NVRAM flash on real firmware). The
  * actual NVRAM write happens later in the worker thread.
  *
- * Idempotent: subsequent calls are no-ops once a work item has
- * been enqueued OR a synchronous fallback ran.
+ * Idempotence is conditional on the eventual outcome:
+ *  - On confirmed SUCCESS or permanent OPT-OUT, the request is
+ *    latched (s_attempted=1, s_enqueued=1) and subsequent calls
+ *    return 0 forever. This is the common-case "already serviced"
+ *    no-op.
+ *  - On TRANSIENT SetVariable failure, the implementation atomically
+ *    rolls BOTH s_attempted and s_enqueued back to 0 under the
+ *    state lock so a future caller can retry the raise. A later
+ *    request_raise() therefore CAN return 1 again -- this is by
+ *    design (Codex 2026-04-30 step-13 M1: blocking retry through
+ *    the public API would silently strand the rollback floor on
+ *    UEFI runtime hiccups).
  *
  * Fallback: if sys_wq is null OR the workqueue pool is exhausted,
  * runs boot_rollback_raise_if_steady() synchronously on the caller s
@@ -307,7 +317,7 @@ int  boot_rollback_raise_if_steady(void);
  * only raise attempt would violate the section test checkpoint.
  *
  * Returns 1 if work was enqueued OR the synchronous fallback ran,
- * 0 if the request was already serviced (idempotent no-op). */
+ * 0 if the request was already serviced (success/opt-out latched). */
 int  boot_rollback_request_raise(void);
 void boot_rollback_reset_for_test(void);
 

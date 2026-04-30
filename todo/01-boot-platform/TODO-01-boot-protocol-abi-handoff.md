@@ -576,7 +576,9 @@ The capability negotiation ABI shipped in §11 advertises what the bootloader po
 > - **Scope boundary:** §16 owns the timing gate only. `should_raise()` policy (opt-in + shipped > required) stays in §13. Retry-on-failure, multi-tier steady signals (shell-input-driven, first-disk-write-driven), and bounded-retry on `SetVariable` failure are future work -- the `s_attempted`/`s_raised` split leaves that door open. Per-finding evidence in commit `c2602171`.
 
 > **Verified:** 2026-04-24 | commit `c2602171` + manual-test doc | 6/6 items | build OK | tests 612/612 kernel + 16/16 user-mode PASS + manual procedure documented
+> **Re-reviewed:** 2026-05-01 | commit `f5ac1118` | 8/8 items | build OK | tests 819 kernel + 16 user-mode PASS + smoke 2.52s | Deferred-raise follow-up: boot_rollback_request_raise() defers the SetVariable to sys_wq. Codex design dispatch caught H1 SMP synchronization (acquire/release atomics on s_steady/s_raised; spinlock on s_attempted/s_enqueued state pair) and M1 enqueue-failure synchronous fallback. Step-13 adversarial-impl converged across 4 rounds (relax "exactly once per boot" to "eventually-once-per-policy-window"; collapse two-store race window under DEFINE_SPINLOCK(s_state_lock)). Post-commit review: adversarial + perf approve; consistency M1 fixed inline (header docstring drift -- updated to document conditional idempotence: success/opt-out latched permanently, transient failure resets state for retry).
 > **Quality reviewed:** 2026-04-24 | Codex 2x (adversarial, quality) | 3M fixed, 0 open | scope: kernel-code-quality
+> **Quality re-reviewed:** 2026-05-01 | Codex 7x (design + adversarial-impl x4 + adversarial + consistency + perf) | 2H+2M fixed inline (SMP atomics + spinlock + sync-fallback + header docstring), 0 open | scope: kernel-code-quality
 
 ---
 
