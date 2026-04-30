@@ -441,7 +441,7 @@ def main() -> int:
                     continue
                 # TODO-08 §16: skip orphaned entries. Without this skip the
                 # observer would keep recording post-compaction step evidence
-                # into an orphaned entry while the §10 step-block hook (which
+                # into an orphaned entry while the skill-step-block hook (which
                 # also skips orphans) ignores it -- creating an enforcement
                 # bypass where post-compaction commits proceed without any
                 # active-skill gate. Symmetric with skill_step_block.py.

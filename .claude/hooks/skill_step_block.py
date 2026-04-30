@@ -496,7 +496,7 @@ def main() -> int:
     sys.stderr.write(
         "[skill-step-block] BLOCK -- skill `" + skill + "` is at commit/"
         "review-todo-section gate but step(s) " + str(missing) + " were "
-        "never observed by the §10 step observer. Run them or set "
+        "never observed by the skill-step observer. Run them or set "
         "SKIP_SKILL_STEP_BLOCK=1 SKIP_SKILL_STEP_BLOCK_REASON=\"<text>\" "
         "(both required, reason >= 12 chars). The required terminal "
         "step list for `" + skill + "` is "

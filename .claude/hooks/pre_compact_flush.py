@@ -8,7 +8,7 @@ When the harness is about to compact context:
    `compaction_orphaned: true` (TODO-08 §16). The PostToolUse step
    observer cannot run during summary generation, so the entry's
    steps_observed list freezes at whatever count was reached
-   pre-compaction. Without this flag the §10 step-block hook would
+   pre-compaction. Without this flag the skill-step-block hook would
    BLOCK every post-compaction `git commit` or
    `Skill(review-todo-section)` call indefinitely (PreToolUse gate
    vs PostToolUse observer is a structural catch-22 once an entry

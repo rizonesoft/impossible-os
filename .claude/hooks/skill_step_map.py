@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-# Per-skill step-evidence map for the §10 step-state telemetry system.
+# Per-skill step-evidence map for the skill-step-state telemetry system
+# (doctrine: TODO-08 §10; the inline "§10" label was retired 2026-04-30
+# because section numbers drift across gap audits + renumbering).
 #
 # Each multi-step skill has a list of (step_number, tool_name, regex_pattern)
 # tuples that pair a numbered step in the skill prose with the tool-call
