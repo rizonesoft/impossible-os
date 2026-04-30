@@ -143,8 +143,12 @@ uint64_t mat_get_code_pages(void);
 uint64_t mat_get_data_pages(void);
 uint64_t mat_get_guard_pages(void);
 
-/* Returns 1 if firmware reported more than MAT_MAX_ENTRIES descriptors
- * (count was clamped). Diagnostic only. */
+/* Returns 1 if firmware reported more descriptors than MAT_MAX_ENTRIES
+ * (the entire table was rejected to avoid publishing a truncated
+ * inventory). Combined with mat_get_count()==0 this lets consumers
+ * distinguish "no MAT available" from "MAT was too large to cache
+ * safely" -- both leave the inventory empty but only the latter
+ * indicates firmware data the kernel deliberately refused. */
 int mat_overflowed(void);
 
 /* Pure classification helper for synthetic testing: takes an

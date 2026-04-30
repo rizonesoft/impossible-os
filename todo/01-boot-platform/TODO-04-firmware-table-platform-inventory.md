@@ -160,7 +160,7 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 
 **Test checkpoint:** Boot log lists every MAT entry with attributes (`EFI_MEMORY_RP/RX/XP`); runtime W^X status visible to TODO-27 §3 consumers. Firmware advertising `EFI_RT_SUPPORTED_SET_VARIABLE` but having a NULL `SetVariable` pointer logs `[WARN] firmware: SetVariable property mismatch`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 10 MAT classify+inventory sub-tests + RT property mismatch sub-tests, 0 failures (GUARD/CODE/DATA/RODATA/WX classify, NULL+range guards, count <= cap, mismatch counter range, supported-implies-callable invariant)
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 11 MAT classify+inventory sub-tests + RT property mismatch sub-tests, 0 failures (GUARD/CODE/DATA/RODATA/WX classify, NULL+range guards, count <= cap, mismatch counter range, supported-implies-callable invariant)
 >
 > **Notes:**
 > - Shipped: `mat_class_t` + `mat_entry_t` + 7 public accessors in `include/kernel/uefi_config.h`; ~140 LOC delta in `src/kernel/uefi_config.c` (cache, classify helper, per-entry logger, overflow warn); `int uefi_rt_property_mismatches(void)` in `include/kernel/uefi_runtime.h`; ~70 LOC `rt_check_property_pointer_mismatch()` in `src/kernel/uefi_runtime.c` covering 14 RT services with bidirectional mismatch detection + advertised-but-NULL-bit-clearing; 10 unit tests in `src/kernel/test/test_uefi_boot.c`.
@@ -168,6 +168,10 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 > - Downstream effects: TODO-27 §3 W^X enforcement now has a concrete iteration API (no need to re-walk firmware table); §6 ESRT mirror, §7 conformance flagging, and §8 firmware-tables.json read the catalog without touching firmware again. Codex 1x adversarial review adoptions in commit `<hash>` -- H1 advertised-but-NULL pointer cleared from supported bitmask so wrappers cannot null-deref.
 > - Canonical doc: `include/kernel/uefi_config.h` MAT inventory contract + `include/kernel/uefi_runtime.h` RT property mismatch contract.
 > - Scope boundary: §5 detects + classifies + logs MAT entries and RT property mismatches; the actual W^X *enforcement* (vmm_set_nx / vmm_set_ro per region) is owned by TODO-27 §3. §6 ESRT firmware inventory is owned by §6. RT services per-offset header_size validation in pre-existing `call_set_virtual_address_map()` + 5-pointer init path is tracked in §10 (item: "Validate s_rt->hdr.header_size covers each function-pointer offset" at line 232).
+
+> **Verified:** 2026-04-30 | commit `c2d12aba` | 5/5 items | build OK | smoke PASS (KVM 2.41s) | tests 764/764 PASS
+> **Accepted:** [H] RT services per-offset header_size validation gap in pre-existing call_set_virtual_address_map() and 5-pointer init path (reason: scope -- pre-existing init code outside §5 inventory work) -> XREF: 01-boot-platform/TODO-04 §10 (item: "Validate s_rt->hdr.header_size covers each function-pointer offset before reading it in call_set_virtual_address_map() and the critical-pointer NULL checks" at line 173)
+> **Quality reviewed:** 2026-04-30 | Codex 12x (design + adversarial-impl x9 + adversarial + consistency + perf) | 1H+9M+1L fixed, 1H accepted-XREF | scope: kernel-code-quality
 
 ---
 
@@ -273,4 +277,3 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 - [ ] Commit: `"docs/firmware: TODO-04 verification complete"`
 
 **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 4 firmware-inventory sub-tests, 0 failures (target on full implementation)
-

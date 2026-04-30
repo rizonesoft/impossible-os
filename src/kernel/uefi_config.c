@@ -400,6 +400,11 @@ void mat_init(void)
              "table rejected (would publish a truncated inventory)",
              count, (uint32_t)MAT_MAX_ENTRIES);
         s_mat_present = 0;
+        /* Set the public overflow signal so consumers can distinguish
+         * "no MAT available" from "MAT was too large to cache safely":
+         * mat_get_count() == 0 + mat_overflowed() == 1 means firmware
+         * advertised more descriptors than the cache cap. */
+        s_mat_overflowed = 1;
         return;
     }
 

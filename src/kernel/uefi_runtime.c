@@ -180,6 +180,21 @@ static int call_set_virtual_address_map(void)
         return -1;
     }
 
+    /* Honor EFI_RT_PROPERTIES_TABLE: a UEFI 2.10 firmware can
+     * legitimately advertise SVAM as unsupported even with a non-NULL
+     * pointer. Calling SVAM in that state risks the irreversible call
+     * landing in firmware that has explicitly said no. read_rt_properties
+     * sets s_supported = 0xFFFFFFFF when the table is absent or rejected,
+     * so a literal 0xFFFFFFFF means "no override", which keeps the bit
+     * set; only an explicit clear bit gates this off. */
+    if (s_supported != 0xFFFFFFFFu &&
+        (s_supported & EFI_RT_SUPPORTED_SET_VIRTUAL_ADDRESS_MAP) == 0) {
+        klog(LOG_WARN, "UEFI",
+             "SetVirtualAddressMap: properties table marks unsupported -- "
+             "skipping call, using physical RT pointers");
+        return 0;
+    }
+
     efi_status_t status = s_rt->set_virtual_address_map(
         map_size, (uint64_t)desc_size, desc_version, vmap);
 
