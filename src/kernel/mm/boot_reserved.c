@@ -154,14 +154,39 @@ boot_result_t boot_reserved_populate_from_info(const struct boot_info *info,
             n = BOOT_USB_MAX_DMA_PAGES;
         uint64_t sp_base = info->usb_controller.scratchpad_base_phys;
         uint32_t sp_count = info->usb_controller.scratchpad_page_count;
+        uint64_t sp_array = info->usb_controller.scratchpad_array_phys;
         int have_scratchpad = (sp_base != 0u && sp_count > 0u);
+        /* Scratchpad pointer array length in bytes = sp_count * 8 (each
+         * pointer is uint64_t in xHCI). Bootloader allocates
+         * ((sp_count * 8 + 4095) / 4096) pages; only the BASE page lands
+         * in dma_pages[]. For sp_count > 512 the array spans multiple
+         * pages and the tail pages would be reclaimed by PMM as free
+         * memory while the controller still references them via the
+         * loaded ERST/Slot context -- silent DMA corruption on real
+         * hardware advertising a large MaxScratchpadBufs in HCSPARAMS2.
+         * Compute the real array byte length and reserve that span when
+         * we encounter the array's base page below. */
+        uint64_t sp_array_len = 0u;
+        if (sp_array != 0u && sp_count > 0u) {
+            uint64_t array_bytes = (uint64_t)sp_count * 8ull;
+            sp_array_len = ((array_bytes + 4095ull) & ~4095ull);
+        }
         uint32_t u;
         for (u = 0u; u < n; u++) {
             uint64_t page = info->usb_controller.dma_pages[u];
             if (page == 0u)
                 continue;  /* zero = unused slot */
             if (have_scratchpad && page == sp_base)
-                continue;  /* scratchpad covers this page below */
+                continue;  /* scratchpad buffer pages covered below */
+            if (sp_array_len != 0u && page == sp_array) {
+                /* Scratchpad pointer array: reserve the full multi-page
+                 * extent rather than the base 4 KiB page. */
+                if (add_or_fatal(page, sp_array_len,
+                                 BOOT_RESERVED_USB_DMA_PAGE, u, out_err)
+                        != BOOT_OK)
+                    return BOOT_FATAL;
+                continue;
+            }
             if (add_or_fatal(page, 4096ull,
                              BOOT_RESERVED_USB_DMA_PAGE, u, out_err) != BOOT_OK)
                 return BOOT_FATAL;
@@ -405,13 +430,45 @@ void boot_reserved_blackbox_dump(void)
         path[pi++] = fn[j];
     path[pi] = '\0';
 
+    /* Truncate the (now-extant) file to zero length so a shorter dump
+     * cannot leave stale tail bytes from a prior longer one. The parent-
+     * dir create above guarantees the file exists at this point, so a
+     * non-zero return from vfs_truncate is a real failure (FS error,
+     * missing truncate op, etc.) and must NOT be silently swallowed --
+     * doing so masks the exact stale-tail failure mode this fix is
+     * meant to close. VFS_O_TRUNC is defined in vfs.h but vfs_open
+     * ignores it today; the systemic VFS-layer fix is tracked under the
+     * BlackBox-dump owner item in this TODO. Until that lands, the
+     * explicit truncate call here is the only way to guarantee a
+     * byte-exact audit artifact on FAT32. */
+    int trunc_rc = vfs_truncate(path, 0);
+    if (trunc_rc != 0) {
+        klog(LOG_ERROR, "mm",
+             "boot_reserved_blackbox_dump: vfs_truncate(%s) failed (%d); "
+             "audit artifact NOT written to avoid stale-tail corruption",
+             (uint64_t)(uintptr_t)path, (uint64_t)trunc_rc);
+        kfree(buf);
+        return;
+    }
     struct vfs_node *f = vfs_open(path, VFS_O_WRITE);
-    if (f) {
-        vfs_write(f, 0, pos, (const uint8_t *)buf);
+    if (!f) {
+        klog(LOG_ERROR, "mm",
+             "boot_reserved_blackbox_dump: vfs_open(%s) failed; "
+             "audit artifact NOT written",
+             (uint64_t)(uintptr_t)path);
+    } else {
+        int wrote = vfs_write(f, 0, pos, (const uint8_t *)buf);
         vfs_close(f);
-        klog(LOG_INFO, "mm",
-             "boot_reserved: dumped %u region(s) to %s",
-             (uint64_t)s_count, (uint64_t)(uintptr_t)path);
+        if (wrote < 0 || (uint32_t)wrote != pos) {
+            klog(LOG_ERROR, "mm",
+                 "boot_reserved_blackbox_dump: short write to %s "
+                 "(wanted=%u got=%d); audit artifact may be torn",
+                 (uint64_t)(uintptr_t)path, (uint64_t)pos, (uint64_t)wrote);
+        } else {
+            klog(LOG_INFO, "mm",
+                 "boot_reserved: dumped %u region(s) to %s",
+                 (uint64_t)s_count, (uint64_t)(uintptr_t)path);
+        }
     }
     kfree(buf);
     (void)klog_dir;  /* reserved for the headless-klog fallback path */

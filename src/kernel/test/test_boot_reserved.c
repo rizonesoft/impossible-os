@@ -197,6 +197,47 @@ static void test_boot_reserved_xhci_scratchpad_no_self_overlap(void)
                    "sp_base de-duped from DMA loop");
 }
 
+static void test_boot_reserved_scratchpad_array_multi_page(void)
+{
+    br_zero_fixture();
+
+    /* xHCI HCSPARAMS2 advertises sp_count = 600 (high-end vendor extension);
+     * pointer array = 600 * 8 = 4800 bytes -> 2 pages. The bootloader
+     * allocates a contiguous 2-page region for the array and records the
+     * BASE in dma_pages[]. Without the multi-page reservation fix, the
+     * second array page would land back in PMM as free memory while the
+     * controller still references it via the loaded ERST -- silent DMA
+     * corruption. This test pins the per-base length: dma_pages[0] entry
+     * covering scratchpad_array_phys must reserve ((600*8 + 4095) & ~4095)
+     * = 8192 bytes, not 4096. */
+    s_br_buf.usb_controller.active                = 1;
+    s_br_buf.usb_controller.dma_page_count        = 1u;
+    s_br_buf.usb_controller.dma_pages[0]          = 0x300000ull; /* sp_array base */
+    s_br_buf.usb_controller.scratchpad_array_phys = 0x300000ull;
+    s_br_buf.usb_controller.scratchpad_base_phys  = 0x400000ull; /* far away */
+    s_br_buf.usb_controller.scratchpad_page_count = 600u;
+
+    enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
+    boot_result_t r = boot_reserved_populate_from_info(&s_br_buf, &err);
+    TEST_ASSERT_EQ((int)r, (int)BOOT_OK, "multi-page scratchpad array accepted");
+
+    /* Walk the published table: find the entry whose phys_start matches
+     * scratchpad_array_phys; assert its length is 2 pages, not 1. */
+    uint32_t i;
+    int found = 0;
+    uint64_t expected_len = 0x2000ull;  /* (600*8 + 4095) rounded up = 8192 */
+    for (i = 0u; i < boot_reserved_count(); i++) {
+        const struct boot_reserved_region *e = boot_reserved_get(i);
+        if (e->phys_start == 0x300000ull) {
+            TEST_ASSERT_EQ((unsigned long)e->length, (unsigned long)expected_len,
+                           "scratchpad-array entry covers full multi-page extent");
+            found = 1;
+            break;
+        }
+    }
+    TEST_ASSERT_EQ(found, 1, "scratchpad-array entry present in table");
+}
+
 static void test_boot_reserved_rt_mmap_num_pages_wrap(void)
 {
     TEST_KLOG_SUPPRESS("mm");
@@ -348,6 +389,9 @@ void test_register_boot_reserved(void)
                             TEST_CAT_BOOT);
     test_suite_register_cat("boot_reserved: xHCI scratchpad self-overlap",
                             test_boot_reserved_xhci_scratchpad_no_self_overlap,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("boot_reserved: scratchpad array multi-page",
+                            test_boot_reserved_scratchpad_array_multi_page,
                             TEST_CAT_BOOT);
     test_suite_register_cat("boot_reserved: NULL info rejected",
                             test_boot_reserved_null_info, TEST_CAT_BOOT);
