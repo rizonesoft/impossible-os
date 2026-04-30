@@ -82,17 +82,152 @@ void boot_timing_print_steps(void)
     }
 }
 
-/* Convert TSC tick delta to milliseconds */
+/* Convert TSC tick delta to milliseconds. Defends against corrupted
+ * tick counts: when `ticks * 1000` would wrap uint64, saturate to
+ * UINT32_MAX (real boots fit in a few thousand ms; only a garbage
+ * timestamp can overflow). The freestanding kernel cannot link libgcc
+ * helpers (__udivti3) so __uint128_t division is unavailable -- use a
+ * pre-multiply bound check instead. */
 static uint32_t tsc_to_ms(uint64_t ticks)
 {
     if (s_tsc_freq == 0) return 0;
-    return (uint32_t)(ticks * 1000 / s_tsc_freq);
+    /* Saturating bound: if ticks > UINT64_MAX/1000, the multiply wraps. */
+    if (ticks > (uint64_t)0xFFFFFFFFFFFFFFFFULL / 1000ULL)
+        return 0xFFFFFFFFu;
+    uint64_t ms = ticks * 1000ULL / s_tsc_freq;
+    if (ms > 0xFFFFFFFFu) return 0xFFFFFFFFu;
+    return (uint32_t)ms;
+}
+
+uint32_t boot_timing_tsc_delta_ms(uint64_t ticks)
+{
+    return tsc_to_ms(ticks);
 }
 
 /* Convert FPDT nanoseconds to milliseconds */
 static uint32_t ns_to_ms(uint64_t ns)
 {
     return (uint32_t)(ns / 1000000);
+}
+
+/* ---- FPDT normalization helpers ----------------------------------------- */
+
+/* 10 minutes in nanoseconds: any FPDT phase larger than this is implausible
+ * (firmware boot never legitimately exceeds ~60s; 10min is a generous cap). */
+#define FPDT_NS_SANITY_CAP (10ULL * 60ULL * 1000000000ULL)
+
+int boot_timing_fpdt_unreliable_eval(int available,
+                                     uint64_t reset_end,
+                                     uint64_t os_loader_load_start,
+                                     uint64_t os_loader_start_start,
+                                     uint64_t exit_bs_entry,
+                                     uint64_t exit_bs_exit)
+{
+    if (!available) return 1;
+
+    uint64_t r  = reset_end;
+    uint64_t ll = os_loader_load_start;
+    uint64_t ls = os_loader_start_start;
+    uint64_t be = exit_bs_entry;
+    uint64_t bx = exit_bs_exit;
+
+    /* All-zero record (VirtualBox EFI publishes FPDT with no data). */
+    if (r == 0 && ll == 0 && ls == 0 && be == 0 && bx == 0) return 1;
+
+    /* The unified timeline uses os_loader_start_start as its absolute
+     * ms-since-reset anchor (boot_timing_bl_entry_ms_since_reset). A
+     * record that left it zero cannot honestly label TSC entries as
+     * unreliable=false, so reject the whole record. */
+    if (ls == 0) return 1;
+
+    /* Monotonicity: each phase must be >= the previous. Zero fields are
+     * tolerated only at the head (firmware that did not record reset_end).
+     * Treat any zero AFTER a non-zero predecessor as garbage. */
+    uint64_t prev = 0;
+    uint64_t seq[5] = { r, ll, ls, be, bx };
+    for (int i = 0; i < 5; i++) {
+        uint64_t v = seq[i];
+        if (v == 0) {
+            if (prev != 0) return 1;     /* zero after non-zero */
+            continue;
+        }
+        if (v < prev) return 1;          /* non-monotonic */
+        if (v > FPDT_NS_SANITY_CAP) return 1;
+        prev = v;
+    }
+
+    return 0;
+}
+
+int boot_timing_fpdt_unreliable(void)
+{
+    return boot_timing_fpdt_unreliable_eval(
+        g_boot_info.timing.fpdt_available ? 1 : 0,
+        g_boot_info.timing.reset_end,
+        g_boot_info.timing.os_loader_load_start,
+        g_boot_info.timing.os_loader_start_start,
+        g_boot_info.timing.exit_bs_entry,
+        g_boot_info.timing.exit_bs_exit);
+}
+
+uint32_t boot_timing_uefi_total_ms(void)
+{
+    uint64_t freq = g_boot_info.timing.tsc_freq;
+    uint64_t bl_entry = g_boot_info.timing.bl_entry;
+    uint64_t kjump = g_boot_info.timing.kernel_jump;
+    if (freq == 0 || bl_entry == 0 || kjump <= bl_entry) return 0;
+    /* Route through tsc_to_ms() so a corrupted handoff cannot wrap the
+     * (delta * 1000) intermediate; the helper saturates to UINT32_MAX. */
+    return tsc_to_ms(kjump - bl_entry);
+}
+
+uint32_t boot_timing_bl_entry_ms_since_reset(void)
+{
+    if (boot_timing_fpdt_unreliable()) return 0;
+    /* The bootloader's bl_entry TSC sample is taken at efi_main entry,
+     * which is the closest moment to FPDT's os_loader_start_start. Use
+     * that field as the absolute anchor. */
+    return ns_to_ms(g_boot_info.timing.os_loader_start_start);
+}
+
+uint32_t boot_timing_get_fpdt_entries(boot_timing_fpdt_entry_t *out, uint32_t cap)
+{
+    if (!out || cap == 0) return 0;
+
+    int unreliable = boot_timing_fpdt_unreliable();
+
+    /* Fixed phase order: matches the FPDT FBPT record fields. Always emit
+     * the full 5-phase set so JSON consumers see consistent shape. */
+    const char *names[5] = {
+        "fpdt:reset_end",
+        "fpdt:os_loader_load",
+        "fpdt:os_loader_start",
+        "fpdt:exit_bs_entry",
+        "fpdt:exit_bs_exit",
+    };
+    uint64_t vals[5] = {
+        g_boot_info.timing.reset_end,
+        g_boot_info.timing.os_loader_load_start,
+        g_boot_info.timing.os_loader_start_start,
+        g_boot_info.timing.exit_bs_entry,
+        g_boot_info.timing.exit_bs_exit,
+    };
+
+    uint32_t n = 0;
+    for (int i = 0; i < 5 && n < cap; i++) {
+        out[n].stage       = names[i];
+        out[n].start_ms    = unreliable ? 0 : ns_to_ms(vals[i]);
+        out[n].unreliable  = (uint8_t)(unreliable ? 1 : 0);
+        out[n].duration_ms = 0;
+        n++;
+    }
+    /* Compute durations as deltas to the next entry. Only meaningful when
+     * reliable; unreliable entries already have all-zero start_ms. */
+    for (uint32_t i = 0; i + 1 < n; i++) {
+        if (out[i + 1].start_ms >= out[i].start_ms)
+            out[i].duration_ms = out[i + 1].start_ms - out[i].start_ms;
+    }
+    return n;
 }
 
 void boot_timing_init(void)
@@ -124,15 +259,16 @@ void boot_timing_init(void)
         g_boot_info.timing.kernel_load_start);
     uint32_t exit_bs_ms = tsc_to_ms(
         g_boot_info.timing.kernel_jump - g_boot_info.timing.exit_bs);
-    uint32_t total_bl_ms = tsc_to_ms(
-        g_boot_info.timing.kernel_jump - bl_entry);
+    uint32_t total_bl_ms = boot_timing_uefi_total_ms();
 
     klog(LOG_INFO, "BOOT", "Bootloader: GOP %ums, Config %ums, "
          "Kernel Load %ums, ExitBS %ums, Total %ums",
          gop_ms, conf_ms, kload_ms, exit_bs_ms, total_bl_ms);
 
-    /* --- FPDT firmware phase timings (nanosecond-based) --- */
-    if (g_boot_info.timing.fpdt_available) {
+    /* --- FPDT firmware phase timings (nanosecond-based) ---
+     * Only print if the FPDT record passes sanity checks; VirtualBox EFI
+     * publishes a zero-filled FPDT and would otherwise log "0ms" lines. */
+    if (g_boot_info.timing.fpdt_available && !boot_timing_fpdt_unreliable()) {
         uint32_t fw_init_ms = ns_to_ms(g_boot_info.timing.reset_end);
         uint32_t loader_load_ms = ns_to_ms(
             g_boot_info.timing.os_loader_load_start);
@@ -150,6 +286,9 @@ void boot_timing_init(void)
 
         klog(LOG_INFO, "BOOT", "Total: Firmware %ums + Bootloader %ums = %ums",
              fw_total_ms, total_bl_ms, fw_total_ms + total_bl_ms);
+    } else if (g_boot_info.timing.fpdt_available) {
+        klog(LOG_WARN, "BOOT",
+             "FPDT present but unreliable (zero/garbage record)");
     } else {
         klog(LOG_INFO, "BOOT", "FPDT not available (firmware timing unknown)");
     }

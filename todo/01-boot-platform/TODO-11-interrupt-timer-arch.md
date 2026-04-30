@@ -212,12 +212,12 @@ JSON boot timeline on disk plus optional shell charting later (overlay bar remov
 **Files:** `src/kernel/main/boot_progress.c`, `include/kernel/boot_progress.h` -- `src/shell/cmd/boot_timeline.c` deferred (not in tree)
 
 - [x] Overlay bar removed (per user preference) -- JSON timeline is the diagnostic output
-- [x] `boot_timeline_dump_json()`: writes `X:\Boot\boot-timeline.json` with `[{"stage":"PMM","phase":0,"post":"0x20","start_ms":86,"duration_ms":7},...]`
+- [x] `boot_timeline_dump_json()`: writes `X:\Perf\boot-timeline.json` (path moved from `X:\Boot\` when FPDT records joined the timeline; see TODO-04 §4) with `[{"stage":"fpdt:reset_end","phase":0,"post":"0x0000","start_ms":0,"duration_ms":50,"source":"fpdt","unreliable":false},{"stage":"PMM","phase":0,"post":"0x20","start_ms":86,"duration_ms":7,"source":"tsc","unreliable":false},...]`
 - [x] Called from `boot_phase3()` after `boot_timing_write_report()`
 - [ ] `boot-timeline` shell command -- deferred to `06-desktop-foundation/TODO-05-desktop-shell.md` (no § yet)
 - [x] Commit: `"kernel: boot timeline JSON dump"`
 
-**Test checkpoint:** With BlackBox mounted, `X:\Boot\boot-timeline.json` exists after desktop boot when dump path enabled; JSON contains stage objects. `boot-timeline` shell deferred to `06-desktop-foundation/TODO-05-desktop-shell.md`. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** With BlackBox mounted, `X:\Perf\boot-timeline.json` exists after desktop boot when dump path enabled; JSON contains stage objects. `boot-timeline` shell deferred to `06-desktop-foundation/TODO-05-desktop-shell.md`. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
 ## 10. Remove Hyper-V Debug Workarounds
 
@@ -281,7 +281,7 @@ Clean up all `#ifdef HYPERV_WORKAROUND` blocks now that correct ACPI/LAPIC/IOAPI
 - [ ] `uptime_ns()` returns monotonically increasing values sampled 1 ms apart; delta ≈ 1 000 000 ns
 - [ ] Serial log shows `[LAPIC] CPU0 timer: {N}MHz (calibrated against HPET)` or `PIT` fallback
 - [ ] Boot splash spinner animates correctly with `-no-hpet` QEMU flag (LAPIC fallback path)
-- [ ] With BlackBox mounted and dump path enabled, `X:\Boot\boot-timeline.json` exists after boot; `boot-timeline` shell deferred to `06-desktop-foundation/TODO-05-desktop-shell.md` (§9)
+- [ ] With BlackBox mounted and dump path enabled, `X:\Perf\boot-timeline.json` exists after boot; `boot-timeline` shell deferred to `06-desktop-foundation/TODO-05-desktop-shell.md` (§9)
 - [ ] QEMU `-smp 4`: serial log shows `[SMP] AP1 online`, `[SMP] AP2 online`, `[SMP] AP3 online`; no Hyper-V workaround blocks compile
 - [ ] Commit: `"kernel: irq-timer-arch verified -- MADT APIC, IDT, UTS, LAPIC calibration"`
 

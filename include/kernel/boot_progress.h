@@ -61,14 +61,20 @@ const boot_stage_entry_t *boot_stage_history_get(uint32_t *out_count);
  * message to boot_splash_status() without recording a new entry. */
 void boot_progress_poll(void);
 
-/* Write boot timeline. Path resolution (codified at src/kernel/main/
- * boot_progress.c:262-282): primary is `X:\Boot\boot-timeline.json`
- * when the BlackBox partition is mounted (klog_using_blackbox);
- * fallback is `C:\Impossible\System\Logs\boot-timeline.json` if
- * BlackBox is unavailable. JSON array of {stage, phase, post,
- * start_ms, duration_ms} per step (contract: see "Boot Time
- * Visualization" section in [01-boot-platform/TODO-11](../../todo/01-boot-platform/TODO-11-interrupt-timer-arch.md),
- * the boot_timeline_dump_json row). */
+/* Write boot timeline. Path resolution: primary is `X:\Perf\boot-timeline
+ * .json` when the BlackBox partition is mounted (klog_using_blackbox);
+ * fallback is `C:\Impossible\System\Logs\boot-timeline.json` if BlackBox
+ * is unavailable. JSON array of records: FPDT firmware-phase entries
+ * first (source="fpdt", unreliable=true on zero/garbage records), then
+ * bootloader+kernel TSC steps (source="tsc"). Each record carries
+ * {stage, phase, post, start_ms, duration_ms, source, unreliable}.
+ * When FPDT is reliable, all start_ms values are ms-since-firmware-reset
+ * so FPDT and TSC entries form one monotonic timeline; when unreliable,
+ * FPDT entries collapse to start_ms=0 with unreliable=true, and TSC
+ * entries fall back to ms-since-bl_entry (also stamped unreliable=true
+ * so consumers cannot mistake fallback for absolute time).
+ * Contract pinned by 01-boot-platform/TODO-04 firmware-table-platform-inventory
+ * (item: "Export JSON to X:\Perf\boot-timeline.json"). */
 void boot_timeline_dump_json(void);
 
 /* Render 4-digit hex POST code at native 8 px scale in top-right corner.

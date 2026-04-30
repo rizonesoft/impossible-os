@@ -50,6 +50,52 @@ typedef struct {
 /* Get the recorded step array. Returns count. */
 uint32_t boot_timing_get_steps(const boot_timing_step_t **out);
 
+/* ---- FPDT + TSC normalization (firmware + bootloader unified timeline) ---- */
+
+/* Returns 1 when the FPDT firmware-performance record is unreliable for
+ * timeline use: not present, all zero, non-monotonic, or implausibly large.
+ * Consumers either skip FPDT entries or stamp them `unreliable: true`. */
+int boot_timing_fpdt_unreliable(void);
+
+/* Pure variant for synthetic testing. `available=0` always returns 1.
+ * Same monotonicity/zero/sanity rules as boot_timing_fpdt_unreliable(),
+ * but takes the 5 FBPT phase nanosecond fields as explicit arguments. */
+int boot_timing_fpdt_unreliable_eval(int available,
+                                     uint64_t reset_end,
+                                     uint64_t os_loader_load_start,
+                                     uint64_t os_loader_start_start,
+                                     uint64_t exit_bs_entry,
+                                     uint64_t exit_bs_exit);
+
+/* UEFI bootloader total wall time in ms (kernel_jump - bl_entry). Returns 0
+ * if tsc_freq or bl_entry are unset. Single source of truth for both
+ * boot_timing_init() log line and the VPD "UEFI Boot:" cell, so they
+ * cannot drift. */
+uint32_t boot_timing_uefi_total_ms(void);
+
+/* Convert a TSC tick delta to milliseconds using the calibrated tsc_freq.
+ * Returns 0 if tsc_freq is 0. Used by JSON exporter and VPD. */
+uint32_t boot_timing_tsc_delta_ms(uint64_t ticks);
+
+/* Anchor for unified timeline: ms-since-firmware-reset of the bootloader
+ * `bl_entry` TSC sample. Returns 0 when FPDT is unreliable, in which case
+ * callers fall back to ms-since-bl_entry as the timeline base. */
+uint32_t boot_timing_bl_entry_ms_since_reset(void);
+
+/* Normalized FPDT phase entry, ms-since-reset (or 0 when unreliable). */
+typedef struct {
+    const char *stage;          /* "fpdt:reset_end" etc. */
+    uint32_t    start_ms;       /* ms since firmware reset */
+    uint32_t    duration_ms;    /* delta to next FPDT phase, 0 for last */
+    uint8_t     unreliable;     /* 1 = FPDT data not trustworthy */
+} boot_timing_fpdt_entry_t;
+
+/* Fill `out[]` (max `cap` entries) with the FPDT phase timeline in
+ * monotonic order. Returns the number of entries written. Always emits
+ * a fixed phase set so JSON consumers see consistent fields; entries are
+ * stamped `unreliable=1` when boot_timing_fpdt_unreliable() is true. */
+uint32_t boot_timing_get_fpdt_entries(boot_timing_fpdt_entry_t *out, uint32_t cap);
+
 /* ---- Boot performance regression detection ------------------------------- */
 
 #define BOOT_PERF_MAX_RECORDS  32

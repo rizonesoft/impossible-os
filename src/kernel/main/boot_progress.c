@@ -200,6 +200,32 @@ void post_display16(uint16_t code)
 #include "kernel/fs/vfs.h"
 #include "libc/string.h"
 
+/* Worst case per record: 32-char stage + 10-digit start_ms + 10-digit
+ * duration_ms + JSON scaffolding ~ 160 bytes. With BOOT_TIMING_MAX_STEPS=64
+ * TSC entries and 5 FPDT entries the upper bound is ~11 KB. Round up to
+ * 16 KB (4 frames) so a worst-case timeline never truncates. */
+#define BOOT_TIMELINE_BUF_PAGES 4
+#define BOOT_TIMELINE_BUF_SIZE  (BOOT_TIMELINE_BUF_PAGES * 4096u)
+#define BOOT_TIMELINE_RECORD_MAX 192   /* slack over the ~160 worst-case */
+
+/* Safe TSC delta -> ms: clamps reverse-ordered timestamps to 0 instead of
+ * wrapping the unsigned subtraction. Codex M2 fix. */
+static uint32_t safe_tsc_delta_ms(uint64_t later, uint64_t earlier)
+{
+    if (later <= earlier) return 0;
+    return boot_timing_tsc_delta_ms(later - earlier);
+}
+
+/* Saturating uint32 add. Returns UINT32_MAX on overflow so callers can
+ * detect the saturation (any UINT32_MAX result with a non-saturated input
+ * is by definition a wrapped sum). */
+static uint32_t sat_add_u32(uint32_t a, uint32_t b)
+{
+    uint32_t s = a + b;
+    if (s < a) return 0xFFFFFFFFu;
+    return s;
+}
+
 void boot_timeline_dump_json(void)
 {
     const boot_timing_step_t *steps;
@@ -207,7 +233,6 @@ void boot_timeline_dump_json(void)
     struct vfs_node *f;
     uint8_t *buf;
     uint32_t pos = 0;
-    uint32_t buf_size = 8192;
     uint64_t freq, base;
 
     count = boot_timing_get_steps(&steps);
@@ -216,20 +241,91 @@ void boot_timeline_dump_json(void)
     freq = boot_timing_tsc_freq();
     if (freq < 1000)
         return;
+    (void)freq;  /* delta math now goes through boot_timing_tsc_delta_ms */
     base = steps[0].tsc;
 
-    buf = (uint8_t *)(uintptr_t)pmm_alloc_contiguous(2);  /* 8 KB */
+    buf = (uint8_t *)(uintptr_t)pmm_alloc_contiguous(BOOT_TIMELINE_BUF_PAGES);
     if (!buf) return;
+
+    /* Anchor TSC steps to firmware reset when FPDT is reliable, otherwise
+     * to bl_entry. boot_timing_bl_entry_ms_since_reset() returns 0 in the
+     * unreliable case so the offset becomes a no-op. Codex M2: use the
+     * safe delta to refuse wraparound when steps[0] precedes bl_entry.
+     *
+     * tsc_unreliable propagates to every emitted TSC record so consumers
+     * can distinguish ms-since-reset (FPDT reliable, anchored) from
+     * ms-since-bl_entry (FPDT unavailable/garbage, fallback). Without
+     * this, fallback boots looked like absolute timelines.  */
+    uint32_t reset_anchor_ms = boot_timing_bl_entry_ms_since_reset();
+    uint64_t bl_entry = g_boot_info.timing.bl_entry;
+    uint32_t step0_offset_ms = safe_tsc_delta_ms(steps[0].tsc, bl_entry);
+    uint32_t tsc_anchor_ms = sat_add_u32(reset_anchor_ms, step0_offset_ms);
+    /* TSC entries are absolute ms-since-reset only when the FPDT firmware
+     * anchor AND the bootloader bl_entry sample are valid AND none of the
+     * arithmetic saturated. step0_offset_ms == UINT32_MAX or the anchor
+     * sum at UINT32_MAX both signal an overflowed base. */
+    int tsc_unreliable = (reset_anchor_ms == 0) || (bl_entry == 0)
+                         || (steps[0].tsc < bl_entry)
+                         || (step0_offset_ms == 0xFFFFFFFFu)
+                         || (tsc_anchor_ms == 0xFFFFFFFFu);
+
+    /* Prepend up to 5 FPDT phase entries so the timeline starts at firmware
+     * reset (or all-zero with unreliable=true on VirtualBox-style firmware
+     * that publishes an empty FPDT record). */
+    boot_timing_fpdt_entry_t fpdt[5];
+    uint32_t fpdt_n = boot_timing_get_fpdt_entries(fpdt, 5);
+    uint32_t total = fpdt_n + count;
 
     /* JSON array */
     buf[pos++] = '[';
     buf[pos++] = '\n';
 
-    for (i = 0; i < count && pos < buf_size - 128; i++) {
-        uint32_t start_ms = boot_prog_tsc_delta_ms(steps[i].tsc - base, freq);
+    uint32_t emitted = 0;
+
+    for (uint32_t k = 0; k < fpdt_n; k++) {
+        if (pos + BOOT_TIMELINE_RECORD_MAX >= BOOT_TIMELINE_BUF_SIZE)
+            goto close;
+        int last = (emitted + 1 == total);
+        int written = snprintf((char *)buf + pos,
+            BOOT_TIMELINE_BUF_SIZE - pos,
+            "  {\"stage\":\"%s\",\"phase\":0,\"post\":\"0x0000\","
+            "\"start_ms\":%u,\"duration_ms\":%u,"
+            "\"source\":\"fpdt\",\"unreliable\":%s}%s\n",
+            fpdt[k].stage,
+            (unsigned)fpdt[k].start_ms,
+            (unsigned)fpdt[k].duration_ms,
+            fpdt[k].unreliable ? "true" : "false",
+            last ? "" : ",");
+        if (written <= 0 ||
+            (uint32_t)written >= BOOT_TIMELINE_BUF_SIZE - pos)
+            goto close;
+        pos += (uint32_t)written;
+        emitted++;
+    }
+
+    for (i = 0; i < count; i++) {
+        if (pos + BOOT_TIMELINE_RECORD_MAX >= BOOT_TIMELINE_BUF_SIZE)
+            goto close;
+        /* Detect reverse-ordered TSC samples explicitly: silent clamping
+         * to 0 in safe_tsc_delta_ms() would otherwise emit a plausible
+         * `unreliable:false` record from corrupt timing data. Once a
+         * reverse step is seen, this and every subsequent record is
+         * stamped unreliable. */
+        if (steps[i].tsc < base) tsc_unreliable = 1;
+        if (i + 1 < count && steps[i + 1].tsc < steps[i].tsc)
+            tsc_unreliable = 1;
+        uint32_t step_off = safe_tsc_delta_ms(steps[i].tsc, base);
+        uint32_t start_ms = sat_add_u32(tsc_anchor_ms, step_off);
         uint32_t dur_ms = 0;
         if (i + 1 < count)
-            dur_ms = boot_prog_tsc_delta_ms(steps[i + 1].tsc - steps[i].tsc, freq);
+            dur_ms = safe_tsc_delta_ms(steps[i + 1].tsc, steps[i].tsc);
+        /* Per-record saturation marks this and the rest unreliable.
+         * dur_ms saturation is the same class -- a forward TSC delta
+         * large enough to saturate is corrupt timing data, not a real
+         * boot duration. */
+        if (start_ms == 0xFFFFFFFFu || step_off == 0xFFFFFFFFu ||
+            dur_ms == 0xFFFFFFFFu)
+            tsc_unreliable = 1;
 
         /* Truncate step name to 32 chars max for JSON safety */
         char safe_name[33];
@@ -239,29 +335,44 @@ void boot_timeline_dump_json(void)
             safe_name[sn] = raw[sn];
         safe_name[sn] = '\0';
 
-        int written = snprintf((char *)buf + pos, buf_size - pos,
+        int last = (emitted + 1 == total);
+        int written = snprintf((char *)buf + pos,
+            BOOT_TIMELINE_BUF_SIZE - pos,
             "  {\"stage\":\"%s\",\"phase\":%u,\"post\":\"0x%02x\","
-            "\"start_ms\":%u,\"duration_ms\":%u}%s\n",
+            "\"start_ms\":%u,\"duration_ms\":%u,"
+            "\"source\":\"tsc\",\"unreliable\":%s}%s\n",
             safe_name,
             (unsigned)steps[i].phase,
             (unsigned)steps[i].postcode,
             (unsigned)start_ms,
             (unsigned)dur_ms,
-            (i + 1 < count) ? "," : "");
-        if (written > 0 && (uint32_t)written < buf_size - pos)
-            pos += (uint32_t)written;
-        else
-            break;  /* buffer full -- close array safely */
+            tsc_unreliable ? "true" : "false",
+            last ? "" : ",");
+        if (written <= 0 ||
+            (uint32_t)written >= BOOT_TIMELINE_BUF_SIZE - pos)
+            goto close;
+        pos += (uint32_t)written;
+        emitted++;
     }
 
-    if (pos + 2 < buf_size) {
+close:
+    /* If we broke early, the previous record carries a trailing comma
+     * because comma selection was based on the planned total. Strip it
+     * so the JSON closes cleanly. The last byte before the close is '\n';
+     * the comma is at pos-2. */
+    if (emitted < total && pos >= 2 && buf[pos - 1] == '\n' && buf[pos - 2] == ',')
+        buf[pos - 2] = ' ';
+
+    if (pos + 2 < BOOT_TIMELINE_BUF_SIZE) {
         buf[pos++] = ']';
         buf[pos++] = '\n';
     }
 
-    /* Write to X:\Boot\ (BlackBox) or C:\Impossible\System\Logs\ (fallback) */
+    /* Write to X:\Perf\ (BlackBox) or C:\Impossible\System\Logs\ (fallback).
+     * Path moved from X:\Boot\ when FPDT entries joined the timeline so
+     * the file lives next to boot-profile.log under the perf dump tree. */
     {
-        const char *tl_dir = klog_using_blackbox ? "X:\\Boot\\" : klog_dir;
+        const char *tl_dir = klog_using_blackbox ? "X:\\Perf\\" : klog_dir;
         char tl_path[64];
         int tp = 0, tj;
         for (tj = 0; tl_dir[tj]; tj++) tl_path[tp++] = tl_dir[tj];
@@ -287,7 +398,7 @@ void boot_timeline_dump_json(void)
 
     {
         uint32_t pg;
-        for (pg = 0; pg < 2; pg++)
+        for (pg = 0; pg < BOOT_TIMELINE_BUF_PAGES; pg++)
             pmm_free_frame((uintptr_t)buf + pg * 4096);
     }
 }

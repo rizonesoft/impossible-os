@@ -42,7 +42,7 @@ title: "TODO-14 -- Boot Diagnostics, Heartbeat & Spinner"
 ## Outcome
 
 - Serial log shows `[+NNNms] BOOT_PMM: Physical memory manager ready` style entries for every major stage.
-- `boot-timeline.json` written under BlackBox `X:\Boot\` (or klog fallback) after successful boot summarizing timed steps (`boot_timeline_dump_json()`).
+- `boot-timeline.json` written under BlackBox `X:\Perf\` (or klog fallback) after successful boot summarizing FPDT firmware phases + TSC bootloader/kernel steps (`boot_timeline_dump_json()`; path moved from `X:\Boot\` by TODO-04 FPDT normalization).
 - Four-digit hex POST code (native 8 px glyphs) visible in the top-right corner of the framebuffer from kernel entry until `BOOT_DESKTOP_READY`; high byte of each 16-bit code is output to I/O port 0x80.
 - On panic: `struct panic_evidence` captured at `0x80000`; next boot saves `last-panic.txt` and shows "System shut down unexpectedly" toast.
 - Panic BSOD shows a QR code in the bottom-right corner linking to the troubleshooting page.
@@ -94,7 +94,7 @@ High-level named-stage wrapper over the existing `boot_progress()` that adds a 3
 - [x] Serial log format: `[+NNNms] STAGE_NAME: msg`
 - [x] `boot_stage_history_get()` accessor for panic forensics
 - [x] `boot_progress_poll()`: re-sends last stage to `boot_splash_status()` for timer-driven visual refresh (no in-tree caller yet -- wire with splash/timer when UI needs refresh without new history rows)
-- [x] `boot_timeline_dump_json()`: writes TSC-based step timeline as JSON to `boot-timeline.json` (BlackBox `X:\Boot\` or klog dir fallback); uses `boot_timing_get_steps()` + `boot_prog_tsc_delta_ms()` (`src/kernel/main/boot_progress.c`)
+- [x] `boot_timeline_dump_json()`: writes unified FPDT + TSC step timeline as JSON to `boot-timeline.json` (BlackBox `X:\Perf\` or klog dir fallback); uses `boot_timing_get_fpdt_entries()` + `boot_timing_get_steps()` + `boot_prog_tsc_delta_ms()` (`src/kernel/main/boot_progress.c`); path moved from `X:\Boot\` by TODO-04 FPDT and Boot Timing Normalization
 - [x] `boot_timeline_dump_json()` invoked after successful desktop-ready init (`src/kernel/main/boot_desktop.c` ~229, after NVRAM POST success + timing reports)
 - [x] Commit: `"kernel: boot progress named-stage API + stage history + elapsed-ms tracking"` (exact subject varies across bring-up commits)
 

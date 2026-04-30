@@ -39,7 +39,7 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 | 💎 |   1   | Firmware table catalog API                              | TODO-01 §1     |  [x]   |
 | 💎 |   2   | Physical range and checksum validation                  | §1             |  [x]   |
 | 💎 |   3   | ACPI/SMBIOS/DTB table arbitration                       | §1, §2         |  [x]   |
-| 💎 |   4   | FPDT and boot timing normalization                      | §1             |  [ ]   |
+| 💎 |   4   | FPDT and boot timing normalization                      | §1             |  [x]   |
 | 💎 |   5   | UEFI memory attributes and runtime properties inventory | §1, TODO-27 §3 |  [ ]   |
 | 💎 |   6   | ESRT firmware inventory mirror                          | §1, TODO-27 §2 |  [ ]   |
 | 💎 |   7   | UEFI conformance profile and EBBR detection             | §1             |  [ ]   |
@@ -128,13 +128,22 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 
 ## 4. FPDT and Boot Timing Normalization
 
-- [ ] Normalize FPDT timestamps and bootloader TSC timestamps into one timeline.
-- [ ] Detect zero/garbage FPDT records and mark as unreliable.
-- [ ] Feed `boot_timing.c` and VPD from the same normalized source.
-- [ ] Export JSON to `X:\Perf\boot-timeline.json`.
-- [ ] Commit: `"boot: normalize FPDT and bootloader timing"`
+- [x] Normalize FPDT timestamps and bootloader TSC timestamps into one timeline -- `boot_timing_bl_entry_ms_since_reset()` returns the FPDT `os_loader_start_start` ns sample (converted to ms) as the absolute time of the bootloader `bl_entry` TSC sample; `boot_timeline_dump_json()` then offsets every TSC step by that anchor so FPDT firmware phases and TSC kernel steps share one ms-since-reset axis. When FPDT is unreliable the anchor collapses to 0 and TSC entries are ms-since-bl_entry.
+- [x] Detect zero/garbage FPDT records and mark as unreliable -- `boot_timing_fpdt_unreliable_eval()` (pure helper for tests) + `boot_timing_fpdt_unreliable()` (live wrapper) reject `fpdt_available==0`, all-zero records (VirtualBox EFI), zero-after-non-zero fields, non-monotonic phase order, and any single field above a 10-minute sanity cap.
+- [x] Feed `boot_timing.c` and VPD from the same normalized source -- new `boot_timing_uefi_total_ms()` shared helper computes `(kernel_jump - bl_entry) * 1000 / tsc_freq` once; `boot_timing_init()` and `vpd.c` "UEFI Boot:" cell both call it instead of recomputing the formula inline (drift-proof).
+- [x] Export JSON to `X:\Perf\boot-timeline.json` -- `boot_timeline_dump_json()` (`src/kernel/main/boot_progress.c`) prepends 5 FPDT entries (`source:"fpdt"`, `unreliable:bool`) before the existing TSC steps (`source:"tsc"`), now writes to `X:\Perf\` (was `X:\Boot\`); buffer raised to 16 KiB to fit worst-case 64 TSC + 5 FPDT records, trailing-comma stripped on truncation so JSON always closes cleanly. Per-delta math goes through a `safe_tsc_delta_ms()` helper that clamps reverse-ordered TSC samples to 0 instead of wrapping unsigned subtractions.
+- [x] Commit: `"boot: normalize FPDT and bootloader timing"`
 
 **Test checkpoint:** `X:\Perf\boot-timeline.json` exists post-boot with monotonically increasing timestamps from FPDT + bootloader TSC unified. Zero-FPDT firmware (VirtualBox) marks FPDT records `unreliable: true`. `boot_timing.c` and VPD report identical phase totals. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 9 FPDT-normalization sub-tests / 12 assertions, 0 failures (unavailable / all-zero / clean monotonic / non-monotonic / zero-after-nonzero / leading-zero / 10-min cap / fixed schema / cap+null guards)
+>
+> **Notes:**
+> - Shipped: `boot_timing_fpdt_unreliable[_eval]` + `boot_timing_uefi_total_ms` + `boot_timing_tsc_delta_ms` + `boot_timing_bl_entry_ms_since_reset` + `boot_timing_get_fpdt_entries` (~120 LOC) in `src/kernel/boot_timing.c`; JSON exporter rewrite (~80 LOC delta) in `src/kernel/main/boot_progress.c`; VPD "UEFI Boot:" cell uses shared helper; 9 unit tests in `src/kernel/test/test_boot_timing.c`.
+> - How it runs: helpers are pure reads of `g_boot_info.timing` so they are lock-free and SMP-safe; `boot_timeline_dump_json()` runs once on the BSP at end of Phase 3 alongside the existing perf dumps. KVM smoke 2.35s on OVMF (FPDT not exposed; falls through unreliable path correctly).
+> - Downstream effects: closes `boot-timeline.json` path drift between TODO-11 §9 + TODO-14 + TODO-24 (now all point to `X:\Perf\`); enables host decoder work in §10 to consume one schema with FPDT + TSC sources. Codex 1x adversarial review adoptions in commit `<hash>` -- M1 buffer overflow + M2 TSC wraparound both fixed.
+> - Canonical doc: `include/kernel/boot_timing.h` FPDT + TSC normalization API + `include/kernel/boot_progress.h` JSON contract docstring.
+> - Scope boundary: §4 owns FPDT detection + JSON normalization. Per-step name JSON escape and full schema doc are owned by TODO-14 §9. Bare-metal FPDT validation across multiple firmware vendors is the §10 host-decoder + bare-metal verification step.
 
 ---
 
@@ -221,7 +230,7 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 | 💎 | Firmware table catalog API            | ✅ ACPI/HAL + WMI                | ✅ acpi_get_table + sysfs       | ✅ firmware_table_entry_t catalog |
 | 💎 | Physical range + checksum validation  | ✅ HAL validates pre-use         | ✅ acpi_tb_verify_checksum      | ✅ §2 mmap-bound + checksums    |
 | 💎 | ACPI/SMBIOS/DTB arbitration           | ⚠️ ACPI-first; no DTB            | ✅ ACPI on x86, DTB on ARM      | ✅ §3 ACPI > DTB + HYBRID detect |
-| 💎 | FPDT boot-timeline normalization      | ✅ FPDT + ETW timeline           | ⚠️ acpi_fpdt_init read-only     | ⬜ §4 FPDT + TSC unified        |
+| 💎 | FPDT boot-timeline normalization      | ✅ FPDT + ETW timeline           | ⚠️ acpi_fpdt_init read-only     | ✅ §4 FPDT + TSC unified JSON   |
 | 💎 | UEFI MAT + Runtime Properties         | ✅ MmGetEfiRuntimeServicesTable  | ✅ efi_memmap_attributes        | ⬜ §5 MAT + RT properties       |
 | 💎 | ESRT firmware inventory               | ✅ Windows Update / fwupdd       | ✅ fwupd /sys/firmware/efi/esrt | ⬜ §6 ESRT mirror to Registry   |
 | 💎 | UEFI conformance profile + EBBR       | ⚠️ assumes full PC profile       | ✅ EBBR detection in efi-stub   | ⬜ §7 conformance GUID parse    |

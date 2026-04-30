@@ -144,7 +144,7 @@ Redirect all kernel log output from `C:\Impossible\System\Logs\` to `X:\Logs\`.
 
 Move the per-boot numbered session logs and boot timeline JSON to `X:\Boot\`.
 
-- [x] `boot-timeline.json` → `X:\Boot\boot-timeline.json` when BlackBox mounted, C:\ fallback
+- [x] `boot-timeline.json` → `X:\Perf\boot-timeline.json` when BlackBox mounted, C:\ fallback (path moved from `X:\Boot\` by TODO-04 FPDT and Boot Timing Normalization when FPDT entries joined the timeline)
 - [x] `boot-profile.log` → `X:\Perf\boot-profile.log` when BlackBox mounted, C:\ fallback
 - [x] `klog_using_blackbox` flag exposed in `klog.h` for boot subsystems to select correct subdirectory
 - [x] Serial session logs remain at `X:\Logs\Serial\Serial_YYMMDDNN.log` (handled by §5)

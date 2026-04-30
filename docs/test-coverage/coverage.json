@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-04-29T21:45:59Z",
-  "total_suites": 718,
-  "total_assertions": 2041,
+  "timestamp": "2026-04-30T07:57:33Z",
+  "total_suites": 769,
+  "total_assertions": 2132,
   "files": [
     {"file": "test_acpi_power.c", "suites": 7, "assertions": 10},
     {"file": "test_alpc.c", "suites": 49, "assertions": 194},
@@ -13,6 +13,7 @@
     {"file": "test_boot_init.c", "suites": 23, "assertions": 80},
     {"file": "test_boot_reserved.c", "suites": 11, "assertions": 36},
     {"file": "test_boot_rollback.c", "suites": 15, "assertions": 36},
+    {"file": "test_boot_timing.c", "suites": 10, "assertions": 13},
     {"file": "test_boot_version.c", "suites": 11, "assertions": 38},
     {"file": "test_boot_warm_update.c", "suites": 13, "assertions": 27},
     {"file": "test_bulletproof.c", "suites": 7, "assertions": 20},
@@ -22,6 +23,8 @@
     {"file": "test_desktop_reset.c", "suites": 0, "assertions": 0},
     {"file": "test_exec.c", "suites": 24, "assertions": 44},
     {"file": "test_fastpath_hardening.c", "suites": 6, "assertions": 15},
+    {"file": "test_firmware_platform.c", "suites": 15, "assertions": 35},
+    {"file": "test_firmware_tables.c", "suites": 26, "assertions": 43},
     {"file": "test_harness.c", "suites": 26, "assertions": 48},
     {"file": "test_heap.c", "suites": 11, "assertions": 31},
     {"file": "test_ipc.c", "suites": 5, "assertions": 12},

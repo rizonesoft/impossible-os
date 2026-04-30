@@ -368,6 +368,7 @@ extern void test_register_vfs(void);
 extern void test_register_sched(void);
 extern void test_register_registry(void);
 extern void test_register_boot_init(void);
+extern void test_register_boot_timing(void);
 extern void test_register_boot_info(void);
 extern void test_register_boot_reserved(void);
 extern void test_register_boot_version(void);
@@ -422,6 +423,7 @@ void test_runner_init(void)
 
     /* Boot */
     test_register_boot_init();
+    test_register_boot_timing();
     test_register_boot_info();
     test_register_boot_reserved();
     test_register_boot_version();

@@ -15,6 +15,7 @@
 #include "kernel/vpd_font.h"
 #include "kernel/boot_info.h"
 #include "kernel/boot_init.h"
+#include "kernel/boot_timing.h"
 #include "kernel/uefi_runtime.h"
 
 /* ---- State --------------------------------------------------------------- */
@@ -319,15 +320,12 @@ static void vpd_render_info_header(void)
     }
     y += VPD_ROW_HEIGHT;
 
-    /* Line 4: UEFI Boot Time */
+    /* Line 4: UEFI Boot Time -- shares boot_timing_uefi_total_ms() with
+     * the boot_timing_init() klog line so the two cannot drift. */
     {
-        uint64_t freq = g_boot_info.timing.tsc_freq;
+        uint32_t ms = boot_timing_uefi_total_ms();
         vpd_puts_scaled(label_x, y, "UEFI Boot:", VPD_COLOR_LABEL);
-        if (freq > 0 && g_boot_info.timing.kernel_jump > 0
-            && g_boot_info.timing.bl_entry > 0) {
-            uint32_t ms = (uint32_t)(
-                (g_boot_info.timing.kernel_jump - g_boot_info.timing.bl_entry)
-                * 1000 / freq);
+        if (ms > 0) {
             vpd_putu32_scaled(val_x, y, ms, VPD_COLOR_VALUE);
             vpd_puts_scaled(val_x + 4 * VPD_CHAR_W, y, "ms",
                              VPD_COLOR_LABEL);
