@@ -38,6 +38,43 @@ If the WARN fires, rewrite the prompt to use the template below. The
 prompt should describe the SCOPE of review (files, sections, angles),
 not the agent's narrative about the work.
 
+## Dispatch invocation shape (apostrophe-safe)
+
+Always feed the prompt body via a single-quoted heredoc into a shell
+variable, then expand it into one argv. Inline `'...'` quoting fails
+the moment the body contains a literal apostrophe (contractions like
+"doesn't", "wrapper's"; C literals like `'\0'`) or a backtick. Both
+collapse the outer quote and bash starts parsing the rest as commands,
+producing `syntax error near unexpected token` failures that look
+random but are deterministic.
+
+```bash
+PROMPT=$(cat <<'EOF'
+[review-kind: adversarial]
+Target: todo/<domain>/TODO-XX-<slug>.md §<N>
+Files in scope: <paths>
+
+<body, free to use apostrophes / backticks / parens>
+EOF
+)
+bash scripts/codex-dispatch.sh "$PROMPT"
+```
+
+The `<<'EOF'` (single-quoted heredoc terminator) prevents `$(...)`,
+`${...}`, and backtick expansion inside the body. The trailing `"$PROMPT"`
+preserves all whitespace and newlines as a single argv, which the
+wrapper `argc == 1` check accepts.
+
+Inline single-quoted form is acceptable ONLY for short prompts that
+provably contain no apostrophes or backticks:
+
+```bash
+bash scripts/codex-dispatch.sh '[review-kind: adversarial] todo/... <body>'
+```
+
+In practice the heredoc form is the default; the inline form is for
+one-line dispatches where you can eyeball the absence of apostrophes.
+
 ## Three dispatch templates
 
 Replace `<TODO_PATH>`, `<SECTION_NUM>`, and `<file:line ...>` placeholders
