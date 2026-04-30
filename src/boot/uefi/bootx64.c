@@ -3147,6 +3147,16 @@ static __attribute__((noreturn)) void bpp_render_and_reset(
         serial_early_print("[BOOT] ABI mismatch: NVRAM persist failed 0x");
         serial_early_print_hex64((UINT64)persist_status);
         serial_early_print(" -- next boot will not carry the transcript\n");
+        /* On real hardware with NVRAM full or locked, the operator
+         * never sees the serial log -- only the on-screen mismatch
+         * banner. Without this on-screen warning they would expect
+         * a transcript at X:\Diag\boot-proto-fault.txt on the next
+         * boot and find none. Make the missing transcript visible. */
+        if (gST && gST->ConOut) {
+            efi_print(u"\r\n  WARNING: fault record could NOT be saved to NVRAM\r\n");
+            efi_print(u"  The next boot will NOT carry a BlackBox transcript.\r\n");
+            efi_print(u"  Capture this screen before reboot.\r\n");
+        }
     }
 
     if (gBS && gBS->Stall)
@@ -3654,6 +3664,20 @@ kernel_loaded:
         return EFI_LOAD_ERROR;
     }
 
+    /* Pre-jump ABI mismatch check MUST run BEFORE the PT_LOAD copy
+     * loop. A stale or malicious kernel image can declare any
+     * p_paddr it wants; copying segments before validating the
+     * .bootproto descriptor would let the bad image perform
+     * attacker-controlled physical writes (UEFI tables, RuntimeServices
+     * pointers, the bootloader itself) before the mismatch screen
+     * ever fires. The parser walks file_buf, not the to-be-loaded
+     * image, so it is safe to run here -- ehdr has been bounds-
+     * validated above and file_buf + file_size are still authoritative
+     * for the on-disk image. On mismatch the function does not return:
+     * it persists a NVRAM fault record, renders a UCS-2 screen, and
+     * reboots cold. */
+    bootproto_verify_or_reset(file_buf, (UINT64)file_size);
+
     /* Load PT_LOAD segments with per-segment validation */
     phdr = (Elf64_Phdr *)(file_buf + ehdr->e_phoff);
     for (i = 0; i < ehdr->e_phnum; i++) {
@@ -3839,13 +3863,6 @@ kernel_loaded:
 
         *entry_point = km_addr;
     }
-
-    /* Pre-jump ABI mismatch check: scan the loaded kernel ELF for
-     * `.bootproto`, compare 4-tuple against bootloader's compile-time
-     * expected bytes. On mismatch the function does not return --
-     * it persists a NVRAM fault record, renders a UCS-2 screen, and
-     * reboots cold. file_buf + file_size are still valid here. */
-    bootproto_verify_or_reset(file_buf, (UINT64)file_size);
 
     return EFI_SUCCESS;
 }

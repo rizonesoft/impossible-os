@@ -77,6 +77,7 @@ title: "TODO-03 -- Bootloader Error Recovery & ELF Hardening"
 | 💎  |  16   | boot_info kernel validation moved to TODO-01   | §15        |  [x]   |
 | 💎  |  17   | Memory map overlap normalization (sort+carve)  | §12        |  [x]   |
 | ⭐  |  18   | Graphical error screen (ChromeOS/Win11-style)  | §9, §14    |  [x]   |
+| 💎  |  19   | PT_LOAD destination policy (defense-in-depth)  | §1         |  [ ]   |
 
 > 💎 = parity -- Windows bootmgfw.efi and GRUB2 both handle these error paths.
 > ⭐ = exclusive -- visible error screen with recovery instructions, QR code, and NVRAM-persisted error codes; neither Windows nor Linux provides this level of pre-kernel diagnostic detail.
@@ -491,6 +492,28 @@ The pre-§18 error screen used UEFI text console (`ConOut`) with white-on-blue t
 
 > **Verified:** 2026-04-12 -- all 10 items confirmed. `fb_pack_rgb` at [bootx64.c:1254](../../src/boot/uefi/bootx64.c#L1254). `bsod_font` at :1277. `bsod_sad_face` at :1468. `bsod_render_graphical` at :1568. `bsod_can_render_graphical` at :1720. `gFbPixelFormat` set at :2098. Integration at :1862. Accepted: none.
 > **Quality reviewed:** 2026-04-12 -- design review flagged ConOut-after-EBS safety, pixel-format-aware color packing, and risk matrix gaps (all fixed before first build). Impl round 1: URL caption unreachable (inlined QR with caption_reserve). Round 2: URL clipped at 1280x720 right edge (three-branch horizontal placement). Round 3: cleared. Post-impl round 1: pre-EBS dwell used counter not wall-clock (added `boot_fatal_dwell()` with `gBS->Stall`); post-EBS had no dwell (added `RuntimeServices->GetTime` loop with TSC fallback). Post-impl round 2: stale ConIn buffer bypassed dwell (added `ConIn->Reset` before polling); post-EBS TSC dwell non-uniform (replaced with GetTime primary, TSC fallback). Quality pass: all helpers referenced, no dead code, pixel format consistent, one-time boot performance. Accepted: none.
+
+---
+
+## 19. PT_LOAD Destination Policy
+
+§1 bounds-checks PT_LOAD segments (file-side: `p_offset + p_filesz <= file_size`, address wraparound, boot_info overlap, framebuffer overlap, 32 MiB total cap), but does NOT reject writes into UEFI tables, RuntimeServices/BootServices regions, the bootloader image itself, or other firmware-reserved memory. A signed-but-misbehaving kernel image (Secure Boot proves the bytes were not tampered with, NOT that the segments target safe addresses) can still drive `efi_memcpy(p_paddr, ...)` into firmware state, corrupting `gST` / `gRT` / loaded-image / firmware tables before any later check runs. TODO-01 §17 `.bootproto` mismatch is a **version-drift** signal, not a security boundary -- a crafted kernel that knows the bootloader's compile-time `{magic, version, struct_size, sha256}` tuple still passes the descriptor gate. This section adds defense-in-depth: an explicit "allowed destination" policy that rejects PT_LOAD copies into firmware-owned, bootloader-owned, or handoff-reserved regions before any `efi_memcpy` runs.
+
+> [!NOTE]
+> **Regression risk:** MEDIUM. False-positives reject otherwise-valid kernels; false-negatives leave the gap §17 already partially closed. Validate against the live UEFI memory map (`gBS->GetMemoryMap`) at kernel-load time, not a hard-coded address list.
+
+- [ ] Snapshot the UEFI memory map immediately before `load_kernel()` returns (after the existing `gBS->GetMemoryMap` call site OR a fresh one); cache the entries that mark `EfiRuntimeServicesCode`, `EfiRuntimeServicesData`, `EfiBootServicesCode` (where the bootloader image lives), `EfiLoaderCode` (bootloader image fallback), `EfiACPIReclaimMemory`, `EfiACPIMemoryNVS`, and any `EfiReserved` ranges. Walk this list per PT_LOAD segment in `load_kernel()` and reject any segment whose `[p_paddr, p_paddr + p_memsz)` overlaps a forbidden region.
+- [ ] Define `bool pt_load_destination_allowed(UINT64 dst_start, UINT64 dst_end, const EFI_MEMORY_DESCRIPTOR *map, UINTN entries, UINTN desc_size)` in `src/boot/uefi/bootx64.c` (or a new `src/boot/uefi/load_policy.c` if it grows past ~80 LOC). Returns false on any overlap with the forbidden classes above; returns true only when every byte of the destination range falls inside `EfiConventionalMemory` or `EfiLoaderData` (the kernel's intended landing pages).
+- [ ] Wire the predicate into `load_kernel()` BEFORE the `efi_memcpy(dst, src, copy_size)` at the existing PT_LOAD copy site (currently `src/boot/uefi/bootx64.c:3744-3756`, search for "Copy segment to its physical address"). On reject: emit `[FAIL] Kernel ELF: PT_LOAD destination forbidden (paddr=0xH..H, type=<EFI_MEMORY_TYPE name>)\n` via `serial_early_print` AND return `EFI_LOAD_ERROR` so the existing §9 fatal screen renders. Do NOT attempt mitigation -- a kernel that wants to write firmware addresses is broken or hostile.
+- [ ] Add a fault class to the §17 `boot_version_fault` schema (or a new sibling NVRAM record) so the operator-visible error names "PT_LOAD destination forbidden" rather than the generic boot-load failure. XREF the §17 producer/consumer to add the new fault class.
+- [ ] Unit test in `src/kernel/test/test_boot_proto.c` (or a new `test_load_policy.c`): synthesize EFI_MEMORY_DESCRIPTOR fixtures covering each forbidden class and assert `pt_load_destination_allowed()` rejects them; assert it accepts a destination fully inside `EfiConventionalMemory`. Cannot test the live `gBS->GetMemoryMap` path under unit tests (lives outside boot infrastructure per `feedback_test_no_live_boot_calls`); the policy predicate is the testable surface.
+- [ ] Smoke test extension in `scripts/test-smoke.sh`: build a synthetic kernel ELF with a PT_LOAD segment targeting `EfiRuntimeServicesData` (the SystemTable region) and confirm the bootloader rejects it via the new fail message before any copy occurs. Owner: §19 fixture; can re-use the `tools/test-bootproto/` fixture infrastructure.
+- [ ] On §19 ship: cross-link from TODO-01 §17 Notes to record that the §17 .bootproto check is "version drift only", and that destination policy lives here.
+- [ ] Commit: `"boot: PT_LOAD destination policy -- reject firmware/loader overlaps before copy"`
+
+**Test checkpoint:** With a synthetic ELF whose PT_LOAD targets `EfiRuntimeServicesData`, bootloader emits `[FAIL] Kernel ELF: PT_LOAD destination forbidden ... type=RuntimeServicesData` on serial and renders the §9 error screen. Verified on QEMU WHPX + TCG; bare-metal validation is operator-driven (requires a hand-built malformed kernel).
+
+> **Test runner:** N/A (not yet shipped) | validation: synthetic-ELF fixture + smoke pattern check
 
 ---
 
