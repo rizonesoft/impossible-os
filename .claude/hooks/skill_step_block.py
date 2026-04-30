@@ -171,9 +171,33 @@ def _is_blocking_signature(d: dict) -> bool:
         return bool(is_commit)
     if tn == "Skill":
         skill = ti.get("skill") or ti.get("name") or ""
-        if skill == "review-todo-section":
+        if skill != "review-todo-section":
+            return False
+        # Bug fix 2026-04-30: only fire when the user is RE-INVOKING the
+        # same review (args match the active state). A fresh Skill call
+        # with different args is starting a NEW review whose terminal
+        # steps haven't run yet -- blocking it on the PRIOR session's
+        # incomplete state was the recurring friction at every section
+        # boundary. The PostToolUse observer creates a fresh entry on
+        # this Skill call regardless; we only want to block when the
+        # user is genuinely trying to commit a stale-state re-entry.
+        new_args = ti.get("args") or ""
+        try:
+            root = _repo_root()
+            if not root:
+                return True  # cannot compare; default to block (safe)
+            state_p = os.path.join(root, ".claude/state/skill-progress.json")
+            if not os.path.exists(state_p):
+                return False  # no prior state, nothing to gate against
+            with open(state_p, "r", encoding="utf-8") as fh:
+                state = json.load(fh)
+            entry = state.get("review-todo-section") or {}
+            cur_args = entry.get("args") or ""
+            if cur_args and cur_args.strip() != new_args.strip():
+                return False  # different review; let observer reset
             return True
-        return False
+        except Exception:
+            return True  # safe default
     return False
 
 
