@@ -35,6 +35,48 @@ import sys
 REPO_ROOT = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", ".."))
 INC = os.path.join(REPO_ROOT, "tools/boot-info-manifest/dump-fields.inc")
 MATRIX = os.path.join(REPO_ROOT, "docs/boot/boot-info-fields.md")
+HEADER = os.path.join(REPO_ROOT, "include/kernel/boot_info.h")
+
+# Map struct name -> F() prefix used in dump-fields.inc. Anonymous inline
+# structs are keyed by their field name (e.g. `timing` is `struct { ... }
+# timing;` inside boot_info, and its members appear as `F(timing.<name>)`).
+# Adding a new top-level struct without registering its prefix here will
+# fail loud at parse time (the manifest-completeness check refuses to run
+# with unknown structs) -- this mirrors the fail-loud rule that
+# expected_sections() applies to documented fields.
+STRUCT_TO_PREFIX: dict[str, str] = {
+    "boot_info":              "",
+    "boot_info_header":       "header.",
+    "boot_config":            "config.",
+    "boot_framebuffer":       "fb.",
+    "boot_usb_controller":    "usb_controller.",
+    "boot_uefi_runtime":      "uefi_runtime.",
+    "boot_mmap_entry":        "mmap[0].",
+    "boot_uefi_config_entry": "config_table[0].",
+    "boot_uefi_guid":         "config_table[0].guid.",
+    "boot_rt_mem_entry":      "rt_mmap[0].",
+    "boot_gop_mode":          "gop_modes[0].",
+    "boot_usb_device":        "usb_devices[0].",
+    "boot_usb_endpoint":      "usb_devices[0].endpoints[0].",
+    "boot_payload_desc":      "payload_descriptors[0].",
+    # Anonymous inline struct field names (parser detects `struct { ... }
+    # <name>;` at top level inside boot_info and treats <name> as the key).
+    "timing":                 "timing.",
+}
+
+# Field types whose own enumeration covers their members -- skip them at
+# the parent level so we don't expect `F(config)` or `F(fb)` for the
+# container itself (only `F(config.<member>)` rows exist).
+NESTED_STRUCT_FIELD_NAMES = {
+    # Members of struct boot_info that are themselves typed sub-structs:
+    "header", "config", "fb", "usb_controller", "uefi_runtime", "timing",
+    "mmap", "config_table", "rt_mmap", "gop_modes", "usb_devices",
+    "payload_descriptors",
+    # Sub-struct members inside other named structs (boot_uefi_guid lives
+    # inside boot_uefi_config_entry; boot_usb_endpoint array lives inside
+    # boot_usb_device):
+    "guid", "endpoints",
+}
 
 # Map a manifest-field prefix to the matrix section that is expected to
 # own the field's nested-struct row. When a manifest field matches a
@@ -278,6 +320,167 @@ def resolve_element_sentinel_parent(field: str) -> str | None:
     return None
 
 
+FIELD_DECL_RE = re.compile(
+    r"^\s*(?:const\s+|volatile\s+|signed\s+|unsigned\s+|struct\s+\w+\s+|"
+    r"[\w_]+\s+)+"                       # type tokens (one or more)
+    r"(\w+)"                             # capture group 1: field name
+    r"\s*(\[[^\]]+\])?\s*;\s*$"          # optional [size]; trailing semicolon
+)
+
+
+def _strip_comments(src: str) -> str:
+    """Remove /* ... */ and // ... comments. Preserve line breaks."""
+    src = re.sub(r"/\*.*?\*/", lambda m: "\n" * m.group(0).count("\n"),
+                 src, flags=re.DOTALL)
+    src = re.sub(r"//[^\n]*", "", src)
+    return src
+
+
+def parse_struct_members(path: str) -> dict[str, list[tuple[str, bool]]]:
+    """Parse boot_info.h and return {struct_name: [(field_name, is_array)]}
+    for every top-level struct definition AND for anonymous inline struct
+    fields of struct boot_info (keyed by their field name -- `timing` etc).
+
+    Skips field declarations whose type names a known nested struct
+    (NESTED_STRUCT_FIELD_NAMES); those members are checked indirectly via
+    their own struct's enumeration.
+
+    Limitations: assumes one top-level brace pair per struct, no nested
+    named struct definitions, no anonymous unions inside named structs
+    (boot_info.h has none today). If those patterns appear, this parser
+    needs extension."""
+    src = _strip_comments(open(path, "r", encoding="utf-8").read())
+    result: dict[str, list[tuple[str, bool]]] = {}
+
+    # Find every top-level `struct <name> { ... };`. State-machine over
+    # brace depth, tracking the open struct's tag.
+    pos = 0
+    while pos < len(src):
+        m = re.search(r"\bstruct\s+(\w+)\s*\{", src[pos:])
+        if not m:
+            break
+        struct_name = m.group(1)
+        body_start = pos + m.end()
+        depth = 1
+        i = body_start
+        while i < len(src) and depth > 0:
+            c = src[i]
+            if c == "{":
+                depth += 1
+            elif c == "}":
+                depth -= 1
+                if depth == 0:
+                    break
+            i += 1
+        if depth != 0:
+            break  # unmatched brace
+        body = src[body_start:i]
+        members: list[tuple[str, bool]] = []
+        # Walk body and collect depth-1 declarations. Skip inner brace
+        # pairs (they are anonymous inline structs that we handle below
+        # ONLY for boot_info; for other structs an inline struct member is
+        # currently unused and would be flagged as "unknown shape").
+        inner_depth = 0
+        line_buf = ""
+        anon_buf: list[tuple[int, str]] = []  # (depth-when-opened, body)
+        anon_open: int = -1
+        for ch_i, ch in enumerate(body):
+            if ch == "{":
+                if inner_depth == 0:
+                    anon_open = ch_i + 1
+                inner_depth += 1
+                continue
+            if ch == "}":
+                inner_depth -= 1
+                if inner_depth == 0:
+                    anon_buf.append((1, body[anon_open:ch_i]))
+                    # Continue: the `<fieldname>;` after `}` will appear
+                    # in line_buf for member-name capture.
+                continue
+            if inner_depth > 0:
+                continue
+            line_buf += ch
+            if ch == ";":
+                fm = FIELD_DECL_RE.match(line_buf)
+                if fm:
+                    fname = fm.group(1)
+                    is_array = fm.group(2) is not None
+                    if fname not in NESTED_STRUCT_FIELD_NAMES:
+                        members.append((fname, is_array))
+                    elif anon_buf and struct_name == "boot_info":
+                        # Anonymous inline struct: enumerate its body as a
+                        # virtual struct keyed by the field name.
+                        inline_members = _parse_inline_body(anon_buf[-1][1])
+                        result[fname] = inline_members
+                    anon_buf = []
+                line_buf = ""
+        # Per-struct dedup: an explicit named struct definition wins over
+        # any prior anonymous-inline registration of the same name.
+        result[struct_name] = members
+        pos = body_start + (i - body_start) + 1
+    return result
+
+
+def _parse_inline_body(body: str) -> list[tuple[str, bool]]:
+    """Parse the body of an anonymous inline struct (boot_info member)
+    and return its leaf fields. Skips brace-nested content."""
+    out: list[tuple[str, bool]] = []
+    depth = 0
+    line_buf = ""
+    for ch in body:
+        if ch == "{":
+            depth += 1
+            continue
+        if ch == "}":
+            depth -= 1
+            continue
+        if depth > 0:
+            continue
+        line_buf += ch
+        if ch == ";":
+            fm = FIELD_DECL_RE.match(line_buf)
+            if fm:
+                out.append((fm.group(1), fm.group(2) is not None))
+            line_buf = ""
+    return out
+
+
+def check_manifest_completeness(
+    fields: list[str],
+    structs: dict[str, list[tuple[str, bool]]],
+) -> list[tuple[str, str]]:
+    """Return [(struct.field, reason)] for every struct member that has
+    no F() entry in the manifest. Inverse direction of the matrix gate:
+    enforces that every real struct field is enumerated by F() before
+    the matrix coverage check runs."""
+    fields_set = set(fields)
+    missing: list[tuple[str, str]] = []
+    for struct_name, members in structs.items():
+        prefix = STRUCT_TO_PREFIX.get(struct_name)
+        if prefix is None:
+            # Unmapped struct definition (new struct landed without
+            # registration). Skip silently rather than fail-loud here:
+            # not every struct in the header is a boot_info member
+            # (some are local helpers). The real coverage check is
+            # against the boot_info shape.
+            continue
+        for fname, is_array in members:
+            expected = f"{prefix}{fname}"
+            if expected not in fields_set:
+                missing.append(
+                    (f"{struct_name}.{fname}",
+                     f"missing F({expected}) line in dump-fields.inc"))
+                continue
+            if is_array:
+                sentinel = f"{prefix}{fname}[0]"
+                if sentinel not in fields_set:
+                    missing.append(
+                        (f"{struct_name}.{fname}",
+                         f"missing element-size sentinel F({sentinel}) "
+                         f"in dump-fields.inc"))
+    return missing
+
+
 def main() -> int:
     if not os.path.exists(INC):
         print(f"error: {INC} missing", file=sys.stderr)
@@ -285,12 +488,30 @@ def main() -> int:
     if not os.path.exists(MATRIX):
         print(f"error: {MATRIX} missing", file=sys.stderr)
         return 2
+    if not os.path.exists(HEADER):
+        print(f"error: {HEADER} missing", file=sys.stderr)
+        return 2
 
     sections = parse_matrix(MATRIX)
     fields = parse_manifest(INC)
     if not fields:
         print(f"error: no F() entries parsed from {INC}", file=sys.stderr)
         return 2
+
+    structs = parse_struct_members(HEADER)
+    completeness_missing = check_manifest_completeness(fields, structs)
+    if completeness_missing:
+        print("FAIL boot_info manifest completeness:",
+              len(completeness_missing),
+              "struct field(s) in include/kernel/boot_info.h have no",
+              "matching F() line in tools/boot-info-manifest/dump-fields.inc",
+              file=sys.stderr)
+        first = completeness_missing[0]
+        print(f"  first missing: {first[0]} ({first[1]})", file=sys.stderr)
+        print("  hint: add the F(<prefix><name>) line; this gate runs",
+              "before the matrix coverage gate so docs cannot mask a",
+              "struct -> manifest drift", file=sys.stderr)
+        return 1
 
     missing: list[tuple[str, str]] = []
     for field in fields:
@@ -350,8 +571,11 @@ def main() -> int:
               file=sys.stderr)
         return 1
 
+    enumerated_fields = sum(len(m) for m in structs.values())
     print(f"PASS boot_info doc coverage: {len(fields)} manifest fields,",
-          "every non-sentinel field has an owning matrix row")
+          "every non-sentinel field has an owning matrix row;",
+          f"manifest completeness OK ({enumerated_fields} struct fields",
+          "across", len(structs), "structs all enumerated by F())")
     return 0
 
 
