@@ -150,6 +150,7 @@ $(UEFI_EFI): src/boot/uefi/bootx64.c src/boot/uefi/efi.h src/boot/uefi/uefi.lds 
              src/boot/uefi/elf_bootproto.c src/boot/uefi/elf_bootproto.h \
              src/boot/uefi/elf_types.h src/boot/uefi/boot_proto_mirror.h \
              src/boot/uefi/boot_info_mirror.h \
+             include/kernel/boot_version_constants.h \
              $(BUILD_DIR)/boot_proto_sha.h
 	@mkdir -p $(BUILD_DIR)/tools
 	$(MAKE) -C src/boot/uefi OUTDIR=$(CURDIR)/$(BUILD_DIR)/tools

@@ -70,6 +70,7 @@ typedef UINTN               EFI_TPL;
 #define BOOT_ERR_ESP_TYPE_GUID      0x000E  /* ESP integrity: GPT partition type GUID mismatch */
 #define BOOT_ERR_ESP_BPB            0x000F  /* ESP integrity: FAT BPB sanity check failed */
 #define BOOT_ERR_ESP_MISSING_FILES  0x0010  /* ESP integrity: required boot files absent */
+#define BOOT_ERR_ROLLBACK_REFUSE    0x0011  /* anti-rollback refusal: shipped < required */
 
 /* --- GUID --- */
 typedef struct {

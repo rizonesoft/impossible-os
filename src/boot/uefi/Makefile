@@ -31,8 +31,16 @@ OBJS := bootx64.o reloc.o elf_bootproto.o
 all: $(OUTDIR)/BOOTX64.EFI
 
 # Compile C source to position-independent object
+# boot_version_constants.h is a UEFI-safe shared header that pins
+# fault_class enum + record magic byte-for-byte against the kernel
+# enum so the producer here cannot drift from the consumer in
+# src/kernel/main/boot_version.c. Listed as a prerequisite so an
+# incremental build that touches the constants header rebuilds
+# bootx64.o; otherwise the build hazard would silently re-link a
+# stale BOOTX64.EFI against a kernel image that already moved.
 bootx64.o: bootx64.c efi.h boot_info_mirror.h boot_proto_mirror.h \
-           elf_bootproto.h elf_types.h ../../../build/boot_proto_sha.h
+           elf_bootproto.h elf_types.h ../../../build/boot_proto_sha.h \
+           ../../../include/kernel/boot_version_constants.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # ELF parser for the .bootproto descriptor; pre-ExitBootServices ABI

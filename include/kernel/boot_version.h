@@ -42,28 +42,21 @@
 
 #include "kernel/types.h"
 #include "kernel/boot_init.h"
+#include "kernel/boot_version_constants.h"
 
 struct boot_info_header;  /* forward decl -- full definition in kernel/boot_info.h */
 
-/* BVPF = "Boot Version Protocol Fault". NVRAM record readers match
- * this magic to distinguish a legitimate fault record from garbage in
- * a variable that happens to share a name with a future rename. */
-#define BOOT_VERSION_FAULT_MAGIC   0x42565046u
-
 enum boot_version_fault_class {
-    BOOT_VERSION_OK                = 0,
-    BOOT_VERSION_FAULT_NULL_HDR    = 1,  /* header pointer NULL -- pre-validator reach */
-    BOOT_VERSION_FAULT_BAD_MAGIC   = 2,  /* header.magic mismatches BOOT_INFO_MAGIC */
-    BOOT_VERSION_FAULT_BAD_VERSION = 3,  /* header.version != BOOT_INFO_VERSION */
-    BOOT_VERSION_FAULT_BAD_SIZE    = 4,  /* header.size != sizeof(struct boot_info) */
-    BOOT_VERSION_FAULT_SEC_ROLLBACK = 5, /* RESERVED for anti-rollback */
-    BOOT_VERSION_FAULT_BAD_SHA     = 6,  /* .bootproto sha256 drift -- magic/version/size
-                                          * match, manifest hash diverged. Bootloader
-                                          * pre-jump path only. */
-    BOOT_VERSION_FAULT_BAD_PARSE   = 7,  /* .bootproto ELF parse failure (missing section,
-                                          * bounds violation, alignment). Bootloader
-                                          * pre-jump path only; the raw parser error
-                                          * enum is stored in observed_loader_sec_ver. */
+    BOOT_VERSION_OK                = BOOT_VERSION_FAULT_VAL_OK,
+    BOOT_VERSION_FAULT_NULL_HDR    = BOOT_VERSION_FAULT_VAL_NULL_HDR,    /* header pointer NULL */
+    BOOT_VERSION_FAULT_BAD_MAGIC   = BOOT_VERSION_FAULT_VAL_BAD_MAGIC,   /* header.magic mismatches BOOT_INFO_MAGIC */
+    BOOT_VERSION_FAULT_BAD_VERSION = BOOT_VERSION_FAULT_VAL_BAD_VERSION, /* header.version != BOOT_INFO_VERSION */
+    BOOT_VERSION_FAULT_BAD_SIZE    = BOOT_VERSION_FAULT_VAL_BAD_SIZE,    /* header.size != sizeof(struct boot_info) */
+    BOOT_VERSION_FAULT_SEC_ROLLBACK = BOOT_VERSION_FAULT_VAL_SEC_ROLLBACK, /* anti-rollback refusal */
+    BOOT_VERSION_FAULT_BAD_SHA     = BOOT_VERSION_FAULT_VAL_BAD_SHA,     /* .bootproto sha256 drift */
+    BOOT_VERSION_FAULT_BAD_PARSE   = BOOT_VERSION_FAULT_VAL_BAD_PARSE,   /* .bootproto ELF parse failure;
+                                                                          * raw parser error enum stored
+                                                                          * in observed_loader_sec_ver. */
 };
 
 /* Fixed 48-byte layout. Pinned so the NVRAM record can be read by a
@@ -93,6 +86,22 @@ struct boot_version_fault {
 
 _Static_assert(sizeof(struct boot_version_fault) == 48,
     "boot_version_fault layout pinned at 48 bytes");
+
+/* Per-field offset asserts. The bootloader has its own mirror struct
+ * (struct bl_boot_version_fault in src/boot/uefi/bootx64.c) and writes
+ * observed/expected_loader_sec_ver as the rollback payload; the kernel
+ * consumer reads them at the same offsets. Pinning sizeof alone is
+ * not enough -- a same-size field reorder would silently desynchronize
+ * the rollback diagnostic. The bootloader mirror MUST replicate these
+ * asserts byte-for-byte. */
+_Static_assert(__builtin_offsetof(struct boot_version_fault, record_magic) == 0,
+    "boot_version_fault.record_magic at offset 0");
+_Static_assert(__builtin_offsetof(struct boot_version_fault, fault_class) == 4,
+    "boot_version_fault.fault_class at offset 4");
+_Static_assert(__builtin_offsetof(struct boot_version_fault, observed_loader_sec_ver) == 28,
+    "boot_version_fault.observed_loader_sec_ver at offset 28 (rollback payload)");
+_Static_assert(__builtin_offsetof(struct boot_version_fault, expected_loader_sec_ver) == 32,
+    "boot_version_fault.expected_loader_sec_ver at offset 32 (rollback payload)");
 
 /* Classify a boot_info header against the kernel's expectations.
  * Fills *out_fault with observed + expected values (whether or not

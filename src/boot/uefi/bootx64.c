@@ -2986,9 +2986,26 @@ struct bl_boot_version_fault {
 _Static_assert(sizeof(struct bl_boot_version_fault) == 48,
     "bl_boot_version_fault layout pinned at 48 bytes");
 
-/* Classification enum values match include/kernel/boot_version.h.
- * Keep values in sync manually; the kernel reader renders the name via
- * boot_version_fault_class_name() which is updated in lockstep. */
+/* Per-field offset asserts mirroring include/kernel/boot_version.h.
+ * Same-size field reorders would silently break the rollback
+ * payload (observed/expected_loader_sec_ver) the kernel reader
+ * consumes; pin offsets explicitly so the producer side fails to
+ * compile if either header drifts from the contract. */
+_Static_assert(__builtin_offsetof(struct bl_boot_version_fault, record_magic) == 0,
+    "bl_boot_version_fault.record_magic at offset 0");
+_Static_assert(__builtin_offsetof(struct bl_boot_version_fault, fault_class) == 4,
+    "bl_boot_version_fault.fault_class at offset 4");
+_Static_assert(__builtin_offsetof(struct bl_boot_version_fault, observed_loader_sec_ver) == 28,
+    "bl_boot_version_fault.observed_loader_sec_ver at offset 28 (rollback payload)");
+_Static_assert(__builtin_offsetof(struct bl_boot_version_fault, expected_loader_sec_ver) == 32,
+    "bl_boot_version_fault.expected_loader_sec_ver at offset 32 (rollback payload)");
+
+/* Classification enum values mirror include/kernel/boot_version.h
+ * (the bootloader cannot include kernel headers because they pull
+ * kernel types). The kernel header is the canonical source; the
+ * bootloader-side numeric `#define`s below are a UEFI-safe mirror,
+ * and the parity asserts further down catch drift at compile time
+ * if either side renumbers. */
 #define BL_FAULT_OK            0u
 #define BL_FAULT_NULL_HDR      1u
 #define BL_FAULT_BAD_MAGIC     2u
@@ -2998,8 +3015,33 @@ _Static_assert(sizeof(struct bl_boot_version_fault) == 48,
 #define BL_FAULT_BAD_SHA       6u
 #define BL_FAULT_BAD_PARSE     7u
 
+/* Compile-time parity: pin the bootloader's mirrored constants
+ * against the canonical kernel constants header so a drift on either
+ * side fails the build. The full kernel header
+ * (include/kernel/boot_version.h) pulls kernel-only types and cannot
+ * be used here; the constants sub-header is UEFI-safe. */
+#include "../../../include/kernel/boot_version_constants.h"
+_Static_assert(BL_FAULT_OK            == BOOT_VERSION_FAULT_VAL_OK,
+    "BL_FAULT_OK drift vs kernel enum");
+_Static_assert(BL_FAULT_NULL_HDR      == BOOT_VERSION_FAULT_VAL_NULL_HDR,
+    "BL_FAULT_NULL_HDR drift vs kernel enum");
+_Static_assert(BL_FAULT_BAD_MAGIC     == BOOT_VERSION_FAULT_VAL_BAD_MAGIC,
+    "BL_FAULT_BAD_MAGIC drift vs kernel enum");
+_Static_assert(BL_FAULT_BAD_VERSION   == BOOT_VERSION_FAULT_VAL_BAD_VERSION,
+    "BL_FAULT_BAD_VERSION drift vs kernel enum");
+_Static_assert(BL_FAULT_BAD_SIZE      == BOOT_VERSION_FAULT_VAL_BAD_SIZE,
+    "BL_FAULT_BAD_SIZE drift vs kernel enum");
+_Static_assert(BL_FAULT_SEC_ROLLBACK  == BOOT_VERSION_FAULT_VAL_SEC_ROLLBACK,
+    "BL_FAULT_SEC_ROLLBACK drift vs kernel enum");
+_Static_assert(BL_FAULT_BAD_SHA       == BOOT_VERSION_FAULT_VAL_BAD_SHA,
+    "BL_FAULT_BAD_SHA drift vs kernel enum");
+_Static_assert(BL_FAULT_BAD_PARSE     == BOOT_VERSION_FAULT_VAL_BAD_PARSE,
+    "BL_FAULT_BAD_PARSE drift vs kernel enum");
+
 /* NVRAM record layout invariants must match include/kernel/boot_version.h. */
 #define BL_BOOT_VERSION_FAULT_MAGIC  0x42565046u
+_Static_assert(BL_BOOT_VERSION_FAULT_MAGIC == BOOT_VERSION_FAULT_MAGIC,
+    "BL_BOOT_VERSION_FAULT_MAGIC drift vs kernel constant");
 
 /* UEFI console print helper: emit a hex byte. Uses efi_print under the
  * hood so non-ASCII digits work on every UEFI console. */
@@ -3220,6 +3262,14 @@ static __attribute__((noreturn)) void bpp_render_rollback_and_halt(
 
     EFI_STATUS persist_status = bpp_persist_nvram_fault(&rec);
 
+    /* Persist the rollback refusal in the BootError NVRAM channel
+     * too. last_boot_error consumers expect BOOT_ERR_* codes; the
+     * richer ImpossibleBootProtoFault record carries the structured
+     * detail (observed/expected versions + class) but the simple
+     * BootError code lets next-boot diagnostics surface "rollback
+     * refusal happened" without parsing the full record. */
+    nvram_write_boot_error(BOOT_ERR_ROLLBACK_REFUSE);
+
     /* UEFI console (gST->ConOut) is ONLY safe pre-EBS. The anti-
      * rollback gate currently runs AFTER ExitBootServices at
      * boot_hw.c's refusal site, so touching ConOut here would drive
@@ -3253,6 +3303,83 @@ static __attribute__((noreturn)) void bpp_render_rollback_and_halt(
             efi_print(u"  See serial log for full EFI_STATUS value.\r\n");
         }
         efi_print(u"\r\n  Power-cycle and enter the UEFI shell to recover.\r\n");
+    } else if (bsod_can_render_graphical()) {
+        /* Post-EBS path (the normal call site for the rollback gate)
+         * cannot use ConOut. Render a ROLLBACK-SPECIFIC graphical
+         * screen instead of the generic bsod_render_graphical: that
+         * generic renderer hardcodes "Press any key to restart" + boot-
+         * media advice ("Check boot media is inserted", "Verify
+         * \\boot\\kernel.exe exists") which are wrong for the rollback
+         * halt path -- there is no key-to-restart and the boot media
+         * is fine. Build the screen here from the lower-level bsod_aa_*
+         * primitives directly. The framebuffer remains valid post-EBS
+         * (GOP backing memory survives ExitBootServices). */
+        UINT32 bg = fb_pack_rgb(0x0A, 0x0A, 0x0A);
+        bsod_fill_rect(0, 0, gFbWidth, gFbHeight, bg);
+        bsod_blit_icon_aa(gFbWidth / 2 - BSOD_ICON_W / 2, 30,
+                          0xFF, 0xFF, 0xFF, 0x0A, 0x0A, 0x0A);
+
+        /* Title -- mirrors the formatting of the structural-mismatch
+         * screen but with rollback wording. */
+        {
+            const char *t = "Security-version downgrade refused.";
+            UINT32 w = bsod_aa_string_width(t, bsod_aa_TITLE);
+            UINT32 x = (gFbWidth > w) ? (gFbWidth - w) / 2 : 8;
+            bsod_aa_string(x, 150, t, bsod_aa_TITLE, bsod_aa_TITLE_data,
+                           BSOD_AA_TITLE_ASCENT,
+                           0xFF, 0xFF, 0xFF, 0x0A, 0x0A, 0x0A);
+        }
+
+        /* Build "image=N required=M" line; append it as a SUB-size
+         * line. UINT32 -> decimal in a stack buffer; max 11 digits + NUL. */
+        char vbuf[64];
+        UINT32 vp = 0;
+        const char *prefix = "image=";
+        for (UINT32 i = 0; prefix[i] && vp < sizeof(vbuf) - 1; i++)
+            vbuf[vp++] = prefix[i];
+        {
+            char tmp[16]; UINT32 ti = 0;
+            UINT32 v = shipped;
+            if (v == 0) tmp[ti++] = '0';
+            while (v) { tmp[ti++] = (char)('0' + (v % 10)); v /= 10; }
+            while (ti && vp < sizeof(vbuf) - 1) vbuf[vp++] = tmp[--ti];
+        }
+        const char *mid = "    required=";
+        for (UINT32 i = 0; mid[i] && vp < sizeof(vbuf) - 1; i++)
+            vbuf[vp++] = mid[i];
+        {
+            char tmp[16]; UINT32 ti = 0;
+            UINT32 v = required;
+            if (v == 0) tmp[ti++] = '0';
+            while (v) { tmp[ti++] = (char)('0' + (v % 10)); v /= 10; }
+            while (ti && vp < sizeof(vbuf) - 1) vbuf[vp++] = tmp[--ti];
+        }
+        vbuf[vp] = '\0';
+        bsod_aa_string(80, 230, vbuf, bsod_aa_SUB, bsod_aa_SUB_data,
+                       BSOD_AA_SUB_ASCENT,
+                       0xFF, 0xFF, 0xFF, 0x0A, 0x0A, 0x0A);
+
+        /* Recovery instructions -- ROLLBACK-SPECIFIC; no "press any
+         * key" prompt because this path halts forever, and no
+         * boot-media advice because the media is fine. */
+        UINT32 ly = 290;
+        const char *lines[] = {
+            "What to do:",
+            "  - Boot a newer signed kernel image,",
+            "  - or clear IPOSRequiredSecVersion via the firmware UEFI",
+            "    shell (setvar / dmpstore) under operator consent,",
+            "  - then power-cycle.",
+            "",
+            "This machine will NOT auto-restart. Power-cycle to recover.",
+            (const char *)0
+        };
+        for (UINT32 i = 0; lines[i]; i++) {
+            bsod_aa_string(80, ly, lines[i],
+                           bsod_aa_BODY, bsod_aa_BODY_data,
+                           BSOD_AA_BODY_ASCENT,
+                           0xFF, 0xFF, 0xFF, 0x0A, 0x0A, 0x0A);
+            ly += BSOD_AA_BODY_ASCENT + 8;
+        }
     }
 
     /* Serial diagnostic (always safe, pre- or post-EBS). Format the
@@ -7502,7 +7629,12 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                 "\n -- operator recovery: clear the variable from UEFI shell "
                 "(setvar / dmpstore) or reflash with matching policy.\n");
             g_boot_info_ptr->flags |= BOOT_FLAG_ROLLBACK_READ_FAILED;
-            boot_fatal(POST16_BL_ROLLBACK_REFUSE,
+            /* boot_fatal first arg is the BOOT_ERR_* code persisted
+             * to BootError NVRAM (last_boot_error consumers expect
+             * BOOT_ERR_* values, NOT POST16 milestones). The POST16
+             * code was emitted above via post_code16; here we record
+             * the operator-visible category. */
+            boot_fatal(BOOT_ERR_ROLLBACK_REFUSE,
                        "Anti-rollback read failure",
                        "IPOSRequiredSecVersion unreadable or malformed");
         }

@@ -61,7 +61,14 @@ const char *boot_version_fault_operator_hint(uint32_t fault_class)
         return "the kernel ELF is missing or malformed -- reflash "
                "kernel.exe and re-sign";
     default:
-        return "rebuild bootloader AND kernel with `bash scripts/build.sh`";
+        /* Default = structural ABI drift (BAD_VERSION / BAD_SIZE /
+         * BAD_MAGIC / NULL_HDR / OK with mismatch). Operators MUST
+         * rebuild AND re-flash both halves: rebuilding alone leaves
+         * the previous bootloader/kernel pair on the ESP, so the
+         * machine re-enters the same refusal on next boot. */
+        return "rebuild AND re-flash bootloader + kernel "
+               "(`bash scripts/build.sh` then write the updated "
+               "system disk)";
     }
 }
 
@@ -160,23 +167,25 @@ void boot_version_render_fatal(const struct boot_version_fault *fault)
         fault ? fault->fault_class : BOOT_VERSION_FAULT_NULL_HDR);
 
     /* Class-specific headline. SEC_ROLLBACK is operator-actionable
-     * (boot a newer kernel OR clear the NVRAM policy variable) --
-     * distinct from structural ABI drift which requires a rebuild
-     * of both halves. Keeping the two flows separate prevents a
-     * confused operator from "rebuilding" a rollback refusal that
-     * would just reproduce the same downgrade-detection. */
+     * distinct from structural ABI drift; per-class wording comes from
+     * boot_version_fault_operator_hint() so render_fatal and
+     * blackbox_transcribe never drift from each other. The headline
+     * label is class-specific; the trailing operator guidance is the
+     * canonical hint string. */
+    const char *hint = boot_version_fault_operator_hint(
+        fault ? fault->fault_class : BOOT_VERSION_FAULT_NULL_HDR);
     if (fault && fault->fault_class == BOOT_VERSION_FAULT_SEC_ROLLBACK) {
         klog(LOG_FATAL, "boot",
              "Security-version downgrade refused -- class=%s "
-             "(boot a newer signed kernel OR clear the "
-             "IPOSRequiredSecVersion NVRAM variable under operator "
-             "consent)",
-             (uint64_t)(uintptr_t)class_name);
+             "(operator response: %s)",
+             (uint64_t)(uintptr_t)class_name,
+             (uint64_t)(uintptr_t)hint);
     } else {
         klog(LOG_FATAL, "boot",
-             "Boot protocol version mismatch -- class=%s (stale bootloader "
-             "or stale kernel; rebuild both halves with bash scripts/build.sh)",
-             (uint64_t)(uintptr_t)class_name);
+             "Boot protocol version mismatch -- class=%s "
+             "(operator response: %s)",
+             (uint64_t)(uintptr_t)class_name,
+             (uint64_t)(uintptr_t)hint);
     }
     if (fault) {
         klog(LOG_FATAL, "boot",
@@ -397,9 +406,9 @@ void boot_version_blackbox_transcribe(void)
                           boot_version_fault_operator_hint(rec.fault_class));
     } else {
         pos = append_line(buf, pos, max_sz, "");
+        pos = append_str(buf, pos, max_sz, "Operator response: ");
         pos = append_line(buf, pos, max_sz,
-                          "Operator response: rebuild bootloader AND "
-                          "kernel with `bash scripts/build.sh`.");
+                          boot_version_fault_operator_hint(rec.fault_class));
     }
 
     /* Write via vfs_open/write, same pattern as hw_dump_write_file. */

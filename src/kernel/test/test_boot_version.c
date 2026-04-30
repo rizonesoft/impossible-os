@@ -180,6 +180,17 @@ static int contains_substr(const char *hay, const char *needle)
     return 0;
 }
 
+/* Pointer-equality check on returned hint strings. The hint helper
+ * returns string literals, so distinct classes returning distinct
+ * advice MUST come back as distinct pointers. Pointer-inequality is
+ * a stricter anti-conflation guard than substring inequality (which
+ * the prior tests used) because a future helper change that returns
+ * THE SAME LITERAL for two classes would silently collapse them. */
+static int hints_distinct(const char *a, const char *b)
+{
+    return (a != (const char *)0 && b != (const char *)0 && a != b);
+}
+
 static void test_boot_version_hint_rollback_wording(void)
 {
     const char *h = boot_version_fault_operator_hint(
@@ -249,6 +260,45 @@ static void test_boot_version_hint_bad_parse_distinct(void)
                    "BAD_PARSE hint advises reflash kernel.exe");
 }
 
+/* Pairwise inequality: SEC_ROLLBACK / BAD_VERSION (default ABI-drift) /
+ * BAD_SHA / BAD_PARSE MUST all return DIFFERENT pointers. The prior
+ * substring assertions caught some conflation cases but would still
+ * pass if two classes returned the same literal. Pointer-inequality
+ * is the stronger anti-collapse guard. */
+static void test_boot_version_hint_pairwise_distinct(void)
+{
+    const char *r = boot_version_fault_operator_hint(BOOT_VERSION_FAULT_SEC_ROLLBACK);
+    const char *v = boot_version_fault_operator_hint(BOOT_VERSION_FAULT_BAD_VERSION);
+    const char *s = boot_version_fault_operator_hint(BOOT_VERSION_FAULT_BAD_SHA);
+    const char *p = boot_version_fault_operator_hint(BOOT_VERSION_FAULT_BAD_PARSE);
+    TEST_ASSERT_EQ((unsigned long)hints_distinct(r, v), (unsigned long)1,
+                   "rollback != ABI-drift");
+    TEST_ASSERT_EQ((unsigned long)hints_distinct(r, s), (unsigned long)1,
+                   "rollback != BAD_SHA");
+    TEST_ASSERT_EQ((unsigned long)hints_distinct(r, p), (unsigned long)1,
+                   "rollback != BAD_PARSE");
+    TEST_ASSERT_EQ((unsigned long)hints_distinct(v, s), (unsigned long)1,
+                   "ABI-drift != BAD_SHA");
+    TEST_ASSERT_EQ((unsigned long)hints_distinct(v, p), (unsigned long)1,
+                   "ABI-drift != BAD_PARSE");
+    TEST_ASSERT_EQ((unsigned long)hints_distinct(s, p), (unsigned long)1,
+                   "BAD_SHA != BAD_PARSE");
+}
+
+/* Confirm the ABI-drift hint now includes "re-flash" (M2 fix from
+ * section 18 review): rebuilding alone leaves the previous binaries
+ * on the ESP, so the operator must rebuild AND re-flash to clear
+ * the refusal loop. */
+static void test_boot_version_hint_abi_drift_mentions_reflash(void)
+{
+    const char *h = boot_version_fault_operator_hint(
+        BOOT_VERSION_FAULT_BAD_VERSION);
+    TEST_ASSERT_EQ((unsigned long)contains_substr(h, "re-flash"),
+                   (unsigned long)1,
+                   "ABI-drift hint mentions 're-flash' (rebuilding alone "
+                   "leaves stale ESP binaries)");
+}
+
 void test_register_boot_version(void)
 {
     test_suite_register_cat("boot_version: classify happy path",
@@ -277,5 +327,11 @@ void test_register_boot_version(void)
                             TEST_CAT_BOOT);
     test_suite_register_cat("boot_version: bad_parse hint names malformed + reflash",
                             test_boot_version_hint_bad_parse_distinct,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("boot_version: hints pairwise distinct (no class collapse)",
+                            test_boot_version_hint_pairwise_distinct,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("boot_version: ABI-drift hint includes re-flash step",
+                            test_boot_version_hint_abi_drift_mentions_reflash,
                             TEST_CAT_BOOT);
 }
