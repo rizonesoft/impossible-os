@@ -68,7 +68,14 @@ Unlike `codex-adversarial-review-section` (reviews shipped code) or `codex-desig
 
 7. **Reject false positives with evidence** -- name the rejection in chat (one line per rejected finding) so the user sees the rationale: "F2 Codex claimed Linux has X; verified absent at <kernel.org URL or man page>." Same evidence-first contract as code review.
 
-8. **Accept out-of-scope findings with concrete XREF** -- if the finding is genuinely valid but belongs to a different TODO, follow the same rule the section-stamp Accepted-XREF check enforces: the XREF target MUST be a concrete `[ ]` item, not a section title.
+8. **Cross-TODO duplicate check before adopting a finding as a new section/item (MANDATORY).** Codex audits this TODO in isolation; cross-TODO ownership is Claude's job, not Codex's. For every finding that would create a new `## N.` section or new `[ ]` item in this TODO:
+   - Grep across `todo/` for the feature name AND likely synonyms / variant phrasings.
+   - Use `mcp__todo-graph__by-domain` to enumerate the relevant domain's sibling TODOs and `mcp__todo-graph__code <symbol>` for any cited function/struct.
+   - Read every hit. If the gap is already owned elsewhere: do NOT create a duplicate. Either accept-XREF (citing the existing concrete `[ ]` item by name) or sharpen the existing target item in place.
+   - For refinement / competitive-edge findings: also scan `docs/infrastructure/` and `CLAUDE.md` for prior decisions. The project may have already evaluated and rejected the proposed approach.
+   - A finding that survives the duplicate check is genuinely new and safe to fold into the inventory; a finding that fails the check is filed as a sharpening of the existing item, never a new section.
+
+9. **Accept out-of-scope findings with concrete XREF** -- if the finding is genuinely valid but belongs to a different TODO, follow the same rule the section-stamp Accepted-XREF check enforces: the XREF target MUST be a concrete `[ ]` item, not a section title.
 
 ## Prompt Template
 
@@ -119,7 +126,7 @@ Reject false positives with citation (URL or section number from official source
 ## Guardrails
 
 - **Mandatory in `gap-audit-todo`.** The skill is wired into Phase 3.5 of `gap-audit-todo`. Skipping requires the same scope-gap-protocol-style justification as skipping any other mandatory step (docs-only sweep with zero new sections / ownership changes / parity claims).
-- **Prompt shape is non-negotiable.** Single-quoted argv via `bash scripts/codex-dispatch.sh`. The `[review-kind: gap-audit]` marker on the first non-blank line is what telemetry attributes against. Multi-argv misuse fails loud at the wrapper.
+- **Prompt shape is non-negotiable.** Single-quoted argv via the canonical Codex dispatch wrapper (see the Workflow step 3 example). The `[review-kind: gap-audit]` marker on the first non-blank line is what telemetry attributes against. Multi-argv misuse fails loud at the wrapper.
 - **Verify against source-of-truth, not Codex's word.** Microsoft Learn, kernel.org Documentation, official specs. Codex hallucinates feature names; the receiving rule applies.
 - **Findings flow back into the inventory BEFORE Phase 4.** The whole point is to correct the inventory before it turns into TODO edits. Folding findings AFTER Phase 4 means re-doing the section drafts.
 - **Accepted-XREF concreteness rule applies here too.** "Accepted with XREF: TODO-XX §N" is rejected; "Accepted with XREF: TODO-XX §N (item: ...at line N)" is the bar.

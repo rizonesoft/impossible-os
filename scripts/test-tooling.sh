@@ -4961,10 +4961,12 @@ fi
 # skill_step_observer -- canonical Codex review-kind dispatch coverage
 # ============================================================================
 # TODO ownership: 00-infrastructure/TODO-08-automation-hardening.md observer
-# regex coverage section. The 7 canonical review-kind markers (design,
+# regex coverage section. The 8 canonical review-kind markers (design,
 # adversarial, adversarial-impl, test-coverage, consistency, perf,
-# re-adversarial) MUST each bind to a step number in the implement-
-# todo-section step map; the prior shape silently dropped 5 of 7.
+# re-adversarial, gap-audit) MUST each bind to a step number in the
+# skill that emits them; the prior shape silently dropped 5 of 7.
+# gap-audit is skill-scoped (only gap-audit-todo binds it); the rest
+# bind under implement-todo-section / review-todo-section.
 # Each sub-test feeds a synthetic Bash codex-companion.mjs adversarial-
 # review command with the named marker and asserts match_step returns
 # the expected step number.
@@ -4982,6 +4984,9 @@ CASES = [
     ("implement-todo-section", "consistency",       20),
     ("implement-todo-section", "perf",              20),
     ("implement-todo-section", "re-adversarial",    20),
+    # 8th canonical kind: gap-audit binds ONLY to gap-audit-todo
+    # (Phase 3.5 dispatch, mapped to step 14 since 14.5 is not an int).
+    ("gap-audit-todo",        "gap-audit",          14),
 ]
 
 for skill, kind, want in CASES:
@@ -5067,16 +5072,71 @@ if _review_kind.detect_review_kind_from_cmd(multiline_b) == "consistency":
     print("OK multiline_continuation_before_prompt")
 else:
     print(f"FAIL multiline_continuation_before_prompt: got {_review_kind.detect_review_kind_from_cmd(multiline_b)!r}")
+
+# gap-audit kind is skill-scoped: gap-audit-todo binds it (step 14),
+# but implement-todo-section MUST NOT (the marker is gap-audit-todo's
+# alone). This guards against future drift where a code-review-flow
+# skill accidentally picks up a planning-only marker.
+gap_audit_cmd = 'node /x/codex-companion.mjs adversarial-review "[review-kind: gap-audit] todo/foo prompt"'
+got = match_step("implement-todo-section", "Bash", gap_audit_cmd)
+if got == []:
+    print("OK gap_audit_kind_not_bound_to_implement")
+else:
+    print(f"FAIL gap_audit_kind_not_bound_to_implement: got {got} want []")
+
+# bound_review_kinds("gap-audit-todo") must include exactly {"gap-audit"}.
+gap_bound = set(bound_review_kinds("gap-audit-todo"))
+if gap_bound == {"gap-audit"}:
+    print("OK gap_audit_todo_bound_kinds_exact")
+else:
+    print(f"FAIL gap_audit_todo_bound_kinds_exact: got {gap_bound} want {{'gap-audit'}}")
+
+# todo-pipeline gates Stage 2 (gap-audit-todo + Codex gap-audit dispatch).
+# A Skill(gap-audit-todo) call AND a [review-kind: gap-audit] dispatch
+# both bind to step 2. Stage 1 / Stage 3 are observation-only.
+got = match_step("todo-pipeline", "Skill", "validate-todo-file")
+if 1 in got:
+    print("OK todo_pipeline_stage1_validate")
+else:
+    print(f"FAIL todo_pipeline_stage1_validate: got {got} want [1]")
+
+got = match_step("todo-pipeline", "Skill", "gap-audit-todo")
+if 2 in got:
+    print("OK todo_pipeline_stage2_gap_audit_skill")
+else:
+    print(f"FAIL todo_pipeline_stage2_gap_audit_skill: got {got} want [2]")
+
+got = match_step("todo-pipeline", "Bash",
+                 'node /x/codex-companion.mjs adversarial-review "[review-kind: gap-audit] todo/foo prompt"')
+if 2 in got:
+    print("OK todo_pipeline_stage2_gap_audit_dispatch")
+else:
+    print(f"FAIL todo_pipeline_stage2_gap_audit_dispatch: got {got} want [2]")
+
+# validate-todo-file telemetry: an Edit on a TODO file under the skill
+# binds to step 1 (observation only -- not gated).
+got = match_step("validate-todo-file", "Edit", "todo/01-boot-platform/TODO-04-firmware-table-platform-inventory.md")
+if 1 in got:
+    print("OK validate_todo_file_edit_observed")
+else:
+    print(f"FAIL validate_todo_file_edit_observed: got {got} want [1]")
+
+# Edit on a non-TODO path under validate-todo-file must NOT match.
+got = match_step("validate-todo-file", "Edit", "src/kernel/uefi_config.c")
+if got == []:
+    print("OK validate_todo_file_non_todo_unbound")
+else:
+    print(f"FAIL validate_todo_file_non_todo_unbound: got {got} want []")
 PYEOF
 )
 SSO_PY="${SSO_PY//\$REPO_ROOT/$REPO_ROOT}"
 SSO_OUT="$(python3 -c "$SSO_PY" 2>&1)"
 SSO_OK=$(echo "$SSO_OUT" | grep -c "^OK ")
-if [ "$SSO_OK" = "15" ]; then
+if [ "$SSO_OK" = "23" ]; then
     echo "$SSO_OUT" | grep "^OK " | while IFS= read -r line; do
         t_pass "skill_step_observer: $line"
     done
-    PASS=$((PASS + 15))
+    PASS=$((PASS + 23))
 else
     t_fail "skill_step_observer: canonical-kind coverage incomplete" \
            "ok-count=$SSO_OK out=$SSO_OUT"

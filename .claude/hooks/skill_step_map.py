@@ -126,6 +126,55 @@ _COMPLETE_TODO_FILE: List[StepRule] = [
 
 
 # ----------------------------------------------------------------------------
+# gap-audit-todo: TODO-level gap audit. Phase 3.5 mandates a Codex
+# red-team dispatch (`[review-kind: gap-audit]`) between Phase 3 (gap
+# detection) and Phase 4 (add missing sections). The dispatch is the
+# only mechanical-evidence step in the whole skill -- everything else
+# is research, classification, and TODO editing without a stable tool
+# signature. We bind the dispatch to step 14 (the section-size audit
+# step that immediately precedes Phase 3.5) since the SKILL.md numbers
+# the dispatch as 14.5 and the StepRule integer key has to be a whole
+# number.
+# ----------------------------------------------------------------------------
+_GAP_AUDIT_TODO: List[StepRule] = [
+    (14, "Bash", "__REVIEW_KIND__:gap-audit"),
+]
+
+
+# ----------------------------------------------------------------------------
+# validate-todo-file: structural audit. The skill produces no Codex
+# dispatch / build / commit -- the only mechanical signal is Edit/Write
+# on the target TODO file. Telemetry-only (no terminal-step requirement
+# in REQUIRED_TERMINAL_STEPS) -- the observer records that the skill
+# ran without blocking any commit on it. todo-pipeline orchestrates
+# stronger gating around it.
+# ----------------------------------------------------------------------------
+_VALIDATE_TODO_FILE: List[StepRule] = [
+    (1, "Edit",  r"todo/[^/]+/TODO-[^/]+\.md$"),
+    (1, "Write", r"todo/[^/]+/TODO-[^/]+\.md$"),
+]
+
+
+# ----------------------------------------------------------------------------
+# todo-pipeline: 3-stage TODO preparation orchestrator.
+#   Stage 1: Skill(validate-todo-file)   -- structural cleanup
+#   Stage 2: Skill(gap-audit-todo)       -- Win11/Linux research +
+#            mandatory Codex red-team via [review-kind: gap-audit]
+#   Stage 3: Skill(validate-todo-file)   -- post-edit sanity check
+# Stages 1 and 3 fire the same Skill call -- the observer cannot
+# distinguish them. We gate only on Stage 2 (the load-bearing
+# competitive-completeness pass), and the Codex gap-audit dispatch
+# inside Stage 2 produces a separate Bash signal that doubles as
+# the strong-form gate.
+# ----------------------------------------------------------------------------
+_TODO_PIPELINE: List[StepRule] = [
+    (1, "Skill", r"^validate-todo-file$"),
+    (2, "Skill", r"^gap-audit-todo$"),
+    (2, "Bash",  "__REVIEW_KIND__:gap-audit"),
+]
+
+
+# ----------------------------------------------------------------------------
 # quality-review-section: industry standards / parity / superiority pass.
 # Builds on review pipeline; minimal additional evidence.
 # ----------------------------------------------------------------------------
@@ -147,6 +196,9 @@ SKILL_STEP_MAP: Dict[str, List[StepRule]] = {
     "verify-todo-section":    _VERIFY_TODO_SECTION,
     "complete-todo-file":     _COMPLETE_TODO_FILE,
     "quality-review-section": _QUALITY_REVIEW_SECTION,
+    "gap-audit-todo":         _GAP_AUDIT_TODO,
+    "validate-todo-file":     _VALIDATE_TODO_FILE,
+    "todo-pipeline":          _TODO_PIPELINE,
 }
 
 
@@ -164,6 +216,20 @@ REQUIRED_TERMINAL_STEPS: Dict[str, List[int]] = {
     "complete-todo-file": [1, 2, 4],
     # quality: build, codex, commit.
     "quality-review-section": [1, 2, 3],
+    # gap-audit: only the codex-gap-audit dispatch is mechanically
+    # checkable; the rest of the skill is research + TODO editing.
+    "gap-audit-todo": [14],
+    # validate-todo-file: telemetry only (no terminal-step gate). The
+    # skill is structural cleanup; gating it would block harmless
+    # standalone validations. Stronger gating happens via todo-pipeline
+    # when validate-todo-file runs as part of the orchestrated flow.
+    "validate-todo-file": [],
+    # todo-pipeline: Stage 2 (gap-audit-todo + its Codex dispatch) is
+    # the load-bearing step. Stages 1 and 3 fire the same Skill call
+    # and are recorded as step 1; gating step 1 would force every
+    # pipeline run to invoke validate-todo-file even when it already
+    # ran in a prior session, so we only require step 2.
+    "todo-pipeline": [2],
 }
 
 
