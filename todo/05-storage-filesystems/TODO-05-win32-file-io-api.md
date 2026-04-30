@@ -60,6 +60,7 @@ title: "TODO-05 -- Win32 File I/O API & IRP Layer"
 | ⭐  |  11   | §11 Internal migration -- all `vfs_open` callers → `CreateFile`/`ReadFile`/`WriteFile`  | §5 + §8 (full read/write + metadata available)                  |  [ ]   |
 | 💎  |  12   | §12 File change notifications -- `FindFirstChangeNotification`/`ReadDirectoryChangesW`   | §6 (directory watch list), §3 (handle for notification object) |  [ ]   |
 | 💎  |  13   | §13 `GetDiskFreeSpaceEx` / `GetVolumeInformation` -- VFS query + Win32 surface            | TODO-03 §4 (Registry volume entries exist)                     |  [ ]   |
+| 💎  |  14   | §14 `DeviceIoControl` + FSCTL dispatch + oplock ioctls + volume lock                     | §3 + §4 (handle table), TODO-04 §14 (vfs_request_oplock)        |  [ ]   |
 
 > §11 (internal migration) is `⭐` exclusive in scope: Windows was built Win32-first and never needed a migration pass; Linux never migrates anything to Win32. Impossible OS performs a clean architectural cut -- kernel-internal code uses `vfs_*` (fast, no handle overhead), while everything visible to user-mode programs uses `CreateFile`/`ReadFile`/`WriteFile` (full Win32 semantics). This gives user-mode programs an unmodified Win32 file API while keeping the kernel core free of handle-table overhead for internal operations.
 
@@ -280,6 +281,29 @@ Implement `GetDiskFreeSpaceExW`/`GetDiskFreeSpaceW` and the remaining `GetVolume
 - [ ] `GetDiskFreeSpaceW(lpRoot, &spc, &bps, &free_c, &total_c)`: return cluster geometry from filesystem BPB + free count
 - [ ] Verify `GetVolumeInformationW` (TODO-03 §4) includes volume serial (CRC32 of device path), max component = 255, correct `FileSystemFlags` per type; extend here if missing
 - [ ] Commit: `"win32: GetDiskFreeSpaceEx/GetDiskFreeSpace -- VFS free-space query, cluster geometry"`
+
+---
+
+## 14. `DeviceIoControl` + FSCTL Dispatch + Oplock Ioctls
+
+Win32 `DeviceIoControl(hDev, dwIoControlCode, ...)` is the single entry point for FSCTL_* / IOCTL_* / METHOD_* operations. Without a routing layer, programs that issue `FSCTL_REQUEST_OPLOCK`, `FSCTL_LOCK_VOLUME`, `FSCTL_DISMOUNT_VOLUME`, `FSCTL_GET_VOLUME_INFORMATION`, etc. get `ERROR_INVALID_FUNCTION` even when the underlying capability exists. This section adds the dispatcher + the oplock ioctls (which §14 of the FAT32+VFS-semantics TODO depends on -- see [`05-storage-filesystems/TODO-04 §14`](TODO-04-fat32-hardening-vfs-semantics.md#14-vfs-opportunistic-locks-oplocks)).
+
+**Files:** `src/kernel/win32/deviceio.c` (new), `src/kernel/win32/fsctl_oplock.c` (new), `include/kernel/win32/fsctl.h` (new)
+
+> [!NOTE]
+> `DeviceIoControl` decodes the IOCTL code's `DEVICE_TYPE` (high 16 bits) and routes to the right handler family (FSCTL = `FILE_DEVICE_FILE_SYSTEM`, disk = `FILE_DEVICE_DISK`, etc.). The `METHOD_*` field selects buffering: `METHOD_BUFFERED` copies user buffers via SystemBuffer, `METHOD_NEITHER` leaves them un-probed (driver responsibility). `FSCTL_REQUEST_OPLOCK` (since Windows 7) accepts a `REQUEST_OPLOCK_INPUT_BUFFER` selecting which lease type (Read, Read-Handle, Read-Write, Read-Write-Handle); `FSCTL_OPLOCK_BREAK_ACKNOWLEDGE` re-arms the oplock from a break-pending state. The TODO-04 §14 oplock subsystem already implements `vfs_request_oplock` / `vfs_break_oplock`; this section is the user-mode plumbing layer.
+
+- [ ] `NTSTATUS NtDeviceIoControlFile(HANDLE, ..., ULONG IoControlCode, PVOID InBuf, ULONG InLen, PVOID OutBuf, ULONG OutLen)` -- the SSDT entry point; wired through the existing handle table (TODO-05 §3) to find the underlying object (file/volume/device)
+- [ ] FSCTL routing table: `static const struct fsctl_handler s_fsctl[] = { { FSCTL_REQUEST_OPLOCK, ... }, ... }` indexed by IOCTL code; unknown codes return `STATUS_INVALID_DEVICE_REQUEST`
+- [ ] `FSCTL_REQUEST_OPLOCK` (0x90240): decode `REQUEST_OPLOCK_INPUT_BUFFER`, map flags to `vfs_request_oplock(node, owner_id, level)` from TODO-04 §14, return `STATUS_PENDING` for async or `STATUS_SUCCESS` on grant
+- [ ] `FSCTL_OPLOCK_BREAK_ACKNOWLEDGE` (0x90238): mark the break-pending oplock as acknowledged so subsequent waiters can proceed; pairs with the §14 `vfs_break_oplock` notification path
+- [ ] `FSCTL_LOCK_VOLUME` (0x90018) + `FSCTL_UNLOCK_VOLUME` (0x9001C) + `FSCTL_DISMOUNT_VOLUME` (0x90020): exclusive volume access for chkdsk/format; rejects new opens while locked; integrates with TODO-13 §4 chkdsk's exclusive-mount need
+- [ ] `FSCTL_GET_VOLUME_INFORMATION` (0x900C4): mirror of the §13 path through the FSCTL surface (some legacy code uses this instead of `GetVolumeInformationW`)
+- [ ] Win32 `DeviceIoControl(...)` user-mode wrapper that calls `NtDeviceIoControlFile` with the right buffer layout
+- [ ] Unit tests: `test_fsctl_oplock_request_release` (Level 1 grant + acknowledge), `test_fsctl_lock_volume_blocks_new_opens`, `test_fsctl_invalid_returns_invalid_device_request`
+- [ ] Commit: `"win32: NtDeviceIoControlFile + FSCTL dispatch + oplock + volume-lock ioctls"`
+
+**Test checkpoint:** A user-mode test program calls `DeviceIoControl(hFile, FSCTL_REQUEST_OPLOCK, ...)` with a Level 1 lease request; receives `STATUS_SUCCESS` on initial grant. A second open of the same file triggers a break notification consumable via overlapped completion. `FSCTL_LOCK_VOLUME` blocks a subsequent `CreateFile` on the same volume with `ERROR_ACCESS_DENIED`. Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
 
 ---
 

@@ -61,7 +61,7 @@ title: "TODO-04 -- FAT32 Hardening & VFS Win32 Semantics"
 | 💎  |  12   | §12 SFN numeric tail collision -- ~1 through ~9, 5-char truncation for ~10+           | §4 (LFN write reworks create path)                       |  [x]   |
 | 💎  |  13   | §13 FAT32 4 GiB write guard -- reject writes that would exceed 0xFFFFFFFF bytes       | §5 (write path stable)                                   |  [x]   |
 | 💎  |  14   | §14 VFS opportunistic locks -- Level 1/2, Batch, Read/Read-Write/Read-Handle          | §8 (share-mode per-handle state)                         |  [x]   |
-| 💎  |  15   | §15 VFS_O_TRUNC end-to-end -- FAT32 cached refresh + exact-slot handle cleanup + cross-FS policy | §8, §14 (handle table) + FAT32 truncate (§4 + §13) |  [ ]   |
+| 💎  |  15   | §15 VFS_O_TRUNC end-to-end -- FAT32 cached refresh + handle cleanup + cross-FS policy | §8, §14 (handle table) + FAT32 truncate (§4 + §13)       |  [ ]   |
 
 > §7 (case-insensitive VFS) is `⭐` exclusive in architecture: Windows case-folds inside `NTFS.sys` / `FAT.sys` per volume type; Linux is case-sensitive by default with per-mount options. Impossible OS applies a unified case-fold in the VFS layer above all filesystem drivers -- one correct implementation that benefits NTFS, FAT32, IXFS, and any future driver equally.
 
@@ -81,6 +81,7 @@ Validate critical BPB fields in `fat32_init()` before any further mount operatio
 - [x] Dirty marker: `fat32_read_dirty_marker()` reads FAT[1] bit 27; if clear: `vol->volume_dirty = 1`; logs `"Dirty volume -- not cleanly unmounted"`
 - [x] On clean unmount: `fat32_set_clean_marker()` sets FAT[1] bit 27 in both FAT copies; called from `fat32_flush_disk()`
 - [x] 3 unit tests: BPB struct size bounds, FSInfo signature constants, dirty bit semantics
+- [ ] Auto-run fsck on dirty mount: in `fat32_init()` after `fat32_read_dirty_marker()` sets `volume_dirty = 1`, call `fat32_fsck(vol, /*fix=*/1)` and log the result before returning the mount handle. The §1 prose ("auto-run fsck (§6) if dirty") promises this but no checklist item or code path wires it today (verified `src/kernel/fs/fat32/fat32_core.c` has no `fat32_fsck` call). Without this, dirty volumes mount with stale FAT/cluster state and silently corrupt subsequent writes; with it, a power-loss reboot self-repairs. Add a unit-test fixture that mounts a synthetically-dirty volume and asserts the post-init `volume_dirty` flag is cleared after auto-fsck. Depends on §6 (fsck shipped).
 - [x] Commit: `"fs/fat32: BPB strict validation -- jmpBoot, BytsPerSec, SecPerClus, RootClus, dirty marker"`
 
 ---
@@ -155,7 +156,7 @@ Encode kernel FILETIME (100 ns ticks since 1601 UTC) to FAT32 date/time format. 
 - [x] `fat32_create_file_vol()` + `fat32_create_dir_vol()`: call `fat32_stamp_create(&de)` -- CrtTime, WrtTime, LstAccDate all populated
 - [x] `fat32_update_dir_size()`: calls `fat32_stamp_modify(de)` -- correct WrtTime on write
 - [x] `seconds_to_fat_datetime()` retained only for `vfs_setattr` external timestamp path
-- [ ] `fat32_ops.c` read callback: LstAccDate update deferred -- often disabled for performance
+- [ ] `fat32_ops.c` read callback: LstAccDate update on every read. Win11 + Linux noatime/relatime defaults skip this for performance, so the value-add is small and the cost is real (every read becomes a write). Recommend keeping deferred behind a `boot.conf` opt-in (`fat32_atime=1`) rather than enabled-by-default. Owner: implement when the time-management TODO ships per-mount atime policy controls -> XREF: `02-kernel-core/TODO-08-time-filetime-management.md` (item: per-mount atime/relatime/noatime policy when that section lands; today it does not exist, so this stays explicitly deferred until policy infrastructure ships). If no atime policy section materializes within the next 6 months, file as a new section under TODO-04 with the boot.conf knob design.
 - [x] Commit: `"fs/fat32: timestamps -- CrtTime on create, WrtTime on write, stamp helpers"`
 
 ---
@@ -308,7 +309,7 @@ Windows file system drivers support opportunistic locks that allow clients to ca
 - [x] `vfs_request_oplock(node, owner_id, level)`: Level 1 exclusive (only if no existing), Level 2 shared (compatible with L2, not L1)
 - [x] `vfs_break_oplock(node, access)`: called from `vfs_open()` before share-mode check; L1+write -> None, L1+read -> L2, L2+write -> None; logs each break
 - [x] Level 1 (exclusive) and Level 2 (shared read) implemented; Batch and Filter deferred
-- [x] `FSCTL_REQUEST_OPLOCK` / `FSCTL_OPLOCK_BREAK_ACKNOWLEDGE` ioctls: deferred to Win32 File I/O TODO (moved to TODO-05)
+- [x] `FSCTL_REQUEST_OPLOCK` / `FSCTL_OPLOCK_BREAK_ACKNOWLEDGE` ioctls: owner is [`05-storage-filesystems/TODO-05 §14`](TODO-05-win32-file-io-api.md#14-deviceiocontrol--fsctl-dispatch--oplock-ioctls) (`DeviceIoControl + FSCTL Dispatch + Oplock Ioctls`); the `vfs_request_oplock` / `vfs_break_oplock` kernel surface here is the consumer for that user-mode plumbing layer.
 - [x] Commit: `"fs: VFS opportunistic locks -- Level 1/2 oplock grant, break on conflicting open"`
 
 **Test checkpoint:** Open file with Level 1 oplock. Second open breaks oplock to Level 2 (notification logged). Third open with write access breaks to None. `FSCTL_REQUEST_OPLOCK` returns correct level. Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
