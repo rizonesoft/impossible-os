@@ -72,6 +72,22 @@ if kernel["struct_size"] != mirror["struct_size"]:
 kernel_fields = kernel["fields"]
 mirror_fields = mirror["fields"]
 
+# Trust-root check: dump-fields.inc is shared, so a duplicated F() line
+# would emit the duplicate row in BOTH manifests. The row-for-row diff
+# below would still PASS even though real coverage silently shrank by
+# one field. Catch duplicates BEFORE the diff so a typo cannot become
+# a hidden gap in drift detection.
+for label, fields in (("kernel", kernel_fields), ("mirror", mirror_fields)):
+    seen = {}
+    for i, f in enumerate(fields):
+        prev = seen.get(f["name"])
+        if prev is not None:
+            fail(
+                f"{label} manifest has duplicate field name '{f['name']}'",
+                f"row #{prev} and row #{i} share the same name; check dump-fields.inc for a duplicated F() line",
+            )
+        seen[f["name"]] = i
+
 if len(kernel_fields) != len(mirror_fields):
     fail(
         f"field count mismatch: kernel={len(kernel_fields)}, mirror={len(mirror_fields)}",

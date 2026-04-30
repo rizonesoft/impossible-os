@@ -330,6 +330,46 @@ else
     fi
 fi
 
+# ---- Duplicate-row trust-root check ----
+# dump-fields.inc is shared between both dumpers, so a typo that emits the
+# same F() row twice would land in BOTH manifests and the row-for-row diff
+# would still PASS even though real coverage silently shrank by one field.
+# Synthesize a kernel + mirror manifest pair where each carries the same
+# duplicate row and assert compare.sh refuses BEFORE the row-for-row diff.
+dup_dir="$TMPDIR/duplicate"
+mkdir -p "$dup_dir"
+python3 - "$dup_dir/k.json" "$dup_dir/m.json" <<'PYEOF'
+import json, sys
+field_a = {"name": "header.magic",   "offset": 0, "size": 4}
+field_b = {"name": "header.version", "offset": 4, "size": 2}
+# Duplicate header.magic deliberately; both views share it.
+manifest = {
+    "view": "kernel",
+    "version": 1,
+    "struct_size": 8,
+    "fields": [field_a, field_b, field_a],
+    "sha256": "0" * 64,
+}
+with open(sys.argv[1], "w") as fh:
+    json.dump(manifest, fh)
+manifest["view"] = "mirror"
+with open(sys.argv[2], "w") as fh:
+    json.dump(manifest, fh)
+PYEOF
+set +e
+dup_out="$(bash "$COMPARE_SH" "$dup_dir/k.json" "$dup_dir/m.json" 2>&1)"
+dup_rc=$?
+set -e
+if [ "$dup_rc" = "0" ]; then
+    t_fail "duplicate-row trust-root" \
+        "compare.sh accepted duplicated 'header.magic' (exit 0); a future regression where compare.sh warns but does not exit non-zero would silently shrink coverage"
+elif printf '%s\n' "$dup_out" | grep -qE "duplicate field name 'header\.magic'"; then
+    t_pass "duplicate-row trust-root (compare.sh refuses duplicated F() name)"
+else
+    t_fail "duplicate-row trust-root" \
+        "compare.sh exited non-zero but did not name duplicated 'header.magic'; output: $(printf '%s\n' "$dup_out" | head -1)"
+fi
+
 # ---- Summary ----
 total=$((PASS + FAIL))
 if [ "$FAIL" = "0" ]; then
