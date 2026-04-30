@@ -3,7 +3,7 @@
 > **Owner:** [Boot Protocol ABI & Handoff Contract roadmap -- Canonical boot_info Field Ownership Table section](../../todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md#1-canonical-boot_info-field-ownership-table).
 > **Single source of truth.** [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h) has a file-top comment that points here rather than duplicating policy inline. Every field of `struct boot_info` (and its nested structs) is listed below with producer, first valid phase, consumer(s), lifetime, owning roadmap, and validation rule. Add a field -> add a row.
 >
-> **Machine-readable complement.** Every build emits [`build/boot-info-abi.kernel.json`](../../build/boot-info-abi.kernel.json) and [`build/boot-info-abi.mirror.json`](../../build/boot-info-abi.mirror.json) (225 fields, struct size, SHA-256 fingerprint) via the `boot_info ABI` step of `bash scripts/build.sh`. The two JSONs are diffed by [`tools/boot-info-manifest/compare.sh`](../../tools/boot-info-manifest/compare.sh); any field / offset / size drift between `include/kernel/boot_info.h` and [`src/boot/uefi/boot_info_mirror.h`](../../src/boot/uefi/boot_info_mirror.h) fails the build with the first mismatching field named. The row set includes indexed leaves for every array-of-struct member (`mmap[0].*`, `gop_modes[0].*`, `config_table[0].*`, `rt_mmap[0].*`, `usb_devices[0].*` plus nested `endpoints[0].*`) and element-size sentinels for every scalar array (`usb_controller.dma_pages[0]`, `uefi_boot_order[0]`, `boot_device_path[0]`, `hv_vendor[0]`, ...), so the manifest also catches same-size element-type changes the six pinned `_Static_assert` offsets miss.
+> **Machine-readable complement.** Every build emits [`build/boot-info-abi.kernel.json`](../../build/boot-info-abi.kernel.json) and [`build/boot-info-abi.mirror.json`](../../build/boot-info-abi.mirror.json) (struct size + SHA-256 fingerprint + the per-field row set; current count printed by `make boot-info-doc-coverage`) via the `boot_info ABI` step of `bash scripts/build.sh`. The two JSONs are diffed by [`tools/boot-info-manifest/compare.sh`](../../tools/boot-info-manifest/compare.sh); any field / offset / size drift between `include/kernel/boot_info.h` and [`src/boot/uefi/boot_info_mirror.h`](../../src/boot/uefi/boot_info_mirror.h) fails the build with the first mismatching field named. The row set includes indexed leaves for every array-of-struct member (`mmap[0].*`, `gop_modes[0].*`, `config_table[0].*`, `rt_mmap[0].*`, `usb_devices[0].*` plus nested `endpoints[0].*`) and element-size sentinels for every scalar array (`usb_controller.dma_pages[0]`, `uefi_boot_order[0]`, `boot_device_path[0]`, `hv_vendor[0]`, ...), so the manifest also catches same-size element-type changes the six pinned `_Static_assert` offsets miss.
 
 ## How to read this doc
 
@@ -64,7 +64,7 @@ Every version bump goes in both [`include/kernel/boot_info.h`](../../include/ker
 | --- | --- | --- | --- | --- | --- | --- |
 | `gop_modes[BOOT_GOP_MODE_MAX]` | bootx64 | P0 | display mode switcher (future) | boot | graphics-asset-foundation | `gop_mode_count <= BOOT_GOP_MODE_MAX`; offset pinned. |
 | `gop_mode_count`               | bootx64 | P0 | same | boot | graphics-asset-foundation | `<= BOOT_GOP_MODE_MAX`. Producer enumerates while `i < BOOT_GOP_MODE_MAX`, so a full table legitimately equals the constant. |
-| `gop_mode_selected`            | bootx64 | P0 | same | boot | graphics-asset-foundation | `< gop_mode_count`. |
+| `gop_mode_selected`            | bootx64 | P0 | same | boot | graphics-asset-foundation | `<= gop_mode_count`. Indexed access only when `< gop_mode_count`; the bootloader writes `gop_mode_selected = gop_mode_count` as an off-table sentinel when the active firmware mode was not captured in the bounded `gop_modes[]` array, and the kernel consumer treats `sel >= mc` as "active mode unknown" (`bootx64.c` near line 1955 + `boot_interrupts.c` near line 282). |
 
 ### ACPI
 
@@ -80,9 +80,9 @@ These fields predate the typed payload descriptor array in [boot-protocol roadma
 
 | Field | Producer | First valid | Consumer | Lifetime | Owning roadmap | Validation |
 | --- | --- | --- | --- | --- | --- | --- |
-| `module_start`     | bootx64 / mb2 | P0 | none today; retained as compatibility alias | handoff | boot-protocol §4 / §5 | None. `module_available` gates reads. |
-| `module_end`       | bootx64 / mb2 | P0 | none today; retained as compatibility alias | handoff | boot-protocol §4 / §5 | None. |
-| `module_available` | bootx64 / mb2 | P0 | gate for legacy consumers | boot | boot-protocol §4 / §5 | `0 | 1`. |
+| `module_start`     | mb2 only (zero on native UEFI) | P0 | none today; retained as compatibility alias | handoff | boot-protocol §4 / §5 | None. `module_available` gates reads. Live writer: `src/kernel/multiboot2_parse.c` lines 110-113 (only). The native `bootx64` does NOT populate this; UKI/native consumers should use the typed payload descriptor array (§4) instead. |
+| `module_end`       | mb2 only (zero on native UEFI) | P0 | none today; retained as compatibility alias | handoff | boot-protocol §4 / §5 | None. Same producer truth as `module_start`. |
+| `module_available` | mb2 only (zero on native UEFI) | P0 | gate for legacy consumers | boot | boot-protocol §4 / §5 | `0 | 1`. Zero on native UEFI means "no MB2 module"; consumers must check this gate before reading the alias fields. |
 
 See **Legacy / Multiboot2-only** block below for the full retain/deprecate breakdown.
 
@@ -237,7 +237,7 @@ Monotonic anti-rollback counter bound to UEFI NVRAM variable `IPOSRequiredSecVer
 
 | Field | Producer | First valid | Consumer | Lifetime | Owning roadmap | Validation |
 | --- | --- | --- | --- | --- | --- | --- |
-| `flags` | bootx64 | P0 | validator (`boot_rollback_validate`), crash-recorder | handoff | boot-protocol-abi-handoff section 13 | Every set bit MUST be in `BOOT_FLAG_MASK_KNOWN` (currently `BOOT_FLAG_ROLLBACK_REFUSAL` + `BOOT_FLAG_ROLLBACK_READ_FAILED`). `REFUSAL` = downgrade halt; `READ_FAILED` = NVRAM read/validation halt (distinct classes for crash recorder diagnostics). Unknown bits halt. Closed mask -- no forward-compat tolerance. |
+| `flags` | bootx64 | P0 | validator (`boot_rollback_validate`), `boot_warm_update_consume`, UKI consumers, crash-recorder | handoff | [boot-protocol section 13 / 14](../../todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md#13-anti-rollback-and-security-version-binding) + [UKI signed boot](../../todo/01-boot-platform/TODO-02-uefi-hardening-secureboot.md#11-unified-signed-boot-artifact-uki-style) | Every set bit MUST be in `BOOT_FLAG_MASK_KNOWN` = `BOOT_FLAG_ROLLBACK_REFUSAL` (1u<<0, downgrade halt) + `BOOT_FLAG_ROLLBACK_READ_FAILED` (1u<<1, NVRAM read/validation halt) + `BOOT_FLAG_WARM_UPDATE` (1u<<2, warm-kernel-update handoff) + `BOOT_FLAG_INVOKED_VIA_UKI` (1u<<3, set by `bootx64.c` when the UKI fast path fires). Unknown bits halt. Closed mask -- no forward-compat tolerance. |
 | `os_loader_security_version` | kernel build (Makefile-baked constant read by bootloader) | P0 | validator, Registry export, Phase 3 NVRAM raise | handoff | boot-protocol-abi-handoff section 13 | `<= BOOT_SECURITY_VERSION_MAX` (0x7FFFFFFF); out-of-range halts. Shipped value baked into `kernel.exe` at build. |
 | `required_security_version` | bootx64 (UEFI variable `IPOSRequiredSecVersion`) | P0 | validator, Registry export, Phase 3 raise-decision | handoff | boot-protocol-abi-handoff section 13 | `<= BOOT_SECURITY_VERSION_MAX`. Zero on first-ever boot (variable absent); raised by kernel Phase 3 opt-in. |
 | `_rollback_pad` | bootx64 | P0 | reserved | handoff | boot-protocol-abi-handoff section 13 | Must be zero; reserved for future anti-rollback policy word. |
