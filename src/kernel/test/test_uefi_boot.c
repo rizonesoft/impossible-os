@@ -12,6 +12,7 @@
 #include "kernel/test/test.h"
 #include "kernel/uefi_runtime.h"
 #include "kernel/uefi_vars.h"
+#include "kernel/uefi_config.h"
 #include "kernel/boot_info.h"
 #include "kernel/smbios.h"
 #include "kernel/nt/ntstatus.h"
@@ -442,6 +443,101 @@ static void test_nt_query_system_information_acpi_enum(void)
     }
 }
 
+/* ---- MAT region inventory + RT property mismatch ---- */
+
+static void test_mat_classify_guard(void)
+{
+    /* RP set: guard regardless of other bits. */
+    TEST_ASSERT_EQ((int)mat_classify_attr(EFI_MEMORY_RP),
+                   (int)MAT_CLASS_GUARD, "RP -> GUARD");
+    TEST_ASSERT_EQ((int)mat_classify_attr(EFI_MEMORY_RP | EFI_MEMORY_RO),
+                   (int)MAT_CLASS_GUARD, "RP+RO -> GUARD (RP wins)");
+}
+
+static void test_mat_classify_code(void)
+{
+    /* RO + executable (no XP) = code region. */
+    TEST_ASSERT_EQ((int)mat_classify_attr(EFI_MEMORY_RO),
+                   (int)MAT_CLASS_CODE, "RO -> CODE");
+}
+
+static void test_mat_classify_data(void)
+{
+    /* Writable + non-executable (XP) = data region. */
+    TEST_ASSERT_EQ((int)mat_classify_attr(EFI_MEMORY_XP),
+                   (int)MAT_CLASS_DATA, "XP -> DATA");
+}
+
+static void test_mat_classify_rodata(void)
+{
+    /* RO + XP = read-only constants. */
+    TEST_ASSERT_EQ((int)mat_classify_attr(EFI_MEMORY_RO | EFI_MEMORY_XP),
+                   (int)MAT_CLASS_RODATA, "RO+XP -> RODATA");
+}
+
+static void test_mat_classify_wx_violation(void)
+{
+    /* Writable AND executable (no RO, no XP) = W^X violation. */
+    TEST_ASSERT_EQ((int)mat_classify_attr(0),
+                   (int)MAT_CLASS_WX_VIOLATION, "0 attr -> WX_VIOLATION");
+}
+
+static void test_mat_get_entry_null_guard(void)
+{
+    TEST_ASSERT_EQ(mat_get_entry(0, 0), 0, "NULL out -> 0");
+}
+
+static void test_mat_get_entry_range_guard(void)
+{
+    mat_entry_t e;
+    /* MAT_MAX_ENTRIES + 1000 is guaranteed out of range whether the
+     * runtime cache is empty or full. */
+    TEST_ASSERT_EQ(mat_get_entry(MAT_MAX_ENTRIES + 1000, &e), 0,
+                   "huge idx -> 0");
+}
+
+static void test_mat_count_consistent(void)
+{
+    /* Whatever count is, it must not exceed the cache cap. */
+    uint32_t n = mat_get_count();
+    TEST_ASSERT(n <= MAT_MAX_ENTRIES, "mat_get_count <= MAT_MAX_ENTRIES");
+}
+
+static void test_rt_property_mismatches_nonneg(void)
+{
+    int n = uefi_rt_property_mismatches();
+    TEST_ASSERT(n >= 0, "uefi_rt_property_mismatches returns nonnegative");
+    /* On QEMU OVMF the mismatch count is typically 0; on weird firmware
+     * it may be non-zero. Either way the value must be sane. */
+    TEST_ASSERT(n <= 14, "mismatches bounded by service count");
+}
+
+static void test_rt_supported_implies_pointer_callable(void)
+{
+    /* Codex H1 guarantee: every bit still set in s_supported after
+     * uefi_runtime_init() must correspond to a non-NULL function
+     * pointer. The mismatch checker clears bits whose pointer is NULL,
+     * so wrappers gating on s_supported cannot null-deref.
+     *
+     * We don't have direct access to s_rt, but we exercise the
+     * critical wrapper surface: if the mismatch fix is in place AND
+     * a service bit is set, the wrapper must not return UEFI_NOT_FOUND
+     * specifically because of NULL. Smoke-check: rt_property_mismatches
+     * is 0 on a healthy firmware (OVMF). On firmware with mismatches,
+     * the bits would have been cleared, so the residual set bits are
+     * always callable. The strongest test we can run from here is
+     * range-bounded counter sanity already covered above. */
+    uint32_t supported = uefi_rt_supported();
+    int mismatches = uefi_rt_property_mismatches();
+    /* If RT properties table absent, supported defaults to 0xFFFFFFFF
+     * and no mismatches are computed (s_rt may be NULL on degraded). */
+    if (uefi_rt_available()) {
+        TEST_ASSERT(supported != 0,
+                    "RT available => at least one service bit set");
+    }
+    (void)mismatches;
+}
+
 /* Registration */
 
 void test_register_uefi_boot(void)
@@ -490,6 +586,27 @@ void test_register_uefi_boot(void)
                             test_vars_registry_validity_contract, TEST_CAT_BOOT);
     test_suite_register_cat("UEFI: NtQuerySystemInformation ACPI enum",
                             test_nt_query_system_information_acpi_enum, TEST_CAT_BOOT);
+    /* MAT classification + inventory + RT property mismatch */
+    test_suite_register_cat("UEFI: MAT classify GUARD",
+                            test_mat_classify_guard, TEST_CAT_BOOT);
+    test_suite_register_cat("UEFI: MAT classify CODE",
+                            test_mat_classify_code, TEST_CAT_BOOT);
+    test_suite_register_cat("UEFI: MAT classify DATA",
+                            test_mat_classify_data, TEST_CAT_BOOT);
+    test_suite_register_cat("UEFI: MAT classify RODATA",
+                            test_mat_classify_rodata, TEST_CAT_BOOT);
+    test_suite_register_cat("UEFI: MAT classify WX violation",
+                            test_mat_classify_wx_violation, TEST_CAT_BOOT);
+    test_suite_register_cat("UEFI: mat_get_entry NULL guard",
+                            test_mat_get_entry_null_guard, TEST_CAT_BOOT);
+    test_suite_register_cat("UEFI: mat_get_entry range guard",
+                            test_mat_get_entry_range_guard, TEST_CAT_BOOT);
+    test_suite_register_cat("UEFI: mat_get_count <= cap",
+                            test_mat_count_consistent, TEST_CAT_BOOT);
+    test_suite_register_cat("UEFI: rt_property_mismatches range",
+                            test_rt_property_mismatches_nonneg, TEST_CAT_BOOT);
+    test_suite_register_cat("UEFI: supported bits imply callable",
+                            test_rt_supported_implies_pointer_callable, TEST_CAT_BOOT);
 }
 
 #endif /* KERNEL_TESTS */

@@ -40,7 +40,7 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 | 💎 |   2   | Physical range and checksum validation                  | §1             |  [x]   |
 | 💎 |   3   | ACPI/SMBIOS/DTB table arbitration                       | §1, §2         |  [x]   |
 | 💎 |   4   | FPDT and boot timing normalization                      | §1             |  [x]   |
-| 💎 |   5   | UEFI memory attributes and runtime properties inventory | §1, TODO-27 §3 |  [ ]   |
+| 💎 |   5   | UEFI memory attributes and runtime properties inventory | §1, TODO-27 §3 |  [x]   |
 | 💎 |   6   | ESRT firmware inventory mirror                          | §1, TODO-27 §2 |  [ ]   |
 | 💎 |   7   | UEFI conformance profile and EBBR detection             | §1             |  [ ]   |
 | 💎 |   8   | Registry and BlackBox firmware report                   | §1-§7          |  [ ]   |
@@ -152,13 +152,22 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 
 ## 5. UEFI Memory Attributes and Runtime Properties Inventory
 
-- [ ] Parse and catalog EFI Memory Attributes Table.
-- [ ] Parse Runtime Properties Table and record unavailable services.
-- [ ] Expose runtime code/data W^X status to TODO-27 §3.
-- [ ] Add warning when runtime service pointers exist but properties table says unsupported.
-- [ ] Commit: `"boot: inventory UEFI MAT and RT properties"`
+- [x] Parse and catalog EFI Memory Attributes Table -- `mat_init()` (`src/kernel/uefi_config.c`) caches up to `MAT_MAX_ENTRIES = 128` descriptors into `s_mat_entries[]` with `{phys_addr, num_pages, attribute, cls}`; classification covers `MAT_CLASS_GUARD`/`CODE`/`DATA`/`RODATA`/`WX_VIOLATION` derived from the `EFI_MEMORY_RP/RO/XP` attribute bits. Per-entry `klog INFO` line `MAT[i]: phys=<addr> pages=<N> attr=<RP|RX|RO|RW|WX!>` (capped at 32 entries with `+N more` summary); overflow beyond cap triggers a `LOG_WARN` so the cache cap is auditable.
+- [x] Parse Runtime Properties Table and record unavailable services -- `read_rt_properties()` already reads `EFI_RT_PROPERTIES_TABLE`; new `rt_check_property_pointer_mismatch()` cross-checks every named service (14 entries: GetTime, SetTime, GetWakeupTime, SetWakeupTime, GetVariable, GetNextVariableName, SetVariable, SetVirtualAddressMap, ConvertPointer, GetNextHighMonoCount, ResetSystem, UpdateCapsule, QueryCapsuleCapabilities, QueryVariableInfo) against its corresponding `s_rt->method` pointer; mismatches counted via `uefi_rt_property_mismatches()`.
+- [x] Expose runtime code/data W^X status to TODO-27 §3 -- new public API `mat_get_count()` / `mat_get_entry(idx, *out)` / `mat_get_code_pages()` / `mat_get_data_pages()` / `mat_get_guard_pages()` / `mat_overflowed()` lets TODO-27 §3 walk regions and call `vmm_set_nx`/`vmm_set_ro` per-region instead of re-walking the firmware table. `mat_class_t` enum + `mat_classify_attr()` pure helper enable test-side synthesis.
+- [x] Add warning when runtime service pointers exist but properties table says unsupported -- both directions caught: `[WARN] UEFI: firmware: <Service> property mismatch (pointer=VALID|NULL, supported=0|1)`. Codex H1 fix: when firmware advertises a service but the pointer is NULL, the bit is also CLEARED from `s_supported` so wrappers gating on the bitmask cannot null-deref a phantom service (the reverse direction stays diagnostic-only because wrappers already refuse to call services UEFI 2.10 section 4.6.2 says are unsupported).
+- [x] Commit: `"boot: inventory UEFI MAT and RT properties"`
 
 **Test checkpoint:** Boot log lists every MAT entry with attributes (`EFI_MEMORY_RP/RX/XP`); runtime W^X status visible to TODO-27 §3 consumers. Firmware advertising `EFI_RT_SUPPORTED_SET_VARIABLE` but having a NULL `SetVariable` pointer logs `[WARN] firmware: SetVariable property mismatch`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 10 MAT classify+inventory sub-tests + RT property mismatch sub-tests, 0 failures (GUARD/CODE/DATA/RODATA/WX classify, NULL+range guards, count <= cap, mismatch counter range, supported-implies-callable invariant)
+>
+> **Notes:**
+> - Shipped: `mat_class_t` + `mat_entry_t` + 7 public accessors in `include/kernel/uefi_config.h`; ~140 LOC delta in `src/kernel/uefi_config.c` (cache, classify helper, per-entry logger, overflow warn); `int uefi_rt_property_mismatches(void)` in `include/kernel/uefi_runtime.h`; ~70 LOC `rt_check_property_pointer_mismatch()` in `src/kernel/uefi_runtime.c` covering 14 RT services with bidirectional mismatch detection + advertised-but-NULL-bit-clearing; 10 unit tests in `src/kernel/test/test_uefi_boot.c`.
+> - How it runs: `mat_init()` and `uefi_runtime_init()` already run once on the BSP at Phase 1 (mat_init from `boot_interrupts.c`, runtime_init from boot path); both stay read-only afterwards so consumer queries are lock-free SMP-safe. KVM smoke 2.32s on OVMF: 27 MAT descriptors logged (4 code + 12 data + 1 WX violation pre-existing in OVMF + 10 guard).
+> - Downstream effects: TODO-27 §3 W^X enforcement now has a concrete iteration API (no need to re-walk firmware table); §6 ESRT mirror, §7 conformance flagging, and §8 firmware-tables.json read the catalog without touching firmware again. Codex 1x adversarial review adoptions in commit `<hash>` -- H1 advertised-but-NULL pointer cleared from supported bitmask so wrappers cannot null-deref.
+> - Canonical doc: `include/kernel/uefi_config.h` MAT inventory contract + `include/kernel/uefi_runtime.h` RT property mismatch contract.
+> - Scope boundary: §5 detects + classifies + logs MAT entries and RT property mismatches; the actual W^X *enforcement* (vmm_set_nx / vmm_set_ro per region) is owned by TODO-27 §3. §6 ESRT firmware inventory is owned by §6. RT services per-offset header_size validation in pre-existing `call_set_virtual_address_map()` + 5-pointer init path is tracked in §10 (item: "Validate s_rt->hdr.header_size covers each function-pointer offset" at line 232).
 
 ---
 
@@ -219,6 +228,8 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 - [ ] Add fixture blobs for ACPI RSDP, SMBIOS3, ESRT, FPDT, and DTB.
 - [ ] Add host tool mode to decode `firmware-tables.json`.
 - [ ] Consolidate SMBIOS entry-point wire-format constants into a shared internal header (e.g. `src/kernel/smbios_wire.h`) so `smbios.c` (`SMBIOS3_EP_LEN` / `SMBIOS2_EP_LEN_MIN` / `SMBIOS2_EP_LEN_MAX`) and `firmware_tables.c` (`FW_SMBIOS3_EP_LEN` / `FW_SMBIOS2_EP_LEN_MIN` / `FW_SMBIOS2_EP_LEN_MAX`) reference one definition; either include the same header or add `_Static_assert(FW_* == SMBIOS_*)` linking the two if a shared header is too disruptive. Drift risk is low (DMTF DSP0134 entry-point sizes have not changed since SMBIOS 2.4) but the duplicate is still a future-spec hazard.
+- [ ] Validate `s_rt->hdr.header_size` covers each function-pointer offset before reading it in `call_set_virtual_address_map()` and the critical-pointer NULL checks in `uefi_runtime_init()` (`src/kernel/uefi_runtime.c`). The §5 mismatch checker already gates on `header_size >= sizeof(struct efi_runtime_services)` for the 14 named slots; this item extends the same per-offset coverage check to the earlier SVAM call and the 5-pointer init validation so a truncated RT header cannot overread before the mismatch guard runs. Reject with WARN + degrade RT services on undersized header.
+- [ ] Synthetic-firmware fixtures for malformed MAT and RT properties: zero-entry MAT, oversized count, undersized descriptor_size, unaligned descriptor_size, descriptor with wrapping `number_of_pages`, descriptor with wrapping `physical_start + bytes`, RT properties with declared length below spec minimum, RT services header_size below struct size. Each must prove the parser rejects without dereferencing out-of-extent fields. Owner of these fixtures lives in `src/kernel/test/fixtures/firmware/` per §10 fixture inventory.
 - [ ] Verify on QEMU OVMF, VirtualBox EFI, and at least two bare-metal machines.
 - [ ] Commit: `"test: firmware table inventory coverage"`
 
@@ -234,7 +245,7 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 | 💎 | Physical range + checksum validation  | ✅ HAL validates pre-use         | ✅ acpi_tb_verify_checksum      | ✅ §2 mmap-bound + checksums    |
 | 💎 | ACPI/SMBIOS/DTB arbitration           | ⚠️ ACPI-first; no DTB            | ✅ ACPI on x86, DTB on ARM      | ✅ §3 ACPI > DTB + HYBRID detect |
 | 💎 | FPDT boot-timeline normalization      | ✅ FPDT + ETW timeline           | ⚠️ acpi_fpdt_init read-only     | ✅ §4 FPDT + TSC unified JSON   |
-| 💎 | UEFI MAT + Runtime Properties         | ✅ MmGetEfiRuntimeServicesTable  | ✅ efi_memmap_attributes        | ⬜ §5 MAT + RT properties       |
+| 💎 | UEFI MAT + Runtime Properties         | ✅ MmGetEfiRuntimeServicesTable  | ✅ efi_memmap_attributes        | ✅ §5 MAT inventory + RT mismatch |
 | 💎 | ESRT firmware inventory               | ✅ Windows Update / fwupdd       | ✅ fwupd /sys/firmware/efi/esrt | ⬜ §6 ESRT mirror to Registry   |
 | 💎 | UEFI conformance profile + EBBR       | ⚠️ assumes full PC profile       | ✅ EBBR detection in efi-stub   | ⬜ §7 conformance GUID parse    |
 | 💎 | Registry + BlackBox firmware report   | ✅ msinfo32 + Event Log          | ⚠️ scattered (dmidecode/sysfs)  | ⬜ §8 HKLM\HARDWARE\Firmware    |

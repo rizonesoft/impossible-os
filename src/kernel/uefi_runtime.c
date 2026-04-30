@@ -14,6 +14,7 @@
 #include "kernel/boot_info.h"
 #include "kernel/boot_init.h"
 #include "kernel/uefi_config.h"
+#include "kernel/firmware_tables.h"
 #include "kernel/nt/ssdt.h"
 #include "kernel/nt/service_numbers.h"
 #include "kernel/nt/ntstatus.h"
@@ -113,6 +114,7 @@ static int s_available;                      /* 1 = RT services usable */
 static uint32_t s_supported;                 /* EFI_RT_SUPPORTED_* bitmask */
 static int s_init_done;                      /* 1 = uefi_runtime_init has run successfully (once-latch) */
 static int s_svam_done;                      /* 1 = SVAM called this boot (kernel-side latch) */
+static int s_rt_prop_mismatches;             /* count of supported-bit vs pointer-NULL disagreements */
 
 /* ---- Internal helpers ---- */
 
@@ -191,6 +193,93 @@ static int call_set_virtual_address_map(void)
     return 0;
 }
 
+/* Cross-check EFI_RT_PROPERTIES_TABLE supported bits against the actual
+ * runtime-services-table function pointers. Either direction is a
+ * firmware bug worth surfacing on serial:
+ *   - bit set + pointer NULL -> firmware advertises a service it cannot
+ *     actually invoke. Calling would null-deref.
+ *   - bit clear + pointer non-NULL -> firmware says service is unsupported
+ *     after SVAM, but left the (post-SVAM virtual) pointer non-NULL. The
+ *     kernel must NOT call those pointers per UEFI 2.10 section 4.6.2.
+ * Returns the number of mismatches; updates s_rt_prop_mismatches. */
+static int rt_check_property_pointer_mismatch(void)
+{
+    if (!s_rt) return 0;
+
+    /* Validate that the firmware-declared RT services header covers
+     * every offset we are about to read. UEFI 2.10 sets the layout at
+     * 24 (header) + 14 * 8 (function pointers) = 136 bytes. Older or
+     * truncated firmware tables shorter than this would have us read
+     * past the declared extent. Skip the mismatch check entirely on
+     * such tables -- the 5-pointer init validation is enough. */
+    if (s_rt->hdr.header_size < sizeof(struct efi_runtime_services)) {
+        klog(LOG_WARN, "UEFI",
+             "RT services header_size=%u below expected %u -- "
+             "skipping property mismatch check",
+             (uint32_t)s_rt->hdr.header_size,
+             (uint32_t)sizeof(struct efi_runtime_services));
+        return 0;
+    }
+
+    /* Mirrors the supported-bit -> pointer mapping for every named slot
+     * in the RT properties table. UpdateCapsule and friends are
+     * deliberately included even though they are not in the 5 critical
+     * pointers checked above -- the firmware-table-platform-inventory
+     * roadmap requires every service to be cross-checked. */
+    struct rt_pp {
+        uint32_t flag;
+        const char *name;
+        void *ptr;
+    } svc[] = {
+        { EFI_RT_SUPPORTED_GET_TIME,                "GetTime",                (void *)s_rt->get_time },
+        { EFI_RT_SUPPORTED_SET_TIME,                "SetTime",                (void *)s_rt->set_time },
+        { EFI_RT_SUPPORTED_GET_WAKEUP_TIME,         "GetWakeupTime",          (void *)s_rt->get_wakeup_time },
+        { EFI_RT_SUPPORTED_SET_WAKEUP_TIME,         "SetWakeupTime",          (void *)s_rt->set_wakeup_time },
+        { EFI_RT_SUPPORTED_GET_VARIABLE,            "GetVariable",            (void *)s_rt->get_variable },
+        { EFI_RT_SUPPORTED_GET_NEXT_VARIABLE_NAME,  "GetNextVariableName",    (void *)s_rt->get_next_variable_name },
+        { EFI_RT_SUPPORTED_SET_VARIABLE,            "SetVariable",            (void *)s_rt->set_variable },
+        { EFI_RT_SUPPORTED_SET_VIRTUAL_ADDRESS_MAP, "SetVirtualAddressMap",   (void *)s_rt->set_virtual_address_map },
+        { EFI_RT_SUPPORTED_CONVERT_POINTER,         "ConvertPointer",         (void *)s_rt->convert_pointer },
+        { EFI_RT_SUPPORTED_GET_NEXT_HIGH_MONO,      "GetNextHighMonoCount",   (void *)s_rt->get_next_high_mono_count },
+        { EFI_RT_SUPPORTED_RESET_SYSTEM,            "ResetSystem",            (void *)s_rt->reset_system },
+        { EFI_RT_SUPPORTED_UPDATE_CAPSULE,          "UpdateCapsule",          (void *)s_rt->update_capsule },
+        { EFI_RT_SUPPORTED_QUERY_CAPSULE_CAP, "QueryCapsuleCaps", (void *)s_rt->query_capsule_capabilities },
+        { EFI_RT_SUPPORTED_QUERY_VARIABLE_INFO,     "QueryVariableInfo",      (void *)s_rt->query_variable_info },
+    };
+
+    int mismatches = 0;
+    uint32_t n = (uint32_t)(sizeof(svc) / sizeof(svc[0]));
+    for (uint32_t i = 0; i < n; i++) {
+        int advertised = (s_supported & svc[i].flag) != 0;
+        int present    = svc[i].ptr != 0;
+        if (advertised != present) {
+            klog(LOG_WARN, "UEFI",
+                 "firmware: %s property mismatch (pointer=%s, supported=%d)",
+                 svc[i].name, present ? "VALID" : "NULL", advertised);
+            mismatches++;
+            /* Make pointer NULLness authoritative for callable services.
+             * Wrappers in this file gate on s_supported before
+             * dereferencing s_rt->method, so a firmware that advertises
+             * a service but leaves the pointer NULL would null-deref on
+             * the first call. Clear the bit so wrappers fall through
+             * to UEFI_UNSUPPORTED. The reverse direction (bit clear,
+             * pointer non-NULL) is benign -- the kernel must NOT call
+             * pointers UEFI 2.10 section 4.6.2 marks unsupported, and
+             * the wrappers already refuse based on s_supported. */
+            if (advertised && !present) {
+                s_supported &= ~svc[i].flag;
+            }
+        }
+    }
+    s_rt_prop_mismatches = mismatches;
+    return mismatches;
+}
+
+int uefi_rt_property_mismatches(void)
+{
+    return s_rt_prop_mismatches;
+}
+
 /* Read EFI_RT_PROPERTIES_TABLE from config table to determine which
  * runtime services are actually supported by this firmware. */
 static void read_rt_properties(void)
@@ -204,8 +293,33 @@ static void read_rt_properties(void)
         return;
     }
 
+    /* Validate the EFI_RT_PROPERTIES_TABLE extent against the firmware
+     * memory map BEFORE dereferencing any field, mirroring the MAT
+     * pre-deref guard. A bogus VendorTable pointer would otherwise
+     * fault or poison s_supported with bytes from unrelated memory. */
+    if (!firmware_table_mmap_contains((uintptr_t)table_addr,
+            sizeof(struct uefi_rt_properties_table))) {
+        klog(LOG_WARN, "UEFI",
+             "RT properties: header at 0x%lx not in firmware mmap -- "
+             "treating table as absent", (uint64_t)table_addr);
+        s_supported = 0xFFFFFFFF;
+        return;
+    }
+
     const struct uefi_rt_properties_table *props =
         (const struct uefi_rt_properties_table *)table_addr;
+
+    /* Reject if the firmware-declared length is shorter than the spec
+     * minimum (UEFI 2.10 section 4.6.1: 8 bytes). Treat as absent so the
+     * fallback path (assume all services supported) runs. */
+    if (props->length < sizeof(struct uefi_rt_properties_table)) {
+        klog(LOG_WARN, "UEFI",
+             "RT properties: declared length=%u below spec minimum %u "
+             "-- treating table as absent", (uint32_t)props->length,
+             (uint32_t)sizeof(struct uefi_rt_properties_table));
+        s_supported = 0xFFFFFFFF;
+        return;
+    }
 
     s_supported = props->runtime_services_supported;
 
@@ -357,6 +471,10 @@ boot_result_t uefi_runtime_init(void)
     /* Mark available -- all critical pointers validated */
     s_available = 1;
     s_init_done = 1;
+
+    /* Cross-check supported bitmask vs pointer presence for all named
+     * RT services. Diagnostic only; does not gate availability. */
+    rt_check_property_pointer_mismatch();
 
     /* Build human-readable service list for log */
     char services[128];

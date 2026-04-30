@@ -87,8 +87,11 @@ Enforce write-XOR-execute on UEFI runtime memory regions by walking the `EFI_MEM
 
 **Files:** `src/kernel/uefi_runtime.c`, `src/kernel/mm/vmm.c`
 
-- [ ] Locate `EFI_MEMORY_ATTRIBUTES_TABLE` in UEFI config tables
-- [ ] Walk entries: for RW pages, set NX bit via `vmm_set_nx(virt, size)`; for RT code regions, set RO via `vmm_set_ro(virt, size)`
+> [!NOTE]
+> `01-boot-platform/TODO-04 §5 UEFI Memory Attributes and Runtime Properties Inventory` shipped the consumer API: `mat_get_count()` / `mat_get_entry(idx, *out)` returning `mat_entry_t {phys_addr, num_pages, attribute, cls}` with `cls` ∈ `{GUARD, CODE, DATA, RODATA, WX_VIOLATION}` from `include/kernel/uefi_config.h`. Iterate that instead of re-walking firmware tables. `mat_classify_attr()` is a pure test helper.
+
+- [x] Locate `EFI_MEMORY_ATTRIBUTES_TABLE` in UEFI config tables -- shipped by TODO-04 §1 catalog + §5 inventory; consume via `mat_get_count()`/`mat_get_entry()`.
+- [ ] Walk entries: for `MAT_CLASS_DATA` regions call `vmm_set_nx(virt, size)`; for `MAT_CLASS_CODE` regions call `vmm_set_ro(virt, size)`. (Iteration source switched to `mat_get_entry()` from `include/kernel/uefi_config.h`.)
 - [ ] Prerequisite: implement `vmm_set_nx()` and `vmm_set_ro()` in vmm.c (do not exist yet)
 - [ ] Graceful degradation: if table absent, log warning and continue
 - [ ] Commit: `"kernel: UEFI runtime W^X enforcement via EFI_MEMORY_ATTRIBUTES_TABLE"`

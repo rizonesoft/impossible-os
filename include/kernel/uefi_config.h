@@ -107,3 +107,46 @@ void mat_init(void);
 
 /* Returns 1 if MAT was present and all regions pass W^X check. */
 int mat_wxn_enforced(void);
+
+/* ---- MAT region inventory (consumer API for TODO-27 W^X enforcement) ---- */
+
+/* Region classification derived from RP/RO/XP attribute bits. */
+typedef enum {
+    MAT_CLASS_GUARD = 0,    /* RP set: page is not present */
+    MAT_CLASS_CODE,         /* RO + executable (no XP): runtime code */
+    MAT_CLASS_DATA,         /* RW + XP: runtime data */
+    MAT_CLASS_RODATA,       /* RO + XP: read-only constants */
+    MAT_CLASS_WX_VIOLATION  /* writable AND executable: W^X violation */
+} mat_class_t;
+
+typedef struct {
+    uint64_t    phys_addr;     /* physical_start from descriptor */
+    uint64_t    num_pages;     /* descriptor pages (4 KiB each) */
+    uint64_t    attribute;     /* raw EFI_MEMORY_* attribute bits */
+    mat_class_t cls;           /* derived classification */
+} mat_entry_t;
+
+/* Cap on cached MAT entries; bare-metal laptops typically expose <50,
+ * OVMF reports ~10-20. 128 leaves headroom without inflating .bss. */
+#define MAT_MAX_ENTRIES 128
+
+/* Returns count of cached MAT entries (clamped to MAT_MAX_ENTRIES).
+ * 0 if MAT was absent or unparseable. */
+uint32_t mat_get_count(void);
+
+/* Copy entry `idx` into `*out`. Returns 1 on success, 0 if idx out of range
+ * or `out` is NULL. Read-only after mat_init(); SMP-safe lock-free. */
+int mat_get_entry(uint32_t idx, mat_entry_t *out);
+
+/* Aggregate page counts (4 KiB each) by classification. */
+uint64_t mat_get_code_pages(void);
+uint64_t mat_get_data_pages(void);
+uint64_t mat_get_guard_pages(void);
+
+/* Returns 1 if firmware reported more than MAT_MAX_ENTRIES descriptors
+ * (count was clamped). Diagnostic only. */
+int mat_overflowed(void);
+
+/* Pure classification helper for synthetic testing: takes an
+ * EFI_MEMORY_* attribute bitmask and returns the derived class. */
+mat_class_t mat_classify_attr(uint64_t attr);

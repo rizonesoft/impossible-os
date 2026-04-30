@@ -63,6 +63,14 @@ int uefi_rt_available(void);
  * If EFI_RT_PROPERTIES_TABLE is absent, all services are assumed supported. */
 uint32_t uefi_rt_supported(void);
 
+/* Returns count of RT services where the EFI_RT_PROPERTIES_TABLE supported
+ * bit and the runtime-services-table function pointer disagree.
+ * 0 = consistent (or absent table treated as "all supported"). Each
+ * mismatch is logged as `[WARN] firmware: <Service> property mismatch`
+ * during uefi_runtime_init(). Diagnostic only -- the kernel honors
+ * pointer NULLness when calling, regardless of advertised support. */
+int uefi_rt_property_mismatches(void);
+
 /* ---- EFI status codes (extended) ---- */
 #define UEFI_NOT_FOUND            (14ULL | (1ULL << 63))
 #define UEFI_BUFFER_TOO_SMALL     (5ULL  | (1ULL << 63))

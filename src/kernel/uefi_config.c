@@ -7,6 +7,7 @@
 
 #include "kernel/uefi_config.h"
 #include "kernel/boot_info.h"
+#include "kernel/firmware_tables.h"
 #include "kernel/klog.h"
 
 /* Compare two boot_uefi_guid structs byte-by-byte */
@@ -259,10 +260,64 @@ struct mat_descriptor {
 static int s_mat_present;
 static int s_wxn_ok;  /* 1 = all regions pass W^X check */
 
+/* MAT region inventory cache (consumer API for TODO-27 W^X enforcement). */
+static mat_entry_t s_mat_entries[MAT_MAX_ENTRIES];
+static uint32_t    s_mat_count;
+static int         s_mat_overflowed;
+static uint64_t    s_mat_code_pages;
+static uint64_t    s_mat_data_pages;
+static uint64_t    s_mat_guard_pages;
+
+/* Per-entry log cap: don't spam serial with hundreds of lines on
+ * vendor firmware that exposes a large MAT. The aggregate summary
+ * still reflects every entry; only individual lines are clipped. */
+#define MAT_PER_ENTRY_LOG_CAP 32
+
+/* Sane upper bound on per-descriptor stride. EFI_MEMORY_DESCRIPTOR is
+ * currently 48 bytes (UEFI 2.10); 256 leaves headroom for vendor
+ * extensions while rejecting 0xFFFFFFFF and other obviously-corrupt
+ * stride values. */
+#define MAT_MAX_DESC_SIZE    256
+
+static mat_class_t mat_classify(uint64_t attr, int *is_violation_out)
+{
+    int is_ro = (attr & EFI_MEMORY_RO) != 0;
+    int is_xp = (attr & EFI_MEMORY_XP) != 0;
+    int is_rp = (attr & EFI_MEMORY_RP) != 0;
+
+    if (is_violation_out) *is_violation_out = 0;
+
+    if (is_rp) return MAT_CLASS_GUARD;
+    if (is_ro && !is_xp) return MAT_CLASS_CODE;
+    if (!is_ro && is_xp) return MAT_CLASS_DATA;
+    if (is_ro && is_xp) return MAT_CLASS_RODATA;
+    /* Writable AND executable: W^X violation. */
+    if (is_violation_out) *is_violation_out = 1;
+    return MAT_CLASS_WX_VIOLATION;
+}
+
+static const char *mat_attr_label(uint64_t attr)
+{
+    int is_ro = (attr & EFI_MEMORY_RO) != 0;
+    int is_xp = (attr & EFI_MEMORY_XP) != 0;
+    int is_rp = (attr & EFI_MEMORY_RP) != 0;
+
+    if (is_rp) return "RP";
+    if (is_ro && !is_xp) return "RX";
+    if (!is_ro && is_xp) return "RW";
+    if (is_ro && is_xp) return "RO";
+    return "WX!";  /* Writable AND executable: W^X violation. */
+}
+
 void mat_init(void)
 {
     s_mat_present = 0;
     s_wxn_ok = 0;
+    s_mat_count = 0;
+    s_mat_overflowed = 0;
+    s_mat_code_pages = 0;
+    s_mat_data_pages = 0;
+    s_mat_guard_pages = 0;
 
     struct boot_uefi_guid mat_guid = UEFI_GUID_MEM_ATTR;
     uintptr_t table_addr = uefi_find_config_table(&mat_guid);
@@ -270,6 +325,19 @@ void mat_init(void)
     if (table_addr == 0) {
         klog(LOG_INFO, "UEFI", "MAT: Not present "
              "(runtime memory W^X not declared)");
+        return;
+    }
+
+    /* Validate the header extent against the firmware UEFI memory map
+     * BEFORE the first dereference. The config-table pointer is
+     * firmware-supplied untrusted input; reading version/count/desc_sz
+     * before this check is exactly the trust-boundary the catalog's
+     * fw_mmap_contains primitive exists to close. */
+    if (!firmware_table_mmap_contains((uintptr_t)table_addr,
+            sizeof(struct efi_memory_attributes_table))) {
+        klog(LOG_WARN, "UEFI",
+             "MAT: header at 0x%lx not in firmware mmap -- table rejected",
+             (uint64_t)table_addr);
         return;
     }
 
@@ -281,64 +349,242 @@ void mat_init(void)
         return;
     }
 
-    s_mat_present = 1;
-
     uint32_t count = mat->number_of_entries;
     uint32_t desc_sz = mat->descriptor_size;
 
-    if (desc_sz < sizeof(struct mat_descriptor))
-        desc_sz = (uint32_t)sizeof(struct mat_descriptor);
+    /* Reject malformed descriptor stride: anything smaller than the
+     * spec-mandated record (0, 1, ...) means firmware allocated less
+     * memory per entry than we read, so silently rounding up would
+     * overread adjacent firmware memory and feed bogus inventory to
+     * TODO-27 W^X enforcement. Stride must also be 8-byte-aligned
+     * because every field in the descriptor is 8-byte. */
+    if (desc_sz < sizeof(struct mat_descriptor) || (desc_sz & 0x7) != 0) {
+        klog(LOG_WARN, "UEFI",
+             "MAT: descriptor_size=%u below required %u or unaligned -- "
+             "table rejected", desc_sz,
+             (uint32_t)sizeof(struct mat_descriptor));
+        return;
+    }
 
-    /* Walk descriptors, verify W^X, classify regions */
-    uint32_t code_regions = 0;   /* RO + executable */
-    uint32_t data_regions = 0;   /* RW + non-executable */
-    uint32_t guard_regions = 0;  /* RP (not present) */
-    uint32_t wxn_violations = 0; /* writable AND executable */
-    uint64_t code_pages = 0;
-    uint64_t data_pages = 0;
+    /* Fail closed on malformed firmware metadata (Codex H1 hardening).
+     * Either bound also prevents the count*desc_sz multiply below from
+     * approaching uint64 overflow on hostile input. */
+    if (desc_sz > MAT_MAX_DESC_SIZE) {
+        klog(LOG_WARN, "UEFI",
+             "MAT: descriptor_size=%u exceeds sanity cap %u -- table rejected",
+             desc_sz, (uint32_t)MAT_MAX_DESC_SIZE);
+        s_mat_present = 0;
+        return;
+    }
+    /* Cache cap is also the parser cap: a count exceeding the cache
+     * cap means TODO-27 W^X enforcement (which iterates the cache)
+     * would miss every entry beyond MAT_MAX_ENTRIES. Publishing a
+     * truncated inventory is worse than failing closed -- enforcement
+     * decisions on unseen regions are silent vulnerabilities. Reject
+     * the whole table; if real hardware ever exceeds the cap, the
+     * fix is to bump MAT_MAX_ENTRIES, not to ship partial data. */
+    /* A zero-entry MAT must NOT be accepted as W^X verified: the empty
+     * walk would leave wxn_violations==0 and set s_wxn_ok=1, telling
+     * TODO-27 W^X enforcement that empty inventory is fine. Treat
+     * count==0 the same as "MAT absent" so consumers cannot mistake
+     * a degenerate table for verified runtime memory. */
+    if (count == 0) {
+        klog(LOG_WARN, "UEFI",
+             "MAT: number_of_entries=0 -- table rejected (no W^X coverage)");
+        return;
+    }
+
+    if (count > MAT_MAX_ENTRIES) {
+        klog(LOG_WARN, "UEFI",
+             "MAT: number_of_entries=%u exceeds cache cap %u -- "
+             "table rejected (would publish a truncated inventory)",
+             count, (uint32_t)MAT_MAX_ENTRIES);
+        s_mat_present = 0;
+        return;
+    }
+
+    /* Validate the full table extent (header + count*desc_sz) against
+     * the firmware-bearing UEFI memory map BEFORE dereferencing any
+     * descriptor. The firmware-table catalog already validates
+     * pointers it tracks; the Memory Attributes Table does not yet
+     * have a per-provider catalog entry, so do the equivalent
+     * containment check inline here. count + desc_sz are bounded so
+     * the multiply cannot wrap. */
+    {
+        uint64_t hdr_size  = (uint64_t)sizeof(struct efi_memory_attributes_table);
+        uint64_t body_size = (uint64_t)count * (uint64_t)desc_sz;
+        uint64_t total     = hdr_size + body_size;
+        if (!firmware_table_mmap_contains((uintptr_t)table_addr, total)) {
+            klog(LOG_WARN, "UEFI",
+                 "MAT: extent [0x%lx +%lu] not in firmware mmap -- "
+                 "table rejected", (uint64_t)table_addr, (uint64_t)total);
+            s_mat_present = 0;
+            return;
+        }
+    }
+
+    /* All metadata validated -- now safe to dereference descriptors. */
+    s_mat_present = 1;
+
+    /* Walk descriptors, verify W^X, classify regions. Cache up to
+     * MAT_MAX_ENTRIES for the consumer iteration API; aggregate
+     * counts include every descriptor regardless of cache cap. */
+    uint32_t code_regions = 0;
+    uint32_t data_regions = 0;
+    uint32_t rodata_regions = 0;
+    uint32_t guard_regions = 0;
+    uint32_t wxn_violations = 0;
 
     const uint8_t *base = (const uint8_t *)(table_addr +
         sizeof(struct efi_memory_attributes_table));
 
+    /* Page-count cap: number_of_pages * 4096 must fit in uint64.
+     * UEFI uses 4 KiB pages so a single descriptor cannot legally
+     * exceed (UINT64_MAX / 4096) pages without wrapping the byte
+     * size that downstream consumers (TODO-27 W^X enforcement)
+     * compute from it. */
+    const uint64_t MAT_PAGE_SIZE = 4096ULL;
+    const uint64_t MAT_MAX_PAGES_PER_DESC = ~(uint64_t)0 / MAT_PAGE_SIZE;
+
     uint32_t i;
+    uint32_t logged = 0;
+    int range_rejection = 0;
     for (i = 0; i < count; i++) {
+        /* Pointer-arithmetic overflow guard: with the count + desc_sz
+         * caps above this can only fire on a future widening, but the
+         * extra check is free and keeps the parser fail-closed. */
+        uint64_t offset = (uint64_t)i * desc_sz;
+        if (offset / desc_sz != i) {
+            klog(LOG_WARN, "UEFI",
+                 "MAT: offset overflow at i=%u desc_sz=%u -- truncating walk",
+                 i, desc_sz);
+            count = i;
+            break;
+        }
         const struct mat_descriptor *d =
-            (const struct mat_descriptor *)(base + (uint64_t)i * desc_sz);
+            (const struct mat_descriptor *)(base + offset);
 
         uint64_t attr = d->attribute;
+        uint64_t pages = d->number_of_pages;
+        uint64_t pstart = d->physical_start;
 
-        int is_ro = (attr & EFI_MEMORY_RO) != 0;
-        int is_xp = (attr & EFI_MEMORY_XP) != 0;
-        int is_rp = (attr & EFI_MEMORY_RP) != 0;
-
-        if (is_rp) {
-            guard_regions++;
-        } else if (is_ro && !is_xp) {
-            /* Read-only + executable = code */
-            code_regions++;
-            code_pages += d->number_of_pages;
-        } else if (!is_ro && is_xp) {
-            /* Writable + non-executable = data */
-            data_regions++;
-            data_pages += d->number_of_pages;
-        } else if (!is_ro && !is_xp) {
-            /* Writable AND executable -- W^X violation! */
-            wxn_violations++;
-        } else {
-            /* Read-only + non-executable -- unusual but safe (e.g. constants) */
-            data_regions++;
-            data_pages += d->number_of_pages;
+        /* Per-descriptor range validation (Codex H1 R4 hardening).
+         * Reject entries where pages*4096 wraps uint64 or where
+         * pstart + bytes wraps. A consumer using these to compute
+         * an end address would either underprotect a wrapped range
+         * or panic on a bogus address. */
+        if (pages > MAT_MAX_PAGES_PER_DESC) {
+            klog(LOG_WARN, "UEFI",
+                 "MAT[%u]: number_of_pages=%lu wraps byte size -- table rejected",
+                 i, (uint64_t)pages);
+            range_rejection = 1;
+            break;
         }
+        uint64_t bytes = pages * MAT_PAGE_SIZE;
+        if (pstart + bytes < pstart) {
+            klog(LOG_WARN, "UEFI",
+                 "MAT[%u]: phys=0x%lx + size=0x%lx wraps -- table rejected",
+                 i, (uint64_t)pstart, (uint64_t)bytes);
+            range_rejection = 1;
+            break;
+        }
+
+        int violation = 0;
+        mat_class_t cls = mat_classify(attr, &violation);
+
+        /* Aggregate-counter saturation guard. Each descriptor's pages
+         * are already bounded above; the sum across N <= 128
+         * descriptors cannot legitimately exceed UINT64_MAX, but a
+         * checked add costs nothing and keeps diagnostics honest. */
+#define MAT_AGG_ADD(slot, p) do { \
+    if ((slot) + (p) < (slot)) { \
+        klog(LOG_WARN, "UEFI", \
+             "MAT[%u]: aggregate page counter overflow -- table rejected", i); \
+        range_rejection = 1; \
+        goto mat_walk_done; \
+    } \
+    (slot) += (p); \
+} while (0)
+
+        switch (cls) {
+        case MAT_CLASS_GUARD:
+            guard_regions++;
+            MAT_AGG_ADD(s_mat_guard_pages, pages);
+            break;
+        case MAT_CLASS_CODE:
+            code_regions++;
+            MAT_AGG_ADD(s_mat_code_pages, pages);
+            break;
+        case MAT_CLASS_DATA:
+            data_regions++;
+            MAT_AGG_ADD(s_mat_data_pages, pages);
+            break;
+        case MAT_CLASS_RODATA:
+            rodata_regions++;
+            MAT_AGG_ADD(s_mat_data_pages, pages);
+            break;
+        case MAT_CLASS_WX_VIOLATION:
+            wxn_violations++;
+            break;
+        }
+#undef MAT_AGG_ADD
+        (void)violation;
+        (void)pstart;
+        (void)bytes;
+
+        if (s_mat_count < MAT_MAX_ENTRIES) {
+            s_mat_entries[s_mat_count].phys_addr = d->physical_start;
+            s_mat_entries[s_mat_count].num_pages = d->number_of_pages;
+            s_mat_entries[s_mat_count].attribute = attr;
+            s_mat_entries[s_mat_count].cls       = cls;
+            s_mat_count++;
+        } else {
+            s_mat_overflowed = 1;
+        }
+
+        if (logged < MAT_PER_ENTRY_LOG_CAP) {
+            klog(LOG_INFO, "UEFI",
+                 "MAT[%u]: phys=0x%lx pages=%lu attr=%s",
+                 i, (uint64_t)d->physical_start,
+                 (uint64_t)d->number_of_pages, mat_attr_label(attr));
+            logged++;
+        }
+    }
+
+mat_walk_done:
+    if (range_rejection) {
+        /* Reset every cache + aggregate so consumers see "MAT absent"
+         * rather than a partially-filled inventory derived from a
+         * descriptor stream we stopped trusting mid-walk. */
+        s_mat_present = 0;
+        s_mat_count = 0;
+        s_mat_overflowed = 0;
+        s_mat_code_pages = 0;
+        s_mat_data_pages = 0;
+        s_mat_guard_pages = 0;
+        return;
+    }
+
+    if (count > logged) {
+        klog(LOG_INFO, "UEFI", "MAT: ... +%u more entries (per-entry log capped)",
+             count - logged);
     }
 
     s_wxn_ok = (wxn_violations == 0) ? 1 : 0;
 
     klog(LOG_INFO, "UEFI",
          "MAT: %u descriptors -- %u code (%u KB), %u data (%u KB), "
-         "%u guard",
-         count, code_regions, (uint32_t)(code_pages * 4),
-         data_regions, (uint32_t)(data_pages * 4),
-         guard_regions);
+         "%u rodata, %u guard",
+         count, code_regions, (uint32_t)(s_mat_code_pages * 4),
+         data_regions, (uint32_t)(s_mat_data_pages * 4),
+         rodata_regions, guard_regions);
+
+    if (s_mat_overflowed) {
+        klog(LOG_WARN, "UEFI",
+             "MAT: %u entries exceeded cache cap of %u -- "
+             "TODO-27 enforcement will only see first %u",
+             count, (uint32_t)MAT_MAX_ENTRIES, (uint32_t)MAT_MAX_ENTRIES);
+    }
 
     if (s_wxn_ok) {
         klog(LOG_INFO, "UEFI", "MAT: W^X verified -- "
@@ -353,3 +599,25 @@ int mat_wxn_enforced(void)
 {
     return s_mat_present && s_wxn_ok;
 }
+
+uint32_t mat_get_count(void)
+{
+    return s_mat_count;
+}
+
+int mat_get_entry(uint32_t idx, mat_entry_t *out)
+{
+    if (!out || idx >= s_mat_count) return 0;
+    *out = s_mat_entries[idx];
+    return 1;
+}
+
+mat_class_t mat_classify_attr(uint64_t attr)
+{
+    return mat_classify(attr, 0);
+}
+
+uint64_t mat_get_code_pages(void)  { return s_mat_code_pages; }
+uint64_t mat_get_data_pages(void)  { return s_mat_data_pages; }
+uint64_t mat_get_guard_pages(void) { return s_mat_guard_pages; }
+int      mat_overflowed(void)      { return s_mat_overflowed; }
