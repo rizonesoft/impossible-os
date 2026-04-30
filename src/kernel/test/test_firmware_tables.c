@@ -1,9 +1,9 @@
 /* ============================================================================
  * test_firmware_tables.c -- TODO-04 firmware table catalog unit tests
  *
- * Covers the catalog API: GUID lookup, name lookup, owner lookup, and the
- * unknown-GUID negative case. Other TODO-04 sections own range, checksum,
- * and conformance-profile tests; this file focuses on the catalog itself.
+ * Covers the catalog API (GUID/name/owner lookup, unknown-GUID negative
+ * case) plus the range/checksum validator (firmware_table_validate_all).
+ * Conformance-profile tests are owned by the conformance-profile section.
  * ============================================================================ */
 
 #ifdef KERNEL_TESTS
@@ -259,6 +259,245 @@ static void test_firmware_table_source_within_known_range(void)
     }
 }
 
+/* ---- Range and checksum validator (firmware_table_validate_all) -------- */
+
+/* Synthesised ACPI SDT laid out exactly per the spec (36-byte header
+ * starting with the signature, length, revision, checksum, OEM IDs, and
+ * creator IDs).  Only signature and length matter for validation; the
+ * checksum byte is tuned so the 8-bit byte sum is zero. */
+struct test_sdt {
+    char     signature[4];
+    uint32_t length;
+    uint8_t  revision;
+    uint8_t  checksum;
+    char     oem_id[6];
+    char     oem_table_id[8];
+    uint32_t oem_revision;
+    uint32_t creator_id;
+    uint32_t creator_revision;
+};
+
+/* Build an entry pointing at `bytes` of `size` and source FW_SOURCE_ACPI_SDT
+ * with status pre-set to VALIDATED so the validator can downgrade it. */
+static void build_sdt_entry(struct firmware_table_entry *e,
+                            const void *bytes, uint32_t size)
+{
+    /* Zero everything by hand so this stays libc-free. */
+    uint8_t *p = (uint8_t *)e;
+    for (uint32_t i = 0; i < sizeof(*e); i++) p[i] = 0;
+    e->phys_addr = (uintptr_t)bytes;
+    e->size = size;
+    e->source = FW_SOURCE_ACPI_SDT;
+    e->status = FW_STATUS_VALIDATED;
+    e->degraded_reason = FW_DEGRADED_NONE;
+    e->name[0] = 'X'; e->name[1] = '\0';
+    e->owner[0] = 'A'; e->owner[1] = 'C'; e->owner[2] = 'P';
+    e->owner[3] = 'I'; e->owner[4] = '\0';
+}
+
+static void seal_checksum(uint8_t *bytes, uint32_t len, uint32_t cs_offset)
+{
+    bytes[cs_offset] = 0;
+    uint8_t sum = 0;
+    for (uint32_t i = 0; i < len; i++) sum = (uint8_t)(sum + bytes[i]);
+    bytes[cs_offset] = (uint8_t)(0u - sum);
+}
+
+/* Find the first CONVENTIONAL mmap descriptor with at least one frame of
+ * room past its base.  Returns 0 if none exists. */
+static uintptr_t conventional_addr_in_mmap(void)
+{
+    for (uint32_t i = 0; i < g_boot_info.mmap_count; i++) {
+        const struct boot_mmap_entry *m = &g_boot_info.mmap[i];
+        if (m->uefi_memory_type == UEFI_MMAP_CONVENTIONAL &&
+            m->length >= 0x1000)
+            return (uintptr_t)(m->base_addr + 0x100);
+    }
+    return 0;
+}
+
+/* ---- Synthetic-buffer test cases --------------------------------------- */
+
+static void test_validate_acpi_sdt_clean(void)
+{
+    static struct test_sdt sdt;
+    /* Make a clean SDT: sig "TEST", length=sizeof, revision=1. */
+    sdt.signature[0] = 'T'; sdt.signature[1] = 'E';
+    sdt.signature[2] = 'S'; sdt.signature[3] = 'T';
+    sdt.length = sizeof(sdt);
+    sdt.revision = 1;
+    sdt.oem_id[0] = 'I'; sdt.oem_id[1] = 'M'; sdt.oem_id[2] = 'P';
+    sdt.oem_table_id[0] = 'T'; sdt.oem_table_id[1] = 'S';
+    seal_checksum((uint8_t *)&sdt, sizeof(sdt),
+                  __builtin_offsetof(struct test_sdt, checksum));
+
+    struct firmware_table_entry e;
+    build_sdt_entry(&e, &sdt, sizeof(sdt));
+    firmware_table_validate_one_for_test(&e, /*bypass_range=*/1);
+    TEST_ASSERT_EQ(e.status, FW_STATUS_VALIDATED,
+                   "well-formed SDT keeps VALIDATED status");
+    TEST_ASSERT_EQ(e.degraded_reason, FW_DEGRADED_NONE,
+                   "clean SDT carries no degraded reason");
+}
+
+static void test_validate_acpi_sdt_checksum_fail(void)
+{
+    static struct test_sdt sdt;
+    sdt.signature[0] = 'B'; sdt.signature[1] = 'A';
+    sdt.signature[2] = 'D'; sdt.signature[3] = 'C';
+    sdt.length = sizeof(sdt);
+    sdt.revision = 1;
+    seal_checksum((uint8_t *)&sdt, sizeof(sdt),
+                  __builtin_offsetof(struct test_sdt, checksum));
+    /* Corrupt one byte AFTER sealing so the sum no longer balances. */
+    ((uint8_t *)&sdt)[16] = (uint8_t)(((uint8_t *)&sdt)[16] ^ 0x55);
+
+    struct firmware_table_entry e;
+    build_sdt_entry(&e, &sdt, sizeof(sdt));
+    firmware_table_validate_one_for_test(&e, /*bypass_range=*/1);
+    TEST_ASSERT_EQ(e.status, FW_STATUS_DEGRADED,
+                   "corrupt SDT downgrades to DEGRADED");
+    TEST_ASSERT_EQ(e.degraded_reason, FW_DEGRADED_CHECKSUM_FAIL,
+                   "corrupt SDT carries CHECKSUM_FAIL reason");
+}
+
+static void test_validate_acpi_sdt_length_below_header(void)
+{
+    static struct test_sdt sdt;
+    sdt.length = sizeof(sdt);
+    /* Catalog size declared smaller than the SDT header itself. */
+    struct firmware_table_entry e;
+    build_sdt_entry(&e, &sdt, 16);
+    firmware_table_validate_one_for_test(&e, /*bypass_range=*/1);
+    TEST_ASSERT_EQ(e.status, FW_STATUS_DEGRADED,
+                   "size below header downgrades");
+    TEST_ASSERT_EQ(e.degraded_reason, FW_DEGRADED_LENGTH_BAD,
+                   "size below header reports LENGTH_BAD");
+}
+
+static void test_validate_acpi_sdt_length_mismatch(void)
+{
+    static struct test_sdt sdt;
+    sdt.signature[0] = 'M'; sdt.signature[1] = 'I';
+    sdt.signature[2] = 'S'; sdt.signature[3] = 'M';
+    sdt.length = sizeof(sdt) + 8;  /* header claims 8 bytes more than catalog */
+    sdt.revision = 1;
+    seal_checksum((uint8_t *)&sdt, sizeof(sdt),
+                  __builtin_offsetof(struct test_sdt, checksum));
+
+    struct firmware_table_entry e;
+    build_sdt_entry(&e, &sdt, sizeof(sdt));
+    firmware_table_validate_one_for_test(&e, /*bypass_range=*/1);
+    TEST_ASSERT_EQ(e.status, FW_STATUS_DEGRADED,
+                   "header.length != catalog size downgrades");
+    TEST_ASSERT_EQ(e.degraded_reason, FW_DEGRADED_LENGTH_BAD,
+                   "size mismatch reports LENGTH_BAD");
+}
+
+static void test_validate_range_unmapped(void)
+{
+    uintptr_t bad = conventional_addr_in_mmap();
+    if (bad == 0) {
+        TEST_SKIP("no CONVENTIONAL mmap entry to probe");
+        return;
+    }
+    struct firmware_table_entry e;
+    build_sdt_entry(&e, (const void *)bad, 64);
+    /* This test specifically exercises the range check, so do NOT bypass. */
+    firmware_table_validate_one_for_test(&e, /*bypass_range=*/0);
+    TEST_ASSERT_EQ(e.status, FW_STATUS_DEGRADED,
+                   "phys_addr in CONVENTIONAL memory downgrades");
+    TEST_ASSERT_EQ(e.degraded_reason, FW_DEGRADED_RANGE_UNMAPPED,
+                   "out-of-firmware-mmap reports RANGE_UNMAPPED");
+}
+
+static void test_validate_null_phys_addr(void)
+{
+    struct firmware_table_entry e;
+    build_sdt_entry(&e, (const void *)0, 64);
+    firmware_table_validate_one_for_test(&e, /*bypass_range=*/0);
+    TEST_ASSERT_EQ(e.status, FW_STATUS_DEGRADED,
+                   "NULL phys_addr downgrades");
+    TEST_ASSERT_EQ(e.degraded_reason, FW_DEGRADED_NULL_POINTER,
+                   "NULL phys_addr reports NULL_POINTER");
+}
+
+/* Promotion contract: an UNKNOWN_PROFILE entry that passes a full
+ * format-specific validator (here: ACPI SDT format) must end VALIDATED
+ * so downstream consumers can distinguish "fully checked by the range
+ * + checksum validator" from "only cataloged". This guards the Codex
+ * re-adversarial finding about UNKNOWN -> VALIDATED promotion. */
+static void test_validate_promotes_unknown_to_validated(void)
+{
+    static struct test_sdt sdt;
+    sdt.signature[0] = 'P'; sdt.signature[1] = 'R';
+    sdt.signature[2] = 'O'; sdt.signature[3] = 'M';
+    sdt.length = sizeof(sdt);
+    sdt.revision = 1;
+    seal_checksum((uint8_t *)&sdt, sizeof(sdt),
+                  __builtin_offsetof(struct test_sdt, checksum));
+
+    struct firmware_table_entry e;
+    build_sdt_entry(&e, &sdt, sizeof(sdt));
+    /* Override the helper's VALIDATED default: simulate an UNKNOWN
+     * cfg-table entry that catalog left for the validator to confirm. */
+    e.status = FW_STATUS_UNKNOWN_PROFILE;
+    e.degraded_reason = FW_DEGRADED_NONE;
+    firmware_table_validate_one_for_test(&e, /*bypass_range=*/1);
+    TEST_ASSERT_EQ(e.status, FW_STATUS_VALIDATED,
+                   "clean full-format pass promotes UNKNOWN_PROFILE to VALIDATED");
+}
+
+/* Idempotent downgrade: a second validate pass on a DEGRADED entry must
+ * not flip the status back to VALIDATED, even if the underlying buffer
+ * happens to look healthy.  This is the one-way contract. */
+static void test_validate_one_way_downgrade(void)
+{
+    static struct test_sdt sdt;
+    sdt.signature[0] = 'I'; sdt.signature[1] = 'D';
+    sdt.signature[2] = 'M'; sdt.signature[3] = 'P';
+    sdt.length = sizeof(sdt);
+    sdt.revision = 1;
+    seal_checksum((uint8_t *)&sdt, sizeof(sdt),
+                  __builtin_offsetof(struct test_sdt, checksum));
+
+    /* Pre-degrade by hand and confirm the validator does not re-promote. */
+    struct firmware_table_entry e;
+    build_sdt_entry(&e, &sdt, sizeof(sdt));
+    e.status = FW_STATUS_DEGRADED;
+    e.degraded_reason = FW_DEGRADED_RANGE_UNMAPPED;
+    firmware_table_validate_one_for_test(&e, /*bypass_range=*/1);
+    TEST_ASSERT_EQ(e.status, FW_STATUS_DEGRADED,
+                   "validator preserves prior DEGRADED status");
+    TEST_ASSERT_EQ(e.degraded_reason, FW_DEGRADED_RANGE_UNMAPPED,
+                   "validator preserves prior degraded reason");
+}
+
+/* ---- Live catalog invariants after firmware_tables_init ---------------- */
+
+static void test_validate_all_clean_ovmf_zero_degraded(void)
+{
+    /* On any sane firmware (OVMF, VirtualBox, real hardware), the catalog
+     * must have produced zero NEW degraded entries beyond the catalog-time
+     * NULL_POINTER cases.  This test asserts that the live catalog has no
+     * RANGE_UNMAPPED / CHECKSUM_FAIL / LENGTH_BAD entries -- those would
+     * indicate a real platform issue worth investigating. */
+    uint32_t n = firmware_table_count();
+    int saw_unexpected = 0;
+    for (uint32_t i = 0; i < n; i++) {
+        const struct firmware_table_entry *e = firmware_table_get(i);
+        if (!e) continue;
+        if (e->status != FW_STATUS_DEGRADED) continue;
+        if (e->degraded_reason == FW_DEGRADED_RANGE_UNMAPPED ||
+            e->degraded_reason == FW_DEGRADED_CHECKSUM_FAIL ||
+            e->degraded_reason == FW_DEGRADED_LENGTH_BAD) {
+            saw_unexpected = 1;
+        }
+    }
+    TEST_ASSERT(!saw_unexpected,
+                "no validator-found degradations on a clean firmware boot");
+}
+
 /* ---- Registration ------------------------------------------------------- */
 
 void test_register_firmware_tables(void)
@@ -298,6 +537,33 @@ void test_register_firmware_tables(void)
                             TEST_CAT_BOOT);
     test_suite_register_cat("FW: source enum range",
                             test_firmware_table_source_within_known_range,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("FW: validator clean SDT stays VALIDATED",
+                            test_validate_acpi_sdt_clean,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("FW: validator detects checksum corruption",
+                            test_validate_acpi_sdt_checksum_fail,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("FW: validator detects size below header",
+                            test_validate_acpi_sdt_length_below_header,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("FW: validator detects header.length mismatch",
+                            test_validate_acpi_sdt_length_mismatch,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("FW: validator detects range outside firmware mmap",
+                            test_validate_range_unmapped,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("FW: validator detects NULL phys_addr",
+                            test_validate_null_phys_addr,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("FW: validator one-way downgrade",
+                            test_validate_one_way_downgrade,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("FW: validator promotes UNKNOWN_PROFILE on full pass",
+                            test_validate_promotes_unknown_to_validated,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("FW: validate_all clean firmware has no validator degradations",
+                            test_validate_all_clean_ovmf_zero_degraded,
                             TEST_CAT_BOOT);
 }
 

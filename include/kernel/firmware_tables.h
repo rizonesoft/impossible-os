@@ -9,9 +9,9 @@
  * one re-walking boot_info.config_table[].
  *
  * Range and checksum validation against the UEFI memory map is the
- * responsibility of the firmware-table validator (firmware_table_validate_all,
- * landing in TODO-04 physical-range-and-checksum-validation), which uses the
- * catalog populated here as its input set.
+ * responsibility of firmware_table_validate_all (declared below), which
+ * uses the catalog populated here as its input set and runs from
+ * firmware_tables_init before the boot summary tally.
  *
  * SMP: Built once on the BSP during Phase 1 boot (before sti). Read-only
  * thereafter -- no locks required.
@@ -38,9 +38,8 @@
  *   UNKNOWN_PROFILE -- entry is present but no provider has validated it
  *                      yet.  Includes both unknown GUIDs and known-named
  *                      entries whose providers have no boot-time oracle
- *                      (FPDT/MAT/RtProps/Conformance/ESRT/DTB).  The
- *                      firmware-table validator (later TODO-04 section)
- *                      can re-check these.
+ *                      (FPDT/MAT/RtProps/Conformance/ESRT/DTB).
+ *                      firmware_table_validate_all re-checks these.
  *   DEGRADED        -- entry was present but failed a check.  At catalog
  *                      time only the NULL VendorTable case sets this
  *                      (FW_DEGRADED_NULL_POINTER); the validator may
@@ -112,3 +111,41 @@ firmware_table_lookup_name(const char *name);
 uint32_t firmware_table_lookup_owner(const char *owner,
                                       const struct firmware_table_entry **out,
                                       uint32_t max_out);
+
+/* Re-validate every catalog entry against the UEFI memory map and recompute
+ * per-source checksums / length invariants. Entries already FW_STATUS_DEGRADED
+ * are left untouched (one-way downgrade). On failure, sets entry->status =
+ * FW_STATUS_DEGRADED and entry->degraded_reason to one of:
+ *
+ *   FW_DEGRADED_RANGE_UNMAPPED -- phys_addr (and span if size>0) is not
+ *                                 contained in a single UEFI memory-map entry
+ *                                 of a firmware-bearing type (RESERVED,
+ *                                 BOOT/RUNTIME/LOADER_*, ACPI_RECLAIM, ACPI_NVS).
+ *                                 Reject CONVENTIONAL/UNUSABLE/MMIO/PAL.
+ *   FW_DEGRADED_LENGTH_BAD     -- header length below required minimum, or
+ *                                 declared length disagrees with catalog size,
+ *                                 or count*entry-size overruns the table region.
+ *   FW_DEGRADED_CHECKSUM_FAIL  -- 8-bit byte-sum-to-zero check failed (ACPI
+ *                                 RSDP / SDT / SMBIOS entry-point / FPDT).
+ *
+ * Idempotent: running a second time produces the same result and never flips
+ * a DEGRADED entry back to VALIDATED. Called once from firmware_tables_init()
+ * before the boot summary so the cataloged/validated/degraded counts reflect
+ * validator findings; can also be invoked from tests. */
+void firmware_table_validate_all(void);
+
+#ifdef KERNEL_TESTS
+/* Test-only single-entry validator used by `test_firmware_tables.c` to
+ * exercise checksum / length / range-unmapped paths against synthetic
+ * `firmware_table_entry` structures pointing at test-owned buffers.
+ *
+ * `bypass_range_check` skips the UEFI memory-map containment check so
+ * tests can validate checksum / length logic against buffers in kernel
+ * BSS (which sits in EfiConventionalMemory after ExitBootServices and
+ * would otherwise trip RANGE_UNMAPPED). Set to 0 to exercise the range
+ * check itself against a real mmap address.
+ *
+ * Production callers MUST use `firmware_table_validate_all`. */
+void firmware_table_validate_one_for_test(struct firmware_table_entry *entry,
+                                          int bypass_range_check);
+#endif

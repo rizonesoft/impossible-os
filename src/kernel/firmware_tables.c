@@ -6,8 +6,9 @@
  * catalog queryable by GUID, name, or owner. Per-provider validation is
  * NOT duplicated here -- this code consumes the helpers in acpi.c,
  * smbios.c, and uefi_config.c that already perform checksum / length
- * checks. Range/checksum validation against the UEFI memory map is
- * deferred to the validator that lands in a later TODO-04 section.
+ * checks. Defense-in-depth range/checksum re-validation against the UEFI
+ * memory map is performed by firmware_table_validate_all() (defined
+ * below) and runs from firmware_tables_init() before the boot summary.
  *
  * SMP: built once on the BSP during Phase 1 boot (before sti); read-only
  * thereafter, so no locking is required on the lookup paths.
@@ -159,7 +160,7 @@ static void format_acpi_sig(uint32_t sig, char out[5])
  * only after smbios_init parsed the entry point).  Other known names
  * (FPDT, MAT, RtProps, Conform, ESRT, DTB) have no boot-time oracle
  * exposed today and are treated as unvalidated until the firmware-
- * table validator (later TODO-04 section) checks them. */
+ * table validator (firmware_table_validate_all) inspects them. */
 static int cfg_owner_validated(const char *short_name)
 {
     if (!short_name) return 0;
@@ -207,8 +208,8 @@ static void catalog_uefi_cfg_tables(void)
             /* Includes both unknown GUIDs AND known-name entries whose
              * provider has not yet been validated (FPDT/MAT/RtProps/
              * Conform/ESRT/DTB own their own checksums, but no oracle
-             * is exposed at catalog time -- those land here, and the
-             * TODO-04 validator section can re-check them). */
+             * is exposed at catalog time -- those land here, and
+             * firmware_table_validate_all re-checks them). */
             e->status = FW_STATUS_UNKNOWN_PROFILE;
             e->degraded_reason = FW_DEGRADED_NONE;
         }
@@ -291,6 +292,465 @@ static void catalog_smbios_raw(void)
     copy_field(e->owner, FIRMWARE_TABLE_OWNER_MAX, "SMBIOS");
 }
 
+/* ---- Range + checksum validation --------------------------------------- */
+
+/* SMBIOS entry-point wire-format sizes (DMTF DSP0134 6.1).  Re-declared
+ * here as private structs so we do not have to expose smbios.c internals
+ * via a header.  The static_asserts below pin the sizes to the spec
+ * wire-format -- if the compiler ever pads these, validation breaks
+ * loudly at compile time. */
+struct fw_smbios3_ep_view {
+    uint8_t  anchor[5];          /* "_SM3_" */
+    uint8_t  checksum;
+    uint8_t  length;             /* spec: 0x18 */
+    uint8_t  major_version;
+    uint8_t  minor_version;
+    uint8_t  docrev;
+    uint8_t  revision;
+    uint8_t  reserved;
+    uint32_t max_struct_size;
+    uint64_t struct_table_addr;
+};
+struct fw_smbios2_ep_view {
+    uint8_t  anchor[4];          /* "_SM_" */
+    uint8_t  checksum;
+    uint8_t  length;             /* spec: 0x1E or 0x1F */
+    uint8_t  rest[25];           /* opaque tail; full validation reads ep->length bytes */
+};
+#define FW_SMBIOS3_EP_LEN     0x18u
+#define FW_SMBIOS2_EP_LEN_MIN 0x1Eu
+#define FW_SMBIOS2_EP_LEN_MAX 0x1Fu
+
+_Static_assert(sizeof(struct fw_smbios3_ep_view) == FW_SMBIOS3_EP_LEN,
+               "SMBIOS 3.x wire-format entry point must be exactly 0x18 bytes");
+_Static_assert(sizeof(struct fw_smbios2_ep_view) == FW_SMBIOS2_EP_LEN_MAX,
+               "SMBIOS 2.x view sized to spec maximum (0x1F)");
+
+/* Minimal RSDP layouts mirroring acpi.h structures so we can validate
+ * without pulling acpi internals.  Field offsets must match. */
+struct fw_rsdp_v1_view {
+    char     signature[8];
+    uint8_t  checksum;
+    char     oem_id[6];
+    uint8_t  revision;
+    uint32_t rsdt_addr;
+};
+struct fw_rsdp_v2_view {
+    struct fw_rsdp_v1_view v1;
+    uint32_t length;
+    uint64_t xsdt_addr;
+    uint8_t  ext_checksum;
+    uint8_t  reserved[3];
+} __attribute__((packed));
+_Static_assert(sizeof(struct fw_rsdp_v1_view) == 20,
+               "RSDP v1 wire-format must be 20 bytes");
+_Static_assert(sizeof(struct fw_rsdp_v2_view) == 36,
+               "RSDP v2 wire-format must be 36 bytes");
+
+/* SDT header view: every ACPI SDT (and FPDT) starts with this 36-byte
+ * header.  signature/length/checksum are the only fields we touch. */
+struct fw_sdt_header_view {
+    char     signature[4];
+    uint32_t length;
+    uint8_t  revision;
+    uint8_t  checksum;
+    char     oem_id[6];
+    char     oem_table_id[8];
+    uint32_t oem_revision;
+    uint32_t creator_id;
+    uint32_t creator_revision;
+};
+_Static_assert(sizeof(struct fw_sdt_header_view) == 36,
+               "ACPI SDT header wire-format must be 36 bytes");
+
+/* ESRT header at table base; entries follow immediately. */
+struct fw_esrt_header_view {
+    uint32_t fw_resource_count;
+    uint32_t fw_resource_count_max;
+    uint64_t fw_resource_version;
+};
+#define FW_ESRT_ENTRY_SIZE 40u  /* GUID(16) + 6*u32 = 40 bytes */
+_Static_assert(sizeof(struct fw_esrt_header_view) == 16,
+               "ESRT header wire-format must be 16 bytes");
+
+/* 8-bit sum-to-zero, matching ACPI / SMBIOS spec checksums. */
+static int fw_sum8_is_zero(const uint8_t *bytes, uint32_t len)
+{
+    uint8_t sum = 0;
+    for (uint32_t i = 0; i < len; i++)
+        sum = (uint8_t)(sum + bytes[i]);
+    return sum == 0;
+}
+
+#ifdef KERNEL_TESTS
+/* Test-only escape hatch: when nonzero, fw_mmap_contains returns 1
+ * unconditionally so tests can exercise checksum / length logic against
+ * buffers in kernel BSS without tripping the range check. The test
+ * helper sets and clears this around individual validator calls. */
+static int g_fw_test_bypass_range;
+#endif
+
+/* True iff [addr, addr+len) sits entirely within a single mmap descriptor
+ * whose memory type can legally host firmware-published data.
+ *
+ *   ACCEPTED: RESERVED, LOADER_CODE/DATA, BOOT_SERVICES_CODE/DATA,
+ *             RUNTIME_CODE/DATA, ACPI_RECLAIM, ACPI_NVS, PERSISTENT.
+ *   REJECTED: CONVENTIONAL (free RAM -- firmware data here is corrupt),
+ *             UNUSABLE, MMIO, MMIO_PORT, PAL_CODE.
+ *
+ * len==0 is rejected (callers should use 1 for "single byte" probes); a
+ * zero-length region cannot be meaningfully bounded. */
+static int fw_mmap_contains(uintptr_t addr, uint64_t len)
+{
+#ifdef KERNEL_TESTS
+    if (g_fw_test_bypass_range) return 1;
+#endif
+    if (len == 0) return 0;
+    /* End-exclusive overflow guard: if addr + len wraps, reject. */
+    if (addr + len < addr) return 0;
+    uint64_t end = (uint64_t)addr + len;
+
+    uint32_t n = g_boot_info.mmap_count;
+    for (uint32_t i = 0; i < n; i++) {
+        const struct boot_mmap_entry *m = &g_boot_info.mmap[i];
+        if (m->length == 0) continue;
+        uint64_t m_end = m->base_addr + m->length;
+        if (m_end < m->base_addr) continue;  /* malformed entry: skip */
+        if ((uint64_t)addr < m->base_addr || end > m_end) continue;
+
+        uint32_t t = m->uefi_memory_type;
+        switch (t) {
+        case UEFI_MMAP_RESERVED:
+        case UEFI_MMAP_LOADER_CODE:
+        case UEFI_MMAP_LOADER_DATA:
+        case UEFI_MMAP_BOOT_SERVICES_CODE:
+        case UEFI_MMAP_BOOT_SERVICES_DATA:
+        case UEFI_MMAP_RUNTIME_CODE:
+        case UEFI_MMAP_RUNTIME_DATA:
+        case UEFI_MMAP_ACPI_RECLAIM:
+        case UEFI_MMAP_ACPI_NVS:
+        case UEFI_MMAP_PERSISTENT:
+            return 1;
+        default:
+            return 0;  /* CONVENTIONAL / UNUSABLE / MMIO / MMIO_PORT / PAL */
+        }
+    }
+    return 0;
+}
+
+static void fw_degrade(struct firmware_table_entry *e, uint8_t reason,
+                       const char *why)
+{
+    e->status = FW_STATUS_DEGRADED;
+    e->degraded_reason = reason;
+    klog(LOG_WARN, "FW", "%s [%s @0x%lx]: %s",
+         e->name[0] ? e->name : "(unnamed)",
+         e->owner[0] ? e->owner : "?",
+         (unsigned long)e->phys_addr, why);
+}
+
+/* ---- Per-source validators --------------------------------------------- */
+
+static void fw_validate_acpi_sdt(struct firmware_table_entry *e)
+{
+    if (e->size < sizeof(struct fw_sdt_header_view)) {
+        fw_degrade(e, FW_DEGRADED_LENGTH_BAD, "SDT size below header");
+        return;
+    }
+    if (!fw_mmap_contains(e->phys_addr, e->size)) {
+        fw_degrade(e, FW_DEGRADED_RANGE_UNMAPPED, "SDT span outside firmware mmap");
+        return;
+    }
+    const struct fw_sdt_header_view *h =
+        (const struct fw_sdt_header_view *)e->phys_addr;
+    if (h->length != e->size) {
+        fw_degrade(e, FW_DEGRADED_LENGTH_BAD,
+                   "SDT header.length disagrees with catalog size");
+        return;
+    }
+    if (!fw_sum8_is_zero((const uint8_t *)h, h->length)) {
+        fw_degrade(e, FW_DEGRADED_CHECKSUM_FAIL, "SDT checksum nonzero");
+        return;
+    }
+}
+
+static void fw_validate_acpi_rsdp(struct firmware_table_entry *e)
+{
+    /* v1 footprint always present; v2 footprint conditional on revision. */
+    if (!fw_mmap_contains(e->phys_addr, sizeof(struct fw_rsdp_v1_view))) {
+        fw_degrade(e, FW_DEGRADED_RANGE_UNMAPPED, "RSDP v1 span outside firmware mmap");
+        return;
+    }
+    const struct fw_rsdp_v1_view *v1 =
+        (const struct fw_rsdp_v1_view *)e->phys_addr;
+    if (!fw_sum8_is_zero((const uint8_t *)v1, sizeof(*v1))) {
+        fw_degrade(e, FW_DEGRADED_CHECKSUM_FAIL, "RSDP v1 checksum nonzero");
+        return;
+    }
+    if (v1->revision >= 2) {
+        if (!fw_mmap_contains(e->phys_addr, sizeof(struct fw_rsdp_v2_view))) {
+            fw_degrade(e, FW_DEGRADED_RANGE_UNMAPPED,
+                       "RSDP v2 span outside firmware mmap");
+            return;
+        }
+        const struct fw_rsdp_v2_view *v2 =
+            (const struct fw_rsdp_v2_view *)e->phys_addr;
+        /* ACPI specification 5.2.5.3: extended checksum covers exactly
+         * v2->length bytes (must be at least sizeof(v2)).  Reject
+         * undersized declarations -- otherwise a 0-length RSDP would
+         * trivially pass with sum=0 over zero bytes. */
+        if (v2->length < sizeof(*v2)) {
+            fw_degrade(e, FW_DEGRADED_LENGTH_BAD, "RSDP v2 length below 36");
+            return;
+        }
+        if (!fw_mmap_contains(e->phys_addr, v2->length)) {
+            fw_degrade(e, FW_DEGRADED_RANGE_UNMAPPED,
+                       "RSDP v2 declared length outside firmware mmap");
+            return;
+        }
+        if (!fw_sum8_is_zero((const uint8_t *)v2, v2->length)) {
+            fw_degrade(e, FW_DEGRADED_CHECKSUM_FAIL,
+                       "RSDP v2 extended checksum nonzero");
+            return;
+        }
+    }
+}
+
+static void fw_validate_smbios_ep(struct firmware_table_entry *e, int is_v3)
+{
+    /* Read just the length byte first to bound the full checksum span. */
+    if (!fw_mmap_contains(e->phys_addr, is_v3 ? FW_SMBIOS3_EP_LEN
+                                              : FW_SMBIOS2_EP_LEN_MIN)) {
+        fw_degrade(e, FW_DEGRADED_RANGE_UNMAPPED,
+                   "SMBIOS entry-point header outside firmware mmap");
+        return;
+    }
+    if (is_v3) {
+        const struct fw_smbios3_ep_view *ep =
+            (const struct fw_smbios3_ep_view *)e->phys_addr;
+        if (ep->anchor[0] != '_' || ep->anchor[1] != 'S' ||
+            ep->anchor[2] != 'M' || ep->anchor[3] != '3' ||
+            ep->anchor[4] != '_') {
+            fw_degrade(e, FW_DEGRADED_LENGTH_BAD,
+                       "SMBIOS3 anchor mismatch");
+            return;
+        }
+        if (ep->length != FW_SMBIOS3_EP_LEN) {
+            fw_degrade(e, FW_DEGRADED_LENGTH_BAD,
+                       "SMBIOS3 length not 0x18");
+            return;
+        }
+        if (!fw_sum8_is_zero((const uint8_t *)ep, ep->length)) {
+            fw_degrade(e, FW_DEGRADED_CHECKSUM_FAIL,
+                       "SMBIOS3 checksum nonzero");
+            return;
+        }
+    } else {
+        const struct fw_smbios2_ep_view *ep =
+            (const struct fw_smbios2_ep_view *)e->phys_addr;
+        if (ep->anchor[0] != '_' || ep->anchor[1] != 'S' ||
+            ep->anchor[2] != 'M' || ep->anchor[3] != '_') {
+            fw_degrade(e, FW_DEGRADED_LENGTH_BAD,
+                       "SMBIOS2 anchor mismatch");
+            return;
+        }
+        if (ep->length < FW_SMBIOS2_EP_LEN_MIN ||
+            ep->length > FW_SMBIOS2_EP_LEN_MAX) {
+            fw_degrade(e, FW_DEGRADED_LENGTH_BAD,
+                       "SMBIOS2 length not in [0x1E, 0x1F]");
+            return;
+        }
+        if (!fw_mmap_contains(e->phys_addr, ep->length)) {
+            fw_degrade(e, FW_DEGRADED_RANGE_UNMAPPED,
+                       "SMBIOS2 declared length outside firmware mmap");
+            return;
+        }
+        if (!fw_sum8_is_zero((const uint8_t *)ep, ep->length)) {
+            fw_degrade(e, FW_DEGRADED_CHECKSUM_FAIL,
+                       "SMBIOS2 checksum nonzero");
+            return;
+        }
+    }
+}
+
+static void fw_validate_fpdt(struct firmware_table_entry *e)
+{
+    /* FPDT is an ACPI SDT advertised via UEFI cfg-table on some firmware.
+     * size is unknown at catalog time (cfg-table source), so read header
+     * length first, then bound the checksum. */
+    if (!fw_mmap_contains(e->phys_addr, sizeof(struct fw_sdt_header_view))) {
+        fw_degrade(e, FW_DEGRADED_RANGE_UNMAPPED, "FPDT header outside firmware mmap");
+        return;
+    }
+    const struct fw_sdt_header_view *h =
+        (const struct fw_sdt_header_view *)e->phys_addr;
+    if (h->length < sizeof(*h)) {
+        fw_degrade(e, FW_DEGRADED_LENGTH_BAD, "FPDT length below header");
+        return;
+    }
+    if (!fw_mmap_contains(e->phys_addr, h->length)) {
+        fw_degrade(e, FW_DEGRADED_RANGE_UNMAPPED,
+                   "FPDT declared length outside firmware mmap");
+        return;
+    }
+    if (!fw_sum8_is_zero((const uint8_t *)h, h->length)) {
+        fw_degrade(e, FW_DEGRADED_CHECKSUM_FAIL, "FPDT checksum nonzero");
+        return;
+    }
+}
+
+static void fw_validate_esrt(struct firmware_table_entry *e)
+{
+    if (!fw_mmap_contains(e->phys_addr, sizeof(struct fw_esrt_header_view))) {
+        fw_degrade(e, FW_DEGRADED_RANGE_UNMAPPED, "ESRT header outside firmware mmap");
+        return;
+    }
+    const struct fw_esrt_header_view *h =
+        (const struct fw_esrt_header_view *)e->phys_addr;
+    if (h->fw_resource_count > h->fw_resource_count_max) {
+        fw_degrade(e, FW_DEGRADED_LENGTH_BAD,
+                   "ESRT count exceeds count_max");
+        return;
+    }
+    /* Header + count*entry must fit; guard the multiplication overflow. */
+    uint64_t entries_bytes = (uint64_t)h->fw_resource_count * FW_ESRT_ENTRY_SIZE;
+    if (entries_bytes > 0xFFFFFFFFull) {
+        fw_degrade(e, FW_DEGRADED_LENGTH_BAD, "ESRT entries overflow u32");
+        return;
+    }
+    uint64_t total = (uint64_t)sizeof(*h) + entries_bytes;
+    if (!fw_mmap_contains(e->phys_addr, total)) {
+        fw_degrade(e, FW_DEGRADED_RANGE_UNMAPPED,
+                   "ESRT entries span outside firmware mmap");
+        return;
+    }
+}
+
+static void fw_validate_smbios_raw(struct firmware_table_entry *e)
+{
+    /* Catalog already records [phys_addr, size) for the structure-table
+     * region.  Re-check it lies entirely in firmware-bearing memory. */
+    if (e->size == 0) {
+        fw_degrade(e, FW_DEGRADED_LENGTH_BAD, "SMBIOS raw size is zero");
+        return;
+    }
+    if (!fw_mmap_contains(e->phys_addr, e->size)) {
+        fw_degrade(e, FW_DEGRADED_RANGE_UNMAPPED,
+                   "SMBIOS raw span outside firmware mmap");
+        return;
+    }
+}
+
+/* Dispatch one entry. Status transitions are:
+ *   DEGRADED          -- one-way; never re-promoted.
+ *   VALIDATED         -- left at VALIDATED on full pass; degraded on failure.
+ *   UNKNOWN_PROFILE   -- promoted to VALIDATED when a full format-specific
+ *                        validator passes (RSDP / SMBIOS EP / FPDT / ESRT);
+ *                        left UNKNOWN when only a base-byte range probe ran
+ *                        (unknown GUIDs, DTB until full DTB parsing lands). */
+static void fw_validate_entry(struct firmware_table_entry *e)
+{
+    /* Skip entries that catalog or a prior validator pass already
+     * downgraded -- preserve the lower-trust status. */
+    if (e->status == FW_STATUS_DEGRADED) return;
+
+    if (e->phys_addr == 0) {
+        fw_degrade(e, FW_DEGRADED_NULL_POINTER, "phys_addr is NULL");
+        return;
+    }
+
+    /* Track whether this entry went through a FULL format-specific
+     * validator (so passing it earns FW_STATUS_VALIDATED) or only a
+     * minimal base-byte range probe (no promotion -- the caller still
+     * does not know the table is well-formed). */
+    int full_format_check = 0;
+
+    switch (e->source) {
+    case FW_SOURCE_UEFI_CFG_TABLE:
+        if (str_eq(e->name, "ACPI2.0") || str_eq(e->name, "ACPI1.0")) {
+            fw_validate_acpi_rsdp(e);
+            full_format_check = 1;
+        } else if (str_eq(e->name, "SMBIOS3")) {
+            fw_validate_smbios_ep(e, 1);
+            full_format_check = 1;
+        } else if (str_eq(e->name, "SMBIOS")) {
+            fw_validate_smbios_ep(e, 0);
+            full_format_check = 1;
+        } else if (str_eq(e->name, "FPDT")) {
+            fw_validate_fpdt(e);
+            full_format_check = 1;
+        } else if (str_eq(e->name, "ESRT")) {
+            fw_validate_esrt(e);
+            full_format_check = 1;
+        } else {
+            /* Unknown / no-oracle GUIDs (MAT, RtProps, Conform, DTB,
+             * unrecognised vendor GUIDs): range-check the single base
+             * byte so we at least catch wildly bad pointers. No format
+             * decode happened, so do NOT promote to VALIDATED. */
+            if (!fw_mmap_contains(e->phys_addr, 1)) {
+                fw_degrade(e, FW_DEGRADED_RANGE_UNMAPPED,
+                           "cfg-table base outside firmware mmap");
+            }
+        }
+        break;
+    case FW_SOURCE_ACPI_SDT:
+        fw_validate_acpi_sdt(e);
+        full_format_check = 1;
+        break;
+    case FW_SOURCE_SMBIOS_RAW:
+        fw_validate_smbios_raw(e);
+        full_format_check = 1;
+        break;
+    case FW_SOURCE_FPDT:
+        fw_validate_fpdt(e);
+        full_format_check = 1;
+        break;
+    case FW_SOURCE_ESRT:
+        fw_validate_esrt(e);
+        full_format_check = 1;
+        break;
+    case FW_SOURCE_DTB:
+        /* DTB has its own header magic + size-of-totalsize field; full
+         * validation lands with the DTB arbitration work. Range-check
+         * the base byte so a wildly bad pointer still degrades here, but
+         * do not promote to VALIDATED until full DTB parsing exists. */
+        if (!fw_mmap_contains(e->phys_addr, 1)) {
+            fw_degrade(e, FW_DEGRADED_RANGE_UNMAPPED,
+                       "DTB base outside firmware mmap");
+        }
+        break;
+    default:
+        /* Catalog source is policed elsewhere; leave entry untouched. */
+        break;
+    }
+
+    /* Promote UNKNOWN_PROFILE -> VALIDATED on a clean full-format pass
+     * so downstream consumers (ESRT mirror, Registry/JSON publication,
+     * sysinfo.exe firmware view) can distinguish "fully checked" from
+     * "only cataloged". DEGRADED is preserved by the early-return above
+     * already; entries that started as VALIDATED stay VALIDATED. */
+    if (full_format_check && e->status == FW_STATUS_UNKNOWN_PROFILE)
+        e->status = FW_STATUS_VALIDATED;
+}
+
+void firmware_table_validate_all(void)
+{
+    for (uint32_t i = 0; i < g_count; i++)
+        fw_validate_entry(&g_entries[i]);
+}
+
+#ifdef KERNEL_TESTS
+void firmware_table_validate_one_for_test(struct firmware_table_entry *entry,
+                                          int bypass_range_check)
+{
+    if (!entry) return;
+    int prev = g_fw_test_bypass_range;
+    g_fw_test_bypass_range = bypass_range_check ? 1 : 0;
+    fw_validate_entry(entry);
+    g_fw_test_bypass_range = prev;
+}
+#endif
+
 /* ---- Public init -------------------------------------------------------- */
 
 void firmware_tables_init(void)
@@ -302,6 +762,11 @@ void firmware_tables_init(void)
     catalog_uefi_cfg_tables();
     catalog_acpi_sdts();
     catalog_smbios_raw();
+
+    /* Re-check every cataloged entry against the UEFI memory map and
+     * recompute per-source checksums before we publish the boot summary,
+     * so the validated/degraded counts reflect the final ground truth. */
+    firmware_table_validate_all();
 
     g_initialized = 1;
 

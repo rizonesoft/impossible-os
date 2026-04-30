@@ -37,7 +37,7 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 | ⭐ | Order | Deliverable                                             | Depends On     | Status |
 | -- | :---: | ------------------------------------------------------- | -------------- | :----: |
 | 💎 |   1   | Firmware table catalog API                              | TODO-01 §1     |  [x]   |
-| 💎 |   2   | Physical range and checksum validation                  | §1             |  [ ]   |
+| 💎 |   2   | Physical range and checksum validation                  | §1             |  [x]   |
 | 💎 |   3   | ACPI/SMBIOS/DTB table arbitration                       | §1, §2         |  [ ]   |
 | 💎 |   4   | FPDT and boot timing normalization                      | §1             |  [ ]   |
 | 💎 |   5   | UEFI memory attributes and runtime properties inventory | §1, TODO-27 §3 |  [ ]   |
@@ -57,7 +57,7 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 - [x] Define `firmware_table_entry_t` with GUID/name, physical address, size, source (`FW_SOURCE_UEFI_CFG_TABLE` / `FW_SOURCE_ACPI_SDT` / `FW_SOURCE_SMBIOS_RAW` / `FW_SOURCE_FPDT` / `FW_SOURCE_ESRT` / `FW_SOURCE_DTB`), validation status, and owner. Header at `include/kernel/firmware_tables.h`; cap `FIRMWARE_TABLE_MAX = 64` slots.
 - [x] Implement `firmware_tables_init()` populating the catalog from `boot_info.config_table[]` plus per-provider accessors. ACPI uses `acpi_for_each_record()` (single validated XSDT/RSDT walk; preserves duplicate SSDTs as distinct entries) and SMBIOS uses `smbios_get_raw_table()`. Wired in `boot_interrupts.c` after `uefi_conformance_init()`.
 - [x] Add `firmware_table_lookup_guid()` / `firmware_table_lookup_name()` / `firmware_table_lookup_owner()` plus `firmware_table_count()` / `firmware_table_get()`. NULL/zero-GUID/NULL-name guards in place.
-- [x] Emit a compact boot log summary: `[BOOT] firmware tables: <N> cataloged, <M> validated, <K> degraded`. QEMU OVMF reports `17 cataloged, 17 validated, 0 degraded`.
+- [x] Emit a compact boot log summary: `[BOOT] firmware tables: <N> cataloged, <M> validated, <K> degraded`. QEMU OVMF reports `17 cataloged, 9 validated, 0 degraded` (validated = entries that either had a per-provider oracle at catalog time OR were promoted by `firmware_table_validate_all` on a clean full-format pass; remaining 8 sit in `FW_STATUS_UNKNOWN_PROFILE` because their cfg-table GUID is unrecognized or has no full-format validator yet -- MAT/RtProps/Conform/DTB and vendor GUIDs are owned by later sections).
 - [x] Commit: `"boot: firmware table catalog API"`
 
 **Test checkpoint:** Boot log shows `[BOOT] firmware tables: <N> cataloged` line; `firmware_table_lookup_guid(EFI_ACPI_20_TABLE_GUID)` returns a valid entry on QEMU OVMF + VirtualBox EFI; lookup of an unknown GUID returns NULL. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
@@ -79,13 +79,22 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 
 ## 2. Physical Range and Checksum Validation
 
-- [ ] Validate every table pointer against the UEFI memory map before dereference.
-- [ ] Verify ACPI RSDP/XSDT checksums, SMBIOS entry-point checksums, FPDT lengths, and ESRT bounds.
-- [ ] Mark bad tables as degraded, not silently absent.
-- [ ] Add `firmware_table_validate_all()` test hooks.
-- [ ] Commit: `"boot: validate firmware table ranges and checksums"`
+- [x] Validate every table pointer against the UEFI memory map before dereference -- `fw_mmap_contains()` in `firmware_tables.c` accepts only RESERVED/LOADER_*/BOOT_SERVICES_*/RUNTIME_*/ACPI_RECLAIM/ACPI_NVS/PERSISTENT; rejects CONVENTIONAL/UNUSABLE/MMIO/MMIO_PORT/PAL_CODE; addr+len overflow guard.
+- [x] Verify ACPI RSDP/XSDT checksums, SMBIOS entry-point checksums, FPDT lengths, and ESRT bounds -- `fw_validate_acpi_rsdp` (v1 20-byte sum + v2 ext_checksum over declared length), `fw_validate_acpi_sdt` (header.length must match catalog size + full-table sum), `fw_validate_smbios_ep` (anchor + spec wire-format length 0x18 / [0x1E,0x1F] + sum), `fw_validate_fpdt` (SDT-shaped sum), `fw_validate_esrt` (count <= count_max + count*40 footprint range-checked, multiplication overflow guarded).
+- [x] Mark bad tables as degraded, not silently absent -- one-way downgrade via `fw_degrade()`; `e->status = FW_STATUS_DEGRADED` + `degraded_reason` populated; entry remains in catalog with original phys_addr so consumers can still inspect.
+- [x] Add `firmware_table_validate_all()` test hooks -- public `firmware_table_validate_all()` declared in `firmware_tables.h`; `KERNEL_TESTS`-gated `firmware_table_validate_one_for_test()` with `bypass_range_check` flag for synthetic-buffer testing.
+- [x] Commit: `"boot: validate firmware table ranges and checksums"`
 
 **Test checkpoint:** Synthetic test corrupts an ACPI RSDP checksum byte; `firmware_table_validate_all()` reports the table as `status: degraded` with reason `checksum_fail`; clean OVMF boot reports zero degraded tables. Pointer outside the UEFI memory map -> `status: degraded` with reason `range_unmapped`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 8 validator sub-tests / 14 assertions, 0 failures (TCG: clean SDT VALIDATED, checksum corruption -> CHECKSUM_FAIL, size-below-header -> LENGTH_BAD, size mismatch -> LENGTH_BAD, CONVENTIONAL phys_addr -> RANGE_UNMAPPED, NULL phys_addr -> NULL_POINTER, one-way downgrade preserved, validate_all clean firmware no validator degradations)
+>
+> **Notes:**
+> - Shipped: `firmware_table_validate_all()` + per-source helpers (~330 LOC) in `src/kernel/firmware_tables.c`; private wire-format struct views (RSDP v1/v2, SDT header, SMBIOS3/SMBIOS2 entry-point, ESRT header) pinned with `_Static_assert` on size; 8 new test functions / 14 assertions in `src/kernel/test/test_firmware_tables.c`.
+> - How it runs: `firmware_tables_init()` calls the validator after the three catalog steps and before the boot summary, so the cataloged/validated/degraded counts in `[BOOT] firmware tables: ...` reflect validator findings; idempotent (one-way downgrade, second call is a no-op).
+> - Downstream effects: §8 Registry/BlackBox firmware report consumes `entry->status` + `degraded_reason`; §6 ESRT mirror trusts the validated entry list; Codex 1x adversarial review approved with one residual non-blocking note (test bypass flag global, accepted: test runner is single-threaded by design).
+> - Canonical doc: `include/kernel/firmware_tables.h` `firmware_table_validate_all()` contract.
+> - Scope boundary: §2 marks status only; consumers act on it. §3 owns full DTB header parsing (validator only range-checks DTB base byte). §6 owns ESRT mirror to Registry. §7 owns conformance-profile flagging. §8 owns Registry + JSON publication.
 
 ---
 
@@ -193,7 +202,7 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 | ⭐ | Feature                               | 🪟 Win11                         | 🐧 Linux                        | 🚀 Impossible OS                |
 | -- | ------------------------------------- | --------------------------------- | ------------------------------- | -------------------------------- |
 | 💎 | Firmware table catalog API            | ✅ ACPI/HAL + WMI                | ✅ acpi_get_table + sysfs       | ✅ firmware_table_entry_t catalog |
-| 💎 | Physical range + checksum validation  | ✅ HAL validates pre-use         | ✅ acpi_tb_verify_checksum      | ⬜ §2 mmap-bound + checksums    |
+| 💎 | Physical range + checksum validation  | ✅ HAL validates pre-use         | ✅ acpi_tb_verify_checksum      | ✅ §2 mmap-bound + checksums    |
 | 💎 | ACPI/SMBIOS/DTB arbitration           | ⚠️ ACPI-first; no DTB            | ✅ ACPI on x86, DTB on ARM      | ⬜ §3 priority + EBBR detect    |
 | 💎 | FPDT boot-timeline normalization      | ✅ FPDT + ETW timeline           | ⚠️ acpi_fpdt_init read-only     | ⬜ §4 FPDT + TSC unified        |
 | 💎 | UEFI MAT + Runtime Properties         | ✅ MmGetEfiRuntimeServicesTable  | ✅ efi_memmap_attributes        | ⬜ §5 MAT + RT properties       |
@@ -208,8 +217,8 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 ## Unit Tests
 
 - [x] `test_firmware_table_guid_lookup` -- §1: ACPI 2.0/1.0 cfg-table entry; non-zero phys_addr; unknown GUID + NULL guid both return NULL.
-- [ ] `test_firmware_table_range_rejects_unmapped` -- owned by §2 (range validator).
-- [ ] `test_firmware_table_checksum_fail` -- owned by §2 (checksum validator).
+- [x] `test_firmware_table_range_rejects_unmapped` -- §2: phys_addr in CONVENTIONAL mmap downgrades to RANGE_UNMAPPED; clean firmware leaves no validator degradations.
+- [x] `test_firmware_table_checksum_fail` -- §2: corrupted SDT byte downgrades to CHECKSUM_FAIL; size-below-header and header.length-mismatch downgrade to LENGTH_BAD; one-way downgrade preserved.
 - [ ] `test_firmware_conformance_profiles` -- owned by §7 (conformance integration).
 
 ---
