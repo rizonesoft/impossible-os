@@ -782,6 +782,18 @@ void firmware_table_validate_all(void)
         fw_validate_entry(&g_entries[i]);
 }
 
+int firmware_table_mmap_contains(uintptr_t addr, uint64_t len)
+{
+    return fw_mmap_contains(addr, len);
+}
+
+#ifdef KERNEL_TESTS
+void firmware_table_set_mmap_bypass_for_test(int bypass)
+{
+    g_fw_test_bypass_range = bypass ? 1 : 0;
+}
+#endif
+
 #ifdef KERNEL_TESTS
 void firmware_table_validate_one_for_test(struct firmware_table_entry *entry,
                                           int bypass_range_check)

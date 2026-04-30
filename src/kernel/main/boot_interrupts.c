@@ -265,6 +265,10 @@ void boot_phase1(void)
         extern void firmware_tables_init(void);
         firmware_tables_init();
     }
+    {
+        extern void firmware_platform_init(void);
+        firmware_platform_init();
+    }
     uefi_capsule_init();
     uefi_crypto_agility_init();
     secureboot_keys_init();

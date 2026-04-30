@@ -134,6 +134,16 @@ uint32_t firmware_table_lookup_owner(const char *owner,
  * validator findings; can also be invoked from tests. */
 void firmware_table_validate_all(void);
 
+/* True iff `[addr, addr+len)` is contained in a single UEFI memory-map
+ * descriptor of a firmware-bearing type (RESERVED / LOADER_* /
+ * BOOT_SERVICES_* / RUNTIME_* / ACPI_RECLAIM / ACPI_NVS / PERSISTENT).
+ * Rejects CONVENTIONAL / UNUSABLE / MMIO / MMIO_PORT / PAL_CODE and
+ * len==0 / addr+len wraparound. Exposed so consumers parsing additional
+ * firmware structures (DTB header walk, future ESRT entry array walk)
+ * can re-use the same firmware-region oracle without re-implementing
+ * the type allowlist. */
+int firmware_table_mmap_contains(uintptr_t addr, uint64_t len);
+
 #ifdef KERNEL_TESTS
 /* Test-only single-entry validator used by `test_firmware_tables.c` to
  * exercise checksum / length / range-unmapped paths against synthetic
@@ -148,4 +158,13 @@ void firmware_table_validate_all(void);
  * Production callers MUST use `firmware_table_validate_all`. */
 void firmware_table_validate_one_for_test(struct firmware_table_entry *entry,
                                           int bypass_range_check);
+
+/* Test-only toggle for the firmware-region oracle used by
+ * `firmware_table_mmap_contains` / private `fw_mmap_contains`. When
+ * set, the oracle returns 1 unconditionally so tests can validate
+ * DTB / firmware-table consumers against fixture buffers in kernel
+ * BSS. Toggle ONLY around the call under test; reset before yielding
+ * to other test code. Single-threaded test runner; no concurrent
+ * exposure. */
+void firmware_table_set_mmap_bypass_for_test(int bypass);
 #endif

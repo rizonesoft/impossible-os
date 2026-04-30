@@ -38,7 +38,7 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 | -- | :---: | ------------------------------------------------------- | -------------- | :----: |
 | 💎 |   1   | Firmware table catalog API                              | TODO-01 §1     |  [x]   |
 | 💎 |   2   | Physical range and checksum validation                  | §1             |  [x]   |
-| 💎 |   3   | ACPI/SMBIOS/DTB table arbitration                       | §1, §2         |  [ ]   |
+| 💎 |   3   | ACPI/SMBIOS/DTB table arbitration                       | §1, §2         |  [x]   |
 | 💎 |   4   | FPDT and boot timing normalization                      | §1             |  [ ]   |
 | 💎 |   5   | UEFI memory attributes and runtime properties inventory | §1, TODO-27 §3 |  [ ]   |
 | 💎 |   6   | ESRT firmware inventory mirror                          | §1, TODO-27 §2 |  [ ]   |
@@ -104,13 +104,22 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 
 ## 3. ACPI/SMBIOS/DTB Table Arbitration
 
-- [ ] Define priority when ACPI 2.0, ACPI 1.0, SMBIOS3, SMBIOS2, and DTB are all present.
-- [ ] Add DTB handoff validation and basic `/chosen`/memory/cpu discovery for EBBR systems.
-- [ ] Document that PC-class hardware must use ACPI for interrupt/timer ownership.
-- [ ] Add registry flags for `FirmwarePlatform=ACPI|DTB|Hybrid`.
-- [ ] Commit: `"boot: arbitrate ACPI SMBIOS DTB firmware sources"`
+- [x] Define priority when ACPI 2.0, ACPI 1.0, SMBIOS3, SMBIOS2, and DTB are all present -- `firmware_platform_init()` in `src/kernel/firmware_platform.c` picks ACPI > DTB; HYBRID only when both validated; ACPI 2.0 trumps ACPI 1.0 in `s_acpi_version`. SMBIOS is informational (never decides ACPI vs DTB). PC-class doctrine pins interrupt/timer ownership to ACPI when present; HYBRID logs primary=ACPI, secondary=DTB.
+- [x] Add DTB handoff validation and basic `/chosen`/memory/cpu discovery for EBBR systems -- `src/kernel/dtb.c` validates FDT v17 header (magic 0xD00DFEED big-endian, totalsize <= 4 MiB cap, version >= 16, last_comp_version <= 17, off_dt_struct + size_dt_struct in bounds), then walks the structure block once, counting nodes whose names match the unit-address convention "chosen", "memory" / "memory@*", and "cpu@*". Header + body both span-checked against the firmware-bearing UEFI mmap via `firmware_table_mmap_contains` before any dereference (Codex H1 fix). HasDTB is gated on `dtb_memory_count() > 0 && dtb_cpu_count() > 0` so a structurally-valid empty DTB stays Unknown (Codex M1 fix).
+- [x] Document that PC-class hardware must use ACPI for interrupt/timer ownership -- doctrine documented in `include/kernel/firmware_platform.h` header docstring + arbitration comment in `firmware_platform_init`. Linux kernel arbitrates the same way on ARM SBSA + DTB systems; HYBRID is a diagnostic, not permission to mix interrupt sources.
+- [x] Add registry flags for `FirmwarePlatform=ACPI|DTB|Hybrid` -- `firmware_platform_populate_registry()` writes `HKLM\SYSTEM\Boot\Firmware\FirmwarePlatform` (REG_SZ) plus `HasACPI` / `HasDTB` / `HasSMBIOS` / `AcpiVersion` (REG_DWORD) and `DtbTotalSize` when DTB is present. Sibling of `HKLM\SYSTEM\Boot\Device\*` populated by TODO-05; reserved exclusively from `HKLM\HARDWARE\Firmware\Tables` which the §8 firmware-report owns.
+- [x] Commit: `"boot: arbitrate ACPI SMBIOS DTB firmware sources"`
 
 **Test checkpoint:** PC-class boot logs `[BOOT] firmware platform: ACPI` and registry has `FirmwarePlatform=ACPI`. Synthetic DTB-only boot logs `FirmwarePlatform=DTB` with `/chosen` parsed. Hybrid (ACPI + DTB present) logs the priority decision. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 16 sub-tests / 32 assertions, 0 failures (DTB: phys_addr=0 invalid, bad magic invalid, minimal blob valid + 4-node-count assertions, oversized totalsize / unsupported version / truncated struct / outside-firmware-mmap reject, empty-root has zero memory+cpu, memorytest prefix not counted as memory, unbalanced BEGIN/END rejects + accumulator stays 0, multi-root rejects + accumulator stays 0, misnested memory/cpu under bogus parent not counted, FW platform: name table strings, ACPI classification on PC, AcpiVersion consistent)
+>
+> **Notes:**
+> - Shipped: `src/kernel/dtb.c` (~210 LOC FDT v17 header + bounded structure-block walker), `src/kernel/firmware_platform.c` (~140 LOC arbitration + Boot\Firmware Registry mirror), `include/kernel/dtb.h` + `include/kernel/firmware_platform.h`, `src/kernel/test/test_firmware_platform.c` (12 tests / 23 assertions). Public `firmware_table_mmap_contains` exposed from firmware_tables.c so DTB consumer reuses the same firmware-region oracle.
+> - How it runs: `firmware_platform_init()` runs once on the BSP at Phase 1 immediately after `firmware_tables_init()`; `firmware_platform_populate_registry()` runs from `registry_populate_defaults()` after `boot_device_populate_registry()`. Read-only thereafter.
+> - Downstream effects: `HKLM\SYSTEM\Boot\Firmware` is the canonical platform fingerprint for sysinfo / diagnostic tools; §6 ESRT mirror, §7 conformance flagging, and §8 firmware-tables.json all read `firmware_platform_get()` to gate their PC-class vs EBBR behavior. Codex 1x adversarial review adoptions in commit `<hash>`.
+> - Canonical doc: `include/kernel/firmware_platform.h` arbitration contract + `include/kernel/dtb.h` FDT validator contract.
+> - Scope boundary: §3 owns DTB header validation + node counts only. Full /chosen/bootargs string extraction, /memory@N reg ranges, and /cpu@N compatible strings are owned by a future DTB parser TODO. §6 owns ESRT Registry mirror. §7 owns conformance flagging. §8 owns the firmware-tables.json export and HARDWARE\Firmware\Tables key.
 
 ---
 
@@ -208,7 +217,7 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 | -- | ------------------------------------- | --------------------------------- | ------------------------------- | -------------------------------- |
 | 💎 | Firmware table catalog API            | ✅ ACPI/HAL + WMI                | ✅ acpi_get_table + sysfs       | ✅ firmware_table_entry_t catalog |
 | 💎 | Physical range + checksum validation  | ✅ HAL validates pre-use         | ✅ acpi_tb_verify_checksum      | ✅ §2 mmap-bound + checksums    |
-| 💎 | ACPI/SMBIOS/DTB arbitration           | ⚠️ ACPI-first; no DTB            | ✅ ACPI on x86, DTB on ARM      | ⬜ §3 priority + EBBR detect    |
+| 💎 | ACPI/SMBIOS/DTB arbitration           | ⚠️ ACPI-first; no DTB            | ✅ ACPI on x86, DTB on ARM      | ✅ §3 ACPI > DTB + HYBRID detect |
 | 💎 | FPDT boot-timeline normalization      | ✅ FPDT + ETW timeline           | ⚠️ acpi_fpdt_init read-only     | ⬜ §4 FPDT + TSC unified        |
 | 💎 | UEFI MAT + Runtime Properties         | ✅ MmGetEfiRuntimeServicesTable  | ✅ efi_memmap_attributes        | ⬜ §5 MAT + RT properties       |
 | 💎 | ESRT firmware inventory               | ✅ Windows Update / fwupdd       | ✅ fwupd /sys/firmware/efi/esrt | ⬜ §6 ESRT mirror to Registry   |
