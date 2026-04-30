@@ -573,6 +573,68 @@ static void test_validate_all_clean_ovmf_zero_degraded(void)
                 "no validator-found degradations on a clean firmware boot");
 }
 
+/* ---- Catalog promotion API for deferred provider oracles --------------- */
+
+/* firmware_table_promote_to_validated is one-way: UNKNOWN_PROFILE ->
+ * VALIDATED only. DEGRADED entries must stay DEGRADED; VALIDATED
+ * entries must stay VALIDATED with no spurious return-true; missing
+ * names must return 0. Guards the Codex consistency-review fix that
+ * reconciled the catalog status with the Boot\Firmware platform
+ * decision after dtb_init succeeds. */
+static void test_firmware_table_promote_unknown_to_validated(void)
+{
+    /* Find an UNKNOWN_PROFILE entry on the live catalog -- typically
+     * MAT, RtProps, Conform, or a vendor GUID labelled "uefi-cfg". */
+    uint32_t n = firmware_table_count();
+    int found = 0;
+    char target[FIRMWARE_TABLE_NAME_MAX];
+    for (uint32_t i = 0; i < n; i++) {
+        const struct firmware_table_entry *e = firmware_table_get(i);
+        if (!e) continue;
+        if (e->status != FW_STATUS_UNKNOWN_PROFILE) continue;
+        /* Skip the placeholder name -- multiple cfg-table entries
+         * share it and we want a unique-name target. */
+        if (str_eq_local("uefi-cfg", e->name)) continue;
+        if (e->name[0] == '\0') continue;
+        for (uint32_t j = 0; j < FIRMWARE_TABLE_NAME_MAX; j++)
+            target[j] = e->name[j];
+        found = 1;
+        break;
+    }
+    if (!found) {
+        TEST_SKIP("no UNKNOWN_PROFILE entry with unique name available");
+        return;
+    }
+    int promoted = firmware_table_promote_to_validated(target);
+    TEST_ASSERT(promoted == 1,
+                "first promote of an UNKNOWN_PROFILE entry returns 1");
+    const struct firmware_table_entry *e =
+        firmware_table_lookup_name(target);
+    TEST_ASSERT(e != (const struct firmware_table_entry *)0,
+                "promoted entry still discoverable by name");
+    TEST_ASSERT_EQ(e->status, FW_STATUS_VALIDATED,
+                   "status transitioned to FW_STATUS_VALIDATED");
+    /* Second promote must be a no-op (already VALIDATED). */
+    promoted = firmware_table_promote_to_validated(target);
+    TEST_ASSERT(promoted == 0,
+                "second promote of a VALIDATED entry returns 0");
+}
+
+static void test_firmware_table_promote_unknown_name_returns_zero(void)
+{
+    int promoted =
+        firmware_table_promote_to_validated("does-not-exist-anywhere");
+    TEST_ASSERT(promoted == 0,
+                "promote of an absent name returns 0");
+}
+
+static void test_firmware_table_promote_null_returns_zero(void)
+{
+    int promoted = firmware_table_promote_to_validated((const char *)0);
+    TEST_ASSERT(promoted == 0,
+                "promote of NULL name returns 0 (no deref)");
+}
+
 /* ---- Registration ------------------------------------------------------- */
 
 void test_register_firmware_tables(void)
@@ -645,6 +707,15 @@ void test_register_firmware_tables(void)
                             TEST_CAT_BOOT);
     test_suite_register_cat("FW: validate_all clean firmware has no validator degradations",
                             test_validate_all_clean_ovmf_zero_degraded,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("FW: promote UNKNOWN_PROFILE -> VALIDATED",
+                            test_firmware_table_promote_unknown_to_validated,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("FW: promote unknown name -> 0",
+                            test_firmware_table_promote_unknown_name_returns_zero,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("FW: promote NULL name -> 0",
+                            test_firmware_table_promote_null_returns_zero,
                             TEST_CAT_BOOT);
 }
 

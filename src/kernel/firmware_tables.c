@@ -787,6 +787,23 @@ int firmware_table_mmap_contains(uintptr_t addr, uint64_t len)
     return fw_mmap_contains(addr, len);
 }
 
+int firmware_table_promote_to_validated(const char *name)
+{
+    if (!name) return 0;
+    for (uint32_t i = 0; i < g_count; i++) {
+        if (!str_eq(g_entries[i].name, name)) continue;
+        /* One-way: only UNKNOWN_PROFILE entries graduate. */
+        if (g_entries[i].status != FW_STATUS_UNKNOWN_PROFILE) return 0;
+        g_entries[i].status = FW_STATUS_VALIDATED;
+        g_entries[i].degraded_reason = FW_DEGRADED_NONE;
+        klog(LOG_INFO, "FW",
+             "%s promoted to VALIDATED by deferred provider oracle",
+             name);
+        return 1;
+    }
+    return 0;
+}
+
 #ifdef KERNEL_TESTS
 void firmware_table_set_mmap_bypass_for_test(int bypass)
 {

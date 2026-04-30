@@ -144,6 +144,17 @@ void firmware_table_validate_all(void);
  * the type allowlist. */
 int firmware_table_mmap_contains(uintptr_t addr, uint64_t len);
 
+/* Promote a single named catalog entry from FW_STATUS_UNKNOWN_PROFILE
+ * to FW_STATUS_VALIDATED after a deferred provider oracle has finished
+ * its full-format check. Used by `firmware_platform_init` once
+ * `dtb_init` has accepted the FDT header + structure walk; without
+ * this call the catalog and `HKLM\SYSTEM\Boot\Firmware` would
+ * disagree on whether the DTB is trusted.
+ *
+ * One-way: never demotes a DEGRADED entry, never touches a
+ * VALIDATED entry. Returns 1 iff a transition occurred. */
+int firmware_table_promote_to_validated(const char *name);
+
 #ifdef KERNEL_TESTS
 /* Test-only single-entry validator used by `test_firmware_tables.c` to
  * exercise checksum / length / range-unmapped paths against synthetic

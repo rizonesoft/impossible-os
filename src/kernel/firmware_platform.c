@@ -68,8 +68,17 @@ void firmware_platform_init(void)
         dtb_entry->phys_addr != 0) {
         dtb_init(dtb_entry->phys_addr);
         if (dtb_is_valid() &&
-            dtb_memory_count() > 0 && dtb_cpu_count() > 0)
+            dtb_memory_count() > 0 && dtb_cpu_count() > 0) {
             s_has_dtb = 1;
+            /* Reconcile the catalog with our acceptance: the
+             * unified validator left DTB at UNKNOWN_PROFILE because
+             * it has no per-format oracle. Now that dtb_init has
+             * accepted the FDT header + structure walk + inventory
+             * gate, promote the catalog entry so consumers reading
+             * firmware_table_lookup_name("DTB")->status agree with
+             * HKLM\SYSTEM\Boot\Firmware\HasDTB=1. */
+            firmware_table_promote_to_validated("DTB");
+        }
     }
 
     /* Arbitration: ACPI wins when both are present. PC-class doctrine
