@@ -278,15 +278,15 @@ int boot_rollback_should_raise(const struct boot_info *info,
                                int opt_in,
                                uint32_t *new_value);
 
-/* Compositor-steady gate (section 16). mark_steady() latches the signal
- * from the compositor (first stable frame) or a timer fallback;
- * raise_if_steady() performs the one-shot NVRAM raise of
- * IPOSRequiredSecVersion when the opt-in policy is set and shipped >
- * required. The raise site used to fire in Phase 3 immediately after
- * POST16_BOOT_OK, which could advance the rollback floor on a boot
- * that crashed during compositor init. Gating on mark_steady ensures
- * the machine can still fall back to the prior image if this boot
- * never reaches user-visible steady state.
+/* Compositor-steady gate (anti-rollback raise timing). mark_steady()
+ * latches the steady signal from the compositor first stable frame --
+ * today this is the only steady source; a pre-frame hang
+ * intentionally withholds the raise so the machine can still fall
+ * back to the prior image. raise_if_steady() performs the one-shot
+ * NVRAM raise of IPOSRequiredSecVersion when the opt-in policy is set
+ * and shipped > required. The raise site used to fire in Phase 3
+ * immediately after POST16_BOOT_OK, which could advance the rollback
+ * floor on a boot that crashed during compositor init.
  * Test-only reset helper is declared but not exposed to release
  * callers; tests link against it via the test harness. */
 void boot_rollback_mark_steady(void);
@@ -297,6 +297,13 @@ int  boot_rollback_raise_if_steady(void);
  * first-frame thread does not block on the UEFI Runtime Services
  * SetVariable call (10-100 ms NVRAM flash on real firmware). The
  * actual NVRAM write happens later in the worker thread.
+ *
+ * Precondition: caller must have invoked mark_steady() first. A call
+ * before the steady signal is latched is a no-op (returns 0) and does
+ * NOT consume the request slot, so a later post-steady caller still
+ * owns the raise. This protects the public API from caller-ordering
+ * mistakes that would otherwise permanently strand the rollback
+ * floor for the boot.
  *
  * Idempotence is conditional on the eventual outcome:
  *  - On confirmed SUCCESS or permanent OPT-OUT, the request is
@@ -316,8 +323,14 @@ int  boot_rollback_raise_if_steady(void);
  * thread. Compositor first-frame is one-shot; silently dropping the
  * only raise attempt would violate the section test checkpoint.
  *
- * Returns 1 if work was enqueued OR the synchronous fallback ran,
- * 0 if the request was already serviced (success/opt-out latched). */
+ * Returns 1 if work was enqueued OR the synchronous fallback ran.
+ * Returns 0 in TWO distinct cases that callers MUST NOT collapse:
+ *  - Pre-steady no-op (retryable): mark_steady has not fired yet;
+ *    no slot was consumed and a later post-steady call can still
+ *    own the raise.
+ *  - Already-serviced no-op (terminal for this boot): the request
+ *    is latched on success or permanent opt-out and subsequent
+ *    calls stay 0 forever. */
 int  boot_rollback_request_raise(void);
 void boot_rollback_reset_for_test(void);
 

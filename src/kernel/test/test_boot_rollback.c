@@ -333,6 +333,39 @@ static void test_boot_rollback_request_raise_sync_fallback(void)
     boot_rollback_reset_for_test();
 }
 
+/* Regression: pre-steady request_raise must NOT latch s_enqueued, or
+ * a later post-steady caller would observe the stale latch and never
+ * advance the rollback floor. (Codex 2026-04-30 full-section review
+ * H1 / consistency H1: caller-ordering safety in the public helper.) */
+static void test_boot_rollback_request_raise_pre_steady_no_latch(void)
+{
+    TEST_KLOG_SUPPRESS("boot");
+    boot_rollback_reset_for_test();
+
+    workqueue_t *saved_wq = sys_wq;
+    uint8_t saved_opt = g_boot_info.config.anti_rollback_raise;
+
+    sys_wq = (workqueue_t *)0;
+    g_boot_info.config.anti_rollback_raise = 0; /* opt-out keeps NVRAM untouched */
+
+    /* Pre-steady: request must short-circuit to 0 without latching. */
+    int r0 = boot_rollback_request_raise();
+    TEST_ASSERT_EQ((uint64_t)r0, 0u,
+                   "pre-steady request returns 0");
+
+    /* Now mark steady and request again -- this call must take
+     * ownership (return 1). If the earlier call had wrongly latched
+     * s_enqueued, this would see the stale latch and return 0. */
+    boot_rollback_mark_steady();
+    int r1 = boot_rollback_request_raise();
+    TEST_ASSERT_EQ((uint64_t)r1, 1u,
+                   "post-steady request still owns the raise");
+
+    sys_wq = saved_wq;
+    g_boot_info.config.anti_rollback_raise = saved_opt;
+    boot_rollback_reset_for_test();
+}
+
 void test_register_boot_rollback(void)
 {
     test_suite_register_cat("boot_rollback: NULL info rejected",
@@ -367,6 +400,8 @@ void test_register_boot_rollback(void)
                             test_boot_rollback_raise_one_shot_opt_out, TEST_CAT_BOOT);
     test_suite_register_cat("boot_rollback: request_raise sync fallback when sys_wq null",
                             test_boot_rollback_request_raise_sync_fallback, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_rollback: request_raise pre-steady is no-latch no-op",
+                            test_boot_rollback_request_raise_pre_steady_no_latch, TEST_CAT_BOOT);
     test_suite_register_cat("boot_rollback: was_raised split stays 0 on opt-out; reset clears",
                             test_boot_rollback_was_raised_reset_clears, TEST_CAT_BOOT);
 }

@@ -304,6 +304,18 @@ static void boot_rollback_raise_worker(void *arg)
 
 int boot_rollback_request_raise(void)
 {
+    /* Precondition: caller must have signalled steady first. Without
+     * this guard a pre-steady request would latch s_enqueued, the
+     * worker/sync-fallback would early-out at !s_steady inside
+     * raise_if_steady, and a later post-steady caller would observe
+     * s_enqueued=1 and never advance the counter -- permanently
+     * stranding the anti-rollback floor for that boot. The compositor
+     * caller orders mark_steady before request_raise, but this is a
+     * public helper exposed in boot_info.h so we enforce the
+     * precondition here. */
+    if (!__atomic_load_n(&s_steady, __ATOMIC_ACQUIRE))
+        return 0;
+
     /* Idempotent: claim the enqueue slot under the state lock so a
      * concurrent failure-path cleanup cannot expose a half-cleared
      * {s_attempted, s_enqueued} pair. */
