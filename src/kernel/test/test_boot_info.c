@@ -1211,10 +1211,18 @@ static void test_payload_aggregate_total_wrap(void)
     bi_payload_zero();
     s_test_buf.payload_count              = 2;
 
-    /* Two individually-valid descriptors whose lengths sum just past
+    /* Two individually-valid descriptors whose lengths sum past
      * UINT64_MAX. Each length passes the per-descriptor overflow
-     * check; the aggregate wraps. Without the accumulator guard, a
-     * forged payload_total_bytes matching the wrapped sum would pass. */
+     * check; the aggregate would wrap if they were ever summed. Note:
+     * after the pairwise descriptor-overlap check landed, two ranges
+     * each spanning >= UINT64_MAX/2 bytes cannot avoid overlapping in
+     * the 64-bit physical address space (it is mathematically
+     * impossible to fit two disjoint ranges of that size in u64), so
+     * the validator now rejects via DESCRIPTOR_OVERLAP before reaching
+     * the aggregate-wrap accumulator. The accumulator check remains as
+     * defense in depth for any future code path that bypasses the
+     * pairwise loop, but the user-visible failure for this fixture
+     * is the overlap rejection. */
     s_test_buf.payload_descriptors[0].type       = BOOT_PAYLOAD_MODULE;
     s_test_buf.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
     s_test_buf.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
@@ -1225,15 +1233,12 @@ static void test_payload_aggregate_total_wrap(void)
     s_test_buf.payload_descriptors[1].phys_start = SAFE_PAYLOAD_START + 0x1000000000000ull;
     s_test_buf.payload_descriptors[1].length     = ((uint64_t)-1) / 2ull + 4ull;
 
-    /* Bootloader-supplied total: irrelevant -- the accumulator wrap
-     * check fires BEFORE the total comparison, so any value here is
-     * acceptable evidence that the wrap was caught. */
     s_test_buf.payload_total_bytes        = 0;
 
     TEST_ASSERT_EQ(boot_payload_validate(&s_test_buf, &err), BOOT_FATAL,
-                   "aggregate sum overflow rejected before total compare");
-    TEST_ASSERT_EQ((int)err, (int)BOOT_PAYLOAD_ERR_TOTAL_MISMATCH,
-                   "err=TOTAL_MISMATCH (aggregate sum wraps uint64_t)");
+                   "aggregate sum overflow rejected (now via pairwise overlap)");
+    TEST_ASSERT_EQ((int)err, (int)BOOT_PAYLOAD_ERR_DESCRIPTOR_OVERLAP,
+                   "err=DESCRIPTOR_OVERLAP (overlap fires before aggregate wrap)");
 }
 
 static void test_payload_retained_rt_mmap_wrap_rejected(void)
