@@ -420,18 +420,57 @@ void boot_version_blackbox_transcribe(void)
     path[pi] = '\0';
 
     int transcript_written = 0;
-    /* VFS_O_TRUNC resets the file length to 0 before we write. The
-     * filename is fixed across boots (boot-proto-fault.txt), so an
-     * earlier, longer transcript could otherwise leave stale tail
-     * bytes past the end of a newer, shorter transcript. */
-    struct vfs_node *f = vfs_open(path, VFS_O_WRITE | VFS_O_TRUNC);
+    /* Stale-tail prevention. The filename is fixed across boots, so a
+     * shorter newer transcript would otherwise leave stale tail bytes
+     * past the end of the new payload (vfs_write at offset 0 does NOT
+     * shrink an existing FAT32 file). VFS_O_TRUNC is defined in vfs.h
+     * but vfs_open ignores it today; the systemic VFS-layer fix
+     * (FAT32 cached-state refresh + exact-slot handle cleanup +
+     * directory policy unification + flag wiring) is owned by the
+     * VFS_O_TRUNC end-to-end TODO in 05-storage-filesystems/TODO-04
+     * (the same section that owns the boot_reserved_blackbox_dump
+     * workaround). Until that section lands, mirror the explicit-
+     * truncate workaround:
+     *   1. open + read node->size to detect a pre-existing longer file
+     *   2. close + vfs_truncate(path, 0) when prior_size > 0
+     *   3. reopen for write
+     *   4. write + check byte-exact return
+     * Any failure path leaves the NVRAM record intact for next-boot
+     * retry rather than destroying it after a torn write. */
+    struct vfs_node *f = vfs_open(path, VFS_O_WRITE);
     if (f) {
-        /* vfs_write returns the number of bytes actually written (or
-         * -1 on error). Only treat the transcript as committed when
-         * the full buffer landed -- a short write indicates the
-         * BlackBox partition is full or the FS returned a transient
-         * error, and the NVRAM record must survive to the next boot
-         * for a retry. */
+        uint64_t prior_size = f->size;
+        if (prior_size > 0u) {
+            vfs_close(f);
+            int trunc_rc = vfs_truncate(path, 0);
+            if (trunc_rc != 0) {
+                /* LOG_ERROR (matches boot_reserved_blackbox_dump
+                 * severity contract): a confirmed pre-existing
+                 * transcript could not be replaced safely. NVRAM is
+                 * retained but a persistent BlackBox failure must
+                 * surface in ERROR-level log review. */
+                klog(LOG_ERROR, "boot",
+                     "boot_version: vfs_truncate(%s) failed on "
+                     "prior-size=%lu file (%d); transcript NOT "
+                     "written to avoid stale-tail corruption; "
+                     "NVRAM record retained for next-boot retry",
+                     (uint64_t)(uintptr_t)path,
+                     (uint64_t)prior_size,
+                     (uint64_t)trunc_rc);
+                kfree(buf);
+                return;
+            }
+            f = vfs_open(path, VFS_O_WRITE);
+            if (!f) {
+                klog(LOG_ERROR, "boot",
+                     "boot_version: vfs_open(%s) failed after "
+                     "truncate; transcript NOT written; NVRAM "
+                     "retained for next-boot retry",
+                     (uint64_t)(uintptr_t)path);
+                kfree(buf);
+                return;
+            }
+        }
         int wrote = vfs_write(f, 0, pos, (const uint8_t *)buf);
         vfs_close(f);
         if (wrote >= 0 && (uint32_t)wrote == pos) {
@@ -441,12 +480,21 @@ void boot_version_blackbox_transcribe(void)
                  "transcript written to %s",
                  (uint64_t)(uintptr_t)path);
         } else {
-            klog(LOG_WARN, "boot",
+            /* LOG_ERROR: short/errored write may have torn the
+             * transcript -- the only durable record (NVRAM) is
+             * retained, but the artifact a triage reader sees on
+             * disk could be partial. Surface in ERROR-level review. */
+            klog(LOG_ERROR, "boot",
                  "boot_version: vfs_write short/error (wrote=%d of %u); "
-                 "retaining NVRAM record for next-boot retry",
+                 "transcript may be torn; NVRAM retained for retry",
                  (uint64_t)wrote, (uint64_t)pos);
         }
     } else {
+        /* LOG_WARN (not LOG_ERROR): on a freshly-mounted BlackBox the
+         * walk_path can fail before the FAT32 dir cache refreshes,
+         * with no stale-tail risk because no prior file exists. The
+         * NVRAM record is retained for next-boot retry; no FAIL marker
+         * needed (matches the boot_reserved_blackbox_dump pattern). */
         klog(LOG_WARN, "boot",
              "boot_version: vfs_open failed for %s; retaining NVRAM "
              "record for next-boot retry",
