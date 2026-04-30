@@ -342,7 +342,10 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 > - **Scope boundary**: §9 owns the kernel-side ABI fuzz coverage. The end-to-end stale-image CI harness is owned by [Stale-ABI QEMU Fixture Harness](#19-stale-abi-qemu-fixture-harness) (shipped 2026-04-24).
 
 > **Verified:** 2026-04-23 | commit `3ec06bb3` + §19 closures | 6/6 items | build OK | 472 kernel + 16 user-mode PASS on KVM (2 new fuzz suites: addr sweep 256 iters, header perturb 32 iters); end-to-end stale-image harness PASS on KVM in 32s via `make stale-abi-fixtures`
-> **Quality reviewed:** 2026-04-23 | Codex 2x (implement-adversarial + review-quality) | 2M fixed (per-iteration snprintf context for header + addr fuzz; address sweep extended 4 -> 7 classes so size>UINT16_MAX / range-wraparound / over-max-addr reject paths are explicitly forced every iteration, and class-2 known-good path asserts BOOT_OK per-iter instead of only feeding the aggregate accept counter), 0 open | scope: kernel-code-quality
+> **Re-reviewed:** 2026-04-30 | 6/6 items | build OK | lint clean | fuzz tests still wired in test_register_boot_info() under TEST_CAT_BOOT; harness scripts present; CI step still gated on §19 follow-up
+> **Accepted:** [H] Fixture failures do not block CI today; concrete deferred owner item exists -> XREF: 01-boot-platform/TODO-01 §19 (item: "three consecutive CI runs have shown clean [PASS] for both fixtures" at line 346)
+> **Quality reviewed:** 2026-04-23 | Codex 2x (implement-adversarial + review-quality) | 2M fixed, 0 open | scope: kernel-code-quality
+> **Quality re-reviewed:** 2026-04-30 | Codex 3x (adversarial + consistency + perf) | 0 fixed, 1H accepted-XREF | scope: kernel-code-quality
 
 ---
 
