@@ -344,6 +344,61 @@ static void test_boot_reserved_payload_count_oor_still_rejected_with_degraded_ca
     TEST_ASSERT_EQ((int)err, (int)BOOT_RESERVED_ERR_COUNT_OOR,      "err=COUNT_OOR");
 }
 
+static void test_boot_reserved_warm_update_no_flag_skipped(void)
+{
+    /* Codex 2026-04-30 re-adversarial regression: a type-9 warm-update
+     * descriptor with BOOT_PAYLOAD_FLAG_RESERVED set MUST NOT be pinned
+     * by boot_reserved_populate when BOOT_FLAG_WARM_UPDATE is clear.
+     * Without this gate, a stale or malformed type-9 descriptor would
+     * pin arbitrary payload pages even after the warm-update consume
+     * cold-fallbacked it. */
+    TEST_KLOG_SUPPRESS("mm");
+    br_zero_fixture();
+    s_br_buf.caps_present                        = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    s_br_buf.flags                               = 0u;  /* BOOT_FLAG_WARM_UPDATE clear */
+    s_br_buf.payload_count                       = 1;
+    s_br_buf.payload_descriptors[0].type         = BOOT_PAYLOAD_WARM_UPDATE_STATE;
+    s_br_buf.payload_descriptors[0].flags        = BOOT_PAYLOAD_FLAG_VALID
+                                                 | BOOT_PAYLOAD_FLAG_RESERVED;
+    s_br_buf.payload_descriptors[0].phys_start   = 0x4000000ull;
+    s_br_buf.payload_descriptors[0].length       = 0x1000ull;
+    s_br_buf.payload_total_bytes                 = 0x1000ull;
+
+    enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
+    boot_result_t r = boot_reserved_populate_from_info(&s_br_buf, &err);
+    TEST_ASSERT_EQ((int)r,   (int)BOOT_OK,                    "warm-update no-flag -> populate OK");
+    TEST_ASSERT_EQ((int)err, (int)BOOT_RESERVED_ERR_OK,       "err=OK");
+    /* Expected: only boot_info entry; warm-update descriptor skipped. */
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_count(), (unsigned long)1,
+                   "warm-update + RESERVED + flag clear -> not pinned");
+}
+
+static void test_boot_reserved_warm_update_with_flag_pinned(void)
+{
+    /* Inverse of the above: when BOOT_FLAG_WARM_UPDATE is set, the
+     * type-9 RESERVED descriptor MUST be pinned (the warm-update
+     * runtime expects the preserved memory range to survive PMM
+     * handoff). */
+    br_zero_fixture();
+    s_br_buf.caps_present                        = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    s_br_buf.flags                               = BOOT_FLAG_WARM_UPDATE;
+    s_br_buf.payload_count                       = 1;
+    s_br_buf.payload_descriptors[0].type         = BOOT_PAYLOAD_WARM_UPDATE_STATE;
+    s_br_buf.payload_descriptors[0].flags        = BOOT_PAYLOAD_FLAG_VALID
+                                                 | BOOT_PAYLOAD_FLAG_RESERVED;
+    s_br_buf.payload_descriptors[0].phys_start   = 0x4000000ull;
+    s_br_buf.payload_descriptors[0].length       = 0x1000ull;
+    s_br_buf.payload_total_bytes                 = 0x1000ull;
+
+    enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
+    boot_result_t r = boot_reserved_populate_from_info(&s_br_buf, &err);
+    TEST_ASSERT_EQ((int)r,   (int)BOOT_OK,                    "warm-update with flag -> populate OK");
+    TEST_ASSERT_EQ((int)err, (int)BOOT_RESERVED_ERR_OK,       "err=OK");
+    /* Expected: boot_info + warm-update RESERVED entry = 2. */
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_count(), (unsigned long)2,
+                   "warm-update + RESERVED + flag set -> pinned");
+}
+
 static void test_boot_reserved_tpm_log_degraded_skipped(void)
 {
     /* Capability-gated retrofit regression: when BOOT_CAP_TPM_EVENT_LOG
@@ -395,6 +450,10 @@ void test_register_boot_reserved(void)
                             TEST_CAT_BOOT);
     test_suite_register_cat("boot_reserved: NULL info rejected",
                             test_boot_reserved_null_info, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_reserved: warm-update RESERVED skipped when WARM_UPDATE flag clear",
+                            test_boot_reserved_warm_update_no_flag_skipped, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_reserved: warm-update RESERVED pinned when WARM_UPDATE flag set",
+                            test_boot_reserved_warm_update_with_flag_pinned, TEST_CAT_BOOT);
     test_suite_register_cat("boot_reserved: degraded TPM caps skips reservation",
                             test_boot_reserved_tpm_log_degraded_skipped, TEST_CAT_BOOT);
     test_suite_register_cat("boot_reserved: payload count OOR still rejected with degraded caps",

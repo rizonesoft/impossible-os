@@ -464,7 +464,17 @@ boot_result_t boot_payload_validate(const struct boot_info *info,
         /* d unknown-type / unknown-flags policy. The REQUIRED flag
          * forces strict checking for forward-compatibility control:
          * a newer bootloader marking a payload REQUIRED tells this
-         * kernel "fail boot rather than silently ignoring me". */
+         * kernel "fail boot rather than silently ignoring me".
+         *
+         * Type-aware unknown-flags mask: warm-update descriptors carry
+         * continuation bits in positions 8..13 above the standard
+         * BOOT_PAYLOAD_FLAG_* family at positions 0..3. For a REQUIRED
+         * BOOT_PAYLOAD_WARM_UPDATE_STATE descriptor the legal mask is
+         * BOOT_PAYLOAD_FLAG_MASK_KNOWN | BOOT_WARM_UPDATE_CONT_MASK_KNOWN.
+         * Without this, a producer that published a REQUIRED warm-update
+         * descriptor with a known continuation bit fataled here before
+         * the warm-update fail-closed COLD_FALLBACK path could run
+         * (Codex 2026-04-30 H2 finding). */
         if (d->flags & BOOT_PAYLOAD_FLAG_REQUIRED) {
             if (!type_is_known(d->type)) {
                 payload_log_failure(i, BOOT_PAYLOAD_ERR_UNKNOWN_REQUIRED, d);
@@ -472,7 +482,11 @@ boot_result_t boot_payload_validate(const struct boot_info *info,
                     *out_error = BOOT_PAYLOAD_ERR_UNKNOWN_REQUIRED;
                 return BOOT_FATAL;
             }
-            if ((d->flags & ~(uint32_t)BOOT_PAYLOAD_FLAG_MASK_KNOWN) != 0u) {
+            uint32_t legal_flag_mask = (uint32_t)BOOT_PAYLOAD_FLAG_MASK_KNOWN;
+            if (d->type == (uint32_t)BOOT_PAYLOAD_WARM_UPDATE_STATE) {
+                legal_flag_mask |= (uint32_t)BOOT_WARM_UPDATE_CONT_MASK_KNOWN;
+            }
+            if ((d->flags & ~legal_flag_mask) != 0u) {
                 payload_log_failure(i, BOOT_PAYLOAD_ERR_UNKNOWN_FLAGS, d);
                 if (out_error != (enum boot_payload_error *)0)
                     *out_error = BOOT_PAYLOAD_ERR_UNKNOWN_FLAGS;

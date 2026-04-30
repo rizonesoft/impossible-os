@@ -731,6 +731,57 @@ static void test_payload_descriptor_overlap_partial(void)
                    "err=DESCRIPTOR_OVERLAP partial");
 }
 
+/* Codex 2026-04-30 H2 regression: REQUIRED warm-update descriptor with
+ * a known continuation bit (positions 8..13) must NOT trigger the
+ * payload-validator unknown-flags fatal -- the validator's REQUIRED +
+ * unknown-flags mask is type-aware and accepts
+ * BOOT_WARM_UPDATE_CONT_MASK_KNOWN bits in addition to
+ * BOOT_PAYLOAD_FLAG_MASK_KNOWN for type =
+ * BOOT_PAYLOAD_WARM_UPDATE_STATE descriptors. */
+static void test_payload_warm_update_required_with_cont_accepted(void)
+{
+    enum boot_payload_error err = BOOT_PAYLOAD_ERR_OK;
+
+    bi_payload_zero();
+    s_test_buf.payload_count = 1;
+    s_test_buf.payload_descriptors[0].type       = BOOT_PAYLOAD_WARM_UPDATE_STATE;
+    s_test_buf.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID
+                                                 | BOOT_PAYLOAD_FLAG_RESERVED
+                                                 | BOOT_PAYLOAD_FLAG_REQUIRED
+                                                 | BOOT_WARM_UPDATE_CONT_PAGE_TABLES;
+    s_test_buf.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
+    s_test_buf.payload_descriptors[0].length     = SAFE_PAYLOAD_LEN;
+    s_test_buf.payload_total_bytes               = SAFE_PAYLOAD_LEN;
+
+    TEST_ASSERT_EQ(boot_payload_validate(&s_test_buf, &err), BOOT_OK,
+                   "REQUIRED warm-update + known cont bit accepted (type-aware mask)");
+    TEST_ASSERT_EQ((int)err, (int)BOOT_PAYLOAD_ERR_OK, "err=OK");
+}
+
+static void test_payload_warm_update_required_with_unknown_rejected(void)
+{
+    TEST_KLOG_SUPPRESS("boot");
+    enum boot_payload_error err = BOOT_PAYLOAD_ERR_OK;
+
+    bi_payload_zero();
+    s_test_buf.payload_count = 1;
+    s_test_buf.payload_descriptors[0].type       = BOOT_PAYLOAD_WARM_UPDATE_STATE;
+    /* Bit 14: outside both BOOT_PAYLOAD_FLAG_MASK_KNOWN and
+     * BOOT_WARM_UPDATE_CONT_MASK_KNOWN; must still trip the
+     * REQUIRED+unknown-flags check. */
+    s_test_buf.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID
+                                                 | BOOT_PAYLOAD_FLAG_RESERVED
+                                                 | BOOT_PAYLOAD_FLAG_REQUIRED
+                                                 | (1u << 14);
+    s_test_buf.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
+    s_test_buf.payload_descriptors[0].length     = SAFE_PAYLOAD_LEN;
+    s_test_buf.payload_total_bytes               = SAFE_PAYLOAD_LEN;
+
+    TEST_ASSERT_EQ(boot_payload_validate(&s_test_buf, &err), BOOT_FATAL,
+                   "REQUIRED warm-update + truly unknown bit still rejected");
+    TEST_ASSERT_EQ((int)err, (int)BOOT_PAYLOAD_ERR_UNKNOWN_FLAGS, "err=UNKNOWN_FLAGS");
+}
+
 static void test_payload_missing_valid_flag(void)
 {
     TEST_KLOG_SUPPRESS("boot");
@@ -1377,6 +1428,10 @@ void test_register_boot_info(void)
                             test_payload_descriptor_overlap_partial, TEST_CAT_BOOT);
     test_suite_register_cat("boot_payload: descriptor adjacent ok",
                             test_payload_descriptor_overlap_adjacent_ok, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_payload: REQUIRED warm-update + known cont bit accepted",
+                            test_payload_warm_update_required_with_cont_accepted, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_payload: REQUIRED warm-update + truly unknown bit rejected",
+                            test_payload_warm_update_required_with_unknown_rejected, TEST_CAT_BOOT);
     test_suite_register_cat("boot_payload: missing FLAG_VALID",
                             test_payload_missing_valid_flag, TEST_CAT_BOOT);
     test_suite_register_cat("boot_payload: warm-update cold-fallback shape",

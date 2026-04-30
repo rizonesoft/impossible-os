@@ -288,6 +288,8 @@ boot_result_t boot_reserved_populate_from_info(const struct boot_info *info,
         return BOOT_FATAL;
     }
     if ((info->caps_present & BOOT_CAP_PAYLOAD_DESCRIPTORS) != 0u) {
+        int warm_update_flag = (int)((info->flags
+                                      & BOOT_FLAG_WARM_UPDATE) != 0u);
         uint32_t i;
         for (i = 0u; i < info->payload_count; i++) {
             const struct boot_payload_desc *d = &info->payload_descriptors[i];
@@ -295,6 +297,21 @@ boot_result_t boot_reserved_populate_from_info(const struct boot_info *info,
                 continue;
             if (d->length == 0u)
                 continue;
+            /* Warm-update descriptor reservation is gated on the global
+             * BOOT_FLAG_WARM_UPDATE handoff signal in addition to the
+             * caps_present bit. Without the flag, a stale or malformed
+             * type-9 descriptor with FLAG_RESERVED would otherwise pin
+             * arbitrary payload pages here -- exactly the failure mode
+             * the warm-update consume cold-fallback path tries to
+             * prevent. (Codex 2026-04-30 re-adversarial finding.) */
+            if (d->type == (uint32_t)BOOT_PAYLOAD_WARM_UPDATE_STATE
+                && !warm_update_flag) {
+                klog(LOG_WARN, "mm",
+                     "boot_reserved: skip warm-update payload[%u] "
+                     "(BOOT_FLAG_WARM_UPDATE clear; cold init proceeds)",
+                     (uint64_t)i);
+                continue;
+            }
             if (add_or_fatal(d->phys_start, d->length,
                              BOOT_RESERVED_PAYLOAD, i, out_err) != BOOT_OK)
                 return BOOT_FATAL;

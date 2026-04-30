@@ -157,42 +157,14 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
                  (uint64_t)g_boot_info.payload_total_bytes);
     }
 
-    /* Warm-kernel-update consume: scan the typed-payload-descriptor
-     * array for BOOT_PAYLOAD_WARM_UPDATE_STATE entries. Each
-     * descriptor gets validated; ACCEPTED means the caller (runtime
-     * live-update owned by todo/03-memory-concurrency/TODO-11) may
-     * proceed with reattach. COLD_FALLBACK on any rejection -- the
-     * validator logged the reason, the caller logs the decision,
-     * boot continues with cold init for the subsystems that would
-     * otherwise have continued. Today the runtime consumer is not
-     * wired so we only exercise the validator + log; the future
-     * reattach path in the runtime TODO will act on the ACCEPTED
-     * result. */
-    {
-        uint32_t j;
-        for (j = 0u; j < g_boot_info.payload_count; j++) {
-            const struct boot_payload_desc *d = &g_boot_info.payload_descriptors[j];
-            if (d->type != (uint32_t)BOOT_PAYLOAD_WARM_UPDATE_STATE)
-                continue;
-            enum boot_warm_update_error werr = BOOT_WARM_UPDATE_ERR_OK;
-            enum boot_warm_update_decision wd =
-                boot_warm_update_consume(d, &werr);
-            if (wd == BOOT_WARM_UPDATE_ACCEPTED) {
-                klog(LOG_INFO, "boot",
-                     "boot_warm_update: descriptor[%u] ACCEPTED; reattach owned by runtime TODO",
-                     (uint64_t)j);
-            } else {
-                klog(LOG_INFO, "boot",
-                     "boot_warm_update: descriptor[%u] COLD_FALLBACK (err=%u); proceeding with cold init",
-                     (uint64_t)j, (uint64_t)werr);
-            }
-        }
-    }
-
     /* Capability negotiation: reject stale-kernel-on-newer-loader
      * (unknown required bits) and producer contradictions (required &
      * degraded, present & degraded) before any capability-gated
-     * subsystem inspects caps_present / caps_degraded. */
+     * subsystem inspects caps_present / caps_degraded. MUST run BEFORE
+     * warm-update consume below: the consume path is gated on
+     * BOOT_CAP_PAYLOAD_DESCRIPTORS, and Codex 2026-04-30 review caught
+     * the prior ordering letting warm-update descriptors get ACCEPTED
+     * before capability validation ran. */
     {
         enum boot_caps_error cerr = BOOT_CAPS_ERR_OK;
         if (boot_caps_validate(&g_boot_info, &cerr) != BOOT_OK) {
@@ -200,6 +172,75 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
                  "boot_caps_validate failed (err=%u); halting before capability consumers run",
                  (uint64_t)cerr);
             boot_halt("boot_caps: capability negotiation invariants violated");
+        }
+    }
+
+    /* Warm-kernel-update consume: scan the typed-payload-descriptor
+     * array for BOOT_PAYLOAD_WARM_UPDATE_STATE entries. Each descriptor
+     * gets validated; ACCEPTED means the caller (runtime live-update
+     * owned by todo/03-memory-concurrency/TODO-11) may proceed with
+     * reattach. COLD_FALLBACK on any rejection -- the validator logged
+     * the reason, the caller logs the decision, boot continues with
+     * cold init.
+     *
+     * Gated on BOOT_CAP_PAYLOAD_DESCRIPTORS (capability negotiation
+     * said the descriptor array is populated + validated) AND on
+     * BOOT_FLAG_WARM_UPDATE (the global handoff signal). Codex review
+     * 2026-04-30 found two ordering / gating bugs:
+     *   H1 (ordering): consume ran BEFORE boot_caps_validate; a
+     *       producer with caps_present clear could ship a type-9
+     *       descriptor and the boot_reserved.c reservation pass
+     *       (which IS gated on caps_present) would skip the range,
+     *       returning preserved memory to PMM.
+     *   H3 (flag invariant): consume ignored BOOT_FLAG_WARM_UPDATE
+     *       entirely; a stale producer's type-9 descriptor got
+     *       ACCEPTED even though the boot-wide handoff flag never
+     *       announced a warm update, weakening the closed-mask ABI. */
+    {
+        int caps_ok = (int)((g_boot_info.caps_present
+                             & BOOT_CAP_PAYLOAD_DESCRIPTORS) != 0u);
+        int flag_set = (int)((g_boot_info.flags
+                              & BOOT_FLAG_WARM_UPDATE) != 0u);
+        uint32_t j;
+        uint32_t accepted_count = 0u;
+        for (j = 0u; j < g_boot_info.payload_count; j++) {
+            const struct boot_payload_desc *d = &g_boot_info.payload_descriptors[j];
+            if (d->type != (uint32_t)BOOT_PAYLOAD_WARM_UPDATE_STATE)
+                continue;
+            if (!caps_ok || !flag_set) {
+                /* Missing precondition: cold-fallback the descriptor
+                 * without invoking the warm-update validator. The
+                 * descriptor may be stale state from an earlier image;
+                 * treating it as ACCEPTED would leave PMM-reservation
+                 * skew (H1) or accept handoff data with no global
+                 * signal (H3). */
+                klog(LOG_WARN, "boot",
+                     "boot_warm_update: descriptor[%u] COLD_FALLBACK "
+                     "(caps_payload=%u flag_warm_update=%u; both required)",
+                     (uint64_t)j, (uint64_t)caps_ok, (uint64_t)flag_set);
+                continue;
+            }
+            enum boot_warm_update_error werr = BOOT_WARM_UPDATE_ERR_OK;
+            enum boot_warm_update_decision wd =
+                boot_warm_update_consume(d, &werr);
+            if (wd == BOOT_WARM_UPDATE_ACCEPTED) {
+                klog(LOG_INFO, "boot",
+                     "boot_warm_update: descriptor[%u] ACCEPTED; reattach owned by runtime TODO",
+                     (uint64_t)j);
+                accepted_count++;
+            } else {
+                klog(LOG_INFO, "boot",
+                     "boot_warm_update: descriptor[%u] COLD_FALLBACK (err=%u); proceeding with cold init",
+                     (uint64_t)j, (uint64_t)werr);
+            }
+        }
+        /* Inverse invariant: BOOT_FLAG_WARM_UPDATE set but no descriptor
+         * accepted. Stale flag from a producer that never published the
+         * descriptor (or all descriptors fell back). Log for audit. */
+        if (flag_set && accepted_count == 0u) {
+            klog(LOG_WARN, "boot",
+                 "boot_warm_update: BOOT_FLAG_WARM_UPDATE set but no "
+                 "descriptor accepted; cold init proceeds");
         }
     }
 
