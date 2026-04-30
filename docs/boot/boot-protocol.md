@@ -114,15 +114,17 @@ The kernel never trusts a pointer until the matching validator has run. `boot_in
 
 ## 4. Minimum Supported Handoff
 
-A third-party bootloader that wants to invoke Impossible OS must populate the fields below at `0x10000` BEFORE jumping to the kernel ELF entry point. Anything not in this table can be left zero; the kernel's validators accept zero as "absent" and reject only structurally-invalid values.
+A third-party bootloader that wants to invoke Impossible OS must populate the fields below at `0x10000` BEFORE jumping to the kernel ELF entry point. Anything not in these tables can be left zero (the kernel's validators accept zero as "absent" and reject only structurally-invalid values), with one important exception below: the capability classification in `caps_present` / `caps_degraded` is a Phase 0 hard requirement for v7+ handoffs because `boot_caps_validate` halts on any known capability bit left unclassified.
 
-### Required (kernel halts with `boot_version` fatal if wrong)
+### Required (kernel halts via Phase 0 validator if wrong)
 
 | Field | Type | Requirement |
 |---|---|---|
 | `header.magic` | `uint32_t` | Must equal `BOOT_INFO_MAGIC = 0x49504F53`. |
 | `header.version` | `uint16_t` | Must equal the `BOOT_INFO_VERSION` the kernel was built against. |
 | `header.size` | `uint16_t` | Must equal `sizeof(struct boot_info)` for that version. |
+| `caps_present`, `caps_degraded` (v7+) | `uint64_t` each | Every bit in `BOOT_CAP_MASK_KNOWN` MUST be classified as present (the loader populated the underlying field) OR degraded (the loader could not populate it and the kernel must use a fallback). A bit set in NEITHER halts via `boot_caps_validate`. A bit set in BOTH also halts. `caps_required` may be zero; if non-zero, every required bit must be in `caps_present`. The native UEFI loader at `src/boot/uefi/bootx64.c` populates this block explicitly; alternate adapters that leave it zero will halt regardless of the rest of their handoff. |
+| `esp_size_mb`, `esp_filesystem_type`, `esp_type_guid_valid` (v11+) | `uint32_t`, `uint8_t`, `uint8_t` | Bootloader's pre-load ESP integrity attestation. The native UEFI loader populates these via `esp_integrity_check()` before `load_kernel()`. The kernel currently logs them but does not halt on zero today; future attestation consumers WILL halt on `esp_type_guid_valid=0`, so adapters SHOULD populate honestly even if the values are best-effort. |
 
 ### Required for full UEFI parity (degrades cleanly if absent)
 
@@ -166,7 +168,7 @@ The canonical bootloader is [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/boot
 | Adapter | Required payloads | Required capability flags | Required provenance fields | Supported |
 |---|---|---|---|---|
 | **Native UEFI (`BOOTX64.EFI`)** | All of `mmap`, `fb`, `uefi_runtime_services` | none (all v6+ features) | `boot_device_*`, `uefi_boot_*`, `timing.*`, `config` | ✅ Canonical |
-| **Multiboot2 legacy path** | `mmap` only | capability negotiation (future) would apply once it ships | none required today (Multiboot2 path does NOT populate `timing.*` fields; timeline starts at kernel entry). | ⚠️ Parses Multiboot2 tags in [`src/kernel/multiboot2_parse.c`](../../src/kernel/multiboot2_parse.c); fills what it can, leaves everything else zero. |
+| **Multiboot2 legacy path** | `mmap` only | **NOT YET POPULATED** -- capability classification (caps_present / caps_degraded) is required by Phase 0 since v7 but the Multiboot2 parser leaves these zero today, so any boot via this path halts via `boot_caps_validate` until the parser is extended | none required today (Multiboot2 path does NOT populate `timing.*` fields; timeline starts at kernel entry). | ⛔ Currently UNSUPPORTED. Parses Multiboot2 tags in [`src/kernel/multiboot2_parse.c`](../../src/kernel/multiboot2_parse.c); fills what it can but leaves caps words zero, which is rejected. Tracked in [Alternate Boot Protocols TODO-08](../../todo/01-boot-platform/TODO-08-alternate-boot-protocols.md). |
 | **PXE / HTTP boot** | `payload_descriptors[]` with `BOOT_PAYLOAD_NETWORK_CONFIG` | reserved for [Network PXE/HTTP boot](../../todo/01-boot-platform/TODO-25-network-pxe-http-boot.md) | [Network provenance section](../../todo/01-boot-platform/TODO-25-network-pxe-http-boot.md#6-boot_info-network-provenance) | ⬜ Planned; alternate adapters should target the [Alternate Boot Protocols](../../todo/01-boot-platform/TODO-08-alternate-boot-protocols.md) TODO for this path. |
 | **Secure Launch (TrenchBoot / TXT / SKINIT)** | `payload_descriptors[]` with `BOOT_PAYLOAD_TPM_EVENT_LOG` | reserved for `drtm_entry_pcr` etc. (see [Attestation Report Export](../../todo/01-boot-platform/TODO-13-tpm-measured-boot-attestation.md#9-attestation-report-export)) | DRTM measurement metadata | ⬜ Planned; forward-compat fields are reserved in the attestation report. |
 | **Warm kernel update (KHO-style)** | `payload_descriptors[]` preserving in-memory state | [Warm kernel update handoff ABI](../../todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md#14-warm-kernel-update-handoff-abi) slot | KHO state region | ⬜ ABI reserved. |
@@ -177,7 +179,7 @@ Every adapter column above references the owning TODO by capability name and anc
 - **Payload drift** (overlapping / wrapping / unknown-required payload descriptors): the kernel halts via `boot_payload_validate` with a per-descriptor error class.
 - **Optional field absence** (framebuffer, runtime services, USB state, TPM log, payloads): the kernel degrades per subsystem with a klog warning. The Multiboot2 row above boots via this path with every optional field zeroed.
 
-An adapter that emits a well-formed header + mmap but zeros everything else is a supported degraded boot; the "fail closed" behavior is scoped to the header-and-payload-integrity validators, not to the full feature surface.
+An adapter that emits a well-formed header + mmap + classified `caps_present`/`caps_degraded` but zeros everything else is a supported degraded boot; the "fail closed" behavior is scoped to the header / capability / payload-integrity validators (header drift, unclassified caps bits, overlapping payloads) and NOT to the full feature surface (framebuffer, runtime services, USB state, TPM log -- each degrades independently with a klog warning when its capability bit is set degraded).
 
 ## 7. See Also
 
