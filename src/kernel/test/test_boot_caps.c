@@ -194,18 +194,61 @@ static void test_boot_caps_mask_known_is_stable(void)
     TEST_ASSERT_EQ((uint64_t)BOOT_CAP_MASK_KNOWN, expected, "BOOT_CAP_MASK_KNOWN coverage");
 }
 
+/* Tiny strcmp -- freestanding kernel has no <string.h>. Returns 1 on
+ * match, 0 on mismatch; assumes both args are NUL-terminated. */
+static int boot_caps_test_streq(const char *a, const char *b)
+{
+    if (a == (const char *)0 || b == (const char *)0)
+        return 0;
+    while (*a == *b) {
+        if (*a == '\0')
+            return 1;
+        a++;
+        b++;
+    }
+    return 0;
+}
+
 static void test_boot_caps_bit_name(void)
 {
-    /* Smoke: the rendering helper returns a non-"reserved" string for
-     * every known single-bit value. */
-    const char *s;
-    s = boot_caps_bit_name(BOOT_CAP_PAYLOAD_DESCRIPTORS);
-    TEST_ASSERT_NEQ((uint64_t)(uintptr_t)s, 0u, "bit name non-null (payload)");
-    s = boot_caps_bit_name(BOOT_CAP_RUNTIME_SERVICES);
-    TEST_ASSERT_NEQ((uint64_t)(uintptr_t)s, 0u, "bit name non-null (runtime)");
-    /* Unknown bit -> "reserved" literal (non-null). */
-    s = boot_caps_bit_name(1ull << 63);
-    TEST_ASSERT_NEQ((uint64_t)(uintptr_t)s, 0u, "bit name non-null (reserved)");
+    /* Table-driven: every known BOOT_CAP_* bit must return its exact
+     * stringified macro name (driven by the same BOOT_CAP_LIST X-macro
+     * that defines BOOT_CAP_MASK_KNOWN). A future bit added to the
+     * header that lacks a switch case in boot_caps_bit_name() falls
+     * through to "reserved" and trips this test. */
+    struct { uint64_t bit; const char *name; } cases[] = {
+#define BOOT_CAP_TEST_ROW(name, bit) { BOOT_CAP_##name, #name },
+        BOOT_CAP_LIST(BOOT_CAP_TEST_ROW)
+#undef BOOT_CAP_TEST_ROW
+    };
+    uint32_t n = (uint32_t)(sizeof(cases) / sizeof(cases[0]));
+    uint32_t i;
+    for (i = 0u; i < n; i++) {
+        const char *got = boot_caps_bit_name(cases[i].bit);
+        TEST_ASSERT_NEQ((uint64_t)(uintptr_t)got, 0u,
+                        "bit name non-null");
+        TEST_ASSERT_EQ((uint64_t)boot_caps_test_streq(got, cases[i].name),
+                       1u,
+                       "bit name exact match (every BOOT_CAP_LIST entry)");
+    }
+    /* Sentinel: reserved bit returns the documented literal. */
+    const char *r = boot_caps_bit_name(1ull << 63);
+    TEST_ASSERT_EQ((uint64_t)boot_caps_test_streq(r, "reserved"),
+                   1u, "reserved bit returns 'reserved'");
+}
+
+static void test_boot_caps_mask_known_matches_list(void)
+{
+    /* Independent check: BOOT_CAP_MASK_KNOWN must equal the OR of every
+     * BOOT_CAP_LIST entry (computed inline so a future divergence
+     * between the manual mask and the list is caught even if both are
+     * mistakenly edited together). */
+    uint64_t expected = 0u;
+#define BOOT_CAP_TEST_OR(name, bit) expected |= BOOT_CAP_##name;
+    BOOT_CAP_LIST(BOOT_CAP_TEST_OR)
+#undef BOOT_CAP_TEST_OR
+    TEST_ASSERT_EQ((uint64_t)BOOT_CAP_MASK_KNOWN, (uint64_t)expected,
+                   "MASK_KNOWN equals OR of BOOT_CAP_LIST entries");
 }
 
 /* The require/mark_present helpers operate on g_boot_info directly,
@@ -302,8 +345,10 @@ void test_register_boot_caps(void)
                             test_boot_caps_unknown_present_tolerated, TEST_CAT_BOOT);
     test_suite_register_cat("boot_caps: BOOT_CAP_MASK_KNOWN coverage",
                             test_boot_caps_mask_known_is_stable, TEST_CAT_BOOT);
-    test_suite_register_cat("boot_caps: bit name helper",
+    test_suite_register_cat("boot_caps: bit name helper (table-driven all known)",
                             test_boot_caps_bit_name, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_caps: MASK_KNOWN equals BOOT_CAP_LIST OR",
+                            test_boot_caps_mask_known_matches_list, TEST_CAT_BOOT);
     test_suite_register_cat("boot_caps: require() basics",
                             test_boot_caps_require_basics, TEST_CAT_BOOT);
     test_suite_register_cat("boot_caps: mark_present promotes degraded",

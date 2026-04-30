@@ -560,22 +560,50 @@ const char *boot_reason_name(uint32_t reason);
  *   - Unknown bits in `caps_present` or `caps_degraded` are SILENTLY
  *     IGNORED (forward compatibility; unknown-optional policy).
  */
-#define BOOT_CAP_PAYLOAD_DESCRIPTORS  (1ull << 0)  /* typed payload descriptor array populated + validated */
-#define BOOT_CAP_RUNTIME_SERVICES     (1ull << 1)  /* uefi_runtime_services + uefi_rt_available set */
-#define BOOT_CAP_SECURE_BOOT_STATE    (1ull << 2)  /* secure_boot_enabled reflects firmware state */
-#define BOOT_CAP_TPM_EVENT_LOG        (1ull << 3)  /* tpm_event_log populated from EFI_TCG2_PROTOCOL */
-#define BOOT_CAP_USB_HANDOVER         (1ull << 4)  /* usb_controller.active + DMA state handed off */
-#define BOOT_CAP_MEDIA_ROLE           (1ull << 5)  /* boot_device classification + removable-media flags */
-#define BOOT_CAP_NETWORK_PROVENANCE   (1ull << 6)  /* reserved for network-boot provenance */
-#define BOOT_CAP_RESUME_METADATA      (1ull << 7)  /* reserved for hibernation/resume handoff */
-#define BOOT_CAP_ALT_PROTOCOL_ADAPTER (1ull << 8)  /* 1 = non-native-UEFI adapter (Multiboot2/etc.) */
+/* Capability bit list -- the SOLE source of truth for known BOOT_CAP_*
+ * names AND their bit positions. The X-macro generates:
+ *   - the BOOT_CAP_* enum constants (mask values used by every consumer)
+ *   - BOOT_CAP_MASK_KNOWN (the "known" universe the validator enforces)
+ *   - the bit-name switch arms in boot_caps.c
+ *   - the table-driven coverage test in test_boot_caps.c
+ *
+ * Adding a new capability is one edit: add an `X(NAME, bit)` row here
+ * and a switch case in boot_caps_bit_name() (a missing case surfaces
+ * immediately via the table-driven test). There is no separate
+ * `#define BOOT_CAP_NAME` line to forget -- the enum constant is
+ * generated from this list. (Codex 2026-04-30 re-adversarial Round 2
+ * finding: parallel #define + list scheme still permits drift if a
+ * developer adds a #define without updating the list.)
+ *
+ * Type note: enum constants are `int` per C99; values up to (1u<<31)
+ * fit. The 9 bits in use today are well under that. Future bits
+ * beyond 30 will need either `static const uint64_t` (loses
+ * case-label usability) or a `1ull << bit` cast at use site. The
+ * validator and consumers always widen to uint64_t at use time
+ * (`info->caps_present & BOOT_CAP_FOO`). */
+#define BOOT_CAP_LIST(X) \
+    X(PAYLOAD_DESCRIPTORS,  0)  /* typed payload descriptor array populated + validated */ \
+    X(RUNTIME_SERVICES,     1)  /* uefi_runtime_services + uefi_rt_available set */         \
+    X(SECURE_BOOT_STATE,    2)  /* secure_boot_enabled reflects firmware state */           \
+    X(TPM_EVENT_LOG,        3)  /* tpm_event_log populated from EFI_TCG2_PROTOCOL */        \
+    X(USB_HANDOVER,         4)  /* usb_controller.active + DMA state handed off */          \
+    X(MEDIA_ROLE,           5)  /* boot_device classification + removable-media flags */    \
+    X(NETWORK_PROVENANCE,   6)  /* reserved for network-boot provenance */                  \
+    X(RESUME_METADATA,      7)  /* reserved for hibernation/resume handoff */               \
+    X(ALT_PROTOCOL_ADAPTER, 8)  /* 1 = non-native-UEFI adapter (Multiboot2/etc.) */
 
-#define BOOT_CAP_MASK_KNOWN \
-    (BOOT_CAP_PAYLOAD_DESCRIPTORS   | BOOT_CAP_RUNTIME_SERVICES   | \
-     BOOT_CAP_SECURE_BOOT_STATE     | BOOT_CAP_TPM_EVENT_LOG      | \
-     BOOT_CAP_USB_HANDOVER          | BOOT_CAP_MEDIA_ROLE         | \
-     BOOT_CAP_NETWORK_PROVENANCE    | BOOT_CAP_RESUME_METADATA    | \
-     BOOT_CAP_ALT_PROTOCOL_ADAPTER)
+/* Generate the BOOT_CAP_* mask constants from BOOT_CAP_LIST. Values
+ * fit in `int` for all current entries; widening to uint64_t at use
+ * time is implicit. */
+enum {
+#define BOOT_CAP__ENUM_ENT(name, bit) BOOT_CAP_##name = (1u << (bit)),
+    BOOT_CAP_LIST(BOOT_CAP__ENUM_ENT)
+#undef BOOT_CAP__ENUM_ENT
+};
+
+/* MASK_KNOWN derived from the list -- by construction cannot drift. */
+#define BOOT_CAP__OR_ENTRY(name, bit) | (1u << (bit))
+#define BOOT_CAP_MASK_KNOWN ((uint64_t)(0u BOOT_CAP_LIST(BOOT_CAP__OR_ENTRY)))
 
 enum boot_caps_error {
     BOOT_CAPS_ERR_OK                 = 0,

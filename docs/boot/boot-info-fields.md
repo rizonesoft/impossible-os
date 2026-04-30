@@ -220,6 +220,22 @@ Tri-word bitmask negotiation between bootloader and kernel. `caps_required` asse
 | `caps_present` | bootx64 | P0 | capability-gated consumers (runtime services, TPM log, USB handover, etc.) | handoff | boot-protocol-abi-handoff §11 | Unknown bits tolerated (forward compat). No bit may be set in both `caps_present` and `caps_degraded`. Every bit in `BOOT_CAP_MASK_KNOWN` must appear in `caps_present OR caps_degraded` (no unclassified known bits). |
 | `caps_degraded` | bootx64 | P0 | boot log, health orchestrator | handoff | boot-protocol-abi-handoff §11 | Unknown bits tolerated. Must not intersect `caps_required` or `caps_present`. Complements `caps_present` to cover every known bit. |
 
+#### `BOOT_CAP_*` bit catalog (v7)
+
+`BOOT_CAP_MASK_KNOWN` is the OR of every entry below; the validator's "unknown required" check rejects any `caps_required` bit outside this set, and the "every known bit must be classified" check requires each of these to appear in `caps_present` OR `caps_degraded`. The list is the single source of truth -- it drives `BOOT_CAP_MASK_KNOWN` in [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h), the bit-name switch in [`src/kernel/main/boot_caps.c`](../../src/kernel/main/boot_caps.c), the table-driven test in [`src/kernel/test/test_boot_caps.c`](../../src/kernel/test/test_boot_caps.c), and this catalog. Adding a new bit requires updating all four.
+
+| Bit | Name (`BOOT_CAP_*` suffix) | Companion `boot_info` fields | Producer rule |
+| --- | --- | --- | --- |
+| 0 | `PAYLOAD_DESCRIPTORS` | `payload_descriptors[]`, `payload_count`, `payload_total_bytes` | `present` when array populated + validated; `degraded` if zero typed payloads delivered (legacy single-module fallback). |
+| 1 | `RUNTIME_SERVICES` | `uefi_runtime_services`, `uefi_rt_available` | `present` when ExitBootServices preserved RT pointer + variable services callable; `degraded` for non-UEFI adapters or revoked RT post-EBS. |
+| 2 | `SECURE_BOOT_STATE` | `secure_boot_enabled` | `degraded` at handoff -- bootloader cannot read the variable pre-RT; kernel reads it after `uefi_runtime_init` and calls `boot_caps_mark_present(BOOT_CAP_SECURE_BOOT_STATE)`. |
+| 3 | `TPM_EVENT_LOG` | `tpm_event_log`, `tpm_event_log_size`, `tpm_available`, `tpm_version`, `tpm_event_count` | `present` when EFI_TCG2_PROTOCOL returned a buffer; `degraded` when no TPM detected or `EFI_TCG2_PROTOCOL` unavailable. |
+| 4 | `USB_HANDOVER` | `usb_controller.active`, `usb_controller.dma_*`, `usb_devices[]` | `present` when bootloader allocated controller DMA + completed enumeration; `degraded` when no xHCI / EHCI handed off (UEFI-only USB stack remains, but kernel cannot resume from that). |
+| 5 | `MEDIA_ROLE` | `boot_device.*`, removable / fixed media flags | `present` when boot media classification + identity captured; `degraded` for adapters that cannot supply the path device. |
+| 6 | `NETWORK_PROVENANCE` | reserved for PXE / HTTPboot / iSCSI metadata | always `degraded` today (no network-boot producer); reserved for the future PXE adapter. |
+| 7 | `RESUME_METADATA` | reserved for hibernation / S4 resume handoff | always `degraded` today (no resume producer); reserved for the future suspend-to-disk path. |
+| 8 | `ALT_PROTOCOL_ADAPTER` | -- (informational) | `present` iff the producer is a non-native-UEFI adapter (Multiboot2 GRUB, etc.); native UEFI bootloader reports it `degraded`. Used by validator to log "adapter=alternate" vs "adapter=native-UEFI" on degraded summaries. |
+
 ### Boot-path provenance
 
 One shared decision record answering "what path did this boot take and why". Consumers (HKLM\SYSTEM\Boot\Decision populator, BlackBox transcription, recovery orchestrator, attestation narrative) read these four fields BEFORE inspecting per-path descriptors (recovery image, resume metadata, network provenance) so they know which descriptor to trust. Validator: [`boot_decision_validate`](../../src/kernel/main/boot_decision.c) wired from `boot_hw.c` after `boot_caps_validate`. Bumping any enum value or flag bit requires a `BOOT_INFO_VERSION` bump.

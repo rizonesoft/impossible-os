@@ -34,19 +34,20 @@
 #include "kernel/boot_info.h"
 #include "kernel/klog.h"
 
+/* Switch arms generated from BOOT_CAP_LIST so adding a new bit to the
+ * header's BOOT_CAP_LIST automatically picks up here -- the X-macro
+ * stringifies each name (e.g. PAYLOAD_DESCRIPTORS becomes
+ * "PAYLOAD_DESCRIPTORS"). Operators reading klog see the uppercase
+ * macro name; the table-driven test asserts exact string equality so
+ * a future rename in the header surfaces immediately. */
+#define BOOT_CAP_NAME_CASE(name, bit) \
+    case BOOT_CAP_##name: return #name;
+
 const char *boot_caps_bit_name(uint64_t cap_bit)
 {
     switch (cap_bit) {
-    case BOOT_CAP_PAYLOAD_DESCRIPTORS:  return "payload_descriptors";
-    case BOOT_CAP_RUNTIME_SERVICES:     return "runtime_services";
-    case BOOT_CAP_SECURE_BOOT_STATE:    return "secure_boot_state";
-    case BOOT_CAP_TPM_EVENT_LOG:        return "tpm_event_log";
-    case BOOT_CAP_USB_HANDOVER:         return "usb_handover";
-    case BOOT_CAP_MEDIA_ROLE:           return "media_role";
-    case BOOT_CAP_NETWORK_PROVENANCE:   return "network_provenance";
-    case BOOT_CAP_RESUME_METADATA:      return "resume_metadata";
-    case BOOT_CAP_ALT_PROTOCOL_ADAPTER: return "alt_protocol_adapter";
-    default:                            return "reserved";
+    BOOT_CAP_LIST(BOOT_CAP_NAME_CASE)
+    default: return "reserved";
     }
 }
 
