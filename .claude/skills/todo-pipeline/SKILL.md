@@ -15,7 +15,7 @@ description: Run the 3-stage TODO preparation pipeline -- validate structure, ru
 
 ```
 Stage 1: /validate-todo-file     -- structural cleanup
-Stage 2: /gap-analysis-todo      -- Win11/Linux research, fill gaps
+Stage 2: /gap-audit-todo         -- Win11/Linux research, fill gaps (mandatory Codex red-team via /codex-gap-audit)
 Stage 3: /validate-todo-file     -- sanity check after edits
 ```
 
@@ -34,7 +34,7 @@ Implementation of individual sections is manual (`/implement-todo-section §N`) 
 ### Stage 2 -- Gap Analysis
 
 6. Announce: `"Stage 2/3: Running gap analysis (Win11/Linux research)..."`
-7. Invoke the `gap-analysis-todo` skill on the target file.
+7. Invoke the `gap-audit-todo` skill on the target file. Its Phase 3.5 dispatches `codex-gap-audit` as a mandatory secondary red-team pass before turning the inventory into TODO edits; the wrapping pipeline does not need to invoke that skill directly.
 8. Let it run to completion -- web research, feature inventory, missing section creation, cross-TODO overlap scan, code-truth audit.
 9. After completion, summarize:
    - How many new sections were added

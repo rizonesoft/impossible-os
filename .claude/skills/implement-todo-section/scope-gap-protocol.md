@@ -167,7 +167,7 @@ The PS and TXT handlers are written inline. A new `[x]` item is added: `- [x] Sc
 
 ## A.5.1 Dedup Sweep (Mandatory before Branch C)
 
-Before Branch C creates a new TODO file, run this sweep. Time budget: ~30 seconds. If it takes longer, escalate to the `gap-analysis-todo` skill instead.
+Before Branch C creates a new TODO file, run this sweep. Time budget: ~30 seconds. If it takes longer, escalate to the `gap-audit-todo` skill instead.
 
 ### Steps
 

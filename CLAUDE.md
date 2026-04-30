@@ -184,7 +184,7 @@ Driver and module formats are tracked separately in the [kernel module system TO
 
 ## Model Roles
 
-Use the strongest available Opus-class model for implementation and judgment-heavy work such as `implement-todo-section`, `review-todo-section`, `create-todo`, `gap-analysis-todo`, `quality-review-section`, and design-heavy roadmap shaping. Keep Codex and GPT-5.4 style external review passes for adversarial review, consistency audit, and performance review.
+Use the strongest available Opus-class model for implementation and judgment-heavy work such as `implement-todo-section`, `review-todo-section`, `create-todo`, `gap-audit-todo`, `quality-review-section`, and design-heavy roadmap shaping. Keep Codex and GPT-5.4 style external review passes for adversarial review, consistency audit, and performance review.
 
 External review does not replace self-review. The agent must always perform its own integration-level check for completeness, polish, regressions, parity gaps, and ownerless adjacent work.
 
@@ -235,7 +235,8 @@ Claude Code skills live in `.claude/skills/`. They auto-load when Claude judges 
 | `/diagnose-serial-log` | Full serial-log audit (crashes / races / leaks / perf / drift) |
 | `/debug-session` | Structured debug session with rubber-duck validation |
 | `/todo-pipeline` | 3-stage TODO prep (validate -> gap analysis -> validate) |
-| `/gap-analysis-todo` | Gap analysis vs Win11/Linux parity + cross-TODO overlap |
+| `/gap-audit-todo` | Gap audit vs Win11/Linux parity + cross-TODO overlap (mandatory secondary Codex pass via `codex-gap-audit`) |
+| `/codex-gap-audit` | Codex red-team of a TODO gap-audit inventory (mandatory in `gap-audit-todo` Phase 3.5) |
 | `/codex-design-review` | Codex pre-implementation design review |
 | `/codex-review-todo` | Codex adversarial review of all implemented sections in a TODO |
 | `/codex-adversarial-review-section` | Codex adversarial review for a single section (up to 3 rounds) |

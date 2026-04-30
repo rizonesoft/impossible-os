@@ -14,9 +14,9 @@ The legacy direct-node form (`node ".../codex-companion.mjs" adversarial-review 
 
 **Multi-line dispatches are supported.** A `node ".../codex-companion.mjs" \<NL>    adversarial-review '<prompt>'` shape (typed verbatim or pulled from a docs example with backslash line-continuation) classifies identically to its single-line equivalent; the helper preprocesses `\<newline>[ \t]*` to whitespace before tokenizing.
 
-## The 7 canonical kinds
+## The 8 canonical kinds
 
-| Marker                   | Skill / context                       | Step binding (implement-todo-section / review-todo-section)        |
+| Marker                   | Skill / context                       | Step binding (implement-todo-section / review-todo-section / gap-audit-todo) |
 | ------------------------ | ------------------------------------- | ------------------------------------------------------------------ |
 | `design`                 | `codex-design-review`                 | implement step 4                                                   |
 | `adversarial-impl`       | implementation-time adversarial pass  | implement step 13 (alternative to `adversarial`)                   |
@@ -25,6 +25,7 @@ The legacy direct-node form (`node ".../codex-companion.mjs" adversarial-review 
 | `consistency`            | `codex-consistency-audit`             | implement step 20 (inline) / review step 8                         |
 | `perf`                   | `codex-perf-review`                   | implement step 20 (inline) / review step 8                         |
 | `re-adversarial`         | `codex-fix-review` retrigger          | implement step 20 (inline) / review step 13                        |
+| `gap-audit`              | `codex-gap-audit`                     | gap-audit-todo step 14.5 (mandatory)                               |
 
 Step numbers are recorded by `.claude/hooks/skill_step_observer.py` via the map in `.claude/hooks/skill_step_map.py`. Coverage of all 7 kinds is locked in by 8 sub-tests in the `[skill_step_observer]` block of `scripts/test-tooling.sh`.
 

@@ -20,7 +20,7 @@ The `superpowers@claude-plugins-official` plugin (5.0.7) ships 14 skills under `
 | `test-driven-development` | **Useful (per-section discipline)** | Repo's `implement-unit-tests` skill is the canonical wiring; TDD is the preferred authoring style for new test surfaces. The skill's strict red/green/refactor cycle is advisory, not mandatory -- the kernel test framework can't always run a single test in isolation pre-build. |
 | `using-git-worktrees` | **Advisory (rarely needed here)** | Single-developer repo with linear `main` history; isolation via worktree is cheap but not required. Use only when running a long-lived experiment (e.g., kernel ABI rewrite) in parallel with normal work. |
 | `finishing-a-development-branch` | **Advisory** | Useful when a feature branch needs merge/PR/cleanup decisioning. Impossible OS uses linear `main` (no PR workflow today), so the merge/PR options are usually no-ops. The cleanup checklist is occasionally useful. |
-| `brainstorming` | **Useful (advisory)** | Pre-implementation creative work. Pairs naturally with `/create-todo` or `/gap-analysis-todo`. No hook gate; agent discipline ("requirements before code"). |
+| `brainstorming` | **Useful (advisory)** | Pre-implementation creative work. Pairs naturally with `/create-todo` or `/gap-audit-todo`. No hook gate; agent discipline ("requirements before code"). |
 | `writing-skills` | **MANDATORY (when authoring or editing skills)** | Repo policy: every new or edited `.claude/skills/*/SKILL.md` walks this skill's authoring rubric. Repo also defines `docs/infrastructure/skill-authoring.md` with Impossible-OS-specific lifecycle rules (pair with `writing-skills`, do not replace). |
 
 ## Doctrine Conflicts and Suppression Rules

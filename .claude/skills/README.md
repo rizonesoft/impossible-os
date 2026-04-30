@@ -17,7 +17,8 @@ Every live skill below has a matching row in [`../../CLAUDE.md`](../../CLAUDE.md
 | [`create-todo`](create-todo/)  | Scaffold a new TODO file with canonical structure and XREFs                           |
 | [`todo-pipeline`](todo-pipeline/) | 3-stage prep: validate -> gap analysis -> validate (before implementation)         |
 | [`validate-todo-file`](validate-todo-file/) | Structural audit: numbering, XREFs, OS-Comparison, test checkpoints      |
-| [`gap-analysis-todo`](gap-analysis-todo/) | Deep Win11/Linux parity + cross-TODO overlap + code-truth audit             |
+| [`gap-audit-todo`](gap-audit-todo/) | Deep Win11/Linux parity + cross-TODO overlap + code-truth audit (mandatory secondary Codex pass) |
+| [`codex-gap-audit`](codex-gap-audit/) | Codex red-team of a TODO gap-audit inventory (mandatory in `gap-audit-todo` Phase 3.5) |
 | [`implement-todo-section`](implement-todo-section/) | Execute one section end-to-end with HARD GATE review pipeline     |
 | [`implement-ssdt-range`](implement-ssdt-range/) | Implement + wire a range of SSDT entries, mark Done `[x]`             |
 | [`implement-unit-tests`](implement-unit-tests/) | Ship a TODO's Unit Tests section end-to-end                           |

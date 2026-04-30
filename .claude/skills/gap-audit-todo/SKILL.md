@@ -1,9 +1,9 @@
 ---
-name: gap-analysis-todo
-description: Deep gap analysis of a TODO file against all overlapping TODOs -- find scope conflicts, stale sections, missing coverage, false completeness, and unclear ownership. Use after creating or majorly editing a TODO, or when planning cross-domain work.
+name: gap-audit-todo
+description: Deep gap audit of a TODO file against all overlapping TODOs -- find scope conflicts, stale sections, missing coverage, false completeness, and unclear ownership. Mandatory secondary Codex pass via codex-gap-audit red-teams the inventory before the result is accepted. Use after creating or majorly editing a TODO, or when planning cross-domain work.
 ---
 
-# Gap Analysis TODO
+# Gap Audit TODO
 
 ## Execution Discipline
 
@@ -140,6 +140,24 @@ description: Deep gap analysis of a TODO file against all overlapping TODOs -- f
     - Include factual evidence in the report for each mismatch (path + symbol + why).
 
 14. **Audit section sizes.** For each existing section, count checklist items. Flag any section with > 10 items -- split into **two new top-level `## N.` sections** (renumber), not into `N.M` sublabels inside one section.
+
+### Phase 3.5 -- Codex Gap Audit (MANDATORY -- NO EXCEPTIONS)
+
+14.5. **Dispatch `codex-gap-audit`** to red-team the gap inventory before Phase 4 turns it into TODO edits. This catches Win11/Linux features the agent missed, parity claims that don't hold under scrutiny, "covered elsewhere" XREFs that point at items which won't actually close the gap, ownerless adjacent work, and refinement opportunities the research phase glossed over.
+
+   ```bash
+   bash scripts/codex-dispatch.sh '[review-kind: gap-audit] <todo-path> <prompt with feature inventory + classified gaps>'
+   ```
+
+   Follow the [`codex-gap-audit`](../codex-gap-audit/SKILL.md) skill for the prompt template. The dispatch is mandatory in every gap-audit run -- planning text is exactly the surface where blind spots calcify into "shipped" before code starts. Skip ONLY when the gap analysis is a docs-only sweep with zero new sections / ownership changes / parity claims (rare); document the skip in the Phase 5 report.
+
+   For each finding:
+   - **Verify against actual Win11/Linux source-of-truth** (Microsoft Learn, kernel.org docs, official spec). Codex sometimes hallucinates feature names or attributes them to the wrong OS; the receiving rule (Fix / Reject with evidence / Accept-XREF) applies.
+   - **Valid finding -> fold into the inventory** before Phase 4: add the missed feature, correct the misclassified gap, retarget the dead-end XREF at a concrete `[ ]` item.
+   - **Reject false positive -> note in chat with citation** (the same kind of file:line evidence the code-review reception requires).
+   - **Out-of-scope -> Accept with concrete XREF** to the owner section/TODO, never a section title alone.
+
+   Receiving the response goes through `superpowers:receiving-code-review` like every other Codex dispatch.
 
 ### Phase 4 -- Add Missing Sections
 
