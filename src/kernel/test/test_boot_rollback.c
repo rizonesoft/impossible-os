@@ -101,6 +101,23 @@ static void test_boot_rollback_version_oor_rejected(void)
     TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_ROLLBACK_ERR_VERSION_OOR,  "err=VERSION_OOR");
 }
 
+static void test_boot_rollback_reserved_pad_nonzero_rejected(void)
+{
+    /* Codex 2026-04-30 finding: _rollback_pad must be zero. A producer
+     * publishing nonzero policy bits in the reserved field is forging
+     * future-policy data the validator does not interpret. */
+    TEST_KLOG_SUPPRESS("boot");
+    rb_zero();
+    s_rb_buf.os_loader_security_version  = 1u;
+    s_rb_buf.required_security_version   = 0u;
+    s_rb_buf._rollback_pad               = 0xCAFEBABEu;
+
+    enum boot_rollback_error err = BOOT_ROLLBACK_ERR_OK;
+    boot_result_t r = boot_rollback_validate(&s_rb_buf, &err);
+    TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_FATAL,                          "_rollback_pad nonzero -> FATAL");
+    TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_ROLLBACK_ERR_RESERVED_NONZERO,  "err=RESERVED_NONZERO");
+}
+
 static void test_boot_rollback_refusal_flag_warning(void)
 {
     TEST_KLOG_SUPPRESS("boot");
@@ -290,6 +307,8 @@ void test_register_boot_rollback(void)
                             test_boot_rollback_unknown_flag_rejected, TEST_CAT_BOOT);
     test_suite_register_cat("boot_rollback: version out-of-range rejected",
                             test_boot_rollback_version_oor_rejected, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_rollback: _rollback_pad nonzero rejected (Rule 3)",
+                            test_boot_rollback_reserved_pad_nonzero_rejected, TEST_CAT_BOOT);
     test_suite_register_cat("boot_rollback: stale REFUSAL flag warns",
                             test_boot_rollback_refusal_flag_warning, TEST_CAT_BOOT);
     test_suite_register_cat("boot_rollback: stale READ_FAILED flag accepted + WARN",

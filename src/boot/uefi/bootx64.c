@@ -7416,13 +7416,22 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
          * silently zeroing `required` (which would disable rollback
          * protection exactly at the trust boundary).
          *
-         * Special case: missing runtime services entirely (e.g.
-         * non-UEFI handoff) -- treat as EFI_NOT_FOUND; the caps
-         * negotiation ABI's RUNTIME_SERVICES degraded bit is the
-         * right place to signal that to the kernel. */
+         * BOOTX64.EFI is by definition a native UEFI bootloader; if
+         * RuntimeServices or GetVariable is unavailable here, the
+         * firmware is in a degraded / corrupted state we cannot trust
+         * for an anti-rollback decision. Fail closed instead of
+         * collapsing into the first-ever-boot path (which would let a
+         * crafted RuntimeServices suppression bypass the rollback
+         * floor on a machine that previously advanced it). The caps-
+         * negotiation RUNTIME_SERVICES degraded bit reports the
+         * runtime gap to the kernel separately; for the rollback
+         * gate, missing RuntimeServices is an integrity failure. */
         if (!gST || !gST->RuntimeServices ||
             !gST->RuntimeServices->GetVariable) {
-            st = EFI_NOT_FOUND;
+            /* Synthesize a non-NOT_FOUND error; the EFI_ERROR(st)
+             * branch below latches read_failed_closed so the bootloader
+             * halts rather than treating this as first-ever-boot. */
+            st = EFI_INVALID_PARAMETER;
         } else {
             st = gST->RuntimeServices->GetVariable(
                 req_name, &g_impossible_os_guid, &attrs, &sz, &required);

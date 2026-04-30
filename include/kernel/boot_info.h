@@ -268,6 +268,7 @@ enum boot_rollback_error {
     BOOT_ROLLBACK_ERR_NULL_INFO          = 1,
     BOOT_ROLLBACK_ERR_UNKNOWN_FLAG       = 2,
     BOOT_ROLLBACK_ERR_VERSION_OOR        = 3,
+    BOOT_ROLLBACK_ERR_RESERVED_NONZERO   = 4,  /* _rollback_pad must be zero */
 };
 
 boot_result_t boot_rollback_validate(const struct boot_info *info,

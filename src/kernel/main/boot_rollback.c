@@ -73,6 +73,20 @@ boot_result_t boot_rollback_validate(const struct boot_info *info,
         return BOOT_FATAL;
     }
 
+    /* Rule 3: _rollback_pad is reserved-zero. The field matrix says
+     * "reserved for future anti-rollback policy word". A nonzero
+     * producer is forging policy data the kernel does not interpret,
+     * which is exactly the silent ABI drift the validator must catch
+     * at the anti-rollback trust boundary. (Codex 2026-04-30 finding.) */
+    if (info->_rollback_pad != 0u) {
+        klog(LOG_ERROR, "boot",
+             "boot_rollback: _rollback_pad must be zero, got 0x%x (forged policy word?)",
+             (uint64_t)info->_rollback_pad);
+        if (out_error != (enum boot_rollback_error *)0)
+            *out_error = BOOT_ROLLBACK_ERR_RESERVED_NONZERO;
+        return BOOT_FATAL;
+    }
+
     /* Telemetry: if either refusal flag is set when the kernel is
      * running, something is wrong. The bootloader should have halted
      * before we got here. Log + keep booting -- we do NOT halt
