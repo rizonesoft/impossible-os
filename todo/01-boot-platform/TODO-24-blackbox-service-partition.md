@@ -142,7 +142,7 @@ Redirect all kernel log output from `C:\Impossible\System\Logs\` to `X:\Logs\`.
 
 ## 6. Boot Logs -- Per-Boot Session Files to X:\Boot\
 
-Move the per-boot numbered session logs and boot timeline JSON to `X:\Boot\`.
+Move the per-boot numbered session logs to `X:\Boot\`. (`boot-timeline.json` originally landed here as well; TODO-04 FPDT and Boot Timing Normalization moved it to `X:\Perf\` when FPDT entries joined the timeline.)
 
 - [x] `boot-timeline.json` → `X:\Perf\boot-timeline.json` when BlackBox mounted, C:\ fallback (path moved from `X:\Boot\` by TODO-04 FPDT and Boot Timing Normalization when FPDT entries joined the timeline)
 - [x] `boot-profile.log` → `X:\Perf\boot-profile.log` when BlackBox mounted, C:\ fallback
@@ -302,7 +302,7 @@ Update cross-references across affected TODOs.
 | 💎 | Cross-platform readable    | ✅ NTFS (with drivers)     | ✅ ext4 (with drivers)     | ✅ §1 -- FAT32 universal            |
 | 💎 | Crash dump isolation       | ✅ C:\Windows\MEMORY.DMP   | ✅ /var/crash              | ✅ §7 -- X:\Crash\                  |
 | ⭐ | Per-boot log files         | ❌ Not built-in            | ❌ Not built-in            | ✅ §6 -- X:\Boot\ + X:\Perf\        |
-| ⭐ | Boot timeline JSON         | ❌ Not built-in            | ❌ Not built-in            | ✅ §6 -- X:\Boot\timeline.json      |
+| ⭐ | Boot timeline JSON         | ❌ Not built-in            | ❌ Not built-in            | ✅ §6 -- X:\Perf\boot-timeline.json |
 | 💎 | Auto-mount on host         | ✅ Windows assigns letter  | ✅ udisks2 auto-mount      | ✅ §1 -- Basic Data GUID            |
 | 💎 | Volume label               | ✅ NTFS volume label       | ✅ e2label / fatlabel      | ✅ §11 -- BPB label parsed          |
 | 💎 | Named partition discovery  | ✅ Volume label match      | ✅ LABEL= in fstab         | ✅ §3 -- GPT name match X:\         |

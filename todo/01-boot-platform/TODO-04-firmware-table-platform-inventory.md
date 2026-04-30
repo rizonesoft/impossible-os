@@ -136,14 +136,17 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 
 **Test checkpoint:** `X:\Perf\boot-timeline.json` exists post-boot with monotonically increasing timestamps from FPDT + bootloader TSC unified. Zero-FPDT firmware (VirtualBox) marks FPDT records `unreliable: true`. `boot_timing.c` and VPD report identical phase totals. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 9 FPDT-normalization sub-tests / 12 assertions, 0 failures (unavailable / all-zero / clean monotonic / non-monotonic / zero-after-nonzero / leading-zero / 10-min cap / fixed schema / cap+null guards)
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 10 FPDT-normalization sub-tests / 13 assertions, 0 failures (unavailable / all-zero / zero-anchor / clean monotonic / non-monotonic / zero-after-nonzero / leading-zero / 10-min cap / fixed schema / cap+null guards)
 >
 > **Notes:**
-> - Shipped: `boot_timing_fpdt_unreliable[_eval]` + `boot_timing_uefi_total_ms` + `boot_timing_tsc_delta_ms` + `boot_timing_bl_entry_ms_since_reset` + `boot_timing_get_fpdt_entries` (~120 LOC) in `src/kernel/boot_timing.c`; JSON exporter rewrite (~80 LOC delta) in `src/kernel/main/boot_progress.c`; VPD "UEFI Boot:" cell uses shared helper; 9 unit tests in `src/kernel/test/test_boot_timing.c`.
-> - How it runs: helpers are pure reads of `g_boot_info.timing` so they are lock-free and SMP-safe; `boot_timeline_dump_json()` runs once on the BSP at end of Phase 3 alongside the existing perf dumps. KVM smoke 2.35s on OVMF (FPDT not exposed; falls through unreliable path correctly).
-> - Downstream effects: closes `boot-timeline.json` path drift between TODO-11 §9 + TODO-14 + TODO-24 (now all point to `X:\Perf\`); enables host decoder work in §10 to consume one schema with FPDT + TSC sources. Codex 1x adversarial review adoptions in commit `<hash>` -- M1 buffer overflow + M2 TSC wraparound both fixed.
+> - Shipped: `boot_timing_fpdt_unreliable[_eval]` + `boot_timing_uefi_total_ms` + `boot_timing_tsc_delta_ms` + `boot_timing_bl_entry_ms_since_reset` + `boot_timing_get_fpdt_entries` (~150 LOC) in `src/kernel/boot_timing.c` with a saturating `tsc_to_ms` (no `__udivti3` link); JSON exporter rewrite (~110 LOC delta) in `src/kernel/main/boot_progress.c` with `safe_tsc_delta_ms` + `sat_add_u32` and a 16 KiB buffer; VPD "UEFI Boot:" cell uses the shared helper; 10 unit tests in `src/kernel/test/test_boot_timing.c`.
+> - How it runs: helpers are pure reads of `g_boot_info.timing` so they are lock-free and SMP-safe; `boot_timing_uefi_total_ms()` reads `tsc_freq` directly from `g_boot_info` so it works during VPD Phase 0 render before `boot_timing_init()` caches the value; `boot_timeline_dump_json()` runs once on the BSP at end of Phase 3 alongside the existing perf dumps. KVM smoke 2.32s on OVMF (FPDT not exposed; falls through unreliable path correctly).
+> - Downstream effects: closes `boot-timeline.json` path drift between TODO-02, TODO-11 §9, TODO-14, TODO-24 (now all point to `X:\Perf\`); enables host decoder work in §10 to consume one schema with FPDT + TSC sources. Codex 6x adversarial + 1x consistency + 1x perf review adoptions in commits `d409f20a` + this review commit -- buffer overflow, TSC wraparound, zero-anchor, fallback-mislabel, ticks*1000 overflow, reverse-order clamp, dur_ms saturation, VPD Phase 0 ordering all fixed.
 > - Canonical doc: `include/kernel/boot_timing.h` FPDT + TSC normalization API + `include/kernel/boot_progress.h` JSON contract docstring.
 > - Scope boundary: §4 owns FPDT detection + JSON normalization. Per-step name JSON escape and full schema doc are owned by TODO-14 §9. Bare-metal FPDT validation across multiple firmware vendors is the §10 host-decoder + bare-metal verification step.
+
+> **Verified:** 2026-04-30 | commit `d409f20a` | 5/5 items | build OK | smoke PASS (KVM 2.32s) | tests 752/752 PASS
+> **Quality reviewed:** 2026-04-30 | Codex 8x (design + adversarial + re-adversarial x5 + consistency + perf) | 1H+9M+1L fixed, 0 open | scope: kernel-code-quality
 
 ---
 

@@ -172,13 +172,21 @@ int boot_timing_fpdt_unreliable(void)
 
 uint32_t boot_timing_uefi_total_ms(void)
 {
+    /* Read tsc_freq from g_boot_info directly, NOT via the static
+     * s_tsc_freq cache. VPD vpd_init() runs in Phase 0 (before
+     * boot_timing_init() in Phase 1), so the cache is still 0 at
+     * VPD render time. The bootloader has already populated
+     * g_boot_info.timing.tsc_freq by then. Same overflow guard as
+     * tsc_to_ms() so a corrupted handoff cannot wrap. */
     uint64_t freq = g_boot_info.timing.tsc_freq;
     uint64_t bl_entry = g_boot_info.timing.bl_entry;
     uint64_t kjump = g_boot_info.timing.kernel_jump;
     if (freq == 0 || bl_entry == 0 || kjump <= bl_entry) return 0;
-    /* Route through tsc_to_ms() so a corrupted handoff cannot wrap the
-     * (delta * 1000) intermediate; the helper saturates to UINT32_MAX. */
-    return tsc_to_ms(kjump - bl_entry);
+    uint64_t ticks = kjump - bl_entry;
+    if (ticks > (uint64_t)0xFFFFFFFFFFFFFFFFULL / 1000ULL) return 0xFFFFFFFFu;
+    uint64_t ms = ticks * 1000ULL / freq;
+    if (ms > 0xFFFFFFFFu) return 0xFFFFFFFFu;
+    return (uint32_t)ms;
 }
 
 uint32_t boot_timing_bl_entry_ms_since_reset(void)
