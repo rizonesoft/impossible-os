@@ -98,11 +98,30 @@ F(config.crash_test);
 F(config.ob_handle_trace);
 F(config.config_version);
 F(config.error_screen_test);
+F(config.compositor);
+F(config.test_monitors_count);
+F(config.anti_rollback_raise);
 F(config._reserved);
 F(config._reserved[0]);         /* element-size sentinel */
 F(config.cmdline);
 F(config.cmdline[0]);           /* element-size sentinel (char -> wchar_t would change here) */
 F(config.config_found);
+F(config.tap);
+F(config._pad_utest);
+F(config._pad_utest[0]);        /* element-size sentinel */
+F(config.utest_timeout_ms);
+F(config.utest_filter);
+F(config.utest_filter[0]);      /* element-size sentinel */
+F(config.utest_isolation);
+F(config._pad_utest2);
+F(config._pad_utest2[0]);       /* element-size sentinel */
+F(config.xml);
+F(config.json);
+F(config.stress_iters);
+F(config.test_kernel_skip);
+F(config.test_usermode_skip);
+F(config._pad_test_skip);
+F(config._pad_test_skip[0]);    /* element-size sentinel */
 F(config._pad);
 F(config._pad[0]);              /* element-size sentinel */
 

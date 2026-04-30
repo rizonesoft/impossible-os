@@ -110,12 +110,28 @@ def parse_matrix(path: str) -> dict[str, set[str]]:
     identifier is the first backticked token in a table row, normalized to
     strip any `[...]` suffix. Only rows inside table bodies count; prose
     backticks are ignored.
+
+    Fenced code blocks (between ``` markers) are skipped: a `| `field` |`
+    line inside an example fence is not an ownership row, even though it
+    structurally matches the row regex. Without this guard, deleting a
+    real ownership row could be silently masked by an unrelated example
+    fence under the same heading.
     """
     sections: dict[str, set[str]] = {}
     current = "(preamble)"
     sections[current] = set()
+    in_fence = False
     with open(path, "r", encoding="utf-8") as fh:
         for line in fh:
+            stripped = line.lstrip()
+            # Toggle fenced-block state on lines starting with ```. The
+            # leading-whitespace tolerance covers indented fences inside
+            # blockquotes (rare, but valid CommonMark).
+            if stripped.startswith("```"):
+                in_fence = not in_fence
+                continue
+            if in_fence:
+                continue
             m = HEADING_RE.match(line.rstrip("\n"))
             if m:
                 current = m.group(2).strip()
@@ -161,18 +177,22 @@ def parse_manifest(path: str) -> list[str]:
     return fields
 
 
-def expected_sections(field: str) -> list[str]:
+def expected_sections(field: str) -> list[str] | None:
     """Return the list of matrix sections that could legitimately own
-    this manifest field's row. Empty list means "any top-level section".
+    this manifest field's row.
+
+    Returns None when the field is dotted (a nested-struct member path)
+    but no entry in PREFIX_SECTIONS matches its prefix. The caller MUST
+    treat None as a fail-loud error: the unmapped prefix would otherwise
+    silently match the field's tail in any top-level section, letting a
+    new struct's documentation gap pass coverage. Bare top-level scalars
+    (no dot) get the full TOPLEVEL_SECTIONS list as before.
     """
-    # Nested struct elements (after stripping [0]).
-    # Order: check longest prefix first so `usb_controller.active` beats
-    # `u...`. Map keys are pre-sorted by length descending below.
     for prefix, sections in PREFIX_SECTIONS.items():
         if field.startswith(prefix):
             return list(sections)
-    # Scalar-array element sentinel -- skip entirely.
-    # Whole-array top-level names and bare scalars land here.
+    if "." in field:
+        return None
     return list(TOPLEVEL_SECTIONS)
 
 
@@ -296,6 +316,10 @@ def main() -> int:
         # tail inside the prefix's named sections ONLY.
         tail_or_name = normalized
         sections_to_check = expected_sections(field)
+        if sections_to_check is None:
+            prefix = normalized.rsplit(".", 1)[0]
+            missing.append((field, f"unmapped prefix '{prefix}' -- add to PREFIX_SECTIONS"))
+            continue
         found = False
         # If the field has a known nested prefix, the tail (part after
         # the last dot) is what appears in the nested-struct row.
