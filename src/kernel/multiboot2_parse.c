@@ -125,5 +125,17 @@ void multiboot2_parse(uintptr_t mbi_addr)
               align_up_8((uintptr_t)tag + tag->size);
     }
 
+    /* Boot decision record: the Multiboot2 adapter reports a normal cold
+     * boot via an alternate-protocol producer. The four boot-decision
+     * fields would otherwise be left BSS-zero (boot_path = UNSET,
+     * boot_reason = UNSET) and the Phase 0 validator would hard-fail
+     * the record as missing producer data. Caps mirror is set in the
+     * adapter wiring TODO; here we only ensure decision validation
+     * never sees a phantom NORMAL boot for an unpopulated record. */
+    g_boot_info.boot_path           = (uint32_t)BOOT_PATH_NORMAL;
+    g_boot_info.boot_reason         = (uint32_t)BOOT_REASON_NORMAL;
+    g_boot_info.boot_source_flags   = 0u;
+    g_boot_info.boot_fallback_depth = 0u;
+
     (void)header; /* suppress unused warning */
 }

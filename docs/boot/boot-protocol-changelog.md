@@ -33,7 +33,15 @@ Both halves of the ABI (the kernel header at `include/kernel/boot_info.h` and th
 
 ## Versions
 
-### v11 (current) -- ESP integrity fields
+### v12 (current) -- Boot-decision UNSET sentinel + per-reason policy table
+
+- **Commit**: pending (re-review of [Common Boot-Path Provenance and Decision Record](../../todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md#12-common-boot-path-provenance-and-decision-record))
+- **Fields added**: none (semantic-only ABI change).
+- **Why**: Codex 2026-04-30 H1 caught a phantom-NORMAL-boot bug -- the v8 layout had `BOOT_PATH_NORMAL = BOOT_REASON_NORMAL = 0`, so any producer that did not populate the four boot-decision fields (e.g. `multiboot2_parse.c` pre-adapter wiring) passed validation as if the firmware reported a real cold boot. Fixed by introducing `BOOT_PATH_UNSET = 0` and `BOOT_REASON_UNSET = 0` as sentinels; `NORMAL` shifts to value 1. Other enum values shift up by 1. Validator Rule 1/2 now hard-rejects `UNSET` so a BSS-zero record halts instead of certifying.
+- **Why (consistency review)**: Rule 5/6/7 switches default-allowed any future enum value to bypass classification, and Rule 7 was unidirectional (reason -> flag enforced; flag -> reason not). Replaced with a per-reason policy table (`reason_policy[]` in `boot_decision.c`) indexed by `enum boot_reason_code`, with `_Static_assert` pinning length to `BOOT_REASON_CODE_MAX + 1`. Rule 7b now also enforces the inverse: any trigger flag set in `boot_source_flags` MUST match the current reason (a producer setting `RECOVERY_TRIGGERED` while reporting `reason=NORMAL` is rejected as a provenance contradiction).
+- **Producers / consumers**: `bootx64.c` already uses enum names so the value shift is implicit; `multiboot2_parse.c` now explicitly populates the four fields with `BOOT_PATH_NORMAL` / `BOOT_REASON_NORMAL` / `0u` / `0u` before completing parse.
+
+### v11 -- ESP integrity fields
 
 Adds three boot_info fields populated by the UEFI bootloader's pre-load ESP sanity gate so the kernel knows the partition was structurally validated before any code was loaded.
 

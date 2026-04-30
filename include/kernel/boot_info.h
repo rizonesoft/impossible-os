@@ -82,7 +82,7 @@
  * sanity gate;
  * v10 added BOOT_FLAG_INVOKED_VIA_UKI;
  * v9 added flags + os_loader/required_security_version */
-#define BOOT_INFO_VERSION  11
+#define BOOT_INFO_VERSION  12
 #endif
 
 /* Upper bound for pre-copy address validation: the UEFI bootloader
@@ -430,30 +430,42 @@ const char *boot_warm_update_cont_name(uint32_t flag_bit);
  * and rollback logic can explain why the current boot chose what it
  * chose.
  */
+/* Value 0 in both enums is the UNSET sentinel: a BSS-zero boot_info
+ * from a producer that never populated the boot-decision fields
+ * (Multiboot2 adapter pre-population wiring, alternate firmware that
+ * doesn't know about v9, etc.) lands at UNSET in both fields and the
+ * validator rejects via Rule 1/2 instead of certifying the record as
+ * a phantom NORMAL boot. (Codex 2026-04-30 capability-negotiation
+ * adversarial finding: the previous v8 layout had
+ * BOOT_PATH_NORMAL = BOOT_REASON_NORMAL = 0, so multiboot2_parse.c
+ * which writes neither field passed validation as if it were a real
+ * cold boot.) Bumped to v9. */
 enum boot_path_type {
-    BOOT_PATH_NORMAL       = 0,  /* normal cold boot from primary boot device */
-    BOOT_PATH_INSTALLER    = 1,  /* installer image handoff */
-    BOOT_PATH_RECOVERY     = 2,  /* recovery partition / Windows RE equivalent */
-    BOOT_PATH_NETWORK      = 3,  /* PXE/HTTP boot */
-    BOOT_PATH_RESUME       = 4,  /* S4 hibernation resume (validated) */
-    BOOT_PATH_FAST_STARTUP = 5,  /* Windows-style fast startup (hybrid boot) */
-    BOOT_PATH_DIAGNOSTIC   = 6,  /* operator-triggered diagnostic mode */
+    BOOT_PATH_UNSET        = 0,  /* sentinel: producer must overwrite */
+    BOOT_PATH_NORMAL       = 1,  /* normal cold boot from primary boot device */
+    BOOT_PATH_INSTALLER    = 2,  /* installer image handoff */
+    BOOT_PATH_RECOVERY     = 3,  /* recovery partition / Windows RE equivalent */
+    BOOT_PATH_NETWORK      = 4,  /* PXE/HTTP boot */
+    BOOT_PATH_RESUME       = 5,  /* S4 hibernation resume (validated) */
+    BOOT_PATH_FAST_STARTUP = 6,  /* Windows-style fast startup (hybrid boot) */
+    BOOT_PATH_DIAGNOSTIC   = 7,  /* operator-triggered diagnostic mode */
 };
 #define BOOT_PATH_TYPE_MAX  BOOT_PATH_DIAGNOSTIC
 
 enum boot_reason_code {
-    BOOT_REASON_NORMAL              = 0,  /* primary path, no policy trigger */
-    BOOT_REASON_USER_SELECTED       = 1,  /* BootNext or operator picked this entry */
-    BOOT_REASON_ROLLBACK            = 2,  /* rollback after failed previous boot */
-    BOOT_REASON_RESUME_VALIDATED    = 3,  /* hibernation image passed validation */
-    BOOT_REASON_RESUME_INVALIDATED  = 4,  /* hibernation image rejected; fell back */
-    BOOT_REASON_NETWORK_INSECURE    = 5,  /* network boot used but flagged insecure */
-    BOOT_REASON_MANIFEST_FAILURE    = 6,  /* image manifest check failed */
-    BOOT_REASON_MEASURED_BOOT_FAIL  = 7,  /* measured-boot/TPM check failed */
-    BOOT_REASON_RECOVERY_TRIGGER    = 8,  /* recovery trigger asserted by firmware or operator */
-    BOOT_REASON_FAST_STARTUP_HIT    = 9,  /* fast-startup image present + valid */
-    BOOT_REASON_DIAGNOSTIC_REQUEST  = 10, /* operator requested diagnostic flow */
-    BOOT_REASON_FALLBACK            = 11, /* loader exhausted primary + chose fallback */
+    BOOT_REASON_UNSET               = 0,  /* sentinel: producer must overwrite */
+    BOOT_REASON_NORMAL              = 1,  /* primary path, no policy trigger */
+    BOOT_REASON_USER_SELECTED       = 2,  /* BootNext or operator picked this entry */
+    BOOT_REASON_ROLLBACK            = 3,  /* rollback after failed previous boot */
+    BOOT_REASON_RESUME_VALIDATED    = 4,  /* hibernation image passed validation */
+    BOOT_REASON_RESUME_INVALIDATED  = 5,  /* hibernation image rejected; fell back */
+    BOOT_REASON_NETWORK_INSECURE    = 6,  /* network boot used but flagged insecure */
+    BOOT_REASON_MANIFEST_FAILURE    = 7,  /* image manifest check failed */
+    BOOT_REASON_MEASURED_BOOT_FAIL  = 8,  /* measured-boot/TPM check failed */
+    BOOT_REASON_RECOVERY_TRIGGER    = 9,  /* recovery trigger asserted by firmware or operator */
+    BOOT_REASON_FAST_STARTUP_HIT    = 10, /* fast-startup image present + valid */
+    BOOT_REASON_DIAGNOSTIC_REQUEST  = 11, /* operator requested diagnostic flow */
+    BOOT_REASON_FALLBACK            = 12, /* loader exhausted primary + chose fallback */
 };
 #define BOOT_REASON_CODE_MAX  BOOT_REASON_FALLBACK
 

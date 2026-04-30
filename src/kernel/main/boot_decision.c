@@ -41,6 +41,7 @@
 const char *boot_path_name(uint32_t path)
 {
     switch (path) {
+    case BOOT_PATH_UNSET:        return "unset";
     case BOOT_PATH_NORMAL:       return "normal";
     case BOOT_PATH_INSTALLER:    return "installer";
     case BOOT_PATH_RECOVERY:     return "recovery";
@@ -55,6 +56,7 @@ const char *boot_path_name(uint32_t path)
 const char *boot_reason_name(uint32_t reason)
 {
     switch (reason) {
+    case BOOT_REASON_UNSET:               return "unset";
     case BOOT_REASON_NORMAL:              return "normal";
     case BOOT_REASON_USER_SELECTED:       return "user_selected";
     case BOOT_REASON_ROLLBACK:            return "rollback";
@@ -88,20 +90,28 @@ boot_result_t boot_decision_validate(const struct boot_info *info,
     uint32_t flags    = info->boot_source_flags;
     uint32_t depth    = info->boot_fallback_depth;
 
-    /* Rule 1: boot_path must be in enum range. */
-    if (path > (uint32_t)BOOT_PATH_TYPE_MAX) {
+    /* Rule 1: boot_path must be set (>= NORMAL) AND in enum range.
+     * UNSET (value 0) is the BSS-zero sentinel: a producer that never
+     * populated the field passes BSS through to the validator, which
+     * MUST reject the phantom record instead of certifying it as a
+     * normal cold boot. */
+    if (path == (uint32_t)BOOT_PATH_UNSET || path > (uint32_t)BOOT_PATH_TYPE_MAX) {
         klog(LOG_ERROR, "boot",
-             "boot_decision: boot_path %u out of range (max %u); stale loader emitted unknown flow",
+             (path == (uint32_t)BOOT_PATH_UNSET)
+                 ? "boot_decision: boot_path is UNSET (producer left BSS zero; populate before handoff)"
+                 : "boot_decision: boot_path %u out of range (max %u); stale loader emitted unknown flow",
              (uint64_t)path, (uint64_t)BOOT_PATH_TYPE_MAX);
         if (out_error != (enum boot_decision_error *)0)
             *out_error = BOOT_DECISION_ERR_BAD_PATH;
         return BOOT_FATAL;
     }
 
-    /* Rule 2: boot_reason must be in enum range. */
-    if (reason > (uint32_t)BOOT_REASON_CODE_MAX) {
+    /* Rule 2: boot_reason must be set (>= NORMAL) AND in enum range. */
+    if (reason == (uint32_t)BOOT_REASON_UNSET || reason > (uint32_t)BOOT_REASON_CODE_MAX) {
         klog(LOG_ERROR, "boot",
-             "boot_decision: boot_reason %u out of range (max %u); stale loader emitted unknown code",
+             (reason == (uint32_t)BOOT_REASON_UNSET)
+                 ? "boot_decision: boot_reason is UNSET (producer left BSS zero; populate before handoff)"
+                 : "boot_decision: boot_reason %u out of range (max %u); stale loader emitted unknown code",
              (uint64_t)reason, (uint64_t)BOOT_REASON_CODE_MAX);
         if (out_error != (enum boot_decision_error *)0)
             *out_error = BOOT_DECISION_ERR_BAD_REASON;
@@ -138,96 +148,140 @@ boot_result_t boot_decision_validate(const struct boot_info *info,
         return BOOT_FATAL;
     }
 
-    /* Rule 5: reason -> path compatibility. Certain reasons only make
-     * sense with their matching path (RESUME_VALIDATED implies the
-     * resume image was accepted and we're running RESUME; NETWORK_
-     * INSECURE means the boot was a network boot with an insecure
-     * channel); certain reasons are "we fell BACK from X" and
-     * therefore forbid the original X as the result path
-     * (RESUME_INVALIDATED forbids path=RESUME; MANIFEST_FAILURE
-     * forbids path=INSTALLER since the failed manifest was the one
-     * trying to install). The rest (NORMAL, USER_SELECTED, ROLLBACK,
-     * FALLBACK, MEASURED_BOOT_FAIL) are path-agnostic. */
+    /* Rules 5-7: per-reason policy table. Each row pins (a) which
+     * path is required for this reason (0 = any), (b) which paths are
+     * forbidden as a bitmask, (c) whether the reason is in the
+     * fallback class, and (d) which trigger flag the reason demands.
+     *
+     * Codex 2026-04-30 findings closed by going table-driven:
+     *  - Rule 5/7 switch defaults silently let a future enum value
+     *    bypass classification (M1 adversarial). The table is indexed
+     *    by enum value with a _Static_assert pinning length to
+     *    BOOT_REASON_CODE_MAX + 1, so a new reason added to the enum
+     *    forces a new row or fails compilation.
+     *  - Rule 7 was unidirectional (reason -> flag enforced;
+     *    flag -> reason not). With the per-flag trigger set computed
+     *    from the policy table, we now also check the inverse: any
+     *    trigger flag set in source_flags MUST match the reason. */
+    /* `classified` = 1 marks a row as deliberately filled. The length
+     * _Static_assert below catches enum count changes, but length alone
+     * does NOT detect a missing designated initializer for a value
+     * inserted before MAX (the gap default-initializes to {0}, which
+     * silently matches "path-agnostic, no fallback class, no trigger
+     * flag"). The classified-flag is checked at validator entry: if any
+     * reason in [NORMAL..MAX] has classified == 0, the validator halts.
+     * That makes a forgotten row a runtime error on the first boot, not
+     * a silent classification drift. */
+    struct boot_reason_policy {
+        uint8_t  classified;          /* 1 in every valid row; 0 = forgotten */
+        uint32_t required_path;       /* 0 = any */
+        uint32_t forbidden_paths_bm;  /* bitmask over enum boot_path_type */
+        uint8_t  is_fallback_class;
+        uint32_t trigger_flag;        /* 0 = no required flag */
+    };
+    static const struct boot_reason_policy reason_policy[BOOT_REASON_CODE_MAX + 1u] = {
+        [BOOT_REASON_UNSET]               = { 0u, 0u, 0u, 0u, 0u },  /* sentinel; Rule 2 rejects */
+        [BOOT_REASON_NORMAL]              = { 1u, 0u, 0u, 0u, 0u },
+        [BOOT_REASON_USER_SELECTED]       = { 1u, 0u, 0u, 0u, 0u },
+        [BOOT_REASON_ROLLBACK]            = { 1u, 0u, 0u, 1u, BOOT_SOURCE_FLAG_ROLLBACK_TRIGGERED },
+        [BOOT_REASON_RESUME_VALIDATED]    = { 1u, BOOT_PATH_RESUME, 0u, 0u, 0u },
+        [BOOT_REASON_RESUME_INVALIDATED]  = { 1u, 0u, (1u << BOOT_PATH_RESUME),
+                                              1u, BOOT_SOURCE_FLAG_RESUME_INVALIDATED },
+        [BOOT_REASON_NETWORK_INSECURE]    = { 1u, BOOT_PATH_NETWORK, 0u, 0u, BOOT_SOURCE_FLAG_NETWORK_INSECURE },
+        [BOOT_REASON_MANIFEST_FAILURE]    = { 1u, 0u, (1u << BOOT_PATH_INSTALLER),
+                                              1u, BOOT_SOURCE_FLAG_MANIFEST_FAILED },
+        [BOOT_REASON_MEASURED_BOOT_FAIL]  = { 1u, 0u, 0u, 1u, BOOT_SOURCE_FLAG_MEASURED_BOOT_FAILED },
+        [BOOT_REASON_RECOVERY_TRIGGER]    = { 1u, BOOT_PATH_RECOVERY, 0u, 0u, BOOT_SOURCE_FLAG_RECOVERY_TRIGGERED },
+        [BOOT_REASON_FAST_STARTUP_HIT]    = { 1u, BOOT_PATH_FAST_STARTUP, 0u, 0u, 0u },
+        [BOOT_REASON_DIAGNOSTIC_REQUEST]  = { 1u, BOOT_PATH_DIAGNOSTIC, 0u, 0u, 0u },
+        [BOOT_REASON_FALLBACK]            = { 1u, 0u, 0u, 1u, 0u },
+    };
+    _Static_assert(sizeof(reason_policy) / sizeof(reason_policy[0])
+                   == (uint32_t)BOOT_REASON_CODE_MAX + 1u,
+                   "reason_policy size must equal BOOT_REASON_CODE_MAX + 1");
+
+    /* Exhaustiveness: every reason in [NORMAL..MAX] MUST have a row
+     * with classified == 1. A new BOOT_REASON_X inserted before MAX
+     * without a designated initializer hits this gate on first boot. */
     {
-        uint32_t forbidden_paths = 0u;
-        uint32_t required_path   = 0xFFFFFFFFu;  /* 0xFFFFFFFF means "any" */
-        switch (reason) {
-        case BOOT_REASON_RESUME_VALIDATED:    required_path = BOOT_PATH_RESUME;       break;
-        case BOOT_REASON_NETWORK_INSECURE:    required_path = BOOT_PATH_NETWORK;      break;
-        case BOOT_REASON_RECOVERY_TRIGGER:    required_path = BOOT_PATH_RECOVERY;     break;
-        case BOOT_REASON_FAST_STARTUP_HIT:    required_path = BOOT_PATH_FAST_STARTUP; break;
-        case BOOT_REASON_DIAGNOSTIC_REQUEST:  required_path = BOOT_PATH_DIAGNOSTIC;   break;
-        case BOOT_REASON_RESUME_INVALIDATED:  forbidden_paths = (1u << BOOT_PATH_RESUME);    break;
-        case BOOT_REASON_MANIFEST_FAILURE:    forbidden_paths = (1u << BOOT_PATH_INSTALLER); break;
-        default:                              /* path-agnostic */                            break;
-        }
-        if (required_path != 0xFFFFFFFFu && path != required_path) {
-            klog(LOG_ERROR, "boot",
-                 "boot_decision: reason=%s requires path=%s but got path=%s",
-                 (uint64_t)(uintptr_t)boot_reason_name(reason),
-                 (uint64_t)(uintptr_t)boot_path_name(required_path),
-                 (uint64_t)(uintptr_t)boot_path_name(path));
-            if (out_error != (enum boot_decision_error *)0)
-                *out_error = BOOT_DECISION_ERR_REASON_PATH;
-            return BOOT_FATAL;
-        }
-        if ((forbidden_paths & (1u << path)) != 0u) {
-            klog(LOG_ERROR, "boot",
-                 "boot_decision: reason=%s forbids path=%s (fell-back reason cannot result in the originating path)",
-                 (uint64_t)(uintptr_t)boot_reason_name(reason),
-                 (uint64_t)(uintptr_t)boot_path_name(path));
-            if (out_error != (enum boot_decision_error *)0)
-                *out_error = BOOT_DECISION_ERR_REASON_PATH;
-            return BOOT_FATAL;
+        uint32_t r;
+        for (r = (uint32_t)BOOT_REASON_NORMAL;
+             r <= (uint32_t)BOOT_REASON_CODE_MAX; r++) {
+            if (reason_policy[r].classified == 0u) {
+                klog(LOG_ERROR, "boot",
+                     "boot_decision: reason_policy[%u] is unclassified -- "
+                     "missing designated initializer (kernel bug, not a producer error)",
+                     (uint64_t)r);
+                if (out_error != (enum boot_decision_error *)0)
+                    *out_error = BOOT_DECISION_ERR_BAD_REASON;
+                return BOOT_FATAL;
+            }
         }
     }
 
-    /* Rule 6: fallback_depth > 0 requires a fallback-class reason.
-     * Primary-path reasons (NORMAL, USER_SELECTED, RESUME_VALIDATED,
-     * NETWORK_INSECURE, RECOVERY_TRIGGER, FAST_STARTUP_HIT,
-     * DIAGNOSTIC_REQUEST) imply the loader's first choice took;
-     * depth>0 would contradict that. */
-    if (depth > 0u) {
-        int fallback_class =
-            (reason == BOOT_REASON_FALLBACK)            ||
-            (reason == BOOT_REASON_ROLLBACK)            ||
-            (reason == BOOT_REASON_RESUME_INVALIDATED)  ||
-            (reason == BOOT_REASON_MANIFEST_FAILURE)    ||
-            (reason == BOOT_REASON_MEASURED_BOOT_FAIL);
-        if (!fallback_class) {
-            klog(LOG_ERROR, "boot",
-                 "boot_decision: fallback_depth=%u requires fallback-class reason but got %s",
-                 (uint64_t)depth,
-                 (uint64_t)(uintptr_t)boot_reason_name(reason));
-            if (out_error != (enum boot_decision_error *)0)
-                *out_error = BOOT_DECISION_ERR_FALLBACK_REASON;
-            return BOOT_FATAL;
-        }
+    const struct boot_reason_policy *pol = &reason_policy[reason];
+
+    /* Rule 5a: required-path enforcement. */
+    if (pol->required_path != 0u && path != pol->required_path) {
+        klog(LOG_ERROR, "boot",
+             "boot_decision: reason=%s requires path=%s but got path=%s",
+             (uint64_t)(uintptr_t)boot_reason_name(reason),
+             (uint64_t)(uintptr_t)boot_path_name(pol->required_path),
+             (uint64_t)(uintptr_t)boot_path_name(path));
+        if (out_error != (enum boot_decision_error *)0)
+            *out_error = BOOT_DECISION_ERR_REASON_PATH;
+        return BOOT_FATAL;
     }
 
-    /* Rule 7: trigger-reasons require the matching flag bit. If the
-     * loader reports reason=NETWORK_INSECURE, consumers expect the
-     * BOOT_SOURCE_FLAG_NETWORK_INSECURE bit to also be set (the flag
-     * is the audit record of what input drove the decision; the
-     * reason is the policy outcome). A reason without its flag
-     * indicates producer inconsistency the validator refuses to paper
-     * over. */
+    /* Rule 5b: forbidden-path enforcement. */
+    if ((pol->forbidden_paths_bm & (1u << path)) != 0u) {
+        klog(LOG_ERROR, "boot",
+             "boot_decision: reason=%s forbids path=%s (fell-back reason cannot result in the originating path)",
+             (uint64_t)(uintptr_t)boot_reason_name(reason),
+             (uint64_t)(uintptr_t)boot_path_name(path));
+        if (out_error != (enum boot_decision_error *)0)
+            *out_error = BOOT_DECISION_ERR_REASON_PATH;
+        return BOOT_FATAL;
+    }
+
+    /* Rule 6: fallback_depth > 0 requires a fallback-class reason. */
+    if (depth > 0u && !pol->is_fallback_class) {
+        klog(LOG_ERROR, "boot",
+             "boot_decision: fallback_depth=%u requires fallback-class reason but got %s",
+             (uint64_t)depth,
+             (uint64_t)(uintptr_t)boot_reason_name(reason));
+        if (out_error != (enum boot_decision_error *)0)
+            *out_error = BOOT_DECISION_ERR_FALLBACK_REASON;
+        return BOOT_FATAL;
+    }
+
+    /* Rule 7a (reason -> flag): every trigger reason demands its flag. */
+    if (pol->trigger_flag != 0u && (flags & pol->trigger_flag) == 0u) {
+        klog(LOG_ERROR, "boot",
+             "boot_decision: reason=%s requires matching flag 0x%x but flags=0x%x",
+             (uint64_t)(uintptr_t)boot_reason_name(reason),
+             (uint64_t)pol->trigger_flag, (uint64_t)flags);
+        if (out_error != (enum boot_decision_error *)0)
+            *out_error = BOOT_DECISION_ERR_REASON_FLAG;
+        return BOOT_FATAL;
+    }
+
+    /* Rule 7b (flag -> reason): every trigger flag set MUST match the
+     * current reason. Computed from the policy table so a new reason
+     * with a trigger flag automatically participates in this check. */
     {
-        uint32_t required_flag = 0u;
-        switch (reason) {
-        case BOOT_REASON_RESUME_INVALIDATED:  required_flag = BOOT_SOURCE_FLAG_RESUME_INVALIDATED;     break;
-        case BOOT_REASON_NETWORK_INSECURE:    required_flag = BOOT_SOURCE_FLAG_NETWORK_INSECURE;       break;
-        case BOOT_REASON_MANIFEST_FAILURE:    required_flag = BOOT_SOURCE_FLAG_MANIFEST_FAILED;        break;
-        case BOOT_REASON_MEASURED_BOOT_FAIL:  required_flag = BOOT_SOURCE_FLAG_MEASURED_BOOT_FAILED;   break;
-        case BOOT_REASON_RECOVERY_TRIGGER:    required_flag = BOOT_SOURCE_FLAG_RECOVERY_TRIGGERED;     break;
-        case BOOT_REASON_ROLLBACK:            required_flag = BOOT_SOURCE_FLAG_ROLLBACK_TRIGGERED;     break;
-        default:                              /* no flag required */                                   break;
+        uint32_t trigger_mask = 0u;
+        uint32_t i;
+        for (i = 0u; i <= (uint32_t)BOOT_REASON_CODE_MAX; i++) {
+            trigger_mask |= reason_policy[i].trigger_flag;
         }
-        if (required_flag != 0u && (flags & required_flag) == 0u) {
+        uint32_t set_triggers = flags & trigger_mask;
+        if (set_triggers != 0u && set_triggers != pol->trigger_flag) {
             klog(LOG_ERROR, "boot",
-                 "boot_decision: reason=%s requires matching flag 0x%x but flags=0x%x",
+                 "boot_decision: trigger flags 0x%x set but reason=%s only justifies 0x%x (provenance contradiction)",
+                 (uint64_t)set_triggers,
                  (uint64_t)(uintptr_t)boot_reason_name(reason),
-                 (uint64_t)required_flag, (uint64_t)flags);
+                 (uint64_t)pol->trigger_flag);
             if (out_error != (enum boot_decision_error *)0)
                 *out_error = BOOT_DECISION_ERR_REASON_FLAG;
             return BOOT_FATAL;

@@ -191,16 +191,63 @@ static void test_boot_decision_all_known_flags_accepted(void)
 {
     TEST_KLOG_SUPPRESS("boot");
     dec_zero();
-    /* Every bit in BOOT_SOURCE_FLAG_MASK_KNOWN at once must pass. */
+    /* All INFORMATIONAL flags (no trigger semantics) at once must pass
+     * with reason=NORMAL. Trigger flags (ROLLBACK_TRIGGERED,
+     * RECOVERY_TRIGGERED, RESUME_INVALIDATED, NETWORK_INSECURE,
+     * MANIFEST_FAILED, MEASURED_BOOT_FAILED) are EXCLUDED here because
+     * Rule 7b (flag -> reason) correctly rejects them when the reason
+     * is NORMAL. The previous version of this suite asserted the full
+     * BOOT_SOURCE_FLAG_MASK_KNOWN was valid with reason=NORMAL, which
+     * was the exact false-positive Codex 2026-04-30 consistency review
+     * caught: a producer could set a recovery trigger flag while the
+     * registry/attestation record claimed reason=normal. */
     s_dec_buf.boot_path           = BOOT_PATH_NORMAL;
     s_dec_buf.boot_reason         = BOOT_REASON_NORMAL;
-    s_dec_buf.boot_source_flags   = BOOT_SOURCE_FLAG_MASK_KNOWN;
+    s_dec_buf.boot_source_flags   = BOOT_SOURCE_FLAG_BOOT_NEXT_SET
+                                  | BOOT_SOURCE_FLAG_BOOT_CURRENT_MISMATCH
+                                  | BOOT_SOURCE_FLAG_MEDIA_REMOVABLE
+                                  | BOOT_SOURCE_FLAG_MEDIA_PRESENT;
     s_dec_buf.boot_fallback_depth = 0u;
 
     enum boot_decision_error err = BOOT_DECISION_ERR_OK;
     boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
-    TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_OK,              "all known flags -> OK");
+    TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_OK,              "all informational flags -> OK");
     TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_DECISION_ERR_OK, "err=OK");
+}
+
+static void test_boot_decision_trigger_flag_without_reason_rejected(void)
+{
+    /* Rule 7b regression test: a trigger flag set with a normal reason
+     * is a provenance contradiction. Codex 2026-04-30 finding. */
+    TEST_KLOG_SUPPRESS("boot");
+    dec_zero();
+    s_dec_buf.boot_path           = BOOT_PATH_NORMAL;
+    s_dec_buf.boot_reason         = BOOT_REASON_NORMAL;
+    s_dec_buf.boot_source_flags   = BOOT_SOURCE_FLAG_RECOVERY_TRIGGERED;
+    s_dec_buf.boot_fallback_depth = 0u;
+
+    enum boot_decision_error err = BOOT_DECISION_ERR_OK;
+    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_FATAL,                       "trigger w/o reason -> FATAL");
+    TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_DECISION_ERR_REASON_FLAG,    "err=REASON_FLAG");
+}
+
+static void test_boot_decision_unset_path_rejected(void)
+{
+    /* Rule 1 UNSET sentinel regression: a BSS-zero record from a
+     * producer that never populated boot_path lands at UNSET (value 0)
+     * and the validator MUST reject. Codex 2026-04-30 H1 finding. */
+    TEST_KLOG_SUPPRESS("boot");
+    dec_zero();  /* leaves boot_path = BOOT_PATH_UNSET = 0 */
+    s_dec_buf.boot_reason         = BOOT_REASON_NORMAL;
+    s_dec_buf.boot_source_flags   = 0u;
+    s_dec_buf.boot_fallback_depth = 0u;
+    /* boot_path intentionally left at UNSET */
+
+    enum boot_decision_error err = BOOT_DECISION_ERR_OK;
+    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_FATAL,                  "UNSET path -> FATAL");
+    TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_DECISION_ERR_BAD_PATH,  "err=BAD_PATH");
 }
 
 /* ---- Cross-field invariant tests (Codex adversarial review) ---- */
@@ -378,6 +425,10 @@ void test_register_boot_decision(void)
                             test_boot_decision_fallback_depth_at_cap, TEST_CAT_BOOT);
     test_suite_register_cat("boot_decision: all known flags accepted",
                             test_boot_decision_all_known_flags_accepted, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_decision: trigger flag without matching reason rejected (R7b)",
+                            test_boot_decision_trigger_flag_without_reason_rejected, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_decision: UNSET path rejected (BSS-zero sentinel)",
+                            test_boot_decision_unset_path_rejected, TEST_CAT_BOOT);
     test_suite_register_cat("boot_decision: reason requires specific path (R5)",
                             test_boot_decision_reason_requires_path, TEST_CAT_BOOT);
     test_suite_register_cat("boot_decision: reason forbids originating path (R5)",

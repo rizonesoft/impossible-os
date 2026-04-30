@@ -250,7 +250,7 @@ struct boot_usb_controller {
 /* v11 adds ESP integrity fields populated by esp_integrity_check();
  * v10 added BOOT_FLAG_INVOKED_VIA_UKI;
  * v9 added flags + os_loader/required_security_version */
-#define BOOT_INFO_VERSION  11
+#define BOOT_INFO_VERSION  12
 #endif
 
 /* Typed payload descriptor array -- must match kernel/boot_info.h. */
@@ -299,26 +299,31 @@ struct boot_usb_controller {
  * include/kernel/boot_info.h. Bootloader populates boot_path /
  * boot_reason / boot_source_flags / boot_fallback_depth before
  * kernel handoff. */
-#define BOOT_PATH_NORMAL        0u
-#define BOOT_PATH_INSTALLER     1u
-#define BOOT_PATH_RECOVERY      2u
-#define BOOT_PATH_NETWORK       3u
-#define BOOT_PATH_RESUME        4u
-#define BOOT_PATH_FAST_STARTUP  5u
-#define BOOT_PATH_DIAGNOSTIC    6u
+/* UNSET=0 sentinel: a BSS-zero record from a producer that never
+ * populated the boot-decision fields lands here and the validator
+ * rejects. Mirror MUST stay in sync with kernel enum values. */
+#define BOOT_PATH_UNSET         0u
+#define BOOT_PATH_NORMAL        1u
+#define BOOT_PATH_INSTALLER     2u
+#define BOOT_PATH_RECOVERY      3u
+#define BOOT_PATH_NETWORK       4u
+#define BOOT_PATH_RESUME        5u
+#define BOOT_PATH_FAST_STARTUP  6u
+#define BOOT_PATH_DIAGNOSTIC    7u
 
-#define BOOT_REASON_NORMAL              0u
-#define BOOT_REASON_USER_SELECTED       1u
-#define BOOT_REASON_ROLLBACK            2u
-#define BOOT_REASON_RESUME_VALIDATED    3u
-#define BOOT_REASON_RESUME_INVALIDATED  4u
-#define BOOT_REASON_NETWORK_INSECURE    5u
-#define BOOT_REASON_MANIFEST_FAILURE    6u
-#define BOOT_REASON_MEASURED_BOOT_FAIL  7u
-#define BOOT_REASON_RECOVERY_TRIGGER    8u
-#define BOOT_REASON_FAST_STARTUP_HIT    9u
-#define BOOT_REASON_DIAGNOSTIC_REQUEST  10u
-#define BOOT_REASON_FALLBACK            11u
+#define BOOT_REASON_UNSET               0u
+#define BOOT_REASON_NORMAL              1u
+#define BOOT_REASON_USER_SELECTED       2u
+#define BOOT_REASON_ROLLBACK            3u
+#define BOOT_REASON_RESUME_VALIDATED    4u
+#define BOOT_REASON_RESUME_INVALIDATED  5u
+#define BOOT_REASON_NETWORK_INSECURE    6u
+#define BOOT_REASON_MANIFEST_FAILURE    7u
+#define BOOT_REASON_MEASURED_BOOT_FAIL  8u
+#define BOOT_REASON_RECOVERY_TRIGGER    9u
+#define BOOT_REASON_FAST_STARTUP_HIT    10u
+#define BOOT_REASON_DIAGNOSTIC_REQUEST  11u
+#define BOOT_REASON_FALLBACK            12u
 
 #define BOOT_SOURCE_FLAG_BOOT_NEXT_SET            (1u << 0)
 #define BOOT_SOURCE_FLAG_BOOT_CURRENT_MISMATCH    (1u << 1)

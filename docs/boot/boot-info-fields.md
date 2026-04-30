@@ -247,6 +247,58 @@ One shared decision record answering "what path did this boot take and why". Con
 | `boot_source_flags` | bootx64 | P0 | Registry (`SourceFlags`), BlackBox | handoff | boot-protocol-abi-handoff section 12 | Every set bit MUST be in `BOOT_SOURCE_FLAG_MASK_KNOWN`; unknown bits halt with "unknown flag" (unlike capability negotiation, forward-compat tolerance does NOT apply -- every flag maps to a kernel-side policy). |
 | `boot_fallback_depth` | bootx64 | P0 | Registry (`FallbackDepth`), BlackBox | handoff | boot-protocol-abi-handoff section 12 | `<= BOOT_FALLBACK_DEPTH_MAX` (16); greater halts with "probable fallback loop". |
 
+#### `BOOT_PATH_*` catalog (v12)
+
+`enum boot_path_type` -- which boot flow ran. Value 0 is the UNSET sentinel (BSS-zero from a producer that never populated the field; validator rejects). The single source of truth lives in [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h); this catalog must stay in sync.
+
+| Value | Name | Description |
+| ----- | ---- | ----------- |
+| 0 | `BOOT_PATH_UNSET` | sentinel (rejected by validator) |
+| 1 | `BOOT_PATH_NORMAL` | normal cold boot from primary boot device |
+| 2 | `BOOT_PATH_INSTALLER` | installer image handoff |
+| 3 | `BOOT_PATH_RECOVERY` | recovery partition / Windows RE equivalent |
+| 4 | `BOOT_PATH_NETWORK` | PXE / HTTP boot |
+| 5 | `BOOT_PATH_RESUME` | S4 hibernation resume (validated) |
+| 6 | `BOOT_PATH_FAST_STARTUP` | Windows-style fast startup (hybrid boot) |
+| 7 | `BOOT_PATH_DIAGNOSTIC` | operator-triggered diagnostic mode |
+
+#### `BOOT_REASON_*` catalog (v12)
+
+`enum boot_reason_code` -- the policy reason for the selected path. Value 0 is the UNSET sentinel. Each reason has a row in the validator's per-reason policy table (`reason_policy[]` in [`src/kernel/main/boot_decision.c`](../../src/kernel/main/boot_decision.c)) that pins required path, forbidden paths, fallback-class membership, and the trigger flag the reason demands. Adding a reason without updating the policy table is a compile-time error (`_Static_assert` on table length).
+
+| Value | Name | Required path | Fallback class | Trigger flag |
+| ----- | ---- | ------------- | -------------- | ------------ |
+| 0 | `BOOT_REASON_UNSET` | -- | -- | -- (rejected) |
+| 1 | `BOOT_REASON_NORMAL` | any | no | -- |
+| 2 | `BOOT_REASON_USER_SELECTED` | any | no | -- |
+| 3 | `BOOT_REASON_ROLLBACK` | any | yes | `ROLLBACK_TRIGGERED` |
+| 4 | `BOOT_REASON_RESUME_VALIDATED` | `RESUME` | no | -- |
+| 5 | `BOOT_REASON_RESUME_INVALIDATED` | any (forbids `RESUME`) | yes | `RESUME_INVALIDATED` |
+| 6 | `BOOT_REASON_NETWORK_INSECURE` | `NETWORK` | no | `NETWORK_INSECURE` |
+| 7 | `BOOT_REASON_MANIFEST_FAILURE` | any (forbids `INSTALLER`) | yes | `MANIFEST_FAILED` |
+| 8 | `BOOT_REASON_MEASURED_BOOT_FAIL` | any | yes | `MEASURED_BOOT_FAILED` |
+| 9 | `BOOT_REASON_RECOVERY_TRIGGER` | `RECOVERY` | no | `RECOVERY_TRIGGERED` |
+| 10 | `BOOT_REASON_FAST_STARTUP_HIT` | `FAST_STARTUP` | no | -- |
+| 11 | `BOOT_REASON_DIAGNOSTIC_REQUEST` | `DIAGNOSTIC` | no | -- |
+| 12 | `BOOT_REASON_FALLBACK` | any | yes | -- |
+
+#### `BOOT_SOURCE_FLAG_*` catalog (v12)
+
+Closed bitmask of inputs that drove the decision. `BOOT_SOURCE_FLAG_MASK_KNOWN` is the OR of every entry below; unknown bits halt the validator (no forward-compat tolerance). Trigger flags participate in Rule 7a (reason demands flag) and Rule 7b (flag demands matching reason); informational flags carry no reason constraint.
+
+| Bit | Name | Class | Producer rule |
+| --- | ---- | ----- | ------------- |
+| 0 | `BOOT_NEXT_SET` | informational | `BootNext` UEFI variable was populated |
+| 1 | `BOOT_CURRENT_MISMATCH` | informational | `BootCurrent` != expected primary entry |
+| 2 | `MEDIA_REMOVABLE` | informational | boot media flagged removable by `EFI_BLOCK_IO_PROTOCOL` |
+| 3 | `MEDIA_PRESENT` | informational | boot media actually present (BlockIO confirmed) |
+| 4 | `ROLLBACK_TRIGGERED` | trigger | rollback counter asserted; reason MUST be `ROLLBACK` |
+| 5 | `RECOVERY_TRIGGERED` | trigger | recovery trigger asserted; reason MUST be `RECOVERY_TRIGGER` |
+| 6 | `RESUME_INVALIDATED` | trigger | hibernation image invalidated; reason MUST be `RESUME_INVALIDATED` |
+| 7 | `NETWORK_INSECURE` | trigger | network boot with insecure-channel flag; reason MUST be `NETWORK_INSECURE` |
+| 8 | `MANIFEST_FAILED` | trigger | image manifest check failed; reason MUST be `MANIFEST_FAILURE` |
+| 9 | `MEASURED_BOOT_FAILED` | trigger | measured-boot/TPM check failed; reason MUST be `MEASURED_BOOT_FAIL` |
+
 ### Anti-rollback and security-version binding
 
 Monotonic anti-rollback counter bound to UEFI NVRAM variable `IPOSRequiredSecVersion`. The bootloader reads it early and refuses to jump when the kernel's `os_loader_security_version` is below the stored `required_security_version`. The kernel ships with a build-time signed value; after a successful Phase 3 proof-of-life (POST16_BOOT_OK), an opt-in policy may raise the NVRAM counter via UEFI RT `SetVariable` so future boots refuse older-signed kernels. Write timing is load-bearing: a pre-jump update would brick the system on a crash before POST16_BOOT_OK. Validator: [`boot_rollback_validate`](../../src/kernel/main/boot_rollback.c) wired from `boot_hw.c` after `boot_decision_validate`.
