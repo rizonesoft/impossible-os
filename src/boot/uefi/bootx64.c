@@ -3928,7 +3928,13 @@ static EFI_STATUS load_kernel(UINT64 *entry_point)
     }
 
     /* Read entire file into memory.
-     * Graduated allocation fallback (S8): try 32 -> 16 -> 8 MiB. */
+     * Graduated allocation fallback: try 32 -> 16 -> 8 MiB.  When a
+     * tier succeeds AT AN OVERLAPPING ADDRESS (boot_info region or
+     * framebuffer), FreePages it and continue to the next smaller
+     * tier rather than aborting -- a 32 MiB request might land on
+     * top of boot_info, but a 16 MiB or 8 MiB request might be
+     * placed elsewhere.  Only when every tier either fails to
+     * allocate or is overlap-rejected do we return EFI_LOAD_ERROR. */
     file_size = 0;
     {
         static const UINTN alloc_sizes[] = {
@@ -3941,18 +3947,55 @@ static EFI_STATUS load_kernel(UINT64 *entry_point)
         int ai;
         for (ai = 0; ai < 3; ai++) {
             UINTN pages = alloc_sizes[ai] / EFI_PAGE_SIZE;
+            EFI_PHYSICAL_ADDRESS try_addr = 0;
             status = gBS->AllocatePages(AllocateAnyPages, EfiLoaderData,
-                                         pages, &buf_addr);
-            if (!EFI_ERROR(status)) {
-                alloc_size = alloc_sizes[ai];
-                serial_early_print("[BOOT] Kernel buffer: ");
-                serial_early_print_uint((UINT32)(alloc_size / (1024 * 1024)));
-                serial_early_print(" MiB allocated\n");
-                break;
+                                         pages, &try_addr);
+            if (EFI_ERROR(status))
+                continue;
+
+            /* Overlap rejection: boot_info region.  Protected
+             * region is the FULL struct boot_info at
+             * BOOT_INFO_PHYS_ADDR (~22 KiB; capped at 65535 by the
+             * static assert), not just the first 4 KiB. */
+            UINT64 bi_start = (UINT64)BOOT_INFO_PHYS_ADDR;
+            UINT64 bi_end   = bi_start + (UINT64)sizeof(struct boot_info);
+            if ((UINT64)try_addr < bi_end &&
+                (UINT64)try_addr + (UINT64)alloc_sizes[ai] > bi_start) {
+                serial_early_print("[BOOT] Kernel buffer ");
+                serial_early_print_uint((UINT32)(alloc_sizes[ai] / (1024 * 1024)));
+                serial_early_print(" MiB overlaps boot_info -- "
+                                   "trying smaller tier\n");
+                gBS->FreePages(try_addr, pages);
+                continue;
             }
+
+            /* Overlap rejection: framebuffer region. */
+            if (g_boot_info_ptr->fb.addr != 0) {
+                UINT64 fb_end = g_boot_info_ptr->fb.addr +
+                    (UINT64)g_boot_info_ptr->fb.pitch *
+                    g_boot_info_ptr->fb.height;
+                if (try_addr < fb_end &&
+                    try_addr + alloc_sizes[ai] > g_boot_info_ptr->fb.addr) {
+                    serial_early_print("[BOOT] Kernel buffer ");
+                    serial_early_print_uint((UINT32)(alloc_sizes[ai] / (1024 * 1024)));
+                    serial_early_print(" MiB overlaps framebuffer -- "
+                                       "trying smaller tier\n");
+                    gBS->FreePages(try_addr, pages);
+                    continue;
+                }
+            }
+
+            /* This tier succeeded AND is non-overlapping.  Commit. */
+            buf_addr   = try_addr;
+            alloc_size = alloc_sizes[ai];
+            serial_early_print("[BOOT] Kernel buffer: ");
+            serial_early_print_uint((UINT32)(alloc_size / (1024 * 1024)));
+            serial_early_print(" MiB allocated\n");
+            break;
         }
         if (alloc_size == 0) {
-            serial_early_print("[FAIL] Cannot allocate kernel buffer (tried 32/16/8 MiB)\n");
+            serial_early_print("[FAIL] Cannot allocate non-overlapping "
+                               "kernel buffer (tried 32/16/8 MiB)\n");
             kernel_file->Close(kernel_file);
             root_dir->Close(root_dir);
             return EFI_LOAD_ERROR;
@@ -3964,37 +4007,6 @@ static EFI_STATUS load_kernel(UINT64 *entry_point)
          * the kernel buffer came from LoadedImage memory. */
         load_buf_addr  = buf_addr;
         load_buf_pages = alloc_size / EFI_PAGE_SIZE;
-
-        /* Verify buffer doesn't overlap boot_info region.
-         * S16: The protected region is the FULL struct boot_info at
-         * BOOT_INFO_PHYS_ADDR, not just the first 4 KiB.  sizeof(struct
-         * boot_info) is ~22 KiB and the S15 assert caps it at 65535,
-         * so any allocation that intersects [0x10000, 0x10000+sizeof)
-         * would silently clobber the handoff tail. */
-        {
-            UINT64 bi_start = (UINT64)BOOT_INFO_PHYS_ADDR;
-            UINT64 bi_end   = bi_start + (UINT64)sizeof(struct boot_info);
-            if ((UINT64)buf_addr < bi_end &&
-                (UINT64)buf_addr + (UINT64)alloc_size > bi_start) {
-                serial_early_print("[FAIL] Kernel buffer overlaps boot_info region\n");
-                kernel_file->Close(kernel_file);
-                root_dir->Close(root_dir);
-                load_err_status = EFI_LOAD_ERROR;
-                goto load_error;
-            }
-        }
-        /* Verify buffer doesn't overlap framebuffer */
-        if (g_boot_info_ptr->fb.addr != 0) {
-            UINT64 fb_end = g_boot_info_ptr->fb.addr +
-                (UINT64)g_boot_info_ptr->fb.pitch * g_boot_info_ptr->fb.height;
-            if (buf_addr < fb_end && buf_addr + alloc_size > g_boot_info_ptr->fb.addr) {
-                serial_early_print("[FAIL] Kernel buffer overlaps framebuffer\n");
-                kernel_file->Close(kernel_file);
-                root_dir->Close(root_dir);
-                load_err_status = EFI_LOAD_ERROR;
-                goto load_error;
-            }
-        }
     }
 
     status = kernel_file->Read(kernel_file, &file_size, file_buf);

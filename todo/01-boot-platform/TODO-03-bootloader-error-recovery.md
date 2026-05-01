@@ -315,17 +315,24 @@ If 16 MiB contiguous allocation fails (fragmented memory), try smaller sizes.
 - [x] Try `AllocatePages(32 MiB)` first via graduated fallback array
 - [x] If fails: try 16 MiB, then 8 MiB (3-element loop)
 - [x] Log actual allocation: `"[BOOT] Kernel buffer: N MiB allocated"`
-- [x] If all fail: `"[FAIL] Cannot allocate kernel buffer (tried 32/16/8 MiB)"` + return EFI_LOAD_ERROR
+- [x] If all fail OR all overlap-rejected: `"[FAIL] Cannot allocate non-overlapping kernel buffer (tried 32/16/8 MiB)"` + return EFI_LOAD_ERROR (string updated 2026-05-01 from §8 review Codex M1; distinguishes fragmentation exhaustion from overlap-vs-protected-region exhaustion).
 - [x] Kernel file size validated by §1 ELF bounds checks (32 MiB cap + per-segment validation)
-- [x] Buffer overlap checks: boot_info (0x10000-0x11000) and framebuffer (addr + pitch*height)
+- [x] Buffer overlap checks: full `sizeof(struct boot_info)` (~22 KiB; protected range is the entire handoff struct, NOT just `0x10000-0x11000` -- §16 caught the 4-KiB-only drift) and framebuffer (addr + pitch*height). Overlap-checks now run INSIDE the alloc loop (§8 review Codex M1 fix 2026-05-01): on overlap, FreePages the bad allocation, log `[BOOT] Kernel buffer N MiB overlaps boot_info/framebuffer -- trying smaller tier`, and continue to the next smaller tier rather than aborting -- a 32 MiB placement on top of a protected region no longer blocks 16 MiB / 8 MiB tries that might land elsewhere.
 - [x] Commit: `"boot: kernel allocation fallback -- 32-16-8 MiB with overlap check"` (c5cd3704)
 
-**Test checkpoint:** Normal boot works (kernel is ~1.5 MiB, fits in any allocation). Serial shows `"Kernel buffer: 32 MiB allocated"`.
+**Test checkpoint:** Normal boot works (kernel is ~1.5 MiB, fits in any allocation). Serial shows `"Kernel buffer: 32 MiB allocated"`. On pathological firmware that places 32 MiB over boot_info, serial would show `"Kernel buffer 32 MiB overlaps boot_info -- trying smaller tier"` followed by the successful smaller-tier line.
 
 > **Test runner:** N/A (UEFI pre-boot only -- AllocatePages graduated fallback runs before kernel) | validation: smoke + serial showing `Kernel buffer: 32 MiB allocated`
 
-> **Verified:** 2026-04-11 -- all 6 items confirmed. Graduated alloc_sizes[] array (32/16/8 MiB), 3-element fallback loop, failure message on exhaustion, overlap checks for boot_info + framebuffer regions. Accepted: none.
-> **Quality reviewed:** 2026-04-11 -- no findings. Graduated fallback exceeds Windows bootmgr, Linux efi-stub, and GRUB2 (none retry with smaller sizes). Explicit overlap checks are unique to our loader. Accepted: none.
+> **Notes:**
+> - What shipped: graduated AllocatePages fallback in load_kernel() with three tiers (32/16/8 MiB), per-iteration overlap checks against full `sizeof(struct boot_info)` + framebuffer (addr + pitch*height), FreePages-on-overlap-then-continue semantics (Codex M1 fix 2026-05-01), exhaustion path returns EFI_LOAD_ERROR with the non-overlapping-specific [FAIL] string.
+> - How it integrates: invoked from load_kernel() in the split-path boot AFTER kernel_file open succeeds; commits buf_addr + alloc_size + load_buf_pages so the §1 cleanup-label FreePages fires on any subsequent ELF-validation failure.
+> - Downstream effects: pathological firmware that places 32 MiB on top of boot_info or framebuffer no longer fails the boot -- 16 MiB or 8 MiB tries get a fresh placement attempt; only when ALL THREE tiers either fail to allocate or are overlap-rejected does the boot abort.
+> - Canonical doc: this section + §1 ELF bounds checks (32 MiB cap consumer) + §16 boot_info ABI (full sizeof protected range, not 4 KiB).
+> - Scope boundary: §8 owns the kernel-buffer allocation policy + overlap rejection. §1 owns ELF file-size validation against the allocated buffer. §17 owns memory-map overlap normalization for runtime regions.
+
+> **Verified:** 2026-05-01 | commit `<pending>` | 6/6 items | build OK | smoke PASS (KVM 2.27s). 6 original items + per-iteration overlap-rejection-with-tier-fallback confirmed at file:line. 2026-04-11 verification retained.
+> **Quality reviewed:** 2026-05-01 | Codex 4x (adversarial + consistency + perf + re-adversarial) | 1M fixed (overlap-rejection now retries smaller tier instead of aborting), 1L fixed (TODO §8 prose updated to match shipped strings + full sizeof(boot_info) range). Round-2 re-adversarial M2 (theoretical AllocateAnyPages re-handing-out same range) rejected with code evidence: UEFI x86 firmware allocates top-down, boot_info at 0x10000 is reserved low memory, framebuffer is MMIO outside EfiConventionalMemory; the loop is defense-in-depth against pathological firmware that hits the overlap branch at all | scope: boot-code-quality
 
 ---
 
