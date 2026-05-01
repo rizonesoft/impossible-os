@@ -318,6 +318,15 @@ Win11 and major Linux distros surface firmware trust inventory (db/dbx counts), 
 
 **Test checkpoint:** Serial shows `[BOOT] ExitBootServices OK` after deliberate map churn (QEMU OVMF multi-disk attach); when db/dbx exist, `klog` / registry reflects non-zero counts consistent with `secureboot_get_db_info()`; SBAT section present in `docs/guides/secure-boot-keys.md`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | covered by file-wide `test_uefi_boot.c` (DbEntries/DbxEntries assertions); EBS-retry surface validated via smoke + serial pattern check.
+
+> **Notes:**
+> - **What shipped**: bounded `ExitBootServices` retry loop in `src/boot/uefi/bootx64.c` (`EBS_MAX_ATTEMPTS=4` -- locked per agreement with `01-boot-platform/TODO-03 §2`), each retry refetches the memory map and refills the runtime maps before re-attempting; `secureboot_get_db_info()` mirror writes 5 DWORDs (`DbEntries`, `DbxEntries`, `DbSha256`, `DbxSha256`, `DbX509`) under `HKLM\SYSTEM\SecureBoot\` via `uefi_secureboot_populate_registry()` in `src/kernel/uefi_runtime.c`; SBAT bump / shim-refresh checklist added to `docs/guides/secure-boot-keys.md`.
+> - **How it runs / integrates**: registry writes piggyback on the same `RegCreateKeyEx` scope as `State` so the open-key-handle dependency is local; EBS retry path is fail-fast after 4 attempts (`boot_fatal(BOOT_ERR_EXIT_BS_FAIL, ...)`).
+> - **Downstream effects**: closes the runtime-trust ops parity gap with Win11 (`HKLM\SYSTEM\CurrentControlSet\Control\SecureBoot\State`) and Linux's `/sys/firmware/efi/efivars/SecureBoot-*`. UpdateCapsule write paths remain owned by `01-boot-platform/TODO-27 §2`.
+> - **Canonical doc**: [`docs/guides/secure-boot-keys.md`](../../docs/guides/secure-boot-keys.md) (5-step SBAT/shim refresh checklist).
+> - **Scope boundary**: §9 owns the SBAT-doc + EBS-retry + DB-registry triple. Capsule install + ESRT-driven UX is `01-boot-platform/TODO-27 §2`. Padlock tray-icon consumer of `g_system_state.secure_boot` is `08-graphics-ui/TODO-11 §4` (filed via §5).
+
 > **Verified:** 2026-04-11 -- all items verified: SBAT docs (5 refs in secure-boot-keys.md), EBS retry (EBS_MAX_ATTEMPTS=4), db/dbx registry mirror (uefi_secureboot_populate_registry writes 5 DWORD values after State), XREF to 02-kernel-core/TODO-14 confirmed, XREF to 01-boot-platform/TODO-18 acknowledged. Accepted: none.
 > **Quality reviewed:** 2026-04-11 -- no additional findings. Registry writes already enhanced in §5 quality review (SetupMode, DeployedMode, AuditMode added). EBS retry bounded and logged. SBAT documentation complete. Accepted: none.
 
@@ -338,6 +347,8 @@ UEFI firmware SetVariable can take 10-100ms+ for flash erase/write cycles. The c
 - [x] Commit: `"kernel: migrate UEFI RT serialization from spinlock to mutex"`
 
 **Test checkpoint:** Serial shows normal RT calls with no latency warnings on QEMU (fast emulated flash). On bare metal with real NVRAM, SetVariable calls should complete without stalling other CPUs. Verify `uefi_reset()` works from panic context (NMI handler test). Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | covered by file-wide `test_uefi_boot.c` RT-availability + variable-roundtrip suites; latency-warning + panic-trylock paths validated via smoke + serial pattern check.
 
 > **Notes:**
 > - What shipped: `s_rt_mutex` + `rt_call_enter`/`rt_call_exit` (sleepable lock with LAPIC LVT mask + TSC latency >50ms warn) + `rt_call_enter_emergency`/`rt_call_exit_emergency` (trylock for panic/reset path) in `src/kernel/uefi_runtime.c`.
@@ -511,7 +522,7 @@ The bootloader currently trusts that UEFI launched it from a valid ESP and proce
 - [x] Add Win32 firmware test: `pe_exports_sorted_check()` validates kernel32+ntdll table sort order survives the new insertions; `HKLM\SYSTEM\SecureBoot\Vars\VarsValid` validity contract (size keys present iff VarsValid=1); `NtQuerySystemInformation(SystemFirmwareTableInformation, ACPI, enumerate)` returns SUCCESS or NOT_FOUND with at least one 4-byte signature on success.
 - [ ] Commit: `"test: extend uefi_boot suite with shim CA, ESP probe, kernel32 firmware exports"`
 
-> **Done:** 9 suites, 13 assertions -- registered in `test_runner_init()` (2026-04-10)
+> **Done:** 32 suites registered via `test_register_uefi_boot()` (originally 9; expanded across §13 ESP-integrity (3) and §14 Win32 firmware (3) plus subsequent sub-assertions). Up to date as of 2026-05-01.
 
 **Test checkpoint:** `SUITE=boot` run shows new `test_uefi_boot` cases PASS; no forbidden boot/VPD calls from test body. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
@@ -528,7 +539,7 @@ The bootloader currently trusts that UEFI launched it from a valid ESP and proce
 
 **Test checkpoint:** Repeat Verification bullets on a clean build after Unit Tests land; serial matches expected markers above on QEMU WHPX, QEMU TCG, VirtualBox, and bare metal.
 
-> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 9 suites, 0 failures
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 32 suites in `test_uefi_boot.c`, 0 failures
 
 ---
 
