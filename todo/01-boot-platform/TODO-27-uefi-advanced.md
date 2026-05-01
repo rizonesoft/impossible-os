@@ -131,7 +131,7 @@ Provide a kernel-lockdown enforcement policy gated on the canonical Secure Boot 
 - [ ] `boot.conf` key `SecureBootEnforce=0`: when 1, read `g_system_state.secure_boot_enforced` (canonical state from TODO-02 §5) and trigger kernel lockdown (-> XREF: `02-kernel-core/TODO-10-kernel-security-hardening.md`)
 - [ ] Audit-mode trap-and-log: when `g_system_state.audit_mode == 1`, install a kernel hook that logs every Secure Boot policy violation (failed signature verify, MOK miss, etc.) to `HKLM\SYSTEM\SecureBoot\AuditLog\` without halting the boot. Lets operators dry-run enforcement.
 - [ ] DeployedMode lockdown: when `g_system_state.deployed_mode == 1`, refuse to clear PK / KEK / db / dbx via `uefi_var_set()` from kernel space (returns `STATUS_ACCESS_DENIED`). Production fleets stay locked.
-- [ ] Drift consumer: subscribe to `uefi_secureboot_drift_event` (filed in TODO-02 §5) and trigger immediate lockdown when the canonical reader reports drift between boot snapshot and live values.
+- [ ] Drift consumer: poll `uefi_secureboot_drift_detected()` (canonical API shipped in [TODO-02 §15](TODO-02-uefi-hardening-secureboot.md#15-post-boot-securebootrevalidation)) from the same kernel worker that fires `uefi_secureboot_revalidate_tick()`, and trigger immediate lockdown when the sticky flag transitions 0->1 between ticks. Alternatively register a callback via a future `uefi_secureboot_register_drift_listener()` if one is added when the periodic worker pattern lands.
 - [ ] Serial log: `[SecureBoot] policy: enforce=%u audit=%u deployed=%u` (no longer logs the raw variable values -- those are TODO-02 §5's surface).
 - [ ] Commit: `"kernel: Secure Boot enforcement policy consuming canonical state"`
 

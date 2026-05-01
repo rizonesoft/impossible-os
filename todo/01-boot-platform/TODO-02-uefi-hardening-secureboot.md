@@ -68,7 +68,7 @@ title: "TODO-02 -- UEFI Bootloader Hardening & Secure Boot"
 | 💎  |   2   | UEFI variable services                   | §1              |  [x]   |
 | 💎  |   3   | GOP resolution auto-detection            | §1              |  [x]   |
 | 💎  |   4   | SMBIOS table parsing                     | §1              |  [x]   |
-| 💎  |   5   | Secure Boot state detection              | §2              |  [/]   |
+| 💎  |   5   | Secure Boot state detection              | §2              |  [x]   |
 | 💎  |   6   | Secure Boot shim chain-loading           | §5              |  [x]   |
 | 💎  |   7   | Boot UX polish                           | §3, §5, T14 §2  |  [x]   |
 | ⭐  |   8   | Serial log standardization               | --              |  [x]   |
@@ -78,6 +78,7 @@ title: "TODO-02 -- UEFI Bootloader Hardening & Secure Boot"
 | 💎  |  12   | MS UEFI CA 2023 transition + 2011 retirement | §6          |  [x]   |
 | 💎  |  13   | EFI System Partition integrity check     | --              |  [x]   |
 | 💎  |  14   | Win32 firmware variable + table surface  | §2              |  [/]   |
+| 💎  |  15   | Post-boot SecureBoot revalidation        | §5              |  [/]   |
 
 ---
 
@@ -202,29 +203,27 @@ Read the UEFI `SecureBoot` variable and expose the state to the kernel.
 
 - [x] `uefi_secureboot_init()`: read `SecureBoot` variable, set `boot_info.secure_boot_enabled`
 - [x] Write `HKLM\SYSTEM\SecureBoot\State` = 0 or 1
-- [/] Padlock icon in system tray when Secure Boot active -- `g_system_state.secure_boot` flag published; rendering not implemented. -> XREF: `08-graphics-ui/TODO-11-startmenu-tray-notifications.md §4` (System tray icons -- `tray_icon` struct + register/unregister) is the owner; padlock-when-secure-boot-on is a §4 consumer of `g_system_state.secure_boot`.
-- [/] **Runtime SecureBoot revalidation** (gap-audit 2026-05-01 M2): drift-detection API shipped at `src/kernel/uefi_runtime.c:1186-1402` -- `uefi_secureboot_snapshot()` freezes the boot-time state vector at the end of `uefi_secureboot_init()`; `uefi_secureboot_refresh()` (S3 resume) and `uefi_secureboot_revalidate_tick()` (periodic) both delegate to a shared `uefi_secureboot_do_revalidate()` helper that re-reads SecureBoot/SetupMode/AuditMode/DeployedMode/PK/KEK OUTSIDE `s_sb_lock` (firmware reads acquire the sleepable `s_rt_mutex`; mutex-under-spinlock would deadlock -- Codex C1 fix), publishes to the legacy `s_sb_*` statics only when the live read is authoritative (preserves `uefi_secureboot_enabled()` contract on transient firmware hiccup -- self-review fix), compares against the snapshot, and on first observed mismatch emits `klog(LOG_FATAL, "SecureBoot", "DRIFT detected: ...")` and writes `HKLM\SYSTEM\SecureBoot\Drift = 1`. Drift detection and registry publication tracked separately (`s_sb_drift_detected` + `s_sb_drift_published`) so a transient registry write failure on the first tick does not permanently suppress the sentinel -- Codex H1 fix. `uefi_secureboot_drift_detected()` exposes the sticky flag for callers. Test: `test_secureboot_drift_detection` (TEST_CAT_BOOT, in `test_uefi_boot.c`) asserts `revalidate_tick` and `refresh` return 0 on an untampered system and the drift flag stays clear. Periodic-tick wiring (a 5-min kernel worker) and S3-resume-path call still open below; without a caller the API exists but no drift fires automatically. CLOSES the duplicate state-reading ownership in [`TODO-27 §5`](TODO-27-uefi-advanced.md#5-secure-boot-extended-state-and-enforcement-policy) -- §5 here is now the canonical source of truth.
-- [ ] **Wire `uefi_secureboot_revalidate_tick()` into a 5-minute periodic kernel worker** (follow-up to 2026-05-01 M2): the API exists but the periodic caller does not. Needs a long-period worker pattern (kthread sleeping `5 * 60 * 1000` ms, or a generic timer-deadline framework) -- new pattern in this kernel. When the worker spawns, it must run with the kernel idle task and yield via `sleep_ms()` so it can not starve. Consumer side only; no firmware-API changes needed.
-- [ ] **Wire `uefi_secureboot_refresh()` into the S3 resume path** -> XREF: [`02-kernel-core/TODO-26-power-management.md §3`](../02-kernel-core/TODO-26-power-management.md#3-s3-suspend-to-ram) (S3 suspend-to-RAM, `[ ]` Implementation Order row 3): the resume handler must call `uefi_secureboot_refresh()` immediately after re-enabling runtime services and before re-entering userspace, so any tampering during sleep is detected before the user types a password. Current S3 path does not exist (status `[ ]`); reciprocal back-reference filed in TODO-26 §3 in same commit.
-- [ ] **Narrow TODO-27 §5 ownership boundary**: TODO-27 §5 currently lists SetupMode/AuditMode/DeployedMode reading as open work, but those values are already published by §5 here (`uefi_secureboot_init`). Edit TODO-27 §5 prose to consume the canonical state via the `uefi_secureboot_*` API and limit its scope to ENFORCEMENT POLICY (deployed-mode lockdown, audit-mode trap-and-log, transition validation) so there is one reader, one source of truth.
 - [x] Commit: `"kernel: Secure Boot state detection, registry key"`
+
+> Out-of-scope work that originally lived under §5 has been migrated to its owning TODOs (2026-05-01): padlock tray icon -> [`08-graphics-ui/TODO-11-startmenu-tray-notifications.md §4`](../08-graphics-ui/TODO-11-startmenu-tray-notifications.md#4-system-tray-icons-sonnet); post-boot drift-detection wiring -> §15 below. The TODO-27 §5 ownership narrowing was already applied during the 2026-05-01 gap-audit ([TODO-27 §5](TODO-27-uefi-advanced.md#5-secure-boot-extended-state-and-enforcement-policy) consumes the canonical state via the `uefi_secureboot_*` API and is scoped to enforcement policy). §5 here is now scoped to the boot-time state read + registry publication only.
 
 > [!NOTE]
 > Kernel **code signature verification** for loaded images is owned by `02-kernel-core/TODO-10-kernel-security-hardening.md §11` (Enclave and code signing) and cross-notes in `02-kernel-core/TODO-15-security-reference-monitor.md`, not this bootloader TODO.
 
-**Test checkpoint:** `boot_info.secure_boot_enabled` matches UEFI `SecureBoot` variable when read succeeded (`StateValid=1`); registry `HKLM\SYSTEM\SecureBoot\StateValid` is `1` if the SecureBoot variable read succeeded, `0` if it failed. `State` key is present (0 or 1) ONLY when `StateValid=1`; absent on read-failure path so legacy boolean readers cannot mistake unknown for disabled. Padlock tray icon matches state when shell is running. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** `boot_info.secure_boot_enabled` matches UEFI `SecureBoot` variable when read succeeded (`StateValid=1`); registry `HKLM\SYSTEM\SecureBoot\StateValid` is `1` if the SecureBoot variable read succeeded, `0` if it failed. `State` key is present (0 or 1) ONLY when `StateValid=1`; absent on read-failure path so legacy boolean readers cannot mistake unknown for disabled. Padlock tray rendering is verified by [TODO-11 §4](../08-graphics-ui/TODO-11-startmenu-tray-notifications.md#4-system-tray-icons-sonnet). Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
 > **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot, TEST_CAT_BOOT) | test_secureboot_state_matches_var + test_secureboot_db_inventory_matches_registry; smoke covers boot reach to C:\>
 
 > **Notes:**
 > - `uefi_secureboot_init()` in `src/kernel/uefi_runtime.c:825-944` reads SecureBoot/SetupMode/DeployedMode/AuditMode (UEFI 2.5+) global vars + PK/KEK existence; publishes to `g_boot_info.secure_boot_enabled` + `g_system_state.secure_boot` + `BOOT_CAP_SECURE_BOOT_STATE` cap bit ONLY when the variable read succeeded. Failure path: state stays zero-init, cap stays degraded, klog says UNKNOWN.
 > - Hostile-firmware hardening (Codex 4x review 2026-04-28): `read_global_byte` now requires `status==SUCCESS && sz==sizeof(val)` (rejects firmware returning SUCCESS with sz=0/sz>1); `global_var_exists` requires `sz>0` (rejects empty PK/KEK as "enrolled"); `uefi_secureboot_populate_registry` writes `StateValid` always but `State` ONLY when valid (closes the unknown-vs-disabled ambiguity in the registry; 0xFF sentinel attempted but re-adversarial caught it polluted the bool contract for legacy readers).
-> - Padlock tray icon: `g_system_state.secure_boot` flag published; rendering owned by `08-graphics-ui/TODO-11-startmenu-tray-notifications.md §4` (System tray icons -- `tray_icon` struct + register/unregister). The flag is the consumer-side signal; no further plumbing needed by this section.
-> - Canonical doc: this section + UEFI 2.10 §8.2.1 (Secure Boot variables) + UEFI 2.10 §3.3 (PK/KEK semantics).
-> - Scope boundary: §5 owns SecureBoot state read + registry publication; kernel **code signature verification** for loaded images is owned by `02-kernel-core/TODO-10-kernel-security-hardening.md §11`; SecureBoot DB/dbx inventory is owned by §9 of this TODO.
+> - Padlock tray icon: `g_system_state.secure_boot` flag is published here; rendering is owned by [TODO-11 §4](../08-graphics-ui/TODO-11-startmenu-tray-notifications.md#4-system-tray-icons-sonnet) (filed there 2026-05-01).
+> - Canonical doc: this section + UEFI 2.10 section 8.2.1 (Secure Boot variables) + UEFI 2.10 section 3.3 (PK/KEK semantics).
+> - Scope boundary: §5 owns boot-time SecureBoot state read + registry publication. Post-boot revalidation (drift detection on S3 resume + periodic) is owned by §15 of this TODO. Kernel **code signature verification** for loaded images is owned by `02-kernel-core/TODO-10-kernel-security-hardening.md §11`; SecureBoot DB/dbx inventory is owned by §9 of this TODO.
 
 > **Verified:** 2026-04-28 | commit `35e9e17e` | 4/4 items (3 [x] + 1 [/]) | build OK | tests test_secureboot_state_matches_var + test_secureboot_db_inventory_matches_registry wired
 > **Quality reviewed:** 2026-04-28 | Codex 4x (adversarial + consistency + perf + re-adversarial) | 1H+2M fixed (+1 re-adversarial regression) | scope: kernel-code-quality (gates walked: SMP-safe by default, memory rules, bare-metal correctness, complete error paths, no TODO/FIXME, Win32 surface)
+> **Scope migration:** 2026-05-01 | section narrowed to boot-time state read; padlock tray icon migrated to TODO-11 §4; post-boot drift revalidation moved to §15 of this TODO; TODO-27 §5 ownership narrowing migrated to TODO-27 §5 itself. IO row flipped [/] -> [x] because remaining items are all [x].
 
 ---
 
@@ -488,6 +487,28 @@ The bootloader currently trusts that UEFI launched it from a valid ESP and proce
 > **Verified:** 2026-04-29 | commit `194e6012` | 5/5 items | build OK | tests 627/627 PASS
 > **Accepted:** [H] kernel32 firmware exports map to native SSDT slots without ABI translation -> XREF: 10-platform-services/TODO-08-win32-api-surface.md §2 (item: "Firmware variable trampolines for kernel32 exports reserved in src/kernel/pe.c s_kernel32_exports[]" at line 131 -- ANSI/Wide + EFI_GUID parsing + SystemFirmwareTableInformation packing + privilege gating)
 > **Quality reviewed:** 2026-04-29 | Codex 7x (design + adversarial-impl + 2x re-adversarial + adversarial + consistency + perf) | 2H+1M+1L fixed, 1H accepted-XREF | scope: kernel-code-quality
+
+---
+
+## 15. Post-boot SecureBoot Revalidation
+
+Detect firmware tampering, NVRAM corruption, or a physical attacker that modifies SecureBoot state while the OS is sleeping or running. Owns the post-boot drift-detection API and its two consumer paths (S3/S4 resume + low-frequency periodic). §5 captures the boot-time state baseline; this section consumes it.
+
+**Files:** `src/kernel/uefi_runtime.c` (drift API shipped here), `src/kernel/test/test_uefi_boot.c` (test).
+
+> [!NOTE]
+> The drift API itself is already shipped: `uefi_secureboot_snapshot()` freezes the boot-time state vector at the end of `uefi_secureboot_init()`; `uefi_secureboot_refresh()` (intended call from S3 resume) and `uefi_secureboot_revalidate_tick()` (intended call from periodic worker) both delegate to a shared `uefi_secureboot_do_revalidate()` helper that re-reads SecureBoot/SetupMode/AuditMode/DeployedMode/PK/KEK from firmware OUTSIDE `s_sb_lock` (firmware reads acquire the sleepable `s_rt_mutex`; mutex-under-spinlock would deadlock), publishes to the legacy `s_sb_*` statics only when EVERY field reads with definitive status (a transient firmware hiccup must not flip a previously-ENABLED system to "disabled"), compares against the snapshot, and on first observed mismatch emits `klog(LOG_FATAL, "SecureBoot", "DRIFT detected: ...")` and writes `HKLM\SYSTEM\SecureBoot\Drift = 1`. Drift detection (`s_sb_drift_detected`) and registry publication (`s_sb_drift_published`) are tracked separately so a transient registry write failure does not permanently suppress the sentinel. `uefi_secureboot_drift_detected()` exposes the sticky flag for callers (e.g. tray UI in [TODO-11 §4](../08-graphics-ui/TODO-11-startmenu-tray-notifications.md#4-system-tray-icons-sonnet) and lockdown enforcement in [TODO-27 §5](TODO-27-uefi-advanced.md#5-secure-boot-extended-state-and-enforcement-policy)). Tri-state read helpers (`read_global_byte_status`, `global_var_exists_status`) distinguish UEFI_NOT_FOUND (definitive "not enrolled") from indeterminate firmware errors so PK/KEK presence can not flip 1->0 on a transient hiccup.
+
+- [x] Drift-detection API (`uefi_secureboot_snapshot` / `_refresh` / `_revalidate_tick` / `_drift_detected`) shipped in `src/kernel/uefi_runtime.c:1186-1486` -- snapshot captured at end of `uefi_secureboot_init()`; do_revalidate helper shared by both consumer entry points; tri-state read helpers; sticky drift + sticky-publish-with-retry.
+- [x] Test `test_secureboot_drift_detection` (TEST_CAT_BOOT, in `test_uefi_boot.c`) asserts revalidate_tick + refresh return 0 on an untampered system and the drift flag stays clear.
+- [ ] **Wire `uefi_secureboot_revalidate_tick()` into a 5-minute periodic kernel worker**: the API exists but the periodic caller does not. Needs a long-period worker pattern (kthread sleeping `5 * 60 * 1000` ms via `sleep_ms()`, or a generic timer-deadline framework) -- new pattern in this kernel. The worker runs in a kernel-task context and yields cooperatively so it can not starve. Consumer side only; no firmware-API changes needed.
+- [ ] **Wire `uefi_secureboot_refresh()` into the S3 resume path** -> XREF: [`02-kernel-core/TODO-26-power-management.md §3`](../02-kernel-core/TODO-26-power-management.md#3-s3-suspend-to-ram) (S3 suspend-to-RAM, Implementation Order row 3, currently `[ ]`): the resume handler must call `uefi_secureboot_refresh()` immediately after re-enabling runtime services and `pm_notify_resume()` and before re-entering userspace, so any tampering during sleep is detected before the user types a password. Reciprocal back-reference already filed in TODO-26 §3 prose.
+- [ ] Test extension when consumer wiring lands: simulate tampered live state (PK absent vs snapshot.pk_present=1) and assert `revalidate_tick()` returns 1, klog FATAL fires once, registry `Drift=1`, and the sticky flag stays set on subsequent calls. Currently blocked by lack of a UEFI variable mock layer; revisit when SecureBoot test infrastructure adds `uefi_get_variable` interception.
+- [ ] Commit on each wiring item ship: `"kernel/secureboot: wire <consumer> -> uefi_secureboot_<entry>()"`
+
+**Test checkpoint:** `test_secureboot_drift_detection` passes today (no tampering -> no drift). After consumer wiring lands: a deliberately tampered fixture must trigger LOG_FATAL once and set `HKLM\SYSTEM\SecureBoot\Drift=1`. Test on: QEMU TCG (variable read failure simulation), bare metal (real S3 resume).
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot, TEST_CAT_BOOT) | test_secureboot_drift_detection (1 of N drift-related tests; rest gated on consumer wiring + UEFI variable mocks)
 
 ---
 
