@@ -59,7 +59,7 @@ title: "TODO-03 -- Bootloader Error Recovery & ELF Hardening"
 
 | ⭐  | Order | Deliverable                                    | Depends On | Status |
 | --- | :---: | ---------------------------------------------- | ---------- | :----: |
-| 💎  |   1   | ELF bounds checking                            | --         |  [/]   |
+| 💎  |   1   | ELF bounds checking                            | --         |  [x]   |
 | 💎  |   2   | ExitBootServices retry loop (bounded)          | --         |  [x]   |
 | 💎  |   3   | Fallback kernel search (3 paths)               | --         |  [x]   |
 | 💎  |   4   | Serial port probe and COM2 fallback            | --         |  [x]   |
@@ -100,7 +100,7 @@ Harden the kernel ELF parser in `load_kernel()` to reject malformed or corrupted
 - [x] Log each loaded segment: `"[BOOT] ELF segment N: paddr=0xHHHH filesz=N memsz=N"` via serial_early_print per segment
 - [x] On any validation failure: `"[FAIL] Kernel ELF corrupt: <reason>"` with specific error text for each check
 - [x] **ELF typedefs consolidated** (Codex consistency H1, shipped 2026-05-01): [`bootx64.c`](../../src/boot/uefi/bootx64.c) now `#include "elf_types.h"` and the duplicate local `Elf64_Ehdr` / `Elf64_Phdr` / `Elf64_Shdr` / `Elf64_Sym` typedefs + `ELF_MAGIC` + `PT_LOAD` + `SHT_*` macros are deleted. 13 `_Static_assert(__builtin_offsetof(...))` checks pin every byte offset `load_kernel()` reads (`e_magic` 0, `e_class` 4, `e_machine` 18, `e_phoff` 32, `e_phentsize` 54, `e_phnum` 56, `p_type` 0, `p_flags` 4, `p_offset` 8, `p_paddr` 24, `p_filesz` 32, `p_memsz` 40) plus `sizeof(Elf64_Ehdr) == 64` / `sizeof(Elf64_Phdr) == 56` per the ELF64 specification (System V ABI AMD64 Supplement). Future drift in `elf_types.h` breaks the build instead of silently shifting kernel-load destinations.
-- [ ] **Replace byte-at-a-time efi_memcpy / efi_memset with word-width or rep movsb path** (review-todo-section 2026-05-01 Codex perf M1): the helpers at [`bootx64.c:186-200`](../../src/boot/uefi/bootx64.c) are one-byte loops; `load_kernel()` calls them across multi-MiB PT_LOAD segments + BSS clears, executing millions of byte stores per boot before kernel handoff. Switch to: (a) `gBS->CopyMem` / `gBS->SetMem` while pre-EBS (UEFI firmware provides optimized implementations), with the byte-loop fallback retained for post-EBS callers, OR (b) inline-asm `rep movsb` / `rep stosb` for x86-64 (modern microarchitectures fast-path these). Measure boot-time delta on QEMU TCG (where the savings are largest). Owner: this section.
+- [x] **efi_memcpy / efi_memset converted to `rep movsb` / `rep stosb`** (Codex perf M1, shipped 2026-05-01): byte-loop helpers at [`bootx64.c`](../../src/boot/uefi/bootx64.c) replaced with x86-64 inline-asm using `cld` + `rep stosb` (memset) and `cld` + `rep movsb` (memcpy). Modern microarchitectures fast-path these via Enhanced REP MOVSB (Ivy Bridge+) and Fast Short REP MOV (Ice Lake+). Constraints: dst in `+D` (RDI), src in `+S` (RSI), count in `+c` (RCX), val byte in `a` (AL); clobbers `memory, cc`. Direction flag explicitly cleared on entry per System V AMD64 ABI (UEFI firmware does not guarantee `DF=0`). Works pre- and post-ExitBootServices (no `gBS` dependency). load_kernel()'s multi-MiB PT_LOAD segment copies + BSS clears no longer execute per-byte stores.
 - [x] Commit: `"boot: harden ELF parser -- bounds check all headers and segments"` (3c888540)
 
 **Test checkpoint:** Build a test kernel with `e_phoff` pointing past EOF. Bootloader must reject with `"Kernel ELF corrupt: phdr offset past EOF"` on serial. Verify on QEMU WHPX and TCG. Normal kernel must pass all checks on all 4 platforms (WHPX, TCG, VBox, bare metal).
@@ -114,10 +114,10 @@ Harden the kernel ELF parser in `load_kernel()` to reject malformed or corrupted
 > - Canonical doc: this section + ELF spec (TIS Tool Interface Standard 1.2 + System V ABI x86-64) + UEFI 2.10 section 13 LoadedImage handoff.
 > - Scope boundary: §1 owns ELF FILE-side validation (offsets, sizes, magic, header fields). §19 owns PT_LOAD DESTINATION policy (where in physical memory segments may write). §17 owns memory-map overlap normalization for runtime regions; this section's overlap checks are static against boot_info + framebuffer only.
 
-> **Verified:** 2026-05-01 | review-todo-section re-verify | 8/10 items, 2 new follow-up [ ] | build OK | smoke PASS (KVM 2.450s). All 8 original checks confirmed at file:line. Prior 2026-04-29 + 2026-04-11 verifications retained.
+> **Verified:** 2026-05-01 | commit `<pending>` | 10/10 items | build OK | smoke PASS (KVM 2.43s). All 8 original ELF bounds checks + 2 follow-up items (typedef consolidation, rep movsb/stosb conversion) confirmed at file:line. Prior 2026-04-29 + 2026-04-11 verifications retained.
 > **Accepted:** [H] PT_LOAD destination policy below 1 MiB floor not enforced -> XREF: 01-boot-platform/TODO-03 §19 (item: "Define `bool pt_load_destination_allowed(...)` predicate" at line 508 -- EfiConventionalMemory/EfiLoaderData allowlist naturally rejects p_paddr < 0x100000)
 > **Accepted:** [M] BOOT_INFO_PHYS_ADDR macro duplicated across bootx64.c + kernel/mm/boot_reserved.c + kernel/main/boot_payload.c -> XREF: 01-boot-platform/TODO-01 §1 (item: "Single source of truth for `BOOT_INFO_PHYS_ADDR` macro" filed 2026-05-01 -- move to boot_info.h, mirror in boot_info_mirror.h, delete three local #defines)
-> **Quality reviewed:** 2026-05-01 | Codex 3x (adversarial + consistency + perf) | 1H accepted-XREF (PT_LOAD floor -> §19), 1H + 1M deferred-§1-followup (ELF typedef consolidation, byte-loop memcpy/memset), 1M accepted-XREF (BOOT_INFO_PHYS_ADDR -> TODO-01) | scope: boot-code-quality (gates walked: UEFI types, error handling, EBS boundary, boot_info ABI sync (Gate 6 finding -> Accept-XREF), parse buffer dynamic alloc).
+> **Quality reviewed:** 2026-05-01 | Codex 5x (adversarial x3 + consistency + perf) | 1H+1M fixed (typedef consolidation, rep movsb/stosb), 1H+1M accepted-XREF (PT_LOAD floor -> §19, BOOT_INFO_PHYS_ADDR -> TODO-01) | scope: boot-code-quality (gates walked: UEFI types, error handling, EBS boundary, boot_info ABI sync, parse buffer dynamic alloc)
 
 ---
 

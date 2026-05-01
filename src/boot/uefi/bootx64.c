@@ -141,22 +141,36 @@ static inline void post_code16(UINT16 code);
 #define POST16_BL_ROLLBACK_REFUSE 0xB09A  /* Anti-rollback: shipped < required */
 #define POST16_BL_ROLLBACK_PASS   0xB09B  /* Anti-rollback: shipped >= required */
 
-/* --- Helper: memory ops --- */
+/* --- Helper: memory ops ---
+ * x86-64 `rep stosb` / `rep movsb` -- modern microarchitectures
+ * (Ivy Bridge+ via ERMSB; Ice Lake+ via FSRM) fast-path these to
+ * cache-line-wide stores/loads.  Both work pre- and post-
+ * ExitBootServices (no gBS dependency).  load_kernel() calls these
+ * across multi-MiB PT_LOAD segments and BSS clears; the prior
+ * byte-loop implementation executed millions of byte stores per
+ * boot.  Direction flag is cleared on entry per the System V AMD64
+ * ABI's stable-DF assumption (UEFI firmware does not guarantee
+ * DF=0 on entry to the loaded image, so be explicit). */
 static void efi_memset(void *dst, UINT8 val, UINTN size)
 {
-    UINT8 *d = (UINT8 *)dst;
-    UINTN i;
-    for (i = 0; i < size; i++)
-        d[i] = val;
+    __asm__ volatile (
+        "cld\n\t"
+        "rep stosb"
+        : "+D"(dst), "+c"(size)
+        : "a"(val)
+        : "memory", "cc"
+    );
 }
 
 static void efi_memcpy(void *dst, const void *src, UINTN size)
 {
-    UINT8 *d = (UINT8 *)dst;
-    const UINT8 *s = (const UINT8 *)src;
-    UINTN i;
-    for (i = 0; i < size; i++)
-        d[i] = s[i];
+    __asm__ volatile (
+        "cld\n\t"
+        "rep movsb"
+        : "+D"(dst), "+S"(src), "+c"(size)
+        :
+        : "memory", "cc"
+    );
 }
 
 /* --- Helper: GUID compare --- */
