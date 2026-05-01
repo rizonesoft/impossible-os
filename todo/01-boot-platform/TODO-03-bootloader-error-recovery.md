@@ -577,4 +577,4 @@ The pre-§18 error screen used UEFI text console (`ConOut`) with white-on-blue t
 
 **Test checkpoint:** Every Verification bullet passes on QEMU WHPX, QEMU TCG, VirtualBox, and bare metal; serial shows no unexpected `[WARN]` / `[CRIT]` on clean boot after all sections land.
 
-**Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot)
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot, TEST_CAT_BOOT) | suites: test_boot_info + test_boot_init + test_boot_decision + test_boot_caps + test_boot_rollback + test_boot_warm_update + test_boot_version + test_boot_timing + test_boot_reserved + test_boot_device + test_uefi_boot
