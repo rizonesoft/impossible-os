@@ -477,7 +477,7 @@ Windows has BootStatusPolicy but error codes are opaque hex values without conte
 - [x] At boot entry: `nvram_read_boot_error()` reads NVRAM -- if non-zero, logs `"[BOOT] Previous boot failed: code=0x"` + 8 hex on serial; reader validates attrs == NV|BS|RT, value <= `BOOT_ERR_REGISTRY_MAX`, and size == 4, repairing any malformed (oversized / undersized / wrong-attrs / out-of-registry) record via UEFI 2.10 7.2.1 delete-then-create so a pre-OS UEFI app cannot poison the channel
 - [x] Pass `boot_info.last_boot_error` to kernel -- field added to both bootloader struct (bootx64.c) and kernel header (boot_info.h) after `serial_baud`; kernel logs `"Previous boot failed: code=0x"` + 8 hex via klog in `boot_hw.c` (UINT32 contract uniform across serial / ConOut / klog / BSOD / QR URL)
 - [x] `boot_fatal()` includes the error code in on-screen display: 8-hex `"Error code: 0xNNNNNNNN"` line on the ConOut text fallback AND on the graphical BSOD subtitle AND in the QR-encoded recovery URL (`impossibleos.co/err/<8hex>`) -- all surfaces match the persisted UINT32
-- [x] Commit: `"review: TODO-03 §13 NVRAM persist -- serial-first ordering, BootError attr/registry repair, UINT32 width across all surfaces"` (TBD)
+- [x] Commit: `"review: TODO-03 §13 NVRAM persist -- serial-first ordering, BootError attr/registry repair, UINT32 width across all surfaces"` (d0a6c045)
 
 **Test checkpoint:** Delete `\boot\kernel.exe`, boot (gets error screen). Reboot normally with kernel restored. Serial shows `"Previous boot failed: code=0x00000003"`. Verify NVRAM variable is cleared on successful boot. Negative path: write a 1-byte BootError under the Impossible OS GUID with non-canonical attrs from a UEFI shell, reboot -- bootloader logs `[WARN] NVRAM: BootError untrusted ... repairing`, deletes, recreates canonical zero record; kernel-side clear path then sees a well-formed record.
 
@@ -489,7 +489,7 @@ Windows has BootStatusPolicy but error codes are opaque hex values without conte
 > - All 5 fatal-display surfaces print 8 hex digits (UINT32): bootloader serial CRIT, ConOut text fallback, graphical BSOD subtitle, QR-encoded recovery URL on both the standalone `qr_render_error_url` path and the inline graphical BSOD URL caption, plus the kernel `klog` previous-boot line; previously the graphical paths truncated to 16 bits while serial widened to 32.
 > - Recovery web registry at `gh-pages/err/errors.js` extended to cover codes `000e`-`0013` (ESP type GUID, ESP BPB, ESP missing files, rollback refusal, UKI payload, UKI disk override); the `Registry source` template tile referencing TODO `§N` was retired since it linked a public page to internal renumbering.
 > - Section IO row stays `[x]` after the boot-error history ring scope was promoted to standalone §20.
-> **Verified:** 2026-05-02 | commit `<TBD>` | 6/6 items | build OK | smoke PASS (KVM 2.28s) | 8 hex surfaces uniform
+> **Verified:** 2026-05-02 | commit `d0a6c045` | 6/6 items | build OK | smoke PASS (KVM 2.28s) | 8 hex surfaces uniform
 > **Quality reviewed:** 2026-05-02 | Codex 7x (adversarial, consistency, perf, re-adversarial x4) | 0H+5M+0L fixed, 0 open | scope: boot-code-quality
 
 ---
