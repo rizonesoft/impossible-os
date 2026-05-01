@@ -223,6 +223,7 @@ Claude Code skills live in `.claude/skills/`. They auto-load when Claude judges 
 | Skill | Description |
 |---|---|
 | `/implement-todo-section` | Implement one TODO section end-to-end |
+| `/implement-todo-item` | Implement a single `[ ]` (or close a `[/]`) item; auto-promotes to section-ship when it closes the last `[ ]` |
 | `/implement-ssdt-range` | Implement + wire a range of SSDT entries, mark Done [x] |
 | `/complete-todo-file` | Finalize / loose-end sweep an active TODO; runs unit tests + verification + commits |
 | `/create-todo` | Create a new TODO file |

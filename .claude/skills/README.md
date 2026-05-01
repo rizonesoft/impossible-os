@@ -20,6 +20,7 @@ Every live skill below has a matching row in [`../../CLAUDE.md`](../../CLAUDE.md
 | [`gap-audit-todo`](gap-audit-todo/) | Deep Win11/Linux parity + cross-TODO overlap + code-truth audit (mandatory secondary Codex pass) |
 | [`codex-gap-audit`](codex-gap-audit/) | Codex red-team of a TODO gap-audit inventory (mandatory in `gap-audit-todo` Phase 3.5) |
 | [`implement-todo-section`](implement-todo-section/) | Execute one section end-to-end with HARD GATE review pipeline     |
+| [`implement-todo-item`](implement-todo-item/) | Execute a single `[ ]` item; auto-promotes to section-ship when it closes the last `[ ]` |
 | [`implement-ssdt-range`](implement-ssdt-range/) | Implement + wire a range of SSDT entries, mark Done `[x]`             |
 | [`implement-unit-tests`](implement-unit-tests/) | Ship a TODO's Unit Tests section end-to-end                           |
 | [`complete-todo-file`](complete-todo-file/) | Finalize a TODO OR sweep an active one for loose ends: stale XREFs / drifted counts / unfilled placeholders / `[/]` platform-list narrowing / reversible `[ ]` manual demos. Full mode also dispatches `implement-unit-tests`, runs Verification items, flags manual-only, commits |

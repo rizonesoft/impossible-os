@@ -180,6 +180,32 @@ _TODO_PIPELINE: List[StepRule] = [
 # quality-review-section: industry standards / parity / superiority pass.
 # Builds on review pipeline; minimal additional evidence.
 # ----------------------------------------------------------------------------
+# ----------------------------------------------------------------------------
+# implement-todo-item: single-checklist-item scope.
+#   step 6  -- first build (Bash: bash scripts/build.sh)
+#   step 9  -- MANDATORY Codex adversarial dispatch (trivial-fix opt-out via
+#              SKIP_CODEX_REVIEW=1 + reason; the gate hook honors the env)
+#   step 11 -- second build after fixes (also Bash: bash scripts/build.sh;
+#              the observer records both step 6 and step 11 from the same
+#              regex -- the second occurrence in the conversation transcript
+#              flips step 11 satisfied)
+#   step 14 -- commit (Bash: git commit). Push is a separate Bash signal but
+#              not gated; commit is the load-bearing action.
+# Note: step 16 (auto-promotion to /review-todo-section when the item closes
+# the section) is a CONDITIONAL terminal step. The section_review_required
+# hook independently enforces it post-commit when the IO row flips, so we do
+# not double-gate here.
+# ----------------------------------------------------------------------------
+_IMPLEMENT_TODO_ITEM: List[StepRule] = [
+    (6,  "Bash", r"\bbash\s+(?:[^\"\']*?/)?scripts/build\.sh\b"),
+    (9,  "Bash", "__REVIEW_KIND__:adversarial"),
+    (9,  "Bash", "__REVIEW_KIND__:adversarial-impl"),
+    (9,  "Skill", r"^codex-adversarial-review-section$"),
+    (11, "Bash", r"\bbash\s+(?:[^\"\']*?/)?scripts/build\.sh\b"),
+    (14, "Bash", r"\bgit\s+commit\b"),
+]
+
+
 _QUALITY_REVIEW_SECTION: List[StepRule] = [
     (1, "Bash", r"\bbash\s+(?:[^\"\']*?/)?scripts/build\.sh\b"),
     # Quality-review Codex dispatches are adversarial-class; bind via the
@@ -194,6 +220,7 @@ _QUALITY_REVIEW_SECTION: List[StepRule] = [
 
 SKILL_STEP_MAP: Dict[str, List[StepRule]] = {
     "implement-todo-section": _IMPLEMENT_TODO_SECTION,
+    "implement-todo-item":    _IMPLEMENT_TODO_ITEM,
     "review-todo-section":    _REVIEW_TODO_SECTION,
     "verify-todo-section":    _VERIFY_TODO_SECTION,
     "complete-todo-file":     _COMPLETE_TODO_FILE,
@@ -211,6 +238,10 @@ REQUIRED_TERMINAL_STEPS: Dict[str, List[int]] = {
     # implement: design optional (conditional skip), build mandatory, adversarial
     # mandatory, rebuild mandatory, commit mandatory.
     "implement-todo-section": [7, 13, 16, 19],
+    # implement-item: build, adversarial, rebuild, commit. Step 16
+    # (post-commit /review-todo-section auto-invoke) is gated separately
+    # by section_review_required.py when the item closes a section.
+    "implement-todo-item": [6, 9, 11, 14],
     # review: build, adversarial, consistency, perf, commit.
     "review-todo-section": [4, 5, 8, 17],
     "verify-todo-section": [4, 5, 8, 17],
