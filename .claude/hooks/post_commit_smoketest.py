@@ -29,6 +29,7 @@ if str(_HOOK_DIR) not in sys.path:
 
 # pylint: disable=wrong-import-position
 import section_commit_gate as scg  # noqa: E402
+import _postcommit_lock as pclock  # noqa: E402
 
 
 _SOURCE_EXTS = (".c", ".h", ".asm", ".ld")
@@ -115,19 +116,40 @@ def main() -> int:
 
     skip_prefix = _read_skip_prefix(root, parent)
 
-    try:
-        result = subprocess.run(
-            ["bash", root + "/scripts/test.sh", "QUIET=1"],
-            capture_output=True, text=True, timeout=60,
-            env={**os.environ, "TIMEOUT": "30"},
-        )
-    except subprocess.TimeoutExpired:
-        print(json.dumps({
-            "systemMessage": (skip_prefix
-                              + "[smoketest] TIMED OUT after 60s"),
-            "continue": True,
-        }))
-        return 0
+    # Serialize against post_commit_smoketest_boot.py and any other
+    # post-commit hook touching build/.  Back-to-back commits stomp
+    # each other's intermediate object directories without this lock.
+    with pclock.try_acquire() as (acquired, _fd):
+        if not acquired:
+            head_short = ""
+            try:
+                head_short = subprocess.check_output(
+                    ["git", "rev-parse", "--short", "HEAD"],
+                    cwd=root, text=True, timeout=2,
+                    stderr=subprocess.DEVNULL,
+                ).strip()
+            except Exception:
+                pass
+            return pclock.emit_deferred(
+                skip_prefix + "[smoketest]", head_short)
+
+        try:
+            result = pclock.run_with_group_timeout(
+                ["bash", root + "/scripts/test.sh", "QUIET=1"],
+                60,
+                env={**os.environ, "TIMEOUT": "30"},
+            )
+        except subprocess.TimeoutExpired:
+            # Process group already SIGKILL'd + reaped by
+            # run_with_group_timeout before this except branch
+            # runs, so the lock can release safely without
+            # leaving QEMU/make descendants stomping build/.
+            print(json.dumps({
+                "systemMessage": (skip_prefix
+                                  + "[smoketest] TIMED OUT after 60s"),
+                "continue": True,
+            }))
+            return 0
 
     if result.returncode == 0:
         line = [l for l in result.stdout.splitlines() if "PASS" in l]
