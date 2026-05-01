@@ -269,7 +269,7 @@ If firmware reports more memory regions than `BOOT_MMAP_MAX_ENTRIES` (currently 
 > - Canonical doc: this section + §17 (mmap normalize) + UEFI 2.10 section 7.2 (memory map services).
 > - Scope boundary: §6 owns cap + truncation signaling (raw + normalize). §17 owns sweep-line overlap resolution. §12 owns descriptor field validation (zero-length, type bounds).
 
-> **Verified:** 2026-05-01 | commit `<pending>` | 5/5 items | build OK | smoke PASS (KVM 2.28s). 5 original items + normalize-overflow flag-setting + warn-once guard confirmed at file:line. 2026-04-11 verification retained.
+> **Verified:** 2026-05-01 | commit `fb016e8b` | 5/5 items | build OK | smoke PASS (KVM 2.28s). 5 original items + normalize-overflow flag-setting + warn-once guard confirmed at file:line. 2026-04-11 verification retained.
 > **Quality reviewed:** 2026-05-01 | Codex 3x (adversarial + consistency + perf) | 2M fixed (normalize-output overflow now sets mmap_truncated; warn-once guard is normalize-local instead of keying on the shared flag); re-adversarial skipped (~25 LOC, no lifecycle/state-machine) | scope: boot-code-quality
 
 ---
