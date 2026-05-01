@@ -77,6 +77,7 @@ Parse the ESRT firmware resource table and implement the UEFI capsule delivery p
 - [ ] Write to Registry: `HKLM\HARDWARE\Firmware\{GUID}\FwType`, `FwVersion`, `LastAttemptVersion`, `LastAttemptStatus`
 - [ ] `capsule_update_request(path)`: read capsule, write to ESP `\EFI\UpdateCapsule\`, set `OsIndications` bit 0, reboot
 - [ ] `capsule_check_result()`: read `OsIndicationsSupported` and `CapsuleReportGuid` at boot
+- [ ] **Capsule submission journal + torn-write recovery** (gap-audit 2026-05-01 H1, surfaced from TODO-02 review pipeline): firmware update is irreversible enough that a half-submitted capsule is a release blocker. Add a durable submission journal in `HKLM\SYSTEM\Capsule\Pending\{guid}\{State, EspPath, OsIndicationsWritten, ScheduledAt}` written BEFORE the ESP file copy AND BEFORE the OsIndications SetVariable write. On the next boot, `capsule_recover_pending()` runs early in Phase 2 and reconciles each pending entry against `CapsuleReportGuid` / `LastAttemptStatus`: if the ESP file exists but OsIndications was never set, retry the SetVariable; if both succeeded but firmware reports `LastAttemptStatus != 0`, log + advance journal to `Failed`; if firmware reports success, advance to `Applied` and delete the pending row. Tests: failure-injection cases for (a) kernel killed after journal write but before ESP copy, (b) kernel killed after ESP copy but before OsIndications, (c) kernel killed after OsIndications but before reboot. Owner: this section.
 - [ ] Commit: `"kernel: ESRT firmware table parse + UEFI capsule update delivery"`
 
 **Test checkpoint:** QEMU: `[ESRT] N firmware entries found`. Registry `HKLM\HARDWARE\Firmware\{GUID}\FwVersion` populated.
@@ -94,6 +95,7 @@ Enforce write-XOR-execute on UEFI runtime memory regions by walking the `EFI_MEM
 - [ ] Walk entries: for `MAT_CLASS_DATA` regions call `vmm_set_nx(virt, size)`; for `MAT_CLASS_CODE` regions call `vmm_set_ro(virt, size)`. (Iteration source switched to `mat_get_entry()` from `include/kernel/uefi_config.h`.)
 - [ ] Prerequisite: implement `vmm_set_nx()` and `vmm_set_ro()` in vmm.c (do not exist yet)
 - [ ] Graceful degradation: if table absent, log warning and continue
+- [ ] **EFI_MEMORY_ATTRIBUTE_PROTOCOL runtime sync** (gap-audit 2026-05-01 H2, surfaced from TODO-02 review pipeline): the static `EFI_MEMORY_ATTRIBUTES_TABLE` (UEFI 2.6) freezes attributes at boot; UEFI 2.10 adds the runtime-callable `EFI_MEMORY_ATTRIBUTE_PROTOCOL` with `GetMemoryAttributes` / `SetMemoryAttributes` / `ClearMemoryAttributes` so firmware-backed permission flips can stay in sync with OS page-table flips. Linux 6.7+ uses this for the EFI stub. Add: (a) protocol discovery via `LocateProtocol(EFI_MEMORY_ATTRIBUTE_PROTOCOL_GUID, ...)` BEFORE ExitBootServices; cache the function pointers via `boot_info.uefi_runtime` mirror (UEFI 2.10 protocol survives EBS like the rest of RT). (b) When `vmm_set_nx`/`vmm_set_ro` modify a UEFI runtime page, ALSO call the protocol's `SetMemoryAttributes(EFI_MEMORY_XP)` / `EFI_MEMORY_RO` so firmware-internal page-table state matches the OS view -- avoids drift on systems where firmware re-asserts permissions after `SetVirtualAddressMap`. (c) Graceful degradation: when the protocol is absent (UEFI < 2.10 or stripped firmware), log `[UEFI] memory-attribute protocol absent; falling back to static MAT enforcement only` and continue. Tests: synthetic UEFI 2.10 fixture (protocol present) asserts both paths fire; synthetic UEFI 2.6 fixture (protocol absent) asserts the absence is logged and the static path still works. Owner: this section.
 - [ ] Commit: `"kernel: UEFI runtime W^X enforcement via EFI_MEMORY_ATTRIBUTES_TABLE"`
 
 **Regression risk:** Modifies page table permissions on UEFI runtime regions. Rollback: skip enforcement (BOOT_DEGRADED path).
@@ -117,16 +119,21 @@ Enumerate all GOP handles via `LocateHandleBuffer` and select the active display
 
 **Test checkpoint:** QEMU (single GPU): `[BOOT] GOP: 1 handle(s)`, unchanged. Bare metal iGPU+dGPU: `[BOOT] GOP: 2 handle(s)`.
 
-## 5. Secure Boot Extended State and Enforcement Policy
+## 5. Secure Boot Enforcement Policy
 
-Read additional UEFI Secure Boot variables and provide an enforcement policy toggle.
+Provide a kernel-lockdown enforcement policy gated on the canonical Secure Boot state. The state itself (SetupMode/AuditMode/DeployedMode + drift detection) is owned by [TODO-02 §5](TODO-02-uefi-hardening-secureboot.md#5-secure-boot-state-detection); this section is enforcement policy that CONSUMES the canonical state via the `uefi_secureboot_*` API, not duplicate variable reads.
 
 **Files:** `src/kernel/uefi_runtime.c`, `include/kernel/uefi_runtime.h`, `include/kernel/boot_info.h`
 
-- [ ] Read `SetupMode`, `AuditMode`, `DeployedMode` UEFI variables; store in `boot_info`; write to `HKLM\SYSTEM\SecureBoot\`
-- [ ] `boot.conf` key `SecureBootEnforce=0`: when 1, trigger kernel lockdown (-> XREF: `02-kernel-core/TODO-10-kernel-security-hardening.md`)
-- [ ] Serial log: `[SecureBoot] SetupMode=%u AuditMode=%u DeployedMode=%u Enforce=%u`
-- [ ] Commit: `"kernel: Secure Boot extended state variables + SecureBootEnforce policy"`
+> [!NOTE]
+> Gap-audit 2026-05-01 narrowed this section's scope: the original "Read SetupMode/AuditMode/DeployedMode" item was duplicated work -- TODO-02 §5 already publishes those values via `uefi_secureboot_init()`. Removed to avoid drift between two readers; this section now consumes the canonical state.
+
+- [ ] `boot.conf` key `SecureBootEnforce=0`: when 1, read `g_system_state.secure_boot_enforced` (canonical state from TODO-02 §5) and trigger kernel lockdown (-> XREF: `02-kernel-core/TODO-10-kernel-security-hardening.md`)
+- [ ] Audit-mode trap-and-log: when `g_system_state.audit_mode == 1`, install a kernel hook that logs every Secure Boot policy violation (failed signature verify, MOK miss, etc.) to `HKLM\SYSTEM\SecureBoot\AuditLog\` without halting the boot. Lets operators dry-run enforcement.
+- [ ] DeployedMode lockdown: when `g_system_state.deployed_mode == 1`, refuse to clear PK / KEK / db / dbx via `uefi_var_set()` from kernel space (returns `STATUS_ACCESS_DENIED`). Production fleets stay locked.
+- [ ] Drift consumer: subscribe to `uefi_secureboot_drift_event` (filed in TODO-02 §5) and trigger immediate lockdown when the canonical reader reports drift between boot snapshot and live values.
+- [ ] Serial log: `[SecureBoot] policy: enforce=%u audit=%u deployed=%u` (no longer logs the raw variable values -- those are TODO-02 §5's surface).
+- [ ] Commit: `"kernel: Secure Boot enforcement policy consuming canonical state"`
 
 **Test checkpoint:** QEMU Setup Mode: `SetupMode=1`. Enrolled PK: `SetupMode=0`. `SecureBootEnforce=1`: `g_system_state.secure_boot_enforced == 1`.
 
