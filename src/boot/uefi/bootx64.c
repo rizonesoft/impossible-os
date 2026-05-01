@@ -4861,6 +4861,87 @@ static int mmap_evict_for_incoming(struct boot_mmap_entry *arr, UINT32 *count,
     return 1;
 }
 
+/* Memory-map geometry guard.  Both the initial GetMemoryMap consumer
+ * AND the ExitBootServices-retry consumer must call this BEFORE
+ * fill_memory_map() / fill_runtime_map() runs; without it,
+ * desc_size=0 with map_size>0 in fill_runtime_map's loop spins
+ * forever (Codex M2 adversarial 2026-05-02). */
+static void mmap_geometry_validate(UINTN map_size, UINTN desc_size,
+                                    const char *site)
+{
+    if (desc_size == 0 || desc_size < sizeof(EFI_MEMORY_DESCRIPTOR) ||
+        map_size == 0 || map_size % desc_size != 0) {
+        serial_early_print("[CRIT] mmap geometry invalid at ");
+        serial_early_print(site);
+        serial_early_print(" -- aborting\n");
+        boot_fatal(BOOT_ERR_MMAP_GEOMETRY,
+                   "Memory map geometry invalid",
+                   "Descriptor size or map size is malformed.");
+    }
+}
+
+/* Per-descriptor validation -- 5 checks shared between
+ * fill_memory_map() and fill_runtime_map() so the runtime-services
+ * handoff cannot consume firmware quirks that the regular mmap
+ * already strips (Codex H1 adversarial 2026-05-02).  Returns 1 if
+ * the descriptor is valid, 0 if invalid (and sets mmap_quirks=1 +
+ * emits a [WARN] line tagged with `site`). */
+static int mmap_descriptor_valid(EFI_MEMORY_DESCRIPTOR *desc,
+                                  UINT32 entry_num,
+                                  const char *site)
+{
+    UINT64 max_pages = 0xFFFFFFFFFFFFFULL;  /* UINT64_MAX / 4096 */
+    if (desc->NumberOfPages > max_pages) {
+        serial_early_print("[WARN] ");
+        serial_early_print(site);
+        serial_early_print(" entry ");
+        serial_early_print_uint(entry_num);
+        serial_early_print(": NumberOfPages overflow -- skipping\n");
+        g_boot_info_ptr->mmap_quirks = 1;
+        return 0;
+    }
+    UINT64 len = desc->NumberOfPages * EFI_PAGE_SIZE;
+    if (desc->PhysicalStart > 0xFFFFFFFFFFFFFFFFULL - len) {
+        serial_early_print("[WARN] ");
+        serial_early_print(site);
+        serial_early_print(" entry ");
+        serial_early_print_uint(entry_num);
+        serial_early_print(": address range wraps -- skipping\n");
+        g_boot_info_ptr->mmap_quirks = 1;
+        return 0;
+    }
+    if (desc->NumberOfPages == 0) {
+        serial_early_print("[WARN] ");
+        serial_early_print(site);
+        serial_early_print(" entry ");
+        serial_early_print_uint(entry_num);
+        serial_early_print(": zero pages -- skipping\n");
+        g_boot_info_ptr->mmap_quirks = 1;
+        return 0;
+    }
+    if (desc->PhysicalStart & 0xFFF) {
+        serial_early_print("[WARN] ");
+        serial_early_print(site);
+        serial_early_print(" entry ");
+        serial_early_print_uint(entry_num);
+        serial_early_print(": unaligned PhysicalStart -- skipping\n");
+        g_boot_info_ptr->mmap_quirks = 1;
+        return 0;
+    }
+    if (desc->Type >= EfiMaxMemoryType) {
+        serial_early_print("[WARN] ");
+        serial_early_print(site);
+        serial_early_print(" entry ");
+        serial_early_print_uint(entry_num);
+        serial_early_print(": invalid type 0x");
+        serial_early_print_hex16((UINT16)desc->Type);
+        serial_early_print(" -- skipping\n");
+        g_boot_info_ptr->mmap_quirks = 1;
+        return 0;
+    }
+    return 1;
+}
+
 static void fill_memory_map(EFI_MEMORY_DESCRIPTOR *mmap,
                              UINTN map_size, UINTN desc_size)
 {
@@ -4904,52 +4985,11 @@ static void fill_memory_map(EFI_MEMORY_DESCRIPTOR *mmap,
         UINT32 dest_idx;
         int incoming_prio;
 
-        /* ---- Descriptor validation (S12) ---- */
-
-        {
-            UINT64 max_pages = 0xFFFFFFFFFFFFFULL;  /* UINT64_MAX / 4096 */
-            if (desc->NumberOfPages > max_pages) {
-                serial_early_print("[WARN] Memory map entry ");
-                serial_early_print_uint(entry_num);
-                serial_early_print(": NumberOfPages overflow -- skipping\n");
-                g_boot_info_ptr->mmap_quirks = 1;
-                continue;
-            }
-            UINT64 len = desc->NumberOfPages * EFI_PAGE_SIZE;
-            if (desc->PhysicalStart > 0xFFFFFFFFFFFFFFFFULL - len) {
-                serial_early_print("[WARN] Memory map entry ");
-                serial_early_print_uint(entry_num);
-                serial_early_print(": address range wraps -- skipping\n");
-                g_boot_info_ptr->mmap_quirks = 1;
-                continue;
-            }
-        }
-
-        if (desc->NumberOfPages == 0) {
-            serial_early_print("[WARN] Memory map entry ");
-            serial_early_print_uint(entry_num);
-            serial_early_print(": zero pages -- skipping\n");
-            g_boot_info_ptr->mmap_quirks = 1;
+        /* Per-descriptor validation -- shared with fill_runtime_map
+         * via mmap_descriptor_valid() so both passes strip the same
+         * firmware quirks. */
+        if (!mmap_descriptor_valid(desc, entry_num, "Memory map"))
             continue;
-        }
-
-        if (desc->PhysicalStart & 0xFFF) {
-            serial_early_print("[WARN] Memory map entry ");
-            serial_early_print_uint(entry_num);
-            serial_early_print(": unaligned PhysicalStart -- skipping\n");
-            g_boot_info_ptr->mmap_quirks = 1;
-            continue;
-        }
-
-        if (desc->Type >= EfiMaxMemoryType) {
-            serial_early_print("[WARN] Memory map entry ");
-            serial_early_print_uint(entry_num);
-            serial_early_print(": invalid type 0x");
-            serial_early_print_hex16((UINT16)desc->Type);
-            serial_early_print(" -- skipping\n");
-            g_boot_info_ptr->mmap_quirks = 1;
-            continue;
-        }
 
         /* Priority-aware cap handling: at capacity, evict a lower-
          * priority existing entry to make room for the incoming one.
@@ -5031,20 +5071,60 @@ static void fill_runtime_map(EFI_MEMORY_DESCRIPTOR *mmap,
     UINTN offset;
     UINT32 idx = 0;
 
-    for (offset = 0; offset < map_size && idx < BOOT_RT_MMAP_MAX;
-         offset += desc_size) {
+    /* Internal geometry guard -- callers in efi_main and the EBS
+     * retry path are expected to call mmap_geometry_validate() too,
+     * but a defense-in-depth check here means desc_size==0 cannot
+     * spin this loop forever even if a future call site forgets
+     * the upstream guard. */
+    if (desc_size == 0 || desc_size < sizeof(EFI_MEMORY_DESCRIPTOR) ||
+        map_size == 0 || map_size % desc_size != 0) {
+        boot_fatal(BOOT_ERR_MMAP_GEOMETRY,
+                   "Runtime map geometry invalid",
+                   "Descriptor size or map size is malformed.");
+    }
+
+    int rt_cap_warned = 0;
+    /* Scan ALL descriptors -- do NOT stop at idx < BOOT_RT_MMAP_MAX.
+     * Stopping early would skip validation on remaining descriptors
+     * (later quirks would not set mmap_quirks or produce warnings)
+     * and would silently truncate the runtime view (Codex M3
+     * consistency 2026-05-02).  When the cap is reached, log once,
+     * set mmap_quirks, and keep scanning for validation purposes. */
+    for (offset = 0; offset < map_size; offset += desc_size) {
         EFI_MEMORY_DESCRIPTOR *desc =
             (EFI_MEMORY_DESCRIPTOR *)((UINT8 *)mmap + offset);
+        UINT32 entry_num = (UINT32)(offset / desc_size);
 
-        if (desc->Type == EfiRuntimeServicesCode ||
-            desc->Type == EfiRuntimeServicesData) {
-            g_boot_info_ptr->rt_mmap[idx].phys_addr  = desc->PhysicalStart;
-            g_boot_info_ptr->rt_mmap[idx].num_pages  = desc->NumberOfPages;
-            g_boot_info_ptr->rt_mmap[idx].attribute  = desc->Attribute;
-            g_boot_info_ptr->rt_mmap[idx].type       = desc->Type;
-            g_boot_info_ptr->rt_mmap[idx].reserved   = 0;
-            idx++;
+        if (desc->Type != EfiRuntimeServicesCode &&
+            desc->Type != EfiRuntimeServicesData)
+            continue;
+
+        /* Apply the SAME validation the regular mmap pass uses --
+         * otherwise rt_mmap could keep firmware quirks (zero-page,
+         * overflow, wrap, unaligned, invalid-type) that mmap[]
+         * stripped, leaving the kernel UEFI runtime setup with
+         * inconsistent views (Codex H1 adversarial 2026-05-02). */
+        if (!mmap_descriptor_valid(desc, entry_num, "Runtime map"))
+            continue;
+
+        if (idx >= BOOT_RT_MMAP_MAX) {
+            if (!rt_cap_warned) {
+                serial_early_print("[WARN] Runtime map cap reached "
+                                   "-- dropping remaining runtime "
+                                   "entries; SetVirtualAddressMap "
+                                   "input incomplete\n");
+                g_boot_info_ptr->mmap_quirks = 1;
+                rt_cap_warned = 1;
+            }
+            continue;  /* keep scanning so later quirks still warn */
         }
+
+        g_boot_info_ptr->rt_mmap[idx].phys_addr  = desc->PhysicalStart;
+        g_boot_info_ptr->rt_mmap[idx].num_pages  = desc->NumberOfPages;
+        g_boot_info_ptr->rt_mmap[idx].attribute  = desc->Attribute;
+        g_boot_info_ptr->rt_mmap[idx].type       = desc->Type;
+        g_boot_info_ptr->rt_mmap[idx].reserved   = 0;
+        idx++;
     }
 
     g_boot_info_ptr->rt_mmap_count = idx;
@@ -7864,12 +7944,10 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                    "UEFI firmware could not provide a memory map.");
     }
 
-    /* Validate descriptor geometry before parsing (S12) */
-    if (desc_size == 0 || desc_size < sizeof(EFI_MEMORY_DESCRIPTOR) ||
-        map_size == 0 || map_size % desc_size != 0) {
-        boot_fatal(BOOT_ERR_MMAP_GEOMETRY, "Memory map geometry invalid",
-                   "Descriptor size or map size is malformed.");
-    }
+    /* Validate descriptor geometry before parsing (shared helper
+     * is called from BOTH this initial path AND the EBS-retry
+     * path so neither can skip the guard). */
+    mmap_geometry_validate(map_size, desc_size, "initial GetMemoryMap");
 
     fill_memory_map(mmap, map_size, desc_size);
     fill_runtime_map(mmap, map_size, desc_size);
@@ -7978,6 +8056,11 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                                "GetMemoryMap failed on EBS retry",
                                "Memory map refresh failed during ExitBootServices retry.");
                 }
+                /* Re-apply geometry guard on the refreshed map --
+                 * the initial guard does NOT carry over (Codex M2
+                 * adversarial 2026-05-02). */
+                mmap_geometry_validate(map_size, desc_size,
+                                        "EBS-retry GetMemoryMap");
                 fill_memory_map(mmap, map_size, desc_size);
                 fill_runtime_map(mmap, map_size, desc_size);
             }

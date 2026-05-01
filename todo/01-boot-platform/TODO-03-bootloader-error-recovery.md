@@ -449,8 +449,16 @@ The UEFI firmware starts a 5-minute watchdog timer at boot. The current bootload
 
 > **Test runner:** N/A (UEFI pre-boot only -- mmap descriptor validation runs before kernel) | validation: smoke + serial; warning lines logged on quirky firmware
 
-> **Verified:** 2026-04-11 -- all 4 items confirmed. 6 validation checks (overflow, wrap, zero, align, type, overlap) + desc_size geometry guard at caller. Codex found NumberOfPages overflow (fixed) and desc_size=0 path (fixed with boot_fatal at caller level). Accepted: overlap normalization (-> XREF: 01-boot-platform/TODO-03 §17).
-> **Quality reviewed:** 2026-04-11 -- boot-code-quality 10/10 gates passed. Codex quality found desc_size geometry + map_size remainder (fixed: boot_fatal guard before both fill functions). EfiMaxMemoryType off-by-one fixed (>= not >). Accepted: overlap priority normalization (-> XREF: 01-boot-platform/TODO-03 §17).
+> **Notes:**
+> - What shipped: shared `mmap_geometry_validate()` + `mmap_descriptor_valid()` helpers in `src/boot/uefi/bootx64.c`. The 5 per-descriptor checks (NumberOfPages overflow, address-range wrap, zero pages, page alignment, Type < EfiMaxMemoryType) are now applied uniformly to BOTH `fill_memory_map()` (mmap[]) AND `fill_runtime_map()` (rt_mmap[]); geometry guard runs on initial GetMemoryMap AND every EBS-retry refresh.
+> - How it integrates: invalid descriptors get `[WARN] <site> entry N: ...` logs + set `mmap_quirks=1` + are stripped from the destination array; geometry failures call `boot_fatal(BOOT_ERR_MMAP_GEOMETRY, ...)`. Runtime-cap overflow (>64 EfiRuntimeServices descriptors) emits a one-shot WARN + sets mmap_quirks; loop continues so later quirks still warn.
+> - Downstream effects: closes the H1 hazard where rt_mmap kept firmware quirks that mmap[] stripped (kernel UEFI runtime setup was exposed to malformed descriptors); closes the M2 hazard where EBS retry skipped the geometry guard (desc_size==0 with map_size>0 could spin fill_runtime_map forever); closes the M3 silent-truncation of runtime descriptors past the 64-entry cap.
+> - Canonical doc: this section + §6 (mmap overflow detection) + §17 (mmap normalization) + UEFI 2.10 specification 7.2 (memory map services) + ACPI 6.5 EFI_MEMORY_DESCRIPTOR layout.
+> - Scope boundary: §12 owns per-descriptor validation + geometry guard. §6 owns total-descriptor cap. §17 owns sweep-line overlap normalization. mmap_evict_for_incoming priority logic is owned by §6's cap-handling subsection.
+
+> **Verified:** 2026-05-02 | commit `<pending>` | 5/5 items | build OK | smoke PASS (KVM 2.31s). All original items + shared validation helpers + EBS-retry geometry guard + runtime-cap WARN confirmed at file:line. 2026-04-11 verification retained.
+> **Accepted:** [M] Overlap priority normalization across descriptor types -> XREF: 01-boot-platform/TODO-03 §17 (item: "mmap_normalize sweep-line carves overlapping ranges by priority" -- §17 owns the cross-descriptor merge; §12 stops at per-descriptor validation)
+> **Quality reviewed:** 2026-05-02 | Codex 4x (adversarial + consistency + perf + re-adversarial) | 1H+2M fixed (runtime-map validation parity, EBS-retry geometry guard, runtime-cap silent-truncation visibility), 1M accepted-XREF | scope: boot-code-quality
 
 ---
 
