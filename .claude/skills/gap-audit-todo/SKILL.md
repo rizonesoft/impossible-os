@@ -160,6 +160,33 @@ description: Deep gap audit of a TODO file against all overlapping TODOs -- find
 
    Receiving the response goes through `superpowers:receiving-code-review` like every other Codex dispatch.
 
+### Phase 3.6 -- Filing Triage Gate (MANDATORY -- runs BEFORE any TODO edit)
+
+> **Why this gate exists:** the most common gap-audit failure mode is shipping the right findings into the wrong shape. Specifically:
+> 1. A finding that is a substantive new feature gets appended as a `[ ]` sub-bullet under a closed `[x]` section, bloating that section's checklist and breaking the "closed sections are stable" contract.
+> 2. A finding that is already owned by another TODO/section gets re-filed here as a fresh `[ ]` instead of cross-referenced, creating duplicate ownership and drift potential.
+>
+> Both failures look like progress in the moment and only surface as drift weeks later. This gate makes the filing decision an explicit, classified step before Phase 4 runs.
+
+14.6. **Classify EVERY accepted finding into one of four branches before the Phase 4 edit pass.** No finding may bypass this gate; the classification is an entry in the gap-analysis report (schema item 14, added below) and drives Phase 4 placement.
+
+   Branches (mirrors the [scope-gap protocol](../implement-todo-section/scope-gap-protocol.md) used by `/implement-todo-section`):
+
+   - **Branch A -- Inline expansion in an OPEN section (`[/]` or `[ ]`).** The finding is small, same-subsystem, fits naturally inside a section that's still in progress. Add as a `- [ ]` checklist item with concrete file:function evidence. **Forbidden when the target section's IO row is `[x]`** -- a closed section's checklist must not grow new mandatory work; if you're tempted to file in a closed section, the finding is wrong-shape and belongs in B / C / D instead. Adding a follow-up `[ ]` to a closed section silently downgrades the IO row to `[/]` (per Phase 4 step 17 status-consistency rule), which usually surprises the agent that closed it.
+   - **Branch B -- New top-level `## N.` section in THIS TODO.** Default for non-trivial new features that fit the TODO's scope. Add a full section with intro paragraph, checklist, Test checkpoint, Test runner, and an Implementation Order row. **This is the default for findings that name a substantive capability, a new subsystem boundary, or work that needs its own commit message**; do not collapse such findings into Branch A bullets even when a closed section's topic is "adjacent."
+   - **Branch C -- Existing concrete `[ ]` item in another TODO (XREF only).** The finding is already owned. Add a `-> XREF:` cross-reference (or, if the target item is too vague to actually close the gap, sharpen its wording in place) and reciprocal back-link in the OWNER TODO. Never spawn a duplicate `[ ]` here. **Both directions of the XREF must land in the same edit pass** (per Phase 3 step 12 reciprocal-patch rule).
+   - **Branch D -- New TODO file in the appropriate domain.** The finding is a substantive scope this TODO does not own and no existing TODO covers. Use `/create-todo` (or document the recommendation for the user) before filing the gap.
+
+   **Cross-TODO duplicate sweep is a HARD precondition for Branch B / D.** Step 14.5 already mandates the sweep; this step formalizes it as a gate -- if the sweep finds an existing owner, the finding becomes Branch C and Branch B / D are forbidden. Do NOT rely on the gut feel that "it would be cleaner to own this here." The sweep query set is fixed:
+
+   1. `mcp__todo-graph__code <symbol>` -- LSP-grade by-symbol lookup (only when the finding names a concrete C symbol, file path, or struct).
+   2. `mcp__todo-graph__by-domain <domain>` -- enumerate every TODO in the affected domain and its siblings.
+   3. `Bash(grep -rni "<feature>" todo/)` -- prose / synonym hits across the whole TODO tree. Try at least 2 phrasings per finding (the registered name plus an obvious synonym).
+
+   If ANY of the three queries returns a hit that names the same capability, the finding routes to Branch C. If you choose to override the sweep (rare; finding genuinely needs a new owner despite an existing partial item), state the override in chat with the file:line of the existing item AND why retargeting / sharpening would not close the gap.
+
+   **Output of this gate:** a per-finding classification table the report's schema item 14 will record. Until every accepted finding has a Branch A/B/C/D label AND, for B/D, evidence that the duplicate sweep was empty, the agent does NOT begin Phase 4.
+
 ### Phase 4 -- Add Missing Sections
 
 15. **Draft new sections or owner items for each significant gap.**
@@ -174,10 +201,12 @@ description: Deep gap audit of a TODO file against all overlapping TODOs -- find
        - For POST-BOOT sections (scheduler, syscall, exec, file I/O, IPC, network, runtime drivers): NO POST16. klog is fully working at this point. POST16 was designed for pre-`sti` triple-fault diagnostics; using it post-boot is cargo-culted noise.
        - For high-risk sections: `> [!WARNING]` callout noting SMP safety or bare-metal concerns.
      - For each competitive edge (⭐): same format, but add a `> [!TIP]` callout explaining why this is superior to Win11/Linux.
-     - For each false-completeness, wiring, or refinement gap:
-       - If it fits the current TODO's natural scope, add a concrete checklist item or a new section now.
-       - If it belongs in another TODO, add the exact owner item there with reciprocal XREFs now.
-       - Do not leave the report as the only place where the gap exists.
+     - For each false-completeness, wiring, or refinement gap, follow the Phase 3.6 Branch classification:
+       - **Branch A only:** the target section's IO row is `[/]` or `[ ]` AND the gap fits naturally inside its checklist. **NEVER append a follow-up bullet to a section whose IO row is `[x]`** -- that bloats closed sections and silently re-opens them. If the natural-target section is closed, the finding is wrong-shape: classify as Branch B (new section in this TODO) or Branch C (XREF in another TODO).
+       - **Branch B only:** new top-level `## N.` section in THIS TODO (full intro + checklist + Test checkpoint + Test runner + IO row). This is the default for non-trivial findings -- if you find yourself drafting a paragraph-long Branch A bullet, the finding has already grown past "inline expansion" and needs Branch B.
+       - **Branch C only:** the duplicate sweep in Phase 3.6 found an existing concrete `[ ]` item that owns the gap. Add reciprocal `-> XREF:` cross-refs (or sharpen the target item's wording). Do NOT spawn a duplicate `[ ]` here.
+       - **Branch D only:** the gap belongs to a domain this TODO does not own AND no existing TODO covers it. Use `/create-todo` (or document the recommendation in the report) before filing.
+       - **Forbidden:** "If it fits the current TODO's natural scope, add a checklist item or a new section now" was the prior wording; that ambiguity caused most of the Branch A misuses. The Branch A vs B decision is now bound by the Phase 3.6 classification, not by gut feel.
      - For Win11-only or Linux-only features: create sections only if they're important for compatibility or user experience. Otherwise note them as deferred with a reason.
 
 16. **Renumber all sections.**
@@ -236,6 +265,7 @@ description: Deep gap audit of a TODO file against all overlapping TODOs -- find
        11. **Cross-file patches applied** (target file, section, inserted/downgraded items, reason)
        12. **Auto-closure decisions** (source ID, target ID, closure result, proof or missing criteria)
        13. **Estimated scope** (new sections added, estimated complexity: low/medium/high, test categories needed)
+       14. **Filing triage table** (Phase 3.6 output): one row per accepted finding with columns `finding`, `branch` (A/B/C/D), `target` (section number for A/B, TODO+section for C, new TODO name for D), `duplicate-sweep` (queries run + result, OR "n/a" for Branch A/C). A Branch B / D row without a "duplicate-sweep: empty" entry is invalid; surface it as a defect in the report.
      - Every finding line must include a confidence tag: `confirmed` or `inferred`.
      - Include the final section count and checklist delta.
 
