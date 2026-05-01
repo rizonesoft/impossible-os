@@ -105,6 +105,8 @@ Harden the kernel ELF parser in `load_kernel()` to reject malformed or corrupted
 
 **Test checkpoint:** Build a test kernel with `e_phoff` pointing past EOF. Bootloader must reject with `"Kernel ELF corrupt: phdr offset past EOF"` on serial. Verify on QEMU WHPX and TCG. Normal kernel must pass all checks on all 4 platforms (WHPX, TCG, VBox, bare metal).
 
+> **Test runner:** N/A (UEFI pre-boot only -- ELF bounds checking runs before kernel is loaded) | validation: `bash scripts/test-smoke.sh` + serial log on QEMU WHPX/TCG, VBox, bare metal
+
 > **Notes:**
 > - What shipped: 8 ELF bounds checks at [`bootx64.c:3855-4020`](../../src/boot/uefi/bootx64.c) covering ehdr file-size guard, magic/class/machine, `e_phentsize == sizeof(Elf64_Phdr)`, `e_phnum <= 64`, `ELF_MAX_KERNEL_SIZE = 32 MiB`, `e_phoff` + phdr-table EOF bounds, per-PT_LOAD `p_offset + p_filesz` subtraction-based bounds, `p_memsz >= p_filesz`, address wraparound, full `sizeof(struct boot_info) = 23872`-byte boot_info overlap, `pitch * height`-with-overflow-guard framebuffer overlap.
 > - How it integrates: invoked by `load_kernel()` in the split-path boot before the segment-copy loop and before any `efi_memcpy` writes; UKI fast path skips this code entirely (signed PE means the kernel bytes are already firmware-verified). Returns `EFI_LOAD_ERROR` to the caller on any failure; caller maps to `boot_fatal(BOOT_ERR_ELF_CORRUPT, ...)` for the §9 error screen.
@@ -137,6 +139,8 @@ UEFI spec (Section 7.4.6) explicitly allows the memory map to change between Get
 
 **Test checkpoint:** Difficult to test directly (requires firmware that changes map between calls). Verify normal boot still succeeds on all 4 platforms. Serial output should show the first `ExitBootServices attempt` log line using the agreed `N` from TODO-02 §9.
 
+> **Test runner:** N/A (UEFI pre-boot only -- EBS retry runs at the boot-services exit boundary; no post-EBS kernel surface to assert) | validation: `bash scripts/test-smoke.sh` + serial log on QEMU WHPX/TCG, VBox, bare metal
+
 > **Notes:**
 > - What shipped: bounded EBS retry loop at [`bootx64.c:7595-7657`](../../src/boot/uefi/bootx64.c) with `EBS_MAX_ATTEMPTS=4`, fresh `gBS->ExitBootServices(map_key)` per attempt, per-attempt fail log carrying attempt number + `EBS_MAX_ATTEMPTS` denominator + 64-bit firmware status hex, `gBS->FreePool` of the stale mmap buffer before each refresh, last-iteration refresh skip so the exhaustion fatal carries `BOOT_ERR_EXIT_BS_FAIL` instead of `BOOT_ERR_EBS_MMAP_FAIL`.
 > - How it integrates: invoked from the kernel-handoff path right before the kernel jump; on success, `[BOOT] ExitBootServices OK` flips `g_ebs_in_progress=1` so subsequent boot_fatal renders fall to serial-only (ConOut dead post-EBS).
@@ -164,6 +168,8 @@ If `\boot\kernel.exe` is not found, search alternative paths before giving up.
 - [x] Commit: `"boot: fallback kernel search -- 3 paths before failure"` (f514594b)
 
 **Test checkpoint:** Rename `\boot\kernel.exe` to `\kernel.exe` on EFI partition. Boot must succeed with serial showing `"Trying \boot\kernel.exe... not found"` then `"Kernel found at \kernel.exe"`. Verify on QEMU TCG. Confirm default path works on all 4 platforms.
+
+> **Test runner:** N/A (UEFI pre-boot only -- kernel-search runs before kernel is loaded; no kernel-side test surface) | validation: `bash scripts/test-smoke.sh` + serial log on QEMU WHPX/TCG, VBox, bare metal
 
 > **Notes:**
 > - Three hardcoded kernel paths (`\boot\kernel.exe` -> `\kernel.exe` -> `\EFI\ImpossibleOS\kernel.exe`) tried in order on the boot device's SimpleFS, with LocateHandleBuffer-based all-volumes fallback when the kernel is absent from the boot device.
