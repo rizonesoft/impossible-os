@@ -47,6 +47,12 @@ typedef UINTN               EFI_TPL;
 #define EFI_NOT_FOUND               (14ULL | (1ULL << 63))
 #define EFI_SECURITY_VIOLATION      (26ULL | (1ULL << 63))
 
+/* --- ResetSystem types (UEFI 2.10 Table 8-3 / EFI_RESET_TYPE) --- */
+#define EFI_RESET_COLD              0
+#define EFI_RESET_WARM              1
+#define EFI_RESET_SHUTDOWN          2
+#define EFI_RESET_PLATFORM_SPECIFIC 3
+
 #define EFI_ERROR(status) ((INTN)(status) < 0)
 
 /* --- Variable attributes (UEFI Spec 2.10 Table 8.2) --- */

@@ -1470,7 +1470,14 @@ static void boot_fatal_dwell(void)
      * GetTime survives ExitBootServices (it's a runtime service).
      * EFI_TIME layout: Year(2)+Month(1)+Day(1)+Hour(1)+Minute(1)+Second(1)+...
      * Our efi.h declares GetTime as (VOID*, VOID*), so we use a raw
-     * byte buffer and read Hour/Minute/Second at offsets 4/5/6. */
+     * byte buffer and read Hour/Minute/Second at offsets 4/5/6.
+     *
+     * GetTime is firmware/SMM-backed on real hardware; calling it in
+     * a tight loop would issue a runtime-services storm for the full
+     * 10s dwell.  Throttle calls to ~10/sec via an inner TSC spin
+     * (~100ms per outer iteration), keeping wall-clock accuracy
+     * while reducing GetTime invocations by ~5 orders of magnitude.
+     * Codex M2 perf 2026-05-01. */
     if (gST && gST->RuntimeServices && gST->RuntimeServices->GetTime) {
         UINT8 tbuf0[20], tbuf[20];
         EFI_STATUS gs = gST->RuntimeServices->GetTime(tbuf0, (void *)0);
@@ -1478,7 +1485,20 @@ static void boot_fatal_dwell(void)
             UINT64 s0 = (UINT64)tbuf0[4] * 3600 + tbuf0[5] * 60 + tbuf0[6];
             for (;;) {
                 UINT64 sn;
-                __asm__ volatile("pause");
+                /* TSC-based ~100ms throttle.  300M ticks at 3 GHz =
+                 * ~100ms; on slower CPUs the throttle is longer
+                 * which only reduces firmware-call rate further. */
+                UINT64 throttle_start, throttle_now;
+                UINT32 lo, hi;
+                __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
+                throttle_start = ((UINT64)hi << 32) | lo;
+                for (;;) {
+                    __asm__ volatile("pause");
+                    __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
+                    throttle_now = ((UINT64)hi << 32) | lo;
+                    if (throttle_now - throttle_start >= 300000000ULL)
+                        break;
+                }
                 gs = gST->RuntimeServices->GetTime(tbuf, (void *)0);
                 if (EFI_ERROR(gs)) break;
                 sn = (UINT64)tbuf[4] * 3600 + tbuf[5] * 60 + tbuf[6];
@@ -1512,8 +1532,13 @@ static __attribute__((noreturn)) void boot_fatal(UINT32 err_code,
     /* 0. Persist error code in NVRAM for next-boot diagnostics (S13) */
     nvram_write_boot_error(err_code);
 
-    /* 1. Log to serial (include hex error code) */
+    /* 1. Log to serial (full 8-hex-digit error code matches the
+     * UINT32 contract on boot_fatal/nvram_write_boot_error/
+     * boot_info.last_boot_error -- truncating to 16 bits diverged
+     * the displayed code from the persisted code, see Codex M1
+     * consistency 2026-05-01). */
     serial_early_print("[CRIT] BOOT FATAL (0x");
+    serial_early_print_hex16((UINT16)(err_code >> 16));
     serial_early_print_hex16((UINT16)err_code);
     serial_early_print("): ");
     serial_early_print(title);
@@ -1538,16 +1563,21 @@ static __attribute__((noreturn)) void boot_fatal(UINT32 err_code,
 
         efi_print(u"\r\n  Impossible OS -- Boot Error\r\n\r\n");
 
-        /* Error code line */
+        /* Error code line -- 8 hex digits (UINT32 width matches the
+         * boot_fatal/nvram/boot_info contract). */
         efi_print(u"  Error code: 0x");
         {
-            CHAR16 hex_buf[5];
+            CHAR16 hex_buf[9];
             CHAR16 hex_chars[] = u"0123456789ABCDEF";
-            hex_buf[0] = hex_chars[(err_code >> 12) & 0xF];
-            hex_buf[1] = hex_chars[(err_code >> 8) & 0xF];
-            hex_buf[2] = hex_chars[(err_code >> 4) & 0xF];
-            hex_buf[3] = hex_chars[err_code & 0xF];
-            hex_buf[4] = 0;
+            hex_buf[0] = hex_chars[(err_code >> 28) & 0xF];
+            hex_buf[1] = hex_chars[(err_code >> 24) & 0xF];
+            hex_buf[2] = hex_chars[(err_code >> 20) & 0xF];
+            hex_buf[3] = hex_chars[(err_code >> 16) & 0xF];
+            hex_buf[4] = hex_chars[(err_code >> 12) & 0xF];
+            hex_buf[5] = hex_chars[(err_code >> 8) & 0xF];
+            hex_buf[6] = hex_chars[(err_code >> 4) & 0xF];
+            hex_buf[7] = hex_chars[err_code & 0xF];
+            hex_buf[8] = 0;
             efi_print(hex_buf);
         }
         efi_print(u"\r\n");
@@ -1631,7 +1661,7 @@ static __attribute__((noreturn)) void boot_fatal(UINT32 err_code,
      * since ResetSystem is a runtime service, not a boot service). */
     if (gST && gST->RuntimeServices)
         gST->RuntimeServices->ResetSystem(
-            0 /* EfiResetCold */, 0, 0, (VOID *)0);
+            EFI_RESET_COLD, 0, 0, (VOID *)0);
 
     /* 5. Fallback: halt forever */
     for (;;) __asm__ volatile("hlt");

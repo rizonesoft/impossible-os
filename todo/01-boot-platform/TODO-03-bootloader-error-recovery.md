@@ -356,8 +356,15 @@ Replace all `for (;;) hlt;` loops with a visible error screen rendered using the
 
 > **Test runner:** N/A (UEFI pre-boot only -- error screen rendered via GOP before kernel) | validation: smoke + manual delete-kernel.exe fixture on QEMU WHPX/TCG, VBox
 
-> **Verified:** 2026-04-11 -- all 7 items confirmed. boot_fatal() with serial CRIT log + console blue/white BSOD + recovery instructions + ConIn keypress + ResetSystem fallback. 4 HLT loops replaced. g_ebs_in_progress gates ConOut after EBS attempted. Accepted: none.
-> **Quality reviewed:** 2026-04-11 -- no findings. Exceeds Linux efi-stub (silent hang) and matches Windows BSOD UX. ConOut guard for post-EBS errors is unique -- neither Linux nor GRUB handles this. Serial CRIT logging provides remote diagnostics that Windows BSOD lacks. Accepted: none.
+> **Notes:**
+> - What shipped: `boot_fatal(UINT32 err_code, const char *title, const char *detail)` + `boot_fatal_dwell()` in `src/boot/uefi/bootx64.c` -- noreturn fatal path: NVRAM-persist err_code, serial `[CRIT] BOOT FATAL (0xXXXXXXXX)` log (8 hex digits matching UINT32 contract, fixed 2026-05-01), white-on-blue ConOut BSOD with recovery steps, optional graphical BSOD via `bsod_render_graphical()` or QR-only via `qr_render_error_url()`, time-based dwell, then `ResetSystem(EFI_RESET_COLD)`.
+> - How it integrates: replaces 4 `for(;;) hlt` error paths (kernel load, GetMemoryMap, EBS retry, EBS final). `g_ebs_in_progress` flag gates ConOut after EBS attempted; framebuffer paths handle the post-EBS case. `error_screen_test=1` boot.conf flag halts before ResetSystem so the screen stays visible for visual diff.
+> - Downstream effects: NVRAM `last_boot_error` field is read at next-boot for §13 boot-error history; full 8-hex-digit display now matches the persisted UINT32 contract. Post-EBS `boot_fatal_dwell` throttles `RuntimeServices->GetTime` to ~10/sec via TSC-spin to avoid SMM-call storms on real firmware (Codex M2 perf 2026-05-01).
+> - Canonical doc: this section + §13 (boot error code registry) + §14 (QR code) + §18 (graphical BSOD) + UEFI 2.10 EFI_RESET_TYPE.
+> - Scope boundary: §9 owns the fatal-render contract + boot_fatal API. §13 owns NVRAM error-code persistence. §14 owns QR encoding. §18 owns the graphical BSOD layout.
+
+> **Verified:** 2026-05-01 | commit `<pending>` | 7/7 items | build OK | smoke PASS (KVM 2.29s). 7 original items + UINT32-width fatal-code display + EFI_RESET_COLD constant + GetTime throttle confirmed at file:line. 2026-04-11 verification retained.
+> **Quality reviewed:** 2026-05-01 | Codex 4x (adversarial + consistency + perf + re-adversarial) | 1M+1M+1L fixed (UINT32-width fatal code display matches contract, EFI_RESET_COLD define added to bootloader efi.h replacing raw literal, post-EBS GetTime polling throttled via TSC-spin to ~10/sec). Round-2 re-adversarial converged with zero new findings | scope: boot-code-quality
 
 ---
 
