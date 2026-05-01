@@ -5,7 +5,7 @@
 #
 # This file is the REPO-OWNED source of truth for the two MCP server
 # blocks Codex CLI is expected to expose: `todo-graph` and `lsp-bridge`.
-# Codex CLI reads `~/.codex/config.toml` (per Codex CLI 0.126), which is
+# Codex CLI reads `~/.codex/config.toml` (per Codex CLI 0.128), which is
 # user-local; this fixture documents the EXACT block shape that file
 # must contain. The drift validator in `scripts/test-tooling.sh` (the
 # `mcp_drift` sub-test) compares the active `~/.codex/config.toml`
