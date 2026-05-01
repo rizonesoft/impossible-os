@@ -331,7 +331,7 @@ If 16 MiB contiguous allocation fails (fragmented memory), try smaller sizes.
 > - Canonical doc: this section + §1 ELF bounds checks (32 MiB cap consumer) + §16 boot_info ABI (full sizeof protected range, not 4 KiB).
 > - Scope boundary: §8 owns the kernel-buffer allocation policy + overlap rejection. §1 owns ELF file-size validation against the allocated buffer. §17 owns memory-map overlap normalization for runtime regions.
 
-> **Verified:** 2026-05-01 | commit `<pending>` | 6/6 items | build OK | smoke PASS (KVM 2.27s). 6 original items + per-iteration overlap-rejection-with-tier-fallback confirmed at file:line. 2026-04-11 verification retained.
+> **Verified:** 2026-05-01 | commit `66b83fff` | 6/6 items | build OK | smoke PASS (KVM 2.27s). 6 original items + per-iteration overlap-rejection-with-tier-fallback confirmed at file:line. 2026-04-11 verification retained.
 > **Quality reviewed:** 2026-05-01 | Codex 4x (adversarial + consistency + perf + re-adversarial) | 1M fixed (overlap-rejection now retries smaller tier instead of aborting), 1L fixed (TODO §8 prose updated to match shipped strings + full sizeof(boot_info) range). Round-2 re-adversarial M2 (theoretical AllocateAnyPages re-handing-out same range) rejected with code evidence: UEFI x86 firmware allocates top-down, boot_info at 0x10000 is reserved low memory, framebuffer is MMIO outside EfiConventionalMemory; the loop is defense-in-depth against pathological firmware that hits the overlap branch at all | scope: boot-code-quality
 
 ---
