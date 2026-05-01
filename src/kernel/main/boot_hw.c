@@ -763,6 +763,50 @@ void boot_decision_populate_registry(void)
     RegSetDword(hKey, "SourceFlags",   g_boot_info.boot_source_flags);
     RegSetDword(hKey, "FallbackDepth", g_boot_info.boot_fallback_depth);
 
+    /* Bootloader build identity: surfaces the producer's git_sha +
+     * build time + label so post-boot triage tools can attribute the
+     * handoff to a specific BOOTX64.EFI image. Mirrors what
+     * boot_info.loader_identity carries. The value comes from
+     * compile-time constants the bootloader baked into its image
+     * via tools/boot-info-manifest/gen-loader-identity.sh. */
+    {
+        /* git_sha as a hex string for REG_SZ; raw bytes available
+         * via boot_info.loader_identity.git_sha for tools that need
+         * the binary form. */
+        char sha_hex[41];
+        const char *xd = "0123456789abcdef";
+        uint32_t i;
+        int sha_zero = 1;
+        for (i = 0; i < 20; i++) {
+            uint8_t b = g_boot_info.loader_identity.git_sha[i];
+            if (b != 0) sha_zero = 0;
+            sha_hex[i * 2]     = xd[(b >> 4) & 0xFu];
+            sha_hex[i * 2 + 1] = xd[b & 0xFu];
+        }
+        sha_hex[40] = '\0';
+        if (sha_zero) {
+            RegSetString(hKey, "LoaderGitSha",
+                         "0000000000000000000000000000000000000000");
+        } else {
+            RegSetString(hKey, "LoaderGitSha", sha_hex);
+        }
+        /* build_unix_time is a uint64; registry has no native QWORD
+         * setter exposed today (only DWORD), so split into HIGH/LOW
+         * pair until a QWORD wrapper lands. */
+        RegSetDword(hKey, "LoaderBuildTimeLow",
+                    (uint32_t)(g_boot_info.loader_identity.build_unix_time
+                               & 0xFFFFFFFFu));
+        RegSetDword(hKey, "LoaderBuildTimeHigh",
+                    (uint32_t)(g_boot_info.loader_identity.build_unix_time
+                               >> 32));
+        /* build_label[24] is NUL-terminated; safe for REG_SZ as-is. */
+        char label[25];
+        for (i = 0; i < 24; i++)
+            label[i] = g_boot_info.loader_identity.build_label[i];
+        label[24] = '\0';
+        RegSetString(hKey, "LoaderBuildLabel", label);
+    }
+
     RegCloseKey(hKey);
 
     klog(LOG_INFO, "boot",

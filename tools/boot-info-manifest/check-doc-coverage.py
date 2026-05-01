@@ -92,6 +92,7 @@ PREFIX_SECTIONS: dict[str, list[str]] = {
     "timing.":         ["Nested struct: `timing`", "Boot timing (FPDT + TSC)"],
     "usb_controller.": ["Nested struct: `boot_usb_controller`"],
     "uefi_runtime.":   ["Nested struct: `boot_uefi_runtime`"],
+    "loader_identity.":["Bootloader build identity"],
 }
 # Top-level scalar sections that carry PRIMARY ownership rows -- any of
 # these can host a bare-name row and satisfy the coverage gate.
@@ -127,6 +128,7 @@ TOPLEVEL_SECTIONS: list[str] = [
     "Boot-path provenance",
     "Anti-rollback and security-version binding",
     "EFI System Partition integrity",
+    "Bootloader build identity",
     # NOTE: do NOT add `Legacy / Multiboot2-only fields` -- it is a
     # summary table only.
 ]

@@ -76,13 +76,43 @@
 #ifndef BOOT_INFO_MAGIC
 #define BOOT_INFO_MAGIC    0x49504F53  /* "IPOS" (Impossible OS) */
 #endif
+/* Bootloader build identity (v13). 64-byte struct populated by the
+ * UEFI bootloader from compile-time constants emitted by
+ * tools/boot-info-manifest/gen-loader-identity.sh into
+ * build/boot_loader_identity.h. Lives at the tail of struct boot_info
+ * (back-compat: a stale kernel reading a fresh handoff still sees its
+ * known prefix; a stale bootloader against a fresh kernel leaves the
+ * field zero and the kernel detects "loader did not populate" via the
+ * all-zero git_sha sentinel). */
+struct __attribute__((packed)) boot_loader_identity {
+    uint8_t  git_sha[20];        /* git rev-parse HEAD raw bytes */
+    uint64_t build_unix_time;    /* git log -1 --format=%ct (LE) */
+    char     build_label[24];    /* git describe --dirty --always (NUL-terminated) */
+    uint8_t  _pad[12];           /* reserved zero */
+};
+
+_Static_assert(sizeof(struct boot_loader_identity) == 64,
+    "boot_loader_identity must be exactly 64 bytes -- ABI contract");
+_Static_assert(__builtin_offsetof(struct boot_loader_identity, git_sha) == 0,
+    "boot_loader_identity.git_sha at offset 0");
+_Static_assert(__builtin_offsetof(struct boot_loader_identity, build_unix_time) == 20,
+    "boot_loader_identity.build_unix_time at offset 20");
+_Static_assert(__builtin_offsetof(struct boot_loader_identity, build_label) == 28,
+    "boot_loader_identity.build_label at offset 28");
+_Static_assert(__builtin_offsetof(struct boot_loader_identity, _pad) == 52,
+    "boot_loader_identity._pad at offset 52");
+
 #ifndef BOOT_INFO_VERSION
 /* v11 adds ESP integrity fields (esp_size_mb, esp_filesystem_type,
  * esp_type_guid_valid) populated by the UEFI bootloader's pre-load
  * sanity gate;
  * v10 added BOOT_FLAG_INVOKED_VIA_UKI;
  * v9 added flags + os_loader/required_security_version */
-#define BOOT_INFO_VERSION  12
+/* v13 adds boot_loader_identity at the tail: bootloader build-identity
+ *     attribution (git_sha + build_unix_time + label), populated by
+ *     the UEFI bootloader from compile-time constants.
+ * v12 added ESP integrity fields. */
+#define BOOT_INFO_VERSION  13
 #endif
 
 /* Upper bound for pre-copy address validation: the UEFI bootloader
@@ -1345,6 +1375,14 @@ struct boot_info {
     uint8_t  esp_filesystem_type;    /* 0=unknown, 1=FAT16, 2=FAT32 */
     uint8_t  esp_type_guid_valid;    /* 1 if GPT type GUID matched ESP type GUID; 0 otherwise/UKI/non-GPT */
     uint8_t  _esp_pad[2];            /* alignment; reserved zero */
+
+    /* Bootloader build identity (v13). Populated by the UEFI
+     * bootloader from compile-time constants in
+     * build/boot_loader_identity.h before the boot_info header magic
+     * write. Zero git_sha[] (impossible for a real SHA-1) is the
+     * "loader did not populate" sentinel for back-compat with stale
+     * bootloaders. */
+    struct boot_loader_identity loader_identity;
 };
 
 /* Compile-time enforcement of ABI header layout (S15) */

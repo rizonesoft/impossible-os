@@ -247,11 +247,30 @@ struct boot_usb_controller {
 #define BOOT_INFO_MAGIC    0x49504F53  /* "IPOS" */
 #endif
 #ifndef BOOT_INFO_VERSION
-/* v11 adds ESP integrity fields populated by esp_integrity_check();
+/* v13 adds boot_loader_identity at the tail (bootloader build-identity
+ *     attribution: git_sha + build_unix_time + label).
+ * v12 added ESP integrity fields populated by esp_integrity_check();
  * v10 added BOOT_FLAG_INVOKED_VIA_UKI;
  * v9 added flags + os_loader/required_security_version */
-#define BOOT_INFO_VERSION  12
+#define BOOT_INFO_VERSION  13
 #endif
+
+/* Mirror of struct boot_loader_identity from include/kernel/boot_info.h.
+ * 64 bytes, byte-for-byte. */
+struct __attribute__((packed)) boot_loader_identity {
+    UINT8   git_sha[20];
+    UINT64  build_unix_time;
+    char    build_label[24];
+    UINT8   _pad[12];
+};
+_Static_assert(sizeof(struct boot_loader_identity) == 64,
+    "boot_loader_identity must be exactly 64 bytes");
+_Static_assert(__builtin_offsetof(struct boot_loader_identity, git_sha) == 0,
+    "boot_loader_identity.git_sha at offset 0");
+_Static_assert(__builtin_offsetof(struct boot_loader_identity, build_unix_time) == 20,
+    "boot_loader_identity.build_unix_time at offset 20");
+_Static_assert(__builtin_offsetof(struct boot_loader_identity, build_label) == 28,
+    "boot_loader_identity.build_label at offset 28");
 
 /* Typed payload descriptor array -- must match kernel/boot_info.h. */
 #define BOOT_PAYLOAD_MAX  32
@@ -580,6 +599,11 @@ struct boot_info {
     UINT8   esp_filesystem_type;    /* 0=unknown, 1=FAT16, 2=FAT32 */
     UINT8   esp_type_guid_valid;    /* 1 if GPT type GUID matched ESP type GUID; 0 otherwise/UKI/non-GPT */
     UINT8   _esp_pad[2];            /* alignment; reserved zero */
+
+    /* Bootloader build identity (v13). Populated from compile-time
+     * constants in build/boot_loader_identity.h before the header
+     * magic write. */
+    struct boot_loader_identity loader_identity;
 };
 
 /* ABI compile-time guards -- catch bootloader/kernel struct drift at build */

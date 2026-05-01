@@ -347,3 +347,13 @@ F(esp_filesystem_type);
 F(esp_type_guid_valid);
 F(_esp_pad);
 F(_esp_pad[0]);     /* element-size sentinel */
+
+/* ---- Bootloader build identity (v13) ---- */
+F(loader_identity);
+F(loader_identity.git_sha);
+F(loader_identity.git_sha[0]);  /* element-size sentinel */
+F(loader_identity.build_unix_time);
+F(loader_identity.build_label);
+F(loader_identity.build_label[0]);
+F(loader_identity._pad);
+F(loader_identity._pad[0]);

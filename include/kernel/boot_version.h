@@ -43,6 +43,7 @@
 #include "kernel/types.h"
 #include "kernel/boot_init.h"
 #include "kernel/boot_version_constants.h"
+#include "kernel/boot_info.h"   /* for struct boot_loader_identity */
 
 struct boot_info_header;  /* forward decl -- full definition in kernel/boot_info.h */
 
@@ -81,11 +82,29 @@ struct boot_version_fault {
      * boot a newer kernel; ABI drift means rebuild both halves). */
     uint32_t observed_loader_sec_ver;
     uint32_t expected_loader_sec_ver;
-    uint32_t _reserved[3];             /* pad to 48 bytes */
+    uint32_t _reserved[3];             /* pad to 48 bytes -- v1 record ends here */
+
+    /* v2 extension (Bootloader Build Identity): producer's build
+     * identity captured at fault time. Allows kernel transcribe to
+     * attribute the prior-boot fault to the loader that emitted it,
+     * NOT to the (different) loader that emitted the next successful
+     * handoff. Persisted alongside the v1 fields in the same NVRAM
+     * variable; size discriminator (sz == 48 vs sz == 112) tells the
+     * kernel which version it's reading.
+     *
+     * Back-compat: an OLD kernel (knows only size 48) reading a v2
+     * record sees a size mismatch and clears it -- one-way upgrade
+     * break, documented in the boot-protocol changelog. Forward-
+     * compat: a NEW kernel reading a v1 record renders identity as
+     * "unavailable (legacy fault record)" and proceeds. */
+    struct boot_loader_identity loader_identity; /* +64 -> 112 bytes */
 };
 
-_Static_assert(sizeof(struct boot_version_fault) == 48,
-    "boot_version_fault layout pinned at 48 bytes");
+_Static_assert(sizeof(struct boot_version_fault) == 112,
+    "boot_version_fault layout pinned at 112 bytes (v2: includes loader identity)");
+
+#define BOOT_VERSION_FAULT_RECORD_SIZE_V1  48u
+#define BOOT_VERSION_FAULT_RECORD_SIZE_V2  ((uint64_t)sizeof(struct boot_version_fault))
 
 /* Per-field offset asserts. The bootloader has its own mirror struct
  * (struct bl_boot_version_fault in src/boot/uefi/bootx64.c) and writes

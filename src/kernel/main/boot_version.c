@@ -89,19 +89,20 @@ const char *boot_version_fault_class_name(uint32_t fault_class)
 
 static void zero_fault(struct boot_version_fault *f)
 {
+    /* Memset the WHOLE record up front. Caller may pass a stack-
+     * allocated fault struct (see boot_version_classify call from
+     * boot_phase0); without a full zero, the v2 loader_identity tail
+     * carries stack garbage and render_fatal would treat nonzero
+     * git_sha as "loader populated" and try to %s a non-NUL-terminated
+     * build_label. Walking the prefix-then-set pattern alone misses
+     * the tail every time the struct grows. */
     uint32_t i;
+    for (i = 0u; i < sizeof(*f); i++)
+        ((uint8_t *)f)[i] = 0u;
     f->record_magic            = BOOT_VERSION_FAULT_MAGIC;
     f->fault_class             = BOOT_VERSION_OK;
-    f->observed_magic          = 0u;
     f->expected_magic          = BOOT_INFO_MAGIC;
-    f->observed_version        = 0u;
     f->expected_version        = BOOT_INFO_VERSION;
-    f->observed_size           = 0u;
-    f->expected_size           = 0u;
-    f->observed_loader_sec_ver = 0u;
-    f->expected_loader_sec_ver = 0u;
-    for (i = 0u; i < sizeof(f->_reserved) / sizeof(f->_reserved[0]); i++)
-        f->_reserved[i] = 0u;
 }
 
 boot_result_t boot_version_classify(const struct boot_info_header *hdr,
@@ -205,6 +206,61 @@ void boot_version_render_fatal(const struct boot_version_fault *fault)
                  (uint64_t)fault->observed_loader_sec_ver,
                  (uint64_t)fault->expected_loader_sec_ver);
         }
+        /* Bootloader build identity (v2 fault record). On a v1
+         * record loader_identity is zeroed -- klog renders the SHA
+         * as 0..0 + label as empty, which the operator can read as
+         * "legacy bootloader; identity unavailable". */
+        {
+            int sha_zero = 1;
+            uint32_t k;
+            for (k = 0; k < 20; k++) {
+                if (fault->loader_identity.git_sha[k] != 0) {
+                    sha_zero = 0;
+                    break;
+                }
+            }
+            if (sha_zero) {
+                klog(LOG_FATAL, "boot",
+                     "  loader_identity: unavailable (legacy bootloader)");
+            } else {
+                /* Render the first 12 bytes of the SHA inline (24
+                 * hex chars). klog has no native hex-array %02x
+                 * support; pack two bytes per %x specifier as a
+                 * uint32. The full 20-byte SHA goes into the
+                 * BlackBox transcript X:\Diag\boot-proto-fault.txt
+                 * via boot_version_blackbox_transcribe.
+                 *
+                 * build_label[24] is supposed to be NUL-terminated
+                 * (truncate-to-23+NUL contract on the producer side),
+                 * but a malformed/garbage record could omit the NUL
+                 * and a bare %s would overread. Copy into a local
+                 * 25-byte buffer with explicit NUL at index 24
+                 * before printing. */
+                char label[25];
+                uint32_t li;
+                for (li = 0; li < 24; li++)
+                    label[li] = fault->loader_identity.build_label[li];
+                label[24] = '\0';
+                klog(LOG_FATAL, "boot",
+                     "  loader build_unix_time=%lu  label=%s",
+                     fault->loader_identity.build_unix_time,
+                     (uint64_t)(uintptr_t)label);
+                klog(LOG_FATAL, "boot",
+                     "  loader git_sha (12 of 20)=%x%x%x %x%x%x %x%x%x %x%x%x",
+                     (uint64_t)fault->loader_identity.git_sha[0],
+                     (uint64_t)fault->loader_identity.git_sha[1],
+                     (uint64_t)fault->loader_identity.git_sha[2],
+                     (uint64_t)fault->loader_identity.git_sha[3],
+                     (uint64_t)fault->loader_identity.git_sha[4],
+                     (uint64_t)fault->loader_identity.git_sha[5],
+                     (uint64_t)fault->loader_identity.git_sha[6],
+                     (uint64_t)fault->loader_identity.git_sha[7],
+                     (uint64_t)fault->loader_identity.git_sha[8],
+                     (uint64_t)fault->loader_identity.git_sha[9],
+                     (uint64_t)fault->loader_identity.git_sha[10],
+                     (uint64_t)fault->loader_identity.git_sha[11]);
+            }
+        }
     }
 
     /* NVRAM persistence deliberately NOT attempted here for the Phase 0
@@ -291,14 +347,26 @@ void boot_version_blackbox_transcribe(void)
     if (!klog_using_blackbox)
         return;
 
+    /* Size-discriminated read: accept either the v1 48-byte record
+     * (legacy bootloader; loader_identity unavailable) or the v2
+     * 112-byte record (current bootloader; loader_identity present).
+     * Reject any other size as stale/corrupt. The buffer is sized
+     * for v2; v1 leaves the loader_identity tail zeroed which the
+     * renderer surfaces as "unavailable". */
     struct boot_version_fault rec;
     uint64_t sz = sizeof(rec);
     uint32_t attrs = 0;
+    uint32_t i;
+    for (i = 0; i < sizeof(rec); i++)
+        ((uint8_t *)&rec)[i] = 0;
     uint64_t status = uefi_get_variable(&s_fault_guid, s_fault_name,
                                         &attrs, &sz, &rec);
     if (status != 0u)
         return;  /* no record (or RT unavailable) */
-    if (sz != sizeof(rec) || rec.record_magic != BOOT_VERSION_FAULT_MAGIC) {
+    int is_v1 = (sz == BOOT_VERSION_FAULT_RECORD_SIZE_V1);
+    int is_v2 = (sz == BOOT_VERSION_FAULT_RECORD_SIZE_V2);
+    if ((!is_v1 && !is_v2) ||
+        rec.record_magic != BOOT_VERSION_FAULT_MAGIC) {
         klog(LOG_WARN, "boot",
              "boot_version transcribe: stale/corrupt NVRAM record "
              "(size=%u magic=0x%x); clearing",
@@ -409,6 +477,55 @@ void boot_version_blackbox_transcribe(void)
         pos = append_str(buf, pos, max_sz, "Operator response: ");
         pos = append_line(buf, pos, max_sz,
                           boot_version_fault_operator_hint(rec.fault_class));
+    }
+
+    /* Bootloader build identity disclosure. Reads from the v2 record's
+     * loader_identity tail (populated by the bootloader at fault
+     * time). On a v1 record (legacy bootloader), git_sha is all-zero
+     * and the renderer surfaces "unavailable" to make the gap
+     * explicit instead of misattributing the fault to the current
+     * loader. */
+    pos = append_line(buf, pos, max_sz, "");
+    pos = append_line(buf, pos, max_sz,
+                      "Bootloader build identity (producer of this fault):");
+    {
+        int sha_zero = 1;
+        uint32_t k;
+        for (k = 0; k < 20; k++) {
+            if (rec.loader_identity.git_sha[k] != 0) {
+                sha_zero = 0;
+                break;
+            }
+        }
+        if (is_v1 || sha_zero) {
+            pos = append_line(buf, pos, max_sz,
+                              "  unavailable (legacy bootloader; "
+                              "loader_identity not populated).");
+        } else {
+            pos = append_str(buf, pos, max_sz, "  git: ");
+            /* SHA-1 is 20 bytes -> 40 hex chars. append_hex32 pads
+             * to 8 chars per uint32 so we'd get 160 chars; use
+             * raw hex_nibble for compact 2-chars-per-byte output. */
+            for (k = 0; k < 20; k++) {
+                if (pos + 2u >= max_sz) break;
+                uint8_t b = rec.loader_identity.git_sha[k];
+                buf[pos++] = (char)hex_nibble((uint32_t)((b >> 4) & 0xFu));
+                buf[pos++] = (char)hex_nibble((uint32_t)(b & 0xFu));
+            }
+            pos = append_line(buf, pos, max_sz, "");
+            pos = append_str(buf, pos, max_sz, "  build_unix_time: ");
+            pos = append_dec(buf, pos, max_sz,
+                             rec.loader_identity.build_unix_time);
+            pos = append_line(buf, pos, max_sz, "");
+            pos = append_str(buf, pos, max_sz, "  label: ");
+            /* build_label[24] is NUL-terminated; bound the read so a
+             * malformed record without NUL still terminates. */
+            char label[25];
+            for (k = 0; k < 24; k++)
+                label[k] = rec.loader_identity.build_label[k];
+            label[24] = '\0';
+            pos = append_line(buf, pos, max_sz, label);
+        }
     }
 
     /* Write via vfs_open/write, same pattern as hw_dump_write_file. */

@@ -26,6 +26,7 @@
 #include "boot_proto_mirror.h"
 #include "elf_bootproto.h"
 #include "boot_proto_sha.h"   /* generated; provides KERNEL_ABI_SHA256 */
+#include "boot_loader_identity.h" /* generated; provides BOOT_LOADER_GIT_SHA + ..._BUILD_TIME + ..._BUILD_LABEL */
 
 /* Inline rdtsc for boot timing */
 static inline UINT64 boot_rdtsc(void)
@@ -2982,9 +2983,40 @@ struct bl_boot_version_fault {
     UINT32 observed_loader_sec_ver;
     UINT32 expected_loader_sec_ver;
     UINT32 reserved_pad[3];
+    /* v2 extension (Bootloader Build Identity): bootloader's compile-
+     * time identity captured at fault time so the kernel transcribe
+     * can attribute prior-boot faults to the loader that emitted
+     * them, not to the (different) recovery loader on next boot.
+     * Old kernel sees size mismatch and clears -- one-way upgrade
+     * break, documented. */
+    struct boot_loader_identity loader_identity;
 };
-_Static_assert(sizeof(struct bl_boot_version_fault) == 48,
-    "bl_boot_version_fault layout pinned at 48 bytes");
+_Static_assert(sizeof(struct bl_boot_version_fault) == 112,
+    "bl_boot_version_fault layout pinned at 112 bytes (v2: includes loader identity)");
+
+/* Stamp the bootloader's compile-time build identity into a fault
+ * record. Called from every site that builds a bl_boot_version_fault
+ * before persisting via bpp_persist_nvram_fault, so the kernel
+ * transcribe path on the NEXT boot can attribute the fault to THIS
+ * bootloader image (not the recovery loader that emits the next
+ * successful handoff). */
+static void bpp_stamp_loader_identity(struct bl_boot_version_fault *rec)
+{
+    static const UINT8 _git_sha[20] = BOOT_LOADER_GIT_SHA;
+    static const char _label[] = BOOT_LOADER_BUILD_LABEL;
+    UINT32 i;
+    for (i = 0; i < 20; i++)
+        rec->loader_identity.git_sha[i] = _git_sha[i];
+    rec->loader_identity.build_unix_time = (UINT64)BOOT_LOADER_BUILD_TIME;
+    for (i = 0; i < sizeof(rec->loader_identity.build_label); i++)
+        rec->loader_identity.build_label[i] = 0;
+    for (i = 0; i < sizeof(_label) - 1 &&
+                i < sizeof(rec->loader_identity.build_label) - 1;
+         i++)
+        rec->loader_identity.build_label[i] = _label[i];
+    for (i = 0; i < sizeof(rec->loader_identity._pad); i++)
+        rec->loader_identity._pad[i] = 0;
+}
 
 /* Per-field offset asserts mirroring include/kernel/boot_version.h.
  * Same-size field reorders would silently break the rollback
@@ -3180,7 +3212,14 @@ static __attribute__((noreturn)) void bpp_render_and_reset(
     serial_early_print_hex16((UINT16)rec->observed_magic);
     serial_early_print("\n");
 
-    EFI_STATUS persist_status = bpp_persist_nvram_fault(rec);
+    /* Stamp the bootloader's compile-time build identity into a
+     * local copy of the fault record before persist. The caller built
+     * `rec` with const-pointer semantics; we own the copy lifetime
+     * here. NVRAM consumers (next-boot kernel transcribe) read
+     * loader_identity to attribute the fault to THIS bootloader. */
+    struct bl_boot_version_fault rec_with_id = *rec;
+    bpp_stamp_loader_identity(&rec_with_id);
+    EFI_STATUS persist_status = bpp_persist_nvram_fault(&rec_with_id);
     if (persist_status != 0) {
         /* Print the FULL EFI_STATUS as 64-bit hex: the error bit
          * (0x8000000000000000) must not be truncated by a UINT32
@@ -3259,6 +3298,7 @@ static __attribute__((noreturn)) void bpp_render_rollback_and_halt(
      * below carry the operator-actionable numbers. */
     rec.observed_loader_sec_ver  = shipped;
     rec.expected_loader_sec_ver  = required;
+    bpp_stamp_loader_identity(&rec);
 
     EFI_STATUS persist_status = bpp_persist_nvram_fault(&rec);
 
@@ -7663,6 +7703,33 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
         }
 
         post_code16(POST16_BL_ROLLBACK_PASS);
+    }
+
+    /* Bootloader build identity: bake the compile-time {git_sha,
+     * build_unix_time, build_label} triple into boot_info. The
+     * generator at tools/boot-info-manifest/gen-loader-identity.sh
+     * regenerates build/boot_loader_identity.h every build, so these
+     * values reflect the exact bootloader image the firmware loaded.
+     * Identity bytes are static -- never set from runtime input,
+     * never modified post-write. Populated BEFORE the header magic
+     * write so a stale-bootloader detection against this field is
+     * race-free. */
+    {
+        static const UINT8 _git_sha[20] = BOOT_LOADER_GIT_SHA;
+        static const char _label[] = BOOT_LOADER_BUILD_LABEL;
+        UINT32 i;
+        for (i = 0; i < 20; i++)
+            g_boot_info_ptr->loader_identity.git_sha[i] = _git_sha[i];
+        g_boot_info_ptr->loader_identity.build_unix_time =
+            (UINT64)BOOT_LOADER_BUILD_TIME;
+        for (i = 0; i < sizeof(g_boot_info_ptr->loader_identity.build_label); i++)
+            g_boot_info_ptr->loader_identity.build_label[i] = 0;
+        for (i = 0; i < sizeof(_label) - 1 &&
+                    i < sizeof(g_boot_info_ptr->loader_identity.build_label) - 1;
+             i++)
+            g_boot_info_ptr->loader_identity.build_label[i] = _label[i];
+        for (i = 0; i < sizeof(g_boot_info_ptr->loader_identity._pad); i++)
+            g_boot_info_ptr->loader_identity._pad[i] = 0;
     }
 
     /* S15: Populate ABI header as the final step before kernel handoff.

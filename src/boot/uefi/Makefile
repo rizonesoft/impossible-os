@@ -40,7 +40,8 @@ all: $(OUTDIR)/BOOTX64.EFI
 # stale BOOTX64.EFI against a kernel image that already moved.
 bootx64.o: bootx64.c efi.h boot_info_mirror.h boot_proto_mirror.h \
            elf_bootproto.h elf_types.h ../../../build/boot_proto_sha.h \
-           ../../../include/kernel/boot_version_constants.h
+           ../../../include/kernel/boot_version_constants.h \
+           ../../../build/boot_loader_identity.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # ELF parser for the .bootproto descriptor; pre-ExitBootServices ABI

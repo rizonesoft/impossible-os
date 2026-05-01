@@ -63,6 +63,7 @@ title: "TODO-14 -- Boot Diagnostics, Heartbeat & Spinner"
 | 💎  |   7   | System-wide multi-instance spinner | 08-graphics-ui/TODO-06 §8     |  [ ]   |
 | ⭐  |   8   | Runtime vital signs strip          | §7                            |  [ ]   |
 | 💎  |   9   | Boot timeline visualization/import | §2                            |  [ ]   |
+| ⭐  |  10   | Bootloader build identity dump in BlackBox | TODO-01 §20                |  [ ]   |
 
 > 💎 = parity -- Windows and Linux both have equivalent diagnostics; Impossible OS must match them.
 > ⭐ = exclusive -- the QR code on BSOD and always-visible vital-signs strip are not present in either competitor at the kernel level.
@@ -206,6 +207,20 @@ Linux `systemd-analyze plot` and Windows performance tooling expose boot as a hu
 - [ ] Commit: `"docs: boot timeline JSON schema + optional trace export"`
 
 **Test checkpoint:** With §9 shipped: JSON from a real boot validates against schema; SVG or Chrome trace opens in target viewer without manual edits. QEMU WHPX + TCG smoke.
+
+---
+
+## 10. Bootloader Build Identity Dump in BlackBox
+
+[Bootloader Build Identity](TODO-01-boot-protocol-abi-handoff.md#20-bootloader-build-identity) added `boot_info.loader_identity` (git_sha + build_unix_time + label) populated at handoff. The kernel fatal screen and `boot_version_blackbox_transcribe` (which writes to `X:\Diag\boot-proto-fault.txt`) already surface identity for FAULT records, but on a healthy boot the identity is only visible via `HKLM\SYSTEM\Boot\Decision\Loader*` registry values. Dump it as a standalone BlackBox artifact for offline triage that doesn't require a registry query.
+
+- [ ] Add `boot_loader_identity_dump_to_blackbox()` to `src/kernel/main/boot_hw.c` (or a dedicated file under `src/kernel/main/blackbox/`) that reads `g_boot_info.loader_identity` and writes `X:\Diag\boot-loader-identity.txt` with `git_sha` (40-hex) + `build_unix_time` (decimal + ISO-8601) + `build_label`. Use the same vfs_open/write/truncate pattern as `boot_version_blackbox_transcribe` (lives in `src/kernel/main/boot_version.c`).
+- [ ] Wire the dump into the late-boot BlackBox sequence next to `hw_dump_write_file()` and `boot_version_blackbox_transcribe()`. One call, idempotent (overwrite-on-rewrite via vfs_truncate(0)).
+- [ ] Test: `test_boot_loader_identity_blackbox_format` builds an in-memory dump string from a synthetic `g_boot_info.loader_identity` and asserts the format matches the documented schema. Skip live VFS write (forbidden in tests).
+- [ ] Document the artifact under [docs/boot/black-box-artifacts.md](../../docs/boot/black-box-artifacts.md) (create or extend) listing every `X:\Diag\*` file the kernel produces.
+- [ ] Commit: `"diag: dump boot_info.loader_identity to X:\Diag\boot-loader-identity.txt"`
+
+**Test checkpoint:** On a clean boot, `X:\Diag\boot-loader-identity.txt` contains the bootloader's git_sha (matches `git rev-parse HEAD` of the build), build_unix_time, and label. Format matches the documented schema. QEMU WHPX + TCG.
 
 ---
 

@@ -1373,6 +1373,77 @@ static void test_payload_retained_fb_wrap_rejected(void)
                    "err=OVERLAP_FB (fb retained-region wrap)");
 }
 
+/* ---- Bootloader build identity (boot_loader_identity) -------------- */
+
+/* Layout pin: struct boot_loader_identity must be exactly 64 bytes
+ * with offsets 0/20/28/52 (packed). The header carries _Static_assert
+ * for these but a runtime test catches malformed builds where the
+ * static assert was somehow bypassed (e.g., a future packed-attribute
+ * regression that the compiler accepts). */
+static void test_boot_loader_identity_layout_pinned(void)
+{
+    TEST_ASSERT_EQ((unsigned long)sizeof(struct boot_loader_identity),
+                   64UL, "boot_loader_identity sizeof == 64");
+    TEST_ASSERT_EQ((unsigned long)__builtin_offsetof(
+                       struct boot_loader_identity, git_sha),
+                   0UL, "git_sha at offset 0");
+    TEST_ASSERT_EQ((unsigned long)__builtin_offsetof(
+                       struct boot_loader_identity, build_unix_time),
+                   20UL, "build_unix_time at offset 20");
+    TEST_ASSERT_EQ((unsigned long)__builtin_offsetof(
+                       struct boot_loader_identity, build_label),
+                   28UL, "build_label at offset 28");
+    TEST_ASSERT_EQ((unsigned long)__builtin_offsetof(
+                       struct boot_loader_identity, _pad),
+                   52UL, "_pad at offset 52");
+}
+
+/* Tail-field pin: boot_info.loader_identity must live at the END of
+ * struct boot_info -- adding a new field to the tail must update the
+ * offset asserts in boot_info.h, and accidentally inserting a field
+ * in the middle would shift all subsequent offsets. The asserts in
+ * boot_info.h cover the named fields up through usb_device_count;
+ * loader_identity is at the absolute tail so its end == sizeof. */
+static void test_boot_info_loader_identity_at_tail(void)
+{
+    uint64_t off = (uint64_t)__builtin_offsetof(
+        struct boot_info, loader_identity);
+    uint64_t end = off + (uint64_t)sizeof(struct boot_loader_identity);
+    TEST_ASSERT_EQ(end, (uint64_t)sizeof(struct boot_info),
+                   "loader_identity must be the tail field "
+                   "(end-of-struct invariant for back-compat)");
+}
+
+/* Zero-default sentinel: a brand-new struct boot_info (or one
+ * populated by a stale bootloader) must have all-zero git_sha[],
+ * which is the "loader did not populate" signal consumers check.
+ * A real SHA-1 cannot be all-zero (collision-resistant; even
+ * git's empty-tree hash 4b825... is nonzero), so zero is a safe
+ * sentinel. */
+static void test_boot_loader_identity_zero_default(void)
+{
+    struct boot_info bi;
+    uint32_t i;
+    for (i = 0; i < sizeof(bi); i++)
+        ((uint8_t *)&bi)[i] = 0;
+    int sha_zero = 1;
+    for (i = 0; i < 20; i++) {
+        if (bi.loader_identity.git_sha[i] != 0) {
+            sha_zero = 0;
+            break;
+        }
+    }
+    TEST_ASSERT_EQ((unsigned long)sha_zero, 1UL,
+                   "zero-init boot_info has all-zero git_sha "
+                   "(loader-did-not-populate sentinel)");
+    TEST_ASSERT_EQ((uint64_t)bi.loader_identity.build_unix_time,
+                   (uint64_t)0,
+                   "zero-init build_unix_time == 0");
+    TEST_ASSERT_EQ((uint64_t)bi.loader_identity.build_label[0],
+                   (uint64_t)0,
+                   "zero-init build_label[0] == NUL");
+}
+
 /* ---- Registration --------------------------------------------------- */
 
 void test_register_boot_info(void)
@@ -1478,6 +1549,14 @@ void test_register_boot_info(void)
                             test_payload_retained_fb_wrap_rejected, TEST_CAT_BOOT);
     test_suite_register_cat("boot_payload: overflow truncated",
                             test_payload_overflow_truncated_rejected, TEST_CAT_BOOT);
+
+    /* Bootloader build identity. */
+    test_suite_register_cat("boot_loader_identity: layout pinned (64B, packed)",
+                            test_boot_loader_identity_layout_pinned, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_info: loader_identity at struct tail",
+                            test_boot_info_loader_identity_at_tail, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_loader_identity: zero is loader-did-not-populate",
+                            test_boot_loader_identity_zero_default, TEST_CAT_BOOT);
 }
 
 #endif /* KERNEL_TESTS */

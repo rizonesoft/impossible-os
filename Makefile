@@ -116,7 +116,7 @@ C_OBJS   := $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.o, $(C_SRCS))
 OBJS     := $(ASM_OBJS) $(C_OBJS) $(AP_TRAMPOLINE_OBJ)
 
 # Generated headers — must exist before any C compilation starts (-j safe)
-GENERATED_HDRS := include/build_info.h include/kernel/os_logo.h src/kernel/bsod_icon.h src/kernel/boot_splash_font_data.h $(BUILD_DIR)/boot_proto_sha.h
+GENERATED_HDRS := include/build_info.h include/kernel/os_logo.h src/kernel/bsod_icon.h src/kernel/boot_splash_font_data.h $(BUILD_DIR)/boot_proto_sha.h $(BUILD_DIR)/boot_loader_identity.h
 
 # ============================================================================
 # Targets
@@ -151,7 +151,8 @@ $(UEFI_EFI): src/boot/uefi/bootx64.c src/boot/uefi/efi.h src/boot/uefi/uefi.lds 
              src/boot/uefi/elf_types.h src/boot/uefi/boot_proto_mirror.h \
              src/boot/uefi/boot_info_mirror.h \
              include/kernel/boot_version_constants.h \
-             $(BUILD_DIR)/boot_proto_sha.h
+             $(BUILD_DIR)/boot_proto_sha.h \
+             $(BUILD_DIR)/boot_loader_identity.h
 	@mkdir -p $(BUILD_DIR)/tools
 	$(MAKE) -C src/boot/uefi OUTDIR=$(CURDIR)/$(BUILD_DIR)/tools
 	@echo "[EFI] $@ created ($$(wc -c < $@ | tr -d ' ') bytes)"
@@ -386,6 +387,23 @@ $(BUILD_DIR)/boot_proto_sha.h: $(BOOT_ABI_KERNEL_JSON) \
                                tools/boot-info-manifest/gen-proto-sha-header.sh
 	@bash tools/boot-info-manifest/gen-proto-sha-header.sh \
 	    $(BOOT_ABI_KERNEL_JSON) $@
+
+## boot_loader_identity.h: auto-generated C header with the bootloader's
+##                         build-identity tuple (git_sha[20] +
+##                         build_unix_time + build_label[24]). Included
+##                         by the bootloader so boot_info.loader_identity
+##                         carries the producer's build identity at
+##                         handoff. Regenerated when git HEAD or working
+##                         tree state changes; idempotent at file-content
+##                         level (no-op mv when bytes unchanged).
+##
+## .PHONY because the script's idempotency check is the cache; Make's
+## timestamp-based caching cannot detect "git HEAD changed" without a
+## sentinel file we'd have to maintain. Phony rules + cmp-then-mv inside
+## the generator give us the right semantics.
+.PHONY: $(BUILD_DIR)/boot_loader_identity.h
+$(BUILD_DIR)/boot_loader_identity.h: tools/boot-info-manifest/gen-loader-identity.sh
+	@bash tools/boot-info-manifest/gen-loader-identity.sh
 
 ## test-boot-info-abi: Regress-test the drift detector itself. Builds
 ##                    intentionally-mutated mirror fixtures and verifies

@@ -124,9 +124,22 @@ static void test_boot_version_classify_bad_size(void)
 
 static void test_boot_version_record_size_pin(void)
 {
-    TEST_ASSERT_EQ((unsigned long)sizeof(struct boot_version_fault),
+    /* v2 record (current): 48-byte v1 prefix + 64-byte loader_identity
+     * tail = 112 bytes. Pin BOTH the legacy v1 size constant and the
+     * current sizeof so a future tail growth has to update both. The
+     * size-discriminated transcribe in boot_version.c relies on these
+     * two values to tell v1 records apart from v2. */
+    TEST_ASSERT_EQ((unsigned long)BOOT_VERSION_FAULT_RECORD_SIZE_V1,
                    (unsigned long)48,
-                   "boot_version_fault is 48 bytes (NVRAM ABI pin)");
+                   "BOOT_VERSION_FAULT_RECORD_SIZE_V1 == 48 "
+                   "(legacy reader contract)");
+    TEST_ASSERT_EQ((unsigned long)BOOT_VERSION_FAULT_RECORD_SIZE_V2,
+                   (unsigned long)sizeof(struct boot_version_fault),
+                   "BOOT_VERSION_FAULT_RECORD_SIZE_V2 tracks current sizeof");
+    TEST_ASSERT_EQ((unsigned long)sizeof(struct boot_version_fault),
+                   (unsigned long)112,
+                   "boot_version_fault is 112 bytes "
+                   "(v1 prefix + loader_identity tail)");
 }
 
 static void test_boot_version_fault_class_name_coverage(void)

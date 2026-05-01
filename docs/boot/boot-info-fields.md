@@ -321,6 +321,18 @@ Pre-load sanity gate written by `esp_integrity_check()` in [`src/boot/uefi/bootx
 | `esp_type_guid_valid` | bootx64 (parent-disk GPT entry table read) | P0 | Registry (`TypeGuidValid`) | handoff | uefi-hardening-secureboot ESP integrity | `1` only when GPT partition type GUID matched `EFI_PARTITION_TYPE_SYSTEM_PARTITION_GUID`. `0` for UKI mode (skipped), non-GPT boot media, or parent-disk handle unavailable. Mismatch halts with `BOOT_ERR_ESP_TYPE_GUID`. |
 | `_esp_pad` | bootx64 | P0 | reserved | handoff | uefi-hardening-secureboot ESP integrity | Must be zero; reserved for future ESP integrity flags (e.g., backup-GPT validity, secondary-LBA agreement). |
 
+### Bootloader build identity
+
+64-byte packed `struct boot_loader_identity` populated by the UEFI bootloader from compile-time constants emitted by [`tools/boot-info-manifest/gen-loader-identity.sh`](../../tools/boot-info-manifest/gen-loader-identity.sh) into `build/boot_loader_identity.h`. Surfaces the producer's git commit + commit time + label so triage tools (kernel fatal screen, BlackBox transcript, NVRAM fault record, `HKLM\SYSTEM\Boot\Decision\Loader{GitSha,BuildTime,BuildLabel}`) can attribute drift / rollback / stale-loader faults to a specific bootloader image. Zero `git_sha[]` is the "loader did not populate" sentinel for back-compat with stale bootloaders against fresh kernels.
+
+| Field | Producer | First valid | Consumer | Lifetime | Owning roadmap | Validation |
+| --- | --- | --- | --- | --- | --- | --- |
+| `loader_identity` | bootx64 (compile-time constants from `build/boot_loader_identity.h`) | P0 | `HKLM\SYSTEM\Boot\Decision\Loader*` registry, `boot_version_render_fatal`, `boot_version_blackbox_transcribe` | handoff | boot-protocol-abi-handoff Bootloader Build Identity | 64 bytes packed; populated immediately before `header.magic` write so a stale-bootloader detection on this field is race-free. All-zero `git_sha[]` means bootloader did not populate (legacy bootloader against fresh kernel). |
+| `loader_identity.git_sha` | bootx64 | P0 | fatal screen + transcript + registry | handoff | boot-protocol-abi-handoff Bootloader Build Identity | 20 raw bytes from `git rev-parse HEAD`; cannot be all-zero on a live build (zero is the populate sentinel). |
+| `loader_identity.build_unix_time` | bootx64 | P0 | fatal screen + transcript + registry | handoff | boot-protocol-abi-handoff Bootloader Build Identity | `git log -1 --format=%ct` (commit unix time, little-endian). 0 on no-git fallback. |
+| `loader_identity.build_label` | bootx64 | P0 | fatal screen + transcript + registry | handoff | boot-protocol-abi-handoff Bootloader Build Identity | `git describe --dirty --always --tags` truncated to 23 bytes + NUL. 24-byte char array, NUL-terminated. |
+| `loader_identity._pad` | bootx64 | P0 | reserved | handoff | boot-protocol-abi-handoff Bootloader Build Identity | Must be zero; reserved for future identity fields (signing-cert SKID, build-host hash, etc.). |
+
 ## Nested struct: `boot_payload_desc`
 
 48-byte ABI-pinned descriptor. Kernel enum `boot_payload_type` maps well-known values (MODULE, INITRD, RECOVERY_IMAGE, HIBERNATION_META, TPM_EVENT_LOG, NETWORK_CONFIG, RANDOM_SEED, USB_HANDOVER); unknown values are SKIPPED for type-specific validation unless `BOOT_PAYLOAD_FLAG_REQUIRED` is set on the descriptor (required-unknown forces a fatal boot failure).
