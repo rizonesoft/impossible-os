@@ -1104,7 +1104,7 @@ The Claude Code post-commit hook fires `bash scripts/build.sh` (and conditionall
 > - Canonical doc: this section + `.claude/hooks/_postcommit_lock.py` module docstring.
 > - Scope boundary: §31 owns the post-commit-hook serialization layer. The hook scripts themselves stay owned by §7 (Hook System Audit + Dedupe). `scripts/build.sh` and `scripts/test-smoke.sh` keep their existing direct-shell callers unaffected.
 
-> **Verified:** 2026-05-01 | commit `<pending>` | 5/5 items | build OK | tests 6/6 PASS (lock helper sub-tests; first/second acquirer, auto-release, deferred-msg JSON, env override, process-group reap). Hook imports clean; lint exit 0.
+> **Verified:** 2026-05-01 | commit `42b831e2` | 5/5 items | build OK | tests 6/6 PASS (lock helper sub-tests; first/second acquirer, auto-release, deferred-msg JSON, env override, process-group reap). Hook imports clean; lint exit 0.
 > **Quality reviewed:** 2026-05-01 | Codex 2x (design + adversarial) | 1M fixed (process-group cleanup on TimeoutExpired prevents descendant survival across lock release); design dispatch returned 2 procedural-confusion no-ships rejected with code evidence; consistency + perf skipped (hook-infrastructure scope, no kernel/runtime surface, no hot path) | scope: N/A (hook-infrastructure, no domain code-quality skill applies)
 
 ---
