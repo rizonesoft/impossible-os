@@ -1298,7 +1298,16 @@ struct boot_info {
     } timing;
 
     /* Serial port (probed by bootloader; 0 = no UART detected) */
-    uint16_t serial_port;           /* I/O base: 0x3F8 (COM1), 0x2F8 (COM2), or 0 */
+    uint16_t serial_port;           /* I/O base.  serial_source==2 (no-SPCR
+                                     * scratch probe) -> 0x3F8 (COM1) or
+                                     * 0x2F8 (COM2) only.  serial_source==1
+                                     * (ACPI SPCR firmware-authoritative)
+                                     * may publish any non-zero 16-bit I/O
+                                     * base in [1, 0xFFF8] -- COM3 0x3E8,
+                                     * COM4 0x2E8, or vendor-custom.
+                                     * Upper bound 0xFFF8 keeps the 16550
+                                     * register block (base..base+7) in
+                                     * the 16-bit I/O port space. */
     uint8_t  serial_source;         /* 0=none, 1=SPCR, 2=I/O-probe */
     uint8_t  _serial_pad;
     uint32_t serial_baud;           /* baud rate from SPCR (0 = use default 38400) */

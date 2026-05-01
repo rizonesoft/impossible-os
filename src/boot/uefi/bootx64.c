@@ -455,13 +455,25 @@ static int serial_spcr_probe(void)
             return 0;
         }
 
-        /* Must be a standard COM port (COM1 or COM2) */
-        UINT16 port = (UINT16)spcr->base_address;
-        if (port != SERIAL_COM1 && port != SERIAL_COM2) {
+        /* SPCR is firmware-authoritative on this address.  Accept any
+         * 16-bit I/O base (COM1/COM2/COM3/COM4 or vendor-custom) so we
+         * do not silently lose diagnostics on hardware that declares a
+         * 16550-compatible UART outside the legacy COM1/COM2 pair.
+         * Reject only if base_address would not fit in a UINT16 -- the
+         * I/O port space is 16 bits wide on x86 and base_addr_space==1
+         * already guaranteed I/O above; firmware advertising an I/O
+         * address > 0xFFFF is malformed.  The fallback probe in
+         * serial_early_init() keeps the narrower COM1/COM2-only policy
+         * because there is no firmware-provided base to trust. */
+        /* The 16550 register block uses offsets through base+7, so
+         * any base above 0xFFF8 would wrap the 16-bit I/O port space
+         * when probing or initializing.  Reject those plus zero. */
+        if (spcr->base_address == 0 || spcr->base_address > 0xFFF8ULL) {
             s_spcr_skipped = 1;
             s_spcr_skip_addr = spcr->base_address;
             return 0;
         }
+        UINT16 port = (UINT16)spcr->base_address;
 
         /* Verify UART actually exists at this address */
         if (!serial_probe_port(port))

@@ -194,7 +194,7 @@ Modern hardware (laptops, tablets) may not have COM1 at 0x3F8. Blindly initializ
 - [x] Before `serial_early_init()`: `serial_probe_port()` writes 0xAE to scratch register (base+7), reads back -- if mismatch, port absent
 - [x] If COM1 absent: try COM2 at 0x2F8 with same probe via `serial_probe_port(SERIAL_COM2)`
 - [x] If both absent: `s_serial_port = 0`, `serial_early_putchar` returns immediately (no-op)
-- [x] Selected port stored in `boot_info.serial_port` (0x3F8 / 0x2F8 / 0) -- `UINT16` field added to both bootloader and kernel `struct boot_info`
+- [x] Selected port stored in `boot_info.serial_port` -- `UINT16` field on both bootloader + kernel `struct boot_info`. `serial_source==2` (no-SPCR scratch probe) restricts to 0x3F8 (COM1) or 0x2F8 (COM2); `serial_source==1` (ACPI SPCR firmware-authoritative) may publish any non-zero base in `[1, 0xFFF8]` (COM3 0x3E8, COM4 0x2E8, or vendor-custom). Upper bound 0xFFF8 keeps the 16550 register block (base..base+7) inside the 16-bit I/O port space.
 - [x] Kernel `serial_init()` reads `g_boot_info.serial_port` to set `s_serial_port` (dynamic). `serial_putchar_raw`, `serial_trygetchar` all use the dynamic port. Default 0x3F8 for early klog before serial_init.
 - [x] Commit: `"boot: probe serial port before init -- COM1/COM2 fallback"` (d785ce92)
 
@@ -202,8 +202,15 @@ Modern hardware (laptops, tablets) may not have COM1 at 0x3F8. Blindly initializ
 
 > **Test runner:** N/A (UEFI pre-boot only -- COM1/COM2 probe runs before kernel) | validation: smoke + serial on QEMU WHPX/TCG, VBox, bare metal
 
-> **Verified:** 2026-04-11 -- all 5 items confirmed. Scratch register probe (0xAE write/readback), COM1->COM2->0 fallback chain, boot_info.serial_port stored, kernel serial_init reads it. SPCR (§10) wraps this probe with ACPI table lookup as primary. Accepted: none.
-> **Quality reviewed:** 2026-04-11 -- no findings. Scratch register probe matches Linux serial8250_config_port (same 0xAE test value). SPCR (§10) elevates this to ACPI-first detection, matching Windows EMS and Linux earlycon SPCR. COM3/COM4 not probed (extremely rare, SPCR covers non-standard). Accepted: none.
+> **Notes:**
+> - What shipped: `serial_probe_port()` 0xAE scratch-register write/readback + COM1->COM2->0 fallback chain in `serial_early_init()`; boot_info.serial_port (UINT16) + serial_source (0/1/2) + serial_baud published to kernel.
+> - How it integrates: ACPI SPCR (§10) is the primary detection method (firmware-authoritative); the no-SPCR scratch probe is the fallback that only checks COM1/COM2. Kernel `serial_init()` reads g_boot_info.serial_port and overrides the static 0x3F8 default for early klog.
+> - Downstream effects: SPCR widening 2026-05-01 lets firmware-declared non-standard I/O UARTs (COM3 0x3E8, COM4 0x2E8, vendor-custom) land authoritatively in serial_port; previously dropped silently.
+> - Canonical doc: this section + §10 (SPCR) + UEFI 2.10 + ACPI 6.5 SPCR table spec + 16550 UART scratch-register convention.
+> - Scope boundary: §4 owns the no-SPCR fallback probe (COM1/COM2 only) + boot_info publication contract. §10 owns ACPI SPCR table parsing + firmware-authoritative base widening.
+
+> **Verified:** 2026-05-01 | commit `<pending>` | 6/6 items | build OK | smoke PASS (KVM 2.49s). Probe + fallback chain + boot_info publication + kernel-side handoff all confirmed at file:line. 2026-04-11 verification retained.
+> **Quality reviewed:** 2026-05-01 | Codex 3x (adversarial + consistency + perf) | 1M fixed (SPCR I/O base widening + 0xFFF8 upper bound for 16550 register block), 1M fixed (test_serial_port_standard broadened by serial_source), 2L fixed (boot_info.h comment + §10 prose updated to match SPCR-authoritative contract); re-adversarial skipped (~30 LOC, policy-widening + test/doc only, no lifecycle/state-machine) | scope: boot-code-quality
 
 ---
 
@@ -338,7 +345,7 @@ Modern firmware provides the ACPI Serial Port Console Redirection Table (SPCR) s
 - [x] If SPCR found: extract `BaseAddress.Address` for port I/O base, `BaudRate` field, `FlowControl`, `TerminalType` -- `BL_ACPI_SPCR` struct, `spcr_decode_baud()` maps encoded field to actual rate
 - [x] Store SPCR-detected port in `boot_info.serial_port` and `boot_info.serial_baud` -- stored in `efi_main()` alongside existing `serial_port`
 - [x] Add `boot_info.serial_source` field: 0=none, 1=SPCR, 2=I/O-probe -- added to `boot_info.h` and bootloader's struct
-- [x] If SPCR address differs from COM1/COM2 (e.g., MMIO UART on ARM-like platforms): log `"[BOOT] SPCR: non-standard port at 0x%llx (MMIO), skipping"` and fall through to I/O probe -- checks `base_addr_space != 1` and port != COM1/COM2
+- [x] If SPCR address is MMIO (`base_addr_space != 1`): log non-standard skip and fall through to I/O probe. SPCR I/O bases are firmware-authoritative -- accept any non-zero 16-bit base in `[1, 0xFFF8]` (COM3 0x3E8, COM4 0x2E8, or vendor-custom included; not just COM1/COM2). Upper bound 0xFFF8 keeps the 16550 register block (base..base+7) within the 16-bit I/O port space; widened 2026-05-01 from the original COM1/COM2-only gate which silently dropped firmware-declared non-standard I/O UARTs.
 - [x] Log: `"[BOOT] Serial: SPCR detected port=0x%x baud=%u"` or `"[BOOT] Serial: SPCR absent, falling back to I/O probe"` -- logged after `boot_log_init()` in `efi_main()`
 - [x] Kernel serial init honors `boot_info.serial_baud` from SPCR instead of hardcoding 38400 -- `serial.c` computes divisor from `serial_baud`
 - [x] Commit: `"boot: ACPI SPCR serial port auto-detection before I/O probe"` -- 437fde7a

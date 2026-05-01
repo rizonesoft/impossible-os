@@ -396,11 +396,24 @@ static void test_serial_baud_valid(void)
 
 static void test_serial_port_standard(void)
 {
-    /* If serial_port is set, it should be COM1 or COM2 */
-    if (g_boot_info.serial_port != 0) {
+    /* serial_source == 2 (I/O probe fallback) is COM1 or COM2 only --
+     * the no-SPCR scratch-register probe in serial_early_init only
+     * checks those two ports.  serial_source == 1 (SPCR) accepts any
+     * firmware-declared 16-bit I/O base in [1, 0xFFF8] because SPCR
+     * (ACPI Serial Port Console Redirection) may legitimately
+     * advertise COM3 (0x3E8), COM4 (0x2E8), or a vendor-custom
+     * address; the bootloader broadened to honor that.  Upper bound
+     * stays at 0xFFF8 so the 16550 register block (base..base+7)
+     * stays inside the 16-bit I/O port space. */
+    if (g_boot_info.serial_port == 0)
+        return;
+    if (g_boot_info.serial_source == 2) {
         TEST_ASSERT(g_boot_info.serial_port == 0x3F8 ||
                     g_boot_info.serial_port == 0x2F8,
-                    "serial_port is COM1 (0x3F8) or COM2 (0x2F8)");
+                    "I/O-probe fallback: serial_port is COM1 or COM2");
+    } else if (g_boot_info.serial_source == 1) {
+        TEST_ASSERT(g_boot_info.serial_port <= 0xFFF8,
+                    "SPCR: serial_port within 16-bit I/O port space");
     }
 }
 
