@@ -456,7 +456,7 @@ The UEFI firmware starts a 5-minute watchdog timer at boot. The current bootload
 > - Canonical doc: this section + §6 (mmap overflow detection) + §17 (mmap normalization) + UEFI 2.10 specification 7.2 (memory map services) + ACPI 6.5 EFI_MEMORY_DESCRIPTOR layout.
 > - Scope boundary: §12 owns per-descriptor validation + geometry guard. §6 owns total-descriptor cap. §17 owns sweep-line overlap normalization. mmap_evict_for_incoming priority logic is owned by §6's cap-handling subsection.
 
-> **Verified:** 2026-05-02 | commit `<pending>` | 5/5 items | build OK | smoke PASS (KVM 2.31s). All original items + shared validation helpers + EBS-retry geometry guard + runtime-cap WARN confirmed at file:line. 2026-04-11 verification retained.
+> **Verified:** 2026-05-02 | commit `5977bfb6` | 5/5 items | build OK | smoke PASS (KVM 2.31s). All original items + shared validation helpers + EBS-retry geometry guard + runtime-cap WARN confirmed at file:line. 2026-04-11 verification retained.
 > **Accepted:** [M] Overlap priority normalization across descriptor types -> XREF: 01-boot-platform/TODO-03 §17 (item: "mmap_normalize sweep-line carves overlapping ranges by priority" -- §17 owns the cross-descriptor merge; §12 stops at per-descriptor validation)
 > **Quality reviewed:** 2026-05-02 | Codex 4x (adversarial + consistency + perf + re-adversarial) | 1H+2M fixed (runtime-map validation parity, EBS-retry geometry guard, runtime-cap silent-truncation visibility), 1M accepted-XREF | scope: boot-code-quality
 
