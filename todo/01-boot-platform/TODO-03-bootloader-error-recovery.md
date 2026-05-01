@@ -71,7 +71,7 @@ title: "TODO-03 -- Bootloader Error Recovery & ELF Hardening"
 | 💎  |  10   | ACPI SPCR serial port auto-detection           | §4         |  [x]   |
 | 💎  |  11   | UEFI watchdog timer management                 | --         |  [x]   |
 | 💎  |  12   | Memory map descriptor validation               | §6         |  [x]   |
-| ⭐  |  13   | Boot error code registry & NVRAM persistence   | §9         |  [x]   |
+| ⭐  |  13   | Boot error code registry & NVRAM persistence   | §9         |  [/]   |
 | ⭐  |  14   | Error screen QR code                           | §9         |  [x]   |
 | 💎  |  15   | boot_info ABI foundation moved to TODO-01      | --         |  [x]   |
 | 💎  |  16   | boot_info kernel validation moved to TODO-01   | §15        |  [x]   |
@@ -222,17 +222,18 @@ Malformed boot.conf should produce warnings, not silent misbehavior.
 > [!NOTE]
 > **Regression risk:** LOW -- validation is additive. Valid configs produce no new warnings.
 
-- [x] Buffer increased to 4096 bytes; if file fills buffer, logs `"[WARN] boot.conf too large (N bytes), truncating"`
+- [x] Dynamic file-size probing via `GetInfo(&EFI_FILE_INFO_ID, ...)` + `gBS->AllocatePool(FileSize+1)`. Sanity cap `BOOT_CONF_SANITY_CAP = 1 MiB` triggers `boot_fatal(BOOT_ERR_CONF_INVALID, ...)` on overflow rather than the previous silent-truncate behavior. Original 4096-byte fixed buffer + truncation warning was retired in the 2026-04-21 incident fix (CLAUDE.md "Bare Metal Gotchas: Dynamic parse buffers + hard-fail on overflow") -- a `test=1` line at EOF was being silently dropped when boot.conf grew past 4096 bytes.
 - [x] After parsing each key=value: unknown keys produce `"[WARN] boot.conf: unknown key 'X' (ignored)"`
 - [x] Known-key whitelist: all existing keys + new `config_version` key
 - [x] `config_version` field added to `boot_config` struct (1 byte from `_reserved[]`). `config_version=1` in boot.conf sets it.
 - [x] Range validation: `debug`/`verbose`/`test` clamped to 0-1, `splash_timeout` clamped to 0-60 (default 3). Out-of-range logs `"[WARN] boot.conf: X out of range, using N"`
 - [x] Commit: `"boot: validate boot.conf -- warn on unknown keys and out-of-range values"` (83b2ccb8)
 
-**Test checkpoint:** Add `bogus_key=42` to boot.conf. Serial must show `"unknown key 'bogus_key'"`. Set `splash_timeout=999` -- serial must show `"out of range, using default 3"`.
+**Test checkpoint:** Add `bogus_key=42` to boot.conf. Serial must show `"unknown key 'bogus_key'"`. Set `splash_timeout=999` -- serial must show `"out of range, using default 3"`. A boot.conf > 1 MiB must trigger `boot_fatal(BOOT_ERR_CONF_INVALID)` (no silent truncation).
 
 > **Verified:** 2026-04-11 -- all 5 items confirmed. 4096-byte buffer with truncation warning, unknown key logging, config_version field, range validation for debug/verbose/test/splash_timeout. Accepted: none.
 > **Quality reviewed:** 2026-04-11 -- no findings. More user-friendly than Windows BCD (human-readable + warnings) and more defensive than GRUB (range clamping vs silent accept). Accepted: none.
+> **Drift fix:** 2026-05-01 (gap-audit Codex M2) -- bullet 1 rewritten from "4096-byte buffer + truncation warning" to dynamic AllocatePool + 1 MiB hard-fail to match the post-2026-04-21 implementation; original wording would let a future validator accept the silent-truncation failure mode the incident eliminated.
 
 ---
 
@@ -359,6 +360,7 @@ Windows has BootStatusPolicy but error codes are opaque hex values without conte
 - [x] At boot entry: `nvram_read_boot_error()` reads NVRAM -- if non-zero, logs `"[BOOT] Previous boot failed: code=0x%04x"` on serial
 - [x] Pass `boot_info.last_boot_error` to kernel -- field added to both bootloader struct (bootx64.c) and kernel header (boot_info.h) after `serial_baud`; kernel logs `"Previous boot failed: code=0x%04X"` via klog in `boot_hw.c`
 - [x] `boot_fatal()` includes the error code in on-screen display: `"Error code: 0xNNNN"` line on BSOD screen, plus hex code in serial log
+- [ ] **Bounded boot-error history ring** (gap-audit 2026-05-01 Codex M3): the current `BootError` NVRAM variable records ONLY the last fatal code. In a retry loop or repeated-boot-failure sequence, each new fatal path overwrites the previous one, so the operator loses ordering and cannot distinguish first-cause from later cascade failures. Ship a bounded ring buffer of the last 8 boot attempts: per-entry struct `{boot_seq, unix_time, err_code, source_section, _pad}` (16 bytes, 128 bytes total) stored in either (a) a new `BootErrorHistory` NVRAM variable with a 128-byte hard cap to stay well under the per-machine NVRAM quota (Lenovo class 64 KiB total), OR (b) X:\Diag\boot-error-history.bin in the BlackBox partition with a single NVRAM-resident pointer/seq counter (preferred -- no NVRAM pressure). Bootloader appends one entry on each fatal exit + one entry on successful EBS handoff (so the kernel can prove "boot reached this point"); kernel clears the in-flight slot on successful Phase 3 reach. Provides Win11 BootStatusData-equivalent multi-attempt diagnostics. Owner: this section; reuses §13's `nvram_write_boot_error` plumbing.
 - [x] Commit: `"boot: structured error codes with NVRAM persistence -- cross-boot diagnostics"` (373a29db)
 
 **Test checkpoint:** Delete `\boot\kernel.exe`, boot (gets error screen). Reboot normally with kernel restored. Serial shows `"Previous boot failed: code=0x0003"`. Verify NVRAM variable is cleared on successful boot.
