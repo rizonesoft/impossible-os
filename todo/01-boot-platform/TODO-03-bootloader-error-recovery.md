@@ -71,13 +71,14 @@ title: "TODO-03 -- Bootloader Error Recovery & ELF Hardening"
 | 💎  |  10   | ACPI SPCR serial port auto-detection           | §4         |  [x]   |
 | 💎  |  11   | UEFI watchdog timer management                 | --         |  [x]   |
 | 💎  |  12   | Memory map descriptor validation               | §6         |  [x]   |
-| ⭐  |  13   | Boot error code registry & NVRAM persistence   | §9         |  [/]   |
+| ⭐  |  13   | Boot error code registry & NVRAM persistence   | §9         |  [x]   |
 | ⭐  |  14   | Error screen QR code                           | §9         |  [x]   |
 | 💎  |  15   | boot_info ABI foundation moved to TODO-01      | --         |  [x]   |
 | 💎  |  16   | boot_info kernel validation moved to TODO-01   | §15        |  [x]   |
 | 💎  |  17   | Memory map overlap normalization (sort+carve)  | §12        |  [x]   |
 | ⭐  |  18   | Graphical error screen (ChromeOS/Win11-style)  | §9, §14    |  [x]   |
 | 💎  |  19   | PT_LOAD destination policy (defense-in-depth)  | §1         |  [ ]   |
+| ⭐  |  20   | Boot error history ring (8-attempt diagnostics) | §13       |  [ ]   |
 
 > 💎 = parity -- Windows bootmgfw.efi and GRUB2 both handle these error paths.
 > ⭐ = exclusive -- visible error screen with recovery instructions, QR code, and NVRAM-persisted error codes; neither Windows nor Linux provides this level of pre-kernel diagnostic detail.
@@ -178,7 +179,7 @@ If `\boot\kernel.exe` is not found, search alternative paths before giving up.
 > - POST16 sequence: `POST16_BL_FALLBACK` (0xB094) on entry to all-volumes search; `POST16_BL_FALLBACK_OK` (0xB095) only on success; left at 0xB094 on total failure so a POST card shows fallback-failed.
 > - Scope boundary: `parse_boot_conf()` and `locate_boot_fs()` still use the silent LocateProtocol pattern; consistency follow-ups filed in §7 and TODO-02 §16 to mirror the §3 hardening.
 > **Verified:** 2026-05-01 | commit `2bf210cd` | 5/5 items | build OK | smoke PASS (KVM 2.45s)
-> **Accepted:** [H] Silent LocateProtocol fallback in `parse_boot_conf()` (reason: scope -- §7 owns boot.conf reads) -> XREF: 01-boot-platform/TODO-03 §7 (item: "Eliminate silent LocateProtocol fallback in `parse_boot_conf()`" at line 181)
+> **Accepted:** [H] Silent LocateProtocol fallback in `parse_boot_conf()` (reason: scope -- §7 owns boot.conf reads) -> XREF: 01-boot-platform/TODO-03 §7 (item: "Eliminate silent LocateProtocol fallback in `parse_boot_conf()`" at line 182)
 > **Accepted:** [H] Silent LocateProtocol fallback in `locate_boot_fs()` (reason: scope -- TODO-02 §16 owns UKI staged-payload disk reads) -> XREF: 01-boot-platform/TODO-02 §16 (item: "Eliminate silent LocateProtocol fallback in `locate_boot_fs()`" at line 540)
 > **Quality reviewed:** 2026-05-01 | Codex 5x (adversarial, consistency, perf, re-adversarial x2) | 1H+2M fixed, 2H accepted-XREF | scope: boot-code-quality
 
@@ -476,7 +477,6 @@ Windows has BootStatusPolicy but error codes are opaque hex values without conte
 - [x] At boot entry: `nvram_read_boot_error()` reads NVRAM -- if non-zero, logs `"[BOOT] Previous boot failed: code=0x%04x"` on serial
 - [x] Pass `boot_info.last_boot_error` to kernel -- field added to both bootloader struct (bootx64.c) and kernel header (boot_info.h) after `serial_baud`; kernel logs `"Previous boot failed: code=0x%04X"` via klog in `boot_hw.c`
 - [x] `boot_fatal()` includes the error code in on-screen display: `"Error code: 0xNNNN"` line on BSOD screen, plus hex code in serial log
-- [ ] **Bounded boot-error history ring** (gap-audit 2026-05-01 Codex M3): the current `BootError` NVRAM variable records ONLY the last fatal code. In a retry loop or repeated-boot-failure sequence, each new fatal path overwrites the previous one, so the operator loses ordering and cannot distinguish first-cause from later cascade failures. Ship a bounded ring buffer of the last 8 boot attempts: per-entry struct `{boot_seq, unix_time, err_code, source_section, _pad}` (16 bytes, 128 bytes total) stored in either (a) a new `BootErrorHistory` NVRAM variable with a 128-byte hard cap to stay well under the per-machine NVRAM quota (Lenovo class 64 KiB total), OR (b) X:\Diag\boot-error-history.bin in the BlackBox partition with a single NVRAM-resident pointer/seq counter (preferred -- no NVRAM pressure). Bootloader appends one entry on each fatal exit + one entry on successful EBS handoff (so the kernel can prove "boot reached this point"); kernel clears the in-flight slot on successful Phase 3 reach. Provides Win11 BootStatusData-equivalent multi-attempt diagnostics. Owner: this section; reuses §13's `nvram_write_boot_error` plumbing.
 - [x] Commit: `"boot: structured error codes with NVRAM persistence -- cross-boot diagnostics"` (373a29db)
 
 **Test checkpoint:** Delete `\boot\kernel.exe`, boot (gets error screen). Reboot normally with kernel restored. Serial shows `"Previous boot failed: code=0x0003"`. Verify NVRAM variable is cleared on successful boot.
@@ -644,6 +644,34 @@ The pre-§18 error screen used UEFI text console (`ConOut`) with white-on-blue t
 **Test checkpoint:** With a synthetic ELF whose PT_LOAD targets `EfiRuntimeServicesData`, bootloader emits `[FAIL] Kernel ELF: PT_LOAD destination forbidden ... type=RuntimeServicesData` on serial and renders the §9 error screen. Verified on QEMU WHPX + TCG; bare-metal validation is operator-driven (requires a hand-built malformed kernel).
 
 > **Test runner:** N/A (not yet shipped) | validation: synthetic-ELF fixture + smoke pattern check
+
+---
+
+## 20. Boot Error History Ring
+
+§13 ships a single-slot `BootError` NVRAM variable that records ONLY the last fatal code. In a retry loop or repeated-boot-failure sequence, each new fatal path overwrites the previous one, so the operator loses ordering and cannot distinguish first-cause from later cascade failures (e.g. "EBS retry exhausted at attempt 4" vs "kernel-load corrupt-ELF caused an EBS-retry storm"). This section adds a bounded ring buffer of the last 8 boot attempts -- per-entry struct `{boot_seq, unix_time, err_code, source_section, _pad}` (16 bytes; 128 bytes total) -- so the kernel can render multi-attempt history at the next-boot welcome banner. Provides Win11 BootStatusData-equivalent diagnostics on a class of failure (cascading multi-boot failure) that the single-slot variable cannot represent.
+
+> [!NOTE]
+> **Regression risk:** LOW -- additive: §13's single-slot `BootError` variable stays untouched, history is in a separate channel. If history write fails the boot still proceeds with §13's existing single-slot persistence as the operator-visible fallback.
+> **Storage decision (filed 2026-05-02 from gap-audit Codex M3 review of §13):** prefer option (b) `X:\Diag\boot-error-history.bin` in BlackBox partition (TODO-17 owner; one NVRAM-resident `BootHistorySeq` u32 cookie tells the bootloader where to append). Avoids NVRAM quota pressure on Lenovo-class firmware (typical 64 KiB total). Option (a) all-NVRAM ring stays as the fallback when BlackBox partition is unavailable (recovery boot, mount failure).
+
+- [ ] **Define `boot_error_history_entry` struct** in `include/kernel/boot_info.h` -- 16 bytes per entry; fields: `uint32_t boot_seq` (monotonic counter from `BootHistorySeq`), `uint32_t unix_time` (from `RuntimeServices->GetTime` at fatal/exit, 0 if unavailable), `uint16_t err_code` (BOOT_ERR_* mapped via §13), `uint16_t source_section` (TODO-03 section number that triggered the fatal, or 0xFFFE for "EBS handoff success", 0xFFFF for "kernel Phase 3 reached"), `uint64_t _pad` (reserved; must be zero on write, ignored on read). Add `_Static_assert(sizeof(boot_error_history_entry) == 16, ...)` + per-field offset asserts (boot_seq @ 0, unix_time @ 4, err_code @ 8, source_section @ 10, _pad @ 16) in both kernel header and bootloader mirror.
+- [ ] **Define `BOOT_HIST_RING_LEN = 8`** + `BOOT_HIST_BIN_SIZE = 128` constants in the same header. Ring is fixed-size; oldest entry is overwritten on append once the cookie's `head` index wraps. Document the wrap-vs-append semantics in a header comment.
+- [ ] **Bootloader: append-on-fatal site in `boot_fatal()`** (`src/boot/uefi/bootx64.c`) -- after the existing `nvram_write_boot_error(err_code)` call: read `BootHistorySeq` u32 from NVRAM (or 0 if absent), read 128-byte ring from `X:\Diag\boot-error-history.bin` (zero-init if absent), append a new entry at `head = seq % BOOT_HIST_RING_LEN`, write ring back, increment + write `BootHistorySeq`. On any I/O failure: WARN to serial + skip (do NOT block the fatal path). Source section comes from a new `boot_fatal()` parameter (extend signature) OR a thread-local-ish global `g_current_section` hint set at the entry of each section's primary code path.
+- [ ] **Bootloader: append-on-EBS-success site** -- in the EBS retry loop's success branch (`src/boot/uefi/bootx64.c` ExitBootServices loop), after the successful `gBS->ExitBootServices(...)`: append a "boot reached EBS handoff" sentinel entry with `source_section = 0xFFFE`, `err_code = 0` (BOOT_ERR_OK). The kernel knows boot reached this point even if a kernel-side crash happens later. Note: the sentinel write uses BlackBox if available; NVRAM-resident cookie still increments to keep `boot_seq` monotonic across all attempts.
+- [ ] **Kernel: append-on-Phase-3-reached site** -- in `boot_phase3()` after subsystem `_init` calls return successfully but BEFORE the scheduler enters userland: append a sentinel entry with `source_section = 0xFFFF`, `err_code = 0`. This is the "kernel reached steady state" marker; downstream operator tools can render history as "boot N: fatal at §M" / "boot N: kernel reached Phase 3" rows.
+- [ ] **Kernel: history reader at `boot_phase0` / `boot_hw.c`** -- after `nvram_read_boot_error()` already there in §13: read the ring from BlackBox (or NVRAM fallback) + decode the last 8 entries + emit a klog block (`"[BOOT] Recent boot history (8 attempts):"` followed by per-entry lines `"  seq=N time=YYYY-MM-DDTHH:MM:SSZ src=§M err=0xNNNN"`). Renders only when the ring has at least one non-zero entry.
+- [ ] **Storage layer: BlackBox `X:\Diag\boot-error-history.bin` writer** -- helpers `boot_history_read(out_ring[8])` and `boot_history_append(seq, entry)` in `src/boot/uefi/boot_history.c`. Use the existing BlackBox file API from TODO-17. On BlackBox partition mount failure or write failure, helper falls back to a `BootErrorHistory` UEFI variable (128-byte hard cap, vendor GUID, NV+BS+RT attributes) so cascading-failure diagnostics still survive a corrupt BlackBox FS.
+- [ ] **NVRAM cookie variable `BootHistorySeq`** -- u32 monotonic counter in NVRAM (vendor GUID, NV+BS+RT). Kernel-side `boot_history_clear_inflight()` does NOT clear this counter -- only the per-attempt records age out via ring-overflow. Cookie wraps at u32 max (4 billion boots; not a concern).
+- [ ] **Unit tests** -- `src/kernel/test/test_boot_history.c`: round-trip 8-entry append+read; ring wrap on 9th entry overwrites slot 0; entries past the cap continue scanning (defense-in-depth); BOOT_HIST_BIN_SIZE static asserts; offset assertions on `boot_error_history_entry` fields. Wire to `TEST_CAT_BOOT`.
+- [ ] **`docs/boot/boot-error-history.md` schema doc** -- canonical wire-format spec covering struct layout, ring semantics, source-section enum (regular `BOOT_ERR_*` consumers + the two sentinel values 0xFFFE/0xFFFF), the BlackBox vs NVRAM dual-channel contract, and operator-visible decode table.
+- [ ] **Smoke test extension** -- `scripts/test-smoke.sh` adds: corrupt `\boot\kernel.exe` to force a cascade of EBS retries, reboot 3 times, assert next-boot serial shows `"Recent boot history"` block with 3 entries each carrying err_code != 0.
+- [ ] **OS Comparison row** -- new row "Multi-attempt boot diagnostics" with Win11 ✅ BootStatusData (since Vista; up to last 4 attempts), Linux ⚠️ systemd-bootctl status (single-slot equivalent; full history requires journal which lives outside firmware), Impossible OS ✅ §20 (8-attempt ring).
+- [ ] Commit: `"boot: bounded boot-error history ring -- multi-attempt next-boot diagnostics"`
+
+**Test checkpoint:** Corrupt `\boot\kernel.exe` (rename), boot, fatal screen renders with err_code 0x0003. Repeat 2 more times. Restore kernel.exe; reboot normally. Serial shows `"[BOOT] Recent boot history (8 attempts):"` followed by 3 entries `"src=§3 err=0x0003"` plus a 4th entry `"src=kernel-Phase3 err=0x0000"`. Verify on QEMU WHPX/TCG, VBox, bare metal. Bare-metal NVRAM size check: `BootHistorySeq` (4 B) + `BootErrorHistory` fallback (128 B) + existing `BootError` (4 B) = ~136 B total under any per-machine quota.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | test_boot_history (8 sub-tests) + test_boot_info NVRAM cookie persist + manual cascade-fixture on QEMU WHPX/TCG, VBox
 
 ---
 
