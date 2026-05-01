@@ -427,7 +427,7 @@ The UEFI firmware starts a 5-minute watchdog timer at boot. The current bootload
 > - Canonical doc: this section + UEFI 2.10 specification section 7.5 (Boot Services Watchdog Timer) + §9 boot_fatal callers (boot_fatal is terminal, never needs watchdog refresh).
 > - Scope boundary: §11 owns the bootloader watchdog state machine. Kernel-side re-arm (after handoff) is owned by `02-kernel-core/TODO-19`; bootloader hands off with watchdog disarmed.
 
-> **Verified:** 2026-05-02 | commit `<pending>` | 6/6 items | build OK | smoke PASS (KVM 2.35s). 5 original items + state-flag split confirmed at file:line. 2026-04-11 verification retained.
+> **Verified:** 2026-05-02 | commit `90f215fb` | 6/6 items | build OK | smoke PASS (KVM 2.35s). 5 original items + state-flag split confirmed at file:line. 2026-04-11 verification retained.
 > **Quality reviewed:** 2026-05-02 | Codex 4x (adversarial + consistency + perf + re-adversarial) | 1M fixed (state-flag split eliminates the refresh-fail-suppresses-disarm hazard). Round-2 re-adversarial converged with zero new findings | scope: boot-code-quality
 
 ---
