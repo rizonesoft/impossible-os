@@ -42,12 +42,25 @@ BUILD_TIME=0
 BUILD_LABEL="unknown"
 if command -v git >/dev/null 2>&1 && \
    git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    GIT_SHA_HEX="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo)"
-    BUILD_TIME="$(git -C "$REPO_ROOT" log -1 --format=%ct 2>/dev/null || echo 0)"
-    BUILD_LABEL="$(git -C "$REPO_ROOT" describe --dirty --always --tags 2>/dev/null || \
-                   git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
-    if [ -z "$GIT_SHA_HEX" ] || [ ${#GIT_SHA_HEX} -ne 40 ]; then
+    # Codex adversarial: refuse to bake parent-repo metadata into a
+    # child build. Bind to REPO_ROOT toplevel via resolved-path
+    # equality so a tarball extracted into a parent worktree cannot
+    # leak the parent's git identity.
+    GIT_TOP="$(git -C "$REPO_ROOT" rev-parse --show-toplevel 2>/dev/null || echo)"
+    GIT_TOP_RESOLVED="$(cd "$GIT_TOP" 2>/dev/null && pwd -P || echo)"
+    REPO_ROOT_RESOLVED="$(cd "$REPO_ROOT" 2>/dev/null && pwd -P || echo)"
+    if [ -n "$GIT_TOP_RESOLVED" ] && \
+       [ "$GIT_TOP_RESOLVED" = "$REPO_ROOT_RESOLVED" ]; then
+        GIT_SHA_HEX="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo)"
+        BUILD_TIME="$(git -C "$REPO_ROOT" log -1 --format=%ct 2>/dev/null || echo 0)"
+        BUILD_LABEL="$(git -C "$REPO_ROOT" describe --dirty --always --tags 2>/dev/null || \
+                       git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+        if [ -z "$GIT_SHA_HEX" ] || [ ${#GIT_SHA_HEX} -ne 40 ]; then
+            GIT_OK=0
+        fi
+    else
         GIT_OK=0
+        echo "[gen-loader-identity] WARN: REPO_ROOT ($REPO_ROOT_RESOLVED) is not the git toplevel (toplevel=$GIT_TOP_RESOLVED); using zero-identity fallback." >&2
     fi
 else
     GIT_OK=0
@@ -58,6 +71,15 @@ fi
 # preserves the leading bytes which carry the most discriminating
 # information (commit SHA prefix, tag name).
 BUILD_LABEL="${BUILD_LABEL:0:23}"
+
+# Codex consistency M1: BOOT_LOADER_BUILD_LABEL is consumed as a C
+# string literal in src/boot/uefi/bootx64.c. git tags / describe
+# output can legally contain backslash and double-quote characters;
+# emitting them raw would produce invalid C. Escape both before
+# emission. Order: backslash MUST be escaped first, otherwise the
+# inserted backslashes from the quote-escape step get re-escaped.
+BUILD_LABEL_ESC="${BUILD_LABEL//\\/\\\\}"
+BUILD_LABEL_ESC="${BUILD_LABEL_ESC//\"/\\\"}"
 
 # Convert the 40-char hex SHA to a C array of 20 bytes. On the no-git
 # fallback path, emit all zeros (the boot_loader_identity zero sentinel).
@@ -99,7 +121,7 @@ trap 'rm -f "$TMP"' EXIT
     echo "#define BOOT_LOADER_BUILD_TIME   ${BUILD_TIME}ULL"
     echo ""
     echo "/* git describe --dirty --always --tags (truncated to 23 bytes + NUL). */"
-    echo "#define BOOT_LOADER_BUILD_LABEL  \"$BUILD_LABEL\""
+    echo "#define BOOT_LOADER_BUILD_LABEL  \"$BUILD_LABEL_ESC\""
     echo ""
     echo "#endif /* BOOT_LOADER_IDENTITY_H */"
 } > "$TMP"

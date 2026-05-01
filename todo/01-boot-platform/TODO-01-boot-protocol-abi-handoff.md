@@ -719,6 +719,9 @@ The handoff today carries `BOOT_INFO_VERSION` + the kernel `.bootproto` manifest
 > - **Canonical doc**: [`docs/boot/boot-info-fields.md`](../../docs/boot/boot-info-fields.md) "Bootloader build identity" section + [`docs/boot/boot-protocol-changelog.md`](../../docs/boot/boot-protocol-changelog.md) v13 entry.
 > - **Scope boundary**: §20 owns the producer + handoff field + fault-record extension + registry + fatal/transcript disclosure. The standalone `X:\Diag\boot-loader-identity.txt` artifact is owned by TODO-14 §10 (BlackBox dump). Attestation-report integration is owned by TODO-13 §9.
 
+> **Verified:** 2026-05-01 | commit `bda769ff` + review fixes | 8/8 items | build OK | tests 376/376 tooling PASS, lint 0, smoke PASS 2.44s on KVM with v13 handoff
+> **Quality reviewed:** 2026-05-01 | Codex 6x (design + adversarial + re-adversarial x2 + consistency + perf) | 1H+5M fixed inline (design H1: persist identity in v2 fault record; impl-adv H1: zero_fault memsets whole struct + bounded label copy; impl-re-adv H1: test_boot_version_record_size_pin updated 48 -> V1/V2/112; review adv M1: gen-loader-identity.sh worktree probe; review adv+cons M2: BUILD_LABEL_ESC backslash+quote escape; review adv M3: vfs_close on diag_dir node) | scope: boot-code-quality + kernel-code-quality
+
 ---
 
 ## OS Comparison

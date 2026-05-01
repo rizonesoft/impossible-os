@@ -531,9 +531,17 @@ void boot_version_blackbox_transcribe(void)
     /* Write via vfs_open/write, same pattern as hw_dump_write_file. */
     const char *diag_dir = "X:\\Diag\\";
     {
+        /* Codex adversarial: balance the vfs_open with vfs_close so
+         * the directory node's refcount returns to zero even when
+         * the create succeeds. The earlier write-mode vfs_open below
+         * is what actually writes the transcript; this open is just
+         * to invoke the create op. */
         struct vfs_node *dir = vfs_open(diag_dir, VFS_O_READ);
-        if (dir && dir->ops && dir->ops->create)
-            dir->ops->create(dir, BOOT_VERSION_FAULT_BLACKBOX_FILE, VFS_FILE);
+        if (dir) {
+            if (dir->ops && dir->ops->create)
+                dir->ops->create(dir, BOOT_VERSION_FAULT_BLACKBOX_FILE, VFS_FILE);
+            vfs_close(dir);
+        }
     }
     char path[64];
     int pi = 0;
