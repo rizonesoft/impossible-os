@@ -1079,6 +1079,24 @@ The `_review_kind.detect_review_kind_from_cmd` classifier currently uses substri
 
 ---
 
+## 31. Post-Commit Hook Concurrency: Serialize Build/Smoke via flock
+
+The Claude Code post-commit hook fires `bash scripts/build.sh` (and conditionally `scripts/test-smoke.sh`) on every kernel-touching commit. Back-to-back commits within ~3 seconds spawn parallel build invocations that share `build/` and stomp each other's intermediate object directories, producing spurious `[smoketest] [FAIL] Build failed` and `SMOKE TEST FAILED` banners in tool output. The actual repo HEAD compiles green on a clean rebuild every time. Reproduced 3+ times during the 2026-05-01 TODO-03 re-review pass (back-to-back review commits + hash-fill commits).
+
+> [!IMPORTANT]
+> **Symptom vs cause:** the failure is purely a hook-side concurrency race; no shipping commit has ever been broken by it. Cost is operator-confusing PostToolUse output that prompts repeated "why is build failing?" questions.
+
+- [ ] **flock-based serialization in the post-commit hook** (filed 2026-05-01 from TODO-03 §7 review): wrap the build + smoke-test invocations in `flock -n /tmp/impossible-os-postcommit.lock bash -c '...'`. On lock-held, exit 0 silently (the in-progress build already covers HEAD). Owner: `.claude/settings.json` post-commit hook block + any new helper script. Test: simulate two `git commit --allow-empty` 1s apart; assert exactly one build runs to completion and second exits 0 with `"[postcommit] another build in progress, deferring"`. Verify the green-tree state is preserved (no race-induced FAILED banners).
+- [ ] **Alternative: queue + collapse via a flag file** -- if flock is undesirable (e.g. WSL2 cross-process semantics), record `.claude/state/postcommit-pending` when a build is running; later post-commit hook fires see the flag and increment a counter, the running build re-checks at end and re-runs once if the counter is >0. Equivalent guarantee, slightly more complex. Owner: same.
+- [ ] **Test-smoke isolation from build** -- short-term mitigation: run smoke-test in `build/smoke/` instead of `build/` so a parallel build can't clobber the smoke artifacts mid-run. Cheaper than full lock; doesn't help the build-vs-build race but covers the smoke side.
+- [ ] Commit: `"hooks: post-commit serialization via flock -- end stomp-stamp races on back-to-back commits"`
+
+**Test checkpoint:** Two `git commit --allow-empty` calls within 1s of each other on a kernel-touching branch must produce exactly ONE build invocation and ONE smoke run; the second post-commit hook must exit 0 with a deferral message. Tool-output stream must NOT contain `[smoketest] [FAIL] Build failed` when HEAD is actually green.
+
+> **Test runner:** N/A (hook-infrastructure only -- not a kernel test surface) | validation: manual two-commit reproduction + grep tool-output for absence of `Build failed` / `SMOKE TEST FAILED` banners
+
+---
+
 ## Format Quick Reference
 
 | Concern                      | Where it lives                                                                                    | Owner                                           |
