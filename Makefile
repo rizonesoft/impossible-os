@@ -185,7 +185,49 @@ MOK_CRT ?= keys/MOK.cer
 ## ahead of the := assignment was silently dropped (prereq evaluated
 ## to empty, target became a no-op).
 SIGN_STAMP := $(BUILD_DIR)/.signed-artifacts.stamp
+SIGN_FINGERPRINT := $(BUILD_DIR)/.signed-artifacts.fingerprint
 UKI_BIN_PATH := $(BUILD_DIR)/tools/BOOTX64.UKI.efi
+
+# Codex round-5 H1 fix 2026-05-01: stamp-identity binding for key
+# rotation. mtime-only invalidation is fooled by a CI run that
+# swaps in a different MOK_CRT with an OLDER mtime than the
+# existing stamp -- the recipe sees prereqs are not newer and
+# silently skips re-signing, shipping the artifact with the old
+# key. Compare the CONTENT fingerprint at parse time and force
+# re-sign when the desired cert SHA-256 differs from the one
+# recorded by sign-efi.sh after the previous successful sign.
+#
+# sha256sum -> shasum fallback mirrors scripts/sign-efi.sh portability
+# (Codex adversarial 2026-05-01: macOS / minimal CI hosts lack
+# sha256sum). Quoted "$(MOK_CRT)" tolerates spaces in CI key paths.
+SIGN_DESIRED_FP := $(shell { sha256sum "$(MOK_CRT)" 2>/dev/null || shasum -a 256 "$(MOK_CRT)" 2>/dev/null; } | awk '{print $$1}')
+SIGN_RECORDED_FP := $(shell cat $(SIGN_FINGERPRINT) 2>/dev/null)
+# Fail-closed invalidation (Codex adversarial 2026-05-01 H1):
+# when MOK_KEY is present (signing is configured) but the desired
+# cert fingerprint can NOT be computed -- because MOK_CRT is
+# missing / unreadable / mistyped, OR because neither sha256sum
+# nor shasum is on PATH -- the previous behavior silently skipped
+# the invalidation block and trusted the existing stamp. That
+# would let a build ship artifacts signed with the previous cert
+# while the configured cert is unusable. Now: if MOK_KEY exists
+# and SIGN_DESIRED_FP is empty, force-invalidate the stamp so the
+# recipe re-runs (sign-efi.sh then surfaces the real error).
+ifneq ($(wildcard $(MOK_KEY)),)
+ifeq ($(SIGN_DESIRED_FP),)
+ifneq ($(wildcard $(SIGN_STAMP)),)
+$(info [SIGN] cert fingerprint NOT computable ($(MOK_CRT) missing/unreadable or sha256sum/shasum unavailable); invalidating stamp -- sign-efi.sh will report the underlying error)
+$(shell rm -f $(SIGN_STAMP))
+endif
+endif
+endif
+ifneq ($(SIGN_DESIRED_FP),)
+ifneq ($(SIGN_DESIRED_FP),$(SIGN_RECORDED_FP))
+ifneq ($(wildcard $(SIGN_STAMP)),)
+$(info [SIGN] cert fingerprint changed (desired $(SIGN_DESIRED_FP), recorded $(SIGN_RECORDED_FP)); invalidating stamp)
+$(shell rm -f $(SIGN_STAMP))
+endif
+endif
+endif
 
 sign-efi: $(SIGN_STAMP)
 
@@ -195,7 +237,9 @@ sign-efi: $(SIGN_STAMP)
 # When the wildcard expands to empty (no keys yet) the dependency is
 # absent and the recipe still fires (because the stamp doesn't exist
 # either); when keys are present the dependency reflects their mtime
-# so a key rotation forces re-sign.
+# so a key rotation forces re-sign. The Codex round-5 H1 parse-time
+# fingerprint check above also invalidates the stamp when the cert
+# identity changes regardless of mtime ordering.
 $(SIGN_STAMP): $(UEFI_EFI) $(UKI_BIN_PATH) scripts/sign-efi.sh \
               $(wildcard $(MOK_KEY)) $(wildcard $(MOK_CRT))
 	@# Codex re-re-adversarial H1 fix 2026-04-29: only touch the stamp
@@ -211,6 +255,7 @@ $(SIGN_STAMP): $(UEFI_EFI) $(UKI_BIN_PATH) scripts/sign-efi.sh \
 		exit 0; \
 	fi
 	@MOK_KEY="$(MOK_KEY)" MOK_CRT="$(MOK_CRT)" EFI_BIN="$(UEFI_EFI)" \
+		SIGN_FINGERPRINT_FILE="$(SIGN_FINGERPRINT)" \
 		bash scripts/sign-efi.sh
 	@touch $@
 

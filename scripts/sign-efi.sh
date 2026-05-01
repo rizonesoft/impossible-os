@@ -163,4 +163,34 @@ if ! mv "$UKI_TMP" "$UKI_BIN"; then
 fi
 trap - EXIT
 rm -f "$EFI_BAK" "$UKI_BAK"
+
+# Stamp-identity binding for key rotation (Codex round-5 H1 fix
+# 2026-04-29). The Makefile previously trusted MOK_CRT mtime to
+# decide whether the stamp was current; a CI run that swaps to a
+# different cert with an OLDER mtime than the existing stamp
+# silently skipped re-signing and shipped the artifact with the old
+# key. Record the cert's SHA-256 content fingerprint AFTER a
+# successful dual-sign so the Makefile can compare desired-vs-
+# recorded at parse time and invalidate the stamp on identity
+# change regardless of mtime.
+#
+# The fingerprint sidecar path is opt-in: callers that don't
+# provide SIGN_FINGERPRINT_FILE keep legacy behavior. The Makefile
+# wires this through.
+if [ -n "${SIGN_FINGERPRINT_FILE:-}" ]; then
+    if command -v sha256sum >/dev/null 2>&1; then
+        FP="$(sha256sum "$MOK_CRT" | awk '{print $1}')"
+    elif command -v shasum >/dev/null 2>&1; then
+        FP="$(shasum -a 256 "$MOK_CRT" | awk '{print $1}')"
+    else
+        echo "[SIGN] WARN: no sha256sum/shasum on PATH; fingerprint sidecar NOT written" >&2
+        FP=""
+    fi
+    if [ -n "$FP" ]; then
+        SIGN_FP_TMP="${SIGN_FINGERPRINT_FILE}.tmp"
+        printf '%s\n' "$FP" > "$SIGN_FP_TMP"
+        mv -f "$SIGN_FP_TMP" "$SIGN_FINGERPRINT_FILE"
+        echo "[SIGN] cert fingerprint recorded: ${FP:0:16}... -> $SIGN_FINGERPRINT_FILE"
+    fi
+fi
 echo "[SIGN] BOOTX64.EFI + BOOTX64.UKI.efi: dual-artifact signing complete"
