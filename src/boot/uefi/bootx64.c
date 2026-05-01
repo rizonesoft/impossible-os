@@ -1823,6 +1823,30 @@ static EFI_STATUS init_gop(void)
 
     serial_early_print("[BOOT] GOP: 1 handle found\n");
 
+    /* GOP NULL guard MUST run before any gop->Mode->* enumeration.
+     * Firmware can return a successful LocateProtocol with gop->Mode
+     * == NULL (uninitialized GOP); dereferencing MaxMode in the
+     * enumeration loop below would crash the bootloader before
+     * gop_negotiate_mode's recovery path ever runs.  Attempt
+     * SetMode(0) once to coax firmware into populating Mode; if it
+     * stays NULL, fall back to headless boot. */
+    if (!gop || !gop->Mode) {
+        serial_early_print("[BOOT] GOP: Mode NULL post-locate -- "
+                           "attempting SetMode(0)\n");
+        if (gop) {
+            gop->SetMode(gop, 0);
+        }
+        if (!gop || !gop->Mode) {
+            serial_early_print("[BOOT] GOP: Mode still NULL -- "
+                               "headless boot\n");
+            g_boot_info_ptr->fb.addr = 0;
+            g_boot_info_ptr->fb.width = 0;
+            g_boot_info_ptr->fb.height = 0;
+            g_boot_info_ptr->fb_available = 0;
+            return EFI_SUCCESS;
+        }
+    }
+
     /* ── Enumerate all available modes into boot_info ──────────────────── */
     g_boot_info_ptr->gop_mode_count = 0;
     g_boot_info_ptr->gop_mode_selected = 0;
@@ -1884,6 +1908,44 @@ static EFI_STATUS init_gop(void)
         gFbHeight = 0;
         gFbPitch = 0;
         gFbPixelFormat = 2;
+        g_boot_info_ptr->fb_available = 0;
+        g_boot_info_ptr->hidpi = 0;
+        return EFI_SUCCESS;
+    }
+
+    /* Mode->Info NULL guard -- gop_negotiate_mode tries SetMode(0)
+     * when Info is NULL, but firmware can still leave it NULL.  Any
+     * dereference below (PixelFormat, HorizontalResolution, etc.)
+     * would fault in the bootloader; degrade headless instead. */
+    if (!gop->Mode->Info) {
+        serial_early_print("[BOOT] GOP: Mode->Info NULL after "
+                           "negotiate -- headless boot\n");
+        gFramebuffer = (UINT32 *)0;
+        gFbWidth = 0; gFbHeight = 0; gFbPitch = 0;
+        gFbPixelFormat = 2;
+        g_boot_info_ptr->fb.addr = 0;
+        g_boot_info_ptr->fb.width = 0;
+        g_boot_info_ptr->fb.height = 0;
+        g_boot_info_ptr->fb_available = 0;
+        g_boot_info_ptr->hidpi = 0;
+        return EFI_SUCCESS;
+    }
+
+    /* Pixel format gate -- the kernel framebuffer driver only handles
+     * RGBX and BGRX 8-bit-per-component formats.  PixelBitMask /
+     * PixelBltOnly / out-of-range formats become a kernel halt at
+     * fb_init() if we publish them with fb_available=1.  Clear the
+     * framebuffer fields and degrade headless instead. */
+    if (gop->Mode->Info->PixelFormat != PixelRedGreenBlueReserved &&
+        gop->Mode->Info->PixelFormat != PixelBlueGreenRedReserved) {
+        serial_early_print("[BOOT] GOP: unsupported pixel format -- "
+                           "headless boot\n");
+        gFramebuffer = (UINT32 *)0;
+        gFbWidth = 0; gFbHeight = 0; gFbPitch = 0;
+        gFbPixelFormat = 2;
+        g_boot_info_ptr->fb.addr = 0;
+        g_boot_info_ptr->fb.width = 0;
+        g_boot_info_ptr->fb.height = 0;
         g_boot_info_ptr->fb_available = 0;
         g_boot_info_ptr->hidpi = 0;
         return EFI_SUCCESS;

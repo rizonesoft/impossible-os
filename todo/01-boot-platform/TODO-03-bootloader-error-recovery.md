@@ -232,8 +232,15 @@ GOP operations can hang on broken firmware. This section adds error recovery aro
 
 > **Test runner:** N/A (UEFI pre-boot only -- GOP mode selection runs before kernel) | validation: smoke + serial on QEMU WHPX/TCG, VBox, bare metal
 
-> **Verified:** 2026-04-11 -- all 4 items confirmed. QueryMode 100-error abort, SetMode->mode0->firmware fallback, headless boot on no GOP, logging at each stage. Additional hardening from 01-boot-platform/TODO-02 §4 quality review (FrameBufferSize bounds, Mode NULL guard, pitch validation). Accepted: none.
-> **Quality reviewed:** 2026-04-11 -- no additional findings. Shared code with 01-boot-platform/TODO-02 §4 which received full quality review (FrameBufferSize bounds, Mode/Info NULL guard, pitch validation, gop_pixel_format_code dedup). Defensive wrappers match UEFI best practice for GOP error recovery. Accepted: none.
+> **Notes:**
+> - What shipped: GOP defensive wrappers in `init_gop()` + `gop_negotiate_mode()` -- QueryMode 100-error abort, SetMode->mode0->firmware fallback, headless degrade on no GOP, FrameBufferBase=0 retry, dimension/size overflow guards, NEW Mode-NULL + Info-NULL guards (2026-05-01), NEW pixel-format gate (RGBX/BGRX only, else headless).
+> - How it integrates: invoked from `efi_main()` after `serial_early_init()`; publishes fb.addr/width/height/pitch + fb_available to boot_info; kernel `fb_init()` honors fb_available=0 and stays headless cleanly.
+> - Downstream effects: hostile/buggy firmware can no longer crash the bootloader via Mode==NULL or Info==NULL; unsupported pixel formats (PixelBitMask, PixelBltOnly) headless-degrade rather than triggering kernel `fb_init()` halt; multi-GOP enumeration owned by TODO-27 §4.
+> - Canonical doc: this section + TODO-02 §4 (single-GOP negotiation) + TODO-27 §4 (multi-GOP) + UEFI 2.10 section 12.9 GOP protocol.
+> - Scope boundary: §5 owns timeout + degrade paths (Mode/Info NULL, format reject, dim overflow, FB size mismatch, FrameBufferBase=0 retry). TODO-02 §4 owns mode negotiation/scoring. TODO-27 §4 owns multi-handle enumeration.
+
+> **Verified:** 2026-05-01 | commit `<pending>` | 4/4 items | build OK | smoke PASS (KVM 2.26s). 4 original deliverables + Mode/Info NULL guards + pixel-format gate confirmed at file:line. 2026-04-11 verification retained.
+> **Quality reviewed:** 2026-05-01 | Codex 4x (adversarial + consistency + perf + re-adversarial) | 2H+1H fixed (Mode-NULL guard before enumeration, unsupported pixel-format headless-degrade, Info-NULL guard before pixel-format dereference) | scope: boot-code-quality
 
 ---
 
