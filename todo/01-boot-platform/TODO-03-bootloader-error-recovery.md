@@ -420,8 +420,15 @@ The UEFI firmware starts a 5-minute watchdog timer at boot. The current bootload
 
 > **Test runner:** N/A (UEFI pre-boot only -- watchdog SetWatchdogTimer runs before kernel) | validation: smoke + serial showing `Watchdog: armed` + `disarmed`
 
-> **Verified:** 2026-04-11 -- all 5 items confirmed. 60s arm with status check, 3 resets at long ops, disarm with retry before EBS. Codex found unchecked disarm during implementation (fixed: status check + retry). Accepted: none.
-> **Quality reviewed:** 2026-04-11 -- 1 fix: centralized watchdog_reset() helper with g_wd_armed tracking (Codex found silent reset failures). Matches UEFI Spec §7.5 (WatchdogCode in OS range 0x10000+). Exceeds Win11/Linux/GRUB (none re-arm, all just disable). Accepted: disarm failure continues to kernel (kernel boots <10s, within 60s timeout -- watchdog reset on failure is actually beneficial).
+> **Notes:**
+> - What shipped: `watchdog_reset()` + initial 60s arm + pre-EBS disarm in `src/boot/uefi/bootx64.c` -- WatchdogCode `0x424F4F54` ("BOOT" ASCII; UEFI 2.10 OS range 0x10000+). Two state flags split 2026-05-02: `g_wd_armed` = firmware watchdog counting (cleared only on successful disarm); `g_wd_refresh_disabled` = stop refresh attempts after first failure (does NOT clear g_wd_armed).
+> - How it integrates: arm fires at efi_main entry; `watchdog_reset()` called before each long pre-EBS operation (init_gop, load_kernel, discover_usb_devices); disarm at pre-ExitBootServices with retry-once on failure.
+> - Downstream effects: a refresh failure no longer suppresses the pre-EBS disarm -- closes the M1 hazard where a transient refresh failure could ship a live 60s timer into the kernel (Codex M1 adversarial 2026-05-02). Exceeds Win11/Linux/GRUB which all simply disable the firmware watchdog.
+> - Canonical doc: this section + UEFI 2.10 specification section 7.5 (Boot Services Watchdog Timer) + §9 boot_fatal callers (boot_fatal is terminal, never needs watchdog refresh).
+> - Scope boundary: §11 owns the bootloader watchdog state machine. Kernel-side re-arm (after handoff) is owned by `02-kernel-core/TODO-19`; bootloader hands off with watchdog disarmed.
+
+> **Verified:** 2026-05-02 | commit `<pending>` | 6/6 items | build OK | smoke PASS (KVM 2.35s). 5 original items + state-flag split confirmed at file:line. 2026-04-11 verification retained.
+> **Quality reviewed:** 2026-05-02 | Codex 4x (adversarial + consistency + perf + re-adversarial) | 1M fixed (state-flag split eliminates the refresh-fail-suppresses-disarm hazard). Round-2 re-adversarial converged with zero new findings | scope: boot-code-quality
 
 ---
 

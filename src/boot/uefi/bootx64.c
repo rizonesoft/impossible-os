@@ -652,7 +652,17 @@ static void efi_print(CHAR16 *str);
  * may be in an undefined state. Set g_ebs_in_progress = 1 before the EBS
  * loop to force serial-only output for EBS-path failures. */
 static int g_ebs_in_progress;
-static int g_wd_armed;  /* 1 if watchdog was successfully armed (S11) */
+/* Watchdog state.  TWO flags, not one -- "is the firmware watchdog
+ * counting?" and "can we still talk to SetWatchdogTimer?" are
+ * different questions.  Conflating them lets a refresh failure
+ * suppress the pre-EBS disarm and ship a live 60s timer into the
+ * kernel handoff (Codex M1 adversarial 2026-05-02). */
+static int g_wd_armed;            /* 1 = firmware watchdog is counting; cleared
+                                   * ONLY on successful disarm. */
+static int g_wd_refresh_disabled; /* 1 = stop calling watchdog_reset()
+                                   * because a prior refresh failed.
+                                   * Pre-EBS disarm is still attempted
+                                   * because g_wd_armed stays 1. */
 
 /* --- NVRAM boot error persistence (S13) ---
  * Write/read a UINT32 error code to UEFI NVRAM so the next boot knows
@@ -697,15 +707,21 @@ static UINT32 nvram_read_boot_error(void)
     return code;
 }
 
-/* Reset the watchdog timer if it was successfully armed.
- * Called before long operations to extend the timeout window. */
+/* Reset the watchdog timer if it was successfully armed AND a prior
+ * refresh has not failed.  On refresh failure we set
+ * g_wd_refresh_disabled=1 to stop spamming the failing call -- but
+ * we DO NOT clear g_wd_armed, because the firmware watchdog from
+ * the initial successful arm may still be counting and the pre-EBS
+ * disarm path must still run (Codex M1 adversarial 2026-05-02). */
 static void watchdog_reset(void)
 {
-    if (!g_wd_armed) return;
+    if (!g_wd_armed || g_wd_refresh_disabled) return;
     EFI_STATUS s = gBS->SetWatchdogTimer(60, 0x424F4F54, 0, (CHAR16 *)0);
     if (EFI_ERROR(s)) {
-        serial_early_print("[WARN] Watchdog: reset failed\n");
-        g_wd_armed = 0;  /* lost the watchdog -- don't try again */
+        serial_early_print("[WARN] Watchdog: reset failed -- stopping "
+                           "refresh attempts; pre-EBS disarm will "
+                           "still fire to clear the live timer\n");
+        g_wd_refresh_disabled = 1;
     }
 }
 
