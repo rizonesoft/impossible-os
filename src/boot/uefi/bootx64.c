@@ -27,6 +27,7 @@
 #include "elf_bootproto.h"
 #include "boot_proto_sha.h"   /* generated; provides KERNEL_ABI_SHA256 */
 #include "boot_loader_identity.h" /* generated; provides BOOT_LOADER_GIT_SHA + ..._BUILD_TIME + ..._BUILD_LABEL */
+#include "../../../include/boot/uki_cmdline_check.h" /* uki_find_disk_override_token() shared with kernel test */
 
 /* Inline rdtsc for boot timing */
 static inline UINT64 boot_rdtsc(void)
@@ -124,6 +125,22 @@ static UINT8 *g_uki_cmdline_ptr;     /* boot.conf-equivalent; may be NULL */
 static UINTN  g_uki_cmdline_size;
 static UINT8 *g_uki_osrel_ptr;       /* os-release info; may be NULL */
 static UINTN  g_uki_osrel_size;
+
+/* UKI v14 signed payloads. Populated by detect_uki_sections() with
+ * pointers into LoadedImage memory; uki_copy_payloads_to_loader_data()
+ * later allocates EfiLoaderData pages and copies each payload so the
+ * kernel-physical addresses survive ExitBootServices. The post-copy
+ * addresses are what gets published into boot_info. Zero means the
+ * section was absent in the UKI (legacy back-compat). */
+static UINT8 *g_uki_initrd_ptr;       /* LoadedImage-relative pointer; may be NULL */
+static UINTN  g_uki_initrd_size;
+static UINT64 g_uki_initrd_phys;      /* post-copy kernel-physical addr; 0 if absent */
+static UINT8 *g_uki_recovery_ptr;
+static UINTN  g_uki_recovery_size;
+static UINT64 g_uki_recovery_phys;
+static UINT8 *g_uki_modules_ptr;
+static UINTN  g_uki_modules_size;
+static UINT64 g_uki_modules_phys;
 
 /* Impossible OS vendor GUID: {6F35D3A4-C0E6-4A82-B5D8-7C9D2E4F8A13}
  * Must match IMPOSSIBLE_OS_VENDOR_GUID_INIT in include/kernel/uefi_vars.h. */
@@ -2428,6 +2445,23 @@ static void parse_boot_conf(void)
             serial_early_print("[BOOT] UKI .cmdline loaded (");
             serial_early_print_uint((UINT32)buf_size);
             serial_early_print(" bytes; firmware-Secure-Boot-verified)\n");
+            /* Reject any disk-side payload override token in the
+             * active cmdline. Helper is in a separate translation
+             * unit so unit tests can exercise it against synthetic
+             * fixtures without booting QEMU. */
+            const char *reject_token = uki_find_disk_override_token(
+                (const UINT8 *)buf, buf_size);
+            if (reject_token) {
+                serial_early_print("[FATAL] UKI mode rejects out-of-UKI ");
+                serial_early_print(reject_token);
+                serial_early_print(" override; disk payload is unsigned\n");
+                boot_fatal(BOOT_ERR_UKI_DISK_OVERRIDE,
+                           "UKI cmdline contains disk-payload override token",
+                           "Rebuild the UKI without initrd= / module= / recovery_image= "
+                           "tokens in resources/boot/boot.conf; load-bearing payloads "
+                           "must use the .initrd / .recovery / .modules PE sections "
+                           "embedded by scripts/build.sh.");
+            }
             goto parse_loop;
         }
         /* UKI mode but no usable .cmdline section: keep boot_config
@@ -2638,17 +2672,44 @@ parse_loop:
         while (*pos && *pos != '\n') pos++;
         if (*pos == '\n') pos++;
 
-        /* Pre-gate empty-value detection for section 5 payload keys.
+        /* UKI whole-chain Secure Boot: reject any disk-payload key
+         * staged by parse_conf_kv when invoked under UKI mode. This
+         * is the AUTHORITATIVE rejection gate -- it runs AFTER the
+         * key has been normalized (whitespace stripped at line 2642)
+         * so a UKI cmdline like `mod ule = foo` (parser normalizes
+         * to `module=foo`) cannot bypass detection. The static-inline
+         * helper in include/boot/uki_cmdline_check.h fired earlier
+         * on literal-byte forms as defense-in-depth; this check
+         * covers the parser's actual decision boundary. Codex
+         * re-adversarial 2026-05-01 round-3 fix: literal-byte helper
+         * missed whitespace-stripped key forms. */
+        if (g_uki_kernel_ptr && ki > 0) {
+            if (ascii_streq(key, "module") ||
+                ascii_streq(key, "initrd") ||
+                ascii_streq(key, "recovery_image")) {
+                serial_early_print("[FATAL] UKI mode rejects out-of-UKI ");
+                serial_early_print(key);
+                serial_early_print("= override; disk payload is unsigned\n");
+                boot_fatal(BOOT_ERR_UKI_DISK_OVERRIDE,
+                           "UKI cmdline contains disk-payload override key",
+                           "Rebuild the UKI without initrd= / module= / recovery_image= "
+                           "lines in resources/boot/boot.conf; load-bearing payloads "
+                           "must use the .initrd / .recovery / .modules PE sections "
+                           "embedded by scripts/build.sh.");
+            }
+        }
+
+        /* Pre-gate empty-value detection for the section 5 payload keys.
          * The `ki > 0 && vi > 0` gate below exists to preserve today's
          * behavior for NON-payload keys: a stray `cmdline=` later in
          * boot.conf must not clear an earlier `cmdline=foo`, and a
          * trailing `test_suite=` must not reset to 0xFF. But the
-         * section 5 test-checkpoint contract requires `module=` /
-         * `initrd=` / `recovery_image=` with empty value to FAIL boot
-         * with a specific diagnostic, which means we cannot silently
-         * drop empty-value lines for those three keys. Detect them
-         * BEFORE the gate, boot_fatal on empty value; everything else
-         * goes through the original gate. */
+         * payload-key contract requires `module=` / `initrd=` /
+         * `recovery_image=` with empty value to FAIL boot with a
+         * specific diagnostic, which means we cannot silently drop
+         * empty-value lines for those three keys. Detect them BEFORE
+         * the gate, boot_fatal on empty value; everything else goes
+         * through the original gate. */
         if (ki > 0 && vi == 0) {
             if (ascii_streq(key, "module") ||
                 ascii_streq(key, "initrd") ||
@@ -3567,6 +3628,17 @@ static EFI_STATUS load_kernel(UINT64 *entry_point)
          * its content came from a whole-chain-signed PE rather than
          * the per-file split path. */
         g_boot_info_ptr->flags |= BOOT_FLAG_INVOKED_VIA_UKI;
+        /* Publish UKI signed-payload addresses (v14). The post-copy
+         * physical addresses populated by uki_copy_payloads_to_loader_data()
+         * survive ExitBootServices in EfiLoaderData. Zero stays in
+         * the field when the corresponding section was absent in the
+         * UKI -- legacy UKIs without payload sections still work. */
+        g_boot_info_ptr->uki_initrd_addr   = g_uki_initrd_phys;
+        g_boot_info_ptr->uki_initrd_size   = (UINT64)g_uki_initrd_size;
+        g_boot_info_ptr->uki_recovery_addr = g_uki_recovery_phys;
+        g_boot_info_ptr->uki_recovery_size = (UINT64)g_uki_recovery_size;
+        g_boot_info_ptr->uki_modules_addr  = g_uki_modules_phys;
+        g_boot_info_ptr->uki_modules_size  = (UINT64)g_uki_modules_size;
         goto kernel_loaded;
     }
 
@@ -5750,6 +5822,15 @@ static void reset_uki_sections(void)
     g_uki_cmdline_size = 0;
     g_uki_osrel_ptr = (UINT8 *)0;
     g_uki_osrel_size = 0;
+    g_uki_initrd_ptr = (UINT8 *)0;
+    g_uki_initrd_size = 0;
+    g_uki_initrd_phys = 0;
+    g_uki_recovery_ptr = (UINT8 *)0;
+    g_uki_recovery_size = 0;
+    g_uki_recovery_phys = 0;
+    g_uki_modules_ptr = (UINT8 *)0;
+    g_uki_modules_size = 0;
+    g_uki_modules_phys = 0;
 }
 
 static void detect_uki_sections(EFI_LOADED_IMAGE_PROTOCOL *li)
@@ -5816,8 +5897,98 @@ static void detect_uki_sections(EFI_LOADED_IMAGE_PROTOCOL *li)
         } else if (pe_section_name_eq(sec->name, ".osrel")) {
             g_uki_osrel_ptr = data;
             g_uki_osrel_size = vsize;
+        } else if (pe_section_name_eq(sec->name, ".initrd")) {
+            g_uki_initrd_ptr = data;
+            g_uki_initrd_size = vsize;
+        } else if (pe_section_name_eq(sec->name, ".recovery")) {
+            g_uki_recovery_ptr = data;
+            g_uki_recovery_size = vsize;
+        } else if (pe_section_name_eq(sec->name, ".modules")) {
+            g_uki_modules_ptr = data;
+            g_uki_modules_size = vsize;
         }
     }
+}
+
+/* Copy a single UKI payload section out of the LoadedImage region
+ * into AllocatePages-allocated EfiLoaderData pages. The returned
+ * physical address survives ExitBootServices (EfiLoaderData is
+ * reclaimable by the kernel PMM but persists through EBS); the
+ * LoadedImage region itself is technically EfiBootServicesCode +
+ * EfiLoaderData depending on the loader, so copying out is the safe
+ * pattern that matches how load_kernel handles g_uki_kernel_ptr.
+ *
+ * Returns 0 on success, EFI_STATUS error code on failure. On
+ * failure, *out_phys is left zero so the boot_info field stays at
+ * the "section absent" sentinel rather than reporting a bogus
+ * pointer (UEFI design F3 fail-closed pattern).
+ *
+ * Sections must be > 0 bytes and < 256 MiB (sanity ceiling -- a
+ * legitimate initrd is typically a few MiB; a multi-hundred-MiB
+ * payload is either an attack or a build mistake; either way the
+ * boot must abort visibly rather than try to allocate it). */
+#define UKI_PAYLOAD_MAX_BYTES (256ULL * 1024 * 1024)
+
+static EFI_STATUS uki_copy_payload(const char *name,
+                                   const UINT8 *src, UINTN src_size,
+                                   UINT64 *out_phys)
+{
+    *out_phys = 0;
+    if (!src || src_size == 0)
+        return EFI_SUCCESS;  /* absent section -- not an error */
+    if (src_size > UKI_PAYLOAD_MAX_BYTES) {
+        serial_early_print("[BOOT] UKI ");
+        serial_early_print(name);
+        serial_early_print(" payload exceeds 256 MiB sanity cap; refusing\r\n");
+        return EFI_INVALID_PARAMETER;
+    }
+
+    UINTN pages = (src_size + 0xFFF) >> 12;
+    EFI_PHYSICAL_ADDRESS phys = 0;
+    EFI_STATUS status = gBS->AllocatePages(AllocateAnyPages,
+                                           EfiLoaderData,
+                                           pages, &phys);
+    if (EFI_ERROR(status)) {
+        serial_early_print("[BOOT] UKI ");
+        serial_early_print(name);
+        serial_early_print(": AllocatePages failed\r\n");
+        return status;
+    }
+    efi_memcpy((void *)(UINTN)phys, src, src_size);
+    *out_phys = (UINT64)phys;
+    return EFI_SUCCESS;
+}
+
+/* Copy all present UKI payload sections (.initrd / .recovery /
+ * .modules) out of LoadedImage into AllocatePages-allocated
+ * EfiLoaderData. Called once after detect_uki_sections() and BEFORE
+ * ExitBootServices so the post-EBS kernel-physical addresses stay
+ * valid. A failed copy aborts the boot via boot_fatal so a UKI that
+ * ships a payload too large to allocate cannot silently lose the
+ * payload (which would defeat the whole-chain Secure Boot
+ * signature claim). */
+static void uki_copy_payloads_to_loader_data(void)
+{
+    EFI_STATUS s;
+    static const char hint[] =
+        "AllocatePages(EfiLoaderData) failed for a UKI signed payload. "
+        "Check firmware free memory or rebuild the UKI without the "
+        "oversized payload section.";
+    s = uki_copy_payload(".initrd", g_uki_initrd_ptr,
+                         g_uki_initrd_size, &g_uki_initrd_phys);
+    if (EFI_ERROR(s))
+        boot_fatal(BOOT_ERR_UKI_PAYLOAD,
+                   "UKI .initrd payload copy failed", hint);
+    s = uki_copy_payload(".recovery", g_uki_recovery_ptr,
+                         g_uki_recovery_size, &g_uki_recovery_phys);
+    if (EFI_ERROR(s))
+        boot_fatal(BOOT_ERR_UKI_PAYLOAD,
+                   "UKI .recovery payload copy failed", hint);
+    s = uki_copy_payload(".modules", g_uki_modules_ptr,
+                         g_uki_modules_size, &g_uki_modules_phys);
+    if (EFI_ERROR(s))
+        boot_fatal(BOOT_ERR_UKI_PAYLOAD,
+                   "UKI .modules payload copy failed", hint);
 }
 
 /* --- EFI System Partition integrity check ---------------------------------
@@ -6659,6 +6830,28 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                     serial_early_print("[BOOT] UKI: .cmdline embedded\n");
                 if (g_uki_osrel_ptr)
                     serial_early_print("[BOOT] UKI: .osrel embedded\n");
+                if (g_uki_initrd_ptr) {
+                    serial_early_print("[BOOT] UKI: .initrd embedded size=");
+                    serial_early_print_uint((UINT32)g_uki_initrd_size);
+                    serial_early_print(" bytes\n");
+                }
+                if (g_uki_recovery_ptr) {
+                    serial_early_print("[BOOT] UKI: .recovery embedded size=");
+                    serial_early_print_uint((UINT32)g_uki_recovery_size);
+                    serial_early_print(" bytes\n");
+                }
+                if (g_uki_modules_ptr) {
+                    serial_early_print("[BOOT] UKI: .modules embedded size=");
+                    serial_early_print_uint((UINT32)g_uki_modules_size);
+                    serial_early_print(" bytes\n");
+                }
+                /* Copy each UKI signed payload out of LoadedImage
+                 * memory into AllocatePages-allocated EfiLoaderData
+                 * pages so the kernel-physical addresses stay valid
+                 * after ExitBootServices. Failure is fatal: silently
+                 * losing a signed payload would break the whole-chain
+                 * Secure Boot signature claim. */
+                uki_copy_payloads_to_loader_data();
                 post_code16(POST16_BL_UKI_DETECT_OK);
             } else {
                 serial_early_print("[BOOT] UKI: no .linux section -- "

@@ -17,6 +17,7 @@
 #include "kernel/smbios.h"
 #include "kernel/nt/ntstatus.h"
 #include "registry.h"
+#include "boot/uki_cmdline_check.h"
 
 /* ---- UEFI Runtime Services ---- */
 
@@ -186,6 +187,145 @@ static void test_secureboot_db_registry_mirror(void)
         }
     }
     RegCloseKey(hKey);
+}
+
+/* ---- UKI signed-payload addresses (v14 ABI; whole-chain Secure Boot) ---- */
+
+static void test_uki_initrd_section_size_consistent(void)
+{
+    /* Invariant: when the bootloader publishes uki_initrd_addr != 0,
+     * uki_initrd_size MUST also be > 0. A non-zero pointer with a
+     * zero size means the bootloader copied the section but reported
+     * it as absent -- a state inconsistency that would mislead the
+     * kernel-side initrd consumer. */
+    if (g_boot_info.uki_initrd_addr != 0) {
+        TEST_ASSERT(g_boot_info.uki_initrd_size > 0,
+                    "uki_initrd_size > 0 when uki_initrd_addr is non-zero");
+    } else {
+        TEST_ASSERT_EQ(g_boot_info.uki_initrd_size, (uint64_t)0,
+                       "uki_initrd_size == 0 when uki_initrd_addr is 0");
+    }
+    /* Same invariant for recovery and modules. */
+    if (g_boot_info.uki_recovery_addr != 0) {
+        TEST_ASSERT(g_boot_info.uki_recovery_size > 0,
+                    "uki_recovery_size > 0 when uki_recovery_addr is non-zero");
+    } else {
+        TEST_ASSERT_EQ(g_boot_info.uki_recovery_size, (uint64_t)0,
+                       "uki_recovery_size == 0 when uki_recovery_addr is 0");
+    }
+    if (g_boot_info.uki_modules_addr != 0) {
+        TEST_ASSERT(g_boot_info.uki_modules_size > 0,
+                    "uki_modules_size > 0 when uki_modules_addr is non-zero");
+    } else {
+        TEST_ASSERT_EQ(g_boot_info.uki_modules_size, (uint64_t)0,
+                       "uki_modules_size == 0 when uki_modules_addr is 0");
+    }
+}
+
+static void test_boot_flag_uki_implies_no_disk_initrd(void)
+{
+    /* Cross-check: if the UKI flag is set in boot_info.flags, the
+     * payload-loading path must come exclusively from the v14 fields
+     * (which can be 0/0 if the UKI shipped no payload sections). The
+     * kernel-side initrd loader (when wired) must reject any disk
+     * path under this flag -- the bootloader rejection in
+     * parse_boot_conf is the upstream check; this test asserts the
+     * boot_info publication invariant the kernel observes. If the
+     * UKI flag is not set, payload addresses must all be zero
+     * (split-path boot does not populate them). */
+    if ((g_boot_info.flags & BOOT_FLAG_INVOKED_VIA_UKI) == 0) {
+        TEST_ASSERT_EQ(g_boot_info.uki_initrd_addr, (uint64_t)0,
+                       "uki_initrd_addr == 0 when not invoked via UKI");
+        TEST_ASSERT_EQ(g_boot_info.uki_recovery_addr, (uint64_t)0,
+                       "uki_recovery_addr == 0 when not invoked via UKI");
+        TEST_ASSERT_EQ(g_boot_info.uki_modules_addr, (uint64_t)0,
+                       "uki_modules_addr == 0 when not invoked via UKI");
+    }
+}
+
+static void test_uki_cmdline_rejects_initrd_token(void)
+{
+    /* Bare initrd= at start of buffer must be detected. */
+    const unsigned char buf1[] = "initrd=disk-payload.img";
+    const char *r1 = uki_find_disk_override_token(buf1, sizeof(buf1) - 1);
+    TEST_ASSERT(r1 != (const char *)0,
+                "uki_find_disk_override_token detects 'initrd=' at offset 0");
+
+    /* initrd= preceded by space must be detected. */
+    const unsigned char buf2[] = "console=ttyS0 initrd=disk.img quiet";
+    const char *r2 = uki_find_disk_override_token(buf2, sizeof(buf2) - 1);
+    TEST_ASSERT(r2 != (const char *)0,
+                "uki_find_disk_override_token detects 'initrd=' after space");
+
+    /* "noinitrd=foo" must NOT match (initrd= not at token start). */
+    const unsigned char buf3[] = "console=ttyS0 noinitrd=foo";
+    const char *r3 = uki_find_disk_override_token(buf3, sizeof(buf3) - 1);
+    TEST_ASSERT_EQ(r3, (const char *)0,
+                   "uki_find_disk_override_token rejects substring match 'noinitrd='");
+
+    /* module= (singular) and recovery_image= (full key) -- the
+     * actual parser keys per parse_conf_kv in bootx64.c. */
+    const unsigned char buf4[] = "module=foo.eif";
+    TEST_ASSERT(uki_find_disk_override_token(buf4, sizeof(buf4) - 1) != (const char *)0,
+                "uki_find_disk_override_token detects 'module=' at offset 0");
+    const unsigned char buf5[] = "recovery_image=foo.img";
+    TEST_ASSERT(uki_find_disk_override_token(buf5, sizeof(buf5) - 1) != (const char *)0,
+                "uki_find_disk_override_token detects 'recovery_image=' at offset 0");
+
+    /* "modules=" plural and "recovery=" short are NOT parser keys.
+     * Helper deliberately ignores them -- rejecting them would be
+     * defense theater since the parser never stages those. */
+    const unsigned char buf4b[] = "modules=foo.cpio";
+    TEST_ASSERT_EQ(uki_find_disk_override_token(buf4b, sizeof(buf4b) - 1),
+                   (const char *)0,
+                   "uki_find_disk_override_token does not flag non-parser key 'modules='");
+    const unsigned char buf5b[] = "recovery=foo.img";
+    TEST_ASSERT_EQ(uki_find_disk_override_token(buf5b, sizeof(buf5b) - 1),
+                   (const char *)0,
+                   "uki_find_disk_override_token does not flag non-parser key 'recovery='");
+
+    /* Clean cmdline (no override tokens) must return NULL. */
+    const unsigned char buf6[] = "console=ttyS0,115200 quiet noapic";
+    TEST_ASSERT_EQ(uki_find_disk_override_token(buf6, sizeof(buf6) - 1),
+                   (const char *)0,
+                   "uki_find_disk_override_token returns NULL on clean cmdline");
+
+    /* Empty buffer / NULL safety. */
+    TEST_ASSERT_EQ(uki_find_disk_override_token(buf1, 0),
+                   (const char *)0,
+                   "uki_find_disk_override_token returns NULL on zero-length buffer");
+    TEST_ASSERT_EQ(uki_find_disk_override_token((const unsigned char *)0, 100),
+                   (const char *)0,
+                   "uki_find_disk_override_token returns NULL on NULL buffer");
+
+    /* Tab + newline + carriage return as separators. */
+    const unsigned char buf7[] = "x\tinitrd=foo";
+    TEST_ASSERT(uki_find_disk_override_token(buf7, sizeof(buf7) - 1) != (const char *)0,
+                "uki_find_disk_override_token detects 'initrd=' after tab");
+    const unsigned char buf8[] = "x\nrecovery_image=bar";
+    TEST_ASSERT(uki_find_disk_override_token(buf8, sizeof(buf8) - 1) != (const char *)0,
+                "uki_find_disk_override_token detects 'recovery_image=' after newline");
+    const unsigned char buf8b[] = "x\rmodule=baz.eif";
+    TEST_ASSERT(uki_find_disk_override_token(buf8b, sizeof(buf8b) - 1) != (const char *)0,
+                "uki_find_disk_override_token detects 'module=' after CR");
+
+    /* Truncated near end: "initrd" without "=" must NOT match. */
+    const unsigned char buf9[] = "initrd";
+    TEST_ASSERT_EQ(uki_find_disk_override_token(buf9, sizeof(buf9) - 1),
+                   (const char *)0,
+                   "uki_find_disk_override_token requires trailing '=' for initrd");
+
+    /* "module" without "=" must NOT match. */
+    const unsigned char buf9b[] = "module";
+    TEST_ASSERT_EQ(uki_find_disk_override_token(buf9b, sizeof(buf9b) - 1),
+                   (const char *)0,
+                   "uki_find_disk_override_token requires trailing '=' for module");
+
+    /* "recovery_imag" (truncated key) must NOT match. */
+    const unsigned char buf9c[] = "recovery_imag=foo";
+    TEST_ASSERT_EQ(uki_find_disk_override_token(buf9c, sizeof(buf9c) - 1),
+                   (const char *)0,
+                   "uki_find_disk_override_token requires full 'recovery_image=' key");
 }
 
 /* ---- SecureBoot Drift Detection (gap-audit 2026-05-01 M2) ---- */
@@ -599,6 +739,12 @@ void test_register_uefi_boot(void)
                             test_secureboot_db_registry_mirror, TEST_CAT_BOOT);
     test_suite_register_cat("UEFI: SecureBoot drift detection",
                             test_secureboot_drift_detection, TEST_CAT_BOOT);
+    test_suite_register_cat("UEFI: UKI initrd section size consistent",
+                            test_uki_initrd_section_size_consistent, TEST_CAT_BOOT);
+    test_suite_register_cat("UEFI: UKI flag implies no disk initrd",
+                            test_boot_flag_uki_implies_no_disk_initrd, TEST_CAT_BOOT);
+    test_suite_register_cat("UEFI: UKI cmdline rejects disk-payload tokens",
+                            test_uki_cmdline_rejects_initrd_token, TEST_CAT_BOOT);
     test_suite_register_cat("UEFI: serial_source valid",
                             test_serial_source_valid, TEST_CAT_BOOT);
     test_suite_register_cat("UEFI: serial_source matches port",

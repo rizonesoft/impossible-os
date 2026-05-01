@@ -16,6 +16,31 @@
 ::   - QEMU installed, ovmf in WSL (apt install ovmf)
 ::   - keys/MOK.key + keys/MOK.cer generated (see docs/guides/secure-boot-keys.md)
 ::   - bash scripts/build.sh (signs EFI + copies MOK.cer to ESP)
+::
+:: Planned UKI signed-payload cases (deferred to follow-up smoke
+:: harness; tracked in TODO-02 UKI signed-payload-sections section
+:: as a [ ] item):
+::   uki_initrd_signed -- stage a synthetic build/uki-payloads/initrd.img
+::     (1 page of deterministic content), rebuild via bash scripts/build.sh
+::     so .initrd is embedded in BOOTX64.UKI.efi, boot the UKI artifact
+::     directly (not the disk image), capture serial-stdio output, and
+::     assert the line:
+::         [BOOT] UKI: .initrd embedded size=4096 bytes
+::     plus the boot_info publication invariant (uki_initrd_addr != 0,
+::     uki_initrd_size == 4096) reflected by test_uki_initrd_section_size_consistent.
+::   uki_initrd_disk_override_rejected -- ship a UKI whose .cmdline
+::     contains one of the parser keys staged for disk loading
+::     ("initrd=disk-payload.img", "module=foo.eif", or
+::     "recovery_image=foo.img"), boot it, capture serial, and assert:
+::         [FATAL] UKI mode rejects out-of-UKI <token> override; disk payload is unsigned
+::     The boot must NOT reach C:\>; boot_fatal aborts before kernel
+::     load. Validates the parse_boot_conf cmdline rejection path.
+::     Token names match parse_conf_kv parser keys exactly -- module=
+::     is singular, recovery_image= is the full key.
+:: Both cases need a headless serial-to-file QEMU invocation pattern
+:: that the current GUI-launcher shape does not implement; the harness
+:: extension lands when a smoke-test driver script is added under
+:: scripts/debug/.
 
 set BUILD=%~dp0..\..\..\build
 set SB_CODE=%BUILD%\OVMF_CODE_4M.secboot.fd

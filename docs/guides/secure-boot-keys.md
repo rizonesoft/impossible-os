@@ -244,17 +244,30 @@ single signature.
 
 ### Section layout
 
-| PE Section | Source                                  | Purpose                                                  |
-|-----------|-----------------------------------------|----------------------------------------------------------|
-| (stub)    | `build/tools/BOOTX64.EFI`               | UEFI entry point; PE code + data, parses sections at boot |
-| `.linux`  | `build/kernel.exe`                      | The ELF kernel; consumed by `load_kernel()` directly      |
-| `.cmdline`| `resources/boot/boot.conf`              | `boot_config` key/value file (UKI-mode equivalent)        |
-| `.osrel`  | `build/uki-osrel.txt` (auto-generated)  | NAME / ID / VERSION_ID / PRETTY_NAME (`os-release` form)  |
+Deterministic ordering: `.osrel` -> `.cmdline` -> `.linux` -> `.initrd` -> `.recovery` -> `.modules`. Order is load-bearing for PCR measurement reproducibility (the measured-boot log consumes the section list in this order; reordering breaks attestation comparisons). Only the first three are mandatory; the last three are conditional on payload files existing in `build/uki-payloads/`.
+
+| PE Section  | Source                                   | Purpose                                                       |
+|-------------|------------------------------------------|---------------------------------------------------------------|
+| (stub)      | `build/tools/BOOTX64.EFI`                | UEFI entry point; PE code + data, parses sections at boot      |
+| `.osrel`    | `build/uki-osrel.txt` (auto-generated)   | NAME / ID / VERSION_ID / PRETTY_NAME (`os-release` form)        |
+| `.cmdline`  | `resources/boot/boot.conf`               | `boot_config` key/value file (UKI-mode equivalent)             |
+| `.linux`    | `build/kernel.exe`                       | The ELF kernel; consumed by `load_kernel()` directly           |
+| `.initrd`   | `build/uki-payloads/initrd.img` (opt)    | Initial ramdisk; copied to `EfiLoaderData` for kernel consume   |
+| `.recovery` | `build/uki-payloads/recovery.img` (opt)  | Recovery image; copied to `EfiLoaderData` for recovery loader   |
+| `.modules`  | `build/uki-payloads/modules.cpio` (opt)  | CPIO of pinned kernel modules; copied to `EfiLoaderData`        |
 
 Section virtual addresses are auto-placed by `objcopy` past the stub's
 existing sections; the bootloader's `detect_uki_sections()` walks the
-PE table by name (matching `.linux`, `.cmdline`, `.osrel`) so specific
-VAs do not need to match the UAPI Group spec constants.
+PE table by name so specific VAs do not need to match the UAPI Group
+spec constants.
+
+### Payload provenance contract
+
+Anything in `build/uki-payloads/` is signed by the same `MOK_KEY` as the PE (the `sbsign` step covers the whole `BOOTX64.UKI.efi` including all embedded sections). **Out-of-tree payloads must not be staged in `build/uki-payloads/` -- staging is the trust boundary, and a misplaced file would silently get a signed-payload provenance claim it does not deserve.** Every payload that ends up in the directory must come from a tracked source (kernel-module build artifact, recovery-image generator, or a CI step that downloads + verifies an external initrd). Build pipelines that pull from external sources MUST verify the upstream signature / hash BEFORE staging into the directory.
+
+### Cmdline rejection rule
+
+When a UKI is invoked (`boot_info.flags & BOOT_FLAG_INVOKED_VIA_UKI`), the bootloader scans the active cmdline (which itself comes from the signed `.cmdline` PE section) for `initrd=` / `module=` / `recovery_image=` tokens. Token names match the keys consumed by `parse_conf_kv` in the bootloader's boot.conf parser exactly -- `module=` is singular, `recovery_image=` is the full key (not `modules=` or `recovery=`). If any of those tokens appear at a token-start position (start-of-buffer or preceded by whitespace), the boot is rejected via `boot_fatal(BOOT_ERR_UKI_DISK_OVERRIDE, ...)` BEFORE the kernel is invoked. Rationale: under UKI mode all load-bearing payloads come from the signed PE sections; a cmdline-driven disk path for these would defeat the whole-chain Secure Boot signature claim. The check is defense-in-depth -- the cmdline IS signed, so a hit means the build pipeline accidentally embedded an inconsistent cmdline. The split path (no UKI flag) accepts these tokens normally. The scanner is `uki_find_disk_override_token` in [`include/boot/uki_cmdline_check.h`](../../include/boot/uki_cmdline_check.h) (header-only, shared between bootloader + unit tests).
 
 ### Build pipeline
 
@@ -269,8 +282,11 @@ llvm-objcopy-19 \
     --set-section-flags .cmdline=alloc,readonly,data \
     --add-section .linux=build/kernel.exe \
     --set-section-flags .linux=alloc,readonly,data \
+    [optional .initrd / .recovery / .modules when staged] \
     build/tools/BOOTX64.EFI build/tools/BOOTX64.UKI.efi
 ```
+
+Optional payload sections are appended only when the corresponding file exists at `build/uki-payloads/{initrd.img,recovery.img,modules.cpio}`. Argument order pins on-disk section ordering (`llvm-objcopy --add-section` preserves it), so a missing payload does not shift the offsets of present ones.
 
 `scripts/sign-efi.sh` then signs both artifacts in the same pass via
 the shared `sign_one()` helper. The split path remains installable;
@@ -284,7 +300,14 @@ after the LoadedImage protocol is acquired. The walker validates the
 DOS magic, e_lfanew bound, PE signature, COFF header, optional-header
 size, section-table extent, and each section's virtual span before
 storing the embedded pointers in `g_uki_kernel_ptr`,
-`g_uki_cmdline_ptr`, and `g_uki_osrel_ptr`. UEFI guarantees
+`g_uki_cmdline_ptr`, `g_uki_osrel_ptr`, and (when present)
+`g_uki_initrd_ptr`, `g_uki_recovery_ptr`, `g_uki_modules_ptr`.
+After the PE walk, `uki_copy_payloads_to_loader_data()` allocates
+`EfiLoaderData` pages via `gBS->AllocatePages` for each payload and
+copies the section bytes out of LoadedImage memory into the new
+range. The post-copy kernel-physical addresses get published into
+`boot_info.uki_initrd_addr` / `_recovery_addr` / `_modules_addr` (v14
+ABI) so they survive ExitBootServices. UEFI guarantees
 `ImageBase` remains valid until ExitBootServices, so the scan is safe
 in the pre-EBS window.
 

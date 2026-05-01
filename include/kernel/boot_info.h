@@ -108,11 +108,19 @@ _Static_assert(__builtin_offsetof(struct boot_loader_identity, _pad) == 52,
  * sanity gate;
  * v10 added BOOT_FLAG_INVOKED_VIA_UKI;
  * v9 added flags + os_loader/required_security_version */
-/* v13 adds boot_loader_identity at the tail: bootloader build-identity
+/* v14 adds UKI-embedded payload addresses (uki_initrd_addr/_size,
+ *     uki_recovery_addr/_size, uki_modules_addr/_size) populated by
+ *     the UEFI bootloader after walking the LoadedImage's PE section
+ *     table for .initrd / .recovery / .modules. Zero addr = section
+ *     not present in the UKI; non-zero addr = kernel-physical address
+ *     of a bootloader-allocated EfiLoaderData copy of the payload.
+ *     Required for whole-chain Secure Boot signature coverage of
+ *     initrd/recovery/module payloads.
+ * v13 adds boot_loader_identity at the tail: bootloader build-identity
  *     attribution (git_sha + build_unix_time + label), populated by
  *     the UEFI bootloader from compile-time constants.
  * v12 added ESP integrity fields. */
-#define BOOT_INFO_VERSION  13
+#define BOOT_INFO_VERSION  14
 #endif
 
 /* Upper bound for pre-copy address validation: the UEFI bootloader
@@ -1383,6 +1391,23 @@ struct boot_info {
      * "loader did not populate" sentinel for back-compat with stale
      * bootloaders. */
     struct boot_loader_identity loader_identity;
+
+    /* UKI-embedded payload addresses (v14). Populated by the UEFI
+     * bootloader after walking the LoadedImage's PE section table
+     * for .initrd / .recovery / .modules and copying each payload
+     * out of the LoadedImage region into an AllocatePages-allocated
+     * EfiLoaderData range that survives ExitBootServices. Zero addr
+     * means the section was absent in the UKI (back-compat with UKI
+     * builds that ship without payload sections). Non-zero addr is a
+     * kernel-physical pointer; size is the original PE section
+     * VirtualSize. Set ONLY when boot_info.flags &
+     * BOOT_FLAG_INVOKED_VIA_UKI; ignored on the legacy split path. */
+    uint64_t uki_initrd_addr;        /* kernel-physical pointer to copied .initrd payload, 0 if absent */
+    uint64_t uki_initrd_size;        /* size in bytes, 0 if absent */
+    uint64_t uki_recovery_addr;      /* kernel-physical pointer to copied .recovery payload, 0 if absent */
+    uint64_t uki_recovery_size;
+    uint64_t uki_modules_addr;       /* kernel-physical pointer to copied .modules cpio payload, 0 if absent */
+    uint64_t uki_modules_size;
 };
 
 /* Compile-time enforcement of ABI header layout (S15) */
@@ -1424,6 +1449,23 @@ _Static_assert(__builtin_offsetof(struct boot_info, usb_device_count) == 21504,
     "boot_info.usb_device_count offset drift -- update kernel + bootloader mirror");
 _Static_assert(__builtin_offsetof(struct boot_info, uefi_boot_current) == 22056,
     "boot_info.uefi_boot_current offset drift -- update kernel + bootloader mirror");
+
+/* v14: UKI-embedded payload offset asserts. The six fields are
+ * appended after struct boot_loader_identity (offset 23760, size
+ * 64; tail at 23824). Per-field asserts catch any same-size reorder
+ * that the total size + magic-version pair would miss. */
+_Static_assert(__builtin_offsetof(struct boot_info, uki_initrd_addr) == 23824,
+    "boot_info.uki_initrd_addr offset drift -- update kernel + bootloader mirror");
+_Static_assert(__builtin_offsetof(struct boot_info, uki_initrd_size) == 23832,
+    "boot_info.uki_initrd_size offset drift -- update kernel + bootloader mirror");
+_Static_assert(__builtin_offsetof(struct boot_info, uki_recovery_addr) == 23840,
+    "boot_info.uki_recovery_addr offset drift -- update kernel + bootloader mirror");
+_Static_assert(__builtin_offsetof(struct boot_info, uki_recovery_size) == 23848,
+    "boot_info.uki_recovery_size offset drift -- update kernel + bootloader mirror");
+_Static_assert(__builtin_offsetof(struct boot_info, uki_modules_addr) == 23856,
+    "boot_info.uki_modules_addr offset drift -- update kernel + bootloader mirror");
+_Static_assert(__builtin_offsetof(struct boot_info, uki_modules_size) == 23864,
+    "boot_info.uki_modules_size offset drift -- update kernel + bootloader mirror");
 
 /* Global boot info -- populated by multiboot2_parse() or UEFI bootloader */
 extern struct boot_info g_boot_info;

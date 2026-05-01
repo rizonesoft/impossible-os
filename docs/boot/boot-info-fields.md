@@ -20,7 +20,7 @@ ABI invariants (enforced by `_Static_assert` in the header):
 - Six critical count fields are pinned by offset between kernel and bootloader mirror: `mmap_count`, `gop_mode_count`, `config_table_count`, `rt_mmap_count`, `usb_device_count`, `uefi_boot_current`.
 - `boot_config.cmdline` is at byte offset 32 (stable across versions); `boot_config.config_found` at 288; `sizeof(struct boot_config) == 512`.
 
-Every version bump goes in both [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h) and [`src/boot/uefi/boot_info_mirror.h`](../../src/boot/uefi/boot_info_mirror.h) (the mirror header included by both [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c) and the host manifest dumper [`tools/boot-info-manifest/dump-mirror.c`](../../tools/boot-info-manifest/dump-mirror.c)). Current: `BOOT_INFO_VERSION = 12`.
+Every version bump goes in both [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h) and [`src/boot/uefi/boot_info_mirror.h`](../../src/boot/uefi/boot_info_mirror.h) (the mirror header included by both [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c) and the host manifest dumper [`tools/boot-info-manifest/dump-mirror.c`](../../tools/boot-info-manifest/dump-mirror.c)). Current: `BOOT_INFO_VERSION = 14`.
 
 ## Top-level `struct boot_info` fields
 
@@ -332,6 +332,19 @@ Pre-load sanity gate written by `esp_integrity_check()` in [`src/boot/uefi/bootx
 | `loader_identity.build_unix_time` | bootx64 | P0 | fatal screen + transcript + registry | handoff | boot-protocol-abi-handoff Bootloader Build Identity | `git log -1 --format=%ct` (commit unix time, little-endian). 0 on no-git fallback. |
 | `loader_identity.build_label` | bootx64 | P0 | fatal screen + transcript + registry | handoff | boot-protocol-abi-handoff Bootloader Build Identity | `git describe --dirty --always --tags` truncated to 23 bytes + NUL. 24-byte char array, NUL-terminated. |
 | `loader_identity._pad` | bootx64 | P0 | reserved | handoff | boot-protocol-abi-handoff Bootloader Build Identity | Must be zero; reserved for future identity fields (signing-cert SKID, build-host hash, etc.). |
+
+## UKI signed-payload addresses (v14)
+
+Six `uint64` fields appended after `loader_identity`. Populated by `detect_uki_sections()` + `uki_copy_payloads_to_loader_data()` in `bootx64.c` after walking the LoadedImage PE section table for `.initrd` / `.recovery` / `.modules`. Each payload is copied out of LoadedImage memory into AllocatePages-allocated `EfiLoaderData` pages so the kernel-physical address survives ExitBootServices. Zero `addr` means the section was absent in the UKI (back-compat with UKI builds shipping no payload sections). Set ONLY when `boot_info.flags & BOOT_FLAG_INVOKED_VIA_UKI`; ignored on the legacy split path. Provides whole-chain Secure Boot signature coverage of load-bearing payloads.
+
+| Field | Producer | Phase | Consumer | Lifetime | Owning TODO | Notes |
+| --- | --- | --- | --- | --- | --- | --- |
+| `uki_initrd_addr` | bootx64 (`uki_copy_payload .initrd`) | P0 | kernel `initrd` consumer (when wired) | handoff | uefi-hardening-secureboot UKI signed payloads | kernel-physical pointer to `EfiLoaderData` copy of the `.initrd` PE section, or 0 if absent. |
+| `uki_initrd_size` | bootx64 | P0 | kernel `initrd` consumer | handoff | uefi-hardening-secureboot UKI signed payloads | original PE section `VirtualSize` in bytes; 0 if absent. |
+| `uki_recovery_addr` | bootx64 (`uki_copy_payload .recovery`) | P0 | recovery image loader (when wired) | handoff | uefi-hardening-secureboot UKI signed payloads | kernel-physical pointer to `EfiLoaderData` copy of the `.recovery` PE section, or 0 if absent. |
+| `uki_recovery_size` | bootx64 | P0 | recovery image loader | handoff | uefi-hardening-secureboot UKI signed payloads | size in bytes; 0 if absent. |
+| `uki_modules_addr` | bootx64 (`uki_copy_payload .modules`) | P0 | kernel module loader (when wired) | handoff | uefi-hardening-secureboot UKI signed payloads | kernel-physical pointer to `EfiLoaderData` copy of the `.modules` cpio archive, or 0 if absent. |
+| `uki_modules_size` | bootx64 | P0 | kernel module loader | handoff | uefi-hardening-secureboot UKI signed payloads | size in bytes; 0 if absent. |
 
 ## Nested struct: `boot_payload_desc`
 

@@ -71,6 +71,9 @@ typedef UINTN               EFI_TPL;
 #define BOOT_ERR_ESP_BPB            0x000F  /* ESP integrity: FAT BPB sanity check failed */
 #define BOOT_ERR_ESP_MISSING_FILES  0x0010  /* ESP integrity: required boot files absent */
 #define BOOT_ERR_ROLLBACK_REFUSE    0x0011  /* anti-rollback refusal: shipped < required */
+#define BOOT_ERR_UKI_PAYLOAD        0x0012  /* UKI signed-payload copy/allocate failed */
+/* UKI mode rejects disk-side initrd= / module= / recovery_image= cmdline override */
+#define BOOT_ERR_UKI_DISK_OVERRIDE  0x0013
 
 /* --- GUID --- */
 typedef struct {

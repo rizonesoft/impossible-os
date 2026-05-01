@@ -247,12 +247,18 @@ struct boot_usb_controller {
 #define BOOT_INFO_MAGIC    0x49504F53  /* "IPOS" */
 #endif
 #ifndef BOOT_INFO_VERSION
-/* v13 adds boot_loader_identity at the tail (bootloader build-identity
+/* v14 adds UKI-embedded payload addresses (uki_initrd_addr/_size,
+ *     uki_recovery_addr/_size, uki_modules_addr/_size) populated
+ *     by detect_uki_sections() + uki_copy_payload() after walking
+ *     the LoadedImage PE section table for .initrd / .recovery /
+ *     .modules. Whole-chain Secure Boot signature coverage of
+ *     load-bearing payloads.
+ * v13 adds boot_loader_identity at the tail (bootloader build-identity
  *     attribution: git_sha + build_unix_time + label).
  * v12 added ESP integrity fields populated by esp_integrity_check();
  * v10 added BOOT_FLAG_INVOKED_VIA_UKI;
  * v9 added flags + os_loader/required_security_version */
-#define BOOT_INFO_VERSION  13
+#define BOOT_INFO_VERSION  14
 #endif
 
 /* Mirror of struct boot_loader_identity from include/kernel/boot_info.h.
@@ -604,6 +610,21 @@ struct boot_info {
      * constants in build/boot_loader_identity.h before the header
      * magic write. */
     struct boot_loader_identity loader_identity;
+
+    /* UKI-embedded payload addresses (v14). Populated by
+     * detect_uki_sections() + uki_copy_payload() in bootx64.c after
+     * walking the LoadedImage PE section table for .initrd /
+     * .recovery / .modules and copying each payload from the
+     * LoadedImage region to an AllocatePages-allocated EfiLoaderData
+     * range that survives ExitBootServices. Zero addr means the
+     * section was absent in the UKI. Set ONLY when boot_info.flags &
+     * BOOT_FLAG_INVOKED_VIA_UKI; ignored on the legacy split path. */
+    UINT64  uki_initrd_addr;
+    UINT64  uki_initrd_size;
+    UINT64  uki_recovery_addr;
+    UINT64  uki_recovery_size;
+    UINT64  uki_modules_addr;
+    UINT64  uki_modules_size;
 };
 
 /* ABI compile-time guards -- catch bootloader/kernel struct drift at build */
@@ -633,3 +654,19 @@ _Static_assert(__builtin_offsetof(struct boot_info, usb_device_count) == 21504,
     "boot_info.usb_device_count offset drift -- kernel + bootloader mirror out of sync");
 _Static_assert(__builtin_offsetof(struct boot_info, uefi_boot_current) == 22056,
     "boot_info.uefi_boot_current offset drift -- kernel + bootloader mirror out of sync");
+
+/* v14: UKI-embedded payload offset asserts -- per-field, mirroring
+ * the kernel header. Catch same-size reorders that escape total-size
+ * + per-section flag checks. */
+_Static_assert(__builtin_offsetof(struct boot_info, uki_initrd_addr) == 23824,
+    "boot_info.uki_initrd_addr offset drift -- kernel + bootloader mirror out of sync");
+_Static_assert(__builtin_offsetof(struct boot_info, uki_initrd_size) == 23832,
+    "boot_info.uki_initrd_size offset drift -- kernel + bootloader mirror out of sync");
+_Static_assert(__builtin_offsetof(struct boot_info, uki_recovery_addr) == 23840,
+    "boot_info.uki_recovery_addr offset drift -- kernel + bootloader mirror out of sync");
+_Static_assert(__builtin_offsetof(struct boot_info, uki_recovery_size) == 23848,
+    "boot_info.uki_recovery_size offset drift -- kernel + bootloader mirror out of sync");
+_Static_assert(__builtin_offsetof(struct boot_info, uki_modules_addr) == 23856,
+    "boot_info.uki_modules_addr offset drift -- kernel + bootloader mirror out of sync");
+_Static_assert(__builtin_offsetof(struct boot_info, uki_modules_size) == 23864,
+    "boot_info.uki_modules_size offset drift -- kernel + bootloader mirror out of sync");

@@ -415,6 +415,32 @@ OSEOF
             # specific VAs don't need to match the UAPI Group spec
             # constants. llvm-objcopy lacks a --change-section-vma flag
             # for PE; section placement is left to the tool's default.
+            # Section ordering is pinned by argument order
+            # (.osrel -> .cmdline -> .linux -> .initrd -> .recovery ->
+            # .modules per docs/guides/secure-boot-keys.md UKI
+            # subsection -- load-bearing for PCR measurement
+            # reproducibility in the measured-boot path). Optional
+            # payloads at build/uki-payloads/{initrd.img,recovery.img,
+            # modules.cpio} are appended only when present so existing
+            # builds without signed payloads ship unchanged (whole-chain
+            # signed-payload feature back-compat contract).
+            UKI_PAYLOAD_DIR="build/uki-payloads"
+            UKI_INITRD="$UKI_PAYLOAD_DIR/initrd.img"
+            UKI_RECOVERY="$UKI_PAYLOAD_DIR/recovery.img"
+            UKI_MODULES="$UKI_PAYLOAD_DIR/modules.cpio"
+            OBJCOPY_OPTIONAL_ARGS=""
+            if [ -f "$UKI_INITRD" ]; then
+                OBJCOPY_OPTIONAL_ARGS="$OBJCOPY_OPTIONAL_ARGS --add-section .initrd=$UKI_INITRD --set-section-flags .initrd=alloc,readonly,data"
+                echo "[uki] embedding .initrd from $UKI_INITRD ($(wc -c < "$UKI_INITRD" | tr -d ' ') bytes)" >> "$LOG"
+            fi
+            if [ -f "$UKI_RECOVERY" ]; then
+                OBJCOPY_OPTIONAL_ARGS="$OBJCOPY_OPTIONAL_ARGS --add-section .recovery=$UKI_RECOVERY --set-section-flags .recovery=alloc,readonly,data"
+                echo "[uki] embedding .recovery from $UKI_RECOVERY ($(wc -c < "$UKI_RECOVERY" | tr -d ' ') bytes)" >> "$LOG"
+            fi
+            if [ -f "$UKI_MODULES" ]; then
+                OBJCOPY_OPTIONAL_ARGS="$OBJCOPY_OPTIONAL_ARGS --add-section .modules=$UKI_MODULES --set-section-flags .modules=alloc,readonly,data"
+                echo "[uki] embedding .modules from $UKI_MODULES ($(wc -c < "$UKI_MODULES" | tr -d ' ') bytes)" >> "$LOG"
+            fi
             "$OBJCOPY" \
                 --add-section .osrel="$UKI_OSREL" \
                 --set-section-flags .osrel=alloc,readonly,data \
@@ -422,6 +448,7 @@ OSEOF
                 --set-section-flags .cmdline=alloc,readonly,data \
                 --add-section .linux="$UKI_KERNEL" \
                 --set-section-flags .linux=alloc,readonly,data \
+                $OBJCOPY_OPTIONAL_ARGS \
                 "$UKI_STUB" "$UKI_OUT" 2>>"$LOG" \
                 && echo "[uki] generated $UKI_OUT ($(wc -c < "$UKI_OUT" | tr -d ' ') bytes)" >> "$LOG" \
                 || { echo "[uki] FATAL: $OBJCOPY --add-section failed" >> "$LOG"; print_errors; echo "=== BUILD FAILED ===" >> "$LOG"; exit 1; }

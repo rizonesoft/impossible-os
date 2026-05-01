@@ -33,7 +33,15 @@ Both halves of the ABI (the kernel header at `include/kernel/boot_info.h` and th
 
 ## Versions
 
-### v13 (current) -- Bootloader build identity
+### v14 (current) -- UKI signed-payload addresses
+
+- **Commit**: pending (UKI Signed Payload Sections in [`todo/01-boot-platform/TODO-02-uefi-hardening-secureboot.md`](../../todo/01-boot-platform/TODO-02-uefi-hardening-secureboot.md#16-signed-initrd--recovery--module-pe-sections-in-uki))
+- **Fields added**: six `uint64` fields appended after `loader_identity` -- `uki_initrd_addr` / `uki_initrd_size` / `uki_recovery_addr` / `uki_recovery_size` / `uki_modules_addr` / `uki_modules_size`. Per-field `_Static_assert` offsets (23824 / 23832 / 23840 / 23848 / 23856 / 23864) on both kernel header and bootloader mirror.
+- **Why**: closes the whole-chain Secure Boot signature gap when the UKI ships an `initrd`, recovery image, or pinned-module CPIO. Prior to v14 the UKI bundled `.osrel` + `.cmdline` + `.linux` only, so any boot path that loaded an `initrd=` from disk read those bytes outside the firmware-verified PE signature. v14 publishes kernel-physical pointers to bootloader-allocated `EfiLoaderData` copies of the new `.initrd` / `.recovery` / `.modules` PE sections so the kernel consumes signed data, and the bootloader rejects any disk-side `initrd=` / `modules=` / `recovery=` cmdline override under `BOOT_FLAG_INVOKED_VIA_UKI`.
+- **Producers / consumers**: bootloader's `detect_uki_sections()` walks the LoadedImage PE table for the new section names; `uki_copy_payloads_to_loader_data()` allocates `EfiLoaderData` pages and copies each payload out of LoadedImage memory before publishing the new physical address into `boot_info`. Consumers: kernel-side initrd / recovery / module loaders (when wired). New `BOOT_ERR_UKI_PAYLOAD` and `BOOT_ERR_UKI_DISK_OVERRIDE` codes for fatal-screen attribution. `uki_find_disk_override_token()` (header-only, shared between bootloader + unit tests) is the canonical scanner.
+- **Back-compat**: legacy UKIs without the new sections set the addr fields to zero; the kernel treats zero as "section absent". Builds without `build/uki-payloads/{initrd.img,recovery.img,modules.cpio}` ship UKIs unchanged. Split-path boot does not set `BOOT_FLAG_INVOKED_VIA_UKI`, so the v14 fields stay zero and the cmdline rejection is bypassed.
+
+### v13 -- Bootloader build identity
 
 - **Commit**: pending (Bootloader Build Identity in [`todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md`](../../todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md#20-bootloader-build-identity))
 - **Fields added**: `loader_identity` (64-byte packed `struct boot_loader_identity` at the tail of `struct boot_info`, with `git_sha[20]` + `build_unix_time` + `build_label[24]` + `_pad[12]`).
