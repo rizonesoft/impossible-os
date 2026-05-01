@@ -2398,15 +2398,20 @@ static void parse_conf_kv(struct boot_config *cfg,
         return;
     }
 
-    /* --- Range validation (S7) --- */
-    /* debug/verbose/serial_debug: must be 0 or 1 */
+    /* --- Range validation ---
+     * Out-of-range boolean values clamp to the SAFE DEFAULT (0), not
+     * to the max (1) -- a malformed `test=255` or `debug=2` must NOT
+     * silently enable test/debug mode, which gates fault-injection
+     * syscalls and bypasses normal boot-perf collection.  Defaults
+     * are populated by boot_config_defaults() (debug=0, verbose=0,
+     * test=0, splash_timeout=3) before this parser runs. */
     if (ascii_streq(key, "debug") && cfg->debug > 1) {
-        serial_early_print("[WARN] boot.conf: debug out of range, using 1\n");
-        cfg->debug = 1;
+        serial_early_print("[WARN] boot.conf: debug out of range, using 0\n");
+        cfg->debug = 0;
     }
     if (ascii_streq(key, "verbose") && cfg->verbose > 1) {
-        serial_early_print("[WARN] boot.conf: verbose out of range, using 1\n");
-        cfg->verbose = 1;
+        serial_early_print("[WARN] boot.conf: verbose out of range, using 0\n");
+        cfg->verbose = 0;
     }
     /* splash_timeout: 0-60 seconds */
     if (ascii_streq(key, "splash_timeout") && cfg->splash_timeout > 60) {
@@ -2415,8 +2420,8 @@ static void parse_conf_kv(struct boot_config *cfg,
     }
     /* test: 0 or 1 */
     if (ascii_streq(key, "test") && cfg->test > 1) {
-        serial_early_print("[WARN] boot.conf: test out of range, using 1\n");
-        cfg->test = 1;
+        serial_early_print("[WARN] boot.conf: test out of range, using 0\n");
+        cfg->test = 0;
     }
 }
 
@@ -2667,11 +2672,23 @@ static void parse_boot_conf(void)
         return;
     }
 
-    /* EFI_FILE_PROTOCOL.Read may legitimately return fewer bytes than
-     * FileSize if the underlying FAT chain truncated -- trim the
-     * declared length to whatever actually landed so the parser does
-     * not walk off a short read. No boot_fatal: this is a soft error,
-     * not a cap overflow. */
+    /* Reject short reads.  Parsing a prefix when the underlying FAT
+     * chain truncated would silently drop trailing keys (test=1,
+     * module=, recovery_image=) -- the same silent-truncation class
+     * the dynamic-buffer hardening eliminated.  Any mismatch between
+     * the declared FileSize and the actual bytes returned is a
+     * filesystem / media error: log declared vs actual and fall
+     * through to boot_config defaults rather than parsing the
+     * truncated prefix. */
+    if (buf_size != (UINTN)file_size) {
+        serial_early_print("[WARN] boot.conf short read: declared=");
+        serial_early_print_uint((UINT32)file_size);
+        serial_early_print(" actual=");
+        serial_early_print_uint((UINT32)buf_size);
+        serial_early_print(" bytes -- using boot_config defaults\n");
+        gBS->FreePool(buf);
+        return;
+    }
     buf[buf_size] = '\0';
 
     serial_early_print("[BOOT] boot.conf loaded (");

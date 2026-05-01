@@ -65,7 +65,7 @@ title: "TODO-03 -- Bootloader Error Recovery & ELF Hardening"
 | 💎  |   4   | Serial port probe and COM2 fallback            | --         |  [x]   |
 | 💎  |   5   | GOP timeout and graceful degradation           | --         |  [x]   |
 | 💎  |   6   | Memory map overflow detection (512 entries)    | --         |  [x]   |
-| 💎  |   7   | boot.conf validation and version field         | --         |  [/]   |
+| 💎  |   7   | boot.conf validation and version field         | --         |  [x]   |
 | 💎  |   8   | Kernel load allocation fallback (32-16-8 MiB)  | --         |  [x]   |
 | ⭐  |   9   | Boot failure error screen                      | §1-§8      |  [x]   |
 | 💎  |  10   | ACPI SPCR serial port auto-detection           | §4         |  [x]   |
@@ -285,7 +285,7 @@ Malformed boot.conf should produce warnings, not silent misbehavior.
 - [x] After parsing each key=value: unknown keys produce `"[WARN] boot.conf: unknown key 'X' (ignored)"`
 - [x] Known-key whitelist: all existing keys + new `config_version` key
 - [x] `config_version` field added to `boot_config` struct (1 byte from `_reserved[]`). `config_version=1` in boot.conf sets it.
-- [x] Range validation: `debug`/`verbose`/`test` clamped to 0-1, `splash_timeout` clamped to 0-60 (default 3). Out-of-range logs `"[WARN] boot.conf: X out of range, using N"`
+- [x] Range validation: `debug`/`verbose`/`test` out-of-range values clamp to safe default `0` (NOT to max `1` -- a malformed `test=255` must NOT silently enable test mode + fault-injection syscall + boot-perf bypass; tightened 2026-05-01 from §7 review Codex M3). `splash_timeout` clamped to 0-60 (default 3). Out-of-range logs `"[WARN] boot.conf: X out of range, using 0"` (or `"using 3"` for splash_timeout). Also: a Read returning fewer bytes than the declared FileSize is rejected with `"[WARN] boot.conf short read"` and falls through to defaults instead of parsing the truncated prefix (closes the same silent-truncation class as the 2026-04-21 fixed-buffer incident).
 - [x] Commit: `"boot: validate boot.conf -- warn on unknown keys and out-of-range values"` (83b2ccb8)
 - [x] **Silent LocateProtocol fallback in `parse_boot_conf()` removed** (Codex H2 from §3 review, shipped 2026-05-01): `parse_boot_conf()` at `src/boot/uefi/bootx64.c` no longer calls `gBS->LocateProtocol(&fs_guid, ...)` when `g_boot_device_handle` is NULL or lacks SimpleFS. Instead logs `[WARN] Boot device has no SimpleFS for boot.conf -- skipping parse, using boot_config defaults` (or `[WARN] No boot device handle...` when the handle is NULL) and returns. `boot_config_defaults()` already populated safe defaults; the kernel-search fallback chain separately locates kernel.exe with explicit per-volume diagnostics, so boot still proceeds on degraded boot devices without letting an arbitrary ESP provide unsigned config to the trust boundary the kernel-search hardening established.
 
@@ -293,9 +293,15 @@ Malformed boot.conf should produce warnings, not silent misbehavior.
 
 > **Test runner:** N/A (UEFI pre-boot only -- boot.conf parse runs before kernel) | validation: smoke + serial; bogus_key + splash_timeout=999 fixtures on QEMU WHPX/TCG
 
-> **Verified:** 2026-04-11 -- all 5 items confirmed. 4096-byte buffer with truncation warning, unknown key logging, config_version field, range validation for debug/verbose/test/splash_timeout. Accepted: none.
-> **Quality reviewed:** 2026-04-11 -- no findings. More user-friendly than Windows BCD (human-readable + warnings) and more defensive than GRUB (range clamping vs silent accept). Accepted: none.
-> **Drift fix:** 2026-05-01 (gap-audit Codex M2) -- bullet 1 rewritten from "4096-byte buffer + truncation warning" to dynamic AllocatePool + 1 MiB hard-fail to match the post-2026-04-21 implementation; original wording would let a future validator accept the silent-truncation failure mode the incident eliminated.
+> **Notes:**
+> - What shipped: parse_boot_conf in `src/boot/uefi/bootx64.c` -- dynamic file-size buffer (GetInfo + AllocatePool) capped at 1 MiB hard-fail; unknown-key WARN; key whitelist + config_version; range clamps to safe defaults (debug/verbose/test -> 0, splash_timeout -> 3); short-read rejection; degraded-boot-device path skips parse and returns to boot_config_defaults() rather than silently picking from an arbitrary ESP via LocateProtocol.
+> - How it integrates: invoked from efi_main() after serial_early_init(); UKI mode short-circuits to `.cmdline` PE section, split-path mode reads `\EFI\ImpossibleOS\boot.conf` from the boot device only.
+> - Downstream effects: trust-boundary preserved -- boot.conf cannot come from a different ESP than the kernel; malformed booleans cannot silently enable privileged diagnostic surfaces (fault-injection syscall, boot-perf bypass); short reads no longer drop trailing keys.
+> - Canonical doc: this section + 2026-04-21 boot.conf incident fix + UEFI 2.10 EFI_FILE_PROTOCOL.Read contract.
+> - Scope boundary: §7 owns the parser + filesystem-resolution policy. §13 owns NVRAM error-code persistence (boot_fatal carries BOOT_ERR_CONF_INVALID on hard cap overflow).
+
+> **Verified:** 2026-05-01 | commit `<pending>` | 7/7 items | build OK | smoke PASS (KVM 2.49s). Dynamic buffer + 1 MiB cap + unknown-key WARN + config_version + range-clamp-to-default + short-read rejection + degraded-boot-device skip all confirmed at file:line. 2026-04-11 verification retained.
+> **Quality reviewed:** 2026-05-01 | Codex 3x (adversarial + consistency + perf) | 1H+1M fixed (short-read rejection prevents silent prefix-parse; out-of-range bool clamp to safe default 0 instead of max 1); re-adversarial skipped (~30 LOC, no lifecycle/state-machine) | scope: boot-code-quality
 
 ---
 
