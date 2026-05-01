@@ -7594,25 +7594,65 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     g_ebs_in_progress = 1;  /* Disable ConOut in boot_fatal from here */
     {
         int ebs_attempt;
-        EFI_STATUS ebs_status;
+        EFI_STATUS ebs_status = EFI_SUCCESS;
         for (ebs_attempt = 0; ebs_attempt < EBS_MAX_ATTEMPTS; ebs_attempt++) {
             ebs_status = gBS->ExitBootServices(gImageHandle, map_key);
             if (!EFI_ERROR(ebs_status))
                 break;
-            serial_early_print("[BOOT] ExitBootServices retry\n");
-            /* Re-fetch memory map for next attempt */
-            status = get_memory_map(&map_key, &mmap, &map_size, &desc_size,
-                                    &desc_version);
-            if (EFI_ERROR(status)) {
-                boot_fatal(BOOT_ERR_EBS_MMAP_FAIL, "GetMemoryMap failed on EBS retry",
-                           "Memory map refresh failed during ExitBootServices retry.");
+            /* Per-attempt log captures attempt number (1-based for
+             * humans), the EBS_MAX_ATTEMPTS denominator (so the log
+             * tracks the constant if the policy ever changes), AND
+             * the firmware status hex so a triple-retry triage can
+             * distinguish "stale map_key" from "firmware unhappy
+             * with this address space" without rerunning. */
+            serial_early_print("[BOOT] ExitBootServices attempt ");
+            serial_early_print_uint((UINT32)(ebs_attempt + 1));
+            serial_early_print("/");
+            serial_early_print_uint((UINT32)EBS_MAX_ATTEMPTS);
+            serial_early_print(" failed: status=0x");
+            serial_early_print_hex16((UINT16)((UINTN)ebs_status >> 48));
+            serial_early_print_hex16((UINT16)((UINTN)ebs_status >> 32));
+            serial_early_print_hex16((UINT16)((UINTN)ebs_status >> 16));
+            serial_early_print_hex16((UINT16)(UINTN)ebs_status);
+            serial_early_print("\n");
+            /* Codex review-todo-section 2026-05-01 M1 fix: skip the
+             * memory-map refresh on the FINAL iteration. The for-loop
+             * exits after attempt N=EBS_MAX_ATTEMPTS, so a refresh
+             * after the last failed EBS does no useful work and, if
+             * it fails, masks the real BOOT_ERR_EXIT_BS_FAIL with a
+             * misleading BOOT_ERR_EBS_MMAP_FAIL. Preserve ebs_status
+             * for the exhaustion-fatal path below.
+             *
+             * Codex perf M1 fix 2026-05-01: free the prior mmap pool
+             * before allocating the next one. get_memory_map() calls
+             * gBS->AllocatePool, so each retry without a free would
+             * leak the previous mmap buffer. Bounded to 4 ~16 KB
+             * buffers max (~64 KB worst case) but unclean -- free
+             * explicitly so post-EBS firmware accounting matches
+             * the kernel's PMM reservation table. */
+            if (ebs_attempt + 1 < EBS_MAX_ATTEMPTS) {
+                if (mmap)
+                    gBS->FreePool(mmap);
+                status = get_memory_map(&map_key, &mmap, &map_size,
+                                        &desc_size, &desc_version);
+                if (EFI_ERROR(status)) {
+                    boot_fatal(BOOT_ERR_EBS_MMAP_FAIL,
+                               "GetMemoryMap failed on EBS retry",
+                               "Memory map refresh failed during ExitBootServices retry.");
+                }
+                fill_memory_map(mmap, map_size, desc_size);
+                fill_runtime_map(mmap, map_size, desc_size);
             }
-            fill_memory_map(mmap, map_size, desc_size);
-            fill_runtime_map(mmap, map_size, desc_size);
         }
         if (EFI_ERROR(ebs_status)) {
-            boot_fatal(BOOT_ERR_EXIT_BS_FAIL, "ExitBootServices failed",
-                       "UEFI ExitBootServices failed after 4 retry attempts.");
+            /* Detail string uses static text rather than a runtime
+             * format because boot_fatal renders a fixed buffer; the
+             * actual attempt count is in the per-attempt serial log
+             * above (which uses EBS_MAX_ATTEMPTS literally). */
+            boot_fatal(BOOT_ERR_EXIT_BS_FAIL,
+                       "ExitBootServices failed",
+                       "UEFI ExitBootServices exhausted EBS_MAX_ATTEMPTS "
+                       "retries; see serial log for per-attempt status.");
         }
     }
     serial_early_print("[BOOT] ExitBootServices OK\n");

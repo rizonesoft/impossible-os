@@ -137,8 +137,15 @@ UEFI spec (Section 7.4.6) explicitly allows the memory map to change between Get
 
 **Test checkpoint:** Difficult to test directly (requires firmware that changes map between calls). Verify normal boot still succeeds on all 4 platforms. Serial output should show the first `ExitBootServices attempt` log line using the agreed `N` from TODO-02 §9.
 
-> **Verified:** 2026-04-11 -- all 7 items confirmed. EBS_MAX_ATTEMPTS=4, bounded loop with fresh map_key per retry, fill_memory_map + fill_runtime_map on each retry, boot_fatal on exhaustion. Shared implementation with 01-boot-platform/TODO-02 §9. Accepted: none.
-> **Quality reviewed:** 2026-04-11 -- no findings. Matches UEFI Spec §7.4.6 exactly. Linux efi-stub uses 8 retries; our 4 is conservative but sufficient (spec requires "retry with fresh map", not a count). ConOut guard via g_ebs_in_progress exceeds Linux/GRUB (neither disables console before EBS). Accepted: none.
+> **Notes:**
+> - What shipped: bounded EBS retry loop at [`bootx64.c:7595-7657`](../../src/boot/uefi/bootx64.c) with `EBS_MAX_ATTEMPTS=4`, fresh `gBS->ExitBootServices(map_key)` per attempt, per-attempt fail log carrying attempt number + `EBS_MAX_ATTEMPTS` denominator + 64-bit firmware status hex, `gBS->FreePool` of the stale mmap buffer before each refresh, last-iteration refresh skip so the exhaustion fatal carries `BOOT_ERR_EXIT_BS_FAIL` instead of `BOOT_ERR_EBS_MMAP_FAIL`.
+> - How it integrates: invoked from the kernel-handoff path right before the kernel jump; on success, `[BOOT] ExitBootServices OK` flips `g_ebs_in_progress=1` so subsequent boot_fatal renders fall to serial-only (ConOut dead post-EBS).
+> - Downstream effects: TODO-02 §9 carries the shared retry policy (`EBS_MAX_ATTEMPTS=4`); changing the constant updates both the loop bound AND the diagnostic denominators automatically. Codex review-todo-section 2026-05-01 4x adoptions in commit `<hash>`.
+> - Canonical doc: this section + UEFI 2.10 section 7.4.6 (boot-services exit) + UEFI 2.10 section 7.2 (memory map services).
+> - Scope boundary: §2 owns the retry loop + per-attempt diagnostics + mmap-buffer lifecycle across retries. The post-EBS ConOut guard (`g_ebs_in_progress`) is shipped here but reused by every `boot_fatal` consumer in this TODO. Memory-map descriptor validation is owned by §12; overlap normalization by §17.
+
+> **Verified:** 2026-05-01 | review-todo-section re-verify | 7/7 items | build OK | smoke PASS (KVM 2.490s). All 7 original checks confirmed at file:line + 3 new fixes (final-iteration refresh skip, EBS_MAX_ATTEMPTS-derived diagnostics, FreePool before retry-AllocatePool). Prior 2026-04-11 verification retained.
+> **Quality reviewed:** 2026-05-01 | Codex 4x (adversarial + consistency + perf + re-adversarial) | 1M (final-iteration mask) + 1M (denominator drift) + 1M (mmap leak) fixed; round-2 re-adversarial confirmed zero new issues introduced by the fixes | scope: boot-code-quality (gates walked: UEFI types, error handling, EBS boundary, fallback chains, parse-buffer dynamic alloc).
 
 ---
 
