@@ -11,7 +11,7 @@ title: "TODO-07 -- IRQL Model & DPCs"
 > **Goal:** Implement a Windows-style Interrupt Request Level (IRQL) model and a real Deferred Procedure Call (DPC) subsystem so interrupt handlers can defer non-trivial work safely. DPCs run at `DISPATCH_LEVEL`, enforce preemption constraints, and provide a deterministic bridge between hard-interrupt context and thread context.
 
 > [!IMPORTANT]
-> **Current state:** Core IRQL and DPC infrastructure (§1–§8) is complete and verified: `KIRQL` exists, per-CPU IRQL tracking is enforced, interrupt entry/exit raises and lowers IRQL correctly, DPCs queue and drain at `DISPATCH_LEVEL`, CPU targeting and importance are implemented, and threaded DPC baseline support exists. Remaining: §9 timer-DPC association, §10 driver migration/workqueue contract split, §11–§14 APC delivery and diagnostics/fairness, and §15–§17 threaded-DPC correctness hardening from the Codex review findings.
+> **Current state:** Core IRQL and DPC infrastructure (§1-§8) is complete and verified: `KIRQL` exists, per-CPU IRQL tracking is enforced, interrupt entry/exit raises and lowers IRQL correctly, DPCs queue and drain at `DISPATCH_LEVEL`, CPU targeting and importance are implemented, and threaded DPC baseline support exists. Remaining: §9 timer-DPC association, §10 driver migration/workqueue contract split, §11-§14 APC delivery and diagnostics/fairness, and §15-§17 threaded-DPC correctness hardening from the Codex review findings.
 
 ## Inputs
 
@@ -26,10 +26,10 @@ title: "TODO-07 -- IRQL Model & DPCs"
 - → XREF: `01-boot-platform/TODO-11-interrupt-timer-arch.md §9` -- `irq_request()` dynamic IRQ API must exist before IRQL levels are mapped to IOAPIC vectors; LAPIC timer (§2 of that TODO) must be calibrated before DPC dispatch at `DISPATCH_LEVEL` is wired.
 - → XREF: `01-boot-platform/TODO-11-interrupt-timer-arch.md §2` -- LAPIC timer calibration is the prerequisite for the timer/APIC scheduling path for DPC dispatch (§1 of this TODO).
 - → XREF: `04-drivers-hardware/INDEX.md` -- ISR drivers (NIC/storage/input) must migrate from ad-hoc workqueue usage to DPC top-half/bottom-half contracts.
-- → XREF: `TODO-12-native-api-ssdt.md §7` -- synchronization and wait semantics at `DISPATCH_LEVEL` must align with native API behavior; NtQueueApcThread (SSDT 0x0043) and NtQueueApcThreadEx (SSDT 0x0380) consume §11–§12 APC infrastructure
+- → XREF: `TODO-12-native-api-ssdt.md §7` -- synchronization and wait semantics at `DISPATCH_LEVEL` must align with native API behavior; NtQueueApcThread (SSDT 0x0043) and NtQueueApcThreadEx (SSDT 0x0380) consume §11-§12 APC infrastructure
 - → XREF: `TODO-08-time-filetime-management.md §6` -- kernel time service (`KeQuerySystemTime`, `KeQueryTickCount`) provides FILETIME-based due times for KTIMER upgrade in §9
 - → XREF: `TODO-23-exception-dispatch-seh.md §5` -- KiUserApcDispatcher ring-3 delivery of user-mode APCs parallels KiUserExceptionDispatcher; §12 sets up the user-mode frame
-- → XREF: `05-storage-filesystems/TODO-05-win32-file-io-api.md §9` -- async I/O completion queues user-mode APC to the issuing thread; depends on §11–§12 APC infrastructure
+- → XREF: `05-storage-filesystems/TODO-05-win32-file-io-api.md §9` -- async I/O completion queues user-mode APC to the issuing thread; depends on §11-§12 APC infrastructure
 
 ## Outcome
 
@@ -84,6 +84,8 @@ title: "TODO-07 -- IRQL Model & DPCs"
 
 **Test checkpoint:** Build passes with `include/kernel/sched/irql.h` included by the scheduler, spinlock, and interrupt code. `PASSIVE_LEVEL == 0`, `APC_LEVEL == 1`, `DISPATCH_LEVEL == 2`, and `HIGH_LEVEL == 31` in compile-time assertions or unit tests. Serial boot reaches Phase 1 with no IRQL header regressions. Verify on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
+---
+
 ## 2. Per-CPU IRQL Tracking and Transition Primitives
 
 - [x] Add `current_irql` to the per-CPU structure and initialize BSP/AP defaults to `PASSIVE_LEVEL`.
@@ -94,6 +96,8 @@ title: "TODO-07 -- IRQL Model & DPCs"
 - [x] Commit: `"kernel: sched -- track current IRQL per CPU and enforce transitions"`
 
 **Test checkpoint:** `KeGetCurrentIrql()` returns `PASSIVE_LEVEL` in normal thread context. `KeRaiseIrql(DISPATCH_LEVEL, &old)` reports `old == PASSIVE_LEVEL`; `KeLowerIrql(old)` restores `PASSIVE_LEVEL`. Illegal lower-on-raise and invalid restore-on-lower trigger diagnostics or assertions instead of silently proceeding. Verify on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+---
 
 ## 3. Interrupt Entry/Exit IRQL Integration
 
@@ -108,6 +112,8 @@ title: "TODO-07 -- IRQL Model & DPCs"
 
 **Test checkpoint:** Trigger a timer interrupt and confirm ISR entry raises to the mapped DIRQL while interrupt exit restores the prior thread IRQL. Nested interrupts preserve highest-active IRQL and unwind cleanly with no stuck elevated level after return. Serial boot and timer tick remain stable after the ISR-path change. Verify on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
+---
+
 ## 4. DPC Object Type and Per-CPU Queue
 
 - [x] `dpc.h` + `dpc.c`: `KDPC` struct with routine, context, args, intrusive queue link, queued flag, cpu_target
@@ -118,6 +124,8 @@ title: "TODO-07 -- IRQL Model & DPCs"
 - [x] Commit: `"kernel: sched -- wire DPC init + timer resolution into boot path"`
 
 **Test checkpoint:** `KeInitializeDpc(&dpc, routine, ctx)` sets all fields. `KeInsertQueueDpc` from `DISPATCH_LEVEL` returns 1 (newly queued). Second `KeInsertQueueDpc` for same DPC returns 0 (no-op). `KeRemoveQueueDpc` returns 1 for queued DPC, 0 for un-queued. `dpc_this_cpu_queue()->depth` increments on insert and decrements on remove. Serial: `"dpc: per-CPU DPC queues initialized"` during Phase 1 boot. If crash, check POST -- 0xD400 = never entered `dpc_init`, 0xD401 = completed successfully.
+
+---
 
 ## 5. DPC Drain Loop at `DISPATCH_LEVEL`
 
@@ -130,6 +138,8 @@ title: "TODO-07 -- IRQL Model & DPCs"
 - [x] Commit: `"kernel: sched -- add DPC dispatcher at DISPATCH_LEVEL"`
 
 **Test checkpoint:** After `KeInsertQueueDpc` + manual `KiDispatchDpc()`, DPC callback fires. `KeGetCurrentIrql()` inside callback returns `DISPATCH_LEVEL`. Callback sets a flag; flag is set after `KiDispatchDpc()` returns. Queue depth returns to 0 after drain. Executed count increments by 1. Serial: `"dpc: dispatched N DPCs on CPU M"`.
+
+---
 
 ## 6. Timer/APIC Scheduling Path for DPC Dispatch
 
@@ -144,6 +154,8 @@ title: "TODO-07 -- IRQL Model & DPCs"
 > **High-risk section.** This wires `KiDispatchDpc` into the LAPIC timer ISR return path. A bug here causes DPC drain on every timer tick -- if the drain crashes, the system triple-faults on the next tick with no recovery. **Rollback:** If DPC dispatch crashes, comment out the `KiDispatchDpc()` call in the timer ISR and fall back to workqueue-only deferred work. Test timer interrupts still work (scheduler tick, compositor frame) before wiring DPC dispatch.
 
 **Test checkpoint:** After wiring, LAPIC timer fires → DPC drains automatically. Queue a DPC, wait one tick, verify callback executed. Re-queued DPC from inside callback does not deadlock. DPC dispatch on BSP and AP cores (SMP). Serial: timer tick rate unchanged after wiring. If crash, check POST -- 0xD600 = entered but DPC dispatch crashed, 0xD601 = dispatch completed. Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
+
+---
 
 ## 7. DPC Targeting, Importance, and Flush
 
@@ -160,6 +172,8 @@ Control which CPU a DPC runs on, how urgently it executes, and provide a synchro
 
 **Test checkpoint:** `KeSetTargetProcessorDpc` to CPU 1 + `KeInsertQueueDpc` from CPU 0 → DPC callback fires on CPU 1 (check `smp_this_cpu()` in callback). `HighImportance` DPC runs before `LowImportance` DPC queued earlier. `KeFlushQueuedDpcs` returns only after callback completes. Verify on QEMU WHPX SMP (2+ vCPUs), TCG, bare metal -- IPI delivery for cross-CPU DPC targeting differs across platforms.
 
+---
+
 ## 8. Threaded DPCs (`PASSIVE_LEVEL` DPC Variant)
 
 Threaded DPCs run at `PASSIVE_LEVEL` in a dedicated per-CPU kernel thread, allowing operations forbidden at `DISPATCH_LEVEL` (paging, mutex acquisition). Used by audio/video drivers for latency-sensitive work.
@@ -175,6 +189,8 @@ Threaded DPCs run at `PASSIVE_LEVEL` in a dedicated per-CPU kernel thread, allow
 > Threaded DPCs are Win11's answer to Linux's threaded IRQs (`request_threaded_irq`). Both solve the same problem: long-running interrupt work that needs to sleep or page. Impossible OS supports both models -- threaded DPC for Win32 driver compat, threaded IRQ semantics via workqueue for Linux compat.
 
 **Test checkpoint:** `KeInitializeThreadedDpc` + `KeInsertQueueDpc` → callback fires with `KeGetCurrentIrql() == PASSIVE_LEVEL`. Threaded DPC can acquire a mutex without deadlock. Regular DPC queued during threaded DPC execution preempts it. Serial: `"dpc: threaded DPC thread started on CPU N"` during init.
+
+---
 
 ## 9. Timer-DPC Association
 
@@ -193,6 +209,8 @@ Bridge between kernel timer objects and the DPC subsystem. When a timer fires, i
 
 **Test checkpoint:** `KeSetTimerEx` with 50ms period + DPC → DPC fires 3 times in 150ms window (check counter in callback). `KeCancelTimer` stops further DPC queueing. Timer without DPC still fires normally (NULL dpc field). Verify periodic re-queue doesn't leak DPC nodes.
 
+---
+
 ## 10. Driver Migration and Workqueue Contract Split
 
 - [ ] Define policy: ISR top-half does minimal register/ack work, then queues DPC; thread-level heavy work goes to workqueue.
@@ -203,6 +221,8 @@ Bridge between kernel timer objects and the DPC subsystem. When a timer fires, i
 - [ ] Commit: `"drivers: irq -- migrate ISR deferred path to DPC model"`
 
 **Test checkpoint:** Migrated driver ISR path: interrupt fires → DPC queued → callback processes data at `DISPATCH_LEVEL`. Workqueue callback runs at `PASSIVE_LEVEL` for heavy work. `workqueue.h` comments updated. Driver smoke test under continuous interrupt load (network RX flood or disk I/O burst) remains stable. Serial: no DPC starvation warnings after 60s load test.
+
+---
 
 ## 11. APC Object Type and Per-Thread Queues
 
@@ -219,6 +239,8 @@ Asynchronous Procedure Calls (APCs) are the per-thread deferred work mechanism a
 - [ ] Commit: `"kernel: sched -- add KAPC object type and per-thread APC queues"`
 
 **Test checkpoint:** `KeInitializeApc` + `KeInsertQueueApc` to current thread succeeds; `KernelApcPending` flag is set. `KeRemoveQueueApc` returns `TRUE` and clears the flag. `KeInsertQueueApc` to exiting thread returns `FALSE`. `KeEnterCriticalRegion` prevents normal kernel APC delivery. Serial: `"apc: initialized per-thread APC queues"` on first thread init.
+
+---
 
 ## 12. APC Delivery Mechanism (KiDeliverApc)
 
@@ -245,6 +267,8 @@ The APC delivery engine runs at defined IRQL transition points -- on return from
 
 **Test checkpoint:** Queue kernel APC to current thread; on `KeLowerIrql` to `PASSIVE_LEVEL`, APC fires (callback sets flag). Queue special kernel APC during ISR; APC fires on interrupt return. `KeEnterCriticalRegion` suppresses normal kernel APC delivery; `KeLeaveCriticalRegion` triggers deferred delivery. Thread exit calls `RundownRoutine` for un-delivered APCs. Serial: `"apc: delivered N kernel APCs, M user APCs"`. If crash, check POST -- 0xDC00 = entered `KiDeliverApc` in ISR return, 0xDC01 = completed. Verify on QEMU WHPX, TCG, VirtualBox, bare metal -- ISR return path modification is platform-sensitive.
 
+---
+
 ## 13. IRQL Violation Traps and Structured Telemetry
 
 - [ ] Add `IRQL_REQUIRE_AT_MOST(level)` and `IRQL_REQUIRE_AT_LEAST(level)` macros for fast debug enforcement.
@@ -254,6 +278,8 @@ The APC delivery engine runs at defined IRQL transition points -- on return from
 - [ ] Commit: `"kernel: sched -- add IRQL contract diagnostics and telemetry"`
 
 **Test checkpoint:** `IRQL_REQUIRE_AT_MOST(APC_LEVEL)` at `DISPATCH_LEVEL` triggers diagnostic log: `"irql: violation at <callsite> -- required <= APC_LEVEL, current = DISPATCH_LEVEL"`. Blocking wait at `DISPATCH_LEVEL` faults immediately (no deadlock). `KeLowerIrql` mismatch (lowering to wrong level) triggers assertion. Violation counters visible in kernel log.
+
+---
 
 ## 14. Budgeted DPC/APC Fairness and Starvation Watchdog
 
@@ -283,6 +309,8 @@ The APC delivery engine runs at defined IRQL transition points -- on return from
 
 **Regression risk:** Changing the handoff pattern affects every threaded DPC consumer. Rollback: revert to single-CPU threaded DPC model (BSP-only).
 
+---
+
 ## 16. KeFlushQueuedDpcs Threaded DPC Completion
 
 > [!WARNING]
@@ -294,6 +322,8 @@ The APC delivery engine runs at defined IRQL transition points -- on return from
 - [ ] Commit: `"kernel: KeFlushQueuedDpcs waits for threaded DPC completion"`
 
 **Test checkpoint:** Queue a threaded DPC, call `KeFlushQueuedDpcs()` from another thread, verify flush blocks until callback completes. Free the DPC object after flush -- no crash.
+
+---
 
 ## 17. Per-CPU Threaded DPC Worker Affinity
 
@@ -350,14 +380,14 @@ The kernel needs a generic "background monitor" primitive: register a callback w
 
 | ⭐ | Feature                        | 🪟 Win11                          | 🐧 Linux                          | 🚀 Impossible OS                 |
 |----|--------------------------------|--------------------------------|--------------------------------|-------------------------------|
-| 💎 | IRQL / preemption levels       | ✅ KIRQL (PASSIVE→HIGH)        | ✅ preempt/softirq/hardirq     | ✅ §1–§3 done                 |
-| 💎 | DPC bottom-half queue          | ✅ KDPC at DISPATCH_LEVEL      | ✅ softirq/tasklet/NAPI        | ✅ §4–§6                      |
+| 💎 | IRQL / preemption levels       | ✅ KIRQL (PASSIVE→HIGH)        | ✅ preempt/softirq/hardirq     | ✅ §1-§3 done                 |
+| 💎 | DPC bottom-half queue          | ✅ KDPC at DISPATCH_LEVEL      | ✅ softirq/tasklet/NAPI        | ✅ §4-§6                      |
 | 💎 | ISR-safe deferred enqueue      | ✅ KeInsertQueueDpc            | ✅ IRQ-safe enqueue            | ✅ §4                         |
-| 💎 | Per-CPU deferred queues        | ✅ Per-CPU DPC state           | ✅ Per-CPU softirq             | ✅ §4–§6                      |
+| 💎 | Per-CPU deferred queues        | ✅ Per-CPU DPC state           | ✅ Per-CPU softirq             | ✅ §4-§6                      |
 | 💎 | DPC targeting (CPU affinity)   | ✅ KeSetTargetProcessorDpc     | ✅ Per-CPU workqueues          | ⚠️ §7 DPC; §17 threaded      |
 | 💎 | DPC importance / priority      | ✅ 4 levels (Low→High)         | ⚠️ Priority workqueues         | ✅ §7                         |
 | 💎 | DPC flush barrier              | ✅ KeFlushQueuedDpcs           | ✅ flush_workqueue             | ⚠️ §7 normal; §16 threaded   |
-| 💎 | Threaded DPCs (PASSIVE)        | ✅ KeInitializeThreadedDpc     | ✅ request_threaded_irq        | ⚠️ §8; §15–§17 hardening     |
+| 💎 | Threaded DPCs (PASSIVE)        | ✅ KeInitializeThreadedDpc     | ✅ request_threaded_irq        | ⚠️ §8; §15-§17 hardening     |
 | 💎 | Timer-DPC auto-queue           | ✅ KeSetTimerEx + KDPC         | ✅ timer_setup + callback      | ⬜ §9                         |
 | 💎 | Context legality contract      | ✅ API rules by IRQL           | ✅ might_sleep() + atomic      | ✅ §1 in irql.h               |
 | 💎 | Workqueue (thread deferred)    | ✅ Work items at PASSIVE       | ✅ alloc_workqueue             | ⚠️ §10 -- exists, needs split  |
@@ -368,11 +398,13 @@ The kernel needs a generic "background monitor" primitive: register a callback w
 | ⭐ | IRQL violation telemetry       | ⚠️ Checked builds only         | ⚠️ Fragmented debug warnings   | ⬜ §13 -- unified diagnostics  |
 | ⭐ | DPC/APC fairness watchdog      | ⚠️ Internal heuristics         | ⚠️ Subsystem-specific          | ⬜ §14 -- explicit policy      |
 
-> **After §1–§8:** Impossible OS reaches parity on the core IRQL contract and DPC architecture: IRQL transitions, per-CPU DPC queues, auto-drain, targeting, importance, and baseline threaded DPC support all exist.
-> **§9–§10** close the remaining timer-DPC and driver-migration gaps so drivers stop treating workqueue as a DPC substitute.
-> **§11–§12** add the APC subsystem -- the per-thread deferred work mechanism required by async I/O completion, `NtQueueApcThread`, alertable waits, and thread cleanup.
-> **§13–§14** turn correctness and fairness into explicit kernel contracts instead of hidden implementation behavior.
-> **§15–§17** fix the threaded-DPC race, flush, and affinity gaps surfaced by the Codex adversarial review.
+> **After §1-§8:** Impossible OS reaches parity on the core IRQL contract and DPC architecture: IRQL transitions, per-CPU DPC queues, auto-drain, targeting, importance, and baseline threaded DPC support all exist.
+> **§9-§10** close the remaining timer-DPC and driver-migration gaps so drivers stop treating workqueue as a DPC substitute.
+> **§11-§12** add the APC subsystem -- the per-thread deferred work mechanism required by async I/O completion, `NtQueueApcThread`, alertable waits, and thread cleanup.
+> **§13-§14** turn correctness and fairness into explicit kernel contracts instead of hidden implementation behavior.
+> **§15-§17** fix the threaded-DPC race, flush, and affinity gaps surfaced by the Codex adversarial review.
+
+---
 
 ## Unit Tests
 
@@ -380,13 +412,13 @@ The kernel needs a generic "background monitor" primitive: register a callback w
 > Boot tests run with `debug=1` or `test=1` in boot.conf.
 
 - [ ] Create `src/kernel/test/test_irql_dpc.c` with:
-  - **IRQL basics (§1–§3):**
+  - **IRQL basics (§1-§3):**
     - `KeGetCurrentIrql()` returns `PASSIVE_LEVEL` when called from normal thread context
     - `KeRaiseIrql(DISPATCH_LEVEL, &old)` sets current IRQL to `DISPATCH_LEVEL`; old is `PASSIVE_LEVEL`
     - `KeLowerIrql(PASSIVE_LEVEL)` restores to `PASSIVE_LEVEL` after raise
     - `KeRaiseIrql` to a level below current IRQL triggers a debug assertion (illegal transition)
     - `KIRQL` constants: `PASSIVE_LEVEL == 0`, `APC_LEVEL == 1`, `DISPATCH_LEVEL == 2`, `HIGH_LEVEL == 31`
-  - **DPC core (§4–§6):**
+  - **DPC core (§4-§6):**
     - `KeInitializeDpc` sets routine and context; `KDPC` fields are non-NULL after init
     - `KeInsertQueueDpc` from `DISPATCH_LEVEL` succeeds and enqueues the DPC
     - `KeRemoveQueueDpc` removes a queued DPC before it fires; returns `TRUE`
@@ -407,7 +439,7 @@ The kernel needs a generic "background monitor" primitive: register a callback w
     - `KeSetTimerEx` with 50ms period + DPC → DPC fires 3 times in ~150ms (counter == 3)
     - `KeCancelTimer` stops further DPC queueing; counter stops incrementing
     - Timer with NULL DPC still fires normally
-  - **APC (§11–§12):**
+  - **APC (§11-§12):**
     - `KeInitializeApc` + `KeInsertQueueApc` to current thread → `KernelApcPending` flag set
     - `KeRemoveQueueApc` returns `TRUE`; `KernelApcPending` cleared
     - Kernel APC callback fires on `KeLowerIrql` to `PASSIVE_LEVEL`; callback sets flag
@@ -433,6 +465,8 @@ The kernel needs a generic "background monitor" primitive: register a callback w
 - [ ] Register in `test_runner_init()`: `test_register_irql_dpc()`
 - [ ] Commit: `"test: add IRQL model, DPC, and APC test suite"`
 
+---
+
 ## Verification
 
 - [ ] `bash scripts/build.sh clean` → `tail -1 build/build.log` → `=== BUILD OK ===`
@@ -454,3 +488,5 @@ The kernel needs a generic "background monitor" primitive: register a callback w
 - [ ] Driver smoke test: representative NIC/storage interrupt path uses `ISR → DPC` split and remains stable under load
 - [ ] All 4 platforms: QEMU WHPX, QEMU TCG, VirtualBox, bare metal
 - [ ] Commit: `"kernel: sched -- IRQL model, DPC, and APC subsystem"`
+
+> **Test runner:** `scripts\debug\kernel\run-sched-tests.bat` (SUITE=sched, TEST_CAT_SCHED) | suites: test_irql_dpc + test_kworker (registered via test_register_irql_dpc + test_register_kworker)
