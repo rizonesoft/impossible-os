@@ -388,8 +388,17 @@ Modern firmware provides the ACPI Serial Port Console Redirection Table (SPCR) s
 
 > **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | test_uefi_boot SPCR-detect assertions + smoke on QEMU OVMF
 
-> **Verified:** 2026-04-11 -- all 7 items confirmed. Codex found unknown baud code treated as preserve-divisor (fixed: non-zero unknown codes now default 38400). Accepted: XSDT/RSDT child pointer validation (corrupt ACPI = unbootable system, SEH needed for recovery).
-> **Quality reviewed:** 2026-04-11 -- 2 fixes: SPCR Interface Type check (ACPI spec Table 5-49, type 0/1 = 16550), kernel serial_init honors no-UART (serial_port=0 now authoritative instead of defaulting to COM1). Accepted: MMIO UART support (I/O-only for now, matches current hardware scope).
+> **Notes:**
+> - What shipped: `serial_spcr_probe()` in `src/boot/uefi/bootx64.c` -- ACPI RSDP/RSDT/XSDT/SPCR walk with full checksum validation (RSDP v1 + v2 + root SDT + SPCR table); `BL_ACPI_SPCR` struct mirrors ACPI 6.5 layout; `spcr_decode_baud()` maps SPCR baud codes (0/3/4/6/7) to actual rates with 38400 fallback for unknown codes; `serial_source` (0/1/2) and `serial_baud` published to boot_info; widened to accept any non-zero 16-bit I/O base in [1, 0xFFF8] (firmware-authoritative).
+> - How it integrates: invoked from `serial_early_init()` BEFORE the no-SPCR scratch-register probe; on success bypasses §4 fallback; on any failure (no RSDP, bad checksum, signature mismatch, MMIO base, malformed length, or no UART at base+7) returns 0 and falls through to §4 unchanged.
+> - Downstream effects: closes the H1 trust-boundary -- corrupt firmware ACPI tables can no longer redirect the SPCR walk into stale memory and trick `serial_probe_port` into writing to an arbitrary base+7 (Codex H1 + M2 adversarial 2026-05-02). Kernel `serial_init()` honors `boot_info.serial_baud` from SPCR; pre-fix the kernel hardcoded 38400.
+> - Canonical doc: this section + §4 (no-SPCR fallback probe) + ACPI 6.5 specification (RSDP, DESCRIPTION_HEADER, SPCR Table 5-49) + UEFI 2.10 EFI_ACPI_TABLE_GUID.
+> - Scope boundary: §10 owns ACPI SPCR detection + checksum gates. §4 owns the no-SPCR fallback. Kernel-side ACPI table validation is owned by `src/kernel/acpi.c`.
+
+> **Verified:** 2026-05-02 | commit `<pending>` | 7/7 items | build OK | smoke PASS (KVM 2.41s). 7 original items + ACPI checksum-gate hardening (RSDP v1+v2, RSDT/XSDT root, SPCR table) confirmed at file:line. 2026-04-11 verification retained.
+> **Accepted:** [H] XSDT/RSDT child pointer validation (corrupt-ACPI fault recovery) -> XREF: 02-kernel-core/TODO-19 §1 (item: "SEH/__try around firmware table walks for fault-isolated recovery" -- requires SEH infrastructure not present in pre-EBS bootloader; checksum gate is the in-scope mitigation)
+> **Accepted:** [M] MMIO UART support (PL011, ARM SBSA, etc.) -> XREF: 04-drivers-hardware/TODO-04 §1 (item: "ARM serial driver -- PL011 + DesignWare UART" -- out of x86-only scope today)
+> **Quality reviewed:** 2026-05-02 | Codex 4x (adversarial + consistency + perf + re-adversarial) | 1H+1M fixed (ACPI checksum validation across RSDP v1/v2 + RSDT/XSDT root + SPCR table; strict RSDP v2 length gate eliminates skip-on-malformed bypass), 1H+1M accepted-XREF | scope: boot-code-quality
 
 ---
 

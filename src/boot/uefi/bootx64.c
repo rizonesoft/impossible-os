@@ -353,6 +353,22 @@ typedef struct {
     UINT8  language;           /* 63 */
 } __attribute__((packed)) BL_ACPI_SPCR;
 
+/* ACPI checksum gate -- byte sum of [base, base+len) MUST equal 0
+ * mod 256 per ACPI 6.5 §5.2.5.3 (RSDP), §5.2.6 (DESCRIPTION_HEADER).
+ * Used by serial_spcr_probe() to reject corrupt firmware tables
+ * BEFORE dereferencing untrusted base_address fields (Codex H1
+ * adversarial 2026-05-02).  Length is caller-bounded; this helper
+ * trusts the caller to have already rejected implausible lengths. */
+static int acpi_checksum_ok(const void *base, UINTN len)
+{
+    const UINT8 *p = (const UINT8 *)base;
+    UINT8 sum = 0;
+    UINTN i;
+    for (i = 0; i < len; i++)
+        sum = (UINT8)(sum + p[i]);
+    return sum == 0;
+}
+
 /* Decode SPCR baud_rate field to actual baud rate.
  * ACPI spec: 0=as-is (firmware-configured), 3-7=specific rates.
  * Unknown non-zero codes fall back to 38400 (not 0/preserve). */
@@ -401,6 +417,27 @@ static int serial_spcr_probe(void)
         rsdp->signature[6] != 'R' || rsdp->signature[7] != ' ')
         return 0;
 
+    /* Validate RSDP v1 checksum (first 20 bytes per ACPI 6.5
+     * specification section 5.2.5.3). */
+    if (!acpi_checksum_ok(rsdp, 20))
+        return 0;
+    /* For revision >= 2, the v2 RSDP MUST have length covering the
+     * full 36-byte struct (signature thru ext_checksum + 3-byte
+     * reserved tail per ACPI specification).  Reject malformed
+     * length OUTRIGHT -- a skip-on-bad-length policy would let
+     * firmware bypass the extended checksum gate while still
+     * steering xsdt_addr (Codex M2 consistency 2026-05-02).  Cap
+     * at sizeof for future-proofing against larger declared
+     * lengths we cannot validate.  Length must also pass the
+     * extended checksum. */
+    if (rsdp->revision >= 2) {
+        if (rsdp->length < sizeof(BL_ACPI_RSDP) ||
+            rsdp->length > sizeof(BL_ACPI_RSDP))
+            return 0;
+        if (!acpi_checksum_ok(rsdp, rsdp->length))
+            return 0;
+    }
+
     /* Step 2: Get RSDT or XSDT address from RSDP */
     UINT64 sdt_addr = 0;
     int use_xsdt = 0;
@@ -419,6 +456,27 @@ static int serial_spcr_probe(void)
     UINT32 hdr_size = 36;  /* standard ACPI SDT header size */
     if (sdt->length < hdr_size || sdt->length > 0x100000)
         return 0;  /* reject implausible lengths (< header or > 1 MiB) */
+
+    /* Validate root signature ("XSDT" if use_xsdt else "RSDT")
+     * + full-table checksum BEFORE treating payload bytes as
+     * entry pointers.  Without this, a corrupt RSDP that
+     * survived the v1/v2 checksum gate could redirect the walk
+     * into stale memory; a chance match on "SPCR" four bytes in
+     * would let the bogus base_address through to
+     * serial_probe_port (Codex H1 adversarial 2026-05-02). */
+    {
+        const UINT8 sig_xsdt[4] = {'X', 'S', 'D', 'T'};
+        const UINT8 sig_rsdt[4] = {'R', 'S', 'D', 'T'};
+        const UINT8 *want = use_xsdt ? sig_xsdt : sig_rsdt;
+        if (sdt->signature[0] != want[0] ||
+            sdt->signature[1] != want[1] ||
+            sdt->signature[2] != want[2] ||
+            sdt->signature[3] != want[3])
+            return 0;
+        if (!acpi_checksum_ok(sdt, sdt->length))
+            return 0;
+    }
+
     UINT32 num_entries = (sdt->length - hdr_size) / entry_size;
     UINT8 *entries = (UINT8 *)sdt + hdr_size;
 
@@ -442,6 +500,19 @@ static int serial_spcr_probe(void)
 
         /* Minimum table length to read the fields we need */
         if (spcr->length < 60)
+            return 0;
+        /* Reject implausible declared length (caller-bounded sanity
+         * cap before checksum walk) -- 1 MiB matches the root SDT
+         * cap above.  ACPI 6.5 SPCR has a max of ~80 bytes today;
+         * future revisions are bounded. */
+        if (spcr->length > 0x100000)
+            return 0;
+        /* Validate full-SPCR-table checksum BEFORE reading
+         * base_address / interface_type / baud_rate.  A SPCR with
+         * a corrupt length-bounded payload cannot reach
+         * serial_probe_port without the byte sum gating it out
+         * (Codex H1 adversarial 2026-05-02). */
+        if (!acpi_checksum_ok(spcr, spcr->length))
             return 0;
 
         /* Interface type must be 16550-compatible (ACPI spec Table 5-49) */
