@@ -53,6 +53,84 @@ import shlex
 _LINE_CONT_RE = re.compile(r"\\\r?\n[ \t]*")
 
 
+# Heredoc-into-variable pre-pass. The canonical apostrophe-safe Codex
+# dispatch shape from `codex-prompt-template.md` is:
+#
+#     PROMPT=$(cat <<'EOF'
+#     [review-kind: gap-audit] todo/...
+#     <body, free to use apostrophes/backticks/parens>
+#     EOF
+#     )
+#     bash scripts/codex-dispatch.sh "$PROMPT"
+#
+# After shlex splits this, the dispatch invocation's prompt argument is
+# the literal string `$PROMPT` (shlex preserves the dollar-name without
+# expansion). Without this pre-pass the kind extractor returns "" because
+# the first non-blank line of `$PROMPT` carries no `[review-kind:]`.
+#
+# The regex walks BEFORE tokenization to capture the heredoc body as a
+# single string; the harvested map is consulted in `_segment_extract_prompt`
+# whenever the extracted argv looks like `$VAR` or `${VAR}`.
+#
+# Multiple assignments in the same command keep their bodies separate
+# (the dict overwrites with the most recent value, matching shell
+# semantics). Unmatched / unterminated heredocs are silently ignored
+# so a malformed dispatch still flows through the legacy path without
+# raising.
+_HEREDOC_VAR_RE = re.compile(
+    r"(?ms)"
+    r"^[ \t]*([A-Za-z_]\w*)=\$\(\s*cat\s*<<-?\s*"   # VAR=$(cat <<
+    r"['\"]?([A-Za-z_]\w*)['\"]?"                    # delimiter (with optional quotes)
+    r"\s*\n"                                         # newline before body
+    r"(.*?)"                                         # body (non-greedy)
+    r"^\2[ \t]*\n"                                   # delimiter alone on its line
+    r"[ \t]*\)"                                      # closing paren
+)
+
+
+def _harvest_heredoc_vars(cmd):
+    """Return `(stripped_cmd, {varname: heredoc_body})` for every
+    `VAR=$(cat <<'X' ... X)` block in `cmd`. The block is REMOVED
+    from the returned command so shlex tokenization isn't poisoned
+    by the `<<` token (which `_trim_heredoc_body` would otherwise
+    treat as the start of an unterminated heredoc, killing every
+    later Codex invocation token).
+
+    Body strings have trailing newlines preserved -- the kind
+    extractor only inspects the first non-blank line.
+    """
+    if not isinstance(cmd, str) or "<<" not in cmd or "=$(" not in cmd:
+        return (cmd, {})
+    out = {}
+
+    def _replace(m):
+        out[m.group(1)] = m.group(3)
+        return ""  # strip the whole block; keep newlines around it
+
+    stripped = _HEREDOC_VAR_RE.sub(_replace, cmd)
+    return (stripped, out)
+
+
+def _resolve_var(prompt, heredoc_vars):
+    """If `prompt` is exactly `$VAR` or `${VAR}` and `VAR` appears in
+    `heredoc_vars`, return the heredoc body. Otherwise return `prompt`
+    unchanged. Tolerates surrounding whitespace because shlex preserves
+    `"$PROMPT"` as the literal `$PROMPT` (quotes stripped, no expansion).
+    """
+    if not prompt or not heredoc_vars:
+        return prompt
+    s = prompt.strip()
+    if s.startswith("${") and s.endswith("}"):
+        name = s[2:-1]
+    elif s.startswith("$"):
+        name = s[1:]
+    else:
+        return prompt
+    if name in heredoc_vars:
+        return heredoc_vars[name]
+    return prompt
+
+
 # Bash control operators that introduce a NEW command sequence.
 # `true && codex review prompt` was a bypass: the original code
 # treated the whole command as one argv with `true` at position 0.
@@ -327,7 +405,8 @@ def is_codex_dispatch(cmd):
         return False
     if "codex" not in cmd:
         return False
-    toks = _tokenize(cmd)
+    stripped, _ = _harvest_heredoc_vars(cmd)
+    toks = _tokenize(stripped)
     if not toks:
         return False
     for seg in _segment_by_separators(toks):
@@ -341,16 +420,24 @@ def extract_dispatch_prompt(cmd):
     """Return the prompt argv from the first matching Codex dispatch
     segment in `cmd`, or empty string. Uses the same shell-aware
     parsing as `is_codex_dispatch`.
+
+    Resolves `VAR=$(cat <<'X' BODY X)` + `... "$VAR"` indirection
+    (the canonical apostrophe-safe shape from
+    `codex-prompt-template.md`) so the kind extractor can read
+    `[review-kind: ...]` from the heredoc body instead of seeing the
+    literal `$VAR` token.
     """
     if not isinstance(cmd, str) or not cmd.strip():
         return ""
     if "codex" not in cmd:
         return ""
-    toks = _tokenize(cmd)
+    stripped, heredoc_vars = _harvest_heredoc_vars(cmd)
+    toks = _tokenize(stripped)
     if not toks:
         return ""
     for seg in _segment_by_separators(toks):
         seg = _trim_heredoc_body(seg)
         if seg and _segment_is_codex_invocation(seg):
-            return _segment_extract_prompt(seg)
+            prompt = _segment_extract_prompt(seg)
+            return _resolve_var(prompt, heredoc_vars)
     return ""

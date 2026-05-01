@@ -174,6 +174,14 @@ _RE_ADV_LOC_THRESHOLD = 50  # >50 LOC C/H trigger
 _STAMP_ADDED_RE = re.compile(
     r"^\+\s{0,3}(?:>\s*)+\*\*(Verified|Quality reviewed):\*\*",
 )
+# Companion regex: REMOVED stamp line carrying the same label. When a
+# diff hunk has BOTH a removed `> **Verified:**` AND an added
+# `> **Verified:**`, that's an in-place UPDATE of an existing stamp
+# (e.g. counts changed during a gap-audit follow-up), not a fresh
+# section ship. The four-dispatch check should not fire on updates.
+_STAMP_REMOVED_RE = re.compile(
+    r"^-\s{0,3}(?:>\s*)+\*\*(Verified|Quality reviewed):\*\*",
+)
 
 # Wrapper / env tokens we walk past to find the real `git` command.
 # Hardcoded (round-7 perf fix) instead of importing from crc to avoid
@@ -198,6 +206,19 @@ _IO_OLD_OPEN_RE = re.compile(
 # A diff line that ADDS a row in `[x]` state:
 _IO_NEW_DONE_RE = re.compile(
     r"^\+\s*\|.+?\|\s*\[x\]\s*\|\s*$",
+)
+# DEMOTION pair: REMOVED `[x]` row + ADDED `[ ]` or `[/]` row in the
+# same hunk. This is the opposite direction from a section ship --
+# typical sources are a gap-audit follow-up that downgrades a paper-
+# complete section after finding a real gap, OR a revert of a
+# previously-stamped section. Demotions must not require fresh
+# adversarial+consistency+perf dispatches; the four-dispatch check is
+# a promotion gate.
+_IO_OLD_DONE_RE = re.compile(
+    r"^-\s*\|.+?\|\s*\[x\]\s*\|\s*$",
+)
+_IO_NEW_OPEN_RE = re.compile(
+    r"^\+\s*\|.+?\|\s*\[(?: |/)\]\s*\|\s*$",
 )
 
 
@@ -740,6 +761,19 @@ def _impl_order_flips_with_status(root: Path, todo_files: list[str]) -> tuple[li
     (flipped, all_diffs_succeeded). Used by _detect_signature to
     distinguish "no flip detected because no diff had one" from
     "no flip detected because git couldn't return the diff".
+
+    PROMOTION ONLY: only counts `[ ]`/`[/]` -> `[x]` transitions.
+    DEMOTION (`[x]` -> `[ ]`/`[/]`) is the opposite direction --
+    typical sources are gap-audit follow-ups that downgrade a
+    paper-complete section after finding a real gap. Demotions
+    must not require fresh adversarial+consistency+perf dispatches;
+    the four-dispatch gate is a promotion gate.
+
+    Detection logic: a hunk that has BOTH an `_IO_OLD_DONE_RE`
+    (removed `[x]` row) and `_IO_NEW_OPEN_RE` (added `[ ]`/`[/]` row)
+    is a demotion -- skip it. A hunk with `_IO_NEW_DONE_RE` (added
+    `[x]`) without a matching `_IO_OLD_DONE_RE` is a promotion --
+    flag it.
     """
     flips: list[str] = []
     all_ok = True
@@ -755,14 +789,20 @@ def _impl_order_flips_with_status(root: Path, todo_files: list[str]) -> tuple[li
             continue
         added_done: list[str] = []
         removed_open: list[str] = []
+        added_open: list[str] = []
+        removed_done: list[str] = []
         flipped_here = False
         for line in diff.splitlines():
             if line.startswith("@@"):
-                if added_done:
+                # Settle the previous hunk before starting the next.
+                if added_done and len(added_done) > len(removed_done):
+                    # promotion: more `[x]` adds than `[x]` removals
                     flipped_here = True
                     break
                 added_done.clear()
                 removed_open.clear()
+                added_open.clear()
+                removed_done.clear()
                 continue
             if line.startswith("---") or line.startswith("+++"):
                 continue
@@ -770,7 +810,13 @@ def _impl_order_flips_with_status(root: Path, todo_files: list[str]) -> tuple[li
                 removed_open.append(line)
             elif _IO_NEW_DONE_RE.match(line):
                 added_done.append(line)
-        if flipped_here or added_done:
+            elif _IO_OLD_DONE_RE.match(line):
+                removed_done.append(line)
+            elif _IO_NEW_OPEN_RE.match(line):
+                added_open.append(line)
+        # Settle the final hunk: a promotion is when added [x] count
+        # exceeds removed [x] count (a demotion balances them).
+        if flipped_here or len(added_done) > len(removed_done):
             flips.append(path)
     return (flips, all_ok)
 
@@ -959,9 +1005,19 @@ def _history_covers(root: Path, staged_src: list[str], current_blobs: dict) -> b
 
 def _stamped_todos(root: Path, todo_files: list[str]) -> list[str]:
     """Return the subset of `todo_files` whose staged diff ADDS a
-    `**Verified:**` or `**Quality reviewed:**` stamp line. The
+    NEW `**Verified:**` or `**Quality reviewed:**` stamp line. The
     four-dispatch check fires only when at least one such file is
     present in the staged diff.
+
+    UPDATE-vs-FRESH discrimination: when a hunk contains BOTH an
+    ADDED stamp line AND a REMOVED stamp line with the SAME label
+    (`Verified` <-> `Verified`, `Quality reviewed` <-> `Quality
+    reviewed`) the count is balanced and the file is treated as an
+    in-place stamp UPDATE (e.g. a gap-audit follow-up that bumps the
+    `7/7 items` count to `7/8 items, 2 deferred [/]` after filing a
+    new follow-up item). Updates do not require fresh
+    adversarial+consistency+perf dispatches. Only ADD lines without a
+    matching removed counterpart count as fresh stamps.
     """
     out: list[str] = []
     for path in todo_files:
@@ -976,10 +1032,21 @@ def _stamped_todos(root: Path, todo_files: list[str]) -> list[str]:
             # file. The signature-detection layer's "unknown" path
             # would have already routed this case via `todo_diff_ok`.
             continue
+        added = {"Verified": 0, "Quality reviewed": 0}
+        removed = {"Verified": 0, "Quality reviewed": 0}
         for line in diff.splitlines():
-            if _STAMP_ADDED_RE.match(line):
-                out.append(path)
-                break
+            m = _STAMP_ADDED_RE.match(line)
+            if m:
+                added[m.group(1)] += 1
+                continue
+            m = _STAMP_REMOVED_RE.match(line)
+            if m:
+                removed[m.group(1)] += 1
+        # Fresh = added beyond what was removed. An update (added==removed
+        # > 0) leaves a 0 net count and does not trigger the gate.
+        net_fresh = sum(max(0, added[k] - removed[k]) for k in added)
+        if net_fresh > 0:
+            out.append(path)
     return out
 
 
