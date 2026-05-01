@@ -209,7 +209,7 @@ Modern hardware (laptops, tablets) may not have COM1 at 0x3F8. Blindly initializ
 > - Canonical doc: this section + §10 (SPCR) + UEFI 2.10 + ACPI 6.5 SPCR table spec + 16550 UART scratch-register convention.
 > - Scope boundary: §4 owns the no-SPCR fallback probe (COM1/COM2 only) + boot_info publication contract. §10 owns ACPI SPCR table parsing + firmware-authoritative base widening.
 
-> **Verified:** 2026-05-01 | commit `<pending>` | 6/6 items | build OK | smoke PASS (KVM 2.49s). Probe + fallback chain + boot_info publication + kernel-side handoff all confirmed at file:line. 2026-04-11 verification retained.
+> **Verified:** 2026-05-01 | commit `7513bcac` | 6/6 items | build OK | smoke PASS (KVM 2.49s). Probe + fallback chain + boot_info publication + kernel-side handoff all confirmed at file:line. 2026-04-11 verification retained.
 > **Quality reviewed:** 2026-05-01 | Codex 3x (adversarial + consistency + perf) | 1M fixed (SPCR I/O base widening + 0xFFF8 upper bound for 16550 register block), 1M fixed (test_serial_port_standard broadened by serial_source), 2L fixed (boot_info.h comment + §10 prose updated to match SPCR-authoritative contract); re-adversarial skipped (~30 LOC, policy-widening + test/doc only, no lifecycle/state-machine) | scope: boot-code-quality
 
 ---
