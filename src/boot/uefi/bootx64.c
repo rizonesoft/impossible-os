@@ -3776,20 +3776,51 @@ static EFI_STATUS load_kernel(UINT64 *entry_point)
                                 found = 1;
                                 break;
                             }
-                            /* Mirror primary-loop semantics: on hard
-                             * errors (EFI_DEVICE_ERROR / VOLUME_CORRUPTED
-                             * / SECURITY_VIOLATION / ACCESS_DENIED),
-                             * abort the whole fallback search instead
-                             * of silently moving to the next path or
-                             * volume.  EFI_NOT_FOUND continues. */
-                            if (fb_s != EFI_NOT_FOUND) {
-                                serial_early_print("[FAIL] Error opening ");
+                            /* Split per-volume hard-error policy:
+                             *
+                             *   - EFI_SECURITY_VIOLATION /
+                             *     EFI_ACCESS_DENIED on a candidate
+                             *     kernel.exe are firmware-detected
+                             *     security/policy events.  Halt the
+                             *     whole search so the operator sees
+                             *     the failure instead of silently
+                             *     booting from a different volume.
+                             *
+                             *   - All other non-EFI_NOT_FOUND statuses
+                             *     (EFI_DEVICE_ERROR /
+                             *     EFI_VOLUME_CORRUPTED / EFI_NO_MEDIA
+                             *     / EFI_MEDIA_CHANGED / etc.) are
+                             *     media or filesystem degradation on
+                             *     this candidate volume only.  Log
+                             *     and SKIP this volume -- continuing
+                             *     to the next handle so one bad
+                             *     removable/encrypted ESP cannot deny
+                             *     boot recovery purely by
+                             *     enumeration order.
+                             *
+                             * Strict semantics stay on the boot-device
+                             * primary loop above (which owns kernel.exe
+                             * trust). */
+                            if (fb_s == EFI_SECURITY_VIOLATION ||
+                                fb_s == EFI_ACCESS_DENIED) {
+                                serial_early_print(
+                                    "[FAIL] Security/policy denial "
+                                    "opening ");
                                 serial_early_print(kernel_path_names[pi]);
-                                serial_early_print(" on non-boot volume "
-                                                   "(device/FS error)\n");
+                                serial_early_print(
+                                    " on non-boot volume\n");
                                 fb_root->Close(fb_root);
                                 gBS->FreePool(fs_handles);
                                 return fb_s;
+                            }
+                            if (fb_s != EFI_NOT_FOUND) {
+                                serial_early_print("[WARN] Skipping "
+                                                   "non-boot volume "
+                                                   "(media/FS error "
+                                                   "opening ");
+                                serial_early_print(kernel_path_names[pi]);
+                                serial_early_print(")\n");
+                                break;
                             }
                         }
                         if (!found)

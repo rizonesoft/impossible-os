@@ -174,13 +174,13 @@ If `\boot\kernel.exe` is not found, search alternative paths before giving up.
 > **Notes:**
 > - Three hardcoded kernel paths (`\boot\kernel.exe` -> `\kernel.exe` -> `\EFI\ImpossibleOS\kernel.exe`) tried in order on the boot device's SimpleFS, with LocateHandleBuffer-based all-volumes fallback when the kernel is absent from the boot device.
 > - `LoadedImage->DeviceHandle` resolved at efi_main into `g_boot_device_handle`; degraded paths (NULL handle or no SimpleFS) defer to the explicit all-volumes search with `[WARN]` diagnostics rather than silently calling `LocateProtocol` (rebuilt 2026-05-01).
-> - Primary loop and all-volumes inner loop share identical error policy: `EFI_NOT_FOUND` continues, every other Open status closes resources, `FreePool(fs_handles)`, and returns the underlying status.
+> - Split error policy: primary boot-device loop returns the underlying status on any non-`EFI_NOT_FOUND` Open error (kernel.exe corruption is fatal); fallback all-volumes loop logs `[WARN]`, skips the candidate volume (break inner pi loop, `if (!found)` Close fb_root, continue handle loop) so a single corrupt/encrypted/removable non-boot SimpleFS cannot deny recovery boot. `FreePool(fs_handles)` runs once after the handle loop.
 > - POST16 sequence: `POST16_BL_FALLBACK` (0xB094) on entry to all-volumes search; `POST16_BL_FALLBACK_OK` (0xB095) only on success; left at 0xB094 on total failure so a POST card shows fallback-failed.
 > - Scope boundary: `parse_boot_conf()` and `locate_boot_fs()` still use the silent LocateProtocol pattern; consistency follow-ups filed in §7 and TODO-02 §16 to mirror the §3 hardening.
-> **Verified:** 2026-05-01 | commit `da32f773` | 5/5 items | build OK | smoke PASS (KVM 2.46s)
+> **Verified:** 2026-05-01 | commit `<pending>` | 5/5 items | build OK | smoke PASS (KVM 2.45s)
 > **Accepted:** [H] Silent LocateProtocol fallback in `parse_boot_conf()` (reason: scope -- §7 owns boot.conf reads) -> XREF: 01-boot-platform/TODO-03 §7 (item: "Eliminate silent LocateProtocol fallback in `parse_boot_conf()`" at line 249)
 > **Accepted:** [H] Silent LocateProtocol fallback in `locate_boot_fs()` (reason: scope -- TODO-02 §16 owns UKI staged-payload disk reads) -> XREF: 01-boot-platform/TODO-02 §16 (item: "Eliminate silent LocateProtocol fallback in `locate_boot_fs()`" at line 540)
-> **Quality reviewed:** 2026-05-01 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 1H+1M fixed, 2H accepted-XREF | scope: boot-code-quality
+> **Quality reviewed:** 2026-05-01 | Codex 5x (adversarial, consistency, perf, re-adversarial x2) | 1H+2M fixed, 2H accepted-XREF | scope: boot-code-quality
 
 ---
 

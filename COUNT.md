@@ -15,10 +15,10 @@
 
 |                       |   Files |      Lines |
 | --------------------- | ------: | ---------: |
-| **C sources** (`.c`)  |     297 |     162663 |
+| **C sources** (`.c`)  |     297 |     162694 |
 | **Headers** (`.h`)    |     219 |      42937 |
 | **Assembly** (`.asm`) |       9 |       1095 |
-| **Subtotal**          | **525** | **206695** |
+| **Subtotal**          | **525** | **206726** |
 
 ## SDK Tools
 
@@ -58,11 +58,11 @@
 
 |                                |    Files |      Lines |
 | ------------------------------ | -------: | ---------: |
-| **Core code + tooling**        |  **734** | **267483** |
+| **Core code + tooling**        |  **734** | **267514** |
 | **Supporting text + metadata** |  **411** | **176313** |
-| **All counted text files**     | **1145** | **443796** |
+| **All counted text files**     | **1145** | **443827** |
 
-> Vendored code excluded: ~13893 lines (`stb_image.h`, `stb_truetype.h`, `efi.h`)
+> Vendored code excluded: ~13895 lines (`stb_image.h`, `stb_truetype.h`, `efi.h`)
 >
 > Binary assets such as fonts, images, certificates, EFI blobs, and cursor resources are not line-counted.
 
@@ -77,15 +77,15 @@
 
 |                               |         Linux |     Windows |         Impossible OS |
 | ----------------------------- | ------------: | ----------: | --------------------: |
-| **Core code + tooling lines** |   ~28,000,000 | ~50,000,000 |               267,483 |
+| **Core code + tooling lines** |   ~28,000,000 | ~50,000,000 |               267,514 |
 | **Developers**                | ~1,000 active | ~5,000 peak |                     1 |
 | **Time span**                 |      33 years |    40 years | 1 month(s), 26 day(s) |
 
-> At industry rates (10,000 LOC/developer/year -- COCOMO II), writing 267,483
+> At industry rates (10,000 LOC/developer/year -- COCOMO II), writing 267,514
 > lines of core code and tooling would take **174 developers** working for **1 month(s), 26 day(s)**.
 >
 > *The "impossible" in Impossible OS was supposed to be the name, not the development method.*
 
 ---
 
-*Last updated: 2026-05-01 20:32 · commit `bb2721ff`*
+*Last updated: 2026-05-01 20:52 · commit `dda8bd51`*

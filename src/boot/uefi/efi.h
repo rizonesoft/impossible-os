@@ -43,7 +43,9 @@ typedef UINTN               EFI_TPL;
 #define EFI_INVALID_PARAMETER       (2ULL | (1ULL << 63))
 #define EFI_UNSUPPORTED             (3ULL | (1ULL << 63))
 #define EFI_BUFFER_TOO_SMALL        (5ULL | (1ULL << 63))
+#define EFI_ACCESS_DENIED           (15ULL | (1ULL << 63))
 #define EFI_NOT_FOUND               (14ULL | (1ULL << 63))
+#define EFI_SECURITY_VIOLATION      (26ULL | (1ULL << 63))
 
 #define EFI_ERROR(status) ((INTN)(status) < 0)
 
