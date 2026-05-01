@@ -253,6 +253,33 @@ int uefi_secureboot_pk_present(void);
 /* Returns 1 if a Key Exchange Key (KEK) is enrolled. */
 int uefi_secureboot_kek_present(void);
 
+/* ---- Runtime SecureBoot revalidation (gap-audit 2026-05-01 M2) ---- */
+
+/* Capture the current SecureBoot state into the drift-detection
+ * baseline. Called from uefi_secureboot_init() after the initial
+ * variable reads complete; callers normally do not invoke directly. */
+void uefi_secureboot_snapshot(void);
+
+/* Re-read every SecureBoot UEFI variable and revalidate against the
+ * boot snapshot. Intended for ACPI S3/S4 resume paths -- a physical
+ * attacker can clear SetupMode and re-add keys while the OS sleeps.
+ * Returns 1 if drift was detected on this call, 0 otherwise (also 0
+ * when runtime services are unavailable or the live read fails). */
+int uefi_secureboot_refresh(void);
+
+/* Compare the live SecureBoot state against the boot snapshot
+ * without re-reading the firmware variables. Intended for the
+ * low-frequency (~5 min) periodic revalidator. Emits LOG_FATAL and
+ * sets HKLM\SYSTEM\SecureBoot\Drift = 1 on first mismatch; the drift
+ * flag is sticky -- a transient firmware glitch can not "un-detect"
+ * a real tampering event. Returns 1 if drift was detected on this
+ * call, 0 otherwise. */
+int uefi_secureboot_revalidate_tick(void);
+
+/* Returns 1 if any prior revalidation pass observed drift from the
+ * boot snapshot. Sticky once set. */
+int uefi_secureboot_drift_detected(void);
+
 /* ---- Secure Boot Key Management API ---- */
 
 /* Security database GUID -- used for db, dbx, dbt variables */

@@ -188,6 +188,43 @@ static void test_secureboot_db_registry_mirror(void)
     RegCloseKey(hKey);
 }
 
+/* ---- SecureBoot Drift Detection (gap-audit 2026-05-01 M2) ---- */
+
+static void test_secureboot_drift_detection(void)
+{
+    /* The boot snapshot must already be captured (uefi_secureboot_init
+     * runs in Phase 1 before any test runs). A no-op revalidate should
+     * report no drift because no UEFI variables changed between init
+     * and now. */
+    int initial_drift = uefi_secureboot_drift_detected();
+    int tick_result = uefi_secureboot_revalidate_tick();
+
+    /* If an earlier test or boot-time anomaly already flagged drift
+     * we can not assert "no drift" -- only that the tick result is
+     * idempotent (sticky once set). */
+    if (initial_drift) {
+        TEST_ASSERT_EQ(uefi_secureboot_drift_detected(), 1,
+                       "drift flag is sticky once set");
+        return;
+    }
+
+    TEST_ASSERT_EQ(tick_result, 0,
+                   "revalidate_tick returns 0 when state matches boot snapshot");
+    TEST_ASSERT_EQ(uefi_secureboot_drift_detected(), 0,
+                   "drift flag stays clear when no mismatch observed");
+
+    /* refresh() re-reads UEFI variables and re-runs the comparison.
+     * On a non-tampered system the variables match the boot snapshot,
+     * so this should also report no drift. On a system without UEFI
+     * runtime services available the function returns 0 (no drift
+     * signal possible) -- still 0. */
+    int refresh_result = uefi_secureboot_refresh();
+    TEST_ASSERT_EQ(refresh_result, 0,
+                   "refresh returns 0 on untampered system");
+    TEST_ASSERT_EQ(uefi_secureboot_drift_detected(), 0,
+                   "drift flag still clear after refresh on untampered system");
+}
+
 /* ---- Serial Detection (S10: SPCR Auto-Detection) ---- */
 
 static void test_serial_source_valid(void)
@@ -560,6 +597,8 @@ void test_register_uefi_boot(void)
                             test_registry_bios_vendor, TEST_CAT_BOOT);
     test_suite_register_cat("UEFI: SecureBoot DB mirror",
                             test_secureboot_db_registry_mirror, TEST_CAT_BOOT);
+    test_suite_register_cat("UEFI: SecureBoot drift detection",
+                            test_secureboot_drift_detection, TEST_CAT_BOOT);
     test_suite_register_cat("UEFI: serial_source valid",
                             test_serial_source_valid, TEST_CAT_BOOT);
     test_suite_register_cat("UEFI: serial_source matches port",

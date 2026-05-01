@@ -179,6 +179,7 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
   6. Compute sleep duration from RTC/UEFI time delta; call `ke_suspend_bias_update()` (→ XREF: `TODO-08-time-filetime-management.md §14`)
   7. Call `pm_notify_resume()` (§9) -- drivers transition back D3->D0
   8. Unfreeze scheduler; resume from the instruction after `acpi_enter_sleep_state(3)`
+- [ ] **Call `uefi_secureboot_refresh()` after runtime services come back online and before re-entering userspace** (filed 2026-05-01 from [`01-boot-platform/TODO-02-uefi-hardening-secureboot.md §5`](../01-boot-platform/TODO-02-uefi-hardening-secureboot.md#5-secure-boot-state-detection)): an attacker with physical access can clear SetupMode and re-add SecureBoot keys while the OS sleeps; the refresh API re-reads SecureBoot/SetupMode/AuditMode/DeployedMode/PK/KEK and emits LOG_FATAL + sets `HKLM\SYSTEM\SecureBoot\Drift = 1` on mismatch with the boot snapshot. Must run after `pm_notify_resume()` finishes (storage + registry back to D0) and before user threads unblock.
 - [ ] Power button physical press -> PM1 fixed event (§1) generates SCI; firmware raises the CPU from S3
 - [ ] RTC alarm: `acpi_set_wakeup_alarm(seconds)` -- programs CMOS RTC alarm registers (port 0x70/0x71), sets `RTC_EN` in PM1a_EN; used for timed wake (-> `Task Scheduler` integration, future)
 - [ ] USB device activity: `XHCI_S3_WAKEUP_EN` -- xHCI remote-wakeup enable bit in the USB port status register (→ XREF: `04-drivers-hardware/TODO-10-usb-stack.md`)

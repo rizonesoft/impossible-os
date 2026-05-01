@@ -1081,6 +1081,12 @@ boot_result_t uefi_secureboot_init(void)
         klog(LOG_INFO, "SecureBoot", "state=DISABLED (firmware or user override)");
     }
 
+    /* Freeze the boot-time state vector so future revalidation passes
+     * (S3 resume / periodic tick) can detect firmware drift. Capture
+     * even on the unauthoritative path -- the revalidation logic gates
+     * on snapshot.sb_state_valid before raising drift. */
+    uefi_secureboot_snapshot();
+
     return BOOT_OK;
 }
 
@@ -1157,6 +1163,320 @@ int uefi_secureboot_enabled(void)  { return s_sb_enabled; }
 int uefi_secureboot_setup_mode(void) { return s_sb_setup_mode; }
 int uefi_secureboot_pk_present(void) { return s_sb_pk_present; }
 int uefi_secureboot_kek_present(void) { return s_sb_kek_present; }
+
+/* ----- Runtime Secure Boot revalidation (gap-audit 2026-05-01 M2) -----
+ *
+ * Boot-time snapshot of the authoritative SecureBoot state. After
+ * uefi_secureboot_init() succeeds we freeze the state vector here;
+ * uefi_secureboot_revalidate_tick() compares the current live values
+ * against this snapshot and raises a LOG_FATAL + sets the registry
+ * sentinel HKLM\SYSTEM\SecureBoot\Drift on any mismatch. A drift
+ * signals firmware compromise, NVRAM corruption, or a physical
+ * attacker clearing SetupMode while the OS slept.
+ *
+ * Concurrency: the s_sb_* statics are read/mutated by uefi_secureboot_*
+ * paths only; uefi_secureboot_init() runs strictly before any thread
+ * is created so the snapshot capture there does not race. After init,
+ * uefi_secureboot_refresh() (S3 resume / periodic) can mutate and any
+ * concurrent reader on another CPU could see a torn read. Serialize
+ * the post-init refresh + comparison under s_sb_lock; the per-byte
+ * accessors stay lock-free for legacy callers because torn reads on
+ * a uint8_t-sized field are atomic on x86-64. */
+
+struct sb_state_vector {
+    int sb_state_valid; /* SecureBoot variable read succeeded */
+    int sb_enabled;
+    int setup_mode;
+    int deployed_mode;
+    int audit_mode;
+    int pk_present;
+    int kek_present;
+};
+
+static struct sb_state_vector s_sb_snapshot;
+static int s_sb_snapshot_valid; /* 1 once uefi_secureboot_init captured the snapshot */
+
+/* Drift detection is sticky once observed; registry publication is
+ * tracked separately so a transient registry write failure on the
+ * first tick does not permanently suppress the sentinel. Codex
+ * adversarial 2026-05-01 H1 fix. */
+static int s_sb_drift_detected;
+static int s_sb_drift_published;
+static DEFINE_SPINLOCK(s_sb_lock);
+
+/* Tri-state byte read: returns 1 if `*out` was set from a definitive
+ * SUCCESS read, 0 if the variable was definitively NOT_FOUND, -1 if
+ * the read was indeterminate (UNSUPPORTED, transient firmware error,
+ * SUCCESS with wrong size, etc.). Codex re-adversarial 2026-05-01 H2
+ * fix: a -1 return must NOT be collapsed to "field is zero" by the
+ * caller -- that would let a transient firmware hiccup trigger a
+ * false drift event. */
+static int read_global_byte_status(const uint16_t *name, uint8_t *out)
+{
+    struct boot_uefi_guid global = EFI_GLOBAL_VARIABLE_GUID;
+    uint8_t val = 0;
+    uint64_t sz = sizeof(val);
+    uint32_t attrs = 0;
+
+    efi_status_t status = uefi_get_variable(&global, name, &attrs, &sz, &val);
+    if (status == UEFI_SUCCESS && sz == sizeof(val)) {
+        *out = val;
+        return 1;
+    }
+    if (status == UEFI_NOT_FOUND)
+        return 0;
+    return -1;
+}
+
+/* Tri-state existence check: returns 1 if the variable definitively
+ * exists with non-zero data, 0 if it definitively does NOT exist
+ * (UEFI_NOT_FOUND, or empty SUCCESS-with-sz=0 which the design
+ * Codex review 2026-04-28 M3 treats as not-enrolled), -1 if the
+ * result is indeterminate. Codex re-adversarial 2026-05-01 H2 fix:
+ * distinguish NOT_FOUND from a read failure so drift detection can
+ * not flip pk_present/kek_present from 1 to 0 on a transient
+ * hiccup. */
+static int global_var_exists_status(const uint16_t *name)
+{
+    struct boot_uefi_guid global = EFI_GLOBAL_VARIABLE_GUID;
+    uint64_t sz = 0;
+    uint32_t attrs = 0;
+
+    efi_status_t status = uefi_get_variable(
+        &global, name, &attrs, &sz, (void *)0);
+
+    if (status == UEFI_BUFFER_TOO_SMALL && sz > 0) return 1;
+    if (status == UEFI_SUCCESS && sz > 0)          return 1;
+    if (status == UEFI_NOT_FOUND)                  return 0;
+    if (status == UEFI_SUCCESS && sz == 0)         return 0;
+    return -1;
+}
+
+/* Read every SecureBoot UEFI variable into a local state vector.
+ * MUST be called WITHOUT s_sb_lock held -- uefi_get_variable()
+ * acquires the sleepable s_rt_mutex via rt_call_enter(), and a
+ * mutex must never be acquired under a spinlock with IRQs disabled
+ * (Codex adversarial 2026-05-01 C1). The s_rt_mutex itself
+ * serializes firmware calls. Returns 1 if EVERY tracked field was
+ * read with a definitive status (vector is fully authoritative), 0
+ * if any field's read was indeterminate (caller MUST skip drift
+ * comparison and legacy accessor updates -- Codex re-adversarial
+ * 2026-05-01 H2). */
+static int uefi_secureboot_read_locked_state(struct sb_state_vector *out)
+{
+    static const uint16_t sb_name[]  = { 'S','e','c','u','r','e','B','o','o','t', 0 };
+    static const uint16_t sm_name[]  = { 'S','e','t','u','p','M','o','d','e', 0 };
+    static const uint16_t dm_name[]  = { 'D','e','p','l','o','y','e','d','M','o','d','e', 0 };
+    static const uint16_t am_name[]  = { 'A','u','d','i','t','M','o','d','e', 0 };
+    static const uint16_t pk_name[]  = { 'P','K', 0 };
+    static const uint16_t kek_name[] = { 'K','E','K', 0 };
+
+    uint8_t b;
+    int s_sb, s_sm, s_dm, s_am, s_pk, s_kek;
+
+    out->sb_state_valid = 0;
+    out->sb_enabled     = 0;
+    out->setup_mode     = 0;
+    out->deployed_mode  = 0;
+    out->audit_mode     = 0;
+    out->pk_present     = 0;
+    out->kek_present    = 0;
+
+    s_sb = read_global_byte_status(sb_name, &b);
+    if (s_sb == 1) {
+        out->sb_enabled     = (b == 1) ? 1 : 0;
+        out->sb_state_valid = 1;
+    }
+
+    s_sm = read_global_byte_status(sm_name, &b);
+    if (s_sm == 1) out->setup_mode = (b == 1) ? 1 : 0;
+
+    s_dm = read_global_byte_status(dm_name, &b);
+    if (s_dm == 1) out->deployed_mode = (b == 1) ? 1 : 0;
+
+    s_am = read_global_byte_status(am_name, &b);
+    if (s_am == 1) out->audit_mode = (b == 1) ? 1 : 0;
+
+    s_pk = global_var_exists_status(pk_name);
+    if (s_pk >= 0) out->pk_present = s_pk;
+
+    s_kek = global_var_exists_status(kek_name);
+    if (s_kek >= 0) out->kek_present = s_kek;
+
+    /* Authoritative iff every tracked read was definitive. Any
+     * indeterminate read (-1) on any field disqualifies the vector
+     * from drift comparison and legacy accessor publication. */
+    if (s_sb < 0 || s_sm < 0 || s_dm < 0 || s_am < 0 ||
+        s_pk < 0 || s_kek < 0)
+        return 0;
+    return 1;
+}
+
+void uefi_secureboot_snapshot(void)
+{
+    uint64_t flags;
+    spin_lock_irqsave(&s_sb_lock, &flags);
+    s_sb_snapshot.sb_state_valid = s_sb_state_valid;
+    s_sb_snapshot.sb_enabled     = s_sb_enabled;
+    s_sb_snapshot.setup_mode     = s_sb_setup_mode;
+    s_sb_snapshot.deployed_mode  = s_sb_deployed_mode;
+    s_sb_snapshot.audit_mode     = s_sb_audit_mode;
+    s_sb_snapshot.pk_present     = s_sb_pk_present;
+    s_sb_snapshot.kek_present    = s_sb_kek_present;
+    s_sb_snapshot_valid          = 1;
+    spin_unlock_irqrestore(&s_sb_lock, flags);
+}
+
+/* Write HKLM\SYSTEM\SecureBoot\Drift = 1 to flag firmware tampering
+ * for monitoring tools. Returns 1 on success, 0 on failure -- the
+ * caller uses the result to decide whether to retry on the next
+ * tick (Codex adversarial 2026-05-01 H1: registry not yet ready
+ * when the first drift is observed must not permanently suppress
+ * the sentinel). */
+static int uefi_secureboot_publish_drift(void)
+{
+    HKEY hKey;
+    if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, "SYSTEM\\SecureBoot", 0,
+                       NULL, 0, KEY_WRITE, NULL, &hKey, NULL) != ERROR_SUCCESS)
+        return 0;
+    long err = RegSetDword(hKey, "Drift", 1);
+    RegCloseKey(hKey);
+    return err == ERROR_SUCCESS;
+}
+
+/* Read live UEFI state, compare against the boot snapshot, and
+ * emit + publish a drift signal on first observed mismatch. Returns
+ * 1 if drift was detected (this call OR any prior call -- the
+ * detection is sticky), 0 otherwise. Returns 0 also when runtime
+ * services are unavailable, the snapshot has not been captured, or
+ * either read was unauthoritative -- those cases are silent so a
+ * transient firmware hiccup does not raise a false alarm. */
+static int uefi_secureboot_do_revalidate(void)
+{
+    struct sb_state_vector live;
+    struct sb_state_vector snapshot_copy;
+    uint64_t flags;
+    int drifted_now = 0;
+    int drift_was_already_detected;
+    int needs_publish;
+    int published_ok = 0;
+    int live_authoritative;
+
+    if (!s_available)
+        return 0;
+
+    /* Read firmware state OUTSIDE s_sb_lock. uefi_get_variable
+     * acquires s_rt_mutex (sleepable) which must never run under a
+     * spinlock with IRQs disabled. */
+    live_authoritative = uefi_secureboot_read_locked_state(&live);
+
+    spin_lock_irqsave(&s_sb_lock, &flags);
+
+    if (!s_sb_snapshot_valid) {
+        spin_unlock_irqrestore(&s_sb_lock, flags);
+        return 0;
+    }
+
+    /* Publish live state to the legacy s_sb_* statics so
+     * uefi_secureboot_enabled() etc. observe post-resume values --
+     * but only when EVERY field was read with a definitive status
+     * AND the SecureBoot variable read succeeded (Codex
+     * re-adversarial 2026-05-01 H2: a transient firmware hiccup on
+     * any non-SecureBoot field must not overwrite the previously
+     * authoritative state). */
+    if (live_authoritative && live.sb_state_valid) {
+        s_sb_state_valid   = 1;
+        s_sb_enabled       = live.sb_enabled;
+        s_sb_setup_mode    = live.setup_mode;
+        s_sb_deployed_mode = live.deployed_mode;
+        s_sb_audit_mode    = live.audit_mode;
+        s_sb_pk_present    = live.pk_present;
+        s_sb_kek_present   = live.kek_present;
+    }
+
+    /* Boot snapshot was unauthoritative, live read had any
+     * indeterminate field, or the live SecureBoot read failed: no
+     * baseline / no comparable state -- skip the drift comparison.
+     * The sticky s_sb_drift_detected flag is returned unchanged so
+     * a real drift latched on a previous tick stays latched. */
+    if (!s_sb_snapshot.sb_state_valid || !live_authoritative ||
+        !live.sb_state_valid) {
+        int sticky = s_sb_drift_detected;
+        spin_unlock_irqrestore(&s_sb_lock, flags);
+        return sticky;
+    }
+
+    if (live.sb_enabled      != s_sb_snapshot.sb_enabled    ||
+        live.setup_mode      != s_sb_snapshot.setup_mode    ||
+        live.deployed_mode   != s_sb_snapshot.deployed_mode ||
+        live.audit_mode      != s_sb_snapshot.audit_mode    ||
+        live.pk_present      != s_sb_snapshot.pk_present    ||
+        live.kek_present     != s_sb_snapshot.kek_present) {
+        drifted_now = 1;
+    }
+
+    drift_was_already_detected = s_sb_drift_detected;
+    if (drifted_now)
+        s_sb_drift_detected = 1;
+
+    /* Retry registry publication on every call where drift is
+     * latched but the sentinel write has not yet been confirmed.
+     * Codex H1 fix 2026-05-01: prior version published only on the
+     * detection edge; if that one write failed (e.g. registry not
+     * yet ready) the sentinel was never retried. */
+    needs_publish = s_sb_drift_detected && !s_sb_drift_published;
+    snapshot_copy = s_sb_snapshot;
+
+    spin_unlock_irqrestore(&s_sb_lock, flags);
+
+    if (drifted_now && !drift_was_already_detected) {
+        klog(LOG_FATAL, "SecureBoot",
+             "DRIFT detected: boot snapshot SB=%u SM=%u DM=%u AM=%u PK=%u KEK=%u "
+             "vs live SB=%u SM=%u DM=%u AM=%u PK=%u KEK=%u "
+             "(firmware compromise, NVRAM corruption, or physical attack)",
+             (uint64_t)snapshot_copy.sb_enabled,
+             (uint64_t)snapshot_copy.setup_mode,
+             (uint64_t)snapshot_copy.deployed_mode,
+             (uint64_t)snapshot_copy.audit_mode,
+             (uint64_t)snapshot_copy.pk_present,
+             (uint64_t)snapshot_copy.kek_present,
+             (uint64_t)live.sb_enabled,
+             (uint64_t)live.setup_mode,
+             (uint64_t)live.deployed_mode,
+             (uint64_t)live.audit_mode,
+             (uint64_t)live.pk_present,
+             (uint64_t)live.kek_present);
+    }
+
+    if (needs_publish) {
+        published_ok = uefi_secureboot_publish_drift();
+        if (published_ok) {
+            spin_lock_irqsave(&s_sb_lock, &flags);
+            s_sb_drift_published = 1;
+            spin_unlock_irqrestore(&s_sb_lock, flags);
+        } else {
+            klog(LOG_WARN, "SecureBoot",
+                 "drift detected but registry publish failed; will retry next tick");
+        }
+    }
+
+    return s_sb_drift_detected;
+}
+
+int uefi_secureboot_revalidate_tick(void)
+{
+    return uefi_secureboot_do_revalidate();
+}
+
+int uefi_secureboot_refresh(void)
+{
+    return uefi_secureboot_do_revalidate();
+}
+
+int uefi_secureboot_drift_detected(void)
+{
+    return s_sb_drift_detected;
+}
 
 /* Surface QueryVariableInfo() results to HKLM\SYSTEM\SecureBoot\Vars
  * so post-boot tools can see the firmware variable storage quota
