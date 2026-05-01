@@ -2522,9 +2522,17 @@ static void parse_boot_conf(void)
     }
 
     /* Split-path fallback only -- no UKI invocation detected. Open
-     * filesystem from boot device (scoped to boot volume).
-     * Fall back to LocateProtocol if device handle is absent or lacks
-     * SimpleFS -- same pattern as load_kernel(). */
+     * filesystem from boot device (scoped to boot volume).  When the
+     * boot DeviceHandle is absent or lacks SimpleFS, do NOT silently
+     * call LocateProtocol -- it returns the first SimpleFS firmware
+     * enumerates, which on multi-disk systems may not be the boot
+     * volume and could let an arbitrary ESP provide boot.conf
+     * (defeating the trust boundary the fallback kernel-search path
+     * established).  Skip the parse instead and keep boot_config
+     * defaults already populated by boot_config_defaults(); a
+     * degraded boot device still boots because the kernel-search
+     * fallback chain separately locates kernel.exe with explicit
+     * per-volume diagnostics. */
     post_code16(POST16_BL_BOOT_FS);
     fs = (EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *)0;
     if (g_boot_device_handle) {
@@ -2533,12 +2541,16 @@ static void parse_boot_conf(void)
         if (!EFI_ERROR(status)) {
             serial_early_print("[BOOT] Using boot device filesystem\n");
         } else {
-            serial_early_print("[WARN] Boot device has no filesystem, "
-                               "using fallback\n");
-            status = gBS->LocateProtocol(&fs_guid, (VOID *)0, (VOID **)&fs);
+            serial_early_print("[WARN] Boot device has no SimpleFS for "
+                               "boot.conf -- skipping parse, using "
+                               "boot_config defaults\n");
+            return;
         }
     } else {
-        status = gBS->LocateProtocol(&fs_guid, (VOID *)0, (VOID **)&fs);
+        serial_early_print("[WARN] No boot device handle for boot.conf "
+                           "-- skipping parse, using boot_config "
+                           "defaults\n");
+        return;
     }
     if (EFI_ERROR(status)) {
         serial_early_print("[BOOT] boot.conf - no filesystem\n");
