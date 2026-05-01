@@ -239,7 +239,7 @@ GOP operations can hang on broken firmware. This section adds error recovery aro
 > - Canonical doc: this section + TODO-02 §4 (single-GOP negotiation) + TODO-27 §4 (multi-GOP) + UEFI 2.10 section 12.9 GOP protocol.
 > - Scope boundary: §5 owns timeout + degrade paths (Mode/Info NULL, format reject, dim overflow, FB size mismatch, FrameBufferBase=0 retry). TODO-02 §4 owns mode negotiation/scoring. TODO-27 §4 owns multi-handle enumeration.
 
-> **Verified:** 2026-05-01 | commit `<pending>` | 4/4 items | build OK | smoke PASS (KVM 2.26s). 4 original deliverables + Mode/Info NULL guards + pixel-format gate confirmed at file:line. 2026-04-11 verification retained.
+> **Verified:** 2026-05-01 | commit `36046e12` | 4/4 items | build OK | smoke PASS (KVM 2.26s). 4 original deliverables + Mode/Info NULL guards + pixel-format gate confirmed at file:line. 2026-04-11 verification retained.
 > **Quality reviewed:** 2026-05-01 | Codex 4x (adversarial + consistency + perf + re-adversarial) | 2H+1H fixed (Mode-NULL guard before enumeration, unsupported pixel-format headless-degrade, Info-NULL guard before pixel-format dereference) | scope: boot-code-quality
 
 ---
