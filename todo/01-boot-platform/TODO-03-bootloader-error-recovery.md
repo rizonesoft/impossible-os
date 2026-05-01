@@ -262,8 +262,15 @@ If firmware reports more memory regions than `BOOT_MMAP_MAX_ENTRIES` (currently 
 
 > **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | mmap_truncated flag asserted via test_boot_info; cap 512 entries on QEMU clean boot
 
-> **Verified:** 2026-04-11 -- all 5 items confirmed. BOOT_MMAP_MAX_ENTRIES=512 in both structs, total_descs comparison, truncation warning, mmap_truncated flag, PMM warns on boot. Loop guard prevents overrun. Accepted: none.
-> **Quality reviewed:** 2026-04-11 -- no findings. 512-entry cap covers known hardware (worst case ~400 on enterprise servers). Linux/Windows/GRUB use dynamic allocation; our fixed array is a deliberate simplicity trade-off -- no heap needed before ExitBootServices. Truncation flag ensures kernel knows if entries were lost. Accepted: none.
+> **Notes:**
+> - What shipped: BOOT_MMAP_MAX_ENTRIES=512 cap on both kernel + bootloader mmap arrays + mmap_truncated u8 flag in boot_info; raw UEFI overflow check at fill time; NEW (2026-05-01) normalize-output overflow detection sets the same flag.
+> - How it integrates: bootloader fills boot_info.mmap[] from gBS->GetMemoryMap output; cap-overflow logs `[WARN]` and sets mmap_truncated; mmap_normalize() runs §17 sweep-line carving and now also flags truncation if its emit hits the cap; kernel pmm.c reads mmap_truncated at init and emits klog warning showing entries-of-cap.
+> - Downstream effects: PMM warning fires on EITHER raw firmware overflow OR normalize-output expansion past cap; previously the latter silently dropped tail segments (potential RuntimeServices loss) and only set mmap_quirks. Both warnings emit independently on combined overflow.
+> - Canonical doc: this section + §17 (mmap normalize) + UEFI 2.10 section 7.2 (memory map services).
+> - Scope boundary: §6 owns cap + truncation signaling (raw + normalize). §17 owns sweep-line overlap resolution. §12 owns descriptor field validation (zero-length, type bounds).
+
+> **Verified:** 2026-05-01 | commit `<pending>` | 5/5 items | build OK | smoke PASS (KVM 2.28s). 5 original items + normalize-overflow flag-setting + warn-once guard confirmed at file:line. 2026-04-11 verification retained.
+> **Quality reviewed:** 2026-05-01 | Codex 3x (adversarial + consistency + perf) | 2M fixed (normalize-output overflow now sets mmap_truncated; warn-once guard is normalize-local instead of keying on the shared flag); re-adversarial skipped (~25 LOC, no lifecycle/state-machine) | scope: boot-code-quality
 
 ---
 

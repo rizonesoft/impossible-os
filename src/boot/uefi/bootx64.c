@@ -4545,6 +4545,12 @@ static void mmap_normalize(struct boot_mmap_entry *arr, UINT32 *count,
     UINT32 i;
     UINT64 prev_addr = 0;
     int prev_valid = 0;
+    /* Local log-once guard for the normalize-overflow [WARN].
+     * Distinct from g_boot_info_ptr->mmap_truncated so the normalize
+     * warning still fires when the raw-UEFI-overflow path already set
+     * the flag.  Both producers must be visible on combined raw +
+     * normalize overflows for diagnostic completeness. */
+    int normalize_overflow_logged = 0;
 
     if (n < 2) return;
     if (n > MMAP_NORMALIZE_MAX) n = MMAP_NORMALIZE_MAX;
@@ -4590,6 +4596,23 @@ static void mmap_normalize(struct boot_mmap_entry *arr, UINT32 *count,
             if (!mmap_emit_segment(arr, &out_count, max_entries,
                                     prev_addr, curr_addr, win_type,
                                     win_simple, win_attr)) {
+                /* Sweep-line emitter dropped a normalized segment
+                 * because BOOT_MMAP_MAX_ENTRIES was reached.  This is
+                 * a kernel-visible truncation -- raw UEFI descriptor
+                 * count <= 512 can still expand past 512 after
+                 * overlap carving.  Set mmap_truncated so the PMM
+                 * init warning at pmm.c fires; mmap_quirks captures
+                 * the same condition for diagnostic traces.  Use a
+                 * normalize-local log-once guard distinct from
+                 * mmap_truncated so the warning fires even when the
+                 * raw-overflow path already set the flag. */
+                if (!normalize_overflow_logged) {
+                    serial_early_print("[WARN] Memory map normalize "
+                                       "exceeds 512 entries -- "
+                                       "truncating tail\n");
+                    normalize_overflow_logged = 1;
+                }
+                g_boot_info_ptr->mmap_truncated = 1;
                 g_boot_info_ptr->mmap_quirks = 1;
             }
         }
