@@ -363,7 +363,7 @@ Replace all `for (;;) hlt;` loops with a visible error screen rendered using the
 > - Canonical doc: this section + §13 (boot error code registry) + §14 (QR code) + §18 (graphical BSOD) + UEFI 2.10 EFI_RESET_TYPE.
 > - Scope boundary: §9 owns the fatal-render contract + boot_fatal API. §13 owns NVRAM error-code persistence. §14 owns QR encoding. §18 owns the graphical BSOD layout.
 
-> **Verified:** 2026-05-01 | commit `<pending>` | 7/7 items | build OK | smoke PASS (KVM 2.29s). 7 original items + UINT32-width fatal-code display + EFI_RESET_COLD constant + GetTime throttle confirmed at file:line. 2026-04-11 verification retained.
+> **Verified:** 2026-05-01 | commit `7a4980eb` | 7/7 items | build OK | smoke PASS (KVM 2.29s). 7 original items + UINT32-width fatal-code display + EFI_RESET_COLD constant + GetTime throttle confirmed at file:line. 2026-04-11 verification retained.
 > **Quality reviewed:** 2026-05-01 | Codex 4x (adversarial + consistency + perf + re-adversarial) | 1M+1M+1L fixed (UINT32-width fatal code display matches contract, EFI_RESET_COLD define added to bootloader efi.h replacing raw literal, post-EBS GetTime polling throttled via TSC-spin to ~10/sec). Round-2 re-adversarial converged with zero new findings | scope: boot-code-quality
 
 ---
