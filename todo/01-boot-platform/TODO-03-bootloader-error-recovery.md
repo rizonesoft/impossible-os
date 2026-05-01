@@ -300,7 +300,7 @@ Malformed boot.conf should produce warnings, not silent misbehavior.
 > - Canonical doc: this section + 2026-04-21 boot.conf incident fix + UEFI 2.10 EFI_FILE_PROTOCOL.Read contract.
 > - Scope boundary: §7 owns the parser + filesystem-resolution policy. §13 owns NVRAM error-code persistence (boot_fatal carries BOOT_ERR_CONF_INVALID on hard cap overflow).
 
-> **Verified:** 2026-05-01 | commit `<pending>` | 7/7 items | build OK | smoke PASS (KVM 2.49s). Dynamic buffer + 1 MiB cap + unknown-key WARN + config_version + range-clamp-to-default + short-read rejection + degraded-boot-device skip all confirmed at file:line. 2026-04-11 verification retained.
+> **Verified:** 2026-05-01 | commit `a6b98e5e` | 7/7 items | build OK | smoke PASS (KVM 2.49s). Dynamic buffer + 1 MiB cap + unknown-key WARN + config_version + range-clamp-to-default + short-read rejection + degraded-boot-device skip all confirmed at file:line. 2026-04-11 verification retained.
 > **Quality reviewed:** 2026-05-01 | Codex 3x (adversarial + consistency + perf) | 1H+1M fixed (short-read rejection prevents silent prefix-parse; out-of-range bool clamp to safe default 0 instead of max 1); re-adversarial skipped (~30 LOC, no lifecycle/state-machine) | scope: boot-code-quality
 
 ---
