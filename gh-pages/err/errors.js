@@ -4,7 +4,6 @@ const BOOT_ERROR_PAGES = {
         title: 'No fatal boot error was recorded',
         summary: 'The bootloader error registry does not currently contain a failure for this boot. This route mainly exists so the QR and recovery flow always have a stable home.',
         stage: 'Registry state',
-        section: 'TODO-02 Section 13',
         screen: 'No bootloader failure screen should be present for this code.',
         checks: [
             'If you arrived here from a QR code, confirm the scanned code really shows 0000.',
@@ -22,7 +21,6 @@ const BOOT_ERROR_PAGES = {
         title: 'Kernel image failed ELF validation',
         summary: 'The bootloader rejected kernel.exe because its ELF headers or loadable segments were malformed, out of bounds, oversized, or overlapping protected boot memory.',
         stage: 'Kernel image validation',
-        section: 'TODO-02 Section 1',
         screen: 'Look for a message like "Kernel ELF corrupt" on serial or the boot error screen.',
         checks: [
             'Confirm kernel.exe was copied completely to the EFI System Partition.',
@@ -40,7 +38,6 @@ const BOOT_ERROR_PAGES = {
         title: 'UEFI could not complete ExitBootServices',
         summary: 'Firmware kept changing the memory map or otherwise refused the handoff from Boot Services to the kernel, even after the bootloader retried with a fresh map key.',
         stage: 'UEFI handoff',
-        section: 'TODO-02 Section 2',
         screen: 'Serial usually shows repeated ExitBootServices retries followed by a critical failure.',
         checks: [
             'Disconnect unnecessary USB devices, docks, and removable media.',
@@ -58,7 +55,6 @@ const BOOT_ERROR_PAGES = {
         title: 'kernel.exe was not found on the boot volume',
         summary: 'The bootloader searched its supported kernel paths and could not locate a bootable kernel image on the EFI System Partition.',
         stage: 'Kernel discovery',
-        section: 'TODO-02 Section 3',
         screen: 'The error screen or serial log should mention "Kernel load failed" or "Kernel not found."',
         checks: [
             'Verify one of these paths exists: \\boot\\kernel.exe, \\kernel.exe, or \\EFI\\ImpossibleOS\\kernel.exe.',
@@ -76,7 +72,6 @@ const BOOT_ERROR_PAGES = {
         title: 'No usable serial port was detected',
         summary: 'The bootloader could not find a working serial console through SPCR or the COM1/COM2 probe path. On many systems this is non-fatal, but the registry keeps the code reserved for serial-detection failures.',
         stage: 'Early diagnostics',
-        section: 'TODO-02 Sections 4 and 10',
         screen: 'The system may still continue without serial output, so on-screen diagnostics matter more than serial for this code.',
         checks: [
             'If you expected serial logs, confirm the platform actually exposes a UART.',
@@ -94,7 +89,6 @@ const BOOT_ERROR_PAGES = {
         title: 'No usable GOP framebuffer was available',
         summary: 'Firmware did not provide a Graphics Output Protocol mode the bootloader could use. The boot path can fall back to headless operation, but the error code remains documented because the graphical error screen depends on GOP.',
         stage: 'Display bring-up',
-        section: 'TODO-02 Section 5',
         screen: 'On affected systems the QR or graphical screen may be missing because no framebuffer was available.',
         checks: [
             'Confirm UEFI boot is enabled and legacy VGA or CSM modes are disabled.',
@@ -112,7 +106,6 @@ const BOOT_ERROR_PAGES = {
         title: 'The firmware memory map exceeded the bootloader budget',
         summary: 'Firmware reported more memory descriptors than the bootloader could safely preserve in the boot_info handoff. The registry reserves this code for overflow-driven boot failures.',
         stage: 'Memory map capture',
-        section: 'TODO-02 Section 6',
         screen: 'Serial may mention that the memory map was larger than the supported entry cap.',
         checks: [
             'Reboot after unplugging extra PCIe, USB, or Thunderbolt devices that can inflate firmware mappings.',
@@ -130,7 +123,6 @@ const BOOT_ERROR_PAGES = {
         title: 'boot.conf contained invalid values',
         summary: 'The boot configuration file contained malformed or out-of-range settings severe enough to stop boot or invalidate the requested boot path.',
         stage: 'Configuration parsing',
-        section: 'TODO-02 Section 7',
         screen: 'Serial warnings normally identify the offending key before the loader stops.',
         checks: [
             'Inspect boot.conf for unknown keys, invalid booleans, or impossible numeric ranges.',
@@ -148,7 +140,6 @@ const BOOT_ERROR_PAGES = {
         title: 'The bootloader could not allocate the kernel buffer',
         summary: 'All kernel buffer allocation sizes failed, which usually means the firmware memory map was too fragmented or a conflicting reservation blocked the candidate ranges.',
         stage: 'Kernel staging buffer allocation',
-        section: 'TODO-02 Section 8',
         screen: 'The serial log should mention that 32, 16, and 8 MiB allocation attempts all failed.',
         checks: [
             'Power cycle the machine to clear firmware-side fragmentation.',
@@ -166,7 +157,6 @@ const BOOT_ERROR_PAGES = {
         title: 'Firmware reported invalid memory map geometry',
         summary: 'The memory map descriptor size, count, or byte geometry was internally inconsistent, making the map unsafe to parse or copy into boot_info.',
         stage: 'Memory map validation',
-        section: 'TODO-02 Section 12',
         screen: 'Serial usually reports "Memory map geometry invalid" before the bootloader halts.',
         checks: [
             'Update the machine firmware or UEFI implementation if possible.',
@@ -184,7 +174,6 @@ const BOOT_ERROR_PAGES = {
         title: 'GetMemoryMap failed before the UEFI handoff',
         summary: 'UEFI returned an error when the bootloader asked for the current memory map, so the loader could not build a trustworthy handoff for the kernel.',
         stage: 'Memory map retrieval',
-        section: 'TODO-02 Sections 2 and 12',
         screen: 'The boot error screen or serial output should explicitly mention GetMemoryMap failure.',
         checks: [
             'Retry after removing extra boot devices and USB peripherals.',
@@ -202,7 +191,6 @@ const BOOT_ERROR_PAGES = {
         title: 'UEFI watchdog reset the machine during boot',
         summary: 'The bootloader took too long in a pre-kernel stage and firmware reset the system through the UEFI watchdog safety timer.',
         stage: 'Pre-kernel timeout',
-        section: 'TODO-02 Section 11',
         screen: 'You may not see a persistent error screen because firmware can reset the machine automatically when the timer expires.',
         checks: [
             'Look for repeated short boot loops that end before the kernel starts.',
@@ -220,7 +208,6 @@ const BOOT_ERROR_PAGES = {
         title: 'GetMemoryMap failed during ExitBootServices retry',
         summary: 'The bootloader entered its ExitBootServices retry path but could not retrieve a fresh memory map for a later attempt, leaving no safe way to continue the handoff.',
         stage: 'UEFI handoff retry',
-        section: 'TODO-02 Section 2',
         screen: 'Serial should show ExitBootServices retry activity followed by GetMemoryMap failure on a retry attempt.',
         checks: [
             'Treat this like a firmware instability bug first: unplug hot-plug style devices and retry.',
@@ -238,7 +225,6 @@ const BOOT_ERROR_PAGES = {
         title: 'The boot_info handoff range was already reserved',
         summary: 'Firmware or another early allocation already owned the physical pages reserved for boot_info, so the loader stopped instead of corrupting the kernel handoff block.',
         stage: 'boot_info reservation',
-        section: 'TODO-02 Section 16',
         screen: 'The serial log should mention that the boot_info range was already owned by firmware.',
         checks: [
             'Verify BOOTX64.EFI and kernel.exe were built together after the latest boot_info changes.',
@@ -249,6 +235,108 @@ const BOOT_ERROR_PAGES = {
             'Rebuild the project and refresh the EFI boot files together.',
             'Power cycle and retry once to clear transient firmware allocations.',
             'If the failure persists, report the platform, firmware version, and whether another boot manager is involved.'
+        ]
+    },
+    '000e': {
+        symbol: 'BOOT_ERR_ESP_TYPE_GUID',
+        title: 'EFI System Partition has the wrong GPT partition type',
+        summary: 'The boot drive\'s ESP did not carry the canonical EFI System Partition GUID (C12A7328-F81F-11D2-BA4B-00A0C93EC93B), so the loader refused to trust it as the boot volume.',
+        stage: 'ESP integrity check',
+        screen: 'The serial log identifies the partition that failed the type-GUID check.',
+        checks: [
+            'Confirm the boot drive uses GPT (not MBR) with a properly typed ESP.',
+            'Verify the ESP GUID with a partition tool (gdisk, parted, diskpart).',
+            'Make sure the firmware is booting from the intended drive, not a recovery volume with a different layout.'
+        ],
+        recovery: [
+            'Recreate the ESP with the correct EFI System Partition type GUID.',
+            'Reflash or restore the boot drive image if it was produced by a tool that wrote the wrong partition type.',
+            'If the platform supports it, switch firmware to UEFI mode (not legacy/CSM).'
+        ]
+    },
+    '000f': {
+        symbol: 'BOOT_ERR_ESP_BPB',
+        title: 'EFI System Partition FAT BPB sanity check failed',
+        summary: 'The FAT BIOS Parameter Block on the ESP did not pass basic sanity checks (signature, sector size, cluster count), so the loader refused to read kernel.exe from a possibly corrupt filesystem.',
+        stage: 'ESP integrity check',
+        screen: 'The serial log shows which BPB field tripped the sanity check.',
+        checks: [
+            'Run a filesystem repair on the ESP from a working OS (chkdsk, fsck.vfat).',
+            'Confirm the ESP was formatted as FAT32 with standard parameters.',
+            'Try booting the same image on another machine to rule out drive-level corruption.'
+        ],
+        recovery: [
+            'Reformat the ESP as FAT32 and copy the boot files back from a known-good source.',
+            'If the drive is failing, replace it before recreating the ESP.',
+            'Report the BPB field that failed when filing an issue.'
+        ]
+    },
+    '0010': {
+        symbol: 'BOOT_ERR_ESP_MISSING_FILES',
+        title: 'Required boot files are missing from the EFI System Partition',
+        summary: 'The loader checked for the canonical Impossible OS boot files on the ESP and at least one was absent, so it stopped instead of half-booting an incomplete install.',
+        stage: 'ESP integrity check',
+        screen: 'The serial log lists the file that was expected but not found.',
+        checks: [
+            'Mount the ESP from a working OS and verify \\EFI\\BOOT\\BOOTX64.EFI and \\boot\\kernel.exe exist.',
+            'Confirm the install/copy step that should have placed those files actually completed.',
+            'If using a custom layout, make sure the firmware boot entry points at the file you copied.'
+        ],
+        recovery: [
+            'Copy the missing files to the ESP from a known-good build.',
+            'Rerun the install step that produces the boot files.',
+            'If using A/B slots, verify the active slot still has its files intact.'
+        ]
+    },
+    '0011': {
+        symbol: 'BOOT_ERR_ROLLBACK_REFUSE',
+        title: 'Anti-rollback refused to boot an older firmware/kernel',
+        summary: 'The bootloader\'s anti-rollback policy compared the candidate slot\'s shipped version with the platform\'s required floor and refused to load an image older than the floor allowed.',
+        stage: 'A/B slot rollback gate',
+        screen: 'The serial log shows the shipped version and the required floor.',
+        checks: [
+            'Verify which slot is being booted (firmware boot order vs. \\boot\\bootmgr indicator).',
+            'Confirm whether you intentionally tried to roll back to an older slot.',
+            'Check whether a forced-rollback override is required for this recovery action.'
+        ],
+        recovery: [
+            'Boot the newer slot (active or fallback) instead of the rolled-back one.',
+            'If a deliberate downgrade is required, follow the documented forced-rollback procedure.',
+            'If the floor itself is wrong, restore an authoritative copy of the rollback policy variable.'
+        ]
+    },
+    '0012': {
+        symbol: 'BOOT_ERR_UKI_PAYLOAD',
+        title: 'UKI signed-payload copy or allocate failed',
+        summary: 'While unpacking a Unified Kernel Image, the loader could not allocate or copy the signed payload section into a measured-and-mapped buffer, so the boot was aborted before the kernel was launched.',
+        stage: 'UKI extraction',
+        screen: 'The serial log shows which UKI section failed and the EFI status code.',
+        checks: [
+            'Confirm the UKI on disk is not truncated (compare expected vs. actual file size).',
+            'Verify the firmware advertises enough free EfiLoaderData/EfiLoaderCode pages.',
+            'Try booting on another machine to rule out platform memory-pressure quirks.'
+        ],
+        recovery: [
+            'Reflash the UKI from a known-good build.',
+            'Free up firmware-side variable storage if the platform exposes that as a contributing factor.',
+            'Switch to a non-UKI boot path temporarily if your build supports it.'
+        ]
+    },
+    '0013': {
+        symbol: 'BOOT_ERR_UKI_DISK_OVERRIDE',
+        title: 'UKI on-disk content disagreed with the trust policy',
+        summary: 'The on-disk UKI carried a payload that the configured trust policy refused (signature mismatch, missing PCR pin, or override that was not whitelisted), so the loader stopped instead of measuring an untrusted image.',
+        stage: 'UKI trust policy',
+        screen: 'The serial log shows which trust check rejected the UKI.',
+        checks: [
+            'Compare the UKI signature/PCR digest against the value the platform was sealed to.',
+            'Check whether the policy file (boot.conf or NVRAM-stored override) was updated incorrectly.',
+            'Verify the platform\'s Secure Boot keys still trust the signing chain that produced the UKI.'
+        ],
+        recovery: [
+            'Reflash the UKI from a build signed by the trusted chain.',
+            'If the trust policy itself was changed by mistake, restore an authoritative copy.',
+            'Re-seal the platform to the new measurements only after auditing the change.'
         ]
     }
 };
@@ -345,10 +433,6 @@ function buildErrorPage(code, entry) {
                 <article class="meta-card">
                     <span class="label">Boot stage</span>
                     <strong>${escapeHtml(entry.stage)}</strong>
-                </article>
-                <article class="meta-card">
-                    <span class="label">Registry source</span>
-                    <strong>${escapeHtml(entry.section)}</strong>
                 </article>
                 <article class="meta-card">
                     <span class="label">What to look for</span>

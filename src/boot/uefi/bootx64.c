@@ -689,12 +689,19 @@ static void nvram_write_boot_error(UINT32 code)
     }
 }
 
+/* BootError values must be a known BOOT_ERR_* code from efi.h.  Reject
+ * anything else as untrusted input (a pre-OS UEFI app can write under
+ * the public Impossible OS GUID).  Keep this in sync with the registry
+ * in efi.h: highest currently-defined code is BOOT_ERR_UKI_DISK_OVERRIDE
+ * (0x0013).  Codex adv M2 2026-05-02. */
+#define BOOT_ERR_REGISTRY_MAX 0x0013
+
 static UINT32 nvram_read_boot_error(void)
 {
     if (!gST || !gST->RuntimeServices)
         return 0;
     EFI_RUNTIME_SERVICES *rt = gST->RuntimeServices;
-    if (!rt->GetVariable)
+    if (!rt->GetVariable || !rt->SetVariable)
         return 0;
     UINT32 code = 0;
     UINTN size = sizeof(code);
@@ -702,8 +709,65 @@ static UINT32 nvram_read_boot_error(void)
     EFI_STATUS s = rt->GetVariable(
         g_boot_error_var, &g_impossible_os_guid,
         &attrs, &size, &code);
-    if (EFI_ERROR(s) || size != sizeof(code))
+
+    /* Per UEFI 2.10 7.2.1, GetVariable populates DataSize and
+     * Attributes on success AND on EFI_BUFFER_TOO_SMALL.  Any record
+     * found (size != 4, oversized, or undersized) under our public
+     * GUID came from a pre-OS app, not the writer side -- canonicalize
+     * it via the delete-then-create repair so the writer-side
+     * SetVariable does not later trip EFI_INVALID_PARAMETER on attr
+     * change (Codex re-adversarial rounds 1-3 2026-05-02).  Only
+     * absent-or-no-perms errors (NOT_FOUND, security violation, etc.)
+     * mean "no previous boot error". */
+    int malformed = 0;
+    if (s == EFI_BUFFER_TOO_SMALL) {
+        malformed = 1;
+    } else if (EFI_ERROR(s)) {
         return 0;
+    } else if (size != sizeof(code)) {
+        malformed = 1;
+    }
+
+    /* Treat any value the writer-side contract would not have produced
+     * as untrusted: attrs must be exactly NV|BS|RT, and the value must
+     * be inside the BOOT_ERR_* registry.  Malformed entries are
+     * overwritten with the writer's canonical attrs+0 so the kernel's
+     * later clear path sees a well-formed record. */
+    const UINT32 expected_attrs = EFI_VARIABLE_NON_VOLATILE |
+                                  EFI_VARIABLE_BOOTSERVICE_ACCESS |
+                                  EFI_VARIABLE_RUNTIME_ACCESS;
+    if (malformed || attrs != expected_attrs || code > BOOT_ERR_REGISTRY_MAX) {
+        serial_early_print("[WARN] NVRAM: BootError untrusted "
+                           "(attrs/value mismatch); repairing\n");
+        /* UEFI 2.10 7.2.1: SetVariable cannot change attributes on an
+         * existing variable -- it returns EFI_INVALID_PARAMETER.  To
+         * promote a poisoned BootError back to the canonical NV|BS|RT
+         * shape we must delete-then-create: SetVariable with size=0 and
+         * the variable's CURRENT attrs deletes it, after which a fresh
+         * SetVariable with canonical attrs and value=0 establishes the
+         * well-formed record the kernel-side clear path expects.
+         * Codex re-adversarial M1 2026-05-02. */
+        EFI_STATUS d = rt->SetVariable(g_boot_error_var,
+                                       &g_impossible_os_guid,
+                                       attrs, 0, (void *)0);
+        if (EFI_ERROR(d)) {
+            serial_early_print("[WARN] NVRAM: BootError repair delete "
+                               "failed; persistence channel poisoned "
+                               "until manual NVRAM cleanup\n");
+            return 0;
+        }
+        UINT32 zero = 0;
+        EFI_STATUS w = rt->SetVariable(g_boot_error_var,
+                                       &g_impossible_os_guid,
+                                       expected_attrs, sizeof(zero),
+                                       &zero);
+        if (EFI_ERROR(w)) {
+            serial_early_print("[WARN] NVRAM: BootError repair "
+                               "recreate failed; channel cleared but "
+                               "next fatal write may also fail\n");
+        }
+        return 0;
+    }
     return code;
 }
 
@@ -1040,10 +1104,19 @@ static void qr_render_error_url(UINT32 err_code)
     int i;
 
     for (i = 0; prefix[i]; i++) url[i] = prefix[i];
+    /* Full 8 hex digits to match the UINT32 boot_fatal/NVRAM/boot_info
+     * contract; the serial+text ConOut paths print 8.  Recovery URL
+     * width must follow or the QR scan lands on a 4-hex page that
+     * disagrees with what the operator read off serial.  Codex cons M1
+     * 2026-05-02. */
+    url[i++] = hex_chars[(err_code >> 28) & 0xF];
+    url[i++] = hex_chars[(err_code >> 24) & 0xF];
+    url[i++] = hex_chars[(err_code >> 20) & 0xF];
+    url[i++] = hex_chars[(err_code >> 16) & 0xF];
     url[i++] = hex_chars[(err_code >> 12) & 0xF];
-    url[i++] = hex_chars[(err_code >> 8) & 0xF];
-    url[i++] = hex_chars[(err_code >> 4) & 0xF];
-    url[i++] = hex_chars[err_code & 0xF];
+    url[i++] = hex_chars[(err_code >>  8) & 0xF];
+    url[i++] = hex_chars[(err_code >>  4) & 0xF];
+    url[i++] = hex_chars[ err_code        & 0xF];
     url[i] = '\0';
 
     UINT8 data_cw[QR_DATA_CW];
@@ -1383,6 +1456,12 @@ static void bsod_render_graphical(UINT32 err_code, const char *title,
         err_buf[i++] = 'C'; err_buf[i++] = 'o'; err_buf[i++] = 'd';
         err_buf[i++] = 'e'; err_buf[i++] = ' ';
         err_buf[i++] = '0'; err_buf[i++] = 'x';
+        /* 8 hex digits -- UINT32 contract; matches serial + ConOut
+         * fatal lines (Codex cons M1 2026-05-02). */
+        err_buf[i++] = hex[(err_code >> 28) & 0xF];
+        err_buf[i++] = hex[(err_code >> 24) & 0xF];
+        err_buf[i++] = hex[(err_code >> 20) & 0xF];
+        err_buf[i++] = hex[(err_code >> 16) & 0xF];
         err_buf[i++] = hex[(err_code >> 12) & 0xF];
         err_buf[i++] = hex[(err_code >>  8) & 0xF];
         err_buf[i++] = hex[(err_code >>  4) & 0xF];
@@ -1445,6 +1524,11 @@ static void bsod_render_graphical(UINT32 err_code, const char *title,
         UINT32 url_x, url_y;
 
         for (k = 0; prefix[k]; k++) url[k] = prefix[k];
+        /* 8 hex digits -- UINT32 contract (Codex cons M1 2026-05-02). */
+        url[k++] = hex[(err_code >> 28) & 0xF];
+        url[k++] = hex[(err_code >> 24) & 0xF];
+        url[k++] = hex[(err_code >> 20) & 0xF];
+        url[k++] = hex[(err_code >> 16) & 0xF];
         url[k++] = hex[(err_code >> 12) & 0xF];
         url[k++] = hex[(err_code >>  8) & 0xF];
         url[k++] = hex[(err_code >>  4) & 0xF];
@@ -1616,14 +1700,16 @@ static __attribute__((noreturn)) void boot_fatal(UINT32 err_code,
                                                   const char *title,
                                                   const char *detail)
 {
-    /* 0. Persist error code in NVRAM for next-boot diagnostics (S13) */
-    nvram_write_boot_error(err_code);
-
-    /* 1. Log to serial (full 8-hex-digit error code matches the
+    /* 1. Log to serial FIRST (full 8-hex-digit error code matches the
      * UINT32 contract on boot_fatal/nvram_write_boot_error/
      * boot_info.last_boot_error -- truncating to 16 bits diverged
      * the displayed code from the persisted code, see Codex M1
-     * consistency 2026-05-01). */
+     * consistency 2026-05-01).
+     *
+     * Serial precedes the NVRAM write so a slow / wedged firmware
+     * SetVariable cannot block the only synchronous diagnostic the
+     * operator has during a boot-services-era fatal (Codex adv M1 /
+     * perf H1 2026-05-02). */
     serial_early_print("[CRIT] BOOT FATAL (0x");
     serial_early_print_hex16((UINT16)(err_code >> 16));
     serial_early_print_hex16((UINT16)err_code);
@@ -1635,6 +1721,11 @@ static __attribute__((noreturn)) void boot_fatal(UINT32 err_code,
         serial_early_print(detail);
         serial_early_print("\n");
     }
+
+    /* 1b. Persist error code in NVRAM for next-boot diagnostics (S13).
+     * Runs after serial so a slow/wedged SetVariable cannot starve
+     * the operator's only fatal-path diagnostic. */
+    nvram_write_boot_error(err_code);
 
     /* 2. Display on UEFI console if available and Boot Services are intact.
      * Skip ConOut if we're inside the EBS retry loop -- Boot Services

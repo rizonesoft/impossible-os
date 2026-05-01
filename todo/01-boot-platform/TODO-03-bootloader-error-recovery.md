@@ -471,20 +471,26 @@ Windows has BootStatusPolicy but error codes are opaque hex values without conte
 > **Competitive advantage:** Neither Windows nor Linux persists structured bootloader error codes in NVRAM. The next boot can display "Last boot failed: 0x0003 -- Kernel not found at \boot\kernel.exe" before trying again. Combined with TODO-21 A/B rollback and TODO-14 §6 panic forensics, this gives a complete cross-boot diagnostic chain.
 > **Regression risk:** LOW -- NVRAM writes are non-destructive (single variable). If NVRAM is full or read-only, write silently fails and boot continues.
 
-- [x] Define `BOOT_ERR_*` codes as `#define` constants in `efi.h` (13 codes: 0x0000-0x000C covering §1-§12 failure modes)
-- [x] On fatal error: `boot_fatal()` writes error code to UEFI NVRAM variable `BootError` (Impossible OS vendor GUID, non-volatile + boot-service-access + runtime-access) via `nvram_write_boot_error()` helper
+- [x] Define `BOOT_ERR_*` codes as `#define` constants in `efi.h` (20 codes 0x0000-0x0013 today: §1-§12 base failures plus §11 UKI/rollback and §15 ESP integrity adds; ceiling tracked by `BOOT_ERR_REGISTRY_MAX` in `bootx64.c`)
+- [x] On fatal error: `boot_fatal()` writes error code to UEFI NVRAM variable `BootError` (Impossible OS vendor GUID, non-volatile + boot-service-access + runtime-access) via `nvram_write_boot_error()` helper -- serial `[CRIT]` line emitted FIRST so a slow / wedged firmware `SetVariable` cannot block the operator's diagnostic
 - [x] On successful boot: kernel clears `BootError` NVRAM variable in `boot_phase0()` after `uefi_vars_init()` succeeds -- clearing in the kernel (not bootloader) ensures a crash between EBS and Phase 0 preserves the error evidence
-- [x] At boot entry: `nvram_read_boot_error()` reads NVRAM -- if non-zero, logs `"[BOOT] Previous boot failed: code=0x%04x"` on serial
-- [x] Pass `boot_info.last_boot_error` to kernel -- field added to both bootloader struct (bootx64.c) and kernel header (boot_info.h) after `serial_baud`; kernel logs `"Previous boot failed: code=0x%04X"` via klog in `boot_hw.c`
-- [x] `boot_fatal()` includes the error code in on-screen display: `"Error code: 0xNNNN"` line on BSOD screen, plus hex code in serial log
-- [x] Commit: `"boot: structured error codes with NVRAM persistence -- cross-boot diagnostics"` (373a29db)
+- [x] At boot entry: `nvram_read_boot_error()` reads NVRAM -- if non-zero, logs `"[BOOT] Previous boot failed: code=0x"` + 8 hex on serial; reader validates attrs == NV|BS|RT, value <= `BOOT_ERR_REGISTRY_MAX`, and size == 4, repairing any malformed (oversized / undersized / wrong-attrs / out-of-registry) record via UEFI 2.10 7.2.1 delete-then-create so a pre-OS UEFI app cannot poison the channel
+- [x] Pass `boot_info.last_boot_error` to kernel -- field added to both bootloader struct (bootx64.c) and kernel header (boot_info.h) after `serial_baud`; kernel logs `"Previous boot failed: code=0x"` + 8 hex via klog in `boot_hw.c` (UINT32 contract uniform across serial / ConOut / klog / BSOD / QR URL)
+- [x] `boot_fatal()` includes the error code in on-screen display: 8-hex `"Error code: 0xNNNNNNNN"` line on the ConOut text fallback AND on the graphical BSOD subtitle AND in the QR-encoded recovery URL (`impossibleos.co/err/<8hex>`) -- all surfaces match the persisted UINT32
+- [x] Commit: `"review: TODO-03 §13 NVRAM persist -- serial-first ordering, BootError attr/registry repair, UINT32 width across all surfaces"` (TBD)
 
-**Test checkpoint:** Delete `\boot\kernel.exe`, boot (gets error screen). Reboot normally with kernel restored. Serial shows `"Previous boot failed: code=0x0003"`. Verify NVRAM variable is cleared on successful boot.
+**Test checkpoint:** Delete `\boot\kernel.exe`, boot (gets error screen). Reboot normally with kernel restored. Serial shows `"Previous boot failed: code=0x00000003"`. Verify NVRAM variable is cleared on successful boot. Negative path: write a 1-byte BootError under the Impossible OS GUID with non-canonical attrs from a UEFI shell, reboot -- bootloader logs `[WARN] NVRAM: BootError untrusted ... repairing`, deletes, recreates canonical zero record; kernel-side clear path then sees a well-formed record.
 
 > **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | test_boot_info NVRAM error-code persist/clear assertions + manual reboot-after-failure fixture
 
-> **Verified:** 2026-04-11 -- Codex adversarial clean. Evidence: 13 BOOT_ERR_* codes (efi.h:56-68), nvram_write/read helpers (bootx64.c:794-825), boot_fatal NVRAM persist + hex display, boot_info.last_boot_error ABI-synced, kernel klog (boot_hw.c:94-97). Accepted: none.
-> **Quality reviewed:** 2026-04-11 -- moved NVRAM clear from bootloader post-EBS to kernel after uefi_vars_init() per Codex finding (crash between EBS and kernel entry now preserves error evidence). 8 unused BOOT_ERR_* codes are future registry entries by design. Accepted: none.
+> **Notes:**
+> - Serial `[CRIT]` line precedes `nvram_write_boot_error()` so a slow / wedged firmware `SetVariable` cannot starve the only synchronous fatal-path diagnostic; persistence is best-effort and runs second.
+> - `nvram_read_boot_error()` validates attrs == NV|BS|RT, size == 4, and code <= `BOOT_ERR_REGISTRY_MAX` (0x0013); any malformed shape (oversized via `EFI_BUFFER_TOO_SMALL`, undersized successful read, wrong attrs, out-of-registry value) enters the same delete-then-create repair path so a pre-OS writer cannot permanently poison persistence.
+> - All 5 fatal-display surfaces print 8 hex digits (UINT32): bootloader serial CRIT, ConOut text fallback, graphical BSOD subtitle, QR-encoded recovery URL on both the standalone `qr_render_error_url` path and the inline graphical BSOD URL caption, plus the kernel `klog` previous-boot line; previously the graphical paths truncated to 16 bits while serial widened to 32.
+> - Recovery web registry at `gh-pages/err/errors.js` extended to cover codes `000e`-`0013` (ESP type GUID, ESP BPB, ESP missing files, rollback refusal, UKI payload, UKI disk override); the `Registry source` template tile referencing TODO `§N` was retired since it linked a public page to internal renumbering.
+> - Section IO row stays `[x]` after the boot-error history ring scope was promoted to standalone §20.
+> **Verified:** 2026-05-02 | commit `<TBD>` | 6/6 items | build OK | smoke PASS (KVM 2.28s) | 8 hex surfaces uniform
+> **Quality reviewed:** 2026-05-02 | Codex 7x (adversarial, consistency, perf, re-adversarial x4) | 0H+5M+0L fixed, 0 open | scope: boot-code-quality
 
 ---
 
