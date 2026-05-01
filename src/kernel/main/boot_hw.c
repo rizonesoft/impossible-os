@@ -277,7 +277,7 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
     /* S13: Log previous boot error if one was persisted in NVRAM.
      * 8 hex digits to match the UINT32 boot_fatal/NVRAM/boot_info
      * contract -- the bootloader's serial CRIT line and graphical
-     * BSOD already render 8 (Codex cons M1 follow-up 2026-05-02). */
+     * BSOD already render 8. */
     if (g_boot_info.last_boot_error != 0)
         klog(LOG_WARN, "UEFI",
              "Previous boot failed: code=0x%08X",

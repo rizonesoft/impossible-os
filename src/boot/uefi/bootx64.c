@@ -426,7 +426,7 @@ static int serial_spcr_probe(void)
      * reserved tail per ACPI specification).  Reject malformed
      * length OUTRIGHT -- a skip-on-bad-length policy would let
      * firmware bypass the extended checksum gate while still
-     * steering xsdt_addr (Codex M2 consistency 2026-05-02).  Cap
+     * steering xsdt_addr.  Cap
      * at sizeof for future-proofing against larger declared
      * lengths we cannot validate.  Length must also pass the
      * extended checksum. */
@@ -463,7 +463,7 @@ static int serial_spcr_probe(void)
      * survived the v1/v2 checksum gate could redirect the walk
      * into stale memory; a chance match on "SPCR" four bytes in
      * would let the bogus base_address through to
-     * serial_probe_port (Codex H1 adversarial 2026-05-02). */
+     * serial_probe_port. */
     {
         const UINT8 sig_xsdt[4] = {'X', 'S', 'D', 'T'};
         const UINT8 sig_rsdt[4] = {'R', 'S', 'D', 'T'};
@@ -511,7 +511,7 @@ static int serial_spcr_probe(void)
          * base_address / interface_type / baud_rate.  A SPCR with
          * a corrupt length-bounded payload cannot reach
          * serial_probe_port without the byte sum gating it out
-         * (Codex H1 adversarial 2026-05-02). */
+         *. */
         if (!acpi_checksum_ok(spcr, spcr->length))
             return 0;
 
@@ -656,7 +656,7 @@ static int g_ebs_in_progress;
  * counting?" and "can we still talk to SetWatchdogTimer?" are
  * different questions.  Conflating them lets a refresh failure
  * suppress the pre-EBS disarm and ship a live 60s timer into the
- * kernel handoff (Codex M1 adversarial 2026-05-02). */
+ * kernel handoff. */
 static int g_wd_armed;            /* 1 = firmware watchdog is counting; cleared
                                    * ONLY on successful disarm. */
 static int g_wd_refresh_disabled; /* 1 = stop calling watchdog_reset()
@@ -693,7 +693,7 @@ static void nvram_write_boot_error(UINT32 code)
  * anything else as untrusted input (a pre-OS UEFI app can write under
  * the public Impossible OS GUID).  Keep this in sync with the registry
  * in efi.h: highest currently-defined code is BOOT_ERR_UKI_DISK_OVERRIDE
- * (0x0013).  Codex adv M2 2026-05-02. */
+ * (0x0013). */
 #define BOOT_ERR_REGISTRY_MAX 0x0013
 
 static UINT32 nvram_read_boot_error(void)
@@ -716,9 +716,8 @@ static UINT32 nvram_read_boot_error(void)
      * GUID came from a pre-OS app, not the writer side -- canonicalize
      * it via the delete-then-create repair so the writer-side
      * SetVariable does not later trip EFI_INVALID_PARAMETER on attr
-     * change (Codex re-adversarial rounds 1-3 2026-05-02).  Only
-     * absent-or-no-perms errors (NOT_FOUND, security violation, etc.)
-     * mean "no previous boot error". */
+     * change.  Only absent-or-no-perms errors (NOT_FOUND, security
+     * violation, etc.) mean "no previous boot error". */
     int malformed = 0;
     if (s == EFI_BUFFER_TOO_SMALL) {
         malformed = 1;
@@ -745,8 +744,7 @@ static UINT32 nvram_read_boot_error(void)
          * shape we must delete-then-create: SetVariable with size=0 and
          * the variable's CURRENT attrs deletes it, after which a fresh
          * SetVariable with canonical attrs and value=0 establishes the
-         * well-formed record the kernel-side clear path expects.
-         * Codex re-adversarial M1 2026-05-02. */
+         * well-formed record the kernel-side clear path expects. */
         EFI_STATUS d = rt->SetVariable(g_boot_error_var,
                                        &g_impossible_os_guid,
                                        attrs, 0, (void *)0);
@@ -776,7 +774,7 @@ static UINT32 nvram_read_boot_error(void)
  * g_wd_refresh_disabled=1 to stop spamming the failing call -- but
  * we DO NOT clear g_wd_armed, because the firmware watchdog from
  * the initial successful arm may still be counting and the pre-EBS
- * disarm path must still run (Codex M1 adversarial 2026-05-02). */
+ * disarm path must still run. */
 static void watchdog_reset(void)
 {
     if (!g_wd_armed || g_wd_refresh_disabled) return;
@@ -1107,8 +1105,7 @@ static void qr_render_error_url(UINT32 err_code)
     /* Full 8 hex digits to match the UINT32 boot_fatal/NVRAM/boot_info
      * contract; the serial+text ConOut paths print 8.  Recovery URL
      * width must follow or the QR scan lands on a 4-hex page that
-     * disagrees with what the operator read off serial.  Codex cons M1
-     * 2026-05-02. */
+     * disagrees with what the operator read off serial. */
     url[i++] = hex_chars[(err_code >> 28) & 0xF];
     url[i++] = hex_chars[(err_code >> 24) & 0xF];
     url[i++] = hex_chars[(err_code >> 20) & 0xF];
@@ -1457,7 +1454,7 @@ static void bsod_render_graphical(UINT32 err_code, const char *title,
         err_buf[i++] = 'e'; err_buf[i++] = ' ';
         err_buf[i++] = '0'; err_buf[i++] = 'x';
         /* 8 hex digits -- UINT32 contract; matches serial + ConOut
-         * fatal lines (Codex cons M1 2026-05-02). */
+         * fatal lines. */
         err_buf[i++] = hex[(err_code >> 28) & 0xF];
         err_buf[i++] = hex[(err_code >> 24) & 0xF];
         err_buf[i++] = hex[(err_code >> 20) & 0xF];
@@ -1524,7 +1521,7 @@ static void bsod_render_graphical(UINT32 err_code, const char *title,
         UINT32 url_x, url_y;
 
         for (k = 0; prefix[k]; k++) url[k] = prefix[k];
-        /* 8 hex digits -- UINT32 contract (Codex cons M1 2026-05-02). */
+        /* 8 hex digits -- UINT32 contract. */
         url[k++] = hex[(err_code >> 28) & 0xF];
         url[k++] = hex[(err_code >> 24) & 0xF];
         url[k++] = hex[(err_code >> 20) & 0xF];
@@ -1700,16 +1697,14 @@ static __attribute__((noreturn)) void boot_fatal(UINT32 err_code,
                                                   const char *title,
                                                   const char *detail)
 {
-    /* 1. Log to serial FIRST (full 8-hex-digit error code matches the
-     * UINT32 contract on boot_fatal/nvram_write_boot_error/
-     * boot_info.last_boot_error -- truncating to 16 bits diverged
-     * the displayed code from the persisted code, see Codex M1
-     * consistency 2026-05-01).
+    /* 1. Log to serial FIRST.  The full 8-hex-digit error code matches
+     * the UINT32 contract on boot_fatal / nvram_write_boot_error /
+     * boot_info.last_boot_error; truncating to 16 bits diverges the
+     * displayed code from the persisted code.
      *
      * Serial precedes the NVRAM write so a slow / wedged firmware
      * SetVariable cannot block the only synchronous diagnostic the
-     * operator has during a boot-services-era fatal (Codex adv M1 /
-     * perf H1 2026-05-02). */
+     * operator has during a boot-services-era fatal. */
     serial_early_print("[CRIT] BOOT FATAL (0x");
     serial_early_print_hex16((UINT16)(err_code >> 16));
     serial_early_print_hex16((UINT16)err_code);
@@ -1895,7 +1890,7 @@ static UINT8 gop_pixel_format_code(EFI_GRAPHICS_PIXEL_FORMAT fmt)
 
 /* Score and select the best 32bpp GOP mode, call SetMode, set hidpi flag.
  *
- * Hostile-firmware hardening (Codex review 2026-04-27):
+ * Hostile-firmware hardening:
  *   - Loop is bounded by BOOT_GOP_MODE_MAX (matches init_gop's enumeration
  *     cap) AND by a consecutive-error counter, so a firmware that reports
  *     MaxMode = 0xFFFFFFFF or that returns garbage from QueryMode cannot
@@ -2168,7 +2163,7 @@ static EFI_STATUS init_gop(void)
 
     {
         UINTN fb_size = gop->Mode->FrameBufferSize;
-        /* Hostile-firmware overflow guard (Codex review 2026-04-27):
+        /* Hostile-firmware overflow guard:
          * UINT32 height * UINT32 pitch * 4 in UINTN can wrap to a small
          * value if firmware reports both dimensions near 0xFFFFFFFF.
          * Reject before any mul that could overflow. */
@@ -2635,7 +2630,7 @@ static void parse_conf_kv(struct boot_config *cfg,
 
 /* Read and parse \EFI\ImpossibleOS\boot.conf
  *
- * UKI mode (Codex post-impl adversarial fix 2026-04-29): when
+ * UKI mode: when
  * detect_uki_sections() captured a `.cmdline` PE section, the
  * embedded buffer is the firmware-Secure-Boot-verified config.
  * Reading boot.conf from the ESP in UKI mode would defeat the
@@ -4956,7 +4951,7 @@ static int mmap_evict_for_incoming(struct boot_mmap_entry *arr, UINT32 *count,
  * AND the ExitBootServices-retry consumer must call this BEFORE
  * fill_memory_map() / fill_runtime_map() runs; without it,
  * desc_size=0 with map_size>0 in fill_runtime_map's loop spins
- * forever (Codex M2 adversarial 2026-05-02). */
+ * forever. */
 static void mmap_geometry_validate(UINTN map_size, UINTN desc_size,
                                     const char *site)
 {
@@ -4974,7 +4969,7 @@ static void mmap_geometry_validate(UINTN map_size, UINTN desc_size,
 /* Per-descriptor validation -- 5 checks shared between
  * fill_memory_map() and fill_runtime_map() so the runtime-services
  * handoff cannot consume firmware quirks that the regular mmap
- * already strips (Codex H1 adversarial 2026-05-02).  Returns 1 if
+ * already strips.  Returns 1 if
  * the descriptor is valid, 0 if invalid (and sets mmap_quirks=1 +
  * emits a [WARN] line tagged with `site`). */
 static int mmap_descriptor_valid(EFI_MEMORY_DESCRIPTOR *desc,
@@ -5194,7 +5189,7 @@ static void fill_runtime_map(EFI_MEMORY_DESCRIPTOR *mmap,
          * otherwise rt_mmap could keep firmware quirks (zero-page,
          * overflow, wrap, unaligned, invalid-type) that mmap[]
          * stripped, leaving the kernel UEFI runtime setup with
-         * inconsistent views (Codex H1 adversarial 2026-05-02). */
+         * inconsistent views. */
         if (!mmap_descriptor_valid(desc, entry_num, "Runtime map"))
             continue;
 
@@ -7212,7 +7207,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
      * unconditionally because detect_uki_sections() is gated on
      * LoadedImage->DeviceHandle; a fallback path that lacks
      * DeviceHandle would otherwise read EDK2 0xAF poison as a fake
-     * .linux pointer (Codex re-adversarial H2 fix 2026-04-29). */
+     * .linux pointer. */
     reset_uki_sections();
 
     /* Re-arm watchdog timer as boot hang safety net (S11).
