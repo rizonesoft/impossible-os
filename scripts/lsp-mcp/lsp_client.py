@@ -611,18 +611,31 @@ class LspSubprocess:
             if not self._shutdown_called:
                 self._crashed = True
                 # Best-effort reason: prefer a poll() exit code if
-                # available (subprocess died on its own) over a
-                # generic "reader exited" string.
-                try:
-                    rc = self._proc.poll() if self._proc else None
-                except Exception:
-                    rc = None
+                # available. Briefly wait for reaping when the reader
+                # races ahead of the kernel (SIGKILL delivered but
+                # proc not yet reaped); EOF on the read pipe already
+                # implies the subprocess exited, so the fallback
+                # reason still says "subprocess exited" -- only the
+                # exit code may be unknown.
+                rc = None
+                if self._proc:
+                    for _ in range(20):  # up to ~100ms
+                        try:
+                            rc = self._proc.poll()
+                        except Exception:
+                            rc = None
+                        if rc is not None:
+                            break
+                        time.sleep(0.005)
                 if rc is not None:
                     self._crash_reason = (
                         f"subprocess exited with code {rc}"
                     )
                 else:
-                    self._crash_reason = "reader thread ended"
+                    self._crash_reason = (
+                        "subprocess exited (reader saw EOF; "
+                        "exit code not yet reaped)"
+                    )
             self._fail_all_pending(LspError(
                 "lsp-subprocess-exited",
                 f"{self.lang} LSP reader thread ended",
