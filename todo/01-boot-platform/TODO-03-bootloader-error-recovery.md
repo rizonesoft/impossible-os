@@ -395,7 +395,7 @@ Modern firmware provides the ACPI Serial Port Console Redirection Table (SPCR) s
 > - Canonical doc: this section + §4 (no-SPCR fallback probe) + ACPI 6.5 specification (RSDP, DESCRIPTION_HEADER, SPCR Table 5-49) + UEFI 2.10 EFI_ACPI_TABLE_GUID.
 > - Scope boundary: §10 owns ACPI SPCR detection + checksum gates. §4 owns the no-SPCR fallback. Kernel-side ACPI table validation is owned by `src/kernel/acpi.c`.
 
-> **Verified:** 2026-05-02 | commit `<pending>` | 7/7 items | build OK | smoke PASS (KVM 2.41s). 7 original items + ACPI checksum-gate hardening (RSDP v1+v2, RSDT/XSDT root, SPCR table) confirmed at file:line. 2026-04-11 verification retained.
+> **Verified:** 2026-05-02 | commit `51b3fbab` | 7/7 items | build OK | smoke PASS (KVM 2.41s). 7 original items + ACPI checksum-gate hardening (RSDP v1+v2, RSDT/XSDT root, SPCR table) confirmed at file:line. 2026-04-11 verification retained.
 > **Accepted:** [H] XSDT/RSDT child pointer validation (corrupt-ACPI fault recovery) -> XREF: 02-kernel-core/TODO-19 §1 (item: "SEH/__try around firmware table walks for fault-isolated recovery" -- requires SEH infrastructure not present in pre-EBS bootloader; checksum gate is the in-scope mitigation)
 > **Accepted:** [M] MMIO UART support (PL011, ARM SBSA, etc.) -> XREF: 04-drivers-hardware/TODO-04 §1 (item: "ARM serial driver -- PL011 + DesignWare UART" -- out of x86-only scope today)
 > **Quality reviewed:** 2026-05-02 | Codex 4x (adversarial + consistency + perf + re-adversarial) | 1H+1M fixed (ACPI checksum validation across RSDP v1/v2 + RSDT/XSDT root + SPCR table; strict RSDP v2 length gate eliminates skip-on-malformed bypass), 1H+1M accepted-XREF | scope: boot-code-quality
