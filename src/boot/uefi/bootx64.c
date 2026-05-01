@@ -37,70 +37,29 @@ static inline UINT64 boot_rdtsc(void)
     return ((UINT64)hi << 32) | lo;
 }
 
-/* --- ELF64 header structures --- */
-#define ELF_MAGIC 0x464C457F  /* \x7FELF */
+/* --- ELF64 header structures ---
+ * Single source of truth shared with elf_bootproto.c (.bootproto walker)
+ * and any future ELF consumer in the bootloader. The _Static_assert block
+ * below pins every byte offset load_kernel() reads, so a future change to
+ * elf_types.h that shifts a field breaks the build instead of silently
+ * miscomputing destination paddrs / segment bounds at boot. */
+#include "elf_types.h"
 
-typedef struct {
-    UINT32 e_magic;
-    UINT8  e_class;       /* 2 = 64-bit */
-    UINT8  e_data;        /* 1 = little-endian */
-    UINT8  e_version;
-    UINT8  e_osabi;
-    UINT8  e_pad[8];
-    UINT16 e_type;
-    UINT16 e_machine;     /* 0x3E = x86-64 */
-    UINT32 e_version2;
-    UINT64 e_entry;
-    UINT64 e_phoff;
-    UINT64 e_shoff;
-    UINT32 e_flags;
-    UINT16 e_ehsize;
-    UINT16 e_phentsize;
-    UINT16 e_phnum;
-    UINT16 e_shentsize;
-    UINT16 e_shnum;
-    UINT16 e_shstrndx;
-} Elf64_Ehdr;
+_Static_assert(__builtin_offsetof(Elf64_Ehdr, e_magic)     ==  0, "Ehdr e_magic");
+_Static_assert(__builtin_offsetof(Elf64_Ehdr, e_class)     ==  4, "Ehdr e_class");
+_Static_assert(__builtin_offsetof(Elf64_Ehdr, e_machine)   == 18, "Ehdr e_machine");
+_Static_assert(__builtin_offsetof(Elf64_Ehdr, e_phoff)     == 32, "Ehdr e_phoff");
+_Static_assert(__builtin_offsetof(Elf64_Ehdr, e_phentsize) == 54, "Ehdr e_phentsize");
+_Static_assert(__builtin_offsetof(Elf64_Ehdr, e_phnum)     == 56, "Ehdr e_phnum");
+_Static_assert(sizeof(Elf64_Ehdr) == 64, "Elf64_Ehdr size mismatch (ELF64 spec)");
 
-#define PT_LOAD 1
-
-typedef struct {
-    UINT32 p_type;
-    UINT32 p_flags;
-    UINT64 p_offset;
-    UINT64 p_vaddr;
-    UINT64 p_paddr;
-    UINT64 p_filesz;
-    UINT64 p_memsz;
-    UINT64 p_align;
-} Elf64_Phdr;
-
-/* ELF section header */
-#define SHT_SYMTAB 2
-#define SHT_STRTAB 3
-
-typedef struct {
-    UINT32 sh_name;
-    UINT32 sh_type;
-    UINT64 sh_flags;
-    UINT64 sh_addr;
-    UINT64 sh_offset;
-    UINT64 sh_size;
-    UINT32 sh_link;      /* index of associated string table section */
-    UINT32 sh_info;
-    UINT64 sh_addralign;
-    UINT64 sh_entsize;
-} Elf64_Shdr;
-
-/* ELF symbol table entry */
-typedef struct {
-    UINT32 st_name;     /* index into string table */
-    UINT8  st_info;
-    UINT8  st_other;
-    UINT16 st_shndx;
-    UINT64 st_value;
-    UINT64 st_size;
-} Elf64_Sym;
+_Static_assert(__builtin_offsetof(Elf64_Phdr, p_type)   ==  0, "Phdr p_type");
+_Static_assert(__builtin_offsetof(Elf64_Phdr, p_flags)  ==  4, "Phdr p_flags");
+_Static_assert(__builtin_offsetof(Elf64_Phdr, p_offset) ==  8, "Phdr p_offset");
+_Static_assert(__builtin_offsetof(Elf64_Phdr, p_paddr)  == 24, "Phdr p_paddr");
+_Static_assert(__builtin_offsetof(Elf64_Phdr, p_filesz) == 32, "Phdr p_filesz");
+_Static_assert(__builtin_offsetof(Elf64_Phdr, p_memsz)  == 40, "Phdr p_memsz");
+_Static_assert(sizeof(Elf64_Phdr) == 56, "Elf64_Phdr size mismatch (ELF64 spec)");
 
 /* --- Globals --- */
 static EFI_SYSTEM_TABLE    *gST;
