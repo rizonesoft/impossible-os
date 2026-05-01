@@ -171,7 +171,7 @@ If `\boot\kernel.exe` is not found, search alternative paths before giving up.
 > - Primary loop and all-volumes inner loop share identical error policy: `EFI_NOT_FOUND` continues, every other Open status closes resources, `FreePool(fs_handles)`, and returns the underlying status.
 > - POST16 sequence: `POST16_BL_FALLBACK` (0xB094) on entry to all-volumes search; `POST16_BL_FALLBACK_OK` (0xB095) only on success; left at 0xB094 on total failure so a POST card shows fallback-failed.
 > - Scope boundary: `parse_boot_conf()` and `locate_boot_fs()` still use the silent LocateProtocol pattern; consistency follow-ups filed in §7 and TODO-02 §16 to mirror the §3 hardening.
-> **Verified:** 2026-05-01 | commit `<pending>` | 5/5 items | build OK | smoke PASS (KVM 2.46s)
+> **Verified:** 2026-05-01 | commit `da32f773` | 5/5 items | build OK | smoke PASS (KVM 2.46s)
 > **Accepted:** [H] Silent LocateProtocol fallback in `parse_boot_conf()` (reason: scope -- §7 owns boot.conf reads) -> XREF: 01-boot-platform/TODO-03 §7 (item: "Eliminate silent LocateProtocol fallback in `parse_boot_conf()`" at line 249)
 > **Accepted:** [H] Silent LocateProtocol fallback in `locate_boot_fs()` (reason: scope -- TODO-02 §16 owns UKI staged-payload disk reads) -> XREF: 01-boot-platform/TODO-02 §16 (item: "Eliminate silent LocateProtocol fallback in `locate_boot_fs()`" at line 540)
 > **Quality reviewed:** 2026-05-01 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 1H+1M fixed, 2H accepted-XREF | scope: boot-code-quality
