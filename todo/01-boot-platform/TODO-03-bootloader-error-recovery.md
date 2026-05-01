@@ -114,10 +114,10 @@ Harden the kernel ELF parser in `load_kernel()` to reject malformed or corrupted
 > - Canonical doc: this section + ELF spec (TIS Tool Interface Standard 1.2 + System V ABI x86-64) + UEFI 2.10 section 13 LoadedImage handoff.
 > - Scope boundary: §1 owns ELF FILE-side validation (offsets, sizes, magic, header fields). §19 owns PT_LOAD DESTINATION policy (where in physical memory segments may write). §17 owns memory-map overlap normalization for runtime regions; this section's overlap checks are static against boot_info + framebuffer only.
 
-> **Verified:** 2026-05-01 | commit `<pending>` | 10/10 items | build OK | smoke PASS (KVM 2.43s). All 8 original ELF bounds checks + 2 follow-up items (typedef consolidation, rep movsb/stosb conversion) confirmed at file:line. Prior 2026-04-29 + 2026-04-11 verifications retained.
+> **Verified:** 2026-05-01 | commit `<pending>` | 10/10 items | build OK | smoke PASS (KVM 2.48s). 8 original ELF bounds checks + ELF typedef consolidation + rep movsb/stosb conversion + cleanup-label fix all confirmed at file:line. Prior 2026-04-29 + 2026-04-11 verifications retained.
 > **Accepted:** [H] PT_LOAD destination policy below 1 MiB floor not enforced -> XREF: 01-boot-platform/TODO-03 §19 (item: "Define `bool pt_load_destination_allowed(...)` predicate" at line 508 -- EfiConventionalMemory/EfiLoaderData allowlist naturally rejects p_paddr < 0x100000)
 > **Accepted:** [M] BOOT_INFO_PHYS_ADDR macro duplicated across bootx64.c + kernel/mm/boot_reserved.c + kernel/main/boot_payload.c -> XREF: 01-boot-platform/TODO-01 §1 (item: "Single source of truth for `BOOT_INFO_PHYS_ADDR` macro" filed 2026-05-01 -- move to boot_info.h, mirror in boot_info_mirror.h, delete three local #defines)
-> **Quality reviewed:** 2026-05-01 | Codex 5x (adversarial x3 + consistency + perf) | 1H+1M fixed (typedef consolidation, rep movsb/stosb), 1H+1M accepted-XREF (PT_LOAD floor -> §19, BOOT_INFO_PHYS_ADDR -> TODO-01) | scope: boot-code-quality (gates walked: UEFI types, error handling, EBS boundary, boot_info ABI sync, parse buffer dynamic alloc)
+> **Quality reviewed:** 2026-05-01 | Codex 4x (adversarial + consistency + perf + re-adversarial) | 2M fixed (cleanup-label disk-buffer leak across all ELF validation hard-error sites; section-header envelope route through label), 1H+1M accepted-XREF | scope: boot-code-quality (gates walked: UEFI types, error handling, EBS boundary, boot_info ABI sync, parse buffer dynamic alloc, fallback chains)
 
 ---
 
@@ -200,6 +200,8 @@ Modern hardware (laptops, tablets) may not have COM1 at 0x3F8. Blindly initializ
 
 **Test checkpoint:** On QEMU (always has COM1), serial output works as before. On VirtualBox with serial disabled, bootloader skips serial silently. Verify no I/O port side effects on bare metal.
 
+> **Test runner:** N/A (UEFI pre-boot only -- COM1/COM2 probe runs before kernel) | validation: smoke + serial on QEMU WHPX/TCG, VBox, bare metal
+
 > **Verified:** 2026-04-11 -- all 5 items confirmed. Scratch register probe (0xAE write/readback), COM1->COM2->0 fallback chain, boot_info.serial_port stored, kernel serial_init reads it. SPCR (§10) wraps this probe with ACPI table lookup as primary. Accepted: none.
 > **Quality reviewed:** 2026-04-11 -- no findings. Scratch register probe matches Linux serial8250_config_port (same 0xAE test value). SPCR (§10) elevates this to ACPI-first detection, matching Windows EMS and Linux earlycon SPCR. COM3/COM4 not probed (extremely rare, SPCR covers non-standard). Accepted: none.
 
@@ -220,6 +222,8 @@ GOP operations can hang on broken firmware. This section adds error recovery aro
 - [x] Commit: `"boot: GOP timeout and graceful degradation -- headless fallback"` (18cc8d84)
 
 **Test checkpoint:** Boot on QEMU (single GOP) -- works as before. Serial shows `"GOP: 1 handles found"` (or `"headless boot"` if GOP absent). If available, test on multi-GPU VirtualBox config. Verify on bare metal -- firmware GOP behavior differs from emulated.
+
+> **Test runner:** N/A (UEFI pre-boot only -- GOP mode selection runs before kernel) | validation: smoke + serial on QEMU WHPX/TCG, VBox, bare metal
 
 > **Verified:** 2026-04-11 -- all 4 items confirmed. QueryMode 100-error abort, SetMode->mode0->firmware fallback, headless boot on no GOP, logging at each stage. Additional hardening from 01-boot-platform/TODO-02 §4 quality review (FrameBufferSize bounds, Mode NULL guard, pitch validation). Accepted: none.
 > **Quality reviewed:** 2026-04-11 -- no additional findings. Shared code with 01-boot-platform/TODO-02 §4 which received full quality review (FrameBufferSize bounds, Mode/Info NULL guard, pitch validation, gop_pixel_format_code dedup). Defensive wrappers match UEFI best practice for GOP error recovery. Accepted: none.
@@ -242,6 +246,8 @@ If firmware reports more memory regions than `BOOT_MMAP_MAX_ENTRIES` (currently 
 
 **Test checkpoint:** Normal boot (typically ~130 entries) works as before on all 4 platforms. Add a `mmap_truncated` field to boot_info and verify kernel reads it. Verify on bare metal -- real firmware often has more entries than QEMU.
 
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | mmap_truncated flag asserted via test_boot_info; cap 512 entries on QEMU clean boot
+
 > **Verified:** 2026-04-11 -- all 5 items confirmed. BOOT_MMAP_MAX_ENTRIES=512 in both structs, total_descs comparison, truncation warning, mmap_truncated flag, PMM warns on boot. Loop guard prevents overrun. Accepted: none.
 > **Quality reviewed:** 2026-04-11 -- no findings. 512-entry cap covers known hardware (worst case ~400 on enterprise servers). Linux/Windows/GRUB use dynamic allocation; our fixed array is a deliberate simplicity trade-off -- no heap needed before ExitBootServices. Truncation flag ensures kernel knows if entries were lost. Accepted: none.
 
@@ -263,6 +269,8 @@ Malformed boot.conf should produce warnings, not silent misbehavior.
 - [ ] **Eliminate silent LocateProtocol fallback in `parse_boot_conf()`** (filed 2026-05-01 from §3 review Codex consistency H2): `parse_boot_conf()` at `src/boot/uefi/bootx64.c:2477-2495` still calls `gBS->LocateProtocol(&fs_guid, ...)` when `g_boot_device_handle` is NULL or lacks SimpleFS, picking the first SimpleFS volume firmware enumerates. After §3's hardening, `load_kernel()` no longer does this -- so on a degraded boot-device path, boot.conf can come from a different ESP than the kernel, defeating the trust boundary. Implementation: mirror the §3 pattern -- on degraded paths, log `[WARN] Boot device has no SimpleFS for boot.conf` and skip the parse entirely (boot_config defaults already populated by `boot_config_defaults()`); OR enter an explicit all-volumes search with `[WARN]` per-volume diagnostics that matches `load_kernel()`'s fallback chain. Test: with QEMU `-drive` set up so the bootloader's LoadedImage->DeviceHandle has no SimpleFS protocol but a second SimpleFS handle exists, assert serial shows the explicit warn (not silent first-volume selection) and that boot.conf is either skipped or selected with a logged volume identity.
 
 **Test checkpoint:** Add `bogus_key=42` to boot.conf. Serial must show `"unknown key 'bogus_key'"`. Set `splash_timeout=999` -- serial must show `"out of range, using default 3"`. A boot.conf > 1 MiB must trigger `boot_fatal(BOOT_ERR_CONF_INVALID)` (no silent truncation).
+
+> **Test runner:** N/A (UEFI pre-boot only -- boot.conf parse runs before kernel) | validation: smoke + serial; bogus_key + splash_timeout=999 fixtures on QEMU WHPX/TCG
 
 > **Verified:** 2026-04-11 -- all 5 items confirmed. 4096-byte buffer with truncation warning, unknown key logging, config_version field, range validation for debug/verbose/test/splash_timeout. Accepted: none.
 > **Quality reviewed:** 2026-04-11 -- no findings. More user-friendly than Windows BCD (human-readable + warnings) and more defensive than GRUB (range clamping vs silent accept). Accepted: none.
@@ -287,6 +295,8 @@ If 16 MiB contiguous allocation fails (fragmented memory), try smaller sizes.
 
 **Test checkpoint:** Normal boot works (kernel is ~1.5 MiB, fits in any allocation). Serial shows `"Kernel buffer: 32 MiB allocated"`.
 
+> **Test runner:** N/A (UEFI pre-boot only -- AllocatePages graduated fallback runs before kernel) | validation: smoke + serial showing `Kernel buffer: 32 MiB allocated`
+
 > **Verified:** 2026-04-11 -- all 6 items confirmed. Graduated alloc_sizes[] array (32/16/8 MiB), 3-element fallback loop, failure message on exhaustion, overlap checks for boot_info + framebuffer regions. Accepted: none.
 > **Quality reviewed:** 2026-04-11 -- no findings. Graduated fallback exceeds Windows bootmgr, Linux efi-stub, and GRUB2 (none retry with smaller sizes). Explicit overlap checks are unique to our loader. Accepted: none.
 
@@ -309,6 +319,8 @@ Replace all `for (;;) hlt;` loops with a visible error screen rendered using the
 - [x] Commit: `"boot: visible error screen on fatal failures -- no more silent halts"` (f734faf3)
 
 **Test checkpoint:** Delete `\boot\kernel.exe` from boot disk. Boot must show error screen with `"Kernel not found"` message and recovery instructions -- not a black screen. Verify on QEMU WHPX, TCG, and VBox. Verify on bare metal -- confirm ConIn keypress works on real keyboard.
+
+> **Test runner:** N/A (UEFI pre-boot only -- error screen rendered via GOP before kernel) | validation: smoke + manual delete-kernel.exe fixture on QEMU WHPX/TCG, VBox
 
 > **Verified:** 2026-04-11 -- all 7 items confirmed. boot_fatal() with serial CRIT log + console blue/white BSOD + recovery instructions + ConIn keypress + ResetSystem fallback. 4 HLT loops replaced. g_ebs_in_progress gates ConOut after EBS attempted. Accepted: none.
 > **Quality reviewed:** 2026-04-11 -- no findings. Exceeds Linux efi-stub (silent hang) and matches Windows BSOD UX. ConOut guard for post-EBS errors is unique -- neither Linux nor GRUB handles this. Serial CRIT logging provides remote diagnostics that Windows BSOD lacks. Accepted: none.
@@ -333,6 +345,8 @@ Modern firmware provides the ACPI Serial Port Console Redirection Table (SPCR) s
 
 **Test checkpoint:** On QEMU with `-device isa-debug-exit` (SPCR absent), fallback I/O probe activates and serial works as before. On QEMU OVMF with SPCR table present, serial log shows `"SPCR detected"`. Verify on bare metal -- real firmware may provide SPCR with non-standard baud rates; kernel must honor the SPCR baud.
 
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | test_uefi_boot SPCR-detect assertions + smoke on QEMU OVMF
+
 > **Verified:** 2026-04-11 -- all 7 items confirmed. Codex found unknown baud code treated as preserve-divisor (fixed: non-zero unknown codes now default 38400). Accepted: XSDT/RSDT child pointer validation (corrupt ACPI = unbootable system, SEH needed for recovery).
 > **Quality reviewed:** 2026-04-11 -- 2 fixes: SPCR Interface Type check (ACPI spec Table 5-49, type 0/1 = 16550), kernel serial_init honors no-UART (serial_port=0 now authoritative instead of defaulting to COM1). Accepted: MMIO UART support (I/O-only for now, matches current hardware scope).
 
@@ -354,6 +368,8 @@ The UEFI firmware starts a 5-minute watchdog timer at boot. The current bootload
 
 **Test checkpoint:** Normal boot completes in < 10s; watchdog is disarmed before ExitBootServices. Serial shows `"Watchdog: armed"` and `"Watchdog: disarmed"`. No unexpected reboots on all 4 platforms. Verify on bare metal -- real firmware watchdog behavior may differ from emulated; some firmware ignores the watchdog code parameter.
 
+> **Test runner:** N/A (UEFI pre-boot only -- watchdog SetWatchdogTimer runs before kernel) | validation: smoke + serial showing `Watchdog: armed` + `disarmed`
+
 > **Verified:** 2026-04-11 -- all 5 items confirmed. 60s arm with status check, 3 resets at long ops, disarm with retry before EBS. Codex found unchecked disarm during implementation (fixed: status check + retry). Accepted: none.
 > **Quality reviewed:** 2026-04-11 -- 1 fix: centralized watchdog_reset() helper with g_wd_armed tracking (Codex found silent reset failures). Matches UEFI Spec §7.5 (WatchdogCode in OS range 0x10000+). Exceeds Win11/Linux/GRUB (none re-arm, all just disable). Accepted: disarm failure continues to kernel (kernel boots <10s, within 60s timeout -- watchdog reset on failure is actually beneficial).
 
@@ -373,6 +389,8 @@ The UEFI firmware starts a 5-minute watchdog timer at boot. The current bootload
 - [x] Commit: `"boot: validate memory map descriptors -- detect overlaps, zero-length, invalid types"`
 
 **Test checkpoint:** Normal boot on QEMU produces no warnings (OVMF generates clean maps). Add a synthetic zero-length descriptor injection test if feasible. Serial log shows descriptor count and any warnings. Verify on bare metal -- real firmware is the primary target for memory map quirks; log any warnings for firmware bug reporting.
+
+> **Test runner:** N/A (UEFI pre-boot only -- mmap descriptor validation runs before kernel) | validation: smoke + serial; warning lines logged on quirky firmware
 
 > **Verified:** 2026-04-11 -- all 4 items confirmed. 6 validation checks (overflow, wrap, zero, align, type, overlap) + desc_size geometry guard at caller. Codex found NumberOfPages overflow (fixed) and desc_size=0 path (fixed with boot_fatal at caller level). Accepted: overlap normalization (-> XREF: 01-boot-platform/TODO-03 §17).
 > **Quality reviewed:** 2026-04-11 -- boot-code-quality 10/10 gates passed. Codex quality found desc_size geometry + map_size remainder (fixed: boot_fatal guard before both fill functions). EfiMaxMemoryType off-by-one fixed (>= not >). Accepted: overlap priority normalization (-> XREF: 01-boot-platform/TODO-03 §17).
@@ -398,6 +416,8 @@ Windows has BootStatusPolicy but error codes are opaque hex values without conte
 
 **Test checkpoint:** Delete `\boot\kernel.exe`, boot (gets error screen). Reboot normally with kernel restored. Serial shows `"Previous boot failed: code=0x0003"`. Verify NVRAM variable is cleared on successful boot.
 
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | test_boot_info NVRAM error-code persist/clear assertions + manual reboot-after-failure fixture
+
 > **Verified:** 2026-04-11 -- Codex adversarial clean. Evidence: 13 BOOT_ERR_* codes (efi.h:56-68), nvram_write/read helpers (bootx64.c:794-825), boot_fatal NVRAM persist + hex display, boot_info.last_boot_error ABI-synced, kernel klog (boot_hw.c:94-97). Accepted: none.
 > **Quality reviewed:** 2026-04-11 -- moved NVRAM clear from bootloader post-EBS to kernel after uefi_vars_init() per Codex finding (crash between EBS and kernel entry now preserves error evidence). 8 unused BOOT_ERR_* codes are future registry entries by design. Accepted: none.
 
@@ -421,6 +441,8 @@ Add a QR code to the boot failure error screen (§9) that encodes a recovery URL
 - [x] Commit: `"boot: QR code on boot error screen -- scan for recovery instructions"` (7e588e7e)
 
 **Test checkpoint:** Run `scripts/debug/kernel/run-error-screen-test.bat` (sets `error_screen_test=1`). Error screen shows QR code in bottom-right. Scan with phone -- URL `https://impossibleos.co/err/0003` appears. Verify QR is scannable at 1280x720 and 1920x1080 resolutions.
+
+> **Test runner:** N/A (UEFI pre-boot only -- QR encoder renders via GOP before kernel) | validation: `scripts\debug\kernel\run-error-screen-test.bat` (error_screen_test=1) + phone-scan
 
 > **Verified:** 2026-04-11 -- Codex adversarial found RS coefficients wrong + format placement wrong (both fixed). Post-fix Codex clean. Real-hardware testing found 3 additional bugs: (1) pixel colors 0xFF000000=blue in BGRX, (2) format bits MSB/LSB reversed (Codex was wrong about this), (3) V2 alphanumeric uppercase URL -- switched to V3 byte mode for lowercase. Accepted: none.
 > **Quality reviewed:** 2026-04-11 -- Switched to QR V3 byte mode after user feedback. Three V3 bugs fixed: zigzag loop skipped column pairs after timing column, zigzag direction formula wrong for cols < 6, byte padding added zero codeword when already aligned. All verified against segno: 0 differences. Accepted: none.
@@ -448,6 +470,8 @@ Place a fixed-size header at offset 0 of `struct boot_info` and have the UEFI bo
 - [x] Commit: `"boot: boot_info ABI header fields and bootloader populate"` (24d7baa2)
 
 **Test checkpoint:** Clean build boots on QEMU WHPX, QEMU TCG, VirtualBox, bare metal; header fields visible in memory at the handoff pointer before kernel entry (debugger or serial hex dump).
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | test_boot_info structural + offset asserts; smoke on QEMU WHPX/TCG, VBox, bare metal
 
 > **Verified:** 2026-04-11 -- all 8 items confirmed with code evidence. Header defined at offset 0 in both `include/kernel/boot_info.h:47` and `src/boot/uefi/bootx64.c:199`. Static asserts for offset/size/<=65535 present on both sides. Bootloader populates at `bootx64.c:3748` as the last step before `jump_to_kernel()`. Kernel validates at `boot_hw.c:70-96` with observed vs expected LOG_ERROR diagnostics before `boot_halt()`. Accepted: pre-memcpy pointer/bounds validation (`boot_info_validate()`) and cross-build layout fingerprinting -> XREF: 01-boot-platform/TODO-03 §16.
 > **Quality reviewed:** 2026-04-11 -- Codex adversarial round 1 flagged LOG_FATAL-before-boot_halt regression (klog LOG_FATAL is no-return); fixed with LOG_ERROR. Round 2 and 3 clean. Dead code + consistency + performance pass -- no findings. Win11 uses BCD signature + Boot Services Protocol GUID; Linux Multiboot2 uses 0x36D76289 + tag format; our magic+version+size + runtime validation is comparable scope. Accepted: 2 HIGH/MED findings accepted as -> XREF: 01-boot-platform/TODO-03 §16 (pre-copy validation, mirror struct drift detection).
@@ -478,6 +502,8 @@ The kernel must reject invalid `mbi` before copying `struct boot_info`. Validati
 
 **Test checkpoint:** Normal boot on QEMU WHPX, QEMU TCG, VirtualBox, bare metal reaches Phase 0 with validation passing. Corrupt `header.magic` in the bootloader build -- serial shows `boot_info: bad header magic=0x...` with observed vs expected values. Intentional `BOOT_INFO_VERSION` mismatch across images -- early halt with `boot_info: bad header ... version=...`. Unit tests `boot_info: *` run under `SUITE=boot` and PASS.
 
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | test_boot_info validator assertions (magic/version/size); intentional-corrupt fixture for header-mismatch path
+
 > **Verified:** 2026-04-11 -- all 9 items confirmed. Three validators at [boot_info.c](../../src/kernel/main/boot_info.c) lines 31 / 77 / 95. Phase 0 call sites at [boot_hw.c:72](../../src/kernel/main/boot_hw.c#L72) and [boot_hw.c:86](../../src/kernel/main/boot_hw.c#L86) with `BOOT_INFO_EARLY_MAP_END` and LOG_ERROR failure paths. Ten mirrored `_Static_assert` offset checks at [boot_info.h:518-529](../../include/kernel/boot_info.h#L518) and [bootx64.c:306-315](../../src/boot/uefi/bootx64.c#L306). Two overlap guards at [bootx64.c:2017](../../src/boot/uefi/bootx64.c#L2017) and [bootx64.c:2128](../../src/boot/uefi/bootx64.c#L2128). 22 pure tests registered via `test_register_boot_info()` at [test_runner.c:227](../../src/kernel/test/test_runner.c#L227). Accepted: none.
 > **Quality reviewed:** 2026-04-11 -- Codex round 1 caught the bootloader `AllocatePages(AllocateAnyPages)` free-pool gap (boot_info not reserved via `AllocateAddress`) and round 2 cleared after the reservation fix at [bootx64.c:3556-3583](../../src/boot/uefi/bootx64.c#L3556). Dead code + consistency + performance pass -- ten offset asserts match on both sides, validators are all referenced, removed post-copy re-checks have no dangling callers, `cmdline` ASCII check reachable, no hot-path allocations. Parity: Linux efi-stub reserves the kernel decompression area via `AllocateAddress` for the same reason; Windows `bootmgfw.efi` uses `BlMmAllocatePhysicalPages` with `AllocateAddress` equivalent. Accepted: none.
 
@@ -497,6 +523,8 @@ The kernel must reject invalid `mbi` before copying `struct boot_info`. Validati
 - [x] Commit: `"boot: memory map sort + overlap normalization by type priority"` (b2f7fcd0)
 
 **Test checkpoint:** Normal boot produces no `[BOOT] mmap: overlap resolved` lines on clean OVMF / QEMU firmware. `mem_upper_kb` in `boot_info` remains within <= 1% of the pre-§17 value on clean maps. Kernel PMM `total_frames` and `used_frames` are consistent with the normalized map. Adversarial synthetic overlap injection is out of scope here (no clean QEMU hook); smoke-test coverage is added to the Unit Tests section below.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | test_boot_info mmap-overlap normalization assertions + smoke
 
 > **Verified:** 2026-04-12 -- all 8 items confirmed with code evidence. Priority table at [bootx64.c:2319](../../src/boot/uefi/bootx64.c#L2319) with Runtime promoted above ACPI Reclaim. Sweep-line `mmap_normalize()` at [bootx64.c:2504](../../src/boot/uefi/bootx64.c#L2504) with event sort, active set, and coalescing emit. BSS work buffers ~34 KiB. `mmap_evict_for_incoming()` min-loss ranking at [bootx64.c:2584](../../src/boot/uefi/bootx64.c#L2584). `fill_memory_map()` three-phase rewrite at [bootx64.c:2670](../../src/boot/uefi/bootx64.c#L2670) with post-normalize `total_mem` recompute. Accepted: none.
 > **Quality reviewed:** 2026-04-12 -- five Codex rounds. Design review flagged Runtime priority ordering, stale `mem_upper_kb`, and cap truncation blindness; all fixed before first build. Impl round 1 flagged a 2*n+16 iterative resolver guard that could exhaust (1291 passes for n=512); replaced with the sweep-line algorithm. Impl round 2 flagged unstable tiebreak under swap-remove reordering; fixed with descriptor-index tiebreak. Review round 1 flagged arbitrary-large-RAM eviction; fixed with overlap-preference eviction. Review round 2 flagged that overlap-preference still discarded non-overlapping fragments of a large victim; fixed with min-loss ranking (`loss = victim.length - overlap_length`). Review round 3 cleared. Quality pass clean: no dead code, priority/eviction/coalescing consistent with `efi.h`, O(n^2) bounded at n=512. Parity: Linux `efi_memmap_insert()` and `e820_update_range()` use similar carve-by-priority logic; Windows HAL applies EFI memory-type precedence internally. Accepted: none.
@@ -524,6 +552,8 @@ The pre-§18 error screen used UEFI text console (`ConOut`) with white-on-blue t
 - [x] Commit: `"boot: graphical error screen -- ChromeOS-style recovery UX"` (4774d5be)
 
 **Test checkpoint:** Trigger `error_screen_test=1`. Error screen renders a clean graphical layout with icon, error text, description, QR code, and URL. ConOut text still appears on serial. Headless mode (no GOP) shows text-only fallback. Compare visually against ChromeOS recovery and Windows 11 BSOD for polish level.
+
+> **Test runner:** N/A (UEFI pre-boot only -- graphical error screen renders via GOP before kernel) | validation: `error_screen_test=1` fixture on QEMU WHPX/TCG, VBox + visual diff
 
 > **Verified:** 2026-04-12 -- all 10 items confirmed. `fb_pack_rgb` at [bootx64.c:1254](../../src/boot/uefi/bootx64.c#L1254). `bsod_font` at :1277. `bsod_sad_face` at :1468. `bsod_render_graphical` at :1568. `bsod_can_render_graphical` at :1720. `gFbPixelFormat` set at :2098. Integration at :1862. Accepted: none.
 > **Quality reviewed:** 2026-04-12 -- design review flagged ConOut-after-EBS safety, pixel-format-aware color packing, and risk matrix gaps (all fixed before first build). Impl round 1: URL caption unreachable (inlined QR with caption_reserve). Round 2: URL clipped at 1280x720 right edge (three-branch horizontal placement). Round 3: cleared. Post-impl round 1: pre-EBS dwell used counter not wall-clock (added `boot_fatal_dwell()` with `gBS->Stall`); post-EBS had no dwell (added `RuntimeServices->GetTime` loop with TSC fallback). Post-impl round 2: stale ConIn buffer bypassed dwell (added `ConIn->Reset` before polling); post-EBS TSC dwell non-uniform (replaced with GetTime primary, TSC fallback). Quality pass: all helpers referenced, no dead code, pixel format consistent, one-time boot performance. Accepted: none.

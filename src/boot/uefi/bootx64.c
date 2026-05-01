@@ -3584,6 +3584,14 @@ static EFI_STATUS load_kernel(UINT64 *entry_point)
     Elf64_Ehdr *ehdr;
     Elf64_Phdr *phdr;
     UINT16 i;
+    /* Disk-path-allocated kernel buffer ownership.  Set ONLY by the
+     * AllocatePages block in the disk path; left zero on the UKI fast
+     * path (which uses LoadedImage memory it does not own).  The
+     * `load_error` cleanup label uses the page count to decide whether
+     * to FreePages, so the UKI path's failure returns are no-ops here. */
+    EFI_PHYSICAL_ADDRESS load_buf_addr  = 0;
+    UINTN                load_buf_pages = 0;
+    EFI_STATUS           load_err_status;
 
     /* UKI fast path: when the bootloader was invoked through a Unified
      * Kernel Image, detect_uki_sections() captured the embedded kernel
@@ -3842,10 +3850,17 @@ static EFI_STATUS load_kernel(UINT64 *entry_point)
         }
         if (alloc_size == 0) {
             serial_early_print("[FAIL] Cannot allocate kernel buffer (tried 32/16/8 MiB)\n");
+            kernel_file->Close(kernel_file);
+            root_dir->Close(root_dir);
             return EFI_LOAD_ERROR;
         }
         file_buf = (UINT8 *)(UINTN)buf_addr;
         file_size = alloc_size;
+        /* Record ownership for the load_error cleanup label.  The UKI
+         * fast path leaves these zero so the cleanup is a no-op when
+         * the kernel buffer came from LoadedImage memory. */
+        load_buf_addr  = buf_addr;
+        load_buf_pages = alloc_size / EFI_PAGE_SIZE;
 
         /* Verify buffer doesn't overlap boot_info region.
          * S16: The protected region is the FULL struct boot_info at
@@ -3859,7 +3874,10 @@ static EFI_STATUS load_kernel(UINT64 *entry_point)
             if ((UINT64)buf_addr < bi_end &&
                 (UINT64)buf_addr + (UINT64)alloc_size > bi_start) {
                 serial_early_print("[FAIL] Kernel buffer overlaps boot_info region\n");
-                return EFI_LOAD_ERROR;
+                kernel_file->Close(kernel_file);
+                root_dir->Close(root_dir);
+                load_err_status = EFI_LOAD_ERROR;
+                goto load_error;
             }
         }
         /* Verify buffer doesn't overlap framebuffer */
@@ -3868,7 +3886,10 @@ static EFI_STATUS load_kernel(UINT64 *entry_point)
                 (UINT64)g_boot_info_ptr->fb.pitch * g_boot_info_ptr->fb.height;
             if (buf_addr < fb_end && buf_addr + alloc_size > g_boot_info_ptr->fb.addr) {
                 serial_early_print("[FAIL] Kernel buffer overlaps framebuffer\n");
-                return EFI_LOAD_ERROR;
+                kernel_file->Close(kernel_file);
+                root_dir->Close(root_dir);
+                load_err_status = EFI_LOAD_ERROR;
+                goto load_error;
             }
         }
     }
@@ -3876,7 +3897,10 @@ static EFI_STATUS load_kernel(UINT64 *entry_point)
     status = kernel_file->Read(kernel_file, &file_size, file_buf);
     if (EFI_ERROR(status)) {
         efi_print(u"[FAIL] Cannot read kernel file\r\n");
-        return status;
+        kernel_file->Close(kernel_file);
+        root_dir->Close(root_dir);
+        load_err_status = status;
+        goto load_error;
     }
 
     kernel_file->Close(kernel_file);
@@ -3892,7 +3916,8 @@ kernel_loaded:
      * hardening pattern of the rest of load_kernel. */
     if (file_size < sizeof(Elf64_Ehdr)) {
         serial_early_print("[FAIL] Kernel ELF corrupt: file < Elf64_Ehdr\n");
-        return EFI_LOAD_ERROR;
+        load_err_status = EFI_LOAD_ERROR;
+        goto load_error;
     }
 
     /* Parse ELF header */
@@ -3900,7 +3925,8 @@ kernel_loaded:
     if (ehdr->e_magic != ELF_MAGIC || ehdr->e_class != 2 ||
         ehdr->e_machine != 0x3E) {
         serial_early_print("[FAIL] Kernel ELF corrupt: invalid magic/class/machine\n");
-        return EFI_LOAD_ERROR;
+        load_err_status = EFI_LOAD_ERROR;
+        goto load_error;
     }
 
     /* --- ELF bounds validation (S1 hardening) --- */
@@ -3909,31 +3935,36 @@ kernel_loaded:
      * A mismatch means phdr indexing reads wrong offsets -- reject. */
     if (ehdr->e_phentsize != sizeof(Elf64_Phdr)) {
         serial_early_print("[FAIL] Kernel ELF corrupt: e_phentsize mismatch\n");
-        return EFI_LOAD_ERROR;
+        load_err_status = EFI_LOAD_ERROR;
+        goto load_error;
     }
 
     /* Cap e_phnum to prevent huge loop on corrupt ELF (matches Linux ELF_MAX_SEGMENTS spirit) */
     if (ehdr->e_phnum > 64) {
         serial_early_print("[FAIL] Kernel ELF corrupt: too many program headers\n");
-        return EFI_LOAD_ERROR;
+        load_err_status = EFI_LOAD_ERROR;
+        goto load_error;
     }
 
     /* Cap total kernel size at 32 MiB */
 #define ELF_MAX_KERNEL_SIZE (32ULL * 1024 * 1024)
     if (file_size > ELF_MAX_KERNEL_SIZE) {
         serial_early_print("[FAIL] Kernel ELF corrupt: file exceeds 32 MiB limit\n");
-        return EFI_LOAD_ERROR;
+        load_err_status = EFI_LOAD_ERROR;
+        goto load_error;
     }
 
     /* Validate program header table is within file bounds.
      * Use subtraction-based check to prevent integer wraparound. */
     if (ehdr->e_phoff > file_size) {
         serial_early_print("[FAIL] Kernel ELF corrupt: phdr offset past EOF\n");
-        return EFI_LOAD_ERROR;
+        load_err_status = EFI_LOAD_ERROR;
+        goto load_error;
     }
     if (ehdr->e_phnum > (file_size - ehdr->e_phoff) / sizeof(Elf64_Phdr)) {
         serial_early_print("[FAIL] Kernel ELF corrupt: phdr table past EOF\n");
-        return EFI_LOAD_ERROR;
+        load_err_status = EFI_LOAD_ERROR;
+        goto load_error;
     }
 
     /* Pre-jump ABI mismatch check MUST run BEFORE the PT_LOAD copy
@@ -3963,7 +3994,8 @@ kernel_loaded:
             serial_early_print("[FAIL] Kernel ELF corrupt: segment ");
             serial_early_print_uint(i);
             serial_early_print(" data past EOF\n");
-            return EFI_LOAD_ERROR;
+            load_err_status = EFI_LOAD_ERROR;
+            goto load_error;
         }
 
         /* Validate memsz >= filesz (ELF spec requirement) */
@@ -3971,7 +4003,8 @@ kernel_loaded:
             serial_early_print("[FAIL] Kernel ELF corrupt: segment ");
             serial_early_print_uint(i);
             serial_early_print(" memsz < filesz\n");
-            return EFI_LOAD_ERROR;
+            load_err_status = EFI_LOAD_ERROR;
+            goto load_error;
         }
 
         /* Reject segments with address wraparound */
@@ -3979,7 +4012,8 @@ kernel_loaded:
             serial_early_print("[FAIL] Kernel ELF corrupt: segment ");
             serial_early_print_uint(i);
             serial_early_print(" address wraparound\n");
-            return EFI_LOAD_ERROR;
+            load_err_status = EFI_LOAD_ERROR;
+            goto load_error;
         }
 
         /* Reject segments that overlap the FULL boot_info region.
@@ -3998,7 +4032,8 @@ kernel_loaded:
                 serial_early_print("[FAIL] Kernel ELF corrupt: segment ");
                 serial_early_print_uint(i);
                 serial_early_print(" overlaps boot_info region\n");
-                return EFI_LOAD_ERROR;
+                load_err_status = EFI_LOAD_ERROR;
+                goto load_error;
             }
         }
 
@@ -4020,7 +4055,8 @@ kernel_loaded:
                     serial_early_print("[FAIL] Kernel ELF corrupt: segment ");
                     serial_early_print_uint(i);
                     serial_early_print(" overlaps framebuffer\n");
-                    return EFI_LOAD_ERROR;
+                    load_err_status = EFI_LOAD_ERROR;
+                    goto load_error;
                 }
             }
         }
@@ -4076,7 +4112,8 @@ kernel_loaded:
             ehdr->e_shoff > file_size ||
             (UINT64)ehdr->e_shnum * sizeof(Elf64_Shdr) > file_size - ehdr->e_shoff) {
             efi_print(u"[FAIL] Kernel ELF: malformed section header table\r\n");
-            return EFI_LOAD_ERROR;
+            load_err_status = EFI_LOAD_ERROR;
+            goto load_error;
         }
         shdr = (Elf64_Shdr *)(file_buf + ehdr->e_shoff);
 
@@ -4130,13 +4167,26 @@ kernel_loaded:
 
         if (km_addr == 0) {
             efi_print(u"[FAIL] kernel_main symbol not found in ELF\r\n");
-            return EFI_LOAD_ERROR;
+            load_err_status = EFI_LOAD_ERROR;
+            goto load_error;
         }
 
         *entry_point = km_addr;
     }
 
     return EFI_SUCCESS;
+
+load_error:
+    /* Disk-path failure cleanup: free the kernel buffer if we own it.
+     * UKI fast path leaves load_buf_pages == 0 so the FreePages call
+     * is skipped (the LoadedImage memory is firmware-managed and we
+     * never allocated it).  kernel_file / root_dir are closed at each
+     * call site before jumping here because not all errors have them
+     * open (e.g. post-Read errors close before validation; UKI path
+     * never opened them). */
+    if (load_buf_pages != 0)
+        gBS->FreePages(load_buf_addr, load_buf_pages);
+    return load_err_status;
 }
 
 /* ============================================================================
