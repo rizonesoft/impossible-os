@@ -53,8 +53,20 @@ fi
 
 echo "[stale-kernel] current=v$CURRENT stale=v$STALE"
 
+CLEANUP_RUNNING=0
 cleanup() {
     local orig_rc=$?
+    # Idempotent + non-reentrant. Bash will fire the EXIT trap AFTER an
+    # INT/TERM trap that calls exit -- so without this guard cleanup()
+    # runs twice for a single cancellation, and the second pass would
+    # invalidate kernel artifacts again with no sentinel to protect a
+    # second restore phase if interrupted. Disable traps + set a guard
+    # so the EXIT-after-INT does nothing.
+    if [ "$CLEANUP_RUNNING" -ne 0 ]; then
+        return
+    fi
+    CLEANUP_RUNNING=1
+    trap - EXIT INT TERM
     echo "[stale-kernel] restoring real kernel.exe..."
     # Scoped invalidation for the restore too: only re-build the TUs
     # that actually saw the KERNEL_EXTRA_CFLAGS override (the
@@ -93,6 +105,9 @@ cleanup() {
     if [ "$restore_rc" -ne 0 ]; then
         exit 1
     fi
+    # Restore succeeded -- the build tree is clean again, so clear
+    # the dirty sentinel.
+    rm -f build/.stale-abi-dirty
     # Propagate the pre-cleanup script exit code (preserves the
     # stale-build-failure signal when that was what triggered us).
     exit "$orig_rc"
@@ -121,6 +136,16 @@ echo "[stale-kernel] invalidated $invalidated_count .o files (scope: boot_info.h
 # both sides of the build rebuild consistently.
 rm -f build/kernel.exe build/kernel.map build/kernel.sym \
       build/boot_proto_sha.h
+
+# Dirty sentinel: signal to scripts/build.sh that the build tree
+# carries objects compiled with BOOT_INFO_VERSION = $STALE. If our
+# cleanup() trap completes normally the sentinel is removed there;
+# if we get SIGKILL / host shutdown / a second signal during
+# cleanup, the sentinel survives and the next normal `bash
+# scripts/build.sh` forces a clean rebuild rather than silently
+# packaging a stale kernel.
+mkdir -p build
+touch build/.stale-abi-dirty
 
 if ! make kernel KERNEL_EXTRA_CFLAGS="-DBOOT_INFO_VERSION=$STALE"; then
     echo "[stale-kernel] build FAILED" >&2

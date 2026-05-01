@@ -336,7 +336,12 @@ boot-info-doc-coverage:
 ##                     are missing, so CI runners without nested virt
 ##                     do not gate the build on a flake.
 .PHONY: stale-abi-fixtures
-stale-abi-fixtures:
+# Depend on $(SYSTEM_DISK) so the fixture harness always copies a
+# CURRENT base disk -- without this, a developer running
+# `make stale-abi-fixtures` after source/header changes could pair
+# freshly rebuilt stale halves with a stale matched-pair disk and
+# get false PASS/FAIL signal for the wrong ABI state.
+stale-abi-fixtures: $(SYSTEM_DISK)
 	@bash scripts/debug/stale-abi-fixtures/run-fixtures.sh
 
 ## test-bootproto-parse: host-side unit test for the bootloader's

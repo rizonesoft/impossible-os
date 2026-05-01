@@ -72,8 +72,17 @@ echo "[stale-bootloader] current=v$CURRENT stale=v$STALE"
 # build fails OR we are interrupted. Otherwise the tree would be left
 # with a bootloader that the system-disk.img still packages.
 SCRATCH=""
+CLEANUP_RUNNING=0
 cleanup() {
     local orig_rc=$?
+    # Idempotent + non-reentrant. Bash fires EXIT after an INT/TERM
+    # trap that calls exit; without this guard cleanup() runs twice
+    # for a single cancellation. Disable traps + set guard.
+    if [ "$CLEANUP_RUNNING" -ne 0 ]; then
+        return
+    fi
+    CLEANUP_RUNNING=1
+    trap - EXIT INT TERM
     # Reap the scratch dir BEFORE any exit so it never leaks. Earlier
     # revision put the `rm -rf "$SCRATCH"` after `cleanup` in the trap
     # expression, but cleanup() exits in its body, making the rm

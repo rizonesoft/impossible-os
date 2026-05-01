@@ -36,6 +36,63 @@ OVMF_VARS_SRC="/usr/share/OVMF/OVMF_VARS_4M.fd"
 # longer so bump the timeout when falling back.
 TIMEOUT_KVM="${STALE_ABI_TIMEOUT_KVM:-45}"
 TIMEOUT_TCG="${STALE_ABI_TIMEOUT_TCG:-120}"
+# Round-trip TCG timeout was previously 180s per boot (= 360s combined)
+# which dwarfed the ~50s green-run target on a TCG fallback. Right-sized
+# to ~60-90s based on observed boot time + the 10s ResetSystem stall.
+ROUNDTRIP_TIMEOUT_KVM="${STALE_ABI_ROUNDTRIP_KVM:-60}"
+ROUNDTRIP_TIMEOUT_TCG="${STALE_ABI_ROUNDTRIP_TCG:-90}"
+
+# --- QEMU process tracking (parent-interrupt cleanup) ---------------
+# Without this, a SIGKILL / CI cancel / `timeout` against the parent
+# shell can leave qemu-system-x86_64 running with the fixture disk
+# and OVMF_VARS file open, leaking CPU and corrupting the shared
+# round-trip vars file.
+#
+# Critical: only LIVE PIDs are tracked. A waited child PID is
+# released back to the OS and can be reused by an unrelated
+# same-user process; if the EXIT trap signaled a stale PID number
+# from a successful fixture earlier in the run, it could KILL an
+# innocent process. Use _qemu_register / _qemu_unregister around
+# every QEMU launch so the trap only ever signals processes that
+# are actually still ours.
+QEMU_PIDS=()
+_qemu_register() {
+    QEMU_PIDS+=("$1")
+}
+_qemu_unregister() {
+    local target="$1"
+    local new=()
+    local pid
+    for pid in "${QEMU_PIDS[@]:-}"; do
+        [ -n "$pid" ] || continue
+        [ "$pid" = "$target" ] && continue
+        new+=("$pid")
+    done
+    QEMU_PIDS=("${new[@]:-}")
+}
+_kill_tracked_qemu() {
+    local pid
+    for pid in "${QEMU_PIDS[@]:-}"; do
+        [ -n "$pid" ] || continue
+        kill -TERM "$pid" 2>/dev/null || true
+    done
+    sleep 0.3
+    for pid in "${QEMU_PIDS[@]:-}"; do
+        [ -n "$pid" ] || continue
+        kill -KILL "$pid" 2>/dev/null || true
+        wait "$pid" 2>/dev/null || true
+    done
+    QEMU_PIDS=()
+}
+# EXIT is the unconditional cleanup path. INT/TERM cleanup must ALSO
+# propagate the cancellation: bash does not auto-exit after a trapped
+# signal, so a Ctrl-C between commands could be swallowed and the
+# harness would keep running through more fixtures. Force exit with
+# the standard signal-mapped status (130 for SIGINT, 143 for SIGTERM)
+# so CI cancel + user Ctrl-C are honored.
+trap _kill_tracked_qemu EXIT
+trap '_kill_tracked_qemu; exit 130' INT
+trap '_kill_tracked_qemu; exit 143' TERM
 
 # Auto-detect accelerator. KVM preferred; TCG fallback so CI runners
 # without nested virt still exercise the fail-closed path instead of
@@ -126,6 +183,7 @@ boot_fixture() {
 
     qemu-system-x86_64 "${args[@]}" &
     local qpid=$!
+    _qemu_register "$qpid"
 
     local deadline=$(( $(date +%s) + timeout ))
     # The stale-ABI path is expected to halt (bootloader fatal on the
@@ -149,6 +207,9 @@ boot_fixture() {
         sleep 0.5
     done
 
+    # Unregister the now-dead PID so the EXIT trap cannot kill an
+    # unrelated process that the OS later assigns the same number to.
+    _qemu_unregister "$qpid"
     return 0
 }
 
@@ -238,17 +299,31 @@ run_nvram_roundtrip() {
     echo
     printf "%s=== %s ===%s\n" "$CYAN" "$label" "$NC"
 
-    # Build the stale-kernel binary + assemble the stale disk.
+    # Reuse the stale-kernel artifact + disk produced by
+    # run_stale_kernel earlier in the harness order if available --
+    # rebuilding the same BOOT_INFO_VERSION-1 kernel a second time
+    # is wasted ~10-20s on every CI run. Fall back to a fresh build
+    # if cache is empty (this fixture run standalone or stale-kernel
+    # was skipped).
     local stale_bin
-    stale_bin="$(bash "$SCRIPT_DIR/build-stale-kernel.sh")"
-    if [ ! -f "$stale_bin" ]; then
-        say_fail "$label: stale build did not produce artifact"
-        FAILED=$((FAILED + 1))
-        return
-    fi
     local stale_disk
-    stale_disk="$(bash "$SCRIPT_DIR/assemble-esp.sh" \
-        --stale-kernel "$stale_bin")"
+    if [ -n "${STALE_KERNEL_BIN_CACHE:-}" ] && \
+       [ -f "${STALE_KERNEL_BIN_CACHE}" ] && \
+       [ -n "${STALE_KERNEL_DISK_CACHE:-}" ] && \
+       [ -f "${STALE_KERNEL_DISK_CACHE}" ]; then
+        say_info "  reusing stale-kernel cache: $STALE_KERNEL_BIN_CACHE"
+        stale_bin="$STALE_KERNEL_BIN_CACHE"
+        stale_disk="$STALE_KERNEL_DISK_CACHE"
+    else
+        stale_bin="$(bash "$SCRIPT_DIR/build-stale-kernel.sh")"
+        if [ ! -f "$stale_bin" ]; then
+            say_fail "$label: stale build did not produce artifact"
+            FAILED=$((FAILED + 1))
+            return
+        fi
+        stale_disk="$(bash "$SCRIPT_DIR/assemble-esp.sh" \
+            --stale-kernel "$stale_bin")"
+    fi
 
     # Shared OVMF_VARS: copied fresh from the firmware template so
     # the test starts from a clean NVRAM. After the first boot it
@@ -373,17 +448,18 @@ _roundtrip_qemu() {
         -no-shutdown
         -display none
     )
-    local timeout=60
+    local timeout="$ROUNDTRIP_TIMEOUT_KVM"
     if [ "$USE_KVM" -eq 1 ]; then
         args+=(-enable-kvm -cpu host)
     else
         args+=(-machine q35 -cpu qemu64)
-        timeout=180
+        timeout="$ROUNDTRIP_TIMEOUT_TCG"
     fi
 
     : > "$serial"
     qemu-system-x86_64 "${args[@]}" &
     local qpid=$!
+    _qemu_register "$qpid"
 
     local deadline=$(( $(date +%s) + timeout ))
     while kill -0 "$qpid" 2>/dev/null; do
@@ -403,6 +479,7 @@ _roundtrip_qemu() {
         fi
         sleep 0.5
     done
+    _qemu_unregister "$qpid"
     return 0
 }
 
@@ -457,6 +534,12 @@ run_stale_kernel() {
     local stale_disk
     stale_disk="$(bash "$SCRIPT_DIR/assemble-esp.sh" \
         --stale-kernel "$stale_bin")"
+
+    # Cache the stale artifact + disk so run_nvram_roundtrip can
+    # reuse them instead of rebuilding the same BOOT_INFO_VERSION-1
+    # kernel a second time (~10-20s saved per harness run).
+    STALE_KERNEL_BIN_CACHE="$stale_bin"
+    STALE_KERNEL_DISK_CACHE="$stale_disk"
 
     local serial="$FIXTURES_DIR/$label.serial.log"
     boot_fixture "$stale_disk" "$serial"

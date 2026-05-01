@@ -57,7 +57,13 @@ fi
 
 mkdir -p "$FIXTURES_DIR"
 OUT="$FIXTURES_DIR/stale-${VARIANT}-disk.img"
-cp "$DISK_SRC" "$OUT"
+# Use --reflink=auto to copy-on-write on btrfs/xfs/etc. (instant +
+# zero-cost until mcopy mutates the fixture); --sparse=always
+# preserves holes. On filesystems without reflink support cp falls
+# back to a full copy automatically. system-disk.img is 512 MiB; the
+# unconditional full copy was costing multiple seconds on CI storage
+# directly competing with the harness wallclock budget.
+cp --reflink=auto --sparse=always "$DISK_SRC" "$OUT"
 
 # ESP partition starts at 1 MiB per the GPT layout produced by the
 # system-disk build. mtools `@@1M` offset notation works as long as

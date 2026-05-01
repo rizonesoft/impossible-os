@@ -286,6 +286,23 @@ echo "" > "$LOG"
 printf '\n%b Impossible OS -- Build System%b\n' "${BOLD}${CYAN}" "$RESET" | tee -a "$LOG"
 printf ' %b%s  (%d parallel jobs)%b\n\n' "$DIM" "$(date '+%Y-%m-%d %H:%M:%S')" "$JOBS" "$RESET" | tee -a "$LOG"
 
+# Stale-ABI fixture sentinel: build-stale-kernel.sh writes
+# build/.stale-abi-dirty before invoking `make kernel
+# KERNEL_EXTRA_CFLAGS=-DBOOT_INFO_VERSION=N` and removes it after
+# the cleanup() trap restores the real kernel. If the sentinel
+# survives (script killed by SIGKILL, host shutdown, second signal
+# during cleanup), the build tree may carry .o files compiled with
+# a stale BOOT_INFO_VERSION that an incremental build would treat
+# as up-to-date. Force a clean rebuild rather than ship a silently
+# stale kernel.
+if [ -f build/.stale-abi-dirty ] && ! $DO_CLEAN; then
+    echo "[build] stale-ABI sentinel present (build/.stale-abi-dirty);" >&2
+    echo "[build]   the build tree may contain objects compiled with" >&2
+    echo "[build]   BOOT_INFO_VERSION-1 from an interrupted fixture run." >&2
+    echo "[build]   Forcing a clean rebuild to ensure a consistent kernel." >&2
+    DO_CLEAN=true
+fi
+
 # Step counter
 STEP=0
 if $DO_CLEAN; then
