@@ -1398,20 +1398,36 @@ static void test_boot_loader_identity_layout_pinned(void)
                    52UL, "_pad at offset 52");
 }
 
-/* Tail-field pin: boot_info.loader_identity must live at the END of
- * struct boot_info -- adding a new field to the tail must update the
- * offset asserts in boot_info.h, and accidentally inserting a field
- * in the middle would shift all subsequent offsets. The asserts in
- * boot_info.h cover the named fields up through usb_device_count;
- * loader_identity is at the absolute tail so its end == sizeof. */
-static void test_boot_info_loader_identity_at_tail(void)
+/* Tail-field pin: the LAST appended field group must end at
+ * sizeof(struct boot_info) -- inserting a field in the middle would
+ * shift all subsequent offsets and silently break ABI back-compat.
+ * v14 (UKI signed-payload addresses) is the current tail; before
+ * v14, loader_identity was. When the next ABI bump appends new
+ * fields, update both the offset and the field name here so the
+ * tail-pin test continues to enforce the end-of-struct invariant. */
+static void test_boot_info_v14_tail(void)
+{
+    /* uki_modules_size is the last uint64 in the v14 tail block. */
+    uint64_t off = (uint64_t)__builtin_offsetof(
+        struct boot_info, uki_modules_size);
+    uint64_t end = off + (uint64_t)sizeof(uint64_t);
+    TEST_ASSERT_EQ(end, (uint64_t)sizeof(struct boot_info),
+                   "uki_modules_size must be the tail field "
+                   "(end-of-struct invariant for back-compat)");
+}
+
+/* loader_identity is no longer the tail (v14 appended UKI payload
+ * fields after it), but its offset must remain stable: it sits
+ * exactly between the v13 ESP integrity fields and the v14 tail
+ * block. Stale-bootloader detection still hinges on the all-zero
+ * git_sha[] sentinel at this offset. */
+static void test_boot_info_loader_identity_offset_stable(void)
 {
     uint64_t off = (uint64_t)__builtin_offsetof(
         struct boot_info, loader_identity);
-    uint64_t end = off + (uint64_t)sizeof(struct boot_loader_identity);
-    TEST_ASSERT_EQ(end, (uint64_t)sizeof(struct boot_info),
-                   "loader_identity must be the tail field "
-                   "(end-of-struct invariant for back-compat)");
+    TEST_ASSERT_EQ(off, (uint64_t)23760,
+                   "loader_identity must stay at offset 23760 "
+                   "(v13 layout pinned; v14 fields append after it)");
 }
 
 /* Zero-default sentinel: a brand-new struct boot_info (or one
@@ -1553,8 +1569,10 @@ void test_register_boot_info(void)
     /* Bootloader build identity. */
     test_suite_register_cat("boot_loader_identity: layout pinned (64B, packed)",
                             test_boot_loader_identity_layout_pinned, TEST_CAT_BOOT);
-    test_suite_register_cat("boot_info: loader_identity at struct tail",
-                            test_boot_info_loader_identity_at_tail, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_info: v14 tail field pin (uki_modules_size)",
+                            test_boot_info_v14_tail, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_info: loader_identity offset stable (v13 layout)",
+                            test_boot_info_loader_identity_offset_stable, TEST_CAT_BOOT);
     test_suite_register_cat("boot_loader_identity: zero is loader-did-not-populate",
                             test_boot_loader_identity_zero_default, TEST_CAT_BOOT);
 }
