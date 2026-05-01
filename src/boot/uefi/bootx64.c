@@ -3643,31 +3643,38 @@ static EFI_STATUS load_kernel(UINT64 *entry_point)
     }
 
     /* Use global g_boot_device_handle (set in efi_main) to get the
-     * boot device's filesystem.  Fall back to LocateProtocol if the
-     * handle was not resolved OR if the handle lacks SimpleFS (e.g.
-     * PXE boot, partition handle without filesystem driver). */
+     * boot device's filesystem.  When the handle is unresolved or
+     * lacks SimpleFS (PXE boot, partition handle without filesystem
+     * driver), do NOT silently call LocateProtocol -- it returns the
+     * first SimpleFS firmware enumerates, which on multi-disk systems
+     * may not be the boot volume and could let an arbitrary ESP
+     * provide kernel.exe. Leave fs/root_dir unset so the explicit
+     * all-volumes fallback below runs with [WARN] diagnostics and the
+     * operator can see which volume was selected. */
     fs = (EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *)0;
+    root_dir = (EFI_FILE_PROTOCOL *)0;
     if (g_boot_device_handle) {
         status = gBS->HandleProtocol(g_boot_device_handle,
                                       &fs_guid, (VOID **)&fs);
         if (EFI_ERROR(status)) {
-            serial_early_print("[WARN] Boot device has no filesystem, "
-                               "trying LocateProtocol fallback\n");
-            status = gBS->LocateProtocol(&fs_guid, (VOID *)0, (VOID **)&fs);
+            serial_early_print("[WARN] Boot device has no SimpleFS; "
+                               "deferring to explicit all-volumes "
+                               "fallback search\n");
+            fs = (EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *)0;
         }
     } else {
-        status = gBS->LocateProtocol(&fs_guid, (VOID *)0, (VOID **)&fs);
-    }
-    if (EFI_ERROR(status)) {
-        serial_early_print("[FAIL] File system protocol not found\n");
-        return status;
+        serial_early_print("[WARN] No boot device handle; deferring to "
+                           "explicit all-volumes fallback search\n");
     }
 
-    /* Open root directory */
-    status = fs->OpenVolume(fs, &root_dir);
-    if (EFI_ERROR(status)) {
-        serial_early_print("[FAIL] Cannot open root volume\n");
-        return status;
+    /* Open root directory on the boot device when available; if fs is
+     * NULL the all-volumes fallback below populates root_dir. */
+    if (fs) {
+        status = fs->OpenVolume(fs, &root_dir);
+        if (EFI_ERROR(status)) {
+            serial_early_print("[FAIL] Cannot open root volume\n");
+            return status;
+        }
     }
 
     /* Fallback kernel search: try paths in order (S3) */
@@ -3684,35 +3691,42 @@ static EFI_STATUS load_kernel(UINT64 *entry_point)
         };
         int found = 0;
         UINT16 pi;
-        for (pi = 0; pi < 3; pi++) {
-            serial_early_print("[BOOT] Trying ");
-            serial_early_print(kernel_path_names[pi]);
-            serial_early_print("...\n");
-            status = root_dir->Open(root_dir, &kernel_file,
-                                     (CHAR16 *)kernel_paths[pi],
-                                     EFI_FILE_MODE_READ, 0);
-            if (!EFI_ERROR(status)) {
-                serial_early_print("[BOOT] Kernel found at ");
+        /* Skip the boot-device search entirely when root_dir is NULL
+         * (degraded boot path: no DeviceHandle or no SimpleFS on it).
+         * The all-volumes fallback below handles those cases with
+         * explicit [WARN] logging. */
+        if (root_dir) {
+            for (pi = 0; pi < 3; pi++) {
+                serial_early_print("[BOOT] Trying ");
                 serial_early_print(kernel_path_names[pi]);
-                serial_early_print("\n");
-                found = 1;
-                break;
-            }
-            /* Only continue searching on EFI_NOT_FOUND; any other error
-             * (EFI_DEVICE_ERROR, EFI_VOLUME_CORRUPTED, etc.) is a hard
-             * failure -- report and stop. */
-            if (status != EFI_NOT_FOUND) {
-                serial_early_print("[FAIL] Error opening ");
-                serial_early_print(kernel_path_names[pi]);
-                serial_early_print(" (device/FS error)\n");
-                root_dir->Close(root_dir);
-                return status;
+                serial_early_print("...\n");
+                status = root_dir->Open(root_dir, &kernel_file,
+                                         (CHAR16 *)kernel_paths[pi],
+                                         EFI_FILE_MODE_READ, 0);
+                if (!EFI_ERROR(status)) {
+                    serial_early_print("[BOOT] Kernel found at ");
+                    serial_early_print(kernel_path_names[pi]);
+                    serial_early_print("\n");
+                    found = 1;
+                    break;
+                }
+                /* Only continue searching on EFI_NOT_FOUND; any other
+                 * error (EFI_DEVICE_ERROR, EFI_VOLUME_CORRUPTED, etc.)
+                 * is a hard failure -- report and stop. */
+                if (status != EFI_NOT_FOUND) {
+                    serial_early_print("[FAIL] Error opening ");
+                    serial_early_print(kernel_path_names[pi]);
+                    serial_early_print(" (device/FS error)\n");
+                    root_dir->Close(root_dir);
+                    return status;
+                }
             }
         }
         if (!found) {
             /*: Device fallback chain -- kernel not on boot device,
              * try all other filesystems before giving up. */
-            root_dir->Close(root_dir);
+            if (root_dir) root_dir->Close(root_dir);
+            root_dir = (EFI_FILE_PROTOCOL *)0;
             post_code16(POST16_BL_FALLBACK);
             serial_early_print("[WARN] Kernel not on boot device, "
                                "searching other volumes...\n");
@@ -3761,6 +3775,21 @@ static EFI_STATUS load_kernel(UINT64 *entry_point)
                                 fs = fb_fs;
                                 found = 1;
                                 break;
+                            }
+                            /* Mirror primary-loop semantics: on hard
+                             * errors (EFI_DEVICE_ERROR / VOLUME_CORRUPTED
+                             * / SECURITY_VIOLATION / ACCESS_DENIED),
+                             * abort the whole fallback search instead
+                             * of silently moving to the next path or
+                             * volume.  EFI_NOT_FOUND continues. */
+                            if (fb_s != EFI_NOT_FOUND) {
+                                serial_early_print("[FAIL] Error opening ");
+                                serial_early_print(kernel_path_names[pi]);
+                                serial_early_print(" on non-boot volume "
+                                                   "(device/FS error)\n");
+                                fb_root->Close(fb_root);
+                                gBS->FreePool(fs_handles);
+                                return fb_s;
                             }
                         }
                         if (!found)

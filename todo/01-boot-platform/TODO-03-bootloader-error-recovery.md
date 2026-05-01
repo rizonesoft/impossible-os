@@ -65,7 +65,7 @@ title: "TODO-03 -- Bootloader Error Recovery & ELF Hardening"
 | 💎  |   4   | Serial port probe and COM2 fallback            | --         |  [x]   |
 | 💎  |   5   | GOP timeout and graceful degradation           | --         |  [x]   |
 | 💎  |   6   | Memory map overflow detection (512 entries)    | --         |  [x]   |
-| 💎  |   7   | boot.conf validation and version field         | --         |  [x]   |
+| 💎  |   7   | boot.conf validation and version field         | --         |  [/]   |
 | 💎  |   8   | Kernel load allocation fallback (32-16-8 MiB)  | --         |  [x]   |
 | ⭐  |   9   | Boot failure error screen                      | §1-§8      |  [x]   |
 | 💎  |  10   | ACPI SPCR serial port auto-detection           | §4         |  [x]   |
@@ -165,8 +165,16 @@ If `\boot\kernel.exe` is not found, search alternative paths before giving up.
 
 **Test checkpoint:** Rename `\boot\kernel.exe` to `\kernel.exe` on EFI partition. Boot must succeed with serial showing `"Trying \boot\kernel.exe... not found"` then `"Kernel found at \kernel.exe"`. Verify on QEMU TCG. Confirm default path works on all 4 platforms.
 
-> **Verified:** 2026-04-11 -- all 5 items confirmed. 3 hardcoded paths, LoadedImage->DeviceHandle + LocateProtocol fallback, EFI_NOT_FOUND continues search / device errors stop immediately, root_dir closed on all failure paths. Accepted: none.
-> **Quality reviewed:** 2026-04-11 -- no findings. LoadedImage->DeviceHandle approach matches GRUB2 and exceeds Linux efi-stub (which uses a single hardcoded path). Error handling more robust than Linux (specific error + halt vs silent hang). Accepted: none.
+> **Notes:**
+> - Three hardcoded kernel paths (`\boot\kernel.exe` -> `\kernel.exe` -> `\EFI\ImpossibleOS\kernel.exe`) tried in order on the boot device's SimpleFS, with LocateHandleBuffer-based all-volumes fallback when the kernel is absent from the boot device.
+> - `LoadedImage->DeviceHandle` resolved at efi_main into `g_boot_device_handle`; degraded paths (NULL handle or no SimpleFS) defer to the explicit all-volumes search with `[WARN]` diagnostics rather than silently calling `LocateProtocol` (rebuilt 2026-05-01).
+> - Primary loop and all-volumes inner loop share identical error policy: `EFI_NOT_FOUND` continues, every other Open status closes resources, `FreePool(fs_handles)`, and returns the underlying status.
+> - POST16 sequence: `POST16_BL_FALLBACK` (0xB094) on entry to all-volumes search; `POST16_BL_FALLBACK_OK` (0xB095) only on success; left at 0xB094 on total failure so a POST card shows fallback-failed.
+> - Scope boundary: `parse_boot_conf()` and `locate_boot_fs()` still use the silent LocateProtocol pattern; consistency follow-ups filed in §7 and TODO-02 §16 to mirror the §3 hardening.
+> **Verified:** 2026-05-01 | commit `<pending>` | 5/5 items | build OK | smoke PASS (KVM 2.46s)
+> **Accepted:** [H] Silent LocateProtocol fallback in `parse_boot_conf()` (reason: scope -- §7 owns boot.conf reads) -> XREF: 01-boot-platform/TODO-03 §7 (item: "Eliminate silent LocateProtocol fallback in `parse_boot_conf()`" at line 249)
+> **Accepted:** [H] Silent LocateProtocol fallback in `locate_boot_fs()` (reason: scope -- TODO-02 §16 owns UKI staged-payload disk reads) -> XREF: 01-boot-platform/TODO-02 §16 (item: "Eliminate silent LocateProtocol fallback in `locate_boot_fs()`" at line 540)
+> **Quality reviewed:** 2026-05-01 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 1H+1M fixed, 2H accepted-XREF | scope: boot-code-quality
 
 ---
 
@@ -246,6 +254,7 @@ Malformed boot.conf should produce warnings, not silent misbehavior.
 - [x] `config_version` field added to `boot_config` struct (1 byte from `_reserved[]`). `config_version=1` in boot.conf sets it.
 - [x] Range validation: `debug`/`verbose`/`test` clamped to 0-1, `splash_timeout` clamped to 0-60 (default 3). Out-of-range logs `"[WARN] boot.conf: X out of range, using N"`
 - [x] Commit: `"boot: validate boot.conf -- warn on unknown keys and out-of-range values"` (83b2ccb8)
+- [ ] **Eliminate silent LocateProtocol fallback in `parse_boot_conf()`** (filed 2026-05-01 from §3 review Codex consistency H2): `parse_boot_conf()` at `src/boot/uefi/bootx64.c:2477-2495` still calls `gBS->LocateProtocol(&fs_guid, ...)` when `g_boot_device_handle` is NULL or lacks SimpleFS, picking the first SimpleFS volume firmware enumerates. After §3's hardening, `load_kernel()` no longer does this -- so on a degraded boot-device path, boot.conf can come from a different ESP than the kernel, defeating the trust boundary. Implementation: mirror the §3 pattern -- on degraded paths, log `[WARN] Boot device has no SimpleFS for boot.conf` and skip the parse entirely (boot_config defaults already populated by `boot_config_defaults()`); OR enter an explicit all-volumes search with `[WARN]` per-volume diagnostics that matches `load_kernel()`'s fallback chain. Test: with QEMU `-drive` set up so the bootloader's LoadedImage->DeviceHandle has no SimpleFS protocol but a second SimpleFS handle exists, assert serial shows the explicit warn (not silent first-volume selection) and that boot.conf is either skipped or selected with a logged volume identity.
 
 **Test checkpoint:** Add `bogus_key=42` to boot.conf. Serial must show `"unknown key 'bogus_key'"`. Set `splash_timeout=999` -- serial must show `"out of range, using default 3"`. A boot.conf > 1 MiB must trigger `boot_fatal(BOOT_ERR_CONF_INVALID)` (no silent truncation).
 
