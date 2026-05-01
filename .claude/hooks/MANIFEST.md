@@ -83,6 +83,8 @@
 | Module | File | Importers | Purpose |
 |---|---|---|---|
 | skill_step_map | `.claude/hooks/skill_step_map.py` | `skill_step_observer.py`, `skill_step_block.py` | Step-evidence rules for the 5 multi-step skills + required-terminal-step lists. Pure data module; no `stderr.write` and no exit paths. |
+| _postcommit_lock | `.claude/hooks/_postcommit_lock.py` | `post_commit_smoketest.py`, `post_commit_smoketest_boot.py` | Shared non-blocking flock helper at `/tmp/impossible-os-postcommit.lock` (overridable via `IMPOSSIBLE_OS_POSTCOMMIT_LOCK`). `try_acquire()` context manager + `emit_deferred()` JSON systemMessage helper + `run_with_group_timeout()` Popen wrapper that uses `start_new_session=True` + `os.killpg(SIGKILL)` on TimeoutExpired so QEMU/make descendants are reaped before the lock releases. (TODO-08 §31.) |
+| test_postcommit_lock | `.claude/hooks/test_postcommit_lock.py` | (test harness, not a hook) | Standalone unit test for `_postcommit_lock.py` -- 6 sub-tests: first acquirer wins, second sees held, auto-release on context exit, deferred-message JSON shape, env override path, `run_with_group_timeout` reaps grandchild process group. Run: `python3 .claude/hooks/test_postcommit_lock.py`. Listed here for `audit-hooks.sh` Check 1 (every file in `.claude/hooks/` needs a manifest row); not invoked by the harness. |
 
 ## SessionStart / UserPromptSubmit / Stop / SubagentStop / PreCompact Hooks
 

@@ -2575,7 +2575,7 @@ PY
         printf '%s' '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"}}' | \
         python3 ".claude/hooks/section_commit_gate.py" >/dev/null 2>&1; echo $?)
     if [ "$BLOCK_RC" = "2" ]; then
-        t_pass "four_dispatch_gate: C nested blockquote stamp (`> > **`) is detected"
+        t_pass "four_dispatch_gate: C nested blockquote stamp ('> > **') is detected"
     else
         t_fail "four_dispatch_gate: C nested blockquote stamp missed (rc=$BLOCK_RC)"
     fi
@@ -2599,7 +2599,7 @@ PY
         printf '%s' '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"}}' | \
         python3 ".claude/hooks/section_commit_gate.py" >/dev/null 2>&1; echo $?)
     if [ "$BLOCK_RC" = "2" ]; then
-        t_pass "four_dispatch_gate: C doubled-blockquote stamp (`>>`) is detected"
+        t_pass "four_dispatch_gate: C doubled-blockquote stamp ('>>') is detected"
     else
         t_fail "four_dispatch_gate: C doubled-blockquote stamp missed (rc=$BLOCK_RC)"
     fi
