@@ -59,7 +59,7 @@ title: "TODO-03 -- Bootloader Error Recovery & ELF Hardening"
 
 | ⭐  | Order | Deliverable                                    | Depends On | Status |
 | --- | :---: | ---------------------------------------------- | ---------- | :----: |
-| 💎  |   1   | ELF bounds checking                            | --         |  [x]   |
+| 💎  |   1   | ELF bounds checking                            | --         |  [/]   |
 | 💎  |   2   | ExitBootServices retry loop (bounded)          | --         |  [x]   |
 | 💎  |   3   | Fallback kernel search (3 paths)               | --         |  [x]   |
 | 💎  |   4   | Serial port probe and COM2 fallback            | --         |  [x]   |
@@ -99,12 +99,23 @@ Harden the kernel ELF parser in `load_kernel()` to reject malformed or corrupted
 - [x] Cap total kernel size at 32 MiB (`ELF_MAX_KERNEL_SIZE`): reject with clear error if exceeded
 - [x] Log each loaded segment: `"[BOOT] ELF segment N: paddr=0xHHHH filesz=N memsz=N"` via serial_early_print per segment
 - [x] On any validation failure: `"[FAIL] Kernel ELF corrupt: <reason>"` with specific error text for each check
+- [ ] **Consolidate ELF typedefs with shared header** (review-todo-section 2026-05-01 Codex consistency H1): `load_kernel()` defines its own `Elf64_Ehdr` / `Elf64_Phdr` at [`bootx64.c:40-76`](../../src/boot/uefi/bootx64.c) while [`src/boot/uefi/elf_types.h`](../../src/boot/uefi/elf_types.h) carries a second copy used by the .bootproto descriptor walker. Two byte-compatible copies both need to track the on-disk ELF spec; drift between them would let one path read fields at different offsets than the other. Include `elf_types.h` from `bootx64.c`, delete the local typedefs, and add `_Static_assert(__builtin_offsetof(Elf64_Ehdr, e_phoff) == 32, ...)` etc. for every field `load_kernel()` reads (e_phoff, e_phentsize, e_phnum, p_offset, p_filesz, p_memsz, p_paddr) so a future ABI change to elf_types.h breaks the build instead of silently changing field offsets. Owner: this section.
+- [ ] **Replace byte-at-a-time efi_memcpy / efi_memset with word-width or rep movsb path** (review-todo-section 2026-05-01 Codex perf M1): the helpers at [`bootx64.c:186-200`](../../src/boot/uefi/bootx64.c) are one-byte loops; `load_kernel()` calls them across multi-MiB PT_LOAD segments + BSS clears, executing millions of byte stores per boot before kernel handoff. Switch to: (a) `gBS->CopyMem` / `gBS->SetMem` while pre-EBS (UEFI firmware provides optimized implementations), with the byte-loop fallback retained for post-EBS callers, OR (b) inline-asm `rep movsb` / `rep stosb` for x86-64 (modern microarchitectures fast-path these). Measure boot-time delta on QEMU TCG (where the savings are largest). Owner: this section.
 - [x] Commit: `"boot: harden ELF parser -- bounds check all headers and segments"` (3c888540)
 
 **Test checkpoint:** Build a test kernel with `e_phoff` pointing past EOF. Bootloader must reject with `"Kernel ELF corrupt: phdr offset past EOF"` on serial. Verify on QEMU WHPX and TCG. Normal kernel must pass all checks on all 4 platforms (WHPX, TCG, VBox, bare metal).
 
-> **Verified:** 2026-04-29 | re-verify of commit `3c888540` | 8/8 items | build OK | smoke PASS (KVM 2.32s). All 8 checks confirmed at file:line. Subtraction-based overflow prevention correct. Framebuffer overlap uses pitch*height with overflow guard. Overlapping PT_LOAD segments accepted (valid ELF feature, matches Linux/GRUB). Prior verify 2026-04-11 retained.
-> **Quality reviewed:** 2026-04-29 | Codex audit-mode adversarial | 1H fixed (file_size >= sizeof(Elf64_Ehdr) guard added before ehdr deref) | scope: boot-code-quality. Prior 2026-04-11 review retained: 1 spec violation fixed (e_phentsize != sizeof(Elf64_Phdr) rejection), 1 best practice (e_phnum capped at 64). Accepted: p_align not checked (identity-mapped, direct physical copy).
+> **Notes:**
+> - What shipped: 8 ELF bounds checks at [`bootx64.c:3855-4020`](../../src/boot/uefi/bootx64.c) covering ehdr file-size guard, magic/class/machine, `e_phentsize == sizeof(Elf64_Phdr)`, `e_phnum <= 64`, `ELF_MAX_KERNEL_SIZE = 32 MiB`, `e_phoff` + phdr-table EOF bounds, per-PT_LOAD `p_offset + p_filesz` subtraction-based bounds, `p_memsz >= p_filesz`, address wraparound, full `sizeof(struct boot_info) = 23872`-byte boot_info overlap, `pitch * height`-with-overflow-guard framebuffer overlap.
+> - How it integrates: invoked by `load_kernel()` in the split-path boot before the segment-copy loop and before any `efi_memcpy` writes; UKI fast path skips this code entirely (signed PE means the kernel bytes are already firmware-verified). Returns `EFI_LOAD_ERROR` to the caller on any failure; caller maps to `boot_fatal(BOOT_ERR_ELF_CORRUPT, ...)` for the §9 error screen.
+> - Downstream effects: blocks malformed/hostile kernel images from clobbering boot_info, framebuffer, or low memory through unchecked PT_LOAD destinations. PT_LOAD destination policy (forbid firmware/loader regions) is owned by §19 below as an open `[ ]` item. Codex 3x review adoptions in commit `<hash>`.
+> - Canonical doc: this section + ELF spec (TIS Tool Interface Standard 1.2 + System V ABI x86-64) + UEFI 2.10 section 13 LoadedImage handoff.
+> - Scope boundary: §1 owns ELF FILE-side validation (offsets, sizes, magic, header fields). §19 owns PT_LOAD DESTINATION policy (where in physical memory segments may write). §17 owns memory-map overlap normalization for runtime regions; this section's overlap checks are static against boot_info + framebuffer only.
+
+> **Verified:** 2026-05-01 | review-todo-section re-verify | 8/10 items, 2 new follow-up [ ] | build OK | smoke PASS (KVM 2.450s). All 8 original checks confirmed at file:line. Prior 2026-04-29 + 2026-04-11 verifications retained.
+> **Accepted:** [H] PT_LOAD destination policy below 1 MiB floor not enforced -> XREF: 01-boot-platform/TODO-03 §19 (item: "Define `bool pt_load_destination_allowed(...)` predicate" at line 508 -- EfiConventionalMemory/EfiLoaderData allowlist naturally rejects p_paddr < 0x100000)
+> **Accepted:** [M] BOOT_INFO_PHYS_ADDR macro duplicated across bootx64.c + kernel/mm/boot_reserved.c + kernel/main/boot_payload.c -> XREF: 01-boot-platform/TODO-01 §1 (item: "Single source of truth for `BOOT_INFO_PHYS_ADDR` macro" filed 2026-05-01 -- move to boot_info.h, mirror in boot_info_mirror.h, delete three local #defines)
+> **Quality reviewed:** 2026-05-01 | Codex 3x (adversarial + consistency + perf) | 1H accepted-XREF (PT_LOAD floor -> §19), 1H + 1M deferred-§1-followup (ELF typedef consolidation, byte-loop memcpy/memset), 1M accepted-XREF (BOOT_INFO_PHYS_ADDR -> TODO-01) | scope: boot-code-quality (gates walked: UEFI types, error handling, EBS boundary, boot_info ABI sync (Gate 6 finding -> Accept-XREF), parse buffer dynamic alloc).
 
 ---
 

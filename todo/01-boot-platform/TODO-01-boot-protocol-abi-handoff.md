@@ -96,6 +96,7 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 - [x] Mark kernel-populated fields (`degraded_mask`, `hv_flags`, `secure_boot_enabled`) separately from bootloader-populated fields.
 - [x] Identify fields that are stale, legacy, or only used by Multiboot2 and decide retain/deprecate.
 - [x] Add comments in `boot_info.h` that point to the ownership document rather than duplicating all policy inline.
+- [ ] **Single source of truth for `BOOT_INFO_PHYS_ADDR` macro** (filed 2026-05-01 from [`TODO-03 §1`](TODO-03-bootloader-error-recovery.md#1-elf-bounds-checking) review Codex consistency M1): the macro is defined three times today -- `src/boot/uefi/bootx64.c:111` (bootloader), `src/kernel/mm/boot_reserved.c` (kernel PMM reservation), `src/kernel/main/boot_payload.c` (kernel payload validator). If the handoff base ever changes, the bootloader's overlap check at `bootx64.c:3962` and the kernel's retained-region validators silently diverge while each file still compiles. Move the macro to [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h) (kernel-side single source of truth, mirrored by `src/boot/uefi/boot_info_mirror.h`); delete the three local `#define` copies; verify static-assert in mirror catches divergence. Test: change the macro value temporarily and confirm mirror static-assert + boot-info-abi manifest diff catch it.
 - [x] Commit: `"docs: boot_info field ownership matrix"`
 
 **Test checkpoint:** `docs/boot/boot-info-fields.md` exists and every `struct boot_info` field is listed with producer, first valid phase, consumer, lifetime, owning TODO, and validation rule. Spot-check `header`, `fb`, `usb_controller`, and TPM-related fields from `boot_info.h`, then confirm QEMU WHPX, QEMU TCG, VirtualBox, and bare-metal boot behavior is unchanged because this section is documentation-only.
@@ -172,7 +173,7 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 > **Re-verified:** 2026-04-23 | commit `cef7233d` | 5/5 items | build OK | drift harness 7/7 (5 mutations + control + sha256 canonicality invariant), test-tooling 82/82; host-arch gate added to dumper recipes + phony entry points + harness startup
 > **Re-reviewed:** 2026-04-30 | 4/6 items | build OK | drift harness 8/8 (added duplicate-row trust-root fixture); compare.sh now refuses duplicated F() names BEFORE the row-for-row diff so a typo cannot silently shrink coverage
 > **Deferred:** [H] header -> manifest coverage gate -- omission half of trust-root (an F() row missing from dump-fields.inc silently shrinks coverage; today's row-for-row diff + canonical-sha cannot detect a row that never existed) -> XREF: 01-boot-platform/TODO-01 §3 (item: "Header -> manifest coverage gate" at line 157)
-> **Deferred:** [M] parallelize fixture compiles (reason: perf scaling, today 32s/8 fixtures within budget) -> XREF: 01-boot-platform/TODO-01 §3 (item: "Parallelize fixture compiles in test-drift-detection.sh" at line 175)
+> **Deferred:** [M] parallelize fixture compiles (reason: perf scaling, today 32s/8 fixtures within budget) -> XREF: 01-boot-platform/TODO-01 §3 (item: "Parallelize fixture compiles in test-drift-detection.sh" at line 176)
 > **Quality reviewed:** 2026-04-17 | Codex 2x (adversarial + quality) | 3M fixed, 0 open | scope: N/A (host shell tooling)
 > **Quality re-reviewed:** 2026-04-23 | Codex 4x (adversarial + 3 quality rounds for iterative hardening) | 1H fixed, 0 open | scope: N/A (host tools -- Makefile + shell)
 > **Quality re-reviewed:** 2026-04-30 | Codex 3x (adversarial + consistency + perf) | 1H+1M fixed, 1H+1M deferred | scope: N/A (host tools)
@@ -343,7 +344,7 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 
 > **Verified:** 2026-04-23 | commit `3ec06bb3` + §19 closures | 6/6 items | build OK | 472 kernel + 16 user-mode PASS on KVM (2 new fuzz suites: addr sweep 256 iters, header perturb 32 iters); end-to-end stale-image harness PASS on KVM in 32s via `make stale-abi-fixtures`
 > **Re-reviewed:** 2026-04-30 | 6/6 items | build OK | lint clean | fuzz tests still wired in test_register_boot_info() under TEST_CAT_BOOT; harness scripts present; CI step still gated on §19 follow-up
-> **Accepted:** [H] Fixture failures do not block CI today; concrete deferred owner item exists -> XREF: 01-boot-platform/TODO-01 §19 (item: "three consecutive CI runs have shown clean [PASS] for both fixtures" at line 346)
+> **Accepted:** [H] Fixture failures do not block CI today; concrete deferred owner item exists -> XREF: 01-boot-platform/TODO-01 §19 (item: "three consecutive CI runs have shown clean [PASS] for both fixtures" at line 347)
 > **Quality reviewed:** 2026-04-23 | Codex 2x (implement-adversarial + review-quality) | 2M fixed, 0 open | scope: kernel-code-quality
 > **Quality re-reviewed:** 2026-04-30 | Codex 3x (adversarial + consistency + perf) | 0 fixed, 1H accepted-XREF | scope: kernel-code-quality
 
