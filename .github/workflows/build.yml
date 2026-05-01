@@ -209,13 +209,16 @@ jobs:
       # someone removes the version check and the stale pair would
       # silently proceed.
       #
-      # continue-on-error: true for the first ~two weeks because KVM
-      # availability on ubuntu-latest runners drifted historically; the
-      # harness itself env-probes KVM/OVMF/mtools and SKIPs cleanly
-      # when any are missing, so most CI runs should pass-through. Flip
-      # to mandatory once three consecutive runs land clean PASS.
+      # MANDATORY as of 2026-05-01: the advisory-rollout window for
+      # the stale-ABI fixture harness closed after multiple consecutive
+      # clean runs against the green-CI shape (see the Stale-ABI
+      # QEMU Fixture Harness Notes in
+      # todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md).
+      # The harness env-probes KVM/OVMF/mtools and SKIPs cleanly when
+      # any are missing -- and run-fixtures.sh upgrades a full-SKIP to
+      # FAIL when GITHUB_ACTIONS=true so silent no-ops cannot meet the
+      # regression-gate contract.
       - name: Stale-ABI fixtures
-        continue-on-error: true
         run: make stale-abi-fixtures
 
       # ── Optional disk-image artifact (manual runs only) ────────────────────
