@@ -545,6 +545,24 @@ else
     t_fail "scripts/todo-graph/tests/test_build.sh not found or not executable"
 fi
 
+# scripts/todo-graph/tests/test_phantom_include.sh covers the lint
+# Check 8 phantom-include wrapper. Skips cleanly when clangd-19 is
+# absent (asserts exit-3 contract), so CI hosts without clangd still
+# pass.
+PHANTOM_TEST="$REPO_ROOT/scripts/todo-graph/tests/test_phantom_include.sh"
+if [ -x "$PHANTOM_TEST" ]; then
+    PI_OUT=$("$PHANTOM_TEST" 2>&1)
+    PI_RC=$?
+    PI_SUMMARY=$(printf '%s\n' "$PI_OUT" | grep -E '^\[test_phantom_include\] ' | tail -1)
+    if [ "$PI_RC" = "0" ]; then
+        t_pass "scripts/todo-graph/tests/test_phantom_include.sh PASS (${PI_SUMMARY:-summary unavailable})"
+    else
+        t_fail "scripts/todo-graph/tests/test_phantom_include.sh FAIL (${PI_SUMMARY:-run directly for details})"
+    fi
+else
+    t_fail "scripts/todo-graph/tests/test_phantom_include.sh not found or not executable"
+fi
+
 # ============================================================================
 # LSP-MCP bridge test harness wiring (TODO-07 in 00-infrastructure)
 #

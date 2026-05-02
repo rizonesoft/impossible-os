@@ -14,5 +14,10 @@ Index:
   Background: Build
 
 Diagnostics:
-  UnusedIncludes: None
+  # Strict mode surfaces phantom-include findings to scripts/lint.sh
+  # Check 8 (via scripts/todo-graph/check_phantom_includes.py over the
+  # lsp-bridge MCP diagnostics tool). Editors see the same findings;
+  # legitimate cases use `// PHANTOM-INCLUDE-OK: <reason>` on the same
+  # line as the #include to suppress.
+  UnusedIncludes: Strict
   MissingIncludes: None

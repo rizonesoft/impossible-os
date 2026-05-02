@@ -482,22 +482,85 @@ else
 fi
 
 # ============================================================================
-# Check 8: Phantom-include detection (TODO-08 #12)
+# Check 8: Phantom-include detection (TODO-08 #12 / TODO-07 #19)
 # ============================================================================
-# Designed to verify every #include in src/kernel/**/*.c references at least
-# one symbol from that header. Accurate detection requires clangd-grade
-# unused-include analysis via the lsp-bridge MCP server (TODO-07 #7
-# diagnostics tool). The MCP server runs as a JSON-RPC subprocess and is
-# not callable from this bash script today; design review 2026-04-28
-# deferred this check rather than ship a heuristic grep that produces
-# false positives on transitive macro-only headers. Skip via
-# SKIP_LINT_PHANTOM_INCLUDE=1 once the MCP wiring lands.
+# Verifies every #include in src/kernel/**/*.c references at least one
+# symbol from that header. Accurate detection comes from clangd's
+# unused-includes diagnostic, surfaced via the lsp-bridge MCP server's
+# `diagnostics` tool (TODO-07 #7). The wrapper at
+# scripts/todo-graph/check_phantom_includes.py spawns bridge.py as an
+# MCP subprocess, calls diagnostics(path) per kernel TU, and emits one
+# `path:line: warning: unused include "<header>"` per phantom finding.
+#
+# Performance: warm-start clangd index + per-file polling adds ~1-3s
+# per uncached TU + ~10-30s cold-clangd startup. To keep pre-commit
+# fast, the check is OPT-IN: set LINT_PHANTOM_INCLUDE_FULL=1 to run
+# the full sweep. Default behavior is a skip-WARN that names the env
+# var so the operator can run it on demand or in CI.
+#
+# Until first-pass triage completes, findings emit as WARN (legacy
+# state, like Check 13). Once triage is complete, set
+# CHECK_8_LEGACY_FILES=() empty-allowlist to flip to ERROR.
+#
+# Allowlist: `// PHANTOM-INCLUDE-OK: <reason>` on the same source line
+# as the #include suppresses individual findings (the wrapper handles
+# this; lint.sh just dispatches the wrapper's output).
+#
+# Exit codes from the wrapper:
+#   0 -- ran (with or without findings on stdout)
+#   2 -- MCP server unavailable (deferred-WARN preserved)
+#   3 -- clangd-19 not installed (graceful skip-WARN)
 if [ "${SKIP_LINT_PHANTOM_INCLUDE:-}" = "1" ]; then
     echo -e "${YELLOW}warn${NC}: Check 8 (phantom-include) skipped via SKIP_LINT_PHANTOM_INCLUDE=1"
     WARNINGS=$((WARNINGS + 1))
-else
-    echo -e "${YELLOW}warn${NC}: Check 8 (phantom-include) deferred -- requires lsp-bridge MCP integration; tracked in TODO-07 follow-up"
+elif [ "${LINT_PHANTOM_INCLUDE_FULL:-}" != "1" ]; then
+    echo -e "${YELLOW}warn${NC}: Check 8 (phantom-include) skipped by default; set LINT_PHANTOM_INCLUDE_FULL=1 to run the lsp-bridge sweep"
     WARNINGS=$((WARNINGS + 1))
+else
+    PHANTOM_OUT_FILE="$(mktemp)"
+    PHANTOM_ERR_FILE="$(mktemp)"
+    set +e
+    python3 "$REPO_ROOT/scripts/todo-graph/check_phantom_includes.py" \
+        >"$PHANTOM_OUT_FILE" 2>"$PHANTOM_ERR_FILE"
+    PHANTOM_RC=$?
+    set -e
+    case "$PHANTOM_RC" in
+        0)
+            if [ -s "$PHANTOM_OUT_FILE" ]; then
+                # Findings present. First-pass triage state: WARN
+                # rather than ERROR (matches Check 13's allowlist
+                # ramp). When triage is complete, flip this branch
+                # to error() and remove the WARN.
+                while IFS=: read -r f l rest; do
+                    [ -z "$f" ] && continue
+                    rest="${rest# }"
+                    rest_trimmed="${rest#warning: }"
+                    warn "$f" "$l" "$rest_trimmed (phantom-include; pre-triage)"
+                done < "$PHANTOM_OUT_FILE"
+            fi
+            if [ -s "$PHANTOM_ERR_FILE" ]; then
+                # Wrapper warnings (e.g. clangd never published) go
+                # to a single visible WARN line so the operator sees
+                # the partial-coverage signal.
+                err_msg="$(head -1 "$PHANTOM_ERR_FILE")"
+                echo -e "${YELLOW}warn${NC}: Check 8 advisory: ${err_msg#\[check_phantom_includes\] }"
+                WARNINGS=$((WARNINGS + 1))
+            fi
+            ;;
+        2)
+            echo -e "${YELLOW}warn${NC}: Check 8 (phantom-include) deferred -- lsp-bridge MCP unavailable: $(head -1 "$PHANTOM_ERR_FILE" 2>/dev/null)"
+            WARNINGS=$((WARNINGS + 1))
+            ;;
+        3)
+            echo -e "${YELLOW}warn${NC}: Check 8 (phantom-include) skipped -- clangd-19 not installed"
+            WARNINGS=$((WARNINGS + 1))
+            ;;
+        *)
+            echo -e "${RED}error${NC}: Check 8 (phantom-include) wrapper exited $PHANTOM_RC: $(head -1 "$PHANTOM_ERR_FILE" 2>/dev/null)"
+            ERRORS=$((ERRORS + 1))
+            ;;
+    esac
+    rm -f "$PHANTOM_OUT_FILE" "$PHANTOM_ERR_FILE"
 fi
 
 # ============================================================================
