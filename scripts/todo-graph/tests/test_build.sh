@@ -2730,6 +2730,246 @@ else
 fi
 
 # ----------------------------------------------------------------------
+# Test 14: stamped_items per-item cache extension (per-item cache extension).
+# Covers the new `stamped_items` array on cache nodes and the lint
+# Check 7 wiring (stub-behind-stamp).
+# ----------------------------------------------------------------------
+
+SI_TREE="$TMP_DIR/stamped-items-tree"
+mkdir -p "$SI_TREE/todo/01-test" "$SI_TREE/src" "$SI_TREE/build" \
+    "$SI_TREE/scripts/lint" "$SI_TREE/scripts/todo-graph"
+
+# Sub-test 14a: a fixture TODO whose section 1 has two `[x]` items, one
+# with a backtick-quoted symbol + markdown link, one with no code refs.
+# Assert the cache emits stamped_items with the correct shape.
+cat > "$SI_TREE/todo/01-test/TODO-01-fixture.md" <<'EOF'
+---
+schema_version: 1
+id: stamped-items-fixture
+domain: 01-test
+status: active
+title: "stamped_items fixture"
+---
+
+# Fixture
+
+## Implementation Order
+
+| icon | Order | Section | Deliverable | Depends On | Status |
+| --- | --- | --- | --- | --- | --- |
+| s | 1 | 1 | First | -- | [x] |
+
+## 1. Stamped items
+
+- [x] Created `foo_init()` in [`src/sample.c`](../../src/sample.c) -- shipped
+- [x] Behavioral checklist item with no code references
+EOF
+
+cat > "$SI_TREE/src/sample.c" <<'EOF'
+int foo_init(void)
+{
+    return 0;
+}
+EOF
+
+SI_CACHE="$SI_TREE/build/todo-cache.json"
+python3 "$BUILD_PY" --quiet --root "$SI_TREE/todo" --output "$SI_CACHE" \
+    --repo-root "$SI_TREE" >"$TMP_DIR/si.log" 2>&1
+if [ $? != 0 ]; then
+    t_fail "stamped_items: build.py failed on fixture (log: $(tail -3 $TMP_DIR/si.log))"
+else
+    if python3 - <<PY 2>/dev/null
+import json, sys
+d = json.load(open("$SI_CACHE"))
+assert len(d) == 1, f"expected 1 node got {len(d)}"
+node = d[0]
+items = node.get("stamped_items")
+assert items is not None, "stamped_items missing"
+assert len(items) == 2, f"expected 2 stamped items got {len(items)}"
+i0, i1 = items
+assert i0["section_n"] == 1 and i0["item_idx"] == 0, f"bad i0: {i0}"
+assert i1["section_n"] == 1 and i1["item_idx"] == 1, f"bad i1: {i1}"
+# i0 must have file ref + symbol ref both pointing at src/sample.c
+kinds = {(r.get("kind"), r.get("symbol")) for r in i0["refs"]}
+assert ("symbol", "foo_init") in kinds, f"i0 missing symbol ref: {i0['refs']}"
+files = [r for r in i0["refs"] if r["kind"] == "file"]
+assert any(r["file"] == "src/sample.c" for r in files), f"i0 missing file ref: {i0['refs']}"
+# Symbol ref must be paired with the file (Codex F2: deterministic resolution)
+sym_ref = next(r for r in i0["refs"] if r["kind"] == "symbol")
+assert sym_ref.get("file") == "src/sample.c", f"symbol not paired: {sym_ref}"
+# i1 must have refs == []
+assert i1["refs"] == [], f"i1 expected empty refs: {i1}"
+sys.exit(0)
+PY
+    then
+        t_pass "stamped_items: cache emits per-item refs (file + paired symbol)"
+    else
+        t_fail "stamped_items: cache shape wrong; first node:"
+        python3 -c "import json; print(json.dumps(json.load(open('$SI_CACHE'))[0].get('stamped_items'), indent=2))" >&2 || true
+    fi
+fi
+
+# Sub-test 14b: lint Check 7 must error on the synthetic fixture's
+# stub-behind-stamp (foo_init returns 0 with no INTENTIONAL-STUB marker).
+cp "$REPO_ROOT/scripts/lint.sh" "$SI_TREE/scripts/lint.sh"
+cp "$REPO_ROOT/scripts/lint/check_stub_behind_stamp.py" \
+    "$SI_TREE/scripts/lint/check_stub_behind_stamp.py"
+cp "$REPO_ROOT/scripts/lint/check_tautological_test.py" \
+    "$SI_TREE/scripts/lint/check_tautological_test.py" 2>/dev/null
+cp "$REPO_ROOT/scripts/todo-graph/resolve_symbol.py" \
+    "$SI_TREE/scripts/todo-graph/resolve_symbol.py"
+mkdir -p "$SI_TREE/include"
+
+# Run only Check 7 by exercising the helper directly. Avoids dragging in
+# the full lint.sh prelude (which scans for #pragma once etc.).
+SI_OUT="$(STUB_LINT_CACHE="$SI_CACHE" STUB_LINT_REPO_ROOT="$SI_TREE" \
+    python3 "$REPO_ROOT/scripts/lint/check_stub_behind_stamp.py" 2>&1)"
+SI_RC=$?
+if [ "$SI_RC" = "0" ] && echo "$SI_OUT" | grep -q "stub-behind-stamp:foo_init"; then
+    t_pass "lint Check 7: foo_init flagged as stub-behind-stamp"
+else
+    t_fail "lint Check 7: expected foo_init flag (rc=$SI_RC, out=$SI_OUT)"
+fi
+
+# Sub-test 14c: INTENTIONAL-STUB allowlist marker on the body opener
+# suppresses the finding.
+cat > "$SI_TREE/src/sample.c" <<'EOF'
+int foo_init(void)
+{ /* INTENTIONAL-STUB: pending downstream scaffolding */
+    return 0;
+}
+EOF
+SI_OUT2="$(STUB_LINT_CACHE="$SI_CACHE" STUB_LINT_REPO_ROOT="$SI_TREE" \
+    python3 "$REPO_ROOT/scripts/lint/check_stub_behind_stamp.py" 2>&1)"
+SI_RC2=$?
+if [ "$SI_RC2" = "0" ] && [ -z "$SI_OUT2" ]; then
+    t_pass "lint Check 7: INTENTIONAL-STUB marker suppresses finding"
+else
+    t_fail "lint Check 7: marker should suppress; rc=$SI_RC2, out=$SI_OUT2"
+fi
+
+# Sub-test 14d: real (non-stub) function does NOT trigger Check 7.
+cat > "$SI_TREE/src/sample.c" <<'EOF'
+int foo_init(void)
+{
+    int total = 0;
+    for (int i = 0; i < 10; i++) {
+        total += i * 2;
+    }
+    return total;
+}
+EOF
+SI_OUT3="$(STUB_LINT_CACHE="$SI_CACHE" STUB_LINT_REPO_ROOT="$SI_TREE" \
+    python3 "$REPO_ROOT/scripts/lint/check_stub_behind_stamp.py" 2>&1)"
+SI_RC3=$?
+if [ "$SI_RC3" = "0" ] && [ -z "$SI_OUT3" ]; then
+    t_pass "lint Check 7: real multi-line function not flagged"
+else
+    t_fail "lint Check 7: real function false-positive; rc=$SI_RC3, out=$SI_OUT3"
+fi
+
+# Sub-test 14f: prototype-then-definition is correctly resolved (Codex F2).
+# A file with `static int foo(void);` above the real definition must not
+# false-pass the lint Check 7.
+cat > "$SI_TREE/src/sample.c" <<'EOF'
+static int foo_init(void);
+
+static int foo_init(void)
+{
+    return 0;
+}
+EOF
+SI_OUT4="$(STUB_LINT_CACHE="$SI_CACHE" STUB_LINT_REPO_ROOT="$SI_TREE" \
+    python3 "$REPO_ROOT/scripts/lint/check_stub_behind_stamp.py" 2>&1)"
+if echo "$SI_OUT4" | grep -q "stub-behind-stamp:foo_init"; then
+    t_pass "lint Check 7: prototype-before-definition correctly resolves to def"
+else
+    t_fail "lint Check 7: prototype-before-definition false-passed; out=$SI_OUT4"
+fi
+
+# Sub-test 14g: cache refs that escape repo_root must NOT be read by
+# Check 7 (Codex F3 path-traversal guard).
+cat > "$SI_TREE/todo/01-test/TODO-03-escape.md" <<'EOF'
+---
+schema_version: 1
+id: stamped-items-escape
+domain: 01-test
+status: active
+title: "escape fixture"
+---
+
+# Body
+
+## Implementation Order
+
+| icon | Order | Section | Deliverable | Depends On | Status |
+| --- | --- | --- | --- | --- | --- |
+| s | 1 | 1 | First | -- | [x] |
+
+## 1. Escape
+
+- [x] Calls `evil_fn()` in [`../../../../tmp/evil.c`](../../../../tmp/evil.c)
+EOF
+mkdir -p /tmp 2>/dev/null
+cat > /tmp/evil.c <<'EOF'
+int evil_fn(void) { return 0; }
+EOF
+python3 "$BUILD_PY" --quiet --root "$SI_TREE/todo" --output "$SI_CACHE" \
+    --repo-root "$SI_TREE" >/dev/null 2>&1
+SI_ESC="$(STUB_LINT_CACHE="$SI_CACHE" STUB_LINT_REPO_ROOT="$SI_TREE" \
+    python3 "$REPO_ROOT/scripts/lint/check_stub_behind_stamp.py" 2>&1)"
+if ! echo "$SI_ESC" | grep -q "stub-behind-stamp:evil_fn"; then
+    t_pass "lint Check 7: repo-escape ref not followed (path-traversal guard)"
+else
+    t_fail "lint Check 7: followed escape ref into /tmp; out=$SI_ESC"
+fi
+rm -f "$SI_TREE/todo/01-test/TODO-03-escape.md" /tmp/evil.c
+
+# Sub-test 14h: helper exit code propagates through lint.sh -- a
+# corrupt cache should NOT silently false-clean the lint (Codex F1).
+cp "$SI_CACHE" "$SI_TREE/build/cache-corrupt.json"
+echo "this is not json" > "$SI_TREE/build/cache-corrupt.json"
+SI_CORRUPT_OUT="$(STUB_LINT_CACHE="$SI_TREE/build/cache-corrupt.json" \
+    STUB_LINT_REPO_ROOT="$SI_TREE" \
+    python3 "$REPO_ROOT/scripts/lint/check_stub_behind_stamp.py" 2>&1)"
+SI_CORRUPT_RC=$?
+if [ "$SI_CORRUPT_RC" != "0" ] && echo "$SI_CORRUPT_OUT" | grep -qi "cache unreadable\|FATAL"; then
+    t_pass "lint Check 7: corrupt cache yields nonzero rc + diagnostic (no false-clean)"
+else
+    t_fail "lint Check 7: corrupt cache should error; rc=$SI_CORRUPT_RC, out=$SI_CORRUPT_OUT"
+fi
+
+# Sub-test 14e: forbidden-field validator rejects hand-authored
+# stamped_items in frontmatter (defense-in-depth, Codex Q4).
+cat > "$SI_TREE/todo/01-test/TODO-02-forbidden.md" <<'EOF'
+---
+schema_version: 1
+id: stamped-items-forbidden
+domain: 01-test
+status: draft
+title: "Forbidden field test"
+stamped_items:
+  - section_n: 1
+    item_idx: 0
+    item_text: "should not be allowed"
+    refs: []
+---
+
+# Body
+EOF
+FORBID_LOG="$TMP_DIR/si-forbid.log"
+RC=0
+python3 "$BUILD_PY" --quiet --root "$SI_TREE/todo" \
+    --output "$SI_TREE/build/cache-forbid.json" --repo-root "$SI_TREE" \
+    >"$FORBID_LOG" 2>&1 || RC=$?
+if [ "$RC" = "1" ] && grep -q "forbidden-field.*stamped_items" "$FORBID_LOG"; then
+    t_pass "stamped_items: forbidden-field rejects hand-authored frontmatter"
+else
+    t_fail "stamped_items: forbidden-field check broken (rc=$RC, log=$(cat $FORBID_LOG))"
+fi
+rm -f "$SI_TREE/todo/01-test/TODO-02-forbidden.md"
+
+# ----------------------------------------------------------------------
 # Test 7: performance budget (under 2s wall-clock per the generator spec).
 # ----------------------------------------------------------------------
 START_NS=$(date +%s%N)

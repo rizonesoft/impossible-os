@@ -383,14 +383,15 @@ def validate_frontmatter(fm: dict) -> list:
     # frontmatter (mirrors the JSON Schema sidecar's not/anyOf/required clause
     # at docs/infrastructure/todo-metadata.schema.json). The generator computes
     # both from git log and emits them into build/todo-cache.json only.
-    for cache_only in ("created_at", "last_active_at"):
+    for cache_only in ("created_at", "last_active_at", "stamped_items"):
         if cache_only in fm:
             errors.append(
                 (
                     "forbidden-field",
                     f"field '{cache_only}' is auto-derived (cache-only); "
                     "MUST NOT appear in hand-authored frontmatter "
-                    "(see docs/infrastructure/todo-metadata.md Auto-Derived Fields)",
+                    "(see docs/infrastructure/todo-metadata.md Auto-Derived Fields). "
+                    "stamped_items is emitted by the per-item cache extension only.",
                 )
             )
     # FATAL: optional field type/shape mismatches. Mirrors the JSON Schema
@@ -469,6 +470,113 @@ def extract_section_headings(body: str) -> list:
         m = re.match(r"^## (\d+)\.\s+(.+?)\s*$", ln)
         if m:
             out.append((int(m.group(1)), m.group(2)))
+    return out
+
+
+# Backtick-quoted symbol form inside a `[x]` item: `foo_init()` -- captures
+# `foo_init`. Requires parens on the symbol so prose words in backticks
+# (e.g. `INTENTIONAL-STUB`, `[x]`) don't get mis-classified as symbols.
+_ITEM_SYMBOL_RE = re.compile(r"`([A-Za-z_][A-Za-z0-9_]*)\s*\(\s*\)`")
+# Backtick-quoted file-with-line form: `src/kernel/foo.c:42`. Optional
+# leading `./` is stripped. The line number is captured when present.
+_ITEM_FILE_LINE_RE = re.compile(
+    r"`(?:\./)?([A-Za-z0-9_./-]+\.(?:c|h|asm|S|py|sh|md|json|ps1|bat))(?::(\d+))?`"
+)
+# Markdown-link form: [label](path/to/file.ext). Path is taken raw; the
+# resolver normalizes `../`-relative paths against the TODO file's parent.
+_ITEM_MD_LINK_RE = re.compile(
+    r"\[[^\]]+\]\(([^)\s]+\.(?:c|h|asm|S|py|sh|md|json|ps1|bat))(?:#[^)]*)?\)"
+)
+
+
+def _normalize_md_link_path(link: str, todo_rel: str) -> str:
+    """Resolve a markdown-link path relative to the TODO file's parent dir,
+    return repo-rooted POSIX path. Drops fragments. Returns the original
+    `link` on failure (kept opaque so the consumer can warn rather than
+    silently skip)."""
+    try:
+        from posixpath import normpath
+        todo_dir = "/".join(todo_rel.split("/")[:-1])
+        joined = link if link.startswith("/") else (todo_dir + "/" + link)
+        return normpath(joined.lstrip("/"))
+    except Exception:
+        return link
+
+
+def extract_stamped_items(body: str, todo_rel: str) -> list:
+    """Walk each `## N. Title` body for `- [x]` checklist items and emit
+    per-item records:
+
+       {section_n, item_idx, item_text, refs: [{kind, file?, symbol?, line?}]}
+
+    Refs combine three surface forms inside the item text:
+      - `symbol_name()`         -> {kind: "symbol", symbol, file?}
+      - `path/to/file.c:42`     -> {kind: "file",   file, line?}
+      - [label](path/to/file.c) -> {kind: "file",   file}
+
+    Symbol refs gain an optional `file` set to the FIRST file ref in the
+    SAME item (Codex design review F2: pair within-item file+symbol refs
+    so lint Check 7 can resolve symbol-only stamps deterministically).
+    Items with no recognizable code refs land with refs: [].
+
+    Refs are deduplicated by full semantic key (Codex Q2). The
+    section_n / item_idx pair is stable as long as the section's `[x]`
+    item ordering is preserved (1-based section_n, 0-based item_idx).
+    """
+    out = []
+    cur_section = None
+    cur_item_idx = 0
+    sec_hdr_re = re.compile(r"^## (\d+)\.\s+")
+    # Match a `[x]` checklist line. Allow `-` or `*` bullets at any
+    # indent; reject blockquoted (`>`) lines because stamp continuations
+    # never carry `[x]`.
+    item_re = re.compile(r"^\s*[-*]\s*\[x\]\s+(.+?)\s*$")
+    for ln in body.splitlines():
+        sec_m = sec_hdr_re.match(ln)
+        if sec_m:
+            cur_section = int(sec_m.group(1))
+            cur_item_idx = 0
+            continue
+        if cur_section is None:
+            continue
+        item_m = item_re.match(ln)
+        if not item_m:
+            continue
+        text = item_m.group(1)
+        file_refs = []
+        for fm in _ITEM_FILE_LINE_RE.finditer(text):
+            entry = {"kind": "file", "file": fm.group(1)}
+            if fm.group(2):
+                entry["line"] = int(fm.group(2))
+            file_refs.append(entry)
+        for lm in _ITEM_MD_LINK_RE.finditer(text):
+            link = lm.group(1).strip("`")
+            normalized = _normalize_md_link_path(link, todo_rel)
+            file_refs.append({"kind": "file", "file": normalized})
+        primary_file = file_refs[0]["file"] if file_refs else None
+        sym_refs = []
+        for sm in _ITEM_SYMBOL_RE.finditer(text):
+            entry = {"kind": "symbol", "symbol": sm.group(1)}
+            if primary_file:
+                entry["file"] = primary_file
+            sym_refs.append(entry)
+        seen = set()
+        merged = []
+        for ref in file_refs + sym_refs:
+            key = (ref.get("kind"), ref.get("file"), ref.get("symbol"), ref.get("line"))
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(ref)
+        out.append(
+            {
+                "section_n": cur_section,
+                "item_idx": cur_item_idx,
+                "item_text": text,
+                "refs": merged,
+            }
+        )
+        cur_item_idx += 1
     return out
 
 
@@ -900,6 +1008,15 @@ def build_node(file_path: Path, repo_root: Path, timestamps: dict, content: str)
     node["section_headings"] = [{"n": n, "title": t} for n, t in section_headings]
     node["inputs_xrefs"] = inputs_xrefs
     node["stamps_xrefs"] = stamps_xrefs
+    # Per-item stamped_items (per-item cache extension): only emit when the
+    # body actually has any `[x]` items; many no-frontmatter / fully-pending
+    # TODOs still parse with zero stamped items, in which case the key is
+    # omitted to keep the cache compact and the schema's optional contract
+    # honest. Lint Check 7 reads stamped_items as the source of truth for
+    # stub-behind-stamp findings.
+    stamped_items = extract_stamped_items(body, rel)
+    if stamped_items:
+        node["stamped_items"] = stamped_items
 
     return node, errors
 

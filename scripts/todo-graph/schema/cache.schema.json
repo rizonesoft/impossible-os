@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://impossible-os.local/schema/todo-graph/cache.schema.json",
+  "title": "TODO graph cache (build/todo-cache.json)",
+  "description": "Per-node shape emitted by scripts/todo-graph/build.py. The cache is a JSON array of these nodes, sorted by file_path. This schema is the optional companion to the per-file frontmatter spec at docs/infrastructure/todo-metadata.schema.json: that one constrains hand-authored frontmatter; this one constrains the generator's output. The forbidden-field validator in build.py rejects hand-authored copies of any field marked cache-only here (created_at, last_active_at, stamped_items).",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": [
+      "id",
+      "schema_version",
+      "domain",
+      "status",
+      "title",
+      "file_path",
+      "created_at",
+      "last_active_at",
+      "sections",
+      "section_headings",
+      "inputs_xrefs",
+      "stamps_xrefs"
+    ],
+    "properties": {
+      "id": { "type": ["string", "null"] },
+      "schema_version": { "type": ["integer", "null"] },
+      "domain": { "type": "string" },
+      "status": { "type": ["string", "null"] },
+      "title": { "type": ["string", "null"] },
+      "file_path": { "type": "string" },
+      "created_at": { "type": ["string", "null"], "description": "ISO-8601 UTC timestamp from git log (cache-only; rejected in frontmatter)." },
+      "last_active_at": { "type": ["string", "null"], "description": "ISO-8601 UTC timestamp from git log (cache-only; rejected in frontmatter)." },
+      "owners": { "type": "array", "items": { "type": "string" } },
+      "depends_on": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+      "satisfies": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+      "superseded_by": { "type": "string" },
+      "file_patterns": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+      "sections": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["n", "deliverable", "depends_on", "status"],
+          "properties": {
+            "n": { "type": ["integer", "null"] },
+            "deliverable": { "type": "string" },
+            "depends_on": { "type": "array" },
+            "status": { "type": "string" }
+          }
+        }
+      },
+      "section_headings": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["n", "title"],
+          "properties": {
+            "n": { "type": "integer" },
+            "title": { "type": "string" }
+          }
+        }
+      },
+      "inputs_xrefs": { "type": "array" },
+      "stamps_xrefs": { "type": "array" },
+      "stamped_items": {
+        "type": "array",
+        "description": "Per-`[x]` checklist-item records. Emitted only when the body has at least one [x] item; absent when no items have shipped. Cache-only -- never legal in hand-authored frontmatter (build.py forbidden-field check enforces).",
+        "items": {
+          "type": "object",
+          "required": ["section_n", "item_idx", "item_text", "refs"],
+          "properties": {
+            "section_n": { "type": "integer", "minimum": 1 },
+            "item_idx": { "type": "integer", "minimum": 0, "description": "0-based ordinal of the [x] item within the section (skips [ ] / [/])." },
+            "item_text": { "type": "string", "description": "Full prose after the `[x] ` prefix (preserved, not truncated)." },
+            "refs": {
+              "type": "array",
+              "items": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "required": ["kind", "file"],
+                    "properties": {
+                      "kind": { "const": "file" },
+                      "file": { "type": "string", "minLength": 1 },
+                      "line": { "type": "integer", "minimum": 1 }
+                    },
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "required": ["kind", "symbol"],
+                    "properties": {
+                      "kind": { "const": "symbol" },
+                      "symbol": { "type": "string", "minLength": 1 },
+                      "file": { "type": "string", "minLength": 1, "description": "Optional: paired with the FIRST file ref in the same item so consumers (e.g. lint Check 7) can resolve symbol-only stamps deterministically. Absent when the item names a symbol with no nearby file reference." }
+                    },
+                    "additionalProperties": false
+                  }
+                ]
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      }
+    }
+  }
+}

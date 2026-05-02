@@ -415,15 +415,22 @@ else
 fi
 
 # ============================================================================
-# Check 7: Stub-behind-stamp detection (TODO-08 #12)
+# Check 7: Stub-behind-stamp detection (TODO-08 #12 + TODO-06 #9)
 # ============================================================================
-# Designed to read build/todo-cache.json (TODO-06 #2 derived cache) for the
-# stamped-item -> file:symbol map and verify each [x]-stamped function has
-# a non-stub body. The TODO-06 #2 cache extension that exposes per-item
-# file:symbol mapping has not shipped yet, so this check skip-with-warns
-# until the cache contract is updated. Allowlist marker (when active):
-# /* INTENTIONAL-STUB: <reason> */ on the same line as the function body.
+# Reads build/todo-cache.json for the stamped-item -> {file, symbol} map
+# emitted by the per-item cache extension and flags any function whose
+# body is a <=3-line `return CONSTANT;` placeholder under an [x] stamp
+# (AI-slop "marked done but doesn't actually do anything" anti-pattern).
+# Allowlist: /* INTENTIONAL-STUB: <reason> */ on the same line as the
+# body-opening `{` (mirrors Check 6's TEST-TAUTOLOGY-OK marker).
 # Skip the whole check via SKIP_LINT_STUB_BEHIND_STAMP=1.
+#
+# Cache freshness: the cache is rebuilt automatically by the PostToolUse
+# hook on TODO edits and by scripts/todo-graph/build-and-validate.sh. To
+# protect against a stale cache silently passing the lint, this check
+# WARNs (without erroring) when the cache mtime is older than the newest
+# todo/**/*.md mtime; the contributor sees a clear "rebuild and rerun"
+# pointer rather than a false-clean.
 if [ "${SKIP_LINT_STUB_BEHIND_STAMP:-}" = "1" ]; then
     echo -e "${YELLOW}warn${NC}: Check 7 (stub-behind-stamp) skipped via SKIP_LINT_STUB_BEHIND_STAMP=1"
     WARNINGS=$((WARNINGS + 1))
@@ -433,14 +440,55 @@ else
         echo -e "${YELLOW}warn${NC}: Check 7 (stub-behind-stamp) skipped -- build/todo-cache.json missing; run bash scripts/todo-graph/build-and-validate.sh"
         WARNINGS=$((WARNINGS + 1))
     elif ! python3 -c "import json,sys; d=json.load(open('$CACHE')); sys.exit(0 if any('stamped_items' in (e or {}) for e in d) else 2)" 2>/dev/null; then
-        echo -e "${YELLOW}warn${NC}: Check 7 (stub-behind-stamp) deferred -- build/todo-cache.json lacks per-item file:symbol map; awaiting TODO-06 cache extension"
+        echo -e "${YELLOW}warn${NC}: Check 7 (stub-behind-stamp) deferred -- build/todo-cache.json lacks per-item file:symbol map; rebuild with bash scripts/todo-graph/build-and-validate.sh"
         WARNINGS=$((WARNINGS + 1))
     else
-        # When the cache extension lands, this branch walks each stamped
-        # function and flags <=3-line return-constant bodies without an
-        # INTENTIONAL-STUB marker. Implementation lands when the dep does.
-        echo -e "${YELLOW}warn${NC}: Check 7 (stub-behind-stamp) cache extension present but check implementation pending"
-        WARNINGS=$((WARNINGS + 1))
+        # Staleness check: any todo/**/*.md newer than the cache?
+        # Portable mtime walk via Python -- find -printf is GNU-only and
+        # silently empties on BSD/macOS, which would false-pass the check.
+        STALE_RC=0
+        python3 - "$CACHE" "$REPO_ROOT/todo" >/dev/null 2>&1 <<'PY' || STALE_RC=$?
+import os, sys
+cache, todo_root = sys.argv[1], sys.argv[2]
+try:
+    cache_m = os.path.getmtime(cache)
+except OSError:
+    sys.exit(0)
+newest = 0.0
+for dirpath, _, files in os.walk(todo_root):
+    for f in files:
+        if f.startswith("TODO-") and f.endswith(".md"):
+            try:
+                m = os.path.getmtime(os.path.join(dirpath, f))
+                if m > newest:
+                    newest = m
+            except OSError:
+                pass
+if newest > cache_m:
+    sys.exit(2)
+sys.exit(0)
+PY
+        if [ "$STALE_RC" = "2" ]; then
+            echo -e "${YELLOW}warn${NC}: Check 7 (stub-behind-stamp) cache stale relative to todo/**/*.md; rebuild with bash scripts/todo-graph/build-and-validate.sh and re-run lint"
+            WARNINGS=$((WARNINGS + 1))
+        else
+            # Capture helper output + stderr + rc separately so an internal
+            # failure (corrupt cache, AttributeError) cannot silently
+            # false-clean the lint (Codex F1).
+            STUB_OUT="$(STUB_LINT_CACHE="$CACHE" STUB_LINT_REPO_ROOT="$REPO_ROOT" \
+                python3 "$REPO_ROOT/scripts/lint/check_stub_behind_stamp.py" 2>"$REPO_ROOT/.lint-stub-stderr")"
+            STUB_RC=$?
+            if [ "$STUB_RC" != "0" ]; then
+                echo -e "${RED}error${NC}: Check 7 (stub-behind-stamp) helper exited $STUB_RC: $(cat "$REPO_ROOT/.lint-stub-stderr" 2>/dev/null | head -3 | tr '\n' ' ')"
+                ERRORS=$((ERRORS + 1))
+            else
+                while IFS=: read -r f l rest; do
+                    [ -z "$f" ] && continue
+                    error "$f" "$l" "$rest"
+                done <<< "$STUB_OUT"
+            fi
+            rm -f "$REPO_ROOT/.lint-stub-stderr"
+        fi
     fi
 fi
 
