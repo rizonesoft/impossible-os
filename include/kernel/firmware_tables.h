@@ -134,6 +134,15 @@ uint32_t firmware_table_lookup_owner(const char *owner,
  * validator findings; can also be invoked from tests. */
 void firmware_table_validate_all(void);
 
+/* Mirror the firmware-table catalog into HKLM\HARDWARE\Firmware\Tables.
+ * Writes one subkey per cataloged entry, keyed by the entry's catalog
+ * name (sanitized for Registry naming rules), with values Address,
+ * Size, Checksum, ValidationStatus, Source mirroring the JSON wire
+ * format pinned by docs/boot/firmware-tables-schema.md.  Idempotent
+ * via RegDeleteTree on entry.  ESRT subtree (HARDWARE\Firmware\ESRT)
+ * is NOT touched -- it is owned by esrt_populate_registry. */
+void firmware_tables_populate_registry(void);
+
 /* True iff `[addr, addr+len)` is contained in a single UEFI memory-map
  * descriptor of a firmware-bearing type (RESERVED / LOADER_* /
  * BOOT_SERVICES_* / RUNTIME_* / ACPI_RECLAIM / ACPI_NVS / PERSISTENT).

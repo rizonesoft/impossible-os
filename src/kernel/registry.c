@@ -1882,6 +1882,16 @@ void registry_populate_defaults(void)
         esrt_populate_registry();
     }
 
+    /* Mirror the generic firmware-table catalog (HKLM\HARDWARE\Firmware\
+     * Tables\*) per the wire format pinned at docs/boot/firmware-
+     * tables-schema.md.  Idempotent like the ESRT mirror; sibling
+     * subtree (different parent path), so the two mirrors do not
+     * stomp each other. */
+    {
+        extern void firmware_tables_populate_registry(void);
+        firmware_tables_populate_registry();
+    }
+
     /* Populate boot decision record (HKLM\SYSTEM\Boot\Decision\*) */
     boot_decision_populate_registry();
 }
