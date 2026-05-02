@@ -10,6 +10,7 @@
 
 #include "kernel/test/test.h"
 #include "kernel/firmware_tables.h"
+#include "kernel/firmware_quirks.h"
 #include "kernel/boot_info.h"
 #include "kernel/uefi_config.h"
 
@@ -833,6 +834,147 @@ void test_register_firmware_tables(void)
     test_suite_register_cat("Conform: no-match name is documented",
                             test_conformance_name_no_match_text_known,
                             TEST_CAT_BOOT);
+
+    /* ---- Firmware quirks (firmware_quirks.c) ---------------------------- */
+    extern void test_register_firmware_quirks(void);
+    test_register_firmware_quirks();
+}
+
+/* ============================================================================
+ * Firmware quirks tests
+ *
+ * These tests cover only PURE helpers (parse_disable, name lookup, iter,
+ * is_active polarity) -- they do NOT call firmware_quirks_init() or read the
+ * live active mask, because that mask is owned by the boot path on the BSP.
+ * Calling init() from a test would also be a Test Code Policy violation
+ * (test_*.c MUST NOT call live boot infrastructure).
+ * ============================================================================ */
+
+static void test_quirks_parse_disable_single(void)
+{
+    uint32_t m = firmware_quirks_parse_disable("broken_fpdt");
+    TEST_ASSERT_EQ(m, FW_QUIRK_BROKEN_FPDT, "single name -> bit");
+
+}
+
+static void test_quirks_parse_disable_multi(void)
+{
+    uint32_t m = firmware_quirks_parse_disable("broken_fpdt,bogus_mat");
+    TEST_ASSERT_EQ(m, FW_QUIRK_BROKEN_FPDT | FW_QUIRK_BOGUS_MAT,
+                   "comma-separated -> OR'd bits");
+
+}
+
+static void test_quirks_parse_disable_unknown(void)
+{
+    uint32_t m = firmware_quirks_parse_disable("unknown_quirk,broken_fpdt");
+    TEST_ASSERT_EQ(m, FW_QUIRK_BROKEN_FPDT,
+                   "unknown name silently dropped, known kept");
+
+}
+
+static void test_quirks_parse_disable_null_empty(void)
+{
+    TEST_ASSERT_EQ(firmware_quirks_parse_disable(0), 0u, "NULL -> 0");
+    TEST_ASSERT_EQ(firmware_quirks_parse_disable(""), 0u, "empty -> 0");
+
+}
+
+static void test_quirks_parse_disable_whitespace(void)
+{
+    uint32_t m = firmware_quirks_parse_disable("broken_fpdt , bogus_mat");
+    TEST_ASSERT_EQ(m, FW_QUIRK_BROKEN_FPDT | FW_QUIRK_BOGUS_MAT,
+                   "whitespace tolerated as separator");
+
+}
+
+static void test_quirks_name_each_bit(void)
+{
+    /* Exact canonical strings -- a typo in s_quirks[].name would
+     * silently break boot.conf override parity AND the JSON
+     * quirks_active[] output. */
+    TEST_ASSERT(str_eq_local(firmware_quirks_name(FW_QUIRK_BROKEN_FPDT),
+                              "broken_fpdt"),
+                "broken_fpdt canonical name");
+    TEST_ASSERT(str_eq_local(firmware_quirks_name(FW_QUIRK_BAD_MADT_CHECKSUM),
+                              "bad_madt_checksum"),
+                "bad_madt_checksum canonical name");
+    TEST_ASSERT(str_eq_local(firmware_quirks_name(FW_QUIRK_GOP_PITCH_LIES),
+                              "gop_pitch_lies"),
+                "gop_pitch_lies canonical name");
+    TEST_ASSERT(str_eq_local(firmware_quirks_name(FW_QUIRK_BOGUS_MAT),
+                              "bogus_mat"),
+                "bogus_mat canonical name");
+    TEST_ASSERT(str_eq_local(firmware_quirks_name(FW_QUIRK_USB_HANDOFF_BLACKLIST),
+                              "usb_handoff_blacklist"),
+                "usb_handoff_blacklist canonical name");
+
+}
+
+/* Round-trip parse_disable(name(bit)) == bit for every defined quirk
+ * catches drift between the kernel descriptor table and the bootloader
+ * qmap[] (their parallel name copies must stay in lockstep, or the
+ * bootloader silently drops the override token). */
+static void test_quirks_parse_round_trip_all_bits(void)
+{
+    static const uint32_t bits[] = {
+        FW_QUIRK_BROKEN_FPDT,
+        FW_QUIRK_BAD_MADT_CHECKSUM,
+        FW_QUIRK_GOP_PITCH_LIES,
+        FW_QUIRK_BOGUS_MAT,
+        FW_QUIRK_USB_HANDOFF_BLACKLIST,
+    };
+    for (uint32_t i = 0; i < sizeof(bits)/sizeof(bits[0]); i++) {
+        const char *n = firmware_quirks_name(bits[i]);
+        TEST_ASSERT(n != 0, "name(bit) returns canonical string");
+        uint32_t parsed = firmware_quirks_parse_disable(n);
+        TEST_ASSERT_EQ(parsed, bits[i],
+                       "parse_disable(name(bit)) round-trips to bit");
+    }
+}
+
+static void test_quirks_name_invalid(void)
+{
+    TEST_ASSERT_EQ((uintptr_t)firmware_quirks_name(0), 0,
+                   "zero bit -> NULL");
+    TEST_ASSERT_EQ((uintptr_t)firmware_quirks_name(0x03), 0,
+                   "non-power-of-two -> NULL");
+    TEST_ASSERT_EQ((uintptr_t)firmware_quirks_name(0x800), 0,
+                   "out-of-range bit -> NULL");
+
+}
+
+static void test_quirks_is_active_polarity(void)
+{
+    /* is_active rejects malformed inputs unconditionally even if the live
+     * mask carries a bit -- gates on power-of-two + nonzero. */
+    TEST_ASSERT_EQ(firmware_quirks_is_active(0), 0,
+                   "zero bit -> 0");
+    TEST_ASSERT_EQ(firmware_quirks_is_active(0x03), 0,
+                   "non-power-of-two -> 0");
+
+}
+
+void test_register_firmware_quirks(void)
+{
+    test_suite_register_cat("Quirks: parse single name",
+                            test_quirks_parse_disable_single, TEST_CAT_BOOT);
+    test_suite_register_cat("Quirks: parse comma list",
+                            test_quirks_parse_disable_multi, TEST_CAT_BOOT);
+    test_suite_register_cat("Quirks: parse unknown drop",
+                            test_quirks_parse_disable_unknown, TEST_CAT_BOOT);
+    test_suite_register_cat("Quirks: parse NULL/empty -> 0",
+                            test_quirks_parse_disable_null_empty, TEST_CAT_BOOT);
+    test_suite_register_cat("Quirks: parse whitespace tolerated",
+                            test_quirks_parse_disable_whitespace, TEST_CAT_BOOT);
+    test_suite_register_cat("Quirks: canonical name for each bit",
+                            test_quirks_name_each_bit, TEST_CAT_BOOT);
+    test_suite_register_cat("Quirks: parse round-trip all bits",
+                            test_quirks_parse_round_trip_all_bits, TEST_CAT_BOOT);
+    test_suite_register_cat("Quirks: name rejects malformed bit",
+                            test_quirks_name_invalid, TEST_CAT_BOOT);
+    test_suite_register_cat("Quirks: is_active polarity guard",
+                            test_quirks_is_active_polarity, TEST_CAT_BOOT);
 }
 
 #endif /* KERNEL_TESTS */

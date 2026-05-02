@@ -34,6 +34,7 @@
 #include "kernel/types.h"
 #include "kernel/firmware_tables.h"
 #include "kernel/firmware_platform.h"
+#include "kernel/firmware_quirks.h"
 #include "kernel/uefi_config.h"
 #include "kernel/uefi_runtime.h"
 #include "kernel/boot_info.h"
@@ -385,7 +386,19 @@ void firmware_tables_publish_json(void)
     }
     jb_putc(&jb, ']');
 
-    jb_puts(&jb, ",\"quirks_active\":[]");
+    jb_puts(&jb, ",\"quirks_active\":[");
+    {
+        uint32_t first = 1;
+        for (uint32_t b = firmware_quirks_iter_next(0); b;
+             b = firmware_quirks_iter_next(b)) {
+            const char *n = firmware_quirks_name(b);
+            if (!n) continue;
+            if (!first) jb_putc(&jb, ',');
+            jb_str(&jb, n);
+            first = 0;
+        }
+    }
+    jb_putc(&jb, ']');
 
     /* acpi block: presence summary via the catalog (full ACPI accessor
      * surface for version + RSDP/XSDT addresses lands when ACPICA-style

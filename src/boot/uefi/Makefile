@@ -41,6 +41,7 @@ all: $(OUTDIR)/BOOTX64.EFI
 bootx64.o: bootx64.c efi.h boot_info_mirror.h boot_proto_mirror.h \
            elf_bootproto.h elf_types.h ../../../build/boot_proto_sha.h \
            ../../../include/kernel/boot_version_constants.h \
+           ../../../include/kernel/firmware_quirks_table.inc \
            ../../../build/boot_loader_identity.h
 	$(CC) $(CFLAGS) -c $< -o $@
 

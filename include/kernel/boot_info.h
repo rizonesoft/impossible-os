@@ -954,10 +954,15 @@ struct boot_config {
      * images set this to 1 in boot.conf when the release cadence
      * wants the monotonic counter to tick forward. */
     uint8_t  anti_rollback_raise;
+    /* Firmware quirk override (firmware quirk database). Bitmask of
+     * FW_QUIRK_* values to suppress. Default 0 = trust the predicate
+     * table. boot.conf line `firmware_quirk_disable=broken_fpdt,bogus_mat`
+     * is parsed by the bootloader into this mask. */
+    uint8_t  firmware_quirk_disable;
     /* Reserved -- new config fields go here without shifting cmdline.
      * Bootloader zero-fills the entire struct, so new fields default to 0
      * in older bootloaders that don't know about them. */
-    uint8_t  _reserved[9];
+    uint8_t  _reserved[8];
     /* Command line (offset 32 -- stable across versions) */
     char     cmdline[BOOT_CONF_CMDLINE_MAX];
     /* Status */

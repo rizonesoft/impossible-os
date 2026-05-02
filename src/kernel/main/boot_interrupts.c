@@ -262,6 +262,10 @@ void boot_phase1(void)
     mat_init();
     uefi_conformance_init();
     {
+        extern void firmware_quirks_init(void);
+        firmware_quirks_init();
+    }
+    {
         extern void firmware_tables_init(void);
         firmware_tables_init();
     }

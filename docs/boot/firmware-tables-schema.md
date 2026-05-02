@@ -26,7 +26,7 @@
 | `conformance_profile`   | object | yes      | See **Conformance profile** below.                                                                              |
 | `tables`                | array  | yes      | Per-entry table descriptors (see **Per-entry shape**).                                                          |
 | `degraded`              | array  | yes      | Catalog entries whose status is `FW_STATUS_DEGRADED`; subset of `tables[]` indices.                             |
-| `quirks_active`         | array  | yes      | SMBIOS-keyed quirks that fired this boot. Empty until the firmware quirk database lands.                        |
+| `quirks_active`         | array  | yes      | Array of canonical firmware quirk names (lowercase tokens) active after `boot.conf firmware_quirk_disable=` suppression. Empty when no quirks fired.                                                            |
 | `acpi`                  | object | yes      | Aggregate ACPI summary (see **Typed sub-blocks**).                                                              |
 | `smbios`                | object | yes      | Aggregate SMBIOS summary.                                                                                       |
 | `mat`                   | object | yes      | UEFI Memory Attributes Table summary.                                                                           |

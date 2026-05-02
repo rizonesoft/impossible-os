@@ -81,7 +81,8 @@ struct boot_config {
      * 0 = whatever the hardware offers, 1..3 = hard-assert exact count. */
     UINT8   test_monitors_count;
     UINT8   anti_rollback_raise;    /* anti-rollback opt-in policy */
-    UINT8   _reserved[9];           /* future fields -- zero-filled by defaults */
+    UINT8   firmware_quirk_disable; /* bitmask of FW_QUIRK_* names to suppress */
+    UINT8   _reserved[8];           /* future fields -- zero-filled by defaults */
     char    cmdline[BOOT_CONF_CMDLINE_MAX];
     UINT8   config_found;
     /* User-mode test launcher knobs (S4 of TODO-04). Mirror of kernel
