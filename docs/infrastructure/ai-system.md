@@ -265,15 +265,14 @@ The `superpowers@claude-plugins-official` plugin ships 14 skills, three of which
 
 ### AI-Slop Content Gates
 
-Build green and tests green do not catch the most common AI-coauthor failure modes; CodeRabbit's December 2025 PR study reports AI-coauthored changes ship roughly 1.7x more major issues than human-authored code, and the leak is content-level rather than compile-level. [`scripts/lint.sh`](../../scripts/lint.sh) Checks 6/7/8 target three patterns CLAUDE.md prohibits in prose. Check 6 (tautological-test) and Check 7 (stub-behind-stamp) are live ERROR gates; Check 8 (phantom-include) ships an opt-in lsp-bridge wrapper that emits findings as WARN until first-pass triage completes:
+Build green and tests green do not catch the most common AI-coauthor failure modes; CodeRabbit's December 2025 PR study reports AI-coauthored changes ship roughly 1.7x more major issues than human-authored code, and the leak is content-level rather than compile-level. [`scripts/lint.sh`](../../scripts/lint.sh) Checks 6 and 7 target two AI-slop patterns CLAUDE.md prohibits in prose. Both are live ERROR gates:
 
 | Check | Pattern | Marker (allowlist) | Skip env |
 |---|---|---|---|
 | 6: Tautological-test | `TEST_ASSERT_EQ(X, X, ...)`, `TEST_ASSERT(true, ...)`, `TEST_ASSERT(1, ...)` in `src/kernel/test/test_*.c` | `/* TEST-TAUTOLOGY-OK: <reason> */` (same line) | `SKIP_LINT_TAUTOLOGY=1` |
 | 7: Stub-behind-stamp | TODO `[x]` item names a function whose body is `<= 3 LOC return-constant`; live via [Per-item stamped_items cache extension](../../todo/00-infrastructure/TODO-06-todo-metadata-layer.md#9-per-item-stamped_items-cache-extension) | `/* INTENTIONAL-STUB: <reason> */` (same line) | `SKIP_LINT_STUB_BEHIND_STAMP=1` |
-| 8: Phantom-include | `#include` in `src/kernel/**/*.c` whose header contributes no symbol to the TU (clangd `unused-includes` / `misc-include-cleaner`); wrapper at [`scripts/todo-graph/check_phantom_includes.py`](../../scripts/todo-graph/check_phantom_includes.py) calls the lsp-bridge `diagnostics` MCP tool. Default skip; opt-in via `LINT_PHANTOM_INCLUDE_FULL=1`. Findings emit as WARN pending [first-pass triage](../../todo/00-infrastructure/TODO-07-lsp-mcp-bridge.md#19-lint-check-8-phantom-include-wrapper). | `// PHANTOM-INCLUDE-OK: <reason>` (same line as the `#include`) | `SKIP_LINT_PHANTOM_INCLUDE=1` |
 
-Check 6 and Check 7 are live ERROR gates; Check 8 is live as an opt-in WARN-mode wrapper (cold-clangd warm-start makes a default-on full sweep too slow for pre-commit). Pre-existing tautological tests are tracked in a per-check legacy allowlist (mirrors Check 5's `BARE_SECTION_LEGACY_FILES`) and emit WARN, not ERROR; new tautology in any non-allowlisted file is ERROR. Every skip env var emits a visible WARN line so bypasses are auditable.
+Pre-existing tautological tests are tracked in a per-check legacy allowlist (mirrors Check 5's `BARE_SECTION_LEGACY_FILES`) and emit WARN, not ERROR; new tautology in any non-allowlisted file is ERROR. Every skip env var emits a visible WARN line so bypasses are auditable. (An originally-planned Check 8 phantom-include lint via lsp-bridge clangd diagnostics was attempted and dropped 2026-05-02 -- false-positive rate too high on this freestanding kernel; rationale lives in the [AI-slop content lints](../../todo/00-infrastructure/TODO-08-automation-hardening.md#12-ai-slop-content-lints-tautological-test--stub-behind-stamp) section history.)
 
 ---
 

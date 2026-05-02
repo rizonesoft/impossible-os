@@ -14,10 +14,11 @@ Index:
   Background: Build
 
 Diagnostics:
-  # Strict mode surfaces phantom-include findings to scripts/lint.sh
-  # Check 8 (via scripts/todo-graph/check_phantom_includes.py over the
-  # lsp-bridge MCP diagnostics tool). Editors see the same findings;
-  # legitimate cases use `// PHANTOM-INCLUDE-OK: <reason>` on the same
-  # line as the #include to suppress.
-  UnusedIncludes: Strict
+  # UnusedIncludes was flipped to Strict for the lint Check 8
+  # phantom-include wrapper. Reverted to None when Check 8 retired
+  # 2026-05-02: clangd's IncludeCleaner produces too many false
+  # positives in this freestanding kernel (macros expanding to
+  # libc-style helpers, errno value identifiers, forward-declaration
+  # providers). Editor noise is not worth the catch rate.
+  UnusedIncludes: None
   MissingIncludes: None

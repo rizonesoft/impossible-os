@@ -545,24 +545,6 @@ else
     t_fail "scripts/todo-graph/tests/test_build.sh not found or not executable"
 fi
 
-# scripts/todo-graph/tests/test_phantom_include.sh covers the lint
-# Check 8 phantom-include wrapper. Skips cleanly when clangd-19 is
-# absent (asserts exit-3 contract), so CI hosts without clangd still
-# pass.
-PHANTOM_TEST="$REPO_ROOT/scripts/todo-graph/tests/test_phantom_include.sh"
-if [ -x "$PHANTOM_TEST" ]; then
-    PI_OUT=$("$PHANTOM_TEST" 2>&1)
-    PI_RC=$?
-    PI_SUMMARY=$(printf '%s\n' "$PI_OUT" | grep -E '^\[test_phantom_include\] ' | tail -1)
-    if [ "$PI_RC" = "0" ]; then
-        t_pass "scripts/todo-graph/tests/test_phantom_include.sh PASS (${PI_SUMMARY:-summary unavailable})"
-    else
-        t_fail "scripts/todo-graph/tests/test_phantom_include.sh FAIL (${PI_SUMMARY:-run directly for details})"
-    fi
-else
-    t_fail "scripts/todo-graph/tests/test_phantom_include.sh not found or not executable"
-fi
-
 # ============================================================================
 # LSP-MCP bridge test harness wiring (TODO-07 in 00-infrastructure)
 #
@@ -3118,13 +3100,14 @@ rm -rf "$HEE_TMP"
 # ============================================================================
 # AI-slop content lints (TODO-08 #12)
 # ============================================================================
-# Three sub-tests exercise lint.sh Checks 6/7/8 against synthetic inputs:
+# Sub-tests exercise lint.sh Checks 6 and 7 against synthetic inputs:
 #   - Check 6 tautological-test: synthetic test file with TEST_ASSERT(true,...)
 #     in a NON-legacy path must produce a lint error.
-#   - Check 7 stub-behind-stamp: WARN-deferred path is exercised by the
-#     baseline lint run (cache extension not yet shipped).
-#   - Check 8 phantom-include: WARN-deferred path is exercised by the
-#     baseline lint run (lsp-bridge MCP integration pending).
+#   - Check 7 stub-behind-stamp: deferred WARN path is exercised by the
+#     baseline lint run (no cache present in synthetic tree).
+# Originally-planned Check 8 phantom-include lint was attempted via lsp-bridge
+# MCP and dropped 2026-05-02 -- clangd false-positive rate too high on this
+# freestanding kernel.
 
 ASL_TMP="$(mktemp -d)"
 ASL_REPO="$ASL_TMP/repo"
@@ -3219,13 +3202,6 @@ if echo "$ASL_OUT3" | grep -q "Check 7 (stub-behind-stamp)"; then
     t_pass "lint_check7_deferred  Check 7 deferred WARN line present"
 else
     t_fail "lint_check7_deferred  expected deferred WARN, got: $(echo "$ASL_OUT3" | tail -3)"
-fi
-
-# Check 8 phantom-include: deferred WARN.
-if echo "$ASL_OUT3" | grep -q "Check 8 (phantom-include)"; then
-    t_pass "lint_check8_deferred  Check 8 deferred WARN line present"
-else
-    t_fail "lint_check8_deferred  expected deferred WARN, got: $(echo "$ASL_OUT3" | tail -3)"
 fi
 
 # Skip env vars produce visible WARN.

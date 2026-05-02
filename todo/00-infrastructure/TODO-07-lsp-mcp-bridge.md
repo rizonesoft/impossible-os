@@ -59,7 +59,6 @@ title: "TODO-07 -- LSP to MCP Bridge (C, NASM, shell, Python, PowerShell)"
 | ⭐  |  16   | Warm-index preloading + cold-start budget                                  | §1, §2, §3, §4, §5, §6            |  [x]   |
 | ⭐  |  17   | Background warm-start mode (MCP launcher compatibility)                    | §16                               |  [x]   |
 | 💎  |  18   | Scale Roadmap (DEFERRED -- trigger-gated, no code today)                   | --                                |  [ ]   |
-| ⭐  |  19   | lint Check 8 phantom-include wrapper (closes Check 8 deferral)             | §7 (diagnostics tool)             |  [/]   |
 
 > 💎 = parity -- matches the existing LSP stacks Win11/Linux devs already use, wrapped in an MCP transport.
 > ⭐ = exclusive -- neither Win11 nor Linux ships a repo-tracked cross-language LSP-MCP bridge with read-only boundary compliance baked in.
@@ -71,7 +70,7 @@ title: "TODO-07 -- LSP to MCP Bridge (C, NASM, shell, Python, PowerShell)"
 
 Lay down the process skeleton, the FastMCP server, and a minimal LSP JSON-RPC client that speaks LSP over stdio to a spawned subprocess. This is the foundation every language integration builds on.
 
-> **XREF (2026-04-28):** consumed by [TODO-08 Automation Hardening](TODO-08-automation-hardening.md) §1 (Codex CLI MCP wiring -- the `[mcp_servers.lsp-bridge]` block points at this server with the `--warm-start=c,py` flag) and §6 (MCP usage discipline). [TODO-08 §12](TODO-08-automation-hardening.md#12-ai-slop-content-lints-tautological-test--stub-behind-stamp--phantom-include) Check 8 (phantom-include detection) is a future consumer that needs `lsp-bridge.diagnostics` MCP integration into `scripts/lint.sh`; until that wiring lands, Check 8 emits a deferred-WARN.
+> **XREF (2026-04-28):** consumed by [TODO-08 Automation Hardening](TODO-08-automation-hardening.md) §1 (Codex CLI MCP wiring -- the `[mcp_servers.lsp-bridge]` block points at this server with the `--warm-start=c,py` flag) and §6 (MCP usage discipline). The originally-planned [TODO-08 §12](TODO-08-automation-hardening.md#12-ai-slop-content-lints-tautological-test--stub-behind-stamp) Check 8 phantom-include lint over `lsp-bridge.diagnostics` was attempted and dropped 2026-05-02 (clangd false-positive rate too high on this freestanding kernel); the bridge `diagnostics` tool itself stays as a general-purpose MCP capability.
 
 - [x] Create `scripts/lsp-mcp/bridge.py` with FastMCP server, `--self-test` flag, and module-level `_CALL_LOCK` (pattern from [`mcp_server.py`](../../scripts/todo-graph/mcp_server.py)).
 - [x] Create `scripts/lsp-mcp/lsp_client.py` implementing minimal LSP JSON-RPC 2.0: `initialize`, `initialized`, `textDocument/didOpen`, `shutdown`, `exit`, plus request/response correlation via `id` field and header framing (`Content-Length:` + double CRLF).
@@ -620,39 +619,6 @@ Current repo is ~215k core LOC (~189k kernel + ~24k tooling per [COUNT.md](../..
 
 ---
 
-## 19. Lint Check 8 Phantom-Include Wrapper
-
-[TODO-08 §12 lint Check 8 (phantom-include)](../00-infrastructure/TODO-08-automation-hardening.md#12-ai-slop-content-lints-tautological-test--stub-behind-stamp--phantom-include) is advisory-deferred against this section. The check wants to flag every `#include "..."` in `src/kernel/**/*.c` whose header contributes zero referenced symbols to the including TU -- the C equivalent of Python's `unused-import`. The §7 `diagnostics` MCP tool already returns clangd's `unused-include` diagnostics from the running LSP, so the work is a thin lint-side wrapper that calls the MCP tool, not a re-implementation.
-
-> [!TIP]
-> **Why now and not §7:** §7 ships the diagnostics MCP tool itself (callable from any agent). This section ships the **lint-side consumer** -- a Python helper script that batches `diagnostics` calls across every `src/kernel/**/*.c` file and reports findings to `scripts/lint.sh` Check 8. Splitting them keeps §7 transport-only and §19 lint-policy.
-
-> [!NOTE]
-> **Heuristic-grep alternative is rejected.** A grep-based "is `header.h`'s symbol used?" check produces false positives on transitive macro-only headers (`<stdint.h>` style), header-only utility libraries (`include/kernel/types.h`), and forward-declaration-only headers. clangd's `unused-include` uses the full TU's symbol-use graph and is the only ground-truth source available without a custom C parser.
-
-- [x] Created [`scripts/todo-graph/check_phantom_includes.py`](../../scripts/todo-graph/check_phantom_includes.py) (~330 LOC, stdlib only). Spawns `python3 scripts/lsp-mcp/bridge.py --warm-start=c --warm-start-mode=blocking` as an MCP stdio subprocess, speaks newline-delimited JSON-RPC (initialize + notifications/initialized + tools/call), iterates `src/kernel/**/*.c` (excluding `/test/` and `_synthetic.c`), filters diagnostic codes in `{unused-includes, unused-include, unused-header, misc-include-cleaner}`, and emits `path:line: warning: unused include "<header>"` per finding. Per-file polling (`POLL_ATTEMPTS=20`, `POLL_INTERVAL=0.3s`) handles clangd's async `publishDiagnostics`; unpublished URIs report to stderr as advisory rather than silent false-clean (Codex design review High). Exit codes: 0 OK, 2 MCP unavailable, 3 clangd missing.
-- [x] Wired into [`scripts/lint.sh`](../../scripts/lint.sh) Check 8 (replaces the prior `deferred -- requires lsp-bridge MCP integration` WARN). Default behavior is `skipped by default; set LINT_PHANTOM_INCLUDE_FULL=1 to run the lsp-bridge sweep` so pre-commit stays fast (cold-clangd warm-start + 287 TUs takes minutes); explicit opt-in runs the full sweep. Exit-2 -> deferred-WARN, exit-3 -> graceful skip-WARN, exit-0 with findings -> per-line `warn` (pre-triage state, mirrors Check 13's allowlist ramp).
-- [/] First-pass triage: wrapper landed in WARN-mode; actual sweep + triage of unused includes is pending. Run `LINT_PHANTOM_INCLUDE_FULL=1 bash scripts/lint.sh` for the full list. Allowlist marker `// PHANTOM-INCLUDE-OK: <reason>` on the same source line as the `#include` suppresses individual findings (handled in the wrapper, mirrors Check 6 + Check 7). Promotion to ERROR (via `CHECK_8_LEGACY_FILES=()` empty-allowlist) is gated on triage completion. Initial spot-check on `--limit 8` surfaced 3 candidate findings (`boot_splash.c:22`, `boot_timing.c:17`, `ahci_core.c:6`); full-tree count TBD.
-- [x] Updated [TODO-08 §12](../00-infrastructure/TODO-08-automation-hardening.md#12-ai-slop-content-lints-tautological-test--stub-behind-stamp--phantom-include) Check 8 sub-bullet from `[/]` to `[x]` (wrapper-side wiring shipped); reciprocal XREF here points at that sub-bullet. Triage of the surfaced findings remains owned by §19 item 3 above.
-- [x] Added regression test [`scripts/todo-graph/tests/test_phantom_include.sh`](../../scripts/todo-graph/tests/test_phantom_include.sh): synthesizes `src/kernel/test_phantom_fixture/synthetic_phantom.c` with two ad-hoc fixture headers (one used + one unused), asserts the wrapper reports `phantom_header.h` and not `used_header.h`, and asserts that `// PHANTOM-INCLUDE-OK:` on the same line suppresses the finding. Skips cleanly with exit-3 contract assertion when clangd-19 is absent. Wired into [`scripts/test-tooling.sh`](../../scripts/test-tooling.sh) `[todo-graph]` block. Note: required flipping `.clangd` `Diagnostics.UnusedIncludes` from `None` to `Strict` so clangd actually emits the unused-include diagnostic the wrapper consumes.
-- [x] Commit: `"scripts/lint: phantom-include wrapper via lsp-bridge diagnostics (closes Check 8)"`.
-
-**Test checkpoint:** `python3 scripts/todo-graph/check_phantom_includes.py --limit 8` exits 0 with 3 findings printed as `file:line: warning: unused include "<header>"`. `bash scripts/todo-graph/tests/test_phantom_include.sh` reports `2 pass, 0 fail, 0 skip`. `bash scripts/lint.sh` Check 8 default emits `skipped by default; set LINT_PHANTOM_INCLUDE_FULL=1 to run the lsp-bridge sweep`. With clangd absent, the wrapper exits 3 and the lint emits `Check 8 (phantom-include) skipped -- clangd-19 not installed`.
-
-> **Test runner:** `bash scripts/todo-graph/tests/test_phantom_include.sh` | aggregate via `bash scripts/test-tooling.sh`.
-
-> **Notes:**
-> - Shipped: `scripts/todo-graph/check_phantom_includes.py` (MCP stdio client + two-phase round-based polling) + `scripts/lint.sh` Check 8 wiring + `scripts/todo-graph/tests/test_phantom_include.sh` (2 sub-tests).
-> - How it runs: `LINT_PHANTOM_INCLUDE_FULL=1 bash scripts/lint.sh` to invoke; default-skip preserves pre-commit speed. Wrapper spawns one bridge subprocess per run; round 1 fires diagnostics for all TUs, rounds 2..MAX_ROUNDS re-poll only the unpublished set under `GLOBAL_DEADLINE_S` to bound total wall-clock instead of per-file.
-> - Downstream effects: closes the lint Check 8 phantom-include sub-bullet in [TODO-08 §12 AI-slop content lints](../00-infrastructure/TODO-08-automation-hardening.md#12-ai-slop-content-lints-tautological-test--stub-behind-stamp--phantom-include) (flipped `[/]` -> `[x]` reciprocally). Codex 4x review adoptions (design pre-code, adversarial pre-commit, adversarial+consistency+perf post-commit) recorded in section-ship commit `6869329b` and review commit.
-> - Canonical doc: this section + [`scripts/todo-graph/check_phantom_includes.py`](../../scripts/todo-graph/check_phantom_includes.py) module docstring + AI-Slop Content Gates table in [`docs/infrastructure/ai-system.md`](../../docs/infrastructure/ai-system.md).
-> - Scope boundary: §19 owns the lint-side wrapper and tooling-test wiring. The bridge `diagnostics` MCP tool itself is owned by §7. The triage of the surfaced phantom-include findings (item 3 above) is staged work staying in this section as `[/]`; promotion to ERROR depends on triage completion.
-
-> **Verified:** 2026-05-02 | commit `6869329b` | 5/6 items | build OK | tests 2/2 PASS
-> **Quality reviewed:** 2026-05-02 | Codex 4x (design + adversarial + consistency + perf) | 0H+5M+0L fixed, 0 open | scope: N/A (host-side Python tooling)
-
----
-
 ## Format Quick Reference
 
 | Language | Extensions        | LSP Server                | Install                            | Spawn Command                                                          |
@@ -690,7 +656,6 @@ Current repo is ~215k core LOC (~189k kernel + ~24k tooling per [COUNT.md](../..
 | ⭐ | Workspace-bound path sandboxing                                 | ❌ editor trusts every path       | ❌ editor trusts every path          | ✅ §15 resolve_in_workspace        |
 | ⭐ | `--warm-start` eager LSP spawn + first-call latency budget      | ❌ editor lazy-initiates          | ❌ editor lazy-initiates             | ✅ §16 60s budget WARN             |
 | ⭐ | Background warm-start compatible with MCP launchers             | ❌ editor blocks on LSP cold start | ❌ editor blocks on LSP cold start  | ✅ §17 daemon thread + publish gate |
-| ⭐ | Lint-side phantom-include check via LSP diagnostics             | ❌ no equivalent in stock toolchain | ⚠️ IWYU/include-what-you-use ad hoc | ✅ §19 lint Check 8 over MCP        |
 
 > **After §1-§6:** Impossible OS reaches parity with a well-configured Win11/Linux developer workstation for every language the repo uses. Every human-facing LSP-capable editor (VS Code, Emacs, Neovim) already speaks these same servers directly; this TODO duplicates none of that.
 > **After §7-§8:** Impossible OS pulls ahead with a cross-language unified MCP surface. 3rd-party bridges (isaacphi/mcp-language-server -- single LSP at a time; jonrad/lsp-mcp -- Node, no multi-LSP; mickeyinfoshan/lsp-mcp -- Go/TS/JS/Py only; Tritlo/lsp-mcp -- Zig, high-perf but no NASM support) cover a subset of this surface but none ship the 5-language mix (NASM + PowerShell are the two painful ones) and none are repo-tracked with boundary compliance.
