@@ -691,16 +691,19 @@ The pre-§18 error screen used UEFI text console (`ConOut`) with white-on-blue t
 - [x] Cross-linked from TODO-01 boot-protocol-abi-handoff `.bootproto` notes: the descriptor check is version-drift signal only; destination policy lives here in §19.
 - [x] Commit: `"boot: PT_LOAD destination policy -- reject firmware/loader overlaps before copy"`
 
-**Test checkpoint:** Live kernel boots through the new gate without false-positive: `bash scripts/test-smoke.sh` reports `SMOKE TEST PASSED` and `Boot complete in 2.32s` (KVM). Boot log shows `[BOOT] ELF segment N: paddr=0xH..H ...` for each PT_LOAD without a `[FAIL] Kernel ELF: PT_LOAD destination forbidden` line. With a synthetic ELF whose PT_LOAD targets `EfiRuntimeServicesData` (deferred fixture work, see item above), the bootloader will emit `[FAIL] Kernel ELF: PT_LOAD destination forbidden ... type=RuntimeServicesData` on serial and render the §18 graphical BSOD.
+**Test checkpoint:** Live kernel boots through the new gate without false-positive: `bash scripts/test-smoke.sh` reports `SMOKE TEST PASSED` and `Boot complete in 2.30s` (KVM). Boot log shows `[BOOT] ELF segment N: paddr=0xH..H ...` for each PT_LOAD without a `[FAIL] Kernel ELF corrupt: segment N PT_LOAD destination forbidden` line. With a synthetic ELF whose PT_LOAD targets `EfiRuntimeServicesData` (deferred fixture work, see item above), the bootloader will emit `[FAIL] Kernel ELF corrupt: segment N PT_LOAD destination forbidden paddr=... memsz=... type=RuntimeServicesData` on serial and render the §18 graphical BSOD.
 
 > **Test runner:** N/A (bootloader-only; UEFI types in predicate prevent kernel-side unit linking) | validation: `bash scripts/test-smoke.sh` (KVM/TCG) + future synthetic-ELF fixture + bare-metal operator verification
 
 > **Notes:**
-> - Shipped: `pt_load_destination_allowed()` + `pt_load_snapshot_mmap()` + `pt_load_mem_type_name()` in [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c) (~150 LOC); 64 KiB BSS-class memory-map snapshot buffer; per-segment gate before `efi_memcpy` in `load_kernel()`.
-> - How it runs: snapshot via `gBS->GetMemoryMap` once at start of PT_LOAD loop, two-pass per-segment walk (forbidden-overlap detect + allowed-coverage confirm), fail-closed on any non-allowed type or unmapped gap. `BootServicesData` excluded from allowed list to protect bootloader scratch (file_buf, etc.) during load.
-> - Downstream effects: closes the defense-in-depth gap that §17 `.bootproto` version-drift check could not -- a kernel that knows the bootloader's compile-time tuple still gets blocked from writing into firmware tables. Smoke PASS confirms zero false-positive on the live kernel.
+> - Shipped: `pt_load_destination_allowed()` + `pt_load_snapshot_mmap()` + `pt_load_mem_type_name()` in [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c) (~150 LOC); 128 KiB BSS-class memory-map snapshot buffer; per-segment gate before `efi_memcpy` in `load_kernel()`.
+> - How it runs: snapshot via `gBS->GetMemoryMap` once at start of PT_LOAD loop, two-pass per-segment walk (forbidden-overlap detect + allowed-coverage confirm), fail-closed on any non-allowed type or unmapped gap. Allowed type: `EfiConventionalMemory` ONLY; `EfiLoaderData` forbidden because it holds bootloader scratch during load.
+> - Downstream effects: closes the defense-in-depth gap that §17 `.bootproto` version-drift check could not. Failure-line shape `[FAIL] Kernel ELF corrupt: segment N PT_LOAD destination forbidden ...` matches neighboring `[FAIL] Kernel ELF corrupt:` siblings so log scrapers see one shape.
 > - Canonical doc: this section + the function-block comment at `src/boot/uefi/bootx64.c` "PT_LOAD destination policy".
-> - Scope boundary: §19 owns the bootloader-side gate. NVRAM fault-class polish + synthetic-ELF smoke fixture are deferred (concrete `[/]` items above with reciprocal XREFs). The kernel-side mmap consumer-validation gate is owned by §17 (post-handoff PMM consumer fail-closed validation).
+> - Scope boundary: §19 owns the bootloader-side gate. NVRAM fault-class polish + synthetic-ELF smoke fixture are deferred (concrete `[/]` items above). The kernel-side mmap consumer-validation gate is owned by §17 (post-handoff PMM consumer fail-closed validation).
+
+> **Verified:** 2026-05-02 | commit `fc1e2971` | 5/8 items | build OK | smoke PASS (KVM 2.30s)
+> **Quality reviewed:** 2026-05-02 | Codex 6x (design + 2x adversarial + re-adversarial + consistency + perf) | 1H+3M+1L fixed, 0 open | scope: boot-code-quality
 
 ---
 

@@ -3920,7 +3920,17 @@ static void bootproto_verify_or_reset(const UINT8 *kernel_image,
  * or hostile ELF land in the bootloader's own heap.
  * ============================================================================ */
 
-#define PT_LOAD_POLICY_MMAP_BUF_PAGES 16  /* 64 KiB scratch for snapshot */
+/* 128 KiB scratch for the snapshot. Real UEFI memory maps are
+ * typically 50-200 descriptors at 48 bytes each (~10 KiB). The
+ * doubled buffer covers descriptor-heavy firmware (large NVDIMM
+ * configurations, Splice-style memory tiering, BIOS-emit-many-tiny
+ * Reserved-region quirks) without an EFI_BUFFER_TOO_SMALL fail
+ * (Codex post-commit adversarial M). The pre-snapshot path
+ * cannot easily fall back to AllocatePool because firmware may
+ * fragment the map between the size-probe call and the data call;
+ * a static doubled buffer is simpler and matches the existing
+ * BOOT_MMAP_MAX_ENTRIES = 512 design upper bound. */
+#define PT_LOAD_POLICY_MMAP_BUF_PAGES 32  /* 128 KiB */
 
 static const char *pt_load_mem_type_name(UINT32 type)
 {
@@ -3945,7 +3955,8 @@ static const char *pt_load_mem_type_name(UINT32 type)
 }
 
 /* True iff every byte of [dst_start, dst_end) falls inside a
- * descriptor of an allowed type (Conventional or LoaderData).
+ * descriptor of EfiConventionalMemory (the only allowed type;
+ * EfiLoaderData is FORBIDDEN, see header above).
  *
  * On false return, *bad_type_out (if non-NULL) is set to the type of
  * the first forbidden / unmapped descriptor that overlaps the range,
@@ -3964,12 +3975,10 @@ static int pt_load_destination_allowed(UINT64 dst_start, UINT64 dst_end,
     /* desc_size MUST be at least sizeof(EFI_MEMORY_DESCRIPTOR) before
      * casting; UEFI spec allows DescriptorSize >= sizeof(struct) for
      * forward compatibility but never less. map_size must be a whole
-     * multiple of desc_size or the trailing partial entry is malformed
-     * (matches the existing mmap_geometry_validate guard elsewhere in
-     * this file). */
+     * multiple of desc_size or the trailing partial entry is malformed.
+     * Conditions match mmap_geometry_validate elsewhere in this file. */
     if (desc_size < sizeof(EFI_MEMORY_DESCRIPTOR) ||
-        desc_size > 4096 ||
-        map_size < desc_size ||
+        map_size == 0 ||
         (map_size % desc_size) != 0) {
         if (bad_type_out) *bad_type_out = (UINT32)-1;
         return 0;
@@ -4069,9 +4078,10 @@ static EFI_STATUS pt_load_snapshot_mmap(UINT8 *buf, UINTN buf_size,
     if (EFI_ERROR(s))
         return s;
     /* Match the predicate's geometry guard so a malformed map is
-     * caught at snapshot time rather than during the walk. */
+     * caught at snapshot time rather than during the walk.
+     * Conditions match mmap_geometry_validate elsewhere in this file. */
     if (desc_size < sizeof(EFI_MEMORY_DESCRIPTOR) ||
-        desc_size > 4096 ||
+        map_size == 0 ||
         (map_size % desc_size) != 0)
         return EFI_INVALID_PARAMETER;
     if (map_size > buf_size)
@@ -4521,11 +4531,11 @@ kernel_loaded:
             s_pt_load_mmap_buf, sizeof s_pt_load_mmap_buf,
             &pt_mmap_size, &pt_desc_size);
         if (EFI_ERROR(ms)) {
-            serial_early_print("[FAIL] Kernel ELF: PT_LOAD policy "
-                               "GetMemoryMap failed (0x");
+            serial_early_print("[FAIL] Kernel ELF corrupt: PT_LOAD policy "
+                               "GetMemoryMap failed status=0x");
             serial_early_print_hex16((UINT16)((UINT64)ms >> 16));
             serial_early_print_hex16((UINT16)ms);
-            serial_early_print(")\n");
+            serial_early_print("\n");
             load_err_status = EFI_LOAD_ERROR;
             goto load_error;
         }
@@ -4614,10 +4624,11 @@ kernel_loaded:
         /* PT_LOAD destination policy: reject any segment whose
          * physical destination overlaps firmware-owned, bootloader-
          * owned, or handoff-reserved memory. The predicate walks
-         * the UEFI memory map snapshot taken above. Allowed types
-         * are EfiConventionalMemory and EfiLoaderData; everything
-         * else is rejected. p_memsz == 0 segments are degenerate
-         * and skipped (no bytes copied). */
+         * the UEFI memory map snapshot taken above. Allowed type:
+         * EfiConventionalMemory ONLY (EfiLoaderData is forbidden
+         * because it holds bootloader scratch -- file_buf, xHCI
+         * DMA, UKI payloads -- during load_kernel). p_memsz == 0
+         * segments are degenerate and skipped (no bytes copied). */
         if (phdr[i].p_memsz > 0) {
             UINT64 dst_start = phdr[i].p_paddr;
             UINT64 dst_end   = dst_start + phdr[i].p_memsz;
@@ -4626,17 +4637,20 @@ kernel_loaded:
                     dst_start, dst_end,
                     s_pt_load_mmap_buf, pt_mmap_size, pt_desc_size,
                     &bad_type)) {
-                serial_early_print("[FAIL] Kernel ELF: PT_LOAD "
-                                   "destination forbidden (segment ");
+                /* Match the neighboring "[FAIL] Kernel ELF corrupt: segment N ..."
+                 * shape so log scrapers and tests keying on that
+                 * prefix see this rejection too. */
+                serial_early_print("[FAIL] Kernel ELF corrupt: segment ");
                 serial_early_print_uint(i);
-                serial_early_print(" paddr=0x");
+                serial_early_print(" PT_LOAD destination forbidden "
+                                   "paddr=0x");
                 serial_early_print_hex16((UINT16)(dst_start >> 16));
                 serial_early_print_hex16((UINT16)dst_start);
                 serial_early_print(" memsz=");
                 serial_early_print_uint((UINT32)phdr[i].p_memsz);
                 serial_early_print(" type=");
                 serial_early_print(pt_load_mem_type_name(bad_type));
-                serial_early_print(")\n");
+                serial_early_print("\n");
                 load_err_status = EFI_LOAD_ERROR;
                 goto load_error;
             }
