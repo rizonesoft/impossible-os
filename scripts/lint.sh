@@ -830,6 +830,135 @@ PYEOF
 fi
 
 # ============================================================================
+# Check 13: Review/task citations in source comments
+# ============================================================================
+# C / asm comments must not carry review-archaeology attributions like
+# "(Codex H1 ...)", "Codex M3 fix:", "incident YYYY-MM-DD", "see commit
+# <hash>", or "per Codex review". Per CLAUDE.md "Don't reference the
+# current task, fix, or callers ... those belong in the PR description
+# and rot as the codebase evolves."
+#
+# Files already on the legacy allowlist below WARN (cleanup is in
+# progress); any other file ERRORS so new citations cannot land.
+#
+# Skip the whole check via SKIP_LINT_CITATIONS=1; the skip prints a
+# visible WARN line so bypasses are auditable.
+if [ "${SKIP_LINT_CITATIONS:-}" = "1" ]; then
+    echo -e "${YELLOW}warn${NC}: Check 13 (citation guard) skipped via SKIP_LINT_CITATIONS=1"
+    WARNINGS=$((WARNINGS + 1))
+elif [ "$#" -eq 0 ]; then
+    # Citation patterns. Each pattern's match anchors must align with
+    # the actual citation form, not random uses of the underlying
+    # word. "Codex" alone is too loose (it matches the OpenAI product
+    # name in legitimate API docs); require a citation cue (Mn/Hn/Fn,
+    # fix, review, finding, round) within ~40 chars to reduce false
+    # positives.  Per-line opt-out: /* CITATION-OK: <reason> */ marker.
+    CITATION_RE='(\bCodex\b[^A-Za-z0-9_]{1,40}([HMFCS][0-9]|fix|review|finding|round|adversarial|consistency)|review caught|adversarial review|consistency review|design review|post-impl review|incident 20[0-9]{2}-[0-9]{2}-[0-9]{2}|see commit [0-9a-f]{7,}|per Codex review)'
+
+    # Vendored / third-party paths that we do not own.
+    is_citation_vendored() {
+        local path="$1"
+        case "$path" in
+            include/stb_truetype.h) return 0 ;;
+            src/libs/*) return 0 ;;
+        esac
+        return 1
+    }
+
+    # Files with pre-existing citations -- WARN-only while the manual
+    # cleanup sweep is in progress. Keep sorted for diff hygiene; remove
+    # entries as files are scrubbed clean.
+    CITATION_LEGACY_FILES=(
+        include/desktop/wm.h
+        include/kernel/acpi.h
+        include/kernel/boot_info.h
+        include/kernel/boot_timing.h
+        include/kernel/smbios.h
+        src/boot/uefi/bootx64.c
+        src/kernel/acpi.c
+        src/kernel/gfx/gfx_simd.c
+        src/kernel/klog.c
+        src/kernel/main/boot_halt.c
+        src/kernel/main/boot_hw.c
+        src/kernel/main/boot_progress.c
+        src/kernel/main/boot_tests.c
+        src/kernel/main/boot_version.c
+        src/kernel/main/main_internal.h
+        src/kernel/nt/nt_sync.c
+        src/kernel/nt/nt_syscall.c
+        src/kernel/ob/ob.c
+        src/kernel/ob/ob_file.c
+        src/kernel/pe.c
+        src/kernel/printk.c
+        src/kernel/sched/syscall.c
+        src/kernel/sched/task.c
+        src/kernel/security/pku.c
+        src/kernel/smbios.c
+        src/kernel/test/input_record.c
+        src/kernel/test/test_alpc.c
+        src/kernel/test/test_boot_decision.c
+        src/kernel/test/test_desktop.c
+        src/kernel/test/test_desktop_reset.c
+        src/kernel/test/test_firmware_platform.c
+        src/kernel/test/test_firmware_tables.c
+        src/kernel/test/test_uefi_boot.c
+        src/kernel/test/test_usermode.c
+        src/kernel/test/test_usermode_launcher.c
+        src/kernel/uefi_config.c
+        src/kernel/uefi_runtime.c
+    )
+
+    is_citation_legacy() {
+        local path="$1"
+        local legacy
+        for legacy in "${CITATION_LEGACY_FILES[@]}"; do
+            [ "$path" = "$legacy" ] && return 0
+        done
+        return 1
+    }
+
+    while IFS=: read -r file linenum rest; do
+        [ -z "$file" ] && continue
+        relpath="${file#"$REPO_ROOT"/}"
+        if is_citation_vendored "$relpath"; then
+            continue
+        fi
+        # Inline allowlist marker: a same-line `CITATION-OK: <reason>`
+        # token (with at least one word of reason) opts the line out.
+        # Use sparingly -- the marker must justify why the citation is
+        # real-and-not-archaeology (e.g. "OpenAI Codex API name",
+        # "upstream commit ref needed for repro").
+        if echo "$rest" | grep -qE 'CITATION-OK:[[:space:]]*[A-Za-z]'; then
+            continue
+        fi
+        # Restrict matches to lines that look like comments (start with
+        # *, //, or /*, or sit inside a known comment block). The grep
+        # pattern is loose; this gate prevents false positives on code
+        # identifiers that happen to share a token (e.g. a variable
+        # literally named codex_review_completed in a hook is a path,
+        # not a citation).
+        if ! echo "$rest" | grep -qE '^\s*(\*|//|/\*)'; then
+            # Allow content after a // on the same line as code.
+            if ! echo "$rest" | grep -qE '//.*'"$CITATION_RE"; then
+                continue
+            fi
+        fi
+        if is_citation_legacy "$relpath"; then
+            warn "$relpath" "$linenum" "review/task citation in comment (legacy; tracked for manual cleanup)"
+        else
+            error "$relpath" "$linenum" "review/task citation in comment (CLAUDE.md: belongs in PR description, not source; or add /* CITATION-OK: <reason> */ if genuine)"
+        fi
+    done < <(
+        grep -rnHE "$CITATION_RE" \
+            --include='*.c' --include='*.h' --include='*.cc' --include='*.cpp' --include='*.hpp' \
+            --include='*.asm' --include='*.S' --include='*.s' \
+            --exclude-dir='.git' --exclude-dir='build' --exclude-dir='node_modules' \
+            "$REPO_ROOT/src" "$REPO_ROOT/include" 2>/dev/null \
+        || true
+    )
+fi
+
+# ============================================================================
 # Summary
 # ============================================================================
 echo ""
