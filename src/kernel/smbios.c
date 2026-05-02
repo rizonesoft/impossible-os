@@ -75,9 +75,7 @@ static uint32_t       s_table_size;
  * sizeof beyond the wire length, letting a hostile firmware ep->length
  * pass a sizeof-based cap and let the checksum loop read one byte past
  * the spec record. */
-#define SMBIOS3_EP_LEN          0x18  /* 24 bytes; spec rev 3.x */
-#define SMBIOS2_EP_LEN_MIN      0x1E  /* 30 bytes; spec rev 2.1 */
-#define SMBIOS2_EP_LEN_MAX      0x1F  /* 31 bytes; spec rev 2.4+ */
+#include "kernel/smbios_wire.h"
 
 /* SMBIOS strings follow the structure data as a double-NUL-terminated list.
  * String index 1 = first string, 2 = second, etc.  Index 0 = no string.

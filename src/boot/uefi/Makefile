@@ -42,6 +42,8 @@ bootx64.o: bootx64.c efi.h boot_info_mirror.h boot_proto_mirror.h \
            elf_bootproto.h elf_types.h ../../../build/boot_proto_sha.h \
            ../../../include/kernel/boot_version_constants.h \
            ../../../include/kernel/firmware_quirks_table.inc \
+           ../../../include/kernel/firmware_quirks_parse.inc \
+           ../../../include/boot/uki_cmdline_check.h \
            ../../../build/boot_loader_identity.h
 	$(CC) $(CFLAGS) -c $< -o $@
 

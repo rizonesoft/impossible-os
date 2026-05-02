@@ -41,83 +41,10 @@
 #include "kernel/mm/pmm.h"
 #include "kernel/fs/vfs.h"
 #include "kernel/klog.h"
+#include "kernel/util/json_builder.h"
 
 #define FW_JSON_BUF_PAGES 4u
 #define FW_JSON_BUF_SIZE  (FW_JSON_BUF_PAGES * 4096u)
-
-/* ---- Buffer state ------------------------------------------------------- */
-
-struct json_buf {
-    char *buf;
-    size_t pos;
-    size_t cap;
-    int truncated;
-};
-
-static void jb_putc(struct json_buf *j, char c)
-{
-    if (j->pos < j->cap - 1)
-        j->buf[j->pos++] = c;
-    else
-        j->truncated = 1;
-}
-
-static void jb_puts(struct json_buf *j, const char *s)
-{
-    while (*s)
-        jb_putc(j, *s++);
-}
-
-/* JSON-escape a single char per RFC 8259 section 7.  All bytes in
- * 0x00..0x1F not covered by \n \r \t emit as \u00XX. */
-static void jb_putesc(struct json_buf *j, unsigned char c)
-{
-    static const char hex[] = "0123456789abcdef";
-    switch (c) {
-    case '\\': jb_puts(j, "\\\\"); return;
-    case '"':  jb_puts(j, "\\\""); return;
-    case '\n': jb_puts(j, "\\n");  return;
-    case '\r': jb_puts(j, "\\r");  return;
-    case '\t': jb_puts(j, "\\t");  return;
-    default:
-        if (c < 0x20) {
-            jb_puts(j, "\\u00");
-            jb_putc(j, hex[(c >> 4) & 0xF]);
-            jb_putc(j, hex[c & 0xF]);
-            return;
-        }
-        jb_putc(j, (char)c);
-    }
-}
-
-static void jb_str(struct json_buf *j, const char *s)
-{
-    jb_putc(j, '"');
-    if (s) {
-        while (*s)
-            jb_putesc(j, (unsigned char)*s++);
-    }
-    jb_putc(j, '"');
-}
-
-/* Emit "0x" + 16 lowercase hex digits.  Used for phys_addr fields. */
-static void jb_hex64(struct json_buf *j, uint64_t v)
-{
-    static const char hex[] = "0123456789abcdef";
-    jb_puts(j, "\"0x");
-    for (int shift = 60; shift >= 0; shift -= 4)
-        jb_putc(j, hex[(v >> shift) & 0xF]);
-    jb_putc(j, '"');
-}
-
-static void jb_u32_dec(struct json_buf *j, uint32_t v)
-{
-    char tmp[11];
-    int n = 0;
-    if (v == 0) { jb_putc(j, '0'); return; }
-    while (v) { tmp[n++] = (char)('0' + (v % 10u)); v /= 10u; }
-    while (n) jb_putc(j, tmp[--n]);
-}
 
 /* ---- Helpers shared with the Registry mirror ---------------------------- */
 
@@ -157,7 +84,7 @@ static const char *degraded_reason_name(uint8_t reason)
 
 /* ---- ISO-8601 from unix_time (Howard-Hinnant civil-from-days) ----------- */
 
-static void jb_iso8601(struct json_buf *j, uint64_t unix_time)
+static void jb_iso8601(struct json_builder *j, uint64_t unix_time)
 {
     if (unix_time == 0) {
         jb_str(j, "1970-01-01T00:00:00Z");
@@ -209,7 +136,7 @@ static void jb_iso8601(struct json_buf *j, uint64_t unix_time)
 
 /* ---- Catalog-style entry emit ------------------------------------------- */
 
-static void emit_entry(struct json_buf *j, const struct firmware_table_entry *e)
+static void emit_entry(struct json_builder *j, const struct firmware_table_entry *e)
 {
     jb_puts(j, "{\"name\":");
     jb_str(j, e->name);
@@ -281,7 +208,7 @@ static void emit_entry(struct json_buf *j, const struct firmware_table_entry *e)
 
 /* ---- APEI/DBG2/WSMT generic listing helper ------------------------------ */
 
-static void emit_named_block(struct json_buf *j, const char *key,
+static void emit_named_block(struct json_builder *j, const char *key,
                              const char *signature)
 {
     jb_putc(j, '"');
@@ -319,11 +246,8 @@ void firmware_tables_publish_json(void)
              FW_JSON_BUF_PAGES);
         return;
     }
-    struct json_buf jb;
-    jb.buf = (char *)phys;
-    jb.pos = 0;
-    jb.cap = FW_JSON_BUF_SIZE;
-    jb.truncated = 0;
+    struct json_builder jb;
+    jb_init(&jb, (char *)phys, FW_JSON_BUF_SIZE);
 
     jb_putc(&jb, '{');
     jb_puts(&jb, "\"schema_version\":1,");
@@ -601,10 +525,19 @@ void firmware_tables_publish_json(void)
     jb_putc(&jb, '}');
     jb_putc(&jb, '\n');
 
-    if (jb.truncated) {
+    if (jb_truncated(&jb)) {
+        /* Fail-closed truncation policy: a buffer that filled before
+         * the closing '}' could be written produces a non-parseable
+         * prefix. Skip the file write entirely so consumers never see
+         * malformed JSON; future cap expansion is a richer-firmware
+         * scaling concern, not a runtime fallback. */
         klog(LOG_WARN, "FW",
-             "JSON: firmware-tables.json buffer truncated at %u bytes",
-             (unsigned)jb.pos);
+             "JSON: firmware-tables.json buffer truncated at %u bytes -- "
+             "skipping file write (cap=%u; expand FW_JSON_BUF_PAGES if firmware grows)",
+             (unsigned)jb_pos(&jb), FW_JSON_BUF_SIZE);
+        for (uint32_t pg = 0; pg < FW_JSON_BUF_PAGES; pg++)
+            pmm_free_frame(phys + pg * 4096);
+        return;
     }
 
     /* Write to X:\Diag\ (BlackBox) -- create the file via parent dir

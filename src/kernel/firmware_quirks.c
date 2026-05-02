@@ -71,13 +71,6 @@ static int str_contains(const char *hay, const char *needle)
     return 0;
 }
 
-static int ascii_eq(const char *a, const char *b)
-{
-    if (!a || !b) return 0;
-    while (*a && *b && *a == *b) { a++; b++; }
-    return *a == 0 && *b == 0;
-}
-
 static int predicate_match(const struct quirk_desc *d,
                            const struct smbios_system_info *info)
 {
@@ -172,28 +165,9 @@ uint32_t firmware_quirks_iter_next(uint32_t prev_bit)
     return 0;
 }
 
+#include "kernel/firmware_quirks_parse.inc"
+
 uint32_t firmware_quirks_parse_disable(const char *list)
 {
-    if (!list || !*list) return 0;
-    uint32_t mask = 0;
-    char     tok[64];
-    uint32_t pos = 0;
-    const char *p = list;
-    while (1) {
-        char c = *p;
-        if (c == ',' || c == 0 || c == ' ' || c == '\t') {
-            if (pos > 0) {
-                tok[pos] = 0;
-                for (uint32_t i = 0; i < QUIRK_COUNT; i++)
-                    if (ascii_eq(tok, s_quirks[i].name))
-                        mask |= s_quirks[i].bit;
-                pos = 0;
-            }
-            if (c == 0) break;
-        } else if (pos < sizeof(tok) - 1) {
-            tok[pos++] = c;
-        }
-        p++;
-    }
-    return mask;
+    return (uint32_t)firmware_quirks_parse_disable_inline(list);
 }

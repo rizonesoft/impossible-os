@@ -28,6 +28,7 @@
 #include "boot_proto_sha.h"   /* generated; provides KERNEL_ABI_SHA256 */
 #include "boot_loader_identity.h" /* generated; provides BOOT_LOADER_GIT_SHA + ..._BUILD_TIME + ..._BUILD_LABEL */
 #include "../../../include/boot/uki_cmdline_check.h" /* uki_find_disk_override_token() shared with kernel test */
+#include "../../../include/kernel/firmware_quirks_parse.inc" /* shared firmware_quirk_disable= tokenizer */
 
 /* Inline rdtsc for boot timing */
 static inline UINT64 boot_rdtsc(void)
@@ -2615,38 +2616,11 @@ static void parse_conf_kv(struct boot_config *cfg,
         cfg->test_usermode_skip = (UINT8)ascii_atoi(val);
     }
     else if (ascii_streq(key, "firmware_quirk_disable")) {
-        /* Comma-separated quirk names; convert to bitmask. The qmap[]
-         * table is generated from include/kernel/firmware_quirks_table.inc
-         * via the shared X-macro so it can never drift from the kernel
-         * descriptor table -- one source of truth for {bit, name}. */
-        static const struct { const char *name; UINT8 bit; } qmap[] = {
-#define FW_QUIRK_DEF(id, bit, name) { name, (UINT8)(bit) },
-#include "../../../include/kernel/firmware_quirks_table.inc"
-#undef FW_QUIRK_DEF
-        };
-        UINT8 mask = 0;
-        char  tok[64];
-        UINTN pos = 0;
-        const char *p = val;
-        for (;;) {
-            char c = *p;
-            if (c == ',' || c == 0 || c == ' ' || c == '\t') {
-                if (pos > 0) {
-                    tok[pos] = 0;
-                    for (UINTN i = 0; i < sizeof(qmap)/sizeof(qmap[0]); i++)
-                        if (ascii_streq(tok, qmap[i].name)) {
-                            mask |= qmap[i].bit;
-                            break;
-                        }
-                    pos = 0;
-                }
-                if (c == 0) break;
-            } else if (pos < sizeof(tok) - 1) {
-                tok[pos++] = c;
-            }
-            p++;
-        }
-        cfg->firmware_quirk_disable = mask;
+        /* Tokenizer + qmap[] live in the shared static-inline at
+         * include/kernel/firmware_quirks_parse.inc -- both kernel and
+         * bootloader call it so tokenization rules cannot drift. */
+        cfg->firmware_quirk_disable =
+            (UINT8)firmware_quirks_parse_disable_inline(val);
     }
     else if (ascii_streq(key, "boot_mode")) {
         if      (ascii_streq(val, "normal"))   cfg->boot_mode = 0;

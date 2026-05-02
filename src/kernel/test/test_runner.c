@@ -381,6 +381,7 @@ extern void test_register_klog(void);
 extern void test_register_uefi_boot(void);
 extern void test_register_firmware_tables(void);
 extern void test_register_firmware_platform(void);
+extern void test_register_json_builder(void);
 extern void test_register_boot_device(void);
 extern void test_register_x86(void);
 extern void test_register_ob(void);
@@ -437,6 +438,7 @@ void test_runner_init(void)
     test_register_uefi_boot();
     test_register_firmware_tables();
     test_register_firmware_platform();
+    test_register_json_builder();
     test_register_boot_device();
     test_register_harness();
 

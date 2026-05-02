@@ -51,7 +51,7 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 | ⭐ |   9   | Firmware quirk database                                 | §8             |  [x]   |
 | ⭐ |  10   | Firmware inventory tests and host decoder               | §1-§9          |  [/]   |
 | ⭐ |  11   | Firmware inventory bug-fix debt                         | §1-§9          |  [/]   |
-| ⭐ |  12   | Firmware inventory refactor debt                        | §1-§9          |  [ ]   |
+| ⭐ |  12   | Firmware inventory refactor debt                        | §1-§9          |  [x]   |
 
 ---
 
@@ -355,12 +355,24 @@ Pre-existing safety / regression fixes surfaced by §1-§9 review pipelines. Eac
 
 Cross-section dedup / future-spec drift prevention. None of these items is an active regression on any currently-tested platform; each removes a duplicated source of truth or a class of latent failure that will become a regression on richer firmware.
 
-- [ ] **Consolidate SMBIOS entry-point wire-format constants** into a shared internal header (e.g. `src/kernel/smbios_wire.h`) so `smbios.c` (`SMBIOS3_EP_LEN` / `SMBIOS2_EP_LEN_MIN` / `SMBIOS2_EP_LEN_MAX`) and `firmware_tables.c` (`FW_SMBIOS3_EP_LEN` / `FW_SMBIOS2_EP_LEN_MIN` / `FW_SMBIOS2_EP_LEN_MAX`) reference one definition; either include the same header or add `_Static_assert(FW_* == SMBIOS_*)` linking the two if a shared header is too disruptive. Drift risk is low (DMTF DSP0134 entry-point sizes have not changed since SMBIOS 2.4) but the duplicate is still a future-spec hazard.
-- [ ] **Consolidate `firmware_quirk_disable=` tokenizer between kernel and bootloader** (Codex §9 test-coverage M, accept-XREF 2026-05-02): the shared X-macro at `include/kernel/firmware_quirks_table.inc` enforces `{name, bit}` parity, but the comma-separated-list tokenizer is duplicated -- `firmware_quirks_parse_disable()` in `src/kernel/firmware_quirks.c` and the inline parser in `src/boot/uefi/bootx64.c parse_conf_kv()` both walk tokens against the X-macro names, but their tokenization rules (whitespace handling, oversize-token truncation, separator semantics) are implemented twice. A regression in the bootloader half would leave `g_boot_info.config.firmware_quirk_disable` at 0 while the 9 kernel helper tests still pass. The Codex-recommended boot-time integration test (`firmware_quirk_disable=broken_fpdt` + synthetic SMBIOS + assert active mask) is forbidden by the Test Code Policy (tests must not call `firmware_quirks_init()`). Solution: extract the tokenizer into a shared static-inline helper in a new `include/kernel/firmware_quirks_parse.inc` (or expand the X-macro to also generate a tokenizer-table-driven parser); both kernel and bootloader include it so the parsing logic is one source of truth. Verify via the existing 9 kernel parse_disable tests (which then cover the bootloader-side path by construction).
-- [ ] **Kernel-wide JSON builder truncation contract** (Codex §8 round-2 M, accept-XREF 2026-05-02): every kernel JSON publisher uses the `jb_putc` / `jb_puts` permanent-stop pattern (`firmware_tables_json.c`, `boot_progress.c` boot-timeline writer, future BlackBox JSON writers). Once `pos >= cap-1` the builder drops every subsequent byte including the closing `}` braces, leaving a non-parseable JSON prefix on truncation. Today the 16 KiB cap is sized for ~3x worst-case OVMF (measured ~7.1 KiB on smoke) so truncation is not a live regression, but a future firmware with hundreds of ESRT entries or richer typed sub-blocks will hit it. Add a shared `jb_*` builder helper that either (a) reserves a fixed tail budget for mandatory closing syntax, or (b) fails closed by skipping the file write entirely on truncation; retrofit every kernel JSON consumer to use it. Owner location: kernel-side json builder library (e.g. `src/kernel/util/json_builder.c`). Add a regression test that forces a tiny buffer cap and asserts the writer either produces parseable JSON or suppresses the write.
-- [ ] Commit: `"boot: firmware inventory refactor debt"`
+- [x] **Consolidate SMBIOS entry-point wire-format constants** -- `include/kernel/smbios_wire.h` is the single source for `SMBIOS3_EP_LEN` / `SMBIOS2_EP_LEN_MIN` / `SMBIOS2_EP_LEN_MAX`; `src/kernel/smbios.c` and `src/kernel/firmware_tables.c` both include it. The local `FW_SMBIOS*_EP_LEN` aliases were dropped; the `_Static_assert` parity checks now reference the shared names directly.
+- [x] **Consolidate `firmware_quirk_disable=` tokenizer between kernel and bootloader** -- `include/kernel/firmware_quirks_parse.inc` exposes `firmware_quirks_parse_disable_inline()` as a `static inline`. `src/kernel/firmware_quirks.c` calls it; `src/boot/uefi/bootx64.c parse_conf_kv()` calls it. The qmap[] is built from the shared X-macro inside the inline so {name, bit} parity is enforced once for both sides; tokenization rules (whitespace, oversize truncation, separator semantics) live in one place. The 9 existing kernel parse_disable tests now cover the bootloader path by construction.
+- [x] **Kernel-wide JSON builder truncation contract** -- `include/kernel/util/json_builder.h` + `src/kernel/util/json_builder.c` expose `jb_init / putc / puts / putesc / str / hex64 / u32_dec / truncated / pos / buf`. Truncation is fail-closed: callers check `jb_truncated()` and skip the file write entirely on overflow. `src/kernel/firmware_tables_json.c` retrofitted; if its 16 KiB buffer fills, the write is skipped with a single WARN line instead of producing malformed JSON. `boot_progress.c` boot-timeline writer uses snprintf-bounded writes (already fail-closed; no jb_* dependency). Regression coverage: 10 unit tests in `src/kernel/test/test_json_builder.c` exercise putc/puts/str/escapes/hex64/u32_dec/truncation latching/zero-cap.
+- [x] Commit: `"boot: firmware inventory refactor debt"`
 
-**Test checkpoint:** SMBIOS entry-point constants compile-time linked between `smbios.c` and `firmware_tables.c` (single source or `_Static_assert` parity). Quirk-tokenizer round-trip parses both kernel and bootloader paths from one source. JSON builder regression test produces parseable output or suppresses on tiny-cap force. No runtime behavior change on QEMU OVMF / VirtualBox / bare metal versus pre-refactor (each refactor is byte-for-byte equivalent on the live boot path). Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** SMBIOS entry-point constants compile-time linked between `smbios.c` and `firmware_tables.c` via shared header. Quirk-tokenizer parses both kernel and bootloader paths from one source. JSON builder regression test (10 cases) covers normal writes + truncation + control-byte escapes. No runtime behavior change on QEMU OVMF (smoke confirms identical 17/9/6 catalog counts). Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 10 json_builder tests + existing 9 firmware_quirks tests | 0 failures
+>
+> **Notes:**
+> - **What shipped** -- `include/kernel/smbios_wire.h` (3 EP-length constants), `include/kernel/firmware_quirks_parse.inc` (static-inline tokenizer + X-macro UINT8 fit guard), `include/kernel/util/json_builder.[ch]` (10-function fail-closed JSON library), `src/kernel/test/test_json_builder.c` (10 unit tests).
+> - **How it runs** -- Refactor-only; byte-equivalent on the live boot path (verified: identical 17/9/6 catalog counts on smoke). Compile-time guards fire in every TU that includes the .inc files; bootloader Makefile now lists both `firmware_quirks_table.inc` + `firmware_quirks_parse.inc` + `uki_cmdline_check.h` as bootx64.o prerequisites.
+> - **Downstream effects** -- Future quirks with bit > 0xFF fail the build instead of silently truncating at the bootloader's UINT8 narrowing. Future kernel JSON publishers (BlackBox, boot-health) reuse the json_builder library + fail-closed gate pattern instead of re-rolling jb_*.
+> - **Canonical doc** -- [`include/kernel/util/json_builder.h`](../../include/kernel/util/json_builder.h) builder API contract; [`include/kernel/firmware_quirks_parse.inc`](../../include/kernel/firmware_quirks_parse.inc) tokenizer contract.
+> - **Scope boundary** -- `boot_progress.c` boot-timeline writer kept on snprintf-bounded writes; it is already fail-closed via `goto close` and migrating to jb_* would be churn for no semantic gain.
+
+> **Verified:** 2026-05-03 | this commit | 4/4 items | build OK | tests 2639/2639 PASS | smoke PASS (KVM, identical 17/9/6 catalog vs pre-refactor)
+> **Quality reviewed:** 2026-05-03 | Codex 4x (design + adversarial + consistency + perf) | 1H+1M fixed, 0 open | scope: kernel-code-quality
 
 ---
 
@@ -382,6 +394,7 @@ Cross-section dedup / future-spec drift prevention. None of these items is an ac
 | ⭐ | DBG2 secondary debug ports            | ✅ kernel debugger reads DBG2    | ✅ amba_pl011 + earlycon DBG2    | ✅ §8 dbg2 block in JSON writer   |
 | ⭐ | WSMT SMM mitigations posture          | ✅ HAL reads WSMT bitmap         | ❌ Linux ignores WSMT            | ✅ §8 wsmt block in JSON writer   |
 | 💎 | firmware-tables.json schema doc       | ⚠️ msinfo32 schema undocumented  | ⚠️ tools differ per distro       | ✅ §8 firmware-tables-schema.md   |
+| ⭐ | Single-source SMBIOS + quirk parsers  | ❌ N/A (no public refactor)      | ⚠️ DMI const drift across files  | ✅ §12 shared header + .inc dedup |
 
 ---
 

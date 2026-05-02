@@ -20,6 +20,7 @@
 #include "kernel/uefi_config.h"
 #include "kernel/acpi.h"
 #include "kernel/smbios.h"
+#include "kernel/smbios_wire.h"
 #include "kernel/klog.h"
 #include "libc/string.h"
 
@@ -325,13 +326,9 @@ struct fw_smbios2_ep_view {
     uint8_t  length;             /* spec: 0x1E or 0x1F */
     uint8_t  rest[25];           /* opaque tail; full validation reads ep->length bytes */
 };
-#define FW_SMBIOS3_EP_LEN     0x18u
-#define FW_SMBIOS2_EP_LEN_MIN 0x1Eu
-#define FW_SMBIOS2_EP_LEN_MAX 0x1Fu
-
-_Static_assert(sizeof(struct fw_smbios3_ep_view) == FW_SMBIOS3_EP_LEN,
+_Static_assert(sizeof(struct fw_smbios3_ep_view) == SMBIOS3_EP_LEN,
                "SMBIOS 3.x wire-format entry point must be exactly 0x18 bytes");
-_Static_assert(sizeof(struct fw_smbios2_ep_view) == FW_SMBIOS2_EP_LEN_MAX,
+_Static_assert(sizeof(struct fw_smbios2_ep_view) == SMBIOS2_EP_LEN_MAX,
                "SMBIOS 2.x view sized to spec maximum (0x1F)");
 
 /* Minimal RSDP layouts mirroring acpi.h structures so we can validate
@@ -580,8 +577,8 @@ static void fw_validate_acpi_rsdp(struct firmware_table_entry *e)
 static void fw_validate_smbios_ep(struct firmware_table_entry *e, int is_v3)
 {
     /* Read just the length byte first to bound the full checksum span. */
-    if (!fw_mmap_contains(e->phys_addr, is_v3 ? FW_SMBIOS3_EP_LEN
-                                              : FW_SMBIOS2_EP_LEN_MIN)) {
+    if (!fw_mmap_contains(e->phys_addr, is_v3 ? SMBIOS3_EP_LEN
+                                              : SMBIOS2_EP_LEN_MIN)) {
         fw_degrade(e, FW_DEGRADED_RANGE_UNMAPPED,
                    "SMBIOS entry-point header outside firmware mmap");
         return;
@@ -596,7 +593,7 @@ static void fw_validate_smbios_ep(struct firmware_table_entry *e, int is_v3)
                        "SMBIOS3 anchor mismatch");
             return;
         }
-        if (ep->length != FW_SMBIOS3_EP_LEN) {
+        if (ep->length != SMBIOS3_EP_LEN) {
             fw_degrade(e, FW_DEGRADED_LENGTH_BAD,
                        "SMBIOS3 length not 0x18");
             return;
@@ -616,8 +613,8 @@ static void fw_validate_smbios_ep(struct firmware_table_entry *e, int is_v3)
                        "SMBIOS2 anchor mismatch");
             return;
         }
-        if (ep->length < FW_SMBIOS2_EP_LEN_MIN ||
-            ep->length > FW_SMBIOS2_EP_LEN_MAX) {
+        if (ep->length < SMBIOS2_EP_LEN_MIN ||
+            ep->length > SMBIOS2_EP_LEN_MAX) {
             fw_degrade(e, FW_DEGRADED_LENGTH_BAD,
                        "SMBIOS2 length not in [0x1E, 0x1F]");
             return;
