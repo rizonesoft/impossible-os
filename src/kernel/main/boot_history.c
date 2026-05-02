@@ -86,13 +86,45 @@ void boot_history_kernel_mark_phase3(void)
 
     efi_guid_t guid = IMPOSSIBLE_OS_VENDOR_GUID_INIT;
 
-    /* Read existing cookie (0 if absent). */
-    uint32_t seq = 0;
-    NTSTATUS st = uefi_var_get_u32(k_hist_seq_var, &guid, &seq);
-    if (!NT_SUCCESS(st))
-        seq = 0;
+    /* Canonical attribute set the writer side ALWAYS uses (matches
+     * UEFI_VAR_NV_BOOT_RUNTIME).  Reads carrying any other shape are
+     * treated as untrusted (pre-OS tool, corrupted NVRAM, attacker-
+     * seeded data) and repaired via delete-then-create so the next
+     * uefi_var_set cannot trip EFI_INVALID_PARAMETER per UEFI 2.10
+     * 7.2.1 ("SetVariable cannot change attributes on existing
+     * variable").  Mirrors the bootloader-side repair in
+     * src/boot/uefi/boot_history.c. */
+    const uint32_t expected_attrs = UEFI_VAR_NV_BOOT_RUNTIME;
 
-    /* Read existing 128 B ring (zero-init on absence/wrong size). */
+    /* Read existing cookie (0 if absent or untrusted-and-repaired).
+     * uefi_var_get maps EFI_BUFFER_TOO_SMALL -> STATUS_BUFFER_TOO_SMALL;
+     * an oversized cookie is a found-but-malformed record (pre-OS
+     * tool, corrupted NVRAM, attacker-seeded data) and must follow
+     * the same delete-then-create repair as a wrong-attrs mismatch
+     * -- mirroring the bootloader-side path in boot_history.c. */
+    uint32_t seq = 0;
+    {
+        size_t cookie_size = sizeof(seq);
+        uint32_t cookie_attrs = 0;
+        NTSTATUS st = uefi_var_get(k_hist_seq_var, &guid,
+                                   &seq, &cookie_size, &cookie_attrs);
+        int malformed = 0;
+        if (st == STATUS_BUFFER_TOO_SMALL) {
+            malformed = 1;
+        } else if (!NT_SUCCESS(st)) {
+            seq = 0;  /* absent / unsupported -- no delete needed */
+        } else if (cookie_size != sizeof(seq) || cookie_attrs != expected_attrs) {
+            malformed = 1;
+        }
+        if (malformed) {
+            klog(LOG_WARN, "boot_history",
+                 "BootHistorySeq untrusted (attrs/size mismatch); repairing");
+            (void)uefi_var_set(k_hist_seq_var, &guid, NULL, 0, cookie_attrs);
+            seq = 0;
+        }
+    }
+
+    /* Read existing 128 B ring (zero-init on absence/wrong shape). */
     struct boot_error_history_entry ring[BOOT_HIST_RING_LEN];
     for (size_t i = 0; i < BOOT_HIST_RING_LEN; i++) {
         ring[i].boot_seq = 0;
@@ -101,19 +133,41 @@ void boot_history_kernel_mark_phase3(void)
         ring[i].source_section = 0;
         ring[i]._pad = 0;
     }
-    size_t ring_size = sizeof(ring);
-    st = uefi_var_get(k_hist_ring_var, &guid, ring, &ring_size, NULL);
-    if (!NT_SUCCESS(st) || ring_size != sizeof(ring)) {
-        for (size_t i = 0; i < BOOT_HIST_RING_LEN; i++) {
-            ring[i].boot_seq = 0;
-            ring[i].unix_time = 0;
-            ring[i].err_code = 0;
-            ring[i].source_section = 0;
-            ring[i]._pad = 0;
+    {
+        size_t ring_size = sizeof(ring);
+        uint32_t ring_attrs = 0;
+        NTSTATUS st = uefi_var_get(k_hist_ring_var, &guid,
+                                   ring, &ring_size, &ring_attrs);
+        int malformed = 0;
+        if (st == STATUS_BUFFER_TOO_SMALL) {
+            malformed = 1;
+        } else if (!NT_SUCCESS(st)) {
+            /* absent / unsupported -- leave zeroed, no delete */
+        } else if (ring_size != sizeof(ring) || ring_attrs != expected_attrs) {
+            malformed = 1;
+        }
+        if (malformed) {
+            for (size_t i = 0; i < BOOT_HIST_RING_LEN; i++) {
+                ring[i].boot_seq = 0;
+                ring[i].unix_time = 0;
+                ring[i].err_code = 0;
+                ring[i].source_section = 0;
+                ring[i]._pad = 0;
+            }
+            klog(LOG_WARN, "boot_history",
+                 "BootErrorHistory untrusted (attrs/size mismatch); repairing");
+            (void)uefi_var_set(k_hist_ring_var, &guid, NULL, 0, ring_attrs);
         }
     }
 
     uint32_t new_seq = seq + 1;
+    /* Guard against u32 wrap producing new_seq=0.  boot_seq=0 is the
+     * empty-slot sentinel; storing 0 hides the latest entry.  An
+     * attacker-seeded cookie at UINT32_MAX hits this immediately, not
+     * just after 4 billion clean boots.  Promote to 1 -- diagnostic
+     * value of "newest entry" beats strict sequential continuity. */
+    if (new_seq == 0)
+        new_seq = 1;
     size_t head = (size_t)(new_seq % BOOT_HIST_RING_LEN);
     ring[head].boot_seq       = new_seq;
     ring[head].unix_time      = boot_history_kernel_now_unix();
@@ -122,8 +176,8 @@ void boot_history_kernel_mark_phase3(void)
     ring[head]._pad           = 0;
 
     /* Ring FIRST, cookie LAST.  See file-header atomicity note. */
-    st = uefi_var_set(k_hist_ring_var, &guid, ring, sizeof(ring),
-                      UEFI_VAR_NV_BOOT_RUNTIME);
+    NTSTATUS st = uefi_var_set(k_hist_ring_var, &guid, ring, sizeof(ring),
+                               UEFI_VAR_NV_BOOT_RUNTIME);
     if (!NT_SUCCESS(st)) {
         klog(LOG_WARN, "boot_history",
              "Phase-3 mark: write ring failed (NTSTATUS=0x%llx)",

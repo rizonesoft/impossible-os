@@ -729,7 +729,7 @@ The pre-§18 error screen used UEFI text console (`ConOut`) with white-on-blue t
 
 **Test checkpoint:** Boot the live kernel; serial shows the EBS-success append line + the Phase-3 append line + no fatal-path appends. Read NVRAM after boot: `BootHistorySeq` increments by 2 per boot (one from bootloader EBS-success, one from kernel Phase-3); `BootErrorHistory` 128 B ring contains the two latest sentinels at slots `seq%8` and `(seq+1)%8`. Verify on QEMU WHPX/TCG. Producer-side smoke pattern proves the data flow works without regressing normal boot. Consumer-side rendering is owned by §21.
 
-> **Test runner:** N/A producer-only (consumer-side `test_boot_history.c` lives in §21) | validation: `bash scripts/test-smoke.sh` (KVM/TCG) -- live boot logs the two append sites; manual NVRAM read confirms cookie increment
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) + WSL2 `bash scripts/test-smoke.sh` confirm the live boot does not regress (Boot complete + C:\> + POST16). Neither runner currently fixed-string asserts the two producer lines (`history: append seq=K src=0xFFFE` / `boot_history: Phase-3 mark: append seq=K+1 src=0xFFFF`); validation of those lines is **manual serial-log inspection** of `build/smoke-test.stripped.log` until the consumer half (§21) lands the synthetic-ring kernel unit test (`test_boot_history.c`, `TEST_CAT_BOOT`) and the cascade-failure smoke fixture that does grep-assert them.
 
 > **Notes:**
 > - **What shipped** -- `boot_history_append()` in `src/boot/uefi/boot_history.c` (~210 LOC) + `boot_history_kernel_mark_phase3()` in `src/kernel/main/boot_history.c` (~140 LOC); 16-byte ring entry struct mirrored byte-exact across `include/kernel/boot_info.h` and `src/boot/uefi/boot_info_mirror.h` with 6+1 `_Static_assert`s on each side; 5 `boot_set_section()` markers cover the major bootloader paths (BL_INIT/BL_CONF/BL_KERNEL/BL_PAGETABLES/BL_EBS).
@@ -737,6 +737,9 @@ The pre-§18 error screen used UEFI text console (`ConOut`) with white-on-blue t
 > - **Downstream effects** -- next-boot consumer half reads ring + cookie, decodes sentinels, transcribes to `X:\Diag\boot-error-history.bin`, and renders the multi-attempt klog block at the welcome banner. Codex 1x design + 1x adversarial in this commit; design adopted Q1+Q2+Q3+Q4 (NVRAM-only, ring-first/cookie-last, UNKNOWN-sentinel + WARN, single GUID); adversarial returned approve with no material findings.
 > - **Canonical doc** -- producer schema block at the bottom of [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h) (operator-facing schema reference + atomicity rule lands in `docs/boot/boot-error-history.md` once the consumer half ships).
 > - **Scope boundary** -- this section owns producer (struct + writer + 3 append sites + cookie + `boot_set_section`); the consumer half owns reader, kernel renderer, unit tests, schema doc, smoke fixture, and the OS Comparison row promote to ✅. BlackBox-file transcribe of the ring is consumer-side, not here.
+
+> **Verified:** 2026-05-02 | commit `5d09924e` (review fixes follow) | 8/9 items | build OK | smoke PASS (KVM 2.31s)
+> **Quality reviewed:** 2026-05-02 | Codex 6x (design + adversarial + consistency + perf + re-adversarial × 2) | 2H+3M fixed, 0 open | scope: boot-code-quality + kernel-code-quality
 
 ---
 

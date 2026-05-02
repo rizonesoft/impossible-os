@@ -91,6 +91,29 @@ static UINT32 boot_history_now_unix(void)
     return efi_time_to_unix(year, month, day, hour, minute, second);
 }
 
+/* Canonical attribute set the writer side ALWAYS uses.  GetVariable
+ * results carrying any other shape are treated as untrusted (pre-OS
+ * tool, corrupted NVRAM, or attacker-seeded data) and repaired via
+ * delete-then-create.  Mirrors the BootError repair pattern in
+ * bootx64.c nvram_read_boot_error to avoid the UEFI 2.10 7.2.1
+ * "SetVariable cannot change attributes on existing variable"
+ * (returns EFI_INVALID_PARAMETER) trap. */
+#define BOOT_HIST_EXPECTED_ATTRS (EFI_VARIABLE_NON_VOLATILE | \
+                                  EFI_VARIABLE_BOOTSERVICE_ACCESS | \
+                                  EFI_VARIABLE_RUNTIME_ACCESS)
+
+/* Delete a variable using its CURRENT attributes (UEFI 2.10 requires
+ * delete with the existing attrs).  Returns EFI_SUCCESS on success or
+ * if the variable was already absent; any other error means the
+ * subsequent canonical write may still trip EFI_INVALID_PARAMETER. */
+static EFI_STATUS boot_history_delete(CHAR16 *var, UINT32 current_attrs)
+{
+    if (!gST || !gST->RuntimeServices || !gST->RuntimeServices->SetVariable)
+        return EFI_UNSUPPORTED;
+    return gST->RuntimeServices->SetVariable(
+        var, &g_impossible_os_guid, current_attrs, 0, (void *)0);
+}
+
 static UINT32 boot_history_read_seq(void)
 {
     if (!gST || !gST->RuntimeServices || !gST->RuntimeServices->GetVariable)
@@ -100,8 +123,26 @@ static UINT32 boot_history_read_seq(void)
     UINT32 attrs = 0;
     EFI_STATUS s = gST->RuntimeServices->GetVariable(
         g_hist_seq_var, &g_impossible_os_guid, &attrs, &size, &seq);
-    if (EFI_ERROR(s) || size != sizeof(seq))
+    /* Per UEFI 2.10 7.2.1, GetVariable populates DataSize and
+     * Attributes on success AND on EFI_BUFFER_TOO_SMALL.  An
+     * oversized variable means a found-but-malformed record (a
+     * pre-OS tool, corrupted NVRAM, or attacker-seeded data wrote
+     * under our name+GUID).  Treat it the same as a wrong-attrs
+     * mismatch: delete with the returned attrs and report absent. */
+    int malformed = 0;
+    if (s == EFI_BUFFER_TOO_SMALL) {
+        malformed = 1;
+    } else if (EFI_ERROR(s)) {
         return 0;
+    } else if (size != sizeof(seq) || attrs != BOOT_HIST_EXPECTED_ATTRS) {
+        malformed = 1;
+    }
+    if (malformed) {
+        serial_early_print("[WARN] boot_history: BootHistorySeq untrusted "
+                           "(attrs/size mismatch); repairing\n");
+        (void)boot_history_delete(g_hist_seq_var, attrs);
+        return 0;
+    }
     return seq;
 }
 
@@ -118,12 +159,25 @@ static void boot_history_read_ring(struct boot_error_history_entry *out_ring)
     UINT32 attrs = 0;
     EFI_STATUS s = gST->RuntimeServices->GetVariable(
         g_hist_ring_var, &g_impossible_os_guid, &attrs, &size, out_ring);
-    if (EFI_ERROR(s) || size != BOOT_HIST_BIN_SIZE) {
-        /* Re-zero if firmware returned a partial buffer on a too-small
-         * size mismatch; defensive against firmware that writes and
-         * then reports a different DataSize. */
+    /* EFI_BUFFER_TOO_SMALL = oversized variable found-but-malformed.
+     * Other EFI_ERROR codes (NOT_FOUND / unsupported / access) mean
+     * absent or unwritable -- leave the buffer zeroed and skip
+     * delete.  On success, validate size + attrs; mismatch repairs
+     * the same way as oversized. */
+    int malformed = 0;
+    if (s == EFI_BUFFER_TOO_SMALL) {
+        malformed = 1;
+    } else if (EFI_ERROR(s)) {
+        return;
+    } else if (size != BOOT_HIST_BIN_SIZE || attrs != BOOT_HIST_EXPECTED_ATTRS) {
+        malformed = 1;
+    }
+    if (malformed) {
         for (UINTN i = 0; i < BOOT_HIST_BIN_SIZE; i++)
             p[i] = 0;
+        serial_early_print("[WARN] boot_history: BootErrorHistory untrusted "
+                           "(attrs/size mismatch); repairing\n");
+        (void)boot_history_delete(g_hist_ring_var, attrs);
     }
 }
 
@@ -154,7 +208,16 @@ static EFI_STATUS boot_history_write_seq(UINT32 seq)
 void boot_history_append(UINT16 source_section, UINT16 err_code)
 {
     UINT32 seq = boot_history_read_seq();
-    UINT32 new_seq = seq + 1;     /* u32 wrap at 4 billion boots is fine */
+    UINT32 new_seq = seq + 1;
+    /* Guard against u32 wrap producing new_seq=0.  boot_seq=0 is the
+     * empty-slot sentinel that the consumer's "count non-zero entries"
+     * pass uses to detect ring boundaries; storing 0 here would hide
+     * the latest entry and corrupt the diagnostic.  An attacker-seeded
+     * cookie at UINT32_MAX hits this on the very next append, not just
+     * after 4 billion clean boots.  Skip 0 by promoting to 1; the
+     * diagnostic value of "newest" beats strict sequential continuity. */
+    if (new_seq == 0)
+        new_seq = 1;
 
     struct boot_error_history_entry ring[BOOT_HIST_RING_LEN];
     boot_history_read_ring(ring);
