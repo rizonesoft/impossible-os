@@ -296,7 +296,8 @@ $(KERNEL_BIN): os-logo bsod-icon boot-font $(OBJS) $(LINKER_SCRIPT)
 	@echo "[NM] Symbol map: $(BUILD_DIR)/kernel.map"
 
 ## host-tools: Build host utility programs (jpg2raw, irespack, etc.)
-host-tools: $(BUILD_DIR)/tools/jpg2raw $(BUILD_DIR)/tools/irespack
+host-tools: $(BUILD_DIR)/tools/jpg2raw $(BUILD_DIR)/tools/irespack \
+            $(BUILD_DIR)/tools/firmware-tables-decode
 
 $(BUILD_DIR)/tools/jpg2raw: tools/jpg2raw.c
 	@mkdir -p $(BUILD_DIR)/tools
@@ -306,6 +307,11 @@ $(BUILD_DIR)/tools/jpg2raw: tools/jpg2raw.c
 $(BUILD_DIR)/tools/irespack: tools/irespack.c
 	@mkdir -p $(BUILD_DIR)/tools
 	$(HOST_CC) -O2 -o $@ $< -lm -Itools
+	@echo "[TOOL] $@ built"
+
+$(BUILD_DIR)/tools/firmware-tables-decode: tools/firmware-tables-decode.c
+	@mkdir -p $(BUILD_DIR)/tools
+	$(HOST_CC) -O2 -o $@ $<
 	@echo "[TOOL] $@ built"
 
 ## boot-info-abi: Build kernel + mirror ABI manifest dumpers, emit JSON, and
