@@ -28,11 +28,43 @@
 # ============================================================================
 
 import re
+from functools import lru_cache
 from pathlib import Path
 from typing import Optional, Tuple
 
 _DEF_HEAD_LIMIT = 512    # lines to scan before giving up the search
 _BODY_SCAN_LIMIT = 1024  # additional lines to scan once the head is found
+
+
+# Module-level file-line cache: a single per-process cache shared by
+# resolve_symbol() and is_stub_body(). Both callers use the same key
+# (path_str only) so a head-limited resolve_symbol() lookup populates
+# the same entry that is_stub_body() later reads. lru_cache keeps the
+# working set bounded for long-running consumers (lint Check 7 scans
+# ~140 unique source files for ~330 unique (file, symbol) refs in the
+# live tree; 512 entries is comfortably above either ceiling).
+#
+# We read the WHOLE file once instead of capping resolve_symbol at
+# _DEF_HEAD_LIMIT + _BODY_SCAN_LIMIT. The original cap was a defensive
+# bound against pathological multi-MB generated headers; even at 50k
+# lines that is ~5MB per cached entry, well within the maxsize budget.
+# resolve_symbol still applies its own slicing bounds to the in-memory
+# tuple so the head/body scan logic remains O(_DEF_HEAD_LIMIT).
+@lru_cache(maxsize=512)
+def _load_file_lines(path_str: str) -> tuple:
+    try:
+        with open(path_str, "r", encoding="utf-8", errors="replace") as fh:
+            return tuple(ln.rstrip("\n") for ln in fh)
+    except OSError:
+        return tuple()
+
+
+def cache_clear() -> None:
+    """Clear the per-process file cache. Tests that mutate fixtures on
+    disk should call this between mutations so they do not see a stale
+    cached read. Production callers do not need it: each lint invocation
+    spawns a fresh interpreter."""
+    _load_file_lines.cache_clear()
 
 
 def _strip_line_comments(line: str) -> str:
@@ -71,17 +103,14 @@ def resolve_symbol(file_path: str, symbol: str) -> Optional[Tuple[str, int, int]
     number of the closing `}`.
     """
     p = Path(file_path)
-    try:
-        # Read at most _DEF_HEAD_LIMIT + _BODY_SCAN_LIMIT lines so we never
-        # slurp a giant header into memory in pathological cases.
-        with p.open("r", encoding="utf-8", errors="replace") as fh:
-            lines = []
-            for idx, ln in enumerate(fh):
-                lines.append(ln.rstrip("\n"))
-                if idx + 1 >= _DEF_HEAD_LIMIT + _BODY_SCAN_LIMIT:
-                    break
-    except (OSError, UnicodeError):
+    # Pull from shared module cache (single key per file). The head/body
+    # scan logic below applies _DEF_HEAD_LIMIT / _BODY_SCAN_LIMIT slicing
+    # to the in-memory tuple so the original O(scan-window) cost is
+    # preserved even when the cached tuple is large.
+    full_tuple = _load_file_lines(str(p))
+    if not full_tuple:
         return None
+    lines = list(full_tuple[: _DEF_HEAD_LIMIT + _BODY_SCAN_LIMIT])
 
     head_re = _build_def_head_re(symbol)
     # Collect EVERY candidate head; keep walking past prototypes that turn
@@ -174,16 +203,15 @@ def is_stub_body(
     Allowlist marker: /* INTENTIONAL-STUB: <reason> */ on the same line as
     the body-opening `{` (mirrors lint Check 6's TEST-TAUTOLOGY-OK pattern).
     """
-    p = Path(file_path)
-    try:
-        with p.open("r", encoding="utf-8", errors="replace") as fh:
-            all_lines = fh.readlines()
-    except (OSError, UnicodeError):
+    # Shared cache: same key as resolve_symbol() so the file is read at
+    # most once per process across both callers.
+    all_lines_tuple = _load_file_lines(str(file_path))
+    if not all_lines_tuple:
         return None
-    if line_start < 1 or line_end > len(all_lines) or line_start > line_end:
+    if line_start < 1 or line_end > len(all_lines_tuple) or line_start > line_end:
         return None
 
-    body_text_lines = all_lines[line_start - 1: line_end]
+    body_text_lines = list(all_lines_tuple[line_start - 1: line_end])
 
     # Find the line carrying the opening `{` (body open). When the head
     # straddles, body open may be on a later line. The marker scan is

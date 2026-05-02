@@ -2933,10 +2933,36 @@ SI_CORRUPT_OUT="$(STUB_LINT_CACHE="$SI_TREE/build/cache-corrupt.json" \
     STUB_LINT_REPO_ROOT="$SI_TREE" \
     python3 "$REPO_ROOT/scripts/lint/check_stub_behind_stamp.py" 2>&1)"
 SI_CORRUPT_RC=$?
-if [ "$SI_CORRUPT_RC" != "0" ] && echo "$SI_CORRUPT_OUT" | grep -qi "cache unreadable\|FATAL"; then
-    t_pass "lint Check 7: corrupt cache yields nonzero rc + diagnostic (no false-clean)"
+# Pin the documented exit-code contract: 5 = corrupt JSON cache. lint.sh
+# routes this to ERROR. A drift to 6 (internal failure) or 2 (missing)
+# would silently break the lint.sh case routing -- assert exactly 5.
+if [ "$SI_CORRUPT_RC" = "5" ] && echo "$SI_CORRUPT_OUT" | grep -qi "cache unreadable"; then
+    t_pass "lint Check 7: corrupt cache yields rc=5 + diagnostic (contract pinned)"
 else
-    t_fail "lint Check 7: corrupt cache should error; rc=$SI_CORRUPT_RC, out=$SI_CORRUPT_OUT"
+    t_fail "lint Check 7: corrupt cache must yield rc=5; rc=$SI_CORRUPT_RC, out=$SI_CORRUPT_OUT"
+fi
+
+# Sub-test 14i: shared file-line cache is actually wired (resolve_symbol +
+# is_stub_body share _load_file_lines). Two consecutive lookups for the
+# same file must register cache hits.
+SI_CACHE_HIT=$(python3 - <<PY 2>&1
+import sys
+sys.path.insert(0, "$REPO_ROOT/scripts/todo-graph")
+import resolve_symbol as rs
+fixture = "$SI_TREE/src/sample.c"
+with open(fixture, "w") as f:
+    f.write("int real(void)\n{\n    int a = 1;\n    int b = a + 2;\n    return b;\n}\n")
+rs.cache_clear()
+rs.resolve_symbol(fixture, "real")
+rs.is_stub_body(fixture, 1, 6)
+info = rs._load_file_lines.cache_info()
+print(f"hits={info.hits} misses={info.misses}")
+PY
+)
+if echo "$SI_CACHE_HIT" | grep -qE "hits=[1-9]"; then
+    t_pass "resolve_symbol: shared _load_file_lines cache registers hits ($SI_CACHE_HIT)"
+else
+    t_fail "resolve_symbol: shared file cache not wired ($SI_CACHE_HIT)"
 fi
 
 # Sub-test 14e: forbidden-field validator rejects hand-authored

@@ -435,61 +435,50 @@ if [ "${SKIP_LINT_STUB_BEHIND_STAMP:-}" = "1" ]; then
     echo -e "${YELLOW}warn${NC}: Check 7 (stub-behind-stamp) skipped via SKIP_LINT_STUB_BEHIND_STAMP=1"
     WARNINGS=$((WARNINGS + 1))
 else
+    # Single-spawn helper: probe + staleness + walk in one Python process.
+    # Distinct exit codes (per check_stub_behind_stamp.py header):
+    #   0 = clean walk        (route findings via error())
+    #   2 = cache missing     -> WARN (contributor hasn't built it)
+    #   3 = no stamped_items  -> WARN (cache pre-extension; run build)
+    #   4 = cache stale       -> ERROR (false-clean risk; rebuild required)
+    #   5 = cache malformed   -> ERROR (corrupt JSON; investigate)
+    #   6 = internal failure  -> ERROR
     CACHE="$REPO_ROOT/build/todo-cache.json"
-    if [ ! -f "$CACHE" ]; then
-        echo -e "${YELLOW}warn${NC}: Check 7 (stub-behind-stamp) skipped -- build/todo-cache.json missing; run bash scripts/todo-graph/build-and-validate.sh"
-        WARNINGS=$((WARNINGS + 1))
-    elif ! python3 -c "import json,sys; d=json.load(open('$CACHE')); sys.exit(0 if any('stamped_items' in (e or {}) for e in d) else 2)" 2>/dev/null; then
-        echo -e "${YELLOW}warn${NC}: Check 7 (stub-behind-stamp) deferred -- build/todo-cache.json lacks per-item file:symbol map; rebuild with bash scripts/todo-graph/build-and-validate.sh"
-        WARNINGS=$((WARNINGS + 1))
-    else
-        # Staleness check: any todo/**/*.md newer than the cache?
-        # Portable mtime walk via Python -- find -printf is GNU-only and
-        # silently empties on BSD/macOS, which would false-pass the check.
-        STALE_RC=0
-        python3 - "$CACHE" "$REPO_ROOT/todo" >/dev/null 2>&1 <<'PY' || STALE_RC=$?
-import os, sys
-cache, todo_root = sys.argv[1], sys.argv[2]
-try:
-    cache_m = os.path.getmtime(cache)
-except OSError:
-    sys.exit(0)
-newest = 0.0
-for dirpath, _, files in os.walk(todo_root):
-    for f in files:
-        if f.startswith("TODO-") and f.endswith(".md"):
-            try:
-                m = os.path.getmtime(os.path.join(dirpath, f))
-                if m > newest:
-                    newest = m
-            except OSError:
-                pass
-if newest > cache_m:
-    sys.exit(2)
-sys.exit(0)
-PY
-        if [ "$STALE_RC" = "2" ]; then
-            echo -e "${YELLOW}warn${NC}: Check 7 (stub-behind-stamp) cache stale relative to todo/**/*.md; rebuild with bash scripts/todo-graph/build-and-validate.sh and re-run lint"
+    STUB_ERR_FILE="$(mktemp -t lint-stub-stderr.XXXXXX)"
+    STUB_OUT_FILE="$(mktemp -t lint-stub-stdout.XXXXXX)"
+    # Run helper outside `set -e` failure boundary: nonzero rc on
+    # missing/stale/corrupt cache is informational, not a fatal lint
+    # error -- the case statement below routes each rc to error()/warn().
+    STUB_RC=0
+    STUB_LINT_CACHE="$CACHE" STUB_LINT_REPO_ROOT="$REPO_ROOT" \
+        python3 "$REPO_ROOT/scripts/lint/check_stub_behind_stamp.py" \
+        >"$STUB_OUT_FILE" 2>"$STUB_ERR_FILE" || STUB_RC=$?
+    STUB_OUT="$(cat "$STUB_OUT_FILE")"
+    case "$STUB_RC" in
+        0)
+            while IFS=: read -r f l rest; do
+                [ -z "$f" ] && continue
+                error "$f" "$l" "$rest"
+            done <<< "$STUB_OUT"
+            ;;
+        2)
+            echo -e "${YELLOW}warn${NC}: Check 7 (stub-behind-stamp) skipped -- build/todo-cache.json missing; run bash scripts/todo-graph/build-and-validate.sh"
             WARNINGS=$((WARNINGS + 1))
-        else
-            # Capture helper output + stderr + rc separately so an internal
-            # failure (corrupt cache, AttributeError) cannot silently
-            # false-clean the lint (Codex F1).
-            STUB_OUT="$(STUB_LINT_CACHE="$CACHE" STUB_LINT_REPO_ROOT="$REPO_ROOT" \
-                python3 "$REPO_ROOT/scripts/lint/check_stub_behind_stamp.py" 2>"$REPO_ROOT/.lint-stub-stderr")"
-            STUB_RC=$?
-            if [ "$STUB_RC" != "0" ]; then
-                echo -e "${RED}error${NC}: Check 7 (stub-behind-stamp) helper exited $STUB_RC: $(cat "$REPO_ROOT/.lint-stub-stderr" 2>/dev/null | head -3 | tr '\n' ' ')"
-                ERRORS=$((ERRORS + 1))
-            else
-                while IFS=: read -r f l rest; do
-                    [ -z "$f" ] && continue
-                    error "$f" "$l" "$rest"
-                done <<< "$STUB_OUT"
-            fi
-            rm -f "$REPO_ROOT/.lint-stub-stderr"
-        fi
-    fi
+            ;;
+        3)
+            echo -e "${YELLOW}warn${NC}: Check 7 (stub-behind-stamp) deferred -- build/todo-cache.json lacks per-item file:symbol map; rebuild with bash scripts/todo-graph/build-and-validate.sh"
+            WARNINGS=$((WARNINGS + 1))
+            ;;
+        4)
+            echo -e "${RED}error${NC}: Check 7 (stub-behind-stamp) cache stale relative to todo/**/*.md; rebuild with bash scripts/todo-graph/build-and-validate.sh and re-run lint"
+            ERRORS=$((ERRORS + 1))
+            ;;
+        *)
+            echo -e "${RED}error${NC}: Check 7 (stub-behind-stamp) helper exited $STUB_RC: $(head -3 "$STUB_ERR_FILE" 2>/dev/null | tr '\n' ' ')"
+            ERRORS=$((ERRORS + 1))
+            ;;
+    esac
+    rm -f "$STUB_ERR_FILE" "$STUB_OUT_FILE"
 fi
 
 # ============================================================================

@@ -6,6 +6,7 @@
   "type": "array",
   "items": {
     "type": "object",
+    "additionalProperties": false,
     "required": [
       "id",
       "schema_version",
@@ -38,6 +39,7 @@
         "type": "array",
         "items": {
           "type": "object",
+          "additionalProperties": false,
           "required": ["n", "deliverable", "depends_on", "status"],
           "properties": {
             "n": { "type": ["integer", "null"] },
@@ -51,6 +53,7 @@
         "type": "array",
         "items": {
           "type": "object",
+          "additionalProperties": false,
           "required": ["n", "title"],
           "properties": {
             "n": { "type": "integer" },
