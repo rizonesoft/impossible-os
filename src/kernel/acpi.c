@@ -913,12 +913,12 @@ int acpi_has_vga(void)
 
 /* ---- Win32 GetSystemFirmwareTable surface ---------------------------------
  *
- * Hostile-input contract per Codex design review F2 (2026-04-29):
- * every accessor below treats firmware-supplied pointers, lengths, and
- * counts as untrusted. The internal find_acpi_table is single-shot
- * boot-time code; these public accessors are reachable from user-mode
- * via NtQuerySystemInformation(SystemFirmwareTableInformation) and
- * therefore must reject every malformed shape before dereferencing.
+ * Hostile-input contract: every accessor below treats firmware-supplied
+ * pointers, lengths, and counts as untrusted. The internal
+ * find_acpi_table is single-shot boot-time code; these public accessors
+ * are reachable from user-mode via NtQuerySystemInformation(
+ * SystemFirmwareTableInformation) and therefore must reject every
+ * malformed shape before dereferencing.
  */
 
 /* Conservative cap on the SDT root entry count. ACPI 6.4 doesn't

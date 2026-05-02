@@ -869,30 +869,15 @@ elif [ "$#" -eq 0 ]; then
     # cleanup sweep is in progress. Keep sorted for diff hygiene; remove
     # entries as files are scrubbed clean.
     CITATION_LEGACY_FILES=(
-        include/desktop/wm.h
-        include/kernel/acpi.h
-        include/kernel/boot_info.h
-        include/kernel/boot_timing.h
-        include/kernel/smbios.h
         src/boot/uefi/bootx64.c
-        src/kernel/acpi.c
-        src/kernel/gfx/gfx_simd.c
         src/kernel/klog.c
-        src/kernel/main/boot_halt.c
         src/kernel/main/boot_hw.c
         src/kernel/main/boot_progress.c
-        src/kernel/main/boot_tests.c
-        src/kernel/main/boot_version.c
-        src/kernel/main/main_internal.h
         src/kernel/nt/nt_sync.c
         src/kernel/nt/nt_syscall.c
         src/kernel/ob/ob.c
         src/kernel/ob/ob_file.c
-        src/kernel/pe.c
         src/kernel/printk.c
-        src/kernel/sched/syscall.c
-        src/kernel/sched/task.c
-        src/kernel/security/pku.c
         src/kernel/smbios.c
         src/kernel/test/input_record.c
         src/kernel/test/test_alpc.c

@@ -1835,9 +1835,9 @@ int task_exec(const uint8_t *data, uint64_t size)
             hwcap = edx;
         }
 
-        /*: emit auxv pairs into a local array, then bulk-copy onto the
+        /* Emit auxv pairs into a local array, then bulk-copy onto the
          * stack. Pair count is computed at emission time -- no hard-coded
-         * stack subtraction count to drift out of sync (Codex F4). */
+         * stack subtraction count to drift out of sync. */
         uint64_t auxv[64];  /* 32 pairs max; we use 16 */
         uint32_t naux = 0;
         #define AUXV_EMIT(t, v) do { \

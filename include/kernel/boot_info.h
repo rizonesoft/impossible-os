@@ -728,9 +728,9 @@ const char *boot_caps_bit_name(uint64_t cap_bit);
  * classification, not scattered reads of legacy companion fields. A
  * loader that reports a capability as degraded via caps_degraded will
  * cause this helper to return zero even when the companion field is
- * non-empty; this is the fail-closed semantic that closes the
- * advisory-only gap the capability negotiation adversarial review
- * flagged when consumers still trusted legacy companion fields. */
+ * non-empty; this is the fail-closed semantic that prevents consumers
+ * from trusting legacy companion fields when the negotiated state
+ * disagrees. */
 int boot_caps_require(uint64_t bits);
 
 /* Post-handoff kernel refinement: set one or more bits in

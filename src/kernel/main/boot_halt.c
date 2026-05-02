@@ -266,16 +266,14 @@ void boot_halt(const char *reason)
     serial_write("Recovery: https://impossible-os.dev/recovery\n");
 
     /* Framebuffer diagnostics -- only when fb is accessible AND the
-     * pitch + dimensions are structurally sane. Codex adversarial
-     * review 2026-04-28 H1: a malformed boot_info handoff used to
-     * write past the framebuffer because we trusted pitch/4 without
-     * bounds. Codex re-adversarial 2026-04-28 H2: the first fix's
-     * `pitch >= width * 4u` had a u32 multiply overflow when width
-     * > UINT32_MAX/4 (~1G), wrapping small so a tiny pitch passed.
-     * Final form below uses snapshot-once + bound-then-compare-as-
-     * pixels to be overflow-safe, plus a sanity cap on width/height
-     * (16K x 16K is 4x the largest known commercial display + leaves
-     * 18 bits of headroom before any 32-bit pixel-count overflow). */
+     * pitch + dimensions are structurally sane.  A malformed boot_info
+     * handoff must not write past the framebuffer.  The naive guard
+     * `pitch >= width * 4u` u32-multiply-overflows when width >
+     * UINT32_MAX/4 (~1G), wrapping small so a tiny pitch passes; the
+     * form below snapshots the fields once, bounds dimensions to a
+     * 16K x 16K sanity cap (4x the largest commercial display + 18
+     * bits of headroom before any 32-bit pixel-count overflow), then
+     * compares as pixels to stay overflow-safe. */
     uint32_t fb_pitch_bytes = g_boot_info.fb.pitch;
     uint32_t fb_w_snap      = g_boot_info.fb.width;
     uint32_t fb_h_snap      = g_boot_info.fb.height;

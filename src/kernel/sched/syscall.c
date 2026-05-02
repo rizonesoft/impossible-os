@@ -285,7 +285,7 @@ int64_t sys_fault_inject_dispatch(uint32_t kind, uint32_t countdown)
         /* Same self-PID isolation contract as the other selectors:
          * without the filter, a foreign task_*.exe, a sibling kthread,
          * or the launcher's own kmalloc calls on the same CPU would
-         * consume the pending trap (Codex M1, 2026-04-20). */
+         * consume the pending trap. */
         pmm_alloc_fail_task_filter_set(pid);
         pmm_alloc_fail_next();
         return 0;

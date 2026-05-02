@@ -54,8 +54,8 @@ void compositor_run(void);
  * framework, headless compositor section). The set/get knobs are
  * always safe to call; `compositor_step_frames` is REJECTED (returns
  * 0) when headless mode is off, so it cannot race the main compositor
- * loop -- Codex review hardened this after the original "also
- * works while compositor_run is live" contract was found unsafe. */
+ * loop -- mixing the headless step path with a live compositor_run is
+ * unsafe. */
 
 /* Switch the compositor to headless mode. Must be called BEFORE
  * compositor_run() to suppress the infinite display loop. Normal

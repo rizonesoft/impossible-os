@@ -62,7 +62,7 @@ void pku_free_key(int key)
         return;
 
     /* Revoke access before releasing the key to prevent stale PKRU
-     * state from granting access after key reuse (Codex finding). */
+     * state from granting access after key reuse. */
     pku_set_permissions(key, PKU_ACCESS_DISABLE);
 
     spin_lock_irqsave(&s_key_lock, &irq_flags);

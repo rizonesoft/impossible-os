@@ -203,10 +203,9 @@ static int pe_stricmp(const char *a, const char *b)
  * conversion, GUID-string parsing, error-code mapping, and the
  * SystemFirmwareTableInformation packing for the firmware-table API.
  *
- * Codex design review (2026-04-29) verified that adding raw
- * name->slot entries here does not by itself produce a working Win32
- * call -- the user-mode trampoline gap is tracked in the Win32 API
- * surface TODO with reciprocal XREFs.
+ * Adding a raw name->slot entry here does not by itself produce a
+ * working Win32 call: the user-mode trampoline gap is tracked in the
+ * Win32 API surface TODO with reciprocal XREFs.
  */
 static const pe_export_entry_t s_kernel32_exports[] = {
     { "CloseHandle",                      SSDT_NtClose },

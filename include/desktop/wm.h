@@ -219,9 +219,8 @@ int wm_get_window_rect(int handle, int32_t *x, int32_t *y,
  * Why deferred: wm_destroy_window() calls pmm_free_pages(), and the
  * compositor walks the windows[] array without IRQ masking. Running
  * destruction directly from the keyboard IRQ races both the PMM bitmap
- * and the compositor's traversal; Codex [H] adversarial review of
- * the desktop UI test framework WM-state-verification section flagged
- * the earlier direct-destroy draft. */
+ * and the compositor's traversal, so the close request is queued and
+ * drained from thread context. */
 void wm_close_focused_window(void);
 
 /* Drain the pending-close queue in thread context and destroy any

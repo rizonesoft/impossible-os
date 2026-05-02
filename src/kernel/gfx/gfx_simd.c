@@ -357,7 +357,7 @@ void simd_enable_avx512(void)
     simd_avx512_burst();
 
     /* Sample counters after burst; use msr_try_read for both post-burst
-     * reads since these MSRs are optional telemetry (Codex finding #3) */
+     * reads since these MSRs are optional telemetry. */
     if (msr_try_read(MSR_IA32_MPERF, &mperf1) != 0 ||
         msr_try_read(MSR_IA32_APERF, &aperf1) != 0) {
         klog(LOG_WARN, "simd",

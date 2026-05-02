@@ -49,7 +49,7 @@ void boot_tests_run(void)
         /* Surface skip decisions BEFORE the LOG_WARN filter clamps
          * non-TEST output -- otherwise the LOG_INFO klog below is
          * suppressed exactly when the operator most needs to see why
-         * a `test=1` boot ran zero suites. Codex M2, 2026-04-21. */
+         * a `test=1` boot ran zero suites. */
         if (g_boot_info.config.test) {
             if (!run_kernel_tests)
                 klog(LOG_WARN, "TEST",

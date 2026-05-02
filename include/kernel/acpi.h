@@ -300,8 +300,7 @@ int acpi_has_vga(void);
 
 /* ---- Win32 GetSystemFirmwareTable / EnumSystemFirmwareTables surface ----
  *
- * Codex design review F2 (2026-04-29) drove these public accessors:
- * the Win32 facade in NtQuerySystemInformation(SystemFirmwareTableInformation)
+ * The Win32 facade in NtQuerySystemInformation(SystemFirmwareTableInformation)
  * exposes ACPI tables to user-mode, so every read MUST validate
  * checksums and lengths. The kernel's internal find_acpi_table walks
  * pointers without per-entry validation -- fine for one-shot boot
