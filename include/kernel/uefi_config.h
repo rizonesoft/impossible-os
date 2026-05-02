@@ -19,26 +19,94 @@ uintptr_t uefi_find_config_table(const struct boot_uefi_guid *guid);
 
 /* ---- Conformance Profile Detection ---- */
 
-/* Well-known conformance profile GUIDs (UEFI 2.10 §4.6) */
+/* Well-known conformance profile GUIDs (UEFI 2.10 section 4.6.5).
+ *
+ * The ECPT (EFI_CONFORMANCE_PROFILES_TABLE) is an ARRAY of profile GUIDs
+ * the firmware supports, not an ordered choice -- a system can claim
+ * UEFI Spec AND EBBR simultaneously.  Detection must therefore track
+ * per-profile presence, not just a single "winner."
+ *
+ * UEFI Spec GUID per UEFI 2.10 section 4.6.5; EBBR GUID per Arm EBBR
+ * 2.1 (cce33c35-... published by U-Boot mailing list, EBBR 2.0 has no
+ * separate GUID -- a single EBBR class profile is intentional).
+ *
+ * IMPORTANT (audit fix 2026-05-02): the previous values for both
+ * GUIDs (4b2a-9a5a-d00dd31a2427 / 4b2a-9088-58d50682f149) were
+ * fabricated; ECPT detection therefore never matched real firmware.
+ * The values below match the canonical UEFI 2.10 / Arm EBBR 2.1
+ * specifications byte-for-byte. */
 #define UEFI_PROFILE_UEFI_SPEC \
-    ((struct boot_uefi_guid){ 0x523c91af, 0xa195, 0x4b2a, \
-        { 0x9a, 0x5a, 0xd0, 0x0d, 0xd3, 0x1a, 0x24, 0x27 } })
+    ((struct boot_uefi_guid){ 0x523c91af, 0xa195, 0x4382, \
+        { 0x81, 0x8d, 0x29, 0x5f, 0xe4, 0x00, 0x64, 0x65 } })
 #define UEFI_PROFILE_EBBR \
-    ((struct boot_uefi_guid){ 0xcce33c35, 0x74ac, 0x4b2a, \
-        { 0x90, 0x88, 0x58, 0xd5, 0x06, 0x82, 0xf1, 0x49 } })
+    ((struct boot_uefi_guid){ 0xcce33c35, 0x74ac, 0x4087, \
+        { 0xbc, 0xe7, 0x8b, 0x29, 0xb0, 0x2e, 0xeb, 0x27 } })
 
-/* Conformance levels */
-#define UEFI_CONFORM_FULL     0  /* Full UEFI 2.10 (or table absent) */
-#define UEFI_CONFORM_EBBR     1  /* Embedded Base Boot Requirements (minimal) */
-#define UEFI_CONFORM_UNKNOWN  2  /* Conformance table present but no known profile */
+/* Profile-id enum used by uefi_conformance_has_profile().  Internal
+ * ordering only; consumers reference symbolic names, not values. */
+enum uefi_conformance_profile_id {
+    UEFI_PROFILE_ID_UEFI_SPEC = 0,
+    UEFI_PROFILE_ID_EBBR      = 1,
+    UEFI_PROFILE_ID__COUNT
+};
+
+/* Backward-compat scalar levels (kept for callers that already query
+ * uefi_conformance_level()).  New code SHOULD use the per-profile
+ * presence + omit / contradiction queries below. */
+#define UEFI_CONFORM_FULL     0  /* UEFI Spec profile claimed (or table absent) */
+#define UEFI_CONFORM_EBBR     1  /* EBBR profile claimed and UEFI Spec was NOT */
+#define UEFI_CONFORM_UNKNOWN  2  /* Table present but no known profile matched */
 
 /* Initialize conformance profile detection.
- * Reads EFI_CONFORMANCE_PROFILES_TABLE from config table.
- * Must be called after uefi_config_init(). */
+ * Reads EFI_CONFORMANCE_PROFILES_TABLE from UEFI configuration tables;
+ * each GUID access is bounded via firmware_table_mmap_contains() so a
+ * malformed NumberOfProfiles cannot drive an overread, and a defensive
+ * cap (UEFI_CONFORM_PROFILE_MAX) limits per-table walk cost.
+ *
+ * Init-order: requires uefi_config_init() (config-table lookup) AND
+ * a populated g_boot_info.mmap[] (the firmware-region oracle reads
+ * boot_info directly).  firmware_tables_init() is NOT a dependency:
+ * the catalog calls into this header to read profile state, so the
+ * Phase 1 boot path runs uefi_conformance_init() FIRST then
+ * firmware_tables_init() -- inverting that order would be the bug. */
 void uefi_conformance_init(void);
 
-/* Returns UEFI_CONFORM_FULL, UEFI_CONFORM_EBBR, or UEFI_CONFORM_UNKNOWN. */
+/* Defensive cap on profile count -- ECPT carries no total length, so
+ * this bounds the walk independent of firmware-supplied count. */
+#define UEFI_CONFORM_PROFILE_MAX 16
+
+/* Backward-compat scalar level (UEFI_CONFORM_*).  Computed as: UEFI
+ * Spec present -> FULL; otherwise EBBR present -> EBBR; otherwise
+ * UNKNOWN (table parsed but no match) or FULL (table absent / pre-2.10
+ * firmware).  Prefer the per-profile queries below for new policy. */
 int uefi_conformance_level(void);
+
+/* Per-profile presence query.  Returns 1 iff the firmware advertised
+ * the matching GUID in ECPT this boot.  Drives EBBR-omit and PC-
+ * contradiction policy: a system that claims BOTH UEFI Spec AND EBBR
+ * still has has_profile(EBBR)==1 so the PC-contradiction warning
+ * fires (UEFI 2.10 section 4.6.5: ECPT is an array, not a winner). */
+int uefi_conformance_has_profile(enum uefi_conformance_profile_id id);
+
+/* Display name of the matched profile, e.g. "UEFI Spec", "EBBR",
+ * "UEFI Spec + EBBR" (both claimed).  Returns "unknown" when ECPT is
+ * present but no row matched, or "Full UEFI (assumed)" when ECPT is
+ * absent.  Display-only -- do not parse for policy. */
+const char *uefi_conformance_name(void);
+
+/* Required-table policy: 1 iff the matched profile permits firmware
+ * to omit PC-class tables (FPDT, MAT, RTProps).  EBBR-class profile
+ * present -> 1; UEFI Spec only -> 0; absent / unknown profile -> 0
+ * (require by default; firmware that elides without telling us is
+ * the worse failure mode). */
+int uefi_conformance_allows_omit_pc_tables(void);
+
+/* PC / EBBR contradiction detector: 1 iff the firmware claims an
+ * EBBR-class profile AND we are running on x86_64 (which requires
+ * legacy PC-only assumptions: PIC space, i8042 ports, RTC port 0x70).
+ * On non-x86 architectures this always returns 0 -- the contradiction
+ * is x86-specific by name (no PC-only hardware to contradict). */
+int uefi_conformance_pc_contradiction(void);
 
 /* ---- ESRT Firmware Inventory (UEFI 2.5+ §23.4) ---- */
 

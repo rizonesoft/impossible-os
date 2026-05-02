@@ -850,9 +850,51 @@ void firmware_tables_init(void)
         else if (g_entries[i].status == FW_STATUS_DEGRADED) degraded++;
     }
 
-    klog(LOG_INFO, "BOOT",
-         "firmware tables: %u cataloged, %u validated, %u degraded",
-         g_count, validated, degraded);
+    /* Required-PC-class table policy gate (UEFI 2.10 conformance):
+     * UEFI Spec profile -> FPDT/MAT/RtProps SHOULD be present;
+     * EBBR-class profile -> absence is fine, do not flag as missing.
+     * The conformance accessor returns 1 iff EBBR is present (default-
+     * deny when no profile matched: silent omission is the worse
+     * failure mode).  Counts are observable in serial so an operator
+     * sees BOTH the absent-count AND whether the profile permits it. */
+    int allows_omit = uefi_conformance_allows_omit_pc_tables();
+    uint32_t missing_pc = 0;
+    {
+        /* FPDT can be cataloged via the UEFI config-table GUID OR via
+         * the ACPI SDT path (signature "FPDT" in the XSDT/RSDT walk).
+         * Real firmware publishes one or the other; lookup_guid alone
+         * false-flags ACPI-source FPDT as absent.  Treat present iff
+         * EITHER source has it.  MAT and RtProps remain UEFI-only
+         * (no ACPI counterpart) so the GUID lookup is sufficient. */
+        struct boot_uefi_guid fpdt    = UEFI_GUID_FPDT;
+        struct boot_uefi_guid mat     = UEFI_GUID_MEM_ATTR;
+        struct boot_uefi_guid rtprops = UEFI_GUID_RT_PROPS;
+        int fpdt_present =
+            (firmware_table_lookup_guid(&fpdt) != (const struct firmware_table_entry *)0) ||
+            (firmware_table_lookup_name("FPDT") != (const struct firmware_table_entry *)0);
+        if (!fpdt_present)
+            missing_pc++;
+        if (firmware_table_lookup_guid(&mat) == (const struct firmware_table_entry *)0)
+            missing_pc++;
+        if (firmware_table_lookup_guid(&rtprops) == (const struct firmware_table_entry *)0)
+            missing_pc++;
+    }
+
+    if (missing_pc == 0) {
+        klog(LOG_INFO, "BOOT",
+             "firmware tables: %u cataloged, %u validated, %u degraded",
+             g_count, validated, degraded);
+    } else if (allows_omit) {
+        klog(LOG_INFO, "BOOT",
+             "firmware tables: %u cataloged, %u validated, %u degraded, "
+             "%u PC-class absent (allowed by profile)",
+             g_count, validated, degraded, missing_pc);
+    } else {
+        klog(LOG_WARN, "BOOT",
+             "firmware tables: %u cataloged, %u validated, %u degraded, "
+             "%u PC-class table(s) absent (FPDT/MAT/RtProps required by profile)",
+             g_count, validated, degraded, missing_pc);
+    }
 
     POST16(POST16_FW_TABLES_OK);
 }

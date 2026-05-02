@@ -11,6 +11,7 @@
 #include "kernel/test/test.h"
 #include "kernel/firmware_tables.h"
 #include "kernel/boot_info.h"
+#include "kernel/uefi_config.h"
 
 /* Local string compare so tests do not depend on libc/string.h. */
 static int str_eq_local(const char *a, const char *b)
@@ -633,6 +634,105 @@ static void test_firmware_table_promote_null_returns_zero(void)
                 "promote of NULL name returns 0 (no deref)");
 }
 
+/* ---- Conformance profile tests (UEFI 2.10 section 4.6.5) ---------------- */
+
+static int conf_strs_eq(const char *a, const char *b)
+{
+    while (*a && *b) { if (*a != *b) return 0; a++; b++; }
+    return *a == 0 && *b == 0;
+}
+
+static void test_conformance_has_profile_oor_id_returns_zero(void)
+{
+    /* Defensive index check on the public has_profile API.  Out-of-
+     * range id must return 0 cleanly, never read past s_profile_present. */
+    TEST_ASSERT_EQ(uefi_conformance_has_profile((enum uefi_conformance_profile_id)99),
+                   0,
+        "has_profile with OOR id returns 0");
+    TEST_ASSERT_EQ(uefi_conformance_has_profile((enum uefi_conformance_profile_id)
+                                                UEFI_PROFILE_ID__COUNT),
+                   0,
+        "has_profile with sentinel COUNT id returns 0");
+}
+
+static void test_conformance_name_returns_nonempty(void)
+{
+    /* Whatever the live ECPT state, the display name is never NULL
+     * and never empty -- callers can print it directly. */
+    const char *name = uefi_conformance_name();
+    TEST_ASSERT(name != (const char *)0,
+        "uefi_conformance_name() returns non-NULL");
+    TEST_ASSERT(name[0] != '\0',
+        "uefi_conformance_name() returns non-empty string");
+}
+
+static void test_conformance_pc_contradiction_arch_gate(void)
+{
+    /* On x86_64, the contradiction can only fire iff EBBR is present;
+     * if EBBR is NOT present, the contradiction must be 0. */
+    int has_ebbr = uefi_conformance_has_profile(UEFI_PROFILE_ID_EBBR);
+    int contradiction = uefi_conformance_pc_contradiction();
+    if (!has_ebbr) {
+        TEST_ASSERT_EQ(contradiction, 0,
+            "no EBBR -> no contradiction");
+    } else {
+        /* EBBR present + x86_64 build -> contradiction must fire. */
+        TEST_ASSERT_EQ(contradiction, 1,
+            "EBBR + x86_64 -> contradiction");
+    }
+}
+
+static void test_conformance_omit_policy_default_deny(void)
+{
+    /* allows_omit_pc_tables() returns 1 ONLY when EBBR is present.
+     * Default-deny is the safer policy when no profile matched. */
+    int has_ebbr = uefi_conformance_has_profile(UEFI_PROFILE_ID_EBBR);
+    int allows = uefi_conformance_allows_omit_pc_tables();
+    TEST_ASSERT_EQ(allows, has_ebbr,
+        "allows_omit_pc_tables() == has_profile(EBBR)");
+}
+
+static void test_conformance_level_consistent_with_presence(void)
+{
+    /* Backward-compat scalar level must agree with presence flags:
+     *   UEFI Spec present -> FULL
+     *   else EBBR present -> EBBR
+     *   else (table absent OR table present-but-no-match) ->
+     *     FULL (absent path) or UNKNOWN (parsed path).
+     * This test validates the "single source of truth" property:
+     * level cannot disagree with what has_profile() reports. */
+    int level = uefi_conformance_level();
+    int has_uefi = uefi_conformance_has_profile(UEFI_PROFILE_ID_UEFI_SPEC);
+    int has_ebbr = uefi_conformance_has_profile(UEFI_PROFILE_ID_EBBR);
+
+    if (has_uefi) {
+        TEST_ASSERT_EQ(level, UEFI_CONFORM_FULL,
+            "UEFI Spec presence -> level FULL");
+    } else if (has_ebbr) {
+        TEST_ASSERT_EQ(level, UEFI_CONFORM_EBBR,
+            "EBBR-only presence -> level EBBR");
+    } else {
+        /* Either FULL (table absent) or UNKNOWN (table present but
+         * no match).  Both are valid; reject the impossible levels. */
+        TEST_ASSERT(level == UEFI_CONFORM_FULL || level == UEFI_CONFORM_UNKNOWN,
+            "no-match -> level FULL or UNKNOWN, never EBBR");
+    }
+}
+
+static void test_conformance_name_no_match_text_known(void)
+{
+    /* Spot-check the "no match" name strings so a future rename is
+     * a single named failure rather than silent display drift. */
+    const char *name = uefi_conformance_name();
+    int has_uefi = uefi_conformance_has_profile(UEFI_PROFILE_ID_UEFI_SPEC);
+    int has_ebbr = uefi_conformance_has_profile(UEFI_PROFILE_ID_EBBR);
+    if (!has_uefi && !has_ebbr) {
+        TEST_ASSERT(conf_strs_eq(name, "Full UEFI (assumed)") ||
+                    conf_strs_eq(name, "unknown"),
+            "no-match name is one of the documented strings");
+    }
+}
+
 /* ---- Registration ------------------------------------------------------- */
 
 void test_register_firmware_tables(void)
@@ -714,6 +814,24 @@ void test_register_firmware_tables(void)
                             TEST_CAT_BOOT);
     test_suite_register_cat("FW: promote NULL name -> 0",
                             test_firmware_table_promote_null_returns_zero,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("Conform: has_profile OOR id -> 0",
+                            test_conformance_has_profile_oor_id_returns_zero,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("Conform: name non-empty",
+                            test_conformance_name_returns_nonempty,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("Conform: pc_contradiction arch-gate",
+                            test_conformance_pc_contradiction_arch_gate,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("Conform: omit-policy default-deny",
+                            test_conformance_omit_policy_default_deny,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("Conform: level vs has_profile consistency",
+                            test_conformance_level_consistent_with_presence,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("Conform: no-match name is documented",
+                            test_conformance_name_no_match_text_known,
                             TEST_CAT_BOOT);
 }
 
