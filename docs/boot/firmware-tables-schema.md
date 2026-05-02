@@ -42,11 +42,12 @@ Every cataloged firmware table emits one entry:
 
 ```json
 {
-  "name": "ACPI 2.0",
+  "name": "ACPI2.0",
   "guid": "{8868e871-e4f1-11d3-bc22-0080c73c8881}",
   "source": "uefi_cfg_table",
   "phys_addr": "0x000000007fec0014",
   "size": 36,
+  "checksum": 0,
   "checksum_status": "validated",
   "validation_reason": null
 }
@@ -59,6 +60,7 @@ Every cataloged firmware table emits one entry:
 | `source`            | string enum    | yes      | One of `"uefi_cfg_table"`, `"acpi_sdt"`, `"smbios_raw"`, `"fpdt"`, `"esrt"`, `"dtb"` (matches `FW_SOURCE_*` enum in `firmware_tables.h`).                                                                            |
 | `phys_addr`         | string         | yes      | Physical address as `0x` + 16 hex digits (lowercase). `"0x0000000000000000"` is reserved for `name`-only entries (e.g. signature-known but address absent on this firmware).                                         |
 | `size`              | int            | yes      | Byte size as cataloged. May be `0` when the source does not carry a size field (UEFI cfg-table entries have GUID + pointer only; the catalog does not probe).                                                        |
+| `checksum`          | int            | yes      | Firmware-published checksum byte (`0`-`255`) stashed by the validator before the sum-check, so `checksum_fail` entries still carry the byte. `0` when the validator did not compute one (catalog-only / signature-only entries). |
 | `checksum_status`   | string enum    | yes      | One of `"validated"`, `"degraded"`, `"unknown_profile"`, `"untested"`. `"validated"` is `FW_STATUS_VALIDATED`; `"degraded"` is `FW_STATUS_DEGRADED`; `"unknown_profile"` is `FW_STATUS_UNKNOWN_PROFILE`.              |
 | `validation_reason` | string \| null | no       | Operator-readable reason when `checksum_status == "degraded"`; one of `"checksum_fail"`, `"length_bad"`, `"range_unmapped"`, `"null_pointer"`, plus future reasons. `null` otherwise.                                |
 
@@ -238,7 +240,7 @@ shape as REG_DWORD/REG_QWORD/REG_SZ values:
 | ------------------- | --------- | ------------------- |
 | `Address`           | REG_QWORD | `phys_addr`         |
 | `Size`              | REG_DWORD | `size`              |
-| `Checksum`          | REG_DWORD | (catalog-internal)  |
+| `Checksum`          | REG_DWORD | `checksum`          |
 | `ValidationStatus`  | REG_SZ    | `checksum_status`   |
 | `Source`            | REG_SZ    | `source`            |
 

@@ -129,11 +129,12 @@ void firmware_tables_populate_registry(void)
          * shadow / RT-services-data above the 4 GiB line. */
         RegSetQword(hKey,  "Address",          (uint64_t)e->phys_addr);
         RegSetDword(hKey,  "Size",             e->size);
-        /* Checksum is catalog-internal; expose 0 until the validators
-         * store the computed checksum on the entry (today they only
-         * set the status field).  Schema doc marks Checksum as
-         * "(catalog-internal)" so 0 is fine. */
-        RegSetDword(hKey,  "Checksum",         0);
+        /* Checksum is the firmware-published checksum byte stashed by
+         * the validator on success (RSDP v2 ext_checksum, v1 checksum,
+         * SDT/FPDT checksum, SMBIOS3/2 entry-point checksum).  Zero
+         * for entries with no full-format validator (DTB header,
+         * vendor-private cfg-table GUIDs, etc.). */
+        RegSetDword(hKey,  "Checksum",         e->computed_checksum);
         RegSetString(hKey, "ValidationStatus", status_name(e->status));
         RegSetString(hKey, "Source",           source_name(e->source));
         RegCloseKey(hKey);

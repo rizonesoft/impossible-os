@@ -392,10 +392,16 @@ void boot_phase3(void)
     terminal_open();
     gallery_open();
 
-    /* --- Load cmd.exe via task_exec (single PEB allocation path) --- */
+    /* Firmware-table inventory JSON publish to X:\Diag\firmware-
+     * tables.json runs BEFORE task_create + scheduler_enable so its
+     * file I/O happens on the BSP main thread (not racing against
+     * cmd.exe loading) AND its diagnostic logs are captured by
+     * scripts/test-smoke.sh which tears down once "Boot complete"
+     * appears.  BlackBox VFS+IXFS are mounted by Phase 3 when this
+     * runs.  Failure is logged but does not block userland entry. */
     {
-        extern void shell_loader_func(void);
-        task_create(shell_loader_func, "cmd.exe");
+        extern void firmware_tables_publish_json(void);
+        firmware_tables_publish_json();
     }
 
     /* Boot-error history ring: append the kernel-Phase-3 sentinel.
@@ -404,6 +410,12 @@ void boot_phase3(void)
      * reached steady state" mark.  Best-effort: a SetVariable failure
      * is logged but does not block userland entry. */
     boot_history_kernel_mark_phase3();
+
+    /* --- Load cmd.exe via task_exec (single PEB allocation path) --- */
+    {
+        extern void shell_loader_func(void);
+        task_create(shell_loader_func, "cmd.exe");
+    }
 
     scheduler_enable();
 

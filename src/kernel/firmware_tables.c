@@ -501,6 +501,11 @@ static void fw_validate_acpi_sdt(struct firmware_table_entry *e)
                    "SDT header.length disagrees with catalog size");
         return;
     }
+    /* Stash the firmware-published checksum byte BEFORE running the
+     * sum check so a CHECKSUM_FAIL entry still surfaces the byte the
+     * operator sees in the source firmware -- the failure path is
+     * where the value is most useful for diagnosis. */
+    e->computed_checksum = h->checksum;
     if (!fw_sum8_is_zero((const uint8_t *)h, h->length)) {
         fw_degrade(e, FW_DEGRADED_CHECKSUM_FAIL, "SDT checksum nonzero");
         return;
@@ -516,6 +521,9 @@ static void fw_validate_acpi_rsdp(struct firmware_table_entry *e)
     }
     const struct fw_rsdp_v1_view *v1 =
         (const struct fw_rsdp_v1_view *)e->phys_addr;
+    /* Stash v1 checksum byte first; v2 path overwrites with
+     * ext_checksum below if applicable. */
+    e->computed_checksum = v1->checksum;
     if (!fw_sum8_is_zero((const uint8_t *)v1, sizeof(*v1))) {
         fw_degrade(e, FW_DEGRADED_CHECKSUM_FAIL, "RSDP v1 checksum nonzero");
         return;
@@ -546,12 +554,17 @@ static void fw_validate_acpi_rsdp(struct firmware_table_entry *e)
                        "RSDP v2 declared length outside firmware mmap");
             return;
         }
+        /* RSDP v2: surface ext_checksum BEFORE the sum check so a
+         * CHECKSUM_FAIL entry still carries the firmware byte. */
+        e->computed_checksum = v2->ext_checksum;
         if (!fw_sum8_is_zero((const uint8_t *)v2, v2->length)) {
             fw_degrade(e, FW_DEGRADED_CHECKSUM_FAIL,
                        "RSDP v2 extended checksum nonzero");
             return;
         }
+        return;
     }
+    /* v1-only path: computed_checksum already set above. */
 }
 
 static void fw_validate_smbios_ep(struct firmware_table_entry *e, int is_v3)
@@ -578,6 +591,7 @@ static void fw_validate_smbios_ep(struct firmware_table_entry *e, int is_v3)
                        "SMBIOS3 length not 0x18");
             return;
         }
+        e->computed_checksum = ep->checksum;
         if (!fw_sum8_is_zero((const uint8_t *)ep, ep->length)) {
             fw_degrade(e, FW_DEGRADED_CHECKSUM_FAIL,
                        "SMBIOS3 checksum nonzero");
@@ -603,6 +617,7 @@ static void fw_validate_smbios_ep(struct firmware_table_entry *e, int is_v3)
                        "SMBIOS2 declared length outside firmware mmap");
             return;
         }
+        e->computed_checksum = ep->checksum;
         if (!fw_sum8_is_zero((const uint8_t *)ep, ep->length)) {
             fw_degrade(e, FW_DEGRADED_CHECKSUM_FAIL,
                        "SMBIOS2 checksum nonzero");
@@ -636,6 +651,7 @@ static void fw_validate_fpdt(struct firmware_table_entry *e)
                    "FPDT declared length outside firmware mmap");
         return;
     }
+    e->computed_checksum = h->checksum;
     if (!fw_sum8_is_zero((const uint8_t *)h, h->length)) {
         fw_degrade(e, FW_DEGRADED_CHECKSUM_FAIL, "FPDT checksum nonzero");
         return;

@@ -68,6 +68,10 @@ struct firmware_table_entry {
     uint32_t  signature;              /* nonzero only for ACPI SDTs (LE 'FACP' = 0x50434146) */
     uintptr_t phys_addr;              /* firmware-mapped physical address */
     uint32_t  size;                   /* bytes; 0 if unknown at catalog time */
+    uint32_t  computed_checksum;      /* sum-of-bytes mod 0x100 over the table when validated;
+                                       * 0 when the validator did not compute one (catalog-only
+                                       * entries: UEFI cfg-table GUIDs that have no full-format
+                                       * validator yet, DTB header / vendor blobs, etc.) */
     uint8_t   source;                 /* FW_SOURCE_* */
     uint8_t   status;                 /* FW_STATUS_* */
     uint8_t   degraded_reason;        /* FW_DEGRADED_* (populated by validator) */
@@ -142,6 +146,15 @@ void firmware_table_validate_all(void);
  * via RegDeleteTree on entry.  ESRT subtree (HARDWARE\Firmware\ESRT)
  * is NOT touched -- it is owned by esrt_populate_registry. */
 void firmware_tables_populate_registry(void);
+
+/* Publish the firmware-table catalog to X:\Diag\firmware-tables.json
+ * conforming to schema_version=1 (canonical wire format pinned in
+ * docs/boot/firmware-tables-schema.md).  Manual JSON formatting,
+ * 16 KiB pmm_alloc_contiguous buffer, write via VFS.  Wire from
+ * boot_phase3() AFTER VFS+IXFS mount (mirrors boot_history_kernel_
+ * mark_phase3 timing).  Idempotent on repeated calls within the
+ * same boot via VFS file overwrite. */
+void firmware_tables_publish_json(void);
 
 /* True iff `[addr, addr+len)` is contained in a single UEFI memory-map
  * descriptor of a firmware-bearing type (RESERVED / LOADER_* /
