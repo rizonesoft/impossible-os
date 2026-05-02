@@ -170,11 +170,10 @@ static int call_set_virtual_address_map(void)
     klog(LOG_INFO, "UEFI", "SetVirtualAddressMap: %u runtime regions, "
          "desc_size=%u, desc_ver=%u", count, desc_size, desc_version);
 
-    /* Codex H2 (2026-04-27 re-review): per-service NULL validation
-     * happens AFTER SVAM in uefi_runtime_init; the SVAM function
-     * pointer itself was being dereferenced before any validation,
-     * so a malformed RT table could null-deref Phase 0 instead of
-     * degrading cleanly. Validate the pointer here before the call. */
+    /* Per-service NULL validation happens AFTER SVAM in
+     * uefi_runtime_init; the SVAM function pointer itself must be
+     * validated here before the call so a malformed RT table
+     * degrades cleanly instead of null-derefing Phase 0. */
     if (!s_rt->set_virtual_address_map) {
         klog(LOG_ERROR, "UEFI", "SetVirtualAddressMap: NULL function pointer");
         return -1;
@@ -344,20 +343,18 @@ static void read_rt_properties(void)
 /* ---- Public API ---- */
 
 /* Clear advertised RT capability + legacy availability byte in
- * lockstep with s_available going to 0. Codex M1 (2026-04-27
- * re-review): without this, BOOT_DEGRADED paths leave
- * caps_present & BOOT_CAP_RUNTIME_SERVICES set and the legacy
- * uefi_rt_available byte at 1, so any later boot_caps_require
+ * lockstep with s_available going to 0.  BOOT_DEGRADED paths must not
+ * leave caps_present & BOOT_CAP_RUNTIME_SERVICES set or the legacy
+ * uefi_rt_available byte at 1, or any later boot_caps_require
  * caller still treats RT as present after init has disabled it.
  *
- * Codex Consistency M1 (re-review): clearing caps_present is not
- * enough -- the boot_info contract (boot_info.h:510-518 / 1183-1187)
- * requires every known capability bit to live in EXACTLY ONE of
- * caps_present or caps_degraded, never neither. Clearing without
- * setting caps_degraded leaves the bit unclassified, which trips
- * later validators that walk the known-bit set. Mirror the
- * present->degraded transition that boot_caps_mark_present() does
- * in the opposite direction. */
+ * Clearing caps_present is not enough -- the boot_info contract
+ * (boot_info.h:510-518 / 1183-1187) requires every known capability
+ * bit to live in EXACTLY ONE of caps_present or caps_degraded, never
+ * neither.  Clearing without setting caps_degraded leaves the bit
+ * unclassified, which trips later validators that walk the known-bit
+ * set.  Mirror the present->degraded transition that
+ * boot_caps_mark_present() does in the opposite direction. */
 static void rt_advertise_unavailable(void)
 {
     s_available = 0;
@@ -370,12 +367,11 @@ boot_result_t uefi_runtime_init(void)
 {
     (void)s_rt_mutex;  /* initialized statically via MUTEX_INIT */
 
-    /* Codex H1 (2026-04-27 re-review): once-latch -- if a duplicate
-     * BOOT_STEP / re-init path calls us, return the cached state
-     * instead of re-running SVAM (which UEFI permits ONLY ONCE per
-     * boot per spec §7.4.2; a second call returns EFI_UNSUPPORTED
-     * and would leave s_available=0, disabling previously-working
-     * services). */
+    /* Once-latch -- if a duplicate BOOT_STEP / re-init path calls us,
+     * return the cached state instead of re-running SVAM (which UEFI
+     * permits ONLY ONCE per boot per spec §7.4.2; a second call
+     * returns EFI_UNSUPPORTED and would leave s_available=0,
+     * disabling previously-working services). */
     if (s_init_done) {
         klog(LOG_INFO, "UEFI",
              "uefi_runtime_init: already initialised (s_available=%d, returning cached state)",
@@ -446,10 +442,10 @@ boot_result_t uefi_runtime_init(void)
     /* Call SetVirtualAddressMap.  Per UEFI spec §7.4.2 this must happen after
      * ExitBootServices().  The bootloader preserves pointers only; SVAM is
      * always the kernel's responsibility.  svam_called is kept as a safety
-     * guard in case a future loader calls SVAM before handoff. The kernel-
-     * side s_svam_done latch (Codex H1, 2026-04-27) is the same guard
-     * within the kernel: even if uefi_runtime_init's once-latch is
-     * bypassed somehow, we never call firmware SVAM twice. */
+     * guard in case a future loader calls SVAM before handoff.  The
+     * kernel-side s_svam_done latch is the same guard within the
+     * kernel: even if uefi_runtime_init's once-latch is bypassed
+     * somehow, we never call firmware SVAM twice. */
     if (g_boot_info.uefi_runtime.svam_called || s_svam_done) {
         klog(LOG_INFO, "UEFI", "SetVirtualAddressMap already called");
     } else {
@@ -912,11 +908,10 @@ boot_result_t uefi_time_init(void)
 static int s_sb_enabled;      /* SecureBoot variable = 1 */
 static int s_sb_state_valid;  /* 1 if SecureBoot var read returned authoritative
                                  value; 0 if read failed (state is unknown).
-                                 Codex review 2026-04-28 H1: registry must NOT
-                                 publish State when this is 0 -- consumers must
-                                 see a separate StateValid=0 signal so the
-                                 read-failure path is distinguishable from
-                                 genuinely-disabled. */
+                                 The registry must NOT publish State when this
+                                 is 0 -- consumers must see a separate
+                                 StateValid=0 signal so the read-failure path
+                                 is distinguishable from genuinely-disabled. */
 static int s_sb_setup_mode;   /* SetupMode variable = 1 */
 static int s_sb_deployed_mode;/* DeployedMode variable = 1 (UEFI 2.5+) */
 static int s_sb_audit_mode;   /* AuditMode variable = 1 (UEFI 2.5+) */
@@ -925,10 +920,10 @@ static int s_sb_kek_present;  /* KEK variable exists with data */
 
 /* Helper: read a single-byte UEFI global variable. Returns the byte, or -1.
  *
- * Codex adversarial review 2026-04-28 M2: SUCCESS alone is not enough --
- * a buggy or hostile firmware can return SUCCESS with sz != 1, leaving
- * `val` at the zero-init or filling only part of the byte. Require both
- * SUCCESS AND sz == sizeof(val); anything else is a read failure. */
+ * SUCCESS alone is not enough -- a buggy or hostile firmware can return
+ * SUCCESS with sz != 1, leaving `val` at the zero-init or filling only
+ * part of the byte.  Require both SUCCESS AND sz == sizeof(val);
+ * anything else is a read failure. */
 static int read_global_byte(const uint16_t *name)
 {
     struct boot_uefi_guid global = EFI_GLOBAL_VARIABLE_GUID;
@@ -944,11 +939,10 @@ static int read_global_byte(const uint16_t *name)
 
 /* Helper: check if a UEFI global variable exists with non-zero size.
  *
- * Codex adversarial review 2026-04-28 M3: SUCCESS-with-sz=0 must NOT
- * count as "exists" for PK/KEK enrollment checks. Empty PK/KEK
- * variables are firmware artifacts, not enrolled keys; reporting them
- * as enrolled would mislead Secure Boot status consumers. Require
- * sz > 0 on either SUCCESS or BUFFER_TOO_SMALL.
+ * SUCCESS-with-sz=0 must NOT count as "exists" for PK/KEK enrollment
+ * checks.  Empty PK/KEK variables are firmware artifacts, not enrolled
+ * keys; reporting them as enrolled would mislead Secure Boot status
+ * consumers.  Require sz > 0 on either SUCCESS or BUFFER_TOO_SMALL.
  */
 static int global_var_exists(const uint16_t *name)
 {
@@ -1098,12 +1092,11 @@ void uefi_secureboot_populate_registry(void)
     if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, "SYSTEM\\SecureBoot", 0,
                        NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
         const struct secureboot_db_info *dbi = secureboot_get_db_info();
-        /* Codex review 2026-04-28 H1: gate State on read validity.
-         * StateValid=0 means the SecureBoot variable read failed;
-         * State is meaningless in that case. We write StateValid
-         * always, but write State ONLY when valid. Re-adversarial
-         * 2026-04-28 H1b: do NOT write a sentinel value for State on
-         * the invalid path -- a truthy 0xFF would pollute the
+        /* Gate State on read validity.  StateValid=0 means the
+         * SecureBoot variable read failed; State is meaningless in
+         * that case.  We write StateValid always, but write State
+         * ONLY when valid.  Do NOT write a sentinel value for State
+         * on the invalid path -- a truthy 0xFF would pollute the
          * existing State=0|1 boolean contract for legacy consumers.
          * Consumers MUST check StateValid first; if they read State
          * directly they get key-not-found (which they must handle
@@ -1144,11 +1137,10 @@ void uefi_secureboot_populate_registry(void)
          * script extracts the CA year via `sbverify --list` and writes
          * it into a generated header consumed here. See
          * docs/guides/secure-boot-keys.md "MS UEFI CA Lifecycle". */
-        /* Codex adversarial H1 fix 2026-04-29: read the actual CA
-         * year from the build-time generated header (extracted by
-         * scripts/extract-shim-ca.sh from `sbverify --list shim/
-         * shimx64.efi`). Reports 2011 / 2023 / 0xFFFFFFFF / 0 per
-         * the sentinel doctrine above. */
+        /* Read the actual CA year from the build-time generated
+         * header (extracted by scripts/extract-shim-ca.sh from
+         * `sbverify --list shim/shimx64.efi`).  Reports 2011 /
+         * 2023 / 0xFFFFFFFF / 0 per the sentinel doctrine above. */
         RegSetDword(hKey, "ShimCA", SHIM_CA_YEAR);
         RegCloseKey(hKey);
         klog(LOG_DEBUG, "SecureBoot",
@@ -1230,11 +1222,10 @@ static int read_global_byte_status(const uint16_t *name, uint8_t *out)
 
 /* Tri-state existence check: returns 1 if the variable definitively
  * exists with non-zero data, 0 if it definitively does NOT exist
- * (UEFI_NOT_FOUND, or empty SUCCESS-with-sz=0 which the design
- * Codex review 2026-04-28 M3 treats as not-enrolled), -1 if the
- * result is indeterminate. Codex re-adversarial 2026-05-01 H2 fix:
- * distinguish NOT_FOUND from a read failure so drift detection can
- * not flip pk_present/kek_present from 1 to 0 on a transient
+ * (UEFI_NOT_FOUND, or empty SUCCESS-with-sz=0 which we treat as
+ * not-enrolled), -1 if the result is indeterminate.  Distinguishing
+ * NOT_FOUND from a read failure prevents drift detection from
+ * flipping pk_present/kek_present from 1 to 0 on a transient
  * hiccup. */
 static int global_var_exists_status(const uint16_t *name)
 {
@@ -1255,13 +1246,11 @@ static int global_var_exists_status(const uint16_t *name)
 /* Read every SecureBoot UEFI variable into a local state vector.
  * MUST be called WITHOUT s_sb_lock held -- uefi_get_variable()
  * acquires the sleepable s_rt_mutex via rt_call_enter(), and a
- * mutex must never be acquired under a spinlock with IRQs disabled
- * (Codex adversarial 2026-05-01 C1). The s_rt_mutex itself
- * serializes firmware calls. Returns 1 if EVERY tracked field was
- * read with a definitive status (vector is fully authoritative), 0
- * if any field's read was indeterminate (caller MUST skip drift
- * comparison and legacy accessor updates -- Codex re-adversarial
- * 2026-05-01 H2). */
+ * mutex must never be acquired under a spinlock with IRQs disabled.
+ * The s_rt_mutex itself serializes firmware calls.  Returns 1 if
+ * EVERY tracked field was read with a definitive status (vector is
+ * fully authoritative), 0 if any field's read was indeterminate
+ * (caller MUST skip drift comparison and legacy accessor updates). */
 static int uefi_secureboot_read_locked_state(struct sb_state_vector *out)
 {
     static const uint16_t sb_name[]  = { 'S','e','c','u','r','e','B','o','o','t', 0 };
@@ -1328,11 +1317,10 @@ void uefi_secureboot_snapshot(void)
 }
 
 /* Write HKLM\SYSTEM\SecureBoot\Drift = 1 to flag firmware tampering
- * for monitoring tools. Returns 1 on success, 0 on failure -- the
+ * for monitoring tools.  Returns 1 on success, 0 on failure -- the
  * caller uses the result to decide whether to retry on the next
- * tick (Codex adversarial 2026-05-01 H1: registry not yet ready
- * when the first drift is observed must not permanently suppress
- * the sentinel). */
+ * tick (registry not yet ready when the first drift is observed
+ * must not permanently suppress the sentinel). */
 static int uefi_secureboot_publish_drift(void)
 {
     HKEY hKey;
@@ -1421,9 +1409,9 @@ static int uefi_secureboot_do_revalidate(void)
 
     /* Retry registry publication on every call where drift is
      * latched but the sentinel write has not yet been confirmed.
-     * Codex H1 fix 2026-05-01: prior version published only on the
-     * detection edge; if that one write failed (e.g. registry not
-     * yet ready) the sentinel was never retried. */
+     * Publishing only on the detection edge means a single failed
+     * write (e.g. registry not yet ready) leaves the sentinel
+     * permanently un-published. */
     needs_publish = s_sb_drift_detected && !s_sb_drift_published;
     snapshot_copy = s_sb_snapshot;
 
@@ -1486,12 +1474,12 @@ int uefi_secureboot_drift_detected(void)
  * are not separately tracked because Win32 GetFirmwareEnvironmentVariable
  * always uses the NV+BS+RT slice).
  *
- * Codex design review F3 (2026-04-29) drove the validity contract:
- * mirror the HKLM\SYSTEM\SecureBoot\State pattern -- always write
- * VarsValid (DWORD 0/1), write the size fields ONLY when QueryVariableInfo
- * succeeded. A missing size key is "did not query"; a present size
- * key is "this is the firmware-reported value". Consumers MUST check
- * VarsValid first. Sizes use REG_QWORD because the spec is UINT64.
+ * Validity contract mirrors the HKLM\SYSTEM\SecureBoot\State pattern:
+ * always write VarsValid (DWORD 0/1), write the size fields ONLY when
+ * QueryVariableInfo succeeded.  A missing size key is "did not query";
+ * a present size key is "this is the firmware-reported value".
+ * Consumers MUST check VarsValid first.  Sizes use REG_QWORD because
+ * the spec is UINT64.
  */
 void uefi_runtime_populate_vars_registry(void)
 {
@@ -1576,10 +1564,10 @@ static void count_sig_entries(const uint8_t *buf, uint64_t buf_sz,
         if (sl->signature_list_size == 0) break;
         if (offset + sl->signature_list_size > buf_sz) break;
 
-        /* Codex M1 (2026-04-27 re-review): firmware/NVRAM-supplied
-         * sizes are untrusted. signature_list_size could be smaller
-         * than header + signature_header_size, which would underflow
-         * the subtraction below and fabricate a huge entries count.
+        /* Firmware/NVRAM-supplied sizes are untrusted.
+         * signature_list_size could be smaller than header +
+         * signature_header_size, which would underflow the
+         * subtraction below and fabricate a huge entries count.
          * Compute header_total as uint64 so a hostile
          * signature_header_size near UINT32_MAX cannot wrap before
          * the comparison. */
@@ -1947,14 +1935,14 @@ const struct capsule_capability_info *uefi_capsule_info(void)
 #define UEFI_VALUE_MAX_BYTES  (64 * 1024)
 #define UEFI_KMALLOC_CAP      4096  /* CLAUDE.md kmalloc <=4 KB rule */
 
-/* Codex H1 (2026-04-27 re-review): value buffers can reach 64 KiB;
- * kmalloc has no internal cap and would happily carve large blocks
- * out of the kernel heap, opening a DoS / fragmentation vector for
- * unprivileged firmware-variable syscalls. Route value buffers
- * through pmm_alloc_contiguous when they exceed the kmalloc-safe
- * ceiling. PMM frames are identity-mapped in the kernel range, so
- * the physical address doubles as a usable kernel pointer. The
- * allocated-frame count is recovered from size on free. */
+/* Value buffers can reach 64 KiB; kmalloc has no internal cap and
+ * would happily carve large blocks out of the kernel heap, opening a
+ * DoS / fragmentation vector for unprivileged firmware-variable
+ * syscalls.  Route value buffers through pmm_alloc_contiguous when
+ * they exceed the kmalloc-safe ceiling.  PMM frames are
+ * identity-mapped in the kernel range, so the physical address
+ * doubles as a usable kernel pointer.  The allocated-frame count is
+ * recovered from size on free. */
 #include "kernel/mm/pmm.h"
 
 static void *uefi_value_alloc(uint32_t size)
@@ -2010,13 +1998,12 @@ static uint16_t *marshal_user_pwstr_name(uint64_t user_ptr,
     if (ProbeForReadIfUser((const void *)user_ptr,
                             UEFI_NAME_MAX_BYTES,
                             sizeof(uint16_t)) != 0) {
-        /* Codex H2 (2026-04-27 re-review): the prior fallback copied
-         * 64-byte chunks without re-probing each chunk, so a name
-         * pointer ending near the user/kernel boundary could pass
-         * the head probe, fail the full probe, then have copy_from_user
-         * read past MM_USER_PROBE_ADDRESS into kernel memory. Probe
-         * EACH chunk before copy; reject if any chunk fails (NUL was
-         * not within mapped user range). */
+        /* A naive fallback that copies 64-byte chunks without re-probing
+         * each chunk lets a name pointer ending near the user/kernel
+         * boundary pass the head probe, fail the full probe, then have
+         * copy_from_user read past MM_USER_PROBE_ADDRESS into kernel
+         * memory.  Probe EACH chunk before copy; reject if any chunk
+         * fails (NUL was not within mapped user range). */
         uint32_t off;
         for (off = 0; off < UEFI_NAME_MAX_BYTES; off += 64) {
             uint32_t chunk = 64;

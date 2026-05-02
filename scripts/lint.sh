@@ -868,10 +868,7 @@ elif [ "$#" -eq 0 ]; then
     # Files with pre-existing citations -- WARN-only while the manual
     # cleanup sweep is in progress. Keep sorted for diff hygiene; remove
     # entries as files are scrubbed clean.
-    CITATION_LEGACY_FILES=(
-        src/boot/uefi/bootx64.c
-        src/kernel/uefi_runtime.c
-    )
+    CITATION_LEGACY_FILES=()
 
     is_citation_legacy() {
         local path="$1"

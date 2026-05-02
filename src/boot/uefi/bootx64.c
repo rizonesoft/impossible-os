@@ -356,9 +356,9 @@ typedef struct {
 /* ACPI checksum gate -- byte sum of [base, base+len) MUST equal 0
  * mod 256 per ACPI 6.5 §5.2.5.3 (RSDP), §5.2.6 (DESCRIPTION_HEADER).
  * Used by serial_spcr_probe() to reject corrupt firmware tables
- * BEFORE dereferencing untrusted base_address fields (Codex H1
- * adversarial 2026-05-02).  Length is caller-bounded; this helper
- * trusts the caller to have already rejected implausible lengths. */
+ * BEFORE dereferencing untrusted base_address fields.  Length is
+ * caller-bounded; this helper trusts the caller to have already
+ * rejected implausible lengths. */
 static int acpi_checksum_ok(const void *base, UINTN len)
 {
     const UINT8 *p = (const UINT8 *)base;
@@ -1607,9 +1607,8 @@ static int bsod_can_render_graphical(void)
  * 2 x 10^10 TSC ticks gives ~20 seconds on a 1 GHz CPU and ~4 seconds
  * on a 5 GHz CPU.  Without TSC frequency calibration at this early
  * stage we cannot hit exact seconds, but any dwell is vastly better
- * than the previous "counter decrement with no time base" which
- * finished in milliseconds when ReadKeyStroke returned quickly.
- * Codex S18 post-impl review finding, 2026-04-12. */
+ * than the naive "counter decrement with no time base" which
+ * finishes in milliseconds when ReadKeyStroke returns quickly. */
 static void boot_fatal_dwell(void)
 {
     const UINT64 dwell_ms = 10000;
@@ -1644,8 +1643,7 @@ static void boot_fatal_dwell(void)
      * a tight loop would issue a runtime-services storm for the full
      * 10s dwell.  Throttle calls to ~10/sec via an inner TSC spin
      * (~100ms per outer iteration), keeping wall-clock accuracy
-     * while reducing GetTime invocations by ~5 orders of magnitude.
-     * Codex M2 perf 2026-05-01. */
+     * while reducing GetTime invocations by ~5 orders of magnitude. */
     if (gST && gST->RuntimeServices && gST->RuntimeServices->GetTime) {
         UINT8 tbuf0[20], tbuf[20];
         EFI_STATUS gs = gST->RuntimeServices->GetTime(tbuf0, (void *)0);
@@ -1819,9 +1817,9 @@ static __attribute__((noreturn)) void boot_fatal(UINT32 err_code,
      * before ResetSystem in all branches (pre-EBS, post-EBS, graphical
      * or QR-only, with or without ConIn).  Uses gBS->Stall pre-EBS and
      * a TSC spin post-EBS so the dwell is time-based, not iteration-
-     * based.  Replaces a pre-existing counter-decrement loop that
-     * could finish in milliseconds when ReadKeyStroke returned
-     * EFI_NOT_READY quickly -- Codex post-impl review round 1. */
+     * based.  A naive counter-decrement loop can finish in
+     * milliseconds when ReadKeyStroke returns EFI_NOT_READY
+     * quickly. */
     boot_fatal_dwell();
 
     /* 3. If error_screen_test, skip reboot so the screen stays visible. */
@@ -2192,9 +2190,8 @@ static EFI_STATUS init_gop(void)
             return EFI_SUCCESS;
         }
         /* VRAM clear is owned by the caller (efi_main, after init_gop
-         * returns). The previous duplicate clear here was redundant
-         * (~8 MB MMIO/WC writes at 1080p) -- removed per Codex review
-         * 2026-04-27 perf finding M2. */
+         * returns); a duplicate clear here would cost ~8 MB MMIO/WC
+         * writes at 1080p for no observable benefit. */
     }
 
     /* fb.pitch * 4 overflow check: gFbPitch <= 0xFFFFFFFFu/4 verified above */
@@ -2213,9 +2210,8 @@ static EFI_STATUS init_gop(void)
      * not enumerated into the bounded gop_modes[] table (firmware exposed
      * more than BOOT_GOP_MODE_MAX modes and the negotiator picked an
      * unenumerated one), we fall through to gop_mode_count as a sentinel
-     * meaning "off-table" -- consumers MUST check selected < count.
-     * (Codex consistency review 2026-04-27: prevents OOB read on
-     * gop_modes[selected].) */
+     * meaning "off-table" -- consumers MUST check selected < count to
+     * avoid OOB reads on gop_modes[selected]. */
     {
         UINT32 active_w   = gFbWidth;
         UINT32 active_h   = gFbHeight;
@@ -4412,12 +4408,11 @@ kernel_loaded:
      * Since UEFI is already in 64-bit Long Mode, we must call kernel_main
      * directly, skipping the 32->64 mode transition in entry.asm.
      *
-     * Codex review M1 fix 2026-04-29: bound the section-header walk
-     * against file_size so a malformed signed UKI .linux section
-     * cannot make the bootloader read past the embedded kernel
-     * buffer or divide by zero. The Secure Boot signature only
-     * proves the bytes were not tampered with -- it does NOT prove
-     * the ELF is well-formed. */
+     * Bound the section-header walk against file_size so a malformed
+     * signed UKI .linux section cannot make the bootloader read past
+     * the embedded kernel buffer or divide by zero.  The Secure Boot
+     * signature only proves the bytes were not tampered with -- it
+     * does NOT prove the ELF is well-formed. */
     {
         Elf64_Shdr *shdr = (Elf64_Shdr *)0;
         UINT16 s;
@@ -4651,10 +4646,9 @@ static void mmap_log_resolved(UINT64 at, UINT32 winner_type, UINT32 loser_type)
 
 /* --- Sweep-line normalization (S17) ---------------------------------
  *
- * Codex adversarial round 1 flagged that an iterative pair-resolver
- * with an ad-hoc pass guard could exit before the map stabilized on
- * pathological inputs.  A provably correct O(n^2) sweep-line pass
- * replaces it:
+ * An iterative pair-resolver with an ad-hoc pass guard can exit
+ * before the map stabilizes on pathological inputs.  A provably
+ * correct O(n^2) sweep-line pass:
  *
  *   1. Copy input into a work buffer, build 2n endpoint events.
  *   2. Sort events by (addr, end-before-start) so touching ranges do
@@ -4880,8 +4874,7 @@ static void mmap_normalize(struct boot_mmap_entry *arr, UINT32 *count,
  * high-priority descriptors by evicting a lower-priority already-
  * accepted entry to make room for the incoming one.
  *
- * Eviction policy (Codex S17 post-implementation review rounds 1 and
- * 2, 2026-04-12): cap handling in Phase 1 cannot use the sweep-line
+ * Eviction policy: cap handling in Phase 1 cannot use the sweep-line
  * carver to preserve non-overlapping fragments -- normalization runs
  * on the already-pruned set.  To avoid pathologically discarding a
  * large RAM block for a small non-overlapping high-priority entry,
@@ -5173,9 +5166,9 @@ static void fill_runtime_map(EFI_MEMORY_DESCRIPTOR *mmap,
     /* Scan ALL descriptors -- do NOT stop at idx < BOOT_RT_MMAP_MAX.
      * Stopping early would skip validation on remaining descriptors
      * (later quirks would not set mmap_quirks or produce warnings)
-     * and would silently truncate the runtime view (Codex M3
-     * consistency 2026-05-02).  When the cap is reached, log once,
-     * set mmap_quirks, and keep scanning for validation purposes. */
+     * and would silently truncate the runtime view.  When the cap is
+     * reached, log once, set mmap_quirks, and keep scanning for
+     * validation purposes. */
     for (offset = 0; offset < map_size; offset += desc_size) {
         EFI_MEMORY_DESCRIPTOR *desc =
             (EFI_MEMORY_DESCRIPTOR *)((UINT8 *)mmap + offset);
@@ -6311,10 +6304,9 @@ static int pe_section_name_eq(const UINT8 *sec_name, const char *want)
  * g_uki_* NULL and the caller falls back to the split path. */
 /* Reset all UKI globals to NULL/0. EDK2 DEBUG fills uninitialized BSS
  * with 0xAF; without this, a non-UKI boot can read poison pointers as
- * if a `.linux` section had been found (incident 2026-04-29: smoke
- * test crashed when load_kernel followed the UKI fast path with
- * g_uki_kernel_ptr=0xAFAFAFAFAFAFAFAF). Codex re-adversarial H2 fix
- * 2026-04-29: caller must invoke this UNCONDITIONALLY at entry --
+ * if a `.linux` section had been found, and load_kernel can follow
+ * the UKI fast path with g_uki_kernel_ptr=0xAFAFAFAFAFAFAFAF.  The
+ * caller must invoke this UNCONDITIONALLY at entry --
  * detect_uki_sections() is gated on LoadedImage->DeviceHandle, so a
  * fallback path that lacks DeviceHandle would otherwise leave the
  * statics at the poison pattern. */
@@ -6514,21 +6506,21 @@ static void uki_copy_payloads_to_loader_data(void)
  *       (< 16 MiB) with a WARN.
  *   (c) Required boot files present: BOOTX64.EFI plus one of the three
  *       kernel.exe fallback paths. boot.conf is diagnostic-only because
- *       parse_boot_conf treats missing as "use default config" (per Codex
- *       design review F3 -- making it required would change boot semantics).
+ *       parse_boot_conf treats missing as "use default config";
+ *       making it required would change boot semantics.
  *
- * Codex design review (2026-04-29) drove three decisions:
- *   F1 UKI fast-skip: in UKI mode the disk identity is not load-bearing,
+ * Three structural decisions:
+ *   - UKI fast-skip: in UKI mode the disk identity is not load-bearing,
  *       so all integrity validation is skipped. esp_size_mb is still
  *       populated from the existing BlockIO probe so post-boot tools see
  *       a non-zero size; esp_type_guid_valid stays 0 to indicate "not
  *       checked".
- *   F2 GPT parser bounds: the corruption gate must treat all on-disk
+ *   - GPT parser bounds: the corruption gate must treat all on-disk
  *       fields as hostile. We validate signature, header_size,
  *       NumberOfPartitionEntries, SizeOfPartitionEntry, table-byte
  *       overflow, PartitionEntryLBA range, and partition_number range
  *       BEFORE allocating, reading, or indexing.
- *   F3 boot.conf diagnostic-only: see (c) above.
+ *   - boot.conf diagnostic-only: see (c) above.
  *
  * Failure mode: type-GUID mismatch / corrupt BPB / missing required file
  * all halt via boot_fatal() with a specific error code so the on-screen
@@ -6611,9 +6603,9 @@ static EFI_STATUS esp_find_parent_disk(EFI_HANDLE part_handle,
             nlen = (UINT16)node->Length[0] | ((UINT16)node->Length[1] << 8);
             if (nlen < 4)
                 return EFI_NOT_FOUND;
-            /* Codex F1 fix: require the full node body fits within the
-             * cap BEFORE advancing -- header bound alone is insufficient
-             * for malformed firmware paths. */
+            /* Require the full node body to fit within the cap BEFORE
+             * advancing -- the header bound alone is insufficient for
+             * malformed firmware paths. */
             if (walked + nlen > 4096)
                 return EFI_NOT_FOUND;
             walked += nlen;
@@ -6702,11 +6694,11 @@ static EFI_STATUS esp_read_harddrive_node(EFI_HANDLE part_handle,
         UINT16 nlen = (UINT16)node->Length[0] |
                       ((UINT16)node->Length[1] << 8);
         if (nlen < 4) return EFI_NOT_FOUND;
-        /* Codex F1 fix: require the FULL node body fits within the 4096
-         * sanity cap before reading any payload fields. The earlier
-         * `walked + 4 <= 4096` only proved the header is in range; a
-         * malformed firmware DP with HardDrive nlen >= 42 starting near
-         * the cap would otherwise read past the bounded window. */
+        /* Require the FULL node body to fit within the 4096 sanity cap
+         * before reading any payload fields.  A `walked + 4 <= 4096`
+         * bound only proves the header is in range; a malformed
+         * firmware DP with HardDrive nlen >= 42 starting near the cap
+         * would otherwise read past the bounded window. */
         if (walked + nlen > 4096) return EFI_NOT_FOUND;
         if (node->Type == EFI_DP_TYPE_END &&
             node->SubType == EFI_DP_SUBTYPE_END_ENTIRE)
@@ -6740,10 +6732,10 @@ static EFI_STATUS esp_read_harddrive_node(EFI_HANDLE part_handle,
  * (warn-skip), or calls boot_fatal() and never returns on actual
  * type-GUID mismatch / corrupt header.
  *
- * Per Codex design review (hostile-field treatment): every on-disk
- * field is validated -- signature, header_size, num_entries,
- * entry_size, table byte count, entry LBA range, and partition_number
- * range -- BEFORE allocation, read, or indexing. */
+ * Hostile-field treatment: every on-disk field is validated --
+ * signature, header_size, num_entries, entry_size, table byte count,
+ * entry LBA range, and partition_number range -- BEFORE allocation,
+ * read, or indexing. */
 static EFI_STATUS esp_check_gpt_type_guid(EFI_HANDLE part_handle)
 {
     EFI_GUID bio_guid = EFI_BLOCK_IO_PROTOCOL_GUID;
@@ -6762,14 +6754,14 @@ static EFI_STATUS esp_check_gpt_type_guid(EFI_HANDLE part_handle)
         return EFI_NOT_FOUND;
     }
 
-    /* Codex round-2 F2 fix: the caller already gated on
-     * boot_partition_style == 2 before calling this function, so every
-     * read failure below is on a GPT-CLASSIFIED boot device. Treat
-     * those as fail-closed (boot_fatal) rather than warn-skip -- a
-     * hostile or degraded parent-disk read path must not be allowed to
-     * disable the type-GUID gate. The only legitimate warn-skip
-     * remains in esp_read_harddrive_node when no HD() node exists
-     * (true non-GPT path) and is reachable BEFORE this function. */
+    /* The caller already gated on boot_partition_style == 2 before
+     * calling this function, so every read failure below is on a
+     * GPT-CLASSIFIED boot device.  Treat those as fail-closed
+     * (boot_fatal) rather than warn-skip -- a hostile or degraded
+     * parent-disk read path must not be allowed to disable the
+     * type-GUID gate.  The only legitimate warn-skip remains in
+     * esp_read_harddrive_node when no HD() node exists (true non-GPT
+     * path) and is reachable BEFORE this function. */
     status = esp_find_parent_disk(part_handle, &parent_handle);
     if (EFI_ERROR(status)) {
         boot_fatal(BOOT_ERR_ESP_TYPE_GUID,
@@ -6789,8 +6781,8 @@ static EFI_STATUS esp_check_gpt_type_guid(EFI_HANDLE part_handle)
     }
 
     EFI_BLOCK_IO_MEDIA *pm = parent_bio->Media;
-    /* Codex round-1 F2 fix: require BlockSize covers the full GPT
-     * header footprint (92 bytes per UEFI 2.10) before reading. */
+    /* Require BlockSize covers the full GPT header footprint (92
+     * bytes per UEFI 2.10) before reading. */
     if (!pm->MediaPresent || pm->BlockSize < sizeof(struct esp_gpt_header) ||
         pm->BlockSize > 4096 || pm->LastBlock < 2) {
         boot_fatal(BOOT_ERR_ESP_TYPE_GUID,
@@ -6938,12 +6930,12 @@ static void esp_check_fat_bpb(EFI_BLOCK_IO_PROTOCOL *bio,
     UINT8 lba0[4096];
     EFI_STATUS status;
 
-    /* Codex round-3 fix: BPB check is a fail-closed gate. Geometry
-     * out of range or ReadBlocks failure on LBA 0 of the partition
-     * we are about to load kernel.exe from is a hard error -- not a
-     * skip. Leaving esp_filesystem_type=0 while continuing to
-     * required-files + load_kernel would let a degraded or hostile
-     * BlockIO path bypass the FAT32 policy entirely. */
+    /* BPB check is a fail-closed gate.  Geometry out of range or
+     * ReadBlocks failure on LBA 0 of the partition we are about to
+     * load kernel.exe from is a hard error -- not a skip.  Leaving
+     * esp_filesystem_type=0 while continuing to required-files +
+     * load_kernel would let a degraded or hostile BlockIO path
+     * bypass the FAT32 policy entirely. */
     if (m->BlockSize < 512 || m->BlockSize > sizeof(lba0)) {
         boot_fatal(BOOT_ERR_ESP_BPB,
                    "ESP integrity: BlockSize geometry unusable for BPB",
@@ -7086,13 +7078,13 @@ static void esp_check_required_files(EFI_HANDLE part_handle)
 
     root->Close(root);
 
-    /* Codex round-2 F1 fix: only BOOTX64.EFI is fatal here. kernel.exe
-     * missing on the boot device is NOT fatal because load_kernel() has
-     * an existing fallback (bootx64.c:3443-3500) that searches every
-     * other SimpleFS volume; making this gate fatal would block that
-     * recovery path. UEFI launched us from BOOTX64.EFI, so it MUST be
-     * on this volume -- a missing copy means the volume itself is
-     * corrupt regardless of what load_kernel finds elsewhere. */
+    /* Only BOOTX64.EFI is fatal here.  kernel.exe missing on the boot
+     * device is NOT fatal because load_kernel() has a fallback
+     * (bootx64.c:3443-3500) that searches every other SimpleFS volume;
+     * making this gate fatal would block that recovery path.  UEFI
+     * launched us from BOOTX64.EFI, so it MUST be on this volume -- a
+     * missing copy means the volume itself is corrupt regardless of
+     * what load_kernel finds elsewhere. */
     if (missing_bootx64) {
         boot_fatal(BOOT_ERR_ESP_MISSING_FILES,
                    "BOOTX64.EFI missing from boot volume",
@@ -7123,10 +7115,9 @@ static void esp_integrity_check(EFI_HANDLE part_handle,
     g_boot_info_ptr->esp_filesystem_type = 0;
     g_boot_info_ptr->esp_type_guid_valid = 0;
 
-    /* UKI fast-skip per Codex design review: in UKI mode the disk is
-     * not load-bearing for kernel.exe / boot.conf, and a valid signed
-     * UKI launched from PXE / RAM-disk / non-GPT media must not fail
-     * this gate. */
+    /* UKI fast-skip: in UKI mode the disk is not load-bearing for
+     * kernel.exe / boot.conf, and a valid signed UKI launched from
+     * PXE / RAM-disk / non-GPT media must not fail this gate. */
     if (g_uki_kernel_ptr && g_uki_kernel_size > 0) {
         serial_early_print("[BOOT] ESP integrity: skipped (UKI mode -- "
                            "trust anchor is signed PE image)\n");
@@ -7292,12 +7283,12 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                                          (VOID **)&loaded_image);
         if (!EFI_ERROR(li_status) && loaded_image) {
             /* DeviceHandle is OPTIONAL on the LoadedImage; UKI
-             * detection is independent. Codex review H1 fix
-             * 2026-04-29: previously gating UKI detection on
-             * DeviceHandle let a UKI invocation with NULL DeviceHandle
-             * silently degrade to split-path boot without setting
-             * BOOT_FLAG_INVOKED_VIA_UKI -- breaking the whole-chain
-             * Secure Boot guarantee on degraded LoadedImage paths. */
+             * detection is independent.  Gating UKI detection on
+             * DeviceHandle would let a UKI invocation with NULL
+             * DeviceHandle silently degrade to split-path boot
+             * without setting BOOT_FLAG_INVOKED_VIA_UKI -- breaking
+             * the whole-chain Secure Boot guarantee on degraded
+             * LoadedImage paths. */
             if (loaded_image->DeviceHandle) {
                 g_boot_device_handle = loaded_image->DeviceHandle;
                 serial_early_print("[BOOT] Boot device: handle=0x");
@@ -8117,21 +8108,20 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
             serial_early_print_hex16((UINT16)((UINTN)ebs_status >> 16));
             serial_early_print_hex16((UINT16)(UINTN)ebs_status);
             serial_early_print("\n");
-            /* Codex review-todo-section 2026-05-01 M1 fix: skip the
-             * memory-map refresh on the FINAL iteration. The for-loop
-             * exits after attempt N=EBS_MAX_ATTEMPTS, so a refresh
-             * after the last failed EBS does no useful work and, if
-             * it fails, masks the real BOOT_ERR_EXIT_BS_FAIL with a
-             * misleading BOOT_ERR_EBS_MMAP_FAIL. Preserve ebs_status
-             * for the exhaustion-fatal path below.
+            /* Skip the memory-map refresh on the FINAL iteration.
+             * The for-loop exits after attempt N=EBS_MAX_ATTEMPTS, so
+             * a refresh after the last failed EBS does no useful work
+             * and, if it fails, masks the real BOOT_ERR_EXIT_BS_FAIL
+             * with a misleading BOOT_ERR_EBS_MMAP_FAIL.  Preserve
+             * ebs_status for the exhaustion-fatal path below.
              *
-             * Codex perf M1 fix 2026-05-01: free the prior mmap pool
-             * before allocating the next one. get_memory_map() calls
-             * gBS->AllocatePool, so each retry without a free would
-             * leak the previous mmap buffer. Bounded to 4 ~16 KB
-             * buffers max (~64 KB worst case) but unclean -- free
-             * explicitly so post-EBS firmware accounting matches
-             * the kernel's PMM reservation table. */
+             * Free the prior mmap pool before allocating the next
+             * one.  get_memory_map() calls gBS->AllocatePool, so
+             * each retry without a free would leak the previous mmap
+             * buffer.  Bounded to 4 ~16 KB buffers max (~64 KB worst
+             * case) but unclean -- free explicitly so post-EBS
+             * firmware accounting matches the kernel's PMM
+             * reservation table. */
             if (ebs_attempt + 1 < EBS_MAX_ATTEMPTS) {
                 if (mmap)
                     gBS->FreePool(mmap);
@@ -8143,8 +8133,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                                "Memory map refresh failed during ExitBootServices retry.");
                 }
                 /* Re-apply geometry guard on the refreshed map --
-                 * the initial guard does NOT carry over (Codex M2
-                 * adversarial 2026-05-02). */
+                 * the initial guard does NOT carry over. */
                 mmap_geometry_validate(map_size, desc_size,
                                         "EBS-retry GetMemoryMap");
                 fill_memory_map(mmap, map_size, desc_size);
