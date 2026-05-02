@@ -230,7 +230,7 @@ static int u_is_test_binary(const char *name)
  * separators, drive-letter colons, or upwards traversal components.
  * The glob-discovery path is already implicitly safe because vfs_readdir
  * returns one directory entry at a time, but the manifest path has no
- * such guard. (Codex adversarial review M1, 2026-04-20.) */
+ * such guard. */
 static int u_is_valid_manifest_name(const char *name)
 {
     const char *p;
@@ -658,12 +658,12 @@ static int u_isolation_reap(const char *test_name)
  * the `C:\...` and `HKLM\...` lines -- a `..` there is either an
  * attacker or a typo; either way reject.
  *
- * Codex adversarial review H3 (2026-04-20): before this guard the raw
- * prefix check authorized `C:\Impossible\..\hello.txt` because the VFS
- * walker resolves real `..` entries in IXFS directories, so the delete
- * escapes outside the allowed subtree. The prefix match alone is not
- * a containment primitive; we have to ban the characters that let the
- * walker leave the subtree. */
+ * Without this guard the raw prefix check authorizes
+ * `C:\Impossible\..\hello.txt` because the VFS walker resolves real
+ * `..` entries in IXFS directories, so the delete escapes outside the
+ * allowed subtree. The prefix match alone is not a containment
+ * primitive; we have to ban the characters that let the walker leave
+ * the subtree. */
 static int u_path_has_traversal(const char *p)
 {
     int at_component_start = 1;
@@ -781,12 +781,11 @@ static void u_cleanup_manifest_apply(void)
                    line_start[2] == 'L' && line_start[3] == 'M' &&
                    line_start[4] == '\\') {
             const char *sub = line_start + 5;
-            /* Guard: reject empty suffix (`HKLM\\` alone) -- Codex H2,
-             * 2026-04-20: RegDeleteTree with an empty lpSubKey wipes
-             * every child of HKEY_LOCAL_MACHINE, i.e. the whole
-             * registry, which is catastrophic even under test=1.
-             * Also restrict to the ImpossibleOS test subtree to bound
-             * the blast radius. */
+            /* Guard: reject empty suffix (`HKLM\\` alone).  RegDeleteTree
+             * with an empty lpSubKey wipes every child of
+             * HKEY_LOCAL_MACHINE, i.e. the whole registry, which is
+             * catastrophic even under test=1.  Also restrict to the
+             * ImpossibleOS test subtree to bound the blast radius. */
             if (sub[0] == '\0') {
                 klog(LOG_WARN, "UTEST",
                      "cleanup manifest: rejecting bare 'HKLM\\' (would wipe root) -- '%s'",
@@ -887,11 +886,11 @@ static int u_manifest_load(struct manifest_state *ms)
 
     size = f->size;
     /* Cap at ARENA - 1 to guarantee room for a sentinel NUL at
-     * arena[size]. Otherwise a file of exactly ARENA bytes whose last
+     * arena[size].  Otherwise a file of exactly ARENA bytes whose last
      * line lacks a trailing newline lets the in-place tokenizer's
      * `*line_end = '\0'` write at arena[size], which is past the end
-     * of the allocation. Codex adversarial review H1, 2026-04-20:
-     * kernel-heap OOB write triggered by a user-provided file. */
+     * of the allocation -- a kernel-heap OOB write triggered by a
+     * user-provided file. */
     if (size == 0 || size >= UTEST_MANIFEST_ARENA_BYTES) {
         vfs_close(f);
         if (size >= UTEST_MANIFEST_ARENA_BYTES)
@@ -1022,7 +1021,7 @@ static int u_manifest_load(struct manifest_state *ms)
                 }
                 /* Enforce the manifest trust boundary on the bare
                  * name: test_*.exe, no path separators, no `..`,
-                 * no control bytes. (Codex M1, 2026-04-20.) */
+                 * no control bytes. */
                 if (!u_is_valid_manifest_name(name_start)) {
                     klog(LOG_WARN, "UTEST",
                          "manifest: rejecting invalid entry '%s'",
@@ -1061,8 +1060,7 @@ static void u_manifest_free(struct manifest_state *ms)
  *
  * Failure paths use task_exit(STATUS) -- a plain `return` from a kernel
  * task only sets TASK_DEAD but never wakes the parent's polling
- * watchdog (Codex H1, 2026-04-20). task_exit is the canonical wakeup
- * path. Status codes:
+ * watchdog.  task_exit is the canonical wakeup path.  Status codes:
  *   -1: NULL pending path (launcher bug)
  *   -2: vfs_open failed
  *   -3: pmm_alloc_contiguous failed
@@ -1654,11 +1652,10 @@ static void u_run_one(const char *name, utest_type_t type,
      * launcher does NOT loop spawning per-iteration because task
      * slots in the kernel are monotonic (`num_tasks++` in task_create
      * with no reuse in task_cleanup); a 100-iteration launcher loop
-     * would exhaust TASK_MAX (32) after ~20 binaries. The
+     * would exhaust TASK_MAX (32) after ~20 binaries.  The
      * s_stress_iters boot.conf knob is RESERVED for a future
      * env-passing syscall that lets stress binaries query the desired
-     * iteration count at runtime. Codex adversarial review critical,
-     * 2026-04-20. */
+     * iteration count at runtime. */
     u_spawn_one(name_copy, path, &pid, &exit_status,
                 &timed_out, &leaked, have_stem);
 
@@ -1705,9 +1702,8 @@ static void u_run_one(const char *name, utest_type_t type,
      * status. Escalations for leaked handles and isolation failures
      * apply BELOW; the single [UTEST]/TAP/XML/JSON emit happens at the
      * bottom so external consumers never see a contradictory "ok N
-     * ... not ok N" pair for the same test_num. Codex adversarial
-     * Phase-2, 2026-04-20: a PASS log emitted here was immediately
-     * flipped to FAIL when the leak check fired, producing two
+     * ... not ok N" pair for the same test_num.  Emitting a PASS log
+     * before the leak check fires lets a subsequent FAIL produce two
      * lines for the same run. */
     if (exit_status == 0) {
         counters[0]++;  /* passed (may be rolled back by escalations) */
@@ -1812,9 +1808,9 @@ static void u_run_one(const char *name, utest_type_t type,
     /* Single verdict emit: exactly one [UTEST] line and (when TAP is
      * on) one TAP line per binary. All escalations have applied above,
      * so `*out_verdict`, `reason`, and `leaked`/`isolation_failed` are
-     * their final values. Codex adversarial Phase-2 2026-04-20:
-     * emitting inside the raw exit-status branches produced a PASS
-     * followed by a FAIL (escalation) for the same test_num. */
+     * their final values.  Emitting inside the raw exit-status branches
+     * produces a PASS followed by a FAIL (escalation) for the same
+     * test_num. */
     if (*out_verdict == 0) {
         klog(LOG_INFO, "UTEST", "%s: PASS (exit=0)", name_copy);
         if (s_tap_mode)
@@ -1905,12 +1901,11 @@ static const char *u_glob_next(struct glob_state *gs,
             continue;
         /* Apply the SAME validator used for manifest entries: both
          * must reject path separators, control bytes, and `..`
-         * components. Without the stricter gate, a directory entry
+         * components.  Without the stricter gate, a directory entry
          * like `test_bad\nline.exe` would pass `u_is_test_binary`
          * (prefix+suffix only) and split a subsequent [UTEST-XML]
          * testcase record across physical log lines, corrupting the
-         * post-processed JUnit XML. Codex adversarial 2026-04-20
-         * quality M2. */
+         * post-processed JUnit XML. */
         if (!u_is_valid_manifest_name(de->name))
             continue;
         /* Snapshot the name -- de->name is shared dirent storage. */

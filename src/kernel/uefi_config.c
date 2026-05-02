@@ -366,9 +366,9 @@ void mat_init(void)
         return;
     }
 
-    /* Fail closed on malformed firmware metadata (Codex H1 hardening).
-     * Either bound also prevents the count*desc_sz multiply below from
-     * approaching uint64 overflow on hostile input. */
+    /* Fail closed on malformed firmware metadata.  Either bound also
+     * prevents the count*desc_sz multiply below from approaching uint64
+     * overflow on hostile input. */
     if (desc_sz > MAT_MAX_DESC_SIZE) {
         klog(LOG_WARN, "UEFI",
              "MAT: descriptor_size=%u exceeds sanity cap %u -- table rejected",
@@ -473,11 +473,10 @@ void mat_init(void)
         uint64_t pages = d->number_of_pages;
         uint64_t pstart = d->physical_start;
 
-        /* Per-descriptor range validation (Codex H1 R4 hardening).
-         * Reject entries where pages*4096 wraps uint64 or where
-         * pstart + bytes wraps. A consumer using these to compute
-         * an end address would either underprotect a wrapped range
-         * or panic on a bogus address. */
+        /* Per-descriptor range validation.  Reject entries where
+         * pages*4096 wraps uint64 or where pstart + bytes wraps. A
+         * consumer using these to compute an end address would either
+         * underprotect a wrapped range or panic on a bogus address. */
         if (pages > MAT_MAX_PAGES_PER_DESC) {
             klog(LOG_WARN, "UEFI",
                  "MAT[%u]: number_of_pages=%lu wraps byte size -- table rejected",

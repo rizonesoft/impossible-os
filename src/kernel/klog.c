@@ -84,14 +84,14 @@ static uint32_t vformat_buf(char *buf, uint32_t bufsize, const char *fmt,
     uint32_t pos = 0;
     int truncated = 0;
 
-    /* Codex M3 fix (2026-04-28 review of Serial Log Standardization
-     * section): the BUF_PUT macro silently dropped chars once pos
-     * reached bufsize-1 (reserved for NUL). A long %s that overflowed
-     * the message buffer left the message silently short -- the live
-     * klog() line-level truncation marker doesn't fire because the
-     * already-truncated message fits within the line buffer's
-     * remaining space. Track the silent-drop case and append '~' as
-     * the final byte before NUL when truncation actually happened. */
+    /* Truncation-marker contract: the BUF_PUT macro silently drops
+     * chars once pos reaches bufsize-1 (reserved for NUL); a long %s
+     * that overflows the message buffer would otherwise leave the
+     * message silently short because the live klog() line-level
+     * truncation marker does not fire when the already-truncated
+     * message fits within the line buffer's remaining space.  Track
+     * the silent-drop case and append '~' as the final byte before
+     * NUL when truncation actually happened. */
     #define BUF_PUT(c) do { \
         if (pos < bufsize - 1) buf[pos++] = (c); \
         else truncated = 1; \
@@ -854,17 +854,13 @@ void klog_set_screen_level(log_level_t min_level)
 
 const klog_entry_t *klog_get_ring(uint32_t *out_count, uint32_t *out_head)
 {
-    /* Codex M2 fix (2026-04-28 review of Serial Log Standardization
-     * section): take s_klog_lock around the head/count read so the
-     * caller sees a consistent (count, head) pair. The previous
-     * unlocked read could observe count advanced but head still at
-     * the old value (or vice versa) when a concurrent klog() append
-     * raced with this read. test_klog.c relies on the before/after
-     * head check; without the lock the test could observe a stale
-     * value and assert against the wrong entry. The returned ring
-     * pointer is still the live array (caller reads at their own
-     * race risk for entry contents); a fully snapshot-safe API
-     * would need to copy entries into caller storage, deferred
+    /* Take s_klog_lock around the head/count read so the caller sees
+     * a consistent (count, head) pair.  An unlocked read can observe
+     * count advanced but head still at the old value (or vice versa)
+     * when a concurrent klog() append races with this read.  The
+     * returned ring pointer is still the live array (caller reads at
+     * their own race risk for entry contents); a fully snapshot-safe
+     * API would need to copy entries into caller storage, deferred
      * because no production caller currently iterates entries
      * concurrently with logging. */
     unsigned long flags;
@@ -970,16 +966,15 @@ void klog(log_level_t level, const char *subsystem, const char *fmt, ...)
         uint32_t pos = 0;
         int line_truncated = 0;
 
-        /* Codex M3 fix (2026-04-28 review of Serial Log Standardization
-         * section): reserve TAIL_RESERVE bytes at the end of `line` for
-         * ANSI_RESET + truncation marker + '\n' + '\0'. The earlier
-         * formatter let LS() consume right up to sizeof(line)-1, so a
-         * long subsystem/message could fill the buffer before the
-         * trailing ANSI_RESET was appended -- the terminal then stayed
-         * in the warning/error/test color for subsequent output. With
-         * the reserve, ANSI_RESET always fits in the unconditional
-         * trailer below. ANSI_RESET = "\x1b[0m" is 4 chars; reserve 16
-         * to give headroom for any future suffix additions. */
+        /* Reserve TAIL_RESERVE bytes at the end of `line` for
+         * ANSI_RESET + truncation marker + '\n' + '\0'.  Letting LS()
+         * consume right up to sizeof(line)-1 lets a long subsystem
+         * /message fill the buffer before the trailing ANSI_RESET is
+         * appended, leaving the terminal in the warning/error/test
+         * color for subsequent output.  With the reserve, ANSI_RESET
+         * always fits in the unconditional trailer below.  ANSI_RESET
+         * = "\x1b[0m" is 4 chars; reserve 16 for any future suffix
+         * additions. */
         #define KLOG_LINE_TAIL_RESERVE 16U
         #define KLOG_LINE_USABLE (sizeof(line) - 1U - KLOG_LINE_TAIL_RESERVE)
 
@@ -1089,10 +1084,10 @@ void klog(log_level_t level, const char *subsystem, const char *fmt, ...)
                 if (level_full_line[level]) LS(ANSI_RESET);
             }
         }
-        /* Codex M3 fix: emit ANSI_RESET unconditionally (the reserved
-         * tail bytes guarantee it fits even when the main format
-         * truncated). This stops the terminal from staying in color
-         * after a long-line truncation. */
+        /* Emit ANSI_RESET unconditionally (the reserved tail bytes
+         * guarantee it fits even when the main format truncated).
+         * This stops the terminal from staying in color after a
+         * long-line truncation. */
         {
             const char *reset = ANSI_RESET;
             while (*reset && pos < sizeof(line) - 4)

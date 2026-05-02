@@ -70,11 +70,11 @@ static uint32_t       s_table_size;
 /* ---- String helper ---- */
 
 /* SMBIOS spec wire-format entry-point lengths (DMTF DSP0134 3.7.0).
- * Codex design review 2026-04-27 M1: must NOT use sizeof(struct
- * smbios{2,3}_entry) as the upper bound -- the local C structs are
- * unpacked and natural padding can stretch sizeof beyond the wire
- * length, letting a hostile firmware ep->length pass a sizeof-based
- * cap and let the checksum loop read one byte past the spec record. */
+ * Do NOT use sizeof(struct smbios{2,3}_entry) as the upper bound --
+ * the local C structs are unpacked and natural padding can stretch
+ * sizeof beyond the wire length, letting a hostile firmware ep->length
+ * pass a sizeof-based cap and let the checksum loop read one byte past
+ * the spec record. */
 #define SMBIOS3_EP_LEN          0x18  /* 24 bytes; spec rev 3.x */
 #define SMBIOS2_EP_LEN_MIN      0x1E  /* 30 bytes; spec rev 2.1 */
 #define SMBIOS2_EP_LEN_MAX      0x1F  /* 31 bytes; spec rev 2.4+ */
@@ -114,11 +114,11 @@ static void str_copy(char *dst, const char *src, uint32_t max)
 
 /* Bounded SMBIOS string copy: like str_copy but never reads past s_table_end
  * even if the firmware-supplied table omits the terminating NUL inside the
- * advertised max_len. Codex adversarial review 2026-04-27 H2: the previous
- * smbios_get_string + str_copy pair lost the s_table_end bound at the copy
- * site -- a truncated table whose last string lacks a NUL inside max_len
- * would let str_copy walk past s_table_end into unmapped memory. This
- * helper preserves the bound end-to-end. Output is always NUL-terminated. */
+ * advertised max_len.  A naive smbios_get_string + str_copy pair loses the
+ * s_table_end bound at the copy site -- a truncated table whose last string
+ * lacks a NUL inside max_len would let str_copy walk past s_table_end into
+ * unmapped memory.  This helper preserves the bound end-to-end.  Output is
+ * always NUL-terminated. */
 static void smbios_copy_string(char *dst, uint32_t max,
                                const struct smbios_header *hdr,
                                uint8_t index)
@@ -291,15 +291,13 @@ static void parse_type17(const struct smbios_header *hdr)
 
 /* Returns 1 on a successful walk, 0 if the firmware-supplied bounds were
  * rejected (max_len==0, table_addr==0, or table_addr+max_len overflow).
- * Codex re-adversarial review 2026-04-27 M2: caller must gate
- * s_info.valid on this return so a rejected table cannot pose as
- * successfully parsed. */
+ * Caller must gate s_info.valid on this return so a rejected table
+ * cannot pose as successfully parsed. */
 static int walk_structures(uintptr_t table_addr, uint32_t max_len)
 {
-    /* Codex adversarial review 2026-04-27 M3: pointer arithmetic on
-     * firmware-supplied table_addr + max_len can wrap UINTPTR_MAX. Reject
-     * (rather than silently cap) so a malformed entry never marks
-     * s_info.valid = 1 with a partial parse. */
+    /* Pointer arithmetic on firmware-supplied table_addr + max_len can
+     * wrap UINTPTR_MAX.  Reject (rather than silently cap) so a malformed
+     * entry never marks s_info.valid = 1 with a partial parse. */
     if (max_len == 0 || table_addr == 0)
         return 0;
     uintptr_t end_addr;
@@ -391,11 +389,11 @@ void smbios_init(void)
             klog(LOG_WARN, "SMBIOS", "3.x anchor mismatch -- skipping");
             ep_addr = 0;  /* fall through to 2.x */
         }
-        /* Validate entry-point length BEFORE checksum (Codex review
-         * 2026-04-27 H1): firmware-supplied ep->length must be the spec
-         * wire-format size. ep->length=0 would make checksum sum 0 bytes
-         * and return "valid"; oversized would make checksum read past the
-         * entry struct. Spec: SMBIOS 3.x entry-point length is 0x18. */
+        /* Validate entry-point length BEFORE checksum: firmware-supplied
+         * ep->length must be the spec wire-format size. ep->length=0
+         * would make checksum sum 0 bytes and return "valid"; oversized
+         * would make checksum read past the entry struct. Spec: SMBIOS
+         * 3.x entry-point length is 0x18. */
         else if (ep->length != SMBIOS3_EP_LEN) {
             klog(LOG_WARN, "SMBIOS",
                  "3.x entry length %u not %u -- rejecting",
@@ -438,9 +436,9 @@ void smbios_init(void)
                 klog(LOG_WARN, "SMBIOS", "2.x anchor mismatch -- skipping");
                 ep_addr = 0;
             }
-            /* Validate entry-point length BEFORE checksum (Codex review
-             * 2026-04-27 H1). Spec: SMBIOS 2.1 length 0x1E, SMBIOS 2.4+
-             * length 0x1F. Reject anything outside [0x1E, 0x1F]. */
+            /* Validate entry-point length BEFORE checksum.  Spec:
+             * SMBIOS 2.1 length 0x1E, SMBIOS 2.4+ length 0x1F.  Reject
+             * anything outside [0x1E, 0x1F]. */
             else if (ep->length < SMBIOS2_EP_LEN_MIN ||
                      ep->length > SMBIOS2_EP_LEN_MAX) {
                 klog(LOG_WARN, "SMBIOS",
@@ -661,19 +659,20 @@ void smbios_populate_registry(void)
 }
 
 
-/* Codex design review F2 (2026-04-29): the public accessor returns the
- * firmware-mapped pointer + length captured at smbios_init(); callers
- * MUST memcpy into their own buffer before exposing to user-mode. The
- * pointer never crosses the syscall boundary. Returns 0 (not 1) when
- * SMBIOS was unparsed or the bounds are zero so the Win32
- * GetSystemFirmwareTable path can return STATUS_NOT_FOUND cleanly. */
-/* Codex adversarial F2 fix (2026-04-29): cap the raw-table size at
- * 16 MiB to mirror the 16 MiB ACPI SDT cap. SMBIOS 3.x allows a 32-bit
- * size field; firmware reporting a huge value would let
- * NtQuerySystemInformation(RSMB) compute a wrap-prone hdr_size +
- * raw_size and hand a near-zero capacity check to a multi-gigabyte
- * memcpy. This cap rejects malformed firmware before it can drive
- * downstream wraparound. Real SMBIOS tables are well under 64 KiB. */
+/* The public accessor returns the firmware-mapped pointer + length
+ * captured at smbios_init(); callers MUST memcpy into their own buffer
+ * before exposing to user-mode.  The pointer never crosses the syscall
+ * boundary.  Returns 0 (not 1) when SMBIOS was unparsed or the bounds
+ * are zero so the Win32 GetSystemFirmwareTable path can return
+ * STATUS_NOT_FOUND cleanly.
+ *
+ * Cap the raw-table size at 16 MiB to mirror the 16 MiB ACPI SDT cap.
+ * SMBIOS 3.x allows a 32-bit size field; firmware reporting a huge value
+ * would let NtQuerySystemInformation(RSMB) compute a wrap-prone
+ * hdr_size + raw_size and hand a near-zero capacity check to a
+ * multi-gigabyte memcpy.  This cap rejects malformed firmware before it
+ * can drive downstream wraparound.  Real SMBIOS tables are well under
+ * 64 KiB. */
 #define SMBIOS_RAW_TABLE_MAX (16U * 1024U * 1024U)
 
 int smbios_get_raw_table(const uint8_t **out_addr, uint32_t *out_size)

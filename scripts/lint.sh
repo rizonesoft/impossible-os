@@ -870,11 +870,6 @@ elif [ "$#" -eq 0 ]; then
     # entries as files are scrubbed clean.
     CITATION_LEGACY_FILES=(
         src/boot/uefi/bootx64.c
-        src/kernel/klog.c
-        src/kernel/smbios.c
-        src/kernel/test/input_record.c
-        src/kernel/test/test_usermode.c
-        src/kernel/uefi_config.c
         src/kernel/uefi_runtime.c
     )
 

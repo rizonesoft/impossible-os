@@ -28,14 +28,14 @@ static int            s_active = 0;     /* 1 between begin() and stop() */
  * terminal commits from compositor, test IME injections from Phase 3
  * tests). All reads/writes of the session state above go through this
  * lock with spin_lock_irqsave so IRQ context cannot race a test-thread
- * begin/release. Codex [H] adversarial review of. */
+ * begin/release. */
 static spinlock_t     s_rec_lock = SPINLOCK_INIT;
 
 /* Malformed-trace safety ceiling: reject replay-time inter-event
  * deltas above this to stop a bad JSONL from wedging the test phase
  * in a busy-spin loop. 10 seconds is larger than any real recorded
  * trace but small enough that a wedge fails fast rather than burning
- * CPU indefinitely. Codex [M] adversarial review. */
+ * CPU indefinitely. */
 #define INPUT_REPLAY_MAX_DELTA_NS (10ULL * 1000ULL * 1000ULL * 1000ULL)
 
 /* ---- Tiny string helpers (freestanding) ------------------------------- */
@@ -108,10 +108,10 @@ static int sr_append_hex8(char *dest, int cap, int *pos, uint8_t v)
 
 /* Parse a uint64 starting at `*pos`; advance `*pos` past the digits.
  * Returns 0 on success, -1 if no digits found OR if accumulated value
- * would overflow uint64. Codex [H] adversarial review of: the
- * prior unchecked `v * 10 + digit` silently wrapped on 20+ digit
- * input, so later range checks on the result were defeated (a
- * 0xFFFFFFFFFFFFFFFF + 1 wrap could pass an `x <= 0xFF` check). */
+ * would overflow uint64.  Unchecked `v * 10 + digit` silently wraps
+ * on 20+ digit input, so later range checks on the result are
+ * defeated (a 0xFFFFFFFFFFFFFFFF + 1 wrap can pass an `x <= 0xFF`
+ * check). */
 static int sr_parse_u64(const char *src, int len, int *pos, uint64_t *out)
 {
     const uint64_t MAX = ~(uint64_t)0;
@@ -663,8 +663,7 @@ int input_replay_from_jsonl(const char *jsonl, int jsonl_len,
         /* Non-monotonic timestamps indicate a corrupt trace; replay
          * would unsigned-underflow in (evt.ts_ns - base_ts) and the
          * busy-wait would spin for the rest of the uint64 range
-         * (~584 years) before producing a single event. Reject
-         * instead. Codex [M] adversarial review of. */
+         * (~584 years) before producing a single event.  Reject. */
         if (have_base && evt.ts_ns < prev_ts) return -1;
         prev_ts = evt.ts_ns;
 
