@@ -1615,14 +1615,16 @@ static int bsod_can_render_graphical(void)
  * read it and scan the QR code before boot_fatal() calls ResetSystem.
  *
  * Pre-EBS path: uses gBS->Stall() for accurate 10-second wall-clock
- * dwell with 50 ms keypress polling for early exit.
+ * dwell with 50 ms keypress polling for early exit.  ConIn->Reset
+ * runs once before polling to flush any stale buffered keystrokes
+ * that would otherwise skip the dwell immediately.
  *
- * Post-EBS path: Boot Services are gone, so use a TSC spin loop.
- * 2 x 10^10 TSC ticks gives ~20 seconds on a 1 GHz CPU and ~4 seconds
- * on a 5 GHz CPU.  Without TSC frequency calibration at this early
- * stage we cannot hit exact seconds, but any dwell is vastly better
- * than the naive "counter decrement with no time base" which
- * finishes in milliseconds when ReadKeyStroke returns quickly. */
+ * Post-EBS path: RuntimeServices->GetTime is the wall-clock primary
+ * (survives ExitBootServices).  TSC is the inner throttle so each
+ * outer iteration calls GetTime at most ~10 times per second --
+ * GetTime is firmware/SMM-backed and a tight loop would issue a
+ * runtime-services storm.  TSC-only fallback applies when GetTime
+ * is unavailable or returns EFI_ERROR. */
 static void boot_fatal_dwell(void)
 {
     const UINT64 dwell_ms = 10000;
