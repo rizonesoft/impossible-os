@@ -118,6 +118,25 @@ static int s_rt_prop_mismatches;             /* count of supported-bit vs pointe
 
 /* ---- Internal helpers ---- */
 
+/* Per-offset header_size validation: confirm that an RT services field
+ * at the given byte offset (with the given byte size) is fully covered
+ * by the header_size value the firmware advertised.  The full-table
+ * gate `header_size >= sizeof(struct efi_runtime_services)` runs later
+ * in uefi_runtime_init for the 14 named services; this helper covers
+ * the earlier SVAM call + 5-pointer NULL-check init that walks the
+ * table before that gate fires.  A truncated firmware table that
+ * undersized header_size would otherwise overread past the firmware-
+ * provided bytes into kernel-allocated memory.  Returns 1 iff the
+ * offset+size span is fully within header_size. */
+static int rt_field_within_header(uint32_t field_offset, uint32_t field_size)
+{
+    if (!s_rt) return 0;
+    uint32_t hdr_size = s_rt->hdr.header_size;
+    if (hdr_size < sizeof(struct efi_table_header)) return 0;
+    uint64_t end = (uint64_t)field_offset + (uint64_t)field_size;
+    return end <= (uint64_t)hdr_size;
+}
+
 /* Build virtual address map with identity mapping (virt = phys) and call
  * SetVirtualAddressMap().  Can only be called ONCE -- irreversible.
  * Returns 0 on success, -1 on failure. */
@@ -169,6 +188,25 @@ static int call_set_virtual_address_map(void)
 
     klog(LOG_INFO, "UEFI", "SetVirtualAddressMap: %u runtime regions, "
          "desc_size=%u, desc_ver=%u", count, desc_size, desc_version);
+
+    /* Per-offset header_size validation BEFORE the function-pointer
+     * read: a truncated firmware table that under-reports header_size
+     * would otherwise overread past firmware-provided bytes into
+     * kernel-allocated memory when reading set_virtual_address_map.
+     * The full-table gate in uefi_runtime_init catches the simpler
+     * "header_size < sizeof(struct efi_runtime_services)" case for
+     * the 14 named services; this gate covers the earlier SVAM call
+     * which runs before that check. */
+    if (!rt_field_within_header(
+            (uint32_t)__builtin_offsetof(struct efi_runtime_services,
+                                         set_virtual_address_map),
+            (uint32_t)sizeof(s_rt->set_virtual_address_map))) {
+        klog(LOG_ERROR, "UEFI",
+             "SetVirtualAddressMap: header_size=%u truncates the SVAM pointer "
+             "offset; degrading RT services",
+             (uint32_t)s_rt->hdr.header_size);
+        return -1;
+    }
 
     /* Per-service NULL validation happens AFTER SVAM in
      * uefi_runtime_init; the SVAM function pointer itself must be
@@ -310,8 +348,16 @@ static void read_rt_properties(void)
     /* Validate the EFI_RT_PROPERTIES_TABLE extent against the firmware
      * memory map BEFORE dereferencing any field, mirroring the MAT
      * pre-deref guard. A bogus VendorTable pointer would otherwise
-     * fault or poison s_supported with bytes from unrelated memory. */
-    if (!firmware_table_mmap_contains((uintptr_t)table_addr,
+     * fault or poison s_supported with bytes from unrelated memory.
+     *
+     * Use the pre-reclaim variant: this code runs in Phase 0 BEFORE
+     * pmm_init reclaims BootServices memory to the free-page pool, so
+     * a firmware-published RT properties table residing in
+     * BootServicesData must still be honoured. The standard
+     * firmware_table_mmap_contains() (Phase-1+ catalog/validator
+     * callers) rejects BootServices because by then PMM has reclaimed
+     * those pages. */
+    if (!firmware_table_mmap_contains_pre_reclaim((uintptr_t)table_addr,
             sizeof(struct uefi_rt_properties_table))) {
         klog(LOG_WARN, "UEFI",
              "RT properties: header at 0x%lx not in firmware mmap -- "
@@ -408,6 +454,26 @@ boot_result_t uefi_runtime_init(void)
         return BOOT_DEGRADED;
     }
 
+    /* Validate the RT table extent against the firmware mmap BEFORE
+     * reading hdr.signature / hdr.crc32 / per-field pointers.  A
+     * malformed handoff that left s_rt pointing at non-firmware memory
+     * would otherwise overread during the signature check + CRC32
+     * computation that walks up to header_size bytes.  Use the
+     * pre-reclaim oracle (this runs in Phase 0 before pmm_init).
+     * sizeof(efi_table_header) is the minimum extent we need to read
+     * to obtain hdr.header_size; once we have header_size we re-check
+     * the full extent below before CRC32. */
+    if (!firmware_table_mmap_contains_pre_reclaim(
+            (uintptr_t)s_rt, sizeof(struct efi_table_header))) {
+        klog(LOG_ERROR, "UEFI",
+             "Runtime services pointer 0x%lx not in firmware mmap -- "
+             "degrading", (uint64_t)(uintptr_t)s_rt);
+        s_rt = (struct efi_runtime_services *)0;
+        rt_advertise_unavailable();
+        s_init_done = 1;
+        return BOOT_DEGRADED;
+    }
+
     /* Validate RT table signature (UEFI Spec §4.5: "RUNTSERV") */
     if (s_rt->hdr.signature != EFI_RUNTIME_SERVICES_SIGNATURE) {
         klog(LOG_ERROR, "UEFI", "RT table signature mismatch: 0x%llx",
@@ -418,12 +484,27 @@ boot_result_t uefi_runtime_init(void)
         return BOOT_DEGRADED;
     }
 
-    /* Validate CRC32 (zero the field, compute, compare, restore) */
+    /* Validate CRC32 (zero the field, compute, compare, restore).
+     * Validate the full [s_rt, s_rt+hdr_size) extent against the
+     * pre-reclaim mmap oracle before CRC32 walks it -- a firmware
+     * that lies about header_size could otherwise drag CRC32 across
+     * unrelated memory.  Worst-case header_size is clamped to 4096
+     * before validation so a 4-GiB lie cannot exhaust the oracle. */
     {
         uint32_t saved_crc = s_rt->hdr.crc32;
         uint32_t hdr_size = s_rt->hdr.header_size;
         if (hdr_size == 0 || hdr_size > 4096)
             hdr_size = sizeof(struct efi_table_header);
+        if (!firmware_table_mmap_contains_pre_reclaim(
+                (uintptr_t)s_rt, hdr_size)) {
+            klog(LOG_WARN, "UEFI",
+                 "RT table header_size=%u extent not in firmware mmap -- "
+                 "skipping CRC32 (degraded clean)", hdr_size);
+            s_rt = (struct efi_runtime_services *)0;
+            rt_advertise_unavailable();
+            s_init_done = 1;
+            return BOOT_DEGRADED;
+        }
         s_rt->hdr.crc32 = 0;
         uint32_t computed = gpt_crc32(&s_rt->hdr, hdr_size);
         s_rt->hdr.crc32 = saved_crc;
@@ -462,14 +543,38 @@ boot_result_t uefi_runtime_init(void)
         g_boot_info.uefi_runtime.svam_called = 1;
     }
 
-    /* Validate critical function pointers */
+    /* Validate critical function pointers.  Per-offset header_size gate
+     * runs before each pointer read so a truncated firmware table that
+     * under-reports header_size cannot overread past firmware-provided
+     * bytes.  The full-table gate at line 229
+     * (`hdr_size >= sizeof(struct efi_runtime_services)`) covers the
+     * 14 named services in aggregate; this loop covers each of the 5
+     * critical pointers individually so a header_size that lies (e.g.
+     * advertises only get_time + set_time) degrades cleanly. */
     int missing = 0;
 
-    if (!s_rt->get_time)     { klog(LOG_WARN, "UEFI", "RT GetTime: NULL");     missing++; }
-    if (!s_rt->set_time)     { klog(LOG_WARN, "UEFI", "RT SetTime: NULL");     missing++; }
-    if (!s_rt->get_variable) { klog(LOG_WARN, "UEFI", "RT GetVariable: NULL"); missing++; }
-    if (!s_rt->set_variable) { klog(LOG_WARN, "UEFI", "RT SetVariable: NULL"); missing++; }
-    if (!s_rt->reset_system) { klog(LOG_WARN, "UEFI", "RT ResetSystem: NULL"); missing++; }
+#define CHECK_RT_PTR(field, name)                                              \
+    do {                                                                       \
+        if (!rt_field_within_header(                                           \
+                (uint32_t)__builtin_offsetof(struct efi_runtime_services,      \
+                                             field),                           \
+                (uint32_t)sizeof(s_rt->field))) {                              \
+            klog(LOG_WARN, "UEFI",                                             \
+                 "RT " name ": offset truncated by header_size=%u",            \
+                 (uint32_t)s_rt->hdr.header_size);                             \
+            missing++;                                                         \
+        } else if (!s_rt->field) {                                             \
+            klog(LOG_WARN, "UEFI", "RT " name ": NULL");                       \
+            missing++;                                                         \
+        }                                                                      \
+    } while (0)
+
+    CHECK_RT_PTR(get_time,     "GetTime");
+    CHECK_RT_PTR(set_time,     "SetTime");
+    CHECK_RT_PTR(get_variable, "GetVariable");
+    CHECK_RT_PTR(set_variable, "SetVariable");
+    CHECK_RT_PTR(reset_system, "ResetSystem");
+#undef CHECK_RT_PTR
 
     if (missing > 0) {
         klog(LOG_WARN, "UEFI", "Runtime services: UNAVAILABLE "

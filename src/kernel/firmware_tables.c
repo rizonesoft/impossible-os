@@ -428,42 +428,52 @@ static int g_fw_test_bypass_range;
  *
  * len==0 is rejected (callers should use 1 for "single byte" probes); a
  * zero-length region cannot be meaningfully bounded. */
-static int fw_mmap_contains(uintptr_t addr, uint64_t len)
+/* Walk mmap; allow_pre_reclaim adds BootServices + Loader (which PMM
+ * reclaims in Phase 0). Returns 1 if [addr, addr+len) is contained in
+ * an accepted region. */
+static int fw_mmap_contains_internal(uintptr_t addr, uint64_t len,
+                                     int allow_pre_reclaim)
 {
 #ifdef KERNEL_TESTS
     if (g_fw_test_bypass_range) return 1;
 #endif
     if (len == 0) return 0;
-    /* End-exclusive overflow guard: if addr + len wraps, reject. */
     if (addr + len < addr) return 0;
     uint64_t end = (uint64_t)addr + len;
 
     uint32_t n = g_boot_info.mmap_count;
+    if (n > BOOT_MMAP_MAX_ENTRIES) n = BOOT_MMAP_MAX_ENTRIES;
     for (uint32_t i = 0; i < n; i++) {
         const struct boot_mmap_entry *m = &g_boot_info.mmap[i];
         if (m->length == 0) continue;
         uint64_t m_end = m->base_addr + m->length;
-        if (m_end < m->base_addr) continue;  /* malformed entry: skip */
+        if (m_end < m->base_addr) continue;
         if ((uint64_t)addr < m->base_addr || end > m_end) continue;
 
         uint32_t t = m->uefi_memory_type;
         switch (t) {
         case UEFI_MMAP_RESERVED:
-        case UEFI_MMAP_LOADER_CODE:
-        case UEFI_MMAP_LOADER_DATA:
-        case UEFI_MMAP_BOOT_SERVICES_CODE:
-        case UEFI_MMAP_BOOT_SERVICES_DATA:
         case UEFI_MMAP_RUNTIME_CODE:
         case UEFI_MMAP_RUNTIME_DATA:
         case UEFI_MMAP_ACPI_RECLAIM:
         case UEFI_MMAP_ACPI_NVS:
         case UEFI_MMAP_PERSISTENT:
             return 1;
+        case UEFI_MMAP_BOOT_SERVICES_CODE:
+        case UEFI_MMAP_BOOT_SERVICES_DATA:
+        case UEFI_MMAP_LOADER_CODE:
+        case UEFI_MMAP_LOADER_DATA:
+            return allow_pre_reclaim ? 1 : 0;
         default:
-            return 0;  /* CONVENTIONAL / UNUSABLE / MMIO / MMIO_PORT / PAL */
+            return 0;
         }
     }
     return 0;
+}
+
+static int fw_mmap_contains(uintptr_t addr, uint64_t len)
+{
+    return fw_mmap_contains_internal(addr, len, /*allow_boot_services=*/0);
 }
 
 static void fw_degrade(struct firmware_table_entry *e, uint8_t reason,
@@ -801,6 +811,11 @@ void firmware_table_validate_all(void)
 int firmware_table_mmap_contains(uintptr_t addr, uint64_t len)
 {
     return fw_mmap_contains(addr, len);
+}
+
+int firmware_table_mmap_contains_pre_reclaim(uintptr_t addr, uint64_t len)
+{
+    return fw_mmap_contains_internal(addr, len, /*allow_boot_services=*/1);
 }
 
 int firmware_table_promote_to_validated(const char *name)

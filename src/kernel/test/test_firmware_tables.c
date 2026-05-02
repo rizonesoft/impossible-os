@@ -554,24 +554,33 @@ static void test_validate_one_way_downgrade(void)
 static void test_validate_all_clean_ovmf_zero_degraded(void)
 {
     /* On any sane firmware (OVMF, VirtualBox, real hardware), the catalog
-     * must have produced zero NEW degraded entries beyond the catalog-time
-     * NULL_POINTER cases.  This test asserts that the live catalog has no
-     * RANGE_UNMAPPED / CHECKSUM_FAIL / LENGTH_BAD entries -- those would
-     * indicate a real platform issue worth investigating. */
+     * must have produced zero NEW CHECKSUM_FAIL or LENGTH_BAD degraded
+     * entries beyond the catalog-time NULL_POINTER cases.  Those reasons
+     * indicate a real platform issue worth investigating.
+     *
+     * RANGE_UNMAPPED is now legitimately expected on OVMF + Hyper-V +
+     * bare metal: the firmware-region oracle (`fw_mmap_contains`)
+     * rejects `UEFI_MMAP_BOOT_SERVICES_CODE/DATA` post-PMM-reclaim
+     * because those pages may have been overwritten by the kernel
+     * allocator between Phase 0 and the catalog walk in Phase 1.
+     * Modern OVMF places HOB list / MAT / properties tables in
+     * BootServicesData, so 5-7 catalog entries flag as RANGE_UNMAPPED
+     * on a normal boot.  Skip the RANGE_UNMAPPED reason from this
+     * "unexpected degradation" check; the dedicated post-reclaim
+     * oracle test covers the rejection-path correctness. */
     uint32_t n = firmware_table_count();
     int saw_unexpected = 0;
     for (uint32_t i = 0; i < n; i++) {
         const struct firmware_table_entry *e = firmware_table_get(i);
         if (!e) continue;
         if (e->status != FW_STATUS_DEGRADED) continue;
-        if (e->degraded_reason == FW_DEGRADED_RANGE_UNMAPPED ||
-            e->degraded_reason == FW_DEGRADED_CHECKSUM_FAIL ||
+        if (e->degraded_reason == FW_DEGRADED_CHECKSUM_FAIL ||
             e->degraded_reason == FW_DEGRADED_LENGTH_BAD) {
             saw_unexpected = 1;
         }
     }
     TEST_ASSERT(!saw_unexpected,
-                "no validator-found degradations on a clean firmware boot");
+                "no checksum/length validator-found degradations on a clean firmware boot");
 }
 
 /* ---- Catalog promotion API for deferred provider oracles --------------- */
