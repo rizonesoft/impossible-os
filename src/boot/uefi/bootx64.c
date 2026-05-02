@@ -3889,6 +3889,200 @@ static void bootproto_verify_or_reset(const UINT8 *kernel_image,
 }
 
 /* ============================================================================
+ * PT_LOAD destination policy
+ * ----------------------------------------------------------------------------
+ * Defense-in-depth gate on the kernel ELF copy site. Even after Secure
+ * Boot proves the bytes were not tampered with, a misbehaving or
+ * malicious kernel image can declare any p_paddr it wants -- including
+ * UEFI tables (gST/gRT), Runtime Services regions, the bootloader
+ * image itself, ACPI tables, or firmware-reserved memory. Without this
+ * gate, efi_memcpy(p_paddr, ...) would corrupt firmware state before
+ * any later check runs.
+ *
+ * The policy walks the live UEFI memory map (snapshot taken just
+ * before the PT_LOAD copy loop) and asserts every byte of every
+ * PT_LOAD destination range falls inside an ALLOWED descriptor:
+ *   EfiConventionalMemory  (only)
+ *
+ * FORBIDDEN descriptor types (any overlap fails the check):
+ *   EfiReservedMemoryType, EfiLoaderCode, EfiLoaderData (bootloader
+ *   allocations: file_buf, xHCI DMA, UKI payloads -- a kernel
+ *   segment overwriting any of these would corrupt loader state
+ *   before handoff), EfiBootServicesCode/Data,
+ *   EfiRuntimeServicesCode/Data, EfiUnusableMemory, EfiACPIReclaimMemory,
+ *   EfiACPIMemoryNVS, EfiMemoryMappedIO, EfiMemoryMappedIOPortSpace,
+ *   EfiPalCode, EfiPersistentMemory, plus any descriptor whose Type is
+ *   above EfiMaxMemoryType (forward-spec types we do not understand).
+ *
+ * Why Conventional only: the kernel ELF's standard load address is
+ * 0x100000 upward, which UEFI firmware reports as
+ * EfiConventionalMemory. Allowing LoaderData would let a malformed
+ * or hostile ELF land in the bootloader's own heap.
+ * ============================================================================ */
+
+#define PT_LOAD_POLICY_MMAP_BUF_PAGES 16  /* 64 KiB scratch for snapshot */
+
+static const char *pt_load_mem_type_name(UINT32 type)
+{
+    switch (type) {
+    case EfiReservedMemoryType:     return "Reserved";
+    case EfiLoaderCode:             return "LoaderCode";
+    case EfiLoaderData:             return "LoaderData";
+    case EfiBootServicesCode:       return "BootServicesCode";
+    case EfiBootServicesData:       return "BootServicesData";
+    case EfiRuntimeServicesCode:    return "RuntimeServicesCode";
+    case EfiRuntimeServicesData:    return "RuntimeServicesData";
+    case EfiConventionalMemory:     return "Conventional";
+    case EfiUnusableMemory:         return "Unusable";
+    case EfiACPIReclaimMemory:      return "ACPIReclaim";
+    case EfiACPIMemoryNVS:          return "ACPIMemoryNVS";
+    case EfiMemoryMappedIO:         return "MMIO";
+    case EfiMemoryMappedIOPortSpace:return "MMIOPort";
+    case EfiPalCode:                return "PalCode";
+    case EfiPersistentMemory:       return "Persistent";
+    default:                        return "Unknown";
+    }
+}
+
+/* True iff every byte of [dst_start, dst_end) falls inside a
+ * descriptor of an allowed type (Conventional or LoaderData).
+ *
+ * On false return, *bad_type_out (if non-NULL) is set to the type of
+ * the first forbidden / unmapped descriptor that overlaps the range,
+ * so the caller can name it on the failure screen. dst_start MUST be
+ * < dst_end (caller checked the wraparound case before calling).
+ *
+ * O(n) walk of the descriptor array; n is typically 50-200 for real
+ * firmware. Per-segment cost is sub-millisecond. */
+static int pt_load_destination_allowed(UINT64 dst_start, UINT64 dst_end,
+                                       const UINT8 *map, UINTN map_size,
+                                       UINTN desc_size,
+                                       UINT32 *bad_type_out)
+{
+    UINTN offset;
+
+    /* desc_size MUST be at least sizeof(EFI_MEMORY_DESCRIPTOR) before
+     * casting; UEFI spec allows DescriptorSize >= sizeof(struct) for
+     * forward compatibility but never less. map_size must be a whole
+     * multiple of desc_size or the trailing partial entry is malformed
+     * (matches the existing mmap_geometry_validate guard elsewhere in
+     * this file). */
+    if (desc_size < sizeof(EFI_MEMORY_DESCRIPTOR) ||
+        desc_size > 4096 ||
+        map_size < desc_size ||
+        (map_size % desc_size) != 0) {
+        if (bad_type_out) *bad_type_out = (UINT32)-1;
+        return 0;
+    }
+    if (dst_start >= dst_end) {
+        if (bad_type_out) *bad_type_out = (UINT32)-1;
+        return 0;
+    }
+
+    /* Sweep the destination range; for every byte that is covered by
+     * a descriptor, the descriptor's type must be allowed. The walk
+     * advances `cursor` to the next byte after the most recent
+     * allowed descriptor that started covering the range. If we
+     * complete the range without a forbidden hit AND the cursor
+     * reached dst_end, every byte was allowed. */
+    UINT64 cursor = dst_start;
+    /* First pass: find any descriptor that overlaps and is forbidden;
+     * report it. Second pass: if no forbidden overlap, walk allowed
+     * descriptors and confirm full coverage. Two passes keep the
+     * logic simple at the cost of 2*N descriptor reads (still O(n)). */
+
+    /* Pass 1: forbidden overlap = immediate fail. */
+    for (offset = 0; offset + desc_size <= map_size; offset += desc_size) {
+        const EFI_MEMORY_DESCRIPTOR *d =
+            (const EFI_MEMORY_DESCRIPTOR *)(map + offset);
+        UINT64 d_start = (UINT64)d->PhysicalStart;
+        UINT64 d_pages = d->NumberOfPages;
+        if (d_pages == 0) continue;
+        /* Wraparound guard: pages * EFI_PAGE_SIZE must fit. */
+        if (d_pages > 0xFFFFFFFFFFFFFFFFULL / EFI_PAGE_SIZE) continue;
+        UINT64 d_size = d_pages * EFI_PAGE_SIZE;
+        if (d_start + d_size < d_start) continue;  /* descriptor wraps */
+        UINT64 d_end = d_start + d_size;
+        if (d_start >= dst_end || d_end <= dst_start) continue;  /* no overlap */
+
+        UINT32 t = d->Type;
+        if (t == EfiConventionalMemory)
+            continue;  /* allowed; pass 2 will confirm full coverage */
+        if (bad_type_out) *bad_type_out = t;
+        return 0;
+    }
+
+    /* Pass 2: confirm every byte of [dst_start, dst_end) is covered
+     * by an allowed descriptor. Iterate the cursor across allowed
+     * descriptors; gaps in the map (no descriptor covers a byte) are
+     * a fail because the kernel cannot land in unmapped firmware
+     * space. */
+    while (cursor < dst_end) {
+        UINT64 best_end = cursor;
+        for (offset = 0; offset + desc_size <= map_size; offset += desc_size) {
+            const EFI_MEMORY_DESCRIPTOR *d =
+                (const EFI_MEMORY_DESCRIPTOR *)(map + offset);
+            UINT64 d_start = (UINT64)d->PhysicalStart;
+            UINT64 d_pages = d->NumberOfPages;
+            if (d_pages == 0) continue;
+            if (d_pages > 0xFFFFFFFFFFFFFFFFULL / EFI_PAGE_SIZE) continue;
+            UINT64 d_size = d_pages * EFI_PAGE_SIZE;
+            if (d_start + d_size < d_start) continue;
+            UINT64 d_end = d_start + d_size;
+            UINT32 t = d->Type;
+            if (t != EfiConventionalMemory) continue;
+            /* Allowed descriptor that includes the cursor byte? */
+            if (d_start <= cursor && d_end > cursor) {
+                if (d_end > best_end) best_end = d_end;
+            }
+        }
+        if (best_end == cursor) {
+            /* No allowed descriptor covers the cursor byte -- gap. */
+            if (bad_type_out) *bad_type_out = (UINT32)-1;
+            return 0;
+        }
+        cursor = best_end;
+    }
+
+    return 1;
+}
+
+/* Snapshot the live UEFI memory map into the caller-provided buffer.
+ * Returns EFI_SUCCESS on success with *map_size_out and *desc_size_out
+ * populated. On failure (firmware error, buffer too small) returns
+ * the EFI_STATUS so the caller can fail-closed. */
+static EFI_STATUS pt_load_snapshot_mmap(UINT8 *buf, UINTN buf_size,
+                                        UINTN *map_size_out,
+                                        UINTN *desc_size_out)
+{
+    UINTN map_size = buf_size;
+    UINTN map_key  = 0;
+    UINTN desc_size = 0;
+    UINT32 desc_version = 0;
+    EFI_STATUS s;
+
+    if (!gBS || !gBS->GetMemoryMap || !buf || buf_size == 0)
+        return EFI_INVALID_PARAMETER;
+
+    s = gBS->GetMemoryMap(&map_size, (EFI_MEMORY_DESCRIPTOR *)buf,
+                          &map_key, &desc_size, &desc_version);
+    if (EFI_ERROR(s))
+        return s;
+    /* Match the predicate's geometry guard so a malformed map is
+     * caught at snapshot time rather than during the walk. */
+    if (desc_size < sizeof(EFI_MEMORY_DESCRIPTOR) ||
+        desc_size > 4096 ||
+        (map_size % desc_size) != 0)
+        return EFI_INVALID_PARAMETER;
+    if (map_size > buf_size)
+        return EFI_BUFFER_TOO_SMALL;
+
+    *map_size_out  = map_size;
+    *desc_size_out = desc_size;
+    return EFI_SUCCESS;
+}
+
+/* ============================================================================
  * Step 2: Load kernel ELF from FAT32
  * ============================================================================ */
 static EFI_STATUS load_kernel(UINT64 *entry_point)
@@ -4311,6 +4505,32 @@ kernel_loaded:
      * reboots cold. */
     bootproto_verify_or_reset(file_buf, (UINT64)file_size);
 
+    /* Snapshot the live UEFI memory map for PT_LOAD destination
+     * policy. This snapshot is consumed by pt_load_destination_allowed
+     * inside the segment loop below; it is independent of the
+     * GetMemoryMap call that supplies the ExitBootServices map_key
+     * later (that map_key has atomicity semantics; this snapshot
+     * does not). The buffer is static-class so it lives in BSS, not
+     * on the load_kernel stack. */
+    static UINT8 s_pt_load_mmap_buf[
+        PT_LOAD_POLICY_MMAP_BUF_PAGES * EFI_PAGE_SIZE];
+    UINTN pt_mmap_size = 0;
+    UINTN pt_desc_size = 0;
+    {
+        EFI_STATUS ms = pt_load_snapshot_mmap(
+            s_pt_load_mmap_buf, sizeof s_pt_load_mmap_buf,
+            &pt_mmap_size, &pt_desc_size);
+        if (EFI_ERROR(ms)) {
+            serial_early_print("[FAIL] Kernel ELF: PT_LOAD policy "
+                               "GetMemoryMap failed (0x");
+            serial_early_print_hex16((UINT16)((UINT64)ms >> 16));
+            serial_early_print_hex16((UINT16)ms);
+            serial_early_print(")\n");
+            load_err_status = EFI_LOAD_ERROR;
+            goto load_error;
+        }
+    }
+
     /* Load PT_LOAD segments with per-segment validation */
     phdr = (Elf64_Phdr *)(file_buf + ehdr->e_phoff);
     for (i = 0; i < ehdr->e_phnum; i++) {
@@ -4388,6 +4608,37 @@ kernel_loaded:
                     load_err_status = EFI_LOAD_ERROR;
                     goto load_error;
                 }
+            }
+        }
+
+        /* PT_LOAD destination policy: reject any segment whose
+         * physical destination overlaps firmware-owned, bootloader-
+         * owned, or handoff-reserved memory. The predicate walks
+         * the UEFI memory map snapshot taken above. Allowed types
+         * are EfiConventionalMemory and EfiLoaderData; everything
+         * else is rejected. p_memsz == 0 segments are degenerate
+         * and skipped (no bytes copied). */
+        if (phdr[i].p_memsz > 0) {
+            UINT64 dst_start = phdr[i].p_paddr;
+            UINT64 dst_end   = dst_start + phdr[i].p_memsz;
+            UINT32 bad_type = (UINT32)-1;
+            if (!pt_load_destination_allowed(
+                    dst_start, dst_end,
+                    s_pt_load_mmap_buf, pt_mmap_size, pt_desc_size,
+                    &bad_type)) {
+                serial_early_print("[FAIL] Kernel ELF: PT_LOAD "
+                                   "destination forbidden (segment ");
+                serial_early_print_uint(i);
+                serial_early_print(" paddr=0x");
+                serial_early_print_hex16((UINT16)(dst_start >> 16));
+                serial_early_print_hex16((UINT16)dst_start);
+                serial_early_print(" memsz=");
+                serial_early_print_uint((UINT32)phdr[i].p_memsz);
+                serial_early_print(" type=");
+                serial_early_print(pt_load_mem_type_name(bad_type));
+                serial_early_print(")\n");
+                load_err_status = EFI_LOAD_ERROR;
+                goto load_error;
             }
         }
 
