@@ -3953,6 +3953,7 @@ static const char *pt_load_mem_type_name(UINT32 type)
     case EfiMemoryMappedIOPortSpace:return "MMIOPort";
     case EfiPalCode:                return "PalCode";
     case EfiPersistentMemory:       return "Persistent";
+    case EfiUnacceptedMemoryType:   return "Unaccepted";
     default:                        return "Unknown";
     }
 }

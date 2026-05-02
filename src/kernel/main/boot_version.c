@@ -497,6 +497,10 @@ void boot_version_blackbox_transcribe(void)
                          "Offending region type: ");
         const char *t;
         switch (rec.observed_loader_sec_ver) {
+        /* Type names match src/boot/uefi/bootx64.c pt_load_mem_type_name
+         * exactly so the BlackBox transcript and the live serial
+         * fail-line agree byte-for-byte. UEFI 2.10 enum range is
+         * 0..15 (Unaccepted = 15); higher values fall back to Unknown. */
         case 0:  t = "Reserved";            break;
         case 1:  t = "LoaderCode";          break;
         case 2:  t = "LoaderData";          break;
@@ -504,7 +508,7 @@ void boot_version_blackbox_transcribe(void)
         case 4:  t = "BootServicesData";    break;
         case 5:  t = "RuntimeServicesCode"; break;
         case 6:  t = "RuntimeServicesData"; break;
-        case 7:  t = "Conventional (unexpected)"; break;
+        case 7:  t = "Conventional";        break;
         case 8:  t = "Unusable";            break;
         case 9:  t = "ACPIReclaim";         break;
         case 10: t = "ACPIMemoryNVS";       break;
@@ -512,6 +516,7 @@ void boot_version_blackbox_transcribe(void)
         case 12: t = "MMIOPort";            break;
         case 13: t = "PalCode";             break;
         case 14: t = "Persistent";          break;
+        case 15: t = "Unaccepted";          break;
         default: t = "Unknown";             break;
         }
         pos = append_line(buf, pos, max_sz, t);
