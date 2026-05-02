@@ -1161,6 +1161,7 @@ The Claude Code post-commit hook fires `bash scripts/build.sh` (and conditionall
 | 💎 | Codex prompt argument escaping       | ❌ N/A      | ❌ N/A          | ✅ §28 (`codex-dispatch.sh` wrapper + lint 12)   |
 | ⭐ | Standardized PreToolUse prefix-list  | ❌ N/A      | ❌ N/A          | ✅ §29 (`_review_pipeline_passthrough.py`)       |
 | ⭐ | Shell-aware Codex dispatch parser    | ❌ N/A      | ❌ N/A          | ✅ §30 (`_codex_dispatch.py` shared helper)      |
+| 💎 | Post-commit hook concurrency: serialize | ❌ N/A   | ❌ N/A          | ✅ §31 (flock-based serializer; ends stomp-stamp races) |
 
 > **After §1-§5:** Claude and Codex share the same MCP server set, the same Codex invocation policy, the same hard gates around reviews and section commits. Drift between the two automation sides is detectable.
 > **After §6-§9:** The whole automation surface is auditable in one script. Hook system is documented; MCP usage is doctrine; superpowers plugin behavior is reconciled with Impossible OS rules.
