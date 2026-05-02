@@ -21,9 +21,13 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 - [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c)
 - -> XREF: `TODO-02-uefi-hardening-secureboot.md §5` -- existing SMBIOS base parser
 - -> XREF: `TODO-02-uefi-hardening-secureboot.md §14` -- Win32 GetSystemFirmwareTable + EnumSystemFirmwareTables surface (commit 194e6012); §1 here consumes `acpi_enumerate_signatures` / `acpi_get_raw_table` / `smbios_get_raw_table` from that section rather than re-implementing per-provider validation
-- -> XREF: `TODO-11-interrupt-timer-arch.md §6` -- ACPI MADT remains the interrupt owner
+- -> XREF: `TODO-11-interrupt-timer-arch.md §1` -- ACPI MADT remains the interrupt owner
 - -> XREF: `TODO-27-uefi-advanced.md §2,§6` -- ESRT/capsule and extended SMBIOS consumers
-- -> XREF: `02-kernel-core/TODO-14-registry-completion.md §5` -- `HKLM\HARDWARE\Firmware\*` storage via registry syscalls (consumer for §8)
+- -> XREF: `02-kernel-core/TODO-14-registry-completion.md §4` -- `HKLM\HARDWARE\Firmware\*` storage via Nt/Zw registry syscalls (consumer for §8)
+- -> XREF: `04-drivers-hardware/TODO-04-security-hardware.md §4` -- IOMMU/VT-d/AMD-Vi parses ACPI DMAR/IVRS; consumer of the §1 firmware-table catalog
+- -> XREF: `04-drivers-hardware/TODO-08-core-driver-enhancements.md §1` -- PCIe ECAM via ACPI MCFG; consumer of the §1 firmware-table catalog
+- -> XREF: `01-boot-platform/TODO-13-tpm-measured-boot-attestation.md` -- TPM TCPA/TPM2 ACPI tables and event-log mirror; this TODO catalogs the table; TODO-13 owns the measured-boot pipeline
+- -> XREF: `16-platform-portability/TODO-01-multi-arch-port.md` -- IORT (ARM IO Remapping Table) catalog work belongs to the ARM SBSA port; deferred from §1 catalog source enum until that domain activates
 
 ## Outcome
 
@@ -41,7 +45,7 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 | 💎 |   3   | ACPI/SMBIOS/DTB table arbitration                       | §1, §2         |  [x]   |
 | 💎 |   4   | FPDT and boot timing normalization                      | §1             |  [x]   |
 | 💎 |   5   | UEFI memory attributes and runtime properties inventory | §1, TODO-27 §3 |  [x]   |
-| 💎 |   6   | ESRT firmware inventory mirror                          | §1, TODO-27 §2 |  [ ]   |
+| 💎 |   6   | ESRT firmware inventory mirror                          | §1, TODO-27 §2 |  [/]   |
 | 💎 |   7   | UEFI conformance profile and EBBR detection             | §1             |  [ ]   |
 | 💎 |   8   | Registry and BlackBox firmware report                   | §1-§7          |  [ ]   |
 | ⭐ |   9   | Firmware quirk database                                 | §8             |  [ ]   |
@@ -67,7 +71,7 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 > **Notes:**
 > - Shipped: `include/kernel/firmware_tables.h` + `src/kernel/firmware_tables.c` (~290 LOC catalog + lookups), unit tests at `src/kernel/test/test_firmware_tables.c`, plus `acpi_for_each_record()` / `acpi_get_record()` accessors on `acpi.c` for duplicate-preserving SDT enumeration.
 > - How it runs: `firmware_tables_init()` is called once on the BSP at Phase 1 (after `uefi_conformance_init()`, before `sti`); read-only thereafter so lookups are lock-free.
-> - Downstream effects: this catalog is the input for the §2 range/checksum validator and the §8 Registry/BlackBox firmware report; Codex 3-round adversarial review adoptions in commit `<hash>`.
+> - Downstream effects: this catalog is the input for the §2 range/checksum validator and the §8 Registry/BlackBox firmware report; Codex 3-round adversarial review adoptions in commit `57d1aa79`.
 > - Canonical doc: `include/kernel/firmware_tables.h` API contract.
 > - Scope boundary: §1 records what per-provider helpers already validated. Range checks against the UEFI memory map and per-table checksum re-verification are owned by §2; ESRT/MAT/conformance details remain owned by §5/§6/§7.
 >
@@ -117,7 +121,7 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 > **Notes:**
 > - Shipped: `src/kernel/dtb.c` (~210 LOC FDT v17 header + bounded structure-block walker), `src/kernel/firmware_platform.c` (~140 LOC arbitration + Boot\Firmware Registry mirror), `include/kernel/dtb.h` + `include/kernel/firmware_platform.h`, `src/kernel/test/test_firmware_platform.c` (12 tests / 23 assertions). Public `firmware_table_mmap_contains` exposed from firmware_tables.c so DTB consumer reuses the same firmware-region oracle.
 > - How it runs: `firmware_platform_init()` runs once on the BSP at Phase 1 immediately after `firmware_tables_init()`; `firmware_platform_populate_registry()` runs from `registry_populate_defaults()` after `boot_device_populate_registry()`. Read-only thereafter.
-> - Downstream effects: `HKLM\SYSTEM\Boot\Firmware` is the canonical platform fingerprint for sysinfo / diagnostic tools; §6 ESRT mirror, §7 conformance flagging, and §8 firmware-tables.json all read `firmware_platform_get()` to gate their PC-class vs EBBR behavior. Codex 1x adversarial review adoptions in commit `<hash>`.
+> - Downstream effects: `HKLM\SYSTEM\Boot\Firmware` is the canonical platform fingerprint for sysinfo / diagnostic tools; §6 ESRT mirror, §7 conformance flagging, and §8 firmware-tables.json all read `firmware_platform_get()` to gate their PC-class vs EBBR behavior. Codex 1x adversarial review adoptions in commit `f6b5c94b`.
 > - Canonical doc: `include/kernel/firmware_platform.h` arbitration contract + `include/kernel/dtb.h` FDT validator contract.
 > - Scope boundary: §3 owns DTB header validation + node counts only. Full /chosen/bootargs string extraction, /memory@N reg ranges, and /cpu@N compatible strings are owned by a future DTB parser TODO. §6 owns ESRT Registry mirror. §7 owns conformance flagging. §8 owns the firmware-tables.json export and HARDWARE\Firmware\Tables key.
 
@@ -165,25 +169,41 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 > **Notes:**
 > - Shipped: `mat_class_t` + `mat_entry_t` + 7 public accessors in `include/kernel/uefi_config.h`; ~140 LOC delta in `src/kernel/uefi_config.c` (cache, classify helper, per-entry logger, overflow warn); `int uefi_rt_property_mismatches(void)` in `include/kernel/uefi_runtime.h`; ~70 LOC `rt_check_property_pointer_mismatch()` in `src/kernel/uefi_runtime.c` covering 14 RT services with bidirectional mismatch detection + advertised-but-NULL-bit-clearing; 10 unit tests in `src/kernel/test/test_uefi_boot.c`.
 > - How it runs: `mat_init()` and `uefi_runtime_init()` already run once on the BSP at Phase 1 (mat_init from `boot_interrupts.c`, runtime_init from boot path); both stay read-only afterwards so consumer queries are lock-free SMP-safe. KVM smoke 2.32s on OVMF: 27 MAT descriptors logged (4 code + 12 data + 1 WX violation pre-existing in OVMF + 10 guard).
-> - Downstream effects: TODO-27 §3 W^X enforcement now has a concrete iteration API (no need to re-walk firmware table); §6 ESRT mirror, §7 conformance flagging, and §8 firmware-tables.json read the catalog without touching firmware again. Codex 1x adversarial review adoptions in commit `<hash>` -- H1 advertised-but-NULL pointer cleared from supported bitmask so wrappers cannot null-deref.
+> - Downstream effects: TODO-27 §3 W^X enforcement now has a concrete iteration API (no need to re-walk firmware table); §6 ESRT mirror, §7 conformance flagging, and §8 firmware-tables.json read the catalog without touching firmware again. Codex 1x adversarial review adoptions in commit `c2d12aba` -- H1 advertised-but-NULL pointer cleared from supported bitmask so wrappers cannot null-deref.
 > - Canonical doc: `include/kernel/uefi_config.h` MAT inventory contract + `include/kernel/uefi_runtime.h` RT property mismatch contract.
 > - Scope boundary: §5 detects + classifies + logs MAT entries and RT property mismatches; the actual W^X *enforcement* (vmm_set_nx / vmm_set_ro per region) is owned by TODO-27 §3. §6 ESRT firmware inventory is owned by §6. RT services per-offset header_size validation in pre-existing `call_set_virtual_address_map()` + 5-pointer init path is tracked in §10 (item: "Validate s_rt->hdr.header_size covers each function-pointer offset" at line 232).
 
 > **Verified:** 2026-04-30 | commit `c2d12aba` | 5/5 items | build OK | smoke PASS (KVM 2.41s) | tests 764/764 PASS
-> **Accepted:** [H] RT services per-offset header_size validation gap in pre-existing call_set_virtual_address_map() and 5-pointer init path (reason: scope -- pre-existing init code outside §5 inventory work) -> XREF: 01-boot-platform/TODO-04 §10 (item: "Validate s_rt->hdr.header_size covers each function-pointer offset before reading it in call_set_virtual_address_map() and the critical-pointer NULL checks" at line 173)
+> **Accepted:** [H] RT services per-offset header_size validation gap in pre-existing call_set_virtual_address_map() and 5-pointer init path (reason: scope -- pre-existing init code outside §5 inventory work) -> XREF: 01-boot-platform/TODO-04 §10 (item: "Validate s_rt->hdr.header_size covers each function-pointer offset before reading it in call_set_virtual_address_map() and the critical-pointer NULL checks" at line 177)
 > **Quality reviewed:** 2026-04-30 | Codex 12x (design + adversarial-impl x9 + adversarial + consistency + perf) | 1H+9M+1L fixed, 1H accepted-XREF | scope: kernel-code-quality
 
 ---
 
 ## 6. ESRT Firmware Inventory Mirror
 
-- [ ] Parse ESRT entries into kernel-owned structs.
-- [ ] Mirror firmware device GUID, type, current version, capsule flags, and last attempt status into Registry.
-- [ ] Include ESRT in hardware dump and support bundle.
-- [ ] Feed TODO-27 capsule update policy.
-- [ ] Commit: `"boot: mirror ESRT firmware inventory"`
+- [x] Parse ESRT entries into kernel-owned structs (already shipped at `src/kernel/uefi_config.c:184` -- `struct esrt_entry` carries all 7 UEFI 2.10 §23.6 entry fields). §6 added header-metadata mirror via `static struct esrt_table_header s_esrt_header` populated at `esrt_init()` so per-table count/count_max/version survive Phase 1.
+- [x] Header accessors `esrt_resource_count_max()` + `esrt_resource_version()` (`include/kernel/uefi_config.h`); `esrt_count()` already covered `fw_resource_count`. All three are pure reads of the cached header.
+- [x] Decoder helpers `esrt_decode_status()` (8 UEFI 2.10 Table 23-3 mnemonics + `Reserved` fallback) + `esrt_decode_type()` (4 §23.6 categories); both static `const char *` tables, zero-alloc, safe to print directly.
+- [x] Capsule-policy primitives -- intentionally narrow per Codex design H1: `esrt_rollback_floor_ok(idx)` (FwVersion >= LowestSupportedFwVersion only) + `esrt_capsule_persists_across_reset(idx)` (CapsuleFlags bit `EFI_CAPSULE_PERSIST_ACROSS_RESET = 0x00010000` only). Out-of-range idx returns 0 cleanly. Capsule-update owner (TODO-27 advanced UEFI work) composes them with FwType + LastAttemptStatus + auth checks; this section is non-authoritative.
+- [x] Registry mirror in `src/kernel/firmware_esrt_registry.c` -- `esrt_populate_registry()` writes `HKLM\HARDWARE\Firmware\ESRT\{<FwClass-GUID>}` per entry with all 7 entry fields (Type, FwVersion, LowestSupportedFwVersion, CapsuleFlags, LastAttemptVersion, LastAttemptStatus) + decoded `TypeName` + decoded `LastAttemptStatusName` (REG_SZ), plus a sibling `_Header` subkey carrying ResourceCount + ResourceCountMax + ResourceVersion. **Idempotent per Codex design M1**: `RegDeleteTree` clears the subtree on entry so removed firmware components do not survive across reboots; ESRT-absent boots leave the parent key empty. Wired in `registry_populate_defaults()` after `firmware_platform_populate_registry()`.
+- [x] Smoke confirms behavior: `[ OK ] ESRT: Not present (no firmware inventory)` + `[ OK ] ESRT: Registry: ESRT absent or empty; HARDWARE\Firmware\ESRT cleared` on QEMU OVMF (which exposes no ESRT).
+- [ ] **Deferred to §8**: ESRT block in `X:\Diag\firmware-tables.json` and BlackBox transcript. §8 owns the JSON schema + writer; this section provides the accessors + decoded labels §8 will consume.
+- [ ] **Deferred to TODO-27 advanced UEFI work**: capsule eligibility composition (rollback floor + persist-across-reset + FwType + LastAttemptStatus + auth check) and the failure-path operator UX that renders `LastAttemptStatusName` to the user.
+- [x] Commit: `"boot: mirror ESRT firmware inventory"`
 
-**Test checkpoint:** ESRT-bearing firmware (modern bare-metal laptop, OVMF with ESRT) populates `HKLM\HARDWARE\Firmware\ESRT\<GUID>\*` with all 5 fields per entry; ESRT-absent firmware (VirtualBox EFI) leaves the registry key empty without errors. TODO-27 §2 capsule policy reads `current_version` correctly. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** ESRT-bearing firmware (modern bare-metal laptop, OVMF with ESRT) populates `HKLM\HARDWARE\Firmware\ESRT\<FwClass-GUID>\*` with all 7 entry fields + 3 header fields; ESRT-absent firmware (VirtualBox EFI) leaves the registry key empty without errors. TODO-27 §2 capsule policy reads `LowestSupportedFwVersion` to enforce a rollback floor and renders `LastAttemptStatus` as a decoded label (e.g. `INSUFFICIENT_RESOURCES`, `INCORRECT_VERSION`). Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 5 ESRT decoder + capsule-helper sub-tests / 14 assertions, 0 failures (status known mnemonics + reserved fallback, type table, helpers OOR-idx -> 0, persist-bit position constant)
+>
+> **Notes:**
+> - **What shipped** -- 5 public APIs in `include/kernel/uefi_config.h` (`esrt_resource_count_max`, `esrt_resource_version`, `esrt_decode_status`, `esrt_decode_type`, `esrt_rollback_floor_ok`, `esrt_capsule_persists_across_reset`, `esrt_populate_registry`) + 1 new constant `EFI_CAPSULE_PERSIST_ACROSS_RESET = 0x00010000`; ~60 LOC delta in `src/kernel/uefi_config.c` (header cache, decoder tables, two narrow capsule primitives); `src/kernel/firmware_esrt_registry.c` NEW (~150 LOC); 5 unit tests / 14 assertions in `test_uefi_boot.c`.
+> - **How it runs** -- `esrt_init()` already runs once on the BSP at Phase 1 (caching all 7 entry fields + 3 header fields); `esrt_populate_registry()` fires from `registry_populate_defaults()` after `firmware_platform_populate_registry()`. Idempotent via `RegDeleteTree("HARDWARE\\Firmware\\ESRT")` on entry, so removed firmware components do not survive across reboots. ESRT-absent boots leave the parent key empty.
+> - **Downstream effects** -- TODO-27 advanced UEFI capsule-update work consumes `esrt_rollback_floor_ok` + `esrt_capsule_persists_across_reset` as primitives (composing them with `FwType` + `LastAttemptStatus` + auth checks for authoritative eligibility per Codex design H1 split). §8 firmware-tables.json + BlackBox transcribe consume the same accessors for the JSON ESRT block. Codex 1x design + 1x adversarial in this commit; design adopted H1 (split eligibility primitives) + M1 (idempotent RegDeleteTree) + Q1 (brace GUID) + Q3 (static const char* tables); adversarial M1 fixed (REG_QWORD for ResourceVersion).
+> - **Canonical doc** -- [`include/kernel/uefi_config.h`](../../include/kernel/uefi_config.h) ESRT API contract (UEFI 2.10 section 23.6 + section 8.5.3 references inline).
+> - **Scope boundary** -- §6 owns kernel-side ESRT inventory + Registry mirror + decoder helpers + capsule-policy primitives. §8 owns the JSON `firmware-tables.json` ESRT block + BlackBox transcript. Authoritative capsule eligibility (composing rollback + persist + FwType + LastAttemptStatus + auth) is owned by TODO-27 advanced UEFI work; this section ships the primitives, not the policy.
+
+> **Verified:** 2026-05-02 | this commit | 7/9 items + 2 deferred-to-owner | build OK | smoke PASS (KVM 2.39s) + ESRT-absent path observed
+> **Quality reviewed:** 2026-05-02 | Codex 4x (design + adversarial + consistency + perf) | 1H+1M+1H+1M fixed, 0 open | scope: kernel-code-quality
 
 ---
 
@@ -192,25 +212,28 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 > [!NOTE]
 > **Partial foundation shipped:** EFI_CONFORMANCE_PROFILES_TABLE parsing already exists in `uefi_config.c` (the `s_conformance_level` / `UEFI_CONFORM_FULL` / `UEFI_CONFORM_EBBR` path at uefi_config.c:107-140). What remains is (a) feeding the result through the §1 catalog, (b) relaxing/tightening the required-table set, and (c) detecting EBBR-claim + PC-hardware contradictions.
 
-- [ ] Wire existing `s_conformance_level` (uefi_config.c) into the §1 firmware table catalog as a query helper rather than a static.
-- [ ] Detect UEFI full profile, EBBR, and unknown profile GUIDs (existing) -- promote unknown-GUID logging from DEBUG to a `firmware_table_entry_t.status = unknown_profile` flag.
-- [ ] Relax or tighten required table set based on profile (e.g. EBBR allows missing FPDT/MAT; full UEFI requires them).
-- [ ] Add diagnostics when hardware claims EBBR but exposes PC-only assumptions (PIC, i8042, RTC port 0x70).
-- [ ] Commit: `"boot: detect UEFI conformance profile"`
+- [ ] Wire existing `s_conformance_level` (uefi_config.c) into the §1 firmware table catalog as a query helper rather than a static; replace the two-enum plan with a **table-driven profile registry** keyed by exact UEFI/EBBR/SBBR GUID constants so adding a new profile is a one-row registry edit, not a new enum value.
+- [ ] Pin canonical GUIDs in a private `uefi_conformance_profiles[]` table: `EFI_CONFORMANCE_PROFILES_UEFI_SPEC_GUID = {523c91af-a195-4382-818d-295fe4006465}` (UEFI 2.10 §4.6.6); `EBBR_v2_GUID = {cce33c35-74ac-4087-bce7-8b29b02eeb27}` (Arm EBBR v2.0/v2.1.0 §2.4); plus reserved rows for SBBR, ARM BBR, and Microsoft EBBR variants. Each row carries `{guid, name, version, required_tables[], allowed_to_omit[]}`.
+- [ ] Detect every published profile GUID via the table; unknown GUIDs surface as `firmware_table_entry_t.status = FW_STATUS_UNKNOWN_PROFILE` with the raw GUID emitted in `[WARN] firmware: unknown conformance profile GUID=<...>` (operator-readable; lets us add the new GUID to the registry without code change). Promote the existing unknown-GUID DEBUG log to that warning.
+- [ ] Relax or tighten the required-table set based on profile registry rows (full UEFI requires FPDT/MAT/RTProps; EBBR allows them missing; SBBR pins ACPI subset). Per-profile policy tested via fixture blobs in §10.
+- [ ] Add diagnostics when hardware claims EBBR but exposes PC-only assumptions (PIC, i8042, RTC port 0x70). Log `[WARN] firmware: EBBR claim with PC-only hardware` and downgrade to `FW_PROFILE_HYBRID` rather than trusting the EBBR claim blindly.
+- [ ] Add fixture tests for: each known GUID -> correct profile resolution; oversized table count vs reported length -> rejection; truncated table -> rejection; multiple profile GUIDs in one table -> deterministic resolution per UEFI 2.10 (highest-conformance wins).
+- [ ] Commit: `"boot: detect UEFI conformance profile via registry"`
 
-**Test checkpoint:** PC-class boot logs `[BOOT] UEFI conformance: full`. Synthetic EBBR profile boot logs `conformance: EBBR` and skips required-PC-table checks. Hybrid case (EBBR-claimed + PIC/i8042 present) logs `[WARN] firmware: EBBR claim with PC-only hardware`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** PC-class boot logs `[BOOT] UEFI conformance: UEFI 2.10`. Synthetic EBBR profile boot logs `conformance: EBBR v2.0` and skips required-PC-table checks. Hybrid case (EBBR-claimed + PIC/i8042 present) logs `[WARN] firmware: EBBR claim with PC-only hardware`. Unknown GUID logs the raw GUID hex string. Fixture tests in `src/kernel/test/test_firmware_tables.c` exercise each known GUID + the bad-table length / count rejection paths. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
 ---
 
 ## 8. Registry and BlackBox Firmware Report
 
-- [ ] Create `HKLM\HARDWARE\Firmware\Tables\*`.
-- [ ] Write `X:\Diag\firmware-tables.json` on boot.
+- [ ] **Pin the wire format BEFORE writing**: create `docs/boot/firmware-tables-schema.md` as the single source of truth covering schema_version field (start at 1), top-level keys (`generated_at_utc`, `firmware_platform`, `conformance_profile`, `tables[]`, `degraded[]`, `quirks_active[]`), per-`tables[]` entry shape (name, guid, source enum, phys_addr hex, size, checksum_status, validation_reason), and typed sub-blocks (`acpi`, `smbios`, `mat`, `rt_properties`, `esrt`, `apei`, `dbg2`, `wsmt`). The `esrt` block MUST mirror the §6 Registry value names byte-for-byte: per entry `Type` (u32), `TypeName` (string), `FwVersion` (u32), `LowestSupportedFwVersion` (u32), `CapsuleFlags` (u32), `LastAttemptVersion` (u32), `LastAttemptStatus` (u32), `LastAttemptStatusName` (string); plus a `_Header` object with `ResourceCount` (u32), `ResourceCountMax` (u32), `ResourceVersion` (**u64 / REG_QWORD**, never truncated). Document absent vs degraded semantics, stable enum string spellings (the UEFI 2.10 mnemonics from `esrt_decode_status` -- including the UEFI 2.7+ renames `ERROR_PWR_EVT_AC` / `ERROR_PWR_EVT_BATT` and the 2.7+ `ERROR_UNSATISFIED_DEPENDENCIES`), numeric units, and bump rules. Without this doc, kernel writer + host decoder + sysinfo + ETW + Win11 `GetSystemFirmwareTable` consumers will silently drift.
+- [ ] Create `HKLM\HARDWARE\Firmware\Tables\*` mirroring the JSON layout (one subkey per table with `Address`, `Size`, `Checksum`, `ValidationStatus`, `Source`).
+- [ ] Write `X:\Diag\firmware-tables.json` on boot conforming to the schema doc above. Include the four §1-§5 surfaces (catalog, validation, MAT, RT Props) plus typed blocks for ESRT (per §6), APEI (`BERT` / `HEST` / `EINJ` / `ERST` signatures + raw decoded headers), DBG2 (Microsoft Debug Port Table 2 -- secondary serial / 1394 / USB debug ports beyond SPCR), and WSMT (Windows SMM Mitigations Table -- 4-byte protections bitmap exposing firmware SMM hardening posture).
 - [ ] Include validation failures, table addresses, checksums, and quirk matches.
-- [ ] Add `sysinfo.exe` integration for firmware inventory.
+- [ ] Add `sysinfo.exe` integration for firmware inventory; the user-mode tool reads the same JSON schema (no field drift).
 - [ ] Commit: `"boot: publish firmware inventory report"`
 
-**Test checkpoint:** Post-boot, `X:\Diag\firmware-tables.json` exists and validates against the host decoder (§10). `HKLM\HARDWARE\Firmware\Tables\<GUID>\Address` reads back the same physical address that `firmware_table_lookup_guid()` returns. `sysinfo.exe firmware` prints the same table set with checksums and quirk matches. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** Post-boot, `X:\Diag\firmware-tables.json` exists, validates against the schema doc (`docs/boot/firmware-tables-schema.md`) AND against the host decoder (§10). `HKLM\HARDWARE\Firmware\Tables\<GUID>\Address` reads back the same physical address that `firmware_table_lookup_guid()` returns. APEI block shows BERT/HEST signatures when present (operator-visible persistent hardware-error records); DBG2 block lists secondary debug ports beyond SPCR; WSMT block reports the SMM mitigations bitmap so users see firmware SMM posture. `sysinfo.exe firmware` prints the same table set with checksums + quirk matches. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
 ---
 
@@ -228,9 +251,9 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 
 ## 10. Firmware Inventory Tests and Host Decoder
 
-- [ ] Unit tests for GUID lookup, range rejection, checksum failures, and conformance levels.
-- [ ] Add fixture blobs for ACPI RSDP, SMBIOS3, ESRT, FPDT, and DTB.
-- [ ] Add host tool mode to decode `firmware-tables.json`.
+- [ ] Unit tests for GUID lookup, range rejection, checksum failures, and conformance levels (each known profile GUID + length/count rejection cases per §7).
+- [ ] **Positive-case fixture blobs in `src/kernel/test/fixtures/firmware/`**: ACPI RSDP (v1 + v2), SMBIOS3, SMBIOS2, ESRT (8-field full entry), FPDT, DTB, **MAT (positive: code/data/RODATA/guard/WX classes)**, **RT Properties (positive: full 14-service supported bitmask)**, **conformance-profile table (one fixture per registered GUID -- UEFI 2.10, EBBR v2.0, +reserved SBBR/BBR rows from §7)**, **APEI signatures (BERT, HEST, EINJ, ERST)**, **DBG2**, **WSMT**.
+- [ ] Add host tool mode to decode `firmware-tables.json`. Host decoder MUST round-trip every §8 schema block (catalog + validation + ESRT + MAT + RT Props + conformance + APEI + DBG2 + WSMT) -- not just table headers. Round-trip means: read JSON -> render human-readable inventory -> re-emit canonical JSON; `cmp` between input and re-emitted output must be byte-identical for any well-formed file.
 - [ ] Consolidate SMBIOS entry-point wire-format constants into a shared internal header (e.g. `src/kernel/smbios_wire.h`) so `smbios.c` (`SMBIOS3_EP_LEN` / `SMBIOS2_EP_LEN_MIN` / `SMBIOS2_EP_LEN_MAX`) and `firmware_tables.c` (`FW_SMBIOS3_EP_LEN` / `FW_SMBIOS2_EP_LEN_MIN` / `FW_SMBIOS2_EP_LEN_MAX`) reference one definition; either include the same header or add `_Static_assert(FW_* == SMBIOS_*)` linking the two if a shared header is too disruptive. Drift risk is low (DMTF DSP0134 entry-point sizes have not changed since SMBIOS 2.4) but the duplicate is still a future-spec hazard.
 - [ ] Validate `s_rt->hdr.header_size` covers each function-pointer offset before reading it in `call_set_virtual_address_map()` and the critical-pointer NULL checks in `uefi_runtime_init()` (`src/kernel/uefi_runtime.c`). The §5 mismatch checker already gates on `header_size >= sizeof(struct efi_runtime_services)` for the 14 named slots; this item extends the same per-offset coverage check to the earlier SVAM call and the 5-pointer init validation so a truncated RT header cannot overread before the mismatch guard runs. Reject with WARN + degrade RT services on undersized header.
 - [ ] Synthetic-firmware fixtures for malformed MAT and RT properties: zero-entry MAT, oversized count, undersized descriptor_size, unaligned descriptor_size, descriptor with wrapping `number_of_pages`, descriptor with wrapping `physical_start + bytes`, RT properties with declared length below spec minimum, RT services header_size below struct size. Each must prove the parser rejects without dereferencing out-of-extent fields. Owner of these fixtures lives in `src/kernel/test/fixtures/firmware/` per §10 fixture inventory.
@@ -243,18 +266,22 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 
 ## OS Comparison
 
-| ⭐ | Feature                               | 🪟 Win11                         | 🐧 Linux                        | 🚀 Impossible OS                |
-| -- | ------------------------------------- | --------------------------------- | ------------------------------- | -------------------------------- |
-| 💎 | Firmware table catalog API            | ✅ ACPI/HAL + WMI                | ✅ acpi_get_table + sysfs       | ✅ firmware_table_entry_t catalog |
-| 💎 | Physical range + checksum validation  | ✅ HAL validates pre-use         | ✅ acpi_tb_verify_checksum      | ✅ §2 mmap-bound + checksums    |
-| 💎 | ACPI/SMBIOS/DTB arbitration           | ⚠️ ACPI-first; no DTB            | ✅ ACPI on x86, DTB on ARM      | ✅ §3 ACPI > DTB + HYBRID detect |
-| 💎 | FPDT boot-timeline normalization      | ✅ FPDT + ETW timeline           | ⚠️ acpi_fpdt_init read-only     | ✅ §4 FPDT + TSC unified JSON   |
-| 💎 | UEFI MAT + Runtime Properties         | ✅ MmGetEfiRuntimeServicesTable  | ✅ efi_memmap_attributes        | ✅ §5 MAT inventory + RT mismatch |
-| 💎 | ESRT firmware inventory               | ✅ Windows Update / fwupdd       | ✅ fwupd /sys/firmware/efi/esrt | ⬜ §6 ESRT mirror to Registry   |
-| 💎 | UEFI conformance profile + EBBR       | ⚠️ assumes full PC profile       | ✅ EBBR detection in efi-stub   | ⬜ §7 conformance GUID parse    |
-| 💎 | Registry + BlackBox firmware report   | ✅ msinfo32 + Event Log          | ⚠️ scattered (dmidecode/sysfs)  | ⬜ §8 HKLM\HARDWARE\Firmware    |
-| ⭐ | Firmware quirk database               | ⚠️ HAL-internal, opaque          | ⚠️ DMI quirks scattered         | ⬜ §9 SMBIOS-keyed quirks       |
-| ⭐ | Host decoder for firmware-tables.json | ❌ N/A                           | ❌ N/A                          | ⬜ §10 host tool decode JSON    |
+| ⭐ | Feature                               | 🪟 Win11                         | 🐧 Linux                         | 🚀 Impossible OS                  |
+| -- | ------------------------------------- | --------------------------------- | -------------------------------- | ---------------------------------- |
+| 💎 | Firmware table catalog API            | ✅ ACPI/HAL + WMI                | ✅ acpi_get_table + sysfs        | ✅ firmware_table_entry_t catalog |
+| 💎 | Physical range + checksum validation  | ✅ HAL validates pre-use         | ✅ acpi_tb_verify_checksum       | ✅ §2 mmap-bound + checksums      |
+| 💎 | ACPI/SMBIOS/DTB arbitration           | ⚠️ ACPI-first; no DTB            | ✅ ACPI on x86, DTB on ARM       | ✅ §3 ACPI > DTB + HYBRID detect  |
+| 💎 | FPDT boot-timeline normalization      | ✅ FPDT + ETW timeline           | ⚠️ acpi_fpdt_init read-only      | ✅ §4 FPDT + TSC unified JSON     |
+| 💎 | UEFI MAT + Runtime Properties         | ✅ MmGetEfiRuntimeServicesTable  | ✅ efi_memmap_attributes         | ✅ §5 MAT inventory + RT mismatch |
+| 💎 | ESRT firmware inventory               | ✅ Windows Update / fwupdd       | ✅ fwupd /sys/firmware/efi/esrt  | ⬜ §6 ESRT mirror to Registry     |
+| 💎 | UEFI conformance profile + EBBR       | ⚠️ assumes full PC profile       | ✅ EBBR detection in efi-stub    | ⬜ §7 conformance GUID parse      |
+| 💎 | Registry + BlackBox firmware report   | ✅ msinfo32 + Event Log          | ⚠️ scattered (dmidecode/sysfs)   | ⬜ §8 HKLM\HARDWARE\Firmware      |
+| ⭐ | Firmware quirk database               | ⚠️ HAL-internal, opaque          | ⚠️ DMI quirks scattered          | ⬜ §9 SMBIOS-keyed quirks         |
+| ⭐ | Host decoder for firmware-tables.json | ❌ N/A                           | ❌ N/A                           | ⬜ §10 host tool decode JSON      |
+| 💎 | APEI (BERT/HEST/EINJ/ERST) visibility | ✅ WHEA hardware-error subsystem | ✅ /sys/firmware/acpi/* + ras-mc | ⬜ §8 typed APEI block + fixture  |
+| ⭐ | DBG2 secondary debug ports            | ✅ kernel debugger reads DBG2    | ✅ amba_pl011 + earlycon DBG2    | ⬜ §8 DBG2 block beyond SPCR      |
+| ⭐ | WSMT SMM mitigations posture          | ✅ HAL reads WSMT bitmap         | ❌ Linux ignores WSMT            | ⬜ §8 WSMT exposure to operator   |
+| 💎 | firmware-tables.json schema doc       | ⚠️ msinfo32 schema undocumented  | ⚠️ tools differ per distro       | ⬜ §8 firmware-tables-schema.md   |
 
 ---
 

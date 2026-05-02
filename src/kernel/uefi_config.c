@@ -170,8 +170,9 @@ struct esrt_table_header {
 
 static struct esrt_entry s_esrt_entries[ESRT_MAX_ENTRIES];
 static uint32_t s_esrt_count;
+static struct esrt_table_header s_esrt_header;  /* count_max + version mirror */
 
-static const char *esrt_type_name(uint32_t fw_type)
+const char *esrt_decode_type(uint32_t fw_type)
 {
     switch (fw_type) {
     case ESRT_FW_TYPE_SYSTEM:       return "System";
@@ -181,9 +182,33 @@ static const char *esrt_type_name(uint32_t fw_type)
     }
 }
 
+const char *esrt_decode_status(uint32_t status)
+{
+    /* UEFI 2.10 Table 23-3 mnemonics, unprefixed.  Codes 0x06/0x07
+     * carry the UEFI 2.7+ rename (PWR_EVT_AC / PWR_EVT_BATT) and
+     * 0x08 was added in UEFI 2.7.  "Reserved" applies to any value
+     * outside 0x00..0x08 so operator UX is honest about future
+     * spec extensions. */
+    switch (status) {
+    case ESRT_STATUS_SUCCESS:                          return "SUCCESS";
+    case ESRT_STATUS_ERROR_UNSUCCESSFUL:               return "ERROR_UNSUCCESSFUL";
+    case ESRT_STATUS_ERROR_INSUFFICIENT_RESOURCES:     return "ERROR_INSUFFICIENT_RESOURCES";
+    case ESRT_STATUS_ERROR_INCORRECT_VERSION:          return "ERROR_INCORRECT_VERSION";
+    case ESRT_STATUS_ERROR_INVALID_FORMAT:             return "ERROR_INVALID_FORMAT";
+    case ESRT_STATUS_ERROR_AUTH_ERROR:                 return "ERROR_AUTH_ERROR";
+    case ESRT_STATUS_ERROR_PWR_EVT_AC:                 return "ERROR_PWR_EVT_AC";
+    case ESRT_STATUS_ERROR_PWR_EVT_BATT:               return "ERROR_PWR_EVT_BATT";
+    case ESRT_STATUS_ERROR_UNSATISFIED_DEPENDENCIES:   return "ERROR_UNSATISFIED_DEPENDENCIES";
+    default:                                           return "Reserved";
+    }
+}
+
 void esrt_init(void)
 {
     s_esrt_count = 0;
+    s_esrt_header.fw_resource_count     = 0;
+    s_esrt_header.fw_resource_count_max = 0;
+    s_esrt_header.fw_resource_version   = 0;
 
     struct boot_uefi_guid esrt_guid = UEFI_GUID_ESRT;
     uintptr_t table_addr = uefi_find_config_table(&esrt_guid);
@@ -195,6 +220,11 @@ void esrt_init(void)
 
     const struct esrt_table_header *hdr =
         (const struct esrt_table_header *)table_addr;
+
+    /* Mirror header metadata so esrt_resource_count_max() / _version()
+     * accessors and the Registry _Header subkey can read it without
+     * re-touching firmware memory after Phase 1 init. */
+    s_esrt_header = *hdr;
 
     uint32_t count = hdr->fw_resource_count;
     if (count > ESRT_MAX_ENTRIES)
@@ -219,13 +249,39 @@ void esrt_init(void)
     klog(LOG_INFO, "ESRT", "%u firmware component(s):", count);
     for (i = 0; i < count; i++) {
         const struct esrt_entry *e = &s_esrt_entries[i];
-        klog(LOG_INFO, "ESRT", "  [%u] %s v%u.%u (min v%u.%u, status=%u)",
-             i, esrt_type_name(e->fw_type),
+        klog(LOG_INFO, "ESRT", "  [%u] %s v%u.%u (min v%u.%u, status=%s)",
+             i, esrt_decode_type(e->fw_type),
              e->fw_version >> 16, e->fw_version & 0xFFFF,
              e->lowest_supported_version >> 16,
              e->lowest_supported_version & 0xFFFF,
-             e->last_attempt_status);
+             esrt_decode_status(e->last_attempt_status));
     }
+}
+
+uint32_t esrt_resource_count_max(void)
+{
+    return s_esrt_header.fw_resource_count_max;
+}
+
+uint64_t esrt_resource_version(void)
+{
+    return s_esrt_header.fw_resource_version;
+}
+
+int esrt_rollback_floor_ok(uint32_t idx)
+{
+    if (idx >= s_esrt_count)
+        return 0;
+    const struct esrt_entry *e = &s_esrt_entries[idx];
+    return e->fw_version >= e->lowest_supported_version;
+}
+
+int esrt_capsule_persists_across_reset(uint32_t idx)
+{
+    if (idx >= s_esrt_count)
+        return 0;
+    const struct esrt_entry *e = &s_esrt_entries[idx];
+    return (e->capsule_flags & EFI_CAPSULE_PERSIST_ACROSS_RESET) != 0;
 }
 
 uint32_t esrt_count(void)

@@ -1093,9 +1093,16 @@ long RegDeleteTree(HKEY hKey, const char *lpSubKey)
     if (!target)
         return ERROR_FILE_NOT_FOUND;
 
-    /* Delete entire subtree, then unlink from parent */
-    reg_delete_subtree(target);
+    /* Unlink from parent FIRST while target->name still hashes to the
+     * original bucket; reg_delete_subtree() clears name[0]='\0' as
+     * part of marking the key freed, after which reg_remove_child
+     * would compute the empty-string bucket instead of the original
+     * name's bucket and silently fail to unlink (Codex audit on the
+     * ESRT registry mirror feature: leaked the ESRT key on every
+     * populate-after-init cycle, monotonic key pool exhausts on
+     * repeated mirror refreshes). */
     reg_remove_child(target->parent, target);
+    reg_delete_subtree(target);
 
     return ERROR_SUCCESS;
 }
@@ -1865,6 +1872,14 @@ void registry_populate_defaults(void)
     {
         extern void firmware_platform_populate_registry(void);
         firmware_platform_populate_registry();
+    }
+
+    /* Mirror ESRT firmware inventory (HKLM\HARDWARE\Firmware\ESRT\*).
+     * Idempotent: clears the subtree before writing, so removed firmware
+     * components do not leak across reboots. */
+    {
+        extern void esrt_populate_registry(void);
+        esrt_populate_registry();
     }
 
     /* Populate boot decision record (HKLM\SYSTEM\Boot\Decision\*) */

@@ -728,6 +728,82 @@ static void test_rt_supported_implies_pointer_callable(void)
     (void)mismatches;
 }
 
+/* ===== ESRT decoder + capsule-policy primitive tests ===== */
+
+static int strs_eq(const char *a, const char *b)
+{
+    while (*a && *b) { if (*a != *b) return 0; a++; b++; }
+    return *a == 0 && *b == 0;
+}
+
+static void test_esrt_decode_status_known(void)
+{
+    /* Spot-check both ends + middle of the UEFI 2.10 Table 23-3 range
+     * so a future drift in any one mnemonic surfaces as a single
+     * named failure rather than a generic regression. */
+    TEST_ASSERT(strs_eq(esrt_decode_status(ESRT_STATUS_SUCCESS), "SUCCESS"),
+        "ESRT_STATUS_SUCCESS decodes to \"SUCCESS\"");
+    TEST_ASSERT(strs_eq(esrt_decode_status(ESRT_STATUS_ERROR_INSUFFICIENT_RESOURCES),
+                        "ERROR_INSUFFICIENT_RESOURCES"),
+        "INSUFFICIENT_RESOURCES decoded mnemonic");
+    TEST_ASSERT(strs_eq(esrt_decode_status(ESRT_STATUS_ERROR_AUTH_ERROR),
+                        "ERROR_AUTH_ERROR"),
+        "AUTH_ERROR decoded mnemonic");
+    TEST_ASSERT(strs_eq(esrt_decode_status(ESRT_STATUS_ERROR_PWR_EVT_BATT),
+                        "ERROR_PWR_EVT_BATT"),
+        "ERROR_PWR_EVT_BATT decoded mnemonic (UEFI 2.7+)");
+    TEST_ASSERT(strs_eq(esrt_decode_status(ESRT_STATUS_ERROR_UNSATISFIED_DEPENDENCIES),
+                        "ERROR_UNSATISFIED_DEPENDENCIES"),
+        "ERROR_UNSATISFIED_DEPENDENCIES decoded mnemonic (UEFI 2.7+)");
+}
+
+static void test_esrt_decode_status_reserved(void)
+{
+    /* Future spec values fall through to "Reserved" so operator UX
+     * cannot silently lie about an unknown status code.  Boundary
+     * is 0x08 (UNSATISFIED_DEPENDENCIES, the highest valid mnemonic
+     * in UEFI 2.10); 0x09+ is "Reserved". */
+    TEST_ASSERT(strs_eq(esrt_decode_status(0xFFFFFFFF), "Reserved"),
+        "out-of-range status decodes to \"Reserved\"");
+    TEST_ASSERT(strs_eq(esrt_decode_status(9), "Reserved"),
+        "9 (one past UNSATISFIED_DEPENDENCIES) decodes to \"Reserved\"");
+}
+
+static void test_esrt_decode_type_table(void)
+{
+    TEST_ASSERT(strs_eq(esrt_decode_type(ESRT_FW_TYPE_SYSTEM), "System"),
+        "type SYSTEM decoded");
+    TEST_ASSERT(strs_eq(esrt_decode_type(ESRT_FW_TYPE_DEVICE), "Device"),
+        "type DEVICE decoded");
+    TEST_ASSERT(strs_eq(esrt_decode_type(ESRT_FW_TYPE_UEFI_DRIVER), "Driver"),
+        "type DRIVER decoded");
+    TEST_ASSERT(strs_eq(esrt_decode_type(ESRT_FW_TYPE_UNKNOWN), "Unknown"),
+        "type UNKNOWN decoded");
+    TEST_ASSERT(strs_eq(esrt_decode_type(99), "Unknown"),
+        "out-of-range type falls back to \"Unknown\"");
+}
+
+static void test_esrt_capsule_helpers_oor_idx_returns_zero(void)
+{
+    /* On QEMU OVMF without ESRT firmware, esrt_count() == 0, so any
+     * idx is out-of-range.  Both helpers must return 0 cleanly --
+     * never read past the cache or crash on an empty inventory. */
+    TEST_ASSERT_EQ(esrt_rollback_floor_ok(0), 0,
+        "rollback_floor_ok(0) returns 0 when inventory empty");
+    TEST_ASSERT_EQ(esrt_rollback_floor_ok(99), 0,
+        "rollback_floor_ok(99) returns 0 on OOR idx");
+    TEST_ASSERT_EQ(esrt_capsule_persists_across_reset(0), 0,
+        "persists_across_reset(0) returns 0 when inventory empty");
+    TEST_ASSERT_EQ(esrt_capsule_persists_across_reset(99), 0,
+        "persists_across_reset(99) returns 0 on OOR idx");
+}
+
+/* persist_across_reset checks bit 0x00010000 (UEFI 2.10 section 8.5.3).
+ * Verifying the literal here would be tautological -- the compiler
+ * already enforces what is in the #define -- so coverage of that bit
+ * lives in the live capsule-policy consumer (TODO-27 advanced UEFI
+ * work) where a real ESRT entry's capsule_flags drives the helper. */
+
 /* Registration */
 
 void test_register_uefi_boot(void)
@@ -766,6 +842,14 @@ void test_register_uefi_boot(void)
                             test_serial_baud_valid, TEST_CAT_BOOT);
     test_suite_register_cat("UEFI: serial_port standard",
                             test_serial_port_standard, TEST_CAT_BOOT);
+    test_suite_register_cat("ESRT: decode_status known mnemonics",
+                            test_esrt_decode_status_known, TEST_CAT_BOOT);
+    test_suite_register_cat("ESRT: decode_status reserved fallback",
+                            test_esrt_decode_status_reserved, TEST_CAT_BOOT);
+    test_suite_register_cat("ESRT: decode_type table",
+                            test_esrt_decode_type_table, TEST_CAT_BOOT);
+    test_suite_register_cat("ESRT: capsule helpers OOR idx -> 0",
+                            test_esrt_capsule_helpers_oor_idx_returns_zero, TEST_CAT_BOOT);
     test_suite_register_cat("UEFI: UKI flag in mask",
                             test_uki_flag_in_known_mask, TEST_CAT_BOOT);
     test_suite_register_cat("UEFI: UKI flag distinct bit",

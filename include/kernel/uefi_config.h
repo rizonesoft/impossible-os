@@ -52,15 +52,27 @@ int uefi_conformance_level(void);
 #define ESRT_FW_TYPE_DEVICE         2  /* Device firmware (EC, TB, etc.) */
 #define ESRT_FW_TYPE_UEFI_DRIVER    3  /* UEFI driver */
 
-/* Last attempt status codes */
-#define ESRT_STATUS_SUCCESS                 0x00000000
-#define ESRT_STATUS_ERROR_UNSUCCESSFUL      0x00000001
-#define ESRT_STATUS_ERROR_INSUFFICIENT_RESOURCES 0x00000002
-#define ESRT_STATUS_ERROR_INCORRECT_VERSION  0x00000003
-#define ESRT_STATUS_ERROR_INVALID_FORMAT    0x00000004
-#define ESRT_STATUS_ERROR_AUTH_ERROR        0x00000005
-#define ESRT_STATUS_ERROR_AC_NOT_CONNECTED  0x00000006
-#define ESRT_STATUS_ERROR_INSUFFICIENT_BATTERY 0x00000007
+/* Last attempt status codes (UEFI 2.10 Table 23-3).  Codes 0x06/0x07
+ * were renamed in UEFI 2.7 (AC_NOT_CONNECTED -> PWR_EVT_AC,
+ * INSUFFICIENT_BATTERY -> PWR_EVT_BATT) and 0x08
+ * UNSATISFIED_DEPENDENCIES added in 2.7+; the canonical UEFI 2.10
+ * mnemonics are pinned here so registry, JSON, BlackBox, and
+ * operator UX consumers all see one stable contract. */
+#define ESRT_STATUS_SUCCESS                       0x00000000
+#define ESRT_STATUS_ERROR_UNSUCCESSFUL            0x00000001
+#define ESRT_STATUS_ERROR_INSUFFICIENT_RESOURCES  0x00000002
+#define ESRT_STATUS_ERROR_INCORRECT_VERSION       0x00000003
+#define ESRT_STATUS_ERROR_INVALID_FORMAT          0x00000004
+#define ESRT_STATUS_ERROR_AUTH_ERROR              0x00000005
+#define ESRT_STATUS_ERROR_PWR_EVT_AC              0x00000006
+#define ESRT_STATUS_ERROR_PWR_EVT_BATT            0x00000007
+#define ESRT_STATUS_ERROR_UNSATISFIED_DEPENDENCIES 0x00000008
+
+/* Capsule flag bits (UEFI 2.10 section 8.5.3).  ESRT entry carries
+ * `capsule_flags` describing how the firmware update capsule must
+ * behave.  Only the bit consumed by esrt_capsule_persists_across_reset
+ * is named here; capsule-policy owner adds others as needed. */
+#define EFI_CAPSULE_PERSIST_ACROSS_RESET    0x00010000
 
 /* EFI_SYSTEM_RESOURCE_ENTRY (one per firmware component) */
 struct esrt_entry {
@@ -84,6 +96,46 @@ uint32_t esrt_count(void);
 
 /* Returns pointer to n-th ESRT entry, or NULL if out of range. */
 const struct esrt_entry *esrt_get_entry(uint32_t index);
+
+/* Header metadata accessors (UEFI 2.10 section 23.6 EFI_SYSTEM_RESOURCE_TABLE).
+ * fw_resource_count and fw_resource_count_max bound the table; readers
+ * iterate in [0, esrt_count()) via esrt_get_entry().  fw_resource_version
+ * is firmware-defined (currently always 1 in practice). */
+uint32_t esrt_resource_count_max(void);
+uint64_t esrt_resource_version(void);
+
+/* Decoder helpers -- static const char * tables; safe to print directly.
+ * Status names are the unprefixed UEFI 2.10 Table 23-3 mnemonics
+ * ("SUCCESS", "ERROR_UNSUCCESSFUL", ...).  Type names are the
+ * UEFI 2.10 section 23.6 categories ("System", "Device", "Driver",
+ * "Unknown"). */
+const char *esrt_decode_status(uint32_t status);
+const char *esrt_decode_type(uint32_t fw_type);
+
+/* Capsule-policy primitives consumed by the capsule-update owner
+ * (TODO-27 advanced UEFI work) -- intentionally narrow.  These are
+ * NOT authoritative eligibility predicates; the capsule-policy owner
+ * composes them with FwType, LastAttemptStatus, and auth checks.
+ *
+ * esrt_rollback_floor_ok(idx): 1 iff FwVersion >= LowestSupportedFwVersion
+ * (the rollback gate from UEFI 2.10 section 23.6 LSV semantics).
+ *
+ * esrt_capsule_persists_across_reset(idx): 1 iff CapsuleFlags &
+ * EFI_CAPSULE_PERSIST_ACROSS_RESET (0x00010000 per UEFI 2.10
+ * section 8.5.3).  Says capsule survives the next reset; says
+ * nothing about whether the resource itself is updatable.
+ *
+ * Both helpers return 0 on out-of-range idx. */
+int esrt_rollback_floor_ok(uint32_t idx);
+int esrt_capsule_persists_across_reset(uint32_t idx);
+
+/* Mirror ESRT into HKLM\HARDWARE\Firmware\ESRT.  Idempotent: clears the
+ * subtree on entry, then writes one subkey per entry keyed by the
+ * canonical Microsoft brace-form FwClass GUID, plus a sibling _Header
+ * subkey carrying ResourceCount / ResourceCountMax / ResourceVersion.
+ * ESRT-absent boots leave the parent key empty (no stale per-resource
+ * keys carry over). */
+void esrt_populate_registry(void);
 
 /* ---- Memory Attributes Table (UEFI 2.6+ §4.6.4) ---- */
 
