@@ -84,9 +84,12 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
         /* S16 phase 2: header field validation via boot_version
          * classifier. Observed + expected magic/version/size go into
          * a boot_version_fault record; on mismatch boot_version
-         * _render_fatal prints the record (LOG_FATAL), attempts NVRAM
-         * persistence for next-boot BlackBox transcription, and halts.
-         * Do not return from render_fatal. */
+         * _render_fatal prints the record (LOG_FATAL) and halts.
+         * The NVRAM persist for next-boot BlackBox transcription is
+         * best-effort and silently fails when Phase 0 has not yet
+         * brought up uefi_runtime (which is the common case at this
+         * call site); see include/kernel/boot_version.h for the full
+         * contract. Do not return from render_fatal. */
         {
             const struct boot_info_header *h = (const struct boot_info_header *)mbi_p;
             struct boot_version_fault fault;
