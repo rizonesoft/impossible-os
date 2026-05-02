@@ -704,7 +704,7 @@ static void test_rt_property_mismatches_nonneg(void)
 
 static void test_rt_supported_implies_pointer_callable(void)
 {
-    /* Codex H1 guarantee: every bit still set in s_supported after
+    /* Invariant: every bit still set in s_supported after
      * uefi_runtime_init() must correspond to a non-NULL function
      * pointer. The mismatch checker clears bits whose pointer is NULL,
      * so wrappers gating on s_supported cannot null-deref.

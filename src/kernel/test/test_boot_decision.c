@@ -196,11 +196,10 @@ static void test_boot_decision_all_known_flags_accepted(void)
      * RECOVERY_TRIGGERED, RESUME_INVALIDATED, NETWORK_INSECURE,
      * MANIFEST_FAILED, MEASURED_BOOT_FAILED) are EXCLUDED here because
      * Rule 7b (flag -> reason) correctly rejects them when the reason
-     * is NORMAL. The previous version of this suite asserted the full
-     * BOOT_SOURCE_FLAG_MASK_KNOWN was valid with reason=NORMAL, which
-     * was the exact false-positive Codex 2026-04-30 consistency review
-     * caught: a producer could set a recovery trigger flag while the
-     * registry/attestation record claimed reason=normal. */
+     * is NORMAL.  Asserting the full BOOT_SOURCE_FLAG_MASK_KNOWN as
+     * valid with reason=NORMAL would let a producer set a recovery
+     * trigger flag while the registry/attestation record claimed
+     * reason=normal. */
     s_dec_buf.boot_path           = BOOT_PATH_NORMAL;
     s_dec_buf.boot_reason         = BOOT_REASON_NORMAL;
     s_dec_buf.boot_source_flags   = BOOT_SOURCE_FLAG_BOOT_NEXT_SET
@@ -250,7 +249,7 @@ static void test_boot_decision_unset_path_rejected(void)
     TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_DECISION_ERR_BAD_PATH,  "err=BAD_PATH");
 }
 
-/* ---- Cross-field invariant tests (Codex adversarial review) ---- */
+/* ---- Cross-field invariant tests ---- */
 
 static void test_boot_decision_reason_requires_path(void)
 {

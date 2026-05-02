@@ -452,8 +452,7 @@ int NtQueryDirectoryObject(HANDLE_TABLE *ht, HANDLE dir_handle,
      * NtClose on the last handle + ObMakeTemporaryObject + ObpRemoveFromDirectory
      * on another CPU could free the body between the handle-table lookup
      * and the spin_lock_irqsave below, causing a UAF on dir->lock itself.
-     * The extra ref is dropped on every exit path. Codex adversarial review
-     * of the kernel-test-harness leak-retrofit pass (2026-04-22). */
+     * The extra ref is dropped on every exit path. */
     ObReferenceObject(dir);
 
     /* Hold dir->lock for the full enumeration so the list cannot be

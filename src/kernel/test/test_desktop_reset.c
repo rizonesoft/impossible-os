@@ -14,8 +14,7 @@
 void test_desktop_reset(void)
 {
     /* 1. Window Manager state: synthetic windows, focus, deferred
-     *    close queue (wm_test_reset also clears pending_close_handle
-     *    per the Codex-fixed regression in that seam). */
+     *    close queue (wm_test_reset also clears pending_close_handle). */
     wm_test_reset();
 
     /* 2. Keyboard driver state: modifier latches + input ring. */

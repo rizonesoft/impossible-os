@@ -4,18 +4,14 @@
  * Outputs formatted text to BOTH the framebuffer console and serial port.
  * Supports: %d, %u, %x, %p, %s, %c, %%
  *
- * Codex H1 fix (2026-04-28 review of Serial Log Standardization
- * section): the older char-at-a-time printk() let a concurrent klog()
- * line interleave between any two characters of a printk() line
- * because klog() holds the serial spinlock for a full line while
- * printk() acquired the lock per-character via serial_putchar(). The
- * section ship stamp had accepted "printk emergency bypass (intentional)" but
- * 13 src files use printk() outside the panic path -- the bypass was
- * not actually quarantined to emergencies. Fixed by formatting the
- * whole printk() output into a single bounded buffer and calling
- * serial_write() ONCE per printk() invocation. Now both klog() and
- * printk() emit lines atomically; the serial log can no longer have
- * interleaved partial lines from the two surfaces.
+ * Atomicity contract: printk() formats the entire output into a
+ * single bounded buffer and calls serial_write() ONCE per printk()
+ * invocation, so the serial log cannot have interleaved partial
+ * lines from concurrent klog() / printk() surfaces.  The naive
+ * char-at-a-time path lets klog() (which holds the serial spinlock
+ * for a full line) interleave between any two characters of a
+ * printk() line because per-char serial_putchar() reacquires the
+ * lock per byte.
  * ============================================================================ */
 
 #include "kernel/printk.h"
@@ -107,10 +103,9 @@ void printk(const char *fmt, ...)
         if (*fmt != '%') {
             /* Plain newline -- serial_write() inserts \r before every \n
              * itself (see src/kernel/drivers/serial.c:96-98), so DO NOT
-             * pre-expand here. Codex re-adversarial M4 fix (2026-04-28
-             * review of Serial Log Standardization section): the earlier
-             * pre-expansion produced \r\r\n on serial because both
-             * surfaces normalized. fb_write() handles plain \n natively. */
+             * pre-expand here.  Pre-expansion produces \r\r\n on serial
+             * because both surfaces normalize.  fb_write() handles
+             * plain \n natively. */
             plnk_putc(&L, *fmt++);
             continue;
         }

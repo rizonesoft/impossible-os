@@ -213,9 +213,8 @@ static void test_firmware_table_unknown_guid_marked_unknown_profile(void)
 
 /* Multiple SSDTs are typical ACPI shape. The catalog must store each one
  * as a distinct entry (different phys_addr, possibly different size),
- * not collapse them all to the first SSDT. Codex adversarial review
- * caught a regression where the catalog used signature-keyed lookup and
- * lost every duplicate; this test guards against the regression. */
+ * not collapse them all to the first SSDT. A signature-keyed lookup
+ * loses every duplicate; this test guards against that regression. */
 static void test_firmware_table_acpi_duplicates_preserved(void)
 {
     uint32_t n = firmware_table_count();
@@ -578,9 +577,8 @@ static void test_validate_all_clean_ovmf_zero_degraded(void)
 /* firmware_table_promote_to_validated is one-way: UNKNOWN_PROFILE ->
  * VALIDATED only. DEGRADED entries must stay DEGRADED; VALIDATED
  * entries must stay VALIDATED with no spurious return-true; missing
- * names must return 0. Guards the Codex consistency-review fix that
- * reconciled the catalog status with the Boot\Firmware platform
- * decision after dtb_init succeeds. */
+ * names must return 0. Keeps the catalog status consistent with the
+ * Boot\Firmware platform decision after dtb_init succeeds. */
 static void test_firmware_table_promote_unknown_to_validated(void)
 {
     /* Find an UNKNOWN_PROFILE entry on the live catalog -- typically

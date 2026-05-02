@@ -353,8 +353,7 @@ static void test_alpc_syscall_full_path(void)
      * \RPC Control\TestPortSyscall path in OBJECT_ATTRIBUTES. Verifies
      * (a) the path-split logic peels "\\RPC Control\\" and passes only
      * "TestPortSyscall" to AlpcCreatePort, and (b) the resulting port
-     * is findable at the original full path. This is the exact test the
-     * Codex review asked for. */
+     * is findable at the original full path. */
     HANDLE out = 0;
     UNICODE_STRING name_us;
     OBJECT_ATTRIBUTES oa;

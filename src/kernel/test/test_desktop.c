@@ -201,7 +201,7 @@ static void test_fb_snapshot_roundtrip(void)
  * AND any pending E0 prefix. Without the full reset, a test-order
  * dependency would creep in: a prior test that injected a modifier press
  * without a matching release would corrupt the next test's scancode
- * (e.g. 0x1E -> Ctrl-A instead of 'a'). Codex [H] adversarial review. */
+ * (e.g. 0x1E -> Ctrl-A instead of 'a'). */
 static void drain_keyboard_buffer(void)
 {
     keyboard_reset_state();

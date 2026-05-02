@@ -174,8 +174,7 @@ int64_t ob_file_write(HANDLE_TABLE *ht, HANDLE h, const void *buf, uint32_t size
     /* Pipe write path -- only the write-end handle is allowed to write.
      * Writing to a read-end handle would corrupt the ring's readable
      * semaphore count and let a malicious caller forge data into a
-     * pipe it should only be able to drain. Codex adversarial
-     * 2026-04-21 H1. */
+     * pipe it should only be able to drain. */
     if (fo->pipe_id >= 0) {
         if (fo->pipe_end != PIPE_WRITE)
             return -1;
@@ -185,7 +184,7 @@ int64_t ob_file_write(HANDLE_TABLE *ht, HANDLE h, const void *buf, uint32_t size
     /* VFS write path -- require VFS_O_WRITE in the handle's access
      * mask. Without this gate, sys_writehandle could mutate a file
      * opened with VFS_O_READ only, turning a read-only handle into a
-     * write handle. Codex adversarial 2026-04-21 H1. */
+     * write handle. */
     if (!fo->vfs_node)
         return -1;
     if (!(fo->access & VFS_O_WRITE))
@@ -196,7 +195,7 @@ int64_t ob_file_write(HANDLE_TABLE *ht, HANDLE h, const void *buf, uint32_t size
     /* Advance the file offset on a positive write so repeated
      * sys_writehandle calls stream instead of overwriting byte 0.
      * Mirrors ob_file_read's post-read offset bump and the NT-path
-     * NtWriteFile semantics. Codex adversarial 2026-04-21 M1. */
+     * NtWriteFile semantics. */
     if (bytes > 0)
         fo->offset += (uint64_t)bytes;
 

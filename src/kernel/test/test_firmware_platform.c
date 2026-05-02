@@ -314,9 +314,8 @@ static void test_dtb_memorytest_not_counted_as_memory(void)
 /* Build a DTB whose structure block has BEGIN BEGIN BEGIN FDT_END (no
  * END_NODE tokens). categorise_name fires on each BEGIN, populating
  * memory_count and cpu_count, but FDT_END at non-zero depth must
- * reject the walk so HasDTB stays false. Guards the Codex M2 finding:
- * without depth tracking, a hostile blob could pass the inventory gate
- * with bogus child names. */
+ * reject the walk so HasDTB stays false.  Without depth tracking, a
+ * hostile blob could pass the inventory gate with bogus child names. */
 static uint32_t build_unbalanced_dtb(uint8_t *out, uint32_t cap)
 {
     if (cap < 128) return 0;
@@ -378,7 +377,7 @@ static void test_dtb_unbalanced_structure_rejects(void)
                    "rejected walk leaves dtb_chosen_count() = 0");
 }
 
-/* ---- Multi-root rejection (Codex M4) ------------------------------------ */
+/* ---- Multi-root rejection ----------------------------------------------- */
 
 /* Build a DTB with two top-level BEGIN/END trees:
  *   BEGIN "" / END   (first root closes)
@@ -449,7 +448,7 @@ static void test_dtb_multi_root_rejects(void)
                    "multi-root rejection leaves cpu_count=0");
 }
 
-/* ---- Path-aware counting (Codex M3) ------------------------------------- */
+/* ---- Path-aware counting ------------------------------------------------ */
 
 /* Build a balanced but misnested DTB: root -> bogus -> { memory@0,
  * cpu@0 } -> END. Token stream is well-formed (depth balances), but

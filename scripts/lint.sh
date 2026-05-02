@@ -871,24 +871,9 @@ elif [ "$#" -eq 0 ]; then
     CITATION_LEGACY_FILES=(
         src/boot/uefi/bootx64.c
         src/kernel/klog.c
-        src/kernel/main/boot_hw.c
-        src/kernel/main/boot_progress.c
-        src/kernel/nt/nt_sync.c
-        src/kernel/nt/nt_syscall.c
-        src/kernel/ob/ob.c
-        src/kernel/ob/ob_file.c
-        src/kernel/printk.c
         src/kernel/smbios.c
         src/kernel/test/input_record.c
-        src/kernel/test/test_alpc.c
-        src/kernel/test/test_boot_decision.c
-        src/kernel/test/test_desktop.c
-        src/kernel/test/test_desktop_reset.c
-        src/kernel/test/test_firmware_platform.c
-        src/kernel/test/test_firmware_tables.c
-        src/kernel/test/test_uefi_boot.c
         src/kernel/test/test_usermode.c
-        src/kernel/test/test_usermode_launcher.c
         src/kernel/uefi_config.c
         src/kernel/uefi_runtime.c
     )

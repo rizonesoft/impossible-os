@@ -162,9 +162,9 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
      * degraded, present & degraded) before any capability-gated
      * subsystem inspects caps_present / caps_degraded. MUST run BEFORE
      * warm-update consume below: the consume path is gated on
-     * BOOT_CAP_PAYLOAD_DESCRIPTORS, and Codex 2026-04-30 review caught
-     * the prior ordering letting warm-update descriptors get ACCEPTED
-     * before capability validation ran. */
+     * BOOT_CAP_PAYLOAD_DESCRIPTORS, so running consume first would let
+     * warm-update descriptors get ACCEPTED before capability
+     * validation ran. */
     {
         enum boot_caps_error cerr = BOOT_CAPS_ERR_OK;
         if (boot_caps_validate(&g_boot_info, &cerr) != BOOT_OK) {
@@ -185,17 +185,14 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
      *
      * Gated on BOOT_CAP_PAYLOAD_DESCRIPTORS (capability negotiation
      * said the descriptor array is populated + validated) AND on
-     * BOOT_FLAG_WARM_UPDATE (the global handoff signal). Codex review
-     * 2026-04-30 found two ordering / gating bugs:
-     *   H1 (ordering): consume ran BEFORE boot_caps_validate; a
-     *       producer with caps_present clear could ship a type-9
-     *       descriptor and the boot_reserved.c reservation pass
-     *       (which IS gated on caps_present) would skip the range,
-     *       returning preserved memory to PMM.
-     *   H3 (flag invariant): consume ignored BOOT_FLAG_WARM_UPDATE
-     *       entirely; a stale producer's type-9 descriptor got
-     *       ACCEPTED even though the boot-wide handoff flag never
-     *       announced a warm update, weakening the closed-mask ABI. */
+     * BOOT_FLAG_WARM_UPDATE (the global handoff signal).  Both gates
+     * are required: skipping the caps_present gate lets a producer
+     * with caps_present clear ship a type-9 descriptor that the
+     * boot_reserved.c reservation pass (which IS gated on caps_present)
+     * would skip, returning preserved memory to PMM; skipping the
+     * BOOT_FLAG_WARM_UPDATE gate lets a stale producer's type-9
+     * descriptor get ACCEPTED even though the boot-wide handoff flag
+     * never announced a warm update, weakening the closed-mask ABI. */
     {
         int caps_ok = (int)((g_boot_info.caps_present
                              & BOOT_CAP_PAYLOAD_DESCRIPTORS) != 0u);

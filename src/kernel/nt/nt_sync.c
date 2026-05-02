@@ -467,9 +467,8 @@ static NTSTATUS wait_on_handle(HANDLE handle, uint32_t timeout_ms)
             return STATUS_SUCCESS;
         }
         /* event_wait_timeout returns 1 on signalled, 0 on timeout.
-         * (Prior inversion here -- `== 0 ? SUCCESS : TIMEOUT` -- would
-         * have reported timeouts as SUCCESS and vice versa; caught
-         * during the ALPC design review.) */
+         * Inverting the test (`== 0 ? SUCCESS : TIMEOUT`) reports
+         * timeouts as SUCCESS and vice versa. */
         return event_wait_timeout(&eo->event, timeout_ms)
                ? STATUS_SUCCESS : STATUS_TIMEOUT;
     }

@@ -209,7 +209,7 @@ void post_display16(uint16_t code)
 #define BOOT_TIMELINE_RECORD_MAX 192   /* slack over the ~160 worst-case */
 
 /* Safe TSC delta -> ms: clamps reverse-ordered timestamps to 0 instead of
- * wrapping the unsigned subtraction. Codex M2 fix. */
+ * wrapping the unsigned subtraction. */
 static uint32_t safe_tsc_delta_ms(uint64_t later, uint64_t earlier)
 {
     if (later <= earlier) return 0;
@@ -249,8 +249,8 @@ void boot_timeline_dump_json(void)
 
     /* Anchor TSC steps to firmware reset when FPDT is reliable, otherwise
      * to bl_entry. boot_timing_bl_entry_ms_since_reset() returns 0 in the
-     * unreliable case so the offset becomes a no-op. Codex M2: use the
-     * safe delta to refuse wraparound when steps[0] precedes bl_entry.
+     * unreliable case so the offset becomes a no-op. The safe delta
+     * refuses wraparound when steps[0] precedes bl_entry.
      *
      * tsc_unreliable propagates to every emitted TSC record so consumers
      * can distinguish ms-since-reset (FPDT reliable, anchored) from

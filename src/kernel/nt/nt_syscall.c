@@ -895,11 +895,10 @@ static NTSTATUS NtQuerySystemInformation(uint64_t a1, uint64_t a2, uint64_t a3,
          *   ULONG TableBufferLength;       in: capacity, out: bytes-needed
          *   UCHAR TableBuffer[ANYSIZE_ARRAY];
          *
-         * Codex adversarial-impl review F1 (2026-04-29): user-mode
-         * callers MUST be probed; previous-mode-aware copy_from_user /
-         * copy_to_user wrappers are mandatory for every read/write
-         * across the buffer. Existing nt_section.c is the reference
-         * pattern. F2: every length addition uses
+         * User-mode callers MUST be probed; previous-mode-aware
+         * copy_from_user / copy_to_user wrappers are mandatory for every
+         * read/write across the buffer.  Existing nt_section.c is the
+         * reference pattern.  Every length addition uses
          * __builtin_add_overflow so a hostile firmware-reported size
          * cannot wrap and bypass the capacity check.
          */

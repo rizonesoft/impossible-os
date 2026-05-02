@@ -385,8 +385,8 @@ static void test_path_join_adds_separator(void)
                 "no duplicate separator when parent already ends in \\");
 }
 
-/* u_path_has_traversal regression (Codex H3 2026-04-20): the raw
- * prefix check in u_cleanup_manifest_apply was bypassable by
+/* u_path_has_traversal regression: a raw prefix check in
+ * u_cleanup_manifest_apply is bypassable by
  * `C:\Impossible\..\hello.txt`. The traversal guard must catch every
  * variant of a `..` component; these cases cover the common
  * separator + position combinations. */
@@ -462,13 +462,12 @@ static void test_json_escape_specials(void)
     }
 }
 
-/* Manifest HKLM guard regression (Codex H2 2026-04-20): `HKLM\`
- * with an empty subkey would otherwise hit RegDeleteTree(HKLM, "")
- * which wipes ALL children of HKEY_LOCAL_MACHINE. The test verifies
- * the parser's reject path leaves the registry untouched. We use a
- * HKLM subkey that we KNOW exists (SOFTWARE is populated by
- * registry_populate_defaults during boot) and assert it survives a
- * simulated `HKLM\` directive.
+/* Manifest HKLM guard regression: `HKLM\` with an empty subkey would
+ * otherwise hit RegDeleteTree(HKLM, "") which wipes ALL children of
+ * HKEY_LOCAL_MACHINE. The test verifies the parser's reject path
+ * leaves the registry untouched. We use a HKLM subkey that we KNOW
+ * exists (SOFTWARE is populated by registry_populate_defaults during
+ * boot) and assert it survives a simulated `HKLM\` directive.
  *
  * Implementation note: we cannot invoke u_cleanup_manifest_apply
  * directly -- it reads an on-disk manifest and the unit test layer
