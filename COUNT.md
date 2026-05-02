@@ -79,13 +79,13 @@
 | ----------------------------- | ------------: | ----------: | --------------------: |
 | **Core code + tooling lines** |   ~28,000,000 | ~50,000,000 |               271,363 |
 | **Developers**                | ~1,000 active | ~5,000 peak |                     1 |
-| **Time span**                 |      33 years |    40 years | 1 month(s), 26 day(s) |
+| **Time span**                 |      33 years |    40 years | 1 month(s), 27 day(s) |
 
 > At industry rates (10,000 LOC/developer/year -- COCOMO II), writing 271,363
-> lines of core code and tooling would take **176 developers** working for **1 month(s), 26 day(s)**.
+> lines of core code and tooling would take **173 developers** working for **1 month(s), 27 day(s)**.
 >
 > *The "impossible" in Impossible OS was supposed to be the name, not the development method.*
 
 ---
 
-*Last updated: 2026-05-02 16:06 · commit `add56e21`*
+*Last updated: 2026-05-02 18:59 · commit `66869a85`*
