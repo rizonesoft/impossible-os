@@ -15,10 +15,10 @@
 
 |                       |   Files |      Lines |
 | --------------------- | ------: | ---------: |
-| **C sources** (`.c`)  |     304 |     166676 |
-| **Headers** (`.h`)    |     220 |      43317 |
+| **C sources** (`.c`)  |     304 |     166717 |
+| **Headers** (`.h`)    |     220 |      43318 |
 | **Assembly** (`.asm`) |       9 |       1095 |
-| **Subtotal**          | **533** | **211088** |
+| **Subtotal**          | **533** | **211130** |
 
 ## SDK Tools
 
@@ -58,9 +58,9 @@
 
 |                                |    Files |      Lines |
 | ------------------------------ | -------: | ---------: |
-| **Core code + tooling**        |  **750** | **273730** |
+| **Core code + tooling**        |  **750** | **273772** |
 | **Supporting text + metadata** |  **417** | **177556** |
-| **All counted text files**     | **1167** | **451286** |
+| **All counted text files**     | **1167** | **451328** |
 
 > Vendored code excluded: ~13902 lines (`stb_image.h`, `stb_truetype.h`, `efi.h`)
 >
@@ -77,15 +77,15 @@
 
 |                               |         Linux |     Windows |         Impossible OS |
 | ----------------------------- | ------------: | ----------: | --------------------: |
-| **Core code + tooling lines** |   ~28,000,000 | ~50,000,000 |               273,730 |
+| **Core code + tooling lines** |   ~28,000,000 | ~50,000,000 |               273,772 |
 | **Developers**                | ~1,000 active | ~5,000 peak |                     1 |
 | **Time span**                 |      33 years |    40 years | 1 month(s), 27 day(s) |
 
-> At industry rates (10,000 LOC/developer/year -- COCOMO II), writing 273,730
+> At industry rates (10,000 LOC/developer/year -- COCOMO II), writing 273,772
 > lines of core code and tooling would take **175 developers** working for **1 month(s), 27 day(s)**.
 >
 > *The "impossible" in Impossible OS was supposed to be the name, not the development method.*
 
 ---
 
-*Last updated: 2026-05-03 00:32 · commit `99556919`*
+*Last updated: 2026-05-03 00:56 · commit `dbdc4a19`*

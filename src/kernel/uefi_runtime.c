@@ -118,20 +118,23 @@ static int s_rt_prop_mismatches;             /* count of supported-bit vs pointe
 
 /* ---- Internal helpers ---- */
 
-/* Per-offset header_size validation: confirm that an RT services field
- * at the given byte offset (with the given byte size) is fully covered
- * by the header_size value the firmware advertised.  The full-table
- * gate `header_size >= sizeof(struct efi_runtime_services)` runs later
- * in uefi_runtime_init for the 14 named services; this helper covers
- * the earlier SVAM call + 5-pointer NULL-check init that walks the
- * table before that gate fires.  A truncated firmware table that
- * undersized header_size would otherwise overread past the firmware-
- * provided bytes into kernel-allocated memory.  Returns 1 iff the
- * offset+size span is fully within header_size. */
+/* Effective RT-services header_size used by all field-coverage gates.
+ * Latched ONCE in uefi_runtime_init after the firmware-mmap extent
+ * check proves [s_rt, s_rt + clamped_hdr_size) is firmware-owned, where
+ * clamped_hdr_size is the firmware-advertised header_size with a hard
+ * 4096-byte ceiling. Reading s_rt->hdr.header_size directly is unsafe:
+ * an oversized lie (e.g. 0xFFFF_FFFF) would otherwise pass the per-
+ * offset gate while pointing past the validated firmware extent. */
+static uint32_t s_rt_effective_hdr_size;
+
+/* Per-offset header_size validation: confirm a span at field_offset is
+ * fully covered by the validated effective header_size. Returns 0 until
+ * the latch is set, so any caller running before the extent gate sees
+ * every field as out-of-bounds (fail-closed). */
 static int rt_field_within_header(uint32_t field_offset, uint32_t field_size)
 {
     if (!s_rt) return 0;
-    uint32_t hdr_size = s_rt->hdr.header_size;
+    uint32_t hdr_size = s_rt_effective_hdr_size;
     if (hdr_size < sizeof(struct efi_table_header)) return 0;
     uint64_t end = (uint64_t)field_offset + (uint64_t)field_size;
     return end <= (uint64_t)hdr_size;
@@ -258,49 +261,78 @@ static int rt_check_property_pointer_mismatch(void)
 {
     if (!s_rt) return 0;
 
-    /* Validate that the firmware-declared RT services header covers
-     * every offset we are about to read. UEFI 2.10 sets the layout at
-     * 24 (header) + 14 * 8 (function pointers) = 136 bytes. Older or
-     * truncated firmware tables shorter than this would have us read
-     * past the declared extent. Skip the mismatch check entirely on
-     * such tables -- the 5-pointer init validation is enough. */
-    if (s_rt->hdr.header_size < sizeof(struct efi_runtime_services)) {
-        klog(LOG_WARN, "UEFI",
-             "RT services header_size=%u below expected %u -- "
-             "skipping property mismatch check",
-             (uint32_t)s_rt->hdr.header_size,
-             (uint32_t)sizeof(struct efi_runtime_services));
-        return 0;
-    }
+    /* UEFI 2.10 layout: 24 (header) + 14 * 8 (function pointers). When
+     * firmware declares a smaller header_size, every pointer slot whose
+     * offset is not fully covered by the declared extent is unreadable
+     * and MUST NOT be called. Pre-pass below clears the corresponding
+     * s_supported bit for each truncated slot so wrapper gates fall
+     * through to UEFI_UNSUPPORTED instead of dereferencing past the
+     * firmware-advertised extent. */
+#define RT_SVC(flag_, name_, field_) \
+    { (flag_), (name_), \
+      (uint32_t)__builtin_offsetof(struct efi_runtime_services, field_), 0 }
 
-    /* Mirrors the supported-bit -> pointer mapping for every named slot
-     * in the RT properties table. UpdateCapsule and friends are
-     * deliberately included even though they are not in the 5 critical
-     * pointers checked above -- the firmware-table-platform-inventory
-     * roadmap requires every service to be cross-checked. */
     struct rt_pp {
         uint32_t flag;
         const char *name;
+        uint32_t offset;
         void *ptr;
     } svc[] = {
-        { EFI_RT_SUPPORTED_GET_TIME,                "GetTime",                (void *)s_rt->get_time },
-        { EFI_RT_SUPPORTED_SET_TIME,                "SetTime",                (void *)s_rt->set_time },
-        { EFI_RT_SUPPORTED_GET_WAKEUP_TIME,         "GetWakeupTime",          (void *)s_rt->get_wakeup_time },
-        { EFI_RT_SUPPORTED_SET_WAKEUP_TIME,         "SetWakeupTime",          (void *)s_rt->set_wakeup_time },
-        { EFI_RT_SUPPORTED_GET_VARIABLE,            "GetVariable",            (void *)s_rt->get_variable },
-        { EFI_RT_SUPPORTED_GET_NEXT_VARIABLE_NAME,  "GetNextVariableName",    (void *)s_rt->get_next_variable_name },
-        { EFI_RT_SUPPORTED_SET_VARIABLE,            "SetVariable",            (void *)s_rt->set_variable },
-        { EFI_RT_SUPPORTED_SET_VIRTUAL_ADDRESS_MAP, "SetVirtualAddressMap",   (void *)s_rt->set_virtual_address_map },
-        { EFI_RT_SUPPORTED_CONVERT_POINTER,         "ConvertPointer",         (void *)s_rt->convert_pointer },
-        { EFI_RT_SUPPORTED_GET_NEXT_HIGH_MONO,      "GetNextHighMonoCount",   (void *)s_rt->get_next_high_mono_count },
-        { EFI_RT_SUPPORTED_RESET_SYSTEM,            "ResetSystem",            (void *)s_rt->reset_system },
-        { EFI_RT_SUPPORTED_UPDATE_CAPSULE,          "UpdateCapsule",          (void *)s_rt->update_capsule },
-        { EFI_RT_SUPPORTED_QUERY_CAPSULE_CAP, "QueryCapsuleCaps", (void *)s_rt->query_capsule_capabilities },
-        { EFI_RT_SUPPORTED_QUERY_VARIABLE_INFO,     "QueryVariableInfo",      (void *)s_rt->query_variable_info },
+        RT_SVC(EFI_RT_SUPPORTED_GET_TIME,                "GetTime",              get_time),
+        RT_SVC(EFI_RT_SUPPORTED_SET_TIME,                "SetTime",              set_time),
+        RT_SVC(EFI_RT_SUPPORTED_GET_WAKEUP_TIME,         "GetWakeupTime",        get_wakeup_time),
+        RT_SVC(EFI_RT_SUPPORTED_SET_WAKEUP_TIME,         "SetWakeupTime",        set_wakeup_time),
+        RT_SVC(EFI_RT_SUPPORTED_GET_VARIABLE,            "GetVariable",          get_variable),
+        RT_SVC(EFI_RT_SUPPORTED_GET_NEXT_VARIABLE_NAME,  "GetNextVariableName",  get_next_variable_name),
+        RT_SVC(EFI_RT_SUPPORTED_SET_VARIABLE,            "SetVariable",          set_variable),
+        RT_SVC(EFI_RT_SUPPORTED_SET_VIRTUAL_ADDRESS_MAP, "SetVirtualAddressMap", set_virtual_address_map),
+        RT_SVC(EFI_RT_SUPPORTED_CONVERT_POINTER,         "ConvertPointer",       convert_pointer),
+        RT_SVC(EFI_RT_SUPPORTED_GET_NEXT_HIGH_MONO,      "GetNextHighMonoCount", get_next_high_mono_count),
+        RT_SVC(EFI_RT_SUPPORTED_RESET_SYSTEM,            "ResetSystem",          reset_system),
+        RT_SVC(EFI_RT_SUPPORTED_UPDATE_CAPSULE,          "UpdateCapsule",        update_capsule),
+        RT_SVC(EFI_RT_SUPPORTED_QUERY_CAPSULE_CAP,       "QueryCapsuleCaps",     query_capsule_capabilities),
+        RT_SVC(EFI_RT_SUPPORTED_QUERY_VARIABLE_INFO,     "QueryVariableInfo",    query_variable_info),
     };
 
-    int mismatches = 0;
+#undef RT_SVC
+
     uint32_t n = (uint32_t)(sizeof(svc) / sizeof(svc[0]));
+
+    /* Truncation pre-pass: clear s_supported bits for slots outside the
+     * firmware-advertised header_size. Runs BEFORE any pointer load so a
+     * truncated header cannot be overread during table construction. */
+    if (s_rt->hdr.header_size < sizeof(struct efi_runtime_services)) {
+        klog(LOG_WARN, "UEFI",
+             "RT services header_size=%u below expected %u -- "
+             "clearing supported bits for fields outside the extent",
+             (uint32_t)s_rt->hdr.header_size,
+             (uint32_t)sizeof(struct efi_runtime_services));
+        for (uint32_t i = 0; i < n; i++) {
+            if (!rt_field_within_header(svc[i].offset, sizeof(void *))) {
+                if (s_supported & svc[i].flag) {
+                    klog(LOG_WARN, "UEFI",
+                         "RT %s: offset %u outside header_size=%u, "
+                         "marking unsupported",
+                         svc[i].name, svc[i].offset,
+                         (uint32_t)s_rt->hdr.header_size);
+                    s_supported &= ~svc[i].flag;
+                }
+            }
+        }
+    }
+
+    /* Pointer load pass: only dereference fields whose slot is fully
+     * covered by header_size. Slots outside the extent stay NULL. */
+    const uint8_t *rt_bytes = (const uint8_t *)s_rt;
+    for (uint32_t i = 0; i < n; i++) {
+        if (rt_field_within_header(svc[i].offset, sizeof(void *))) {
+            void *p;
+            __builtin_memcpy(&p, rt_bytes + svc[i].offset, sizeof(void *));
+            svc[i].ptr = p;
+        }
+    }
+
+    int mismatches = 0;
     for (uint32_t i = 0; i < n; i++) {
         int advertised = (s_supported & svc[i].flag) != 0;
         int present    = svc[i].ptr != 0;
@@ -505,6 +537,9 @@ boot_result_t uefi_runtime_init(void)
             s_init_done = 1;
             return BOOT_DEGRADED;
         }
+        /* Extent proven firmware-owned: latch the validated size as the
+         * authoritative header_size for all subsequent field gates. */
+        s_rt_effective_hdr_size = hdr_size;
         s_rt->hdr.crc32 = 0;
         uint32_t computed = gpt_crc32(&s_rt->hdr, hdr_size);
         s_rt->hdr.crc32 = saved_crc;

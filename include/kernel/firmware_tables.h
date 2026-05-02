@@ -157,15 +157,16 @@ void firmware_tables_populate_registry(void);
 void firmware_tables_publish_json(void);
 
 /* True iff `[addr, addr+len)` is contained in a single UEFI memory-map
- * descriptor of a firmware-bearing type (RESERVED / LOADER_* /
- * RUNTIME_* / ACPI_RECLAIM / ACPI_NVS / PERSISTENT).
+ * descriptor of a firmware-bearing type (RESERVED / RUNTIME_* /
+ * ACPI_RECLAIM / ACPI_NVS / PERSISTENT).
  *
- * Post-PMM-reclaim contract: REJECTS UEFI_MMAP_BOOT_SERVICES_CODE and
- * UEFI_MMAP_BOOT_SERVICES_DATA along with CONVENTIONAL / UNUSABLE /
- * MMIO / MMIO_PORT / PAL_CODE.  PMM reclaims BootServices in Phase 0
- * before the firmware-table catalog walk in Phase 1, so any firmware
- * structure pointed into BootServices memory may have been overwritten
- * by the kernel allocator by the time a Phase-1+ consumer reads it.
+ * Post-PMM-reclaim contract: REJECTS UEFI_MMAP_BOOT_SERVICES_CODE/DATA
+ * AND UEFI_MMAP_LOADER_CODE/DATA along with CONVENTIONAL / UNUSABLE /
+ * MMIO / MMIO_PORT / PAL_CODE.  PMM reclaims BootServices and Loader
+ * memory in Phase 0 before the firmware-table catalog walk in Phase 1,
+ * so any firmware structure pointed into either type may have been
+ * overwritten by the kernel allocator by the time a Phase-1+ consumer
+ * reads it.
  *
  * Phase-0 callers that run BEFORE `pmm_init()` reclaims BootServices
  * (e.g. `uefi_runtime_init` reading `EFI_RT_PROPERTIES_TABLE` from
@@ -179,13 +180,13 @@ void firmware_tables_publish_json(void);
 int firmware_table_mmap_contains(uintptr_t addr, uint64_t len);
 
 /* Phase-0 pre-PMM-reclaim variant: also accepts UEFI_MMAP_BOOT_SERVICES_
- * CODE/DATA as firmware-owned. Use when the caller runs before
- * `pmm_init()` recovers BootServices pages to the free-page pool
- * (e.g. `uefi_runtime_init` -> `read_rt_properties` reading the
- * EFI_RT_PROPERTIES_TABLE which firmware may publish in
- * BootServicesData). Phase-1+ callers (firmware-table catalog walk,
- * validators, MAT inventory, ECPT detection) MUST use the standard
- * `firmware_table_mmap_contains()` to reject those types. */
+ * CODE/DATA AND UEFI_MMAP_LOADER_CODE/DATA as firmware-owned. Use when
+ * the caller runs before `pmm_init()` recovers those pages to the
+ * free-page pool (e.g. `uefi_runtime_init` -> `read_rt_properties`
+ * reading the EFI_RT_PROPERTIES_TABLE which firmware may publish in
+ * BootServicesData or LoaderData). Phase-1+ callers (firmware-table
+ * catalog walk, validators, MAT inventory, ECPT detection) MUST use
+ * the standard `firmware_table_mmap_contains()` to reject those types. */
 int firmware_table_mmap_contains_pre_reclaim(uintptr_t addr, uint64_t len);
 
 /* Promote a single named catalog entry from FW_STATUS_UNKNOWN_PROFILE

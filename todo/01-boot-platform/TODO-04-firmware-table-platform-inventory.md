@@ -345,9 +345,9 @@ Pre-existing safety / regression fixes surfaced by §1-§9 review pipelines. Eac
 > - **Canonical doc** -- [`include/kernel/firmware_tables.h`](../../include/kernel/firmware_tables.h) firmware-region oracle contract + [`src/kernel/uefi_runtime.c`](../../src/kernel/uefi_runtime.c) RT header-size gate.
 > - **Scope boundary** -- §11 owns the 2 shipped safety fixes; the VFS Phase-3 write cluster is now cross-filed at `05-storage-filesystems/TODO-04 §15` since the root cause is the FAT32 dir-cache walk_path retry that §15 already owns. Refactor / dedup hygiene is owned by §12.
 
-> **Verified:** 2026-05-03 | this commit | 2/3 items (1 cross-filed) | build OK | smoke PASS (KVM 2.41s, RT services OK, 17 firmware tables / 9 validated / 6 correctly degraded)
+> **Verified:** 2026-05-03 | this commit | 2/3 items (1 cross-filed) | build OK | tests 2616/2616 PASS | smoke PASS (KVM 2.41s, RT services OK, 17 firmware tables / 9 validated / 6 correctly degraded)
 > **Deferred:** [H] Phase-3 VFS write failure cluster (3 files: boot-profile.log + boot-reserved.json + firmware-tables.json) -> XREF: 05-storage-filesystems/TODO-04 §15 (item: "Replace explicit-truncate workarounds in two consumers" at line 347 -- needs extension to cover all 3 Phase-3 writers, not just the 2 already named)
-> **Quality reviewed:** 2026-05-03 | Codex 6x (design + adversarial-impl + adversarial x2 + consistency + perf) | 5H+1M fixed, 1H cross-filed to D05 T04 §15, 1M accept-as-is | scope: kernel-code-quality
+> **Quality reviewed:** 2026-05-03 | Codex 10x (design + adversarial-impl + adversarial x2 + consistency x2 + perf x2 + re-adversarial x3) | 8H+2M fixed, 1H cross-filed to D05 T04 §15, 1M accept-as-is | scope: kernel-code-quality
 
 ---
 

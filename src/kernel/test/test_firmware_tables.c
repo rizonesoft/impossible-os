@@ -189,9 +189,15 @@ static void test_firmware_table_unknown_guid_marked_unknown_profile(void)
             }
         } else {
             /* Nonzero VendorTable, GUID not recognised here -- contract
-             * says UNKNOWN_PROFILE, not VALIDATED. */
+             * says UNKNOWN_PROFILE, not VALIDATED. The firmware-region
+             * oracle adds a second valid outcome: DEGRADED with
+             * RANGE_UNMAPPED when the table sits in BootServicesData/Code
+             * or LoaderData/Code (PMM reclaims those in Phase 0). Range
+             * precedence is correct -- never reaches profile classification. */
             saw_nonzero_unknown = 1;
-            if (e->status != FW_STATUS_UNKNOWN_PROFILE) {
+            if (e->status != FW_STATUS_UNKNOWN_PROFILE &&
+                !(e->status == FW_STATUS_DEGRADED &&
+                  e->degraded_reason == FW_DEGRADED_RANGE_UNMAPPED)) {
                 unknown_violation = 1;
             }
         }
