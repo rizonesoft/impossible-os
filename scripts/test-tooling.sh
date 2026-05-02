@@ -5417,6 +5417,28 @@ rm -rf "$CDE_TMP"
 
 
 # ============================================================================
+# Boot-error history cascade fixture (consumer-side)
+# ============================================================================
+# Runs bash scripts/test-smoke-history.sh (4 QEMU boots: 3 corrupt-kernel
+# fatals + 1 clean boot, asserting the kernel renderer surfaces the
+# "Recent boot history (4 attempts)" klog block).  Disabled by default
+# because each run is ~30-60s; opt in with SMOKE_HISTORY=1.  Skips
+# gracefully when the host lacks mtools / OVMF / qemu so CI matrices
+# without those packages still pass.
+if [ "${SMOKE_HISTORY:-0}" = "1" ]; then
+    if command -v mcopy >/dev/null && command -v qemu-system-x86_64 >/dev/null \
+       && [ -f /usr/share/OVMF/OVMF_CODE_4M.fd ]; then
+        if bash scripts/test-smoke-history.sh >/dev/null 2>&1; then
+            t_pass "smoke_history: cascade fixture (3 corrupt + 1 clean boot)"
+        else
+            t_fail "smoke_history: cascade fixture" \
+                   "scripts/test-smoke-history.sh failed; rerun to see output"
+        fi
+    fi
+fi
+
+
+# ============================================================================
 # Summary
 # ============================================================================
 

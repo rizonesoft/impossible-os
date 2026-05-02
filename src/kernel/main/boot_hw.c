@@ -372,6 +372,12 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
         uefi_var_set(var_name, &guid, &zero, sizeof(zero), UEFI_VAR_NV_BOOT_RUNTIME);
     }
 
+    /* Render the boot-error history ring.  Reads the 8-entry NVRAM ring
+     * populated by the producer-side append sites (bootloader fatal,
+     * EBS-success, kernel Phase-3) and emits a klog block listing the
+     * recent attempts oldest-first.  Silent no-op on first-ever boot. */
+    boot_history_render();
+
     /* --- Secure Boot state detection --- */
     POST16(POST16_SECUREBOOT);
     {

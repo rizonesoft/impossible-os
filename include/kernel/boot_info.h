@@ -1547,3 +1547,28 @@ _Static_assert(BOOT_HIST_BIN_SIZE ==
  * remain callable post-EBS).  Idempotent on repeated call within the
  * same boot.  Silently no-ops when RT services are unavailable. */
 void boot_history_kernel_mark_phase3(void);
+
+/* Consumer-side reader.  Reads the 8-entry NVRAM ring + cookie via
+ * uefi_var_get / uefi_var_get_u32, validates size + attrs (mismatch
+ * triggers the same delete-then-warn repair as the writer side), and
+ * fills `out_ring` with up to BOOT_HIST_RING_LEN entries.  Returns the
+ * count of non-zero entries (0..BOOT_HIST_RING_LEN); zero-initializes
+ * out_ring on any failure.  Pure-data: callable safely from boot_hw.c
+ * after uefi_vars_init() returns BOOT_OK.  The X:\Diag\boot-error-
+ * history.bin BlackBox-file path is reserved for future expansion
+ * (when the ring outgrows NVRAM); for now NVRAM is the sole channel. */
+size_t boot_history_read(struct boot_error_history_entry out_ring[BOOT_HIST_RING_LEN]);
+
+/* Decode a source_section value into a stable human label.  Sentinels
+ * (UNKNOWN/EBS_OK/KERNEL_PHASE3) get named strings; bootloader-phase
+ * codes (0x01NN) get "bl-init"/"bl-conf"/"bl-kernel"/"bl-pagetables"/
+ * "bl-ebs"; everything else falls back to "section-0xNNNN".  Returns
+ * the number of bytes (excluding terminator) written to `out` -- never
+ * exceeds `cap - 1`. */
+size_t boot_history_decode_source_section(uint16_t src, char *out, size_t cap);
+
+/* Top-level renderer.  Calls boot_history_read and emits a klog block
+ * "[BOOT] Recent boot history (N attempts):" plus one line per non-
+ * zero entry, oldest-first by boot_seq.  Silent no-op when count==0.
+ * Wire AFTER uefi_vars_init in boot_phase0/boot_hw.c. */
+void boot_history_render(void);
