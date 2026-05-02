@@ -23,7 +23,7 @@ implements_after: TODO-04
 > - A/B rollback (TODO-21), recovery partition (TODO-22), boot menu (TODO-07)
 > - VFS Phase-3 write failure cluster (TODO-04 §11)
 > - JSON builder truncation contract (TODO-04 §12)
-> - SMEP/SMAP via CR4 (needs KPTI per-process page tables, TODO-15 + TODO-27)
+> - SMEP/SMAP via CR4 (needs KPTI per-process page tables, D03 T02 §memory-security)
 > - TSC_AUX MSR per-CPU (TODO-02-kernel-core/TODO-09 §x86-64)
 > - PAT WC retry on Hyper-V (TODO-03-memory-concurrency/TODO-01 §VMM)
 > - AT_PHDR derivation in ELF loader (TODO-10-platform-services/TODO-10 §linux-compat)
@@ -93,7 +93,7 @@ A single operator-facing dashboard collapsing every "what's wrong on this boot" 
 - [ ] Define `schema_version=1` wire format in `docs/boot/boot-health-schema.md` mirroring `firmware-tables-schema.md` style: `schema_version`, `generated_at_utc`, `boot_seq`, `degraded_caps[]` (from `boot_caps`), `degraded_subsystems[]` (from `kernel_subsystem_ready` oracle), `missing_capabilities[]` (TPM, USB, NVMe, network -- queried from each subsystem's accessor), `perf_breaches[]` (from §1), `mat_wx_violations[]` (from §5), `firmware_quirks_active[]` (from `firmware_quirks_iter_next`), `recent_boot_times_s[]` (last 3 from `boot_history`), `secureboot_state` (UNKNOWN/ENABLED/DISABLED/SETUP).
 - [ ] Implement `boot_health_publish_json()` in NEW `src/kernel/main/boot_health.c` (~250 LOC). Single-shot call from `boot_phase3()` AFTER `boot_progress_dump_summary()` and the §1 budget check, BEFORE the firmware-tables JSON publish (so a single Phase-3 file-write batch covers all artifacts).
 - [ ] Use the same single-open `vfs_open(VFS_O_WRITE | VFS_O_CREATE | VFS_O_TRUNC)` shape that `klog_disk` uses (TODO-04 §11 fix lands first). 8 KiB pmm buffer, RFC 8259 escapes, civil-from-days ISO-8601.
-- [ ] Add `mcp__lsp-bridge__definition`-grep-stable accessors so the writer reads from canonical sources (no copy-paste of subsystem state).
+- [ ] Use stable accessor functions from each owning subsystem so the writer reads from canonical sources (no copy-paste of subsystem state).
 - [ ] Commit: `"boot: publish consolidated boot-health.json"`
 
 **Test checkpoint:** Post-boot, `X:\Diag\boot-health.json` exists, parses through `cJSON_Parse`, contains every required top-level key, and reflects the live boot's actual degraded state (e.g. on this current OVMF run: `degraded_caps` lists 6 entries, `missing_capabilities` lists `TPM` + `USB` + `NVMe`, `mat_wx_violations` count is 1).
@@ -208,6 +208,8 @@ Tests live under `src/kernel/test/test_boot_health.c` (NEW). Registered via `tes
 - [ ] §5: `mat_violation_classify(attr_bits)` returns the WX-violation reason string; tests cover all 8 attr-bit combinations.
 - [ ] §8: `boot_heartbeat_should_emit(elapsed_ms, last_emit_ms)` returns 1 every 250ms; tests cover edge cases (elapsed=0, last=0, wraparound).
 
+---
+
 ## Verification
 
 - [ ] All unit tests in `## Unit Tests` PASS under `SUITE=boot`.
@@ -220,4 +222,4 @@ Tests live under `src/kernel/test/test_boot_health.c` (NEW). Registered via `tes
 - [ ] Boot heartbeat fires during a synthetic 1s busy-loop step; absent on <250ms steps.
 - [ ] Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | unit tests for §1-§3 + §5 + §8 pure helpers, 0 failures
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 5 boot-health pure-helper suites (§1, §2, §3, §5, §8), 0 failures
