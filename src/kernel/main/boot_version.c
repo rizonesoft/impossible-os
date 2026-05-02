@@ -161,9 +161,12 @@ int boot_version_persist_nvram(const struct boot_version_fault *fault)
 
 void boot_version_render_fatal(const struct boot_version_fault *fault)
 {
-    /* Two LOG_FATAL lines separate the "what class" label from the
-     * observed/expected values, so grep-ing boot logs for the label
-     * yields both lines. */
+    /* Multi-line diagnostics use LOG_ERROR, NOT LOG_FATAL. klog
+     * treats LOG_FATAL as no-return (HLT loop after the first line);
+     * a LOG_FATAL line anywhere in this function would prevent the
+     * remaining observed/expected/loader-identity lines from
+     * reaching serial. boot_halt() at the end of this function is
+     * the real halt point. */
     const char *class_name = boot_version_fault_class_name(
         fault ? fault->fault_class : BOOT_VERSION_FAULT_NULL_HDR);
 
@@ -176,31 +179,31 @@ void boot_version_render_fatal(const struct boot_version_fault *fault)
     const char *hint = boot_version_fault_operator_hint(
         fault ? fault->fault_class : BOOT_VERSION_FAULT_NULL_HDR);
     if (fault && fault->fault_class == BOOT_VERSION_FAULT_SEC_ROLLBACK) {
-        klog(LOG_FATAL, "boot",
+        klog(LOG_ERROR, "boot",
              "Security-version downgrade refused -- class=%s "
              "(operator response: %s)",
              (uint64_t)(uintptr_t)class_name,
              (uint64_t)(uintptr_t)hint);
     } else {
-        klog(LOG_FATAL, "boot",
+        klog(LOG_ERROR, "boot",
              "Boot protocol version mismatch -- class=%s "
              "(operator response: %s)",
              (uint64_t)(uintptr_t)class_name,
              (uint64_t)(uintptr_t)hint);
     }
     if (fault) {
-        klog(LOG_FATAL, "boot",
+        klog(LOG_ERROR, "boot",
              "  observed magic=0x%x version=%u size=%u",
              (uint64_t)fault->observed_magic,
              (uint64_t)fault->observed_version,
              (uint64_t)fault->observed_size);
-        klog(LOG_FATAL, "boot",
+        klog(LOG_ERROR, "boot",
              "  expected magic=0x%x version=%u size=%u",
              (uint64_t)fault->expected_magic,
              (uint64_t)fault->expected_version,
              (uint64_t)fault->expected_size);
         if (fault->fault_class == BOOT_VERSION_FAULT_SEC_ROLLBACK) {
-            klog(LOG_FATAL, "boot",
+            klog(LOG_ERROR, "boot",
                  "  security version: observed=%u expected=%u "
                  "(anti-rollback refusal; boot a newer kernel)",
                  (uint64_t)fault->observed_loader_sec_ver,
@@ -220,7 +223,7 @@ void boot_version_render_fatal(const struct boot_version_fault *fault)
                 }
             }
             if (sha_zero) {
-                klog(LOG_FATAL, "boot",
+                klog(LOG_ERROR, "boot",
                      "  loader_identity: unavailable (legacy bootloader)");
             } else {
                 /* Render the first 12 bytes of the SHA inline (24
@@ -241,11 +244,11 @@ void boot_version_render_fatal(const struct boot_version_fault *fault)
                 for (li = 0; li < 24; li++)
                     label[li] = fault->loader_identity.build_label[li];
                 label[24] = '\0';
-                klog(LOG_FATAL, "boot",
+                klog(LOG_ERROR, "boot",
                      "  loader build_unix_time=%lu  label=%s",
                      fault->loader_identity.build_unix_time,
                      (uint64_t)(uintptr_t)label);
-                klog(LOG_FATAL, "boot",
+                klog(LOG_ERROR, "boot",
                      "  loader git_sha (12 of 20)=%x%x%x %x%x%x %x%x%x %x%x%x",
                      (uint64_t)fault->loader_identity.git_sha[0],
                      (uint64_t)fault->loader_identity.git_sha[1],
@@ -267,7 +270,7 @@ void boot_version_render_fatal(const struct boot_version_fault *fault)
      * caller: uefi_runtime_init runs LATER in boot_phase0, so
      * uefi_set_variable would always return UEFI_UNSUPPORTED on the
      * stale-loader path this function was designed for. The fault is
-     * fully diagnosed on serial + framebuffer via klog(LOG_FATAL)
+     * fully diagnosed on serial + framebuffer via klog(LOG_ERROR)
      * above; post-halt persistence is covered by the bootloader-side
      * pre-jump NVRAM write tracked as a remaining checklist item.
      * If a FUTURE caller with uefi_runtime already live (for example,
