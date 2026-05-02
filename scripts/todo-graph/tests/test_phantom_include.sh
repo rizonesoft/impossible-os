@@ -35,7 +35,7 @@ TMP_DIR="$(mktemp -d -t phantom-include-test.XXXXXX)" \
 # --------------------------------------------------------------------
 # Skip-on-missing-clangd contract
 # --------------------------------------------------------------------
-if ! command -v clangd-19 >/dev/null 2>&1 && ! command -v clangd >/dev/null 2>&1; then
+if ! command -v clangd-19 >/dev/null 2>&1; then
     OUT="$TMP_DIR/no-clangd.log"
     set +e
     python3 "$WRAPPER" --limit 1 >"$OUT" 2>&1

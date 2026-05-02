@@ -498,9 +498,11 @@ fi
 # the full sweep. Default behavior is a skip-WARN that names the env
 # var so the operator can run it on demand or in CI.
 #
-# Until first-pass triage completes, findings emit as WARN (legacy
-# state, like Check 13). Once triage is complete, set
-# CHECK_8_LEGACY_FILES=() empty-allowlist to flip to ERROR.
+# Until first-pass triage completes, findings emit as WARN. The
+# triage work (sweep + remove or annotate every unused include)
+# and the eventual flip from WARN to ERROR are owned by the
+# phantom-include first-pass triage item in TODO-07's lint
+# Check 8 phantom-include wrapper section.
 #
 # Allowlist: `// PHANTOM-INCLUDE-OK: <reason>` on the same source line
 # as the #include suppresses individual findings (the wrapper handles

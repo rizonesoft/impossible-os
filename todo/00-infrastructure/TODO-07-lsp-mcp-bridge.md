@@ -642,11 +642,14 @@ Current repo is ~215k core LOC (~189k kernel + ~24k tooling per [COUNT.md](../..
 > **Test runner:** `bash scripts/todo-graph/tests/test_phantom_include.sh` | aggregate via `bash scripts/test-tooling.sh`.
 
 > **Notes:**
-> - Shipped: `scripts/todo-graph/check_phantom_includes.py` (MCP stdio client + per-file polling) + `scripts/lint.sh` Check 8 wiring + `scripts/todo-graph/tests/test_phantom_include.sh` (2 sub-tests).
-> - How it runs: `LINT_PHANTOM_INCLUDE_FULL=1 bash scripts/lint.sh` to invoke; default-skip preserves pre-commit speed. Wrapper spawns one bridge subprocess per run; per-file polling bounds `publishDiagnostics` async wait at ~6s per TU.
-> - Downstream effects: closes TODO-08 §12 Check 8 sub-bullet (flipped `[/]` -> `[x]` reciprocally). Codex design review adoptions in commit `<this-commit>` (Finding 2 polling fix, Finding 3 don't stage stale bootloader).
-> - Canonical doc: this section + [`scripts/todo-graph/check_phantom_includes.py`](../../scripts/todo-graph/check_phantom_includes.py) module docstring.
+> - Shipped: `scripts/todo-graph/check_phantom_includes.py` (MCP stdio client + two-phase round-based polling) + `scripts/lint.sh` Check 8 wiring + `scripts/todo-graph/tests/test_phantom_include.sh` (2 sub-tests).
+> - How it runs: `LINT_PHANTOM_INCLUDE_FULL=1 bash scripts/lint.sh` to invoke; default-skip preserves pre-commit speed. Wrapper spawns one bridge subprocess per run; round 1 fires diagnostics for all TUs, rounds 2..MAX_ROUNDS re-poll only the unpublished set under `GLOBAL_DEADLINE_S` to bound total wall-clock instead of per-file.
+> - Downstream effects: closes the lint Check 8 phantom-include sub-bullet in [TODO-08 §12 AI-slop content lints](../00-infrastructure/TODO-08-automation-hardening.md#12-ai-slop-content-lints-tautological-test--stub-behind-stamp--phantom-include) (flipped `[/]` -> `[x]` reciprocally). Codex 4x review adoptions (design pre-code, adversarial pre-commit, adversarial+consistency+perf post-commit) recorded in section-ship commit `6869329b` and review commit.
+> - Canonical doc: this section + [`scripts/todo-graph/check_phantom_includes.py`](../../scripts/todo-graph/check_phantom_includes.py) module docstring + AI-Slop Content Gates table in [`docs/infrastructure/ai-system.md`](../../docs/infrastructure/ai-system.md).
 > - Scope boundary: §19 owns the lint-side wrapper and tooling-test wiring. The bridge `diagnostics` MCP tool itself is owned by §7. The triage of the surfaced phantom-include findings (item 3 above) is staged work staying in this section as `[/]`; promotion to ERROR depends on triage completion.
+
+> **Verified:** 2026-05-02 | commit `6869329b` | 5/6 items | build OK | tests 2/2 PASS
+> **Quality reviewed:** 2026-05-02 | Codex 4x (design + adversarial + consistency + perf) | 0H+5M+0L fixed, 0 open | scope: N/A (host-side Python tooling)
 
 ---
 

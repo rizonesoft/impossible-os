@@ -57,12 +57,20 @@ PHANTOM_CODES = {
     "misc-include-cleaner",
 }
 
-# Per-file polling for clangd publishDiagnostics. clangd indexes
-# asynchronously after didOpen; a fresh URI usually publishes within
-# 1-3 seconds, but a cold-index miss can take longer. Cap at
-# POLL_ATTEMPTS * POLL_INTERVAL = ~6s per file before giving up.
-POLL_ATTEMPTS = 20
-POLL_INTERVAL = 0.3
+# Two-phase polling for clangd publishDiagnostics. clangd indexes
+# asynchronously after didOpen; a sequential per-file 6s wait would
+# multiply across 287 TUs into ~30 minutes worst case. Codex perf
+# review caught this. Strategy:
+#   Round 1 -- fire diagnostics(path) for every TU. Keep results
+#              that are already published; queue the rest.
+#   Round 2..N -- re-poll only the still-unpublished set; each round
+#              sleeps once globally then re-issues diagnostics calls.
+# Each round caps at MAX_ROUNDS, gated by GLOBAL_DEADLINE_S so a
+# hung clangd can never wedge the sweep past the bar. Per-file
+# wait equals only the ROUND_INTERVAL cumulative across rounds.
+MAX_ROUNDS = 20
+ROUND_INTERVAL = 0.3
+GLOBAL_DEADLINE_S = 300.0
 RPC_TIMEOUT = 90.0
 
 ALLOWLIST_RE = re.compile(r"//\s*PHANTOM-INCLUDE-OK\b")
@@ -227,32 +235,27 @@ def _extract_header(diag_message: str, source_line: str) -> str:
     return "<unknown>"
 
 
-def _process_file(client, repo_root, c_path, rel):
-    """Run diagnostics on one file with bounded polling. Returns
-    (findings_lines, status, detail) where status is one of:
-      "ok"          -- diagnostics published; findings may be empty
-      "unpublished" -- clangd never published within the deadline
-      "error"       -- bridge returned an error envelope
-                       ({error, detail, ...}) -- the path is not
-                       safely classifiable as clean."""
-    last_payload = None
-    for _ in range(POLL_ATTEMPTS):
-        payload = client.call_tool("diagnostics", {"path": rel})
-        if payload is None:
-            return [], "error", "rpc-recv-failed"
-        # Bridge returns {error: kind, detail: ..., **extra} on LSP
-        # failure (see scripts/lsp-mcp/lsp_client.py LspError.to_envelope).
-        # Treating this as clean would silently hide phantoms when
-        # clangd cannot spawn. Codex adversarial review High.
-        if "error" in payload:
-            return [], "error", str(payload.get("error"))
-        last_payload = payload
-        if not payload.get("note"):
-            break
-        time.sleep(POLL_INTERVAL)
-    if last_payload is None or last_payload.get("note"):
-        return [], "unpublished", ""
-    diagnostics = last_payload.get("diagnostics") or []
+def _diagnostics_once(client, rel):
+    """Single diagnostics call; returns (status, payload_or_detail)
+    where status is "ok" / "pending" / "error". 'payload_or_detail' is
+    the response dict on ok/pending, the error kind string on error."""
+    payload = client.call_tool("diagnostics", {"path": rel})
+    if payload is None:
+        return "error", "rpc-recv-failed"
+    # Bridge returns {error: kind, detail: ..., **extra} on LSP
+    # failure (see scripts/lsp-mcp/lsp_client.py LspError.to_envelope).
+    # Codex adversarial review High.
+    if "error" in payload:
+        return "error", str(payload.get("error"))
+    if payload.get("note"):
+        return "pending", payload
+    return "ok", payload
+
+
+def _findings_from_payload(c_path, rel, payload):
+    """Filter PHANTOM_CODES diagnostics, drop allowlisted lines,
+    return the formatted warning lines."""
+    diagnostics = payload.get("diagnostics") or []
     findings = []
     for d in diagnostics:
         code = d.get("code")
@@ -270,7 +273,7 @@ def _process_file(client, repo_root, c_path, rel):
         findings.append(
             f'{rel}:{line_idx + 1}: warning: unused include "{header}"'
         )
-    return findings, "ok", ""
+    return findings
 
 
 def main(argv=None):
@@ -337,22 +340,58 @@ def main(argv=None):
                     "fastmcp SDK or crashed on warm-start")
             return 2
 
-        unpublished = []
-        errors = []
+        # Build the (rel, c_path) list, dropping anything outside the
+        # workspace root.
+        targets = []
         for c_path in files:
             try:
                 rel = c_path.resolve().relative_to(repo_root).as_posix()
             except ValueError:
                 continue
-            findings, status, detail = _process_file(
-                client, repo_root, c_path, rel,
-            )
-            for line in findings:
-                print(line)
-            if status == "unpublished":
-                unpublished.append(rel)
-            elif status == "error":
-                errors.append((rel, detail))
+            targets.append((rel, c_path))
+
+        # Round 1: fire diagnostics for every target. Files that come
+        # back ok or error are settled; pending files queue for round 2+.
+        # Two-phase strategy bounds total wait time at MAX_ROUNDS *
+        # ROUND_INTERVAL globally, instead of per-file. Codex perf
+        # review medium.
+        pending = []
+        errors = []
+        deadline = time.time() + GLOBAL_DEADLINE_S
+        for rel, c_path in targets:
+            status, payload_or_detail = _diagnostics_once(client, rel)
+            if status == "ok":
+                for line in _findings_from_payload(c_path, rel, payload_or_detail):
+                    print(line)
+            elif status == "pending":
+                pending.append((rel, c_path))
+            else:  # status == "error"
+                errors.append((rel, payload_or_detail))
+
+        # Rounds 2..MAX_ROUNDS: sleep once per round, then re-poll the
+        # pending set. Each successful publish leaves the pending list.
+        # clangd has been indexing in the background while we issued
+        # round 1, so most files publish on round 2.
+        round_idx = 1
+        while pending and round_idx < MAX_ROUNDS and time.time() < deadline:
+            time.sleep(ROUND_INTERVAL)
+            round_idx += 1
+            still_pending = []
+            for rel, c_path in pending:
+                if time.time() >= deadline:
+                    still_pending.append((rel, c_path))
+                    continue
+                status, payload_or_detail = _diagnostics_once(client, rel)
+                if status == "ok":
+                    for line in _findings_from_payload(c_path, rel, payload_or_detail):
+                        print(line)
+                elif status == "pending":
+                    still_pending.append((rel, c_path))
+                else:
+                    errors.append((rel, payload_or_detail))
+            pending = still_pending
+
+        unpublished = [rel for rel, _ in pending]
 
         if unpublished:
             _eprint(
