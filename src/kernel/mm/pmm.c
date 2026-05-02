@@ -18,6 +18,7 @@
 #include "kernel/mm/user_range.h"
 #include "kernel/mm/boot_reserved.h"
 #include "kernel/boot_info.h"
+#include "kernel/boot_halt.h"
 #include "kernel/klog.h"
 #ifdef KERNEL_TESTS
 #include "kernel/smp.h"                 /* smp_this_cpu() for per-CPU countdown */
@@ -104,6 +105,38 @@ boot_result_t pmm_init(void)
     if (g_boot_info.mmap_quirks)
         klog(LOG_WARN, "mm",
              "PMM: memory map had quirky descriptors (stripped by bootloader)");
+
+    /* Fail-closed consumer-side validation. The bootloader
+     * normalizes and bounds the map, but PMM must not trust the
+     * post-handoff contents: a corrupt same-version BOOTX64.EFI, a
+     * memory clobber after Phase 0, or a future producer bug could
+     * deliver mmap_count > BOOT_MMAP_MAX_ENTRIES (out-of-bounds
+     * read) or a base+length pair that wraps past UINT64_MAX (bogus
+     * highest_addr / free-region selection). Validate count cap
+     * and each entry's base+length non-wrap before consuming. */
+    if (g_boot_info.mmap_count > BOOT_MMAP_MAX_ENTRIES) {
+        klog(LOG_ERROR, "mm",
+             "PMM: mmap_count %u exceeds BOOT_MMAP_MAX_ENTRIES %u "
+             "(corrupt boot_info)",
+             (uint64_t)g_boot_info.mmap_count,
+             (uint64_t)BOOT_MMAP_MAX_ENTRIES);
+        boot_halt("pmm_init: mmap_count exceeds cap");
+    }
+    for (i = 0; i < g_boot_info.mmap_count; i++) {
+        uint64_t base = g_boot_info.mmap[i].base_addr;
+        uint64_t length = g_boot_info.mmap[i].length;
+        if (length == 0)
+            continue;  /* zero-length entry is benign; just skipped */
+        if (base + length < base) {
+            klog(LOG_ERROR, "mm",
+                 "PMM: mmap[%u] base=0x%lx length=0x%lx wraps past "
+                 "UINT64_MAX (corrupt boot_info)",
+                 (uint64_t)i,
+                 base,
+                 length);
+            boot_halt("pmm_init: mmap entry wraps");
+        }
+    }
 
     /* Step 1: Find the highest usable physical address.
      *
