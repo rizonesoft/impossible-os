@@ -504,21 +504,21 @@ Add a QR code to the boot failure error screen (§9) that encodes a recovery URL
 
 - [x] Implement QR code encoder in bootloader: QR Version 3 (29x29 modules), byte mode, ECL-L, Reed-Solomon EC (15 codewords), mask pattern 0 -- self-contained in `bootx64.c`, verified 0-diff against segno (spec-compliant library)
 - [x] `boot_fatal()` renders QR code in bottom-right corner of the GOP framebuffer (direct pixel write, works even during EBS retry); if ConOut unavailable but framebuffer available, renders QR-only
-- [x] QR payload: `https://impossibleos.co/err/XXXXXXXX` (8 lowercase hex digits matching the UINT32 boot_fatal/NVRAM/boot_info contract; both QR-only and graphical BSOD paths produce the identical string via `format_recovery_url()`)
+- [x] QR payload: `https://impossibleos.co/err/XXXX` (4 lowercase hex digits matching the published `gh-pages/err/<code>/` static pages and the BOOT_ERR_REGISTRY_MAX domain (0x0013 currently, well under 16 bits); both QR-only and graphical BSOD paths produce the identical string via `format_recovery_url()`)
 - [x] QR module size: 4px at 1280x720, 6px at 1920x1080, 8px at 2560+ -- with 4-module white quiet zone
 - [x] If GOP unavailable (gFramebuffer NULL or size 0): QR rendering silently skipped, text error screen still shows
 - [x] Standalone encoder ([TODO-14 §6 Panic QR Code](../01-boot-platform/TODO-14-boot-diagnostics.md#6-panic-qr-code-deferred----depends-on-5) not yet implemented) -- when that section lands, the kernel-side encoder can be factored from this implementation
 - [x] `error_screen_test=1` boot.conf key triggers `boot_fatal()` before kernel load for QR/BSOD testing (halts instead of rebooting so screen stays visible)
 - [x] Commit: `"boot: QR code on boot error screen -- scan for recovery instructions"` (134702ae)
 
-**Test checkpoint:** Run `scripts/debug/kernel/run-error-screen-test.bat` (sets `error_screen_test=1`). Error screen shows QR code in bottom-right. Scan with phone -- URL `https://impossibleos.co/err/00000003` appears. Verify QR is scannable at 1280x720 and 1920x1080 resolutions.
+**Test checkpoint:** Run `scripts/debug/kernel/run-error-screen-test.bat` (sets `error_screen_test=1`). Error screen shows QR code in bottom-right. Scan with phone -- URL `https://impossibleos.co/err/0003` appears and resolves to the recovery page. Verify QR is scannable at 1280x720 and 1920x1080 resolutions.
 
 > **Test runner:** N/A (UEFI pre-boot only -- QR encoder renders via GOP before kernel) | validation: `scripts\debug\kernel\run-error-screen-test.bat` (error_screen_test=1) + phone-scan
 
 > **Notes:**
 > - Shipped: QR Version 3 byte-mode encoder + `qr_render_error_url()` + graphical BSOD QR block in `src/boot/uefi/bootx64.c` (~1100-1604) + `error_screen_test=1` boot.conf gate (~7956).
 > - How it runs: `boot_fatal()` invokes `qr_render_error_url()` when ConOut is unavailable but GOP is; full graphical BSOD calls a parallel inline QR block. Both paths now share `format_recovery_url()` so QR payload and on-screen caption are byte-identical.
-> - Downstream effects: QR encoder remains self-contained and 0-diff vs segno. Static recovery pages under `gh-pages/err/` currently cover the 4-hex range 0000-000d; extending to 8-hex coverage or installing 4-hex redirects is operational follow-up handled in the gh-pages branch, not tracked as a kernel/boot TODO item.
+> - Downstream effects: QR encoder remains self-contained and 0-diff vs segno. URL width matches `gh-pages/err/<code>/` static pages 1:1; new error codes need a matching directory added to gh-pages.
 > - Canonical doc: this section + the `format_recovery_url()` doc-comment in bootx64.c.
 > - Scope boundary: §14 owns the bootloader QR encoder, the QR/caption renderer, and the error_screen_test trigger. The kernel-side panic-QR factor-out is owned by [TODO-14 §6 Panic QR Code](../01-boot-platform/TODO-14-boot-diagnostics.md#6-panic-qr-code-deferred----depends-on-5).
 

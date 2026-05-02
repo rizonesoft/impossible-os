@@ -1094,12 +1094,15 @@ static void qr_render_to_fb(const UINT8 matrix[QR_SIZE][QR_SIZE],
 }
 
 /* High-level: encode URL and render QR to framebuffer bottom-right. */
-/* Canonical recovery URL: scheme + host + path + 8 lowercase hex.
+/* Canonical recovery URL: scheme + host + path + 4 lowercase hex.
  * Both QR-only (qr_render_error_url) and graphical BSOD paths must
  * encode the same string -- otherwise users scan one URL and read
- * another. Buffer must be at least 37 bytes (28-byte prefix + 8 hex
- * + NUL). Returns the URL length excluding NUL. */
-#define RECOVERY_URL_MIN_BUF 37
+ * another. The 4-hex width matches the gh-pages/err/<code>/ static
+ * page layout AND the BOOT_ERR_REGISTRY_MAX domain (currently
+ * 0x0013, well under 16 bits); the upper 16 bits of err_code carry
+ * no information today. Buffer must be at least 33 bytes (28-byte
+ * prefix + 4 hex + NUL). Returns the URL length excluding NUL. */
+#define RECOVERY_URL_MIN_BUF 33
 static UINTN format_recovery_url(char *buf, UINTN size, UINT32 err_code)
 {
     static const char hex_lc[] = "0123456789abcdef";
@@ -1111,14 +1114,9 @@ static UINTN format_recovery_url(char *buf, UINTN size, UINT32 err_code)
         return 0;
     }
     for (i = 0; prefix[i]; i++) buf[i] = prefix[i];
-    /* 8 hex digits to match the UINT32 boot_fatal/NVRAM/boot_info
-     * contract; the serial+text ConOut paths print 8.  Lowercase to
-     * match RFC 3986 canonical URL form and the static recovery
-     * pages under gh-pages/err/. */
-    buf[i++] = hex_lc[(err_code >> 28) & 0xF];
-    buf[i++] = hex_lc[(err_code >> 24) & 0xF];
-    buf[i++] = hex_lc[(err_code >> 20) & 0xF];
-    buf[i++] = hex_lc[(err_code >> 16) & 0xF];
+    /* 4 lowercase hex digits.  Matches the published recovery pages
+     * under gh-pages/err/0000../<code>/.  RFC 3986 canonical URL
+     * form for the host + path. */
     buf[i++] = hex_lc[(err_code >> 12) & 0xF];
     buf[i++] = hex_lc[(err_code >>  8) & 0xF];
     buf[i++] = hex_lc[(err_code >>  4) & 0xF];
