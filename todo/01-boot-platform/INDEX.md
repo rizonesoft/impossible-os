@@ -53,6 +53,7 @@ This domain covers the path from firmware entry through kernel handoff and early
 - [TODO-26 -- Hibernation Resume & Fast Startup Boot Handoff](TODO-26-hibernation-resume-fast-startup-handoff.md) -- S4/fast-startup metadata, resume eligibility, integrity validation, boot_info resume payload, failure fallback, and resume diagnostics.
 - [TODO-27 -- UEFI Advanced Features](TODO-27-uefi-advanced.md) -- Deferred UEFI-specific features: multi-OS discovery/chainload entries for [TODO-07](TODO-07-boot-entry-store-menu-policy.md), capsule updates, W^X, multi-GPU GOP, extended SB, SMBIOS ext, DBX sync
 - [TODO-28 -- Boot Validation & Hardware Certification Matrix](TODO-28-boot-validation-certification-matrix.md) -- Unified VM, media, security, rollback, network, and bare-metal boot certification matrix with support bundle and release gate.
+- [TODO-29 -- Boot Performance & Health Observability](TODO-29-boot-perf-health-observability.md) -- Per-phase perf budgets + threshold alarms, consolidated `boot-health.json` dashboard, rolling `boot-trend.json` regression detection, plus targeted optimization on the slowest observed phases (SMBIOS, PS/2 mouse, font/icon load).
 
 ## Completed / Doc-converted
 
