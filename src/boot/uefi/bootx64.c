@@ -1094,27 +1094,45 @@ static void qr_render_to_fb(const UINT8 matrix[QR_SIZE][QR_SIZE],
 }
 
 /* High-level: encode URL and render QR to framebuffer bottom-right. */
+/* Canonical recovery URL: scheme + host + path + 8 lowercase hex.
+ * Both QR-only (qr_render_error_url) and graphical BSOD paths must
+ * encode the same string -- otherwise users scan one URL and read
+ * another. Buffer must be at least 37 bytes (28-byte prefix + 8 hex
+ * + NUL). Returns the URL length excluding NUL. */
+#define RECOVERY_URL_MIN_BUF 37
+static UINTN format_recovery_url(char *buf, UINTN size, UINT32 err_code)
+{
+    static const char hex_lc[] = "0123456789abcdef";
+    static const char prefix[] = "https://impossibleos.co/err/";
+    UINTN i;
+
+    if (size < RECOVERY_URL_MIN_BUF) {
+        if (size > 0) buf[0] = '\0';
+        return 0;
+    }
+    for (i = 0; prefix[i]; i++) buf[i] = prefix[i];
+    /* 8 hex digits to match the UINT32 boot_fatal/NVRAM/boot_info
+     * contract; the serial+text ConOut paths print 8.  Lowercase to
+     * match RFC 3986 canonical URL form and the static recovery
+     * pages under gh-pages/err/. */
+    buf[i++] = hex_lc[(err_code >> 28) & 0xF];
+    buf[i++] = hex_lc[(err_code >> 24) & 0xF];
+    buf[i++] = hex_lc[(err_code >> 20) & 0xF];
+    buf[i++] = hex_lc[(err_code >> 16) & 0xF];
+    buf[i++] = hex_lc[(err_code >> 12) & 0xF];
+    buf[i++] = hex_lc[(err_code >>  8) & 0xF];
+    buf[i++] = hex_lc[(err_code >>  4) & 0xF];
+    buf[i++] = hex_lc[ err_code        & 0xF];
+    buf[i] = '\0';
+    return i;
+}
+
 static void qr_render_error_url(UINT32 err_code)
 {
     char url[48];
-    static const char hex_chars[] = "0123456789abcdef";
-    static const char prefix[] = "https://impossibleos.co/err/";
     int i;
 
-    for (i = 0; prefix[i]; i++) url[i] = prefix[i];
-    /* Full 8 hex digits to match the UINT32 boot_fatal/NVRAM/boot_info
-     * contract; the serial+text ConOut paths print 8.  Recovery URL
-     * width must follow or the QR scan lands on a 4-hex page that
-     * disagrees with what the operator read off serial. */
-    url[i++] = hex_chars[(err_code >> 28) & 0xF];
-    url[i++] = hex_chars[(err_code >> 24) & 0xF];
-    url[i++] = hex_chars[(err_code >> 20) & 0xF];
-    url[i++] = hex_chars[(err_code >> 16) & 0xF];
-    url[i++] = hex_chars[(err_code >> 12) & 0xF];
-    url[i++] = hex_chars[(err_code >>  8) & 0xF];
-    url[i++] = hex_chars[(err_code >>  4) & 0xF];
-    url[i++] = hex_chars[ err_code        & 0xF];
-    url[i] = '\0';
+    if (format_recovery_url(url, sizeof url, err_code) == 0) return;
 
     UINT8 data_cw[QR_DATA_CW];
     UINT8 ec_cw[QR_EC_LEN];
@@ -1497,14 +1515,15 @@ static void bsod_render_graphical(UINT32 err_code, const char *title,
 
     /* 7. QR code + URL caption, bottom-right.
      *
-     * The existing qr_render_error_url() (S14) places the QR with a
-     * fixed 12-pixel bottom margin, which leaves no room for a caption
+     * The existing qr_render_error_url() places the QR with a fixed
+     * 12-pixel bottom margin, which leaves no room for a caption
      * line below.  For the graphical BSOD we inline the QR encoding
      * here and position the QR higher so the URL text fits in the
-     * reserved bottom strip.  qr_render_to_fb is called directly. */
+     * reserved bottom strip.  qr_render_to_fb is called directly.
+     * The URL itself is built by format_recovery_url() so QR payload
+     * and caption text match qr_render_error_url's contract exactly. */
     {
         char url[48];
-        static const char prefix[] = "impossibleos.co/err/";
         int k;
         UINT8 data_cw[QR_DATA_CW];
         UINT8 ec_cw[QR_EC_LEN];
@@ -1520,17 +1539,13 @@ static void bsod_render_graphical(UINT32 err_code, const char *title,
         UINT32 qr_x, qr_y;
         UINT32 url_x, url_y;
 
-        for (k = 0; prefix[k]; k++) url[k] = prefix[k];
-        /* 8 hex digits -- UINT32 contract. */
-        url[k++] = hex[(err_code >> 28) & 0xF];
-        url[k++] = hex[(err_code >> 24) & 0xF];
-        url[k++] = hex[(err_code >> 20) & 0xF];
-        url[k++] = hex[(err_code >> 16) & 0xF];
-        url[k++] = hex[(err_code >> 12) & 0xF];
-        url[k++] = hex[(err_code >>  8) & 0xF];
-        url[k++] = hex[(err_code >>  4) & 0xF];
-        url[k++] = hex[(err_code >>  0) & 0xF];
-        url[k] = '\0';
+        /* format_recovery_url is structurally defensive (returns 0
+         * only when the buffer is < RECOVERY_URL_MIN_BUF; we pass 48
+         * which is comfortably above 37). On the impossible failure
+         * path, skip QR rendering rather than aborting the rest of
+         * the BSOD -- title/error code/caption already drew. */
+        if (format_recovery_url(url, sizeof url, err_code) == 0)
+            goto skip_qr;
 
         /* Match the mod-size selection from qr_render_error_url so the
          * QR has the same visual scale across renderers. */
@@ -1585,6 +1600,7 @@ static void bsod_render_graphical(UINT32 err_code, const char *title,
                 }
             }
         }
+    skip_qr:;
     }
 }
 
