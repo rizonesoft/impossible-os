@@ -44,7 +44,7 @@ title: "TODO-27 -- UEFI Advanced Features"
 | ⭐  | Order | Deliverable                              | Depends On          | Status |
 | --- | :---: | ---------------------------------------- | ------------------- | :----: |
 | ⭐  |   1   | UEFI multi-OS detection and chainload entries | T07 §1-§4      |  [ ]   |
-| 💎  |   2   | UEFI capsule update and ESRT             | T02 §2              |  [ ]   |
+| 💎  |   2   | Firmware update advisor (read-only LVFS) | T04 §6              |  [ ]   |
 | 💎  |   3   | UEFI memory attributes (W^X)            | T02 §1, T24 §1      |  [ ]   |
 | 💎  |   4   | Multi-GPU GOP enumeration                | T02 §3              |  [ ]   |
 | 💎  |   5   | Secure Boot extended state + enforcement | T02 §5              |  [ ]   |
@@ -67,20 +67,25 @@ Detect other OS partitions from GPT and contribute chainload entries to the TODO
 
 **Test checkpoint:** QEMU with two GPT partitions: TODO-07 boot menu includes 2 entries, countdown from 3, auto-selects Impossible OS. Bare metal dual-boot: detects Windows/Linux, chainload works.
 
-## 2. UEFI Capsule Update and ESRT
+## 2. Firmware Update Advisor (read-only LVFS-style)
 
-Parse the ESRT firmware resource table and implement the UEFI capsule delivery path for firmware updates.
+Surface what firmware updates exist for the host and tell the operator how to apply them via the **vendor's** update path. Impossible OS does NOT call `UpdateCapsule()`, does NOT write the `OsIndications` capsule bit, does NOT stage capsule images on the ESP, and does NOT trigger reboot-and-flash. Firmware writes are the single failure mode that turns a laptop into a paperweight; the OS-side risk surface for an actual capsule path is wider than its hobby-OS value, so this section is deliberately scoped as advisory only.
 
-**Files:** `src/kernel/uefi_capsule.c` (new), `include/kernel/uefi_capsule.h` (new)
+**Files:** `src/kernel/firmware_advisor.c` (new), `include/kernel/firmware_advisor.h` (new), `user/sysinfo/firmware_cmd.c` (new)
 
-- [ ] `esrt_init()`: locate `EFI_SYSTEM_RESOURCE_TABLE` in UEFI config tables; walk entries; extract firmware type, GUID, current/last-attempt version, status
-- [ ] Write to Registry: `HKLM\HARDWARE\Firmware\{GUID}\FwType`, `FwVersion`, `LastAttemptVersion`, `LastAttemptStatus`
-- [ ] `capsule_update_request(path)`: read capsule, write to ESP `\EFI\UpdateCapsule\`, set `OsIndications` bit 0, reboot
-- [ ] `capsule_check_result()`: read `OsIndicationsSupported` and `CapsuleReportGuid` at boot
-- [ ] **Capsule submission journal + torn-write recovery** (gap-audit 2026-05-01 H1, surfaced from TODO-02 review pipeline): firmware update is irreversible enough that a half-submitted capsule is a release blocker. Add a durable submission journal in `HKLM\SYSTEM\Capsule\Pending\{guid}\{State, EspPath, OsIndicationsWritten, ScheduledAt}` written BEFORE the ESP file copy AND BEFORE the OsIndications SetVariable write. On the next boot, `capsule_recover_pending()` runs early in Phase 2 and reconciles each pending entry against `CapsuleReportGuid` / `LastAttemptStatus`: if the ESP file exists but OsIndications was never set, retry the SetVariable; if both succeeded but firmware reports `LastAttemptStatus != 0`, log + advance journal to `Failed`; if firmware reports success, advance to `Applied` and delete the pending row. Tests: failure-injection cases for (a) kernel killed after journal write but before ESP copy, (b) kernel killed after ESP copy but before OsIndications, (c) kernel killed after OsIndications but before reboot. Owner: this section.
-- [ ] Commit: `"kernel: ESRT firmware table parse + UEFI capsule update delivery"`
+> [!NOTE]
+> **Option B scope decision (2026-05-02):** the original §2 plan covered actual capsule delivery (UpdateCapsule + OsIndications + ESP staging + submission journal + torn-write recovery). That work is **out of scope and intentionally unowned**. Operators update firmware via the vendor's tool (BIOS Setup, Lenovo Vantage, Dell Command Update, fwupd from a Linux live USB, etc.); Impossible OS only tells them *what* to update and *why*. Removed deliverables: `capsule_update_request`, `capsule_check_result`, `OsIndications` write, ESP `\EFI\UpdateCapsule\` staging, capsule submission journal, torn-write recovery. **Stance change condition:** revisit only if (a) Impossible OS becomes the user's primary daily-driver OS AND (b) a vendor-signing path with brick-test coverage on real hardware is in place.
 
-**Test checkpoint:** QEMU: `[ESRT] N firmware entries found`. Registry `HKLM\HARDWARE\Firmware\{GUID}\FwVersion` populated.
+- [ ] **ESRT consumer** (no re-parse): consume the `D01 T04 §6` `esrt_count` / `esrt_get_entry` / `esrt_resource_count_max` / `esrt_resource_version` / `esrt_decode_status` / `esrt_decode_type` / `esrt_rollback_floor_ok` / `esrt_capsule_persists_across_reset` API. Do not duplicate ESRT parsing or registry mirror -- those ship at `01-boot-platform/TODO-04 §6`. The advisor reads, never writes.
+- [ ] **LVFS metadata client** (HTTP GET, signed-XML verify): fetch `https://fwupd.org/downloads/firmware.xml.gz`, verify the GPG/PKCS7 signature against a pinned LVFS public-key allowlist baked into the image, parse the XML into a per-`fw_class`-GUID map of `{latest_version, vulnerability_summary, vendor_update_url, requires_ac, requires_battery_pct, release_notes_url}`. Cache to `X:\Diag\lvfs-metadata.json` so offline boots can still render advice. Refresh-on-network, never auto-on-boot.
+- [ ] **Version-comparison advisor**: for each ESRT entry, compare its `FwVersion` against the LVFS `latest_version` and emit one of three states per `FwClass`: `up_to_date` / `update_available` / `unknown` (no LVFS metadata for this GUID). Render `LastAttemptStatusName` from the §6 decoder so prior failed updates surface as context (e.g. "last attempt failed: ERROR_PWR_EVT_BATT 2025-08-12; recharge and retry via vendor tool").
+- [ ] **Rollback gate (advisory only)**: surface `esrt_rollback_floor_ok(idx)` in the advisor output as "vendor blocks downgrade below FwVersion 0x..." -- read-only warning, never enforced by us.
+- [ ] **`sysinfo.exe firmware-updates` tool**: user-mode CLI that reads `HKLM\HARDWARE\Firmware\ESRT\*` from §6, joins against the LVFS metadata cache, and prints a table per firmware component: `{component, current, latest, status, vendor_update_url, severity}`. Severity = `critical` if the LVFS row carries a CVE id, else `recommended`. **Always closes with the same line: `Apply via the vendor's BIOS update tool; Impossible OS does not write firmware.`**
+- [ ] **Registry mirror** of advisor state at `HKLM\SOFTWARE\Impossible\FirmwareAdvisor\{FwClass-GUID}\*` with `{Current, Latest, Status, VendorUpdateUrl, ReleaseNotesUrl, Severity, CveId}`; idempotent via the §6 `RegDeleteTree` pattern. Read-only consumer-facing surface for desktop notification UX.
+- [ ] **Refusal path**: if any caller (kernel module, user app) attempts to import a function named `UpdateCapsule` / `capsule_update_request` / `capsule_submit`, the linker fails. Add a `_Static_assert(0, "Impossible OS does not implement firmware capsule delivery -- see TODO-27 §2 Option B note")` in a sentinel `firmware_capsule_refused.c` so a future contributor cannot silently re-introduce the write path without explicit policy review.
+- [ ] Commit: `"kernel: firmware-update advisor (read-only LVFS metadata + ESRT join)"`
+
+**Test checkpoint:** `sysinfo.exe firmware-updates` on QEMU OVMF (no ESRT) prints `No firmware components reported by ESRT (firmware does not advertise updatable resources).` On a synthetic-ESRT fixture (1 entry, FwClass=00000000-..., FwVersion=0x100) plus a synthetic LVFS cache entry (`latest_version=0x110`, `cve=CVE-2099-0001`), the tool prints status `update_available`, severity `critical`, and the standard refusal closer. `HKLM\SOFTWARE\Impossible\FirmwareAdvisor\{...}\Status` reads `update_available`. **No `OsIndications` variable is touched on any boot.** Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
 ## 3. UEFI Memory Attributes (W^X)
 
@@ -175,7 +180,7 @@ Synchronize the UEFI dbx with the latest revocation list shipped with OS updates
 | ⭐ | Feature                   | 🪟 Win11                   | 🐧 Linux                  | 🚀 Impossible OS              |
 |----|---------------------------|-----------------------------|----------------------------|--------------------------------|
 | ⭐ | In-bootloader OS menu     | ❌ Separate BCD/bootmgr    | ❌ GRUB is separate        | ⬜ §1 -- integrated countdown |
-| 💎 | UEFI capsule update       | ✅ WU UEFI capsules        | ✅ fwupd                   | ⬜ §2                         |
+| ⭐ | Firmware update advisor   | ⚠️ silent WU push only     | ⚠️ fwupd writes flash      | ⬜ §2 read-only LVFS; no UpdateCapsule |
 | 💎 | UEFI memory W^X           | ✅ Since Win10 1607        | ✅ EFI_MEMORY_ATTRIBUTES   | ⬜ §3                         |
 | 💎 | Multi-GPU GOP             | ✅ LocateHandleBuffer      | ✅ grub handle buffer      | ⬜ §4                         |
 | 💎 | Secure Boot extended vars | ✅ SetupMode + Deployed    | ✅ efivarfs all SB vars    | ⬜ §5                         |
