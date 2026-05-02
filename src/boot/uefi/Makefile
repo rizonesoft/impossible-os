@@ -24,7 +24,7 @@ CFLAGS += $(EXTRA_CFLAGS)
 
 OUTDIR ?= ../../../build/tools
 
-OBJS := bootx64.o reloc.o elf_bootproto.o
+OBJS := bootx64.o reloc.o elf_bootproto.o boot_history.o
 
 .PHONY: all clean
 
@@ -48,6 +48,12 @@ bootx64.o: bootx64.c efi.h boot_info_mirror.h boot_proto_mirror.h \
 # mismatch check.
 elf_bootproto.o: elf_bootproto.c elf_bootproto.h elf_types.h \
                  boot_proto_mirror.h efi.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# Boot-error history ring producer (NVRAM ring + cookie).  Mirrors
+# struct boot_error_history_entry from include/kernel/boot_info.h via
+# boot_info_mirror.h offset asserts.
+boot_history.o: boot_history.c efi.h boot_info_mirror.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # Assemble the PE relocation stub

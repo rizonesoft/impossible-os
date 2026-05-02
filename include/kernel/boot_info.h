@@ -1489,3 +1489,61 @@ void boot_device_populate_registry(void);
  * boot_device_populate_registry(). Writes Path / PathName / Reason /
  * ReasonName / SourceFlags / FallbackDepth. */
 void boot_decision_populate_registry(void);
+
+/* ============================================================================
+ * Boot Error History Ring (producer schema)
+ * ============================================================================
+ *
+ * Bounded ring of the last 8 boot attempts, persisted in NVRAM.  Three
+ * append sites: bootloader boot_fatal() (any fatal pre-EBS), bootloader
+ * EBS-success (sentinel 0xFFFE), kernel boot_phase3 entry (sentinel 0xFFFF).
+ *
+ * Storage: a single `BootErrorHistory` UEFI variable (128 bytes, NV+BS+RT
+ * attrs) under IMPOSSIBLE_OS_VENDOR_GUID, plus a `BootHistorySeq` u32
+ * cookie under the same GUID.  head = seq % BOOT_HIST_RING_LEN.  Wrap is
+ * unconditional: oldest entry is overwritten on append.
+ *
+ * Atomicity: SetVariable is per-variable; there is no transactional
+ * batch.  The producer writes the ring FIRST, then increments the
+ * cookie.  A torn write between the two leaves a stale-but-bounded read
+ * (head points at the previous slot), never UB.
+ *
+ * The kernel-side reader, BlackBox transcribe, and renderer are owned
+ * by the consumer half of the boot-error history feature; this block
+ * pins ONLY the producer schema. */
+
+#define BOOT_HIST_RING_LEN          8u   /* fixed entry count */
+#define BOOT_HIST_BIN_SIZE          128u /* BOOT_HIST_RING_LEN * sizeof(entry) */
+#define BOOT_SECTION_UNKNOWN        0xFFFDu /* g_boot_section default; surfaces hint gaps */
+#define BOOT_SECTION_EBS_OK         0xFFFEu /* bootloader reached ExitBootServices */
+#define BOOT_SECTION_KERNEL_PHASE3  0xFFFFu /* kernel reached boot_phase3 */
+
+struct boot_error_history_entry {
+    uint32_t boot_seq;        /* monotonic from BootHistorySeq cookie */
+    uint32_t unix_time;       /* RuntimeServices->GetTime epoch seconds, 0 if unavailable */
+    uint16_t err_code;        /* BOOT_ERR_* (see efi.h); 0 for sentinels */
+    uint16_t source_section;  /* roadmap-doc section number or BOOT_SECTION_* sentinel */
+    uint32_t _pad;            /* reserved; must be 0 on write, ignored on read */
+};
+
+_Static_assert(sizeof(struct boot_error_history_entry) == 16,
+    "boot_error_history_entry must be exactly 16 bytes -- ring ABI contract");
+_Static_assert(__builtin_offsetof(struct boot_error_history_entry, boot_seq) == 0,
+    "boot_error_history_entry.boot_seq must be at offset 0");
+_Static_assert(__builtin_offsetof(struct boot_error_history_entry, unix_time) == 4,
+    "boot_error_history_entry.unix_time must be at offset 4");
+_Static_assert(__builtin_offsetof(struct boot_error_history_entry, err_code) == 8,
+    "boot_error_history_entry.err_code must be at offset 8");
+_Static_assert(__builtin_offsetof(struct boot_error_history_entry, source_section) == 10,
+    "boot_error_history_entry.source_section must be at offset 10");
+_Static_assert(__builtin_offsetof(struct boot_error_history_entry, _pad) == 12,
+    "boot_error_history_entry._pad must be at offset 12");
+_Static_assert(BOOT_HIST_BIN_SIZE ==
+    BOOT_HIST_RING_LEN * sizeof(struct boot_error_history_entry),
+    "BOOT_HIST_BIN_SIZE must equal BOOT_HIST_RING_LEN * entry size");
+
+/* Kernel-side Phase-3 sentinel append.  Writes (BOOT_SECTION_KERNEL_PHASE3,
+ * 0) into the ring via uefi_var_set + uefi_var_set_u32 (RT services
+ * remain callable post-EBS).  Idempotent on repeated call within the
+ * same boot.  Silently no-ops when RT services are unavailable. */
+void boot_history_kernel_mark_phase3(void);

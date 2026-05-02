@@ -398,6 +398,13 @@ void boot_phase3(void)
         task_create(shell_loader_func, "cmd.exe");
     }
 
+    /* Boot-error history ring: append the kernel-Phase-3 sentinel.
+     * Subsystem _init calls have all returned successfully and userland
+     * threads are not yet running; this is the canonical "kernel
+     * reached steady state" mark.  Best-effort: a SetVariable failure
+     * is logged but does not block userland entry. */
+    boot_history_kernel_mark_phase3();
+
     scheduler_enable();
 
     /* Yield to give cmd.exe CPU time to print its banner */

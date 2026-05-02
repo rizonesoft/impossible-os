@@ -670,3 +670,41 @@ _Static_assert(__builtin_offsetof(struct boot_info, uki_modules_addr) == 23856,
     "boot_info.uki_modules_addr offset drift -- kernel + bootloader mirror out of sync");
 _Static_assert(__builtin_offsetof(struct boot_info, uki_modules_size) == 23864,
     "boot_info.uki_modules_size offset drift -- kernel + bootloader mirror out of sync");
+
+/* ============================================================================
+ * Boot Error History Ring -- producer mirror
+ * ============================================================================
+ * Byte-exact mirror of struct boot_error_history_entry in
+ * include/kernel/boot_info.h.  Both sides use the same offsets so
+ * SetVariable / GetVariable round-trips are well-defined across the
+ * bootloader and kernel append paths. */
+
+#define BOOT_HIST_RING_LEN          8u
+#define BOOT_HIST_BIN_SIZE          128u
+#define BOOT_SECTION_UNKNOWN        0xFFFDu
+#define BOOT_SECTION_EBS_OK         0xFFFEu
+#define BOOT_SECTION_KERNEL_PHASE3  0xFFFFu
+
+struct boot_error_history_entry {
+    UINT32 boot_seq;
+    UINT32 unix_time;
+    UINT16 err_code;
+    UINT16 source_section;
+    UINT32 _pad;
+};
+
+_Static_assert(sizeof(struct boot_error_history_entry) == 16,
+    "boot_error_history_entry must be exactly 16 bytes -- ring ABI contract (mirror)");
+_Static_assert(__builtin_offsetof(struct boot_error_history_entry, boot_seq) == 0,
+    "boot_error_history_entry.boot_seq offset drift (mirror)");
+_Static_assert(__builtin_offsetof(struct boot_error_history_entry, unix_time) == 4,
+    "boot_error_history_entry.unix_time offset drift (mirror)");
+_Static_assert(__builtin_offsetof(struct boot_error_history_entry, err_code) == 8,
+    "boot_error_history_entry.err_code offset drift (mirror)");
+_Static_assert(__builtin_offsetof(struct boot_error_history_entry, source_section) == 10,
+    "boot_error_history_entry.source_section offset drift (mirror)");
+_Static_assert(__builtin_offsetof(struct boot_error_history_entry, _pad) == 12,
+    "boot_error_history_entry._pad offset drift (mirror)");
+_Static_assert(BOOT_HIST_BIN_SIZE ==
+    BOOT_HIST_RING_LEN * sizeof(struct boot_error_history_entry),
+    "BOOT_HIST_BIN_SIZE must equal BOOT_HIST_RING_LEN * entry size (mirror)");

@@ -62,7 +62,7 @@ _Static_assert(__builtin_offsetof(Elf64_Phdr, p_memsz)  == 40, "Phdr p_memsz");
 _Static_assert(sizeof(Elf64_Phdr) == 56, "Elf64_Phdr size mismatch (ELF64 spec)");
 
 /* --- Globals --- */
-static EFI_SYSTEM_TABLE    *gST;
+EFI_SYSTEM_TABLE    *gST;
 static EFI_BOOT_SERVICES   *gBS;
 static EFI_HANDLE           gImageHandle;
 static EFI_HANDLE g_boot_device_handle; /*: boot device from LoadedImage */
@@ -103,13 +103,80 @@ static UINT64 g_uki_modules_phys;
 
 /* Impossible OS vendor GUID: {6F35D3A4-C0E6-4A82-B5D8-7C9D2E4F8A13}
  * Must match IMPOSSIBLE_OS_VENDOR_GUID_INIT in include/kernel/uefi_vars.h. */
-static EFI_GUID g_impossible_os_guid = {
+EFI_GUID g_impossible_os_guid = {
     0x6f35d3a4, 0xc0e6, 0x4a82,
     { 0xb5, 0xd8, 0x7c, 0x9d, 0x2e, 0x4f, 0x8a, 0x13 }
 };
 
 /* NVRAM variable name for boot error persistence (UCS-2) */
 static CHAR16 g_boot_error_var[] = u"BootError";
+
+/* Boot-error history source-section hint.  Set via boot_set_section()
+ * at the entry of each major bootloader code path; read by boot_fatal()
+ * when appending to the history ring.  Default UNKNOWN value surfaces
+ * any path that forgot to call the setter (logged as a [WARN] line at
+ * fatal-time so the gap is operator-visible).  Fatal path uses the
+ * static rather than threading a parameter through every call site.
+ *
+ * Section codes use the 0x01NN range so they cannot collide with
+ * BOOT_ERR_* (0x000N..0x0013), the kernel-Phase-3 sentinel (0xFFFF),
+ * the EBS-success sentinel (0xFFFE), or the UNKNOWN sentinel (0xFFFD).
+ * The consumer-side renderer decodes the sentinels by name and shows
+ * remaining values as raw 0xNNNN; a future renderer extension can
+ * promote these to symbolic phase names. */
+#define BOOT_SECTION_BL_INIT        0x0101u  /* efi_main entry */
+#define BOOT_SECTION_BL_CONF        0x0102u  /* parse_boot_conf */
+#define BOOT_SECTION_BL_KERNEL      0x0103u  /* load_kernel */
+#define BOOT_SECTION_BL_PAGETABLES  0x0104u  /* setup_kernel_pages */
+#define BOOT_SECTION_BL_EBS         0x0105u  /* ExitBootServices retry loop */
+
+static UINT16 g_boot_section = BOOT_SECTION_UNKNOWN;
+
+/* Forward declaration of the history-ring writer (definition lives in
+ * src/boot/uefi/boot_history.c).  Three call sites: boot_fatal(),
+ * the EBS retry success branch, and the kernel side via the
+ * uefi_var_* helpers.  Failure WARNs to serial; never blocks. */
+extern void boot_history_append(UINT16 source_section, UINT16 err_code);
+
+/* Forward declaration of serial_early_print -- the static definition
+ * lives further down (the original code orders helpers by phase, and
+ * the boot_set_section setter introduces the first early-serial use
+ * before the definition appears). */
+void serial_early_print(const char *s);
+
+static void boot_set_section(UINT16 section)
+{
+    if (g_boot_section == section)
+        return;
+    /* Single-line transition log so reviewers can scan a serial
+     * capture for path-attribution coverage.  The hex format keeps
+     * the sentinels (0xFFFD/0xFFFE/0xFFFF) and section numbers in a
+     * uniform shape. */
+    serial_early_print("[BOOT] section transition: 0x");
+    {
+        const char *hex = "0123456789ABCDEF";
+        char buf[5];
+        buf[0] = hex[(g_boot_section >> 12) & 0xF];
+        buf[1] = hex[(g_boot_section >> 8) & 0xF];
+        buf[2] = hex[(g_boot_section >> 4) & 0xF];
+        buf[3] = hex[g_boot_section & 0xF];
+        buf[4] = 0;
+        serial_early_print(buf);
+    }
+    serial_early_print(" -> 0x");
+    {
+        const char *hex = "0123456789ABCDEF";
+        char buf[5];
+        buf[0] = hex[(section >> 12) & 0xF];
+        buf[1] = hex[(section >> 8) & 0xF];
+        buf[2] = hex[(section >> 4) & 0xF];
+        buf[3] = hex[section & 0xF];
+        buf[4] = 0;
+        serial_early_print(buf);
+    }
+    serial_early_print("\n");
+    g_boot_section = section;
+}
 
 /* Framebuffer for splash */
 static UINT32 *gFramebuffer;
@@ -595,7 +662,7 @@ static void serial_early_putchar(char c)
     outb_early(s_serial_port, (UINT8)c);
 }
 
-static void serial_early_print(const char *s)
+void serial_early_print(const char *s)
 {
     boot_log_append(s);
     const char *p = s;
@@ -1736,6 +1803,17 @@ static __attribute__((noreturn)) void boot_fatal(UINT32 err_code,
      * the operator's only fatal-path diagnostic. */
     nvram_write_boot_error(err_code);
 
+    /* 1c. Append a history-ring entry so multi-attempt diagnostics
+     * (BootHistorySeq cookie + BootErrorHistory ring) capture
+     * ordering across cascading boot failures.  err_code already fits
+     * UINT16 (registry max 0x0013); cast is safe.  An UNKNOWN
+     * source_section means the failing path forgot to call
+     * boot_set_section() -- WARN so the operator can grep coverage. */
+    if (g_boot_section == BOOT_SECTION_UNKNOWN) {
+        serial_early_print("[WARN] boot_history: source_section UNKNOWN at fatal\n");
+    }
+    boot_history_append(g_boot_section, (UINT16)err_code);
+
     /* 2. Display on UEFI console if available and Boot Services are intact.
      * Skip ConOut if we're inside the EBS retry loop -- Boot Services
      * may be in an undefined state after a failed ExitBootServices. */
@@ -2653,6 +2731,7 @@ static void parse_conf_kv(struct boot_config *cfg,
  * filesystem. */
 static void parse_boot_conf(void)
 {
+    boot_set_section(BOOT_SECTION_BL_CONF);
     EFI_GUID fs_guid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
     EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *fs;
     EFI_FILE_PROTOCOL *root_dir, *conf_file;
@@ -4101,6 +4180,7 @@ static EFI_STATUS pt_load_snapshot_mmap(UINT8 *buf, UINTN buf_size,
  * ============================================================================ */
 static EFI_STATUS load_kernel(UINT64 *entry_point)
 {
+    boot_set_section(BOOT_SECTION_BL_KERNEL);
     EFI_GUID fs_guid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
     EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *fs;
     EFI_FILE_PROTOCOL *root_dir, *kernel_file;
@@ -5829,6 +5909,7 @@ static void copy_config_tables(void)
 
 static void setup_page_tables(void)
 {
+    boot_set_section(BOOT_SECTION_BL_PAGETABLES);
     UINT64 *pml4 = (UINT64 *)PT_PML4;
     UINT64 *pdpt = (UINT64 *)PT_PDPT;
     UINT64 *pd;
@@ -7472,6 +7553,10 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     gBS = SystemTable->BootServices;
     gImageHandle = ImageHandle;
 
+    /* Mark the source-section hint as soon as gST/gBS are wired, so any
+     * fatal during the very first phase records BL_INIT (not UNKNOWN). */
+    boot_set_section(BOOT_SECTION_BL_INIT);
+
     /* Clear the UEFI text console immediately -- firmware (BdsDxe, QEMU MMIO
      * warnings) may have left text on screen before our image was launched. */
     if (SystemTable->ConOut)
@@ -8392,6 +8477,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     serial_early_print("[BOOT] ExitBootServices...\n");
     g_boot_info_ptr->timing.exit_bs = boot_rdtsc();
     g_ebs_in_progress = 1;  /* Disable ConOut in boot_fatal from here */
+    boot_set_section(BOOT_SECTION_BL_EBS);
     {
         int ebs_attempt;
         EFI_STATUS ebs_status = EFI_SUCCESS;
@@ -8459,6 +8545,14 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
         }
     }
     serial_early_print("[BOOT] ExitBootServices OK\n");
+
+    /* Append the EBS-success sentinel BEFORE the Boot-Services-gone
+     * watershed.  RuntimeServices->SetVariable survives EBS, but
+     * keeping the call here means the producer-side smoke pattern
+     * (serial line "[BOOT] history: append seq=K src=0xFFFE") fires
+     * deterministically every clean boot, so a missing line on the
+     * NEXT boot means EBS itself failed (not the history write). */
+    boot_history_append(BOOT_SECTION_EBS_OK, 0);
 
     /* === NO MORE UEFI Boot Services CALLS FROM HERE === */
 
