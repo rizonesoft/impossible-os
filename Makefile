@@ -153,6 +153,8 @@ $(UEFI_EFI): src/boot/uefi/bootx64.c src/boot/uefi/efi.h src/boot/uefi/uefi.lds 
              src/boot/uefi/boot_history.c \
              include/kernel/boot_version_constants.h \
              include/kernel/firmware_quirks_table.inc \
+             include/kernel/firmware_quirks_parse.inc \
+             include/boot/uki_cmdline_check.h \
              $(BUILD_DIR)/boot_proto_sha.h \
              $(BUILD_DIR)/boot_loader_identity.h
 	@mkdir -p $(BUILD_DIR)/tools

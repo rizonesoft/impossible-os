@@ -372,7 +372,7 @@ Cross-section dedup / future-spec drift prevention. None of these items is an ac
 > - **Scope boundary** -- `boot_progress.c` boot-timeline writer kept on snprintf-bounded writes; it is already fail-closed via `goto close` and migrating to jb_* would be churn for no semantic gain.
 
 > **Verified:** 2026-05-03 | this commit | 4/4 items | build OK | tests 2639/2639 PASS | smoke PASS (KVM, identical 17/9/6 catalog vs pre-refactor)
-> **Quality reviewed:** 2026-05-03 | Codex 4x (design + adversarial + consistency + perf) | 1H+1M fixed, 0 open | scope: kernel-code-quality
+> **Quality reviewed:** 2026-05-03 | Codex 7x (design + adversarial x2 + consistency x2 + perf x2) | 3H+1M fixed, 0 open | scope: kernel-code-quality
 
 ---
 

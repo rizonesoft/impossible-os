@@ -38,9 +38,9 @@
 | **Python** (`.py`)                |      77 |     27661 |
 | **JavaScript** (`.js`)            |       1 |       524 |
 | **Include fragments** (`.inc`)    |       7 |      3156 |
-| **Makefile**                      |       3 |      1541 |
+| **Makefile**                      |       3 |      1543 |
 | **Linker scripts** (`.ld`/`.lds`) |       2 |       137 |
-| **Subtotal**                      | **211** | **61001** |
+| **Subtotal**                      | **211** | **61003** |
 
 ## Documentation & Project Metadata
 
@@ -58,9 +58,9 @@
 
 |                                |    Files |      Lines |
 | ------------------------------ | -------: | ---------: |
-| **Core code + tooling**        |  **755** | **274044** |
+| **Core code + tooling**        |  **755** | **274046** |
 | **Supporting text + metadata** |  **417** | **177571** |
-| **All counted text files**     | **1172** | **451615** |
+| **All counted text files**     | **1172** | **451617** |
 
 > Vendored code excluded: ~13902 lines (`stb_image.h`, `stb_truetype.h`, `efi.h`)
 >
@@ -77,15 +77,15 @@
 
 |                               |         Linux |     Windows |         Impossible OS |
 | ----------------------------- | ------------: | ----------: | --------------------: |
-| **Core code + tooling lines** |   ~28,000,000 | ~50,000,000 |               274,044 |
+| **Core code + tooling lines** |   ~28,000,000 | ~50,000,000 |               274,046 |
 | **Developers**                | ~1,000 active | ~5,000 peak |                     1 |
 | **Time span**                 |      33 years |    40 years | 1 month(s), 27 day(s) |
 
-> At industry rates (10,000 LOC/developer/year -- COCOMO II), writing 274,044
+> At industry rates (10,000 LOC/developer/year -- COCOMO II), writing 274,046
 > lines of core code and tooling would take **175 developers** working for **1 month(s), 27 day(s)**.
 >
 > *The "impossible" in Impossible OS was supposed to be the name, not the development method.*
 
 ---
 
-*Last updated: 2026-05-03 01:18 · commit `09d28787`*
+*Last updated: 2026-05-03 01:22 · commit `b09781f9`*
