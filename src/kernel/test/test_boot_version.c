@@ -166,6 +166,15 @@ static void test_boot_version_fault_class_name_coverage(void)
     n = boot_version_fault_class_name(BOOT_VERSION_FAULT_SEC_ROLLBACK);
     TEST_ASSERT_EQ((unsigned long)(n[0] != '\0' ? 1 : 0),
                    (unsigned long)1, "name(SEC_ROLLBACK) non-empty");
+    n = boot_version_fault_class_name(BOOT_VERSION_FAULT_BAD_SHA);
+    TEST_ASSERT_EQ((unsigned long)(n[0] != '\0' ? 1 : 0),
+                   (unsigned long)1, "name(BAD_SHA) non-empty");
+    n = boot_version_fault_class_name(BOOT_VERSION_FAULT_BAD_PARSE);
+    TEST_ASSERT_EQ((unsigned long)(n[0] != '\0' ? 1 : 0),
+                   (unsigned long)1, "name(BAD_PARSE) non-empty");
+    n = boot_version_fault_class_name(BOOT_VERSION_FAULT_PT_LOAD_FORBIDDEN);
+    TEST_ASSERT_EQ((unsigned long)(n[0] != '\0' ? 1 : 0),
+                   (unsigned long)1, "name(PT_LOAD_FORBIDDEN) non-empty");
     /* Unknown value falls back to "UNKNOWN" (also non-empty). */
     n = boot_version_fault_class_name(0xFFFFFFFFu);
     TEST_ASSERT_EQ((unsigned long)(n[0] != '\0' ? 1 : 0),
@@ -298,10 +307,46 @@ static void test_boot_version_hint_pairwise_distinct(void)
                    "BAD_SHA != BAD_PARSE");
 }
 
+/* PT_LOAD destination policy fault: the fault_class added alongside
+ * the bootloader's PT_LOAD destination gate must produce a non-
+ * default name + hint, AND the hint must be pointer-distinct from
+ * the ABI-drift default. A future change that collapsed
+ * PT_LOAD_FORBIDDEN into the default would silently send operators
+ * down the wrong recovery path -- ABI-drift advice says rebuild and
+ * re-flash both halves, but PT_LOAD_FORBIDDEN means the kernel
+ * ELF's linker script is wrong. */
+static void test_boot_version_pt_load_forbidden_wording(void)
+{
+    const char *name = boot_version_fault_class_name(
+        BOOT_VERSION_FAULT_PT_LOAD_FORBIDDEN);
+    TEST_ASSERT_EQ((unsigned long)contains_substr(name, "PT_LOAD"),
+                   (unsigned long)1,
+                   "PT_LOAD_FORBIDDEN name contains 'PT_LOAD'");
+
+    const char *hint = boot_version_fault_operator_hint(
+        BOOT_VERSION_FAULT_PT_LOAD_FORBIDDEN);
+    TEST_ASSERT_EQ((unsigned long)(hint != (const char *)0 ? 1 : 0),
+                   (unsigned long)1,
+                   "PT_LOAD_FORBIDDEN hint non-NULL");
+    TEST_ASSERT_EQ((unsigned long)contains_substr(hint, "PT_LOAD"),
+                   (unsigned long)1,
+                   "PT_LOAD_FORBIDDEN hint mentions 'PT_LOAD'");
+    TEST_ASSERT_EQ((unsigned long)contains_substr(hint, "linker"),
+                   (unsigned long)1,
+                   "PT_LOAD_FORBIDDEN hint mentions 'linker' "
+                   "(rebuild advice, not rebuild-bootloader-too)");
+
+    const char *abi_hint = boot_version_fault_operator_hint(
+        BOOT_VERSION_FAULT_BAD_VERSION);
+    TEST_ASSERT_EQ((unsigned long)hints_distinct(hint, abi_hint),
+                   (unsigned long)1,
+                   "PT_LOAD_FORBIDDEN hint distinct from ABI-drift hint");
+}
+
 /* Confirm the ABI-drift hint now includes "re-flash" (M2 fix from
- * section 18 review): rebuilding alone leaves the previous binaries
- * on the ESP, so the operator must rebuild AND re-flash to clear
- * the refusal loop. */
+ * the boot graphical-error-screen review): rebuilding alone leaves
+ * the previous binaries on the ESP, so the operator must rebuild
+ * AND re-flash to clear the refusal loop. */
 static void test_boot_version_hint_abi_drift_mentions_reflash(void)
 {
     const char *h = boot_version_fault_operator_hint(
@@ -346,5 +391,8 @@ void test_register_boot_version(void)
                             TEST_CAT_BOOT);
     test_suite_register_cat("boot_version: ABI-drift hint includes re-flash step",
                             test_boot_version_hint_abi_drift_mentions_reflash,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("boot_version: PT_LOAD_FORBIDDEN name + hint distinct",
+                            test_boot_version_pt_load_forbidden_wording,
                             TEST_CAT_BOOT);
 }

@@ -3398,6 +3398,7 @@ _Static_assert(__builtin_offsetof(struct bl_boot_version_fault, expected_loader_
 #define BL_FAULT_SEC_ROLLBACK  5u
 #define BL_FAULT_BAD_SHA       6u
 #define BL_FAULT_BAD_PARSE     7u
+#define BL_FAULT_PT_LOAD_FORBIDDEN 8u
 
 /* Compile-time parity: pin the bootloader's mirrored constants
  * against the canonical kernel constants header so a drift on either
@@ -3421,6 +3422,8 @@ _Static_assert(BL_FAULT_BAD_SHA       == BOOT_VERSION_FAULT_VAL_BAD_SHA,
     "BL_FAULT_BAD_SHA drift vs kernel enum");
 _Static_assert(BL_FAULT_BAD_PARSE     == BOOT_VERSION_FAULT_VAL_BAD_PARSE,
     "BL_FAULT_BAD_PARSE drift vs kernel enum");
+_Static_assert(BL_FAULT_PT_LOAD_FORBIDDEN == BOOT_VERSION_FAULT_VAL_PT_LOAD_FORBIDDEN,
+    "BL_FAULT_PT_LOAD_FORBIDDEN drift vs kernel enum");
 
 /* NVRAM record layout invariants must match include/kernel/boot_version.h. */
 #define BL_BOOT_VERSION_FAULT_MAGIC  0x42565046u
@@ -4651,6 +4654,28 @@ kernel_loaded:
                 serial_early_print(" type=");
                 serial_early_print(pt_load_mem_type_name(bad_type));
                 serial_early_print("\n");
+
+                /* Persist a PT_LOAD_FORBIDDEN fault record so the
+                 * next successful boot transcribes it to
+                 * X:\Diag\boot-proto-fault.txt for operators with
+                 * no serial console. observed_loader_sec_ver carries
+                 * the offending EFI_MEMORY_TYPE per the v1 schema
+                 * convention (BAD_PARSE reuses the same slot for the
+                 * parser-error enum). Persist failure is non-fatal
+                 * for this path -- the existing serial diagnostic +
+                 * graphical BSOD already reach the operator. */
+                struct bl_boot_version_fault rec;
+                {
+                    UINT8 *p = (UINT8 *)&rec;
+                    UINTN k;
+                    for (k = 0; k < sizeof(rec); k++) p[k] = 0;
+                }
+                rec.record_magic             = BL_BOOT_VERSION_FAULT_MAGIC;
+                rec.fault_class              = BL_FAULT_PT_LOAD_FORBIDDEN;
+                rec.observed_loader_sec_ver  = bad_type;
+                bpp_stamp_loader_identity(&rec);
+                (void)bpp_persist_nvram_fault(&rec);
+
                 load_err_status = EFI_LOAD_ERROR;
                 goto load_error;
             }

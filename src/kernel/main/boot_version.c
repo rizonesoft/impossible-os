@@ -60,6 +60,11 @@ const char *boot_version_fault_operator_hint(uint32_t fault_class)
     case BOOT_VERSION_FAULT_BAD_PARSE:
         return "the kernel ELF is missing or malformed -- reflash "
                "kernel.exe and re-sign";
+    case BOOT_VERSION_FAULT_PT_LOAD_FORBIDDEN:
+        return "the kernel image declared a PT_LOAD segment whose "
+               "destination overlaps firmware, RuntimeServices, or "
+               "the bootloader -- rebuild the kernel with a clean "
+               "linker script (PT_LOAD must land in conventional RAM)";
     default:
         /* Default = structural ABI drift (BAD_VERSION / BAD_SIZE /
          * BAD_MAGIC / NULL_HDR / OK with mismatch). Operators MUST
@@ -83,6 +88,7 @@ const char *boot_version_fault_class_name(uint32_t fault_class)
     case BOOT_VERSION_FAULT_SEC_ROLLBACK:    return "SEC_ROLLBACK";
     case BOOT_VERSION_FAULT_BAD_SHA:         return "BAD_SHA";
     case BOOT_VERSION_FAULT_BAD_PARSE:       return "BAD_PARSE";
+    case BOOT_VERSION_FAULT_PT_LOAD_FORBIDDEN: return "PT_LOAD_FORBIDDEN";
     default:                                 return "UNKNOWN";
     }
 }
@@ -472,6 +478,44 @@ void boot_version_blackbox_transcribe(void)
         pos = append_line(buf, pos, max_sz,
                           ".bootproto manifest hash drift: magic/version/"
                           "size matched but SHA-256 diverged.");
+        pos = append_str(buf, pos, max_sz, "Operator response: ");
+        pos = append_line(buf, pos, max_sz,
+                          boot_version_fault_operator_hint(rec.fault_class));
+    } else if (rec.fault_class == BOOT_VERSION_FAULT_PT_LOAD_FORBIDDEN) {
+        /* The bootloader stores the offending EFI_MEMORY_TYPE in
+         * observed_loader_sec_ver per the v1 schema convention.
+         * Decode the type name inline -- the kernel cannot include
+         * src/boot/uefi/efi.h, so the name table is duplicated here.
+         * Drift between the two tables would only surface a stale
+         * label in the transcript; the live serial diagnostic
+         * already names the type via pt_load_mem_type_name(). */
+        pos = append_line(buf, pos, max_sz, "");
+        pos = append_str(buf, pos, max_sz,
+                         "PT_LOAD destination forbidden: kernel ELF "
+                         "declared a segment whose physical destination "
+                         "overlapped firmware/loader/handoff memory. "
+                         "Offending region type: ");
+        const char *t;
+        switch (rec.observed_loader_sec_ver) {
+        case 0:  t = "Reserved";            break;
+        case 1:  t = "LoaderCode";          break;
+        case 2:  t = "LoaderData";          break;
+        case 3:  t = "BootServicesCode";    break;
+        case 4:  t = "BootServicesData";    break;
+        case 5:  t = "RuntimeServicesCode"; break;
+        case 6:  t = "RuntimeServicesData"; break;
+        case 7:  t = "Conventional (unexpected)"; break;
+        case 8:  t = "Unusable";            break;
+        case 9:  t = "ACPIReclaim";         break;
+        case 10: t = "ACPIMemoryNVS";       break;
+        case 11: t = "MMIO";                break;
+        case 12: t = "MMIOPort";            break;
+        case 13: t = "PalCode";             break;
+        case 14: t = "Persistent";          break;
+        default: t = "Unknown";             break;
+        }
+        pos = append_line(buf, pos, max_sz, t);
+        pos = append_line(buf, pos, max_sz, "");
         pos = append_str(buf, pos, max_sz, "Operator response: ");
         pos = append_line(buf, pos, max_sz,
                           boot_version_fault_operator_hint(rec.fault_class));

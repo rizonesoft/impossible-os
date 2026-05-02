@@ -58,6 +58,10 @@ enum boot_version_fault_class {
     BOOT_VERSION_FAULT_BAD_PARSE   = BOOT_VERSION_FAULT_VAL_BAD_PARSE,   /* .bootproto ELF parse failure;
                                                                           * raw parser error enum stored
                                                                           * in observed_loader_sec_ver. */
+    BOOT_VERSION_FAULT_PT_LOAD_FORBIDDEN = BOOT_VERSION_FAULT_VAL_PT_LOAD_FORBIDDEN, /* PT_LOAD destination
+                                                                          * overlaps firmware/loader/handoff
+                                                                          * region; offending EFI_MEMORY_TYPE
+                                                                          * stored in observed_loader_sec_ver. */
 };
 
 /* Fixed 48-byte layout. Pinned so the NVRAM record can be read by a
