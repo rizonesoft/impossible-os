@@ -156,6 +156,18 @@ The §1 budget check catches absolute breaches, but a slow drift inside the budg
 
 **Test checkpoint:** Synthetic 6-boot fixture with prior-3 `SMBIOS=[80,80,80]` and newest-3 `[150,150,150]` produces an 87% regression alarm. Same shape but newest-3 `[80,82,84]` stays silent (median 82 within 15% band). Unit test seeds the file with 16 fixture entries and asserts prepend+trim to 16. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 10 suites, 0 failures
+>
+> **Notes:**
+> - `boot_trend_publish_json()` in `src/kernel/main/boot_trend.c` rolls last 16 boots; canonical wire spec at `docs/boot/boot-trend-schema.md`.
+> - Atomic via temp+rename: writes `.tmp`, then `vfs_rename_ex(... VFS_RENAME_REPLACE_EXISTING)` from the storage TODO-04 §16 primitive.
+> - 3-run median per phase (prior=`boots[3..5]`, newest=`boots[0..2]`); BOOT-TREND WARN >15%; first 5 boots silent.
+> - Two separate 16 KiB PMM allocations (input + output); top-level schema validation only -- bad files quarantined to `.corrupt-<seq>`.
+> - 5 pure-helper tests cover `boot_trend_median3` truth table + `boot_trend_compute_growth_pct` boundaries.
+>
+> **Verified:** 2026-05-03 | commit `ec9f1c1c` | 6/6 items | build OK | smoke PASS (KVM 2.39s)
+> **Quality reviewed:** 2026-05-03 | Codex 6x (design + adversarial + re-adversarial + consistency x2 + perf) | 3H+5M+1L fixed | scope: kernel-code-quality
+
 ---
 
 ## 4. SMBIOS Init Profiling + Optimization

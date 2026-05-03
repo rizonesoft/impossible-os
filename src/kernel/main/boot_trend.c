@@ -238,14 +238,24 @@ static int trend_emit_existing_entry(struct json_builder *jb,
 
 void boot_trend_publish_json(void)
 {
-    uintptr_t phys = pmm_alloc_contiguous(BOOT_TREND_BUF_PAGES);
-    if (!phys) {
+    /* Separate input + output buffers, each at full BOOT_TREND_BUF_SIZE.
+     * Splitting one allocation into halves caps each at 8 KiB and
+     * silently truncates once the 16-boot ring fills up. */
+    uintptr_t in_phys = pmm_alloc_contiguous(BOOT_TREND_BUF_PAGES);
+    if (!in_phys) {
         klog(LOG_WARN, "boot_trend",
-             "PMM alloc failed (%u pages); skipping",
-             (uint64_t)BOOT_TREND_BUF_PAGES);
+             "PMM alloc failed for input buffer; skipping");
         return;
     }
-    char *buf = (char *)phys;
+    uintptr_t out_phys = pmm_alloc_contiguous(BOOT_TREND_BUF_PAGES);
+    if (!out_phys) {
+        klog(LOG_WARN, "boot_trend",
+             "PMM alloc failed for output buffer; skipping");
+        for (uint32_t pp = 0; pp < BOOT_TREND_BUF_PAGES; pp++)
+            pmm_free_frame(in_phys + pp * 4096u);
+        return;
+    }
+    char *buf = (char *)in_phys;
 
     uint32_t cur_seq = boot_history_kernel_phase3_committed_seq();
     uint32_t cur_unix = 0;
@@ -261,8 +271,10 @@ void boot_trend_publish_json(void)
     }
 
     uint32_t in_len = 0;
-    (void)trend_read_file((uint8_t *)buf, (BOOT_TREND_BUF_SIZE / 2) - 1,
-                          &in_len);
+    /* Pass BOOT_TREND_BUF_SIZE so trend_read_file accepts files up to
+     * BOOT_TREND_BUF_SIZE - 1 bytes (writer can emit exactly that
+     * size before truncation; reader's NUL goes at byte cap-1). */
+    (void)trend_read_file((uint8_t *)buf, BOOT_TREND_BUF_SIZE, &in_len);
 
     struct cJSON *root = (struct cJSON *)0;
     struct cJSON *boots_arr = (struct cJSON *)0;
@@ -290,8 +302,8 @@ void boot_trend_publish_json(void)
         }
     }
 
-    char *out_buf = buf + (BOOT_TREND_BUF_SIZE / 2);
-    uint32_t out_cap = BOOT_TREND_BUF_SIZE / 2;
+    char *out_buf = (char *)out_phys;
+    uint32_t out_cap = BOOT_TREND_BUF_SIZE;
     struct json_builder jb;
     jb_init(&jb, out_buf, out_cap);
 
@@ -317,8 +329,10 @@ void boot_trend_publish_json(void)
         klog(LOG_WARN, "boot_trend",
              "JSON serialization truncated; skipping disk write");
         if (root) json_free(root);
-        for (uint32_t pp = 0; pp < BOOT_TREND_BUF_PAGES; pp++)
-            pmm_free_frame(phys + pp * 4096u);
+        for (uint32_t pp = 0; pp < BOOT_TREND_BUF_PAGES; pp++) {
+            pmm_free_frame(in_phys + pp * 4096u);
+            pmm_free_frame(out_phys + pp * 4096u);
+        }
         return;
     }
 
@@ -344,8 +358,10 @@ void boot_trend_publish_json(void)
     if (!f) {
         klog(LOG_WARN, "boot_trend",
              "could not open %s for write", BOOT_TREND_TMP_PATH);
-        for (uint32_t pp = 0; pp < BOOT_TREND_BUF_PAGES; pp++)
-            pmm_free_frame(phys + pp * 4096u);
+        for (uint32_t pp = 0; pp < BOOT_TREND_BUF_PAGES; pp++) {
+            pmm_free_frame(in_phys + pp * 4096u);
+            pmm_free_frame(out_phys + pp * 4096u);
+        }
         return;
     }
     int wrote = vfs_write(f, 0, (uint32_t)jb_pos(&jb),
@@ -356,8 +372,10 @@ void boot_trend_publish_json(void)
              "short write to %s (wrote=%d expected=%u); abandoning .tmp",
              BOOT_TREND_TMP_PATH, (uint64_t)wrote, (uint64_t)jb_pos(&jb));
         (void)vfs_unlink(BOOT_TREND_TMP_PATH);
-        for (uint32_t pp = 0; pp < BOOT_TREND_BUF_PAGES; pp++)
-            pmm_free_frame(phys + pp * 4096u);
+        for (uint32_t pp = 0; pp < BOOT_TREND_BUF_PAGES; pp++) {
+            pmm_free_frame(in_phys + pp * 4096u);
+            pmm_free_frame(out_phys + pp * 4096u);
+        }
         return;
     }
 
@@ -373,6 +391,8 @@ void boot_trend_publish_json(void)
              BOOT_TREND_PATH, (uint64_t)jb_pos(&jb), (uint64_t)kept);
     }
 
-    for (uint32_t pp = 0; pp < BOOT_TREND_BUF_PAGES; pp++)
-        pmm_free_frame(phys + pp * 4096u);
+    for (uint32_t pp = 0; pp < BOOT_TREND_BUF_PAGES; pp++) {
+        pmm_free_frame(in_phys + pp * 4096u);
+        pmm_free_frame(out_phys + pp * 4096u);
+    }
 }

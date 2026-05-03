@@ -82,11 +82,13 @@ namespace evolution.
 
 ## Failure modes
 
-- **Existing file too large** (> 8 KiB): publisher logs `LOG_WARN` and
-  treats as empty (writes a fresh single-entry file).
+- **Existing file too large** (>= 16 KiB minus a NUL): publisher logs
+  `LOG_WARN` and treats as empty (writes a fresh single-entry file).
 - **Existing file unparseable**: quarantined to `.corrupt-<seq>`, fresh
   write proceeds.
-- **PMM allocation failure** (16 KiB buffer): `LOG_WARN`, no write.
+- **PMM allocation failure** for either of the two 16 KiB buffers
+  (separate input + output allocations): `LOG_WARN`, no write; any
+  successfully-allocated buffer is freed.
 - **Buffer overflow during emission**: `jb_truncated()` fail-closed;
   `LOG_WARN`, no write.
 - **Short write to `.tmp`**: `.tmp` deleted, `LOG_WARN`, no rename
