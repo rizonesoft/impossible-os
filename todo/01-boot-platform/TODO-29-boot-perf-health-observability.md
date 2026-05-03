@@ -63,7 +63,7 @@ implements_after: TODO-04
 | -- | :---: | --------------------------------------------------- | ----------------------------------------- | :----: |
 | 💎 |   1   | Per-phase boot perf budgets + threshold alarms      | --                                        |  [x]   |
 | 💎 |   2   | Boot health audit JSON (`X:\Diag\boot-health.json`) | §1, T04 §11 (VFS fix)                     |  [x]   |
-| ⭐ |   3   | Boot perf trend file + regression detection         | §1, §2                                    |  [ ]   |
+| ⭐ |   3   | Boot perf trend file + regression detection         | §1, §2                                    |  [x]   |
 | 💎 |   4   | SMBIOS init profiling + optimization                | §1                                        |  [ ]   |
 | 💎 |   5   | MAT W^X violation root-cause attribution            | T04 §5                                    |  [ ]   |
 | 💎 |   6   | Mouse PS/2 init profiling + optimization            | §1                                        |  [ ]   |
@@ -147,13 +147,14 @@ A single operator-facing dashboard collapsing every "what's wrong on this boot" 
 
 The §1 budget check catches absolute breaches, but a slow drift inside the budget (e.g. SMBIOS creeping from 80ms to 95ms over 50 commits) stays invisible. A rolling per-phase median makes the drift visible.
 
-- [ ] `X:\Perf\boot-trend.json` rolls the last 16 boots: `{ "schema_version": 1, "boots": [ { "boot_seq": N, "unix_time": ..., "phase_durations_ms": { "PMM": 8, "SMBIOS": 80, ... } } ] }`. Newest at index 0, oldest at 15; ring-buffer overwrite on the 17th boot.
-- [ ] Read-modify-write cycle: load existing file (or empty array if missing), prepend current boot's per-phase durations, truncate to 16, write. Failure path leaves the file untouched (no partial write).
-- [ ] Compute 3-run median per phase. Emit `[WARN] BOOT-TREND: <phase> 3-run median grew <pct>% (<old>ms -> <new>ms)` when median grows >15% vs the previous 3-run window.
-- [ ] CI hook (under TODO-28 §boot-validation, not here) can read the same JSON and fail a release gate when the trend shows regression. This section ships only the data file and the warn line; the CI gate is owned by TODO-28.
-- [ ] Commit: `"boot: rolling boot-trend.json + regression alarms"`
+- [x] `X:\Perf\boot-trend.json` schema v1 shipped: top-level `schema_version`+`boots`, per-entry `{boot_seq, unix_time, phase_durations_ms: {step: ms}}`; canonical spec at `docs/boot/boot-trend-schema.md`.
+- [x] RMW cycle in `boot_trend_publish_json`: read+parse -> prepend current boot -> trim to 16 -> write `.tmp` -> `vfs_rename_ex(... VFS_RENAME_REPLACE_EXISTING)`.
+- [x] Top-level schema validation only; bad `schema_version` or non-array `boots` -> rename to `.corrupt-<seq>` + fresh v1 write.
+- [x] 3-run median per phase (prior=`boots[3..5]`, newest=`boots[0..2]`); emits BOOT-TREND WARN when growth >15%; first 5 boots silent.
+- [x] CI hook stays owned by the boot-validation matrix (this section ships data file + warn line only).
+- [x] Commit: `"boot: rolling boot-trend.json + regression alarms"`
 
-**Test checkpoint:** Synthetic 4-boot sequence with `SMBIOS=80,80,80,150` produces a 56% regression alarm. `SMBIOS=80,82,80,84` stays silent (within noise band). Unit test seeds the file with 16 fixture entries and asserts the next write trims correctly.
+**Test checkpoint:** Synthetic 6-boot fixture with prior-3 `SMBIOS=[80,80,80]` and newest-3 `[150,150,150]` produces an 87% regression alarm. Same shape but newest-3 `[80,82,84]` stays silent (median 82 within 15% band). Unit test seeds the file with 16 fixture entries and asserts prepend+trim to 16. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
 ---
 
@@ -369,7 +370,7 @@ Smoke (KVM, 2026-05-03) records `[WARN] mm: PAT: entry 1 = 0x04 (expected WC=0x0
 | -- | ---------------------------------- | --------------------------------- | --------------------------------- | ---------------------------------- |
 | 💎 | Per-phase boot perf budgets        | ⚠️ ETW boot trace (post-hoc)     | ⚠️ systemd-analyze (post-hoc)    | ⬜ §1 boot-time alarms             |
 | ⭐ | Consolidated boot health JSON      | ⚠️ msinfo32 + Event Viewer       | ⚠️ journalctl + scattered tools   | ✅ §2 single boot-health.json      |
-| ⭐ | Boot perf trend regression alarm   | ❌ no built-in                    | ❌ no built-in                    | ⬜ §3 boot-trend.json + 15% gate   |
+| ⭐ | Boot perf trend regression alarm   | ❌ no built-in                    | ❌ no built-in                    | ✅ §3 boot-trend.json + 15% gate   |
 | 💎 | SMBIOS init speed                  | ⚠️ NT HAL parses lazily          | ⚠️ dmidecode-driven, scattered    | ⬜ §4 <100ms target                |
 | ⭐ | MAT W^X root-cause attribution     | ❌ unsupported                    | ⚠️ /sys/firmware/efi/* raw       | ⬜ §5 per-violation phys+attr      |
 | 💎 | PS/2 mouse init speed              | ⚠️ HAL probes serially            | ⚠️ atkbd serial probe             | ⬜ §6 <100ms target                |

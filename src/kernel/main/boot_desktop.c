@@ -436,6 +436,15 @@ void boot_phase3(void)
         boot_health_publish_json();
     }
 
+    /* Boot-trend rolling regression file -- writes X:\Perf\boot-trend.json
+     * with the last 16 boots' per-phase durations and emits BOOT-TREND
+     * WARN when a phase's 3-run median grew >15%.  Atomic via
+     * vfs_rename_ex.  Failure is LOG_WARN only. */
+    {
+        extern void boot_trend_publish_json(void);
+        boot_trend_publish_json();
+    }
+
     /* --- Load cmd.exe via task_exec (single PEB allocation path) --- */
     {
         extern void shell_loader_func(void);

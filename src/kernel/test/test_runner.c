@@ -383,6 +383,7 @@ extern void test_register_firmware_tables(void);
 extern void test_register_firmware_platform(void);
 extern void test_register_firmware_advisor(void);
 extern void test_register_boot_health(void);
+extern void test_register_boot_trend(void);
 extern void test_register_json_builder(void);
 extern void test_register_boot_perf_budget(void);
 extern void test_register_boot_device(void);
@@ -443,6 +444,7 @@ void test_runner_init(void)
     test_register_firmware_platform();
     test_register_firmware_advisor();
     test_register_boot_health();
+    test_register_boot_trend();
     test_register_json_builder();
     test_register_boot_perf_budget();
     test_register_boot_device();
