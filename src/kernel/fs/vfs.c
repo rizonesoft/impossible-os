@@ -647,6 +647,11 @@ int vfs_unlink(const char *path)
 
 int vfs_rename(const char *old_path, const char *new_path)
 {
+    return vfs_rename_ex(old_path, new_path, 0);
+}
+
+int vfs_rename_ex(const char *old_path, const char *new_path, uint32_t flags)
+{
     const char *old_rest, *new_rest;
     int old_idx, new_idx;
     struct vfs_node *old_parent, *new_parent;
@@ -707,7 +712,13 @@ int vfs_rename(const char *old_path, const char *new_path)
     if (!old_parent->ops || !old_parent->ops->rename)
         return -1;
 
-    return old_parent->ops->rename(old_parent, old_name, new_name);
+    if ((flags & VFS_RENAME_REPLACE_EXISTING) && new_parent->ops->finddir) {
+        struct vfs_node *dst = new_parent->ops->finddir(new_parent, new_name);
+        if (dst && dst->ref_count > 0)
+            return -1;
+    }
+
+    return old_parent->ops->rename(old_parent, old_name, new_name, flags);
 }
 
 int vfs_stat(const char *path, struct vfs_stat *st)

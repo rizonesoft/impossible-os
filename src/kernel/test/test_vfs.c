@@ -210,6 +210,58 @@ static void test_vfs_o_trunc_fat32_lowercase_lfn(void)
     TEST_SKIP("FAT32 zero-cluster coherency follow-up tracked");
 }
 
+/* IXFS rejects vfs_rename_ex REPLACE_EXISTING explicitly. */
+static void test_vfs_rename_replace_ixfs_rejects(void)
+{
+    const char *src = "C:\\Impossible\\rn_src.tmp";
+    const char *dst = "C:\\Impossible\\rn_dst.tmp";
+    vfs_test_write_n(src, 0xAA, 16);
+    vfs_test_write_n(dst, 0xBB, 16);
+
+    int rc = vfs_rename_ex(src, dst, VFS_RENAME_REPLACE_EXISTING);
+    TEST_ASSERT_EQ((uint64_t)rc, (uint64_t)(uint32_t)-1,
+                   "IXFS rejects REPLACE_EXISTING with -1");
+
+    struct vfs_node *a = vfs_open(src, VFS_O_READ);
+    struct vfs_node *b = vfs_open(dst, VFS_O_READ);
+    TEST_ASSERT(a != NULL, "src still openable after rejected replace");
+    TEST_ASSERT(b != NULL, "dst still openable after rejected replace");
+    if (a) vfs_close(a);
+    if (b) vfs_close(b);
+
+    vfs_unlink(src);
+    vfs_unlink(dst);
+}
+
+/* Legacy 2-arg vfs_rename still routes correctly through vfs_rename_ex shim. */
+static void test_vfs_rename_legacy_no_flag_ixfs(void)
+{
+    const char *src = "C:\\Impossible\\rn_legacy_src.tmp";
+    const char *dst = "C:\\Impossible\\rn_legacy_dst.tmp";
+    vfs_test_write_n(src, 0xCD, 8);
+    vfs_unlink(dst);
+
+    int rc = vfs_rename(src, dst);
+    TEST_ASSERT_EQ((uint64_t)rc, (uint64_t)0u,
+                   "legacy vfs_rename returns 0 with no dst collision");
+
+    struct vfs_node *r = vfs_open(dst, VFS_O_READ);
+    TEST_ASSERT(r != NULL, "renamed file readable at new path");
+    if (r) vfs_close(r);
+
+    vfs_unlink(dst);
+    vfs_unlink(src);
+}
+
+/* VFS_RENAME_REPLACE_EXISTING flag-bit consistency. */
+static void test_vfs_rename_replace_flag_bit(void)
+{
+    TEST_ASSERT(VFS_RENAME_REPLACE_EXISTING != 0,
+                "REPLACE_EXISTING flag is non-zero");
+    TEST_ASSERT((VFS_RENAME_REPLACE_EXISTING & 0xFFFF0000u) == 0,
+                "REPLACE_EXISTING fits in low 16 bits");
+}
+
 /* Registration */
 void test_register_vfs(void)
 {
@@ -228,6 +280,12 @@ void test_register_vfs(void)
         test_vfs_o_trunc_directory_read_only_masked, TEST_CAT_FS);
     test_suite_register_cat("VFS: O_TRUNC + write on FAT32 lowercase-LFN name",
         test_vfs_o_trunc_fat32_lowercase_lfn, TEST_CAT_FS);
+    test_suite_register_cat("VFS: rename REPLACE_EXISTING rejected by IXFS",
+        test_vfs_rename_replace_ixfs_rejects, TEST_CAT_FS);
+    test_suite_register_cat("VFS: legacy vfs_rename routes via _ex shim",
+        test_vfs_rename_legacy_no_flag_ixfs, TEST_CAT_FS);
+    test_suite_register_cat("VFS: rename REPLACE_EXISTING flag bit",
+        test_vfs_rename_replace_flag_bit, TEST_CAT_FS);
 }
 
 #endif /* KERNEL_TESTS */

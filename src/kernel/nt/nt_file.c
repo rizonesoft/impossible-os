@@ -296,7 +296,7 @@ static NTSTATUS NtSetInformationFile_handler(
             ascii_name[i] = (char)(ri->FileName[i] & 0x7F);
         ascii_name[chars] = '\0';
         if (node->parent && node->parent->ops && node->parent->ops->rename) {
-            if (node->parent->ops->rename(node->parent, node->name, ascii_name) != 0)
+            if (node->parent->ops->rename(node->parent, node->name, ascii_name, 0) != 0)
                 return STATUS_UNSUCCESSFUL;
         }
         if (iosb) {

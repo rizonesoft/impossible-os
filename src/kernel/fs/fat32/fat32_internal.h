@@ -12,6 +12,7 @@
 #include "kernel/mm/heap.h"
 #include "kernel/mm/pmm.h"
 #include "kernel/klog.h"
+#include "kernel/fs/vfs.h"
 #include "kernel/sched/spinlock.h"
 #include "kernel/timer.h"
 #include "kernel/nt/filetime.h"
@@ -249,7 +250,8 @@ int      fat32_create_dir_vol(struct fat32_volume *vol, uint32_t parent_cluster,
 int      fat32_delete_file_vol(struct fat32_volume *vol, uint32_t dir_cluster,
                                 const char *name);
 int      fat32_rename_vol(struct fat32_volume *vol, uint32_t dir_cluster,
-                           const char *old_name, const char *new_name);
+                           const char *old_name, const char *new_name,
+                           uint32_t flags);
 
 /* ---- fat32_fsck.c: Filesystem consistency checker ---- */
 

@@ -26,7 +26,8 @@ static int fat32_vfs_create(struct vfs_node *parent, const char *name,
                             uint8_t type);
 static int fat32_vfs_unlink(struct vfs_node *parent, const char *name);
 static int fat32_vfs_rename(struct vfs_node *parent,
-                            const char *old_name, const char *new_name);
+                            const char *old_name, const char *new_name,
+                            uint32_t flags);
 static int fat32_vfs_stat(struct vfs_node *node, struct vfs_stat *st);
 static int fat32_vfs_truncate(struct vfs_node *node, uint64_t new_size);
 static int fat32_vfs_mkdir(struct vfs_node *parent, const char *name);
@@ -460,7 +461,8 @@ static int fat32_vfs_unlink(struct vfs_node *parent, const char *name)
 }
 
 static int fat32_vfs_rename(struct vfs_node *parent,
-                            const char *old_name, const char *new_name)
+                            const char *old_name, const char *new_name,
+                            uint32_t flags)
 {
     struct fat32_volume *vol = vol_from_node(parent);
     uint32_t dir_cluster = dir_cluster_from_node(parent);
@@ -468,8 +470,10 @@ static int fat32_vfs_rename(struct vfs_node *parent,
 
     if (!vol) return -1;
     spin_lock(&vol->lock);
-    rc = fat32_rename_vol(vol, dir_cluster, old_name, new_name);
+    rc = fat32_rename_vol(vol, dir_cluster, old_name, new_name, flags);
     spin_unlock(&vol->lock);
+    if (rc == 0)
+        vol->dir_file_count = 0;
     return rc;
 }
 

@@ -31,6 +31,9 @@ _Static_assert(VFS_MAX_DRIVES == 26, "VFS drive letters must be A-Z (26)");
 #define VFS_O_TRUNC      0x10
 #define VFS_O_DELETE_ON_CLOSE  0x20
 
+/* Flags for vfs_rename_ex / vfs_node_ops::rename. */
+#define VFS_RENAME_REPLACE_EXISTING  0x01
+
 /* Share mode flags (compatible with Win32 FILE_SHARE_*) */
 #define VFS_SHARE_READ   0x01
 #define VFS_SHARE_WRITE  0x02
@@ -96,7 +99,7 @@ struct vfs_ops {
     int      (*create)(struct vfs_node *parent, const char *name, uint8_t type);
     int      (*unlink)(struct vfs_node *parent, const char *name);
     int      (*rename)(struct vfs_node *parent, const char *old_name,
-                       const char *new_name);
+                       const char *new_name, uint32_t flags);
     int      (*stat)(struct vfs_node *node, struct vfs_stat *st);
     int      (*truncate)(struct vfs_node *node, uint64_t new_size);
     int      (*mkdir)(struct vfs_node *parent, const char *name);
@@ -177,6 +180,7 @@ int vfs_unlink(const char *path);
 
 /* Rename a file or directory (both paths must be on the same drive) */
 int vfs_rename(const char *old_path, const char *new_path);
+int vfs_rename_ex(const char *old_path, const char *new_path, uint32_t flags);
 
 /* Get file/directory metadata without opening */
 int vfs_stat(const char *path, struct vfs_stat *st);

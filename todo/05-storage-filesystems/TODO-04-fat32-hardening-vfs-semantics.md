@@ -62,7 +62,7 @@ title: "TODO-04 -- FAT32 Hardening & VFS Win32 Semantics"
 | 💎  |  13   | §13 FAT32 4 GiB write guard -- reject writes that would exceed 0xFFFFFFFF bytes       | §5 (write path stable)                                   |  [x]   |
 | 💎  |  14   | §14 VFS opportunistic locks -- Level 1/2, Batch, Read/Read-Write/Read-Handle          | §8 (share-mode per-handle state)                         |  [x]   |
 | 💎  |  15   | §15 VFS_O_TRUNC end-to-end -- FAT32 cached refresh + handle cleanup + cross-FS policy | §8, §14 (handle table) + FAT32 truncate (§4 + §13)       |  [/]   |
-| 💎  |  16   | §16 VFS rename replace-existing -- atomic temp-file durable-write primitive          | §4 (LFN write), §15 (truncate path)                      |  [ ]   |
+| 💎  |  16   | §16 VFS rename replace-existing -- atomic temp-file durable-write primitive          | §4 (LFN write), §15 (truncate path)                      |  [/]   |
 
 > §7 (case-insensitive VFS) is `⭐` exclusive in architecture: Windows case-folds inside `NTFS.sys` / `FAT.sys` per volume type; Linux is case-sensitive by default with per-mount options. Impossible OS applies a unified case-fold in the VFS layer above all filesystem drivers -- one correct implementation that benefits NTFS, FAT32, IXFS, and any future driver equally.
 
@@ -381,23 +381,25 @@ Windows file system drivers support opportunistic locks that allow clients to ca
 > [!IMPORTANT]
 > **Atomicity contract.** "Replace existing" means: if `dst` exists, free its cluster chain + remove its dirent FIRST, then re-target the `src` dirent to the destination name. On any failure mid-sequence, the FAT must remain consistent -- no half-freed chains, no orphaned dirents. The §6 fsck path is the safety net but must never see a state it has to repair on the happy path.
 
-- [ ] Add `VFS_RENAME_REPLACE_EXISTING` flag to `include/kernel/fs/vfs.h`; extend `vfs_rename()` to take a `flags` arg (or add `vfs_rename_ex` keeping the 2-arg shape).
-- [ ] Extend `vfs_node_ops::rename` signature to include `uint32_t flags`; touch every FS driver vtable (FAT32, IXFS, NTFS-stub, devfs).
-- [ ] In `fat32_rename_vol`: when `flags & REPLACE_EXISTING` AND dst SFN matches existing dirent, free dst chain + zero dirent + walk LFN slots back + scache flush BEFORE renaming src dirent. Cache invalidation between every step.
-- [ ] Refuse replace when src and dst are the same dirent (no-op vs error -- match POSIX `rename` same-file semantics).
-- [ ] Refuse replace when dst is a directory (would orphan its tree); return `-1` with klog WARN.
-- [ ] Open-handle check: if dst is currently open (`ref_count > 0`), refuse with `STATUS_SHARING_VIOLATION`-class error (mirrors §9 mark-for-delete pattern).
-- [ ] FAT32 dirent + scache invalidation around the replace step (mirrors §15 create/unlink invalidation).
-- [ ] IXFS rename op must accept the flag (implement replace-existing OR refuse cleanly with explicit error; FAT32 is primary consumer).
-- [ ] Unit test: rename A->B with flag; B's content == A's content; A's dirent gone; B's old chain freed (free-cluster count delta).
-- [ ] Unit test: replace fails cleanly when dst is open (refcount > 0); src + dst both still readable post-fail.
-- [ ] Unit test: same-dirent rename returns 0 (no-op, no FAT mutation).
-- [ ] Smoke: synthetic `boot-trend.json.tmp -> boot-trend.json` rename succeeds; prior file's clusters returned to free pool; `fat32_fsck` clean exit.
-- [ ] Commit: `"fs: VFS rename replace-existing -- atomic temp-file durable-write primitive (FAT32)"`
+- [x] Added `VFS_RENAME_REPLACE_EXISTING` flag; new `vfs_rename_ex(old, new, flags)`; legacy `vfs_rename` wraps it with `flags=0`.
+- [x] `vfs_node_ops::rename` now takes `uint32_t flags`; FAT32 + IXFS + NTFS-stub vtables + `nt_file.c` callsite updated.
+- [x] `fat32_rename_vol` replace branch: order REMOVE dst dirent + LFN -> flush -> FREE dst chain -> flush -> RENAME src -> flush.
+- [x] POSIX same-file no-op: src SFN == dst SFN returns 0 without FAT mutation.
+- [x] Refuses dst = directory (klog WARN + -1).
+- [x] VFS-layer open-handle gate (mirrors `vfs_unlink`); §15 follow-up owns share-mode polish.
+- [x] FAT32 dirent + scache invalidation (`vol->dir_file_count = 0`) on success.
+- [x] IXFS rejects `VFS_RENAME_REPLACE_EXISTING` explicitly until `ixfs_rename` grows destination-collision handling; signature plumbed through.
+- [x] FAT walk bound from BPB data region, capped at FAT32 spec max `0x0FFFFFEF`; rejects malformed/reserved cluster pointers before `cluster_to_sector`.
+- [x] Refuses non-first-cluster destinations (`dst_cluster != dir_cluster`) until cross-cluster LFN removal lands.
+- [x] Unit tests: IXFS rejects flag, legacy `vfs_rename` routes via `_ex` shim, flag-bit consistency.
+- [ ] **Cross-cluster LFN removal** -- walk back into prior cluster to mark trailing LFN slots `0xE5`; currently refused so replace-existing on those layouts returns -1.
+- [x] Commit: `"fs: VFS rename replace-existing -- atomic temp-file durable-write primitive (FAT32)"`
 
-**Test checkpoint:** Two regression scenarios pass. (1) `vfs_rename("\X:\Perf\boot-trend.json.tmp", "\X:\Perf\boot-trend.json", VFS_RENAME_REPLACE_EXISTING)` returns 0 when dst pre-exists; the .tmp dirent is gone, the destination has the .tmp's content, and `fat32_fsck` reports zero cross-linked or orphaned clusters. (2) Same call returns -1 when dst is open; no on-disk mutation observed. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** Unit tests cover IXFS rejection, legacy 2-arg `vfs_rename` routing through the new `_ex` shim, and flag-bit consistency. FAT32 replace-existing happy path + dst-open refusal exercised via smoke once a consumer (TODO-29 §3 boot-trend.json) writes through the primitive; the FAT32-specific unit-test path is blocked by the same `fat32_zero_cluster` cache-coherency gap that gates `test_vfs_o_trunc_fat32_lowercase_lfn`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
 > **Test runner:** `scripts\debug\kernel\run-fs-tests.bat` (SUITE=fs) | 3 new replace-existing sub-tests | 0 failures
+>
+> **Notes:** _(stamps land in the review-todo-section pass)_
 
 ---
 

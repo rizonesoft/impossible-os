@@ -240,7 +240,7 @@ int ixfs_check_perm(const struct ixfs_inode *inode, uint16_t uid,
 
 /* Rename a file or directory in the given parent directory */
 int ixfs_rename(struct vfs_node *parent, const char *old_name,
-                const char *new_name);
+                const char *new_name, uint32_t flags);
 
 /* Test block groups, buffer cache, and directory hash index */
 void ixfs_test_performance(void);

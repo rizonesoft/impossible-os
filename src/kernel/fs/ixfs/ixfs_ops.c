@@ -740,9 +740,12 @@ static int ixfs_unlink(struct vfs_node *parent, const char *name)
     return -1;  /* file not found */
 }
 
-/* Rename a file or directory within the same parent directory */
+/* Rename a file or directory within the same parent directory.
+ * IXFS rejects VFS_RENAME_REPLACE_EXISTING until ixfs_rename grows
+ * destination-collision handling (current impl rewrites d_name without
+ * checking dst, which would create duplicate dirents). */
 int ixfs_rename(struct vfs_node *parent, const char *old_name,
-               const char *new_name)
+               const char *new_name, uint32_t flags)
 {
     struct ixfs_vnode *pv = (struct ixfs_vnode *)parent->fs_data;
     struct ixfs_volume *vol = pv->vol;
@@ -752,6 +755,12 @@ int ixfs_rename(struct vfs_node *parent, const char *old_name,
 
     if (!pv || !old_name || !new_name)
         return -1;
+
+    if (flags & VFS_RENAME_REPLACE_EXISTING) {
+        klog(LOG_WARN, "ixfs",
+             "rename: REPLACE_EXISTING not supported (refused)");
+        return -1;
+    }
 
     total_entries = pv->inode.i_size / sizeof(struct ixfs_dir_entry);
 

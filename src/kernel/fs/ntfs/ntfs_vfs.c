@@ -60,9 +60,10 @@ static int ntfs_vfs_unlink_ro(struct vfs_node *p, const char *nm)
 {
     (void)p; (void)nm; return -1;
 }
-static int ntfs_vfs_rename_ro(struct vfs_node *p, const char *a, const char *b)
+static int ntfs_vfs_rename_ro(struct vfs_node *p, const char *a, const char *b,
+                              uint32_t flags)
 {
-    (void)p; (void)a; (void)b; return -1;
+    (void)p; (void)a; (void)b; (void)flags; return -1;
 }
 static int ntfs_vfs_truncate_ro(struct vfs_node *n, uint64_t sz)
 {
