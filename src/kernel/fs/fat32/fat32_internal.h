@@ -97,6 +97,17 @@ struct fat32_file {
     uint32_t first_cluster;
     uint32_t file_size;
     uint32_t dir_cluster;          /* parent directory cluster */
+    uint8_t  sfn[11];              /* cached short-name (8.3 packed) as
+                                    * stored on disk; populated by
+                                    * fat32_read_dir. Truncate / unlink
+                                    * match on this directly because
+                                    * fat32_make_short_name does NOT
+                                    * reproduce the ~N collision suffix
+                                    * fat32_generate_sfn adds for LFN
+                                    * names, including lowercase 8.3
+                                    * inputs like "postcode.log" that
+                                    * become "POSTCO~1LOG" on disk. */
+    uint8_t  _pad[1];
     struct fat32_volume *volume;   /* back-pointer to owning volume */
 };
 
@@ -223,6 +234,12 @@ int      fat32_set_times(struct fat32_volume *vol, uint32_t dir_cluster,
                           const char *name, const filetime_t *ctime_p,
                           const filetime_t *mtime_p, const filetime_t *atime_p);
 int      fat32_flush_disk(struct fat32_volume *vol);
+
+/* SFN-precomputed truncate. Callers with a cached fat32_file pass
+ * f->sfn directly; the legacy fat32_truncate(name) entry remains for
+ * callers that only have a string. */
+int      fat32_truncate_by_sfn(struct fat32_volume *vol, uint32_t dir_cluster,
+                                const uint8_t sfn[11], uint32_t new_size);
 
 /* Volume-aware write functions (used by VFS ops layer) */
 int      fat32_create_file_vol(struct fat32_volume *vol, uint32_t dir_cluster,

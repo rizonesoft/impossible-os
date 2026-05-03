@@ -352,6 +352,10 @@ int vfs_check_sharing(struct vfs_node *node, uint32_t access, uint32_t share)
     return 0;
 }
 
+/* Returns slot index on success, -1 if no free slot. The slot index is
+ * captured by vfs_open so a failed FS-specific open or TRUNC can clear
+ * the EXACT slot it created -- a by-access remove would otherwise drop
+ * a pre-existing compatible handle's share entry. */
 static int vfs_add_handle(struct vfs_node *node, uint32_t access, uint32_t share)
 {
     uint32_t i;
@@ -360,12 +364,25 @@ static int vfs_add_handle(struct vfs_node *node, uint32_t access, uint32_t share
             node->open_handles[i].access_mode = access & (VFS_O_READ | VFS_O_WRITE);
             node->open_handles[i].share_mode  = share;
             node->open_handles[i].active      = 1;
-            return 0;
+            return (int)i;
         }
     }
     return -1;  /* no free handle slots */
 }
 
+/* Exact-slot cleanup -- used by vfs_open failure paths where the slot
+ * index is known. Avoids the "by-access" matching that could remove a
+ * surviving real handle whose access bits collide. */
+static void vfs_remove_handle_at(struct vfs_node *node, int idx)
+{
+    if (idx < 0 || (uint32_t)idx >= VFS_MAX_HANDLES) return;
+    node->open_handles[idx].active = 0;
+}
+
+/* By-access cleanup -- vfs_close releases its own handle without a
+ * stored slot index; the access bits are sufficient there because the
+ * close path tears down ONE handle and the per-handle access bits are
+ * unique enough in practice. */
 static void vfs_remove_handle(struct vfs_node *node, uint32_t access)
 {
     uint32_t i;
@@ -383,6 +400,7 @@ struct vfs_node *vfs_open(const char *path, uint32_t flags)
 {
     const char *rest;
     int idx;
+    int slot_idx = -1;
     struct vfs_node *node;
     /* Extract share mode from upper bits of flags (if provided) */
     uint32_t share = (flags >> 8) & 0x07;  /* bits 10:8 = share mode */
@@ -390,6 +408,11 @@ struct vfs_node *vfs_open(const char *path, uint32_t flags)
     /* Default share mode: share everything (compatible with existing callers) */
     if (share == 0)
         share = VFS_SHARE_READ | VFS_SHARE_WRITE | VFS_SHARE_DELETE;
+
+    /* VFS_O_TRUNC requires VFS_O_WRITE. Truncating a read-only handle
+     * is contradictory; reject early before any FS dispatch. */
+    if ((flags & VFS_O_TRUNC) && !(flags & VFS_O_WRITE))
+        return (struct vfs_node *)0;
 
     idx = parse_drive(path, &rest);
     if (idx < 0 || !mounts[idx].mounted)
@@ -407,6 +430,13 @@ struct vfs_node *vfs_open(const char *path, uint32_t flags)
         if (!node)
             return (struct vfs_node *)0;
     }
+
+    /* VFS-level policy: VFS_O_TRUNC on a directory is silently masked
+     * BEFORE FS dispatch, so all 3 backends see consistent flags. NTFS
+     * still rejects WRITE on directories via its own open hook; FAT32
+     * and IXFS no-op on directory opens. */
+    if (!(node->type & VFS_FILE) && (flags & VFS_O_TRUNC))
+        flags &= ~VFS_O_TRUNC;
 
     /* Oplock break: break existing oplock before share-mode check */
     if (node->type & VFS_FILE)
@@ -426,17 +456,37 @@ struct vfs_node *vfs_open(const char *path, uint32_t flags)
     if (flags & VFS_O_DELETE_ON_CLOSE)
         node->delete_on_close = 1;
 
-    /* Track this open handle */
-    if (node->type & VFS_FILE)
-        vfs_add_handle(node, flags, share);
+    /* Track this open handle. Capture the exact slot index so failure
+     * paths below clear the slot they created -- by-access remove can
+     * delete a pre-existing compatible handle's share entry. */
+    if (node->type & VFS_FILE) {
+        slot_idx = vfs_add_handle(node, flags, share);
+        if (slot_idx < 0)
+            return (struct vfs_node *)0;  /* handle table full */
+    }
 
     /* Call the FS-specific open if available */
     node->flags = flags;
     if (node->ops && node->ops->open) {
         if (node->ops->open(node, flags) != 0) {
-            vfs_remove_handle(node, flags);
+            vfs_remove_handle_at(node, slot_idx);
             return (struct vfs_node *)0;
         }
+    }
+
+    /* VFS-level VFS_O_TRUNC: after the FS-specific open succeeds and
+     * before ref_count++, truncate to zero. Files only -- directories
+     * already had TRUNC masked above. NULL truncate op or non-zero
+     * return fails the open and clears the exact handle slot. */
+    if ((flags & VFS_O_TRUNC) && (node->type & VFS_FILE)) {
+        if (!node->ops || !node->ops->truncate ||
+            node->ops->truncate(node, 0) != 0) {
+            if (node->ops && node->ops->close)
+                node->ops->close(node);
+            vfs_remove_handle_at(node, slot_idx);
+            return (struct vfs_node *)0;
+        }
+        node->size = 0;
     }
 
     node->ref_count++;

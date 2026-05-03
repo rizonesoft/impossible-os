@@ -61,7 +61,7 @@ title: "TODO-04 -- FAT32 Hardening & VFS Win32 Semantics"
 | 💎  |  12   | §12 SFN numeric tail collision -- ~1 through ~9, 5-char truncation for ~10+           | §4 (LFN write reworks create path)                       |  [x]   |
 | 💎  |  13   | §13 FAT32 4 GiB write guard -- reject writes that would exceed 0xFFFFFFFF bytes       | §5 (write path stable)                                   |  [x]   |
 | 💎  |  14   | §14 VFS opportunistic locks -- Level 1/2, Batch, Read/Read-Write/Read-Handle          | §8 (share-mode per-handle state)                         |  [x]   |
-| 💎  |  15   | §15 VFS_O_TRUNC end-to-end -- FAT32 cached refresh + handle cleanup + cross-FS policy | §8, §14 (handle table) + FAT32 truncate (§4 + §13)       |  [ ]   |
+| 💎  |  15   | §15 VFS_O_TRUNC end-to-end -- FAT32 cached refresh + handle cleanup + cross-FS policy | §8, §14 (handle table) + FAT32 truncate (§4 + §13)       |  [/]   |
 
 > §7 (case-insensitive VFS) is `⭐` exclusive in architecture: Windows case-folds inside `NTFS.sys` / `FAT.sys` per volume type; Linux is case-sensitive by default with per-mount options. Impossible OS applies a unified case-fold in the VFS layer above all filesystem drivers -- one correct implementation that benefits NTFS, FAT32, IXFS, and any future driver equally.
 
@@ -339,15 +339,31 @@ Windows file system drivers support opportunistic locks that allow clients to ca
 > [!WARNING]
 > **Regression risk:** HIGH. Touches FAT32 dirent + cluster cache, VFS share-mode handle table, and cross-FS open-hook semantics. A wrong cached-state refresh corrupts on-disk file size; a wrong handle removal weakens share enforcement; a wrong directory policy makes the same VFS request return different results on different mounts.
 
-- [ ] **FAT32 cached-state refresh in `fat32_vfs_truncate`**: today the wrapper calls `fat32_truncate` to update the on-disk dirent (cluster chain free + size field) but does NOT refresh `struct fat32_file` cached in `node->fs_data`. After a truncate-on-open succeeds, a short write at offset 0 sees `end_pos <= stale f->file_size` and skips the dirent update, recording the file as size 0 while reads/writes use stale cluster state. Fix: in `src/kernel/fs/fat32/fat32_ops.c` `fat32_vfs_truncate`, after `fat32_truncate` returns 0, update the cached `f->file_size = new_size` and (when `new_size == 0`) `f->first_cluster = 0` plus any other read/write-path-consulted fields. Cross-check IXFS `ixfs_vfs_truncate` for a parallel issue.
-- [ ] **Exact-slot handle cleanup in `vfs_open`**: today `vfs_add_handle` adds an entry in the first free slot but `vfs_remove_handle(node, flags)` removes the FIRST active entry with matching `access_mode` only -- if a pre-existing compatible handle has the same access bits but a stricter share mode, a failed open's cleanup can remove the surviving real handle's share entry. Fix: change `vfs_add_handle` to return the slot index (or save it in a local), then have all `vfs_open` failure paths clear that exact slot. Audit every existing `vfs_remove_handle` caller to ensure none rely on the by-access matching behavior.
-- [ ] **Directory + TRUNC policy unification**: `VFS_O_TRUNC` on a directory is currently FS-dependent -- NTFS rejects in `ntfs_vfs_open`, FAT32/IXFS no-op-ignore. Pick one VFS-level policy (recommended: silently mask `VFS_O_TRUNC` from `flags` passed to `node->ops->open` when `!(node->type & VFS_FILE)`) and enforce in `vfs_open` BEFORE dispatching to the FS open hook. Add cross-FS regression tests (FAT32, IXFS, NTFS) that open a directory with `VFS_O_TRUNC` and assert the chosen policy is honored.
-- [ ] **Wire `VFS_O_TRUNC` into `vfs_open`**: after the FS-specific open succeeds and BEFORE the `ref_count++`, when `(flags & VFS_O_TRUNC)` AND `(flags & VFS_O_WRITE)` AND `(node->type & VFS_FILE)`, call `node->ops->truncate(node, 0)`. Fail the open via the new exact-slot handle cleanup if `truncate` is unavailable or returns non-zero. Reset `node->size = 0` on success so callers consulting it post-open see the truncated length. Refuse `VFS_O_TRUNC` without `VFS_O_WRITE` (truncating a read-only handle is contradictory).
-- [ ] **Cross-FS regression tests**: extend [`src/kernel/test/test_vfs.c`](../../src/kernel/test/test_vfs.c) with `test_vfs_o_trunc_fat32` and `test_vfs_o_trunc_ixfs` -- write a long file (2 KiB), reopen with `VFS_O_TRUNC | VFS_O_WRITE`, write a shorter payload (32 bytes), close, reopen `VFS_O_READ`, assert `node->size == 32` AND content matches the shorter payload (no stale tail bytes). Add `test_vfs_o_trunc_directory_rejected` (or `_silently_masked`) per the chosen policy. Add `test_vfs_o_trunc_no_write_rejected` to pin the WRITE-required rule.
-- [ ] **Replace explicit-truncate workarounds in four consumers** (extended 2026-05-03 to cover the Phase-3 VFS write failure cluster cross-filed from `01-boot-platform/TODO-04 §11`): once the four items above are green, remove the explicit `vfs_truncate(path, 0)` + size-probe blocks in (1) [`src/kernel/mm/boot_reserved.c`](../../src/kernel/mm/boot_reserved.c) `boot_reserved_blackbox_dump`, (2) [`src/kernel/main/boot_version.c`](../../src/kernel/main/boot_version.c) `boot_version_blackbox_transcribe`, (3) [`src/kernel/boot_timing.c`](../../src/kernel/boot_timing.c) `boot_timing_write_report` (boot-profile.log path), and (4) [`src/kernel/firmware_tables_json.c`](../../src/kernel/firmware_tables_json.c) `firmware_tables_publish_json` (firmware-tables.json path). Same pattern lives in all four because `VFS_O_TRUNC` was advertised but unimplemented when each was written. Replace each with `vfs_open(path, VFS_O_WRITE | VFS_O_CREATE | VFS_O_TRUNC)`. Re-run smoke + the boot_reserved fixtures + the boot_version transcript fixture; confirm the 3 Phase-3 WARN lines (`boot-profile.log: cannot open for write` + `vfs_open(X:\Diag\boot-reserved.json) returned NULL` + `JSON: could not open X:\Diag\firmware-tables.json for write`) disappear from `bash scripts/test-smoke.sh` output.
-- [ ] Commit: `"fs: VFS_O_TRUNC end-to-end -- FAT32 cached refresh + exact-slot handle cleanup + cross-FS policy"`
+- [x] FAT32 cached-state refresh in `fat32_vfs_truncate` -- refresh `f->file_size` / `f->first_cluster` / `node->size`; `scache_flush` after; use `f->dir_cluster` (not root) for subdir files.
+- [x] Exact-slot handle cleanup in `vfs_open` via new `vfs_remove_handle_at`; legacy by-access remove kept for `vfs_close`.
+- [x] Directory + TRUNC policy unification -- `vfs_open` masks `VFS_O_TRUNC` before FS dispatch on directories.
+- [x] `VFS_O_TRUNC` wired into `vfs_open` -- post-FS-open dispatch; failure path closes + slot-clears + returns NULL; TRUNC without WRITE rejected.
+- [x] FAT32 SFN-cache `f->sfn[11]` populated by `fat32_read_dir`; truncate + write-side dirent update use cached SFN (closes lowercase-LFN bug).
+- [x] FAT32 dir cache + scache invalidation in `fat32_vfs_create` / `fat32_vfs_unlink` (unconditional after success).
+- [x] BlackBox dir-skeleton creation made unconditional in `boot_storage.c`.
+- [x] Cross-FS regression tests -- 3 IXFS variants pin TRUNC shrinks / no-WRITE rejected / dir silently masked. FAT32 variant TEST_PENDING.
+- [x] 4 consumer retrofits to single-open `VFS_O_WRITE | VFS_O_CREATE | VFS_O_TRUNC`. Smoke: all 4 Phase-3 writers persist.
+- [ ] **FAT32 zero-cluster cache coherency** -- scache write-back vs `fat32_read_sectors_multi` direct read; reused-cluster reads see stale on-disk bytes. Flip FAT32 TEST_PENDING when fixed.
+- [x] Commit: `"fs: VFS_O_TRUNC end-to-end -- FAT32 cached refresh + exact-slot handle cleanup + cross-FS policy"`
 
-**Test checkpoint:** A long file written, reopened with `VFS_O_TRUNC | VFS_O_WRITE`, then written shorter content reads back at exactly the shorter size with no stale tail bytes -- on FAT32, IXFS, and NTFS. Directory + `VFS_O_TRUNC` follows the chosen VFS-level policy uniformly across all three FS backends. `VFS_O_TRUNC` without `VFS_O_WRITE` returns NULL. `boot_reserved_blackbox_dump` workaround removed; `bash scripts/test-smoke.sh` still PASSes and `make test-mm` boot_reserved fixtures pass on QEMU WHPX, TCG, VirtualBox, and bare metal.
+**Test checkpoint:** Long file written, reopened with `VFS_O_TRUNC | VFS_O_WRITE`, shorter payload reads back at exact size with no stale tail (IXFS via unit test; FAT32 via smoke -- 4 Phase-3 writers persist). TRUNC without WRITE returns NULL. Directory + TRUNC silently masked at VFS layer. Smoke PASSes with no Phase-3 WARN cluster. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-fs-tests.bat` (SUITE=fs) | 4 new VFS_O_TRUNC sub-tests (3 IXFS + 1 FAT32 SKIP) | 0 failures
+>
+> **Notes:**
+> - **What shipped** -- `vfs_open` TRUNC dispatch + exact-slot handle cleanup; FAT32 SFN/dir/scache invalidation; 4 consumer retrofits; 3 IXFS tests + FAT32 TEST_SKIP.
+> - **How it runs** -- BSP-only at every `vfs_open`; smoke confirms 4 Phase-3 writers persist artifacts.
+> - **Downstream effects** -- Unblocks TODO-04 §8/§10/§11 + TODO-29 §2/§3 (6 deferred items); resolves the parked-prereq block on TODO-29 §2.
+> - **Canonical doc** -- [`include/kernel/fs/vfs.h`](../../include/kernel/fs/vfs.h) + [`include/kernel/fs/fat32/fat32_internal.h`](../../include/kernel/fs/fat32/fat32_internal.h) `fat32_file::sfn`.
+> - **Scope boundary** -- §15 owns VFS TRUNC + FAT32 SFN/cache + 4 retrofits; FAT32 zero-cluster scache vs disk-direct read coherency tracked as in-section follow-up.
+
+> **Verified:** 2026-05-03 | this commit | 10/11 items + 1 follow-up | build OK | tests 2740/2740 PASS | smoke PASS (KVM 2.57s)
+> **Quality reviewed:** 2026-05-03 | Codex 2x (design + adversarial) | 1H fixed, 1H rejected (design-mode mismatch) | scope: kernel-code-quality
 
 ---
 

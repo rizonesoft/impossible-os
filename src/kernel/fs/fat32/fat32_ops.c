@@ -227,9 +227,11 @@ static int fat32_file_write_vfs(struct vfs_node *node, uint32_t offset,
             uint32_t bpc = vol->bpb.sectors_per_cluster * 512;
             uint8_t *dbuf = (uint8_t *)kmalloc(bpc);
             if (dbuf) {
-                uint8_t short_name[11];
                 uint32_t dc = f->dir_cluster;
-                fat32_make_short_name(node->name, short_name);
+                /* Match dirent by cached on-disk SFN; fat32_make_short_name
+                 * misses the ~N collision suffix fat32_generate_sfn writes
+                 * for LFN-required (lowercase 8.3) names. */
+                const uint8_t *short_name = f->sfn;
 
                 while (dc >= 2 && dc < FAT32_EOC) {
                     uint32_t sec = cluster_to_sector(vol, dc);
@@ -422,6 +424,19 @@ static int fat32_vfs_create(struct vfs_node *parent, const char *name,
         rc = fat32_create_dir_vol(vol, dir_cluster, name);
     else
         rc = fat32_create_file_vol(vol, dir_cluster, name);
+    if (rc == 0) {
+        /* Invalidate the dir cache (parent walks during vfs_create may
+         * have repopulated dir_cached_cluster with a sibling's cluster;
+         * cheapest correct fix is unconditional). */
+        vol->dir_file_count = 0;
+        vol->dir_cached_cluster = 0;
+        /* Flush scache so the new dirent reaches disk before any
+         * subsequent fat32_read_sectors_multi (which bypasses scache
+         * via direct blkdev_read). Without this, vfs_open's
+         * VFS_O_CREATE re-walk reads stale on-disk sectors and misses
+         * the freshly-created file. */
+        scache_flush(vol);
+    }
     spin_unlock(&vol->lock);
     return rc;
 }
@@ -435,6 +450,11 @@ static int fat32_vfs_unlink(struct vfs_node *parent, const char *name)
     if (!vol) return -1;
     spin_lock(&vol->lock);
     rc = fat32_delete_file_vol(vol, dir_cluster, name);
+    if (rc == 0) {
+        vol->dir_file_count = 0;
+        vol->dir_cached_cluster = 0;
+        scache_flush(vol);
+    }
     spin_unlock(&vol->lock);
     return rc;
 }
@@ -486,9 +506,26 @@ static int fat32_vfs_truncate(struct vfs_node *node, uint64_t new_size)
     }
 
     if (node->name[0]) {
+        /* Use the file's actual parent dir cluster + cached on-disk
+         * SFN. Lowercase 8.3 names ("postcode.log") get a ~1 collision
+         * suffix from fat32_generate_sfn at create time; the cached
+         * sfn[] is the only authoritative match key. */
+        uint32_t dir_cluster = (f->dir_cluster >= 2)
+                             ? f->dir_cluster : vol->bpb.root_cluster;
         spin_lock(&vol->lock);
-        rc = fat32_truncate(vol, vol->bpb.root_cluster, node->name,
-                            (uint32_t)new_size);
+        rc = fat32_truncate_by_sfn(vol, dir_cluster, f->sfn,
+                                   (uint32_t)new_size);
+        if (rc == 0) {
+            /* Refresh cached state: post-truncate writes consult
+             * f->file_size + f->first_cluster directly. Without this
+             * a truncate-on-open + short write would skip the dirent
+             * update because end_pos <= stale f->file_size. */
+            f->file_size = (uint32_t)new_size;
+            if (new_size == 0)
+                f->first_cluster = 0;
+            node->size = new_size;
+            scache_flush(vol);
+        }
         spin_unlock(&vol->lock);
         return rc;
     }

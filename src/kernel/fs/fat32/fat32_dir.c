@@ -547,6 +547,14 @@ void fat32_read_dir(struct fat32_volume *vol, uint32_t cluster)
             f->first_cluster = fc;
             f->file_size = de->file_size;
             f->volume = vol;
+            /* Cache the on-disk SFN for downstream truncate/unlink
+             * matching (collision suffix is part of the on-disk name
+             * but absent from fat32_make_short_name). */
+            {
+                int sk;
+                for (sk = 0; sk < 11; sk++)
+                    f->sfn[sk] = de->name[sk];
+            }
 
             vol->dir_file_count++;
         }

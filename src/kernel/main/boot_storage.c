@@ -253,23 +253,24 @@ void boot_phase2(void)
     boot_splash_status("Mounting filesystems...");
     partition_mount_filesystems();
 
-    /* --- BlackBox directory skeleton (X:\) --- */
+    /* --- BlackBox directory skeleton (X:\) ---
+     * Try every dir on every boot. vfs_create on an existing FAT32
+     * directory is a silent no-op (fat32_create_dir_vol returns -1
+     * when the dirent already exists), so re-running is safe. The
+     * old "probe Logs and skip everything if it exists" gate left
+     * Diag/Perf/Crash/Tools missing whenever Logs survived but a
+     * sibling didn't (firmware crash mid-skeleton, manual deletion,
+     * mismatch between BlackBox builds). */
     {
-        struct vfs_node *probe = vfs_open("X:\\Logs", 0);
-        if (probe) {
-            vfs_close(probe);  /* already exists */
-        } else {
-            /* First boot or reformatted -- create directory skeleton */
-            static const char *bb_dirs[] = {
-                "X:\\Logs", "X:\\Boot", "X:\\Crash", "X:\\Crash\\WER",
-                "X:\\Perf", "X:\\Diag", "X:\\Tools"
-            };
-            uint32_t d;
-            for (d = 0; d < 7; d++) {
-                if (vfs_create(bb_dirs[d], VFS_DIRECTORY) == 0)
-                    klog(LOG_INFO, "boot", "BlackBox: created %s",
-                         bb_dirs[d]);
-            }
+        static const char *bb_dirs[] = {
+            "X:\\Logs", "X:\\Boot", "X:\\Crash", "X:\\Crash\\WER",
+            "X:\\Perf", "X:\\Diag", "X:\\Tools"
+        };
+        uint32_t d;
+        for (d = 0; d < 7; d++) {
+            if (vfs_create(bb_dirs[d], VFS_DIRECTORY) == 0)
+                klog(LOG_INFO, "boot", "BlackBox: created %s",
+                     bb_dirs[d]);
         }
     }
 

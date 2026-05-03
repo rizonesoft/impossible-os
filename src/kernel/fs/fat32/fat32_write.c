@@ -296,16 +296,31 @@ ren_not_found:
 int fat32_truncate(struct fat32_volume *vol, uint32_t dir_cluster,
                     const char *name, uint32_t new_size)
 {
+    uint8_t short_name[11];
+    fat32_make_short_name(name, short_name);
+    return fat32_truncate_by_sfn(vol, dir_cluster, short_name, new_size);
+}
+
+int fat32_truncate_by_sfn(struct fat32_volume *vol, uint32_t dir_cluster,
+                           const uint8_t sfn[11], uint32_t new_size)
+{
     uint32_t bytes_per_cluster = vol->bpb.sectors_per_cluster * 512;
     uint8_t *cluster_buf;
     uint8_t short_name[11];
     uint32_t cur_cluster = dir_cluster;
+    int sk;
 
     cluster_buf = (uint8_t *)kmalloc(bytes_per_cluster);
     if (!cluster_buf)
         return -1;
 
-    fat32_make_short_name(name, short_name);
+    /* Match against the caller-provided SFN. The legacy entry above
+     * derives it via fat32_make_short_name when the caller has only a
+     * name; modern callers (vfs ops layer with a cached fat32_file)
+     * pass the on-disk SFN directly because lowercase-8.3 inputs like
+     * "postcode.log" become "POSTCO~1LOG" via fat32_generate_sfn's
+     * unconditional ~1 suffix for LFN-required names. */
+    for (sk = 0; sk < 11; sk++) short_name[sk] = sfn[sk];
 
     while (cur_cluster >= 2 && cur_cluster < FAT32_EOC) {
         uint32_t sector = cluster_to_sector(vol, cur_cluster);

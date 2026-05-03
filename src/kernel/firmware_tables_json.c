@@ -540,27 +540,15 @@ void firmware_tables_publish_json(void)
         return;
     }
 
-    /* Write to X:\Diag\ (BlackBox) -- create the file via parent dir
-     * to avoid the FAT32 dir-cache re-walk bug noted in
-     * boot_timeline_dump_json. */
-    const char *dir = "X:\\Diag\\";
-    {
-        struct vfs_node *d = vfs_open(dir, VFS_O_READ);
-        if (d) {
-            if (d->ops && d->ops->create)
-                d->ops->create(d, "firmware-tables.json", VFS_FILE);
-            vfs_close(d);
-        }
-    }
     {
         struct vfs_node *f = vfs_open("X:\\Diag\\firmware-tables.json",
-                                      VFS_O_WRITE);
+                                      VFS_O_WRITE | VFS_O_CREATE | VFS_O_TRUNC);
         if (f) {
-            vfs_write(f, 0, (uint32_t)jb.pos, (const uint8_t *)jb.buf);
+            vfs_write(f, 0, (uint32_t)jb_pos(&jb), (const uint8_t *)jb_buf(&jb));
             vfs_close(f);
             klog(LOG_INFO, "FW",
                  "JSON: wrote X:\\Diag\\firmware-tables.json (%u bytes)",
-                 (unsigned)jb.pos);
+                 (unsigned)jb_pos(&jb));
         } else {
             klog(LOG_WARN, "FW",
                  "JSON: could not open X:\\Diag\\firmware-tables.json for write");
