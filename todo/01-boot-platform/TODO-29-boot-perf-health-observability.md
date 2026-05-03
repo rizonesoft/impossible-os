@@ -74,6 +74,9 @@ implements_after: TODO-04
 | ⭐ |  11   | Phase-3 X:\Diag JSON writer batching                | T04 §8, T29 §2 (advisor)                  |  [ ]   |
 | ⭐ |  12   | AVX-512 throttle policy when APERF/MPERF absent     | T19 §3                                    |  [ ]   |
 | ⭐ |  13   | Boot history ring depth + format (8 → 32+ entries)  | T01 §11                                   |  [ ]   |
+| ⭐ |  14   | FAT32 dirty-mount fsck cost in VFS step             | D05 T04                                   |  [ ]   |
+| ⭐ |  15   | User-mode binary spawn latency (~1s task_create→ELF)| T22 (sched / exec)                        |  [ ]   |
+| ⭐ |  16   | TSC frequency variability under hypervisor          | --                                        |  [ ]   |
 
 ---
 
@@ -280,6 +283,52 @@ Today `boot_error_history` rings 8 entries. After 8 boots the oldest rolls off; 
 - [ ] Commit: `"boot: boot_history ring depth 8 -> 32 entries (operator UX)"`
 
 **Test checkpoint:** Existing unit tests pass at the 32-entry size. Smoke shows no regression in `boot_history: Recent boot history (N attempts)` output. NVRAM bin file is 512 bytes (32 × 16); RegSetBinary handles the larger blob.
+
+---
+
+## 14. FAT32 Dirty-Mount fsck Cost in VFS Step
+
+Smoke (KVM, 2026-05-03) shows VFS step durations swinging by 4x depending on whether BlackBox last unmounted cleanly: 213ms on a clean mount, 861ms when `fat32: Dirty volume -- not cleanly unmounted` triggers `fat32_fsck` (BPB validate + cluster bitmap walk + ~440ms inside the repair pass). Variance is invisible in the per-step timing summary because the budget is fixed; operators see "VFS slow today" without knowing fsck ran.
+
+**Files:** `src/kernel/fs/fat32/fat32_fsck.c`, `src/kernel/fs/fat32/fat32_ops.c`, `include/kernel/boot_init.h`
+
+- [ ] Sub-time the dirty-mount path: emit `boot_progress` substeps for `fat32_fsck.bpb_validate`, `fat32_fsck.fat_compare`, `fat32_fsck.cluster_walk`. Today the only signal is the wall-clock VFS delta.
+- [ ] Add a `fsck_ran` boolean + `fsck_duration_ms` to the boot-health JSON (§2) so VFS step variance is attributable rather than mysterious.
+- [ ] Investigate a fast-clean shutdown path that flips the dirty bit on graceful poweroff (cmd.exe `shutdown` + ACPI S5) so subsequent boots skip fsck. Today the volume is dirty on every boot because the smoke teardown SIGTERMs QEMU mid-flight.
+- [ ] Commit: `"fs: fat32 fsck substep timing + dirty-mount duration in boot-health"`
+
+**Test checkpoint:** Boot serial shows 3 substep lines under VFS when fsck triggers; absent when volume was clean. Boot-health.json carries `fat32: { fsck_ran: bool, fsck_duration_ms: u32 }`. Graceful-shutdown smoke confirms the next boot skips fsck.
+
+---
+
+## 15. User-Mode Binary Spawn Latency (~1s task_create → ELF entry)
+
+Smoke (KVM, 2026-05-03) shows a consistent ~1s gap between `sched: Task N ("cmd.exe") created` and the matching `exec: Loading ELF binary`. The kernel logs both events but nothing between them, so the time is hidden inside the scheduler / exec / page-table-setup path. Same pattern visible for every user-mode binary spawn (cmd.exe, every test_*.exe). Real users experience this as "slow login shell" on every boot.
+
+**Files:** `src/kernel/sched/syscall.c` (SYS_EXEC), `src/kernel/exec.c`, `src/kernel/sched/task.c`, `src/kernel/main/boot_desktop.c` (cmd.exe shell_loader_func)
+
+- [ ] Add `boot_progress` substeps inside the SYS_EXEC path: read_file, format_dispatch, segment_load, page_table_install, auxv_setup, scheduler_resume. Capture per-step ms.
+- [ ] Profile the ELF loader's per-segment work; a 67 KiB cmd.exe loading 3 segments in ~1s suggests page-by-page allocation rather than batched. Investigate whether `pmm_alloc_contiguous` for the segment span shaves the cost.
+- [ ] If the gap is scheduler-side (task created but not picked for ~1s), audit the round-robin policy for boot-time starvation -- a freshly-created kernel task should run before idle.
+- [ ] Commit: `"kernel: SYS_EXEC substep timing + spawn-latency profile"`
+
+**Test checkpoint:** Boot serial shows 6 substep lines per user-mode spawn. cmd.exe spawn drops below 200ms or the cost is justified in `boot_perf_budgets[]`. test=1 mode shows the same pattern for the 16 user-mode test binaries (16 × 200ms = 3.2s vs 16 × 1s = 16s today is the upper bound on the win).
+
+---
+
+## 16. TSC Frequency Variability Under Hypervisor
+
+Smoke logs across boots show TSC frequency reported as 7056 MHz, 4939 MHz, 5000 MHz on the same physical i5-11600K host. Hyper-V re-derives the TSC scale on each VM start; Linux 6.x logs a single canonical value because it pins TSC freq from CPUID 0x15/0x16 once at boot. Impossible OS uses `lapic: Tier 1: Hyper-V MSR 0x40000023` which returns the runtime-current scale, not a CPUID-pinned value. Downstream consumers (sys_uptime, KUSD QpcFreq, perf counters) cache whatever they got first; if a future TSC-freq refresh pulls a different value mid-boot, time-since-boot would jump.
+
+**Files:** `src/kernel/drivers/lapic.c`, `src/kernel/cpuid.c`, `src/kernel/time.c`, `src/kernel/nt/kusd.c`
+
+- [ ] Verify all TSC-freq consumers (KUSD QpcFreq, time_get_tsc_ns_per_tick, perf_record timestamps) read from a single latched value computed once at LAPIC init, not re-queried.
+- [ ] Add a one-time post-init self-check: re-read MSR 0x40000023 and compare against the latched value; if it drifted by > 1%, log LOG_WARN with both values for triage.
+- [ ] CPUID 0x15/0x16 fallback: when the hypervisor MSR is absent (bare metal Intel Tier 1), pin to CPUID 0x15 ratio + 0x16 base which Linux trusts as authoritative.
+- [ ] Boot-health.json (§2) records the latched TSC freq + the source (Hyper-V MSR / CPUID 0x15 / PIT / HPET) so operator triage can spot when a hypervisor reset confused the calibration.
+- [ ] Commit: `"time: TSC frequency single-latch + drift-check + CPUID fallback"`
+
+**Test checkpoint:** Smoke shows one `[time] TSC freq locked: <N> MHz from <source>` line; no later line reports a different freq. Synthetic-drift fixture (mock MSR returning a different value on second read) triggers the LOG_WARN. boot-health.json carries `tsc: { freq_hz: u64, source: "hyperv-msr"|"cpuid-0x15"|"pit"|"hpet" }`.
 
 ---
 
