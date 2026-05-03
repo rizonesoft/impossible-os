@@ -9,6 +9,7 @@
 #include "kernel/klog.h"
 #include "kernel/boot_info.h"
 #include "kernel/boot_timing.h"
+#include "kernel/boot_perf_budget.h"
 #include "kernel/boot_splash.h"
 #include "kernel/drivers/serial.h"
 #include "kernel/drivers/framebuffer.h"
@@ -289,7 +290,7 @@ void boot_timeline_dump_json(void)
         int written = snprintf((char *)buf + pos,
             BOOT_TIMELINE_BUF_SIZE - pos,
             "  {\"stage\":\"%s\",\"phase\":0,\"post\":\"0x0000\","
-            "\"start_ms\":%u,\"duration_ms\":%u,"
+            "\"start_ms\":%u,\"duration_ms\":%u,\"target_ms\":0,"
             "\"source\":\"fpdt\",\"unreliable\":%s}%s\n",
             fpdt[k].stage,
             (unsigned)fpdt[k].start_ms,
@@ -335,17 +336,23 @@ void boot_timeline_dump_json(void)
             safe_name[sn] = raw[sn];
         safe_name[sn] = '\0';
 
+        /* Per-step target_ms (0 when no budget defined). */
+        const struct boot_phase_budget *bp =
+            boot_perf_budget_lookup(steps[i].step);
+        uint32_t target_ms = bp ? bp->target_ms : 0u;
+
         int last = (emitted + 1 == total);
         int written = snprintf((char *)buf + pos,
             BOOT_TIMELINE_BUF_SIZE - pos,
             "  {\"stage\":\"%s\",\"phase\":%u,\"post\":\"0x%02x\","
-            "\"start_ms\":%u,\"duration_ms\":%u,"
+            "\"start_ms\":%u,\"duration_ms\":%u,\"target_ms\":%u,"
             "\"source\":\"tsc\",\"unreliable\":%s}%s\n",
             safe_name,
             (unsigned)steps[i].phase,
             (unsigned)steps[i].postcode,
             (unsigned)start_ms,
             (unsigned)dur_ms,
+            (unsigned)target_ms,
             tsc_unreliable ? "true" : "false",
             last ? "" : ",");
         if (written <= 0 ||

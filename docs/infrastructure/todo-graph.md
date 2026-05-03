@@ -120,6 +120,9 @@ flowchart TD
   todo_01_boot_platform_TODO_28_boot_validation_certification_matrix_md_1c2cca["boot-validation-certification-matrix<br/>TODO-28"]
   class todo_01_boot_platform_TODO_28_boot_validation_certification_matrix_md_1c2cca active
   click todo_01_boot_platform_TODO_28_boot_validation_certification_matrix_md_1c2cca "https://github.com/rizonetech/impossible-os/blob/main/todo/01-boot-platform/TODO-28-boot-validation-certification-matrix.md"
+  todo_01_boot_platform_TODO_29_boot_perf_health_observability_md_d13a9f["boot-perf-health-observability<br/>TODO-29"]
+  class todo_01_boot_platform_TODO_29_boot_perf_health_observability_md_d13a9f active
+  click todo_01_boot_platform_TODO_29_boot_perf_health_observability_md_d13a9f "https://github.com/rizonetech/impossible-os/blob/main/todo/01-boot-platform/TODO-29-boot-perf-health-observability.md"
   todo_02_kernel_core_TODO_01_kernel_init_sequencing_md_0dbd4c["kernel-init-sequencing<br/>TODO-01"]
   class todo_02_kernel_core_TODO_01_kernel_init_sequencing_md_0dbd4c active
   click todo_02_kernel_core_TODO_01_kernel_init_sequencing_md_0dbd4c "https://github.com/rizonetech/impossible-os/blob/main/todo/02-kernel-core/TODO-01-kernel-init-sequencing.md"
@@ -713,7 +716,6 @@ flowchart TD
   todo_01_boot_platform_TODO_01_boot_protocol_abi_handoff_md_27e791 -.->|accepted| todo_01_boot_platform_TODO_20_usb_zero_delay_handover_md_e2973e
   todo_01_boot_platform_TODO_01_boot_protocol_abi_handoff_md_27e791 -.->|accepted| todo_05_storage_filesystems_TODO_04_fat32_hardening_vfs_semantics_md_511b7d
   todo_01_boot_platform_TODO_01_boot_protocol_abi_handoff_md_27e791 -.->|deferred| todo_01_boot_platform_TODO_13_tpm_measured_boot_attestation_md_ab1f6e
-  todo_01_boot_platform_TODO_01_boot_protocol_abi_handoff_md_27e791 -.->|accepted| todo_01_boot_platform_TODO_03_bootloader_error_recovery_md_f7e477
   todo_01_boot_platform_TODO_02_uefi_hardening_secureboot_md_a4ee3c -.->|accepted| todo_02_kernel_core_TODO_12_native_api_ssdt_md_8ba594
   todo_01_boot_platform_TODO_02_uefi_hardening_secureboot_md_a4ee3c -.->|accepted| todo_03_memory_concurrency_TODO_03_advanced_allocator_md_4669cf
   todo_01_boot_platform_TODO_02_uefi_hardening_secureboot_md_a4ee3c -.->|accepted| todo_03_memory_concurrency_TODO_08_advanced_sync_md_31eaa2
@@ -722,6 +724,9 @@ flowchart TD
   todo_01_boot_platform_TODO_03_bootloader_error_recovery_md_f7e477 -.->|accepted| todo_01_boot_platform_TODO_02_uefi_hardening_secureboot_md_a4ee3c
   todo_01_boot_platform_TODO_03_bootloader_error_recovery_md_f7e477 -.->|accepted| todo_02_kernel_core_TODO_19_code_integrity_trust_policy_md_211b09
   todo_01_boot_platform_TODO_03_bootloader_error_recovery_md_f7e477 -.->|accepted| todo_04_drivers_hardware_TODO_04_security_hardware_md_4e7447
+  todo_01_boot_platform_TODO_04_firmware_table_platform_inventory_md_daf5a4 -.->|deferred| todo_05_storage_filesystems_TODO_04_fat32_hardening_vfs_semantics_md_511b7d
+  todo_01_boot_platform_TODO_04_firmware_table_platform_inventory_md_daf5a4 -.->|deferred| todo_05_storage_filesystems_TODO_04_fat32_hardening_vfs_semantics_md_511b7d
+  todo_01_boot_platform_TODO_04_firmware_table_platform_inventory_md_daf5a4 -.->|deferred| todo_05_storage_filesystems_TODO_04_fat32_hardening_vfs_semantics_md_511b7d
   todo_02_kernel_core_TODO_12_native_api_ssdt_md_8ba594 -.->|accepted| todo_02_kernel_core_TODO_14_registry_completion_md_e13937
   todo_02_kernel_core_TODO_12_native_api_ssdt_md_8ba594 -.->|accepted| todo_02_kernel_core_TODO_31_kernel_bulletproofing_md_f4ac23
   todo_02_kernel_core_TODO_12_native_api_ssdt_md_8ba594 -.->|accepted| todo_02_kernel_core_TODO_14_registry_completion_md_e13937

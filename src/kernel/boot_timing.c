@@ -10,6 +10,7 @@
  * ============================================================================ */
 
 #include "kernel/boot_timing.h"
+#include "kernel/boot_perf_budget.h"
 #include "kernel/boot_init.h"
 #include "kernel/boot_info.h"
 #include "kernel/klog.h"
@@ -684,4 +685,7 @@ void boot_perf_dump(void)
              padded, ms_vals[idx], durations[idx],
              (uint32_t)s_steps[idx].phase);
     }
+
+    boot_perf_budget_check();
+    boot_perf_total_check();
 }

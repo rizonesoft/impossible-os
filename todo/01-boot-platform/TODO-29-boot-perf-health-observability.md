@@ -59,16 +59,16 @@ implements_after: TODO-04
 
 ## Implementation Order
 
-| ⭐ | Order | Deliverable                                       | Depends On                                | Status |
-| -- | :---: | ------------------------------------------------- | ----------------------------------------- | :----: |
-| 💎 |   1   | Per-phase boot perf budgets + threshold alarms    | --                                        |  [ ]   |
-| 💎 |   2   | Boot health audit JSON (`X:\Diag\boot-health.json`) | §1, T04 §11 (VFS fix)                   |  [ ]   |
-| ⭐ |   3   | Boot perf trend file + regression detection       | §1, §2                                    |  [ ]   |
-| 💎 |   4   | SMBIOS init profiling + optimization              | §1                                        |  [ ]   |
-| 💎 |   5   | MAT W^X violation root-cause attribution          | T04 §5                                    |  [ ]   |
-| 💎 |   6   | Mouse PS/2 init profiling + optimization          | §1                                        |  [ ]   |
-| ⭐ |   7   | Async font/icon loader (post-desktop-ready)       | §1                                        |  [ ]   |
-| ⭐ |   8   | Boot heartbeat telemetry during long phases       | §1, T14 §6 (alive-blink), T23 (watchdog)  |  [ ]   |
+| ⭐ | Order | Deliverable                                         | Depends On                                | Status |
+| -- | :---: | --------------------------------------------------- | ----------------------------------------- | :----: |
+| 💎 |   1   | Per-phase boot perf budgets + threshold alarms      | --                                        |  [x]   |
+| 💎 |   2   | Boot health audit JSON (`X:\Diag\boot-health.json`) | §1, T04 §11 (VFS fix)                     |  [ ]   |
+| ⭐ |   3   | Boot perf trend file + regression detection         | §1, §2                                    |  [ ]   |
+| 💎 |   4   | SMBIOS init profiling + optimization                | §1                                        |  [ ]   |
+| 💎 |   5   | MAT W^X violation root-cause attribution            | T04 §5                                    |  [ ]   |
+| 💎 |   6   | Mouse PS/2 init profiling + optimization            | §1                                        |  [ ]   |
+| ⭐ |   7   | Async font/icon loader (post-desktop-ready)         | §1                                        |  [ ]   |
+| ⭐ |   8   | Boot heartbeat telemetry during long phases         | §1, T14 §6 (alive-blink), T23 (watchdog)  |  [ ]   |
 
 ---
 
@@ -76,13 +76,28 @@ implements_after: TODO-04
 
 Today `boot_progress(phase, step, postcode)` records 31 timeline entries with absolute and delta timestamps. There is no notion of an **expected** duration -- a 1342ms SMBIOS init prints identically to an 80ms ACPI init, so the slow path is invisible without manual log inspection.
 
-- [ ] Define `struct boot_phase_budget { uint16_t step; uint32_t target_ms; const char *reason; }` in [`include/kernel/boot_init.h`](../../include/kernel/boot_init.h). Initial budgets keyed to step labels (PMM, VMM, HEAP, ACPI, FB, SMBIOS, TIMER, KEYBOARD, MOUSE, PCI_NET_DEFERRED, SMP, STORAGE_DRV, VFS, OB, REGISTRY, SCHED, IPC, EXEC, DESKTOP_READY): 8/12/2/100/200/100/20/50/100/200/200/30/500/100/200/50/120/100/2000 ms respectively. Each entry carries a one-line `reason` (why this budget) so future drift gets a documented baseline.
-- [ ] Add `boot_perf_budget_check()` called from `boot_progress_dump_summary()` after the existing PERF table emits. Walks every recorded step, looks up the budget, and emits `[WARN] BOOT-BUDGET: <step> took <observed>ms (target <target>ms): <reason>` for every breach. Below-budget steps stay silent. The check is data-only -- no side-effects, no panics.
-- [ ] Per-step **soft cap** vs **hard cap**: soft = 1.5x target → WARN, hard = 4x target → ERR (breach is logged but does not halt; halt-on-breach is owned by TODO-23 watchdog).
-- [ ] Wire `BOOT_PHASE_BUDGET()` macro into `boot_progress` so every step records the budget alongside its observed delta -- timeline JSON gains a `target_ms` field that consumers (host decoder, `boot-trend.json`) can compare. Updating the schema doc lives under TODO-04 §10 host decoder.
-- [ ] Commit: `"boot: per-phase perf budgets + threshold alarms"`
+- [x] Define `struct boot_phase_budget { const char *step; uint32_t target_ms; const char *reason; }` in `include/kernel/boot_perf_budget.h` (string-keyed to match `boot_timing_step_t.step`).
+- [x] Ship 18 named per-step budgets in `src/kernel/boot_perf_budget.c`; targets per the design table. DESKTOP_READY excluded (last step has no per-step delta).
+- [x] Pure `enum boot_perf_budget_class { BUDGET_OK, BUDGET_SOFT, BUDGET_HARD }` + `boot_perf_budget_classify(observed_ms, target_ms)` for synthetic-test use (no live boot calls).
+- [x] `boot_perf_budget_check()` called from `boot_perf_dump()`; walks steps, skips last, emits klog `[WARN]` / `[FAIL] BOOT-BUDGET: <step> took <obs>ms (target <t>ms): <reason>`. Data-only.
+- [x] Soft = 1.5x target -> WARN; hard = 4x target -> ERR. Equal-to-target is OK. Halt-on-breach owned by TODO-23 watchdog.
+- [x] Total-boot-time `boot_perf_total_check()` -- compares `steps[last].tsc - steps[0].tsc` against 4000ms target with same soft/hard thresholds.
+- [x] Schema bump for `boot-timeline.json` -- per-record `target_ms` field (0 = no budget). Trend-analysis decoder is owned by §3.
+- [x] Commit: `"boot: per-phase perf budgets + threshold alarms"`
 
-**Test checkpoint:** Synthetic boot sequence with `mock_boot_progress(STEP_SMBIOS, 1342)` triggers the soft-cap WARN line; `mock_boot_progress(STEP_TIMER, 18)` stays silent (under 20ms target). Unit test fires every defined budget twice (under and over) and asserts the WARN/silent split.
+**Test checkpoint:** `boot_perf_budget_classify(99, 100) == OK`; `(150, 100) == OK`; `(151, 100) == SOFT`; `(400, 100) == SOFT`; `(401, 100) == HARD`. Lookup of known step returns budget; unknown + NULL return NULL. Clean boot stays silent; synthetic over-budget step triggers WARN/ERR.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 15 boot_perf_budget sub-tests, 0 failures
+>
+> **Notes:**
+> - **What shipped** -- `include/kernel/boot_perf_budget.h` + `src/kernel/boot_perf_budget.c` (18 per-step budgets, classifier, lookup, check, total-boot check) + 15 unit tests; boot-timeline JSON gains `target_ms` per record.
+> - **How it runs** -- BSP-only at `boot_perf_dump()` time (post-Phase-3); pure data-only walk over `boot_timing_get_steps()`; emits WARN at >1.5x target, ERR at >4x. Idempotent.
+> - **Downstream effects** -- §2 boot-health.json consumes the per-step + total-boot classifications; §3 trend file diffs `target_ms` against observed across the rolling boot ring; §4/§6 SMBIOS+Mouse optimizations measure success against these budgets.
+> - **Canonical doc** -- [`include/kernel/boot_perf_budget.h`](../../include/kernel/boot_perf_budget.h) API + budget table.
+> - **Scope boundary** -- §1 owns budget data + classifier + boot-time WARN/ERR emit; halt-on-breach owned by TODO-23 watchdog; consolidated health JSON owned by §2; rolling trend owned by §3.
+
+> **Verified:** 2026-05-03 | this commit | 8/8 items | build OK | tests 2729/2729 PASS
+> **Quality reviewed:** 2026-05-03 | Codex 4x (design + adversarial + consistency + perf) | 2H+2M+1L fixed, 0 open | scope: kernel-code-quality
 
 ---
 

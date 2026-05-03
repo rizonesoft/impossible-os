@@ -386,7 +386,7 @@ Cross-section dedup / future-spec drift prevention. None of these items is an ac
 | 💎 | UEFI conformance profile + EBBR       | ⚠️ assumes full PC profile       | ✅ EBBR detection in efi-stub    | ✅ §7 ECPT + EBBR + PC contradict |
 | 💎 | Registry + BlackBox firmware report   | ✅ msinfo32 + Event Log          | ⚠️ scattered (dmidecode/sysfs)   | ✅ §8 HKLM mirror + JSON writer   |
 | ⭐ | Firmware quirk database               | ⚠️ HAL-internal, opaque          | ⚠️ DMI quirks scattered          | ✅ §9 SMBIOS-keyed + JSON publish |
-| ⭐ | Host decoder for firmware-tables.json | ❌ N/A                           | ❌ N/A                           | ✅ §10 firmware-tables-decode    |
+| ⭐ | Host decoder for firmware-tables.json | ❌ N/A                           | ❌ N/A                           | ✅ §10 firmware-tables-decode     |
 | 💎 | APEI (BERT/HEST/EINJ/ERST) visibility | ✅ WHEA hardware-error subsystem | ✅ /sys/firmware/acpi/* + ras-mc | ✅ §8 apei block in JSON writer   |
 | ⭐ | DBG2 secondary debug ports            | ✅ kernel debugger reads DBG2    | ✅ amba_pl011 + earlycon DBG2    | ✅ §8 dbg2 block in JSON writer   |
 | ⭐ | WSMT SMM mitigations posture          | ✅ HAL reads WSMT bitmap         | ❌ Linux ignores WSMT            | ✅ §8 wsmt block in JSON writer   |
