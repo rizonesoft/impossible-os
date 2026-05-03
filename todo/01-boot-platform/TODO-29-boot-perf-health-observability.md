@@ -104,7 +104,7 @@ Today `boot_progress(phase, step, postcode)` records 31 timeline entries with ab
 > - **Canonical doc** -- [`include/kernel/boot_perf_budget.h`](../../include/kernel/boot_perf_budget.h) API + budget table.
 > - **Scope boundary** -- §1 owns budget data + classifier + boot-time WARN/ERR emit; halt-on-breach owned by TODO-23 watchdog; consolidated health JSON owned by §2; rolling trend owned by §3.
 
-> **Verified:** 2026-05-03 | this commit | 8/8 items | build OK | tests 2729/2729 PASS
+> **Verified:** 2026-05-03 | this commit | 8/8 items | build OK | tests 2760/2760 PASS (re-review: source unchanged since b09d2cdb)
 > **Quality reviewed:** 2026-05-03 | Codex 7x (design + adversarial x2 + consistency x2 + perf x2) | 2H+2M+1L fixed, 0 open | scope: kernel-code-quality
 
 ---
